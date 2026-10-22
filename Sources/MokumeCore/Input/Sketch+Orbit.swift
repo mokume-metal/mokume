@@ -15,7 +15,7 @@ extension SketchPart {
     /// | 左ドラッグ (中ボタンなど、ほかのボタンも) | 注視点のまわりを回る。**指の向きへ被写体が回る** (掴んで回す向き) |
     /// | 右ドラッグ・⌥ を押したまま左ドラッグ | 注視点を画面の面に沿ってずらす (平行移動)。**被写体が指に付いて動く** |
     /// | スクロール | 寄る・引く |
-    /// | ピンチ (トラックパッド) | 開くと寄り、閉じると引く。開いた倍率の分だけ寄る (距離が `1 / (1 + ``pinch``)` 倍) |
+    /// | ピンチ (トラックパッド) | 開くと寄り、閉じると引く。開いた倍率の分だけ寄る (距離が、そのフレームの倍率の**積**の逆数倍) |
     /// | ダブルクリック (左ボタン) | 始めの視点へ戻る |
     ///
     /// 平行移動の量は、注視点の奥行きで 1 画素が覆う長さで測る。注視点の奥行きにある点は、
@@ -34,9 +34,20 @@ extension SketchPart {
     /// }
     /// ```
     ///
+    /// ピンチの寄りは、**1 件ごとの倍率 (`1 + 量`) を掛け合わせた分**である。1 フレームに 0.1 を 2 件
+    /// 開けば 1.1 × 1.1 = 1.21 倍寄り、閉じる −0.1 を 10 件束ねても 0.9 の 10 乗倍 (約 0.35 倍) で、
+    /// 効かなくならない。足した合計 (``pinch``) で `1 / (1 + 合計)` を作ると、閉じる件が溜まっただけで
+    /// 0 以下になって閉じる操作が丸ごと外れる。**1 件で `1 + 量 ≤ 0` (閉じる側に −1 以上) の外れ値が
+    /// 混ざったフレームだけは進めず**、警告する (距離を動かせる倍率ではない)。
+    ///
     /// 戻る先は、**最初にこれを呼んだフレームの ``orbit``** — `setup()` で ``orbit`` に書いた視点があれば
     /// それ、無ければ既定の視点である。戻ると慣性の速さも 0 になる (慣性の設定と寄れる限界は変わらない)。
     /// 戻したフレームは、ほかの操作 (引きずり・スクロール・ピンチ) を食わない。
+    ///
+    /// - Important: **戻る先は 1 度控えたきりで、後から変わらない。** 最初の呼び出しより後に
+    ///   ``orbit`` へ新しい視点を書いても (`orbit = .fitting(newModel)` で別のモデルへ替えても)、
+    ///   ダブルクリックは最初の視点へ戻る。モデルを替えて戻す先も替えたいときは、視点を ``orbit`` に
+    ///   書いたうえで、戻す操作を自分で書く (`orbit` へ直接書き戻す)。
     ///
     /// 始まりは**既定の視点と同じ位置**なので、これを足しただけでは絵が動かない。
     /// 寄り・引きの限界も既定の投影の手前・奥の面に合わせてあるので、限界まで動かしても
@@ -45,7 +56,8 @@ extension SketchPart {
     /// - Parameters:
     ///   - sensitivityX: 横に引きずったときの効き。負にすると回る向きが逆になる。
     ///   - sensitivityY: 縦に引きずったときの効き。
-    ///   - sensitivityZ: スクロールとピンチの効き (ピンチは量に掛ける)。
+    ///   - sensitivityZ: スクロールとピンチの効き (ピンチは倍率の積の指数に掛かる。既定の 1 は倍率どおり、
+    ///     2 は倍率を 2 回重ねた寄り)。
     ///
     ///   数でない値・無限の感度は、警告してその軸だけ効かせない (他の軸と慣性の流れは
     ///   いつもどおり進む)。有限でも、引きずった量との積が溢れた軸はそのフレームだけ進めない。
@@ -116,7 +128,7 @@ extension SketchPart {
             // 平行移動の間は回さない。回す軸は 0 の引きずりとして進め、慣性の速さも捨てる
             let held = orbit.advance(
                 dragX: pans ? 0 : input.dragX, dragY: pans ? 0 : input.dragY, scroll: input.scrollY,
-                pinch: input.pinch, isDragging: input.isMouseDown, sensitivity: sensitivity)
+                pinchScale: input.pinchScale, isDragging: input.isMouseDown, sensitivity: sensitivity)
             let panHeld =
                 pans
                 && !orbit.pan(
@@ -130,7 +142,7 @@ extension SketchPart {
             if overflowed {
                 canvas.warnOnce(
                     .orbitStepHeld,
-                    "orbitControl(): a turn, pan or zoom came out as not a number or infinite (too large a sensitivity or movement), so that axis was left as it was for the frame")
+                    "orbitControl(): a turn, pan or zoom came out as not a number or infinite (too large a sensitivity or movement, or a pinch that closed by a whole view or more in one event), so that axis was left as it was for the frame")
             }
         } else {
             orbit.clampToLimits()
@@ -151,6 +163,9 @@ extension SketchPart {
     ///     orbit.inertia = 0.92          // 離すと流れる
     /// }
     /// ```
+    ///
+    /// **``orbitControl(_:_:_:)`` がダブルクリックで戻る先は、最初に呼んだフレームの値で、後から書き換えても
+    /// 変わらない** — 呼んだ後で別のモデルへ ``Orbit/fitting(_:)`` で替えても、戻る先は替わらない。
     ///
     /// 書いた値は限界へ収められる (仰角は真上・真下を越えず、距離は上下限の中へ入る)。
     /// 収めようのない値 (数でない値・無限の角や見ている先など) は既定へ倒し、初回だけ

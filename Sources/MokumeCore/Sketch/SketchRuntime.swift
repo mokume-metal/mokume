@@ -366,6 +366,7 @@ public final class SketchRuntime {
     var orbit: Orbit?
     /// 視点を戻す先。**最初に `orbitControl()` を呼んだフレームの ``orbit``** (`setup()` で書いた値か既定)。
     /// ダブルクリックで戻す先になる ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    /// **1 度控えたきりで、後から `orbit` を書き換えても変わらない** (決定どおり。`orbitControl` と `orbit` の説明が代償として名乗る)。
     var orbitHome: Orbit?
     /// 視点を操る道具を、最後に進めたフレーム。
     ///

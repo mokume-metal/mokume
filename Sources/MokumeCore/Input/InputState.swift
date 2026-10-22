@@ -67,6 +67,15 @@ public final class InputState {
     /// 直近のピンチの量 (このフレームぶん・倍率の差分の合計)。開くと正、閉じると負
     /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
     public private(set) var pinch: Float = 0
+    /// このフレームのピンチの倍率の**積** (Π(1 + 量))。``SketchPart/orbitControl(_:_:_:)`` の寄りが読む。
+    ///
+    /// **合計 (``pinch``) で寄らない理由**: 倍率は掛け算で重なる。0.1 を開く 10 件は 1.1^10 倍で、閉じる
+    /// −0.1 を 10 件は 0.9^10 倍 (約 0.35 倍) — 合計では前者が 1.0・後者が −1.0 になり、`1 + 合計` が
+    /// 0 以下になって閉じる操作が丸ごと効かなくなる (fps が落ちて 1 フレームに束ねられた速い閉じで踏む)。
+    /// 1 件で `1 + 量 ≤ 0` (閉じる側に −1 以上) の外れ値が 1 件でも届いたフレームは、積に意味が無いので
+    /// 0 になる (寄りの側が進めずに言う)。フレームの頭で 1 に戻る。
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
+    private(set) var pinchScale: Double = 1
     /// このフレームに届いた、左ボタンの 2 回目の押下 (`clickCount == 2`) の数。**フレームの頭で 0 に戻る。**
     /// ``SketchPart/orbitControl(_:_:_:)`` が視点を戻す合図に読む。スケッチ向けの口はまだ無い (作例が来てから)。
     private(set) var leftDoubleClicks = 0
@@ -108,7 +117,7 @@ public final class InputState {
 
     /// 入力の層が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
-        /// 当てると、見せる量か配る量が有限でなくなる移動・スクロールを捨てた (``apply(_:)``・#2731)。
+        /// 当てると、見せる量か配る量が有限でなくなる移動・スクロール・ピンチを捨てた (``apply(_:)``・#2731)。
         case nonFiniteEvent
         /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
@@ -181,6 +190,7 @@ public final class InputState {
         scrollX = 0
         scrollY = 0
         pinch = 0
+        pinchScale = 1
         leftDoubleClicks = 0
         dragX = 0
         dragY = 0
@@ -362,7 +372,7 @@ public final class InputState {
                 warnings.warnOnce(
                     .nonFiniteEvent,
                     "Dropped the input event \(Self.spelled(event)): applying it would make the "
-                        + "mouse position, a movement, a drag or a scroll amount infinite or not a "
+                        + "mouse position, a movement, a drag, a scroll amount or a pinch amount infinite or not a "
                         + "number (later events like this are dropped without saying so again)")
                 return nil
             }
@@ -386,7 +396,9 @@ public final class InputState {
     static func spelled(_ event: InputEvent) -> String {
         switch event {
         case .mouseDown(let x, let y, let button, let clickCount):
-            "mouseDown(x: \(x), y: \(y), button: \(spelled(button)), clickCount: \(clickCount))"
+            // 単発 (1) は書かない — 線の 1 行と同じく、省いた形が単発である
+            "mouseDown(x: \(x), y: \(y), button: \(spelled(button))"
+                + (clickCount == 1 ? "" : ", clickCount: \(clickCount)") + ")"
         case .mouseUp(let x, let y, let button):
             "mouseUp(x: \(x), y: \(y), button: \(spelled(button)))"
         default:
@@ -431,6 +443,9 @@ public final class InputState {
             scrollY += dy
         case .pinched(let amount):
             pinch += amount
+            // 1 件ぶんの倍率を掛ける。`1 + 量 ≤ 0` の 1 件が混ざったフレームは 0 のまま残す (``pinchScale``)
+            let factor = 1 + Double(amount)
+            pinchScale = factor > 0 ? pinchScale * factor : 0
         case .keyDown(let code, let characters, let isRepeat):
             let wasPressed = !pressedKeys.insert(code).inserted
             if Self.isFreshPress(wasPressed: wasPressed, isRepeat: isRepeat) {
@@ -461,6 +476,7 @@ public final class InputState {
     /// - 位置の移動: 位置と、当てる前との差を足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - 相対の移動: 足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - スクロール: 足した後の ``scrollX``・``scrollY``
+    /// - ピンチ: 足した後の ``pinch`` と、掛けた後の ``pinchScale``
     ///
     /// **範囲の外の位置は丸めない** (`SurfaceMapping` の「帯の上は丸めない」)。極端でも有限に
     /// 収まる値は、今までどおり当てる。
@@ -477,7 +493,7 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
         case .pinched(let amount):
-            amount.isFinite && (pinch + amount).isFinite
+            amount.isFinite && (pinch + amount).isFinite && (pinchScale * (1 + Double(amount))).isFinite
         case .keyDown, .keyUp:
             true
         }

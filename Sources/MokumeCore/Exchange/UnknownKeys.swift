@@ -24,7 +24,12 @@ nonisolated enum UnknownKeys {
     static func names<Key: CodingKey & CaseIterable>(in decoder: any Decoder, known _: Key.Type)
         throws -> [String]
     {
-        let known = Set(readKeys(Key.self))
+        try names(in: decoder, readKeys: readKeys(Key.self))
+    }
+
+    /// 読む鍵を名前で与える形。読む鍵が出来事の種別で変わるものが使う。
+    static func names(in decoder: any Decoder, readKeys: [String]) throws -> [String] {
+        let known = Set(readKeys)
         return try decoder.container(keyedBy: AnyKey.self).allKeys.map(\.stringValue)
             .filter { !known.contains($0) }
             .sorted()

@@ -115,11 +115,11 @@
           "clickCount": {
             "type": ["integer", "null"],
             "minimum": 0,
-            "description": "For mouseDown, which press in a run this is: 1 for a single press (also what an omitted value reads as), 2 for the second press of a double-click. The sketch's own window sends NSEvent.clickCount as it is. **A value that is not an integer or is negative counts that one event in ignored.** orbitControl() returns to its first view on a second press of the left button (clickCount 2). Ignored on mouseUp."
+            "description": "For mouseDown, which press in a run this is: 1 for a single press (also what an omitted value reads as), 2 for the second press of a double-click. The sketch's own window sends NSEvent.clickCount as it is. **A value that is not an integer or is negative counts that one mouseDown in ignored.** orbitControl() returns to its first view on a second press of the left button (clickCount 2). **Read on mouseDown only**: on any other type (mouseUp, for one) it is not read, whatever its value, and the reply's warnings name it like any key that is not read; the event itself goes through."
           },
           "amount": {
             "type": ["number", "null"],
-            "description": "For pinched, how much the trackpad pinch changed the scale: **the change in magnification**, as AppKit's NSEvent.magnification gives it (0.1 = opened to 1.1 times, negative = closed). The sketch reads the total of a frame as `pinch`: two events of 0.1 in one frame read as 0.2, and a frame with none reads 0. orbitControl() moves the distance by a factor of 1 / (1 + pinch), within its limits. An amount that is not a finite number, or whose total in a frame would not be, is dropped when it is applied."
+            "description": "For pinched, how much the trackpad pinch changed the scale: **the change in magnification**, as AppKit's NSEvent.magnification gives it (0.1 = opened to 1.1 times, negative = closed). The sketch reads the total of a frame as `pinch`: two events of 0.1 in one frame read as 0.2, and a frame with none reads 0. orbitControl() moves the distance by the inverse of the product of (1 + amount) over the frame's events, within its limits (magnifications multiply, so ten events of -0.1 in one frame close by 0.9 to the tenth, about 0.35, even though they total -1); a single event with an amount of -1 or less cannot be a magnification, so it holds that frame's zoom and is said once. **Read on pinched only**: on any other type it is not read, whatever its value, and the reply's warnings name it. An amount that is not a finite number, or whose total (or product) in a frame would not be, is dropped when it is applied."
           },
           "dx": {
             "type": ["number", "null"],

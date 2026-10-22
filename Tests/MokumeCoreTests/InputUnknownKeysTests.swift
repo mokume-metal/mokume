@@ -49,11 +49,46 @@ struct InputUnknownKeysTests {
         let line = try #require(warnings.first)
         #expect(line.hasPrefix("events[0]: "), "位置が無い: \(line)")
         #expect(line.contains("buton"), "名前が無い: \(line)")
-        for key in RawInputEvent.readKeys {
+        for key in RawInputEvent.readKeys(forType: "mouseDown") {
             #expect(line.contains(key), "読む鍵 \(key) が並ばない: \(line)")
         }
         // 書かれた応答にも載る
         #expect(try writtenKeys(in: facet).contains("warnings"))
+    }
+
+    /// `amount` は pinched で、`clickCount` は mouseDown でだけ読む ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す。
+    /// 型違いの値でも、その 1 件を `ignored` にしない — `mouseUp` が落ちると釦が押されたまま残る。
+    @Test("clickCount・amount は読む種別でだけ読む。ほかの種別では読まない鍵として名乗り、1 件は通す")
+    func namesTheKeysOnlyOneTypeReads() throws {
+        let facet = try makeFacet()
+        let state = InputState()
+        try send(
+            #"{"id":"i8","events":[{"type":"mouseDown","x":1,"y":2,"clickCount":1},"#
+                + #"{"type":"mouseUp","x":1,"y":2,"clickCount":1.5},"#
+                + #"{"type":"scrolled","dy":3,"amount":0.5},"#
+                + #"{"type":"pinched","amount":0.2,"clickCount":2}]}"#,
+            to: facet)
+
+        let report = try #require(InputInbox(directory: facet).drain(into: state))
+        #expect(report.accepted == 4, "型違いの clickCount が付いた mouseUp が落ちた")
+        #expect(report.ignored == 0)
+        state.beginFrame()
+        #expect(state.pressedButtons.isEmpty, "mouseUp が届かず、釦が押されたまま残った")
+        #expect(state.pinch == 0.2)
+
+        let warnings = try #require(report.warnings)
+        #expect(warnings.count == 3, "\(warnings)")
+        #expect(warnings[0].hasPrefix("events[1]: ") && warnings[0].contains("clickCount"))
+        #expect(warnings[1].hasPrefix("events[2]: ") && warnings[1].contains("amount"))
+        #expect(warnings[2].hasPrefix("events[3]: ") && warnings[2].contains("clickCount"))
+        // 名乗る「読む鍵」は、その種別が読む鍵 (mouseUp は clickCount も amount も読まない)
+        #expect(!warnings[0].contains("the keys read are type, x, y, button, dx, dy, code, characters, isRepeat, amount"))
+        #expect(!RawInputEvent.readKeys(forType: "mouseUp").contains("clickCount"))
+        #expect(!RawInputEvent.readKeys(forType: "mouseUp").contains("amount"))
+        #expect(RawInputEvent.readKeys(forType: "pinched").contains("amount"))
+        #expect(!RawInputEvent.readKeys(forType: "pinched").contains("clickCount"))
+        #expect(RawInputEvent.readKeys(forType: "teleport") == RawInputEvent.readKeys, "知らない種別は全部を読む鍵とする")
     }
 
     @Test("名乗る位置は、知らない鍵を持つ出来事の番号である")

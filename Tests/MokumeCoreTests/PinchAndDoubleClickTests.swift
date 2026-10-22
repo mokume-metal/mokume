@@ -42,6 +42,29 @@ struct PinchAndClickCountInputTests {
         #expect(state.pinch == -0.3, "閉じる向きが負にならない")
     }
 
+    @Test("寄りに使う倍率は積で、閉じる −0.1 を 10 件束ねても 0.9 の 10 乗になる (合計は −1 になる)")
+    func theScaleMultipliesWhileThePinchAdds() {
+        let state = InputState()
+        run(state, Array(repeating: .pinched(amount: -0.1), count: 10))
+        #expect(abs(state.pinch - -1) < 1e-5, "公開の pinch はフレーム合計のまま: \(state.pinch)")
+        #expect(abs(state.pinchScale - pow(0.9, 10)) < 1e-6, "積になっていない: \(state.pinchScale)")
+
+        run(state, Array(repeating: .pinched(amount: 0.1), count: 10))
+        #expect(abs(state.pinchScale - pow(1.1, 10)) < 1e-6)
+
+        run(state, [])
+        #expect(state.pinchScale == 1, "次のフレームへ持ち越した")
+    }
+
+    @Test("1 件で 1 + 量 が 0 以下の外れ値が混ざったフレームだけ、積は 0 になる。次のフレームは戻る", arguments: [Float(-1), -2, -1e30])
+    func anOutlierEmptiesTheScaleForThatFrame(_ amount: Float) {
+        let state = InputState()
+        run(state, [.pinched(amount: 0.1), .pinched(amount: amount), .pinched(amount: 0.1)])
+        #expect(state.pinchScale == 0, "外れ値のあとで積が戻った: \(state.pinchScale)")
+        run(state, [.pinched(amount: 0.1)])
+        #expect(abs(state.pinchScale - 1.1) < 1e-6, "次のフレームへ持ち越した: \(state.pinchScale)")
+    }
+
     @Test("ピンチは呼び出しを配らない (読むのはフレームの合計だけ)")
     func pinchDispatchesNothing() {
         let state = InputState()
@@ -151,6 +174,19 @@ struct PinchAndClickCountWireTests {
         }
     }
 
+    @Test("clickCount は mouseDown でだけ読む。型違いの値が付いた mouseUp も解ける (釦が押されたまま残らない)")
+    func clickCountIsReadOnMouseDownOnly() throws {
+        #expect(
+            try decode(#"{"type": "mouseUp", "x": 1, "y": 2, "clickCount": 1.5}"#).event
+                == .mouseUp(x: 1, y: 2, button: .left))
+        #expect(
+            try decode(#"{"type": "mouseUp", "x": 1, "y": 2, "clickCount": "x"}"#).event
+                == .mouseUp(x: 1, y: 2, button: .left))
+        #expect(
+            try decode(#"{"type": "scrolled", "dy": 3, "amount": "x"}"#).event
+                == .scrolled(dx: 0, dy: 3), "amount も pinched でだけ読む")
+    }
+
     /// 外から送る要求では、読めない 1 件だけが `ignored` に数えられ、残りは通る。
     @Test("外から送る要求でも、不正な押した回数の 1 件だけが ignored に数えられる")
     func theRequestCountsTheBadOneAsIgnored() throws {
@@ -176,7 +212,7 @@ struct PinchAndClickCountViewMathTests {
 
     private func pinch(_ orbit: inout Orbit, _ amount: Float, z: Float = 1) -> Orbit.HeldAxes {
         orbit.advance(
-            dragX: 0, dragY: 0, scroll: 0, pinch: amount, isDragging: false,
+            dragX: 0, dragY: 0, scroll: 0, pinchScale: 1 + Double(amount), isDragging: false,
             sensitivity: SIMD3(1, 1, z))
     }
 
@@ -220,15 +256,49 @@ struct PinchAndClickCountViewMathTests {
         #expect(orbit.distance.isFinite)
     }
 
-    @Test("寄りの感度はピンチの量に掛かり、数でない感度なら進めない")
+    @Test("寄りの感度は倍率の指数に掛かり、数でない感度なら進めない")
     func theZoomSensitivityScalesThePinch() {
         var orbit = fitting()
         let start = orbit.distance
         _ = pinch(&orbit, 0.25, z: 2)
-        #expect(abs(orbit.distance - start / 1.5) < 1e-3)
+        #expect(abs(orbit.distance - start / 1.5625) < 1e-3)
+        var off = fitting()
+        _ = pinch(&off, 0.25, z: 0)
+        #expect(off.distance == start, "感度 0 でも寄った")
         var broken = fitting()
         #expect(pinch(&broken, 0.25, z: .nan).zoom)
         #expect(broken.distance == start)
+    }
+
+    /// 入力の合流点から視点まで (GPU は要らない)。1 件ずつは正しい閉じが、溜まって外れないこと。
+    @MainActor
+    @Test("閉じる −0.1 を 10 件束ねたフレームでも、距離は 0.9 の 10 乗で割った分だけ遠ざかり、進めなかったと言わない")
+    func manyClosingPinchesInOneFrameStillZoomOut() {
+        let state = InputState()
+        for _ in 0..<10 { state.enqueue(.pinched(amount: -0.1)) }
+        state.beginFrame()
+        var orbit = fitting()
+        let start = orbit.distance
+        let held = orbit.advance(
+            dragX: 0, dragY: 0, scroll: 0, pinchScale: state.pinchScale, isDragging: false,
+            sensitivity: SIMD3(1, 1, 1))
+        #expect(!held.zoom, "合計が −1 になっただけで、引く操作が外れた")
+        #expect(abs(orbit.distance - start / Float(pow(0.9, 10))) < start * 1e-4, "\(orbit.distance)")
+    }
+
+    @MainActor
+    @Test("1 件で −1 以下の本当の外れ値だけが、寄りの軸が進まなかったに入る")
+    func onlyARealOutlierHoldsTheZoom() {
+        let state = InputState()
+        state.enqueue(.pinched(amount: -1.5))
+        state.beginFrame()
+        var orbit = fitting()
+        let start = orbit.distance
+        let held = orbit.advance(
+            dragX: 0, dragY: 0, scroll: 0, pinchScale: state.pinchScale, isDragging: false,
+            sensitivity: SIMD3(1, 1, 1))
+        #expect(held.zoom)
+        #expect(orbit.distance == start)
     }
 
     @Test("戻すと注視点・距離・角が戻り、慣性の速さは 0 になる。慣性の設定と限界は変わらない")
@@ -305,6 +375,19 @@ struct PinchAndClickCountOrbitControlTests {
         let after = try #require(sketch.seenOrbit).distance
         try runtime.advance()
         #expect(try #require(sketch.seenOrbit).distance == after, "送らないフレームで動いた")
+    }
+
+    @Test("閉じる −0.1 を 10 件束ねたフレームでも、引く操作が効く (0.9 の 10 乗で割った距離)")
+    func manyClosingPinchesInOneFrameStillZoomOut() throws {
+        let sketch = Subject()
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+        let start = try #require(sketch.seenOrbit).distance
+        for _ in 0..<10 { runtime.input.enqueue(.pinched(amount: -0.1)) }
+        try runtime.advance()
+        let after = try #require(sketch.seenOrbit).distance
+        #expect(abs(after - start / Float(pow(0.9, 10))) < start * 1e-4, "\(after)")
+        #expect(!runtime.canvas.warnings.hasWarned(.orbitStepHeld), "見当違いの警告を出した")
     }
 
     @Test("引きずって回した後、左の 2 回目の押下で setup() の視点へ戻る。1 回目の押下では戻らない")

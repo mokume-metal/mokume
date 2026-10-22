@@ -50,11 +50,16 @@ struct InputRequest: ExchangeRequest {
         let event: InputEvent?
         /// この 1 件にあった、読まない鍵 (名前順)。
         let unknownKeys: [String]
+        /// この 1 件の種別が読む鍵。名乗りの文面が並べる (``RawInputEvent/readKeys(forType:)``)。
+        let readKeys: [String]
 
         init(from decoder: Decoder) throws {
             event = (try? RawInputEvent(from: decoder))?.event
-            unknownKeys =
-                (try? UnknownKeys.names(in: decoder, known: RawInputEvent.CodingKeys.self)) ?? []
+            // 種別は、解けなかった 1 件でも読めれば読む鍵を絞れる
+            let type = try? decoder.container(keyedBy: RawInputEvent.CodingKeys.self)
+                .decodeIfPresent(String.self, forKey: .type)
+            readKeys = RawInputEvent.readKeys(forType: type ?? nil)
+            unknownKeys = (try? UnknownKeys.names(in: decoder, readKeys: readKeys)) ?? []
         }
 
         /// 解けなかった 1 件。`events` の読めない要求は、これだけを持つ要求として流す (#2550)。
@@ -63,6 +68,7 @@ struct InputRequest: ExchangeRequest {
         private init(event: InputEvent?) {
             self.event = event
             self.unknownKeys = []
+            self.readKeys = RawInputEvent.readKeys
         }
     }
 
@@ -91,10 +97,9 @@ struct InputRequest: ExchangeRequest {
         if let top = UnknownKeys.warning(unknown: unknownKeys, in: "request", known: Self.readKeys) {
             warnings.append(top)
         }
-        let known = RawInputEvent.readKeys
         let spelled = events.enumerated().filter { !$0.element.unknownKeys.isEmpty }
         for (index, entry) in spelled.prefix(Self.namedEventLimit) {
-            if let line = UnknownKeys.warning(unknown: entry.unknownKeys, in: "event", known: known) {
+            if let line = UnknownKeys.warning(unknown: entry.unknownKeys, in: "event", known: entry.readKeys) {
                 warnings.append("events[\(index)]: \(line)")
             }
         }

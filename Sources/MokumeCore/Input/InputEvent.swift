@@ -42,6 +42,7 @@ public enum InputEvent: Equatable, Sendable {
 ///
 /// `amount` (ピンチの量) も省略に意味が無い。量の無いピンチは何も動かさず、送り手には `accepted: 1` が
 /// 返るので、省いた 1 件を読めない 1 件として数える。`clickCount` は省略が自然に読める (単発の 1)。
+/// **この 2 つは、読む種別 (`pinched`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
 ///
 /// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
@@ -73,8 +74,43 @@ struct RawInputEvent: Decodable {
     }
 
     /// 読む鍵 (宣言順)。スキーマ (`input-request.schema.json`) の出来事の `properties` と同じ集合で、
-    /// 知らない鍵の名乗りが並べる。一致は検査が見る ([#2843](https://github.com/mokume-metal/mokume/issues/2843))。
+    /// どれかの種別が読む鍵をすべて含む。一致は検査が見る ([#2843](https://github.com/mokume-metal/mokume/issues/2843))。
     static var readKeys: [String] { UnknownKeys.readKeys(CodingKeys.self) }
+
+    /// 種別 `type` の出来事が読む鍵 (宣言順)。知らない鍵の名乗りが並べる。
+    ///
+    /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ読む** ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す (値の型が違っても
+    /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、釦が押されたまま残る)。
+    /// 種別が欠けた・知らない出来事は、どの種別の鍵か決まらないので、すべての鍵を読む鍵として扱う (名乗りに出さない)。
+    static func readKeys(forType type: String?) -> [String] {
+        guard let type, let kind = InputEventType(rawValue: type) else { return readKeys }
+        return readKeys.filter { key in
+            switch key {
+            case CodingKeys.amount.stringValue: kind == .pinched
+            case CodingKeys.clickCount.stringValue: kind == .mouseDown
+            default: true
+            }
+        }
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        x = try container.decodeIfPresent(Float.self, forKey: .x)
+        y = try container.decodeIfPresent(Float.self, forKey: .y)
+        button = try container.decodeIfPresent(Int.self, forKey: .button)
+        dx = try container.decodeIfPresent(Float.self, forKey: .dx)
+        dy = try container.decodeIfPresent(Float.self, forKey: .dy)
+        code = try container.decodeIfPresent(Int.self, forKey: .code)
+        characters = try container.decodeIfPresent(String.self, forKey: .characters)
+        isRepeat = try container.decodeIfPresent(Bool.self, forKey: .isRepeat)
+        // 種別が読まない鍵は解かない (値の型が違っても、その 1 件は解ける)
+        let kind = InputEventType(rawValue: type)
+        amount = kind == .pinched ? try container.decodeIfPresent(Float.self, forKey: .amount) : nil
+        clickCount =
+            kind == .mouseDown ? try container.decodeIfPresent(Int.self, forKey: .clickCount) : nil
+    }
 
     /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
     ///
