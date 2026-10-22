@@ -1541,8 +1541,9 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
 
     var testDescription: String { "\(self)" }
 
-    /// 書く口か。書く口は描き場所のフレームの中でだけ書ける。
-    var writes: Bool { self == .set || self == .writePixels }
+    /// 書く口か。書く口は描き場所のフレームの中でだけ書ける。`updatePixels` (`Pixels.update`・#2450) も、
+    /// 入口で許可を 1 回尋ねる書く口である。
+    var writes: Bool { self == .set || self == .writePixels || self == .updatePixels }
 
     /// 呼ぶ。`get` の戻り値だけを返す。
     func call(on canvas: Canvas) -> LinearRGBA? {
