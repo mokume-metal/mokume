@@ -128,8 +128,11 @@ struct GPUMemoryAccessGateTests {
             file: "Display/PresentPipeline.swift", discipline: .ring,
             reason: "差し出しごとに自分の環を 1 つ進める。描き切りが全完了を待たなくなった時点で、前の差し出しが終わっている保証は他に無い (#754)"),
         Permit(
-            file: "Text/GlyphAtlas.swift", discipline: .settlesOrSkips,
-            reason: "焼く直前に待つ。待てなければ焼かず unbakeable を返す (#934)。面の作成時の書き込みは新しい面へ"),
+            file: "Text/GlyphAtlas.swift", discipline: .waitedElsewhere,
+            reason: "作成時だけ新しい面へ書く (0 で埋める・左上の白い区画)。字形を焼く口は面へ書かず、頁の控えへ積むだけで、描き切りが GPU 側のコピーで届ける (#1792)"),
+        Permit(
+            file: "Text/GlyphPage.swift", discipline: .settlesOrSkips,
+            reason: "焼いた画素は描き切りが GPU 側のコピーで頁へ届ける (#1792・#749)。面へ直に書くのは、控えに載せられないほど大きい頁の逃げ道だけで、直前に待ち、待てなければ書かず控えに残す (#934)"),
         Permit(
             file: "Image/Image.swift", discipline: .settlesOrSkips,
             reason: "送りは描き切りが GPU 側のコピーで面へ届ける (#749)。面へ直に書くのは作成時 (新しい面) と、控えに載せられないほど大きい画像の逃げ道だけで、逃げ道は直前に待ち、待てなければ送らず旗を立てたままにする (#934)"),

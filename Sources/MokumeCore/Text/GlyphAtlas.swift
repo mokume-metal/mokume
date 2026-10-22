@@ -34,12 +34,21 @@ import simd
 ///
 /// ## 書き込んでよい時機
 ///
-/// 焼き付けは CPU からこの面へ直接書き込む。**GPU がこの面を読んでいる間に書き換えて
-/// はならない。** 面への描画は投入しても GPU の完了を待たずに返る (#727) ので、焼く
-/// 直前に投入済みのものが全部終わるのを待つ。新しい字形が出ないフレームは焼かない
-/// ので、待ちも払わない。広げるとき (`grow`) と焼き直すとき (`rebake`) は新しい頁
-/// (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを指している列や形が手放すまで
-/// 生きる。
+/// **焼く口は GPU を待たない** ([#1792])。焼いた画素は頁 (``GlyphPage``) の控えに「区画 + 画素」で積み、
+/// 描き切りがコマンドの先頭で GPU 側のコピーで頁へ届ける (画像と同じ・[#749])。コピーの前には、前の
+/// 仕事が読み終わるのを待つ仕掛けを積む (`Canvas.encodeUploads`)。焼いたフレームの描きは新しい字を読む。
+/// 焼く区画は作りたての場所で、普段は前の仕事がまだ読まない。GPU が固まった場面は、焼かずに諦める
+/// のではなく、描き切りの待ちの期限と、打ち切りの後の届け直し ([#2199]) で扱われる。広げるとき (`grow`)
+/// と焼き直すとき (`rebake`) は新しい頁 (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを
+/// 指している列や形が手放すまで生き、控えも前の頁のものが前の頁へ届く。
+///
+/// **残る待ちは 2 つで、どちらも数えられる回数である。** 控えに積む量が上限 (``GlyphPage/pendingByteLimit``・
+/// ``GlyphPage/pendingRegionLimit``) を越えたとき (多くの字を初めて焼くフレーム) と、控えの置き場が
+/// 足りなくて取り直すとき (`GrowableBuffer`・ふだんは起きない) は、全完了を待つ。
+///
+/// [#749]: https://github.com/mokume-metal/mokume/issues/749
+/// [#1792]: https://github.com/mokume-metal/mokume/issues/1792
+/// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
 ///
 /// ## 上限の面が埋まったら
 ///
@@ -140,10 +149,14 @@ import simd
         /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
         /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
         case tooLarge(width: Int, height: Int)
-        /// 焼けなかった。**広げても変わらない** — 焼き場を用意できなかったか、
-        /// GPU の完了を待てなくて面へ書かなかった ([#934])。
+        /// 焼けなかった。**広げても変わらない** — 字形の大きさが焼き場の座標に収まらない (幅か高さが 0 以下・
+        /// 外接矩形が Int に直せない) か、CPU で描けなかった。
+        ///
+        /// 以前は GPU の完了を待てなくて面へ書かなかった場合 ([#934]) もここへ来たが、焼く口が待たなく
+        /// なったので ([#1792]) 来ない。
         ///
         /// [#934]: https://github.com/mokume-metal/mokume/issues/934
+        /// [#1792]: https://github.com/mokume-metal/mokume/issues/1792
         case unbakeable
     }
 
@@ -160,6 +173,15 @@ import simd
         /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         var weight: Int = 0
+    }
+
+    /// 1 つの頁が控えに積んでよいバイト数・区画の数の上限 (``GlyphPage/pendingByteLimit``・
+    /// ``GlyphPage/pendingRegionLimit``)。**頁を替えても引き継ぐ。** 検査が差し替える。
+    var pendingByteLimit = GlyphPage.defaultPendingByteLimit {
+        didSet { page.pendingByteLimit = pendingByteLimit }
+    }
+    var pendingRegionLimit = GlyphPage.defaultPendingRegionLimit {
+        didSet { page.pendingRegionLimit = pendingRegionLimit }
     }
 
     /// いま字形を焼いている頁。**広げると差し替わる。**
@@ -180,9 +202,6 @@ import simd
     private var cursorX: Int
     private var cursorY: Int
     private var rowHeight: Int
-    /// 焼く前に待つ相手 (「書き込んでよい時機」を参照)。
-    private let gpu: RenderDevice
-
     /// 1 度だけ言う注意の種類。仕組みは ``WarningLog`` が持つ ([#734])。
     ///
     /// [#734]: https://github.com/mokume-metal/mokume/issues/734
@@ -266,7 +285,6 @@ import simd
     private(set) var warnings = WarningLog<Warning>()
 
     init(gpu: RenderDevice) throws(RenderFailure) {
-        self.gpu = gpu
         self.size = Self.initialSize
         self.page = try GlyphPage(side: size, gpu: gpu)
         self.pageSerial = Self.takePageSerial()
@@ -282,7 +300,7 @@ import simd
     /// いまの頁の面を、頁と組にして渡す。**列へ渡すときはこちら** (``HeldTexture``)。
     var held: HeldTexture { HeldTexture(texture: page.texture, owner: page) }
 
-    fileprivate static func makeTexture(side: Int, gpu: RenderDevice) throws(RenderFailure)
+    static func makeTexture(side: Int, gpu: RenderDevice) throws(RenderFailure)
         -> any MTLTexture
     {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -388,7 +406,10 @@ import simd
     /// 一辺 `side` の新しい頁を作り、焼いた字形の控えと棚を空に戻す。
     private func startPage(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
-        page = try GlyphPage(side: side, gpu: gpu)
+        let fresh = try GlyphPage(side: side, gpu: gpu)
+        fresh.pendingByteLimit = pendingByteLimit
+        fresh.pendingRegionLimit = pendingRegionLimit
+        page = fresh
         size = side
         entries.removeAll(keepingCapacity: true)
         pageSerial = Self.takePageSerial()
@@ -489,17 +510,10 @@ import simd
                     penY: -bottom)
         else { return .unbakeable }
 
-        // 前のフレームがまだこの面を読んでいるかもしれない。書く直前に待つ。
-        // **待てなければ焼かない** (#934) — 取った場所は捨てる (漏れるだけで絵は壊れ
-        // ない)。引けなかった字形は控えに残らないので、次の機会に焼き直せる
-        guard
-            gpu.settleBeforeWriting(
-                orWarn: "Could not wait for the GPU before baking glyphs, so the write was "
-                    + "called off")
-        else { return .unbakeable }
-        texture.replace(
-            region: MTLRegionMake2D(origin.x, origin.y, width, height), mipmapLevel: 0,
-            withBytes: pixels, bytesPerRow: width * Self.bytesPerPixel)
+        // **待たずに、焼いた画素を頁の控えへ積む** (#1792)。届けるのは描き切りの GPU 側のコピーで、
+        // コピーの前に前の仕事の読みを待つ仕掛けを積む。この区画は作りたての (前の仕事がまだ読まない)
+        // 場所なので、普段は前のフレームが読んでいる画素を書き換えることも無い
+        page.stage(x: origin.x, y: origin.y, width: width, height: height, pixels: pixels)
 
         let side = Float(size)
         return .found(
@@ -611,31 +625,4 @@ import simd
         }
         return drawn ? pixels : nil
     }
-}
-
-/// 字形の面 1 枚。**死ぬときに面を常駐から退かせる** ([#738])。
-///
-/// ## なぜ置き場 (``GlyphAtlas``) と分けるか
-///
-/// 面の持ち主が置き場のままだと、広げたときに前の面を退かせる時機を置き場が決める
-/// ことになる。置き場は広げた後も同じ 1 つとして生き続けるので、「前の面を読む者が
-/// まだ居るか」を知らない。面ごとに持ち主を分ければ、読む側 (束・保持した形) が頁を
-/// 抱え (``HeldTexture``)、全員が手放した時点で頁が死ぬ — 退かせる時機を誰も判断
-/// しなくてよい ([#1079]・[#1178])。
-///
-/// [#738]: https://github.com/mokume-metal/mokume/issues/738
-/// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
-/// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
-// `isolated deinit` を持つ型は隔離を明示する。**理由は `RenderDevice` の冒頭が持つ**
-// (release のテストビルドでは既定隔離が取り込み側から見失われる・#761)。
-@MainActor final class GlyphPage {
-    let texture: any MTLTexture
-    private let gpu: RenderDevice
-
-    init(side: Int, gpu: RenderDevice) throws(RenderFailure) {
-        self.gpu = gpu
-        self.texture = try GlyphAtlas.makeTexture(side: side, gpu: gpu)
-    }
-
-    isolated deinit { gpu.retire(texture) }
 }
