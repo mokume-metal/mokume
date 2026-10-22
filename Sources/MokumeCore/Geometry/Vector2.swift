@@ -173,6 +173,10 @@ public nonisolated struct Vector2: Sendable, Hashable {
 
     /// 長さ。Processing の `mag()` に当たる。
     ///
+    /// 2 乗が溢れるほど大きい値も、潰れるほど小さい値 (`Vector2(1e-30, 1e-30)` は約 1.414e-30) も
+    /// 有限の長さで返り、**0 になるのは 0 ベクトルだけ**。関数の `mag(_:_:)`・`dist(_:_:_:_:)` と
+    /// 同じ答えになる。Processing (`float`) はこの小ささでは 0 を返す。
+    ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
@@ -197,16 +201,7 @@ public nonisolated struct Vector2: Sendable, Hashable {
     /// }
     // shot: 1 snippet=26b58a86
     public var length: Float {
-        let squared = (simd * simd).sum()
-        // 2 乗の和が収まる範囲では従来の式のまま通るので、結果のビットは変わらない (#2885)
-        if squared >= Vector2.safeSquaredLow && squared < Vector2.safeSquaredHigh {
-            return squared.squareRoot()
-        }
-        // 2 乗の和が 0 に潰れる小さい値は 0 のまま返す (#2722 の約束。`normalized()` が前提にする)。
-        // 数でない値・無限の値も従来のまま
-        guard squared != 0, simd.x.isFinite, simd.y.isFinite else { return squared.squareRoot() }
-        // 2 乗の和が溢れる・非正規数になる値は、2 の冪で寄せて測り直す
-        return Vector2.scaledLength(of: simd)
+        Vector2.measuredLength(of: simd)
     }
 }
 
@@ -447,9 +442,11 @@ nonisolated extension Vector2 {
     /// 位置の差から「向かう向き」だけを取り出し、好きな大きさを掛けて歩幅にする。
     /// 元の値は変わらない (新しい値を返す。Processing の `normalize()` は自分を書き換える)。
     ///
-    /// **長さが 0 の値は、変えずに返す** (`Vector2(0, 0).normalized()` は `Vector2(0, 0)`)。
-    /// 向きが無いので 0 で割らず、数でない値を絵に流さない。成分が小さすぎて ``length`` が 0 に
-    /// なる値も同じ。Processing の `normalize()` も、長さ 0 では変えない。
+    /// **長さが 0 の値 (0 ベクトルだけ) は、変えずに返す** (`Vector2(0, 0).normalized()` は
+    /// `Vector2(0, 0)`)。向きが無いので 0 で割らず、数でない値を絵に流さない。Processing の
+    /// `normalize()` も、長さ 0 では変えない。成分が小さいだけの値は 0 ベクトルではないので、
+    /// 2 乗が 0 に潰れるほど小さくても (`Vector2(1e-30, 1e-30)`)、長さ 1 の向きを返す。
+    /// Processing (`float`) は、その小ささでは変えずに返す。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -521,10 +518,8 @@ nonisolated extension Vector2 {
     public func limited(to maximum: some ScalarConvertible) -> Vector2 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector2(0, 0) }
-        // `length` は 2 乗の和が 0 に潰れる小さい値で 0 を返す。上限との比較は潰れない長さで行う
-        // (そうしないと、上限より長いのに越えていないことになる・#2885)
-        var magnitude = length
-        if magnitude == 0 { magnitude = Vector2.scaledLength(of: simd) }
+        // `length` は 2 乗が溢れる・潰れる値も測れる (0 になるのは 0 ベクトルだけ・#2935)
+        let magnitude = length
         guard magnitude > limit else { return self }
         let limited = simd * limit / magnitude
         // 成分が有限なのに、長さが Float に収まらない・`simd * limit` が溢れる・潰れる (0 や非正規数に
@@ -558,12 +553,24 @@ nonisolated extension Vector2 {
         Int(max(abs(value.x), abs(value.y)).exponent)
     }
 
+    /// `value` の長さ。`length` と、関数の層の `mag`・`dist` が共有する、長さを開く唯一の口 (#2935)。
+    ///
+    /// 2 乗の和が `2^-100` 以上 `2^100` 未満なら従来の式のまま通るので、結果のビットは変わらない
+    /// (#2885)。外 (溢れる・非正規数になる・0 に潰れる) は `scaledLength(of:)` で測るので、
+    /// **0 になるのは 0 ベクトルだけ**。数でない値・無限の値が混じるときは 2 乗の和をそのまま開く
+    /// (扱いは呼ぶ側が決める)。
+    static func measuredLength(of value: SIMD2<Float>) -> Float {
+        let squared = (value * value).sum()
+        if squared >= safeSquaredLow && squared < safeSquaredHigh {
+            return squared.squareRoot()
+        }
+        return scaledLength(of: value)
+    }
+
     /// 2 乗を作らずに測った長さ。大きいほうの成分の指数の分だけ 2 の冪で寄せてから 2 乗するので、
     /// 成分が有限なら溢れも潰れもしない。寄せるのも戻すのも丸めを足さない。
     ///
-    /// 長さが 0 に潰れる小さな値も測るので、`length` の代わりには使わない (`length` は 2 乗の和が
-    /// 0 に潰れる値で 0 を返す約束 — `normalized()` がそれを前提に変えずに返す)。成分が有限でなければ
-    /// `length` と同じ。
+    /// 0 になるのは 0 ベクトルだけ。成分が有限でなければ 2 乗の和をそのまま開く。
     static func scaledLength(of value: SIMD2<Float>) -> Float {
         guard value.x.isFinite, value.y.isFinite else { return (value * value).sum().squareRoot() }
         guard value != .zero else { return 0 }
