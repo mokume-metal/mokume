@@ -753,7 +753,13 @@ public final class Canvas {
     ///
     /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
     ///
+    /// **形の組み立ての出口で戻るのは、組み立てている面の置き場と、スケッチの口が書く本体の面の置き場
+    /// だけである** (ADR-0021 決定 4・[#2090])。直に作った面 `c` の中で別の面の口 (`c.noiseSeed(_:)`) が
+    /// 書いた `c` の置き場は、本体の組み立ての出口では戻らない。本体から作った描き場所は置き場を本体と
+    /// 共有するので戻る。
+    ///
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    /// [#2090]: https://github.com/mokume-metal/mokume/issues/2090
     var noiseStore = NoiseStore()
 
     /// 揺らぎの種と細かさ。**面どうしで共有するための参照型**で、値の意味は
@@ -967,6 +973,9 @@ public final class Canvas {
     /// 控えを届けるコピーのあとに、続く段が待つ仕掛けを積んだ回数 (作ってから通算)。
     /// 計算の側と同じ理由で持つ。
     var uploadBarriersEncoded = 0
+    /// 控えを届けるコピーの**前**に、前の仕事が読み終わるのを待つ仕掛けを積んだ回数 (作ってから通算・#1792)。
+    /// 積む 1 行と同じ場所で数え、**その行を消したら数も減る**。
+    var uploadWaitsEncoded = 0
     /// 1 品で控えの置き場へ写してよいバイト数の上限。**超えたものは待って直接書く。**
     ///
     /// 控えの置き場は環のスロットの数だけ同じ大きさで取り直すので、巨大な画像を毎フレーム
@@ -2509,7 +2518,13 @@ public final class Canvas {
     /// 色の値の形もここを通るので、断る順は形に依らない。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
-    func paintBackground(_ color: LinearRGBA?) {
+    ///
+    /// `opacity` は数の形で渡した 0–255 の不透明度。**締めたことは、断りを通ったあとで言う** — 区間の外や
+    /// 組み立ての中では塗り直さないので、締めたことも言わない ([#1842])。色の値の形は渡さない
+    /// (不透明度は色を作った口が締めている)。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    func paintBackground(_ color: LinearRGBA?, opacity: Float? = nil) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -2526,6 +2541,7 @@ public final class Canvas {
         guard !recordingShape else { return warnInsideShape(.background) }
         // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
         guard let color else { return warnNotANumberColor(.background) }
+        if let opacity { warnRoundedOpacity(.background, passed: opacity) }
         replaceSurface(with: .color(color))
     }
 

@@ -144,8 +144,9 @@ extension SketchPart {
     /// (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列なので、``randomSeed(_:)`` を
     /// 決めれば何度走らせても同じ要素が選ばれる。
     ///
-    /// **Swift の `randomElement()` は種に従わない。** 同じ配列から選んでも、走らせるたびに違う
-    /// 要素が出る。種で揃えたい選択はこちらで書く。
+    /// **Swift の `randomElement()` は、引数を省くと種に従わない。** 同じ配列から選んでも、走らせる
+    /// たびに違う要素が出る。種で揃えたい選択はこちらで書くか、`randomElement(using: &randomSource)`
+    /// (``randomSource``) と書けば、同じ列を引く。
     ///
     /// 下は 3 色のパレットから、四角ごとに 1 色を選んで塗ったもの。
     ///
@@ -252,8 +253,9 @@ extension SketchPart {
     ///
     /// ``random()`` と同じ列から引き、**要素の数より 1 少ない数だけ列を進める**。粒の放出
     /// (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列で、``randomSeed(_:)`` を
-    /// 決めれば何度走らせても同じ並びになる。**Swift の `shuffled()` は種に従わない** — 走らせる
-    /// たびに違う並びになる。
+    /// 決めれば何度走らせても同じ並びになる。**Swift の `shuffled()` は、引数を省くと種に従わない** —
+    /// 走らせるたびに違う並びになる。`shuffled(using: &randomSource)` (``randomSource``) と書けば、
+    /// 種に従う。
     ///
     /// 下は左に低い順の灰色の棒、右に同じ高さを `shuffle` で並べ替えた橙の棒を置いたもの。
     ///
@@ -322,6 +324,44 @@ extension SketchPart {
     /// 種を書く前に中で引いた分と、種を書かずに引いた分は、外で引いたのと同じく列を進める。
     // shot: 1 snippet=c29016d0
     public func randomSeed(_ seed: Int) { Self.liveRuntime()?.writeSeed(seed) }
+
+    /// スケッチの乱数の列を、Swift 標準の乱数の口へ渡せる乱数源として出す。``random()`` と同じ列を引く。
+    ///
+    /// Swift の `randomElement()`・`shuffled()`・`Float.random(in:)` は、`using:` を省くと種に従わず、
+    /// 走らせるたびに絵が変わる ([ADR-0001] 原則 2 が黙って破れる)。**`using: &randomSource` と渡す**と、
+    /// ``randomSeed(_:)`` で決めた種に従い、同じ列を引く。
+    ///
+    /// <!-- example: 文脈 let heights = [40, 80, 120, 160, 200] -->
+    /// ```swift
+    /// randomSeed(7)
+    /// background(23, 26, 31)
+    /// noStroke()
+    /// fill(242, 115, 64)
+    /// for (i, high) in heights.shuffled(using: &randomSource).enumerated() {
+    ///     rect(40 + Float(i) * 70, height - Float(high), 50, Float(high))
+    /// }
+    /// ```
+    ///
+    /// **``random()`` と同じ 1 本の列を進める。** 引いた分だけ次の ``random()`` が変わり、``randomSeed(_:)``
+    /// で戻せば同じ並びに戻る。粒の放出 (``emit(_:from:toward:rate:speed:life:size:color:)``) とも同じ列である。
+    /// 部品ごとの列が要るなら、値として持てる ``RandomSource`` を作る (`RandomSource(seed:index:)`)。
+    ///
+    /// **新しい乱数源を代入すると、種を書いたのと同じ**になる (`randomSource = RandomSource(seed: 3)` は
+    /// `randomSeed(3)` と同じ列)。形の組み立て (``createShape(_:)``) の中では、``randomSeed(_:)`` と同じく、
+    /// 抜けると外へ残らない。`using: &randomSource` で引くだけなら、列を進めるだけである。
+    ///
+    /// 走っていない所 (部品の `init` の中など) から読むと、種 0 の乱数源を返して、1 度だけ知らせる。書いても
+    /// 何も起きない。
+    ///
+    /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
+    // shot: 撮れない 列の持ち方の口で、絵にしても差は「走らせるたびに変わる」ことでしか見えない。正しさはテストが見る
+    public var randomSource: RandomSource {
+        get {
+            Self.liveRuntime(.read(returning: "a source seeded with 0"))?.randomSource
+                ?? RandomSource(seed: 0)
+        }
+        nonmutating set { Self.liveRuntime()?.writeSource(newValue) }
+    }
 
     /// その座標の揺らぎ (0…1)。**近い座標には近い値**が返る、なめらかな乱れ。
     ///

@@ -114,6 +114,10 @@ public final class OSCPort: Inlet {
     let input: ExternalQueue<OSCMessage>
     let source: any MessageSource<OSCMessage>
     private let outbound: (any DatagramSending)?
+
+    /// 送り手が見たことの跡。送り手が跡を持たなければ (記録するだけの送り手・送り先の無い入り口) `nil`。
+    /// 検査が、送ったものが受け口で読まれなかった回の名乗りに載せる (#3001)。読むだけで、振る舞いを決めない。
+    var sendTrace: SendTrace? { (outbound as? SendTracing)?.sendTrace }
     private weak var owner: (any Sketch)?
     private let warn: (String) -> Void
     /// 知らせた送れない理由。同じものは 2 度言わない。

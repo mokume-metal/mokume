@@ -37,6 +37,23 @@ mokume watch .    # 保存したら作り直して差し替える
 **推測で絵の話をしない。** コードを読んで「こう見えているはず」と答えるのは、観測を持って
 いる場でやることではない。
 
+## 乱数は種に従わせる
+
+**Swift 標準の `randomElement()`・`shuffled()`・`Float.random(in:)` は、引数を省くと種に従わない。**
+コンパイルは通り、注意も出ず、走らせるたびに絵が変わる (同じ入力から同じ絵、が黙って破れる)。
+`using: &randomSource` を渡すと、`randomSeed(_:)` で決めた同じ列を引く。
+
+```swift
+randomSeed(7)
+let tint = palette.randomElement(using: &randomSource)!   // 種に従う
+let order = petals.shuffled(using: &randomSource)         // 種に従う
+```
+
+`random()`・`random(配列)`・`shuffle(配列)` で書いてもよい。部品ごと・要素ごとに別の列が要るなら、
+値として持てる `RandomSource(seed: 7, index: i)` を作って `using:` に渡す (種を省いた作り方は無い)。
+揺らぎは `noise()` がスケッチ全体で 1 つの種と細かさを持つので、部品ごとに別の種が要るときは値として持てる
+`NoiseField(seed:)` を使う。
+
 ## 窓口が応えないとき
 
 `mokume doctor` を打つ。区画の基準・区画の有無・最後の作り直し・環境の前提が並ぶ。

@@ -1263,6 +1263,313 @@ struct WatchSessionTests {
         #expect(lines.contains { $0.0 == named && $0.1 == false }, "プレビューへ名乗っていない: \(lines)")
     }
 
+    // MARK: - 合図が名乗る子の番号で照合する (#2982)
+
+    /// 保存を 2 度続けた回の並びを作る。B が映り、C を起こし、合図が来ないまま 2 度目の保存で B を畳み、
+    /// C を前の世代へ回して D を待つ。
+    private func twoSavesInARow(_ session: WatchSession, ready: Ready) async throws -> (
+        mapped: Process, previous: Process, waiting: Process
+    ) {
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let third = try #require(session.child)
+        waitUntilGone(shown)
+        #expect(!shown.isRunning, "検査の前提: 映っていた世代が畳まれている")
+        #expect(session.outgoing === second)
+        #expect(session.waitingGeneration === third)
+        return (shown, second, third)
+    }
+
+    /// **前の世代 (C) の乗り換えの合図は、待っている次の世代 (D) のものではない。** 番号を見ずに待ちを下ろして
+    /// C を畳むと、D が倒れても見張りはもう待っていないので何もせず、道具の窓には畳まれた C の絵が凍る。
+    @Test("待っていない世代の乗り換えの合図は受けず、続けて D が倒れたら前の世代を畳める")
+    func aPromotionOfTheOutgoingGenerationDoesNotEndTheWait() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        // C (前の世代) が 1 枚焼いて乗り換えた合図。番号は C のもの
+        let stopped = await session.generationPromoted(pid: generations.previous.processIdentifier)
+        #expect(stopped == nil)
+        #expect(generations.previous.isRunning, "待っていない世代の合図で、映っている世代を畳んだ")
+        #expect(session.outgoing === generations.previous)
+        #expect(session.waitingGeneration === generations.waiting, "待ちが下りた")
+
+        // 続けて D が倒れる。待ちが残っているので、倒れた子の口が前の世代を畳める
+        _ = try placeFellBackMarker(of: generations.waiting, for: session)
+        #expect(await session.retireAfterFallback() != nil, "D の倒れを受けられない")
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning)
+    }
+
+    @Test("待っている世代の番号の合図は受けて前の世代を畳み、番号の無い合図は今までどおり受ける")
+    func aPromotionOfTheWaitingGenerationRetiresTheOutgoingOne() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        await session.generationPromoted(pid: generations.waiting.processIdentifier)
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning, "待っている世代の合図で前の世代を畳んでいない")
+        #expect(session.waitingGeneration == nil)
+
+        // 番号を名乗らない子 (古いライブラリ) の合図は、今までの推定どおり待っている世代のものと読む
+        let readyLegacy = Ready()
+        let other = try overlapping(ready: readyLegacy)
+        defer { other.stopBlocking() }
+        let again = try await twoSavesInARow(other, ready: readyLegacy)
+        await other.generationPromoted(pid: nil)
+        waitUntilGone(again.previous)
+        #expect(!again.previous.isRunning, "番号の無い合図を受けていない")
+    }
+
+    @Test("受け取れない知らせは、読めた目録の番号が待っている世代でなければ受けない")
+    func anUndeliverableNoticeFromAnotherGenerationIsNotTaken() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        let generations = try await twoSavesInARow(session, ready: ready)
+
+        // 前の世代 (C) の目録の知らせ
+        #expect(
+            await session.retireAfterUndeliverable(
+                waiting: generations.waiting, pid: generations.previous.processIdentifier) == nil)
+        #expect(generations.previous.isRunning)
+        #expect(session.waitingGeneration === generations.waiting)
+
+        // 待っている世代 (D) の目録の知らせは受ける
+        let taken = await session.retireAfterUndeliverable(
+            waiting: generations.waiting, pid: generations.waiting.processIdentifier)
+        #expect(taken != nil)
+        waitUntilGone(generations.previous)
+        #expect(!generations.previous.isRunning)
+    }
+
+    // MARK: - 台へ世代を手放したと伝える口 (#2983)
+
+    /// **台は、畳まれた世代・居なくなった世代のカーソルの頼みを、読み直す契機が来ないまま持ち続ける**
+    /// ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。台の知らせを通らない 3 つの口
+    /// (倒れた子・子の離脱・合図の来ないまま次の保存) から、台へ手放したと伝える。
+
+    @Test("倒れた子の知らせで前の世代を畳むとき、台へ世代を手放したと伝える")
+    func aFallenChildTellsTheDisplayToRelinquish() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        var told = 0
+        session.relinquishesDisplay = { _ in told += 1 }
+        await session.start()
+        ready.waitForLast()
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+
+        // 知らせが来ていないあいだは伝えない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(told == 0)
+        _ = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        #expect(told == 1, "倒れた子で台へ伝えていない")
+        // 同じ知らせで、もう 1 度は伝えない
+        #expect(await session.retireAfterFallback() == nil)
+        #expect(told == 1)
+    }
+
+    @Test("子が消えたと名乗るとき、台へ世代を手放したと伝え、同じ消え方では 1 度だけ")
+    func aDepartedChildTellsTheDisplayToRelinquish() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(running: "echo ready; exit 7", ready: ready))
+        var told = 0
+        session.relinquishesDisplay = { _ in told += 1 }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        #expect(session.departed() != nil)
+        #expect(told == 1, "子の離脱で台へ伝えていない")
+        #expect(session.departed() == nil)
+        #expect(told == 1, "同じ消え方で 2 度伝えた")
+    }
+
+    @Test("乗り換えの合図が来ないまま次の保存が来て、映っている世代を畳むとき、台へ手放したと伝える")
+    func retiringTheDisplayedGenerationAtTheNextSwapTellsTheDisplay() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        var told = 0
+        session.relinquishesDisplay = { _ in told += 1 }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        // 1 回目の保存: 映っている世代は前の世代になる。畳むものが無いので伝えない
+        await session.tick()
+        ready.waitForLast()
+        #expect(session.outgoing === shown)
+        #expect(told == 0, "畳む世代が無いのに伝えた")
+
+        // 合図が来ないまま 2 回目の保存: 映っている世代を畳む
+        await session.tick()
+        ready.waitForLast()
+        waitUntilGone(shown)
+        #expect(!shown.isRunning)
+        #expect(told == 1, "合図の来ない次の保存で台へ伝えていない")
+    }
+
+    /// **台へ伝えるのは、前の世代を止めた後である** ([#2983])。止める前に伝えると、止まるまでに書く 1 枚で
+    /// 台が頼みを読み直す。倒れた子と、合図の来ないまま次の保存の 2 つの口で、伝えた時点で前の世代が
+    /// もう動いていないことを見る。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("倒れた子の口は、前の世代を止めた後に台へ伝える")
+    func aFallenChildTellsTheDisplayAfterStoppingThePreviousGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        var runningWhenTold: [Bool] = []
+        session.relinquishesDisplay = { _ in runningWhenTold.append(leaving.isRunning) }
+        _ = try placeFellBackMarker(of: arriving, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        #expect(runningWhenTold == [false], "前の世代を止める前に台へ伝えた: \(runningWhenTold)")
+    }
+
+    @Test("合図の来ないまま次の保存の口は、映っていた世代を止めた後に台へ伝える")
+    func theNextSwapTellsTheDisplayAfterStoppingTheDisplayedGeneration() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        var runningWhenTold: [Bool] = []
+        session.relinquishesDisplay = { _ in runningWhenTold.append(shown.isRunning) }
+        await session.tick()
+        ready.waitForLast()
+        #expect(runningWhenTold == [false], "映っていた世代を止める前に台へ伝えた: \(runningWhenTold)")
+    }
+
+    /// **手放す世代は番号で指す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。台が、映っている
+    /// 生きた世代に当てず、まだ採っていない死んだ子の目録も手放した扱いにするために。
+    @Test("台へ伝える番号は、倒れた子・離脱・次の保存の 3 つの口で、手放す世代のものである")
+    func theDisplayIsToldWhichGenerationsAreLetGo() async throws {
+        // 倒れた子: 倒れた子と、畳む前の世代
+        do {
+            let ready = Ready()
+            let session = try overlapping(ready: ready)
+            defer { session.stopBlocking() }
+            await session.start()
+            ready.waitForLast()
+            let leaving = try #require(session.child)
+            await session.tick()
+            ready.waitForLast()
+            let arriving = try #require(session.child)
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            _ = try placeFellBackMarker(of: arriving, for: session)
+            #expect(await session.retireAfterFallback() != nil)
+            #expect(
+                told == [[arriving.processIdentifier, leaving.processIdentifier]], "倒れた子: \(told)")
+        }
+        // 次の保存: 畳んだ映っていた世代
+        do {
+            let ready = Ready()
+            let session = try overlapping(ready: ready)
+            defer { session.stopBlocking() }
+            await session.start()
+            ready.waitForLast()
+            let shown = try #require(session.child)
+            await session.tick()
+            ready.waitForLast()
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            await session.tick()
+            ready.waitForLast()
+            #expect(told == [[shown.processIdentifier]], "次の保存: \(told)")
+        }
+        // 離脱: 消えた子と、畳む前の世代
+        do {
+            let ready = Ready()
+            let session = WatchSession(
+                directory: try makeDirectory(), context: testContext(),
+                hooks: hooks(running: "echo ready; exit 7", ready: ready))
+            var told: [[Int32]] = []
+            session.relinquishesDisplay = { told.append($0) }
+            await session.start()
+            let child = try #require(session.child)
+            ready.waitForLast()
+            waitUntilGone(child)
+            #expect(session.departed() != nil)
+            #expect(told == [[child.processIdentifier]], "離脱: \(told)")
+        }
+    }
+
+    /// **映っている前の世代 (`outgoing`) が自分で終わる・落ちる回も、台へ伝える** ([#2983] の反証)。
+    /// `departed()` は `child` だけを見るので、乗り換えを待つ間に映っている前の世代が消えても、台は
+    /// 消えた世代の頼みを持ち続ける。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    @Test("映っている前の世代が自分で終わったら、台へその番号で伝え、1 度だけ伝える")
+    func anOutgoingGenerationThatEndsTellsTheDisplay() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        #expect(session.outgoing === leaving)
+        var told: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+
+        session.relinquishIfOutgoingDeparted()
+        #expect(told.isEmpty, "生きている前の世代で伝えた")
+        // 前の世代が自分で終わる (子は 1 行読んだら終わる。入力は映っている前の世代へ届く)
+        session.send("touch\n")
+        waitUntilGone(leaving)
+        session.relinquishIfOutgoingDeparted()
+        #expect(told == [[leaving.processIdentifier]], "\(told)")
+        session.relinquishIfOutgoingDeparted()
+        #expect(told.count == 1, "同じ世代を 2 度伝えた")
+    }
+
+    /// 受け取れない知らせで前の世代を畳むときも、畳んだ世代を台へ伝える (台が畳んだ世代を映しているかもしれない)。
+    /// 乗り換えを待っている世代は、これから書くので含めない。
+    @Test("受け取れない知らせで前の世代を畳むとき、畳んだ世代だけを台へ伝える")
+    func anUndeliverableNoticeTellsTheDisplayWhichGenerationWasRetired() async throws {
+        let ready = Ready()
+        let session = try overlapping(ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let leaving = try #require(session.child)
+        await session.tick()
+        ready.waitForLast()
+        let arriving = try #require(session.child)
+        var told: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+        #expect(await session.retireAfterUndeliverable(waiting: arriving) != nil)
+        #expect(told == [[leaving.processIdentifier]], "\(told)")
+    }
+
     // MARK: - 道具の窓が受け取れない世代 (#2928)
 
     /// **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る。

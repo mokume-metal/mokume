@@ -562,7 +562,7 @@ struct TransformFormulaTests {
                     canvas.push()
                     canvas.translate(place.x, place.y, place.z)
                     canvas.rotateZ(place.rotation.z)
-                    canvas.scale(place.scale, place.scale, place.scale)
+                    canvas.scale(place.scale.x, place.scale.y, place.scale.z)
                     canvas.shape(shape)
                     canvas.pop()
                 }

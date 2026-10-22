@@ -53,15 +53,19 @@ import MokumeDiagnostics
 /// ``SketchPart/jumpTime(_:)`` は音を止めない・飛ばさない (``SoundFile`` と同じ)。
 ///
 /// 1 つのスケッチで同時に生きていられる合成した音は、オシレータ・ノイズ・エフェクトを合わせて 64 個
-/// まで。**手放して (変数や配列から外して) 鳴り終えたオシレータとノイズは、数から外れる** — 鳴り終えたとは、
+/// まで (エフェクトへ通した ``SoundFile`` もこの数に入る — 下の段落)。**手放して (変数や配列から外して) 鳴り終えたオシレータとノイズは、数から外れる** — 鳴り終えたとは、
 /// ``SynthSource/stop()`` で止めて消えたか、``Env`` の形が終わって無音になったこと。手放しても鳴っている音は
 /// 切らず、鳴り終えてから数から外れる。鳴らしたまま (包絡なしの ``SynthSource/play()`` で) 手放した音は鳴り
 /// 続け、数から外れない。**エフェクトはスケッチの終わりまで残る**。`setup()` で作って使い回す書き方は、
 /// 今も勧める形で、当たるたびに短い音を作って捨てる書き方も、包絡で鳴り終えさせれば 64 個を使い切らない。
 ///
+/// **エフェクトへ通した ``SoundFile`` も 1 つずつ数える** (同じ 64 個の内)。通したファイルは、スケッチから
+/// 外す (`detach(_:)`) か、スケッチが終わるまで数に残る。外すと、鳴っている音は 5 ミリ秒ほどで消え、
+/// 消えきってから数から外れる。
+///
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-public class SynthSound {
+public class SynthSound: EffectInput {
     let stage: SynthStage
     let node: RackNode?
     /// 知らせに載せる型の名前。

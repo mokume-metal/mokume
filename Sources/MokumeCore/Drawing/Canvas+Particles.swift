@@ -290,7 +290,7 @@ extension Canvas {
         guard let run = particles.quad.runs.first, run.source == .solid else { return }
         let places = particles.living(
             from: read(particles.state), transform: transform.matrix,
-            basis: currentCamera.basis)
+            basis: currentCamera.basis, lifeStep: Particles.lifeStep(of: frameStep))
         guard !places.isEmpty else { return }
         replaying(CollectionOfOne(run)) { run in
             placeSolid(run, of: particles.quad, instances: places)
