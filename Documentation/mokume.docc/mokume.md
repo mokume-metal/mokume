@@ -106,6 +106,11 @@ circle(200, 150, 20 + pow(2, level))
 
 `mokume watch` で `.swift` を保存すると、スケッチは新しいプロセスで作り直される。
 資材の置き場 (`Sources/<名前>/assets/`) のファイルを足したり保存したりしたときも、ビルドが資材を写し直すので同じく作り直す。
+
+見張るのは次の3つで、これが約束である。`Package.swift`、`Sources/` の下の `.swift` (隠しファイルと包みの中を除く)、`Sources/<名前>/assets/` の下の普通のファイル (隠しファイル・`.metal`・シンボリックリンクを除く)。
+
+**範囲の外を変えても作り直さない。** `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、置き場の中のシンボリックリンク、`Package.resolved`、パスで指した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、作り直しは起きない。外を変えたときは `mokume watch` を起こし直す。範囲を `Package.swift` の宣言から導く形は、宣言を変えた作品が出てから決める。
+
 **フレームを越える状態も、この作り直しでは最初から始まる。** 本体が引き継ぐのは次の2種類である。
 
 | 残るもの | 引き継ぎ方 |
@@ -167,11 +172,14 @@ rotate(Float.pi / 4)      // 型を名乗っても通る
 
 `pow(2, 3)` のようにリテラルだけを渡す計算の関数も、同じ理由で型が決まらず組めない (上の「`import mokume` で通る語彙」)。
 
-**2. 割り算は、片方に小数点を付ける。** 整数だけの式は整数のまま計算され、`1 / 2` は 0 になる。
+**2. 割り算は、片方に小数点を付ける。** 渡す先が型を決めない口 (mokume の描く口・数の口) へ、
+整数リテラルだけの式を渡すと、整数のまま計算され、`1 / 2` は 0 になる。型を名乗った文脈
+(`let r: Float = 1 / 2`) では、同じ式が小数で計算される。
 **エラーにならず**、描かれる絵で気付くことになる。
 
 ```swift
-circle(width / 2, height / 2, 1 / 2)     // 直径が 0 になり、何も描かれない
+let r: Float = 1 / 2                     // 0.5 (型を名乗った文脈では小数で計算される)
+circle(width / 2, height / 2, 1 / 2)     // 0 になり、直径が 0 で何も描かれない (渡す先が型を決めないので Int で計算される)
 circle(width / 2, height / 2, 1.0 / 2)   // 0.5 が渡る
 ```
 
@@ -416,6 +424,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -429,6 +438,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/strokeWeight(_:)``
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
+- ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
 
@@ -444,6 +455,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
 - ``SketchPart/line(_:_:_:_:)``
+- ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 
 ### 座標の読み方
 
@@ -473,6 +485,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
+- ``bezierPoint(_:_:_:_:_:)``
+- ``bezierTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``

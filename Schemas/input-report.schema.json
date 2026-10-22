@@ -35,6 +35,14 @@
       "type": "integer",
       "minimum": 0,
       "description": "How many were dropped because they could not be held (a running total since launch). If this grows, too much is being sent."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "The keys of the request that this version did not read. **Omitted when there are none**, so a reply to a request with only known keys has the same keys as before. An event is taken without a key it does not read (it still counts in accepted, or in ignored if it could not be read for another reason), so a misspelt key (buton for button) is named here rather than read as the key it resembles. A line names the key and the keys that are read; one about an event begins with its position (events[0]). **A request whose events could not be read also names the keys of the request itself** (evnts for events). At most 5 events are named, then one line gives how many more carried keys that were not read, and a name over 32 characters is cut short."
     }
   }
 }

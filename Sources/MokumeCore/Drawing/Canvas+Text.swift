@@ -368,6 +368,12 @@ extension Canvas {
     /// 改行しない空白 (U+00A0・U+202F・U+2007) は字と同じに扱い、切れ目にせず、消費も
     /// 削りもしない ([#1540])。
     ///
+    /// **`.word` の切れ目は、空白だけでなく Unicode の行分割の規則 (UAX #14) が決める**
+    /// ([#2448])。切れ目の候補は `lastWordBreak(in:after:upTo:breaks:)` が返し、空白の無い切れ目
+    /// (和文の字と字の間) では何も消費しない。1 語 (切れ目と切れ目の間) が幅より長いときは、
+    /// いままでどおり文字の切れ目へ倒れる。位置の計算は字ごとの送り幅の和のままである。
+    ///
+    /// [#2448]: https://github.com/mokume-metal/mokume/issues/2448
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
     /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
@@ -384,36 +390,26 @@ extension Canvas {
             var start = paragraph.startIndex
             var index = paragraph.startIndex
             var width: Float = 0
-            var lastSpace: String.Index?
+            // 段落の切れ目の候補。**溢れて初めて数える** — 1 行に収まる段落は、
+            // 切れ目を数える費用を払わない
+            var breaks: [WordBreak]?
 
             while index < paragraph.endIndex {
                 let character = paragraph[index]
                 let step = face.advance(of: String(character))
 
-                // **切れ目は、幅を測る前に憶える。** 幅を超えたのが空白そのものだった
-                // とき、その空白は「ここまでが 1 行」の合図であって、次の行へ送る
-                // 対象ではない
-                //
-                // **切れ目は、続いた空白の先頭に置く。** 溢れる直前に見た空白を切れ目に
-                // すると、それより前の空白が行の末尾に残り、右揃え・中央揃えの行が
-                // その幅だけずれる ([#1412])。段落の頭の空白 (字下げ) は、前に語が
-                // 無いので切れ目にしない
-                if character.isBreakingSpace, index > start,
-                    !paragraph[paragraph.index(before: index)].isBreakingSpace
-                {
-                    lastSpace = index
-                }
-
                 // **1 文字だけの行は折らない。** 幅より広い字はそのままはみ出させる
                 if width + step > limit, index > start {
-                    if style.textWrap == .word, let space = lastSpace, space > start {
-                        lines.append(paragraph[start..<space])
-                        var next = space
-                        while next < paragraph.endIndex, paragraph[next].isBreakingSpace {
-                            next = paragraph.index(after: next)
-                        }
-                        start = next
-                        index = next
+                    // **語の切れ目は、溢れた字の手前までで最後の切れ目。** 幅を超えたのが
+                    // 切れ目の空白そのものだったとき、その空白は「ここまでが 1 行」の合図
+                    // であって、次の行へ送る対象ではない — 切れ目は空白の手前に置く
+                    if style.textWrap == .word,
+                        let cut = Self.lastWordBreak(
+                            in: paragraph, after: start, upTo: index, breaks: &breaks)
+                    {
+                        lines.append(paragraph[start..<cut.end])
+                        start = cut.next
+                        index = cut.next
                     } else {
                         // **文字の切れ目でも、切れ目の空白はまとめて消費する** ([#1424])。
                         // 行の末尾に収まった空白 (`index` の前) も、溢れた空白 (`index` から
@@ -431,7 +427,6 @@ extension Canvas {
                         start = index
                     }
                     width = 0
-                    lastSpace = nil
                     continue
                 }
 
@@ -482,6 +477,103 @@ extension Canvas {
             trimmed = paragraph.index(before: trimmed)
         }
         return trimmed > start ? trimmed : end
+    }
+
+    /// 語の切れ目 1 つ。**行が `end` で終わり、次の行が `next` から始まる。**
+    ///
+    /// `end` と `next` の間にあるのは、切れ目に続く折ってよい空白 (`Character.isBreakingSpace`)
+    /// だけで、どちらの行にも入らない。空白の無い切れ目 (和文の字と字の間など) は `end == next`
+    /// で、何も消費しない。
+    struct WordBreak {
+        var end: String.Index
+        var next: String.Index
+    }
+
+    /// `start` から数えて、`limit` より前で最後の語の切れ目を返す。無ければ `nil`。
+    ///
+    /// **語の切れ目は Unicode の行分割の規則 (UAX #14) で決める** ([#2448])。組版はせずに
+    /// 切れ目だけを `CFStringTokenizer` (`kCFStringTokenizerUnitLineBreak`) から借りる — 位置を
+    /// 決める計算は、いまも字ごとの送り幅の和のままである (``Typeface`` の加法性の決定)。
+    /// 規則は、行頭に来てはいけない字 (「、」「。」「」」) と行末に残してはいけない字 (「「」) を
+    /// 切れ目の前後に置かず、空白の無い和文には字と字の間に切れ目を置き、改行しない空白
+    /// (U+00A0・U+202F・U+2007) の前後では切らない。
+    ///
+    /// 切れ目は、切れ目に続く空白の手前 (`end`) に置く。`start` と同じかその手前に `end` が
+    /// 来る切れ目は、行が空になるので数えない — 段落の頭の空白 (字下げ) の後ろの切れ目も
+    /// 同じ理由で、前に語が無いので切れ目にしない。
+    ///
+    /// 段落ごとに最初に呼ばれたときだけ切れ目を数え、`breaks` に残す。
+    ///
+    /// [#2448]: https://github.com/mokume-metal/mokume/issues/2448
+    private static func lastWordBreak(
+        in paragraph: Substring, after start: String.Index, upTo limit: String.Index,
+        breaks: inout [WordBreak]?
+    ) -> WordBreak? {
+        let candidates: [WordBreak]
+        if let cached = breaks {
+            candidates = cached
+        } else {
+            candidates = wordBreaks(in: paragraph)
+            breaks = candidates
+        }
+        // `end` は昇順に並ぶので、`limit` 以下で最後のものを二分探索する
+        var low = 0
+        var high = candidates.count
+        while low < high {
+            let middle = (low + high) / 2
+            if candidates[middle].end <= limit {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        guard low > 0, candidates[low - 1].end > start else { return nil }
+        return candidates[low - 1]
+    }
+
+    /// 段落の語の切れ目を、前から順に並べて返す。
+    ///
+    /// UAX #14 の切れ目の単位は、続く空白までを含む (「語 」)。単位の終わりが次の行の
+    /// 始まり (`next`) で、末尾の折ってよい空白を除いた位置が行の終わり (`end`) である。
+    /// 字の境界に載らない位置 (結合文字列の途中) の切れ目と、空白しか無い単位 (段落の頭の
+    /// 字下げ)、段落の終わりで終わる空白の無い単位は、切れ目にしない。
+    private static func wordBreaks(in paragraph: Substring) -> [WordBreak] {
+        let units = Array(paragraph.utf16)
+        guard
+            let text = units.withUnsafeBufferPointer({
+                CFStringCreateWithCharacters(nil, $0.baseAddress, units.count)
+            })
+        else { return [] }
+        let tokenizer = CFStringTokenizerCreate(
+            nil, text, CFRange(location: 0, length: units.count),
+            kCFStringTokenizerUnitLineBreak, nil)
+
+        var result: [WordBreak] = []
+        var unitStart = paragraph.startIndex
+        var startIsBoundary = true
+        var offset = 0
+        while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
+            let range = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            // 単位は隙間なく並ぶ。隙間があれば、その単位は飛ばす (切れ目が減るだけで、
+            // 溢れた行は文字の切れ目へ倒れる)
+            let contiguous = range.location == offset
+            offset = range.location + range.length
+            let unitEnd = paragraph.utf16.index(paragraph.startIndex, offsetBy: offset)
+            let endIsBoundary = unitEnd.samePosition(in: paragraph.base) != nil
+            let usable = contiguous && startIsBoundary && endIsBoundary
+            let previousStart = unitStart
+            unitStart = unitEnd
+            startIsBoundary = endIsBoundary
+            guard usable else { continue }
+
+            var end = unitEnd
+            while end > previousStart, paragraph[paragraph.index(before: end)].isBreakingSpace {
+                end = paragraph.index(before: end)
+            }
+            guard end > previousStart, end < paragraph.endIndex else { continue }
+            result.append(WordBreak(end: end, next: unitEnd))
+        }
+        return result
     }
 }
 

@@ -213,7 +213,8 @@ extension SketchPart {
     ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
-    ///   `preserveAspectRatio` が効く
+    ///   `preserveAspectRatio` が効く (`preserveAspectRatio` の値は SVG のとおり大文字小文字を区別し、
+    ///   `XMINYMID` のような綴りは読めない値として知らせ、書いていないとき (`xMidYMid meet`) と同じに写す)
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`
@@ -230,6 +231,14 @@ extension SketchPart {
     /// 1 度、何を何回・最初に出た行を添えて知らせる。** 描ける部分は描く — 字が 1 つ混ざって
     /// いるだけで、ロゴ全体が読めなくなることはない。塗りが `url(#a) red` のように代わりの色を
     /// 持っていれば、その色で塗る。
+    ///
+    /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
+    /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
+    /// `ellipse` の `cx` / `cy` / `rx` / `ry`・`path` の `d`・入れ子の `<svg>` の `x` / `y`) は、属性の値で描き、
+    /// `CSS property "width"` の形で知らせる。CSS の変換 (`transform`・`translate`・`rotate`・`scale`) は掛けずに
+    /// 知らせ、`transform` 属性を掛ける要素の `transform-origin` / `transform-box` (属性でも CSS でも) と、
+    /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
+    /// 知らせない。
     ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///

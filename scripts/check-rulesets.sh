@@ -52,6 +52,10 @@ esac
 
 # 形が壊れていれば実設定を見るまでもない
 python3 scripts/rulesets_lib.py shape "$DEFS"
+# 縮退の定義 (#2252) も同じ形の検査にかける。無いチェックアウトでは見ない
+if [ -d .github/rulesets-degraded ]; then
+  python3 scripts/rulesets_lib.py shape .github/rulesets-degraded
+fi
 # set -e の下では `[ ... ] && exit 0` が偽になった時点でスクリプトごと終わる。
 # 条件分岐で書く
 if [ "$mode" = shape ]; then
