@@ -413,7 +413,8 @@ protocol DatagramSending: AnyObject, Sendable {
 /// **捨てた繋ぎ (いまの繋ぎでないもの) に返った完了は、いまの繋ぎの話ではないので無視する。** 繋ぎを
 /// 捨てると、その繋ぎに積まれていた送信の完了が `ECANCELED` などの誤りで返る。それを送れない理由として
 /// 名乗らず、いまの繋ぎの数え方も崩さない。**繋ぎの状態 (`failed`・`waiting`) も同じ**で、捨てた繋ぎから
-/// 遅れて届いたものは読まない (送れたと読んで戻った後に、言い直さないため — #3045)。
+/// 遅れて届いたものは読まない (送れたと読んで戻った後に、言い直さないため — #3045)。待ちの名乗りを誤り
+/// 無しの完了で戻すのも、いまの繋ぎの完了だけである。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
 nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
@@ -533,12 +534,12 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
                 if isCurrent(sent) { unrefutedSince = unrefutedSince ?? now() }
                 return
             }
+            // 捨てた繋ぎの完了は、待ちの名乗りも戻さず、いまの繋ぎの数え方にも入れない
+            guard isCurrent(sent) else { return }
             guard refused else {
                 warned = false
                 return
             }
-            // 捨てた繋ぎの完了は、いまの繋ぎの数え方に入れない
-            guard isCurrent(sent) else { return }
             let completed = now()
             let since = unrefutedSince ?? completed
             unrefutedSince = since

@@ -66,7 +66,7 @@ struct DatagramSenderTests {
         sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 1)
 
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
+        sender.onQueue { sender.finished(sending: nil, on: connection) }
         sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 2)
     }
@@ -189,7 +189,7 @@ struct DatagramSenderTests {
         let sender = clocked(told, clock)
         let connection = attached(sender)
         sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
-        sender.onQueue { sender.finished(sending: nil, on: nil) }
+        sender.onQueue { sender.finished(sending: nil, on: connection) }
         sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 2)
     }
@@ -317,5 +317,26 @@ struct DatagramSenderTests {
         sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: current) }
         #expect(told.lines.count == 1)
         #expect(told.lines.first?.contains("Connection refused") == true)
+    }
+
+    @Test("捨てた繋ぎの誤り無しの完了は、待ちの名乗りを戻さない")
+    func aCleanCompletionOfADroppedConnectionDoesNotClearAWaiting() {
+        let told = Told()
+        let sender = sender(told)
+        let current = attached(sender)
+        let dropped = NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: current) }
+        #expect(told.lines.count == 1)
+
+        // 捨てた繋ぎ (弱参照が消えたものも) の完了は、いまの繋ぎの話ではない。戻さないので、言い直さない
+        sender.onQueue { sender.finished(sending: nil, on: dropped) }
+        sender.onQueue { sender.finished(sending: nil, on: nil) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: current) }
+        #expect(told.lines.count == 1, "診断: \(told.lines)")
+
+        // いまの繋ぎの完了なら、戻って言い直す
+        sender.onQueue { sender.finished(sending: nil, on: current) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: current) }
+        #expect(told.lines.count == 2)
     }
 }
