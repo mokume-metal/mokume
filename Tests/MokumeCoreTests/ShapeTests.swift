@@ -1537,6 +1537,7 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
     case loadPixels
     case readPixels
     case writePixels
+    case updatePixels
 
     var testDescription: String { "\(self)" }
 
@@ -1552,6 +1553,7 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
         case .loadPixels: canvas.loadPixels()
         case .readPixels: _ = canvas.pixels[5, 5]
         case .writePixels: canvas.pixels[5, 5] = white
+        case .updatePixels: canvas.pixels.update { _, _, _ in white }
         }
         return nil
     }

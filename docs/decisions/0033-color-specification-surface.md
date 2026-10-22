@@ -139,6 +139,7 @@ hue は 0–360 の**度**、saturation と brightness は 0–100 の**百分�
 | `ambient` / `emissive` / `ambientLight` | 1・3 引数 |
 | `directionalLight` / `pointLight` / `spotLight` | 3 成分のみ |
 | `color` (値の側) | 色の値と不透明度の 2 引数 `color(c, alpha)` (2026-10-18 追補・下の段) |
+| `paletteLerp` (値の側) | 区切り `[(色, 位置)]` と `amount` の 2 引数 `paletteLerp(stops, amount)`。混ぜる空間は `lerpColor` と同じ作業空間 (線形) で、手本 (p5.js 2.x) と中間の色が違うことを説明文で名乗る (2026-10-21 追記・[#2424](https://github.com/mokume-metal/mokume/issues/2424)) |
 
 **光に alpha 形と gray 形は足さない。** 手本に無く、`directionalLight(128, 64, 0, -1, 0)` の `64` が何を指すのかを説明できない。`set(x, y, color)` は手本も色の値を取るので、数値形を持たない。
 

@@ -9,8 +9,9 @@
 #      PR には .github/dependabot.yml が自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
-#   - 閉じる Issue に Bug が含まれるなら、PR 本文に空でない「反証」の節がある
-#     (ADR-0040 決定 4 — 下の「4.」)
+#   - 閉じる Issue に Bug が含まれるなら、PR 本文に空でない「反証」の節があり、応えが
+#     「起票した」の行は理由の語 (約束の選択 / 根が違う) を持つ (ADR-0040 決定 4・#2302 —
+#     下の「4.」)
 #   - AGENTS.md を合流先との分岐点より長くした PR は、本文に増分の宣言があり実測と一致する
 #     (#1668 — 下の「AGENTS.md の増分」)
 #
@@ -56,6 +57,10 @@ REPO="$(this_repo)"
 # 本文を行で読む検査 (body_section・増分の宣言) はここを通す
 # shellcheck source=scripts/markdown-live.sh
 . "$(dirname "${BASH_SOURCE[0]}")/markdown-live.sh"
+
+# 反証の「起票した」に理由の語を求めるのは、この日時より後に出た PR だけ (#2302)。この版が入る
+# 前に出ていた PR の本文は、語を持たない形で書かれている
+readonly REFUTE_REASON_FROM='2026-10-22T00:00:00Z'
 
 fail() { # $1=理由 $2=次にすること (省略可)
   echo "review-gate: 差し戻し — $1" >&2
@@ -126,7 +131,7 @@ missing_refute_message() {
   | 指摘 | 根拠 | 応え |
   | --- | --- | --- |
   | 同じ形の口がもう 1 つある | Sources/…/Foo.swift:42 | 直した (この PR) |
-  | 呼び出し元の … が壊れうる | Sources/…/Bar.swift:17 | 起票した #N |
+  | 呼び出し元の … が壊れうる | Sources/…/Bar.swift:17 | 起票した #N (約束の選択) |
   | 根ではなく症状を塞いでいる | Sources/…/Baz.swift:88 | 当たらない: 理由 |
 
 反証役はプランも完了条件も渡されないサブエージェントで、Issue の症状と差分だけから
@@ -137,6 +142,30 @@ missing_refute_message() {
 **見ているのは節があって中身が空でないことだけで、中身の正しさは見ていません**
 (HTML コメントだけの節は空とみなします)。防いでいるのは反証役の起こし忘れです
 (理由: ADR-0040 決定 4・ADR-0019 決定 1)。
+
+EOF
+  after_fix_note
+}
+
+# 反証の「起票した」の行に、理由の語が無いときの差し戻し文言 (#2302)。$1 = その行 (改行区切り)
+missing_filing_reason_message() {
+  cat <<EOF
+「## 反証」の表で、応えが「起票した」の行は、同じ PR で直さない理由の語を添えてください。
+語は 2 つだけです。
+
+  起票した #N (約束の選択)   約束 (不変条件・契約) を決める・変える判断が要る。完了条件を書けないので、
+                              メンテナの判断を待つ
+  起票した #N (根が違う)     この PR の説明では筋が通らない別の根。完了条件を書いて起票する
+
+**「範囲が大きい」「未実測」「差分の外」は理由に認めません。** 同じ根の兄弟は、同じ PR で直すのが
+既定です (AGENTS.md の「作業中に踏んだ問題」の表の 1 行目)。直すなら応えを「直した」にしてください。
+
+語の無い行:
+$1
+
+見ているのは、応えの欄が「起票した」で始まる行に、(約束の選択) か (根が違う) があることだけで、
+どちらの語が正しいかは見ていません (理由: #2302)。手順は .claude/skills/bug-refute/SKILL.md の
+「4. 応える」にあります。
 
 EOF
   after_fix_note
@@ -178,6 +207,25 @@ body_section() {
   '
 }
 
+# 反証の節 (標準入力) から、応えの欄が「起票した」で始まるのに、理由の語 (約束の選択 / 根が違う) が
+# 括弧に入っていない表の行を、行ごとに返す (#2302)。表の行は先頭が | の行で、応えは最後の空でない欄。
+# コードブロックと HTML コメントの中の行は、表の行と読まない (body_section と同じ規則)。
+# 全角の括弧も認める (alternation で書く — mawk は bracket expression を byte で読む)
+unreasoned_filings() {
+  awk "$MARKDOWN_LINES_AWK"'
+    { if (md_kind($0)) next }
+    /^[[:space:]]*\|/ {
+      n = split($0, cell, "|")
+      ans = ""
+      for (i = n; i >= 1; i--) {
+        c = cell[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", c)
+        if (c != "") { ans = c; break }
+      }
+      if (ans ~ /^起票した/ && ans !~ /(\(|（)(約束の選択|根が違う)(\)|）)/) print $0
+    }
+  '
+}
+
 # 標準入力から HTML コメント (<!-- … -->、行をまたいでよい) を除く。テンプレートの
 # 案内はコメントで書かれているので、見出しだけ残して中身を書かなかった節は、これを
 # 通すと空白だけになる
@@ -201,7 +249,7 @@ strip_html_comments() {
 }
 
 pr_json=$(gh pr view "$PR" -R "$REPO" \
-  --json body,labels,latestReviews,closingIssuesReferences,baseRefName,headRefOid)
+  --json body,labels,latestReviews,closingIssuesReferences,baseRefName,headRefOid,createdAt)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 # **変更ファイルだけ別の口から取る** (#793)。同じ gh pr view にまとめると呼び出しは
 # 1 回で済むが、files は GraphQL の接続で上限があり、大きな PR では後半が落ちる —
@@ -352,6 +400,14 @@ fi
 #
 #    採られた率 (指摘のうち「直した」「起票した」の割合) がほぼ 0 なら畳む (ADR-0040
 #    決定 4)。数え直しは #1663
+#
+#    **応えが「起票した」の行は、理由の語 (約束の選択 / 根が違う) を括弧に持つ** (#2302)。
+#    反証役が merge 前に見つけた指摘のうち、起票へ回った 16 件を読むと、同じ根で同じ PR に
+#    入るべきだったもの (表の 1 行目) が 5 件あり (#1823・#1830・#1873・#1913・#1942)、反証の
+#    行は起票の理由に「未実測」「範囲が大きい」「差分の外」と書いていた。表が起票を認める理由は
+#    「約束の選択」と「根が違う」だけで、その 2 語以外は認めない。**見るのは語の有無だけで**、
+#    どちらの語が正しいかは見ない (ADR-0019 決定 1)。既存の「反証」の検めを広げる形で、
+#    新しい検査は足さない。語を求めるのは REFUTE_REASON_FROM より後に出た PR だけである
 if [ -n "$bug_issues" ]; then
   refute=$(jq -r '.body // ""' <<<"$pr_json" | body_section 反証)
   # 見出しだけの節 (中身が空) と節そのものが無い場合を分けて名乗る。見出しの有無は
@@ -370,6 +426,19 @@ if [ -n "$bug_issues" ]; then
          "$(missing_refute_message)"
   fi
   echo "review-gate: 反証の節を確認 (${bug_issues# })"
+  # 「起票した」の理由 (#2302)。**この版より前に出た PR には問わない** — 出ていた PR の本文は
+  # 理由の語を持たない形で書かれていて、新しい版の検めを後から当てると、書いた時点で守れない
+  # 規約で赤くなる。作成日時 (createdAt) の字面を ISO8601 の辞書順で比べる
+  created=$(jq -r '.createdAt // ""' <<<"$pr_json")
+  if [ -z "$created" ] || [[ $created > $REFUTE_REASON_FROM ]]; then
+    refute_live=$(strip_html_comments <<<"$refute")
+    unreasoned=$(unreasoned_filings <<<"$refute_live")
+    if [ -n "$unreasoned" ]; then
+      fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の表に、理由の語が無い「起票した」の行がある" \
+           "$(missing_filing_reason_message "$unreasoned")"
+    fi
+    echo "review-gate: 「起票した」の理由の語を確認"
+  fi
 fi
 
 # 5. 変更要求が残っていない

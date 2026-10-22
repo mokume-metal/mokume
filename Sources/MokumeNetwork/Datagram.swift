@@ -67,6 +67,11 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     /// 届いた間は数がこれを超えてよく、黙った後の次の受け入れで戻る。
     static let connectionLimit = 64
 
+    /// 「空で流れが閉じた」と知らせた送り元を覚えておく数の上限。覚えておくのは、同じ送り元に 2 度
+    /// 言わないためで、空を送る送り元が際限なく変わっても状態が増えない。**超えたら、先に覚えた送り元から
+    /// 忘れる。** 忘れた送り元がまた空で流れを閉じたら、もう 1 度言う (#2363)。
+    static let emptyClosedLimit = 256
+
     /// 黙っている送り元を閉じてよいとするまでの秒数 (既定)。
     static let defaultIdleAfter: TimeInterval = 5
 
@@ -77,6 +82,9 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
+    private let closedByEmpty: @Sendable (String) -> Void
+    /// 空で流れが閉じたと知らせた送り元 (``closedByEmpty``)。同じ送り元には 2 度言わない。
+    private var toldEmptyClosed = EmptyClosedSenders(limit: DatagramListener.emptyClosedLimit)
     /// 受け口。閉じたときの知らせに自分を渡すので、他をすべて決めた後に作る。
     private var opener: PortListener!
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
@@ -91,17 +99,22 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///   - now: 送り元の黙りを測る時計 (秒)。既定は ``systemClock``。検査は手で進める時計を
     ///     渡し、受け入れの速さに依らずに黙りを決める (#2225)。``queue`` の上で呼ばれる。
     ///   - received: 届いた datagram と、届いた瞬間の host time。``queue`` の上で呼ばれる。
+    ///   - closedByEmpty: 終わりを名乗った空の datagram を渡してこちらで流れを閉じたとき、その送り元
+    ///     (`127.0.0.1:51234`) で呼ぶ。**同じ送り元には 1 度だけ** (覚える数は ``emptyClosedLimit``)。
+    ///     ``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = systemClock,
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
+        closedByEmpty: @escaping @Sendable (String) -> Void = { _ in },
         changed: @escaping @Sendable (Event) -> Void
     ) {
         self.idleAfter = idleAfter
         self.now = now
         self.received = received
+        self.closedByEmpty = closedByEmpty
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
         opener = PortListener(
             port: port, host: host, retryAfter: retryAfter, queue: queue,
@@ -195,7 +208,21 @@ nonisolated final class DatagramListener: @unchecked Sendable {
                 received(bytes, hostTime)
                 connection.cancel()
             }
+            // 空の直後に同じ送り元から届いたものは、Network.framework が捨てうる (#2363)。
+            // 何が落ちたかは見えないので、流れが閉じたことを送り元ごとに 1 度だけ言う
+            if completion.closesFlowOnEmpty {
+                let sender = Self.describe(connection.endpoint)
+                if toldEmptyClosed.insert(sender) { closedByEmpty(sender) }
+            }
         }
+    }
+
+    /// 送り元の名乗り (`127.0.0.1:51234`・IPv6 は `[::1]:51234`)。診断に出す。
+    static func describe(_ endpoint: NWEndpoint) -> String {
+        guard case .hostPort(let host, let port) = endpoint else { return "\(endpoint)" }
+        // 範囲指定 (`fe80::1%en0`) の `%` 以降は、診断の読み手に要らない
+        let address = "\(host)".split(separator: "%", maxSplits: 1).first.map(String.init) ?? "\(host)"
+        return address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)"
     }
 
     /// 受けの完了 1 つの扱い。
@@ -208,6 +235,14 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         case ended
         /// こちらが閉じた繋ぎの、待っていた受けの返り。何も渡さない。
         case abandoned
+
+        /// 空の datagram を渡して流れを閉じる扱いか。**この扱いだけが、空の直後に届いたものが落ちたかも
+        /// しれないことを名乗る** (#2363)。終わりを名乗らない空 (流れが続く)・こちらが閉じた繋ぎ
+        /// (黙りで閉じた・受け口が失敗した)・空を含まない流れの終わりでは、何も落ちた疑いが無い。
+        var closesFlowOnEmpty: Bool {
+            if case .last = self { return true }
+            return false
+        }
     }
 
     /// 受けの完了が渡したもの (`content`・文脈の `isFinal`・失敗したか) と、その繋ぎをまだ台帳に
@@ -236,6 +271,27 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         if let content { return .datagram([UInt8](content)) }
         guard held else { return .abandoned }
         return isFinal ? .last([]) : .datagram([])
+    }
+}
+
+/// 「空で流れが閉じた」と知らせた送り元の覚え (#2363)。同じ送り元に 2 度言わず、**覚える数に上限を持つ**。
+/// 上限を超えたら、先に覚えた送り元から忘れる (忘れた送り元がまた閉じたら、もう 1 度言う)。
+nonisolated struct EmptyClosedSenders {
+    let limit: Int
+    private var order: [String] = []
+    private var known: Set<String> = []
+
+    init(limit: Int) { self.limit = max(1, limit) }
+
+    /// 覚えている数。
+    var count: Int { order.count }
+
+    /// `sender` を覚える。まだ知らなければ真 (言う)、覚えていれば偽 (もう言った)。
+    mutating func insert(_ sender: String) -> Bool {
+        guard known.insert(sender).inserted else { return false }
+        order.append(sender)
+        if order.count > limit { known.remove(order.removeFirst()) }
+        return true
     }
 }
 

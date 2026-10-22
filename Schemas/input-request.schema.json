@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mokume.org/schemas/input-request.schema.json",
   "title": "The input request",
-  "description": "Sends input events to the running sketch. Any number of them can go in one call (a run of them, such as a drag, goes as it is). Placed atomically as ADR-0018 decision 3 requires, and id changes with every request.",
+  "description": "Sends input events to the running sketch. Any number of them can go in one call (a run of them, such as a drag, goes as it is). Placed atomically as ADR-0018 decision 3 requires, and id changes with every request. **A key this version does not read does not fail the request**: it is taken without the key, and the reply's warnings name it — at the top of the request, or inside an event with the event's position (events[0]) — together with the keys that are read, so a misspelt key (buton for button) is never read as the key it resembles. The keys listed here are the whole set, so a writer that adds a key updates this schema first (additionalProperties is false).",
   "type": "object",
   "required": [
     "id",
@@ -23,7 +23,8 @@
         "required": [
           "type"
         ],
-        "description": "Unknown keys are ignored. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
+        "additionalProperties": false,
+        "description": "A key not listed here is not read: the event is taken without it (it is not ignored, and the request does not fail), and the reply's warnings name the key with the event's position (events[0]) and the keys that are read. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y; keys need code, because 0 is the top left of the surface and the A key, not the absence of a value. button (0 = the left, primary button), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
         "allOf": [
           {
             "if": {
