@@ -97,6 +97,8 @@ fill(128, 64)            // 2 つなら灰色と不透明度
 
 手本も締める。p5.js 1.x の `p5.Color` は成分も不透明度も 0–1 に締める (成分まで締める点は決定 6 と違う)。
 
+**締めたときは、1 度だけ知らせる** ([#1842](https://github.com/mokume-metal/mokume/issues/1842)・ADR-0020 決定 5 の 2026-10-22 追補)。説明が「不透明度は 0–255 に締める」と名乗っていても言う — `fill(255, 400)` は「fill(): the opacity takes 0 to 255, but 400.0 was passed, so 255 was used」と言う。数の口 (`fill`・`stroke`・`tint`・`background` の数の形と `fill(c, alpha)`・`stroke(c, alpha)`) は面の鍵で、値を作る口 (`color(…)`・`color(c, alpha)`・`color(hue:…)`) は `ColorValues` の鍵で、口ごとに数える。`.display(…, alpha:)` と `LinearRGBA.init(straightRed:…)` は値型の初期化子で、面も控えも持たないので言わない (掛ける点で黙って締める — 数の口から来た値は、手前の口が言っている)。
+
 ### 4. `colorMode()` は持たない
 
 決定 2 により尺度は行ごとに確定するので、モードを持つ理由が無い。0–1 で書きたいときは `.display(red:...)` がある。
@@ -116,6 +118,8 @@ hue は 0–360 の**度**、saturation と brightness は 0–100 の**百分�
 | hue | **巻き戻す** (`-40` → `320`、`380` → `20`) | 色相は円環なので、丸めても情報が増えない。`color(hue: Float(frameCount), …)` が剰余なしで書ける |
 | saturation / brightness の上側 | **通す** | `brightness: 150` は表示範囲を超えた明るさ、`saturation: 120` は色域外の色として意味を持つ。ADR-0011 決定 1 が保っている情報を、入口で捨てない |
 | saturation / brightness の下側 (負) | **0 へ丸める** | 負にすると最大成分が入れ替わり、**hue が 180° 反転する**。`hue: 200, brightness: -50` は画面では橙に見える。これは「値を保持する」ではなく「引数の意味が変わる」ので、決定 1 の対象ではない |
+
+**負の彩度・明度を 0 へ丸めたときは、1 度だけ知らせる** ([#1842](https://github.com/mokume-metal/mokume/issues/1842))。彩度・明度・不透明度は量ごとに数える。上側へ突き抜ける値は丸めないので言わない。
 
 **非有限の値 (NaN・無限) は受け口で弾く。** 巻き戻しと区画の割り出しは、非有限の入力で trap する (`Int(h / 60)` が変換できない)。ADR-0020 決定 5 は「フレームごとに呼ばれるものは投げない」と言っており、trap は投げるより悪い。`color(hue: 360 * part / total, …)` の `total == 0` は実際に起きる。
 
@@ -209,7 +213,13 @@ hue は 0–360 の**度**、saturation と brightness は 0–100 の**百分�
 
 `lerp` と非対称になることは、`lerpColor` の説明文で名乗る (`lerp` と違って締める — 手本も締める)。
 
+**`amount` を締めたときは、1 度だけ知らせる** ([#1842](https://github.com/mokume-metal/mokume/issues/1842)・ADR-0020 決定 5 の 2026-10-22 追補)。`lerpColor(a, b, 1.5)` は「lerpColor(): amount takes 0 to 1, but 1.5 was passed, so 1 was used」と言う。`paletteLerp(stops, amount)` も同じで、鍵は口ごとに分ける。
+
 **この改訂で、表の `lerpColor` の行は役目を終えた。** 表は、待つままの文字列の色の行と一緒に記録として残す。
+
+#### 追補 (2026-10-22) — 締めた・丸めたときは知らせる ([#1842](https://github.com/mokume-metal/mokume/issues/1842))
+
+決定 3 の不透明度の締め・決定 5 の負の彩度と明度の丸め・決定 7 の `lerpColor` の `amount` の締めは、ADR-0020 決定 5 の 2026-10-22 追補どおり、**締めたら 1 度だけ言う**ようにした。この ADR の各段の中身 (範囲と締め先) は変えない。足したのは知らせだけで、絵は変わらない。退けた案は ADR-0020 の同じ追補に書いた (「説明が名乗っている量は黙る」)。
 
 ### 8. 数値形は、上下の層の両方に置く
 
