@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
 # 使い捨て (merge しない)。#3010 の完了条件 2: 専用機に前の job から残った
 # CPU を食うプロセスを読む。2 度目の push で、#2959 が残した yes (2026-10-19 15:36:41Z
 # に立ち、ppid=1 で残ったもの) だけを止める。
