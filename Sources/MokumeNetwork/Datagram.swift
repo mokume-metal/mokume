@@ -412,7 +412,8 @@ protocol DatagramSending: AnyObject, Sendable {
 ///
 /// **捨てた繋ぎ (いまの繋ぎでないもの) に返った完了は、いまの繋ぎの話ではないので無視する。** 繋ぎを
 /// 捨てると、その繋ぎに積まれていた送信の完了が `ECANCELED` などの誤りで返る。それを送れない理由として
-/// 名乗らず、いまの繋ぎの数え方も崩さない。
+/// 名乗らず、いまの繋ぎの数え方も崩さない。**繋ぎの状態 (`failed`・`waiting`) も同じ**で、捨てた繋ぎから
+/// 遅れて届いたものは読まない (送れたと読んで戻った後に、言い直さないため — #3045)。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
 nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
@@ -500,7 +501,12 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     }
 
     /// 繋ぎの移り変わりを読む。送れない形なら 1 度だけ知らせる。
+    ///
+    /// **いまの繋ぎからの移り変わりだけを読む。** 捨てた繋ぎ (弱参照が消えたものも含む) の状態は、
+    /// 完了と同じく、いまの繋ぎの話ではない。捨てた繋ぎから遅れて `failed` や `waiting` が届くと、
+    /// 送れたと読んで戻った後に言い直し、待ちの名乗りを拒否へ読み替えてしまう (#3045)。
     func changed(to state: NWConnection.State, on opened: NWConnection?) {
+        guard isCurrent(opened) else { return }
         switch state {
         case .waiting(let error):
             // 繋ぎは Network.framework が自分で待ち続ける。捨てずに、送れないことだけを言う

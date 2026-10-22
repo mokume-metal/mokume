@@ -18,11 +18,20 @@ struct DatagramSenderTests {
         DatagramSender(host: "192.168.1.20", port: 7000, warn: told.append)
     }
 
+    /// 繋ぎの状態は、いまの繋ぎからのものだけを読む (#3045)。検査は、始めていない繋ぎをいまの繋ぎに据え、
+    /// 状態をその繋ぎから返ったものとして読ませる。
+    private func attached(_ sender: DatagramSender) -> NWConnection {
+        let connection = NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
+        sender.onQueue { sender.attach(connection) }
+        return connection
+    }
+
     @Test("待っている繋ぎは 1 度だけ名乗り、宛先とエラーと許可の見当を添える")
     func waitingIsToldOnce() {
         let told = Told()
         let sender = sender(told)
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        let connection = attached(sender)
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 1)
         let line = told.lines.first ?? ""
         #expect(line.contains("192.168.1.20:7000"))
@@ -31,7 +40,7 @@ struct DatagramSenderTests {
         #expect(line.contains("may not be allowed"))  // 断定しない
 
         // 待ち続けても重ねて言わない
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 1)
     }
 
@@ -39,9 +48,10 @@ struct DatagramSenderTests {
     func readyIsSilent() {
         let told = Told()
         let sender = sender(told)
+        let connection = attached(sender)
         let states: [NWConnection.State] = [.setup, .preparing, .ready, .cancelled]
         for state in states {
-            sender.onQueue { sender.changed(to: state, on: nil) }
+            sender.onQueue { sender.changed(to: state, on: connection) }
         }
         #expect(told.lines.isEmpty)
     }
@@ -50,13 +60,14 @@ struct DatagramSenderTests {
     func toldAgainAfterASuccessfulSend() {
         let told = Told()
         let sender = sender(told)
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
-        sender.onQueue { sender.changed(to: .ready, on: nil) }
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        let connection = attached(sender)
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
+        sender.onQueue { sender.changed(to: .ready, on: connection) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 1)
 
         sender.onQueue { sender.finished(sending: nil, on: nil) }
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 2)
     }
 
@@ -64,7 +75,8 @@ struct DatagramSenderTests {
     func failedPointsAtTheListener() {
         let told = Told()
         let sender = sender(told)
-        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: nil) }
+        let connection = attached(sender)
+        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: connection) }
         #expect(told.lines.count == 1)
         let line = told.lines.first ?? ""
         #expect(line.contains("192.168.1.20:7000"))
@@ -151,34 +163,6 @@ struct DatagramSenderTests {
         #expect(told.lines.count == 2)
     }
 
-    /// 受け手が居ない間の最後の送信が誤り無く終わり、受け手が開くまでが `confirmAfter` を超えると、
-    /// 送れたと読んで戻る。そこへ拒否の残りが返ると 2 行目を名乗る (#3045)。**設計どおりの結果** —
-    /// 時計を手で進めて、実時間の揺れ無しに固定する。本物の繋ぎで送り続ける検査
-    /// (``DatagramSenderLoopbackTests``) は、開いた直後の増えを高々 1 行まで許す。
-    @Test("居ない間の最後の送信が誤り無く終わり、開くまでが confirmAfter を超えると、残りの拒否で 2 行目を名乗る")
-    func aLeftoverRefusalAfterTheReceiverOpensIsToldAgain() {
-        let told = Told()
-        let clock = ManualClock(0)
-        let sender = clocked(told, clock, confirmAfter: 0.1)
-        let connection = unstartedConnection()
-        sender.onQueue { sender.attach(connection) }
-        complete(sender, refused, on: connection)
-        #expect(told.lines.count == 1)
-
-        // 受け手が居ない間の最後の送信 (0 秒に誤り無く終わる)。そこから 0.3 秒後に受け手が開き、
-        // 次の送信は誤り無く終わる (間が confirmAfter 以上なので、戻る)
-        let next = unstartedConnection()
-        sender.onQueue { sender.attach(next) }
-        complete(sender, nil, on: next, issuedAt: 0)
-        clock.advance(by: 0.3)
-        complete(sender, nil, on: next, issuedAt: clock.provider())
-        #expect(told.lines.count == 1)
-
-        // 拒否の残りが返る
-        complete(sender, refused, on: next)
-        #expect(told.lines.count == 2)
-    }
-
     @Test("間は送信を出した時刻で測る。完了が遅れて返っただけでは満たさない")
     func theGapIsMeasuredFromWhenTheSendWasIssued() {
         let told = Told()
@@ -203,9 +187,10 @@ struct DatagramSenderTests {
         let told = Told()
         let clock = ManualClock(0)
         let sender = clocked(told, clock)
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        let connection = attached(sender)
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         sender.onQueue { sender.finished(sending: nil, on: nil) }
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 2)
     }
 
@@ -216,7 +201,7 @@ struct DatagramSenderTests {
         let sender = clocked(told, clock)
         let connection = unstartedConnection()
         sender.onQueue { sender.attach(connection) }
-        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: connection) }
         #expect(told.lines.count == 1)
 
         complete(sender, refused, on: connection)  // 名乗り済みなので増えない。ここで拒否になる
@@ -266,5 +251,71 @@ struct DatagramSenderTests {
         complete(sender, .posix(.ECANCELED), on: connection)
         #expect(told.lines.count == 1)
         #expect(told.lines.first?.contains("Operation canceled") == true)
+    }
+
+    // MARK: - 捨てた繋ぎから届く状態 (#3045)
+
+    @Test("捨てた繋ぎから遅れて届いた失敗は、送れたと読んで戻った後でも名乗らない")
+    func aLateFailureOfADroppedConnectionIsNotToldAgain() {
+        let told = Told()
+        let clock = ManualClock(0)
+        let sender = clocked(told, clock, confirmAfter: 0.1)
+        let dropped = unstartedConnection()
+        sender.onQueue { sender.attach(dropped) }
+        complete(sender, refused, on: dropped)  // 拒否で名乗り、繋ぎを捨てる
+        #expect(told.lines.count == 1)
+
+        // 受け手が開いて、次の繋ぎで間を空けて送れ続けたので、送れたと読んで戻る
+        let current = unstartedConnection()
+        sender.onQueue { sender.attach(current) }
+        complete(sender, nil, on: current, issuedAt: 0)
+        clock.advance(by: 0.3)
+        complete(sender, nil, on: current, issuedAt: clock.provider())
+        #expect(told.lines.count == 1)
+
+        // 捨てた繋ぎの失敗が、いまになって届く。いまの繋ぎの話ではない (弱参照が消えたものも同じ)
+        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: dropped) }
+        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: nil) }
+        #expect(told.lines.count == 1, "診断: \(told.lines)")
+
+        // いまの繋ぎの拒否は、変わらず名乗る
+        complete(sender, refused, on: current)
+        #expect(told.lines.count == 2)
+    }
+
+    @Test("捨てた繋ぎから届いた待ちは、名乗らない")
+    func aWaitingOfADroppedConnectionIsNotTold() {
+        let told = Told()
+        let sender = sender(told)
+        let dropped = NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
+        _ = attached(sender)  // いまの繋ぎは別のもの
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: dropped) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: nil) }
+        #expect(told.lines.isEmpty, "診断: \(told.lines)")
+    }
+
+    @Test("捨てた繋ぎの失敗は、待ちの名乗りを拒否へ読み替えない")
+    func aDroppedConnectionsFailureDoesNotTurnAWaitingIntoARefusal() {
+        let told = Told()
+        let sender = sender(told)
+        let current = attached(sender)
+        let dropped = NWConnection(host: "192.168.1.20", port: 7000, using: .udp)
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: current) }
+        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: dropped) }
+
+        // 待ちのままなら、誤り無く終わった 1 度で戻り、次の待ちをまた名乗る
+        sender.onQueue { sender.finished(sending: nil, on: current) }
+        sender.onQueue { sender.changed(to: .waiting(.posix(.ENETDOWN)), on: current) }
+        #expect(told.lines.count == 2, "診断: \(told.lines)")
+    }
+
+    @Test("いまの繋ぎの失敗は名乗る (宛先の見当を添える)")
+    func aFailureOfTheCurrentConnectionIsTold() {
+        let told = Told()
+        let sender = sender(told)
+        let current = attached(sender)
+        sender.onQueue { sender.changed(to: .failed(.posix(.ECONNREFUSED)), on: current) }
+        #expect(told.lines.count == 1)
+        #expect(told.lines.first?.contains("Connection refused") == true)
     }
 }
