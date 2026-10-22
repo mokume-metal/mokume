@@ -2504,7 +2504,13 @@ public final class Canvas {
     /// 色の値の形もここを通るので、断る順は形に依らない。
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
-    func paintBackground(_ color: LinearRGBA?) {
+    ///
+    /// `opacity` は数の形で渡した 0–255 の不透明度。**締めたことは、断りを通ったあとで言う** — 区間の外や
+    /// 組み立ての中では塗り直さないので、締めたことも言わない ([#1842])。色の値の形は渡さない
+    /// (不透明度は色を作った口が締めている)。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    func paintBackground(_ color: LinearRGBA?, opacity: Float? = nil) {
         // 塗り直しも置くことである。区間の外では、溜めたものを捨てる前に断る ([#1672])。
         //
         // **見るのは形の組み立てを含まない述語** (``writesToSurface``)。塗り直しは形に焼き付かず、
@@ -2521,6 +2527,7 @@ public final class Canvas {
         guard !recordingShape else { return warnInsideShape(.background) }
         // 数でない成分・無限の成分は、溜めたものを捨てる前に断る (#1706)
         guard let color else { return warnNotANumberColor(.background) }
+        if let opacity { warnRoundedOpacity(.background, passed: opacity) }
         replaceSurface(with: .color(color))
     }
 
@@ -3870,32 +3877,6 @@ public final class Canvas {
         placedPictureEpoch &+= 1
     }
 
-    /// 画素の口がいま描き切ると、形を組み立てている途中の面を描き切らせうるか ([#1588])。
-    ///
-    /// 途中の描き切りは冒頭で、自分を置いた面に置いた時点の絵を写させる (``settlePlacersBeforeChange()``)。
-    /// 置いた面が組み立ての途中でも、組み立ての入口より前の列を写しへ差し替えるだけで描き切らせない
-    /// が (#1855 の案 E)、**写しの上限に達していれば組み立ての前の列を描き切らせる** (``keepPicture(placedFrom:)``・
-    /// 組み立てている区間は残す・#2850。以前は組み立てた区間ごと描き切って空になった)。画素の口は、自分の面だけでなく置かれた描き場所でも同じ守りに
-    /// 入る — 同じフレームで `image(layer)` と置いてから、組み立ての中で `layer.get()` と読むと、本体の
-    /// 組み立てが描き切られていた。**断る範囲は #1588 のまま**で、写しで済む場合も断る (緩めるかは
-    /// 別に決める)。
-    ///
-    /// **見るのは自分を直に置いた面だけ** (#1656)。組み立ての途中でない面は写しを取って描き切られ
-    /// ないので、その先へは連ならない。写しの上限・写しの失敗で描き切った面がさらに組み立ての途中の
-    /// 面に置かれている形はここでは見ない — その面の描き切りが、組み立ての前の列だけを描き切らせる
-    /// (#2850)。細かさを下げた面の途中の描き切りは出す先を変えないので、置いた面を描き切らせない。
-    ///
-    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
-    var isPlacedInAShapeInProgress: Bool {
-        guard upscaleStage == nil else { return false }
-        for entry in placers {
-            guard let canvas = entry.canvas, canvas.placedGraphics.contains(placementKey)
-            else { continue }
-            if canvas.recordingShape { return true }
-        }
-        return false
-    }
-
     /// 直前のフレームで描画を呼んだ回数。
     ///
     /// **畳めているかを数えるための値。** 絵が同じでも畳まれていなければ保持は目的を
@@ -4050,10 +4031,13 @@ public final class Canvas {
         // 記録へ来る呼び手を壊す — 走らせなければ、写しの上限に達した後は追い付きを見送って前の絵を置く。
         // ここなら細かさ 1 の面と同じ時点・同じ作法になる
         //
-        // **フレームの中で描く先を変えない途中の描き切り (何も溜めずに `get()` を呼ぶ) は写させない**
-        // ([#2103])。出す先も変わらないので要らない写しで、写しの上限 (``placedPictureCopyLimit``) を
-        // 食えば、置いた側に利用者が呼んでいない区切りが入る (#1656)。フレームの外ではこれまでどおり
-        // 写させる。**描き切りの外で出す先を書く口は、それぞれ自分の頭で通る** (#1942。数え上げは
+        // **細かさを下げた面 (`upscaleStage != nil`) では、フレームの中で描く先を変えない途中の描き切り
+        // (何も溜めずに `get()` を呼ぶ) は写させない** ([#2103])。出す先も変わらないので要らない写しで、
+        // 写しの上限 (``placedPictureCopyLimit``) を食えば、置いた側に利用者が呼んでいない区切りが入る
+        // (#1656)。**細かさ 1 の面は `upscaleStage == nil` なので、読むだけでも置いた側の写しを 1 枚使う**
+        // — 1 フレームに上限を越えて読むと、置いた側に区切りが入る (組み立ての途中なら、形は組み立てた
+        // 中身を残し (#2850)、区切りより前の面は後から置いた立体の影を受けない・#2203)。フレームの外では
+        // これまでどおり写させる。**描き切りの外で出す先を書く口は、それぞれ自分の頭で通る** (#1942。数え上げは
         // ``settlePlacersBeforeChange()``)
         //
         // [#1469]: https://github.com/mokume-metal/mokume/issues/1469

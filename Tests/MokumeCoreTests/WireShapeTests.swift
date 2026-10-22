@@ -59,6 +59,9 @@ struct WireShapeTests {
         #expect(
             try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9, windowScale: 0.5))
                 == base.union(["windowScale"]))
+        #expect(
+            try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9, pid: 42))
+                == base.union(["pid"]))
     }
 
     @Test("撮った 1 枚。**測れていないものは出さない**")

@@ -39,6 +39,11 @@
       "type": "number",
       "exclusiveMinimum": 0,
       "description": "How many points of the window one pixel takes (SketchSettings.windowScale). The tool's artwork window opens at width × windowScale by height × windowScale, the size the sketch's own window would open at, and follows it again only when that size changes (#1624). Optional: a reader that does not know it still shows the picture, and a writer that predates it leaves it out, in which case the window keeps its size."
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The process identifier of the sketch that wrote this file. The tool that owns the window reads it to tell which generation a signal belongs to: a surface it could not look up, or a frame it showed, is attributed to the child it names rather than to whichever child the tool happens to be waiting for (#2982). Optional, so the version stays 1: a writer that predates it leaves it out, and a reader then falls back to attributing the signal to the child it is waiting for. A value that is not a positive integer is read as absent; the file is not discarded."
     }
   }
 }

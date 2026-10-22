@@ -21,9 +21,13 @@ struct SolidInstance {
     /// 効くためである (``Transform/normalMatrix``)。
     ///
     /// `w` は ``normal1``・``normal2`` の `w` と合わせて、**単位の形の列でだけ軸ごとの寸法**
-    /// (x・y・z) を持ち、ほかは 0 である。単位の形の頂点関数 (`UnitShape.metal` の
-    /// `unitShapeVertexMain`) が単位の形の位置 × この 3 つで位置を作る ([#1862]・[#2386]・
-    /// ``SolidShape/unitScaling``)。ほかの頂点関数は `w` を読まない。
+    /// (x・y・z) を持つ。単位の形の頂点関数 (`UnitShape.metal` の `unitShapeVertexMain`) が単位の形の
+    /// 位置 × この 3 つで位置を作る ([#1862]・[#2386]・``SolidShape/unitScaling``)。
+    ///
+    /// **粒の置き場所だけは、この `w` に年齢 (0…1) を持つ** (``Particles/age(life:born:)``)。粒は単位の形の
+    /// 列ではないので、寸法とは重ならない。立体の頂点関数 (`solidVertexMain`) がこれを断片の
+    /// `in.particle.age` へ渡し、**ほかの置き場所は 0** なので粒でない形では 0 になる。置き場所の幅は
+    /// 増えない。ほかの頂点関数は `w` を読まない。
     ///
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
     /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386

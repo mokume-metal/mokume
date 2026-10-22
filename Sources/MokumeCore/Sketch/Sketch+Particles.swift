@@ -67,6 +67,48 @@ extension SketchPart {
     ///   }
     /// }
     ///
+    /// ## 寿命に沿って薄くする (`in.particle.age`)
+    ///
+    /// 粒の塗りの断片は、その粒の年齢 `in.particle.age` を読める。出して最初に描かれる
+    /// フレームで 0、寿命が尽きる直前に 1 へ近づく (0…1 の外へは出ない)。`1.0 - in.particle.age`
+    /// を色に掛ければ、寿命の終わりへ向けて薄くなって溶ける。**断片は作る前に当てる**ので、
+    /// 年齢は粒ごとに断片へ届く値で、断片の値を変える必要は無い。粒でない形 (平面・立体) に同じ
+    /// 断片を当てたときは、`in.particle.age` は 0 として読める。
+    ///
+    /// 粒の板の `in.uv` は板の中で変わらない (白い区画を指す 1 点) ので、丸く柔らかい粒は
+    /// 板の中の位置 `in.shapePosition` (`plane(1, 1)` の板で ±0.5) から作る。
+    ///
+    /// ```swift
+    /// var smoke: Particles!
+    ///
+    /// func setup() {
+    ///     if let soft = try? makeShader("""
+    ///         float4 paint(Fragment in, Values values) {
+    ///             float r = length(in.shapePosition.xy) * 2.0;
+    ///             return in.color * (1.0 - smoothstep(0.0, 1.0, r)) * (1.0 - in.particle.age);
+    ///         }
+    ///         """)
+    ///     {
+    ///         shader(soft)
+    ///     }
+    ///     blendMode(.add)
+    ///     smoke = try? makeParticles(count: 12_000)
+    ///     blendMode(.blend)
+    ///     resetShader()
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     emit(smoke, from: .line(80, 250, 400, 250),
+    ///          toward: .plane((-.pi / 2 - 0.3)...(-.pi / 2 + 0.3)),
+    ///          rate: 500, speed: 50...90, life: 3...5, size: 24...48,
+    ///          color: color(200, 220, 255, 30))
+    ///     force(smoke, .gravity(0, -50), .drag(0.8))
+    ///     particles(smoke)
+    /// }
+    /// ```
+    ///
     /// ## 枠は環状に回る
     ///
     /// 出した粒は空いている枠へ順に入り、末尾まで行くと先頭へ戻る。**まだ生きている粒を

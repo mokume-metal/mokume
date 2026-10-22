@@ -18,15 +18,19 @@ struct MCPServerTests {
         let server = MCPServer(
             tools: Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
-            write: { recorder.written.append($0) })
+            write: { recorder.record($0) })
         return (server, recorder)
     }
 
-    final class Recorder: @unchecked Sendable {
+    /// 窓口の読みは別の手で走る (#2355) ので、読みと書きは鍵の内側に置く。
+    nonisolated final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
         private var lines: [String]
-        var written: [String] = []
+        private var answered: [String] = []
         init(lines: [String]) { self.lines = lines }
-        func next() -> String? { lines.isEmpty ? nil : lines.removeFirst() }
+        func next() -> String? { lock.withLock { lines.isEmpty ? nil : lines.removeFirst() } }
+        func record(_ line: String) { lock.withLock { answered.append(line) } }
+        var written: [String] { lock.withLock { answered } }
     }
 
     private func makeDirectory() throws -> URL {
@@ -86,7 +90,7 @@ struct MCPServerTests {
         let server = MCPServer(
             tools: Tools(facets: Facets(directory: package, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
-            write: { recorder.written.append($0) })
+            write: { recorder.record($0) })
         try beforeServing()
         server.serve()
         let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]

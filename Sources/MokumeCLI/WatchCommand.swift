@@ -404,19 +404,27 @@ enum WatchCommand {
         // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
+        // **畳んだ・居なくなった世代の頼みを、両方の台で下ろす** (#2983)。台の知らせを通らない 3 つの口
+        // (倒れた子・子の離脱・合図の来ないまま次の保存) から ``WatchSession`` が呼ぶ
+        session.relinquishesDisplay = { [weak window, weak preview] pids in
+            window?.relinquishGeneration(pids: pids)
+            preview?.relinquishGeneration(pids: pids)
+        }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
         // 合図は窓の側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
         let viewer = Viewer(window: window, preview: preview)
         let firstFrame = viewer.firstFrame
-        window.onGenerationPromoted = { [weak session] in
+        // **合図が名乗った子の番号を渡す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        // 見張りは、待っている世代のものだけを受ける
+        window.onGenerationPromoted = { [weak session] pid in
             firstFrame.promoted(.window)
-            Task { @MainActor in await retire(after: session) }
+            Task { @MainActor in await retire(after: session, pid: pid) }
         }
-        preview.onGenerationPromoted = { [weak session] in
+        preview.onGenerationPromoted = { [weak session] pid in
             firstFrame.promoted(.preview)
-            Task { @MainActor in await retire(after: session) }
+            Task { @MainActor in await retire(after: session, pid: pid) }
         }
         // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る
         // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。名乗って、乗り換えたとみなす。
@@ -424,16 +432,18 @@ enum WatchCommand {
         //
         // **知らせを受けた時点で、待っている世代を同期に控える。** 捌くのは `Task` で遅れ、知らせは世代の
         // 印を持たないので、作り直しの続きが先に走ると前の世代の知らせが次の世代に当たる
-        window.onGenerationUndeliverable = { [weak session] cause in
+        window.onGenerationUndeliverable = { [weak session] cause, pid in
             let waiting = session?.waitingGeneration
             Task { @MainActor in
-                await retireUndeliverable(cause, session: session, waiting: waiting, viewer: viewer)
+                await retireUndeliverable(
+                    cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
             }
         }
-        preview.onGenerationUndeliverable = { [weak session] cause in
+        preview.onGenerationUndeliverable = { [weak session] cause, pid in
             let waiting = session?.waitingGeneration
             Task { @MainActor in
-                await retireUndeliverable(cause, session: session, waiting: waiting, viewer: viewer)
+                await retireUndeliverable(
+                    cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
             }
         }
         // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
@@ -505,8 +515,11 @@ enum WatchCommand {
     /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
     /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
     /// 出るまでの記録もこの合図で足される (#930)。
-    static func retire(after session: WatchSession?) async {
-        announce(await session?.generationPromoted())
+    ///
+    /// - Parameter pid: 合図が名乗った子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    ///   名乗らない子の合図は `nil` で、今までどおり待っている世代のものと読む。
+    static func retire(after session: WatchSession?, pid: Int32? = nil) async {
+        announce(await session?.generationPromoted(pid: pid))
     }
 
     /// 道具の窓が新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
@@ -516,13 +529,15 @@ enum WatchCommand {
     /// 窓ごとに呼ばれるので、2 度目以降は何もしない。名乗るのも 1 度である。
     ///
     /// - Parameter waiting: 知らせを受けた時点で乗り換えを待っていた世代 (``WatchSession/waitingGeneration``)。
+    /// - Parameter pid: 知らせが読めた目録の子の番号 (#2982)。待っている世代でなければ何もしない。
+    ///   読めない目録・番号を名乗らない子なら `nil` で、今までの推定。
     /// - Parameter preview: プレビューへ出す口。検査から差し替える (``step(_:viewer:stopped:preview:)`` と同じ)。
     static func retireUndeliverable(
         _ cause: UndeliverableGeneration, session: WatchSession?, waiting: Process?,
-        viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
+        pid: Int32? = nil, viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
     ) async {
         guard let session,
-            let undelivered = await session.retireAfterUndeliverable(waiting: waiting)
+            let undelivered = await session.retireAfterUndeliverable(waiting: waiting, pid: pid)
         else { return }
         let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
         announce(undelivered.outcome)
@@ -644,6 +659,8 @@ enum WatchCommand {
         // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
         // `willRebuild` が上書きする (#1103)
+        // **映っている前の世代が自分で消えた回も、台へ伝える** (#2983)。`departed()` は起こした子だけを見る
+        session.relinquishIfOutgoingDeparted()
         if let departure = session.departed() {
             // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
             // 合図はもう来ないので、ここで畳む (#1142)

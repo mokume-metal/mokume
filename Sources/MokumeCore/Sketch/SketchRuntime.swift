@@ -481,12 +481,22 @@ public final class SketchRuntime {
     ///   - gpu: 描画の土台。
     ///   - clock: 時刻の出どころ。省略すると設定のフレームレートから導く
     ///     **再現する時計**になる — 画面に出す経路が実時間を選ぶ。
+    ///   - persistsParams: 合わせたつまみの値の保存 (`.mokume/state/params.json`) を持つか。
+    ///     既定は持つ — 起動で保存から値を戻し、変わった値を書く (窓の経路と同じ・
+    ///     [ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 6)。
+    ///     **`false` なら読みも書きもしない**。撮り直せば同じ絵になることを名乗る書き出し
+    ///     (同じ番号のフレームを描く参照スケッチ・説明文の例の撮影) は、撮った人の手元にだけ在る
+    ///     保存で絵が変わらないよう、これで組む ([#1832](https://github.com/mokume-metal/mokume/issues/1832))。
+    ///     作品の `@Param` は宣言した既定値で動く。
     public convenience init(
         sketch: any Sketch,
         gpu: RenderDevice,
-        clock: Clock? = nil
+        clock: Clock? = nil,
+        persistsParams: Bool = true
     ) throws(RenderFailure) {
-        try self.init(sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() })
+        try self.init(
+            sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
+            persistsParams: persistsParams)
     }
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
@@ -497,6 +507,7 @@ public final class SketchRuntime {
     ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
@@ -510,6 +521,7 @@ public final class SketchRuntime {
         now: @escaping () -> Double,
         displays: () -> [Display] = { Display.connected },
         onScreen: Bool = false,
+        persistsParams: Bool = true,
         opensFacets: Bool = true
     ) throws(RenderFailure) {
         let settings = sketch.settings
@@ -547,7 +559,8 @@ public final class SketchRuntime {
         // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
-        let store = ParamStore.makeIfNeeded(for: registry)
+        // **保存を持たない組み方では、読みも書きもしない** (`persistsParams`・#1832)
+        let store = persistsParams ? ParamStore.makeIfNeeded(for: registry) : nil
         self.paramStore = store
         self.params = opensFacets ? ParamSurface.makeIfEnabled(for: registry, store: store) : nil
         canvas.isRuntimeSurface = true
@@ -714,6 +727,7 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
@@ -1398,6 +1412,7 @@ public final class SketchRuntime {
         }
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
+        SeamHomes.record(inlet, in: self)
         return true
     }
 
@@ -1410,6 +1425,7 @@ public final class SketchRuntime {
         }
         guard Self.open(outlet, opening: outlet.open) else { return false }
         outlets.append((outlet, SeamHealth()))
+        SeamHomes.record(outlet, in: self)
         outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
         return true
     }
@@ -1417,6 +1433,7 @@ public final class SketchRuntime {
     private func detachNow(_ inlet: any Inlet) {
         guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
         inlets.remove(at: index)
+        SeamHomes.forget(inlet)
         inlet.close()
     }
 
@@ -1431,6 +1448,7 @@ public final class SketchRuntime {
         // 渡している最中に出口が自分で外れていれば、閉じるのは 1 度だけ
         guard let index = outlets.firstIndex(where: { $0.seam === outlet }) else { return }
         outlets.remove(at: index)
+        SeamHomes.forget(outlet)
         outletJoinedAt[ObjectIdentifier(outlet)] = nil
         outlet.close()
     }

@@ -116,10 +116,11 @@ enum HueSaturationBrightness {
 /// **彩度と明度は上へ突き抜けられる。** `brightness: 150` は表示範囲を超えた明るさ、
 /// `saturation: 120` は色域の外の色を指す — 作業空間はどちらも保つ ([ADR-0011] 決定 1)。
 /// 負の値だけは 0 として扱う (負にすると色相が 180 度回ってしまい、値を保つのではなく
-/// 引数の意味が変わるため)。
+/// 引数の意味が変わるため)。**丸めたときは、1 度だけ知らせる** (`saturation: -20` なら、彩度が 0 以上を
+/// 取ることと、渡した値と、0 を使ったことを言う。彩度・明度・不透明度は別々に数える)。
 ///
-/// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になる
-/// ([ADR-0033] 決定 3 の改訂)。
+/// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になり、
+/// 締めたときは 1 度だけ知らせる ([ADR-0033] 決定 3 の改訂)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
@@ -136,9 +137,20 @@ public func color(
                 + "one, so transparent was returned")
         return .transparent
     }
+    // 丸めたことを言う ([#1842])。上へ突き抜ける値は丸めないので言わない
+    let name = "color(hue:saturation:brightness:)"
+    if saturation < 0 {
+        ColorValues.warnRounded(
+            .roundedSaturation, name, "saturation", takes: "0 or more", passed: saturation, used: 0)
+    }
+    if brightness < 0 {
+        ColorValues.warnRounded(
+            .roundedBrightness, name, "brightness", takes: "0 or more", passed: brightness, used: 0)
+    }
+    ColorValues.warnIfOpacityRounded(.roundedHSBOpacity, name, passed: alpha)
     let parts = HueSaturationBrightness.components(
         hue: hue, saturation: saturation, brightness: brightness)
-    return color(parts.red, parts.green, parts.blue, alpha)
+    return makeColor(red: parts.red, green: parts.green, blue: parts.blue, alpha: alpha)
 }
 
 // MARK: - 色相・彩度・明度で読む
