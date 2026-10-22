@@ -35,12 +35,16 @@ import simd
 /// ## 書き込んでよい時機
 ///
 /// **焼く口は GPU を待たない** ([#1792])。焼いた画素は頁 (``GlyphPage``) の控えに「区画 + 画素」で積み、
-/// 描き切りがコマンドの先頭で GPU 側のコピーで頁へ届ける (画像と同じ・[#749])。コピーは投入の順に
-/// 走るので、焼いたフレームの描きは新しい字を読み、前に投入した仕事は古い面を読む — 焼く区画は
-/// 作りたての場所で、前の仕事がまだ読まない。GPU が固まった場面は、焼かずに諦めるのではなく、
-/// 描き切りの待ちの期限と、打ち切りの後の届け直し ([#2199]) で扱われる。広げるとき (`grow`) と
-/// 焼き直すとき (`rebake`) は新しい頁 (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを指して
-/// いる列や形が手放すまで生き、控えも前の頁のものが前の頁へ届く。
+/// 描き切りがコマンドの先頭で GPU 側のコピーで頁へ届ける (画像と同じ・[#749])。コピーの前には、前の
+/// 仕事が読み終わるのを待つ仕掛けを積む (`Canvas.encodeUploads`)。焼いたフレームの描きは新しい字を読む。
+/// 焼く区画は作りたての場所で、普段は前の仕事がまだ読まない。GPU が固まった場面は、焼かずに諦める
+/// のではなく、描き切りの待ちの期限と、打ち切りの後の届け直し ([#2199]) で扱われる。広げるとき (`grow`)
+/// と焼き直すとき (`rebake`) は新しい頁 (``GlyphPage``) を作るだけなので待たない — 前の頁は、そこを
+/// 指している列や形が手放すまで生き、控えも前の頁のものが前の頁へ届く。
+///
+/// **残る待ちは 2 つで、どちらも数えられる回数である。** 控えに積む量が上限 (``GlyphPage/pendingByteLimit``・
+/// ``GlyphPage/pendingRegionLimit``) を越えたとき (多くの字を初めて焼くフレーム) と、控えの置き場が
+/// 足りなくて取り直すとき (`GrowableBuffer`・ふだんは起きない) は、全完了を待つ。
 ///
 /// [#749]: https://github.com/mokume-metal/mokume/issues/749
 /// [#1792]: https://github.com/mokume-metal/mokume/issues/1792
@@ -145,7 +149,8 @@ import simd
         /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
         /// [#1587]: https://github.com/mokume-metal/mokume/issues/1587
         case tooLarge(width: Int, height: Int)
-        /// 焼けなかった。**広げても変わらない** — 焼き場を用意できなかった。
+        /// 焼けなかった。**広げても変わらない** — 字形の大きさが焼き場の座標に収まらない (幅か高さが 0 以下・
+        /// 外接矩形が Int に直せない) か、CPU で描けなかった。
         ///
         /// 以前は GPU の完了を待てなくて面へ書かなかった場合 ([#934]) もここへ来たが、焼く口が待たなく
         /// なったので ([#1792]) 来ない。
@@ -168,6 +173,15 @@ import simd
         /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         var weight: Int = 0
+    }
+
+    /// 1 つの頁が控えに積んでよいバイト数・区画の数の上限 (``GlyphPage/pendingByteLimit``・
+    /// ``GlyphPage/pendingRegionLimit``)。**頁を替えても引き継ぐ。** 検査が差し替える。
+    var pendingByteLimit = GlyphPage.defaultPendingByteLimit {
+        didSet { page.pendingByteLimit = pendingByteLimit }
+    }
+    var pendingRegionLimit = GlyphPage.defaultPendingRegionLimit {
+        didSet { page.pendingRegionLimit = pendingRegionLimit }
     }
 
     /// いま字形を焼いている頁。**広げると差し替わる。**
@@ -392,7 +406,10 @@ import simd
     /// 一辺 `side` の新しい頁を作り、焼いた字形の控えと棚を空に戻す。
     private func startPage(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         // **新しい頁を先に作る。** 作れずに投げたときも、前の頁はそのまま使える
-        page = try GlyphPage(side: side, gpu: gpu)
+        let fresh = try GlyphPage(side: side, gpu: gpu)
+        fresh.pendingByteLimit = pendingByteLimit
+        fresh.pendingRegionLimit = pendingRegionLimit
+        page = fresh
         size = side
         entries.removeAll(keepingCapacity: true)
         pageSerial = Self.takePageSerial()
@@ -494,8 +511,8 @@ import simd
         else { return .unbakeable }
 
         // **待たずに、焼いた画素を頁の控えへ積む** (#1792)。届けるのは描き切りの GPU 側のコピーで、
-        // コピーは投入の順に走る。この区画は作りたての (前の仕事がまだ読まない) 場所なので、
-        // 前のフレームが読んでいる画素を書き換えることも無い
+        // コピーの前に前の仕事の読みを待つ仕掛けを積む。この区画は作りたての (前の仕事がまだ読まない)
+        // 場所なので、普段は前のフレームが読んでいる画素を書き換えることも無い
         page.stage(x: origin.x, y: origin.y, width: width, height: height, pixels: pixels)
 
         let side = Float(size)

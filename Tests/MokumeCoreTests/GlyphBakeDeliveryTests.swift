@@ -39,6 +39,19 @@ struct GlyphBakeDeliveryTests {
         return count
     }
 
+    /// 多くの字を 1 フレームで初めて焼く場面 (頁が何度も広がる)。
+    private func manyGlyphsFrame(_ canvas: Canvas) throws -> DisplayImage {
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            for line in 0..<60 {
+                canvas.textSize(24 + Float(line) * 0.37)
+                canvas.text("Hamburgefonts", 4, 10 + Float(line) * 9.5)
+            }
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
     // MARK: - 待たない (完了条件 1)
 
     @Test("新しい字・新しい大きさを焼いても、焼く口は GPU の完了を待たない")
@@ -121,6 +134,92 @@ struct GlyphBakeDeliveryTests {
         #expect(same, "焼き直しの前に焼いた字が、焼き直したフレームで欠けた")
     }
 
+    // MARK: - 控えの量の上限 (#1792 の反証)
+
+    /// 1 回の描き切りが届ける量がそのまま Canvas の控えの置き場の要求量になり、置き場は縮まない。
+    /// 上限が無ければ、最初のフレームで大量に焼いただけで、置き場が太ったまま残る。
+    @Test("多くの字を初めて焼くフレームでも、控えの置き場は上限の大きさに収まる")
+    func stagingStorageStaysBounded() throws {
+        // 対照: 上限を外すと、1 フレームで焼いた全部がそのまま置き場の大きさになる
+        let unlimited = try makeCanvas(width: 600, height: 600)
+        unlimited.atlas.pendingByteLimit = .max
+        unlimited.atlas.pendingRegionLimit = .max
+        _ = try manyGlyphsFrame(unlimited)
+        let swollen = unlimited.uploadStorage.capacity
+        try #require(swollen > 1 << 20, "検査の前提: 上限が無いのに置き場が太らない (\(swollen))")
+
+        let bounded = try makeCanvas(width: 600, height: 600)
+        bounded.atlas.pendingByteLimit = 64 << 10
+        _ = try manyGlyphsFrame(bounded)
+        // 頁ごとに上限 (+ 越える 1 区画) までしか積まない。頁は数回しか替わらない
+        let capacity = bounded.uploadStorage.capacity
+        #expect(capacity < swollen / 2, "置き場が上限なしと同じほど太った (\(capacity) と \(swollen))")
+        #expect(bounded.atlas.page.directWrites + bounded.atlas.bakedCount > 0)
+        #expect(bounded.atlas.page.pendingUploadByteCount <= 64 << 10 + (1 << 16))
+    }
+
+    /// 字 1 つに GPU のコピーが 1 本なので、区画の数にも上限を置く。越えたら待って直接書く。
+    @Test("積んだ区画の数が上限を越えたら、その場で待って直接書き、控えは上限を越えない")
+    func regionCountIsBounded() throws {
+        let canvas = try makeCanvas()
+        canvas.atlas.pendingRegionLimit = 8
+        let resolved = try #require(canvas.typeface.glyph(for: "M"))
+        var maxPending = 0
+        for index in 0..<40 {
+            let key = GlyphAtlas.Key(
+                fontKey: resolved.fontKey, size: 12 + Float(index) * 0.5, style: .normal,
+                glyph: resolved.glyph)
+            guard case .found = canvas.atlas.entry(for: key, font: resolved.font) else {
+                Issue.record("検査の前提: 焼けなかった")
+                return
+            }
+            maxPending = max(maxPending, canvas.atlas.page.pendingRegionCount)
+        }
+        #expect(maxPending <= 8, "区画が上限を越えて控えに残った (\(maxPending))")
+        #expect(canvas.atlas.page.directWrites > 0, "上限を越えたのに、直接書いていない")
+    }
+
+    @Test("控えの上限を越えて直接書いた字も、描き切りで届けた字も、同じ絵になる")
+    func directlyWrittenGlyphsDrawTheSame() throws {
+        let straight = try makeCanvas(width: 600, height: 600)
+        let reference = try manyGlyphsFrame(straight)
+        let tiny = try makeCanvas(width: 600, height: 600)
+        tiny.atlas.pendingRegionLimit = 4
+        tiny.atlas.pendingByteLimit = 16 << 10
+        let image = try manyGlyphsFrame(tiny)
+        #expect(tiny.atlas.page.directWrites > 0 || tiny.atlas.size > GlyphAtlas.initialSize)
+        let same = reference.bytes == image.bytes
+        #expect(inkedPixelCount(image) > 0, "検査の前提: 何も描かれていない")
+        #expect(same, "上限を越えて直接書いた字の絵が、描き切りで届けた絵と違う")
+    }
+
+    // MARK: - コピーの前の待ち (#341)
+
+    /// 届け直す区画は作りたての場所ではない。コピーの前に前の仕事が読み終わるのを待たないと、前の
+    /// フレームがまだ読んでいる画素を上書きしうる。画像の届け直し・書き換えも同じ口に頼る。
+    @Test("控えを届けるコピーの前に、前の仕事が読み終わるのを待つ仕掛けを積む")
+    func uploadsWaitForEarlierWorkBeforeCopying() throws {
+        let canvas = try makeCanvas()
+        let waits = canvas.uploadWaitsEncoded
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(36)
+            canvas.text("Q", 8, 60)
+        }
+        #expect(canvas.uploadWaitsEncoded - waits == 1, "字形を届けるコピーの前に待ちを積んでいない")
+        // 画像も同じ口で届ける
+        let image = try canvas.createImage(4, 4)
+        image.fill(white)
+        let before = canvas.uploadWaitsEncoded
+        try canvas.draw { canvas.image(image, 0, 0) }
+        #expect(canvas.uploadWaitsEncoded - before == 1, "画像を届けるコピーの前に待ちを積んでいない")
+        // 届けるものが無いフレームは積まない
+        let idle = canvas.uploadWaitsEncoded
+        try canvas.draw { canvas.background(black) }
+        #expect(canvas.uploadWaitsEncoded == idle)
+    }
+
     // MARK: - 打ち切りの届け直し
 
     @Test("字形を届けた投入が打ち切られると、結末が届いた後の描き切りが届け直す。無ければ届け直さない",
@@ -149,6 +248,34 @@ struct GlyphBakeDeliveryTests {
         let barriers = canvas.uploadBarriersEncoded
         try canvas.draw {}
         #expect(canvas.uploadBarriersEncoded - barriers == (dropped ? 1 : 0), "届け直した回数が違う")
+        #expect(page.pendingRegionCount == 0, "届け直した後も控えが残っている")
+    }
+
+    /// 画像と数の並びは、結末を失った投入を届け直さない (正しく済んだ中身を CPU の古い値で潰しうる)。
+    /// 字形の区画は CPU の画素が変わらない正本で、同じ画素を書き直すだけなので、字形の頁だけは届け直す
+    /// 側に倒す。倒さないと、区画が空のまま頁が替わるまで字が欠け続ける。
+    @Test("字形を届けた投入の結末を失ったときも、字形の区画は届け直す。無ければ届け直さない",
+        arguments: [true, false])
+    func aGlyphWhoseOutcomeWasLostIsSentAgain(lost: Bool) throws {
+        let gpu = try RenderDevice()
+        gpu.outcomeWaitLimit = .milliseconds(100)
+        let canvas = try makeCanvas(gpu: gpu)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(36)
+            canvas.text("Q", 8, 60)
+            if lost { gpu.losesNextOutcomeForTesting = true }
+        }
+        let page = canvas.atlas.page
+        try #require(page.deliveredRegionCount > 0, "検査の前提: 区画を投入に載せていない")
+
+        // 投げる読む口と同じ待ちで、失われた結末を打ち切りとして記させる
+        _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+        gpu.revokeDroppedDeliveries()
+        #expect((page.pendingRegionCount > 0) == lost, "控え: \(page.pendingRegionCount)")
+
+        try canvas.draw {}
         #expect(page.pendingRegionCount == 0, "届け直した後も控えが残っている")
     }
 

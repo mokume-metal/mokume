@@ -23,13 +23,21 @@ import Metal
 /// ## 書き込み (#1792)
 ///
 /// 焼く口 (``GlyphAtlas``) は GPU を待たない。焼いた画素を「区画 + 画素」として積み (``stage(x:y:width:height:pixels:)``)、
-/// 登録簿 (``PendingUploads``) に載せるだけである。**届けるのは描き切りの GPU 側のコピー**で、コピーは
-/// 投入の順に走るので、前に投入した仕事は古い面を、このコマンドとその後の仕事は新しい面を読む。
-/// 焼く区画は作りたての (まだ誰も読まない) 場所なので、前の仕事が読む画素を書き換えることも無い。
+/// 登録簿 (``PendingUploads``) に載せるだけである。**届けるのは描き切りの GPU 側のコピー**で、コピーの前に
+/// 前の仕事が読み終わるのを待つ仕掛けを積む (`Canvas.encodeUploads`・[#341])。焼く区画は作りたての
+/// (まだ誰も読まない) 場所なので、普段は前の仕事が読む画素を書き換えない。**届け直す区画は作りたてでは
+/// ない** — 打ち切りの後も前の仕事は同じ区画を読み続けるので、書き直しはその待ちに守られる。
 ///
 /// **届けた控えは、投入の結末が届くまで持つ。** GPU が投入を打ち切ったら、控えへ戻して次の描き切りが
-/// 届け直す (画像と同じ・[#2199])。結末が正常なら手放す。
+/// 届け直す (画像と同じ・[#2199])。結末を失った投入と、上限を越えて忘れた打ち切りに掛かりうる投入も、
+/// 字形の頁だけは届け直す側に倒す (``submissionSettled(_:dropped:)``)。
 ///
+/// **積む量には上限がある** (``pendingByteLimit``・``pendingRegionLimit``)。1 回の描き切りが届ける量が
+/// そのまま Canvas の控えの置き場の要求量になり、置き場は縮まない。越えたら、その場で待って直接書く
+/// (数の並びの汚れ区間 `dirtyRangeLimit` と同じ形)。多くの字を初めて焼くフレーム (CJK の段落) だけが
+/// 払う、数えられる回数の待ちである。字 1 つに GPU のコピーが 1 本なので、区画の数にも上限を置く。
+///
+/// [#341]: https://github.com/mokume-metal/mokume/issues/341
 /// [#738]: https://github.com/mokume-metal/mokume/issues/738
 /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
 /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
@@ -64,6 +72,19 @@ import Metal
     /// 診断: 逃げ道で待って直接書いた区画の数。**検査が読む** — 通常の焼き込みは 0 のまま。
     private(set) var directWrites = 0
 
+    /// 控えに積んでよいバイト数の上限。**超えたら、その場で待って直接書く。** 1 回の描き切りが届ける量が
+    /// そのまま控えの置き場 (``Canvas`` の `uploadStorage`) の要求量になり、置き場は縮まない。上限が無いと、
+    /// 最初のフレームで大きな字を大量に焼いただけで、置き場がスロットの数ぶん太ったまま残る。検査が
+    /// 差し替える。
+    var pendingByteLimit = GlyphPage.defaultPendingByteLimit
+
+    /// 控えに積んでよい区画の数の上限。字 1 つに GPU のコピーが 1 本なので、数百〜数千本の
+    /// コピーを 1 つのコマンドへ積まない。**超えたら、その場で待って直接書く。** 検査が差し替える。
+    var pendingRegionLimit = GlyphPage.defaultPendingRegionLimit
+
+    static let defaultPendingByteLimit = 4 << 20
+    static let defaultPendingRegionLimit = 256
+
     init(side: Int, gpu: RenderDevice) throws(RenderFailure) {
         self.gpu = gpu
         self.texture = try GlyphAtlas.makeTexture(side: side, gpu: gpu)
@@ -79,6 +100,12 @@ import Metal
                 x: x, y: y, width: width, height: height, pixels: pixels,
                 generation: lastGeneration))
         gpu.pendingUploads.enqueue(self)
+        // 積みすぎた分だけは、ここで待って届ける。待てなければ控えに残す (#934)
+        if pending.count > pendingRegionLimit || pendingUploadByteCount > pendingByteLimit,
+            let uploaded = uploadDirectly()
+        {
+            markUploaded(through: uploaded, by: nil)
+        }
     }
 
     /// まだ届けていない区画の数。**検査が読む。**
@@ -145,15 +172,20 @@ extension GlyphPage: PendingUpload {
         return true
     }
 
-    /// 届けた投入の結末が届いた。**打ち切られていたら、その投入が運んだ区画を控えへ戻す** ([#2199])。
-    /// 次の描き切りがもう一度届ける。正常に終わっていれば手放す。
+    /// 届けた投入の結末が届いた。**打ち切られていたら (結末を失った投入を含む)、その投入が運んだ区画を
+    /// 控えへ戻す** ([#2199])。次の描き切りがもう一度届ける。正常に終わっていれば手放す。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
+        // **結末を失った投入と、忘れた打ち切りに掛かりうる投入も、届け直す側に倒す。** 画像と数の並びは
+        // 取り消さない — 正しく済んだ中身を CPU の古い値で潰しうるから。字形の区画は CPU の画素が
+        // 変わらない正本で、同じ区画へ同じ画素を書き直すだけなので、倒し違えても害が無い。倒さないと、
+        // 区画が空のまま頁が替わるまで字が欠け続ける (以前は CPU が直接書いたので消えなかった)
+        let redeliver = dropped || gpu.undelivered(submission) == true
         var returned: [Region] = []
         delivered.removeAll { entry in
             guard entry.submission == submission else { return false }
-            if dropped { returned += entry.regions }
+            if redeliver { returned += entry.regions }
             return true
         }
         guard !returned.isEmpty else { return }
