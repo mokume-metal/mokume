@@ -769,6 +769,12 @@ struct FormFragmentIn {
     /// インスタンスごとに決まる。0: 縁 1 本の距離場で数える・1: 両縁を見る積 (扇は画素の中の標本) で数える・
     /// 2: 穴は細くないが中心の角が尖った扇で、尖りの先の画素だけ標本で数える (`mokume_sectorApex`)
     uint thinHole [[flat]];
+    /// 描く画素の法線向きの幅 (`mokume_reachPerPixel`)。細い枝の境目を測る。インスタンスごとの量なので
+    /// 頂点で 1 度だけ出す (断片で出すと、面を覆う塗りの GPU 時間が 3 割ほど増えた・#2991)
+    float2 reachPerPixel [[flat]];
+    /// 直線の縁だけの形 (`rect`・線) で、形の軸が画素の軸に沿っているか (1 なら縁の被覆は従来の式の
+    /// まま・`mokume_formCoverage`)。これもインスタンスごとの量なので頂点で 1 度だけ出す
+    uint keepsLinearEdge [[flat]];
     /// 扇の始まりと終わりの角の向き。xy が `(cos 始まり, sin 始まり)`、zw が `(cos 終わり, sin 終わり)`。
     /// 扇のインスタンスごとに一定なので、頂点関数が 1 度だけ求めて渡す (`mokume_sectorDirections`・
     /// [#2384](https://github.com/mokume-metal/mokume/issues/2384))。断片で求めると、塗りと輪郭の
@@ -1073,6 +1079,10 @@ vertex FormFragmentIn formVertexMain(
     out.position = frame.projection * float4(placed, 0.0, 1.0);
     out.local = local;
     out.inverseRows = drawnRows;
+    out.reachPerPixel = mokume_reachPerPixel(drawnRows);
+    out.keepsLinearEdge =
+        ((form.meta.x == kFormRect || form.meta.x == kFormLine) && mokume_rowsAlignToPixels(drawnRows))
+        ? 1u : 0u;
     // **輪郭と線は、画面で半画素寄せて評価する。** 整数の座標は画素の角に落ちるので、
     // 塗りの縁は整数の座標で画素の境目に乗り、`rect(10, 20, 4, 8)` はちょうど 4x8 画素を
     // 塗る。輪郭は縁の上に中心を持つ帯なので、そのまま置くと太さ 1 の線が 2 列の画素を
@@ -1106,7 +1116,7 @@ vertex FormFragmentIn formVertexMain(
     // 輪郭の帯の穴が 1 画素より細いか潰れているか。これもインスタンスごとの量なので頂点で 1 度だけ
     // 出す — 断片で出すと、楕円の穴の半径 (平方根 2 つ) を画素ごとに解き、面を覆う円で GPU 時間が
     // 2 割増えた (#2186)。断片の `unitsPerPixel` と同じ式で描く画素の大きさを出す
-    float2 drawnUnits = mokume_reachPerPixel(drawnRows);
+    float2 drawnUnits = out.reachPerPixel;
     // 扇の穴は、内接円の半径の下限から太さの半分を引いた半径を、`kFormSectorHoleReach` 画素で測る
     // (半径が画素の 3 つ分より小さければ細い)。`mokume_thinHole` は半幅が画素の半分より小さいかを
     // 見るので、半径を 2 · `kFormSectorHoleReach` で割って渡す
@@ -1810,11 +1820,11 @@ static inline FormPaint mokume_formPaint(
     float2 unitsPerPixel = float2(length(in.inverseRows.xy), length(in.inverseRows.zw));
     // 細い枝の境目は、行ノルムではなく**画素の法線向きの幅** (画素の正方形を形自身の軸へ射影した幅・
     // `mokume_reachPerPixel`・#2991) で測る。軸に沿う形では行ノルムと同じ値
-    float2 reachPerPixel = mokume_reachPerPixel(in.inverseRows);
+    // (頂点関数がインスタンスごとに 1 度だけ出す。断片で出すと面を覆う塗りの費用が増える)
+    float2 reachPerPixel = in.reachPerPixel;
     // 直線の縁だけの形 (`rect`・線) で、形の軸が画素の軸に沿うなら、縁の被覆は従来の式のまま
     // (`mokume_formCoverage`)。曲線の縁を持つ形は、軸に沿っていても縁の向きで決まる
-    bool keepsLinearEdge =
-        (kind == kFormRect || kind == kFormLine) && mokume_rowsAlignToPixels(in.inverseRows);
+    bool keepsLinearEdge = in.keepsLinearEdge != 0;
 
     // 塗りの距離場と、輪郭の**外縁**・**内縁**の距離場。輪郭は「外縁の内側で内縁の外側」
     FormField fill = mokume_field(1e6, float2(1.0, 0.0));
