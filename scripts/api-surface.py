@@ -720,6 +720,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "curveDetail": (DRAWING_STYLE, "表に無い。曲線の頂点の細かさで、線の太さと同じくスタイルとして持ち越す"),
     "curveTightness": (DRAWING_STYLE, "curveDetail と同じ理由"),
     "randomSeed": (DRAWING_STYLE, "表の「揺らぎの種」と同じく、乱数の流れの種で持ち越す"),
+    "randomSource": (DRAWING_STYLE, "randomSeed と同じ列を値として出し入れする。代入は種を書くのと同じで持ち越す"),
     "orbit": (DRAWING_STYLE, "視点を操る道具の状態で、フレームを越えて持ち越す (setup() で書く例がある)。視点そのものを書くのは orbitControl"),
     # シーンの記述 — 表の「視点・投影・光・材質・変換・影・周囲の光・効果・切り抜き」
     "camera": SCENE,

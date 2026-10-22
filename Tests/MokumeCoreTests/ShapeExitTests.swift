@@ -352,6 +352,7 @@ extension ShapeExit {
             "warnings": "ランタイムが 1 度だけ言った注意の控え (走っている最中の枚数の代入・#1323)。形に焼き付く値を生まない",
             "blockingLoads": "draw() の中の同期の読み込みを 1 度だけ言う控え (#2601)。形に焼き付く値を生まない",
             "seedScopes":"組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",
+            "randomLine": "乱数の列の出どころの印 (randomSource の写しが列の続きかを見分ける・#2418)。出口で戻さず、出口の仕組み (shapeAssemblyEnded) が進める — 戻した列は抜ける前の写しの続きではないため。形に焼き付く値を生まない",
         ]
         let restored: (String, RuntimeExit) = (
             "randomness",
