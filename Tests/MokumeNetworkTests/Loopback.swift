@@ -149,34 +149,75 @@ func clients(_ server: TextPort, reach count: Int, within seconds: TimeInterval 
     }
 }
 
-/// 繋ぎに行く側 `client` (``TCPClient``・``WebSocketClient``) を、受け口 `server` が `count` 人として数えるのを、
-/// 期限まで待つ。数えなければ、**両側の様子を名乗って 1 つで止まる** (`#require`・#3104)。
+/// 受け口 `server` が数える相手の数が `count` になるのを、期限まで待つ。**ならなければ、値を控えてから
+/// 名乗って 1 つで止まる** (`#require`・#3104)。数が増える方向も減る方向も同じ。
 ///
-/// `PeerGroup.reach(on:replacements:within:)` (#2940) は検査の側の相手 (``LoopbackPeer``) を束ねる。
-/// こちらは繋ぎに行くのが製品の ``ClientSource`` なので、繋ぎ直しは製品の既定のもの以外を足さない。**期限は
-/// 延ばさず、繋ぎ直さず、救わない** (#2945・#3001 と同じ。原因が分かっていないので、救うと次の 1 回で
-/// 読み分ける材料が消える)。止まると後ろの期待 (`collect`) へ連鎖しない。
+/// - **決めた時点の値を名乗る**: 数・状態・移り変わり・`told` は、期限で「ならなかった」と決めた直後に
+///   控え、名乗りの前に `supply()` し直さない。期限の直後に数が届いても、「1 人のうち 1 人」のような
+///   食い違う文で止まらない。
+/// - **満たしたときは何も読み足さない**: `supply()` は待ちの中でだけ回す。満たした後に回すと、受け口の
+///   届き物 (`messages`) を移し、次の `collect` が上書きして 1 行失いうる。
+/// - **期限は延ばさず、繋ぎ直さず、救わない** (#2945・#3001 と同じ。原因が分かっていないので、救うと
+///   次の 1 回で読み分ける材料が消える)。止まるので後ろの期待 (`collect`) へ連鎖しない。
 ///
-/// 名乗り:
-/// - **受け口 (サーバ)**: 状態・数えた数・移り変わりの数と最後 (``EventTrace``)
-/// - **クライアント**: 状態 (``SourceState``)・移り変わりの数と最後。繋ぎ直しの試みそのものは見えず、
-///   見えるのは受けた移り変わりだけ。**`NWConnection` の `preparing`・`waiting`・`ready` は、移り変わりの
-///   「最後」に出た分だけ**
-/// - **`told` の全行**。受け口とクライアントの行が混ざるので、行の頭のラベルで見分ける
+/// 名乗り: 受け口の状態・数えた数・移り変わりの数と最後 (``EventTrace``)・`told` の全行 (受け口と相手の行が
+/// 混ざるので、行の頭のラベルで見分ける)・**実際に待った秒数と期限**・`others` (相手側の様子)。
+///
+/// **見えないもの**: 受け口が数えるのは `.ready` になった繋ぎだけで、受け入れたがまだ `.ready` でない繋ぎの数・
+/// `failed` / `cancelled` で外した回は、受け口が持つ配列が `private` なので、検査から読めない。読ませる口を
+/// `Sources/` に足さないのは、メンテナの決定 (#3104)。名乗りにもそう書く。
 ///
 /// - Parameters:
-///   - count: 数えてほしい相手の数。数が戻ること (`0`) を待つ段は、これを通さず ``clients(_:reach:)`` を使う。
+///   - what: 何が満たされなかったかの 1 文。
+///   - others: 相手側の様子。止まると決めた後に呼ぶ。
+func requireCounted(
+    _ server: TextPort, count: Int, within seconds: TimeInterval = 5, told: Told?, what: String,
+    others: () -> String
+) async throws {
+    var counted = 0
+    let started = Date()
+    let met = await until(seconds) {
+        server.supply()
+        counted = server.connected
+        return counted == count
+    }
+    if met { return }
+    // 決めた時点の値を控える。ここから後は supply しない
+    let waited = Date().timeIntervalSince(started)
+    let state = server.state.rawValue
+    let trace = traceText(server.source)
+    let lines = told.map { "\($0.lines)" } ?? "知らせを持たない"
+    try #require(
+        met,
+        "\(what): 相手 \(count) 人のうち、受け口が数えたのは \(counted) 人 (待った \(String(format: "%.1f", waited)) 秒/期限 \(seconds) 秒)。受け口: 状態 \(state)\(trace)。\(others())。同じ told の全行: \(lines)。注: 受け口は .ready になった繋ぎだけを数える。受け入れたがまだ .ready でない繋ぎの数と、failed・cancelled で外した回は、ここからは見えない"
+    )
+}
+
+/// 繋ぎに行く側 `client` (``TCPClient``・``WebSocketClient``) を、受け口 `server` が `count` 人として数えるのを、
+/// 期限まで待つ。数えなければ、**両側の様子を名乗って 1 つで止まる** (``requireCounted(_:count:within:told:what:others:)``・#3104)。
+///
+/// `PeerGroup.reach(on:told:replacements:within:)` (#2940) は検査の側の相手 (``LoopbackPeer``) を束ねる。
+/// こちらは繋ぎに行くのが製品の ``ClientSource`` で、検査が `retryAfter` (0.05 秒)・`connectTimeout`
+/// (0.3 秒) を縮めている (`StreamClientTests`)。**繋ぎ直しは、その縮めた既定のもの以外を足さない。**
+///
+/// クライアントの名乗りは、**``SourceState``・移り変わりの数と最後 (``EventTrace``)** (メンテナの決定・#3104)。
+/// `NWConnection` の状態そのものは出ない — `ClientSource` は `.preparing` を捨て、`.waiting`・`.failed` を
+/// `failed(理由)` に読み替えて閉じ (`drop`)、`.ready` を `connected` と読む。だから最後に出るのは
+/// `connected`・`failed("…")`・`lost` のような ``ConnectorEvent`` の文で、繋ぎ直しの試みそのものは見えない。
+///
+/// - Parameters:
+///   - count: 数えてほしい相手の数。**数が増える方向の待ち**に使う。減る方向 (相手が閉じて数が戻る) は
+///     ``PeerGroup/requireCount(on:equals:told:within:)``。
 ///   - told: 受け口とクライアントの `warn:` に渡したもの。
 func requireClients(
     _ server: TextPort, reach count: Int = 1, from client: TextPort, told: Told,
     within seconds: TimeInterval = 5
 ) async throws {
-    let met = await clients(server, reach: count, within: seconds)
-    server.supply()
-    try #require(
-        met,
-        "相手 \(count) 人のうち、受け口が数えたのは \(server.connected) 人 (期限 \(seconds) 秒)。受け口: 状態 \(server.state.rawValue)\(traceText(server.source))。クライアント: 状態 \(client.state.rawValue)\(traceText(client.source))。同じ told の全行: \(told.lines)"
-    )
+    try await requireCounted(
+        server, count: count, within: seconds, told: told, what: "受け口が相手を数えなかった"
+    ) {
+        "クライアント: 状態 \(client.state.rawValue)\(traceText(client.source))"
+    }
 }
 
 /// 検査の側の相手の繋ぎの状態。**1 つの値で読む** — 「まだ繋がっていない」と「名乗った」を別々に
@@ -243,7 +284,7 @@ nonisolated extension NWConnection.State {
 /// 待ちの上限が 10 秒なのは、以前の `clients(_, reach:)` の 5 秒に、替える分の猶予 (3 回 × 約 2.5 秒) を
 /// 載せるため。5 秒のままでは、1 回替えて新しい相手の繋ぎを待つ時間が残らない。
 ///
-/// 相手は ``subscript(_:)`` で読む。**``reach(on:replacements:within:)`` の後に読む** — 替えると
+/// 相手は ``subscript(_:)`` で読む。**``reach(on:told:replacements:within:)`` の後に読む** — 替えると
 /// 同じ番号の相手が別のものになる。
 final class PeerGroup<Peer: LoopbackPeer> {
     private(set) var peers: [Peer]
@@ -265,9 +306,9 @@ final class PeerGroup<Peer: LoopbackPeer> {
     ///
     /// 数えない理由を 1 つで名乗って止まる (`#require`): 受け口の状態・数・替えた回数と、相手ごとの
     /// 状態 (名乗った理由を含む)。受け口側の原因か相手側の原因かは、これで読み分ける。
-    func reach(on server: TextPort, replacements: Int = 3, within seconds: TimeInterval = 10)
-        async throws
-    {
+    func reach(
+        on server: TextPort, told: Told? = nil, replacements: Int = 3, within seconds: TimeInterval = 10
+    ) async throws {
         let expected = peers.count
         let patience = seconds / Double(replacements + 1)
         var attempts = [Int](repeating: 1, count: expected)
@@ -290,11 +331,30 @@ final class PeerGroup<Peer: LoopbackPeer> {
             try await Task.sleep(for: .milliseconds(10))
         }
         server.supply()
+        let counted = server.connected
         let ready = peers.allSatisfy(\.isReady)
+        let lines = told.map { "\($0.lines)" } ?? "知らせを持たない"
         try #require(
-            server.connected == expected && ready,
-            "\(expected) 人のうち、受け口が数えたのは \(server.connected) 人 (受け口の状態: \(server.state)・替えたのは \(replaced) 回・期限 \(seconds) 秒)。相手の様子: \(peers.enumerated().map { "#\($0.offset) \($0.element.state.text)" })"
+            counted == expected && ready,
+            "\(expected) 人のうち、受け口が数えたのは \(counted) 人 (受け口の状態: \(server.state)\(traceText(server.source))・替えたのは \(replaced) 回・期限 \(seconds) 秒)。相手の様子: \(statesText)。同じ told の全行: \(lines)"
         )
+    }
+
+    /// 相手ごとの繋ぎの状態 (名乗る材料)。
+    var statesText: String {
+        "\(peers.enumerated().map { "#\($0.offset) \($0.element.state.text)" })"
+    }
+
+    /// 受け口が数える相手の数が `count` になるのを待つ。ならなければ、受け口と相手の様子を名乗って 1 つで止まる
+    /// (``requireCounted(_:count:within:told:what:others:)``)。**相手が閉じて数が戻る・減る方向の待ち**に使う。
+    func requireCount(
+        on server: TextPort, equals count: Int, told: Told? = nil, within seconds: TimeInterval = 5
+    ) async throws {
+        try await requireCounted(
+            server, count: count, within: seconds, told: told, what: "受け口の数が \(count) 人にならなかった"
+        ) {
+            "相手の様子: \(statesText)"
+        }
     }
 }
 

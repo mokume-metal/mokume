@@ -90,7 +90,7 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("0.25\nhit\r\n\n")
@@ -110,13 +110,13 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         first.send("0.5")
         first.finish()
         #expect(await collect(server, count: 1) == ["0.5"])
-        #expect(await clients(server, reach: 1))
+        try await peers.requireCount(on: server, equals: 1, told: told)
         #expect(await until { first.closedByPeer })
 
         second.close()
@@ -131,7 +131,7 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("before\n")
@@ -152,7 +152,7 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         server.write("hit\n")
@@ -173,7 +173,7 @@ struct TCPServerTests {
 
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         server.write("c")
         #expect(await until { peer.received == "c" })
@@ -192,7 +192,7 @@ struct TCPServerTests {
         let (server, port) = try await listening(told: told)
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.close()
@@ -241,7 +241,7 @@ struct TCPServerTests {
         defer { live.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: live)
+        try await peers.reach(on: live, told: told)
         let peer = peers[0]
         peer.send(textScript.map { $0 + "\n" }.joined())
         let received = await collect(live, count: textScript.count)
@@ -286,7 +286,7 @@ struct TCPServerTests {
         try await requireState(told: told, tracing: source) { server.state }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.send("back\n")
         #expect(await collect(server, count: 1) == ["back"])
@@ -429,9 +429,11 @@ struct TCPServerTests {
             ScriptedPeer(.trouble("waiting (scripted)"), in: room)
         }
         defer { peers.closeAll() }
+        let told = Told()
+        told.append("scripted note")
         let said = Mutex("")
         try await withKnownIssue {
-            try await peers.reach(on: server, replacements: 0, within: 0.2)
+            try await peers.reach(on: server, told: told, replacements: 0, within: 0.2)
         } matching: { issue in
             said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
             return Self.isNotReached(issue)
@@ -440,6 +442,8 @@ struct TCPServerTests {
         #expect(text.contains("2 人のうち、受け口が数えたのは 0 人"))
         #expect(text.contains("受け口の状態: ") && text.contains("running"))
         #expect(text.contains("#0 waiting (scripted)") && text.contains("#1 waiting (scripted)"))
+        // 渡した知らせの全行を載せる
+        #expect(text.contains("同じ told の全行: [\"scripted note\"]"), "名乗り: \(text)")
     }
 
     // MARK: - 作る口

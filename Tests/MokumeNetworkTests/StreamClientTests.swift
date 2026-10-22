@@ -197,6 +197,7 @@ struct StreamClientTests {
         #expect(await clients(server, reach: 0))
         // 繋ぎ直さない
         try await Task.sleep(for: .milliseconds(300))
+        server.supply()  // connected は supply (取り出し) でしか書き換わらない。読む前に回す
         #expect(server.connected == 0)
         client.write("late\n")
         client.write("later\n")
@@ -241,8 +242,11 @@ struct StreamClientTests {
         let short = try await said {
             try await requireClients(server, reach: 2, from: connected, told: told, within: 0.3)
         }
-        #expect(short.contains("相手 2 人のうち、受け口が数えたのは 1 人 (期限 0.3 秒)"), "名乗り: \(short)")
+        #expect(short.contains("相手 2 人のうち、受け口が数えたのは 1 人 (待った "), "名乗り: \(short)")
+        #expect(short.contains("/期限 0.3 秒)"), "名乗り: \(short)")
         #expect(short.contains("受け口: 状態 running・移り変わり "), "名乗り: \(short)")
+        // 見えないものも、名乗りに書く (受け口が数えるのは .ready の繋ぎだけ)
+        #expect(short.contains("受け入れたがまだ .ready でない繋ぎの数と、failed・cancelled で外した回は、ここからは見えない"), "名乗り: \(short)")
         #expect(short.contains("クライアント: 状態 running・移り変わり "), "名乗り: \(short)")
 
         // 誰も待っていないポートへ繋ぎに行くクライアント (作り物の相手): 繋がらず、受け口は 0 人と数える
@@ -259,7 +263,7 @@ struct StreamClientTests {
         let text = try await said {
             try await requireClients(alone, from: lost, told: told, within: 0.3)
         }
-        #expect(text.contains("相手 1 人のうち、受け口が数えたのは 0 人 (期限 0.3 秒)"), "名乗り: \(text)")
+        #expect(text.contains("相手 1 人のうち、受け口が数えたのは 0 人 (待った "), "名乗り: \(text)")
         // 受け口側: 状態と、移り変わりの数・最後
         #expect(text.contains("受け口: 状態 running・移り変わり 1 回・最後: ready(port: "), "名乗り: \(text)")
         // クライアント側: 状態と、移り変わりの数・最後 (繋げなかったので unavailable)
@@ -273,6 +277,45 @@ struct StreamClientTests {
             try await requireClients(alone, from: connected, told: told, within: 0.3)
         }
         #expect(closed.contains("受け口: 状態 stopped"), "名乗り: \(closed)")
+    }
+
+    /// 読むたびに 0・1・2… と数える作り物の受け口の相手の数。
+    private nonisolated final class CountingClients: Broadcasting, @unchecked Sendable {
+        private let reads = Mutex(0)
+        var clientCount: Int { reads.withLock { value in defer { value += 1 }; return value } }
+        /// これまで数を読まれた回数。
+        var readCount: Int { reads.withLock { $0 } }
+        func broadcast(_ text: String) {}
+    }
+
+    @Test("名乗る数は止まると決めた時点のもので、名乗りの前に読み直さない。待った秒数も名乗る")
+    func requireCountedNamesTheValueItDecidedOn() async throws {
+        let counting = CountingClients()
+        let server = TextPort(
+            port: nil, name: "counting", source: RecordedSource<String>(batches: [[]]),
+            clients: counting, owner: nil, warn: { _ in })
+        try server.open()
+        let text = try await said {
+            try await requireCounted(
+                server, count: 1_000_000, within: 0.1, told: nil, what: "数えなかった", others: { "相手側" })
+        }
+        // 期限の後の最後の 1 回まで読んだ数が、名乗りの数。名乗りのために読み直していない
+        let reads = counting.readCount
+        #expect(text.contains("数えたのは \(reads - 1) 人 (待った "), "名乗り: \(text) (読んだ回数 \(reads))")
+        #expect(text.contains("/期限 0.1 秒)"), "名乗り: \(text)")
+        #expect(text.contains("同じ told の全行: 知らせを持たない"), "名乗り: \(text)")
+        #expect(text.contains("相手側"), "名乗り: \(text)")
+    }
+
+    @Test("満たしたときは取り出しを足さない。受け口の届き物を次の読みの前に捨てない")
+    func requireCountedDoesNotSupplyAfterBeingMet() async throws {
+        let server = TextPort(
+            port: nil, name: "recorded", source: RecordedSource<String>(batches: [["a"], ["b"]]),
+            clients: nil, owner: nil, warn: { _ in })
+        try server.open()
+        // 数は最初から 0 で、1 回の取り出しで満たす。もう 1 回回すと、届き物は ["b"] に替わる
+        try await requireCounted(server, count: 0, told: Told(), what: "数えなかった", others: { "" })
+        #expect(server.messages == ["a"])
     }
 
     // MARK: - WebSocket
@@ -331,6 +374,7 @@ struct StreamClientTests {
 
         try await requireTold(containing: "WebSocket client cannot connect to wss://127.0.0.1:\(port)/room", count: 1, exactly: false, told: told, tracing: client.source) { client.state }
         #expect(client.state == .unavailable)
+        server.supply()  // connected は supply (取り出し) でしか書き換わらない
         #expect(server.connected == 0)
     }
 
