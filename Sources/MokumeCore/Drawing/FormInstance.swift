@@ -102,17 +102,25 @@ struct FormInstance {
     private func isThin(
         half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>, axes: ThinAxes = .both
     ) -> Bool {
-        // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
-        // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
-        // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
-        let determinant = linear.x * linear.w - linear.y * linear.z
-        let rowX = SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel
-        let rowY = SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel
+        // 断片が読むのは、描く画素 1 つの**法線向きの幅** (画素の正方形を形自身の x・y の軸へ射影した
+        // 幅・逆行列の各行の絶対値の和・#2991)。逆行列は余因子 / 行列式なので、両辺に行列式の絶対値を
+        // 掛けて、割り算を使わずに比べる
+        let determinant = abs(linear.x * linear.w - linear.y * linear.z)
+        let (reachX, reachY) = reachTimesDeterminant(unitsPerDrawnPixel)
         let span = 2 * half * (1 + 2.0 / 256)
-        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
-        let squared = determinant * determinant
-        let thinX = axes == .both && span.x * span.x * squared < simd_length_squared(rowX) * reach
-        return thinX || span.y * span.y * squared < simd_length_squared(rowY) * reach
+        let slack = 1 + Self.thinFillSlack
+        let thinX = axes == .both && span.x * determinant < reachX * slack
+        return thinX || span.y * determinant < reachY * slack
+    }
+
+    /// 描く画素 1 つの法線向きの幅 (逆行列の行の絶対値の和・断片の `mokume_reachPerPixel`) に、
+    /// 行列式の絶対値を掛けたもの。形自身の x の向きと y の向き。**行の軸が画素の軸に沿うときは、
+    /// 断片は行ノルムで測り、それは和と一致する (和は行ノルム以上) ので、ここは常に含む側に倒れる。**
+    private func reachTimesDeterminant(_ unitsPerDrawnPixel: SIMD2<Float>) -> (Float, Float) {
+        (
+            abs(linear.w) * unitsPerDrawnPixel.x + abs(linear.z) * unitsPerDrawnPixel.y,
+            abs(linear.y) * unitsPerDrawnPixel.x + abs(linear.x) * unitsPerDrawnPixel.y
+        )
     }
 
     /// ``isThin(half:unitsPerDrawnPixel:axes:)`` が見る向き。線の枝は太さの向き (y) だけを見る。
@@ -181,11 +189,13 @@ struct FormInstance {
         let determinant = linear.x * linear.w - linear.y * linear.z
         let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
         let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
-        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
-        let squared = determinant * determinant
+        // 細い枝の境目は、行ノルムではなく画素の法線向きの幅 (行の絶対値の和・#2991) で測る
+        let (reachX, reachY) = reachTimesDeterminant(unitsPerDrawnPixel)
+        let absDeterminant = abs(determinant)
+        let slack = 1 + Self.thinFillSlack
         func thin(_ half: SIMD2<Float>) -> Bool {
             let span = 2 * half * (1 + 2.0 / 256)
-            return span.x * span.x * squared < rowX * reach || span.y * span.y * squared < rowY * reach
+            return span.x * absDeterminant < reachX * slack || span.y * absDeterminant < reachY * slack
         }
         if (fills && thin(half)) || (strokes && thin(hole)) { return true }
         if isArc, mayNeedApexSampling() { return true }
