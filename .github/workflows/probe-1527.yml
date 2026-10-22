@@ -1,0 +1,271 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: probe-1527
+
+# 使い捨て。merge しない。#1527 (本体の検査のプロセス swiftpm-testing-helper が、要約も記録も
+# 残さずに消える) を、専用機の上で条件を変えて走らせて絞る。結果は #1527 に書いて、この枝ごと閉じる。
+#
+# 専用機の取り合い: render.yml と同じ門番 (scripts/render-turn.sh wait) を GitHub ホストで通ってから
+# 専用機に積む。走っている間も、merge queue の render の run が現れたら (認証なしの API を 2 分おきに
+# 引く)、いまの 1 回を殺してそこで終える (譲る)。占める時間は 57 分で打ち切る。
+#
+# 条件 (すべて Metal の検証レイヤつき・gpu-slot 経由 = make test と同じ):
+#   A  swift test --skip-build --filter MokumeCoreTests            (Core 全体・既定の並列)
+#   B  A から PhaseRuntimeTests|PhaseFormulaTests を外す            (#3018 が足した検査を除く)
+#   C  --filter "SharedFrameStageTests|PhaseRuntimeTests"          (引き金の疑いの 2 つだけ)
+#   D  --filter SharedFrameStageTests                              (窓の Suite だけ・対照)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: ['.github/workflows/probe-1527.yml']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  turn:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RENDER_TURN_LIMIT: "30"
+        run: bash scripts/render-turn.sh wait
+
+  probe:
+    needs: turn
+    if: ${{ !cancelled() && needs.turn.result == 'success' }}
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 60
+    steps:
+      - run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+      # #3018 の head そのもの (合流 ref ではなく) を検める
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
+
+      - name: 道具を置く
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe/out"
+          cat > "$RUNNER_TEMP/probe/run_one.py" <<'PY'
+          #!/usr/bin/env python3
+          """1 回を走らせ、期限と「譲る」を見張り、材料を採り、summary.txt に 1 行足す。
+
+          run_one.py <ラベル> <条件> <期限秒> -- <コマンド…>
+          """
+          import glob, gzip, json, os, re, signal, subprocess, sys, time, urllib.request, datetime
+
+          label, cond, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+          cmd = sys.argv[sys.argv.index("--") + 1:]
+          out = os.path.join(os.environ["RUNNER_TEMP"], "probe", "out")
+          home = os.path.expanduser("~")
+          user = os.environ.get("USER") or os.path.basename(home)
+          t_end_hard = int(os.environ["T0"]) + 57 * 60
+
+
+          def scrub(text):
+              text = text.replace(home, "~")
+              return re.sub(r"/Users/" + re.escape(user) + r"\b", "~", text)
+
+
+          def merge_queue_busy():
+              """認証なしで merge queue の render の run を見る。読めなければ None。"""
+              try:
+                  url = "https://api.github.com/repos/mokume-metal/mokume/actions/workflows/render.yml/runs?event=merge_group&per_page=10"
+                  req = urllib.request.Request(url, headers={"User-Agent": "probe-1527", "Accept": "application/vnd.github+json"})
+                  with urllib.request.urlopen(req, timeout=10) as r:
+                      runs = json.load(r)["workflow_runs"]
+                  now = time.time()
+                  for run in runs:
+                      if run["status"] == "completed":
+                          continue
+                      created = datetime.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")).timestamp()
+                      if now - created < 70 * 60:
+                          return str(run["id"])
+              except Exception:
+                  return None
+              return None
+
+
+          busy = merge_queue_busy()
+          if busy:
+              line = f"{label} | {cond} | 譲った (走り始める前に merge queue の run {busy} が現れた)"
+              with open(os.path.join(out, "summary.txt"), "a") as s:
+                  s.write(line + "\n")
+              print(line, flush=True)
+              open(os.path.join(out, "yielded"), "w").close()
+              sys.exit(0)
+
+          limit = min(limit, t_end_hard - int(time.time()))
+          started = time.time()
+          started_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started))
+          log_path = os.path.join(out, f"{label}.log")
+          with open(log_path, "wb") as log:
+              proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+              verdict_hint, last_poll = None, started
+              while proc.poll() is None:
+                  time.sleep(2)
+                  now = time.time()
+                  if now - started > limit:
+                      verdict_hint = "時間切れ"
+                  elif now - last_poll > 120:
+                      last_poll = now
+                      if merge_queue_busy():
+                          verdict_hint = "譲った"
+                  if verdict_hint:
+                      for sig in (signal.SIGTERM, signal.SIGKILL):
+                          try:
+                              os.killpg(proc.pid, sig)
+                          except ProcessLookupError:
+                              pass
+                          try:
+                              proc.wait(timeout=15)
+                              break
+                          except subprocess.TimeoutExpired:
+                              pass
+                      break
+          ended = time.time()
+          rc = proc.returncode
+
+          # --- ログを畳んで残す (全文は gzip・要点は平文)
+          with open(log_path, "rb") as f:
+              text = scrub(f.read().decode("utf-8", "replace"))
+          os.remove(log_path)
+          with gzip.open(os.path.join(out, f"{label}.log.gz"), "wt") as g:
+              g.write(text)
+          lines = text.splitlines()
+          key = re.compile(r"^(◇|✔|✘|━|↳|⚠) (Suite|Test run)|recorded an issue|[Ff]atal|[Cc]rash|[Ss]ignal|Terminated|Killed|[Aa]bort|[Aa]ssert|[Pp]recondition|error:|swiftpm-testing-helper.*(exit|died|terminat)")
+          keyed = [l for l in lines if key.search(l)]
+          with open(os.path.join(out, f"{label}.key.txt"), "w") as f:
+              f.write("\n".join(keyed[:6000]) + "\n\n=== tail 300 ===\n" + "\n".join(lines[-300:]) + "\n")
+
+          # --- 結末の読み取り
+          record = glob.glob(f"{os.environ['GITHUB_WORKSPACE']}/.build/probe-{label}*swift-testing.xml")
+          rec = subprocess.run(["python3", "scripts/read-test-record.py", "--failures", record[0] if record else "none.xml"],
+                               capture_output=True, text=True).stdout.strip() or "?"
+          started_suites = set(re.findall(r'^◇ Suite "(.*?)" started', text, re.M))
+          done_suites = set(re.findall(r'^(?:✔|✘) Suite "(.*?)" (?:passed|failed)', text, re.M))
+          unfinished = sorted(started_suites - done_suites)
+          window_started = '◇ Suite "道具が出す窓" started' in text
+          window_done = '✔ Suite "道具が出す窓" passed' in text or '✘ Suite "道具が出す窓" failed' in text
+          summaries = len(re.findall(r"^(?:✔|✘|━) Test run with", text, re.M))
+          helpers = len(set(re.findall(r"swiftpm-testing-helper\[(\d+):", text)))
+          if verdict_hint:
+              verdict = verdict_hint
+          elif rec.startswith(("missing", "unreadable")) or (rc != 0 and rec.startswith("failures 0")):
+              verdict = "消えた"
+          elif rc == 0:
+              verdict = "緑"
+          else:
+              verdict = "赤(検査の失敗)"
+
+          # --- 材料 (その回の開始より新しいもの)
+          mat = os.path.join(out, f"{label}.material.txt")
+          crash = []
+          report_dirs = (os.path.join(home, "Library/Logs/DiagnosticReports"), "/Library/Logs/DiagnosticReports")
+          for d in report_dirs:
+              for p in glob.glob(os.path.join(d, "*")):
+                  try:
+                      if os.path.getmtime(p) >= started - 2 and re.search(r"swiftpm|testing-helper|mokume|\.xctest", os.path.basename(p), re.I):
+                          crash.append(p)
+                  except OSError:
+                      pass
+          with open(mat, "w") as m:
+              m.write(f"# {label} cond={cond} started={started_str} rc={rc} verdict={verdict}\n")
+              for d in report_dirs:
+                  try:
+                      names = sorted(os.listdir(d))
+                      m.write(scrub(f"## ls {d}: {len(names)} 件 (末尾 10)\n") + "\n".join(names[-10:]) + "\n")
+                  except OSError as e:
+                      m.write(scrub(f"## ls {d}: 読めない ({e})\n"))
+              for p in crash:
+                  dst = os.path.join(out, f"{label}.report-{os.path.basename(p)}")
+                  with open(p, "rb") as f:
+                      body = scrub(f.read().decode("utf-8", "replace"))
+                  with open(dst, "w") as f:
+                      f.write(body)
+                  m.write(scrub(f"## 報告を写した: {p}\n"))
+              r = subprocess.run(["log", "show", "--start", started_str, "--predicate",
+                                  'eventMessage CONTAINS "jetsam" OR eventMessage CONTAINS "memorystatus" OR process == "swiftpm-testing-helper" OR eventMessage CONTAINS "swiftpm-testing-helper"'],
+                                 capture_output=True, text=True)
+              logshow = scrub(r.stdout)
+              m.write(f"## log show (開始から・終了コード {r.returncode}) 行数={len(logshow.splitlines())}\n")
+              hits = [l for l in logshow.splitlines()
+                      if re.search(r"jetsam|memorystatus|terminat|killed|exit|crash|signal|swiftpm-testing-helper", l, re.I)]
+              m.write("\n".join(hits[:3000]) + "\n")
+              if r.returncode != 0:
+                  m.write(scrub(f"## log show stderr: {r.stderr[:500]}\n"))
+              for c in (["vm_stat"], ["sysctl", "vm.swapusage", "hw.memsize"], ["memory_pressure", "-Q"]):
+                  try:
+                      rr = subprocess.run(c, capture_output=True, text=True, timeout=20)
+                      m.write(f"## {' '.join(c)}\n{scrub(rr.stdout)}\n")
+                  except Exception as e:
+                      m.write(f"## {' '.join(c)}: {e}\n")
+
+          line = " | ".join([
+              label, cond, f"rc={rc}", verdict, f"{int(ended - started)}s", f"record={rec}",
+              f"要約行={summaries} helper={helpers}", f"窓Suite={'済' if window_done else ('始まりのみ' if window_started else '無し')}",
+              f"未完Suite={unfinished[:5] if unfinished else '無し'}", f"報告={len(crash)}件",
+          ])
+          with open(os.path.join(out, "summary.txt"), "a") as s:
+              s.write(line + "\n")
+          print(line, flush=True)
+          if verdict == "譲った":
+              open(os.path.join(out, "yielded"), "w").close()
+          PY
+
+      - name: 1 回ビルドする
+        run: |
+          swift build --build-tests 2>&1 | tail -5
+          echo "build 済み: $(( $(date +%s) - T0 )) 秒" | tee -a "$RUNNER_TEMP/probe/out/summary.txt"
+
+      - name: 条件を走らせる
+        env:
+          MTL_DEBUG_LAYER: "1"
+          MTL_DEBUG_LAYER_WARNING_MODE: nslog
+        run: |
+          out="$RUNNER_TEMP/probe/out"
+          run() { # <ラベル> <条件> <期限秒> <swift test の追加引数…>
+            local label=$1 cond=$2 limit=$3; shift 3
+            [ ! -e "$out/yielded" ] || { echo "$label | $cond | 見送り (merge queue に譲った)" | tee -a "$out/summary.txt"; return 0; }
+            local remain=$(( T0 + 57*60 - $(date +%s) ))
+            if [ "$remain" -lt "$limit" ]; then
+              echo "$label | $cond | 見送り (期限まで ${remain}s で、1 回の期限 ${limit}s に足りない)" | tee -a "$out/summary.txt"
+              return 0
+            fi
+            python3 "$RUNNER_TEMP/probe/run_one.py" "$label" "$cond" "$limit" -- \
+              python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output ".build/probe-$label.xml" "$@" || true
+          }
+          core=( --filter MokumeCoreTests )
+          # 短い順に: C と D を交互に (5 回・3 回)
+          for i in 1 2 3 4 5; do
+            run "C$i" "C 窓+位相のみ" 300 --filter "SharedFrameStageTests|PhaseRuntimeTests"
+            if [ "$i" -le 3 ]; then run "D$i" "D 窓のみ(対照)" 300 --filter "SharedFrameStageTests"; fi
+          done
+          # Core 全体: A B A B … を期限の入る限り (1 回 13 分ほど・期限 17 分)
+          for i in 1 2 3; do
+            run "A$i" "A Core全体" 1020 "${core[@]}"
+            run "B$i" "B Core全体-Phase" 1020 "${core[@]}" --skip "PhaseRuntimeTests|PhaseFormulaTests"
+          done
+          echo "---"; cat "$out/summary.txt"
+          { echo "## probe-1527 の結果"; echo '```'; cat "$out/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: probe-1527
+          path: ${{ runner.temp }}/probe/out/
+          if-no-files-found: ignore
+          retention-days: 14
