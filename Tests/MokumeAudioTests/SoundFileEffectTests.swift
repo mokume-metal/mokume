@@ -637,6 +637,55 @@ struct SoundFileEffectTests {
         #expect(occupied.max() == 2, "置き場の数の最大 \(occupied.max() ?? 0)")
     }
 
+    @Test("足し直してすぐエフェクトへ通すときは、器を読み直さない (ファイルが消えていても知らせず、節が鳴らす)")
+    func reattachThenProcessDoesNotReadTheFileAgain() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var notices: [String] = []
+        var stage: SynthStage?
+        var song: SoundFile?
+        var filter: LowPass?
+        var occupied: [Int] = []
+        let runtime = try run(
+            frames: 12,
+            setup: { sketch in
+                let made = SynthStage.stage(for: sketch)
+                let loaded = try AudioFile.load(url, path: "ten.wav")
+                let file = SoundFile(
+                    name: "ten.wav", buffer: loaded, owner: sketch, flow: flow, source: url,
+                    warn: { notices.append($0) })
+                sketch.attach(file)
+                let low = LowPass(stage: made)
+                low.process(file)
+                file.loop()
+                stage = made
+                song = file
+                filter = low
+            },
+            draw: { sketch in
+                guard let stage, let song, let filter else { return }
+                occupied.append(stage.rack.occupiedCount)
+                switch sketch.frameCount {
+                case 3: sketch.detach(song)
+                case 8:
+                    // 外している間に消えたファイルは、読み直そうとすれば知らせが出る
+                    try? FileManager.default.removeItem(at: url)
+                    sketch.attach(song)
+                    filter.process(song)
+                    song.loop()
+                default: break
+                }
+            })
+        let said = runtime.blockingLoads.message(for: "play() or loop() on a SoundFile attached again")
+        let playing = song?.isPlaying
+        runtime.closePlugins()
+        #expect(notices.isEmpty, "通すだけなら読み直さない: \(notices)")
+        #expect(said == nil)
+        #expect(occupied.last == 2, "足し直して通した節が鳴っている: \(occupied)")
+        #expect(playing == true)
+    }
+
     @Test("鳴っている最中に通すとき、節を入力に選ぶ操作が、鳴らし始める操作より先に音の側へ届く")
     func theInputIsChosenBeforeTheNodeSounds() throws {
         let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
