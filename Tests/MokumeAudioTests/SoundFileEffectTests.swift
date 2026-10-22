@@ -344,6 +344,34 @@ struct SoundFileEffectTests {
         #expect(framedLate.file == framedPlain.file)
         // 通した後は、エフェクトの出口に音が出ている
         #expect(late.effect[30].level > 0)
+        // 通す前に直に鳴っていた音は止まり、聞こえるのはエフェクトの出口の音だけになる
+        let outlet = try #require(late.filter?.node).meter.latest(AudioAnalysis.windowSize)
+        let tail = Array(late.heard.left.suffix(AudioAnalysis.windowSize))
+        let worst = zip(tail, outlet).map { abs($0 - $1 * Self.center) }.max() ?? 1
+        #expect(worst < 1e-5, "通した後も、ファイルの音が直に聞こえている: \(worst)")
+    }
+
+    @Test("止めるとエフェクトの出口も無音になり、鳴らし直すと戻る (固定の時計でも実際に鳴らす流れでも)")
+    func pausingSilencesTheEffect() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let act: (SoundFile, Int) -> Void = { song, frame in
+            switch frame {
+            case 10: song.pause()
+            case 20: song.play()
+            case 30: song.stop()
+            default: break
+            }
+        }
+        let flows: [SoundFlow?] = [nil, try offline()]
+        for flow in flows {
+            let heard = try take(frames: 40, flow: flow, url: url, act: act)
+            let levels = heard.effect.map(\.level)
+            #expect(levels[5] > 0, "鳴っている間は出口に音がある")
+            #expect(levels[12..<20].allSatisfy { $0 == 0 }, "止めた間は無音: \(levels[12..<20])")
+            #expect(levels[24] > 0, "鳴らし直すと戻る")
+            #expect(levels[33...].allSatisfy { $0 == 0 }, "止めて頭へ戻すと無音")
+        }
     }
 
     @Test("固定の時計と実際に鳴らす流れで、ステージとファイルのどちらを先に作っても、エフェクトの出口は毎フレーム同じ")
