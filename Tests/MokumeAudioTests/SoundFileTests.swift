@@ -598,6 +598,118 @@ struct SoundFileTests {
         #expect(notices.first?.contains("not a number") == true)
     }
 
+    // MARK: - 外して足し直す (#3108)
+
+    /// 外して (`detach`) 足し直した (`attach`) ファイルを回し、各フレームの後に流れから描いた音を返す。
+    /// 4 フレーム目で外し、8 フレーム目で足し直して `loop()` する。
+    private func renderedAcrossReattach(
+        url: URL, viaLoadSound: Bool, source: URL?, notices: @escaping (String) -> Void = { _ in }
+    ) throws -> [[Float]] {
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var sound: SoundFile?
+        var heard: [[Float]] = []
+        let runtime = try run(
+            frames: 12,
+            setup: { sketch in
+                if viaLoadSound {
+                    sound = try sketch.loadSound(url.path, flow: flow)
+                } else {
+                    let loaded = try AudioFile.load(url, path: "chord.wav")
+                    let made = SoundFile(
+                        name: "chord.wav", buffer: loaded, owner: sketch, flow: flow, source: source,
+                        warn: notices)
+                    sketch.attach(made)
+                    sound = made
+                }
+                sound?.loop()
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                if sketch.frameCount == 4 { sketch.detach(sound) }
+                if sketch.frameCount == 8 {
+                    sketch.attach(sound)
+                    sound.loop()
+                }
+            },
+            between: { _ in heard.append(try render(flow, Self.perFrame)) })
+        runtime.closePlugins()
+        return heard
+    }
+
+    private func peak(_ frames: ArraySlice<[Float]>) -> Float {
+        frames.flatMap { $0 }.map { abs($0) }.max() ?? 0
+    }
+
+    @Test("外して足し直して loop() すると、最初と同じ出力で鳴り直し、「出力が開けない」と知らせない")
+    func reattachedFileIsHeardAgain() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for viaLoadSound in [true, false] {
+            var notices: [String] = []
+            let heard = try renderedAcrossReattach(
+                url: url, viaLoadSound: viaLoadSound, source: url, notices: { notices.append($0) })
+            #expect(heard.count == 12)
+            #expect(peak(heard[0..<3]) > 0.1, "最初は鳴る (viaLoadSound: \(viaLoadSound))")
+            #expect(peak(heard[4..<7]) == 0, "外している間は鳴らない (viaLoadSound: \(viaLoadSound))")
+            #expect(peak(heard[7..<12]) > 0.1, "足し直した後も鳴る (viaLoadSound: \(viaLoadSound))")
+            #expect(notices.isEmpty, "出力が開けるのに知らせた: \(notices)")
+        }
+    }
+
+    @Test("足し直しで音が鳴り直したとき、鳴った音は loop() が始めたファイルの頭からの音")
+    func reattachedFilePlaysFromTheTop() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let heard = try renderedAcrossReattach(url: url, viaLoadSound: true, source: url)
+        // 足し直したフレーム (8 フレーム目) の後に描いた音は、ファイルの頭 (loop() で頭から) の音
+        let again = heard[7...].flatMap { $0 }
+        let worst = zip(again, chord).map { abs($0 - $1) }.max() ?? 1
+        #expect(worst < 1e-6)
+    }
+
+    @Test("足し直すとき、読み込んだ場所が読み直せなければ、鳴らさずに実時間で位置を進め、そのことを 1 度だけ知らせる")
+    func reattachWithoutReadableSourceFallsBackToTheClock() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let gone = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-gone-\(UUID().uuidString).wav")
+        for source in [nil, gone] as [URL?] {
+            var notices: [String] = []
+            let heard = try renderedAcrossReattach(
+                url: url, viaLoadSound: false, source: source, notices: { notices.append($0) })
+            #expect(peak(heard[7..<12]) == 0, "器が戻せなければ鳴らさない")
+            #expect(notices.count == 1, "1 度だけ知らせる: \(notices)")
+            #expect(notices.first?.contains("could not be read again") == true, "\(notices)")
+        }
+    }
+
+    @Test("書き出し (固定の時計) では、外して足し直しても位置が同じで、知らせない")
+    func reattachInExportKeepsThePosition() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var sound: SoundFile?
+        var positions: [Int] = []
+        let runtime = try run(
+            frames: 11,
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path)
+                sound?.loop()
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                positions.append(sound.samplePosition)
+                if sketch.frameCount == 4 { sketch.detach(sound) }
+                if sketch.frameCount == 8 {
+                    sketch.attach(sound)
+                    sound.loop()
+                }
+            })
+        runtime.closePlugins()
+        #expect(positions[0..<4] == [0, 800, 1600, 2400])
+        // 足し直して頭から数え直した位置は、最初に鳴らし始めたときと同じ進み方
+        #expect(positions[8..<11] == [800, 1600, 2400])
+    }
+
     // MARK: - 作れないとき
 
     @Test("見つからない・読めない・対応外の形式・長さ 0 は、作るときに型のついた失敗で投げる")

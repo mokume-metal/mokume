@@ -124,8 +124,11 @@ public final class SoundFile: Inlet, EffectInput {
 
     /// 解析に使う標本列 (チャンネルを平均したモノラル)。
     let samples: [Float]
-    /// 読み込んだ器。鳴らすときに player へ渡し、鳴らさないと決まったら手放す。
+    /// 読み込んだ器。鳴らすときに player へ渡し、鳴らさないと決まったら手放す。手放した後に足し直して
+    /// 鳴らすときは、``source`` から読み直す (外している間、標本の写しを持ち続けない)。
     private var buffer: AVAudioPCMBuffer?
+    /// 読み込んだファイルの場所。足し直して鳴らすとき、手放した器を読み直すのに使う。
+    private let source: URL?
     /// 渡された名前。知らせに載せる。
     private let name: String
     private weak var owner: (any Sketch)?
@@ -228,6 +231,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// 1 度だけ言う知らせ。
     private enum Notice: Hashable {
         case noOutput
+        case cannotReload
         case volumeOutOfRange
         case volumeNotANumber
         case jumpNotANumber
@@ -238,6 +242,7 @@ public final class SoundFile: Inlet, EffectInput {
 
     init(
         name: String, buffer: AVAudioPCMBuffer, owner: (any Sketch)?, flow: SoundFlow?,
+        source: URL? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
@@ -247,6 +252,7 @@ public final class SoundFile: Inlet, EffectInput {
         self.sampleRate = Float(buffer.format.sampleRate)
         self.owner = owner
         self.injectedFlow = flow
+        self.source = source
         self.now = now
         self.warn = warn
         playhead = Playhead(length: samples.count)
@@ -578,8 +584,18 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     /// 実際に鳴らす。出力が開けなければ、鳴らさずに実時間で進める。
+    ///
+    /// 器は最初に開いたときに手放しているので、足し直したときは ``source`` から読み直す。
     private func speak(through flow: SoundFlow) {
-        if let buffer, let player = FilePlayer(flow: flow, buffer: buffer) {
+        guard let buffer = buffer ?? reloadBuffer() else {
+            pace = .realTime(origin: now())
+            notice(
+                .cannotReload,
+                "\"\(name)\" could not be read again when it was attached back, so it is not heard. "
+                    + "Its position still follows the clock, and its analysis keeps working")
+            return
+        }
+        if let player = FilePlayer(flow: flow, buffer: buffer) {
             player.volume = volume
             pace = .speaker(player)
             return
@@ -589,6 +605,16 @@ public final class SoundFile: Inlet, EffectInput {
             .noOutput,
             "No audio output could be opened, so \"\(name)\" is not heard. Its position still "
                 + "follows the clock, and its analysis keeps working")
+    }
+
+    /// 手放した器を、読み込んだファイルから読み直す。場所が無い・読めない・読み込んだときと標本の数が
+    /// 違う (ファイルが差し替わった) ときは `nil`。
+    private func reloadBuffer() -> AVAudioPCMBuffer? {
+        guard let source,
+            let reloaded = try? AudioFile.load(source, path: name),
+            Int(reloaded.frameLength) == samples.count
+        else { return nil }
+        return reloaded
     }
 
     /// いまの区切りの中で鳴った標本の数。

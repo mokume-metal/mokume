@@ -38,7 +38,8 @@ extension Sketch {
     /// 位置の音を解析するので、何度書き出しても同じ絵になる。
     ///
     /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作るときに 1 度だけで、
-    /// 全体を手元に持つ。呼んだだけでは鳴らず、許可も要らない。
+    /// 全体を手元に持つ (``SketchPart/detach(_:)-(Inlet)`` で外して足し直し、窓に出して鳴らし直すときだけ、
+    /// ファイルをもう 1 度読む)。呼んだだけでは鳴らず、許可も要らない。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
@@ -62,8 +63,9 @@ extension Sketch {
     func loadSound(_ file: String, flow: SoundFlow?) throws(AudioFailure) -> SoundFile {
         // 足せない所なら、ファイルを読む前に断る (#2740)。名乗るのは利用者が呼ぶ口
         try requireAttachable(AudioFailure.self, calledAs: "loadSound(_:)")
-        let buffer = try AudioFile.load(audioURL(file), path: file)
-        let sound = SoundFile(name: file, buffer: buffer, owner: self, flow: flow)
+        let url = try audioURL(file)
+        let buffer = try AudioFile.load(url, path: file)
+        let sound = SoundFile(name: file, buffer: buffer, owner: self, flow: flow, source: url)
         attach(sound)
         return sound
     }
