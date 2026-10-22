@@ -95,7 +95,7 @@ job_section() { # $1=見出し $2=結論 $3=記録 $4=test-log $5=台帳の絵�
       if [ "$2" = failure ]; then
         case "$form" in
           missing | unreadable)
-            printf '\n落ちて記録が無いか読めないのは、検査が記録を書く前に止まったときである — ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた (#1526)。下の「検査の出力」と run の画面で、どちらかを読む。消えた回は test-log に「検査のプロセスが要約を残さずに終わった」と出て、debug なら材料が artifact `scheduled-debug-record` の `test-vanished/` に上がる\n'
+            printf '\n落ちて記録が無いか読めないのは、検査が記録を書く前に止まったときである — ビルドかジョブの開始で落ちたか、検査のプロセスが記録を残さずに消えた (#1526)。**専用機で前検査が `gpu-slot:` で赤になった回も、検査は起こされず記録が無い** — gpu-slot の期限切れの記録 (`wait-expired.json`) が残っていると、人が確かめて消すまで止まる (#2235)。下の「検査の出力」と run の画面 (前検査の出力に `gpu-slot:` があるか) で、どれかを読む。消えた回は test-log に「検査のプロセスが要約を残さずに終わった」と出て、debug なら材料が artifact `scheduled-debug-record` の `test-vanished/` に上がる\n'
             ;;
         esac
       fi
@@ -157,4 +157,5 @@ bash "$here/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$log" \
   --body-file "$body" \
+  --key-file "$body" \
   --source '.github/workflows/render.yml の scheduled-report が自動起票した (#1983)'

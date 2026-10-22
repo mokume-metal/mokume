@@ -213,7 +213,8 @@ extension SketchPart {
     ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
-    ///   `preserveAspectRatio` が効く
+    ///   `preserveAspectRatio` が効く (`preserveAspectRatio` の値は SVG のとおり大文字小文字を区別し、
+    ///   `XMINYMID` のような綴りは読めない値として知らせ、書いていないとき (`xMidYMid meet`) と同じに写す)
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`
@@ -230,6 +231,21 @@ extension SketchPart {
     /// 1 度、何を何回・最初に出た行を添えて知らせる。** 描ける部分は描く — 字が 1 つ混ざって
     /// いるだけで、ロゴ全体が読めなくなることはない。塗りが `url(#a) red` のように代わりの色を
     /// 持っていれば、その色で塗る。
+    ///
+    /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
+    /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
+    /// `ellipse` の `cx` / `cy` / `rx` / `ry`・`path` の `d`・入れ子の `<svg>` の `x` / `y`) は、属性の値で描き、
+    /// `CSS property "width"` の形で知らせる。CSS の変換 (`transform`・`translate`・`rotate`・`scale`) は掛けずに
+    /// 知らせ、`transform` 属性を掛ける要素の `transform-origin` / `transform-box` (属性でも CSS でも) と、
+    /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
+    /// 知らせない。
+    ///
+    /// CSS の全体キーワード (`inherit`・`initial`・`unset`・`revert`・`revert-layer`) は、勝てば、属性・`style` 属性・
+    /// `<style>` のどこに書いても CSS のとおり効く。`initial` は性質の初めの値 (`fill` なら黒)、`unset` は受け継ぐ
+    /// 性質なら親の値・そうでなければ初めの値で、`revert`・`revert-layer` は `unset` と同じに読む (SVG には UA の
+    /// 値も層も無い)。`marker-start` などは、SVG では受け継ぐ性質だが、描けない効果として要素ごとに数えるので受け
+    /// 継がない側に置く。形の長さの属性では、`auto` を取る口 (`width`・`rx` など) は `auto`、取らない口
+    /// (`x`・`cx`・`r` など) は 0 と読む。
     ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///
@@ -301,6 +317,10 @@ extension SketchPart {
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
     /// そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
+    /// 後に届いても落ちず、形はそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。
+    ///
     /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
@@ -308,6 +328,8 @@ extension SketchPart {
     /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。ただし走っていないときは、ファイルを
     ///   読む前に投げる。走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`)
     ///   で呼ぶと ``DataFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try Self.loadingCanvas(DataFailure.self)

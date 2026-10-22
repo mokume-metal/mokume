@@ -87,6 +87,9 @@ enum BundleCommand {
         let identity = try AppIdentity.read(in: directory)
         // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
         try DeviceUse.check(in: directory, identity: identity)
+        // **作り直す先が自分の出力でなければ、ビルドの前に止まる** (#2500)。消せないと分かるのは
+        // 数分のビルドの後ではなく、いまでよい
+        _ = try replaceableApp(for: identity, in: out)
 
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
@@ -111,11 +114,36 @@ enum BundleCommand {
             executable: executable, identity: identity,
             minimumSystemVersion: declared?.minimumMacOSVersion ?? defaultMinimumSystemVersion,
             into: out)
-        try check(app, contains: declared?.declaredResourceBundles ?? [])
         let signature = signIdentity(environment: ProcessInfo.processInfo.environment)
-        try sign(app, as: signature, entitlements: identity.entitlements)
-        let note = try writeOpeningNote(for: identity, beside: app)
+        let note = try finish(
+            app, identity: identity, bundles: declared?.declaredResourceBundles ?? []
+        ) { app throws(CommandFailure) in
+            try sign(app, as: signature, entitlements: identity.entitlements)
+        }
         print(report(for: app, package: directory, note: note, signedAs: signature))
+    }
+
+    /// 組み上がった包みの仕上げ。**手順の順序をここ 1 か所で持つ** — 資材の検め → 開き方の紙 → 署名。
+    ///
+    /// **紙は署名の前に書く** ([#2773](https://github.com/mokume-metal/mokume/issues/2773))。
+    /// 紙は `.app` の隣にあって署名の対象ではないので、先に書いても代償は無い。逆にすると、
+    /// 紙が書けない理由 (行き先が同じ名前のディレクトリ・書けない置き場など) で止まる回に、
+    /// 署名済みの (`codesign --verify` が通る) `.app` が残る。先に書けば、そうした回は署名の段に
+    /// 進む前に同じ失敗で終わる。組み立て途中の `.app` を消す約束は、資材の欠けで止まる回と同じく
+    /// ここでも作らない。
+    ///
+    /// - Parameters:
+    ///   - bundles: 宣言された資材の包み。
+    ///   - signing: 署名の段。**検査が、ビルドも `codesign` も起こさずに順序を見るために外から渡せる形にしてある。**
+    /// - Returns: 書いた紙の場所。
+    static func finish(
+        _ app: URL, identity: AppIdentity, bundles: [String],
+        signing: (URL) throws(CommandFailure) -> Void
+    ) throws(CommandFailure) -> URL {
+        try check(app, contains: bundles)
+        let note = try writeOpeningNote(for: identity, beside: app)
+        try signing(app)
+        return note
     }
 
     // MARK: - 引数
@@ -147,40 +175,24 @@ enum BundleCommand {
     /// **作り直しは消してから。** 前の版の資材が残ると、消したはずのものが配られる —
     /// しかも手元では動くので気付けない。
     ///
-    /// **消してよいのは、`--out` の直下にある `<name>.app` だけである** (そこに在るものを前の版の
-    /// 自分の出力とみなす。中身が自分のものかまでは確かめない)。名前から作った場所がそこを
-    /// 外れていたら、何も消さずに投げる。名前の `/` は名乗りを読む段
-    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに
-    /// 組んだ `AppIdentity` でも `--out` の外を消さない。`..` を含む名前で `--out` の外にある
-    /// `.app` を中身ごと消していた ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// **消してよいのは、`--out` の直下にある、前の版の自分の `.app` だけである** (#2309・#2500)。
+    /// 場所は ``replaceableApp(for:in:)`` が、中身は ``isOwnOutput(_:identity:)`` が確かめ、
+    /// どちらかが外れたら何も消さずに投げる。
     static func assemble(
         executable: URL, identity: AppIdentity, minimumSystemVersion: String, into out: URL
     ) throws(CommandFailure) -> URL {
-        let fileName = "\(identity.name).app"
-        let app = out.appendingPathComponent(fileName, isDirectory: true)
-        // 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれるので外れる)、親が `--out`
-        guard app.lastPathComponent == fileName,
-            app.deletingLastPathComponent().standardizedFileURL.path
-                == out.standardizedFileURL.path
-        else {
-            throw .cannotCreate(
-                path: app.path,
-                reason: "It would not sit directly inside \(out.path), so nothing was removed"
-                    + " or written. The name must not contain \"/\"")
-        }
+        let app = try replaceableApp(for: identity, in: out)
         let contents = app.appendingPathComponent("Contents", isDirectory: true)
         let programs = contents.appendingPathComponent("MacOS", isDirectory: true)
         let resources = contents.appendingPathComponent("Resources", isDirectory: true)
 
-        try? FileManager.default.removeItem(at: app)
+        try retire(app, in: out, name: identity.name)
         try create(programs)
         try create(resources)
 
-        try copy(executable, to: programs.appendingPathComponent(executable.lastPathComponent))
-        for bundle in resourceBundles(besides: executable) {
-            try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
-        }
-
+        // **`Info.plist` を先に書く。** 印 (``AppIdentity/bundledMarkKey``) が入っているので、組み立ての
+        // 途中で止まって残った `.app` も、次の回に自分の出力と確かめられて作り直せる (後に書くと、
+        // 途中の `.app` は印を持たず、手で消すまで先へ進めない)
         let plist = identity.infoPlist(
             executable: executable.lastPathComponent,
             minimumSystemVersion: minimumSystemVersion)
@@ -198,7 +210,121 @@ enum BundleCommand {
                 path: contents.appendingPathComponent("Info.plist").path,
                 reason: Diagnostics.failureText(error))
         }
+
+        try copy(executable, to: programs.appendingPathComponent(executable.lastPathComponent))
+        for bundle in resourceBundles(besides: executable) {
+            try copy(bundle, to: resources.appendingPathComponent(bundle.lastPathComponent))
+        }
         return app
+    }
+
+    /// 作る `<name>.app` の場所。**消してよいと確かめられたときだけ返し、そうでなければ何も消さずに
+    /// 投げる** (``assemble(executable:identity:minimumSystemVersion:into:)`` とビルドの前の `run`
+    /// が同じ判定を使う)。
+    ///
+    /// 確かめることは 2 つ。**場所**: 最後の部品が名前そのもので (`a/../b` は `b.app` に畳まれる
+    /// ので外れる)、親が `--out` であること。名前の `/` は名乗りを読む段
+    /// (``AppIdentity/make(from:path:)``) が断るが、ここはそれに頼らない — 名乗りを通らずに組んだ
+    /// `AppIdentity` でも `--out` の外を消さない ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
+    /// **中身**: そこに既に在るものが、mokume の出力と確かめられること
+    /// (``isOwnOutput(_:identity:)``)。何も無ければ消すものも無い。
+    static func replaceableApp(for identity: AppIdentity, in out: URL) throws(CommandFailure) -> URL {
+        let fileName = "\(identity.name).app"
+        let app = out.appendingPathComponent(fileName, isDirectory: true)
+        guard app.lastPathComponent == fileName,
+            app.deletingLastPathComponent().standardizedFileURL.path
+                == out.standardizedFileURL.path
+        else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It would not sit directly inside \(out.path), so nothing was removed"
+                    + " or written. The name must not contain \"/\"")
+        }
+        // 何も無ければ消すものも無い。**シンボリックリンクは在るものとして数える** (壊れたものも)
+        guard kind(of: app) != nil else { return app }
+        guard isOwnOutput(app, identity: identity) else {
+            throw .cannotCreate(
+                path: app.path,
+                reason: "It could not be confirmed as something mokume bundled, so nothing was"
+                    + " removed or written. If you do not need it, remove it by hand and run this again")
+        }
+        return app
+    }
+
+    /// `Info.plist` を読んでよい大きさの上限 (バイト)。他人の `.app` の中を、確かめるために読むので、
+    /// 読む前に大きさで断る (普通の `Info.plist` は数 KB)。
+    static let infoPlistReadLimit = 1_048_576
+
+    /// 既にある `<name>.app` が、前の版の自分の出力と確かめられるか。
+    ///
+    /// **まず形を見る。** `<name>.app`・`Contents` は実体のディレクトリ、`Contents/Info.plist` は普通の
+    /// ファイルで ``infoPlistReadLimit`` 以下であること。**シンボリックリンクは、生きていても壊れていても
+    /// 確かめられない側に倒す** — リンクの先の `Info.plist` を読んで「自分のもの」と判定すると、利用者が
+    /// 張った別の場所の `.app` へのリンクを外してしまう (#2500)。形が外れるものは読まずに断る。
+    ///
+    /// **形が合えば `Info.plist` を読んで、2 つのどちらかを見る。** 1 つ目は mokume だけが書く印
+    /// (``AppIdentity/bundledMarkKey``) で、識別子を変えた作り直しもこれで通る。2 つ目は
+    /// この変更より前に束ねたもの (印が無い) のための、`CFBundleIdentifier` が今の名乗りと同じこと。
+    /// どちらでもなければ消さない。
+    ///
+    /// **印が示すのは「mokume の出力」までである。** 別の作品が同じ `--out` に同じ名前で束ねた
+    /// `.app` も作り直しの対象になる (名前の衝突として受け入れる)。
+    static func isOwnOutput(_ app: URL, identity: AppIdentity) -> Bool {
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        let info = contents.appendingPathComponent("Info.plist")
+        guard kind(of: app) == .typeDirectory, kind(of: contents) == .typeDirectory,
+            kind(of: info) == .typeRegular,
+            let attributes = try? FileManager.default.attributesOfItem(atPath: info.path),
+            let size = (attributes[.size] as? NSNumber)?.intValue, size <= infoPlistReadLimit,
+            let data = try? Data(contentsOf: info),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: Any]
+        else { return false }
+        if plist[AppIdentity.bundledMarkKey] as? Bool == true { return true }
+        return plist["CFBundleIdentifier"] as? String == identity.identifier
+    }
+
+    /// `url` 自身の種類。**リンクは辿らない** (`lstat`)。無ければ `nil`。
+    private static func kind(of url: URL) -> FileAttributeType? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return attributes?[.type] as? FileAttributeType
+    }
+
+    // MARK: - 前の出力を退ける
+
+    /// 前の出力を消す一時の名前の形 (`.<name>.app.removing-<UUID>`)。名前の前後を固定する。
+    private static func retiringPrefix(_ name: String) -> String { ".\(name).app.removing-" }
+
+    /// 消し損ねた一時の名前か。**消してよいのは、この名前のこの形のものだけ** (`<UUID>` が UUID として
+    /// 読めるもの)。ほかの `.` から始まるものや、ほかの作品の一時の名前には触れない。
+    static func isRetiredRemnant(_ fileName: String, name: String) -> Bool {
+        let prefix = retiringPrefix(name)
+        guard fileName.hasPrefix(prefix) else { return false }
+        return UUID(uuidString: String(fileName.dropFirst(prefix.count))) != nil
+    }
+
+    /// 前の `<name>.app` を退ける。**`<name>.app` の場所に半端なものを残さない** (#2500)。
+    ///
+    /// 直接消すと、途中で止まった (Ctrl-C・kill・消せないものがある) とき `Info.plist` だけが先に
+    /// 消えて他が残ることがあり、次の回に自分の出力と確かめられず断られる。だから `--out` の中の
+    /// 一時の名前へ**先に rename し** (同じ場所での rename は 1 手で、半端が出ない)、それから消す。
+    /// rename に失敗したら黙らずに投げる (`<name>.app` は元のまま)。一時の名前の中身を消し損ねても、
+    /// 新しい `<name>.app` は作れるので投げず、残ったものは次の回に ``isRetiredRemnant(_:name:)`` の形
+    /// のものだけ先に消す。
+    private static func retire(_ app: URL, in out: URL, name: String) throws(CommandFailure) {
+        let listing = (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? []
+        for entry in listing where isRetiredRemnant(entry, name: name) {
+            try? FileManager.default.removeItem(at: out.appendingPathComponent(entry))
+        }
+        guard kind(of: app) != nil else { return }
+        let retiring = out.appendingPathComponent(
+            "\(retiringPrefix(name))\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.moveItem(at: app, to: retiring)
+        } catch {
+            throw .cannotCreate(path: app.path, reason: Diagnostics.failureText(error))
+        }
+        try? FileManager.default.removeItem(at: retiring)
     }
 
     /// 実行ファイルの隣に並んだ資材の包み。

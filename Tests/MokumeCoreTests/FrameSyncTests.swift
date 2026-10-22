@@ -201,8 +201,10 @@ struct FrameSyncTests {
         #expect(!image.needsUpload, "描き切りの後も送り直しの旗が立っている")
     }
 
-    @Test("字形を焼く口は、焼く直前に待つ")
-    func glyphBakingWaitsBeforeReplacing() throws {
+    /// 字形を焼く口は、以前は焼く直前に投入済みの全部を待っていた (#934)。#1792 で画像と同じ形に移した —
+    /// 焼いた画素は控えに積み、描き切りが GPU 側のコピーで届ける。
+    @Test("字形を焼く口は待たず、描き切りが届ける")
+    func glyphBakingDoesNotWait() throws {
         let bench = try makeBench(width: 64, height: 64)
         defer { bench.leaveIdle() }
         let canvas = bench.canvas
@@ -210,13 +212,15 @@ struct FrameSyncTests {
         try canvas.draw { bench.keepGPUBusy() }
         try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない")
 
-        var idleAfterBaking = false
+        var idleAfterBaking = true
+        let before = bench.gpu.settleCalls
         try canvas.draw {
             // 初めて出る字形なので、ここで焼く
             canvas.text("A", 8, 40)
             idleAfterBaking = bench.gpu.isIdle
         }
-        #expect(idleAfterBaking, "字形を焼いた時点で、前のフレームの GPU が終わっていない")
+        #expect(!idleAfterBaking, "字形を焼いた時点で、前のフレームの GPU が終わっている — 焼く口が待っている")
+        #expect(bench.gpu.settleCalls == before, "字形を焼く口が待ちを頼んでいる")
     }
 
     @Test("前のフレームの GPU が読んでいる置き場を、次のフレームの CPU が書き換えない")

@@ -34,6 +34,7 @@ extension CanvasTests {
             style.strokeWeight = 3
             style.strokeCap = .square
             style.strokeJoin = .bevel
+            style.strokeDash = StrokeDash(length: 4, gap: 2)
             style.hasFill = false
             style.hasStroke = false
             style.rectMode = .center
@@ -547,7 +548,7 @@ extension CanvasTests {
                 "computeEncodersOpened": count, "computeEncodersClosed": count,
                 "earlySubmissionsAttempted": count,
                 "earlySubmissionFailedFrame": "面をまたぐ順のための早い投入に失敗したときのフレーム番号 (#1870)。番号どうしで比べるので、境目で戻す手は要らない (閉じ忘れを捨てる道も番号を進める)",
-                "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+                "computeBarriersEncoded": count, "uploadBarriersEncoded": count, "uploadWaitsEncoded": count,
                 "lastComputeBarrierQueueStages": "最後に積んだ投入の最後の口が待たせる段 (#1687)。積むたびに上書きし、検査が読む。境目で戻す手は要らない",
                 "glyphQuadsPlaced": count, "drawCallsInLastFrame": count, "drawsEncodedInLastFrame": count,
                 "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
@@ -625,7 +626,7 @@ extension CanvasTests {
 
         /// ``Canvas/Style`` のうち、越えるフィールド。どれも描き方である (ADR-0021 決定 4)。
         private let carriedStyle: Set<String> = [
-            "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "hasFill", "hasStroke",
+            "fill", "stroke", "strokeWeight", "strokeCap", "strokeJoin", "strokeDash", "hasFill", "hasStroke",
             "rectMode", "ellipseMode", "blendMode", "fontSelection", "textSize", "textFace",
             "horizontalTextAlign", "verticalTextAlign", "textLeading", "textWrap", "imageMode",
             "tint", "picture", "gradient",

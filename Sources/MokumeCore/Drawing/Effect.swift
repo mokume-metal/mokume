@@ -25,6 +25,9 @@ import simd
 /// - **`amount` は 0…1 の外なら端へ締める。** 1 を越えれば 1 と同じ絵で、負なら効かない
 /// - `radius` は 131072 画素 (面の辺の上限の 8 倍) まで。それより大きくしても絵は
 ///   変わらない
+/// - **締めたときは、効果・量・範囲・渡した値・使った値を 1 度だけ警告する**
+///   (`invert(amount: 3)` は「amount は 0…1 だが 3.0 が渡された。1 を使った」)。説明に書いた
+///   範囲でも言う — 書いた値と違う値が効いたことを知る手段が、他に無いため
 ///
 /// **散文の約束にしていない。** 全部の組み込みの効果について「無効の値なら絵が
 /// 1 ビットも変わらない」を検査が見ている。
@@ -185,12 +188,15 @@ extension Effect {
     /// - `threshold` と ``adjust(brightness:contrast:saturation:)`` の 3 つは範囲を決めて
     ///   いないので、締めない
     ///
-    /// **締めるときは言わない** (#1478 の不透明度と同じ)。説明どおりの扱いで、失われる
-    /// 意図が無い。
+    /// **締めたときは言う** ([#1842]・[ADR-0020] 決定 5)。説明に範囲と締め方を書いていても、書いた値と
+    /// 違う値が効いたことを利用者が知る手段が他に無い。何を締めたかは `roundings` が返し、
+    /// ``Canvas/effects(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
+    /// 負の `radius`) は言わない。
     ///
     /// 利用者の効果 (``custom(_:)``) は数を持たないので、そのまま通す。
     ///
     /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     var accepted: Effect? {
         switch self {
@@ -219,6 +225,51 @@ extension Effect {
             return self
         case .custom:
             return self
+        }
+    }
+
+    /// ``accepted`` が締める値を 1 つ。``Canvas/effects(_:)`` が初回だけ言うために読む ([#1842])。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    struct Rounding {
+        /// 注意の鍵。効果と量ごとに分ける。
+        var warning: Canvas.Warning
+        /// 文面に入る量の名前 (`the invert amount`)。
+        var quantity: String
+        /// 受け取れる範囲の文面。
+        var range: String
+        var passed: Float
+        var used: Int
+    }
+
+    /// ``accepted`` が締める値のうち、いま範囲の外にあるもの。**数でない値・無限を持つ効果は空**
+    /// (その効果は外すので、締める値が無い)。範囲の中の値・締めない量は含めない。
+    var roundings: [Rounding] {
+        func amount(_ warning: Canvas.Warning, _ effect: String, _ value: Float) -> Rounding? {
+            guard value.isFinite, value < 0 || value > 1 else { return nil }
+            return Rounding(
+                warning: warning, quantity: "the \(effect) amount", range: "0 to 1", passed: value,
+                used: value < 0 ? 0 : 1)
+        }
+        func radius(_ warning: Canvas.Warning, _ effect: String, _ value: Float) -> Rounding? {
+            guard value.isFinite, value > Self.maxRadius else { return nil }
+            return Rounding(
+                warning: warning, quantity: "the \(effect) radius", range: "up to \(Int(Self.maxRadius))",
+                passed: value, used: Int(Self.maxRadius))
+        }
+        switch self {
+        case .blur(let value):
+            return [radius(.roundedBlurRadius, "blur", value)].compactMap { $0 }
+        case .bloom(let value, let threshold, let reach):
+            guard threshold.isFinite else { return [] }
+            return [amount(.roundedBloomAmount, "bloom", value), radius(.roundedBloomRadius, "bloom", reach)]
+                .compactMap { $0 }
+        case .invert(let value): return [amount(.roundedInvertAmount, "invert", value)].compactMap { $0 }
+        case .monochrome(let value):
+            return [amount(.roundedMonochromeAmount, "monochrome", value)].compactMap { $0 }
+        case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", value)].compactMap { $0 }
+        case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", value)].compactMap { $0 }
+        case .adjust, .custom: return []
         }
     }
 

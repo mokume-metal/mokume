@@ -95,6 +95,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let frames: [UInt32: Frame]
         /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
         let windowScale: Float?
+        /// 目録を置いた子の番号。**名乗らない子 (古いライブラリ) なら `nil`** (#2982)。
+        let pid: Int32?
     }
 
     private let gpu: RenderDevice
@@ -168,16 +170,23 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
     /// の仕事で、この台は絵の出口しか知らない。
-    var onGenerationPromoted: (() -> Void)?
+    ///
+    /// **引数は、乗り換えた世代の目録が名乗った子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。受け取る側は、番号があれば待っている世代のものかを照合する。
+    var onGenerationPromoted: ((Int32?) -> Void)?
     /// 控えた世代の絵を、この台が受け取れないことの知らせ ([#2928])。
     ///
     /// **乗り換えの知らせが来ない形のうち、道具だけが知る 2 つ** (``UndeliverableGeneration``)。
     /// 子は自分の目録が読まれないことも、面が引けないことも知らないので、子からの申告は届かない。
     /// **知らせるだけで、前の世代を畳むのはここではない** (``onGenerationPromoted`` と同じ分担)。
-    /// どの世代の知らせかは目録が印を持たないので、受け取る側が「乗り換えを待っている世代」だけを見る。
+    /// どの世代の知らせかは、目録が番号を名乗れば照合できる (下の引数)。名乗らなければ、受け取る側が
+    /// 「乗り換えを待っている世代」だけを見る。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
-    var onGenerationUndeliverable: ((UndeliverableGeneration) -> Void)?
+    ///
+    /// **2 つ目の引数は、読めた目録が名乗った子の番号** (#2982)。読めない目録の知らせ・番号を名乗らない
+    /// 子の目録では `nil`。
+    var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)?
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ ([#2875])。
     ///
     /// **入れ替わりの知らせとは別に持つ。** 最初の世代は絵が来る前に採用されるので
@@ -304,6 +313,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
+        //
+        // **渡す `InputState` は溜め置きでしかない** ([#2777])。出来事は `relay` の線で子へ渡り、
+        // こちらの状態は誰も流し込まない (`beginFrame` を呼ぶ者が居ない)。上限 (4096 件) に達すると
+        // 最も古い 1 件を溢れの経路で当て、その和が収まらなければ `Dropped the input event` と警告
+        // しうるが、それは 4096 件前の出来事についてで、子へ届いた出来事を指さない
+        //
+        // [#2777]: https://github.com/mokume-metal/mokume/issues/2777
         let view = SketchSurface(
             frame: NSRect(origin: .zero, size: window.contentLayoutRect.size),
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
@@ -431,9 +447,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastSeenFrame = newest.frame
         // `newest` を返した面は握っているので、引き直さない (#2368)
         guard let surface = lookup.surface(newest.id) else { return }
-        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
-        pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
-        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む。**手放した世代の面からは
+        // 読まない** — 畳まれる世代の最後の数枚で頼みが戻る (#2983)
+        if !isReleased(source) {
+            pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
+            cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        }
         guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }
@@ -480,13 +499,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             // 頼みは下ろす (``releaseInheritedRequests()``)
             view?.setCanvasSize((manifest.width, manifest.height))
             releaseInheritedRequests()
-            onGenerationUndeliverable?(anyLookedUp ? .unusableSurface : .noSurface)
+            onGenerationUndeliverable?(anyLookedUp ? .unusableSurface : .noSurface, manifest.pid)
             return
         }
         incoming = Source(
             ids: manifest.ids, lookup: SharedFrameSurface.Lookup(ids: manifest.ids),
             width: manifest.width, height: manifest.height, frames: frames,
-            windowScale: manifest.windowScale)
+            windowScale: manifest.windowScale, pid: manifest.pid)
     }
 
     /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
@@ -507,6 +526,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
         source = waiting
         incoming = nil
+        // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
+        // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
+        if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
+        relinquishedLegacyIDs = nil
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -519,7 +542,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastFrame = 0
         lastSeenFrame = 0
         shownCurrentGeneration = false
-        onGenerationPromoted?()
+        onGenerationPromoted?(waiting.pid)
     }
 
     /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
@@ -566,12 +589,64 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **新しい世代の絵を受け取れないと知ったとき**に呼ぶ。見張りがその世代へ乗り換えたとみなして
     /// 前の世代を畳むと、前の世代はもう絵を書かないので、頼みを読み直す契機 (``readNumbers(from:in:)``
     /// は新しい枚数のときだけ読む) が来ず、窓はカーソルを捕まえたまま・隠したままになる。
-    /// 畳まれなかった (前の世代が生きて書き続ける) ときは、次の枚数で読み直されて戻る。
+    ///
+    /// **写しを空にするだけでは足りない** ([#2983])。止めるまでに前の世代が書く 1 枚 (止まらない子は
+    /// 数秒書き続ける) で、同じ面から頼みを読み直して戻る。だから**手放した世代の面を覚え**
+    /// (``relinquishedPIDs``・``relinquishedLegacyIDs``)、その世代からは次に乗り換えるまで頼みを読まない。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
     private func releaseInheritedRequests() {
         pointerLockRequested = false
         cursorHiddenRequested = false
+        // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
+        if let pid = source?.pid {
+            relinquishedPIDs.insert(pid)
+        } else {
+            relinquishedLegacyIDs = source?.ids
+        }
+    }
+
+    /// 番号を名乗らない世代 (古いライブラリ) の、頼みを手放した面の番号。**その世代が出している間は、頼みを
+    /// 読まない。** 面の番号は再利用されうるので、**乗り換えで捨てる** (``promoteIfReady()``)。
+    private var relinquishedLegacyIDs: [UInt32]?
+    /// 見張りが手放した世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// **まだ採っていない目録も、この番号を名乗れば生まれたときから手放した扱いにする** — 離脱の知らせが
+    /// 台の拍より先に来ると、台は死んだ子 (1 枚書いてすぐ死んだ) へ乗り換えてその頼みを読む。別の番号の
+    /// 世代へ乗り換えたら捨てる (番号の使い回しで、無関係な世代を手放したことにしない)。
+    private var relinquishedPIDs: Set<Int32> = []
+
+    /// この世代の頼みを読まないか。
+    private func isReleased(_ generation: Source?) -> Bool {
+        guard let generation else { return false }
+        if let pid = generation.pid { return relinquishedPIDs.contains(pid) }
+        return relinquishedLegacyIDs == generation.ids
+    }
+
+    /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
+    /// 次の乗り換えまで読まない。**
+    ///
+    /// 受け取れない知らせ (``releaseInheritedRequests()``) の経路は台が自分で気付いたが、次の 3 つは
+    /// 台を通らない: 作り直した子が窓へ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
+    /// 映っている世代を畳んだ回。どれも畳まれた世代はもう絵を書かず、頼みを読み直す契機
+    /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、窓がカーソルを捕まえたまま・
+    /// 隠したままになる。**最後の絵と入力の写しの寸法は残す** (ADR-0032 決定 6)。寸法を変える材料
+    /// (新しい子の目録) が、この口には無い。
+    ///
+    /// **生きて書き続ける世代へ誤って当たると、その世代は次の乗り換えまで頼めない** — 捕まえは押し直す
+    /// まで戻らない (``SketchSurface/followPointerLock(requested:)``)。呼ぶのは、見張りが畳む・居なくなったと
+    /// 決めた世代についてだけである。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    ///
+    /// **`pids` は手放す世代の子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 映している世代の目録が番号を名乗れば、手放す世代のときだけ下ろす — 映っている生きた世代に誤って
+    /// 当てない。番号を名乗らない世代 (古いライブラリ) は照合できないので下ろす。まだ採っていない目録も、
+    /// 手放した番号のものは生まれたときから手放した扱いにする。
+    func relinquishSource(pids: [Int32]) {
+        relinquishedPIDs.formUnion(pids)
+        let matches = source?.pid.map { pids.contains($0) } ?? true
+        if matches { releaseInheritedRequests() }
     }
 
     // MARK: - 言うこと
@@ -596,8 +671,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // [#2928]: https://github.com/mokume-metal/mokume/issues/2928
         releaseInheritedRequests()
         switch failure {
-        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest)
-        case .cannotRead: onGenerationUndeliverable?(.unreadableFile)
+        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest, nil)
+        case .cannotRead: onGenerationUndeliverable?(.unreadableFile, nil)
         }
     }
 

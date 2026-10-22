@@ -747,31 +747,6 @@ struct MidFrameCutTests {
         #expect(second.placedPicturesCopied == 1, "2 つ目の置いた側が写していない")
     }
 
-    @Test("組み立ての途中の面を守るのは、自分を直に置いた面だけ (写しで止まる先は見ない)")
-    func onlyDirectPlacersGuardAShapeInProgress() throws {
-        let gpu = try RenderDevice()
-        let canvas = try CanvasFixture.make(gpu: gpu, width: 64, height: 64)
-        let inner = try canvas.createGraphics(8, 8)
-        let outer = try canvas.createGraphics(16, 16)
-        var outerGuarded = false
-        var innerGuarded = true
-        try canvas.draw {
-            outer.beginDraw()
-            outer.image(inner, 0, 0)
-            outer.endDraw()
-            outer.beginDraw()
-            outer.image(inner, 0, 0)
-            canvas.image(outer, 0, 0)
-            _ = canvas.createShape {
-                outerGuarded = outer.isPlacedInAShapeInProgress
-                innerGuarded = inner.isPlacedInAShapeInProgress
-            }
-            outer.endDraw()
-        }
-        #expect(outerGuarded, "組み立ての途中の面に直に置かれた面を守っていない")
-        #expect(!innerGuarded, "写しで止まる先まで守った")
-    }
-
     @Test("区切りを毎フレーム持つ静止した場面は、2 枚目から焼き直さない")
     func aStillSceneWithACutIsNotRebaked() throws {
         // 区切りの焼き (この回の列が球) と終わりの焼き (持ち越した列が球) は同じ指紋になり、

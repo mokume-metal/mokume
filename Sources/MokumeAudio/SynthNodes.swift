@@ -31,7 +31,8 @@ nonisolated enum SynthParam: UInt8, Sendable {
 
 /// ラックの節 (音源かエフェクト)。**音の側のスレッドだけが状態を触る。**
 ///
-/// 主スレッドが読んでよいのは、作るときに決まって変わらない ``id`` と ``meter`` だけである。
+/// 主スレッドが読んでよいのは、作るときに決まって変わらない ``id`` と ``meter`` (と、ファイルの節が
+/// 原子値で返す進み具合 — ``FileNode/played(generation:)``) だけである。
 /// 値を変えるときは、``SynthRack`` の列へ操作を渡す。
 nonisolated class RackNode {
     let id: Int
@@ -66,6 +67,9 @@ nonisolated class RackNode {
 
     /// 包絡を頭から始める (音源)。
     func trigger() {}
+
+    /// 区切りを始める (ファイルの音源)。`bits` の読み方は ``FileNode/segment(start:looping:generation:)``。
+    func begin(_ bits: UInt64) {}
 
     /// 入力が無い状態から入力が入ったとき。前の状態を持ち越さない (エフェクト)。
     func reset() {}

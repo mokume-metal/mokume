@@ -305,7 +305,10 @@ extension RenderFailure: CustomStringConvertible {
             report it with this message at https://github.com/mokume-metal/mokume/issues
             """
         case .gpuNotResponding:
-            Self.notResponding(after: CommandQueueGate.process.closure)
+            Self.notResponding(
+                after: CommandQueueGate.process.closure,
+                record: CommandQueueGate.process.expiryRecordExists
+                    ? CommandQueueGate.process.expiryRecordPath?.path : nil)
         case .invalidSize(let width, let height):
             """
             That is not a valid size for a render target: \(width)×\(height)
@@ -425,7 +428,27 @@ extension RenderFailure: CustomStringConvertible {
     ///
     /// 付随値は持たない。文面は、プロセスで 1 つの関所が控えた最初の待ちを読む (公開の case に足さない
     /// ため)。検査が自前の関所を渡した土台の断りは、その関所ではなく、プロセスの関所を読む。
-    nonisolated static func notResponding(after closure: CommandQueueGate.Closure?) -> String {
+    ///
+    /// **記録 (`record`) があるとき** (`scripts/gpu-slot.py` の下の検査・計測が残す記録・#2235) は、プロセスを
+    /// 起こし直しても記録は消えないので、起こし直しとは言わず、人が GPU の答えを確かめて記録を消すよう言う。
+    /// このプロセスが印を立てていれば (`closure`) 「earlier in this process」と、立てていなければ別の回の記録
+    /// だと言う — **実際に合わせる**。**頭の句は、検査の記録を読む側 (`scripts/read-test-record.py` の
+    /// `GATE_CLOSED`) が畳む 2 つのどちらかにする。**
+    nonisolated static func notResponding(
+        after closure: CommandQueueGate.Closure?, record: String? = nil
+    ) -> String {
+        if let record {
+            let origin =
+                closure.map {
+                    "earlier in this process (\($0.summary)), and gpu-slot.py's record (\(record)) stops later runs too"
+                } ?? "in another run under gpu-slot.py (record: \(record))"
+            return """
+                A wait for the GPU went past its limit \(origin), so no new drawing foundation is set up.
+                That can be one frame drawing too much or a GPU that stopped answering, and the two look the same from \
+                here. New work piled onto a GPU that does not answer can freeze the whole Mac. A person checks that the GPU \
+                answers, and then deletes that record; starting this process again does not remove it.
+                """
+        }
         let first = closure.map { " (\($0.summary))" } ?? ""
         return """
             A wait for the GPU went past its limit earlier in this process, so no new drawing foundation is set up in it\(first).

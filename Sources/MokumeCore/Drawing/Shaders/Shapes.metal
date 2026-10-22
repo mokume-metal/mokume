@@ -76,6 +76,7 @@ vertex ShapeFragmentIn shapeVertexMain(
     out.shapeNormal = float3(0.0);
     // 細い線を広げた頂点だけが 1 未満の被覆を持つ (#1637)。持つ頂点の無いフレームは読まない
     out.coverage = frame.readsCoverage != 0 ? coverages[index] : 1.0;
+    out.particleAge = 0.0;
     return out;
 }
 
@@ -186,6 +187,10 @@ vertex ShapeFragmentIn solidVertexMain(
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = flipsNormal ? -vertex_in.shapeNormal : vertex_in.shapeNormal;
     out.coverage = isStroke ? vertex_in.stroke : 1.0;
+    // 粒の置き場所だけが、面の向きの 1 列目の `w` に年齢を置く (Swift 側の `SolidInstance` を参照)。
+    // 単位の形の寸法を `w` に持つ置き場所は、別の頂点関数 (`unitShapeVertexMain`) を通るので、
+    // ここへ届くほかの置き場所の `w` は 0 である
+    out.particleAge = placement.normal0.w;
     return out;
 }
 
@@ -672,6 +677,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     out.shapeNormal = float3(0);
     // 被覆は置き場所が持つ (細い線を広げたとき 1 未満・#1637)
     out.coverage = s.uv.w;
+    out.particleAge = 0.0;
     return out;
 }
 

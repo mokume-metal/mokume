@@ -1537,8 +1537,13 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
     case loadPixels
     case readPixels
     case writePixels
+    case updatePixels
 
     var testDescription: String { "\(self)" }
+
+    /// 書く口か。書く口は描き場所のフレームの中でだけ書ける。`updatePixels` (`Pixels.update`・#2450) も、
+    /// 入口で許可を 1 回尋ねる書く口である。
+    var writes: Bool { self == .set || self == .writePixels || self == .updatePixels }
 
     /// 呼ぶ。`get` の戻り値だけを返す。
     func call(on canvas: Canvas) -> LinearRGBA? {
@@ -1549,6 +1554,7 @@ enum PixelCallInsideShape: CaseIterable, CustomTestStringConvertible {
         case .loadPixels: canvas.loadPixels()
         case .readPixels: _ = canvas.pixels[5, 5]
         case .writePixels: canvas.pixels[5, 5] = white
+        case .updatePixels: canvas.pixels.update { _, _, _ in white }
         }
         return nil
     }
@@ -2979,13 +2985,15 @@ extension ShapeTests {
         }
     }
 
-    /// 置いた描き場所の画素を組み立ての中で読むと、読み込みの描き切りが置いた側 (組み立ての途中の
-    /// 本体) を描き切らせていた ([#1588] の反証 1)。読み込みが要るなら、自分の面と同じく断る。
+    /// 置いた描き場所の画素は、組み立ての中でも読める ([#2203])。**断るのは、自分の面が組み立ての途中の
+    /// ときだけ。** 読み込みの描き切りは、置いた側 (組み立ての途中の本体) に置いた時点の絵を写させる
+    /// が、組み立ての入口より前の列を写しへ差し替えるだけで本体を描き切らせない (#1855 の案 E)。#1588 では、
+    /// この読み込みが組み立ての区間ごと本体を描き切らせていたので断っていた。
     ///
-    /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+    /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
     @Test(
-        "置いた描き場所の画素を組み立ての中で読んでも、本体の組み立ては描き切られない",
-        arguments: [PixelCallInsideShape.get, .loadPixels, .readPixels])
+        "置いた描き場所の画素を組み立ての中で読み書きすると、描き場所の色が読め、本体の組み立ては描き切られない",
+        arguments: PixelCallInsideShape.allCases)
     func readingAPlacedTargetInsideABuildKeepsTheShape(_ call: PixelCallInsideShape) throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         let layer = try canvas.createGraphics(16, 16)
@@ -3000,15 +3008,152 @@ extension ShapeTests {
             canvas.image(layer, 200, 200)
             shape = canvas.createShape {
                 placeCircle(canvas)
+                // 書く口は、描き場所のフレームの中でだけ書ける (置いてよい区間・#1672)。組み立ての中で
+                // 描き場所を描き換えるのは #1855 の案 E で許したことで、その中で書く
+                if call.writes { layer.beginDraw() }
                 read = call.call(on: layer)
+                if call.writes { layer.endDraw() }
             }
         }
-        if call == .get { #expect(read == .transparent) }
+        if call == .get { #expect(read == Self.green, "置いた描き場所の色が読めない: \(String(describing: read))") }
+        if call.writes {
+            #expect(layer.get(5, 5) == .linear(red: 1, green: 1, blue: 1), "置いた描き場所へ書いた画素が載っていない")
+        }
         #expect(!shape.isEmpty)
         #expect(canvas.get(11, 11) == Self.red)
         #expect(canvas.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
-        #expect(layer.warnings.message(for: .pixelsInsideShape) == insideShapeNotices[.pixels])
+        #expect(!layer.warnings.hasWarned(.pixelsInsideShape), "置いた描き場所の画素の口を断った")
+        #expect(!layer.warnings.hasWarned(.pixelWriteOutsideFrame), "書く口が区間の外と言った (検査の前提)")
         #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding))
+        // 組み立てた円は形に入っている
+        try canvas.draw {
+            canvas.background(Self.black)
+            canvas.shape(shape, 8, 8)
+        }
+        #expect(canvas.get(8, 8) == Self.green, "組み立てた円が形に残っていない")
+    }
+
+    /// 写しを持てないとき (上限・失敗) も同じ ([#2203]・[#2904] の上限と失敗の 2 場面と同じ形)。置いた側は
+    /// 組み立ての前の列だけを描き切り、組み立てている区間は残る — 読んだ値は描き場所の色で、形は組み立てた
+    /// 中身を持ち、組み立てた図形はフレームに出ず、安全網 (`shapeDrawnOutWhileBuilding`) は出ない。
+    ///
+    /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
+    /// [#2904]: https://github.com/mokume-metal/mokume/pull/2904
+    @Test(
+        "置いた側が写しを持てなくても、置いた描き場所を組み立ての中で読めて、形は組み立てた中身を残す",
+        arguments: NoPictureCopy.allCases, PixelCallInsideShape.allCases)
+    func readingAPlacedTargetWithoutACopyInsideABuildKeepsTheShape(
+        cause: NoPictureCopy, call: PixelCallInsideShape
+    ) throws {
+        let canvas = try makeCanvas(width: 16, height: 16)
+        let layer = try canvas.createGraphics(16, 16)
+        var shape = Shape.empty
+        var read: LinearRGBA?
+        var passes = -1
+        try canvas.draw {
+            canvas.background(Self.black)
+            switch cause {
+            case .limitReached:
+                // 「置く → 描き換える」を上限の回数だけ繰り返し、写しを使い切る
+                for _ in 0..<Canvas.placedPictureCopyLimit {
+                    canvas.image(layer, 200, 200)
+                    layer.beginDraw()
+                    layer.background(Self.blue)
+                    layer.endDraw()
+                }
+            case .copyFails:
+                layer.beginDraw()
+                layer.background(Self.blue)
+                layer.endDraw()
+            }
+            // 読み込みの描き切りが要る (描き場所を描いた後)。最後の描き換えの後で置く
+            layer.beginDraw()
+            layer.background(Self.green)
+            layer.endDraw()
+            canvas.image(layer, 200, 200)
+            if cause == .copyFails { canvas.failPlacedPictureCopyForTesting = .encoderUnavailable }
+            shape = canvas.createShape {
+                placeCircle(canvas)
+                if call.writes { layer.beginDraw() }
+                read = call.call(on: layer)
+                if call.writes { layer.endDraw() }
+            }
+            canvas.failPlacedPictureCopyForTesting = nil
+            passes = canvas.passesThisFrame
+        }
+        switch cause {
+        case .limitReached:
+            #expect(canvas.placedPictureCopyLimitReached >= 1, "組み立ての中で写しを試していない")
+        case .copyFails:
+            #expect(canvas.placedPicturesCopied == 0, "写しの失敗が差し込まれていない")
+        }
+        #expect(passes >= 1, "置いた側を描き切っていない (検査の前提)")
+        if call == .get { #expect(read == Self.green, "置いた描き場所の色が読めない: \(String(describing: read))") }
+        #expect(!shape.isEmpty, "組み立てた中身が形に残っていない")
+        #expect(!canvas.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+        #expect(!layer.warnings.hasWarned(.pixelsInsideShape), "置いた描き場所の画素の口を断った")
+        #expect(!layer.warnings.hasWarned(.pixelWriteOutsideFrame), "書く口が区間の外と言った (検査の前提)")
+        #expect(canvas.get(3, 3) == Self.black, "組み立てた円がフレームに出た")
+
+        try canvas.draw {
+            canvas.background(Self.black)
+            canvas.shape(shape, 8, 8)
+        }
+        #expect(canvas.get(8, 8) == Self.green, "描き切りより前に組み立てた円が形に入っていない")
+    }
+
+    /// 面どうしが置き合っていて、置いた描き場所を読む ([#2203])。描き換えの側の
+    /// `aReenteredDrawOutDoesNotRebaseTwice` ([#2850]) と同じ形で、**読む口でも**、逃げ道 (置いた側を描き切る)
+    /// が入れ子になっても印を二重に引かず、形は組み立てた中身を持つ。P は R と Q を置き、Q は P を置く。
+    /// R を P の組み立ての中で読むと、R の読み込みが P に写させ (上限・失敗で P を描き切り)、P の描き切りが
+    /// Q に写させる。
+    ///
+    /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
+    /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
+    @Test("置き合う面の組み立ての中で置いた描き場所を読んでも、印を二重に引かず、形は組み立てた中身を持つ")
+    func aReenteredDrawOutOnReadDoesNotRebaseTwice() throws {
+        func build(reading: Bool) throws -> (shape: Shape, canvas: Canvas, read: LinearRGBA?) {
+            let main = try makeCanvas(width: 24, height: 24)
+            let p = try main.createGraphics(24, 24)
+            let q = try main.createGraphics(24, 24)
+            let r = try main.createGraphics(8, 8)
+            var shape = Shape.empty
+            var read: LinearRGBA?
+            try main.draw {
+                // R に描いておく。読み込みが要る
+                r.beginDraw()
+                r.background(Self.blue)
+                r.endDraw()
+                p.beginDraw()
+                q.beginDraw()
+                p.background(Self.black)
+                p.image(r, 16, 0)
+                p.image(q, 0, 16)
+                q.image(p, 0, 0)
+                if reading {
+                    p.failPlacedPictureCopyForTesting = .encoderUnavailable
+                    q.failPlacedPictureCopyForTesting = .encoderUnavailable
+                }
+                shape = p.createShape {
+                    self.buildMixed(p, picture: r) {
+                        guard reading else { return }
+                        read = r.get(5, 5)
+                    }
+                }
+                p.failPlacedPictureCopyForTesting = nil
+                q.failPlacedPictureCopyForTesting = nil
+                #expect(!p.warnings.hasWarned(.shapeDrawnOutWhileBuilding), "安全網に届いた")
+                p.endDraw()
+                q.endDraw()
+            }
+            return (shape, p, read)
+        }
+        let plain = try build(reading: false)
+        let reading = try build(reading: true)
+        #expect(reading.read == Self.blue, "置いた描き場所の色が読めない: \(String(describing: reading.read))")
+        #expect(!reading.shape.isEmpty)
+        #expect(signature(of: reading.shape) == signature(of: plain.shape), "読んで逃げ道を通った形が、通らない形と違う")
+        #expect(!reading.canvas.warnings.hasWarned(.pixelsInsideShape))
     }
 
     /// 対照: 読み込み済みの描き場所は、組み立ての中でも読める。描き切らないので誰の組み立ても

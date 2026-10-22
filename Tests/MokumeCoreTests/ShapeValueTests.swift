@@ -250,15 +250,17 @@ struct ShapeValueTests {
         #expect(original == Vector2(3, 4))
     }
 
-    @Test("normalized() は長さ 0 の値を、数でない値にせず変えずに返す")
+    @Test("normalized() は長さ 0 の値 (0 ベクトルだけ) を、数でない値にせず変えずに返す")
     func vectorNormalizedZeroLength() {
         let zero = Vector2(0, 0).normalized()
         #expect(zero == Vector2(0, 0))
         #expect(!zero.x.isNaN && !zero.y.isNaN)
-        // 2 乗が 0 に潰れて length が 0 になるほど小さい値も、変えずに返す
+        #expect(Vector2(0, 0).length == 0)
+        // 成分が 0 に近いだけの値は 0 ベクトルではない (#2935 が #2722 の「小さい値は自身を返す」を改めた)。
+        // 向きを返す。詳しくは `vectorOfTinyComponentsIsMeasuredNotDropped`
         let tiny = Vector2(1e-30, 1e-30)
-        #expect(tiny.length == 0)
-        #expect(tiny.normalized() == tiny)
+        #expect(tiny.length != 0)
+        #expect(tiny.normalized() != tiny)
     }
 
     @Test("limited(to:) は上限を越えるときだけ、向きを保って長さを上限にする")
@@ -332,11 +334,76 @@ struct ShapeValueTests {
         #expect(close(huge.limited(to: 1), Vector2(0.70710678, -0.70710678)))
     }
 
-    @Test("長さが 0 に潰れるほど小さい値の length と normalized() は、#2722 のとおり変えない")
-    func vectorOfTinyComponentsKeepsItsPromise() {
+    @Test("2 乗が 0 に潰れるほど小さい値も、length は正しい長さを返し normalized() は向きを返す (#2935 が #2722 を改めた)")
+    func vectorOfTinyComponentsIsMeasuredNotDropped() {
+        // #2722 は「長さが 0 に潰れる小さい値の length は 0、normalized() は自身を返す」と固定していた。
+        // #2935 で改め、0 になるのは 0 ベクトルだけにした。守りたかった「数でない値を流さない」は保たれる
         let tiny = Vector2(1e-30, 1e-30)
-        #expect(tiny.length == 0)
-        #expect(tiny.normalized() == tiny)
+        #expect(abs(tiny.length / 1.4142135e-30 - 1) < 1e-6)
+        let direction = tiny.normalized()
+        #expect(close(direction, Vector2(0.70710678, 0.70710678)))
+        #expect(!direction.x.isNaN && !direction.y.isNaN)
+        // 最小の非正規数のまわりでも 0 にならない
+        #expect(Vector2(Float.leastNonzeroMagnitude, 0).length == Float.leastNonzeroMagnitude)
+        #expect(Vector2(0, -Float.leastNonzeroMagnitude).normalized() == Vector2(0, -1))
+    }
+
+    @Test("length・mag・dist は、小さい値でも大きい値でも同じ答えを返す (#2935)")
+    func theTwoLayersAgreeOnTheLength() {
+        // 2 乗の和が 0 に潰れる (1e-23 未満) 値と、最小の非正規数のまわりまで。どれも 0 でない
+        for e: Float in [1e-19, 1e-23, 1e-30, 1e-38, 1e-45] {
+            let length = Vector2(e, e).length
+            #expect(length != 0, "\(e)")
+            #expect(mag(e, e) == length, "mag \(e)")
+            #expect(dist(0, 0, e, e) == length, "dist \(e)")
+        }
+        #expect(abs(Vector2(1e-30, 1e-30).length / 1.4142135e-30 - 1) < 1e-6)
+        // 大きい側も、2 の冪倍で歩いて同じ。2^-140 は成分が非正規数になる側、2^120 は溢れる手前
+        let bases: [Vector2] = [Vector2(3, 4), Vector2(1, 1), Vector2(0.3, -0.7), Vector2(-5, 0), Vector2(0, 9)]
+        for base in bases {
+            for exponent in -140...120 {
+                let v = scaled(base, by: exponent)
+                #expect(mag(v.x, v.y) == v.length, "mag \(base) × 2^\(exponent)")
+                #expect(dist(0, 0, v.x, v.y) == v.length, "dist \(base) × 2^\(exponent)")
+            }
+        }
+        // 結果が Float の範囲を越えるときだけ ∞ で、どちらの層も同じ
+        let top = Float.greatestFiniteMagnitude
+        #expect(Vector2(top, top).length == .infinity)
+        #expect(mag(top, top) == .infinity)
+        #expect(dist(-top, 0, top, 0) == .infinity)
+    }
+
+    @Test("0 ベクトルの length は 0 で、mag・dist も 0 (0 になるのは 0 ベクトルだけ)")
+    func zeroVectorIsTheOnlyZeroLength() {
+        #expect(Vector2(0, 0).length == 0)
+        #expect(Vector2(-0.0, 0).length == 0)
+        #expect(Vector2(0, 0).normalized() == Vector2(0, 0))
+        #expect(mag(0, 0) == 0)
+        #expect(dist(2, 3, 2, 3) == 0)
+        #expect(Vector2(Float.leastNonzeroMagnitude, 0).length > 0)
+    }
+
+    @Test("mag・dist は、2 乗の和が 2^-100 以上 2^100 未満の値で従来の式と 1 ビットも変わらない")
+    func magAndDistOrdinaryValuesAreBitIdentical() {
+        var seed: UInt64 = 0x1234_5678_9ABC_DEF1
+        func next() -> Float {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Float(Int64(bitPattern: seed >> 11) % 2_000_000) / 1000 - 1000
+        }
+        for _ in 0..<2000 {
+            let (x1, y1, x2, y2) = (next(), next(), next(), next())
+            let (dx, dy) = (x2 - x1, y2 - y1)
+            let legacy = (dx * dx + dy * dy).squareRoot()
+            #expect(mag(dx, dy) == legacy)
+            #expect(dist(x1, y1, x2, y2) == legacy)
+        }
+        // 範囲の端の内側 (2 乗の和が 2^-100 と 2^100 の手前) でも同じ
+        for exponent in [-49, -30, 0, 30, 49] {
+            let v = scaled(Vector2(3, 4), by: exponent)
+            let legacy = (v.x * v.x + v.y * v.y).squareRoot()
+            #expect(mag(v.x, v.y) == legacy, "2^\(exponent)")
+        }
     }
 
     @Test("普通の大きさの値は、従来の式と 1 ビットも変わらない")
@@ -513,21 +580,63 @@ struct ShapeValueTests {
         }
     }
 
-    @Test("成分が約 1e-19 未満の値も、normalized() は長さ 1 になる (2 乗が潰れて 0 でない間)")
+    @Test("成分が約 1e-19 未満の値も、2 乗が 0 に潰れる値も、normalized() は長さ 1 になる (#2935)")
     func normalizedOfSmallComponents() {
         for component: Float in [1e-19, 1e-20, 1e-21, 1e-22, 3e-23] {
             let direction = Vector2(component, component).normalized()
             #expect(abs(direction.x - 0.70710678) < 1e-6 && abs(direction.y - 0.70710678) < 1e-6, "\(component)")
         }
-        // 2 乗が 0 に潰れて length が 0 になる値は、#2722 の約束のまま変えずに返す
+        // 2 乗が 0 に潰れる値も、長さ 1 になる (#2935 が #2722 の「変えずに返す」を改めた)
         for component: Float in [1e-23, 1e-30, 1e-38] {
-            let tiny = Vector2(component, component)
-            #expect(tiny.length == 0, "\(component)")
-            #expect(tiny.normalized() == tiny, "\(component)")
+            let direction = Vector2(component, component).normalized()
+            #expect(abs(direction.x - 0.70710678) < 1e-6 && abs(direction.y - 0.70710678) < 1e-6, "\(component)")
         }
     }
 
-    @Test("小さい値でも limited(to:) は上限を守る (length が 0 に潰れる値も)")
+    /// 長さが非正規数 (約 1.2e-38 未満) に丸められる値。**斜めの値で見る** — 軸に沿った `(0, -t)` は、
+    /// 長さが成分とちょうど等しいので、丸められた長さで割っても偶然 (0, -1) になる。
+    ///
+    /// 長さ 1 の許容は 1e-6。結果の成分は 1 以下の正規数で、`scaledDirection` は 2 の冪で寄せて
+    /// 2 乗の和・平方根・割り算を 1 回ずつ丸めるだけなので、誤差は 1 の ulp (1.2e-7) の数倍に収まる。
+    /// 直す前は長さ 1.414 (`(t, t)`)・0.901 (`(2t, 3t)`)・0.990 (`(1e-44, 1e-44)`) まで外れた。
+    @Test("長さが非正規数になる斜めの値も、normalized() は長さ 1 になる (#2935)")
+    func normalizedOfSubnormalLengthIsOne() {
+        let t = Float.leastNonzeroMagnitude
+        let inputs: [Vector2] = [
+            Vector2(t, t), Vector2(2 * t, 3 * t), Vector2(-3 * t, 4 * t), Vector2(1e-44, 1e-44),
+            Vector2(1e-42, 1e-42), Vector2(3e-40, -4e-40), Vector2(1e-38, 1e-38), Vector2(1e-39, 0),
+            Vector2(0, -t),
+        ]
+        for input in inputs {
+            let direction = input.normalized()
+            let length = (direction.x * direction.x + direction.y * direction.y).squareRoot()
+            #expect(abs(length - 1) < 1e-6, "\(input) → \(direction) (長さ \(length))")
+            // 向きは変わらない (外積が 0 に近い。`Double` で掛けるので非正規数の積も丸めない)
+            let cross = Double(direction.x) * Double(input.y) - Double(direction.y) * Double(input.x)
+            #expect(abs(cross) <= 1e-6 * (Double(abs(input.x)) + Double(abs(input.y))), "\(input) の向き")
+        }
+    }
+
+    /// 上限を守る。上限も結果の成分も非正規数の刻み (1.4e-45) に丸められるので、長さは上限から刻み
+    /// 2 つ分以内に収まる (成分 2 つの丸めがそれぞれ刻みの半分)。
+    @Test("長さが非正規数になる値でも、limited(to:) は上限の長さに縮める (#2935)")
+    func limitedOfSubnormalLength() {
+        let t = Float.leastNonzeroMagnitude
+        for (input, limit) in [
+            (Vector2(1e-42, 1e-42), Float(5e-43)), (Vector2(3e-40, -4e-40), 1e-40),
+            (Vector2(1e-44, 1e-44), 4e-45), (Vector2(2 * t, 3 * t), 2 * t),
+        ] {
+            let limited = input.limited(to: limit)
+            // 2 乗が潰れるので `Double` で測る
+            let length = Float((Double(limited.x) * Double(limited.x) + Double(limited.y) * Double(limited.y)).squareRoot())
+            #expect(abs(length - limit) <= 2 * t, "\(input).limited(to: \(limit)) → \(limited) (長さ \(length))")
+            #expect(limited.x.sign == input.x.sign && limited.y.sign == input.y.sign, "\(input) の向き")
+        }
+        // 上限以下なら変えずに返す
+        #expect(Vector2(1e-42, 1e-42).limited(to: 1e-41) == Vector2(1e-42, 1e-42))
+    }
+
+    @Test("小さい値でも limited(to:) は上限を守る (2 乗の和が 0 に潰れる値も)")
     func limitedOfSmallComponents() {
         let limited = Vector2(3e-30, 4e-30).limited(to: 1e-30)
         #expect(close(limited, Vector2(0.6e-30, 0.8e-30), tolerance: 1e-6), "\(limited)")

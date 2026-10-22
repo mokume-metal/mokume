@@ -22,8 +22,31 @@ public struct Placement: Equatable, Sendable {
     public var x: Float
     public var y: Float
     public var z: Float
-    /// 大きさの倍率。
-    public var scale: Float
+    /// 軸ごとの大きさの倍率。**既定は `Vector3(1, 1, 1)`** (どの軸も伸ばさない)。
+    ///
+    /// 高さだけ伸ばした箱 (棒グラフの街並み・音の柱) のように、軸ごとに大きさの違うものを
+    /// まとめて置くのに使う。倍率は**形自身の軸**に掛かり、回転より先に効く (`transform` の順は
+    /// 大きさ → 回転 → 位置) ので、回して置いた形も、回す前の軸に沿って伸びる。負の値は、その軸で
+    /// 裏返す。軸のどれかが数でない値・無限の置き場所は置かれない (`shape(_:at:)` が 1 度だけ注意する)。
+    ///
+    /// どの軸にも同じ倍率なら、`init(x:y:z:scale:rotation:fill:)` に数を 1 つ渡す
+    /// (`Placement(scale: 2)` は `Placement(scale: Vector3(2, 2, 2))` と等しい)。
+    ///
+    /// ```swift
+    /// // 高さの違う 8 本の柱を、箱 1 つの形から置く
+    /// background(23, 26, 31)
+    /// lights()
+    /// noStroke()
+    /// fill(242, 115, 64)
+    /// let unitBox = createShape { box(1) }
+    /// var bars: [Placement] = []
+    /// for i in 0..<8 {
+    ///     let tall = 60 + Float(i) * 25
+    ///     bars.append(Placement(x: 55 + Float(i) * 42, y: 280 - tall / 2, scale: Vector3(28, tall, 28)))
+    /// }
+    /// shape(unitBox, at: bars)
+    /// ```
+    public var scale: Vector3
     /// 各軸まわりの回転 (ラジアン)。**横 → 縦 → 奥行き**の順に掛かる。
     public var rotation: Vector3
     /// この置き場所の塗り。`nil` なら何も掛からず、記録した色のまま出る。
@@ -41,8 +64,22 @@ public struct Placement: Equatable, Sendable {
     /// 加えて、最初に置いた後は引いた頂点 (約 125 MiB) も持つ。
     public var fill: LinearRGBA?
 
+    /// どの軸にも同じ倍率で作る。`scale` は 3 つの軸に同じ値で入る (``scale`` は `Vector3(scale, scale, scale)`)。
+    ///
+    /// 軸ごとに変えるなら `init(x:y:z:scale:rotation:fill:)` の `Vector3` を受ける側を使う。
     public init(
         x: Float = 0, y: Float = 0, z: Float = 0, scale: Float = 1,
+        rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
+    ) {
+        self.init(x: x, y: y, z: z, scale: Vector3(scale, scale, scale), rotation: rotation, fill: fill)
+    }
+
+    /// 軸ごとの倍率で作る。
+    ///
+    /// `Placement(x: 100, y: 200, scale: Vector3(1, 4, 1))` で置いた形は、`push()` のあとに
+    /// `translate(100, 200, 0)`・`scale(1, 4, 1)` を同じ順で書いて置いたものと同じ絵になる。
+    public init(
+        x: Float = 0, y: Float = 0, z: Float = 0, scale: Vector3,
         rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
     ) {
         self.x = x
@@ -63,7 +100,9 @@ public struct Placement: Equatable, Sendable {
         if rotation.x != 0 { built.rotateX(by: rotation.x) }
         if rotation.y != 0 { built.rotateY(by: rotation.y) }
         if rotation.z != 0 { built.rotateZ(by: rotation.z) }
-        if scale != 1 { built.scale(x: scale, y: scale, z: scale) }
+        if scale.x != 1 || scale.y != 1 || scale.z != 1 {
+            built.scale(x: scale.x, y: scale.y, z: scale.z)
+        }
         return built
     }
 
@@ -73,9 +112,10 @@ public struct Placement: Equatable, Sendable {
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     var isUsable: Bool { hasFiniteGeometry && hasFiniteFill }
 
-    /// 位置・倍率・回転がどれも有限か。
+    /// 位置・倍率 (軸ごとの倍率も)・回転がどれも有限か。
     var hasFiniteGeometry: Bool {
-        [x, y, z, scale, rotation.x, rotation.y, rotation.z].allSatisfy(\.isFinite)
+        [x, y, z, scale.x, scale.y, scale.z, rotation.x, rotation.y, rotation.z]
+            .allSatisfy(\.isFinite)
     }
 
     /// 塗りが無いか、塗りの 4 成分がどれも有限か。

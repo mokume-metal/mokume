@@ -97,6 +97,8 @@ public struct Shape {
     /// ``RingFillRecipe/recordedFillSpan``)。置く行列でこれが描く画素で 1 画素以上なら、どの塗りも
     /// 細くならないので区間を走査しない。名指しの基本図形の塗りが無ければ無限大。
     let thinnestRecordedFill: Float
+    /// 平面の部分の幾何の外接 (``bounds``)。焼くときに求めて持つ (``measureBounds(vertices:strokeRanges:forms:)``)。
+    let planeBox: PlaneBox?
 
     /// 区間を塗るもの一式。
     ///
@@ -195,8 +197,13 @@ public struct Shape {
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
         strokeRanges: [StrokeRange] = [], fillRanges: [RingFillRange] = [],
         solidStrokes: [SolidStrokePiece] = [],
-        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = []
+        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = [],
+        planeBox knownBox: PlaneBox?? = nil
     ) {
+        // 繋ぐだけの組 (`group`) は子の外接の和を渡す。渡さなければ焼いた並びから求める
+        planeBox =
+            knownBox
+            ?? Self.measureBounds(vertices: vertices, strokeRanges: strokeRanges, forms: forms)
         self.vertices = vertices
         self.solidVertices = solidVertices
         self.solidIndices = solidIndices
@@ -265,6 +272,33 @@ public struct Shape {
         return found
     }
 
+    /// 平面の部分の外接矩形。**線の太さを含まない**幾何の外接で、形自身の座標のまま返す (置く場所の
+    /// 変換は掛かっていない)。
+    ///
+    /// 読み込んだ SVG (``SketchPart/loadShape(_:)``) の寸法や、組み立てた形の広がりを問うのに使う。
+    /// たとえば形の中心を原点へ寄せて置き直すなら、`shape(read, -box.center.x, -box.center.y)` と
+    /// 書ける。ファイルを開いて確かめた寸法をコードへ写さずに済む。
+    ///
+    /// - **線の太さを含まない。** `strokeWeight(8)` で描いても、`rect(10, 20, 100, 50)` の外接は
+    ///   `Rect(left: 10, top: 20, width: 100, height: 50)` のまま。線の端や折れ目の張り出しも含まない
+    /// - **基本図形はその形が描く幾何で外接する。** `circle(0, 0, 40)` は `(-20, -20, 40, 40)`、
+    ///   `arc(0, 0, 100, 100, 0, .pi / 2)` は楕円全体の箱ではなく、中心と弧が作る扇の箱 `(0, 0, 50, 50)`
+    ///   (弧の端の三角関数は `Float` の丸めぶんだけずれる)。角を丸めた `rect` は丸めない `rect` と同じ箱になる
+    /// - **組み立ての中の変換 (`translate`・`scale`・`rotate`) は掛かった後の座標で外接する。**
+    ///   `createShape { translate(50, 0); rect(0, 0, 10, 10) }` は `(50, 0, 10, 10)`。回した矩形は、
+    ///   回した後の軸に沿った外接になる
+    /// - **字と画像は、置く矩形の外接である** (字の墨の部分だけの箱ではない)。`texture()` や
+    ///   `shader()` を効かせた円など、距離関数でなく多角形で描く基本図形は、刻んだ周の点の外接になり、真の外接より
+    ///   刻みの分だけ小さくなりうる
+    /// - **立体は見ない。** 立体の頂点は箱に入らず、平面の部分が無い形 (`Shape.empty`・立体だけの形・
+    ///   塗りも線も描かない図形だけの形) は `nil` を返す。1 点だけの形 (`point`) は幅も高さも 0 の矩形を返す
+    ///
+    /// ``group(_:)`` と `+` で繋いだ形は、子の外接の和になる。置き直し (``SketchPart/shape(_:_:_:)``) で
+    /// 位置や大きさを変えるときは、返した矩形に同じ変換を掛けて使う。
+    ///
+    /// 焼くときに求めて持つので、何度問うても費用は変わらない。
+    public var bounds: Rect? { planeBox?.rect }
+
     /// 何も入っていない形。
     public static let empty = Shape(vertices: [], runs: [])
 
@@ -309,10 +343,12 @@ public struct Shape {
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
         var solidParts: [SolidPart] = []
+        var box: PlaneBox?
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
         for shape in shapes {
+            box = PlaneBox.union(box, shape.planeBox)
             let flatOffset = vertices.count
             let solidOffset = solidVertices.count
             let indexOffset = solidIndices.count
@@ -358,7 +394,7 @@ public struct Shape {
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
             forms: forms, runs: runs, strokeRanges: strokeRanges, fillRanges: fillRanges,
             solidStrokes: solidStrokes,
-            gpuStrokes: gpuStrokes, solidParts: solidParts)
+            gpuStrokes: gpuStrokes, solidParts: solidParts, planeBox: .some(box))
     }
 
     /// 2 つの形を 1 つに畳む。

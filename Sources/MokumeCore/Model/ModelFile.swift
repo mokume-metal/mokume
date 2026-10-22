@@ -46,6 +46,21 @@ nonisolated enum ModelFile {
     static let empty = Parsed(
         positions: [], normals: [], uvs: [], derivedNormals: [], skippedLines: 0)
 
+    /// 読めなかった (壊れている) ものの 1 種類。**読み込んだときの知らせの材料** (#2565)。
+    ///
+    /// ``Parsed/skippedLines`` は意図して読まない行 (`mtllib`・`usemtl`・`o`・`s`・`g`。書き出した
+    /// ファイルにはほぼ必ずある) も数えるので、壊れた行に気付く手がかりにならない。これは壊れたものだけを
+    /// 種類ごとに数える。SVG の捨てたもの (``Canvas/svgSkippedNotice(_:path:)``) と同じ形で、**何を・何回・最初は
+    /// どの行か**を持つ。
+    struct Malformed: Sendable, Equatable {
+        /// 何が読めなかったか (知らせに出す英文の名詞句)。
+        let what: String
+        /// 読めなかった数。
+        let count: Int
+        /// 最初に見つけた行 (1 から数える物理行)。行を持たない形式 (STL) は `nil`。
+        let line: Int?
+    }
+
     /// 読み取った中身。正規化する前の形。
     struct Parsed: Sendable, Equatable {
         /// 三角形の頂点の位置 (ファイルの座標のまま・3 つで 1 枚)。
@@ -94,6 +109,9 @@ nonisolated enum ModelFile {
         /// 足す (読めない `v` 1 行を 2 つの面の行が指せば 3)。`vt`・`vn` を指す角は書いて
         /// いない角と同じに読み、足さない。
         var skippedLines: Int
+        /// ``skippedLines`` のうち、**意図して読まない行ではなく壊れたもの**の種類ごとの数 (#2565)。
+        /// 読み込んだときの知らせの材料で、`skippedLines` の意味と値は変えない。
+        var malformed: [Malformed] = []
     }
 
     /// 名前から探して読む。**拡張子で読み手を選ぶ** (``Format``)。
@@ -152,8 +170,9 @@ nonisolated enum ModelFile {
         /// 面の頂点 (位置の番号・読み取り位置の番号・向きの番号)。
         var faces: [[(position: Int, texture: Int?, normal: Int?)]] = []
         var skipped = 0
+        var broken = BrokenLines()
 
-        for line in text.lines {
+        for (offset, line) in text.lines.enumerated() {
             var fields = line.split(whereSeparator: \.isWhitespaceQuickly)
             guard !fields.isEmpty else { continue }
             // **`#` から後は、欄の途中でもコメント** (#2624)。`v 1 2 3#c`・`vt 0.5#c`・`#Blender` の
@@ -175,6 +194,7 @@ nonisolated enum ModelFile {
                 let point = vector(values)
                 if point == nil {
                     skipped += 1
+                    broken.note("v", "a \"v\" line that could not be read", line: offset + 1)
                     unreadablePositions.insert(positions.count)
                 }
                 positions.append(point ?? .zero)
@@ -182,6 +202,7 @@ nonisolated enum ModelFile {
                 let point = vector(values)
                 if point == nil {
                     skipped += 1
+                    broken.note("vn", "a \"vn\" line that could not be read", line: offset + 1)
                     unreadableNormals.insert(normals.count)
                 }
                 normals.append(point ?? .zero)
@@ -189,6 +210,7 @@ nonisolated enum ModelFile {
                 let point = texture(values)
                 if point == nil {
                     skipped += 1
+                    broken.note("vt", "a \"vt\" line that could not be read", line: offset + 1)
                     unreadableTextures.insert(textures.count)
                 }
                 textures.append(point ?? .zero)
@@ -221,19 +243,57 @@ nonisolated enum ModelFile {
                 }
                 guard corners.count == written.count, corners.count >= 3 else {
                     skipped += 1
+                    broken.note(
+                        "f", "an \"f\" line with a corner that could not be read or fewer than 3 corners",
+                        line: offset + 1)
                     continue
                 }
                 faces.append(corners)
             default:
-                // 材質・物体の区切り・なめらかさの指定などは読まない
+                // 材質・物体の区切り・なめらかさの指定などは読まない。仕様にある語 (`mtllib`・`usemtl`・
+                // `o`・`g`・`s` ほか) は意図した読み飛ばしで、知らせない。仕様に無い語 (`vv` など) は壊れた行
                 skipped += 1
+                if !Self.specKeywords.contains(keyword) {
+                    broken.note(
+                        "unknown", "a line starting with an unknown keyword, such as \"\(keyword)\"",
+                        line: offset + 1)
+                }
             }
         }
 
         // 面が指すのは読めた行だけ (上で確かめてある)。枠だけの 0 は指されない
-        return assemble(
+        var parsed = assemble(
             positions: positions, normals: normals, textures: textures, faces: faces,
             skipped: skipped)
+        parsed.malformed = broken.kinds
+        return parsed
+    }
+
+    /// OBJ の仕様にある語のうち、**いま読まないもの** (#2565)。意図した読み飛ばしなので、壊れた行とは
+    /// 数えない。読む語 (`v`・`vn`・`vt`・`f`) は ``parse(_:)`` の `switch` が持つ。
+    private static let specKeywords: Set<Substring> = [
+        "mtllib", "usemtl", "o", "g", "s", "vp", "p", "l", "cstype", "deg", "bmat", "step", "curv",
+        "curv2", "surf", "parm", "trim", "hole", "scrv", "sp", "end", "con", "mg", "bevel", "c_interp",
+        "d_interp", "lod", "usemap", "maplib", "shadow_obj", "trace_obj", "ctech", "stech", "call", "csh",
+    ]
+
+    /// 壊れた行を、種類ごとに数える (#2565)。種類は `v`・`vn`・`vt`・`f`・仕様に無い語の 5 つで、
+    /// 仕様に無い語は語ごとに分けない (語が行ごとに違うファイルで、数える種類が際限なく増えない)。
+    private struct BrokenLines {
+        private var entries: [(key: String, what: String, count: Int, line: Int)] = []
+
+        mutating func note(_ key: String, _ what: @autoclosure () -> String, line: Int) {
+            if let index = entries.firstIndex(where: { $0.key == key }) {
+                entries[index].count += 1
+            } else {
+                entries.append((key, what(), 1, line))
+            }
+        }
+
+        /// 最初に見つけた順の種類。
+        var kinds: [Malformed] {
+            entries.map { Malformed(what: $0.what, count: $0.count, line: $0.line) }
+        }
     }
 
     /// 読み取った並びを三角形へ畳む。

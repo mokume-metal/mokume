@@ -58,7 +58,7 @@ import Testing
         #expect(try texels(image, on: gpu) == expected)
         let gpuOutput = try canvas.target.encodeForDisplay()
         image.materializePixels()
-        #expect(image.pixels == expected)
+        #expect(image.workingPixels == expected)
         image.set(0, 0, image.get(0, 0))
         try canvas.draw {
             canvas.background(.transparent)
@@ -95,7 +95,7 @@ import Testing
         _ = image.get(5, 6)
         #expect(image.displayInput == nil)
         #expect(!image.needsUpload, "読むだけで送り直さない")
-        #expect(image.pixels == actual)
+        #expect(image.workingPixels == actual)
     }
 
     @Test("編集上限・fill・再度の write で古い入力や編集を復活させない")
@@ -154,7 +154,7 @@ import Testing
         try canvas.draw { canvas.image(image, 0, 0) }
         #expect(!image.needsUpload)
         #expect(image.displayInput == nil)
-        #expect(try texels(image, on: gpu) == image.pixels)
+        #expect(try texels(image, on: gpu) == image.workingPixels)
     }
 
     @Test("積んだ後に投入を捨てても、次の描き切りが入力と編集を届ける")
@@ -233,7 +233,7 @@ import Testing
         for (index, image) in images.enumerated() {
             let actual = try texels(image, on: gpu)
             #expect(actual[index].x == 11)
-            #expect(actual == image.pixels)
+            #expect(actual == image.workingPixels)
         }
         // **打ち切りそのものを見る** (#1812 の完了条件 4)。変換は GPU が読む画像と置き場の
         // 常駐・寿命に頼るので、取り違えは絵より先に打ち切り (page fault 等) として現れる。
@@ -393,6 +393,6 @@ import Testing
         image.write(DisplayImage(width: 1, height: 1, bytes: [255, 128, 0, 255]))
         try canvas.draw { canvas.image(image, 0, 0) }
         #expect(canvas.imageInputPass == nil)
-        #expect(try texels(image, on: gpu) == image.pixels)
+        #expect(try texels(image, on: gpu) == image.workingPixels)
     }
 }

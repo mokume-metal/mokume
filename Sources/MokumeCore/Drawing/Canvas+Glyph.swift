@@ -107,9 +107,38 @@ extension Canvas {
         warnOnce(
             .missingFallbackTypefaceStyle,
             "textStyle(): \(missing) has no \(Self.quoted(scalar)), so it is drawn from \(source) "
-                + "(\(Self.faceTraits(of: fallback))) without the \(style) style. This is said once for "
-                + "all such characters; to draw them in \(style), set textFont() to a typeface that "
-                + "has these characters in a face for \(style)")
+                + "(\(Self.faceTraits(of: fallback))) without the \(style) style. "
+                + Self.fallbackFamilyNotice(face, fallback)
+                + "This is said once for all such characters; to draw them in \(style), set textFont() to a "
+                + "typeface that has these characters in a face for \(style)"
+                + Self.exampleNotice(face, scalar, fallback))
+    }
+
+    /// 代わりに使った書体の**家族に頼んだ面が無い**ことを言う文 ([#2924])。mokume が引かなかったのではなく、
+    /// 候補の書体が持たないと読める言い方にする。家族が面を持つのに字形だけが無いときは、何も言わない。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    private static func fallbackFamilyNotice(_ face: Typeface, _ fallback: CTFont) -> String {
+        guard Typeface.familyLacksFace(of: fallback, requested: Typeface.traits(of: face.request.style)) else {
+            return ""
+        }
+        let subject = passableName(fallback).map { "\"\($0)\"" } ?? "that typeface"
+        return "The family of \(subject) has no .\(face.request.style) face, so none could be used. "
+    }
+
+    /// その字を頼んだ面で持つ書体の例 ([#2924])。環境から引き、字形と頼んだ面の両方を持つ名前が
+    /// 見つかったときだけ、`, for example "<名前>"` を返す。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    private static func exampleNotice(
+        _ face: Typeface, _ scalar: Unicode.Scalar, _ fallback: CTFont
+    ) -> String {
+        guard
+            let name = Typeface.exampleTypeface(
+                for: scalar, requested: Typeface.traits(of: face.request.style),
+                size: CTFontGetSize(fallback))
+        else { return "" }
+        return ", for example \"\(name)\""
     }
 
     /// ``textFont(_:)`` に渡せる書体の名前 (PostScript 名)。**`.` で始まる内部名 (`.HiraKakuInterface-W4`) は

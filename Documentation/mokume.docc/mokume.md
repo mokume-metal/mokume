@@ -106,6 +106,11 @@ circle(200, 150, 20 + pow(2, level))
 
 `mokume watch` で `.swift` を保存すると、スケッチは新しいプロセスで作り直される。
 資材の置き場 (`Sources/<名前>/assets/`) のファイルを足したり保存したりしたときも、ビルドが資材を写し直すので同じく作り直す。
+
+見張るのは次の3つで、これが約束である。`Package.swift`、`Sources/` の下の `.swift` (隠しファイルと包みの中を除く)、`Sources/<名前>/assets/` の下の普通のファイル (隠しファイル・`.metal`・シンボリックリンクを除く)。
+
+**範囲の外を変えても作り直さない。** `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、置き場の中のシンボリックリンク、`Package.resolved`、パスで指した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、作り直しは起きない。外を変えたときは `mokume watch` を起こし直す。範囲を `Package.swift` の宣言から導く形は、宣言を変えた作品が出てから決める。
+
 **フレームを越える状態も、この作り直しでは最初から始まる。** 本体が引き継ぐのは次の2種類である。
 
 | 残るもの | 引き継ぎ方 |
@@ -167,11 +172,14 @@ rotate(Float.pi / 4)      // 型を名乗っても通る
 
 `pow(2, 3)` のようにリテラルだけを渡す計算の関数も、同じ理由で型が決まらず組めない (上の「`import mokume` で通る語彙」)。
 
-**2. 割り算は、片方に小数点を付ける。** 整数だけの式は整数のまま計算され、`1 / 2` は 0 になる。
+**2. 割り算は、片方に小数点を付ける。** 渡す先が型を決めない口 (mokume の描く口・数の口) へ、
+整数リテラルだけの式を渡すと、整数のまま計算され、`1 / 2` は 0 になる。型を名乗った文脈
+(`let r: Float = 1 / 2`) では、同じ式が小数で計算される。
 **エラーにならず**、描かれる絵で気付くことになる。
 
 ```swift
-circle(width / 2, height / 2, 1 / 2)     // 直径が 0 になり、何も描かれない
+let r: Float = 1 / 2                     // 0.5 (型を名乗った文脈では小数で計算される)
+circle(width / 2, height / 2, 1 / 2)     // 0 になり、直径が 0 で何も描かれない (渡す先が型を決めないので Int で計算される)
 circle(width / 2, height / 2, 1.0 / 2)   // 0.5 が渡る
 ```
 
@@ -286,6 +294,22 @@ let turn = width / 400                   // Float
 rotate(turn * .pi)                       // 他の項が Float なら .pi のままで通る
 ```
 
+**Swift 標準の乱数は、種に従わない。** `randomElement()`・`shuffled()`・`Float.random(in:)` は、引数を
+省くと Swift が持つ別の乱数で引く。**コンパイルは通り、注意も出ず、走らせるたびに絵が変わる** — 同じ入力から
+同じ絵になる約束 (``SketchPart/randomSeed(_:)``) が、黙って外れる。同じ列で引かせるには、`using:` に
+``SketchPart/randomSource`` を渡す。
+
+```swift
+randomSeed(7)
+let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]
+fill(palette.randomElement(using: &randomSource)!)   // 種に従う。走らせるたびに同じ色
+fill(palette.randomElement()!)                       // 種に従わない。走らせるたびに違う色
+```
+
+部品ごと・花ごとに別の列が要るなら、値として持てる ``RandomSource`` を作る (`RandomSource(seed: 7, index: i)`)。
+スケッチの乱数 (``SketchPart/random()``) を何回引いても、その列は動かない。揺らぎも同じで、種と細かさを
+値として持つ ``NoiseField`` がある (``SketchPart/noiseSeed(_:)`` に触れずに、板ごとに別の種で引ける)。
+
 ### 手本の名前から引く
 
 **Processing・p5.js の名前で書いて通らない・動きが違うときに、mokume のどの口へ直すかを引く表である。** 名前は手本から採っているので、多くはそのまま写せる。ここに並ぶのは、写すと黙ってずれるか、綴りが変わる口だけである。違う理由と詳しい振る舞いは、リンク先の説明にある。
@@ -354,6 +378,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/canvas``
 - ``SketchPart/frameCount``
 - ``SketchPart/time``
+- ``SketchPart/authorTime``
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``
 - ``Clock``
@@ -415,6 +440,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -428,6 +454,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/strokeWeight(_:)``
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
+- ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
 
@@ -443,6 +471,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
 - ``SketchPart/line(_:_:_:_:)``
+- ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 
 ### 座標の読み方
 
@@ -472,6 +501,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
+- ``bezierPoint(_:_:_:_:_:)``
+- ``bezierTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``
@@ -608,6 +639,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/createBandPass()``
 - ``Sketch/createReverb()``
 - ``Sketch/createDelay()``
+- ``EffectInput``
 - ``SynthSound``
 - ``SynthSource``
 - ``Oscillator``
@@ -709,9 +741,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 - ``SketchPart/loadJSONObject(_:)``
 - ``SketchPart/requestJSONObject(_:)``
+- ``SketchPart/parseJSONObject(_:)``
+- ``SketchPart/loadJSONArray(_:)``
+- ``SketchPart/requestJSONArray(_:)``
+- ``SketchPart/parseJSONArray(_:)``
 - ``SketchPart/loadXML(_:)``
 - ``SketchPart/requestXML(_:)``
 - ``JSONObject``
+- ``JSONArray``
 - ``XML``
 
 ### 立体を置く
@@ -798,9 +835,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
+- ``SketchPart/randomSource``
+- ``RandomSource``
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``NoiseField``
 
 ### 角度と数を直す
 

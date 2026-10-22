@@ -248,10 +248,18 @@ struct GlyphAtlasRebakeTests {
             return
         }
 
+        // 焼いた画素は描き切りが届ける (#1792)。空のフレームでも、控えは届く
+        try canvas.draw {}
+        try gpu.settle()
         let previous = atlas.texture
         let side = atlas.size
         let bakedBefore = texels(of: previous, side: side)
-        try #require(bakedBefore.contains { $0.w != 0 }, "検査の前提: 焼いた画素が面に無い")
+        // 左上の白い区画のほかに、焼いた画素が面に届いている
+        let whiteBlock = GlyphAtlas.whiteBlock
+        try #require(
+            bakedBefore.enumerated().contains { index, texel in
+                texel.w != 0 && (index % side >= whiteBlock || index / side >= whiteBlock)
+            }, "検査の前提: 焼いた画素が面に届いていない")
         let settles = gpu.settleCalls
 
         try atlas.rebake(gpu: gpu)
@@ -261,14 +269,17 @@ struct GlyphAtlasRebakeTests {
         #expect(atlas.size == side, "焼き直しで、面の大きさが \(side) から \(atlas.size) に変わった")
         #expect(texels(of: previous, side: side) == bakedBefore, "焼き直しが、前の面を書き換えた")
 
-        // 焼いた字形の控えも捨てている — 同じ字を頼むと、新しい頁へもう一度焼く (焼くときだけ待つ)
+        // 焼いた字形の控えも捨てている — 同じ字を頼むと、新しい頁へもう一度焼く。**焼く口も待たない**
+        // (新しい頁の控えへ積むだけ・#1792)
+        #expect(atlas.page.pendingRegionCount == 0, "検査の前提: 新しい頁に控えが残っている")
         guard case .found = atlas.entry(for: key, font: resolved.font) else {
             Issue.record("焼き直した後に「M」を焼けなかった")
             return
         }
         #expect(
-            gpu.settleCalls == settles + 1,
+            atlas.page.pendingRegionCount == 1,
             "焼き直した後の「M」を、新しい頁へ焼いていない (前の頁の控えが残っている)")
+        #expect(gpu.settleCalls == settles, "焼く口が、GPU の完了を待った")
     }
 
     /// 面を読み戻す。**読み戻す先を 1 で埋めてから渡す** — 0 で埋めると、読み戻しが何も

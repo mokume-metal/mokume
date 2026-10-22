@@ -26,6 +26,15 @@ struct DatagramSenderLoopbackTests {
     /// 送れないことの診断の数。
     private func refusals(_ told: Told) -> Int { told.count(containing: "Could not send") }
 
+    /// 診断の行の読み分け。`refusals` は "Could not send" で数えて、宛先の失敗 (拒否・`Check that something
+    /// is listening`) と待ち (`keeps waiting`) を区別しない。**赤のとき、どちらの文が増えたかを失敗の文面に
+    /// 載せる** (次に赤が出たら切り分けられるように — #3045)。
+    private func diagnosis(_ told: Told) -> String {
+        let toward = told.count(containing: "Check that something is listening")
+        let waiting = told.count(containing: "keeps waiting")
+        return "宛先の失敗 \(toward) 行・待ち \(waiting) 行・全行: \(told.lines)"
+    }
+
     /// **握っている間は、他が同じ番号を取れない** (#2542)。隙間はめったに開かないので、握らない形へ
     /// 戻しても下の検査は赤くならない — その代わりに、隙間が無いことをここで直に見る。
     @Test("誰も受けない口は、握っている間、同じ番号を bind できない")
@@ -56,7 +65,7 @@ struct DatagramSenderLoopbackTests {
         }
         #expect(await until { refusals(told) >= 1 })
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) == 1, "診断: \(told.lines)")
+        #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
     }
 
     @Test("1 フレームの中で 10 回まとめて送っても、診断は 1 行で、自分で取り消した繋ぎの名乗りは混ざらない")
@@ -74,7 +83,7 @@ struct DatagramSenderLoopbackTests {
             sender.send([UInt8(index)])
         }
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) <= 1, "診断: \(told.lines)")
+        #expect(refusals(told) <= 1, "診断: \(diagnosis(told))")
 
         // 間を置いてまとめ直す。拒否が届いた後なので、束の最初の送信が失敗して名乗る。名乗りは
         // 通しで 1 行のままである
@@ -85,8 +94,8 @@ struct DatagramSenderLoopbackTests {
             try await Task.sleep(for: .milliseconds(300))
         }
         #expect(await until { refusals(told) >= 1 })
-        #expect(refusals(told) == 1, "診断: \(told.lines)")
-        #expect(told.count(containing: "Operation canceled") == 0, "診断: \(told.lines)")
+        #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
+        #expect(told.count(containing: "Operation canceled") == 0, "診断: \(diagnosis(told))")
     }
 
     @Test("OSCPort.send と UDPPort.send も、誰も受けていない宛先へ送り続けて、それぞれ 1 行")
@@ -112,7 +121,7 @@ struct DatagramSenderLoopbackTests {
         }
         #expect(await until { refusals(told) >= 1 })
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) == 1, "OSC の診断: \(told.lines)")
+        #expect(refusals(told) == 1, "OSC の診断: \(diagnosis(told))")
 
         // 同じ宛先を、別の入り口 (別の送り手) から。こちらも 1 行
         for index in 0..<10 {
@@ -121,7 +130,7 @@ struct DatagramSenderLoopbackTests {
         }
         #expect(await until { refusals(told) >= 2 })
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) == 2, "UDP の診断: \(told.lines)")
+        #expect(refusals(told) == 2, "UDP の診断: \(diagnosis(told))")
     }
 
     @Test("受け手が開けば届き、届いた後で受け手が閉じれば、また 1 行だけ名乗る")
@@ -132,9 +141,15 @@ struct DatagramSenderLoopbackTests {
         let nobody = try unanswered()
         defer { nobody.release() }
         let port = nobody.port
-        // 戻すまでの間は短くして、検査が待つ時間を詰める (本番の既定は 0.5 秒)
+        // 戻すまでの間 (`confirmAfter`) は、**手で進める時計で測る** (#3045)。実時間で 0.1 秒にすると、
+        // 居ない間の最後の送信が誤り無く終わってから受け手が開くまでが 0.1 秒を越えうる。越えると、開いた後の
+        // 最初の送信で「送れた」と読んで戻り、遅れて返った拒否で 2 行目を名乗る — 設計どおりの振る舞い
+        // (``DatagramSenderTests`` の `aLeftoverRefusalAfterTheReceiverOpensIsToldAgain`) が、負荷の下の
+        // 実時間の速さで出入りして、数が揺れる。時計を止めておけば、受け手が開くまでに戻りは起きず、
+        // 数は決定的になる。戻るのは、届いた後に時計を進めたときだけ
+        let clock = ManualClock(0)
         let sender = DatagramSender(
-            host: "127.0.0.1", port: port, confirmAfter: 0.1, warn: told.append)
+            host: "127.0.0.1", port: port, confirmAfter: 0.1, now: clock.provider, warn: told.append)
         defer { sender.stop() }
 
         // 受け手が居ない間は 1 行
@@ -142,7 +157,7 @@ struct DatagramSenderLoopbackTests {
             sender.send(Array("miss \(index)".utf8))
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(refusals(told) == 1, "診断: \(told.lines)")
+        #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
 
         // 受け手が開く
         nobody.release()
@@ -156,10 +171,13 @@ struct DatagramSenderLoopbackTests {
         defer { receiver.close() }
         try await requireState(told: heard, tracing: source) { receiver.state }
 
-        // 開いた直後に、拒否の残りが 1 つだけ送信の失敗として返ることはある。続けて送れば届き、
-        // 届き始めたら取りこぼさない
+        // 開いた直後に、拒否の残りが 1 つだけ送信の失敗として返ることはある (時計が止まっていて戻らない
+        // ので、名乗りは増えない)。続けて送れば届き、届き始めたら取りこぼさない
         var received: [String] = []
-        let deadline = Date().addingTimeInterval(10)
+        let log = SendLog()
+        log.watch(sender: sender)
+        let started = Date()
+        let deadline = started.addingTimeInterval(10)
         var attempt = 0
         while received.isEmpty && Date() < deadline {
             sender.send(Array("first \(attempt)".utf8))
@@ -168,19 +186,38 @@ struct DatagramSenderLoopbackTests {
             receiver.supply()
             received += receiver.messages
         }
-        #expect(!received.isEmpty, "届かなかった: \(told.lines)")
+        // 読まれなかった回は、送り手と受け口の様子を名乗って止まる (#3001)
+        log.record(
+            label: "送り", expected: 1, heard: min(received.count, 1), missing: nil, replacements: 0,
+            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: 10)
+        try await requireSent(
+            !received.isEmpty, "受け手が開いた後、\(attempt) 通を送っても 1 通も読まれなかった (送り手の診断: \(diagnosis(told)))",
+            log: log, landing: landing(of: receiver, port: port, told: heard))
         for index in 0..<3 {
             sender.send(Array("after \(index)".utf8))
             try await Task.sleep(for: .milliseconds(60))
         }
-        received += await collect(receiver, count: 3)
+        let heardBefore = received.count
+        let afterLog = SendLog()
+        afterLog.watch(sender: sender)
+        received += await collect(receiver, count: 3, log: afterLog)
+        try await requireSent(
+            received.count >= heardBefore + 3, "続けて送った 3 通のうち読まれたのは \(received.count - heardBefore) 通",
+            log: afterLog, landing: landing(of: receiver, port: port, told: heard))
         #expect(received.suffix(3) == ["after 0", "after 1", "after 2"], "届いた: \(received)")
-        #expect(refusals(told) == 1, "診断: \(told.lines)")
+        #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
 
-        // 間を空けて送れ続けたので、送れたと読んで戻っている。受け手が閉じたら、また 1 行
-        try await Task.sleep(for: .milliseconds(300))
-        sender.send(Array("settled".utf8))
+        // 時計を進めて、間を空けて送れ続ける。**最初の誤り無しの完了から `confirmAfter` 以上後に出した送信も
+        // 誤り無く終わって**初めて、送れたと読んで戻る。1 つ目 (`settled 0`) は、残りの拒否で繋ぎが作り直された
+        // 回の「最初の完了」になりうるので、間を空けた 2 つ目 (`settled 1`) までを届くのを待って送る
+        for index in 0..<2 {
+            clock.advance(by: 0.3)
+            sender.send(Array("settled \(index)".utf8))
+            let settled = await collect(receiver, count: 1)
+            #expect(settled == ["settled \(index)"], "届いた: \(settled)")
+        }
         try await Task.sleep(for: .milliseconds(100))
+        // 受け手が閉じたら、また 1 行
         receiver.close()
         #expect(await until { receiver.state == .stopped })
         for index in 0..<10 {
@@ -189,6 +226,6 @@ struct DatagramSenderLoopbackTests {
         }
         #expect(await until { refusals(told) >= 2 })
         try await Task.sleep(for: .milliseconds(300))
-        #expect(refusals(told) == 2, "診断: \(told.lines)")
+        #expect(refusals(told) == 2, "診断: \(diagnosis(told))")
     }
 }

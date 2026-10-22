@@ -21,12 +21,12 @@
 # **検出漏れより過検出のほうが安全。** BLOCK は行番号を示すだけ、WARN は判断を委ねるので、
 # 広めに取っても行き止まりにならない。
 #
-# ## ここに無いもの
+# ## 配線の範囲
 #
-# **投稿の口には配線していない。** `comment.sh` に「秘密情報らしき文字列があれば止める」を
-# 足すのは**新しいゲート**で、[ADR-0008](../docs/decisions/0008-mechanism-needs-demonstrated-harm.md)
-# が実害の提示を求める側である。`comment.sh` 経由で秘密が出た実例はまだ無い。要るように
-# なったら、実害を Issue 番号で示してから配線する。
+# **plan-record は BLOCK で止める。** `comment.sh` / `edit-body.sh` は**止めずに名乗るだけ**
+# (`secret_notice`、#3075): 本文を作るのは人かエージェントで、混入に気付いて直せば足りる。
+# 止めると正当な `localhost` の言及で連投が止まり、ADR-0008 が避ける「実害の無い行き止まり」
+# になる。`comment.sh` の宛先の近況 (#1327) と同じ作法で、stderr に 1 件 1 行を出すだけ。
 #
 # **「持ち出せる形に整える」は別の問い。** 絶対パスとホームディレクトリを畳むのは
 # `plan-record.sh` の sanitize が持つ。見つけるのと整えるのを 1 つにすると、畳む前と
@@ -81,4 +81,16 @@ secret_scan() { # $1=本文 → 1 件 1 行のタブ区切り
   secret_emit WARN '1Password の参照 (vault の構造が漏れる)' "$body" 'op://[^[:space:]]+'
   secret_emit WARN '畳めなかった絶対パス' "$body" '/(Users|home)/[A-Za-z0-9._-]+'
   secret_emit WARN 'ローカルのポート番号' "$body" 'localhost:[0-9]+|127\.0\.0\.1:[0-9]+'
+}
+
+# 投稿の直前に、検出した種別と行番号だけを stderr に 1 行ずつ名乗る (#3075)。止めない・
+# 中身は出さない・検出が無ければ何も出さない。呼び出し側の set -e を落とさない。
+#   $1=本文
+secret_notice() {
+  local body="${1:-}" kind label where
+  while IFS=$'\t' read -r kind label where; do
+    [ -n "$kind" ] || continue
+    printf '本文に %s らしきものがあります (%s)。残してよいか確認してください\n' "$label" "$where" >&2
+  done < <(secret_scan "$body" || true)
+  return 0
 }

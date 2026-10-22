@@ -73,6 +73,42 @@ queue`・`kIOGPUCommandBufferCallbackErrorOutOfMemory`) で、変更と関係の
 **包まないもの:** 普段のスケッチの実行 (`mokume watch`・作品の起動)。作り手の実行を、検査の都合で
 待たせない。
 
+## 期限切れの記録 (#2235)
+
+**GPU の待ちが期限を越えたプロセスは、その旨を置き場へ 1 つ残す。次の検査・計測は、それを名乗って
+始めずに止まる。** 待ちが期限 (`RenderDevice.waitLimitSeconds`・5 秒) を越えたプロセスは、以後
+新しい発行口を作らない (`CommandQueueGate`・#2052) が、その印はプロセスの中にしか無い。害 (WindowServer
+の watchdog によるカーネルパニック) は機械全体に及ぶので、検査が終わって枠が返ると、待っていた別の
+検査プロセスが新しい関所で、まだ答えない GPU に発行口を作り、止まった発行口がまた溜まる。
+
+- 記録は `$MOKUME_GPU_SLOT_DIR` の `wait-expired.json` (枠のロックと同じ場所)。時刻・pid・cwd・
+  どの待ちがどの期限を越えたか、と、起動元 (`lineage`・`agent`。「## 起動元の記録」と同じ項目) が入る。
+  書くのは Swift の側 (`ExpiryRecord`) で、**この包みの下で走っているときだけ**書く。包みが子へ
+  `MOKUME_GPU_SLOT_EXPIRY_RECORD` (記録のパス) と `MOKUME_GPU_SLOT_PID` (包みの pid) を渡し、
+  渡されていなければ (利用者のスケッチ・`mokume run` ほか) 何も書かない。起動元は子から引けないので、
+  書いた子の包みが、子が終わった後に足す
+- **枠を取る前に記録があれば、記録の中身と、人が何を確かめてから消すかを名乗り、子を起こさずに 76 で
+  抜ける** (期限切れの 75 とは別)。`--exclusive` も同じである。枠を待つ間に別のプロセスが期限を越える
+  こともあるので、**枠を取れた後にもう一度見て**、あれば枠を返して止まる。計測の内側で起こした
+  この包み (`MOKUME_GPU_SLOT_EXCLUSIVE` が立っているとき) も、枠は取らないが、記録は見て止まる —
+  1 つの計測が何本も起こすので、2 本目以降が答えない GPU に発行口を作らないように
+- **記録は手で消すまで残る。** 時間や回数で下ろす形は採らない — GPU が答えるようになったかを確かめる
+  には、発行口に仕事を積んで待つほかなく、それ自体が答えない GPU への積み増しになるから
+  (`CommandQueueGate` の印が一方向なのと同じ理由)。**消すのは人で、確かめてからである**: 画面が固まって
+  いない・前の検査プロセスが残っていない・GPU が答える。止まる文面は何を確かめるかを先に言い、記録の
+  場所を示すだけにする (そのまま打てる削除の 1 行は出さない — 読んだエージェントが、確かめずに消す)
+- **記録は、起こされた後のプロセスにも効く。** この包みが記録を読むのは起こすときだけだが、`MOKUME_GPU_SLOT_
+  EXPIRY_RECORD` を渡されたプロセスの関所 (Swift の `CommandQueueGate`) は、新しい発行口を作る前に記録の
+  有無を見て、あれば作らない。包んだ実行の中で後から起きる子 (exit test の子・`mokume watch` の世代) と、
+  既に走っている別の枠の検査は、これで止まる。**関所に記録を持たせるのは、この包みの下で走るプロセス
+  だけ**で、書きも読みもする
+- **古い版の `gpu-slot.py` (他の作業ツリー) は、記録を読まない。** 記録を知らない版が起こす検査は止まらない
+  (子へ書き先も渡さないので、その検査は記録も書かない)。順番待ちの印 (`exclusive.lock`) を知らない版を
+  「## 窓つきの計測」が認めているのと同じ、作業ツリーの版が揃うまでの形である。記録を読む版を取り込めば
+  その作業ツリーも止まるので、機械の中の版が揃うほど守りは強くなる
+- **範囲の外:** 枠を通らない実行 (素の `swift test`・`make reference-shots`・`make example-shots`・
+  エージェントが起こす `mokume watch` など) は、この包みも渡さないので書きも読みもしない (下の「範囲の外」)
+
 ## 範囲の外
 
 **素の `swift test` (全検査も `--filter …` も) は、この枠にも下の並列の幅にも届かない。範囲の
@@ -184,7 +220,8 @@ GPU は画面の描画 (WindowServer) と共有なので、全検査が重なっ
 ここに無ければ、それは枠の外の実行である (上の「範囲の外」・#2052)。窓つきの計測は、包んでいれば
 `"mode": "exclusive"` の行で載る (上の「## 窓つきの計測」)。
 
-子の終了コードは、そのまま返す。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
+終了コードは、子のものをそのまま返す。包み自身が返すのは、使い方の誤り (2)・枠を待つ期限切れ (75)・
+期限切れの記録で止まったとき (76) である。SIGINT / SIGTERM は子へ渡す。取り直しの間隔
 (`$MOKUME_GPU_SLOT_POLL` 秒) と名乗る間隔 (`$MOKUME_GPU_SLOT_REPORT` 秒) は、検査が短く回す
 ための口である。検査は scripts/tests/gpu_slot_test.py。
 """
@@ -193,6 +230,7 @@ import fcntl
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -202,6 +240,13 @@ DEFAULT_SLOTS = 3
 DEFAULT_WAIT_SECONDS = 5400
 EXIT_TIMED_OUT = 75
 EXIT_USAGE = 2
+# 期限切れの記録があって、起こさずに止まった (上の「## 期限切れの記録」)
+EXIT_GPU_STUCK = 76
+
+# 期限切れの記録 (#2235)。置き場のファイル名と、子へ渡す環境変数 (Swift の `ExpiryRecord` と揃える)
+EXPIRY_NAME = "wait-expired.json"
+EXPIRY_VARIABLE = "MOKUME_GPU_SLOT_EXPIRY_RECORD"
+WRAPPER_VARIABLE = "MOKUME_GPU_SLOT_PID"
 
 # 窓つきの計測 (上の「## 窓つきの計測」)。順番待ちの印のファイル名と、子へ渡す「内側で走っている」の印
 GATE_NAME = "exclusive.lock"
@@ -520,8 +565,118 @@ def _acquire_all(slots, wait_seconds, poll, report_every, origin, command):
         return None
 
 
-def _run(command, exclusive=False):
+def _expiry_path():
+    return _slot_dir() / EXPIRY_NAME
+
+
+def _read_expiry():
+    """期限切れの記録を読む。無ければ None、あれば (パス, 中身) を返す。中身が読めない (JSON でない・
+    権限が無い) ときは、中身を None にして返す — **在るのに読めない記録を、無いものとして素通ししない**。
+    置き場そのものを使えないとき (枠も取れない環境) は、無いものとして扱う。"""
+    path = _expiry_path()
+    try:
+        status = os.lstat(path)
+    except OSError:
+        # 無い。置き場そのものを使えないとき (枠も取れない環境) も、無いものとして扱う
+        return None
+    # **リンクは辿らない。** Swift の関所 (`ExpiryRecord.exists`・lstat) と前検査 (`-L`) は、壊れたリンクも
+    # 生きたリンクも「在る」と数える。辿ると、壊れたリンクを「無い」と読んで子を起こし、関所が止める記録を
+    # この包みが素通しする。普通のファイルでないものは、読めない記録として止める
+    if not stat.S_ISREG(status.st_mode):
+        return path, None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path, None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    return path, data if isinstance(data, dict) else None
+
+
+def _refuse_for_expiry(found, subject, origin=None):
+    """期限切れの記録があるので、起こさずに止まる。記録の中身と、人が確かめることを名乗り、76 を返す。
+
+    **消すためのそのまま打てる 1 行は出さない** (上の「## 期限切れの記録」)。読んだエージェントが、確かめずに消す。"""
+    path, data = found
+    _say(
+        f"GPU の待ちが期限を越えた記録があるので、{subject}を走らせずに抜ける (終了コード {EXIT_GPU_STUCK})。"
+        "前の実行が止めた GPU は、まだ答えないかもしれない:"
+    )
+    if data is not None:
+        waited = data.get("wait", "?")
+        print(
+            f"  - {data.get('time', '?')} · pid {data.get('pid', '?')} · {data.get('cwd', '?')}"
+            f" · 待ち: {waited} (期限 {data.get('limit', '?')})",
+            file=sys.stderr, flush=True,
+        )
+        print(f"  (起動元は記録の lineage・agent と、{_log_path()} の take の行にある)", file=sys.stderr, flush=True)
+    else:
+        print("  - 記録の中身を読めない", file=sys.stderr, flush=True)
+    print(
+        "  記録は人が確かめてから消す (時間では下りない)。確かめること: 画面が固まっていない・前の検査プロセスが"
+        " 残っていない (`bash scripts/orphan-processes.sh`)・GPU が答える。確かめる前に消して続けると、"
+        "答えない GPU に新しい発行口を作って、機械ごと止まりうる。",
+        file=sys.stderr, flush=True,
+    )
+    print(f"  記録のファイル: {path}", file=sys.stderr, flush=True)
+    if origin is None:
+        origin = _origin()
+    _record("refused", reason="wait-expired", expiry_record=str(path), expiry=data, **origin)
+    return EXIT_GPU_STUCK
+
+
+def _fullsync(descriptor):
+    """ディスクまで落とす (macOS の `fsync` はドライブのキャッシュに留まりうるので `F_FULLFSYNC` を試す)。"""
+    try:
+        fcntl.fcntl(descriptor, fcntl.F_FULLFSYNC)
+    except (AttributeError, OSError):
+        os.fsync(descriptor)
+
+
+def _complete_expiry(origin):
+    """自分の子が書いた期限切れの記録に、起動元と包みのコマンドを足す。子は親プロセスの連鎖を引けない
+    ので、ここで足す。足せなくても (包みごと殺された・書けない) 記録は残り、起動元は `take` の行から引ける。
+    **何が起きても例外を外へ出さない。**"""
+    try:
+        path = _expiry_path()
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return  # リンクは辿らない (自分の子が書いたのは普通のファイル)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("gpu_slot_pid") != os.getpid() or "lineage" in data:
+            return
+        data.update(origin)
+        # 置き換えは同じ置き場の中で (別のファイルシステムをまたがない)
+        temporary = path.with_name(f".{path.name}.{os.getpid()}")
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            try:
+                os.write(descriptor, (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
+                _fullsync(descriptor)
+            finally:
+                os.close(descriptor)
+            # **置き換えの直前に、記録がまだ在るかを確かめる。** 読んでから置き換えるまでの間に人が消した
+            # (GPU が答えると確かめて消した) 記録を、起動元つきで書き戻すと、消したはずの記録が戻る
+            if not os.path.lexists(path):
+                return
+            os.replace(temporary, path)
+        finally:
+            try:
+                os.unlink(temporary)  # 置き換えた後は無い。置き換えなかったときの下書きを残さない
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+def _run(command, exclusive=False, own=True):
     environment = dict(os.environ)
+    # 期限切れの書き先と包みの pid を子へ渡す (上の「## 期限切れの記録」)。pid は、自分の子の記録かを
+    # 包みが見分けるためで、内側の素通しの包み (own=False) は外側のものを残す
+    environment[EXPIRY_VARIABLE] = str(_expiry_path().absolute())
+    if own:
+        environment[WRAPPER_VARIABLE] = str(os.getpid())
     # 空の値は未設定と同じに扱う。Swift Testing が読めない値を素通しすると、縛りが黙って外れる
     if not environment.get(PARALLELIZATION_WIDTH_VARIABLE, "").strip():
         environment[PARALLELIZATION_WIDTH_VARIABLE] = DEFAULT_PARALLELIZATION_WIDTH
@@ -551,22 +706,39 @@ def main(argv):
     if os.environ.get(EXCLUSIVE_VARIABLE):
         # 祖先の --exclusive が順番待ちの印と枠を全部握っている。--exclusive でも普段の実行
         # (計測の内側で打った make test) でも、取りに行けば自分の祖先を期限まで待つことになる
+        # 枠は取らない。**記録は見る** — 1 つの計測が何本も起こすので、2 本目以降が答えない GPU に発行口を作る
+        found = _read_expiry()
+        if found:
+            return _refuse_for_expiry(found, "計測の内側の" + ("計測" if exclusive else "検査"))
         _say(f"既に窓つきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
-        return _run(command, exclusive=exclusive)
+        return _run(command, exclusive=exclusive, own=False)
     slots = _number("MOKUME_GPU_SLOTS", DEFAULT_SLOTS, integer=True)
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)
     poll = _number("MOKUME_GPU_SLOT_POLL", 2.0, integer=False)
     report_every = _number("MOKUME_GPU_SLOT_REPORT", 60.0, integer=False)
+    # 前の実行が期限切れを残していたら、枠を待つ前に止まる (上の「## 期限切れの記録」)
+    subject = "計測" if exclusive else "検査"
+    found = _read_expiry()
+    if found:
+        return _refuse_for_expiry(found, subject)
     origin = _origin()
     if exclusive:
         taken = _acquire_all(slots, wait_seconds, poll, report_every, origin, command)
         handles = [] if taken is None else [*taken[1], taken[0]]
         names = None if taken is None else [Path(handle.name).name for handle in taken[1]]
-        _record("take", mode="exclusive", slots=names, command=command, **origin)
     else:
         slot = _acquire(slots, wait_seconds, poll, report_every, origin)
         handles = [] if slot is None else [slot]
         names = None if slot is None else Path(slot.name).name
+    # 枠を待つ間 (最長 $MOKUME_GPU_SLOT_WAIT) に、別のプロセスが期限を越えたかもしれない。起こす前にもう一度見る
+    found = _read_expiry()
+    if found:
+        for handle in handles:
+            handle.close()
+        return _refuse_for_expiry(found, subject, origin)
+    if exclusive:
+        _record("take", mode="exclusive", slots=names, command=command, **origin)
+    else:
         _record("take", slot=names, command=command, **origin)
     started = time.monotonic()
     code = None
@@ -578,6 +750,7 @@ def main(argv):
             "release", **({"mode": "exclusive", "slots": names} if exclusive else {"slot": names}),
             exit_code=code, seconds=round(time.monotonic() - started, 1),
         )
+        _complete_expiry(origin)
         # 枠を先に返し、順番待ちの印を最後に返す
         for handle in handles:
             handle.close()

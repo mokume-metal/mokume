@@ -46,6 +46,8 @@ enum NumberValues {
             case sq
             case fract
             case mod
+            case bezierPoint
+            case bezierTangent
         }
     }
 
@@ -646,20 +648,12 @@ public func mag(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Flo
 /// ベクトル (`dx`, `dy`) の長さ。``dist(_:_:_:_:)`` と ``mag(_:_:)`` が共有する。**注意は言わない** —
 /// 値は数であること (差が溢れて ±∞ になったものは来てよい)。
 ///
-/// **2 乗の和をそのまま開くのが常で、`3, 4` から 5 がちょうど返る。** ただし 2 乗が溢れるほど
-/// 大きい値 (1.8e19 を越える成分は 2 乗で ∞ になり、本当は有限の距離が ∞ になる) と、潰れるほど
-/// 小さい値 (1e-19 を下回る成分は 2 乗が 0 や非正規数になり、距離が 0 や粗い値になる) は、
-/// 大きいほうで割って開き直す。割った値は 1 以下なので溢れも潰れもしない。結果が `Float` の範囲を
-/// 越えるなら、掛け戻しで ∞ になる。
+/// **長さを開く規則は、値型 `Vector2` の `length` と同じ 1 本** (#2935)。2 乗の和が `2^-100` 以上
+/// `2^100` 未満ならそのまま開くので、`3, 4` から 5 がちょうど返る。外 (2 乗が溢れる大きい値・
+/// 0 や非正規数に潰れる小さい値) は、2 の冪で寄せて測るので、有限の距離は有限で返り、**0 になるのは
+/// 0 ベクトルだけ**。結果が `Float` の範囲を越えるなら ∞ になる (差が溢れて ∞ になった入力も ∞)。
 private func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
-    let (a, b) = (abs(dx), abs(dy))
-    let large = max(a, b)
-    if large == 0 { return 0 }
-    if large >= 1e-18 && large <= 1e18 { return (dx * dx + dy * dy).squareRoot() }
-    // 差が溢れて ∞ になったときは割れない。距離も `Float` の範囲を越えるので ∞
-    guard large.isFinite else { return .infinity }
-    let ratio = min(a, b) / large
-    return large * (1 + ratio * ratio).squareRoot()
+    Vector2.measuredLength(of: SIMD2(dx, dy))
 }
 
 /// 2 乗。

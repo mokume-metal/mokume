@@ -18,15 +18,19 @@ struct MCPServerTests {
         let server = MCPServer(
             tools: Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
-            write: { recorder.written.append($0) })
+            write: { recorder.record($0) })
         return (server, recorder)
     }
 
-    final class Recorder: @unchecked Sendable {
+    /// 窓口の読みは別の手で走る (#2355) ので、読みと書きは鍵の内側に置く。
+    nonisolated final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
         private var lines: [String]
-        var written: [String] = []
+        private var answered: [String] = []
         init(lines: [String]) { self.lines = lines }
-        func next() -> String? { lines.isEmpty ? nil : lines.removeFirst() }
+        func next() -> String? { lock.withLock { lines.isEmpty ? nil : lines.removeFirst() } }
+        func record(_ line: String) { lock.withLock { answered.append(line) } }
+        var written: [String] { lock.withLock { answered } }
     }
 
     private func makeDirectory() throws -> URL {
@@ -86,7 +90,7 @@ struct MCPServerTests {
         let server = MCPServer(
             tools: Tools(facets: Facets(directory: package, waitLimit: 0.2), makeID: { "fixed" }),
             readLine: { recorder.next() },
-            write: { recorder.written.append($0) })
+            write: { recorder.record($0) })
         try beforeServing()
         server.serve()
         let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
@@ -1075,9 +1079,8 @@ struct MCPServerTests {
                 atPath: directory.appendingPathComponent(".mokume/observe").path))
     }
 
-    /// `null` の方針は #2393 で決める。それまでは、`as? Double` が外れて省略と同じに
-    /// なっていた従来の読み方を変えない (省略できる欄に `null` を入れる呼び手が断られないように)。
-    @Test("null の縮尺は、従来どおり省いたのと同じに読む")
+    /// `null` は省略と同じに読む (#2393。省略できる欄に `null` を入れる呼び手が断られないように)。
+    @Test("null の縮尺は、省いたのと同じに読む")
     func readsANullScaleAsOmitted() throws {
         let directory = try makeDirectory()
         let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
@@ -1088,6 +1091,124 @@ struct MCPServerTests {
             try JSONSerialization.jsonObject(with: Data(contentsOf: observeRequest(in: directory)))
                 as? [String: Any])
         #expect(request.keys.sorted() == ["id"])
+    }
+
+    /// 観測を頼み、誰も応えない区画へ置かれた要求を読む (置かれていなければ `nil`)。
+    private func placedObservation(_ json: String) throws -> [String: Any]? {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        // 誰も応えないので上限まで待って諦めるが、要求は置かれている
+        _ = tools.call("observe", arguments: try decode(json))
+        guard let data = try? Data(contentsOf: observeRequest(in: directory)) else { return nil }
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    /// **省略可能な欄の `null` は省略と同じ** (#2393)。`time`・`count`・`every` も、これまでの
+    /// 道具の誤りではなく、`scale` と同じに読む。省略と読んだ欄は区画の要求に書かない。
+    @Test(
+        "null の時刻・枚数・間隔は、省いたのと同じに読み、要求に null のキーを書かない",
+        arguments: [
+            (#"{"time":null}"#, ["id"]),
+            (#"{"count":null,"every":null}"#, ["id"]),
+            (#"{"time":3,"count":null}"#, ["id", "time"]),
+            (#"{"time":3,"every":null}"#, ["id", "time"]),
+            (#"{"time":null,"scale":null,"count":null,"every":null}"#, ["id"]),
+            (#"{"count":2,"every":null}"#, ["count", "id"]),
+        ])
+    func readsNullOptionalFieldsAsOmitted(json: String, keys: [String]) throws {
+        let request = try #require(try placedObservation(json), "\(json)")
+        #expect(request.keys.sorted() == keys, "\(json)")
+        #expect(!request.values.contains { $0 is NSNull }, "\(json)")
+    }
+
+    /// 上の反対側。`null` を受けても、**型の違う値は断ったまま** (#2408)。
+    @Test(
+        "時刻・枚数・間隔・縮尺の型違いは、null を受けるようになっても要求を置かずに断る",
+        arguments: [
+            (#"{"time":"3"}"#, "time must be finite, non-negative seconds within the Float range"),
+            (#"{"time":true}"#, "time must be finite, non-negative seconds within the Float range"),
+            (#"{"count":true}"#, "count must be a whole number"),
+            (#"{"every":"2"}"#, "every must be a whole number"),
+            (#"{"scale":"0.5"}"#, "scale must be a finite number"),
+            (#"{"time":3,"count":"1"}"#, "A specified time requires count=1 and every=1"),
+        ])
+    func stillRefusesWrongTypesAlongsideNull(json: String, reason: String) throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: try decode(json))
+        #expect(outcome.isError, "\(json)")
+        #expect(outcome.text == reason, "\(json)")
+        #expect(!FileManager.default.fileExists(atPath: observeRequest(in: directory).path), "\(json)")
+    }
+
+    /// **知らない名前の引数は、道具を走らせずに断る** (#2486)。黙って捨てると、`scal` の
+    /// 綴り違いが等倍で撮る頼みに化ける。断る文面は知らない名前と、受ける名前を言う。
+    @Test("observe の知らない引数は、区画に要求を書かずに、受ける名前を添えて断る")
+    func refusesAnUnknownObserveArgument() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call("observe", arguments: try decode(#"{"scal":0.5}"#))
+        #expect(outcome.isError)
+        #expect(
+            outcome.text == "Unknown argument: scal. observe accepts count, every, scale, time.",
+            "\(outcome.text)")
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent(".mokume").path))
+    }
+
+    @Test(
+        "どの道具も、知らない引数を断る (値が null でも、知っている名前と並んでいても)",
+        arguments: [
+            ("build_status", #"{"x":1}"#, "Unknown argument: x. build_status takes no arguments."),
+            ("build_status", #"{"x":null}"#, "Unknown argument: x. build_status takes no arguments."),
+            ("reference", #"{"nam":"api"}"#, "Unknown argument: nam. reference accepts name."),
+            ("input", #"{"events":[],"evnts":[]}"#, "Unknown argument: evnts. input accepts events."),
+            // 知っている名前の `null` は余りに数えない。数えるのは知らない名前だけ
+            ("observe", #"{"scale":null,"scal":1}"#,
+                "Unknown argument: scal. observe accepts count, every, scale, time."),
+            ("observe", #"{"b":1,"a":null}"#,
+                "Unknown arguments: a, b. observe accepts count, every, scale, time."),
+        ])
+    func refusesUnknownArgumentsOfEveryTool(tool: String, json: String, reason: String) throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tools = Tools(facets: Facets(directory: directory, waitLimit: 0.2), makeID: { "fixed" })
+        let outcome = tools.call(tool, arguments: try decode(json))
+        #expect(outcome.isError, "\(tool) \(json)")
+        #expect(outcome.text == reason, "\(tool) \(json)")
+        // 区画へは何も書いていない
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent(".mokume").path))
+    }
+
+    /// 範囲は `arguments` の直下だけ。`input` の出来事の中の余りの欄は、区画の読み手が扱う (#1132)。
+    /// 必須の `events` の `null` は省略ではなく、従来どおりの文面で断る。
+    @Test("input の出来事の中の余りの欄は断らず、events が null なら従来の文面で断る")
+    func surplusCheckStopsAtTheTopLevel() throws {
+        let tools = Tools(
+            facets: Facets(directory: try makeDirectory(), waitLimit: 0.2), makeID: { "fixed" })
+        let inside = tools.call(
+            "input", arguments: try decode(#"{"events":[{"type":"keyDown","code":1,"extra":true}]}"#))
+        #expect(!inside.text.hasPrefix("Unknown argument"), "\(inside.text)")
+        let missing = tools.call("input", arguments: try decode(#"{"events":null}"#))
+        #expect(missing.isError)
+        #expect(missing.text == "events needs an array of events")
+    }
+
+    @Test("tools/list の道具はどれも、余りの引数を additionalProperties: false で断ると名乗る")
+    func listedToolsDeclareNoAdditionalProperties() throws {
+        let (server, recorder) = makeServer(
+            directory: try makeDirectory(),
+            input: [#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#])
+        server.serve()
+        let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
+        let tools = try #require(result?["tools"] as? [[String: Any]])
+        try #require(tools.count == 4)
+        for tool in tools {
+            let schema = try #require(tool["inputSchema"] as? [String: Any])
+            #expect(schema["additionalProperties"] as? Bool == false, "\(tool["name"] ?? "?")")
+        }
     }
 
     @Test("範囲の外の縮尺は切らずに要求へ置き、撮る側が切ったことを名乗れるようにする")
@@ -1592,9 +1713,8 @@ struct MCPServerTests {
         #expect(!outcome.text.contains("Documents this interface serves"))
     }
 
-    /// `null` の方針は #2393 で決める。それまでは、`as? String` が外れて省略と同じに
-    /// なっていた従来の読み方を変えない。
-    @Test("null の文書の名前は、従来どおり省いたのと同じに一覧を返す")
+    /// `null` は省略と同じに読む (#2393)。型の違う値 (上) は断ったまま。
+    @Test("null の文書の名前は、省いたのと同じに一覧を返す")
     func readsANullDocumentNameAsOmitted() throws {
         let tools = makeTools(directory: try makeDirectory(), fetches: Fetches())
         let outcome = tools.call("reference", arguments: try decode(#"{"name":null}"#))
