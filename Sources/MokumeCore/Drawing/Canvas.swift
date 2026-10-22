@@ -1631,12 +1631,17 @@ public final class Canvas {
         /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
-        /// 基本図形の列が持つもの (塗り・輪郭・1 画素より細い塗り)。**基本図形の列だけが使う。**
+        /// 基本図形の列が持つもの (塗り・輪郭・細い枝を含みうるか・斜めの縁を含みうるか)。**基本図形の列だけが
+        /// 使う。** 旗は 4 つ — ``FormInstance/fillsFlag``・``FormInstance/strokesFlag`` (置き場所が持つ旗で、
+        /// 変わると列を切る)・``FormInstance/thinFillsFlag`` (1 画素より細い塗り・帯の穴・線の枝・#1477)・
+        /// ``FormInstance/obliqueEdgesFlag`` (縁が画素の軸に斜めになりうる形・#2991。この 2 つは列の旗で、
+        /// 変わっても列を切らない)。
         ///
-        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771]・[#1477])。
+        /// 断片は有無で特化してあるので、この組がパイプラインを選ぶ ([#771]・[#1477]・[#2991])。
         ///
         /// [#771]: https://github.com/mokume-metal/mokume/issues/771
         /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
+        /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
         var formFlags: UInt32 = 0
         /// 置き場所をどこから読むか。`nil` なら溜め場を写した置き場。**持ち主ごと持つ**
         /// (``ExternalInstances`` と同じ理由)。
