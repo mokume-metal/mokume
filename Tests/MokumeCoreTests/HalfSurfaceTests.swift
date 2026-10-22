@@ -55,7 +55,7 @@ struct HalfSurfaceTests {
     @Test("白を越える明るさの色の値は、締められずに残る")
     func colorValuesAreNotBounded() {
         #expect(abs(red(color(40000)) - 40000) < 1)
-        #expect(color(40000).red > 65504)
+        #expect(color(40000).premultipliedRed > 65504)
     }
 
     /// 反証の指摘 1。**有限の数で書いた色は、`Float` の段でも有限のまま作業空間へ入る** —
@@ -64,7 +64,7 @@ struct HalfSurfaceTests {
     func colorsBeyondTheLargestFloatStayFinite() {
         for value: Float in [3.1e18, 4e18, .greatestFiniteMagnitude] {
             let written = color(value)
-            for component in [written.red, written.green, written.blue, written.alpha] {
+            for component in [written.premultipliedRed, written.premultipliedGreen, written.premultipliedBlue, written.alpha] {
                 #expect(component.isFinite, "color(\(value))")
             }
         }
@@ -413,7 +413,7 @@ struct HalfSurfaceRouteTests {
         case .loadImage:
             // 読み込みの口は、ファイルに書いた成分を復号して半精度の画素にする ([#1873])
             let url = try FloatPictureFixture.write(
-                SIMD4(color.red, color.green, color.blue, color.alpha),
+                SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha),
                 width: Self.side, height: Self.side, as: .tiff)
             defer { try? FileManager.default.removeItem(at: url) }
             let image = try canvas.loadImage(url.path)
@@ -575,7 +575,7 @@ struct HalfSurfaceRouteTests {
             for x in 10..<30 {
                 let (a, b) = (p[x, y], q[x, y])
                 let gap = max(
-                    abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue),
+                    abs(a.premultipliedRed - b.premultipliedRed), abs(a.premultipliedGreen - b.premultipliedGreen), abs(a.premultipliedBlue - b.premultipliedBlue),
                     abs(a.alpha - b.alpha))
                 if !(gap <= 0.004) { differing += 1 }
             }
@@ -584,7 +584,7 @@ struct HalfSurfaceRouteTests {
     }
 
     private func components(_ color: LinearRGBA) -> [Float] {
-        [color.red, color.green, color.blue, color.alpha]
+        [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha]
     }
 
     /// 同じ値か、半精度の隣り合う目盛りか。**どちらかが有限でなければ一致とみなさない** —

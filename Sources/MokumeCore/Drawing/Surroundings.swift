@@ -72,8 +72,8 @@ public struct Surroundings: Equatable, Sendable {
 
     private static func scale(_ color: LinearRGBA, _ factor: Float) -> LinearRGBA {
         LinearRGBA(
-            premultipliedRed: color.red * factor, green: color.green * factor,
-            blue: color.blue * factor, alpha: color.alpha)
+            premultipliedRed: color.premultipliedRed * factor, green: color.premultipliedGreen * factor,
+            blue: color.premultipliedBlue * factor, alpha: color.alpha)
     }
 
     /// 受け取れる値か。数でない成分・負の成分を持つ周囲は置かない。不透明度は使わないので見ない。
@@ -84,7 +84,7 @@ public struct Surroundings: Equatable, Sendable {
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     var isUsable: Bool {
         [top, horizon, bottom].allSatisfy { color in
-            color.hasFiniteRGB && SIMD3(color.red, color.green, color.blue).min() >= 0
+            color.hasFiniteRGB && SIMD3(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue).min() >= 0
         }
     }
 
@@ -93,10 +93,10 @@ public struct Surroundings: Equatable, Sendable {
     /// - Parameter isBackdrop: この列が**周囲そのものを出す**なら真。
     func packed(isBackdrop: Bool = false) -> PackedSurroundings {
         PackedSurroundings(
-            topAndPresence: SIMD4(top.red, top.green, top.blue, 1),
+            topAndPresence: SIMD4(top.premultipliedRed, top.premultipliedGreen, top.premultipliedBlue, 1),
             horizonAndBackdrop: SIMD4(
-                horizon.red, horizon.green, horizon.blue, isBackdrop ? 1 : 0),
-            bottom: SIMD4(bottom.red, bottom.green, bottom.blue, 0))
+                horizon.premultipliedRed, horizon.premultipliedGreen, horizon.premultipliedBlue, isBackdrop ? 1 : 0),
+            bottom: SIMD4(bottom.premultipliedRed, bottom.premultipliedGreen, bottom.premultipliedBlue, 0))
     }
 }
 

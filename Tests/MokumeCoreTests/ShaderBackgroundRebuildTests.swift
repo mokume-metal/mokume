@@ -124,7 +124,7 @@ struct ShaderBackgroundRebuildTests {
     }
 
     private static func green(_ runtime: SketchRuntime) throws -> Float {
-        try runtime.target.readPixels()[4, 4].green
+        try runtime.target.readPixels()[4, 4].premultipliedGreen
     }
 
     @Test("保存しても、そのフレームは前の断片で描き、譲らずに回すうちに組み上がって差し替わる")

@@ -178,8 +178,8 @@ struct MaterialTests {
             let dull = try render(shininess: 0)
             let glossy = try render(shininess: 8)
             return (
-                glossy[32, 32].red - dull[32, 32].red,
-                glossy[32, 32].blue - dull[32, 32].blue
+                glossy[32, 32].premultipliedRed - dull[32, 32].premultipliedRed,
+                glossy[32, 32].premultipliedBlue - dull[32, 32].premultipliedBlue
             )
         }
 
@@ -277,10 +277,10 @@ struct MaterialTests {
         let pixel = image[80, 80]
         // 奥の面と手前の面の 2 層ぶん。直す前は奥の面が向きで捨てられ、この向きでは 1 層
         // (glowRed × α) だった (#1549)
-        #expect(abs(pixel.red - glowRed * twoLayers(alpha)) < 0.01, "赤が \(pixel.red)")
+        #expect(abs(pixel.premultipliedRed - glowRed * twoLayers(alpha)) < 0.01, "赤が \(pixel.premultipliedRed)")
         if alpha == 0 {
             // 置かないのと同じ (黒地のまま)
-            #expect(abs(pixel.red) < 0.005 && abs(pixel.green) < 0.005 && abs(pixel.blue) < 0.005)
+            #expect(abs(pixel.premultipliedRed) < 0.005 && abs(pixel.premultipliedGreen) < 0.005 && abs(pixel.premultipliedBlue) < 0.005)
         }
     }
 
@@ -300,11 +300,11 @@ struct MaterialTests {
         }
         let ground = try translucentGlow(background: { $0.background(0, 0, 255) }) { _ in }[80, 80]
         let clear = try box(alpha: 0)
-        #expect(abs(clear.red - ground.red) < 0.005)
-        #expect(abs(clear.green - ground.green) < 0.005)
-        #expect(abs(clear.blue - ground.blue) < 0.005)
+        #expect(abs(clear.premultipliedRed - ground.premultipliedRed) < 0.005)
+        #expect(abs(clear.premultipliedGreen - ground.premultipliedGreen) < 0.005)
+        #expect(abs(clear.premultipliedBlue - ground.premultipliedBlue) < 0.005)
         // 赤は地の青と混ざらないので、奥の面と手前の面の 2 層ぶんの自発光だけになる (#1549)
-        #expect(abs(try box(alpha: 128).red - glowRed * twoLayers(128)) < 0.01)
+        #expect(abs(try box(alpha: 128).premultipliedRed - glowRed * twoLayers(128)) < 0.01)
     }
 
     @Test("半透明の面では、自発光も塗り × 光と同じだけ薄まる")
@@ -328,9 +328,9 @@ struct MaterialTests {
         let half = try plane(alpha: 128)
         let clear = try plane(alpha: 0)
         let opaque = try plane(alpha: 255)
-        for value in [half.red, half.green, half.blue] { #expect(abs(value - 0.217) < 0.01) }
-        for value in [clear.red, clear.green, clear.blue] { #expect(abs(value) < 0.005) }
-        for value in [opaque.red, opaque.green, opaque.blue] { #expect(abs(value - 0.432) < 0.005) }
+        for value in [half.premultipliedRed, half.premultipliedGreen, half.premultipliedBlue] { #expect(abs(value - 0.217) < 0.01) }
+        for value in [clear.premultipliedRed, clear.premultipliedGreen, clear.premultipliedBlue] { #expect(abs(value) < 0.005) }
+        for value in [opaque.premultipliedRed, opaque.premultipliedGreen, opaque.premultipliedBlue] { #expect(abs(value - 0.432) < 0.005) }
     }
 
     @Test("保持した形でも、透明な立体の自発光は下地を変えない")
@@ -345,7 +345,7 @@ struct MaterialTests {
             canvas.shape(ball, 80, 80)
         }
         let pixel = image[80, 80]
-        #expect(abs(pixel.red) < 0.005 && abs(pixel.green) < 0.005 && abs(pixel.blue) < 0.005)
+        #expect(abs(pixel.premultipliedRed) < 0.005 && abs(pixel.premultipliedGreen) < 0.005 && abs(pixel.premultipliedBlue) < 0.005)
     }
 
     // MARK: - 寿命と積み方

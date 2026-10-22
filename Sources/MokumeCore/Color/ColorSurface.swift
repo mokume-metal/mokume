@@ -54,7 +54,7 @@ enum DisplayScale {
             premultiplied.isFinite ? OutputStage.straighten(premultiplied, alpha: color.alpha) : 0
         }
         let sRGB = ColorPrimaries.sRGB(
-            fromWorking: SIMD3(straight(color.red), straight(color.green), straight(color.blue)))
+            fromWorking: SIMD3(straight(color.premultipliedRed), straight(color.premultipliedGreen), straight(color.premultipliedBlue)))
         return SIMD3(component(sRGB.x), component(sRGB.y), component(sRGB.z))
     }
 
@@ -112,8 +112,8 @@ enum DisplayScale {
         // 書き順は決定 3 の改訂と揃える (`max` は第 1 引数の NaN をそのまま返す)
         let rate = min(max(alpha / maximum, 0), 1)
         return LinearRGBA(
-            premultipliedRed: color.red * rate, green: color.green * rate,
-            blue: color.blue * rate, alpha: color.alpha * rate)
+            premultipliedRed: color.premultipliedRed * rate, green: color.premultipliedGreen * rate,
+            blue: color.premultipliedBlue * rate, alpha: color.alpha * rate)
     }
 }
 
@@ -396,9 +396,9 @@ public func lerpColor(
     // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
     // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
     return LinearRGBA(
-        premultipliedRed: interpolate(start.red, stop.red, amount),
-        green: interpolate(start.green, stop.green, amount),
-        blue: interpolate(start.blue, stop.blue, amount),
+        premultipliedRed: interpolate(start.premultipliedRed, stop.premultipliedRed, amount),
+        green: interpolate(start.premultipliedGreen, stop.premultipliedGreen, amount),
+        blue: interpolate(start.premultipliedBlue, stop.premultipliedBlue, amount),
         alpha: interpolate(start.alpha, stop.alpha, amount))
 }
 

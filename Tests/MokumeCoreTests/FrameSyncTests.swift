@@ -133,8 +133,8 @@ struct FrameSyncTests {
         // 1 画素も書かれていない面 (`a == 0`) を分けられない — #1063 の起票は
         // そこを取り違えて「背景は載っているので後続の描画だけが落ちた」と読んでいた
         #expect(pixels[16, 16].alpha == 1, "面に 1 画素も書かれていない\(bench.gpu.faultNote())")
-        #expect(pixels[16, 16].red == 1, "赤が載っていない\(bench.gpu.faultNote())")
-        #expect(pixels[16, 16].green == 0, "赤のはずの画素に緑が載っている\(bench.gpu.faultNote())")
+        #expect(pixels[16, 16].premultipliedRed == 1, "赤が載っていない\(bench.gpu.faultNote())")
+        #expect(pixels[16, 16].premultipliedGreen == 0, "赤のはずの画素に緑が載っている\(bench.gpu.faultNote())")
     }
 
     @Test("数の並びへ書く口は待たず、読むと書いた値が返る")
@@ -408,9 +408,9 @@ struct FrameSyncTests {
                 check: {
                     let pixel = try canvas.target.readPixels()[16, 16]
                     let expected: Float = lastFrame.isMultiple(of: 2) ? 0 : 1
-                    #expect(pixel.red == 1, "置いた画像が面に載っていない\(bench.gpu.faultNote())")
+                    #expect(pixel.premultipliedRed == 1, "置いた画像が面に載っていない\(bench.gpu.faultNote())")
                     #expect(
-                        pixel.green == expected,
+                        pixel.premultipliedGreen == expected,
                         "面に載ったのが、そのフレームで書いた画素ではない\(bench.gpu.faultNote())")
                 })
         }
@@ -606,9 +606,9 @@ struct FrameSyncTests {
             let (x, y) = Self.bandProbe(at: band, of: bands)
             let actual = pixels[x, y]
             #expect(
-                abs(actual.red - expected.red) < 0.02
-                    && abs(actual.green - expected.green) < 0.02
-                    && abs(actual.blue - expected.blue) < 0.02,
+                abs(actual.premultipliedRed - expected.premultipliedRed) < 0.02
+                    && abs(actual.premultipliedGreen - expected.premultipliedGreen) < 0.02
+                    && abs(actual.premultipliedBlue - expected.premultipliedBlue) < 0.02,
                 """
                 \(band) 本目の帯が壊れている (期待 \(expected)、実際 \(actual))。
                 そのフレームの置き場を、次のフレームの CPU が読まれている間に書き換えている\

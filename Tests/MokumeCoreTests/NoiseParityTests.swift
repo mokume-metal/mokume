@@ -97,7 +97,7 @@ struct NoiseParityTests {
             canvas.shader(shader)
             canvas.rect(0, 0, 8, 8)
         }
-        return canvas.get(4, 4).red
+        return canvas.get(4, 4).premultipliedRed
     }
 
     /// 4 つ目の軸 (`w`) を持つ座標の突き合わせ先 ([#2425])。**`w` が 0 でない点が主**で、`w` が整数の
@@ -154,7 +154,7 @@ struct NoiseParityTests {
             canvas.shader(shader)
             canvas.rect(0, 0, 8, 8)
         }
-        return canvas.get(4, 4).red
+        return canvas.get(4, 4).premultipliedRed
     }
 
     @Test("4 つの座標で、既定の設定の代表点がすべて一致する", arguments: NoiseParityTests.places4)
@@ -227,7 +227,7 @@ struct NoiseParityTests {
                 canvas.shader(shader)
                 canvas.rect(0, 0, 8, 8)
             }
-            return canvas.get(4, 4).red
+            return canvas.get(4, 4).premultipliedRed
         }
 
         canvas.noiseSeed(1)

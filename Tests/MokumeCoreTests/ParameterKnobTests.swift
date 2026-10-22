@@ -147,9 +147,9 @@ struct KnobColorTests {
     func theRoundTripKeepsTheColor() {
         for original in [color(255, 204, 0), color(255, 204, 0, 128), color(0, 0, 0), color(128)] {
             let returned = KnobColor.working(of: KnobColor.display(of: original))
-            #expect(abs(returned.red - original.red) < 0.01)
-            #expect(abs(returned.green - original.green) < 0.01)
-            #expect(abs(returned.blue - original.blue) < 0.01)
+            #expect(abs(returned.premultipliedRed - original.premultipliedRed) < 0.01)
+            #expect(abs(returned.premultipliedGreen - original.premultipliedGreen) < 0.01)
+            #expect(abs(returned.premultipliedBlue - original.premultipliedBlue) < 0.01)
             #expect(abs(returned.alpha - original.alpha) < 0.01)
         }
     }

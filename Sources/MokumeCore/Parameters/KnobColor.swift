@@ -15,9 +15,9 @@ enum KnobColor {
         guard alpha > 0 else { return Color(.displayP3, red: 0, green: 0, blue: 0, opacity: 0) }
         return Color(
             .displayP3,
-            red: Double(TransferFunction.encode(value.red / alpha)),
-            green: Double(TransferFunction.encode(value.green / alpha)),
-            blue: Double(TransferFunction.encode(value.blue / alpha)),
+            red: Double(TransferFunction.encode(value.premultipliedRed / alpha)),
+            green: Double(TransferFunction.encode(value.premultipliedGreen / alpha)),
+            blue: Double(TransferFunction.encode(value.premultipliedBlue / alpha)),
             opacity: Double(alpha))
     }
 

@@ -49,8 +49,8 @@ struct SolidSweepRenderTests {
         for y in 0..<a.height {
             for x in 0..<a.width {
                 let (p, q) = (a[x, y], b[x, y])
-                if abs(p.red - q.red) > 0.02 || abs(p.green - q.green) > 0.02
-                    || abs(p.blue - q.blue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
+                if abs(p.premultipliedRed - q.premultipliedRed) > 0.02 || abs(p.premultipliedGreen - q.premultipliedGreen) > 0.02
+                    || abs(p.premultipliedBlue - q.premultipliedBlue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
                 {
                     count += 1
                 }
@@ -65,7 +65,7 @@ struct SolidSweepRenderTests {
         for y in 0..<picture.height {
             for x in 0..<picture.width {
                 let pixel = picture[x, y]
-                if pixel.red > 0.02 || pixel.green > 0.02 || pixel.blue > 0.02 { count += 1 }
+                if pixel.premultipliedRed > 0.02 || pixel.premultipliedGreen > 0.02 || pixel.premultipliedBlue > 0.02 { count += 1 }
             }
         }
         return count
@@ -291,7 +291,7 @@ struct SolidSweepRenderTests {
         var wrong: [String] = []
         for point in disc(radius: 24) {
             let pixel = swept[point.x, point.y]
-            if abs(pixel.red - 0.75) > 0.01 || abs(pixel.blue - 0.1875) > 0.01 {
+            if abs(pixel.premultipliedRed - 0.75) > 0.01 || abs(pixel.premultipliedBlue - 0.1875) > 0.01 {
                 wrong.append("(\(point.x), \(point.y)) \(pixel)")
             }
         }
@@ -302,7 +302,7 @@ struct SolidSweepRenderTests {
     @Test("手前から置いた 2 つの半透明の保持した球は、畳んでも並べ替えない (奥の青は隠れたまま)")
     func sweptSpheresPlacedFrontToBackAreNotSorted() throws {
         let picture = try twoRetainedSpheres(backFirst: false, policy: .always)
-        let shown = disc(radius: 24).filter { picture[$0.x, $0.y].blue > 0.02 }
+        let shown = disc(radius: 24).filter { picture[$0.x, $0.y].premultipliedBlue > 0.02 }
         #expect(shown.isEmpty, "奥の青が \(shown.count) 画素に出た")
     }
 
@@ -329,7 +329,7 @@ struct SolidSweepRenderTests {
         #expect(result.draws == 1, "畳んで描いていない")
         for point in disc(radius: 6) {
             #expect(
-                abs(result.picture[point.x, point.y].red - 0.75) <= 0.01,
+                abs(result.picture[point.x, point.y].premultipliedRed - 0.75) <= 0.01,
                 "(\(point.x), \(point.y)) \(result.picture[point.x, point.y])")
         }
     }

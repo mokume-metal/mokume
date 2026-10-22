@@ -151,9 +151,9 @@ final class NoiseAndSeed: Sketch {
         let lateness = smoothstep(0.72, 0.9, ring) * (1 - smoothstep(0.94, 1.0, ring))
         let fibre = (noise(px * 2, py * 26) - 0.5) * 0.14
         return LinearRGBA(
-            premultipliedRed: lerp(early.red, late.red, lateness) + fibre,
-            green: lerp(early.green, late.green, lateness) + fibre,
-            blue: lerp(early.blue, late.blue, lateness) + fibre,
+            premultipliedRed: lerp(early.premultipliedRed, late.premultipliedRed, lateness) + fibre,
+            green: lerp(early.premultipliedGreen, late.premultipliedGreen, lateness) + fibre,
+            blue: lerp(early.premultipliedBlue, late.premultipliedBlue, lateness) + fibre,
             alpha: 1)
     }
 

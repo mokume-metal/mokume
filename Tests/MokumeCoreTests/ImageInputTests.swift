@@ -114,8 +114,8 @@ import Testing
         let capacity = canvas.uploadStorage.capacity
         image.set(0, 4, .linear(red: 0, green: 1, blue: 0))
         #expect(image.displayInput == nil)
-        #expect(image.get(0, 4).green == 1)
-        #expect(image.get(0, 0).red == 1)
+        #expect(image.get(0, 4).premultipliedGreen == 1)
+        #expect(image.get(0, 0).premultipliedRed == 1)
         image.write(picture(255))
         image.set(1, 1, .transparent)
         image.fill(.linear(red: 0, green: 0, blue: 1))

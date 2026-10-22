@@ -70,7 +70,7 @@ struct CaptureTests {
             draw: { sketch in
                 guard let camera else { return }
                 #expect(camera.isNewFrame)
-                seen.append(camera.image.get(0, 0).red)
+                seen.append(camera.image.get(0, 0).premultipliedRed)
                 arrivals.append(camera.lastArrival?.frame)
             })
         // 赤 → 青 → 赤 → 青 (線形の値で赤は 1、青の赤成分は 0)
@@ -91,7 +91,7 @@ struct CaptureTests {
             let runtime = try run(
                 frames: 5,
                 setup: { camera = try $0.createCapture(frames: [solid(255, 0, 0), solid(0, 255, 0), solid(0, 0, 255)]) },
-                draw: { _ in seen.append(camera?.image.get(0, 0).green ?? -1) })
+                draw: { _ in seen.append(camera?.image.get(0, 0).premultipliedGreen ?? -1) })
             runtime.closePlugins()
             return seen
         }
@@ -116,7 +116,7 @@ struct CaptureTests {
             frames: 4,
             setup: { camera = try $0.createCapture(frames: [solid(255, 0, 0), solid(0, 0, 255)]) },
             draw: { sketch in
-                seen.append(camera?.image.get(0, 0).red ?? -1)
+                seen.append(camera?.image.get(0, 0).premultipliedRed ?? -1)
                 if sketch.frameCount == 2 { camera?.stop() }
             })
         // 3 と 4 では供給されないので、2 の青のまま
@@ -145,7 +145,7 @@ struct CaptureTests {
             setup: { camera = try $0.createCapture(frames: [halves()], mirrored: true) },
             draw: { _ in
                 guard let camera else { return }
-                reds = (0..<4).map { camera.image.get($0, 1).red }
+                reds = (0..<4).map { camera.image.get($0, 1).premultipliedRed }
             })
         // 左の 2 列が青 (赤成分 0)、右の 2 列が赤 (赤成分 1)
         #expect(reds == [0, 0, 1, 1])
@@ -170,7 +170,7 @@ struct CaptureTests {
                         if let mirrored { try $0.createCapture(frames: [ramp], mirrored: mirrored) }
                         else { try $0.createCapture(frames: [ramp]) }
                 },
-                draw: { _ in reds = (0..<4).map { camera?.image.get($0, 0).red ?? -1 } })
+                draw: { _ in reds = (0..<4).map { camera?.image.get($0, 0).premultipliedRed ?? -1 } })
             runtime.closePlugins()
             return reds
         }
@@ -189,7 +189,7 @@ struct CaptureTests {
             let runtime = try run(
                 frames: 4,
                 setup: { camera = try $0.createCapture(frames: [halves(), solid(0, 255, 0)], mirrored: true) },
-                draw: { _ in seen.append(camera?.image.get(3, 0).red ?? -1) })
+                draw: { _ in seen.append(camera?.image.get(3, 0).premultipliedRed ?? -1) })
             runtime.closePlugins()
             return seen
         }

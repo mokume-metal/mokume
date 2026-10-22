@@ -62,10 +62,10 @@ struct UpscaleTests {
             try canvas.draw { quadrant(on: canvas) }
             let pixels = canvas.output.pixels
             // 境目からは離れて見る (拡大は境目をなめらかにする)
-            #expect(pixels[16, 12].red > 0.9, "\(density) の内側")
-            #expect(pixels[Self.width - 16, Self.height - 12].red < 0.1, "\(density) の外側")
-            #expect(pixels[Self.width - 16, 12].red < 0.1, "\(density) の右上")
-            #expect(pixels[16, Self.height - 12].red < 0.1, "\(density) の左下")
+            #expect(pixels[16, 12].premultipliedRed > 0.9, "\(density) の内側")
+            #expect(pixels[Self.width - 16, Self.height - 12].premultipliedRed < 0.1, "\(density) の外側")
+            #expect(pixels[Self.width - 16, 12].premultipliedRed < 0.1, "\(density) の右上")
+            #expect(pixels[16, Self.height - 12].premultipliedRed < 0.1, "\(density) の左下")
         }
     }
 
@@ -82,9 +82,9 @@ struct UpscaleTests {
                 canvas.rect(0, 0, Float(Self.width), Float(Self.height))
             }
             let pixels = canvas.output.pixels
-            #expect(pixels[16, 12].red > 0.9, "\(density) の内側")
-            #expect(pixels[Self.width - 16, 12].red < 0.1, "\(density) の外側")
-            #expect(pixels[16, Self.height - 12].red < 0.1, "\(density) の下")
+            #expect(pixels[16, 12].premultipliedRed > 0.9, "\(density) の内側")
+            #expect(pixels[Self.width - 16, 12].premultipliedRed < 0.1, "\(density) の外側")
+            #expect(pixels[16, Self.height - 12].premultipliedRed < 0.1, "\(density) の下")
         }
     }
 
@@ -151,7 +151,7 @@ struct UpscaleTests {
     /// 中ほどの 1 行を横に読んだときの、明るさの並び。
     private func row(_ canvas: Canvas) -> [Float] {
         let pixels = canvas.output.pixels
-        return (8..<(Self.width - 8)).map { pixels[$0, Self.height / 2].red }
+        return (8..<(Self.width - 8)).map { pixels[$0, Self.height / 2].premultipliedRed }
     }
 
     @Test("時間方向は、描く細かさで捉えきれない模様を平均へ収める")
@@ -192,9 +192,9 @@ struct UpscaleTests {
         let pixels = canvas.output.pixels
         let corner = pixels[4, 4]
         #expect(corner.alpha < 0.02)
-        #expect(corner.red < 0.02)
-        #expect(corner.green < 0.02)
-        #expect(corner.blue < 0.02)
+        #expect(corner.premultipliedRed < 0.02)
+        #expect(corner.premultipliedGreen < 0.02)
+        #expect(corner.premultipliedBlue < 0.02)
         // 一様な内側の濃さは動かない
         #expect(abs(pixels[64, 48].alpha - 0.5) < 0.05)
     }
@@ -224,8 +224,8 @@ struct UpscaleTests {
             for x in 0..<pixels.width {
                 let c = pixels[x, y]
                 if c.alpha > 1 { counts.alpha += 1 }
-                if max(c.red, c.green, c.blue) > c.alpha { counts.colour += 1 }
-                if min(c.red, c.green, c.blue, c.alpha) < 0 { counts.negative += 1 }
+                if max(c.premultipliedRed, c.premultipliedGreen, c.premultipliedBlue) > c.alpha { counts.colour += 1 }
+                if min(c.premultipliedRed, c.premultipliedGreen, c.premultipliedBlue, c.alpha) < 0 { counts.negative += 1 }
             }
         }
         return counts
@@ -255,7 +255,7 @@ struct UpscaleTests {
             canvas.rect(32, 24, 64, 48)
         }
         // ADR-0011 決定 2 — 出力段まで捨てずに運ぶ
-        #expect(canvas.output.pixels[64, 48].red > 1.5)
+        #expect(canvas.output.pixels[64, 48].premultipliedRed > 1.5)
     }
 
     /// 入りが範囲の外でも、拡大は読んだ周りの値の範囲を越えない。1 を越える光が透明と
@@ -275,15 +275,15 @@ struct UpscaleTests {
             for x in 0..<pixels.width {
                 let c = pixels[x, y]
                 if c.alpha > 1 { alphaOver += 1 }
-                if max(c.red, c.green, c.blue) > 4 { brighter += 1 }
-                if min(c.red, c.green, c.blue, c.alpha) < 0 { negative += 1 }
+                if max(c.premultipliedRed, c.premultipliedGreen, c.premultipliedBlue) > 4 { brighter += 1 }
+                if min(c.premultipliedRed, c.premultipliedGreen, c.premultipliedBlue, c.alpha) < 0 { negative += 1 }
             }
         }
         #expect(alphaOver == 0, "不透明度 > 1 が \(alphaOver) 画素 (\(density))")
         #expect(brighter == 0, "描いた 4 より明るい画素が \(brighter) 画素 (\(density))")
         #expect(negative == 0, "負の値が \(negative) 画素 (\(density))")
         // 越えていた分 (色 4・不透明度 1) は運ぶ
-        #expect(pixels[64, 48].red > 3.9)
+        #expect(pixels[64, 48].premultipliedRed > 3.9)
     }
 
     /// #1817 の反証 1 (拡大の段)。**乗算を戻した色は、読んだ周りの乗算を戻した値を越えない。**
@@ -308,7 +308,7 @@ struct UpscaleTests {
             for x in 0..<pixels.width {
                 let c = pixels[x, y]
                 guard c.alpha > 0.05 else { continue }
-                brightest = max(brightest, c.red / c.alpha, c.green / c.alpha, c.blue / c.alpha)
+                brightest = max(brightest, c.premultipliedRed / c.alpha, c.premultipliedGreen / c.alpha, c.premultipliedBlue / c.alpha)
             }
         }
         #expect(brightest <= 4 * (1 + 2e-3), "乗算を戻した色が \(brightest) で、読んだ 4 を越えた (\(density))")
@@ -328,7 +328,7 @@ struct UpscaleTests {
         for (x, y) in [(0, 0), (64, 48), (127, 95)] {
             let c = pixels[x, y]
             #expect(
-                c.red == 1 && c.green == 0.5 && c.blue == 0.25 && c.alpha == 0,
+                c.premultipliedRed == 1 && c.premultipliedGreen == 0.5 && c.premultipliedBlue == 0.25 && c.alpha == 0,
                 "(\(x), \(y)) が \(c) (\(density))")
         }
     }
@@ -351,8 +351,8 @@ struct UpscaleTests {
         }
         let full = try centre(density: 1)
         let half = try centre(density: 0.5)
-        #expect(full.red < -0.3, "細かさ 1 で \(full.red)")
-        #expect(abs(half.red - full.red) < 0.01, "細かさ 0.5 で \(half.red) / 細かさ 1 で \(full.red)")
+        #expect(full.premultipliedRed < -0.3, "細かさ 1 で \(full.premultipliedRed)")
+        #expect(abs(half.premultipliedRed - full.premultipliedRed) < 0.01, "細かさ 0.5 で \(half.premultipliedRed) / 細かさ 1 で \(full.premultipliedRed)")
         #expect(abs(half.alpha - full.alpha) < 0.01)
     }
 

@@ -375,7 +375,7 @@ struct FormShapeTests {
                 return try canvas.target.readPixels()
             }
             func gap(_ p: LinearRGBA, _ q: LinearRGBA) -> Float {
-                max(abs(p.red - q.red), abs(p.green - q.green), abs(p.blue - q.blue), abs(p.alpha - q.alpha))
+                max(abs(p.premultipliedRed - q.premultipliedRed), abs(p.premultipliedGreen - q.premultipliedGreen), abs(p.premultipliedBlue - q.premultipliedBlue), abs(p.alpha - q.alpha))
             }
             // 帯に丸ごと入る画素: 輪郭だけを不透明な白で重ねた被覆率がちょうど 1
             let band: PixelBuffer = try {
@@ -390,7 +390,7 @@ struct FormShapeTests {
                 return try canvas.target.readPixels()
             }()
             let inBand = (0..<band.height).flatMap { y in
-                (0..<band.width).compactMap { x in band[x, y].red >= 1 ? (x, y) : nil }
+                (0..<band.width).compactMap { x in band[x, y].premultipliedRed >= 1 ? (x, y) : nil }
             }
             #expect(inBand.count > 100, "\(shape.name): 帯に丸ごと入る画素が少ない (\(inBand.count))")
             let once = try render(.once, strokeAlpha: strokeAlpha)
@@ -414,7 +414,7 @@ struct FormShapeTests {
                 let inner = once[26, 48]
                 #expect(abs(inner.alpha - strokeAlpha / 255) <= 1.0 / 255, "(26, 48) の α: \(inner.alpha)")
                 #expect(
-                    inner.blue <= strokeColor(strokeAlpha).blue + 1.0 / 255,
+                    inner.premultipliedBlue <= strokeColor(strokeAlpha).premultipliedBlue + 1.0 / 255,
                     "(26, 48) に塗りが透けている: \(inner)")
             }
         }
@@ -448,7 +448,7 @@ struct FormShapeTests {
 
         /// 画素 (x, y) の塗り `f`・帯 `s`・重なり `o`
         func at(_ x: Int, _ y: Int) -> (f: Float, s: Float, o: Float) {
-            let (f, outer, inner) = (fills[x, y].red, outers[x, y].red, inners[x, y].red)
+            let (f, outer, inner) = (fills[x, y].premultipliedRed, outers[x, y].premultipliedRed, inners[x, y].premultipliedRed)
             return (f, max(0, outer - inner), max(0, min(f, outer) - min(f, inner)))
         }
 
@@ -468,7 +468,7 @@ struct FormShapeTests {
         var bandMismatchCount: Int {
             var count = 0
             for y in 0..<fills.height {
-                for x in 0..<fills.width where abs(at(x, y).s - strokes[x, y].red) > 1.0 / 255 {
+                for x in 0..<fills.width where abs(at(x, y).s - strokes[x, y].premultipliedRed) > 1.0 / 255 {
                     count += 1
                 }
             }
@@ -535,8 +535,8 @@ struct FormShapeTests {
         func placed(_ color: LinearRGBA) -> LinearRGBA {
             guard let tint else { return color }
             return LinearRGBA(
-                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
-                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+                premultipliedRed: color.premultipliedRed * tint.premultipliedRed, green: color.premultipliedGreen * tint.premultipliedGreen,
+                blue: color.premultipliedBlue * tint.premultipliedBlue, alpha: color.alpha * tint.alpha)
         }
         let (fillPlaced, strokePlaced) = (placed(fillColor), placed(strokeColor))
         for rect in Self.edgeRects {
@@ -566,16 +566,18 @@ struct FormShapeTests {
             for y in 0..<once.height {
                 for x in 0..<once.width {
                     let (f, s, o) = areas.at(x, y)
-                    let expected = [
-                        strokePlaced.red * s + fillPlaced.red * (f - o),
-                        strokePlaced.green * s + fillPlaced.green * (f - o),
-                        strokePlaced.blue * s + fillPlaced.blue * (f - o),
-                        strokePlaced.alpha * s + fillPlaced.alpha * (f - o),
-                    ]
+                    let fillArea: Float = f - o
+                    let expectedRed: Float = strokePlaced.premultipliedRed * s + fillPlaced.premultipliedRed * fillArea
+                    let expectedGreen: Float =
+                        strokePlaced.premultipliedGreen * s + fillPlaced.premultipliedGreen * fillArea
+                    let expectedBlue: Float =
+                        strokePlaced.premultipliedBlue * s + fillPlaced.premultipliedBlue * fillArea
+                    let expectedAlpha: Float = strokePlaced.alpha * s + fillPlaced.alpha * fillArea
+                    let expected = [expectedRed, expectedGreen, expectedBlue, expectedAlpha]
                     let actual = once[x, y]
                     let gap = max(
-                        abs(actual.red - expected[0]), abs(actual.green - expected[1]),
-                        abs(actual.blue - expected[2]), abs(actual.alpha - expected[3]))
+                        abs(actual.premultipliedRed - expected[0]), abs(actual.premultipliedGreen - expected[1]),
+                        abs(actual.premultipliedBlue - expected[2]), abs(actual.alpha - expected[3]))
                     if gap > 1.0 / 255 { differing += 1 }
                     if gap > worst.gap { worst = (gap, x, y, f, s) }
                 }
@@ -642,7 +644,7 @@ struct FormShapeTests {
             return (pixels[48, 48], pixels[20, 48], pixels[12, 48], pixels[2, 2])
         }()
         func components(_ color: LinearRGBA) -> SIMD4<Float> {
-            SIMD4(color.red, color.green, color.blue, color.alpha)
+            SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
         }
         for rect in Self.edgeRects {
             let areas = try rectAreas(rect)
@@ -768,14 +770,14 @@ struct FormShapeTests {
             var worst = (gap: Float(0), x: 0, y: 0)
             for y in 0..<once.height {
                 for x in 0..<once.width {
-                    let (f, s) = (fills[x, y].red, strokes[x, y].red)
+                    let (f, s) = (fills[x, y].premultipliedRed, strokes[x, y].premultipliedRed)
                     let whole = (f == 0 || f == 1) && (s == 0 || s == 1)
                     guard comparesEdges || whole else { continue }
                     if s == 1 { inBand += 1 }
                     let (p, q) = (once[x, y], split[x, y])
                     let gap = max(
-                        abs(p.red - q.red), abs(p.green - q.green),
-                        abs(p.blue - q.blue), abs(p.alpha - q.alpha))
+                        abs(p.premultipliedRed - q.premultipliedRed), abs(p.premultipliedGreen - q.premultipliedGreen),
+                        abs(p.premultipliedBlue - q.premultipliedBlue), abs(p.alpha - q.alpha))
                     if gap > 1.0 / 255 { differing += 1 }
                     if gap > worst.gap { worst = (gap, x, y) }
                 }

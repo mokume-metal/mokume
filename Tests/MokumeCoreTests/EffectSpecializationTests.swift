@@ -50,7 +50,7 @@ struct EffectSpecializationTests {
         for y in 0..<pixels.height {
             for x in 0..<pixels.width {
                 let pixel = pixels[x, y]
-                out += [pixel.red, pixel.green, pixel.blue, pixel.alpha].map { $0.bitPattern }
+                out += [pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue, pixel.alpha].map { $0.bitPattern }
             }
         }
         return (out, try canvas.effectPipeline().builtinStatesBuilt)

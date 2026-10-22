@@ -435,7 +435,7 @@ struct UnitShapeTests {
 
         func centres() throws -> [(red: Float, green: Float)] {
             let pixels = try runtime.target.readPixels()
-            return (0..<4).map { (pixels[$0 * 20 + 10, 16].red, pixels[$0 * 20 + 10, 16].green) }
+            return (0..<4).map { (pixels[$0 * 20 + 10, 16].premultipliedRed, pixels[$0 * 20 + 10, 16].premultipliedGreen) }
         }
         func advance(until done: () -> Bool) throws -> Bool {
             let deadline = DispatchTime.now() + 30

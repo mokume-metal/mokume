@@ -379,11 +379,11 @@ struct TextureTests {
         // 左右が同じ色になる
         #expect(left != right)
         // 割らずに届いていること — 右端は u = span なので赤が 1 近くまで上がる
-        #expect(left.red < 0.1)
-        #expect(right.red > 0.9)
+        #expect(left.premultipliedRed < 0.1)
+        #expect(right.premultipliedRed > 0.9)
         // v も届く (上端 0・下端 1)
-        #expect(canvas.get(32, 18).green < 0.15)
-        #expect(canvas.get(32, 46).green > 0.85)
+        #expect(canvas.get(32, 18).premultipliedGreen < 0.15)
+        #expect(canvas.get(32, 46).premultipliedGreen > 0.85)
     }
 
     @Test("絵を束ねずに読み取り位置を書いても、組み込みの塗りの色は変わらない", arguments: StripRoute.allCases)

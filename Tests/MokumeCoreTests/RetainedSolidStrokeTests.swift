@@ -52,7 +52,7 @@ struct RetainedSolidStrokeTests {
         for y in 0..<a.height {
             for x in 0..<a.width {
                 let (p, q) = (a[x, y], b[x, y])
-                let diff = [p.red - q.red, p.green - q.green, p.blue - q.blue, p.alpha - q.alpha]
+                let diff = [p.premultipliedRed - q.premultipliedRed, p.premultipliedGreen - q.premultipliedGreen, p.premultipliedBlue - q.premultipliedBlue, p.alpha - q.alpha]
                 if diff.contains(where: { abs($0) > 0.02 }) { count += 1 }
             }
         }
@@ -82,7 +82,7 @@ struct RetainedSolidStrokeTests {
         let differing = differingPixels(retained, immediate)
         #expect(differing <= 30, "保持とその場で \(differing) 画素違う (起票時 3361)")
         // 行 80 の右の縦の稜線を横切る。光る列の数が線の太さにあたる
-        let lit = (100..<135).filter { retained[$0, 80].red > 0.3 }.count
+        let lit = (100..<135).filter { retained[$0, 80].premultipliedRed > 0.3 }.count
         #expect(abs(lit - 12) <= 1, "保持した箱の稜線が \(lit) 列 (起票時 1・その場で 12)")
     }
 
@@ -129,7 +129,7 @@ struct RetainedSolidStrokeTests {
             var sum: Float = 0
             var moment: Float = 0
             for x in 0..<image.width {
-                let red = image[x, placement.row].red
+                let red = image[x, placement.row].premultipliedRed
                 sum += red
                 moment += red * (Float(x) + 0.5)
             }

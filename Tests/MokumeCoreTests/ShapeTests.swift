@@ -297,7 +297,7 @@ struct ShapeTests {
             canvas.noStroke()
             canvas.shape(outlined)
         }
-        #expect(canvas.get(8, 8).green > 0.5)
+        #expect(canvas.get(8, 8).premultipliedGreen > 0.5)
     }
 
     // MARK: - 焼き付いた塗り (利用者の断片)
@@ -659,7 +659,7 @@ struct ShapeTests {
             canvas.shape(adding)
         }
         // 足し合わせなら 0.75。置き換えなら 0.25 になる
-        #expect(canvas.get(8, 8).red == 0.75)
+        #expect(canvas.get(8, 8).premultipliedRed == 0.75)
     }
 
     @Test("形が持ち込んだ混ぜ方は、置いたあとに残らない")
@@ -680,7 +680,7 @@ struct ShapeTests {
             canvas.fill(.linear(red: 0.5, green: 0, blue: 0))
             canvas.rect(0, 8, 8, 8)
         }
-        #expect(canvas.get(4, 12).red == 0.5)
+        #expect(canvas.get(4, 12).premultipliedRed == 0.5)
     }
 
     // MARK: - 置き方

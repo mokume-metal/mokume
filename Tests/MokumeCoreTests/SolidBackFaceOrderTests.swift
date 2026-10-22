@@ -49,8 +49,8 @@ struct SolidBackFaceOrderTests {
         for y in 0..<a.height {
             for x in 0..<a.width {
                 let (p, q) = (a[x, y], b[x, y])
-                if abs(p.red - q.red) > 0.02 || abs(p.green - q.green) > 0.02
-                    || abs(p.blue - q.blue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
+                if abs(p.premultipliedRed - q.premultipliedRed) > 0.02 || abs(p.premultipliedGreen - q.premultipliedGreen) > 0.02
+                    || abs(p.premultipliedBlue - q.premultipliedBlue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
                 {
                     count += 1
                 }
@@ -120,7 +120,7 @@ struct SolidBackFaceOrderTests {
         }
         for picture in [pair.plain, pair.turned] {
             let single = disc(radius: 36).filter {
-                abs(picture[$0.x, $0.y].red - Self.twoLayers) > 0.01
+                abs(picture[$0.x, $0.y].premultipliedRed - Self.twoLayers) > 0.01
             }
             #expect(single.isEmpty, "奥の面が透けていない画素が \(single.count) ある")
         }
@@ -137,7 +137,7 @@ struct SolidBackFaceOrderTests {
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         if form != .torus {
             for picture in [pair.plain, pair.turned] {
-                #expect(abs(picture[80, 80].red - Self.twoLayers) <= 0.01, "(80, 80) \(picture[80, 80])")
+                #expect(abs(picture[80, 80].premultipliedRed - Self.twoLayers) <= 0.01, "(80, 80) \(picture[80, 80])")
             }
         }
     }
@@ -171,7 +171,7 @@ struct SolidBackFaceOrderTests {
             canvas.pop()
         }
         // 起票時 (0.413, 0.017, 0.009)。直すと手前の箱の奥の面が透けて赤が 2 層になる
-        #expect(picture[80, 80].blue <= 0.02, "奥の青い箱が出た: \(picture[80, 80])")
+        #expect(picture[80, 80].premultipliedBlue <= 0.02, "奥の青い箱が出た: \(picture[80, 80])")
     }
 
     @Test("半透明の置き場所と同じ列に居る不透明の形どうしも、呼び出し順で隠れたまま")
@@ -195,7 +195,7 @@ struct SolidBackFaceOrderTests {
         }
         let pixel = picture[80, 80]
         #expect(
-            abs(pixel.red - 1) <= 0.01 && abs(pixel.green - 1) <= 0.01 && abs(pixel.blue - 1) <= 0.01,
+            abs(pixel.premultipliedRed - 1) <= 0.01 && abs(pixel.premultipliedGreen - 1) <= 0.01 && abs(pixel.premultipliedBlue - 1) <= 0.01,
             "手前の白い箱が奥の青い箱に隠された: \(pixel)")
     }
 
@@ -228,7 +228,7 @@ struct SolidBackFaceOrderTests {
         var wrong: [String] = []
         for point in disc(radius: 24) {
             let pixel = picture[point.x, point.y]
-            if abs(pixel.red - 0.618) > 0.01 || abs(pixel.blue - 0.182) > 0.01 {
+            if abs(pixel.premultipliedRed - 0.618) > 0.01 || abs(pixel.premultipliedBlue - 0.182) > 0.01 {
                 wrong.append("(\(point.x), \(point.y)) \(pixel)")
             }
         }
@@ -238,7 +238,7 @@ struct SolidBackFaceOrderTests {
     @Test("手前から置いた 2 つの半透明の球は並べ替えない (奥の青は隠れたまま)")
     func spheresPlacedFrontToBackAreNotSorted() throws {
         let picture = try twoSpheres(backFirst: false, turned: false)
-        let shown = disc(radius: 24).filter { picture[$0.x, $0.y].blue > 0.02 }
+        let shown = disc(radius: 24).filter { picture[$0.x, $0.y].premultipliedBlue > 0.02 }
         #expect(shown.isEmpty, "奥の青が \(shown.count) 画素に出た")
     }
 
@@ -256,7 +256,7 @@ struct SolidBackFaceOrderTests {
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         if !lit {
             for picture in [pair.plain, pair.turned] {
-                #expect(abs(picture[80, 86].red - 0.432) <= 0.01, "(80, 86) \(picture[80, 86])")
+                #expect(abs(picture[80, 86].premultipliedRed - 0.432) <= 0.01, "(80, 86) \(picture[80, 86])")
             }
         }
     }
@@ -275,7 +275,7 @@ struct SolidBackFaceOrderTests {
         }
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         for picture in [pair.plain, pair.turned] {
-            #expect(abs(picture[80, 86].red - 0.750) <= 0.01, "(80, 86) \(picture[80, 86])")
+            #expect(abs(picture[80, 86].premultipliedRed - 0.750) <= 0.01, "(80, 86) \(picture[80, 86])")
         }
     }
 
@@ -303,7 +303,7 @@ struct SolidBackFaceOrderTests {
         let pair = try retainedPair { $0.fill(255, 255, 255, 128) }
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         for picture in [pair.plain, pair.turned] {
-            #expect(abs(picture[80, 86].red - Self.twoLayers) <= 0.01, "(80, 86) \(picture[80, 86])")
+            #expect(abs(picture[80, 86].premultipliedRed - Self.twoLayers) <= 0.01, "(80, 86) \(picture[80, 86])")
         }
     }
 
@@ -315,7 +315,7 @@ struct SolidBackFaceOrderTests {
         }
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         for picture in [pair.plain, pair.turned] {
-            #expect(abs(picture[80, 86].red - 0.432) <= 0.01, "(80, 86) \(picture[80, 86])")
+            #expect(abs(picture[80, 86].premultipliedRed - 0.432) <= 0.01, "(80, 86) \(picture[80, 86])")
         }
     }
 
@@ -373,7 +373,7 @@ struct SolidBackFaceOrderTests {
         }
         // 加算の箱は灰色なので、奥の青が出なければ青の成分は赤の成分と同じ
         let pixel = picture[80, 80]
-        #expect(abs(pixel.blue - pixel.red) <= 0.01, "奥の青い箱が出た: \(pixel)")
+        #expect(abs(pixel.premultipliedBlue - pixel.premultipliedRed) <= 0.01, "奥の青い箱が出た: \(pixel)")
     }
 
     // MARK: - 線を付けたまま記録した保持した形 (反証 1)
@@ -410,8 +410,8 @@ struct SolidBackFaceOrderTests {
         let (single, double): (Float, Float) = additive ? (0.216, 0.432) : (0.502, Self.twoLayers)
         for picture in [pair.plain, pair.turned] {
             let points = disc(radius: 20)
-            let missing = points.filter { abs(picture[$0.x, $0.y].red - single) <= 0.01 }
-            let shown = points.filter { abs(picture[$0.x, $0.y].red - double) <= 0.01 }
+            let missing = points.filter { abs(picture[$0.x, $0.y].premultipliedRed - single) <= 0.01 }
+            let shown = points.filter { abs(picture[$0.x, $0.y].premultipliedRed - double) <= 0.01 }
             #expect(missing.isEmpty, "奥の面が抜けた画素が \(missing.count) ある")
             #expect(shown.count > points.count / 2, "2 層ぶんの画素が \(shown.count) / \(points.count)")
         }
@@ -440,7 +440,7 @@ struct SolidBackFaceOrderTests {
         var wrong: [String] = []
         for point in disc(radius: 24) {
             let pixel = picture[point.x, point.y]
-            if abs(pixel.red - 0.618) > 0.01 || abs(pixel.blue - 0.182) > 0.01 {
+            if abs(pixel.premultipliedRed - 0.618) > 0.01 || abs(pixel.premultipliedBlue - 0.182) > 0.01 {
                 wrong.append("(\(point.x), \(point.y)) \(pixel)")
             }
         }
@@ -486,7 +486,7 @@ struct SolidBackFaceOrderTests {
         }
         #expect(differingPixels(pair.plain, pair.turned) == 0)
         for picture in [pair.plain, pair.turned] {
-            #expect(abs(picture[80, 80].red - Self.twoLayers) <= 0.01, "(80, 80) \(picture[80, 80])")
+            #expect(abs(picture[80, 80].premultipliedRed - Self.twoLayers) <= 0.01, "(80, 80) \(picture[80, 80])")
         }
     }
 

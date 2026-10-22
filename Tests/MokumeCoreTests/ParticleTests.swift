@@ -1054,7 +1054,7 @@ struct ParticleTests {
         let pixels = try runtime.target.readPixels()
         var (count, inside) = (0, false)
         for x in 0..<pixels.width {
-            let on = pixels[x, pixels.height / 2].red > 0.3
+            let on = pixels[x, pixels.height / 2].premultipliedRed > 0.3
             if on && !inside { count += 1 }
             inside = on
         }

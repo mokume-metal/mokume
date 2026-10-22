@@ -132,7 +132,7 @@ struct BrightnessTests {
         canvas.exposure(3)
         try flat(canvas, 0.25)
         let pixels = try canvas.target.readPixels()
-        #expect(abs(pixels[4, 4].red - 0.25) < 0.001)
+        #expect(abs(pixels[4, 4].premultipliedRed - 0.25) < 0.001)
     }
 
     @Test("露出はフレームを越える")
@@ -195,14 +195,14 @@ struct BrightnessTests {
                 let color = working[x, y]
                 let straight =
                     color.alpha > 0
-                    ? SIMD3(color.red, color.green, color.blue) / color.alpha : SIMD3<Float>.zero
+                    ? SIMD3(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue) / color.alpha : SIMD3<Float>.zero
                 let expected = brightness.map(straight) * color.alpha
                 let actual = onScreen[x, y]
                 // **明るいところほど半精度の刻みが粗い**ので、差は明るさで割って見る。
                 // 絶対値で見ると、暗いところの食い違いを見逃す幅まで許すことになる
-                worst = max(worst, difference(expected.x, actual.red))
-                worst = max(worst, difference(expected.y, actual.green))
-                worst = max(worst, difference(expected.z, actual.blue))
+                worst = max(worst, difference(expected.x, actual.premultipliedRed))
+                worst = max(worst, difference(expected.y, actual.premultipliedGreen))
+                worst = max(worst, difference(expected.z, actual.premultipliedBlue))
             }
         }
         #expect(worst < 0.002, "画面と書き出しで明るさが食い違っている (相対 \(worst))")

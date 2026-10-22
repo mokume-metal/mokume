@@ -380,7 +380,7 @@ struct DensityInvarianceTests {
         let last = Int((74 * density).rounded(.down))
         var total = 0.0
         for x in first..<last {
-            for y in 0..<pixels.height { total += Double(pixels[x, y].red) }
+            for y in 0..<pixels.height { total += Double(pixels[x, y].premultipliedRed) }
         }
         return total / Double(last - first)
     }
@@ -388,7 +388,7 @@ struct DensityInvarianceTests {
     private static func totalSum(_ pixels: PixelBuffer) -> Double {
         var total = 0.0
         for y in 0..<pixels.height {
-            for x in 0..<pixels.width { total += Double(pixels[x, y].red) }
+            for x in 0..<pixels.width { total += Double(pixels[x, y].premultipliedRed) }
         }
         return total
     }
@@ -681,7 +681,7 @@ struct DensityInvarianceTests {
                 let quad = try render(shape, shift: shift, asQuad: true)
                 var differing = 0
                 for y in 0..<rect.height {
-                    for x in 0..<rect.width where rect[x, y].red != quad[x, y].red { differing += 1 }
+                    for x in 0..<rect.width where rect[x, y].premultipliedRed != quad[x, y].premultipliedRed { differing += 1 }
                 }
                 if differing > 0 { broken.append("\(shape.label)・ずらし \(shift): \(differing) 画素") }
             }
@@ -786,7 +786,7 @@ struct DensityInvarianceTests {
         // (太さ 2・半分の濃さ) が焼き付いていれば、列のいちばん明るい画素が 0.5 になる
         if recordOnMain {
             let column = Int(64 * density)
-            let brightest = (0..<pixels.height).map { pixels[column, $0].red }.max() ?? 0
+            let brightest = (0..<pixels.height).map { pixels[column, $0].premultipliedRed }.max() ?? 0
             #expect(brightest > 0.9, "\(route)へ置いた box の稜線のいちばん明るい画素: \(brightest)")
         }
     }
@@ -1054,7 +1054,7 @@ struct DensityInvarianceTests {
         let pixels = try canvas.target.readPixels()
         func lit(_ columns: Range<Int>, _ rows: Range<Int>) -> Double {
             var sum = 0.0
-            for y in rows { for x in columns { sum += Double(pixels[x, y].red) } }
+            for y in rows { for x in columns { sum += Double(pixels[x, y].premultipliedRed) } }
             return sum
         }
         // quad: 左の縦の辺は描く画素で x = 30 ± 2 (+0.5 の寄せ)。その外 (x < 28) に光は無い
@@ -1101,7 +1101,7 @@ struct DensityInvarianceTests {
         }
         #expect(holes == 0, "\(solid ? "立体" : "平面")の置き換える輪郭が開けた穴: \(holes) 画素")
         // 上の辺の帯の行 (描く画素で y = 10) の真ん中は、塗りが半分透けて見える (帯の被覆 0.5)
-        let band = pixels[30, 10].red
+        let band = pixels[30, 10].premultipliedRed
         #expect(band > 0.25, "帯の下の塗りが消えた: \(band)")
     }
 
@@ -1258,12 +1258,12 @@ struct DensityInvarianceTests {
     static func displaced(
         _ candidate: PixelBuffer, from reference: PixelBuffer, threshold: Float, reach: Int
     ) -> (count: Int, examples: [String]) {
-        func white(_ buffer: PixelBuffer, _ x: Int, _ y: Int) -> Bool { buffer[x, y].red > threshold }
+        func white(_ buffer: PixelBuffer, _ x: Int, _ y: Int) -> Bool { buffer[x, y].premultipliedRed > threshold }
         var count = 0
         var examples: [String] = []
         for y in 0..<reference.height {
             for x in 0..<reference.width {
-                let value = reference[x, y].red
+                let value = reference[x, y].premultipliedRed
                 guard abs(value - threshold) > 0.05 else { continue }
                 let wanted = white(candidate, x, y)
                 guard wanted != (value > threshold) else { continue }

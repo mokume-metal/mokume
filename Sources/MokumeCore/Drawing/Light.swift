@@ -51,7 +51,7 @@ struct Light {
         direction: SIMD3<Float> = SIMD3(0, 1, 0), coneCosine: Float = -1
     ) {
         // 光は面へ足すものなので、アルファは持ち込まない (乗算済みの成分をそのまま使う)
-        colorAndKind = SIMD4(color.red, color.green, color.blue, Float(kind.rawValue))
+        colorAndKind = SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, Float(kind.rawValue))
         self.position = SIMD4(position, 0)
         directionAndCone = SIMD4(direction, coneCosine)
     }

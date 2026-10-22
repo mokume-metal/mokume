@@ -404,8 +404,8 @@ struct OutputEncodeTests {
         for (x, expected) in Self.edgeCases.enumerated() {
             let actual = stored[x, 0]
             let pairs = [
-                (expected.red, actual.red), (expected.green, actual.green),
-                (expected.blue, actual.blue), (expected.alpha, actual.alpha),
+                (expected.premultipliedRed, actual.premultipliedRed), (expected.premultipliedGreen, actual.premultipliedGreen),
+                (expected.premultipliedBlue, actual.premultipliedBlue), (expected.alpha, actual.alpha),
             ]
             for (want, got) in pairs {
                 if want.isNaN {

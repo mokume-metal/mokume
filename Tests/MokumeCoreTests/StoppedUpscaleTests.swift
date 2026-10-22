@@ -192,14 +192,14 @@ struct StoppedUpscaleTests {
         try canvas.draw {}
         let drawn = try canvas.target.readPixels()
         let centre = (x: canvas.pixelWidth / 2, y: canvas.pixelHeight / 2)
-        #expect(drawn[centre.x, centre.y].red > 0.99 && drawn[centre.x, centre.y].green < 0.01)
+        #expect(drawn[centre.x, centre.y].premultipliedRed > 0.99 && drawn[centre.x, centre.y].premultipliedGreen < 0.01)
 
         // 隅は周辺減光が最も効くところで、書いていない。2 枚目は効果を頼まないので下地の値に戻る
         let untouched = try Self.makeCanvas(density: density)
         try Self.firstFrame(untouched, effects: true)
         try untouched.draw {}
         let plain = try untouched.target.readPixels()
-        #expect(drawn[3, 3] == plain[3, 3], "隅に効果が焼き込まれた: \(drawn[3, 3].red)")
+        #expect(drawn[3, 3] == plain[3, 3], "隅に効果が焼き込まれた: \(drawn[3, 3].premultipliedRed)")
     }
 
     // MARK: - 変えたときだけ払う
@@ -309,7 +309,7 @@ struct StoppedUpscaleTests {
         let canvas = try Self.changedWhileStopped(density: 0.5, effects: false, change: change)
         let read = try canvas.output.readPixels()[80, 80]
 
-        #expect(read.red > 0.9 && read.green < 0.1 && read.blue < 0.1, "CPU の読み出しに出ていない: \(read)")
+        #expect(read.premultipliedRed > 0.9 && read.premultipliedGreen < 0.1 && read.premultipliedBlue < 0.1, "CPU の読み出しに出ていない: \(read)")
     }
 
     // MARK: - 時間方向の位置
@@ -568,7 +568,7 @@ struct StoppedUpscaleTests {
             return try canvas.target.readPixels()
         }
         let lastFrame = try drawn(placedWhileStopped: false)
-        #expect(lastFrame[35, 30].red < 0.01, "前提: 図形が描く先にある")
+        #expect(lastFrame[35, 30].premultipliedRed < 0.01, "前提: 図形が描く先にある")
         #expect(try drawn(placedWhileStopped: true) == lastFrame, "最後のフレームに描いた絵と違う")
     }
 

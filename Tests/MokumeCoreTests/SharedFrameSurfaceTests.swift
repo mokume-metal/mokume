@@ -280,9 +280,9 @@ struct SharedFrameSurfaceTests {
         let shared = try withFacet { try written(color: color, in: $0) }
         let actual = try #require(SharedSurfaceReader.pixel(id: shared.ids[0], x: 8, y: 4))
 
-        #expect(actual.red == expected.red)
-        #expect(actual.green == expected.green)
-        #expect(actual.blue == expected.blue)
+        #expect(actual.red == expected.premultipliedRed)
+        #expect(actual.green == expected.premultipliedGreen)
+        #expect(actual.blue == expected.premultipliedBlue)
         #expect(actual.alpha == expected.alpha)
     }
 

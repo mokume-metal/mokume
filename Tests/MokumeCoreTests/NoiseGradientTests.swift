@@ -148,7 +148,7 @@ struct NoiseGradientTests {
             canvas.rect(0, 0, 8, 8)
         }
         let pixel = canvas.get(4, 4)
-        return SIMD3(pixel.red, pixel.green, pixel.blue)
+        return SIMD3(pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue)
     }
 
     private static func makeCanvas(seed: Int, octaves: Int, falloff: Float) throws -> Canvas {

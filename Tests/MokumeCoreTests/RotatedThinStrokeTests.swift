@@ -427,7 +427,7 @@ struct RotatedThinStrokeTests {
             // 端の形を避けて、x = 40…59 の列の和を平均する
             var total = 0.0
             for x in 40..<60 {
-                for y in 0..<pixels.height { total += Double(pixels[x, y].red) }
+                for y in 0..<pixels.height { total += Double(pixels[x, y].premultipliedRed) }
             }
             let measured = total / 20
             if !(measured < 1 && measured >= expected - 1.0 / 1024) {

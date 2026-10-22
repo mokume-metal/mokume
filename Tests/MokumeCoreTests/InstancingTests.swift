@@ -334,7 +334,7 @@ struct InstancingTests {
         }
         #expect(differingPixels(result.together, result.oneByOne) == 0, "まとめて置いた絵が 1 つずつと違う")
         let pixel = result.together[130, 125]
-        #expect(pixel.red > 0.5 && pixel.blue < 0.1, "後に置いた矩形の赤が上に出ていない (\(pixel))")
+        #expect(pixel.premultipliedRed > 0.5 && pixel.premultipliedBlue < 0.1, "後に置いた矩形の赤が上に出ていない (\(pixel))")
     }
 
     @Test("置き場所ごとの半透明の色でも、区間の途中で混ぜ方を変えた形でも、1 つずつ置いた絵と同じ")
@@ -455,7 +455,7 @@ struct InstancingTests {
         let gap = differingPixels(result.together, result.oneByOne)
         #expect(gap == 0, "まとめて置いた絵が 1 つずつと \(gap) 画素違う")
         let pixel = result.together[130, 125]
-        #expect(pixel.red > 0.5 && pixel.blue < 0.1, "後に置いた側の赤が上に出ていない (\(pixel))")
+        #expect(pixel.premultipliedRed > 0.5 && pixel.premultipliedBlue < 0.1, "後に置いた側の赤が上に出ていない (\(pixel))")
     }
 
     @Test("同じ奥行きで重なる不透明の立体の区間も、まとめて置いた絵が 1 つずつ置いた絵と同じ")

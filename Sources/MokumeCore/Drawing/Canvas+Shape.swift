@@ -892,7 +892,7 @@ extension Canvas {
         if let tint {
             let color = vertex.color
             vertex.color = SIMD4<Float>(
-                color.x * tint.red, color.y * tint.green, color.z * tint.blue, color.w * tint.alpha)
+                color.x * tint.premultipliedRed, color.y * tint.premultipliedGreen, color.z * tint.premultipliedBlue, color.w * tint.alpha)
         }
     }
 
@@ -1079,7 +1079,7 @@ extension Canvas {
             // 置き場所の色は線にも掛かる (焼いた頂点に掛かるのと同じ式)。透けたら GPU の
             // 条件 (不透明) から外れるので、焼いた帯のまま置く。骨の円板で刻みが足りない太さの
             // 丸い端 (#2011) も同じく、焼いた帯 (置くときに組み直す) のまま置く
-            let color = SIMD4(stroke.color.red, stroke.color.green, stroke.color.blue, stroke.color.alpha)
+            let color = SIMD4(stroke.color.premultipliedRed, stroke.color.premultipliedGreen, stroke.color.premultipliedBlue, stroke.color.alpha)
                 * instance.color
             guard color.w == 1, case .mesh(let solid) = stroke.source,
                 let (geometry, geometryScale) = gpuStrokeGeometry(

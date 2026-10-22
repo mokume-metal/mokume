@@ -216,7 +216,7 @@ struct NumericColorEntryTests {
         let untouched = try centre(afterFillingWith: 0)
         let opaque = try centre(afterFillingWith: 255)
         // 不透明度 0 の矩形は下地を残す (赤 0.216)。ここが崩れると下の比較が意味を失う
-        #expect(abs(untouched.red - TransferFunction.decode(128 / 255)) < 1e-3)
+        #expect(abs(untouched.premultipliedRed - TransferFunction.decode(128 / 255)) < 1e-3)
         let belowTheScale = try centre(afterFillingWith: -100)
         let aboveTheScale = try centre(afterFillingWith: 400)
         #expect(belowTheScale == untouched)
@@ -286,9 +286,9 @@ struct NumericColorEntryTests {
             let ink = LinearRGBA.display(red: 0.114, green: 0.110, blue: 0.118)
             entry.call(sketch, ink, 0.72 * 255)
             let faded = read()
-            #expect(abs(faded.red - ink.red * 0.72) < 1e-6, "\(faded)")
-            #expect(abs(faded.green - ink.green * 0.72) < 1e-6, "\(faded)")
-            #expect(abs(faded.blue - ink.blue * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.premultipliedRed - ink.premultipliedRed * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.premultipliedGreen - ink.premultipliedGreen * 0.72) < 1e-6, "\(faded)")
+            #expect(abs(faded.premultipliedBlue - ink.premultipliedBlue * 0.72) < 1e-6, "\(faded)")
             #expect(abs(faded.alpha - ink.alpha * 0.72) < 1e-6, "\(faded)")
         }
     }
@@ -371,8 +371,8 @@ struct HueSectorTests {
     private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
         -> Bool
     {
-        abs(one.red - other.red) < tolerance && abs(one.green - other.green) < tolerance
-            && abs(one.blue - other.blue) < tolerance && abs(one.alpha - other.alpha) < tolerance
+        abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance
+            && abs(one.premultipliedBlue - other.premultipliedBlue) < tolerance && abs(one.alpha - other.alpha) < tolerance
     }
 
     /// 彩度 100・明度 100 では m = 0・C = 255・X = 127.5。

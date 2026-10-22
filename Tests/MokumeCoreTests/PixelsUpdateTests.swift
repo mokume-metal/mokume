@@ -125,7 +125,7 @@ struct PixelsUpdateTests {
 
         var marked = 0
         image.pixels.update { x, y, c in
-            if c.red > 0.5 {
+            if c.premultipliedRed > 0.5 {
                 marked += 1
                 #expect(x == 5 && y == 3)
             }
@@ -133,7 +133,7 @@ struct PixelsUpdateTests {
         }
         #expect(marked == 1)
         #expect(image.displayInput == nil)
-        #expect(image.get(5, 3).red > 0.5)
+        #expect(image.get(5, 3).premultipliedRed > 0.5)
     }
 
     @Test("閉包の中で同じ絵を読んでも落ちない")
@@ -233,8 +233,8 @@ struct PixelsUpdateTests {
                     let mix = Float(x - 32) / 32
                     let c = looped.pixels[x, y]
                     looped.pixels[x, y] = LinearRGBA(
-                        premultipliedRed: c.red * (1 - mix) + c.blue * mix, green: c.green,
-                        blue: c.blue * (1 - mix) + c.red * mix, alpha: c.alpha)
+                        premultipliedRed: c.premultipliedRed * (1 - mix) + c.premultipliedBlue * mix, green: c.premultipliedGreen,
+                        blue: c.premultipliedBlue * (1 - mix) + c.premultipliedRed * mix, alpha: c.alpha)
                 }
             }
         }
@@ -243,8 +243,8 @@ struct PixelsUpdateTests {
                 guard x >= 32 else { return c }
                 let mix = Float(x - 32) / 32
                 return LinearRGBA(
-                    premultipliedRed: c.red * (1 - mix) + c.blue * mix, green: c.green,
-                    blue: c.blue * (1 - mix) + c.red * mix, alpha: c.alpha)
+                    premultipliedRed: c.premultipliedRed * (1 - mix) + c.premultipliedBlue * mix, green: c.premultipliedGreen,
+                    blue: c.premultipliedBlue * (1 - mix) + c.premultipliedRed * mix, alpha: c.alpha)
             }
         }
         // 左半分が元のままで、右半分が書き換わっていること (何も書いていなければ一致は自明)

@@ -46,9 +46,9 @@ public enum OutputStage {
                 let alpha = clampToStandardRange(color.alpha)
                 let mapped = brightness.map(
                     SIMD3(
-                        straighten(color.red, alpha: alpha),
-                        straighten(color.green, alpha: alpha),
-                        straighten(color.blue, alpha: alpha)))
+                        straighten(color.premultipliedRed, alpha: alpha),
+                        straighten(color.premultipliedGreen, alpha: alpha),
+                        straighten(color.premultipliedBlue, alpha: alpha)))
                 let base = (y * pixels.width + x) * 4
                 bytes[base] = quantize(encodeForDisplay(mapped.x))
                 bytes[base + 1] = quantize(encodeForDisplay(mapped.y))

@@ -76,7 +76,7 @@ struct SolidStrokeFacingTests {
                 let offset = SIMD2(Float(x) + 0.5, Float(y) + 0.5) - segment.start
                 let t = simd_dot(offset, along) / length
                 guard t >= 0.3, t <= 0.7, abs(simd_dot(offset, across)) <= reach else { continue }
-                sum += image[x, y].red
+                sum += image[x, y].premultipliedRed
             }
         }
         return sum / (0.4 * length)

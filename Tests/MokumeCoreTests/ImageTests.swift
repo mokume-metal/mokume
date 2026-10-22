@@ -435,9 +435,9 @@ struct ImageTests {
         let loaded = try canvas.loadImage(url.path).get(0, 0)
         let written = color(204, 153, 0)
         // 画像は 16 bit 浮動小数で保たれるので、最下位の揺れだけを許す
-        #expect(abs(loaded.red - written.red) < 2e-3)
-        #expect(abs(loaded.green - written.green) < 2e-3)
-        #expect(abs(loaded.blue - written.blue) < 2e-3)
+        #expect(abs(loaded.premultipliedRed - written.premultipliedRed) < 2e-3)
+        #expect(abs(loaded.premultipliedGreen - written.premultipliedGreen) < 2e-3)
+        #expect(abs(loaded.premultipliedBlue - written.premultipliedBlue) < 2e-3)
     }
 
     @Test("元の絵が持つ色の記述が尊重される")
@@ -676,9 +676,9 @@ struct ImageTests {
 
         // 不透明な画素は、指定した表示の値がそのまま線形へ戻る
         let opaque = image.get(0, 0)
-        #expect(abs(opaque.red - 1) < 0.001)
-        #expect(abs(opaque.green - TransferFunction.decode(128.0 / 255)) < 0.001)
-        #expect(opaque.blue == 0)
+        #expect(abs(opaque.premultipliedRed - 1) < 0.001)
+        #expect(abs(opaque.premultipliedGreen - TransferFunction.decode(128.0 / 255)) < 0.001)
+        #expect(opaque.premultipliedBlue == 0)
         #expect(opaque.alpha == 1)
 
         // 半透明の画素は**乗算済み**で入る (作業空間の不変条件)
@@ -686,7 +686,7 @@ struct ImageTests {
         let straight = TransferFunction.decode(64.0 / 255)
         let alpha = Float(128) / 255
         #expect(abs(translucent.alpha - alpha) < 0.001)
-        #expect(abs(translucent.red - straight * alpha) < 0.001)
+        #expect(abs(translucent.premultipliedRed - straight * alpha) < 0.001)
     }
 
     @Test("まとめて書き込むと、前の中身は残らない")
@@ -848,8 +848,8 @@ struct ImageTests {
         first.fill(white)
 
         let second = try canvas.loadImage(url.path)
-        #expect(second.get(0, 0).red > 0.9)
-        #expect(second.get(0, 0).green < 0.1)
+        #expect(second.get(0, 0).premultipliedRed > 0.9)
+        #expect(second.get(0, 0).premultipliedGreen < 0.1)
         #expect(canvas.imagesDecoded == 1)
     }
 
@@ -860,13 +860,13 @@ struct ImageTests {
 
         let canvas = try makeCanvas()
         let before = try canvas.loadImage(url.path)
-        #expect(before.get(0, 0).red > 0.9)
+        #expect(before.get(0, 0).premultipliedRed > 0.9)
 
         try rewritePNG(url, [(0, 0, 1, 1)], width: 1, height: 1)
 
         let after = try canvas.loadImage(url.path)
         #expect(
-            after.get(0, 0).blue > 0.9,
+            after.get(0, 0).premultipliedBlue > 0.9,
             """
             走らせたまま絵を差し替えたのに、控えが古い中身を返した。
 
@@ -959,7 +959,7 @@ struct ImageTests {
         let requested = try await canvas.requestImage(url.path)
 
         #expect(canvas.imagesDecoded == 1)
-        #expect(requested.get(0, 0).green > 0.9)
+        #expect(requested.get(0, 0).premultipliedGreen > 0.9)
     }
 
     @Test("待たない読み込みが先でも、あとの読み込みは復号し直さない")

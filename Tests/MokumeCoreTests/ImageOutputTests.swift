@@ -81,7 +81,7 @@ struct ImageOutputTests {
 
         // 描画先には 4.0 のまま残っているが (ADR-0011 決定 2)、
         // 出力段で標準レンジへ収まる (同 決定 5 の既定)
-        #expect(try target.readPixels()[0, 0].red == 4)
+        #expect(try target.readPixels()[0, 0].premultipliedRed == 4)
         #expect(try target.encodeForDisplay()[0, 0] == (255, 188, 0, 255))
     }
 }

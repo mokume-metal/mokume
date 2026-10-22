@@ -34,8 +34,8 @@ struct FlatInstance {
     init(linear: SIMD4<Float>, offset: SIMD2<Float>, fill: LinearRGBA, stroke: LinearRGBA) {
         self.linear = linear
         self.offset = SIMD4(offset.x, offset.y, 0, 0)
-        self.fill = SIMD4(fill.red, fill.green, fill.blue, fill.alpha)
-        self.stroke = SIMD4(stroke.red, stroke.green, stroke.blue, stroke.alpha)
+        self.fill = SIMD4(fill.premultipliedRed, fill.premultipliedGreen, fill.premultipliedBlue, fill.alpha)
+        self.stroke = SIMD4(stroke.premultipliedRed, stroke.premultipliedGreen, stroke.premultipliedBlue, stroke.alpha)
     }
 
     /// 何も動かさない置き場所。

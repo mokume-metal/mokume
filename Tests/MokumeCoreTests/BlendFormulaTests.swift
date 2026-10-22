@@ -189,7 +189,7 @@ struct BlendFormulaTests {
         }
 
         let pixel = try drawn(pairing, through: route)
-        let channels = [("赤", pixel.red), ("緑", pixel.green), ("青", pixel.blue)]
+        let channels = [("赤", pixel.premultipliedRed), ("緑", pixel.premultipliedGreen), ("青", pixel.premultipliedBlue)]
         for ((name, drawn), value) in zip(channels, expected) {
             #expect(
                 Double(drawn) == value,
@@ -303,7 +303,7 @@ struct BlendFormulaTests {
     private func expectPixel(
         _ pixel: LinearRGBA, equals color: [Double], alpha: Double, _ context: String
     ) {
-        let channels = [("赤", pixel.red), ("緑", pixel.green), ("青", pixel.blue)]
+        let channels = [("赤", pixel.premultipliedRed), ("緑", pixel.premultipliedGreen), ("青", pixel.premultipliedBlue)]
         for ((name, drawn), value) in zip(channels, color) {
             #expect(Double(drawn) == value, "\(context)で\(name)が \(drawn) — 式からは \(value)")
         }

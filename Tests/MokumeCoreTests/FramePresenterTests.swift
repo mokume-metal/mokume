@@ -37,30 +37,30 @@ struct FramePresenterTests {
     @Test("縦横比が一致していれば、面いっぱいに絵が出る")
     func matchingAspectFillsEverything() throws {
         let pixels = try presented(content: (32, 16), into: (64, 32))
-        #expect(pixels[0, 0].red == 1)
-        #expect(pixels[63, 31].red == 1)
-        #expect(pixels[32, 16].red == 1)
+        #expect(pixels[0, 0].premultipliedRed == 1)
+        #expect(pixels[63, 31].premultipliedRed == 1)
+        #expect(pixels[32, 16].premultipliedRed == 1)
     }
 
     @Test("面のほうが横長なら、左右が黒帯になる")
     func widerSurfaceGetsBlackSideBands() throws {
         // 2:1 の絵を 4:1 の面へ。絵は中央の半分に収まる
         let pixels = try presented(content: (32, 16), into: (128, 32))
-        #expect(pixels[2, 16].red == 0, "左が帯になっていない")
-        #expect(pixels[125, 16].red == 0, "右が帯になっていない")
-        #expect(pixels[64, 16].red == 1, "中央に絵が出ていない")
-        #expect(pixels[64, 2].red == 1, "上端まで広がっていない")
-        #expect(pixels[64, 29].red == 1, "下端まで広がっていない")
+        #expect(pixels[2, 16].premultipliedRed == 0, "左が帯になっていない")
+        #expect(pixels[125, 16].premultipliedRed == 0, "右が帯になっていない")
+        #expect(pixels[64, 16].premultipliedRed == 1, "中央に絵が出ていない")
+        #expect(pixels[64, 2].premultipliedRed == 1, "上端まで広がっていない")
+        #expect(pixels[64, 29].premultipliedRed == 1, "下端まで広がっていない")
     }
 
     @Test("面のほうが縦長なら、上下が黒帯になる")
     func tallerSurfaceGetsBlackTopAndBottomBands() throws {
         let pixels = try presented(content: (32, 16), into: (32, 64))
-        #expect(pixels[16, 2].red == 0, "上が帯になっていない")
-        #expect(pixels[16, 61].red == 0, "下が帯になっていない")
-        #expect(pixels[16, 32].red == 1, "中央に絵が出ていない")
-        #expect(pixels[1, 32].red == 1, "左端まで広がっていない")
-        #expect(pixels[30, 32].red == 1, "右端まで広がっていない")
+        #expect(pixels[16, 2].premultipliedRed == 0, "上が帯になっていない")
+        #expect(pixels[16, 61].premultipliedRed == 0, "下が帯になっていない")
+        #expect(pixels[16, 32].premultipliedRed == 1, "中央に絵が出ていない")
+        #expect(pixels[1, 32].premultipliedRed == 1, "左端まで広がっていない")
+        #expect(pixels[30, 32].premultipliedRed == 1, "右端まで広がっていない")
     }
 
     /// 左半分が白・右半分が黒の絵を、いくつかの大きさの面へ収める。**絵そのものは面の大きさに
@@ -94,8 +94,8 @@ struct FramePresenterTests {
             let row = item.size.1 / 2
             let whiteColumn = item.left + item.width / 4
             let blackColumn = item.left + item.width * 3 / 4
-            #expect(pixels[whiteColumn, row].red == 1, "\(item.size) で左半分が白で出ていない")
-            #expect(pixels[blackColumn, row].red == 0, "\(item.size) で右半分が黒で出ていない")
+            #expect(pixels[whiteColumn, row].premultipliedRed == 1, "\(item.size) で左半分が白で出ていない")
+            #expect(pixels[blackColumn, row].premultipliedRed == 0, "\(item.size) で右半分が黒で出ていない")
             // 描いた側は一度も作り直されない
             #expect(source.width == 32)
             #expect(source.height == 16)

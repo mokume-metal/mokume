@@ -83,7 +83,7 @@ struct EffectFormulaTests {
     }
 
     private static func channels(_ pixel: LinearRGBA) -> [Double] {
-        [Double(pixel.red), Double(pixel.green), Double(pixel.blue), Double(pixel.alpha)]
+        [Double(pixel.premultipliedRed), Double(pixel.premultipliedGreen), Double(pixel.premultipliedBlue), Double(pixel.alpha)]
     }
 
     /// **前提: 式の厳密な値が Float16 で表せる。** 表せない組では描画先へ書くときに丸めが
@@ -520,7 +520,7 @@ struct EffectFormulaTests {
             for x in 0..<pixels.width {
                 let pixel = pixels[x, y]
                 if pixel.alpha > 0.01, pixel.alpha < 0.99 { edges += 1 }
-                for (name, value) in [("赤", pixel.red), ("緑", pixel.green), ("青", pixel.blue)] {
+                for (name, value) in [("赤", pixel.premultipliedRed), ("緑", pixel.premultipliedGreen), ("青", pixel.premultipliedBlue)] {
                     #expect(
                         value <= pixel.alpha,
                         "(\(x), \(y)) の\(name)が \(value) で、不透明度 \(pixel.alpha) を越えた")
@@ -565,8 +565,8 @@ struct EffectFormulaTests {
             red: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), blue: nil, on: canvas)
         // 読む先が本当に帯に落ちている (不透明度は 1/3)
         #expect(abs(pixel.alpha - 1.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
-        #expect(pixel.red / pixel.alpha <= 4 * (1 + 1e-3), "乗算を戻した赤が \(pixel.red / pixel.alpha) で、読んだ 4 を越えた")
-        #expect(pixel.red / pixel.alpha > 3.9, "越えていた光を運んでいない: \(pixel.red / pixel.alpha)")
+        #expect(pixel.premultipliedRed / pixel.alpha <= 4 * (1 + 1e-3), "乗算を戻した赤が \(pixel.premultipliedRed / pixel.alpha) で、読んだ 4 を越えた")
+        #expect(pixel.premultipliedRed / pixel.alpha > 3.9, "越えていた光を運んでいない: \(pixel.premultipliedRed / pixel.alpha)")
     }
 
     /// #1817 の反証 2。**成分ごとの上限は、その成分を取った 1 枚だけで決める。** 赤を読む先が
@@ -579,9 +579,9 @@ struct EffectFormulaTests {
             red: .linear(red: 1, green: 1, blue: 1),
             blue: LinearRGBA(straightRed: 4, green: 4, blue: 4, alpha: 1), on: canvas)
         #expect(abs(pixel.alpha - 2.0 / 3) < 0.01, "不透明度が \(pixel.alpha) — 絵の選び方の前提が崩れている")
-        #expect(pixel.red <= pixel.alpha, "赤が \(pixel.red) で、不透明度 \(pixel.alpha) を越えた")
+        #expect(pixel.premultipliedRed <= pixel.alpha, "赤が \(pixel.premultipliedRed) で、不透明度 \(pixel.alpha) を越えた")
         // 青は越えていた光を運ぶ (読んだ先の 4 まで)
-        #expect(pixel.blue / pixel.alpha > 3.9 && pixel.blue / pixel.alpha <= 4 * (1 + 1e-3))
+        #expect(pixel.premultipliedBlue / pixel.alpha > 3.9 && pixel.premultipliedBlue / pixel.alpha <= 4 * (1 + 1e-3))
     }
 
     /// #1817 の反証 3・2-4。**色調整は、入りに元からある負の値を 0 へ切らない** — 作業空間は
@@ -781,7 +781,7 @@ struct EffectFormulaTests {
             let (x, y) = span.alongX ? (index, span.height / 2) : (span.width / 2, index)
             let note = "\(span) の \(index) 番目"
             // 傾きが式どおりに描けている
-            #expect(Double(plain[x, y].blue) == Double(index) / 128, "\(note): 傾きが描けていない")
+            #expect(Double(plain[x, y].premultipliedBlue) == Double(index) / 128, "\(note): 傾きが描けていない")
 
             let expected = Self.fringeBlue(at: index, length: length, reference: length)
             Self.expectBracketed(

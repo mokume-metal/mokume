@@ -783,8 +783,8 @@ extension Canvas {
         func mix(_ x: SIMD3<Float>, _ y: SIMD3<Float>, _ w: Float) -> SIMD3<Float> { x + w * (y - x) }
         func mix(_ x: SIMD2<Float>, _ y: SIMD2<Float>, _ w: Float) -> SIMD2<Float> { x + w * (y - x) }
         func mix(_ x: LinearRGBA, _ y: LinearRGBA, _ w: Float) -> SIMD4<Float> {
-            let from = SIMD4(x.red, x.green, x.blue, x.alpha)
-            return from + w * (SIMD4(y.red, y.green, y.blue, y.alpha) - from)
+            let from = SIMD4(x.premultipliedRed, x.premultipliedGreen, x.premultipliedBlue, x.alpha)
+            return from + w * (SIMD4(y.premultipliedRed, y.premultipliedGreen, y.premultipliedBlue, y.alpha) - from)
         }
         func average<Value: SIMD>(_ first: Value?, _ second: Value?) -> Value?
         where Value.Scalar == Float {

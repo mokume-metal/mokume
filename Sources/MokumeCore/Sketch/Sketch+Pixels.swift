@@ -21,8 +21,8 @@ extension SketchPart {
     ///         for x in 0..<(pixelWidth / 2) {
     ///             let color = pixels[x, y]
     ///             pixels[x, y] = LinearRGBA(
-    ///                 premultipliedRed: color.green, green: color.blue, blue: color.red,
-    ///                 alpha: color.alpha)
+    ///                 premultipliedRed: color.premultipliedGreen, green: color.premultipliedBlue,
+    ///                 blue: color.premultipliedRed, alpha: color.alpha)
     ///         }
     ///     }
     ///     ```
@@ -178,7 +178,7 @@ extension SketchPart {
     /// (``SketchSettings/pixelDensity``) を下げているときは ``width`` / ``height``
     /// より小さい。**読み書きするのは拡大より手前の絵**なので、ここで書いた値も
     /// 拡大を通ってから出て行く。
-    // shot: 1 snippet=0617ccbc
+    // shot: 1 snippet=39398d9e
     // shot: 2 snippet=ab94a2c3
     // shot: 3 snippet=f1c90989
     public var pixels: Pixels {

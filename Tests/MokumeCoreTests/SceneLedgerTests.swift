@@ -1301,8 +1301,8 @@ enum Scene: String, CaseIterable, Sendable {
                     x < 64
                         ? color
                         : LinearRGBA(
-                            premultipliedRed: color.blue, green: color.green,
-                            blue: color.red, alpha: color.alpha))
+                            premultipliedRed: color.premultipliedBlue, green: color.premultipliedGreen,
+                            blue: color.premultipliedRed, alpha: color.alpha))
             }
         }
     }

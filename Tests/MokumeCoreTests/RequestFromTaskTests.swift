@@ -109,8 +109,8 @@ struct RequestFromTaskTests {
     }
 
     private func isClose(_ color: LinearRGBA, _ red: Float, _ green: Float, _ blue: Float) -> Bool {
-        abs(color.red - red) < 1e-3 && abs(color.green - green) < 1e-3
-            && abs(color.blue - blue) < 1e-3
+        abs(color.premultipliedRed - red) < 1e-3 && abs(color.premultipliedGreen - green) < 1e-3
+            && abs(color.premultipliedBlue - blue) < 1e-3
     }
 
     @Test("setup() で起こした Task から requestImage を呼んでも落ちず、絵が届く")

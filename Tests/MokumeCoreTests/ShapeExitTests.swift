@@ -561,7 +561,7 @@ struct ShapeExitTests {
             for x in 0..<leaked.width {
                 let (p, q) = (leaked[x, y], plain[x, y])
                 let gap = max(
-                    abs(p.red - q.red), abs(p.green - q.green), abs(p.blue - q.blue),
+                    abs(p.premultipliedRed - q.premultipliedRed), abs(p.premultipliedGreen - q.premultipliedGreen), abs(p.premultipliedBlue - q.premultipliedBlue),
                     abs(p.alpha - q.alpha))
                 if gap > 0.004 { differing += 1 }
             }

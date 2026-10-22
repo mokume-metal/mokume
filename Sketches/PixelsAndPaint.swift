@@ -77,9 +77,9 @@ final class PixelsAndPaint: Sketch {
                 let mix = map(Float(x), 480, width, 0, 1)
                 let colour = pixels[x, y]
                 pixels[x, y] = LinearRGBA(
-                    premultipliedRed: colour.red * (1 - mix) + colour.blue * mix,
-                    green: colour.green,
-                    blue: colour.blue * (1 - mix) + colour.red * mix,
+                    premultipliedRed: colour.premultipliedRed * (1 - mix) + colour.premultipliedBlue * mix,
+                    green: colour.premultipliedGreen,
+                    blue: colour.premultipliedBlue * (1 - mix) + colour.premultipliedRed * mix,
                     alpha: colour.alpha)
             }
         }

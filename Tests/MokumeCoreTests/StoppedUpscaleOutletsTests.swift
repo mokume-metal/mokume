@@ -228,7 +228,7 @@ struct StoppedUpscaleOutletsTests {
 
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
 
-            #expect(Self.isRed(point.red, point.green, point.blue), "窓が読む絵に出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "窓が読む絵に出ていない: \(point)")
         }
     }
 
@@ -254,12 +254,12 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: density, vignette: true) { runtime, gpu, press in
             try press("w")
             let shown = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(shown.red, shown.green, shown.blue), "窓が読む絵に出ていない: \(shown)")
+            #expect(Self.isRed(shown.premultipliedRed, shown.premultipliedGreen, shown.premultipliedBlue), "窓が読む絵に出ていない: \(shown)")
 
             try press("r")
             let second = try Self.windowPicture(of: runtime, gpu: gpu)
             let point = second[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "描き直したら書いた画素が消えた: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "描き直したら書いた画素が消えた: \(point)")
             #expect(
                 second[3, 3] == untouched[3, 3],
                 "隅に効果が焼き込まれた: \(second[3, 3]) (書かなければ \(untouched[3, 3]))")
@@ -364,7 +364,7 @@ struct StoppedUpscaleOutletsTests {
             try press("a")
             // 追い付いた後の本体の出す先には、書いた画素が出ている
             let body = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(body.red, body.green, body.blue), "本体の出す先に書いた画素が出ていない: \(body)")
+            #expect(Self.isRed(body.premultipliedRed, body.premultipliedGreen, body.premultipliedBlue), "本体の出す先に書いた画素が出ていない: \(body)")
 
             try press("e")
             let layer = try #require(box.canvas)
@@ -483,7 +483,7 @@ struct StoppedUpscaleOutletsTests {
     }
 
     private static func isBackdrop(_ point: LinearRGBA) -> Bool {
-        point.red > 0.7 && point.green > 0.7 && point.blue > 0.7
+        point.premultipliedRed > 0.7 && point.premultipliedGreen > 0.7 && point.premultipliedBlue > 0.7
     }
 
     /// 本体を描き切らせてから、新しい描き場所へ置いて閉じる。描き場所は `box` へ渡す。
@@ -520,7 +520,7 @@ struct StoppedUpscaleOutletsTests {
         }) { _, _, press in
             try press("k")
             let point = try #require(box.canvas).output.readPixels()[40, 40]
-            #expect(Self.isRed(point.red, point.green, point.blue), "置いた先に描き切った絵が出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "置いた先に描き切った絵が出ていない: \(point)")
         }
     }
 
@@ -540,7 +540,7 @@ struct StoppedUpscaleOutletsTests {
             }
         }) { _, _, _ in
             let point = try #require(box.canvas).output.readPixels()[40, 40]
-            #expect(Self.isRed(point.red, point.green, point.blue), "置いた先に描き切った絵が出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "置いた先に描き切った絵が出ていない: \(point)")
         }
     }
 
@@ -559,7 +559,7 @@ struct StoppedUpscaleOutletsTests {
         }) { _, _, press in
             try press("k")
             let point = try #require(box.canvas).output.readPixels()[40, 40]
-            #expect(Self.isRed(point.red, point.green, point.blue), "置いた先に描き切った絵が出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "置いた先に描き切った絵が出ていない: \(point)")
         }
     }
 
@@ -587,9 +587,9 @@ struct StoppedUpscaleOutletsTests {
             try press("k")
             let picture = try #require(box.canvas).output.readPixels()
             let first = picture[40, 40]
-            #expect(Self.isRed(first.red, first.green, first.blue), "先に置いた分が置いた時点の赤でない: \(first)")
+            #expect(Self.isRed(first.premultipliedRed, first.premultipliedGreen, first.premultipliedBlue), "先に置いた分が置いた時点の赤でない: \(first)")
             let second = picture[120, 120]
-            #expect(Self.isBlue(second.red, second.green, second.blue), "後に置いた分が描き換えた青でない: \(second)")
+            #expect(Self.isBlue(second.premultipliedRed, second.premultipliedGreen, second.premultipliedBlue), "後に置いた分が描き換えた青でない: \(second)")
         }
     }
 
@@ -632,9 +632,9 @@ struct StoppedUpscaleOutletsTests {
             try press("k")
             let picture = try #require(box.canvas).output.readPixels()
             let first = picture[40, 40]
-            #expect(Self.isRed(first.red, first.green, first.blue), "先に塗った分が置いた時点の赤でない: \(first)")
+            #expect(Self.isRed(first.premultipliedRed, first.premultipliedGreen, first.premultipliedBlue), "先に塗った分が置いた時点の赤でない: \(first)")
             let second = picture[120, 120]
-            #expect(Self.isBlue(second.red, second.green, second.blue), "後に塗った分が描き換えた青でない: \(second)")
+            #expect(Self.isBlue(second.premultipliedRed, second.premultipliedGreen, second.premultipliedBlue), "後に塗った分が描き換えた青でない: \(second)")
         }
     }
 
@@ -657,7 +657,7 @@ struct StoppedUpscaleOutletsTests {
         }) { _, _, press in
             try press("k")
             let point = try #require(box.canvas).output.readPixels()[40, 40]
-            #expect(Self.isRed(point.red, point.green, point.blue), "置いた時点の赤でない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "置いた時点の赤でない: \(point)")
         }
     }
 
@@ -692,7 +692,7 @@ struct StoppedUpscaleOutletsTests {
             #expect(Self.isBackdrop(picture[40, 40]), "書いただけの画素が置いた先に出た: \(picture[40, 40])")
             // 描き切らせた隅の四角は出る (置く口が追い付いた)
             let corner = picture[3, 3]
-            #expect(corner.green > 0.9 && corner.red < 0.1, "描き切らせた隅の四角が出ていない: \(corner)")
+            #expect(corner.premultipliedGreen > 0.9 && corner.premultipliedRed < 0.1, "描き切らせた隅の四角が出ていない: \(corner)")
         }
     }
 
@@ -821,7 +821,7 @@ struct StoppedUpscaleOutletsTests {
 
     /// 赤が勝っているか。立体は陰りを受けうるので、色の向きだけを見る (下地は 235 の灰)。
     private static func leansRed(_ point: LinearRGBA) -> Bool {
-        point.red > 0.5 && point.green < 0.2 && point.blue < 0.2
+        point.premultipliedRed > 0.5 && point.premultipliedGreen < 0.2 && point.premultipliedBlue < 0.2
     }
 
     /// 畳む口の外の経路でも、止まっている間に描き切らせた本体を置くと、どの細かさでも描き切った絵が
@@ -901,7 +901,7 @@ struct StoppedUpscaleOutletsTests {
             #expect(Self.isBackdrop(picture[120, 40]), "見送っている間に置いた分が古い絵でない: \(picture[120, 40])")
             let retried = picture[120, 120]
             #expect(
-                Self.isRed(retried.red, retried.green, retried.blue),
+                Self.isRed(retried.premultipliedRed, retried.premultipliedGreen, retried.premultipliedBlue),
                 "描き切らせた後に置いた分が追い付いていない: \(retried)")
         }
     }
@@ -1070,7 +1070,7 @@ struct StoppedUpscaleOutletsTests {
                 #expect(Self.leansRed(point), "\(round) 回目に置いた分が赤でない: \(point)")
             } else {
                 #expect(
-                    point.blue > 0.5 && point.red < 0.2 && point.green < 0.2,
+                    point.premultipliedBlue > 0.5 && point.premultipliedRed < 0.2 && point.premultipliedGreen < 0.2,
                     "\(round) 回目に置いた分が青でない: \(point)")
             }
         }
@@ -1143,7 +1143,7 @@ struct StoppedUpscaleOutletsTests {
         }) { _, _, press in
             try press("r")
             let point = try #require(box.canvas).output.readPixels()[40, 40]
-            #expect(Self.isRed(point.red, point.green, point.blue), "置いた先に途中まで描いた絵が出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "置いた先に途中まで描いた絵が出ていない: \(point)")
         }
     }
 
@@ -1196,9 +1196,9 @@ struct StoppedUpscaleOutletsTests {
             try press("r")
             let picture = try #require(box.canvas).output.readPixels()
             let first = picture[40, 40]
-            #expect(Self.isRed(first.red, first.green, first.blue), "先に置いた分が置いた時点の赤でない: \(first)")
+            #expect(Self.isRed(first.premultipliedRed, first.premultipliedGreen, first.premultipliedBlue), "先に置いた分が置いた時点の赤でない: \(first)")
             let second = picture[120, 120]
-            #expect(Self.isBlue(second.red, second.green, second.blue), "後に置いた分が描き換えた青でない: \(second)")
+            #expect(Self.isBlue(second.premultipliedRed, second.premultipliedGreen, second.premultipliedBlue), "後に置いた分が描き換えた青でない: \(second)")
         }
     }
 
@@ -1251,7 +1251,7 @@ struct StoppedUpscaleOutletsTests {
             placed == placedAfterReading,
             "出す先を読むのを挟むと、置いた絵が変わった: 中央 \(placed[40, 40]) / \(placedAfterReading[40, 40])")
         let centre = placed[40, 40]
-        #expect(Self.isRed(centre.red, centre.green, centre.blue), "置いた先に途中まで描いた絵が出ていない: \(centre)")
+        #expect(Self.isRed(centre.premultipliedRed, centre.premultipliedGreen, centre.premultipliedBlue), "置いた先に途中まで描いた絵が出ていない: \(centre)")
     }
 
     /// 時間方向・細かさ 0.5 で、フレームの中で追い付いた出す先の図形は、そのフレームの終わりの拡大と同じ
@@ -1291,12 +1291,12 @@ struct StoppedUpscaleOutletsTests {
     /// 下地 (左上の隅の画素) からの緑の減り方で重みを付けた重心 (出す画素)。赤い図形の位置を、補間の
     /// ぼけによらず画素より細かく読む。
     private static func centroidOfChange(in picture: PixelBuffer) -> SIMD2<Double> {
-        let backdrop = picture[0, 0].green
+        let backdrop = picture[0, 0].premultipliedGreen
         var sum = SIMD2<Double>.zero
         var total = 0.0
         for y in 0..<picture.height {
             for x in 0..<picture.width {
-                let weight = Double(backdrop - picture[x, y].green)
+                let weight = Double(backdrop - picture[x, y].premultipliedGreen)
                 sum += SIMD2(Double(x) + 0.5, Double(y) + 0.5) * weight
                 total += weight
             }
@@ -1328,7 +1328,7 @@ struct StoppedUpscaleOutletsTests {
             let picture = try #require(box.canvas).output.readPixels()
             #expect(Self.isBackdrop(picture[40, 40]), "書いただけの画素が置いた先に出た: \(picture[40, 40])")
             let corner = picture[3, 3]
-            #expect(corner.green > 0.9 && corner.red < 0.1, "描き切らせた隅の四角が出ていない: \(corner)")
+            #expect(corner.premultipliedGreen > 0.9 && corner.premultipliedRed < 0.1, "描き切らせた隅の四角が出ていない: \(corner)")
         }
     }
 
@@ -1350,7 +1350,7 @@ struct StoppedUpscaleOutletsTests {
         }) { _, _, press in
             try press("r")
             let point = try #require(read)[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "読んだ絵に書いた画素が出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "読んだ絵に書いた画素が出ていない: \(point)")
         }
     }
 
@@ -1383,10 +1383,10 @@ struct StoppedUpscaleOutletsTests {
             try press("r")
             // 周辺減光が掛かっていれば隅が中央より暗い。掛かっていなければ下地一色
             let placed = try #require(box.canvas).output.readPixels()
-            let placedGap = abs(placed[40, 40].green - placed[1, 1].green)
+            let placedGap = abs(placed[40, 40].premultipliedGreen - placed[1, 1].premultipliedGreen)
             #expect(placedGap < 0.02, "置いた先に効果を通した絵が出た (中央と隅の差 \(placedGap))")
             let picture = try #require(read)
-            let readGap = abs(picture[80, 80].green - picture[2, 2].green)
+            let readGap = abs(picture[80, 80].premultipliedGreen - picture[2, 2].premultipliedGreen)
             #expect(readGap < 0.02, "読んだ絵に効果を通した絵が出た (中央と隅の差 \(readGap))")
         }
     }
@@ -1478,7 +1478,7 @@ struct StoppedUpscaleOutletsTests {
             try runtime.advance()
             #expect(!canvas.target.hasPendingPixelWrites, "直った後のリフレッシュが書き戻していない")
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "やり直しで窓に出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "やり直しで窓に出ていない: \(point)")
         }
     }
 
@@ -1504,7 +1504,7 @@ struct StoppedUpscaleOutletsTests {
             #expect(!canvas.target.hasPendingPixelWrites, "止めている間のリフレッシュが書き戻していない")
             #expect(!canvas.needsOutputEnlargement, "止めている間のリフレッシュが広げ直していない")
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(Self.isRed(point.red, point.green, point.blue), "止めている間に窓に出ていない: \(point)")
+            #expect(Self.isRed(point.premultipliedRed, point.premultipliedGreen, point.premultipliedBlue), "止めている間に窓に出ていない: \(point)")
 
             let submissions = gpu.submissionCount
             try runtime.advance()
@@ -1530,7 +1530,7 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: density) { runtime, gpu, press in
             try press("b")
             let circle = try Self.windowPicture(of: runtime, gpu: gpu)[30, 30]
-            #expect(circle.green > 0.9 && circle.red < 0.1, "検査の前提: 円が (30, 30) に出ていない: \(circle)")
+            #expect(circle.premultipliedGreen > 0.9 && circle.premultipliedRed < 0.1, "検査の前提: 円が (30, 30) に出ていない: \(circle)")
         }
 
         // 書くコールバックと描き直すコールバックが別
@@ -1544,10 +1544,10 @@ struct StoppedUpscaleOutletsTests {
             let shown = try Self.windowPicture(of: runtime, gpu: gpu)
             let written = shown[80, 80]
             #expect(
-                Self.isRed(written.red, written.green, written.blue),
+                Self.isRed(written.premultipliedRed, written.premultipliedGreen, written.premultipliedBlue),
                 "描けなかったフレームの後で、前のコールバックで書いた画素が消えた: \(written)")
             let circle = shown[30, 30]
-            #expect(circle.red > 0.5, "描けなかったフレームへ持ち越した円が残った: \(circle)")
+            #expect(circle.premultipliedRed > 0.5, "描けなかったフレームへ持ち越した円が残った: \(circle)")
         }
 
         // 同じコールバックで書いて描き直す
@@ -1558,7 +1558,7 @@ struct StoppedUpscaleOutletsTests {
             try runtime.advance()
 
             let point = try Self.windowPicture(of: runtime, gpu: gpu)[80, 80]
-            #expect(point.green > 0.5, "描けなかったフレームで書いた画素が残った: \(point)")
+            #expect(point.premultipliedGreen > 0.5, "描けなかったフレームで書いた画素が残った: \(point)")
             #expect(!runtime.canvas.target.hasPendingPixelWrites, "描けなかったフレームの書き込みが待ちに残った")
         }
     }

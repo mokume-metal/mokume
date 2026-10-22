@@ -116,7 +116,7 @@ struct EffectTests {
         }
         let grey = try canvas.target.readPixels()[8, 8]
         let tolerance = Float(Float16(luminance).nextUp) - Float(Float16(luminance)) + 1e-4
-        for (name, value) in [("red", grey.red), ("green", grey.green), ("blue", grey.blue)] {
+        for (name, value) in [("red", grey.premultipliedRed), ("green", grey.premultipliedGreen), ("blue", grey.premultipliedBlue)] {
             #expect(
                 abs(value - luminance) <= tolerance,
                 "\(name) = \(value)、期待は \(luminance)\(canvas.gpu.faultNote())")
@@ -280,7 +280,7 @@ struct EffectTests {
                 canvas.effects([.blur(radius: radius)])
             }
             // 縁 (x = 80) から 3 画素外。半径 4 (σ = 2) でも僅かに漏れる距離
-            let outside = canvas.target.pixels[83, 48].red
+            let outside = canvas.target.pixels[83, 48].premultipliedRed
             #expect(outside > previous, "radius \(radius): \(outside) <= \(previous)")
             previous = outside
         }
@@ -309,7 +309,7 @@ struct EffectTests {
     /// 透け具合の違いと色の違いが区別できない。
     private func straight(_ color: LinearRGBA) -> (r: Float, g: Float, b: Float) {
         guard color.alpha > 0 else { return (0, 0, 0) }
-        return (color.red / color.alpha, color.green / color.alpha, color.blue / color.alpha)
+        return (color.premultipliedRed / color.alpha, color.premultipliedGreen / color.alpha, color.premultipliedBlue / color.alpha)
     }
 
     /// 入りと出りでアルファの表現が変わらないことを画素で見る。
@@ -324,9 +324,9 @@ struct EffectTests {
             let pixels = canvas.target.pixels
             let corner = pixels[1, 1]
             #expect(corner.alpha < 0.02, "\(name)")
-            #expect(corner.red < 0.02, "\(name)")
-            #expect(corner.green < 0.02, "\(name)")
-            #expect(corner.blue < 0.02, "\(name)")
+            #expect(corner.premultipliedRed < 0.02, "\(name)")
+            #expect(corner.premultipliedGreen < 0.02, "\(name)")
+            #expect(corner.premultipliedBlue < 0.02, "\(name)")
         }
     }
 
@@ -573,10 +573,10 @@ struct EffectTests {
         let unaffected = try plain.corner()
 
         // 出口には効果が効いている (隅は下地より十分暗い)
-        #expect(trail[0].red < unaffected.red * 0.6, "1 枚目の出口に効果が効いていない")
+        #expect(trail[0].premultipliedRed < unaffected.premultipliedRed * 0.6, "1 枚目の出口に効果が効いていない")
         #expect(trail[0] == repainted[0])
         for (index, value) in trail.enumerated() {
-            #expect(value == trail[0], "\(index + 1) 枚目の隅が 1 枚目と違う: \(value.red)")
+            #expect(value == trail[0], "\(index + 1) 枚目の隅が 1 枚目と違う: \(value.premultipliedRed)")
         }
         #expect(trail[11] == repainted[11])
     }
@@ -600,7 +600,7 @@ struct EffectTests {
         let unaffected = try plain.corner()
 
         #expect(affected != unaffected, "1 枚目に効果が効いていない")
-        #expect(next == unaffected, "効果を書かないフレームに効果が残った: \(next.red)")
+        #expect(next == unaffected, "効果を書かないフレームに効果が残った: \(next.premultipliedRed)")
     }
 
     /// 画素を読む口。
@@ -648,7 +648,7 @@ struct EffectTests {
         try fixture.frame { canvas in
             next = reader.read(from: canvas)
         }
-        #expect(next == before, "次のフレームで読んだ画素に効果が残った: \(next.red)")
+        #expect(next == before, "次のフレームで読んだ画素に効果が残った: \(next.premultipliedRed)")
     }
 
     /// 完了条件 6 — **効果を頼まないフレームは何も払わない。** 控えへ写すのは効果を通す

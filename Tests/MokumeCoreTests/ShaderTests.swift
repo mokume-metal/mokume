@@ -75,7 +75,7 @@ struct ShaderTests {
         for y in 8..<26 {
             for x in 4..<28 {
                 let pixel = canvas.get(x, y)
-                if pixel.blue > 0.5, pixel.red < 0.1, pixel.green < 0.1 { sawBlueGlyph = true }
+                if pixel.premultipliedBlue > 0.5, pixel.premultipliedRed < 0.1, pixel.premultipliedGreen < 0.1 { sawBlueGlyph = true }
             }
         }
         #expect(sawBlueGlyph)
@@ -113,7 +113,7 @@ struct ShaderTests {
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8).red == 0.75)
+        #expect(canvas.get(8, 8).premultipliedRed == 0.75)
     }
 
     // MARK: - 渡した値
@@ -135,8 +135,8 @@ struct ShaderTests {
             shader.set("level", 1)
             canvas.rect(16, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8).red == 0.25)
-        #expect(canvas.get(24, 8).red == 1)
+        #expect(canvas.get(8, 8).premultipliedRed == 0.25)
+        #expect(canvas.get(24, 8).premultipliedRed == 1)
     }
 
     @Test("宣言していない名前は受け付けない")
@@ -151,7 +151,7 @@ struct ShaderTests {
             canvas.shader(shader)
             canvas.rect(0, 0, 16, 16)
         }
-        #expect(canvas.get(8, 8).red == 0.5)
+        #expect(canvas.get(8, 8).premultipliedRed == 0.5)
     }
 
     @Test("組み込みの入力が届く")
@@ -173,9 +173,9 @@ struct ShaderTests {
         }
         let left = canvas.get(0, 8)
         let right = canvas.get(31, 8)
-        #expect(left.red < right.red, "面の中の位置が左右で変わっていない")
-        #expect(left.green == 0.5, "秒数が届いていない")
-        #expect(left.blue == 0.5, "面の大きさが届いていない")
+        #expect(left.premultipliedRed < right.premultipliedRed, "面の中の位置が左右で変わっていない")
+        #expect(left.premultipliedGreen == 0.5, "秒数が届いていない")
+        #expect(left.premultipliedBlue == 0.5, "面の大きさが届いていない")
     }
 
     // MARK: - 渡せる値の数
@@ -284,8 +284,8 @@ struct ShaderTests {
             canvas.rect(0, 0, 16, 16)
         }
         let pixel = canvas.get(8, 8)
-        #expect(abs(pixel.red - 0.25) < 0.01)
-        #expect(abs(pixel.green - 0.5) < 0.01)
+        #expect(abs(pixel.premultipliedRed - 0.25) < 0.01)
+        #expect(abs(pixel.premultipliedGreen - 0.5) < 0.01)
     }
 
     /// 完了条件 2「読み込んだ絵と、自分で描いた面の両方」。
@@ -396,8 +396,8 @@ struct ShaderTests {
             user.rect(16, 0, 16, 16)
             user.resetShader()
         }
-        #expect(abs(user.get(8, 8).red - 1) < 0.01, "set より前に置いた図形が後の値で描かれた")
-        #expect(abs(user.get(24, 8).red - 0.25) < 0.01)
+        #expect(abs(user.get(8, 8).premultipliedRed - 1) < 0.01, "set より前に置いた図形が後の値で描かれた")
+        #expect(abs(user.get(24, 8).premultipliedRed - 0.25) < 0.01)
     }
 
     /// 完了条件 1 (#1683)・2 (#1652)。面の `set` でも同じ。
@@ -422,8 +422,8 @@ struct ShaderTests {
             user.resetShader()
         }
         let (left, right) = (user.get(8, 8), user.get(24, 8))
-        #expect(left.red > 0.99 && left.green < 0.01, "set より前に置いた図形が後の面で描かれた")
-        #expect(right.red < 0.01 && right.green > 0.99)
+        #expect(left.premultipliedRed > 0.99 && left.premultipliedGreen < 0.01, "set より前に置いた図形が後の面で描かれた")
+        #expect(right.premultipliedRed < 0.01 && right.premultipliedGreen > 0.99)
     }
 
     /// 完了条件 2 (#1683)・3 (#1652)。同じ断片を 2 つの面に置いてから `set` する。
@@ -454,8 +454,8 @@ struct ShaderTests {
             main.resetShader()
         }
         for (name, canvas) in [("本体", main), ("描き場所", layer)] {
-            #expect(abs(canvas.get(8, 8).red - 1) < 0.01, "\(name): set より前の図形が後の値で描かれた")
-            #expect(abs(canvas.get(24, 8).red - 0.25) < 0.01, "\(name)")
+            #expect(abs(canvas.get(8, 8).premultipliedRed - 1) < 0.01, "\(name): set より前の図形が後の値で描かれた")
+            #expect(abs(canvas.get(24, 8).premultipliedRed - 0.25) < 0.01, "\(name)")
         }
     }
 
@@ -482,9 +482,9 @@ struct ShaderTests {
 
     /// 赤・緑・青のどれが最も強く出ているか。描き場所の色は面の形式で丸まるので、名前で比べる。
     private static func hue(_ pixel: LinearRGBA) -> String {
-        guard max(pixel.red, pixel.green, pixel.blue) > 0.5 else { return "黒" }
-        if pixel.red >= pixel.green && pixel.red >= pixel.blue { return "赤" }
-        return pixel.green >= pixel.blue ? "緑" : "青"
+        guard max(pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue) > 0.5 else { return "黒" }
+        if pixel.premultipliedRed >= pixel.premultipliedGreen && pixel.premultipliedRed >= pixel.premultipliedBlue { return "赤" }
+        return pixel.premultipliedGreen >= pixel.premultipliedBlue ? "緑" : "青"
     }
 
     /// 完了条件 3 (#1683)・1・2 (#1653)。断片の面に渡した描き場所を、置いた後に描き換える。
@@ -961,7 +961,7 @@ struct ShaderTests {
                 canvas.shader(shader)
                 canvas.rect(0, 0, 16, 16)
             }
-            #expect(canvas.get(8, 8).green == green, "保存した内容で描かれていない")
+            #expect(canvas.get(8, 8).premultipliedGreen == green, "保存した内容で描かれていない")
         }
     }
 
@@ -1209,7 +1209,7 @@ struct ShaderWatchWithoutYieldingTests {
         sketch.paint = fragments.shader
         try runtime.advance()
         try #require(fragments.generations == [0, 0, 0])
-        var green = try runtime.target.readPixels()[4, 4].green
+        var green = try runtime.target.readPixels()[4, 4].premultipliedGreen
 
         for revision in 1...2 {
             try rewrite(fragments, revision)
@@ -1221,7 +1221,7 @@ struct ShaderWatchWithoutYieldingTests {
                 \(fragments.generations) (塗り・効果・計算)。見張りの知らせが、譲らない間は届かない
                 """)
             // 読み直しただけでなく、そのフレームが新しい断片で描かれている
-            let drawn = try runtime.target.readPixels()[4, 4].green
+            let drawn = try runtime.target.readPixels()[4, 4].premultipliedGreen
             #expect(drawn != green, "保存の次のフレームが、まだ古い断片で描かれている")
             green = drawn
         }

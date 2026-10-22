@@ -652,8 +652,8 @@ struct ThinStrokeRecipe {
         var color = self.color
         if let tint {
             color = LinearRGBA(
-                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
-                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+                premultipliedRed: color.premultipliedRed * tint.premultipliedRed, green: color.premultipliedGreen * tint.premultipliedGreen,
+                blue: color.premultipliedBlue * tint.premultipliedBlue, alpha: color.alpha * tint.alpha)
         }
         return ThinStrokeRecipe(
             outline: outline, weight: weight, cap: cap, join: join, color: color,

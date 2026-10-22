@@ -21,8 +21,8 @@ struct ColorSurfaceTests {
     private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-6)
         -> Bool
     {
-        abs(one.red - other.red) < tolerance && abs(one.green - other.green) < tolerance
-            && abs(one.blue - other.blue) < tolerance && abs(one.alpha - other.alpha) < tolerance
+        abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance
+            && abs(one.premultipliedBlue - other.premultipliedBlue) < tolerance && abs(one.alpha - other.alpha) < tolerance
     }
 
     @Test("素の数値の色は 0–1 の指定と一致する")
@@ -141,7 +141,7 @@ struct ColorSurfaceTests {
         // 乗算済みの層は作業空間の「計算のための値」(ADR-0011 決定 1) なので、渡したまま
         let premultiplied = LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 2)
         #expect(premultiplied.alpha == 2)
-        #expect(premultiplied.red == 1)
+        #expect(premultiplied.premultipliedRed == 1)
     }
 
     @Test("数でない不透明度は、締めても不透明に化けない")

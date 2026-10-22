@@ -46,7 +46,7 @@ struct OutputAgreementTests {
         var wrong = 0
         for index in expected.indices {
             let actual = stored[index % 256, index / 256]
-            let got = SIMD4(actual.red, actual.green, actual.blue, actual.alpha)
+            let got = SIMD4(actual.premultipliedRed, actual.premultipliedGreen, actual.premultipliedBlue, actual.alpha)
             for lane in 0..<4 {
                 let want = Float(Float16(expected[index][lane]))
                 if want.isNaN ? !got[lane].isNaN : got[lane] != want { wrong += 1 }

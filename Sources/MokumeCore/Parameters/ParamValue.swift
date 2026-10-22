@@ -59,7 +59,7 @@ public enum ParamValue: Equatable, Sendable {
         case .float(let number): number.isFinite
         case .int, .bool, .string: true
         case .color(let color):
-            color.red.isFinite && color.green.isFinite && color.blue.isFinite && color.alpha.isFinite
+            color.premultipliedRed.isFinite && color.premultipliedGreen.isFinite && color.premultipliedBlue.isFinite && color.alpha.isFinite
         case .vector2(let vector): vector.x.isFinite && vector.y.isFinite
         case .vector3(let vector): vector.x.isFinite && vector.y.isFinite && vector.z.isFinite
         }

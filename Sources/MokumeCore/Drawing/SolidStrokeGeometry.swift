@@ -169,7 +169,7 @@ struct SolidStrokePlacement {
             eye = SIMD4(camera.eye.simd, 0)
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
-        self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
+        self.color = SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
         self.uv = SIMD4(uv.x, uv.y, 0, coverage)
         shapeScale = SIMD4(geometryScale, 0)
         // 端の形は画面の横の w (向きには使わない成分) に載せる (``capCode(_:)``)

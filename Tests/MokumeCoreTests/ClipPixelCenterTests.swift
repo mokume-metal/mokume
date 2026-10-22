@@ -37,7 +37,7 @@ struct ClipPixelCenterTests {
     /// 真ん中の行で、白く塗られた描く画素の範囲 (両端を含む)。
     private func whiteColumns(_ pixels: PixelBuffer) -> ClosedRange<Int>? {
         let row = pixels.height / 2
-        let whites = (0..<pixels.width).filter { pixels[$0, row].red > 0.5 }
+        let whites = (0..<pixels.width).filter { pixels[$0, row].premultipliedRed > 0.5 }
         guard let first = whites.first, let last = whites.last else { return nil }
         #expect(whites.count == last - first + 1, "白い画素が途切れている: \(whites)")
         return first...last
@@ -72,7 +72,7 @@ struct ClipPixelCenterTests {
         let clipped = try render(clipped: true)
         let plain = try render(clipped: false)
         #expect(clipped == plain)
-        #expect(plain[10, 30].red > 0.4 && plain[50, 30].red > 0.4, "縁の列が半分の濃さで塗られている前提")
+        #expect(plain[10, 30].premultipliedRed > 0.4 && plain[50, 30].premultipliedRed > 0.4, "縁の列が半分の濃さで塗られている前提")
     }
 
     @Test("細かさ 0.5 の clip(51.5, 0, 20, 40) は、描く画素 26…35 を通す (完了条件 3)")

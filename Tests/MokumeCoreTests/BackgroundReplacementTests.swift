@@ -95,7 +95,7 @@ struct BackgroundReplacementTests {
             for x in columns {
                 let (p, q) = (a[x, y], b[x, y])
                 let gap = max(
-                    abs(p.red - q.red), abs(p.green - q.green), abs(p.blue - q.blue),
+                    abs(p.premultipliedRed - q.premultipliedRed), abs(p.premultipliedGreen - q.premultipliedGreen), abs(p.premultipliedBlue - q.premultipliedBlue),
                     abs(p.alpha - q.alpha))
                 if gap > 1.0 / 255 { count += 1 }
             }

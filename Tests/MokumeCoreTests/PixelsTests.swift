@@ -93,8 +93,8 @@ struct PixelsTests {
         }
         let drawn = canvas.get(8, 8)
         for (name, got, want) in [
-            ("赤", drawn.red, read.red), ("緑", drawn.green, read.green),
-            ("青", drawn.blue, read.blue), ("不透明度", drawn.alpha, read.alpha),
+            ("赤", drawn.premultipliedRed, read.premultipliedRed), ("緑", drawn.premultipliedGreen, read.premultipliedGreen),
+            ("青", drawn.premultipliedBlue, read.premultipliedBlue), ("不透明度", drawn.alpha, read.alpha),
         ] {
             #expect(isQuantized(got, want), "\(name): 塗った画素 \(got) / 読んだ値 \(want)")
         }
@@ -125,9 +125,9 @@ struct PixelsTests {
             return drawn == nearest || drawn == below || drawn == above
         }
         let drawn = canvas.get(16, 16)
-        #expect(isQuantized(drawn.red, color.red))
-        #expect(isQuantized(drawn.green, color.green))
-        #expect(isQuantized(drawn.blue, color.blue))
+        #expect(isQuantized(drawn.premultipliedRed, color.premultipliedRed))
+        #expect(isQuantized(drawn.premultipliedGreen, color.premultipliedGreen))
+        #expect(isQuantized(drawn.premultipliedBlue, color.premultipliedBlue))
         #expect(drawn.alpha == Float(Float16(color.alpha)))
     }
 
@@ -728,7 +728,7 @@ struct PixelsTests {
             viaGetSet = gpu.settleCalls - before
 
             before = gpu.settleCalls
-            for y in 0..<size { for x in 0..<size { _ = canvas.pixels[x, y].red } }
+            for y in 0..<size { for x in 0..<size { _ = canvas.pixels[x, y].premultipliedRed } }
             viaRead = gpu.settleCalls - before
         }
         // 画素の数は 64 と 2304。待ちの頼みは、画素の数ではなく状態の変わり目の数で決まる

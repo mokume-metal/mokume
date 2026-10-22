@@ -202,9 +202,9 @@ struct StoppedSolidDepthTests {
 
         func matches(_ pixel: LinearRGBA) -> Bool {
             switch self {
-            case .red: pixel.red > 0.4 && pixel.green < 0.1 && pixel.blue < 0.1
-            case .green: pixel.green > 0.4 && pixel.red < 0.1 && pixel.blue < 0.1
-            case .blue: pixel.blue > 0.4 && pixel.red < 0.1 && pixel.green < 0.1
+            case .red: pixel.premultipliedRed > 0.4 && pixel.premultipliedGreen < 0.1 && pixel.premultipliedBlue < 0.1
+            case .green: pixel.premultipliedGreen > 0.4 && pixel.premultipliedRed < 0.1 && pixel.premultipliedBlue < 0.1
+            case .blue: pixel.premultipliedBlue > 0.4 && pixel.premultipliedRed < 0.1 && pixel.premultipliedGreen < 0.1
             }
         }
 

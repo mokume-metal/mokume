@@ -188,9 +188,9 @@ struct ScalarConvertibleTests {
         let b: LinearRGBA = color(40, 50, 120)
         let blended: LinearRGBA = lerpColor(a, b, d)
         let halfway = LinearRGBA(
-            premultipliedRed: interpolate(a.red, b.red, 0.5),
-            green: interpolate(a.green, b.green, 0.5),
-            blue: interpolate(a.blue, b.blue, 0.5),
+            premultipliedRed: interpolate(a.premultipliedRed, b.premultipliedRed, 0.5),
+            green: interpolate(a.premultipliedGreen, b.premultipliedGreen, 0.5),
+            blue: interpolate(a.premultipliedBlue, b.premultipliedBlue, 0.5),
             alpha: interpolate(a.alpha, b.alpha, 0.5))
         #expect(blended == halfway)
     }

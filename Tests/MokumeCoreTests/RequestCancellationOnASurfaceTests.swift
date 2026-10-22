@@ -152,6 +152,6 @@ struct RequestCancellationOnASurfaceTests {
         #expect(sketch.arrivals == 2, "取り消した A が届いていない (取消で止まるようになった)")
         let photo = try #require(sketch.photo)
         let pixel = photo.get(0, 0)
-        #expect(pixel.blue > 0.99 && pixel.red < 0.01, "B ではなく A を採っている: \(pixel)")
+        #expect(pixel.premultipliedBlue > 0.99 && pixel.premultipliedRed < 0.01, "B ではなく A を採っている: \(pixel)")
     }
 }

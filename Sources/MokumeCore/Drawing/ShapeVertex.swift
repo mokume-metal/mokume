@@ -28,6 +28,6 @@ struct ShapeVertex {
     init(position: SIMD2<Float>, uv: SIMD2<Float>, color: LinearRGBA) {
         self.position = position
         self.uv = uv
-        self.color = SIMD4<Float>(color.red, color.green, color.blue, color.alpha)
+        self.color = SIMD4<Float>(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
     }
 }

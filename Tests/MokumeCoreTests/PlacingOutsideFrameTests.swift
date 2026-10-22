@@ -831,8 +831,8 @@ struct CarryOverRegionTests {
         defer { runtime.closePlugins() }
         try runtime.advance()
 
-        let shown = try runtime.target.readPixels()[4, 8].red
-        let read = scene.layer.get(4, 8).red
+        let shown = try runtime.target.readPixels()[4, 8].premultipliedRed
+        let read = scene.layer.get(4, 8).premultipliedRed
         // 読む口と置く口が同じ絵を見る。直す前は get が 0.82・image が 0 だった
         #expect(abs(shown - read) < 0.004)
         if wrapped {

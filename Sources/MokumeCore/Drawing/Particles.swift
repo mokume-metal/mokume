@@ -604,7 +604,7 @@ public final class Particles {
         // 色の値の受け口と同じ述語で見る (#1706 の反証 8)。塗りは `fill(_:)` が断るので公開の道
         // からは数でなくならないが、`color:` は利用者が直に渡すのでここが受け口である
         if !paint.isFinite {
-            let channels = [paint.red, paint.green, paint.blue, paint.alpha]
+            let channels = [paint.premultipliedRed, paint.premultipliedGreen, paint.premultipliedBlue, paint.alpha]
             let name = color == nil ? "the fill (color was omitted)" : "color"
             return (name, "(\(channels.map { "\($0)" }.joined(separator: ", ")))")
         }
@@ -692,7 +692,7 @@ public final class Particles {
                     x: place.x, y: place.y, z: place.z,
                     vx: direction.x * rate, vy: direction.y * rate, vz: direction.z * rate,
                     life: remaining, span: span, size: extent,
-                    red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
+                    red: color.premultipliedRed, green: color.premultipliedGreen, blue: color.premultipliedBlue, alpha: color.alpha,
                     seed: randomness.unitValue(), born: remaining))
         }
     }

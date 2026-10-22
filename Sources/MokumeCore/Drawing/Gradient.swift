@@ -328,9 +328,9 @@ final class ResolvedGradient: Sendable, Equatable {
         packed[layout.info + 1] = Float(stops.count)
         for (index, stop) in stops.enumerated() {
             let color = layout.colors[index]
-            packed[color] = stop.color.red
-            packed[color + 1] = stop.color.green
-            packed[color + 2] = stop.color.blue
+            packed[color] = stop.color.premultipliedRed
+            packed[color + 1] = stop.color.premultipliedGreen
+            packed[color + 2] = stop.color.premultipliedBlue
             packed[color + 3] = stop.color.alpha
             packed[layout.positions[index]] = stop.position
         }

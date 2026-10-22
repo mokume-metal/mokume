@@ -78,7 +78,7 @@ struct StrokeOverlapTests {
     private func overpainted(_ pixels: PixelBuffer) -> [SIMD2<Int>] {
         var found: [SIMD2<Int>] = []
         for y in 0..<pixels.height {
-            for x in 0..<pixels.width where pixels[x, y].red > 0.5 { found.append(SIMD2(x, y)) }
+            for x in 0..<pixels.width where pixels[x, y].premultipliedRed > 0.5 { found.append(SIMD2(x, y)) }
         }
         return found
     }
@@ -87,7 +87,7 @@ struct StrokeOverlapTests {
     private func painted(_ pixels: PixelBuffer) -> Int {
         var count = 0
         for y in 0..<pixels.height {
-            for x in 0..<pixels.width where pixels[x, y].red > 0.05 { count += 1 }
+            for x in 0..<pixels.width where pixels[x, y].premultipliedRed > 0.05 { count += 1 }
         }
         return count
     }
@@ -155,8 +155,8 @@ struct StrokeOverlapTests {
             canvas.strokeJoin(join)
             Self.closedSquare(canvas)
         }
-        #expect(abs(pixels[80, 45].red - Self.once) <= 0.01, "辺の中ほど: \(pixels[80, 45].red)")
-        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(abs(pixels[80, 45].premultipliedRed - Self.once) <= 0.01, "辺の中ほど: \(pixels[80, 45].premultipliedRed)")
+        #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
         #expect(overpainted(pixels).count == 0, "\(join)")
     }
 
@@ -177,7 +177,7 @@ struct StrokeOverlapTests {
             canvas.strokeCap(cap)
             Self.twoPoints(canvas)
         }
-        #expect(abs(pixels[44, 80].red - Self.once) <= 0.01, "端から 4 内側: \(pixels[44, 80].red)")
+        #expect(abs(pixels[44, 80].premultipliedRed - Self.once) <= 0.01, "端から 4 内側: \(pixels[44, 80].premultipliedRed)")
         #expect(overpainted(pixels).count == 0, "\(cap)")
     }
 
@@ -190,7 +190,7 @@ struct StrokeOverlapTests {
             canvas.strokeJoin(join)
             canvas.rect(40, 40, 80, 80)
         }
-        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
         #expect(overpainted(pixels).count == 0, "\(join)")
     }
 
@@ -253,9 +253,9 @@ struct StrokeOverlapTests {
         }
         var brightest: Float = 0
         for y in 0..<160 {
-            for x in 0..<160 { brightest = max(brightest, pixels[x, y].red) }
+            for x in 0..<160 { brightest = max(brightest, pixels[x, y].premultipliedRed) }
         }
-        #expect(pixels[80, 45].red > 0.1)
+        #expect(pixels[80, 45].premultipliedRed > 0.1)
         #expect(brightest <= 0.11, "赤の最大: \(brightest)")
     }
 
@@ -275,7 +275,7 @@ struct StrokeOverlapTests {
             canvas.vertex(20, 140)
             canvas.endShape()
         }
-        #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(abs(pixels[80, 80].premultipliedRed - Self.twice) <= 0.01, "交点: \(pixels[80, 80].premultipliedRed)")
         let far = overpainted(pixels).filter { point in
             let offset = SIMD2<Float>(Float(point.x - 80), Float(point.y - 80))
             return (offset * offset).sum() > 100
@@ -354,7 +354,7 @@ struct StrokeOverlapTests {
             canvas.strokeWeight(10)
             canvas.quad(20, 20, 140, 140, 140, 20, 20, 140)
         }
-        #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(abs(pixels[80, 80].premultipliedRed - Self.twice) <= 0.01, "交点: \(pixels[80, 80].premultipliedRed)")
     }
 
     // MARK: - #1910: beginShape(.quads) の輪郭は quad() と同じ規則
@@ -399,7 +399,7 @@ struct StrokeOverlapTests {
             canvas.strokeWeight(10)
             Self.quadCall(canvas, Self.crossed)
         }
-        #expect(abs(byQuads[80, 80].red - Self.twice) <= 0.01, "交点: \(byQuads[80, 80].red)")
+        #expect(abs(byQuads[80, 80].premultipliedRed - Self.twice) <= 0.01, "交点: \(byQuads[80, 80].premultipliedRed)")
         #expect(differingPixels(byQuads, byCall) == 0, "quad() との差: \(differingPixels(byQuads, byCall))")
     }
 
@@ -430,8 +430,8 @@ struct StrokeOverlapTests {
             Self.quadCall(canvas, second)
         }
         // 1 枚目の右の辺 (x = 100) と 2 枚目の上の辺 (y = 70) が交わる所
-        #expect(abs(byQuads[100, 70].red - Self.twice) <= 0.01, "重なり: \(byQuads[100, 70].red)")
-        #expect(abs(byQuads[40, 40].red - Self.once) <= 0.01, "1 枚の中の角: \(byQuads[40, 40].red)")
+        #expect(abs(byQuads[100, 70].premultipliedRed - Self.twice) <= 0.01, "重なり: \(byQuads[100, 70].premultipliedRed)")
+        #expect(abs(byQuads[40, 40].premultipliedRed - Self.once) <= 0.01, "1 枚の中の角: \(byQuads[40, 40].premultipliedRed)")
         #expect(differingPixels(byQuads, byCalls) == 0, "quad() 2 回との差: \(differingPixels(byQuads, byCalls))")
     }
 
@@ -510,7 +510,7 @@ struct StrokeOverlapTests {
             canvas.shape(shape)
         }
         let pixels = try canvas.target.readPixels()
-        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
         #expect(overpainted(pixels).count == 0)
     }
 
@@ -532,7 +532,7 @@ struct StrokeOverlapTests {
             canvas.endContour()
             canvas.endShape(.close)
         }
-        #expect(abs(pixels[62, 62].red - Self.once) <= 0.01, "穴の角: \(pixels[62, 62].red)")
+        #expect(abs(pixels[62, 62].premultipliedRed - Self.once) <= 0.01, "穴の角: \(pixels[62, 62].premultipliedRed)")
         #expect(overpainted(pixels).count == 0)
     }
 
@@ -610,8 +610,8 @@ struct StrokeOverlapTests {
                 Placement(
                     fill: LinearRGBA(premultipliedRed: 0.5, green: 0.5, blue: 0.5, alpha: 0.5))
             ])
-        #expect(abs(pixels[80, 45].red - Self.once) <= 0.01, "辺の中ほど (80, 45): \(pixels[80, 45].red)")
-        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(abs(pixels[80, 45].premultipliedRed - Self.once) <= 0.01, "辺の中ほど (80, 45): \(pixels[80, 45].premultipliedRed)")
+        #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
         #expect(overpainted(pixels).count == 0, "重ね塗り: \(overpainted(pixels).count)")
     }
 
@@ -623,8 +623,8 @@ struct StrokeOverlapTests {
             { Self.opaqueShape($0, join: join, Self.closedSquare) }, at: [Placement(fill: Self.veil)])
         let direct = try directlyTranslucent(join: join, Self.closedSquare)
         #expect(overpainted(pixels).count == 0, "\(join): \(overpainted(pixels).count)")
-        #expect(abs(pixels[80, 45].red - Self.once) <= 0.01, "辺の中ほど: \(pixels[80, 45].red)")
-        #expect(abs(pixels[45, 45].red - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].red)")
+        #expect(abs(pixels[80, 45].premultipliedRed - Self.once) <= 0.01, "辺の中ほど: \(pixels[80, 45].premultipliedRed)")
+        #expect(abs(pixels[45, 45].premultipliedRed - Self.once) <= 0.01, "角 (45, 45): \(pixels[45, 45].premultipliedRed)")
         #expect(differingPixels(pixels, direct) == 0, "\(join): \(holes(pixels, direct))")
     }
 
@@ -645,7 +645,7 @@ struct StrokeOverlapTests {
         let pixels = try placed(
             { Self.opaqueShape($0, cap: cap, Self.twoPoints) }, at: [Placement(fill: Self.veil)])
         let direct = try directlyTranslucent(cap: cap, Self.twoPoints)
-        #expect(abs(pixels[44, 80].red - Self.once) <= 0.01, "端から 4 内側: \(pixels[44, 80].red)")
+        #expect(abs(pixels[44, 80].premultipliedRed - Self.once) <= 0.01, "端から 4 内側: \(pixels[44, 80].premultipliedRed)")
         #expect(overpainted(pixels).count == 0, "\(cap)")
         #expect(differingPixels(pixels, direct) == 0, "\(cap): \(holes(pixels, direct))")
     }
@@ -835,8 +835,8 @@ struct StrokeOverlapTests {
         #expect(painted(pixels) > 0)
         #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
         #expect(
-            abs(pixels[45, 45].red - pixels[80, 45].red) <= 0.01,
-            "角 \(pixels[45, 45].red) / 辺の中ほど \(pixels[80, 45].red)")
+            abs(pixels[45, 45].premultipliedRed - pixels[80, 45].premultipliedRed) <= 0.01,
+            "角 \(pixels[45, 45].premultipliedRed) / 辺の中ほど \(pixels[80, 45].premultipliedRed)")
     }
 
     /// 組 (`Shape.group` と `+`) は並びを繋ぐだけなので、輪郭の元も繋がって残る。
@@ -928,8 +928,8 @@ struct StrokeOverlapTests {
 
     private static func scaled(_ color: LinearRGBA, by factor: Float) -> LinearRGBA {
         LinearRGBA(
-            premultipliedRed: color.red * factor, green: color.green * factor,
-            blue: color.blue * factor, alpha: color.alpha * factor)
+            premultipliedRed: color.premultipliedRed * factor, green: color.premultipliedGreen * factor,
+            blue: color.premultipliedBlue * factor, alpha: color.alpha * factor)
     }
 
     /// 一辺 16 の閉じた四角。`fill` / `stroke` が無ければ、塗りだけ・線だけの形になる。

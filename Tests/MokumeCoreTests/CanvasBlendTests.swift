@@ -218,7 +218,7 @@ extension CanvasTests {
                 canvas.rect(0, 0, 16, 16)  // 同じところへもう 1 枚重ねる
             }
             // 0.6 を 2 回足せば 1.2。合成の出口で飽和させていると 1.0 で頭打ちになる
-            #expect(canvas.get(8, 8).red > 1.1)
+            #expect(canvas.get(8, 8).premultipliedRed > 1.1)
         }
 
         /// **飽和の担い手は出力段である** (`OutputStage` の `clampToStandardRange`)。

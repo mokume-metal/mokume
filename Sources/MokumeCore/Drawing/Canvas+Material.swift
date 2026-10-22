@@ -85,7 +85,7 @@ extension Canvas {
         // **有限かは成分ごとに先に見る** (``LinearRGBA/hasFiniteRGB``)。SIMD の min は数でない
         // 成分を飛ばすので、有限と分かった後でだけまとめて見てよい
         guard color.hasFiniteRGB else { return nil }
-        let components = SIMD3(color.red, color.green, color.blue)
+        let components = SIMD3(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue)
         guard components.min() >= 0 else { return nil }
         return components
     }

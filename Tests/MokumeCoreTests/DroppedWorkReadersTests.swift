@@ -128,7 +128,7 @@ struct DroppedWorkReadersTests {
         // 打ち切られた読み戻しの写しを「映した」まま返すと、ここが前の中身になる
         let again = try canvas.output.readPixels()
         #expect(canvas.output.pixelReadbacksEncoded == readbacks + 2, "読み戻しを積み直していない")
-        #expect(again[4, 4].blue == 1 && again[4, 4].red == 0)
+        #expect(again[4, 4].premultipliedBlue == 1 && again[4, 4].premultipliedRed == 0)
     }
 
     @Test("encodeForDisplay() の出力段が打ち切られると投げ、次の読みは組み直して今の絵を返す")
@@ -167,7 +167,7 @@ struct DroppedWorkReadersTests {
         // 新しく描けば、その描画が範囲になる。前の打ち切りは範囲の外
         try paint(canvas, Self.red)
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].red == 1 && read[4, 4].blue == 0)
+        #expect(read[4, 4].premultipliedRed == 1 && read[4, 4].premultipliedBlue == 0)
     }
 
     /// この面の中身を変えない投入 (投げない口の読み戻し・出口へ渡す出力段・何も描かない描き切り・
@@ -224,7 +224,7 @@ struct DroppedWorkReadersTests {
         #expect(namesTheDrop(failure), "名乗りが違う: \(String(describing: failure))")
 
         let again = try canvas.output.readPixels()
-        #expect(again[4, 4].blue == 1 && again[4, 4].red == 0)
+        #expect(again[4, 4].premultipliedBlue == 1 && again[4, 4].premultipliedRed == 0)
         #expect(try canvas.output.encodeForDisplay()[4, 4].blue == 255)
     }
 
@@ -252,7 +252,7 @@ struct DroppedWorkReadersTests {
         let blue = Pixels(
             base: mirrored.storage.contents(), width: 16, height: 16,
             bytesPerRow: mirrored.bytesPerRow, mirror: mirrored)[4, 4]
-        #expect(blue.blue == 1 && blue.red == 0, "写しの書いた画素が読み戻しで上書きされた: \(blue)")
+        #expect(blue.premultipliedBlue == 1 && blue.premultipliedRed == 0, "写しの書いた画素が読み戻しで上書きされた: \(blue)")
 
         // (4, 4) には触れずに描き足す。この描き切りが、書いた画素を書き戻し直す
         let writeBacks = canvas.output.pixelWriteBacksEncoded
@@ -263,8 +263,8 @@ struct DroppedWorkReadersTests {
         }
         #expect(canvas.output.pixelWriteBacksEncoded == writeBacks + 1, "書き戻し直していない")
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].blue == 1 && read[4, 4].red == 0, "書いた画素が失われた: \(read[4, 4])")
-        #expect(read[0, 0].red == 1, "描いていない所が変わった")
+        #expect(read[4, 4].premultipliedBlue == 1 && read[4, 4].premultipliedRed == 0, "書いた画素が失われた: \(read[4, 4])")
+        #expect(read[0, 0].premultipliedRed == 1, "描いていない所が変わった")
     }
 
     // MARK: - 結末の知らせが欠けたとき (#1932 の反証 8・9)
@@ -289,7 +289,7 @@ struct DroppedWorkReadersTests {
         try paint(canvas, Self.red)
         let waits = gpu.outcomeWaits
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].red == 1)
+        #expect(read[4, 4].premultipliedRed == 1)
         #expect(gpu.outcomeWaits - waits <= 1)
     }
 
@@ -334,7 +334,7 @@ struct DroppedWorkReadersTests {
         }
         try paint(canvas, Self.blue)
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].blue == 1)
+        #expect(read[4, 4].premultipliedBlue == 1)
         #expect(gpu.commandFaultCount == 1, "打ち切りの記録が 1 つでない — 前提が崩れている")
     }
 
@@ -348,7 +348,7 @@ struct DroppedWorkReadersTests {
         let later = try makeCanvas(gpu)
         try paint(later, Self.blue)
         let read = try later.output.readPixels()
-        #expect(read[4, 4].blue == 1)
+        #expect(read[4, 4].premultipliedBlue == 1)
         // 同じ打ち切りは、前からあった面の読みでは範囲に入る
         #expect(throws: RenderFailure.workDropped(reason: Self.victim)) { _ = try earlier.output.readPixels() }
     }
@@ -376,7 +376,7 @@ struct DroppedWorkReadersTests {
         let canvas = try makeCanvas(gpu)
         gpu.recordCommandFaultForTesting(Self.victim)
         try paint(canvas, Self.blue)
-        #expect(try canvas.output.readPixels()[4, 4].blue == 1)
+        #expect(try canvas.output.readPixels()[4, 4].premultipliedBlue == 1)
         #expect(try canvas.output.encodeForDisplay()[4, 4].blue == 255)
     }
 
@@ -390,7 +390,7 @@ struct DroppedWorkReadersTests {
 
         var waits = gpu.outcomeWaits
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].blue == 1 && read[4, 4].red == 0)
+        #expect(read[4, 4].premultipliedBlue == 1 && read[4, 4].premultipliedRed == 0)
         #expect(gpu.outcomeWaits - waits <= 1)
 
         // 変わらない面を読み直す。写しは映したままなので、積むものも待つものも無い

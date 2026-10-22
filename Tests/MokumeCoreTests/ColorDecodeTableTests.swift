@@ -39,8 +39,8 @@ struct ColorDecodeTableTests {
     }
 
     private func sameBits(_ one: LinearRGBA, _ other: LinearRGBA) -> Bool {
-        sameBits(one.red, other.red) && sameBits(one.green, other.green)
-            && sameBits(one.blue, other.blue) && sameBits(one.alpha, other.alpha)
+        sameBits(one.premultipliedRed, other.premultipliedRed) && sameBits(one.premultipliedGreen, other.premultipliedGreen)
+            && sameBits(one.premultipliedBlue, other.premultipliedBlue) && sameBits(one.alpha, other.alpha)
     }
 
     /// 食い違った入力を書き出して返す。空なら全部が一致している。
@@ -115,9 +115,9 @@ struct ColorDecodeTableTests {
         #expect(wrong.isEmpty, "\(wrong)")
         // 参照が -0 を残している (この検査が -0 と 0 を区別できている) ことの確認
         let negative = LinearRGBA.display(red: -0.0, green: -0.0, blue: -0.0)
-        #expect(negative.red.bitPattern == (-0.0 as Float).bitPattern)
+        #expect(negative.premultipliedRed.bitPattern == (-0.0 as Float).bitPattern)
         let positive = LinearRGBA.display(red: 0, green: 0, blue: 0)
-        #expect(positive.red.bitPattern == (0.0 as Float).bitPattern)
+        #expect(positive.premultipliedRed.bitPattern == (0.0 as Float).bitPattern)
     }
 
     @Test("整数でない入力は表に丸められず、変更前の式と同じ値を返す")

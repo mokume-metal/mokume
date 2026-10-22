@@ -229,7 +229,7 @@ final class KnobsAndValues: Sketch {
         case .bool(let flag): flag ? "true" : "false"
         case .string(let string): "\"\(string)\""
         case .color(let color):
-            String(format: "(%.2f, %.2f, %.2f)", color.red, color.green, color.blue)
+            String(format: "(%.2f, %.2f, %.2f)", color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue)
         case .vector2(let pair): String(format: "(%.2f, %.2f)", pair.x, pair.y)
         case .vector3(let triple): String(format: "(%.0f, %.0f, %.0f)", triple.x, triple.y, triple.z)
         }

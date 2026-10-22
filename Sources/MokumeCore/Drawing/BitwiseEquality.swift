@@ -35,8 +35,9 @@ extension Vector3 {
 extension LinearRGBA {
     @inline(__always)
     func isBitwiseEqual(to other: LinearRGBA) -> Bool {
-        red.isBitwiseEqual(to: other.red) && green.isBitwiseEqual(to: other.green)
-            && blue.isBitwiseEqual(to: other.blue) && alpha.isBitwiseEqual(to: other.alpha)
+        premultipliedRed.isBitwiseEqual(to: other.premultipliedRed)
+            && premultipliedGreen.isBitwiseEqual(to: other.premultipliedGreen)
+            && premultipliedBlue.isBitwiseEqual(to: other.premultipliedBlue) && alpha.isBitwiseEqual(to: other.alpha)
     }
 }
 

@@ -285,7 +285,7 @@ struct ParticleLifetimeTests {
     func theRuntimeDrawsALifeOfOneForTwentyFourFrames() throws {
         let runtime = try SketchRuntime(sketch: OneSpark(), gpu: RenderDevice())
         defer { runtime.closePlugins() }
-        func lit() throws -> Bool { try runtime.target.readPixels()[8, 8].red > 0.3 }
+        func lit() throws -> Bool { try runtime.target.readPixels()[8, 8].premultipliedRed > 0.3 }
         for _ in 0..<OneSpark.fps { try runtime.advance() }
         #expect(try lit(), "\(OneSpark.fps) 枚目に描かれていない")
         try runtime.advance()

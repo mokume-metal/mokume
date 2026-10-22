@@ -54,9 +54,9 @@ struct ColorInterpolationTests {
     @Test("線形の光の量で混ぜる — 黒と白の真ん中は 187.5 と読める")
     func theMixIsLinear() {
         let middle = lerpColor(color(0), color(255), 0.5)
-        #expect(abs(middle.red - 0.5) < 1e-6, "\(middle)")
-        #expect(abs(middle.green - 0.5) < 1e-6, "\(middle)")
-        #expect(abs(middle.blue - 0.5) < 1e-6, "\(middle)")
+        #expect(abs(middle.premultipliedRed - 0.5) < 1e-6, "\(middle)")
+        #expect(abs(middle.premultipliedGreen - 0.5) < 1e-6, "\(middle)")
+        #expect(abs(middle.premultipliedBlue - 0.5) < 1e-6, "\(middle)")
         #expect(abs(middle.alpha - 1) < 1e-6, "\(middle)")
         #expect(isNear(red(middle), 187.5), "\(red(middle))")
     }

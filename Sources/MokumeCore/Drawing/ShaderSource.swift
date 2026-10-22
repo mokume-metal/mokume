@@ -411,9 +411,9 @@ public enum ShaderValue: Equatable, Sendable {
             buffer[offset] = x
             buffer[offset + 1] = y
         case .color(let color):
-            buffer[offset] = color.red
-            buffer[offset + 1] = color.green
-            buffer[offset + 2] = color.blue
+            buffer[offset] = color.premultipliedRed
+            buffer[offset + 1] = color.premultipliedGreen
+            buffer[offset + 2] = color.premultipliedBlue
             buffer[offset + 3] = color.alpha
         }
     }
@@ -422,7 +422,7 @@ public enum ShaderValue: Equatable, Sendable {
         switch self {
         case .number(let value): [value]
         case .pair(let x, let y): [x, y]
-        case .color(let color): [color.red, color.green, color.blue, color.alpha]
+        case .color(let color): [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha]
         }
     }
 }

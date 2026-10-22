@@ -44,8 +44,8 @@ struct RenderTargetTests {
         try target.fill(with: .linear(red: 4, green: 2, blue: 1))
 
         let pixels = try target.readPixels()
-        #expect(pixels[0, 0].red == 4)
-        #expect(pixels[1, 1].green == 2)
+        #expect(pixels[0, 0].premultipliedRed == 4)
+        #expect(pixels[1, 1].premultipliedGreen == 2)
     }
 
     @Test("塗り直さなければ、前の内容の上に残る")

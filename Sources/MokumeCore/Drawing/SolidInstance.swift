@@ -48,7 +48,7 @@ struct SolidInstance {
         normal0 = SIMD4(normalMatrix.columns.0, 0)
         normal1 = SIMD4(normalMatrix.columns.1, 0)
         normal2 = SIMD4(normalMatrix.columns.2, 0)
-        self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
+        self.color = SIMD4(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
     }
 
     /// この置き場所へ置いた頂点を、**頂点関数より先に CPU で**作る。

@@ -627,8 +627,8 @@ struct GraphicsTests {
         let layer = try canvas.createGraphics(16, 16)
         paint(layer, red)
         let color = layer.get(8, 8)
-        #expect(color.red > 0.9)
-        #expect(color.green < 0.01)
+        #expect(color.premultipliedRed > 0.9)
+        #expect(color.premultipliedGreen < 0.01)
         #expect(color.alpha > 0.99)
     }
 
@@ -724,7 +724,7 @@ struct GraphicsTests {
             guard frame == 1 || frame == 16 else { continue }
             try #require(sketch.graphics != nil && sketch.pulse != nil, "描き場所か断片を作れなかった")
             let pixels = try runtime.target.readPixels()
-            reds.append((pixels[8, 8].red, pixels[24, 8].red))
+            reds.append((pixels[8, 8].premultipliedRed, pixels[24, 8].premultipliedRed))
         }
         return reds
     }
@@ -797,7 +797,7 @@ struct GraphicsTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
         for _ in 0..<16 { try runtime.advance() }
         try #require(sketch.effect != nil && sketch.graphics != nil, "描き場所か効果を作れなかった")
-        return try runtime.target.readPixels()[8, 8].red
+        return try runtime.target.readPixels()[8, 8].premultipliedRed
     }
 
     /// 完了条件 2 ([#1467])。直す前は描き場所の効果が時刻 0 の色 (赤 0.5) を返す。
@@ -925,8 +925,8 @@ struct GraphicsTests {
 
     /// 比較の断片が描いた画素から、差 (赤) を読む。**描かれていなければ (緑が 1 でなければ) 止まる。**
     private func gap(of pixel: LinearRGBA) throws -> Float {
-        try #require(pixel.green > 0.99, "比較の断片が描かれていない (画素 \(pixel))")
-        return pixel.red
+        try #require(pixel.premultipliedGreen > 0.99, "比較の断片が描かれていない (画素 \(pixel))")
+        return pixel.premultipliedRed
     }
 
     /// 断片が返す揺らぎの傾きの大きさ (符号は落とす)。
@@ -1049,7 +1049,7 @@ struct GraphicsTests {
 
         func slope(on surface: Canvas, graphics: Bool) throws -> SIMD3<Float> {
             let pixel = try paintAndRead(surface, with: shader, graphics: graphics)
-            return SIMD3(pixel.red, pixel.green, pixel.blue)
+            return SIMD3(pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue)
         }
         for place in Self.noisePlaces {
             shader.set("place", .pair(place.x, place.y))
@@ -1444,8 +1444,8 @@ struct GraphicsTests {
 
         // 投げないので、ここまで来ていること自体が半分の答え。絵は前のまま
         let color = layer.get(8, 8)
-        #expect(color.red > 0.9)
-        #expect(color.blue < 0.01)
+        #expect(color.premultipliedRed > 0.9)
+        #expect(color.premultipliedBlue < 0.01)
     }
 
     // MARK: - フレームの外で断った注意は、自分でフレームを開く面では直し先を案内する (#2780)

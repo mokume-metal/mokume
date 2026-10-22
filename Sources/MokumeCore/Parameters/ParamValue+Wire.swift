@@ -74,7 +74,7 @@ extension ParamValue: Codable {
                 var container = encoder.singleValueContainer()
                 try container.encode(
                     WireColor(
-                        red: color.red, green: color.green, blue: color.blue, alpha: color.alpha))
+                        red: color.premultipliedRed, green: color.premultipliedGreen, blue: color.premultipliedBlue, alpha: color.alpha))
             case .vector2(let vector):
                 var container = encoder.singleValueContainer()
                 try container.encode([vector.x, vector.y])

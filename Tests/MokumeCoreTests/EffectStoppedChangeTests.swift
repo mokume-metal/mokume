@@ -94,7 +94,7 @@ struct EffectStoppedChangeTests {
     }
 
     private static func isRed(_ color: LinearRGBA) -> Bool {
-        color.red > 0.99 && color.green < 0.01 && color.blue < 0.01
+        color.premultipliedRed > 0.99 && color.premultipliedGreen < 0.01 && color.premultipliedBlue < 0.01
     }
 
     /// 画素を書く口。
@@ -142,7 +142,7 @@ struct EffectStoppedChangeTests {
             let untouched = try Self.untouchedSecondFrame(surface)
             #expect(
                 second[3, 3] == untouched[3, 3],
-                "隅に効果が焼き込まれた: \(second[3, 3].red) (書かなければ \(untouched[3, 3].red))")
+                "隅に効果が焼き込まれた: \(second[3, 3].premultipliedRed) (書かなければ \(untouched[3, 3].premultipliedRed))")
         }
     }
 
@@ -203,7 +203,7 @@ struct EffectStoppedChangeTests {
         }
         #expect(Self.isRed(second[centre.x, centre.y]), "出力段を通した後、書いた画素が消えた")
         let untouched = try Self.untouchedSecondFrame(surface)
-        #expect(second[3, 3] == untouched[3, 3], "隅に効果が焼き込まれた: \(second[3, 3].red)")
+        #expect(second[3, 3] == untouched[3, 3], "隅に効果が焼き込まれた: \(second[3, 3].premultipliedRed)")
     }
 
     /// 止まっている間に置いて、その場で描き切らせるもの。
@@ -266,10 +266,10 @@ struct EffectStoppedChangeTests {
             #expect(Self.isRed(point), "描き切った図形が 2 枚目で消えた: \(point)")
         case .graphicsThenRedrawn:
             // 置いた時点の絵 (描き直す前の緑) が残る
-            #expect(point.green > 0.99 && point.red < 0.01, "描き切った絵が 2 枚目で消えた: \(point)")
+            #expect(point.premultipliedGreen > 0.99 && point.premultipliedRed < 0.01, "描き切った絵が 2 枚目で消えた: \(point)")
         case .backgroundThenRead:
             for (x, y) in [(3, 3), (centre.x, centre.y)] {
-                #expect(second[x, y].red < 0.01, "塗った背景が (\(x), \(y)) で消えた: \(second[x, y])")
+                #expect(second[x, y].premultipliedRed < 0.01, "塗った背景が (\(x), \(y)) で消えた: \(second[x, y])")
             }
         }
     }
@@ -395,7 +395,7 @@ struct EffectStoppedChangeTests {
 
         #expect(Self.isRed(untouched[centre.x, centre.y]), "検査の前提: 読んだ後に描いた円が 2 枚目に出ていない")
         let point = written[5, 5]
-        #expect(point.green > 0.99 && point.red < 0.01, "書いた画素が 2 枚目に残っていない: \(point)")
+        #expect(point.premultipliedGreen > 0.99 && point.premultipliedRed < 0.01, "書いた画素が 2 枚目に残っていない: \(point)")
         var differing = 0
         for y in 0..<written.height {
             for x in 0..<written.width where (x, y) != (5, 5) && written[x, y] != untouched[x, y] {
@@ -432,7 +432,7 @@ struct EffectStoppedChangeTests {
         }
         let written = try secondFrame(writing: true)
         let untouched = try secondFrame(writing: false)
-        #expect(untouched[3, 3].red.isFinite, "検査の前提: 書かなければ 2 枚目は下地に戻る")
+        #expect(untouched[3, 3].premultipliedRed.isFinite, "検査の前提: 書かなければ 2 枚目は下地に戻る")
         #expect(
             written[3, 3] == untouched[3, 3],
             "書いていない隅に、効果の数でない値が残った: \(written[3, 3])")

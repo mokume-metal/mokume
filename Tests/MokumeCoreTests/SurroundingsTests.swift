@@ -55,9 +55,9 @@ struct SurroundingsTests {
         // 置いたのに何も起きない設定を作らない。周囲は光と同じく面を明るくするもの
         let lit = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
         let (top, bottom) = topAndBottom(lit)
-        #expect(top.red > 0.05, "周囲だけでは明るくなっていない")
+        #expect(top.premultipliedRed > 0.05, "周囲だけでは明るくなっていない")
         // 上と下で色が違う = 向きに応じて周囲を読んでいる (平坦な塗りではない)
-        #expect(abs(top.blue - bottom.blue) > 0.05)
+        #expect(abs(top.premultipliedBlue - bottom.premultipliedBlue) > 0.05)
     }
 
     @Test("周囲を切ると、金属は特徴のない塊に戻る")
@@ -75,10 +75,10 @@ struct SurroundingsTests {
         let varied = topAndBottom(withSurroundings)
         let flat = topAndBottom(without)
         // 周囲があれば上 (空) と下 (地面) で違う色になる
-        #expect(abs(varied.top.blue - varied.bottom.blue) > 0.08)
+        #expect(abs(varied.top.premultipliedBlue - varied.bottom.premultipliedBlue) > 0.08)
         // 切れば、底上げの光が一様に返るだけ = どこも同じ色
-        #expect(abs(flat.top.blue - flat.bottom.blue) < 0.01)
-        #expect(flat.top.red > 0.05, "映す先が無いのに真っ黒になっている")
+        #expect(abs(flat.top.premultipliedBlue - flat.bottom.premultipliedBlue) < 0.01)
+        #expect(flat.top.premultipliedRed > 0.05, "映す先が無いのに真っ黒になっている")
     }
 
     // MARK: - 二重に数えない
@@ -99,14 +99,14 @@ struct SurroundingsTests {
         for y in 0..<both.height {
             for x in 0..<both.width {
                 let sum = SIMD3(
-                    onlySurroundings[x, y].red + onlyAmbient[x, y].red,
-                    onlySurroundings[x, y].green + onlyAmbient[x, y].green,
-                    onlySurroundings[x, y].blue + onlyAmbient[x, y].blue)
+                    onlySurroundings[x, y].premultipliedRed + onlyAmbient[x, y].premultipliedRed,
+                    onlySurroundings[x, y].premultipliedGreen + onlyAmbient[x, y].premultipliedGreen,
+                    onlySurroundings[x, y].premultipliedBlue + onlyAmbient[x, y].premultipliedBlue)
                 let actual = both[x, y]
                 if sum.x > 0.02 { lit += 1 }
-                worst = max(worst, abs(sum.x - actual.red))
-                worst = max(worst, abs(sum.y - actual.green))
-                worst = max(worst, abs(sum.z - actual.blue))
+                worst = max(worst, abs(sum.x - actual.premultipliedRed))
+                worst = max(worst, abs(sum.y - actual.premultipliedGreen))
+                worst = max(worst, abs(sum.z - actual.premultipliedBlue))
             }
         }
         #expect(lit > 500, "明るい画素が少なすぎて、足し算を確かめられていない")
@@ -120,12 +120,12 @@ struct SurroundingsTests {
         // いちばん明るい色に塗りを掛けたところまでである
         let pixels = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
         let brightest = max(
-            max(Surroundings.sky.top.blue, Surroundings.sky.horizon.blue),
-            Surroundings.sky.bottom.blue)
+            max(Surroundings.sky.top.premultipliedBlue, Surroundings.sky.horizon.premultipliedBlue),
+            Surroundings.sky.bottom.premultipliedBlue)
         let fill: Float = 0.82
         var peak: Float = 0
         for y in 0..<pixels.height {
-            for x in 0..<pixels.width { peak = max(peak, pixels[x, y].blue) }
+            for x in 0..<pixels.width { peak = max(peak, pixels[x, y].premultipliedBlue) }
         }
         #expect(peak > brightest * fill / 2, "周囲をほとんど受け取っていない")
         #expect(peak <= brightest * fill + 0.01, "受け取る量が周囲より多い")
@@ -143,9 +143,9 @@ struct SurroundingsTests {
         let middle = pixels[32, 32]
         let bottom = pixels[32, 62]
         // 地平 (真ん中) がいちばん明るく、上へ行くほど青く、下へ行くほど暗い
-        #expect(middle.red > top.red, "地平が上より明るくない")
-        #expect(middle.red > bottom.red, "地平が下より明るくない")
-        #expect(top.blue - top.red > bottom.blue - bottom.red, "上ほど青くなっていない")
+        #expect(middle.premultipliedRed > top.premultipliedRed, "地平が上より明るくない")
+        #expect(middle.premultipliedRed > bottom.premultipliedRed, "地平が下より明るくない")
+        #expect(top.premultipliedBlue - top.premultipliedRed > bottom.premultipliedBlue - bottom.premultipliedRed, "上ほど青くなっていない")
     }
 
     @Test("映り込みの上下が、背景の上下と一致する")
@@ -168,8 +168,8 @@ struct SurroundingsTests {
         let backdrop = (top: pixels[2, 2], bottom: pixels[2, 62])
 
         // 球の上は空、下は地面。背景と同じ向きになっている
-        #expect(sphere.top.blue - sphere.top.red > sphere.bottom.blue - sphere.bottom.red)
-        #expect(backdrop.top.blue - backdrop.top.red > backdrop.bottom.blue - backdrop.bottom.red)
+        #expect(sphere.top.premultipliedBlue - sphere.top.premultipliedRed > sphere.bottom.premultipliedBlue - sphere.bottom.premultipliedRed)
+        #expect(backdrop.top.premultipliedBlue - backdrop.top.premultipliedRed > backdrop.bottom.premultipliedBlue - backdrop.bottom.premultipliedRed)
     }
 
     // MARK: - 他の設定を書き換えない
@@ -205,11 +205,11 @@ struct SurroundingsTests {
             $0.metalness(1)
         }
         let (top, bottom) = topAndBottom(backdropOnly)
-        #expect(abs(top.blue - bottom.blue) < 0.01, "背景を描いただけで映り込んでいる")
+        #expect(abs(top.premultipliedBlue - bottom.premultipliedBlue) < 0.01, "背景を描いただけで映り込んでいる")
 
         // 置くだけ (背景には出ない)
         let placedOnly = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
-        #expect(placedOnly[2, 2].blue < 0.01, "置いただけで背景に出ている")
+        #expect(placedOnly[2, 2].premultipliedBlue < 0.01, "置いただけで背景に出ている")
     }
 
     // MARK: - 寿命と壊れた入力
@@ -222,7 +222,7 @@ struct SurroundingsTests {
         // 2 フレーム目は真っ黒 (光も周囲も無い面は塗り 1 色だが、背景が黒なので
         // 球は塗りのまま出る)。前のフレームの周囲が残っていれば上下に色が付く
         let (top, bottom) = topAndBottom(second)
-        #expect(abs(top.blue - bottom.blue) < 0.001)
+        #expect(abs(top.premultipliedBlue - bottom.premultipliedBlue) < 0.001)
     }
 
     @Test("初期化のときに置いた周囲は、どのフレームにも属さないので無視される")
@@ -257,7 +257,7 @@ struct SurroundingsTests {
         let full = try sphere(try makeCanvas()) { $0.surroundings(.sky) }
         let half = try sphere(try makeCanvas()) { $0.surroundings(.sky.scaled(by: 0.5)) }
         let point = (x: 32, y: 10)
-        #expect(abs(full[point.x, point.y].red / 2 - half[point.x, point.y].red) < 0.005)
-        #expect(half[point.x, point.y].red > 0.01)
+        #expect(abs(full[point.x, point.y].premultipliedRed / 2 - half[point.x, point.y].premultipliedRed) < 0.005)
+        #expect(half[point.x, point.y].premultipliedRed > 0.01)
     }
 }

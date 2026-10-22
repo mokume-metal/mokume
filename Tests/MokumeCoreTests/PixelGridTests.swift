@@ -441,7 +441,7 @@ struct PixelGridTests {
             }
             let pixels = try canvas.target.readPixels()
             // 帯は x = 0.5〜16.5、塗りは x = 8〜40
-            return [pixels[24, 24].red, pixels[12, 24].red, pixels[4, 24].red]
+            return [pixels[24, 24].premultipliedRed, pixels[12, 24].premultipliedRed, pixels[4, 24].premultipliedRed]
         }()
         let (low, high) = (Double(whole.min() ?? 0), Double(whole.max() ?? 0))
         let groundLevel = Double(groundValue)
@@ -697,7 +697,7 @@ struct PixelGridTests {
                 canvas.rect(8, 8, 32, 32)
             }
             let pixels = try canvas.target.readPixels()
-            return [pixels[24, 24].red, pixels[12, 24].red, pixels[4, 24].red]
+            return [pixels[24, 24].premultipliedRed, pixels[12, 24].premultipliedRed, pixels[4, 24].premultipliedRed]
         }()
         // 塗りを持たない形は帯だけの色だけで読む
         let range = fills ? whole : [whole[2]]
@@ -1266,10 +1266,10 @@ struct PixelGridTests {
                     guard simd_length(center) > 4 else { continue }
                     func ramp(_ value: Double) -> Double { min(1, max(0, 0.5 - value)) }
                     let truth = max(0, ramp(distance - halfWeight) - ramp(distance + halfWeight))
-                    let error = abs(Double(pixels[x, y].red) - truth)
+                    let error = abs(Double(pixels[x, y].premultipliedRed) - truth)
                     if error > worst {
                         worst = error
-                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].red) 期待 \(truth)"
+                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].premultipliedRed) 期待 \(truth)"
                     }
                 }
             }
@@ -1343,10 +1343,10 @@ struct PixelGridTests {
                         }
                     }
                     let truth = Double(covered) / 256
-                    let error = abs(Double(pixels[x, y].red) - truth)
+                    let error = abs(Double(pixels[x, y].premultipliedRed) - truth)
                     if error > worst {
                         worst = error
-                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].red) 真の面積 \(truth)"
+                        at = "(\(x), \(y)) を \(placement) で 画素 \(pixels[x, y].premultipliedRed) 真の面積 \(truth)"
                     }
                 }
             }
@@ -1415,10 +1415,10 @@ struct PixelGridTests {
                 let q = SIMD2(Double(x) - 160, Double(y) - 160)
                 let d = PixelGridTests.ellipseDistance(q, radii)
                 let expected = max(0, ramp(d - halfWeight) - ramp(d + halfWeight))
-                let error = abs(Double(pixels[x, y].red) - expected)
+                let error = abs(Double(pixels[x, y].premultipliedRed) - expected)
                 if error > worst {
                     worst = error
-                    at = "(\(x), \(y)) 画素 \(pixels[x, y].red) 期待 \(expected)"
+                    at = "(\(x), \(y)) 画素 \(pixels[x, y].premultipliedRed) 期待 \(expected)"
                 }
             }
         }

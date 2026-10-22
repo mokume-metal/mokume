@@ -40,7 +40,7 @@ struct ColorWithOpacityTests {
     @Test("負の不透明度は、成分も不透明度も 0 の透明な色になる")
     func negativeOpacityIsTransparent() {
         let gone = color(half, -100)
-        #expect(gone.red == 0 && gone.green == 0 && gone.blue == 0 && gone.alpha == 0)
+        #expect(gone.premultipliedRed == 0 && gone.premultipliedGreen == 0 && gone.premultipliedBlue == 0 && gone.alpha == 0)
         #expect(color(opaque, 0) == gone)
     }
 
@@ -54,9 +54,9 @@ struct ColorWithOpacityTests {
     func scalesEveryPremultipliedComponent() {
         let ink = LinearRGBA.display(red: 0.114, green: 0.110, blue: 0.118)
         let faded = color(ink, 0.72 * 255)
-        #expect(abs(faded.red - ink.red * 0.72) < 1e-6, "\(faded)")
-        #expect(abs(faded.green - ink.green * 0.72) < 1e-6, "\(faded)")
-        #expect(abs(faded.blue - ink.blue * 0.72) < 1e-6, "\(faded)")
+        #expect(abs(faded.premultipliedRed - ink.premultipliedRed * 0.72) < 1e-6, "\(faded)")
+        #expect(abs(faded.premultipliedGreen - ink.premultipliedGreen * 0.72) < 1e-6, "\(faded)")
+        #expect(abs(faded.premultipliedBlue - ink.premultipliedBlue * 0.72) < 1e-6, "\(faded)")
         #expect(abs(faded.alpha - ink.alpha * 0.72) < 1e-6, "\(faded)")
     }
 
@@ -88,8 +88,8 @@ struct ColorWithOpacityTests {
     func doesNotInspectTheComponents() {
         let broken = LinearRGBA(premultipliedRed: .nan, green: 0.4, blue: 0.6, alpha: 1)
         let faded = color(broken, 128)
-        #expect(faded.red.isNaN)
-        #expect(abs(faded.green - 0.4 * 128 / 255) < 1e-6)
+        #expect(faded.premultipliedRed.isNaN)
+        #expect(abs(faded.premultipliedGreen - 0.4 * 128 / 255) < 1e-6)
     }
 }
 

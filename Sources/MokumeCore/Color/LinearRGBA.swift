@@ -15,7 +15,7 @@
 ///
 /// **比べる・符号化する適合と、成分から直に作る口は隔離の外に置く** ([#2600])。値型の見た目
 /// (``Rect/fill``・``Circle/fill``) として、隔離の外で作られ・比べられ・符号化される。
-/// `Codable` の形は格納している 4 成分 (線形・アルファ乗算済み) のままである。原色の移し替えを
+/// `Codable` の形は格納している 4 成分 (線形・アルファ乗算済み) で、キーは `red`・`green`・`blue`・`alpha`。原色の移し替えを
 /// 通る口 (``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) は main actor に
 /// 残る ([#2389])。
 ///
@@ -23,27 +23,38 @@
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
 public struct LinearRGBA: Sendable {
-    /// 赤成分 (線形・アルファ乗算済み)。
-    public var red: Float
-    /// 緑成分 (線形・アルファ乗算済み)。
-    public var green: Float
-    /// 青成分 (線形・アルファ乗算済み)。
-    public var blue: Float
-    /// 不透明度。
+    /// 赤成分 (線形・アルファ乗算済み)。**読むだけで、書き換えられない。**
+    ///
+    /// 成分はアルファを掛けた値なので、`alpha` だけを書き換えると乗算済みの約束が壊れる
+    /// (半透明にしたつもりが下地を越えて光る)。値を変えるには作り直す —
+    /// 不透明度を変えるなら ``color(_:_:)-(LinearRGBA,_)``、成分から作るなら
+    /// ``init(premultipliedRed:green:blue:alpha:)`` ([ADR-0011] 決定 4)。
+    ///
+    /// 数で読む ``red(_:)`` は sRGB の 0–255 で、乗算していない値を返す。こちらは作業空間の線形の値で、
+    /// 目盛りが違う。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    public private(set) var premultipliedRed: Float
+    /// 緑成分 (線形・アルファ乗算済み)。読むだけで、書き換えられない。
+    public private(set) var premultipliedGreen: Float
+    /// 青成分 (線形・アルファ乗算済み)。読むだけで、書き換えられない。
+    public private(set) var premultipliedBlue: Float
+    /// 不透明度。**読むだけで、書き換えられない。**
+    ///
+    /// 0…1 の目盛りで、色の成分と違って乗算されない (``alpha(_:)`` は 0–255)。
     ///
     /// 乗算していない成分から作った色 (``init(straightRed:green:blue:alpha:)`` と、それを通る
     /// ``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) では **0…1 に締まっている**。
-    /// このプロパティと ``init(premultipliedRed:green:blue:alpha:)`` は作業空間の
-    /// 「計算のための値」なので締めない — 書き換えた値はそのまま残る。
-    public var alpha: Float
+    /// ``init(premultipliedRed:green:blue:alpha:)`` は作業空間の「計算のための値」なので締めない。
+    public private(set) var alpha: Float
 
     /// アルファを乗算済みの成分から作る (作業空間の内側で使う形)。
     ///
     /// **どの値も締めない。** 渡した不透明度が 0…1 の外でもそのまま持つ。
     nonisolated public init(premultipliedRed red: Float, green: Float, blue: Float, alpha: Float) {
-        self.red = red
-        self.green = green
-        self.blue = blue
+        self.premultipliedRed = red
+        self.premultipliedGreen = green
+        self.premultipliedBlue = blue
         self.alpha = alpha
     }
 
@@ -63,9 +74,9 @@ public struct LinearRGBA: Sendable {
         // **この書き順を保つ。** Swift の `min` / `max` は第 1 引数の NaN を返すので、
         // `max(0, min(1, alpha))` と書くと NaN が 1 (不透明) に化ける
         let alpha = min(max(alpha, 0), 1)
-        self.red = red * alpha
-        self.green = green * alpha
-        self.blue = blue * alpha
+        self.premultipliedRed = red * alpha
+        self.premultipliedGreen = green * alpha
+        self.premultipliedBlue = blue * alpha
         self.alpha = alpha
     }
 
@@ -164,7 +175,7 @@ public struct LinearRGBA: Sendable {
     ///
     /// [#1706]: https://github.com/mokume-metal/mokume/issues/1706
     var hasFiniteRGB: Bool {
-        red.isFinite && green.isFinite && blue.isFinite
+        premultipliedRed.isFinite && premultipliedGreen.isFinite && premultipliedBlue.isFinite
     }
 
     /// 完全に透明な色。
@@ -172,9 +183,19 @@ public struct LinearRGBA: Sendable {
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
 
     /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。
-    var components: SIMD4<Float> { SIMD4(red, green, blue, alpha) }
+    var components: SIMD4<Float> { SIMD4(premultipliedRed, premultipliedGreen, premultipliedBlue, alpha) }
 }
 
 // 比べる・符号化する適合だけを隔離の外に置く (上の型の説明)。格納している 4 成分を
-// そのまま比べ・書くので、合成に任せる
-nonisolated extension LinearRGBA: Equatable, Hashable, Codable {}
+// そのまま比べ・書く。**符号化のキーは `red`・`green`・`blue`・`alpha` のまま据え置く** — 格納の名前を
+// 改めても、保存した値 (`Rect`・`Circle` の `fill`・つまみの JSON) の形は変わらない (#2756)
+nonisolated extension LinearRGBA: Equatable, Hashable {}
+
+nonisolated extension LinearRGBA: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case premultipliedRed = "red"
+        case premultipliedGreen = "green"
+        case premultipliedBlue = "blue"
+        case alpha
+    }
+}

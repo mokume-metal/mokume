@@ -67,8 +67,8 @@ struct TextReplaceMarginTests {
 
     /// どれかの成分の差が許容を超えるか。
     private func differs(_ a: LinearRGBA, _ b: LinearRGBA) -> Bool {
-        abs(a.red - b.red) > Self.tolerance || abs(a.green - b.green) > Self.tolerance
-            || abs(a.blue - b.blue) > Self.tolerance || abs(a.alpha - b.alpha) > Self.tolerance
+        abs(a.premultipliedRed - b.premultipliedRed) > Self.tolerance || abs(a.premultipliedGreen - b.premultipliedGreen) > Self.tolerance
+            || abs(a.premultipliedBlue - b.premultipliedBlue) > Self.tolerance || abs(a.alpha - b.alpha) > Self.tolerance
     }
 
     /// 字形の被覆 0 の画素 — 重ねる混ぜ方で描いた絵で、下地のまま残った画素。

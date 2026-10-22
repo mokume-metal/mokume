@@ -1154,7 +1154,7 @@ struct ModelTests {
             for y in 106..<125 {
                 for x in 106..<118 {
                     let color = image[x, y]
-                    sum += (color.red + color.green + color.blue) / 3
+                    sum += (color.premultipliedRed + color.premultipliedGreen + color.premultipliedBlue) / 3
                     count += 1
                 }
             }

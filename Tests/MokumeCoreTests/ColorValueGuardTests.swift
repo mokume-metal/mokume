@@ -197,7 +197,7 @@ struct ColorValueGuardTests {
         case .ambientLight, .directionalLight, .pointLight, .spotLight:
             [0]
         case .ambient, .emissive:
-            [previous.red, previous.green, previous.blue]
+            [previous.premultipliedRed, previous.premultipliedGreen, previous.premultipliedBlue]
         case .placement:
             components(previous)
         }
@@ -418,7 +418,7 @@ struct ColorValueGuardTests {
     }
 
     private func components(_ color: LinearRGBA) -> [Float] {
-        [color.red, color.green, color.blue, color.alpha]
+        [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha]
     }
 
     /// 同じ状態か。**数でない値が混じったら同じとみなさない。**

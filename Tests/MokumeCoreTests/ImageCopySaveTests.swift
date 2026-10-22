@@ -31,8 +31,8 @@ struct ImageCopySaveTests {
     }
 
     private func same(_ a: LinearRGBA, _ b: LinearRGBA, within tolerance: Float = 0) -> Bool {
-        abs(a.red - b.red) <= tolerance && abs(a.green - b.green) <= tolerance
-            && abs(a.blue - b.blue) <= tolerance && abs(a.alpha - b.alpha) <= tolerance
+        abs(a.premultipliedRed - b.premultipliedRed) <= tolerance && abs(a.premultipliedGreen - b.premultipliedGreen) <= tolerance
+            && abs(a.premultipliedBlue - b.premultipliedBlue) <= tolerance && abs(a.alpha - b.alpha) <= tolerance
     }
 
     // MARK: - copy()
@@ -73,7 +73,7 @@ struct ImageCopySaveTests {
             }
         }
         // 2.8 は 8 bit の 255 を超える。8 bit を経由したなら 1.0 で止まる
-        #expect(b.get(4, 0).red > 2.5)
+        #expect(b.get(4, 0).premultipliedRed > 2.5)
     }
 
     @Test("大きな入力 (復号を遅らせるもの) とその後の書き換えも、論理的な値のまま写る")

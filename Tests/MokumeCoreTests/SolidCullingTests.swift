@@ -470,8 +470,8 @@ struct SolidCullingTests {
             for x in 0..<a.width where !ignoring(x, y) {
                 let (p, q) = (a[x, y], b[x, y])
                 let apart =
-                    abs(p.red - q.red) > 0.02 || abs(p.green - q.green) > 0.02
-                    || abs(p.blue - q.blue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
+                    abs(p.premultipliedRed - q.premultipliedRed) > 0.02 || abs(p.premultipliedGreen - q.premultipliedGreen) > 0.02
+                    || abs(p.premultipliedBlue - q.premultipliedBlue) > 0.02 || abs(p.alpha - q.alpha) > 0.02
                 if apart { count += 1 }
             }
         }
@@ -485,7 +485,7 @@ struct SolidCullingTests {
     private func twoLayerPixels(_ image: PixelBuffer) -> Int {
         var count = 0
         for y in 0..<image.height {
-            for x in 0..<image.width where image[x, y].red > 0.7 { count += 1 }
+            for x in 0..<image.width where image[x, y].premultipliedRed > 0.7 { count += 1 }
         }
         return count
     }

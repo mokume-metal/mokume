@@ -99,7 +99,7 @@ struct LightTests {
         // エンコードの手前 (`rgba16Float`) で読めば、間の丸めは Float16 の 1 段だけで、
         // 0.5 はそこで丸まらない (塗りの色を変えた照合は `LightFormulaTests` が持つ・#1381)
         let value = try canvas.target.readPixels()[32, 32]
-        #expect([value.red, value.green, value.blue, value.alpha] == [0.5, 0.5, 0.5, 1])
+        #expect([value.premultipliedRed, value.premultipliedGreen, value.premultipliedBlue, value.alpha] == [0.5, 0.5, 0.5, 1])
     }
 
     @Test("1 を超える色の光は、白い面を白へ飽和させる")
@@ -318,7 +318,7 @@ struct LightTests {
         for y in 0..<one.height {
             for x in 0..<one.width {
                 let (a, b) = (one[x, y], other[x, y])
-                let gap = max(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
+                let gap = max(abs(a.premultipliedRed - b.premultipliedRed), abs(a.premultipliedGreen - b.premultipliedGreen), abs(a.premultipliedBlue - b.premultipliedBlue))
                 if gap > tolerance { differing += 1 }
             }
         }
@@ -342,7 +342,7 @@ struct LightTests {
 
         // 面の 1% まで。倍率を 10 倍にした同じ形でも、分け方の丸めで 132 画素は違う
         #expect(differingPixels(scaled, ellipsoid) <= 256)
-        #expect(abs(scaled[52, 80].red - ellipsoid[52, 80].red) <= 0.02)
+        #expect(abs(scaled[52, 80].premultipliedRed - ellipsoid[52, 80].premultipliedRed) <= 0.02)
     }
 
     @Test("一様に縮めた球は、縮めずに置いた同じ大きさの球と同じ絵になる")

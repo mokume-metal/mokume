@@ -341,7 +341,7 @@ struct DroppedWorkRedeliveryTests {
         try drawElsewhere(canvas)
         #expect(canvas.output.pixelWriteBacksEncoded - writeBacks == 1, "書き戻した回数が 1 でない")
         let read = try canvas.output.readPixels()
-        #expect(read[4, 4].blue == 1 && read[4, 4].red == 0, "書いた画素が失われた: \(read[4, 4])")
+        #expect(read[4, 4].premultipliedBlue == 1 && read[4, 4].premultipliedRed == 0, "書いた画素が失われた: \(read[4, 4])")
     }
 
     // MARK: - 読み戻しの「映した」(#2199 の反証 1)
@@ -361,7 +361,7 @@ struct DroppedWorkRedeliveryTests {
         let readbacks = canvas.output.pixelReadbacksEncoded
         let read = canvas.output.pixels[4, 4]
         #expect(canvas.output.pixelReadbacksEncoded - readbacks == (dropped ? 1 : 0), "映し直した回数が違う")
-        #expect(read.blue == 1 && read.red == 0)
+        #expect(read.premultipliedBlue == 1 && read.premultipliedRed == 0)
     }
 
     // MARK: - 作ったときの塗り (#2199 の反証 2)

@@ -117,9 +117,9 @@ struct KnobWritebackTests {
         let expected = LinearRGBA(
             straightRed: linear.red, green: linear.green, blue: linear.blue, alpha: alpha)
         let tint = sketch.tint
-        #expect(abs(tint.red - expected.red) < 2e-3, "\(tint)")
-        #expect(abs(tint.green - expected.green) < 2e-3, "\(tint)")
-        #expect(abs(tint.blue - expected.blue) < 2e-3, "\(tint)")
+        #expect(abs(tint.premultipliedRed - expected.premultipliedRed) < 2e-3, "\(tint)")
+        #expect(abs(tint.premultipliedGreen - expected.premultipliedGreen) < 2e-3, "\(tint)")
+        #expect(abs(tint.premultipliedBlue - expected.premultipliedBlue) < 2e-3, "\(tint)")
         #expect(abs(tint.alpha - expected.alpha) < 2e-3, "\(tint)")
     }
 

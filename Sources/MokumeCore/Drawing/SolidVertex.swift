@@ -75,6 +75,6 @@ struct SolidVertex {
         self.shapeNormal = shapeNormal ?? normal
         self.uv = uv
         self.stroke = isStroke ? strokeCoverage : 0
-        self.color = SIMD4<Float>(color.red, color.green, color.blue, color.alpha)
+        self.color = SIMD4<Float>(color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha)
     }
 }

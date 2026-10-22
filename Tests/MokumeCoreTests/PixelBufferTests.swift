@@ -25,7 +25,7 @@ struct PixelBufferTests {
         for y in 0..<height {
             for x in 0..<width {
                 let color = color(x, y)
-                components += [color.red, color.green, color.blue, color.alpha].map(Float16.init)
+                components += [color.premultipliedRed, color.premultipliedGreen, color.premultipliedBlue, color.alpha].map(Float16.init)
             }
         }
         return PixelBuffer(width: width, height: height, components: components)

@@ -17,8 +17,8 @@ struct HueSaturationBrightnessTests {
     private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
         -> Bool
     {
-        abs(one.red - other.red) < tolerance && abs(one.green - other.green) < tolerance
-            && abs(one.blue - other.blue) < tolerance && abs(one.alpha - other.alpha) < tolerance
+        abs(one.premultipliedRed - other.premultipliedRed) < tolerance && abs(one.premultipliedGreen - other.premultipliedGreen) < tolerance
+            && abs(one.premultipliedBlue - other.premultipliedBlue) < tolerance && abs(one.alpha - other.alpha) < tolerance
     }
 
     @Test("既知の色が、素の数値の指定と一致する")

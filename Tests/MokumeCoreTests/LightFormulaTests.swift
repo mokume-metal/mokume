@@ -186,7 +186,7 @@ struct LightFormulaTests {
             Spot.offAxis(x, y) >= Spot.angle + 0.5 * .pi / 180
         }
         // 検出力: 同じ画素を点光源は照らしている (0 なのは N·L のせいではない)
-        let pointLit = pixels(where: outside).allSatisfy { point[$0.x, $0.y].red > 0 }
+        let pointLit = pixels(where: outside).allSatisfy { point[$0.x, $0.y].premultipliedRed > 0 }
         try #require(pointLit, "広がりの外の画素を、点光源も照らしていない")
         try expectEverywhere(spot, .exact, "広がりの外は 0", where: outside) { _, _ in .black }
     }
@@ -338,8 +338,8 @@ struct LightFormulaTests {
 
         let image = try glossImage(shininess: 200, source: source)
         var brightest = (x: -1, y: -1, value: -Float.infinity)
-        for (x, y) in pixels(where: { _, _ in true }) where image[x, y].red > brightest.value {
-            brightest = (x, y, image[x, y].red)
+        for (x, y) in pixels(where: { _, _ in true }) where image[x, y].premultipliedRed > brightest.value {
+            brightest = (x, y, image[x, y].premultipliedRed)
         }
         #expect(brightest.value > 0, "艶が出ていない")
         #expect(
@@ -382,7 +382,7 @@ struct LightFormulaTests {
         var peaks: [(shininess: Float, value: Float)] = []
         for shininess: Float in [50, 100, 200, 400, 1000, 2220] {
             let image = try glossImage(shininess: shininess, source: source)
-            peaks.append((shininess, image[pixel.x, pixel.y].red))
+            peaks.append((shininess, image[pixel.x, pixel.y].premultipliedRed))
         }
         for (lower, higher) in zip(peaks, peaks.dropFirst()) {
             #expect(
@@ -536,7 +536,7 @@ struct LightFormulaTests {
 
         // 芯はすべて影に入っている (影なしの絵より暗い)
         let core = pixels(where: Self.isCore(detail: detail))
-        let unshadowedCore = core.filter { shadowed[$0.x, $0.y].red >= lit[$0.x, $0.y].red }
+        let unshadowedCore = core.filter { shadowed[$0.x, $0.y].premultipliedRed >= lit[$0.x, $0.y].premultipliedRed }
         #expect(unshadowedCore.isEmpty, "投影した影の中なのに暗くない画素: \(unshadowedCore.prefix(3))")
 
         // 外はすべて影なしの絵と同じ
@@ -614,7 +614,7 @@ struct LightFormulaTests {
             let want = expected(x, y)
             let pixel = image[x, y]
             checked += 1
-            let drawn = [pixel.red, pixel.green, pixel.blue]
+            let drawn = [pixel.premultipliedRed, pixel.premultipliedGreen, pixel.premultipliedBlue]
             if tolerance == .exact {
                 // **前提: 式の厳密な値が Float16 で表せる。** 表せない値では描画先へ書くときに
                 // 丸めが入り、完全一致で比べる根拠が無くなる

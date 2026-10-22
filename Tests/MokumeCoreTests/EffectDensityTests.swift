@@ -53,7 +53,7 @@ struct EffectDensityTests {
 
     /// 80 行目の赤 (線形)。
     private static func row(of buffer: PixelBuffer) -> [Float] {
-        (0..<buffer.width).map { buffer[$0, 80].red }
+        (0..<buffer.width).map { buffer[$0, 80].premultipliedRed }
     }
 
     /// 帯に効果を掛けた縁の幅 (出す画素)。
@@ -100,7 +100,7 @@ struct EffectDensityTests {
             for x in 0..<buffer.width {
                 let dx = Float(x) + 0.5 - 80
                 let dy = Float(y) + 0.5 - 80
-                if dx * dx + dy * dy > 100 { sum += buffer[x, y].red }
+                if dx * dx + dy * dy > 100 { sum += buffer[x, y].premultipliedRed }
             }
         }
         return sum
@@ -157,7 +157,7 @@ struct EffectDensityTests {
                 canvas.background(255)
                 canvas.effects([.vignette(amount: 0.8)])
             }
-            return try canvas.output.readPixels()[2, 2].red
+            return try canvas.output.readPixels()[2, 2].premultipliedRed
         }
         let full = try corner(density: 1)
         let reduced = try corner(density: 0.5)

@@ -232,7 +232,9 @@ struct SameStateKeepsBatchTests {
         #expect(
             try batchesClosed(by: { $0.surroundings(.studio) }, prepare: { $0.surroundings(.sky) }, on: canvas) == 1)
         var negative = Surroundings.sky
-        negative.top.red = -1
+        negative.top = LinearRGBA(
+            premultipliedRed: -1, green: negative.top.premultipliedGreen,
+            blue: negative.top.premultipliedBlue, alpha: negative.top.alpha)
         #expect(try batchesClosed(by: { $0.surroundings(negative) }, on: canvas) == 0, "断った周囲で閉じた")
     }
 
@@ -312,10 +314,10 @@ struct SameStateKeepsBatchTests {
                 canvas.rect(Float(i) * 16, 0, 16, 64)
             }
         }
-        #expect(canvas.get(8, 32).red > 0.9)
-        #expect(canvas.get(24, 32).red < 0.1)
-        #expect(canvas.get(40, 32).red > 0.9)
-        #expect(canvas.get(56, 32).red < 0.1)
+        #expect(canvas.get(8, 32).premultipliedRed > 0.9)
+        #expect(canvas.get(24, 32).premultipliedRed < 0.1)
+        #expect(canvas.get(40, 32).premultipliedRed > 0.9)
+        #expect(canvas.get(56, 32).premultipliedRed < 0.1)
     }
 
     // MARK: - 比べる型に項目が増えたら止まる

@@ -56,15 +56,15 @@ struct GradientFillTests {
             c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
-        #expect(abs(pixels[0, 5].red - position(of: 0)) < 0.01)
-        #expect(abs(pixels[99, 5].red - position(of: 99)) < 0.01)
-        #expect(abs(pixels[50, 5].red - 0.505) < 0.01, "x = 50: \(pixels[50, 5].red)")
+        #expect(abs(pixels[0, 5].premultipliedRed - position(of: 0)) < 0.01)
+        #expect(abs(pixels[99, 5].premultipliedRed - position(of: 99)) < 0.01)
+        #expect(abs(pixels[50, 5].premultipliedRed - 0.505) < 0.01, "x = 50: \(pixels[50, 5].premultipliedRed)")
         for x in [10, 30, 70, 90] {
-            #expect(abs(pixels[x, 5].red - position(of: x)) < 0.01, "x = \(x): \(pixels[x, 5].red)")
+            #expect(abs(pixels[x, 5].premultipliedRed - position(of: x)) < 0.01, "x = \(x): \(pixels[x, 5].premultipliedRed)")
         }
         // 勾配は縦には変わらない。矩形の外は黒のまま
-        #expect(abs(pixels[50, 0].red - pixels[50, 9].red) < 0.002)
-        #expect(pixels[50, 15].red == 0)
+        #expect(abs(pixels[50, 0].premultipliedRed - pixels[50, 9].premultipliedRed) < 0.002)
+        #expect(pixels[50, 15].premultipliedRed == 0)
         let display = try canvas.target.encodeForDisplay()
         let shown = Float(display[50, 5].red)
         #expect(abs(shown - 188) <= 3, "表示の赤: \(shown)")
@@ -81,7 +81,7 @@ struct GradientFillTests {
         for x in [0, 10, 25, 49, 50, 75, 90, 99] {
             let t = position(of: x)
             let expected = 1 - abs(2 * t - 1)
-            #expect(abs(pixels[x, 5].red - expected) < 0.02, "x = \(x): \(pixels[x, 5].red) (期待 \(expected))")
+            #expect(abs(pixels[x, 5].premultipliedRed - expected) < 0.02, "x = \(x): \(pixels[x, 5].premultipliedRed) (期待 \(expected))")
         }
     }
 
@@ -94,16 +94,16 @@ struct GradientFillTests {
             c.fill(.linearGradient((white, 0.75), (black, 0.25), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
-        #expect(pixels[5, 5].red < 0.002, "0.25 より手前は最初の色 (黒)")
-        #expect(pixels[95, 5].red > 0.998, "0.75 より先は最後の色 (白)")
-        #expect(abs(pixels[50, 5].red - 0.51) < 0.02, "中ほどは混ざる: \(pixels[50, 5].red)")
+        #expect(pixels[5, 5].premultipliedRed < 0.002, "0.25 より手前は最初の色 (黒)")
+        #expect(pixels[95, 5].premultipliedRed > 0.998, "0.75 より先は最後の色 (白)")
+        #expect(abs(pixels[50, 5].premultipliedRed - 0.51) < 0.02, "中ほどは混ざる: \(pixels[50, 5].premultipliedRed)")
         // 同じ位置の 2 つは書いた順に並び、その位置で色が切り替わる
         let stepped = try self.pixels(canvas) { c in
             c.fill(.linearGradient((black, 0.5), (white, 0.5), from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 10)
         }
-        #expect(stepped[40, 5].red < 0.002)
-        #expect(stepped[60, 5].red > 0.998)
+        #expect(stepped[40, 5].premultipliedRed < 0.002)
+        #expect(stepped[60, 5].premultipliedRed > 0.998)
     }
 
     /// 完了条件 3: 放射の勾配で塗った円は、中心が 1 つ目の色、縁の内側が最後の色になる。
@@ -115,14 +115,14 @@ struct GradientFillTests {
             c.circle(50, 50, 80)
         }
         let center = pixels[50, 50]
-        #expect(center.red > 0.95 && center.blue < 0.05, "中心 \(center)")
+        #expect(center.premultipliedRed > 0.95 && center.premultipliedBlue < 0.05, "中心 \(center)")
         let edge = pixels[50 + 38, 50]
-        #expect(edge.blue > 0.9 && edge.red < 0.1, "縁の内側 \(edge)")
+        #expect(edge.premultipliedBlue > 0.9 && edge.premultipliedRed < 0.1, "縁の内側 \(edge)")
         // 途中は距離に比例して混ざる (x = 70 は中心から 20.5 = 位置 0.5125)
         let middle = pixels[70, 50]
-        #expect(abs(middle.blue - 0.5125) < 0.03, "中ほど \(middle)")
+        #expect(abs(middle.premultipliedBlue - 0.5125) < 0.03, "中ほど \(middle)")
         // 円の外は黒のまま
-        #expect(pixels[2, 2].red == 0 && pixels[2, 2].blue == 0)
+        #expect(pixels[2, 2].premultipliedRed == 0 && pixels[2, 2].premultipliedBlue == 0)
     }
 
     /// 区切りを配列で組み立てて渡す形は、`(色, 位置)` を並べる形と同じ勾配になる。並べる形は
@@ -168,8 +168,8 @@ struct GradientFillTests {
             var total: (Float, Float) = (0, 0)
             for y in 0..<60 {
                 for x in columns {
-                    total.0 += pixels[x, y].red
-                    total.1 += pixels[x, y].blue
+                    total.0 += pixels[x, y].premultipliedRed
+                    total.1 += pixels[x, y].premultipliedBlue
                 }
             }
             return total
@@ -196,8 +196,8 @@ struct GradientFillTests {
         var left: (Float, Float) = (0, 0)
         var right: (Float, Float) = (0, 0)
         for y in 0..<60 {
-            for x in 0..<70 { left.0 += pixels[x, y].red; left.1 += pixels[x, y].blue }
-            for x in 130..<200 { right.0 += pixels[x, y].red; right.1 += pixels[x, y].blue }
+            for x in 0..<70 { left.0 += pixels[x, y].premultipliedRed; left.1 += pixels[x, y].premultipliedBlue }
+            for x in 130..<200 { right.0 += pixels[x, y].premultipliedRed; right.1 += pixels[x, y].premultipliedBlue }
         }
         #expect(left.0 > 3 * left.1, "左の字は赤が強い: \(left)")
         #expect(right.1 > 2 * right.0, "右の字は青が強い: \(right)")
@@ -215,7 +215,7 @@ struct GradientFillTests {
             c.popStyle()
             c.rect(0, 10, 100, 5)
         }
-        #expect(pixels[10, 2].green > 0.05, "積んだ中は勾配: \(pixels[10, 2])")
+        #expect(pixels[10, 2].premultipliedGreen > 0.05, "積んだ中は勾配: \(pixels[10, 2])")
         #expect(pixels[10, 12] == red.sameLinear, "戻した後は前の色: \(pixels[10, 12])")
         #expect(pixels[90, 12] == red.sameLinear)
         // 勾配を持ったまま積み、その中で色に替えて戻すと、勾配へ戻る
@@ -229,7 +229,7 @@ struct GradientFillTests {
             c.rect(0, 10, 100, 5)
         }
         #expect(pixels2[10, 2] == blue.sameLinear, "積んだ中は色: \(pixels2[10, 2])")
-        #expect(abs(pixels2[90, 12].red - position(of: 90)) < 0.01, "戻すと勾配: \(pixels2[90, 12])")
+        #expect(abs(pixels2[90, 12].premultipliedRed - position(of: 90)) < 0.01, "戻すと勾配: \(pixels2[90, 12])")
     }
 
     /// 完了条件 4: `createShape { }` の中で塗った勾配は形に焼き付き、置き場所で回すと勾配も一緒に回る。
@@ -247,11 +247,11 @@ struct GradientFillTests {
             c.shape(strip, at: [Placement(x: 90, y: 20, rotation: Vector3(0, 0, Float.pi / 2))])
         }
         // 回さない帯: 左から右へ明るくなる (x = 5…65・y = 5…25)
-        #expect(pixels[10, 15].red < pixels[60, 15].red - 0.5, "回さない帯: \(pixels[10, 15].red) → \(pixels[60, 15].red)")
+        #expect(pixels[10, 15].premultipliedRed < pixels[60, 15].premultipliedRed - 0.5, "回さない帯: \(pixels[10, 15].premultipliedRed) → \(pixels[60, 15].premultipliedRed)")
         // 回した帯: 上から下へ明るくなる。90° 回すので、形の x が下向きになる (x = 70…90・y = 20…80)
-        #expect(pixels[80, 25].red < pixels[80, 75].red - 0.5, "回した帯: \(pixels[80, 25].red) → \(pixels[80, 75].red)")
+        #expect(pixels[80, 25].premultipliedRed < pixels[80, 75].premultipliedRed - 0.5, "回した帯: \(pixels[80, 25].premultipliedRed) → \(pixels[80, 75].premultipliedRed)")
         // 横には変わらない
-        #expect(abs(pixels[72, 50].red - pixels[88, 50].red) < 0.02, "回した帯の横: \(pixels[72, 50].red), \(pixels[88, 50].red)")
+        #expect(abs(pixels[72, 50].premultipliedRed - pixels[88, 50].premultipliedRed) < 0.02, "回した帯の横: \(pixels[72, 50].premultipliedRed), \(pixels[88, 50].premultipliedRed)")
     }
 
     /// 形の組み立ての外で決めた勾配は、組み立ての中では形自身の座標で読み直す。
@@ -267,8 +267,8 @@ struct GradientFillTests {
             c.resetMatrix()
             c.shape(strip)
         }
-        #expect(abs(pixels[45, 5].red - 0.905) < 0.02, "形自身の座標で読む: \(pixels[45, 5].red)")
-        #expect(pixels[5, 5].red < 0.15)
+        #expect(abs(pixels[45, 5].premultipliedRed - 0.905) < 0.02, "形自身の座標で読む: \(pixels[45, 5].premultipliedRed)")
+        #expect(pixels[5, 5].premultipliedRed < 0.15)
     }
 
     /// 同じ形を続けて置くと畳まれる (雛形 + 置き場所)。畳まれた置き場所も勾配で塗る。
@@ -283,7 +283,7 @@ struct GradientFillTests {
             c.rect(70, 0, 30, 10)
         }
         for x in [10, 50, 90] {
-            #expect(abs(pixels[x, 5].red - position(of: x)) < 0.01, "x = \(x): \(pixels[x, 5].red)")
+            #expect(abs(pixels[x, 5].premultipliedRed - position(of: x)) < 0.01, "x = \(x): \(pixels[x, 5].premultipliedRed)")
         }
     }
 
@@ -299,8 +299,8 @@ struct GradientFillTests {
             c.fill(blue)
             c.shape(strip)
         }
-        #expect(abs(pixels[90, 5].red - position(of: 90)) < 0.01)
-        #expect(pixels[90, 5].blue < 0.95 * pixels[90, 5].red + 0.05, "置く側の青は混ざらない: \(pixels[90, 5])")
+        #expect(abs(pixels[90, 5].premultipliedRed - position(of: 90)) < 0.01)
+        #expect(pixels[90, 5].premultipliedBlue < 0.95 * pixels[90, 5].premultipliedRed + 0.05, "置く側の青は混ざらない: \(pixels[90, 5])")
     }
 
     /// 完了条件 4: `shader()` を付けたら利用者の断片が勝ち、勾配は効かない。外すと勾配で塗る。
@@ -316,7 +316,7 @@ struct GradientFillTests {
             c.rect(0, 10, 100, 5)
         }
         #expect(pixels[50, 2] == blue.sameLinear, "断片が勝つ: \(pixels[50, 2])")
-        #expect(abs(pixels[90, 12].red - position(of: 90)) < 0.01, "外すと勾配: \(pixels[90, 12])")
+        #expect(abs(pixels[90, 12].premultipliedRed - position(of: 90)) < 0.01, "外すと勾配: \(pixels[90, 12])")
         // 断片を付けた後で勾配を渡しても、断片が勝つ
         let canvas2 = try makeCanvas()
         let flat2 = try canvas2.makeShader("float4 paint(Fragment in, Values values) { return float4(0, 0, 1, 1); }")
@@ -341,10 +341,10 @@ struct GradientFillTests {
         // 輪郭の帯の中 (左辺の x = 20 の中心・右辺の x = 80 の中心) は赤
         let left = pixels[20, 50]
         let right = pixels[80, 50]
-        #expect(left.red > 0.95 && left.green < 0.02, "左の辺: \(left)")
-        #expect(right.red > 0.95 && right.green < 0.02, "右の辺: \(right)")
+        #expect(left.premultipliedRed > 0.95 && left.premultipliedGreen < 0.02, "左の辺: \(left)")
+        #expect(right.premultipliedRed > 0.95 && right.premultipliedGreen < 0.02, "右の辺: \(right)")
         // 内側は勾配 (x = 50 は 0.505)
-        #expect(abs(pixels[50, 50].green - 0.505) < 0.02, "内側: \(pixels[50, 50])")
+        #expect(abs(pixels[50, 50].premultipliedGreen - 0.505) < 0.02, "内側: \(pixels[50, 50])")
     }
 
     /// `body` を `draw()` として 1 フレーム描くスケッチ (値型の `draw()` は走っているスケッチの面へ描く)。
@@ -406,7 +406,7 @@ struct GradientFillTests {
             c.shape(strip, at: [Placement(fill: red)])
         }
         let sample = pixels[50, 5]
-        #expect(sample.red > 0.95 && sample.green < 0.02 && sample.blue < 0.02, "赤を掛ける: \(sample)")
+        #expect(sample.premultipliedRed > 0.95 && sample.premultipliedGreen < 0.02 && sample.premultipliedBlue < 0.02, "赤を掛ける: \(sample)")
     }
 
     /// 勾配の区切りが 1 つなら単色。受けられない勾配は、塗りを前のまま残す。
@@ -441,7 +441,7 @@ struct GradientFillTests {
             c.fill(.linearGradient(stops, from: [0, 0], to: [100, 0]))
             c.rect(0, 0, 100, 5)
         }
-        #expect(pixels[95, 2].red < 0.002, "11 個目 (白) は使わない: \(pixels[95, 2].red)")
+        #expect(pixels[95, 2].premultipliedRed < 0.002, "11 個目 (白) は使わない: \(pixels[95, 2].premultipliedRed)")
     }
 
     /// 勾配は `fill(_:)` を呼んだときの変換で読む: 呼んだ後に変換を変えても動かない。
@@ -460,10 +460,10 @@ struct GradientFillTests {
             c.translate(50, 0)
             c.rect(0, 20, 50, 10)
         }
-        #expect(abs(pixels[50, 5].red - 0.01) < 0.02, "平行移動の後で呼ぶ: \(pixels[50, 5].red)")
-        #expect(abs(pixels[99, 5].red - 0.99) < 0.02)
-        #expect(abs(pixels[50, 25].red - 0.505) < 0.02, "呼んだ後の平行移動では動かない: \(pixels[50, 25].red)")
-        #expect(abs(pixels[99, 25].red - 0.995) < 0.02)
+        #expect(abs(pixels[50, 5].premultipliedRed - 0.01) < 0.02, "平行移動の後で呼ぶ: \(pixels[50, 5].premultipliedRed)")
+        #expect(abs(pixels[99, 5].premultipliedRed - 0.99) < 0.02)
+        #expect(abs(pixels[50, 25].premultipliedRed - 0.505) < 0.02, "呼んだ後の平行移動では動かない: \(pixels[50, 25].premultipliedRed)")
+        #expect(abs(pixels[99, 25].premultipliedRed - 0.995) < 0.02)
     }
 
     /// 勾配は塗らない設定を覚えている: `noFill()` で塗らなくなり、`fill(_:)` で戻る。
@@ -477,8 +477,8 @@ struct GradientFillTests {
             c.fill(.linearGradient((black, 0), (white, 1), from: [0, 0], to: [100, 0]))
             c.rect(0, 10, 100, 5)
         }
-        #expect(pixels[90, 2].red == 0, "塗らない")
-        #expect(abs(pixels[90, 12].red - position(of: 90)) < 0.01)
+        #expect(pixels[90, 2].premultipliedRed == 0, "塗らない")
+        #expect(abs(pixels[90, 12].premultipliedRed - position(of: 90)) < 0.01)
     }
 }
 
@@ -486,7 +486,7 @@ extension LinearRGBA {
     /// 描いた画素と比べるための、半精度の丸めを通した値。
     fileprivate var sameLinear: LinearRGBA {
         LinearRGBA(
-            premultipliedRed: Float(Float16(red)), green: Float(Float16(green)),
-            blue: Float(Float16(blue)), alpha: Float(Float16(alpha)))
+            premultipliedRed: Float(Float16(premultipliedRed)), green: Float(Float16(premultipliedGreen)),
+            blue: Float(Float16(premultipliedBlue)), alpha: Float(Float16(alpha)))
     }
 }

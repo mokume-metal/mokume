@@ -319,7 +319,7 @@ struct ParameterNonFiniteTests {
 
         #expect(report.rejected.isEmpty)
         #expect(sketch.pair == Vector2(Float.greatestFiniteMagnitude, -Float.greatestFiniteMagnitude))
-        #expect(sketch.tint.red == .greatestFiniteMagnitude)
+        #expect(sketch.tint.premultipliedRed == .greatestFiniteMagnitude)
     }
 
     @Test("保存の組の成分が Float に収まらなければ、その値だけを捨て、他の値は戻す")
