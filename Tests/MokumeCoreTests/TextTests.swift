@@ -1712,33 +1712,26 @@ struct TextTests {
         [8192, 1e18, 1e20, .greatestFiniteMagnitude]
     }
 
-    @Test("待てなかったら、字形を焼かない")
-    func doesNotBakeAGlyphWhenTheWaitFails() throws {
+    /// #934 の「待てなければ焼かない」は、#1792 で手放した (画像が #749 で選んだのと同じ交換)。
+    /// 焼く口は GPU を待たないので、完了を待てない状況でも字形は焼けて、控えに積まれる。
+    /// 待ちの期限は描き切りが持ち、打ち切りの後の届け直しは `GlyphBakeDeliveryTests` が見る。
+    @Test("GPU の完了を待てない状況でも、焼く口は待たずに字形を焼いて控えへ積む")
+    func bakesAGlyphEvenWhenTheWaitWouldFail() throws {
         let canvas = try makeCanvas()
         let resolved = try #require(canvas.typeface.glyph(for: "M"))
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: 32, style: .normal, glyph: resolved.glyph)
 
         canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
-        let refused = canvas.atlas.entry(for: key, font: resolved.font)
+        let settles = canvas.gpu.settleCalls
+        let baked = canvas.atlas.entry(for: key, font: resolved.font)
         canvas.gpu.failSettleForTesting = nil
-        guard case .unbakeable = refused else {
-            Issue.record(
-                """
-                GPU の完了を待てなかったのに、面は「\(refused)」と答えた。
-
-                焼いていない場所を字形として返すと、前のフレームがまだ読んでいるかも
-                しれない面へ書いたうえ、その領域をそのまま描くことになる
-                ([#934](https://github.com/mokume-metal/mokume/issues/934))。
-                """)
+        guard case .found = baked else {
+            Issue.record("GPU の完了を待てなくても焼けるはずが、面は「\(baked)」と答えた")
             return
         }
-
-        // 引けなかった字形は控えに残らないので、次の機会に焼き直せる
-        guard case .found = canvas.atlas.entry(for: key, font: resolved.font) else {
-            Issue.record("待てるようになった後も焼けていない")
-            return
-        }
+        #expect(canvas.gpu.settleCalls == settles, "焼く口が GPU の完了を待とうとした")
+        #expect(canvas.atlas.page.pendingRegionCount == 1, "焼いた画素を控えへ積んでいない")
     }
 
     @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る", arguments: overwhelmingSizes)
