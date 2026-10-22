@@ -213,16 +213,26 @@ nonisolated final class CommandQueueGate: Sendable {
         }
         // 書くのは錠の外で、最初の 1 回だけ (#2235)。書けなくても投げず、1 度名乗る
         if first, writesRecord, let record = expiryRecord {
-            if case .failed(let reason) = record.write(after: wait, limit: limit, at: date) {
-                Diagnostics.warn(Self.recordFailureNotice(at: record.path, reason: reason))
+            if case .failed(let reason, let createdFile) = record.write(after: wait, limit: limit, at: date) {
+                Diagnostics.warn(
+                    Self.recordFailureNotice(at: record.path, reason: reason, createdFile: createdFile))
             }
         }
         return first
     }
 
-    /// 記録を書けなかったときに 1 度出す 1 行。**記録が無いと、次の検査・計測が止まらない**と名乗る。
-    static func recordFailureNotice(at path: URL, reason: String) -> String {
-        "Could not write the record of the GPU wait that went past its limit (\(path.path): \(reason)), so the next"
+    /// 記録を書けなかったときに 1 度出す 1 行。**実際に合わせて 2 通りを言い分ける。**
+    ///
+    /// - 記録のファイルを作れなかった: 記録が無いので、次の検査・計測は止まらない。
+    /// - 作った後に書き損ねた (`createdFile`): 空か途中までのファイルが残り、`gpu-slot.py` は読めない記録として
+    ///   止める。人が GPU の答えを確かめて消すまで止まる。
+    static func recordFailureNotice(at path: URL, reason: String, createdFile: Bool = false) -> String {
+        if createdFile {
+            return "Could not finish writing the record of the GPU wait that went past its limit (\(path.path): \(reason)),"
+                + " so an unreadable one is left there. gpu-slot.py stops the next test or measurement on it until a person"
+                + " checks that the GPU answers and deletes it"
+        }
+        return "Could not write the record of the GPU wait that went past its limit (\(path.path): \(reason)), so the next"
             + " test or measurement started by gpu-slot.py will not be stopped by it — check that the GPU answers"
             + " before starting one"
     }
@@ -233,6 +243,10 @@ nonisolated final class CommandQueueGate: Sendable {
 
     /// 記録を持つ関所で、記録が在るか。
     var expiryRecordExists: Bool { expiryRecord?.exists ?? false }
+
+    /// **別のプロセス (または前の回) の記録だけがあって、このプロセスは印を立てていない**か。
+    /// ``RenderDevice/isAvailable`` が、装置の有無と記録の有無を分けるために読む。
+    var onlyAnotherRunsRecord: Bool { closure == nil && expiryRecordExists }
 
     /// 記録の置き場。持たなければ `nil`。
     var expiryRecordPath: URL? { expiryRecord?.path }

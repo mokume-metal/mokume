@@ -61,6 +61,38 @@ struct CommandQueueGateTests {
 
     /// 答えの来ない投入 (検査の差し込み) の期限切れは、記録を書かない。**書くと、検査のたびに本物の置き場へ
     /// 記録が残り、以後の検査・計測が止まる** (#2235)。知らせを黙らせているのと同じ条件である。
+    @Test("記録が在るプロセスの関所は、発行口を作らずに断る。isAvailable は装置の有無を答え、GPU の suite を飛ばさない")
+    func aRecordStopsNewQueues() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("wait-expired.json")
+        let gate = CommandQueueGate(expiryRecord: ExpiryRecord(path: path, wrapper: nil))
+        _ = try gate.makeQueue(on: device)
+        #expect(gate.queuesMade == 1)
+
+        try Data("{}".utf8).write(to: path)
+        let failure = #expect(throws: RenderFailure.self) {
+            _ = try RenderDevice(device: device, slotCount: 1, queueGate: gate)
+        }
+        #expect(failure == .gpuNotResponding, "名乗りが違う: \(String(describing: failure))")
+        #expect(gate.queuesMade == 1, "記録が在るのに発行口を作った (計 \(gate.queuesMade) 本)")
+
+        // **記録だけがあるとき `isAvailable` は、発行口を作らずに「装置は在る」と答える。** `false` にすると、
+        // `.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が「GPU が無い実行環境」として全部飛び、
+        // `swift test` が緑で終わる。suite は走って、上の土台の断りで赤になる (記録で止まる = 名乗って赤)
+        #expect(RenderDevice.isAvailable(on: device, through: gate), "記録のせいで GPU の suite が飛ぶ")
+        #expect(gate.queuesMade == 1, "使える環境かを問うだけで発行口を作った (計 \(gate.queuesMade) 本)")
+        // 装置が無ければ、記録があっても偽 (GPU が無い環境は今までどおり飛ばす)
+        #expect(!RenderDevice.isAvailable(on: nil, through: gate))
+
+        // このプロセス自身の印は、今までどおり偽 (記録の有無によらない)
+        let own = CommandQueueGate(expiryRecord: ExpiryRecord(path: path, wrapper: nil))
+        #expect(own.close(after: .finishing, limit: .seconds(5), writesRecord: false))
+        #expect(!RenderDevice.isAvailable(on: device, through: own))
+    }
+
     @Test("検査の差し込みの期限切れは、記録を持つ関所でも記録を書かない")
     func aTestInjectedExpiryWritesNoRecord() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
@@ -203,7 +235,7 @@ struct CommandQueueGateWordingTests {
 
         // 置き場が無くても、投げずに書かない
         let missing = ExpiryRecord(path: directory.appendingPathComponent("absent/wait-expired.json"), wrapper: nil)
-        guard case .failed(let reason) = missing.write(after: .allocator, limit: .seconds(5)) else {
+        guard case .failed(let reason, _) = missing.write(after: .allocator, limit: .seconds(5)) else {
             Issue.record("置き場が無いのに、書けなかったと言わない")
             return
         }
@@ -212,8 +244,8 @@ struct CommandQueueGateWordingTests {
         // 環境変数が無い (`gpu-slot.py` の外) か空なら、記録を持たない = 何も書かない
         #expect(ExpiryRecord.fromEnvironment([:]) == nil)
         #expect(ExpiryRecord.fromEnvironment([ExpiryRecord.variable: ""]) == nil)
-        // 鍵は一覧が正典で、読み手はそこから取る
-        #expect(ExpiryRecord.variable == StartupReads.gpuSlotExpiryRecord.key)
+        // 鍵は `gpu-slot.py` が子へ渡す名前と同じ (利用者の一覧には載せない・許可の行に理由がある)
+        #expect(ExpiryRecord.variable == "MOKUME_GPU_SLOT_EXPIRY_RECORD")
         let given = ExpiryRecord.fromEnvironment([
             ExpiryRecord.variable: path.path, ExpiryRecord.wrapperVariable: "77",
         ])
@@ -247,26 +279,6 @@ struct CommandQueueGateWordingTests {
         // 壊れたシンボリックリンクも「在る」(中身を読まない)
         try FileManager.default.createSymbolicLink(atPath: path.path, withDestinationPath: "/nonexistent-target")
         #expect(gate.isClosed)
-    }
-
-    @Test("記録が在るプロセスの関所は、発行口を作らずに断り、使い捨ての発行口も作らない")
-    func aRecordStopsNewQueues() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let path = directory.appendingPathComponent("wait-expired.json")
-        let gate = CommandQueueGate(expiryRecord: ExpiryRecord(path: path, wrapper: nil))
-        _ = try gate.makeQueue(on: device)
-        #expect(gate.queuesMade == 1)
-
-        try Data("{}".utf8).write(to: path)
-        let failure = #expect(throws: RenderFailure.self) {
-            _ = try RenderDevice(device: device, slotCount: 1, queueGate: gate)
-        }
-        #expect(failure == .gpuNotResponding, "名乗りが違う: \(String(describing: failure))")
-        #expect(!RenderDevice.isAvailable(on: device, through: gate))
-        #expect(gate.queuesMade == 1, "記録が在るのに発行口を作った (計 \(gate.queuesMade) 本)")
     }
 
     @Test("プロセスの関所は、環境の書き先から記録を書き・読む配線を持つ")
@@ -323,17 +335,71 @@ struct CommandQueueGateWordingTests {
         #expect(!FileManager.default.fileExists(atPath: path.path), "差し込みの期限切れが記録を書いた")
     }
 
+    @Test("作った後に書き損ねたときは、止まらないとは言わず、読めない記録が残ると言う")
+    func aHalfWrittenRecordIsNamedForWhatItIs() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("wait-expired.json")
+        let record = ExpiryRecord(path: path, wrapper: nil)
+
+        // ディスクが満杯の形: 開けて作った後に、書く口が失敗する
+        let outcome = record.write(
+            after: .finishing, limit: .seconds(5), rawWrite: { _, _, _ in
+                errno = ENOSPC
+                return -1
+            })
+        guard case .failed(let reason, let createdFile) = outcome else {
+            Issue.record("書き損ねたのに、書けたと言う: \(outcome)")
+            return
+        }
+        #expect(createdFile, "作った後の失敗なのに、作っていないと言う")
+        #expect(reason.contains("space"), Comment(rawValue: reason))
+        #expect(FileManager.default.fileExists(atPath: path.path), "空か途中のファイルが残る (gpu-slot.py が読めない記録として止める)")
+
+        let notice = CommandQueueGate.recordFailureNotice(at: path, reason: reason, createdFile: true)
+        #expect(notice.contains("an unreadable one is left"), Comment(rawValue: notice))
+        #expect(!notice.contains("will not be stopped by it"), "止まらないとは言えない: \(notice)")
+        let none = CommandQueueGate.recordFailureNotice(at: path, reason: reason)
+        #expect(none.contains("will not be stopped by it"), Comment(rawValue: none))
+
+        // 関所は、その形でも 1 度だけ名乗る
+        let said = Diagnostics.$digest.withValue(WarningDigest()) { () -> [String] in
+            let gate = CommandQueueGate(
+                expiryRecord: ExpiryRecord(path: directory.appendingPathComponent("absent/wait-expired.json"), wrapper: nil))
+            #expect(gate.close(after: .finishing, limit: .seconds(5), at: Self.first))
+            return Diagnostics.takeUnreported()
+        }
+        #expect(said.count == 1, "\(said)")
+    }
+
     @Test("別のプロセスの記録があるときの断りは、起こし直しではなく、人が確かめて記録を消すよう言う")
     func theRefusalForARecordPointsAtTheRecord() {
         let text = RenderFailure.notResponding(after: nil, record: "/slots/wait-expired.json")
         #expect(text.contains("/slots/wait-expired.json"))
         #expect(text.contains("A person checks that the GPU answers"), "\(text)")
         #expect(!text.contains("start the process again"), "記録は起こし直しでは消えない")
-        // 検査の記録を読む側が、関所の巻き込みとして畳む頭の句
-        #expect(text.hasPrefix("A wait for the GPU went past its limit earlier in this process"))
+        // 別の回の記録なので、「このプロセスの前」とは言わない。検査の記録を読む側が畳む頭の句
+        #expect(text.hasPrefix("A wait for the GPU went past its limit in another run under gpu-slot.py"), "\(text)")
+        #expect(!text.contains("earlier in this process"), "\(text)")
+
+        // このプロセス自身が印を立てて記録も書いた回: 起こし直しとは言わず、記録を消すと言う
+        let closure = CommandQueueGate.Closure(wait: .finishing, limit: .seconds(5), date: Self.first)
+        let own = RenderFailure.notResponding(after: closure, record: "/slots/wait-expired.json")
+        #expect(own.hasPrefix("A wait for the GPU went past its limit earlier in this process"), "\(own)")
+        #expect(own.contains("the first was"), "\(own)")
+        #expect(own.contains("stops later runs too"), "\(own)")
+        #expect(own.contains("A person checks that the GPU answers"), "\(own)")
+        #expect(!own.contains("start the process again"), "\(own)")
+        // 記録を書いたプロセスが印を立てた時の 1 行も、起こし直せとは言わない
+        let notice = RenderDevice.closingNotice(after: .finishing, limit: .seconds(5), record: "/slots/wait-expired.json")
+        #expect(notice.contains("/slots/wait-expired.json"), "\(notice)")
+        #expect(notice.contains("a person checks that the GPU answers"), "\(notice)")
+        #expect(!notice.contains("start it again"), "\(notice)")
+        #expect(!notice.contains("\n"))
         // 印を立てたプロセスの断りは、今までどおり起こし直しへ送る
-        let own = RenderFailure.notResponding(after: nil)
-        #expect(own.contains("start the process again"))
+        let plain = RenderFailure.notResponding(after: nil)
+        #expect(plain.contains("start the process again"))
     }
 
     @Test("断りの 1 行目が、最初に期限を越えた待ちの種類・期限・時刻を名乗る")

@@ -21,8 +21,9 @@ import Foundation
 ///
 /// **`scripts/gpu-slot.py` の下で走っているときだけ書く。** 書き先は `gpu-slot.py` が環境変数
 /// (``variable``) で渡す。渡されていなければ何も書かず、何も読まない。利用者のスケッチ・`mokume run`・
-/// `mokume watch` が、開発の道具の置き場へ書かないためである。読む場所は
-/// ``StartupReads/gpuSlotExpiryRecord`` が名乗る (起動の瞬間に決まる)。
+/// `mokume watch` が、開発の道具の置き場へ書かないためである。**起動の瞬間に読む値だが、`StartupReads` の
+/// 一覧には載せない** — 利用者の一覧 (`watch` の名乗り・doctor・`reference`) に出るのは、利用者のスケッチが
+/// 使うものだけで、これは開発の道具の口である。載せない理由は `StartupReadsTests` の許可の行に書いてある。
 ///
 /// ## 何を書くか
 ///
@@ -35,6 +36,8 @@ import Foundation
 ///
 /// **書けなかったときは 1 度名乗る** (``CommandQueueGate/close(after:limit:at:writesRecord:)``)。
 /// 記録が無いと次の検査・計測は止まらないので、黙って消えると守りが無いことに誰も気付かない。
+/// **作った後に書き損ねたときは、空か途中までのファイルを残す** (`createdFile`)。`gpu-slot.py` は読めない
+/// 記録として 76 で止めるので、安全側に倒れる — 名乗りは「止まらない」ではなく「読めない記録が残った」と言う。
 /// **既にあれば上書きしない** (最初の 1 件を残す)。
 ///
 /// **ディスクまで落とす。** 書いた直後に機械が落ちる (パニックになる) ことがあるので、`gpu-slot.py`
@@ -46,7 +49,7 @@ import Foundation
 /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
 nonisolated struct ExpiryRecord: Sendable, Equatable {
     /// 書き先を渡す環境変数 (`scripts/gpu-slot.py` が子へ渡す)。
-    static let variable = StartupReads.gpuSlotExpiryRecord.key
+    static let variable = "MOKUME_GPU_SLOT_EXPIRY_RECORD"
     /// 包みの pid を渡す環境変数。記録に載せ、包みが自分の子の記録かを見分ける。
     static let wrapperVariable = "MOKUME_GPU_SLOT_PID"
 
@@ -60,17 +63,15 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
         case written
         /// 既にあった (上書きしない)。
         case alreadyThere
-        /// 書けなかった。`reason` は人が読む理由。
-        case failed(reason: String)
+        /// 書けなかった。`reason` は人が読む理由。`createdFile` は、記録のファイルを作った後で書き損ねたか
+        /// (空か途中までのファイルが残る)。
+        case failed(reason: String, createdFile: Bool)
     }
 
     /// 環境から作る。書き先が渡されていなければ `nil` (何も書かず、何も読まない)。
-    ///
-    /// **読む場所は ``StartupReads/gpuSlotExpiryRecord``** — 鍵は一覧が正典である。
     static func fromEnvironment(_ given: [String: String]? = nil) -> ExpiryRecord? {
         let environment = given ?? ProcessInfo.processInfo.environment
-        let entry = StartupReads.gpuSlotExpiryRecord
-        guard let path = environment[entry.key], !path.isEmpty else { return nil }
+        guard let path = environment[variable], !path.isEmpty else { return nil }
         return ExpiryRecord(
             path: URL(fileURLWithPath: path), wrapper: environment[wrapperVariable].flatMap { Int($0) })
     }
@@ -82,8 +83,13 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
     }
 
     /// 記録を書く。**上書きせず** (`O_EXCL`)、**ディスクまで落とす** (`F_FULLFSYNC`)。投げない。
+    ///
+    /// - Parameter rawWrite: 書く口。**検査だけが差す** — 作った後に書き損ねる形 (ディスクが満杯) を作るため。
     @discardableResult
-    func write(after wait: CommandQueueGate.Wait, limit: Duration, at date: Date = Date()) -> Outcome {
+    func write(
+        after wait: CommandQueueGate.Wait, limit: Duration, at date: Date = Date(),
+        rawWrite: (Int32, UnsafeRawPointer, Int) -> Int = { Foundation.write($0, $1, $2) }
+    ) -> Outcome {
         var entry: [String: Any] = [
             "event": "wait-expired",
             // gpu-slot の記録 (`$MOKUME_GPU_SLOT_LOG`) の `time` と同じ形 (`2026-10-22T09:00:00+0900`)
@@ -98,18 +104,18 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
         guard
             let data = try? JSONSerialization.data(
                 withJSONObject: entry, options: [.sortedKeys, .withoutEscapingSlashes])
-        else { return .failed(reason: "could not encode the record") }
+        else { return .failed(reason: "could not encode the record", createdFile: false) }
 
         let descriptor = open(path.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
         guard descriptor >= 0 else {
             if errno == EEXIST { return .alreadyThere }
-            return .failed(reason: Self.reason(errno))
+            return .failed(reason: Self.reason(errno), createdFile: false)
         }
         defer { close(descriptor) }
         var written = 0
         let failure: Int32? = data.withUnsafeBytes { raw in
             while written < raw.count {
-                let count = Foundation.write(descriptor, raw.baseAddress! + written, raw.count - written)
+                let count = rawWrite(descriptor, raw.baseAddress! + written, raw.count - written)
                 if count < 0 {
                     if errno == EINTR { continue }
                     return errno
@@ -118,7 +124,7 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
             }
             return nil
         }
-        if let failure { return .failed(reason: Self.reason(failure)) }
+        if let failure { return .failed(reason: Self.reason(failure), createdFile: true) }
         // macOS の `fsync` はドライブのキャッシュに留まりうるので `F_FULLFSYNC` を試す
         if fcntl(descriptor, F_FULLFSYNC) != 0 { _ = fsync(descriptor) }
         return .written

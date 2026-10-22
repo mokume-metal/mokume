@@ -54,6 +54,10 @@ struct StartupReadsTests {
         "Sources/MokumeCLI/Invocation.swift":
             "既定引数。読んだ環境は GivenPath.workDirectory(environment:) へそのまま渡し、"
             + "規則そのものは一覧を通っている (読めない作業ディレクトリを断る入口・#2497)",
+        "Sources/MokumeCore/Rendering/ExpiryRecord.swift":
+            "開発の道具 (scripts/gpu-slot.py) が検査と計測を包むときだけ子へ渡す、期限切れの記録の書き先"
+            + " (#2235)。利用者のスケッチ・run・watch は渡されず、読みも書きもしない。スケッチの起動を"
+            + "決める値ではなく、利用者の一覧 (watch の名乗り・doctor・reference) に出すものでもない",
         "Sources/MokumeCLI/MCP/SchemasLocator.swift":
             "同上 — 置き場の在処を並べるために読む。規則そのものは BuildDirectory の"
             + "1 箇所にあり、ここが読んだ環境はそこへそのまま渡す",

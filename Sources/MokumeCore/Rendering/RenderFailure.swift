@@ -429,17 +429,21 @@ extension RenderFailure: CustomStringConvertible {
     /// 付随値は持たない。文面は、プロセスで 1 つの関所が控えた最初の待ちを読む (公開の case に足さない
     /// ため)。検査が自前の関所を渡した土台の断りは、その関所ではなく、プロセスの関所を読む。
     ///
-    /// **記録 (`record`) があって、このプロセスが印を立てていないとき**は、別のプロセスが期限を越えた
-    /// 回である (`scripts/gpu-slot.py` の下の検査・計測が残す記録・#2235)。プロセスを起こし直しても
-    /// 記録は消えないので、起こし直しとは言わず、人が GPU の答えを確かめて記録を消すよう言う。
-    /// **頭の句は印を立てた回と同じにする** — 検査の記録を読む側 (`scripts/read-test-record.py` の
-    /// `GATE_CLOSED`) が、この文面の失敗も「関所が閉じた後」として畳む。
+    /// **記録 (`record`) があるとき** (`scripts/gpu-slot.py` の下の検査・計測が残す記録・#2235) は、プロセスを
+    /// 起こし直しても記録は消えないので、起こし直しとは言わず、人が GPU の答えを確かめて記録を消すよう言う。
+    /// このプロセスが印を立てていれば (`closure`) 「earlier in this process」と、立てていなければ別の回の記録
+    /// だと言う — **実際に合わせる**。**頭の句は、検査の記録を読む側 (`scripts/read-test-record.py` の
+    /// `GATE_CLOSED`) が畳む 2 つのどちらかにする。**
     nonisolated static func notResponding(
         after closure: CommandQueueGate.Closure?, record: String? = nil
     ) -> String {
-        if closure == nil, let record {
+        if let record {
+            let origin =
+                closure.map {
+                    "earlier in this process (\($0.summary)), and gpu-slot.py's record (\(record)) stops later runs too"
+                } ?? "in another run under gpu-slot.py (record: \(record))"
             return """
-                A wait for the GPU went past its limit earlier in this process or in another run under gpu-slot.py (record: \(record)), so no new drawing foundation is set up.
+                A wait for the GPU went past its limit \(origin), so no new drawing foundation is set up.
                 That can be one frame drawing too much or a GPU that stopped answering, and the two look the same from \
                 here. New work piled onto a GPU that does not answer can freeze the whole Mac. A person checks that the GPU \
                 answers, and then deletes that record; starting this process again does not remove it.
