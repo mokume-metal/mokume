@@ -753,7 +753,13 @@ public final class Canvas {
     ///
     /// 直に作った面 (``init(target:gpu:)``) は自分の置き場を持つ。
     ///
+    /// **形の組み立ての出口で戻るのは、組み立てている面の置き場と、スケッチの口が書く本体の面の置き場
+    /// だけである** (ADR-0021 決定 4・[#2090])。直に作った面 `c` の中で別の面の口 (`c.noiseSeed(_:)`) が
+    /// 書いた `c` の置き場は、本体の組み立ての出口では戻らない。本体から作った描き場所は置き場を本体と
+    /// 共有するので戻る。
+    ///
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    /// [#2090]: https://github.com/mokume-metal/mokume/issues/2090
     var noiseStore = NoiseStore()
 
     /// 揺らぎの種と細かさ。**面どうしで共有するための参照型**で、値の意味は
