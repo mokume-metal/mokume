@@ -304,6 +304,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
+        //
+        // **渡す `InputState` は溜め置きでしかない** ([#2777])。出来事は `relay` の線で子へ渡り、
+        // こちらの状態は誰も流し込まない (`beginFrame` を呼ぶ者が居ない)。上限 (4096 件) に達すると
+        // 最も古い 1 件を溢れの経路で当て、その和が収まらなければ `Dropped the input event` と警告
+        // しうるが、それは 4096 件前の出来事についてで、子へ届いた出来事を指さない
+        //
+        // [#2777]: https://github.com/mokume-metal/mokume/issues/2777
         let view = SketchSurface(
             frame: NSRect(origin: .zero, size: window.contentLayoutRect.size),
             device: gpu.device, input: InputState(), canvasSize: (1, 1))

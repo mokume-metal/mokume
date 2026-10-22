@@ -70,6 +70,7 @@ enum ShapeExit {
             ("style.strokeWeight", { c, _ in c.strokeWeight(7) }),
             ("style.strokeCap", { c, _ in c.strokeCap(.square) }),
             ("style.strokeJoin", { c, _ in c.strokeJoin(.bevel) }),
+            ("style.strokeDash", { c, _ in c.strokeDash(4, 2) }),
             ("style.rectMode", { c, _ in c.rectMode(.center) }),
             ("style.ellipseMode", { c, _ in c.ellipseMode(.corner) }),
             ("style.blendMode", { c, _ in c.blendMode(.add) }),

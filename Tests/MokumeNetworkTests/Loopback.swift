@@ -352,6 +352,16 @@ nonisolated final class RawDatagramSocket: Sendable {
         }
     }
 
+    /// 送り元のポート。**1 度送った後に読む** (送るまでは OS が番号を決めていない)。
+    var port: Int {
+        var address = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(descriptor, $0, &length) }
+        }
+        return Int(UInt16(bigEndian: address.sin_port))
+    }
+
     func release() { close(descriptor) }
 }
 

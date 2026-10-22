@@ -62,6 +62,7 @@ path = [
   ".github/rulesets/main-protection.json",
   ".github/rulesets/signed-commits.json",
   ".github/rulesets/release-tags.json",
+  ".github/rulesets-degraded/main-protection.json",
   ".github/pull_request_template.md",
   ".github/ISSUE_TEMPLATE/bug-report.md",
   ".github/ISSUE_TEMPLATE/proposal.md",

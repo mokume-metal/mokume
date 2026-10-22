@@ -95,6 +95,8 @@ final class MySketch: Sketch {
 
 オプションの一覧は `mokume help` で確認できます。
 
+`mokume watch` が見張るのは、`Package.swift`・`Sources/` の下の `.swift`・`Sources/<名前>/assets/` の下の普通のファイルです (隠しファイルとシンボリックリンクは数えません)。`.metal` の断片は作り直さず、走らせたまま差し替わります。**範囲の外を変えても作り直しません** — `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)・`Package.resolved`・パスで指した依存 (`--local` の mokume のチェックアウト) です。変えたときは `mokume watch` を起こし直してください。
+
 ### 動画に書き出す
 
 ```bash
@@ -142,7 +144,6 @@ mokume render --fps 25 --seconds 4 --out loop.gif   # 100 枚。4 秒で 1 周�
 - `--out` が exFAT や FAT32 のとき。名前を分解しない形で数えるので、240 以上と数える名前 (`が` を 120 字など) でも作れることがあり、そのときは検めが断ります
 
 すでに同じ名前の `<name>.app` があるときは、`mokume bundle` が前に作ったものだけを作り直します。mokume が作ったと確かめられないもの (無関係なフォルダやファイル、別のアプリ) は、ビルドの前に何も消さずに止まるので、要らなければ手で消してください。
-
 標準では ad-hoc 署名のため、受け取った人が初めて開くときは macOS にブロックされ、「システム設定」→「プライバシーとセキュリティ」の「このまま開く」から開く必要があります。その手順を書いた `How to open <name>.txt` が `.app` の隣にできるので、一緒に渡してください。
 
 <details>

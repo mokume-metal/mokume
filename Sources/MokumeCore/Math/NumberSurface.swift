@@ -46,6 +46,8 @@ enum NumberValues {
             case sq
             case fract
             case mod
+            case bezierPoint
+            case bezierTangent
         }
     }
 

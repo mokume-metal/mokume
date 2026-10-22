@@ -16,7 +16,8 @@ import Foundation
 ///   (どちらも ``document(of:)``)
 /// - **外の実体 (`SYSTEM`) は読まない** (`XMLParser` の既定)。XML の中の名前から手元の
 ///   ファイルや外の URL を読みに行かない
-/// - 持つのは要素の名前・属性・子の要素。名前空間の前置きは名前の一部として扱う (`s:b`)
+/// - 持つのは要素の名前・属性・子の要素・要素の直下の文字 (``XML/getContent()``)。名前空間の前置きは
+///   名前の一部として扱う (`s:b`)
 /// - **入れ子は、根の下に 512 段まで** (``deepest``)。JSON (``JSONFile``) の上限と揃えた
 ///
 /// ## なぜ入れ子に上限を置くのか
@@ -43,6 +44,9 @@ nonisolated enum XMLFile {
         var name: String
         var attributes: [String: String]
         var children: [Element]
+        /// 要素の直下にある文字 (CDATA も含む) を、書かれた順に連ねたもの。子の要素の中の文字は含めず、
+        /// 前後の空白も、子の要素の間の改行や字下げもそのまま残す。
+        var content: String = ""
     }
 
     /// 読める入れ子の深さ。根の要素を 1 段と数え、その下に 512 段 (`JSONSerialization` が読める
@@ -242,6 +246,16 @@ nonisolated enum XMLFile {
             } else {
                 open[open.count - 1].children.append(closed)
             }
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            guard !open.isEmpty else { return }
+            open[open.count - 1].content += string
+        }
+
+        func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+            guard !open.isEmpty else { return }
+            open[open.count - 1].content += String(decoding: CDATABlock, as: UTF8.self)
         }
 
         func parser(_ parser: XMLParser, parseErrorOccurred parseError: any Error) {
