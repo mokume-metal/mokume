@@ -4143,6 +4143,15 @@ public final class Canvas {
         closeBatch()
         for batch in batches { batch.run.prepareSurfaces() }
         if let failureForTesting { throw failureForTesting }
+        // **GPU に頼む仕事が 1 つも無い描き切りは、パスも投入も作らない** ([#2787])。描く先の絵は
+        // 1 画素も変わらない。環を進めて待つことも、置き場に書くこともしない (書くものが無い)
+        //
+        // [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+        if skipsFlush(mirroringPixels: mirroringPixels, changesTarget: changesTarget) {
+            skipFlush(applyingEffects: applyingEffects)
+            discardAfterFlush(applyingEffects: applyingEffects)
+            return
+        }
         // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
         // (頂点・列ごとの値・効果の値・数の並びと画像の控え・置き場の取り直し)。書き先は
         // これから進むスロットの置き場なので、待つのは**そのスロットを最後に読んだ投入**
@@ -4441,6 +4450,12 @@ public final class Canvas {
         // 分も捨てる)。フレームの終わりの描き切り (効果を通す) は持ち越さない
         //
         // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        discardAfterFlush(applyingEffects: applyingEffects)
+    }
+
+    /// 描き切りの後に溜めたものを捨てる。**投入した描き切りも、投入を省いた描き切り
+    /// (``skipsFlush(mirroringPixels:changesTarget:)``) も同じここを通る。**
+    private func discardAfterFlush(applyingEffects: Bool) {
         var kept = FrameCasters()
         if !applyingEffects {
             swap(&kept, &frameCasters)
@@ -4448,6 +4463,55 @@ public final class Canvas {
         }
         discardFrame()
         if !applyingEffects { frameCasters = kept }
+    }
+
+    /// この描き切りが、GPU に頼む仕事を 1 つも持たないか ([#2787])。持たなければ、描く先へのパスも
+    /// 投入も作らない。
+    ///
+    /// **仕事を持つのは、次のどれか。1 つでも当たれば省かない** — 描く先を変えるもの
+    /// (図形・背景・書き戻す画素・効果を通す前の絵の戻し。``flush(applyingEffects:mirroringPixels:)``
+    /// の `changesTarget` が数える。控えへも加える変更 (``changesGoIntoCarry``) は、どれも描く先を変える
+    /// ので、これに含まれる)・頼まれた計算と粒の進め・届けていない控え (数の並びと画像)・頼まれた効果・
+    /// 拡大の段・画素の読み戻し。
+    /// **溜めた列の数 (``drawCallsInLastFrame``) だけでは決めない。** 背景だけ・計算だけ・書き戻しだけ・
+    /// 効果だけのフレームも仕事を持つ。
+    ///
+    /// 省いても、フレームの意味 (時計・描き切った回数・溜めたものの片付け・失敗の受け戻し) は
+    /// 投入した描き切りと同じに進める。省くのは**描く先の絵が 1 画素も変わらない**描き切りだけなので、
+    /// 引き継ぐ奥行きの扱いだけは別に写す (``skipFlush(applyingEffects:)``)。
+    ///
+    /// [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+    private func skipsFlush(mirroringPixels: Bool, changesTarget: Bool) -> Bool {
+        !changesTarget && !mirroringPixels
+            && upscaleStage == nil && pendingEffects.isEmpty
+            && pendingComputations.isEmpty && particleAdvancesThisFrame.isEmpty
+            && gpu.pendingUploads.owners.isEmpty
+    }
+
+    /// 仕事を持たない描き切りの記帳。投入した描き切りの末尾 (``flush(applyingEffects:mirroringPixels:)``) が
+    /// 書くもののうち、投入に拠らないものを同じ値にする ([#2787])。
+    ///
+    /// 奥行きは、引き継ぐ奥行きを持つ描き切りが省かれても面に残る。**フレームの終わりの描き切りは
+    /// 奥行きを捨てるので、引き継ぎを切る** (投入した描き切りの `depthIsHeld` と同じ)。拡大の段が
+    /// 無い面 (省ける条件) では、描く先が出す先そのもので、追い付かせるものが無い。
+    ///
+    /// [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+    private func skipFlush(applyingEffects: Bool) {
+        drawCallsInLastFrame = 0
+        drawsEncodedInLastFrame = 0
+        flatVerticesInLastFrame = vertices.count
+        flatOutlinesInLastFrame = outlinesAssembledThisFrame
+        outlinesAssembledThisFrame = 0
+        pointScansInLastFrame = pointScansThisFrame
+        pointScansThisFrame = 0
+        passesThisFrame += 1
+        // 届けるものが無い持ち主 (逃げ道で直接書いた・手放された) は、投入しない描き切りでも降ろす
+        gpu.pendingUploads.dropFinishedOwners()
+        if applyingEffects {
+            depthIsHeld = false
+            targetChangedSinceUpscale = false
+            placingCatchUpDeferred = false
+        }
     }
 
     /// この描き場所の面のうち、投入が中身を書き換えるもの ([#1932])。
