@@ -32,6 +32,10 @@ struct ClockHandoverTests {
 
     final class Box {
         var values: [ClockHandover.Snapshot] = []
+        /// 範囲の外は `nil` (書かれなかった回に落ちずに、期待で赤にする)。
+        subscript(index: Int) -> ClockHandover.Snapshot? {
+            values.indices.contains(index) ? values[index] : nil
+        }
     }
 
     // MARK: - 純関数
@@ -222,21 +226,21 @@ struct ClockHandoverTests {
             clock.advance()
         }
         #expect(written.values.count == 1, "外挿が合っている間は書き直さない: \(written.values.count)")
-        #expect(written.values[0].isRealtime && !written.values[0].isHeld)
+        #expect(written[0].map { $0.isRealtime && !$0.isHeld } == true)
 
         // 飛んだ
         clock.jumpTime(50)
         now += 1.0 / 60
         clock.advance()
         #expect(written.values.count == 2)
-        #expect(abs(written.values[1].seconds - 50) < 1e-9)
+        #expect(abs((written[1]?.seconds ?? -1) - 50) < 1e-9)
 
         // 止めた
         clock.pauseTime()
         now += 1.0 / 60
         clock.advance()
         #expect(written.values.count == 3)
-        #expect(written.values[2].isHeld)
+        #expect(written[2]?.isHeld == true)
         // 止めている間は、秒が変わらなければ書かない
         for _ in 0..<5 {
             now += 1.0 / 60
@@ -249,12 +253,30 @@ struct ClockHandoverTests {
         now += 1.0 / 60
         clock.advance()
         #expect(written.values.count == 4)
-        #expect(!written.values[3].isHeld)
+        #expect(written[3]?.isHeld == false)
 
         // しばらく経ったら、外挿が合っていても書き直す
         now += ClockHandover.refreshInterval + 0.1
         clock.advance()
         #expect(written.values.count == 5)
+    }
+
+    @Test("長く回した世代の秒は、引き継いでも書き直しても倍精度のまま (単精度の刻みへ戻らない)")
+    func aLongRunningSecondKeepsItsPrecision() {
+        var now = 500.0
+        let written = Box()
+        // 6 日ぶん回した世代。単精度の `time` では 60 fps の刻みが区別できない
+        let base = 6.0 * 86_400
+        let clock = timing(
+            .frameIndex(frameRate: 60), inherited: snapshot(base, realtime: false), now: { now },
+            written: written)
+        for _ in 0..<5 {
+            now += 0.01
+            clock.advance()
+        }
+        #expect(abs(clock.seconds - (base + 4.0 / 60)) < 1e-9)
+        #expect(abs((written[4]?.seconds ?? -1) - (base + 4.0 / 60)) < 1e-9)
+        #expect(Float(base + 3.0 / 60) == Float(base + 4.0 / 60), "(確認) 単精度の time ではこの刻みは区別できない")
     }
 
     @Test("フレームの時計は、秒が動くたびに書く。観測の指定秒ではなく作者の時計の秒を書く")
