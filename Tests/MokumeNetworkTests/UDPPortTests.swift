@@ -455,14 +455,15 @@ struct UDPPortTests {
         #expect(udp.messages == ["fresh"])
     }
 
-    @Test("利用者の stop() の後は、足し直しても受けも送りもしない。ランタイムが外しただけなら、足し直すと戻る (#3122)")
-    func userStopSticksButRuntimeDetachDoesNot() throws {
-        let told = Told()
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
         let recording = RecordingSender()
         let udp = UDPPort(
             port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: [["a"]]),
-            outbound: recording, owner: nil, warn: told.append)
+            outbound: recording, owner: nil)
         try udp.open()
+        udp.stop()
+        #expect(udp.state == .running, "外で呼んだ stop() は何も止めない")
 
         udp.close()
         try udp.open()
@@ -471,16 +472,6 @@ struct UDPPortTests {
         #expect(udp.state == .running)
         #expect(udp.messages == ["a"])
         #expect(recording.sent == [Array("back".utf8)])
-
-        udp.stop()
-        udp.close()
-        try udp.open()
-        udp.supply()
-        udp.send("after stop")
-        #expect(udp.state == .stopped)
-        #expect(udp.messages.isEmpty)
-        #expect(recording.sent.count == 1)
-        #expect(told.count(containing: "is stopped") == 1)
     }
 
     @Test("UTF-8 で 9216 バイト以上の文字列は送り手に渡さず、大きさと上限を 1 度だけ知らせる")

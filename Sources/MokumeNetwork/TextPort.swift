@@ -138,8 +138,8 @@ public class TextPort: Inlet {
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`TCPServer.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        stoppedByUser = true
-        owner?.detach(self, calledAs: "\(type(of: self)).stop()")
+        // 印は、外す頼みが実行に届いたときだけ立てる。外で呼んで警告だけ出した回に立てると、走っているポートが止まる
+        if owner?.detach(self, calledAs: "\(type(of: self)).stop()") == true { stoppedByUser = true }
     }
 
     // MARK: - Inlet

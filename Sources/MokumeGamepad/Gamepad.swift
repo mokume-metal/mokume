@@ -68,6 +68,9 @@ public final class Gamepad: Inlet {
     /// 返さず、作り直す。**足し直せば (``open()``) 戻る** ので、外して足し直したパッドは一覧に同じ物のまま居て、
     /// 同じ機材が 2 台にならない (#3122)。
     private(set) var isClosed = false
+    /// このパッドを一覧に載せている係 (``Sketch/gamepads()`` が作ったパッドだけ。記録のパッドは一覧に載らない)。
+    /// 足し直されたとき (``open()``)、外されている間に一覧が代わりに作ったパッドを外して、同じ機材を 1 台に戻す。
+    weak var roster: GamepadRoster?
 
     init(id: String, name: String, source: any GamepadSource) {
         self.id = id
@@ -97,6 +100,8 @@ public final class Gamepad: Inlet {
         // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外されていた印を戻す
         isClosed = false
         source.start(into: inbox)
+        // 外されている間に一覧を呼んでいれば、同じ識別子の代わりが作られている。足し直した側を 1 台に戻す
+        roster?.reclaim(self)
     }
 
     public func supply() {

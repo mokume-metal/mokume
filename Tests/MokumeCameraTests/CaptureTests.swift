@@ -4,7 +4,7 @@
 import Testing
 
 @testable import MokumeCamera
-import MokumeCore
+@testable import MokumeCore
 
 /// 何もしない出どころ。状態だけを始まりに置き、絵は 1 枚も入れない。
 final class SilentSource: CaptureSource {
@@ -153,6 +153,61 @@ struct CaptureTests {
             })
         #expect(seen.count == 2)
         #expect(seen.allSatisfy { !$0.new && $0.red == 0 }, "外す前の絵が出た: \(seen)")
+        runtime.closePlugins()
+    }
+
+    /// 足し直した後の 2 フレーム (3・4 フレーム目) の `(state, isNewFrame)`。1 フレーム目に `leave` で外し、2 フレーム目に
+    /// 足し直す。記録した絵は毎フレーム届く。
+    private func afterReattach(
+        leaving leave: @escaping (CaptureSketch, Capture) -> Void
+    ) throws -> [(state: SourceState, new: Bool)] {
+        var camera: Capture?
+        var seen: [(state: SourceState, new: Bool)] = []
+        let runtime = try run(
+            frames: 4,
+            setup: { camera = try $0.createCapture(frames: [solid(255, 0, 0)]) },
+            draw: { sketch in
+                guard let camera else { return }
+                switch sketch.frameCount {
+                case 1: leave(sketch, camera)
+                case 2: sketch.attach(camera)
+                default: seen.append((camera.state, camera.isNewFrame))
+                }
+            })
+        runtime.closePlugins()
+        return seen
+    }
+
+    @Test("ランタイムが外しただけのカメラの入り口は、足し直せばまた受け取る。利用者が stop() したものは、足し直しても受け取らない (#3122)")
+    func userStopSticksButRuntimeDetachDoesNot() throws {
+        let detached = try afterReattach { sketch, camera in sketch.detach(camera) }
+        #expect(detached.count == 2)
+        #expect(detached.allSatisfy { $0.state == .running && $0.new }, "\(detached)")
+
+        let stopped = try afterReattach { _, camera in camera.stop() }
+        #expect(stopped.count == 2)
+        #expect(stopped.allSatisfy { $0.state == .stopped && !$0.new }, "足し直しても戻らない: \(stopped)")
+    }
+
+    @Test("実行の外で呼んだ stop() は警告だけで何も止めず、利用者が止めた印も立てない (#3122)")
+    func stopOutsideTheRunDoesNotStick() throws {
+        var camera: Capture?
+        let runtime = try run(
+            frames: 1,
+            setup: { sketch in
+                // 足さずに持つ。`stop()` は、走っていない所から呼ぶ
+                camera = Capture(
+                    image: try sketch.createImage(4, 4), device: nil, name: "camera",
+                    source: SilentSource(.running), owner: sketch)
+            })
+        let loose = try #require(camera)
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) { loose.stop() }
+        #expect(log.message(for: "Capture.stop()") != nil, "外で呼ぶと警告する: \(log.messages)")
+
+        // 印が立っていなければ、開けば受け始める
+        try loose.open()
+        #expect(loose.state == .running)
         runtime.closePlugins()
     }
 

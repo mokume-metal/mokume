@@ -315,6 +315,71 @@ struct AudioInTests {
         runtime.closePlugins()
     }
 
+    /// 足し直した後の 2 フレーム (3・4 フレーム目) の `(level, state, isNewFrame)`。1 フレーム目に `leave` で外し、
+    /// 2 フレーム目に足し直す。出どころは毎回大きな音を入れる。
+    private func afterReattach(
+        leaving leave: @escaping (AudioSketch, AudioIn) -> Void
+    ) throws -> (seen: [(level: Float, state: SourceState, new: Bool)], audio: AudioIn?) {
+        var audio: AudioIn?
+        var seen: [(level: Float, state: SourceState, new: Bool)] = []
+        let runtime = try run(
+            frames: 4,
+            setup: { sketch in
+                let made = AudioIn(
+                    device: nil, name: "microphone", source: UnpluggedAudioSource(after: 100),
+                    owner: sketch, warn: { _ in })
+                sketch.attach(made)
+                audio = made
+            },
+            draw: { sketch in
+                guard let audio else { return }
+                switch sketch.frameCount {
+                case 1: leave(sketch, audio)
+                case 2: sketch.attach(audio)
+                default: seen.append((audio.level, audio.state, audio.isNewFrame))
+                }
+            })
+        runtime.closePlugins()
+        return (seen, audio)
+    }
+
+    @Test("ランタイムが外しただけの音の入り口は、足し直せばまた受け取る。利用者が stop() したものは、足し直しても受け取らない (#3122)")
+    func userStopSticksButRuntimeDetachDoesNot() throws {
+        let detached = try afterReattach { sketch, audio in sketch.detach(audio) }
+        #expect(detached.seen.count == 2)
+        #expect(detached.seen.allSatisfy { $0.level > 0.9 && $0.state == .running && $0.new }, "\(detached.seen)")
+
+        let stopped = try afterReattach { _, audio in audio.stop() }
+        #expect(stopped.seen.count == 2)
+        #expect(
+            stopped.seen.allSatisfy { $0.level == 0 && $0.state == .stopped && !$0.new },
+            "足し直しても戻らない: \(stopped.seen)")
+    }
+
+    @Test("実行の外で呼んだ stop() は警告だけで何も止めず、利用者が止めた印も立てない (#3122)")
+    func stopOutsideTheRunDoesNotStick() throws {
+        var audio: AudioIn?
+        let runtime = try run(
+            frames: 1,
+            setup: { sketch in
+                // 足さずに持つ。`stop()` は、走っていない所から呼ぶ
+                audio = AudioIn(
+                    device: nil, name: "microphone", source: UnpluggedAudioSource(after: 100),
+                    owner: sketch, warn: { _ in })
+            })
+        let loose = try #require(audio)
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) { loose.stop() }
+        #expect(log.message(for: "AudioIn.stop()") != nil, "外で呼ぶと警告する: \(log.messages)")
+
+        // 印が立っていなければ、開けば受け始める
+        try loose.open()
+        loose.supply()
+        #expect(loose.state == .running)
+        #expect(loose.level > 0.9)
+        runtime.closePlugins()
+    }
+
     @Test("状態と最後に届いたフレームが、観測の応答の inputs に載る")
     func appearsInObservation() throws {
         let facet = FileManager.default.temporaryDirectory

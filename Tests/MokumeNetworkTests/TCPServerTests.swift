@@ -265,14 +265,15 @@ struct TCPServerTests {
         #expect(told.count(containing: "is stopped") == 2)
     }
 
-    @Test("利用者の stop() の後は、足し直しても受けも書きもしない。ランタイムが外しただけなら、足し直すと戻る (#3122)")
-    func userStopSticksButRuntimeDetachDoesNot() throws {
-        let told = Told()
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
         let room = RecordingBroadcaster(clientCount: 1)
         let server = TCPServer(
             port: 5205, name: "tcp :5205", source: RecordedSource<String>(batches: [["a"]]),
-            clients: room, owner: nil, warn: told.append)
+            clients: room, owner: nil)
         try server.open()
+        server.stop()
+        #expect(server.state == .running, "外で呼んだ stop() は何も止めない")
 
         server.close()
         try server.open()
@@ -281,16 +282,6 @@ struct TCPServerTests {
         #expect(server.state == .running)
         #expect(server.messages == ["a"])
         #expect(room.written == ["back"])
-
-        server.stop()
-        server.close()
-        try server.open()
-        server.supply()
-        server.write("after stop")
-        #expect(server.state == .stopped)
-        #expect(server.messages.isEmpty)
-        #expect(room.written == ["back"])
-        #expect(told.count(containing: "is stopped") == 1)
     }
 
     // MARK: - 注入
