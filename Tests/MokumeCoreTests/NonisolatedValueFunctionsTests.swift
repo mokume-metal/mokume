@@ -9,6 +9,11 @@ import Testing
 
 @testable import MokumeCore
 
+/// 子のタスクへ渡せる、数えるだけの箱 (`Mutex` は複製できず、局所変数のまま渡すと 6.3 が競合を疑う)。
+private final class Counter: Sendable {
+    let count = Mutex(0)
+}
+
 /// 値だけを扱う数と色の関数は、`nonisolated` の文脈から呼べて、main で呼んだのと同じ値を返す
 /// ([#2389](https://github.com/mokume-metal/mokume/issues/2389))。
 ///
@@ -89,14 +94,14 @@ struct NonisolatedValueFunctionsTests {
     @Test("複数のスレッドから同じ注意を同時に言っても、文面はちょうど 1 度だけ組まれ、1 度だけ出る")
     func warningsAreSaidExactlyOnceAcrossThreads() async {
         let log = SharedWarningLog<Int>()
-        let built = Mutex(0)
+        let built = Counter()
         let digest = WarningDigest()
         await Diagnostics.$digest.withValue(digest) {
             await withTaskGroup(of: Void.self) { group in
                 for _ in 0..<400 {
                     group.addTask {
-                        log.warnOnce(1, { built.withLock { $0 += 1 }; return "concurrent warning once" }())
-                        log.warnOnce(2, { built.withLock { $0 += 1 }; return "concurrent warning twice" }())
+                        log.warnOnce(1, { built.count.withLock { $0 += 1 }; return "concurrent warning once" }())
+                        log.warnOnce(2, { built.count.withLock { $0 += 1 }; return "concurrent warning twice" }())
                     }
                 }
             }
@@ -104,7 +109,8 @@ struct NonisolatedValueFunctionsTests {
         let said = digest.takeUnreported().sorted()
         #expect(said == ["concurrent warning once", "concurrent warning twice"], "\(said)")
         // 文面は言う回にだけ、鍵ごとに 1 度組む (@autoclosure)
-        #expect(built.withLock { $0 } == 2, "文面を組んだ回数: \(built.withLock { $0 })")
+        let counted = built.count.withLock { $0 }
+        #expect(counted == 2, "文面を組んだ回数: \(counted)")
         #expect(log.snapshot.message(for: 1) == "concurrent warning once")
         #expect(log.snapshot.count { _ in true } == 2)
     }
@@ -191,7 +197,7 @@ struct NonisolatedValueFunctionsTests {
     func aSplitLoopMatchesTheSerialOne() {
         let width = 192
         let height = 108
-        nonisolated func pixel(_ x: Int, _ y: Int) -> Float {
+        @Sendable nonisolated func pixel(_ x: Int, _ y: Int) -> Float {
             let c = color(map(x, 0, width, 0, 255), map(y, 0, height, 255, 0), 64)
             return red(c) + 2 * green(c) + 4 * blue(c)
         }
