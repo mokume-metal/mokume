@@ -63,7 +63,7 @@ PR 本文が揃い `ci-gate`・`pr-gate` が green なら、指示を待たず `
 
 置き場は、PR ができるまでは Issue、できてからは PR。ただし完了条件が動く話と完了報告 (条件と PR の対応表を 1 通) は Issue、恒久的な決定は ADR。多くの Issue を 1 つのセッションで束ねて進めるときは、束ごとに Task の Issue を 1 本立て、束のプラン・途中経過・結果・再開メモをそこに置く。束の Issue は本文の表で挙げ、sub-issue にしない。束の Issue の 1 本や閉じた Issue を置き場に使い回さない。Issue に「実装 PR は #N」とは書かない (GitHub が相互リンクを描く)。
 
-AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。新しく作る Issue / PR の本文にも、末尾に同じ署名 (エージェントと、分かればモデルの名乗り) を付ける。`scripts/sub-issue.sh` は自動で付け、素の `gh issue create` / `gh pr create` で署名が無ければフックが貼る 1 行を示して差し戻す。close / reopen は発言を投稿してから、状態だけを発言なしで変える。本文の書き換えは `bash scripts/edit-body.sh {issue|pr} <番号>` の `--fetch <ファイル>` で取得して直し、`--body-file` で書き込む。他のリポジトリへは素の `gh` で書く。
+AI エージェントは、このリポジトリへの発言 (コメント・`gh pr review` の本文・close / reopen の発言) を `bash scripts/comment.sh {issue|pr} <番号> --body-file <ファイル>` で投稿し、署名をラッパーに付けさせる。新しく作る Issue / PR の本文にも、末尾に同じ署名 (エージェントと、分かればモデルの名乗り) を付ける。`scripts/sub-issue.sh` は自動で付け、素の `gh issue create` / `gh pr create` で署名が無ければフックが貼る 1 行を示して差し戻す。署名は経路を問わず付ける。フックが見るのは Bash の `gh` だけなので、アプリ・ブラウザ・MCP・`gh api` から書くときは手で付ける。close / reopen は発言を投稿してから、状態だけを発言なしで変える。本文の書き換えは `bash scripts/edit-body.sh {issue|pr} <番号>` の `--fetch <ファイル>` で取得して直し、`--body-file` で書き込む。他のリポジトリへは素の `gh` で書く。
 
 ## コミット・PR の規約
 
