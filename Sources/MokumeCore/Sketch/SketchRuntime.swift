@@ -30,6 +30,17 @@ public final class SketchRuntime {
     public let sketch: any Sketch
     /// 描いている面。
     public let canvas: Canvas
+    /// ``SketchPart/draw(into:_:)`` の閉包の間だけ立つ、スケッチの口の向き先。立っていなければ本体の面
+    /// (``canvas``) へ向く。**入れ子では内側の向き先が立ち、抜けると 1 つ前へ戻る** ([#2454])。
+    ///
+    /// 向き先を引く口は ``activeCanvas`` 1 つだけで、描く・状態を書く・面の大きさを読むスケッチの口
+    /// (``SketchPart/liveCanvas(_:_:)``・``SketchPart/canvas``・`emit`・`orbitControl`) がここを通る。
+    /// ランタイム自身の描き切り・時刻・出力は本体の面 (``canvas``) のままで、向き先に左右されない。
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    var drawingInto: Canvas?
+    /// スケッチの口が、いま描く面。``drawingInto`` が立っていればそれ、なければ本体の面。
+    var activeCanvas: Canvas { drawingInto ?? canvas }
     /// 出す先。**画面も保存も観測もこの 1 枚を受け取る** ([ADR-0023] 決定 2)。
     ///
     /// 描く細かさを下げているときは、拡大の段を通ったあとの絵である。出口ごとに
@@ -710,7 +721,8 @@ public final class SketchRuntime {
     ///
     /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
     /// 見る** — 差込口を閉じるのは最初の 1 回だけで、2 回目からは撮る係の待ちだけを見る
-    /// (差込口の `close()` は「一度だけ呼ばれる」約束である)。
+    /// (終わりの処理で、同じ差込口の `close()` を 2 度呼ばない。外して足し直したときに
+    /// `open()` がもう 1 度来る約束とは別の話である — ``Inlet/open()``)。
     ///
     /// **待つのは撮る係だけで、差込口とつまみは先に済ませる。** 撮る係の待ちは動画を閉じ
     /// 終えるまでかかりうるので、その後ろに置くと、待っている間にプロセスが殺されたときに
@@ -1442,6 +1454,11 @@ public final class SketchRuntime {
         return attachNow(outlet)
     }
 
+    /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
+    package func isAttached(_ inlet: any Inlet) -> Bool {
+        inlets.contains { $0.seam === inlet }
+    }
+
     /// 入り口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Inlet)``)。
     public func detach(_ inlet: any Inlet) {
         guard seamVisitDepth == 0 else {
@@ -1464,7 +1481,8 @@ public final class SketchRuntime {
     private func attachNow(_ inlet: any Inlet) -> Bool {
         guard admits(inlet) else { return false }
         if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
-            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // **居れば開き直さない** (開いているものを重ねて足しても `open()` は呼ばない。外して足し直したときは
+            // ここに来ず、下で `open()` をもう 1 度呼ぶ — ``Inlet/open()``)。続けて転んで外されていれば、
             // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
             if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
             return true

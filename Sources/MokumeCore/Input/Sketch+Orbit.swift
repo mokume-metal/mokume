@@ -84,7 +84,7 @@ extension SketchPart {
         _ sensitivityZ: some ScalarConvertible = 1
     ) {
         guard let runtime = Self.liveRuntime() else { return }
-        let canvas = runtime.canvas
+        let canvas = runtime.activeCanvas
         let (sensitivityX, sensitivityY, sensitivityZ) = (
             sensitivityX.asFloat, sensitivityY.asFloat, sensitivityZ.asFloat
         )
@@ -92,8 +92,18 @@ extension SketchPart {
         // 外 (`setup()`・止まっている間のコールバック) では下の `camera` が断る。そこまで
         // 進めてから断ると、注意は出ても道具の状態 (慣性・引きずった量を食った印) だけが
         // 1 段進み、「無視する」にならない。形の組み立ての中も同じく先に断る (#1529)
-        guard canvas.admits(.camera) else { return }
-        var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
+        //
+        // **道具の状態 (``orbit``) は本体と共有なので、進めてよいかは本体のフレームで決める** (#2454)。
+        // ``draw(into:_:)`` の向き先は、`setup()` やコールバックの中でもフレームを開く (`isDrawing`)。
+        // 向き先だけを見ると、本体ではフレームの外で断る呼び出しが道具の状態を進めてしまう。
+        // 向き先が本体なら 1 度で済む
+        guard runtime.canvas.admits(.camera), canvas === runtime.canvas || canvas.admits(.camera) else {
+            return
+        }
+        // 道具の始まりは、向き先によらず**本体の面の中央**。道具の状態が本体と共有なので、先に向き先の
+        // 大きさで作ると、本体の視点と戻り先が描き場所の中央になる (#2454)
+        var orbit =
+            runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         // 戻す先は、最初に呼んだフレームの視点 (#2762)。ここで控え、以後は変えない
         if runtime.orbitHome == nil { runtime.orbitHome = orbit }
 
@@ -122,8 +132,11 @@ extension SketchPart {
             let pans =
                 input.pressedButtons.contains(.right)
                 || (input.pressedButtons.contains(.left) && Keyboard(state: input).isPressed(.option))
-            // **平行移動の量は動かす前の視点で測る。** 投影はいまのもの (`orbitControl` は書き換えない)
-            var view = canvas.currentCamera
+            // **平行移動の量は動かす前の視点で測る。** 投影はいまのもの (`orbitControl` は書き換えない)。
+            // 道具の状態を進める量なので、測る面は向き先によらず**本体の面**である (#2454)。向き先の大きさと
+            // 投影で測ると、1 フレームに最初に呼んだ面で量が決まり、呼ぶ順で変わる。向き先は視点を書く先だけ
+            let measure = runtime.canvas
+            var view = measure.currentCamera
             (view.eye, view.center, view.up) = (orbit.eye, orbit.center, orbit.up)
             // 平行移動の間は回さない。回す軸は 0 の引きずりとして進め、慣性の速さも捨てる
             let held = orbit.advance(
@@ -132,8 +145,8 @@ extension SketchPart {
             let panHeld =
                 pans
                 && !orbit.pan(
-                    dragX: input.dragX, dragY: input.dragY, through: view, width: canvas.width,
-                    height: canvas.height)
+                    dragX: input.dragX, dragY: input.dragY, through: view, width: measure.width,
+                    height: measure.height)
             // 感度が有限なのに進めなかった軸 — 積が溢れた・届いた量が数でない・無限。
             // 別の軸の感度が使えなくても、こちらは別に知らせる。平行移動は感度を使わない
             let overflowed =
@@ -177,16 +190,17 @@ extension SketchPart {
             guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
                 return Orbit(center: Vector3(0, 0, 0), distance: 0)
             }
+            // 道具の始まりは本体の面の中央で、向き先によらない (``orbitControl(_:_:_:)``)
             return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }
         // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
         nonmutating set {
             guard let runtime = Self.liveRuntime() else { return }
             var orbit = newValue
-            // 見ている先の既定は、道具の始まりと同じ面の中央
+            // 見ている先の既定は、道具の始まりと同じ面の中央 (本体の面)
             let start = Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
             if orbit.clampToLimits(fallbackCenter: start.center) {
-                runtime.canvas.warnOnce(
+                runtime.activeCanvas.warnOnce(
                     .badOrbit,
                     "orbit: got a value that is not a number, or an infinite one with no limit to stop at, so it fell back to its default (the middle of the canvas, angle 0, the nearest distance, minimum distance 1, no maximum distance, no inertia)")
             }

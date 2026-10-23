@@ -54,6 +54,8 @@ public final class AudioIn: Inlet {
     let input: ExternalInput<[Float]>
     private let source: any AudioSource
     private weak var owner: (any Sketch)?
+    /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
+    private var stoppedByUser = false
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
     private var levels = AudioLevels.silence
@@ -104,15 +106,26 @@ public final class AudioIn: Inlet {
 
     /// 止める。機材を閉じ、以後の値は無音になる。
     ///
+    /// **利用者が止めたものは、足し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で足し直しても、
+    /// 機材を開かず値は無音のままで、``state`` は ``SourceState/stopped`` のまま (止めたのは利用者の意思なので、
+    /// 足し直しで戻さない)。受け始めるには、新しく作る。
+    ///
+    /// **ランタイムが外した場合は別である。** ``SketchPart/detach(_:)-(Inlet)`` で外しただけ (``stop()`` は呼んで
+    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で足し直せば、機材を開き直してまた受け取る。実行が終わった
+    /// ものは足し直す先が無い。
+    ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        owner?.detach(self, calledAs: "AudioIn.stop()")
+        // 印は、外す頼みが実行に届いたときだけ立てる。外で呼んで警告だけ出した回に立てると、走っている機材が止まる
+        if owner?.detach(self, calledAs: "AudioIn.stop()") == true { stoppedByUser = true }
     }
 
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。利用者が ``stop()`` したものは開き直さない
+        guard !stoppedByUser else { return }
         openedAt = now()
         // **起点は作者の時計の秒** — 時刻を指定した観測の枚の `draw()` で作ったものが、観測の秒を起点として
         // 残さない (#2357)。読む位置 (``supply()``) は見せる時刻で決める
@@ -134,6 +147,8 @@ public final class AudioIn: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった音は捨てる。足し直した最初の ``supply()`` に、外す前の音を出さない
+        input.discardWaiting()
         levels = .silence
     }
 
