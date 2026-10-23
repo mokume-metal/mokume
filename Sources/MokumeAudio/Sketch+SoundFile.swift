@@ -65,11 +65,10 @@ extension Sketch {
     /// 鳴らす流れを差し替えられる入口 (検査用)。`flow` を渡すと、時計によらずその流れで鳴らす。
     func loadSound(_ file: String, flow: SoundFlow?) throws(AudioFailure) -> SoundFile {
         // 足せない所なら、ファイルを読む前に断る (#2740)。名乗るのは利用者が呼ぶ口
-        try requireAttachable(AudioFailure.self, calledAs: "loadSound(_:)")
-        let url = try audioURL(file)
-        let buffer = try AudioFile.load(url, path: file)
-        let sound = SoundFile(name: file, buffer: buffer, owner: self, flow: flow, source: url)
-        attach(sound)
-        return sound
+        return try attached(AudioFailure.self, calledAs: "loadSound(_:)") { () throws(AudioFailure) -> SoundFile in
+            let url = try audioURL(file)
+            let buffer = try AudioFile.load(url, path: file)
+            return SoundFile(name: file, buffer: buffer, owner: self, flow: flow, source: url)
+        }
     }
 }

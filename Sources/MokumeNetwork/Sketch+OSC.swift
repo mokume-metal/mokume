@@ -77,16 +77,15 @@ extension Sketch {
                 throw .invalidHost(destination.host)
             }
         }
-        try requireAttachable(OSCFailure.self, calledAs: #function)
-        let outbound = destination.map {
-            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+        return try attached(OSCFailure.self, calledAs: #function) {
+            let outbound = destination.map {
+                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+            }
+            return OSCPort(
+                port: port, name: "osc :\(port)",
+                source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
+                outbound: outbound, owner: self)
         }
-        let osc = OSCPort(
-            port: port, name: "osc :\(port)",
-            source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
-            outbound: outbound, owner: self)
-        attach(osc)
-        return osc
     }
 
     /// 受けずに、送るだけの OSC の入り口を作る。**受けるポートを開かない。**
@@ -121,14 +120,13 @@ extension Sketch {
         guard Endpoint.isUsable(host: destination.host) else {
             throw .invalidHost(destination.host)
         }
-        try requireAttachable(OSCFailure.self, calledAs: #function)
-        let osc = OSCPort(
-            port: nil, name: "osc (send only)", source: SendOnlySource(),
-            outbound: DatagramSender(
-                host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) }),
-            owner: self)
-        attach(osc)
-        return osc
+        return try attached(OSCFailure.self, calledAs: #function) {
+            OSCPort(
+                port: nil, name: "osc (send only)", source: SendOnlySource(),
+                outbound: DatagramSender(
+                    host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) }),
+                owner: self)
+        }
     }
 
     /// 記録したメッセージの列を、受けたかのように流す。**ポートを開かない。**

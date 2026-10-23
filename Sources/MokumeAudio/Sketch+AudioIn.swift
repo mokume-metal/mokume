@@ -76,10 +76,11 @@ extension Sketch {
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
-        try requireAttachable(AudioFailure.self, calledAs: #function)
-        let decoded = try AudioFile.read(audioURL(file), path: file)
-        return attachRecorded(
-            samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
+        return try attached(AudioFailure.self, calledAs: #function) { () throws(AudioFailure) -> AudioIn in
+            let decoded = try AudioFile.read(audioURL(file), path: file)
+            return recordedAudioIn(
+                samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
+        }
     }
 
     /// 手元の標本列を、マイクの代わりに解析する。**鳴らさない。機材も許可も使わない。**
@@ -113,8 +114,9 @@ extension Sketch {
     public func createAudioIn(samples: [Float], sampleRate: Float) throws(AudioFailure) -> AudioIn {
         guard !samples.isEmpty else { throw .empty }
         guard sampleRate > 0, sampleRate.isFinite else { throw .invalidSampleRate(sampleRate) }
-        try requireAttachable(AudioFailure.self, calledAs: #function)
-        return attachRecorded(samples: samples, sampleRate: sampleRate, name: "audio (samples)")
+        return try attached(AudioFailure.self, calledAs: #function) {
+            recordedAudioIn(samples: samples, sampleRate: sampleRate, name: "audio (samples)")
+        }
     }
 
     /// 繋がっている音の入力の機材の一覧。``createAudioIn(device:)`` で 1 つを選ぶのに使う。
@@ -143,11 +145,10 @@ extension Sketch {
         }
     }
 
-    private func attachRecorded(samples: [Float], sampleRate: Float, name: String) -> AudioIn {
-        let audio = AudioIn(
+    /// 記録した標本から入り口を作る。足すのは呼ぶ側の ``attached(_:calledAs:making:)``。
+    private func recordedAudioIn(samples: [Float], sampleRate: Float, name: String) -> AudioIn {
+        AudioIn(
             device: nil, name: name,
             source: RecordedSource(samples: samples, sampleRate: sampleRate), owner: self)
-        attach(audio)
-        return audio
     }
 }
