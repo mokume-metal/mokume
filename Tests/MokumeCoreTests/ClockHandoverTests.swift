@@ -192,7 +192,7 @@ struct ClockHandoverTests {
 
     @Test("止めていなければ続きから進む: 最初の枚の time は前の世代が描いていた秒で、以後は実時間で進む")
     func aRunningSecondContinuesOnTheWallClock() {
-        var now = 500.0
+        var now = 100.0
         // 前の世代は 100 の時点で 12.5 秒を描いていた。新しい世代の最初の枚は 3.6 秒後
         let clock = timing(.wallClock, handover(Readings([.found(snapshot(12.5, at: 100))])), now: { now })
         now = 103.6

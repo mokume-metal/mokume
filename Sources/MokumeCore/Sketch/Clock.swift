@@ -367,7 +367,7 @@ final class FrameTiming {
             beginHandover()
             let source = authorTouchedClock ? predecessor : (handover?.predecessor() ?? predecessor)
             if let source {
-                let start = source.start(at: now)
+                let start = source.start(at: moment)
                 offset = start.seconds - raw
                 if !authorTouchedClock { heldAt = start.isHeld ? start.seconds : nil }
             }
@@ -398,7 +398,7 @@ final class FrameTiming {
             case .wallClock: kind = .realtime
             case .frameIndex(let frameRate): kind = .frames(interval: 1 / Double(max(1, frameRate)))
             }
-            handover.publish(seconds: seconds, isHeld: heldAt != nil, kind: kind, frames: frameCount, at: now)
+            handover.publish(seconds: seconds, isHeld: heldAt != nil, kind: kind, frames: frameCount, at: moment)
         }
     }
 
