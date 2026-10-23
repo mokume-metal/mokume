@@ -30,6 +30,17 @@ public final class SketchRuntime {
     public let sketch: any Sketch
     /// 描いている面。
     public let canvas: Canvas
+    /// ``SketchPart/draw(into:_:)`` の閉包の間だけ立つ、スケッチの口の向き先。立っていなければ本体の面
+    /// (``canvas``) へ向く。**入れ子では内側の向き先が立ち、抜けると 1 つ前へ戻る** ([#2454])。
+    ///
+    /// 向き先を引く口は ``activeCanvas`` 1 つだけで、描く・状態を書く・面の大きさを読むスケッチの口
+    /// (``SketchPart/liveCanvas(_:_:)``・``SketchPart/canvas``・`emit`・`orbitControl`) がここを通る。
+    /// ランタイム自身の描き切り・時刻・出力は本体の面 (``canvas``) のままで、向き先に左右されない。
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    var drawingInto: Canvas?
+    /// スケッチの口が、いま描く面。``drawingInto`` が立っていればそれ、なければ本体の面。
+    var activeCanvas: Canvas { drawingInto ?? canvas }
     /// 出す先。**画面も保存も観測もこの 1 枚を受け取る** ([ADR-0023] 決定 2)。
     ///
     /// 描く細かさを下げているときは、拡大の段を通ったあとの絵である。出口ごとに

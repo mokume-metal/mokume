@@ -124,6 +124,7 @@ struct SceneOutsideFrameTests {
             // 無視する口 (`Canvas.isShaping` の説明が挙げる並び)
             Mouth("particles", .particles) { $0.particles(try $0.makeParticles(count: 4)) },
             Mouth("force", .particles) { $0.force(try $0.makeParticles(count: 4), [.gravity(0, 90)]) },
+            Mouth("force(variadic)", .particles) { $0.force(try $0.makeParticles(count: 4), .gravity(0, 90)) },
             Mouth("compute(1D)", .compute) { canvas in
                 let heat = try canvas.makeNumbers(count: 4)
                 let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
