@@ -315,6 +315,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 下が開いた橙色の太い弧が中央にあり、中心へ向かう線は無い -->
+    ///     ![下が開いた橙色の太い弧が中央にあり、中心へ向かう線は無い](https://i.gyazo.com/f4b2cb4e33d19ed0a96d914d1a2ecb01.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -337,6 +338,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ弧が 4 つ。左上は扇の塗りと開いた弧、右上は扇の枠つき、左下は弦で閉じた形、右下は弦で結んだ形の塗りと開いた弧 -->
+    ///     ![同じ弧が 4 つ。左上は扇の塗りと開いた弧、右上は扇の枠つき、左下は弦で閉じた形、右下は弦で結んだ形の塗りと開いた弧](https://i.gyazo.com/eef5238b07675b9adfb4eecd8a3b2fb9.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -356,6 +358,8 @@ extension SketchPart {
     // shot: 2 snippet=e00e11b7
     // shot: 3 snippet=16db4ac0
     // shot: 4 snippet=27105ca4
+    // shot: 5 snippet=6cae2c65
+    // shot: 6 snippet=8e587865
     public func arc(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
