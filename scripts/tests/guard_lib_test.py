@@ -764,20 +764,29 @@ class LengthTest(unittest.TestCase):
        まま) が、フックの timeout (10 秒) へは近づく。この木の実測は素の読みの 1.1〜4.8 倍
        (引用の本文が 1.1 倍、語を区切るだけの長い列が 4.8 倍。gh の前に前置が並ぶ形は語ごとに
        予約語・前置の表を引くので A=1 が 5.5 倍・! が 7.9 倍で、その 2 倍の 12・16 倍を上限にする)。
+       1 回ごとに同じ回の SMALL・LARGE・素の読みで比を取り、多数決で決める。
        10 倍はその 2 倍の余裕。素の読みが 500KB で 0.25 秒の機械では guard は 2.5 秒未満で、
        timeout の 4 分の 1。
 
-    **測り方** (比を、負荷の偏りと固定費に強くする):
+    **測り方** (比を、固定費と、コアの種類・負荷の偏りに強くする):
 
     - **固定費を引く**: bash の起動と guard-lib.sh の source は長さによらず 0.01〜0.04 秒かかる。
       分子にも分母にも入って比を 1 へ寄せるので、本文が空の同じ形のコマンドの CPU 時間を
-      引いてから比べる。
-    - **測る順を交互にし、最小を取る**: 順を固定すると負荷の偏りが片方に載って比が縮み、退行を
-      隠す。ROUNDS 回、SMALL→LARGE と LARGE→SMALL を交互に測り、それぞれの最小を取る (負荷は
-      CPU 時間を増やす向きにしか偏らない)。
+      引いてから比べる。回ごとに測って、同じ回の値から引く。
+    - **回ごとに比を取り、多数決で決める**: 同じ awk・同じ入力の CPU 時間が、動くコアの種類
+      (性能コア・効率コア) と混み具合で 4 倍以上違う (忙しい回しを 14 本並べた機械で実測)。
+      SMALL と LARGE のそれぞれの最小どうしを比べると、短い SMALL は負荷を受けない回を拾いやすく、
+      長い LARGE は受けやすいので、比が伸びの大きい側へ偏る。そこで 1 回ごとに SMALL・LARGE・
+      素の読みを続けて測り (順は回ごとに逆にする)、**同じ回の中で比を取る**。判定は、MIN_ROUNDS 回の
+      全部が同じ結論ならそれ、割れたら MAX_ROUNDS 回まで足して多数決 (奇数回で決まる)。
+      静かな機械では MIN_ROUNDS 回で終わり、負荷で割れたときだけ回を足す。
     - **SMALL は測れる大きさにする**: 固定費を引いた SMALL の CPU 時間が MIN_NET に届かなければ、
       SMALL を 2 倍にする (速い機械では傾きが埋もれるため)。MAX_DOUBLINGS 回で届かなければ
-      測れないものとして落とす。
+      測れないものとして落とす。2 乗が強く出る形は、検査の時間を抑えるため小さい SMALL で測る。
+
+    命令数 (macOS の `time -l` の instructions retired) はコアの種類に依らず安定するが、使えない:
+    2 乗の元になる substr の写しは SIMD で、命令数がほとんど増えずに時間だけが 2 乗になる
+    (`A=1 ` を 125KB 並べた形で 140M 命令に対し 1.6 秒)。
 
     **測るのは壁時計ではなく、ガード (子とその子) が使った CPU 時間** (#1857)。2 乗の退行は
     ガード自身の CPU として現れるが、壁時計は他の誰かが CPU を使った分まで足す。hooks-test を
@@ -809,7 +818,10 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
 
     SMALL = 125_000
     GROWTH = 4
-    ROUNDS = 3
+    #: 1 回ごとに SMALL・LARGE・素の読みを続けて測る。MIN_ROUNDS 回で全部の回の判定が揃えば
+    #: そこで決め、揃わなければ MAX_ROUNDS 回まで足して多数決で決める (負荷で揺れた回に引きずられない)
+    MIN_ROUNDS = 3
+    MAX_ROUNDS = 9
     MAX_DOUBLINGS = 3
     #: 固定費を引いた SMALL の CPU 時間がこれ未満なら、傾きが測れない。
     MIN_NET = 0.03
@@ -847,11 +859,26 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
         """piece を繰り返して size バイトに届かせる。"""
         return piece * (size // len(piece.encode()) + 1)
 
-    def measure(self, piece, build):
-        """(SMALL の大きさ, 固定費を引いた SMALL・LARGE・素の読みの CPU 時間) を測る。"""
-        fixed = min(self.guard_cpu(build("")) for _ in range(self.ROUNDS))
-        plain_fixed = min(self.plain_cpu(build("")) for _ in range(self.ROUNDS))
-        size = self.SMALL
+    def sample(self, tiny, small_command, large_command, backwards):
+        """1 回分: (固定費を引いた SMALL・LARGE・素の読みの CPU 時間)。続けて測り、順は回ごとに逆にする。
+
+        固定費 (本文が空の同じ形) も回ごとに測って引く。回をまたいで 1 つに揃えると、コアの種類
+        (性能コアと効率コア) や混み具合が違う回の値を引くことになる。
+        """
+        steps = [("fixed", tiny), ("small", small_command), ("large", large_command), ("plain", large_command)]
+        if backwards:
+            steps.reverse()
+        got = {}
+        for name, command in steps:
+            got[name] = self.plain_cpu(command) if name == "plain" else self.guard_cpu(command)
+        fixed_plain = self.plain_cpu(tiny)
+        return got["small"] - got["fixed"], got["large"] - got["fixed"], got["plain"] - fixed_plain
+
+    def measure(self, piece, build, within=None, small=None):
+        """(SMALL の大きさ, 回ごとの (SMALL・LARGE・素の読み)、伸びの判定、倍率の判定) を測る。"""
+        tiny = build("")
+        fixed = min(self.guard_cpu(tiny) for _ in range(3))
+        size = small or self.SMALL
         for _ in range(self.MAX_DOUBLINGS + 1):
             if self.guard_cpu(build(self.repeat(piece, size))) - fixed >= self.MIN_NET:
                 break
@@ -860,33 +887,47 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
             self.fail(f"{size} バイトでも CPU 時間が {self.MIN_NET} 秒に届かず、伸びが測れない")
         small_command = build(self.repeat(piece, size))
         large_command = build(self.repeat(piece, size * self.GROWTH))
-        smalls, larges = [], []
-        for round_ in range(self.ROUNDS):
-            order = [(smalls, small_command), (larges, large_command)]
-            if round_ % 2:
-                order.reverse()
-            for into, command in order:
-                into.append(self.guard_cpu(command))
-        plain = min(self.plain_cpu(large_command) for _ in range(self.ROUNDS))
-        return size, min(smalls) - fixed, min(larges) - fixed, plain - plain_fixed
+        rounds, growth, budget = [], [], []
+        while True:
+            rounds.append(self.sample(tiny, small_command, large_command, len(rounds) % 2 == 1))
+            small, large, plain = rounds[-1]
+            growth.append(self.grows_linearly(small, large))
+            budget.append(self.reads_within_budget(large, plain, within))
+            settled = all(len(set(votes)) == 1 for votes in (growth, budget))
+            if (settled and len(rounds) >= self.MIN_ROUNDS) or len(rounds) >= self.MAX_ROUNDS:
+                break
+        return size, rounds, growth, budget
 
-    def assert_linear(self, piece, build, within=None):
+    @staticmethod
+    def majority(votes):
+        return sum(votes) * 2 > len(votes)
+
+    @staticmethod
+    def median(values):
+        return sorted(values)[len(values) // 2]
+
+    def assert_linear(self, piece, build, within=None, small=None):
         """build(本文) の形のコマンドの読みが、線形に伸び、素の読みの数倍に収まるかを見る。
 
         within は素の読みとの倍率の上限 (既定は MAX_VS_PLAIN)。語ごとに予約語・前置の表を引く
-        形は素の読みの 6〜8 倍かかるので、その分だけ緩める (自然な値の 2 倍)。
+        形は素の読みの数倍かかるので、その分だけ緩める (自然な値の 2 倍)。small は SMALL の替わりの
+        大きさ。2 乗が強く出る形は小さくして、検査にかかる時間を抑える。
         """
-        size, small, large, plain = self.measure(piece, build)
+        size, rounds, growth, budget = self.measure(piece, build, within, small)
+        small = self.median([r[0] for r in rounds])
+        large = self.median([r[1] for r in rounds])
+        plain = self.median([r[2] for r in rounds])
         self.assertTrue(
-            self.grows_linearly(small, large),
+            self.majority(growth),
             f"長さが {self.GROWTH} 倍 ({size} → {size * self.GROWTH} バイト) で CPU 時間が"
-            f" {large / small:.1f} 倍 ({small:.2f} 秒 → {large:.2f} 秒)。線形なら 4 倍前後で、"
-            f"{self.MAX_GROWTH:.0f} 倍以上は 2 乗の疑い",
+            f" {large / max(small, 1e-9):.1f} 倍 ({small:.2f} 秒 → {large:.2f} 秒・{len(rounds)} 回の中央値・"
+            f"{growth.count(False)} 回が外れ)。線形なら 4 倍前後で、{self.MAX_GROWTH:.0f} 倍以上は 2 乗の疑い",
         )
         self.assertTrue(
-            self.reads_within_budget(large, plain, within),
+            self.majority(budget),
             f"{size * self.GROWTH} バイトの読みが {large:.2f} 秒で、素の読み ({plain:.2f} 秒) の"
-            f" {large / plain:.1f} 倍。{within or self.MAX_VS_PLAIN:.0f} 倍以上はフックの timeout (10 秒) に近づく",
+            f" {large / max(plain, 1e-9):.1f} 倍 ({len(rounds)} 回の中央値・{budget.count(False)} 回が外れ)。"
+            f"{within or self.MAX_VS_PLAIN:.0f} 倍以上はフックの timeout (10 秒) に近づく",
         )
 
     def test_long_double_quoted_body(self):
@@ -909,14 +950,30 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
 
     def test_long_run_of_assignment_prefixes(self):
         """gh の前に前置が長く並ぶ形。前置を 1 語ずつ削る読みが 2 乗だった (#3115)。"""
-        self.assert_linear("A=1 ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=12)
+        self.assert_linear("A=1 ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=12, small=62_500)
 
     def test_long_run_of_negations(self):
-        self.assert_linear("! ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=16)
+        self.assert_linear("! ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=16, small=62_500)
 
     def test_long_heredoc_delimiter(self):
         """区切り語を 1 文字ずつ継ぎ足すと 2 乗だった (#3115)。"""
-        self.assert_linear("A", lambda word: f"cat <<{word}\n{word}\ngh issue {COMMENT} 1 -b x")
+        self.assert_linear("A", lambda word: f"cat <<{word}\n{word}\ngh issue {COMMENT} 1 -b x", small=62_500)
+
+    def test_long_heredoc_delimiter_with_many_body_lines(self):
+        """区切り語の長さを本文の行ごとに引くと、区切り語の長さ × 行の数の 2 乗だった (#3115)。"""
+        self.assert_linear(
+            "A",
+            lambda word: f"cat <<{word}\n" + "\n" * (2 * len(word)) + f"{word}\ngh issue {COMMENT} 1 -b x",
+            small=50_000,
+        )
+
+    def test_deeply_nested_loops_with_many_commands(self):
+        """入れ子のループを閉じるたびに、溜めた gh の行を全部回すと 2 乗だった (#3115)。"""
+        self.assert_linear(
+            f"while a; do gh issue {COMMENT} 1; ",
+            lambda body: f"gh issue {COMMENT} 1; " + body + "done; " * body.count("while"),
+            small=62_500,
+        )
 
     # --- 物差しそのものの検査 (#3115) ---
     #
@@ -988,11 +1045,28 @@ printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
     def test_a_burst_of_load_on_one_measurement_does_not_flip_the_verdict(self):
         a = 8e-7
         # 負荷が重なる回をどこに置いても (固定費 3 回・大きさの確認 1 回の後が本番の測り)、
-        # 線形は緑のまま、2 乗は赤のまま
-        for burst in range(0, 11):
+        # 線形は緑のまま、2 乗は赤のまま。揺れた回は多数決で捨てられる
+        for burst in range(0, 20):
             with self.subTest(burst=burst):
                 self.assertTrue(self.verdict(self.synthetic(a=a, bursts=(burst,))))
                 self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5), bursts=(burst,))))
+
+    def test_bursts_on_several_rounds_do_not_flip_the_verdict_either(self):
+        a = 8e-7
+        # 4 回目 (番号 4 から 3 つずつ) までの回のうち 2 回の SMALL と、別の回の LARGE が重く測れた
+        for bursts in ((5, 8), (6, 9), (5, 12), (7, 10, 13), (5, 11)):
+            with self.subTest(bursts=bursts):
+                self.assertTrue(self.verdict(self.synthetic(a=a, bursts=bursts)))
+                self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5), bursts=bursts)))
+
+    def test_rounds_are_added_only_when_they_disagree(self):
+        a = 8e-7
+        quiet = self.synthetic(a=a)
+        _, rounds, _, _ = quiet.measure("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+        self.assertEqual(len(rounds), LengthTest.MIN_ROUNDS)
+        noisy = self.synthetic(a=a, bursts=(6,))
+        _, rounds, _, _ = noisy.measure("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+        self.assertGreater(len(rounds), LengthTest.MIN_ROUNDS)
 
     def test_a_constant_factor_slowdown_of_the_guard_alone_is_red(self):
         # 同じ機械で素の読みは変わらず、guard だけが 3 倍かかる退行。伸びは 4 倍のままなので、
