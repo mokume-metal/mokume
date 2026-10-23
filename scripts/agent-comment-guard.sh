@@ -23,6 +23,7 @@
 #   - gh {issue,pr} {close,reopen} の --comment → 差し戻す (閉じ / 開き ながら発言する)
 #   - gh {issue,pr} edit で本文オプションが付くもの → 差し戻す (scripts/edit-body.sh へ。#2615)
 #   - gh {issue,pr} edit で本文以外だけ (--title・--add-label など) → 素通し
+#   - gh {issue,pr} create・gh pr revert で、本文に署名が無いもの → 差し戻す (#3149)
 #   - 他のリポジトリ宛て (-R other/repo)        → 素通し (このリポジトリの規約の外)
 #   - それ以外 (view/list、gh api、--help)      → 素通し
 #
@@ -43,16 +44,28 @@
 # test_body_bearing_surfaces_are_enumerated が **gh の --help から導いた集合と照合する**。
 # gh が口を増やせば赤くなるので、この一覧を人が見張らなくてよい。
 #
-# 発言の境界は「スレッドへの発言か」の 1 本で、本文を伴っても次は署名の対象にしない:
+# 署名の境界は「エージェントが新しく書く文か」の 1 本である (#3149)。以前は「スレッドへの
+# 発言か」で、Issue / PR の本文は対象の外だった。その間、本文の署名は覚えていれば付く
+# だけで、sub-issue の 11 件中 9 件・PR の本文 30 件すべてが無署名だった (#3149 の実測)。
+# scripts/ready-queue.sh はその署名をエージェントの起票の唯一の手掛かりにしているので、
+# 無署名の起票は人の起票に見えて在庫から漏れる。口ごとの扱い:
 #
-#   gh {issue,pr} create --body   → Issue / PR の本文 (スレッドに並ぶ発言ではない)。素通し
+#   gh {issue,pr} create --body   → 新しい本文。署名が無ければ差し戻す。ラッパーは持たない —
+#                                   作る口は gh の旗が多く (--fill・--template・--label …)、
+#                                   包むと写しが要る。署名を足せばその場で続けられる
+#   gh pr revert --body           → revert として作る PR の本文。create と同じ
 #   gh {issue,pr} edit --body     → 既存本文の書き換え。発言ではないが、読んだ後の改訂を
-#                                   黙って消すので scripts/edit-body.sh へ回す (#2615)
-#   gh pr merge --body            → マージコミットの本文。素通し
-#   gh pr revert --body           → revert として作る PR の本文。素通し
+#                                   黙って消すので scripts/edit-body.sh へ回す (#2615)。
+#                                   署名は求めない — 人の本文をエージェントが直すこともあり、
+#                                   署名を足すと出所の嘘になる (エージェントの本文なら、取得した
+#                                   写しに署名が残っている)
+#   gh pr merge --body            → マージコミットの本文。素通し (Assisted-by の trailer は別にある)
 #   gh {issue,pr} view --comments → 読み取り。素通し
 #
-# create と merge・revert を素通しのままにするのは、上書きする既存の本文が無いからである。
+# 作る口の本文は scripts/gh_issue_body.py で取り出す (issue-evidence-guard.sh と同じ読み方)。
+# 取り出せない形 (`-F -` のヒアドキュメント・$(cat …)・--fill・本文なし・長い --body) は、
+# コマンド文字列のどこかに署名があれば通し、無ければ差し戻す — 「必ず付く」を取って止める側へ
+# 倒す。逃げ道は署名を書いた --body-file の 1 つで足りる。
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/comment_test.py。
@@ -63,6 +76,9 @@ set -uo pipefail
 # 害が大きい (hook_payload の jq と同じ fail open の考え方)
 # shellcheck source=scripts/guard-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/guard-lib.sh" 2>/dev/null || exit 0
+# 署名の検知キーと、差し戻しの文面に貼る 1 行の組み方 (#3149)
+# shellcheck source=scripts/agent-signature.sh
+. "$(dirname "${BASH_SOURCE[0]}")/agent-signature.sh" 2>/dev/null || exit 0
 
 hook_payload
 hook_command
@@ -106,6 +122,23 @@ is_body_edit_invocation() { # $1=gh の断片
 }
 
 
+# この gh の呼び出しは、新しい本文を作るものか (#3149)。本文の旗の有無は問わない —
+# 旗が無い create も、--fill やテンプレートで本文を作る
+is_create_invocation() { # $1=gh の断片
+  gh_fragment_is "$1" '(issue[[:space:]]+create|pr[[:space:]]+(create|revert))'
+}
+
+# 作る呼び出しの本文に署名があるか。取り出せなければコマンド文字列全体で見る (冒頭の説明)
+create_is_signed() { # $1=断片 $2=chdir の列 $3=cwd
+  local body
+  if body=$(python3 "$(dirname "${BASH_SOURCE[0]}")/gh_issue_body.py" "$1" "$2" "$3"); then
+    grep -qF "$SIGNATURE_KEY" <<<"$body"
+  else
+    grep -qF "$SIGNATURE_KEY" <<<"$command"
+  fi
+}
+
+
 # 止めた呼び出しが、別のコマンドの引数の中の $( … ) かバッククォートで実行されるものだった
 # ときに、差し戻しの頭に添える (#1729 の 2 回目の反証)。
 #
@@ -126,6 +159,7 @@ EOF
 
 offending=0
 editing=0
+unsigned=0
 in_substitution=0
 while IFS=$'\t' read -r repo chdir place fragment; do
   kind=
@@ -133,6 +167,8 @@ while IFS=$'\t' read -r repo chdir place fragment; do
     kind=comment
   elif is_body_edit_invocation "$fragment"; then
     kind=edit
+  elif is_create_invocation "$fragment"; then
+    kind=create
   fi
   [ -n "$kind" ] || continue
   # 使い方を尋ねているだけなら投稿ではない (判定は guard-lib.sh が持つ)
@@ -141,11 +177,17 @@ while IFS=$'\t' read -r repo chdir place fragment; do
   # 別に決まっており、ラッパーの投稿先は mokume 固定なので、ここで止めると逃げ道が無くなる。
   # 判定は guard-lib.sh が持つ
   invocation_targets_other_repo "$fragment" "$repo" "$chdir" "$cwd" && continue
-  if [ "$kind" = comment ]; then offending=1; else editing=1; fi
+  case $kind in
+    comment) offending=1 ;;
+    edit) editing=1 ;;
+    create)
+      create_is_signed "$fragment" "$chdir" "$cwd" && continue
+      unsigned=1 ;;
+  esac
   [ "$place" = sub ] && in_substitution=1
 done < <(gh_invocations "$command")
 
-[ "$offending" = 1 ] || [ "$editing" = 1 ] || exit 0
+[ "$offending" = 1 ] || [ "$editing" = 1 ] || [ "$unsigned" = 1 ] || exit 0
 
 hint=
 [ "$in_substitution" = 1 ] && hint="$(substitution_hint)"$'\n\n'
@@ -168,13 +210,48 @@ PR の本文なら issue を pr に替えます。タイトル・ラベルなど
 EOF
 }
 
+# 署名の無い本文の案内 (#3149)。貼る 1 行はこのセッションの名乗りで組む (モデルも名乗る)
+unsigned_reason() {
+  local sig model
+  # Claude Code 以外 (Codex など) は、payload がモデルを名乗っていればそれを使う。Claude Code は
+  # 記録 (transcript_path) から、サブエージェントのモデルまで拾う
+  model=$(hook_field '.model // empty')
+  case "$(detect_agent)" in
+    "Claude Code"*) ;;
+    *) [ -z "$model" ] || MOKUME_AGENT_MODEL=${MOKUME_AGENT_MODEL:-$model} ;;
+  esac
+  sig=$(agent_signature --generic --transcript "$(hook_field '.transcript_path // empty')")
+  cat <<EOF
+このリポジトリに新しく作る Issue / PR の本文には、エージェントの署名が要ります。
+
+署名は発言の出どころを後から辿る手掛かりで、scripts/ready-queue.sh がエージェントの起票を
+見分ける唯一の手掛かりでもあります (無いと人の起票に見えます。#3149)。本文の末尾に次の
+2 行を足してから、同じコマンドで出し直してください:
+
+---
+$sig
+
+別のエージェント・モデルと一緒に作ったなら、括弧の後ろに「 and <名乗り> (<モデル>)」と
+併記してください。本文を \$(cat …) で組むと中身を読めないので、署名を書いたファイルを
+--body-file に渡してください。sub-issue は scripts/sub-issue.sh が署名を自動で付けます。
+EOF
+}
+
+# 先頭に出す案内と、並んだ他の案内を組む。コメント > 本文の書き換え > 署名の順に重い
+reasons=()
+[ "$editing" = 1 ] && reasons+=("$(edit_reason)$(other_repo_hint 'gh issue edit <番号>')")
+[ "$unsigned" = 1 ] && reasons+=("$(unsigned_reason)$(other_repo_hint 'gh issue create')")
+
 if [ "$offending" = 0 ]; then
-  hook_deny "$hint$(edit_reason)$(other_repo_hint 'gh issue edit <番号>')"
+  first=${reasons[0]}
+  rest=
+  [ "${#reasons[@]}" -gt 1 ] && rest=$'\n\n'"${reasons[1]}"
+  hook_deny "$hint$first$rest"
   exit 0
 fi
 
 also=
-[ "$editing" = 1 ] && also=$'\n\n'"$(edit_reason)"
+for r in ${reasons[@]+"${reasons[@]}"}; do also="$also"$'\n\n'"$r"; done
 
 hook_deny "$hint$(cat <<'EOF'
 このリポジトリの Issue / PR へのコメントは scripts/comment.sh から投稿してください。

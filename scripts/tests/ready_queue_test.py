@@ -633,6 +633,18 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual([n for n, v in seen.items() if v[0] == "stock"], [20, 21, 22])
         self.assertEqual(seen[26][0], "ready")
 
+    # 4b. 署名はエージェントを問わない (#3149)。モデルの名乗りが付いても読む
+    def test_stock_reads_any_agent_signature(self):
+        issues = [
+            issue(40, type_="Bug", body="本文\n\n---\n<sub>🤖 Assisted by [OpenAI Codex](https://developers.openai.com/codex) (gpt-6-astra)</sub>"),
+            issue(41, type_="Task", body=f"本文\n\n---\n<sub>{SIGNATURE} (Claude Opus 5.5)</sub>"),
+            issue(42, type_="Bug", body="人が書いた本文"),
+            issue(43, labels=["verify: triaged"]),
+        ]
+        done, _ = self.run_queue(issues)
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual([n for n, v in seen.items() if v[0] == "stock"], [40, 41])
+
     # 5. 行は 3 欄で、描画の見込みを持たない (描画レーンは #1769 で畳んだ)
     def test_rows_have_no_drawing_guess(self):
         issues = [

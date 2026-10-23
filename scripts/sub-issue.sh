@@ -6,12 +6,16 @@
 # gh CLI に sub-issue コマンドが無いための補い (ADR-0002 / #23)。
 #
 # 使い方:
-#   sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--test]
+#   sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--test]
 #   sub-issue.sh <親番号> --attach <番号>
 #   --type   : 親から継ぐ型を上書きする (ADR-0004 の 5 型: Bug/Feature/Task/Design/Docs)
 #   --test   : 使い捨て検証用。タイトルに test: を補い、verify: triaged を付け、
 #              本文が無ければ検証用の雛形を入れる (確認後に close する前提)
+#   --with   : 一緒に作った別のエージェント・モデルを署名に併記する (#3149)
 #   --attach : 作らずに、既に在る Issue を親の下へ繋ぐ (#1661)。型は継がない
+#
+# エージェントが実行したときは、作る Issue の本文の末尾にエージェントの署名を付ける (#3149。
+# 名乗りの決まり方は scripts/agent-signature.sh)。人の実行には付けない。
 #
 # ## --attach (#1661)
 #
@@ -34,8 +38,11 @@ set -euo pipefail
 # shellcheck source=scripts/repo-slug.sh
 . "$(dirname "${BASH_SOURCE[0]}")/repo-slug.sh"
 REPO="$(this_repo)"
+# 起票の署名 (#3149)
+# shellcheck source=scripts/agent-signature.sh
+. "$(dirname "${BASH_SOURCE[0]}")/agent-signature.sh"
 
-USAGE='使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--test]
+USAGE='使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--test]
         sub-issue.sh <親番号> --attach <番号>'
 
 # usage は 64 (sysexits の EX_USAGE) で揃える (#820)。**使い方も出す** —
@@ -82,13 +89,14 @@ fi
 TITLE="${1:?タイトルが必要}"; shift
 
 BODY="" BODY_FILE="" TYPE="" IS_TEST=false
-LABELS=()
+LABELS=() WITH=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --body-file) BODY_FILE="$2"; shift 2 ;;
     --body)      BODY="$2"; shift 2 ;;
     --label)     LABELS+=("$2"); shift 2 ;;
     --type)      TYPE="$2"; shift 2 ;;
+    --with)      WITH+=(--with "$2"); shift 2 ;;
     --test)      IS_TEST=true; shift ;;
     *)           usage_error "不明な引数: $1" ;;
   esac
@@ -108,11 +116,27 @@ if [ -z "$TYPE" ]; then
   TYPE=$(gh issue view "$PARENT" -R "$REPO" --json issueType --jq '.issueType.name // empty')
 fi
 
-args=(--title "$TITLE" -R "$REPO")
+# エージェントの起票なら本文の末尾に署名を付ける (#3149)。ここで作る Issue は中の gh を
+# 通るので、素の gh issue create を見る agent-comment-guard.sh には見えない。署名は
+# scripts/ready-queue.sh がエージェントの起票を見分ける唯一の手掛かりでもある。
+# **人の実行には付けない** — エージェントと判定できなければ署名しない (総称に落とさない)
+if [ "$BODY_FILE" = - ]; then
+  BODY=$(cat)
+elif [ -n "$BODY_FILE" ]; then
+  [ -f "$BODY_FILE" ] || { echo "本文のファイルが無い: $BODY_FILE" >&2; exit 66; }
+  BODY=$(cat "$BODY_FILE")
+fi
+# --generic を渡さない = 判定できなければ署名しない
+if ! grep -qF "$SIGNATURE_KEY" <<<"$BODY" &&
+   sig=$(agent_signature ${WITH[@]+"${WITH[@]}"}); then
+  BODY="${BODY:+$BODY
+
+}---
+$sig"
+fi
+
+args=(--title "$TITLE" -R "$REPO" --body "$BODY")
 [ -n "$TYPE" ] && args+=(--type "$TYPE")
-[ -n "$BODY_FILE" ] && args+=(--body-file "$BODY_FILE")
-[ -n "$BODY" ] && args+=(--body "$BODY")
-[ -z "$BODY_FILE" ] && [ -z "$BODY" ] && args+=(--body "")
 for l in "${LABELS[@]:-}"; do [ -n "$l" ] && args+=(--label "$l"); done
 
 url=$(gh issue create "${args[@]}")
