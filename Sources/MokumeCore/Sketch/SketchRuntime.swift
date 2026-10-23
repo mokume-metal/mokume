@@ -52,6 +52,9 @@ public final class SketchRuntime {
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
     private(set) var isLooping = true
+    /// 書き出す経路 (`mokume render`) が先に知っている、描く枚数。**最後の 1 枚を描くとき**、拡大した字の焼きを
+    /// 次のフレームへ送らない (``GlyphAtlas/mayDeferScaledBakes``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
+    var framesToRender: Int?
     /// 止まっているか — 作者が `noLoop()` で止めた、または外から ``pause()`` されている。
     ///
     /// 窓と出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
@@ -929,6 +932,11 @@ public final class SketchRuntime {
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
         canvas.frameStep = timing.step
+        // 次のフレームが来るときだけ、拡大した字の焼きを次へ送ってよい。止めたスケッチ・時刻を指した 1 枚・
+        // 書き出しの最後の 1 枚は、次が来ないので要る段で焼き切る (#2446)
+        canvas.atlas.mayDeferScaledBakes =
+            isLooping && !isPaused && requestedTime == nil
+            && timing.frameCount < (framesToRender ?? .max)
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
@@ -1622,7 +1630,11 @@ public final class SketchRuntime {
     public var isRunning: Bool { !isPaused }
 
     /// 作者の口の転送 (正本は ``SketchPart/noLoop()``)。
-    func noLoop() { isLooping = false }
+    func noLoop() {
+        isLooping = false
+        // このフレームの残りの字も、次が来ないので要る段で焼き切る (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
+    }
 
     /// 作者の口の転送 (正本は ``SketchPart/loop()``)。
     func loop() {

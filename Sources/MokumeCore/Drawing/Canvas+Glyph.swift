@@ -164,27 +164,31 @@ extension Canvas {
             glyph: resolved.glyph, weight: style.textWeight ?? 0, step: step)
     }
 
-    /// 字を焼く拡大の段 ([#2446])。**いまの変換が字を拡げる量**を、対数の最も近い段に丸めたもの。
+    /// 字を焼く拡大の段 ([#2446])。**いまの変換が字を、描く画素で拡げる量**を、対数の最も近い段に丸めたもの。
     ///
-    /// 拡大は変換の左上 2×2 の最大の伸び (特異値の最大) で、回転だけなら 1、軸ごとに違う倍率なら大きい
-    /// ほう。平面の層は奥行きを捨てる (ADR-0021 決定 2) ので、`rotateY` などの遠近は見ない。拡大が 1 以下
-    /// (段 0) は、`textSize` の大きさで焼いたまま描く。段は ``glyphStepLimit`` で頭打ちにする。
+    /// 拡大は、変換の左上 2×2 に**出す画素から描く画素への比** (``unitsPerDrawnPixel``・細かさ) を掛けた
+    /// 行列の最大の特異値で (``splitScale(of:)``・倍精度・桁あふれに強い)、回転だけなら 1、軸ごとに
+    /// 違う倍率なら大きいほう。細かさを下げた面では、描く画素が粗いぶん拡大が小さく数えられる
+    /// (細かさ 0.5 の `scale(2)` は 1 対 1 で、段 0)。平面の層は奥行きを捨てる (ADR-0021 決定 2) ので、
+    /// 変換の 3 列目 (z) は見ない — `rotateY` などで傾けた字の遠近も、傾きで縮んだ分も数えない。
+    /// 拡大が 1 以下 (段 0) は、`textSize` の大きさで焼いたまま描く。段は ``glyphStepLimit`` で頭打ちにする。
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     var glyphStep: Int {
-        let m = transform.matrix
-        let a = m.columns.0.x, c = m.columns.0.y, b = m.columns.1.x, d = m.columns.1.y
-        let sum = a * a + b * b + c * c + d * d
-        let determinant = a * d - b * c
-        let spread = max(sum * sum - 4 * determinant * determinant, 0).squareRoot()
-        let stretch = ((sum + spread) / 2).squareRoot()
-        guard stretch.isFinite, stretch > 1 else { return 0 }
+        let drawn = drawnLinear(transform.matrix)
+        let flat = simd_float4x4(
+            columns: (
+                SIMD4(drawn.columns.0.x, drawn.columns.0.y, 0, 0),
+                SIMD4(drawn.columns.1.x, drawn.columns.1.y, 0, 0),
+                SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1)))
+        let stretch = Self.splitScale(of: flat)
+        guard stretch > 1 else { return 0 }
         let step = Int((RuntimeMath.log2(stretch) * Float(GlyphAtlas.stepsPerOctave)).rounded())
         return min(step, glyphStepLimit)
     }
 
-    /// 焼いてよい最大の段。**1 字の em を 2048 画素までに留める** — それより大きく焼いても、焼き場の面
-    /// (一辺 4096) に入る字形が少なくなるだけである。
+    /// 頼んでよい最大の段。**1 字の em を 2048 画素までに留める** — 段の倍率が桁あふれしないための
+    /// 目安である。実際の頭打ちは 1 字の画素のバイト数で、字形ごとに決まる (``GlyphAtlas/plan(for:font:)``)。
     private var glyphStepLimit: Int {
         let size = style.textSize
         guard size > 0, size < Self.largestBakedEm else { return 0 }
@@ -192,6 +196,14 @@ extension Canvas {
     }
 
     private static let largestBakedEm: Float = 2048
+
+    /// 引いた字形と、**頼んだ段について決まった答えか** (`settled`)。決まっていれば、書体の控え
+    /// (``Typeface/placedScaled``) へ入れて、次のフレームから引き直さない。上限を越えて先送りした字や、
+    /// 頁が溢れて低い段で描いた字は決まっていない (次のフレームで頼んだ段を焼き直す)。
+    struct GlyphLookup {
+        var entry: GlyphAtlas.Entry
+        var settled: Bool
+    }
 
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ
     /// 大きさの新しい頁へ焼き直す ([#1342])。
@@ -220,39 +232,82 @@ extension Canvas {
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
-    func glyphEntry(for resolved: ResolvedGlyph, step: Int = 0) -> GlyphAtlas.Entry? {
-        guard step > 0 else { return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font) }
-        return scaledGlyphEntry(for: resolved, step: step)
+    func glyphLookup(for resolved: ResolvedGlyph, step: Int) -> GlyphLookup? {
+        guard step > 0 else {
+            return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
+                .map { GlyphLookup(entry: $0, settled: true) }
+        }
+        return scaledGlyphLookup(for: resolved, step: step)
     }
 
-    /// 拡大した段 (`step` が 0 より上) の字形を引く ([#2446])。
+    /// 段 0 の字形を引く (``glyphLookup(for:step:)`` の段 0)。検査が使う。
+    func glyphEntry(for resolved: ResolvedGlyph) -> GlyphAtlas.Entry? {
+        glyphLookup(for: resolved, step: 0)?.entry
+    }
+
+    /// 拡大した段 (`step` が 0 より上) の字形を引く ([#2446])。**どの場合も字は欠かさず、頼んだ段より低い
+    /// 段の画素で描くことはあっても、段 0 (以前の焼き方) を下回らない。**
     ///
-    /// - 焼いてあればそれを返す
-    /// - **1 フレームに新しく焼く数の上限** (``GlyphAtlas/scaledBakesPerFrame``) を越えていて、その字形の
-    ///   近い段が焼いてあれば、それで描く (欠けない・少しぼける)。近い段が無い字 (初めて出る字) は、
-    ///   上限に関わらず焼く
-    /// - 段が焼き場に入らなければ (大きすぎる)、低い段へ下がる。段 0 まで下がっても入らなければ `nil`
+    /// 1. 焼いてあればそれを返す
+    /// 2. **1 字の大きさ**で頭打ちにする: 画素のバイト数が上限 (``GlyphAtlas/scaledBakeByteLimit``) を越える
+    ///    段は焼かず、収まる段まで下げる。この下げは字形ごとに決まるので、答えは決まったものとして控える。
+    ///    下げたことは、初回だけ知らせる (``Canvas/Warning/softEnlargedText``)
+    /// 3. **1 フレームの量**で頭打ちにする (``GlyphAtlas/admitScaledBake(_:bytes:frame:)``): 数・バイト数が
+    ///    枠を越えていれば、焼いてある近い段で描き、近い段が無ければ段 0 で焼いて描く。どちらも控えて、
+    ///    次のフレームで先に焼く。次のフレームが来ない面は枠を外し、要る段で焼き切る
+    ///    (``GlyphAtlas/mayDeferScaledBakes``)
+    /// 4. 焼く。**焼き場に入らなければ (頁が溢れた・拡大した字形が面の割合を使い切った) 1 オクターブずつ**
+    ///    低い段へ下がり、最後は段 0
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
-    private func scaledGlyphEntry(for resolved: ResolvedGlyph, step: Int) -> GlyphAtlas.Entry? {
-        if let found = atlas.cachedEntry(for: glyphKey(for: resolved, step: step)) { return found }
-        if atlas.scaledBakes(inFrame: framesDrawn) >= atlas.scaledBakesPerFrame,
-            let near = nearestBakedGlyph(for: resolved, step: step)
-        {
-            return near
+    private func scaledGlyphLookup(for resolved: ResolvedGlyph, step: Int) -> GlyphLookup? {
+        let wanted = glyphKey(for: resolved, step: step)
+        if let found = atlas.cachedEntry(for: wanted) { return GlyphLookup(entry: found, settled: true) }
+
+        let plan = atlas.plan(for: wanted, font: resolved.font)
+        if plan.step < step { warnSoftEnlargedTextOnce() }
+        let target = glyphKey(for: resolved, step: plan.step)
+        if plan.step == 0 {
+            return bakedGlyph(for: target, font: resolved.font).map { GlyphLookup(entry: $0, settled: true) }
         }
-        var current = step
+        if let found = atlas.cachedEntry(for: target) { return GlyphLookup(entry: found, settled: true) }
+
+        // 空白は焼く画素が無いので、数えない
+        if plan.bytes > 0, !atlas.admitScaledBake(target, bytes: plan.bytes, frame: framesDrawn) {
+            if let near = nearestBakedGlyph(for: resolved, step: plan.step) {
+                return GlyphLookup(entry: near, settled: false)
+            }
+            return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
+                .map { GlyphLookup(entry: $0, settled: false) }
+        }
+
+        var current = plan.step
         while current > 0 {
             let key = glyphKey(for: resolved, step: current)
-            if let cached = atlas.cachedEntry(for: key) { return cached }
-            if let entry = bakedGlyph(for: key, font: resolved.font) {
-                // 空白は焼く画素が無いので数えない
-                if !entry.isBlank { atlas.countScaledBake(inFrame: framesDrawn) }
-                return entry
+            if let cached = atlas.cachedEntry(for: key) {
+                return GlyphLookup(entry: cached, settled: current == plan.step)
             }
-            current -= 1
+            if let entry = bakedGlyph(for: key, font: resolved.font, reportsFull: false) {
+                return GlyphLookup(entry: entry, settled: current == plan.step)
+            }
+            if current == plan.step { warnSoftEnlargedTextOnce() }
+            current = max(0, current - GlyphAtlas.stepsPerOctave)
         }
         return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
+            .map { GlyphLookup(entry: $0, settled: false) }
+    }
+
+    /// 拡大した字が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で描かれたことを、初回だけ知らせる。
+    /// **原因が拡大 (`scale()` と `textSize()` の積) であることを名乗る** — 字は欠けず、伸ばして描くので
+    /// 縁がぼける。次の一手 (拡大か `textSize()` を下げる・字の種類を減らす) が打てる文面にする。
+    private func warnSoftEnlargedTextOnce() {
+        warnOnce(
+            .softEnlargedText,
+            "text(): the text is enlarged (textSize() times scale()) beyond what the baking area keeps "
+                + "sharp: a single glyph is baked at most \(atlas.scaledBakeByteLimit >> 20) MiB, and "
+                + "enlarged glyphs use only the top \(Int(GlyphAtlas.scaledPageShare * 100))% of the "
+                + "area. The glyphs are still drawn, from a smaller image, so their edges look soft — "
+                + "lower the enlargement (scale() or textSize()) or draw fewer different enlarged characters")
     }
 
     /// その字形で焼いてある、頼んだ段に一番近い段の字形。**上の段を先に探す** (縮めて描くほうが、
@@ -263,16 +318,21 @@ extension Canvas {
                 return entry
             }
         }
-        for below in stride(from: step - 1, through: 0, by: -1) {
+        for below in stride(from: step - 1, through: 1, by: -1) {
             if let entry = atlas.cachedEntry(for: glyphKey(for: resolved, step: below)) {
                 return entry
             }
         }
-        return nil
+        return atlas.cachedEntry(for: glyphKey(for: resolved))
     }
 
     /// 鍵の字形を、焼き場から引く (無ければ焼く)。段 0 も拡大した段も、焼き場の面の広げ方・焼き直しは同じ。
-    private func bakedGlyph(for key: GlyphAtlas.Key, font: CTFont) -> GlyphAtlas.Entry? {
+    ///
+    /// `reportsFull` が偽なら、1 フレームのうちに溢れて諦めるときも黙る — 呼ぶ側 (拡大した段) が低い段へ
+    /// 下がって描き、必要なら自分の言葉で知らせる。
+    private func bakedGlyph(
+        for key: GlyphAtlas.Key, font: CTFont, reportsFull: Bool = true
+    ) -> GlyphAtlas.Entry? {
         while true {
             switch atlas.entry(for: key, font: font) {
             case .found(let entry): return entry
@@ -282,7 +342,7 @@ extension Canvas {
             }
 
             guard atlas.canGrow || atlasPageFrame != framesDrawn else {
-                warnAtlasFullInOneFrameOnce()
+                if reportsFull { warnAtlasFullInOneFrameOnce() }
                 return nil
             }
             closeBatch()

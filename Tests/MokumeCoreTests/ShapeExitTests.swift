@@ -337,6 +337,7 @@ extension ShapeExit {
             "hasSetUp": control, "isPaused": control, "isLooping": control,
             "redrawRequested": control, "observingAtTime": control, "showsObservedTime": control,
             "presence": control,
+            "framesToRender": "書き出す経路が先に知っている枚数 (#2446)。最後の 1 枚で拡大した字の焼きを次へ送らないために読む。実行の制御で、形に焼き付く値を生まず、組み立ての中でも外の制御としてそのまま効く",
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,

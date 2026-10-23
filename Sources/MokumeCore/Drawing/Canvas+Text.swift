@@ -240,14 +240,17 @@ extension Canvas {
                 continue
             }
             guard let resolved = face.glyph(for: scalar) else { continue }
-            if let entry = glyphEntry(for: resolved, step: step) {
+            if let found = glyphLookup(for: resolved, step: step) {
+                let entry = found.entry
                 // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
                 let placed = PlacedGlyph(
                     pageSerial: atlas.pageSerial, entry: entry, advance: resolved.advance)
                 if step == 0 {
                     face.placed[scalar] = placed
-                } else if atlas.cachedEntry(for: glyphKey(for: resolved, step: step)) != nil {
-                    // 頼んだ段で焼けているときだけ。上限を越えて近い段で描いた字形は控えない
+                } else if found.settled {
+                    // 頼んだ段について答えが決まったときだけ。上限を越えて先送りした字と、頁が溢れて低い段で
+                    // 描いた字は控えない (次のフレームで頼んだ段を焼き直す)。1 字の大きさで段を下げた字は
+                    // 決まった答えなので控える — 毎フレーム外接矩形と大きさの判定をやり直さない
                     face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)] = placed
                 }
                 if !entry.isBlank {
@@ -746,10 +749,15 @@ extension Canvas {
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         var box = CGRect.null
         let face = typeface
+        // 拡大した字 (段 0 より上) は、`text()` が別の鍵の画素で焼く。**段 0 の画素を預けても引き取られない**
+        // ので、預けない (#2560・#2446)。墨の測りは段 0 のまま
+        let keepsPixels = glyphStep == 0
         forEachGlyph(in: string, x.asFloat, y.asFloat) { scalar, resolved, path, pen, baseline in
             let measured =
                 Typeface.measuresByDrawing(resolved, path: path)
-                ? face.drawnInk(of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved))
+                ? face.drawnInk(
+                    of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved),
+                    keepsPixels: keepsPixels)
                 : path?.boundingBoxOfPath
             guard let glyph = measured else { return }
             // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない
