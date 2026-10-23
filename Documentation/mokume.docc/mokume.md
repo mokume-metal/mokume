@@ -914,6 +914,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``MouseButton``
 - ``SketchPart/scrollX``
 - ``SketchPart/scrollY``
+- ``SketchPart/pinch``
 - ``SketchPart/dragX``
 - ``SketchPart/dragY``
 - ``SketchPart/movedX``

@@ -264,7 +264,10 @@ extension SketchSurface {
 
     private func notePress(_ event: NSEvent) {
         if let point = pressPoint(of: event) {
-            deliver(.mouseDown(x: point.x, y: point.y, button: Self.button(of: event)))
+            deliver(
+                .mouseDown(
+                    x: point.x, y: point.y, button: Self.button(of: event),
+                    clickCount: event.clickCount))
         }
         // **面そのものへの押しだけを数える** — 重ねたつまみ (`KnobOverlay`) への押しは、応答者の
         // 連なりでここへ上がってきても捕まえの合図にしない (#1144)
@@ -353,7 +356,7 @@ extension SketchSurface {
         switch event {
         case .keyDown(let code, _, _): heldKeys.insert(code)
         case .keyUp(let code): heldKeys.remove(code)
-        case .mouseDown(let x, let y, let button):
+        case .mouseDown(let x, let y, let button, _):
             lastPoint = (x, y)
             heldButtons.insert(button)
             releasedOnLeave.remove(button)
@@ -361,7 +364,7 @@ extension SketchSurface {
             lastPoint = (x, y)
             heldButtons.remove(button)
         case .mouseMoved(let x, let y): lastPoint = (x, y)
-        case .mouseMovedBy, .scrolled: break
+        case .mouseMovedBy, .scrolled, .pinched: break
         }
     }
 
@@ -392,6 +395,15 @@ extension SketchSurface {
     /// (``Orbit/radiansPerPixel`` が面の大きさに依らない割合を選んでいるのと同じ理由)。
     override func scrollWheel(with event: NSEvent) {
         deliver(.scrolled(dx: Float(event.scrollingDeltaX), dy: Float(event.scrollingDeltaY)))
+    }
+
+    // MARK: ピンチ
+
+    /// トラックパッドのピンチ。**倍率の差分をそのまま運ぶ** (0.1 で 1.1 倍に開いた・
+    /// [#2762](https://github.com/mokume-metal/mokume/issues/2762))。スクロールと同じく身振りの量なので、
+    /// 窓の大きさでは変えない。
+    override func magnify(with event: NSEvent) {
+        deliver(.pinched(amount: Float(event.magnification)))
     }
 
     // MARK: キー

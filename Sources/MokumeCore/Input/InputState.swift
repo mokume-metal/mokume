@@ -18,13 +18,13 @@ import Foundation
 /// ## 見せる量と配る量は有限である
 ///
 /// 位置 (``x``・``previousX``)・動いた量 (``movedX``)・引きずった量 (``dragX``)・スクロール量
-/// (``scrollX``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
+/// (``scrollX``)・ピンチの量 (``pinch``) と、配る量 (引きずり・移動・スクロールの 1 件ぶん) は、数でない値にも無限にも
 /// ならない ([#2731](https://github.com/mokume-metal/mokume/issues/2731))。外から送る経路は
 /// ±3.4e38 までの極端な値を運べ、その差や和は `Float` に収まらないことがある。差は原点の両側で
 /// 約 1.7e38 より遠い位置どうしで溢れ、和はずっと小さい量の繰り返しでも溢れる。``enqueue(_:)`` には
 /// 数でない値も渡せる。
 ///
-/// - **移動とスクロール** (`mouseMoved`・`mouseMovedBy`・`scrolled`) は、当てるとそうなるなら、
+/// - **移動・スクロール・ピンチ** (`mouseMoved`・`mouseMovedBy`・`scrolled`・`pinched`) は、当てるとそうなるなら、
 ///   状態にも配りにも入れずに捨て、1 度だけ言う
 /// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。釦の
 ///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすと釦が押されたまま残り
@@ -64,6 +64,21 @@ public final class InputState {
     /// 直近のスクロール量 (このフレームぶん)。
     public private(set) var scrollX: Float = 0
     public private(set) var scrollY: Float = 0
+    /// 直近のピンチの量 (このフレームぶん・倍率の差分の合計)。開くと正、閉じると負
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    public private(set) var pinch: Float = 0
+    /// このフレームのピンチの倍率の**積** (Π(1 + 量))。``SketchPart/orbitControl(_:_:_:)`` の寄りが読む。
+    ///
+    /// **合計 (``pinch``) で寄らない理由**: 倍率は掛け算で重なる。0.1 を開く 10 件は 1.1^10 倍で、閉じる
+    /// −0.1 を 10 件は 0.9^10 倍 (約 0.35 倍) — 合計では前者が 1.0・後者が −1.0 になり、`1 + 合計` が
+    /// 0 以下になって閉じる操作が丸ごと効かなくなる (fps が落ちて 1 フレームに束ねられた速い閉じで踏む)。
+    /// 1 件で `1 + 量 ≤ 0` (閉じる側に −1 以上) の外れ値が 1 件でも届いたフレームは、積に意味が無いので
+    /// 0 になる (寄りの側が進めずに言う)。フレームの頭で 1 に戻る。
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
+    private(set) var pinchScale: Double = 1
+    /// このフレームに届いた、左ボタンの 2 回目の押下 (`clickCount == 2`) の数。**フレームの頭で 0 に戻る。**
+    /// ``SketchPart/orbitControl(_:_:_:)`` が視点を戻す合図に読む。スケッチ向けの口はまだ無い (作例が来てから)。
+    private(set) var leftDoubleClicks = 0
     /// 押したまま引きずった量 (このフレームぶん)。
     ///
     /// **押下は移動ではない。** `mouseX - pmouseX` には、押した瞬間にカーソルが押下
@@ -102,7 +117,7 @@ public final class InputState {
 
     /// 入力の層が 1 度だけ言う注意の種類。
     enum Warning: Hashable {
-        /// 当てると、見せる量か配る量が有限でなくなる移動・スクロールを捨てた (``apply(_:)``・#2731)。
+        /// 当てると、見せる量か配る量が有限でなくなる移動・スクロール・ピンチを捨てた (``apply(_:)``・#2731)。
         case nonFiniteEvent
         /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
@@ -174,6 +189,9 @@ public final class InputState {
         previousY = y
         scrollX = 0
         scrollY = 0
+        pinch = 0
+        pinchScale = 1
+        leftDoubleClicks = 0
         dragX = 0
         dragY = 0
         movedX = 0
@@ -270,6 +288,10 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             // 1 件ぶんが出来事にそのまま載っているので、控えずに渡せる
             dispatch(.mouseWheel(deltaX: dx, deltaY: dy))
+        case .pinched:
+            // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
+            // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
+            break
         }
     }
 
@@ -339,9 +361,9 @@ public final class InputState {
     private func apply(_ event: InputEvent) -> InputEvent? {
         let applied: InputEvent
         switch event {
-        case .mouseDown(let x, let y, let button) where !(x.isFinite && y.isFinite):
+        case .mouseDown(let x, let y, let button, let clickCount) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
-            applied = .mouseDown(x: self.x, y: self.y, button: button)
+            applied = .mouseDown(x: self.x, y: self.y, button: button, clickCount: clickCount)
         case .mouseUp(let x, let y, let button) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
             applied = .mouseUp(x: self.x, y: self.y, button: button)
@@ -350,7 +372,7 @@ public final class InputState {
                 warnings.warnOnce(
                     .nonFiniteEvent,
                     "Dropped the input event \(Self.spelled(event)): applying it would make the "
-                        + "mouse position, a movement, a drag or a scroll amount infinite or not a "
+                        + "mouse position, a movement, a drag, a scroll amount or a pinch amount infinite or not a "
                         + "number (later events like this are dropped without saying so again)")
                 return nil
             }
@@ -373,8 +395,10 @@ public final class InputState {
     /// 出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。名前の無い番号は番号で書く。
     static func spelled(_ event: InputEvent) -> String {
         switch event {
-        case .mouseDown(let x, let y, let button):
-            "mouseDown(x: \(x), y: \(y), button: \(spelled(button)))"
+        case .mouseDown(let x, let y, let button, let clickCount):
+            // 単発 (1) は書かない — 線の 1 行と同じく、省いた形が単発である
+            "mouseDown(x: \(x), y: \(y), button: \(spelled(button))"
+                + (clickCount == 1 ? "" : ", clickCount: \(clickCount)") + ")"
         case .mouseUp(let x, let y, let button):
             "mouseUp(x: \(x), y: \(y), button: \(spelled(button)))"
         default:
@@ -395,11 +419,12 @@ public final class InputState {
     /// 出来事 1 件ぶん、状態を進める。**検めは済んでいる** (``apply(_:)`` からだけ呼ぶ)。
     private func update(by event: InputEvent) {
         switch event {
-        case .mouseDown(let x, let y, let button):
+        case .mouseDown(let x, let y, let button, let clickCount):
             self.x = x
             self.y = y
             self.button = button
             pressedButtons.insert(button)
+            if button == .left, clickCount == 2 { leftDoubleClicks += 1 }
         case .mouseUp(let x, let y, let button):
             self.x = x
             self.y = y
@@ -416,6 +441,11 @@ public final class InputState {
         case .scrolled(let dx, let dy):
             scrollX += dx
             scrollY += dy
+        case .pinched(let amount):
+            pinch += amount
+            // 1 件ぶんの倍率を掛ける。`1 + 量 ≤ 0` の 1 件が混ざったフレームは 0 のまま残す (``pinchScale``)
+            let factor = 1 + Double(amount)
+            pinchScale = factor > 0 ? pinchScale * factor : 0
         case .keyDown(let code, let characters, let isRepeat):
             let wasPressed = !pressedKeys.insert(code).inserted
             if Self.isFreshPress(wasPressed: wasPressed, isRepeat: isRepeat) {
@@ -446,6 +476,7 @@ public final class InputState {
     /// - 位置の移動: 位置と、当てる前との差を足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - 相対の移動: 足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - スクロール: 足した後の ``scrollX``・``scrollY``
+    /// - ピンチ: 足した後の ``pinch`` と、掛けた後の ``pinchScale``
     ///
     /// **範囲の外の位置は丸めない** (`SurfaceMapping` の「帯の上は丸めない」)。極端でも有限に
     /// 収まる値は、今までどおり当てる。
@@ -453,7 +484,7 @@ public final class InputState {
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     private func keepsQuantitiesFinite(_ event: InputEvent) -> Bool {
         switch event {
-        case .mouseDown(let x, let y, _), .mouseUp(let x, let y, _):
+        case .mouseDown(let x, let y, _, _), .mouseUp(let x, let y, _):
             x.isFinite && y.isFinite
         case .mouseMoved(let x, let y):
             x.isFinite && y.isFinite && keepsMotionFinite(deltaX: x - self.x, deltaY: y - self.y)
@@ -461,6 +492,8 @@ public final class InputState {
             keepsMotionFinite(deltaX: dx, deltaY: dy)
         case .scrolled(let dx, let dy):
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
+        case .pinched(let amount):
+            amount.isFinite && (pinch + amount).isFinite && (pinchScale * (1 + Double(amount))).isFinite
         case .keyDown, .keyUp:
             true
         }

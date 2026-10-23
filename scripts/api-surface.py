@@ -928,6 +928,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "movedY": READING,
     "scrollX": READING,
     "scrollY": READING,
+    "pinch": READING,
     "mouseButton": READING,
     "isMousePressed": READING,
     "key": READING,
