@@ -321,19 +321,33 @@ float4 effect(Pixel in, Values values) {
     // 2 値化。**p0 は、しきい値を線形へ戻した値** (`Effect.passes` が渡す)。画素の明るさは
     // `brightness(_:)` と同じ物差しで、乗算を戻して sRGB の原色へ移した 3 成分の最大である。
     // エンコードは単調なので、エンコードせずに線形のまま比べても答えは同じ。**アルファは動かさない** —
-    // 白は不透明度ぶんだけ (乗算済み)、黒は 0。不透明度 0 の画素はそのまま通す
+    // 白は不透明度ぶんだけ (乗算済み)、黒は 0。
+    //
+    // **比べるのは半精度同士。** 面の画素は半精度で、しきい値は単精度で戻した値なので、単精度のまま比べると
+    // ちょうどの値 (たとえば `fill(128)` に `level: 128 / 255`) が、半精度に丸めた画素のほうが僅かに小さく
+    // 読めて黒になる。両方を半精度へ丸めて比べると、ちょうどの値は白になる。
+    //
+    // **不透明度 0 の画素 (透明な地へ加算した光) も 2 値にする。** 戻す相手の不透明度が無いので、持っている
+    // 色をそのまま比べ、白 (1) か黒 (0) にして、不透明度は 0 のままにする。何も持たない画素 (色が全部 0) は
+    // 透明のまま通す。
     if (kind == kEffectThreshold) {
         float alpha = in.color.a;
-        if (alpha <= 0.0) { return in.color; }
-        float3 straight = in.color.rgb / alpha;
+        float3 straight = in.color.rgb;
+        if (alpha > 0.0) {
+            straight = in.color.rgb / alpha;
+        } else if (all(straight == 0.0)) {
+            return in.color;
+        }
         // 線形 Display P3 → 線形 sRGB。**係数は `ColorPrimaries.sRGBFromWorkingRows` と同じ**
+        // (`FilterImmediateTests` が突き合わせる)
         float3 srgb = float3(
             dot(straight, float3(1.2249401762805598, -0.2249401762805601, 0.0)),
             dot(straight, float3(-0.0420569547096882, 1.0420569547096878, 0.0)),
             dot(straight, float3(-0.0196375545903344, -0.0786360455506318, 1.0982736001409665)));
         float brightest = max(srgb.r, max(srgb.g, srgb.b));
-        float on = brightest >= p0 ? 1.0 : 0.0;
-        return float4(float3(on * alpha), alpha);
+        float on = half(brightest) >= half(p0) ? 1.0 : 0.0;
+        // 不透明度 0 のときは白が 1、不透明度があるときは不透明度ぶん (乗算済み)
+        return float4(float3(on * (alpha > 0.0 ? alpha : 1.0)), alpha);
     }
 
     // 拡大して、前のフレームの結果と混ぜる (時間方向)。**p2 がいまのフレームの重み**で、

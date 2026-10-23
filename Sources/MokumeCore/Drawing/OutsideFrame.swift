@@ -49,6 +49,11 @@ extension Canvas {
         ///
         /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
         case debug
+        /// 呼んだ時点の絵へ効果を掛けた (``Canvas/filter(_:)``)。**シーンの記述ではない** — 掛けた絵は次の
+        /// フレームへ残るので、寿命は置いたもの (``placing``) の側にある。持ち越しを約束する区間でも掛けられ、
+        /// 断るのはその外だけなので、文面は置ける場面を名乗る。鍵を ``effects`` と分けるのは、直す先の口が
+        /// 違う (`effects()` は毎フレーム書き直す) からである。
+        case filter
         /// 図形・絵・背景を置いた ([#1672])。**シーンの記述ではない** — 置いたものは、持ち越しを
         /// 約束する区間 (本体の `setup()` と止まっている間のコールバック・描き場所の
         /// `beginDraw()`〜`endDraw()`) ならフレームの外でも置ける。断るのはその外だけなので、
@@ -83,6 +88,7 @@ extension Canvas {
             case .style: subject = "Pushing and popping style only works inside a frame"
             case .clip: subject = "The clip is written again every frame"
             case .effects: subject = "Effects are written again every frame"
+            case .filter: subject = "filter() applies to the picture drawn so far, inside a frame"
             case .light: subject = "Lights are placed again every frame"
             case .surroundings: subject = "The surroundings are placed again every frame"
             case .shadow: subject = "Shadows are written again every frame"
@@ -110,6 +116,7 @@ extension Canvas {
             case .style: .styleOutsideFrame
             case .clip: .clipOutsideFrame
             case .effects: .effectsOutsideFrame
+            case .filter: .filterOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -149,6 +156,10 @@ extension Canvas {
             case .effects:
                 "Effects are written again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .filter:
+                "filter() applies to the picture drawn so far, so call it in setup(), draw() or an "
+                    + "input callback, or between beginDraw() and endDraw() on a drawing target. This "
+                    + "was called outside all of them, so it belongs to no frame, and was ignored"
             case .light:
                 "Lights are placed again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"

@@ -64,80 +64,95 @@ extension Canvas {
     /// ``effects(_:)`` とは違い、フレームの終わりを待たない。**呼んだ後に描くものには掛からず、掛けた絵は
     /// 次のフレームへ持ち越す** (効果を通す前の絵に戻さない)。
     ///
+    /// **寿命は「置いたもの」の側である** (図形・絵・背景・画素の書き込みと同じ・ADR-0021 決定 4 の追補
+    /// (2026-09-27))。掛けた絵が次のフレームへ残るので、シーンの記述 (`effects()`) のようにフレームの中
+    /// だけには限らず、持ち越しを約束する区間 — 本体の `setup()` と止まっている間のコールバック・描き場所の
+    /// `beginDraw()`〜`endDraw()` — でも掛けられる。Processing の定番 (`setup()` で絵を置いて `filter(BLUR)`、
+    /// `noLoop()`) が書ける。区間の外と、形の組み立ての中では 1 度言って何もしない。
+    ///
     /// 呼んだ所は途中の描き切り (区切り) になる (``loadPixels()`` と同じ・ADR-0021 決定 3)。溜めた図形を
     /// 描き切ってから、描く先を入りとして効果の段を通し、通した絵を描く先へ書き戻す。書き戻しは全面の
-    /// 写し 1 回である。効果を通せなかったときは、描く先はそのままで、理由を 1 度知らせる。
+    /// 写し 1 回である。**止まっている間に、効果を通した前のフレームの絵が描く先に残っているときは、
+    /// 次のフレームの入りになる効果を通す前の絵 (控え) にも同じ並びを掛ける** (``changesGoIntoCarry``・
+    /// [#1524])。画面に出る絵と次のフレームの入りがずれない。効果を通せなかったときは、描く先はそのままで、
+    /// 理由を 1 度知らせる。
     ///
-    /// 断り方は ``effects(_:)`` と同じ — フレームの外・形の組み立ての中では 1 度言って何もしない。
+    /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     public func filter(_ effects: [Effect]) {
-        guard admits(.effects) else { return }
+        guard admitsFilter() else { return }
         let accepted = acceptedEffects(effects, calledBy: "filter")
         guard !accepted.isEmpty else { return }
         do {
             try applyFilter(accepted)
         } catch {
             warnOnce(
-                .effectFailed,
+                .filterFailed,
                 "Could not run filter(): \(error.headline). The picture stays as it was before it")
         }
     }
 
+    /// ``filter(_:)`` を受けてよいか。**持ち越しを約束する区間かフレームの中**で、形の組み立ての中ではない。
+    ///
+    /// 断るときは 1 度だけ理由を言う。区間の外は ``OutsideFrame/filter`` (置く口と同じ区間の言い方)、
+    /// 組み立ての中は ``InsideShape/filter``。見るのは ``writesToSurface`` で、``isDrawing`` ではない —
+    /// 掛けた絵は残るので、置いたものと同じ区間で許す (画素を書く口 ``admitsPixelWrite()`` と同じ形)。
+    func admitsFilter() -> Bool {
+        guard writesToSurface else {
+            warnOutsideFrame(.filter)
+            return false
+        }
+        // 描き切ってから掛けるので、組み立ての中で通すと溜め場を描き切って組み立ての区間を壊す
+        guard !recordingShape else {
+            warnInsideShape(.filter)
+            return false
+        }
+        return true
+    }
+
     /// ``filter(_:)`` の本体。描き切ってから、段を描く先 → 中間の絵と通し、最後の絵を描く先へ写す。
     ///
-    /// **効果の控え (``EffectPipeline/carry()``) は使わない。** 控えは「効果を通す前の絵」を次のフレームの
+    /// **効果の控え (``EffectPipeline/carry()``) は取り替えない。** 控えは「効果を通す前の絵」を次のフレームの
     /// 入りに残すための面で、掛けた絵を持ち越すこの口とは役割が逆になる。取り替えず、中間の絵を経て写す。
+    /// 止まっている間に控えが生きているとき (``changesGoIntoCarry``) は、控えにも同じ並びを掛けて写す。
     func applyFilter(_ effects: [Effect]) throws(RenderFailure) {
         let passes = effects.flatMap { $0.passes(drawnPerOutput: effectRadiusScale) }
         guard !passes.isEmpty else { return }
         // 途中の描き切り。効果は掛けない (フレームの終わりの `effects(_:)` が掛ける分は、まだ溜めたまま)
         try flush(applyingEffects: false)
         let pipeline = try effectPipeline()
+        // 掛ける面。**描き切りの後で見る** — フレームの中の最初の描き切りは控えを描く先へ戻して印を下ろし、
+        // 止まっている間の描き切りは控えにも図形を描いて印を残す
+        var surfaces: [any EffectSurface] = [target]
+        if changesGoIntoCarry, let carry = pipeline.existingCarry { surfaces.append(carry) }
         // 描く先を書き換える口は、書く前に置いた側へ写させる (#1942)
         settlePlacersBeforeChange()
         try frameRing.advance()
         stagePassesUsed = 0
-        try pipeline.reservePasses(passes.count)
+        try pipeline.reservePasses(passes.count * surfaces.count)
 
-        var current: any EffectSurface = target
-        var nextSlot = 0
-        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> any EffectSurface {
-            switch slot {
-            case .current: return current
-            case .next: return try pipeline.scratch(at: nextSlot)
-            case .side(let index, let level):
-                return try pipeline.scratch(at: level == 0 ? 2 + index : index, level: level)
-            }
-        }
         let held: [AnyObject] = effects.compactMap {
             if case .custom(let shader) = $0 { shader } else { nil }
         }
-        let submission = try gpu.withCommands { commands throws(RenderFailure) in
-            for pass in passes {
-                let source = try image(of: pass.input)
-                let paired = try image(of: pass.paired ?? pass.input)
-                let destination = try image(of: pass.output)
-                try encode(
-                    pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
-                    into: destination, using: pipeline, in: commands)
-                if pass.output == .next {
-                    current = destination
-                    nextSlot = 1 - nextSlot
+        _ = try gpu.withCommands { commands throws(RenderFailure) in
+            for surface in surfaces {
+                let (result, _) = try encodeEffectPasses(
+                    passes, startingFrom: surface, using: pipeline, in: commands)
+                // 通した絵 (最後の `.next`) を元の面へ写す。段が書き終わるのを待ち、写し終わるのを後の段が待つ
+                guard let encoder = commands.makeComputeCommandEncoder() else {
+                    throw .encoderUnavailable
                 }
+                encoder.barrier(
+                    afterQueueStages: [.fragment, .blit], beforeStages: .blit,
+                    visibilityOptions: .device)
+                encoder.copy(sourceTexture: result.texture, destinationTexture: surface.texture)
+                encoder.barrier(
+                    afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+                    visibilityOptions: .device)
+                encoder.endEncoding()
             }
-            // 通した絵 (最後の `.next`) を描く先へ写す。段が書き終わるのを待ち、写し終わるのを後の段が待つ
-            guard let encoder = commands.makeComputeCommandEncoder() else {
-                throw .encoderUnavailable
-            }
-            encoder.barrier(
-                afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
-            encoder.copy(sourceTexture: current.texture, destinationTexture: target.texture)
-            encoder.barrier(
-                afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
-                visibilityOptions: .device)
-            encoder.endEncoding()
-            return gpu.commit(commands, retaining: held, writing: surfacesWritten(drawing: true, upscaling: false))
+            return gpu.commit(
+                commands, retaining: held, writing: surfacesWritten(drawing: true, upscaling: false))
         }
-        _ = submission
         frameRing.noteSubmission()
         // 描く先が変わった。細かさを下げた面は、出す先が追い付き直す。読んでおいた画素の写しは古い
         if upscaleStage != nil {
@@ -145,6 +160,56 @@ extension Canvas {
             placingCatchUpDeferred = false
         }
         hasLoadedPixels = false
+    }
+
+    /// 段の並びを `start` の絵から順に積む。**フレームの終わりの ``encodeEffects(into:)`` と
+    /// ``applyFilter(_:)`` が同じ 1 本を通る** — 中間の絵の振り分けと往復の進め方を写さない。
+    ///
+    /// - Parameters:
+    ///   - start: 入りの絵。最初の段はここから読む。
+    ///   - lastOutput: 渡すと、最後の `.next` の段がここへ直接書く (``encodeEffects(into:)`` が出す面を
+    ///     渡す。入りの絵は描く先なので、読んでいる面へ書くことにはならない・#755)。渡さなければ中間の絵に書く。
+    /// - Returns: 最後に書いた絵と、`lastOutput` へ書いたか。段が `.next` に書かなければ、最後の絵は `start`。
+    func encodeEffectPasses(
+        _ passes: [EffectPass], startingFrom start: any EffectSurface,
+        lastOutput: (any EffectSurface)? = nil,
+        using pipeline: EffectPipeline, in commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) -> (current: any EffectSurface, wroteLastOutput: Bool) {
+        /// いまの絵。**最初は入りの絵** — 控えへ写さずそのまま読む (#2388)。
+        var current = start
+        var nextSlot = 0
+        var wroteLastOutput = false
+
+        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> any EffectSurface {
+            switch slot {
+            case .current: return current
+            case .next: return try pipeline.scratch(at: nextSlot)
+            // 全解像度の脇は往復の 2 枚の後ろに置く。縮めた絵は別の列なので先頭から
+            case .side(let index, let level):
+                return try pipeline.scratch(at: level == 0 ? 2 + index : index, level: level)
+            }
+        }
+
+        for (position, pass) in passes.enumerated() {
+            let source = try image(of: pass.input)
+            let paired = try image(of: pass.paired ?? pass.input)
+            // **最後の段は出す面へ直接書く** (#755)。入りの絵は描く先なので、1 段だけの
+            // 並びやにじみ単独の合成のように入りの絵を読む段でも、読んでいる面へ書く
+            // ことにはならない (同じ面を読みながら描くのは Metal では未定義で、かつては
+            // その並びだけ控えへ書いてから写し戻していた)。書いた絵が次のフレームの
+            // 入りにならないのは、描く先と取り替わった控えから戻すため (#1469)
+            let isLast = lastOutput != nil && position == passes.count - 1 && pass.output == .next
+            let destination = isLast ? lastOutput! : try image(of: pass.output)
+            try encode(
+                pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
+                into: destination, using: pipeline, in: commands)
+            if pass.output == .next {
+                current = destination
+                nextSlot = 1 - nextSlot
+                wroteLastOutput = isLast
+            }
+        }
+        return (current, wroteLastOutput)
     }
 
     /// 効果を通した絵の出す面 (``EffectPipeline/carry(startingTransparent:)``) を、組み立てに入る前に、塗って
@@ -278,41 +343,10 @@ extension Canvas {
         /// 出す面。**最後の段が書く先で、描く先とは別の面** — 入りの絵を読みながら同じ面へ書く
         /// ことにならない (同じ面を読みながら描くのは Metal では未定義)。
         let output = try pipeline.carry()
-
-        /// いまの絵。**最初は描く先** — 入りの絵はそのまま描く先から読む (控えへ写さない・#2388)。
-        var current: any EffectSurface = target
-        var nextSlot = 0
-        var wroteOutput = false
-
-        func image(of slot: EffectPass.Slot) throws(RenderFailure) -> any EffectSurface {
-            switch slot {
-            case .current: return current
-            case .next: return try pipeline.scratch(at: nextSlot)
-            // 全解像度の脇は往復の 2 枚の後ろに置く。縮めた絵は別の列なので先頭から
-            case .side(let index, let level):
-                return try pipeline.scratch(at: level == 0 ? 2 + index : index, level: level)
-            }
-        }
-
-        for (position, pass) in passes.enumerated() {
-            let source = try image(of: pass.input)
-            let paired = try image(of: pass.paired ?? pass.input)
-            // **最後の段は出す面へ直接書く** (#755)。入りの絵は描く先なので、1 段だけの
-            // 並びやにじみ単独の合成のように入りの絵を読む段でも、読んでいる面へ書く
-            // ことにはならない (同じ面を読みながら描くのは Metal では未定義で、かつては
-            // その並びだけ控えへ書いてから写し戻していた)。書いた絵が次のフレームの
-            // 入りにならないのは、描く先と取り替わった控えから戻すため (#1469)
-            let isLast = position == passes.count - 1 && pass.output == .next
-            let destination = isLast ? output : try image(of: pass.output)
-            try encode(
-                pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
-                into: destination, using: pipeline, in: commands)
-            if pass.output == .next {
-                current = destination
-                nextSlot = 1 - nextSlot
-                wroteOutput = isLast
-            }
-        }
+        // 段は共通の 1 本 (``encodeEffectPasses(_:startingFrom:lastOutput:using:in:)``)。入りの絵は描く先で、
+        // 控えへ写さずそのまま読む (#2388)
+        let (_, wroteOutput) = try encodeEffectPasses(
+            passes, startingFrom: target, lastOutput: output, using: pipeline, in: commands)
 
         // **出す面へ書いたら、描く先と取り替える。** 後の段 (拡大・読み戻し) は描く先を読むので、
         // ここで取り替えてから積む。途中で失敗すればここへ来ない
