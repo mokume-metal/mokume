@@ -366,6 +366,21 @@ struct ObservationCopyTests {
         #expect(FileManager.default.fileExists(atPath: mine.path))
     }
 
+    /// 道具の束を作るたびに一時の場所の全体を一覧すると、溜まった数万の項目を検査のたびになめて、
+    /// 無関係な検査が桁違いに遅くなる ([#3131](https://github.com/mokume-metal/mokume/pull/3131))。
+    /// 掃くのは窓口が立つときだけ (`MCPCommand.run`) で、置き場を作るだけでは何も消さない。
+    @Test("置き場を作るだけでは、一時の場所を掃かない")
+    func makingTheRootDoesNotSweep() throws {
+        // 走っているはずのない pid (macOS の pid は 99999 まで)
+        let stale = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(ObservationCopies.prefix)4000003-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stale) }
+        _ = ObservationCopies()
+        _ = Tools(facets: Facets(directory: stale.appendingPathComponent("facets")))
+        #expect(FileManager.default.fileExists(atPath: stale.path), "作るたびに一時の場所を掃いた")
+    }
+
     @Test("既定の置き場の名前は持ち主の pid を持つ")
     func theDefaultRootNamesItsOwner() {
         let root = ObservationCopies().root

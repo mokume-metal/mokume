@@ -44,8 +44,14 @@ final class ObservationCopies {
     /// 古い順の、写しを置いた識別子と、その枚数。
     private var order: [(id: String, pictures: Int)] = []
 
-    /// - Parameter root: 置き場。**渡さなければ、一時の場所に pid 入りの名前で作り**、持ち主が居ない
-    ///   古い置き場を掃く。渡された置き場 (検査) は掃かない。
+    /// - Parameter root: 置き場。渡さなければ、一時の場所に pid 入りの名前で作る。
+    ///
+    /// **作るだけで、古い置き場は掃かない。** 掃く (``sweepStale(in:isAlive:)``) のは一時の場所の
+    /// 全体を一覧する仕事で、窓口が立つときに 1 度だけ行えばよい (``MCPCommand/run(_:serving:)``)。
+    /// ここで掃くと、道具の束 (``Tools``) を作るたびに一覧が走る — 検査は束を何百と作るので、
+    /// 一時の場所に溜まった数万の項目を毎回なめて、無関係な検査まで桁違いに遅くなった ([#3131])。
+    ///
+    /// [#3131]: https://github.com/mokume-metal/mokume/pull/3131
     init(
         root: URL? = nil, keep: Int = ObservationCopies.defaultKeep,
         maxPictures: Int = ObservationCopies.defaultMaxPictures
@@ -53,9 +59,7 @@ final class ObservationCopies {
         if let root {
             self.root = root
         } else {
-            let temporary = FileManager.default.temporaryDirectory
-            Self.sweepStale(in: temporary)
-            self.root = temporary.appendingPathComponent(
+            self.root = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "\(Self.prefix)\(getpid())-\(UUID().uuidString.lowercased())", isDirectory: true)
         }
         self.keep = max(1, keep)
