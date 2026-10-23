@@ -394,7 +394,11 @@ struct UDPPortTests {
         var received = await collect(receiver, count: 1, log: log)
         sender.send("")
         received += await collect(receiver, count: 1, log: log)
-        #expect(await until { source.tally.ended >= 1 })
+        try await requireWait(
+            "受け口が流れの終わりを数えなかった", detail: { "終わりの数: \(source.tally.ended)" }
+        ) {
+            source.tally.ended >= 1
+        }
         sender.send("y")
         received += await collect(receiver, count: 1, log: log)
         try await requireReceived(
