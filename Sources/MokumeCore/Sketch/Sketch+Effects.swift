@@ -255,6 +255,7 @@ extension SketchPart {
     /// の側にある** (`effects()` のようにフレームの中だけではない)。`draw()` の中のほか、`setup()` と
     /// 止まっている間 (``noLoop()``) の入力のコールバックでも掛けられる:
     ///
+    /// <!-- example: 文脈 var photo: Image! -->
     /// ```swift
     /// func setup() {
     ///     image(photo, 0, 0)
