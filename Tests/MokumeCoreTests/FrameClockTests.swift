@@ -145,6 +145,77 @@ struct FrameClockTests {
         #expect(timing.deltaTime == Float(step))
     }
 
+    /// **#2413 の約束は、予定の時刻が `setup()` の前に決まっていても守る** ([#2390])。窓の経路では、予定の時刻は
+    /// コールバックの時点で決まり、`setup()` はその後に走る。時計を作ってから最初の枚までに 5 秒かかり、
+    /// 予定の時刻がその最中に過ぎていても、2 枚目の経過に 5 秒が戻らない。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("最初の枚の予定の時刻が、起点を据える時点で過ぎていても、2 枚目の経過に過ぎたぶんが戻らない")
+    func aStaleFirstDisplayTimeDoesNotLeakIntoTheSecondFrame() {
+        var now = 100.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        // 予定の時刻 (100 + 1 刻み) は、`setup()` の 2 秒の間に過ぎた
+        now = 102
+        timing.advance(displayTime: 100 + step)
+        #expect(timing.time == 0)
+        #expect(timing.deltaTime == Float(step))
+        // 2 枚目は 102.005 のコールバックで、予定の時刻は次の刻みの 1 つ先
+        now = 102.005
+        timing.advance(displayTime: 102 + 2 * step)
+        #expect(abs(timing.time - Float(2 * step)) < 1e-5, "time が \(timing.time)")
+        #expect(abs(timing.deltaTime - Float(2 * step)) < 1e-5, "deltaTime が \(timing.deltaTime)")
+    }
+
+    /// **外から止めて再開した後の最初の経過も、予定の時刻の軸で 1 フレームぶんに収まる** ([#2390])。
+    /// 起点を現在時刻に据えると、次の枚の予定の時刻 (現在時刻より約 1 刻み先) との差が、
+    /// 1〜2 刻みぶんになる。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示の予定の時刻で進めている最中に止めて再開しても、再開後の最初の経過は 1 フレームぶんに収まる")
+    func resumingWhileAdvancingByTheDisplayTimeKeepsTheFirstStepWithinOneFrame() {
+        var now = 0.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        // 表示のリフレッシュは、コールバックの 1 刻み先を予定の時刻として渡す
+        for index in 0..<5 {
+            now = 1000 + Double(index) * step
+            timing.advance(displayTime: now + step)
+        }
+        let before = timing.time
+        // 10 秒止めて再開する。次のコールバックは、再開から 4 ms 後
+        now = 1010
+        timing.resync()
+        now = 1010.004
+        timing.advance(displayTime: now + step)
+        #expect(abs(timing.deltaTime - 0.004) < 1e-5, "再開後の最初の経過が \(timing.deltaTime)")
+        #expect(timing.deltaTime <= Float(step))
+        // 止めていた間も `time` は実時間のまま進む (戻らない)
+        #expect(timing.time > before + 9)
+
+        // 陰性対照ではなく、その次の枚は表示の刻みの間隔に戻る
+        now += step
+        timing.advance(displayTime: now + step)
+        #expect(abs(timing.deltaTime - Float(step)) < 1e-5)
+    }
+
+    /// 再開の起点は前の枚の予定の時刻より前へ戻らない ([#2390])。戻すと、前の枚の予定の時刻から再開までの
+    /// 間が、次の経過に入る。
+    @Test("再開が前の枚の予定の時刻より前に来ても、起点はそれより前へ戻らず、time は後戻りしない")
+    func resumingNeverMovesTheOriginBeforeThePreviousDisplayTime() {
+        var now = 0.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        now = 500
+        timing.advance(displayTime: now + step)
+        // 直後 (予定の時刻に届く前) に止めて再開する
+        now = 500 + step * 0.2
+        timing.resync()
+        let reached = timing.time
+        now = 500 + step * 0.4
+        timing.advance(displayTime: now + step)
+        #expect(timing.time >= reached)
+        // 経過は、前の枚の予定の時刻から次の予定の時刻まで以上にならない (戻していれば 0.2 刻みぶん余計)
+        #expect(timing.deltaTime <= Float(step) + 1e-6, "deltaTime が \(timing.deltaTime)")
+    }
+
     @Test("フレームの時計は、表示の予定の時刻を読まない")
     func theFrameClockIgnoresTheDisplayTime() {
         let plain = FrameTiming(clock: .frameIndex(frameRate: 60), frameRate: 60, now: { 0 })
