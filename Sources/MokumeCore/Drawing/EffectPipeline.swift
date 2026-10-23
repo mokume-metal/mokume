@@ -125,10 +125,17 @@ final class EffectPipeline {
     /// 効果を通す前の絵の控え ([#1469])。**効果を頼まれてはじめて作り、使い回す**
     /// ([ADR-0023] 決定 5)。
     ///
-    /// 効果の並びはこれを入りの絵として読み、最後の段が描く先へ効果を通した絵を書く。
-    /// 次のフレームの入りは、ここから描く先へ戻した絵になる (``Canvas`` の描き切り)。
+    /// 効果の並びは描く先を入りの絵として読み、最後の段がこれへ効果を通した絵を書く。書けたら、描く先と
+    /// **面を取り替える** (``Canvas/exchangeTargetWithCarry()``・[#2388]) — 取り替えた後の描く先が効果を
+    /// 通した絵で、これには効果を通す前の絵が残る。次のフレームの入りは、これを描く先へ戻した絵になる
+    /// (``Canvas`` の描き切りが、もう一度取り替える)。
+    ///
+    /// **面は描く先と入れ替わるので、「控えの面」は固定していない。** 面を持ち歩く側は、控えの面を値で
+    /// 写し取らない (``HeldTexture``・``RenderTarget/exchangePartner``)。
     ///
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     private var carryStorage: StageImage?
     /// 控えを作った回数。**効果を頼まない面では 0 のまま**であることを検査が見る — 細かさを
     /// 下げた面は拡大のためにこのパイプラインが立つので、パイプラインの有無では見られない。
@@ -354,12 +361,18 @@ final class EffectPipeline {
 
     /// 効果を通す前の絵の控え。無ければ作る。
     ///
-    /// 大きさは描く細かさ (中間の絵と同じ)。塗っておかない — 読まれる前に必ず描く先から
-    /// 写されるうえ、コマンドを組み立てている最中に作られるので塗れもしない。
-    func carry() throws(RenderFailure) -> StageImage {
+    /// 大きさは描く細かさ (中間の絵と同じ)。**中身は、書かれる前に読まれることがある** — 最初の効果を通す
+    /// フレームの最後の段が書くまで、控えは何も書かれていない。その投入が打ち切られると、取り替えた
+    /// 描く先が (結末が届いて取り替えが戻るまでの間) 書かれていない面を読む (窓・書き出し・同じフレームに
+    /// 置いた面)。**組み立ての外で作れるなら塗って作る** (`startingTransparent`・``Canvas/effects(_:)`` が頼む)
+    /// ので、読んでも透明な黒である。コマンドを組み立てている最中に作るときは塗れない (その分は、打ち切られ
+    /// た最初の効果を通すフレームの間だけ、書かれていない面を読みうる)。
+    ///
+    /// - Parameter startingTransparent: 作るなら、透明な黒に塗って作るか。組み立ての最中は偽にする。
+    func carry(startingTransparent: Bool = false) throws(RenderFailure) -> StageImage {
         if let carryStorage { return carryStorage }
         let made = try StageImage(
-            gpu: gpu, width: width, height: height, startingTransparent: false)
+            gpu: gpu, width: width, height: height, startingTransparent: startingTransparent)
         carryStorage = made
         carriesBuilt += 1
         return made
@@ -399,7 +412,8 @@ final class EffectPipeline {
 
     /// 描く先を変える前の絵の控え。無ければ作る ([#1524])。
     ///
-    /// 大きさと塗らない理由は ``carry()`` と同じ (読まれる前に必ず描く先から写される)。
+    /// 大きさは ``carry()`` と同じ。塗らないのは、読まれる前に必ず描く先から写される (``encodeKeepPicture(into:)``)
+    /// うえ、コマンドを組み立てている最中に作られるので塗れもしないため。
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     func pictureBeforeChange() throws(RenderFailure) -> StageImage {

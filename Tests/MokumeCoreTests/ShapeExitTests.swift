@@ -191,7 +191,7 @@ enum ShapeExit {
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
             "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,
-            "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectOutputsExchanged": count, "effectRestoresExchanged": count, "effectRestoreBarriersEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
             "depthLoadsEncoded": count, "depthStoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
@@ -216,7 +216,7 @@ enum ShapeExit {
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "upscaledBy": flush,
-            "carriedBy": flush,
+            "carriedFlush": flush, "carriedAwaitingOutcome": flush,
             "shadowBake": "影の焼き付けが持ち越す格納 (#2257)。焼いた面・記帳・資源・数えの全部が面と同じだけ生き、組み立ての中の shadows() は断られるので焼き付けは組み立てに関わらない。投入の範囲 (bakedSince・bakedThrough) は描き切りの印と同じく、組み立ての中では動かない",
             "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
             "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
@@ -242,7 +242,7 @@ enum ShapeExit {
             "sweepPolicy": testing, "sharesUnitShapes": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
-            "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
+            "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
             "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
         return restored.map { ($0.0, .restore($0.1)) }
