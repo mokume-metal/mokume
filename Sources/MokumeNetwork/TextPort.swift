@@ -57,7 +57,7 @@ import MokumeDiagnostics
 /// | ``SourceState/unavailable`` | 開く途中か、他のアプリがそのポートを使っている。空けば受け始める |
 /// | ``SourceState/denied`` | macOS がローカルネットワークを拒んでいる |
 /// | ``SourceState/disconnected`` | 受けていたが、失敗した。開き直し続ける (クライアントは、繋がっていたのが切れた。繋ぎ直し続ける) |
-/// | ``SourceState/stopped`` | ``stop()`` した (外した)。足し直せば受け始める |
+/// | ``SourceState/stopped`` | ``stop()`` した (足し直しても戻らない)。ランタイムが外した (``SketchPart/detach(_:)-(Inlet)``) だけなら、足し直せば受け始める |
 ///
 /// 使用中・拒まれた・失敗したときは、1 度だけ診断に出す。
 ///
@@ -102,8 +102,10 @@ public class TextPort: Inlet {
     private let warn: (String) -> Void
     /// 知らせた送れない理由。同じものは 2 度言わない。
     private var told: Set<String> = []
-    /// ``stop()`` した・外された (閉じた) か。足し直す (``open()``) と戻る。
+    /// 外されている (``close()`` の後で、まだ足し直されていない)。足し直す (``open()``) と戻る。
     private(set) var closed = false
+    /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
+    private(set) var stoppedByUser = false
 
     init(
         port: Int?, name: String, source: any MessageSource<String>,
@@ -123,29 +125,38 @@ public class TextPort: Inlet {
     /// 最後に文字列が届いたフレーム。まだ 1 つも届いていなければ `nil`。
     public var lastArrival: Arrival? { input.lastArrival }
 
-    /// 止める。ポートを閉じ、**足し直さない限り**、以後 ``messages`` は空のままで、送っても何も出ない。
+    /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
     ///
-    /// ``SketchPart/detach(_:)-(Inlet)`` と同じ外し方で、ランタイムが外すとき (``SketchPart/detach(_:)-(Inlet)``・
-    /// 走っている実行の終わり) に呼ぶ ``Inlet/close()`` に着く。**外しただけなら、``SketchPart/attach(_:)-(Inlet)`` で
-    /// 足し直せる。** 足し直せばまた受け始め、送れ、``state`` も戻る。実行が終わったものは足し直す先が無い。
+    /// **利用者が止めたものは、足し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で足し直しても、
+    /// 受けも送りもせず、``state`` は ``SourceState/stopped`` のまま (止めたのは利用者の意思なので、足し直しで
+    /// 戻さない)。受け始めるには、新しく作る。
+    ///
+    /// **ランタイムが外した場合は別である。** ``SketchPart/detach(_:)-(Inlet)`` で外しただけ (``stop()`` は呼んで
+    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で足し直せば、また受け始め、送れ、``state`` も戻る。
+    /// 実行が終わったものは足し直す先が無い。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`TCPServer.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
+        stoppedByUser = true
         owner?.detach(self, calledAs: "\(type(of: self)).stop()")
     }
 
     // MARK: - Inlet
 
     public func open() throws {
-        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外していた間に立てた印と、「止まっている」と
-        // 知らせた記憶を戻す。受け口・繋ぎは ``source`` が開き直す
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。利用者が ``stop()`` したものは戻さない。
+        // ランタイムが外しただけなら、外していた間に立てた印と、「止まっている」と知らせた記憶を戻す。
+        // 受け口・繋ぎは ``source`` が開き直す
+        guard !stoppedByUser else { return }
         closed = false
         forget("stopped")
         source.start(into: input)
     }
 
     public func supply() {
+        // 利用者が止めたものは、足し直されても受け口を開いていない。何も取り出さない
+        guard !stoppedByUser else { return }
         source.pump(into: input)
         messages = input.take()
         connected = clients?.clientCount ?? 0
@@ -156,6 +167,8 @@ public class TextPort: Inlet {
         source.stop()
         closeOutbound()
         input.setState(.stopped)
+        // 届いて読まれなかった分は捨てる。足し直した最初の ``supply()`` に、外す前のものを出さない
+        input.discardWaiting()
         messages = []
         connected = 0
     }
@@ -170,7 +183,7 @@ public class TextPort: Inlet {
     /// 繋いでいる相手全員へ配る。止めた後・記録した列・相手が 0 人なら、理由ごとに 1 度だけ
     /// 知らせて何もしない。`kind` は文面の名乗り (`TCP server` など)、`verb` は `written` か `sent`。
     func deliver(_ text: String, by kind: String, verb: String) {
-        guard !closed else {
+        guard !closed, !stoppedByUser else {
             tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
             return
         }
@@ -197,7 +210,7 @@ public class TextPort: Inlet {
     /// 1 度だけ知らせて何もしない。`kind` は文面の名乗り (`TCP client` など)、`target` は繋ぎ先の綴り、
     /// `verb` は `written` か `sent`。
     func sendToServer(_ text: String, by kind: String, target: String, verb: String) {
-        guard !closed else {
+        guard !closed, !stoppedByUser else {
             tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
             return
         }

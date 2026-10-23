@@ -480,6 +480,63 @@ struct OSCPortTests {
         #expect(told.count(containing: "is stopped") == 2)
     }
 
+    @Test("外して足し直した入り口は、外す前に溜まっていたメッセージを出さず、足し直した後に届いたものだけを出す (#3122)")
+    func reopenedPortDoesNotDeliverWhatWaitedBeforeClose() throws {
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000", source: RecordedSource<OSCMessage>(batches: [[]]),
+            outbound: nil, owner: nil)
+        try osc.open()
+        osc.input.send(OSCMessage("/stale", 1))
+        osc.close()
+
+        try osc.open()
+        osc.supply()
+        #expect(osc.messages.isEmpty, "外す前に溜まっていた分は、足し直した最初のフレームに出ない")
+        #expect(osc.latest("/stale") == nil)
+
+        osc.input.send(OSCMessage("/fresh", 2))
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/fresh", 2)])
+    }
+
+    @Test("利用者の stop() の後は、足し直しても受けも送りもしない。ランタイムが外しただけなら、足し直すと戻る (#3122)")
+    func userStopSticksButRuntimeDetachDoesNot() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000",
+            source: RecordedSource<OSCMessage>(batches: [[OSCMessage("/a", 1)]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try osc.open()
+
+        // ランタイムが外しただけ (detach・実行の終わり): 足し直せば戻る
+        osc.close()
+        try osc.open()
+        osc.supply()
+        osc.send("/back", 1)
+        #expect(osc.state == .running)
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+        #expect(recording.sent == [try OSCCodec.encode(OSCMessage("/back", 1))])
+
+        // 利用者の stop(): 足し直しても戻らない
+        osc.stop()
+        osc.close()
+        try osc.open()
+        osc.supply()
+        osc.send("/after-stop", 2)
+        #expect(osc.state == .stopped)
+        #expect(osc.messages.isEmpty)
+        #expect(recording.sent.count == 1)
+        #expect(told.count(containing: "is stopped") == 1)
+
+        // 足し直したまま外し直しても、同じ
+        osc.close()
+        try osc.open()
+        osc.send("/still", 3)
+        #expect(osc.state == .stopped)
+        #expect(recording.sent.count == 1)
+    }
+
     @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
     func injectedMessagesGiveTheSameOutcome() async throws {
         let told = Told()
