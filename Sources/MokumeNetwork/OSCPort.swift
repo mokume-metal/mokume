@@ -225,8 +225,6 @@ public final class OSCPort: Inlet {
     }
 
     public func supply() {
-        // 利用者が止めたものは、足し直されても受け口を開いていない。何も取り出さない
-        guard !stoppedByUser else { return }
         source.pump(into: input)
         messages = input.take()
         for message in messages {

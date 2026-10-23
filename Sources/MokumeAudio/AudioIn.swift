@@ -133,11 +133,6 @@ public final class AudioIn: Inlet {
     }
 
     public func supply() {
-        // 利用者が止めたものは、足し直されても機材を開いていない。新しい音は無く、値は無音のまま
-        guard !stoppedByUser else {
-            isNewFrame = false
-            return
-        }
         source.pump(into: input, at: Double(owner?.time ?? 0))
         if let window = input.take() {
             levels = AudioAnalyzer.shared.analyze(window)

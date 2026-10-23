@@ -108,11 +108,6 @@ public final class Capture: Inlet {
     }
 
     public func supply() {
-        // 利用者が止めたものは、足し直されてもカメラを開いていない。新しい絵は無い
-        guard !stoppedByUser else {
-            isNewFrame = false
-            return
-        }
         source.pump(into: input)
         if let picture = input.take() {
             image.write(mirrored ? picture.horizontallyReflected() : picture)

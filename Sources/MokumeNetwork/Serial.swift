@@ -119,8 +119,6 @@ public final class Serial: Inlet {
     }
 
     public func supply() {
-        // 利用者が止めたものは、足し直されてもポートを開いていない。何も取り出さない
-        guard !stoppedByUser else { return }
         source.pump(into: input)
         lines = input.take()
     }

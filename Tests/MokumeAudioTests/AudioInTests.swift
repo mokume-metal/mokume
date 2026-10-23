@@ -26,6 +26,8 @@ final class UnpluggedAudioSource: AudioSource {
     var sampleRate: Float { 48_000 }
     func start(into input: ExternalInput<[Float]>, at time: Double) { input.setState(.running) }
     func pump(into input: ExternalInput<[Float]>, at time: Double) {
+        // 開いていない (止めた・開き直されていない) 出どころは何も入れない
+        guard input.state == .running else { return }
         pumped += 1
         if pumped > after {
             input.setState(.disconnected)
