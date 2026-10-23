@@ -207,22 +207,16 @@ final class IdleSketch: Sketch {
 struct OSCPortTests {
     /// フレームを回すように取り出しを続け、`count` 個届くまで (か期限まで) 集める。
     ///
-    /// `log` を渡せば、読めた数と待った秒数を数える (読まれなかった回の名乗りの材料 — #3001)。
+    /// 読めた数と待った秒数を `log` に数える (読まれなかった回の名乗りの材料 — #3001)。足りなくても名乗らずに
+    /// 短い列を返すので、`log` は必須で、呼ぶ側が ``requireSent(_:_:log:landing:)`` で名乗る (#3124)。
     private func collect(
         _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, label: String = "送り",
-        log: SendLog? = nil
+        log: SendLog
     ) async -> [OSCMessage] {
-        var received: [OSCMessage] = []
-        let started = Date()
-        _ = await until(seconds) {
+        await collectCounting(count: count, within: seconds, label: label, log: log) {
             osc.supply()
-            received += osc.messages
-            return received.count >= count
+            return osc.messages
         }
-        log?.record(
-            label: label, expected: count, heard: min(received.count, count), missing: nil, replacements: 0,
-            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: seconds)
-        return received
     }
 
     /// 番号を載せた OSC (`address <番号>`) を `count` 個の送り元から 1 通ずつ送り、番号が全部読まれるまで
@@ -1027,8 +1021,7 @@ struct OSCPortTests {
 
         // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
         // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
-        let phantom = await until(1) { osc.input.unreadable > 0 }
-        #expect(!phantom)
+        #expect(await doesNotHappen(within: 1) { osc.input.unreadable > 0 })
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
@@ -1088,8 +1081,10 @@ struct OSCPortTests {
             lateLog.watch("/late", index: index, sender: sender)
             sender.send(try Wire.encoded(OSCMessage("/late", index)))
         }
-        let swept = await until { source.tally.closedIdle > closedWhileCollecting }
-        if !swept {
+        try await requireArrival(
+            "黙った送り元が次の受け入れで閉じられなかった",
+            until: { source.tally.closedIdle > closedWhileCollecting }
+        ) {
             lateLog.record(
                 label: "/late", expected: late.count,
                 heard: min(source.tally.accepted - acceptedAtStart, late.count), missing: nil,
@@ -1104,7 +1099,6 @@ struct OSCPortTests {
                 source.tally.accepted > atLimit, "台帳が目安に届いた後、新しい受け入れが起きなかった — 閉じる契機が来ていない",
                 log: lateLog, osc: osc, port: port, told: told)
         }
-        #expect(swept)
         #expect(source.connectionCount < DatagramListener.connectionLimit)
     }
 

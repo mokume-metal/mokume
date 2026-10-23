@@ -63,7 +63,11 @@ struct DatagramSenderLoopbackTests {
             sender.send([UInt8(index)])
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(await until { refusals(told) >= 1 })
+        try await requireWait(
+            "宛先の拒否が 1 行に届かなかった", detail: { diagnosis(told) }
+        ) {
+            refusals(told) >= 1
+        }
         try await Task.sleep(for: .milliseconds(300))
         #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
     }
@@ -93,7 +97,11 @@ struct DatagramSenderLoopbackTests {
             }
             try await Task.sleep(for: .milliseconds(300))
         }
-        #expect(await until { refusals(told) >= 1 })
+        try await requireWait(
+            "宛先の拒否が 1 行に届かなかった", detail: { diagnosis(told) }
+        ) {
+            refusals(told) >= 1
+        }
         #expect(refusals(told) == 1, "診断: \(diagnosis(told))")
         #expect(told.count(containing: "Operation canceled") == 0, "診断: \(diagnosis(told))")
     }
@@ -119,7 +127,11 @@ struct DatagramSenderLoopbackTests {
             osc.send("/hit", index)
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(await until { refusals(told) >= 1 })
+        try await requireWait(
+            "宛先の拒否が 1 行に届かなかった", detail: { diagnosis(told) }
+        ) {
+            refusals(told) >= 1
+        }
         try await Task.sleep(for: .milliseconds(300))
         #expect(refusals(told) == 1, "OSC の診断: \(diagnosis(told))")
 
@@ -128,7 +140,11 @@ struct DatagramSenderLoopbackTests {
             udp.send("hit \(index)")
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(await until { refusals(told) >= 2 })
+        try await requireWait(
+            "宛先の拒否が 2 行に届かなかった", detail: { diagnosis(told) }
+        ) {
+            refusals(told) >= 2
+        }
         try await Task.sleep(for: .milliseconds(300))
         #expect(refusals(told) == 2, "UDP の診断: \(diagnosis(told))")
     }
@@ -213,18 +229,24 @@ struct DatagramSenderLoopbackTests {
         for index in 0..<2 {
             clock.advance(by: 0.3)
             sender.send(Array("settled \(index)".utf8))
-            let settled = await collect(receiver, count: 1)
+            let settled = try await requireCollected(receiver, count: 1)
             #expect(settled == ["settled \(index)"], "届いた: \(settled)")
         }
         try await Task.sleep(for: .milliseconds(100))
         // 受け手が閉じたら、また 1 行
         receiver.close()
-        #expect(await until { receiver.state == .stopped })
+        try await requireWait("受け手を閉じても stopped にならなかった", detail: { "状態: \(receiver.state.rawValue)" }) {
+            receiver.state == .stopped
+        }
         for index in 0..<10 {
             sender.send(Array("gone \(index)".utf8))
             try await Task.sleep(for: .milliseconds(60))
         }
-        #expect(await until { refusals(told) >= 2 })
+        try await requireWait(
+            "宛先の拒否が 2 行に届かなかった", detail: { diagnosis(told) }
+        ) {
+            refusals(told) >= 2
+        }
         try await Task.sleep(for: .milliseconds(300))
         #expect(refusals(told) == 2, "診断: \(diagnosis(told))")
     }
