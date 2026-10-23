@@ -197,6 +197,9 @@ enum MCPCommand {
         let given = WorkDirectory.given != nil
         // 窓口を立てた場所と、そこがスケッチかも同じく起動の時点で決め、案内が名乗る (#2487)
         let place = InterfacePlace.at(directories.package)
+        // 信号で終わった窓口の観測の写しの置き場を、立てるときに 1 度だけ掃く (一時の場所の一覧は
+        // 重いので、道具の束を作るたびにはしない・#3131)
+        ObservationCopies.sweepStale(in: FileManager.default.temporaryDirectory)
         let server = MCPServer(
             tools: Tools(
                 facets: Facets(

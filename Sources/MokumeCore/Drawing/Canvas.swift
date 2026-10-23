@@ -653,7 +653,7 @@ public final class Canvas {
     /// 組み込みの立体の予算 (``solidCacheBudget``・16 MiB) には 1 つも入らない。共有すると、予算を広げる
     /// か、モデルを常に CPU の帯へ戻すかしかなく、前者は小さな立体の骨まで巻き込んで追い出し合う。
     ///
-    /// **作れなかったことも覚える** (``ModelStrokeBone/refused``)。開いた端を持つ・同じ直線に載る 2 辺が
+    /// **作れなかったことも覚える** (``ModelStrokeBone/refused``)。開いた端を持つ・同じ側へ折り返す 2 辺が
     /// 集まる・予算の半分を超える網は骨を作れず CPU の帯へ戻るが、毎フレーム骨を作りかけて諦めると
     /// 戻った先より遅くなる。重さは小さい固定値で、作れたものの追い出しを妨げない。
     ///
@@ -695,10 +695,10 @@ public final class Canvas {
     /// 光の置き場。
     private let lightStorageBuffer: GrowableBuffer
     /// 列ごとの「光がどこから何個か」の置き場。
-    private let lightingStorage: GrowableBuffer
+    let lightingStorage: GrowableBuffer
 
     /// 列ごとの材質の置き場。列 1 つにつき 1 区画。
-    private let materialStorage: GrowableBuffer
+    let materialStorage: GrowableBuffer
 
     /// いま置かれている周囲。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -707,7 +707,7 @@ public final class Canvas {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     var activeSurroundings: Surroundings?
     /// 列ごとの周囲の置き場。列 1 つにつき 1 区画。
-    private let surroundingsStorage: GrowableBuffer
+    let surroundingsStorage: GrowableBuffer
 
     /// 影を落とすか。**フレームを越えない** ([ADR-0021] 決定 4)。
     ///
@@ -776,6 +776,11 @@ public final class Canvas {
             guard !readers.contains(where: { $0.canvas === canvas }) else { return }
             readers.append(WeakCanvas(canvas: canvas))
         }
+
+        /// 借りていた面を載せ替えで外す (``Canvas/borrowSketchState(from:)``)。
+        func remove(reader canvas: Canvas) {
+            readers.removeAll { $0.canvas == nil || $0.canvas === canvas }
+        }
     }
 
     /// 揺らぎの種と細かさを書き換える。**置いた図形は、置いた時点の種で引く** ([#1503])。
@@ -814,6 +819,69 @@ public final class Canvas {
         }
         noiseSettings = next
     }
+
+    /// ``SketchPart/draw(into:_:)`` の間だけ、スケッチの置き場 (揺らぎの種と細かさ・時刻と刻み) を
+    /// 本体の面 `main` から借りる。**返した閉包を呼ぶと手放す** ([#2454])。
+    ///
+    /// 種はスケッチに 1 つ、時刻と刻みも 1 つである ([#1503]・[#1467])。作った描き場所
+    /// (``createGraphics(_:_:)``) は最初から本体と同じ置き場を指すので、借りるのは**直に作った面**
+    /// (``init(target:gpu:)``) だけで、置き場が同じなら何もしない。借りないと、直に作った面へ向けた閉包の
+    /// 中で `noise()` が本体と別の種を読み、粒は 1/60 秒の刻みで進み、`wander` は面の描き歴で揺れる。
+    ///
+    /// **欄を 1 つずつ写さず、置き場の参照ごと取り替える。** 繋ぎ方は ``createGraphics(_:_:)`` と同じ 1 本
+    /// (``bind(_:)``) で、置き場を読む面・使う描き場所の登録まで通る。欄を足したときに写し漏らさないためと、
+    /// 揺らぎの種を書き換える口 (``changeNoise(_:)``) が、借りている間の面の開いた列も閉じるためである。
+    ///
+    /// 取り替える前に、揺らぎを読みうる開いた列を閉じる (``changeNoise(_:)`` と同じ作法)。閉じた列は
+    /// 取り替える前の設定を持ち歩くので、置いた図形は置いた時点の種で引かれる。手放すときも同じ。
+    ///
+    /// **時刻の置き場は、手放す時点で面のフレームが開いていれば、そのフレームが閉じるまで借りたままにする**
+    /// (``sketchTimeLease``)。時刻は列ごとに持たず、描き切りの時点で 1 つ読む (``Uniforms/time``・効果の
+    /// ``Effect`` の枠) ので、閉包の中で置いた図形を、閉包の外で開いたフレームの描き切りが面の自分の時刻で
+    /// 描くことになる。揺らぎの種は列が持ち歩くので閉じれば足りるが、時刻は閉じても足りない。
+    /// 閉じるのは ``leaveFrame()``。
+    ///
+    /// 面が ``beginDraw()`` で開いたまま借りたときは、そのフレームを借りた時点の本体のフレームに属するものと
+    /// して続ける (``beginDrawFrame`` の番号を借りた置き場の数え方へ移す)。数え方が置き場ごとに違うので、
+    /// 移さないと境目を越えたと見て捨ててしまう。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    func borrowSketchState(from main: Canvas) -> () -> Void {
+        let (ownTimebase, ownStore) = (timebase, noiseStore)
+        let borrowsTime = ownTimebase !== main.timebase
+        let borrowsNoise = ownStore !== main.noiseStore
+        guard borrowsTime || borrowsNoise else { return {} }
+        // 種を取り替える前に、揺らぎを読みうる開いた列を閉じる (閉じた列は取り替える前の種を持ち歩く)
+        if borrowsNoise { closeRunBeforeSwapping(to: main.noiseStore) }
+        main.bind(self)
+        if borrowsTime, isDrawing, beginDrawFrame != nil { beginDrawFrame = timebase.frameForOpening }
+        let (mainTimebase, mainStore) = (main.timebase, main.noiseStore)
+        return { [unowned self] in
+            if borrowsNoise {
+                closeRunBeforeSwapping(to: ownStore)
+                noiseStore = ownStore
+                mainStore.remove(reader: self)
+            }
+            guard borrowsTime else { return }
+            let release = { [unowned self] in
+                timebase = ownTimebase
+                mainTimebase.remove(layer: self)
+            }
+            // フレームが開いたまま抜けるなら、そのフレームの描き切りまで借りておく
+            if isDrawing { sketchTimeLease = release } else { release() }
+        }
+    }
+
+    /// 揺らぎの置き場を `store` に替えるとき、設定が変わるなら先に、読みうる開いた列を閉じる。
+    private func closeRunBeforeSwapping(to store: NoiseStore) {
+        if store.settings != noiseSettings, !isFlushing, openRunReadsNoise { closeBatch() }
+    }
+
+    /// ``borrowSketchState(from:)`` が借りた時刻の置き場を、面のフレームが開いたまま閉包を抜けたときに
+    /// 手放す処理。``leaveFrame()`` が呼んで下ろす。**境目では常に既定** (フレームを出る道が下ろす)。
+    var sketchTimeLease: (() -> Void)?
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
@@ -1941,6 +2009,13 @@ public final class Canvas {
         /// どちらの並びから描くか。**区間が持っているものをそのまま読む** —
         /// 保持した形が持ち歩くのと同じ値なので、2 つ持つと食い違いうる
         var source: VertexSource { run.source }
+
+        /// 列ごとの値・光・材質・周囲の区画 (``Canvas/detailRegionCount``) を読む列か。**基本図形は
+        /// 行列しか読まない** ([#2364])。読まない列には区画を取らない ([#3083])。
+        ///
+        /// [#2364]: https://github.com/mokume-metal/mokume/issues/2364
+        /// [#3083]: https://github.com/mokume-metal/mokume/issues/3083
+        var readsDetail: Bool { source != .form }
     }
 
     /// 列がどちらの並びから描かれるか。
@@ -1965,9 +2040,9 @@ public final class Canvas {
     /// フレームを通して変わらない値 (時刻・面の大きさ) の置き場。
     private let uniformsStorage: GrowableBuffer
     /// 列ごとの、利用者が渡した値の置き場。列 1 つにつき 1 区画。
-    private let valuesStorage: GrowableBuffer
+    let valuesStorage: GrowableBuffer
     /// 列ごとの、描画先の座標へ落とす行列の置き場。列 1 つにつき 1 区画。
-    private let matrixStorage: GrowableBuffer
+    let matrixStorage: GrowableBuffer
     /// 計算の頼みごとの、利用者が渡した値の置き場。頼み 1 つにつき 1 区画。
     ///
     /// **塗りの列と同じ形で持つ** ([#932])。値を計算の側に 1 本だけ持たせると、溜めた
@@ -2086,6 +2161,11 @@ public final class Canvas {
             layers.removeAll { $0.canvas == nil }
             guard !layers.contains(where: { $0.canvas === canvas }) else { return }
             layers.append(WeakCanvas(canvas: canvas))
+        }
+
+        /// 借りていた面を手放すときに外す (``Canvas/borrowSketchState(from:)``)。
+        func remove(layer canvas: Canvas) {
+            layers.removeAll { $0.canvas == nil || $0.canvas === canvas }
         }
     }
 
@@ -3001,7 +3081,7 @@ public final class Canvas {
     ///   描き始め直す
     ///
     /// 捨てたフレームで書いた変換・溜めた図形・開いた形・書いた画素 (``set(_:_:_:)``・``pixels``)・
-    /// 頼んだ計算は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)``) も落とす・[#1678])。
+    /// 頼んだ計算は、次のフレームへ持ち込まない (積んだ力 (``force(_:_:)-(_,[Force])``) も落とす・[#1678])。
     /// ただし、次の 3 つは取り消せない。どれも**境目を越える前** (同じ本体のフレームの中) に
     /// 起きたもので、越えた後の読みはここに入らない。止まっている間のコールバックの中の読みも、
     /// 止まる前のフレームから見れば越えた後である (区間の入口で捨ててある)。逆に、本体のフレームが
@@ -3531,6 +3611,12 @@ public final class Canvas {
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         hasLoadedPixels = false
+        // 閉包を抜けた後も開いていたフレームのために借りたままにした時刻の置き場は、描き切りが済んだ
+        // ここで手放す (``borrowSketchState(from:)``)。描き切りは時刻を読むので、手放すのはその後
+        if let release = sketchTimeLease {
+            sketchTimeLease = nil
+            release()
+        }
     }
 
     /// フレームの終わりに、**シーンの記述と開いたままの操作を既定へ戻す。** 溜めたものには
@@ -4610,6 +4696,8 @@ public final class Canvas {
             }
         }
 
+        // 値・光・材質・周囲の区画は、基本図形を飛ばして詰めて番号を振る (``detailRegionCount``)
+        var detailIndex = 0
         for (index, batch) in batches.enumerated() {
             let run = batch.run
             if batch.replacesSurface != pinnedFar {
@@ -4683,18 +4771,15 @@ public final class Canvas {
             // (`formVertexMain`・`mokume_formFragment*`)。値・光・材質・周囲・字の焼き場・数の並び・
             // 面は読まないので、束ねない ([#2364])。引数表の中身は前の列のままだが、読まない
             // 口は何が入っていても走りに効かない
-            if batch.source != .form {
+            if batch.readsDetail {
+                let detailOffset = UInt64(detailIndex * Self.valuesStride)
+                detailIndex += 1
+                bind(perBatch.values.gpuAddress + detailOffset, ShapePipeline.valuesBufferIndex)
+                bind(perBatch.lighting.gpuAddress + detailOffset, ShapePipeline.lightingBufferIndex)
                 bind(
-                    perBatch.values.gpuAddress + UInt64(index * Self.valuesStride),
-                    ShapePipeline.valuesBufferIndex)
+                    perBatch.materials.gpuAddress + detailOffset, ShapePipeline.materialBufferIndex)
                 bind(
-                    perBatch.lighting.gpuAddress + UInt64(index * Self.valuesStride),
-                    ShapePipeline.lightingBufferIndex)
-                bind(
-                    perBatch.materials.gpuAddress + UInt64(index * Self.valuesStride),
-                    ShapePipeline.materialBufferIndex)
-                bind(
-                    perBatch.surroundings.gpuAddress + UInt64(index * Self.valuesStride),
+                    perBatch.surroundings.gpuAddress + detailOffset,
                     ShapePipeline.surroundingsBufferIndex)
                 // **字の焼き場を読む列かを渡す。** 置き換える列はこれを見て、字形の外の余白を
                 // 捨てる (#1557)。読まない断片にも束ねておく (口を空けたまま走らせない)。
@@ -4966,6 +5051,21 @@ public final class Canvas {
         let instances: any MTLBuffer
     }
 
+    /// 溜めた列のうち、光・材質・周囲・値の区画を読む列の数 (``Batch/readsDetail``)。
+    ///
+    /// **基本図形の列は行列しか読まない** ([#2364]) ので、4 つの置き場は基本図形を飛ばして詰め、
+    /// この数だけ要求する ([#3083])。基本図形が多いほど、使わない区画の分の容量を取らずに済む。
+    /// 画面と影の焼き付けは同じ数を要求する (``GrowableBuffer/buffer(holding:)`` の順序の規律)。
+    ///
+    /// [#2364]: https://github.com/mokume-metal/mokume/issues/2364
+    /// [#3083]: https://github.com/mokume-metal/mokume/issues/3083
+    private var detailRegionCount: Int {
+        var count = 0
+        // 列を値で取り出さず添字で読む — 列は参照を抱える大きな値で、写すと数えるだけの走査が重くなる
+        for index in batches.indices where batches[index].readsDetail { count += 1 }
+        return count
+    }
+
     /// 列ごとの値 (揺らぎを含む) と、フレームに 1 つの値 (時刻・面の大きさ・影) を置く。
     ///
     /// - Parameter drawingInFrame: フレームの描き切りか。時間方向の揺らしを選ぶ
@@ -4978,16 +5078,18 @@ public final class Canvas {
         // 置き場は書く前に全部取る。**列の走査は 1 本**で、`Batch` を写すのは列ごとに 1 回で済む
         // ([#2364])。列が閉じた時点の値がそのまま入り、揺らしだけは描き切りの時点で足す — 止まって
         // いる間に閉じた列も、描くのがどの描き切りかで揺らしが決まる (``jitter(drawingInFrame:)``)
+        let detailCount = detailRegionCount
         let matrices = try matrixStorage.buffer(holding: batches.count)
-        let lighting = try lightingStorage.buffer(holding: batches.count)
-        let materials = try materialStorage.buffer(holding: batches.count)
-        let surroundings = try surroundingsStorage.buffer(holding: batches.count)
-        let values = try valuesStorage.buffer(holding: batches.count)
+        let lighting = try lightingStorage.buffer(holding: detailCount)
+        let materials = try materialStorage.buffer(holding: detailCount)
+        let surroundings = try surroundingsStorage.buffer(holding: detailCount)
+        let values = try valuesStorage.buffer(holding: detailCount)
         let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         let readsCoverage: UInt32 = coverageSpans.isEmpty ? 0 : 1
         let solidStrokeShift = Self.solidStrokeShift(width: width, height: height)
+        var detailIndex = 0
         for (index, batch) in batches.enumerated() {
-            let offset = index * Self.valuesStride
+            let matrixOffset = index * Self.valuesStride
             // 行列のすぐ後ろに、輪郭の頂点が始まる番号を置く。**立体は行列しか
             // 読まない**ので、同じ区画に足しても効かない
             var frame = FlatFrame(
@@ -4995,14 +5097,19 @@ public final class Canvas {
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
                 strokeShift: solidStrokeShift,
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage)
-            matrices.contents().advanced(by: offset)
+            matrices.contents().advanced(by: matrixOffset)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
 
             // **基本図形の頂点も断片も、読むのは `FlatFrame` だけである** (`formVertexMain`・
             // `mokume_formFragment*`)。ほかの欄は書かない — 読まない口は束ねもしない
-            // (``encodeBatches(into:prepared:)``)。区画は列の番号で決まるので、飛ばしても
-            // 後ろの列の位置は動かない
-            if batch.source == .form { continue }
+            // (``encodeBatches(into:prepared:)``)。行列の区画は列の番号で決まるので、飛ばしても
+            // 後ろの列の位置は動かない。ほかの 4 つの区画は、飛ばした列の分を詰める
+            // (``detailRegionCount``・[#3083])
+            //
+            // [#3083]: https://github.com/mokume-metal/mokume/issues/3083
+            guard batch.readsDetail else { continue }
+            let offset = detailIndex * Self.valuesStride
+            detailIndex += 1
 
             // 列ごとの光の区間と揺らぎ。**揺らぎの種と細かさもここで列ごとに届く** — **断片が種を
             // 受け取る**ので、利用者が値として配線しなくても、置いた時点の CPU の `noise()` と
@@ -5067,9 +5174,14 @@ public final class Canvas {
     }
 
     private func uploadBatchValues() throws(RenderFailure) -> any MTLBuffer {
-        let values = try valuesStorage.buffer(holding: batches.count)
-        for (index, batch) in batches.enumerated() {
-            writeValues(of: batch, into: values.contents().advanced(by: index * Self.valuesStride))
+        // **画面と同じ大きさを要求する** (``uploadPerBatch(shadow:drawingInFrame:)``)。区画は基本図形を
+        // 飛ばして詰めた番号で、画面の列と同じ置き場を同じ位置へ書く
+        let values = try valuesStorage.buffer(holding: detailRegionCount)
+        var detailIndex = 0
+        for batch in batches where batch.readsDetail {
+            writeValues(
+                of: batch, into: values.contents().advanced(by: detailIndex * Self.valuesStride))
+            detailIndex += 1
         }
         return values
     }
@@ -5102,7 +5214,11 @@ public final class Canvas {
         let solidIndices: any MTLBuffer
     }
 
-    /// 列ごとの値の置き場。**どれも列の番号 × `valuesStride` で区切って読む。**
+    /// 列ごとの値の置き場。**どれも `valuesStride` で区切って読む。** 行列は列の番号で、
+    /// ほかの 4 つ (光・材質・周囲・値) は基本図形を飛ばして詰めた番号で区切る
+    /// (``detailRegionCount``・[#3083])。
+    ///
+    /// [#3083]: https://github.com/mokume-metal/mokume/issues/3083
     private struct BatchBuffers {
         let matrices: any MTLBuffer
         let lighting: any MTLBuffer
@@ -5477,13 +5593,19 @@ public final class Canvas {
         // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
         // 前後判定が書く) ので、断片段に渡すものが無い
         encoder.setArgumentTable(argumentTable, stages: [.vertex])
-        for (batchIndex, batch) in batches.enumerated() where batch.castsShadow {
+        // 値の区画は基本図形を飛ばして詰めた番号 (``detailRegionCount``)。落とす列は立体か平面で、
+        // 基本図形は影へ焼かない (`Canvas.form` が `castsShadow` を偽にする)
+        var detailIndex = 0
+        for batch in batches where batch.readsDetail {
+            let detailOffset = UInt64(detailIndex * Self.valuesStride)
+            detailIndex += 1
+            guard batch.castsShadow else { continue }
             encodeCaster(
                 batch,
                 from: CasterSource(
                     vertices: solidBuffer.gpuAddress, indices: solidIndexBuffer, indexBase: 0,
                     instances: instanceBuffer.gpuAddress,
-                    values: batchValues.gpuAddress + UInt64(batchIndex * Self.valuesStride)),
+                    values: batchValues.gpuAddress + detailOffset),
                 on: encoder)
         }
         // 持ち越した列は、控えたときに上げた区画を読む (上げ直さない)。面が既に持っていれば焼かない

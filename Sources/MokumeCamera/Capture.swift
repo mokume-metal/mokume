@@ -45,6 +45,8 @@ public final class Capture: Inlet {
     /// 届いた 1 枚の左右を入れ替えるか。機材の道も注入の道も、ここで当てる。
     private let mirrored: Bool
     private weak var owner: (any Sketch)?
+    /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
+    private var stoppedByUser = false
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
     private var openedAt: TimeInterval?
@@ -81,15 +83,26 @@ public final class Capture: Inlet {
 
     /// 止める。カメラを閉じ、以後 ``image`` は変わらない。
     ///
+    /// **利用者が止めたものは、足し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で足し直しても、
+    /// カメラを開かず ``image`` は変わらず、``state`` は ``SourceState/stopped`` のまま (止めたのは利用者の意思なので、
+    /// 足し直しで戻さない)。受け始めるには、新しく作る。
+    ///
+    /// **ランタイムが外した場合は別である。** ``SketchPart/detach(_:)-(Inlet)`` で外しただけ (``stop()`` は呼んで
+    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で足し直せば、カメラを開き直してまた受け取る。実行が終わった
+    /// ものは足し直す先が無い。
+    ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`Capture.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        owner?.detach(self, calledAs: "Capture.stop()")
+        // 印は、外す頼みが実行に届いたときだけ立てる。外で呼んで警告だけ出した回に立てると、走っているカメラが止まる
+        if owner?.detach(self, calledAs: "Capture.stop()") == true { stoppedByUser = true }
     }
 
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。利用者が ``stop()`` したものは開き直さない
+        guard !stoppedByUser else { return }
         openedAt = now()
         source.start(into: input)
     }
@@ -108,6 +121,8 @@ public final class Capture: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった絵は捨てる。足し直した最初の ``supply()`` に、外す前の絵を出さない
+        input.discardWaiting()
     }
 
     public var report: SourceReport? { input.report }

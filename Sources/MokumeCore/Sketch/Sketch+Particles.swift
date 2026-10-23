@@ -441,9 +441,9 @@ extension SketchPart {
         color: LinearRGBA? = nil
     ) {
         guard let runtime = Self.liveRuntime() else { return }
-        runtime.canvas.emit(
+        runtime.activeCanvas.emit(
             particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
-            size: size, color: color, using: &runtime.randomness)
+            size: size, color: color, frame: runtime.frameCount, using: &runtime.randomness)
     }
 
     /// 粒に力を効かせる。

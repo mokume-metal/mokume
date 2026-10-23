@@ -96,7 +96,7 @@ struct TCPServerTests {
         peer.send("0.25\nhit\r\n\n")
         peer.send("0.")
         peer.send("75\n")
-        let received = await collect(server, count: 4)
+        let received = try await requireCollected(server, count: 4)
         #expect(received == ["0.25", "hit", "", "0.75"])
         #expect(server.lastArrival != nil)
         #expect(server.report == SourceReport(name: "tcp :0", state: .running, lastArrival: server.lastArrival))
@@ -115,12 +115,12 @@ struct TCPServerTests {
 
         first.send("0.5")
         first.finish()
-        #expect(await collect(server, count: 1) == ["0.5"])
+        #expect(try await requireCollected(server, count: 1) == ["0.5"])
         try await peers.requireCount(on: server, equals: 1, told: told)
-        #expect(await until { first.closedByPeer })
+        try await requireWait("閉じた相手の繋ぎを、受け口が閉じ返さなかった") { first.closedByPeer }
 
         second.close()
-        #expect(await clients(server, reach: 0))
+        try await peers.requireCount(on: server, equals: 0, told: told)
         #expect(server.state == .running)  // 受け口は開いたまま。次の相手を待つ
     }
 
@@ -138,9 +138,13 @@ struct TCPServerTests {
         peer.send([0x68, 0xFF, 0x0A])  // 'h' と、UTF-8 に現れないバイト
         peer.send([UInt8](repeating: 0x61, count: StreamListener.lineLimit + 10) + [0x0A])
         peer.send("after\n")
-        let received = await collect(server, count: 2)
+        let received = try await requireCollected(server, count: 2)
         #expect(received == ["before", "after"])
-        #expect(await until { server.input.unreadable == 2 })
+        try await requireWait(
+            "読めない行が 2 つと数えられなかった", detail: { "数えた数: \(server.input.unreadable)" }
+        ) {
+            server.input.unreadable == 2
+        }
     }
 
     // MARK: - 書く
@@ -157,7 +161,12 @@ struct TCPServerTests {
 
         server.write("hit\n")
         server.write("size 0.5")
-        #expect(await until { first.received == "hit\nsize 0.5" && second.received == "hit\nsize 0.5" })
+        try await requireWait(
+            "2 人の相手が同じ書き込みを受け取らなかった",
+            detail: { "1 人目: \(first.received.debugDescription)・2 人目: \(second.received.debugDescription)" }
+        ) {
+            first.received == "hit\nsize 0.5" && second.received == "hit\nsize 0.5"
+        }
         #expect(told.lines.isEmpty)
     }
 
@@ -176,9 +185,11 @@ struct TCPServerTests {
         try await peers.reach(on: server, told: told)
         let peer = peers[0]
         server.write("c")
-        #expect(await until { peer.received == "c" })
+        try await requireWait("相手が書き込みを受け取らなかった", detail: { "受け取った: \(peer.received.debugDescription)" }) {
+            peer.received == "c"
+        }
         peer.close()
-        #expect(await clients(server, reach: 0))
+        try await peers.requireCount(on: server, equals: 0, told: told)
 
         server.write("d")
         server.write("e")
@@ -199,7 +210,7 @@ struct TCPServerTests {
         #expect(server.state == .stopped)
         #expect(server.clientCount == 0)
         #expect(server.messages.isEmpty)
-        #expect(await until { peer.closedByPeer })
+        try await requireWait("止めた受け口が相手の繋ぎを閉じなかった") { peer.closedByPeer }
         server.write("late\n")
         server.write("later\n")
         #expect(told.count(containing: "This TCP server is stopped") == 1)
@@ -232,6 +243,58 @@ struct TCPServerTests {
         #expect(present.written == ["hit\n"])
     }
 
+    @Test("外して足し直した (close の後に open が来る) 入り口は、また書け、受け取りも戻る。外し直せばまた 1 度だけ知らせて書かない (#3122)")
+    func reopenedServerWritesAgain() throws {
+        let told = Told()
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5204, name: "tcp :5204", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil, warn: told.append)
+        try server.open()
+        server.write("before")
+        server.supply()
+        #expect(server.messages == ["a"])
+
+        server.close()
+        #expect(server.state == .stopped)
+        server.write("while closed 1")
+        server.write("while closed 2")
+        #expect(room.written == ["before"])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try server.open()
+        #expect(server.state == .running)
+        server.write("after")
+        server.supply()
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["before", "after"])
+
+        // 外し直せば、また書かず、また 1 度だけ知らせる
+        server.close()
+        server.write("again")
+        #expect(room.written == ["before", "after"])
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5205, name: "tcp :5205", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil)
+        try server.open()
+        server.stop()
+        #expect(server.state == .running, "外で呼んだ stop() は何も止めない")
+
+        server.close()
+        try server.open()
+        server.supply()
+        server.write("back")
+        #expect(server.state == .running)
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["back"])
+    }
+
     // MARK: - 注入
 
     @Test("同じ行の列は、ポートで受けても注入しても同じ結果になる")
@@ -244,7 +307,7 @@ struct TCPServerTests {
         try await peers.reach(on: live, told: told)
         let peer = peers[0]
         peer.send(textScript.map { $0 + "\n" }.joined())
-        let received = await collect(live, count: textScript.count)
+        let received = try await requireCollected(live, count: textScript.count)
 
         let injected = IdleSketch().createTCPServer(messages: textScript.map { [$0] })
         try injected.open()
@@ -289,7 +352,7 @@ struct TCPServerTests {
         try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.send("back\n")
-        #expect(await collect(server, count: 1) == ["back"])
+        #expect(try await requireCollected(server, count: 1) == ["back"])
     }
 
     @Test("受け口が期限までに running にならなければ、状態と受け口の知らせの全行を名乗って 1 つで止まる (#2945)")
@@ -324,7 +387,9 @@ struct TCPServerTests {
         #expect(text.contains("同じ told の全行"), "名乗り: \(text)")
 
         // 知らせは 1 度でも、使用中のあいだは開き直すたびに移り変わりの数が増える (止まれば増えない)
-        #expect(await until { source.trace.count >= 3 })
+        try await requireWait("受け口の移り変わりが 3 回に届かなかった", detail: { "回数: \(source.trace.count)" }) {
+            source.trace.count >= 3
+        }
 
         // 知らせを待つ側も、言われなかったら状態と移り変わりと told の全行を名乗って止まる
         let toldSaid = Mutex("")
