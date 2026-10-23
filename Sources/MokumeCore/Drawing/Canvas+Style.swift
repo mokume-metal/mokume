@@ -388,6 +388,13 @@ extension Canvas {
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry, usesUnitShape: open.usesUnitShape))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 組み込みの形を、不透明なスタイルで置いただけの列 (#2366)。裏面が絵に出うるかの判定 (裏面を
+        // 捨てられる列) と同じ値を、置き場所の色の α まで含めて読む
+        if case .mesh = open.source, open.external == nil, open.strokeGeometry == nil,
+            !open.mayShowBackFaces
+        {
+            batches[batches.count - 1].isOpaqueFill = true
+        }
         warnIfMaterialCannotShow()
     }
 

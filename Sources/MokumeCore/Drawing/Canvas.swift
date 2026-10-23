@@ -210,6 +210,9 @@ public final class Canvas {
     /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くか (``drawsUnlitSolid(_:)``・#1795)。
     /// 検査が偽にして、枝を残した断片との画素の一致を比べる。製品では常に真。
     var specializesUnlitSolids = true
+    /// 不透明と分かる立体の塗りを、ブレンドなしで描くか (``drawsOpaqueSolid(_:)``・#2366)。検査が偽にして、
+    /// ブレンドありとの画素の一致を比べる。製品では常に真。
+    var specializesOpaqueSolids = true
     /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
     /// ``Batch/thinCoverage`` へ移して下ろす。
     var openBatchHasThinCoverage = false
@@ -1736,6 +1739,13 @@ public final class Canvas {
         /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
         /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
+        /// この列の塗りが、組み込みの形を不透明なスタイルで置いただけの列か (#2366)。
+        ///
+        /// 真なら、塗りの α はどの置き場所でも 1 と CPU で分かる。**閉じる時点で決める**
+        /// (``Canvas/closeSolidBatch()``) — 置いたときのスタイルを読む `mayShowBackFaces` と同じ値から作る。
+        /// 保持した形・自分で並べた頂点・粒・読み込んだモデルは、頂点が持つ色の α を CPU が
+        /// 見ていないので偽に倒す。
+        var isOpaqueFill = false
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -4496,9 +4506,8 @@ public final class Canvas {
         // フレームの頭が延びるが、同じ組は 2 度と組まない
         try pipeline.prepareForms(
             batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
-        // 光も周囲も置かない立体の塗りの組も同じ (#1795)。光を置くスケッチは 1 本も組まない
-        try pipeline.prepareUnlitSolids(
-            batches.lazy.filter { self.drawsUnlitSolid($0) }.map { ($0.usesUnitShape, $0.run.mode) })
+        // 特化した立体の塗りの組も同じ (#1795・#2366)。特化できる列の無い絵は 1 本も組まない
+        try pipeline.prepareSolidVariants(batches.lazy.compactMap { self.solidVariant(of: $0) })
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
@@ -4582,12 +4591,10 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
             case .solid:
-                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは、
-                // 光の枝を外した断片で描く (#1795)
-                if drawsUnlitSolid(batch) {
-                    use(
-                        pipeline.builtUnlitSolidState(
-                            isUnitShape: batch.usesUnitShape, mode: batch.run.mode))
+                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の枝を
+                // 外した断片で (#1795)、不透明と分かる塗りはブレンドなしで描く (#2366)
+                if let variant = solidVariant(of: batch) {
+                    use(pipeline.builtSolidVariantState(variant))
                 } else {
                     use(
                         (batch.strokeGeometry != nil

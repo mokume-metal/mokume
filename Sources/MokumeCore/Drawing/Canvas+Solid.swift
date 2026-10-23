@@ -1298,4 +1298,29 @@ extension Canvas {
             && !(batch.surroundings.topAndPresence.w > 0.5)
             && !(batch.surroundings.horizonAndBackdrop.w > 0.5)
     }
+
+    /// この立体の列を、ブレンドなしの断片で描いてよいか ([#2366])。
+    ///
+    /// **不透明と CPU で分かる列だけ**: 組み込みの形を、塗りの α = 1・貼る絵なし・重ねる混ぜ方・
+    /// 利用者の断片なしで置いただけの列 (``Batch/isOpaqueFill``)。α = 1 の source-over は
+    /// `source + destination × 0` で、ブレンドなしの書き込みと一致する。利用者の断片は α を返すかが静的に
+    /// 分からず、貼る絵は透けた画素を持ちうるので、今のまま。GPU で広げる立体の輪郭と、細い線を広げた頂点を
+    /// 持つ列も外す。
+    ///
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    func drawsOpaqueSolid(_ batch: Batch) -> Bool {
+        specializesOpaqueSolids && batch.source == .solid && batch.isOpaqueFill
+            && batch.strokeGeometry == nil && batch.run.mode == .blend
+            && batch.run.paint.shader == nil && !batch.thinCoverage
+    }
+
+    /// この立体の列を描く、特化したパイプラインの鍵。特化できる列でなければ `nil`
+    /// (``drawsUnlitSolid(_:)``・``drawsOpaqueSolid(_:)``)。
+    func solidVariant(of batch: Batch) -> ShapePipeline.SolidVariantKey? {
+        let unlit = drawsUnlitSolid(batch)
+        let opaque = drawsOpaqueSolid(batch)
+        guard unlit || opaque else { return nil }
+        return ShapePipeline.SolidVariantKey(
+            isUnitShape: batch.usesUnitShape, unlit: unlit, opaque: opaque, mode: batch.run.mode)
+    }
 }

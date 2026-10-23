@@ -5,16 +5,21 @@ import Testing
 
 @testable import MokumeCore
 
-/// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描く特化の検査 ([#1795])。GPU を要する。
+/// 立体の塗りを、列の中身に合わせて特化したパイプラインで描く検査 ([#1795]・[#2366])。GPU を要する。
+///
+/// - **光も周囲も置かない列は、光の枝を外した断片で描く** (#1795)
+/// - **不透明と CPU で分かる列は、ブレンドなしで描く** (#2366)
 ///
 /// **この特化は速さだけを変え、画素は 1 ビットも変えない。** 枝は光・周囲・背景がどれも無い列では
 /// 必ず偽になるので、外し損ねても (入れ損ねても) 絵が崩れるのは「枝が要る列に外した断片を使った」
 /// ときだけである — それを光の検査 (`LightTests` ほか) と、ここの「特化あり / なしで画素が全部同じ」が
-/// 受け持つ。逆向き (外せる列に外さない) は絵に出ないので、判定の述語そのものと、組んだ本数をここで見る。
+/// 受け持つ。ブレンドも同じで、α < 1 の列をブレンドなしで描くと下地が消える。逆向き (特化できる列に
+/// 特化しない) は絵に出ないので、判定の述語そのものと、組んだ本数をここで見る。
 ///
 /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+/// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
 @Suite(
-    "光なしの立体の塗りの特化",
+    "特化した立体の塗り",
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -27,11 +32,12 @@ struct UnlitSolidTests {
     }
 
     /// 絵を描いて、作業空間の画素をそのまま返す。`unlit` が偽なら、特化を止めて枝を残した断片で描く。
-    private func render(unlit: Bool, sharesUnitShapes: Bool = true, scene: (Canvas) -> Void) throws
-        -> PixelBuffer
-    {
+    private func render(
+        unlit: Bool, opaque: Bool = false, sharesUnitShapes: Bool = true, scene: (Canvas) -> Void
+    ) throws -> PixelBuffer {
         let canvas = try makeCanvas()
         canvas.specializesUnlitSolids = unlit
+        canvas.specializesOpaqueSolids = opaque
         canvas.sharesUnitShapes = sharesUnitShapes
         try canvas.draw {
             canvas.background(.display(red: 0.1, green: 0.1, blue: 0.2))
@@ -42,10 +48,12 @@ struct UnlitSolidTests {
 
     /// 特化あり / なしで、画素が 1 ビットも違わないこと。
     private func expectSamePicture(
-        _ name: String, sharesUnitShapes: Bool = true, scene: (Canvas) -> Void
+        _ name: String, unlit: Bool = true, opaque: Bool = false, sharesUnitShapes: Bool = true,
+        scene: (Canvas) -> Void
     ) throws {
         let plain = try render(unlit: false, sharesUnitShapes: sharesUnitShapes, scene: scene)
-        let specialized = try render(unlit: true, sharesUnitShapes: sharesUnitShapes, scene: scene)
+        let specialized = try render(
+            unlit: unlit, opaque: opaque, sharesUnitShapes: sharesUnitShapes, scene: scene)
         #expect(plain == specialized, "\(name): 特化で画素が変わった")
         // 何も描いていない絵で一致しても何も言えない
         var drawn = false
@@ -145,6 +153,7 @@ struct UnlitSolidTests {
         func picture(unlit: Bool, route: Canvas.ParticleRoute) throws -> PixelBuffer {
             let canvas = try makeCanvas()
             canvas.specializesUnlitSolids = unlit
+            canvas.specializesOpaqueSolids = false
             canvas.particleRoute = route
             var randomness = Randomness(seed: 20_260_829)
             let dust = try canvas.makeParticles(count: 512)
@@ -191,6 +200,7 @@ struct UnlitSolidTests {
     @Test("光も周囲も置かない立体の塗りの列だけが、特化で描く")
     func onlyUnlitSolidFillsAreSpecialized() throws {
         let canvas = try makeCanvas()
+        canvas.specializesOpaqueSolids = false
         func decide(_ scene: (Canvas) -> Void) throws -> Bool {
             canvas.drawsUnlitSolid(try closedBatch(scene))
         }
@@ -229,28 +239,29 @@ struct UnlitSolidTests {
     @Test("光を置く絵は特化の組を 1 本も組まず、光を置かない絵は使う分だけ組む")
     func buildsOnlyWhatTheFrameUses() throws {
         let canvas = try makeCanvas()
+        canvas.specializesOpaqueSolids = false
         let pipeline = canvas.pipeline
-        #expect(pipeline.builtUnlitSolidStateCount == 0, "起動で組んでいる")
+        #expect(pipeline.builtSolidVariantCount == 0, "起動で組んでいる")
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.ambientLight(grey)
             canvas.box(20)
         }
-        #expect(pipeline.builtUnlitSolidStateCount == 0, "光を置いた絵で組んだ")
+        #expect(pipeline.builtSolidVariantCount == 0, "光を置いた絵で組んだ")
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.box(20)
         }
         // 重ねる列の単位の形 1 本だけ
-        #expect(pipeline.builtUnlitSolidStateCount == 1)
+        #expect(pipeline.builtSolidVariantCount == 1)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.box(20)
         }
-        #expect(pipeline.builtUnlitSolidStateCount == 1, "同じ組を組み直した")
+        #expect(pipeline.builtSolidVariantCount == 1, "同じ組を組み直した")
     }
 
     @Test("特化の組は、頂点関数が枝を残す立体でも光の枝を外す値を渡す")
@@ -264,5 +275,134 @@ struct UnlitSolidTests {
                 ShapePipeline.fragmentConstants(vertexFunctionName: vertex, formFlags: nil, unlit: true)
                     == Constants(lit: false))
         }
+    }
+
+    // MARK: - 不透明な列のブレンドなし (#2366)
+
+    /// 奥から手前へ重ねた不透明の箱・球。ブレンドなしで描いて、重なりが変わらないことを見る。
+    private func layeredOpaque(_ canvas: Canvas) {
+        canvas.noStroke()
+        for layer in 0..<5 {
+            canvas.fill(
+                .display(red: 0.2 + 0.15 * Float(layer), green: 0.6 - 0.1 * Float(layer), blue: 0.8))
+            canvas.push()
+            canvas.translate(24 + Float(layer) * 10, 28 + Float(layer) * 8, Float(layer - 5) * 6)
+            canvas.rotateY(0.3 * Float(layer))
+            if layer.isMultiple(of: 2) { canvas.box(34) } else { canvas.sphere(20) }
+            canvas.pop()
+        }
+        canvas.fill(.display(red: 0.9, green: 0.8, blue: 0.2))
+        canvas.push()
+        canvas.translate(66, 70, 2)
+        canvas.plane(30, 22)
+        canvas.pop()
+    }
+
+    @Test("不透明な立体の列は、ブレンドなしでも画素が全部同じ (光なし・光あり)")
+    func opaqueColumnsKeepTheirPixels() throws {
+        for (name, lights) in [("光なし", false), ("光あり", true)] {
+            for unlit in [false, true] {
+                try expectSamePicture("不透明 \(name) 特化 \(unlit)", unlit: unlit, opaque: true) { canvas in
+                    if lights {
+                        canvas.ambientLight(grey)
+                        canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), 0.3, 0.8, -0.5)
+                    }
+                    layeredOpaque(canvas)
+                }
+            }
+        }
+    }
+
+    @Test("寸法ごとの形の不透明な列も、画素が全部同じ")
+    func opaqueSizedShapesKeepTheirPixels() throws {
+        try expectSamePicture("寸法ごとの形", unlit: false, opaque: true, sharesUnitShapes: false) {
+            layeredOpaque($0)
+        }
+    }
+
+    @Test("半透明・透けた画素・重ねない混ぜ方が混ざる絵は、ブレンドなしにした列だけで画素が全部同じ")
+    func translucentColumnsKeepTheirPixels() throws {
+        try expectSamePicture("半透明が間に挟まる", unlit: true, opaque: true) { canvas in
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.9, green: 0.4, blue: 0.2))
+            canvas.push()
+            canvas.translate(40, 40, -20)
+            canvas.box(50)
+            canvas.pop()
+            canvas.fill(.display(red: 0.2, green: 0.8, blue: 0.9, alpha: 0.5))
+            canvas.push()
+            canvas.translate(52, 52, 0)
+            canvas.sphere(30)
+            canvas.pop()
+            canvas.fill(.display(red: 0.7, green: 0.9, blue: 0.3))
+            canvas.push()
+            canvas.translate(60, 36, 10)
+            canvas.box(26)
+            canvas.pop()
+            canvas.blendMode(.add)
+            canvas.fill(.display(red: 0.4, green: 0.1, blue: 0.1))
+            canvas.push()
+            canvas.translate(30, 62, 20)
+            canvas.box(30)
+            canvas.pop()
+        }
+    }
+
+    @Test("半透明の頂点を持つ保持した形の列は、ブレンドなしにしない")
+    func retainedShapesStayBlended() throws {
+        let canvas = try makeCanvas()
+        var batch: Canvas.Batch?
+        try canvas.draw {
+            canvas.noStroke()
+            let shape = canvas.createShape {
+                canvas.fill(.display(red: 1, green: 0, blue: 0, alpha: 0.5))
+                canvas.box(20)
+            }
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.shape(shape)
+            canvas.closeBatch()
+            batch = canvas.batches.last
+        }
+        #expect(try !canvas.drawsOpaqueSolid(#require(batch)), "保持した形の半透明の頂点をブレンドなしにした")
+    }
+
+    @Test("不透明な組み込みの形の列だけが、ブレンドなしで描く")
+    func onlyOpaqueMeshColumnsAreUnblended() throws {
+        let canvas = try makeCanvas()
+        canvas.specializesUnlitSolids = false
+        func decide(_ scene: (Canvas) -> Void) throws -> Bool {
+            canvas.drawsOpaqueSolid(try closedBatch(scene))
+        }
+        #expect(try decide { $0.fill(.display(red: 1, green: 0, blue: 0)); $0.box(20) })
+        // 光は関係しない
+        #expect(try decide { $0.ambientLight(grey); $0.box(20) })
+        // 半透明の塗り・重ねない混ぜ方・貼る絵・利用者の断片は、ブレンドを残す
+        #expect(try !decide { $0.fill(.display(red: 1, green: 0, blue: 0, alpha: 0.5)); $0.box(20) })
+        #expect(try !decide { $0.blendMode(.add); $0.box(20) })
+        // 平面は立体の列ではない
+        #expect(try !decide { $0.rect(0, 0, 10, 10) })
+        canvas.specializesOpaqueSolids = false
+        #expect(try !decide { $0.box(20) })
+    }
+
+    @Test("光を置いても不透明なら、特化の組は光の枝を残してブレンドだけを外す")
+    func opaqueLitColumnsBuildTheirOwnPipeline() throws {
+        let canvas = try makeCanvas()
+        let pipeline = canvas.pipeline
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.ambientLight(grey)
+            canvas.box(20)
+        }
+        #expect(pipeline.builtSolidVariantCount == 1)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.ambientLight(grey)
+            canvas.fill(.display(red: 1, green: 0, blue: 0, alpha: 0.5))
+            canvas.box(20)
+        }
+        #expect(pipeline.builtSolidVariantCount == 1, "半透明の列で組んだ")
     }
 }

@@ -221,32 +221,49 @@ final class ShapePipeline {
     /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
     private let formPipelines: Mutex<[FormKey: any MTLRenderPipelineState]>
 
-    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くパイプライン ([#1795])。
+    /// 立体の塗りを、列の中身に合わせて特化したパイプライン ([#1795]・[#2366])。
     ///
-    /// 立体の塗りは光・周囲・背景のどれも通るので枝を残して組む (``shapeLit(forVertexFunction:)``)。
-    /// 光も周囲も置かない列では、その枝は必ず偽になる — 外しても画素は変わらず、塗りが律速の
-    /// 場面で断片の費用だけが減る。**組むのは使うときに 1 本ずつ** (基本図形と同じ・[#3114]) で、
-    /// 光を置いて描くスケッチは 1 本も組まない。
+    /// 立体の塗りの既定の組 (``solidStates``・``unitShapeStates``) は、光・周囲・背景のどれも通り、
+    /// 混ぜ方ごとに固定機能のブレンドを付けた形で組む。列の中身が分かれば、その組より軽い組で描ける:
+    ///
+    /// - **光も周囲も置かない列** (``SolidVariantKey/unlit``・#1795): 光の枝を function constant で
+    ///   外す。枝は必ず偽なので画素は変わらず、塗りが律速の場面で断片の費用だけが減る
+    /// - **不透明と CPU で分かる列** (``SolidVariantKey/opaque``・#2366): ブレンドを外す。Apple GPU
+    ///   (TBDR) の隠面除去は、遮る側になれるのがブレンドなし・捨てなしの断片だけなので、奥から手前へ
+    ///   重ねても隠れた層の断片を走らせずに済む。α = 1 の source-over と書き込みは一致する
+    ///
+    /// **組むのは使うときに 1 本ずつ** (基本図形と同じ・[#3114]) で、起動では 1 本も組まない。
+    /// 光を置いて半透明で描くスケッチは、1 本も組まない。
     ///
     /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
     /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
-    private let unlitSolidPipelines: Mutex<[UnlitSolidKey: any MTLRenderPipelineState]>
+    private let solidVariantPipelines: Mutex<[SolidVariantKey: any MTLRenderPipelineState]>
 
-    /// 光の枝を外した立体の塗りのパイプライン 1 本の鍵 — 頂点関数と、混ぜ方の列。
-    struct UnlitSolidKey: Hashable, Sendable {
+    /// 特化した立体の塗りのパイプライン 1 本の鍵。
+    struct SolidVariantKey: Hashable, Sendable {
         /// 単位の形の頂点関数 (``unitShapeVertexFunctionName``) で組むか。偽なら ``solidVertexFunctionName``。
         let isUnitShape: Bool
+        /// 光の枝を外すか (#1795)。
+        let unlit: Bool
+        /// ブレンドを外すか (#2366)。**重ねる列 (`.blend`) だけが不透明でありうる** ので、真の鍵の
+        /// 列は `blend` に決まる。
+        let opaque: Bool
         let column: BlendStates.Column
+
+        init(isUnitShape: Bool, unlit: Bool, opaque: Bool, mode: BlendMode) {
+            self.isUnitShape = isUnitShape
+            self.unlit = unlit
+            self.opaque = opaque
+            column = opaque ? .blend : .init(mode)
+        }
     }
 
-    /// 光の枝を外した立体の塗りで描くパイプライン。**まだ組んでいなければここで組む。**
-    func unlitSolidState(
-        isUnitShape: Bool, mode: BlendMode
-    ) throws(RenderFailure) -> any MTLRenderPipelineState {
-        let key = UnlitSolidKey(isUnitShape: isUnitShape, column: .init(mode))
-        return try unlitSolidPipelines.withLock { (built) throws(RenderFailure) in
+    /// 特化した立体の塗りで描くパイプライン。**まだ組んでいなければここで組む。**
+    func solidVariantState(_ key: SolidVariantKey) throws(RenderFailure) -> any MTLRenderPipelineState {
+        try solidVariantPipelines.withLock { (built) throws(RenderFailure) in
             if let state = built[key] { return state }
-            let state = try Self.makeUnlitSolidState(
+            let state = try Self.makeSolidVariantState(
                 compiler: compiler, vertexLibrary: vertexLibrary, unitShapeLibrary: unitShapeLibrary,
                 pixelFormat: pixelFormat, key: key)
             built[key] = state
@@ -254,25 +271,21 @@ final class ShapePipeline {
         }
     }
 
-    /// 組み済みの 1 本。組んでいなければ ``prepareUnlitSolids(_:)`` を呼び忘れている。
-    func builtUnlitSolidState(isUnitShape: Bool, mode: BlendMode) -> any MTLRenderPipelineState {
-        let key = UnlitSolidKey(isUnitShape: isUnitShape, column: .init(mode))
-        guard let state = unlitSolidPipelines.withLock({ $0[key] }) else {
-            preconditionFailure(
-                "the unlit solid pipeline (unit shape: \(isUnitShape), \(key.column)) was not prepared before encoding")
+    /// 組み済みの 1 本。組んでいなければ ``prepareSolidVariants(_:)`` を呼び忘れている。
+    func builtSolidVariantState(_ key: SolidVariantKey) -> any MTLRenderPipelineState {
+        guard let state = solidVariantPipelines.withLock({ $0[key] }) else {
+            preconditionFailure("the solid pipeline \(key) was not prepared before encoding")
         }
         return state
     }
 
-    /// 積む列が使う、光の枝を外した立体のパイプラインを、積む前に組み済みにする。
-    func prepareUnlitSolids(
-        _ uses: some Sequence<(isUnitShape: Bool, mode: BlendMode)>
-    ) throws(RenderFailure) {
-        for use in uses { _ = try unlitSolidState(isUnitShape: use.isUnitShape, mode: use.mode) }
+    /// 積む列が使う、特化した立体のパイプラインを、積む前に組み済みにする。
+    func prepareSolidVariants(_ keys: some Sequence<SolidVariantKey>) throws(RenderFailure) {
+        for key in keys { _ = try solidVariantState(key) }
     }
 
-    /// 組み済みの光の枝を外した立体のパイプラインの本数 (検査用)。
-    var builtUnlitSolidStateCount: Int { unlitSolidPipelines.withLock { $0.count } }
+    /// 組み済みの特化した立体のパイプラインの本数 (検査用)。
+    var builtSolidVariantCount: Int { solidVariantPipelines.withLock { $0.count } }
 
     /// 基本図形のパイプライン 1 本の鍵 — 旗の組と、混ぜ方の列。
     struct FormKey: Hashable, Sendable {
@@ -413,8 +426,8 @@ final class ShapePipeline {
                 key: defaultKey)
         ])
 
-        // 光の枝を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
-        self.unlitSolidPipelines = Mutex([:])
+        // 特化した立体の塗りも使うときに組む (#1795・#2366)。起動では 1 本も組まない
+        self.solidVariantPipelines = Mutex([:])
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -549,22 +562,33 @@ final class ShapePipeline {
             compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
     }
 
-    /// 光の枝を外した立体の塗りのパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ
-    /// ``blendPlans`` を通り、列だけを選ぶ ([#1795])。
+    /// 特化した立体の塗りのパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ
+    /// ``blendPlans`` を通り、列だけを選ぶ。ブレンドを外す組 (``SolidVariantKey/opaque``) は、重ねる列の
+    /// 断片 (下地を読まず、捨てもしない) をブレンドなしで組む ([#1795]・[#2366])。
     ///
     /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
-    private static func makeUnlitSolidState(
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    private static func makeSolidVariantState(
         compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, unitShapeLibrary: any MTLLibrary,
-        pixelFormat: MTLPixelFormat, key: UnlitSolidKey
+        pixelFormat: MTLPixelFormat, key: SolidVariantKey
     ) throws(RenderFailure) -> any MTLRenderPipelineState {
         let vertexFunctionName =
             key.isUnitShape ? unitShapeVertexFunctionName : solidVertexFunctionName
-        let plans = blendPlans(
-            pixelFormat: pixelFormat,
-            label: key.isUnitShape ? "mokume.unit-shapes.unlit" : "mokume.solids.unlit",
-            vertexFunctionName: vertexFunctionName, unlit: true)
+        var label = key.isUnitShape ? "mokume.unit-shapes" : "mokume.solids"
+        if key.unlit { label += ".unlit" }
+        let plan: StatePlan
+        if key.opaque {
+            plan = Self.plan(
+                label: label + ".opaque", vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: flatDirectFragmentFunctionName, sourceOver: false,
+                formFlags: nil, unlit: key.unlit, pixelFormat: pixelFormat)
+        } else {
+            plan = blendPlans(
+                pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName,
+                unlit: key.unlit)[key.column.planIndex]
+        }
         // 頂点関数は単位の形だけ別のライブラリにあり、断片はどちらも Shapes にある
-        return try plans[key.column.planIndex].makeNow(
+        return try plan.makeNow(
             compiler: compiler, vertexLibrary: key.isUnitShape ? unitShapeLibrary : vertexLibrary,
             fragmentLibrary: vertexLibrary)
     }
