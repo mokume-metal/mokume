@@ -24,9 +24,12 @@ struct ScreenDisplayLinkTests {
         var advances = 0
         /// 進められた時刻 (`ProcessInfo.systemUptime`)。見張りがいつ引き受けたかを見る検査が読む。
         var times: [Double] = []
-        func displayLinkFired() {
+        /// 持ち主へ運ばれた表示の予定の時刻 (運ばれなかった回は `nil`)。
+        var displayTimes: [Double?] = []
+        func displayLinkFired(at displayTime: Double?) {
             advances += 1
             times.append(ProcessInfo.processInfo.systemUptime)
+            displayTimes.append(displayTime)
         }
     }
 
@@ -39,6 +42,28 @@ struct ScreenDisplayLinkTests {
         let counter = Counter()
         link.owner = counter
         return (link, counter)
+    }
+
+    /// **表示のリフレッシュが運ぶ予定の時刻は、そのまま持ち主へ届く** ([#2390])。コールバックが走った
+    /// 時刻 (`at`) へ置き換えない。予備の回には予定の時刻が無いので、持ち主は `nil` を受ける。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示の予定の時刻は持ち主へそのまま届き、予備の回は時刻を持たない")
+    func theDisplayTimeReachesTheOwner() {
+        let (link, counter) = makeLink()
+        // コールバックは予定の時刻より後に、揺れて来る
+        link.advanceFromDisplayLink(at: 100.004, displayTime: 100.017)
+        link.advanceFromDisplayLink(at: 100.021, displayTime: 100.034)
+        #expect(counter.displayTimes == [100.017, 100.034])
+
+        // 時刻を渡さない呼び方 (検査) は、持ち主へ時刻を運ばない
+        link.advanceFromDisplayLink(at: 100.04)
+        #expect(counter.displayTimes.last == .some(nil))
+
+        // 止まった後の予備の回
+        link.advanceFromFallbackIfStalled(at: 100.04 + FrameDriver.stallThreshold(frameRate: rate) * 2)
+        #expect(counter.advances == 4)
+        #expect(counter.displayTimes.last == .some(nil))
     }
 
     /// **二重に回ると、絵を出す枚数と入れ替わりの判定が二重になる。** 予備は表示の

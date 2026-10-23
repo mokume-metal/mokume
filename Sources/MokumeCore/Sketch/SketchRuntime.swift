@@ -794,11 +794,26 @@ public final class SketchRuntime {
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
+        try advance(displayTime: nil)
+    }
+
+    /// フレームを 1 つ進める。実時間の時計では、その枚の時刻を `displayTime` にする。
+    ///
+    /// **窓・共有面の経路が、表示のリフレッシュが運んだ「その枚が表示される予定の時刻」を渡す口**である
+    /// ([#2390])。コールバックが走った時刻は main が他の仕事で遅れたぶん揺れ、``SketchPart/deltaTime`` の
+    /// 揺れとして作品に見える。予定の時刻は表示の刻みの間隔のまま並ぶ。フレームの時計・書き出し・観測の指定秒の
+    /// 値は変わらない (``FrameTiming/advance(at:displayTime:)``)。
+    ///
+    /// - Parameter displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    ///   `nil` (予備のタイマーが進めた回・直に回す面) なら現在時刻。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(displayTime: Double?) throws(RenderFailure) {
         // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
         updatePresence()
-        try runFrame()
+        try runFrame(displayTime: displayTime)
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
@@ -806,7 +821,7 @@ public final class SketchRuntime {
     /// 分けてあるのは、名乗りのメニューが開いている間だけ**ここが別の駆動源から呼ばれる**
     /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
     /// 名乗りの世話が入れ子になる。
-    private func runFrame() throws(RenderFailure) {
+    private func runFrame(displayTime: Double? = nil) throws(RenderFailure) {
         // **閉じ終えるのを待っている間は進めない** ([#978])。待ちは塞がずに見に来る形なので、
         // その間も駆動源 (画面の link・予備の Timer・名乗りのメニューの Timer) は呼んでくる。
         // 進めると `draw()` が新しい録りや `save()` を頼み、誰にも閉じられないまま終わる。
@@ -902,7 +917,7 @@ public final class SketchRuntime {
         }
         var drawFailure: RenderFailure?
         do {
-            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime)
+            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime, displayTime: displayTime)
         } catch {
             drawFailure = error
         }
@@ -946,7 +961,9 @@ public final class SketchRuntime {
     /// - Parameter deliveredInput: このフレームの入力を、止まっている間に既に当てて配ったか
     ///   (``deliverWhileStopped()``)。当て直すと、前のフレームからの動き (`pmouseX`・
     ///   引きずった量・スクロール) が描くフレームから消える。
-    private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
+    private func drawSketchFrame(
+        deliveredInput: Bool = false, at requestedTime: Float? = nil, displayTime: Double? = nil
+    ) throws(RenderFailure) {
         // **このフレームの絵が拠る投入は、ここより後に積まれる** (#2743)。出口へ配る前の判定の範囲の
         // 始まりである。`setup()` で積んだものが入るのは、`setup()` をここ (下の `start()`) で走らせる
         // とき — ふつうの最初のフレーム — だけで、先に `start()` を呼んだ使い方 (公開の `start()`・時刻を
@@ -956,7 +973,7 @@ public final class SketchRuntime {
         start()
         // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
         frameWorkBegan = now()
-        timing.advance(at: requestedTime)
+        timing.advance(at: requestedTime, displayTime: displayTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
         beginFrame()

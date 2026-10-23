@@ -10,6 +10,8 @@ import QuartzCore
 /// 時刻の出どころを変えれば、絵が再現するかどうかが変わる。
 public enum Clock: Equatable, Sendable {
     /// 実際に流れた時間。画面に出しながら動かすときの既定。
+    ///
+    /// 窓・共有面では、その枚が表示される予定の時刻で進む (``SketchPart/time``)。
     case wallClock
 
     /// フレーム番号から導く。
@@ -262,8 +264,21 @@ final class FrameTiming {
     /// 指定秒を描く)。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
-    func advance(at requestedTime: Float? = nil) {
-        let now = now()
+    ///
+    /// - Parameters:
+    ///   - requestedTime: 観測の指定秒。
+    ///   - displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。**実時間の
+    ///     時計 (``Clock/wallClock``) だけが読む** ([#2390])。窓・共有面の経路で、表示のリフレッシュが運んだ
+    ///     回が渡す。`nil` (予備のタイマーが進めた回・直に回す面) は現在時刻で代える。コールバックが走った
+    ///     時刻は main が他の仕事で遅れたぶん揺れるが、予定の時刻は表示の刻みの間隔のまま並ぶ。
+    ///     **どちらの回でも ``time`` は前の枚より小さくならない** — 予定の時刻は現在時刻より先なので、
+    ///     予備の回の現在時刻が前の枚の予定を下回ることがあり、そのときは前の枚の時刻に留める。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(at requestedTime: Float? = nil, displayTime: Double? = nil) {
+        // 実時間の時計の、この枚の時刻。**前の枚より前へは戻さない** (上の `displayTime`)。
+        // フレームの時計は時刻を読まない
+        let moment = max(displayTime ?? now(), previous)
         if frameCount == 0, clock == .wallClock {
             // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
             // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
@@ -271,7 +286,7 @@ final class FrameTiming {
             // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
             //
             // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
-            started = now
+            started = moment
             stepsOneFrame = true
         }
         frameCount += 1
@@ -279,7 +294,7 @@ final class FrameTiming {
         let raw: Double
         switch clock {
         case .wallClock:
-            raw = now - started
+            raw = moment - started
         case .frameIndex(let frameRate):
             // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)。
             // 最初のフレームを 0 秒にする
@@ -296,9 +311,9 @@ final class FrameTiming {
             } else {
                 // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
                 // 側 (粒・視点) が 1 枚で吹き飛ぶ
-                step = .seconds(min(max(0, now - previous), maximumDeltaTime))
+                step = .seconds(min(max(0, moment - previous), maximumDeltaTime))
             }
-            previous = now
+            previous = moment
         case .frameIndex(let frameRate):
             // 止めていたところから描く 1 枚も、既に 1 フレームぶんしか進まないので
             // ``stepOneFrameNext()`` は効かせるものが無い。見せる `deltaTime` は
