@@ -45,6 +45,12 @@ struct ResolvedGlyph {
     var fontKey: String
 }
 
+/// 拡大した段の字形を引く鍵 (``Typeface/placedScaled``)。
+struct ScaledGlyphKey: Hashable {
+    var scalar: Unicode.Scalar
+    var step: Int
+}
+
 /// 焼き場で引いた字形と、それを引いた頁 (``Typeface/placed``)。
 struct PlacedGlyph {
     var pageSerial: UInt64
@@ -92,6 +98,14 @@ final class Typeface {
     ///
     /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
     var placed: [Unicode.Scalar: PlacedGlyph] = [:]
+
+    /// ``placed`` の、拡大した段 (0 より上) の字形の控え ([#2446])。**頁の通し番号が一致し、頼んだ段に
+    /// ついて答えが決まった字形だけが入る** (``Canvas/GlyphLookup``)。1 字の大きさで段を下げた字形は決まった
+    /// 答えとして入るが、上限を越えて近い段で描いた字形と、頁が溢れて低い段で描いた字形は入れない
+    /// (次のフレームで頼んだ段を焼くため)。段 0 は ``placed`` を使い、これまでの経路を変えない。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var placedScaled: [ScaledGlyphKey: PlacedGlyph] = [:]
 
     /// 頼まれた太さ・傾きの面を、書体が持っていなかったか ([#2444])。持っていなければ ``base`` は
     /// 元の面か、引けた片方の性質だけの面で、それを知らせるのは書体を作らせた側 (`Canvas`) である。
@@ -536,7 +550,7 @@ final class Typeface {
         path == nil || CTFontGetSymbolicTraits(resolved.font).contains(.traitColorGlyphs)
     }
 
-    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:)``)
+    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:scale:)``)
     /// で描いた墨の範囲を、字形の座標 (書き始めと基準線から測り、上向き) で返す。墨が無ければ
     /// `nil` ([#2308])。
     ///
@@ -549,22 +563,24 @@ final class Typeface {
     /// 入らない大きさの字は、描かずに外接矩形を墨とする — 墨を含む、送り幅の升目ぶん広い枠に
     /// なる。描く道具を作れなかったときも `nil` を返すが、控えないので次に呼べば描き直す。
     ///
-    /// **描いた画素は焼き場に預ける** (`atlas`・`key`・[#2560])。控え (`drawnInks`) は書体ごと、書体は
+    /// **描いた画素は焼き場に預ける** (`atlas`・`key`・[#2560])。`keepsPixels` が偽なら預けない — 呼ぶ側が
+    /// 拡大して描くときは、`text()` が別の鍵 (拡大の段) の画素を焼くので、預けても引き取られない ([#2446])。控え (`drawnInks`) は書体ごと、書体は
     /// 大きさごとなので、`textSize()` を毎フレーム動かすと控えは外れ、測るたびに描き直す。その大きさの
     /// 字を `text()` が焼くときは、同じ升目に同じ描き方で描くので、預けた画素をそのまま使えば CPU で
     /// 描くのは 1 回で済む (``GlyphAtlas/keepRendered(_:for:)``)。
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     func drawnInk(
         of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph, keeping atlas: GlyphAtlas,
-        as key: GlyphAtlas.Key
+        as key: GlyphAtlas.Key, keepsPixels: Bool = true
     ) -> CGRect? {
         if let cached = drawnInks[scalar] { return cached }
         switch Self.draw(resolved, on: atlas) {
         case .ink(let ink, let rendered):
             drawnInks[scalar] = ink
-            if let rendered { atlas.keepRendered(rendered, for: key) }
+            if keepsPixels, let rendered { atlas.keepRendered(rendered, for: key) }
             return ink
         case .failed:
             return nil

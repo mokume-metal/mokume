@@ -224,10 +224,15 @@ extension Canvas {
         guard !line.isEmpty else { return }
 
         var pen = penStart(at: x, face: face, line: line)
+        // 変換が字を拡げる量から、焼く段を決める。**行ごとに 1 度** (行の中で変換は変わらない・#2446)
+        let step = glyphStep
 
         for scalar in line.unicodeScalars {
             // 同じ頁で引いたことのある字は、書体も焼き場も引かない (``Typeface/placed``)
-            if let placed = face.placed[scalar], placed.pageSerial == atlas.pageSerial {
+            let known = step == 0
+                ? face.placed[scalar]
+                : face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)]
+            if let placed = known, placed.pageSerial == atlas.pageSerial {
                 if !placed.entry.isBlank {
                     appendGlyphQuad(placed.entry, penX: pen, baseline: baseline, color: color)
                 }
@@ -235,12 +240,31 @@ extension Canvas {
                 continue
             }
             guard let resolved = face.glyph(for: scalar) else { continue }
-            if let entry = glyphEntry(for: resolved) {
+            if let found = glyphLookup(for: resolved, step: step) {
+                let entry = found.entry
                 // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
-                face.placed[scalar] = PlacedGlyph(
+                let placed = PlacedGlyph(
                     pageSerial: atlas.pageSerial, entry: entry, advance: resolved.advance)
+                if step == 0 {
+                    face.placed[scalar] = placed
+                } else if found.settled {
+                    // 頼んだ段について答えが決まったときだけ。上限を越えて先送りした字と、頁が溢れて低い段で
+                    // 描いた字は控えない (次のフレームで頼んだ段を焼き直す)。1 字の大きさで段を下げた字は
+                    // 決まった答えなので控える — 毎フレーム外接矩形と大きさの判定をやり直さない
+                    face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)] = placed
+                }
                 if !entry.isBlank {
-                    appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+                    // 先送りした字は、先送りした字だけの列へ置く。フレームの終わりに絵が残るなら、そこで
+                    // 払う (``settleDeferredGlyphs(baking:)``)
+                    if let key = found.deferredKey, prepareDeferredRun() {
+                        let start = appendGlyphQuad(
+                            entry, penX: pen, baseline: baseline, color: color, inDeferredRun: true)
+                        noteDeferredGlyph(
+                            start: start, placedWith: entry, key: key, font: resolved.font,
+                            penX: pen, baseline: baseline, color: color)
+                    } else {
+                        appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+                    }
                 }
             }
             pen += resolved.advance
@@ -735,10 +759,15 @@ extension Canvas {
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         var box = CGRect.null
         let face = typeface
+        // 拡大した字 (段 0 より上) は、`text()` が別の鍵の画素で焼く。**段 0 の画素を預けても引き取られない**
+        // ので、預けない (#2560・#2446)。墨の測りは段 0 のまま
+        let keepsPixels = glyphStep == 0
         forEachGlyph(in: string, x.asFloat, y.asFloat) { scalar, resolved, path, pen, baseline in
             let measured =
                 Typeface.measuresByDrawing(resolved, path: path)
-                ? face.drawnInk(of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved))
+                ? face.drawnInk(
+                    of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved),
+                    keepsPixels: keepsPixels)
                 : path?.boundingBoxOfPath
             guard let glyph = measured else { return }
             // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない

@@ -426,6 +426,12 @@ extension Canvas {
         ///
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         case atlasFullInOneFrame
+        /// 拡大した字 (`textSize()` × `scale()`) が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で
+        /// 描かれた ([#2446])。**``atlasFullInOneFrame`` とは鍵を分ける** — あちらは字が欠ける知らせで、
+        /// こちらは欠けずに縁がぼける知らせである。
+        ///
+        /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+        case softEnlargedText
 
         /// 形の組み立て (``createShape(_:)``) の中で塗り直した ([#1588])。塗り 1 色の背景と周囲の
         /// 背景が鍵を共有する。種類と文面は ``InsideShape`` が持つ。
