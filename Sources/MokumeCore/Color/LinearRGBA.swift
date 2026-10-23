@@ -22,7 +22,7 @@
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
-public struct LinearRGBA: Sendable {
+public nonisolated struct LinearRGBA: Sendable {
     /// 赤成分 (線形・アルファ乗算済み)。
     public var red: Float
     /// 緑成分 (線形・アルファ乗算済み)。
@@ -168,7 +168,7 @@ public struct LinearRGBA: Sendable {
     }
 
     /// 完全に透明な色。
-    public static let transparent = LinearRGBA(
+    public nonisolated static let transparent = LinearRGBA(
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
 
     /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。

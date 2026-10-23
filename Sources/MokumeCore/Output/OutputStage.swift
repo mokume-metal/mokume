@@ -120,7 +120,7 @@ public enum OutputStage {
     /// **画素ごとに `pow()` を呼ばないための表である。** 1920×1080 なら色成分は
     /// 622 万個あり、そこへ伝達関数を素直に掛けると変換だけで 1 フレームの予算を
     /// 使い切る。段は 256 しか無いので、全部を先に引いておける。
-    static let decodeLinear: [Float] = (0...255).map {
+    nonisolated static let decodeLinear: [Float] = (0...255).map {
         TransferFunction.decode(Float($0) / 255)
     }
 
@@ -129,7 +129,7 @@ public enum OutputStage {
     /// アルファの乗算を戻す (手 1)。
     ///
     /// 完全に透明な画素には戻すべき色が無いので 0 を返す。
-    static func straighten(_ premultiplied: Float, alpha: Float) -> Float {
+    nonisolated static func straighten(_ premultiplied: Float, alpha: Float) -> Float {
         alpha > 0 ? premultiplied / alpha : 0
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import MokumeDiagnostics
+import Synchronization
 
 /// 「初回だけ知らせる」注意の控え。
 ///
@@ -54,4 +55,32 @@ nonisolated struct WarningLog<Key: Hashable> {
     /// 鍵が値を持つ注意 (行き先ごとに 1 度言う書き損じ・``FrameRecorder``) の、言った数に
     /// 上限を置くためにある。数を別に持つと、控えと数の 2 つを揃えて空に戻す必要が出る。
     func count(where isIncluded: (Key) -> Bool) -> Int { said.keys.count(where: isIncluded) }
+}
+
+nonisolated extension WarningLog: Sendable where Key: Sendable {}
+
+/// 複数のスレッドから言える「初回だけ知らせる」控え ([#2389])。
+///
+/// 値だけを扱う数と色の関数 (``map(_:_:_:_:_:)`` や ``color(_:_:_:_:)``) は、持ち主の面が無いので
+/// 控えをプロセスで 1 つ持つ。これらを `nonisolated` にして、`concurrentPerform` や TaskGroup から
+/// 並べて呼べるようにすると、**同じ注意を同時に言いうる**。控えの確かめと書き込みを `Mutex` の
+/// 1 つの区間に入れて、どのスレッドから何本呼んでも、注意は 1 度だけ出る。
+///
+/// 面が持つ控え (``Canvas/warnings`` など) は main actor の中だけで触るので、``WarningLog`` のまま
+/// 持つ。ここへ寄せるのは、持ち主が無く、隔離の外から呼ばれうる口だけである。
+///
+/// **文面の組み立てと標準エラーへの 1 行は、区間の中で行う。** 言う回は最初の 1 回だけで、
+/// 黙る回は鍵を見るだけで抜ける (区間は短い)。
+///
+/// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
+nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
+    private let log = Mutex(WarningLog<Key>())
+
+    /// まだ言っていなければ、その注意を 1 度だけ言う。
+    func warnOnce(_ key: Key, _ message: @autoclosure () -> String) {
+        log.withLock { $0.warnOnce(key, message()) }
+    }
+
+    /// いま言ってある注意の写し。**検査が読む。**
+    var snapshot: WarningLog<Key> { log.withLock { $0 } }
 }
