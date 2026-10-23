@@ -72,7 +72,10 @@ import MokumeDiagnostics
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     private(set) var exchangePartner: StageImage?
 
-    /// 面を取り替えた回数 (取り消しを含めて作ってから通算)。``contentRevision`` の一部。
+    /// 打ち切られた投入の取り消しで、面の中身が変わったと名乗った回数 (``noteTextureReplaced()`` を呼んだ回数・
+    /// 作ってから通算)。``contentRevision`` の一部。**取り替え (``exchangeTexture(with:)``) の回数ではない** —
+    /// 通常の取り替えは投入が面を名乗る番号 (``lastWriteSubmission``) で足りて、ここは進めない。頭で戻した回の
+    /// 打ち切りは面を取り替え直さないが、中身は変わるので数える。
     private var texturesReplaced: UInt64 = 0
 
     /// 奥行きを覚えておく面。
@@ -104,16 +107,17 @@ import MokumeDiagnostics
     /// ``Canvas/settlePlacersBeforeChange()`` を通った後は空になるので、関所を通さずに出す先を書く口は、
     /// ここで debug の検査が落とす (release では何もしない)。
     ///
-    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 3 系統である。描く先への
+    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 4 系統である。描く先への
     /// パスの記述 (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``。描き切りと ``fill(with:)``)・
     /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
-    /// `encodeEnlargement`)。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
+    /// `encodeEnlargement`)・面の取り替え (``exchangeTexture(with:)``・[#2388])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
     /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
     /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
     /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
     ///
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     func assertPlacersSettledBeforeWriting() {
         assert(
             drawer?.placers.isEmpty ?? true,
@@ -770,10 +774,16 @@ import MokumeDiagnostics
     /// ``Canvas/exchangeTargetWithCarry()`` だけが呼ぶ。2 回取り替えれば元の面である。**初めて取り替える
     /// とき、相手をこの描き場所に結ぶ** (``exchangePartner``)。
     ///
+    /// **出す先を書き換える口なので、置いた側が居ないことを検算する** ([#1942]・
+    /// ``assertPlacersSettledBeforeWriting()``)。呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す
+    /// (描き切りの頭・打ち切りの取り消し ``Canvas/carryDropped(_:)``)。
+    ///
     /// 2 枚の面は同じ形 (大きさ・形式) でなければならない — 描く細かさの控えとだけ取り替える。
     ///
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     func exchangeTexture(with partner: StageImage) {
+        assertPlacersSettledBeforeWriting()
         assert(
             partner.width == width && partner.height == height
                 && partner.texture.pixelFormat == texture.pixelFormat,

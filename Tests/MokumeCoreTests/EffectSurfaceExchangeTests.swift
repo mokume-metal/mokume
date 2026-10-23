@@ -260,6 +260,65 @@ struct EffectSurfaceExchangeTests {
         #expect((canvas.output.contentRevision != before) == dropped, "出し直しの印の進み方が違う")
     }
 
+    // MARK: - 結末の前に次のフレームが戻した (2 回目の反証 1)
+
+    /// 塗り直した効果のフレーム S が打ち切られ、その結末が届く前に次のフレーム S' の頭が戻すと、記帳は S' に
+    /// 上書きされて取り消せない。**名乗って受け入れる代償** (メンテナの判断 2026-10-23) なので、結末が届いたとき、
+    /// 戻された後の打ち切りだと見つけて 1 度だけ知らせる。順番は、結末の照会を止めて S' を組んで作る。
+    @Test("結末が届く前に次のフレームが戻していたら、打ち切りの結末で効果が焼き込まれたかもしれないと 1 度知らせる",
+        arguments: [true, false])
+    func aDropAfterTheNextFrameRestoredIsAnnounced(restoredBefore: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        // 結末の前に S' を組むなら照会を止めて描く。そうでなければ、S の結末を受けてから S' を組む
+        if restoredBefore { gpu.holdRevocations() }
+        try canvas.draw {
+            canvas.background(LinearRGBA.linear(red: 0, green: 0, blue: 1))
+            canvas.effects(Self.darkening)
+            gpu.dropsNextSubmissionForTesting = Self.victim
+        }
+        if !restoredBefore {
+            awaitOutcomes(gpu)
+            gpu.revokeDroppedDeliveries()
+        }
+        // S' — 塗り直さず、印を見て戻す
+        try canvas.draw { canvas.circle(8, 8, 4) }
+        // 結末の前に組んだ S' は印だけを見て戻す。結末を受けた後の S' は、印が下りているので戻さない
+        #expect(canvas.effectRestoresExchanged == (restoredBefore ? 1 : 0), "前提が崩れている")
+        if restoredBefore { gpu.releaseRevocations() }
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+
+        #expect(canvas.warnings.hasWarned(.effectBakedAfterDrop) == restoredBefore)
+        #expect(canvas.carriedAwaitingOutcome.isEmpty, "結末が届いたのに覚えが残っている")
+    }
+
+    /// 打ち切りの取り消しは、描き切りの外で出す先の面を取り替える口である (#1942 の登録簿)。置いた側が
+    /// 溜めている間に取り消すなら、取り替える前に置いた時点の絵を写させる。
+    @Test("打ち切りの取り消しが面を取り替えるときは、置いた側に変わる前の絵を写させる")
+    func theRevertGivesPlacersThePictureBeforeTheChange() throws {
+        let gpu = try RenderDevice()
+        let host = try CanvasFixture.make(gpu: gpu, width: 32, height: 32)
+        let layer = try host.createGraphics(16, 16)
+        gpu.holdRevocations()
+        layer.beginDraw()
+        layer.background(LinearRGBA.linear(red: 0, green: 0, blue: 1))
+        layer.effects(Self.darkening)
+        gpu.dropsNextSubmissionForTesting = Self.victim
+        layer.endDraw()
+        let copied = host.placedPicturesCopied
+        let exchanged = layer.target.texture
+        try host.draw {
+            host.image(layer, 0, 0)
+            #expect(!layer.output.drawer!.placers.isEmpty, "置いた記録が無い — 前提が崩れている")
+            gpu.releaseRevocations()
+            awaitOutcomes(gpu)
+            gpu.revokeDroppedDeliveries()
+            #expect(!Self.same(layer.target.texture, exchanged), "取り替えを戻していない — 前提が崩れている")
+            #expect(host.placedPicturesCopied == copied + 1, "置いた側に、変わる前の絵を写させていない")
+        }
+    }
+
     // MARK: - 最初の効果を通すフレームの出す面 (反証 6)
 
     /// 出す面は、頼まれた時点 (``Canvas/effects(_:)``) で塗って作る。書かれる前に読まれても (最初の効果を通す

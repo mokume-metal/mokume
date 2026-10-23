@@ -149,6 +149,11 @@ extension Canvas {
         case effectsOutsideFrame
         /// 効果を通せなかった。
         case effectFailed
+        /// GPU が打ち切った効果のフレームの後に、次のフレームがもう戻していた ([#2388])。効果が焼き込まれたまま
+        /// 残りうる。
+        ///
+        /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+        case effectBakedAfterDrop
         /// 拡大を通せなかった。
         case upscaleFailed
         /// 止まっている間のコールバックが書いた画素を、配った直後に描く先へ書き戻せなかった
