@@ -406,6 +406,13 @@ public final class SketchRuntime {
     private lazy var presence = SketchPresence(source: self)
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
     private var firstAdvanceAt: Double?
+    /// 名乗りが読む実時間の出どころ。**既定は実時間の単調な時計で、internal の初期化子だけが差し替える**
+    /// (検査が実時間も偽れるように・[#3119])。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    private let presenceClock: () -> Double
+    /// 最初に ``advance()`` が呼ばれたときの ``presenceClock`` の読み。``firstAdvanceAt`` と対で立つ。
+    private var firstAdvanceRealAt: Double?
     /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
     private var isAdvancingFrame = false
     /// 描き終えた (描けなかったものも含む) 最後のフレームの番号。**録りの幅の終わりになる。**
@@ -525,7 +532,8 @@ public final class SketchRuntime {
         displays: () -> [Display] = { Display.connected },
         onScreen: Bool = false,
         persistsParams: Bool = true,
-        opensFacets: Bool = true
+        opensFacets: Bool = true,
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -549,6 +557,7 @@ public final class SketchRuntime {
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
+        self.presenceClock = presenceClock
         // **観測・入力・つまみの区画は、書き出しの子には開かない** (`opensFacets`・#1619)。書き出しは
         // 外から届くものを水準 2 (同じ引数から同じ動き) を壊すものとして断る (ADR-0032「書き出す起こし方」)。
         // 区画を開くと、見張りの世代交代の瞬間に要求を取り合い (入力・つまみの値が絵に混ざる)、
@@ -579,7 +588,8 @@ public final class SketchRuntime {
         inbox: InputInbox? = nil,
         params: ParamSurface? = nil,
         paramStore: ParamStore? = nil,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -599,6 +609,7 @@ public final class SketchRuntime {
         self.isOnScreen = clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
+        self.presenceClock = presenceClock
         self.observer = observer
         self.inbox = inbox
         self.relayed = nil
@@ -1510,19 +1521,35 @@ public final class SketchRuntime {
     ///
     /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
     /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    ///
+    /// **経過は「作者の時計 (``now``) での経過」と「実時間での経過」の小さいほうで数える** ([#3119])。
+    /// ``now`` は検査が差し替えて進められる (`.wallClock` の週をまたぐ検査など)。それだけで名乗ると、
+    /// プロセス全体の状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスで窓を
+    /// 開閉する検査の run loop が止まって `exit(0)` で要約を残さず終わる ([#1527])。逆に ``now`` を
+    /// 止めた検査 (`now: { 0 }`) は、実時間だけで数えると混んだ機械で 30 秒を越えて名乗ってしまう
+    /// (直す前は経過 0 で名乗らなかった)。**両方が猶予を越えたときだけ名乗る**。本番の ``now`` は
+    /// `CACurrentMediaTime()` で、実時間と同じ値を返すので、振る舞いは変わらない。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    /// [#1527]: https://github.com/mokume-metal/mokume/issues/1527
     private func updatePresence() {
-        let now = self.now()
-        guard let started = firstAdvanceAt else {
-            firstAdvanceAt = now
+        guard firstAdvanceAt != nil else {
+            firstAdvanceAt = now()
+            firstAdvanceRealAt = presenceClock()
             return
         }
-        presence.advanced(runningFor: now - started)
+        presence.advanced(runningFor: presenceElapsed)
     }
 
-    /// 走り続けている時間 (秒)。名乗りが読む。
+    /// 名乗っているか。検査が読む (名乗りの本体 ``presence`` は持たせたまま外へ出さない)。
+    var isPresenceAnnounced: Bool { presence.isAnnounced }
+
+    /// 走り続けている時間 (秒)。名乗りが読む。最初のフレームの前は 0。
+    ///
+    /// 作者の時計での経過と実時間での経過の**小さいほう** (``updatePresence()``)。戻った時計で負にしない。
     var presenceElapsed: Double {
-        guard let firstAdvanceAt else { return 0 }
-        return now() - firstAdvanceAt
+        guard let firstAdvanceAt, let firstAdvanceRealAt else { return 0 }
+        return max(0, min(now() - firstAdvanceAt, presenceClock() - firstAdvanceRealAt))
     }
 
     /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。
