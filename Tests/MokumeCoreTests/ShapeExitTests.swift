@@ -155,6 +155,7 @@ enum ShapeExit {
             "frameRing": construction, "pipeline": construction, "argumentTable": construction,
             "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
+            "sketchTimeLease": "draw(into:) の閉包を抜けた後も開いていたフレームのために、借りた時刻の置き場を手放す処理 (#2454)。フレームを出る道が呼んで下ろす。組み立ての出口は触らない",
             "placementKey": "\(construction)。置いた側の記録が置いた描き場所を見分ける通し番号 (#2306)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,

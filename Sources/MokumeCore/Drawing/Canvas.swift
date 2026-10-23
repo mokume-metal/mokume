@@ -776,6 +776,11 @@ public final class Canvas {
             guard !readers.contains(where: { $0.canvas === canvas }) else { return }
             readers.append(WeakCanvas(canvas: canvas))
         }
+
+        /// 借りていた面を載せ替えで外す (``Canvas/borrowSketchState(from:)``)。
+        func remove(reader canvas: Canvas) {
+            readers.removeAll { $0.canvas == nil || $0.canvas === canvas }
+        }
     }
 
     /// 揺らぎの種と細かさを書き換える。**置いた図形は、置いた時点の種で引く** ([#1503])。
@@ -816,39 +821,67 @@ public final class Canvas {
     }
 
     /// ``SketchPart/draw(into:_:)`` の間だけ、スケッチの置き場 (揺らぎの種と細かさ・時刻と刻み) を
-    /// 本体の面 `main` から借りる。**返した閉包を呼ぶと、元の置き場へ戻す** ([#2454])。
+    /// 本体の面 `main` から借りる。**返した閉包を呼ぶと手放す** ([#2454])。
     ///
     /// 種はスケッチに 1 つ、時刻と刻みも 1 つである ([#1503]・[#1467])。作った描き場所
     /// (``createGraphics(_:_:)``) は最初から本体と同じ置き場を指すので、借りるのは**直に作った面**
-    /// (``init(target:gpu:)``) だけで、同じ置き場なら何もしない。借りないと、直に作った面へ向けた閉包の
-    /// 中で `noise()` が本体と別の種を読み、粒は 1/60 秒の刻みで進む。
+    /// (``init(target:gpu:)``) だけで、置き場が同じなら何もしない。借りないと、直に作った面へ向けた閉包の
+    /// 中で `noise()` が本体と別の種を読み、粒は 1/60 秒の刻みで進み、`wander` は面の描き歴で揺れる。
     ///
-    /// 置き場を取り替える前に、揺らぎを読みうる開いた列を閉じる (``changeNoise(_:)`` と同じ作法)。
-    /// 閉じた列は取り替える前の設定を持ち歩くので、置いた図形は置いた時点の種で引かれる。
+    /// **欄を 1 つずつ写さず、置き場の参照ごと取り替える。** 繋ぎ方は ``createGraphics(_:_:)`` と同じ 1 本
+    /// (``bind(_:)``) で、置き場を読む面・使う描き場所の登録まで通る。欄を足したときに写し漏らさないためと、
+    /// 揺らぎの種を書き換える口 (``changeNoise(_:)``) が、借りている間の面の開いた列も閉じるためである。
+    ///
+    /// 取り替える前に、揺らぎを読みうる開いた列を閉じる (``changeNoise(_:)`` と同じ作法)。閉じた列は
+    /// 取り替える前の設定を持ち歩くので、置いた図形は置いた時点の種で引かれる。手放すときも同じ。
+    ///
+    /// **時刻の置き場は、手放す時点で面のフレームが開いていれば、そのフレームが閉じるまで借りたままにする**
+    /// (``sketchTimeLease``)。時刻は列ごとに持たず、描き切りの時点で 1 つ読む (``Uniforms/time``・効果の
+    /// ``Effect`` の枠) ので、閉包の中で置いた図形を、閉包の外で開いたフレームの描き切りが面の自分の時刻で
+    /// 描くことになる。揺らぎの種は列が持ち歩くので閉じれば足りるが、時刻は閉じても足りない。
+    /// 閉じるのは ``leaveFrame()``。
+    ///
+    /// 面が ``beginDraw()`` で開いたまま借りたときは、そのフレームを借りた時点の本体のフレームに属するものと
+    /// して続ける (``beginDrawFrame`` の番号を借りた置き場の数え方へ移す)。数え方が置き場ごとに違うので、
+    /// 移さないと境目を越えたと見て捨ててしまう。
     ///
     /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
     /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
     /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
     func borrowSketchState(from main: Canvas) -> () -> Void {
-        var restores: [() -> Void] = []
-        if noiseStore !== main.noiseStore {
-            let own = noiseStore
-            replaceNoiseStore(with: main.noiseStore)
-            restores.append { [unowned self] in replaceNoiseStore(with: own) }
+        let (ownTimebase, ownStore) = (timebase, noiseStore)
+        let borrowsTime = ownTimebase !== main.timebase
+        let borrowsNoise = ownStore !== main.noiseStore
+        guard borrowsTime || borrowsNoise else { return {} }
+        // 種を取り替える前に、揺らぎを読みうる開いた列を閉じる (閉じた列は取り替える前の種を持ち歩く)
+        if borrowsNoise { closeRunBeforeSwapping(to: main.noiseStore) }
+        main.bind(self)
+        if borrowsTime, isDrawing, beginDrawFrame != nil { beginDrawFrame = timebase.frameForOpening }
+        let (mainTimebase, mainStore) = (main.timebase, main.noiseStore)
+        return { [unowned self] in
+            if borrowsNoise {
+                closeRunBeforeSwapping(to: ownStore)
+                noiseStore = ownStore
+                mainStore.remove(reader: self)
+            }
+            guard borrowsTime else { return }
+            let release = { [unowned self] in
+                timebase = ownTimebase
+                mainTimebase.remove(layer: self)
+            }
+            // フレームが開いたまま抜けるなら、そのフレームの描き切りまで借りておく
+            if isDrawing { sketchTimeLease = release } else { release() }
         }
-        if timebase !== main.timebase {
-            let (time, step) = (timebase.time, timebase.step)
-            (timebase.time, timebase.step) = (main.timebase.time, main.timebase.step)
-            restores.append { [unowned self] in (timebase.time, timebase.step) = (time, step) }
-        }
-        return { for restore in restores.reversed() { restore() } }
     }
 
-    /// 揺らぎの置き場を取り替える。設定が変わるなら、先に読みうる開いた列を閉じる。
-    private func replaceNoiseStore(with store: NoiseStore) {
+    /// 揺らぎの置き場を `store` に替えるとき、設定が変わるなら先に、読みうる開いた列を閉じる。
+    private func closeRunBeforeSwapping(to store: NoiseStore) {
         if store.settings != noiseSettings, !isFlushing, openRunReadsNoise { closeBatch() }
-        noiseStore = store
     }
+
+    /// ``borrowSketchState(from:)`` が借りた時刻の置き場を、面のフレームが開いたまま閉包を抜けたときに
+    /// 手放す処理。``leaveFrame()`` が呼んで下ろす。**境目では常に既定** (フレームを出る道が下ろす)。
+    var sketchTimeLease: (() -> Void)?
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
@@ -2121,6 +2154,11 @@ public final class Canvas {
             layers.removeAll { $0.canvas == nil }
             guard !layers.contains(where: { $0.canvas === canvas }) else { return }
             layers.append(WeakCanvas(canvas: canvas))
+        }
+
+        /// 借りていた面を手放すときに外す (``Canvas/borrowSketchState(from:)``)。
+        func remove(layer canvas: Canvas) {
+            layers.removeAll { $0.canvas == nil || $0.canvas === canvas }
         }
     }
 
@@ -3566,6 +3604,12 @@ public final class Canvas {
         //
         // [#1524]: https://github.com/mokume-metal/mokume/issues/1524
         hasLoadedPixels = false
+        // 閉包を抜けた後も開いていたフレームのために借りたままにした時刻の置き場は、描き切りが済んだ
+        // ここで手放す (``borrowSketchState(from:)``)。描き切りは時刻を読むので、手放すのはその後
+        if let release = sketchTimeLease {
+            sketchTimeLease = nil
+            release()
+        }
     }
 
     /// フレームの終わりに、**シーンの記述と開いたままの操作を既定へ戻す。** 溜めたものには
