@@ -134,6 +134,15 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
         SourceReport(name: name, state: state, lastArrival: lastArrival)
     }
 
+    /// まだ取り出されていないものを、読まずに捨てる (数えず、診断にも出さない)。
+    ///
+    /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
+    /// 読まれなかったものを残すと、足し直した最初の ``take()`` が古いものを出す。捨てた数 (``overflowed``・
+    /// ``unreadable``) と ``lastArrival`` は変えない。
+    package func discardWaiting() {
+        waiting.withLock { $0.removeAll() }
+    }
+
     // MARK: - 捨てた数
 
     /// 上限で捨てた数 (始まってからの累計)。
@@ -189,6 +198,12 @@ private nonisolated struct Waiting<Value: Sendable>: Sendable {
         ring[head] = (value, hostTime)
         head = (head + 1) % capacity
         overflowed += 1
+    }
+
+    /// 溜まっているものを捨てる。数えた累計は変えない。
+    mutating func removeAll() {
+        ring.removeAll()
+        head = 0
     }
 
     /// 届いた順に全部を取り出し、空にする。

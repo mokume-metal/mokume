@@ -108,6 +108,8 @@ public final class Capture: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった絵は捨てる。足し直した最初の ``supply()`` に、外す前の絵を出さない
+        input.discardWaiting()
     }
 
     public var report: SourceReport? { input.report }

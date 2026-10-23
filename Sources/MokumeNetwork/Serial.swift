@@ -114,6 +114,8 @@ public final class Serial: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった行は捨てる。足し直した最初の ``supply()`` に、外す前のものを出さない
+        input.discardWaiting()
         lines = []
     }
 

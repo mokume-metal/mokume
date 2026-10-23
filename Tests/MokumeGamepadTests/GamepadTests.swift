@@ -85,6 +85,24 @@ struct GamepadTests {
         #expect(device.state == .running)
     }
 
+    @Test("外して足し直したパッドは、外す前に溜まっていた釦と傾きを当てず、押されたままにならない (#3122)")
+    func reopenedPadDoesNotApplyWhatWaitedBeforeClose() throws {
+        // 空の列は何も入れない。外す前に届いて取り出されていない分だけを、受け取り口へ直に入れる
+        let device = try pad([])
+        device.inbox.changes.send(.pressed(.a))
+        device.inbox.stick.send([1, 0])
+        device.close()
+
+        try device.open()
+        device.supply()
+        #expect(!device.isPressed(.a), "外す前に押された釦が、足し直した最初のフレームで押されたままになる")
+        #expect(device.leftStick.simd == [0, 0])
+
+        device.inbox.changes.send(.pressed(.b))
+        device.supply()
+        #expect(device.isPressed(.b))
+    }
+
     @Test("外している間は入力を受けず、外し直せばまた止まる")
     func closedPadStaysSilentUntilItIsOpenedAgain() throws {
         let device = try pad([GamepadInput(leftStick: [0, 1], pressed: [.b])])

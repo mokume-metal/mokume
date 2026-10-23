@@ -125,6 +125,37 @@ struct CaptureTests {
         runtime.closePlugins()
     }
 
+    @Test("外して足し直したカメラの入り口は、外す前に届いて読まれなかった絵を、足し直した最初のフレームに出さない (#3122)")
+    func reattachedCaptureDoesNotShowThePictureThatWaitedBeforeDetach() throws {
+        var camera: Capture?
+        var seen: [(new: Bool, red: Float)] = []
+        let runtime = try run(
+            frames: 4,
+            setup: { sketch in
+                let made = Capture(
+                    image: try sketch.createImage(4, 4), device: nil, name: "camera",
+                    source: SilentSource(.running), owner: sketch)
+                sketch.attach(made)
+                camera = made
+            },
+            draw: { sketch in
+                guard let camera else { return }
+                switch sketch.frameCount {
+                case 1:
+                    // 届いたが、まだ読まれていない赤い絵を残したまま外す
+                    camera.input.send(solid(255, 0, 0))
+                    sketch.detach(camera)
+                case 2:
+                    sketch.attach(camera)
+                default:
+                    seen.append((camera.isNewFrame, camera.image.get(0, 0).red))
+                }
+            })
+        #expect(seen.count == 2)
+        #expect(seen.allSatisfy { !$0.new && $0.red == 0 }, "外す前の絵が出た: \(seen)")
+        runtime.closePlugins()
+    }
+
     // MARK: - 鏡像 (#2453)
 
     /// 左半分が赤、右半分が青の 4x4。

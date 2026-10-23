@@ -285,6 +285,36 @@ struct AudioInTests {
         runtime.closePlugins()
     }
 
+    @Test("外して足し直した音の入り口は、外す前に届いて読まれなかった音を、足し直した最初のフレームに出さない (#3122)")
+    func reattachedAudioDoesNotAnalyseTheSoundThatWaitedBeforeDetach() throws {
+        var audio: AudioIn?
+        var levels: [Float] = []
+        let runtime = try run(
+            frames: 4,
+            setup: { sketch in
+                let made = AudioIn(
+                    device: nil, name: "microphone", source: SilentAudioSource(.running),
+                    owner: sketch, warn: { _ in })
+                sketch.attach(made)
+                audio = made
+            },
+            draw: { sketch in
+                guard let audio else { return }
+                switch sketch.frameCount {
+                case 1:
+                    // 届いたが、まだ読まれていない大きな音を残したまま外す
+                    audio.input.send(sine(band: 20))
+                    sketch.detach(audio)
+                case 2:
+                    sketch.attach(audio)
+                default:
+                    levels.append(audio.level)
+                }
+            })
+        #expect(levels == [0, 0], "外す前の音が出た: \(levels)")
+        runtime.closePlugins()
+    }
+
     @Test("状態と最後に届いたフレームが、観測の応答の inputs に載る")
     func appearsInObservation() throws {
         let facet = FileManager.default.temporaryDirectory

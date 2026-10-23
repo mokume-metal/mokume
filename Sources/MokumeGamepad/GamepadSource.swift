@@ -42,6 +42,12 @@ nonisolated final class GamepadInbox: Sendable {
         changes.setState(state)
     }
 
+    /// まだ取り出されていない傾きと釦の押し離しを、読まずに捨てる (``Gamepad/close()``)。
+    func discardWaiting() {
+        stick.discardWaiting()
+        changes.discardWaiting()
+    }
+
     /// 出どころの状態。
     var state: SourceState { changes.state }
 

@@ -88,6 +88,14 @@ public nonisolated final class ExternalInput<Value: Sendable>: Sendable {
     /// 最後に取り出した値が、どのフレームに割り当てられたか。まだなら `nil`。
     public var lastArrival: Arrival? { arrival.withLock { $0 } }
 
+    /// まだ取り出されていない値を、読まずに捨てる。
+    ///
+    /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
+    /// 読まれなかった値を残すと、足し直した最初の ``take()`` が古い値を出す。``lastArrival`` は変えない。
+    package func discardWaiting() {
+        latest.withLock { $0 = nil }
+    }
+
     /// 観測の応答に載せる名乗り。``Inlet/report`` から返す。
     public var report: SourceReport {
         SourceReport(name: name, state: state, lastArrival: lastArrival)

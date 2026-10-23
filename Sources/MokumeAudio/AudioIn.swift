@@ -134,6 +134,8 @@ public final class AudioIn: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった音は捨てる。足し直した最初の ``supply()`` に、外す前の音を出さない
+        input.discardWaiting()
         levels = .silence
     }
 

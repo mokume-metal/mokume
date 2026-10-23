@@ -115,6 +115,8 @@ public final class Gamepad: Inlet {
         isClosed = true
         source.stop()
         inbox.setState(.stopped)
+        // 届いて読まれなかった釦と傾きは捨てる。足し直した最初の ``supply()`` に、外す前のものを当てない
+        inbox.discardWaiting()
         leftStick = Vector2(0, 0)
         pressed.removeAll()
     }
