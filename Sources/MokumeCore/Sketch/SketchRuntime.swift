@@ -710,7 +710,8 @@ public final class SketchRuntime {
     ///
     /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
     /// 見る** — 差込口を閉じるのは最初の 1 回だけで、2 回目からは撮る係の待ちだけを見る
-    /// (差込口の `close()` は「一度だけ呼ばれる」約束である)。
+    /// (終わりの処理で、同じ差込口の `close()` を 2 度呼ばない。外して足し直したときに
+    /// `open()` がもう 1 度来る約束とは別の話である — ``Inlet/open()``)。
     ///
     /// **待つのは撮る係だけで、差込口とつまみは先に済ませる。** 撮る係の待ちは動画を閉じ
     /// 終えるまでかかりうるので、その後ろに置くと、待っている間にプロセスが殺されたときに
@@ -1464,7 +1465,8 @@ public final class SketchRuntime {
     private func attachNow(_ inlet: any Inlet) -> Bool {
         guard admits(inlet) else { return false }
         if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
-            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // **居れば開き直さない** (開いているものを重ねて足しても `open()` は呼ばない。外して足し直したときは
+            // ここに来ず、下で `open()` をもう 1 度呼ぶ — ``Inlet/open()``)。続けて転んで外されていれば、
             // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
             if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
             return true
