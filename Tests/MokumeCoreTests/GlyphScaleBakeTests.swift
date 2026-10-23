@@ -695,13 +695,14 @@ struct GlyphScaleBakeTests {
         }
     }
 
-    /// 窓に出しながら回すランタイム (`isOnScreen`・実時間の時計) を組む。
+    /// 窓に出しながら回すランタイム (`defersEnlargedGlyphBakes`) を組む。
     private func makeZoom(
         _ sketch: Zoom, onScreen: Bool = true, observer: URL? = nil, scaledBakesPerFrame: Int = 2
     ) throws -> SketchRuntime {
         let runtime = try SketchRuntime(
-            sketch: sketch, gpu: try RenderDevice(), clock: onScreen ? .wallClock : nil, now: { 0 },
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 },
             observer: observer.map { FrameObserver(directory: $0) })
+        runtime.defersEnlargedGlyphBakes = onScreen
         runtime.canvas.atlas.scaledBakesPerFrame = scaledBakesPerFrame
         sketch.readsDeferral = { [unowned runtime] in runtime.canvas.atlas.mayDeferScaledBakes }
         return runtime

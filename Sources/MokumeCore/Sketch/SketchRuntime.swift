@@ -52,6 +52,11 @@ public final class SketchRuntime {
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
     private(set) var isLooping = true
+    /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
+    /// **窓・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
+    /// いるので、絵が窓へ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
+    /// 組み込み (検査・外から `pause()`・画素を読む使い方) と書き出す経路は既定のまま、先送りせず焼き切る。
+    var defersEnlargedGlyphBakes = false
     /// 1 枚だけ描いて書き出す口 (``renderFrame(to:)``) の最中か。**書き出す絵は残る**ので、拡大した字の焼きを
     /// 次のフレームへ送らない (``canDeferEnlargedGlyphs``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
     private var exportsOneFrame = false
@@ -997,14 +1002,14 @@ public final class SketchRuntime {
     /// と分かっているときだけ** — 近い段の画素で置いた字は、次のフレームが焼き直すまでぼけているので、
     /// 残る絵に載せてはいけない。
     ///
-    /// 許すのは、窓・共有面へ出しながら回している間 (``isOnScreen``) で、作者が止めておらず・外から止めて
+    /// 許すのは、窓・共有面へ出しながら回している間 (``defersEnlargedGlyphBakes``) で、作者が止めておらず・外から止めて
     /// おらず・時刻を指しておらず・観測が撮らず・撮る係 (`save()`・`beginRecord()`・`mokume render`) が
     /// 頼まれておらず・1 枚の書き出しでもないフレームだけである。書き出す・撮る・止める絵と、
     /// `draw()` の中で後から `noLoop()`・`save()` を呼ぶ絵は、既定で許さない側に倒れる。
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     private func canDeferEnlargedGlyphs(at requestedTime: Float?) -> Bool {
-        isOnScreen && isLooping && !isPaused && requestedTime == nil && !frameIsObserved
+        defersEnlargedGlyphBakes && isLooping && !isPaused && requestedTime == nil && !frameIsObserved
             && !exportsOneFrame && recorder?.isIdle != false && closingRecorder == nil
     }
 
