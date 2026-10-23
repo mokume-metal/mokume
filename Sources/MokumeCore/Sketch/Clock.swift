@@ -10,6 +10,8 @@ import QuartzCore
 /// 時刻の出どころを変えれば、絵が再現するかどうかが変わる。
 public enum Clock: Equatable, Sendable {
     /// 実際に流れた時間。画面に出しながら動かすときの既定。
+    ///
+    /// 窓では、その枚が表示される予定の時刻で進む (``SketchPart/time``)。
     case wallClock
 
     /// フレーム番号から導く。
@@ -146,6 +148,11 @@ final class FrameTiming {
     /// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
     private var started: Double
     private var previous: Double
+    /// 直近の枚の「表示の予定の時刻 − 現在時刻」(秒・0 以上)。**予定の時刻を運ばなかった枚は 0。**
+    /// 外から止めて再開したときに、起点を予定の時刻の軸へ据えるのに使う (``resync()``・[#2390])。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    private var displayLead: Double = 0
 
     /// これまでに進めたフレームの数。最初のフレームの最中は 1。
     private(set) var frameCount = 0
@@ -262,24 +269,47 @@ final class FrameTiming {
     /// 指定秒を描く)。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
-    func advance(at requestedTime: Float? = nil) {
-        let now = now()
+    ///
+    /// - Parameters:
+    ///   - requestedTime: 観測の指定秒。
+    ///   - displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。**実時間の
+    ///     時計 (``Clock/wallClock``) だけが読む** ([#2390])。窓・共有面の経路で、表示のリフレッシュが運んだ
+    ///     回が渡す。`nil` (予備のタイマーが進めた回・直に回す面) は現在時刻で代える。コールバックが走った
+    ///     時刻は main が他の仕事で遅れたぶん揺れるが、予定の時刻は表示の刻みの間隔のまま並ぶ。
+    ///     **どちらの回でも ``time`` は前の枚より小さくならない** — 予定の時刻は現在時刻より先なので、
+    ///     予備の回の現在時刻が前の枚の予定を下回ることがあり、そのときは前の枚の時刻に留める。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(at requestedTime: Float? = nil, displayTime: Double? = nil) {
+        // 実時間の時計の、この枚の時刻。**前の枚より前へは戻さない** (上の `displayTime`)。
+        // フレームの時計は時刻を読まない
+        let current = now()
+        var moment = max(displayTime ?? current, previous)
         if frameCount == 0, clock == .wallClock {
             // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
             // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
             // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
             // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
             //
+            // **起点は予定の時刻と、ここでの現在時刻の遅いほう** ([#2390])。予定の時刻は表示のリフレッシュが
+            // 来た時点で決まっていて、`setup()` (最初の枚の中・先に呼んだ `start()`・止まっている間のコールバック)
+            // はその後に走る。予定の時刻だけを起点にすると、`setup()` にかかった時間が 2 枚目の ``time`` と
+            // ``deltaTime`` に戻る (#2413 の退行)。`setup()` が刻みの内に収まるなら予定の時刻のままで、
+            // 2 枚目の経過は表示の刻みの間隔になる
+            //
             // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
-            started = now
+            // [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+            moment = max(moment, current)
+            started = moment
             stepsOneFrame = true
         }
+        displayLead = displayTime.map { max(0, $0 - current) } ?? 0
         frameCount += 1
         defer { stepsOneFrame = false }
         let raw: Double
         switch clock {
         case .wallClock:
-            raw = now - started
+            raw = moment - started
         case .frameIndex(let frameRate):
             // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)。
             // 最初のフレームを 0 秒にする
@@ -296,9 +326,9 @@ final class FrameTiming {
             } else {
                 // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
                 // 側 (粒・視点) が 1 枚で吹き飛ぶ
-                step = .seconds(min(max(0, now - previous), maximumDeltaTime))
+                step = .seconds(min(max(0, moment - previous), maximumDeltaTime))
             }
-            previous = now
+            previous = moment
         case .frameIndex(let frameRate):
             // 止めていたところから描く 1 枚も、既に 1 フレームぶんしか進まないので
             // ``stepOneFrameNext()`` は効かせるものが無い。見せる `deltaTime` は
@@ -364,8 +394,15 @@ final class FrameTiming {
     ///
     /// 実時間で動かしているときにしか効かない — フレーム番号から導く時刻は
     /// そもそも実時間に依存しないので、寄せ直すものがない。
+    ///
+    /// **起点は、次の枚が使う時間軸に据える** ([#2390])。窓の経路の次の枚は表示の予定の時刻で進み、それは
+    /// 現在時刻より約 1 刻み先にある。現在時刻に据えると最初の経過が 1〜2 刻みぶんになるので、直近の枚で
+    /// 見た「予定の時刻と現在時刻の差」(``displayLead``) だけ先に据える。**前の枚より前へは戻さない**
+    /// (戻すと、前の枚の予定の時刻と今の間が経過に入る)。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func resync() {
-        previous = now()
+        previous = max(previous, now() + displayLead)
     }
 
     /// 次の ``advance()`` の経過 (``deltaTime``) を、目標の 1 フレームぶんにする。
