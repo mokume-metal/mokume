@@ -42,9 +42,9 @@ struct DrawIntoTests {
         var direct: Canvas?
         /// `pad` の粒 (`setup()` で作る。粒は枚をまたいで生きるので、台本の外に持つ)
         var dust: Particles?
-        var script: ((Probe) -> Void)?
+        var script: ((Probe) throws -> Void)?
         /// `setup()` の終わりに走らせる台本 (描き場所を作った後)
-        var setupScript: ((Probe) -> Void)?
+        var setupScript: ((Probe) throws -> Void)?
         /// 走らせているランタイム。閉包の中の `canvas` は向き先なので、本体の面はここから引く
         weak var runtime: SketchRuntime?
 
@@ -56,12 +56,12 @@ struct DrawIntoTests {
             let gpu = canvas.gpu
             dust = try? pad?.makeParticles(count: 64)
             direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu)
-            setupScript?(self)
+            do { try setupScript?(self) } catch { Issue.record(error) }
         }
 
         func draw() {
             background(20)
-            script?(self)
+            do { try script?(self) } catch { Issue.record(error) }
         }
 
         /// 本体向けに書いた描く関数。`trail.` を付けない
@@ -75,7 +75,7 @@ struct DrawIntoTests {
     /// 台本を走らせる。`frames` 枚の `draw()` が済んだところで返る。
     @discardableResult
     private func run(
-        frames: Int = 1, setup: ((Probe) -> Void)? = nil, _ script: @escaping (Probe) -> Void
+        frames: Int = 1, setup: ((Probe) throws -> Void)? = nil, _ script: @escaping (Probe) throws -> Void
     ) throws -> (probe: Probe, runtime: SketchRuntime) {
         let probe = Probe()
         probe.script = script
@@ -490,6 +490,201 @@ struct DrawIntoTests {
         #expect(!warnedInFrame, "本体のフレームの中で、フレームの呼び出しの注意が出た")
         #expect(drewInto === result.runtime.canvas, "入れ子の中から本体へ戻れない")
         #expect(result.runtime.canvas.framesDrawn == 1, "本体のフレームが 1 回でない")
+    }
+
+    // MARK: - 置き場は参照ごと借りる (2 回目の反証 1・2・3・7)
+
+    @Test("直に作った面は閉包の間だけ本体の時刻の置き場を指し、粒の wander の揺れを決める番号も本体のもの")
+    func theDirectSurfaceSharesTheWholeTimebaseWhileBorrowing() throws {
+        var sameInside = false
+        var mainFramesInside = -1
+        var mainFramesOfMain = -1
+        var registeredInside = false
+        var sameAfter = true
+        var registeredAfter = true
+        let result = try run(frames: 3) { probe in
+            let direct = probe.direct!
+            let main = probe.runtime!.canvas
+            probe.draw(into: direct) {
+                sameInside = direct.timebase === main.timebase
+                mainFramesInside = direct.timebase.mainFramesDrawn
+                mainFramesOfMain = main.timebase.mainFramesDrawn
+                registeredInside =
+                    main.timebase.layers.contains { $0.canvas === direct }
+                    && main.noiseStore.readers.contains { $0.canvas === direct }
+            }
+            sameAfter = direct.timebase === main.timebase
+            registeredAfter =
+                main.timebase.layers.contains { $0.canvas === direct }
+                || main.noiseStore.readers.contains { $0.canvas === direct }
+        }
+        #expect(result.probe.direct != nil)
+        #expect(sameInside, "閉包の間、直に作った面が本体の時刻の置き場を指していない")
+        #expect(mainFramesOfMain > 0 && mainFramesInside == mainFramesOfMain, "粒の wander の番号が本体と違う")
+        #expect(registeredInside, "借りている間、置き場を使う面として登録されていない (createGraphics と同じ手順を通っていない)")
+        #expect(!sameAfter, "閉包を抜けても、本体の時刻の置き場を指したまま")
+        #expect(!registeredAfter, "閉包を抜けても、置き場の登録が残った")
+    }
+
+    /// 比較の断片: 置いた時点の種で引いた `mokume_noise` と CPU で引いた値の差を赤に返す。
+    private static let noiseGap = """
+        float4 paint(Fragment in, Values values) {
+            float mine = mokume_noise(in, float3(values.place, 0.0));
+            return float4(abs(mine - values.expected), 1.0, 0.0, 1.0);
+        }
+        """
+
+    @Test("本体の面から noiseSeed を決め直しても、借りている面の開いた列は置いた時点の種で引かれる")
+    func anotherSurfaceChangingTheSeedClosesTheBorrowedRun() throws {
+        var gap: Float = -1
+        var gapWithoutChange: Float = -1
+        for changesSeed in [true, false] {
+            var observed: Float = -1
+            try run { probe in
+                let direct = probe.direct!
+                let main = probe.runtime!.canvas
+                probe.noiseSeed(3)
+                let placed = main.noiseSettings
+                let shader = try direct.makeShader(
+                    Self.noiseGap,
+                    values: ["place": .pair(0, 0), "expected": .number(0)])
+                shader.set("place", .pair(1.5, 2.5))
+                shader.set("expected", .number(placed.value(1.5, 2.5, 0)))
+                try direct.draw {
+                    probe.draw(into: direct) {
+                        probe.background(.linear(red: 0, green: 0, blue: 0))
+                        probe.blendMode(.replace)
+                        probe.noStroke()
+                        probe.shader(shader)
+                        probe.rect(0, 0, 8, 8)
+                        // 閉包の中で、**本体の面の口**から種を決め直す。借りている面の開いた列を閉じなければ、
+                        // 置いた図形が置いた後の種で引かれる (#1503・#366)
+                        if changesSeed { main.noiseSeed(99) }
+                    }
+                }
+                observed = direct.get(4, 4).red
+            }
+            if changesSeed { gap = observed } else { gapWithoutChange = observed }
+        }
+        #expect(gapWithoutChange < 0.01, "検査が成り立たない: 種を変えなくても CPU の値と合わない (\(gapWithoutChange))")
+        #expect(gap < 0.01, "置いた図形が、置いた後の種で引かれた (差 \(gap))")
+    }
+
+    /// 時刻を赤に返す断片。
+    private static let timeProbe = """
+        float4 paint(Fragment in, Values values) {
+            return float4(in.time, 1.0, 0.0, 1.0);
+        }
+        """
+
+    @Test("閉包を抜けた後も面のフレームが開いているなら、そのフレームの描き切りは本体の時刻を読む")
+    func aFrameOpenAcrossTheClosureStillReadsTheSketchTime() throws {
+        var painted: Float = -1
+        var mainTime: Float = -1
+        var timeAfter: Float = -1
+        var sameAfter = true
+        try run(frames: 3) { probe in
+            let direct = probe.direct!
+            let main = probe.runtime!.canvas
+            direct.time = 5
+            mainTime = main.time
+            let shader = try direct.makeShader(Self.timeProbe, values: [:])
+            // 閉包の外で開いたフレームの中で、閉包を使う (`D.draw { draw(into: D) { … } }`)
+            try direct.draw {
+                probe.draw(into: direct) {
+                    probe.blendMode(.replace)
+                    probe.noStroke()
+                    probe.shader(shader)
+                    probe.rect(0, 0, 8, 8)
+                }
+            }
+            painted = direct.get(4, 4).red
+            timeAfter = direct.time
+            sameAfter = direct.timebase === main.timebase
+        }
+        #expect(mainTime > 0 && mainTime < 1, "検査が成り立たない: 本体の時刻が 0…1 に居ない (\(mainTime))")
+        #expect(abs(painted - mainTime) < 0.01, "閉包の中で置いた図形が、本体の時刻 \(mainTime) でなく \(painted) で描かれた")
+        #expect(timeAfter == 5 && !sameAfter, "フレームが閉じたのに、借りた時刻の置き場を手放していない")
+    }
+
+    @Test("beginDraw() で開いた直に作った面も、draw(into:) は続きとして走らせ、開いていたフレームを捨てない")
+    func aDirectSurfaceOpenedByBeginDrawContinues() throws {
+        var warned = false
+        var dropped = true
+        // 本体のフレーム番号が面の自分の数え方 (1) と離れた 3 枚目で試す
+        let result = try run(frames: 3) { probe in
+            guard probe.runtime!.canvas.framesDrawn == 2 else { return }
+            let direct = probe.direct!
+            direct.beginDraw()
+            direct.noStroke()
+            direct.fill(255, 0, 0)
+            direct.rect(0, 0, 8, 8)
+            probe.draw(into: direct) {
+                probe.fill(0, 255, 0)
+                probe.rect(16, 16, 8, 8)
+            }
+            warned = direct.warnings.hasWarned(.frameCallInsideDraw)
+            dropped = direct.warnings.hasWarned(.unfinishedFrameDropped)
+            direct.endDraw()
+        }
+        let drawn = try image(of: result.probe.direct)
+        #expect(drawn[4, 4] != (0, 0, 0, 0), "開いていたフレームの中身が捨てられた")
+        #expect(drawn[20, 20] != (0, 0, 0, 0), "閉包の中の描画が続きに載っていない")
+        #expect(warned && !dropped, "続きとして走らせる注意が出ていない、または開いていたフレームを捨てた")
+    }
+
+    // MARK: - 道具の状態を進める量は本体の面で測る (2 回目の反証 4)
+
+    @Test("orbitControl() の平行移動の量は、向き先によらず本体の面で測る")
+    func orbitPanIsMeasuredOnTheMainSurface() throws {
+        func centerAfterRightDrag(into: Bool) throws -> Vector3 {
+            let probe = Probe()
+            probe.script = { probe in
+                if into {
+                    probe.draw(into: probe.pad!) { probe.orbitControl() }
+                } else {
+                    probe.orbitControl()
+                }
+            }
+            let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
+            probe.runtime = runtime
+            runtime.start()
+            runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: .right))
+            try runtime.advance()
+            runtime.input.enqueue(.mouseMoved(x: 40, y: 32))
+            try runtime.advance()
+            return try #require(runtime.orbit).center
+        }
+        let plain = try centerAfterRightDrag(into: false)
+        let viaPad = try centerAfterRightDrag(into: true)
+        #expect(Orbit.fitting(width: 64, height: 64).center != plain, "検査が成り立たない: 平行移動が起きていない")
+        #expect(plain == viaPad, "向き先の面 (32×16) で測った量が混ざった")
+    }
+
+    // MARK: - usesFrameHistory は本体の面を読む (2 回目の反証 5)
+
+    @Test("usesFrameHistory は閉包の中でも本体の面の答え")
+    func usesFrameHistoryReadsTheMainSurface() throws {
+        final class Temporal: Sketch {
+            var settings: SketchSettings {
+                SketchSettings(width: 64, height: 64, pixelDensity: 0.5, upscale: .temporal)
+            }
+            var pad: Canvas?
+            var outside = false
+            var inside: Bool?
+            init() {}
+            func setup() { pad = try? createGraphics(16, 16) }
+            func draw() {
+                outside = usesFrameHistory
+                draw(into: pad!) { inside = usesFrameHistory }
+            }
+        }
+        let sketch = Temporal()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+        runtime.start()
+        try runtime.advance()
+        #expect(sketch.outside, "検査が成り立たない: 本体の面が履歴を使っていない")
+        #expect(sketch.inside == sketch.outside, "閉包の中と外で答えが割れた")
     }
 
     // MARK: - 失敗系

@@ -586,8 +586,13 @@ extension SketchPart {
     /// `true` になるのは ``SketchSettings/upscale`` に ``Upscale/temporal`` を
     /// 選び、かつ実際に拡大が立っているときだけである。
     ///
+    /// ``draw(into:_:)`` の閉包の中でも、答えは本体の面のもの。スケッチの設定で決まる値で、描き場所は
+    /// 拡大を立てないので、向き先を読むと閉包の中と外で答えが割れる。
+    ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public var usesFrameHistory: Bool { Self.liveCanvas(.read(returning: "false"))?.usesFrameHistory ?? false }
+    public var usesFrameHistory: Bool {
+        Self.liveRuntime(.read(returning: "false"))?.canvas.usesFrameHistory ?? false
+    }
 
     /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
     public var frameCount: Int { Self.liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }

@@ -132,8 +132,11 @@ extension SketchPart {
             let pans =
                 input.pressedButtons.contains(.right)
                 || (input.pressedButtons.contains(.left) && Keyboard(state: input).isPressed(.option))
-            // **平行移動の量は動かす前の視点で測る。** 投影はいまのもの (`orbitControl` は書き換えない)
-            var view = canvas.currentCamera
+            // **平行移動の量は動かす前の視点で測る。** 投影はいまのもの (`orbitControl` は書き換えない)。
+            // 道具の状態を進める量なので、測る面は向き先によらず**本体の面**である (#2454)。向き先の大きさと
+            // 投影で測ると、1 フレームに最初に呼んだ面で量が決まり、呼ぶ順で変わる。向き先は視点を書く先だけ
+            let measure = runtime.canvas
+            var view = measure.currentCamera
             (view.eye, view.center, view.up) = (orbit.eye, orbit.center, orbit.up)
             // 平行移動の間は回さない。回す軸は 0 の引きずりとして進め、慣性の速さも捨てる
             let held = orbit.advance(
@@ -142,8 +145,8 @@ extension SketchPart {
             let panHeld =
                 pans
                 && !orbit.pan(
-                    dragX: input.dragX, dragY: input.dragY, through: view, width: canvas.width,
-                    height: canvas.height)
+                    dragX: input.dragX, dragY: input.dragY, through: view, width: measure.width,
+                    height: measure.height)
             // 感度が有限なのに進めなかった軸 — 積が溢れた・届いた量が数でない・無限。
             // 別の軸の感度が使えなくても、こちらは別に知らせる。平行移動は感度を使わない
             let overflowed =
