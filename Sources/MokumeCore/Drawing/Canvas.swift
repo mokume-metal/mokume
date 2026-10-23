@@ -814,6 +814,41 @@ public final class Canvas {
         }
         noiseSettings = next
     }
+
+    /// ``SketchPart/draw(into:_:)`` の間だけ、スケッチの置き場 (揺らぎの種と細かさ・時刻と刻み) を
+    /// 本体の面 `main` から借りる。**返した閉包を呼ぶと、元の置き場へ戻す** ([#2454])。
+    ///
+    /// 種はスケッチに 1 つ、時刻と刻みも 1 つである ([#1503]・[#1467])。作った描き場所
+    /// (``createGraphics(_:_:)``) は最初から本体と同じ置き場を指すので、借りるのは**直に作った面**
+    /// (``init(target:gpu:)``) だけで、同じ置き場なら何もしない。借りないと、直に作った面へ向けた閉包の
+    /// 中で `noise()` が本体と別の種を読み、粒は 1/60 秒の刻みで進む。
+    ///
+    /// 置き場を取り替える前に、揺らぎを読みうる開いた列を閉じる (``changeNoise(_:)`` と同じ作法)。
+    /// 閉じた列は取り替える前の設定を持ち歩くので、置いた図形は置いた時点の種で引かれる。
+    ///
+    /// [#1467]: https://github.com/mokume-metal/mokume/issues/1467
+    /// [#1503]: https://github.com/mokume-metal/mokume/issues/1503
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    func borrowSketchState(from main: Canvas) -> () -> Void {
+        var restores: [() -> Void] = []
+        if noiseStore !== main.noiseStore {
+            let own = noiseStore
+            replaceNoiseStore(with: main.noiseStore)
+            restores.append { [unowned self] in replaceNoiseStore(with: own) }
+        }
+        if timebase !== main.timebase {
+            let (time, step) = (timebase.time, timebase.step)
+            (timebase.time, timebase.step) = (main.timebase.time, main.timebase.step)
+            restores.append { [unowned self] in (timebase.time, timebase.step) = (time, step) }
+        }
+        return { for restore in restores.reversed() { restore() } }
+    }
+
+    /// 揺らぎの置き場を取り替える。設定が変わるなら、先に読みうる開いた列を閉じる。
+    private func replaceNoiseStore(with store: NoiseStore) {
+        if store.settings != noiseSettings, !isFlushing, openRunReadsNoise { closeBatch() }
+        noiseStore = store
+    }
     /// 溜めた計算。描く前に流し、フレームの終わりに空になる。
     var pendingComputations: [ComputeDispatch] = []
     /// この面が作った計算。観測へ失敗を載せるために持つ。**弱く持つ** (``Canvas/shaders``)。
@@ -4488,6 +4523,11 @@ public final class Canvas {
         shadow bakedShadow: BakedShadow?, drawingInFrame: Bool
     ) throws(RenderFailure) -> PreparedBatches? {
         guard hasPendingGeometry else { return nil }
+        // **基本図形のパイプラインは、積む前に使う分だけ組み済みにする** (#3114)。積む側
+        // (``encodeBatches``) は組み済みの 1 本を引くだけで、組むのはここ。組んだ本数だけ
+        // フレームの頭が延びるが、同じ組は 2 度と組まない
+        try pipeline.prepareForms(
+            batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
@@ -4564,7 +4604,7 @@ public final class Canvas {
             case .form:
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
-                use(pipeline.formStates(for: batch.formFlags).state(for: run.mode))
+                use(pipeline.builtFormState(for: batch.formFlags, mode: run.mode))
                 use(depth: pipeline.flatDepthState)
                 bind(
                     geometry.formInstances.gpuAddress

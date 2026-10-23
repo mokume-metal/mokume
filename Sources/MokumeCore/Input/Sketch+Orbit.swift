@@ -92,8 +92,18 @@ extension SketchPart {
         // 外 (`setup()`・止まっている間のコールバック) では下の `camera` が断る。そこまで
         // 進めてから断ると、注意は出ても道具の状態 (慣性・引きずった量を食った印) だけが
         // 1 段進み、「無視する」にならない。形の組み立ての中も同じく先に断る (#1529)
-        guard canvas.admits(.camera) else { return }
-        var orbit = runtime.orbit ?? Orbit.fitting(width: canvas.width, height: canvas.height)
+        //
+        // **道具の状態 (``orbit``) は本体と共有なので、進めてよいかは本体のフレームで決める** (#2454)。
+        // ``draw(into:_:)`` の向き先は、`setup()` やコールバックの中でもフレームを開く (`isDrawing`)。
+        // 向き先だけを見ると、本体ではフレームの外で断る呼び出しが道具の状態を進めてしまう。
+        // 向き先が本体なら 1 度で済む
+        guard runtime.canvas.admits(.camera), canvas === runtime.canvas || canvas.admits(.camera) else {
+            return
+        }
+        // 道具の始まりは、向き先によらず**本体の面の中央**。道具の状態が本体と共有なので、先に向き先の
+        // 大きさで作ると、本体の視点と戻り先が描き場所の中央になる (#2454)
+        var orbit =
+            runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         // 戻す先は、最初に呼んだフレームの視点 (#2762)。ここで控え、以後は変えない
         if runtime.orbitHome == nil { runtime.orbitHome = orbit }
 
@@ -177,14 +187,15 @@ extension SketchPart {
             guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
                 return Orbit(center: Vector3(0, 0, 0), distance: 0)
             }
-            return runtime.orbit ?? Orbit.fitting(width: runtime.activeCanvas.width, height: runtime.activeCanvas.height)
+            // 道具の始まりは本体の面の中央で、向き先によらない (``orbitControl(_:_:_:)``)
+            return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
         }
         // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
         nonmutating set {
             guard let runtime = Self.liveRuntime() else { return }
             var orbit = newValue
-            // 見ている先の既定は、道具の始まりと同じ面の中央
-            let start = Orbit.fitting(width: runtime.activeCanvas.width, height: runtime.activeCanvas.height)
+            // 見ている先の既定は、道具の始まりと同じ面の中央 (本体の面)
+            let start = Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
             if orbit.clampToLimits(fallbackCenter: start.center) {
                 runtime.activeCanvas.warnOnce(
                     .badOrbit,

@@ -68,12 +68,16 @@ struct PlacedGlyph {
 /// 幅を合計する場所を散らすと、症状は「整列が数画素ずれる」という形で出る —
 /// 決定的だが小さく、枠を描いて拡大しないと見えない種類の壊れ方になる。
 ///
-/// ## 組版はしない
+/// ## 引き当ては組版しない
 ///
-/// 引き当ては**Unicode スカラ 1 つずつ**で、合字・字形の入れ替え・複雑な文字体系の
-/// 並べ替えは行わない。組版の結果を使うと合字には強くなるが、**部分の幅を足しても
+/// ``glyph(for:)``・``advance(of:)`` の引き当ては**Unicode スカラ 1 つずつ**で、合字・字形の入れ替え・
+/// 複雑な文字体系の並べ替えは行わない。組版の結果を使うと合字には強くなるが、**部分の幅を足しても
 /// 全体の幅に一致しなくなる** (加法性が失われる)。両方は成り立たないので、
-/// 加法性のほうを選んでいる。
+/// ``glyph(for:)`` 系 (`text()`・`textWidth()`・`textBounds()`) は加法性のほうを選んでいる。
+/// **組版した結果が要る口は別にある** — ``shape(_:)`` (`shapedText()`・`shapedTextWidth()`・
+/// `shapedTextBounds()`。[#2404]) は、1 行を CoreText に組ませて字形の列と幅を返す。
+///
+/// [#2404]: https://github.com/mokume-metal/mokume/issues/2404
 final class Typeface {
     let request: TypefaceRequest
     /// 引き当ての出発点になる書体。
@@ -133,7 +137,7 @@ final class Typeface {
     /// 必ず決めさせる (知らせない検査は空の口を渡す)。
     ///
     /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
-    private let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
+    let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
 
     init(
         request: TypefaceRequest,
@@ -531,6 +535,11 @@ final class Typeface {
     /// (空白など)。**描く道具を作れずに描けなかった字は控えず、次に引き直す** (焼き場が
     /// `.unbakeable` を控えないのと同じ)。
     private var drawnInks: [Unicode.Scalar: CGRect?] = [:]
+    /// 組版した字形の墨の控え (``ink(of:keeping:as:)``)。
+    var shapedInks: [ShapedInkKey: CGRect?] = [:]
+    /// 組版した 1 行の控え (``shape(_:)``)。重さは字形の数で、予算を超えたら古い順に 1 件ずつ捨てる。
+    var shaped = BoundedCache<ShapedLineKey, ShapedLine>(
+        budget: Typeface.shapedBudget, weight: { max(1, $0.glyphs.count) })
 
     /// その字形を、**道筋ではなく描いて測るか** ([#2308])。
     ///
@@ -589,12 +598,12 @@ final class Typeface {
 
     /// 描いて測った結果。描けなかったこと (`failed`) と、描いて墨が無かったこと (`ink(nil)`) を分ける。
     /// 描いたときは、その画素も一緒に返す (焼き場へ預ける)。
-    private enum Drawing {
+    enum Drawing {
         case ink(CGRect?, GlyphAtlas.Rendered?)
         case failed
     }
 
-    private static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
+    static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
         var glyph = resolved.glyph
         let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
@@ -641,7 +650,7 @@ final class Typeface {
     }
 
     /// 書体の中での字形の番号。持っていなければ 0。
-    private static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
+    static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
         var units = Array(String(scalar).utf16)
         var glyphs = [CGGlyph](repeating: 0, count: units.count)
         CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)
