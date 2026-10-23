@@ -53,7 +53,7 @@ import simd
     /// GPU 側の面。
     let texture: any MTLTexture
     /// 送りを頼む先 (控えの登録簿) と、逃げ道で待つ相手。
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
     /// 入力の控え (raw / CPU 半精度) が GPU 側より新しいか。
     ///
     /// **検査が読む。** 描き切りが待てずに送れなかったときは立ったままになり、次の

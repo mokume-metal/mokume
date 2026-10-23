@@ -138,6 +138,8 @@ extension Canvas {
         case roundedMonochromeAmount
         case roundedVignetteAmount
         case roundedFringeAmount
+        /// ``Effect/threshold(level:)`` の `level` が 0…1 の外で、端へ締めた。
+        case roundedThresholdLevel
         /// 効果の `radius` が ``Effect/maxRadius`` を越え、そこへ締めた ([#1842])。
         ///
         /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842

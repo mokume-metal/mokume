@@ -50,6 +50,14 @@ public enum Effect {
     case fringe(amount: Float)
     /// 明るさ・対比・彩度を動かす。**どれも 0 が無効。**
     case adjust(brightness: Float = 0, contrast: Float = 0, saturation: Float = 0)
+    /// 2 値化する。**明るさが `level` 以上の画素は白、未満は黒にし、アルファは動かさない。**
+    ///
+    /// `level` は 0…1 で、明るさは ``brightness(_:)`` と同じ物差し (乗算を戻した表示の色の 3 成分の最大) で
+    /// 比べる。`brightness(c) / 100 >= level` の画素が白になる。Processing の `filter(THRESHOLD, level)` と
+    /// 同じ量で、`level` が 0 なら全部白、1 なら 1 の画素だけが白になる。範囲の外は端へ締める。
+    ///
+    /// 白は不透明度ぶんの白 (乗算済み) で、半透明の画素は半透明のまま 2 値になる。
+    case threshold(level: Float)
     /// 利用者が書いた効果。
     case custom(EffectShader)
 
@@ -126,6 +134,9 @@ public enum Effect {
             return [
                 EffectPass(control: Self.control(kind: .adjust, brightness, contrast, saturation))
             ]
+        case .threshold(let level):
+            // 比べるのは線形へ戻した値 (エンコードは単調なので答えは変わらない)。0 以下は 0 のまま
+            return [EffectPass(control: Self.control(kind: .threshold, TransferFunction.decode(level)))]
         case .custom(let shader):
             return [EffectPass(control: Self.control(kind: .copy), shader: shader)]
         }
@@ -223,6 +234,9 @@ extension Effect {
         case .adjust(let brightness, let contrast, let saturation):
             guard brightness.isFinite, contrast.isFinite, saturation.isFinite else { return nil }
             return self
+        case .threshold(let level):
+            guard level.isFinite else { return nil }
+            return .threshold(level: Self.clampAmount(level))
         case .custom:
             return self
         }
@@ -269,6 +283,13 @@ extension Effect {
             return [amount(.roundedMonochromeAmount, "monochrome", value)].compactMap { $0 }
         case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", value)].compactMap { $0 }
         case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", value)].compactMap { $0 }
+        case .threshold(let value):
+            guard value.isFinite, value < 0 || value > 1 else { return [] }
+            return [
+                Rounding(
+                    warning: .roundedThresholdLevel, quantity: "the threshold level", range: "0 to 1",
+                    passed: value, used: value < 0 ? 0 : 1)
+            ]
         case .adjust, .custom: return []
         }
     }
@@ -292,6 +313,7 @@ extension Effect {
         case .vignette: "vignette"
         case .fringe: "fringe"
         case .adjust: "adjust"
+        case .threshold: "threshold"
         case .custom: "custom"
         }
     }
@@ -379,6 +401,8 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     case accumulate = 12
     /// 縮める / 広げる。大きなぼかしが縮めた絵の上で回るための段 ([#755])。
     case resize = 13
+    /// 2 値化 (``Effect/threshold(level:)``)。
+    case threshold = 14
 
     /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
     var value: Float { Float(rawValue) }
@@ -399,6 +423,7 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
         case .enlarge: "kEffectEnlarge"
         case .accumulate: "kEffectAccumulate"
         case .resize: "kEffectResize"
+        case .threshold: "kEffectThreshold"
         }
     }
 }
