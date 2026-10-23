@@ -223,6 +223,8 @@ extension Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
+        // 先送りした四角の列は、閉じる (#2446)。閉じる列が無くても下ろす
+        deferredRunOpen = false
         // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
         defer { openBatchHasThinCoverage = false }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
@@ -515,6 +517,9 @@ extension Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func beginFlat() {
+        // 先送りした四角だけの列へ、ほかの平面の頂点を足さない (#2446)。要る段の画素へ置き直すとき、列ごと
+        // 読む面を差し替えるので、紛れ込んだ頂点の読む位置が合わなくなる
+        if deferredRunOpen && !isPlacingDeferredGlyph { closeBatch() }
         notePaintPlacement()
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ

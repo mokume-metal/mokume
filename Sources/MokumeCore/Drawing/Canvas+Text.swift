@@ -254,12 +254,16 @@ extension Canvas {
                     face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)] = placed
                 }
                 if !entry.isBlank {
-                    let start = appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
-                    // 先送りした字は、フレームの終わりに絵が残るなら払う (``settleDeferredGlyphs(baking:)``)
-                    if let key = found.deferredKey {
+                    // 先送りした字は、先送りした字だけの列へ置く。フレームの終わりに絵が残るなら、そこで
+                    // 払う (``settleDeferredGlyphs(baking:)``)
+                    if let key = found.deferredKey, prepareDeferredRun() {
+                        let start = appendGlyphQuad(
+                            entry, penX: pen, baseline: baseline, color: color, inDeferredRun: true)
                         noteDeferredGlyph(
                             start: start, placedWith: entry, key: key, font: resolved.font,
                             penX: pen, baseline: baseline, color: color)
+                    } else {
+                        appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
                     }
                 }
             }

@@ -1431,11 +1431,17 @@ public final class Canvas {
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     var atlasPageFrame: Int?
     /// 1 フレームに焼く量の上限を越えて**先送りし、近い段の画素で置いた四角**の控え ([#2446])。
-    /// 頂点の位置と、焼くはずだった段の鍵・置いた変換を持ち、フレームを描き切る直前に払う
+    /// 先送りした四角は、**それだけで 1 つの列に並べる** (``DeferredRun``) — 頁が替わっても、その列の頂点と
+    /// 読む面だけを差し替えて、要る段の画素へ置き直せる。フレームを描き切る直前に払う
     /// (``settleDeferredGlyphs(baking:)``)。溜め場と同じ寿命で、描き切りか捨てるときに空になる。
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
-    var deferredGlyphs: [DeferredGlyph] = []
+    var deferredRuns: [DeferredRun] = []
+    /// 先送りした四角の列を、いま開いているか。**開いている間、平面の頂点はこの列にしか積まない**
+    /// (``beginFlat()`` が、ほかの平面の頂点を置く前に列を閉じる)。列を閉じるとき (``closeBatch()``) に下りる。
+    var deferredRunOpen = false
+    /// 先送りした四角を置いている最中。``beginFlat()`` が、開いている列を閉じずに続けるための印。
+    var isPlacingDeferredGlyph = false
     /// **いま描いているフレームの絵が、次のフレームに描き直されずに残るか** ([#2446])。ランタイムが
     /// `draw()` の後ろで、`noLoop()`・`save()`・`beginRecord()` で決まった分を書く。残るなら、先送りした
     /// 字をフレームの終わりに焼いて置き直す。フレームを出るときに下ろす。
@@ -2769,7 +2775,8 @@ public final class Canvas {
         }
         list(&vertices)
         // 先送りの控えは、頂点の位置を指す。頂点ごと捨てたので、控えも要らない
-        list(&deferredGlyphs, counted: false)
+        list(&deferredRuns, counted: false)
+        if emptying { deferredRunOpen = false }
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)

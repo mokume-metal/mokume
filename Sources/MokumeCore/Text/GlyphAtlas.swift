@@ -65,6 +65,8 @@ import simd
     static let initialSize = 256
     /// 広げられる上限 (画素)。
     static let maximumSize = 4096
+    /// 初めの大きさから上限まで、頁を広げられる回数 (大きさは倍々に広がる)。
+    static let maximumGrowths = (maximumSize / initialSize).trailingZeroBitCount
     /// 字形の絵の周りに置く余白 (画素)。
     ///
     /// **この余白は送り位置に混ざってはならない。** 焼くときに余白ぶんずらし、

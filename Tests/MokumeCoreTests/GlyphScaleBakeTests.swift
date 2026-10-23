@@ -453,7 +453,7 @@ struct GlyphScaleBakeTests {
         #expect(try drawSix(canvas, scale: 4, persists: true) == 6, "字が欠けた")
         #expect(scaledBakedCount(canvas) == 6, "払っていない: \(scaledBakedCount(canvas))")
         #expect(canvas.atlas.owedGlyphCount == 0, "払った字が先送りの履歴に残っている")
-        #expect(canvas.deferredGlyphs.isEmpty)
+        #expect(canvas.deferredRuns.isEmpty)
         #expect(try canvas.target.encodeForDisplay() == reference, "払った絵が、先送りしなかった絵と違う")
         #expect(canvas.warnings.message(for: .softEnlargedText) == nil)
     }
@@ -484,7 +484,7 @@ struct GlyphScaleBakeTests {
                 canvas.scale(4, 4)
                 canvas.text("abcdef", 0, 0)
             }
-            #expect(canvas.deferredGlyphs.isEmpty)
+            #expect(canvas.deferredRuns.isEmpty)
             canvas.fill(white)
             canvas.shape(shape, 4, 60)
         }
@@ -492,14 +492,126 @@ struct GlyphScaleBakeTests {
         #expect(canvas.atlas.owedGlyphCount == 0)
     }
 
-    /// 境界: 控えた四角を置いた後に頁が替わると、置き直す先の面が違う。置き直さず (別の頁の位置を書かない)、
-    /// 近い段のまま、拡大が原因だと知らせる。頁が溢れたときと同じ約束で、字は欠けない。
-    @Test("頁が替わって置き直せない四角は、近い段のまま残して知らせる")
-    func glyphsOnAnotherPageStaySoftAndAreReported() throws {
+    /// 境界: 先送りした四角を置いた後に、同じフレームで頁が広がる (焼いた字形が全部消える) 場合。**静的な 1 枚の
+    /// 絵 (`noLoop()` のポスター) の最初のフレームは、これが普通に起きる** — 頁は小さく始まり、字を焼くたびに
+    /// 広がる。先送りした四角は列に分けてあるので、広げた頁へ焼き直して列の読む面を差し替えれば、先送りしな
+    /// かった絵と同じになる。
+    @Test("先送りした後に頁が広がっても、絵が残るなら先送りしなかった絵と同じになる")
+    func aPageGrowingAfterTheDeferralIsStillPaid() throws {
+        func frame(_ canvas: Canvas, persists: Bool) throws -> Int {
+            let before = canvas.glyphQuadsPlaced
+            var pages = 0
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(16)
+                canvas.pushMatrix()
+                canvas.translate(4, 60)
+                canvas.scale(4, 4)
+                canvas.text("abcdef", 0, 0)
+                canvas.popMatrix()
+                // 先送りした後に、拡大しない字を大量に焼いて頁を広げさせる
+                let serial = canvas.atlas.pageSerial
+                canvas.textSize(90)
+                canvas.text("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 4, 100)
+                canvas.text("abcdefghijklmnopqrstuvwxyz0123456789", 4, 124)
+                if canvas.atlas.pageSerial != serial { pages += 1 }
+                canvas.framePersists = persists
+            }
+            #expect(canvas.glyphQuadsPlaced - before == 6 + 26 + 36, "字が欠けた")
+            return pages
+        }
+        let reference = try makeCanvas(width: 400, height: 128)
+        _ = try frame(reference, persists: false)
+        let expected = try reference.target.encodeForDisplay()
+
         let canvas = try makeCanvas(width: 400, height: 128)
         canvas.atlas.scaledBakesPerFrame = 2
         canvas.atlas.mayDeferScaledBakes = true
-        let before = canvas.glyphQuadsPlaced
+        #expect(try frame(canvas, persists: true) >= 1, "検査の前提: 先送りの後に頁が広がらなかった")
+        #expect(canvas.atlas.owedGlyphCount == 0, "先送りの履歴が残っている")
+        #expect(try canvas.target.encodeForDisplay() == expected, "頁が広がった後の絵が、先送りしなかった絵と違う")
+        #expect(canvas.warnings.message(for: .softEnlargedText) == nil)
+    }
+
+    /// 境界: **払うときに頁が広がる** 場合 (先送りした字を要る段で焼くと、頁に入りきらない)。広げると焼いた字形は
+    /// 全部消えるので、列の字を広げた頁へ焼き直す。焼き直さないと、列の字が別々の頁の位置を読む。
+    @Test("払うときに頁が広がっても、列の字は同じ頁へ揃い、先送りしなかった絵と同じになる")
+    func aPageGrowingWhilePayingIsStillPaid() throws {
+        func frame(_ canvas: Canvas, persists: Bool) throws {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(16)
+                canvas.translate(4, 100)
+                canvas.scale(8, 8)
+                canvas.text("abcdef", 0, 0)
+                canvas.framePersists = persists
+            }
+        }
+        let reference = try makeCanvas(width: 400, height: 128)
+        try frame(reference, persists: false)
+        let expected = try reference.target.encodeForDisplay()
+
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 1
+        canvas.atlas.mayDeferScaledBakes = true
+        var serialBeforePaying = canvas.atlas.pageSerial
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(16)
+            canvas.translate(4, 100)
+            canvas.scale(8, 8)
+            canvas.text("abcdef", 0, 0)
+            #expect(canvas.deferredRuns.map(\.glyphs.count) == [5], "検査の前提: 5 字を先送りしていない")
+            serialBeforePaying = canvas.atlas.pageSerial
+            canvas.framePersists = true
+        }
+        #expect(canvas.atlas.pageSerial != serialBeforePaying, "検査の前提: 払うときに頁が広がらなかった")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+        #expect(try canvas.target.encodeForDisplay() == expected, "払う途中で頁が広がった絵が、先送りしなかった絵と違う")
+        #expect(canvas.warnings.message(for: .softEnlargedText) == nil)
+    }
+
+    /// 境界: 列が控えたとおりでなければ (頂点が動いた・列に数えていない頂点がある)、読む面を差し替えない。差し替えると、
+    /// 数えていない頂点が別の頁の位置を読む。置き直さず、近い段のまま、拡大が原因だと知らせる。
+    @Test("控えと食い違う列は置き直さず、近い段のまま残して知らせる")
+    func aRunThatDoesNotMatchItsRecordIsLeftSoftAndReported() throws {
+        func frame(_ tamper: (Canvas) -> Void) throws -> Canvas {
+            let canvas = try makeCanvas(width: 400, height: 128)
+            canvas.atlas.scaledBakesPerFrame = 2
+            canvas.atlas.mayDeferScaledBakes = true
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(16)
+                canvas.translate(4, 60)
+                canvas.scale(4, 4)
+                canvas.text("abcdef", 0, 0)
+                tamper(canvas)
+                canvas.framePersists = true
+            }
+            return canvas
+        }
+        // 控えに無い四角が列にある (控えを 1 字減らす)
+        let extra = try frame { $0.deferredRuns[0].glyphs.removeLast() }
+        #expect(extra.warnings.message(for: .softEnlargedText) != nil, "列の頂点の数が控えと違うのに置き直した")
+        // 頂点が動いている (控えた位置が違う)
+        let moved = try frame { $0.deferredRuns[0].glyphs[1].topLeft.x += 1 }
+        #expect(moved.warnings.message(for: .softEnlargedText) != nil, "頂点が控えと違うのに置き直した")
+        // 崩れていない列は、知らせない
+        let intact = try frame { _ in }
+        #expect(intact.warnings.message(for: .softEnlargedText) == nil)
+    }
+
+    /// 反証 1〜4 の根の 2: 先送りした四角の列は、**ほかの頂点を混ぜない**。先送りした字と焼いてある字が
+    /// 入れ替わる所で列を閉じ、列は先送りした字の数だけの頂点でできている。
+    @Test("先送りした四角は、ほかの頂点と別の列に並ぶ")
+    func deferredQuadsFormTheirOwnRuns() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
         try canvas.draw {
             canvas.background(black)
             canvas.fill(white)
@@ -507,12 +619,15 @@ struct GlyphScaleBakeTests {
             canvas.translate(4, 60)
             canvas.scale(4, 4)
             canvas.text("abcdef", 0, 0)
-            #expect(canvas.deferredGlyphs.count == 4)
-            try? canvas.atlas.rebake(gpu: canvas.gpu)
-            canvas.framePersists = true
+            // 続けて先送りした 4 字が 1 つの列 (開いたまま)。ほかの図形を置く前に閉じる
+            #expect(canvas.deferredRuns.count == 1)
+            #expect(canvas.deferredRuns[0].glyphs.count == 4)
+            canvas.rect(0, 0, 3, 3)
+            #expect(!canvas.deferredRunOpen, "ほかの図形を置いたのに、列が開いたまま")
+            let run = canvas.deferredRuns[0]
+            #expect(canvas.batches[run.batch].run.count == 4 * 6)
+            canvas.framePersists = false
         }
-        #expect(canvas.glyphQuadsPlaced - before == 6, "字が欠けた")
-        #expect(canvas.warnings.message(for: .softEnlargedText) != nil, "置き直せなかったのに知らせていない")
     }
 
     /// 反証 5: 描き場所 (`createGraphics`) は自分の焼き場を持ち、旗を立てるのは本体の面だけ。**描き場所の絵は

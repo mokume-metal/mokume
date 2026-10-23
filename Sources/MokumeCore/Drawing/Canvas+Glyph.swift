@@ -202,7 +202,7 @@ extension Canvas {
     /// 頁が溢れて低い段で描いた字は決まっていない (次のフレームで頼んだ段を焼き直す)。
     ///
     /// `deferredKey` は、**上限を越えて先送りした**ときだけ、焼くはずだった段の鍵。置いた四角をフレームの
-    /// 終わりに払うために控える (``noteDeferredGlyph(_:key:font:penX:baseline:color:)``)。
+    /// 終わりに払うために控える (``noteDeferredGlyph(start:placedWith:key:font:penX:baseline:color:)``)。
     struct GlyphLookup {
         var entry: GlyphAtlas.Entry
         var settled: Bool
@@ -323,8 +323,6 @@ extension Canvas {
         /// 焼くはずだった段の鍵と、その字形の書体。
         var key: GlyphAtlas.Key
         var font: CTFont
-        /// 置いたときの焼き場の頁 (``GlyphAtlas/pageSerial``)。頁が替わっていたら、置き直す先の面が違う。
-        var pageSerial: UInt64
         /// 置いた四角の左上の位置と読む位置 — 頂点がまだそこにあることを確かめる。
         var topLeft: SIMD2<Float>
         var uvMin: SIMD2<Float>
@@ -334,43 +332,98 @@ extension Canvas {
         var transform: Transform
     }
 
-    /// 先送りして置いた四角を控える。**置かなかった (区間の外・台帳の指紋) ときは控えない。**
+    /// 先送りした四角だけを並べた 1 つの列 ([#2446])。**頁が替わっても置き直せるように、先送りした四角は
+    /// ほかの頂点と同じ列に混ぜない** — 列の頂点を全部要る段の画素へ置き直し、列の読む面を現在の頁へ差し替える
+    /// だけで済む。連続して先送りした字は 1 つの列に並ぶので、列が増えるのは、先送りした字と焼いてある字が
+    /// 入れ替わる所と、頁を替えた所である。
+    struct DeferredRun {
+        /// この列が入る位置 (``Canvas/batches`` の添字)。閉じるとその添字に積まれる。
+        var batch: Int
+        var glyphs: [DeferredGlyph]
+    }
+
+    /// 先送りした四角を置く前に、四角だけの列へ移る。**置けないとき (区間の外・台帳の指紋) は `false`**
+    /// (呼ぶ側は先送りとして控えない)。
+    func prepareDeferredRun() -> Bool {
+        guard canPlace, placesGlyphs else { return false }
+        if !deferredRunOpen { closeBatch() }
+        return true
+    }
+
+    /// 先送りして置いた四角を、四角の列へ控える。置いたとき (``prepareDeferredRun()`` が `true` で、
+    /// ``appendGlyphQuad(_:penX:baseline:color:inDeferredRun:)`` が頂点の位置を返したとき) だけ呼ぶ。
     func noteDeferredGlyph(
         start: Int?, placedWith entry: GlyphAtlas.Entry, key: GlyphAtlas.Key, font: CTFont,
         penX: Float, baseline: Float, color: LinearRGBA
     ) {
         guard let start, start + 6 <= vertices.count else { return }
-        deferredGlyphs.append(
-            DeferredGlyph(
-                start: start, key: key, font: font, pageSerial: atlas.pageSerial,
-                topLeft: vertices[start].position, uvMin: entry.uvMin, penX: penX, baseline: baseline,
-                color: color, transform: transform))
+        let glyph = DeferredGlyph(
+            start: start, key: key, font: font, topLeft: vertices[start].position,
+            uvMin: entry.uvMin, penX: penX, baseline: baseline, color: color, transform: transform)
+        if deferredRunOpen, !deferredRuns.isEmpty {
+            deferredRuns[deferredRuns.count - 1].glyphs.append(glyph)
+        } else {
+            deferredRuns.append(DeferredRun(batch: batches.count, glyphs: [glyph]))
+            deferredRunOpen = true
+        }
     }
 
     /// 先送りした字を払う ([#2446])。**絵が残る (`baking`) なら、焼いて、置いた四角を要る段の画素へ置き直す。**
     /// 残らない (次のフレームが描き直す) なら、控えを捨てるだけで、焼くのは次のフレームに任せる。
     ///
-    /// 置き直すのは**頂点の中身だけ**で、列も順番も変えない。置き直せない四角 — 頁が替わって置いた面と焼く面が
-    /// 違う・頂点が動いている・焼き場に場所が無い — は近い段のまま残し、拡大が原因だと初回だけ知らせる
-    /// (``warnSoftEnlargedTextOnce()``・頁が溢れて低い段で描くときと同じ約束)。
+    /// 列ごとに払う (``DeferredRun``)。列の字を全部、いまの頁へ焼いて、頂点を置き直し、列の読む面をその頁へ
+    /// 差し替える。**焼いている途中で頁が広がったら、広げた頁へ列の字を焼き直す** — 広げると焼いた字形は全部
+    /// 消えるので、列の字が同じ頁に揃うまで繰り返す (頁は有限の段で上限に届くので止まる)。列が崩れていた・焼き場の
+    /// 上限の頁に入らない列は、近い段の画素のまま残し、拡大が原因だと初回だけ知らせる (頁が溢れて低い段で描くとき
+    /// と同じ約束で、字は欠けない)。
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     func settleDeferredGlyphs(baking: Bool) {
-        guard !deferredGlyphs.isEmpty else { return }
-        let owed = deferredGlyphs
-        deferredGlyphs.removeAll(keepingCapacity: true)
+        if deferredRunOpen { closeBatch() }
+        guard !deferredRuns.isEmpty else { return }
+        let runs = deferredRuns
+        deferredRuns.removeAll(keepingCapacity: true)
         guard baking else { return }
-        var left = 0
-        for glyph in owed {
-            guard glyph.pageSerial == atlas.pageSerial,
-                glyph.start + 6 <= vertices.count,
-                vertices[glyph.start].position == glyph.topLeft,
-                vertices[glyph.start].uv == glyph.uvMin,
-                case .found(let entry) = atlas.entry(for: glyph.key, font: glyph.font)
-            else {
-                left += 1
-                continue
+        var unpaid = false
+        for run in runs where !payDeferredRun(run) { unpaid = true }
+        if unpaid { warnSoftEnlargedTextOnce() }
+    }
+
+    /// 先送りした四角の列を 1 つ払う (``settleDeferredGlyphs(baking:)``)。置き直せたか。
+    private func payDeferredRun(_ run: DeferredRun) -> Bool {
+        let glyphs = run.glyphs
+        // **列が、控えたとおりの頂点だけでできているか確かめる。** 崩れていたら (ほかの頂点が紛れた・頂点が
+        // 動いた) 読む面を差し替えられない。差し替えると、紛れた頂点が別の頁の位置を読む
+        guard let first = glyphs.first, run.batch < batches.count,
+            batches[run.batch].source == .flat,
+            batches[run.batch].run.start == first.start,
+            batches[run.batch].run.count == glyphs.count * 6
+        else { return false }
+        for (number, glyph) in glyphs.enumerated() {
+            let start = glyph.start
+            guard start == first.start + number * 6, start + 6 <= vertices.count,
+                vertices[start].position == glyph.topLeft, vertices[start].uv == glyph.uvMin
+            else { return false }
+        }
+
+        // 頁が広がる (焼いた字形が全部消える) たびに、列の字を最初から焼き直す。広げる段は有限
+        var entries: [GlyphAtlas.Entry] = []
+        var settledPage = false
+        for _ in 0...GlyphAtlas.maximumGrowths + 1 {
+            let page = atlas.pageSerial
+            entries.removeAll(keepingCapacity: true)
+            for glyph in glyphs {
+                guard let entry = bakedGlyphGrowing(for: glyph.key, font: glyph.font) else { return false }
+                entries.append(entry)
             }
+            if atlas.pageSerial == page {
+                settledPage = true
+                break
+            }
+        }
+        guard settledPage, entries.count == glyphs.count else { return false }
+
+        for (glyph, entry) in zip(glyphs, entries) {
             atlas.noteBaked(glyph.key, frame: framesDrawn)
             let color = entry.isColored ? Self.whiteScaled(byAlphaOf: glyph.color) : glyph.color
             let (topLeft, topRight, bottomRight, bottomLeft) = Self.placedCorners(
@@ -383,7 +436,26 @@ extension Canvas {
                 uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)
             vertices.replaceSubrange(glyph.start..<glyph.start + 6, with: quad)
         }
-        if left > 0 { warnSoftEnlargedTextOnce() }
+        batches[run.batch].run.texture = atlas.held
+        return true
+    }
+
+    /// 鍵の字形を引く。**広げれば入るときは頁を広げる** (広げるだけで、同じ大きさで取り直すことはしない —
+    /// 1 フレームに上限の頁を何枚も作らない)。入らないときは `nil`。
+    private func bakedGlyphGrowing(for key: GlyphAtlas.Key, font: CTFont) -> GlyphAtlas.Entry? {
+        while true {
+            switch atlas.entry(for: key, font: font) {
+            case .found(let entry): return entry
+            case .tooLarge, .unbakeable: return nil
+            case .full: break
+            }
+            guard atlas.canGrow else { return nil }
+            closeBatch()
+            do { try atlas.grow(gpu: gpu) } catch { return nil }
+            atlasPageFrame = framesDrawn
+            currentTexture = atlas.held
+            whiteUV = atlas.whiteUV
+        }
     }
 
     /// 拡大した字が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で描かれたことを、初回だけ知らせる。
@@ -517,9 +589,13 @@ extension Canvas {
     /// 字形 1 つを四角として置く。
     ///
     /// - Returns: 積んだ 6 頂点の先頭の位置 (``vertices`` の添字)。置かなかったときは `nil`。
+    ///
+    /// `inDeferredRun` は、先送りした四角を置くとき (``prepareDeferredRun()`` の後)。先送りした四角の列を閉じずに
+    /// 続ける (``beginFlat()``)。
     @discardableResult
     func appendGlyphQuad(
-        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
+        _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA,
+        inDeferredRun: Bool = false
     ) -> Int? {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。断るのは置く所だけで、`text()` は
         // 送り幅と流し込みの続きを今までどおり返す
@@ -529,6 +605,8 @@ extension Canvas {
         }
         // 台帳の指紋を採るときは置かない (``placesGlyphs``)。送り幅は呼ぶ側が進める
         guard placesGlyphs else { return nil }
+        isPlacingDeferredGlyph = inDeferredRun
+        defer { isPlacingDeferredGlyph = false }
         glyphQuadsPlaced += 1
         useGlyphTexture()
         // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
