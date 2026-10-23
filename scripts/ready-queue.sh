@@ -102,7 +102,7 @@
 #   紐づく PR       gh pr list の closingIssuesReferences。**GitHub 自身の答えを読む** —
 #                   本文を正規表現で拾うと scripts/review-gate.sh と読み方が割れ、
 #                   割れたほうが黙って「着手できる」に倒れる (ADR-0008 決定 6)
-#   B-1 の対象か    本文末尾の Assisted by [Claude Code] の署名。**これが唯一の手掛かり**
+#   B-1 の対象か    本文の 🤖 Assisted by の署名 (エージェントを問わない。#3149)。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
 #   落ちて見えるか  紐づく open PR が無く、git worktree list のパスと枝の名前に番号が
@@ -197,8 +197,9 @@ DROPPED_MINUTES=${DROPPED_MINUTES:-120}
 
 readonly TRIAGED='verify: triaged'
 readonly IN_PROGRESS='status: in progress'
-# エージェントの起票の唯一の手掛かり (scripts/comment.sh が付ける署名の綴り)
-readonly AGENT_MARK='Assisted by [Claude Code]'
+# エージェントの起票の唯一の手掛かり (scripts/agent-signature.sh の検知キー)。以前は
+# Claude Code の綴りに固定で、Codex など他のエージェントの起票を人の起票と読んでいた (#3149)
+readonly AGENT_MARK='🤖 Assisted by'
 # 無印のまま出してよい型。Design / Feature は判断が要る側なので出さない (ADR-0036 決定 6)
 readonly STOCK_TYPES='Bug Task Docs'
 

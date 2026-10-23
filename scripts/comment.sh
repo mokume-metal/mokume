@@ -19,12 +19,14 @@
 # https://github.com/mokume-metal/mokume/issues/1327 にある。
 #
 # 使い方:
-#   scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--dry-run]
+#   scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--with 名乗り]... [--dry-run]
+#     --with    : 一緒に作った別のエージェント・モデルを署名に併記する (#3149)
 #     --dry-run : gh を呼ばず、最終的なコマンドと本文を stdout に出す
 #
 # 環境変数:
 #   MOKUME_AGENT_NAME  署名に出す名前を明示する (自動検出より優先)
 #   MOKUME_AGENT_URL   その名前に張るリンク (省略可)
+#   MOKUME_AGENT_MODEL 署名に出すモデル (カンマ区切りで複数。省略時は検出できる範囲で名乗る)
 #   GITHUB_REPOSITORY  投稿先リポジトリ (既定 mokume-metal/mokume)
 #
 # **責務は「署名を付けて投稿する」1 つに保つ。** close / reopen も -R も足さない —
@@ -47,54 +49,22 @@ REPO="$(this_repo)"
 # shellcheck source=scripts/bot-hand.sh
 . "$(dirname "${BASH_SOURCE[0]}")/bot-hand.sh"
 
-# 署名の検知キー。リンク先や絵文字が変わっても効き続けるよう、固定の語で見る。
-# scripts/agent-comment-guard.sh と .github の検査もこの文字列を共有する
-readonly SIGNATURE_KEY='Assisted by'
+# 署名の組み方 (エージェントとモデルの名乗り・検知キー) は scripts/agent-signature.sh と
+# 共有する (#3149)。起票の scripts/sub-issue.sh と差し戻しの文面も同じ 1 行を使う
+# shellcheck source=scripts/agent-signature.sh
+. "$(dirname "${BASH_SOURCE[0]}")/agent-signature.sh"
 
 usage() {
   cat >&2 <<'EOF'
-使い方: scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--dry-run]
+使い方: scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--with 名乗り]... [--dry-run]
+
+  --with : 一緒に作った別のエージェント・モデルを署名に併記する (例 --with "OpenAI Codex (gpt-6-astra)")
 
 例:
   scripts/comment.sh issue 42 --body-file /tmp/plan.md
   scripts/comment.sh pr 7 --body "CI が緑になったので確認しました"
 EOF
   exit 64
-}
-
-# --- エージェントの検出 -----------------------------------------------------
-# 「どの AI が書いたか」を実行環境から判定する。検出できなくても投稿は止めない
-# — 止めるとこのラッパー自体が使われなくなり、署名の無い素の gh に戻ってしまう。
-# 総称の署名で投稿し、名乗り方を stderr で案内する。
-
-detect_agent() { # → "表示名\tURL" (URL は空でもよい)
-  local is_claude
-  if [ -n "${MOKUME_AGENT_NAME:-}" ]; then
-    printf '%s\t%s' "$MOKUME_AGENT_NAME" "${MOKUME_AGENT_URL:-}"
-    return
-  fi
-  # Claude Code: CLAUDECODE=1 を立てる。AI_AGENT にも識別子が入る
-  case "${AI_AGENT:-}" in claude-code*) is_claude=true ;; *) is_claude=false ;; esac
-  if [ "${CLAUDECODE:-}" = "1" ] || [ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ] || $is_claude; then
-    printf 'Claude Code\thttps://claude.com/claude-code'
-    return
-  fi
-  # OpenAI Codex: 専用の名乗りがまだ無く (openai/codex#13416)、サンドボックス実行の
-  # 痕跡で見るしかない。判定が緩いぶん、名乗りが増えたらここを差し替える
-  if [ -n "${CODEX_SANDBOX:-}" ] || [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
-     [ -n "${CODEX_HOME:-}" ]; then
-    printf 'OpenAI Codex\thttps://developers.openai.com/codex'
-    return
-  fi
-  printf 'an AI agent\t'
-}
-
-signature() { # $1=表示名 $2=URL
-  if [ -n "$2" ]; then
-    printf '<sub>🤖 %s [%s](%s)</sub>' "$SIGNATURE_KEY" "$1" "$2"
-  else
-    printf '<sub>🤖 %s %s</sub>' "$SIGNATURE_KEY" "$1"
-  fi
 }
 
 # --- 引数 -------------------------------------------------------------------
@@ -105,10 +75,12 @@ case "$KIND" in issue | pr) ;; *) echo "種別は issue か pr: $KIND" >&2; usag
 case "$NUMBER" in '' | *[!0-9]*) echo "番号が数値でない: $NUMBER" >&2; usage ;; esac
 
 BODY='' BODY_FILE='' DRY_RUN=false
+WITH=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --body) BODY="${2:?--body に本文が必要}"; shift 2 ;;
     --body-file | -F) BODY_FILE="${2:?--body-file にパスが必要}"; shift 2 ;;
+    --with) WITH+=(--with "${2:?--with に名乗りが必要}"); shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     *) echo "不明な引数: $1" >&2; usage ;;
   esac
@@ -122,9 +94,11 @@ fi
 
 # --- 署名の付与 -------------------------------------------------------------
 
-agent=$(detect_agent)
-name=${agent%%$'\t'*}
-url=${agent#*$'\t'}
+# 「どの AI が書いたか」を実行環境から判定する。検出できなくても投稿は止めない
+# — 止めるとこのラッパー自体が使われなくなり、署名の無い素の gh に戻ってしまう。
+# 総称の署名で投稿し、名乗り方を stderr で案内する。
+generic=false
+detect_agent >/dev/null || generic=true
 
 if grep -qF "$SIGNATURE_KEY" <<<"$BODY"; then
   # 既に署名がある本文には足さない (plan-record のように署名込みで用意される経路がある)
@@ -133,14 +107,15 @@ else
   final="$BODY
 
 ---
-$(signature "$name" "$url")"
+$(agent_signature --generic ${WITH[@]+"${WITH[@]}"})"
 fi
 
-if [ "$name" = "an AI agent" ]; then
+if $generic; then
   cat >&2 <<EOF
 どの AI エージェントから投稿されているか判定できませんでした。総称の署名で投稿します。
 
-名乗らせるには MOKUME_AGENT_NAME を設定してください (リンクを付けるなら MOKUME_AGENT_URL も):
+名乗らせるには MOKUME_AGENT_NAME を設定してください (リンクを付けるなら MOKUME_AGENT_URL、
+モデルを名乗るなら MOKUME_AGENT_MODEL も):
 
   MOKUME_AGENT_NAME="<エージェント名>" scripts/comment.sh $KIND $NUMBER ...
 EOF
