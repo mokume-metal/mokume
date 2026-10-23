@@ -45,7 +45,25 @@ public protocol Sketch: AnyObject, SketchPart {
     var plugins: [any Plugin] { get }
 
     /// 一度だけ呼ばれる。
-    func setup()
+    ///
+    /// **`throws` で書ける。** 読み込みの失敗を `try?` で捨てずに、`try` で書いて投げられる。投げたら、
+    /// ``draw()`` を 1 度も呼ばずにスケッチは起動の失敗として止まり、投げた失敗の全文 (何を読めなかったかと、
+    /// 次にすること) が標準エラーに出る。窓で走らせても `mokume render` で書き出しても、同じ文面で止まる。
+    ///
+    /// <!-- example: 文脈 var cat: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     cat = try loadImage("assets/cat.png")   // 無ければ、起動の失敗として止まる
+    /// }
+    ///
+    /// func draw() {
+    ///     image(cat, 0, 0)
+    /// }
+    /// ```
+    ///
+    /// 投げる型は問わない (``ImageFailure``・``ShaderFailure`` などをそのまま通せる)。投げない `func setup()` は
+    /// これまでどおり書けて、同じように呼ばれる。`async` にはできない。
+    func setup() throws
 
     /// フレームごとに呼ばれる。
     func draw()
@@ -220,7 +238,7 @@ public protocol Sketch: AnyObject, SketchPart {
 extension Sketch {
     public var settings: SketchSettings { SketchSettings() }
     public var plugins: [any Plugin] { [] }
-    public func setup() {}
+    public func setup() throws {}
     public func draw() {}
     public func mousePressed() {}
     public func mouseReleased() {}

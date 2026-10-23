@@ -209,6 +209,15 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     case unreadableRenderRequest(value: String)
+
+    /// ``Sketch/setup()`` が投げたので、スケッチは `draw()` を 1 度も呼ばずに止まった ([#2401])。
+    ///
+    /// `reason` は投げた失敗の全文 (`loadImage` の失敗なら、何を読めなかったかと次にすること)。**どの経路で
+    /// 走らせても** — 窓・書き出し・`SketchRuntime` を直に回す検査 — 同じ失敗がここへ畳まれる。投げた型は
+    /// 問わないので、運ぶのは文面だけである。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    case setupFailed(reason: String)
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -388,6 +397,13 @@ extension RenderFailure: CustomStringConvertible {
             """
         case .notRunning(let call):
             OutsideRun.notRunningNotice(call)
+        case .setupFailed(let reason):
+            // **投げた失敗の全文をそのまま運ぶ** — 次にすることは投げた側の文面が持っている。
+            // 窓の経路が出す 1 行 (`headline`) は先頭行になるので、何が起きたかは 1 行目に入れる
+            """
+            setup() threw, so the sketch did not start:
+            \(reason)
+            """
         case .unreadableRenderRequest(let value):
             """
             The sketch was asked to render, but it cannot read or write what it was asked: \(value)

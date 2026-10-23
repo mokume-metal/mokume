@@ -44,6 +44,13 @@ public final class SketchRuntime {
     private let timing: FrameTiming
     private let now: () -> Double
     private var hasSetUp = false
+    /// ``Sketch/setup()`` が投げた失敗 ([#2401])。立っていれば、フレームは `draw()` を呼ばずにこれを投げる。
+    ///
+    /// ``start()`` は投げない (公開の口で、呼ぶ側が多い) ので、控えておいて最初のフレームが投げる。
+    /// 控えは消えない — 呼び直しても同じ失敗が返り、`draw()` は呼ばれない。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private(set) var setupFailure: RenderFailure?
     /// 外から止められているか (``pause()``)。
     private var isPaused = false
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
@@ -648,8 +655,13 @@ public final class SketchRuntime {
         // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
         // (ADR-0030 決定 6)
         let restoration = paramStore?.restore() ?? .init()
-        // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)
-        withActiveRuntime { carryingOver { sketch.setup() } }
+        // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)。
+        // **投げたら控えて、最初のフレームが投げ直す** (``setupFailure``・#2401)
+        do {
+            try withActiveRuntime { try carryingOver { try sketch.setup() } }
+        } catch {
+            setupFailure = .setupFailed(reason: "\(error)")
+        }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
         params?.start(after: restoration)
@@ -828,7 +840,8 @@ public final class SketchRuntime {
             if closingRecorder != nil { refusal = "Cannot draw at a specified time while recording is closing" }
             if refusal == nil {
                 start() // setupが録画を始める場合も、指定の絵を描く前に断る。
-                if recorder?.isRecording == true {
+                if let setupFailure { refusal = "Cannot draw because \(setupFailure.headline)" }
+                if refusal == nil, recorder?.isRecording == true {
                     refusal = "Cannot draw at a specified time while recording"
                 }
             }
@@ -954,6 +967,8 @@ public final class SketchRuntime {
         // 置いたものは最初のフレームの描き切りが描くので、そちらは範囲に入る
         frameDrawnAfter = target.gpu.submissionCount
         start()
+        // **`setup()` が投げたなら、1 枚も描かない** (#2401)。時計も進めず、`draw()` も呼ばない
+        if let setupFailure { throw setupFailure }
         // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
         frameWorkBegan = now()
         timing.advance(at: requestedTime)
@@ -2257,11 +2272,11 @@ public final class SketchRuntime {
     /// 下ろし損ねると、`Task` の続きのような区間の外で置いたものまで持ち越してしまう。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-    private func carryingOver(_ body: () -> Void) {
+    private func carryingOver(_ body: () throws -> Void) rethrows {
         let previous = canvas.carriesOver
         canvas.carriesOver = true
         defer { canvas.carriesOver = previous }
-        body()
+        try body()
     }
 
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
@@ -2282,7 +2297,7 @@ public final class SketchRuntime {
     ///
     /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
     /// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
-    func withActiveRuntime(_ body: () -> Void) {
+    func withActiveRuntime(_ body: () throws -> Void) rethrows {
         let previous = runningSketch
         let previousListener = shapeAssemblyListener
         runningSketch = self
@@ -2291,6 +2306,6 @@ public final class SketchRuntime {
             runningSketch = previous
             shapeAssemblyListener = previousListener
         }
-        LaunchingSketch.$canvas.withValue(canvas, operation: body)
+        try LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }

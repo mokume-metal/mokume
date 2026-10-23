@@ -959,12 +959,28 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             defer { FrameSignposts.endPresent(presentInterval) }
             try presentFrame()
         } catch {
+            // **`setup()` が投げたなら、直らないので続けない** (#2401)。起動の失敗として全文を言って終わる
+            if case .setupFailed = error { return stopForSetupFailure(error) }
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
             // 次のリフレッシュでもう一度試す — ただし**黙って捨てない**
             noteFrameFailure(error)
             return
         }
         noteFrameRecovery()
+    }
+
+    /// ``Sketch/setup()`` が投げたので、起動できなかったことを言って 0 以外で終わる ([#2401])。
+    ///
+    /// 文面は組み立てが投げたとき (``Sketch/main()``) と同じ ``startupFailureText(_:)`` で、窓の経路も
+    /// 書き出し (`mokume render`) も同じになる。1 フレームも描いていないので、後始末する書き出しは無い。
+    /// 道具は終了コードで「書けたか」を読むので、0 以外で終わる (``exitProcess``)。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private func stopForSetupFailure(_ failure: RenderFailure) {
+        guard !isTerminating else { return }
+        isTerminating = true
+        FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+        exitProcess(1)
     }
 
     /// 進めた 1 フレームを、与えられた出口へ差し出す。
