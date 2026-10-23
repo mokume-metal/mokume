@@ -738,11 +738,55 @@ class HeredocTest(unittest.TestCase):
 
 
 class LengthTest(unittest.TestCase):
-    """読む時間は長さに比例する (#1729 の 2 回目の反証)。
+    """読む時間は長さに比例させる (#1729 の 2 回目の反証・#3115)。
 
     1 文字ずつ文字列を継ぎ足すと長さの 2 乗かかり、480KB の二重引用の本文でガード 1 本が
     16 秒を越えた。フックの timeout は 10 秒で、越えると判定が出ずに素通しになりうる。
-    上限は手元で 1 秒前後のものに、遅い機械の分の余裕を持たせてある。
+    macOS の awk (20200816) の substr は、切り出す長さによらず呼ぶたびに元の文字列の長さに
+    比例してかかるので、語ごと・行ごとに `substr(src, …)` を呼んでも同じ 2 乗になる (#3115 の
+    反証。いまは文字の配列から繋ぐ `rng`)。
+    断片の先頭を 1 語ずつ文字列から削る読み (前置が長く並ぶ形) と、区切り語を 1 文字ずつ継ぎ足す
+    読みも同じ 2 乗だった (語の位置を進める読みと、半分ずつ繋ぐ `hjoin` に替えた)。
+
+    **守るのは「長さに対して線形」と「素の読みの数倍に収まる」で、「ある機械で何秒に収まる」では
+    ない** (#3115)。CPU 時間の絶対値は機械の速さと負荷で動き、queue の CI で、guard に触れて
+    いない PR が 5.6 秒で外れた。だから 2 つの比で見る。どちらも同じ機械で同じ時に測った
+    CPU 時間どうしの比なので、機械の速さに依らない。
+
+    1. **伸び**: 同じ形のコマンドを大きさ SMALL と LARGE (4 倍) で判定させ、CPU 時間の比を見る。
+       線形なら 4 倍前後 (この木の実測は固定費を引いて 4.0〜4.5 倍)、2 乗なら 16 倍に近づく。
+       しきい値 MAX_GROWTH は 6 倍 (長さの 1.29 乗)。guard の awk の空白の分岐に、語ごとに
+       `substr(src, 1, i)` を足す変異は 8.5 倍 (500KB で 3.7 秒) で取れる。T = a·n + b·n² の
+       2 乗の項が SMALL で線形の項の 2 割 (b·SMALL / a) を越えると外れる。比で見るので、
+       線形の項だけが何倍遅い機械でも判定は変わらない。
+    2. **素の読みとの倍率**: 同じ入力を素の awk が 1 度だけ文字ごとに読む時間 (PLAIN_READ) の
+       MAX_VS_PLAIN 倍未満。線形のまま定数倍遅くなる退行は、伸びでは見えない (比は 4 倍の
+       まま) が、フックの timeout (10 秒) へは近づく。この木の実測は素の読みの 1.1〜4.8 倍
+       (引用の本文が 1.1 倍、語を区切るだけの長い列が 4.8 倍。gh の前に前置が並ぶ形は語ごとに
+       予約語・前置の表を引くので A=1 が 5.5 倍・! が 7.9 倍で、その 2 倍の 12・16 倍を上限にする)。
+       1 回ごとに同じ回の SMALL・LARGE・素の読みで比を取り、多数決で決める。
+       10 倍はその 2 倍の余裕。素の読みが 500KB で 0.25 秒の機械では guard は 2.5 秒未満で、
+       timeout の 4 分の 1。
+
+    **測り方** (比を、固定費と、コアの種類・負荷の偏りに強くする):
+
+    - **固定費を引く**: bash の起動と guard-lib.sh の source は長さによらず 0.01〜0.04 秒かかる。
+      分子にも分母にも入って比を 1 へ寄せるので、本文が空の同じ形のコマンドの CPU 時間を
+      引いてから比べる。回ごとに測って、同じ回の値から引く。
+    - **回ごとに比を取り、多数決で決める**: 同じ awk・同じ入力の CPU 時間が、動くコアの種類
+      (性能コア・効率コア) と混み具合で 4 倍以上違う (忙しい回しを 14 本並べた機械で実測)。
+      SMALL と LARGE のそれぞれの最小どうしを比べると、短い SMALL は負荷を受けない回を拾いやすく、
+      長い LARGE は受けやすいので、比が伸びの大きい側へ偏る。そこで 1 回ごとに SMALL・LARGE・
+      素の読みを続けて測り (順は回ごとに逆にする)、**同じ回の中で比を取る**。判定は、MIN_ROUNDS 回の
+      全部が同じ結論ならそれ、割れたら MAX_ROUNDS 回まで足して多数決 (奇数回で決まる)。
+      静かな機械では MIN_ROUNDS 回で終わり、負荷で割れたときだけ回を足す。
+    - **SMALL は測れる大きさにする**: 固定費を引いた SMALL の CPU 時間が MIN_NET に届かなければ、
+      SMALL を 2 倍にする (速い機械では傾きが埋もれるため)。MAX_DOUBLINGS 回で届かなければ
+      測れないものとして落とす。2 乗が強く出る形は、検査の時間を抑えるため小さい SMALL で測る。
+
+    命令数 (macOS の `time -l` の instructions retired) はコアの種類に依らず安定するが、使えない:
+    2 乗の元になる substr の写しは SIMD で、命令数がほとんど増えずに時間だけが 2 乗になる
+    (`A=1 ` を 125KB 並べた形で 140M 命令に対し 1.6 秒)。
 
     **測るのは壁時計ではなく、ガード (子とその子) が使った CPU 時間** (#1857)。2 乗の退行は
     ガード自身の CPU として現れるが、壁時計は他の誰かが CPU を使った分まで足す。hooks-test を
@@ -765,40 +809,287 @@ rm -f "$out"
 exit 1
 """
 
-    LIMIT = 5.0
-    SIZE = 500_000
+    #: 素の awk が同じ入力を 1 度だけ、guard と同じ読み方 (LC_ALL=C・1 文字ずつの配列) で読む。
+    #: 線形の読みがかかる時間の下限で、guard の倍率の物差し。
+    PLAIN_READ = """
+printf '%s\\n' "$1" | LC_ALL=C awk 'BEGIN { RS = "\\001" } { src = $0 }
+  END { sub(/\\n$/, "", src); n = split(src, C, ""); for (i = 1; i <= n; i++) c = C[i] }'
+"""
+
+    SMALL = 125_000
+    GROWTH = 4
+    #: 1 回ごとに SMALL・LARGE・素の読みを続けて測る。MIN_ROUNDS 回で全部の回の判定が揃えば
+    #: そこで決め、揃わなければ MAX_ROUNDS 回まで足して多数決で決める (負荷で揺れた回に引きずられない)
+    MIN_ROUNDS = 3
+    MAX_ROUNDS = 9
+    MAX_DOUBLINGS = 3
+    #: 固定費を引いた SMALL の CPU 時間がこれ未満なら、傾きが測れない。
+    MIN_NET = 0.03
+    MAX_GROWTH = 6.0
+    MAX_VS_PLAIN = 10.0
 
     @staticmethod
     def children_cpu():
         usage = resource.getrusage(resource.RUSAGE_CHILDREN)
         return usage.ru_utime + usage.ru_stime
 
-    def time_of(self, command):
+    def cpu_of(self, body, command):
         start = self.children_cpu()
-        self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}", self.MEASURED), 0)
+        self.assertEqual(judge(command, f"issue[[:space:]]+{COMMENT}", body), 0)
         return self.children_cpu() - start
 
-    def repeat(self, piece):
-        """piece を繰り返して SIZE バイトに届かせる。"""
-        return piece * (self.SIZE // len(piece.encode()) + 1)
+    def guard_cpu(self, command):
+        return self.cpu_of(self.MEASURED, command)
+
+    def plain_cpu(self, command):
+        return self.cpu_of(self.PLAIN_READ, command)
+
+    @classmethod
+    def grows_linearly(cls, small, large):
+        """固定費を引いた SMALL と LARGE の CPU 時間が、線形の伸びの範囲に収まるか。"""
+        return small > 0 and large / small < cls.MAX_GROWTH
+
+    @classmethod
+    def reads_within_budget(cls, guard, plain, within=None):
+        """固定費を引いた guard の CPU 時間が、素の読みの within (既定は MAX_VS_PLAIN) 倍未満か。"""
+        return guard < plain * (within or cls.MAX_VS_PLAIN)
+
+    @staticmethod
+    def repeat(piece, size):
+        """piece を繰り返して size バイトに届かせる。"""
+        return piece * (size // len(piece.encode()) + 1)
+
+    def sample(self, tiny, small_command, large_command, backwards):
+        """1 回分: (固定費を引いた SMALL・LARGE・素の読みの CPU 時間)。続けて測り、順は回ごとに逆にする。
+
+        固定費 (本文が空の同じ形) も回ごとに測って引く。回をまたいで 1 つに揃えると、コアの種類
+        (性能コアと効率コア) や混み具合が違う回の値を引くことになる。
+        """
+        steps = [("fixed", tiny), ("small", small_command), ("large", large_command), ("plain", large_command)]
+        if backwards:
+            steps.reverse()
+        got = {}
+        for name, command in steps:
+            got[name] = self.plain_cpu(command) if name == "plain" else self.guard_cpu(command)
+        fixed_plain = self.plain_cpu(tiny)
+        return got["small"] - got["fixed"], got["large"] - got["fixed"], got["plain"] - fixed_plain
+
+    def measure(self, piece, build, within=None, small=None):
+        """(SMALL の大きさ, 回ごとの (SMALL・LARGE・素の読み)、伸びの判定、倍率の判定) を測る。"""
+        tiny = build("")
+        fixed = min(self.guard_cpu(tiny) for _ in range(3))
+        size = small or self.SMALL
+        for _ in range(self.MAX_DOUBLINGS + 1):
+            if self.guard_cpu(build(self.repeat(piece, size))) - fixed >= self.MIN_NET:
+                break
+            size *= 2
+        else:
+            self.fail(f"{size} バイトでも CPU 時間が {self.MIN_NET} 秒に届かず、伸びが測れない")
+        small_command = build(self.repeat(piece, size))
+        large_command = build(self.repeat(piece, size * self.GROWTH))
+        rounds, growth, budget = [], [], []
+        while True:
+            rounds.append(self.sample(tiny, small_command, large_command, len(rounds) % 2 == 1))
+            small, large, plain = rounds[-1]
+            growth.append(self.grows_linearly(small, large))
+            budget.append(self.reads_within_budget(large, plain, within))
+            settled = all(len(set(votes)) == 1 for votes in (growth, budget))
+            if (settled and len(rounds) >= self.MIN_ROUNDS) or len(rounds) >= self.MAX_ROUNDS:
+                break
+        return size, rounds, growth, budget
+
+    @staticmethod
+    def majority(votes):
+        return sum(votes) * 2 > len(votes)
+
+    @staticmethod
+    def median(values):
+        return sorted(values)[len(values) // 2]
+
+    def assert_linear(self, piece, build, within=None, small=None):
+        """build(本文) の形のコマンドの読みが、線形に伸び、素の読みの数倍に収まるかを見る。
+
+        within は素の読みとの倍率の上限 (既定は MAX_VS_PLAIN)。語ごとに予約語・前置の表を引く
+        形は素の読みの数倍かかるので、その分だけ緩める (自然な値の 2 倍)。small は SMALL の替わりの
+        大きさ。2 乗が強く出る形は小さくして、検査にかかる時間を抑える。
+        """
+        size, rounds, growth, budget = self.measure(piece, build, within, small)
+        small = self.median([r[0] for r in rounds])
+        large = self.median([r[1] for r in rounds])
+        plain = self.median([r[2] for r in rounds])
+        self.assertTrue(
+            self.majority(growth),
+            f"長さが {self.GROWTH} 倍 ({size} → {size * self.GROWTH} バイト) で CPU 時間が"
+            f" {large / max(small, 1e-9):.1f} 倍 ({small:.2f} 秒 → {large:.2f} 秒・{len(rounds)} 回の中央値・"
+            f"{growth.count(False)} 回が外れ)。線形なら 4 倍前後で、{self.MAX_GROWTH:.0f} 倍以上は 2 乗の疑い",
+        )
+        self.assertTrue(
+            self.majority(budget),
+            f"{size * self.GROWTH} バイトの読みが {large:.2f} 秒で、素の読み ({plain:.2f} 秒) の"
+            f" {large / max(plain, 1e-9):.1f} 倍 ({len(rounds)} 回の中央値・{budget.count(False)} 回が外れ)。"
+            f"{within or self.MAX_VS_PLAIN:.0f} 倍以上はフックの timeout (10 秒) に近づく",
+        )
 
     def test_long_double_quoted_body(self):
-        body = self.repeat("本文の行です。\n")
-        self.assertLess(self.time_of(f'gh issue {COMMENT} 1 --body "{body}"'), self.LIMIT)
+        self.assert_linear("本文の行です。\n", lambda body: f'gh issue {COMMENT} 1 --body "{body}"')
 
     def test_long_body_with_many_special_characters(self):
-        body = self.repeat("本文 $HOME と \\\" と `x` と -R x/y --help\n")
-        self.assertLess(self.time_of(f'gh issue {COMMENT} 1 --body "{body}"'), self.LIMIT)
+        self.assert_linear(
+            "本文 $HOME と \\\" と `x` と -R x/y --help\n",
+            lambda body: f'gh issue {COMMENT} 1 --body "{body}"',
+        )
 
     def test_long_unquoted_command(self):
-        words = self.repeat("word ")
-        self.assertLess(self.time_of(f"gh issue {COMMENT} 1 -b x {words}"), self.LIMIT)
+        self.assert_linear("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
 
     def test_long_heredoc_body(self):
-        lines = self.repeat("本文の行 <<X ; && ' \"\n")
-        self.assertLess(
-            self.time_of(f"gh issue {COMMENT} 1 -F - <<'EOF'\n{lines}EOF"), self.LIMIT
+        self.assert_linear(
+            "本文の行 <<X ; && ' \"\n",
+            lambda lines: f"gh issue {COMMENT} 1 -F - <<'EOF'\n{lines}EOF",
         )
+
+    def test_long_run_of_assignment_prefixes(self):
+        """gh の前に前置が長く並ぶ形。前置を 1 語ずつ削る読みが 2 乗だった (#3115)。"""
+        self.assert_linear("A=1 ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=12, small=62_500)
+
+    def test_long_run_of_negations(self):
+        self.assert_linear("! ", lambda prefixes: f"{prefixes}gh issue {COMMENT} 1 -b x", within=16, small=62_500)
+
+    def test_long_heredoc_delimiter(self):
+        """区切り語を 1 文字ずつ継ぎ足すと 2 乗だった (#3115)。"""
+        self.assert_linear("A", lambda word: f"cat <<{word}\n{word}\ngh issue {COMMENT} 1 -b x", small=62_500)
+
+    def test_long_heredoc_delimiter_with_many_body_lines(self):
+        """区切り語の長さを本文の行ごとに引くと、区切り語の長さ × 行の数の 2 乗だった (#3115)。"""
+        self.assert_linear(
+            "A",
+            lambda word: f"cat <<{word}\n" + "\n" * (2 * len(word)) + f"{word}\ngh issue {COMMENT} 1 -b x",
+            small=50_000,
+        )
+
+    def test_deeply_nested_loops_with_many_commands(self):
+        """入れ子のループを閉じるたびに、溜めた gh の行を全部回すと 2 乗だった (#3115)。"""
+        self.assert_linear(
+            f"while a; do gh issue {COMMENT} 1; ",
+            lambda body: f"gh issue {COMMENT} 1; " + body + "done; " * body.count("while"),
+            small=62_500,
+        )
+
+    # --- 物差しそのものの検査 (#3115) ---
+    #
+    # CPU 時間を T = a·n + b·n² + c (a: 線形の項・b: 2 乗の項・c: 固定費) の合成で与え、a と b を
+    # 別々に動かして判定が変わる / 変わらないことを見る。測った値に同じ倍率を掛けるだけだと、
+    # 比が倍率に依らないことの言い直しにしかならない (#3115 の反証)。
+
+    def synthetic(self, a=8e-7, b=0.0, c=0.014, plain=None, guard_scale=1.0, bursts=()):
+        """guard の CPU 時間を a·n + b·n² + c、素の読みを plain·n + c とする機械の検査。
+
+        plain の既定は a (素の読みと同じだけかかる)。素の読みとの倍率の検査が、伸びの検査に
+        混ざらないようにする。guard_scale は guard だけを何倍かに遅くする (退行・定数倍)。
+        bursts は、guard を測った回の通し番号 (0 始まり) のうち、負荷が重なって 3 倍かかった回。
+        """
+        plain = a if plain is None else plain
+        calls = {"guard": 0}
+
+        def guard_cpu(_self, command):
+            n = len(command.encode())
+            t = (a * n + b * n * n) * guard_scale + c
+            index = calls["guard"]
+            calls["guard"] += 1
+            return t * 3 if index in bursts else t
+
+        def plain_cpu(_self, command):
+            return plain * len(command.encode()) + c
+
+        machine = type("Synthetic", (LengthTest,), {"guard_cpu": guard_cpu, "plain_cpu": plain_cpu})
+        return machine("test_long_unquoted_command")
+
+    def quadratic(self, a, share):
+        """SMALL で 2 乗の項が線形の項の share 倍になる b。"""
+        return a * share / self.SMALL
+
+    def verdict(self, machine):
+        try:
+            machine.assert_linear("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+        except AssertionError:
+            return False
+        return True
+
+    def test_a_machine_slower_in_the_linear_term_stays_green(self):
+        for scale in (0.3, 1.0, 10.0, 30.0):
+            with self.subTest(scale=scale):
+                machine = self.synthetic(a=8e-7 * scale)
+                self.assertTrue(self.verdict(machine), f"線形の項が {scale} 倍遅い機械で赤になった")
+
+    def test_a_quadratic_term_turns_it_red_whatever_the_speed_of_the_machine(self):
+        for scale in (0.3, 1.0, 10.0):
+            with self.subTest(scale=scale):
+                a = 8e-7 * scale
+                machine = self.synthetic(a=a, b=self.quadratic(a, 0.5))
+                self.assertFalse(self.verdict(machine), f"2 乗の項があるのに {scale} 倍の機械で緑になった")
+
+    def test_a_mild_quadratic_term_inside_the_threshold_is_tolerated(self):
+        a = 8e-7
+        # 2 乗の項が線形の項の 1 割 (4 倍で 5.1 倍) は、メモリの扱いなどの自然な伸びの内
+        self.assertTrue(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.1))))
+        # 5 割 (4 倍で 8 倍) は外す
+        self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5))))
+
+    def test_the_fixed_cost_does_not_hide_a_quadratic_term_or_fail_a_linear_one(self):
+        a = 8e-7
+        for fixed in (0.0, 0.036, 0.3):
+            with self.subTest(fixed=fixed):
+                self.assertTrue(self.verdict(self.synthetic(a=a, c=fixed)))
+                self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5), c=fixed)))
+
+    def test_a_burst_of_load_on_one_measurement_does_not_flip_the_verdict(self):
+        a = 8e-7
+        # 負荷が重なる回をどこに置いても (固定費 3 回・大きさの確認 1 回の後が本番の測り)、
+        # 線形は緑のまま、2 乗は赤のまま。揺れた回は多数決で捨てられる
+        for burst in range(0, 20):
+            with self.subTest(burst=burst):
+                self.assertTrue(self.verdict(self.synthetic(a=a, bursts=(burst,))))
+                self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5), bursts=(burst,))))
+
+    def test_bursts_on_several_rounds_do_not_flip_the_verdict_either(self):
+        a = 8e-7
+        # 4 回目 (番号 4 から 3 つずつ) までの回のうち 2 回の SMALL と、別の回の LARGE が重く測れた
+        for bursts in ((5, 8), (6, 9), (5, 12), (7, 10, 13), (5, 11)):
+            with self.subTest(bursts=bursts):
+                self.assertTrue(self.verdict(self.synthetic(a=a, bursts=bursts)))
+                self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5), bursts=bursts)))
+
+    def test_rounds_are_added_only_when_they_disagree(self):
+        a = 8e-7
+        quiet = self.synthetic(a=a)
+        _, rounds, _, _ = quiet.measure("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+        self.assertEqual(len(rounds), LengthTest.MIN_ROUNDS)
+        noisy = self.synthetic(a=a, bursts=(6,))
+        _, rounds, _, _ = noisy.measure("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+        self.assertGreater(len(rounds), LengthTest.MIN_ROUNDS)
+
+    def test_a_constant_factor_slowdown_of_the_guard_alone_is_red(self):
+        # 同じ機械で素の読みは変わらず、guard だけが 3 倍かかる退行。伸びは 4 倍のままなので、
+        # 素の読みとの倍率だけが取る
+        natural = 1.7e-7  # この木の実測 (素の読みの 4.7 倍)
+        self.assertTrue(self.verdict(self.synthetic(plain=natural)))
+        self.assertFalse(self.verdict(self.synthetic(plain=natural, guard_scale=3.0)))
+
+    def test_a_machine_that_is_slow_all_over_stays_green(self):
+        # guard も素の読みも同じだけ遅い機械は、倍率が変わらないので緑
+        self.assertTrue(self.verdict(self.synthetic(a=8e-7 * 3, plain=1.7e-7 * 3)))
+
+    def test_a_machine_too_fast_to_measure_the_slope_is_not_silently_green(self):
+        # SMALL を MAX_DOUBLINGS 回 2 倍にしても固定費を引いた CPU 時間が MIN_NET に届かない
+        machine = self.synthetic(a=1e-9)
+        with self.assertRaises(AssertionError):
+            machine.assert_linear("word ", lambda words: f"gh issue {COMMENT} 1 -b x {words}")
+
+    def test_a_short_small_input_is_grown_until_the_slope_is_measurable(self):
+        # 4 倍速い機械: SMALL を 2 倍にして測り、線形は緑・2 乗は赤
+        a = 2e-7
+        self.assertTrue(self.verdict(self.synthetic(a=a)))
+        self.assertFalse(self.verdict(self.synthetic(a=a, b=self.quadratic(a, 0.5))))
 
 
 class WiringTest(unittest.TestCase):
