@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Testing
 
 @testable import MokumeCore
@@ -127,5 +128,77 @@ struct SketchPresenceTests {
             title: "", executable: "evidence", pid: 1, directory: "/tmp", home: "/Users/x",
             elapsed: 0)
         #expect(description.title == "evidence")
+    }
+}
+
+/// 名乗りの**時計の出どころ**を、`SketchRuntime` を通して見る検査 (#3119)。
+///
+/// 名乗りの経過は「作者の時計 (`now`) での経過」と「実時間での経過」の**小さいほう**で数える。
+/// 検査が差し替えた `now` だけが進んでも、実時間だけが進んでも (`now` を止めた検査が混んだ機械で
+/// 待たされる)、名乗ってはならない。名乗るとプロセス全体の状態が変わり、同じプロセスで窓を開閉する
+/// 検査の run loop を止め、`exit(0)` で要約を残さず終わらせる (#1527)。
+///
+/// **名乗りそのものは起こさない。** 最初のフレームで起点を作ったあと、時計を進めて `advance()` を
+/// **呼ばずに**、経過 (``SketchRuntime/presenceElapsed``) と判定 (``SketchPresence/shouldAnnounce(runningFor:)``)
+/// だけを読む。退行しても、この検査が名乗って同じ実行の窓の検査を巻き込むことはない。
+@Suite("名乗りの経過は実時間でも数える", .enabled(if: RenderDevice.isAvailable, "対応する GPU が必要"))
+@MainActor
+struct SketchPresenceClockTests {
+    private final class Blank: Sketch {
+        init() {}
+        let settings = SketchSettings(width: 16, height: 16)
+    }
+
+    /// 検査が進める 2 つの時計。参照で共有する。
+    private final class Clockwork {
+        var author = 0.0
+        var real = 0.0
+    }
+
+    /// 最初のフレームだけ進めて起点を立てたランタイム。
+    private func started(_ clockwork: Clockwork) throws -> SketchRuntime {
+        let runtime = try SketchRuntime(
+            sketch: Blank(), gpu: RenderDevice(), clock: .wallClock, now: { clockwork.author },
+            presenceClock: { clockwork.real })
+        try runtime.advance()
+        return runtime
+    }
+
+    @Test(
+        "作者の時計と実時間の両方が猶予を越えたときだけ、名乗るべきになる",
+        arguments: [
+            // (作者の時計の進み, 実時間の進み, 名乗るべきか)。進みは猶予の何倍か
+            (100.0, 0.0, false),
+            (0.0, 100.0, false),
+            (100.0, 100.0, true),
+            (0.0, 0.0, false),
+            // 境界: 猶予ちょうどで名乗り、手前では名乗らない。小さいほうが決める
+            (1.0, 1.0, true),
+            (100.0, 0.99, false),
+        ])
+    func announcesOnlyWhenBothClocksPassTheGrace(author: Double, real: Double, expected: Bool) throws {
+        let clockwork = Clockwork()
+        let runtime = try started(clockwork)
+        clockwork.author += author * SketchPresence.grace
+        clockwork.real += real * SketchPresence.grace
+        #expect(SketchPresence.shouldAnnounce(runningFor: runtime.presenceElapsed) == expected)
+        // `advance()` は呼んでいない。名乗りそのものは起こさない
+        #expect(!runtime.isPresenceAnnounced)
+    }
+
+    @Test("最初のフレームの前は 0 で、どちらの時計が戻っても経過は負にならない")
+    func elapsedStartsAtZeroAndNeverGoesNegative() throws {
+        let clockwork = Clockwork()
+        clockwork.author = 1000
+        clockwork.real = 1000
+        let runtime = try SketchRuntime(
+            sketch: Blank(), gpu: RenderDevice(), clock: .wallClock, now: { clockwork.author },
+            presenceClock: { clockwork.real })
+        clockwork.author = 5000
+        #expect(runtime.presenceElapsed == 0)
+        try runtime.advance()
+        clockwork.author = -1000
+        clockwork.real = -1000
+        #expect(runtime.presenceElapsed == 0)
     }
 }
