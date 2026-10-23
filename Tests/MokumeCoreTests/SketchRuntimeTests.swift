@@ -289,6 +289,72 @@ struct SketchRuntimeTests {
         #expect(abs(sketch.seen[1].delta - 0.02) < 1e-5)
     }
 
+    /// `setup()` で時計を 2 秒進め、描いた枚の時刻と経過を控えるスケッチ ([#2390])。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    private final class SlowSetupSketch: Sketch {
+        var settings = SketchSettings(width: 8, height: 8, frameRate: 60)
+        var onSetup: () -> Void = {}
+        var seen: [(time: Float, delta: Float)] = []
+        init() {}
+        func setup() { onSetup() }
+        func draw() {
+            seen.append((time, deltaTime))
+            background(.linear(red: 0, green: 0, blue: 0))
+        }
+    }
+
+    /// **#2413 の約束は、表示の予定の時刻で進むときにも守る** ([#2390])。窓の経路では、予定の時刻は
+    /// コールバックの時点で決まり (`setup()` の前)、`setup()` は最初の枚の `advance` の中で走る。
+    /// 予定の時刻を起点にすると、`setup()` にかかった時間が 2 枚目の `time`・`deltaTime` に戻る。
+    /// **実際の順** — 予定の時刻 → `setup()` が 2 秒 → 進める — で通す。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示の予定の時刻で進めても、setup() にかかった時間は 2 枚目の time にも deltaTime にも戻らない")
+    func setupTimeIsNotCountedWhenAdvancingByTheDisplayTime() throws {
+        let step = 1.0 / 60
+        let clock = FrameTimingTests.ManualClock(100)
+        let sketch = SlowSetupSketch()
+        sketch.onSetup = { clock.now += 2 }
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: clock.provider)
+        // 1 枚目のコールバックが 100 秒に来て、予定の時刻は 1 刻み先。`setup()` はこの後に 2 秒かかる
+        try runtime.advance(displayTime: 100 + step)
+        // 2 枚目のコールバックは `setup()` と 1 枚目を描き終えた後 (102.005 秒)。予定の時刻は次の刻みの 1 つ先
+        clock.now = 102.005
+        try runtime.advance(displayTime: 102 + 2 * step)
+
+        try #require(sketch.seen.count == 2)
+        #expect(sketch.seen[0].time == 0)
+        #expect(sketch.seen[0].delta == Float(step))
+        // 変更前 (予定の時刻を起点にしていた) は time ≈ 2.03・deltaTime は上限 (1/6)
+        #expect(sketch.seen[1].time < Float(3 * step), "setup() の 2 秒が 2 枚目の time に戻った")
+        #expect(sketch.seen[1].delta < Float(3 * step), "setup() の 2 秒が 2 枚目の deltaTime に戻った")
+        #expect(sketch.seen[1].time > 0)
+    }
+
+    /// 先に `start()` を呼ぶ使い方 (公開の `start()`・時刻を指定した観測) も同じ。予定の時刻は
+    /// `start()` の前に決まっている。
+    @Test("先に start() を呼んだ後に、古い予定の時刻で進めても、setup() にかかった時間は戻らない")
+    func setupTimeIsNotCountedWhenStartedBeforeTheDisplayTime() throws {
+        let step = 1.0 / 60
+        let clock = FrameTimingTests.ManualClock(100)
+        let sketch = SlowSetupSketch()
+        sketch.onSetup = { clock.now += 2 }
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .wallClock, now: clock.provider)
+        runtime.start()
+        // 予定の時刻は `start()` より前に決まっていた (100 秒のコールバック)
+        try runtime.advance(displayTime: 100 + step)
+        clock.now = 102.005
+        try runtime.advance(displayTime: 102 + 2 * step)
+
+        try #require(sketch.seen.count == 2)
+        #expect(sketch.seen[0].time == 0)
+        #expect(sketch.seen[1].time < Float(3 * step))
+        #expect(sketch.seen[1].delta < Float(3 * step))
+    }
+
     /// **いまの振る舞いを固定するだけ** (直さない)。最初の枚の起点は描き始め (`advance`) なので、
     /// 最初のフレームの中で使った時間 — 最初の `draw()` の重い準備、`setup()` で置いて最初の
     /// フレームへ持ち越した図形・画素を組む時間 — は、ほかのフレームと同じく 2 枚目の経過に乗る
