@@ -99,6 +99,10 @@ final class RecordedGamepadSource: GamepadSource {
     }
 
     func start(into inbox: GamepadInbox) {
+        // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は続け、押していた釦の記憶は捨てる
+        // (パッドの側は外すときに押した記憶を消すので、同じ釦を押し続ける列は押し直しとして届ける)
+        stopped = false
+        held = []
         inbox.setState(inputs.isEmpty ? .unavailable : .running)
     }
 

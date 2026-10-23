@@ -35,7 +35,7 @@ import MokumeCore
 /// | ``SourceState/running`` | 繋がっている |
 /// | ``SourceState/disconnected`` | 抜かれた。挿し直せば戻る |
 /// | ``SourceState/unavailable`` | 走っていないスケッチから作った・記録した列が空 |
-/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``) |
+/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。足し直せば戻る |
 ///
 /// 許可は要らない。**入力が届くのは、スケッチの窓が前面にある間だけ**である (GameController の
 /// 既定。窓のキーやマウスと同じ)。
@@ -64,7 +64,9 @@ public final class Gamepad: Inlet {
     let inbox: GamepadInbox
     private let source: any GamepadSource
     private var pressed: Set<GamepadButton> = []
-    /// 外された。``Sketch/gamepads()`` は外されたものを返さず、作り直す。
+    /// 外されている (``close()`` の後で、まだ足し直されていない)。``Sketch/gamepads()`` は外されているものを
+    /// 返さず、作り直す。**足し直せば (``open()``) 戻る** ので、外して足し直したパッドは一覧に同じ物のまま居て、
+    /// 同じ機材が 2 台にならない (#3122)。
     private(set) var isClosed = false
 
     init(id: String, name: String, source: any GamepadSource) {
@@ -92,6 +94,8 @@ public final class Gamepad: Inlet {
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外されていた印を戻す
+        isClosed = false
         source.start(into: inbox)
     }
 

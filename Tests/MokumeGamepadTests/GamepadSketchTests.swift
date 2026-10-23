@@ -98,4 +98,40 @@ struct GamepadSketchTests {
         #expect(lists.allSatisfy { $0.count == 1 && $0 == lists[0] })
         #expect(states == [.running, .running, .disconnected, .disconnected])
     }
+
+    @Test("外して足し直したパッドは、一覧が同じ 1 台を返し続け、同じ機材のパッドが 2 つにならない (#3122)")
+    func reattachedPadStaysTheOnlyPad() throws {
+        let hub = GamepadHub(watches: false)
+        let controller = GCController.withExtendedGamepad()
+        hub.connected(controller)
+        var original: Gamepad?
+        var listed: [(frame: Int, pads: [Gamepad])] = []
+        GamepadSketch.onSetup = { _ in }
+        GamepadSketch.onDraw = { sketch in
+            let roster = GamepadRoster.roster(for: sketch)
+            switch sketch.frameCount {
+            case 1:
+                original = roster.gamepads(for: sketch, from: hub, calledAs: "gamepads()").first
+            case 3:
+                // 外してから足し直すまでの間は、一覧を呼ばない (外されたパッドは一覧が作り直す約束のまま)
+                if let original { sketch.detach(original) }
+            case 5:
+                if let original { sketch.attach(original) }
+            case 6, 7:
+                listed.append(
+                    (sketch.frameCount, roster.gamepads(for: sketch, from: hub, calledAs: "gamepads()")))
+            default:
+                break
+            }
+        }
+        try run(frames: 7)
+        let pad = try #require(original)
+        #expect(listed.count == 2)
+        for entry in listed {
+            #expect(entry.pads.count == 1)
+            #expect(entry.pads.first === pad, "足し直したパッドを返す。別の 1 台を作って足さない")
+        }
+        #expect(!pad.isClosed)
+        #expect(pad.state == .running)
+    }
 }
