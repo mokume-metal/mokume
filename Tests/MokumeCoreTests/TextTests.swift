@@ -862,8 +862,11 @@ struct TextTests {
         #expect(message == nil, "\(item.style) の「\(item.string)」(\(fallback)) で鳴った: \(message ?? "")")
     }
 
-    /// 代わりの書体から字を引く口。どれも同じ `Typeface.glyph(for:)` を通る。
-    nonisolated static var glyphReadingEntries: [String] { ["text", "textWidth", "textBounds", "textOutline"] }
+    /// 代わりの書体から字を引く口。`text` 系は同じ `Typeface.glyph(for:)` を、`shapedText` 系は組版した結果の
+    /// 代わりの書体の区間を `glyph(for:)` と同じ約束で扱う (#2404)。
+    nonisolated static var glyphReadingEntries: [String] {
+        ["text", "textWidth", "textBounds", "textOutline", "shapedText", "shapedTextWidth", "shapedTextBounds"]
+    }
 
     @Test("どの口から先に引いても、代わりの書体の面の警告は 1 度出る", arguments: glyphReadingEntries)
     func theFallbackWarningComesFromEveryEntry(_ entry: String) throws {
@@ -876,6 +879,9 @@ struct TextTests {
             case "textWidth": _ = canvas.textWidth("aあ")
             case "textBounds": _ = canvas.textBounds("aあ", 20, 50)
             case "textOutline": _ = canvas.textOutline("aあ", 20, 50)
+            case "shapedText": try canvas.draw { canvas.shapedText("aあ", 20, 50) }
+            case "shapedTextWidth": _ = canvas.shapedTextWidth("aあ")
+            case "shapedTextBounds": _ = canvas.shapedTextBounds("aあ", 20, 50)
             default: Issue.record("知らない口 \(entry)")
             }
         }

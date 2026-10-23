@@ -583,6 +583,9 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/textOutline(_:_:_:)``
 - ``SketchPart/textOutline(_:_:_:spacing:)``
 - ``SketchPart/textBounds(_:_:_:)``
+- ``SketchPart/shapedText(_:_:_:)``
+- ``SketchPart/shapedTextWidth(_:)``
+- ``SketchPart/shapedTextBounds(_:_:_:)``
 - ``SketchPart/loadFont(_:)``
 - ``Font``
 - ``FontFailure``

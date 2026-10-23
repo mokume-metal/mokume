@@ -27,7 +27,10 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 機能を作る側は、同じ呼び出しを作る口 (`createCapture()` のような) の中に置く。
+    /// 機能を作る側は、同じ呼び出しを作る口の中に置く。**返す `false` を捨てない** — 走っている実行の外から
+    /// 呼ばれると足されず、捨てた口は生きていない入り口を黙って返す。足せたかを見て、足せなければ作る口が
+    /// 自分の名前で断る。このリポジトリのパッケージの作る口は、確かめて足すまでを 1 回で行う内部の道具を通り、
+    /// 素の `attach` を呼ばない (#2794)。
     ///
     /// - 呼んだ時点で ``Inlet/open()`` する。投げたら診断に出して `false` を返す
     ///   ([ADR-0024] 決定 7)
@@ -267,8 +270,9 @@ extension SketchPart {
     /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げる作る口)。足せなければ、`call` の名前で
     /// 1 度だけ警告して `notRunning(call:)` を投げる (文面は ``OutsideRun/notAttachedNotice(_:)``)。
     ///
-    /// ファイルを読む・ポートを開く前に呼ぶ。足すのはその後の ``attach(_:)-(Inlet)`` で、同じ所から続けて呼ぶので
-    /// 足せる。#2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
+    /// ファイルを読む・ポートを開く前に呼ぶ。**作る口が直に呼ぶのではなく、確かめて足すまでを 1 回で行う
+    /// ``attached(_:calledAs:making:)`` が呼ぶ** (確かめと足すを分けると、足した結果の `false` を捨てる古い形を写す・#2794)。
+    /// #2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
     package func requireAttachable<Failure: NotRunningFailure>(
         _ failure: Failure.Type, calledAs call: String
     ) throws(Failure) {
@@ -277,6 +281,61 @@ extension SketchPart {
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
         }
+    }
+
+    /// **確かめて、作って、足すまでを 1 回で行う** (投げる作る口・[#2794])。足せなければ、作る前に ``requireAttachable(_:calledAs:)`` と
+    /// 同じく `call` の名前で 1 度だけ警告して `notRunning(call:)` を投げる。足せる所なら `make` で入り口を作り、足して返す。
+    ///
+    /// **作る口は、公開の ``attach(_:)-(Inlet)`` を素で呼ばず、これを通る。** 素の `attach` は足せなかったとき
+    /// (`false`) を返すだけで、呼ぶ側が捨てると黙って生きていない入り口を返す。確かめるのと足すのが 2 回の呼びに
+    /// 分かれると、新しい口が古い形を写す (#2297・#2295)。写しは `scripts/check-attach-result.py` が `ci-static` で赤くする。
+    ///
+    /// 足した結果の `false` は、ここで 1 か所だけ捨てる (`attachAfterCheck(_:)`)。`false` になるのは、閉じた後で断られたとき
+    /// (入り口の `state` は変わらず、診断に 1 行だけ出る) と、`open()` が投げたとき (入り口の `state` が言う。ポートが
+    /// 使用中なら `unavailable` など) で、どちらも作る口は作ったものをそのまま返す。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーと警告に載せる口の名前。呼ぶ側の `#function` が入る。
+    ///   - make: 入り口を作る。ファイルを読む・ポートを開く仕事は、確かめた後のここに置く。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () throws(Failure) -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        return attachAfterCheck(try make())
+    }
+
+    /// ``attached(_:calledAs:making:)`` の、作るのが投げない口。足せない所で投げるのは確かめだけ。
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        return attachAfterCheck(make())
+    }
+
+    /// ``attached(_:calledAs:making:)`` の、**面を取れる所かを確かめる** 版 (投げる作る口・[#2794])。絵の置き場 (面) の上に
+    /// 作る入り口 (``Capture``・``Movie``) の道具である。
+    ///
+    /// 確かめるのは ``requireSurface(_:calledAs:)`` で、外で呼んだときの警告は資源を作る口の名乗り (`thrown`) のまま変わらない
+    /// (``attached(_:calledAs:making:)`` の確かめは、足せない所の名乗り `thrownUnattached` になる)。面を取れなければ
+    /// `make` の前に断るので、ファイルを開くなどの重い仕事も走らない。**確かめは道具自身が行う** — 作る側が先に確かめたことを
+    /// 前提にしない。足した結果の `false` は ``attached(_:calledAs:making:)`` と同じ 1 か所で捨てる。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attachedOnSurface<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () throws(Failure) -> Part
+    ) throws(Failure) -> Part {
+        try requireSurface(failure, calledAs: call)
+        return attachAfterCheck(try make())
+    }
+
+    /// 確かめた所から、作った入り口を続けて足す。**足せなかった結果 (`false`) を捨てるのは、作る口の道具のうちここだけ**で、
+    /// ``attached(_:calledAs:making:)``・``attachedOnSurface(_:calledAs:making:)`` だけが呼ぶ。確かめてから続けて呼ぶので足せる。
+    private func attachAfterCheck<Part: Inlet>(_ part: Part) -> Part {
+        _ = attach(part)
+        return part
     }
 
     /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げない作る口)。足せなければ、`call` の名前で

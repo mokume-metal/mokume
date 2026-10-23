@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import Synchronization
 import simd
 
 /// 図形を描くためのパイプラインと、資源の受け渡し口。
@@ -16,7 +17,8 @@ import simd
 /// ## 持ち主は ``RenderDevice`` で、面は分け合う ([#2785])
 ///
 /// ここが抱えるのは**組み上がったら変わらないもの**だけ — ライブラリ・組み立て器・
-/// パイプライン 33 本・奥行きの扱い。組み込みの原文からできる値で、面にも利用者の断片にも
+/// パイプライン・奥行きの扱い (基本図形のパイプラインは使うときに 1 本ずつ組んで控える・
+/// 組んだ 1 本は変わらない — [#3114])。組み込みの原文からできる値で、面にも利用者の断片にも
 /// 依らない。なので ``RenderDevice/shapePipeline(pixelFormat:)`` が GPU ごと・出力形式ごとに
 /// 1 つ組み、面は何枚作っても同じものを使う。面を作るたびに組み直すと、描き場所を動的に
 /// 作る場面が、寸法にも内容にも依らない費用を払い続ける。
@@ -25,6 +27,7 @@ import simd
 /// ので、分け合うと面どうしで束ねが漏れる。面が自分の分を作る (``makeArgumentTable(gpu:)``)。
 ///
 /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+/// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
 final class ShapePipeline {
     /// 同じ絵を描く、**混ぜ方ごとに分かれたパイプラインの組**。
     ///
@@ -82,10 +85,35 @@ final class ShapePipeline {
 
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
-            switch mode {
+            switch Column(mode) {
             case .blend: blend
             case .replace: replace
-            default: composite
+            case .composite: composite
+            }
+        }
+
+        /// 3 本のうちの 1 本を指す列。**混ぜ方からどの本へ行くかを決めるのはここ 1 か所**で、
+        /// 3 本を一度に組む経路 (``init(_:)``) も、基本図形を 1 本ずつ組む経路
+        /// (``ShapePipeline/formState(for:mode:)``・#3114) も、この並びを使う。
+        enum Column: CaseIterable, Sendable {
+            case composite, blend, replace
+
+            init(_ mode: BlendMode) {
+                switch mode {
+                case .blend: self = .blend
+                case .replace: self = .replace
+                default: self = .composite
+                }
+            }
+
+            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:)``
+            /// が返す 3 本の中での位置。
+            var planIndex: Int {
+                switch self {
+                case .composite: 0
+                case .blend: 1
+                case .replace: 2
+                }
             }
         }
     }
@@ -181,7 +209,29 @@ final class ShapePipeline {
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
-    private let formStatesByFlags: [UInt32: BlendStates]
+    ///
+    /// ## 組むのは使うときで、1 本ずつ ([#3114])
+    ///
+    /// 組は 12 組 × 3 本 = 36 本あり、全部を ``Canvas`` を作るときに組むと、Metal のコンパイルの
+    /// キャッシュが無いとき (版を上げた直後・初めて開く `.app`) に起動が 1.5 秒延びた (#2991)。
+    /// 旗の組は絵の中身で決まり、混ぜ方も絵ごとなので、1 つの絵が使う組は数本しかない。
+    /// **最初にその旗・その混ぜ方で描くフレームの頭 (``Canvas`` の溜めた列の用意) で組み、
+    /// 控えて使い回す。** 起動で組むのは ``defaultFormKey`` の 1 本だけ。
+    ///
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
+    private let formPipelines: Mutex<[FormKey: any MTLRenderPipelineState]>
+
+    /// 基本図形のパイプライン 1 本の鍵 — 旗の組と、混ぜ方の列。
+    struct FormKey: Hashable, Sendable {
+        let flags: UInt32
+        let column: BlendStates.Column
+    }
+
+    /// **起動で組む 1 本。** 既定の描き方 (塗りも輪郭もあり・重ねる) で `circle` を描く列 —
+    /// 楕円は縁が軸に斜めになりうる形なので、旗に斜めの縁が立つ。ほかは使うときに組む。
+    static let defaultFormKey = FormKey(
+        flags: FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.obliqueEdgesFlag,
+        column: .blend)
 
     /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
     /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
@@ -200,13 +250,39 @@ final class ShapePipeline {
         return base + base.map { $0 | FormInstance.obliqueEdgesFlag }
     }()
 
-    /// その旗の組で描くパイプラインの 3 本組。
-    func formStates(for flags: UInt32) -> BlendStates {
-        guard let states = formStatesByFlags[flags] else {
-            preconditionFailure("no form pipeline was built for the flag combination \(flags)")
+    /// その旗の組・その混ぜ方で描くパイプライン。**まだ組んでいなければここで組む** (#3114)。
+    ///
+    /// 組むのは数十 ms (キャッシュが無いとき) で、描くフレームの頭でそれを払う。
+    /// ``Canvas`` は積む前に ``prepareForms(_:)`` で組み済みにするので、積む側は組み済みの
+    /// 1 本を引くだけである (``builtFormState(for:mode:)``)。
+    func formState(for flags: UInt32, mode: BlendMode) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let key = FormKey(flags: flags, column: .init(mode))
+        return try formPipelines.withLock { (built) throws(RenderFailure) in
+            if let state = built[key] { return state }
+            let state = try Self.makeFormState(
+                compiler: compiler, vertexLibrary: vertexLibrary, pixelFormat: pixelFormat, key: key)
+            built[key] = state
+            return state
         }
-        return states
     }
+
+    /// 組み済みの 1 本。組んでいなければ ``prepareForms(_:)`` を呼び忘れている。
+    func builtFormState(for flags: UInt32, mode: BlendMode) -> any MTLRenderPipelineState {
+        let key = FormKey(flags: flags, column: .init(mode))
+        guard let state = formPipelines.withLock({ $0[key] }) else {
+            preconditionFailure(
+                "the form pipeline for flags \(flags) (\(key.column)) was not prepared before encoding")
+        }
+        return state
+    }
+
+    /// 積む列が使う基本図形のパイプラインを、積む前に組み済みにする。
+    func prepareForms(_ uses: some Sequence<(flags: UInt32, mode: BlendMode)>) throws(RenderFailure) {
+        for use in uses { _ = try formState(for: use.flags, mode: use.mode) }
+    }
+
+    /// いまの組み済みの本数 (検査用)。
+    var builtFormStateCount: Int { formPipelines.withLock { $0.count } }
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
@@ -275,21 +351,14 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、それぞれに
-        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)、さらにそれぞれに斜めの縁の枝を
-        // 残したもの (旗に 8 を足した組)
-        var formStates: [UInt32: BlendStates] = [:]
-        for flags in Self.formFlagCombinations {
-            formStates[flags] = try Self.makeBlendStates(
-                compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-                pixelFormat: pixelFormat, label: "mokume.forms.\(flags)",
-                vertexFunctionName: Self.formVertexFunctionName,
-                fragmentFunctionName: Self.formFragmentFunctionName,
-                blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
-                replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName,
-                formFlags: flags)
-        }
-        self.formStatesByFlags = formStates
+        // 基本図形の組 (旗の組 12 × 混ぜ方 3 列) は使うときに 1 本ずつ組む (#3114)。
+        // ここで組むのは既定の描き方の 1 本だけ
+        let defaultKey = Self.defaultFormKey
+        self.formPipelines = Mutex([
+            defaultKey: try Self.makeFormState(
+                compiler: compiler, vertexLibrary: library, pixelFormat: pixelFormat,
+                key: defaultKey)
+        ])
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -406,6 +475,22 @@ final class ShapePipeline {
                 replaceFragmentFunctionName: replaceFragmentFunctionName, formFlags: formFlags)
         ).makeNow(fragmentLibrary: fragmentLibrary)
         return BlendStates(built)
+    }
+
+    /// 基本図形のパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ ``blendPlans`` を通り、
+    /// 旗の組と列だけを選ぶ。
+    private static func makeFormState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat,
+        key: FormKey
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let plans = blendPlans(
+            pixelFormat: pixelFormat, label: "mokume.forms.\(key.flags)",
+            vertexFunctionName: formVertexFunctionName,
+            fragmentFunctionName: formFragmentFunctionName,
+            blendFragmentFunctionName: formBlendFragmentFunctionName,
+            replaceFragmentFunctionName: formReplaceFragmentFunctionName, formFlags: key.flags)
+        return try plans[key.column.planIndex].makeNow(
+            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
     }
 
     /// 3 本の組み方。`composite`・`blend`・`replace` の順 (``BlendStates/init(_:)`` が読む順)。
