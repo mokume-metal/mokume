@@ -32,6 +32,20 @@ nonisolated struct WarningLog<Key: Hashable> {
     /// 言う数に上限を置く — ``count(where:)``)。
     private var said: [Key: String] = [:]
 
+    /// 言う権利を取る。まだ言っていなければ、空の文面で控えに載せて `true`。言ってあれば `false`。
+    ///
+    /// ``SharedWarningLog`` が、**錠の中では「初めてか」の確かめと印だけを行い、文面の組み立てと
+    /// 標準エラーへの書き込みを錠の外で行う**ために分けた入口。載せた空の文面は、
+    /// ``record(_:_:)`` が言った文面に置き換える。
+    mutating func claim(_ key: Key) -> Bool {
+        guard said[key] == nil else { return false }
+        said[key] = ""
+        return true
+    }
+
+    /// ``claim(_:)`` で取った鍵に、言った文面を控える。
+    mutating func record(_ key: Key, _ text: String) { said[key] = text }
+
     /// まだ言っていなければ、その注意を 1 度だけ言う。2 度目からは何もしない。
     ///
     /// 文面は `@autoclosure` で受ける。**言わない回は組み立てない** — 呼ばれる場所は
@@ -63,22 +77,91 @@ nonisolated extension WarningLog: Sendable where Key: Sendable {}
 ///
 /// 値だけを扱う数と色の関数 (``map(_:_:_:_:_:)`` や ``color(_:_:_:_:)``) は、持ち主の面が無いので
 /// 控えをプロセスで 1 つ持つ。これらを `nonisolated` にして、`concurrentPerform` や TaskGroup から
-/// 並べて呼べるようにすると、**同じ注意を同時に言いうる**。控えの確かめと書き込みを `Mutex` の
-/// 1 つの区間に入れて、どのスレッドから何本呼んでも、注意は 1 度だけ出る。
+/// 並べて呼べるようにすると、**同じ注意を同時に言いうる**。どのスレッドから何本呼んでも、
+/// 注意は 1 度だけ出る。
 ///
 /// 面が持つ控え (``Canvas/warnings`` など) は main actor の中だけで触るので、``WarningLog`` のまま
 /// 持つ。ここへ寄せるのは、持ち主が無く、隔離の外から呼ばれうる口だけである。
 ///
-/// **文面の組み立てと標準エラーへの 1 行は、区間の中で行う。** 言う回は最初の 1 回だけで、
-/// 黙る回は鍵を見るだけで抜ける (区間は短い)。
+/// ## 錠は「初めて言う 1 回」にしか取らない
+///
+/// 範囲の外を締める入力が毎画素来る並列のループでは、言い終えた後の回が大多数になる。その回ごとに
+/// プロセスで 1 つの錠を取ると、全スレッドが 1 本の錠に並ぶ ([#2389] の反証)。そこで、
+///
+/// 1. **言う権利を取った鍵は、錠を取らずに抜ける。** その鍵を、追記するだけの連結リストに公開してあり、
+///    先にそれを錠なしで辿る。載っていれば、言うのは別のスレッドが済ませたか、いま言っている最中である
+///    (読み出しは取得順序で、載せる側は公開順序なので、載った鍵は必ず見える)
+/// 2. **初めての回だけ錠を取る。** 錠の中は「この鍵は初めてか」の確かめと印 (``WarningLog/claim(_:)``)
+///    だけで、**文面の組み立てと標準エラーへの書き込みは錠の外**で行う。文面の中から同じ控えの口を
+///    呼んでも錠の再入にならず、標準エラーが詰まっても、言わない回を巻き込んで止めない
+///
+/// 言う権利を取るのは 1 スレッドだけなので、文面の組み立ても 1 度だけである。
 ///
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
+    /// 言った鍵の連結リストの 1 つ。**追記だけで、載せた鍵は消えない。**
+    ///
+    /// **参照を数える物にしない** (生のポインタと番地で持つ)。読む側が節を `retain` / `release` すると、
+    /// 全スレッドが同じ節の参照カウントを書き換えて、錠より遅くなる (#2389 の実測)。節は載せたら
+    /// 書き換えず (末尾のときに `next` へ 1 度書くだけ)、読むだけなら共有の読み出しなので、
+    /// スレッドが増えても詰まらない。
+    private struct Node: ~Copyable {
+        let key: Key
+        /// 次の節の番地。0 は末尾。
+        let next = Atomic<UInt>(0)
+    }
+
     private let log = Mutex(WarningLog<Key>())
+    /// 先頭の節の番地。0 は何も載っていない。
+    private let first = Atomic<UInt>(0)
+
+    deinit {
+        // 読む側はもう居ない。節を先頭から辿って返す
+        var address = first.load(ordering: .acquiring)
+        while address != 0, let node = UnsafeMutablePointer<Node>(bitPattern: address) {
+            address = node.pointee.next.load(ordering: .acquiring)
+            node.deinitialize(count: 1)
+            node.deallocate()
+        }
+    }
+
+    /// その鍵が公開されているか。**錠を取らない。**
+    private func isPublished(_ key: Key) -> Bool {
+        var address = first.load(ordering: .acquiring)
+        while address != 0, let node = UnsafeMutablePointer<Node>(bitPattern: address) {
+            if node.pointee.key == key { return true }
+            address = node.pointee.next.load(ordering: .acquiring)
+        }
+        return false
+    }
+
+    /// 鍵を連結リストの末尾に公開する。**錠の中でだけ呼ぶ** (書き手は常に 1 人)。
+    private func publish(_ key: Key) {
+        let node = UnsafeMutablePointer<Node>.allocate(capacity: 1)
+        node.initialize(to: Node(key: key))
+        let address = UInt(bitPattern: node)
+        var slot = first.load(ordering: .acquiring)
+        guard slot != 0 else { return first.store(address, ordering: .releasing) }
+        while true {
+            let current = UnsafeMutablePointer<Node>(bitPattern: slot)!
+            let next = current.pointee.next.load(ordering: .acquiring)
+            if next == 0 { return current.pointee.next.store(address, ordering: .releasing) }
+            slot = next
+        }
+    }
 
     /// まだ言っていなければ、その注意を 1 度だけ言う。
     func warnOnce(_ key: Key, _ message: @autoclosure () -> String) {
-        log.withLock { $0.warnOnce(key, message()) }
+        guard !isPublished(key) else { return }
+        let isFirst = log.withLock { log in
+            guard log.claim(key) else { return false }
+            publish(key)
+            return true
+        }
+        guard isFirst else { return }
+        let text = message()
+        log.withLock { $0.record(key, text) }
+        Diagnostics.warn(text)
     }
 
     /// いま言ってある注意の写し。**検査が読む。**

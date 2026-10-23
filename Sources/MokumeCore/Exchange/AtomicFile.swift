@@ -58,8 +58,10 @@ package enum AtomicFile {
     /// ドラッグしている間のように**入力のたびに書く経路がある**ためで
     /// (``RemoteParams``)、そこで毎回言うと標準エラーが流れて他の注意が読めなくなる。
     ///
-    /// 静的に持つ形は ``ColorSurface`` と ``NumberSurface`` に前例がある。パッケージの
-    /// 既定隔離が main actor なので (ADR-0010 決定 1)、共有しても競合しない。
+    /// 静的に持つのは、書く口に持ち主の面が無いからである。この型は隔離を外していない (パッケージの
+    /// 既定隔離の main actor・ADR-0010 決定 1) ので、共有しても競合しない。
+    /// 隔離の外から呼ばれる口の控えは、`Mutex` で守る ``SharedWarningLog`` に置く
+    /// (``NumberValues``・``ColorValues``・``PaletteValues``・#2389)。
     private static var failures = WarningLog<URL>()
 
     /// 一時ファイルの名前に足す連番。**共有しても競合しない** (``failures`` と同じ理由)。

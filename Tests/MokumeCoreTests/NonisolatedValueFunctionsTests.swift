@@ -3,6 +3,7 @@
 
 import Dispatch
 import Foundation
+import MokumeDiagnostics
 import Synchronization
 import Testing
 
@@ -50,6 +51,14 @@ struct NonisolatedValueFunctionsTests {
         read(paletteLerp([(color(255, 0, 0), 0), (color(0, 255, 0), 0.5), (color(0, 0, 255), 1)], 0.75))
         read(LinearRGBA.display(red: 0.5, green: 0.25, blue: 0.75, alpha: 1))
         out.append(bezierPoint(0, 10, 10, 0, 0.5))
+        // 作業空間から表示形式へ移す出口 (#2389 の反証)。戻す道も同じ型にある
+        let pixels = PixelBuffer(
+            width: 2, height: 1, components: [0.5, 0.25, 0.75, 1, 0.1, 0.2, 0.3, 0.5])
+        let encoded = OutputStage.encode(pixels)
+        out += encoded.bytes.map(Float.init)
+        out += OutputStage.encode(pixels, brightness: Brightness(exposure: 2, toneMapping: .roll))
+            .bytes.map(Float.init)
+        out += OutputStage.decode(encoded).flatMap { [Float($0.x), Float($0.y), Float($0.z), Float($0.w)] }
         return out
     }
 
@@ -73,30 +82,107 @@ struct NonisolatedValueFunctionsTests {
         }
     }
 
-    /// 完了条件 2: 数でない値を、複数のスレッドから同時に渡しても落ちず、注意は 1 度だけ出る。
-    @Test("複数のスレッドから数でない値を渡しても、落ちず、注意は 1 度だけ出る")
-    func warningsAreSaidOnceAcrossThreads() {
-        // 検査どうしで共有する控えを数えないよう、この検査だけの控えで文面の組み立てを数える
+    /// 完了条件 2: 複数のスレッドから同時に言っても、落ちず、注意は**ちょうど 1 度**出る。
+    ///
+    /// 控えの型を直に使う。検査どうしで共有する本物の控えだと、先に別の検査が同じ鍵を鳴らしていれば
+    /// 並列の呼び出しが無くても緑になるので、この検査だけの控えと溜め場で数える。
+    @Test("複数のスレッドから同じ注意を同時に言っても、文面はちょうど 1 度だけ組まれ、1 度だけ出る")
+    func warningsAreSaidExactlyOnceAcrossThreads() async {
         let log = SharedWarningLog<Int>()
         let built = Mutex(0)
-        DispatchQueue.concurrentPerform(iterations: 200) { _ in
-            log.warnOnce(1, { built.withLock { $0 += 1 }; return "concurrent warning once" }())
-            log.warnOnce(2, { built.withLock { $0 += 1 }; return "concurrent warning once (2)" }())
+        let digest = WarningDigest()
+        await Diagnostics.$digest.withValue(digest) {
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0..<400 {
+                    group.addTask {
+                        log.warnOnce(1, { built.withLock { $0 += 1 }; return "concurrent warning once" }())
+                        log.warnOnce(2, { built.withLock { $0 += 1 }; return "concurrent warning twice" }())
+                    }
+                }
+            }
         }
-        // 文面は言う回にだけ組む (@autoclosure)。1 度ずつだけ
-        #expect(log.snapshot.hasWarned(1) && log.snapshot.hasWarned(2))
+        let said = digest.takeUnreported().sorted()
+        #expect(said == ["concurrent warning once", "concurrent warning twice"], "\(said)")
+        // 文面は言う回にだけ、鍵ごとに 1 度組む (@autoclosure)
+        #expect(built.withLock { $0 } == 2, "文面を組んだ回数: \(built.withLock { $0 })")
         #expect(log.snapshot.message(for: 1) == "concurrent warning once")
         #expect(log.snapshot.count { _ in true } == 2)
-        #expect(built.withLock { $0 } == 2, "文面を言わない回にも組んだ: \(built.withLock { $0 })")
-        // 本物の口も、並べて呼んで落ちず、控えに載る
-        DispatchQueue.concurrentPerform(iterations: 64) { _ in
-            _ = map(Float.nan, 0, 1, 0, 1)
-            _ = color(Float.nan, 0, 0)
-            _ = lerpColor(color(0), color(255), Float.nan)
+    }
+
+    /// 本物の口を並べて呼ぶと、標準エラーの 1 行は口ごとにちょうど 1 度。プロセスの控えは検査どうしで
+    /// 共有するので、まっさらな控えを持つ子のプロセスで言わせて数える。
+    @Test("本物の口を並べて呼んでも、標準エラーの注意は口ごとにちょうど 1 度だけ出る")
+    func realMouthsSayOncePerMouthAcrossThreads() async throws {
+        let result = await #expect(processExitsWith: .success, observing: [\.standardErrorContent]) {
+            DispatchQueue.concurrentPerform(iterations: 256) { _ in
+                _ = map(Float.nan, 0, 1, 0, 1)
+                _ = color(Float.nan, 0, 0)
+                _ = color(10, 20, 30, 999)
+                _ = lerpColor(color(0), color(255), Float.nan)
+                _ = lerpColor(color(0), color(255), 7)
+                _ = paletteLerp([(color(255, 0, 0), 0), (color(0, 0, 255), 1)], 7)
+                _ = mod(1, 0)
+            }
         }
-        #expect(NumberValues.warnings.hasWarned(.notANumber(.map)))
-        #expect(ColorValues.warnings.hasWarned(.notANumber))
-        #expect(ColorValues.warnings.hasWarned(.notANumberLerpColor))
+        guard let result else { return }
+        let errors = String(decoding: result.standardErrorContent, as: UTF8.self)
+        let lines = errors.split(separator: "\n").map(String.init)
+        for prefix in ["map()", "color()", "lerpColor()", "paletteLerp()", "mod()"] {
+            let mine = lines.filter { $0.contains(prefix) }
+            // color() は数でない値と不透明度の外の 2 種類、lerpColor() も同じく 2 種類を言う
+            let expected = (prefix == "color()" || prefix == "lerpColor()") ? 2 : 1
+            #expect(mine.count == expected, "\(prefix): \(mine.count) 行 (\(expected) 行のはず)\n\(errors)")
+        }
+    }
+
+    /// 文面の中から同じ控えの口を呼んでも、錠の再入で止まらない。
+    @Test("文面の組み立てで同じ控えの口を呼んでも、止まらない")
+    func buildingAMessageMayCallTheSameLog() {
+        let log = SharedWarningLog<Int>()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            log.warnOnce(1, { log.warnOnce(2, "inner"); return "outer" }())
+            done.signal()
+        }
+        // 止まったときは、錠を持ったままの控えを読むと検査ごと止まるので、読まずに赤にする
+        guard done.wait(timeout: .now() + 10) == .success else {
+            Issue.record("文面の中から同じ控えを呼んで止まった")
+            return
+        }
+        #expect(log.snapshot.message(for: 1) == "outer" && log.snapshot.message(for: 2) == "inner")
+    }
+
+    /// 文面を組んでいる間 (標準エラーが詰まった間も同じ) も、言い終えた鍵を言う回は止まらない。
+    @Test("ある鍵の文面を組んでいる間も、別の鍵の言い終えた回は待たされない")
+    func aSlowMessageDoesNotStallTheOthers() {
+        let log = SharedWarningLog<Int>()
+        log.warnOnce(2, "already said")
+        let building = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let slow = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            log.warnOnce(
+                1,
+                {
+                    building.signal()
+                    _ = release.wait(timeout: .now() + 20)
+                    return "slow"
+                }())
+            slow.signal()
+        }
+        #expect(building.wait(timeout: .now() + 10) == .success)
+        let quick = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            for _ in 0..<1000 { log.warnOnce(2, "already said") }
+            // 初めての鍵も、遅い文面の完了を待たずに言える
+            log.warnOnce(3, "third")
+            quick.signal()
+        }
+        let progressed = quick.wait(timeout: .now() + 10) == .success
+        release.signal()
+        _ = slow.wait(timeout: .now() + 10)
+        #expect(progressed, "遅い文面を組んでいる間、ほかの回が待たされた")
+        #expect(log.snapshot.message(for: 1) == "slow" && log.snapshot.message(for: 3) == "third")
     }
 
     /// 完了条件 5 の形: 全画素を `map`→`color` で埋めるループを、ライブラリの口のまま分けて回せる。
