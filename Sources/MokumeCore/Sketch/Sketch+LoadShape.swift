@@ -43,9 +43,11 @@ extension SketchPart {
     ///   ``Placement/scale``。**拡大しても滑らかに出る** — 矩形・円・楕円は距離関数で描き、
     ///   曲線は 20 倍に拡大しても折れ目が見えない細かさで刻む
     /// - **色**: SVG に書いた塗りと線の色が形に焼き付く (``createShape(_:)`` と同じ)。
-    ///   置く前の ``fill(_:)-(LinearRGBA)`` は効かない。置き場所ごとに変えるなら ``Placement/fill`` で
+    ///   置く前の ``fill(_:)-(LinearRGBA)`` も ``fill(_:)-(Gradient)`` も効かない (読んだ SVG は
+    ///   記録した塗りで出る)。置き場所ごとに変えるなら ``Placement/fill`` で
     ///   **色を掛ける**。色を丸ごと差し替えたいなら、白で描いた SVG を読んで掛ける色を渡す —
-    ///   白に掛けた色はそのまま出る
+    ///   白に掛けた色はそのまま出る。**読んだ SVG を勾配で塗る口はまだ無い**。SVG に書いた
+    ///   `<linearGradient>`・`<radialGradient>` も、いまは読まない ([#3031])
     ///
     /// 下の 4 枚は、例がその場で書き出した SVG — 80×50 の `viewBox` に、橙の正方形と水色の円を
     /// 1 つずつ描いたもの — を読んで置いたもので、1 枚ごとに SVG の中身か置き方を 1 か所だけ
@@ -165,7 +167,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 白で描いた SVG なら、置き場所ごとに色を渡して染められる。置く前の ``fill(_:)-(LinearRGBA)`` は効かない。
+    /// 白で描いた SVG なら、置き場所ごとに色を渡して染められる。置く前の ``fill(_:)-(LinearRGBA)`` や ``fill(_:)-(Gradient)`` は効かない。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -285,6 +287,8 @@ extension SketchPart {
     /// ファイルをもう一度読む。毎フレーム呼ばず、`setup()` で読んで持ち回る。
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
+    ///
+    /// [#3031]: https://github.com/mokume-metal/mokume/issues/3031
     // shot: 1 snippet=002b4165
     // shot: 2 snippet=bbba0594
     // shot: 3 snippet=b33c97d0

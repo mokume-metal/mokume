@@ -37,6 +37,10 @@ extension Canvas {
         ///
         /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
         var hasThinFill = false
+        /// この列に、縁が画素の軸に斜めになりうる図形が 1 つでもあるか
+        /// (``FormInstance/mayHaveObliqueEdge(unitsPerDrawnPixel:)``・#2991)。立っていれば、閉じるときに
+        /// ``FormInstance/obliqueEdgesFlag`` を足す。``hasThinFill`` と同じく、変わっても列を切らない。
+        var hasObliqueEdge = false
     }
 
     /// 基本図形をこの経路で描いてよいか。
@@ -63,7 +67,7 @@ extension Canvas {
     /// 足す (``OpenForm/hasThinFill``)。
     ///
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
-    func beginForm(flags: UInt32, thinFill: Bool) {
+    func beginForm(flags: UInt32, thinFill: Bool, obliqueEdge: Bool) {
         if openSource != .form {
             closeBatch()
             openSource = .form
@@ -77,6 +81,7 @@ extension Canvas {
             openForm = OpenForm(instanceStart: formInstances.count, flags: flags)
         }
         if thinFill { openForm?.hasThinFill = true }
+        if obliqueEdge { openForm?.hasObliqueEdge = true }
     }
 
     /// 開いている基本図形の列を閉じる。
@@ -115,7 +120,8 @@ extension Canvas {
                 castsShadow: false,
                 instanceStart: open.instanceStart,
                 instanceCount: count,
-                formFlags: open.flags | (open.hasThinFill ? FormInstance.thinFillsFlag : 0)))
+                formFlags: open.flags | (open.hasThinFill ? FormInstance.thinFillsFlag : 0)
+                    | (open.hasObliqueEdge ? FormInstance.obliqueEdgesFlag : 0)))
     }
 
     /// 基本図形を 1 つ置く。
@@ -164,7 +170,8 @@ extension Canvas {
         // 細い塗りと、輪郭の帯の細い穴 (#2186) は同じ旗に乗る (``FormInstance/thinFillsFlag``)
         beginForm(
             flags: instance.meta.w,
-            thinFill: instance.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel))
+            thinFill: instance.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel),
+            obliqueEdge: instance.mayHaveObliqueEdge(unitsPerDrawnPixel: unitsPerDrawnPixel))
         formInstances.append(instance)
     }
 

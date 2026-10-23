@@ -78,9 +78,32 @@ nonisolated enum AudioAnalysis {
             ofType: Float.self)
     }
 
+    /// 変換の入出力に使う作業領域。**値は持ち越さない** — 呼ぶたびに全部書き直してから読む。
+    ///
+    /// 窓の長さの配列を 4 本 (窓に重みを掛けた入力・虚部の 0・変換の出力の実部と虚部) 持つ。解析した
+    /// 結果 (``AudioLevels/spectrum``・``AudioLevels/spectrumLevels``) はここに置かず、呼ぶたびに新しい
+    /// 配列を作って返すので、利用者が保存した値は後の解析で書き換わらない。
+    struct Scratch {
+        var weighted = [Float](repeating: 0, count: windowSize)
+        /// 入力の虚部。実数の入力なので 0 のまま (書き換えない)。
+        let imaginary = [Float](repeating: 0, count: windowSize)
+        var outputReal = [Float](repeating: 0, count: windowSize)
+        var outputImaginary = [Float](repeating: 0, count: windowSize)
+    }
+
     /// 作ってある変換で窓 1 つを解析する。**``analyze(_:)`` と同じ式**で、変換の作り手だけが違う。
     static func analyze(
         _ window: [Float], using transform: vDSP.DiscreteFourierTransform<Float>?
+    ) -> AudioLevels {
+        var scratch = Scratch()
+        return analyze(window, using: transform, scratch: &scratch)
+    }
+
+    /// 作ってある変換と作業領域で窓 1 つを解析する。**``analyze(_:)`` と同じ式**で、一時配列の置き場だけが違う
+    /// (値はビット一致する)。繰り返し解析する側 (``AudioAnalyzer``) が、作業領域を使い回すために呼ぶ。
+    static func analyze(
+        _ window: [Float], using transform: vDSP.DiscreteFourierTransform<Float>?,
+        scratch: inout Scratch
     ) -> AudioLevels {
         let samples = padded(window)
         let rms = vDSP.rootMeanSquare(samples)
@@ -88,12 +111,14 @@ nonisolated enum AudioAnalysis {
 
         var spectrum = Array(repeating: Float(0), count: bandCount)
         if let transform {
-            let real = vDSP.multiply(samples, hann)
-            let imaginary = [Float](repeating: 0, count: windowSize)
-            let output = transform.transform(real: real, imaginary: imaginary)
+            vDSP.multiply(samples, hann, result: &scratch.weighted)
+            transform.transform(
+                inputReal: scratch.weighted, inputImaginary: scratch.imaginary,
+                outputReal: &scratch.outputReal, outputImaginary: &scratch.outputImaginary)
             for band in 0..<bandCount {
-                let magnitude = (output.real[band] * output.real[band]
-                    + output.imaginary[band] * output.imaginary[band]).squareRoot()
+                let real = scratch.outputReal[band]
+                let imaginary = scratch.outputImaginary[band]
+                let magnitude = (real * real + imaginary * imaginary).squareRoot()
                 // 正の周波数と負の周波数に半分ずつ分かれるので 2 倍する (直流は分かれない)
                 spectrum[band] = magnitude * (band == 0 ? 1 : 2) / hannSum
             }
@@ -140,21 +165,26 @@ nonisolated enum AudioAnalysis {
 ///
 /// 変換は `Sendable` でないので、呼ぶ側と同じ main actor に置く。解析する側 (``AudioIn``・
 /// ``SoundFile``・``SynthSound``) はどれも main actor の上で解析するので、共有しても競合は無い。
+/// 変換の入出力の作業領域 (16 KB) も 1 組だけ持って使い回す ([#3086])。音源ごとには持たない。
+///
 /// 以前は「フレームに 1 度で、数十マイクロ秒」を前提に呼ぶたびに作っていたが、合成音が音ごとに
 /// 解析するようになって前提が崩れた (最大 64 個で 1 フレームに 64 回)。
 ///
 /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
+/// [#3086]: https://github.com/mokume-metal/mokume/issues/3086
 final class AudioAnalyzer {
     static let shared = AudioAnalyzer()
 
     private let transform = AudioAnalysis.makeTransform()
+    /// 変換の作業領域。解析のたびに書き直すので、呼び出しの間に値は持ち越さない。
+    private var scratch = AudioAnalysis.Scratch()
     /// 解析した回数。**検査が読む** — 製品の経路がここを通ることと、読まれない値は解析しないことを
     /// 数で見る。
     private(set) var analyses = 0
 
     func analyze(_ window: [Float]) -> AudioLevels {
         analyses += 1
-        return AudioAnalysis.analyze(window, using: transform)
+        return AudioAnalysis.analyze(window, using: transform, scratch: &scratch)
     }
 }
 
