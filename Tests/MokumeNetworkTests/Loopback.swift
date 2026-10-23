@@ -14,9 +14,21 @@ import Testing
 //
 // **待つ側が期限を持つ** — 届くのを待つ検査は、期限を越えたら満たされなかったとして落ちる
 // (AGENTS.md「待ちを含む検査を書く」)。
+//
+// **前提を待つ段は、名乗る道具だけを通る** (#3124)。素の待ち `until` は `fileprivate` で、この
+// ファイルの外からは呼べない。足りなくても偽を返すだけの道具を直に呼ぶと、読まれなかった回が「偽」と
+// 言うだけで後ろまで走り続ける形に戻る (#3001・#3104・#3105 は呼び出し箇所を 1 つずつ差し替えてきた)。
+// 外から使える待ちは、次のどれかである。
+// - ``requireWait(_:within:until:)``・``requireWait(_:within:detail:until:)``: 条件が満ちる前提。満ちなければ
+//   名乗って 1 つで止まる。口の状態・知らせ・繋ぎの数・送りの前提は、専用の ``requireState``・``requireTold``・
+//   ``requireCounted``・``requireClients``・``requireSent`` が名乗る
+// - ``requireCollected(_:count:within:what:told:)``・``requireCollected(count:within:what:detail:take:)``: `count` 個
+//   届く前提。足りなければ名乗って止まる。送りの前提は ``collect(_:count:within:label:log:)`` で数えて
+//   ``requireSent(_:_:log:landing:)`` が名乗る
+// - ``doesNotHappen(within:_:)``: 起きないことの観測。偽 (起きなかった) が正しい答えになる、前提ではない待ち
 
-/// 期限まで、条件が満ちるのを待つ。満ちなければ偽。
-func until(_ seconds: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
+/// 期限まで、条件が満ちるのを待つ。満ちなければ偽。**この道具は外から呼べない** (#3124)。
+fileprivate func until(_ seconds: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
     while Date() < deadline {
         if condition() { return true }
@@ -25,25 +37,87 @@ func until(_ seconds: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
     return condition()
 }
 
-/// フレームを回すように取り出しを続け、`count` 個届くまで (か期限まで) 集める。
+/// 期限のあいだ、`condition` が**満ちない**ことを観測する。満ちれば偽、期限まで満ちなければ真。
 ///
-/// `log` を渡せば、読めた数と待った秒数を数える (読まれなかった回の名乗りの材料 — #3001)。どの通が読まれ
-/// なかったかは分からない (`label` の受け口の列として数える)。
+/// **前提を待つ道具ではない。** 起きてはいけないこと (読めない数が湧く・余計な送りが出る) が、待っても
+/// 起きないことを見る。起きるはずのことを待つなら ``requireWait(_:within:until:)`` — 満ちない回は名乗って止まる。
+func doesNotHappen(within seconds: TimeInterval = 5, _ condition: () -> Bool) async -> Bool {
+    !(await until(seconds, condition))
+}
+
+/// フレームを回すように取り出しを続け、`count` 個届くまで (か期限まで) 集める。足りなくても名乗らずに短い列を返す
+/// ので、**読まれた数を ``SendLog`` に数え、呼ぶ側が ``requireSent(_:_:log:landing:)`` で名乗る**。
+///
+/// `log` は必須 (#3124)。読めた数と待った秒数を数える (読まれなかった回の名乗りの材料 — #3001)。どの通が
+/// 読まれなかったかは分からない (`label` の受け口の列として数える)。ログを渡さずに集める道は
+/// ``requireCollected(_:count:within:what:told:)`` (足りなければ止まる)。
 func collect(
     _ port: TextPort, count: Int, within seconds: TimeInterval = 5, label: String = "送り",
-    log: SendLog? = nil
+    log: SendLog
 ) async -> [String] {
-    var received: [String] = []
+    await collectCounting(count: count, within: seconds, label: label, log: log) {
+        port.supply()
+        return port.messages
+    }
+}
+
+/// ``collect(_:count:within:label:log:)`` の、取り出す関数を渡す形。入り口の型 (文字列・OSC) に依らず、数え方を
+/// 1 つにする。`take` は 1 フレーム分の取り出し (`supply()` して、届いたものを返す)。
+func collectCounting<Value>(
+    count: Int, within seconds: TimeInterval = 5, label: String = "送り", log: SendLog,
+    take: () -> [Value]
+) async -> [Value] {
+    var received: [Value] = []
     let started = Date()
     _ = await until(seconds) {
-        port.supply()
-        received += port.messages
+        received += take()
         return received.count >= count
     }
-    log?.record(
+    log.record(
         label: label, expected: count, heard: min(received.count, count), missing: nil, replacements: 0,
         heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: seconds)
     return received
+}
+
+/// `count` 個届くのを、期限まで待つ。**足りなければ、読めた数と `what`・`detail` を名乗って 1 つで止まる**
+/// (`#require`・#3124)。読めた分だけ返す。`take` は 1 フレーム分の取り出し。
+///
+/// 送り元が受け口へ送る検査 (送りの前提が崩れうる段) は、名乗りに受け口の様子を足せる
+/// ``collect(_:count:within:label:log:)`` と ``requireSent(_:_:log:landing:)`` を使う。こちらは、
+/// 送るのが検査自身の相手 (すでに繋がっている・注入した) で、足りない原因が受け口の中にある段の道具。
+func requireCollected<Value>(
+    count: Int, within seconds: TimeInterval = 5, what: String, detail: () -> String = { "" },
+    take: () -> [Value]
+) async throws -> [Value] {
+    var received: [Value] = []
+    let met = await until(seconds) {
+        received += take()
+        return received.count >= count
+    }
+    // 決めた時点の値を名乗る。ここから後は取り出さない
+    let extra = detail()
+    try #require(
+        met,
+        "\(what): \(count) 個のうち読めたのは \(received.count) 個 (期限 \(seconds) 秒)\(extra.isEmpty ? "" : "・\(extra)")"
+    )
+    return received
+}
+
+/// ``requireCollected(count:within:what:detail:take:)`` の、``TextPort`` の形。足りなければ、受け口の状態と
+/// 移り変わり (``EventTrace``)、`told` の全行を名乗る。
+func requireCollected(
+    _ port: TextPort, count: Int, within seconds: TimeInterval = 5, what: String = "受け口", told: Told? = nil
+) async throws -> [String] {
+    try await requireCollected(
+        count: count, within: seconds, what: "\(what)が \(count) 通を読めなかった",
+        detail: {
+            let lines = told.map { "・同じ told の全行: \($0.lines)" } ?? ""
+            return "状態: \(port.state.rawValue)\(traceText(port.source))\(lines)"
+        }
+    ) {
+        port.supply()
+        return port.messages
+    }
 }
 
 /// 受けた文字列を作例のスケッチと同じく読んだ結果 (数は大きさを置き換え、`hit` を数える)。
@@ -83,6 +157,28 @@ func requireWait(
 ) async throws {
     let met = await until(seconds) { condition() }
     try #require(met, "\(what) (\(detail())・期限 \(seconds) 秒)")
+}
+
+/// ``requireWait(_:within:detail:until:)`` の、足す手がかりが無い形。`what` と期限だけを名乗って 1 つで止まる。
+/// 状態・知らせ・数のような読める手がかりがあるなら、``requireWait(_:within:detail:until:)`` か専用の道具
+/// (``requireState``・``requireTold``・``requireCounted``) で添える。
+func requireWait(
+    _ what: String, within seconds: TimeInterval = 5, until condition: () -> Bool
+) async throws {
+    try await requireWait(what, within: seconds, detail: { "手がかり無し" }, until: condition)
+}
+
+/// ``requireWait(_:within:detail:until:)`` の、**満たされなかったときの名乗りを呼ぶ側が行う**形 (#3124)。満たされなければ
+/// `miss` を呼ぶ。`miss` は ``requireSent(_:_:log:landing:)`` のように、受け口の様子を読んで名乗って投げる段
+/// (非同期の読みが要るので、`detail` の文字列では足りない)。`miss` が投げずに返っても、`what` を名乗って止まる。
+func requireArrival(
+    _ what: String, within seconds: TimeInterval = 5, until condition: () -> Bool,
+    naming miss: () async throws -> Void
+) async throws {
+    let met = await until(seconds) { condition() }
+    if met { return }
+    try await miss()
+    try #require(met, "\(what) (期限 \(seconds) 秒)")
 }
 
 /// 口の中の移り変わりの跡を、名乗りに載せる文にする。跡を読めない出どころなら空。
@@ -139,14 +235,6 @@ func requireTold(
 func boundPort(of server: TextPort, source: StreamSource, told: Told) async throws -> Int {
     try await requireState(told: told, tracing: source) { server.state }
     return try #require(source.boundPort)
-}
-
-/// フレームを回すように取り出しを続け、繋いでいる相手の数が `count` になるまで (か期限まで) 待つ。
-func clients(_ server: TextPort, reach count: Int, within seconds: TimeInterval = 5) async -> Bool {
-    await until(seconds) {
-        server.supply()
-        return server.connected == count
-    }
 }
 
 /// 受け口 `server` が数える相手の数が `count` になるのを、期限まで待つ。**ならなければ、値を控えてから

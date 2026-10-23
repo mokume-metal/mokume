@@ -87,11 +87,11 @@ struct StreamClientTests {
 
         client.write("0.3\n")
         client.write("hit\n")
-        #expect(await collect(server, count: 2) == ["0.3", "hit"])
+        #expect(try await requireCollected(server, count: 2) == ["0.3", "hit"])
 
         server.write("0.")
         server.write("75\nback\n")
-        #expect(await collect(client, count: 2) == ["0.75", "back"])
+        #expect(try await requireCollected(client, count: 2) == ["0.75", "back"])
         #expect(client.lastArrival != nil)
         #expect(client.report == SourceReport(name: "tcp client 127.0.0.1:\(port)", state: .running, lastArrival: client.lastArrival))
         #expect(told.lines.isEmpty)
@@ -118,7 +118,7 @@ struct StreamClientTests {
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
         try await requireClients(second, from: client, told: told)
         client.write("back\n")
-        #expect(await collect(second, count: 1) == ["back"])
+        #expect(try await requireCollected(second, count: 1) == ["back"])
 
         // 戻った後にまた切れたら、また知らせる (繋がったときに忘れる)
         second.close()
@@ -149,7 +149,7 @@ struct StreamClientTests {
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
         try await requireClients(server, from: client, told: told)
         server.write("hello\n")
-        #expect(await collect(client, count: 1) == ["hello"])
+        #expect(try await requireCollected(client, count: 1) == ["hello"])
     }
 
     @Test("繋がっていない間の write は 1 度だけ知らせて捨て、繋がった後に届かない。繋がれば、また言えるように戻る")
@@ -173,7 +173,7 @@ struct StreamClientTests {
         try await requireClients(server, from: client, told: told)
         client.write("kept\n")
         // 繋がる前に書いたものは届かない
-        #expect(await collect(server, count: 1) == ["kept"])
+        #expect(try await requireCollected(server, count: 1) == ["kept"])
 
         server.close()
         try await requireState(.disconnected, what: "繋ぎ", told: told, tracing: client.source) { client.state }
@@ -194,7 +194,9 @@ struct StreamClientTests {
         client.close()
         #expect(client.state == .stopped)
         #expect(client.messages.isEmpty)
-        #expect(await clients(server, reach: 0))
+        try await requireCounted(server, count: 0, told: told, what: "クライアントを閉じても、受け口の数が 0 に戻らなかった") {
+            "クライアント: 状態 \(client.state.rawValue)"
+        }
         // 繋ぎ直さない
         try await Task.sleep(for: .milliseconds(300))
         server.supply()  // connected は supply (取り出し) でしか書き換わらない。読む前に回す
@@ -219,8 +221,12 @@ struct StreamClientTests {
         // 'h' と、UTF-8 に現れないバイトは文字列では書けないので、別の読めない行 (長すぎる行) で見る
         server.write(String(repeating: "a", count: StreamListener.lineLimit + 10) + "\n")
         server.write("after\n")
-        #expect(await collect(client, count: 2) == ["before", "after"])
-        #expect(await until { client.input.unreadable == 1 })
+        #expect(try await requireCollected(client, count: 2) == ["before", "after"])
+        try await requireWait(
+            "読めない行が 1 つと数えられなかった", detail: { "数えた数: \(client.input.unreadable)" }
+        ) {
+            client.input.unreadable == 1
+        }
     }
 
     // MARK: - 繋ぎに行く側の前提が満たされなかった回の名乗り (#3104)
@@ -333,10 +339,10 @@ struct StreamClientTests {
 
         client.send("0.25")
         client.send("hit")
-        #expect(await collect(server, count: 2) == ["0.25", "hit"])
+        #expect(try await requireCollected(server, count: 2) == ["0.25", "hit"])
         server.send("0.75")
         server.send("fade")
-        #expect(await collect(client, count: 2) == ["0.75", "fade"])
+        #expect(try await requireCollected(client, count: 2) == ["0.75", "fade"])
         #expect(told.lines.isEmpty)
     }
 
@@ -358,7 +364,7 @@ struct StreamClientTests {
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
         try await requireClients(second, from: client, told: told)
         client.send("back")
-        #expect(await collect(second, count: 1) == ["back"])
+        #expect(try await requireCollected(second, count: 1) == ["back"])
     }
 
     /// `wss://` は TLS の上で繋ぐ。TLS を話さない相手 (ここでは平文の WebSocket サーバ) には、
@@ -435,7 +441,7 @@ struct StreamClientTests {
         try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
         try await requireClients(server, from: client, told: told)
         server.write(textScript.map { $0 + "\n" }.joined())
-        let received = await collect(client, count: textScript.count)
+        let received = try await requireCollected(client, count: textScript.count)
 
         let injected = IdleSketch().createTCPClient(messages: textScript.map { [$0] })
         try injected.open()
