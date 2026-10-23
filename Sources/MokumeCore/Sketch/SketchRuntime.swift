@@ -461,6 +461,9 @@ public final class SketchRuntime {
     /// 観測の秒へ飛ぶ ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。観測でない枚では
     /// どちらも同じ値である。
     public var time: Float { showsObservedTime ? timing.time : timing.authorTime }
+    /// ``time`` が示す秒を、倍精度のまま持つもの。``time`` と同じ約束で読み分ける (観測の秒を読むのは
+    /// ``Sketch/draw()`` と入り口の供給の間だけ)。周期の位相 (``SketchPart/phase(period:)``) が読む。
+    var timeSeconds: Double { showsObservedTime ? timing.shownSeconds : timing.seconds }
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。**観測の指定秒が描き直す枚でも作者の時計の値。**
     /// 本体が持つ状態 (動画の再生位置・録った音の起点) はこちらで進める。
     var authorTime: Float { timing.authorTime }
