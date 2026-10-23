@@ -605,7 +605,7 @@ extension CanvasTests {
                 "isRuntimeSurface": "ランタイムの本体の面かの印。ランタイムが作ったときに 1 度だけ立て、境目では動かない (#2780)",
                 "stopsOnPlacementOutsideRegions": testing,
                 "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
-                "sweepPolicy": testing, "sharesUnitShapes": testing,
+                "sweepPolicy": testing, "sharesUnitShapes": testing, "specializesUnlitSolids": testing,
                 "uploadByteLimit": testing, "failureForTesting": testing,
                 "placesRetainedStrokesOnGPU": testing,
                 "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
