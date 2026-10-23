@@ -11,8 +11,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var logo: Shape? -->
     /// ```swift
-    /// func setup() {
-    ///     logo = try? loadShape("assets/logo.svg")
+    /// func setup() throws {
+    ///     logo = try loadShape("assets/logo.svg")
     /// }
     ///
     /// func draw() {

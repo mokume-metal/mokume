@@ -165,9 +165,9 @@ import simd
     /// ```swift
     /// private var video: Image?
     ///
-    /// func setup() {
+    /// func setup() throws {
     ///     // 面は 1 度だけ作る。書き込みでは大きさが変わらない
-    ///     video = try? createImage(320, 180)
+    ///     video = try createImage(320, 180)
     /// }
     ///
     /// func draw() {
@@ -215,7 +215,7 @@ import simd
     /// var camera: Capture?
     /// var shots: [Image] = []
     ///
-    /// func setup() { camera = try? createCapture() }
+    /// func setup() throws { camera = try createCapture() }
     ///
     /// func draw() {
     ///     background(0)
@@ -251,8 +251,8 @@ import simd
     /// 絵を PNG ファイルにして書く。Processing の `PImage.save()` に当たる。**書き終えてから返る。**
     ///
     /// ```swift
-    /// func setup() {
-    ///     guard let swatch = try? createImage(64, 64) else { return }
+    /// func setup() throws {
+    ///     let swatch = try createImage(64, 64)
     ///     swatch.fill(.linear(red: 1, green: 0.4, blue: 0.1))
     ///     try? swatch.save("out/swatch.png")
     /// }
@@ -323,7 +323,7 @@ import simd
     /// ```swift
     /// var camera: Capture?
     ///
-    /// func setup() { camera = try? createCapture() }
+    /// func setup() throws { camera = try createCapture() }
     ///
     /// func draw() {
     ///     guard let camera else { return }

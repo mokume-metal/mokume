@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
-    /// func setup() {
-    ///     head = try? loadModel("assets/head.obj")
+    /// func setup() throws {
+    ///     head = try loadModel("assets/head.obj")
     /// }
     /// func draw() {
     ///     lights()

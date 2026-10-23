@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var dust: Particles! -->
     /// ```swift
-    /// func setup() {
-    ///     dust = try? makeParticles(count: 20000)
+    /// func setup() throws {
+    ///     dust = try makeParticles(count: 20000)
     /// }
     /// ```
     ///
@@ -81,18 +81,16 @@ extension SketchPart {
     /// ```swift
     /// var smoke: Particles!
     ///
-    /// func setup() {
-    ///     if let soft = try? makeShader("""
+    /// func setup() throws {
+    ///     let soft = try makeShader("""
     ///         float4 paint(Fragment in, Values values) {
     ///             float r = length(in.shapePosition.xy) * 2.0;
     ///             return in.color * (1.0 - smoothstep(0.0, 1.0, r)) * (1.0 - in.particle.age);
     ///         }
     ///         """)
-    ///     {
-    ///         shader(soft)
-    ///     }
+    ///     shader(soft)
     ///     blendMode(.add)
-    ///     smoke = try? makeParticles(count: 12_000)
+    ///     smoke = try makeParticles(count: 12_000)
     ///     blendMode(.blend)
     ///     resetShader()
     /// }

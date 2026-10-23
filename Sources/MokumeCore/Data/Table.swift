@@ -8,8 +8,8 @@ import Foundation
 ///
 /// <!-- example: 文脈 var table: Table? -->
 /// ```swift
-/// func setup() {
-///     guard var read = try? loadTable("data/temperatures.csv", header: true) else { return }
+/// func setup() throws {
+///     var read = try loadTable("data/temperatures.csv", header: true)
 ///     read.addColumn("mean")
 ///     for (i, row) in read.rows.enumerated() {
 ///         read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)

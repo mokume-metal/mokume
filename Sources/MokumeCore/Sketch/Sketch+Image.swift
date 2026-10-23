@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var grain: Image? -->
     /// ```swift
-    /// func setup() {
-    ///     grain = try? loadImage("assets/grain.png")
+    /// func setup() throws {
+    ///     grain = try loadImage("assets/grain.png")
     /// }
     /// ```
     ///

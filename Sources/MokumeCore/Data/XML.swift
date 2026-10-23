@@ -8,9 +8,9 @@ import Foundation
 ///
 /// <!-- example: 文脈 var sky: XML? -->
 /// ```swift
-/// func setup() {
+/// func setup() throws {
 ///     // <sky><star x="120" y="80" size="6"/> … </sky>
-///     sky = try? loadXML("data/constellation.xml")
+///     sky = try loadXML("data/constellation.xml")
 /// }
 ///
 /// func draw() {
@@ -27,9 +27,9 @@ import Foundation
 ///
 /// <!-- example: 文脈 var feed: XML? -->
 /// ```swift
-/// func setup() {
+/// func setup() throws {
 ///     // <rss><channel><item><title>Nightfall</title></item> … </channel></rss>
-///     feed = try? loadXML("data/news.xml")
+///     feed = try loadXML("data/news.xml")
 /// }
 ///
 /// func draw() {

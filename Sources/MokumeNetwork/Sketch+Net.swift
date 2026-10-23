@@ -29,7 +29,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var server: TCPServer?
     ///     var size: Float = 0.5
-    ///     func setup() { server = try? createTCPServer(5204) }
+    ///     func setup() throws { server = try createTCPServer(5204) }
     ///     func draw() {
     ///         for line in server?.messages ?? [] { size = Float(line) ?? size }
     ///         circle(width / 2, height / 2, size * height)
@@ -79,7 +79,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var socket: WebSocketServer?
     ///     var size: Float = 0.5
-    ///     func setup() { socket = try? createWebSocketServer(8025) }
+    ///     func setup() throws { socket = try createWebSocketServer(8025) }
     ///     func draw() {
     ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
     ///         circle(width / 2, height / 2, size * height)
@@ -201,7 +201,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var link: TCPClient?
     ///     var size: Float = 0.5
-    ///     func setup() { link = try? createTCPClient("127.0.0.1", 7000) }
+    ///     func setup() throws { link = try createTCPClient("127.0.0.1", 7000) }
     ///     func draw() {
     ///         for line in link?.messages ?? [] { size = Float(line) ?? size }
     ///         background(20)
@@ -263,7 +263,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var socket: WebSocketClient?
     ///     var size: Float = 0.5
-    ///     func setup() { socket = try? createWebSocketClient("wss://relay.example/room") }
+    ///     func setup() throws { socket = try createWebSocketClient("wss://relay.example/room") }
     ///     func draw() {
     ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
     ///         background(20)
@@ -379,7 +379,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var udp: UDPPort?
     ///     var size: Float = 0.5
-    ///     func setup() { udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
+    ///     func setup() throws { udp = try createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
     ///     func draw() {
     ///         for text in udp?.messages ?? [] { size = Float(text) ?? size }
     ///         circle(width / 2, height / 2, size * height)

@@ -151,4 +151,185 @@ struct SetupThrowsTests {
         #expect(statuses == [1], "終了コードが 1 を 1 度だけ渡していない: \(statuses)")
         #expect(sketch.draws == 0, "draw() が呼ばれた")
     }
+
+    // MARK: - どの枝からも通り抜けない (反証 1)
+
+    /// `setup()` で `noLoop()` を呼んでから投げるスケッチ (Issue の想定例の 1 行目の形)。止めた後に入力を数える。
+    final class StopsThenThrows: Sketch {
+        var settings = SketchSettings(width: 32, height: 32)
+        var draws = 0
+        var keys = 0
+        init() {}
+        func setup() throws {
+            noLoop()
+            throw Custom()
+        }
+        func draw() { draws += 1 }
+        func keyPressed() { keys += 1 }
+    }
+
+    @Test("setup() で noLoop() を呼んでから投げても、以後のフレームはずっと同じ失敗を投げ、入力を配らない")
+    func aStoppedSketchThatThrewKeepsThrowing() throws {
+        let sketch = StopsThenThrows()
+        let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
+        let first = try #require(failure(of: runtime))
+        #expect(first == .setupFailed(reason: Custom().description))
+        for _ in 0..<3 {
+            runtime.input.enqueue(.keyDown(code: .space, characters: " ", isRepeat: false))
+            #expect(failure(of: runtime) == first, "止めた後のフレームが失敗を投げない")
+        }
+        #expect(sketch.keys == 0, "失敗したスケッチへ入力が配られた")
+        #expect(sketch.draws == 0)
+
+        // 始めてから 1 枚も進めずに書き出しても、ファイルを書かない
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-setup-throws-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(throws: RenderFailure.self) { try runtime.renderFrame(to: url) }
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// 観測のある往復。`Talker` の代わりに、`setup()` が投げる検体を使う。
+    private func report(
+        _ body: String, in facet: URL, with runtime: SketchRuntime
+    ) throws -> (warnings: [String], complete: Bool?) {
+        try AtomicFile.write(
+            Data(#"{"id":"o\#(UUID().uuidString.prefix(6))"\#(body)}"#.utf8),
+            to: facet.appendingPathComponent("request.json"))
+        _ = failure(of: runtime)
+        let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        return (parsed["warnings"] as? [String] ?? [], parsed["complete"] as? Bool)
+    }
+
+    private func makeFacet() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-setup-throws-facet-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    @Test("時刻を指定した観測は、setup() が投げたなら断り、断りの文に投げた理由の最初の行が入る。2 度目以降も同じ")
+    func aTimedObservationNamesTheSetupFailure() throws {
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: Plain(), gpu: RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        for round in 0..<2 {
+            let answer = try report(#","time":0.5"#, in: facet, with: runtime)
+            let all = answer.warnings.joined(separator: "\n")
+            #expect(all.contains("my own failure"), "\(round) 回目: 断りに理由が載っていない: \(all)")
+            #expect(answer.complete != true, "\(round) 回目: 撮れたと答えた")
+        }
+    }
+
+    @Test("外から止められた観測のない一枚描きでも、setup() の失敗を撮れたと答えない")
+    func aPausedFirstObservationDoesNotClaimASuccess() throws {
+        let facet = try makeFacet()
+        let sketch = Plain()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        runtime.pause()
+        let answer = try report("", in: facet, with: runtime)
+        let all = answer.warnings.joined(separator: "\n")
+        #expect(all.contains("my own failure"), "応えに理由が載っていない: \(all)")
+        #expect(answer.complete != true, "撮れたと答えた")
+        #expect(sketch.draws == 0)
+    }
+
+    @Test("名乗りのメニューが進めた回に setup() が投げたら、捨てずに窓の経路へ知らせる")
+    func presenceReportsTheSetupFailure() throws {
+        let sketch = Plain()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: nil, now: { 100 })
+        var told: [RenderFailure] = []
+        runtime.setupFailureHandler = { told.append($0) }
+        runtime.advanceForPresence()
+        #expect(told == [.setupFailed(reason: Custom().description)], "\(told)")
+        #expect(sketch.draws == 0)
+    }
+
+    // MARK: - 文面 (反証 2・6)
+
+    /// `LocalizedError` だけを持つ型。`"\(error)"` では構造体のダンプになる。
+    struct OnlyLocalized: LocalizedError {
+        var errorDescription: String? { "the disk is full" }
+        var recoverySuggestion: String? { "free some space and run again" }
+    }
+
+    final class Localized: Sketch {
+        var settings = SketchSettings(width: 32, height: 32)
+        init() {}
+        func setup() throws { throw OnlyLocalized() }
+    }
+
+    final class Unwritable: Sketch {
+        var settings = SketchSettings(width: 32, height: 32)
+        init() {}
+        func setup() throws { throw ImageWriteFailure.writeFailed(path: "/nowhere/a.png") }
+    }
+
+    @Test("文面は、CustomStringConvertible・LocalizedError・素の Error の順に読み、型を問わず全文になる")
+    func theFailureTextIsReadInOneOrder() throws {
+        let localized = try #require(failure(of: SketchRuntime(sketch: Localized(), gpu: RenderDevice())))
+        #expect(
+            localized == .setupFailed(reason: "the disk is full\nfree some space and run again"),
+            "LocalizedError の説明が運ばれていない: \(localized)")
+        let unwritable = try #require(failure(of: SketchRuntime(sketch: Unwritable(), gpu: RenderDevice())))
+        guard case .setupFailed(let reason) = unwritable else {
+            Issue.record("setupFailed でない: \(unwritable)")
+            return
+        }
+        #expect(reason.contains("/nowhere/a.png") && reason.contains("could not be written"), Comment(rawValue: reason))
+        #expect(!reason.hasPrefix("writeFailed"), Comment(rawValue: "ケース名のダンプになっている: " + reason))
+    }
+
+    @Test("1 行に削る経路でも、何が起きたかと理由の最初の行が残る")
+    func theHeadlineKeepsTheReason() {
+        let failure = RenderFailure.setupFailed(reason: "could not read assets/cat.png\ncheck the path")
+        #expect(failure.headline == "setup() threw, so the sketch did not start: could not read assets/cat.png")
+        #expect(startupFailureText(failure).contains("check the path"), "全文は起動の失敗の文面に残る")
+    }
+
+    // MARK: - 差込口 (反証 3)
+
+    final class Opened: Inlet {
+        var closes = 0
+        func open() throws {}
+        func supply() {}
+        func close() { closes += 1 }
+        var failure: String? { nil }
+        var report: SourceReport? { nil }
+    }
+
+    struct OpenedPlugin: Plugin {
+        let inlet: Opened
+        func register(into registry: PluginRegistry) { registry.add(inlet: inlet) }
+    }
+
+    final class WithAnInlet: Sketch {
+        nonisolated(unsafe) static var inlet = Opened()
+        var settings = SketchSettings(width: 32, height: 32)
+        var plugins: [any Plugin] { [OpenedPlugin(inlet: Self.inlet)] }
+        init() {}
+        func setup() throws { throw Custom() }
+    }
+
+    @Test("窓の経路は、setup() が投げたら、差込口を閉じてから終わる")
+    func theApplicationClosesTheInletsBeforeExiting() throws {
+        WithAnInlet.inlet = Opened()
+        let inlet = WithAnInlet.inlet
+        let application = try SketchApplication(sketch: WithAnInlet(), gpu: RenderDevice())
+        var statuses: [Int32] = []
+        var closesWhenExiting: [Int] = []
+        application.exitProcess = {
+            statuses.append($0)
+            closesWhenExiting.append(inlet.closes)
+        }
+        application.didFinishLaunching()
+        application.displayLinkFired()
+        #expect(statuses == [1])
+        #expect(closesWhenExiting == [1], "終わる前に差込口が閉じられていない: \(closesWhenExiting)")
+    }
 }
