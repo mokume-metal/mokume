@@ -90,6 +90,7 @@ struct SceneOutsideFrameTests {
             Mouth("noClip", .clip) { $0.noClip() },
             // 効果 (#1605)
             Mouth("effects", .effects) { $0.effects([.invert()]) },
+            Mouth("filter", .effects) { $0.filter([.invert()]) },
             // 光。`noLights()` は取り除く光が無くても言う (#1670)
             Mouth("ambientLight(color)", .light) { $0.ambientLight(white) },
             Mouth("ambientLight(gray)", .light) { $0.ambientLight(200) },
