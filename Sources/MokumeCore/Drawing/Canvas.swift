@@ -3809,11 +3809,12 @@ public final class Canvas {
     /// (``keepPicture(placedFrom:)``)。
     ///
     /// **自分の出す先 (``output``) を書く口は、書く前に必ずここを通る** ([#1942])。描き切り
-    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 5 つある:
+    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 6 つある:
     /// 細かさを下げた面の追い付き (``catchUpOutput()``)・細かさ 1 の面の書き戻し
     /// (``writeBackPendingPixels()``)・出力段の書き戻し (``RenderTarget/encodeToImage()`` ほか)・
     /// 出す先を直に塗る ``RenderTarget/fill(with:)``・打ち切られた投入の面の取り替えの取り消し
-    /// (``carryDropped(_:)``・[#2388])。新しい口を足すときは、書く前にここを通す。
+    /// (``carryDropped(_:)``・[#2388])・呼んだ時点で効果を掛けて描く先へ書き戻す ``filter(_:)``
+    /// (``applyFilter(_:)``・[#2455])。新しい口を足すときは、書く前にここを通す。
     /// **この列挙は出す先を書く口の登録簿で**、通し忘れは、出す先を書く最下層が呼ぶ検算
     /// (`RenderTarget.assertPlacersSettledBeforeWriting()`) が debug の検査で捕まえる。
     /// 写しを取るのは出す先が実際に変わる口だけで、変えていない口は呼ばない (ADR-0023 決定 5)。
@@ -3825,6 +3826,7 @@ public final class Canvas {
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、

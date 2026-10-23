@@ -73,6 +73,9 @@ import simd
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
+    /// ``filtered(_:)`` が効果を通す作業の面。**初めて掛けるときに作り、絵が手放されるまで使い回す**
+    /// (呼ぶたびに面と効果の置き場を確保しない)。注意を 1 度だけ言う控えもこの面が持つ。
+    var filterWorkspace: Canvas?
 
     /// 画素を渡して作る。
     init(width: Int, height: Int, pixels: [SIMD4<Float16>], gpu: RenderDevice) throws(

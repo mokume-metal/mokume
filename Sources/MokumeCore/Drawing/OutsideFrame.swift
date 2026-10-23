@@ -13,7 +13,7 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
-    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
+    /// **シーンの記述 (``placing``・``pixelWrite``・``filter`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
     /// どの口でも同じ 1 文で「フレームの外で呼ばれた」とだけ言う** ([#2723])。
     ///
     /// - **場面**: 断るのは `setup()` の中だけではない。止まっている間 (`noLoop()`) の入力の
@@ -27,7 +27,7 @@ extension Canvas {
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
     /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
-    /// 描き場所の面だけ、14 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// 描き場所の面だけ、15 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
     /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
@@ -68,7 +68,7 @@ extension Canvas {
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
 
-        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 14 種で共通の
+        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 15 種で共通の
         /// 型にする** ([#2780])。自分でフレームを開く面とは、描き場所 (`createGraphics`) と、直に使う
         /// ``Canvas`` (`init(target:gpu:)`) である — ランタイムが持ち越しの区間を約束する本体の面
         /// (``Canvas/isRuntimeSurface``) ではない。
@@ -102,7 +102,7 @@ extension Canvas {
             return subject + ". " + Self.drawingTargetTail
         }
 
-        /// ``drawingTargetNotice`` の、14 種で共通の直し先の案内。
+        /// ``drawingTargetNotice`` の、15 種で共通の直し先の案内。
         static let drawingTargetTail =
             "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
             + "inside its draw { }. This was called outside them, so it belongs to no frame, and "

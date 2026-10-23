@@ -42,6 +42,9 @@ public enum Effect {
     /// 半径で揃えてあるが、絵は全解像度で回したものとは同じにならない。
     case blur(radius: Float)
     /// 明るいところをにじませる。`radius` は出す画素。
+    ///
+    /// `threshold` はにじませる明るさの下限で、**この明るさを越えた分だけがにじむ** (範囲を決めず、締めない)。
+    /// 2 値化の ``threshold(level:)`` の `level` (明るさ以上を白にする境目) とは別の量である。
     case bloom(amount: Float, threshold: Float = 0.7, radius: Float = 12)
     /// 色を反転する。**アルファは動かない。**
     case invert(amount: Float = 1)
@@ -59,7 +62,9 @@ public enum Effect {
     /// 比べる。`brightness(c) / 100 >= level` の画素が白になる。Processing の `filter(THRESHOLD, level)` と
     /// 同じ量で、`level` が 0 なら全部白、1 なら 1 の画素だけが白になる。範囲の外は端へ締める。
     ///
-    /// 白は不透明度ぶんの白 (乗算済み) で、半透明の画素は半透明のまま 2 値になる。
+    /// 白は不透明度ぶんの白 (乗算済み) で、半透明の画素は半透明のまま 2 値になる。**不透明度 0 で色を持つ
+    /// 画素 (透明な地へ加算した光) も、その色を白か黒にする** (不透明度は 0 のまま。色が全部 0 の画素は透明のまま)。
+    /// 面の画素は半精度で持つので、`level` の 1/1024 手前から白とする — `fill(128)` に `level: 128 / 255` のようなちょうどの値は白になる (8 ビットの隣り合う目盛りは取り違えない)。
     case threshold(level: Float)
     /// 利用者が書いた効果。
     case custom(EffectShader)
@@ -199,12 +204,12 @@ extension Effect {
     /// - `amount` は 0…1。1 を越えた値は 1 と同じ絵になる (負の値は、締める前から 0 と同じ
     ///   く効かない)。越えたまま通すと、反転や周辺減光が負の光を作る
     /// - `radius` は ``maxRadius`` まで。締めても絵は変わらない (そちらの説明)
-    /// - `threshold` と ``adjust(brightness:contrast:saturation:)`` の 3 つは範囲を決めて
-    ///   いないので、締めない
+    /// - ``bloom(amount:threshold:radius:)`` の `threshold` と ``adjust(brightness:contrast:saturation:)`` の
+    ///   3 つは範囲を決めていないので、締めない。2 値化の ``threshold(level:)`` の `level` は 0…1 へ締める
     ///
     /// **締めたときは言う** ([#1842]・[ADR-0020] 決定 5)。説明に範囲と締め方を書いていても、書いた値と
     /// 違う値が効いたことを利用者が知る手段が他に無い。何を締めたかは `roundings` が返し、
-    /// ``Canvas/effects(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
+    /// ``Canvas/effects(_:)`` と ``Canvas/filter(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
     /// 負の `radius`) は言わない。
     ///
     /// 利用者の効果 (``custom(_:)``) は数を持たないので、そのまま通す。

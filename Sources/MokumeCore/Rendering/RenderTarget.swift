@@ -107,10 +107,11 @@ import MokumeDiagnostics
     /// ``Canvas/settlePlacersBeforeChange()`` を通った後は空になるので、関所を通さずに出す先を書く口は、
     /// ここで debug の検査が落とす (release では何もしない)。
     ///
-    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 4 系統である。描く先への
+    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 5 系統である。描く先への
     /// パスの記述 (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``。描き切りと ``fill(with:)``)・
     /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
-    /// `encodeEnlargement`)・面の取り替え (``exchangeTexture(with:)``・[#2388])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
+    /// `encodeEnlargement`)・面の取り替え (``exchangeTexture(with:)``・[#2388])・効果を通した絵での上書き
+    /// (``encodeOverwrite(with:into:)``・[#2455])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
     /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
     /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
     /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
@@ -118,10 +119,39 @@ import MokumeDiagnostics
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     func assertPlacersSettledBeforeWriting() {
         assert(
             drawer?.placers.isEmpty ?? true,
             "A door that writes a canvas output must call Canvas.settlePlacersBeforeChange() first")
+    }
+
+    /// 面を、効果を通した絵 `texture` で丸ごと上書きする blit を積む (``Canvas/applyFilter(_:)``)。
+    ///
+    /// **出す先を書く口なので、書く前に関所を通したことを検算する** (``assertPlacersSettledBeforeWriting()``)。
+    /// 呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す。段が書き終わるのを待ち、写し終わるのを
+    /// 後の段が待つ (blit の前後の関所は ``copy(_:into:in:)`` が積む)。
+    func encodeOverwrite(
+        with texture: any MTLTexture, into commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) {
+        assertPlacersSettledBeforeWriting()
+        try Self.copy(texture, into: self.texture, in: commands)
+    }
+
+    /// 面から面へ全体を写す blit を、前後の関所つきで積む。
+    static func copy(
+        _ source: any MTLTexture, into destination: any MTLTexture, in commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) {
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
+        encoder.copy(sourceTexture: source, destinationTexture: destination)
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+            visibilityOptions: .device)
+        encoder.endEncoding()
     }
 
     /// 画素の写し。**頼まれてはじめて作り、以後は使い回す。**

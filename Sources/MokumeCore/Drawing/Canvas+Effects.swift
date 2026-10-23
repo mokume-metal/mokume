@@ -137,18 +137,13 @@ extension Canvas {
             for surface in surfaces {
                 let (result, _) = try encodeEffectPasses(
                     passes, startingFrom: surface, using: pipeline, in: commands)
-                // 通した絵 (最後の `.next`) を元の面へ写す。段が書き終わるのを待ち、写し終わるのを後の段が待つ
-                guard let encoder = commands.makeComputeCommandEncoder() else {
-                    throw .encoderUnavailable
+                // 通した絵 (最後の `.next`) を元の面へ写す。描く先へは出す先を書く最下層の口を通る
+                // (関所の検算つき・``RenderTarget/encodeOverwrite(with:into:)``)
+                if surface === target {
+                    try target.encodeOverwrite(with: result.texture, into: commands)
+                } else {
+                    try RenderTarget.copy(result.texture, into: surface.texture, in: commands)
                 }
-                encoder.barrier(
-                    afterQueueStages: [.fragment, .blit], beforeStages: .blit,
-                    visibilityOptions: .device)
-                encoder.copy(sourceTexture: result.texture, destinationTexture: surface.texture)
-                encoder.barrier(
-                    afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
-                    visibilityOptions: .device)
-                encoder.endEncoding()
             }
             return gpu.commit(
                 commands, retaining: held, writing: surfacesWritten(drawing: true, upscaling: false))
