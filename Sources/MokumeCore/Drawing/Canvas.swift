@@ -4488,6 +4488,11 @@ public final class Canvas {
         shadow bakedShadow: BakedShadow?, drawingInFrame: Bool
     ) throws(RenderFailure) -> PreparedBatches? {
         guard hasPendingGeometry else { return nil }
+        // **基本図形のパイプラインは、積む前に使う分だけ組み済みにする** (#3114)。積む側
+        // (``encodeBatches``) は組み済みの 1 本を引くだけで、組むのはここ。組んだ本数だけ
+        // フレームの頭が延びるが、同じ組は 2 度と組まない
+        try pipeline.prepareForms(
+            batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
@@ -4564,7 +4569,7 @@ public final class Canvas {
             case .form:
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
-                use(pipeline.formStates(for: batch.formFlags).state(for: run.mode))
+                use(pipeline.builtFormState(for: batch.formFlags, mode: run.mode))
                 use(depth: pipeline.flatDepthState)
                 bind(
                     geometry.formInstances.gpuAddress
