@@ -119,6 +119,17 @@ class ApiSurfaceTests(unittest.TestCase):
         symbols = [symbol("tint(_:)", owner="Sketch"), symbol("tint(_:)", owner="Canvas")]
         self.assertEqual(api.check_forwarding(symbols, set()), [])
 
+    def test_理由つきの許可表に載せた口は転送の検査から外す(self):
+        symbols = [
+            symbol("draw(into:_:)", owner="SketchPart"),
+            symbol("draw(_:)", owner="Canvas"),
+        ]
+        self.assertIn("draw(into:_:)", api.FORWARDING_ALLOWLIST)
+        self.assertEqual(api.check_forwarding(symbols, set()), [])
+        # 表に無い同じ形の口は、これまでどおり見つかる
+        other = [symbol("stamp(into:_:)", owner="SketchPart"), symbol("stamp(_:)", owner="Canvas")]
+        self.assertEqual(len(api.check_forwarding(other, set())), 1)
+
     def test_プロトコルの要件は転送の検査から外す(self):
         symbols = [
             symbol("draw()", owner="Sketch", precise="requirement"),

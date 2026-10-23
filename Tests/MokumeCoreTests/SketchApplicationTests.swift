@@ -52,6 +52,37 @@ struct SketchApplicationTests {
         return application
     }
 
+    /// 毎フレームの `time` と `deltaTime` を控えるスケッチ。
+    private final class Timed: Sketch {
+        nonisolated(unsafe) static var seen: [(time: Float, deltaTime: Float)] = []
+        func draw() { Self.seen.append((time, deltaTime)) }
+    }
+
+    /// **窓の経路は、表示のリフレッシュが運んだ予定の時刻を、その枚の時刻にする** ([#2390])。
+    ///
+    /// 駆動源 (`displayLinkFired(at:)`) が持ち主へ運んだ時刻が、ランタイムの時計へ届く区間を見る。
+    /// 時刻は実時間 (`CACurrentMediaTime()`) より先の等間隔の列にして、コールバックの時点 (いまの時刻) が
+    /// 時計へ入ると食い違うようにする。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("窓の経路の time と deltaTime は、表示の予定の時刻の間隔で進む")
+    func theWindowAdvancesByTheDisplayTime() throws {
+        Timed.seen = []
+        let application = try makeApplication(Timed())
+        defer { application.willTerminate() }
+        let step = 1.0 / 60
+        let start = CACurrentMediaTime() + 1000
+        // 4 枚目の前で 1 刻み飛ぶ
+        let targets = [0, 1, 2, 3, 5, 6].map { start + Double($0) * step }
+        for target in targets { application.displayLinkFired(at: target) }
+        #expect(Timed.seen.count == targets.count)
+        for (index, row) in Timed.seen.enumerated() {
+            #expect(row.time == Float(targets[index] - targets[0]), "\(index + 1) 枚目の time")
+            let expected = index == 0 ? step : targets[index] - targets[index - 1]
+            #expect(row.deltaTime == Float(expected), "\(index + 1) 枚目の deltaTime")
+        }
+    }
+
     /// **閉じた窓を、閉じた後に触る。**
     ///
     /// 窓を閉じるとアプリケーションは終わりに向かうが、即死ではない。加えてフレームの

@@ -63,6 +63,65 @@ struct GamepadTests {
         #expect(seen.map(\.tilt) == [[1, 0], [0, 0], [0, 0], [0, 1]])
     }
 
+    @Test("外して足し直した (close の後に open が来る) パッドは、また入力を受け、押している釦も当て直す (#3122)")
+    func reopenedPadReceivesInputAgain() throws {
+        // 同じ釦を押し続ける列。外すと押した記憶は消えるので、足し直した後の最初のフレームで押し直さないと A が戻らない
+        let device = try pad([GamepadInput(leftStick: [1, 0], pressed: [.a]), GamepadInput(leftStick: [1, 0], pressed: [.a])])
+        device.supply()
+        #expect(device.isPressed(.a))
+
+        device.close()
+        #expect(device.state == .stopped)
+        #expect(device.leftStick.simd == [0, 0])
+        #expect(!device.isPressed(.a))
+        #expect(device.isClosed)
+
+        try device.open()
+        #expect(!device.isClosed, "足し直したパッドは外されたままではない (一覧が作り直して同じ機材が 2 台にならない)")
+        #expect(device.state == .running)
+        device.supply()
+        #expect(device.leftStick.simd == [1, 0])
+        #expect(device.isPressed(.a))
+        #expect(device.state == .running)
+    }
+
+    @Test("外して足し直したパッドは、外す前に溜まっていた釦と傾きを当てず、押されたままにならない (#3122)")
+    func reopenedPadDoesNotApplyWhatWaitedBeforeClose() throws {
+        // 空の列は何も入れない。外す前に届いて取り出されていない分だけを、受け取り口へ直に入れる
+        let device = try pad([])
+        device.inbox.changes.send(.pressed(.a))
+        device.inbox.stick.send([1, 0])
+        device.close()
+
+        try device.open()
+        device.supply()
+        #expect(!device.isPressed(.a), "外す前に押された釦が、足し直した最初のフレームで押されたままになる")
+        #expect(device.leftStick.simd == [0, 0])
+
+        device.inbox.changes.send(.pressed(.b))
+        device.supply()
+        #expect(device.isPressed(.b))
+    }
+
+    @Test("外している間は入力を受けず、外し直せばまた止まる")
+    func closedPadStaysSilentUntilItIsOpenedAgain() throws {
+        let device = try pad([GamepadInput(leftStick: [0, 1], pressed: [.b])])
+        device.close()
+        device.supply()
+        #expect(device.leftStick.simd == [0, 0])
+        #expect(!device.isPressed(.b))
+        #expect(device.state == .stopped)
+
+        try device.open()
+        device.supply()
+        #expect(device.isPressed(.b))
+        device.close()
+        device.supply()
+        #expect(!device.isPressed(.b))
+        #expect(device.state == .stopped)
+        #expect(device.isClosed)
+    }
+
     @Test("抜かれる前に押していた釦は、挿し直した後に押していなければ押されていない")
     func unpluggedPressDoesNotLinger() throws {
         // 押したまま抜け、挿し直した後は押していない。抜けたことを当てずにいると A が残る

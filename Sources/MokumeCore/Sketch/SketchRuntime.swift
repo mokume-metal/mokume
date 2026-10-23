@@ -30,6 +30,17 @@ public final class SketchRuntime {
     public let sketch: any Sketch
     /// 描いている面。
     public let canvas: Canvas
+    /// ``SketchPart/draw(into:_:)`` の閉包の間だけ立つ、スケッチの口の向き先。立っていなければ本体の面
+    /// (``canvas``) へ向く。**入れ子では内側の向き先が立ち、抜けると 1 つ前へ戻る** ([#2454])。
+    ///
+    /// 向き先を引く口は ``activeCanvas`` 1 つだけで、描く・状態を書く・面の大きさを読むスケッチの口
+    /// (``SketchPart/liveCanvas(_:_:)``・``SketchPart/canvas``・`emit`・`orbitControl`) がここを通る。
+    /// ランタイム自身の描き切り・時刻・出力は本体の面 (``canvas``) のままで、向き先に左右されない。
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    var drawingInto: Canvas?
+    /// スケッチの口が、いま描く面。``drawingInto`` が立っていればそれ、なければ本体の面。
+    var activeCanvas: Canvas { drawingInto ?? canvas }
     /// 出す先。**画面も保存も観測もこの 1 枚を受け取る** ([ADR-0023] 決定 2)。
     ///
     /// 描く細かさを下げているときは、拡大の段を通ったあとの絵である。出口ごとに
@@ -717,7 +728,8 @@ public final class SketchRuntime {
     ///
     /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
     /// 見る** — 差込口を閉じるのは最初の 1 回だけで、2 回目からは撮る係の待ちだけを見る
-    /// (差込口の `close()` は「一度だけ呼ばれる」約束である)。
+    /// (終わりの処理で、同じ差込口の `close()` を 2 度呼ばない。外して足し直したときに
+    /// `open()` がもう 1 度来る約束とは別の話である — ``Inlet/open()``)。
     ///
     /// **待つのは撮る係だけで、差込口とつまみは先に済ませる。** 撮る係の待ちは動画を閉じ
     /// 終えるまでかかりうるので、その後ろに置くと、待っている間にプロセスが殺されたときに
@@ -801,11 +813,26 @@ public final class SketchRuntime {
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
+        try advance(displayTime: nil)
+    }
+
+    /// フレームを 1 つ進める。実時間の時計では、その枚の時刻を `displayTime` にする。
+    ///
+    /// **窓・共有面の経路が、表示のリフレッシュが運んだ「その枚が表示される予定の時刻」を渡す口**である
+    /// ([#2390])。コールバックが走った時刻は main が他の仕事で遅れたぶん揺れ、``SketchPart/deltaTime`` の
+    /// 揺れとして作品に見える。予定の時刻は表示の刻みの間隔のまま並ぶ。フレームの時計・書き出し・観測の指定秒の
+    /// 値は変わらない (``FrameTiming/advance(at:displayTime:)``)。
+    ///
+    /// - Parameter displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    ///   `nil` (予備のタイマーが進めた回・直に回す面) なら現在時刻。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(displayTime: Double?) throws(RenderFailure) {
         // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
         updatePresence()
-        try runFrame()
+        try runFrame(displayTime: displayTime)
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
@@ -813,7 +840,7 @@ public final class SketchRuntime {
     /// 分けてあるのは、名乗りのメニューが開いている間だけ**ここが別の駆動源から呼ばれる**
     /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
     /// 名乗りの世話が入れ子になる。
-    private func runFrame() throws(RenderFailure) {
+    private func runFrame(displayTime: Double? = nil) throws(RenderFailure) {
         // **閉じ終えるのを待っている間は進めない** ([#978])。待ちは塞がずに見に来る形なので、
         // その間も駆動源 (画面の link・予備の Timer・名乗りのメニューの Timer) は呼んでくる。
         // 進めると `draw()` が新しい録りや `save()` を頼み、誰にも閉じられないまま終わる。
@@ -909,7 +936,7 @@ public final class SketchRuntime {
         }
         var drawFailure: RenderFailure?
         do {
-            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime)
+            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime, displayTime: displayTime)
         } catch {
             drawFailure = error
         }
@@ -953,7 +980,9 @@ public final class SketchRuntime {
     /// - Parameter deliveredInput: このフレームの入力を、止まっている間に既に当てて配ったか
     ///   (``deliverWhileStopped()``)。当て直すと、前のフレームからの動き (`pmouseX`・
     ///   引きずった量・スクロール) が描くフレームから消える。
-    private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
+    private func drawSketchFrame(
+        deliveredInput: Bool = false, at requestedTime: Float? = nil, displayTime: Double? = nil
+    ) throws(RenderFailure) {
         // **このフレームの絵が拠る投入は、ここより後に積まれる** (#2743)。出口へ配る前の判定の範囲の
         // 始まりである。`setup()` で積んだものが入るのは、`setup()` をここ (下の `start()`) で走らせる
         // とき — ふつうの最初のフレーム — だけで、先に `start()` を呼んだ使い方 (公開の `start()`・時刻を
@@ -963,7 +992,7 @@ public final class SketchRuntime {
         start()
         // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
         frameWorkBegan = now()
-        timing.advance(at: requestedTime)
+        timing.advance(at: requestedTime, displayTime: displayTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
         beginFrame()
@@ -1449,6 +1478,11 @@ public final class SketchRuntime {
         return attachNow(outlet)
     }
 
+    /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
+    package func isAttached(_ inlet: any Inlet) -> Bool {
+        inlets.contains { $0.seam === inlet }
+    }
+
     /// 入り口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Inlet)``)。
     public func detach(_ inlet: any Inlet) {
         guard seamVisitDepth == 0 else {
@@ -1471,7 +1505,8 @@ public final class SketchRuntime {
     private func attachNow(_ inlet: any Inlet) -> Bool {
         guard admits(inlet) else { return false }
         if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
-            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // **居れば開き直さない** (開いているものを重ねて足しても `open()` は呼ばない。外して足し直したときは
+            // ここに来ず、下で `open()` をもう 1 度呼ぶ — ``Inlet/open()``)。続けて転んで外されていれば、
             // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
             if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
             return true
@@ -1612,6 +1647,11 @@ public final class SketchRuntime {
     ///
     /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
     /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
+    ///
+    /// **この回は表示の予定の時刻を持たず、現在時刻で進む** ([#2390])。時刻は前の枚より小さくならない
+    /// (``SketchPart/time``)。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
         guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
         try? runFrame()

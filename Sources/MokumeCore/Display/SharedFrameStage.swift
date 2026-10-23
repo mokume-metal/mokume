@@ -387,6 +387,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     // MARK: - 駆動
 
+    /// 表示の予定の時刻は使わない (この台は絵を作っていない・``ScreenDisplayLinkOwner``)。
+    func displayLinkFired(at displayTime: Double?) {
+        displayLinkFired()
+    }
+
     func displayLinkFired() {
         // **結末の届いた差し出しを、出すかを決める前に照らす** ([#2735])。打ち切られていれば
         // ``submissionSettled(_:dropped:)`` が記しを戻し、このリフレッシュが同じ枚を出し直す。

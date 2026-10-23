@@ -23,20 +23,31 @@ extension Canvas {
         // 前のフレームの上に積み上がる絵が書ける。奥行きは作りたての面では持ち越さない
         // 扱い (`depthIsHeld = false`) なので、最初の描き切りが必ず消す
         let graphics = try Canvas(target: target, gpu: gpu)
-        // **時刻と刻みは作った面と同じ置き場を指す** (#1467)。本体の面へ時刻を渡すのは
-        // ランタイムだけなので、繋がないと描き場所の断片・効果は時刻 0 を、粒は 1/60 秒の
-        // 刻みを読み続ける。描き場所から作った描き場所も、同じ 1 つへ辿り着く
-        graphics.timebase = timebase
-        // 本体のフレームを進めるとき、閉じ忘れたフレームを捨てる相手として置き場に載せる (#1834)
-        timebase.add(layer: graphics)
-        // **揺らぎの種と細かさも同じ置き場を指す** (#1503)。繋がないと、本体で決めた種が
-        // 描き場所の断片に届かず、描き場所で決めた種は本体に届かない — 種はスケッチに 1 つ
-        graphics.noiseStore = noiseStore
-        // 書き換える前に開いた列を閉じさせる相手として、両側を置き場に載せる (``changeNoise(_:)``)
-        noiseStore.add(reader: self)
-        noiseStore.add(reader: graphics)
+        // 時刻と刻み・揺らぎの種と細かさの置き場を、作った面と同じものに繋ぐ (``bind(_:)``)
+        bind(graphics)
         // 字形を置くかも引き継ぐ (``placesGlyphs``・#1559)。描き場所に書いた字も同じ絵に載る
         graphics.placesGlyphs = placesGlyphs
         return graphics
+    }
+
+    /// `graphics` を、この面のスケッチの置き場 (時刻と刻み・揺らぎの種と細かさ) に繋ぐ。
+    /// ``createGraphics(_:_:)`` と ``borrowSketchState(from:)`` (``SketchPart/draw(into:_:)``) がこの 1 本を通る。
+    /// **置き場を足すときは、ここへ足す** — 手順を写すと足すたびに片方が漏れる ([#2454])。
+    ///
+    /// - **時刻と刻みは作った面と同じ置き場を指す** (#1467)。本体の面へ時刻を渡すのは
+    ///   ランタイムだけなので、繋がないと描き場所の断片・効果は時刻 0 を、粒は 1/60 秒の
+    ///   刻みを読み続ける。描き場所から作った描き場所も、同じ 1 つへ辿り着く。本体のフレームを
+    ///   進めるとき、閉じ忘れたフレームを捨てる相手として置き場に載せる (#1834)
+    /// - **揺らぎの種と細かさも同じ置き場を指す** (#1503)。繋がないと、本体で決めた種が
+    ///   描き場所の断片に届かず、描き場所で決めた種は本体に届かない — 種はスケッチに 1 つ。
+    ///   書き換える前に開いた列を閉じさせる相手として、両側を置き場に載せる (``changeNoise(_:)``)
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    func bind(_ graphics: Canvas) {
+        graphics.timebase = timebase
+        timebase.add(layer: graphics)
+        graphics.noiseStore = noiseStore
+        noiseStore.add(reader: self)
+        noiseStore.add(reader: graphics)
     }
 }
