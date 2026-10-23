@@ -704,11 +704,8 @@ extension Canvas {
         vertices.append(ShapeVertex(position: c, uv: uv.2, color: colors.2))
     }
 
-    /// 塗りに貼る絵があるなら、囲みの箱を 0…1 に写す関数を返す。
-    ///
-    /// **変換を掛ける前の座標から作る。** 描画先の座標から作ると、回した図形の上を
-    /// 絵が滑る (図形は回ったのに絵は画面に貼り付いたままになる)。
-    static func boxUV(of points: [SIMD2<Float>]) -> (SIMD2<Float>) -> SIMD2<Float> {
+    /// 点の囲みの箱 (xy が下限・zw が幅)。点が無ければ下限が無限・幅が非数になるので、呼ぶ側は点を持つ周で呼ぶ。
+    static func uvBounds(of points: [SIMD2<Float>]) -> SIMD4<Float> {
         var lowest = SIMD2<Float>(repeating: .infinity)
         var highest = SIMD2<Float>(repeating: -.infinity)
         for point in points {
@@ -716,6 +713,17 @@ extension Canvas {
             highest = simd_max(highest, point)
         }
         let span = highest - lowest
+        return SIMD4(lowest.x, lowest.y, span.x, span.y)
+    }
+
+    /// 塗りに貼る絵があるなら、囲みの箱を 0…1 に写す関数を返す。
+    ///
+    /// **変換を掛ける前の座標から作る。** 描画先の座標から作ると、回した図形の上を
+    /// 絵が滑る (図形は回ったのに絵は画面に貼り付いたままになる)。
+    static func boxUV(of points: [SIMD2<Float>]) -> (SIMD2<Float>) -> SIMD2<Float> {
+        let bounds = uvBounds(of: points)
+        let lowest = SIMD2(bounds.x, bounds.y)
+        let span = SIMD2(bounds.z, bounds.w)
         // **潰れた軸は 0 に倒す。** 幅の無い図形を 0 で割ると、読み取り位置が数でなく
         // なって面のどこも指さなくなる
         return { point in

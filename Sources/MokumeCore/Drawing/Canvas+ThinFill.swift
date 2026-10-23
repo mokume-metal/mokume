@@ -21,6 +21,135 @@ extension Canvas {
         var coverage: Float
     }
 
+    /// 細い塗りの片の**記述**。置き場所 1 つぶん ([#2208])。
+    ///
+    /// 片は、描く画素の空間の 2 つの基底 (`axis` と `across`) で表した帯の列で、`origin` から
+    /// `span` を `divisor` 個に割った刻みで `pieces` 個並ぶ。片 `k` の角は、描く画素での
+    /// `(u, v)` — `u` は刻みの端、`v` は `±side` — を `center + inverse (axis u + across (slope u + v))`
+    /// で形自身の座標へ戻した点である。被覆は種別 (``Coverage``) が決める。
+    ///
+    /// **並びは Shapes.metal の `ThinFillRecord` と一致していなければならない**
+    /// (`ShaderInterfaceTests` が反射と突き合わせる)。CPU で片を出す式 (``pieces()``) と頂点段の式は
+    /// 同じ足し算と掛け算で、種別・倍精度の特異値・弦の積分は CPU が記述にして渡す。
+    ///
+    /// [#2208]: https://github.com/mokume-metal/mokume/issues/2208
+    struct ThinFillRecord {
+        /// 被覆の決め方。
+        enum Coverage {
+            /// 全部の片が同じ被覆。
+            case constant(Float)
+            /// 細長い楕円: 片の中でいちばん太い弦から取る。
+            case longEllipse(thin: Float, long: Float, width: Float)
+            /// 片ごとの被覆の表 (長い向きが短い楕円。0 の片は置かない)。
+            case table(SIMD16<Float>)
+        }
+
+        /// 描く画素から形自身の座標へ戻す 2x2 (列 2 本を並べる)。
+        var inverse: SIMD4<Float>
+        /// 形の中心 (xy) と、刻みの向き (zw・描く画素)。
+        var centerAxis: SIMD4<Float>
+        /// 帯の幅の向き (xy・描く画素)・弦の中点の傾き・帯の半幅 (``ThinFillRecord`` の `side`)。
+        var acrossSlopeSide: SIMD4<Float>
+        /// 刻みの始まり・刻み全体の長さ・割る数・片の数。
+        var layout: SIMD4<Float>
+        /// 被覆の種別 (0 一定・1 細長い楕円・2 表) と、種別ごとの値。
+        var coverageMode: SIMD4<Float>
+        /// 被覆の表 (種別 2 だけが読む)。
+        var table0 = SIMD4<Float>(repeating: 0)
+        var table1 = SIMD4<Float>(repeating: 0)
+        var table2 = SIMD4<Float>(repeating: 0)
+
+        init(
+            inverse: simd_float2x2, center: SIMD2<Float>, axis: SIMD2<Float>, across: SIMD2<Float>,
+            slope: Float, side: Float, origin: Float, span: Float, divisor: Float, pieces: Int,
+            coverage: Coverage
+        ) {
+            self.inverse = SIMD4(
+                inverse.columns.0.x, inverse.columns.0.y, inverse.columns.1.x, inverse.columns.1.y)
+            centerAxis = SIMD4(center.x, center.y, axis.x, axis.y)
+            acrossSlopeSide = SIMD4(across.x, across.y, slope, side)
+            layout = SIMD4(origin, span, divisor, Float(pieces))
+            switch coverage {
+            case .constant(let value):
+                coverageMode = SIMD4(0, value, 0, 0)
+            case .longEllipse(let thin, let long, let width):
+                coverageMode = SIMD4(1, thin, long, width)
+            case .table(let table):
+                coverageMode = SIMD4(2, 0, 0, 0)
+                table0 = SIMD4(table[0], table[1], table[2], table[3])
+                table1 = SIMD4(table[4], table[5], table[6], table[7])
+                table2 = SIMD4(table[8], table[9], 0, 0)
+            }
+        }
+
+        /// 描く画素 1 つの正方形 (中心 `center` のまわり・描く画素の軸に沿う)。被覆は描く画素での面積
+        /// などで、呼ぶ側が渡す。
+        static func unitSquare(
+            around center: SIMD2<Float>, inverse: simd_float2x2, coverage: Float
+        ) -> ThinFillRecord {
+            ThinFillRecord(
+                inverse: inverse, center: center, axis: SIMD2(1, 0), across: SIMD2(0, 1), slope: 0,
+                side: 0.5, origin: -0.5, span: 1, divisor: 1, pieces: 1, coverage: .constant(coverage))
+        }
+
+        /// 片の数。
+        var pieceCount: Int { Int(layout.w) }
+
+        /// 雛形が持つ片の数。**形の種類だけで決まる** (矩形は 1・楕円は上限の ``Canvas/thinEllipseSliceLimit``)。
+        /// 置き場所ごとに片の数が変わっても雛形を割らない代わりに、使わない片は頂点段が潰す。
+        static func capacity(isEllipse: Bool) -> Int {
+            isEllipse ? Canvas.thinEllipseSliceLimit : 1
+        }
+
+        /// 片 `k` の被覆。**置かない片は 0 以下** (表の 0・弦が 0 の端)。
+        func coverage(of index: Int, from: Float, to: Float) -> Float {
+            switch Int(coverageMode.x) {
+            case 1:
+                let (thin, long, width) = (coverageMode.y, coverageMode.z, coverageMode.w)
+                // 片の中で、中心にいちばん近い位置の弦 (片の中でいちばん太い)
+                let nearest = from <= 0 && to >= 0 ? 0 : min(abs(from), abs(to))
+                let ratio = min(nearest / long, 1)
+                let chord = thin * max(0, 1 - ratio * ratio).squareRoot()
+                return chord > 0 ? chord / width : 0
+            case 2:
+                switch index {
+                case 0..<4: return table0[index]
+                case 4..<8: return table1[index - 4]
+                default: return table2[index - 8]
+                }
+            default:
+                return coverageMode.y
+            }
+        }
+
+        /// 記述から片を出す。**頂点段の式 (Shapes.metal の `mokume_thinFillCorner`) と同じ式。**
+        func pieces() -> [ThinFillPiece] {
+            let inverseMatrix = simd_float2x2(
+                SIMD2(inverse.x, inverse.y), SIMD2(inverse.z, inverse.w))
+            let center = SIMD2(centerAxis.x, centerAxis.y)
+            let axis = SIMD2(centerAxis.z, centerAxis.w)
+            let across = SIMD2(acrossSlopeSide.x, acrossSlopeSide.y)
+            let (slope, side) = (acrossSlopeSide.z, acrossSlopeSide.w)
+            let (origin, span, divisor) = (layout.x, layout.y, layout.z)
+            var result: [ThinFillPiece] = []
+            result.reserveCapacity(pieceCount)
+            func corner(_ along: Float, _ offset: Float) -> SIMD2<Float> {
+                center + inverseMatrix * (axis * along + across * (slope * along + offset))
+            }
+            for index in 0..<pieceCount {
+                let from = origin + span * Float(index) / divisor
+                let to = origin + span * Float(index + 1) / divisor
+                let cover = coverage(of: index, from: from, to: to)
+                if coverageMode.x != 0, !(cover > 0) { continue }
+                result.append(
+                    ThinFillPiece(
+                        corners: (corner(from, -side), corner(to, -side), corner(to, side), corner(from, side)),
+                        coverage: cover))
+            }
+            return result
+        }
+    }
+
     /// 名指しの基本図形の塗りを、形自身の座標を描く画素へ写す 2x2 `linear` で置いたとき、描く画素で
     /// 1 画素より細い向きを持つなら、補う片 ([#1934])。**細くなければ `nil`** で、塗りはこれまで
     /// どおり周から三角形に割る。
@@ -76,10 +205,21 @@ extension Canvas {
     static func thinFillPieces(
         _ named: Outline.NamedFill, by linear: simd_float2x2
     ) -> [ThinFillPiece]? {
+        thinFillRecord(named, by: linear)?.pieces()
+    }
+
+    /// ``thinFillPieces(_:by:)`` と同じ判定で、片を出す前の**記述**を返す。細くなければ `nil`。
+    ///
+    /// 片は記述から決まる (``ThinFillRecord/pieces()``)。畳んだ雛形は片を頂点にせず、この記述を置き場所
+    /// ごとに GPU へ渡して頂点段が同じ式で片を出す (#2208)。判定と、倍精度の特異値・弦の積分は CPU に
+    /// 残る — 頂点段へ移るのは、記述から頂点を出す足し算と掛け算だけである。
+    static func thinFillRecord(
+        _ named: Outline.NamedFill, by linear: simd_float2x2
+    ) -> ThinFillRecord? {
         let determinant = simd_determinant(linear)
         guard determinant != 0, determinant.isFinite, isFinite(named) else { return nil }
         return named.isEllipse
-            ? thinEllipsePieces(named, by: linear) : thinRectPieces(named, by: linear)
+            ? thinEllipseRecord(named, by: linear) : thinRectRecord(named, by: linear)
     }
 
     /// 長い向きが短いとみなす、列 (行) の向きの長さの上限 (描く画素)。これ以上長い形は長い向きの
@@ -176,21 +316,21 @@ extension Canvas {
             endAlong: endAlong, area: span.area)
     }
 
-    private static func thinRectPieces(
+    private static func thinRectRecord(
         _ named: Outline.NamedFill, by linear: simd_float2x2
-    ) -> [ThinFillPiece]? {
+    ) -> ThinFillRecord? {
         guard let plan = rectPlan(named, by: linear) else { return nil }
         let (widensHeight, thinSpan, edge, endAlong, area): (Bool, Float, SIMD2<Float>, Float, Float)
         switch plan {
         case .square(let coverage):
-            return [unitSquare(around: named.center, inverse: linear.inverse, coverage: coverage)]
+            return .unitSquare(around: named.center, inverse: linear.inverse, coverage: coverage)
         case .band(let widens, let span, let longEdge, let along, let drawnArea):
             (widensHeight, thinSpan, edge, endAlong, area) = (widens, span, longEdge, along, drawnArea)
         }
         // 長い向きが短い形の手当ては、端の辺が 1 列に収まるときだけ (剪断で端が長く伸びた形は、
         // 長さを長い辺だけで数えると形が縮む)。収まらなければ帯のまま広げる
         if endAlong <= 1, let profile = ShortProfile(rectEdge: edge, area: area) {
-            return shortPieces(profile, center: named.center, inverse: linear.inverse)
+            return shortRecord(profile, center: named.center, inverse: linear.inverse)
         }
         var half = named.half
         let band = widenedBand(thinSpan, along: simd_normalize(edge))
@@ -200,14 +340,11 @@ extension Canvas {
         } else {
             half.x *= band.widen
         }
-        let center = named.center
-        return [
-            ThinFillPiece(
-                corners: (
-                    center + SIMD2(-half.x, -half.y), center + SIMD2(half.x, -half.y),
-                    center + SIMD2(half.x, half.y), center + SIMD2(-half.x, half.y)
-                ), coverage: coverage)
-        ]
+        // 帯は形自身の座標の箱 (中心 ± 半幅・半高) なので、描く画素への写しは恒等にして記述する
+        return ThinFillRecord(
+            inverse: matrix_identity_float2x2, center: named.center, axis: SIMD2(1, 0),
+            across: SIMD2(0, 1), slope: 0, side: half.y, origin: -half.x, span: 2 * half.x,
+            divisor: 1, pieces: 1, coverage: .constant(coverage))
     }
 
     /// 辺に垂直な隔たり `span` (描く画素・1 未満) の帯を、向き `direction` (描く画素・長さ 1) に
@@ -222,16 +359,6 @@ extension Canvas {
         let crossings: Float = span / axis <= 1 ? 1 : 2
         let target = crossings * axis
         return (target / span, span / target)
-    }
-
-    /// 描く画素での中心 `center` のまわりの、描く画素の軸に沿った描く画素 1 つの正方形。
-    private static func unitSquare(
-        around center: SIMD2<Float>, inverse: simd_float2x2, coverage: Float
-    ) -> ThinFillPiece {
-        func corner(_ x: Float, _ y: Float) -> SIMD2<Float> { center + inverse * SIMD2(x, y) }
-        return ThinFillPiece(
-            corners: (corner(-0.5, -0.5), corner(0.5, -0.5), corner(0.5, 0.5), corner(-0.5, 0.5)),
-            coverage: coverage)
     }
 
     // MARK: - 楕円
@@ -255,9 +382,9 @@ extension Canvas {
         simd_float2x2(linear.columns.0 * named.half.x, linear.columns.1 * named.half.y)
     }
 
-    private static func thinEllipsePieces(
+    private static func thinEllipseRecord(
         _ named: Outline.NamedFill, by linear: simd_float2x2
-    ) -> [ThinFillPiece]? {
+    ) -> ThinFillRecord? {
         let shape = ellipseLinear(named, linear)
         let axes = principalAxes(shape)
         // 半径が単精度で無限へあふれた楕円も補わない (片の数を整数へ直せない)
@@ -268,13 +395,11 @@ extension Canvas {
         // 長軸も細い楕円 (1 画素より小さい円を含む) は、描く画素 1 つの正方形にする。被覆は描く
         // 画素での外接する箱の面積 (2 つの半径の積の 4 倍)
         if roundedDrawnWeight(2 * axes.long) < 1 {
-            return [
-                unitSquare(
-                    around: named.center, inverse: inverse, coverage: 4 * axes.long * axes.short)
-            ]
+            return .unitSquare(
+                around: named.center, inverse: inverse, coverage: 4 * axes.long * axes.short)
         }
         if let profile = ShortProfile(ellipse: shape, longAxis: axes.direction) {
-            return shortPieces(profile, center: named.center, inverse: inverse)
+            return shortRecord(profile, center: named.center, inverse: inverse)
         }
         let along = axes.direction
         let across = SIMD2(-along.y, along.x)
@@ -287,27 +412,10 @@ extension Canvas {
         let count =
             span >= Float(thinEllipseSliceLimit)
             ? thinEllipseSliceLimit : max(1, Int(span.rounded(.up)))
-        var pieces: [ThinFillPiece] = []
-        pieces.reserveCapacity(count)
-        func corner(_ distance: Float, _ side: Float) -> SIMD2<Float> {
-            named.center + inverse * (along * distance + across * side)
-        }
-        for index in 0..<count {
-            let from = -long + 2 * long * Float(index) / Float(count)
-            let to = -long + 2 * long * Float(index + 1) / Float(count)
-            // 片の中で、中心にいちばん近い位置の弦 (片の中でいちばん太い)
-            let nearest = from <= 0 && to >= 0 ? 0 : min(abs(from), abs(to))
-            let ratio = min(nearest / long, 1)
-            let chord = thin * max(0, 1 - ratio * ratio).squareRoot()
-            guard chord > 0 else { continue }
-            pieces.append(
-                ThinFillPiece(
-                    corners: (
-                        corner(from, -width / 2), corner(to, -width / 2), corner(to, width / 2),
-                        corner(from, width / 2)
-                    ), coverage: chord / width))
-        }
-        return pieces
+        return ThinFillRecord(
+            inverse: inverse, center: named.center, axis: along, across: across, slope: 0,
+            side: width / 2, origin: -long, span: span, divisor: Float(count), pieces: count,
+            coverage: .longEllipse(thin: thin, long: long, width: width))
     }
 
     /// 2x2 `m` が単位円を写した楕円の、長い半径・短い半径と、長軸の向き (長さ 1)。
@@ -440,47 +548,45 @@ extension Canvas {
     /// 保持した形の控えにも使える。
     ///
     /// **矩形は m 列を 1 枚の片にする** — 弦が一定なので、どの列にも同じ量を配ればよい。楕円は列
-    /// 1 つずつの片に切り、片の中の弦の積分の割合で配る。
-    private static func shortPieces(
+    /// 1 つずつの片に切り、片の中の弦の積分の割合で配る (列ごとの被覆は記述の表に入れる)。
+    private static func shortRecord(
         _ profile: ShortProfile, center: SIMD2<Float>, inverse: simd_float2x2
-    ) -> [ThinFillPiece] {
+    ) -> ThinFillRecord {
         let count = max(1, Int((2 * profile.half).rounded(.up)))
         let light = profile.averagedLight
         let left = -Float(count) / 2
-        // (片の始まり, 終わり, 列 1 つに配る量)
-        var spans: [(from: Float, to: Float, share: Float)] = []
-        if profile.isEllipse {
-            let whole = profile.integral(-profile.half, profile.half)
-            spans.reserveCapacity(count)
-            for index in 0..<count {
-                let from = left + Float(index)
-                let low = max(from, -profile.half)
-                let high = min(from + 1, profile.half)
-                let share = high > low && whole > 0 ? light * profile.integral(low, high) / whole : 0
-                if share > 0 { spans.append((from, from + 1, share)) }
-            }
-        } else {
-            spans.append((left, -left, light / Float(count)))
-        }
-        var largest: Float = 0
-        for span in spans { largest = max(largest, span.share) }
-        let crossings: Float = largest <= 1 ? 1 : 2
         let axis: SIMD2<Float> = profile.byRows ? SIMD2(0, 1) : SIMD2(1, 0)
         let across: SIMD2<Float> = profile.byRows ? SIMD2(1, 0) : SIMD2(0, 1)
-        func corner(_ s: Float, _ side: Float) -> SIMD2<Float> {
-            center + inverse * (axis * s + across * (profile.slope * s + side))
+        guard profile.isEllipse else {
+            // 矩形: (始まり, 終わり) = (left, -left) の 1 枚。列 1 つに配る量は light / count
+            let share = light / Float(count)
+            let crossings: Float = share <= 1 ? 1 : 2
+            return ThinFillRecord(
+                inverse: inverse, center: center, axis: axis, across: across, slope: profile.slope,
+                side: crossings / 2, origin: left, span: Float(count), divisor: 1, pieces: 1,
+                coverage: .constant(share / crossings))
         }
-        var pieces: [ThinFillPiece] = []
-        pieces.reserveCapacity(spans.count)
-        for span in spans {
-            pieces.append(
-                ThinFillPiece(
-                    corners: (
-                        corner(span.from, -crossings / 2), corner(span.to, -crossings / 2),
-                        corner(span.to, crossings / 2), corner(span.from, crossings / 2)
-                    ), coverage: span.share / crossings))
+        // 楕円は列 1 つずつの片。配る量が 0 の列は片を置かない (表の 0 が潰す)
+        let whole = profile.integral(-profile.half, profile.half)
+        var shares = SIMD16<Float>(repeating: 0)
+        var largest: Float = 0
+        for index in 0..<count {
+            let from = left + Float(index)
+            let low = max(from, -profile.half)
+            let high = min(from + 1, profile.half)
+            let share = high > low && whole > 0 ? light * profile.integral(low, high) / whole : 0
+            if share > 0 {
+                shares[index] = share
+                largest = max(largest, share)
+            }
         }
-        return pieces
+        let crossings: Float = largest <= 1 ? 1 : 2
+        var table = SIMD16<Float>(repeating: 0)
+        for index in 0..<count where shares[index] > 0 { table[index] = shares[index] / crossings }
+        return ThinFillRecord(
+            inverse: inverse, center: center, axis: axis, across: across, slope: profile.slope,
+            side: crossings / 2, origin: left, span: 1, divisor: 1, pieces: count,
+            coverage: .table(table))
     }
 
     // MARK: - 積む
@@ -517,6 +623,38 @@ extension Canvas {
         }
     }
 
+    /// 細い塗りの畳んだ雛形の頂点を積む (#2208)。**片は組まない** — 頂点は「片の番号と角の番号」だけを
+    /// `position` に持ち、置き場所ごとの記述 (``ThinFillRecord``) から頂点関数が片の角を出す。
+    /// `capacity` 個の片ぶん (片 1 つが三角形 2 枚 = 6 頂点) を積み、使わない片は頂点関数が潰す。
+    ///
+    /// 貼る絵があるときの読み取り位置は、周の囲みの箱から頂点関数が作る (``FlatFrame/thinFillUV``)。
+    /// その箱を返す (絵が無ければ `nil`)。
+    func fillThinTemplate(capacity: Int, outline: Outline) -> SIMD4<Float>? {
+        guard canPlace else {
+            warnOutsideFrame(.placing)
+            return nil
+        }
+        // appendTriangle と同じ手順で、読む面を決める
+        beginFlat()
+        let hasPicture = style.picture != nil
+        if hasPicture { useWrittenUVTexture() } else { useGlyphTexture() }
+        let fillColor = fillVertexColor
+        let uv = whiteUV
+        vertices.reserveCapacity(vertices.count + capacity * 6)
+        for piece in 0..<capacity {
+            // 三角形 2 枚: (a, b, c) と (a, c, d)
+            for corner in [0, 1, 2, 0, 2, 3] {
+                vertices.append(
+                    ShapeVertex(
+                        position: SIMD2(Float(piece), Float(corner)), uv: uv, color: fillColor))
+            }
+        }
+        // 広げた片の被覆は 1 未満になりうるので、置き換える列は下地を読む断片で描く (#1637)
+        openBatchHasThinCoverage = true
+        guard hasPicture else { return nil }
+        return Self.uvBounds(of: outline.points)
+    }
+
     /// 読み取り位置を 0…1 の箱に収める。
     static func clampedUV(_ uv: SIMD2<Float>) -> SIMD2<Float> {
         simd_clamp(uv, SIMD2<Float>(0, 0), SIMD2<Float>(1, 1))
@@ -528,7 +666,8 @@ extension Canvas {
     /// 2x2 (#1934)。畳みの鍵 (``FlatKey/fillLinear``) に入る。**鍵は 2x2 そのもの** — 広げ方が帯の
     /// 向きで決まるので、線 (``rotationFreeKey(_:)``) と違って回転だけが違う置き場所も別の雛形になる。
     /// 塗りを持たない図形・扇・細くならない塗りは `nil` で、これまでどおり変換の違う置き場所も
-    /// 同じ雛形に畳む。
+    /// 同じ雛形に畳む。**広げ方を頂点段へ移した畳み (#2208) は使わない** — 検査が CPU の組み直しと
+    /// 画素を比べるために残した形 (``expandsThinFillsInVertexStage`` が偽のとき)。
     func thinFillLinear(_ form: FlatForm) -> ThinFold? {
         guard style.hasFill, let named = form.namedFill else { return nil }
         let matrix = transform.matrix

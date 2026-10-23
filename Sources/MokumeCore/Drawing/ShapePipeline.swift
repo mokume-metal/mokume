@@ -149,6 +149,8 @@ final class ShapePipeline {
     static let numbersBufferIndex = 11
     /// 平面の頂点ごとの被覆を渡す口の番号 (シェーダ側の `buffer(12)`・#1637)。
     static let coverageBufferIndex = 12
+    /// 細い塗りの雛形の、置き場所ごとの記述を渡す口の番号 (シェーダ側の `buffer(13)`・#2208)。
+    static let thinFillBufferIndex = 13
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
@@ -165,7 +167,7 @@ final class ShapePipeline {
 
     /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
     /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
-    static let bufferBindCount = 13
+    static let bufferBindCount = 14
     /// 引数のテーブルに束ねられる面の数。利用者の面の口が最後に並ぶ。
     static let textureBindCount = surfaceTextureIndex + surfaceCapacity
 

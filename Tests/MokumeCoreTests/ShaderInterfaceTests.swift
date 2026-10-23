@@ -264,6 +264,10 @@ struct ShaderInterfaceTests {
                         .layout(Self.flatInstance)),
                     // 平面の頂点ごとの被覆 (#1637)
                     .buffer("coverages", ShapePipeline.coverageBufferIndex, .scalar(Float.self)),
+                    // 細い塗りの雛形の、置き場所ごとの記述 (#2208)
+                    .buffer(
+                        "thinFills", ShapePipeline.thinFillBufferIndex,
+                        .layout(Self.thinFillRecord)),
                 ]),
             Entry(
                 ShapePipeline.solidVertexFunctionName,
@@ -386,7 +390,17 @@ struct ShaderInterfaceTests {
         [
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
-            ("readsCoverage", \.readsCoverage),
+            ("readsCoverage", \.readsCoverage), ("thinFill", \.thinFill),
+            ("thinFillUV", \.thinFillUV),
+        ])
+
+    static let thinFillRecord = layout(
+        of: Canvas.ThinFillRecord.self,
+        [
+            ("inverse", \.inverse), ("centerAxis", \.centerAxis),
+            ("acrossSlopeSide", \.acrossSlopeSide), ("layout", \.layout),
+            ("coverageMode", \.coverageMode), ("table0", \.table0), ("table1", \.table1),
+            ("table2", \.table2),
         ])
 
     static let flatInstance = layout(

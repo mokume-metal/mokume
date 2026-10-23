@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import simd
 
 @testable import MokumeCore
 
@@ -340,6 +341,10 @@ extension CanvasTests {
                     c.stroke(.linear(red: 1, green: 1, blue: 1))
                 }),
                 ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
+                ("thinFillInstances", end, all, { c, _ in
+                    c.thinFillInstances.append(
+                        .unitSquare(around: .zero, inverse: matrix_identity_float2x2, coverage: 0.5))
+                }),
                 ("coverageSpans", end, all, { c, _ in
                     c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
                 }),
@@ -519,6 +524,7 @@ extension CanvasTests {
                 "atlas": construction, "timebase": "時刻と刻み。ランタイムが進め、描き場所は作った面と共有する (#1467)",
                 "placementKey": "\(construction)。置いた側の記録が置いた描き場所を見分ける通し番号 (#2306)",
                 "vertexStorage": resource, "flatInstanceStorage": resource,
+                "thinFillInstanceStorage": resource,
                 "formInstanceStorage": resource, "solidVertexStorage": resource,
                 "solidIndexStorage": resource, "solidInstanceStorage": resource,
                 "solidSweepStorage": resource,
@@ -606,6 +612,7 @@ extension CanvasTests {
                 "stopsOnPlacementOutsideRegions": testing,
                 "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
                 "sweepPolicy": testing, "sharesUnitShapes": testing,
+                "expandsThinFillsInVertexStage": testing,
                 "uploadByteLimit": testing, "failureForTesting": testing,
                 "placesRetainedStrokesOnGPU": testing,
                 "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,

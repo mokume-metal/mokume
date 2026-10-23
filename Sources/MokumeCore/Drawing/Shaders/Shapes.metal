@@ -33,7 +33,44 @@ struct FlatFrame {
     float2 unitsPerDrawnPixel;
     /// 平面の頂点ごとの被覆 (`coverages`) を読むか。0 なら読まずに 1 とする (#1637)。
     uint readsCoverage;
+    /// 塗りの頂点を、置き場所ごとの記述 (`ThinFillRecord`) から頂点段で広げるか (#2208)。0 は広げない。
+    /// 1 と 2 なら、`strokeStart` より前の頂点の `position` は「片の番号と角の番号」で、頂点段が片の
+    /// 角を組む。2 は貼る絵があり、読み取り位置を `thinFillUV` の箱から作る。
+    uint thinFill;
+    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が幅)。`thinFill` が 2 のときだけ読む。
+    float4 thinFillUV;
 };
+
+/// 細い塗りの置き場所ごとの記述 (#2208)。並びは Swift 側の `Canvas.ThinFillRecord` と一致する。
+///
+/// 片は、描く画素の空間の 2 つの基底で表した帯の列で、`layout.x` から `layout.y` を `layout.z` 個に
+/// 割った刻みで `layout.w` 個並ぶ。**片の角を出す式は Swift 側の `ThinFillRecord.pieces()` と同じ**
+/// (足し算と掛け算の順も同じ。割り算は丸めを揃えるため `precise` で行う)。
+struct ThinFillRecord {
+    /// 描く画素から形自身の座標へ戻す 2x2 (列 2 本を並べる)。
+    float4 inverse;
+    /// 形の中心 (xy) と、刻みの向き (zw・描く画素)。
+    float4 centerAxis;
+    /// 帯の幅の向き (xy)・弦の中点の傾き (z)・帯の半幅 (w)。
+    float4 acrossSlopeSide;
+    /// 刻みの始まり・刻み全体の長さ・割る数・片の数。
+    float4 layout;
+    /// 被覆の種別 (x: 0 一定・1 細長い楕円・2 表) と、種別ごとの値。
+    float4 coverageMode;
+    /// 被覆の表 (種別 2 だけが読む)。
+    float4 table0;
+    float4 table1;
+    float4 table2;
+};
+
+/// 片の角 (刻みの位置 `along`・帯の幅の向きの位置 `offset`) を形自身の座標で返す。
+static inline float2 mokume_thinFillCorner(ThinFillRecord record, float along, float offset) {
+    float2 axis = record.centerAxis.zw;
+    float2 across = record.acrossSlopeSide.xy;
+    float slope = record.acrossSlopeSide.z;
+    float2 drawn = axis * along + across * (slope * along + offset);
+    return record.centerAxis.xy + (record.inverse.xy * drawn.x + record.inverse.zw * drawn.y);
+}
 
 vertex ShapeFragmentIn shapeVertexMain(
     uint index [[vertex_id]],
@@ -41,15 +78,67 @@ vertex ShapeFragmentIn shapeVertexMain(
     constant ShapeVertex *vertices [[buffer(0)]],
     constant FlatFrame &frame [[buffer(1)]],
     constant FlatInstance *instances [[buffer(10)]],
-    constant float *coverages [[buffer(12)]])
+    constant float *coverages [[buffer(12)]],
+    constant ThinFillRecord *thinFills [[buffer(13)]])
 {
     ShapeVertex vertex_in = vertices[index];
     FlatInstance placement = instances[instance];
 
+    // **細い塗りの雛形の塗りの頂点は、片の番号と角の番号だけを持つ** (#2208)。置き場所ごとの記述から
+    // 片の角を形自身の座標で組み、以降は畳んだ頂点と同じ経路を通る。使わない片と、置かない片
+    // (被覆 0) は、角を 1 点に潰して面積 0 にする
+    float2 formPosition = vertex_in.position;
+    float2 formUV = vertex_in.uv;
+    float thinCoverage = 1.0;
+    bool expandsThin = frame.thinFill != 0 && index < frame.strokeStart;
+    if (expandsThin) {
+        ThinFillRecord record = thinFills[instance];
+        float piece = vertex_in.position.x;
+        uint corner = uint(vertex_in.position.y);
+        float origin = record.layout.x;
+        float span = record.layout.y;
+        float divisor = record.layout.z;
+        float from = origin + precise::divide(span * piece, divisor);
+        float to = origin + precise::divide(span * (piece + 1.0), divisor);
+        float side = record.acrossSlopeSide.w;
+        uint mode = uint(record.coverageMode.x);
+        float cover = record.coverageMode.y;
+        if (mode == 1) {
+            float thin = record.coverageMode.y;
+            float longRadius = record.coverageMode.z;
+            float width = record.coverageMode.w;
+            float nearest = (from <= 0.0 && to >= 0.0) ? 0.0 : min(abs(from), abs(to));
+            float ratio = min(precise::divide(nearest, longRadius), 1.0);
+            float chord = thin * precise::sqrt(max(0.0, 1.0 - ratio * ratio));
+            cover = chord > 0.0 ? precise::divide(chord, width) : 0.0;
+        } else if (mode == 2) {
+            uint slot = uint(piece);
+            float4 row = slot < 4 ? record.table0 : (slot < 8 ? record.table1 : record.table2);
+            cover = row[slot & 3u];
+        }
+        bool alive = piece < record.layout.w && (mode == 0 || cover > 0.0);
+        if (alive) {
+            float along = (corner == 1 || corner == 2) ? to : from;
+            float offset = corner < 2 ? -side : side;
+            formPosition = mokume_thinFillCorner(record, along, offset);
+            thinCoverage = cover;
+        } else {
+            formPosition = mokume_thinFillCorner(record, origin, -side);
+        }
+        if (frame.thinFill == 2) {
+            float2 lowest = frame.thinFillUV.xy;
+            float2 extent = frame.thinFillUV.zw;
+            float2 mapped = float2(
+                extent.x > 0.0 ? precise::divide(formPosition.x - lowest.x, extent.x) : 0.0,
+                extent.y > 0.0 ? precise::divide(formPosition.y - lowest.y, extent.y) : 0.0);
+            formUV = clamp(mapped, float2(0.0), float2(1.0));
+        }
+    }
+
     // **形自身の座標を、置き場所の変換で描画先の座標へ移す。** 何も動かさない置き場所
     // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
-    float2 placed = placement.linear.xy * vertex_in.position.x
-        + placement.linear.zw * vertex_in.position.y + placement.offset.xy;
+    float2 placed = placement.linear.xy * formPosition.x
+        + placement.linear.zw * formPosition.y + placement.offset.xy;
     // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
     // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
     // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が
@@ -60,7 +149,7 @@ vertex ShapeFragmentIn shapeVertexMain(
 
     ShapeFragmentIn out;
     out.position = frame.projection * float4(placed, 0.0, 1.0);
-    out.uv = vertex_in.uv;
+    out.uv = formUV;
     // 置き場所の色は**頂点の色に掛かる**。畳んだ雛形は頂点が白、畳めない頂点は置き場所が
     // 白なので、どちらもこの 1 本で通る (立体と同じ)
     out.color = vertex_in.color
@@ -75,7 +164,7 @@ vertex ShapeFragmentIn shapeVertexMain(
     out.shapePosition = float3(0.0);
     out.shapeNormal = float3(0.0);
     // 細い線を広げた頂点だけが 1 未満の被覆を持つ (#1637)。持つ頂点の無いフレームは読まない
-    out.coverage = frame.readsCoverage != 0 ? coverages[index] : 1.0;
+    out.coverage = expandsThin ? thinCoverage : (frame.readsCoverage != 0 ? coverages[index] : 1.0);
     out.particleAge = 0.0;
     return out;
 }

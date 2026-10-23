@@ -33,4 +33,10 @@ struct FlatFrame {
     /// 平面の頂点ごとの被覆 (``Canvas/coverageSpans``) を読むか。1 なら読み、0 なら 1 とする
     /// (#1637)。細い線を広げた頂点が無いフレームは 0 で、頂点関数は被覆の並びに触れない。
     var readsCoverage: UInt32 = 0
+    /// 塗りの頂点を、置き場所ごとの記述 (``Canvas/ThinFillRecord``) から頂点段で広げるか。0 は広げない。
+    /// 1 と 2 なら、輪郭の手前の頂点 (`strokeStart` より前) の `position` は「片の番号と角の番号」で、
+    /// 片を頂点段が組む (#2208)。2 は貼る絵があり、読み取り位置を `thinFillUV` の箱から作る。
+    var thinFill: UInt32 = 0
+    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が幅)。`thinFill` が 2 のときだけ読む。
+    var thinFillUV = SIMD4<Float>(repeating: 0)
 }
