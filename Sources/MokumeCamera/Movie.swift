@@ -49,6 +49,12 @@ import MokumeDiagnostics
 /// ``play()``・``loop()``・``jump(_:)`` は次のフレームで効く (そのフレームに、始めた位置・
 /// 飛んだ先のコマが出る)。``pause()`` はすぐ効き、いま映っているコマで止まる。音は鳴らさない。
 ///
+/// ## 外して足し直す
+///
+/// ``SketchPart/detach(_:)-(Inlet)`` で外した動画は、``SketchPart/attach(_:)-(Inlet)`` で足し直せる。足し直すと
+/// また ``image`` が書かれ、``state`` も ``SourceState/running`` に戻る (外している間は
+/// ``SourceState/stopped``)。
+///
 /// ## 読めなくなったとき
 ///
 /// 途中が壊れていて読めなくなっても、フレームの間は投げない ([ADR-0020] 決定 5)。最後に
@@ -141,6 +147,13 @@ public final class Movie: Inlet {
     }
 
     // MARK: - Inlet
+
+    public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外していた間の ``SourceState/stopped`` を戻す
+        // (読み手は、止めた後でも次に読むときに開き直すので、ここでは何もしない)。読めなくなって
+        // いた (``SourceState/disconnected``) のは、そのまま ``supply()`` が読み直して戻す
+        if input.state == .stopped { input.setState(.running) }
+    }
 
     public func supply() {
         // **状態は作者の時計の秒で進め、映すコマは観測の秒で決める** (#2357)。時刻を指定した観測の枚の

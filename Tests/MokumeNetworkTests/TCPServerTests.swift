@@ -243,6 +243,58 @@ struct TCPServerTests {
         #expect(present.written == ["hit\n"])
     }
 
+    @Test("外して足し直した (close の後に open が来る) 入り口は、また書け、受け取りも戻る。外し直せばまた 1 度だけ知らせて書かない (#3122)")
+    func reopenedServerWritesAgain() throws {
+        let told = Told()
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5204, name: "tcp :5204", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil, warn: told.append)
+        try server.open()
+        server.write("before")
+        server.supply()
+        #expect(server.messages == ["a"])
+
+        server.close()
+        #expect(server.state == .stopped)
+        server.write("while closed 1")
+        server.write("while closed 2")
+        #expect(room.written == ["before"])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try server.open()
+        #expect(server.state == .running)
+        server.write("after")
+        server.supply()
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["before", "after"])
+
+        // 外し直せば、また書かず、また 1 度だけ知らせる
+        server.close()
+        server.write("again")
+        #expect(room.written == ["before", "after"])
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5205, name: "tcp :5205", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil)
+        try server.open()
+        server.stop()
+        #expect(server.state == .running, "外で呼んだ stop() は何も止めない")
+
+        server.close()
+        try server.open()
+        server.supply()
+        server.write("back")
+        #expect(server.state == .running)
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["back"])
+    }
+
     // MARK: - 注入
 
     @Test("同じ行の列は、ポートで受けても注入しても同じ結果になる")

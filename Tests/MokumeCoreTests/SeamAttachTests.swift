@@ -335,6 +335,21 @@ struct ExternalInputTests {
         #expect(input.lastArrival?.hostTime == 10)
     }
 
+    @Test("読まずに捨てる口は、預かっている値を捨て、最後に届いたフレーム・状態は変えず、その後に届いた値は取り出せる (#3122)")
+    func discardWaitingDropsTheHeldValue() {
+        let input = ExternalInput<Int>(name: "probe", state: .running)
+        input.send(1)
+        #expect(input.take() == 1)
+        let arrival = input.lastArrival
+        input.send(2)
+        input.discardWaiting()
+        #expect(input.take() == nil)
+        #expect(input.lastArrival == arrival, "取り出していないので、最後に届いたフレームは動かない")
+        #expect(input.state == .running)
+        input.send(3)
+        #expect(input.take() == 3)
+    }
+
     @Test("取り出す前に届いた古いものは、新しいものに上書きされる")
     func keepsOnlyTheLatest() {
         let input = ExternalInput<Int>(name: "probe", state: .running)
