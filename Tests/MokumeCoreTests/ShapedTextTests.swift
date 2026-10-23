@@ -26,6 +26,22 @@ struct ShapedTextTests {
             onFallbackLackingStyle: { _, _, _ in })
     }
 
+    /// 代わりの書体の知らせを数える書体。`notes` に、知らせた字を積む。
+    private final class Notes { var scalars: [Unicode.Scalar] = [] }
+
+    private func face(
+        name: String? = "Helvetica", file: Font? = nil, style: TextStyle, notes: Notes = Notes()
+    ) -> Typeface {
+        Typeface(
+            request: TypefaceRequest(name: name, file: file, size: 40, style: style),
+            onFallbackLackingStyle: { _, scalar, _ in notes.scalars.append(scalar) })
+    }
+
+    /// 字形の列の見分け (書体の鍵と字形の番号)。
+    private func identities(_ line: ShapedLine) -> [String] {
+        line.glyphs.map { "\($0.resolved.fontKey)#\($0.resolved.glyph)" }
+    }
+
     // MARK: - 組版の結果 (GPU を要らない)
 
     @Test(
@@ -65,14 +81,136 @@ struct ShapedTextTests {
         #expect(face.advance(of: "👍🏽") == face.advance(of: "👍") + face.advance(of: "🏽"))
     }
 
-    @Test("同じ文字列の組版は控えから返り、控えは上限を越えて育たない")
-    func shapedLinesAreCachedAndBounded() {
+    @Test("同じ文字列の組版は控えから返る")
+    func shapedLinesAreCached() {
         let face = face()
         #expect(face.shape("mokume") === face.shape("mokume"))
-        for number in 0..<1000 { _ = face.shape("n\(number)") }
-        #expect(face.shaped.count <= 256)
-        // 控えが空になった後も、同じ値が組める
-        #expect(face.shape("AV").width == face.shape("AV").width)
+        #expect(face.shaped.made == 1)
+    }
+
+    /// 控えは字形の数で上限を持ち、超えたら古い順に 1 件ずつ捨てる (ADR-0023 決定 5)。全部は捨てない。
+    @Test("控えは字形の数で上限を持ち、超えたら古い順に 1 件ずつ捨てる (全部は捨てない)")
+    func shapedLinesAreBoundedByWeightAndEvictedOneByOne() {
+        let face = face()
+        face.shaped.budget = 25
+        let first = face.shape("0123456789")  // 重さ 10
+        let second = face.shape("abcdefghij")  // 重さ 10 (合計 20)
+        _ = face.shape("0123456789")  // first を使い直す: 古いのは second になる
+        let third = face.shape("ABCDEFGHIJ")  // 合計 30 が 25 を超える → second だけが落ちる
+        #expect(face.shaped.count == 2, "1 件ずつ捨てるので 2 件が残る: \(face.shaped.count)")
+        #expect(face.shape("0123456789") === first)
+        #expect(face.shape("ABCDEFGHIJ") === third)
+        #expect(face.shape("abcdefghij") !== second, "最後に使ったのが古い second が落ちる")
+        // 重さは字形の数 — 長い文字列 1 本は、短い文字列何本ぶんかを押し出す
+        face.shaped.budget = 12
+        for number in 0..<100 { _ = face.shape("n\(number)") }
+        #expect(face.shaped.total <= 12, "重さの合計 \(face.shaped.total)")
+    }
+
+    @Test("300 本の違う文字列を毎フレーム組んでも、2 回目からは組み直さない")
+    func manyLinesAreNotReshapedEveryFrame() {
+        let face = face()
+        let lines = (0..<300).map { "mokume \($0) AV" }
+        for line in lines { _ = face.shape(line) }
+        let made = face.shaped.made
+        let kept = lines.map { face.shape($0) }
+        for _ in 0..<3 { for line in lines { _ = face.shape(line) } }
+        #expect(face.shaped.made == made, "2 回目から組み直した: \(face.shaped.made - made) 回")
+        #expect(face.shape(lines[0]) === kept[0] && face.shape(lines[299]) === kept[299])
+    }
+
+    /// Swift の `String` は等価を正準等価で取る。字形の違う文字列が同じ鍵になって、先に組んだほうの結果が
+    /// 返らない (`text()` の控えは `Unicode.Scalar` が鍵で起きない)。
+    nonisolated static let canonicallyEquivalent: [(String, String)] = [
+        ("\u{4FAE}", "\u{FA30}"),
+        ("\u{03A9}", "\u{2126}"),
+        ("\u{00C5}", "\u{212B}"),
+    ]
+
+    @Test("正準等価な 2 つの文字列は、別の鍵で別の字形のまま、組む順に依らない", arguments: canonicallyEquivalent)
+    func canonicallyEquivalentLinesStayApart(_ pair: (String, String)) throws {
+        let (a, b) = pair
+        try #require(a == b, "前提: Swift の String では等しい")
+        #expect(ShapedLineKey(line: a) != ShapedLineKey(line: b))
+        let alone = identities(face().shape(b))
+        try #require(alone != identities(face().shape(a)), "前提: 字形が違う")
+        let order = face()
+        _ = order.shape(a)
+        #expect(identities(order.shape(b)) == alone, "先に組んだ \(a.unicodeScalars.first!) の結果が返った")
+        let reverse = face()
+        _ = reverse.shape(b)
+        #expect(identities(reverse.shape(a)) == identities(face().shape(a)))
+    }
+
+    // MARK: - 代わりの書体 (text() と揃える)
+
+    @Test("代わりの書体の区間は、頼んだ太さの面へ引き直す: Apple Chancery の太字の「あ」は、text() と同じ太字の面")
+    func aFallbackRunIsRestyledToTheRequestedFace() throws {
+        let typeface = face(name: "Apple Chancery", style: .bold)
+        // 前提: CoreText は、太字を持てなかった (劣化した) base に合わせて細い代わりを選び、その家族に太字の面がある
+        let picked = CTFontCreateForString(typeface.base, "あ" as CFString, CFRangeMake(0, 1))
+        let boldFace = CTFontCreateCopyWithSymbolicTraits(picked, 40, nil, .traitBold, .traitBold)
+        try #require(!CTFontGetSymbolicTraits(picked).contains(.traitBold), "前提: 細い面が選ばれる")
+        try #require(
+            boldFace.map { CTFontGetSymbolicTraits($0).contains(.traitBold) } == true,
+            "前提: 代わりの書体の家族に太字の面がある")
+        let shaped = typeface.shape("aあb")
+        let kana = try #require(shaped.glyphs.dropFirst().first)
+        let read = try #require(typeface.glyph(for: "あ"))
+        #expect(CTFontGetSymbolicTraits(kana.resolved.font).contains(.traitBold), "\(kana.resolved.fontKey)")
+        #expect(kana.resolved.fontKey == read.fontKey && kana.resolved.glyph == read.glyph)
+        // 基の字の側は動かない
+        #expect(shaped.glyphs.first?.resolved.fontKey == typeface.glyph(for: "a")?.fontKey)
+    }
+
+    @Test("頼んだ面が引けない代わりの書体の区間は、text() と同じに 1 度知らせる")
+    func aFallbackRunLackingTheStyleIsNotified() throws {
+        let notes = Notes()
+        let line = face(style: .italic, notes: notes).shape("aあb")
+        let kana = try #require(line.glyphs.dropFirst().first)
+        let read = try #require(face(style: .italic).glyph(for: "あ"), "前提: text() が「あ」を引く")
+        #expect(kana.resolved.fontKey == read.fontKey, "text() が引く面と違う: \(kana.resolved.fontKey)")
+        #expect(notes.scalars == ["あ"], "知らせた字: \(notes.scalars)")
+        // 何も頼まなければ知らせない
+        let quiet = Notes()
+        _ = face(style: .normal, notes: quiet).shape("aあb")
+        #expect(quiet.scalars.isEmpty)
+    }
+
+    @Test("ファイルから読んだ書体の字は、ファイルの同一性を鍵に持ち、代わりの書体の字は持たない (text() と同じ)")
+    func fileFontKeysFollowTheSameStructure() throws {
+        let file = try Font.load(FontFileTests.staticFile)
+        let typeface = face(name: nil, file: file, style: .normal)
+        let line = typeface.shape("aあb")
+        try #require(line.glyphs.count == 3)
+        let latin = try #require(typeface.glyph(for: "a"))
+        let kana = try #require(typeface.glyph(for: "あ"))
+        #expect(line.glyphs[0].resolved.fontKey == latin.fontKey)
+        #expect(line.glyphs[0].resolved.fontKey.hasSuffix("#" + file.identity))
+        #expect(line.glyphs[1].resolved.fontKey == kana.fontKey)
+        #expect(!line.glyphs[1].resolved.fontKey.contains("#"))
+    }
+
+    @Test("異体字セレクタ 16 は、絵文字を持たない字の後では書体を替えず、持つ字の後では絵文字を選ぶ")
+    func theEmojiSelectorDoesNotMoveALetterToAnotherTypeface() throws {
+        let face = face()
+        let letter = face.shape("a\u{FE0F}")
+        let plain = face.shape("a")
+        #expect(identities(letter) == identities(plain), "a の書体が替わった: \(identities(letter))")
+        #expect(letter.width == plain.width)
+        // 絵文字を持つ字の後は、そのまま絵文字になる
+        if TextTests.hasColoredGlyphs {
+            for string in ["\u{2764}\u{FE0F}", "1\u{FE0F}\u{20E3}", "\u{00A9}\u{FE0F}"] {
+                let line = face.shape(string)
+                #expect(line.glyphs.count == 1, "\(string.unicodeScalars.map(\.value)): \(identities(line))")
+                #expect(line.glyphs[0].resolved.fontKey == "AppleColorEmoji")
+            }
+        }
+        // 先頭の印・重ねた印も落ちない・数えが合う
+        #expect(face.shape("\u{FE0F}").glyphs.count <= 1)
+        #expect(identities(face.shape("a\u{FE0F}\u{FE0F}")) == identities(plain))
+        // 印以外の異体字セレクタは渡す (書体を替えない)
+        #expect(identities(face.shape("a\u{FE0E}")) == identities(plain))
     }
 
     // MARK: - 描く・測る (GPU を要する)
@@ -235,6 +373,42 @@ struct ShapedTextTests {
             let shapedInk = try #require(inkBounds(shaped))
             let apartInk = try #require(inkBounds(apart))
             #expect(shapedInk.right < apartInk.right - 1)
+        }
+
+        @Test("代わりの書体の区間は text() と同じ面で描く: Apple Chancery の太字の「あ」は、text() と同じ絵")
+        func aFallbackRunDrawsLikeTheOldEntry() throws {
+            let canvas = try makeCanvas()
+            canvas.textFont("Apple Chancery")
+            canvas.textStyle(.bold)
+            let shaped = try render(canvas) { canvas.shapedText("あ", 20, 70) }
+            let old = try render(canvas) { canvas.text("あ", 20, 70) }
+            #expect(shaped.bytes == old.bytes, "shapedText の「あ」が text() の「あ」と違う面になった")
+        }
+
+        @Test("300 本の違う文字列を毎フレーム描いても、組み直しは 2 フレーム目から 0 で、焼き場の引き当ても残る")
+        func manyLinesAreNotReshapedPerFrame() throws {
+            let canvas = try makeCanvas(size: 12)
+            let lines = (0..<300).map { "mokume \($0) AV" }
+            func frame() throws {
+                try canvas.draw {
+                    canvas.background(black)
+                    canvas.fill(white)
+                    for (index, line) in lines.enumerated() {
+                        canvas.shapedText(line, Float(index % 4) * 100, 10 + Float((index / 4) % 80))
+                    }
+                }
+            }
+            try frame()
+            let made = canvas.typeface.shaped.made
+            let kept = lines.map { canvas.typeface.shape($0) }
+            try frame()
+            try frame()
+            #expect(canvas.typeface.shaped.made == made, "2 フレーム目から組み直した: \(canvas.typeface.shaped.made - made) 回")
+            #expect(lines.indices.allSatisfy { canvas.typeface.shape(lines[$0]) === kept[$0] })
+            let glyphs = canvas.typeface.shape(lines[0]).glyphs.count
+            #expect(
+                canvas.typeface.shape(lines[0]).placed.prefix(glyphs).allSatisfy { $0 != nil },
+                "焼き場の控え (placed) が消えた")
         }
 
         @Test("墨の無い文字列・大きさ 0・数でない位置は、幅 0 と枠なし。大きさ 0 では何も描かない")
