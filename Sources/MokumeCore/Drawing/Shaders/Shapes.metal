@@ -407,10 +407,307 @@ struct SolidStrokeCorner {
     float3 far2;
 };
 
+// MARK: - 潰れた辺が何段も続く群 (同じ直線に載る辺の鎖・#2989)
+
+/// 「slot が無い」の印。
+constant uint kSolidStrokeNoSlot = 0xFFFFFFFFu;
+/// 潰れた辺を何段までたどるか。同じ直線に載る辺の鎖は閉じない (閉じた形は 1 周で向きが変わる) ので
+/// 届かない上限だが、骨の取り違えで終わらない繰り返しにならないよう置く
+constant uint kSolidStrokeMaxRun = 1u << 16;
+
+/// 点の記録が、隣の並びの後ろに対の相手の語を持つか (見出しの語の小数部が 0.5 のとき)。
+bool solidStrokeHasPairs(uint record, constant float4 *words) {
+    float count = words[record].w;
+    return count != floor(count);
+}
+
+/// 点の記録 `record` (隣の数 `count`) の、隣 `slot` と同じ直線の向かい側に抜ける隣の slot。無ければ
+/// `kSolidStrokeNoSlot`。**対を持つ記録 (`solidStrokeHasPairs`) にだけ呼ぶ。**
+uint solidStrokePairSlot(uint record, uint count, uint slot, constant float4 *words) {
+    float partner = words[record + 1 + count + slot / 4][slot % 4];
+    return partner < 0 ? kSolidStrokeNoSlot : uint(partner);
+}
+
+/// 潰れた辺を 1 段たどる。点 `from` の隣 `slot` (潰れている辺) の先の点 `to`、`to` から `from` へ戻る辺の slot
+/// (`back`)、`to` で同じ直線が向かい側へ続くときの slot (`onward`)。続くのは、対の相手の辺も潰れているとき。
+void solidStrokeRunStep(
+    uint from, uint slot, constant float4 *words, constant SolidStrokePlacement &s,
+    thread uint &to, thread uint &back, thread uint &onward)
+{
+    to = uint(words[from + 1 + slot].w);
+    uint count = uint(words[to].w);
+    back = kSolidStrokeNoSlot;
+    onward = kSolidStrokeNoSlot;
+    for (uint k = 0; k < count; k++) {
+        if (uint(words[to + 1 + k].w) == from) {
+            back = k;
+            break;
+        }
+    }
+    if (back == kSolidStrokeNoSlot || !solidStrokeHasPairs(to, words)) return;
+    uint partner = solidStrokePairSlot(to, count, back, words);
+    if (partner == kSolidStrokeNoSlot) return;
+    float4 entry = words[to + 1 + partner];
+    if (solidStrokeEdgeCollapsed(
+            solidStrokePlaced(words[to].xyz, s), to, solidStrokePlaced(entry.xyz, s), uint(entry.w), s))
+    {
+        onward = partner;
+    }
+}
+
+/// 群の腕 1 本。
+struct SolidStrokeArm {
+    /// 群の中での番号 (手前の点の腕から、`slotA` の側へ、続けて `slotB` の側へ)
+    uint index;
+    /// 腕が出る点の記録 (同じ点から出た腕かを見分ける)
+    uint origin;
+    float3 originPoint;
+    float3 farPoint;
+};
+
+/// 群の腕を順に返す。**手前の点の腕、`slotA` の側の点を手前から遠ざかる順、`slotB` の側の点を同じ順**に、
+/// 点ごとに辺の順で、潰れた辺 (群の中の辺) を除いて並べる。
+struct SolidStrokeRunCursor {
+    uint center;
+    uint slotA;
+    uint slotB;
+    /// いま腕を数えている点の記録と隣の数
+    uint member;
+    uint count;
+    /// いまの点で腕に数えない隣 (群の中の辺)
+    uint skipFirst;
+    uint skipSecond;
+    /// いまの点から次の点へ出る隣
+    uint leave;
+    /// 0 手前の点・1 `slotA` の側・2 `slotB` の側・3 終わり
+    uint side;
+    uint slot;
+    uint steps;
+    uint index;
+};
+
+SolidStrokeRunCursor solidStrokeRunStart(uint center, uint slotA, uint slotB, constant float4 *words) {
+    SolidStrokeRunCursor c;
+    c.center = center;
+    c.slotA = slotA;
+    c.slotB = slotB;
+    c.member = center;
+    c.count = uint(words[center].w);
+    c.skipFirst = slotA;
+    c.skipSecond = slotB;
+    c.leave = kSolidStrokeNoSlot;
+    c.side = 0;
+    c.slot = 0;
+    c.steps = 0;
+    c.index = 0;
+    return c;
+}
+
+/// 次の腕を `arm` に入れる。もう無ければ偽。
+bool solidStrokeRunNext(
+    thread SolidStrokeRunCursor &c, constant float4 *words, constant SolidStrokePlacement &s,
+    thread SolidStrokeArm &arm)
+{
+    while (true) {
+        while (c.slot < c.count) {
+            uint k = c.slot;
+            c.slot++;
+            if (k == c.skipFirst || k == c.skipSecond) continue;
+            arm.index = c.index;
+            c.index++;
+            arm.origin = c.member;
+            arm.originPoint = solidStrokePlaced(words[c.member].xyz, s);
+            arm.farPoint = solidStrokePlaced(words[c.member + 1 + k].xyz, s);
+            return true;
+        }
+        // この点の腕は尽きた。同じ側の次の点へ進む。側が尽きたら次の側の最初の点へ
+        while (true) {
+            if (c.leave != kSolidStrokeNoSlot && c.steps < kSolidStrokeMaxRun) {
+                c.steps++;
+                uint to;
+                uint back;
+                uint onward;
+                solidStrokeRunStep(c.member, c.leave, words, s, to, back, onward);
+                c.member = to;
+                c.count = uint(words[to].w);
+                c.skipFirst = back;
+                c.skipSecond = onward;
+                c.leave = onward;
+                c.slot = 0;
+                break;
+            }
+            c.side++;
+            if (c.side >= 3) return false;
+            c.member = c.center;
+            c.count = uint(words[c.center].w);
+            c.slot = c.count;
+            c.leave = c.side == 1 ? c.slotA : c.slotB;
+            c.steps = 0;
+        }
+    }
+}
+
+/// 向き `toward` の腕のうち、群でいちばん先に現れる腕が出る点の記録。**同じ向きの腕は、最初に現れた点の
+/// 腕だけを数える** (CPU の `screenCorner`: 別の点から出た同じ向きの腕は 1 本と数え、前の腕を残す。
+/// 数える腕は「同じ向きの腕のうち、最初に現れた点から出たもの」になる)。
+uint solidStrokeRunFirstOrigin(
+    SolidStrokeRunCursor start, float2 toward, constant float4 *words, constant SolidStrokePlacement &s,
+    uint fallback)
+{
+    SolidStrokeRunCursor c = start;
+    SolidStrokeArm other;
+    while (solidStrokeRunNext(c, words, s, other)) {
+        float2 direction;
+        if (solidStrokeToward(other.originPoint, other.farPoint, s, direction) && all(direction == toward)) {
+            return other.origin;
+        }
+    }
+    return fallback;
+}
+
+/// 群の腕 `arm` を数えるか。向きが無い (画面で潰れた) 腕と、同じ向きの先着の点でない腕は数えない。
+bool solidStrokeRunKept(
+    SolidStrokeRunCursor start, thread const SolidStrokeArm &arm, constant float4 *words,
+    constant SolidStrokePlacement &s, thread float2 &toward)
+{
+    if (!solidStrokeToward(arm.originPoint, arm.farPoint, s, toward)) return false;
+    return solidStrokeRunFirstOrigin(start, toward, words, s, arm.origin) == arm.origin;
+}
+
+/// 画面で潰れた辺が何段も続く群 (同じ直線に載る辺の鎖) に置く形。**群の手前の点だけが置く。**
+/// 腕の数え方と形の決め方は `solidStrokeCornerShape` の、群が 1 点か 2 点のときと同じである。
+SolidStrokeCorner solidStrokeRunShape(
+    uint record, bool roundEnd, uint slotA, uint slotB, constant float4 *words,
+    constant SolidStrokePlacement &s)
+{
+    SolidStrokeCorner result;
+    result.kind = 0;
+    float3 center = solidStrokePlaced(words[record].xyz, s);
+    result.center = center;
+    // 手前の点 (奥行きが等しければ記録の位置が小さい点) を、群の両側をたどって探す。自分でなければ置かない
+    float depth = solidStrokeDepth(center, s);
+    for (uint side = 0; side < 2; side++) {
+        uint cur = record;
+        uint slot = side == 0 ? slotA : slotB;
+        for (uint step = 0; slot != kSolidStrokeNoSlot && step < kSolidStrokeMaxRun; step++) {
+            uint to;
+            uint back;
+            uint onward;
+            solidStrokeRunStep(cur, slot, words, s, to, back, onward);
+            float other = solidStrokeDepth(solidStrokePlaced(words[to].xyz, s), s);
+            if (other < depth || (other == depth && to < record)) return result;
+            cur = to;
+            slot = onward;
+        }
+    }
+    SolidStrokeRunCursor start = solidStrokeRunStart(record, slotA, slotB, words);
+    // 数える腕の数と、前の 2 本
+    uint arms = 0;
+    uint kept = 0;
+    uint firstKept = 0;
+    uint secondKept = 0;
+    float2 firstToward = float2(0);
+    {
+        SolidStrokeRunCursor c = start;
+        SolidStrokeArm arm;
+        while (solidStrokeRunNext(c, words, s, arm)) {
+            arms++;
+            float2 toward;
+            if (!solidStrokeRunKept(start, arm, words, s, toward)) continue;
+            if (kept == 0) {
+                firstKept = arm.index;
+                firstToward = toward;
+            } else if (kept == 1) {
+                secondKept = arm.index;
+            }
+            kept++;
+        }
+    }
+    uint a = firstKept;
+    uint b = secondKept;
+    uint cap = uint(s.right.w);
+    if (kept == 0) {
+        return result;
+    } else if (kept == 1) {
+        if (cap == 1) return result;
+        if (cap == 2) {
+            result.kind = 3;
+        } else if (roundEnd) {
+            result.kind = 1;
+            return result;
+        } else {
+            if (arms < 2) return result;
+            result.kind = 4;
+            a = 0;
+            b = 1;
+        }
+    } else if (kept == 2) {
+        result.kind = 4;
+    } else {
+        // 時計回りの端を前から探す (`solidStrokeCornerShape` の、群が小さいときと同じ手順)
+        float2 first = firstToward;
+        {
+            SolidStrokeRunCursor c = start;
+            SolidStrokeArm arm;
+            while (solidStrokeRunNext(c, words, s, arm)) {
+                if (arm.index <= firstKept) continue;
+                float2 toward;
+                if (!solidStrokeRunKept(start, arm, words, s, toward)) continue;
+                if (any(toward != first) && solidStrokeCross(first, toward) < 0) {
+                    a = arm.index;
+                    first = toward;
+                }
+            }
+        }
+        // 残りがすべて、時計回りの端から反時計回りに 180° 未満 (か同じ向き) に収まるか
+        {
+            SolidStrokeRunCursor c = start;
+            SolidStrokeArm arm;
+            while (solidStrokeRunNext(c, words, s, arm)) {
+                float2 toward;
+                if (arm.index == a || !solidStrokeRunKept(start, arm, words, s, toward)) continue;
+                float turn = solidStrokeCross(first, toward);
+                if (!(all(toward == first) || turn > 0 || (turn == 0 && dot(first, toward) > 0))) return result;
+            }
+        }
+        b = a;
+        float2 last = first;
+        {
+            SolidStrokeRunCursor c = start;
+            SolidStrokeArm arm;
+            while (solidStrokeRunNext(c, words, s, arm)) {
+                float2 toward;
+                if (!solidStrokeRunKept(start, arm, words, s, toward)) continue;
+                if (any(toward != last) && solidStrokeCross(last, toward) > 0) {
+                    b = arm.index;
+                    last = toward;
+                }
+            }
+        }
+        result.kind = 4;
+    }
+    SolidStrokeRunCursor c = start;
+    SolidStrokeArm arm;
+    while (solidStrokeRunNext(c, words, s, arm)) {
+        if (arm.index == a) {
+            result.origin1 = arm.originPoint;
+            result.far1 = arm.farPoint;
+        }
+        if (arm.index == b) {
+            result.origin2 = arm.originPoint;
+            result.far2 = arm.farPoint;
+        }
+    }
+    return result;
+}
+
+
 /// 点の記録 `record` の点に置く形を決める (#1889・#1893・#1903 の決定)。
 ///
-/// 画面で潰れた辺で結ばれた点 (1 段まで) を群とし、群のいちばん手前の点 (奥行きが等しければ記録の
-/// 位置が小さい点) だけが置く (CPU の `strokeNet` と同じ選び方)。
+/// 画面で潰れた辺で結ばれた点を群とし、群のいちばん手前の点 (奥行きが等しければ記録の
+/// 位置が小さい点) だけが置く (CPU の `strokeNet` と同じ選び方)。**群が 1 点か 2 点のときは、ここの手順で
+/// 置く。潰れた辺が 3 点以上続くとき (同じ直線に載る向かい側の 2 辺の鎖) は、対の相手をたどって群を
+/// 引き、`solidStrokeRunShape` が同じ手順で置く** (#2989)。
 /// 群に集まる腕の画面での向きの数で、0 なら何も置かない・1 なら端 (`strokeCap`)・
 /// 2 なら 2 本の折れ目・3 以上なら角度の順で 180° を越える間を挟む 2 本の折れ目 (無ければ何も
 /// 置かない)。**0 本の群 (CPU の `Canvas.screenCorner` の向きの無い点) は、骨を作れる網では現れない。**
@@ -435,18 +732,41 @@ SolidStrokeCorner solidStrokeCornerShape(
     g.recordJ = record;
     g.selfAt = 0;
     uint partners = 0;
+    uint slotA = kSolidStrokeNoSlot;
+    uint slotB = kSolidStrokeNoSlot;
     for (uint k = 0; k < countI; k++) {
         float4 entry = words[record + 1 + k];
         if (solidStrokeEdgeCollapsed(center, record, solidStrokePlaced(entry.xyz, s), uint(entry.w), s)) {
             if (partners == 0) {
                 g.partnerAt = k;
                 g.recordJ = uint(entry.w);
+                slotA = k;
+            } else if (partners == 1) {
+                slotB = k;
             }
             partners++;
         }
     }
-    // 潰れた辺が 2 本続く群は骨を作らない (`SolidStrokeGeometry`)。手前の点でなければ置かない
-    if (partners > 1) return result;
+    // 潰れた辺が 3 本以上ある点は、骨を作る網には現れない (`SolidStrokeGeometry` は 1 本の辺を 2 つの対に
+    // 入れない)。置かない
+    if (partners > 2) return result;
+    if (partners == 2) {
+        // 潰れた 2 本は同じ直線に載る対でなければ、群は 1 本の鎖にならない。置かない
+        if (!solidStrokeHasPairs(record, words) || solidStrokePairSlot(record, countI, slotA, words) != slotB) {
+            return result;
+        }
+        return solidStrokeRunShape(record, roundEnd, slotA, slotB, words, s);
+    }
+    if (partners == 1) {
+        // 先の点で同じ直線がさらに潰れて続くなら、群は 3 点以上の鎖になる
+        uint to;
+        uint back;
+        uint onward;
+        solidStrokeRunStep(record, slotA, words, s, to, back, onward);
+        if (onward != kSolidStrokeNoSlot) {
+            return solidStrokeRunShape(record, roundEnd, slotA, kSolidStrokeNoSlot, words, s);
+        }
+    }
     g.sameOrigin = false;
     if (partners == 1) {
         float3 partner = solidStrokePlaced(words[g.recordJ].xyz, s);

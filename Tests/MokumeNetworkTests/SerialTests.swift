@@ -244,6 +244,23 @@ struct SerialTests {
         #expect(recorded.state == .running)
     }
 
+    @Test("外して足し直したシリアルの入り口は、外す前に溜まっていた行を出さず、足し直した後に届いた行だけを出す (#3122)")
+    func reopenedSerialDoesNotDeliverWhatWaitedBeforeClose() throws {
+        let serial = Serial(
+            name: "serial (recorded)", source: RecordedSource<String>(batches: [[]]), owner: nil)
+        try serial.open()
+        serial.input.send("stale")
+        serial.close()
+
+        try serial.open()
+        serial.supply()
+        #expect(serial.lines.isEmpty, "外す前に溜まっていた分は、足し直した最初のフレームに出ない")
+
+        serial.input.send("fresh")
+        serial.supply()
+        #expect(serial.lines == ["fresh"])
+    }
+
     // MARK: - 抜き差し
 
     @Test("抜くと disconnected になり、同じ識別子のポートを挿し直すと running に戻って受け始める")

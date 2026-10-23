@@ -274,7 +274,7 @@ public final class Particles {
     ///
     /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
     private var cadences: [EmissionCadence] = []
-    /// 呼んだ順を数えているフレーム (面の `Canvas.framesDrawn`)。変わったら数え直す。
+    /// 呼んだ順を数えているフレーム (スケッチのフレーム番号・#2454)。変わったら数え直す。
     private var cadenceFrame: Int?
     /// `cadenceFrame` のフレームで、これまでに数えた `emit` の回数。
     private var emitsThisFrame = 0
@@ -532,7 +532,7 @@ public final class Particles {
                 + "drew the particles; forces added before it take effect in the next call")
     }
 
-    /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
+    /// この 1 フレームで出す数。`frame` はスケッチのフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
     func count(rate: Float, over step: FrameStep, frame: Int) -> Int {

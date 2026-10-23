@@ -38,7 +38,8 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 
     private let requested: AudioDevice?
     private let control = DispatchQueue(label: "org.mokume.audio.control")
-    private let ring = SampleRing(capacity: AudioAnalysis.windowSize * 32)
+    /// 受けた標本の環。検査が直に書けるよう、内部に開けてある。
+    let ring = SampleRing(capacity: AudioAnalysis.windowSize * 32)
 
     /// 入れ物。操作の列が置き、許可の答えの手続きが読む。
     private let input = Mutex<ExternalInput<[Float]>?>(nil)
@@ -91,6 +92,17 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
             removeObservers()
             apply(lifecycle.stop(), device: nil)
         }
+        discardUnread()
+    }
+
+    /// 環に書かれて、まだ入れ物へ送っていない標本を、送らないことにする (#3122)。
+    ///
+    /// 止めた後に足し直す (``AudioIn`` の `detach` → `attach`) と、止める前に届いて読まれなかった標本が、
+    /// 足し直した最初のフレームに「新しい音」として出る。`lastTotal` を書かれた総数へ揃えれば、``pump(into:at:)``
+    /// は次に標本が書かれるまで何も送らない。エンジンは止まっているので、揃えた後に書かれるものは無い。
+    /// フレームの側 (``pump(into:at:)`` と同じ側) でだけ触る。
+    func discardUnread() {
+        lastTotal = ring.total
     }
 
     // MARK: - 操作の列の上

@@ -69,4 +69,72 @@ struct SerialSketchTests {
         #expect(result.frames.dropFirst(2).allSatisfy { $0.isEmpty })
         #expect(result.serial?.state == .stopped)
     }
+
+    /// 外して足し直した後の 2 フレーム (3・4 フレーム目) に届いた行と状態 (#3122)。1 フレーム目に `leave` で外し、
+    /// 2 フレーム目に足し直す。
+    private func reattached(
+        leaving leave: @escaping (SerialSketch, Serial) -> Void
+    ) throws -> (lines: [[String]], states: [SourceState]) {
+        var serial: Serial?
+        var lines: [[String]] = []
+        var states: [SourceState] = []
+        SerialSketch.onSetup = { sketch in
+            let made = Serial(
+                name: "serial (recorded)", source: RecordedSource<String>(batches: [["512"]]), owner: sketch)
+            sketch.attach(made)
+            serial = made
+        }
+        SerialSketch.onDraw = { sketch in
+            guard let serial else { return }
+            switch sketch.frameCount {
+            case 1: leave(sketch, serial)
+            case 2: sketch.attach(serial)
+            default:
+                lines.append(serial.lines)
+                states.append(serial.state)
+            }
+        }
+        defer { SerialSketch.onSetup = { _ in }; SerialSketch.onDraw = { _ in } }
+        let runtime = try SketchRuntime(sketch: SerialSketch(), gpu: try RenderDevice())
+        for _ in 0..<4 { try runtime.advance() }
+        runtime.closePlugins()
+        return (lines, states)
+    }
+
+    @Test("ランタイムが外しただけのシリアルの入り口は、足し直せばまた受ける。利用者が stop() したものは、足し直しても受けない (#3122)")
+    func userStopSticksButRuntimeDetachDoesNot() throws {
+        let detached = try reattached { sketch, serial in sketch.detach(serial) }
+        #expect(detached.lines == [["512"], ["512"]])
+        #expect(detached.states == [.running, .running])
+
+        let stopped = try reattached { _, serial in serial.stop() }
+        #expect(stopped.lines == [[], []], "足し直しても受けない")
+        #expect(stopped.states == [.stopped, .stopped])
+    }
+
+    @Test("実行の外・足していない入り口への stop() は、利用者が止めた印を立てない (#3122)")
+    func stopOutsideTheRunDoesNotStick() throws {
+        var serial: Serial?
+        SerialSketch.onSetup = { sketch in
+            // 足さずに持つ。走っている最中に呼んだ `stop()` も、並びに居ないので何も外さず、印を立てない
+            serial = Serial(
+                name: "serial (recorded)", source: RecordedSource<String>(batches: [["512"]]), owner: sketch)
+            serial?.stop()
+        }
+        SerialSketch.onDraw = { _ in }
+        defer { SerialSketch.onSetup = { _ in }; SerialSketch.onDraw = { _ in } }
+        let runtime = try SketchRuntime(sketch: SerialSketch(), gpu: try RenderDevice())
+        try runtime.advance()
+        let loose = try #require(serial)
+        let log = OutsideRun()
+        OutsideRun.$current.withValue(log) { loose.stop() }
+        #expect(log.message(for: "Serial.stop()") != nil, "外で呼ぶと警告する: \(log.messages)")
+
+        // 印が立っていなければ、開けば受け始める
+        try loose.open()
+        loose.supply()
+        #expect(loose.state == .running)
+        #expect(loose.lines == ["512"])
+        runtime.closePlugins()
+    }
 }
