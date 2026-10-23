@@ -47,6 +47,25 @@ extension Canvas {
             }
             return accepted
         }
+        prepareEffectOutput()
+    }
+
+    /// 効果を通した絵の出す面 (``EffectPipeline/carry(startingTransparent:)``) を、組み立てに入る前に、塗って
+    /// 作っておく ([#2388])。
+    ///
+    /// 出す面は、最初の効果を通すフレームの最後の段が書くまで何も書かれていない。取り替えは組み立ての最中に
+    /// 済ませるので、その投入が打ち切られると、取り替えた描く先を読む側 (窓・書き出し・同じフレームに置いた
+    /// 面) は、結末が届いて取り替えが戻るまでの間、書かれていない面を読む。作るときに透明な黒へ塗って
+    /// おけば、そのとき読んでも未定義ではない。塗るのは自分の投入を 1 本積むので、組み立ての最中には
+    /// できない — 利用者の描く手前の、ここで済ませる。作れなければ (資源が枯れた・組み立ての最中)、
+    /// 描き切りが塗らずに作る。効果を頼まないスケッチは何も払わない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    private func prepareEffectOutput() {
+        guard !pendingEffects.isEmpty, let pipeline = try? effectPipeline(),
+            pipeline.existingCarry == nil
+        else { return }
+        _ = try? pipeline.carry(startingTransparent: true)
     }
 
     /// 文字列から効果を作る。
@@ -216,13 +235,16 @@ extension Canvas {
     ///
     /// **自分に戻る** (2 回取り替えれば元の面)。組み立てが投げて投入されなかった描き切りは、取り替えを
     /// この口でもう一度取り替えて戻す ([#1183] と同じ作法・``flush(applyingEffects:mirroringPixels:)``)。
-    /// 効果を通した絵がまだ無い面 (控えを作っていない面) では何もしない。
+    /// 打ち切られた投入は、その投入の取り替えを ``carryDropped(_:)`` が戻す。取り替えるのは
+    /// ``RenderTarget/exchangeTexture(with:)`` で、描く先と控えは**面だけを入れ替える** — 面を溜める側は
+    /// 面を値で写し取らず描き場所を持つ (``HeldTexture``)。効果を通した絵がまだ無い面 (控えを作っていない面)
+    /// では何もしない。
     ///
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     func exchangeTargetWithCarry() {
         guard let carry = effectPipelineStorage?.existingCarry else { return }
-        swap(&target.texture, &carry.texture)
+        target.exchangeTexture(with: carry)
     }
 
     // MARK: - 止まっている間に変えた分 (#1524)

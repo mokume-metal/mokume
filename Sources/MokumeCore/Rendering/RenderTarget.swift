@@ -49,11 +49,31 @@ import MokumeDiagnostics
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
     ///
     /// **効果を通すフレームでは、効果の控え (``StageImage``) と取り替わる** ([#2388])。取り替えるのは
-    /// ``Canvas/exchangeTargetWithCarry()`` だけで、窓・書き出し・読む画素はどれも、そのときの
+    /// ``exchangeTexture(with:)`` だけで、窓・書き出し・読む画素はどれも、そのときの
     /// この面を読めばよい (読む口に手は入れない)。
     ///
+    /// **面を持ち歩く側は、面を値で写し取らない。** 取り替えた後は、組んだ時点の面が控えの面になる。
+    /// 面を溜める側は ``HeldTexture`` で描き場所そのものを持ち (読むたびに ``texture`` を引く)、
+    /// 取り替えの相手 (``exchangePartner``) は、この描き場所が生きている間は生きている。
+    ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
-    var texture: any MTLTexture
+    private(set) var texture: any MTLTexture
+
+    /// この面と取り替わる面 (効果の控え) の持ち主 ([#2388])。**強く持つ。**
+    ///
+    /// 取り替えると、組んだ時点の面は相手の面になり、相手の持ち主 (``Canvas`` の効果のパイプライン) が
+    /// 死ぬとき面を常駐から退かせる (``StageImage``)。面を溜める側 (``HeldTexture``) は持ち主をこの描き場所
+    /// として抱えるので、描き場所だけが生き残って相手が先に死ぬと、読む面が常駐から外れる ([#1079]・
+    /// [#1178] と同じ型の穴)。ここで抱えれば、2 枚の面は同じ寿命で、この描き場所が死ぬとき一緒に退く。
+    /// 取り替えた最初のとき (``exchangeTexture(with:)``) に結ぶ。
+    ///
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    private(set) var exchangePartner: StageImage?
+
+    /// 面を取り替えた回数 (取り消しを含めて作ってから通算)。``contentRevision`` の一部。
+    private var texturesReplaced: UInt64 = 0
 
     /// 奥行きを覚えておく面。
     ///
@@ -213,14 +233,18 @@ import MokumeDiagnostics
     ///   決める番号と同じ・#2786)
     /// - CPU の画素の書き込み: ``PixelMirror/cpuWriteCount`` (``Pixels`` へ書くたびに進む)。書いた画素は
     ///   次に GPU がこの面へ触るまで戻らないので、面に着く前の書き込みを数える
+    /// - 投入を介さない面の持ち替え: 打ち切られた投入の取り替えを戻すとき (``noteTextureReplaced()``・
+    ///   [#2388])。持ち替えは投入の番号を進めないので、別に数える
     ///
     /// 止まっている間のスケッチが、この番号が前に出したときと同じなら、窓の present も共有面の写しも
-    /// 飛ばす (``SketchApplication``)。**番号を上げる場所はこの 2 つの口だけである** — 面を変える口を
-    /// 足したら、どちらかを通す。
+    /// 飛ばす (``SketchApplication``)。**番号を上げる場所はこの 3 つの口だけである** — 面を変える口を
+    /// 足したら、どれかを通す。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     ///
     /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     var contentRevision: UInt64 {
-        lastWriteSubmission &+ (pixelMirror?.cpuWriteCount ?? 0)
+        lastWriteSubmission &+ (pixelMirror?.cpuWriteCount ?? 0) &+ texturesReplaced
     }
 
     /// 面を塗って始めた投入の番号。打ち切られていれば、この面へ書いた投入の打ち切りとして数える
@@ -741,15 +765,34 @@ import MokumeDiagnostics
         lastWriteSubmission = submission
     }
 
-    /// 面の中身を、投入を介さずに別の絵へ持ち替えた ([#2388])。**写しの「映した」を下ろす。**
+    /// 面を、効果の控え `partner` の面と取り替える ([#2388])。**写さない。**
     ///
-    /// 持ち替えは ``texture`` を効果の控えと取り替える口 (``Canvas/exchangeTargetWithCarry()``) が、
-    /// 打ち切られた投入の記帳を取り消すときに使う。投入が書いた面の番号 (``lastWriteSubmission``) は
-    /// 進まないので、映してある写しを新しいと見誤らないように下ろす。CPU が書いたまま戻していない
-    /// 写しは CPU の側が最新なので触らない。
+    /// ``Canvas/exchangeTargetWithCarry()`` だけが呼ぶ。2 回取り替えれば元の面である。**初めて取り替える
+    /// とき、相手をこの描き場所に結ぶ** (``exchangePartner``)。
+    ///
+    /// 2 枚の面は同じ形 (大きさ・形式) でなければならない — 描く細かさの控えとだけ取り替える。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    func exchangeTexture(with partner: StageImage) {
+        assert(
+            partner.width == width && partner.height == height
+                && partner.texture.pixelFormat == texture.pixelFormat,
+            "A target only exchanges its surface with a surface of the same shape")
+        if exchangePartner !== partner { exchangePartner = partner }
+        swap(&texture, &partner.texture)
+    }
+
+    /// 面の中身を、投入を介さずに別の絵へ持ち替えた ([#2388])。**写しの「映した」を下ろし、
+    /// 出し直す印 (``contentRevision``) を進める。**
+    ///
+    /// 持ち替えは ``exchangeTexture(with:)`` を、打ち切られた投入の記帳を取り消すとき (``Canvas/carryDropped(_:)``)
+    /// にもう一度呼ぶ。投入が書いた面の番号 (``lastWriteSubmission``) は進まないので、映してある写しを
+    /// 新しいと見誤らないように下ろし、止まっている間の窓が出し直せるように印を進める。CPU が書いた
+    /// まま戻していない写しは CPU の側が最新なので触らない。
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     func noteTextureReplaced() {
+        texturesReplaced &+= 1
         guard let pixelMirror, !pixelMirror.hasPendingWrites else { return }
         pixelMirror.syncedThrough = 0
     }

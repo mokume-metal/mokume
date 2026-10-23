@@ -852,11 +852,28 @@ public final class Canvas {
     /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     var carriesPictureBeforeEffects = false
-    /// 効果を通した絵を出す面へ書いて、面を取り替えた最後の投入の番号 ([#2199])。打ち切られたら
-    /// 取り替えを戻して ``carriesPictureBeforeEffects`` を下ろす (``carryDropped(_:)``)。
+    /// 効果を通した絵を出す面へ書いて、面を取り替えた最後の投入 ([#2199]・[#2388])。打ち切られたら
+    /// その投入の取り替えをすべて戻す (``carryDropped(_:)``)。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
-    var carriedBy: UInt64 = 0
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var carriedFlush = CarriedFlush()
+
+    /// 効果を通した絵を書いた投入が、面をどう取り替えたかの記帳 ([#2388])。
+    ///
+    /// **投入ごとに、取り替えの内訳を持つ。** 打ち切られた投入は 1 画素も書かないので、その投入の
+    /// 取り替え (頭の戻しと最後の段のもの) を両方戻せば、面も印も投入の前の姿になる — 描く先は前の
+    /// 効果を通した絵のまま、控えは効果を通す前の絵のままで、前のフレームの絵が出続け、窓・書き出し・
+    /// 読む画素が食い違わない。戻すのは、その投入が頭で戻していたら戻しの取り替え (1 回) も含めて 2 回で、
+    /// 塗り直した回は最後の段の 1 回だけである。1 回だけ戻す形は、塗り直した回でしか正しくない。
+    struct CarriedFlush {
+        /// 投入の番号。`0` は記帳が無い。
+        var submission: UInt64 = 0
+        /// この投入が、頭で控えを描く先へ戻した (面を取り替えた) か。
+        var restoredCarry = false
+        /// この投入の前に、控えを戻す印 (``Canvas/carriesPictureBeforeEffects``) が立っていたか。
+        var hadCarry = false
+    }
     /// 描く先が、最後に拡大した後に変わったか ([#1882])。**細かさを下げた面の出す先は、描く先を
     /// 拡大の段が広げて書いた絵**で、拡大が積まれるのはフレームの終わりの描き切りだけである。
     /// 途中の描き切り (フレームの中でも、止まっている間でも) はその後に描く先だけを変えるので、立って
@@ -918,6 +935,12 @@ public final class Canvas {
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     var effectRestoresExchanged = 0
+    /// 戻しの取り替えの後に、控えへ重ねた画素 (止まっている間に書いた分) を描く先へのパスが待つ仕掛けを
+    /// 積んだ数 (作ってから通算・[#2388])。**積む 1 行と同じ場所で数える。** 写していた頃は、戻しの blit が
+    /// 待っていた。取り替えは写さないので、待つ相手は控えへ書いた段 (描く先になる面への書き込み) である。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var effectRestoreBarriersEncoded = 0
     /// 積んだ待つ仕掛けの数。**積む 1 行と同じ場所で数える。**
     var effectBarriersEncoded = 0
     /// 検査から「途中で失敗した段」を作るための差し込み。製品の経路では常に `nil`。
@@ -4160,6 +4183,7 @@ public final class Canvas {
         // [#2388]: https://github.com/mokume-metal/mokume/issues/2388
         var exchanges = 0
         var submitted = false
+        let hadCarry = carriesPictureBeforeEffects
         defer {
             if !submitted, exchanges % 2 == 1 { exchangeTargetWithCarry() }
         }
@@ -4229,6 +4253,18 @@ public final class Canvas {
 
             guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
                 throw .encoderUnavailable
+            }
+            // **取り替えた後の描く先は、止まっている間に書いた画素を重ねた段 (控えへの書き込み) が書いた
+            // 面である** ([#2388])。写していた頃は、戻しの blit が重ね段の書き込みを待ち、続く段を待たせて
+            // いた。取り替えには待つ blit が無いので、描く先へのパス (前の内容を読む `.load`) が、重ね段の
+            // 書き込みが終わるのをここで待つ。待たなければ、書いた画素が次のフレームの入りから欠ける
+            //
+            // [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+            if restoresCarry && wroteBack {
+                encoder.barrier(
+                    afterQueueStages: [.fragment, .blit], beforeStages: [.vertex, .fragment],
+                    visibilityOptions: .device)
+                effectRestoreBarriersEncoded += 1
             }
 
             let prepared = try prepareBatches(shadow: bakedShadow, drawingInFrame: drawsInFrame)
@@ -4345,9 +4381,10 @@ public final class Canvas {
         if startsFrame { carriesPictureBeforeEffects = false }
         if assembled.carried {
             carriesPictureBeforeEffects = true
-            // 出す面へ書いた投入が打ち切られたら、出す面は書かれていない (初めてなら未定義) ので、面の取り替えを戻して印を下ろす
-            // (``carryDropped(_:)``・#2199)
-            carriedBy = assembled.submission
+            // 出す面へ書いた投入が打ち切られたら、出す面は書かれていない。投入の取り替えを戻し、印も投入の前に
+            // 戻す (``carryDropped(_:)``・#2199・#2388)
+            carriedFlush = CarriedFlush(
+                submission: assembled.submission, restoredCarry: restoresCarry, hadCarry: hadCarry)
             gpu.awaitSettlement(of: assembled.submission, by: self)
         }
 
@@ -5596,18 +5633,36 @@ extension Canvas: SettlementObserver {
     }
 
     /// 効果を通した絵を出す面へ書いた投入 `submission` が打ち切られた。**それが最後に書いた投入で、まだ
-    /// 控えを戻す印が立っていれば、面を取り替え直して印を下ろす** ([#2199]・[#2388])。出す面は書かれて
-    /// おらず (打ち切られた描画は 1 画素も書かない)、効果を通す前の絵は控えに残っている。取り替えたままだと、
-    /// 次のフレームの入りが書かれていない面になり、背景を塗らないスケッチでは以後ずっと持ち越す。取り替え
-    /// 直せば、次のフレームは効果を通す前の絵の上に描く — 打ち切られた回の絵と同じく、そのフレームの欠けは
-    /// 取り戻さない。
+    /// 控えを戻す印が立っていれば、その投入の取り替えをすべて戻し、印を投入の前に戻す** ([#2199]・[#2388])。
+    ///
+    /// 打ち切られた投入は 1 画素も書かないので、出す面は書かれておらず、頭の戻しの先も描かれていない。
+    /// **投入の前の姿に戻す** — 描く先は前のフレームの効果を通した絵、控えは効果を通す前の絵のまま (前の
+    /// フレームの絵が出続け、窓・書き出し・読む画素が食い違わない)。次のフレームはそこから戻して続けるので、
+    /// 打ち切られた回の絵と同じく、そのフレームの欠けは取り戻さない。
+    ///
+    /// - 塗り直した回 (最後の段の取り替えだけ): もう 1 回取り替えて戻す。印は投入の前の値に戻す
+    /// - 頭で戻した回 (戻しと最後の段の 2 回): 2 回の取り替えは面の割り当てを元に戻しているので、面は
+    ///   触らない。戻すだけの取り替えは GPU の書き込みに拠らないので、戻しだけを取り消す形は採らない
+    ///   (描く先が効果を通す前の絵になり、窓の絵と食い違う)。印は立てたまま
+    ///
+    /// 取り替えたままだと、次のフレームの入りが書かれていない面になり、背景を塗らないスケッチでは以後ずっと
+    /// 持ち越す。
+    ///
+    /// **結末が届くまでの間に読んだ側は、書かれていない出す面を読む。** 取り替えは組み立ての最中に済ませる
+    /// ので、打ち切りの知らせより前に present した窓・同じフレームに置いた面・出口は、書かれていない出す面を
+    /// 読んでしまう (前は、描く先を前の中身のまま読んでいた)。出す面の中身は、前に効果を通したフレームがあれば
+    /// 前のフレームの絵 (塗り直さない回は効果を通した絵、塗り直す回は効果を通す前の絵)、初めてなら透明な黒
+    /// (``EffectPipeline/carry(startingTransparent:)``・``Canvas/effects(_:)`` が塗って作る) で、未定義ではない。読まれた絵は、打ち切られた回の絵と同じく 1 フレームの欠けで、知らせが届けば
+    /// 上の取り消しが前の絵へ戻す。
     ///
     /// [#2199]: https://github.com/mokume-metal/mokume/issues/2199
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     func carryDropped(_ submission: UInt64) {
-        guard submission == carriedBy, carriesPictureBeforeEffects else { return }
-        carriesPictureBeforeEffects = false
-        exchangeTargetWithCarry()
+        guard submission == carriedFlush.submission, carriesPictureBeforeEffects else { return }
+        let flush = carriedFlush
+        carriedFlush = CarriedFlush()
+        if !flush.restoredCarry { exchangeTargetWithCarry() }
+        carriesPictureBeforeEffects = flush.hadCarry
         target.noteTextureReplaced()
     }
 }

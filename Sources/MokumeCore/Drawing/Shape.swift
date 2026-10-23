@@ -506,12 +506,61 @@ struct ByIdentityOrNone<Object: AnyObject>: Equatable {
 /// 比べるのは面の同一性だけである。同じ面なら持ち主も同じなので、畳めるかの判定
 /// (``Shape/Run/sameSettings(as:)``) は面だけを持っていた頃と変わらない。
 ///
+/// ## 描き場所の面は、読むたびに引く ([#2388])
+///
+/// 描き場所 (``RenderTarget``) の面は、効果を通すフレームで効果の控えと取り替わる
+/// (``Canvas/exchangeTargetWithCarry()``)。組んだ時点の面を値で持ち歩くと、取り替えた後は効果を通す前の
+/// 絵 (や書かれていない面) を読み、置いた時点の写しを取る判定 (``Canvas``・描き場所の面と `===` で比べる) からも
+/// 外れる。そこで持ち主が描き場所なら**描き場所そのものを持ち**、面は ``texture`` を読むたびに引く —
+/// 取り替わらなかった頃の「同じ描き場所なら同じ面」が、取り替えの後も成り立つ。面を持たないので、
+/// 取り替えの相手の面 (``RenderTarget/exchangePartner``) の寿命も、描き場所と一緒に抱えることになる。
+///
+/// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
 /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
 /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
 struct HeldTexture: Equatable {
-    let texture: any MTLTexture
+    /// 面の出どころ。**描き場所だけは、面を持たずに描き場所そのものを持つ** (``texture``)。
+    private enum Source {
+        /// 取り替わらない面 (画像・字形の頁・写し) と、その持ち主。
+        case fixed(texture: any MTLTexture, owner: AnyObject)
+        /// 描き場所。面は読むたびに引く。
+        case rendered(RenderTarget)
+    }
+
+    private let source: Source
+
+    /// 面と、その面を常駐させている持ち主の組を作る。持ち主が描き場所 (``RenderTarget``) なら、
+    /// 渡した面は使わず、描き場所のいまの面を読む組になる (``texture``)。
+    init(texture: any MTLTexture, owner: AnyObject) {
+        if let target = owner as? RenderTarget {
+            source = .rendered(target)
+        } else {
+            source = .fixed(texture: texture, owner: owner)
+        }
+    }
+
     /// 死ぬと面を常駐から退かせるもの。この組が生きている間は死なない。
-    let owner: AnyObject
+    var owner: AnyObject {
+        switch source {
+        case .fixed(_, let owner): owner
+        case .rendered(let target): target
+        }
+    }
+
+    /// 読む面。**持ち主が描き場所なら、読む時点の描き場所の面** ([#2388])。
+    ///
+    /// 描き場所の面は、効果を通すフレームで効果の控えと取り替わる (``Canvas/exchangeTargetWithCarry()``)
+    /// ので、組んだ時点の面を持ち歩くと、取り替えた後に効果を通す前の絵 (や、書かれていない面) を読む。
+    /// 描き場所は「いまの絵」を読ませる約束なので、**読むたびに引く** — 保持した形も、断片へ渡した面も、
+    /// 置いた時点の写しを取る判定 (``Canvas``) も、同じ面を見る。画像・字形の頁・写しの面は取り替わらない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var texture: any MTLTexture {
+        switch source {
+        case .fixed(let texture, _): texture
+        case .rendered(let target): target.texture
+        }
+    }
 
     /// 引数表へ束ねる番地。
     var gpuResourceID: MTLResourceID { texture.gpuResourceID }
