@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -54,19 +55,32 @@ struct FixedFunctionBlendTests {
     func eachBlendKindHasItsOwnPipeline() throws {
         let gpu = try RenderDevice()
         let pipeline = try ShapePipeline(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
-        let groups =
-            [pipeline.states, pipeline.solidStates]
-            + ShapePipeline.formFlagCombinations.map { pipeline.formStates(for: $0) }
-        for states in groups {
-            let blend = states.state(for: .blend)
-            let replace = states.state(for: .replace)
-            let multiply = states.state(for: .multiply)
+        func check(
+            blend: any MTLRenderPipelineState, replace: any MTLRenderPipelineState,
+            multiply: any MTLRenderPipelineState, screen: any MTLRenderPipelineState,
+            add: any MTLRenderPipelineState
+        ) {
             #expect(blend !== multiply, "重ねる列が下地を読む列と同じパイプラインになっている")
             #expect(replace !== multiply, "置き換える列が下地を読む列と同じパイプラインになっている")
             #expect(blend !== replace, "重ねる列と置き換える列が同じパイプラインになっている")
             // 固定機能で表せない混ぜ方は 1 本を共有する (下地を読んで断片が混ぜる)
-            #expect(multiply === states.state(for: .screen))
-            #expect(multiply === states.state(for: .add))
+            #expect(multiply === screen)
+            #expect(multiply === add)
+        }
+        for states in [pipeline.states, pipeline.solidStates] {
+            check(
+                blend: states.state(for: .blend), replace: states.state(for: .replace),
+                multiply: states.state(for: .multiply), screen: states.state(for: .screen),
+                add: states.state(for: .add))
+        }
+        // 基本図形は使うときに 1 本ずつ組む (#3114)。旗の組ごとに同じ 3 通りを引く
+        for flags in ShapePipeline.formFlagCombinations {
+            check(
+                blend: try pipeline.formState(for: flags, mode: .blend),
+                replace: try pipeline.formState(for: flags, mode: .replace),
+                multiply: try pipeline.formState(for: flags, mode: .multiply),
+                screen: try pipeline.formState(for: flags, mode: .screen),
+                add: try pipeline.formState(for: flags, mode: .add))
         }
     }
 
