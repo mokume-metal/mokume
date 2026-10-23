@@ -394,7 +394,11 @@ struct UDPPortTests {
         var received = await collect(receiver, count: 1, log: log)
         sender.send("")
         received += await collect(receiver, count: 1, log: log)
-        #expect(await until { source.tally.ended >= 1 })
+        try await requireWait(
+            "受け口が流れの終わりを数えなかった", detail: { "終わりの数: \(source.tally.ended)" }
+        ) {
+            source.tally.ended >= 1
+        }
         sender.send("y")
         received += await collect(receiver, count: 1, log: log)
         try await requireReceived(
@@ -403,6 +407,75 @@ struct UDPPortTests {
         // 受け手の流れが閉じたことだけを、1 度言う (#2363)。送り手は何も言わない
         #expect(told.lines.count == 1)
         #expect(told.lines.first?.contains("empty datagram") == true)
+    }
+
+    @Test("外して足し直した (close の後に open が来る) UDP の入り口は、また送れる。外し直せばまた 1 度だけ知らせて送らない (#3122)")
+    func reopenedPortSendsAgain() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: [["a"]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try udp.open()
+        udp.send("before")
+        udp.supply()
+        #expect(udp.messages == ["a"])
+
+        udp.close()
+        #expect(udp.state == .stopped)
+        udp.send("while closed 1")
+        udp.send("while closed 2")
+        #expect(recording.sent == [Array("before".utf8)])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try udp.open()
+        #expect(udp.state == .running)
+        udp.send("after")
+        udp.supply()
+        #expect(udp.messages == ["a"])
+        #expect(recording.sent == [Array("before".utf8), Array("after".utf8)])
+
+        udp.close()
+        udp.send("again")
+        #expect(recording.sent.count == 2)
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
+    @Test("外して足し直した UDP の入り口は、外す前に溜まっていた文字列を出さない (#3122)")
+    func reopenedPortDoesNotDeliverWhatWaitedBeforeClose() throws {
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: [[]]),
+            outbound: nil, owner: nil)
+        try udp.open()
+        udp.input.send("stale")
+        udp.close()
+
+        try udp.open()
+        udp.supply()
+        #expect(udp.messages.isEmpty, "外す前に溜まっていた分は、足し直した最初のフレームに出ない")
+
+        udp.input.send("fresh")
+        udp.supply()
+        #expect(udp.messages == ["fresh"])
+    }
+
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: [["a"]]),
+            outbound: recording, owner: nil)
+        try udp.open()
+        udp.stop()
+        #expect(udp.state == .running, "外で呼んだ stop() は何も止めない")
+
+        udp.close()
+        try udp.open()
+        udp.supply()
+        udp.send("back")
+        #expect(udp.state == .running)
+        #expect(udp.messages == ["a"])
+        #expect(recording.sent == [Array("back".utf8)])
     }
 
     @Test("UTF-8 で 9216 バイト以上の文字列は送り手に渡さず、大きさと上限を 1 度だけ知らせる")

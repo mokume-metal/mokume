@@ -215,6 +215,25 @@ struct Facets {
         """
     }
 
+    /// 応答は自分のものだったが、絵を写している間に別の書き手の撮り始めが応答を消した (または別の
+    /// 識別子に書き換えた) ときの答え ([#2992](https://github.com/mokume-metal/mokume/issues/2992))。
+    ///
+    /// **写した絵は渡さない。** 掃除は応答を先に消すので、写し終えた後に応答が自分のものでなければ、
+    /// 写している間に別の書き手の撮影が始まっていて、写した絵に別の書き手のものが混ざらないとは
+    /// 言えない。待っている間の取り合い (``contested(_:repeatable:)``) とは違い、自分の応答は一度
+    /// 返っている — 撮り直しの手の案内は同じ (``nextMove``)。
+    func contestedWhileCopying(_ entry: StartupReads.Entry, repeatable: Bool) -> String {
+        """
+        Another writer started its own request in this facet while the picture was being copied out, so \
+        the copy cannot be trusted as this request's picture and none is returned.
+
+        The facet keeps one request and one report, and the next request clears the report and rewrites \
+        the pictures under the same names. The sketch itself is running and answering.
+
+        \(Self.nextMove(entry, repeatable: repeatable))
+        """
+    }
+
     /// 期限まで待っても応答が返らず、その間に別の書き手が要求を置き換えていたときの答え。
     ///
     /// **走っていないとは言わない** — 置き換えた要求が長い列の観測なら、スケッチは走って撮っている。

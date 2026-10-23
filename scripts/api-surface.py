@@ -335,6 +335,16 @@ def check_onoff(symbols: list[dict]) -> list[str]:
     return problems
 
 
+# 転送の対称性から外してよい上の層の口と、その理由 (ADR-0020 決定 1)。
+#
+# 作法は FOREIGN_ALLOWLIST と同じ — **対象と理由を組で書く**。同じ基底名を下の層が持つのに引数ラベルが
+# 違う口は、上で書けたコードが下で書けない食い違いに見える。ここへ載せられるのは、同じ名前を下の層に
+# 持たせる代わりに**意味が違う別の口**である場合に限る。
+FORWARDING_ALLOWLIST = {
+    "draw(into:_:)": "Canvas.draw(_:) は描き場所のフレームを開くだけで、中の素の呼び出しは本体へ行く。draw(into:) は同じフレームを開いたうえで、スケッチの口を描き場所へ向ける別の口 (ADR-0023 決定 1・#2454)。同じ名前・同じラベルにすると、中の素の呼び出しの向き先が層で割れる",
+}
+
+
 def check_forwarding(symbols: list[dict], requirements: set[str]) -> list[str]:
     """ADR-0020 決定 1: 下の層が上の層の転送先なら、同じ名前・同じ引数ラベルを保つ。
 
@@ -354,7 +364,7 @@ def check_forwarding(symbols: list[dict], requirements: set[str]) -> list[str]:
     problems = []
     for name in sorted(entry):
         base = name.split("(")[0]
-        if base not in lower_bases or name in lower:
+        if base not in lower_bases or name in lower or name in FORWARDING_ALLOWLIST:
             continue
         problems.append(
             f"{ENTRY_TYPE}.{name} と {LOWER_TYPE}.{sorted(lower_bases[base])[0]} で"

@@ -576,7 +576,7 @@ extension SketchPart {
         // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
         // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
         guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
-        return runtime.canvas
+        return runtime.activeCanvas
     }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
@@ -604,8 +604,13 @@ extension SketchPart {
     /// `true` になるのは ``SketchSettings/upscale`` に ``Upscale/temporal`` を
     /// 選び、かつ実際に拡大が立っているときだけである。
     ///
+    /// ``draw(into:_:)`` の閉包の中でも、答えは本体の面のもの。スケッチの設定で決まる値で、描き場所は
+    /// 拡大を立てないので、向き先を読むと閉包の中と外で答えが割れる。
+    ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public var usesFrameHistory: Bool { Self.liveCanvas(.read(returning: "false"))?.usesFrameHistory ?? false }
+    public var usesFrameHistory: Bool {
+        Self.liveRuntime(.read(returning: "false"))?.canvas.usesFrameHistory ?? false
+    }
 
     /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
     public var frameCount: Int { Self.liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }
@@ -620,6 +625,23 @@ extension SketchPart {
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
     /// 実時間の時計で複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
     /// 状態ではない。
+    ///
+    /// **窓に出している間の実時間の時計では、その枚が表示される予定の時刻である**
+    /// ([#2390](https://github.com/mokume-metal/mokume/issues/2390))。``Sketch/draw()`` が走った時刻ではない。
+    /// main が他の仕事 (イベント・タイマー) で数ミリ秒遅れても、時刻は表示の刻みの間隔のまま進み、
+    /// 表示が刻みを飛ばしたときは飛んだ枚数ぶん進んで、表示の時刻と合ったままになる。
+    /// 最初の枚が 0 で、その起点は ``Sketch/setup()`` の後である。
+    ///
+    /// - **表示の時刻と合うのは、その刻みに間に合った枚だけ** — 描き終えて差し出せた枚である。
+    ///   遅れた枚は後の刻みで表示されるが、時刻は予定のままである
+    /// - **共有面 (`mokume watch` のプレビュー) では、スケッチ側の刻みの予定の時刻である。** 揺れは窓と同じく
+    ///   取れるが、道具の窓に出る時刻とは 1〜2 刻みずれうる (絵はスケッチ側の刻みで焼き、公開は次の刻みで、
+    ///   出すのは道具の側の画面の刻みである)
+    /// - **現在時刻で進む回がある。** 表示のリフレッシュが止まって予備のタイマーが進めた回と、名乗りの
+    ///   メニューが開いている間にプレビューを動かす回である。どちらの回でも時刻は前の枚より小さくならず、
+    ///   予定の時刻が現在時刻より先にある間の切り替わりでは経過が 0 の枚が出うる
+    /// - **窓の数字 (fps・1 枚の ms) と観測の応答の `frameRate`・`frameTimeMs` は、描いた時刻 (コールバックの
+    ///   時点) で数える。** 予定の時刻の列で数えると main の遅れが見えなくなるので、時刻の軸とは揃えない
     ///
     /// 窓でもフレームの時計を選べる (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``)。
     /// そのときと書き出し (`mokume render`) では `(frameCount − 1) / fps` で、重いフレームでも 1 枚に
@@ -692,6 +714,11 @@ extension SketchPart {
     /// にした窓) では、**常にちょうど 1 / fps 秒**である。重いフレームの後でも変わらない。
     ///
     /// 以下は、窓の既定の**実時間の時計** (``Clock/wallClock``) の話である。
+    ///
+    /// **窓に出している間は、経過は表示の刻みの間隔である** ([#2390](https://github.com/mokume-metal/mokume/issues/2390))。
+    /// ``Sketch/draw()`` が走った時刻の差ではなく、その枚が表示される予定の時刻 (``time`` と同じ時刻) の差なので、
+    /// main が他の仕事で遅れても揺れない。60 Hz なら、ふだんは 1/60 秒に揃い、表示が刻みを飛ばしたときだけ
+    /// 飛んだ枚数ぶん跳ぶ。共有面・現在時刻で進む回・間に合わなかった枚の扱いは ``time`` にある。
     ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
     /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
@@ -771,7 +798,7 @@ extension SketchPart {
     /// 走っている実行の面。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
     @MainActor
     static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
-        liveRuntime(use, call)?.canvas
+        liveRuntime(use, call)?.activeCanvas
     }
 
     /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ

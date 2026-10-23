@@ -40,13 +40,21 @@
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 public protocol Inlet: AnyObject {
-    /// 一度だけ呼ばれる。**ここは投げてよい** (その束だけ外れる)。
+    /// 足されたときに呼ばれる。**ここは投げてよい** (その束だけ外れる)。
+    ///
+    /// **外された入り口が足し直されると、``close()`` の後にもう 1 度呼ばれる。** ``SketchPart/detach(_:)-(Inlet)`` で
+    /// 外した入り口は ``SketchPart/attach(_:)-(Inlet)`` で足し直せるので、入り口は ``close()`` を最後と思い込まず、
+    /// ここで自分を使える状態へ戻す (``close()`` で立てた印を下ろす・止めた出どころを開き直す)。居る入り口を
+    /// 重ねて足しても呼ばれない (開いているものは開き直さない)。
     func open() throws
 
     /// フレームごとに、`draw()` の直前に呼ばれる。**投げない。**
     func supply()
 
-    /// 終わるときに一度だけ呼ばれる。**投げない。**
+    /// 外されるとき (``SketchPart/detach(_:)-(Inlet)``) と、スケッチが終わるときに呼ばれる。**投げない。**
+    ///
+    /// 外された後に足し直されれば、``open()`` がもう 1 度来る。持ち主から手放すものは、足し直しで要る分を
+    /// 残すか、``open()`` で用意し直す。
     func close()
 
     /// 直近の ``supply()`` で転んだ理由。順調なら `nil`。
