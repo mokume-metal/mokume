@@ -260,7 +260,7 @@ public final class OSCPort: Inlet {
     // MARK: - 送る
 
     func send(_ message: OSCMessage) {
-        guard !closed, !stoppedByUser else {
+        guard !closed else {
             tellOnce("stopped", "This OSC port is stopped, so \(message.address) was not sent")
             return
         }

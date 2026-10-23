@@ -181,7 +181,7 @@ public class TextPort: Inlet {
     /// 繋いでいる相手全員へ配る。止めた後・記録した列・相手が 0 人なら、理由ごとに 1 度だけ
     /// 知らせて何もしない。`kind` は文面の名乗り (`TCP server` など)、`verb` は `written` か `sent`。
     func deliver(_ text: String, by kind: String, verb: String) {
-        guard !closed, !stoppedByUser else {
+        guard !closed else {
             tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
             return
         }
@@ -208,7 +208,7 @@ public class TextPort: Inlet {
     /// 1 度だけ知らせて何もしない。`kind` は文面の名乗り (`TCP client` など)、`target` は繋ぎ先の綴り、
     /// `verb` は `written` か `sent`。
     func sendToServer(_ text: String, by kind: String, target: String, verb: String) {
-        guard !closed, !stoppedByUser else {
+        guard !closed else {
             tellOnce("stopped", "This \(kind) is stopped, so \(Self.preview(text)) was not \(verb)")
             return
         }
