@@ -518,7 +518,9 @@ struct PixelGridTests {
         @MainActor func draw(on canvas: Canvas) {
             let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
             if let arc {
-                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y))
+                // 扇の周の帯 (中心の角・2 本の半径・穴) を見る形。閉じ方を渡さない既定は開いた弧の帯で、
+                // こうした部分を持たない (弦で結んだ形と開いた弧は `ArcClosureShapeTests` が見る・#2428)
+                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y), .pie)
             } else if isEllipse {
                 canvas.ellipse(0, 0, size.x, size.y)
             } else {

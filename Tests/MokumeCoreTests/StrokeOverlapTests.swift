@@ -322,12 +322,19 @@ struct StrokeOverlapTests {
         }
         #expect(overpainted(ellipse).count <= 5, "ellipse: \(overpainted(ellipse).count)")
         #expect(painted(ellipse) == 2747)
-        let arc = try translucent(shaded: true) { canvas in
-            canvas.strokeWeight(20)
-            canvas.arc(80, 80, 100, 6, 0, Float.pi)
+        // 扇の周 (`.pie`・起票時の値) と、引数なしの既定 (輪郭は開いた弧の帯・#2428) の両方
+        for (mode, count) in [(ArcMode.pie, 2572), (nil, 2308)] as [(ArcMode?, Int)] {
+            let arc = try translucent(shaded: true) { canvas in
+                canvas.strokeWeight(20)
+                if let mode {
+                    canvas.arc(80, 80, 100, 6, 0, Float.pi, mode)
+                } else {
+                    canvas.arc(80, 80, 100, 6, 0, Float.pi)
+                }
+            }
+            #expect(overpainted(arc).count <= 5, "arc \(String(describing: mode)): \(overpainted(arc).count)")
+            #expect(painted(arc) == count, "arc \(String(describing: mode)): \(painted(arc))")
         }
-        #expect(overpainted(arc).count <= 5, "arc: \(overpainted(arc).count)")
-        #expect(painted(arc) == 2572)
     }
 
     // MARK: - 反証で足した口
