@@ -323,9 +323,9 @@ struct MovieTests {
             })
         #expect(phase == 2, "読めなくなるところまで進まなかった")
         #expect(afterReattach.count >= 10)
-        // 読めない所へ進めば、読みに行って disconnected になる。外す前の「まだ試さない」を持ち越すと、
-        // 読みに行かず、絵が止まったまま動いていると名乗り続ける
-        #expect(afterReattach.contains(.disconnected), "\(afterReattach)")
+        // 足し直した直後に読みに行き、読めない所で disconnected になる。外す前の「まだ試さない」を持ち越すと、
+        // 約 1 秒ぶんの間、読みに行かずに絵が止まったまま動いていると名乗る
+        #expect(afterReattach.prefix(5).contains(.disconnected), "\(afterReattach)")
         runtime.closePlugins()
     }
 
