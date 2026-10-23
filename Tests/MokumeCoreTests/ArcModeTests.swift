@@ -342,6 +342,22 @@ struct ArcModeTests {
 
     // MARK: - 保持した形
 
+    /// 反証 3: 保持した円弧は、どの閉じ方でも置き場所 1 つで、頂点も輪郭の区間も持たない (`createShape` の
+    /// 区間が三角形に割れていない)。置くときの費用が閉じ方によらず同じになる。
+    @Test("保持した円弧は、どの閉じ方も基本図形 1 つで、頂点も輪郭の区間も持たない", arguments: [nil, .open, .chord, .pie] as [ArcMode?])
+    func retainedArcIsOneForm(_ mode: ArcMode?) throws {
+        let canvas = try makeCanvas()
+        let shape = canvas.createShape {
+            canvas.fill(white)
+            canvas.stroke(white)
+            canvas.strokeWeight(3)
+            if let mode { canvas.arc(0, 0, 40, 40, 0.3, 3.5, mode) } else { canvas.arc(0, 0, 40, 40, 0.3, 3.5) }
+        }
+        #expect(shape.forms.count == 1)
+        #expect(shape.vertices.isEmpty)
+        #expect(shape.strokeRanges.isEmpty)
+    }
+
     /// 完了条件 (残り 5)。`createShape` の中の円弧は、閉じ方ごとの周 (``Canvas/Outline/Ring/Piece``) を
     /// 記録して、置くときの拡大で刻み直す。拡大して置いた絵が、拡大せずに直に描いた絵と同じになる。
     /// 刻み直しが閉じ方を落とすと、扇や弦の形が別の閉じ方の形で出る。

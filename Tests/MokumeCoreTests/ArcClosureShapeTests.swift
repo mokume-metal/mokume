@@ -40,12 +40,20 @@ struct ArcClosureShapeTests {
             Arc(name: "楕円・大きい弧", radii: SIMD2(34, 18), start: 4.0, sweep: 3.9),
         ]
 
-        /// 弓形の角 (弧と弦が出会う角) が 60° 未満で尖っているのに、細い輪郭 (太さ 2) の穴は 1 画素より太い弧。
-        /// 角の先の画素を標本で数える枝 (`mokume_chordApex`・扇は `mokume_sectorApex`) の対象。
-        static let sharpCornered = [
-            Arc(name: "円・尖った弓形", radii: SIMD2(34, 34), start: 0.4, sweep: 1.9),
-            Arc(name: "楕円・尖った弓形", radii: SIMD2(34, 24), start: 3.6, sweep: 1.8),
+        /// 角が 60° 未満で尖っているのに、既定の太さ (1) の輪郭の穴は 1 画素より十分に太い弧 (穴の半径が画素の 3 つ分
+        /// 以上)。尖りの先の画素を標本で数える枝 (弦で結んだ形は `mokume_chordApex`・扇は `mokume_sectorApex`) の対象。
+        /// 弓形の角は掃引の半分、扇の中心の角は掃引そのもの。
+        static let sharpCornered: [(Arc, Style)] = [
+            (Arc(name: "円・尖った弓形", radii: SIMD2(100, 100), start: 0.4, sweep: 1.0), Style(mode: .chord, cap: .round)),
+            (Arc(name: "楕円・尖った弓形", radii: SIMD2(100, 70), start: 3.6, sweep: 0.9), Style(mode: .chord, cap: .round)),
+            (Arc(name: "円・尖った扇", radii: SIMD2(100, 100), start: 0.4, sweep: 0.5), Style(mode: .pie, cap: .round)),
         ]
+    }
+
+    nonisolated struct SharpCase: CustomTestStringConvertible, Sendable {
+        let arc: Arc
+        let style: Style
+        var testDescription: String { "\(arc.name)・\(style)" }
     }
 
     /// 閉じ方と端の形の組。端の形は開いた弧の帯 (`standard`・`open`) にしか効かない。
@@ -211,10 +219,10 @@ struct ArcClosureShapeTests {
     /// 描いた絵と定義の食い違い。絵が 0 でも 1 でもない画素と、定義が 0 でも 1 でもない画素だけを数える
     /// (中身の画素は食い違えば最悪値に出る)。
     private func measure(
-        _ spec: Arc, style: Style, weight: Float, stroke: Bool
+        _ spec: Arc, style: Style, weight: Float, stroke: Bool, size: Int = 96
     ) throws -> Measured {
-        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 96, height: 96)
-        let placed = SIMD2<Float>(48.37, 47.61)
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
+        let placed = SIMD2<Float>(Float(size) / 2 + 0.37, Float(size) / 2 - 0.39)
         try canvas.draw {
             canvas.background(black)
             canvas.translate(placed.x, placed.y)
@@ -246,8 +254,8 @@ struct ArcClosureShapeTests {
         let reach = max(spec.radii.x, spec.radii.y) + Double(weight) + 2
         let low = SIMD2(Int(Double(placed.x) - reach), Int(Double(placed.y) - reach))
         let high = SIMD2(Int(Double(placed.x) + reach) + 1, Int(Double(placed.y) + reach) + 1)
-        for y in max(low.y, 0)..<min(high.y, 96) {
-            for x in max(low.x, 0)..<min(high.x, 96) {
+        for y in max(low.y, 0)..<min(high.y, size) {
+            for x in max(low.x, 0)..<min(high.x, size) {
                 let drawn = Double(pixels[x, y].red)
                 // 定義は標本の数えなので、まず絵が 0 / 1 の画素は軽く済ませる
                 let expected = reference.coverage(x: x, y: y, stroke: stroke)
@@ -280,11 +288,12 @@ struct ArcClosureShapeTests {
 
     @Test(
         "角が尖った弓形・扇の輪郭は、穴が太くても、角の先まで真の幾何と画素の被覆が合う",
-        arguments: Arc.sharpCornered, [Style(mode: .chord, cap: .round), Style(mode: .pie, cap: .round)])
-    func sharpCornerStrokeMatchesTheGeometry(_ spec: Arc, _ style: Style) throws {
-        let measured = try measure(spec, style: style, weight: 2, stroke: true)
+        arguments: Arc.sharpCornered.map { SharpCase(arc: $0.0, style: $0.1) })
+    func sharpCornerStrokeMatchesTheGeometry(_ sharp: SharpCase) throws {
+        let (spec, style) = (sharp.arc, sharp.style)
+        let measured = try measure(spec, style: style, weight: 1, stroke: true, size: 240)
         #expect(
-            measured.worst < 0.4,
+            measured.worst < 0.15,
             "\(spec) \(style): 最悪 \(measured.worst) \(measured.worstAt) 縁の二乗平均 \(measured.rootMeanSquare)")
         #expect(
             measured.rootMeanSquare < 0.06,

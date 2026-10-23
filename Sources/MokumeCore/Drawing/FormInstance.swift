@@ -383,9 +383,10 @@ struct FormInstance {
         let half = SIMD2(size.x, size.y)
         // 開いた弧の帯は閉じた周が無いので穴を持たない ([#2428])。帯そのものが描く画素で 1 画素より細いかを
         // 見る (線の細い枝と同じ。断片は画素ごとに、距離場の勾配の向きの幅で決める)
-        let hasHole = strokes && !(isArc && arcClosure.strokesOpenArc)
+        let isOpenBand = strokes && isArc && arcClosure.strokesOpenArc
+        let hasHole = strokes && !isOpenBand
         var hole = SIMD2<Float>(1, 1)
-        if strokes && !hasHole { if mayHaveThinBand(unitsPerDrawnPixel: unitsPerDrawnPixel) { return true } }
+        if isOpenBand, mayHaveThinBand(unitsPerDrawnPixel: unitsPerDrawnPixel) { return true }
         if hasHole {
             hole = holeHalfSize()
             // 潰れた穴は描く画素によらず細い
