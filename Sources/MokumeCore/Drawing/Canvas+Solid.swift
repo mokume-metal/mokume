@@ -1279,3 +1279,23 @@ struct StrokeCamera {
         return SIMD2(normal.x / size, normal.y / size)
     }
 }
+
+extension Canvas {
+    /// この立体の列を、光の枝を外した断片で描いてよいか ([#1795])。
+    ///
+    /// **断片が光の枝に入る条件の否定そのもの** (`mokume_shapeColor`): 光が 1 つも効かず
+    /// (`lighting.count == 0`)、周囲を置かず、列が周囲そのものを出す背景でもない。値は列を閉じた
+    /// 時点のもので、列ごとに渡る値と同じなので、枝は必ず偽になる — 外しても画素は変わらない。
+    ///
+    /// 対象は組み込みの塗りだけである。**利用者の断片の列は、利用者の `shader()` を載せた
+    /// パイプラインで描く** (``Shader``) ので外す。GPU で広げる立体の輪郭 (``Batch/strokeGeometry``) は
+    /// 元から枝を外した組で描く。細い線を広げた頂点を持つ列も、これまでの選び方に任せる。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    func drawsUnlitSolid(_ batch: Batch) -> Bool {
+        specializesUnlitSolids && batch.source == .solid && batch.strokeGeometry == nil
+            && batch.run.paint.shader == nil && !batch.thinCoverage && batch.lightRange.isEmpty
+            && !(batch.surroundings.topAndPresence.w > 0.5)
+            && !(batch.surroundings.horizonAndBackdrop.w > 0.5)
+    }
+}

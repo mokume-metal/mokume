@@ -207,6 +207,9 @@ public final class Canvas {
     /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:cache:stroke:)``)。控えが
     /// 効いていれば、同じ大きさで置き続けても増えない。
     var thinStrokesRebuilt = 0
+    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くか (``drawsUnlitSolid(_:)``・#1795)。
+    /// 検査が偽にして、枝を残した断片との画素の一致を比べる。製品では常に真。
+    var specializesUnlitSolids = true
     /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
     /// ``Batch/thinCoverage`` へ移して下ろす。
     var openBatchHasThinCoverage = false
@@ -4493,6 +4496,9 @@ public final class Canvas {
         // フレームの頭が延びるが、同じ組は 2 度と組まない
         try pipeline.prepareForms(
             batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
+        // 光も周囲も置かない立体の塗りの組も同じ (#1795)。光を置くスケッチは 1 本も組まない
+        try pipeline.prepareUnlitSolids(
+            batches.lazy.filter { self.drawsUnlitSolid($0) }.map { ($0.usesUnitShape, $0.run.mode) })
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
@@ -4576,14 +4582,21 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
             case .solid:
-                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う
-                use(
-                    (batch.strokeGeometry != nil
-                        ? pipeline.solidStrokeStates
-                        : batch.usesUnitShape
-                            ? (run.paint.shader?.unitShapeStates ?? pipeline.unitShapeStates)
-                            : (run.paint.shader?.solidStates ?? pipeline.solidStates))
-                        .drawing(batch))
+                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは、
+                // 光の枝を外した断片で描く (#1795)
+                if drawsUnlitSolid(batch) {
+                    use(
+                        pipeline.builtUnlitSolidState(
+                            isUnitShape: batch.usesUnitShape, mode: batch.run.mode))
+                } else {
+                    use(
+                        (batch.strokeGeometry != nil
+                            ? pipeline.solidStrokeStates
+                            : batch.usesUnitShape
+                                ? (run.paint.shader?.unitShapeStates ?? pipeline.unitShapeStates)
+                                : (run.paint.shader?.solidStates ?? pipeline.solidStates))
+                            .drawing(batch))
+                }
                 use(
                     depth: batch.replacesSurface
                         ? pipeline.replaceDepthState : pipeline.solidDepthState)
