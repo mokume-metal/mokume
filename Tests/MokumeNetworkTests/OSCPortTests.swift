@@ -442,6 +442,44 @@ struct OSCPortTests {
         #expect(osc.messages.isEmpty)
     }
 
+    @Test("外して足し直した (close の後に open が来る) 入り口は、受け取りも送信も戻る。外し直せばまた 1 度だけ知らせて送らない (#3122)")
+    func reopenedPortSendsAgain() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000",
+            source: RecordedSource<OSCMessage>(batches: [[OSCMessage("/a", 1)]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try osc.open()
+        osc.send("/before", 1)
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+
+        osc.close()
+        #expect(osc.state == .stopped)
+        osc.send("/while-closed", 1)
+        osc.send("/while-closed", 2)
+        #expect(recording.sent == [try OSCCodec.encode(OSCMessage("/before", 1))])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try osc.open()
+        #expect(osc.state == .running)
+        osc.send("/after", 2)
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+        #expect(
+            recording.sent == [
+                try OSCCodec.encode(OSCMessage("/before", 1)), try OSCCodec.encode(OSCMessage("/after", 2)),
+            ])
+        #expect(told.count(containing: "is stopped") == 1, "足し直した後に送れたので、新しい知らせは出ない")
+
+        // 外し直せば、また送らず、また 1 度だけ知らせる
+        osc.close()
+        osc.send("/again", 3)
+        #expect(recording.sent.count == 2)
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
     @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
     func injectedMessagesGiveTheSameOutcome() async throws {
         let told = Told()

@@ -57,7 +57,7 @@ import MokumeDiagnostics
 /// | ``SourceState/unavailable`` | 開く途中か、他のアプリがそのポートを使っている。空けば受け始める |
 /// | ``SourceState/denied`` | macOS がローカルネットワークを拒んでいる |
 /// | ``SourceState/disconnected`` | 受けていたが、失敗した。開き直し続ける (クライアントは、繋がっていたのが切れた。繋ぎ直し続ける) |
-/// | ``SourceState/stopped`` | ``stop()`` した |
+/// | ``SourceState/stopped`` | ``stop()`` した (外した)。足し直せば受け始める |
 ///
 /// 使用中・拒まれた・失敗したときは、1 度だけ診断に出す。
 ///
@@ -102,7 +102,7 @@ public class TextPort: Inlet {
     private let warn: (String) -> Void
     /// 知らせた送れない理由。同じものは 2 度言わない。
     private var told: Set<String> = []
-    /// ``stop()`` した (閉じた) か。
+    /// ``stop()`` した・外された (閉じた) か。足し直す (``open()``) と戻る。
     private(set) var closed = false
 
     init(
@@ -123,7 +123,11 @@ public class TextPort: Inlet {
     /// 最後に文字列が届いたフレーム。まだ 1 つも届いていなければ `nil`。
     public var lastArrival: Arrival? { input.lastArrival }
 
-    /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
+    /// 止める。ポートを閉じ、**足し直さない限り**、以後 ``messages`` は空のままで、送っても何も出ない。
+    ///
+    /// ``SketchPart/detach(_:)-(Inlet)`` と同じ外し方で、ランタイムが外すとき (``SketchPart/detach(_:)-(Inlet)``・
+    /// 走っている実行の終わり) に呼ぶ ``Inlet/close()`` に着く。**外しただけなら、``SketchPart/attach(_:)-(Inlet)`` で
+    /// 足し直せる。** 足し直せばまた受け始め、送れ、``state`` も戻る。実行が終わったものは足し直す先が無い。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
     /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`TCPServer.stop()` のように型を付けた名前で 1 度だけ警告する。
@@ -134,6 +138,10 @@ public class TextPort: Inlet {
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外していた間に立てた印と、「止まっている」と
+        // 知らせた記憶を戻す。受け口・繋ぎは ``source`` が開き直す
+        closed = false
+        forget("stopped")
         source.start(into: input)
     }
 

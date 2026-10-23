@@ -405,6 +405,38 @@ struct UDPPortTests {
         #expect(told.lines.first?.contains("empty datagram") == true)
     }
 
+    @Test("外して足し直した (close の後に open が来る) UDP の入り口は、また送れる。外し直せばまた 1 度だけ知らせて送らない (#3122)")
+    func reopenedPortSendsAgain() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let udp = UDPPort(
+            port: 6000, name: "udp :6000", source: RecordedSource<String>(batches: [["a"]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try udp.open()
+        udp.send("before")
+        udp.supply()
+        #expect(udp.messages == ["a"])
+
+        udp.close()
+        #expect(udp.state == .stopped)
+        udp.send("while closed 1")
+        udp.send("while closed 2")
+        #expect(recording.sent == [Array("before".utf8)])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try udp.open()
+        #expect(udp.state == .running)
+        udp.send("after")
+        udp.supply()
+        #expect(udp.messages == ["a"])
+        #expect(recording.sent == [Array("before".utf8), Array("after".utf8)])
+
+        udp.close()
+        udp.send("again")
+        #expect(recording.sent.count == 2)
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
     @Test("UTF-8 で 9216 バイト以上の文字列は送り手に渡さず、大きさと上限を 1 度だけ知らせる")
     func oversizedSendIsRefusedOnce() throws {
         let told = Told()
