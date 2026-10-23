@@ -21,17 +21,24 @@
 #   エージェント  MOKUME_AGENT_NAME (+ MOKUME_AGENT_URL) > Claude Code の env > Codex の痕跡 >
 #                 AI_AGENT の道具名 (他の道具も立てる慣習の変数)。どれも無ければ「分からない」
 #   モデル        MOKUME_AGENT_MODEL (カンマ区切りで複数) > Claude Code のセッションの記録に
-#                 残る assistant の model (主の記録が先、サブエージェントの記録が後)
+#                 残る assistant の model。**名乗るのはこの文を書いたモデルではなく、このセッションで
+#                 使ったモデル**である (どの文をどのモデルが書いたかは記録から決められない)。
+#                 先頭は主の記録の最新のモデル (/model で切り替えた後のもの)、続いて主の記録の残り、
+#                 サブエージェントの記録にだけ現れるモデルの順
 #   併記          --with に渡した名乗り (複数可)。連携は実行環境からは見えないので明示する
 
-# 署名の検知キー。リンク先や絵文字・モデルの名乗りが変わっても効き続けるよう、固定の語で見る。
-# scripts/agent-comment-guard.sh・scripts/ready-queue.sh と .github の検査もこの文字列を共有する
-SIGNATURE_KEY='Assisted by'
+# 署名の検知キー。リンク先やモデルの名乗りが変わっても効き続けるよう、固定の語で見る。
+# 絵文字まで含めるのは、署名の話をする本文や英文の引用 ("Assisted by") を署名と取り違えない
+# ため (#3149 の反証)。scripts/agent-comment-guard.sh・scripts/ready-queue.sh・
+# scripts/review-gate.sh もこの綴りを読む
+SIGNATURE_KEY='🤖 Assisted by'
 
 # 「どの AI が書いたか」を実行環境から判定する → "表示名\tURL" (URL は空でもよい)。
-# 判定できなければ 1 を返して何も出さない (総称に落とすかは呼ぶ側が決める)
+# 判定できなければ 1 を返して何も出さない (総称に落とすかは呼ぶ側が決める)。
+#   $1 = strict なら、人もシェルの設定で立てる変数 (CODEX_HOME) だけでは判定しない。人も打つ
+#        口 (scripts/sub-issue.sh) が人の起票に Codex の署名を付けないため (#3149 の反証)
 detect_agent() {
-  local is_claude
+  local is_claude strict=${1:-}
   if [ -n "${MOKUME_AGENT_NAME:-}" ]; then
     printf '%s\t%s' "$MOKUME_AGENT_NAME" "${MOKUME_AGENT_URL:-}"
     return 0
@@ -45,7 +52,7 @@ detect_agent() {
   # OpenAI Codex: 専用の名乗りがまだ無く (openai/codex#13416)、サンドボックス実行の
   # 痕跡で見るしかない。判定が緩いぶん、名乗りが増えたらここを差し替える
   if [ -n "${CODEX_SANDBOX:-}" ] || [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
-     [ -n "${CODEX_HOME:-}" ]; then
+     { [ "$strict" != strict ] && [ -n "${CODEX_HOME:-}" ]; }; then
     printf 'OpenAI Codex\thttps://developers.openai.com/codex'
     return 0
   fi
@@ -92,6 +99,13 @@ transcript_models() { # $1=記録のパス…
   done | grep -vxF '<synthetic>' | sort | uniq -c | sort -rn | awk '{print $2}'
 }
 
+# 記録の最後の assistant の行のモデル (いま主が使っているモデル)
+latest_model() { # $1=記録のパス
+  [ -f "$1" ] || return 0
+  grep -E '"type": ?"assistant"' "$1" | jq -r '.message.model // empty' 2>/dev/null |
+    grep -vxF '<synthetic>' | tail -n 1
+}
+
 # 使ったモデルの名乗り → "Claude Opus 5.5, Claude Haiku 5.5" (分からなければ空)。
 #   $1 = エージェントの表示名  $2 = Claude Code の記録のパス (省略時は env から探す)
 agent_models() {
@@ -102,13 +116,14 @@ agent_models() {
   fi
   [ "$agent" = "Claude Code" ] || return 0
   [ -n "$transcript" ] || transcript=$(claude_transcript) || return 0
-  # 主の記録のモデルを先に、サブエージェントの記録にだけ現れるモデルを後に並べる
+  # 主の記録の最新のモデル → 主の記録の残り → サブエージェントの記録にだけ現れるモデル
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     line=$(model_display_name "$line")
     case ", $out, " in *", $line, "*) continue ;; esac
     out=${out:+$out, }$line
-  done < <(transcript_models "$transcript"
+  done < <(latest_model "$transcript"
+           transcript_models "$transcript"
            transcript_models "${transcript%.jsonl}"/subagents/*.jsonl)
   printf '%s' "$out"
 }
@@ -134,7 +149,9 @@ agent_signature() {
       *) return 64 ;;
     esac
   done
-  if agent=$(detect_agent); then
+  local strict=strict
+  $generic && strict=
+  if agent=$(detect_agent "$strict"); then
     name=${agent%%$'\t'*}
     url=${agent#*$'\t'}
   elif $generic; then
@@ -145,5 +162,5 @@ agent_signature() {
   credits=$(agent_credit "$name" "$url" "$(agent_models "$name" "$transcript")")
   local w
   for w in ${with[@]+"${with[@]}"}; do credits="$credits and $w"; done
-  printf '<sub>🤖 %s %s</sub>' "$SIGNATURE_KEY" "$credits"
+  printf '<sub>%s %s</sub>' "$SIGNATURE_KEY" "$credits"
 }

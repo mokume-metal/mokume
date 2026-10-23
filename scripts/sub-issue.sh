@@ -120,11 +120,10 @@ fi
 # 通るので、素の gh issue create を見る agent-comment-guard.sh には見えない。署名は
 # scripts/ready-queue.sh がエージェントの起票を見分ける唯一の手掛かりでもある。
 # **人の実行には付けない** — エージェントと判定できなければ署名しない (総称に落とさない)
-if [ "$BODY_FILE" = - ]; then
-  BODY=$(cat)
-elif [ -n "$BODY_FILE" ]; then
-  [ -f "$BODY_FILE" ] || { echo "本文のファイルが無い: $BODY_FILE" >&2; exit 66; }
-  BODY=$(cat "$BODY_FILE")
+[ -n "$BODY_FILE" ] && [ -n "$BODY" ] && usage_error "--body と --body-file は併せない"
+if [ -n "$BODY_FILE" ]; then
+  # 読めるかは cat に任せる (`<(…)` のようなファイルでないものも、`-` の標準入力も読む)
+  BODY=$(cat "$BODY_FILE") || { echo "本文のファイルを読めない: $BODY_FILE" >&2; exit 66; }
 fi
 # --generic を渡さない = 判定できなければ署名しない
 if ! grep -qF "$SIGNATURE_KEY" <<<"$BODY" &&

@@ -68,7 +68,7 @@ class SubIssueTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "gh.log"
         self.log.touch()
 
-    def run_sub_issue(self, *args, parent_type="", link_error="", link_body="", **agent):
+    def env(self, parent_type="", link_error="", link_body="", **agent):
         # 検査自体がエージェントのセッションから走るので、署名に効く env は消してから
         # 要るものだけ立てる (既定は人の実行)
         env = {k: v for k, v in os.environ.items() if k not in AGENT_ENV}
@@ -78,6 +78,10 @@ class SubIssueTest(unittest.TestCase):
         env["FAKE_PARENT_TYPE"] = parent_type
         env["FAKE_LINK_ERROR"] = link_error
         env["FAKE_LINK_BODY"] = link_body
+        return env
+
+    def run_sub_issue(self, *args, parent_type="", link_error="", link_body="", **agent):
+        env = self.env(parent_type, link_error, link_body, **agent)
         proc = subprocess.run(
             ["/bin/bash", str(SCRIPT), "74", *args],
             capture_output=True,
@@ -152,6 +156,34 @@ class SubIssueTest(unittest.TestCase):
         proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Assisted by", calls, "人の実行に署名を付けている")
+
+    def test_codex_home_alone_is_not_an_agent(self):
+        """CODEX_HOME は人もシェルの設定で立てる。それだけでは Codex の署名を付けない (反証の #7)。"""
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CODEX_HOME="/tmp/codex")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Assisted by", calls)
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CODEX_SANDBOX="seatbelt")
+        self.assertIn("Assisted by [OpenAI Codex]", calls)
+
+    def test_body_from_process_substitution_and_stdin(self):
+        """ファイルでない本文の口 (`<(…)`・`-`) も読む (反証の #10)。"""
+        proc = subprocess.run(
+            ["/bin/bash", "-c", f'bash "{SCRIPT}" 74 "ci: 直す" --body-file <(printf "置換の本文")'],
+            capture_output=True, text=True, env=self.env(CLAUDECODE="1"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"置換の本文\n\n---\n{SIGNATURE}", self.log.read_text(encoding="utf-8"))
+        proc = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "74", "ci: 直す", "--body-file", "-"],
+            input="標準入力の本文", capture_output=True, text=True, env=self.env(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--body 標準入力の本文", self.log.read_text(encoding="utf-8"))
+
+    def test_body_and_body_file_together_is_a_usage_error(self):
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "x", "--body-file", "/dev/null")
+        self.assertEqual(proc.returncode, 64, proc.stderr)
+        self.assertNotIn("issue create", calls)
 
     def test_existing_signature_is_not_duplicated(self):
         proc, calls = self.run_sub_issue(

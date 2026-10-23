@@ -873,6 +873,20 @@ class CreateSignatureGuardTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assert_denied(command, wrapper=UNSIGNED)
 
+    def test_signature_elsewhere_in_the_command_does_not_count(self):
+        """本文を取り出せないとき、別のコマンドの語やコメントの署名では通さない (反証の #4)。"""
+        for command in (
+            "echo '🤖 Assisted by'; gh pr create --fill",
+            "gh pr create --fill # 🤖 Assisted by",
+            "gh pr create --fill && echo '<sub>🤖 Assisted by x</sub>'",
+        ):
+            with self.subTest(command=command):
+                self.assert_denied(command, wrapper=UNSIGNED)
+
+    def test_quoting_the_words_is_not_a_signature(self):
+        """署名の話をするだけの本文 ("Assisted by" の引用) は署名ではない (反証の #6)。"""
+        self.assert_denied('gh issue create --title t --body "Assisted by の綴りを直す"', wrapper=UNSIGNED)
+
     def test_signed_inline_body_passes(self):
         self.assert_passed(f'gh issue create --title t --body "本文\n---\n{SIGNATURE_LINE}"')
         # 他のエージェントの署名でも通る (検知キーは名乗りに依らない)
@@ -978,7 +992,7 @@ class SignatureTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             write_transcript(
                 d,
-                ["claude-opus-5-5"] * 2 + ["claude-sonnet-5-5-20261001"],
+                ["claude-sonnet-5-5-20261001"] + ["claude-opus-5-5"] * 2,
                 subagents=[["claude-haiku-5-5"], ["claude-opus-5-5"]],
             )
             out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
@@ -987,6 +1001,13 @@ class SignatureTest(unittest.TestCase):
             " (Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5)</sub>",
             out,
         )
+
+    def test_the_latest_main_model_comes_first(self):
+        """/model で切り替えたら、いま使っているモデルを先頭に名乗る (反証の #8)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_transcript(d, ["claude-haiku-5-5"] * 5 + ["claude-opus-5-5"])
+            out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
+        self.assertIn("(Claude Opus 5.5, Claude Haiku 5.5)</sub>", out)
 
     def test_missing_transcript_names_no_model(self):
         """記録が見つからなければモデルは書かない (推測で名乗らない)。"""

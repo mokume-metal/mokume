@@ -63,9 +63,11 @@
 #   gh {issue,pr} view --comments → 読み取り。素通し
 #
 # 作る口の本文は scripts/gh_issue_body.py で取り出す (issue-evidence-guard.sh と同じ読み方)。
-# 取り出せない形 (`-F -` のヒアドキュメント・$(cat …)・--fill・本文なし・長い --body) は、
-# コマンド文字列のどこかに署名があれば通し、無ければ差し戻す — 「必ず付く」を取って止める側へ
-# 倒す。逃げ道は署名を書いた --body-file の 1 つで足りる。
+# 取り出せない形は、その呼び出しの断片に署名があれば通し、無ければ差し戻す — 「必ず付く」を
+# 取って止める側へ倒す。逃げ道は署名を書いた --body-file の 1 つで足りる。例外は本文を標準
+# 入力から読む `-F -` で、本文 (ヒアドキュメント・パイプの手前) は断片の外にあるので、
+# コマンド文字列全体で見る。それ以外で全体を見ると、`echo '🤖 Assisted by'; gh pr create --fill`
+# のように別のコマンドの語で通る (#1729 と同じ形。#3149 の反証)。
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/comment_test.py。
@@ -128,13 +130,16 @@ is_create_invocation() { # $1=gh の断片
   gh_fragment_is "$1" '(issue[[:space:]]+create|pr[[:space:]]+(create|revert))'
 }
 
-# 作る呼び出しの本文に署名があるか。取り出せなければコマンド文字列全体で見る (冒頭の説明)
+# 作る呼び出しの本文に署名があるか。取り出せなければ断片で、`-F -` ならコマンド文字列全体で
+# 見る (冒頭の説明)。断片の引用の中の空白は \002 に伏せて届くので戻してから見る
 create_is_signed() { # $1=断片 $2=chdir の列 $3=cwd
   local body
   if body=$(python3 "$(dirname "${BASH_SOURCE[0]}")/gh_issue_body.py" "$1" "$2" "$3"); then
     grep -qF "$SIGNATURE_KEY" <<<"$body"
-  else
+  elif grep -qE '(^|[[:space:]])(-F|--body-file)([[:space:]]+|=)-([[:space:]]|$)' <<<"$1"; then
     grep -qF "$SIGNATURE_KEY" <<<"$command"
+  else
+    grep -qF "$SIGNATURE_KEY" <<<"${1//$'\002'/ }"
   fi
 }
 
