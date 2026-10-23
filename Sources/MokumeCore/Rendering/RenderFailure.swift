@@ -399,11 +399,9 @@ extension RenderFailure: CustomStringConvertible {
             OutsideRun.notRunningNotice(call)
         case .setupFailed(let reason):
             // **投げた失敗の全文をそのまま運ぶ** — 次にすることは投げた側の文面が持っている。
-            // 窓の経路が出す 1 行 (`headline`) は先頭行になるので、何が起きたかは 1 行目に入れる
-            """
-            setup() threw, so the sketch did not start:
-            \(reason)
-            """
+            // 1 行に削る経路 (`headline`) は先頭行だけを使うので、何が起きたかと投げた失敗の最初の行を
+            // 1 行目に入れる (名乗りだけが先頭に来ると、理由が落ちる)
+            "setup() threw, so the sketch did not start: \(reason)"
         case .unreadableRenderRequest(let value):
             """
             The sketch was asked to render, but it cannot read or write what it was asked: \(value)

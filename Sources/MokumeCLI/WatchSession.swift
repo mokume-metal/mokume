@@ -191,6 +191,14 @@ final class WatchSession {
         /// **読む人が次にすることが変わる。** 落ちたのなら端末を遡る先があり、自分から
         /// 終わったのならスケッチの側にそう書いてある。
         var wasSignalled: Bool
+        /// 絵を 1 枚も出さないうちに — 道具の窓へ乗り換える合図が来る前に — 消えたか ([#2401])。
+        ///
+        /// 作り直しは通ったのに起動できなかった子 (`setup()` が投げた・組み立てが失敗した) がこれに当たる。
+        /// 作り直しが通らなかった回と同じに扱い、**前の版を残す** (``keepPreviousAfterFailedStart()``)。
+        /// 窓を出せない見張りは乗り換えの合図を持たないので、いつも `false`。
+        ///
+        /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+        var neverShowedAFrame = false
     }
 
     /// 止まるのを待つ上限 (秒)。
@@ -551,14 +559,43 @@ final class WatchSession {
             !isBringingDown(gone)
         else { return nil }
         hasNamedDeparture = true
+        let neverShowedAFrame = awaitingPromotion
         // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
         // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
         // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
         relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
         switch ChildEnding(of: gone) {
-        case .exited(let status): return Departure(status: status, wasSignalled: false)
-        case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
+        case .exited(let status):
+            return Departure(
+                status: status, wasSignalled: false, neverShowedAFrame: neverShowedAFrame)
+        case .signalled(let signal):
+            return Departure(
+                status: signal, wasSignalled: true, neverShowedAFrame: neverShowedAFrame)
         }
+    }
+
+    /// 起こした子が絵を出さずに消えたとき、**映っている前の版を残して、現役に戻す** ([#2401])。
+    ///
+    /// 作り直しが通らなかった回は、走っているものを落とさない (``rebuild``)。`setup()` が投げて起動できなかった
+    /// 子も同じで、前の版が動き続けるのが最も助かる。以前は消えた子を「自分で消えた」と扱って前の版まで畳み、
+    /// 絵が凍っていた。戻すと、次の保存の差し替えは前の版を止めて新しい子を起こす、いつもの道を通る。
+    ///
+    /// **窓へ乗り換える前の世代だけを戻す** — 前の世代が生きていて、止めている最中でもないとき。
+    ///
+    /// - Returns: 前の版を残したか。残せなければ (前の版が居ない・窓を出せない見張り) `false`。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    func keepPreviousAfterFailedStart() -> Bool {
+        guard awaitingPromotion, let previous = outgoing, previous.isRunning,
+            !isBringingDown(previous), !stopRequested
+        else { return false }
+        awaitingPromotion = false
+        firstFrameSince = nil
+        child = previous
+        outgoing = nil
+        // 戻した世代が後で消えたときは、そのぶんも名乗る
+        hasNamedDeparture = false
+        return true
     }
 
     /// 映っている前の世代 (``outgoing``) が自分で終わった・落ちたとき、台へその番号で伝える

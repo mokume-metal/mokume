@@ -62,6 +62,23 @@ public final class SketchRuntime {
     ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     private(set) var setupFailure: RenderFailure?
+    /// ``setupFailure`` を、フレームを投げて受ける道 (``advance()``) の外で見つけたときに知らせる先。窓の経路
+    /// (``SketchApplication``) が差し、起動の失敗として終わらせる。名乗りのメニューが開いている間に別の駆動源が
+    /// 進めた回 (``advanceForPresence()``) が使う。
+    var setupFailureHandler: ((RenderFailure) -> Void)?
+    /// 投げられた失敗の文面。**型を問わず、全文を取る** — 読み方は 3 段で、
+    /// `CustomStringConvertible` (``ImageFailure`` ほかの公開の失敗は全部これ) → `LocalizedError` の説明 → 素の `Error`。
+    /// `"\(error)"` と書くと、`LocalizedError` だけを持つ型は構造体のダンプになる ([#2401])。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    static func failureText(of error: any Error) -> String {
+        if let described = error as? any CustomStringConvertible { return described.description }
+        if let localized = error as? any LocalizedError, let text = localized.errorDescription {
+            return [text, localized.failureReason, localized.recoverySuggestion]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        return "\(error)"
+    }
     /// 外から止められているか (``pause()``)。
     private var isPaused = false
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
@@ -671,7 +688,7 @@ public final class SketchRuntime {
         do {
             try withActiveRuntime { try carryingOver { try sketch.setup() } }
         } catch {
-            setupFailure = .setupFailed(reason: "\(error)")
+            setupFailure = .setupFailed(reason: Self.failureText(of: error))
         }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
@@ -853,6 +870,15 @@ public final class SketchRuntime {
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
         let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
+        // **`setup()` が投げているなら、どの枝にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
+        // (`setup()` で `noLoop()` を呼んでから投げる形はここ) のどれも、この失敗より先に動かない — 動くと、
+        // 入力が失敗したスケッチへ配られ、窓は終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
+        // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。初めてのフレームは、下で `setup()` を走らせる
+        // ``drawSketchFrame(deliveredInput:at:displayTime:)`` が同じ失敗を投げる
+        if let setupFailure {
+            serveObservationIfRequested(request: observation, drawFailure: setupFailure)
+            throw setupFailure
+        }
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -1662,7 +1688,13 @@ public final class SketchRuntime {
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
         guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
-        try? runFrame()
+        do throws(RenderFailure) {
+            try runFrame()
+        } catch {
+            // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、窓の経路へ知らせて終わらせる。
+            // それ以外の失敗は、次の回でやり直す
+            if case .setupFailed = error { setupFailureHandler?(error) }
+        }
     }
 
     /// これだけ描かれていなければ「誰も進めていない」とみなす (秒)。
@@ -2053,9 +2085,15 @@ public final class SketchRuntime {
         }
         guard let request else { return }
         // **通常のフレームと同じ手順で描く。** 手順をここへ写すと、段を足すたびに
-        // 片方だけ腐る (#808)
+        // 片方だけ腐る (#808)。**失敗は握りつぶさず、応えに載せる** — `setup()` が投げたのに「撮れた」と
+        // 答えない ([#2401])
+        var drawFailure = drawFailure
         if drawFailure == nil, timing.frameCount == 0 {
-            try? drawSketchFrame()
+            do throws(RenderFailure) {
+                try drawSketchFrame()
+            } catch {
+                drawFailure = error
+            }
         }
         beginCapture(for: request, through: observer, drawFailure: drawFailure, appliedTime: appliedTime)
     }

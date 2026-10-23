@@ -402,6 +402,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         super.init()
         screenLink.owner = self
         windowRelay.application = self
+        // `advance()` の外で `setup()` の失敗を見つけた回 (名乗りのメニューが進めた回) も、同じ道で終わらせる (#2401)
+        runtime.setupFailureHandler = { [weak self] failure in self?.stopForSetupFailure(failure) }
     }
 
     /// アプリケーションとして走らせる。戻らない。
@@ -978,11 +980,16 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 書き出し (`mokume render`) も同じになる。1 フレームも描いていないので、後始末する書き出しは無い。
     /// 道具は終了コードで「書けたか」を読むので、0 以外で終わる (``exitProcess``)。
     ///
+    /// **終わる前に差込口を閉じる** — `setup()` が投げる前に開いたカメラ・音・シリアル・ソケットを、通常の終わり
+    /// (``willTerminate()``) と同じに閉じる (ADR-0024 決定 7)。`exit` は後始末を通らないので、ここで済ませる。
+    ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     private func stopForSetupFailure(_ failure: RenderFailure) {
         guard !isTerminating else { return }
         isTerminating = true
         FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+        runtime.closePlugins()
+        screenLink.invalidate()
         exitProcess(1)
     }
 
