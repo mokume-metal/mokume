@@ -56,7 +56,8 @@ extension SketchPart {
     /// 異体字セレクタを付けた `❤️`・囲みを付けた `1️⃣` は、その指定が読まれず、基の字と部品が
     /// 別々に引き当てられる。幅も部品の幅の和になる (``textWidth(_:)``)。部分の幅を足すと
     /// 全体の幅と一致する、という約束と引き換えの選び方である。
-    /// 1 字で出したい絵文字は、1 つのスカラで書ける形 (`👍`) を使う。
+    /// 1 字で出したい絵文字や、結合文字を基の字に重ねたいときは、組版して描く ``shapedText(_:_:_:)`` を使う
+    /// (幅の加法性は持たない。幅は ``shapedTextWidth(_:)``、墨の範囲は ``shapedTextBounds(_:_:_:)``)。
     ///
     /// **``scale(_:_:)`` で拡大した字は、拡大に合わせた画素で焼き直して置く**ので、伸ばしても縁は
     /// 鮮明なままである。ただし**保持した形 (``createShape(_:)``) の中の字は、記録した時点の変換で
@@ -523,7 +524,8 @@ extension SketchPart {
     ///
     /// **組版をしない**ので、複数のスカラでできた字 (肌色の修飾子を付けた `👍🏽`・国旗の
     /// `🇯🇵`・ZWJ で繋いだ絵文字) は 1 字の幅にならず、部品の幅の和になる。`textWidth("👍🏽")` は
-    /// `textWidth("👍") + textWidth("🏽")` と等しい (描かれ方は ``text(_:_:_:)``)。
+    /// `textWidth("👍") + textWidth("🏽")` と等しい (描かれ方は ``text(_:_:_:)``)。組版した幅 (カーニング・
+    /// 合字・複数のスカラでできた絵文字を 1 字の幅で数える) が要るときは ``shapedTextWidth(_:)``。
     ///
     /// 送り幅は字の左右に書体が付けた余白を含む。墨の載る範囲は ``textBounds(_:_:_:)`` が返す。
     ///
@@ -915,5 +917,134 @@ extension SketchPart {
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "nil"))?.textBounds(string, x, y)
+    }
+
+    // MARK: - 組版した文字列
+
+    /// 文字列を**組版して**描く。複数のスカラでできた絵文字や結合文字が、1 つの字として出る。
+    ///
+    /// ``text(_:_:_:)`` は Unicode のスカラ 1 つずつ並べるので、肌色の修飾子を付けた `👍🏽`・国旗の `🇯🇵`・
+    /// ZWJ で繋いだ `👨‍👩‍👧`・異体字セレクタを付けた `❤️`・囲みを付けた `1️⃣` が部品に分かれ、`e` と結合文字
+    /// `\u{0301}` (アクセント) が別々の位置に出る。この口は、文字列を 1 行ずつ CoreText に組ませて
+    /// (Core Text の `CTLine` に当たる)、できた字形の列を描く。5 つの絵文字はそれぞれ 1 字で出て、
+    /// `e\u{0301}` は 1 つの位置に重なって `é` に見える。ラテンの字はカーニングが掛かり、`AV` のように
+    /// 詰めて並ぶ。
+    ///
+    /// **幅の加法性を持たない。** ``textWidth(_:)`` は部分の幅を足すと全体の幅と一致するが、組版した幅
+    /// (``shapedTextWidth(_:)``) は一致しない — 詰めや合字が部分の境で起こるからである。字ごとに位置を
+    /// 決めたいとき (字を 1 つずつ動かす・ずらす) は、``text(_:_:_:)`` を使う。
+    ///
+    /// 縦横の整列 (``textAlign(_:_:)``)・書体・大きさ・太さ・行送り・塗りは、``text(_:_:_:)`` と同じに効く。
+    /// 整列は組版した行の幅で決まり、描く位置と ``shapedTextBounds(_:_:_:)`` の墨の範囲も同じ組版の結果から出る。
+    ///
+    /// **書体が覆えない字は、CoreText が行の中で別の書体を選ぶ。** その書体は ``text(_:_:_:)`` と同じに
+    /// 扱う — 字 (書記素) ごとに、頼んだ太さ・傾き (``textStyle(_:)``) の面を持つならその面へ引き直して描き、
+    /// 持たなければ引けた面で描いて、``textStyle(_:)`` の警告で 1 度知らせる。
+    ///
+    /// **絵文字でない字から始まる書記素は、基の字の書体を替えない。** 基の字を書体が覆えるのに、後ろに
+    /// 書体が持たない字 (絵文字の見た目を選ぶ異体字セレクタ 16・字をつなぐ ZWJ・モンゴル文字の異体字
+    /// セレクタ・タグ文字・肌色の修飾子・囲み記号) が付くと、CoreText は書記素ごと別の書体へ移す。この口は
+    /// 基の字を書体に残し、続く字だけを CoreText が選んだ書体で後ろへ並べる (`a\u{FE0F}` の `a` は
+    /// 書体のまま・幅も `a` の幅、`a` と肌色の修飾子は `a` の隣に色の四角)。絵文字から始まる書記素
+    /// (`👨‍👩‍👧`・`👍🏽`・`🇯🇵`・`❤️`・`1️⃣`) は CoreText が組むとおり 1 字になる。
+    ///
+    /// **タブは ``text(_:_:_:)`` と同じ送り幅で進む** (CoreText の既定のタブ位置は使わない)。タブをまたぐ
+    /// カーニングは掛からない。
+    ///
+    /// **保証の外:** 右から左へ書く文字 (アラビア語・ヘブライ語) の並べ替えと文脈による字形の変化は
+    /// 保証しない。**矩形への流し込み (``text(_:_:_:_:_:)``)・折り返し (``textWrap(_:)``)・輪郭
+    /// (``textOutline(_:_:_:)``) は組版しない** — どれもスカラ 1 つずつのまま。
+    ///
+    /// 同じ文字列は組版の結果を控えるので、毎フレーム同じ文字列を描いても組版は 1 度である。控えは字形の数で
+    /// 上限を持ち (書体ごと)、超えたら古い文字列から 1 つずつ捨てる — 毎フレーム違う文字列を数百本描いても、
+    /// 使い続ける文字列は残る。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(40)
+    ///     shapedText("👍🏽 🇯🇵 👨‍👩‍👧 ❤️ 1️⃣", 20, 70)
+    ///     text("👍🏽 🇯🇵 👨‍👩‍👧 ❤️ 1️⃣", 20, 150)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に、上の行は 5 つの絵文字が 1 字ずつ、下の行は同じ文字列が部品に分かれて並んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedText(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (x, y) = (x.asFloat, y.asFloat)
+        canvas.shapedText(string, x, y)
+    }
+
+    /// 文字列を組版したときの送り幅 (画素)。
+    ///
+    /// ``shapedText(_:_:_:)`` が描く文字列の幅で、カーニングや合字を含む。**部分の幅を足しても全体の幅に
+    /// 一致しない** (``textWidth(_:)`` は一致する)。改行を含む文字列では、いちばん長い行の幅を返す。
+    /// 大きさ 0 では 0 を返す。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(60)
+    ///     shapedText("AVATAR", 20, 90)
+    ///     // 上の線は組版した幅、下の線はスカラ 1 つずつ並べた幅 (詰まったぶんだけ長い)
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(3)
+    ///     line(20, 110, 20 + shapedTextWidth("AVATAR"), 110)
+    ///     line(20, 125, 20 + textWidth("AVATAR"), 125)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に黒い AVATAR が詰めて並び、下に橙の線が 2 本ある。上の線は語と同じ長さ、下の線はそれより少し長い -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedTextWidth(_ string: String) -> Float {
+        Self.liveCanvas(.read(returning: "0"))?.shapedTextWidth(string) ?? 0
+    }
+
+    /// 文字列を組版して描いたときに、墨が載る範囲を返す。
+    ///
+    /// 同じ引数で ``shapedText(_:_:_:)`` を描いたときの墨を囲む。意味は ``textBounds(_:_:_:)`` と同じ
+    /// (枠は左上が `x`・`y`、送り幅とは違う、墨が無ければ `nil`) で、墨は組版した字形から測る —
+    /// 色の字形 (絵文字) も、描いた絵の墨を囲む。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(255)
+    ///     noStroke()
+    ///     fill(23, 26, 31)
+    ///     textSize(60)
+    ///     shapedText("1️⃣ AV é", 20, 90)
+    ///     if let bounds = shapedTextBounds("1️⃣ AV é", 20, 90) {
+    ///         noFill()
+    ///         stroke(242, 115, 64)
+    ///         strokeWeight(2)
+    ///         rect(bounds.x, bounds.y, bounds.width, bounds.height)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 白地に黒い 1️⃣ AV é の墨を、橙の細い枠がぴったり囲んでいる -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 後で撮る
+    public func shapedTextBounds(
+        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible
+    ) -> TextBounds? {
+        let (x, y) = (x.asFloat, y.asFloat)
+        return Self.liveCanvas(.read(returning: "nil"))?.shapedTextBounds(string, x, y)
     }
 }
