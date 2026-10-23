@@ -5,10 +5,10 @@
 #
 # 署名は「どのエージェントが、どのモデルで」を、分かる範囲で名乗る:
 #
-#   <sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Claude Opus 5.5)</sub>
-#   <sub>🤖 Assisted by [Claude Code](…) (Claude Opus 5.5, Claude Haiku 5.5)</sub>   サブエージェントが別のモデル
+#   <sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5)</sub>
+#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5, Haiku 5.5)</sub>   サブエージェントが別のモデル
 #   <sub>🤖 Assisted by Grok CLI (grok-5)</sub>                                        環境変数で名乗る
-#   <sub>🤖 Assisted by [Claude Code](…) (Claude Opus 5.5) and OpenAI Codex (gpt-6-astra)</sub>   --with で併記
+#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5) and OpenAI Codex (gpt-6-astra)</sub>   --with で併記
 #
 # **分からない部分は書かない。** 推測で書いたモデル名は出所の嘘になる。Codex の
 # config.toml の model は起動時の指定で上書きされうるので読まない。
@@ -64,13 +64,16 @@ detect_agent() {
   return 1
 }
 
-# モデルの ID を表示名へ畳む。claude-opus-5-5 → Claude Opus 5.5、日付の接尾辞は落とす。
+# モデルの ID を表示名へ畳む。claude-opus-5-5 → Opus 5.5、日付の接尾辞は落とす。
+# 「Claude」を付けないのは、記録から読むのが Claude Code のときだけで、署名の頭の
+# [Claude Code] と重なるため (メンテナの指定)。Claude 以外のエージェントが Claude の
+# モデルを名乗るときは MOKUME_AGENT_MODEL に書いたとおりに出る (Claude Opus 5.5 など)。
 # 形が読めない ID はそのまま返す (知らない形を作り替えると別のモデルを名乗りかねない)
 model_display_name() { # $1=モデルの ID
   local id=${1%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}
   if [[ $id =~ ^claude-([a-z]+)-([0-9]+)(-([0-9]{1,2}))?$ ]]; then
     local family=${BASH_REMATCH[1]}
-    printf 'Claude %s%s %s' "$(tr '[:lower:]' '[:upper:]' <<<"${family:0:1}")" "${family:1}" \
+    printf '%s%s %s' "$(tr '[:lower:]' '[:upper:]' <<<"${family:0:1}")" "${family:1}" \
       "${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
   else
     printf '%s' "$1"
@@ -106,7 +109,7 @@ latest_model() { # $1=記録のパス
     grep -vxF '<synthetic>' | tail -n 1
 }
 
-# 使ったモデルの名乗り → "Claude Opus 5.5, Claude Haiku 5.5" (分からなければ空)。
+# 使ったモデルの名乗り → "Opus 5.5, Haiku 5.5" (分からなければ空)。
 #   $1 = エージェントの表示名  $2 = Claude Code の記録のパス (省略時は env から探す)
 agent_models() {
   local agent=$1 transcript=${2:-} line out=
@@ -128,7 +131,7 @@ agent_models() {
   printf '%s' "$out"
 }
 
-# 1 人分の名乗り → "[Claude Code](url) (Claude Opus 5.5)"
+# 1 人分の名乗り → "[Claude Code](url) (Opus 5.5)"
 agent_credit() { # $1=表示名 $2=URL $3=モデル
   if [ -n "$2" ]; then printf '[%s](%s)' "$1" "$2"; else printf '%s' "$1"; fi
   [ -z "$3" ] || printf ' (%s)' "$3"

@@ -910,7 +910,7 @@ class CreateSignatureGuardTest(unittest.TestCase):
             CLAUDECODE="1",
         )
         self.assertIn(
-            "Assisted by [Claude Code](https://claude.com/claude-code) (Claude Opus 5.5, Claude Haiku 5.5)",
+            "Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5, Haiku 5.5)",
             reason,
         )
         self.assertNotIn("synthetic", reason)
@@ -998,7 +998,7 @@ class SignatureTest(unittest.TestCase):
             out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
         self.assertIn(
             "Assisted by [Claude Code](https://claude.com/claude-code)"
-            " (Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5)</sub>",
+            " (Opus 5.5, Sonnet 5.5, Haiku 5.5)</sub>",
             out,
         )
 
@@ -1007,7 +1007,7 @@ class SignatureTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             write_transcript(d, ["claude-haiku-5-5"] * 5 + ["claude-opus-5-5"])
             out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
-        self.assertIn("(Claude Opus 5.5, Claude Haiku 5.5)</sub>", out)
+        self.assertIn("(Opus 5.5, Haiku 5.5)</sub>", out)
 
     def test_missing_transcript_names_no_model(self):
         """記録が見つからなければモデルは書かない (推測で名乗らない)。"""
@@ -1020,6 +1020,11 @@ class SignatureTest(unittest.TestCase):
             write_transcript(d, ["claude-3-5-sonnet-20241022"])
             out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
         self.assertIn("(claude-3-5-sonnet-20241022)", out)
+
+    def test_explicit_model_is_kept_as_written(self):
+        """Claude 以外のエージェントが Claude のモデルを名乗るなら、書いたとおりに出す。"""
+        out, _ = self.dry_run(MOKUME_AGENT_NAME="Cursor", MOKUME_AGENT_MODEL="Claude Opus 5.5")
+        self.assertIn("Assisted by Cursor (Claude Opus 5.5)</sub>", out)
 
     def test_explicit_name_and_model(self):
         out, _ = self.dry_run(MOKUME_AGENT_NAME="Grok CLI", MOKUME_AGENT_MODEL="grok-5")

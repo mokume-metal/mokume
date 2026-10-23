@@ -741,7 +741,7 @@ class ReviewGateTest(unittest.TestCase):
 
     def test_a_refute_section_with_only_the_agent_signature_is_blocked(self):
         # 反証が本文の最後の節だと、末尾の署名 (#3149) が節の中に入る。署名は中身に数えない
-        signature = "---\n<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Claude Opus 5.5)</sub>"
+        signature = "---\n<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5)</sub>"
         proc = self.run_gate(
             pr_json(body="Closes #12" + refute_section("<!-- 指摘と応え -->\n\n" + signature)),
             issue_json(TRIAGED, issue_type="Bug"),

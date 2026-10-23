@@ -637,7 +637,7 @@ class ReadyQueueTest(unittest.TestCase):
     def test_stock_reads_any_agent_signature(self):
         issues = [
             issue(40, type_="Bug", body="本文\n\n---\n<sub>🤖 Assisted by [OpenAI Codex](https://developers.openai.com/codex) (gpt-6-astra)</sub>"),
-            issue(41, type_="Task", body=f"本文\n\n---\n<sub>{SIGNATURE} (Claude Opus 5.5)</sub>"),
+            issue(41, type_="Task", body=f"本文\n\n---\n<sub>{SIGNATURE} (Opus 5.5)</sub>"),
             issue(42, type_="Bug", body="人が書いた本文"),
             issue(43, labels=["verify: triaged"]),
         ]
