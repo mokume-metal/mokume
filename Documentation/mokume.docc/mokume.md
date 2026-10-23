@@ -890,6 +890,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/shader(_:)``
 - ``SketchPart/resetShader()``
 - ``SketchPart/effects(_:)``
+- ``SketchPart/filter(_:)``
 - ``SketchPart/loadEffect(_:values:)``
 - ``SketchPart/makeEffect(_:name:values:)``
 - ``SketchPart/makeNumbers(count:)``
