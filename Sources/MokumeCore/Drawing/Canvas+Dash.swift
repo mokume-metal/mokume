@@ -236,20 +236,21 @@ extension Canvas {
         ).moved(by: center)
     }
 
-    /// 距離関数で描ける基本図形 (矩形・楕円・扇形) を、破線の輪郭か、距離関数で表せない輪郭 (円弧の
-    /// 開いた弧) で置く。**塗りは距離関数のまま置き、輪郭だけを輪郭の片で引く** — 塗りの縁の出方は、
-    /// 輪郭を引かない図形と同じである。
+    /// 距離関数で描ける基本図形 (矩形・楕円・扇形) を、破線の輪郭で置く。**塗りは距離関数のまま置き、
+    /// 輪郭だけを破線の片で引く** — 塗りの縁の出方は、輪郭を引かない図形と同じである。
     ///
     /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
+    /// **周は区間の中だと分かってから組む** (`outline` は遅延評価・#2428)。
     func appendDashedForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
-        arc: SIMD2<Float> = .zero, cornerRadius: Float = 0, outline: Outline
+        arc: SIMD2<Float> = .zero, arcClosure: FormInstance.ArcClosure = .pie,
+        cornerRadius: Float = 0, outline: @autoclosure () -> Outline
     ) {
         guard canPlace else { return warnOutsideFrame(.placing) }
         appendForm(
-            kind, center: center, half: half, arc: arc, fills: true, cornerRadius: cornerRadius,
-            strokes: false)
+            kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
+            cornerRadius: cornerRadius, strokes: false)
         outlinesAssembledThisFrame += 1
-        strokeOutline(outline)
+        strokeOutline(outline())
     }
 }

@@ -22,7 +22,7 @@ public nonisolated enum StrokeCap: Sendable, Equatable {
 /// 折れ線と、閉じた図形の輪郭の角に効く。**曲線の刻みの継ぎ目には効かない** —
 /// 継ぎ目は角ではないので、どの形でも丸く繋ぐ ([#1409])。曲線の終点と通過点は
 /// 置いた点なので、そこで折れれば角として扱う。扇形 (``SketchPart/arc(_:_:_:_:_:_:_:)`` の
-/// `.pie`) の中心と弧の両端は、どの形でも丸く繋ぐ。`.chord` の弦と弧の継ぎ目は角で、この形に従う。
+/// `.pie`) の中心と弧の両端、弦で結んだ形 (`.chord`) の弦と弧の継ぎ目は、どの形でも丸く繋ぐ。
 ///
 /// [#1409]: https://github.com/mokume-metal/mokume/issues/1409
 public nonisolated enum StrokeJoin: Sendable, Equatable {
@@ -32,7 +32,7 @@ public nonisolated enum StrokeJoin: Sendable, Equatable {
     /// そこで角の二等分線に垂直に切る。直角 (矩形の角) では尖りがちょうどその長さなので、
     /// 切られずに尖る。それより鋭い角では先が平らに切られ、極端には伸びない。
     ///
-    /// - Note: 伸びの限界を線ごとに選ぶ口は無い。`.pie` の扇形の角は、折れ目の形によらず丸く出る。
+    /// - Note: 伸びの限界を線ごとに選ぶ口は無い。`.pie`・`.chord` の角は、折れ目の形によらず丸く出る。
     case miter
     /// 角を削ぐ。
     ///

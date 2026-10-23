@@ -245,7 +245,7 @@ struct PixelGridTests {
             canvas.noStroke()
             canvas.translate(placement.x, placement.y)
             canvas.rotate(placement.angle)
-            canvas.arc(0, 0, 60, 24, span.start, span.stop, .pie)
+            canvas.arc(0, 0, 60, 24, span.start, span.stop)
         }
         let form = try coverage { arc(on: $0) }
         let triangles = try coverage { canvas in
@@ -295,7 +295,7 @@ struct PixelGridTests {
                 canvas.strokeJoin(join)
                 canvas.translate(placement.x, placement.y)
                 canvas.rotate(placement.angle)
-                canvas.arc(0, 0, pie.width, pie.height, pie.start, pie.stop, .pie)
+                canvas.arc(0, 0, pie.width, pie.height, pie.start, pie.stop)
             }
             let form = try coverage { arc(on: $0) }
             let triangles = try coverage { canvas in
@@ -518,7 +518,7 @@ struct PixelGridTests {
         @MainActor func draw(on canvas: Canvas) {
             let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
             if let arc {
-                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y), .pie)
+                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y))
             } else if isEllipse {
                 canvas.ellipse(0, 0, size.x, size.y)
             } else {
@@ -557,7 +557,7 @@ struct PixelGridTests {
     }
 
     /// 点 `p` が楕円の扇 (中心を含む) の内か。**扇の内外は、中心から弧の端へ向かう 2 本の半直線で
-    /// 決める** (角は媒介変数の角・`mokume_sectorField` の説明)。
+    /// 決める** (角は媒介変数の角・`mokume_arcRegionField` の説明)。
     nonisolated static func sectorContains(
         _ p: SIMD2<Double>, radii: SIMD2<Double>, start: Double, sweep: Double
     ) -> Bool {
@@ -1494,9 +1494,9 @@ struct PixelGridTests {
         let shapes: [(String, (Canvas) -> Void)] = [
             ("rect", { $0.rect(-14, -9, 28, 18) }),
             ("ellipse", { $0.ellipse(0, 0, 30, 20) }),
-            ("arc 0…1.25π", { $0.arc(0, 0, 36, 36, 0, .pi * 1.25, .pie) }),
-            ("arc 0.4…1.1π", { $0.arc(0, 0, 36, 30, 0.4, .pi * 1.1, .pie) }),
-            ("arc 1…2.6", { $0.arc(0, 0, 32, 32, 1, 2.6, .pie) }),
+            ("arc 0…1.25π", { $0.arc(0, 0, 36, 36, 0, .pi * 1.25) }),
+            ("arc 0.4…1.1π", { $0.arc(0, 0, 36, 30, 0.4, .pi * 1.1) }),
+            ("arc 1…2.6", { $0.arc(0, 0, 32, 32, 1, 2.6) }),
         ]
         for (name, shape) in shapes {
             for angle: Float in [0, 0.35] {
@@ -1559,7 +1559,7 @@ struct PixelGridTests {
         let shapes: [(String, (Canvas) -> Void)] = [
             ("rect", { $0.rect(-14, -9, 28, 18) }),
             ("ellipse", { $0.ellipse(0, 0, 36, 22) }),
-            ("arc", { $0.arc(0, 0, 40, 40, 0.4, .pi * 1.5, .pie) }),
+            ("arc", { $0.arc(0, 0, 40, 40, 0.4, .pi * 1.5) }),
         ]
         for (name, shape) in shapes {
             func fillCoverage(triangles: Bool) throws -> Coverage {

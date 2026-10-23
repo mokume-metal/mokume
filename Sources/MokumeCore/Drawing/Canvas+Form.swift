@@ -131,6 +131,7 @@ extension Canvas {
     ///   - half: 半幅・半高 (楕円は半径。線は半分の長さと 0)。
     ///   - axis: 形自身の横軸の向き (長さ 1)。線だけが線の向きを渡す。
     ///   - arc: 扇形の開始角と掃引。
+    ///   - arcClosure: 扇形の閉じ方 (``FormInstance/ArcClosure``・#2428)。扇形以外では読まない。
     ///   - fills: この形が塗りを持ちうるか (線と点は持たない)。
     ///   - cornerRadius: 矩形の角の半径 (形自身の座標。半幅・半高の小さいほう以下に締めてある・
     ///     #2757)。矩形以外と、角を丸めない矩形は 0。
@@ -140,6 +141,7 @@ extension Canvas {
     func appendForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
+        arcClosure: FormInstance.ArcClosure = .pie,
         fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0, strokes: Bool = true
     ) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)
@@ -158,7 +160,7 @@ extension Canvas {
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
             offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
-            halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
+            arcClosure: arcClosure, halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
             fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,
             cap: cap ?? style.strokeCap, join: style.strokeJoin)

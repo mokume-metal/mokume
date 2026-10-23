@@ -104,7 +104,7 @@ extension FormInstance {
     /// 形自身の座標の点 `(u, v)` は、`offset.xy + linear.xy * u + linear.zw * v` へ移る
     /// (``linear`` は形自身の横軸・縦軸が移る先)。矩形は 4 つの角 (角を丸めても同じ箱)、線と
     /// 点は 2 つの端 (点は 2 つが重なる)、楕円は 2x2 を掛けた外接、扇は中心と弧の両端と、
-    /// 弧の上で各軸が極値になる点である。
+    /// 弧の上で各軸が極値になる点 (弦で結んだ形 `.chord`・`.open` は中心を除く) である。
     func addGeometry(to box: inout PlaneBox?) {
         let origin = SIMD2(offset.x, offset.y)
         let columnU = SIMD2(linear.x, linear.y)
@@ -130,7 +130,10 @@ extension FormInstance {
             box.include(origin - reach)
             box.include(origin + reach)
         case Kind.arc.rawValue:
-            box.include(origin)
+            // 中心を箱に入れるのは扇を塗る形 (`.pie` と引数なしの既定・塗りが扇)。弧の両端を弦で結ぶ形
+            // (`.chord`・`.open`) は、弧と弦だけが幾何で、中心は入らない。**塗りや輪郭を止めても変わらない**
+            // — 箱は閉じ方が決める幾何の外接で、描く設定には依らない (矩形が `noFill()` でも同じ箱なのと同じ)
+            if !arcClosure.fillsChord { box.include(origin) }
             let start = offset.z
             let sweep = offset.w
             box.include(place(halfU * RuntimeMath.cos(start), halfV * RuntimeMath.sin(start)))

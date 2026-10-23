@@ -192,6 +192,40 @@ struct ShapeBoundsTests {
         expectBox(thick.bounds, 0, 0, 50, 50, tolerance: 1e-3)
     }
 
+    /// 外接は、閉じ方が決める幾何の外接で、描く設定 (塗り・輪郭を止める) には依らない (#2428)。扇を塗る形
+    /// (引数なしの既定と `.pie`) は中心を含み、弧の両端を弦で結ぶ形 (`.chord`・`.open`) は含まない。
+    @Test("arc の外接は閉じ方が決める: 扇は中心を含み、弦で結んだ形は含まない。塗りや輪郭を止めても変わらない")
+    func arcBoundsFollowTheClosure() throws {
+        let canvas = try makeCanvas()
+        // 弧 π/4〜3π/4。両端は (±50 cos 45°, 50 sin 45°)、弧は真下 (y = 50) まで張る
+        let edge = Float(50 * (0.5).squareRoot())
+        func shape(_ mode: ArcMode?, noFill: Bool = false, noStroke: Bool = false) -> Shape {
+            canvas.createShape {
+                if noFill { canvas.noFill() }
+                if noStroke { canvas.noStroke() }
+                if let mode {
+                    canvas.arc(0, 0, 100, 100, Float.pi / 4, 3 * Float.pi / 4, mode)
+                } else {
+                    canvas.arc(0, 0, 100, 100, Float.pi / 4, 3 * Float.pi / 4)
+                }
+            }
+        }
+        for mode in [nil, .pie] as [ArcMode?] {
+            for (noFill, noStroke) in [(false, false), (true, false), (false, true)] {
+                expectBox(
+                    shape(mode, noFill: noFill, noStroke: noStroke).bounds, -edge, 0, 2 * edge, 50,
+                    tolerance: 1e-3)
+            }
+        }
+        for mode in [.chord, .open] as [ArcMode?] {
+            for (noFill, noStroke) in [(false, false), (true, false), (false, true)] {
+                expectBox(
+                    shape(mode, noFill: noFill, noStroke: noStroke).bounds, -edge, edge, 2 * edge,
+                    50 - edge, tolerance: 1e-3)
+            }
+        }
+    }
+
     @Test("回した楕円の扇は、回した後の軸の極値を取りこぼさない")
     func rotatedArcBounds() throws {
         let canvas = try makeCanvas()

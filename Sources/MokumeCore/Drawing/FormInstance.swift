@@ -24,10 +24,12 @@ struct FormInstance {
     /// xy: 平行移動 (形の中心)。zw: 扇形の開始角と掃引 (それ以外は 0)。
     var offset: SIMD4<Float>
     /// xy: 半幅・半高 (楕円は半径。線は半分の長さと 0)。z: 線幅の半分 (輪郭が無ければ 0)。
-    /// w: 矩形の角の半径 (形自身の座標・半幅と半高の小さいほう以下。角を丸めない矩形と、
-    /// 矩形以外は 0・[#2757])。
+    /// w: 矩形の角の半径 (形自身の座標・半幅と半高の小さいほう以下。角を丸めない矩形は 0・[#2757])。
+    /// **扇だけは、同じ欄が閉じ方 (``ArcClosure``) の番号を持つ** (扇は角の半径を持たない・[#2428])。
+    /// 楕円と線は 0。
     ///
     /// [#2757]: https://github.com/mokume-metal/mokume/issues/2757
+    /// [#2428]: https://github.com/mokume-metal/mokume/issues/2428
     var size: SIMD4<Float>
     /// 塗り (乗算済み線形)。塗りが無ければ 0。
     var fill: SIMD4<Float>
@@ -47,6 +49,32 @@ struct FormInstance {
         case ellipse = 1
         case arc = 2
         case line = 3
+    }
+
+    /// 扇 (``Kind/arc``) の閉じ方 ([#2428])。置き場所の ``size`` の w が持つ。**列を切る旗 (`meta.w`) には
+    /// 入れない** ので、閉じ方違いも、寸法違いや種別違いと同じ 1 列に並ぶ。
+    ///
+    /// 番号の正本は `Shaders/Kinds.metal` の `kArc*` (`KindLayoutTests` が突き合わせる)。0 は、この欄が
+    /// 角の半径でなかった頃から扇の置き場所が持っていた値で、塗りも輪郭も扇である。
+    ///
+    /// | 閉じ方 | 塗り | 輪郭 |
+    /// | --- | --- | --- |
+    /// | `pie` | 扇 | 扇の周 (中心への 2 本の半径と弧) |
+    /// | `standard` | 扇 | 開いた弧の帯 (引数に閉じ方を渡さない `arc` の既定) |
+    /// | `chord` | 弧の両端を弦で結んだ形 | 弦で結んだ形の周 |
+    /// | `open` | 弧の両端を弦で結んだ形 | 開いた弧の帯 |
+    ///
+    /// [#2428]: https://github.com/mokume-metal/mokume/issues/2428
+    enum ArcClosure: UInt32 {
+        case pie = 0
+        case standard = 1
+        case chord = 2
+        case open = 3
+
+        /// 塗りが、弧の両端を弦で結んだ形か (そうでなければ扇)。
+        var fillsChord: Bool { self == .chord || self == .open }
+        /// 輪郭が、閉じない弧の帯か (そうでなければ、扇か弦で結んだ形の周の帯)。
+        var strokesOpenArc: Bool { self == .standard || self == .open }
     }
 
     /// 塗りを持つ。
@@ -133,6 +161,11 @@ struct FormInstance {
             return .joined
         }
         return .straight
+    }
+
+    /// 扇の閉じ方 (``ArcClosure``)。扇でない形は `.pie` を返す (読まない)。
+    var arcClosure: ArcClosure {
+        meta.x == Kind.arc.rawValue ? ArcClosure(rawValue: UInt32(max(size.w, 0))) ?? .pie : .pie
     }
 
     /// 細い枝の境目を測る幅の、行ノルムの割合 (0: 画素の法線向きの幅・1: 行ノルム)。塗りと線の太さの境目が読む。
@@ -299,13 +332,16 @@ struct FormInstance {
     /// 潰れた穴 (どちらかの向きが 0 以下) は、描く画素によらず「含む」。
     ///
     /// 扇 (`arc`) の穴は、内接円の半径の上限 (``sectorDepthBound(radii:sweep:)``) から太さの半分を引いた
-    /// 1 つの半径で測る ([#2747])。線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
+    /// 1 つの半径で測る ([#2747])。弦で結んだ形の周は弓形の内接円で測る (``chordDepthLower(radii:sweep:)``)。
+    /// **開いた弧の帯は穴を持たない**ので「含まない」(帯の細さは ``mayHaveThinPart(unitsPerDrawnPixel:)`` が見る)。
+    /// 線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
     ///
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
     /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
     func mayHaveThinHole(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
         guard meta.w & Self.strokesFlag != 0,
-            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || meta.x == Kind.arc.rawValue
+            meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
+                || (meta.x == Kind.arc.rawValue && !arcClosure.strokesOpenArc)
         else { return false }
         let hole = holeHalfSize()
         guard hole.x > 0, hole.y > 0 else { return true }
@@ -345,8 +381,12 @@ struct FormInstance {
         let fills = meta.w & Self.fillsFlag != 0 && !isArc
         let strokes = meta.w & Self.strokesFlag != 0
         let half = SIMD2(size.x, size.y)
+        // 開いた弧の帯は閉じた周が無いので穴を持たない ([#2428])。帯そのものが描く画素で 1 画素より細いかを
+        // 見る (線の細い枝と同じ。断片は画素ごとに、距離場の勾配の向きの幅で決める)
+        let hasHole = strokes && !(isArc && arcClosure.strokesOpenArc)
         var hole = SIMD2<Float>(1, 1)
-        if strokes {
+        if strokes && !hasHole { if mayHaveThinBand(unitsPerDrawnPixel: unitsPerDrawnPixel) { return true } }
+        if hasHole {
             hole = holeHalfSize()
             // 潰れた穴は描く画素によらず細い
             if hole.x <= 0 || hole.y <= 0 { return true }
@@ -365,13 +405,32 @@ struct FormInstance {
                 2 * half * (1 + 2.0 / 256), axes: .both, curved: curved, determinant: determinant,
                 rowNormsSquared: SIMD2(rowX, rowY), sums: SIMD2(reachX, reachY))
         }
-        if (fills && thin(half, curved: fillCurved)) || (strokes && thin(hole, curved: holeCurved)) { return true }
+        if (fills && thin(half, curved: fillCurved)) || (hasHole && thin(hole, curved: holeCurved)) { return true }
         if isArc, mayNeedApexSampling() { return true }
         // 近似の距離場では輪郭の位置がずれすぎる楕円 (``mayNeedExactRing(unitsPerDrawnPixel:)``)
         return strokes && (meta.x == Kind.ellipse.rawValue || isArc) && size.x != size.y
             && Self.exactRingIsNeeded(
                 radii: half, halfWeight: size.z, rowNormsSquared: rowX + rowY,
                 determinant: determinant, unitsPerDrawnPixel: unitsPerDrawnPixel)
+    }
+
+    /// 開いた弧の帯 (``ArcClosure/strokesOpenArc``) が、描く画素で 1 画素より細いことがありうるか ([#2428])。
+    ///
+    /// 断片の `mokume_arcBandField` は、帯の太さ (`2 × 太さの半分 × (1 + 2/256)`) を、**画素ごとに**、その画素で
+    /// 帯の縁が向く法線の方向の画素の幅 (距離場の勾配を画面へ写した長さ) と比べる。その幅は「描く画素 →
+    /// 形自身の座標」の行列の最大の特異値以下なので、ここは全成分の 2 乗和の平方根 (それ以上の上界) と比べて、
+    /// 迷ったら「含む」と答える。
+    ///
+    /// [#2428]: https://github.com/mokume-metal/mokume/issues/2428
+    func mayHaveThinBand(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        guard meta.w & Self.strokesFlag != 0, size.z > 0 else { return false }
+        let determinant = linear.x * linear.w - linear.y * linear.z
+        let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
+        let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
+        let span = SIMD2(repeating: 2 * size.z * (1 + 2.0 / 256))
+        return Self.isThinSpan(
+            span, axes: .both, curved: 1, determinant: determinant,
+            rowNormsSquared: SIMD2(repeating: rowX + rowY), sums: .zero)
     }
 
     /// 輪郭の帯の穴の、形自身の座標での半幅・半径 (種別ごと。潰れていれば 0 以下)。`rect` は半幅 − 太さの
@@ -385,8 +444,10 @@ struct FormInstance {
         case Kind.arc.rawValue:
             // 内接円の半径の下限から太さの半分を引いた半径を、画素の ``sectorHoleReach`` 個分で測る
             // (`mokume_thinHole` は半幅が画素の半分より小さいかを見るので、2 · ``sectorHoleReach`` で割る)
-            return SIMD2(repeating: (Self.sectorDepthLower(radii: half, sweep: offset.w) - size.z)
-                / (2 * Self.sectorHoleReach))
+            let lower = arcClosure == .chord
+                ? Self.chordDepthLower(radii: half, sweep: offset.w)
+                : Self.sectorDepthLower(radii: half, sweep: offset.w)
+            return SIMD2(repeating: (lower - size.z) / (2 * Self.sectorHoleReach))
         default:
             return half - size.z
         }
@@ -412,13 +473,46 @@ struct FormInstance {
         return sineHalf < 0.5
     }
 
-    /// 穴は細くなくても、中心の角が尖った扇か ([#2747])。尖りの先の画素を標本で数える枝に入る。輪郭の無い
-    /// 扇と、扇でない形は「含まない」。
+    /// 弦で結んだ形の 2 つの角 (弧と弦が出会う弧の両端) のどちらかが尖っているか (角が 60° 未満)。断片の
+    /// `mokume_chordApex` と同じ式。弓形が薄い (掃引が小さい) ほど鋭い。
+    static func chordApexIsSharp(radii: SIMD2<Float>, start: Float, sweep: Float) -> Bool {
+        let end1 = radii * SIMD2(RuntimeMath.cos(start), RuntimeMath.sin(start))
+        let end2 = radii * SIMD2(RuntimeMath.cos(start + sweep), RuntimeMath.sin(start + sweep))
+        func sharp(end: SIMD2<Float>, other: SIMD2<Float>, tangent: SIMD2<Float>) -> Bool {
+            let along = tangent * (1 / max(simd_dot(tangent, tangent), 1e-30).squareRoot())
+            let chord = other - end
+            let across = chord * (1 / max(simd_dot(chord, chord), 1e-30).squareRoot())
+            let sum = along + across
+            let sumLength = simd_length(sum)
+            guard sumLength >= 1e-4 else { return false }
+            let bisector = sum / sumLength
+            return abs(along.x * bisector.y - along.y * bisector.x) < 0.5
+        }
+        let tangent1 = radii * SIMD2(-RuntimeMath.sin(start), RuntimeMath.cos(start))
+        let tangent2 = radii * SIMD2(-RuntimeMath.sin(start + sweep), RuntimeMath.cos(start + sweep))
+        return sharp(end: end1, other: end2, tangent: tangent1)
+            || sharp(end: end2, other: end1, tangent: -tangent2)
+    }
+
+    /// 穴は細くなくても、中心の角が尖った扇か ([#2747])。尖りの先の画素を標本で数える枝に入る。弦で結んだ形の周は
+    /// 弧の両端の 2 つの角のどちらかが尖っているか (``chordApexIsSharp(radii:start:sweep:)``)。輪郭の無い
+    /// 扇、開いた弧の帯 (角が無い)、扇でない形は「含まない」。
     ///
     /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
     func mayNeedApexSampling() -> Bool {
         guard meta.w & Self.strokesFlag != 0, meta.x == Kind.arc.rawValue else { return false }
-        return Self.sectorApexIsSharp(radii: SIMD2(size.x, size.y), start: offset.z, sweep: offset.w)
+        let radii = SIMD2(size.x, size.y)
+        switch arcClosure {
+        case .pie: return Self.sectorApexIsSharp(radii: radii, start: offset.z, sweep: offset.w)
+        case .chord: return Self.chordApexIsSharp(radii: radii, start: offset.z, sweep: offset.w)
+        case .standard, .open: return false
+        }
+    }
+
+    /// 弦で結んだ形の中で、輪郭から最も深い所の深さの下限 (形自身の座標)。断片の `mokume_chordDepthLower` と
+    /// 同じ式 — 媒介変数の空間では単位円の弓形で、内接円の半径は `(1 − cos(掃引 / 2)) / 2` (大きい弓形でも成り立つ)。
+    static func chordDepthLower(radii: SIMD2<Float>, sweep: Float) -> Float {
+        min(radii.x, radii.y) * 0.5 * (1 - RuntimeMath.cos(0.5 * sweep))
     }
 
     /// 扇の中で、輪郭から最も深い所の深さ (扇に内接する円の半径) の上限 (形自身の座標)。断片の
@@ -520,13 +614,16 @@ struct FormInstance {
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     init(
         kind: Kind, linear: SIMD4<Float>, offset: SIMD2<Float>, half: SIMD2<Float>,
-        arc: SIMD2<Float> = .zero, halfWeight: Float, cornerRadius: Float = 0,
-        fill: SIMD4<Float>, stroke: SIMD4<Float>, fills: Bool, strokes: Bool,
+        arc: SIMD2<Float> = .zero, arcClosure: ArcClosure = .pie, halfWeight: Float,
+        cornerRadius: Float = 0, fill: SIMD4<Float>, stroke: SIMD4<Float>, fills: Bool, strokes: Bool,
         cap: StrokeCap, join: StrokeJoin
     ) {
         self.linear = linear
         self.offset = SIMD4(offset.x, offset.y, arc.x, arc.y)
-        self.size = SIMD4(half.x, half.y, strokes ? halfWeight : 0, cornerRadius)
+        // 扇は角の半径の欄に閉じ方を持つ (``size``)
+        self.size = SIMD4(
+            half.x, half.y, strokes ? halfWeight : 0,
+            kind == .arc ? Float(arcClosure.rawValue) : cornerRadius)
         self.fill = fills ? fill : .zero
         self.stroke = strokes ? stroke : .zero
         self.meta = SIMD4(

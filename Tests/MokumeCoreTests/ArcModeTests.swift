@@ -245,6 +245,101 @@ struct ArcModeTests {
         #expect(dashed < solid * 3 / 4, "破線が実線と同じだけ塗っている (\(dashed) / \(solid))")
     }
 
+    // MARK: - 距離関数の経路: 縁の AA・1 つの断片・1 列 (#2428)
+
+    private func drawFrame(_ body: (Canvas) -> Void) throws -> (canvas: Canvas, pixels: PixelBuffer) {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            body(canvas)
+        }
+        return (canvas, try canvas.target.readPixels())
+    }
+
+    /// 縁が中間値になっている画素 (被覆 5%〜95%) を数える。
+    private func partialPixels(_ pixels: PixelBuffer) -> Int {
+        var count = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                let value = pixels[x, y].red
+                if value > 0.05 && value < 0.95 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    private func ink(_ pixels: PixelBuffer) -> Double {
+        var sum = 0.0
+        for y in 0..<pixels.height { for x in 0..<pixels.width { sum += Double(pixels[x, y].red) } }
+        return sum
+    }
+
+    /// 反証 1: 引数なしの arc (ほぼすべての arc) の輪郭の縁が、画素の格子に丸まらず滑らかに出る。
+    /// 帯の両縁に沿って中間値の画素が並ぶ — 半径 40 の半円の弧は長さ約 126、両縁で 250 画素ほど。
+    @Test("開いた弧と弦の輪郭は、縁が滑らかに出る (引数なし・`.open`・`.chord`)", arguments: [nil, .open, .chord] as [ArcMode?])
+    func outlineEdgesAreAntialiased(_ mode: ArcMode?) throws {
+        let (_, pixels) = try drawFrame { canvas in
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(6)
+            if let mode { canvas.arc(64.3, 64.6, 80, 80, 0, Float.pi, mode) } else { canvas.arc(64.3, 64.6, 80, 80, 0, Float.pi) }
+        }
+        #expect(partialPixels(pixels) > 200, "縁の中間値の画素が少ない (\(partialPixels(pixels)))")
+    }
+
+    /// 開いた弧の帯が覆う光の量は、帯の面積に一致し、置く位置の小数部で揺れない (縁を面積で数える約束)。
+    /// 丸い端: 面積 = 太さ × 弧の長さ + 円 1 つぶん (両端の半円)。太さ 6 の太い帯と、1 画素未満の細い帯の両方。
+    @Test("開いた弧の帯の光の量は、帯の面積に合い、置く位置で揺れない", arguments: [Float(6), 0.5])
+    func openBandConservesLight(_ weight: Float) throws {
+        let radius: Float = 36
+        let length = Double(radius) * Double.pi
+        let area = Double(weight) * length + Double.pi * Double(weight / 2) * Double(weight / 2)
+        var measured: [Double] = []
+        for offset: Float in [0, 0.25, 0.5, 0.75] {
+            let (_, pixels) = try drawFrame { canvas in
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(weight)
+                canvas.arc(64 + offset, 50 + offset * 0.7, 2 * radius, 2 * radius, 0, Float.pi)
+            }
+            measured.append(ink(pixels))
+        }
+        for value in measured {
+            #expect(abs(value - area) / area < 0.03, "光の量 \(value) が帯の面積 \(area) と合わない")
+        }
+        let spread = (measured.max() ?? 0) - (measured.min() ?? 0)
+        #expect(spread / area < 0.01, "置く位置で光の量が揺れる (\(measured))")
+    }
+
+    /// 反証 3: 閉じ方の違う arc を、他の図形と混ぜても 1 列・三角形無し (N 個で 1 回の描画)。
+    @Test("閉じ方の違う arc を他の図形と混ぜても、1 列に収まる")
+    func closuresShareOneDrawCall() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(black)
+            for index in 0..<64 {
+                let step = Float(index)
+                canvas.push()
+                canvas.translate(8 + step.truncatingRemainder(dividingBy: 8) * 14, 8 + (step / 8).rounded(.down) * 14)
+                canvas.fill(.linear(red: step / 64, green: 0.5, blue: 1 - step / 64))
+                canvas.stroke(.linear(red: 1, green: step / 64, blue: 0))
+                canvas.strokeWeight(1 + step * 0.04)
+                canvas.strokeCap([.round, .square, .project][index % 3])
+                switch index % 6 {
+                case 0: canvas.arc(0, 0, 9, 7, 0.2, 2 + step * 0.02)
+                case 1: canvas.arc(0, 0, 9, 7, 0.2, 2 + step * 0.02, .pie)
+                case 2: canvas.arc(0, 0, 9, 7, 0.2, 2 + step * 0.02, .chord)
+                case 3: canvas.arc(0, 0, 9, 7, 0.2, 2 + step * 0.02, .open)
+                case 4: canvas.circle(0, 0, 6 + step * 0.05)
+                default: canvas.rect(0, 0, 6 + step * 0.05, 4)
+                }
+                canvas.pop()
+            }
+        }
+        #expect(canvas.drawCallsInLastFrame == 1, "閉じ方か端の形で列が分かれている")
+        #expect(canvas.flatOutlinesInLastFrame == 0, "三角形の経路で輪郭を組んでいる")
+    }
+
     // MARK: - 保持した形
 
     /// 完了条件 (残り 5)。`createShape` の中の円弧は、閉じ方ごとの周 (``Canvas/Outline/Ring/Piece``) を

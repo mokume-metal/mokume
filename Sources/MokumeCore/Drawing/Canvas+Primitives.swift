@@ -196,11 +196,14 @@ extension Canvas {
 
     /// 円弧を置く。`mode` が `nil` なら、渡さなかったとき (塗りは扇・輪郭は開いた弧)。
     ///
-    /// **扇の塗りと輪郭を 1 つの形で出すのは `.pie` だけ** (距離関数の扇・変更前の既定と同じ絵)。
-    /// 開いた弧の輪郭と弦の形は距離関数で表せないので、輪郭の周 (``Outline``) で組む。既定は、
-    /// 塗りを距離関数の扇に、輪郭を開いた弧の周に分ける — 破線の輪郭 (#2835) が使う
-    /// 「塗りは距離関数・輪郭は輪郭の片」(``appendDashedForm(_:center:half:arc:cornerRadius:outline:)``) と同じ形である。
-    /// 輪郭を引かないなら、塗りは扇だけなので `.pie` と同じ 1 つの形のままにする。
+    /// **距離関数の経路で描ける図形は、閉じ方によらず 1 つの置き場所・1 つの断片で描く** (``FormInstance/ArcClosure``)。
+    /// 塗りが扇か弦で結んだ形か、輪郭が扇の周・弦で結んだ形の周・開いた弧の帯のどれかは、断片が閉じ方から決める。
+    /// だから既定の `arc` も縁を滑らかにして出し、塗りと輪郭を 1 つの断片で重ねる約束 (ADR-0039 決定 5) も、
+    /// 閉じ方の違う `arc` が同じ列に並ぶ性質も、`.pie` と変わらない。
+    ///
+    /// 距離関数の経路を使えないとき — `texture()` か `shader()` を効かせた塗りは三角形の経路へ — は、輪郭の周
+    /// (``Outline``) を部分ごとに組んで描く (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
+    /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
     private func placeArc(
@@ -218,13 +221,7 @@ extension Canvas {
         // 一周ぶんなら中心は周に含めない (楕円と同じ形になる)
         let isFullTurn = sweep >= 2 * .pi
         let center = SIMD2(box.x + radiusX, box.y + radiusY)
-        let drawsStroke = style.hasStroke && style.strokeWeight > 0
-        let isSinglePie = isFullTurn || mode == .pie || (mode == nil && !drawsStroke)
-        guard isSinglePie else {
-            return placeArcInParts(
-                mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
-                sweep: sweep)
-        }
+        let closure = mode.map(\.closure) ?? .standard
         if formAllowed(fills: true) {
             if dashedStroke != nil {
                 return isFullTurn
@@ -235,15 +232,22 @@ extension Canvas {
                             piece: .sector, at: center))
                     : appendDashedForm(
                         .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
+                        arcClosure: closure,
                         outline: ringOutlineForDash(
                             radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                            piece: .sector, at: center))
+                            piece: closure.strokePiece, at: center))
             }
             return isFullTurn
                 ? appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
                 : appendForm(
                     .arc, center: center, half: SIMD2(radiusX, radiusY),
-                    arc: SIMD2(start, sweep), fills: true)
+                    arc: SIMD2(start, sweep), arcClosure: closure, fills: true)
+        }
+        let drawsStroke = style.hasStroke && style.strokeWeight > 0
+        guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) else {
+            return placeArcInParts(
+                mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
+                sweep: sweep)
         }
         draw(
             folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
@@ -261,18 +265,21 @@ extension Canvas {
         }
     }
 
-    /// 弧の塗りと輪郭が、1 つの扇の形では出せない閉じ方 (既定・`.chord`・`.open`) を置く。
+    /// 距離関数の経路を使えない (貼る絵か断片が塗りに効いている) とき、弧の塗りと輪郭が 1 つの扇の形では出せない
+    /// 閉じ方 (既定・`.chord`・`.open`) を、輪郭の周を部分ごとに組んで置く。
     ///
-    /// - 既定: 塗りは扇、輪郭は開いた弧。**塗りは距離関数が使えるなら距離関数の扇** (輪郭は別に引く)
+    /// - 既定: 塗りは扇、輪郭は開いた弧
     /// - `.chord`: 弦で結んだ形の塗りと、その周の輪郭
     /// - `.open`: 弦で結んだ形の塗りと、開いた弧の輪郭
     ///
     /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
     /// 破線の輪郭は、開いた弧の周を刻むので、ここでも ``strokeOutline(_:discSegments:)`` が引き受ける。
+    /// **周は区間の中だと分かってから組む。**
     private func placeArcInParts(
         mode: ArcMode?, center: SIMD2<Float>, radiusX: Float, radiusY: Float, start: Float,
         sweep: Float
     ) {
+        guard canPlace else { return warnOutsideFrame(.placing) }
         func outline(_ piece: Outline.Ring.Piece) -> Outline {
             ringOutlineForDash(
                 radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, piece: piece,
@@ -280,14 +287,8 @@ extension Canvas {
         }
         switch mode {
         case nil:
-            if formAllowed(fills: true) {
-                appendDashedForm(
-                    .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
-                    outline: outline(.arcLine))
-            } else {
-                draw(outline(.sectorFill))
-                draw(outline(.arcLine))
-            }
+            draw(outline(.sectorFill))
+            draw(outline(.arcLine))
         case .chord:
             draw(outline(.chord))
         case .open:
@@ -475,4 +476,26 @@ extension Canvas {
         endShape()
     }
 
+}
+
+extension ArcMode {
+    /// 距離関数の経路の置き場所が持つ、同じ閉じ方 (``FormInstance/ArcClosure``)。
+    fileprivate var closure: FormInstance.ArcClosure {
+        switch self {
+        case .open: .open
+        case .chord: .chord
+        case .pie: .pie
+        }
+    }
+}
+
+extension FormInstance.ArcClosure {
+    /// 三角形の経路 (破線の輪郭) が輪郭として刻む周の部分。
+    fileprivate var strokePiece: Canvas.Outline.Ring.Piece {
+        switch self {
+        case .pie: .sector
+        case .chord: .chord
+        case .standard, .open: .arcLine
+        }
+    }
 }

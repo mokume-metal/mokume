@@ -464,8 +464,8 @@ extension Canvas {
     /// 楕円・弧の周を、一周を `ring.segments` 個に刻んだ周にする。**中心は原点。**
     /// 一周ならば中心は周に含めず、弧ならば部分 (``Outline/Ring/Piece``) で決まる。扇は中心を
     /// 最初の点にする (扇の 3 つの角のうち中心と、弧の両端が周の点になる・#1486)。弦は弧の点だけを
-    /// 閉じ、開いた弧は閉じない。周の点はどれも刻みで、角は 1 つも無い (#1423)。ただし弦の
-    /// 両端は、弦と弧が作る角で、折れ目の形に従う。
+    /// 閉じ、開いた弧は閉じない。周の点はどれも刻みで、角は 1 つも無い (#1423)。弦の両端 (弦と弧が作る角) も
+    /// 丸く繋ぐ (扇の角と同じ)。
     ///
     /// 周を組む口 (`ellipse` / `arc`) と、保持した形を置くときに刻み直す口
     /// (``Outline/Ring``・#1645) が同じ周を作る。
@@ -479,13 +479,12 @@ extension Canvas {
             case .sector, .sectorFill:
                 break
             case .chord, .chordFill:
-                // 弧の点だけを閉じる。最初の点からの扇で塗れる (弦で切った弧は凸)
-                var steps = Array(repeating: true, count: arcPoints.count)
-                steps[0] = false
-                steps[steps.count - 1] = false
+                // 弧の点だけを閉じる。最初の点からの扇で塗れる (弦で切った弧は凸)。**弦と弧が出会う 2 つの角も、
+                // 折れ目の形によらず丸く繋ぐ** — 距離関数の経路は輪郭を距離の帯で出すので、扇の角と同じく丸くなる
                 return Outline(
                     points: arcPoints, isClosed: arcPoints.count >= 3, strokes: ring.piece == .chord,
-                    curveSteps: steps, strokesAsOneRegion: true, ring: ring)
+                    curveSteps: Array(repeating: true, count: arcPoints.count),
+                    strokesAsOneRegion: true, ring: ring)
             case .arcLine:
                 return Outline(
                     points: arcPoints, isClosed: false, fills: false,
