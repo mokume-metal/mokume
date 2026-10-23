@@ -245,6 +245,43 @@ struct ArcModeTests {
         #expect(dashed < solid * 3 / 4, "破線が実線と同じだけ塗っている (\(dashed) / \(solid))")
     }
 
+    // MARK: - 保持した形
+
+    /// 完了条件 (残り 5)。`createShape` の中の円弧は、閉じ方ごとの周 (``Canvas/Outline/Ring/Piece``) を
+    /// 記録して、置くときの拡大で刻み直す。拡大して置いた絵が、拡大せずに直に描いた絵と同じになる。
+    /// 刻み直しが閉じ方を落とすと、扇や弦の形が別の閉じ方の形で出る。
+    @Test(
+        "保持した円弧は、拡大して置いても、閉じ方ごとに拡大しない円弧と同じ絵になる",
+        arguments: [nil, .open, .chord, .pie] as [ArcMode?], Route.allCases)
+    func retainedArcMatchesDirectOne(_ mode: ArcMode?, _ route: Route) throws {
+        func arc(_ canvas: Canvas, _ x: Float, _ y: Float, _ size: Float) {
+            let (start, stop) = (Float.pi * 0.2, Float.pi * 1.4)
+            if let mode {
+                canvas.arc(x, y, size, size, start, stop, mode)
+            } else {
+                canvas.arc(x, y, size, size, start, stop)
+            }
+        }
+        func style(_ canvas: Canvas, weight: Float) {
+            canvas.fill(LinearRGBA.linear(red: 0.2, green: 0.2, blue: 0.2))
+            canvas.stroke(white)
+            canvas.strokeWeight(weight)
+        }
+        let retained = try picture(route) { canvas in
+            style(canvas, weight: 0.5)
+            let shape = canvas.createShape { arc(canvas, 4, 4, 4) }
+            canvas.scale(20, 20)
+            canvas.shape(shape)
+        }
+        let direct = try picture(route) { canvas in
+            style(canvas, weight: 10)
+            arc(canvas, 80, 80, 80)
+        }
+        let blank = try picture(route) { _ in }
+        #expect(direct.bytes != blank.bytes, "\(route): 直に描いた絵が空")
+        #expect(retained.bytes == direct.bytes, "\(route): 拡大して置いた絵が直に描いた絵と違う")
+    }
+
     // MARK: - 変わらないもの
 
     @Test("角度が逆向きの円弧は、どの閉じ方でも何も描かない", arguments: [nil, .open, .chord, .pie] as [ArcMode?])
