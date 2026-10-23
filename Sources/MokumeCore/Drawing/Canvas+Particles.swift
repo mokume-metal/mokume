@@ -132,6 +132,13 @@ extension Canvas {
             using: &randomness)
     }
 
+    /// 粒に力を効かせる。
+    ///
+    /// ``SketchPart/force(_:_:)`` と同じ可変長の形。描き場所の中でだけ積める (`beginDraw()` と `endDraw()` の間)。
+    public func force(_ particles: Particles, _ forces: Force...) {
+        force(particles, forces)
+    }
+
     /// 力を積む。
     public func force(_ particles: Particles, _ forces: [Force]) {
         guard admits(.particles) else { return }
