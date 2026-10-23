@@ -1622,6 +1622,11 @@ public final class SketchRuntime {
     ///
     /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
     /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
+    ///
+    /// **この回は表示の予定の時刻を持たず、現在時刻で進む** ([#2390])。時刻は前の枚より小さくならない
+    /// (``SketchPart/time``)。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
         guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
         try? runFrame()
