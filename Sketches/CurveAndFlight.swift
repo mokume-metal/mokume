@@ -37,8 +37,8 @@ final class CurveAndFlight: Sketch {
         strokeWeight(2)
         bezier(60, 420, 260, 60, 640, 600, 900, 160)
 
-        // 曲線の上を飛ぶ機体
-        let t = (time * 0.15).truncatingRemainder(dividingBy: 1)
+        // 曲線の上を飛ぶ機体。周期のある動きは phase(period:) で書く (何日走らせても刻みが粗くならない)
+        let t = phase(period: 1 / 0.15)
         let x = bezierPoint(60, 260, 640, 900, t)
         let y = bezierPoint(420, 60, 600, 160, t)
         let angle = atan2(bezierTangent(420, 60, 600, 160, t), bezierTangent(60, 260, 640, 900, t))
