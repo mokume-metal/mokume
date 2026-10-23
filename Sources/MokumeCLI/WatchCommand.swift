@@ -22,6 +22,25 @@ enum WatchCommand {
     /// 所要時間に検出の時間が出るので、足りなければ実測を根拠に差し替えられる。
     static let interval: TimeInterval = 0.25
 
+    /// 作り直しをまたいで作者の時計を渡す旗 (値を取らない)。**`watch` だけが受ける** — `run`・`render` は
+    /// 知らない選択肢として断る。
+    static let keepTimeFlag = "--keep-time"
+
+    /// `watch` が足す選択肢 (走らせる部分の選択肢 ``Invocation/options`` に足して解く)。
+    @MainActor static var options: [Arguments.Option] {
+        [
+            Arguments.Option([keepTimeFlag], isSwitch: true) {
+                "\($0) takes no value"
+            }
+        ]
+    }
+
+    /// 世代をまたいで作者の時計を渡すファイルの場所。見張り 1 本ごとに別 (プロセス番号で分ける)。
+    static func keepTimeFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-keep-time-\(getpid())", isDirectory: false)
+    }
+
     /// 終わりの合図として受けるもの。
     ///
     /// **端末が消える形 (SIGHUP) がいちばん多い。** 見張りを起こした端末やセッションが
@@ -48,7 +67,8 @@ enum WatchCommand {
         watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) },
         claiming: (URL) throws(CommandFailure) -> WatchPlaceLock = { try WatchPlaceLock.claim(under: $0) }
     ) throws(CommandFailure) {
-        let invocation = try Invocation.parse(arguments)
+        let (invocation, values) = try Invocation.parse(arguments, adding: options)
+        let keepsTime = values[keepTimeFlag] != nil
         let directory = try invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
@@ -87,9 +107,16 @@ enum WatchCommand {
         let place = try claiming(facetBase)
         defer { place.release() }
 
+        // **世代をまたいで時計を渡すファイル** (`--keep-time`・#2414)。始める前に消す (前の見張りの時計から
+        // 始めない) し、終わりでも消す。旗の無い見張りは何も作らず、子にも渡さない
+        let keepTimeFile = keepsTime ? Self.keepTimeFile() : nil
+        if let keepTimeFile { try? FileManager.default.removeItem(at: keepTimeFile) }
+        defer { if let keepTimeFile { try? FileManager.default.removeItem(at: keepTimeFile) } }
+
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
-            reportsRate: true, hooks: .live(resolver: resolver, running: running))
+            reportsRate: true,
+            hooks: .live(resolver: resolver, running: running, keepTime: keepTimeFile?.path))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても

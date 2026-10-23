@@ -536,6 +536,8 @@ public final class SketchRuntime {
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
     ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ・``ClockHandover``)。
+    ///     **書き出しの子には渡さない。** 省けば 0 秒から始まる。
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
@@ -551,6 +553,7 @@ public final class SketchRuntime {
         onScreen: Bool = false,
         persistsParams: Bool = true,
         opensFacets: Bool = true,
+        handover: ClockHandover? = nil,
         presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
@@ -571,7 +574,8 @@ public final class SketchRuntime {
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
-        self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.timing = FrameTiming(
+            clock: clock, frameRate: settings.frameRate, now: now, handover: handover)
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now

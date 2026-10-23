@@ -209,6 +209,10 @@ final class FrameTiming {
     var authorTime: Float { Float(seconds) }
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
+    /// 作り直しをまたいで作者の時計を渡す先と元 (`mokume watch --keep-time`・``ClockHandover``)。旗の無い実行は `nil`。
+    private let handover: ClockHandover?
+    /// 前の世代から引き継ぐ作者の時計。最初の枚で使って落ちる。
+    private var inheritance: ClockHandover.Snapshot?
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
     private var pendingJump: Double?
     /// 数でない飛び先を知らせたか (``jumpTime(_:)``)。2 回目からは言わない。
@@ -231,13 +235,19 @@ final class FrameTiming {
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ)。最初の枚が
+    ///     前の世代の秒から始まり、以後の作者の時計を書く。省けば 0 秒から始まり、何も書かない
+    ///     ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     init(
         clock: Clock, frameRate: Int = 60,
         now: @escaping () -> Double = { CACurrentMediaTime() },
-        warn: @escaping (String) -> Void = Diagnostics.warn
+        warn: @escaping (String) -> Void = Diagnostics.warn,
+        handover: ClockHandover? = nil
     ) {
         self.clock = clock
         self.warn = warn
+        self.handover = handover
+        self.inheritance = handover?.inherited
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
@@ -305,6 +315,17 @@ final class FrameTiming {
             // `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
             step = .frame(perSecond: max(1, frameRate))
         }
+        if let inherited = inheritance {
+            // **前の世代の作者の時計から始める** (`watch --keep-time`・[#2414])。最初の枚だけ。原点のずれを、この枚の
+            // 秒が前の世代の秒になるように置く。止めていれば止める。`setup()` で作者が頼んだ飛び先・止めた秒は、
+            // 次の分岐が上書きする (作者が明示したものを優先する)
+            //
+            // [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+            inheritance = nil
+            let start = inherited.start(at: now)
+            offset = start.seconds - raw
+            if start.isHeld { heldAt = start.seconds }
+        }
         if let target = pendingJump ?? heldAt {
             // 飛んだ枚と止めている枚。**ずれを毎枚寄せ直す** — 再開した次の枚は、
             // 生の時刻の 1 枚ぶんの進みだけ先になる (実時計の経過へ跳ね戻らない)
@@ -324,6 +345,10 @@ final class FrameTiming {
         }
         // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
         elapsed += step.seconds
+        // 次の世代へ渡す作者の時計 (観測の指定秒ではなく、作者の時計の秒)
+        handover?.publish(
+            ClockHandover.Snapshot(
+                seconds: seconds, isHeld: heldAt != nil, isRealtime: clock == .wallClock, at: now))
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
