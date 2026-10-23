@@ -142,8 +142,8 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
     /// まだ取り出されていないものを、読まずに捨てる (数えず、診断にも出さない)。
     ///
     /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
-    /// 読まれなかったものを残すと、足し直した最初の ``take()`` が古いものを出す。捨てた数 (``overflowed``・
-    /// ``unreadable``) と ``lastArrival`` は変えない。
+    /// 読まれなかったものを残すと、足し直した最初の ``take()`` が古いものを出す。上限で捨てた数・読めずに捨てた数と
+    /// ``lastArrival`` は変えない。出どころ (OS のコールバックなど) が止まった後に呼ぶ — 先に捨てると、止まる間際に届いたものが残る。
     public func discardWaiting() {
         waiting.withLock { $0.removeAll() }
     }
