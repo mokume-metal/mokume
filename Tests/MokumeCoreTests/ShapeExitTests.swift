@@ -349,6 +349,7 @@ extension ShapeExit {
             "exposedValues": observation, "measuredValues": observation,
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
+            "orbitHome": "orbit と同じ (ダブルクリックで戻る始めの視点・#2762)。`orbitControl()` が最初の呼び出しで 1 度だけ控える。組み立ての中では `orbitControl()` が視点を書く前に断るので、形には焼き付かない",
             "warnings": "ランタイムが 1 度だけ言った注意の控え (走っている最中の枚数の代入・#1323)。形に焼き付く値を生まない",
             "blockingLoads": "draw() の中の同期の読み込みを 1 度だけ言う控え (#2601)。形に焼き付く値を生まない",
             "seedScopes":"組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",
