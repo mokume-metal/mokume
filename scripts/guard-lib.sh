@@ -199,7 +199,8 @@ is_help_request() { # $1=コマンド
 # 出すときに半分ずつ繋ぐ。**入力全体 (src) に substr を使わない** — macOS の awk (20200816)
 # の substr は、切り出す長さによらず呼ぶたびに src の長さに比例してかかるので、語ごと・行ごとに
 # 呼ぶと長さの 2 乗になる (#3115)。切り出しは文字の配列 C から rng で繋ぐ。断片の先頭の前置も
-# 文字列から削らず、語の配列 X の位置を進めて読み、区切り語は 1 文字ずつ積んで hjoin で繋ぐ。読む時間の検査は
+# 文字列から削らず、語の配列 X の位置を進めて読み、区切り語は 1 文字ずつ積んで hjoin で繋ぐ。区切り語の長さは行ごとに引かず、ループの印は
+# 差分で覚えて出すときに 1 度で付ける。読む時間の検査は
 # scripts/tests/guard_lib_test.py の LengthTest (長さが 4 倍で CPU 時間が 6 倍未満・素の awk の
 # 読みの 10 倍未満)。
 #
@@ -245,13 +246,13 @@ gh_invocations() { # $1=コマンド
       }
       # 複合コマンドの枠を閉じる。ループを閉じるときは、本体で宛先を変える文があれば、本体の
       # gh の行すべてにその印を付ける
-      function popcmp(   k, d) {
+      function popcmp(   d) {
         if (FLOOP[fd]) {
+          # 印は、本体の行の範囲 [FB0, NB] への差分として覚え、出す (rows) ときに 1 度で付ける。
+          # 閉じるたびに本体の行を全部回すと、入れ子のループが深いとき長さの 2 乗 (#3115)
           d = FDEP[fd]
-          for (k = FB0[fd]; k <= NB; k++) {
-            if (DCC[d] > FDC0[fd]) RC[k] = 1
-            if (DRC[d] > FDR0[fd] && RR[k] == "=") RR[k] = "?"
-          }
+          if (DCC[d] > FDC0[fd]) { MC[FB0[fd]]++; MC[NB + 1]-- }
+          if (DRC[d] > FDR0[fd]) { MR[FB0[fd]]++; MR[NB + 1]-- }
           LOOPN--
         }
         fd--
@@ -266,8 +267,16 @@ gh_invocations() { # $1=コマンド
         NB++; RR[NB] = r; RC[NB] = c; RP[NB] = p; RF[NB] = f
         if (!LOOPN) rows()
       }
-      function rows(   k) {
-        for (k = 1; k <= NB; k++) print RR[k] "\t" RC[k] "\t" RP[k] "\t" RF[k]
+      function rows(   k, sc, sr) {
+        sc = 0; sr = 0
+        for (k = 1; k <= NB; k++) {
+          sc += MC[k]; sr += MR[k]
+          if (sc > 0) RC[k] = 1
+          if (sr > 0 && RR[k] == "=") RR[k] = "?"
+          delete MC[k]; delete MR[k]
+          print RR[k] "\t" RC[k] "\t" RP[k] "\t" RF[k]
+        }
+        delete MC[NB + 1]; delete MR[NB + 1]
         NB = 0
       }
       # 宛先を変える文の印。数 (DCC・DRC) はループの本体で立ったかを見るのに使う
@@ -374,8 +383,10 @@ gh_invocations() { # $1=コマンド
         return j - 1
       }
       # 改行 (位置 i) の後ろの本文を、覚えた区切り語の順に落とす。戻り値は最後の改行の位置
-      function bodies(i,   k, a, e, b, f, t) {
+      function bodies(i,   k, a, e, b, f, t, hl) {
         for (k = 1; k <= nh; k++) {
+          # 区切り語の長さは行ごとに引かない (length は語の長さに比例し、行の数だけ掛かる・#3115)
+          hl = length(HD[k])
           while (i < n) {
             a = i + 1; e = a
             while (e <= n && C[e] != "\n") e++
@@ -384,7 +395,7 @@ gh_invocations() { # $1=コマンド
             b = a; while (b < e && (C[b] == " " || C[b] == "\t")) b++
             f = e; while (f > b && (C[f - 1] == " " || C[f - 1] == "\t")) f--
             i = e
-            if (f - b != length(HD[k])) continue
+            if (f - b != hl) continue
             t = rng(b, f)
             if (t == HD[k]) break
           }
