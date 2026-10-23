@@ -112,13 +112,14 @@ struct SerialSketchTests {
         #expect(stopped.states == [.stopped, .stopped])
     }
 
-    @Test("実行の外 (足していない・終わった後) で呼んだ stop() は、利用者が止めた印を立てない (#3122)")
+    @Test("実行の外・足していない入り口への stop() は、利用者が止めた印を立てない (#3122)")
     func stopOutsideTheRunDoesNotStick() throws {
         var serial: Serial?
         SerialSketch.onSetup = { sketch in
-            // 足さずに持つ。`stop()` は走っていない所から呼ぶ
+            // 足さずに持つ。走っている最中に呼んだ `stop()` も、並びに居ないので何も外さず、印を立てない
             serial = Serial(
                 name: "serial (recorded)", source: RecordedSource<String>(batches: [["512"]]), owner: sketch)
+            serial?.stop()
         }
         SerialSketch.onDraw = { _ in }
         defer { SerialSketch.onSetup = { _ in }; SerialSketch.onDraw = { _ in } }

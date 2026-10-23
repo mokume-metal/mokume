@@ -280,6 +280,55 @@ struct MovieTests {
         #expect(movie?.state == .stopped)
     }
 
+    @Test("読めなくなっていた動画を外して足し直した後、読めない所へ進めば、また読めなくなったと名乗る (#3122)")
+    func reattachedDamagedMovieNoticesTheDamageAgain() async throws {
+        let url = try await TestMovie.write(frames: 60, width: 64, height: 48, pixel: TestMovie.noise)
+        let broken = try TestMovie.damaged(url, from: 0.3, to: 0.6)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: broken)
+        }
+        var movie: Movie?
+        var phase = 0
+        var afterReattach: [SourceState] = []
+        let runtime = try run(
+            frames: 60,
+            setup: { sketch in
+                let reader = try MovieReader(url: broken, path: "broken.mov")
+                let made = Movie(
+                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    name: "video: broken.mov", owner: sketch, warn: { _ in })
+                sketch.attach(made)
+                made.loop()
+                movie = made
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                switch phase {
+                case 0:
+                    // 読めなくなったところで止め、外す
+                    if movie.state == .disconnected {
+                        movie.pause()
+                        sketch.detach(movie)
+                        phase = 1
+                    }
+                case 1:
+                    // 足し直して、また流す
+                    sketch.attach(movie)
+                    movie.loop()
+                    phase = 2
+                default:
+                    afterReattach.append(movie.state)
+                }
+            })
+        #expect(phase == 2, "読めなくなるところまで進まなかった")
+        #expect(afterReattach.count >= 10)
+        // 読めない所へ進めば、読みに行って disconnected になる。外す前の「まだ試さない」を持ち越すと、
+        // 読みに行かず、絵が止まったまま動いていると名乗り続ける
+        #expect(afterReattach.contains(.disconnected), "\(afterReattach)")
+        runtime.closePlugins()
+    }
+
     // MARK: - 作れないとき・読めなくなったとき
 
     @Test("見つからない・中身が動画でない・映像が無いときは、作るときに投げる")

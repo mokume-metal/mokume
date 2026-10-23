@@ -358,16 +358,17 @@ struct AudioInTests {
             "足し直しても戻らない: \(stopped.seen)")
     }
 
-    @Test("実行の外で呼んだ stop() は警告だけで何も止めず、利用者が止めた印も立てない (#3122)")
+    @Test("実行の外・足していない入り口への stop() は何も止めず、利用者が止めた印も立てない (#3122)")
     func stopOutsideTheRunDoesNotStick() throws {
         var audio: AudioIn?
         let runtime = try run(
             frames: 1,
             setup: { sketch in
-                // 足さずに持つ。`stop()` は、走っていない所から呼ぶ
+                // 足さずに持つ。走っている最中に呼んだ `stop()` も、並びに居ないので何も外さず、印を立てない
                 audio = AudioIn(
                     device: nil, name: "microphone", source: UnpluggedAudioSource(after: 100),
                     owner: sketch, warn: { _ in })
+                audio?.stop()
             })
         let loose = try #require(audio)
         let log = OutsideRun()

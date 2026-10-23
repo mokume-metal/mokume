@@ -26,9 +26,14 @@ import Synchronization
 ///     func supply() {
 ///         if let value = input.take() { celsius = value }
 ///     }
+///     func close() { input.discardWaiting() }
 ///     var report: SourceReport? { input.report }
 /// }
 /// ```
+///
+/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 外した入り口は `attach(_:)` で足し直されうる
+/// (``Inlet/open()``)。外す前に届いて読まれなかった値が残っていると、足し直した最初のフレームの
+/// ``take()`` が古い値を出す。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
@@ -92,7 +97,8 @@ public nonisolated final class ExternalInput<Value: Sendable>: Sendable {
     ///
     /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
     /// 読まれなかった値を残すと、足し直した最初の ``take()`` が古い値を出す。``lastArrival`` は変えない。
-    package func discardWaiting() {
+    /// 出どころ (OS のコールバックなど) が止まった後に呼ぶ — 先に捨てると、止まる間際に届いたものが残る。
+    public func discardWaiting() {
         latest.withLock { $0 = nil }
     }
 

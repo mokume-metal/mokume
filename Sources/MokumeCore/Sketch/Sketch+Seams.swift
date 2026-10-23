@@ -378,9 +378,10 @@ extension SketchPart {
     /// (`Countdown.restart()` と同じ)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
     /// スケッチが終わった後 (終わりの処理が既に閉じている) でも事実である。
     ///
-    /// 戻り値は、外す頼みが**実行に届いたか** (外から呼んで警告だけ出して何もしなかったら `false`)。利用者が呼ぶ `stop()` が、
-    /// 届いたときだけ「利用者が止めた」印を立てるために使う。印を無条件に立てると、外で呼んで何も止まらなかった回にも印が
-    /// 立ち、走っている別の実行で生きている入り口が止まる (#3122)。外す頼みが巡回の最中で後回しになった場合も、届いたものとして `true`。
+    /// 戻り値は、外す頼みが**並びに居る入り口を外したか** (外から呼んで警告だけ出して何もしなかった・並びに居ない入り口だった
+    /// ら `false`)。利用者が呼ぶ `stop()` が、実際に止めたときだけ「利用者が止めた」印を立てるために使う。印を無条件に立てると、
+    /// 外で呼んで何も止まらなかった回にも印が立ち、足していない入り口に呼んだ `stop()` が、後で足したその入り口を止めたままにする
+    /// (#3122)。外す頼みが巡回の最中で後回しになった場合も、頼んだ時点で並びに居れば `true`。
     ///
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
     @discardableResult
@@ -389,7 +390,8 @@ extension SketchPart {
             OutsideRun.log.warn(call, .act)
             return false
         }
+        let wasAttached = runtime.isAttached(inlet)
         runtime.detach(inlet)
-        return true
+        return wasAttached
     }
 }

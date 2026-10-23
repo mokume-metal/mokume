@@ -1443,6 +1443,11 @@ public final class SketchRuntime {
         return attachNow(outlet)
     }
 
+    /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
+    package func isAttached(_ inlet: any Inlet) -> Bool {
+        inlets.contains { $0.seam === inlet }
+    }
+
     /// 入り口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Inlet)``)。
     public func detach(_ inlet: any Inlet) {
         guard seamVisitDepth == 0 else {

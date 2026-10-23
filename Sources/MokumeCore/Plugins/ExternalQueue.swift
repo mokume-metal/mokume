@@ -23,9 +23,14 @@ import Synchronization
 ///     let input = ExternalQueue<String>(name: "doorbell", state: .running)
 ///     private(set) var rings: [String] = []
 ///     func supply() { rings = input.take() }
+///     func close() { input.discardWaiting() }
 ///     var report: SourceReport? { input.report }
 /// }
 /// ```
+///
+/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 外した入り口は `attach(_:)` で足し直されうる
+/// (``Inlet/open()``)。外す前に届いて読まれなかったものが残っていると、足し直した最初のフレームの
+/// ``take()`` が古いものを出す。
 ///
 /// ## 上限で捨て、捨てたことを黙らない
 ///
@@ -139,7 +144,7 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
     /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
     /// 読まれなかったものを残すと、足し直した最初の ``take()`` が古いものを出す。捨てた数 (``overflowed``・
     /// ``unreadable``) と ``lastArrival`` は変えない。
-    package func discardWaiting() {
+    public func discardWaiting() {
         waiting.withLock { $0.removeAll() }
     }
 

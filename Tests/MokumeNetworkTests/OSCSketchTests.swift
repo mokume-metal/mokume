@@ -207,16 +207,17 @@ struct OSCSketchTests {
         #expect(stopped.result.told == 1)
     }
 
-    @Test("実行の外 (足していない・終わった後) で呼んだ stop() は、利用者が止めた印を立てない (#3122)")
+    @Test("実行の外・足していない入り口への stop() は、利用者が止めた印を立てない (#3122)")
     func stopOutsideTheRunDoesNotStick() throws {
         var osc: OSCPort?
         let recording = RecordingSender()
         OSCSketch.onSetup = { sketch in
-            // 足さずに持つ。`stop()` は走っていない所から呼ぶ
+            // 足さずに持つ。走っている最中に呼んだ `stop()` も、並びに居ないので何も外さず、印を立てない
             osc = OSCPort(
                 port: 6000, name: "osc :6000",
                 source: RecordedSource<OSCMessage>(batches: [[OSCMessage("/a", 1)]]),
                 outbound: recording, owner: sketch)
+            osc?.stop()
         }
         OSCSketch.onDraw = { _ in }
         defer { OSCSketch.onSetup = { _ in }; OSCSketch.onDraw = { _ in } }

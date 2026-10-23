@@ -189,16 +189,17 @@ struct CaptureTests {
         #expect(stopped.allSatisfy { $0.state == .stopped && !$0.new }, "足し直しても戻らない: \(stopped)")
     }
 
-    @Test("実行の外で呼んだ stop() は警告だけで何も止めず、利用者が止めた印も立てない (#3122)")
+    @Test("実行の外・足していない入り口への stop() は何も止めず、利用者が止めた印も立てない (#3122)")
     func stopOutsideTheRunDoesNotStick() throws {
         var camera: Capture?
         let runtime = try run(
             frames: 1,
             setup: { sketch in
-                // 足さずに持つ。`stop()` は、走っていない所から呼ぶ
+                // 足さずに持つ。走っている最中に呼んだ `stop()` も、並びに居ないので何も外さず、印を立てない
                 camera = Capture(
                     image: try sketch.createImage(4, 4), device: nil, name: "camera",
                     source: SilentSource(.running), owner: sketch)
+                camera?.stop()
             })
         let loose = try #require(camera)
         let log = OutsideRun()
