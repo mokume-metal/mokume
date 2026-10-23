@@ -40,7 +40,8 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
     private let requested: CaptureDevice?
     private let converter: FrameConverter
     private let control = DispatchQueue(label: "org.mokume.camera.control")
-    private let frames = DispatchQueue(label: "org.mokume.camera.frames")
+    /// 絵の列。検査が直に積めるよう、内部に開けてある。
+    let frames = DispatchQueue(label: "org.mokume.camera.frames")
 
     /// 入れ物。操作の列が置き、絵の列が読む。1 度置くだけなので、錠は読み書きの境目のため
     private let input = Mutex<ExternalInput<DisplayImage>?>(nil)
@@ -77,6 +78,10 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         observers.removeAll()
         // **止め終わるまで待つ。** 閉じた後に 1 枚届くと、閉じた入り口の入れ物へ入る
         control.sync { [self] in apply(lifecycle.stop(), device: nil) }
+        // **絵の列に積まれていた届きかけの 1 枚も、ここで済ませる** (#3122)。操作の列が待つのは止める手だけで、
+        // 絵の列の 1 枚は止めた後に入れ物へ入りうる。``Capture/close()`` が捨てる (`discardWaiting()`) より前に
+        // 入れておけば、足し直した最初のフレームに外す前の絵が出ない
+        frames.sync {}
     }
 
     // MARK: - 待ち行列の上

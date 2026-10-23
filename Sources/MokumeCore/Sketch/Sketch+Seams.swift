@@ -37,6 +37,8 @@ extension SketchPart {
     /// - `setup()` や入力のコールバックの中で足せば、そのフレームの `draw()` の前から
     ///   ``Inlet/supply()`` が呼ばれる。`draw()` の中で足せば、次のフレームから
     /// - 同じものを 2 度足しても 1 つのまま (開き直さない)
+    /// - ``detach(_:)-(Inlet)`` で外した入り口を足し直せば、``Inlet/open()`` がもう 1 度呼ばれて、また ``Inlet/supply()`` が
+    ///   呼ばれる (入り口は ``Inlet/close()`` を最後と思い込まない約束である)
     /// - ``Inlet/supply()`` の中から頼んだときは、その巡回が終わってから開いて足す
     ///   (戻り値は `true`。開けなければ診断に出る)
     /// - ``Sketch/plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
@@ -151,7 +153,8 @@ extension SketchPart {
 
     /// 入り口を外して閉じる。
     ///
-    /// ``Inlet/close()`` を 1 度だけ呼び、以後 ``Inlet/supply()`` は呼ばれない。並びに
+    /// ``Inlet/close()`` を 1 度だけ呼び、以後 ``Inlet/supply()`` は呼ばれない。外した入り口は
+    /// ``attach(_:)-(Inlet)`` で足し直せ、足し直せば ``Inlet/open()`` がもう 1 度呼ばれる。並びに
     /// 居なければ何もしない。``Inlet/supply()`` の中から頼んだときは、その巡回が終わって
     /// から外す。
     ///
@@ -187,6 +190,7 @@ extension SketchPart {
     ///         private(set) var count = 0
     ///         private(set) var isClosed = false
     ///         func supply() { count += 1 }
+    ///         func open() { isClosed = false }
     ///         func close() { isClosed = true }
     ///     }
     ///     ```
@@ -197,7 +201,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4e5e0378
+    // shot: 1 snippet=56e84096
     public func detach(_ inlet: any Inlet) {
         guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
@@ -241,6 +245,7 @@ extension SketchPart {
     ///         private(set) var frames: [Int] = []
     ///         private(set) var isClosed = false
     ///         func receive(_ frame: OutputFrame) { frames.append(frame.frame) }
+    ///         func open() { isClosed = false }
     ///         func close() { isClosed = true }
     ///     }
     ///     ```
@@ -251,7 +256,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=751061ce
+    // shot: 1 snippet=463f1630
     public func detach(_ outlet: any Outlet) {
         guard let runtime = SeamHomes.runtime(of: outlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
@@ -373,11 +378,20 @@ extension SketchPart {
     /// (`Countdown.restart()` と同じ)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
     /// スケッチが終わった後 (終わりの処理が既に閉じている) でも事実である。
     ///
+    /// 戻り値は、外す頼みが**並びに居る入り口を外したか** (外から呼んで警告だけ出して何もしなかった・並びに居ない入り口だった
+    /// ら `false`)。利用者が呼ぶ `stop()` が、実際に止めたときだけ「利用者が止めた」印を立てるために使う。印を無条件に立てると、
+    /// 外で呼んで何も止まらなかった回にも印が立ち、足していない入り口に呼んだ `stop()` が、後で足したその入り口を止めたままにする
+    /// (#3122)。外す頼みが巡回の最中で後回しになった場合も、頼んだ時点で並びに居れば `true`。
+    ///
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
-    package func detach(_ inlet: any Inlet, calledAs call: String) {
+    @discardableResult
+    package func detach(_ inlet: any Inlet, calledAs call: String) -> Bool {
         guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
-            return OutsideRun.log.warn(call, .act)
+            OutsideRun.log.warn(call, .act)
+            return false
         }
+        let wasAttached = runtime.isAttached(inlet)
         runtime.detach(inlet)
+        return wasAttached
     }
 }

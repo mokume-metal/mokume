@@ -478,5 +478,5 @@ func shapeValueCanvas(_ call: String) -> Canvas? {
         OutsideRun.log.warn(call, .act)
         return nil
     }
-    return runtime.canvas
+    return runtime.activeCanvas
 }

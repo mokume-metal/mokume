@@ -34,6 +34,14 @@
 そこで、**request.json が自分の要求でなくなっていて、応答が「置く直前の応答」でも自分の応答でも
 ない識別子を echo したら**、`Contested` を投げる (`Facets.exchange` と同じ規則)。当たったかは
 分からない。呼び手は `place` が返した「置く直前の応答の識別子」を `answered` に渡す。
+
+## 返された絵は、写してから渡す (#2992)
+
+区画の絵は番号だけの固定名で、次の書き手の撮り始めが応答を消して書き直す。`answered` が返した
+応答の `image` を後から読むと、別の書き手の絵を自分の絵として読みうる。**絵は `copy_images` /
+`copy_image` で自分の置き場へ写す。** 写し終えた後に `report.json` がまだ自分の識別子を echo して
+いれば、写している間に掃除 (応答を先に、絵を後に消す) は始まっていないので、写した絵はすべて自分の
+撮影のもの。echo していなければ `Contested` を投げる (絵は返さない)。時計では見切らない。
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import time
 
 # 応答を見に行く間隔 (秒)。**呼び出し側で変えられる** — 要求を置き続けて圧をかける側は
@@ -138,3 +147,136 @@ def answered(
                 )
         time.sleep(poll)
     return None
+
+
+class Unverified(Exception):
+    """確かめて渡せる写しが無い。**取り合いではない** — 応答は自分のままである (#2992)。
+
+    起きるのは 2 つ。写せなかった (読めない・容量など。掃除は応答を先に消すので、応答が自分のままなら
+    掃除のせいではない) と、応答に目録 (`frames`) が無い (#408 より前の版は、応答を消さずに絵を先に
+    上書きするので、写した後の確かめは何も言えない)。**区画の場所は `sources` にあるが、次の要求までしか
+    自分の絵でない。** 窓口の `observe` が、区画の場所に「次の要求まで」と添えて返すのと同じ扱いである。
+    """
+
+    def __init__(self, message: str, sources: list[pathlib.Path]):
+        super().__init__(message)
+        self.sources = sources
+
+
+def image_names(report: dict) -> list[str]:
+    """応答が名乗る絵の名前。目録 (`frames`) が先で、無ければ単数形 (`image`)。
+
+    読み手は名前を組み立てない (Schemas/observe-report.schema.json)。
+    """
+    frames = report.get("frames")
+    names = [
+        frame["image"]
+        for frame in (frames if isinstance(frames, list) else [])
+        if isinstance(frame, dict) and isinstance(frame.get("image"), str)
+    ]
+    if not names and isinstance(report.get("image"), str):
+        names = [report["image"]]
+    return names
+
+
+def _has_catalogue(report: dict) -> bool:
+    """目録 (`frames`) を書く版の応答か。**判定は形から行う** (ADR-0018 決定 5 の追補)。"""
+    frames = report.get("frames")
+    return isinstance(frames, list) and any(
+        isinstance(frame, dict) and isinstance(frame.get("image"), str) for frame in frames
+    )
+
+
+def _require_plain(name: str) -> None:
+    """区画の外へ抜ける名前 (`../`・区切り) は写さない。"""
+    if not name or pathlib.PurePath(name).name != name or name in (".", ".."):
+        raise OSError(f"絵の名前が単なるファイル名ではない: {name!r}")
+
+
+def _copied_while_mine(
+    facet: pathlib.Path,
+    identifier: str,
+    copy_all,
+    written: list[pathlib.Path],
+    sources: list[pathlib.Path],
+):
+    """`copy_all()` で絵を写し、写し終えた後に応答が自分の識別子のままかを確かめる。
+
+    **取り合った回 (応答が自分でなくなった) は、写したものを消してから `Contested` を投げる** — 渡さない
+    写しを残さない。**写せなかった回も確かめる** — 掃除は応答を先に消すので、応答が自分のままなら
+    写せなかったのは掃除のせいではなく、`Unverified` (取り合いと言わない)。
+    """
+    try:
+        result = copy_all()
+    except OSError as error:
+        _discard(written)
+        if _echo(facet) != identifier:
+            raise Contested(
+                f"写している間に別の書き手が撮り始めた (自分は {identifier!r})"
+            ) from None
+        raise Unverified(f"絵を写せなかった: {error}", sources) from error
+    if _echo(facet) != identifier:
+        _discard(written)
+        raise Contested(
+            f"写し終えた後の応答は {_echo(facet)!r} で、自分の {identifier!r} ではない"
+        )
+    return result
+
+
+def _discard(written: list[pathlib.Path]) -> None:
+    for path in written:
+        path.unlink(missing_ok=True)
+
+
+_NO_CATALOGUE = (
+    "応答に目録 (frames) が無い。#408 より前の版は応答を消さずに絵を先に上書きするので、"
+    "写した後の確かめでは自分の絵と言えない"
+)
+
+
+def copy_images(
+    facet: pathlib.Path, report: dict, identifier: str, into: pathlib.Path
+) -> list[pathlib.Path]:
+    """目録の全枚を `into` へ同じ名前で写し、写し終えた後に応答が自分のままなら写した場所を返す。
+
+    - 応答が自分でなくなっていた (写している間・写せなかった後) → `Contested`。写したものは消す
+    - 応答は自分のままで、写せなかった・名前が素のファイル名でない・目録が無い → `Unverified`
+      (窓口の `observe` と同じ読み)。目録の無い版では確かめが成り立たないので、写さない
+    """
+    names = image_names(report)
+    sources = [facet / name for name in names]
+    if names and not _has_catalogue(report):
+        raise Unverified(_NO_CATALOGUE, sources)
+    written: list[pathlib.Path] = []
+
+    def copy_all() -> list[pathlib.Path]:
+        into.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            _require_plain(name)
+        for name in names:
+            written.append(into / name)
+            shutil.copy(facet / name, into / name)
+        return list(written)
+
+    return _copied_while_mine(facet, identifier, copy_all, written, sources)
+
+
+def copy_image(
+    facet: pathlib.Path, report: dict, identifier: str, destination: pathlib.Path
+) -> pathlib.Path | None:
+    """応答の `image` (単数形) を `destination` へ写す。無ければ None。確かめ方は `copy_images` と同じ。"""
+    name = report.get("image")
+    if not isinstance(name, str):
+        return None
+    sources = [facet / name]
+    if not _has_catalogue(report):
+        raise Unverified(_NO_CATALOGUE, sources)
+    written: list[pathlib.Path] = []
+
+    def copy_one() -> pathlib.Path:
+        _require_plain(name)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        written.append(destination)
+        return pathlib.Path(shutil.copy(facet / name, destination))
+
+    return _copied_while_mine(facet, identifier, copy_one, written, sources)

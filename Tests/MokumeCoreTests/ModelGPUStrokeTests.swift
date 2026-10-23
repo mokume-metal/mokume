@@ -26,8 +26,9 @@ struct ModelGPUStrokeTests {
 
     /// 波打つ格子 (開いた端を持つ板)。**どの辺も折れている** — 高さに格子ごとの揺らぎを足してあるので、
     /// 隣り合う 2 枚が同じ平面に載らず、全部の辺が稜線になる。**点の位置 (横と縦) も決まった揺らぎで
-    /// ずらす** — 揃った格子は同じ直線に載る 2 辺を偶然に持ちやすく (点が 5 万を超えると、ほぼ必ず
-    /// 持つ)、その網は骨を作らない (``SolidStrokeGeometry/init(net:gpu:byteLimit:)``)。
+    /// ずらす** — 揃った格子は同じ直線に載る 2 辺を偶然に持ちやすい (点が 5 万を超えると、ほぼ必ず持つ)。
+    /// 骨は鎖も引ける (#2989・`StraightChainStrokeTests`) ので、揃った格子も骨を作るが、ここでは揺らした格子で
+    /// 鎖の無い網の経路を見る。
     static func wavyGrid(_ cells: Int) -> String {
         // 決まった乱数 (線形合同法)。検査が実行ごとに違う網を作らない
         var state: UInt32 = 0x1234_5678
@@ -182,21 +183,24 @@ struct ModelGPUStrokeTests {
         }
     }
 
-    /// 同じ直線に載る 2 辺が集まる網は骨を作らず、CPU の帯へ戻る (``SolidStrokeGeometry/init(net:gpu:byteLimit:)``)。
+    /// 同じ側へ折り返す 2 辺が集まる網は骨を作らず、CPU の帯へ戻る (``SolidStrokeGeometry/init(net:gpu:byteLimit:)``)。
     /// **戻ったことを控える** — 骨の作りかけを毎フレーム繰り返さない。
     @Test("骨を作れないモデルは CPU の帯へ戻り、同じ絵を保ち、作りかけを繰り返さない")
     func refusedModelsStayOnTheCPU() throws {
+        // 三角形 (P, R, X) の長い辺 P–R の途中に点 Q が載り、別の三角形 (P, Q, Y) の辺 P–Q が重なる (T 字の継ぎ目)
+        let path = Self.written(
+            "v 0 0 0\nv 1 0 0\nv 2 0 0\nv 0.5 1 0\nv 1 -1 0\nf 1 3 4\nf 1 2 5\n", as: "folded-straight.obj")
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 120, height: 120)
-        let model = try canvas.loadModel(ModelFixture.ridge)
+        let model = try canvas.loadModel(path, normalize: false)
         var pictures: [[UInt8]] = []
         for _ in 0..<3 {
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.stroke(.linear(red: 1, green: 1, blue: 1))
                 canvas.strokeWeight(2)
-                canvas.translate(60, 60, 0)
+                canvas.translate(40, 60, 0)
                 canvas.rotateY(0.5)
-                canvas.scale(0.5, 0.5, 0.5)
+                canvas.scale(25, 25, 25)
                 canvas.model(model)
                 canvas.closeBatch()
                 #expect(canvas.batches.allSatisfy { $0.strokeGeometry == nil })

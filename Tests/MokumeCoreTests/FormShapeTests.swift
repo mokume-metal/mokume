@@ -2759,4 +2759,82 @@ struct FormShapeTests {
         #expect(arc(200, 20, start: 1.2, sweep: 0.3).mayNeedApexSampling(), "細長い楕円の狭い扇")
         #expect(!arc(200, 20, start: 0.5, sweep: 1.2).mayNeedApexSampling(), "細長い楕円の広い扇")
     }
+
+    // MARK: - 列ごとの区画 (#3083)
+
+    /// 基本図形の列は、光・材質・周囲・値の区画を読まない ([#2364])。**その 4 つの置き場の容量は、基本図形の
+    /// 列の数に比例して増えない** ([#3083])。行列だけは、基本図形も列の番号で読むので列の数だけ要る。
+    ///
+    /// 塗りの円と線を交互に置くと、種別が違うので列が 1 つずつに分かれる。
+    ///
+    /// [#2364]: https://github.com/mokume-metal/mokume/issues/2364
+    /// [#3083]: https://github.com/mokume-metal/mokume/issues/3083
+    @Test("基本図形だけの列では、行列以外の区画の容量が列の数に比例して増えない")
+    func formOnlyFramesDoNotGrowTheDetailRegions() throws {
+        let canvas = try makeCanvas()
+        _ = try picture(canvas) { canvas in
+            for index in 0..<2000 {
+                let x = Float(index % 90) + 3
+                if index % 2 == 0 {
+                    canvas.noStroke()
+                    canvas.fill(red)
+                    canvas.circle(x, 20, 3)
+                } else {
+                    canvas.noFill()
+                    canvas.stroke(green)
+                    canvas.line(x, 40, x + 3, 44)
+                }
+            }
+        }
+        let batches = canvas.drawCallsInLastFrame
+        #expect(batches > 1000, "列が分かれていない: \(batches)")
+        #expect(canvas.matrixStorage.capacity >= batches, "行列は列の数だけ要る")
+        // 使わない 4 つは、最初に取る下限 (16) のまま
+        for (name, storage) in [
+            ("lighting", canvas.lightingStorage), ("materials", canvas.materialStorage),
+            ("surroundings", canvas.surroundingsStorage), ("values", canvas.valuesStorage),
+        ] {
+            #expect(storage.capacity <= 16, "\(name) が基本図形の列の数だけ取られている: \(storage.capacity)")
+        }
+    }
+
+    /// 立体と基本図形が交互に並ぶとき、4 つの置き場は**立体の列の数だけ**取り、立体は自分の値の区画を読む。
+    ///
+    /// 基本図形を飛ばして番号を詰めるので、画面の束ねと書き込みの番号が食い違うと、立体が隣の列の値を読む。
+    /// 立体ごとに違う値を断片へ渡して、画素の赤が値と一致することで見る。
+    @Test("基本図形と立体が交互に並んでも、立体の列はそれぞれ自分の値を読む")
+    func solidsAmongFormsReadTheirOwnValues() throws {
+        let canvas = try makeCanvas(width: 128, height: 64)
+        let paint = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) { return float4(values.level, 0.0, 0.0, 1.0); }
+            """,
+            values: ["level": .number(0)])
+        let count = 16
+        _ = try picture(canvas) { canvas in
+            canvas.noStroke()
+            for index in 0..<count {
+                let x = Float(index) * 8 + 4
+                canvas.resetShader()
+                canvas.fill(blue)
+                canvas.circle(x, 12, 4)
+                paint.set("level", .number(Float(index + 1) / Float(count + 1)))
+                canvas.shader(paint)
+                canvas.pushMatrix()
+                canvas.translate(x, 40, 0)
+                canvas.box(6)
+                canvas.popMatrix()
+            }
+        }
+        #expect(canvas.lightingStorage.capacity == count, "立体の列の数だけ取る: \(canvas.lightingStorage.capacity)")
+        #expect(canvas.valuesStorage.capacity == count)
+        for index in 0..<count {
+            let expected = Float(index + 1) / Float(count + 1)
+            let pixel = canvas.get(index * 8 + 4, 40)
+            #expect(
+                abs(pixel.red - expected) < 0.01,
+                "\(index) 番目の立体の赤 \(pixel.red) が値 \(expected) と合わない")
+            #expect(canvas.get(index * 8 + 4, 12).blue > 0.9, "\(index) 番目の円が出ていない")
+        }
+    }
 }
