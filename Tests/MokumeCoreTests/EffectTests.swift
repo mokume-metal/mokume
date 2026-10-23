@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -435,7 +436,7 @@ struct EffectTests {
         let scratch = pipeline.scratchBuilt
         let reduced = pipeline.reducedBuilt
         let carries = pipeline.carriesBuilt
-        let restores = canvas.effectCarryRestoresEncoded
+        let restores = canvas.effectRestoresExchanged
 
         for frame in 0..<200 {
             // **値を動かし続ける。** 小数を控えのキーにしていれば、ここで増える。
@@ -464,7 +465,7 @@ struct EffectTests {
         #expect(pipeline.carriesBuilt == carries)
         #expect(carries == 1)
         // 塗り直さなかった 100 フレームは、どれも前のフレームの効果の後に来るので戻す
-        #expect(canvas.effectCarryRestoresEncoded - restores == 100)
+        #expect(canvas.effectRestoresExchanged - restores == 100)
     }
 
     // MARK: - フレームの境目 (#1469)
@@ -651,8 +652,8 @@ struct EffectTests {
         #expect(next == before, "次のフレームで読んだ画素に効果が残った: \(next.red)")
     }
 
-    /// 完了条件 6 — **効果を頼まないフレームは何も払わない。** 控えへ写すのは効果を通す
-    /// フレームだけ、控えから戻すのはその次の 1 回だけで、塗り直すフレームでは戻さない。
+    /// 完了条件 6 — **効果を頼まないフレームは何も払わない。** 面を取り替えるのは効果を通す
+    /// フレームだけ、控えから戻す (取り替え直す) のはその次の 1 回だけで、塗り直すフレームでは戻さない。
     ///
     /// 見るのは数である — 戻しすぎても絵は同じなので、絵では分からない。細かさを下げた面は
     /// 効果を頼まなくても拡大のために段のパイプラインが立つので、控えの有無はパイプラインの
@@ -674,22 +675,107 @@ struct EffectTests {
             }
         }
         #expect(carriesBuilt == 0, "効果を頼んでいないのに控えを作った")
-        #expect(canvas.effectCarriesEncoded == 0)
-        #expect(canvas.effectCarryRestoresEncoded == 0)
+        #expect(canvas.effectOutputsExchanged == 0)
+        #expect(canvas.effectRestoresExchanged == 0)
 
         // 効果を通したフレームの次に塗り直すなら、戻さない (戻しても消えるだけ)
         try fixture.frame { $0.effects(Self.darkening) }
         #expect(carriesBuilt == 1)
-        #expect(canvas.effectCarriesEncoded == 1)
+        #expect(canvas.effectOutputsExchanged == 1)
         try fixture.frame { Self.paper($0) }
-        #expect(canvas.effectCarryRestoresEncoded == 0, "塗り直すフレームで控えから戻した")
+        #expect(canvas.effectRestoresExchanged == 0, "塗り直すフレームで控えから戻した")
 
         // 効果を通したフレームの次に塗り直さないフレームが続いても、戻すのは 1 回だけ
         try fixture.frame { $0.effects(Self.darkening) }
         for _ in 0..<3 { try fixture.frame { stroke($0) } }
-        #expect(canvas.effectCarryRestoresEncoded == 1, "効果を通していないフレームの後にも戻した")
-        #expect(canvas.effectCarriesEncoded == 2)
+        #expect(canvas.effectRestoresExchanged == 1, "効果を通していないフレームの後にも戻した")
+        #expect(canvas.effectOutputsExchanged == 2)
         #expect(carriesBuilt == 1, "控えを作り直した")
+    }
+
+    // MARK: - 写さずに面を取り替える (#2388)
+
+    private static func same(_ a: any MTLTexture, _ b: any MTLTexture) -> Bool {
+        (a as AnyObject) === (b as AnyObject)
+    }
+
+    /// 完了条件 1 — **効果を通すフレームの終わりも、次のフレームの頭の戻しも、全画面を写さない。**
+    /// 効果を通す前の絵は元の面に残り、描く先は最後の段が書いた面に取り替わる。戻すのは取り替え直す
+    /// ことで、効果を通した絵の面は次の最後の段が書き直す。写していれば、効果を通す前の絵は別の面へ
+    /// 移り、面は取り替わらない。
+    @Test(
+        "効果を通す前の絵は写されずに元の面に残り、戻すのは面の取り替えである",
+        arguments: CarrySurface.allCases)
+    func exchangesSurfacesInsteadOfCopying(surface: CarrySurface) throws {
+        let fixture = try surface.make()
+        let canvas = fixture.canvas
+        let drawn = canvas.target.texture
+
+        try fixture.frame { canvas in
+            Self.paper(canvas)
+            canvas.effects(Self.darkening)
+        }
+        let carry = try #require(canvas.effectPipelineStorage?.existingCarry)
+        #expect(Self.same(carry.texture, drawn), "効果を通す前の絵が元の面に残っていない — 写している")
+        #expect(!Self.same(canvas.target.texture, drawn), "効果を通した絵の面へ取り替わっていない")
+        #expect(canvas.effectOutputsExchanged == 1)
+        let shown = canvas.target.texture
+
+        // 塗り直さずに描き足す。効果を通す前の絵が、写されずに描く先へ戻る
+        try fixture.frame { $0.circle(80, 80, 20) }
+        #expect(Self.same(canvas.target.texture, drawn), "描く先が効果を通す前の絵の面へ戻っていない")
+        #expect(Self.same(carry.texture, shown), "効果を通した絵の面が控えへ退いていない")
+        #expect(canvas.effectRestoresExchanged == 1)
+    }
+
+    /// 完了条件 4 — **面を取り替えた後で描き切りが投げたら、面は元のまま、印も元のまま**で、
+    /// 投げた回は無かったことになる。取り替えが残ると、次のフレームは効果を通した絵の上へ描き足し、
+    /// 効果を通す前の絵は失われる。
+    ///
+    /// 戻しの取り替えだけが済んだ回 (描き足すだけのフレーム) と、最後の段の取り替えだけが済んだ回
+    /// (塗り直して効果を通すフレーム) の両方を見る。
+    @Test("面を取り替えた後で描き切りが投げても、面は元のまま、次のフレームは投げた回が無かった絵になる", arguments: [false, true])
+    func anAbandonedFlushLeavesTheSurfacesAsTheyWere(repaints: Bool) throws {
+        func start() throws -> CarryFixture {
+            let fixture = try CarrySurface.main.make()
+            try fixture.frame { canvas in
+                Self.paper(canvas)
+                canvas.circle(60, 60, 30)
+                canvas.effects(Self.darkening)
+            }
+            return fixture
+        }
+        func next(_ fixture: CarryFixture) throws -> [UInt8] {
+            try fixture.frame { canvas in
+                canvas.circle(100, 90, 20)
+                canvas.effects([.invert()])
+            }
+            return try fixture.canvas.output.encodeForDisplay().bytes
+        }
+
+        let failing = try start()
+        let canvas = failing.canvas
+        let target = canvas.target.texture
+        let carry = try #require(canvas.effectPipelineStorage?.existingCarry).texture
+        canvas.failAfterEffectsForTesting = .encoderUnavailable
+        #expect(throws: RenderFailure.self) {
+            try failing.frame { canvas in
+                if repaints {
+                    Self.paper(canvas)
+                    canvas.effects(Self.darkening)
+                } else {
+                    canvas.circle(10, 10, 5)
+                }
+            }
+        }
+        canvas.failAfterEffectsForTesting = nil
+        #expect(Self.same(canvas.target.texture, target), "投げた回の取り替えが残っている (描く先)")
+        let kept = try #require(canvas.effectPipelineStorage?.existingCarry)
+        #expect(Self.same(kept.texture, carry), "投げた回の取り替えが残っている (控え)")
+        #expect(canvas.carriesPictureBeforeEffects, "投げた回が、控えを戻す印を動かした")
+
+        let reference = try start()
+        #expect(fingerprint(try next(failing)) == fingerprint(try next(reference)))
     }
 
     // MARK: - 利用者の効果

@@ -378,6 +378,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/canvas``
 - ``SketchPart/frameCount``
 - ``SketchPart/time``
+- ``SketchPart/phase(period:)``
 - ``SketchPart/authorTime``
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``

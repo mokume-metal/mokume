@@ -40,6 +40,15 @@ struct UDPPortTests {
             landing: landing(of: udp, port: port, told: told))
     }
 
+    /// 素の socket から送った通が `count` 通読まれるのを待つ。読まれなければ、受け口の様子と素の 1 通の前後の
+    /// 受け入れの差を名乗って 1 つで止まる (#3105)。名乗りの中身は ``collectOrName(_:count:within:landing:_:)``。
+    private func heard(
+        _ udp: UDPPort, count: Int, port: Int, told: Told, from peer: RawDatagramSocket, _ note: String = ""
+    ) async throws -> [String] {
+        try await collectOrName(
+            udp, count: count, from: peer, landing: landing(of: udp, port: port, told: told), note)
+    }
+
     // MARK: - 受ける
 
     @Test("相手から届いた文字列を届いた順に受け、末尾の改行 1 つを落とす")
@@ -101,17 +110,19 @@ struct UDPPortTests {
         // 送り元の流れができて受けを待っているところへ空を送る。この形の空の datagram を、
         // Network.framework は毎回、流れの終わり (`isFinal`) と名乗って渡す (macOS 27.0.1 で実測)
         #expect(peer.send(Array("a".utf8), to: port) == 1)
-        var received = await collect(udp, count: 1)
+        var received = try await heard(udp, count: 1, port: port, told: told, from: peer, "(a)")
         #expect(peer.send([], to: port) == 0)
-        received += await collect(udp, count: 1)
+        received += try await heard(udp, count: 1, port: port, told: told, from: peer, "(空)")
         #expect(received == ["a", ""])
 
         // 終わりを名乗った空を渡したら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
-        #expect(await until { source.tally.ended >= 1 })
+        try await requireWait(
+            "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+            until: { source.tally.ended >= 1 })
         for text in ["b", "c"] {
             #expect(peer.send(Array(text.utf8), to: port) == 1)
         }
-        received += await collect(udp, count: 2)
+        received += try await heard(udp, count: 2, port: port, told: told, from: peer, "(b・c)")
         #expect(received == ["a", "", "b", "c"])
         #expect(udp.input.unreadable == 0)
         // 空で流れが閉じたことだけを、1 度言う (#2363)。ほかは何も言わない
@@ -162,8 +173,13 @@ struct UDPPortTests {
         let peer = try RawDatagramSocket()
         defer { peer.release() }
 
+        let direct = landing(
+            of: listener, port: port, events: { events.withLock { $0 } },
+            probeArrived: { received.withLock { $0.contains("probe") } })
         #expect(peer.send(Array("a".utf8), to: port) == 1)
-        #expect(await until { received.withLock { $0 } == ["a"] })
+        try await requireRawArrival(
+            "受け口が a を 1 通読まなかった (読めたもの: \(received.withLock { $0 }))", from: peer, landing: direct
+        ) { received.withLock { $0 } == ["a"] }
         #expect(listener.connectionCount == 1)
 
         // 受け口が失敗して閉じたときに PortListener が呼ぶ手続きを、受け口を本当に失敗させずに呼ぶ。
@@ -174,7 +190,10 @@ struct UDPPortTests {
         // 届くことも、閉じかけの流れに入って届かないこともある (実測)
         try await Task.sleep(for: .milliseconds(100))
         #expect(peer.send(Array("b".utf8), to: port) == 1)
-        #expect(await until { received.withLock { $0.count } >= 2 })
+        try await requireRawArrival(
+            "受け口を閉じて外した後の b を読まなかった (読めたもの: \(received.withLock { $0 }))", from: peer,
+            landing: direct
+        ) { received.withLock { $0.count } >= 2 }
         #expect(received.withLock { $0 } == ["a", "b"])
         // 外した繋ぎは閉じたので、b は新しい送り元として受け直している。外した数は ended に入れない
         #expect(listener.tally.accepted == 2)
@@ -187,12 +206,12 @@ struct UDPPortTests {
     /// `tally.ended` で待つ (閉じる前に次を送ると、次が落ちうる)。
     private func cycle(
         _ index: Int, from peer: RawDatagramSocket, to port: Int, through udp: UDPPort,
-        source: DatagramSource<String>, endedBefore: Int
+        source: DatagramSource<String>, endedBefore: Int, told: Told
     ) async throws -> [String] {
         #expect(peer.send(Array("x\(index)".utf8), to: port) == 2)
-        var received = await collect(udp, count: 1)
+        var received = try await heard(udp, count: 1, port: port, told: told, from: peer, "(x\(index))")
         #expect(peer.send([], to: port) == 0)
-        received += await collect(udp, count: 1)
+        received += try await heard(udp, count: 1, port: port, told: told, from: peer, "(x\(index) の後の空)")
         try await requireWait(
             "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
             until: { source.tally.ended >= endedBefore + 1 })
@@ -213,7 +232,7 @@ struct UDPPortTests {
         // 1 つの送り元から、空で流れが閉じるのを 3 度。空は messages に入り、診断は 1 度だけ
         for index in 0..<3 {
             let received = try await cycle(
-                index, from: peer, to: port, through: udp, source: source, endedBefore: index)
+                index, from: peer, to: port, through: udp, source: source, endedBefore: index, told: told)
             #expect(received == ["x\(index)", ""])
         }
         try await requireTold(
@@ -224,12 +243,12 @@ struct UDPPortTests {
         #expect(first.contains("may have been dropped"))
 
         // 別の送り元は、その送り元について 1 度。もとの送り元はもう言わない
-        _ = try await cycle(0, from: other, to: port, through: udp, source: source, endedBefore: 3)
+        _ = try await cycle(0, from: other, to: port, through: udp, source: source, endedBefore: 3, told: told)
         try await requireTold(
             containing: "empty datagram", count: 2, told: told, tracing: source) { udp.state }
         #expect(told.lines.count == 2)
         #expect(told.lines.last?.contains("127.0.0.1:\(other.port)") == true)
-        _ = try await cycle(9, from: peer, to: port, through: udp, source: source, endedBefore: 4)
+        _ = try await cycle(9, from: peer, to: port, through: udp, source: source, endedBefore: 4, told: told)
         #expect(told.lines.count == 2)
         #expect(udp.input.unreadable == 0)
     }
@@ -286,7 +305,7 @@ struct UDPPortTests {
             #expect(peer.send([UInt8](repeating: 0x61, count: size), to: port) == size)
         }
         #expect(peer.send(Array("after".utf8), to: port) == 5)
-        let received = await collect(udp, count: 3)
+        let received = try await heard(udp, count: 3, port: port, told: told, from: peer, "(1000・9215・after)")
         #expect(received.map(\.utf8.count) == [1000, 9215, 5])
         #expect(received.last == "after")
         #expect(udp.input.unreadable == 4)
@@ -320,7 +339,13 @@ struct UDPPortTests {
         for size in [9215, 9216, 20000] {
             #expect(peer.send([UInt8](repeating: 0x61, count: size), to: port) == size)
         }
-        #expect(await until { lengths.withLock { $0.count } >= 3 })
+        // 素の 1 通 (`probe` の 5 バイト) は、先に届いた 3 通とは長さで見分ける
+        try await requireRawArrival(
+            "受け口が 3 通を渡さなかった (渡された長さ: \(lengths.withLock { $0 }))", from: peer,
+            landing: landing(
+                of: listener, port: port, events: { events.withLock { $0 } },
+                probeArrived: { lengths.withLock { $0.contains(5) } })
+        ) { lengths.withLock { $0.count } >= 3 }
         #expect(
             lengths.withLock { $0 } == [9215, 9216, 9216],
             "Network.framework の切り方が変わった。#2325 の上限 (Datagram.sizeLimit) の前提を見直す")
@@ -577,15 +602,17 @@ struct UDPPortTests {
         var made = 0
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 2
+            within: 2, log: log
         ) { warn in
             made += 1
             // 最初の送り元は、送れないと名乗って何も出さない
             return ScriptedSender(
                 raw: made == 1 ? nil : raw, port: port, complaint: made == 1 ? warn : nil)
         }
+        try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port, told: told)
         #expect(received == ["a", "b"])
         #expect(made == 2)
     }
@@ -602,13 +629,15 @@ struct UDPPortTests {
         var made = 0
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 4
+            within: 4, log: log
         ) { warn in
             made += 1
             return ScriptedSender(raw: raw, port: port, complaint: warn)
         }
+        try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port, told: told)
         #expect(received == ["a", "b"])
         #expect(made == 1)
 
@@ -720,6 +749,90 @@ struct UDPPortTests {
         }
         #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
         #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
+    }
+
+    // MARK: - 素の socket から送った通が読まれなかった回の名乗り (#3105)
+
+    @Test("素の socket から送った通が読まれなければ、受け口の様子と素の 1 通の前後の受け入れの差を名乗り、送り手の欄は様子を読めない送り元と言って 1 つで止まる")
+    func rawSocketShortReadNamesTheReceiver() async throws {
+        let told = Told()
+        let (udp, port) = try await listening(told: told)
+        defer { udp.close() }
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+
+        // 1 通だけ送って 2 通を期待する (2 通目は来ない)
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        let text = try await said {
+            _ = try await collectOrName(
+                udp, count: 2, within: 0.5, from: peer, landing: landing(of: udp, port: port, told: told),
+                "(2 通目は送っていない)")
+        }
+        #expect(text.contains("素の socket から送った 2 通のうち読めたのは 1 通(2 通目は送っていない)"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
+        #expect(text.contains("受け口 (1 通の前): running") && text.contains("移り変わり "), "名乗り: \(text)")
+        #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
+        #expect(text.contains("受け口の知らせは 0 行"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1 (新しい送り元を受けられた)"), "名乗り: \(text)")
+        // 送り手の欄: 素の socket は名乗りも替えも持たない。黙っているとは言わない
+        #expect(text.contains("素の socket: 読めたのは 1/2・読めなかった 1 通 (どの通かは分からない)"), "名乗り: \(text)")
+        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
+        #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
+        // 送った socket の sendto の戻り: 送れていたので、読めなかった理由は受け口側と読める
+        #expect(text.contains("sendto は 1 回とも成功 (計 1 バイト)"), "名乗り: \(text)")
+
+        // 受け口が受けない形 (閉じた受け口) は、素の 1 通も読まれず、受け口側と読み分けられる
+        udp.close()
+        let closed = try await said {
+            _ = try await collectOrName(
+                udp, count: 1, within: 0.3, from: peer, landing: landing(of: udp, port: port, told: told))
+        }
+        #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
+        #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
+    }
+
+    @Test("受け口を直に使う検査で、素の socket から送った結果が満ちなければ、状態と知らせを持たない受け口として名乗り、受け入れの差も言って 1 つで止まる")
+    func requireRawArrivalNamesABareListener() async throws {
+        let received = Mutex<[String]>([])
+        let bound = Mutex<Int?>(nil)
+        let events = Mutex<[String]>([])
+        let listener = DatagramListener(
+            port: 0, host: "127.0.0.1", retryAfter: 0.05,
+            received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
+            changed: { event in
+                events.withLock { $0.append("\(event)") }
+                if case .ready(let port) = event { bound.withLock { $0 = port } }
+            })
+        listener.start()
+        defer { listener.stop() }
+        try await requireWait(
+            "受け口が ready にならなかった", detail: { "受けた移り変わり: \(events.withLock { $0 })" },
+            until: { bound.withLock { $0 } != nil })
+        let port = try #require(bound.withLock { $0 })
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let bare = landing(
+            of: listener, port: port, events: { events.withLock { $0 } },
+            probeArrived: { received.withLock { $0.contains("probe") } })
+
+        // 満ちる条件は、満ちれば何も言わない
+        #expect(peer.send(Array("a".utf8), to: port) == 1)
+        try await requireRawArrival("a を読まなかった", from: peer, landing: bare) { received.withLock { $0 } == ["a"] }
+
+        // 満ちない条件 (2 通目は送っていない) は、期限で名乗って止まる
+        let text = try await said {
+            try await requireRawArrival(
+                "受け口が 2 通を読まなかった (読めたもの: \(received.withLock { $0 }))", within: 0.5, from: peer, landing: bare
+            ) { received.withLock { $0.count } >= 2 }
+        }
+        #expect(text.contains("受け口が 2 通を読まなかった (読めたもの: [\"a\"])"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
+        #expect(text.contains("受け口 (1 通の前): 状態は読めない・移り変わり "), "名乗り: \(text)")
+        #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
+        #expect(text.contains("受け口の知らせは持たない"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1 (新しい送り元を受けられた)"), "名乗り: \(text)")
+        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
+        #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
     }
 
     // MARK: - 作る口

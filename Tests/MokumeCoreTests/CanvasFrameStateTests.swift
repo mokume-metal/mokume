@@ -464,7 +464,10 @@ extension CanvasTests {
             let resource = "資源 (置き場・パイプライン)。頼まれてはじめて作り、使い回す"
             let count = "計数 (作ってから通算)。数で確かめる検査が読む"
             return [
-                "width": construction, "height": construction, "texture": construction,
+                "width": construction, "height": construction,
+                "texture": "色の面。作ったときに決まり、効果を通すフレームの終わりと次のフレームの頭で効果の控えと取り替わる (フレームの外へ持ち越す・#2388)",
+                "exchangePartner": "面を取り替える相手 (効果の控え) の持ち主。初めて取り替えたときに結び、面と同じだけ生きる。面を溜める側が描き場所だけを抱えても、相手の面が先に常駐から外れないため (#2388)",
+                "texturesReplaced": "打ち切られた投入の取り消しで面の中身が変わったと名乗った回数 (作ってから通算)。止まっている間に窓と出口へ出し直すかを決める内容の変更番号の一部で、増える一方 (#2388)",
                 "depthTexture": construction, "gpu": construction,
                 "drawer": "この面を出す先に持つ描き場所 (弱く持つ)。組み立ての最後に 1 度だけ書く",
                 "brightness": "明るさを画面へ写す段の設定。画面の性質なのでフレームを越える",
@@ -541,7 +544,7 @@ extension CanvasTests {
                 "pendingDiscards": "溜め場を捨てた通し番号。形の組み立てが入口と出口で比べる (#1588)",
                 "framesDrawn": "閉じたフレームの通し番号。境目の印そのもの",
                 "spheresFromUnit": count,
-                "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+                "effectOutputsExchanged": count, "effectRestoresExchanged": count, "effectRestoreBarriersEncoded": count,
                 "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
                 "depthLoadsEncoded": count, "depthStoresEncoded": count,
                 "effectBarriersEncoded": count, "effectPassesEncoded": count,
@@ -563,13 +566,14 @@ extension CanvasTests {
                 "currentCurveDetail": "描き方 (曲線の細かさ)。一度書けば残る",
                 "currentCurveTightness": "描き方 (曲線の張り)。一度書けば残る",
                 "noiseStore": "揺らぎの種と細かさの置き場。一度書けば残る (断片と共有する・#366)。描き場所は作った面と共有する (#1503)",
-                "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (#1469)",
+                "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (面の取り替え・#1469・#2388)",
                 "targetChangedSinceUpscale": "描く先が最後の拡大より後に変わったか。止まっている間の出力段が広げ直して下ろす。フレームの終わりの描き切りも下ろす (#1882)",
                 "placingCatchUpDeferred": "置く口の追い付きを見送っているか。描く先が変わる描き切りと、追い付けたときに下ろす (#2042)",
                 "placers": "自分を置いた面。自分の絵が変わる直前 (描き切り) に相手へ置いた時点の絵を写させて空にする (#1656)。捨てるだけでは絵が変わらないので残す",
                 "casterSegmentsFree": "途中の描き切りで控えた落とす列の区画の空き。読んだ投入が終わってから使い回す (#1656)",
                 "upscaledBy": "最後に拡大を積んだ投入の番号。打ち切られたら targetChangedSinceUpscale を立て直すために越える (#2199)",
-                "carriedBy": "効果を通す前の絵を控えへ写した最後の投入の番号。打ち切られたら carriesPictureBeforeEffects を下ろすために越える (#2199)",
+                "carriedAwaitingOutcome": "効果を通した絵を書いて結末の届いていない投入と、結末の前に次のフレームが戻したか。結末が届いたら手放す (#2388)",
+                "carriedFlush": "効果を通した絵を出す面へ書いて面を取り替えた最後の投入と、その取り替えの内訳。打ち切られたら取り替えを戻して carriesPictureBeforeEffects を投入の前に戻すために越える (#2199・#2388)",
                 "placedPictureCopiesFree": "置いた時点の絵の写しの空き。使い回すために持ち、境目で 1 フレーム使わなかったものを手放す (#1656)",
                 "placedPictureEpoch": "境目の番号。写しの空きのうち使わなかったものを見分けるのに読む (#1656)",
                 "placedPictureCopiesMade": count, "placedPicturesCopied": count,
@@ -600,7 +604,7 @@ extension CanvasTests {
                 "sweepPolicy": testing, "sharesUnitShapes": testing,
                 "uploadByteLimit": testing, "failureForTesting": testing,
                 "placesRetainedStrokesOnGPU": testing,
-                "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
+                "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
                 "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
             ]
         }

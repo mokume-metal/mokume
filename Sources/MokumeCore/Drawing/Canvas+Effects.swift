@@ -47,6 +47,25 @@ extension Canvas {
             }
             return accepted
         }
+        prepareEffectOutput()
+    }
+
+    /// 効果を通した絵の出す面 (``EffectPipeline/carry(startingTransparent:)``) を、組み立てに入る前に、塗って
+    /// 作っておく ([#2388])。
+    ///
+    /// 出す面は、最初の効果を通すフレームの最後の段が書くまで何も書かれていない。取り替えは組み立ての最中に
+    /// 済ませるので、その投入が打ち切られると、取り替えた描く先を読む側 (窓・書き出し・同じフレームに置いた
+    /// 面) は、結末が届いて取り替えが戻るまでの間、書かれていない面を読む。作るときに透明な黒へ塗って
+    /// おけば、そのとき読んでも未定義ではない。塗るのは自分の投入を 1 本積むので、組み立ての最中には
+    /// できない — 利用者の描く手前の、ここで済ませる。作れなければ (資源が枯れた・組み立ての最中)、
+    /// 描き切りが塗らずに作る。効果を頼まないスケッチは何も払わない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    private func prepareEffectOutput() {
+        guard !pendingEffects.isEmpty, let pipeline = try? effectPipeline(),
+            pipeline.existingCarry == nil
+        else { return }
+        _ = try? pipeline.carry(startingTransparent: true)
     }
 
     /// 文字列から効果を作る。
@@ -106,20 +125,21 @@ extension Canvas {
 
     /// 頼まれた効果を、描き終えた絵へ通す。
     ///
-    /// **描く先へ書くのは最後の 1 段だけ。** 描き終えた絵をまず控え
-    /// (``EffectPipeline/carry()``) へ写し、段はそれを入りの絵として読んで中間の絵の間を
-    /// 往復し、並びの最後の段が描く先へ書く。段の失敗はすべてコマンドを組む時点で起きるので、
-    /// 最後の段の組み立てに失敗すれば描く先へは 1 命令も積まれない。だから**途中で失敗しても
-    /// 「途中の絵」は出ない** — 描く先は 1 ビットも変わっていない (#755 で書き戻しの段を
-    /// 消しても、ここは変わらない)。
+    /// **描く先を入りの絵として読み、最後の段が控え (``EffectPipeline/carry()``) へ書く。** 控えは
+    /// このフレームの出す面で、書けたら描く先と**面を取り替える** (``exchangeTargetWithCarry()``・
+    /// [#2388])。取り替えた後の描く先が効果を通した絵 (画面・書き出し・読む画素はこれ) で、控えが
+    /// 効果を通す前の絵 (次のフレームの入り) になる — 全画面を写す blit は 1 つも積まない。段の
+    /// 失敗はすべてコマンドを組む時点で起きるので、最後の段の組み立てに失敗すれば控えへは 1 命令も
+    /// 積まれず、取り替えも起きない。だから**途中で失敗しても「途中の絵」は出ない** — 描く先は 1 ビットも
+    /// 変わっていない (#755 で書き戻しの段を消しても、ここは変わらない)。
     ///
     /// **描く先に残った効果は、次のフレームの入りにならない** ([#1469])。控えには効果を
-    /// 通す前の絵が残るので、次のフレームの最初の描き切りがそこから戻す
-    /// (``encodeCarryRestore(into:)``)。細かさ 1 では描く先と出す先が同じ 1 枚なので、
-    /// 出口へ届ける絵は描く先へ書くしかなく、戻さなければ塗り直さずに描き足すスケッチで
+    /// 通す前の絵が残るので、次のフレームの最初の描き切りがそこへ戻す (面を取り替える・
+    /// ``Canvas/flush(applyingEffects:mirroringPixels:)``)。細かさ 1 では描く先と出す先が同じ 1 枚で、
+    /// 出口へ届ける絵はその 1 枚に載るので、戻さなければ塗り直さずに描き足すスケッチで
     /// 効果がフレームごとに重なる。
     ///
-    /// 頼まれていなければ段も写しも 1 つも積まず、控えも作らないので、効果を使わない
+    /// 頼まれていなければ段も取り替えも 1 つも積まず、控えも作らないので、効果を使わない
     /// スケッチはここで何も払わない (代表シーンの台帳が動かないのもこれによる)。
     ///
     /// 効果を通す。**失敗しても投げない。**
@@ -128,9 +148,11 @@ extension Canvas {
     /// 決定 5)。描く先を書く段の手前で止まれば描く先は無傷なので、**入りをそのまま
     /// 通して**理由を知らせる。
     ///
-    /// - Returns: 描く先へ効果を通した絵を書いたか。書いたなら、効果を通す前の絵は控えにある。
+    /// - Returns: 効果を通した絵を出す面へ書き、面を取り替えたか。取り替えたなら、描く先が効果を通した
+    ///   絵で、効果を通す前の絵は控えにある。
     ///
     /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     func applyEffects(into commands: any MTL4CommandBuffer) -> Bool {
         do {
@@ -154,15 +176,16 @@ extension Canvas {
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
         // 入れ替わるので、既に束ねた番地の指す先を生かしておくことに頼ることになる。
         // 数え切っておけば、そもそも途中で取り直さない (拡大のぶんを足す — 上限で
-        // 数えてよい)。控えへの写しは段ではないので枠を取らない
+        // 数えてよい)
         try pipeline.reservePasses(stagePassesUsed + passes.count + upscalePassCount)
-        let carry = try pipeline.carry()
-        try encodeCarry(into: carry, in: commands)
+        /// 出す面。**最後の段が書く先で、描く先とは別の面** — 入りの絵を読みながら同じ面へ書く
+        /// ことにならない (同じ面を読みながら描くのは Metal では未定義)。
+        let output = try pipeline.carry()
 
-        /// いまの絵。**最初は控え** — 入りの絵を描く先から読まないので、最後の段は
-        /// 読んでいる面へ書くことにならない。
-        var current: any EffectSurface = carry
+        /// いまの絵。**最初は描く先** — 入りの絵はそのまま描く先から読む (控えへ写さない・#2388)。
+        var current: any EffectSurface = target
         var nextSlot = 0
+        var wroteOutput = false
 
         func image(of slot: EffectPass.Slot) throws(RenderFailure) -> any EffectSurface {
             switch slot {
@@ -177,84 +200,51 @@ extension Canvas {
         for (position, pass) in passes.enumerated() {
             let source = try image(of: pass.input)
             let paired = try image(of: pass.paired ?? pass.input)
-            // **最後の段は描く先へ直接書く** (#755)。入りの絵は控えなので、1 段だけの
+            // **最後の段は出す面へ直接書く** (#755)。入りの絵は描く先なので、1 段だけの
             // 並びやにじみ単独の合成のように入りの絵を読む段でも、読んでいる面へ書く
             // ことにはならない (同じ面を読みながら描くのは Metal では未定義で、かつては
-            // その並びだけ控えへ書いてから写し戻していた)。ここで書いた絵が次の
-            // フレームの入りにならないのは、控えから戻すため (#1469)
-            let destination =
-                position == passes.count - 1 && pass.output == .next
-                ? target : try image(of: pass.output)
+            // その並びだけ控えへ書いてから写し戻していた)。書いた絵が次のフレームの
+            // 入りにならないのは、描く先と取り替わった控えから戻すため (#1469)
+            let isLast = position == passes.count - 1 && pass.output == .next
+            let destination = isLast ? output : try image(of: pass.output)
             try encode(
                 pass, at: takeStagePass(), from: source.texture, paired: paired.texture,
                 into: destination, using: pipeline, in: commands)
             if pass.output == .next {
                 current = destination
                 nextSlot = 1 - nextSlot
+                wroteOutput = isLast
             }
         }
 
-        // **描く先へ書くのはここまでで 1 度きり。** 途中で失敗すればここへ来ない
-        return current === target
+        // **出す面へ書いたら、描く先と取り替える。** 後の段 (拡大・読み戻し) は描く先を読むので、
+        // ここで取り替えてから積む。途中で失敗すればここへ来ない
+        guard wroteOutput else { return false }
+        exchangeTargetWithCarry()
+        return true
     }
 
-    /// 描き終えた絵を、控えへ写す blit を積む ([#1469])。
+    /// 描く先と効果の控えの面を取り替える ([#2388])。**写さない。**
     ///
-    /// **段の外に置く。** 段にすると採番 (``takeStagePass()``) と置き場の数え切りに入り、
-    /// 「段の数は並びが宣言する段の数」が崩れる。待つ仕掛けは描画先の読み戻しと同じ形
-    /// (``RenderTarget/encodePixelReadback(into:)``)。
+    /// 効果を通すフレームの終わりと、次のフレームの最初の描き切りの 2 か所で使う。
     ///
-    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
-    private func encodeCarry(into carry: StageImage, in commands: any MTL4CommandBuffer)
-        throws(RenderFailure)
-    {
-        guard let encoder = commands.makeComputeCommandEncoder() else {
-            throw .encoderUnavailable
-        }
-        // **描き終わるのを待つ。** この世代は encoder をまたぐ依存を自動では張らない
-        // (#341)。前の戻し・書き戻し (blit) も待つ — 控えは戻しが読んだ面でもある
-        encoder.barrier(
-            afterQueueStages: [.fragment, .blit], beforeStages: .blit,
-            visibilityOptions: .device)
-        encoder.copy(sourceTexture: target.texture, destinationTexture: carry.texture)
-        // **写し終わるのを、控えを読む段と描く先へ書く段が待つ。** `.device` を渡さないと
-        // 実行順だけ揃って中身が見えない (#341 で実測)
-        encoder.barrier(
-            afterStages: .blit, beforeQueueStages: .fragment, visibilityOptions: .device)
-        encoder.endEncoding()
-        effectCarriesEncoded += 1
-    }
-
-    /// 控えから描く先へ、効果を通す前の絵を戻す blit を積む ([#1469])。**控えが無ければ
-    /// 何も積まない。**
+    /// - フレームの終わり: 最後の段が控えへ書いた効果を通した絵が描く先になり、効果を通す前の絵
+    ///   (描いてきた描く先) が控えになる
+    /// - 次のフレームの頭 (塗り直さないとき): 効果を通す前の絵 (控え) が描く先に戻り、効果を通した絵は
+    ///   控えへ退く。効果を通した絵はもう読まれない — 控えの中身は、次に最後の段が全画素を書き直す
     ///
-    /// 描き切りのコマンドの**先頭**に積む (CPU の画素の書き戻しより前)。前の投入とは投入の
-    /// 順で直列になっている (``RenderDevice/commit(_:retaining:writing:)`` の `orderAfter`) ので、
-    /// 頭に待つ仕掛けは要らない。積んだ blit を後続の段が待つ仕掛けは、書き戻しと同じ形で
-    /// ここで積む。
+    /// **自分に戻る** (2 回取り替えれば元の面)。組み立てが投げて投入されなかった描き切りは、取り替えを
+    /// この口でもう一度取り替えて戻す ([#1183] と同じ作法・``flush(applyingEffects:mirroringPixels:)``)。
+    /// 打ち切られた投入は、その投入の取り替えを ``carryDropped(_:)`` が戻す。取り替えるのは
+    /// ``RenderTarget/exchangeTexture(with:)`` で、描く先と控えは**面だけを入れ替える** — 面を溜める側は
+    /// 面を値で写し取らず描き場所を持つ (``HeldTexture``)。効果を通した絵がまだ無い面 (控えを作っていない面)
+    /// では何もしない。
     ///
-    /// [#1469]: https://github.com/mokume-metal/mokume/issues/1469
-    ///
-    /// - Parameter afterKeepingChanges: 直前に、変わった画素を控えへ重ねたか
-    ///   (``encodeKeepChanged(into:)``)。重ねたなら、それが書き終わるのを待ってから戻す。
-    func encodeCarryRestore(into commands: any MTL4CommandBuffer, afterKeepingChanges: Bool = false)
-        throws(RenderFailure)
-    {
+    /// [#1183]: https://github.com/mokume-metal/mokume/issues/1183
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    func exchangeTargetWithCarry() {
         guard let carry = effectPipelineStorage?.existingCarry else { return }
-        guard let encoder = commands.makeComputeCommandEncoder() else {
-            throw .encoderUnavailable
-        }
-        if afterKeepingChanges {
-            encoder.barrier(
-                afterQueueStages: .fragment, beforeStages: .blit, visibilityOptions: .device)
-        }
-        encoder.copy(sourceTexture: carry.texture, destinationTexture: target.texture)
-        // **戻し終わるのを、続く書き戻し・描画・効果・読み戻しが待つ**
-        encoder.barrier(
-            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
-            visibilityOptions: .device)
-        encoder.endEncoding()
-        effectCarryRestoresEncoded += 1
+        target.exchangeTexture(with: carry)
     }
 
     // MARK: - 止まっている間に変えた分 (#1524)
@@ -266,7 +256,7 @@ extension Canvas {
     /// 通す前の絵に同じ変更を載せたもの (次のフレームの入りはこれ) である。変えるたびに両方へ
     /// 加えるので、混ぜ方 (縁の AA・半透明・足す混ぜ方) はどちらも置いた面の上で決まる。
     ///
-    /// 控えは次のフレームの頭で戻す (``encodeCarryRestore(into:afterKeepingChanges:)``) ので、
+    /// 控えは次のフレームの頭で描く先へ戻る (面の取り替え・``exchangeTargetWithCarry()``) ので、
     /// 塗り直すフレームでは使われない。
     ///
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
@@ -302,7 +292,6 @@ extension Canvas {
     }
 
     /// 描く先を、書き戻す前の写し (``EffectPipeline/pictureBeforeChange()``) へ写す blit を積む。
-    /// 待つ仕掛けは控えへの写し (`encodeCarry`) と同じ形。
     func encodeKeepPicture(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
         let kept = try effectPipeline().pictureBeforeChange()
         guard let encoder = commands.makeComputeCommandEncoder() else {
