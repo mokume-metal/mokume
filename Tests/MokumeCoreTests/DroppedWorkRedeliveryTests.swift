@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 
 @testable import MokumeCore
@@ -418,9 +419,10 @@ struct DroppedWorkRedeliveryTests {
         #expect(image.inputNeedsDecode == dropped, "復号から届け直していない")
     }
 
-    /// 効果を通す前の絵を控えへ写した投入が打ち切られると、控えは古い (初めてなら未定義)。印が立った
-    /// ままだと、次のフレームの最初の描き切りがそれを描く先へ戻す (C2)。
-    @Test("効果を通す前の絵を控えへ写した投入が打ち切られると、控えを戻す印を下ろす。無ければ下ろさない",
+    /// 効果を通した絵を出す面へ書いた投入が打ち切られると、出す面は書かれていない (初めてなら中身が無い)。
+    /// 印が立ったままだと、次のフレームの最初の描き切りが、書かれていない面を描く先へ戻す (C2)。
+    /// 初めての効果を通すフレームなので、投入の前も印は立っていない — 戻した後も下りている。
+    @Test("効果を通した絵を書いた投入が打ち切られると、控えを戻す印を投入の前に戻す。無ければ戻さない",
         arguments: [true, false])
     func aDroppedCarryIsNotRestored(dropped: Bool) throws {
         let gpu = try RenderDevice()
@@ -430,11 +432,36 @@ struct DroppedWorkRedeliveryTests {
             canvas.effects([.vignette(amount: 0.6)])
             if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
         }
-        #expect(canvas.carriesPictureBeforeEffects, "控えへ写していない — 前提が崩れている")
+        #expect(canvas.carriesPictureBeforeEffects, "効果を通した絵を出す面へ書いていない — 前提が崩れている")
 
         awaitOutcomes(gpu)
         gpu.revokeDroppedDeliveries()
         #expect(canvas.carriesPictureBeforeEffects == !dropped, "控えを戻す印の扱いが違う")
+    }
+
+    /// 効果を通した絵を出す面へ書いた投入が打ち切られると、出す面は書かれていない。面を取り替えたままだと、
+    /// 次のフレームの入りが書かれていない面になる (#2388)。取り替えを戻せば、効果を通す前の絵が描く先に残る。
+    @Test("効果を通した絵を書いた投入が打ち切られると、面の取り替えを戻す。無ければ戻さない",
+        arguments: [true, false])
+    func aDroppedEffectFrameGivesTheSurfacesBack(dropped: Bool) throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+        let drawn = canvas.target.texture
+        try canvas.draw {
+            canvas.background(Self.blue)
+            canvas.effects([.vignette(amount: 0.6)])
+            if dropped { gpu.dropsNextSubmissionForTesting = Self.victim }
+        }
+        #expect(!Self.same(canvas.target.texture, drawn), "面を取り替えていない — 前提が崩れている")
+
+        awaitOutcomes(gpu)
+        gpu.revokeDroppedDeliveries()
+        let given = Self.same(canvas.target.texture, drawn)
+        #expect(given == dropped, "面の取り替えの扱いが違う")
+    }
+
+    private static func same(_ a: any MTLTexture, _ b: any MTLTexture) -> Bool {
+        (a as AnyObject) === (b as AnyObject)
     }
 
     /// 届けるものが無い描き切りでも、登録簿から届け終えた持ち主を降ろす (C6)。逃げ道で直接書いた

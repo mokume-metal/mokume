@@ -48,6 +48,7 @@ enum NumberValues {
             case mod
             case bezierPoint
             case bezierTangent
+            case phase
         }
     }
 

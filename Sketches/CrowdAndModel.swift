@@ -143,6 +143,9 @@ final class CrowdAndModel: Sketch {
         translate(width / 2 - 400, height / 2 - 110, 0)
         rotateY(time * 0.6)
         beginShape()
+        // 向きを書く口 (`normal`)。平らな面なので、書かなくても形から求まる向きと同じ
+        // (どちらの側から見ても光を受けるので、符号によらず同じ明るさで出る)
+        normal(0, 0, 1)
         for step in 0..<6 {
             let around = Float(step) / 6 * 2 * .pi
             vertex(cos(around) * 84, sin(around) * 84, 0)

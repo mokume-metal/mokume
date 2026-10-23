@@ -33,7 +33,7 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port, path: "/remote") }  // どのパスでも同じ受け口に届く
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         for text in ["0.25", "hit\n", "a\nb", ""] { peer.send(text) }
@@ -52,7 +52,7 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("before")
@@ -71,7 +71,7 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         server.send("hit")
@@ -89,7 +89,7 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.send("")
@@ -106,7 +106,7 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.close()
         #expect(await clients(server, reach: 0))
@@ -118,7 +118,7 @@ struct WebSocketServerTests {
 
         let nextPeers = PeerGroup { BrowserSocket(port: port) }
         defer { nextPeers.closeAll() }
-        try await nextPeers.reach(on: server)
+        try await nextPeers.reach(on: server, told: told)
         let next = nextPeers[0]
         server.send("c")
         #expect(await until { next.received == ["c"] })
@@ -130,7 +130,7 @@ struct WebSocketServerTests {
         let (server, port) = try await listening(told: told)
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.close()
@@ -186,7 +186,7 @@ struct WebSocketServerTests {
         defer { live.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: live)
+        try await peers.reach(on: live, told: told)
         let peer = peers[0]
         for text in textScript { peer.send(text) }
         let received = await collect(live, count: textScript.count)
@@ -228,7 +228,7 @@ struct WebSocketServerTests {
         try await requireState(told: told, tracing: source) { server.state }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.send("back")
         #expect(await collect(server, count: 1) == ["back"])

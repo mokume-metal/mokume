@@ -41,6 +41,7 @@ extension InputEvent {
         case .mouseMoved: .mouseMoved
         case .mouseMovedBy: .mouseMovedBy
         case .scrolled: .scrolled
+        case .pinched: .pinched
         case .keyDown: .keyDown
         case .keyUp: .keyUp
         }
@@ -49,8 +50,14 @@ extension InputEvent {
     /// 種別ごとに要る値。**読み手が「省略の意味が無い」とした鍵は必ず載せる。**
     private var wireFields: [(String, String)] {
         switch self {
-        case .mouseDown(let x, let y, let button), .mouseUp(let x, let y, let button):
+        case .mouseDown(let x, let y, let button, let clickCount):
+            // **押した回数は単発 (1) なら載せない** — 省略が単発と読めるので、これまでの 1 行と同じになる
             [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
+                + (clickCount == 1 ? [] : [("clickCount", "\(clickCount)")])
+        case .mouseUp(let x, let y, let button):
+            [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
+        case .pinched(let amount):
+            [("amount", Self.number(amount))]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):

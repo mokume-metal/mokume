@@ -197,7 +197,11 @@ final class FrameTiming {
     /// ([#2328])。観測の枚を除けば、``time`` の倍精度の元である。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
-    private var seconds: Double = 0
+    private(set) var seconds: Double = 0
+    /// いまの枚の、``time`` が示す時刻 (倍精度)。観測の指定秒が描き直す枚では、その指定秒 (``time`` と同じ)
+    /// で、それ以外は ``seconds`` と同じ。周期の位相 (``SketchPart/phase(period:)``) は、``time`` が
+    /// 示す秒から巡らせるのでこちらを読む。
+    private(set) var shownSeconds: Double = 0
     /// いまの枚の、作者の時計の上の時刻 (単精度)。**観測の指定秒が描き直す枚でも作者の時計の値**で、
     /// 観測の枚を除けば ``time`` と同じ値である。``draw()`` の外 (入力のコールバック) と、本体が
     /// 持つ状態 (動画の再生位置・録った音の起点) が読む — 観測の秒を状態として積まないために
@@ -310,10 +314,12 @@ final class FrameTiming {
         }
         seconds = raw + offset
         time = Float(seconds)
+        shownSeconds = seconds
         if let requestedTime {
             // 観測の指定秒は、見せる時刻と経過だけを上書きする。作者の時計 (`seconds`・
             // `offset`) は上で観測が無い枚と同じに進めてあり、次の枚はそこから続く
             time = requestedTime
+            shownSeconds = Double(requestedTime)
             step = .seconds(0)
         }
         // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない

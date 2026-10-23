@@ -48,16 +48,23 @@ extension EffectSurface {
     let width: Int
     let height: Int
     /// GPU 専用の面。描画先と同じ形式で、段が読み書きする。
-    let texture: any MTLTexture
+    ///
+    /// **取り替えられる** — 効果の控えは、描く先と面を取り替える (``Canvas/exchangeTargetWithCarry()``・
+    /// [#2388])。取り替えるのはその 1 口だけで、取り替えても確保した面の数は変わらない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var texture: any MTLTexture
     /// 死ぬときに面を退かせる先。
     private let gpu: RenderDevice
 
     /// - Parameters:
     ///   - startingTransparent: 作った時点で透明な黒に塗るか。GPU 専用の面の
     ///     初期値は未定義なので、**書かれる前に読まれる面**は塗っておく (時間方向の拡大の
-    ///     控えは最初のフレームから読まれる)。効果の控えは全画素を書く段か写ししか通らないうえ、
-    ///     コマンドを組み立てている最中に作られるので塗れない
-    ///     (``RenderDevice/makeClearedTexture(descriptor:)``)。
+    ///     控えは最初のフレームから読まれる)。効果の出す面は、最後の段が全画素を書くまで読まれないが、
+    ///     書く投入が打ち切られると描く先と取り替えたまま読まれうるので、組み立ての外で作れるときは塗って作る
+    ///     (``EffectPipeline/carry(startingTransparent:)``・#2388)。コマンドを組み立てている最中に作る面
+    ///     (中間の絵・変える前の絵の控え) は、全画素を書く段か写しだけが通るので塗らない
+    ///     (塗るのは自分の投入を 1 本開く・``RenderDevice/makeClearedTexture(descriptor:)``)。
     ///   - pixelFormat: 面の形式。既定は描画先と同じ色の形式で、奥行きを控える面だけが
     ///     描画先の奥行きの形式を渡す ([#1524])。
     ///

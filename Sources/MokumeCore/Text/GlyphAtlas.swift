@@ -65,6 +65,8 @@ import simd
     static let initialSize = 256
     /// 広げられる上限 (画素)。
     static let maximumSize = 4096
+    /// 初めの大きさから上限まで、頁を広げられる回数 (大きさは倍々に広がる)。
+    static let maximumGrowths = (maximumSize / initialSize).trailingZeroBitCount
     /// 字形の絵の周りに置く余白 (画素)。
     ///
     /// **この余白は送り位置に混ざってはならない。** 焼くときに余白ぶんずらし、
@@ -173,7 +175,189 @@ import simd
         /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         var weight: Int = 0
+        /// 焼く拡大の段 ([#2446])。0 は `size` の大きさそのままで焼く (拡大を掛けない・これまでの焼き方)。
+        /// `n` は ``GlyphAtlas/ratio(ofStep:)`` 倍の画素で焼く — 字形の形と並びは `size` のまま、
+        /// 描く面の画素だけを細かくする。
+        ///
+        /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+        var step: Int = 0
     }
+
+    /// 1 オクターブ (2 倍) を何段に刻むか ([#2446])。拡大を動かすと、この段の境を越えるたびに焼き直す。
+    /// 細かいほど拡大に合った画素で焼けるが、焼き直しが増える。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    static let stepsPerOctave = 8
+
+    /// 段 `step` で焼くときの、`size` に対する倍率。段 0 は厳密に 1。
+    static func ratio(ofStep step: Int) -> Float {
+        step == 0 ? 1 : RuntimeMath.pow(2, Float(step) / Float(stepsPerOctave))
+    }
+
+    // MARK: - 拡大した字形を焼く量の上限 ([#2446])
+    //
+    // 拡大した字形は、段が変わるたびに焼き直す。**拡大を動かす絵が 1 フレームに焼く量**と、**1 字の大きさ**
+    // と、**面のうち拡大した字形が占める割合**の 3 つを抑える。どれも越えたとき、字を欠かさず、焼いてある
+    // 近い段か低い段の画素で描く (以前は伸ばして描いていたので、それを下回らない)。
+    //
+    // [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+
+    /// 1 フレームに、新しく焼いてよい拡大した字形 (段が 0 より上) の数の上限。**数と画素のバイト数の両方で
+    /// 数える** (``scaledBakeBytesPerFrame``)。越えた分は、その字形で焼いてある近い段で描き、次のフレームで
+    /// 先に焼く (``admitScaledBake(_:bytes:frame:)``)。
+    var scaledBakesPerFrame = 64
+
+    /// **1 字の大きさ**の上限 (画素のバイト数)。頁の控えの上限 (``pendingByteLimit``) と同じ値にする —
+    /// 1 字で越えると、焼くたびに GPU の全完了を待つ ([#1792])。これを越える段は焼かず、収まる段まで下げる
+    /// (``plan(for:font:)``)。
+    ///
+    /// [#1792]: https://github.com/mokume-metal/mokume/issues/1792
+    var scaledBakeByteLimit: Int { pendingByteLimit }
+
+    /// 1 フレームに新しく焼いてよい拡大した字形の画素のバイト数。**1 字の上限 (``scaledBakeByteLimit``) より
+    /// 小さく置く** — 1 フレームの焼きを抑え、フレームの時間を揃える (測った値は #2446 の PR)。
+    /// 1 フレームの最初の 1 字は、この量を越えても焼く。
+    var scaledBakeBytesPerFrame = 2 << 20
+
+    /// 面の上から何割までの段 (棚) に、拡大した字形を置いてよいか。下の残りは、拡大しない字 (段 0) の分
+    /// である。**拡大した字形で面の底まで埋め尽くすと、そのフレームの後の字が (小さなラベルも) 置けず欠ける。**
+    /// 面積ではなく棚の高さで区切る — 棚は左から詰めるので、幅の狭い字が混じると面積では数え切れない。
+    static let scaledPageShare = 0.75
+
+    /// 拡大した字形を置いてよい、面の上からの高さ (画素)。
+    private static func scaledRowLimit(side: Int) -> Int { Int(scaledPageShare * Double(side)) }
+
+    /// **このフレームの絵が、次のフレームに描き直されて残らないと分かっているか。** 立てた面だけが、上限を
+    /// 越えた字の焼きを次のフレームへ送る (近い段の画素で描いた四角を、そのフレームの間だけ残す)。下ろした
+    /// ままなら (既定) 上限を外して、字を要る段で焼き切る — 描き場所の絵・書き出す絵・撮る絵・止めた絵・形に
+    /// 記録した字は残るので、送るとぼけたまま残る。
+    ///
+    /// 立てるのは走らせる側 (`SketchRuntime`) で、窓に出しながら回していて、次のフレームがそのフレームを描き
+    /// 直すと分かっているときだけである。形の組み立ての中は、呼ぶ側 (``Canvas``) が送らない。
+    var mayDeferScaledBakes = false
+
+    private var budgetFrame = -1
+    private var scaledBakesThisFrame = 0
+    private var scaledBytesThisFrame = 0
+
+    /// 焼けずに先送りした字形。`bytes` は頼んだ段で焼くバイト数、`age` は続けて何フレーム先送りしたか。
+    private struct Owed {
+        var bytes: Int
+        var age: Int
+    }
+    /// 前のフレームで上限に当たり、焼けずに近い段か段 0 で描いた字形 (段を除いた鍵 → 先送りの履歴)。
+    /// **このフレームでは、先送りが長い字形から先に焼く枠を持つ** — 描く順で早い字が枠を使い切ると、後ろの字が
+    /// いつまでも焼けない (速くズームする絵で、後ろの字だけ近い段のまま残る)。新しい字形 (age 0) は、先送りした
+    /// 字形すべての分を除いた残りしか使えず、先送りした字形は、自分より長く先送りした字形の分を除いた残りを使う。
+    private var owedLastFrame: [Key: Owed] = [:]
+    private var owedThisFrame: [Key: Owed] = [:]
+
+    /// 検査が読む: 先送りして焼けていない字形の数。
+    var owedGlyphCount: Int { owedLastFrame.count + owedThisFrame.count }
+
+    private func openBudget(frame: Int) {
+        guard budgetFrame != frame else { return }
+        budgetFrame = frame
+        scaledBakesThisFrame = 0
+        scaledBytesThisFrame = 0
+        owedLastFrame = owedThisFrame
+        owedThisFrame = [:]
+    }
+
+    /// 拡大した字形 1 つ (`bytes` バイト) を、このフレームに新しく焼いてよいか。**焼くなら数と量を数える。**
+    ///
+    /// 焼けなかった字形は控えて、次のフレームで先に焼く。`mayDeferScaledBakes` が下りていれば常に焼く
+    /// (数えはする)。
+    func admitScaledBake(_ key: Key, bytes: Int, frame: Int, deferrable: Bool = true) -> Bool {
+        openBudget(frame: frame)
+        var identity = key
+        identity.step = 0
+        let age = owedLastFrame[identity]?.age ?? 0
+        var allowed = true
+        if mayDeferScaledBakes && deferrable {
+            var reservedCount = 0
+            var reservedBytes = 0
+            for (other, owed) in owedLastFrame where other != identity && owed.age > age {
+                reservedCount += 1
+                reservedBytes += owed.bytes
+            }
+            let countFits = scaledBakesThisFrame + reservedCount < scaledBakesPerFrame
+            // 1 フレームの最初の 1 字は、量が枠を越えても焼く (1 字の大きさは別に頭打ちにしてある)
+            let first = scaledBytesThisFrame == 0 && reservedBytes == 0
+            let bytesFit = first || scaledBytesThisFrame + bytes + reservedBytes <= scaledBakeBytesPerFrame
+            allowed = countFits && bytesFit
+        }
+        guard allowed else {
+            owedThisFrame[identity] = Owed(bytes: bytes, age: age + 1)
+            return false
+        }
+        scaledBakesThisFrame += 1
+        scaledBytesThisFrame += bytes
+        owedLastFrame.removeValue(forKey: identity)
+        return true
+    }
+
+    /// 先送りした字形が、別の道で要る段に焼けた (焼いてあった・低い段で決まった・フレームの終わりに払った)。
+    /// **先送りの履歴から外す** — 残すと、次のフレームで若い字の枠をその分だけ押さえる。
+    func noteBaked(_ key: Key, frame: Int) {
+        guard !owedLastFrame.isEmpty || !owedThisFrame.isEmpty else { return }
+        openBudget(frame: frame)
+        var identity = key
+        identity.step = 0
+        owedLastFrame.removeValue(forKey: identity)
+        owedThisFrame.removeValue(forKey: identity)
+    }
+
+    /// 字形の外接矩形を倍率 `ratio` で拡げ、余白を足して整数へ広げた升目の縁。
+    private struct Edges {
+        var left: CGFloat
+        var bottom: CGFloat
+        var right: CGFloat
+        var top: CGFloat
+        var width: CGFloat { right - left }
+        var height: CGFloat { top - bottom }
+    }
+
+    private static func edges(of bounds: CGRect, ratio: CGFloat) -> Edges {
+        var bounds = bounds
+        if ratio != 1 { bounds = bounds.applying(CGAffineTransform(scaleX: ratio, y: ratio)) }
+        let pad = CGFloat(padding)
+        return Edges(
+            left: bounds.minX.rounded(.down) - pad, bottom: bounds.minY.rounded(.down) - pad,
+            right: bounds.maxX.rounded(.up) + pad, top: bounds.maxY.rounded(.up) + pad)
+    }
+
+    /// 頼んだ段 (`key.step`) の字形を、**1 字の大きさの上限に収まる段まで下げた段**と、その段で焼く画素の
+    /// バイト数。空白など絵の無い字形は、頼んだ段のままバイト数 0。
+    ///
+    /// 上限は 2 つ — 1 字が頁に入ること (``fitsFreshPage(width:height:side:)``・面の割合を含む) と、
+    /// 画素が ``scaledBakeByteLimit`` に収まること。段 0 は下げない (これまでの焼き方で、上限は
+    /// ``bake(key:font:)`` が名乗る)。
+    func plan(for key: Key, font: CTFont) -> (step: Int, bytes: Int) {
+        var glyph = CGGlyph(key.glyph)
+        let bounds = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, nil, 1)
+        guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
+        else { return (key.step, 0) }
+        let limitPixels = CGFloat(scaledBakeByteLimit / Self.bytesPerPixel)
+        // 拡大した字形は、作りたての上限の頁でも棚の上から ``scaledPageShare`` までに収まる大きさに限る
+        let rowSide = Self.scaledRowLimit(side: Self.maximumSize)
+        var step = key.step
+        while true {
+            let edges = Self.edges(of: bounds, ratio: CGFloat(Self.ratio(ofStep: step)))
+            let pixels = edges.width * edges.height
+            if step == 0
+                || Self.fitsFreshPage(width: edges.width, height: edges.height, side: rowSide)
+                    && pixels <= limitPixels
+            {
+                return (step, Int(min(pixels, CGFloat(Int.max / Self.bytesPerPixel)))
+                    * Self.bytesPerPixel)
+            }
+            step -= 1
+        }
+    }
+
+    /// 焼いてある字形。**焼かない** — 無ければ `nil`。
+    func cachedEntry(for key: Key) -> Entry? { entries[key] }
 
     /// 1 つの頁が控えに積んでよいバイト数・区画の数の上限 (``GlyphPage/pendingByteLimit``・
     /// ``GlyphPage/pendingRegionLimit``)。**頁を替えても引き継ぐ。** 検査が差し替える。
@@ -242,16 +426,18 @@ import simd
 
     /// 字形を CPU で描く。**焼き場も測る側も、描くときはここを通す** (数えるため)。
     func renderOnCPU(
-        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
+        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int,
+        scale: CGFloat = 1
     ) -> [SIMD4<Float16>]? {
         cpuRenders += 1
         return Self.render(
-            glyph: glyph, font: font, width: width, height: height, penX: penX, penY: penY)
+            glyph: glyph, font: font, width: width, height: height, penX: penX, penY: penY,
+            scale: scale)
     }
 
     /// 測る側が描いた画素を預かる。同じ鍵の字形を焼くとき、同じ升目なら描き直さずに使う。
     ///
-    /// **描き方は焼き場と同じ** (``render(glyph:font:width:height:penX:penY:)``) なので、預けた画素から
+    /// **描き方は焼き場と同じ** (``render(glyph:font:width:height:penX:penY:scale:)``) なので、預けた画素から
     /// 焼いた字形は、描き直して焼いたものと 1 ビットも変わらない。
     ///
     /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
@@ -460,6 +646,9 @@ import simd
     /// 字形を焼いて面へ置く。
     private func bake(key: Key, font: CTFont) -> Lookup {
         var glyph = CGGlyph(key.glyph)
+        // **拡大の段は、書体の大きさの引数を変えずに、描く面の拡大で作る** (#2446)。大きさの引数を変えると、
+        // 光学サイズを持つ書体 (既定の SF) は大きな光学サイズの字形にすり替わる
+        let ratio = CGFloat(Self.ratio(ofStep: key.step))
         let bounds = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &glyph, nil, 1)
 
         // 絵を持たない字 (空白)。場所は取らないが、送り幅は持つ
@@ -474,19 +663,17 @@ import simd
         // **Int へ直す前に、浮動小数のまま大きさを見る** (#1587)。巨大な大きさでは外接矩形の辺が
         // Int の範囲を越え、先に直すとそこでプロセスごと落ちる。上限の頁は Int の範囲よりはるかに
         // 小さいので、入るかどうかは浮動小数で決まる
-        let pad = CGFloat(Self.padding)
-        let leftEdge = bounds.minX.rounded(.down) - pad
-        let bottomEdge = bounds.minY.rounded(.down) - pad
-        let rightEdge = bounds.maxX.rounded(.up) + pad
-        let topEdge = bounds.maxY.rounded(.up) + pad
-        let extent = (width: rightEdge - leftEdge, height: topEdge - bottomEdge)
+        let edges = Self.edges(of: bounds, ratio: ratio)
+        let (leftEdge, bottomEdge, rightEdge, topEdge) = (edges.left, edges.bottom, edges.right, edges.top)
+        let extent = (width: edges.width, height: edges.height)
         guard extent.width > 0, extent.height > 0 else { return .unbakeable }
         // **作りたての上限の頁にも入らないなら、広げても焼き直しても入らない。** ここで名乗って
         // 諦める。上限と比べるだけでは足りない — 両辺が上限以下でも、左上の隅のぶん入らない
         // 字形がある (#1492)
         guard Self.fitsFreshPage(width: extent.width, height: extent.height, side: Self.maximumSize)
         else {
-            warnTooLargeOnce(width: extent.width, height: extent.height)
+            // 拡大した字形が入らないときは、呼ぶ側が低い段で描く。段 0 の字形だけ知らせる
+            if key.step == 0 { warnTooLargeOnce(width: extent.width, height: extent.height) }
             return .tooLarge(
                 width: Self.saturatingInt(extent.width), height: Self.saturatingInt(extent.height))
         }
@@ -500,14 +687,20 @@ import simd
         // いまの面より大きいだけなら、広げれば入る
         guard width <= size, height <= size else { return .full }
 
-        guard let origin = reserve(width: width, height: height) else { return .full }
+        // 拡大した字形は、棚の上から ``scaledPageShare`` までにしか置かない。入らなければ、場所が無いものとして扱う
+        // (呼ぶ側は広げるか焼き直すか、低い段へ下がる)。拡大しない字の分を残す
+        guard
+            let origin = reserve(
+                width: width, height: height,
+                rowLimit: key.step == 0 ? nil : Self.scaledRowLimit(side: size))
+        else { return .full }
         // 測る側が同じ升目に描いて預けていれば、描き直さずに使う (#2560)
         guard
             let pixels = takeRendered(
                 for: key, width: width, height: height, penX: -left, penY: -bottom)
                 ?? renderOnCPU(
                     glyph: glyph, font: font, width: width, height: height, penX: -left,
-                    penY: -bottom)
+                    penY: -bottom, scale: ratio)
         else { return .unbakeable }
 
         // **待たずに、焼いた画素を頁の控えへ積む** (#1792)。届けるのは描き切りの GPU 側のコピーで、
@@ -516,13 +709,22 @@ import simd
         page.stage(x: origin.x, y: origin.y, width: width, height: height, pixels: pixels)
 
         let side = Float(size)
+        // 拡大の段は、座標の単位 (`size` の大きさ) に戻して持つ。置く側は変わらず、拡大が段の倍率と
+        // 同じなら、焼いた画素と描く画素が 1 対 1 になる (#2446)
+        let unit = Float(ratio)
+        var offset = SIMD2(Float(left), Float(-top))
+        var drawnSize = SIMD2(Float(width), Float(height))
+        if key.step != 0 {
+            offset /= unit
+            drawnSize /= unit
+        }
         return .found(
             Entry(
                 uvMin: SIMD2(Float(origin.x) / side, Float(origin.y) / side),
                 uvMax: SIMD2(Float(origin.x + width) / side, Float(origin.y + height) / side),
                 // 縦は下向きに測るので、基準線から上端までの距離が負のずれになる
-                offset: SIMD2(Float(left), Float(-top)),
-                size: SIMD2(Float(width), Float(height)),
+                offset: offset,
+                size: drawnSize,
                 isBlank: false,
                 isColored: Self.hasOwnColor(pixels)))
     }
@@ -563,17 +765,30 @@ import simd
     }
 
     /// 面の中に場所を取る。棚を左から埋め、いっぱいになったら次の段へ。
-    private func reserve(width: Int, height: Int) -> (x: Int, y: Int)? {
-        if cursorX + width > size {
-            cursorX = 0
-            cursorY += rowHeight
-            rowHeight = 0
+    ///
+    /// `rowLimit` は、字形の下端がここまでに収まる棚だけを使う (拡大した字形・``scaledPageShare``)。収まらないとき
+    /// は、棚を進めずに諦める — 続く小さな字が、いまの棚の残りを使えるように。
+    private func reserve(width: Int, height: Int, rowLimit: Int? = nil) -> (x: Int, y: Int)? {
+        var x = cursorX
+        var y = cursorY
+        var row = rowHeight
+        if x + width > size {
+            x = 0
+            y += row
+            row = 0
         }
-        guard cursorY + height <= size else { return nil }
-        let origin = (x: cursorX, y: cursorY)
-        cursorX += width
-        rowHeight = max(rowHeight, height)
-        return origin
+        guard y + height <= (rowLimit ?? size) else {
+            if rowLimit == nil {
+                cursorX = x
+                cursorY = y
+                rowHeight = row
+            }
+            return nil
+        }
+        cursorX = x + width
+        cursorY = y
+        rowHeight = max(row, height)
+        return (x: x, y: y)
     }
 
     /// 字形 1 つを、作業空間の色の並びとして描く。
@@ -593,8 +808,14 @@ import simd
     /// `text()` の墨と食い違いうる。
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
+    ///
+    /// **`scale` は拡大の段の倍率** ([#2446])。書体の大きさの引数はそのままに、描く面を拡げて描くので、
+    /// 字形の形 (光学サイズの選び) は変わらず、画素だけが細かくなる。`penX`・`penY` は拡げた後の画素。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     static func render(
-        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int
+        glyph: CGGlyph, font: CTFont, width: Int, height: Int, penX: Int, penY: Int,
+        scale: CGFloat = 1
     ) -> [SIMD4<Float16>]? {
         var pixels = [SIMD4<Float16>](repeating: .zero, count: width * height)
         let stride = width * Self.bytesPerPixel
@@ -620,6 +841,10 @@ import simd
 
             var index = glyph
             var position = CGPoint(x: CGFloat(penX), y: CGFloat(penY))
+            if scale != 1 {
+                context.scaleBy(x: scale, y: scale)
+                position = CGPoint(x: position.x / scale, y: position.y / scale)
+            }
             CTFontDrawGlyphs(font, &index, &position, 1, context)
             return true
         }

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import importlib.util
 import json
 import pathlib
 import re
@@ -614,6 +615,7 @@ UNSHOWN = {
     "createTCPClient": "繋ぎ先のサーバが要り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。記録した列を流す形 (messages:) と手元の TCPServer との往復はテストが回す (#2470)",
     "createWebSocketClient": "createTCPClient と同じ理由",
     "assetURL": "資材の在処を返す口で、絵にならない。正しさはテストが見る",
+    "requestModel": "モデルが届くフレームが実行ごとに違い、--render と台帳で同じ絵を回せない (口の説明の Note)。`Task` の中から Sketch の口を呼ぶのは走っている状態の外になりうる (#1367)。参照スケッチ (CrowdAndModel) は描き場所 (canvas) を先に取って、同じ非同期の読み込みを Canvas の口で示す。絵は loadModel が見る",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
     "loadEffect": "loadShader と同じ理由",
@@ -626,8 +628,63 @@ UNSHOWN = {
 }
 
 
+def _blank_comments():
+    """check-tool-language.py の字句の読みを取り込む (`check-runtime-math.py` と同じ形)。
+
+    ファイル名にハイフンがあるので importlib で読む。写さない — 文字列の中身まで塗る引数
+    (`strings=True`) もそこにある。
+    """
+    path = pathlib.Path(__file__).resolve().parent / "check-tool-language.py"
+    spec = importlib.util.spec_from_file_location("check_tool_language", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.blank_comments
+
+
+blank_comments = _blank_comments()
+
+# 参照スケッチの中の 1 つの名前の出方。前の宣言の語 (`let name`・`func name`・`case name`・
+# `for name`) と、`self.` だけを許す受け手と、後ろの `(`・`{`・ラベルの `:` を 1 度に読む
+SKETCH_RECEIVERS = r"(?:self|sketch|\$0)"
+
+
+def _sketch_name_pattern(name: str) -> re.Pattern:
+    return re.compile(
+        rf"(?P<declaration>\b(?:func|let|var|case|for)\s+)?"
+        # 前が `.` や識別子の文字なら、受け手つき (別の型の口)・列挙子・別の名前。**スケッチを指す
+        # 受け手だけは許す** (`self.`・参照スケッチが `Sketch` を引数に取る閉包の `sketch.`・`$0.`)
+        rf"(?<![\w.])(?:{SKETCH_RECEIVERS}\.)?(?P<name>{re.escape(name)})(?![\w])"
+        rf"(?P<after>\s*[({{]|:(?!:))?"
+    )
+
+
+def _sketch_member_uses(code: str, name: str, kind: str, closure_last: bool) -> bool:
+    """参照スケッチの `code` が、メンバ `name` を使っているか。`kind` は呼び出しの数え方。
+
+    - `callback`: 作者が書く口 (プロトコルの要件と既定の実装)。宣言 (`func`・`var`・`let` の
+      `name`、`init` は `init(`) で書かれたとき
+    - `function`: 呼び出しの形 `name(`、最後の引数が閉包の口だけは末尾の閉包 `name {` も
+    - `property`: 宣言の左辺 (`let/var/for/case name`)・引数のラベル (`name:`) 以外の出方
+    """
+    for match in _sketch_name_pattern(name).finditer(code):
+        declaration = (match.group("declaration") or "").strip()
+        after = (match.group("after") or "").strip()
+        if kind == "callback":
+            if declaration in ("func", "var", "let") or (name == "init" and after == "("):
+                return True
+        elif declaration:
+            continue
+        elif kind == "function":
+            if after == "(" or (after == "{" and closure_last):
+                return True
+        elif after != ":":
+            return True
+    return False
+
+
 def check_sketch_coverage(
-    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN
+    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN,
+    requirements: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
     """`Sketch` の公開メンバが、参照スケッチのどこかで呼ばれているか (#1358)。
 
@@ -635,16 +692,52 @@ def check_sketch_coverage(
     ものが無く、100 件を超える空白が溜まった (#1350)。空白は不具合も隠す — スケッチから
     呼べる場所の無い口が、スケッチへ足すまで誰にも見つからなかった (#1367)。
 
-    見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントは
-    落としてから照合するが、**文字列の中に書いた名前は「呼ばれた」に数える** — 取り
-    こぼすのは名前を文字列にだけ書いたときで、そこまでは追わない。
+    見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントと
+    文字列の中身は空けてから照合する (`check-runtime-math.py` と同じ前処理)。文字列補間
+    `"\\(…)"` の中はコードなので数える。
+
+    **口の種類ごとに、数える出方を変える** (#3026)。名前の字面だけで見ると、同じ綴りの局所変数
+    (`let phase = …`) で通ってしまい、どのスケッチも呼ばない `phase(period:)` が検査を抜けた。
+
+    - **関数のメンバ** (引数部を持つもの) は、呼び出しの形 `phase(` で書かれたときだけ数える。
+      最後の引数が閉包の口 (`createShape { … }`) だけは、末尾の閉包 `name {` も数える —
+      それ以外の口は `if phase {` を呼び出しと読まない。シンボルグラフの宣言から決める。
+      前が `.` の呼び出し (`canvas.requestModel(`) は別の型の口なので数えない。数える受け手は
+      スケッチを指すもの (`self.`・`sketch.`・`$0.`) だけである。参照スケッチは `Sketch` を引数に
+      取る閉包を並べる作りがあり、`$0.ellipsoid(…)` は `Sketch` の口の呼び出しである
+    - **作者が書く口** (プロトコルの要件とその既定の実装。`setup`・`draw`・`mouse*`・`settings`・
+      `init` など) は、スケッチが呼ぶものではなく書くものなので、宣言で数える。表は持たず、
+      シンボルグラフの関係 (`requirements`) から決める
+    - **性質** (`time`・`width` のように括弧を持たないもの) は、宣言の左辺 (`let time = …`) と
+      引数のラベル (`time:`) 以外の出方を数える。同じ基底名に性質もあるときも性質として数える
+
+    **数えないもの (代償)**: 関数を値として渡す形 (`values.map(phase)`) は呼び出しの形ではない
+    ので数えない。示したいなら `phase(period: …)` と呼ぶ。多重定義は基底名に畳むので、片方の
+    引数の形だけが呼ばれていても通る ([#3035](https://github.com/mokume-metal/mokume/issues/3035))。
+    根は字句の照合である — コンパイラが解いた参照 (index store) で引けば、局所変数・受け手・
+    宣言を取り違えない。残した道として #3026 に書いた。
     """
-    code = re.sub(r"/\*.*?\*/", "", sources, flags=re.DOTALL)
-    code = re.sub(r"//[^\n]*", "", code)
-    bases = {title(s).split("(")[0] for s in symbols if layer(s) == ENTRY_TYPE}
+    code = blank_comments(sources, strings=True)
+    # 基底名 → (口の種類, 最後の引数が閉包の宣言があるか)
+    flags: dict[str, dict[str, bool]] = {}
+    for member in symbols:
+        if layer(member) != ENTRY_TYPE:
+            continue
+        base = title(member).split("(")[0]
+        seen = flags.setdefault(base, {"required": False, "property": False, "closure": False})
+        seen["required"] |= member["identifier"]["precise"] in requirements
+        seen["property"] |= "(" not in title(member)
+        seen["closure"] |= _ends_with_closure(member)
+    members = {
+        base: (
+            "callback" if seen["required"] else "property" if seen["property"] else "function",
+            seen["closure"])
+        for base, seen in flags.items()
+    }
     problems = []
-    for base in sorted(bases - unshown.keys()):
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
+    for base in sorted(members.keys() - unshown.keys()):
+        kind, closure_last = members[base]
+        if _sketch_member_uses(code, base, kind, closure_last):
             continue
         problems.append(
             f"{ENTRY_TYPE}.{base} が参照スケッチ (Sketches/) から呼ばれていない。"
@@ -652,6 +745,16 @@ def check_sketch_coverage(
             "scripts/api-surface.py の UNSHOWN に載せる (#1358)"
         )
     return problems
+
+
+def _ends_with_closure(symbol: dict) -> bool:
+    """最後の引数の型が閉包か (末尾の閉包で呼べるか)。型の綴りに `->` を含むかで見る。"""
+    parameters = (symbol.get("functionSignature") or {}).get("parameters", [])
+    if not parameters:
+        return False
+    spelling = "".join(
+        fragment.get("spelling", "") for fragment in parameters[-1].get("declarationFragments", []))
+    return "->" in spelling.split(":", 1)[-1]
 
 
 # 公開の口が何の仕事をするかの種類 (#1670)。**寿命の約束 (ADR-0021 決定 4) は種類ごとに
@@ -811,6 +914,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "pixelHeight": READING,
     "frameCount": READING,
     "time": READING,
+    "phase": (READING, "時計の秒から周期の位相を取って返す。time を巡らせた値で、値を返すだけ"),
     "authorTime": (READING, "time を観測の枚でも作者の時計の秒で返す。入り口・部品が状態を進めるのに読む (ADR-0045 決定 9)"),
     "deltaTime": READING,
     "clock": (READING, "時刻の出どころを値で返す。外の時間で動くもの (音声ファイルの再生) を作る側が読む"),
@@ -824,6 +928,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "movedY": READING,
     "scrollX": READING,
     "scrollY": READING,
+    "pinch": READING,
     "mouseButton": READING,
     "isMousePressed": READING,
     "key": READING,
@@ -1145,7 +1250,7 @@ def main() -> int:
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
         + check_float_ports(symbols, requirements)
-        + check_sketch_coverage(symbols, read_sketches(SKETCHES))
+        + check_sketch_coverage(symbols, read_sketches(SKETCHES), requirements=requirements)
         + check_settings_form(symbols, SKETCHES)
         + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))
     )
