@@ -156,7 +156,8 @@ extension Canvas {
                 return appendDashedForm(
                     .ellipse, center: center, half: SIMD2(radiusX, radiusY),
                     outline: ringOutlineForDash(
-                        radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, at: center))
+                        radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi,
+                        piece: .sector, at: center))
             }
             return appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
         }
@@ -168,17 +169,43 @@ extension Canvas {
             Self.ringOutline(
                 Outline.Ring(
                     radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi,
-                    segments: segments))
+                    segments: segments, piece: .sector))
         }
     }
 
     /// 円弧。座標の読み方は ``ellipseMode(_:)`` が決める。
     ///
-    /// 塗りは中心を含む扇形で、輪郭も扇の周 (2 本の半径と弧) を回る。
+    /// 塗りは中心を含む扇形で、輪郭は開いた弧 (中心へ半径を引かない)。閉じ方を選ぶなら
+    /// ``arc(_:_:_:_:_:_:_:)`` を使う。
     public func arc(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
-        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
+        placeArc(a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat, mode: nil)
+    }
+
+    /// 円弧を、閉じ方 (``ArcMode``) を選んで描く。座標の読み方は ``ellipseMode(_:)`` が決める。
+    ///
+    /// `.pie` は塗りも輪郭も扇、`.chord` は弧の両端を弦で結んだ形、`.open` は輪郭を閉じない
+    /// (塗りは弦で結んだ形)。
+    public func arc(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible,
+        _ mode: ArcMode
+    ) {
+        placeArc(a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat, mode: mode)
+    }
+
+    /// 円弧を置く。`mode` が `nil` なら、渡さなかったとき (塗りは扇・輪郭は開いた弧)。
+    ///
+    /// **扇の塗りと輪郭を 1 つの形で出すのは `.pie` だけ** (距離関数の扇・変更前の既定と同じ絵)。
+    /// 開いた弧の輪郭と弦の形は距離関数で表せないので、輪郭の周 (``Outline``) で組む。既定は、
+    /// 塗りを距離関数の扇に、輪郭を開いた弧の周に分ける — 破線の輪郭 (#2835) が使う
+    /// 「塗りは距離関数・輪郭は輪郭の片」(``appendDashedForm(_:center:half:arc:cornerRadius:outline:)``) と同じ形である。
+    /// 輪郭を引かないなら、塗りは扇だけなので `.pie` と同じ 1 つの形のままにする。
+    ///
+    /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
+    private func placeArc(
+        _ a: Float, _ b: Float, _ c: Float, _ d: Float, _ start: Float, _ stop: Float, mode: ArcMode?
+    ) {
         let box = Self.resolveBox(a, b, c, d, mode: style.ellipseMode)
         let radiusX = box.width / 2
         let radiusY = box.height / 2
@@ -191,17 +218,26 @@ extension Canvas {
         // 一周ぶんなら中心は周に含めない (楕円と同じ形になる)
         let isFullTurn = sweep >= 2 * .pi
         let center = SIMD2(box.x + radiusX, box.y + radiusY)
+        let drawsStroke = style.hasStroke && style.strokeWeight > 0
+        let isSinglePie = isFullTurn || mode == .pie || (mode == nil && !drawsStroke)
+        guard isSinglePie else {
+            return placeArcInParts(
+                mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
+                sweep: sweep)
+        }
         if formAllowed(fills: true) {
             if dashedStroke != nil {
                 return isFullTurn
                     ? appendDashedForm(
                         .ellipse, center: center, half: SIMD2(radiusX, radiusY),
                         outline: ringOutlineForDash(
-                            radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, at: center))
+                            radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi,
+                            piece: .sector, at: center))
                     : appendDashedForm(
                         .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
                         outline: ringOutlineForDash(
-                            radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, at: center))
+                            radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
+                            piece: .sector, at: center))
             }
             return isFullTurn
                 ? appendForm(.ellipse, center: center, half: SIMD2(radiusX, radiusY), fills: true)
@@ -221,7 +257,45 @@ extension Canvas {
             Self.ringOutline(
                 Outline.Ring(
                     radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                    segments: segments))
+                    segments: segments, piece: .sector))
+        }
+    }
+
+    /// 弧の塗りと輪郭が、1 つの扇の形では出せない閉じ方 (既定・`.chord`・`.open`) を置く。
+    ///
+    /// - 既定: 塗りは扇、輪郭は開いた弧。**塗りは距離関数が使えるなら距離関数の扇** (輪郭は別に引く)
+    /// - `.chord`: 弦で結んだ形の塗りと、その周の輪郭
+    /// - `.open`: 弦で結んだ形の塗りと、開いた弧の輪郭
+    ///
+    /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
+    /// 破線の輪郭は、開いた弧の周を刻むので、ここでも ``strokeOutline(_:discSegments:)`` が引き受ける。
+    private func placeArcInParts(
+        mode: ArcMode?, center: SIMD2<Float>, radiusX: Float, radiusY: Float, start: Float,
+        sweep: Float
+    ) {
+        func outline(_ piece: Outline.Ring.Piece) -> Outline {
+            ringOutlineForDash(
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, piece: piece,
+                at: center)
+        }
+        switch mode {
+        case nil:
+            if formAllowed(fills: true) {
+                appendDashedForm(
+                    .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
+                    outline: outline(.arcLine))
+            } else {
+                draw(outline(.sectorFill))
+                draw(outline(.arcLine))
+            }
+        case .chord:
+            draw(outline(.chord))
+        case .open:
+            draw(outline(.chordFill))
+            draw(outline(.arcLine))
+        case .pie:
+            // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
+            preconditionFailure("a pie is placed as a single form")
         }
     }
 

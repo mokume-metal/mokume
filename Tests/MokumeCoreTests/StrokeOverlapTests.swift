@@ -324,7 +324,7 @@ struct StrokeOverlapTests {
         #expect(painted(ellipse) == 2747)
         let arc = try translucent(shaded: true) { canvas in
             canvas.strokeWeight(20)
-            canvas.arc(80, 80, 100, 6, 0, Float.pi)
+            canvas.arc(80, 80, 100, 6, 0, Float.pi, .pie)
         }
         #expect(overpainted(arc).count <= 5, "arc: \(overpainted(arc).count)")
         #expect(painted(arc) == 2572)

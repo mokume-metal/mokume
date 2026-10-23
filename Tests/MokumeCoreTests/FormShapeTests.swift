@@ -100,7 +100,7 @@ struct FormShapeTests {
                 switch index % 3 {
                 case 0: canvas.rect(0, 0, 6 + step * 0.1, 4)
                 case 1: canvas.circle(0, 0, 5 + step * 0.1)
-                default: canvas.arc(0, 0, 8, 6, 0.2, 2 + step * 0.02)
+                default: canvas.arc(0, 0, 8, 6, 0.2, 2 + step * 0.02, .pie)
                 }
                 canvas.pop()
             }
@@ -183,7 +183,7 @@ struct FormShapeTests {
                     switch index % 5 {
                     case 0: canvas.rect(0, 0, scatter.next(1...20), scatter.next(1...20))
                     case 1: canvas.ellipse(0, 0, scatter.next(1...24), scatter.next(1...24))
-                    case 2: canvas.arc(0, 0, 20, 14, scatter.next(0...3), scatter.next(3...7))
+                    case 2: canvas.arc(0, 0, 20, 14, scatter.next(0...3), scatter.next(3...7), .pie)
                     case 3: canvas.line(0, 0, scatter.next(-20...20), scatter.next(-20...20))
                     default: canvas.point(0, 0)
                     }
@@ -332,7 +332,7 @@ struct FormShapeTests {
             ("rect", 7, { $0.rect(20.3, 18.6, 52, 46) }),
             ("circle", 7, { $0.circle(48.4, 47.7, 58) }),
             ("ellipse", 7, { $0.ellipse(48.3, 47.6, 84, 26) }),
-            ("arc", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+            ("arc", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .pie) }),
         ]
         let ground = transparentGround
             ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0) : black
@@ -715,7 +715,7 @@ struct FormShapeTests {
             ("rect", { $0.rect(20.3, 18.6, 52, 46) }),
             ("circle", { $0.circle(48.4, 47.7, 58) }),
             ("ellipse", { $0.ellipse(48.3, 47.6, 84, 26) }),
-            ("arc", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+            ("arc", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .pie) }),
         ]
         let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8)
         let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
@@ -1228,7 +1228,7 @@ struct FormShapeTests {
                 switch kind {
                 case "rect": canvas.rect(10 + offset, 40, 40, 40)
                 case "circle": canvas.circle(60 + offset, 60, 100)
-                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5)
+                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5, .pie)
                 }
             }
             let sum = rowSum(pixels, row: 60, columns: 0..<20)
@@ -1722,7 +1722,7 @@ struct FormShapeTests {
                 switch kind {
                 case "rect": canvas.rect(10 + offset, 40, 40, 40)
                 case "circle": canvas.circle(60 + offset, 60, 100)
-                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5)
+                default: canvas.arc(60 + offset, 60, 100, 100, Float.pi - 0.5, Float.pi + 0.5, .pie)
                 }
             }
             // 描く画素の行 30 (出す座標の y = 60〜62) が左の縁を横切る
@@ -1928,7 +1928,7 @@ struct FormShapeTests {
             canvas.stroke(white)
             canvas.strokeWeight(6)
             // 始まりの角度 0 = 中心から右へ伸びる水平な半径。帯はその上下 3 画素ぶん
-            canvas.arc(48, 48, 60, 60, 0, .pi * 0.75)
+            canvas.arc(48, 48, 60, 60, 0, .pi * 0.75, .pie)
         }
         // 半径の途中を横切る縦の並び。帯の内側は端から端まで塗り切られている
         for y in 46...50 {
@@ -1943,7 +1943,7 @@ struct FormShapeTests {
     ///
     /// [#1448]: https://github.com/mokume-metal/mokume/issues/1448
     private func ellipticSector(_ canvas: Canvas) {
-        canvas.arc(20, 60, 260, 80, 0, Float.pi / 4)
+        canvas.arc(20, 60, 260, 80, 0, Float.pi / 4, .pie)
     }
 
     /// 楕円の扇の**塗り**の内外は、辺を引くのと同じ媒介変数の角で決まる。

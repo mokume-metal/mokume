@@ -320,6 +320,19 @@ extension SketchPart {
         canvas.arc(a, b, c, d, start, stop)
     }
 
+    /// 円弧を、閉じ方 (``ArcMode``) を選んで描く。
+    ///
+    /// 最初の 6 つの数は ``arc(_:_:_:_:_:_:)`` と同じ読み方で、7 つ目が閉じ方。
+    // shot: 参照 arc(_:_:_:_:_:_:)
+    public func arc(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible,
+        _ mode: ArcMode
+    ) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
+        canvas.arc(a, b, c, d, start, stop, mode)
+    }
+
     /// 三角形を塗る。3 つの頂点をそのまま与える。
     ///
     /// @Row {

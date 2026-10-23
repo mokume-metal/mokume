@@ -356,7 +356,7 @@ struct CurveJoinTests {
         arguments: PieRoute.allCases, Pie.all)
     func trianglePieIgnoresTheJoin(_ route: PieRoute, _ pie: Pie) throws {
         func place(_ canvas: Canvas) {
-            canvas.arc(32, 32, pie.width, pie.height, pie.start, pie.stop)
+            canvas.arc(32, 32, pie.width, pie.height, pie.start, pie.stop, .pie)
         }
         func draw(_ join: StrokeJoin) throws -> DisplayImage {
             switch route {
