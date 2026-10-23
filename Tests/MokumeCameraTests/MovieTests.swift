@@ -246,6 +246,40 @@ struct MovieTests {
         #expect(movie?.state == .stopped)
     }
 
+    @Test("外して足し直すと、動いているに戻り、観測の名乗りも動いているになって、コマがまた届く (#3122)")
+    func reattachedMovieIsRunningAgain() async throws {
+        let url = try await TestMovie.write(frames: 12)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var movie: Movie?
+        var states: [SourceState] = []
+        var reported: [SourceState?] = []
+        var arrivals: [Int?] = []
+        let runtime = try run(
+            frames: 9,
+            setup: { sketch in
+                movie = try sketch.createVideo(url.path)
+                movie?.loop()
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                // 3 フレーム目で外し、6 フレーム目で足し直す
+                if sketch.frameCount == 3 { sketch.detach(movie) }
+                if sketch.frameCount == 6 { sketch.attach(movie) }
+                states.append(movie.state)
+                reported.append(movie.report?.state)
+                arrivals.append(movie.lastArrival?.frame)
+            })
+        let running = SourceState.running
+        let stopped = SourceState.stopped
+        #expect(states == [running, running, stopped, stopped, stopped, running, running, running, running])
+        #expect(reported == states)
+        // 外している間はコマが届かず、足し直した後にまた届く
+        #expect(Array(arrivals.prefix(5)) == [1, 2, 3, 3, 3])
+        #expect(arrivals.last == 9)
+        runtime.closePlugins()
+        #expect(movie?.state == .stopped)
+    }
+
     // MARK: - 作れないとき・読めなくなったとき
 
     @Test("見つからない・中身が動画でない・映像が無いときは、作るときに投げる")
