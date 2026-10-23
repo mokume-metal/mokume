@@ -652,6 +652,9 @@ public final class SketchRuntime {
         // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
         // (ADR-0030 決定 6)
         let restoration = paramStore?.restore() ?? .init()
+        // **前の世代の作者の時計を入れるのも `setup()` より先** (`watch --keep-time`・#2414)。`setup()` の
+        // `pauseTime()`・`playTime()`・`jumpTime(_:)` が、前の世代の状態によらず通常どおり効く
+        timing.beginHandover()
         // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)
         withActiveRuntime { carryingOver { sketch.setup() } }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の

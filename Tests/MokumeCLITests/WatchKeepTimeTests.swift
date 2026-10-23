@@ -139,21 +139,30 @@ struct WatchKeepTimeTests {
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: root.appendingPathComponent("Package.swift"))
         let file = WatchCommand.keepTimeFile()
-        defer { try? FileManager.default.removeItem(at: file) }
+        let lock = URL(fileURLWithPath: file.path + ".lock")
+        defer {
+            try? FileManager.default.removeItem(at: file)
+            try? FileManager.default.removeItem(at: lock)
+        }
         #expect(file.path.hasPrefix("/"), "絶対パス")
         #expect(file.lastPathComponent.hasSuffix("\(getpid())"), "見張り 1 本ごとに別")
 
         // 旗が有る: 前の見張りが残したものは始める前に消え、巡回の中で置いたものは終わりで消える
         try Data("stale".utf8).write(to: file)
+        try Data().write(to: lock)
         var existedInTheLoop = true
         try WatchCommand.run(
             ["--keep-time", root.path],
             watching: { _, _ in
-                existedInTheLoop = FileManager.default.fileExists(atPath: file.path)
+                existedInTheLoop =
+                    FileManager.default.fileExists(atPath: file.path)
+                    || FileManager.default.fileExists(atPath: lock.path)
                 try? Data("clock".utf8).write(to: file)
+                try? Data().write(to: lock)
             })
         #expect(!existedInTheLoop, "前の見張りの時計が残っている")
         #expect(!FileManager.default.fileExists(atPath: file.path), "終わりで消していない")
+        #expect(!FileManager.default.fileExists(atPath: lock.path), "錠のファイルを終わりで消していない")
 
         // 旗が無い: 何も作らず、在るものにも触れない
         try Data("untouched".utf8).write(to: file)

@@ -211,8 +211,16 @@ final class FrameTiming {
     private var heldAt: Double?
     /// 作り直しをまたいで作者の時計を渡す先と元 (`mokume watch --keep-time`・``ClockHandover``)。旗の無い実行は `nil`。
     private let handover: ClockHandover?
-    /// 前の世代から引き継ぐ作者の時計。最初の枚で使って落ちる。
-    private var inheritance: ClockHandover.Snapshot?
+    /// 前の世代から引き継ぐ作者の時計を、まだ最初の枚で始め直していないか。立つのは ``handover`` があるときだけで、
+    /// 最初の ``advance(at:)`` で下りる。
+    private var awaitsHandover: Bool
+    /// `setup()` の前に読んだ、前の世代の作者の時計 (``beginHandover()``)。
+    private var predecessor: ClockHandover.Predecessor?
+    /// ``beginHandover()`` を済ませたか。
+    private var hasBegunHandover = false
+    /// 最初の枚の前に、作者が ``pauseTime()``・``playTime()``・``jumpTime(_:)`` を呼んだか。
+    /// 呼んでいれば、最初の枚で前の世代のファイルを読み直して始め直さず、作者の明示を優先する。
+    private var authorTouchedClock = false
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
     private var pendingJump: Double?
     /// 数でない飛び先を知らせたか (``jumpTime(_:)``)。2 回目からは言わない。
@@ -235,9 +243,9 @@ final class FrameTiming {
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
-    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ)。最初の枚が
-    ///     前の世代の秒から始まり、以後の作者の時計を書く。省けば 0 秒から始まり、何も書かない
-    ///     ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ)。`setup()` の
+    ///     前 (``beginHandover()``) に前の世代の秒を入れ、最初の枚がその続きから始まり、以後の作者の時計を書く。
+    ///     省けば 0 秒から始まり、何も書かない ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     init(
         clock: Clock, frameRate: Int = 60,
         now: @escaping () -> Double = { CACurrentMediaTime() },
@@ -247,7 +255,7 @@ final class FrameTiming {
         self.clock = clock
         self.warn = warn
         self.handover = handover
-        self.inheritance = handover?.inherited
+        self.awaitsHandover = handover != nil
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
@@ -315,16 +323,24 @@ final class FrameTiming {
             // `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
             step = .frame(perSecond: max(1, frameRate))
         }
-        if let inherited = inheritance {
+        if awaitsHandover {
             // **前の世代の作者の時計から始める** (`watch --keep-time`・[#2414])。最初の枚だけ。原点のずれを、この枚の
-            // 秒が前の世代の秒になるように置く。止めていれば止める。`setup()` で作者が頼んだ飛び先・止めた秒は、
-            // 次の分岐が上書きする (作者が明示したものを優先する)
+            // 秒が前の世代の秒になるように置く。止めていれば止める。
+            //
+            // **`setup()` が時計に触っていなければ、いま読み直して始め直す。** `setup()` の前に読んだ値は、ビルドの後で
+            // 前の世代がまだ回っている間に取ったもので、最初の枚が出るまでに前の世代で止めた・再開した・飛んだ分と、
+            // 外挿できないフレームの時計の乗り換えの隙間が抜ける。触っていれば、`setup()` の前に読んだ値を土台にして、
+            // 作者が頼んだ止めた秒・飛び先を次の分岐が上書きする (作者が明示したものを優先する)
             //
             // [#2414]: https://github.com/mokume-metal/mokume/issues/2414
-            inheritance = nil
-            let start = inherited.start(at: now)
-            offset = start.seconds - raw
-            if start.isHeld { heldAt = start.seconds }
+            awaitsHandover = false
+            beginHandover()
+            let source = authorTouchedClock ? predecessor : (handover?.predecessor() ?? predecessor)
+            if let source {
+                let start = source.start(at: now)
+                offset = start.seconds - raw
+                if !authorTouchedClock { heldAt = start.isHeld ? start.seconds : nil }
+            }
         }
         if let target = pendingJump ?? heldAt {
             // 飛んだ枚と止めている枚。**ずれを毎枚寄せ直す** — 再開した次の枚は、
@@ -345,22 +361,48 @@ final class FrameTiming {
         }
         // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
         elapsed += step.seconds
-        // 次の世代へ渡す作者の時計 (観測の指定秒ではなく、作者の時計の秒)
-        handover?.publish(
-            ClockHandover.Snapshot(
-                seconds: seconds, isHeld: heldAt != nil, isRealtime: clock == .wallClock, at: now))
+        // 次の世代へ渡す作者の時計 (観測の指定秒ではなく、作者の時計の秒)。書くかどうかの判断は口の側
+        if let handover {
+            let kind: ClockHandover.Kind
+            switch clock {
+            case .wallClock: kind = .realtime
+            case .frameIndex(let frameRate): kind = .frames(interval: 1 / Double(max(1, frameRate)))
+            }
+            handover.publish(seconds: seconds, isHeld: heldAt != nil, kind: kind, frames: frameCount, at: now)
+        }
+    }
+
+    /// **`setup()` の前に**、前の世代の作者の時計を時計へ入れる (`watch --keep-time`・[#2414])。
+    ///
+    /// ここで入れておくと、`setup()` から見える ``seconds`` と止めているかが引き継いだ値になり、`setup()` で
+    /// 作者が呼ぶ ``pauseTime()``・``playTime()``・``jumpTime(_:)`` が、前の世代の状態によらず通常どおり
+    /// 効く。入れないと、`setup()` の ``pauseTime()`` が 0 秒で止め、最初の枚の引き継ぎがそれを上書きする。
+    /// 何度呼んでもよい (2 度目からは何もしない)。引き継ぎの口が無い実行では何もしない。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    func beginHandover() {
+        guard let handover, !hasBegunHandover else { return }
+        hasBegunHandover = true
+        predecessor = handover.predecessor()
+        guard let predecessor else { return }
+        let start = predecessor.start(at: now())
+        seconds = start.seconds
+        shownSeconds = start.seconds
+        heldAt = start.isHeld ? start.seconds : nil
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
     /// 描画は続く。ふだんは ``time`` と同じ値で、観測の指定秒が描き直す枚でだけ違う。
     /// 止めている間の経過は 0 である。既に止めていれば何もしない。
     func pauseTime() {
+        if awaitsHandover { authorTouchedClock = true }
         // 同じ枚で先に飛ぶ先を頼まれていれば、そこで止める
         if heldAt == nil { heldAt = pendingJump ?? seconds }
     }
 
     /// 止めた秒から時刻を進め直す。止めていなければ何もしない。
     func playTime() {
+        if awaitsHandover { authorTouchedClock = true }
         heldAt = nil
     }
 
@@ -380,6 +422,7 @@ final class FrameTiming {
             warnedJump = true
             return warn("jumpTime(): \(target) is not a time, so the time does not jump")
         }
+        if awaitsHandover { authorTouchedClock = true }
         pendingJump = target
         if heldAt != nil { heldAt = target }
     }

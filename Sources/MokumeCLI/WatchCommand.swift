@@ -41,6 +41,13 @@ enum WatchCommand {
             .appendingPathComponent("mokume-keep-time-\(getpid())", isDirectory: false)
     }
 
+    /// 時計を渡すファイルと、書く側が同じ場所に持つ錠のファイル (名は `<ファイル>.lock`。書く側は
+    /// `ClockHandover.lockPath(for:)`・本体の内側なのでここからは名指せず、綴りを揃えてある) を消す。
+    static func removeKeepTimeFiles(_ file: URL) {
+        try? FileManager.default.removeItem(at: file)
+        try? FileManager.default.removeItem(atPath: file.path + ".lock")
+    }
+
     /// 終わりの合図として受けるもの。
     ///
     /// **端末が消える形 (SIGHUP) がいちばん多い。** 見張りを起こした端末やセッションが
@@ -110,8 +117,8 @@ enum WatchCommand {
         // **世代をまたいで時計を渡すファイル** (`--keep-time`・#2414)。始める前に消す (前の見張りの時計から
         // 始めない) し、終わりでも消す。旗の無い見張りは何も作らず、子にも渡さない
         let keepTimeFile = keepsTime ? Self.keepTimeFile() : nil
-        if let keepTimeFile { try? FileManager.default.removeItem(at: keepTimeFile) }
-        defer { if let keepTimeFile { try? FileManager.default.removeItem(at: keepTimeFile) } }
+        if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) }
+        defer { if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) } }
 
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
