@@ -43,10 +43,13 @@ struct SolidGPUStrokeTests {
                 == Canvas.solidDiscFloorUnits.map { [$0.x.bitPattern, $0.y.bitPattern] })
     }
 
-    /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本
-    /// 続く。GPU の頂点関数は潰れた辺の先を 1 段しか引かないので、骨を作らずに CPU の骨へ戻す。
-    @Test("同じ直線に載る 2 本の辺を持つ網は、GPU の骨を作らない")
-    func straightPairsStayOnTheCPU() throws {
+    /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本以上続く。
+    /// 頂点関数は潰れた辺を対の相手をたどって何段でも引くので、骨を作る ([#2989])。
+    /// 絵が CPU の帯と一致することは `StraightChainStrokeTests` が見る。
+    ///
+    /// [#2989]: https://github.com/mokume-metal/mokume/issues/2989
+    @Test("同じ直線に載る 2 本の辺を持つ網も、GPU の骨を作る")
+    func straightPairsMakeABone() throws {
         // 直線 a–m–b を稜にして、折れた 2 枚ずつで挟む (稜線は a–m と m–b の 2 本に分かれる)
         let (a, m, b) = (SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(2, 0, 0))
         let (up, side) = (SIMD3<Float>(1, 1, 0), SIMD3<Float>(1, 0, 1))
@@ -58,9 +61,27 @@ struct SolidGPUStrokeTests {
         }
         let net = SolidEdges(SolidMesh(points: points))
         #expect(!net.edges.isEmpty)
-        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) == nil)
+        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) != nil)
         let box = SolidEdges(SolidShape.box(width: 2, height: 2, depth: 2).make())
         #expect(try SolidStrokeGeometry(net: box, gpu: RenderDevice()) != nil)
+    }
+
+    /// 骨を作らない配置。**直線の上で同じ側へ重なる 2 辺** (T 字の継ぎ目: 長い辺の途中に別の点が載る) は、
+    /// 視線をその直線に沿わせたとき、たどる道が分かれるので、CPU の帯へ戻す。
+    @Test("同じ側へ折り返す 2 本の辺を持つ網は、GPU の骨を作らない")
+    func foldedStraightPairsStayOnTheCPU() throws {
+        // P–Q と P–R は同じ向きに重なる (Q は P–R の途中)
+        let (p, q, r) = (SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(2, 0, 0))
+        let (x, y) = (SIMD3<Float>(0.5, 1, 0), SIMD3<Float>(1, -1, 0))
+        var points: [SolidMesh.Point] = []
+        for triangle in [[p, r, x], [p, q, y]] {
+            for corner in triangle {
+                points.append(SolidMesh.Point(position: corner, normal: .zero, uv: .zero))
+            }
+        }
+        let net = SolidEdges(SolidMesh(points: points))
+        #expect(!net.edges.isEmpty)
+        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) == nil)
     }
 
     @Test("同じ球は列をまたいで頂点と骨を共用する")

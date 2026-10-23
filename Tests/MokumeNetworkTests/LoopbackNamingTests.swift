@@ -281,4 +281,77 @@ struct LoopbackNamingTests {
         other.noted(completion: nil)
         #expect(other.sendTrace.completed == 1, "\(other.sendTrace)")
     }
+
+    // MARK: - 待ちの道具 (#3124)
+
+    @Test("前提を待つ道具は、満たされなければ何が・どれだけ待って満たされなかったかを名乗って止まり、満たされれば何も言わない")
+    func requireWaitNamesWhatDidNotHappen() async throws {
+        let bare = try await said {
+            try await requireWait("相手が閉じなかった", within: 0.1) { false }
+        }
+        #expect(bare.contains("相手が閉じなかった"), "\(bare)")
+        #expect(bare.contains("期限 0.1 秒"), "\(bare)")
+
+        let detailed = try await said {
+            try await requireWait("数が揃わなかった", within: 0.1, detail: { "数えたのは 2" }) { false }
+        }
+        #expect(detailed.contains("数が揃わなかった") && detailed.contains("数えたのは 2"), "\(detailed)")
+
+        // 満たされれば、止まらずに返る (止まれば検査が赤になる)
+        try await requireWait("すぐ満ちる", within: 0.1) { true }
+    }
+
+    @Test("集める道具は、足りなければ個数と読めた数と手がかりを名乗って止まり、揃えば読めたものを返す")
+    func requireCollectedNamesTheShortfall() async throws {
+        var given = false
+        let short = try await said {
+            _ = try await requireCollected(
+                count: 3, within: 0.1, what: "受け口が読めなかった", detail: { "状態: running" }
+            ) {
+                defer { given = true }
+                return given ? [] : ["a"]
+            }
+        }
+        #expect(short.contains("受け口が読めなかった"), "\(short)")
+        #expect(short.contains("3 個のうち読めたのは"), "\(short)")
+        #expect(short.contains("状態: running"), "\(short)")
+
+        var round = 0
+        let enough = try await requireCollected(count: 3, within: 1, what: "集める") {
+            round += 1
+            return round == 1 ? ["a", "b"] : ["c"]
+        }
+        #expect(enough == ["a", "b", "c"])
+    }
+
+    @Test("満たされなかったときの名乗りを呼ぶ側が行う待ちは、名乗る段を呼び、その段が投げなくても止まる")
+    func requireArrivalCallsTheNamingStep() async throws {
+        let called = Mutex(0)
+        let thrown = try await said {
+            try await requireArrival("着かなかった", within: 0.1, until: { false }) {
+                called.withLock { $0 += 1 }
+                try #require(Bool(false), "名乗る段の文")
+            }
+        }
+        #expect(called.withLock { $0 } == 1)
+        #expect(thrown.contains("名乗る段の文"), "\(thrown)")
+
+        let silent = try await said {
+            try await requireArrival("着かなかった", within: 0.1, until: { false }) {
+                called.withLock { $0 += 1 }
+            }
+        }
+        #expect(silent.contains("着かなかった"), "名乗る段が黙っても止まる: \(silent)")
+
+        try await requireArrival("すぐ着く", within: 0.1, until: { true }) {
+            called.withLock { $0 += 100 }
+        }
+        #expect(called.withLock { $0 } == 2, "満たされたら名乗る段は呼ばない")
+    }
+
+    @Test("起きないことの観測は、期限まで起きなければ真、起きれば偽")
+    func doesNotHappenIsTrueOnlyWhenItNeverHappens() async {
+        #expect(await doesNotHappen(within: 0.05) { false })
+        #expect(await !doesNotHappen(within: 0.5) { true })
+    }
 }

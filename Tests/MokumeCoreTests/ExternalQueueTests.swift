@@ -31,6 +31,20 @@ struct ExternalQueueTests {
         func advance(_ seconds: TimeInterval) { clock.withLock { $0 += seconds } }
     }
 
+    @Test("読まずに捨てる口は、溜まっているものだけを捨て、捨てた数・最後に届いたフレームは変えず、その後に届いたものは取り出せる (#3122)")
+    func discardWaitingDropsOnlyWhatWaits() {
+        let probe = Probe()
+        let queue = probe.queue(capacity: 2)
+        for value in 1...3 { queue.send(value) }
+        #expect(queue.overflowed == 1)
+        queue.discardWaiting()
+        #expect(queue.take() == [])
+        #expect(queue.overflowed == 1, "捨てた数は変えない")
+        queue.send(9)
+        #expect(queue.take() == [9])
+        #expect(probe.lines.count == 1, "読まずに捨てたものは診断に出さない: \(probe.lines)")
+    }
+
     @Test("届いた順に全部を取り出し、取り出した後は空になる")
     func takesEverythingInOrder() {
         let probe = Probe()
