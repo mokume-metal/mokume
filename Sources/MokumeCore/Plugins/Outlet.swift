@@ -23,16 +23,21 @@
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
 public protocol Outlet: AnyObject {
-    /// 一度だけ呼ばれる。資源の用意はここで行う。
+    /// 足されたときに呼ばれる。資源の用意はここで行う。
     ///
     /// **ここは投げてよい。** 投げると**その束だけが外れて**、他の束とスケッチは
     /// 動き続ける ([ADR-0024] 決定 7)。
+    ///
+    /// **外された出口が足し直されると、``close()`` の後にもう 1 度呼ばれる** (``Inlet/open()`` と同じ)。
+    /// 出口は ``close()`` を最後と思い込まず、ここで自分を使える状態へ戻す。
     func open() throws
 
     /// フレームごとに呼ばれる。**投げない。**
     func receive(_ frame: OutputFrame)
 
-    /// 終わるときに一度だけ呼ばれる。**投げない。**
+    /// 外されるとき (``SketchPart/detach(_:)-(Outlet)``) と、スケッチが終わるときに呼ばれる。**投げない。**
+    ///
+    /// 外された後に足し直されれば、``open()`` がもう 1 度来る。
     func close()
 
     /// 直近の ``receive(_:)`` で転んだ理由。順調なら `nil`。
