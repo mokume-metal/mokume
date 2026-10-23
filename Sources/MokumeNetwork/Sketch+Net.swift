@@ -61,10 +61,7 @@ extension Sketch {
     ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createTCPServer(_ port: Int) throws(NetworkFailure) -> TCPServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let server = tcpServer(port: port)
-        attach(server)
-        return server
+        return try attached(NetworkFailure.self, calledAs: #function) { tcpServer(port: port) }
     }
 
     /// ``createTCPServer(_:)`` が足すもの (番号は検めてある)。ポートは足したときに開く。走らせずに中身を
@@ -118,10 +115,7 @@ extension Sketch {
     ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createWebSocketServer(_ port: Int) throws(NetworkFailure) -> WebSocketServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let server = webSocketServer(port: port)
-        attach(server)
-        return server
+        return try attached(NetworkFailure.self, calledAs: #function) { webSocketServer(port: port) }
     }
 
     /// ``createWebSocketServer(_:)`` が足すもの (番号は検めてある)。``tcpServer(port:)`` と同じく、検査も使う。
@@ -247,10 +241,7 @@ extension Sketch {
     public func createTCPClient(_ host: String, _ port: Int) throws(NetworkFailure) -> TCPClient {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         guard Endpoint.isUsable(host: host) else { throw .invalidHost(host) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let client = tcpClient(host: host, port: port)
-        attach(client)
-        return client
+        return try attached(NetworkFailure.self, calledAs: #function) { tcpClient(host: host, port: port) }
     }
 
     /// ``createTCPClient(_:_:)`` が足すもの (値は検めてある)。繋ぐのは足したときに始める。検査も使う。
@@ -311,10 +302,9 @@ extension Sketch {
         if let port = parsed.port, !Endpoint.usablePorts.contains(port) {
             throw .invalidPort(port)
         }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let client = webSocketClient(url: url, parsed: parsed)
-        attach(client)
-        return client
+        return try attached(NetworkFailure.self, calledAs: #function) {
+            webSocketClient(url: url, parsed: parsed)
+        }
     }
 
     /// ``createWebSocketClient(_:)`` が足すもの (値は検めてある)。``tcpClient(host:port:)`` と同じく、検査も使う。
@@ -443,16 +433,15 @@ extension Sketch {
                 throw .invalidHost(destination.host)
             }
         }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let outbound = destination.map {
-            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+        return try attached(NetworkFailure.self, calledAs: #function) {
+            let outbound = destination.map {
+                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+            }
+            return UDPPort(
+                port: port, name: "udp :\(port)",
+                source: DatagramSource<String>.text(port: port, warn: { Diagnostics.warn($0) }),
+                outbound: outbound, owner: self)
         }
-        let udp = UDPPort(
-            port: port, name: "udp :\(port)",
-            source: DatagramSource<String>.text(port: port, warn: { Diagnostics.warn($0) }),
-            outbound: outbound, owner: self)
-        attach(udp)
-        return udp
     }
 
     /// 記録した文字列の列を、UDP で受けたかのように流す。**ポートを開かない。**

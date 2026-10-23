@@ -197,8 +197,10 @@ import MokumeDiagnostics
     /// 組み込みの図形を描くパイプライン。**この GPU の上で出力形式ごとに 1 度だけ組み、面が分け合う**
     /// ([#2785])。
     ///
-    /// 面を作るたびに組み直していたものは、組み込みのライブラリ 2 本とパイプライン 33 本で、面の寸法にも
+    /// 面を作るたびに組み直していたものは、組み込みのライブラリ 2 本とパイプラインで、面の寸法にも
     /// 内容にも依らない。最初の面が払う生成はそのまま残る — 遅らせて描画中の停止へ移さない。
+    /// **例外は基本図形の旗の組 (12 組 × 3 本)** で、全部を組むとキャッシュの無い起動が 1.5 秒延びる
+    /// ので、使うフレームの頭で 1 本ずつ組む ([#3114])。
     /// **組めたものだけを控える**ので、失敗したときは次の面がもう 1 度試す。
     ///
     /// 抱えるのはこの GPU が生きている間だけで、GPU を畳めば一緒に畳まれる。パイプラインは
@@ -206,6 +208,7 @@ import MokumeDiagnostics
     /// (``ShaderLibraries`` の型の説明と同じ理由)。
     ///
     /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
     func shapePipeline(pixelFormat: MTLPixelFormat) throws(RenderFailure) -> ShapePipeline {
         if let made = shapePipelines[pixelFormat] { return made }
         let pipeline = try ShapePipeline(gpu: self, pixelFormat: pixelFormat)

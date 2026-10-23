@@ -43,7 +43,17 @@ AGENT_ENV = [
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "CODEX_HOME",
+    # 署名のモデルの名乗りに効く (#3149)。呼び出し元のセッションの記録を読ませない
+    "MOKUME_AGENT_MODEL",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CONFIG_DIR",
 ]
+
+
+# 署名の 1 行と、署名の無い本文を差し戻すときの文面の頭 (#3149)
+SIGNATURE_LINE = "<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>"
+UNSIGNED = "エージェントの署名が要ります"
+SIGNATURE_KEY_IN_REASON = "<sub>🤖 Assisted by"
 
 
 # --- gh が持つ「本文を伴う口」の数え上げ (#708) --------------------------
@@ -67,10 +77,10 @@ AGENT_ENV = [
 #
 # 行の意味: (グループ, サブコマンド): (gh が与える本文系フラグ, 扱い, 代表コマンド, 理由)
 #
-# **発言の境界は「スレッドへの発言か」の 1 本。** Issue / PR の本文・マージコミットの本文は
-# 発言ではないので署名の対象にしない (署名の作法はスレッドに並ぶコメントを対象にしている)。
-# ただし既存の本文の書き換え (edit) は、読んだ後の改訂を黙って消すので scripts/edit-body.sh
-# へ回す (#2615。扱いは "deny-body")。
+# **署名の境界は「エージェントが新しく書く文か」の 1 本 (#3149)。** スレッドへの発言は
+# scripts/comment.sh へ回し ("deny")、新しく作る Issue / PR の本文は署名が無ければ差し戻す
+# ("deny-unsigned")。既存の本文の書き換え (edit) は、読んだ後の改訂を黙って消すので
+# scripts/edit-body.sh へ回す (#2615。"deny-body")。マージコミットの本文は対象にしない。
 BODY_BEARING_SURFACES = {
     ("issue", "comment"): (
         {"--body", "--body-file"},
@@ -92,9 +102,9 @@ BODY_BEARING_SURFACES = {
     ),
     ("issue", "create"): (
         {"--body", "--body-file"},
-        "pass",
+        "deny-unsigned",
         'gh issue create --title "題" --body "本文"',
-        "Issue の本文。スレッドへの発言ではない",
+        "新しく作る Issue の本文。署名が無ければ差し戻す (#3149)",
     ),
     ("issue", "edit"): (
         {"--body", "--body-file"},
@@ -134,9 +144,9 @@ BODY_BEARING_SURFACES = {
     ),
     ("pr", "create"): (
         {"--body", "--body-file"},
-        "pass",
+        "deny-unsigned",
         'gh pr create --title "題" --body "本文"',
-        "PR の本文。スレッドへの発言ではない",
+        "新しく作る PR の本文。署名が無ければ差し戻す (#3149)",
     ),
     ("pr", "edit"): (
         {"--body", "--body-file"},
@@ -152,9 +162,9 @@ BODY_BEARING_SURFACES = {
     ),
     ("pr", "revert"): (
         {"--body", "--body-file"},
-        "pass",
+        "deny-unsigned",
         'gh pr revert 42 --body "戻す理由"',
-        "revert として作る PR の本文",
+        "revert として作る PR の本文。create と同じ (#3149)",
     ),
     ("pr", "view"): (
         {"--comments"},
@@ -223,6 +233,27 @@ def destination_json(state="OPEN", comments=()):
     return json.dumps({"state": state, "comments": list(comments)})
 
 
+def write_transcript(directory, models, subagents=()):
+    """Claude Code のセッションの記録を模して置き、パスを返す (#3149)。
+
+    assistant の行だけが message.model を持つ。ツールの結果に映った "model" の字面も 1 本
+    混ぜる (字面で拾えば別のモデルを名乗る)。
+    """
+    path = Path(directory) / "projects" / "-repo" / "sess-1.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "user", "message": {"content": '{"model":"gpt-fake"}'}})]
+    lines += [json.dumps({"type": "assistant", "message": {"model": m}}) for m in models]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for i, sub in enumerate(subagents):
+        agent = path.with_suffix("") / "subagents" / f"agent-{i}.jsonl"
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_text(
+            "\n".join(json.dumps({"type": "assistant", "message": {"model": m}}) for m in sub) + "\n",
+            encoding="utf-8",
+        )
+    return path
+
+
 def stub_gh(testcase, script=FAILING_GH):
     """gh のスタブを 1 つ置いたディレクトリを作って返す (PATH の先頭に置く用)。"""
     tmp = tempfile.TemporaryDirectory()
@@ -278,9 +309,10 @@ def clean_env(path_prefix=None, **overrides):
 class GuardTest(unittest.TestCase):
     """PreToolUse フック: どのコマンドを差し戻し、どれを素通しするか。"""
 
-    def run_guard(self, command, cwd=None, **env):
+    def run_guard(self, command, cwd=None, payload_extra=None, **env):
         payload = json.dumps(
-            {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {})}
+            {"tool_input": {"command": command}, **({"cwd": cwd} if cwd else {}),
+             **(payload_extra or {})}
         )
         # 打つシェルから継ぐ GH_REPO は宛先に効く (#1729)。呼び出し元の値を漏らさない
         environment = {k: v for k, v in clean_env(**env).items() if k != "GH_REPO" or "GH_REPO" in env}
@@ -719,6 +751,11 @@ class GuardTest(unittest.TestCase):
                     self.assert_denied(command)
                 elif expect == "deny-body":
                     self.assert_denied(command, wrapper="scripts/edit-body.sh")
+                elif expect == "deny-unsigned":
+                    self.assert_denied(command, wrapper=UNSIGNED)
+                    # 同じコマンドに署名を足せば通る
+                    self.assert_passed(command.replace("本文", f"本文 {SIGNATURE_LINE}")
+                                       .replace("戻す理由", f"戻す理由 {SIGNATURE_LINE}"))
                 else:
                     self.assert_passed(command)
 
@@ -768,7 +805,7 @@ class GuardTest(unittest.TestCase):
         self.assert_passed("bash scripts/edit-body.sh issue 42 --fetch /tmp/42.md")
         self.assert_passed("bash scripts/edit-body.sh issue 42 --body-file /tmp/42.md")
         self.assert_passed("echo 'gh issue edit 42 --body-file は使わない'")
-        self.assert_passed('gh issue create --title "題" --body-file body.md')
+        self.assert_passed(f'gh issue create --title "題" --body "本文 {SIGNATURE_LINE}"')
 
     def test_prefixed_body_edit_is_denied(self):
         for gh in self.PREFIXES:
@@ -779,6 +816,118 @@ class GuardTest(unittest.TestCase):
         reason = self.assert_denied("gh issue comment 1 -b x && gh issue edit 1 --body-file body.md")
         self.assertIn("scripts/edit-body.sh", reason)
 
+
+class CreateSignatureGuardTest(unittest.TestCase):
+    """新しく作る本文の署名 (#3149): どの形を差し戻し、どの形を通すか。
+
+    以前は Issue / PR の本文を「スレッドへの発言ではない」として素通しにしており、
+    sub-issue の 11 件中 9 件・PR の本文 30 件すべてが無署名だった。
+    """
+
+    # ガードへの流し方は GuardTest と同じ (継ぐと GuardTest の検査が 2 度走る)
+    run_guard = GuardTest.run_guard
+    assert_denied = GuardTest.assert_denied
+    assert_passed = GuardTest.assert_passed
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+
+    def body_file(self, text):
+        path = self.dir / "body.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_unsigned_body_file_is_denied_and_signed_passes(self):
+        path = self.body_file("本文\n")
+        for gh in ("gh issue create --title t", "gh pr create --title t", "gh pr revert 3"):
+            with self.subTest(gh=gh):
+                reason = self.assert_denied(f"{gh} --body-file {path}", wrapper=UNSIGNED)
+                self.assertIn(SIGNATURE_KEY_IN_REASON, reason, "貼る 1 行が示されていない")
+        self.body_file(f"本文\n\n---\n{SIGNATURE_LINE}\n")
+        for gh in ("gh issue create --title t", "gh pr create --title t", "gh pr revert 3"):
+            with self.subTest(gh=gh, signed=True):
+                self.assert_passed(f"{gh} --body-file {path}")
+
+    def test_relative_body_file_is_read_from_cwd(self):
+        self.body_file(f"本文\n{SIGNATURE_LINE}\n")
+        self.assert_passed("gh issue create -t t -F body.md", cwd=str(self.dir))
+        self.body_file("本文\n")
+        self.assert_denied("gh issue create -t t -F body.md", cwd=str(self.dir), wrapper=UNSIGNED)
+
+    def test_heredoc_body_is_read_from_the_command(self):
+        """`-F -` は本文を取り出せないが、ヒアドキュメントはコマンド文字列に載る。"""
+        signed = f"gh pr create --title t --body-file - <<'EOF'\n本文\n---\n{SIGNATURE_LINE}\nEOF"
+        self.assert_passed(signed)
+        self.assert_denied("gh pr create --title t --body-file - <<'EOF'\n本文\nEOF", wrapper=UNSIGNED)
+
+    def test_body_that_cannot_be_read_is_denied_without_a_signature(self):
+        """本文を作るのに本文の旗が無い形も、署名の無い本文を作る。"""
+        for command in (
+            "gh pr create --fill",
+            "gh pr create --title t --template bug.md",
+            'gh issue create --title t --body "$(cat body.md)"',
+            'url=$(gh issue create --title t --body "x") && echo "$url"',
+        ):
+            with self.subTest(command=command):
+                self.assert_denied(command, wrapper=UNSIGNED)
+
+    def test_signature_elsewhere_in_the_command_does_not_count(self):
+        """本文を取り出せないとき、別のコマンドの語やコメントの署名では通さない (反証の #4)。"""
+        for command in (
+            "echo '🤖 Assisted by'; gh pr create --fill",
+            "gh pr create --fill # 🤖 Assisted by",
+            "gh pr create --fill && echo '<sub>🤖 Assisted by x</sub>'",
+        ):
+            with self.subTest(command=command):
+                self.assert_denied(command, wrapper=UNSIGNED)
+
+    def test_quoting_the_words_is_not_a_signature(self):
+        """署名の話をするだけの本文 ("Assisted by" の引用) は署名ではない (反証の #6)。"""
+        self.assert_denied('gh issue create --title t --body "Assisted by の綴りを直す"', wrapper=UNSIGNED)
+
+    def test_signed_inline_body_passes(self):
+        self.assert_passed(f'gh issue create --title t --body "本文\n---\n{SIGNATURE_LINE}"')
+        # 他のエージェントの署名でも通る (検知キーは名乗りに依らない)
+        self.assert_passed('gh issue create --title t --body "本文 <sub>🤖 Assisted by Grok CLI</sub>"')
+
+    def test_exceptions_still_pass(self):
+        self.assert_passed("gh issue create -R shinyaoguri/setup --title t --body x")
+        self.assert_passed("gh pr create --help")
+        self.assert_passed('gh pr merge 3 --squash --body "マージ本文"')
+        self.assert_passed("echo 'gh issue create --body x は使わない'")
+
+    def test_reason_names_the_models_of_this_session(self):
+        """差し戻しの 1 行は、記録に残るモデル (サブエージェントの分も) を名乗る。"""
+        transcript = write_transcript(
+            self.dir, ["claude-opus-5-5"] * 3 + ["<synthetic>"], subagents=[["claude-haiku-5-5"]]
+        )
+        reason = self.assert_denied(
+            "gh issue create --title t --body x",
+            wrapper=UNSIGNED,
+            payload_extra={"transcript_path": str(transcript)},
+            CLAUDECODE="1",
+        )
+        self.assertIn(
+            "Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5, Haiku 5.5)",
+            reason,
+        )
+        self.assertNotIn("synthetic", reason)
+        self.assertNotIn("gpt-fake", reason, "ツールの結果に映った model を拾っている")
+
+    def test_reason_uses_the_payload_model_for_other_agents(self):
+        reason = self.assert_denied(
+            "gh issue create --title t --body x",
+            wrapper=UNSIGNED,
+            payload_extra={"model": "gpt-6-astra"},
+            CODEX_SANDBOX="seatbelt",
+        )
+        self.assertIn("Assisted by [OpenAI Codex](https://developers.openai.com/codex) (gpt-6-astra)", reason)
+
+    def test_comment_and_unsigned_create_together_name_both(self):
+        reason = self.assert_denied("gh issue comment 1 -b x && gh issue create -t t -b y")
+        self.assertIn(UNSIGNED, reason)
 
 class SignatureTest(unittest.TestCase):
     """ラッパー: 署名を誰の名前で、どう付けるか。"""
@@ -836,6 +985,70 @@ class SignatureTest(unittest.TestCase):
         out, err = self.dry_run()
         self.assertIn("Assisted by an AI agent", out)
         self.assertIn("MOKUME_AGENT_NAME", err)
+
+    # --- モデルの名乗り・併記 (#3149) ----------------------------------------
+
+    def test_claude_code_names_the_models_in_its_transcript(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_transcript(
+                d,
+                ["claude-sonnet-5-5-20261001"] + ["claude-opus-5-5"] * 2,
+                subagents=[["claude-haiku-5-5"], ["claude-opus-5-5"]],
+            )
+            out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
+        self.assertIn(
+            "Assisted by [Claude Code](https://claude.com/claude-code)"
+            " (Opus 5.5, Sonnet 5.5, Haiku 5.5)</sub>",
+            out,
+        )
+
+    def test_the_latest_main_model_comes_first(self):
+        """/model で切り替えたら、いま使っているモデルを先頭に名乗る (反証の #8)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_transcript(d, ["claude-haiku-5-5"] * 5 + ["claude-opus-5-5"])
+            out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
+        self.assertIn("(Opus 5.5, Haiku 5.5)</sub>", out)
+
+    def test_missing_transcript_names_no_model(self):
+        """記録が見つからなければモデルは書かない (推測で名乗らない)。"""
+        with tempfile.TemporaryDirectory() as d:
+            out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="nope", CLAUDE_CONFIG_DIR=d)
+        self.assertIn("Assisted by [Claude Code](https://claude.com/claude-code)</sub>", out)
+
+    def test_unknown_model_id_is_kept_as_is(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_transcript(d, ["claude-3-5-sonnet-20241022"])
+            out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
+        self.assertIn("(claude-3-5-sonnet-20241022)", out)
+
+    def test_explicit_model_is_kept_as_written(self):
+        """Claude 以外のエージェントが Claude のモデルを名乗るなら、書いたとおりに出す。"""
+        out, _ = self.dry_run(MOKUME_AGENT_NAME="Cursor", MOKUME_AGENT_MODEL="Claude Opus 5.5")
+        self.assertIn("Assisted by Cursor (Claude Opus 5.5)</sub>", out)
+
+    def test_explicit_name_and_model(self):
+        out, _ = self.dry_run(MOKUME_AGENT_NAME="Grok CLI", MOKUME_AGENT_MODEL="grok-5")
+        self.assertIn("<sub>🤖 Assisted by Grok CLI (grok-5)</sub>", out)
+
+    def test_unknown_ai_agent_names_its_tool(self):
+        out, err = self.dry_run(AI_AGENT="grok-cli_1-0-0_agent")
+        self.assertIn("Assisted by grok-cli</sub>", out)
+        self.assertNotIn("判定できませんでした", err)
+
+    def test_with_names_collaborators(self):
+        proc = subprocess.run(
+            ["/bin/bash", str(COMMENT), "issue", "42", "--body", "本文",
+             "--with", "OpenAI Codex (gpt-6-astra)", "--with", "Grok CLI", "--dry-run"],
+            capture_output=True,
+            text=True,
+            env=clean_env(path_prefix=stub_gh(self), CLAUDECODE="1"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(
+            "Assisted by [Claude Code](https://claude.com/claude-code)"
+            " and OpenAI Codex (gpt-6-astra) and Grok CLI</sub>",
+            proc.stdout,
+        )
 
     def test_existing_signature_not_duplicated(self):
         body = "本文\n\n---\n<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>"
