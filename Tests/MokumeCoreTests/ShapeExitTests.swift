@@ -354,6 +354,7 @@ extension ShapeExit {
             "outletsClosing": recording, "closingOutcomesGiveUpAt": recording,
             "lastFrameFailedToDraw": recording,
             "exposedValues": observation, "measuredValues": observation,
+            "drawingInto": "draw(into:) の閉包の間だけ立つスケッチの口の向き先 (#2454)。閉包を抜けるときに 1 つ前へ戻す実行の制御で、形に焼き付く値を生まない",
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
             "orbitHome": "orbit と同じ (ダブルクリックで戻る始めの視点・#2762)。`orbitControl()` が最初の呼び出しで 1 度だけ控える。組み立ての中では `orbitControl()` が視点を書く前に断るので、形には焼き付かない",

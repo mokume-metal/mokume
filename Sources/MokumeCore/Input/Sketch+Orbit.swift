@@ -84,7 +84,7 @@ extension SketchPart {
         _ sensitivityZ: some ScalarConvertible = 1
     ) {
         guard let runtime = Self.liveRuntime() else { return }
-        let canvas = runtime.canvas
+        let canvas = runtime.activeCanvas
         let (sensitivityX, sensitivityY, sensitivityZ) = (
             sensitivityX.asFloat, sensitivityY.asFloat, sensitivityZ.asFloat
         )
@@ -177,16 +177,16 @@ extension SketchPart {
             guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
                 return Orbit(center: Vector3(0, 0, 0), distance: 0)
             }
-            return runtime.orbit ?? Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
+            return runtime.orbit ?? Orbit.fitting(width: runtime.activeCanvas.width, height: runtime.activeCanvas.height)
         }
         // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
         nonmutating set {
             guard let runtime = Self.liveRuntime() else { return }
             var orbit = newValue
             // 見ている先の既定は、道具の始まりと同じ面の中央
-            let start = Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)
+            let start = Orbit.fitting(width: runtime.activeCanvas.width, height: runtime.activeCanvas.height)
             if orbit.clampToLimits(fallbackCenter: start.center) {
-                runtime.canvas.warnOnce(
+                runtime.activeCanvas.warnOnce(
                     .badOrbit,
                     "orbit: got a value that is not a number, or an infinite one with no limit to stop at, so it fell back to its default (the middle of the canvas, angle 0, the nearest distance, minimum distance 1, no maximum distance, no inertia)")
             }

@@ -558,7 +558,7 @@ extension SketchPart {
         // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
         // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
         guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
-        return runtime.canvas
+        return runtime.activeCanvas
     }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
@@ -753,7 +753,7 @@ extension SketchPart {
     /// 走っている実行の面。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
     @MainActor
     static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
-        liveRuntime(use, call)?.canvas
+        liveRuntime(use, call)?.activeCanvas
     }
 
     /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ

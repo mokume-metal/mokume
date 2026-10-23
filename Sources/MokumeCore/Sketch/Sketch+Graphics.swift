@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeDiagnostics
+
 // 描き場所と、貼る絵。
 extension SketchPart {
     /// 画面とは別の描き場所を作る。**焼いた絵を置いたり、重ねたり、積み上げたりできる。**
@@ -115,6 +117,131 @@ extension SketchPart {
     // shot: 1 snippet=952dfdc7
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try Self.resourceCanvas(RenderFailure.self).createGraphics(width, height)
+    }
+
+    /// 描き場所へ描く間だけ、スケッチの口 (``circle(_:_:_:)``・``fill(_:)-(LinearRGBA)`` など) をその描き場所へ
+    /// 向ける。**本体向けに書いた描く関数を、書き換えずに描き場所で使える。**
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var trail: Canvas! -->
+    ///     ```swift
+    ///     func setup() {
+    ///         trail = try! createGraphics(400, 300)
+    ///     }
+    ///
+    ///     func brush() {
+    ///         noStroke()
+    ///         fill(255, 102, 51, 40)
+    ///         circle(200 + 120 * cos(time * 3), 150 + 80 * sin(time * 3), 24)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         draw(into: trail) { brush() }   // 筆跡は描き場所に積む
+    ///         background(20)
+    ///         image(trail, 0, 0)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙色の半透明の円が楕円の軌道に沿って動き、通った跡が弧になって積み重なっていく | frames=60 -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// `brush()` の中は本体に描くときと同じ書き方で、`trail.` を付けない。閉包を抜けると向き先は本体へ戻る。
+    /// 閉包の中の描画は本体の面に出ず、``image(_:_:_:)-(Canvas,_,_)`` で置くまで本体は下地のままである。
+    ///
+    /// ## 閉包の中で描き場所へ向く口
+    ///
+    /// - 形・描画の状態・光・視点・材質・変換・切り抜き (``circle(_:_:_:)``・``fill(_:)-(LinearRGBA)``・
+    ///   ``translate(_:_:)``・``background(_:)-(LinearRGBA)`` など)
+    /// - 粒 (``emit(_:from:toward:rate:speed:life:size:color:)``・``force(_:_:)``・``particles(_:)``) と
+    ///   ``orbitControl(_:_:_:)``
+    /// - ``canvas``・``effects(_:)``・``shader(_:)``・画素の読み書き・揺らぎの種と細かさ
+    /// - 値の形 (`Rect`・`Circle`) の `draw()`
+    ///
+    /// **``width`` と ``height`` は描き場所の大きさを返す。** 本体が 400×400、描き場所が 200×100 なら、
+    /// 次は描き場所の全面を塗る (本体の大きさでは塗らない):
+    ///
+    /// <!-- example: 文脈 var pad: Canvas! -->
+    /// ```swift
+    /// draw(into: pad) {
+    ///     background(255)
+    ///     rect(0, 0, width, height)
+    /// }
+    /// ```
+    ///
+    /// **入力 (``mouseX``・``mouseY``・キーなど) は本体の窓のまま**で、描き場所の座標へは変わらない。描き場所を
+    /// 本体と同じ大きさにして、マウスの位置にそのまま描く使い方を想定している。時刻 (``time``・``deltaTime``・
+    /// ``frameCount``) も本体と同じである。``orbitControl(_:_:_:)`` の道具の状態 (``orbit``) は本体と共有で、
+    /// 視点を書く先だけが描き場所になる。
+    ///
+    /// 効果は描き場所のものになり、本体の効果は書き換わらない:
+    ///
+    /// <!-- example: 文脈 var pad: Canvas! -->
+    /// ```swift
+    /// draw(into: pad) {
+    ///     effects([.blur(radius: 4)])
+    /// }
+    /// ```
+    ///
+    /// ## 入れ子と、`pad.` 付きの呼び出しとの混在
+    ///
+    /// 入れ子にでき、内側を抜けると 1 つ外の向き先へ戻る。閉包の中で `other.circle(…)` と描き場所を指して書いた
+    /// 呼び出しは、これまでどおりその描き場所へ行く:
+    ///
+    /// <!-- example: 文脈 var a: Canvas! -->
+    /// <!-- example: 文脈 var b: Canvas! -->
+    /// <!-- example: 文脈 var c: Canvas! -->
+    /// ```swift
+    /// draw(into: a) {
+    ///     draw(into: b) { circle(10, 10, 8) }   // b へ
+    ///     circle(30, 30, 8)                      // a へ
+    ///     c.circle(50, 50, 8)                    // c へ (指して書いた呼び出し)
+    /// }
+    /// ```
+    ///
+    /// ## フレームは `draw { }` と同じ形で開く
+    ///
+    /// 描き場所のフレームは ``Canvas/draw(_:)`` と同じ規則で開く。閉じていれば開いて閉包を走らせ、抜けるときに
+    /// 描き切る。``Canvas/beginDraw()`` で開いている最中なら、そのフレームの続きとして走らせる (注意を 1 度出す)。
+    /// 描き場所の形の組み立て (``Canvas/createShape(_:)``) の中では、フレームを始めずに組み立ての続きとして
+    /// 走らせる。**ただし描き切りの失敗は、投げずに警告で知らせる** (``Canvas/endDraw()`` と同じ)。
+    /// ``Canvas/draw(_:)`` は ``RenderFailure`` を投げるので、そこだけ違う。
+    ///
+    /// ## 3 つの `draw` の違い
+    ///
+    /// - ``Sketch/draw()``: 利用者が書く、1 フレームごとに呼ばれる関数
+    /// - ``Canvas/draw(_:)``: 描き場所のフレームを開く。**中の素の呼び出しは本体へ行く** (`pad.circle(…)` と書く)
+    /// - `draw(into:)`: 描き場所のフレームを開き、**中の素の呼び出しを描き場所へ向ける**
+    ///
+    /// ## 揺らぎの種などの置き場
+    ///
+    /// 閉包の中の ``noiseSeed(_:)`` や ``noiseDetail(_:_:)`` は、向き先の描き場所の置き場へ書く。
+    /// ``createGraphics(_:_:)`` で作った描き場所は本体と置き場を共有するので、本体の値が変わり、形の組み立ての
+    /// 出口の規則 (``createShape(_:)``) どおり戻る。直に作った面 (``Canvas/init(target:gpu:)``) へ向けた
+    /// ときは「別の面の状態」で、組み立ての出口で戻らない。
+    ///
+    /// ## 粒を描き場所へ出す
+    ///
+    /// ``Canvas`` は `emit` を公開しない。乱数の列を 1 本に保つためである (``randomSeed(_:)`` が粒に効かなくなる)。
+    /// 描き場所へ粒を出すときは、閉包の中で ``emit(_:from:toward:rate:speed:life:size:color:)`` を呼ぶ。
+    ///
+    /// - Parameters:
+    ///   - graphics: 描く先の描き場所。
+    ///   - body: 中の呼び出しが `graphics` へ向く閉包。
+    // shot: 後で撮る
+    public func draw(into graphics: Canvas, _ body: () -> Void) {
+        guard let runtime = Self.liveRuntime() else { return }
+        let previous = runtime.drawingInto
+        runtime.drawingInto = graphics
+        defer { runtime.drawingInto = previous }
+        do {
+            try graphics.draw(body)
+        } catch {
+            Diagnostics.warn("draw(into:): could not finish drawing: \(error.headline)")
+        }
     }
 
     /// 描き場所を等倍で置く。

@@ -441,7 +441,7 @@ extension SketchPart {
         color: LinearRGBA? = nil
     ) {
         guard let runtime = Self.liveRuntime() else { return }
-        runtime.canvas.emit(
+        runtime.activeCanvas.emit(
             particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
             size: size, color: color, using: &runtime.randomness)
     }
