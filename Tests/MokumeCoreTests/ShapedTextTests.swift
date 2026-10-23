@@ -30,10 +30,11 @@ struct ShapedTextTests {
     private final class Notes { var scalars: [Unicode.Scalar] = [] }
 
     private func face(
-        name: String? = "Helvetica", file: Font? = nil, style: TextStyle, notes: Notes = Notes()
+        name: String? = "Helvetica", file: Font? = nil, size: Float = 40, style: TextStyle,
+        notes: Notes = Notes()
     ) -> Typeface {
         Typeface(
-            request: TypefaceRequest(name: name, file: file, size: 40, style: style),
+            request: TypefaceRequest(name: name, file: file, size: size, style: style),
             onFallbackLackingStyle: { _, scalar, _ in notes.scalars.append(scalar) })
     }
 
@@ -177,6 +178,31 @@ struct ShapedTextTests {
         #expect(quiet.scalars.isEmpty)
     }
 
+    @Test("区間の中の字ごとに頼んだ面で引き直し、面が覆えない字だけ元の面に残して知らせる (text() と同じ)")
+    func aFallbackRunIsRestyledPerCharacter() throws {
+        let notes = Notes()
+        let typeface = face(name: "Apple Chancery", style: .bold, notes: notes)
+        let reader = face(name: "Apple Chancery", style: .bold)
+        let (c, a) = ("\u{0108}", "\u{0200}")
+        let (readC, readA) = (
+            try #require(reader.glyph(for: Unicode.Scalar(c.unicodeScalars.first!.value)!)),
+            try #require(reader.glyph(for: Unicode.Scalar(a.unicodeScalars.first!.value)!))
+        )
+        try #require(readC.fontKey != readA.fontKey, "前提: text() は 2 字を別の面で引く (一方は頼んだ面を持たない)")
+        let line = typeface.shape(c + a)
+        try #require(line.glyphs.count == 2)
+        #expect(line.glyphs[0].resolved.fontKey == readC.fontKey, "\(line.glyphs[0].resolved.fontKey)")
+        #expect(line.glyphs[1].resolved.fontKey == readA.fontKey, "\(line.glyphs[1].resolved.fontKey)")
+        #expect(notes.scalars == [Unicode.Scalar(0x0200)!], "\(notes.scalars)")
+    }
+
+    @Test("知らせる字は、書体が持たない字 (書記素の先頭ではない): Helvetica の斜体の 1 + 囲み記号は囲み記号")
+    func theNotifiedScalarIsTheOneTheTypefaceLacks() throws {
+        let notes = Notes()
+        _ = face(style: .italic, notes: notes).shape("1\u{20E3}")
+        #expect(notes.scalars == [Unicode.Scalar(0x20E3)!], "\(notes.scalars)")
+    }
+
     @Test("ファイルから読んだ書体の字は、ファイルの同一性を鍵に持ち、代わりの書体の字は持たない (text() と同じ)")
     func fileFontKeysFollowTheSameStructure() throws {
         let file = try Font.load(FontFileTests.staticFile)
@@ -191,26 +217,75 @@ struct ShapedTextTests {
         #expect(!line.glyphs[1].resolved.fontKey.contains("#"))
     }
 
-    @Test("異体字セレクタ 16 は、絵文字を持たない字の後では書体を替えず、持つ字の後では絵文字を選ぶ")
-    func theEmojiSelectorDoesNotMoveALetterToAnotherTypeface() throws {
-        let face = face()
-        let letter = face.shape("a\u{FE0F}")
-        let plain = face.shape("a")
-        #expect(identities(letter) == identities(plain), "a の書体が替わった: \(identities(letter))")
-        #expect(letter.width == plain.width)
-        // 絵文字を持つ字の後は、そのまま絵文字になる
-        if TextTests.hasColoredGlyphs {
-            for string in ["\u{2764}\u{FE0F}", "1\u{FE0F}\u{20E3}", "\u{00A9}\u{FE0F}"] {
-                let line = face.shape(string)
-                #expect(line.glyphs.count == 1, "\(string.unicodeScalars.map(\.value)): \(identities(line))")
-                #expect(line.glyphs[0].resolved.fontKey == "AppleColorEmoji")
+    // MARK: - 基の字の書体 (書記素の移し)
+
+    /// 基の字 `a` の後ろに付けると、書体が持たなければ CoreText が書記素ごと別の書体へ移す印・修飾 (反証役の
+    /// 43 字)。移されても `a` は書体に残る。
+    nonisolated static let marks: [UInt32] = [
+        0x034F, 0x061C, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B, 0x180C, 0x180D, 0x180E, 0x180F, 0x200B,
+        0x200C, 0x200D, 0x200E, 0x200F, 0x202A, 0x202C, 0x202E, 0x2060, 0x2061, 0x2064, 0x2066, 0x2069,
+        0x206A, 0x206F, 0x3164, 0xFE00, 0xFE01, 0xFE0E, 0xFE0F, 0xFEFF, 0xFFA0, 0x1BCA0, 0x1D173, 0xE0001,
+        0xE0020, 0xE0067, 0xE007F, 0xE0100, 0xE01EF, 0x1F3FB, 0x20E3,
+    ]
+    /// 空の名前はシステムの書体。
+    nonisolated static let baseFonts = [
+        "Helvetica", "Apple Chancery", "Georgia", "Menlo", "Times New Roman", "Avenir Next", "Futura",
+        "Hiragino Mincho ProN", "Optima", "Didot", "",
+    ]
+
+    @Test("書体が覆える字は、後ろに付く印や修飾の書体が違っても書体を替えない", arguments: baseFonts)
+    func aLetterStaysInItsTypefaceBesideMarks(_ name: String) throws {
+        let typeface = face(name: name.isEmpty ? nil : name, style: .normal)
+        let plain = try #require(typeface.glyph(for: "a"))
+        var moved: [String] = []
+        for mark in Self.marks {
+            let scalar = try #require(Unicode.Scalar(mark))
+            let line = typeface.shape("a" + String(scalar))
+            let first = try #require(line.glyphs.first, "U+\(String(mark, radix: 16))")
+            if !CFEqual(first.resolved.font, typeface.base) || first.resolved.glyph != plain.glyph {
+                moved.append("U+\(String(mark, radix: 16)) → \(first.resolved.fontKey)")
             }
         }
-        // 先頭の印・重ねた印も落ちない・数えが合う
-        #expect(face.shape("\u{FE0F}").glyphs.count <= 1)
-        #expect(identities(face.shape("a\u{FE0F}\u{FE0F}")) == identities(plain))
-        // 印以外の異体字セレクタは渡す (書体を替えない)
-        #expect(identities(face.shape("a\u{FE0E}")) == identities(plain))
+        #expect(moved.isEmpty, "\(name): \(moved)")
+        // 印は幅を変えない (字形を持たない印) か、別の書体の字として後ろへ並ぶ
+        #expect(typeface.shape("a\u{FE0F}").width == typeface.shape("a").width)
+    }
+
+    @Test("絵文字から始まる書記素 (合成絵文字) は、CoreText のまま 1 字になる")
+    func emojiSequencesStayOneGlyph() throws {
+        try #require(TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い")
+        let typeface = face()
+        for string in [
+            "👨\u{200D}👩\u{200D}👧", "👍🏽", "🇯🇵", "🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
+            "\u{2764}\u{FE0F}", "1\u{FE0F}\u{20E3}", "1\u{20E3}\u{FE0F}", "\u{00A9}\u{FE0F}",
+        ] {
+            let line = typeface.shape(string)
+            #expect(line.glyphs.count == 1, "\(string.unicodeScalars.map(\.value)): \(identities(line))")
+            #expect(line.glyphs.first?.resolved.fontKey == "AppleColorEmoji")
+        }
+    }
+
+    @Test("絵文字を持たない字の後ろの肌色の修飾子は、字の隣に色の四角として並び、字の書体を替えない")
+    func aModifierAfterALetterStandsBesideIt() throws {
+        try #require(TextTests.hasColoredGlyphs, "この環境には色を持つ字形の書体が無い")
+        let line = face().shape("a\u{1F3FD}b")
+        #expect(line.glyphs.count == 3)
+        #expect(line.glyphs.map(\.resolved.fontKey) == ["Helvetica", "AppleColorEmoji", "Helvetica"])
+    }
+
+    // MARK: - タブ
+
+    @Test("タブは text() と同じ送り幅: 大きな字でもつぶれない", arguments: [12 as Float, 40, 200])
+    func tabsAdvanceLikeTheOldEntry(size: Float) throws {
+        let typeface = face(size: size, style: .normal)
+        let tab = typeface.advance(of: "\t")
+        try #require(tab > 1, "前提: タブの字形は送りを持つ")
+        for string in ["a\tb", "\ta", "a\t", "a\t\tb", "\t"] {
+            let shaped = typeface.shape(string).width
+            #expect(abs(shaped - typeface.advance(of: string)) < 0.01, "\(string.debugDescription): 組版 \(shaped)")
+        }
+        let b = try #require(typeface.shape("a\tb").glyphs.last)
+        #expect(abs(b.x - typeface.advance(of: "a\t")) < 0.01)
     }
 
     // MARK: - 描く・測る (GPU を要する)
@@ -383,6 +458,14 @@ struct ShapedTextTests {
             let shaped = try render(canvas) { canvas.shapedText("あ", 20, 70) }
             let old = try render(canvas) { canvas.text("あ", 20, 70) }
             #expect(shaped.bytes == old.bytes, "shapedText の「あ」が text() の「あ」と違う面になった")
+        }
+
+        @Test("タブを含む文字列は、text() と同じ位置に字を置く (大きな字でもタブが潰れない)")
+        func tabsPlaceGlyphsLikeTheOldEntry() throws {
+            let canvas = try makeCanvas(size: 60)
+            let shaped = try render(canvas) { canvas.shapedText("a\tb", 10, 70) }
+            let old = try render(canvas) { canvas.text("a\tb", 10, 70) }
+            #expect(shaped.bytes == old.bytes, "タブの送りが text() と違う")
         }
 
         @Test("300 本の違う文字列を毎フレーム描いても、組み直しは 2 フレーム目から 0 で、焼き場の引き当ても残る")

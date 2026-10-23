@@ -104,77 +104,127 @@ extension Typeface {
         return CTLineCreateWithAttributedString(text)
     }
 
-    /// 異体字セレクタ 16 (U+FE0F。絵文字の見た目を求める印) を、**絵文字になれない字の後では落とす**。
-    ///
-    /// `a\u{FE0F}` の `a` は絵文字を持たない。書体が U+FE0F の字形を持たないと、CoreText は印を覆える別の
-    /// 書体を選び、**書体が覆える `a` ごと別の書体 (LucidaGrande) へ替えてしまう**。印は絵文字を持つ字の
-    /// 見た目を選ぶもので、持たない字には効かないので、落として書体を替えない。絵文字を持つ字 (`❤`・`1`・
-    /// `©`) の後の印は、そのまま渡す。
-    static func droppingIdleEmojiSelectors(_ line: String) -> String {
-        guard line.unicodeScalars.contains("\u{FE0F}") else { return line }
-        var kept = String.UnicodeScalarView()
-        var previous: Unicode.Scalar?
-        for scalar in line.unicodeScalars {
-            if scalar == "\u{FE0F}", let previous, !previous.properties.isEmoji { continue }
-            kept.append(scalar)
-            previous = scalar
+    /// 書記素 (``Character``) 1 つぶんの、文字列の中の範囲 (UTF-16) とスカラ。
+    private struct Cluster {
+        var range: CFRange
+        var scalars: [Unicode.Scalar]
+
+        /// 字形を持たずに働く印 (ZWJ・異体字セレクタなど) を除いたスカラ。
+        var visible: [Unicode.Scalar] { scalars.filter { !$0.properties.isDefaultIgnorableCodePoint } }
+
+        func contains(_ location: Int) -> Bool {
+            location >= range.location && location < range.location + range.length
         }
-        return String(kept)
     }
 
-    /// 文字列の、UTF-16 の位置にあるスカラ。
-    private static func scalar(at unit: Int, in units: [UInt16]) -> Unicode.Scalar? {
-        guard units.indices.contains(unit) else { return nil }
-        let end = min(unit + 2, units.count)
-        return String(decoding: units[unit..<end], as: UTF16.self).unicodeScalars.first
-    }
-
-    /// その書体が、範囲の字を全部覆うか (結合記号や ZWJ のような、字形を持たない印は問わない)。
-    private static func covers(_ units: ArraySlice<UInt16>, in font: CTFont) -> Bool {
-        for scalar in String(decoding: units, as: UTF16.self).unicodeScalars
-        where !scalar.properties.isDefaultIgnorableCodePoint {
-            if glyphIndex(of: scalar, in: font) == 0 { return false }
+    private static func clusters(of line: String) -> [Cluster] {
+        var location = 0
+        var clusters: [Cluster] = []
+        for character in line {
+            let length = character.utf16.count
+            clusters.append(Cluster(range: CFRangeMake(location, length), scalars: Array(character.unicodeScalars)))
+            location += length
         }
-        return true
+        return clusters
     }
 
+    /// その書体が、字を全部覆うか (字形を持たずに働く印は問わない)。
+    private static func covers(_ scalars: [Unicode.Scalar], in font: CTFont) -> Bool {
+        scalars.allSatisfy { $0.properties.isDefaultIgnorableCodePoint || glyphIndex(of: $0, in: font) != 0 }
+    }
+
+    /// 行を組版する。**タブは CoreText に任せず、`text()` と同じに数える** — CoreText のタブは文字の大きさに
+    /// 依らない既定の位置 (28 単位ごと) で止まり、大きな字ではほとんど幅を持たない。タブで行を分けて 1 区間ずつ
+    /// 組み、タブの字形の送り幅 (``advance(of:)`` と同じ) ぶんだけ次の区間を右へ置く。区間をまたぐ
+    /// カーニングは掛からない。
     private func makeShaped(_ source: String) -> ShapedLine {
-        let line = Self.droppingIdleEmojiSelectors(source)
-        let units = Array(line.utf16)
+        guard source.unicodeScalars.contains("\t") else { return makeShapedSegment(source) }
+        let tab = glyph(for: "\t")?.advance ?? 0
+        var glyphs: [ShapedLine.Glyph] = []
+        var pen: Float = 0
+        let segments = source.unicodeScalars.split(separator: "\t", omittingEmptySubsequences: false)
+        for (index, segment) in segments.enumerated() {
+            if index > 0 { pen += tab }
+            let piece = makeShapedSegment(String(segment))
+            for glyph in piece.glyphs {
+                var moved = glyph
+                moved.x += pen
+                glyphs.append(moved)
+            }
+            pen += piece.width
+        }
+        return ShapedLine(glyphs: glyphs, width: pen)
+    }
+
+    private func makeShapedSegment(_ line: String) -> ShapedLine {
         guard var ctLine = Self.makeLine(line, base: base, overrides: []) else {
             return ShapedLine(glyphs: [], width: 0)
         }
-
-        // 代わりの書体 (CoreText が行の中で選んだ、``base`` と違う書体) の区間を、``glyph(for:)`` と同じに扱う:
-        // 頼んだ太さ・傾きの面へ引き直し、引き直しても面が頼んだ性質を欠くなら知らせる ([#2561]・[#2770])。
-        // 引き直した面は、その区間の書体として組み直す (カーニングや結合記号の位置も、その面で決まる)
-        let requested = Self.traits(of: request.style)
         var overrides: [(range: CFRange, font: CTFont)] = []
-        for run in CTLineGetGlyphRuns(ctLine) as? [CTRun] ?? [] {
-            let font = Self.font(of: run, default: base)
-            guard !CFEqual(font, base), CTRunGetGlyphCount(run) > 0 else { continue }
-            let (indices, _) = Self.glyphs(of: run)
-            guard
-                let first = indices.indices.first(where: {
-                    indices[$0] != 0 && Self.lacksStyle(fallback: font, glyph: indices[$0], requested: requested)
-                })
-            else { continue }
-            let range = CTRunGetStringRange(run)
-            var stringIndices = [CFIndex](repeating: 0, count: indices.count)
-            CTRunGetStringIndices(run, CFRangeMake(0, 0), &stringIndices)
-            guard
-                range.location >= 0, range.location + range.length <= units.count,
-                let scalar = Self.scalar(at: stringIndices[first], in: units)
-            else { continue }
-            let covered = units[range.location..<(range.location + range.length)]
-            let (face, _, lacksStyle) = Self.restyledFallback(
-                font, glyph: indices[first], requested: requested,
-                copy: { CTFontCreateCopyWithSymbolicTraits(font, CTFontGetSize(font), nil, $0, $0) },
-                glyphIndex: { Self.covers(covered, in: $0) ? Self.glyphIndex(of: scalar, in: $0) : 0 })
-            if !CFEqual(face, font) { overrides.append((range, face)) }
-            if lacksStyle { onFallbackLackingStyle(self, scalar, face) }
+        var clusters: [Cluster]?
+        func clusterList() -> [Cluster] {
+            if let clusters { return clusters }
+            let made = Self.clusters(of: line)
+            clusters = made
+            return made
         }
-        if !overrides.isEmpty, let restyled = Self.makeLine(line, base: base, overrides: overrides) {
+
+        // 1. **絵文字でない字から始まる書記素は、基の字を書体に残す。** 基の字を書体が覆えるのに、後ろに付く
+        //    字 (書体が持たない異体字セレクタ 16・ZWJ・モンゴル文字の異体字セレクタ・タグ文字・肌色の修飾子・
+        //    囲み記号) があると、CoreText は書記素ごと別の書体へ移し、覆える基の字の書体まで替わる。移された
+        //    書記素は、基の字の後ろへ別の書体の区間 (続く字を CoreText が選んだ書体で) を立てて、基の字を
+        //    書体に残す。絵文字から始まる書記素 (合成絵文字) は CoreText に任せる
+        var moved = Self.runs(of: ctLine, default: base).filter { !CFEqual($0.font, base) }
+        var tails: [Int: Cluster] = [:]  // 基の字を残した書記素の、続く字の部分 (書記素の先頭の位置が鍵)
+        if !moved.isEmpty {
+            for cluster in clusterList() where cluster.scalars.count > 1 {
+                let head = cluster.scalars[0]
+                guard !head.properties.isEmoji, Self.glyphIndex(of: head, in: base) != 0,
+                    moved.contains(where: { $0.contains(cluster.range.location) })
+                else { continue }
+                let headLength = String(head).utf16.count
+                let tail = CFRangeMake(cluster.range.location + headLength, cluster.range.length - headLength)
+                var text = String.UnicodeScalarView()
+                text.append(contentsOf: cluster.scalars.dropFirst())
+                let tailText = String(text) as CFString
+                let font = CTFontCreateForString(base, tailText, CFRangeMake(0, CFStringGetLength(tailText)))
+                overrides.append((tail, font))
+                tails[cluster.range.location] = Cluster(range: tail, scalars: Array(cluster.scalars.dropFirst()))
+            }
+            if !overrides.isEmpty, let pinned = Self.makeLine(line, base: base, overrides: overrides) {
+                ctLine = pinned
+            }
+        }
+
+        // 2. 代わりの書体 (CoreText が行の中で選んだ、``base`` と違う書体) の字を、``glyph(for:)`` と同じに
+        //    **書記素ごと**扱う: 頼んだ太さ・傾きの面へ引き直し、引き直しても面が頼んだ性質を欠くなら知らせる
+        //    ([#2561]・[#2770])。面が覆える書記素だけを引き直した面で組み直す (カーニングや結合記号の位置も
+        //    その面で決まる)。区間の中の隣の字が面を欠いても、覆える字は頼んだ面になる
+        let requested = Self.traits(of: request.style)
+        let pins = overrides.count
+        moved = Self.runs(of: ctLine, default: base).filter { !CFEqual($0.font, base) }
+        if !requested.isEmpty {
+            for run in moved {
+                for whole in clusterList() {
+                    let cluster = tails[whole.range.location] ?? whole
+                    guard run.contains(cluster.range.location) else { continue }
+                    let visible = cluster.visible
+                    guard
+                        let sample = visible.first(where: { Self.glyphIndex(of: $0, in: run.font) != 0 })
+                    else { continue }
+                    // 知らせる字は、書体が持たない最初の字 (持つ字を名乗ると、例の書体に基の書体自身を挙げる)
+                    let named = visible.first(where: { Self.glyphIndex(of: $0, in: base) == 0 }) ?? sample
+                    let font = run.font
+                    let (face, _, lacksStyle) = Self.restyledFallback(
+                        font, glyph: Self.glyphIndex(of: sample, in: font), requested: requested,
+                        copy: { CTFontCreateCopyWithSymbolicTraits(font, CTFontGetSize(font), nil, $0, $0) },
+                        glyphIndex: { Self.covers(cluster.scalars, in: $0) ? Self.glyphIndex(of: sample, in: $0) : 0 })
+                    if !CFEqual(face, font) { overrides.append((cluster.range, face)) }
+                    if lacksStyle { onFallbackLackingStyle(self, named, face) }
+                }
+            }
+        }
+        if overrides.count > pins, let restyled = Self.makeLine(line, base: base, overrides: overrides) {
             ctLine = restyled
         }
 
@@ -197,6 +247,22 @@ extension Typeface {
             }
         }
         return ShapedLine(glyphs: glyphs, width: width)
+    }
+
+    /// 行の区間 (CTRun) の、文字列の範囲と書体。
+    private struct RunSpan {
+        var range: CFRange
+        var font: CTFont
+
+        func contains(_ location: Int) -> Bool {
+            location >= range.location && location < range.location + range.length
+        }
+    }
+
+    private static func runs(of line: CTLine, default fallback: CTFont) -> [RunSpan] {
+        (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).map {
+            RunSpan(range: CTRunGetStringRange($0), font: font(of: $0, default: fallback))
+        }
     }
 
     private static func font(of run: CTRun, default fallback: CTFont) -> CTFont {
