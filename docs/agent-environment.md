@@ -21,7 +21,10 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 作る (AGENTS.md「コミット・PR の規約」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
 利用する秘密管理から取得するコマンドを起動環境で渡す。
 値や秘密の在処をリポジトリに書かない。署名の自動検出が効かない環境は
-`MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) を明示する。
+`MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) を明示する。モデルは Claude Code なら
+セッションの記録から名乗るので、それ以外 (Codex・Grok など) は `MOKUME_AGENT_MODEL` で渡す
+(例 `MOKUME_AGENT_NAME="Grok CLI" MOKUME_AGENT_MODEL=grok-5`)。別のエージェントと一緒に
+作った発言は `scripts/comment.sh` / `scripts/sub-issue.sh` の `--with "<名乗り>"` で併記する。
 
 絵・動きの確認はローカルの Mac で行う。[visual-evidence](../.claude/skills/visual-evidence/SKILL.md)
 の前提を確かめ、窓を撮る場合の画面収録権限は利用するアプリに付与する。

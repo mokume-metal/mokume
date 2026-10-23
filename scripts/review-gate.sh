@@ -420,7 +420,10 @@ if [ -n "$bug_issues" ]; then
     fail "閉じる Bug (${bug_issues# }) の PR 本文に「反証」の節が無い" \
          "$(missing_refute_message)"
   fi
-  refute_text=$(strip_html_comments <<<"$refute")
+  # 本文の末尾に付くエージェントの署名 (--- と <sub>🤖 Assisted by …</sub>。#3149) は節の中身に
+  # 数えない。「前の直しの見落とし」を消すと反証が最後の節になり、署名だけで空でなくなる
+  refute_text=$(strip_html_comments <<<"$refute" |
+    grep -vE '^[[:space:]]*(-{3,}|<sub>🤖 Assisted by.*</sub>)[[:space:]]*$' || true)
   if ! grep -q '[^[:space:]]' <<<"$refute_text"; then
     fail "閉じる Bug (${bug_issues# }) の PR 本文の「反証」の節が空" \
          "$(missing_refute_message)"
