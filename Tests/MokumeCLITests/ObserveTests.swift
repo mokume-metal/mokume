@@ -28,6 +28,13 @@ struct ObserveTests {
         body["id"] = "fixed"
         try JSONSerialization.data(withJSONObject: body)
             .write(to: facets.observeFacet.appendingPathComponent("report.json"))
+        // 窓口は絵を自分の置き場へ写してから渡す (#2992)。応答が名乗る絵は区画に在る
+        let names =
+            ((report["frames"] as? [[String: Any]]) ?? []).compactMap { $0["image"] as? String }
+            + [report["image"] as? String].compactMap { $0 }
+        for name in Set(names) {
+            try Data("picture".utf8).write(to: facets.observeFacet.appendingPathComponent(name))
+        }
         return Tools(facets: facets, makeID: { "fixed" })
     }
 
