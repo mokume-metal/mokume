@@ -23,9 +23,14 @@ import Synchronization
 ///     let input = ExternalQueue<String>(name: "doorbell", state: .running)
 ///     private(set) var rings: [String] = []
 ///     func supply() { rings = input.take() }
+///     func close() { input.discardWaiting() }
 ///     var report: SourceReport? { input.report }
 /// }
 /// ```
+///
+/// **``Inlet/close()`` で ``discardWaiting()`` を呼ぶ。** 外した入り口は `attach(_:)` で足し直されうる
+/// (``Inlet/open()``)。外す前に届いて読まれなかったものが残っていると、足し直した最初のフレームの
+/// ``take()`` が古いものを出す。
 ///
 /// ## 上限で捨て、捨てたことを黙らない
 ///
@@ -134,6 +139,15 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
         SourceReport(name: name, state: state, lastArrival: lastArrival)
     }
 
+    /// まだ取り出されていないものを、読まずに捨てる (数えず、診断にも出さない)。
+    ///
+    /// 入り口が ``Inlet/close()`` で呼ぶ。外した入り口は足し直されうる (``Inlet/open()``) ので、外す前に届いて
+    /// 読まれなかったものを残すと、足し直した最初の ``take()`` が古いものを出す。上限で捨てた数・読めずに捨てた数と
+    /// ``lastArrival`` は変えない。出どころ (OS のコールバックなど) が止まった後に呼ぶ — 先に捨てると、止まる間際に届いたものが残る。
+    public func discardWaiting() {
+        waiting.withLock { $0.removeAll() }
+    }
+
     // MARK: - 捨てた数
 
     /// 上限で捨てた数 (始まってからの累計)。
@@ -189,6 +203,12 @@ private nonisolated struct Waiting<Value: Sendable>: Sendable {
         ring[head] = (value, hostTime)
         head = (head + 1) % capacity
         overflowed += 1
+    }
+
+    /// 溜まっているものを捨てる。数えた累計は変えない。
+    mutating func removeAll() {
+        ring.removeAll()
+        head = 0
     }
 
     /// 届いた順に全部を取り出し、空にする。
