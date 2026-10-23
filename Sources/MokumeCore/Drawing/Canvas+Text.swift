@@ -132,7 +132,7 @@ extension Canvas {
     /// 文字列の送り幅 (画素)。
     ///
     /// **Unicode のスカラ 1 つずつの送り幅の合計**なので、部分に切って足しても全体と一致する。
-    /// 組版をしないので、複数のスカラでできた絵文字の幅は部品の幅の和になる。
+    /// 組版をしないので、複数のスカラでできた絵文字の幅は部品の幅の和になる (組版した幅は ``shapedTextWidth(_:)``)。
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
     ///
     /// **大きさ 0 では 0 を返す** (高さと深さも同じ)。描く口と同じ見張りで帰る — 大きさ 0 を
@@ -160,7 +160,8 @@ extension Canvas {
     ///
     /// 縦の基準は ``textAlign(_:_:)`` が決める。既定は**基準線** — `y` が字の乗る線になる。
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
-    /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる)。
+    /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる。
+    /// 組版して描くのは ``shapedText(_:_:_:)``)。
     public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
