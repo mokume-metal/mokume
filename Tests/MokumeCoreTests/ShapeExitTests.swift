@@ -240,7 +240,7 @@ enum ShapeExit {
             "solidStrokeCapture": transient,
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
-            "sweepPolicy": testing, "sharesUnitShapes": testing, "specializesUnlitSolids": testing,
+            "sweepPolicy": testing, "sharesUnitShapes": testing, "specializesUnlitSolids": testing, "specializesOpaqueSolids": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
             "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
