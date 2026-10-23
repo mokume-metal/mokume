@@ -122,19 +122,22 @@ struct ShapedTextTests {
 
     /// Swift の `String` は等価を正準等価で取る。字形の違う文字列が同じ鍵になって、先に組んだほうの結果が
     /// 返らない (`text()` の控えは `Unicode.Scalar` が鍵で起きない)。
-    nonisolated static let canonicallyEquivalent: [(String, String)] = [
-        ("\u{4FAE}", "\u{FA30}"),
-        ("\u{03A9}", "\u{2126}"),
-        ("\u{00C5}", "\u{212B}"),
+    /// 書体は名指す — 代わりの書体に任せると、機械によって 2 つを同じ字形で描く書体 (PingFang) が選ばれ、
+    /// 前提が崩れる (CI の機械で起きた)。Hiragino Sans と Helvetica は macOS に標準で入る。
+    nonisolated static let canonicallyEquivalent: [(typeface: String, a: String, b: String)] = [
+        ("Hiragino Sans", "\u{4FAE}", "\u{FA30}"),
+        ("Helvetica", "\u{03A9}", "\u{2126}"),
+        ("Helvetica", "\u{00C5}", "\u{212B}"),
     ]
 
     @Test("正準等価な 2 つの文字列は、別の鍵で別の字形のまま、組む順に依らない", arguments: canonicallyEquivalent)
-    func canonicallyEquivalentLinesStayApart(_ pair: (String, String)) throws {
-        let (a, b) = pair
+    func canonicallyEquivalentLinesStayApart(_ pair: (typeface: String, a: String, b: String)) throws {
+        let (name, a, b) = pair
+        let face = { self.face(name: name, style: .normal) }
         try #require(a == b, "前提: Swift の String では等しい")
         #expect(ShapedLineKey(line: a) != ShapedLineKey(line: b))
         let alone = identities(face().shape(b))
-        try #require(alone != identities(face().shape(a)), "前提: 字形が違う")
+        try #require(alone != identities(face().shape(a)), "前提: \(name) で字形が違う")
         let order = face()
         _ = order.shape(a)
         #expect(identities(order.shape(b)) == alone, "先に組んだ \(a.unicodeScalars.first!) の結果が返った")
