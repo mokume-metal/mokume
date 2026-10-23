@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Metal
 import Testing
 
@@ -306,7 +307,12 @@ struct GlyphScaleBakeTests {
 
     // MARK: - 1 フレームに新しく焼く量の上限
 
-    private func drawSix(_ canvas: Canvas, scale: Float) throws -> Int {
+    /// - Parameters:
+    ///   - persists: このフレームの絵が次のフレームに描き直されずに残るか (`draw()` の後ろでランタイムが書く)。
+    ///   - midFlush: 字を置いた後、フレームの途中で描き切る (`loadPixels()`)。
+    private func drawSix(
+        _ canvas: Canvas, scale: Float, persists: Bool = false, midFlush: Bool = false
+    ) throws -> Int {
         let before = canvas.glyphQuadsPlaced
         try canvas.draw {
             canvas.background(black)
@@ -315,6 +321,8 @@ struct GlyphScaleBakeTests {
             canvas.translate(4, 60)
             canvas.scale(scale, scale)
             canvas.text("abcdef", 0, 0)
+            if midFlush { canvas.loadPixels() }
+            canvas.framePersists = persists
         }
         return canvas.glyphQuadsPlaced - before
     }
@@ -415,36 +423,300 @@ struct GlyphScaleBakeTests {
         #expect(canvas.atlas.bakedCount == 6)
     }
 
+    // MARK: - 絵が残るフレームは、先送りした字を払う
+
+    /// 6 字を 4 倍で描く参照の絵 (先送りせず、全部を要る段で焼く)。
+    private func referenceImage() throws -> DisplayImage {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        #expect(try drawSix(canvas, scale: 4) == 6)
+        return try canvas.target.encodeForDisplay()
+    }
+
+    /// 反証 1〜4 の根: 先送りは、そのフレームの絵が次のフレームに描き直されるときだけ許す。**絵が残る
+    /// フレーム (`framePersists`) は、先送りして近い段で置いた四角を、描き切る直前に焼いて置き直す** —
+    /// 先送りしなかった絵と 1 画素も違わない。
+    @Test("絵が残るフレームは、先送りした字をフレームの終わりに払い、先送りしなかった絵と同じになる")
+    func aFrameThatPersistsPaysTheDeferredGlyphs() throws {
+        let reference = try referenceImage()
+
+        // 検査の前提: 払わないと、近い段で置いたぼけた字が絵に残る
+        let soft = try makeCanvas(width: 400, height: 128)
+        soft.atlas.scaledBakesPerFrame = 2
+        soft.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(soft, scale: 4, persists: false) == 6)
+        #expect(scaledBakedCount(soft) == 2)
+        #expect(try soft.target.encodeForDisplay() != reference, "検査の前提: 先送りした絵がぼけていない")
+
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(canvas, scale: 4, persists: true) == 6, "字が欠けた")
+        #expect(scaledBakedCount(canvas) == 6, "払っていない: \(scaledBakedCount(canvas))")
+        #expect(canvas.atlas.owedGlyphCount == 0, "払った字が先送りの履歴に残っている")
+        #expect(canvas.deferredGlyphs.isEmpty)
+        #expect(try canvas.target.encodeForDisplay() == reference, "払った絵が、先送りしなかった絵と違う")
+        #expect(canvas.warnings.message(for: .softEnlargedText) == nil)
+    }
+
+    /// 境界: 途中の描き切り (`loadPixels()`) の前は、そのフレームが残るか分からないので払う。
+    /// 描き切った頂点は GPU へ渡り、後からは置き直せない。
+    @Test("フレームの途中で描き切るときは、その前に先送りした字を払う")
+    func aMidFramePassPaysTheDeferredGlyphs() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(canvas, scale: 4, persists: false, midFlush: true) == 6)
+        #expect(scaledBakedCount(canvas) == 6, "途中の描き切りの前に払っていない")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+        #expect(try canvas.target.encodeForDisplay() == (try referenceImage()))
+    }
+
+    /// 反証 1: 形の記録 (`createShape`) の中は先送りしない。記録した四角は形に焼き付いて残り、次のフレームでも
+    /// 近い段のままになる。上限を越えても、記録の中の字は要る段で焼く。
+    @Test("形の記録の中で、上限を越える字を先送りしない")
+    func aShapeRecordingDoesNotDefer() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        try canvas.draw {
+            canvas.textSize(16)
+            let shape = canvas.createShape {
+                canvas.scale(4, 4)
+                canvas.text("abcdef", 0, 0)
+            }
+            #expect(canvas.deferredGlyphs.isEmpty)
+            canvas.fill(white)
+            canvas.shape(shape, 4, 60)
+        }
+        #expect(scaledBakedCount(canvas) == 6, "記録の中の字を先送りした: \(scaledBakedCount(canvas))")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+    }
+
+    /// 境界: 控えた四角を置いた後に頁が替わると、置き直す先の面が違う。置き直さず (別の頁の位置を書かない)、
+    /// 近い段のまま、拡大が原因だと知らせる。頁が溢れたときと同じ約束で、字は欠けない。
+    @Test("頁が替わって置き直せない四角は、近い段のまま残して知らせる")
+    func glyphsOnAnotherPageStaySoftAndAreReported() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        let before = canvas.glyphQuadsPlaced
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(16)
+            canvas.translate(4, 60)
+            canvas.scale(4, 4)
+            canvas.text("abcdef", 0, 0)
+            #expect(canvas.deferredGlyphs.count == 4)
+            try? canvas.atlas.rebake(gpu: canvas.gpu)
+            canvas.framePersists = true
+        }
+        #expect(canvas.glyphQuadsPlaced - before == 6, "字が欠けた")
+        #expect(canvas.warnings.message(for: .softEnlargedText) != nil, "置き直せなかったのに知らせていない")
+    }
+
+    /// 反証 5: 描き場所 (`createGraphics`) は自分の焼き場を持ち、旗を立てるのは本体の面だけ。**描き場所の絵は
+    /// 次のフレームへ残る**ので先送りせず、上限を越えても常に焼き切る。
+    @Test("描き場所は先送りせず、上限を越えても焼き切る")
+    func aGraphicsSurfaceBakesEverything() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        let layer = try canvas.createGraphics(400, 128)
+        layer.textFont("Helvetica")
+        layer.atlas.scaledBakesPerFrame = 2
+        layer.beginDraw()
+        layer.background(black)
+        layer.fill(white)
+        layer.textSize(16)
+        layer.translate(4, 60)
+        layer.scale(4, 4)
+        layer.text("abcdef", 0, 0)
+        layer.endDraw()
+        #expect(scaledBakedCount(layer) == 6, "描き場所で先送りした: \(scaledBakedCount(layer))")
+        #expect(layer.atlas.owedGlyphCount == 0)
+        #expect(try layer.target.encodeForDisplay() == (try referenceImage()))
+    }
+
+    /// 反証 6: 先送りした字が、別の道で焼けていた (焼いてある段で早く返る) とき、先送りの履歴から外す。
+    /// 外さないと、次のフレームで新しい字の枠をその分だけ押さえる。
+    @Test("焼いてある段で早く返る字は、先送りの履歴から外れる")
+    func aGlyphThatIsAlreadyBakedLeavesTheDeferredHistory() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 1
+        // 2 倍 (8 段) を先に全部焼いておく
+        #expect(try drawSix(canvas, scale: 2) == 6)
+        canvas.atlas.mayDeferScaledBakes = true
+        // 4 倍 (16 段) は 1 字だけ焼き、残りは 8 段の字で描いて先送りする
+        #expect(try drawSix(canvas, scale: 4) == 6)
+        #expect(canvas.atlas.owedGlyphCount == 5)
+        // 2 倍へ戻す。書体の控えを空にして、焼き場の引きを通す (控えから引くと、引かずに置く)
+        canvas.typeface.placedScaled.removeAll()
+        #expect(try drawSix(canvas, scale: 2) == 6)
+        #expect(canvas.atlas.owedGlyphCount == 0, "焼いてある字が先送りの履歴に残っている")
+    }
+
     // MARK: - 走らせる側が立てる旗
 
-    final class Idle: Sketch {
-        var settings: SketchSettings { SketchSettings(width: 32, height: 32) }
-        var stopAtFrame: Int?
+    final class Zoom: Sketch {
+        var settings = SketchSettings(width: 400, height: 128)
+        /// `draw()` の最後に `noLoop()` を呼ぶか。
+        var stopsAfterDrawing = false
+        /// `draw()` の最後に `save()` を頼む先。
+        var savesTo: String?
+        /// 描き始めたときに先送りが許されていたかを読む口。
+        var readsDeferral: (() -> Bool)?
+        var seen: [Bool] = []
         init() {}
         func draw() {
-            if frameCount == stopAtFrame { noLoop() }
+            seen.append(readsDeferral?() ?? false)
+            background(0)
+            fill(255)
+            textFont("Helvetica")
+            textSize(16)
+            translate(4, 60)
+            scale(4, 4)
+            text("abcdef", 0, 0)
+            if let savesTo { save(savesTo) }
+            if stopsAfterDrawing { noLoop() }
         }
     }
 
-    /// 反証 7 の口: 走らせる側 (`SketchRuntime`) が、次のフレームが来るときだけ旗を立てる。
-    @Test("ランタイムは、次のフレームが来る間だけ拡大した字の先送りを許す")
-    func theRuntimeAllowsDeferringOnlyBeforeAnotherFrame() throws {
-        let runtime = try SketchRuntime(sketch: Idle(), gpu: try RenderDevice())
-        runtime.framesToRender = 3
-        try runtime.advance()
-        #expect(runtime.canvas.atlas.mayDeferScaledBakes, "走っている間は先送りを許すはず")
-        try runtime.advance()
-        #expect(runtime.canvas.atlas.mayDeferScaledBakes)
-        try runtime.advance()
-        #expect(!runtime.canvas.atlas.mayDeferScaledBakes, "書き出しの最後の 1 枚で先送りを許した")
+    /// 窓に出しながら回すランタイム (`isOnScreen`・実時間の時計) を組む。
+    private func makeZoom(
+        _ sketch: Zoom, onScreen: Bool = true, observer: URL? = nil, scaledBakesPerFrame: Int = 2
+    ) throws -> SketchRuntime {
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: onScreen ? .wallClock : nil, now: { 0 },
+            observer: observer.map { FrameObserver(directory: $0) })
+        runtime.canvas.atlas.scaledBakesPerFrame = scaledBakesPerFrame
+        sketch.readsDeferral = { [unowned runtime] in runtime.canvas.atlas.mayDeferScaledBakes }
+        return runtime
+    }
 
-        let stopping = Idle()
-        stopping.stopAtFrame = 2
-        let stopped = try SketchRuntime(sketch: stopping, gpu: try RenderDevice())
+    private func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-glyph-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func scaledBakedCount(_ runtime: SketchRuntime) -> Int { scaledBakedCount(runtime.canvas) }
+
+    /// ランタイムが先送りを許すのは、窓に出しながら回していて、そのフレームの絵を次のフレームが描き直す
+    /// ときだけ。直に回す側 (窓の経路でない)・1 枚の書き出し・撮る係が居る (`mokume render`・`save()`・
+    /// `beginRecord()`)・観測が撮るフレームは、許さない。
+    @Test("ランタイムは、次のフレームが描き直すフレームだけで先送りを許す")
+    func theRuntimeAllowsDeferringOnlyForAFrameThatIsRedrawn() throws {
+        // 窓に出しながら回している間は許す
+        let live = Zoom()
+        let runtime = try makeZoom(live)
+        try runtime.advance()
+        try runtime.advance()
+        #expect(live.seen == [true, true])
+
+        // 窓の経路でない (直に回す・`mokume render`) ランタイムは許さない
+        let direct = Zoom()
+        let plain = try makeZoom(direct, onScreen: false)
+        try plain.advance()
+        #expect(direct.seen == [false])
+
+        // 1 枚の書き出し
+        let exported = Zoom()
+        let exporter = try makeZoom(exported)
+        let directory = try temporaryDirectory()
+        try exporter.renderFrame(to: directory.appendingPathComponent("a.png"))
+        #expect(exported.seen == [false], "1 枚の書き出しで先送りを許した")
+        try exporter.advance()
+        #expect(exported.seen == [false, true], "書き出しの後の通常のフレームで許さない")
+
+        // 連番を撮っている (`mokume render` は撮る係を先に頼む)
+        let recorded = Zoom()
+        let recorder = try makeZoom(recorded)
+        recorder.beginRecord(directory.appendingPathComponent("r-###.png").path, rendering: 2)
+        try recorder.advance()
+        #expect(recorded.seen == [false], "撮る係が居るフレームで先送りを許した")
+
+        // 止めたフレームは、描き始めは許す。描き切る前に払う (下の検査)
+        let stopping = Zoom()
+        stopping.stopsAfterDrawing = true
+        let stopped = try makeZoom(stopping)
         try stopped.advance()
-        #expect(stopped.canvas.atlas.mayDeferScaledBakes)
+        #expect(stopping.seen == [true])
         try stopped.advance()
-        #expect(!stopped.canvas.atlas.mayDeferScaledBakes, "noLoop() を呼んだフレームで先送りを許した")
+        #expect(stopping.seen == [true], "止めたスケッチが描いた")
+    }
+
+    /// 反証 4: 観測が撮るフレームは、先送りを許さない。撮った絵は残る。
+    @Test("観測が撮るフレームでは、先送りを許さない")
+    func anObservedFrameDoesNotDefer() throws {
+        let facet = try temporaryDirectory()
+        let sketch = Zoom()
+        let runtime = try makeZoom(sketch, observer: facet)
+        try runtime.advance()
+        #expect(sketch.seen == [true])
+        try AtomicFile.write(
+            Data(#"{"id":"snap"}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try runtime.advance()
+        #expect(sketch.seen == [true, false], "撮るフレームで先送りを許した")
+        try runtime.advance()
+        #expect(sketch.seen == [true, false, true], "撮り終えた後のフレームで許さない")
+    }
+
+    /// 反証 2: `draw()` の後ろで `noLoop()` を呼ぶ形 (Processing の定番)。先に描いた字は先送りされて
+    /// いたが、止まるフレームの描き切りで払うので、窓・出口に残る絵は先送りしなかった絵と同じ。
+    @Test("draw() の後ろで noLoop() を呼ぶと、止めた絵は先送りしなかった絵と同じになる")
+    func noLoopAfterTheTextPaysTheDeferredGlyphs() throws {
+        // 参照: 先送りしない (窓の経路でない)
+        let plain = try makeZoom(Zoom(), onScreen: false)
+        try plain.advance()
+        let reference = try plain.target.encodeForDisplay()
+
+        let sketch = Zoom()
+        sketch.stopsAfterDrawing = true
+        let runtime = try makeZoom(sketch)
+        try runtime.advance()
+        #expect(sketch.seen == [true], "検査の前提: 描き始めは先送りが許されている")
+        #expect(scaledBakedCount(runtime) == 6, "止めたフレームの字が、近い段のまま残った")
+        #expect(runtime.canvas.atlas.owedGlyphCount == 0)
+        #expect(try runtime.target.encodeForDisplay() == reference)
+
+        // 止めずに回し続ける絵は、次のフレームが焼き直すまでぼけている (払わない)
+        let looping = Zoom()
+        let running = try makeZoom(looping)
+        try running.advance()
+        #expect(scaledBakedCount(running) == 2)
+        #expect(try running.target.encodeForDisplay() != reference, "検査の前提: 回している間は先送りが効く")
+    }
+
+    /// 反証 4: `draw()` の後ろで `save()` を頼む形。撮る絵は先送りしなかった絵と同じ。
+    @Test("draw() の後ろで save() を頼むと、撮る絵は先送りしなかった絵と同じになる")
+    func saveAfterTheTextPaysTheDeferredGlyphs() throws {
+        let plain = try makeZoom(Zoom(), onScreen: false)
+        try plain.advance()
+        let reference = try plain.target.encodeForDisplay()
+
+        let directory = try temporaryDirectory()
+        let sketch = Zoom()
+        sketch.savesTo = directory.appendingPathComponent("shot.png").path
+        let runtime = try makeZoom(sketch)
+        try runtime.advance()
+        #expect(sketch.seen == [true])
+        #expect(scaledBakedCount(runtime) == 6)
+        #expect(try runtime.target.encodeForDisplay() == reference)
+    }
+
+    /// 反証 3: 公開の `renderFrame(to:)` は 1 枚だけ描いて書き出す。先送りせず、全部の字を要る段で焼く。
+    @Test("renderFrame(to:) は先送りせず、書き出す絵は先送りしなかった絵と同じ")
+    func renderFrameDoesNotDefer() throws {
+        let plain = try makeZoom(Zoom(), onScreen: false)
+        try plain.advance()
+        let reference = try plain.target.encodeForDisplay()
+
+        let runtime = try makeZoom(Zoom())
+        let file = try temporaryDirectory().appendingPathComponent("frame.png")
+        try runtime.renderFrame(to: file)
+        #expect(scaledBakedCount(runtime) == 6)
+        #expect(runtime.canvas.atlas.owedGlyphCount == 0)
+        #expect(try runtime.target.encodeForDisplay() == reference)
     }
 
     // MARK: - 測る側が預ける画素

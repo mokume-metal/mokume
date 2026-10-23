@@ -52,9 +52,12 @@ public final class SketchRuntime {
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
     private(set) var isLooping = true
-    /// 書き出す経路 (`mokume render`) が先に知っている、描く枚数。**最後の 1 枚を描くとき**、拡大した字の焼きを
-    /// 次のフレームへ送らない (``GlyphAtlas/mayDeferScaledBakes``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
-    var framesToRender: Int?
+    /// 1 枚だけ描いて書き出す口 (``renderFrame(to:)``) の最中か。**書き出す絵は残る**ので、拡大した字の焼きを
+    /// 次のフレームへ送らない (``canDeferEnlargedGlyphs``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
+    private var exportsOneFrame = false
+    /// 観測がいま描いているフレームを撮るか (要求を拾った・列を撮っている最中・目録の決着を待っている)。
+    /// **撮った絵は残る**ので、拡大した字の焼きを次のフレームへ送らない。``runFrame()`` が描く前に決める。
+    private var frameIsObserved = false
     /// 止まっているか — 作者が `noLoop()` で止めた、または外から ``pause()`` されている。
     ///
     /// 窓と出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
@@ -833,7 +836,12 @@ public final class SketchRuntime {
         guard closingRecorder == nil, !outletsClosing else { return }
         observingAtTime = requestedTime != nil
         let keepStopped = observingAtTime && !isLooping
-        defer { observingAtTime = false }
+        // 撮る絵は残る。拡大した字の焼きを次へ送らない (#2446)
+        frameIsObserved = observation != nil || capture != nil || settling != nil
+        defer {
+            observingAtTime = false
+            frameIsObserved = false
+        }
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
@@ -946,11 +954,9 @@ public final class SketchRuntime {
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
         canvas.frameStep = timing.step
-        // 次のフレームが来るときだけ、拡大した字の焼きを次へ送ってよい。止めたスケッチ・時刻を指した 1 枚・
-        // 書き出しの最後の 1 枚は、次が来ないので要る段で焼き切る (#2446)
-        canvas.atlas.mayDeferScaledBakes =
-            isLooping && !isPaused && requestedTime == nil
-            && timing.frameCount < (framesToRender ?? .max)
+        // このフレームの絵を次のフレームが描き直すと分かっているときだけ、拡大した字の焼きを次へ送ってよい。
+        // 残る絵 (書き出す・撮る・止める・形に記録する) は要る段で焼き切る (#2446)
+        canvas.atlas.mayDeferScaledBakes = canDeferEnlargedGlyphs(at: requestedTime)
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
@@ -979,8 +985,27 @@ public final class SketchRuntime {
                 let drawInterval = FrameSignposts.beginDraw()
                 defer { FrameSignposts.endDraw(drawInterval) }
                 sketch.draw()
+                // **`draw()` の中で後から決まったことは、ここで知る。** `noLoop()` で止めた・`save()` や
+                // `beginRecord()` で撮ると頼んだフレームは、描き直されずに残る。そのフレームで先送りした字は、
+                // フレームの終わりに払う (``Canvas/settleDeferredGlyphs(baking:)``・#2446)
+                canvas.framePersists = !isLooping || recorder?.isIdle == false
             }
         }
+    }
+
+    /// 拡大した字の焼きを、次のフレームへ送ってよいか ([#2446])。**このフレームの絵を、次のフレームが描き直す
+    /// と分かっているときだけ** — 近い段の画素で置いた字は、次のフレームが焼き直すまでぼけているので、
+    /// 残る絵に載せてはいけない。
+    ///
+    /// 許すのは、窓・共有面へ出しながら回している間 (``isOnScreen``) で、作者が止めておらず・外から止めて
+    /// おらず・時刻を指しておらず・観測が撮らず・撮る係 (`save()`・`beginRecord()`・`mokume render`) が
+    /// 頼まれておらず・1 枚の書き出しでもないフレームだけである。書き出す・撮る・止める絵と、
+    /// `draw()` の中で後から `noLoop()`・`save()` を呼ぶ絵は、既定で許さない側に倒れる。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    private func canDeferEnlargedGlyphs(at requestedTime: Float?) -> Bool {
+        isOnScreen && isLooping && !isPaused && requestedTime == nil && !frameIsObserved
+            && !exportsOneFrame && recorder?.isIdle != false && closingRecorder == nil
     }
 
     /// 作者が止めている間に届いた入力を引き取り、コールバックを配る。
@@ -1711,6 +1736,9 @@ public final class SketchRuntime {
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
+        // 書き出す絵は残る。拡大した字の焼きを次へ送らない (#2446)
+        exportsOneFrame = true
+        defer { exportsOneFrame = false }
         try advance()
         try PNGFile.write(try target.encodeToImageAndRead(avoiding: outletStorageToAvoid()), to: url)
     }
@@ -1723,6 +1751,8 @@ public final class SketchRuntime {
         // 「そのフレームの絵」ではなく前の絵が書かれる (#927・#2743)
         requireRecorder().save(path, at: timing.frameCount)
         attachRecorderIfNeeded()
+        // 撮る絵は残る。これより後に置く字は、先送りせず要る段で焼く (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
     }
 
     /// 連番を始める。転送 (正本は ``SketchPart/beginRecord(_:)``)。
@@ -1743,6 +1773,8 @@ public final class SketchRuntime {
         // 前から並びに居たときに 1 つ前の絵から録る (#1456)
         requireRecorder().beginRecord(pattern, at: timing.frameCount, rendering: frameCount)
         attachRecorderIfNeeded()
+        // 撮る絵は残る。これより後に置く字は、先送りせず要る段で焼く (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
     }
 
     /// 連番を止める。転送 (正本は ``SketchPart/endRecord()``)。

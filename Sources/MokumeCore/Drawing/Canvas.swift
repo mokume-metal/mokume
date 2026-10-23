@@ -1430,6 +1430,18 @@ public final class Canvas {
     ///
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     var atlasPageFrame: Int?
+    /// 1 フレームに焼く量の上限を越えて**先送りし、近い段の画素で置いた四角**の控え ([#2446])。
+    /// 頂点の位置と、焼くはずだった段の鍵・置いた変換を持ち、フレームを描き切る直前に払う
+    /// (``settleDeferredGlyphs(baking:)``)。溜め場と同じ寿命で、描き切りか捨てるときに空になる。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var deferredGlyphs: [DeferredGlyph] = []
+    /// **いま描いているフレームの絵が、次のフレームに描き直されずに残るか** ([#2446])。ランタイムが
+    /// `draw()` の後ろで、`noLoop()`・`save()`・`beginRecord()` で決まった分を書く。残るなら、先送りした
+    /// 字をフレームの終わりに焼いて置き直す。フレームを出るときに下ろす。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var framePersists = false
     /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
     ///
     /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
@@ -2756,6 +2768,8 @@ public final class Canvas {
             if emptying { value = false } else if value { amount += 1 }
         }
         list(&vertices)
+        // 先送りの控えは、頂点の位置を指す。頂点ごと捨てたので、控えも要らない
+        list(&deferredGlyphs, counted: false)
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)
@@ -3448,6 +3462,7 @@ public final class Canvas {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     private func leaveFrame() {
         isDrawing = false
+        framePersists = false
         // 組み立ての出口まで待たせた `endDraw()` と、待たせた捨てる印は、もう対象のフレームが無い (#1855・#2509)
         frameEndAwaitingShape = false
         dropAwaitingShape = false
@@ -4018,6 +4033,12 @@ public final class Canvas {
         // 描き切りの区間 (Instruments・#2378)
         let flushInterval = FrameSignposts.beginFlush()
         defer { FrameSignposts.endFlush(flushInterval) }
+        // **先送りした字は、頂点が溜め場に居るいまのうちに払う** ([#2446])。描き切ると頂点は GPU へ渡り、
+        // 置き直せない。フレームの終わりの描き切りは、絵が残るとき (`framePersists`) だけ払う。途中の描き切り
+        // (`loadPixels()` など) は、そのフレームが残るかをまだ知らないので、払う
+        //
+        // [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+        settleDeferredGlyphs(baking: applyingEffects ? framePersists : true)
         // **自分の絵が変わる直前がここ。** 自分を溜めている面にいまの絵を写させると、
         // その面には「置いた時点の絵」が残る (#1656)。`beginDraw()` ではなくここに置くのは、
         // 描き切りが要る経路が対の外にもある (画素の読み出し) ため

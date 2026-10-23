@@ -200,9 +200,13 @@ extension Canvas {
     /// 引いた字形と、**頼んだ段について決まった答えか** (`settled`)。決まっていれば、書体の控え
     /// (``Typeface/placedScaled``) へ入れて、次のフレームから引き直さない。上限を越えて先送りした字や、
     /// 頁が溢れて低い段で描いた字は決まっていない (次のフレームで頼んだ段を焼き直す)。
+    ///
+    /// `deferredKey` は、**上限を越えて先送りした**ときだけ、焼くはずだった段の鍵。置いた四角をフレームの
+    /// 終わりに払うために控える (``noteDeferredGlyph(_:key:font:penX:baseline:color:)``)。
     struct GlyphLookup {
         var entry: GlyphAtlas.Entry
         var settled: Bool
+        var deferredKey: GlyphAtlas.Key?
     }
 
     /// 焼いてある字形を引く。**場所が足りないときだけ**面を広げる — 上限の面なら、同じ
@@ -262,23 +266,34 @@ extension Canvas {
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     private func scaledGlyphLookup(for resolved: ResolvedGlyph, step: Int) -> GlyphLookup? {
         let wanted = glyphKey(for: resolved, step: step)
-        if let found = atlas.cachedEntry(for: wanted) { return GlyphLookup(entry: found, settled: true) }
+        if let found = atlas.cachedEntry(for: wanted) {
+            atlas.noteBaked(wanted, frame: framesDrawn)
+            return GlyphLookup(entry: found, settled: true)
+        }
 
         let plan = atlas.plan(for: wanted, font: resolved.font)
         if plan.step < step { warnSoftEnlargedTextOnce() }
         let target = glyphKey(for: resolved, step: plan.step)
         if plan.step == 0 {
+            atlas.noteBaked(wanted, frame: framesDrawn)
             return bakedGlyph(for: target, font: resolved.font).map { GlyphLookup(entry: $0, settled: true) }
         }
-        if let found = atlas.cachedEntry(for: target) { return GlyphLookup(entry: found, settled: true) }
+        if let found = atlas.cachedEntry(for: target) {
+            atlas.noteBaked(target, frame: framesDrawn)
+            return GlyphLookup(entry: found, settled: true)
+        }
 
-        // 空白は焼く画素が無いので、数えない
-        if plan.bytes > 0, !atlas.admitScaledBake(target, bytes: plan.bytes, frame: framesDrawn) {
+        // 空白は焼く画素が無いので、数えない。**形の記録の中は先送りしない** — 記録した四角は形に
+        // 焼き付いて残るので、近い段のままでは次のフレームで直せない
+        let deferrable = !recordingShape
+        if plan.bytes > 0,
+            !atlas.admitScaledBake(target, bytes: plan.bytes, frame: framesDrawn, deferrable: deferrable)
+        {
             if let near = nearestBakedGlyph(for: resolved, step: plan.step) {
-                return GlyphLookup(entry: near, settled: false)
+                return GlyphLookup(entry: near, settled: false, deferredKey: target)
             }
             return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
-                .map { GlyphLookup(entry: $0, settled: false) }
+                .map { GlyphLookup(entry: $0, settled: false, deferredKey: target) }
         }
 
         var current = plan.step
@@ -295,6 +310,80 @@ extension Canvas {
         }
         return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
             .map { GlyphLookup(entry: $0, settled: false) }
+    }
+
+    /// 先送りして近い段の画素で置いた四角 ([#2446])。**置いた頂点の位置と、焼くはずだった段の鍵・置いた
+    /// ときの変換を控える。** フレームの終わりにその絵が残ると分かったとき、焼いて頂点を置き直す
+    /// (``settleDeferredGlyphs(baking:)``)。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    struct DeferredGlyph {
+        /// 6 頂点の先頭の位置 (``Canvas/vertices`` の添字)。
+        var start: Int
+        /// 焼くはずだった段の鍵と、その字形の書体。
+        var key: GlyphAtlas.Key
+        var font: CTFont
+        /// 置いたときの焼き場の頁 (``GlyphAtlas/pageSerial``)。頁が替わっていたら、置き直す先の面が違う。
+        var pageSerial: UInt64
+        /// 置いた四角の左上の位置と読む位置 — 頂点がまだそこにあることを確かめる。
+        var topLeft: SIMD2<Float>
+        var uvMin: SIMD2<Float>
+        var penX: Float
+        var baseline: Float
+        var color: LinearRGBA
+        var transform: Transform
+    }
+
+    /// 先送りして置いた四角を控える。**置かなかった (区間の外・台帳の指紋) ときは控えない。**
+    func noteDeferredGlyph(
+        start: Int?, placedWith entry: GlyphAtlas.Entry, key: GlyphAtlas.Key, font: CTFont,
+        penX: Float, baseline: Float, color: LinearRGBA
+    ) {
+        guard let start, start + 6 <= vertices.count else { return }
+        deferredGlyphs.append(
+            DeferredGlyph(
+                start: start, key: key, font: font, pageSerial: atlas.pageSerial,
+                topLeft: vertices[start].position, uvMin: entry.uvMin, penX: penX, baseline: baseline,
+                color: color, transform: transform))
+    }
+
+    /// 先送りした字を払う ([#2446])。**絵が残る (`baking`) なら、焼いて、置いた四角を要る段の画素へ置き直す。**
+    /// 残らない (次のフレームが描き直す) なら、控えを捨てるだけで、焼くのは次のフレームに任せる。
+    ///
+    /// 置き直すのは**頂点の中身だけ**で、列も順番も変えない。置き直せない四角 — 頁が替わって置いた面と焼く面が
+    /// 違う・頂点が動いている・焼き場に場所が無い — は近い段のまま残し、拡大が原因だと初回だけ知らせる
+    /// (``warnSoftEnlargedTextOnce()``・頁が溢れて低い段で描くときと同じ約束)。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    func settleDeferredGlyphs(baking: Bool) {
+        guard !deferredGlyphs.isEmpty else { return }
+        let owed = deferredGlyphs
+        deferredGlyphs.removeAll(keepingCapacity: true)
+        guard baking else { return }
+        var left = 0
+        for glyph in owed {
+            guard glyph.pageSerial == atlas.pageSerial,
+                glyph.start + 6 <= vertices.count,
+                vertices[glyph.start].position == glyph.topLeft,
+                vertices[glyph.start].uv == glyph.uvMin,
+                case .found(let entry) = atlas.entry(for: glyph.key, font: glyph.font)
+            else {
+                left += 1
+                continue
+            }
+            atlas.noteBaked(glyph.key, frame: framesDrawn)
+            let color = entry.isColored ? Self.whiteScaled(byAlphaOf: glyph.color) : glyph.color
+            let (topLeft, topRight, bottomRight, bottomLeft) = Self.placedCorners(
+                glyph.transform, x: glyph.penX + entry.offset.x, y: glyph.baseline + entry.offset.y,
+                width: entry.size.x, height: entry.size.y)
+            var quad: [ShapeVertex] = []
+            quad.reserveCapacity(6)
+            Self.appendQuad(
+                into: &quad, topLeft, topRight, bottomRight, bottomLeft,
+                uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)
+            vertices.replaceSubrange(glyph.start..<glyph.start + 6, with: quad)
+        }
+        if left > 0 { warnSoftEnlargedTextOnce() }
     }
 
     /// 拡大した字が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で描かれたことを、初回だけ知らせる。
@@ -371,28 +460,40 @@ extension Canvas {
     /// 見えない ([#948](https://github.com/mokume-metal/mokume/issues/948))。
     ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
+    ///
+    /// - Returns: 積んだ 6 頂点の先頭の位置 (``vertices`` の添字)。
+    @discardableResult
     private func appendPixelAlignedQuad(
         x: Float, y: Float, width: Float, height: Float,
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
-    ) {
-        let left = x
-        let top = y
-        let right = left + width
-        let bottom = top + height
-
-        let topLeft = transform.placed(x: left, y: top)
-        let topRight = transform.placed(x: right, y: top)
-        let bottomRight = transform.placed(x: right, y: bottom)
-        let bottomLeft = transform.placed(x: left, y: bottom)
+    ) -> Int {
+        let (topLeft, topRight, bottomRight, bottomLeft) = Self.placedCorners(
+            transform, x: x, y: y, width: width, height: height)
 
         // **6 頂点を 1 度の書き込みで積む** ([#1783])。1 頂点ずつ面の並びへ足すと、足す
         // たびに排他の確かめ (`swift_beginAccess`) が走り、字 1 つで 12 回になっていた
         //
         // [#1783]: https://github.com/mokume-metal/mokume/issues/1783
         beginFlat()
+        let start = vertices.count
         Self.appendQuad(
             into: &vertices, topLeft, topRight, bottomRight, bottomLeft,
             uvMin: uvMin, uvMax: uvMax, color: color)
+        return start
+    }
+
+    /// 四角の 4 隅を、変換で描く先へ移す。**置くときと、先送りした四角を置き直すとき
+    /// (``settleDeferredGlyphs(baking:)``) で同じ式を通す。**
+    private static func placedCorners(
+        _ transform: Transform, x: Float, y: Float, width: Float, height: Float
+    ) -> (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>, SIMD2<Float>) {
+        let left = x
+        let top = y
+        let right = left + width
+        let bottom = top + height
+        return (
+            transform.placed(x: left, y: top), transform.placed(x: right, y: top),
+            transform.placed(x: right, y: bottom), transform.placed(x: left, y: bottom))
     }
 
     /// 四角を 2 つの三角形として積む。並びは左上・右上・右下 / 左上・右下・左下。
@@ -414,14 +515,20 @@ extension Canvas {
     }
 
     /// 字形 1 つを四角として置く。
+    ///
+    /// - Returns: 積んだ 6 頂点の先頭の位置 (``vertices`` の添字)。置かなかったときは `nil`。
+    @discardableResult
     func appendGlyphQuad(
         _ entry: GlyphAtlas.Entry, penX: Float, baseline: Float, color: LinearRGBA
-    ) {
+    ) -> Int? {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。断るのは置く所だけで、`text()` は
         // 送り幅と流し込みの続きを今までどおり返す
-        guard canPlace else { return warnOutsideFrame(.placing) }
+        guard canPlace else {
+            warnOutsideFrame(.placing)
+            return nil
+        }
         // 台帳の指紋を採るときは置かない (``placesGlyphs``)。送り幅は呼ぶ側が進める
-        guard placesGlyphs else { return }
+        guard placesGlyphs else { return nil }
         glyphQuadsPlaced += 1
         useGlyphTexture()
         // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
@@ -432,7 +539,7 @@ extension Canvas {
         // 「どちらの式を使うか」を描画側へ伝える道が要らないのはこのためで、
         // 判断は積む側でここだけに閉じている (#271)
         let color = entry.isColored ? Self.whiteScaled(byAlphaOf: color) : color
-        appendPixelAlignedQuad(
+        return appendPixelAlignedQuad(
             x: penX + entry.offset.x, y: baseline + entry.offset.y,
             width: entry.size.x, height: entry.size.y,
             uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)

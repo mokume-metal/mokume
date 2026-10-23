@@ -225,10 +225,13 @@ import simd
     /// 拡大した字形を置いてよい、面の上からの高さ (画素)。
     private static func scaledRowLimit(side: Int) -> Int { Int(scaledPageShare * Double(side)) }
 
-    /// 次のフレームがあると分かっているか。**立てた面だけが**、上限を越えた字の焼きを次のフレームへ送る。
-    /// 下ろしたままなら (既定) 上限を外して、字を要る段で焼き切る — 1 枚だけの書き出しや止めたフレームは、
-    /// 次のフレームが来ないので、送るとぼけたまま残る。立てるのは走らせる側 (`SketchRuntime`) で、書き出しの
-    /// 最後の 1 枚と、止めたスケッチと、時刻を指した 1 枚では下ろす。
+    /// **このフレームの絵が、次のフレームに描き直されて残らないと分かっているか。** 立てた面だけが、上限を
+    /// 越えた字の焼きを次のフレームへ送る (近い段の画素で描いた四角を、そのフレームの間だけ残す)。下ろした
+    /// ままなら (既定) 上限を外して、字を要る段で焼き切る — 描き場所の絵・書き出す絵・撮る絵・止めた絵・形に
+    /// 記録した字は残るので、送るとぼけたまま残る。
+    ///
+    /// 立てるのは走らせる側 (`SketchRuntime`) で、窓に出しながら回していて、次のフレームがそのフレームを描き
+    /// 直すと分かっているときだけである。形の組み立ての中は、呼ぶ側 (``Canvas``) が送らない。
     var mayDeferScaledBakes = false
 
     private var budgetFrame = -1
@@ -263,13 +266,13 @@ import simd
     ///
     /// 焼けなかった字形は控えて、次のフレームで先に焼く。`mayDeferScaledBakes` が下りていれば常に焼く
     /// (数えはする)。
-    func admitScaledBake(_ key: Key, bytes: Int, frame: Int) -> Bool {
+    func admitScaledBake(_ key: Key, bytes: Int, frame: Int, deferrable: Bool = true) -> Bool {
         openBudget(frame: frame)
         var identity = key
         identity.step = 0
         let age = owedLastFrame[identity]?.age ?? 0
         var allowed = true
-        if mayDeferScaledBakes {
+        if mayDeferScaledBakes && deferrable {
             var reservedCount = 0
             var reservedBytes = 0
             for (other, owed) in owedLastFrame where other != identity && owed.age > age {
@@ -290,6 +293,17 @@ import simd
         scaledBytesThisFrame += bytes
         owedLastFrame.removeValue(forKey: identity)
         return true
+    }
+
+    /// 先送りした字形が、別の道で要る段に焼けた (焼いてあった・低い段で決まった・フレームの終わりに払った)。
+    /// **先送りの履歴から外す** — 残すと、次のフレームで若い字の枠をその分だけ押さえる。
+    func noteBaked(_ key: Key, frame: Int) {
+        guard !owedLastFrame.isEmpty || !owedThisFrame.isEmpty else { return }
+        openBudget(frame: frame)
+        var identity = key
+        identity.step = 0
+        owedLastFrame.removeValue(forKey: identity)
+        owedThisFrame.removeValue(forKey: identity)
     }
 
     /// 字形の外接矩形を倍率 `ratio` で拡げ、余白を足して整数へ広げた升目の縁。

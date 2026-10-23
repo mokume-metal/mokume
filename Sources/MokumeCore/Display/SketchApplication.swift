@@ -607,7 +607,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // **最初のフレームより前に撮り始める。** 撮る係は頼まれたフレームの絵から録るので
             // (#1456)、ここで頼めば 1 枚目から入る。作品が `beginRecord` を呼ぶ必要は無い
             runtime.beginRecord(request.destination, rendering: request.frameCount)
-            runtime.framesToRender = request.frameCount
             screenLink.attach(to: NSScreen.main)
             return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
