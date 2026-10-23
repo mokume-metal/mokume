@@ -332,7 +332,7 @@ extension ShapeExit {
             "pointerLockRequested": "カーソルを捕まえる要求 (requestPointerLock)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#1144)",
             "cursorHidingRequested": "矢印のカーソルを隠す要求 (noCursor)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#2439)",
             "timing": control, "now": control, "tempo": control, "budget": control,
-            "frameWorkBegan": control, "firstAdvanceAt": control,
+            "frameWorkBegan": control, "firstAdvanceAt": control, "firstAdvanceRealAt": control, "presenceClock": control,
             "lastFrameAt": control, "drawnThrough": control, "isAdvancingFrame": control,
             "hasSetUp": control, "isPaused": control, "isLooping": control,
             "redrawRequested": control, "observingAtTime": control, "showsObservedTime": control,
