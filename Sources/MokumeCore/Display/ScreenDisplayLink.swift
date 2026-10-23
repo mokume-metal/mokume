@@ -31,6 +31,17 @@ extension ScreenDisplayLinkOwner {
     }
 }
 
+/// 表示のリフレッシュが運ぶ、その回で描く枚が表示される予定の時刻。`CADisplayLink` が満たす。
+///
+/// 検査が `CADisplayLink` を作らずに、運ぶ行 (``ScreenDisplayLink/refreshed(by:)``) を確かめるための継ぎ目である。
+@MainActor
+protocol DisplayRefresh {
+    /// 予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    var targetTimestamp: CFTimeInterval { get }
+}
+
+extension CADisplayLink: DisplayRefresh {}
+
 /// フレームの駆動源を**画面**のリフレッシュに紐づけ、窓が移った先へ張り替える。
 ///
 /// ## なぜ面ではなく画面から取るのか
@@ -195,11 +206,18 @@ final class ScreenDisplayLink: NSObject {
     }
 
     @objc private func step(_ link: CADisplayLink) {
-        // **表示の予定の時刻を運ぶ** ([#2390])。コールバックが走った時刻は、main が他の仕事で遅れたぶん
-        // 揺れるが、`targetTimestamp` は表示の刻みの間隔のまま並ぶ
-        //
-        // [#2390]: https://github.com/mokume-metal/mokume/issues/2390
-        advanceFromDisplayLink(displayTime: link.targetTimestamp)
+        refreshed(by: link)
+    }
+
+    /// 表示のリフレッシュが来た (`CADisplayLink` のコールバックの本体)。
+    ///
+    /// **表示の予定の時刻を運ぶ** ([#2390])。コールバックが走った時刻は、main が他の仕事で遅れたぶん
+    /// 揺れるが、`targetTimestamp` は表示の刻みの間隔のまま並ぶ。`CADisplayLink` は検査から作れないので、
+    /// 運ぶ行は ``DisplayRefresh`` を受けるここに置き、検査は作り物のリフレッシュを渡す。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func refreshed(by refresh: some DisplayRefresh) {
+        advanceFromDisplayLink(displayTime: refresh.targetTimestamp)
     }
 
     // MARK: - 予備の駆動源

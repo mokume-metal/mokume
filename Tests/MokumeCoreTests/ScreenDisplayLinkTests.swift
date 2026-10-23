@@ -66,6 +66,23 @@ struct ScreenDisplayLinkTests {
         #expect(counter.displayTimes.last == .some(nil))
     }
 
+    /// 表示のリフレッシュ (`CADisplayLink`) の作り物。予定の時刻だけを持つ。
+    private struct FakeRefresh: DisplayRefresh {
+        let targetTimestamp: Double
+    }
+
+    /// **表示のリフレッシュのコールバックは、そのリフレッシュの `targetTimestamp` を持ち主へ運ぶ** ([#2390])。
+    /// コールバックが走った時刻 (`at`) や、前の回の時刻を運ばない。運ぶ行を現在時刻に戻すと赤くなる。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示のリフレッシュのコールバックは、そのリフレッシュの予定の時刻を持ち主へ運ぶ")
+    func theRefreshCarriesItsTargetTimestamp() {
+        let (link, counter) = makeLink()
+        link.refreshed(by: FakeRefresh(targetTimestamp: 200.017))
+        link.refreshed(by: FakeRefresh(targetTimestamp: 200.034))
+        #expect(counter.displayTimes == [200.017, 200.034])
+    }
+
     /// **二重に回ると、絵を出す枚数と入れ替わりの判定が二重になる。** 予備は表示の
     /// リフレッシュと同じ間隔で機会を得るので、そこで進めないことがこの機構の前提である。
     @Test("表示のリフレッシュが来ている間、予備は 1 回も進めない")
