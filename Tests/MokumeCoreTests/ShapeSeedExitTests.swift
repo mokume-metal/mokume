@@ -321,6 +321,38 @@ struct ShapeSeedExitTests {
         #expect(outside == before.value(0.3, 0, 0), "抜けた後の noise() が、組み立ての前の設定で引いていない")
     }
 
+    /// **今の範囲を名乗る** (#2090・ADR-0021 決定 4)。組み立ての出口で戻るのは、組み立てている面の置き場と、
+    /// スケッチの口が書く本体の面の置き場だけで、別の面の口でその面自身の置き場を書いても戻らない。直に作った面
+    /// `c` (とそこから作った描き場所) は揺らぎの置き場を本体と共有しないので、本体の組み立ての中の
+    /// `c.noiseSeed(42)` は抜けた後も 42 のまま。本体から作った描き場所 `pg` は置き場を本体と共有するので、
+    /// `pg.noiseSeed(43)` は本体の置き場を書き、戻る。振る舞いを変える検査ではなく、約束の線を固定する。
+    @Test(
+        "別の面の口で書いた揺らぎの設定は、本体の組み立てを抜けても戻らない。本体と、本体から作った描き場所は戻る (#2090)",
+        arguments: Phase.allCases)
+    func aNoiseSettingWrittenOnAnotherSurfaceIsNotRestored(phase: Phase) throws {
+        var inside: (pg: ValueNoise, body: ValueNoise)?
+        var after: (c: ValueNoise, cLayer: ValueNoise, pg: ValueNoise, body: ValueNoise)?
+        try run(phase) { probe in
+            guard let c = probe.direct, let cLayer = probe.directLayer, let pg = probe.layer else {
+                return
+            }
+            probe.noiseSeed(1)
+            c.noiseSeed(1)
+            _ = probe.build(.sketch) { _ in
+                c.noiseSeed(42)  // 直に作った面の置き場を書く
+                pg.noiseSeed(43)  // 本体から作った描き場所は、本体の置き場を書く
+                inside = (pg.noiseSettings, probe.canvas.noiseSettings)
+            }
+            after = (c.noiseSettings, cLayer.noiseSettings, pg.noiseSettings, probe.canvas.noiseSettings)
+        }
+        #expect(inside?.pg == noise(seed: 43), "pg の口が本体の置き場を書いていない (置き場の共有が前提)")
+        #expect(inside?.body == noise(seed: 43), "pg の口で書いた設定が本体の面に届いていない")
+        #expect(after?.c == noise(seed: 42), "直に作った面の設定が、抜けた後に戻った (約束の外のはず)")
+        #expect(after?.cLayer == noise(seed: 42), "直に作った面から作った描き場所は、置き場を共有している")
+        #expect(after?.body == noise(seed: 1), "本体の設定が、組み立ての前に戻っていない")
+        #expect(after?.pg == noise(seed: 1), "本体から作った描き場所の設定が、本体と一緒に戻っていない")
+    }
+
     @Test(
         "入れ子の組み立てで、内側を抜けた直後の揺らぎは外側の組み立ての設定である (#2041)",
         arguments: Nesting.all, Phase.allCases)

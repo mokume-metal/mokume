@@ -57,6 +57,26 @@ struct CameraOutsideRunTests {
             func draw() { background(0, 0, 0) }
         }
 
+        /// 走っている実行の中で起こした `Task` から止める ([#2840])。`stop()` を呼ぶ側が実行を持たなくても、
+        /// 足した実行が走っている間は効く。警告は出ない。
+        ///
+        /// [#2840]: https://github.com/mokume-metal/mokume/issues/2840
+        @Test("走っている間は、Task から Capture の stop() を呼ぶと止まり、警告は出ない (#2840)")
+        func stopFromATaskWhileRunning() async throws {
+            let sketch = Filming()
+            let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+            try runtime.advance()
+            let capture = try #require(sketch.capture)
+            #expect(capture.state != .stopped)
+            let log = OutsideRun()
+            await Task {
+                OutsideRun.$current.withValue(log) { capture.stop() }
+            }.value
+            #expect(capture.state == .stopped, "Task から止まる")
+            #expect(log.messages.isEmpty, "\(log.messages)")
+            runtime.closePlugins()
+        }
+
         /// `Capture` は面の絵を持つので、足せる所で作るには GPU を要する。外で呼ぶ側は何も使わない。
         ///
         /// 後片付け (`closePlugins()`) の後に呼ぶ。外の中でも、終わりの処理が既に閉じた後が文面の分かれ目になる。

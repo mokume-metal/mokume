@@ -43,7 +43,7 @@
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [#366]: https://github.com/mokume-metal/mokume/issues/366
 /// [#1141]: https://github.com/mokume-metal/mokume/issues/1141
-struct ValueNoise: Equatable, Sendable {
+nonisolated struct ValueNoise: Equatable, Sendable {
     /// 受け取れる重ねる枚数。上を切るのは、枚数だけで走らせ続けられないため。
     static let octaveRange = 1...16
     /// 扱える座標の端。**外はここへ張り付く。**
@@ -288,6 +288,6 @@ struct ValueNoise: Equatable, Sendable {
 
 /// 線形に混ぜる。**`Common.metal` の `mix` と同じ式**にするために自前で書く
 /// (`simd` の `mix` は書き方が違うので、並べて読めなくなる)。
-private func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
+private nonisolated func mix(_ a: Float, _ b: Float, _ t: Float) -> Float {
     a + (b - a) * t
 }

@@ -125,6 +125,30 @@ struct SharedFrameManifestTests {
         }
     }
 
+    /// **書き手の子の番号は任意の欄である** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 書かない古いライブラリの子の目録も読み、読めない値は目録ごと捨てずに「印が無い」として読む。
+    @Test("書き手の子の番号を読み、無い・読めない値は印が無いものとして読む")
+    func readsTheWriterPid() throws {
+        try withManifest(#"{"schemaVersion":1,"ids":[7],"width":16,"height":8,"pid":4242}"#) {
+            #expect(SharedFrameSurface.readManifest(at: $0)?.pid == 4242)
+        }
+        try withManifest(#"{"schemaVersion":1,"ids":[7],"width":16,"height":8}"#) {
+            let manifest = try #require(SharedFrameSurface.readManifest(at: $0))
+            #expect(manifest.pid == nil, "欄の無い目録は印が無い")
+            #expect(manifest.ids == [7] && manifest.width == 16 && manifest.height == 8)
+        }
+        for bad in ["0", "-3", "1.5", "\"x\"", "null", "99999999999"] {
+            try withManifest(
+                #"{"schemaVersion":1,"ids":[7],"width":16,"height":8,"pid":"# + bad + "}"
+            ) {
+                let manifest = try #require(
+                    SharedFrameSurface.readManifest(at: $0), "番号 \(bad) で目録ごと捨てた")
+                #expect(manifest.pid == nil, "番号 \(bad)")
+                #expect(manifest.ids == [7])
+            }
+        }
+    }
+
     /// **知らない版は読まない。** 推測で解くと、食い違いが絵の壊れ方として出る。
     @Test("版が違えば読まない")
     func refusesAnUnknownVersion() throws {

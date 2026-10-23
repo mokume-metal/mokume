@@ -375,6 +375,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
+    /// 乱数の列が**置き換えられた回数**。``randomSource`` で取り出した写しが、この列の続きか (印が同じ)、
+    /// 自分で作ったもの・古い写し (印が違う) かを見分ける。値には効かない。
+    var randomLine: UInt64 = 0
     /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
     /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
     /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
@@ -403,6 +406,13 @@ public final class SketchRuntime {
     private lazy var presence = SketchPresence(source: self)
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
     private var firstAdvanceAt: Double?
+    /// 名乗りが読む実時間の出どころ。**既定は実時間の単調な時計で、internal の初期化子だけが差し替える**
+    /// (検査が実時間も偽れるように・[#3119])。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    private let presenceClock: () -> Double
+    /// 最初に ``advance()`` が呼ばれたときの ``presenceClock`` の読み。``firstAdvanceAt`` と対で立つ。
+    private var firstAdvanceRealAt: Double?
     /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
     private var isAdvancingFrame = false
     /// 描き終えた (描けなかったものも含む) 最後のフレームの番号。**録りの幅の終わりになる。**
@@ -484,12 +494,22 @@ public final class SketchRuntime {
     ///   - gpu: 描画の土台。
     ///   - clock: 時刻の出どころ。省略すると設定のフレームレートから導く
     ///     **再現する時計**になる — 画面に出す経路が実時間を選ぶ。
+    ///   - persistsParams: 合わせたつまみの値の保存 (`.mokume/state/params.json`) を持つか。
+    ///     既定は持つ — 起動で保存から値を戻し、変わった値を書く (窓の経路と同じ・
+    ///     [ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 6)。
+    ///     **`false` なら読みも書きもしない**。撮り直せば同じ絵になることを名乗る書き出し
+    ///     (同じ番号のフレームを描く参照スケッチ・説明文の例の撮影) は、撮った人の手元にだけ在る
+    ///     保存で絵が変わらないよう、これで組む ([#1832](https://github.com/mokume-metal/mokume/issues/1832))。
+    ///     作品の `@Param` は宣言した既定値で動く。
     public convenience init(
         sketch: any Sketch,
         gpu: RenderDevice,
-        clock: Clock? = nil
+        clock: Clock? = nil,
+        persistsParams: Bool = true
     ) throws(RenderFailure) {
-        try self.init(sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() })
+        try self.init(
+            sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
+            persistsParams: persistsParams)
     }
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
@@ -500,6 +520,7 @@ public final class SketchRuntime {
     ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
@@ -513,7 +534,9 @@ public final class SketchRuntime {
         now: @escaping () -> Double,
         displays: () -> [Display] = { Display.connected },
         onScreen: Bool = false,
-        opensFacets: Bool = true
+        persistsParams: Bool = true,
+        opensFacets: Bool = true,
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -537,6 +560,7 @@ public final class SketchRuntime {
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
+        self.presenceClock = presenceClock
         // **観測・入力・つまみの区画は、書き出しの子には開かない** (`opensFacets`・#1619)。書き出しは
         // 外から届くものを水準 2 (同じ引数から同じ動き) を壊すものとして断る (ADR-0032「書き出す起こし方」)。
         // 区画を開くと、見張りの世代交代の瞬間に要求を取り合い (入力・つまみの値が絵に混ざる)、
@@ -550,7 +574,8 @@ public final class SketchRuntime {
         // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
-        let store = ParamStore.makeIfNeeded(for: registry)
+        // **保存を持たない組み方では、読みも書きもしない** (`persistsParams`・#1832)
+        let store = persistsParams ? ParamStore.makeIfNeeded(for: registry) : nil
         self.paramStore = store
         self.params = opensFacets ? ParamSurface.makeIfEnabled(for: registry, store: store) : nil
         canvas.isRuntimeSurface = true
@@ -566,7 +591,8 @@ public final class SketchRuntime {
         inbox: InputInbox? = nil,
         params: ParamSurface? = nil,
         paramStore: ParamStore? = nil,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -586,6 +612,7 @@ public final class SketchRuntime {
         self.isOnScreen = clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
+        self.presenceClock = presenceClock
         self.observer = observer
         self.inbox = inbox
         self.relayed = nil
@@ -717,6 +744,7 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
@@ -1401,6 +1429,7 @@ public final class SketchRuntime {
         }
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
+        SeamHomes.record(inlet, in: self)
         return true
     }
 
@@ -1413,6 +1442,7 @@ public final class SketchRuntime {
         }
         guard Self.open(outlet, opening: outlet.open) else { return false }
         outlets.append((outlet, SeamHealth()))
+        SeamHomes.record(outlet, in: self)
         outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
         return true
     }
@@ -1420,6 +1450,7 @@ public final class SketchRuntime {
     private func detachNow(_ inlet: any Inlet) {
         guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
         inlets.remove(at: index)
+        SeamHomes.forget(inlet)
         inlet.close()
     }
 
@@ -1434,6 +1465,7 @@ public final class SketchRuntime {
         // 渡している最中に出口が自分で外れていれば、閉じるのは 1 度だけ
         guard let index = outlets.firstIndex(where: { $0.seam === outlet }) else { return }
         outlets.remove(at: index)
+        SeamHomes.forget(outlet)
         outletJoinedAt[ObjectIdentifier(outlet)] = nil
         outlet.close()
     }
@@ -1492,19 +1524,35 @@ public final class SketchRuntime {
     ///
     /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
     /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    ///
+    /// **経過は「作者の時計 (``now``) での経過」と「実時間での経過」の小さいほうで数える** ([#3119])。
+    /// ``now`` は検査が差し替えて進められる (`.wallClock` の週をまたぐ検査など)。それだけで名乗ると、
+    /// プロセス全体の状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスで窓を
+    /// 開閉する検査の run loop が止まって `exit(0)` で要約を残さず終わる ([#1527])。逆に ``now`` を
+    /// 止めた検査 (`now: { 0 }`) は、実時間だけで数えると混んだ機械で 30 秒を越えて名乗ってしまう
+    /// (直す前は経過 0 で名乗らなかった)。**両方が猶予を越えたときだけ名乗る**。本番の ``now`` は
+    /// `CACurrentMediaTime()` で、実時間と同じ値を返すので、振る舞いは変わらない。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    /// [#1527]: https://github.com/mokume-metal/mokume/issues/1527
     private func updatePresence() {
-        let now = self.now()
-        guard let started = firstAdvanceAt else {
-            firstAdvanceAt = now
+        guard firstAdvanceAt != nil else {
+            firstAdvanceAt = now()
+            firstAdvanceRealAt = presenceClock()
             return
         }
-        presence.advanced(runningFor: now - started)
+        presence.advanced(runningFor: presenceElapsed)
     }
 
-    /// 走り続けている時間 (秒)。名乗りが読む。
+    /// 名乗っているか。検査が読む (名乗りの本体 ``presence`` は持たせたまま外へ出さない)。
+    var isPresenceAnnounced: Bool { presence.isAnnounced }
+
+    /// 走り続けている時間 (秒)。名乗りが読む。最初のフレームの前は 0。
+    ///
+    /// 作者の時計での経過と実時間での経過の**小さいほう** (``updatePresence()``)。戻った時計で負にしない。
     var presenceElapsed: Double {
-        guard let firstAdvanceAt else { return 0 }
-        return now() - firstAdvanceAt
+        guard let firstAdvanceAt, let firstAdvanceRealAt else { return 0 }
+        return max(0, min(now() - firstAdvanceAt, presenceClock() - firstAdvanceRealAt))
     }
 
     /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。

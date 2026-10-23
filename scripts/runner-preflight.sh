@@ -19,6 +19,14 @@
 #   console  /dev/console の持ち主 (表の GUI セッション) が job のユーザーと同じ — #2507 の根
 #   screens  job のユーザーから見える画面が 1 枚以上 (NSScreen.screens)
 #   metal    Metal の既定のデバイスが取れる (MTLCreateSystemDefaultDevice)
+#   gpu-slot GPU の待ちの期限切れの記録 (wait-expired.json) が無い (#2235)
+#
+# **gpu-slot の記録は、専用機では job をまたいで残る。** 検査・計測を包む gpu-slot.py の置き場
+# ($MOKUME_GPU_SLOT_DIR・既定は runner の ~/Library/Caches/mokume/gpu-slots) が runner のユーザーに
+# 固定されているので、GPU の待ちが期限を越えた回が書いた記録 (scripts/gpu-slot.py の「## 期限切れの
+# 記録」) は、手で消すまで次の job にも見える。残ったままだと、以後の検査は gpu-slot が起こさず 76 で
+# 落ち続ける。それは PR の赤ではなく機械の状態なので、検査の前にここで名乗って、既存の発信
+# (render-environment-report) で人に届ける。消すのは人 (GPU が答えることを確かめてから)。
 #
 # 当たったものは全部名乗る (1 つ目で止めない)。直す人が専用機の前に立つのは 1 回で済ませたい。
 # 画面と Metal は osascript (JXA) で読む。手元の実測で 0.1 秒で、swift のスクリプトのように
@@ -57,6 +65,12 @@ if [ -z "$metal" ]; then
   problems+=("metal: Metal の既定のデバイスが取れない")
 fi
 
+slot_dir=${MOKUME_GPU_SLOT_DIR:-$HOME/Library/Caches/mokume/gpu-slots}
+expiry_record="$slot_dir/wait-expired.json"
+if [ -e "$expiry_record" ] || [ -L "$expiry_record" ]; then
+  problems+=("gpu-slot: GPU の待ちが期限を越えた記録が残っている (${expiry_record})。人が GPU の答えを確かめて消すまで、検査は gpu-slot が起こさず 76 で止まる")
+fi
+
 if [ ${#problems[@]} -eq 0 ]; then
   echo "runner-preflight: 検査を走らせられる (表のセッション ${console_user}・画面 ${screens} 枚・${metal})"
   exit 0
@@ -77,7 +91,15 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     for p in "${problems[@]}"; do
       printf -- '- %s\n' "$p"
     done
-    printf '\nPR の中身による赤ではない。直し方: 専用機の前で、表の GUI セッションを runner のユーザーに戻す (#2507)。\n'
+    printf '\nPR の中身による赤ではない。\n'
+    case "$reason" in
+      *"console:"* | *"screens:"* | *"metal:"*)
+        printf '直し方 (console・screens・metal): 専用機の前で、表の GUI セッションを runner のユーザーに戻す (#2507)。\n' ;;
+    esac
+    case "$reason" in
+      *"gpu-slot:"*)
+        printf '直し方 (gpu-slot): 専用機の前で、画面が固まっていない・前の検査プロセスが残っていない (bash scripts/orphan-processes.sh)・GPU が答える、を確かめてから、記録のファイル (%s) を人が削除する。確かめる前に消すと、答えない GPU に新しい発行口を作って機械ごと止まりうる。中身には、期限を越えた待ちと起動元がある (scripts/gpu-slot.py の「## 期限切れの記録」・#2235)。\n' "$expiry_record" ;;
+    esac
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 

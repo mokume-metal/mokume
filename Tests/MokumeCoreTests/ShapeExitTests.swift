@@ -193,7 +193,7 @@ enum ShapeExit {
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "earlySubmissionsAttempted": count, "earlySubmissionFailedFrame": count,
-            "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+            "computeBarriersEncoded": count, "uploadBarriersEncoded": count, "uploadWaitsEncoded": count,
             "lastComputeBarrierQueueStages": "最後に積んだ投入の最後の口が待たせる段 (#1687)。積むたびに上書きし、検査が読む。組み立ての中で書く口が無い",
             "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
@@ -332,7 +332,7 @@ extension ShapeExit {
             "pointerLockRequested": "カーソルを捕まえる要求 (requestPointerLock)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#1144)",
             "cursorHidingRequested": "矢印のカーソルを隠す要求 (noCursor)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#2439)",
             "timing": control, "now": control, "tempo": control, "budget": control,
-            "frameWorkBegan": control, "firstAdvanceAt": control,
+            "frameWorkBegan": control, "firstAdvanceAt": control, "firstAdvanceRealAt": control, "presenceClock": control,
             "lastFrameAt": control, "drawnThrough": control, "isAdvancingFrame": control,
             "hasSetUp": control, "isPaused": control, "isLooping": control,
             "redrawRequested": control, "observingAtTime": control, "showsObservedTime": control,
@@ -352,6 +352,7 @@ extension ShapeExit {
             "warnings": "ランタイムが 1 度だけ言った注意の控え (走っている最中の枚数の代入・#1323)。形に焼き付く値を生まない",
             "blockingLoads": "draw() の中の同期の読み込みを 1 度だけ言う控え (#2601)。形に焼き付く値を生まない",
             "seedScopes":"組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",
+            "randomLine": "乱数の列の出どころの印 (randomSource の写しが列の続きかを見分ける・#2418)。出口で戻さず、出口の仕組み (shapeAssemblyEnded) が進める — 戻した列は抜ける前の写しの続きではないため。形に焼き付く値を生まない",
         ]
         let restored: (String, RuntimeExit) = (
             "randomness",

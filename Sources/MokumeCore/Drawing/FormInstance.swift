@@ -68,6 +68,135 @@ struct FormInstance {
     /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
     static let thinFillsFlag: UInt32 = 4
 
+    /// 縁が画素の軸に斜めになりうる形を含む列の旗 ([#2991])。**列の旗** (``thinFillsFlag`` と同じく、
+    /// 変わっても列を切らない)。
+    ///
+    /// 立っていれば、断片に「縁の被覆を半平面と画素の正方形の重なりの面積で数える」枝を残した組
+    /// (`kFormHasObliqueEdge`) で描く。立っていない列は、その枝を原稿から外す — 軸に沿った `rect`・線だけの
+    /// 列 (面を覆う塗りなど) の費用を、枝が在るだけで増やさないため。**迷ったら「含む」と答える**
+    /// (``mayHaveObliqueEdge(unitsPerDrawnPixel:)``)。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    static let obliqueEdgesFlag: UInt32 = 8
+
+    /// 基本図形の縁の分類 ([#2991])。**境目 (細い枝との境の測り方) と被覆 (縁 1 本を線形の渡しか面積で数えるか)
+    /// の両方が、この 1 つの表を読む。** 正本は `Shaders/Kinds.metal` の `mokume_formEdgeClass` ほか (同じ表)。
+    /// `KindLayoutTests` が GPU 自身にその関数を評価させ、CPU のこの表と突き合わせる。
+    ///
+    /// | 分類 | 形 | 境目 (塗り・線の太さ) | 被覆 (軸に沿う / 回した) |
+    /// | --- | --- | --- | --- |
+    /// | `straight` | 角を丸めない `rect`・四角い端の線・四角い点 | 直線 (法線向きの幅) | 線形 / 面積 |
+    /// | `curved` | 楕円・扇 | 曲線 (行ノルム) | 面積 / 面積 |
+    /// | `rounded` | 角の半径 > 0 の `rect` | 曲線 (円と同じ) | 角だけ面積 / 面積 |
+    /// | `joined` | 折れ目が round・bevel の輪郭の `rect` | 直線 | 折れ目の領域だけ面積 / 面積 |
+    /// | `roundLine` | 丸い端の線 | 点から線へつなぐ | 線形 / 辺は面積・端は線形 |
+    /// | `point` | 丸い端で長さ 0 (`point()`) | 曲線 | 線形 / 線形 (**回転によらず常に**) |
+    ///
+    /// 帯の穴の境目は、楕円・扇の穴と、内縁に丸い角が残る `rect` (角の半径が太さの半分より大きい) の穴だけ
+    /// 曲線 (``holeReachIsCurved``)。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    enum EdgeClass: UInt32 {
+        case straight = 0
+        case curved = 1
+        case rounded = 2
+        case joined = 3
+        case roundLine = 4
+        case point = 5
+    }
+
+    /// 縁の被覆の数え方。番号の正本は `Shaders/Kinds.metal` の `kCoverage*`。
+    enum CoverageMode: UInt32 {
+        /// 縁 1 本ごとに、半平面と画素の正方形の重なりの面積。
+        case area = 0
+        /// 従来の線形の渡し (縁の法線に幅 1)。
+        case linear = 1
+        /// 辺は線形の渡しで、曲がった部分 (角丸の角・丸い折れ目・削ぎ) の領域だけ面積。軸に沿う `rect` だけ。
+        case linearExceptCorners = 2
+        /// 辺は面積で、丸い端の領域だけ線形の渡し。回した丸い端の線だけ。
+        case linearExceptCaps = 3
+    }
+
+    /// この形の縁の分類。`Kinds.metal` の `mokume_formEdgeClass` と同じ式。
+    var edgeClass: EdgeClass {
+        let kind = meta.x
+        if kind == Kind.ellipse.rawValue || kind == Kind.arc.rawValue { return .curved }
+        if kind == Kind.line.rawValue {
+            if meta.y != Self.code(of: StrokeCap.round) { return .straight }
+            return size.x > 0 ? .roundLine : .point
+        }
+        if size.w > 0 { return .rounded }
+        let join = meta.z
+        if meta.w & Self.strokesFlag != 0,
+            join == Self.code(of: StrokeJoin.round) || join == Self.code(of: StrokeJoin.bevel)
+        {
+            return .joined
+        }
+        return .straight
+    }
+
+    /// 細い枝の境目を測る幅の、行ノルムの割合 (0: 画素の法線向きの幅・1: 行ノルム)。塗りと線の太さの境目が読む。
+    /// `Kinds.metal` の `mokume_formReachCurved` と同じ式。丸い端の線は、半分の長さが太さの半分の 1/4 までは
+    /// 丸い点から直線の線へつなぐ (点と長さ 1e-3 の線の間で境目が跳ばない。辺が画素ほど長い線は和で測る)。
+    var reachCurved: Float {
+        switch edgeClass {
+        case .curved, .rounded, .point: return 1
+        case .roundLine: return 1 - min(max(size.x / max(0.25 * size.z, 1e-30), 0), 1)
+        case .straight, .joined: return 0
+        }
+    }
+
+    /// 輪郭の帯の穴の境目を、行ノルムで測るか。`Kinds.metal` の `mokume_formHoleCurved` と同じ式。
+    var holeReachIsCurved: Bool {
+        let edgeClass = edgeClass
+        return edgeClass == .curved || (edgeClass == .rounded && size.w > size.z)
+    }
+
+    /// 縁の被覆の数え方。`aligned` は、形の軸が描く画素の軸に沿うか。`Kinds.metal` の
+    /// `mokume_formCoverageMode` と同じ式。**点は回転によらず常に線形** (`point()` の例外)。
+    func coverageMode(aligned: Bool) -> CoverageMode {
+        let edgeClass = edgeClass
+        if edgeClass == .point { return .linear }
+        if aligned {
+            switch edgeClass {
+            case .curved: return .area
+            case .rounded, .joined: return .linearExceptCorners
+            default: return .linear
+            }
+        }
+        return edgeClass == .roundLine ? .linearExceptCaps : .area
+    }
+
+    /// 形の軸が、描く画素の軸に沿っているか。断片の `mokume_rowsAlignToPixels` (逆行列の各行の小さいほうの
+    /// 成分が、大きいほうの 1e-5 倍以下) と同じ式を、境目の半分 (0.5e-5) で解く — CPU と GPU の丸めの違いで、
+    /// 断片が斜めと読む形を見落とさないため (CPU が「沿う」と答えれば GPU も沿うと読む)。見落としても、
+    /// 断片は従来の式に戻るだけで、1e-5 の傾きの縁は絵に見えない。逆行列の行は余因子 / 行列式で、行列式は
+    /// 行ごとに共通なので比べるときに要らない。
+    func isAxisAligned(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        let firstRow = SIMD2(abs(linear.w) * unitsPerDrawnPixel.x, abs(linear.z) * unitsPerDrawnPixel.y)
+        let secondRow = SIMD2(abs(linear.y) * unitsPerDrawnPixel.x, abs(linear.x) * unitsPerDrawnPixel.y)
+        let tolerance: Float = 0.5e-5
+        func aligned(_ row: SIMD2<Float>) -> Bool { min(row.x, row.y) <= tolerance * max(row.x, row.y) }
+        return aligned(firstRow) && aligned(secondRow)
+    }
+
+    /// この形が、**画素の軸に斜めの縁**を持ちうるか ([#2991])。断片の縁の被覆の枝
+    /// (`mokume_formCoverage` の面積) を残した組で描くかを決める。**縁の分類の表** (``EdgeClass``) の被覆の
+    /// 数え方が、線形の渡しだけでなければ「含む」。
+    ///
+    /// - 楕円・扇は、軸に沿っていても常に「含む」。軸に沿う `rect` も、曲がった部分 (角丸・丸い折れ目・削ぎ)
+    ///   があれば「含む」
+    /// - 直線の縁だけの形 (`rect`・線) は、形の軸が画素の軸に沿っていれば「含まない」
+    /// - **点は回転によらず「含まない」** (線形の渡しのまま)。軸に沿う丸い端の線も「含まない」。回した丸い端の線は
+    ///   辺が面積になるので「含む」
+    ///
+    /// 迷ったら「含む」と答える (``isAxisAligned(unitsPerDrawnPixel:)`` は GPU より狭く沿うと読む)。
+    ///
+    /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+    func mayHaveObliqueEdge(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
+        coverageMode(aligned: isAxisAligned(unitsPerDrawnPixel: unitsPerDrawnPixel)) != .linear
+    }
+
     /// 判定を保守側へ倒す幅 (相対)。
     ///
     /// 断片の境目 (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) と同じ式を CPU で解くが、
@@ -94,25 +223,67 @@ struct FormInstance {
         guard meta.w & Self.fillsFlag != 0,
             meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue
         else { return false }
-        return isThin(half: SIMD2(size.x, size.y), unitsPerDrawnPixel: unitsPerDrawnPixel)
+        return isThin(
+            half: SIMD2(size.x, size.y), unitsPerDrawnPixel: unitsPerDrawnPixel, curved: reachCurved)
     }
 
     /// 半幅 `half` (形自身の座標) の向きのどちらかが、描く画素で 1 画素より細いか。断片の境目
-    /// (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) を、``thinFillSlack`` だけ「細い」側へ広げて解く。
+    /// (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つの幅`) を、``thinFillSlack`` だけ「細い」側へ広げて解く。
+    ///
+    /// **幅は縁の形で分ける** (#2991・``EdgeClass``・断片の `mokume_reachPerPixel`): `curved` が 0 なら直線の縁の
+    /// 幅 (画素の正方形を形自身の軸へ射影した法線向きの幅・逆行列の行の絶対値の和・45° で行ノルムの √2 倍)、
+    /// 1 なら曲線の縁の幅 (向きによらない行ノルム)、その間は両者をつなぐ (丸い端の線)。
     private func isThin(
-        half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>, axes: ThinAxes = .both
+        half: SIMD2<Float>, unitsPerDrawnPixel: SIMD2<Float>, axes: ThinAxes = .both, curved: Float
     ) -> Bool {
-        // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
-        // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
-        // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
         let determinant = linear.x * linear.w - linear.y * linear.z
-        let rowX = SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel
-        let rowY = SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel
-        let span = 2 * half * (1 + 2.0 / 256)
-        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
-        let squared = determinant * determinant
-        let thinX = axes == .both && span.x * span.x * squared < simd_length_squared(rowX) * reach
-        return thinX || span.y * span.y * squared < simd_length_squared(rowY) * reach
+        let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
+        let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
+        let (reachX, reachY) = reachTimesDeterminant(unitsPerDrawnPixel)
+        return Self.isThinSpan(
+            2 * half * (1 + 2.0 / 256), axes: axes, curved: curved, determinant: determinant,
+            rowNormsSquared: SIMD2(rowX, rowY), sums: SIMD2(reachX, reachY))
+    }
+
+    /// ``isThin(half:unitsPerDrawnPixel:axes:curved:)`` の比べ。`span` は半幅の 2 倍 (遊びを込めたもの)、
+    /// `rowNormsSquared` は逆行列の行に描く画素の大きさを掛けたものの長さの 2 乗 (行列式の 2 乗を掛けた形)、
+    /// `sums` は法線向きの幅に行列式の絶対値を掛けたもの。
+    private static func isThinSpan(
+        _ span: SIMD2<Float>, axes: ThinAxes, curved: Float, determinant: Float,
+        rowNormsSquared: SIMD2<Float>, sums: SIMD2<Float>
+    ) -> Bool {
+        let slack = 1 + thinFillSlack
+        if curved >= 1 {
+            // 断片が読む行ノルム (描く画素 1 つが形自身の座標でいくらか) は、逆行列の行に
+            // 描く画素の大きさを掛けたものの長さ。逆行列は余因子 / 行列式なので、両辺に
+            // 行列式の 2 乗を掛けて、割り算と平方根を使わずに 2 乗どうしで比べる
+            let squared = determinant * determinant
+            let thinX = axes == .both && span.x * span.x * squared < rowNormsSquared.x * slack * slack
+            return thinX || span.y * span.y * squared < rowNormsSquared.y * slack * slack
+        }
+        let absDeterminant = abs(determinant)
+        if curved <= 0 {
+            // 直線の縁が読むのは、描く画素 1 つの**法線向きの幅** (逆行列の各行の絶対値の和)。逆行列は余因子 /
+            // 行列式なので、両辺に行列式の絶対値を掛けて、割り算を使わずに比べる
+            let thinX = axes == .both && span.x * absDeterminant < sums.x * slack
+            return thinX || span.y * absDeterminant < sums.y * slack
+        }
+        // つなぐ幅 (丸い端の線): 法線向きの幅と行ノルムの割合 `curved` の混ぜ。和は行ノルム以上なので、
+        // 軸に沿う形 (断片は行ノルムを返す) では含む側に倒れる
+        let reachX = (1 - curved) * sums.x + curved * rowNormsSquared.x.squareRoot()
+        let reachY = (1 - curved) * sums.y + curved * rowNormsSquared.y.squareRoot()
+        let thinX = axes == .both && span.x * absDeterminant < reachX * slack
+        return thinX || span.y * absDeterminant < reachY * slack
+    }
+
+    /// 描く画素 1 つの法線向きの幅 (逆行列の行の絶対値の和・断片の `mokume_reachPerPixel` の直線の縁の式) に、
+    /// 行列式の絶対値を掛けたもの。形自身の x の向きと y の向き。**行の軸が画素の軸に沿うときは、
+    /// 断片は行ノルムで測り、それは和と一致する (和は行ノルム以上) ので、ここは常に含む側に倒れる。**
+    private func reachTimesDeterminant(_ unitsPerDrawnPixel: SIMD2<Float>) -> (Float, Float) {
+        (
+            abs(linear.w) * unitsPerDrawnPixel.x + abs(linear.z) * unitsPerDrawnPixel.y,
+            abs(linear.y) * unitsPerDrawnPixel.x + abs(linear.x) * unitsPerDrawnPixel.y
+        )
     }
 
     /// ``isThin(half:unitsPerDrawnPixel:axes:)`` が見る向き。線の枝は太さの向き (y) だけを見る。
@@ -138,7 +309,8 @@ struct FormInstance {
         else { return false }
         let hole = holeHalfSize()
         guard hole.x > 0, hole.y > 0 else { return true }
-        return isThin(half: hole, unitsPerDrawnPixel: unitsPerDrawnPixel)
+        return isThin(
+            half: hole, unitsPerDrawnPixel: unitsPerDrawnPixel, curved: holeReachIsCurved ? 1 : 0)
     }
 
     /// 列の旗 (``thinFillsFlag``) を立てるか: 塗りが細い (``mayHaveThinFill(unitsPerDrawnPixel:)``) か、
@@ -147,7 +319,8 @@ struct FormInstance {
     /// 輪郭の楕円 (扇) が近似の距離場では位置がずれすぎるか (``mayNeedExactRing(unitsPerDrawnPixel:)``・
     /// #2742) も、同じ口で解く。答えは **3 つの論理和と同じ**。
     ///
-    /// **1 度の行列式と行ノルムで解く。** 図形を置くたびに走る費用は、release で判定だけが図形 1 つ
+    /// **1 度の行列式と、縁の形で分けた幅 (直線の縁は行の絶対値の和・曲線の縁は行ノルム・#2991) で解く。**
+    /// 図形を置くたびに走る費用は、release で判定だけが図形 1 つ
     /// あたり 5.8 ns から 13.4 ns、寸法違いの円 20 万個を置く本体が 1 つあたり 51.7 ns から 56.8 ns
     /// になった (帯の穴の判定を足す前と比べて・#2186)。3 つ目の判定 (#2742) は、release で図形 1 つ
     /// あたり、円が 4.7 ns から 5.6 ns、矩形が 3.3 ns から 4.0 ns、非円の楕円 (長さ 100〜200・厚み 0.6 倍・
@@ -163,7 +336,8 @@ struct FormInstance {
         // 太さの向き (形自身の y) だけを見る
         if meta.x == Kind.line.rawValue {
             guard meta.w & Self.strokesFlag != 0 else { return false }
-            return isThin(half: SIMD2(0, size.z), unitsPerDrawnPixel: unitsPerDrawnPixel, axes: .y)
+            return isThin(
+                half: SIMD2(0, size.z), unitsPerDrawnPixel: unitsPerDrawnPixel, axes: .y, curved: reachCurved)
         }
         let isArc = meta.x == Kind.arc.rawValue
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
@@ -181,13 +355,17 @@ struct FormInstance {
         let determinant = linear.x * linear.w - linear.y * linear.z
         let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
         let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
-        let reach = (1 + Self.thinFillSlack) * (1 + Self.thinFillSlack)
-        let squared = determinant * determinant
-        func thin(_ half: SIMD2<Float>) -> Bool {
-            let span = 2 * half * (1 + 2.0 / 256)
-            return span.x * span.x * squared < rowX * reach || span.y * span.y * squared < rowY * reach
+        // 細い枝の境目は、縁の形で分けた幅 (#2991・``EdgeClass``): 塗りは ``reachCurved``、穴は
+        // ``holeReachIsCurved`` で、行の絶対値の和と行ノルムのどちらで測るかを決める
+        let (reachX, reachY) = reachTimesDeterminant(unitsPerDrawnPixel)
+        let fillCurved = reachCurved
+        let holeCurved: Float = holeReachIsCurved ? 1 : 0
+        func thin(_ half: SIMD2<Float>, curved: Float) -> Bool {
+            Self.isThinSpan(
+                2 * half * (1 + 2.0 / 256), axes: .both, curved: curved, determinant: determinant,
+                rowNormsSquared: SIMD2(rowX, rowY), sums: SIMD2(reachX, reachY))
         }
-        if (fills && thin(half)) || (strokes && thin(hole)) { return true }
+        if (fills && thin(half, curved: fillCurved)) || (strokes && thin(hole, curved: holeCurved)) { return true }
         if isArc, mayNeedApexSampling() { return true }
         // 近似の距離場では輪郭の位置がずれすぎる楕円 (``mayNeedExactRing(unitsPerDrawnPixel:)``)
         return strokes && (meta.x == Kind.ellipse.rawValue || isArc) && size.x != size.y

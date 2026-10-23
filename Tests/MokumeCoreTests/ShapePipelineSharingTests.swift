@@ -66,7 +66,7 @@ struct ShapePipelineSharingTests {
         #expect(surfaces.count == 12)
         #expect(gpu.shaders.librariesBuilt == builtAfterFirst, "面を足してライブラリを組み直した")
         let reference = objects(of: first.pipeline)
-        #expect(reference.count == 30 + 3 + 3, "混ぜ方別 10 組 (30 本) + 影 3 本 + 奥行きの扱い 3 つ")
+        #expect(reference.count == 48 + 3 + 3, "混ぜ方別 16 組 (48 本・基本図形は旗の組 12 組) + 影 3 本 + 奥行きの扱い 3 つ")
         for surface in surfaces {
             #expect(surface.pipeline === first.pipeline)
             let own = objects(of: surface.pipeline)

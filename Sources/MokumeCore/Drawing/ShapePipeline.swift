@@ -186,13 +186,19 @@ final class ShapePipeline {
     /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
     /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
     /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)`` は輪郭の無い形に「含まない」と答える)。
-    static let formFlagCombinations: [UInt32] = [
-        FormInstance.fillsFlag, FormInstance.strokesFlag,
-        FormInstance.fillsFlag | FormInstance.strokesFlag,
-        FormInstance.fillsFlag | FormInstance.thinFillsFlag,
-        FormInstance.strokesFlag | FormInstance.thinFillsFlag,
-        FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
-    ]
+    ///
+    /// **縁が画素の軸に斜めになりうる形を含むか** (``FormInstance/obliqueEdgesFlag``・#2991) でも分かれ、
+    /// 上の 6 つのそれぞれに、斜めの縁の枝を残した組がある (12 組)。
+    static let formFlagCombinations: [UInt32] = {
+        let base: [UInt32] = [
+            FormInstance.fillsFlag, FormInstance.strokesFlag,
+            FormInstance.fillsFlag | FormInstance.strokesFlag,
+            FormInstance.fillsFlag | FormInstance.thinFillsFlag,
+            FormInstance.strokesFlag | FormInstance.thinFillsFlag,
+            FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
+        ]
+        return base + base.map { $0 | FormInstance.obliqueEdgesFlag }
+    }()
 
     /// その旗の組で描くパイプラインの 3 本組。
     func formStates(for flags: UInt32) -> BlendStates {
@@ -270,7 +276,8 @@ final class ShapePipeline {
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
         // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、それぞれに
-        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)
+        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)、さらにそれぞれに斜めの縁の枝を
+        // 残したもの (旗に 8 を足した組)
         var formStates: [UInt32: BlendStates] = [:]
         for flags in Self.formFlagCombinations {
             formStates[flags] = try Self.makeBlendStates(
@@ -431,6 +438,9 @@ final class ShapePipeline {
     static let formHasStrokeConstantIndex = 1
     /// 1 画素より細い塗りを含むかを渡す function constant の番号 (シェーダ側の `kFormHasThinFill`)。
     static let formHasThinFillConstantIndex = 2
+    /// 縁が画素の軸に斜めになりうる形を含むかを渡す function constant の番号 (シェーダ側の
+    /// `kFormHasObliqueEdge`・#2991)。
+    static let formHasObliqueEdgeConstantIndex = 3
     /// 光と周囲を受けうるかを渡す function constant の番号 (シェーダ側の `kShapeLitValue`)。
     /// 利用者の断片が宣言する番号と重ならないよう、大きく取ってある。
     static let shapeLitConstantIndex = 65000
@@ -537,6 +547,7 @@ final class ShapePipeline {
             values.append(.init(index: formHasFillConstantIndex, value: (formFlags & FormInstance.fillsFlag) != 0))
             values.append(.init(index: formHasStrokeConstantIndex, value: (formFlags & FormInstance.strokesFlag) != 0))
             values.append(.init(index: formHasThinFillConstantIndex, value: (formFlags & FormInstance.thinFillsFlag) != 0))
+            values.append(.init(index: formHasObliqueEdgeConstantIndex, value: (formFlags & FormInstance.obliqueEdgesFlag) != 0))
         }
         if let lit = constants.lit {
             values.append(.init(index: shapeLitConstantIndex, value: lit))

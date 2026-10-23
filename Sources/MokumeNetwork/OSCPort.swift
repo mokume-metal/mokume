@@ -114,6 +114,10 @@ public final class OSCPort: Inlet {
     let input: ExternalQueue<OSCMessage>
     let source: any MessageSource<OSCMessage>
     private let outbound: (any DatagramSending)?
+
+    /// 送り手が見たことの跡。送り手が跡を持たなければ (記録するだけの送り手・送り先の無い入り口) `nil`。
+    /// 検査が、送ったものが受け口で読まれなかった回の名乗りに載せる (#3001)。読むだけで、振る舞いを決めない。
+    var sendTrace: SendTrace? { (outbound as? SendTracing)?.sendTrace }
     private weak var owner: (any Sketch)?
     private let warn: (String) -> Void
     /// 知らせた送れない理由。同じものは 2 度言わない。
@@ -191,7 +195,7 @@ public final class OSCPort: Inlet {
     /// 止める。ポートを閉じ、以後 ``messages`` は空のままで、送っても何も出ない。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`OSCPort.stop()` のように型を付けた名前で 1 度だけ警告する。
+    /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`OSCPort.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
         owner?.detach(self, calledAs: "OSCPort.stop()")
     }

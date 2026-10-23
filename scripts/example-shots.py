@@ -1083,7 +1083,9 @@ do {
     let gpu = try RenderDevice()
 
     for entry in catalogue {
-        let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
+        // **つまみの保存を持たない** (#1832)。撮り直せば同じ絵になるよう、撮った人の手元にだけ在る
+        // `.mokume/state/params.json` を読まず、先に撮った例の値を後の例が戻さない
+        let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu, persistsParams: false)
         guard entry.frames > 0 else {
             // **最初のフレームを撮る。** 秒で待つと待つ間に進む枚数が実行ごとに変わり、
             // 撮り直すたびに別の絵になる

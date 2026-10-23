@@ -132,6 +132,11 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         self.assertIn("gh pr merge <番号> --auto --squash", body)
         self.assertIn("bash scripts/stall-watch.sh", body)
         self.assertIn("解消したらこの Issue を閉じる", body)
+        # gpu-slot の期限切れの記録 (#2235) は、人が確かめて消す。直し方があり、そのまま打てる削除の行は無い
+        self.assertIn("`gpu-slot`", body)
+        self.assertIn("人が確かめてから", body)
+        self.assertIn("wait-expired.json", body)
+        self.assertNotIn("rm ", body.replace("gh pr merge", ""))
         # 当番を走らせても予約は戻らない (#2614)。そう読める案内を残さない
         self.assertNotIn("gh workflow run stall-watch.yml", body)
 

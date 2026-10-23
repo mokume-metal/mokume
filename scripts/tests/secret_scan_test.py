@@ -145,14 +145,15 @@ class WiringTest(unittest.TestCase):
         text = (REPO / "scripts" / "plan-record.sh").read_text(encoding="utf-8")
         self.assertNotIn("AKIA[0-9A-Z]", text, "plan-record.sh にパターンの写しが残っている")
 
-    def test_the_posting_wrapper_is_not_wired(self):
-        """**投稿の口には配線しない** — 新しいゲートは実害の提示が要る (ADR-0008)。
-
-        配線したくなったら、実害を Issue 番号で示してからにする。この検査は「まだ
-        配線していない」ことの記録であって、配線を禁じるものではない。
+    def test_the_posting_wrappers_only_announce(self):
+        """#3075: 投稿の口は止めずに名乗るだけ (`secret_notice`)。止める (`secret_scan` を直に
+        読んで終了する) 配線は、実害を Issue 番号で示してからにする (ADR-0008)。
         """
-        text = (REPO / "scripts" / "comment.sh").read_text(encoding="utf-8")
-        self.assertNotIn("secret-scan.sh", text)
+        for name in ("comment.sh", "edit-body.sh"):
+            with self.subTest(name=name):
+                text = (REPO / "scripts" / name).read_text(encoding="utf-8")
+                self.assertIn("secret_notice ", text, f"{name} が名乗りを呼んでいない")
+                self.assertNotIn("secret_scan ", text, f"{name} が止める読み方をしている")
 
 
 if __name__ == "__main__":

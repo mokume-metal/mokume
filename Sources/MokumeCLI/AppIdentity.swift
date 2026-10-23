@@ -156,6 +156,10 @@ nonisolated struct AppIdentity: Equatable {
         return text.isEmpty ? nil : text
     }
 
+    /// `mokume bundle` が書いた `.app` の印 (`Info.plist` の鍵)。作り直すときに消してよいかの確かめに使う。
+    /// 内部の鍵で、README には出さない。
+    static let bundledMarkKey = "MokumeBundled"
+
     /// 包みが名乗るための一覧。
     ///
     /// **許可の文言は、書かれているものだけ入れる。** 文言を持たない作品の包みに
@@ -166,6 +170,9 @@ nonisolated struct AppIdentity: Equatable {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+    ///
+    /// **mokume だけが書く印 (``bundledMarkKey``) を入れる** (#2500)。作り直すとき、消してよいのが
+    /// 前の版の自分の出力だけであることを、識別子に依らずに確かめるために ``BundleCommand`` が読む。
     func infoPlist(executable: String, minimumSystemVersion: String) -> [String: Any] {
         var plist: [String: Any] = [
             "CFBundleExecutable": executable,
@@ -179,6 +186,7 @@ nonisolated struct AppIdentity: Equatable {
             "LSMinimumSystemVersion": minimumSystemVersion,
             // 画面の密度に合わせて描く。これが無いと、細かい画面で引き伸ばされた絵になる
             "NSHighResolutionCapable": true,
+            Self.bundledMarkKey: true,
         ]
         if let cameraUsage { plist["NSCameraUsageDescription"] = cameraUsage }
         if let microphoneUsage { plist["NSMicrophoneUsageDescription"] = microphoneUsage }

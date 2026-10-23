@@ -235,6 +235,11 @@ announce_destination() { # $1=issue|pr $2=番号
   printf '宛先 %s #%s%s — %s\n' "$1" "$2" "$mark" "$latest" >&2
 }
 
+# 本文に個人情報・秘密情報らしきものがあれば、止めずに名乗る (#3075)
+# shellcheck source=scripts/secret-scan.sh
+. "$(dirname "${BASH_SOURCE[0]}")/secret-scan.sh"
+secret_notice "$BODY"
+
 announce_destination "$KIND" "$NUMBER"
 
 # --- 投稿 -------------------------------------------------------------------

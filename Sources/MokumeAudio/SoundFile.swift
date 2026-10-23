@@ -53,6 +53,50 @@ import MokumeDiagnostics
 /// 止まっている間の値は無音 (``level`` が 0) になる。左右のあるファイルは左右のまま鳴らし、
 /// 解析はチャンネルを平均して行う。
 ///
+/// ## エフェクトに通す
+///
+/// 合成した音と同じエフェクトに通せる (``SoundEffect/process(_:)``)。
+///
+/// <!-- example: 文脈 var song: SoundFile?; var filter: LowPass? -->
+/// ```swift
+/// func setup() {
+///     song = try? loadSound("assets/song.wav")
+///     filter = createLowPass()
+///     if let song { filter?.process(song, 800) }
+///     song?.loop()
+/// }
+/// ```
+///
+/// - **通した後は、ラックで鳴る。** 通されるまでは、いままでどおり直に鳴る。ラックでは、読み込んだ標本を
+///   合成した音と同じ時計で読み出して節として混ぜる。通された音はエフェクトの出口を通ってだけ聞こえる
+/// - **左右は畳まれる。** ラックの節は中央に定位するので、左右のあるファイルも、エフェクトの出口では
+///   モノラルになる。エフェクトをやめても (``SoundEffect/stop()``)、通したファイルはラックで中央のまま鳴る
+/// - **ラックの節の上限を 1 つ使う。** 同時に生きている節は 64 までで、通したファイルはそのうちの 1 つ
+///   (``SynthSound``)。スケッチから外す (`detach(_:)`) と節が返り、外したファイルを足し直して通すと
+///   節を取り直す。埋まっていれば通さず、そのことを 1 度だけ知らせる。通せなかったファイルは直に鳴る
+/// - **標本化率が違えば、ラックの率へ読み直される。** ラックの標本化率は 48000 Hz (書き出しでも同じ) で、
+///   違うファイルは通すと、低い率は補間で、高い率は折り返しを抑える低域通過を掛けて読み直す。
+///   ``position``・``duration`` はファイルの率のままの秒で返る
+/// - **鳴らし始め・止めは約 5 ミリ秒かけて立ち上がる・消える** (合成した音と同じ)。鳴っている最中に頭から
+///   鳴らし直すときや飛ぶときは、前の位置の音が消えながら新しい位置の音が立ち上がる
+/// - 鳴っている最中に通しても、頭へ戻らず、いまの位置から続く。**ただし、通す瞬間だけはつなぎ目がある** —
+///   通す前に直に鳴っていた音 (OS の再生機) はその場で止まり、ラックの節が約 5 ミリ秒かけて立ち上がる。
+///   2 つは別の時計 (再生機の時計とラックの時計) で進んでいて、標本の精度では重ねられないので、つなぎ目で
+///   音が一瞬だけ細る。避けるなら、鳴らし始める前 (`setup()`) に通す
+/// - 通した後も ``play()``・``loop()``・``pause()``・``stop()``・``jump(_:)``・``amp(_:)`` は同じに効く。
+///   ``position`` と解析の値 (``level`` ほか) は、通さないときと同じ操作の列から同じになる。**ただし、書き出し
+///   (固定の時計) で標本化率が 48000 Hz でないファイルを、fps が 48000 を割り切れない (144 fps など)
+///   ときに通すと、``position`` は通さないときと最大 1 標本ずれる** (ラックは整数の標本で進むので、
+///   ファイルの標本へ直すと端数が出る)。標本化率が 48000 Hz のファイルと、48000 を割り切れる fps
+///   (60・30・24・100 fps など) では同じ
+/// - **ラックの操作の列が詰まっている間** (1 フレームに数千の音の変更を頼むなど) は、``play()`` などの位置を
+///   動かす操作は、位置と一緒に詰まりが解けるまで (通常は次のフレーム) 控える。聞こえている音と
+///   ``position`` はずれない。控えている間の ``isPlaying`` は、控える前のまま (値はそのフレームの始まりのもの)。
+///   このときの ``SoundEffect/process(_:)`` は、何も変えずに断って 1 度だけ知らせる (次のフレームから通せる)
+/// - ``AudioIn`` (マイク) は通せない
+///
+/// Processing Sound では、`LowPass`・`Reverb` などの `process(_:)` が `SoundFile` を受ける。
+///
 /// ## 書き出しでは鳴らさない
 ///
 /// 窓に出して動かしている間は実際に鳴らし、解析の位置は実際に鳴った標本の数から読む。書き出し
@@ -61,23 +105,38 @@ import MokumeDiagnostics
 /// ÷ fps」で決める。どちらも同じ位置から同じ窓を切り出すので、書き出した絵は実時間で鳴らした
 /// ときと同じ時刻の音で動き、何度書き出しても同じになる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。
 ///
+/// エフェクトへ通したファイルは、位置をどの流れでも**ラックの節が描いた標本の数**から読む (固定の時計では
+/// ラックが同じフレームの数で進み、実時間では打ち切り — 2 秒を超える停止の後は 2 秒ぶんずつ — も節と
+/// 同じに働く)。聞こえている音と ``position``・解析の位置がずれない。
+///
 /// 位置を進めるのは音の時計で、``SketchPart/time`` ではない。``SketchPart/pauseTime()`` と
 /// ``SketchPart/jumpTime(_:)`` は音を止めない・飛ばさない。
 ///
 /// 出力の機材が開けないときは、鳴らさずに実時間で位置を進め、そのことを 1 度だけ知らせる。
+/// 外した (`detach(_:)`) ファイルを足し直して鳴らし直すときは、鳴らす分の標本を読み込んだファイルから
+/// もう 1 度読む (外している間は解析用のモノラルの標本だけを持つ)。読み直せないときも、鳴らさずに実時間で
+/// 位置を進め、読めなかった事情とともに 1 度だけ知らせる。
 /// 出力の機材が替わって音が止まったときは、止まった位置から鳴らし直す。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-public final class SoundFile: Inlet {
+public final class SoundFile: Inlet, EffectInput {
     /// ファイルの標本化率 (Hz)。帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 
     /// 解析に使う標本列 (チャンネルを平均したモノラル)。
     let samples: [Float]
-    /// 読み込んだ器。鳴らすときに player へ渡し、鳴らさないと決まったら手放す。
+    /// 読み込んだ器 (左右などチャンネルごとの標本)。鳴らすときに player へ渡し、鳴らさないと決まったら
+    /// 手放す。手放した後に足し直して鳴らすときは、``source`` から読み直す。外している間に持ち続けるのは、
+    /// 解析用のモノラルの ``samples`` だけである (器の写しは持たない)。
     private var buffer: AVAudioPCMBuffer?
+    /// 読み込んだときの器の形式 (チャンネル数・標本化率)。読み直したファイルが同じものかを見分ける。
+    private let format: AVAudioFormat
+    /// 読み込んだときの標本の数。
+    private let frameLength: AVAudioFrameCount
+    /// 読み込んだファイルの場所。足し直して鳴らすとき、手放した器を読み直すのに使う。
+    private let source: URL?
     /// 渡された名前。知らせに載せる。
     private let name: String
     private weak var owner: (any Sketch)?
@@ -106,6 +165,63 @@ public final class SoundFile: Inlet {
     /// 最後のフレームで読んだ、区切りの中で鳴った標本の数。
     private var lastPlayed = 0
     private var noticed: Set<Notice> = []
+    /// エフェクトへ通されたとき (``SoundEffect/process(_:)``) に足す、ラックの節。通されるまでは `nil`。
+    private var feed: Feed?
+    /// ラックの操作の列が詰まっている間 (``SynthRack/isCongested``) に呼ばれた、位置を動かす操作 (頼んだ順)。
+    /// 詰まりが解けた最初の ``supply()`` (か、次の呼び出し) で、頼んだ順に効かせる。
+    private var waiting: [Operation] = []
+    /// 控えている操作の中で、最後に頼まれた ``jump(_:)`` の飛び先 (標本)。**``position`` は飛び先を返す。**
+    private var waitingTarget: Int?
+
+    /// 位置を動かす操作。
+    private enum Operation {
+        case play(looping: Bool)
+        case pause
+        case stop
+        case jump(Int)
+    }
+
+    /// ラックの節と、いまの区切りの世代。区切りを始めるたびに世代を 1 つ進める。
+    ///
+    /// 区切りを始める操作は、ラックの操作の列が詰まっていないときにだけ頼む (``SoundFile/submit(_:)``)。
+    /// 控えに回る操作で世代だけが進むと、``FileNode/played(generation:)`` が 0 を返し続けて位置が凍る。
+    private struct Feed {
+        let stage: SynthStage
+        let node: FileNode
+        var generation = 0
+        /// エフェクトの入力に選ばれるまで、鳴らし始めるのを待っているか。
+        ///
+        /// 節を入力に選ぶ操作 (`.inputs`) より先に鳴らす操作 (`.segment`) が音の側へ届くと、その間に
+        /// 描かれた区切りは、入力に選ばれていない鳴っている節 = 直に出る節として出てしまう。
+        var waitsForInput = false
+
+        /// 区切りを始めるよう、節へ頼む。
+        mutating func begin(start: Int, looping: Bool) {
+            generation += 1
+            stage.rack.post(
+                SynthCommand(
+                    op: .segment, node: UInt8(node.id),
+                    bits: FileNode.segment(start: start, looping: looping, generation: generation)))
+        }
+
+        /// 節を止める。
+        func halt() {
+            stage.rack.post(SynthCommand(op: .stop, node: UInt8(node.id)))
+        }
+
+        /// 手放す。鳴り終えた (消えきった) ら、置き場が戻る。
+        func release() {
+            stage.rack.post(SynthCommand(op: .release, node: UInt8(node.id)))
+        }
+
+        /// 音量を伝える。
+        func amp(_ volume: Float) {
+            stage.rack.post(
+                SynthCommand(
+                    op: .set, node: UInt8(node.id), param: .amplitude,
+                    bits: UInt64(volume.bitPattern)))
+        }
+    }
 
     /// 位置を進める時計。
     private enum Pace {
@@ -115,27 +231,41 @@ public final class SoundFile: Inlet {
         case realTime(origin: TimeInterval)
         /// 実際に鳴らしている。位置は player が描いた数から読む。
         case speaker(FilePlayer)
+        /// 足し直した後で、鳴らす流れは決まったが、器をまだ読み直していない。**器が要るのは実際に鳴らす
+        /// とき (``beginSegment()``) だけ**で、エフェクトへ通すだけなら (``route(into:)``) 読まずに済む。
+        case unloaded(SoundFlow)
+        /// エフェクトへ通され、ラックの節が鳴らしている。**位置はどの流れでも節が描いた数から読む**
+        /// (``Feed``) — 位置を導く時計を 1 本にするため。
+        case routed
     }
 
     /// 1 度だけ言う知らせ。
     private enum Notice: Hashable {
         case noOutput
+        case cannotReload
         case volumeOutOfRange
         case volumeNotANumber
         case jumpNotANumber
+        case cannotProcess
+        case fileCapacity
+        case congested
     }
 
     init(
         name: String, buffer: AVAudioPCMBuffer, owner: (any Sketch)?, flow: SoundFlow?,
+        source: URL? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
         self.name = name
         self.buffer = buffer
+        self.format = buffer.format
+        self.frameLength = buffer.frameLength
         self.samples = AudioFile.mono(buffer)
         self.sampleRate = Float(buffer.format.sampleRate)
         self.owner = owner
         self.injectedFlow = flow
+        self.source = source
         self.now = now
         self.warn = warn
         playhead = Playhead(length: samples.count)
@@ -156,7 +286,7 @@ public final class SoundFile: Inlet {
     /// **鳴っている最中に呼ぶと、頭から鳴らし直す。** ``loop()`` で鳴らしている最中に呼んだときも
     /// 頭から鳴らし直し、今度は終わりで止まる。
     public func play() {
-        start(looping: false)
+        submit(.play(looping: false))
     }
 
     /// 終わりから頭へ戻って、鳴らし続ける。
@@ -171,7 +301,7 @@ public final class SoundFile: Inlet {
     ///
     /// どこから鳴らし始めるかは ``play()`` と同じで、鳴っている最中に呼ぶと頭から鳴らし直す。
     public func loop() {
-        start(looping: true)
+        submit(.play(looping: true))
     }
 
     /// 止めて、いまの位置を覚える。次の ``play()`` か ``loop()`` は、そこから鳴らす。
@@ -186,21 +316,12 @@ public final class SoundFile: Inlet {
     ///
     /// 止まっていれば何もしない。
     public func pause() {
-        guard playhead.isPlaying else { return }
-        playhead.pause(after: played())
-        // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
-        if let target = pendingJump {
-            pendingJump = nil
-            playhead.jump(to: target)
-        }
-        halt()
+        submit(.pause)
     }
 
     /// 止めて、頭へ戻す。次の ``play()`` か ``loop()`` は頭から鳴らす。
     public func stop() {
-        pendingJump = nil
-        playhead.stop()
-        halt()
+        submit(.stop)
     }
 
     /// `seconds` 秒の位置へ飛ぶ。**呼んだ直後から ``position`` は飛び先を返す。**
@@ -235,12 +356,7 @@ public final class SoundFile: Inlet {
         // 寄せてから整数にする (大きな秒のまま整数へ直すと溢れる)。いちばん近い標本へ丸める — 切り捨てると、
         // 単精度で 5.1 をわずかに割る `jump(5.1)` が 1 標本手前になり、`position` が 5.1 に戻らない
         let reach = min(max(Double(seconds) * Double(sampleRate), 0), Double(samples.count))
-        let target = Int(reach.rounded())
-        if playhead.isPlaying {
-            pendingJump = target
-        } else {
-            playhead.jump(to: target)
-        }
+        submit(.jump(Int(reach.rounded())))
     }
 
     /// いま鳴らしている位置 (秒)。0 から ``duration`` まで。``jump(_:)`` を呼んだ後なら、その飛び先。
@@ -259,7 +375,7 @@ public final class SoundFile: Inlet {
     /// 位置を進めるのは音の時計で、``SketchPart/time`` ではない。書き出し (固定の時計) では、鳴らし
     /// 始めてから進んだフレームの数で決まるので、同じフレームはいつも同じ位置で描かれる。値はその
     /// フレームの始まりのもの (``isPlaying`` と同じ)。止まっている間は止めた位置、鳴り終わった後は 0。
-    public var position: Float { seconds(pendingJump ?? samplePosition) }
+    public var position: Float { seconds(waitingTarget ?? pendingJump ?? samplePosition) }
 
     /// 長さ (秒)。標本の数 ÷ ``sampleRate``。
     public var duration: Float { seconds(samples.count) }
@@ -297,6 +413,7 @@ public final class SoundFile: Inlet {
         }
         self.volume = clamped
         if case .speaker(let player) = pace { player.volume = clamped }
+        feed?.amp(clamped)
     }
 
     /// 鳴っているか。``play()`` か ``loop()`` で `true` になり、``pause()``・``stop()``・
@@ -340,10 +457,15 @@ public final class SoundFile: Inlet {
 
     public func supply() {
         if let owner { frame = Self.frameIndex(of: owner) }
+        // 節が位置を決めているときは、ステージのラックをこのフレームまで進めてから読む。ステージと
+        // このファイルのどちらが先に `supply()` を受けても、同じ位置になる
+        if isRouted { feed?.stage.catchUpForFiles() }
         resumeIfStopped()
+        // 列が詰まっている間に控えた操作は、詰まりが解けたここで、頼んだ順に効かせる
+        drainDeferred()
         // 前のフレームで飛ぶよう頼まれていれば、このフレームを飛び先から始まる区切りの頭にする
-        // (``position`` がちょうど飛び先になり、窓は飛び先で終わる)
-        if let target = pendingJump {
+        // (``position`` がちょうど飛び先になり、窓は飛び先で終わる)。列が詰まっていれば、解けるまで待つ
+        if let target = pendingJump, !isCongested {
             pendingJump = nil
             playhead.jump(to: target)
             beginSegment()
@@ -370,10 +492,101 @@ public final class SoundFile: Inlet {
 
     public func close() {
         pendingJump = nil
+        waiting.removeAll()
+        waitingTarget = nil
         if case .speaker(let player) = pace { player.leave() }
+        // 止めて、手放す。節が消えきったら置き場が戻る (入力にも残らない)
+        feed?.halt()
+        feed?.release()
+        feed = nil
         pace = nil
         playhead.stop()
         deferred.silence()
+    }
+
+    // MARK: - エフェクトへ通す
+
+    /// エフェクト (``SoundEffect``) の入力に足す節を返す。**最初に通されたときだけ**、実際に鳴らす
+    /// 経路を ``FilePlayer`` からラックの節 (``FileNode``) へ切り替える。以後は同じ節を返す。
+    ///
+    /// 通されたとき鳴っていれば、いまの位置から鳴らし続ける (頭へ戻さない)。**位置は、以後どの流れでも
+    /// 節が描いた標本の数から読む** (``Pace/routed``)。固定の時計と実時間でも、ファイルが自分の時計で
+    /// 進めずに、ステージのラックを進める時計 (実時間なら 2 秒で打ち切る) の 1 本から導く。
+    ///
+    /// **節を鳴らし始める操作は、ここでは載せない。** 呼んだ側 (``SoundEffect``) が節を入力に選んでから
+    /// ``nodeIsConnected()`` を呼ぶ。先に鳴らし始めると、入力に選ばれる前の節が直に出る。
+    ///
+    /// - Parameter stage: エフェクトが属するステージ。このファイルを作ったスケッチのものでなければ断る。
+    /// - Returns: 節。断ったとき (別のスケッチ・動いていない・ラックの置き場が埋まっている) は `nil` で、
+    ///   そのことを 1 度だけ知らせる。断ったファイルは、いままでどおり ``FilePlayer`` で鳴る。
+    func route(into stage: SynthStage) -> FileNode? {
+        if let feed {
+            guard feed.stage === stage else { return refuse(.cannotProcess) }
+            return feed.node
+        }
+        guard let owner, stage.isOwned(by: owner), !stage.isClosed, stage.pace != nil,
+            pace != nil
+        else { return refuse(.cannotProcess) }
+        // 節を足す・入力に選ぶ・鳴らし始めるの 3 つが、**控えに回らず続けて載る**ときだけ切り替える。
+        // どれかが控えに回ると、鳴らしていた音を外したのに節が鳴らない (か、入力に選ばれない節が直に鳴る) 間ができる
+        guard !stage.rack.isCongested else { return refuse(.congested) }
+        guard let node = stage.rack.addFile(
+            samples: samples, fileRate: Double(sampleRate), amplitude: volume)
+        else { return refuse(.fileCapacity) }
+
+        // 位置は、時計を切り替える前の測り方で読む
+        let position = playhead.position(after: played())
+        let wasPlaying = playhead.isPlaying
+        if case .speaker(let player) = pace { player.leave() }
+        pace = .routed
+        feed = Feed(stage: stage, node: node)
+        if wasPlaying {
+            // いまの位置から区切りを始め直す。窓は、始まりより前もファイルの標本で埋める (``Playhead/jump(to:)``)
+            // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
+            playhead.jump(to: position)
+            lastPlayed = 0
+            feed?.waitsForInput = true
+        }
+        return node
+    }
+
+    /// 節がエフェクトの入力に選ばれた。入力を待っていたなら、いまの位置から鳴らし始める。
+    func nodeIsConnected() {
+        guard feed?.waitsForInput == true else { return }
+        feed?.waitsForInput = false
+        if playhead.isPlaying { beginSegment() }
+    }
+
+    /// 節が位置を決めているか。
+    private var isRouted: Bool {
+        if case .routed = pace { return true }
+        return false
+    }
+
+    /// 通せなかったことを 1 度だけ知らせて、`nil` を返す。
+    private func refuse(_ kind: Notice) -> FileNode? {
+        switch kind {
+        case .fileCapacity:
+            notice(
+                kind,
+                "process() could not take \"\(name)\": a sketch holds at most "
+                    + "\(SynthRack.capacity) oscillators, noises, effects and sound files passed to "
+                    + "effects alive together (a sound file stops counting once it is detached). "
+                    + "\"\(name)\" keeps playing on its own, without the effect")
+        case .congested:
+            notice(
+                kind,
+                "process() could not take \"\(name)\" right now: the sketch sent the audio engine more "
+                    + "commands in one frame than it could take at once (e.g. a very large number of "
+                    + "effect or oscillator changes). \"\(name)\" keeps playing on its own, without the "
+                    + "effect. Call process() again from the next frame")
+        default:
+            notice(
+                kind,
+                "process() could not take \"\(name)\": the effect belongs to another sketch, or the "
+                    + "sound is not running. \"\(name)\" keeps playing on its own, without the effect")
+        }
+        return nil
     }
 
     // MARK: - 時計
@@ -384,8 +597,19 @@ public final class SoundFile: Inlet {
     }
 
     /// 実際に鳴らす。出力が開けなければ、鳴らさずに実時間で進める。
+    ///
+    /// 器は最初に開いたときに手放しているので、足し直したときは、鳴らし始めるまで読み直さない
+    /// (``Pace/unloaded(_:)``)。エフェクトへ通すだけなら、器は要らない。
     private func speak(through flow: SoundFlow) {
-        if let buffer, let player = FilePlayer(flow: flow, buffer: buffer) {
+        guard let buffer else {
+            pace = .unloaded(flow)
+            return
+        }
+        startPlayer(through: flow, buffer: buffer)
+    }
+
+    private func startPlayer(through flow: SoundFlow, buffer: AVAudioPCMBuffer) {
+        if let player = FilePlayer(flow: flow, buffer: buffer) {
             player.volume = volume
             pace = .speaker(player)
             return
@@ -395,6 +619,68 @@ public final class SoundFile: Inlet {
             .noOutput,
             "No audio output could be opened, so \"\(name)\" is not heard. Its position still "
                 + "follows the clock, and its analysis keeps working")
+    }
+
+    /// 足し直した後に初めて鳴らすとき、器を読み直して player を作る。
+    ///
+    /// 読むのは `draw()` を止める同期の読み込みなので、`loadSound(_:)` と同じく知らせる ([#2601])。
+    /// 読み直せなければ、鳴らさずに実時間で進め、読めなかった事情を 1 度だけ知らせる。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    private func loadPlayer(through flow: SoundFlow) {
+        if let owner {
+            type(of: owner).noticeBlockingLoad(
+                "play() or loop() on a SoundFile attached again", instead: nil)
+        }
+        switch reloadBuffer() {
+        case .success(let reloaded):
+            startPlayer(through: flow, buffer: reloaded)
+        case .failure(let why):
+            pace = .realTime(origin: now())
+            notice(
+                .cannotReload,
+                "\"\(name)\" could not be read again after it was attached back, so it is not heard "
+                    + "(\(why)). Its position still follows the clock, and its analysis keeps working")
+        }
+    }
+
+    /// 読み直せなかった事情。
+    private enum ReloadFailure: Error, CustomStringConvertible {
+        /// ファイルから作ったのではないので、読み直す先が無い。
+        case noSource
+        /// 読めなかった。`AudioFile.load` が名乗った事情をそのまま運ぶ
+        /// (開けない・音声として読めないを取り違えない・[#2358])。
+        ///
+        /// [#2358]: https://github.com/mokume-metal/mokume/issues/2358
+        case load(AudioFailure)
+        /// 読めたが、読み込んだときのファイルと別のもの (標本の数・チャンネル数・標本化率が違う)。
+        case changed
+
+        var description: String {
+            switch self {
+            case .noSource:
+                "it was not created from a file, so there is nothing to read it from"
+            case .load(let failure):
+                failure.description
+            case .changed:
+                "the file is no longer the one that was loaded: its length, channels or sample rate differ"
+            }
+        }
+    }
+
+    /// 手放した器を、読み込んだファイルから読み直す。
+    private func reloadBuffer() -> Result<AVAudioPCMBuffer, ReloadFailure> {
+        guard let source else { return .failure(.noSource) }
+        let reloaded: AVAudioPCMBuffer
+        do throws(AudioFailure) {
+            reloaded = try AudioFile.load(source, path: name)
+        } catch {
+            return .failure(.load(error))
+        }
+        guard reloaded.frameLength == frameLength, reloaded.format == format else {
+            return .failure(.changed)
+        }
+        return .success(reloaded)
     }
 
     /// いまの区切りの中で鳴った標本の数。
@@ -407,22 +693,79 @@ public final class SoundFile: Inlet {
             return Int(((now() - origin) * Double(sampleRate)).rounded(.down))
         case .speaker(let player):
             return player.played ?? lastPlayed
-        case nil:
+        case .routed:
+            return feed.map { $0.node.played(generation: $0.generation) } ?? lastPlayed
+        case .unloaded, nil:
             return 0
         }
     }
 
-    /// 鳴らし始める。鳴っている最中なら頭から鳴らし直す (``Playhead/play(looping:)``)。
-    private func start(looping: Bool) {
-        // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
-        pendingJump = nil
-        playhead.play(looping: looping)
-        beginSegment()
+    // MARK: - 位置を動かす操作
+
+    /// ラックの操作の列が詰まっているか。節を通した後だけ意味がある (``Feed``)。
+    private var isCongested: Bool {
+        feed?.stage.rack.isCongested ?? false
+    }
+
+    /// 操作を効かせる。**ラックの操作の列が詰まっている間は控え**、詰まりが解けたとき頼んだ順に効かせる。
+    ///
+    /// 詰まった列へ区切りを始める操作や止める操作を載せると、それは控えに回って、音の側へ届くまで古い区切りが
+    /// 鳴り続ける。その間に位置だけを新しい区切りへ進めると、聞こえている音と ``position`` がずれる。位置を
+    /// 動かす操作を、音の側へ渡せるときまで一緒に控えることで、ずれない。
+    private func submit(_ operation: Operation) {
+        drainDeferred()
+        if waiting.isEmpty, !isCongested {
+            perform(operation)
+            return
+        }
+        waiting.append(operation)
+        switch operation {
+        case .jump(let target): waitingTarget = target
+        case .play, .stop: waitingTarget = nil
+        case .pause: break
+        }
+    }
+
+    /// 控えていた操作を、列が詰まっていない間、頼んだ順に効かせる。
+    private func drainDeferred() {
+        while !waiting.isEmpty, !isCongested { perform(waiting.removeFirst()) }
+        if waiting.isEmpty { waitingTarget = nil }
+    }
+
+    private func perform(_ operation: Operation) {
+        switch operation {
+        case .play(let looping):
+            // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
+            pendingJump = nil
+            playhead.play(looping: looping)
+            beginSegment()
+        case .pause:
+            guard playhead.isPlaying else { return }
+            playhead.pause(after: played())
+            // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
+            if let target = pendingJump {
+                pendingJump = nil
+                playhead.jump(to: target)
+            }
+            halt()
+        case .stop:
+            pendingJump = nil
+            playhead.stop()
+            halt()
+        case .jump(let target):
+            if playhead.isPlaying {
+                pendingJump = target
+            } else {
+                playhead.jump(to: target)
+            }
+        }
     }
 
     /// 区切りを始め直す。いまのフレーム (鳴らしているなら、いま) が区切りの始まりになる。
     private func beginSegment() {
         lastPlayed = 0
+        // 足し直した後に初めて鳴らすとき、ここで器を読み直す
+        if case .unloaded(let flow) = pace { loadPlayer(through: flow) }
         switch pace {
         case .frames(let frameRate, _):
             pace = .frames(perSecond: frameRate, origin: frame)
@@ -430,14 +773,16 @@ public final class SoundFile: Inlet {
             pace = .realTime(origin: now())
         case .speaker(let player):
             player.play(from: playhead.start, looping: playhead.isLooping)
-        case nil:
+        case .routed, .unloaded, nil:
             break
         }
+        feed?.begin(start: playhead.start, looping: playhead.isLooping)
     }
 
-    /// 鳴らしている player を止める。
+    /// 鳴らしている player と、ラックの節を止める。
     private func halt() {
         if case .speaker(let player) = pace { player.halt() }
+        feed?.halt()
     }
 
     /// 出力の機材が替わると、流れは自分で止まり、player も止まる。最後に読んだ位置から鳴らし直す。

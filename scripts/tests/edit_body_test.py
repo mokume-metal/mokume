@@ -250,6 +250,19 @@ class EditBodyTest(unittest.TestCase):
 
     # --- 素の gh issue edit が見ていた照合 (#2195) を引き継ぐ -----------------
 
+    def test_personal_info_in_body_is_announced_but_still_written(self):
+        """#3075: 個人情報らしきものは名乗るが、書き込みは止めない。"""
+        self.fetch()
+        edited = ORIGINAL + "連絡先 so@example.com\n"
+        self.file.write_text(edited, encoding="utf-8")
+
+        proc = self.run_wrapper("issue", 42, "--body-file", self.file)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("メールアドレス", proc.stderr)
+        self.assertNotIn("so@example.com", proc.stderr)
+        self.assertEqual(self.body(), edited)
+
     def test_issue_body_naming_a_drawing_file_needs_evidence(self):
         self.fetch()
         self.file.write_text("`Shapes.metal` の mokume_formPaint が細い塗りで透ける\n", encoding="utf-8")

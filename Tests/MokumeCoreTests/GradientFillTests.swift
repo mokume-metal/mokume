@@ -303,6 +303,57 @@ struct GradientFillTests {
         #expect(pixels[90, 5].blue < 0.95 * pixels[90, 5].red + 0.05, "置く側の青は混ざらない: \(pixels[90, 5])")
     }
 
+    /// 置く前の勾配は、組み込みの塗りで記録した形 (読んだ SVG と、色を塗って組み立てた形) に効かず、
+    /// 記録した色で出る (#3008・#788)。`ShapeTests.anAmbientFragmentDoesNotReachARetainedShape` の勾配版。
+    ///
+    /// 読んだ SVG は矩形・円 (距離関数の区間) と三角形の path (三角形の区間) の両方を含む。勾配は
+    /// 赤から青へ x に沿って変わるので、勾配が効く実装なら白にならない (矩形の中ほどは紫がかった赤)。
+    /// 置いた後の同じ状態の `rect` は勾配で塗る (形を置いても状態は使い切られない)。
+    @Test("置く前の勾配は、読んだ SVG と色を塗って記録した形に効かず、記録した色で出る")
+    func ambientGradientDoesNotReachARetainedShape() throws {
+        let canvas = try makeCanvas(width: 100, height: 140)
+        // 白の矩形 (0…50 × 0…50)・円 (中心 (65, 15)・半径 15)・三角形 ((0, 60)・(80, 60)・(40, 100))
+        let source = """
+            <svg xmlns="http://www.w3.org/2000/svg" width="80" height="100">
+              <rect x="0" y="0" width="50" height="50" fill="white"/>
+              <circle cx="65" cy="15" r="15" fill="white"/>
+              <path d="M0 60 L80 60 L40 100 Z" fill="white"/>
+            </svg>
+            """
+        let drawing = try SVGFile.parse(source, path: "mark.svg")
+        let mark = canvas.shape(of: drawing, readFrom: "mark.svg")
+        let square = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(red)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(30, 0)
+            canvas.vertex(30, 30)
+            canvas.vertex(0, 30)
+            canvas.endShape(.close)
+        }
+        let pixels = try pixels(canvas) { c in
+            c.fill(.linearGradient((red, 0), (blue, 1), from: [0, 0], to: [80, 0]))
+            c.shape(mark)
+            c.shape(square, at: [Placement(x: 5, y: 105)])
+            c.rect(60, 105, 30, 30)
+        }
+        func isWhite(_ pixel: LinearRGBA, _ what: String) {
+            #expect(
+                pixel.red > 0.98 && pixel.green > 0.98 && pixel.blue > 0.98,
+                "\(what) は記録した白のまま: \(pixel)")
+        }
+        isWhite(pixels[25, 25], "矩形の中ほど")
+        isWhite(pixels[65, 15], "円の中心")
+        isWhite(pixels[40, 70], "三角形の中")
+        let recorded = pixels[20, 120]
+        #expect(
+            recorded.red > 0.98 && recorded.green < 0.02 && recorded.blue < 0.02,
+            "色を塗って記録した四角は赤のまま: \(recorded)")
+        let live = pixels[75, 120]
+        #expect(live.blue > 0.8 && live.red < 0.2, "置いた後の rect は勾配で塗る: \(live)")
+    }
+
     /// 完了条件 4: `shader()` を付けたら利用者の断片が勝ち、勾配は効かない。外すと勾配で塗る。
     @Test("shader() を付けると利用者の断片が勝ち、外すと勾配で塗る")
     func userShaderBeatsTheGradient() throws {

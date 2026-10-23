@@ -216,6 +216,9 @@ class ReportScheduledRenderTest(unittest.TestCase):
         # 並べ、消えた回の材料の置き場 (scheduled-debug-record の test-vanished/) を案内する
         self.assertIn("ビルドかジョブの開始で落ち", body)
         self.assertIn("記録を残さずに消えた", body)
+        # 専用機の前検査が gpu-slot の記録で赤になった回も、検査は起こされず記録が無い (#2235)
+        self.assertIn("`gpu-slot:`", body)
+        self.assertIn("wait-expired.json", body)
         self.assertIn("`scheduled-debug-record`", body)
         self.assertIn("test-vanished/", body)
 

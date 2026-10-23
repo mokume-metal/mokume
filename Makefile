@@ -582,7 +582,11 @@ CLI_ASSET := .build/dist/mokume-macos-arm64.tar.gz
 cli-examples: ## 道具に同梱する作例の束を作る (Sources/MokumeCLI/Examples)
 	python3 scripts/bundle-examples.py
 
-cli-dist: cli-examples ## 道具の配布物を束ねる (OUT=path で置き場を指定)
+# **版と SHA を渡したときだけ** (RELEASE_VERSION=v0.29.0 RELEASE_SHA=<commit>)、実行ファイルの隣に
+# 1 行の `mokume.release` を置いて tarball に入れる (#2887)。道具は ToolVersion がそれを読んで
+# `<版> (release <短い SHA>)` と名乗る。渡さない手元の組み立ては、今までどおり local build と
+# 名乗る。stage は追跡外 (.build の下) なので、リポジトリのファイルは版ごとに変わらない
+cli-dist: cli-examples ## 道具の配布物を束ねる (OUT=path で置き場を指定。版は RELEASE_VERSION・RELEASE_SHA)
 	swift build -c release --product mokume-cli
 	rm -rf "$(CLI_STAGE)"
 	mkdir -p "$(CLI_STAGE)" "$(dir $(CLI_ASSET))"
@@ -594,9 +598,21 @@ cli-dist: cli-examples ## 道具の配布物を束ねる (OUT=path で置き場�
 		exit 1; \
 	fi; \
 	for bundle in $$bundles; do cp -R ".build/release/$$bundle" "$(CLI_STAGE)/"; done; \
+	meta=""; \
+	if [ -n "$(RELEASE_VERSION)$(RELEASE_SHA)" ]; then \
+		{ printf '%s\n' "$(RELEASE_VERSION)" | grep -Eq '^v?[0-9][0-9A-Za-z.+_-]*$$' && \
+		printf '%s\n' "$(RELEASE_SHA)" | grep -Eq '^[0-9a-fA-F]{7,40}$$'; } || { \
+			echo "RELEASE_VERSION (例 v0.29.0) と RELEASE_SHA (16 進 7〜40 文字) は両方を正しい形で渡す" >&2; exit 1; }; \
+		echo "$(RELEASE_VERSION) $(RELEASE_SHA)" > "$(CLI_STAGE)/mokume.release"; \
+		meta="mokume.release"; \
+	fi; \
 	asset="$(or $(OUT),$(CLI_ASSET))"; \
-	COPYFILE_DISABLE=1 tar -czf "$$asset" -C "$(CLI_STAGE)" mokume $$bundles; \
+	COPYFILE_DISABLE=1 tar -czf "$$asset" -C "$(CLI_STAGE)" mokume $$meta $$bundles; \
 	listed="$$(tar tzf "$$asset")"; \
+	if [ -n "$$meta" ]; then \
+		printf '%s\n' "$$listed" | grep -qx "mokume.release" || { \
+			echo "版の 1 行ファイル (mokume.release) が資産に入っていない: $$asset" >&2; exit 1; }; \
+	fi; \
 	for bundle in $$bundles; do \
 		printf '%s\n' "$$listed" | grep -q "^$$bundle/" || { \
 			echo "束ねたはずの $$bundle が資産に入っていない: $$asset" >&2; exit 1; }; \

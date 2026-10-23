@@ -74,6 +74,11 @@ import Metal
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
             throw .encoderUnavailable
         }
+        // 前の仕事が画像を読み終わるのを待つ。この世代は encoder をまたぐ依存を自動では張らない
+        // (#341)。書き換えた画像の面へ書くので、前のフレームの読みと重ねない
+        encoder.barrier(
+            afterQueueStages: [.dispatch, .fragment, .blit], beforeStages: [.vertex, .fragment],
+            visibilityOptions: .device)
         bytes.storeBytes(
             of: SIMD2(UInt32(image.width), UInt32(image.height)), toByteOffset: sizeOffset,
             as: SIMD2<UInt32>.self)

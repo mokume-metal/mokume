@@ -294,6 +294,22 @@ let turn = width / 400                   // Float
 rotate(turn * .pi)                       // 他の項が Float なら .pi のままで通る
 ```
 
+**Swift 標準の乱数は、種に従わない。** `randomElement()`・`shuffled()`・`Float.random(in:)` は、引数を
+省くと Swift が持つ別の乱数で引く。**コンパイルは通り、注意も出ず、走らせるたびに絵が変わる** — 同じ入力から
+同じ絵になる約束 (``SketchPart/randomSeed(_:)``) が、黙って外れる。同じ列で引かせるには、`using:` に
+``SketchPart/randomSource`` を渡す。
+
+```swift
+randomSeed(7)
+let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]
+fill(palette.randomElement(using: &randomSource)!)   // 種に従う。走らせるたびに同じ色
+fill(palette.randomElement()!)                       // 種に従わない。走らせるたびに違う色
+```
+
+部品ごと・花ごとに別の列が要るなら、値として持てる ``RandomSource`` を作る (`RandomSource(seed: 7, index: i)`)。
+スケッチの乱数 (``SketchPart/random()``) を何回引いても、その列は動かない。揺らぎも同じで、種と細かさを
+値として持つ ``NoiseField`` がある (``SketchPart/noiseSeed(_:)`` に触れずに、板ごとに別の種で引ける)。
+
 ### 手本の名前から引く
 
 **Processing・p5.js の名前で書いて通らない・動きが違うときに、mokume のどの口へ直すかを引く表である。** 名前は手本から採っているので、多くはそのまま写せる。ここに並ぶのは、写すと黙ってずれるか、綴りが変わる口だけである。違う理由と詳しい振る舞いは、リンク先の説明にある。
@@ -425,6 +441,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -623,6 +640,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/createBandPass()``
 - ``Sketch/createReverb()``
 - ``Sketch/createDelay()``
+- ``EffectInput``
 - ``SynthSound``
 - ``SynthSource``
 - ``Oscillator``
@@ -818,9 +836,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
+- ``SketchPart/randomSource``
+- ``RandomSource``
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``NoiseField``
 
 ### 角度と数を直す
 
