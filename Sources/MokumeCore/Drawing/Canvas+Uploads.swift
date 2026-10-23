@@ -40,8 +40,8 @@ extension Canvas {
     func encodeUploads(into commands: any MTL4CommandBuffer) throws(RenderFailure)
         -> EncodedUploads
     {
+        guard encodesUploads else { return [] }
         let owners = gpu.pendingUploads.owners
-        guard !owners.isEmpty else { return [] }
 
         var uploaded: EncodedUploads = []
         var staged: [(owner: any PendingUpload, offset: Int)] = []
