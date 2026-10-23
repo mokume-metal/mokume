@@ -146,20 +146,14 @@ struct OSCSketchTests {
         #expect(port.report == nil)
         #expect(port.state == .running)
 
-        var received: [OSCMessage] = []
         // `createOSC(send:)` が組む送り手から送った 1 通が読まれる前提。読まれなかった回は、送り手と受け口の
         // 様子を名乗って止まる (#3001)
         let log = SendLog()
         log.watch { port.sendTrace }
-        let started = Date()
-        _ = await until {
+        let received = await collectCounting(count: 1, log: log) {
             receiver.supply()
-            received += receiver.messages
-            return !received.isEmpty
+            return receiver.messages
         }
-        log.record(
-            label: "送り", expected: 1, heard: min(received.count, 1), missing: nil, replacements: 0,
-            heardAfterReplacement: 0, waited: Date().timeIntervalSince(started), limit: 5)
         try await requireSent(
             !received.isEmpty, "1 通のうち読めたのは \(received.count) 通 (createOSC(send:) の送り手から)", log: log,
             landing: landing(of: receiver, port: target, told: told))
