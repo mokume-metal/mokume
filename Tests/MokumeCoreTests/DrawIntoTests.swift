@@ -43,6 +43,8 @@ struct DrawIntoTests {
         /// `pad` の粒 (`setup()` で作る。粒は枚をまたいで生きるので、台本の外に持つ)
         var dust: Particles?
         var script: ((Probe) -> Void)?
+        /// `setup()` の終わりに走らせる台本 (描き場所を作った後)
+        var setupScript: ((Probe) -> Void)?
         /// 走らせているランタイム。閉包の中の `canvas` は向き先なので、本体の面はここから引く
         weak var runtime: SketchRuntime?
 
@@ -54,6 +56,7 @@ struct DrawIntoTests {
             let gpu = canvas.gpu
             dust = try? pad?.makeParticles(count: 64)
             direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu)
+            setupScript?(self)
         }
 
         func draw() {
@@ -72,10 +75,11 @@ struct DrawIntoTests {
     /// 台本を走らせる。`frames` 枚の `draw()` が済んだところで返る。
     @discardableResult
     private func run(
-        frames: Int = 1, _ script: @escaping (Probe) -> Void
+        frames: Int = 1, setup: ((Probe) -> Void)? = nil, _ script: @escaping (Probe) -> Void
     ) throws -> (probe: Probe, runtime: SketchRuntime) {
         let probe = Probe()
         probe.script = script
+        probe.setupScript = setup
         let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
         probe.runtime = runtime
         runtime.start()
@@ -320,24 +324,158 @@ struct DrawIntoTests {
 
     // MARK: - 置き場の書き込み (完了条件 5)
 
-    @Test("noiseSeed は向き先の置き場へ書く。作った描き場所は本体と共有し、直に作った面は別")
-    func noiseSeedGoesToTheTargetsStore() throws {
+    @Test("noiseSeed は本体の置き場へ書く。作った描き場所は元から共有し、直に作った面へ向けても閉包の間だけ借りる")
+    func noiseSeedGoesToTheSketchStore() throws {
         var before: ValueNoise?
         var afterGraphics: ValueNoise?
+        var insideDirect: ValueNoise?
         var afterDirectMain: ValueNoise?
         var afterDirect: ValueNoise?
+        var directOwn: ValueNoise?
         try run { probe in
             before = probe.canvas.noiseSettings
+            directOwn = probe.direct!.noiseSettings
             probe.draw(into: probe.layer!) { probe.noiseSeed(42) }
             afterGraphics = probe.canvas.noiseSettings
             if let before { probe.canvas.noiseSettings = before }
-            probe.draw(into: probe.direct!) { probe.noiseSeed(42) }
+            probe.draw(into: probe.direct!) {
+                probe.noiseSeed(42)
+                probe.noiseDetail(2, 0.3)
+                insideDirect = probe.direct!.noiseSettings
+            }
             afterDirectMain = probe.canvas.noiseSettings
             afterDirect = probe.direct!.noiseSettings
         }
         #expect(afterGraphics != before, "createGraphics で作った描き場所は本体と置き場を共有するので、本体の種が変わる")
-        #expect(afterDirectMain == before, "直に作った面への書き込みが本体の置き場へ届いた")
-        #expect(afterDirect != before, "直に作った面が、自分の置き場へ書いていない")
+        // 直に作った面へ向けても、種はスケッチに 1 つ (#1503)。書き込みは本体の置き場へ届き、面は閉包の間だけ借りる
+        #expect(afterDirectMain?.seed == 42 && afterDirectMain?.octaves == 2, "直に作った面への書き込みが本体の置き場へ届かない")
+        #expect(insideDirect == afterDirectMain, "閉包の間、直に作った面がスケッチの置き場を読んでいない")
+        #expect(afterDirect == directOwn, "閉包を抜けても、直に作った面が借りた置き場のまま")
+    }
+
+    @Test("直に作った面へ向けた閉包の中の noise() は、本体と同じ種で引く")
+    func noiseReadsTheSketchSeedForADirectSurface() throws {
+        var insideValue: Float = -1
+        var bodyValue: Float = -1
+        var ownValue: Float = -1
+        try run { probe in
+            probe.noiseSeed(7)
+            bodyValue = probe.noise(1.3, 2.1)
+            ownValue = probe.direct!.noise(1.3, 2.1)  // 直に作った面が自分の種で引いた値
+            probe.draw(into: probe.direct!) { insideValue = probe.noise(1.3, 2.1) }
+        }
+        #expect(bodyValue != ownValue, "検査が成り立たない: 本体と直に作った面の種が同じ")
+        #expect(insideValue == bodyValue, "閉包の中の noise() が本体と別の種で引いた")
+    }
+
+    @Test("直に作った面へ向けた閉包の中の粒の刻みと時刻は、スケッチのものを読む")
+    func stepAndTimeFollowTheSketchForADirectSurface() throws {
+        var timeInside: Float = -1
+        var mainTime: Float = -1
+        var stepEqual = false
+        var stepEqualAfter = true
+        let result = try run(frames: 3) { probe in
+            let direct = probe.direct!
+            let main = probe.runtime!.canvas
+            probe.draw(into: direct) {
+                stepEqual = direct.frameStep == main.frameStep
+                timeInside = direct.time
+            }
+            stepEqualAfter = direct.frameStep == main.frameStep
+            mainTime = main.time
+        }
+        #expect(result.probe.direct != nil)
+        #expect(stepEqual, "閉包の間、直に作った面の刻みがスケッチの刻みでない")
+        #expect(!stepEqualAfter, "閉包を抜けても、直に作った面が借りた刻みのまま")
+        #expect(mainTime > 0 && timeInside == mainTime, "閉包の間、直に作った面の時刻がスケッチの時刻でない")
+    }
+
+    // MARK: - 道具の状態 (orbitControl)
+
+    @Test("orbitControl() を描き場所の閉包から先に呼んでも、道具の始まりと戻り先は本体の面の中央")
+    func orbitStartsFromTheMainSurface() throws {
+        var readInside: Vector3?
+        let result = try run { probe in
+            probe.draw(into: probe.pad!) {
+                readInside = probe.orbit.center
+                probe.orbitControl()
+            }
+        }
+        let start = Orbit.fitting(width: 64, height: 64)  // 本体は 64×64、描き場所は 32×16
+        #expect(readInside == start.center, "閉包の中で読んだ道具の始まりが本体の面の中央でない")
+        #expect(result.runtime.orbit?.center == start.center, "道具の状態が描き場所の中央で作られた")
+        #expect(result.runtime.orbitHome?.center == start.center, "戻り先が描き場所の中央になった")
+    }
+
+    @Test("setup() から描き場所の閉包で呼んだ orbitControl() は、本体と同じく断り、道具の状態を進めない")
+    func orbitControlInSetupRefusesLikeTheMain() throws {
+        let plain = try run(frames: 0, setup: { $0.orbitControl() }) { _ in }
+        let into = try run(frames: 0, setup: { probe in
+            probe.draw(into: probe.pad!) { probe.orbitControl() }
+        }) { _ in }
+        for (name, result) in [("素の呼び出し", plain), ("draw(into:) の中", into)] {
+            #expect(result.runtime.orbit == nil && result.runtime.orbitHome == nil, "\(name) が道具の状態を進めた")
+            #expect(
+                result.runtime.canvas.warnings.hasWarned(Canvas.OutsideFrame.camera.warning),
+                "\(name) が本体のフレームの外だと言わなかった")
+        }
+    }
+
+    // MARK: - 粒の繰り越し (呼んだ順)
+
+    @Test("同じ粒へ本体と閉包の中から出しても、繰り越しは呼んだ順に分かれる")
+    func cadenceSplitsByCallOrderAcrossSurfaces() throws {
+        var fromMain = 0
+        var fromInto = 0
+        try run(frames: 6) { probe in
+            let dust = probe.dust!
+            // 描き場所のフレームを 1 回余分に進めて、面ごとの描き切りの数が本体より先へ行くようにする
+            probe.draw(into: probe.pad!) {}
+            var mark = dust.cursor
+            probe.emit(dust, from: .point(16, 8), rate: 30, speed: 0...0, life: 5...5, size: 1...1)
+            fromMain += dust.cursor - mark
+            probe.draw(into: probe.pad!) {
+                mark = dust.cursor
+                probe.emit(dust, from: .point(16, 8), rate: 30, speed: 0...0, life: 5...5, size: 1...1)
+                fromInto += dust.cursor - mark
+            }
+        }
+        // 毎フレーム 0.5 個ずつ繰り越すので、6 フレームでどちらも 3 個。1 つの繰り越しを取り合うと片方が飢える
+        #expect(fromMain == 3 && fromInto == 3, "噴き口ごとの繰り越しが分かれていない (本体 \(fromMain)・閉包 \(fromInto))")
+    }
+
+    // MARK: - 本体の面を渡したとき
+
+    @Test("本体の面を渡しても、フレームを開き直さない。setup() からも本体のフレームは余分に回らない")
+    func passingTheMainSurfaceDoesNotOpenAFrame() throws {
+        var ranInSetup = false
+        var framesAfterSetup = -1
+        var insideIsMain = false
+        var warnedInFrame = true
+        var drewInto: Canvas?
+        let result = try run(
+            frames: 1,
+            setup: { probe in
+                probe.draw(into: probe.runtime!.canvas) { ranInSetup = true }
+                framesAfterSetup = probe.runtime!.canvas.framesDrawn
+            }
+        ) { probe in
+            let main = probe.runtime!.canvas
+            probe.draw(into: main) {
+                insideIsMain = probe.canvas === main
+            }
+            warnedInFrame = main.warnings.hasWarned(.frameCallInsideDraw)
+            // 入れ子の中から本体へ戻る
+            probe.draw(into: probe.pad!) {
+                probe.draw(into: main) { drewInto = probe.canvas }
+            }
+        }
+        #expect(ranInSetup, "setup() の中で閉包が走らない")
+        #expect(framesAfterSetup == 0, "setup() の中で本体のフレームが余分に回った")
+        #expect(insideIsMain)
+        #expect(!warnedInFrame, "本体のフレームの中で、フレームの呼び出しの注意が出た")
+        #expect(drewInto === result.runtime.canvas, "入れ子の中から本体へ戻れない")
+        #expect(result.runtime.canvas.framesDrawn == 1, "本体のフレームが 1 回でない")
     }
 
     // MARK: - 失敗系
