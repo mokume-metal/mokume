@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Synchronization
 import Testing
 
 @testable import MokumeCore
@@ -18,11 +19,12 @@ import Testing
 @MainActor
 struct ClockHandoverTests {
     private func snapshot(
-        _ seconds: Double, held: Bool = false, rate: Double = 1, at: Double = 100,
-        writer: Int32 = 4242, generation: Int = 1
+        _ seconds: Double, held: Bool = false, still: Bool = false, rate: Double? = 1, at: Double = 100,
+        writer: Int32 = 4242, generation: Double = 1
     ) -> ClockHandover.Snapshot {
         ClockHandover.Snapshot(
-            seconds: seconds, isHeld: held, rate: rate, at: at, writer: writer, generation: generation)
+            seconds: seconds, isHeld: held, isStill: still, rate: rate, at: at, writer: writer,
+            generation: generation)
     }
 
     /// 読む順に値を返す箱。最後の値は繰り返す。読んだ回数を数える。
@@ -51,11 +53,12 @@ struct ClockHandoverTests {
 
     private func handover(
         _ readings: Readings = Readings([]), alive: Bool = true, written: Box? = nil, said: Said? = nil,
-        path: String? = "/tmp/mokume-keep-time-test"
+        path: String? = "/tmp/mokume-keep-time-test", generation: Double = 5
     ) -> ClockHandover {
         ClockHandover(
             read: { readings.next() }, write: { written?.values.append($0) },
-            isAlive: { _ in alive }, warn: { said?.lines.append($0) }, writer: 7, path: path)
+            isAlive: { _ in alive }, warn: { said?.lines.append($0) }, writer: 7, generation: generation,
+            path: path)
     }
 
     private func timing(
@@ -114,7 +117,8 @@ struct ClockHandoverTests {
             return
         }
         try Data(
-            #"{"seconds":1e999,"isHeld":false,"rate":1,"at":1,"writer":1,"generation":1}"#.utf8
+            #"{"version":1,"seconds":1e999,"isHeld":false,"isStill":false,"rate":1,"at":1,"writer":1,"generation":1}"#
+                .utf8
         ).write(to: URL(fileURLWithPath: path))
         guard case .unusable(let reason) = ClockHandover.read(path: path) else {
             Issue.record("非有限の秒を使える扱いにした")
@@ -169,9 +173,45 @@ struct ClockHandoverTests {
         #expect(line.contains("TMPDIR") && line.contains("0 s"), "次にすること: \(line)")
 
         let found = handover(Readings([.found(snapshot(8, generation: 3))]), alive: false)
-        #expect(found.predecessor() == ClockHandover.Predecessor(snapshot: snapshot(8, generation: 3), writerIsAlive: false))
-        #expect(found.generation == 4, "読んだ世代 + 1")
-        #expect(handover().generation == 1, "読めなければ 1")
+        #expect(
+            found.predecessor()
+                == ClockHandover.Predecessor(snapshot: snapshot(8, generation: 3), writerIsAlive: false))
+    }
+
+    @Test("世代の番号は読めたかによらず、後に起きたものほど大きい。読めない版は使えない")
+    func generationsOnlyGrowAndUnknownVersionsAreRefused() throws {
+        // 前の世代が読めなくても (壊れた・読めない版)、後の世代の番号は前の世代より大きい
+        let older = ClockHandover(read: { .absent }, write: { _ in })
+        let newer = ClockHandover(read: { .unusable(reason: "broken") }, write: { _ in }, warn: { _ in })
+        _ = newer.predecessor()
+        #expect(newer.generation > older.generation)
+
+        // 読めない版
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        try Data(
+            #"{"version":99,"seconds":1,"isHeld":false,"isStill":false,"rate":1,"at":1,"writer":1,"generation":1}"#
+                .utf8
+        ).write(to: URL(fileURLWithPath: path))
+        guard case .unusable(let reason) = ClockHandover.read(path: path) else {
+            Issue.record("読めない版を使える扱いにした")
+            return
+        }
+        #expect(reason.contains("99"), "\(reason)")
+        // 版の無い書式 (この版より前に書かれたもの)
+        try Data(#"{"seconds":1,"isHeld":false,"rate":1,"at":1,"writer":1,"generation":1}"#.utf8)
+            .write(to: URL(fileURLWithPath: path))
+        guard case .unusable = ClockHandover.read(path: path) else {
+            Issue.record("版の無い書式を使える扱いにした")
+            return
+        }
+        // 読めない版は、読む側が 1 度だけ言って 0 秒から始める
+        let said = LockedLines()
+        let reader = ClockHandover(path: path, warn: { said.append($0) })
+        #expect(reader.predecessor() == nil)
+        #expect(reader.predecessor() == nil)
+        #expect(said.lines.count == 1 && said.lines[0].contains(path), "\(said.lines)")
     }
 
     // MARK: - 渡された値から始まる時計
@@ -426,7 +466,7 @@ struct ClockHandoverTests {
             clock.advance()
         }
         #expect(written.values.count == 1, "外挿が合っている間は書き直さない: \(written.values.count)")
-        #expect(written[0].map { $0.rate == 1 && !$0.isHeld && $0.writer == 7 && $0.generation == 1 } == true)
+        #expect(written[0].map { $0.rate == 1 && !$0.isHeld && $0.writer == 7 && $0.generation == 5 } == true)
 
         // 飛んだ
         clock.jumpTime(50)
@@ -473,7 +513,7 @@ struct ClockHandoverTests {
         }
         #expect(written.values.count <= 20, "毎枚 (90 回) ではなく間隔を空けて書く: \(written.values.count)")
         let last = try! #require(written.values.last)
-        #expect(abs(last.rate - 0.5) < 0.02, "測った進み方: \(last.rate)")
+        #expect(abs((last.rate ?? 0) - 0.5) < 0.02, "測った進み方: \(String(describing: last.rate))")
         // 新しい世代の最初の枚が 3.6 秒後に出る。前の世代はその間も同じ進み方で回る
         let arrival = now + 3.6
         let truth = clock.seconds + 0.5 * 3.6
@@ -491,7 +531,22 @@ struct ClockHandoverTests {
             clock.advance()
         }
         #expect(written.values.count <= 6, "2 秒で \(written.values.count) 回")
-        #expect(written.values.allSatisfy { abs($0.rate - 1) < 0.02 })
+        #expect(written.values.dropFirst().allSatisfy { abs(($0.rate ?? 0) - 1) < 0.02 })
+    }
+
+    @Test("毎枚 jumpTime する作品でも、状態の変わり目でなければ 1 秒に 20 回までしか書かない")
+    func aJumpOnEveryFrameIsThrottled() {
+        var now = 500.0
+        let written = Box()
+        let clock = timing(.wallClock, handover(written: written), now: { now })
+        for index in 0..<120 {
+            now += 1.0 / 60
+            clock.jumpTime(Double(index % 7))
+            clock.advance()
+        }
+        // 2 秒ぶん。毎枚 (120 回) ではなく、50 ms あけて
+        #expect(written.values.count <= 2 * 20 + 1, "\(written.values.count) 回")
+        #expect(written.values.count >= 10, "止まってはいない: \(written.values.count) 回")
     }
 
     @Test("観測の指定秒ではなく作者の時計の秒を書く")
@@ -500,13 +555,13 @@ struct ClockHandoverTests {
         let written = Box()
         let clock = timing(.frameIndex(frameRate: 60), handover(written: written), now: { now })
         for _ in 0..<3 {
-            now += 0.01
+            now += 0.06
             clock.advance()
         }
         // 秒が進まない (止めている) 前に、作者の時計の秒で 1 度書いてある
         let before = written.values.count
         clock.jumpTime(70)
-        now += 0.01
+        now += 0.06
         clock.advance(at: 99)
         #expect(clock.time == 99)
         #expect(written.values.count == before + 1)
@@ -532,6 +587,83 @@ struct ClockHandoverTests {
         #expect(Float(seconds) == Float(seconds + 1.0 / 60), "(確認) 単精度ではこの刻みは区別できない")
     }
 
+    // MARK: - 枚が止まっているとき (noLoop())
+
+    @Test("枚が止まっている世代・進み方がまだ測れていない世代は外挿しない。止めていなければ従来どおり進める")
+    func aStillOrUnmeasuredPredecessorIsNotExtrapolated() {
+        #expect(snapshot(12.5, still: true, at: 100).start(at: 160) == (12.5, false), "枚が止まっている")
+        #expect(snapshot(12.5, rate: nil, at: 100).start(at: 160) == (12.5, false), "進み方が未測定")
+        #expect(snapshot(12.5, held: true, still: true, at: 100).start(at: 160) == (12.5, true))
+        let running = snapshot(12.5, at: 100).start(at: 103.6)
+        #expect(abs(running.seconds - 16.1) < 1e-9)
+    }
+
+    @Test("noLoop() で枚が止まったら、その枚の秒を止まっていると書く。60 秒眺めてから保存しても、新しい世代は同じ秒から始まる")
+    func aStoppedSketchHandsOverTheShownSecondNotTheElapsedOne() {
+        for clock in [Clock.wallClock, Clock.frameIndex(frameRate: 60)] {
+            var now = 500.0
+            let written = Box()
+            let readings = Readings([.absent])
+            let old = timing(clock, handover(readings, written: written), now: { now })
+            for _ in 0..<30 {
+                now += 1.0 / 60
+                old.advance()
+            }
+            let shown = old.seconds
+            let before = written.values.count
+            old.noteStill(true)
+            #expect(written.values.count == before + 1, "止まった枚の秒をその場で書く: \(clock)")
+            let last = written.values.last
+            #expect(last?.isStill == true && last?.seconds == shown, "\(String(describing: last))")
+            // 止まったまま眺める。枚は来ない。同じ状態を何度告げても書き直さない
+            old.noteStill(true)
+            #expect(written.values.count == before + 1)
+
+            // 60 秒後に保存して作り直した世代は、窓に出ている秒から始まる
+            now += 60
+            let new = timing(clock, handover(Readings([.found(last!)])), now: { now })
+            new.beginHandover()
+            new.advance()
+            #expect(abs(new.seconds - shown) < 1e-9, "止まっていた間の 60 秒を足さない: \(clock) \(new.seconds) vs \(shown)")
+        }
+    }
+
+    @Test("動き出したときは、次の枚が動いていると書く。最初の枚の前に止められても、書かずに控える")
+    func resumingIsWrittenByTheNextFrame() {
+        var now = 500.0
+        let written = Box()
+        let clock = timing(.wallClock, handover(written: written), now: { now })
+        // 最初の枚の前 (setup() の noLoop()): まだ秒が無いので書かない
+        clock.noteStill(true)
+        #expect(written.values.isEmpty)
+        now += 1.0 / 60
+        clock.advance()
+        #expect(written.values.last?.isStill == true, "控えた状態のまま最初の枚が書く")
+        clock.noteStill(false)
+        #expect(written.values.last?.isStill == true, "動き出しはここでは書かない")
+        now += 1.0 / 60
+        clock.advance()
+        #expect(written.values.last?.isStill == false, "次の枚が動いていると書く")
+    }
+
+    @Test("フレームの時計は、進み方が測れるまで nil を書く。測れたら書き直す")
+    func theFrameClockWritesNoRateUntilItIsMeasured() {
+        var now = 500.0
+        let written = Box()
+        let clock = timing(.frameIndex(frameRate: 60), handover(written: written), now: { now })
+        now += 1.0 / 60
+        clock.advance()
+        #expect(written[0]?.rate == nil)
+        for _ in 0..<40 {
+            now += 1.0 / 60
+            clock.advance()
+        }
+        let measured = written.values.last
+        #expect(measured?.rate != nil, "0.5 秒で測れて書き直した")
+        // 書く前の世代は、続きの秒を求められない (外挿せず書いた秒から始める)
+        #expect(written[0]?.start(at: now + 100).seconds == written[0]?.seconds)
+    }
+
     // MARK: - 書く側の口 (main の外)
 
     @Test("続けて頼んでも最新のものだけが、間隔を空けて書かれ、頼みが止んでも最後の 1 つは届く")
@@ -552,12 +684,14 @@ struct ClockHandoverTests {
         #expect(sink.writeCount < 10, "200 回の頼みを \(sink.writeCount) 回に畳む")
     }
 
-    @Test("新しい世代が書いた後、古い世代は書かずに退く (どちらの順でも、新しい世代のファイルが残る)")
-    func anOlderGenerationNeverOverwritesANewerOne() throws {
+    @Test("より新しい世代の書き手が生きている間、古い世代は書かずに見送り、居なくなれば見送りは取り消される")
+    func anOlderGenerationYieldsOnlyWhileTheNewerWriterLives() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("clock").path
-        let old = ClockHandover.FileSink(path: path, warn: { _ in })
+        let newerLives = Mutex(true)
+        let old = ClockHandover.FileSink(
+            path: path, warn: { _ in }, isAlive: { _ in newerLives.withLock { $0 } })
         let new = ClockHandover.FileSink(path: path, warn: { _ in })
 
         old.submit(snapshot(1, writer: 10, generation: 1))
@@ -574,23 +708,70 @@ struct ClockHandoverTests {
             return
         }
         #expect(read.generation == 2 && read.seconds == 9 && read.isHeld, "新しい世代が残る: \(read)")
-        #expect(old.writeCount == 1 && new.writeCount == 1, "古い世代は退いた後に書いていない")
+        #expect(old.writeCount == 1 && new.writeCount == 1, "古い世代は見送って書いていない")
         // 新しい世代は自分の世代を書き直せる
         new.submit(snapshot(10, held: true, writer: 11, generation: 2))
         new.settle()
+        // 新しい世代の書き手が居なくなった (落ちた)。見送りは取り消され、古い世代が書く
+        newerLives.withLock { $0 = false }
+        old.submit(snapshot(7, writer: 10, generation: 1))
+        old.settle()
         guard case .found(let again) = ClockHandover.read(path: path) else {
             Issue.record("読めない")
             return
         }
-        #expect(again.seconds == 10)
+        #expect(again.generation == 1 && again.seconds == 7, "書き手が居なければ古い世代が書く: \(again)")
+    }
+
+    @Test("読めないファイルの上へは、世代によらず書く (読めない世代が、新しい世代を永久に黙らせない)")
+    func anUnreadableFileIsWrittenOver() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        try Data("not json".utf8).write(to: URL(fileURLWithPath: path))
+        let sink = ClockHandover.FileSink(path: path, warn: { _ in }, isAlive: { _ in true })
+        sink.submit(snapshot(3, writer: 10, generation: 1))
+        sink.settle()
+        guard case .found(let read) = ClockHandover.read(path: path) else {
+            Issue.record("書かれていない")
+            return
+        }
+        #expect(read.seconds == 3)
+    }
+
+    @Test("原子的な置き方は AtomicFile を通る: 落とされた書き手の残した一時ファイルを片付け、自分の一時ファイルを残さない")
+    func writesGoThroughAtomicFile() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("clock").path
+        // 書いている途中に SIGKILL された子が残した一時ファイル (持ち主の番号は、終わって回収したプロセスのもの)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try process.run()
+        process.waitUntilExit()
+        let abandoned = directory.appendingPathComponent(".clock.\(process.processIdentifier)-3.tmp")
+        try Data("half".utf8).write(to: abandoned)
+
+        let sink = ClockHandover.FileSink(path: path, warn: { _ in })
+        sink.submit(snapshot(2))
+        sink.settle()
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+        #expect(!names.contains(abandoned.lastPathComponent), "落とされた書き手の一時ファイルが残っている: \(names)")
+        #expect(names.filter { $0.hasSuffix(".tmp") }.isEmpty, "自分の一時ファイルが残っている: \(names)")
+        guard case .found = ClockHandover.read(path: path) else {
+            Issue.record("置けていない")
+            return
+        }
     }
 
     @Test("書けないとき・読めないときは、黙って 0 秒に戻さず、1 度だけ原因と次にすることを言う")
     func failuresToWriteAreSaidOnce() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        // 置き場の無い場所 (TMPDIR が消えた・書けない)
-        let path = directory.appendingPathComponent("missing/clock").path
+        // 置き場を作れない場所 (置き場の名前を普通のファイルが使っている)
+        let blocker = directory.appendingPathComponent("blocker")
+        try Data("file".utf8).write(to: blocker)
+        let path = blocker.appendingPathComponent("clock").path
         let said = LockedLines()
         let sink = ClockHandover.FileSink(path: path, warn: { said.append($0) })
         sink.submit(snapshot(1))
@@ -611,19 +792,10 @@ struct ClockHandoverTests {
         #expect(readSaid.lines.count == 1 && readSaid.lines[0].contains(broken), "\(readSaid.lines)")
     }
 
-    nonisolated final class LockedLines: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storage: [String] = []
-        func append(_ line: String) {
-            lock.lock()
-            defer { lock.unlock() }
-            storage.append(line)
-        }
-        var lines: [String] {
-            lock.lock()
-            defer { lock.unlock() }
-            return storage
-        }
+    nonisolated final class LockedLines: Sendable {
+        private let storage = Mutex<[String]>([])
+        func append(_ line: String) { storage.withLock { $0.append(line) } }
+        var lines: [String] { storage.withLock { $0 } }
     }
 
     // MARK: - ファイルをはさんだ受け渡し
@@ -635,7 +807,8 @@ struct ClockHandoverTests {
         let path = directory.appendingPathComponent("clock").path
 
         var now = 500.0
-        let first = timing(.wallClock, ClockHandover(path: path, warn: { _ in }), now: { now })
+        let firstHandover = ClockHandover(path: path, warn: { _ in })
+        let first = timing(.wallClock, firstHandover, now: { now })
         first.beginHandover()
         for _ in 0..<5 {
             now += 1.0 / 60
@@ -660,7 +833,7 @@ struct ClockHandoverTests {
         secondTiming.beginHandover()
         secondTiming.advance()
         #expect(secondTiming.seconds == 8, "止めた秒を運ぶ: \(secondTiming.seconds)")
-        #expect(second.generation == 2)
+        #expect(second.generation > firstHandover.generation, "後に起きた世代ほど番号が大きい")
     }
 }
 
@@ -700,7 +873,7 @@ struct ClockHandoverRuntimeTests {
 
     private func held(_ seconds: Double) -> ClockHandover.Snapshot {
         ClockHandover.Snapshot(
-            seconds: seconds, isHeld: true, rate: 1, at: 90, writer: 1, generation: 1)
+            seconds: seconds, isHeld: true, isStill: false, rate: 1, at: 90, writer: 1, generation: 1)
     }
 
     @Test("窓の経路で組んだ実行は、渡された止めた秒から始まり、止まったまま動く。setup() はその秒を見る")
@@ -739,6 +912,51 @@ struct ClockHandoverRuntimeTests {
             try runtime.advance()
         }
         #expect(sketch.seen == [2, 2, 2, 2])
+    }
+
+    final class Written {
+        var values: [ClockHandover.Snapshot] = []
+    }
+
+    final class Stopper: Sketch {
+        var frames = 0
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 8, height: 4) }
+        func draw() {
+            background(0)
+            frames += 1
+            if frames == 3 { noLoop() }
+        }
+    }
+
+    @Test("draw() の中の noLoop() も外からの停止も、止まった枚の秒を止まっていると書く。動き出せば次の枚が書き直す")
+    func aStoppedRuntimeWritesItsShownSecond() throws {
+        var now = 500.0
+        let written = Written()
+        let handover = ClockHandover(
+            read: { .absent }, write: { written.values.append($0) }, isAlive: { _ in true }, warn: { _ in })
+        let sketch = Stopper()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: nil, now: { now }, onScreen: true, handover: handover)
+        for _ in 0..<3 {
+            now += 1.0 / 60
+            try runtime.advance()
+        }
+        let stopped = try #require(written.values.last)
+        #expect(stopped.isStill && !stopped.isHeld, "noLoop() の枚で止まったと書く: \(stopped)")
+        #expect(abs(stopped.seconds - 2.0 / 60) < 1e-9, "窓に出ている枚の秒: \(stopped.seconds)")
+
+        // 外からの停止と再開
+        runtime.loop()
+        now += 1.0 / 60
+        try runtime.advance()
+        #expect(written.values.last?.isStill == false, "動き出して描いた枚は、動いていると書く")
+        runtime.pause()
+        #expect(written.values.last?.isStill == true, "外から止めた")
+        runtime.resume()
+        now += 1.0 / 60
+        try runtime.advance()
+        #expect(written.values.last?.isStill == false)
     }
 
     @Test("書き出しの頼みが在れば、渡された時計は使わない")

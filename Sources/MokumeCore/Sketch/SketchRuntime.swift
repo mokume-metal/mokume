@@ -56,13 +56,18 @@ public final class SketchRuntime {
     private let now: () -> Double
     private var hasSetUp = false
     /// 外から止められているか (``pause()``)。
-    private var isPaused = false
+    private var isPaused = false {
+        // 止まった枚の秒を次の世代へ渡す (`watch --keep-time`・#2414)。止まったかどうかは両方から決まる
+        didSet { timing.noteStill(isHeldStill) }
+    }
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
     /// 意味の違いは ``resume()`` の説明にある。
     ///
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    private(set) var isLooping = true
+    private(set) var isLooping = true {
+        didSet { timing.noteStill(isHeldStill) }
+    }
     /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
     /// **窓・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
     /// いるので、絵が窓へ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。

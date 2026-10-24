@@ -225,6 +225,10 @@ final class FrameTiming {
     private var predecessor: ClockHandover.Predecessor?
     /// ``beginHandover()`` を済ませたか。
     private var hasBegunHandover = false
+    /// 枚が止まっているか (``SketchPart/noLoop()``・外からの停止)。``noteStill(_:)`` が受ける。
+    /// 次の世代へ渡す (``ClockHandover/Snapshot/isStill``) — 止まっている間は枚が来ないので、前の世代が
+    /// 回り続けているとは言えない。
+    private var isStill = false
     /// 最初の枚の前に、作者が ``pauseTime()``・``playTime()``・``jumpTime(_:)`` を呼んだか。
     /// 呼んでいれば、最初の枚で前の世代のファイルを読み直して始め直さず、作者の明示を優先する。
     private var authorTouchedClock = false
@@ -305,7 +309,7 @@ final class FrameTiming {
         var moment = max(displayTime ?? current, previous)
         if frameCount == 0, clock == .wallClock {
             // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
-            // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
+            // の約束。`watch --keep-time` で前の世代から引き継ぐ実行だけは、下で原点を前の世代の秒に置き直す)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
             // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
             // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
             //
@@ -392,14 +396,36 @@ final class FrameTiming {
         // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
         elapsed += step.seconds
         // 次の世代へ渡す作者の時計 (観測の指定秒ではなく、作者の時計の秒)。書くかどうかの判断は口の側
-        if let handover {
-            let kind: ClockHandover.Kind
-            switch clock {
-            case .wallClock: kind = .realtime
-            case .frameIndex(let frameRate): kind = .frames(interval: 1 / Double(max(1, frameRate)))
-            }
-            handover.publish(seconds: seconds, isHeld: heldAt != nil, kind: kind, frames: frameCount, at: moment)
+        publishHandover(at: moment)
+    }
+
+    /// 次の世代へ渡す作者の時計を、いまの状態で口へ渡す。
+    private func publishHandover(at moment: Double) {
+        guard let handover else { return }
+        let kind: ClockHandover.Kind
+        switch clock {
+        case .wallClock: kind = .realtime
+        case .frameIndex(let frameRate): kind = .frames(interval: 1 / Double(max(1, frameRate)))
         }
+        handover.publish(
+            seconds: seconds, isHeld: heldAt != nil, isStill: isStill, kind: kind, frames: frameCount,
+            at: moment)
+    }
+
+    /// 枚が止まった・動き出したことを受ける (`noLoop()`・`loop()`・外からの停止と再開)。
+    ///
+    /// 止まった枚は、窓に出ている最後の枚の秒のままである。前の世代が枚を出し続けているとは言えないので、
+    /// 次の世代は止まっていた間の時間を足さず、この秒から始める ([#2414])。**止まったときに、その枚の秒を書く** —
+    /// 止まった後は ``advance(at:displayTime:)`` が来ないので、次の枚を待てない。動き出したときは書かない:
+    /// 次の枚の ``advance(at:displayTime:)`` が、その枚の秒とともに書く。最初の枚の前は秒がまだ無いので、
+    /// 控えるだけで書かない (最初の枚が書く)。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    func noteStill(_ still: Bool) {
+        guard isStill != still else { return }
+        isStill = still
+        guard still, frameCount > 0 else { return }
+        publishHandover(at: now())
     }
 
     /// **`setup()` の前に**、前の世代の作者の時計を時計へ入れる (`watch --keep-time`・[#2414])。

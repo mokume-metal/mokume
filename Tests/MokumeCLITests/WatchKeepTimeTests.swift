@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 import Testing
 
@@ -168,5 +169,88 @@ struct WatchKeepTimeTests {
         try Data("untouched".utf8).write(to: file)
         try WatchCommand.run([root.path], watching: { _, _ in })
         #expect(try String(contentsOf: file, encoding: .utf8) == "untouched")
+    }
+
+    @Test("書いている途中に落とされた子の一時ファイルも、始めに消し、終わりでも消す")
+    func theWatcherClearsHalfWrittenTemporaries() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"// swift-tools-version: 6.2"#.utf8)
+            .write(to: root.appendingPathComponent("Package.swift"))
+        let file = WatchCommand.keepTimeFile()
+        let directory = file.deletingLastPathComponent()
+        // `AtomicFile` の一時ファイルの名: `.<名前>.<pid>-<連番>.tmp`
+        let leftover = directory.appendingPathComponent(".\(file.lastPathComponent).99999-4.tmp")
+        let later = directory.appendingPathComponent(".\(file.lastPathComponent).99999-5.tmp")
+        defer {
+            try? FileManager.default.removeItem(at: leftover)
+            try? FileManager.default.removeItem(at: later)
+        }
+        try Data("half".utf8).write(to: leftover)
+        var leftInTheLoop = true
+        try WatchCommand.run(
+            ["--keep-time", root.path],
+            watching: { _, _ in
+                leftInTheLoop = FileManager.default.fileExists(atPath: leftover.path)
+                try? Data("half".utf8).write(to: later)
+            })
+        #expect(!leftInTheLoop, "前の見張りの書きかけが残っている")
+        #expect(!FileManager.default.fileExists(atPath: later.path), "終わりで書きかけを消していない")
+    }
+
+    @Test("居なくなった見張りが残した時計のファイルだけを消す (生きている見張りのものと、無関係の名前には触れない)")
+    func staleFilesOfGoneWatchersAreSwept() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gone = 4_000_001
+        let alive = 4_000_002
+        let names = [
+            "mokume-keep-time-\(gone)", "mokume-keep-time-\(gone).lock", ".mokume-keep-time-\(gone).77-3.tmp",
+            "mokume-keep-time-\(alive)", "mokume-keep-time-\(alive).lock", ".mokume-keep-time-\(alive).77-3.tmp",
+            "mokume-keep-time-notes", "mokume-keep-time-\(gone).txt", "unrelated-\(gone)",
+        ]
+        for name in names { try Data("x".utf8).write(to: directory.appendingPathComponent(name)) }
+
+        WatchCommand.removeStaleKeepTimeFiles(in: directory, running: { $0 == pid_t(alive) })
+
+        let left = Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+        #expect(
+            left
+                == [
+                    "mokume-keep-time-\(alive)", "mokume-keep-time-\(alive).lock",
+                    ".mokume-keep-time-\(alive).77-3.tmp", "mokume-keep-time-notes",
+                    "mokume-keep-time-\(gone).txt", "unrelated-\(gone)",
+                ], "\(left.sorted())")
+    }
+
+    @Test("Dock の「終了」・ログアウトで run() に戻らなくても、後始末で時計のファイルと錠と書きかけを消す。2 度通っても害は無い")
+    func teardownClearsTheClockFilesWithoutReturningFromRun() async throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mokume-keep-time-\(getpid())")
+        let lock = URL(fileURLWithPath: file.path + ".lock")
+        let temporary = directory.appendingPathComponent(".mokume-keep-time-\(getpid()).88-1.tmp")
+        for url in [file, lock, temporary] { try Data("x".utf8).write(to: url) }
+
+        let session = await MainActor.run {
+            WatchSession(
+                directory: directory, context: testContext(), hooks: WatchCommandTests.Stub().hooks())
+        }
+        await MainActor.run {
+            // 道具立てが終わる経路 (`applicationWillTerminate`) だけを通す。`run()` の `defer` は通らない
+            let delegate = WatchCommand.ApplicationDelegate(
+                stopRequested: {}, isFinished: { true },
+                teardown: { WatchCommand.teardown(session, nil, keepTimeFile: file) })
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+            // 2 度目 (巡回を抜けた道と両方から呼ばれうる)
+            WatchCommand.removeKeepTimeFiles(file)
+        }
+        for url in [file, lock, temporary] {
+            #expect(!FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent) が残っている")
+        }
     }
 }
