@@ -1279,3 +1279,34 @@ struct StrokeCamera {
         return SIMD2(normal.x / size, normal.y / size)
     }
 }
+
+extension Canvas {
+    /// この立体の列を、光の枝を外した断片で描くなら、その組の鍵 (描いてよくなければ `nil`)・[#1795]。
+    /// **列を閉じるときに 1 度だけ出して列に持たせる** (``Batch/unlitSolid``) — 描き切りは列ごとに
+    /// 述語を評価し直さない。
+    ///
+    /// **断片が光の枝に入る条件の否定そのもの** (`mokume_shapeColor`): 光が 1 つも効かず
+    /// (`lighting.count == 0`)、周囲を置かず、列が周囲そのものを出す背景でもない。値は列を閉じた
+    /// 時点のもので、列ごとに渡る値と同じなので、枝は必ず偽になる — 外しても画素は変わらない。
+    ///
+    /// 対象は組み込みの塗りだけである。**利用者の断片の列は、利用者の `shader()` を載せた
+    /// パイプラインで描く** (``Shader``) ので外す。GPU で広げる立体の輪郭 (``Batch/strokeGeometry``) は
+    /// 元から枝を外した組で描く。**面を置き換える板** (``Batch/replacesSurface``・`background(色)` を
+    /// 切り抜きの下で呼んだとき) はこの経路を通らない — 列を閉じる側 (``closeSolidBatch()``) が出さない
+    /// ので、光を置いた絵の背景の置き換えが組を 1 本増やすこともない。
+    ///
+    /// **列の選び方は既定の組と同じ** (``ShapePipeline/BlendStates/Column/init(drawing:)``)。細い線を
+    /// 広げた頂点を持つ置き換える列は下地を読む列で描くので、鍵の列もそれに従う。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    func unlitSolidKey(of batch: Batch) -> ShapePipeline.UnlitSolidKey? {
+        guard
+            specializesUnlitSolids && batch.source == .solid && batch.strokeGeometry == nil
+                && batch.run.paint.shader == nil && batch.lightRange.isEmpty
+                && !(batch.surroundings.topAndPresence.w > 0.5)
+                && !(batch.surroundings.horizonAndBackdrop.w > 0.5)
+        else { return nil }
+        return ShapePipeline.UnlitSolidKey(
+            isUnitShape: batch.usesUnitShape, column: .init(drawing: batch))
+    }
+}

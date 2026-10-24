@@ -394,6 +394,8 @@ extension Canvas {
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry, usesUnitShape: open.usesUnitShape))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 特化できる列かは、ここで 1 度だけ決める (#1795)。細い線の被覆は直前に移したので、その後
+        batches[batches.count - 1].unlitSolid = unlitSolidKey(of: batches[batches.count - 1])
         warnIfMaterialCannotShow()
     }
 

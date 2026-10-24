@@ -80,12 +80,17 @@ final class ShapePipeline {
         /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
         /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
         func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
-            batch.run.mode == .replace && batch.thinCoverage ? composite : state(for: batch.run.mode)
+            state(in: Column(drawing: batch))
         }
 
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
-            switch Column(mode) {
+            state(in: Column(mode))
+        }
+
+        /// その列のパイプライン。
+        private func state(in column: Column) -> any MTLRenderPipelineState {
+            switch column {
             case .blend: blend
             case .replace: replace
             case .composite: composite
@@ -106,7 +111,15 @@ final class ShapePipeline {
                 }
             }
 
-            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:)``
+            /// **その列を描く列。** 置き換える列のうち、細い線を広げた頂点を持つ列だけは下地を読む列
+            /// (`composite`) で描く (#1637・``BlendStates/drawing(_:)``)。**列を選ぶのはここ 1 か所**で、
+            /// 3 本一組で描く経路も、特化した 1 本を選ぶ経路 (``ShapePipeline/UnlitSolidKey``・#1795) も
+            /// この列を通る — 例外を写し持つと、片方だけが直されて絵が割れる。
+            init(drawing batch: Canvas.Batch) {
+                self = batch.run.mode == .replace && batch.thinCoverage ? .composite : .init(batch.run.mode)
+            }
+
+            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:unlit:)``
             /// が返す 3 本の中での位置。
             var planIndex: Int {
                 switch self {
@@ -224,6 +237,104 @@ final class ShapePipeline {
     ///
     /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
     private let formPipelines: Mutex<[FormKey: any MTLRenderPipelineState]>
+
+    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くパイプライン ([#1795])。
+    ///
+    /// 立体の塗りは光・周囲・背景のどれも通るので枝を残して組む (``shapeLit(forVertexFunction:)``)。
+    /// 光も周囲も置かない列では、その枝は必ず偽になる — 外しても画素は変わらず、塗りが律速の
+    /// 場面で断片の費用だけが減る。**組むのは使うときに 1 本ずつ** (基本図形と同じ・[#3114]) で、
+    /// 光を置いた列だけの絵は 1 本も組まない。
+    ///
+    /// **組めなかった鍵は控えて、組み直さない。** 描く側は、組めなかった鍵の列を既定の組 (起動で
+    /// 組み済み・画素は同じ) で描く。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
+    private let unlitSolidPipelines: Mutex<UnlitSolidPipelines>
+
+    /// ``unlitSolidPipelines`` の中身。
+    struct UnlitSolidPipelines {
+        var built: [UnlitSolidKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵と、その失敗。毎フレーム組み直さない。失敗まで持つのは、控えがデバイスで共有なので、
+        /// 組もうとしなかった 2 つ目以降のキャンバスにも「組めていない」と言わせるため。
+        var failed: [UnlitSolidKey: RenderFailure] = [:]
+        /// 検査が組む失敗を差し込む口 (``failBuildingUnlitSolidsForTesting(_:)``)。製品では常に `nil`。
+        var failureForTesting: RenderFailure?
+    }
+
+    /// 光の枝を外した立体の塗りのパイプライン 1 本の鍵 — 頂点関数と、混ぜ方の列。
+    struct UnlitSolidKey: Hashable, Sendable {
+        /// 単位の形の頂点関数 (``unitShapeVertexFunctionName``) で組むか。偽なら ``solidVertexFunctionName``。
+        let isUnitShape: Bool
+        /// **その列を描く列** (``BlendStates/Column/init(drawing:)``)。
+        let column: BlendStates.Column
+    }
+
+    /// 積む列が使う、光の枝を外した立体のパイプラインを、積む前に組み済みにして返す。
+    ///
+    /// **投げない。** 組めなかった鍵は返す辞書に載せず (``UnlitSolidPreparation/failure`` に最初の失敗を持たせる)、
+    /// 描く側が既定の組へ戻る — 特化は速さだけを変えるので、組めないことでフレームを落とさない。
+    /// **組むときは錠を持たない** (コンパイルの間、ほかの読み手を止めない)。
+    func prepareUnlitSolids(_ keys: [UnlitSolidKey]) -> UnlitSolidPreparation {
+        var preparation = UnlitSolidPreparation()
+        for key in keys where preparation.states[key] == nil {
+            let lookup = unlitSolidPipelines.withLock { pipelines -> UnlitSolidLookup in
+                if let state = pipelines.built[key] { return .built(state) }
+                if let failure = pipelines.failed[key] { return .failed(failure) }
+                return .missing(pipelines.failureForTesting)
+            }
+            switch lookup {
+            case .built(let state):
+                preparation.states[key] = state
+            case .failed(let failure):
+                // 組み直さない。ただし、このキャンバスにも 1 度言えるよう、控えた失敗を返す
+                preparation.failure = preparation.failure ?? failure
+                continue
+            case .missing(let injected):
+                do throws(RenderFailure) {
+                    if let injected { throw injected }
+                    let state = try Self.makeUnlitSolidState(
+                        compiler: compiler, vertexLibrary: vertexLibrary,
+                        unitShapeLibrary: unitShapeLibrary, pixelFormat: pixelFormat, key: key)
+                    // 同時に組んだ側があれば、先に控えた 1 本を使う
+                    preparation.states[key] = unlitSolidPipelines.withLock { pipelines in
+                        if let existing = pipelines.built[key] { return existing }
+                        pipelines.built[key] = state
+                        return state
+                    }
+                } catch {
+                    unlitSolidPipelines.withLock { $0.failed[key] = error }
+                    preparation.failure = preparation.failure ?? error
+                }
+            }
+        }
+        return preparation
+    }
+
+    /// ``prepareUnlitSolids(_:)`` が控えを引いた結果。
+    private enum UnlitSolidLookup {
+        case built(any MTLRenderPipelineState)
+        case failed(RenderFailure)
+        case missing(RenderFailure?)
+    }
+
+    /// ``prepareUnlitSolids(_:)`` の答え。
+    struct UnlitSolidPreparation {
+        /// 組み済みの鍵と、その 1 本。
+        var states: [UnlitSolidKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵の最初の失敗。
+        var failure: RenderFailure?
+    }
+
+    /// 組み済みの光の枝を外した立体のパイプラインの本数 (検査用)。
+    var builtUnlitSolidStateCount: Int { unlitSolidPipelines.withLock { $0.built.count } }
+
+    /// 光の枝を外した立体のパイプラインを組むとき、この失敗を投げさせる (検査用・`nil` で戻す)。
+    /// 組めなかったときに既定の組で描き続けることを、検査から作る穴 (`failureForTesting` と同じ形)。
+    /// 公開はしない。
+    func failBuildingUnlitSolidsForTesting(_ failure: RenderFailure?) {
+        unlitSolidPipelines.withLock { $0.failureForTesting = failure }
+    }
 
     /// 基本図形のパイプライン 1 本の鍵 — 旗の組と、混ぜ方の列。
     struct FormKey: Hashable, Sendable {
@@ -364,6 +475,9 @@ final class ShapePipeline {
                 key: defaultKey)
         ])
 
+        // 光の枝を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
+        self.unlitSolidPipelines = Mutex(UnlitSolidPipelines())
+
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
         flat.depthCompareFunction = .always
@@ -497,27 +611,47 @@ final class ShapePipeline {
             compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
     }
 
+    /// 光の枝を外した立体の塗りのパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ
+    /// ``blendPlans`` を通り、列だけを選ぶ ([#1795])。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    private static func makeUnlitSolidState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, unitShapeLibrary: any MTLLibrary,
+        pixelFormat: MTLPixelFormat, key: UnlitSolidKey
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let vertexFunctionName =
+            key.isUnitShape ? unitShapeVertexFunctionName : solidVertexFunctionName
+        let plans = blendPlans(
+            pixelFormat: pixelFormat,
+            label: key.isUnitShape ? "mokume.unit-shapes.unlit" : "mokume.solids.unlit",
+            vertexFunctionName: vertexFunctionName, unlit: true)
+        // 頂点関数は単位の形だけ別のライブラリにあり、断片はどちらも Shapes にある
+        return try plans[key.column.planIndex].makeNow(
+            compiler: compiler, vertexLibrary: key.isUnitShape ? unitShapeLibrary : vertexLibrary,
+            fragmentLibrary: vertexLibrary)
+    }
+
     /// 3 本の組み方。`composite`・`blend`・`replace` の順 (``BlendStates/init(_:)`` が読む順)。
     private static func blendPlans(
         pixelFormat: MTLPixelFormat, label: String, vertexFunctionName: String,
         fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
         blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
         replaceFragmentFunctionName: String = ShapePipeline.flatReplaceFragmentFunctionName,
-        formFlags: UInt32? = nil
+        formFlags: UInt32? = nil, unlit: Bool = false
     ) -> [StatePlan] {
         [
             plan(
                 label: label, vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: fragmentFunctionName, sourceOver: false,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
             plan(
                 label: "\(label).blend", vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: blendFragmentFunctionName, sourceOver: true,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
             plan(
                 label: "\(label).replace", vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: replaceFragmentFunctionName, sourceOver: false,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
         ]
     }
 
@@ -572,15 +706,17 @@ final class ShapePipeline {
     ///
     /// - 基本図形の断片 (`formFlags` あり) は旗だけを受け取り、`kShapeLitValue` を読まない
     /// - 三角形の経路の断片は光の有無だけを受け取り、`kFormHas*` を読まない
-    ///   (値は ``shapeLit(forVertexFunction:)``)
+    ///   (値は ``shapeLit(forVertexFunction:)``。**`unlit` は、光も周囲も置かない列だと呼ぶ側が
+    ///   言い切れるとき**で、頂点関数が枝を残す立体の塗りも枝を外して組む・[#1795])
     ///
     /// [#2293]: https://github.com/mokume-metal/mokume/issues/2293
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
     static func fragmentConstants(
-        vertexFunctionName: String, formFlags: UInt32?
+        vertexFunctionName: String, formFlags: UInt32?, unlit: Bool = false
     ) -> FragmentConstants {
         FragmentConstants(
             formFlags: formFlags,
-            lit: formFlags == nil ? shapeLit(forVertexFunction: vertexFunctionName) : nil)
+            lit: formFlags == nil ? !unlit && shapeLit(forVertexFunction: vertexFunctionName) : nil)
     }
 
     /// 断片を旗の組と光の有無で特化する記述。
@@ -778,13 +914,14 @@ final class ShapePipeline {
 
     private static func plan(
         label: String, vertexFunctionName: String, fragmentFunctionName: String,
-        sourceOver: Bool, formFlags: UInt32?, pixelFormat: MTLPixelFormat
+        sourceOver: Bool, formFlags: UInt32?, unlit: Bool, pixelFormat: MTLPixelFormat
     ) -> StatePlan {
         StatePlan(
             label: label, vertexFunctionName: vertexFunctionName,
             fragmentFunctionName: fragmentFunctionName,
             specialization: specializationValues(
-                fragmentConstants(vertexFunctionName: vertexFunctionName, formFlags: formFlags)),
+                fragmentConstants(
+                    vertexFunctionName: vertexFunctionName, formFlags: formFlags, unlit: unlit)),
             sourceOver: sourceOver, pixelFormat: pixelFormat)
     }
 
