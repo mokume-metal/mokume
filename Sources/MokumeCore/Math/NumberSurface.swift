@@ -202,6 +202,8 @@ public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { ra
 /// 並行性の注釈を書かなくても、いつもどおり書ける。
 ///
 /// ```swift
+/// import Dispatch
+///
 /// DispatchQueue.concurrentPerform(iterations: 256) { x in
 ///     _ = color(map(x, 0, 255, 0, 255), 64, 128)
 /// }
