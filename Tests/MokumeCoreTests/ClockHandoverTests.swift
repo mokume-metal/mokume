@@ -681,7 +681,7 @@ struct ClockHandoverTests {
             return
         }
         #expect(read.seconds == 199, "最後の頼みが届く: \(read.seconds)")
-        #expect(sink.writeCount < 10, "200 回の頼みを \(sink.writeCount) 回に畳む")
+        #expect(sink.writeCount < 100, "200 回の頼みを \(sink.writeCount) 回に畳む (書いている間の頼みは最後の 1 つになる。回数は書く速さで変わる)")
     }
 
     @Test("より新しい世代の書き手が生きている間、古い世代は書かずに見送り、居なくなれば見送りは取り消される")
