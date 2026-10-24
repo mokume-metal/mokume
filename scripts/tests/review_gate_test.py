@@ -544,6 +544,28 @@ class ReviewGateTest(unittest.TestCase):
         proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    # --- <details> に畳んだ節 (#3184) ------------------------------------------
+    # 本文の先頭に人が読む要約を置き、詳細を <details> に畳んでよい (AGENTS.md「説明と報告」)。
+    # 畳んだ中の「確認方法」「反証」も節として読む。<details> は HTML コメントではない
+
+    def test_a_verification_section_folded_in_details_is_read(self):
+        body = (
+            "**要約**: …\n\n**人が判断すること**: なし\n\n<details>\n<summary>詳細</summary>\n"
+            + verification_section([12])
+            + "\n</details>\n"
+        )
+        proc = self.run_gate(pr_json(body=body, verified=()), issue_json(TRIAGED))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_refute_section_folded_in_details_is_read(self):
+        body = (
+            "Closes #12\n\n**要約**: …\n\n<details>\n<summary>反証の詳細</summary>\n"
+            + refute_section()
+            + "\n</details>\n"
+        )
+        proc = self.run_gate(pr_json(body=body), issue_json(TRIAGED, issue_type="Bug"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
     # --- コメントとリスト項目の中のフェンス (#2816 a・b) ----------------------
     # 期待は GitHub の描画 API で確かめた結果 (本文の読みは scripts/markdown-live.sh)
 
