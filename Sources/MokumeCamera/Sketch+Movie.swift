@@ -21,8 +21,8 @@ extension Sketch {
     /// final class Overlay: Sketch {
     ///     var settings: SketchSettings { SketchSettings(width: 1280, height: 720) }
     ///     var clip: Movie?
-    ///     func setup() {
-    ///         clip = try? createVideo("assets/clip.mov")
+    ///     func setup() throws {
+    ///         clip = try createVideo("assets/clip.mov")
     ///         clip?.loop()
     ///     }
     ///     func draw() {

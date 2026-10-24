@@ -15,7 +15,7 @@ import MokumeDiagnostics
 /// ```swift
 /// final class Mirror: Sketch {
 ///     var camera: Capture?
-///     func setup() { camera = try? createCapture(640, 480, mirrored: true) }
+///     func setup() throws { camera = try createCapture(640, 480, mirrored: true) }
 ///     func draw() {
 ///         guard let camera else { return }
 ///         image(camera.image, 0, 0)

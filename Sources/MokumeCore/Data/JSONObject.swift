@@ -8,10 +8,10 @@ import Foundation
 ///
 /// <!-- example: 文脈 var temp: Float? -->
 /// ```swift
-/// func setup() {
+/// func setup() throws {
 ///     // 応答は { "name": "Sapporo", "main": { "temp": -3.5 } } の形
-///     let weather = try? loadJSONObject("data/weather.json")
-///     temp = weather?.getJSONObject("main").getFloat("temp")
+///     let weather = try loadJSONObject("data/weather.json")
+///     temp = weather.getJSONObject("main").getFloat("temp")
 /// }
 /// ```
 ///

@@ -50,6 +50,7 @@ final class ShaderLibraries {
     /// 組んだ `Present`。最初に頼まれたときに組む。
     private var present: (any MTLLibrary)?
     private var imageInput: (any MTLLibrary)?
+    private var builtinEffect: (any MTLLibrary)?
     /// パイプラインの組み立て器。最初に頼まれたときに作る。
     private var madeCompiler: (any MTL4Compiler)?
 
@@ -73,6 +74,17 @@ final class ShaderLibraries {
         if let imageInput { return imageInput }
         let library = try makeLibrary(named: "ImageInput")
         imageInput = library
+        return library
+    }
+
+    /// 組み込みの効果のライブラリ。**組むのは最初の 1 度だけ** — 効果のパイプラインを持つ面が増えても
+    /// (描き場所・``Image/filtered(_:)`` の作業の面)、同梱の同じ原文を組み直さない (冷えた状態で数十 ms)。
+    func builtinEffectLibrary() throws(RenderFailure) -> any MTLLibrary {
+        if let builtinEffect { return builtinEffect }
+        let library = try makeEffectLibrary(
+            named: "builtin", body: try bundledShaderSource(named: "Builtin"),
+            bodyName: Self.bundledName("Builtin"))
+        builtinEffect = library
         return library
     }
 

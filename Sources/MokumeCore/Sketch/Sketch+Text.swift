@@ -216,8 +216,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var display: Font? -->
     ///     ```swift
-    ///     func setup() {
-    ///         display = try? loadFont("/System/Library/Fonts/SFNS.ttf")
+    ///     func setup() throws {
+    ///         display = try loadFont("/System/Library/Fonts/SFNS.ttf")
     ///     }
     ///
     ///     func draw() {

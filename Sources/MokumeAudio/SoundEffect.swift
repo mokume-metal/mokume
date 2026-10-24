@@ -60,8 +60,8 @@ public class SoundEffect: SynthSound {
     ///
     /// <!-- example: 文脈 var song: SoundFile?; var reverb: Reverb? -->
     /// ```swift
-    /// func setup() {
-    ///     song = try? loadSound("assets/song.wav")
+    /// func setup() throws {
+    ///     song = try loadSound("assets/song.wav")
     ///     reverb = createReverb()
     ///     if let song { reverb?.process(song) }
     ///     song?.loop()
