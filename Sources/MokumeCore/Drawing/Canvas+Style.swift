@@ -270,6 +270,12 @@ extension Canvas {
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 細い塗りの雛形の列は、塗りの頂点を頂点段で組む (#2208)
+        if let template, template.key.thinFillCapacity > 0 {
+            batches[batches.count - 1].thinFillExpands = true
+            batches[batches.count - 1].thinFillStart = template.thinFillStart
+            batches[batches.count - 1].thinFillUV = template.thinFillUV
+        }
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
