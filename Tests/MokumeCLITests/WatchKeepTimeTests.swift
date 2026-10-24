@@ -15,7 +15,7 @@ import Testing
 /// 見張りが場所を始めに消し終わりで消すこと。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
-@Suite("watch --keep-time", .signalStateKept)
+@Suite("watch --keep-time", .serialized, .signalStateKept)
 struct WatchKeepTimeTests {
     private func makeDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -131,48 +131,18 @@ struct WatchKeepTimeTests {
 
     // MARK: - 見張りの口
 
-    @Test("旗を付けた見張りは、前の見張りの時計を始めに消し、終わりでも消す。旗の無い見張りは触れない")
-    func theWatcherClearsItsFile() throws {
-        let kept = SignalState.current()
-        defer { kept.restore() }
-        let root = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        try Data(#"// swift-tools-version: 6.2"#.utf8)
-            .write(to: root.appendingPathComponent("Package.swift"))
+    @Test("時計のファイルは専用のディレクトリの中に置く (一時ディレクトリの直下に置かない)")
+    func theClockFileLivesInItsOwnDirectory() {
         let file = WatchCommand.keepTimeFile()
-        let lock = URL(fileURLWithPath: file.path + ".lock")
-        defer {
-            try? FileManager.default.removeItem(at: file)
-            try? FileManager.default.removeItem(at: lock)
-        }
         #expect(file.path.hasPrefix("/"), "絶対パス")
-        #expect(file.lastPathComponent.hasSuffix("\(getpid())"), "見張り 1 本ごとに別")
-
-        // 旗が有る: 前の見張りが残したものは始める前に消え、巡回の中で置いたものは終わりで消える
-        try Data("stale".utf8).write(to: file)
-        try Data().write(to: lock)
-        var existedInTheLoop = true
-        try WatchCommand.run(
-            ["--keep-time", root.path],
-            watching: { _, _ in
-                existedInTheLoop =
-                    FileManager.default.fileExists(atPath: file.path)
-                    || FileManager.default.fileExists(atPath: lock.path)
-                try? Data("clock".utf8).write(to: file)
-                try? Data().write(to: lock)
-            })
-        #expect(!existedInTheLoop, "前の見張りの時計が残っている")
-        #expect(!FileManager.default.fileExists(atPath: file.path), "終わりで消していない")
-        #expect(!FileManager.default.fileExists(atPath: lock.path), "錠のファイルを終わりで消していない")
-
-        // 旗が無い: 何も作らず、在るものにも触れない
-        try Data("untouched".utf8).write(to: file)
-        try WatchCommand.run([root.path], watching: { _, _ in })
-        #expect(try String(contentsOf: file, encoding: .utf8) == "untouched")
+        let directory = file.deletingLastPathComponent()
+        #expect(directory.lastPathComponent == "mokume-keep-time-\(getpid())", "見張り 1 本ごとに別: \(directory.path)")
+        #expect(directory.deletingLastPathComponent().standardizedFileURL
+            == FileManager.default.temporaryDirectory.standardizedFileURL)
     }
 
-    @Test("書いている途中に落とされた子の一時ファイルも、始めに消し、終わりでも消す")
-    func theWatcherClearsHalfWrittenTemporaries() throws {
+    @Test("旗を付けた見張りは、前の見張りの時計 (ファイル・錠・書きかけ) を始めに消し、終わりでも消す。旗の無い見張りは触れない")
+    func theWatcherClearsItsFiles() throws {
         let kept = SignalState.current()
         defer { kept.restore() }
         let root = try makeDirectory()
@@ -181,48 +151,44 @@ struct WatchKeepTimeTests {
             .write(to: root.appendingPathComponent("Package.swift"))
         let file = WatchCommand.keepTimeFile()
         let directory = file.deletingLastPathComponent()
+        let lock = URL(fileURLWithPath: file.path + ".lock")
         // `AtomicFile` の一時ファイルの名: `.<名前>.<pid>-<連番>.tmp`
-        let leftover = directory.appendingPathComponent(".\(file.lastPathComponent).99999-4.tmp")
-        let later = directory.appendingPathComponent(".\(file.lastPathComponent).99999-5.tmp")
-        defer {
-            try? FileManager.default.removeItem(at: leftover)
-            try? FileManager.default.removeItem(at: later)
+        let leftover = directory.appendingPathComponent(".clock.99999-4.tmp")
+        let later = directory.appendingPathComponent(".clock.99999-5.tmp")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func plant(_ urls: [URL]) throws {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for url in urls { try Data("x".utf8).write(to: url) }
         }
-        try Data("half".utf8).write(to: leftover)
+
+        // 旗が有る: 前の見張りが残したものは始める前に消え、巡回の中で置いたものは終わりで消える
+        try plant([file, lock, leftover])
         var leftInTheLoop = true
         try WatchCommand.run(
             ["--keep-time", root.path],
             watching: { _, _ in
-                leftInTheLoop = FileManager.default.fileExists(atPath: leftover.path)
-                try? Data("half".utf8).write(to: later)
+                leftInTheLoop = [file, lock, leftover].contains { FileManager.default.fileExists(atPath: $0.path) }
+                try? plant([file, lock, later])
             })
-        #expect(!leftInTheLoop, "前の見張りの書きかけが残っている")
-        #expect(!FileManager.default.fileExists(atPath: later.path), "終わりで書きかけを消していない")
+        #expect(!leftInTheLoop, "前の見張りの時計が残っている")
+        #expect(!FileManager.default.fileExists(atPath: directory.path), "終わりで消していない")
+
+        // 旗が無い: 何も作らず、在るものにも触れない
+        try plant([file])
+        try WatchCommand.run([root.path], watching: { _, _ in })
+        #expect(try String(contentsOf: file, encoding: .utf8) == "x")
     }
 
-    @Test("居なくなった見張りが残した時計のファイルだけを消す (生きている見張りのものと、無関係の名前には触れない)")
-    func staleFilesOfGoneWatchersAreSwept() throws {
-        let directory = try makeDirectory()
+    @Test("名前が前置きで始まらないディレクトリは消さない (場所の取り違えで一時ディレクトリそのものを消さない)")
+    func onlyItsOwnDirectoryIsRemoved() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unrelated-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let gone = 4_000_001
-        let alive = 4_000_002
-        let names = [
-            "mokume-keep-time-\(gone)", "mokume-keep-time-\(gone).lock", ".mokume-keep-time-\(gone).77-3.tmp",
-            "mokume-keep-time-\(alive)", "mokume-keep-time-\(alive).lock", ".mokume-keep-time-\(alive).77-3.tmp",
-            "mokume-keep-time-notes", "mokume-keep-time-\(gone).txt", "unrelated-\(gone)",
-        ]
-        for name in names { try Data("x".utf8).write(to: directory.appendingPathComponent(name)) }
-
-        WatchCommand.removeStaleKeepTimeFiles(in: directory, running: { $0 == pid_t(alive) })
-
-        let left = Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
-        #expect(
-            left
-                == [
-                    "mokume-keep-time-\(alive)", "mokume-keep-time-\(alive).lock",
-                    ".mokume-keep-time-\(alive).77-3.tmp", "mokume-keep-time-notes",
-                    "mokume-keep-time-\(gone).txt", "unrelated-\(gone)",
-                ], "\(left.sorted())")
+        let file = directory.appendingPathComponent("clock")
+        try Data("x".utf8).write(to: file)
+        WatchCommand.removeKeepTimeFiles(file)
+        #expect(FileManager.default.fileExists(atPath: file.path))
     }
 
     @Test("Dock の「終了」・ログアウトで run() に戻らなくても、後始末で時計のファイルと錠と書きかけを消す。2 度通っても害は無い")
@@ -231,9 +197,11 @@ struct WatchKeepTimeTests {
         defer { kept.restore() }
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("mokume-keep-time-\(getpid())")
+        let clockDirectory = directory.appendingPathComponent("mokume-keep-time-\(getpid())", isDirectory: true)
+        try FileManager.default.createDirectory(at: clockDirectory, withIntermediateDirectories: true)
+        let file = clockDirectory.appendingPathComponent("clock")
         let lock = URL(fileURLWithPath: file.path + ".lock")
-        let temporary = directory.appendingPathComponent(".mokume-keep-time-\(getpid()).88-1.tmp")
+        let temporary = clockDirectory.appendingPathComponent(".clock.88-1.tmp")
         for url in [file, lock, temporary] { try Data("x".utf8).write(to: url) }
 
         let session = await MainActor.run {
