@@ -30,7 +30,7 @@ extension Canvas {
     ///
     /// **並びは Shapes.metal の `ThinFillRecord` と一致していなければならない**
     /// (`ShaderInterfaceTests` が反射と突き合わせる)。CPU で片を出す式 (``pieces()``) と頂点段の式は
-    /// 同じ足し算と掛け算で、種別・倍精度の特異値・弦の積分は CPU が記述にして渡す。
+    /// 同じ順の `fma` (積和の順を固定する) で、種別・倍精度の特異値・弦の積分は CPU が記述にして渡す。
     ///
     /// [#2208]: https://github.com/mokume-metal/mokume/issues/2208
     struct ThinFillRecord {
@@ -109,7 +109,7 @@ extension Canvas {
                 // 片の中で、中心にいちばん近い位置の弦 (片の中でいちばん太い)
                 let nearest = from <= 0 && to >= 0 ? 0 : min(abs(from), abs(to))
                 let ratio = min(nearest / long, 1)
-                let chord = thin * max(0, 1 - ratio * ratio).squareRoot()
+                let chord = thin * max(0, Float(1).addingProduct(-ratio, ratio)).squareRoot()
                 return chord > 0 ? chord / width : 0
             case 2:
                 switch index {
@@ -124,8 +124,6 @@ extension Canvas {
 
         /// 記述から片を出す。**頂点段の式 (Shapes.metal の `mokume_thinFillCorner`) と同じ式。**
         func pieces() -> [ThinFillPiece] {
-            let inverseMatrix = simd_float2x2(
-                SIMD2(inverse.x, inverse.y), SIMD2(inverse.z, inverse.w))
             let center = SIMD2(centerAxis.x, centerAxis.y)
             let axis = SIMD2(centerAxis.z, centerAxis.w)
             let across = SIMD2(acrossSlopeSide.x, acrossSlopeSide.y)
@@ -133,8 +131,14 @@ extension Canvas {
             let (origin, span, divisor) = (layout.x, layout.y, layout.z)
             var result: [ThinFillPiece] = []
             result.reserveCapacity(pieceCount)
+            // 積和の順は頂点段 (`mokume_thinFillCorner`) と同じ `fma` の順で固定する
+            let inverseX = SIMD2(inverse.x, inverse.y)
+            let inverseY = SIMD2(inverse.z, inverse.w)
             func corner(_ along: Float, _ offset: Float) -> SIMD2<Float> {
-                center + inverseMatrix * (axis * along + across * (slope * along + offset))
+                let shift = offset.addingProduct(slope, along)
+                let drawn = (axis * along).addingProduct(across, SIMD2(repeating: shift))
+                let moved = (inverseX * drawn.x).addingProduct(inverseY, SIMD2(repeating: drawn.y))
+                return center + moved
             }
             for index in 0..<pieceCount {
                 let from = origin + span * Float(index) / divisor

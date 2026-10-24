@@ -45,7 +45,7 @@ struct FlatFrame {
 ///
 /// 片は、描く画素の空間の 2 つの基底で表した帯の列で、`layout.x` から `layout.y` を `layout.z` 個に
 /// 割った刻みで `layout.w` 個並ぶ。**片の角を出す式は Swift 側の `ThinFillRecord.pieces()` と同じ**
-/// (足し算と掛け算の順も同じ。割り算は丸めを揃えるため `precise` で行う)。
+/// (足し算と掛け算の順も同じ。積和は `fma` で順を固定し、割り算は丸めを揃えるため `precise` で行う)。
 struct ThinFillRecord {
     /// 描く画素から形自身の座標へ戻す 2x2 (列 2 本を並べる)。
     float4 inverse;
@@ -68,8 +68,13 @@ static inline float2 mokume_thinFillCorner(ThinFillRecord record, float along, f
     float2 axis = record.centerAxis.zw;
     float2 across = record.acrossSlopeSide.xy;
     float slope = record.acrossSlopeSide.z;
-    float2 drawn = axis * along + across * (slope * along + offset);
-    return record.centerAxis.xy + (record.inverse.xy * drawn.x + record.inverse.zw * drawn.y);
+    // 積和の順は `fma` で固定する (UnitShape.metal の冒頭と同じ理由)。Shapes は既定の fast-math で
+    // 組むので、`a * b + c` と書くとどの積を融合するかをコンパイラが決める。CPU の
+    // `ThinFillRecord.pieces()` も同じ順の `addingProduct` で書き、検査が許容 0 で突き合わせる
+    float shift = fma(slope, along, offset);
+    float2 drawn = fma(across, float2(shift), axis * along);
+    float2 moved = fma(record.inverse.zw, float2(drawn.y), record.inverse.xy * drawn.x);
+    return record.centerAxis.xy + moved;
 }
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -109,7 +114,7 @@ vertex ShapeFragmentIn shapeVertexMain(
             float width = record.coverageMode.w;
             float nearest = (from <= 0.0 && to >= 0.0) ? 0.0 : min(abs(from), abs(to));
             float ratio = min(precise::divide(nearest, longRadius), 1.0);
-            float chord = thin * precise::sqrt(max(0.0, 1.0 - ratio * ratio));
+            float chord = thin * precise::sqrt(max(0.0, fma(-ratio, ratio, 1.0)));
             cover = chord > 0.0 ? precise::divide(chord, width) : 0.0;
         } else if (mode == 2) {
             uint slot = uint(piece);
@@ -139,6 +144,13 @@ vertex ShapeFragmentIn shapeVertexMain(
     // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
     float2 placed = placement.linear.xy * formPosition.x
         + placement.linear.zw * formPosition.y + placement.offset.xy;
+    if (expandsThin) {
+        // 広げた片は、畳まずに CPU が置いた頂点 (`Transform.placed` = 行列の積 `fma(列 y, y, 列 x * x)` の
+        // 後に平行移動) と 1 ビットも違わない位置に置く。畳まない細い塗りと同じフレームに並ぶので、順を
+        // 固定しないと融合の仕方で位置が 1 つ違い、貼る絵の読み取りの継ぎ目や縁の画素が振れる
+        placed = fma(placement.linear.zw, float2(formPosition.y), placement.linear.xy * formPosition.x)
+            + placement.offset.xy;
+    }
     // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
     // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
     // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が

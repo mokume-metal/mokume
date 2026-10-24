@@ -145,11 +145,9 @@ struct ThinFillVertexStageTests {
         return try canvas.target.readPixels()
     }
 
-    /// - Parameter tolerance: 違ってよい成分の数。**貼る絵の読み取り位置は、片の角の足し算の最後の桁が
-    ///   頂点段 (融合した積和) と CPU でずれると、最近傍で読む 8×8 の絵の継ぎ目の画素が 1 つ振れる**。
-    ///   形の位置を比べる場面は 0 のまま。
+    /// **許容は 0** — 片の角の積和は頂点段と CPU で `fma` の順を固定しているので、1 成分も違わない。
     private func expectSame(
-        _ name: String, density: Float = 1, texture: Bool = false, tolerance: Int = 0,
+        _ name: String, density: Float = 1, texture: Bool = false,
         scene: (Canvas) -> Void
     ) throws {
         let cpu = try picture(density: density, expands: false, texture: texture, scene: scene)
@@ -162,7 +160,7 @@ struct ThinFillVertexStageTests {
         }
         #expect(lit > 0, "\(name): 絵が空")
         #expect(
-            differing <= tolerance, "\(name): 画素の成分が \(differing) 個違う (点いている成分 \(lit))")
+            differing == 0, "\(name): 画素の成分が \(differing) 個違う (点いている成分 \(lit))")
     }
 
     /// 置き場所ごとに回転と倍率を変える。**形の寸法は 1 つの場面で同じ** — 寸法が違うと別の雛形になり、
@@ -237,7 +235,7 @@ struct ThinFillVertexStageTests {
         try expectSame("貼る絵の rect", texture: true) { canvas in
             scatter(canvas, spin: 0.27) { canvas.rect(-10, -0.5, 20, 1) }
         }
-        try expectSame("貼る絵の楕円", texture: true, tolerance: 8) { canvas in
+        try expectSame("貼る絵の楕円", texture: true) { canvas in
             scatter(canvas, spin: 0.27) { canvas.ellipse(0, 0, 20, 0.7) }
         }
     }
