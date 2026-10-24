@@ -207,10 +207,10 @@ public final class Canvas {
     /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:cache:stroke:)``)。控えが
     /// 効いていれば、同じ大きさで置き続けても増えない。
     var thinStrokesRebuilt = 0
-    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くか (``drawsUnlitSolid(_:)``・#1795)。
+    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くか (``solidVariantKey(of:opaque:)``・#1795)。
     /// 検査が偽にして、枝を残した断片との画素の一致を比べる。製品では常に真。
     var specializesUnlitSolids = true
-    /// 不透明と分かる立体の塗りを、ブレンドなしで描くか (``drawsOpaqueSolid(_:)``・#2366)。検査が偽にして、
+    /// 不透明と分かる立体の塗りを、ブレンドなしで描くか (``solidVariantKey(of:opaque:)``・#2366)。検査が偽にして、
     /// ブレンドありとの画素の一致を比べる。製品では常に真。
     var specializesOpaqueSolids = true
     /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
@@ -455,6 +455,12 @@ public final class Canvas {
         /// 置いた後で外した絵の列が裏面を捨て、透けた画素から見えるはずの奥の面が消える
         /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
         var mayShowBackFaces = false
+        /// 保持した形の頂点が、全部 α がちょうど 1 か (``Shape/solidAlphaIsOne``)。**保持した形の列だけが
+        /// 使う** — 形を置く側が、列を開くときに写す (``Canvas/openRetainedSolid(_:of:mirrored:external:)``)。
+        /// 不透明な列の判定 (``Canvas/isOpaqueFill(_:closing:)``・#2366) が、頂点を列ごとに読み直さずに済む。
+        var retainedVerticesAreOpaque = false
+        /// 保持した形の頂点が、全部同じ読み取り位置 (焼き場の白い区画) を指すか。上と同じ口で写す。
+        var retainedReadsWhiteCell = false
         /// 置き場所で置く組み込みの形・読み込んだモデルの、巻き方の向き (``SolidWinding``)。
         ///
         /// 列を閉じるとき、形全体を 1 つの部品 (``SolidPart``) にするのに使う。組み込みの形は
@@ -1688,7 +1694,7 @@ public final class Canvas {
     static let typefaceCacheLimit = 64
     /// 貼る絵を束ねずに読み取り位置を書いた塗りが読む、1×1 の白い絵。
     /// **最初に要ったときに 1 度だけ作る** (``useWrittenUVTexture()``)。
-    private var blankPicture: Picture?
+    var blankPicture: Picture?
 
     // MARK: - 組み立て中の形
 
@@ -1807,13 +1813,12 @@ public final class Canvas {
         /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
         /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
-        /// この列の塗りが、組み込みの形を不透明なスタイルで置いただけの列か (#2366)。
+        /// この列を、光の枝を外した断片で描くときの組の鍵 (#1795)。`nil` なら既定の組。
         ///
-        /// 真なら、塗りの α はどの置き場所でも 1 と CPU で分かる。**閉じる時点で決める**
-        /// (``Canvas/closeSolidBatch()``) — 置いたときのスタイルを読む `mayShowBackFaces` と同じ値から作る。
-        /// 保持した形・自分で並べた頂点・粒・読み込んだモデルは、頂点が持つ色の α を CPU が
-        /// 見ていないので偽に倒す。
-        var isOpaqueFill = false
+        /// **列を閉じるときに 1 度だけ決める** (``Canvas/unlitSolidKey(of:)``) — 光・周囲・切り抜きと同じく
+        /// 閉じた時点の値で決まり、描き切りは述語を評価し直さない。立体の列を閉じる経路
+        /// (``Canvas/closeSolidBatch()``) だけが入れる。
+        var solidVariant: ShapePipeline.SolidVariantKey?
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -4580,6 +4585,9 @@ public final class Canvas {
         let perBatch: BatchBuffers
         /// 裏 → 表で描く置き場所の連なりを 1 回で描く添字の列 (``SolidSweep``)。
         let sweeps: SweepUploads
+        /// 列が使う、光の枝を外した立体の組 (``Batch/solidVariant``)。**ここに無い鍵の列は既定の組で描く**
+        /// (組めなかった鍵・#1795)。積む側は錠も辞書も引かずに、これを引くだけ。
+        let solidVariantStates: [ShapePipeline.SolidVariantKey: any MTLRenderPipelineState]
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -4592,14 +4600,30 @@ public final class Canvas {
         // フレームの頭が延びるが、同じ組は 2 度と組まない
         try pipeline.prepareForms(
             batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
-        // 特化した立体の塗りの組も同じ (#1795・#2366)。特化できる列の無い絵は 1 本も組まない
-        try pipeline.prepareSolidVariants(batches.lazy.compactMap { self.solidVariant(of: $0) })
+        // 光も周囲も置かない立体の塗りの組も同じ (#1795)。**列に持たせた鍵を 1 フレームに 1 度だけ
+        // 集めて**組み、光を置いた列だけの絵は 1 本も組まない。組めなければ 1 度だけ言い、その鍵の列は
+        // 起動で組み済みの既定の組で描く — 画素は同じで、速さだけが戻る
+        var variantKeys: [ShapePipeline.SolidVariantKey] = []
+        var previousKey: ShapePipeline.SolidVariantKey?
+        for batch in batches {
+            guard let key = batch.solidVariant, key != previousKey else { continue }
+            previousKey = key
+            if !variantKeys.contains(key) { variantKeys.append(key) }
+        }
+        let unlit = pipeline.prepareSolidVariants(variantKeys)
+        if let failure = unlit.failure {
+            warnOnce(
+                .solidVariantUnavailable,
+                "A specialised pipeline for solid shapes could not be built (\(failure.headline)), "
+                    + "so those shapes are drawn with the general one. The picture is the same; "
+                    + "only drawing is slower")
+        }
         // **置き場は積む前に全部取る。** 番地を束ねたあとに取り直すと、束ねた先が
         // 死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
         return PreparedBatches(
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
             perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
-            sweeps: try uploadSweeps())
+            sweeps: try uploadSweeps(), solidVariantStates: unlit.states)
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -4632,6 +4656,15 @@ public final class Canvas {
         var memory = EncodedStateMemory()
         func use(_ state: any MTLRenderPipelineState) {
             if memory.changes(pipeline: ObjectIdentifier(state)) { encoder.setRenderPipelineState(state) }
+        }
+        // **光の枝を外した組は、前の列と同じ鍵なら辞書を引かない** (#1795)。引く先は組み済みの控えで、
+        // 錠も取らない。鍵が組めなかった列は `nil` を返して既定の組で描く
+        var previousVariant: (key: ShapePipeline.SolidVariantKey, state: any MTLRenderPipelineState)?
+        func variantState(for key: ShapePipeline.SolidVariantKey) -> (any MTLRenderPipelineState)? {
+            if let previousVariant, previousVariant.key == key { return previousVariant.state }
+            guard let state = prepared.solidVariantStates[key] else { return nil }
+            previousVariant = (key, state)
+            return state
         }
         func use(depth state: (any MTLDepthStencilState)?) {
             if memory.changes(depth: state.map { ObjectIdentifier($0) }) { encoder.setDepthStencilState(state) }
@@ -4679,10 +4712,10 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
             case .solid:
-                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の枝を
-                // 外した断片で (#1795)、不透明と分かる塗りはブレンドなしで描く (#2366)
-                if let variant = solidVariant(of: batch) {
-                    use(pipeline.builtSolidVariantState(variant))
+                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは、
+                // 光の枝を外した断片で描く (#1795)
+                if let key = batch.solidVariant, let state = variantState(for: key) {
+                    use(state)
                 } else {
                     use(
                         (batch.strokeGeometry != nil

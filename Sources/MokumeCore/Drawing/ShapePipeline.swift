@@ -80,12 +80,17 @@ final class ShapePipeline {
         /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
         /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
         func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
-            batch.run.mode == .replace && batch.thinCoverage ? composite : state(for: batch.run.mode)
+            state(in: Column(drawing: batch))
         }
 
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
-            switch Column(mode) {
+            state(in: Column(mode))
+        }
+
+        /// その列のパイプライン。
+        private func state(in column: Column) -> any MTLRenderPipelineState {
+            switch column {
             case .blend: blend
             case .replace: replace
             case .composite: composite
@@ -106,7 +111,15 @@ final class ShapePipeline {
                 }
             }
 
-            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:)``
+            /// **その列を描く列。** 置き換える列のうち、細い線を広げた頂点を持つ列だけは下地を読む列
+            /// (`composite`) で描く (#1637・``BlendStates/drawing(_:)``)。**列を選ぶのはここ 1 か所**で、
+            /// 3 本一組で描く経路も、特化した 1 本を選ぶ経路 (``ShapePipeline/SolidVariantKey``・#1795) も
+            /// この列を通る — 例外を写し持つと、片方だけが直されて絵が割れる。
+            init(drawing batch: Canvas.Batch) {
+                self = batch.run.mode == .replace && batch.thinCoverage ? .composite : .init(batch.run.mode)
+            }
+
+            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:unlit:)``
             /// が返す 3 本の中での位置。
             var planIndex: Int {
                 switch self {
@@ -230,15 +243,27 @@ final class ShapePipeline {
     ///   外す。枝は必ず偽なので画素は変わらず、塗りが律速の場面で断片の費用だけが減る
     /// - **不透明と CPU で分かる列** (``SolidVariantKey/opaque``・#2366): ブレンドを外す。Apple GPU
     ///   (TBDR) の隠面除去は、遮る側になれるのがブレンドなし・捨てなしの断片だけなので、奥から手前へ
-    ///   重ねても隠れた層の断片を走らせずに済む。α = 1 の source-over と書き込みは一致する
+    ///   重ねても隠れた層の断片を走らせずに済む。α がちょうど 1 の source-over と書き込みは一致する
     ///
     /// **組むのは使うときに 1 本ずつ** (基本図形と同じ・[#3114]) で、起動では 1 本も組まない。
-    /// 光を置いて半透明で描くスケッチは、1 本も組まない。
+    /// 特化できる列の無い絵は、1 本も組まない。
+    ///
+    /// **組めなかった鍵は控えて、組み直さない。** 描く側は、組めなかった鍵の列を既定の組 (起動で
+    /// 組み済み・画素は同じ) で描く。
     ///
     /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
     /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
     /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
-    private let solidVariantPipelines: Mutex<[SolidVariantKey: any MTLRenderPipelineState]>
+    private let solidVariantPipelines: Mutex<SolidVariantPipelines>
+
+    /// ``solidVariantPipelines`` の中身。
+    struct SolidVariantPipelines {
+        var built: [SolidVariantKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵。毎フレーム組み直さない。
+        var failed: Set<SolidVariantKey> = []
+        /// 検査が組む失敗を差し込む口 (``failBuildingSolidVariantsForTesting(_:)``)。製品では常に `nil`。
+        var failureForTesting: RenderFailure?
+    }
 
     /// 特化した立体の塗りのパイプライン 1 本の鍵。
     struct SolidVariantKey: Hashable, Sendable {
@@ -249,43 +274,73 @@ final class ShapePipeline {
         /// ブレンドを外すか (#2366)。**重ねる列 (`.blend`) だけが不透明でありうる** ので、真の鍵の
         /// 列は `blend` に決まる。
         let opaque: Bool
+        /// **その列を描く列** (``BlendStates/Column/init(drawing:)``)。
         let column: BlendStates.Column
-
-        init(isUnitShape: Bool, unlit: Bool, opaque: Bool, mode: BlendMode) {
-            self.isUnitShape = isUnitShape
-            self.unlit = unlit
-            self.opaque = opaque
-            column = opaque ? .blend : .init(mode)
-        }
     }
 
-    /// 特化した立体の塗りで描くパイプライン。**まだ組んでいなければここで組む。**
-    func solidVariantState(_ key: SolidVariantKey) throws(RenderFailure) -> any MTLRenderPipelineState {
-        try solidVariantPipelines.withLock { (built) throws(RenderFailure) in
-            if let state = built[key] { return state }
-            let state = try Self.makeSolidVariantState(
-                compiler: compiler, vertexLibrary: vertexLibrary, unitShapeLibrary: unitShapeLibrary,
-                pixelFormat: pixelFormat, key: key)
-            built[key] = state
-            return state
+    /// 積む列が使う、特化した立体のパイプラインを、積む前に組み済みにして返す。
+    ///
+    /// **投げない。** 組めなかった鍵は返す辞書に載せず (``SolidVariantPreparation/failure`` に最初の失敗を持たせる)、
+    /// 描く側が既定の組へ戻る — 特化は速さだけを変えるので、組めないことでフレームを落とさない。
+    /// **組むときは錠を持たない** (コンパイルの間、ほかの読み手を止めない)。
+    func prepareSolidVariants(_ keys: [SolidVariantKey]) -> SolidVariantPreparation {
+        var preparation = SolidVariantPreparation()
+        for key in keys where preparation.states[key] == nil {
+            let lookup = solidVariantPipelines.withLock { pipelines -> SolidVariantLookup in
+                if let state = pipelines.built[key] { return .built(state) }
+                if pipelines.failed.contains(key) { return .failed }
+                return .missing(pipelines.failureForTesting)
+            }
+            switch lookup {
+            case .built(let state):
+                preparation.states[key] = state
+            case .failed:
+                continue
+            case .missing(let injected):
+                do throws(RenderFailure) {
+                    if let injected { throw injected }
+                    let state = try Self.makeSolidVariantState(
+                        compiler: compiler, vertexLibrary: vertexLibrary,
+                        unitShapeLibrary: unitShapeLibrary, pixelFormat: pixelFormat, key: key)
+                    // 同時に組んだ側があれば、先に控えた 1 本を使う
+                    preparation.states[key] = solidVariantPipelines.withLock { pipelines in
+                        if let existing = pipelines.built[key] { return existing }
+                        pipelines.built[key] = state
+                        return state
+                    }
+                } catch {
+                    solidVariantPipelines.withLock { _ = $0.failed.insert(key) }
+                    preparation.failure = preparation.failure ?? error
+                }
+            }
         }
+        return preparation
     }
 
-    /// 組み済みの 1 本。組んでいなければ ``prepareSolidVariants(_:)`` を呼び忘れている。
-    func builtSolidVariantState(_ key: SolidVariantKey) -> any MTLRenderPipelineState {
-        guard let state = solidVariantPipelines.withLock({ $0[key] }) else {
-            preconditionFailure("the solid pipeline \(key) was not prepared before encoding")
-        }
-        return state
+    /// ``prepareSolidVariants(_:)`` が控えを引いた結果。
+    private enum SolidVariantLookup {
+        case built(any MTLRenderPipelineState)
+        case failed
+        case missing(RenderFailure?)
     }
 
-    /// 積む列が使う、特化した立体のパイプラインを、積む前に組み済みにする。
-    func prepareSolidVariants(_ keys: some Sequence<SolidVariantKey>) throws(RenderFailure) {
-        for key in keys { _ = try solidVariantState(key) }
+    /// ``prepareSolidVariants(_:)`` の答え。
+    struct SolidVariantPreparation {
+        /// 組み済みの鍵と、その 1 本。
+        var states: [SolidVariantKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵の最初の失敗。
+        var failure: RenderFailure?
     }
 
     /// 組み済みの特化した立体のパイプラインの本数 (検査用)。
-    var builtSolidVariantCount: Int { solidVariantPipelines.withLock { $0.count } }
+    var builtSolidVariantCount: Int { solidVariantPipelines.withLock { $0.built.count } }
+
+    /// 特化した立体のパイプラインを組むとき、この失敗を投げさせる (検査用・`nil` で戻す)。
+    /// 組めなかったときに既定の組で描き続けることを、検査から作る穴 (`failureForTesting` と同じ形)。
+    /// 公開はしない。
+    func failBuildingSolidVariantsForTesting(_ failure: RenderFailure?) {
+        solidVariantPipelines.withLock { $0.failureForTesting = failure }
+    }
 
     /// 基本図形のパイプライン 1 本の鍵 — 旗の組と、混ぜ方の列。
     struct FormKey: Hashable, Sendable {
@@ -426,8 +481,8 @@ final class ShapePipeline {
                 key: defaultKey)
         ])
 
-        // 特化した立体の塗りも使うときに組む (#1795・#2366)。起動では 1 本も組まない
-        self.solidVariantPipelines = Mutex([:])
+        // 光の枝を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
+        self.solidVariantPipelines = Mutex(SolidVariantPipelines())
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
