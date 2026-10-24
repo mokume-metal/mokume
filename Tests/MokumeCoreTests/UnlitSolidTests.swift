@@ -790,4 +790,77 @@ struct UnlitSolidTests {
             #expect(!unblended[2, 2].red.isFinite && !blended[2, 2].red.isFinite)
         }
     }
+
+    // MARK: - 貼る絵
+
+    /// 市松に透けた画素を持つ絵。貼った面は透けた画素から奥が見える。
+    private func checkeredPicture(_ canvas: Canvas) -> Image {
+        guard let image = try? canvas.createImage(4, 4) else { fatalError("絵を作れない") }
+        for y in 0..<4 {
+            for x in 0..<4 {
+                image.set(
+                    x, y,
+                    (x + y).isMultiple(of: 2) ? .linear(red: 0.9, green: 0.2, blue: 0.2) : .transparent)
+            }
+        }
+        return image
+    }
+
+    @Test("貼る絵のある列は、塗りの α が 1 でもブレンドなしにせず、画素が全部同じ")
+    func pictureFillsStayBlended() throws {
+        func scene(_ canvas: Canvas) {
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.2, green: 0.5, blue: 0.9))
+            canvas.push()
+            canvas.translate(40, 40, -20)
+            canvas.box(50)
+            canvas.pop()
+            canvas.texture(checkeredPicture(canvas))
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.push()
+            canvas.translate(52, 52, 0)
+            canvas.box(34)
+            canvas.pop()
+            canvas.noTexture()
+        }
+        let batch = try closedBatch(unlit: false) { canvas in
+            canvas.texture(checkeredPicture(canvas))
+            canvas.fill(.display(red: 1, green: 1, blue: 1))
+            canvas.box(20)
+        }
+        #expect(batch.solidVariant?.opaque != true, "貼る絵のある列をブレンドなしにした")
+        try expectSamePicture("貼る絵", unlit: true, opaque: true, scene: scene)
+    }
+
+    // MARK: - 細い線の被覆
+
+    /// 1 画素より細い立体の線は、被覆 (1 未満) を α に掛けて出す。α を下げる列なので、頂点の α が 1 でも
+    /// ブレンドなしにしない (下地に混ぜる)。
+    @Test("細い線を広げた頂点を持つ重ねる列は、ブレンドなしにせず、画素が全部同じ")
+    func thinCoverageColumnsStayBlended() throws {
+        func scene(_ canvas: Canvas) {
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.8, green: 0.8, blue: 0.2))
+            canvas.push()
+            canvas.translate(48, 48, -20)
+            canvas.box(70)
+            canvas.pop()
+            canvas.noFill()
+            canvas.stroke(.display(red: 1, green: 1, blue: 1))
+            canvas.strokeWeight(0.4)
+            canvas.push()
+            canvas.translate(48, 48, 0)
+            canvas.beginShape()
+            canvas.vertex(-30, -30, 0)
+            canvas.vertex(30, -30, 0)
+            canvas.vertex(30, 30, 0)
+            canvas.endShape(.close)
+            canvas.pop()
+        }
+        let batch = try closedBatch(unlit: false, scene)
+        #expect(batch.thinCoverage, "細い線の被覆が立っていない")
+        #expect(batch.run.mode == .blend)
+        #expect(batch.solidVariant?.opaque != true, "細い線の被覆を持つ列をブレンドなしにした")
+        try expectSamePicture("細い線", unlit: true, opaque: true, scene: scene)
+    }
 }
