@@ -225,7 +225,7 @@ extension Canvas {
 
         // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数の区間が小さい
         // 置き場所も大きい区間の雛形に受ける** (区間が上がったときだけ、新しい雛形になる)
-        if let open = openFlat, open.key.holds(key) {
+        if let open = openFlat, open.key == key || open.key.holds(key) {
             appendFolded(
                 placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
             return

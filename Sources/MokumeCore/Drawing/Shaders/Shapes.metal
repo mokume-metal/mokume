@@ -117,35 +117,41 @@ vertex ShapeFragmentIn shapeVertexMain(
         ThinFillRecord record = thinFills[slot];
         uint corner = uint(vertex_in.position.y);
         float origin = record.layout.x;
-        float span = record.layout.y;
-        float divisor = record.layout.z;
-        float from = origin + precise::divide(span * piece, divisor);
-        float to = origin + precise::divide(span * (piece + 1.0), divisor);
         float side = record.acrossSlopeSide.w;
-        uint mode = uint(record.coverageMode.x);
-        float cover = record.coverageMode.y;
-        if (mode == 1) {
-            float thin = record.coverageMode.y;
-            float longRadius = record.coverageMode.z;
-            float width = record.coverageMode.w;
-            float nearest = (from <= 0.0 && to >= 0.0) ? 0.0 : min(abs(from), abs(to));
-            float ratio = min(precise::divide(nearest, longRadius), 1.0);
-            float chord = thin * precise::sqrt(max(0.0, fma(-ratio, ratio, 1.0)));
-            cover = chord > 0.0 ? precise::divide(chord, width) : 0.0;
-        } else if (mode == 2) {
-            uint entry = uint(piece);
-            float4 row = entry < 4 ? record.table0 : (entry < 8 ? record.table1 : record.table2);
-            cover = row[entry & 3u];
-        }
-        bool alive = piece < record.layout.w && (mode == 0 || cover > 0.0);
+        // 使わない片 (雛形の区間が記述の片の数より大きいぶん) は、割り算も平方根も通さずに潰す
+        bool alive = piece < record.layout.w;
+        float along = origin;
+        float offset = -side;
+        float cover = 1.0;
         if (alive) {
-            float along = (corner == 1 || corner == 2) ? to : from;
-            float offset = corner < 2 ? -side : side;
-            formPosition = mokume_thinFillCorner(record, along, offset);
-            thinCoverage = cover;
-        } else {
-            formPosition = mokume_thinFillCorner(record, origin, -side);
+            float span = record.layout.y;
+            float divisor = record.layout.z;
+            float from = origin + precise::divide(span * piece, divisor);
+            float to = origin + precise::divide(span * (piece + 1.0), divisor);
+            uint mode = uint(record.coverageMode.x);
+            cover = record.coverageMode.y;
+            if (mode == 1) {
+                float thin = record.coverageMode.y;
+                float longRadius = record.coverageMode.z;
+                float width = record.coverageMode.w;
+                float nearest = (from <= 0.0 && to >= 0.0) ? 0.0 : min(abs(from), abs(to));
+                float ratio = min(precise::divide(nearest, longRadius), 1.0);
+                float chord = thin * precise::sqrt(max(0.0, fma(-ratio, ratio, 1.0)));
+                cover = chord > 0.0 ? precise::divide(chord, width) : 0.0;
+            } else if (mode == 2) {
+                uint entry = uint(piece);
+                float4 row = entry < 4 ? record.table0 : (entry < 8 ? record.table1 : record.table2);
+                cover = row[entry & 3u];
+            }
+            // 被覆 0 の片も置かない (種別 0 は一定の被覆で、0 でも置く)
+            alive = mode == 0 || cover > 0.0;
+            if (alive) {
+                along = (corner == 1 || corner == 2) ? to : from;
+                offset = corner < 2 ? -side : side;
+                thinCoverage = cover;
+            }
         }
+        formPosition = mokume_thinFillCorner(record, along, offset);
         if (frame.thinFill == 2) {
             float2 lowest = frame.thinFillUV.xy;
             float2 extent = frame.thinFillUV.zw;

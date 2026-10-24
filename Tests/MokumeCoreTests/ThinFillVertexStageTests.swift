@@ -55,7 +55,8 @@ struct ThinFillVertexStageTests {
             #expect(canvas.openFlat != nil, "細い楕円が畳まれない")
             #expect(canvas.flatInstances.count == count + 1, "置き場所: \(canvas.flatInstances.count)")
             #expect(canvas.thinFillSpans.count == count, "記述: \(canvas.thinFillSpans.count)")
-            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+            // 長さ 40 は、刻みの端の丸めで 40〜41 片の区間 (40 か 48)
+            #expect([40, 48].contains(canvas.openFlat?.key.thinFillCapacity ?? 0))
         }
     }
 
@@ -128,7 +129,8 @@ struct ThinFillVertexStageTests {
                 placeEllipse(canvas, length: length, at: index)
             }
             #expect(canvas.thinFillSpans.count == 9, "記述: \(canvas.thinFillSpans.count)")
-            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+            // 長さ 50 は 56 片の区間。後の 40・30 は同じ雛形に受ける
+            #expect(canvas.openFlat?.key.thinFillCapacity == 56)
             // 上がった後は、小さい区間と大きい区間が交互に来ても割れない
             let before = canvas.outlinesAssembledThisFrame
             for index in 0..<12 {
@@ -142,7 +144,7 @@ struct ThinFillVertexStageTests {
     /// 1 画素より小さい円や短い楕円は、置き場所ごとに 64 片ぶん (384 頂点) の頂点関数を回さない。
     @Test("小さい円・短い楕円の雛形は、それぞれ 1 片・10 片ぶんの頂点だけを持つ")
     func smallShapesTemplatesStayCompact() throws {
-        for (length, pieces) in [(Float(0.4), 1), (6, 10), (40, 64)] {
+        for (length, pieces) in [(Float(0.4), 1), (6, 10), (14, 16), (39.5, 40), (63.5, 64)] {
             let canvas = try Self.makeCanvas(density: 1)
             let shader = try canvas.makeShader(Self.plain)
             try canvas.draw {
@@ -180,6 +182,8 @@ struct ThinFillVertexStageTests {
             }
             #expect(canvas.thinFillRecordsBuilt - before == 1, "求めた数: \(canvas.thinFillRecordsBuilt - before)")
             #expect(canvas.thinFillSpans.count == 30)
+            // 同じ記述は足し直さず、30 の置き場所が 1 つの記述を指す
+            #expect(canvas.thinFillRecords.count == 1, "記述の数: \(canvas.thinFillRecords.count)")
             // 向きが変われば求め直す (最初の置き場所は回転 0 で、直前と同じ向きなので控えが効く)
             let rotating = canvas.thinFillRecordsBuilt
             for index in 0..<30 {
@@ -525,6 +529,49 @@ struct ThinFillVertexStageTests {
                 }
             }
         }
+    }
+
+    /// 片の角の積和の順 (頂点段と同じ `fma` の順) を、別に書いた式と 1 ビットずつ突き合わせる。
+    /// **GPU の側の順は画素の検査では見えない場合がある** (コンパイラが偶然同じ融合をする) ので、CPU の
+    /// 式を `Shapes.metal` の `mokume_thinFillCorner` と同じ順に固定していることを、ここで押さえる。
+    @Test("CPU の片の角は、頂点段と同じ fma の順で出る")
+    func cornersUseTheFusedOrder() throws {
+        var seed: UInt64 = 7
+        func next() -> Float {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Float((seed >> 33) & 0xFFFFFF) / Float(0xFFFFFF)
+        }
+        var checked = 0
+        for _ in 0..<400 {
+            let angle = next() * 6.2831853
+            let (c, s) = (cos(angle), sin(angle))
+            let stretch = 0.5 + next() * 3
+            let linear = simd_float2x2(SIMD2(c, s) * stretch, SIMD2(-s, c) * (0.2 + next()))
+            let named = Canvas.Outline.NamedFill(
+                isEllipse: true, center: SIMD2(next() * 9, next() * 9), half: SIMD2(5 + next() * 30, 0.05 + next() * 0.3))
+            guard let record = Canvas.thinFillRecord(named, by: linear) else { continue }
+            let pieces = record.pieces()
+            let axis = SIMD2(record.centerAxis.z, record.centerAxis.w)
+            let across = SIMD2(record.acrossSlopeSide.x, record.acrossSlopeSide.y)
+            let (slope, side) = (record.acrossSlopeSide.z, record.acrossSlopeSide.w)
+            let inverseX = SIMD2(record.inverse.x, record.inverse.y)
+            let inverseY = SIMD2(record.inverse.z, record.inverse.w)
+            let center = SIMD2(record.centerAxis.x, record.centerAxis.y)
+            let (origin, span, divisor) = (record.layout.x, record.layout.y, record.layout.z)
+            // 先頭の片の 2 つ目の角: along = origin + span * 1 / divisor、offset = -side
+            guard let first = pieces.first, record.coverageMode.x == 1 else { continue }
+            let to = origin + span * Float(1) / divisor
+            var shift = -side
+            shift.addProduct(slope, to)
+            var drawn = axis * to
+            drawn.addProduct(across, SIMD2(repeating: shift))
+            var moved = inverseX * drawn.x
+            moved.addProduct(inverseY, SIMD2(repeating: drawn.y))
+            let expected = center + moved
+            #expect(first.corners.1 == expected, "\(first.corners.1) != \(expected)")
+            checked += 1
+        }
+        #expect(checked > 300)
     }
 
     // MARK: - 記述

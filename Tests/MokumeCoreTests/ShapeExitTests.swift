@@ -230,7 +230,7 @@ enum ShapeExit {
             "placingCatchUpDeferred": flush,
             "lightStorage": "光の置き場。記録の中で閉じた立体の列もいまの光を写すが、列ごと形へ抜くので読まれず、フレームの頭で空になる",
             "solidMeshRanges": unused, "flatInstances": unused, "pendingFlat": unused,
-            "thinFillRecords": unused, "thinFillSpans": unused,
+            "thinFillRecords": unused, "thinFillSpans": unused, "lastThinFillRecord": unused,
             "thinFillMemo": "細い塗りの記述の直前の問い合わせ 1 件。中身は入力で決まる (#2208)",
             "thinFillRecordsBuilt": count,
             "buildingFlatTemplate": unused,

@@ -131,6 +131,9 @@ public final class Canvas {
     /// 直前に求めた細い塗りの記述 (``thinFillRecord(of:drawn:)``)。**向きと寸法が同じ置き場所は記述も
     /// 同じ**なので、続けて同じ置き場所が来る間は求め直さない。
     var thinFillMemo: ThinFillMemo?
+    /// 直前に足した記述の ``thinFillRecords`` での位置 (同じ記述を足し直さない・``addThinFill(_:)``)。
+    /// フレームの境目で溜め場を空にするとき、一緒に忘れる。
+    var lastThinFillRecord: Int?
     /// 細い塗りの記述を求めた数 (検査用)。控えが効いている間は増えない。
     var thinFillRecordsBuilt = 0
     /// 細い塗りの広げ方を頂点段へ移した畳みを使うか (#2208)。偽にすると、畳みの鍵に 2x2 そのものを
@@ -323,7 +326,9 @@ public final class Canvas {
         /// どおり変換の違う置き場所も同じ雛形に畳む。**広げ方を頂点段へ移した畳み (``thinFillCapacity``・
         /// #2208) では使わない** — ``expandsThinFillsInVertexStage`` を偽にした検査用の形だけが入れる。
         var fillLinear: ThinFold?
-        /// 頂点段で広げる細い塗りの雛形が持つ片の数の上限の区間 (#2208)。置き場所の 2x2 は鍵に入らない —
+        /// 頂点段で広げる細い塗りの雛形が持つ片の数の区間 (1・10・64・#2208・``ThinFillRecord/capacity(forPieces:)``)。
+        /// **この区間だけは、大きい区間の雛形が小さい区間の置き場所も受ける** (``joined(with:)``・``holds(_:)``)。
+        /// 置き場所の 2x2 は鍵に入らない —
         /// 広げ方は置き場所ごとの記述 (``ThinFillRecord``) が持つので、回転だけが違う置き場所も 1 つの雛形に
         /// 畳まれる。細い塗りでなければ 0 で、これまでどおり。``expandsThinFillsInVertexStage`` を偽にすると
         /// 0 のまま (``fillLinear`` を使う)。
@@ -2958,6 +2963,7 @@ public final class Canvas {
         list(&flatInstances, resettingTo: [FlatInstance.identity])
         list(&thinFillRecords)
         list(&thinFillSpans)
+        if emptying { lastThinFillRecord = nil }
         list(&formInstances)
         // 列は数えない。溜めたものを閉じて束ねるだけで、置いたものではない — 数えると、区間の
         // 外で `blendMode()` を書いて列を閉じただけで量が増える。列があれば、束ねた中身が上の

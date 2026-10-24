@@ -348,6 +348,7 @@ extension CanvasTests {
                 ("thinFillSpans", end, all, { c, _ in
                     c.thinFillSpans.append(Canvas.ThinFillSpan(first: 0, count: 1))
                 }),
+                ("lastThinFillRecord", end, all, { c, _ in c.lastThinFillRecord = 0 }),
                 ("coverageSpans", end, all, { c, _ in
                     c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
                 }),

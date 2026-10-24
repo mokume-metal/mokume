@@ -54,7 +54,7 @@ extension Canvas {
     /// 同じ順の `fma` (積和の順を固定する) で、種別・倍精度の特異値・弦の積分は CPU が記述にして渡す。
     ///
     /// [#2208]: https://github.com/mokume-metal/mokume/issues/2208
-    struct ThinFillRecord {
+    struct ThinFillRecord: Equatable {
         /// 被覆の決め方。
         enum Coverage {
             /// 全部の片が同じ被覆。
@@ -125,13 +125,18 @@ extension Canvas {
                 && finite(coverageMode) && finite(table0) && finite(table1) && finite(table2)
         }
 
-        /// 雛形が持つ片の数の区間: 1・``shortCapacity``・上限の ``Canvas/thinEllipseSliceLimit``。
+        /// 雛形が持つ片の数の区間: 1・``shortCapacity``・16 と、そこから 8 刻みで上限の
+        /// ``Canvas/thinEllipseSliceLimit`` まで (計 9 つ)。
         /// **置き場所の片の数が入る最小の区間を雛形の鍵に入れる。** 置き場所ごとに片の数が変わっても
-        /// 同じ区間に収まる間は雛形を割らず、使わない片は頂点段が潰す。区間は 3 つだけなので、拡大で
-        /// 区間を跨いでも割れるのは高々 2 回で、大きい区間の雛形は小さい区間の置き場所も受ける
-        /// (``Canvas/FlatKey/holds(_:)``)。小さい区間の置き場所を、いつも 64 片ぶんの頂点で流さないための区間である。
+        /// 同じ区間に収まる間は雛形を割らず、使わない片は頂点段が潰す。大きい区間の雛形は小さい区間の
+        /// 置き場所も受ける (``Canvas/FlatKey/holds(_:)``) ので、割れるのは区間が上がるときだけで、1 フレームに
+        /// 高々 8 回である。区間の目的は、小さい円や短い楕円を、いつも 64 片ぶん (384 頂点) の頂点関数で流さず、
+        /// 長い楕円も使わない片を 8 片未満に抑えること (頂点関数の費用が頂点数にほぼ比例するため)。
         static func capacity(forPieces count: Int) -> Int {
-            count <= 1 ? 1 : (count <= shortCapacity ? shortCapacity : Canvas.thinEllipseSliceLimit)
+            if count <= 1 { return 1 }
+            if count <= shortCapacity { return shortCapacity }
+            if count <= 16 { return 16 }
+            return min((count + 7) & ~7, Canvas.thinEllipseSliceLimit)
         }
 
         /// 長い向きが短い楕円 (``Canvas/thinFillShortSpan`` 未満) が使いうる片の数の上限。
@@ -278,7 +283,15 @@ extension Canvas {
     }
 
     /// 置き場所の記述を 1 つ足す。**置き場所ごとに 1 度**呼ぶ (先頭と数は、足した記述から決まる)。
+    ///
+    /// **直前に足した記述と同じなら、記述は足さずに同じものを指す** — 向きと寸法が同じ置き場所が続く
+    /// 場面では、記述が 1 つで済み (CPU の書き込みと GPU の読み出しが減る)、先頭と数の並びだけが伸びる。
     func addThinFill(_ record: ThinFillRecord) {
+        if let last = lastThinFillRecord, thinFillRecords[last] == record {
+            thinFillSpans.append(ThinFillSpan(first: UInt32(last), count: 1))
+            return
+        }
+        lastThinFillRecord = thinFillRecords.count
         thinFillSpans.append(ThinFillSpan(first: UInt32(thinFillRecords.count), count: 1))
         thinFillRecords.append(record)
     }
