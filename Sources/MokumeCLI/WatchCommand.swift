@@ -22,6 +22,45 @@ enum WatchCommand {
     /// 所要時間に検出の時間が出るので、足りなければ実測を根拠に差し替えられる。
     static let interval: TimeInterval = 0.25
 
+    /// 作り直しをまたいで作者の時計を渡す旗 (値を取らない)。**`watch` だけが受ける** — `run`・`render` は
+    /// 知らない選択肢として断る。
+    static let keepTimeFlag = "--keep-time"
+
+    /// `watch` が足す選択肢 (走らせる部分の選択肢 ``Invocation/options`` に足して解く)。
+    @MainActor static var options: [Arguments.Option] {
+        [
+            Arguments.Option([keepTimeFlag], isSwitch: true) {
+                "\($0) takes no value"
+            }
+        ]
+    }
+
+    /// 世代をまたいで作者の時計を渡すファイルの場所。見張り 1 本ごとに別 (プロセス番号で分ける)。
+    ///
+    /// **専用の小さなディレクトリの中に置く。** 書く側 (`AtomicFile`) は、落とされた書き手が残した一時ファイルを
+    /// 探すために、最初に置くときファイルの隣を 1 度だけ引く — 一時ディレクトリの直下に置くと、物が溜まった
+    /// 一時ディレクトリ (実測で 14 万件) を最初の枚の中で引いて、窓の枚が 1 秒詰まった。錠のファイルと
+    /// 書きかけの一時ファイルも同じディレクトリに入るので、後始末はディレクトリごと消すだけで済む。
+    static func keepTimeFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(keepTimeFilePrefix)\(getpid())", isDirectory: true)
+            .appendingPathComponent("clock", isDirectory: false)
+    }
+
+    /// 時計を渡すディレクトリの名前の前置き (`keepTimeFile()` が見張りの pid を続ける)。
+    private static let keepTimeFilePrefix = "mokume-keep-time-"
+
+    /// 時計を渡すファイルと、それに付いてくるもの (書く側が隣に持つ錠のファイルと、書いている途中に落とされた子が
+    /// 残した一時ファイル) を、専用のディレクトリごと消す。
+    ///
+    /// **無ければ何もしない・2 度消しても害は無い** (終わりの経路が 2 つある — `run` の戻りと `teardown`)。
+    /// 消すのは名前が前置きで始まるディレクトリだけ — 場所の取り違えで一時ディレクトリそのものを消さない。
+    static func removeKeepTimeFiles(_ file: URL) {
+        let directory = file.deletingLastPathComponent()
+        guard directory.lastPathComponent.hasPrefix(keepTimeFilePrefix) else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     /// 終わりの合図として受けるもの。
     ///
     /// **端末が消える形 (SIGHUP) がいちばん多い。** 見張りを起こした端末やセッションが
@@ -48,7 +87,8 @@ enum WatchCommand {
         watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) },
         claiming: (URL) throws(CommandFailure) -> WatchPlaceLock = { try WatchPlaceLock.claim(under: $0) }
     ) throws(CommandFailure) {
-        let invocation = try Invocation.parse(arguments)
+        let (invocation, values) = try Invocation.parse(arguments, adding: options)
+        let keepsTime = values[keepTimeFlag] != nil
         let directory = try invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
@@ -87,9 +127,18 @@ enum WatchCommand {
         let place = try claiming(facetBase)
         defer { place.release() }
 
+        // **世代をまたいで時計を渡すファイル** (`--keep-time`・#2414)。始める前に消す (前の見張りの時計から
+        // 始めない) し、終わりでも消す。旗の無い見張りは何も作らず、子にも渡さない
+        let keepTimeFile = keepsTime ? Self.keepTimeFile() : nil
+        if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) }
+        // **終わる経路は 2 つある。** ここは巡回を抜けて戻る道で、Dock の「終了」・ログアウト・システム終了は
+        // `run()` から戻らず `teardown` だけを通る — 消す処理はそちらにも載せてある (2 度消しても害は無い)
+        defer { if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) } }
+
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
-            reportsRate: true, hooks: .live(resolver: resolver, running: running))
+            reportsRate: true,
+            hooks: .live(resolver: resolver, running: running, keepTime: keepTimeFile?.path))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
@@ -148,14 +197,14 @@ enum WatchCommand {
                 session.noteStopRequested()
             },
             isFinished: { session.finishStage == .done },
-            teardown: { teardown(session, viewer, created: prepared) })
+            teardown: { teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile) })
         NSApplication.shared.delegate = delegate
 
         // **巡回に入る前に断る。** 窓が覆われてから立てるのでは遅い — App Nap は
         // 起動から 30〜60 秒で入る (#1199)
         refuseThrottling()
         watching(session, viewer)
-        teardown(session, viewer, created: prepared)
+        teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
     }
 
     /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
@@ -224,7 +273,10 @@ enum WatchCommand {
     ///
     /// - Parameter created: `prepareFacets(under:)` が置いた区画。**畳むのはこれだけ** —
     ///   人が置いたものは残す。
-    static func teardown(_ session: WatchSession, _ viewer: Viewer?, created: [URL] = []) {
+    /// - Parameter keepTimeFile: `--keep-time` の時計のファイル。置いていかない。
+    static func teardown(
+        _ session: WatchSession, _ viewer: Viewer?, created: [URL] = [], keepTimeFile: URL? = nil
+    ) {
         guard !teardownDone else { return }
         teardownDone = true
         // **断りを返す。** 終わりの経路は 2 つある (巡回が抜けた / 道具立てが終わらせた)
@@ -239,6 +291,9 @@ enum WatchCommand {
         // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
+        // **時計を渡すファイルも置いていかない** (`--keep-time`・#2414)。Dock の「終了」・ログアウト・システム終了は
+        // `run()` の `defer` を通らない。子は `finishBlocking` が止め終えているので、もう書く者は居ない
+        if let keepTimeFile { removeKeepTimeFiles(keepTimeFile) }
     }
 
     /// 後始末を済ませたか。**印は 1 プロセスに 1 つ** (終わりの合図と同じ扱い)。

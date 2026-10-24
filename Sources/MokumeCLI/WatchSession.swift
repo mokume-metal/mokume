@@ -86,12 +86,14 @@ final class WatchSession {
         ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
+        /// - Parameter keepTime: 作り直しをまたいで作者の時計を渡すファイルの絶対パス (`watch --keep-time`)。
+        ///   起こす子ごとに環境変数で渡す (``StartupReads/keepTime``・#2414)。省けば渡さない。
         /// - Parameter stamps: 世代の読み手。**1 つを持ち回る** — 属性の変わらないファイルを
         ///   巡回のたびに読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)。
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
-            stamps: SourceStamp.Reader = SourceStamp.Reader()
+            stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil
         ) -> Hooks {
             Hooks(
                 rebuild: { directory throws(CommandFailure) in
@@ -132,7 +134,8 @@ final class WatchSession {
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
-                        assetOrigin: (try? resolver.current())?.context.assets.url?.path)
+                        assetOrigin: (try? resolver.current())?.context.assets.url?.path,
+                        keepTime: keepTime)
                     do {
                         try process.run()
                     } catch {
