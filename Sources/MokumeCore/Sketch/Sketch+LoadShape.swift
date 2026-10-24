@@ -11,8 +11,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var logo: Shape? -->
     /// ```swift
-    /// func setup() {
-    ///     logo = try? loadShape("assets/logo.svg")
+    /// func setup() throws {
+    ///     logo = try loadShape("assets/logo.svg")
     /// }
     ///
     /// func draw() {
@@ -61,7 +61,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -69,8 +69,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -87,7 +87,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る -->
-    ///     ![橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る](https://i.gyazo.com/a7d69881928db10e8d13184bc1a69b56.png)
+    ///     ![橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る](https://i.gyazo.com/d19553e685d6b212c30523284316e642.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -100,7 +100,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -108,8 +108,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark-160x100.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -124,7 +124,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま -->
-    ///     ![width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま](https://i.gyazo.com/dadd62bdbc531b3d34c4415d648ae0f6.png)
+    ///     ![width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま](https://i.gyazo.com/5290a86233ae8cfc2c7dbc5e806894af.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -137,7 +137,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -145,8 +145,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -162,7 +162,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか -->
-    ///     ![scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか](https://i.gyazo.com/eb6b95f5b69a4b76cf50a85e90fd0b1f.png)
+    ///     ![scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか](https://i.gyazo.com/fccc62c786bae8b3f4e12b38119134a6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -175,7 +175,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="white"/>
@@ -183,8 +183,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark-white.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -198,7 +198,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる -->
-    ///     ![白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる](https://i.gyazo.com/53b595fc4a7f9c2072d57df4dbfcf724.png)
+    ///     ![白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる](https://i.gyazo.com/6ece90babe0ee924a5c088f934b49fd4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -289,10 +289,10 @@ extension SketchPart {
     /// - Throws: 上のどれか (``DataFailure``)。
     ///
     /// [#3031]: https://github.com/mokume-metal/mokume/issues/3031
-    // shot: 1 snippet=002b4165
-    // shot: 2 snippet=bbba0594
-    // shot: 3 snippet=b33c97d0
-    // shot: 4 snippet=8ae46fb2
+    // shot: 1 snippet=0a647cc6
+    // shot: 2 snippet=2487b4f6
+    // shot: 3 snippet=847c2a54
+    // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         Self.noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)

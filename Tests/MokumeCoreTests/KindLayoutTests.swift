@@ -94,9 +94,9 @@ struct KindLayoutTests {
     /// 上の検査は**並びが同じ長さである限り**値を見るが、片方だけに 1 つ足すと
     /// 末尾の印の位置がずれるので、そこでも落ちる。この検査は「いくつあるか」を
     /// 人が読める形で残しておくためのもの。
-    @Test("種別の総数が、区画の印を含めて 64 のまま")
+    @Test("種別の総数が、区画の印を含めて 65 のまま")
     func keepsTheNumberOfKinds() {
-        #expect(Self.expected.count == 64)
+        #expect(Self.expected.count == 65)
     }
 
     /// **基本図形の縁の分類 (境目の幅・被覆の数え方) が、CPU と GPU で一致する** ([#2991])。

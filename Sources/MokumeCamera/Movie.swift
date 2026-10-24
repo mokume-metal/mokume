@@ -15,7 +15,7 @@ import MokumeDiagnostics
 /// ```swift
 /// final class Scrub: Sketch {
 ///     var clip: Movie?
-///     func setup() { clip = try? createVideo("assets/clip.mov") }
+///     func setup() throws { clip = try createVideo("assets/clip.mov") }
 ///     func draw() {
 ///         guard let clip else { return }
 ///         image(clip.image, 0, 0, width, height)

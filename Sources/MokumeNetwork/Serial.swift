@@ -14,8 +14,8 @@ import MokumeCore
 /// final class Knob: Sketch {
 ///     var port: Serial?
 ///     var x: Float = 0
-///     func setup() {
-///         if let first = serialPorts().first { port = try? createSerial(first, baudRate: 9600) }
+///     func setup() throws {
+///         if let first = serialPorts().first { port = try createSerial(first, baudRate: 9600) }
 ///     }
 ///     func draw() {
 ///         background(0)

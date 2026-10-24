@@ -13,8 +13,8 @@
 /// final class Muffled: Sketch {
 ///     var song: SoundFile?
 ///     var filter: LowPass?
-///     func setup() {
-///         song = try? loadSound("assets/song.wav")
+///     func setup() throws {
+///         song = try loadSound("assets/song.wav")
 ///         filter = createLowPass()
 ///         if let song { filter?.process(song, 800) }
 ///         song?.loop()

@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
-    /// func setup() {
-    ///     head = try? loadModel("assets/head.obj")
+    /// func setup() throws {
+    ///     head = try loadModel("assets/head.obj")
     /// }
     /// func draw() {
     ///     lights()
@@ -73,7 +73,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
     ///         for s in [1, 30] {
     ///             let obj = """
@@ -89,7 +89,7 @@ extension SketchPart {
     ///                 f 2 3 4 5
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
-    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///             pyramids.append(try! loadModel(path))
     ///         }
     ///     }
@@ -124,7 +124,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
     ///         for s in [1, 30] {
     ///             let obj = """
@@ -140,7 +140,7 @@ extension SketchPart {
     ///                 f 2 3 4 5
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
-    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///             pyramids.append(try! loadModel(path, normalize: false))
     ///         }
     ///     }
@@ -198,8 +198,8 @@ extension SketchPart {
     ///   形式のときに ``ModelFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=422c10b2
-    // shot: 2 snippet=c25f28d8
+    // shot: 1 snippet=f06ca23f
+    // shot: 2 snippet=3d711263
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         Self.noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
         return try Self.resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
@@ -268,7 +268,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let obj = """
     ///             v 0 3 0
     ///             v -1 0 -1
@@ -282,7 +282,7 @@ extension SketchPart {
     ///             f 2 3 4 5
     ///             """
     ///         let path = NSTemporaryDirectory() + "pyramid.obj"
-    ///         try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///         pyramid = try! loadModel(path)
     ///     }
     ///
@@ -310,6 +310,6 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=84b7a99d
+    // shot: 1 snippet=f81bf796
     public func model(_ model: Model) { Self.liveCanvas()?.model(model) }
 }

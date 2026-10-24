@@ -158,7 +158,7 @@ public struct Pixels {
     /// 並びへ読んでおく。
     ///
     /// ``Image/pixels`` から取った窓なら、その絵の画素を書き換える。**絵ごとに効果を掛けて新しい絵を
-    /// 返す口 (`filtered(_:)`) とは違い、この口は自分を変える** — ``subscript(_:_:)``・
+    /// 返す口 (``Image/filtered(_:)``) とは違い、この口は自分を変える** — ``subscript(_:_:)``・
     /// ``fill(_:)`` と同じである。
     public func update(_ transform: (_ x: Int, _ y: Int, _ color: LinearRGBA) -> LinearRGBA) {
         if let image {
