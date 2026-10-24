@@ -180,7 +180,7 @@ nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
             guard !state.said.hasWarned(key), state.pending.insert(key).inserted else { return false }
             assert(
                 state.published < Self.maximumKeys,
-                "SharedWarningLog の鍵が \(Self.maximumKeys) を超えた。値を持つ鍵は WarningLog に置き、呼ぶ側が上限を置く")
+                "SharedWarningLog has more than \(Self.maximumKeys) keys; keys that carry a value belong in WarningLog")
             state.published += 1
             publish(key)
             return true
