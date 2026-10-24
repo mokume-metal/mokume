@@ -236,7 +236,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている -->
-    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/5d5ef1d146facd02816e5a4f0431b7cc.png)
+    ///     ![中央の円の、右から下へ 4 分の 1 だけが橙色の扇形になっている](https://i.gyazo.com/d5f5aa923c51fd1821e7066f3bc9e5a8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -253,7 +253,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている -->
-    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/781c7a80131768de3b4eb0356008c848.png)
+    ///     ![同じ円の 4 分の 3 が橙色の扇形になり、右上だけが欠けている](https://i.gyazo.com/3a486644e5e2f557729bc46d53d1428c.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -270,7 +270,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左から上へ 4 分の 1 だけの橙色の扇形 -->
-    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/dc188ab234ebc18e5b37d95fc58fcca9.png)
+    ///     ![左から上へ 4 分の 1 だけの橙色の扇形](https://i.gyazo.com/e0a2e81d454a89e016ca70b3e3688368.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -299,12 +299,61 @@ extension SketchPart {
     /// 塗りは**中心を含む扇形**になる。終わりの角度が始まりより小さいときは
     /// **何も描かず**、最初の 1 回だけ知らせる。
     ///
+    /// **輪郭は閉じない弧になる。** 扇の 2 本の半径は引かない — 手本 (Processing・p5.js) の
+    /// 既定と同じで、`noFill()` で弧だけを引けば、メーターの針の跡や輪の欠けが描ける。
+    /// 塗りと輪郭が違う形 (塗りは扇・輪郭は開いた弧) になるのも手本と同じである。開いた弧の両端には
+    /// ``strokeCap(_:)`` の端の形が付く — 丸い端なら弧の先が丸く、`.project` なら弧の延長でなく
+    /// 接線の向きにまっすぐ半分の太さだけ出る。`.project` の端は帯との和集合で、ほぼ一周の弧で両端が
+    /// 近くても、重なる所は濃くならない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noFill()
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(14)
+    ///     arc(200, 150, 200, 200, Float.pi * 0.75, Float.pi * 2.25)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 下が開いた橙色の太い弧が中央にあり、中心へ向かう線は無い -->
+    ///     ![下が開いた橙色の太い弧が中央にあり、中心へ向かう線は無い](https://i.gyazo.com/c99fdb2aa310d8f6645b7a11994262e9.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// **閉じ方を選ぶなら 7 つ目の引数に ``ArcMode`` を渡す** (``arc(_:_:_:_:_:_:_:)``)。
+    /// 左上が引数を渡さない形、続く 3 つが `.pie`・`.chord`・`.open`。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64, 140)
+    ///     stroke(242, 217, 89)
+    ///     strokeWeight(4)
+    ///     arc(105, 80, 150, 110, 0.4, 4.4)
+    ///     arc(295, 80, 150, 110, 0.4, 4.4, .pie)
+    ///     arc(105, 220, 150, 110, 0.4, 4.4, .chord)
+    ///     arc(295, 220, 150, 110, 0.4, 4.4, .open)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 同じ弧が 4 つ。左上は扇の塗りと開いた弧、右上は扇の枠つき、左下は弦で閉じた形、右下は弦で結んだ形の塗りと開いた弧 -->
+    ///     ![同じ弧が 4 つ。左上は扇の塗りと開いた弧、右上は扇の枠つき、左下は弦で閉じた形、右下は弦で結んだ形の塗りと開いた弧](https://i.gyazo.com/cf31ba393a6bae82b9999c3ad6035ff8.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 手本から移すとき、輪郭付きの `arc` で**扇の枠が要る**なら `.pie` を渡す。
+    ///
     /// - Note: **幅と高さが違うとき、角度は中心から見た向きではない。** 中心を `(cx, cy)`、
     ///   幅と高さの半分を `rx`・`ry` とすると、角度 `t` の弧の端は
     ///   `(cx + rx·cos t, cy + ry·sin t)` の点 (楕円の媒介変数の角) で、中心から見ると `t` より
     ///   長い軸の側に寄る — 横長の `arc(0, 0, 260, 80, 0, Float.pi / 4)` の弧の端は、
     ///   中心から見ると 45° ではなく 17° の向きにある。扇の 2 本の辺はこの点へ引かれ、塗りも
-    ///   輪郭もその間だけに出る。円では 2 つの向きが一致する。
+    ///   輪郭もその間だけに出る (輪郭は `.pie` のとき)。円では 2 つの向きが一致する。
     ///
     /// - Note: **p5.js とは楕円の絵が違う。** 手本の読み方は割れていて、Processing はこちらと
     ///   同じく媒介変数の角として読み、p5.js は角度を中心から見た向きとして換算してから弧を引く。
@@ -312,12 +361,38 @@ extension SketchPart {
     // shot: 2 snippet=e00e11b7
     // shot: 3 snippet=16db4ac0
     // shot: 4 snippet=27105ca4
+    // shot: 5 snippet=6cae2c65
+    // shot: 6 snippet=8e587865
     public func arc(
         _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
         canvas.arc(a, b, c, d, start, stop)
+    }
+
+    /// 円弧を、閉じ方 (``ArcMode``) を選んで描く。
+    ///
+    /// 最初の 6 つの数は ``arc(_:_:_:_:_:_:)`` と同じ読み方で、7 つ目が閉じ方。
+    ///
+    /// | 閉じ方 | 塗り | 輪郭 |
+    /// | --- | --- | --- |
+    /// | (6 つの数だけ) | 扇 | 開いた弧 |
+    /// | `.pie` | 扇 | 扇の枠 (中心への 2 本の半径と弧) |
+    /// | `.chord` | 弧の両端を弦で結んだ形 | 弦で閉じた形の周 |
+    /// | `.open` | 弧の両端を弦で結んだ形 | 開いた弧 |
+    ///
+    /// **`.open` の塗りは扇ではなく弦で結んだ形になる。** 手本の既定 (引数を渡さない形) とは
+    /// 塗りが違うので、既定の見た目が欲しいときは、閉じ方を渡さずに呼ぶ。
+    /// 一周ぶんの弧は、どの閉じ方でも楕円と同じ形になる。
+    // shot: 参照 arc(_:_:_:_:_:_:)
+    public func arc(
+        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible,
+        _ mode: ArcMode
+    ) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
+        canvas.arc(a, b, c, d, start, stop, mode)
     }
 
     /// 三角形を塗る。3 つの頂点をそのまま与える。

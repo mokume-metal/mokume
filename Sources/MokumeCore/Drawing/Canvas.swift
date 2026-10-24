@@ -167,6 +167,14 @@ public final class Canvas {
     /// (`Shape.fillRanges`)。記録を終えると `createShape` が抜く。
     var recordedFillRanges: [RingFillRange] = []
 
+    /// 保持する形を記録している間に、**描かずに幾何だけを覚えた**置き場所 (``Shape/geometryForms``・#2428)。
+    ///
+    /// 円弧は、距離関数の経路で描くなら置き場所が幾何を持つが、三角形の経路 (`texture()` / `shader()`)
+    /// と、塗りを止めた破線の輪郭では、置き場所が無く、頂点や周の点だけが残る。それでは外接が閉じ方でなく
+    /// 経路に従う (塗りを止めた既定の弧が、扇の中心を落とす)。**外接は閉じ方が決める幾何で、描く経路に依らない**
+    /// 約束なので、置き場所を描かずに足しておく。記録を終えると `createShape` が抜く。
+    var recordedGeometryForms: [FormInstance] = []
+
     /// 保持する形を記録している間に積んだ立体の線の元 (``SolidStrokePiece``)。
     ///
     /// 立体の線の帯は視点に合わせて組むので、記録したときの視点で組んだ帯は置いた先で
@@ -2915,6 +2923,7 @@ public final class Canvas {
         if emptying { openBatchHasThinCoverage = false }
         list(&recordedStrokeRanges)
         list(&recordedFillRanges)
+        list(&recordedGeometryForms, counted: false)
         list(&recordedSolidStrokes)
         list(&recordedGPUStrokes)
         list(&solidVertices)

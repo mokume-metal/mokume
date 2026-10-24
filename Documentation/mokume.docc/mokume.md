@@ -493,6 +493,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/circle(_:_:_:)``
 - ``SketchPart/ellipse(_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:)``
+- ``SketchPart/arc(_:_:_:_:_:_:_:)``
+- ``ArcMode``
 - ``SketchPart/triangle(_:_:_:_:_:_:)``
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
