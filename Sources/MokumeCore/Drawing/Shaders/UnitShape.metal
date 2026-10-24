@@ -41,7 +41,7 @@ struct FlatFrame {
     /// 1 と 2 なら、`strokeStart` より前の頂点の `position` は「片の番号と角の番号」で、頂点段が片の
     /// 角を組む。2 は貼る絵があり、読み取り位置を `thinFillUV` の箱から作る。
     uint thinFill;
-    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が幅)。`thinFill` が 2 のときだけ読む。
+    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
     float4 thinFillUV;
 };
 

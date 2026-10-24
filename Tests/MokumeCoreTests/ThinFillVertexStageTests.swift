@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import Metal
 import Testing
 import simd
 
@@ -500,6 +501,49 @@ struct ThinFillVertexStageTests {
         }
     }
 
+    /// 置き場所の位置 (anchor) が 0 でない場面。CPU が畳まずに置くときは周の中心へ位置を足してから変換し、
+    /// 畳んだ雛形は位置を変換の後で足すので、頂点段が同じ順で置かないと丸めが別になる。ほかの場面は
+    /// `translate` の後に原点で描くので位置が 0 で、この差が見えない。
+    @Test("置き場所の位置が 0 でない細い塗りも、CPU で組み直す畳みと画素が同じ")
+    func offsetPlacementsKeepTheirPixels() throws {
+        try expectSame("原点以外の楕円") { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.ellipse(11.3, 5.7, 26, 0.5)
+            }
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+        }
+        try expectSame("原点以外の短い楕円", texture: true) { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.37); c.scale(0.6 + Float(i % 5) * 0.2, 1) }) {
+                canvas.ellipse(7.7, 3.1, 8, 0.4)
+            }
+        }
+        try expectSame("原点以外の rect") { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.31) }) {
+                canvas.rect(3.1, 5.7, 24, 0.8)
+            }
+        }
+        try expectSame("原点以外の貼る絵の rect と鏡映", texture: true) { canvas in
+            place(canvas, transform: { c, i in c.scale(-1, 1); c.rotate(Float(i) * 0.29) }) {
+                canvas.rect(-9.3, 4.9, 20, 0.6)
+            }
+        }
+        try expectSame("原点以外の細かさ 0.5", density: 0.5) { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.23) }) {
+                canvas.ellipse(10.1, -6.3, 28, 0.8)
+            }
+        }
+        // translate なしで回す (平行移動が 0 で、位置だけが変換に載る)
+        try expectSame("translate なしの回転") { canvas in
+            for index in 0..<30 {
+                canvas.pushMatrix()
+                canvas.translate(2, 2)
+                canvas.rotate(Float(index) * 0.05)
+                canvas.ellipse(37.3 + Float(index), 11.7 + Float(index) * 2, 26, 0.5)
+                canvas.popMatrix()
+            }
+        }
+    }
+
     @Test("極端な寸法の細い塗りは、有限でない記述を作らない")
     func extremeSizesNeverMakeNonFiniteRecords() {
         let big: [Float] = [1e30, 1e37, 1.6e38, 1.75e38, 2e38, 3e38, Float.greatestFiniteMagnitude]
@@ -572,6 +616,105 @@ struct ThinFillVertexStageTests {
             checked += 1
         }
         #expect(checked > 300)
+    }
+
+    // MARK: - 頂点段の出力を読み戻す
+
+    /// 頂点関数が呼ぶ片の角 (`mokume_thinFillCorner`) と置き場所への移し (`mokume_thinFillPlace`) を、
+    /// Shapes.metal の原文に足した計算の入口から呼び、出力を読み戻して CPU の式と **1 ビットずつ**
+    /// 突き合わせる。画素の比べでは 1 ulp の差は赤にならない (縁や継ぎ目の画素が振れたときだけ見える)。
+    /// 置き場所の位置 (anchor) が 0 でない場面と、鏡映・剪断・大きな平行移動を含む。
+    @Test("頂点段の片の角と置き場所への移しは、CPU の式と 1 ビットも違わない")
+    func vertexStageCornersMatchTheCPUBitForBit() throws {
+        let gpu = try RenderDevice()
+        let shapes = try gpu.shaders.bundledShaderSource(named: "Shapes")
+        let probe = """
+
+        kernel void probeThinFill(
+            constant ThinFillRecord *records [[buffer(0)]], constant ThinFillSpan *spans [[buffer(1)]],
+            constant float4 *linears [[buffer(2)]], constant float2 *inputs [[buffer(3)]],
+            device float2 *corners [[buffer(4)]], device float2 *placed [[buffer(5)]],
+            uint id [[thread_position_in_grid]])
+        {
+            ThinFillSpan span = spans[0];
+            float2 corner = mokume_thinFillCorner(records[span.first], span.anchor, inputs[id].x, inputs[id].y);
+            corners[id] = corner;
+            placed[id] = mokume_thinFillPlace(linears[0], span.translation, corner);
+        }
+        """
+        let library = try gpu.shaders.makeShapeLibrary(named: "ThinFillProbe", body: shapes + probe)
+        let function = try #require(library.makeFunction(name: "probeThinFill"))
+        let pipeline = try gpu.device.makeComputePipelineState(function: function)
+        let queue = try #require(gpu.device.makeCommandQueue())
+
+        var seed: UInt64 = 99
+        func next() -> Float {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Float((seed >> 33) & 0xFFFFFF) / Float(0xFFFFFF)
+        }
+        func buffer<T>(_ values: [T]) throws -> any MTLBuffer {
+            try #require(
+                values.withUnsafeBytes {
+                    gpu.device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+                })
+        }
+        var compared = 0
+        for round in 0..<300 {
+            let angle = next() * 6.2831853
+            let (c, s) = (cos(angle), sin(angle))
+            let stretch: Float = 0.4 + next() * 3
+            let flip: Float = round % 4 == 0 ? -1 : 1
+            let shear = round % 5 == 0 ? (next() - 0.5) * 2 : 0
+            let linear = simd_float2x2(
+                SIMD2(c, s) * stretch, SIMD2(-s + shear * c, c + shear * s) * flip * (0.15 + next()))
+            let named = Canvas.Outline.NamedFill(
+                isEllipse: round % 3 != 0, center: SIMD2(next() * 9, next() * 9),
+                half: SIMD2(2 + next() * 30, 0.05 + next() * 0.4))
+            guard let record = Canvas.thinFillRecord(named, by: linear) else { continue }
+            let anchor = round % 2 == 0 ? SIMD2(37.3, 11.7) : SIMD2(next() * 300 - 150, next() * 300 - 150)
+            let translation = SIMD2(next() * 600 - 300, next() * 600 - 300)
+            let placement = SIMD4(linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y)
+            let inputs = (0..<64).map { _ in SIMD2(next() * 70 - 35, next() * 2 - 1) }
+            let span = Canvas.ThinFillSpan(first: 0, count: 1, anchor: anchor, translation: translation)
+            let cornerBuffer = try #require(
+                gpu.device.makeBuffer(length: 64 * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared))
+            let placedBuffer = try #require(
+                gpu.device.makeBuffer(length: 64 * MemoryLayout<SIMD2<Float>>.stride, options: .storageModeShared))
+            let commands = try #require(queue.makeCommandBuffer())
+            let encoder = try #require(commands.makeComputeCommandEncoder())
+            encoder.setComputePipelineState(pipeline)
+            encoder.setBuffer(try buffer([record]), offset: 0, index: 0)
+            encoder.setBuffer(try buffer([span]), offset: 0, index: 1)
+            encoder.setBuffer(try buffer([placement]), offset: 0, index: 2)
+            encoder.setBuffer(try buffer(inputs), offset: 0, index: 3)
+            encoder.setBuffer(cornerBuffer, offset: 0, index: 4)
+            encoder.setBuffer(placedBuffer, offset: 0, index: 5)
+            encoder.dispatchThreads(
+                MTLSize(width: 64, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+            encoder.endEncoding()
+            commands.commit()
+            commands.waitUntilCompleted()
+            let corners = Array(
+                UnsafeBufferPointer(
+                    start: cornerBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: 64), count: 64))
+            let placed = Array(
+                UnsafeBufferPointer(
+                    start: placedBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: 64), count: 64))
+            // `Transform.placed` と同じ行列の積 (列 2 本と平行移動だけを持つ 4x4)
+            let matrix = simd_float4x4(
+                SIMD4(linear.columns.0.x, linear.columns.0.y, 0, 0), SIMD4(linear.columns.1.x, linear.columns.1.y, 0, 0),
+                SIMD4(0, 0, 1, 0), SIMD4(translation.x, translation.y, 0, 1))
+            for (index, input) in inputs.enumerated() {
+                let expected = record.corner(anchor: anchor, along: input.x, offset: input.y)
+                #expect(corners[index] == expected, "角 \(index): GPU \(corners[index]) CPU \(expected)")
+                let moved = matrix * SIMD4<Float>(expected.x, expected.y, 0, 1)
+                #expect(
+                    placed[index] == SIMD2(moved.x, moved.y),
+                    "置き場所 \(index): GPU \(placed[index]) CPU \(SIMD2(moved.x, moved.y))")
+                compared += 1
+            }
+        }
+        #expect(compared > 10_000)
     }
 
     // MARK: - 記述

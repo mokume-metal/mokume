@@ -407,7 +407,8 @@ struct ShaderInterfaceTests {
         ])
 
     static let thinFillSpan = layout(
-        of: Canvas.ThinFillSpan.self, [("first", \.first), ("count", \.count)])
+        of: Canvas.ThinFillSpan.self,
+        [("first", \.first), ("count", \.count), ("anchor", \.anchor), ("translation", \.translation)])
 
     static let flatInstance = layout(
         of: FlatInstance.self,

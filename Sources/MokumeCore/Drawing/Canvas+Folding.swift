@@ -167,15 +167,18 @@ extension Canvas {
             ringSegments = ringSplitMemo.count(forRadius: radius, scale: scale)
         }
         // 細い塗り: 広げ方を頂点段へ移した畳みでは、置き場所ごとの記述を求める (#2208)。雛形の鍵には
-        // 片の数の区間 (1・10・64) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
-        var thinFill: ThinFillRecord?
+        // 片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
+        var thinFill: ThinFillPlacing?
         var thinFillCapacity = 0
         var fillLinear: ThinFold?
         if expandsThinFillsInVertexStage {
             if style.hasFill,
                 let record = thinFillRecord(of: form, drawn: drawnLinear(transform.matrix))
             {
-                thinFill = record
+                // 位置と平行移動は記述の外に持つ — 位置が違うだけの置き場所は同じ記述を指す
+                let columns = transform.matrix.columns
+                thinFill = ThinFillPlacing(
+                    record: record, anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y))
                 thinFillCapacity = ThinFillRecord.capacity(forPieces: record.pieceCount)
             }
         } else {
@@ -245,7 +248,7 @@ extension Canvas {
             pendingFlat = nil
             openFlatTemplate(key: joined, outline: outline)
             flatInstances.append(waiting.placement)
-            if let record = waiting.thinFill { addThinFill(record) }
+            if let waitingFill = waiting.thinFill { addThinFill(waitingFill) }
             appendFolded(placement(at: anchor), thinFill: thinFill, outline: { outline })
             return
         }
@@ -270,7 +273,7 @@ extension Canvas {
     /// 開き直すのは、畳まない経路へ落とすと**上限をまたいだ図形だけ組み立て方が
     /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
     private func appendFolded(
-        _ placement: FlatInstance, thinFill: ThinFillRecord?,
+        _ placement: FlatInstance, thinFill: ThinFillPlacing?,
         outline makeOutline: () -> Outline
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている

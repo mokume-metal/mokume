@@ -29,9 +29,22 @@ extension Canvas {
     /// 複数の記述を持てる並びにしてあるのは、線 (#2172) が太さの違う区間ごとの記述を同じ置き場所に
     /// 並べて当てられるようにするため。口・列の引き方・頂点段の数え方はそのまま使え、増えるのは記述の
     /// 種別だけである。
+    ///
+    /// 置き場所の位置 (`anchor`) と変換の平行移動 (`translation`) も持つ — 記述は向きと寸法だけで決まり
+    /// 位置を含まないので、位置が違うだけの置き場所は同じ記述を指せる。頂点段は周の中心へ `anchor` を
+    /// 足してから角を出し、`translation` を最後に足して置く。CPU が畳まずに置くときと同じ順である。
     struct ThinFillSpan {
         var first: UInt32
         var count: UInt32
+        var anchor: SIMD2<Float> = .zero
+        var translation: SIMD2<Float> = .zero
+    }
+
+    /// 細い塗りの置き場所に添える、記述と置き場所の位置・平行移動 (``ThinFillSpan`` になる)。
+    struct ThinFillPlacing {
+        var record: ThinFillRecord
+        var anchor: SIMD2<Float>
+        var translation: SIMD2<Float>
     }
 
     /// 直前に求めた細い塗りの記述の控え。向きと寸法 (``Canvas/FlatForm``) と、描く画素へ写す 2x2 が
@@ -129,9 +142,10 @@ extension Canvas {
         /// ``Canvas/thinEllipseSliceLimit`` まで (計 9 つ)。
         /// **置き場所の片の数が入る最小の区間を雛形の鍵に入れる。** 置き場所ごとに片の数が変わっても
         /// 同じ区間に収まる間は雛形を割らず、使わない片は頂点段が潰す。大きい区間の雛形は小さい区間の
-        /// 置き場所も受ける (``Canvas/FlatKey/holds(_:)``) ので、割れるのは区間が上がるときだけで、1 フレームに
-        /// 高々 8 回である。区間の目的は、小さい円や短い楕円を、いつも 64 片ぶん (384 頂点) の頂点関数で流さず、
-        /// 長い楕円も使わない片を 8 片未満に抑えること (頂点関数の費用が頂点数にほぼ比例するため)。
+        /// 置き場所も受ける (``Canvas/FlatKey/holds(_:)``) ので、割れるのは区間が上がるときだけである。区間が下がる・
+        /// 同じ区間の置き場所は割れず、**区間が上がり続ける 1 つの並びの中なら高々 8 回**で済む (置き場所の
+        /// 並びが途中で別の図形に変わって雛形を閉じれば、そこから数え直しになる)。
+        /// 区間の目的は、小さい円や短い楕円を、いつも 64 片ぶん (384 頂点) の頂点関数で流さず、長い楕円も使わない片を 8 片未満に抑えること (頂点関数の費用が頂点数にほぼ比例するため)。
         static func capacity(forPieces count: Int) -> Int {
             if count <= 1 { return 1 }
             if count <= shortCapacity { return shortCapacity }
@@ -163,23 +177,31 @@ extension Canvas {
             }
         }
 
-        /// 記述から片を出す。**頂点段の式 (Shapes.metal の `mokume_thinFillCorner`) と同じ式。**
-        func pieces() -> [ThinFillPiece] {
+        /// 片の角 (刻みの位置 `along`・帯の幅の向きの位置 `offset`) を形自身の座標で返す。
+        /// **頂点段の式 (Shapes.metal の `mokume_thinFillCorner`) と同じ順の演算**: 積和は `fma` で固定し、
+        /// 周の中心へ置き場所の位置 `anchor` を足してから、片の角を足す。
+        func corner(anchor: SIMD2<Float>, along: Float, offset: Float) -> SIMD2<Float> {
             let center = SIMD2(centerAxis.x, centerAxis.y)
             let axis = SIMD2(centerAxis.z, centerAxis.w)
             let across = SIMD2(acrossSlopeSide.x, acrossSlopeSide.y)
-            let (slope, side) = (acrossSlopeSide.z, acrossSlopeSide.w)
+            let slope = acrossSlopeSide.z
+            let shift = offset.addingProduct(slope, along)
+            let drawn = (axis * along).addingProduct(across, SIMD2(repeating: shift))
+            let inverseX = SIMD2(inverse.x, inverse.y)
+            let inverseY = SIMD2(inverse.z, inverse.w)
+            let moved = (inverseX * drawn.x).addingProduct(inverseY, SIMD2(repeating: drawn.y))
+            return (center + anchor) + moved
+        }
+
+        /// 記述から片を出す。**頂点段の式 (Shapes.metal の `mokume_thinFillCorner`) と同じ式。**
+        /// 位置は記述の周の中心に含まれている (畳まずに置くときは、周を置き場所ぶんずらしてから記述を作る)。
+        func pieces() -> [ThinFillPiece] {
+            let side = acrossSlopeSide.w
             let (origin, span, divisor) = (layout.x, layout.y, layout.z)
             var result: [ThinFillPiece] = []
             result.reserveCapacity(pieceCount)
-            // 積和の順は頂点段 (`mokume_thinFillCorner`) と同じ `fma` の順で固定する
-            let inverseX = SIMD2(inverse.x, inverse.y)
-            let inverseY = SIMD2(inverse.z, inverse.w)
             func corner(_ along: Float, _ offset: Float) -> SIMD2<Float> {
-                let shift = offset.addingProduct(slope, along)
-                let drawn = (axis * along).addingProduct(across, SIMD2(repeating: shift))
-                let moved = (inverseX * drawn.x).addingProduct(inverseY, SIMD2(repeating: drawn.y))
-                return center + moved
+                self.corner(anchor: .zero, along: along, offset: offset)
             }
             for index in 0..<pieceCount {
                 let from = origin + span * Float(index) / divisor
@@ -288,14 +310,20 @@ extension Canvas {
     ///
     /// **直前に足した記述と同じなら、記述は足さずに同じものを指す** — 向きと寸法が同じ置き場所が続く
     /// 場面では、記述が 1 つで済み (CPU の書き込みと GPU の読み出しが減る)、先頭と数の並びだけが伸びる。
-    func addThinFill(_ record: ThinFillRecord) {
-        if let last = lastThinFillRecord, thinFillRecords[last] == record {
-            thinFillSpans.append(ThinFillSpan(first: UInt32(last), count: 1))
+    func addThinFill(_ placing: ThinFillPlacing) {
+        if let last = lastThinFillRecord, thinFillRecords[last] == placing.record {
+            thinFillSpans.append(
+                ThinFillSpan(
+                    first: UInt32(last), count: 1, anchor: placing.anchor,
+                    translation: placing.translation))
             return
         }
         lastThinFillRecord = thinFillRecords.count
-        thinFillSpans.append(ThinFillSpan(first: UInt32(thinFillRecords.count), count: 1))
-        thinFillRecords.append(record)
+        thinFillSpans.append(
+            ThinFillSpan(
+                first: UInt32(thinFillRecords.count), count: 1, anchor: placing.anchor,
+                translation: placing.translation))
+        thinFillRecords.append(placing.record)
     }
 
     /// 長い向きが短いとみなす、列 (行) の向きの長さの上限 (描く画素)。これ以上長い形は長い向きの
