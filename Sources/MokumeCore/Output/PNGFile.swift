@@ -21,27 +21,17 @@ public enum ImageWriteFailure: Error, Equatable, Sendable {
 }
 
 extension ImageWriteFailure: CustomStringConvertible {
-    /// 人が読む文面。**何が起きたかと、次にすることまで** 言う — `setup()` が投げた失敗は、この文面が
-    /// そのまま起動の失敗として出る ([#2401])。
+    /// 人が読む文面。**1 行で、行き先は載せない** — 書き出しの警告 (`"Could not write <行き先>: …"`)・観測の
+    /// 書き出しの結末・``Image/save(_:)`` の ``ImageFailure/unwritable(path:reason:)`` は、どれも行き先を別に
+    /// 持っているので、この句を理由として入れる。文面の正本はここ 1 つ ([#2401])。
     ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     public var description: String {
         switch self {
         case .malformedImage(let width, let height, let byteCount):
-            """
-            The picture could not be written: its \(byteCount) bytes do not fit \(width) x \(height) pixels.
-            This is most likely a fault inside mokume — please report it at https://github.com/mokume-metal/mokume/issues
-            """
-        case .destinationUnavailable(let path):
-            """
-            The picture could not be written: \(path) could not be opened for writing.
-            Check that its folder exists and can be written to, then run again
-            """
-        case .writeFailed(let path):
-            """
-            The picture could not be written: writing to \(path) failed.
-            Check that the disk has room and the file can be written, then run again
-            """
+            "the picture is malformed (\(width)x\(height), \(byteCount) bytes)"
+        case .destinationUnavailable: "the destination could not be opened"
+        case .writeFailed: "the file could not be written"
         }
     }
 }

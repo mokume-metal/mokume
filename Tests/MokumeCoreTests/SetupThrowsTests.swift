@@ -192,14 +192,14 @@ struct SetupThrowsTests {
     /// 観測のある往復。`Talker` の代わりに、`setup()` が投げる検体を使う。
     private func report(
         _ body: String, in facet: URL, with runtime: SketchRuntime
-    ) throws -> (warnings: [String], complete: Bool?) {
+    ) throws -> (warnings: [String], complete: Bool?, thrown: RenderFailure?) {
         try AtomicFile.write(
             Data(#"{"id":"o\#(UUID().uuidString.prefix(6))"\#(body)}"#.utf8),
             to: facet.appendingPathComponent("request.json"))
-        _ = failure(of: runtime)
+        let thrown = failure(of: runtime)
         let data = try Data(contentsOf: facet.appendingPathComponent("report.json"))
         let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-        return (parsed["warnings"] as? [String] ?? [], parsed["complete"] as? Bool)
+        return (parsed["warnings"] as? [String] ?? [], parsed["complete"] as? Bool, thrown)
     }
 
     private func makeFacet() throws -> URL {
@@ -212,15 +212,21 @@ struct SetupThrowsTests {
     @Test("時刻を指定した観測は、setup() が投げたなら断り、断りの文に投げた理由の最初の行が入る。2 度目以降も同じ")
     func aTimedObservationNamesTheSetupFailure() throws {
         let facet = try makeFacet()
+        let sketch = Plain()
         let runtime = try SketchRuntime(
-            sketch: Plain(), gpu: RenderDevice(), clock: nil, now: { 0 },
+            sketch: sketch, gpu: RenderDevice(), clock: nil, now: { 0 },
             observer: FrameObserver(directory: facet))
         for round in 0..<2 {
             let answer = try report(#","time":0.5"#, in: facet, with: runtime)
             let all = answer.warnings.joined(separator: "\n")
             #expect(all.contains("my own failure"), "\(round) 回目: 断りに理由が載っていない: \(all)")
             #expect(answer.complete != true, "\(round) 回目: 撮れたと答えた")
+            // **最初のフレームも投げる** (2 回目の反証 4a)。断って返ると、窓の経路は絵を出しに進む
+            #expect(
+                answer.thrown == .setupFailed(reason: Custom().description),
+                "\(round) 回目: 投げずに返った: \(String(describing: answer.thrown))")
         }
+        #expect(sketch.draws == 0)
     }
 
     @Test("外から止められた観測のない一枚描きでも、setup() の失敗を撮れたと答えない")
@@ -235,6 +241,28 @@ struct SetupThrowsTests {
         let all = answer.warnings.joined(separator: "\n")
         #expect(all.contains("my own failure"), "応えに理由が載っていない: \(all)")
         #expect(answer.complete != true, "撮れたと答えた")
+        // **最初のフレームも投げる** (2 回目の反証 4b)。投げずに返ると、窓の経路は絵を出しに進む
+        #expect(
+            answer.thrown == .setupFailed(reason: Custom().description),
+            "投げずに返った: \(String(describing: answer.thrown))")
+        #expect(sketch.draws == 0)
+    }
+
+    @Test("作者が止めた枝 (最初のフレームの前に noLoop()) の観測の一枚描きも、応えた後で投げる")
+    func aStoppedFirstObservationThrowsToo() throws {
+        let facet = try makeFacet()
+        let sketch = Plain()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        runtime.noLoop()
+        let answer = try report("", in: facet, with: runtime)
+        let all = answer.warnings.joined(separator: "\n")
+        #expect(all.contains("my own failure"), "応えに理由が載っていない: \(all)")
+        #expect(answer.complete != true, "撮れたと答えた")
+        #expect(
+            answer.thrown == .setupFailed(reason: Custom().description),
+            "投げずに返った: \(String(describing: answer.thrown))")
         #expect(sketch.draws == 0)
     }
 
@@ -270,7 +298,7 @@ struct SetupThrowsTests {
         func setup() throws { throw ImageWriteFailure.writeFailed(path: "/nowhere/a.png") }
     }
 
-    @Test("文面は、CustomStringConvertible・LocalizedError・素の Error の順に読み、型を問わず全文になる")
+    @Test("文面は Diagnostics の読み方 1 つで、型を問わず全文になる (LocalizedError は説明・次の一手まで)")
     func theFailureTextIsReadInOneOrder() throws {
         let localized = try #require(failure(of: SketchRuntime(sketch: Localized(), gpu: RenderDevice())))
         #expect(
@@ -281,8 +309,28 @@ struct SetupThrowsTests {
             Issue.record("setupFailed でない: \(unwritable)")
             return
         }
-        #expect(reason.contains("/nowhere/a.png") && reason.contains("could not be written"), Comment(rawValue: reason))
-        #expect(!reason.hasPrefix("writeFailed"), Comment(rawValue: "ケース名のダンプになっている: " + reason))
+        #expect(reason == "the file could not be written", Comment(rawValue: reason))
+    }
+
+    /// 読み込みの失敗が `NSError` のまま届く形 (`String(contentsOf:)`)。
+    final class ReadsAFile: Sketch {
+        var settings = SketchSettings(width: 32, height: 32)
+        init() {}
+        func setup() throws {
+            _ = try String(contentsOf: URL(fileURLWithPath: "/nonexistent-setup-throws/a.txt"), encoding: .utf8)
+        }
+    }
+
+    @Test("NSError を投げても、構造体のダンプにならず、Diagnostics の読み方の文になる")
+    func anNSErrorFailureIsNotDumped() throws {
+        let thrown = try #require(failure(of: SketchRuntime(sketch: ReadsAFile(), gpu: RenderDevice())))
+        guard case .setupFailed(let reason) = thrown else {
+            Issue.record("setupFailed でない: \(thrown)")
+            return
+        }
+        #expect(!reason.contains("Error Domain="), Comment(rawValue: reason))
+        #expect(!reason.contains("UserInfo"), Comment(rawValue: reason))
+        #expect(reason == String(cString: strerror(ENOENT)), Comment(rawValue: reason))
     }
 
     @Test("1 行に削る経路でも、何が起きたかと理由の最初の行が残る")

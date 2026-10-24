@@ -66,19 +66,6 @@ public final class SketchRuntime {
     /// (``SketchApplication``) が差し、起動の失敗として終わらせる。名乗りのメニューが開いている間に別の駆動源が
     /// 進めた回 (``advanceForPresence()``) が使う。
     var setupFailureHandler: ((RenderFailure) -> Void)?
-    /// 投げられた失敗の文面。**型を問わず、全文を取る** — 読み方は 3 段で、
-    /// `CustomStringConvertible` (``ImageFailure`` ほかの公開の失敗は全部これ) → `LocalizedError` の説明 → 素の `Error`。
-    /// `"\(error)"` と書くと、`LocalizedError` だけを持つ型は構造体のダンプになる ([#2401])。
-    ///
-    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
-    static func failureText(of error: any Error) -> String {
-        if let described = error as? any CustomStringConvertible { return described.description }
-        if let localized = error as? any LocalizedError, let text = localized.errorDescription {
-            return [text, localized.failureReason, localized.recoverySuggestion]
-                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
-        }
-        return "\(error)"
-    }
     /// 外から止められているか (``pause()``)。
     private var isPaused = false
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
@@ -688,7 +675,8 @@ public final class SketchRuntime {
         do {
             try withActiveRuntime { try carryingOver { try sketch.setup() } }
         } catch {
-            setupFailure = .setupFailed(reason: Self.failureText(of: error))
+            // 文面は ``Diagnostics/failureText(_:)`` の読み方 1 つ (型を問わず全文・`NSError` はダンプしない)
+            setupFailure = .setupFailed(reason: Diagnostics.failureText(error))
         }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
@@ -873,12 +861,14 @@ public final class SketchRuntime {
         // **`setup()` が投げているなら、どの枝にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
         // (`setup()` で `noLoop()` を呼んでから投げる形はここ) のどれも、この失敗より先に動かない — 動くと、
         // 入力が失敗したスケッチへ配られ、窓は終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
-        // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。初めてのフレームは、下で `setup()` を走らせる
-        // ``drawSketchFrame(deliveredInput:at:displayTime:)`` が同じ失敗を投げる
-        if let setupFailure {
-            serveObservationIfRequested(request: observation, drawFailure: setupFailure)
-            throw setupFailure
-        }
+        // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。
+        //
+        // **ここで見えるのは 2 枚目以降。** ``setupFailure`` が立つのは ``start()`` の中で、`start()` を呼ぶ最初の
+        // 場所はこの先にある。最初のフレームで `setup()` を走らせる枝は、走らせた直後に自分で見て投げる —
+        // 通常の枝は下の ``drawSketchFrame(deliveredInput:at:displayTime:)``、時刻指定の観測の枝は
+        // `start()` の直後、外から止められた枝・作者が止めた枝の観測の一枚描きは、応えた直後。見落とすと、
+        // 窓の経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
+        try throwSetupFailure(answering: observation)
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -893,8 +883,10 @@ public final class SketchRuntime {
             if closingRecorder != nil { refusal = "Cannot draw at a specified time while recording is closing" }
             if refusal == nil {
                 start() // setupが録画を始める場合も、指定の絵を描く前に断る。
-                if let setupFailure { refusal = "Cannot draw because \(setupFailure.headline)" }
-                if refusal == nil, recorder?.isRecording == true {
+                // **`setup()` が投げたなら、断って返らず投げる** (#2401)。ここは最初のフレームでしか通らない
+                // 頭の検査の外なので、自分で見る。返ってしまうと、窓の経路は絵を出しに進む
+                try throwSetupFailure(answering: observation)
+                if recorder?.isRecording == true {
                     refusal = "Cannot draw at a specified time while recording"
                 }
             }
@@ -934,6 +926,8 @@ public final class SketchRuntime {
             takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
             serveObservationIfRequested(request: observation)
+            // 観測の一枚描きが最初のフレームで `setup()` を走らせて、投げたなら、応えた後で投げる (#2401)
+            if let setupFailure { throw setupFailure }
             return
         }
         // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
@@ -955,6 +949,7 @@ public final class SketchRuntime {
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
                     serveObservationIfRequested(request: observation)
+                    if let setupFailure { throw setupFailure }  // 上の外の停止の枝と同じ (#2401)
                     return
                 }
                 deliveredInput = true
@@ -997,6 +992,18 @@ public final class SketchRuntime {
         }
         serveObservationIfRequested(request: observation, drawFailure: drawFailure, appliedTime: requestedTime)
         if let drawFailure { throw drawFailure }
+    }
+
+    /// ``setup()`` が投げているなら、観測の要求には失敗を載せて応え、同じ失敗を投げる ([#2401])。
+    ///
+    /// 立っていなければ何もしない。``runFrame(displayTime:)`` の頭と、時刻指定の観測の枝が `start()` を
+    /// 呼んだ直後に使う。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private func throwSetupFailure(answering observation: ObservationRequest?) throws(RenderFailure) {
+        guard let setupFailure else { return }
+        serveObservationIfRequested(request: observation, drawFailure: setupFailure)
+        throw setupFailure
     }
 
     /// フレームを 1 枚描く手順。**正本はここ 1 つ。**

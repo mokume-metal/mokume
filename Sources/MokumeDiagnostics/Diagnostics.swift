@@ -116,11 +116,28 @@ public nonisolated enum Diagnostics {
         return nil
     }
 
-    /// 失敗の理由の句。下に POSIX の事情があればその番号の C の文面 (``posixReason(_:)``)、無ければ
-    /// 今までどおり `localizedDescription`。``reason(_:)`` と違い、型の名乗りを前に付けない —
+    /// 失敗の理由の句。``reason(_:)`` と違い、型の名乗りを前に付けない —
     /// 口ごとの失敗の型 (`unreachable(url:reason:)` など) の `reason` に、そのまま入れる句である。
+    ///
+    /// 読む順は 4 段で、**`NSError` は構造体のダンプ (`Error Domain=… UserInfo={… 0x…}`) になるので、自前の
+    /// 説明より先に外す** ([#2401])。
+    /// 1. 下に POSIX の事情があれば、その番号の C の文面 (``posixReason(_:)``)
+    /// 2. `NSError` (Foundation が返す失敗) は `localizedDescription`
+    /// 3. 自前の `CustomStringConvertible` (mokume の公開の失敗はこれ) は、その説明
+    /// 4. `LocalizedError` は、説明・理由・次の一手を改行でつないだもの。無ければ `localizedDescription`
+    ///
+    /// 3・4 は複数行になりうる。1 行にしたい呼び手は ``reason(_:)`` を使う (改行を畳む)。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     package static func failureText(_ error: any Error) -> String {
-        posixCode(in: error).map(posixReason) ?? error.localizedDescription
+        if let code = posixCode(in: error) { return posixReason(code) }
+        if type(of: error) is NSError.Type { return error.localizedDescription }
+        if let described = error as? any CustomStringConvertible { return described.description }
+        if let localized = error as? any LocalizedError, let text = localized.errorDescription {
+            return [text, localized.failureReason, localized.recoverySuggestion]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        return error.localizedDescription
     }
 
     /// 書けなかった失敗の、POSIX の事情の句。POSIX の事情が無ければ `nil` (呼び手が今の文面に落とす)。

@@ -281,19 +281,10 @@ import simd
             try FrameWriter.createParentDirectory(of: url)
             try PNGFile.write(picture, to: url)
         } catch let failure as ImageWriteFailure {
-            throw .unwritable(path: path, reason: Self.reason(of: failure))
+            throw .unwritable(path: path, reason: failure.description)
         } catch {
             // 置き場を作れない事情は OS の文面で名乗る (#2839 の 1 か所)
             throw .unwritable(path: path, reason: Diagnostics.reason(error))
-        }
-    }
-
-    private static func reason(of failure: ImageWriteFailure) -> String {
-        switch failure {
-        case .malformedImage(let width, let height, let byteCount):
-            "the picture is malformed (\(width)x\(height), \(byteCount) bytes)"
-        case .destinationUnavailable: "the destination could not be opened"
-        case .writeFailed: "the file could not be written"
         }
     }
 
