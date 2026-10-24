@@ -80,6 +80,7 @@ struct EffectTests {
         ("brightness", .adjust(brightness: 0.2)),
         ("contrast", .adjust(contrast: 0.5)),
         ("saturation", .adjust(saturation: -1)),
+        ("threshold", .threshold(level: 0.5)),
     ]
 
     @Test("効かせると、絵が変わる")

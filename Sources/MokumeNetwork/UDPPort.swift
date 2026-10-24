@@ -24,7 +24,7 @@ import MokumeDiagnostics
 /// final class Remote: Sketch {
 ///     var udp: UDPPort?
 ///     var size: Float = 0.5
-///     func setup() { udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
+///     func setup() throws { udp = try createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
 ///     func draw() {
 ///         for text in udp?.messages ?? [] { size = Float(text) ?? size }
 ///         circle(width / 2, height / 2, size * height)

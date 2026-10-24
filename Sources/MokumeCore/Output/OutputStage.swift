@@ -28,7 +28,7 @@ import simd
 /// 離さないのと同じ理由による。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-public enum OutputStage {
+public nonisolated enum OutputStage {
     /// 作業空間の画素を、表示できる形へ変換する。
     ///
     /// 明るさを写す段の設定は**画面が持つ**ので、画面を経由しないこの入口では

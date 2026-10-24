@@ -50,8 +50,8 @@ extension Sketch {
     ///
     /// <!-- example: 文脈 var song: AudioIn? -->
     /// ```swift
-    /// func setup() {
-    ///     song = try? createAudioIn(file: "assets/song.wav")
+    /// func setup() throws {
+    ///     song = try createAudioIn(file: "assets/song.wav")
     /// }
     /// func draw() {
     ///     background(0)
@@ -88,13 +88,13 @@ extension Sketch {
     /// ```swift
     /// final class Beat: Sketch {
     ///     var beat: AudioIn?
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 440 Hz の音を、1 秒に 2 回大きくする
     ///         let samples = (0..<48_000).map { index -> Float in
     ///             let t = Float(index) / 48_000
     ///             return sin(2 * .pi * 440 * t) * (0.5 + 0.5 * cos(2 * .pi * 2 * t))
     ///         }
-    ///         beat = try? createAudioIn(samples: samples, sampleRate: 48_000)
+    ///         beat = try createAudioIn(samples: samples, sampleRate: 48_000)
     ///     }
     ///     func draw() {
     ///         background(0)

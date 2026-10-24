@@ -18,8 +18,8 @@ extension Sketch {
     ///
     /// <!-- example: 文脈 var song: SoundFile? -->
     /// ```swift
-    /// func setup() {
-    ///     song = try? loadSound("assets/song.wav")
+    /// func setup() throws {
+    ///     song = try loadSound("assets/song.wav")
     ///     song?.loop()
     /// }
     /// func draw() {

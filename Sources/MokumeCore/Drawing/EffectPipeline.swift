@@ -174,10 +174,8 @@ final class EffectPipeline {
         let compiler = try gpu.shaders.compiler()
         self.compiler = compiler
 
-        let library = try gpu.shaders.makeEffectLibrary(
-            named: "builtin", body: try gpu.shaders.bundledShaderSource(named: "Builtin"),
-            bodyName: ShaderLibraries.bundledName("Builtin"))
-        self.builtinLibrary = library
+        // 組み込みのライブラリは、この GPU で 1 度だけ組む (面ごとに組み直さない)
+        self.builtinLibrary = try gpu.shaders.builtinEffectLibrary()
 
         passBuffer = try passStorage.buffer(holding: 8)
         tablePool = ArgumentTablePool(

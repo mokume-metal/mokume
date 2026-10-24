@@ -4,7 +4,7 @@
 /// ``paletteLerp(_:_:)`` が 1 度だけ言う注意。
 ///
 /// 鍵は口ごとに分ける — ``ColorValues`` と共有すると、先に鳴った口が後の口を永久に黙らせる。
-enum PaletteValues {
+nonisolated enum PaletteValues {
     enum Warning: Hashable {
         /// `amount` が数でない値・無限だった。
         case notANumber
@@ -19,10 +19,19 @@ enum PaletteValues {
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
-    private(set) static var warnings = WarningLog<Warning>()
+    ///
+    /// **複数のスレッドから同時に言える** ([#2389]): ここの口は `nonisolated` で、`concurrentPerform` や
+    /// TaskGroup から並べて呼ばれうる。控えは ``SharedWarningLog`` が `Mutex` で守り、同じ注意は
+    /// 1 度だけ出る。`warnings` は検査が読む写しである。
+    ///
+    /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
+    private static let shared = SharedWarningLog<Warning>()
+
+    /// 言った注意の写し。**検査が読む。**
+    static var warnings: WarningLog<Warning> { shared.snapshot }
 
     static func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
-        warnings.warnOnce(warning, message())
+        shared.warnOnce(warning, message())
     }
 }
 
@@ -75,7 +84,7 @@ enum PaletteValues {
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func paletteLerp(
+public nonisolated func paletteLerp(
     _ stops: [(LinearRGBA, Float)], _ amount: some ScalarConvertible
 ) -> LinearRGBA {
     var usable = stops

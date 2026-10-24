@@ -14,7 +14,7 @@ import MokumeDiagnostics
 /// final class Remote: Sketch {
 ///     var socket: WebSocketClient?
 ///     var size: Float = 0.5
-///     func setup() { socket = try? createWebSocketClient("wss://relay.example/room") }
+///     func setup() throws { socket = try createWebSocketClient("wss://relay.example/room") }
 ///     func draw() {
 ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
 ///         background(20)
