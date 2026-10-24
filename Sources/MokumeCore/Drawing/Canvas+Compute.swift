@@ -163,7 +163,7 @@ extension Canvas {
     ///
     /// [#341]: https://github.com/mokume-metal/mokume/issues/341
     func encodeComputations(into commands: any MTL4CommandBuffer) throws(RenderFailure) {
-        guard !pendingComputations.isEmpty else { return }
+        guard encodesComputations else { return }
         // **溜め場から降ろすのは、呼んだ側が投入した後である** ([#1183])。積んだ後で
         // 組み立てが投げるとコマンドは捨てられるので、ここで降ろすと頼みが消える — 途中の
         // 描き切り (`loadPixels()`) が一時的に失敗しただけなら、フレーム末尾の描き切りが
@@ -304,7 +304,7 @@ extension Canvas {
     private func runPendingComputations() {
         // **打ち切られた投入の控えを、流すものがあるかを見る前に立て直す** (#2199)。読む前に届け直す
         gpu.revokeDroppedDeliveries()
-        guard !pendingComputations.isEmpty || !gpu.pendingUploads.isEmpty else { return }
+        guard encodesComputations || encodesUploads else { return }
         // **値の区画と控えの置き場へ書く前に待つ。** ここは描き切りを通らないので、フレームの
         // 環を進める `frameRing.advance()` の待ちが効かない — 直前のフレームの投入が、
         // これから書くスロットをまだ読んでいるかもしれない (#932 で値の置き場を計算から
@@ -390,7 +390,7 @@ extension Canvas {
     ///
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     func submitPendingComputations() {
-        guard !pendingComputations.isEmpty, earlySubmissionFailedFrame != framesDrawn else { return }
+        guard encodesComputations, earlySubmissionFailedFrame != framesDrawn else { return }
         earlySubmissionsAttempted += 1
         do throws(RenderFailure) {
             if let failEarlySubmissionForTesting { throw failEarlySubmissionForTesting }
