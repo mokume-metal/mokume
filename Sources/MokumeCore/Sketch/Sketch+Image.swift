@@ -33,7 +33,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 横 120・縦 80 画素の絵を、一時ディレクトリへ PNG で書き出す
     ///         let (w, h) = (120, 80)
     ///         var bytes: [UInt8] = []
@@ -44,9 +44,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -72,7 +72,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 横だけ 2 倍の 240 画素にする
     ///         let (w, h) = (240, 80)
     ///         var bytes: [UInt8] = []
@@ -83,9 +83,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -111,7 +111,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 縦だけ 2 倍の 160 画素にする
     ///         let (w, h) = (120, 160)
     ///         var bytes: [UInt8] = []
@@ -122,9 +122,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -163,9 +163,9 @@ extension SketchPart {
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    // shot: 1 snippet=33373ac5
-    // shot: 2 snippet=57be30b4
-    // shot: 3 snippet=78ae8dd3
+    // shot: 1 snippet=d21cd07f
+    // shot: 2 snippet=75a302ec
+    // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         Self.noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
         return try Self.resourceCanvas(ImageFailure.self).loadImage(path)

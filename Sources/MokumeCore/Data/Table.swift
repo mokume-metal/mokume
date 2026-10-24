@@ -14,7 +14,7 @@ import Foundation
 ///     for (i, row) in read.rows.enumerated() {
 ///         read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
 ///     }
-///     try? saveTable(read, "out/temperatures-with-mean.csv")
+///     try saveTable(read, "out/temperatures-with-mean.csv")
 ///     table = read
 /// }
 /// ```

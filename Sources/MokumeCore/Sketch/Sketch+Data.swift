@@ -21,8 +21,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var lines: [String] = [] -->
     /// ```swift
-    /// func setup() {
-    ///     lines = (try? loadStrings("data/poem.txt")) ?? []
+    /// func setup() throws {
+    ///     lines = try loadStrings("data/poem.txt")
     /// }
     ///
     /// func draw() {
@@ -219,18 +219,14 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
-    /// func setup() {
-    ///     do {
-    ///         var read = try loadTable("data/temperatures.csv", header: true)
-    ///         read.addColumn("mean")
-    ///         for (i, row) in read.rows.enumerated() {
-    ///             read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
-    ///         }
-    ///         try saveTable(read, "out/temperatures-with-mean.csv")
-    ///         table = read
-    ///     } catch {
-    ///         print(error)
+    /// func setup() throws {
+    ///     var read = try loadTable("data/temperatures.csv", header: true)
+    ///     read.addColumn("mean")
+    ///     for (i, row) in read.rows.enumerated() {
+    ///         read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
     ///     }
+    ///     try saveTable(read, "out/temperatures-with-mean.csv")
+    ///     table = read
     /// }
     /// ```
     ///

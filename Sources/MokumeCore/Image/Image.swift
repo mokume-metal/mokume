@@ -254,7 +254,7 @@ import simd
     /// func setup() throws {
     ///     let swatch = try createImage(64, 64)
     ///     swatch.fill(.linear(red: 1, green: 0.4, blue: 0.1))
-    ///     try? swatch.save("out/swatch.png")
+    ///     try swatch.save("out/swatch.png")
     /// }
     /// ```
     ///
