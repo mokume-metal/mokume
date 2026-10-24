@@ -147,6 +147,36 @@ struct ArcModeTests {
         #expect(isBlack(image, 50, 78), "\(route): 半径の上に輪郭が載っている")
     }
 
+    /// 一周を細かく刻んだ点のうち、細い掃引 (`segments · sweep / 2π ≤ 1`) では弧の点が 2 個になる。**弦と弧の 2 辺の
+    /// 閉じた周**のはずなのに、点が 2 個だと閉じない線分になり、三角形の経路の輪郭が `strokeCap` の端を持つ開いた
+    /// 線分で出て、距離関数の経路の閉じた弓形と食い違った (#2428)。
+    @Test("細い掃引の `.chord` は、弧の点が 2 個でも閉じた周になり、どちらの経路も弦のカプセルを描く")
+    func chordOfAThinSweepIsClosed() throws {
+        func ink(_ route: Route) throws -> Double {
+            let image = try picture(route) { canvas in
+                canvas.noFill()
+                canvas.stroke(white)
+                canvas.strokeWeight(10)
+                // 端を長さちょうどで切る形。開いた線分なら、弦の長さ x 太さの長方形 (閉じた周の半分ほど) になる
+                canvas.strokeCap(.square)
+                canvas.arc(64, 64, 80, 80, Float.pi / 2 - 0.1, Float.pi / 2 + 0.1, .chord)
+            }
+            var total = 0.0
+            for y in 0..<128 {
+                for x in 0..<128 { total += Double(image[x, y].red) / 255 }
+            }
+            return total
+        }
+        // 弦の長さ 8 (半径 40 の弧の掃引 0.2)・太さ 10 の閉じた帯は、両端を丸く繋ぐのでカプセル (8 · 10 + 25π ≈ 158)。
+        // 開いた線分なら、端を長さちょうどで切る長方形 (8 · 10 = 80) になる。縁の滑らかさと弧の膨らみ (0.2) で
+        // 数 % ずれるので、1 割の幅で見る
+        let capsule = 8.0 * 10.0 + 25.0 * Double.pi
+        let field = try ink(.distanceField)
+        let triangles = try ink(.triangles)
+        #expect(abs(field - capsule) / capsule < 0.1, "距離関数の経路 \(field) がカプセル \(capsule) と食い違う")
+        #expect(abs(triangles - capsule) / capsule < 0.1, "三角形の経路 \(triangles) がカプセル \(capsule) と食い違う (開いた線分になっている)")
+    }
+
     @Test("`.chord` の塗りは、弧と弦に挟まれた形だけを塗る", arguments: Route.allCases)
     func chordFillIsTheSegment(_ route: Route) throws {
         let image = try picture(route) { canvas in

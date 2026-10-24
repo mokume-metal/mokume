@@ -480,9 +480,11 @@ extension Canvas {
                 break
             case .chord, .chordFill:
                 // 弧の点だけを閉じる。最初の点からの扇で塗れる (弦で切った弧は凸)。**弦と弧が出会う 2 つの角も、
-                // 折れ目の形によらず丸く繋ぐ** — 距離関数の経路は輪郭を距離の帯で出すので、扇の角と同じく丸くなる
+                // 折れ目の形によらず丸く繋ぐ** — 距離関数の経路は輪郭を距離の帯で出すので、扇の角と同じく丸くなる。
+                // **弧の点が 2 個 (細い掃引) でも閉じる** — 弦と弧の 2 辺の周で、距離関数の経路の閉じた弓形と揃う
+                // (開いた線にすると、輪郭が `strokeCap` の端を持つ線分で出る・#2428)
                 return Outline(
-                    points: arcPoints, isClosed: arcPoints.count >= 3, strokes: ring.piece == .chord,
+                    points: arcPoints, isClosed: true, strokes: ring.piece == .chord,
                     curveSteps: Array(repeating: true, count: arcPoints.count),
                     strokesAsOneRegion: true, ring: ring)
             case .arcLine:
