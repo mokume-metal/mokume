@@ -815,6 +815,108 @@ struct UnlitSolidTests {
         }
     }
 
+    // MARK: - 画素の 1 ビット (反証 2 回目)
+
+    /// 白い下地の上に、黒い箱と、同じ黒の並べた三角形を、透視で斜めに見て置く。黒 (成分 0・α 1) は、α の補間が
+    /// 1 からわずかにずれて下地が滲むと、半精度に残る数少ない色である (白の下地 × (1 − α) の小さな値が、
+    /// 0 でなく小さな正の値になる)。
+    private func obliqueBlacks(_ canvas: Canvas, lit: Bool = false) {
+        // 既定の投影が透視である (画素の座標系で、画面の中央から外れるほど斜めに写る)
+        canvas.background(255)
+        if lit {
+            canvas.ambientLight(grey)
+            canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), 0.3, 0.8, -0.5)
+        }
+        canvas.noStroke()
+        canvas.fill(.linear(red: 0, green: 0, blue: 0))
+        canvas.push()
+        canvas.translate(26, 28, -20)
+        canvas.rotateX(0.9)
+        canvas.rotateY(0.7)
+        canvas.box(34)
+        canvas.pop()
+        canvas.push()
+        canvas.translate(10, 40, 0)
+        canvas.rotateX(1.1)
+        canvas.rotateZ(0.4)
+        canvas.beginShape(.triangles)
+        for (x, y) in [(0, 0), (70, 6), (34, 48)] as [(Float, Float)] {
+            canvas.vertex(x, y, 0)
+        }
+        canvas.endShape()
+        canvas.pop()
+    }
+
+    /// 頂点の色は透視補間で断片へ渡り、3 頂点とも α が 1 でも、補間した α がちょうど 1 になるとは型が
+    /// 保証しない。ブレンドなしは α をそのまま書くので、1 からずれていれば下地の滲みを落とす側で画素が変わる。
+    /// 実機では、補間した α は 1 のまま届いた (この検査がその記録)。
+    @Test("透視で斜めに見た黒い不透明な箱と三角形は、白い下地の上でブレンドなしでも画素が全部同じ")
+    func obliqueBlackSolidsKeepTheirPixels() throws {
+        // ブレンドなしの列で描いている (描き損ねた比較で通らない)
+        for lit in [false, true] {
+            let batch = try closedBatch { obliqueBlacks($0, lit: lit) }
+            #expect(batch.solidVariant?.opaque == true, "黒い不透明な箱がブレンドなしの列でない (光 \(lit))")
+            let plain = try render(unlit: false, scene: { obliqueBlacks($0, lit: lit) })
+            let specialized = try render(unlit: true, opaque: true, scene: { obliqueBlacks($0, lit: lit) })
+            #expect(bits(plain) == bits(specialized), "斜めの黒で画素が変わった (光 \(lit))")
+            // 黒が下地を覆っている画素が十分にある (滲みがあれば 0 でなく小さな正の値になる)。
+            // 光を置くと黒は周囲光で明るくなるので、数えるのは光なしのときだけ
+            if !lit {
+                #expect(plain.components.filter { $0 == 0 }.count > 600, "黒が白の下地を十分に覆っていない")
+            }
+        }
+    }
+
+    /// 塗りの成分が −0 のとき、ブレンドありは `−0 + (下地 × 0) = +0` になるが、ブレンドなしが `−0` を
+    /// そのまま書けば画素の符号ビットが変わる (rgba16Float は符号ビットを残す)。−0 は公開の口
+    /// `LinearRGBA(premultipliedRed:…)` から入る。
+    ///
+    /// **実機 (Apple Silicon) では、−0 は画素に届かない。** 頂点の色は頂点段の出力で、三角形の中では補間して
+    /// 断片へ渡る。−0 の色で塗った箱・球・並べた三角形のどれも、ブレンドなしの絵はブレンドありと 1 ビットも
+    /// 違わなかった (断片の出口で符号を直す手は足していない)。補間が符号ビットを落とすと読めるが、それは
+    /// ハードウェアの実装で、仕様ではない — この検査が、そうでなくなったときに赤くなって知らせる
+    /// (断片の出口で −0 を書かせると赤くなることを変異で確かめてある)。
+    @Test("塗りの成分が −0 の不透明な列は、ブレンドなしでも画素が 1 ビットも違わない")
+    func negativeZeroFillsKeepTheirBits() throws {
+        let negative = LinearRGBA(premultipliedRed: -0.0, green: -0.0, blue: -0.0, alpha: 1)
+        let mixed = LinearRGBA(premultipliedRed: -0.0, green: 0.4, blue: -0.0, alpha: 1)
+        var lit = false
+        func scene(_ canvas: Canvas) {
+            if lit {
+                canvas.ambientLight(grey)
+                canvas.directionalLight(.linear(red: 1, green: 1, blue: 1), 0.3, 0.8, -0.5)
+            }
+            canvas.noStroke()
+            canvas.fill(negative)
+            canvas.push()
+            canvas.translate(30, 36, 0)
+            canvas.box(36)
+            canvas.pop()
+            canvas.fill(mixed)
+            canvas.push()
+            canvas.translate(64, 58, 6)
+            canvas.sphere(20)
+            canvas.pop()
+            // その場で並べた頂点 (頂点ごとの色)
+            canvas.beginShape(.triangles)
+            for (x, y) in [(50, 8), (88, 12), (70, 34)] as [(Float, Float)] {
+                canvas.fill(negative)
+                canvas.vertex(x, y, 10)
+            }
+            canvas.endShape()
+        }
+        let batch = try closedBatch { scene($0) }
+        #expect(batch.solidVariant?.opaque == true, "−0 の塗りがブレンドなしの列でない")
+        for (shares, withLights) in [(true, false), (false, false), (true, true)] {
+            lit = withLights
+            let plain = try render(unlit: false, sharesUnitShapes: shares, scene: scene)
+            let specialized = try render(unlit: true, opaque: true, sharesUnitShapes: shares, scene: scene)
+            #expect(bits(plain) == bits(specialized), "−0 の塗りで画素の符号ビットが変わった (共有 \(shares)・光 \(withLights))")
+            // 対照: 光なしでは、ブレンドありは箱の中心で +0 になっていて、−0 を書いていない
+            if !withLights { #expect(plain[30, 36].red.bitPattern == 0, "ブレンドありの箱の赤が +0 でない") }
+        }
+    }
+
     // MARK: - 貼る絵
 
     /// 市松に透けた画素を持つ絵。貼った面は透けた画素から奥が見える。
