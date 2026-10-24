@@ -53,7 +53,7 @@ import simd
     /// GPU 側の面。
     let texture: any MTLTexture
     /// 送りを頼む先 (控えの登録簿) と、逃げ道で待つ相手。
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
     /// 入力の控え (raw / CPU 半精度) が GPU 側より新しいか。
     ///
     /// **検査が読む。** 描き切りが待てずに送れなかったときは立ったままになり、次の
@@ -73,6 +73,10 @@ import simd
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
+    /// ``filtered(_:)`` が効果を通す作業の面のうち、この絵が最後に使ったもの。**大きさが同じ絵どうしで
+    /// 使い回す** (``FilterWorkspaces``) ので、この絵だけのものではない。持つのは、掛け終えた面がすぐ手放されて、
+    /// 次の呼び出しで作り直すことにならないため。注意を 1 度だけ言う控えは面が持つ。
+    var filterWorkspace: Canvas?
 
     /// 画素を渡して作る。
     init(width: Int, height: Int, pixels: [SIMD4<Float16>], gpu: RenderDevice) throws(
@@ -337,7 +341,7 @@ import simd
     ///
     /// **`Image` は参照型なので、書き換えは同じ 1 枚を変える。** カメラの ``Capture/image`` のように
     /// 次のフレームで上書きされる絵に書いても、書いた分は次のフレームで消える。取っておくなら先に
-    /// ``copy()`` で写す。**絵ごとに効果を掛けて新しい絵を返す口 (`filtered(_:)`) とは違い、この口は
+    /// ``copy()`` で写す。**絵ごとに効果を掛けて新しい絵を返す口 (``Image/filtered(_:)``) とは違い、この口は
     /// 自分を変える** — ``set(_:_:_:)``・``fill(_:)``・``Pixels/update(_:)`` が揃って、同じ絵を書き換える。
     public var pixels: Pixels { Pixels(image: self) }
 

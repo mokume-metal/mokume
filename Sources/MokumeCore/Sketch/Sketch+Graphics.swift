@@ -158,7 +158,7 @@ extension SketchPart {
     ///   ``translate(_:_:)``・``background(_:)-(LinearRGBA)`` など)
     /// - 粒 (``emit(_:from:toward:rate:speed:life:size:color:)``・``force(_:_:)``・``particles(_:)``) と
     ///   ``orbitControl(_:_:_:)``
-    /// - ``canvas``・``effects(_:)``・``shader(_:)``・画素の読み書き・揺らぎの種と細かさ
+    /// - ``canvas``・``effects(_:)``・``filter(_:)``・``shader(_:)``・画素の読み書き・揺らぎの種と細かさ
     /// - 値の形 (`Rect`・`Circle`) の `draw()`
     ///
     /// **``width`` と ``height`` は描き場所の大きさを返す。** 本体が 400×400、描き場所が 200×100 なら、

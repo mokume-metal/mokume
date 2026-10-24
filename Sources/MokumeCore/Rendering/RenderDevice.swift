@@ -189,6 +189,10 @@ import MokumeDiagnostics
     /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
     let shaders: ShaderLibraries
 
+    /// ``Image/filtered(_:)`` の作業の面の置き場。**弱くしか持たない** — 面は GPU を強く持つので、強く持つと
+    /// 循環する (``FilterWorkspaces``)。
+    let filterWorkspaces = FilterWorkspaces()
+
     /// 組み込みの図形のパイプライン。出力形式ごとに 1 つ、最初に頼まれたときに組む ([#2785])。
     ///
     /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785

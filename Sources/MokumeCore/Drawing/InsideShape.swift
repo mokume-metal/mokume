@@ -102,6 +102,9 @@ extension Canvas {
         case clip
         /// 効果を頼んだ。
         case effects
+        /// 呼んだ時点の絵へ効果を掛けた (``Canvas/filter(_:)``)。描き切ってから掛けるので、組み立ての中では
+        /// 断る。フレームの外での扱いは口が自分で持つ (持ち越しを約束する区間では許す)。
+        case filter
         /// 光を置いた・外した。
         case light
         /// 周囲の光を置いた。
@@ -138,7 +141,7 @@ extension Canvas {
             case .particles: .particles
             case .compute: .compute
             case .debug: .debug
-            case .background, .pixels, .drawnOut, .frameEnd, .frameStart, .brightness: nil
+            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness: nil
             }
         }
 
@@ -153,6 +156,7 @@ extension Canvas {
             case .camera: .cameraInsideShape
             case .clip: .clipInsideShape
             case .effects: .effectsInsideShape
+            case .filter: .filterInsideShape
             case .light: .lightInsideShape
             case .surroundings: .surroundingsInsideShape
             case .shadow: .shadowInsideShape
@@ -198,6 +202,9 @@ extension Canvas {
             case .effects:
                 "Effects do nothing inside createShape { }. A shape cannot hold effects, so write "
                     + "them before or after building the shape"
+            case .filter:
+                "filter() does nothing inside createShape { }. It applies effects to the picture drawn "
+                    + "so far, which a shape has not drawn yet, so call it before or after building the shape"
             case .light:
                 "Lights do nothing inside createShape { }. A shape cannot hold a light, so place "
                     + "it before or after building the shape"

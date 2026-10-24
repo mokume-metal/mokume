@@ -933,6 +933,15 @@ public final class Canvas {
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     var carriedAwaitingOutcome: [UInt64: Bool] = [:]
+    /// ``filter(_:)`` の投入のうち、結末がまだ届いていないもの。打ち切られたら知らせ (``filterDropped(_:)``)、
+    /// 届いたら手放す。
+    var filterSubmissions: Set<UInt64> = []
+    /// 検査の差し込み: ``filter(_:)`` が自分の投入を積む直前に呼ぶ。途中の描き切りも投入を 1 本積むので、
+    /// 「次の投入を打ち切る」差し込みを手前から仕掛けると、そちらに当たる。
+    var beforeFilterCommitForTesting: (() -> Void)?
+    /// ``Image/filtered(_:)`` が効果を通す作業の面のうち、この面が持つもの (``holdFilterWorkspace(_:)``)。
+    /// 新しい絵に掛けるたびに面を作り直さないために、走っているスケッチの面が持ち続ける。
+    var filterWorkspaces: [Canvas] = []
 
     /// 効果を通した絵を書いた投入が、面をどう取り替えたかの記帳 ([#2388])。
     ///
@@ -3809,11 +3818,12 @@ public final class Canvas {
     /// (``keepPicture(placedFrom:)``)。
     ///
     /// **自分の出す先 (``output``) を書く口は、書く前に必ずここを通る** ([#1942])。描き切り
-    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 5 つある:
+    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 6 つある:
     /// 細かさを下げた面の追い付き (``catchUpOutput()``)・細かさ 1 の面の書き戻し
     /// (``writeBackPendingPixels()``)・出力段の書き戻し (``RenderTarget/encodeToImage()`` ほか)・
     /// 出す先を直に塗る ``RenderTarget/fill(with:)``・打ち切られた投入の面の取り替えの取り消し
-    /// (``carryDropped(_:)``・[#2388])。新しい口を足すときは、書く前にここを通す。
+    /// (``carryDropped(_:)``・[#2388])・呼んだ時点で効果を掛けて描く先へ書き戻す ``filter(_:)``
+    /// (``applyFilter(_:)``・[#2455])。新しい口を足すときは、書く前にここを通す。
     /// **この列挙は出す先を書く口の登録簿で**、通し忘れは、出す先を書く最下層が呼ぶ検算
     /// (`RenderTarget.assertPlacersSettledBeforeWriting()`) が debug の検査で捕まえる。
     /// 写しを取るのは出す先が実際に変わる口だけで、変えていない口は呼ばない (ADR-0023 決定 5)。
@@ -3825,6 +3835,7 @@ public final class Canvas {
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
@@ -5887,7 +5898,11 @@ extension Canvas: SettlementObserver {
     /// 後の投入が上書きする。
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
         let restoredOver = carriedAwaitingOutcome.removeValue(forKey: submission) ?? false
+        // `filter()` の投入は、届いたら手放す。打ち切られていたら知らせる (戻すものは無い)
+        let wasFilter = filterSubmissions.contains(submission)
+        if !dropped { filterSubmissions.remove(submission) }
         guard dropped else { return }
+        if wasFilter { filterDropped(submission) }
         shadowBakeDropped(submission)
         upscaleDropped(submission)
         carryDropped(submission)
