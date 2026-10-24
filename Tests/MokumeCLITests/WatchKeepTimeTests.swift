@@ -246,11 +246,11 @@ struct WatchKeepTimeTests {
                 stopRequested: {}, isFinished: { true },
                 teardown: { WatchCommand.teardown(session, nil, keepTimeFile: file) })
             delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
-            // 2 度目 (巡回を抜けた道と両方から呼ばれうる)
-            WatchCommand.removeKeepTimeFiles(file)
         }
         for url in [file, lock, temporary] {
             #expect(!FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent) が残っている")
         }
+        // 2 度目 (巡回を抜けた道と両方から呼ばれうる) は、何も無くても落ちない
+        await MainActor.run { WatchCommand.removeKeepTimeFiles(file) }
     }
 }
