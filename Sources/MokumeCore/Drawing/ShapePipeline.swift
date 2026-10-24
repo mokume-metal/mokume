@@ -251,8 +251,9 @@ final class ShapePipeline {
     /// ``unlitSolidPipelines`` の中身。
     struct UnlitSolidPipelines {
         var built: [UnlitSolidKey: any MTLRenderPipelineState] = [:]
-        /// 組めなかった鍵。毎フレーム組み直さない。
-        var failed: Set<UnlitSolidKey> = []
+        /// 組めなかった鍵と、その失敗。毎フレーム組み直さない。失敗まで持つのは、控えがデバイスで共有なので、
+        /// 組もうとしなかった 2 つ目以降のキャンバスにも「組めていない」と言わせるため。
+        var failed: [UnlitSolidKey: RenderFailure] = [:]
         /// 検査が組む失敗を差し込む口 (``failBuildingUnlitSolidsForTesting(_:)``)。製品では常に `nil`。
         var failureForTesting: RenderFailure?
     }
@@ -275,13 +276,15 @@ final class ShapePipeline {
         for key in keys where preparation.states[key] == nil {
             let lookup = unlitSolidPipelines.withLock { pipelines -> UnlitSolidLookup in
                 if let state = pipelines.built[key] { return .built(state) }
-                if pipelines.failed.contains(key) { return .failed }
+                if let failure = pipelines.failed[key] { return .failed(failure) }
                 return .missing(pipelines.failureForTesting)
             }
             switch lookup {
             case .built(let state):
                 preparation.states[key] = state
-            case .failed:
+            case .failed(let failure):
+                // 組み直さない。ただし、このキャンバスにも 1 度言えるよう、控えた失敗を返す
+                preparation.failure = preparation.failure ?? failure
                 continue
             case .missing(let injected):
                 do throws(RenderFailure) {
@@ -296,7 +299,7 @@ final class ShapePipeline {
                         return state
                     }
                 } catch {
-                    unlitSolidPipelines.withLock { _ = $0.failed.insert(key) }
+                    unlitSolidPipelines.withLock { $0.failed[key] = error }
                     preparation.failure = preparation.failure ?? error
                 }
             }
@@ -307,7 +310,7 @@ final class ShapePipeline {
     /// ``prepareUnlitSolids(_:)`` が控えを引いた結果。
     private enum UnlitSolidLookup {
         case built(any MTLRenderPipelineState)
-        case failed
+        case failed(RenderFailure)
         case missing(RenderFailure?)
     }
 

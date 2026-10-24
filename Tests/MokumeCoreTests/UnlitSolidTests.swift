@@ -358,6 +358,30 @@ struct UnlitSolidTests {
         #expect(try canvas.target.readPixels() == reference)
     }
 
+    /// 控えはデバイスで共有なので、2 つ目以降のキャンバスは組もうとしない。それでも、そのキャンバスが
+    /// 既定の組で描いていることは、キャンバスごとに 1 度言う (反証 2 回目)。
+    @Test("控えが組めなかった鍵だけで描く 2 つ目のキャンバスにも、1 度だけ言う")
+    func warnsOnEveryCanvasThatFallsBack() throws {
+        let gpu = try RenderDevice()
+        let first = try CanvasFixture.make(gpu: gpu, width: 96, height: 96)
+        first.pipeline.failBuildingUnlitSolidsForTesting(.pipelineUnavailable(reason: "injected"))
+        try first.draw {
+            first.background(.display(red: 0.1, green: 0.1, blue: 0.2))
+            solids(first)
+        }
+        #expect(first.warnings.hasWarned(.solidVariantUnavailable))
+        // 2 つ目は組もうとしない (口を戻しても控えの失敗を読む) — だが、既定の組で描くことは言う
+        first.pipeline.failBuildingUnlitSolidsForTesting(nil)
+        let second = try CanvasFixture.make(gpu: gpu, width: 96, height: 96)
+        #expect(!second.warnings.hasWarned(.solidVariantUnavailable))
+        try second.draw {
+            second.background(.display(red: 0.1, green: 0.1, blue: 0.2))
+            solids(second)
+        }
+        #expect(second.pipeline.builtUnlitSolidStateCount == 0, "組み直した")
+        #expect(second.warnings.hasWarned(.solidVariantUnavailable), "2 つ目のキャンバスが黙って既定の組で描いた")
+    }
+
     @Test("特化の組は、頂点関数が枝を残す立体でも光の枝を外す値を渡す")
     func theAssemblyPassesUnlitThrough() {
         typealias Constants = ShapePipeline.FragmentConstants
