@@ -96,6 +96,7 @@ extension Canvas {
         let runStart = mark.batches
         let strokeRangeStart = mark.recordedStrokeRanges
         let fillRangeStart = mark.recordedFillRanges
+        let geometryStart = mark.recordedGeometryForms
         let solidStrokeStart = mark.recordedSolidStrokes
         let gpuStrokeStart = mark.recordedGPUStrokes
         let discardsAtStart = mark.discards
@@ -147,6 +148,9 @@ extension Canvas {
             $0.shifted(by: -vertexStart)
         }
         recordedFillRanges.removeLast(recordedFillRanges.count - fillRangeStart)
+        // 描かずに幾何だけ覚えた置き場所は、頂点の区間を持たないので、そのまま抜く (#2428)
+        let recordedGeometry = Array(recordedGeometryForms[geometryStart...])
+        recordedGeometryForms.removeLast(recordedGeometryForms.count - geometryStart)
         let recordedSolid = Array(solidVertices[solidStart...])
         // 立体の線の元も形自身の 0 起点へ引き戻し、覚えていた側からは抜く (入れ子の記録
         // なら外側の記録には、置き直した線として `placeSolid` が積み直す)
@@ -200,7 +204,7 @@ extension Canvas {
         return Shape(
             vertices: recorded, solidVertices: recordedSolid, solidIndices: recordedIndices,
             forms: recordedForms, runs: Array(runs), strokeRanges: recordedStrokes,
-            fillRanges: recordedFills,
+            fillRanges: recordedFills, geometryForms: recordedGeometry,
             solidStrokes: recordedPieces, gpuStrokes: recordedGPU, solidParts: recordedParts)
     }
 
@@ -224,6 +228,7 @@ extension Canvas {
         var batches: Int
         var recordedStrokeRanges: Int
         var recordedFillRanges: Int
+        var recordedGeometryForms: Int
         var recordedSolidStrokes: Int
         var recordedGPUStrokes: Int
         /// 溜め場を捨てた回数 (``Canvas/pendingDiscards``) の、「記録の途中で捨てていない」ときの値。出口の
@@ -239,6 +244,7 @@ extension Canvas {
             batches = canvas.batches.count
             recordedStrokeRanges = canvas.recordedStrokeRanges.count
             recordedFillRanges = canvas.recordedFillRanges.count
+            recordedGeometryForms = canvas.recordedGeometryForms.count
             recordedSolidStrokes = canvas.recordedSolidStrokes.count
             recordedGPUStrokes = canvas.recordedGPUStrokes.count
             discards = canvas.pendingDiscards
@@ -257,6 +263,7 @@ extension Canvas {
             clamped.batches = min(batches, pool.batches)
             clamped.recordedStrokeRanges = min(recordedStrokeRanges, pool.recordedStrokeRanges)
             clamped.recordedFillRanges = min(recordedFillRanges, pool.recordedFillRanges)
+            clamped.recordedGeometryForms = min(recordedGeometryForms, pool.recordedGeometryForms)
             clamped.recordedSolidStrokes = min(recordedSolidStrokes, pool.recordedSolidStrokes)
             clamped.recordedGPUStrokes = min(recordedGPUStrokes, pool.recordedGPUStrokes)
             return clamped
@@ -272,6 +279,7 @@ extension Canvas {
             batches += base.batches - origin.batches
             recordedStrokeRanges += base.recordedStrokeRanges - origin.recordedStrokeRanges
             recordedFillRanges += base.recordedFillRanges - origin.recordedFillRanges
+            recordedGeometryForms += base.recordedGeometryForms - origin.recordedGeometryForms
             recordedSolidStrokes += base.recordedSolidStrokes - origin.recordedSolidStrokes
             recordedGPUStrokes += base.recordedGPUStrokes - origin.recordedGPUStrokes
         }
@@ -294,6 +302,7 @@ extension Canvas {
         var batches: [Batch]
         var recordedStrokeRanges: [StrokeRange]
         var recordedFillRanges: [RingFillRange]
+        var recordedGeometryForms: [FormInstance]
         var recordedSolidStrokes: [SolidStrokePiece]
         var recordedGPUStrokes: [RetainedGPUStroke]
         /// 切り詰める前の被覆。描き切りが投げて溜め場が手つかずのままなら、そのまま戻す。
@@ -319,6 +328,8 @@ extension Canvas {
             canvas.recordedStrokeRanges.removeLast(recordedStrokeRanges.count)
             recordedFillRanges = Array(canvas.recordedFillRanges[origin.recordedFillRanges...])
             canvas.recordedFillRanges.removeLast(recordedFillRanges.count)
+            recordedGeometryForms = Array(canvas.recordedGeometryForms[origin.recordedGeometryForms...])
+            canvas.recordedGeometryForms.removeLast(recordedGeometryForms.count)
             recordedSolidStrokes = Array(canvas.recordedSolidStrokes[origin.recordedSolidStrokes...])
             canvas.recordedSolidStrokes.removeLast(recordedSolidStrokes.count)
             recordedGPUStrokes = Array(canvas.recordedGPUStrokes[origin.recordedGPUStrokes...])
@@ -347,6 +358,7 @@ extension Canvas {
                 contentsOf: recordedStrokeRanges.map { $0.shifted(by: vertexShift) })
             canvas.recordedFillRanges.append(
                 contentsOf: recordedFillRanges.map { $0.shifted(by: vertexShift) })
+            canvas.recordedGeometryForms.append(contentsOf: recordedGeometryForms)
             canvas.recordedSolidStrokes.append(
                 contentsOf: recordedSolidStrokes.map { piece in
                     var piece = piece
@@ -557,6 +569,18 @@ extension Canvas {
             warnBadPlacement(geometry: badGeometry, fill: badFill)
         }
         guard !usable.isEmpty else { return }
+
+        // 描かずに幾何だけ持つ置き場所 (``Shape/geometryForms``) は、記録の中で置くときだけ、外側の記録へ
+        // 置き場所の変換を掛けて引き継ぐ (外接のため・#2428)。描く区間には載らない
+        if recordingShape, !shape.geometryForms.isEmpty {
+            for placement in usable {
+                let matrix = transform.matrix * placement.transform.matrix
+                for form in shape.geometryForms {
+                    let moved = form.placed(by: matrix, tint: nil)
+                    if moved.isPlaceable { recordedGeometryForms.append(moved) }
+                }
+            }
+        }
 
         // 半透明の色を掛ける置き場所があるときだけ、区間ごとに差し替える輪郭を求める。
         // 色を掛けない置き場所だけなら、輪郭を走査しない (輪郭の多い形を毎フレーム置いても増えない)

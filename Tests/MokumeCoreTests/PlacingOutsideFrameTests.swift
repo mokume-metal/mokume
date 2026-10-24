@@ -26,6 +26,14 @@ enum PlacingCall: CaseIterable, CustomTestStringConvertible {
     case circle
     case ellipse
     case arc
+    /// 閉じ方を渡した円弧 (#2428)。距離関数の経路 (`appendForm`)。
+    case arcOpen
+    case arcChord
+    /// 破線の輪郭の円弧。塗りは距離関数・輪郭は周の片で、**周は区間の中だと分かってから組む**
+    /// (`appendDashedForm`)。
+    case arcDashed
+    /// 断片を効かせた円弧。部分ごとの周を三角形の経路で組む (`placeArcInParts`)。
+    case arcWithShader
     case square
     case line
     case point
@@ -90,6 +98,14 @@ enum PlacingCall: CaseIterable, CustomTestStringConvertible {
         case .circle: canvas.circle(8, 8, 6)
         case .ellipse: canvas.ellipse(8, 8, 6, 4)
         case .arc: canvas.arc(8, 8, 6, 6, 0, 1)
+        case .arcOpen: canvas.arc(8, 8, 6, 6, 0, 1, .open)
+        case .arcChord: canvas.arc(8, 8, 6, 6, 0, 1, .chord)
+        case .arcDashed:
+            canvas.strokeDash(2, 2)
+            canvas.arc(8, 8, 6, 6, 0, 1)
+        case .arcWithShader:
+            canvas.shader(props.shader)
+            canvas.arc(8, 8, 6, 6, 0, 1)
         case .square: canvas.square(1, 1, 6)
         case .line: canvas.line(1, 1, 12, 12)
         case .point: canvas.point(4, 4)
@@ -220,7 +236,7 @@ struct PlacingOutsideFrameTests {
             canvas.vertices.count, canvas.solidVertices.count, canvas.solidIndices.count,
             canvas.solidInstances.count, canvas.formInstances.count, canvas.flatInstances.count,
             canvas.recordedStrokeRanges.count, canvas.recordedFillRanges.count,
-            canvas.recordedSolidStrokes.count,
+            canvas.recordedSolidStrokes.count, canvas.recordedGeometryForms.count,
             canvas.placedGraphics.count, canvas.hasPendingDrawing ? 1 : 0,
         ]
     }

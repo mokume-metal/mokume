@@ -42,6 +42,17 @@ constant uint kFormEllipse = 1;
 constant uint kFormArc = 2;
 constant uint kFormLine = 3;
 
+// 扇 (`kFormArc`) の閉じ方 (#2428)。Swift 側は `FormInstance.ArcClosure`。置き場所の `size.w` (矩形の角の半径の欄・
+// 扇では未使用) に入る。0 は変更前から扇の置き場所が持っていた値で、塗りも輪郭も扇 (`.pie`)。
+//   kArcPie       塗りも輪郭も扇 (中心への 2 本の半径と弧)
+//   kArcStandard  塗りは扇・輪郭は開いた弧 (引数に閉じ方を渡さない `arc` の既定)
+//   kArcChord     塗りも輪郭も、弧の両端を弦で結んだ形
+//   kArcOpen      塗りは弦で結んだ形・輪郭は開いた弧
+constant uint kArcPie = 0;
+constant uint kArcStandard = 1;
+constant uint kArcChord = 2;
+constant uint kArcOpen = 3;
+
 // 端の形。Swift 側は `FormInstance.code(of: StrokeCap)`
 constant uint kFormCapRound = 0;
 constant uint kFormCapSquare = 1;
@@ -241,6 +252,12 @@ kernel void mokume_kindLayout(
     numbers[i++] = kCoverageLinear;
     numbers[i++] = kCoverageLinearExceptCorners;
     numbers[i++] = kCoverageLinearExceptCaps;
+
+    numbers[i++] = kKindSection + 9;
+    numbers[i++] = kArcPie;
+    numbers[i++] = kArcStandard;
+    numbers[i++] = kArcChord;
+    numbers[i++] = kArcOpen;
 
     // 末尾の印。**個数がずれたらここが合わなくなる**
     numbers[i++] = kKindSection + 99;

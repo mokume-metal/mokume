@@ -362,6 +362,13 @@ extension CanvasTests {
                                 color: .transparent, hasPicture: false, transform: .identity,
                                 uv: .zero)))
                 }),
+                ("recordedGeometryForms", end, all, { c, _ in
+                    c.recordedGeometryForms.append(
+                        FormInstance(
+                            kind: .arc, linear: SIMD4(1, 0, 0, 1), offset: .zero, half: SIMD2(4, 4),
+                            arc: SIMD2(0, 1), halfWeight: 0, fill: .zero, stroke: .zero, fills: false,
+                            strokes: false, cap: .round, join: .round))
+                }),
                 ("recordedSolidStrokes", end, all, { c, _ in
                     c.recordedSolidStrokes.append(
                         SolidStrokePiece(
