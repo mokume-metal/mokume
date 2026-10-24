@@ -264,6 +264,13 @@ struct ShaderInterfaceTests {
                         .layout(Self.flatInstance)),
                     // 平面の頂点ごとの被覆 (#1637)
                     .buffer("coverages", ShapePipeline.coverageBufferIndex, .scalar(Float.self)),
+                    // 細い塗りの雛形の、記述の置き場と置き場所ごとの先頭と数 (#2208)
+                    .buffer(
+                        "thinFills", ShapePipeline.thinFillBufferIndex,
+                        .layout(Self.thinFillRecord)),
+                    .buffer(
+                        "thinFillSpans", ShapePipeline.thinFillSpanBufferIndex,
+                        .layout(Self.thinFillSpan)),
                 ]),
             Entry(
                 ShapePipeline.solidVertexFunctionName,
@@ -386,8 +393,22 @@ struct ShaderInterfaceTests {
         [
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
-            ("readsCoverage", \.readsCoverage),
+            ("readsCoverage", \.readsCoverage), ("thinFill", \.thinFill),
+            ("thinFillUV", \.thinFillUV),
         ])
+
+    static let thinFillRecord = layout(
+        of: Canvas.ThinFillRecord.self,
+        [
+            ("inverse", \.inverse), ("centerAxis", \.centerAxis),
+            ("acrossSlopeSide", \.acrossSlopeSide), ("layout", \.layout),
+            ("coverageMode", \.coverageMode), ("table0", \.table0), ("table1", \.table1),
+            ("table2", \.table2),
+        ])
+
+    static let thinFillSpan = layout(
+        of: Canvas.ThinFillSpan.self,
+        [("first", \.first), ("count", \.count), ("anchor", \.anchor), ("translation", \.translation)])
 
     static let flatInstance = layout(
         of: FlatInstance.self,

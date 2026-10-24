@@ -191,6 +191,24 @@ extension Canvas {
         if let radius = form.ringRadius {
             ringSegments = ringSplitMemo.count(forRadius: radius, scale: scale)
         }
+        // 細い塗り: 広げ方を頂点段へ移した畳みでは、置き場所ごとの記述を求める (#2208)。雛形の鍵には
+        // 片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
+        var thinFill: ThinFillPlacing?
+        var thinFillCapacity = 0
+        var fillLinear: ThinFold?
+        if expandsThinFillsInVertexStage {
+            if style.hasFill,
+                let record = thinFillRecord(of: form, drawn: drawnLinear(transform.matrix))
+            {
+                // 位置と平行移動は記述の外に持つ — 位置が違うだけの置き場所は同じ記述を指す
+                let columns = transform.matrix.columns
+                thinFill = ThinFillPlacing(
+                    record: record, anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y))
+                thinFillCapacity = ThinFillRecord.capacity(forPieces: record.pieceCount)
+            }
+        } else {
+            fillLinear = thinFillLinear(form)
+        }
         let key = FlatKey(
             form: form,
             hasFill: style.hasFill,
@@ -198,11 +216,14 @@ extension Canvas {
             strokeWeight: style.strokeWeight,
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
-            ringSegments: ringSegments,
+            // 頂点段で広げる細い塗りは周を刻まない。貼る絵が無く輪郭も無ければ、刻み方の違う置き場所も
+            // 1 つの雛形に畳む (貼る絵の読み取り位置は周の囲みの箱から作るので、絵があれば刻み方も鍵に残す)
+            ringSegments: thinFillCapacity > 0 && !hasStroke && style.picture == nil ? 0 : ringSegments,
             discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(),
-            fillLinear: thinFillLinear(form),
+            fillLinear: fillLinear,
+            thinFillCapacity: thinFillCapacity,
             texture: style.hasFill ? style.picture?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
@@ -214,7 +235,7 @@ extension Canvas {
         guard !(key.texture != nil && key.hasStroke), !recordingShape,
             !(hasStroke && style.strokeDash != nil)
         else {
-            return draw(makeOutline(key.ringSegments).moved(by: anchor))
+            return draw(makeOutline(ringSegments).moved(by: anchor))
         }
 
         // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
@@ -230,18 +251,19 @@ extension Canvas {
         if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         notePaintPlacement()
 
-        // 開いている雛形と同じ形なら、置き場所を足すだけで済む
-        if openFlat?.key == key {
+        // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数の区間が小さい
+        // 置き場所も大きい区間の雛形に受ける** (区間が上がったときだけ、新しい雛形になる)
+        if let open = openFlat, open.key == key || open.key.holds(key) {
             appendFolded(
-                placement(at: anchor), key: key, outline: { makeOutline(key.ringSegments) })
+                placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
             return
         }
-        let outline = makeOutline(key.ringSegments)
+        let outline = makeOutline(ringSegments)
 
         // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
         // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
         // 畳む前より遅い ([#424](https://github.com/mokume-metal/mokume/issues/424))
-        if let waiting = pendingFlat, waiting.key == key,
+        if let waiting = pendingFlat, let joined = waiting.key.joined(with: key),
             waiting.vertexEnd == vertices.count, waiting.batchCount == batches.count
         {
             // 1 つ目の頂点を溜め場から抜き、雛形として積み直す。抜けるのは**まだ列が
@@ -249,9 +271,10 @@ extension Canvas {
             vertices.removeLast(vertices.count - waiting.vertexStart)
             trimCoverage(to: waiting.vertexStart)
             pendingFlat = nil
-            openFlatTemplate(key: key, outline: outline)
+            openFlatTemplate(key: joined, outline: outline)
             flatInstances.append(waiting.placement)
-            appendFolded(placement(at: anchor), key: key, outline: { outline })
+            if let waitingFill = waiting.thinFill { addThinFill(waitingFill) }
+            appendFolded(placement(at: anchor), thinFill: thinFill, outline: { outline })
             return
         }
 
@@ -266,7 +289,8 @@ extension Canvas {
         }
         pendingFlat = PendingFlat(
             key: key, outline: outline, placement: placement(at: anchor),
-            vertexStart: vertexStart, vertexEnd: vertices.count, batchCount: batches.count)
+            vertexStart: vertexStart, vertexEnd: vertices.count, thinFill: thinFill,
+            batchCount: batches.count)
     }
 
     /// 畳んだ置き場所を 1 つ足す。**上限に達していたら、同じ形のまま雛形を開き直す。**
@@ -274,13 +298,17 @@ extension Canvas {
     /// 開き直すのは、畳まない経路へ落とすと**上限をまたいだ図形だけ組み立て方が
     /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
     private func appendFolded(
-        _ placement: FlatInstance, key: FlatKey, outline makeOutline: () -> Outline
+        _ placement: FlatInstance, thinFill: ThinFillPlacing?,
+        outline makeOutline: () -> Outline
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
-            openFlatTemplate(key: key, outline: makeOutline())
+            // 開き直す雛形は、開いていた雛形の区間を引き継ぐ (区間が上がった後に小さい区間へ戻さない)
+            openFlatTemplate(key: open.key, outline: makeOutline())
         }
         flatInstances.append(placement)
+        // 細い塗りの雛形は、置き場所ごとの記述を同じ番号で足す (#2208)
+        if let thinFill { addThinFill(thinFill) }
     }
 
     /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
@@ -312,8 +340,15 @@ extension Canvas {
         templateStrokeMatrix = key.strokeLinear.map { Self.placementMatrix($0.linear) }
         outlinesAssembledThisFrame += 1
         // 細い塗りの雛形は、鍵の変換で細さを測って広げる (#1934・``FlatKey/fillLinear``)
+        var thinFillUV: SIMD4<Float>?
         if key.hasFill {
-            fillInterior(outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+            if key.thinFillCapacity > 0 {
+                // 頂点は「片の番号と角の番号」で、片は頂点段が置き場所ごとの記述から組む (#2208)
+                thinFillUV = fillThinTemplate(capacity: key.thinFillCapacity, outline: outline)
+            } else {
+                fillInterior(
+                    outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+            }
         }
         let strokeStart = vertices.count
         // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)
@@ -325,7 +360,8 @@ extension Canvas {
         style.stroke = savedStroke
 
         openFlat = OpenFlat(
-            key: key, strokeStart: strokeStart, instanceStart: flatInstances.count)
+            key: key, strokeStart: strokeStart, instanceStart: flatInstances.count,
+            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV)
     }
 
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
