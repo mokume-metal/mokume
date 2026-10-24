@@ -430,7 +430,7 @@ struct FilterImmediateTests {
 
     @Test("半透明の画素でも、ちょうどの値は白で 1 つ上の level は黒。不透明度を割り戻さずに比べる")
     func thresholdTreatsTheExactValueAsWhiteWhenSemiTransparent() throws {
-        for alpha: Float in [0.1, 0.25, 0.4, 0.5, 0.75, 0.9] {
+        for alpha in (1...19).map({ Float($0) / 20 }) + [1.0 / 3, 2.0 / 3, 0.07, 0.93] {
             let colors = (0...255).map { value -> LinearRGBA in
                 let level = Float(value) / 255
                 return LinearRGBA.display(red: level, green: level, blue: level, alpha: alpha)
@@ -438,7 +438,8 @@ struct FilterImmediateTests {
             for k in [1, 2, 64, 127, 128, 200, 254, 255] {
                 let image = try thresholded(colors, level: Float(k) / 255)
                 var wrong: [Int] = []
-                for v in 0...255 where image[v, 0].alpha > 0 {
+                // 乗算済みの色が半精度の正規数の下限 (約 6e-5) に近いほど暗く薄い画素は、丸めが幅を越えるので除く
+                for v in 0...255 where image[v, 0].alpha > 0 && colors[v].red >= 2e-4 {
                     if (image[v, 0].red == 255) != (v >= k) { wrong.append(v) }
                 }
                 #expect(wrong.isEmpty, "不透明度 \(alpha)・level \(k)/255 で白黒が違う灰: \(wrong.prefix(8))")
@@ -723,6 +724,8 @@ struct FilterImmediateTests {
         let host = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
         let other = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
         let source = try grayImage(on: host, level: 0.9)
+        // 作業の面を先に作っておく (面を作った後の別の面の打ち切りが、判定の範囲に入る形にする)
+        _ = source.filtered([.invert()])
         // 別の面の描画が打ち切られた後
         gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
         try other.draw { other.background(255) }

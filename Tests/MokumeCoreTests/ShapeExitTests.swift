@@ -218,6 +218,9 @@ enum ShapeExit {
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "upscaledBy": flush,
             "carriedFlush": flush, "carriedAwaitingOutcome": flush,
+            // #2455 (filter() の投入の記帳と、Image.filtered() の作業の面)
+            "filterSubmissions": flush, "beforeFilterCommitForTesting": "検査の差し込み。filter() の投入の直前に呼ぶだけで、組み立てに関わらない",
+            "filterWorkspaces": resource,
             "shadowBake": "影の焼き付けが持ち越す格納 (#2257)。焼いた面・記帳・資源・数えの全部が面と同じだけ生き、組み立ての中の shadows() は断られるので焼き付けは組み立てに関わらない。投入の範囲 (bakedSince・bakedThrough) は描き切りの印と同じく、組み立ての中では動かない",
             "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
             "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
