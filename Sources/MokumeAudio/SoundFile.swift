@@ -15,8 +15,8 @@ import MokumeDiagnostics
 /// ```swift
 /// final class Pulse: Sketch {
 ///     var song: SoundFile?
-///     func setup() {
-///         song = try? loadSound("assets/song.wav")
+///     func setup() throws {
+///         song = try loadSound("assets/song.wav")
 ///         song?.loop()
 ///     }
 ///     func draw() {
@@ -59,8 +59,8 @@ import MokumeDiagnostics
 ///
 /// <!-- example: 文脈 var song: SoundFile?; var filter: LowPass? -->
 /// ```swift
-/// func setup() {
-///     song = try? loadSound("assets/song.wav")
+/// func setup() throws {
+///     song = try loadSound("assets/song.wav")
 ///     filter = createLowPass()
 ///     if let song { filter?.process(song, 800) }
 ///     song?.loop()
@@ -293,8 +293,8 @@ public final class SoundFile: Inlet, EffectInput {
     ///
     /// <!-- example: 文脈 var song: SoundFile? -->
     /// ```swift
-    /// func setup() {
-    ///     song = try? loadSound("assets/song.wav")
+    /// func setup() throws {
+    ///     song = try loadSound("assets/song.wav")
     ///     song?.loop()
     /// }
     /// ```

@@ -8,8 +8,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var display: Font? -->
     /// ```swift
-    /// func setup() {
-    ///     display = try? loadFont("assets/fonts/Display.otf")
+    /// func setup() throws {
+    ///     display = try loadFont("assets/fonts/Display.otf")
     /// }
     ///
     /// func draw() {

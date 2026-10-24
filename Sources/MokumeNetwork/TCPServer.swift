@@ -13,7 +13,7 @@ import MokumeCore
 /// final class Remote: Sketch {
 ///     var server: TCPServer?
 ///     var size: Float = 0.5
-///     func setup() { server = try? createTCPServer(5204) }
+///     func setup() throws { server = try createTCPServer(5204) }
 ///     func draw() {
 ///         for line in server?.messages ?? [] { size = Float(line) ?? size }
 ///         circle(width / 2, height / 2, size * height)

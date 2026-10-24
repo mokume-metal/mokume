@@ -9,10 +9,9 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var notes: String? -->
     /// ```swift
-    /// func setup() {
-    ///     if let url = try? assetURL("assets/notes.txt") {
-    ///         notes = try? String(contentsOf: url, encoding: .utf8)
-    ///     }
+    /// func setup() throws {
+    ///     let url = try assetURL("assets/notes.txt")
+    ///     notes = try String(contentsOf: url, encoding: .utf8)
     /// }
     /// ```
     ///

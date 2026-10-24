@@ -17,7 +17,7 @@ extension Sketch {
     /// ```swift
     /// final class Mirror: Sketch {
     ///     var camera: Capture?
-    ///     func setup() { camera = try? createCapture(mirrored: true) }
+    ///     func setup() throws { camera = try createCapture(mirrored: true) }
     ///     func draw() {
     ///         if let camera { image(camera.image, 0, 0) }
     ///     }
@@ -75,9 +75,9 @@ extension Sketch {
     /// ```swift
     /// final class Replay: Sketch {
     ///     var camera: Capture?
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let red = DisplayImage(width: 4, height: 4, bytes: Array(repeating: [255, 0, 0, 255], count: 16).flatMap { $0 })
-    ///         camera = try? createCapture(frames: [red])
+    ///         camera = try createCapture(frames: [red])
     ///     }
     ///     func draw() {
     ///         if let camera { image(camera.image, 0, 0, width, height) }

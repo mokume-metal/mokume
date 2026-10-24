@@ -21,8 +21,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var lines: [String] = [] -->
     /// ```swift
-    /// func setup() {
-    ///     lines = (try? loadStrings("data/poem.txt")) ?? []
+    /// func setup() throws {
+    ///     lines = try loadStrings("data/poem.txt")
     /// }
     ///
     /// func draw() {
@@ -121,8 +121,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
-    /// func setup() {
-    ///     table = try? loadTable("data/temperatures.csv", header: true)
+    /// func setup() throws {
+    ///     table = try loadTable("data/temperatures.csv", header: true)
     /// }
     ///
     /// func draw() {
@@ -219,18 +219,14 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
-    /// func setup() {
-    ///     do {
-    ///         var read = try loadTable("data/temperatures.csv", header: true)
-    ///         read.addColumn("mean")
-    ///         for (i, row) in read.rows.enumerated() {
-    ///             read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
-    ///         }
-    ///         try saveTable(read, "out/temperatures-with-mean.csv")
-    ///         table = read
-    ///     } catch {
-    ///         print(error)
+    /// func setup() throws {
+    ///     var read = try loadTable("data/temperatures.csv", header: true)
+    ///     read.addColumn("mean")
+    ///     for (i, row) in read.rows.enumerated() {
+    ///         read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
     ///     }
+    ///     try saveTable(read, "out/temperatures-with-mean.csv")
+    ///     table = read
     /// }
     /// ```
     ///
@@ -259,8 +255,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var weather: JSONObject? -->
     /// ```swift
-    /// func setup() {
-    ///     weather = try? loadJSONObject("data/weather.json")
+    /// func setup() throws {
+    ///     weather = try loadJSONObject("data/weather.json")
     /// }
     ///
     /// func draw() {
@@ -366,9 +362,9 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var scores: JSONArray? -->
     /// ```swift
-    /// func setup() {
+    /// func setup() throws {
     ///     // ファイルの中身は [{"name": "Ann", "score": 12}, {"name": "Bo", "score": 7}] の形
-    ///     scores = try? loadJSONArray("data/scores.json")
+    ///     scores = try loadJSONArray("data/scores.json")
     /// }
     ///
     /// func draw() {
@@ -496,8 +492,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var sky: XML? -->
     /// ```swift
-    /// func setup() {
-    ///     sky = try? loadXML("data/constellation.xml")
+    /// func setup() throws {
+    ///     sky = try loadXML("data/constellation.xml")
     /// }
     ///
     /// func draw() {
