@@ -277,7 +277,9 @@ extension Canvas {
     func thinFillRecord(of form: FlatForm, drawn: simd_float2x2) -> ThinFillRecord? {
         if let memo = thinFillMemo, memo.form == form, memo.drawn == drawn { return memo.record }
         thinFillRecordsBuilt += 1
-        let record = form.namedFill.flatMap { Self.thinFillRecord($0, by: drawn) }
+        // `Optional.flatMap` に閉包を渡さない — 置き場所ごとに隔離の実行時検査を払う (#1779)
+        var record: ThinFillRecord?
+        if let named = form.namedFill { record = Self.thinFillRecord(named, by: drawn) }
         thinFillMemo = ThinFillMemo(form: form, drawn: drawn, record: record)
         return record
     }
