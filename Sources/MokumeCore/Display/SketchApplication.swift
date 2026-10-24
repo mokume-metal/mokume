@@ -868,12 +868,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
     /// やめるとその約束が窓の状態で緩む。加えて、見えていない面へ差し出そうとすると
     /// `nextDrawable()` が返らずに待つので、飛ばすほうが速い。
-    func displayLinkFired() {
+    ///
+    /// - Parameter displayTime: この枚が表示される予定の時刻 (``ScreenDisplayLinkOwner/displayLinkFired(at:)``)。
+    ///   実時間の時計の時刻になる。`nil` なら現在時刻。
+    func displayLinkFired(at displayTime: Double?) {
         pollStopSignal()
         // **書き出す経路では、決めた枚数より先を描かない。** 終わりを頼んだ後も駆動源は
         // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く
         guard !rendersNoMore else { return }
-        advanceAndPresent()
+        advanceAndPresent(displayTime: displayTime)
         followPointerLockRequest()
         finishRenderIfDone()
     }
@@ -949,11 +952,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 1 フレーム進めて差し出す。
     ///
     /// **予備の駆動源から来た回もここを通る。** 表示のリフレッシュが止まっている間
-    /// (画面が眠っている間) に叩くのは駆動源の側の仕事で、こちらからは区別しない
-    /// (``ScreenDisplayLink``)。
-    private func advanceAndPresent() {
+    /// (画面が眠っている間) に叩くのは駆動源の側の仕事で、通る道は同じである (``ScreenDisplayLink``)。
+    /// 違うのは `displayTime` が `nil` (予定の時刻が無い) なことだけで、時刻は現在時刻で代わる。
+    private func advanceAndPresent(displayTime: Double?) {
         do {
-            try runtime.advance()
+            try runtime.advance(displayTime: displayTime)
             // 差し出しの区間 (Instruments・#2378)。窓と共有面の両方がここを通る
             let presentInterval = FrameSignposts.beginPresent()
             defer { FrameSignposts.endPresent(presentInterval) }

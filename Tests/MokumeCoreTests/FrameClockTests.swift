@@ -51,6 +51,183 @@ struct FrameClockTests {
         }
     }
 
+    // MARK: - 表示の予定の時刻 (#2390)
+
+    /// 60 Hz の表示の刻み (`targetTimestamp` の代わり)。
+    private func targets(_ count: Int, from start: Double = 1000, skipping skipped: Set<Int> = []) -> [Double] {
+        var time = start
+        return (0..<count).map { index in
+            if skipped.contains(index) { time += step }
+            defer { time += step }
+            return time
+        }
+    }
+
+    /// **完了条件 5。** コールバックの時点 (`now`) は main の遅れで揺れ、表示の予定の時刻は等間隔の列を渡す。
+    @Test("実時間の時計は、コールバックの時点が揺れても、表示の予定の時刻の間隔で進む")
+    func theWallClockFollowsTheDisplayTime() {
+        var now = 0.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        let shown = targets(30)
+        var deltas: [Float] = []
+        var times: [Float] = []
+        for (index, target) in shown.enumerated() {
+            // main が 0〜3 ms 遅れる。遅れ方は枚ごとに違う
+            now = target - step + Double(index % 4) * 0.001
+            timing.advance(displayTime: target)
+            deltas.append(timing.deltaTime)
+            times.append(timing.time)
+        }
+        #expect(times.first == 0)
+        #expect(deltas.first == Float(step), "最初の枚は目標の 1 フレームぶん")
+        for index in 1..<shown.count {
+            #expect(deltas[index] == Float(shown[index] - shown[index - 1]), "\(index + 1) 枚目の deltaTime")
+            #expect(times[index] == Float(shown[index] - shown[0]), "\(index + 1) 枚目の time")
+        }
+
+        // 陰性対照: 時刻を渡さなければ、コールバックの時点の揺れがそのまま deltaTime に出る
+        now = 0
+        let old = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        var oldDeltas: [Float] = []
+        for (index, target) in shown.enumerated() {
+            now = target - step + Double(index % 4) * 0.001
+            old.advance()
+            oldDeltas.append(old.deltaTime)
+        }
+        #expect(Set(oldDeltas.dropFirst().map { ($0 * 10000).rounded() }).count > 1)
+    }
+
+    @Test("表示が刻みを飛ばした枚は、飛んだ枚数ぶん進み、time は表示の時刻と合ったまま")
+    func aSkippedRefreshAdvancesByTheSkippedSteps() {
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { 0 })
+        let shown = targets(8, skipping: [5])
+        var deltas: [Float] = []
+        for target in shown {
+            timing.advance(displayTime: target)
+            deltas.append(timing.deltaTime)
+        }
+        #expect(abs(deltas[5] - Float(2 * step)) < 1e-6)
+        #expect(abs(deltas[4] - Float(step)) < 1e-6)
+        #expect(timing.time == Float(shown[7] - shown[0]))
+    }
+
+    @Test("予備の回 (予定の時刻が無い) は現在時刻で進み、time は前の枚より小さくならない")
+    func theFallbackUsesTheCurrentTimeAndNeverGoesBack() {
+        var now = 1000.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        timing.advance(displayTime: 1000)
+        // 表示のリフレッシュが運んだ枚は、コールバックより 1 刻み先の時刻を持つ
+        timing.advance(displayTime: 1000 + step)
+        let afterTarget = timing.time
+        // 次の枚は予備の回。現在時刻は前の枚の予定の時刻より前になりうる
+        now = 1000 + step * 0.5
+        timing.advance(displayTime: nil)
+        #expect(timing.time >= afterTarget, "time が戻った")
+        #expect(timing.deltaTime == 0)
+        // 現在時刻が追い越した後は、現在時刻で進む
+        now = 1000 + step * 4
+        timing.advance(displayTime: nil)
+        #expect(timing.time == Float(step * 4))
+        #expect(abs(timing.deltaTime - Float(step * 3)) < 1e-6)
+    }
+
+    @Test("最初の枚の起点も、表示の予定の時刻へ寄せる。time は 0・deltaTime は目標の 1 フレームぶん")
+    func theFirstFrameStartsAtTheDisplayTime() {
+        // 時計を作ってから最初の枚まで 5 秒かかった (起動・窓・setup())
+        var now = 100.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        now = 105
+        timing.advance(displayTime: 105 + step)
+        #expect(timing.time == 0)
+        #expect(timing.deltaTime == Float(step))
+        timing.advance(displayTime: 105 + 2 * step)
+        #expect(timing.time == Float(step))
+        #expect(timing.deltaTime == Float(step))
+    }
+
+    /// **#2413 の約束は、予定の時刻が `setup()` の前に決まっていても守る** ([#2390])。窓の経路では、予定の時刻は
+    /// コールバックの時点で決まり、`setup()` はその後に走る。時計を作ってから最初の枚までに 5 秒かかり、
+    /// 予定の時刻がその最中に過ぎていても、2 枚目の経過に 5 秒が戻らない。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("最初の枚の予定の時刻が、起点を据える時点で過ぎていても、2 枚目の経過に過ぎたぶんが戻らない")
+    func aStaleFirstDisplayTimeDoesNotLeakIntoTheSecondFrame() {
+        var now = 100.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        // 予定の時刻 (100 + 1 刻み) は、`setup()` の 2 秒の間に過ぎた
+        now = 102
+        timing.advance(displayTime: 100 + step)
+        #expect(timing.time == 0)
+        #expect(timing.deltaTime == Float(step))
+        // 2 枚目は 102.005 のコールバックで、予定の時刻は次の刻みの 1 つ先
+        now = 102.005
+        timing.advance(displayTime: 102 + 2 * step)
+        #expect(abs(timing.time - Float(2 * step)) < 1e-5, "time が \(timing.time)")
+        #expect(abs(timing.deltaTime - Float(2 * step)) < 1e-5, "deltaTime が \(timing.deltaTime)")
+    }
+
+    /// **外から止めて再開した後の最初の経過も、予定の時刻の軸で 1 フレームぶんに収まる** ([#2390])。
+    /// 起点を現在時刻に据えると、次の枚の予定の時刻 (現在時刻より約 1 刻み先) との差が、
+    /// 1〜2 刻みぶんになる。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示の予定の時刻で進めている最中に止めて再開しても、再開後の最初の経過は 1 フレームぶんに収まる")
+    func resumingWhileAdvancingByTheDisplayTimeKeepsTheFirstStepWithinOneFrame() {
+        var now = 0.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        // 表示のリフレッシュは、コールバックの 1 刻み先を予定の時刻として渡す
+        for index in 0..<5 {
+            now = 1000 + Double(index) * step
+            timing.advance(displayTime: now + step)
+        }
+        let before = timing.time
+        // 10 秒止めて再開する。次のコールバックは、再開から 4 ms 後
+        now = 1010
+        timing.resync()
+        now = 1010.004
+        timing.advance(displayTime: now + step)
+        #expect(abs(timing.deltaTime - 0.004) < 1e-5, "再開後の最初の経過が \(timing.deltaTime)")
+        #expect(timing.deltaTime <= Float(step))
+        // 止めていた間も `time` は実時間のまま進む (戻らない)
+        #expect(timing.time > before + 9)
+
+        // 陰性対照ではなく、その次の枚は表示の刻みの間隔に戻る
+        now += step
+        timing.advance(displayTime: now + step)
+        #expect(abs(timing.deltaTime - Float(step)) < 1e-5)
+    }
+
+    /// 再開の起点は前の枚の予定の時刻より前へ戻らない ([#2390])。戻すと、前の枚の予定の時刻から再開までの
+    /// 間が、次の経過に入る。
+    @Test("再開が前の枚の予定の時刻より前に来ても、起点はそれより前へ戻らず、time は後戻りしない")
+    func resumingNeverMovesTheOriginBeforeThePreviousDisplayTime() {
+        var now = 0.0
+        let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
+        now = 500
+        timing.advance(displayTime: now + step)
+        // 直後 (予定の時刻に届く前) に止めて再開する
+        now = 500 + step * 0.2
+        timing.resync()
+        let reached = timing.time
+        now = 500 + step * 0.4
+        timing.advance(displayTime: now + step)
+        #expect(timing.time >= reached)
+        // 経過は、前の枚の予定の時刻から次の予定の時刻まで以上にならない (戻していれば 0.2 刻みぶん余計)
+        #expect(timing.deltaTime <= Float(step) + 1e-6, "deltaTime が \(timing.deltaTime)")
+    }
+
+    @Test("フレームの時計は、表示の予定の時刻を読まない")
+    func theFrameClockIgnoresTheDisplayTime() {
+        let plain = FrameTiming(clock: .frameIndex(frameRate: 60), frameRate: 60, now: { 0 })
+        let shown = FrameTiming(clock: .frameIndex(frameRate: 60), frameRate: 60, now: { 0 })
+        for target in targets(10, skipping: [3, 7]) {
+            plain.advance()
+            shown.advance(displayTime: target)
+            #expect(plain.time == shown.time)
+            #expect(plain.deltaTime == shown.deltaTime)
+        }
+    }
+
     // MARK: - 同じ入力から同じ状態 (完了条件 2)
 
     /// 跳ねる球の状態。`deltaTime` で積むので、刻みが揺れれば状態も揺れる。
