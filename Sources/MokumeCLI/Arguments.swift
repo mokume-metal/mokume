@@ -35,14 +35,18 @@ enum Arguments {
         /// 語は値に取らず、元の位置のまま読む (`doctor -c /path/to/sketch` の場所を値に食わない)。
         /// 値を使う口は取った後に自分の言い方で断るので、そちらは変えない。
         let accepts: ((String) -> Bool)?
+        /// 値を取らない旗か (`--keep-time`)。打たれていれば ``Parsed/values`` に `"true"` が載り、
+        /// 次の語は読み飛ばさない (位置引数のまま読む)。**値が欠ける誤りは無いので、``missingValue`` は使わない。**
+        let isSwitch: Bool
 
         init(
             _ flags: [String], takesPlace: Bool = false, accepts: ((String) -> Bool)? = nil,
-            missingValue: @escaping (String) -> String
+            isSwitch: Bool = false, missingValue: @escaping (String) -> String
         ) {
             self.flags = flags
             self.takesPlace = takesPlace
             self.accepts = accepts
+            self.isSwitch = isSwitch
             self.missingValue = missingValue
         }
 
@@ -113,7 +117,8 @@ enum Arguments {
     private static func separatedSpelling(of argument: String, in options: [Option]) -> String? {
         guard let equals = argument.firstIndex(of: "=") else { return nil }
         let flag = String(argument[..<equals])
-        guard options.contains(where: { $0.flags.contains(flag) }) else { return nil }
+        // 値を取らない旗に `=` で値を付けても、空白で区切る案内は誤り (区切る値が無い)。知らない綴りとして断る
+        guard options.contains(where: { $0.flags.contains(flag) && !$0.isSwitch }) else { return nil }
         let value = String(argument[argument.index(after: equals)...])
         // 値は貼って動く 1 語にする (#2320 の規律)。空白入りの `'my take.mov'` を裸で書くと、
         // 案内どおりに打って別の誤りになる
@@ -135,6 +140,12 @@ enum Arguments {
             let argument = arguments[index]
             if let option = options.first(where: { $0.flags.contains(argument) }) {
                 index += 1
+                if option.isSwitch {
+                    // 値を取らない旗。次の語は読み飛ばさない
+                    parsed.values[option.key] = "true"
+                    if case .ignore = surplus { parsed.setAside.append(argument) }
+                    continue
+                }
                 if case .ignore = surplus {
                     // 使われない選択肢。値は取るが、止まらない (切り分けの口は止まらない)
                     if index < arguments.count, !arguments[index].hasPrefix("-"),

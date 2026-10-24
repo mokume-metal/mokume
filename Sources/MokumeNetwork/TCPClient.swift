@@ -13,7 +13,7 @@ import MokumeDiagnostics
 /// final class Remote: Sketch {
 ///     var link: TCPClient?
 ///     var size: Float = 0.5
-///     func setup() { link = try? createTCPClient("127.0.0.1", 7000) }
+///     func setup() throws { link = try createTCPClient("127.0.0.1", 7000) }
 ///     func draw() {
 ///         for line in link?.messages ?? [] { size = Float(line) ?? size }
 ///         background(20)

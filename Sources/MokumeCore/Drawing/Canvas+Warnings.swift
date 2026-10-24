@@ -138,6 +138,8 @@ extension Canvas {
         case roundedMonochromeAmount
         case roundedVignetteAmount
         case roundedFringeAmount
+        /// ``Effect/threshold(level:)`` の `level` が 0…1 の外で、端へ締めた。
+        case roundedThresholdLevel
         /// 効果の `radius` が ``Effect/maxRadius`` を越え、そこへ締めた ([#1842])。
         ///
         /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
@@ -147,8 +149,23 @@ extension Canvas {
         ///
         /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
         case effectsOutsideFrame
-        /// 効果を通せなかった。
+        /// 効果を通せなかった (フレームの終わりの ``Canvas/effects(_:)``)。
         case effectFailed
+        /// ``Canvas/filter(_:)`` が、持ち越しを約束する区間の外で呼ばれた。置いたもの (``OutsideFrame/placing``) と
+        /// 同じ区間で許すので、シーンの記述の鍵 (``effectsOutsideFrame``) とは分ける — 直す先の言い方が違う。
+        case filterOutsideFrame
+        /// ``Canvas/filter(_:)`` が効果を通せなかった。``effectFailed`` と文面が違う (こちらは絵がそのまま残る)。
+        case filterFailed
+        /// ``Canvas/filter(_:)`` が呼んだ投入を、GPU が打ち切った。絵は掛ける前のまま残る (打ち切られた投入は
+        /// 1 画素も書かない)。
+        case filterDropped
+        /// 受け口の注意 (``badEffect``・`rounded…`) を、``Canvas/effects(_:)`` ではなく ``Canvas/filter(_:)`` と
+        /// ``Image/filtered(_:)`` の口から言うときの鍵。**口ごとに鍵を分ける** — `effects()` で 1 度出した注意が、
+        /// 同じ面の `filter()` の注意を面の寿命のあいだ黙らせない (失敗の鍵と区間の外の鍵を分けたのと同じ理由)。
+        /// 文面は呼んだ口の名前を名乗るので、どちらの口の書き違えかを指さす。
+        indirect case filterSide(Warning)
+        /// 作業の面を作れず、``Image/filtered(_:)`` が効果を掛けない写しを返した。大きさごとに 1 度だけ言う。
+        case filteredWorkspaceUnavailable
         /// GPU が打ち切った効果のフレームの後に、次のフレームがもう戻していた ([#2388])。効果が焼き込まれたまま
         /// 残りうる。
         ///
@@ -479,6 +496,7 @@ extension Canvas {
         case cameraInsideShape
         case clipInsideShape
         case effectsInsideShape
+        case filterInsideShape
         case lightInsideShape
         case surroundingsInsideShape
         case shadowInsideShape

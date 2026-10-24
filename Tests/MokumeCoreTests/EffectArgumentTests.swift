@@ -135,7 +135,7 @@ struct EffectArgumentTests {
 
     // MARK: - 数でない値・無限 (完了条件 1・2)
 
-    /// 組み込みの効果の引数 1 つ。**11 個全部を並べる** — 範囲を決めていない引数
+    /// 組み込みの効果の引数 1 つ。**12 個全部を並べる** — 範囲を決めていない引数
     /// (`threshold` と `adjust` の 3 つ) も、非有限なら同じく外す。
     enum Argument: CaseIterable, CustomTestStringConvertible {
         case blurRadius
@@ -149,6 +149,7 @@ struct EffectArgumentTests {
         case adjustBrightness
         case adjustContrast
         case adjustSaturation
+        case thresholdLevel
 
         var testDescription: String { "\(self)" }
 
@@ -166,6 +167,7 @@ struct EffectArgumentTests {
             case .adjustBrightness: .adjust(brightness: value)
             case .adjustContrast: .adjust(contrast: value)
             case .adjustSaturation: .adjust(saturation: value)
+            case .thresholdLevel: .threshold(level: value)
             }
         }
     }
@@ -239,7 +241,7 @@ struct EffectArgumentTests {
     /// 効果と量ごとの鍵。
     private static let roundingKeys: [Canvas.Warning] = [
         .roundedBlurRadius, .roundedBloomAmount, .roundedBloomRadius, .roundedInvertAmount,
-        .roundedMonochromeAmount, .roundedVignetteAmount, .roundedFringeAmount,
+        .roundedMonochromeAmount, .roundedVignetteAmount, .roundedFringeAmount, .roundedThresholdLevel,
     ]
 
     /// #1544 は「締めるときは言わない」(#1478 の不透明度と同じ) だった。#1842 (案 A) で改め、締めたら言う。
@@ -251,7 +253,7 @@ struct EffectArgumentTests {
             Self.scene(on: canvas)
             canvas.effects([
                 .invert(amount: 3), .vignette(amount: -1), .monochrome(amount: 2), .fringe(amount: 4),
-                .bloom(amount: 7, threshold: 0.2, radius: 1e9), .blur(radius: 1e9),
+                .bloom(amount: 7, threshold: 0.2, radius: 1e9), .blur(radius: 1e9), .threshold(level: 3),
             ])
             // 2 度目は言わない。別の値でも文面は最初のまま
             canvas.effects([.invert(amount: 100)])
@@ -264,6 +266,7 @@ struct EffectArgumentTests {
             (.roundedBloomAmount, "effects(): the bloom amount takes 0 to 1, but 7.0 was passed, so 1 was used"),
             (.roundedBloomRadius, "effects(): the bloom radius takes up to 131072, but 1e+09 was passed, so 131072 was used"),
             (.roundedBlurRadius, "effects(): the blur radius takes up to 131072, but 1e+09 was passed, so 131072 was used"),
+            (.roundedThresholdLevel, "effects(): the threshold level takes 0 to 1, but 3.0 was passed, so 1 was used"),
         ]
         for (key, message) in expected {
             #expect(canvas.warnings.message(for: key) == message, "\(key)")
@@ -296,6 +299,7 @@ struct EffectArgumentTests {
             (Argument.monochromeAmount, Float(2)),
             (Argument.fringeAmount, Float(3)),
             (Argument.bloomAmount, Float(3)),
+            (Argument.thresholdLevel, Float(2)),
         ])
     func clampsTheAmountToOne(argument: Argument, amount: Float) throws {
         let canvas = try makeCanvas()

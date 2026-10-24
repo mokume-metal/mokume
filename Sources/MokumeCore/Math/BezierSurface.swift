@@ -33,7 +33,7 @@
 /// で繋いだものも同じ式である。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func bezierPoint(
+public nonisolated func bezierPoint(
     _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
     _ t: some ScalarConvertible
 ) -> Float {
@@ -71,7 +71,7 @@ public func bezierPoint(
 ///
 /// **0…1 の外は締めない** (``bezierPoint(_:_:_:_:_:)`` と同じ)。数でない値・無限の値が混じった
 /// ときは 0 を返し、注意は 1 度だけ言う。
-public func bezierTangent(
+public nonisolated func bezierTangent(
     _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
     _ t: some ScalarConvertible
 ) -> Float {

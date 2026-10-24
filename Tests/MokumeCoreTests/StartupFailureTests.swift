@@ -67,6 +67,7 @@ struct StartupFailureTests {
         ("samplerUnavailable", .samplerUnavailable),
         ("notRunning", .notRunning(call: "createGraphics(_:_:)")),
         ("unreadableRenderRequest", .unreadableRenderRequest(value: "not a request")),
+        ("setupFailed", .setupFailed(reason: "\"cat.png\" was not found\nCheck the file name")),
     ]
 
     /// リポジトリ直下。原文を読む検査が使う。

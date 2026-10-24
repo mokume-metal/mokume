@@ -936,6 +936,15 @@ public final class Canvas {
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     var carriedAwaitingOutcome: [UInt64: Bool] = [:]
+    /// ``filter(_:)`` の投入のうち、結末がまだ届いていないもの。打ち切られたら知らせ (``filterDropped(_:)``)、
+    /// 届いたら手放す。
+    var filterSubmissions: Set<UInt64> = []
+    /// 検査の差し込み: ``filter(_:)`` が自分の投入を積む直前に呼ぶ。途中の描き切りも投入を 1 本積むので、
+    /// 「次の投入を打ち切る」差し込みを手前から仕掛けると、そちらに当たる。
+    var beforeFilterCommitForTesting: (() -> Void)?
+    /// ``Image/filtered(_:)`` が効果を通す作業の面のうち、この面が持つもの (``holdFilterWorkspace(_:)``)。
+    /// 新しい絵に掛けるたびに面を作り直さないために、走っているスケッチの面が持ち続ける。
+    var filterWorkspaces: [Canvas] = []
 
     /// 効果を通した絵を書いた投入が、面をどう取り替えたかの記帳 ([#2388])。
     ///
@@ -3818,11 +3827,12 @@ public final class Canvas {
     /// (``keepPicture(placedFrom:)``)。
     ///
     /// **自分の出す先 (``output``) を書く口は、書く前に必ずここを通る** ([#1942])。描き切り
-    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 5 つある:
+    /// (``flush(applyingEffects:mirroringPixels:)``) のほかに、描き切りの外で出す先を書く口が 6 つある:
     /// 細かさを下げた面の追い付き (``catchUpOutput()``)・細かさ 1 の面の書き戻し
     /// (``writeBackPendingPixels()``)・出力段の書き戻し (``RenderTarget/encodeToImage()`` ほか)・
     /// 出す先を直に塗る ``RenderTarget/fill(with:)``・打ち切られた投入の面の取り替えの取り消し
-    /// (``carryDropped(_:)``・[#2388])。新しい口を足すときは、書く前にここを通す。
+    /// (``carryDropped(_:)``・[#2388])・呼んだ時点で効果を掛けて描く先へ書き戻す ``filter(_:)``
+    /// (``applyFilter(_:)``・[#2455])。新しい口を足すときは、書く前にここを通す。
     /// **この列挙は出す先を書く口の登録簿で**、通し忘れは、出す先を書く最下層が呼ぶ検算
     /// (`RenderTarget.assertPlacersSettledBeforeWriting()`) が debug の検査で捕まえる。
     /// 写しを取るのは出す先が実際に変わる口だけで、変えていない口は呼ばない (ADR-0023 決定 5)。
@@ -3834,6 +3844,7 @@ public final class Canvas {
     /// [#2042]: https://github.com/mokume-metal/mokume/issues/2042
     /// [#2103]: https://github.com/mokume-metal/mokume/issues/2103
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     func settlePlacersBeforeChange() {
         guard !placers.isEmpty else { return }
         // **先に空にする。** 描き切らせた先から置き直されることがあるので、
@@ -4204,6 +4215,9 @@ public final class Canvas {
         let startsFrame = passesThisFrame == 0 && drawsInFrame
         let restoresCarry = carriesPictureBeforeEffects && startsFrame && pendingBackground == nil
         let changesTarget = hasPendingDrawing || target.hasPendingPixelWrites || restoresCarry
+        // **GPU に頼む仕事が 1 つも無い描き切りか** ([#2787])。そうなら描く先の絵は 1 画素も変わらないので、
+        // 置いた側への写させも、パスも投入も要らない
+        let skipsThisFlush = skipsFlush(mirroringPixels: mirroringPixels, changesTarget: changesTarget)
         //
         // **置かれるのは出す先 (``output``) なので、出す先が変わる描き切りで写させる** (#1656)。細かさを
         // 下げた面の出す先は、描き切りの中ではフレームの終わりの拡大でしか変わらない (途中の描き切りは描く
@@ -4226,8 +4240,12 @@ public final class Canvas {
         //
         // [#1469]: https://github.com/mokume-metal/mokume/issues/1469
         // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
+        // **出す先を書かない描き切りは写させない** ([#2787])。置いた側の写しを使わず、区切りも入れない。
+        // 置いた側は、自分の絵が次に変わる前に写させる (``placers`` は残る)
+        //
         // [#2103]: https://github.com/mokume-metal/mokume/issues/2103
-        if applyingEffects || upscaleStage == nil || !isDrawing || changesTarget {
+        // [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+        if !skipsThisFlush, applyingEffects || upscaleStage == nil || !isDrawing || changesTarget {
             settlePlacersBeforeChange()
         }
         isFlushing = true
@@ -4238,6 +4256,15 @@ public final class Canvas {
         closeBatch()
         for batch in batches { batch.run.prepareSurfaces() }
         if let failureForTesting { throw failureForTesting }
+        // **GPU に頼む仕事が 1 つも無い描き切りは、パスも投入も作らない** ([#2787])。描く先の絵は
+        // 1 画素も変わらない。環を進めて待つことも、置き場に書くこともしない (書くものが無い)
+        //
+        // [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+        if skipsThisFlush {
+            skipFlush(applyingEffects: applyingEffects)
+            discardAfterFlush(applyingEffects: applyingEffects)
+            return
+        }
         // **書く前に、環を 1 つ進めて待つ。** ここから先は GPU 可視メモリへ CPU が書く
         // (頂点・列ごとの値・効果の値・数の並びと画像の控え・置き場の取り直し)。書き先は
         // これから進むスロットの置き場なので、待つのは**そのスロットを最後に読んだ投入**
@@ -4536,6 +4563,12 @@ public final class Canvas {
         // 分も捨てる)。フレームの終わりの描き切り (効果を通す) は持ち越さない
         //
         // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
+        discardAfterFlush(applyingEffects: applyingEffects)
+    }
+
+    /// 描き切りの後に溜めたものを捨てる。**投入した描き切りも、投入を省いた描き切り
+    /// (``skipsFlush(mirroringPixels:changesTarget:)``) も同じここを通る。**
+    private func discardAfterFlush(applyingEffects: Bool) {
         var kept = FrameCasters()
         if !applyingEffects {
             swap(&kept, &frameCasters)
@@ -4543,6 +4576,75 @@ public final class Canvas {
         }
         discardFrame()
         if !applyingEffects { frameCasters = kept }
+    }
+
+    /// 組み立ての段ごとの「積むか」。**段の入口の守りと、省く判定 (``skipsFlush(mirroringPixels:changesTarget:)``)
+    /// が、同じここを読む** ([#2787])。段を足すときは述語をここへ足し、段の守りと判定の両方から読む —
+    /// 判定にだけ足し忘れた段の仕事は、省いた描き切りの片付け (``discardFrame()``) で黙って捨てられる。
+    ///
+    /// - 計算の段 (``encodeComputations(into:)``): 頼まれた計算がある
+    /// - 控えを届ける段 (``encodeUploads(into:)``): 届けていない書き込みがある
+    /// - 効果の段 (``encodeEffects(into:)``): 頼まれた効果がある
+    /// - 拡大の段 (``applyUpscale(into:)``): 拡大の段を持つ面である
+    ///
+    /// [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+    var encodesComputations: Bool { !pendingComputations.isEmpty }
+    var encodesUploads: Bool { !gpu.pendingUploads.isEmpty }
+    var encodesEffects: Bool { !pendingEffects.isEmpty }
+    var encodesUpscale: Bool { upscaleStage != nil }
+
+    /// この描き切りが、GPU に頼む仕事を 1 つも持たないか ([#2787])。持たなければ、描く先へのパスも
+    /// 投入も作らない。
+    ///
+    /// **仕事を持つのは、次のどれか。1 つでも当たれば省かない** — 描く先を変えるもの
+    /// (図形・背景・書き戻す画素・効果を通す前の絵の戻し。``flush(applyingEffects:mirroringPixels:)``
+    /// の `changesTarget` が数える。控えへも加える変更 (``changesGoIntoCarry``) は、どれも描く先を変える
+    /// ので、これに含まれる)・組み立ての段が積むもの (上の ``encodesComputations`` ほか)・粒の進め・
+    /// 画素の読み戻し・検査が差し込んだ失敗。拡大の段を持つ面は、**空間方向で、出す先が描く先を広げた
+    /// 最新の絵のとき**だけ省く (``targetChangedSinceUpscale``)。時間方向は、揺らしと履歴を毎フレーム進める
+    /// ので省かない。
+    /// **溜めた列の数 (``drawCallsInLastFrame``) だけでは決めない。** 背景だけ・計算だけ・書き戻しだけ・
+    /// 効果だけのフレームも仕事を持つ。
+    ///
+    /// 省いても、フレームの意味 (時計・描き切った回数・溜めたものの片付け・失敗の受け戻し) は
+    /// 投入した描き切りと同じに進める。省くのは**描く先の絵が 1 画素も変わらない**描き切りだけなので、
+    /// 引き継ぐ奥行きの扱いだけは別に写す (``skipFlush(applyingEffects:)``)。
+    ///
+    /// [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+    private func skipsFlush(mirroringPixels: Bool, changesTarget: Bool) -> Bool {
+        guard !changesTarget, !mirroringPixels, failureForTesting == nil,
+            !encodesComputations, !encodesUploads, !encodesEffects,
+            particleAdvancesThisFrame.isEmpty
+        else { return false }
+        guard encodesUpscale, let stage = upscaleStage else { return true }
+        return stage.history == nil && !targetChangedSinceUpscale
+    }
+
+    /// 仕事を持たない描き切りの記帳。投入した描き切りの末尾 (``flush(applyingEffects:mirroringPixels:)``) が
+    /// 書くもののうち、投入に拠らないものを同じ値にする ([#2787])。
+    ///
+    /// 奥行きは、引き継ぐ奥行きを持つ描き切りが省かれても面に残る。**フレームの終わりの描き切りは
+    /// 奥行きを捨てるので、引き継ぎを切る** (投入した描き切りの `depthIsHeld` と同じ)。拡大の段を持つ面は、
+    /// 出す先が最新のときだけ省く (``skipsFlush(mirroringPixels:changesTarget:)``) ので、拡大より後に
+    /// 描く先が変わった印 (``targetChangedSinceUpscale``) も、置く口の追い付きの見送り
+    /// (``placingCatchUpDeferred``) も、省く前から下りている。
+    ///
+    /// [#2787]: https://github.com/mokume-metal/mokume/issues/2787
+    private func skipFlush(applyingEffects: Bool) {
+        assert(
+            upscaleStage == nil || !targetChangedSinceUpscale,
+            "A flush is not skipped on a surface whose drawing target changed after the last upscale")
+        drawCallsInLastFrame = 0
+        drawsEncodedInLastFrame = 0
+        flatVerticesInLastFrame = vertices.count
+        flatOutlinesInLastFrame = outlinesAssembledThisFrame
+        outlinesAssembledThisFrame = 0
+        pointScansInLastFrame = pointScansThisFrame
+        pointScansThisFrame = 0
+        passesThisFrame += 1
+        // 届けるものが無い持ち主 (逃げ道で直接書いた・手放された) は、投入しない描き切りでも降ろす
+        gpu.pendingUploads.dropFinishedOwners()
+        if applyingEffects { depthIsHeld = false }
     }
 
     /// この描き場所の面のうち、投入が中身を書き換えるもの ([#1932])。
@@ -5840,7 +5942,11 @@ extension Canvas: SettlementObserver {
     /// 後の投入が上書きする。
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
         let restoredOver = carriedAwaitingOutcome.removeValue(forKey: submission) ?? false
+        // `filter()` の投入は、届いたら手放す。打ち切られていたら知らせる (戻すものは無い)
+        let wasFilter = filterSubmissions.contains(submission)
+        if !dropped { filterSubmissions.remove(submission) }
         guard dropped else { return }
+        if wasFilter { filterDropped(submission) }
         shadowBakeDropped(submission)
         upscaleDropped(submission)
         carryDropped(submission)

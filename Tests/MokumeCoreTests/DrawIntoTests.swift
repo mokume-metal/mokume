@@ -245,6 +245,20 @@ struct DrawIntoTests {
         #expect(result.runtime.canvas.pendingEffects.isEmpty)
     }
 
+    @Test("閉包の中の filter() は描き場所の絵にその場で掛かり、本体の絵には掛からない (#2455)")
+    func filterGoesToThePad() throws {
+        let result = try run { probe in
+            probe.draw(into: probe.layer!) {
+                probe.background(255)
+                probe.filter([.invert()])
+            }
+        }
+        let layer = try image(of: result.probe.layer)
+        #expect(layer[10, 10] == (0, 0, 0, 255), "描き場所の白が反転していない")
+        let main = try image(of: result.runtime.canvas)
+        #expect(main[10, 10].red < 100, "本体の下地が反転した")
+    }
+
     @Test("閉包の中の orbitControl() は描き場所の視点を書き、本体の視点は変えない")
     func orbitControlWritesThePadCamera() throws {
         var padCenter: Float = -1

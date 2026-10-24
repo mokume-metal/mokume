@@ -10,7 +10,7 @@
 /// final class Remote: Sketch {
 ///     var osc: OSCPort?
 ///     var size: Float = 0.5
-///     func setup() { osc = try? createOSC(listen: 9000) }
+///     func setup() throws { osc = try createOSC(listen: 9000) }
 ///     func draw() {
 ///         for message in osc?.messages ?? [] where message.address == "/size" {
 ///             size = message.float(0) ?? size

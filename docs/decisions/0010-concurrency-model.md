@@ -67,7 +67,17 @@ SPDX-License-Identifier: MIT
 
 **代償:** 同じ値型に、どこからでも呼べるメンバーと main だけのメンバーが混ざる。学生のスケッチは main で動くので、書き味には出ない。スケッチを書く人が並行性の注釈を書かないこと (上の決定と影響節の受け入れ検査) は変わらない。
 
-**範囲の外:** 既存の関数 (`map`・`lerp`・`color`・`noise`) を main actor の外へ出すかは、ゲームの方向と独立しているので [#2389](https://github.com/mokume-metal/mokume/issues/2389) で決める。
+#### 改訂 (2026-10-23) — 値だけを扱う数と色の関数も main actor の外に置く ([#2389](https://github.com/mokume-metal/mokume/issues/2389))
+
+上の改訂は、既存の関数 (`map`・`lerp`・`color` など) を main actor の外へ出すかを範囲の外に置いた。**決めた: 値を受けて値を返すだけのトップレベルの数と色の関数は `nonisolated` にする。** 対象は `map`・`lerp`・`constrain`・`norm`・`smoothstep`・`radians`・`degrees`・`damp`・`pingpong`・`lerpAngle`・`dist`・`mag`・`sq`・`fract`・`mod`・`bezierPoint`・`bezierTangent`、`color` の各口・`lerpColor`・`paletteLerp`、色の成分の読み出し (`red` ほか・`hue` ほか)、原色の移し替えを通る `LinearRGBA.display(...)`、作業空間の画素を表示形式へ移す `OutputStage.encode(_:)`、円周率の定数 (`PI` ほか) である。
+
+- **隔離が要る理由は、注意を 1 度だけ言う記録だけだった。** 記録 (`NumberValues`・`ColorValues`・`PaletteValues` の `warnings`) は `static var` で、main actor でしか触れなかった。`Mutex` で守る控え (`SharedWarningLog`) に替え、複数のスレッドから同時に言っても注意は 1 度だけ出る。スケッチを書く人の書き味は変わらない
+- **理由は実測にある。** 1080p の全画素を `noise`→`map`→`color` で埋めるループは、main の 1 本で 169 ms、写しを `concurrentPerform` で 64 分割すると 11.3 ms だった (#2389 の 2026-10-12 のコメント)。並列にできる口が無いと、画素を計算する仕事を P コアと E コアに分けられない。いちばん使われる `map` と `color` が main 隔離だったことが、その邪魔になっていた
+- **範囲:** スケッチの状態 (描く状態・`noise` の種と細かさ) を読む `Sketch` / `Canvas` / `SketchPart` のメンバーは main actor に残る。`noise` のメソッドは種を読むので、並列から呼べない。値で持つ揺らぎは新しい値型として #2418 が決める (上の改訂のとおり `nonisolated` で生まれる)
+- **これは明示的に選ぶ人向けの道である** ([ADR-0001](0001-founding-principles.md) 原則 1)。スケッチは変わらず注釈なしで書ける。`concurrentPerform` に渡す閉包は `@Sendable` になり、スケッチの口を呼ぶ main actor の閉包を渡すと実行時の隔離の検査で落ちる (SE-0423)。`map` の説明文がこれを名乗る
+
+退けた案: **しない。** 並列に回したい人は値型 (`Vector2` など) と値の揺らぎで書き、`map`・`color` は自前で写す。写しを 1 本で回すだけでも 18% 速かった (139 対 169 ms) うえ、写しはライブラリとの一致を人が保つことになる。**代償:** 数と色の関数の隔離が、同じ名前のメソッド (`noise` ほか) と食い違う。
+
 
 ### 2. 暗黙のアクティブコンテキストは main actor 隔離のグローバルとして正式化する
 
@@ -87,13 +97,9 @@ GPU コマンドの生成、書き出し、観測、アセット読み込みな�
 
 **当初の見出しと文言は、`Task` / `TaskGroup` を structured concurrency の例に挙げていた。** 決定の中身 (分離する・境界を越える値は `Sendable`・`DispatchQueue` を新たに導入しない) は変えず、`Task {}` が非構造化だと分かる言葉に直しただけである。見出しの綴りの経緯は [history/0010.md](history/0010.md)。
 
-#### 改訂 (2026-10-03) — 例外は 1 本ではなくなった。条件で認める
+#### 例外は 1 本ではなくなった。条件で認める
 
 **現行の扱い: OS の受け口が待ち行列やスレッドを決めるものは、[ADR-0042](0042-camera-and-audio-standard.md) 決定 7 の条件をすべて満たすときに限って認める。** 条件は、受ける点でしかないこと・境界を越えるのが `Sendable` な値か合図だけであること・利用者に漏らさないこと・realtime スレッドで確保もロック待ちも dispatch もしないこと・置くのは本体の上に載る別ターゲットだけであること、の 5 つである。**MokumeCore の中の例外は、ファイルの見張り 1 本 (追補 (2026-09-09)。[history/0010.md](history/0010.md)) のまま増やさない。**
-
-**追補 (2026-09-09。[history/0010.md](history/0010.md)) は、ファイルの見張りを「この決定に対する唯一の例外」と数えていた。** カメラと音を標準の機能に入れると ([ADR-0041](0041-standard-scope-map.md))、その数え方が成り立たなくなった。カメラの受け取り (`AVCaptureVideoDataOutput`) は待ち行列を引数に取り、音の入力と出力は OS の realtime スレッドで呼ばれる。どちらも、ファイルの見張りと同じく**並列の設計ではなく OS の受け口の形**で、「渡さない」「呼ばれない」は選べない。
-
-**理由は動いていない。** 禁じているのは自前の並列を待ち行列で組むことで、その追補が挙げた守り (受ける点でしかない・値を渡さない・callback を漏らさない) は ADR-0042 決定 7 の条件にそのまま入っている。変わったのは、例外を 1 本ずつ数える形から、条件で認める形にしたことだけである。
 
 ### 5. 継続的な値の流れは AsyncSequence を一級 API とする
 

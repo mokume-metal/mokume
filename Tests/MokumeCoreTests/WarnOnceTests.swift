@@ -38,6 +38,10 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
     .effects:
         "Effects are written again every frame, so call this from draw(). This was "
             + "called outside a frame, so it belongs to no frame, and was ignored",
+    .filter:
+        "filter() applies to the picture drawn so far, so call it in setup(), draw() or an "
+            + "input callback, or between beginDraw() and endDraw() on a drawing target. This "
+            + "was called outside all of them, so it belongs to no frame, and was ignored",
     .light:
         "Lights are placed again every frame, so call this from draw(). This was "
             + "called outside a frame, so it belongs to no frame, and was ignored",
@@ -97,6 +101,7 @@ struct OutsideFrameNoticeTests {
             .style: "Pushing and popping style only works inside a frame",
             .clip: "The clip is written again every frame",
             .effects: "Effects are written again every frame",
+            .filter: "filter() applies to the picture drawn so far, inside a frame",
             .light: "Lights are placed again every frame",
             .surroundings: "The surroundings are placed again every frame",
             .shadow: "Shadows are written again every frame",
@@ -148,14 +153,18 @@ struct OutsideFrameNoticeTests {
     /// `noLights()`、視点なら `perspective()`・`ortho()`、スタイルなら `popStyle()`、粒なら
     /// `force()`・`particles()` も使う。そこで 12 種とも同じ「呼ばれた」の 1 文にそろえた。
     ///
-    /// 置くことと画素を書くことの 2 文 ([#1672]) は、置ける場面として `setup()` を挙げるので除く。
+    /// 置くことと画素を書くことの 2 文 ([#1672]) と、掛けた絵が残る ``Canvas/filter(_:)`` の 1 文 ([#2455]) は、
+    /// 置ける場面として `setup()` を挙げるので除く。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     /// [#2723]: https://github.com/mokume-metal/mokume/issues/2723
     /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
     @Test("シーンの記述の文は、断った場面を setup と決め打ちせず、どの口でも真の 1 文でフレームの外と言う")
     func sceneNoticesDoNotNameSetupAsTheScene() {
-        let scene = Canvas.OutsideFrame.allCases.filter { $0 != .placing && $0 != .pixelWrite }
+        let scene = Canvas.OutsideFrame.allCases.filter {
+            $0 != .placing && $0 != .pixelWrite && $0 != .filter
+        }
         #expect(scene.count == 12, "シーンの記述の種類が変わった — この検査の範囲を見直す")
         for subject in scene {
             #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")

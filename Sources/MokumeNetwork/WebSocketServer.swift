@@ -14,7 +14,7 @@ import MokumeCore
 /// final class Remote: Sketch {
 ///     var socket: WebSocketServer?
 ///     var size: Float = 0.5
-///     func setup() { socket = try? createWebSocketServer(8025) }
+///     func setup() throws { socket = try createWebSocketServer(8025) }
 ///     func draw() {
 ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
 ///         circle(width / 2, height / 2, size * height)

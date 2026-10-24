@@ -171,3 +171,77 @@ struct PosixReasonTests {
         #expect(written == .unwritable(path: out, reason: String(cString: strerror(EACCES))))
     }
 }
+
+/// 失敗の文面の読み方は ``Diagnostics/failureText(_:)`` の 1 つ ([#2401])。
+///
+/// 読む順は POSIX → `NSError` → 自前の `CustomStringConvertible` → `LocalizedError` → 素の説明。
+/// **`NSError` を自前の説明より先に外す** — `NSError` 自身が `CustomStringConvertible` で、先に読むと
+/// `Error Domain=… UserInfo={… 0x…}` のダンプが文面になる。
+///
+/// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+@Suite("失敗の文面の読み方")
+struct FailureTextTests {
+    struct Described: Error, CustomStringConvertible {
+        var description: String { "my own failure\nfix it and run again" }
+    }
+
+    struct Localized: LocalizedError {
+        var errorDescription: String? { "the disk is full" }
+        var failureReason: String? { "no room left" }
+        var recoverySuggestion: String? { "free some space and run again" }
+    }
+
+    /// 理由も次の一手も無く、説明だけを持つ。
+    struct OnlyDescription: LocalizedError {
+        var errorDescription: String? { "just this" }
+    }
+
+    @Test("NSError は構造体のダンプにせず、POSIX の事情があれば C の文面、無ければ localizedDescription")
+    func anNSErrorIsNeverDumped() {
+        let foreign = NSError(domain: "tests", code: 7, userInfo: [NSLocalizedDescriptionKey: "it broke"])
+        #expect(Diagnostics.failureText(foreign) == "it broke")
+        let posix = PosixReasonTests.nested(EACCES)
+        #expect(Diagnostics.failureText(posix) == String(cString: strerror(EACCES)))
+    }
+
+    @Test("Foundation が読み込みで返す失敗 (NSError) も、ダンプではなく人が読む文になる")
+    func aFileReadFailureReadsAsASentence() throws {
+        let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/x.txt")
+        var thrown: (any Error)?
+        do { _ = try String(contentsOf: missing, encoding: .utf8) } catch { thrown = error }
+        let text = Diagnostics.failureText(try #require(thrown))
+        #expect(!text.contains("Error Domain="), Comment(rawValue: text))
+        #expect(!text.contains("UserInfo"), Comment(rawValue: text))
+        #expect(!text.isEmpty)
+    }
+
+    @Test("自前の CustomStringConvertible は、その説明の全文")
+    func aDescribedErrorKeepsItsText() {
+        #expect(Diagnostics.failureText(Described()) == "my own failure\nfix it and run again")
+    }
+
+    @Test("LocalizedError は、説明・理由・次の一手を改行でつなぐ。無い段は飛ばす")
+    func aLocalizedErrorJoinsItsParts() {
+        #expect(
+            Diagnostics.failureText(Localized())
+                == "the disk is full\nno room left\nfree some space and run again")
+        #expect(Diagnostics.failureText(OnlyDescription()) == "just this")
+    }
+
+    @Test("reason(_:) は、自前の説明も 1 行にして型の名乗りを前に付ける")
+    func reasonFoldsASelfDescribedErrorIntoOneLine() {
+        #expect(Diagnostics.reason(Described()) == "Described: my own failure fix it and run again")
+    }
+
+    @Test("ImageWriteFailure の説明は 1 行 (走行中の警告に埋めても 1 行に保つ)")
+    func anImageWriteFailureReadsOnOneLine() throws {
+        let cases: [ImageWriteFailure] = [
+            .malformedImage(width: 2, height: 3, byteCount: 5),
+            .destinationUnavailable(path: "/x/a.png"), .writeFailed(path: "/x/a.png"),
+        ]
+        for failure in cases {
+            #expect(!failure.description.contains("\n"), Comment(rawValue: failure.description))
+            #expect(Diagnostics.failureText(failure) == failure.description)
+        }
+    }
+}

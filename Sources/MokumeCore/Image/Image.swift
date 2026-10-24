@@ -53,7 +53,7 @@ import simd
     /// GPU 側の面。
     let texture: any MTLTexture
     /// 送りを頼む先 (控えの登録簿) と、逃げ道で待つ相手。
-    private let gpu: RenderDevice
+    let gpu: RenderDevice
     /// 入力の控え (raw / CPU 半精度) が GPU 側より新しいか。
     ///
     /// **検査が読む。** 描き切りが待てずに送れなかったときは立ったままになり、次の
@@ -73,6 +73,10 @@ import simd
     private(set) var directUploads = 0
     /// 大きさの違う絵を渡されたことを、もう知らせたか。
     private var warnedMismatch = false
+    /// ``filtered(_:)`` が効果を通す作業の面のうち、この絵が最後に使ったもの。**大きさが同じ絵どうしで
+    /// 使い回す** (``FilterWorkspaces``) ので、この絵だけのものではない。持つのは、掛け終えた面がすぐ手放されて、
+    /// 次の呼び出しで作り直すことにならないため。注意を 1 度だけ言う控えは面が持つ。
+    var filterWorkspace: Canvas?
 
     /// 画素を渡して作る。
     init(width: Int, height: Int, pixels: [SIMD4<Float16>], gpu: RenderDevice) throws(
@@ -165,9 +169,9 @@ import simd
     /// ```swift
     /// private var video: Image?
     ///
-    /// func setup() {
+    /// func setup() throws {
     ///     // 面は 1 度だけ作る。書き込みでは大きさが変わらない
-    ///     video = try? createImage(320, 180)
+    ///     video = try createImage(320, 180)
     /// }
     ///
     /// func draw() {
@@ -215,7 +219,7 @@ import simd
     /// var camera: Capture?
     /// var shots: [Image] = []
     ///
-    /// func setup() { camera = try? createCapture() }
+    /// func setup() throws { camera = try createCapture() }
     ///
     /// func draw() {
     ///     background(0)
@@ -251,10 +255,10 @@ import simd
     /// 絵を PNG ファイルにして書く。Processing の `PImage.save()` に当たる。**書き終えてから返る。**
     ///
     /// ```swift
-    /// func setup() {
-    ///     guard let swatch = try? createImage(64, 64) else { return }
+    /// func setup() throws {
+    ///     let swatch = try createImage(64, 64)
     ///     swatch.fill(.linear(red: 1, green: 0.4, blue: 0.1))
-    ///     try? swatch.save("out/swatch.png")
+    ///     try swatch.save("out/swatch.png")
     /// }
     /// ```
     ///
@@ -281,19 +285,10 @@ import simd
             try FrameWriter.createParentDirectory(of: url)
             try PNGFile.write(picture, to: url)
         } catch let failure as ImageWriteFailure {
-            throw .unwritable(path: path, reason: Self.reason(of: failure))
+            throw .unwritable(path: path, reason: failure.description)
         } catch {
             // 置き場を作れない事情は OS の文面で名乗る (#2839 の 1 か所)
             throw .unwritable(path: path, reason: Diagnostics.reason(error))
-        }
-    }
-
-    private static func reason(of failure: ImageWriteFailure) -> String {
-        switch failure {
-        case .malformedImage(let width, let height, let byteCount):
-            "the picture is malformed (\(width)x\(height), \(byteCount) bytes)"
-        case .destinationUnavailable: "the destination could not be opened"
-        case .writeFailed: "the file could not be written"
         }
     }
 
@@ -323,7 +318,7 @@ import simd
     /// ```swift
     /// var camera: Capture?
     ///
-    /// func setup() { camera = try? createCapture() }
+    /// func setup() throws { camera = try createCapture() }
     ///
     /// func draw() {
     ///     guard let camera else { return }
@@ -337,7 +332,7 @@ import simd
     ///
     /// **`Image` は参照型なので、書き換えは同じ 1 枚を変える。** カメラの ``Capture/image`` のように
     /// 次のフレームで上書きされる絵に書いても、書いた分は次のフレームで消える。取っておくなら先に
-    /// ``copy()`` で写す。**絵ごとに効果を掛けて新しい絵を返す口 (`filtered(_:)`) とは違い、この口は
+    /// ``copy()`` で写す。**絵ごとに効果を掛けて新しい絵を返す口 (``Image/filtered(_:)``) とは違い、この口は
     /// 自分を変える** — ``set(_:_:_:)``・``fill(_:)``・``Pixels/update(_:)`` が揃って、同じ絵を書き換える。
     public var pixels: Pixels { Pixels(image: self) }
 

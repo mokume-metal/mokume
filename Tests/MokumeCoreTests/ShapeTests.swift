@@ -1503,6 +1503,9 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
     .effects:
         "Effects do nothing inside createShape { }. A shape cannot hold effects, so write them "
             + "before or after building the shape",
+    .filter:
+        "filter() does nothing inside createShape { }. It applies effects to the picture drawn "
+            + "so far, which a shape has not drawn yet, so call it before or after building the shape",
     .light:
         "Lights do nothing inside createShape { }. A shape cannot hold a light, so place it "
             + "before or after building the shape",

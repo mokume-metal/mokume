@@ -27,7 +27,7 @@ extension Canvas {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1882]: https://github.com/mokume-metal/mokume/issues/1882
     func applyUpscale(into commands: any MTL4CommandBuffer) -> Bool {
-        guard let stage = upscaleStage else { return true }
+        guard encodesUpscale, let stage = upscaleStage else { return true }
         do {
             try encodeUpscale(stage, into: commands)
             return true

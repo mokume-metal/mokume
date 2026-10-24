@@ -355,7 +355,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         _ = SharedFrameSurface.launchOwner
         // **置き場の元の合図も同じ** (#2517)。孫へ継がせない
         _ = ShaderOrigin.startup()
-        try self.init(sketch: sketch, gpu: gpu, render: try RenderRequest.startup())
+        // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
+        try self.init(
+            sketch: sketch, gpu: gpu, render: try RenderRequest.startup(),
+            handover: ClockHandover.startup())
     }
 
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
@@ -368,9 +371,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///   - render: 書き出しの頼み。`nil` ならいつもの窓の経路。
     ///   - displays: ディスプレイの一覧の出どころ (全画面で出す先を選ぶ・#2020)。既定はいま
     ///     繋がっているもの。**検査から差し替える。**
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time`・#2414)。**書き出しの頼みが
+    ///     在れば使わない** — 書き出しは 0 秒から、同じ引数から同じ動きを出す。
     init(
         sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        handover: ClockHandover? = nil
     ) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
@@ -389,7 +395,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         gpu.rebuildsShadersInBackground = render == nil
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
-            displays: displays, onScreen: render == nil, opensFacets: render == nil)
+            displays: displays, onScreen: render == nil, opensFacets: render == nil,
+            handover: Self.handover(given: handover, render: render))
         self.clock = runtime.clock
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         runtime.defersEnlargedGlyphBakes = render == nil
@@ -402,6 +409,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         super.init()
         screenLink.owner = self
         windowRelay.application = self
+        // `advance()` の外で `setup()` の失敗を見つけた回 (名乗りのメニューが進めた回) も、同じ道で終わらせる (#2401)
+        runtime.setupFailureHandler = { [weak self] failure in self?.stopForSetupFailure(failure) }
+    }
+
+    /// 作り直しをまたぐ時計の合図を、使うかどうか決める。**書き出しの頼みが在れば使わない** — 書き出しは
+    /// 0 秒から、同じ引数から同じ動きを出す ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
+    static func handover(given: ClockHandover?, render: RenderRequest?) -> ClockHandover? {
+        render == nil ? given : nil
     }
 
     /// アプリケーションとして走らせる。戻らない。
@@ -962,12 +977,33 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             defer { FrameSignposts.endPresent(presentInterval) }
             try presentFrame()
         } catch {
+            // **`setup()` が投げたなら、直らないので続けない** (#2401)。起動の失敗として全文を言って終わる
+            if case .setupFailed = error { return stopForSetupFailure(error) }
             // 1 フレーム描けなかったことでアプリケーションごと落とさない。
             // 次のリフレッシュでもう一度試す — ただし**黙って捨てない**
             noteFrameFailure(error)
             return
         }
         noteFrameRecovery()
+    }
+
+    /// ``Sketch/setup()`` が投げたので、起動できなかったことを言って 0 以外で終わる ([#2401])。
+    ///
+    /// 文面は組み立てが投げたとき (``Sketch/main()``) と同じ ``startupFailureText(_:)`` で、窓の経路も
+    /// 書き出し (`mokume render`) も同じになる。1 フレームも描いていないので、後始末する書き出しは無い。
+    /// 道具は終了コードで「書けたか」を読むので、0 以外で終わる (``exitProcess``)。
+    ///
+    /// **終わる前に差込口を閉じる** — `setup()` が投げる前に開いたカメラ・音・シリアル・ソケットを、通常の終わり
+    /// (``willTerminate()``) と同じに閉じる (ADR-0024 決定 7)。`exit` は後始末を通らないので、ここで済ませる。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private func stopForSetupFailure(_ failure: RenderFailure) {
+        guard !isTerminating else { return }
+        isTerminating = true
+        FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+        runtime.closePlugins()
+        screenLink.invalidate()
+        exitProcess(1)
     }
 
     /// 進めた 1 フレームを、与えられた出口へ差し出す。

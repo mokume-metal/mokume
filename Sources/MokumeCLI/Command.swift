@@ -103,9 +103,17 @@ enum Command {
                 )
             case .watch:
                 (
-                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>]",
+                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>] [--keep-time]",
                     """
                     Rebuild the sketch and swap it in whenever you save.
+                    Pass --keep-time to carry the sketch's clock across a rebuild: the new version starts
+                    from where the old one was (a time you stopped with pauseTime() stays stopped), instead
+                    of at 0. It carries only that clock's seconds and whether it is stopped, not frameCount,
+                    random numbers or anything built up from deltaTime; with clock .frames the time continues
+                    from the carried second while frameCount starts at 1 again, and a pauseTime(), playTime()
+                    or jumpTime() in setup() wins. If the old version crashed or had stopped drawing
+                    with noLoop(), the new one starts from the second it last wrote or last showed,
+                    without the time that passed. run and render always start at 0.
                     What it watches: Package.swift, every .swift under Sources/, and the regular files
                     under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
                     fragment is not rebuilt: it swaps in while the sketch keeps running.
