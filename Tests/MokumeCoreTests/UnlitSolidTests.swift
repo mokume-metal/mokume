@@ -176,8 +176,9 @@ struct UnlitSolidTests {
     // MARK: - 判定
 
     /// 判定の述語を、列を閉じたまま取り出して見る。
-    private func closedBatch(_ scene: (Canvas) -> Void) throws -> Canvas.Batch {
+    private func closedBatch(specializing: Bool = true, _ scene: (Canvas) -> Void) throws -> Canvas.Batch {
         let canvas = try makeCanvas()
+        canvas.specializesUnlitSolids = specializing
         var batch: Canvas.Batch?
         try canvas.draw {
             canvas.noStroke()
@@ -190,9 +191,9 @@ struct UnlitSolidTests {
 
     @Test("光も周囲も置かない立体の塗りの列だけが、特化で描く")
     func onlyUnlitSolidFillsAreSpecialized() throws {
-        let canvas = try makeCanvas()
+        var specializing = true
         func decide(_ scene: (Canvas) -> Void) throws -> Bool {
-            canvas.drawsUnlitSolid(try closedBatch(scene))
+            try closedBatch(specializing: specializing, scene).unlitSolid != nil
         }
         // 光も周囲も無い
         #expect(try decide { $0.box(20) })
@@ -205,7 +206,7 @@ struct UnlitSolidTests {
         // 平面は立体の列ではない
         #expect(try !decide { $0.rect(0, 0, 10, 10) })
         // 特化を止めれば使わない (検査が枝を残した断片と比べる口)
-        canvas.specializesUnlitSolids = false
+        specializing = false
         #expect(try !decide { $0.box(20) })
     }
 
@@ -221,12 +222,12 @@ struct UnlitSolidTests {
             canvas.closeBatch()
             batch = canvas.batches.last
         }
-        #expect(try !canvas.drawsUnlitSolid(#require(batch)))
+        #expect(try #require(batch).unlitSolid == nil)
     }
 
     // MARK: - 組む本数
 
-    @Test("光を置く絵は特化の組を 1 本も組まず、光を置かない絵は使う分だけ組む")
+    @Test("光を置いた列だけの絵は特化の組を 1 本も組まず、光を置かない列は使う分だけ組む")
     func buildsOnlyWhatTheFrameUses() throws {
         let canvas = try makeCanvas()
         let pipeline = canvas.pipeline
@@ -251,6 +252,110 @@ struct UnlitSolidTests {
             canvas.box(20)
         }
         #expect(pipeline.builtUnlitSolidStateCount == 1, "同じ組を組み直した")
+    }
+
+    /// 切り抜きを置いたままの `background(色)` は、面を置き換える板を列として積む。板は光を持たない
+    /// (`lightRange` が空) が、特化の組を使わない — 光を置いた絵の背景の置き換えが、置き換える列の
+    /// 組を 1 本増やさない。
+    @Test("切り抜きの下の背景の置き換えは特化の組を使わず、光を置いた絵は 1 本も組まない")
+    func surfaceReplacementsDoNotBuildSpecializedPipelines() throws {
+        let canvas = try makeCanvas()
+        var replacement: Canvas.Batch?
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.ambientLight(grey)
+            canvas.box(20)
+            canvas.clip(10, 10, 40, 40)
+            canvas.background(.display(red: 0.3, green: 0.1, blue: 0.1))
+            replacement = canvas.batches.last
+        }
+        let batch = try #require(replacement)
+        #expect(batch.replacesSurface, "置き換える板が積まれていない")
+        #expect(batch.unlitSolid == nil)
+        #expect(canvas.pipeline.builtUnlitSolidStateCount == 0, "光を置いた絵の背景の置き換えで組んだ")
+        // 光を置かない絵でも、組むのは箱の列の 1 本だけ (置き換える列は組まない)
+        let unlit = try makeCanvas()
+        try unlit.draw {
+            unlit.background(0)
+            unlit.noStroke()
+            unlit.box(20)
+            unlit.clip(10, 10, 40, 40)
+            unlit.background(.display(red: 0.3, green: 0.1, blue: 0.1))
+        }
+        #expect(unlit.pipeline.builtUnlitSolidStateCount == 1)
+    }
+
+    /// 列は閉じるときに鍵を決める — 描き切りは述語を評価し直さない。閉じたあとで旗を変えても、
+    /// 閉じた列は閉じたときの答えで描く。
+    @Test("特化できるかは列を閉じるときに決まり、描き切りでは評価し直さない")
+    func theDecisionIsMadeWhenTheBatchCloses() throws {
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.box(20)
+            canvas.closeBatch()
+            canvas.specializesUnlitSolids = false
+        }
+        #expect(canvas.pipeline.builtUnlitSolidStateCount == 1)
+    }
+
+    // MARK: - 列の選び方 (既定の組と同じ)
+
+    /// 置き換える列のうち、細い線を広げた頂点を持つ列は、下地を読む列で描く (#1637)。特化した組もその列を
+    /// 使う — 述語に細い線の被覆を写して外すのではなく、既定の組と同じ選び方で列を決める。
+    @Test("細い線を広げた頂点を持つ置き換える列は、下地を読む列の特化で描き、画素が全部同じ")
+    func thinCoverageReplaceColumnsUseTheCompositeColumn() throws {
+        func scene(_ canvas: Canvas) {
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(0.4)
+            canvas.blendMode(.replace)
+            let shape = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(-30, -30, 0)
+                canvas.vertex(30, -30, 0)
+                canvas.vertex(30, 30, 0)
+                canvas.endShape(.close)
+            }
+            canvas.translate(48, 48, 0)
+            canvas.shape(shape)
+        }
+        let batch = try closedBatch(scene)
+        #expect(batch.thinCoverage, "細い線の被覆が立っていない")
+        #expect(batch.run.mode == .replace)
+        let key = try #require(batch.unlitSolid, "特化の対象でない")
+        #expect(key.column == .composite, "置き換える列のまま特化した")
+        try expectSamePicture("細い線の置き換え", scene: scene)
+    }
+
+    // MARK: - 組めなかったとき
+
+    /// 特化は速さだけを変える。組めなければ 1 度だけ言い、その列は起動で組み済みの既定の組で描く —
+    /// フレームが描けなくなったり、絵が変わったりしない。
+    @Test("特化の組を組めなくても、1 度だけ言って既定の組で描き、画素は変わらない")
+    func fallsBackToTheGeneralPipelineWhenABuildFails() throws {
+        let reference = try render(unlit: false, scene: { solids($0) })
+        let canvas = try makeCanvas()
+        canvas.pipeline.failBuildingUnlitSolidsForTesting(.pipelineUnavailable(reason: "injected"))
+        for _ in 0..<2 {
+            try canvas.draw {
+                canvas.background(.display(red: 0.1, green: 0.1, blue: 0.2))
+                solids(canvas)
+            }
+        }
+        #expect(canvas.warnings.hasWarned(.solidVariantUnavailable))
+        #expect(canvas.pipeline.builtUnlitSolidStateCount == 0)
+        #expect(try canvas.target.readPixels() == reference, "既定の組へ戻した絵が変わった")
+        // 口を戻しても、組めなかった鍵は組み直さない (毎フレームのコンパイルを避ける)
+        canvas.pipeline.failBuildingUnlitSolidsForTesting(nil)
+        try canvas.draw {
+            canvas.background(.display(red: 0.1, green: 0.1, blue: 0.2))
+            solids(canvas)
+        }
+        #expect(canvas.pipeline.builtUnlitSolidStateCount == 0)
+        #expect(try canvas.target.readPixels() == reference)
     }
 
     @Test("特化の組は、頂点関数が枝を残す立体でも光の枝を外す値を渡す")
