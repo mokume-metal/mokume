@@ -177,6 +177,26 @@ extension Canvas {
         formInstances.append(instance)
     }
 
+    /// 基本図形の幾何だけを、保持する形の記録へ足す。**何も描かない** (``Shape/geometryForms``・#2428)。
+    ///
+    /// 描く経路が置き場所を足さない (三角形の経路・塗りを止めた破線の輪郭) 円弧が、記録の間だけ呼ぶ。
+    /// 外接を閉じ方の幾何から求めるための置き場所で、描く旗 (塗り・輪郭) は持たない。引数は ``appendForm`` と同じ。
+    func noteGeometryForm(
+        _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>, arc: SIMD2<Float>,
+        arcClosure: FormInstance.ArcClosure
+    ) {
+        guard recordingShape else { return }
+        let columns = transform.matrix.columns
+        let instance = FormInstance(
+            kind: kind, linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
+            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
+            arcClosure: arcClosure, halfWeight: 0, fill: .zero, stroke: .zero, fills: false,
+            strokes: false, cap: style.strokeCap, join: style.strokeJoin)
+        guard instance.isPlaceable, half.x.isFinite, half.y.isFinite, arc.x.isFinite, arc.y.isFinite
+        else { return }
+        recordedGeometryForms.append(instance)
+    }
+
     /// 線を基本図形として置く。長さが 0 でも端の形ぶんは出る (点と同じ規則)。
     func appendLineForm(_ a: SIMD2<Float>, _ b: SIMD2<Float>) {
         let delta = b - a

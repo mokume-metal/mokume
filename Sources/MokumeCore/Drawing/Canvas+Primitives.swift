@@ -222,6 +222,18 @@ extension Canvas {
         let isFullTurn = sweep >= 2 * .pi
         let center = SIMD2(box.x + radiusX, box.y + radiusY)
         let closure = mode.map(\.closure) ?? .standard
+        let drawsStroke = style.hasStroke && style.strokeWeight > 0
+        // **外接は閉じ方の幾何で決まり、描く経路にも塗り・輪郭の有無にも依らない** (``Shape/bounds``・#2428)。
+        // 距離関数の経路は置き場所が幾何を持つが、三角形の経路 (`texture()` / `shader()`) と塗りを止めた破線の
+        // 輪郭は置き場所を足さない。その経路が頂点や周の点から外接を出すと、塗りを止めた既定の弧が扇の中心を落とすので、
+        // 描かない置き場所で幾何を渡す。何も描かない (塗りも輪郭も無い) 弧は外接も持たない
+        if !isFullTurn, recordingShape, canPlace, style.hasFill || drawsStroke,
+            !(formAllowed(fills: true) && (dashedStroke == nil || style.hasFill))
+        {
+            noteGeometryForm(
+                .arc, center: center, half: SIMD2(radiusX, radiusY), arc: SIMD2(start, sweep),
+                arcClosure: closure)
+        }
         if formAllowed(fills: true) {
             if dashedStroke != nil {
                 return isFullTurn
@@ -243,7 +255,6 @@ extension Canvas {
                     .arc, center: center, half: SIMD2(radiusX, radiusY),
                     arc: SIMD2(start, sweep), arcClosure: closure, fills: true)
         }
-        let drawsStroke = style.hasStroke && style.strokeWeight > 0
         guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) else {
             return placeArcInParts(
                 mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,

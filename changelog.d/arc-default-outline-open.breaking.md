@@ -16,6 +16,6 @@ SPDX-License-Identifier: MIT
 
 開いた弧の端には `strokeCap` の端の形が付き、`strokeDash` の破線にもできます。一周ぶんの弧は、どの閉じ方でも楕円と同じ形です。輪郭を引かない (`noStroke()`) `arc` の絵は変わりません。どの閉じ方も、これまでの `arc` と同じく塗りと輪郭を 1 つの図形として縁を滑らかに描き、閉じ方の違う `arc` を何個並べても 1 回の描画に収まります。`.chord` の弦と弧の継ぎ目は、扇の角と同じく `strokeJoin` によらず丸く繋ぎます。
 
-`createShape` が返す `Shape` の `bounds` は、`.chord`・`.open` の `arc` では中心を含みません (弧の両端と弦の箱)。閉じ方を渡さない `arc` と `.pie` は、これまでどおり中心を含みます。`noFill()` や `noStroke()` にしても `bounds` は変わりません。
+`createShape` が返す `Shape` の `bounds` は、`.chord`・`.open` の `arc` では中心を含みません (弧の両端と弦の箱)。閉じ方を渡さない `arc` と `.pie` は、これまでどおり中心を含みます。`noFill()` や `noStroke()` にしても、`texture()`・`shader()`・`strokeDash` を付けても `bounds` は変わりません (閉じ方だけで決まります)。
 
 移行: 輪郭付きの `arc` で、これまでの扇の枠が要るなら、7 つ目の引数に `.pie` を渡してください (`arc(200, 200, 160, 160, 0, .pi, .pie)`)。絵はこれまでと同じです。`noFill()` で弧だけを引くつもりで書いていたコードは、書き換えなしで意図どおりの絵になります。

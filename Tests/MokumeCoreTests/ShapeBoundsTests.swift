@@ -192,15 +192,40 @@ struct ShapeBoundsTests {
         expectBox(thick.bounds, 0, 0, 50, 50, tolerance: 1e-3)
     }
 
-    /// 外接は、閉じ方が決める幾何の外接で、描く設定 (塗り・輪郭を止める) には依らない (#2428)。扇を塗る形
+    /// 弧を描く経路。距離関数 (既定)・断片 (`shader()`)・貼る絵 (`texture()`) は三角形の経路、破線は塗りを距離関数で
+    /// 置き輪郭を周の片で引く経路 (塗りを止めると置き場所が無い)。
+    enum ArcRoute: CaseIterable, CustomStringConvertible {
+        case distanceField, shader, texture, dashed
+        var description: String {
+            switch self {
+            case .distanceField: "距離関数"
+            case .shader: "shader()"
+            case .texture: "texture()"
+            case .dashed: "破線"
+            }
+        }
+    }
+
+    /// 外接は、閉じ方が決める幾何の外接で、描く経路にも設定 (塗り・輪郭を止める) にも依らない (#2428)。扇を塗る形
     /// (引数なしの既定と `.pie`) は中心を含み、弧の両端を弦で結ぶ形 (`.chord`・`.open`) は含まない。
-    @Test("arc の外接は閉じ方が決める: 扇は中心を含み、弦で結んだ形は含まない。塗りや輪郭を止めても変わらない")
-    func arcBoundsFollowTheClosure() throws {
+    @Test(
+        "arc の外接は閉じ方が決める: 扇は中心を含み、弦で結んだ形は含まない。経路にも塗りや輪郭を止めても変わらない",
+        arguments: ArcRoute.allCases)
+    func arcBoundsFollowTheClosure(_ route: ArcRoute) throws {
         let canvas = try makeCanvas()
+        let shader = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        let sheet = try canvas.createImage(4, 4)
         // 弧 π/4〜3π/4。両端は (±50 cos 45°, 50 sin 45°)、弧は真下 (y = 50) まで張る
         let edge = Float(50 * (0.5).squareRoot())
-        func shape(_ mode: ArcMode?, noFill: Bool = false, noStroke: Bool = false) -> Shape {
+        func shape(_ mode: ArcMode?, noFill: Bool, noStroke: Bool) -> Shape {
             canvas.createShape {
+                switch route {
+                case .distanceField: break
+                case .shader: canvas.shader(shader)
+                case .texture: canvas.texture(sheet)
+                case .dashed: canvas.strokeDash(6, 4)
+                }
                 if noFill { canvas.noFill() }
                 if noStroke { canvas.noStroke() }
                 if let mode {
@@ -210,20 +235,51 @@ struct ShapeBoundsTests {
                 }
             }
         }
+        // 塗りも輪郭も止めた弧は何も描かないので、外接も持たない
+        let settings = [(false, false), (true, false), (false, true)]
         for mode in [nil, .pie] as [ArcMode?] {
-            for (noFill, noStroke) in [(false, false), (true, false), (false, true)] {
+            for (noFill, noStroke) in settings {
                 expectBox(
                     shape(mode, noFill: noFill, noStroke: noStroke).bounds, -edge, 0, 2 * edge, 50,
-                    tolerance: 1e-3)
+                    tolerance: 1e-3, "\(route) \(String(describing: mode)) noFill \(noFill) noStroke \(noStroke)")
             }
         }
         for mode in [.chord, .open] as [ArcMode?] {
-            for (noFill, noStroke) in [(false, false), (true, false), (false, true)] {
+            for (noFill, noStroke) in settings {
                 expectBox(
                     shape(mode, noFill: noFill, noStroke: noStroke).bounds, -edge, edge, 2 * edge,
-                    50 - edge, tolerance: 1e-3)
+                    50 - edge, tolerance: 1e-3,
+                    "\(route) \(String(describing: mode)) noFill \(noFill) noStroke \(noStroke)")
             }
         }
+    }
+
+    /// 描かずに幾何だけ持つ置き場所は、入れ子の記録でも外接を運ぶ (回して置けば、回した後の軸の極値を取る)。
+    @Test("三角形の経路で描いた弧の外接は、別の形の中へ回して置いても、閉じ方の幾何のまま")
+    func geometryTravelsThroughANestedPlacement() throws {
+        let canvas = try makeCanvas()
+        let shader = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color; }")
+        let inner = canvas.createShape {
+            canvas.shader(shader)
+            canvas.noFill()
+            canvas.arc(0, 0, 100, 100, 0, Float.pi / 2)
+        }
+        // 弧 0…π/2 の扇 (中心 + 四分円) を 45° 回して置く。扇は中心を含み、極値は真下 (y = 50) と両端
+        let edge = Float(50 * (0.5).squareRoot())
+        let outer = canvas.createShape {
+            canvas.rotate(Float.pi / 4)
+            canvas.shape(inner)
+        }
+        expectBox(outer.bounds, -edge, 0, 2 * edge, 50, tolerance: 1e-3)
+        // 組にして置いても、描かない置き場所は子から引き継がれる
+        let grouped = Shape.group([inner, inner])
+        expectBox(grouped.bounds, 0, 0, 50, 50, tolerance: 1e-3)
+        let outerGrouped = canvas.createShape {
+            canvas.rotate(Float.pi / 4)
+            canvas.shape(grouped)
+        }
+        expectBox(outerGrouped.bounds, -edge, 0, 2 * edge, 50, tolerance: 1e-3)
     }
 
     @Test("回した楕円の扇は、回した後の軸の極値を取りこぼさない")

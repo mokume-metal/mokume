@@ -50,7 +50,8 @@ enum ShapeExit {
     /// 描き切る逃げ道は、ここの全部を預けて引き戻す** (``Canvas/ShapeMark``・``Canvas/HeldBuild``・#2850)。
     static let poolStorageNames = [
         "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
-        "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+        "recordedStrokeRanges", "recordedFillRanges", "recordedGeometryForms", "recordedSolidStrokes",
+        "recordedGPUStrokes",
     ]
 
     static var table: [(name: String, exit: ShapeExit)] {
