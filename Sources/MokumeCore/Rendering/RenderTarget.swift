@@ -111,7 +111,7 @@ import MokumeDiagnostics
     /// パスの記述 (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``。描き切りと ``fill(with:)``)・
     /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
     /// `encodeEnlargement`)・面の取り替え (``exchangeTexture(with:)``・[#2388])・効果を通した絵での上書き
-    /// (``encodeOverwrite(with:into:)``・[#2455])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
+    /// (``copy(_:into:in:)``・[#2455])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
     /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
     /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
     /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
@@ -126,28 +126,23 @@ import MokumeDiagnostics
             "A door that writes a canvas output must call Canvas.settlePlacersBeforeChange() first")
     }
 
-    /// 面を、効果を通した絵 `texture` で丸ごと上書きする blit を積む (``Canvas/applyFilter(_:)``)。
-    ///
-    /// **出す先を書く口なので、書く前に関所を通したことを検算する** (``assertPlacersSettledBeforeWriting()``)。
-    /// 呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す。段が書き終わるのを待ち、写し終わるのを
-    /// 後の段が待つ (blit の前後の関所は ``copy(_:into:in:)`` が積む)。
-    func encodeOverwrite(
-        with texture: any MTLTexture, into commands: any MTL4CommandBuffer
-    ) throws(RenderFailure) {
-        assertPlacersSettledBeforeWriting()
-        try Self.copy(texture, into: self.texture, in: commands)
-    }
-
     /// 面から面へ全体を写す blit を、前後の関所つきで積む。
+    ///
+    /// **写し先が描く先 (``RenderTarget``) なら、出す先を書く口なので、書く前に関所を通したことを検算する**
+    /// (``assertPlacersSettledBeforeWriting()``)。呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す。
+    /// 写し先を効果の控え (``StageImage``) とするときは検算は要らない。**面を書く blit はこの 1 本で、検算を
+    /// 持たない写しを別に置かない** — 描く先を渡せば登録簿を素通りして書けてしまう。
+    /// 段が書き終わるのを待ち、写し終わるのを後の段が待つ。
     static func copy(
-        _ source: any MTLTexture, into destination: any MTLTexture, in commands: any MTL4CommandBuffer
+        _ source: any MTLTexture, into destination: any EffectSurface, in commands: any MTL4CommandBuffer
     ) throws(RenderFailure) {
+        (destination as? RenderTarget)?.assertPlacersSettledBeforeWriting()
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
         encoder.barrier(
             afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
-        encoder.copy(sourceTexture: source, destinationTexture: destination)
+        encoder.copy(sourceTexture: source, destinationTexture: destination.texture)
         encoder.barrier(
             afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
             visibilityOptions: .device)
@@ -779,6 +774,16 @@ import MokumeDiagnostics
     }
 
     // MARK: - 投げる読む口の判定 (#1932)
+
+    /// 打ち切りの判定の範囲を、いま土台に積まれている最後の投入の後から始める。**これより前の投入は、次の
+    /// 読み出しの判定に入れない。**
+    ///
+    /// 使い回す作業の面 (``Image/filtered(_:)``) のように、中身を毎回すべて書き直してから読む面が使う。
+    /// 範囲を捨てるのは、面を作ってからの別の面の投入 (スケッチ本体の描画など) の打ち切りで、この読み出しが
+    /// 巻き添えになって投げないため。この呼び出しの後に積んだ投入 (描画・読み戻し) は判定に入る。
+    func judgeDroppedWorkFromNow() {
+        judgedThrough = gpu.submissionCount
+    }
 
     /// 前の判定でこの面へ書いた投入の打ち切りを見つけたまま、この面へ書く新しい投入が無ければ、
     /// 同じ理由で投げる。**投げる読む口の頭で、何かを積む前に呼ぶ。**

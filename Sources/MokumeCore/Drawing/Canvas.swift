@@ -933,6 +933,15 @@ public final class Canvas {
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
     var carriedAwaitingOutcome: [UInt64: Bool] = [:]
+    /// ``filter(_:)`` の投入のうち、結末がまだ届いていないもの。打ち切られたら知らせ (``filterDropped(_:)``)、
+    /// 届いたら手放す。
+    var filterSubmissions: Set<UInt64> = []
+    /// 検査の差し込み: ``filter(_:)`` が自分の投入を積む直前に呼ぶ。途中の描き切りも投入を 1 本積むので、
+    /// 「次の投入を打ち切る」差し込みを手前から仕掛けると、そちらに当たる。
+    var beforeFilterCommitForTesting: (() -> Void)?
+    /// ``Image/filtered(_:)`` が効果を通す作業の面のうち、この面が持つもの (``holdFilterWorkspace(_:)``)。
+    /// 新しい絵に掛けるたびに面を作り直さないために、走っているスケッチの面が持ち続ける。
+    var filterWorkspaces: [Canvas] = []
 
     /// 効果を通した絵を書いた投入が、面をどう取り替えたかの記帳 ([#2388])。
     ///
@@ -5798,7 +5807,11 @@ extension Canvas: SettlementObserver {
     /// 後の投入が上書きする。
     func submissionSettled(_ submission: UInt64, dropped: Bool) {
         let restoredOver = carriedAwaitingOutcome.removeValue(forKey: submission) ?? false
+        // `filter()` の投入は、届いたら手放す。打ち切られていたら知らせる (戻すものは無い)
+        let wasFilter = filterSubmissions.contains(submission)
+        if !dropped { filterSubmissions.remove(submission) }
         guard dropped else { return }
+        if wasFilter { filterDropped(submission) }
         shadowBakeDropped(submission)
         upscaleDropped(submission)
         carryDropped(submission)

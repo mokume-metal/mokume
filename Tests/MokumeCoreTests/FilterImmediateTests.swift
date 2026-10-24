@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import Testing
 
 @testable import MokumeCore
@@ -389,8 +390,8 @@ struct FilterImmediateTests {
 
     // MARK: - threshold の端 (反証 7・8・9)
 
-    @Test("不透明度 0 で色を持つ画素 (加算した光) も白か黒になり、不透明度は 0 のまま。何も無い画素は透明のまま")
-    func thresholdBinarisesLightOnATransparentGround() throws {
+    @Test("不透明度 0 の画素 (加算した光) は、level によらずそのまま通る。何も無い画素も透明のまま (ADR-0011 決定 1)")
+    func thresholdPassesZeroOpacityPixelsThrough() throws {
         func after(level: Float) throws -> [LinearRGBA] {
             let canvas = try makeCanvas(width: 4, height: 1)
             try canvas.draw {
@@ -400,13 +401,49 @@ struct FilterImmediateTests {
             }
             return (0..<4).map { canvas.get($0, 0) }
         }
-        let low = try after(level: 0.3)
-        // 明るい光 (0.5, 0.2, 0) は白、暗い光 (0.02, …) は level 0.3 に届かず黒
-        #expect(low[0].red == 1 && low[0].green == 1 && low[0].blue == 1 && low[0].alpha == 0, "明るい光が白になっていない: \(low[0])")
-        #expect(low[1].red == 0 && low[1].green == 0 && low[1].blue == 0 && low[1].alpha == 0, "暗い光が黒になっていない: \(low[1])")
-        #expect(low[2] == LinearRGBA.transparent, "何も無い画素が塗られた")
-        let high = try after(level: 1)
-        #expect(high[0].red == 0 && high[0].alpha == 0, "level 1 に届かない光が残った: \(high[0])")
+        let original = try after(level: 0)
+        // level 0 (全部が届く) でも、level 1 (どれも届かない) でも、不透明度 0 の光は同じ値のまま
+        for level: Float in [0, 0.3, 1] {
+            let result = try after(level: level)
+            for index in 0..<2 {
+                #expect(result[index] == original[index], "level \(level) で不透明度 0 の光 \(index) が動いた: \(result[index])")
+            }
+            #expect(result[2] == LinearRGBA.transparent, "何も無い画素が塗られた")
+        }
+        // 光は本当に持っている (検査が空振りしていない): 0.02 の弱い光が 1 の光にならない
+        #expect(original[1].red < 0.1 && original[1].red > 0, "前提が崩れている: \(original[1])")
+        #expect(original[1].alpha == 0)
+    }
+
+    @Test("明るさが負の画素 (引いて負にした分) は、level が 0 でも黒になる。0 の画素は白")
+    func thresholdTurnsNegativeBrightnessBlack() throws {
+        let canvas = try makeCanvas(width: 2, height: 1)
+        try canvas.draw {
+            canvas.set(0, 0, LinearRGBA(premultipliedRed: -0.2, green: -0.2, blue: -0.2, alpha: 1))
+            canvas.set(1, 0, LinearRGBA.linear(red: 0, green: 0, blue: 0))
+            canvas.filter([.threshold(level: 0)])
+        }
+        let image = try read(canvas)
+        #expect(image[0, 0] == (0, 0, 0, 255), "負の明るさが黒でない: \(image[0, 0])")
+        #expect(image[1, 0] == (255, 255, 255, 255), "0 の画素が白でない: \(image[1, 0])")
+    }
+
+    @Test("半透明の画素でも、ちょうどの値は白で 1 つ上の level は黒。不透明度を割り戻さずに比べる")
+    func thresholdTreatsTheExactValueAsWhiteWhenSemiTransparent() throws {
+        for alpha: Float in [0.1, 0.25, 0.4, 0.5, 0.75, 0.9] {
+            let colors = (0...255).map { value -> LinearRGBA in
+                let level = Float(value) / 255
+                return LinearRGBA.display(red: level, green: level, blue: level, alpha: alpha)
+            }
+            for k in [1, 2, 64, 127, 128, 200, 254, 255] {
+                let image = try thresholded(colors, level: Float(k) / 255)
+                var wrong: [Int] = []
+                for v in 0...255 where image[v, 0].alpha > 0 {
+                    if (image[v, 0].red == 255) != (v >= k) { wrong.append(v) }
+                }
+                #expect(wrong.isEmpty, "不透明度 \(alpha)・level \(k)/255 で白黒が違う灰: \(wrong.prefix(8))")
+            }
+        }
     }
 
     @Test("ちょうどの値 (v / 255 の灰に level: v / 255) は白で、1 つ上の level は黒。0…255 の全部で")
@@ -431,7 +468,7 @@ struct FilterImmediateTests {
             .appendingPathComponent("Sources/MokumeCore/Drawing/Shaders/Effects/Builtin.metal")
         let text = try String(contentsOf: source, encoding: .utf8)
         let pattern = try NSRegularExpression(
-            pattern: #"dot\(straight, float3\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)\)"#)
+            pattern: #"dot\(premultiplied, float3\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)\)"#)
         let range = NSRange(text.startIndex..., in: text)
         let rows = pattern.matches(in: text, range: range).map { match in
             (1...3).map { Double(text[Range(match.range(at: $0), in: text)!])! }
@@ -524,14 +561,14 @@ struct FilterImmediateTests {
         let source = try grayImage(on: canvas, level: 0.5)
         _ = source.filtered([.threshold(level: 2), .blur(radius: .nan)])
         let workspace = try #require(source.filterWorkspace)
-        let rounded = try #require(workspace.warnings.message(for: .roundedThresholdLevel))
-        let bad = try #require(workspace.warnings.message(for: .badEffect))
+        let rounded = try #require(workspace.warnings.message(for: .filterSide(.roundedThresholdLevel)))
+        let bad = try #require(workspace.warnings.message(for: .filterSide(.badEffect)))
         #expect(rounded.hasPrefix("filtered()"), Comment(rawValue: rounded))
         #expect(bad.hasPrefix("filtered()"), Comment(rawValue: bad))
         // 2 回目は同じ控えを見るので、文面は変わらず (言い直さず) 同じ鍵のまま
         _ = source.filtered([.threshold(level: 2), .blur(radius: .nan)])
         #expect(source.filterWorkspace === workspace)
-        #expect(workspace.warnings.message(for: .roundedThresholdLevel) == rounded)
+        #expect(workspace.warnings.message(for: .filterSide(.roundedThresholdLevel)) == rounded)
     }
 
     @Test("面の中で効果が失敗したら、効果の掛かっていない絵を成功として返さず、filtered() の文で 1 度だけ言う")
@@ -547,5 +584,226 @@ struct FilterImmediateTests {
         #expect(!workspace.warnings.hasWarned(.effectFailed), "フレームの終わりの文が使われた")
         #expect(result !== source)
         #expect(result.get(0, 0) == source.get(0, 0), "失敗したときは掛けない写しを返す")
+    }
+
+    // MARK: - 時刻・共有・打ち切り・鍵・画面の一致 (2 回目の反証)
+
+    /// 時刻を色に出す効果で絵を作り、`filtered()` の結果を毎フレーム控えるスケッチ。
+    final class FilteredTimeSketch: Sketch {
+        var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
+        var source: Image?
+        var effect: EffectShader?
+        var seen: [Float] = []
+        func setup() {
+            source = try? createImage(2, 2)
+            source?.set(0, 0, LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5))
+            effect = try? makeEffect(
+                "float4 effect(Pixel in, Values values) { return float4(float3(in.time * 10.0), 1.0); }")
+        }
+        func draw() {
+            background(0)
+            guard let source, let effect else { return }
+            seen.append(source.filtered([.custom(effect)]).get(0, 0).red)
+        }
+    }
+
+    @Test("filtered() の .custom が読む秒は、走っているスケッチの時刻で進む (作業の面が自分の時刻を持たない)")
+    func filteredCustomEffectReadsTheSketchTime() throws {
+        let sketch = FilteredTimeSketch()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
+        for _ in 0..<4 { try runtime.advance() }
+        #expect(sketch.seen.count == 4)
+        // フレーム 0 の秒は 0 なので黒。以後は 1/60 秒ずつ進み、10 倍した値が赤に出る
+        #expect(sketch.seen[0] == 0, "最初のフレームの秒が 0 でない: \(sketch.seen)")
+        for index in 1..<4 {
+            #expect(sketch.seen[index] > sketch.seen[index - 1], "秒が進んでいない: \(sketch.seen)")
+        }
+        let expected = Float(3) / 60 * 10
+        #expect(abs(sketch.seen[3] - expected) < 0.02, "秒がスケッチの時刻と合わない: \(sketch.seen[3]) 対 \(expected)")
+    }
+
+    @Test("スケッチの外から呼んだ .custom の秒は 0 になる (説明に書いた約束)")
+    func filteredOutsideASketchReadsTimeZero() throws {
+        let canvas = try makeCanvas(width: 4, height: 4)
+        let source = try grayImage(on: canvas, level: 0.5)
+        let timed = try canvas.makeEffect(
+            "float4 effect(Pixel in, Values values) { return float4(float3(in.time * 10.0 + 0.25), 1.0); }")
+        let result = source.filtered([.custom(timed)])
+        #expect(abs(result.get(0, 0).red - 0.25) < 0.01, "\(result.get(0, 0))")
+    }
+
+    @Test("同じ大きさの別の絵・写しは作業の面を使い回し、大きさが違えば別の面になる。ライブラリは組み直さない")
+    func filteredSharesTheWorkspaceBySize() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
+        let a = try grayImage(on: canvas, level: 0.9)
+        let b = try grayImage(on: canvas, level: 0.2)
+        let first = a.filtered([.threshold(level: 0.5)])
+        #expect(gpu.filterWorkspaces.made == 1)
+        // 返った絵・別の絵・写しに掛けても、同じ面を使う (面一式も効果の組み立ても払わない)
+        _ = first.filtered([.invert()])
+        _ = b.filtered([.invert()])
+        _ = a.copy().filtered([.invert()])
+        #expect(gpu.filterWorkspaces.made == 1, "同じ大きさで面を作り直した: \(gpu.filterWorkspaces.made)")
+        #expect(first.filterWorkspace === b.filterWorkspace)
+        // 大きさが違えば別の面
+        let wide = try canvas.createImage(3, 1)
+        _ = wide.filtered([.invert()])
+        #expect(gpu.filterWorkspaces.made == 2)
+        #expect(wide.filterWorkspace !== a.filterWorkspace)
+        // 組み込みの効果のライブラリは、面が増えても 1 度だけ組む (本体の面の分も含めて)
+        try canvas.draw { canvas.effects([.invert()]) }
+        #expect(gpu.shaders.librariesBuilt["builtin"] == 1, "ライブラリを組み直した: \(gpu.shaders.librariesBuilt)")
+    }
+
+    @Test("走っているスケッチの面が作業の面を持つので、掛け終えた絵が手放されても面は残る。持つのは最近の 2 つまで")
+    func theRunningSketchKeepsTheWorkspaces() throws {
+        final class Chained: Sketch {
+            var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
+            func draw() {
+                background(0)
+                // 毎フレーム新しい写しに掛ける (写しは手放される)
+                if let image = try? createImage(2, 2) { _ = image.copy().filtered([.invert()]) }
+                if let image = try? createImage(3, 1) { _ = image.copy().filtered([.invert()]) }
+            }
+        }
+        let gpu = try RenderDevice()
+        let runtime = try SketchRuntime(sketch: Chained(), gpu: gpu, clock: nil, now: { 0 })
+        try runtime.advance()
+        let made = gpu.filterWorkspaces.made
+        #expect(made == 2, "前提が崩れている (大きさ 2 つに掛けて 2 面)")
+        // 手放された写しに掛け続けても、スケッチの面が面を持つので作り直さない
+        try runtime.advance()
+        try runtime.advance()
+        #expect(gpu.filterWorkspaces.made == made, "毎フレーム面を作り直している: \(made) → \(gpu.filterWorkspaces.made)")
+        #expect(runtime.canvas.filterWorkspaces.count == 2)
+    }
+
+    @Test("スケッチの面が持つ作業の面は、最近使った 2 つまで。古いものから手放す")
+    func theSketchKeepsOnlyTheRecentWorkspaces() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
+        let first = try Canvas(target: RenderTarget(gpu: gpu, width: 1, height: 1), gpu: gpu)
+        let second = try Canvas(target: RenderTarget(gpu: gpu, width: 2, height: 1), gpu: gpu)
+        let third = try Canvas(target: RenderTarget(gpu: gpu, width: 3, height: 1), gpu: gpu)
+        for workspace in [first, second, third] { canvas.holdFilterWorkspace(workspace) }
+        #expect(canvas.filterWorkspaces.count == Canvas.filterWorkspaceLimit)
+        #expect(canvas.filterWorkspaces.first === third && canvas.filterWorkspaces.last === second, "最近使った順でない")
+        // 持っているものを使い直すと、先頭へ上がる
+        canvas.holdFilterWorkspace(second)
+        #expect(canvas.filterWorkspaces.first === second && canvas.filterWorkspaces.count == 2)
+    }
+
+    @Test("作業の面を作れない大きさは覚え、作り直しを試さず、警告も大きさごとに 1 度だけ。効果を掛けない写しを返す")
+    func unavailableWorkspaceIsRememberedAndWarnedOnce() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
+        let source = try grayImage(on: canvas, level: 0.9)
+        gpu.filterWorkspaces.failsNextMakeForTesting = .invalidSize(width: 2, height: 1)
+        let digest = WarningDigest()
+        let results = Diagnostics.$digest.withValue(digest) {
+            (0..<3).map { _ in source.filtered([.invert()]) }
+        }
+        for result in results {
+            #expect(result.get(0, 0) == source.get(0, 0), "作れなかったときは、掛けない写しを返す")
+        }
+        #expect(gpu.filterWorkspaces.made == 0, "覚えたはずの大きさで作り直しを試した")
+        let lines = digest.takeUnreported().filter { $0.contains("filtered()") }
+        #expect(lines.count == 1, "警告が 1 度にならない: \(lines)")
+        // 別の大きさは別に試す
+        let other = try canvas.createImage(3, 1)
+        _ = other.filtered([.invert()])
+        #expect(gpu.filterWorkspaces.made == 1)
+    }
+
+    @Test("別の面への投入が打ち切られても filtered() は掛かる。この呼び出しの投入が打ち切られたら、掛けない写しを返して言う")
+    func filteredJudgesOnlyItsOwnSubmissions() throws {
+        let gpu = try RenderDevice()
+        let host = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
+        let other = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
+        let source = try grayImage(on: host, level: 0.9)
+        // 別の面の描画が打ち切られた後
+        gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+        try other.draw { other.background(255) }
+        let applied = source.filtered([.threshold(level: 0.5)])
+        #expect(applied.get(0, 0) == LinearRGBA.linear(red: 1, green: 1, blue: 1), "別の面の打ち切りで、効果が掛からなかった")
+        // この呼び出しが積む最初の投入が打ち切られたとき
+        gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+        let refused = source.filtered([.threshold(level: 0.5)])
+        #expect(refused.get(0, 0) == source.get(0, 0), "自分の投入が打ち切られたのに、掛かった絵を返した")
+        let workspace = try #require(source.filterWorkspace)
+        #expect(workspace.warnings.hasWarned(.filterFailed), "打ち切りを言っていない")
+    }
+
+    @Test("受け口の注意の鍵は filter() と effects() で別で、片方で出しても、もう片方の注意が黙らない")
+    func warningKeysAreSeparatePerMouth() throws {
+        for effectsFirst in [true, false] {
+            let canvas = try makeCanvas(width: 8, height: 8)
+            try canvas.draw {
+                if effectsFirst {
+                    canvas.effects([.threshold(level: 2), .blur(radius: .nan)])
+                    canvas.filter([.threshold(level: 2), .blur(radius: .nan)])
+                } else {
+                    canvas.filter([.threshold(level: 2), .blur(radius: .nan)])
+                    canvas.effects([.threshold(level: 2), .blur(radius: .nan)])
+                }
+            }
+            for key in [Canvas.Warning.roundedThresholdLevel, .badEffect] {
+                #expect(canvas.warnings.hasWarned(key), "effects() の注意が出ていない (\(effectsFirst))")
+                #expect(canvas.warnings.hasWarned(.filterSide(key)), "filter() の注意が出ていない (\(effectsFirst))")
+            }
+            let said = try #require(canvas.warnings.message(for: .filterSide(.badEffect)))
+            #expect(said.hasPrefix("filter()"), "呼んだ口の名前を名乗らない: \(said)")
+            #expect(try #require(canvas.warnings.message(for: .badEffect)).hasPrefix("effects()"))
+        }
+    }
+
+    @Test("止まっている間に filter() を掛けた画面は、redraw() の後の画面と一致する。可換でない組み合わせ (threshold と blur) でも")
+    func stoppedScreenMatchesTheRedrawnScreen() throws {
+        let canvas = try makeCanvas(width: 48, height: 48)
+        let effects: [Effect] = [.threshold(level: 0.5)]
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.circle(24, 24, 28)
+            canvas.effects(effects)
+        }
+        Self.whileStopped(canvas) { canvas.filter([.blur(radius: 5)]) }
+        let shown = try read(canvas)
+        // 前提: ぼかしは 2 値化の前に効いている — 画面は 2 値のまま (G(E(x)) なら縁が中間の灰になる)
+        var grey = 0
+        for y in 0..<48 { for x in 0..<48 where ![0, 255].contains(shown[x, y].red) { grey += 1 } }
+        #expect(grey == 0, "画面に 2 値でない画素がある (ぼかしが 2 値化の後に効いた): \(grey)")
+        // redraw(): 塗り直さず、同じ効果だけを頼む
+        try canvas.draw { canvas.effects(effects) }
+        let redrawn = try read(canvas)
+        var different = 0
+        for y in 0..<48 { for x in 0..<48 where shown[x, y] != redrawn[x, y] { different += 1 } }
+        #expect(different == 0, "止まっている間の画面と redraw() 後の画面が \(different) 画素違う")
+    }
+
+    @Test("止まっている間の filter() の投入が打ち切られたら 1 度知らせる。打ち切りが無ければ知らせず、覚えも残さない")
+    func aDroppedFilterInTheStoppedPeriodIsAnnounced() throws {
+        for dropped in [true, false] {
+            let gpu = try RenderDevice()
+            let canvas = try CanvasFixture.make(gpu: gpu, width: 16, height: 16)
+            try canvas.draw {
+                canvas.background(77)
+                canvas.effects([.invert()])
+            }
+            // 途中の描き切りも投入を 1 本積むので、filter() 自身の投入の直前に仕掛ける
+            if dropped {
+                canvas.beforeFilterCommitForTesting = {
+                    gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
+                }
+            }
+            Self.whileStopped(canvas) { canvas.filter([.threshold(level: 0.5)]) }
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            gpu.revokeDroppedDeliveries()
+            #expect(canvas.warnings.hasWarned(.filterDropped) == dropped, "打ち切りの知らせが合わない (打ち切り \(dropped))")
+            #expect(canvas.filterSubmissions.isEmpty, "結末が届いたのに覚えが残っている")
+        }
     }
 }
