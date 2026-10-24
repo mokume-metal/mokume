@@ -355,7 +355,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         _ = SharedFrameSurface.launchOwner
         // **置き場の元の合図も同じ** (#2517)。孫へ継がせない
         _ = ShaderOrigin.startup()
-        try self.init(sketch: sketch, gpu: gpu, render: try RenderRequest.startup())
+        // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
+        try self.init(
+            sketch: sketch, gpu: gpu, render: try RenderRequest.startup(),
+            handover: ClockHandover.startup())
     }
 
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
@@ -368,9 +371,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///   - render: 書き出しの頼み。`nil` ならいつもの窓の経路。
     ///   - displays: ディスプレイの一覧の出どころ (全画面で出す先を選ぶ・#2020)。既定はいま
     ///     繋がっているもの。**検査から差し替える。**
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time`・#2414)。**書き出しの頼みが
+    ///     在れば使わない** — 書き出しは 0 秒から、同じ引数から同じ動きを出す。
     init(
         sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        handover: ClockHandover? = nil
     ) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
@@ -389,7 +395,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         gpu.rebuildsShadersInBackground = render == nil
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
-            displays: displays, onScreen: render == nil, opensFacets: render == nil)
+            displays: displays, onScreen: render == nil, opensFacets: render == nil,
+            handover: Self.handover(given: handover, render: render))
         self.clock = runtime.clock
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         runtime.defersEnlargedGlyphBakes = render == nil
@@ -404,6 +411,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         windowRelay.application = self
         // `advance()` の外で `setup()` の失敗を見つけた回 (名乗りのメニューが進めた回) も、同じ道で終わらせる (#2401)
         runtime.setupFailureHandler = { [weak self] failure in self?.stopForSetupFailure(failure) }
+    }
+
+    /// 作り直しをまたぐ時計の合図を、使うかどうか決める。**書き出しの頼みが在れば使わない** — 書き出しは
+    /// 0 秒から、同じ引数から同じ動きを出す ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
+    static func handover(given: ClockHandover?, render: RenderRequest?) -> ClockHandover? {
+        render == nil ? given : nil
     }
 
     /// アプリケーションとして走らせる。戻らない。

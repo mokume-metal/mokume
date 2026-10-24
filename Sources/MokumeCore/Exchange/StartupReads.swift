@@ -192,6 +192,23 @@ nonisolated public enum StartupReads {
             + "passes it only for watch, and the sketch takes it out of its own environment once read",
         readSite: "Sources/MokumeCore/Drawing/ShaderOrigin.swift")
 
+    /// 作り直しをまたいで、作者の時計を渡すファイル — `mokume watch --keep-time` ([#2414])。
+    ///
+    /// 見張りは旗 `--keep-time` のときだけ、世代をまたいで 1 つの場所を子へ渡す。受けた子は、最初の枚の前に
+    /// そのファイルから前の世代の作者の時計 (秒と、止めているか) を読み、毎枚ではなく必要なときに自分のを書く
+    /// (``ClockHandover``)。値は絶対パスで、渡すのは `watch` の旗のときだけ (``viewportOwner`` と同じく、
+    /// 渡さなければ親の環境に在っても落とす)。**受け取った子は読んだ時点で自分の環境から消す** — 合図は
+    /// その子 1 つのもので、スケッチがさらに起こすプロセスへは継がせない。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    public static let keepTime = Entry(
+        name: "Keep time", origin: .environment, key: "MOKUME_KEEP_TIME", decidedBy: .tool,
+        note: "Where to hand the author's clock (seconds, and whether it is paused) from one "
+            + "generation of the sketch to the next, so a rebuild does not send time back to 0. "
+            + "The value is a file's absolute path, and the tool passes it only for watch "
+            + "--keep-time, and the sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Sketch/ClockHandover.swift")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -238,6 +255,6 @@ nonisolated public enum StartupReads {
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, observe, input, params, viewport,
+        assetOrigin, keepTime, observe, input, params, viewport,
     ]
 }
