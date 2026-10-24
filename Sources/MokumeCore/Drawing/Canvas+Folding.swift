@@ -36,6 +36,11 @@ extension Canvas {
         var fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
         /// 塗りを持つか。線と点は持たない。
         var fills: Bool
+        /// 輪郭を引くか。偽なら、いまの設定が輪郭を引くときも塗りだけを出す。
+        ///
+        /// 円弧の既定 (塗りは扇・輪郭は開いた弧) は、扇の塗りと開いた弧の輪郭を別の周にして、
+        /// 扇の塗りの側がこれを偽にする (``Ring/Piece``)。
+        var strokes: Bool
         /// 点ごとに、折れ目の形によらず円板で埋めるか。曲線の刻みの点
         /// (``BuildingVertex/isCurveStep``) と、扇の 3 つの角 (中心と弧の両端・#1486) がそう。
         /// 空ならどの点も角。
@@ -75,6 +80,21 @@ extension Canvas {
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
+            /// 弧のどの部分を周にするか。**円弧は閉じ方 (``ArcMode``) ごとに、塗りの周と輪郭の周が別になる**
+            /// (既定は塗りが扇・輪郭が開いた弧) ので、周の元が部分まで持つ。保持した形の刻み直しも、
+            /// 同じ部分を作り直す。一周は楕円と同じ形で、部分によらない。
+            enum Piece: Equatable {
+                /// 扇。塗りも輪郭も持つ (`.pie`)。
+                case sector
+                /// 扇の塗りだけ (既定の塗り)。
+                case sectorFill
+                /// 弧の両端を弦で結んだ形。塗りも輪郭も持つ (`.chord`)。
+                case chord
+                /// 弦で結んだ形の塗りだけ (`.open` の塗り)。
+                case chordFill
+                /// 開いた弧の輪郭だけ (既定と `.open` の輪郭)。
+                case arcLine
+            }
             var radiusX: Float
             var radiusY: Float
             var start: Float
@@ -82,6 +102,8 @@ extension Canvas {
             var sweep: Float
             /// 一周ぶんの分割数。点はこの数で刻んである (``Canvas/segmentCount(forRadius:scale:)``)。
             var segments: Int
+            /// 弧のどの部分を周にするか。
+            var piece: Piece
         }
 
         /// 名指しの基本図形の塗りの形。形自身の座標で、中心と半幅・半高 (楕円は半径) を持つ。
@@ -96,7 +118,8 @@ extension Canvas {
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
             fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]? = nil,
-            fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = [],
+            fills: Bool = true, strokes: Bool = true, curveSteps: [Bool] = [],
+            cornerDiagonals: [SIMD2<Float>] = [],
             strokesAsOneRegion: Bool = false, ring: Ring? = nil, namedFill: NamedFill? = nil
         ) {
             self.points = points
@@ -104,6 +127,7 @@ extension Canvas {
             self.fanCenter = fanCenter
             self.fillTriangles = fillTriangles
             self.fills = fills
+            self.strokes = strokes
             self.curveSteps = curveSteps
             self.cornerDiagonals = cornerDiagonals
             self.strokesAsOneRegion = strokesAsOneRegion
@@ -119,7 +143,8 @@ extension Canvas {
                 points: points.map { $0 + offset }, isClosed: isClosed,
                 fanCenter: fanCenter.map { $0 + offset },
                 fillTriangles: fillTriangles?.map { ($0.0 + offset, $0.1 + offset, $0.2 + offset) },
-                fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals,
+                fills: fills, strokes: strokes, curveSteps: curveSteps,
+                cornerDiagonals: cornerDiagonals,
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
@@ -135,7 +160,7 @@ extension Canvas {
         if outline.fills, style.hasFill {
             fillInterior(outline, thinFillMatrix: recordingShape ? nil : transform.matrix)
         }
-        if style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
+        if outline.strokes, style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
     }
 
     /// 形自身の座標で作った周を、置き場所へ置く。**同じ形が続く間は畳む。**
@@ -437,8 +462,10 @@ extension Canvas {
     }
 
     /// 楕円・弧の周を、一周を `ring.segments` 個に刻んだ周にする。**中心は原点。**
-    /// 一周ならば中心は周に含めず、弧ならば中心を最初の点にする (扇の 3 つの角のうち
-    /// 中心と、弧の両端が周の点になる・#1486)。周の点はどれも刻みで、角は 1 つも無い (#1423)。
+    /// 一周ならば中心は周に含めず、弧ならば部分 (``Outline/Ring/Piece``) で決まる。扇は中心を
+    /// 最初の点にする (扇の 3 つの角のうち中心と、弧の両端が周の点になる・#1486)。弦は弧の点だけを
+    /// 閉じ、開いた弧は閉じない。周の点はどれも刻みで、角は 1 つも無い (#1423)。弦の両端 (弦と弧が作る角) も
+    /// 丸く繋ぐ (扇の角と同じ)。
     ///
     /// 周を組む口 (`ellipse` / `arc`) と、保持した形を置くときに刻み直す口
     /// (``Outline/Ring``・#1645) が同じ周を作る。
@@ -447,10 +474,31 @@ extension Canvas {
             center: SIMD2(0, 0), radiusX: ring.radiusX, radiusY: ring.radiusY, from: ring.start,
             sweep: ring.sweep, fullTurn: ring.segments)
         let isFullTurn = ring.sweep >= 2 * .pi
+        if !isFullTurn {
+            switch ring.piece {
+            case .sector, .sectorFill:
+                break
+            case .chord, .chordFill:
+                // 弧の点だけを閉じる。最初の点からの扇で塗れる (弦で切った弧は凸)。**弦と弧が出会う 2 つの角も、
+                // 折れ目の形によらず丸く繋ぐ** — 距離関数の経路は輪郭を距離の帯で出すので、扇の角と同じく丸くなる。
+                // **弧の点が 2 個 (細い掃引) でも閉じる** — 弦と弧の 2 辺の周で、距離関数の経路の閉じた弓形と揃う
+                // (開いた線にすると、輪郭が `strokeCap` の端を持つ線分で出る・#2428)
+                return Outline(
+                    points: arcPoints, isClosed: true, strokes: ring.piece == .chord,
+                    curveSteps: Array(repeating: true, count: arcPoints.count),
+                    strokesAsOneRegion: true, ring: ring)
+            case .arcLine:
+                return Outline(
+                    points: arcPoints, isClosed: false, fills: false,
+                    curveSteps: Array(repeating: true, count: arcPoints.count),
+                    strokesAsOneRegion: true, ring: ring)
+            }
+        }
         let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
         // 一周は楕円と同じ形で、`fill` の説明が名指す基本図形に入る。扇は入らない (#1934)
         return Outline(
             points: points, isClosed: true, fanCenter: SIMD2(0, 0),
+            strokes: ring.piece != .sectorFill,
             curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
             ring: ring,
             namedFill: isFullTurn

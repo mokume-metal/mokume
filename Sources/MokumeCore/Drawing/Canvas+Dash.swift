@@ -220,14 +220,19 @@ extension Canvas {
 
     /// 楕円・弧の周 (一周は楕円)。破線の片に刻む元で、点は画面に出る半径で刻む
     /// (``segmentCount(forRadius:scale:)``)。置き場所の中心ぶんずらしてある。
+    ///
+    /// `piece` は弧のどの部分か (``Outline/Ring/Piece``)。破線の輪郭は扇か一周、開いた弧の輪郭と
+    /// 弦の形を三角形の経路で出すときは、それぞれの部分を渡す。
     func ringOutlineForDash(
-        radiusX: Float, radiusY: Float, start: Float, sweep: Float, at center: SIMD2<Float>
+        radiusX: Float, radiusY: Float, start: Float, sweep: Float, piece: Outline.Ring.Piece,
+        at center: SIMD2<Float>
     ) -> Outline {
         let segments = Self.segmentCount(
             forRadius: max(radiusX, radiusY), scale: Self.splitScale(of: transform.matrix))
         return Self.ringOutline(
             Outline.Ring(
-                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, segments: segments)
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, segments: segments,
+                piece: piece)
         ).moved(by: center)
     }
 
@@ -235,15 +240,17 @@ extension Canvas {
     /// 輪郭だけを破線の片で引く** — 塗りの縁の出方は、輪郭を引かない図形と同じである。
     ///
     /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
+    /// **周は区間の中だと分かってから組む** (`outline` は遅延評価・#2428)。
     func appendDashedForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
-        arc: SIMD2<Float> = .zero, cornerRadius: Float = 0, outline: Outline
+        arc: SIMD2<Float> = .zero, arcClosure: FormInstance.ArcClosure = .pie,
+        cornerRadius: Float = 0, outline: @autoclosure () -> Outline
     ) {
         guard canPlace else { return warnOutsideFrame(.placing) }
         appendForm(
-            kind, center: center, half: half, arc: arc, fills: true, cornerRadius: cornerRadius,
-            strokes: false)
+            kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
+            cornerRadius: cornerRadius, strokes: false)
         outlinesAssembledThisFrame += 1
-        strokeOutline(outline)
+        strokeOutline(outline())
     }
 }

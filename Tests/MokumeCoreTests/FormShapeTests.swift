@@ -333,6 +333,8 @@ struct FormShapeTests {
             ("circle", 7, { $0.circle(48.4, 47.7, 58) }),
             ("ellipse", 7, { $0.ellipse(48.3, 47.6, 84, 26) }),
             ("arc", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+            ("arc .open", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .open) }),
+            ("arc .chord", 7, { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .chord) }),
         ]
         let ground = transparentGround
             ? LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0) : black
@@ -716,6 +718,8 @@ struct FormShapeTests {
             ("circle", { $0.circle(48.4, 47.7, 58) }),
             ("ellipse", { $0.ellipse(48.3, 47.6, 84, 26) }),
             ("arc", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1) }),
+            ("arc .open", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .open) }),
+            ("arc .chord", { $0.arc(48.2, 48.6, 64, 64, 0.4, 4.1, .chord) }),
         ]
         let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8)
         let strokeColor = LinearRGBA.display(red: 0.75, green: 0.3, blue: 0.15, alpha: strokeAlpha / 255)
@@ -1928,7 +1932,8 @@ struct FormShapeTests {
             canvas.stroke(white)
             canvas.strokeWeight(6)
             // 始まりの角度 0 = 中心から右へ伸びる水平な半径。帯はその上下 3 画素ぶん
-            canvas.arc(48, 48, 60, 60, 0, .pi * 0.75)
+            // 2 本の半径を持つのは扇の周 (`.pie`)。引数なしの既定の輪郭は開いた弧で、半径を引かない
+            canvas.arc(48, 48, 60, 60, 0, .pi * 0.75, .pie)
         }
         // 半径の途中を横切る縦の並び。帯の内側は端から端まで塗り切られている
         for y in 46...50 {
@@ -1943,7 +1948,7 @@ struct FormShapeTests {
     ///
     /// [#1448]: https://github.com/mokume-metal/mokume/issues/1448
     private func ellipticSector(_ canvas: Canvas) {
-        canvas.arc(20, 60, 260, 80, 0, Float.pi / 4)
+        canvas.arc(20, 60, 260, 80, 0, Float.pi / 4, .pie)
     }
 
     /// 楕円の扇の**塗り**の内外は、辺を引くのと同じ媒介変数の角で決まる。

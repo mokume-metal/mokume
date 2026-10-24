@@ -10,12 +10,15 @@ import simd
 // 走査すると、円の多い形で問うたびに費用がかかる。
 //
 // 外接は**幾何**のもので、線の太さを含まない。焼いた頂点には輪郭の帯が混ざっていて、
-// 頂点を全部見ると太さぶん広がるので、見るものを 3 つに分ける。
+// 頂点を全部見ると太さぶん広がるので、見るものを 4 つに分ける。
 //
 //   1. 塗りの頂点: ``Shape/vertices`` のうち輪郭の区間 (``Shape/strokeRanges``) の外
 //   2. 輪郭: 区間が持つ周の点 (``ThinStrokeRecipe``) を、記録のときの変換で置いたもの。
 //      周を持たない区間 (一部だけを置き直したもの) は帯の頂点で代える (太さを含みうる)
 //   3. 基本図形: 置き場所 (``FormInstance``) の中心・半幅・2x2 から、描く幾何で求める
+//   4. 描かない置き場所 (``Shape/geometryForms``): 三角形の経路や塗りを止めた破線の円弧が、
+//      閉じ方の幾何を外接のためだけに渡す。**外接は閉じ方が決めるもので、描く経路や
+//      塗り・輪郭の有無に依らない**(#2428)
 //
 // 立体の頂点は見ない。
 
@@ -65,7 +68,8 @@ extension Optional where Wrapped == PlaneBox {
 extension Shape {
     /// 焼いた並びから、平面の部分の幾何の外接を求める。
     static func measureBounds(
-        vertices: [ShapeVertex], strokeRanges: [StrokeRange], forms: [FormInstance]
+        vertices: [ShapeVertex], strokeRanges: [StrokeRange], forms: [FormInstance],
+        geometryForms: [FormInstance] = []
     ) -> PlaneBox? {
         var box: PlaneBox?
 
@@ -94,6 +98,8 @@ extension Shape {
 
         // 3. 基本図形
         for form in forms { form.addGeometry(to: &box) }
+        // 4. 描かない置き場所 (``Shape/geometryForms``)。三角形の経路・塗りを止めた破線の弧が、閉じ方の幾何を渡す
+        for form in geometryForms { form.addGeometry(to: &box) }
         return box
     }
 }
@@ -104,7 +110,7 @@ extension FormInstance {
     /// 形自身の座標の点 `(u, v)` は、`offset.xy + linear.xy * u + linear.zw * v` へ移る
     /// (``linear`` は形自身の横軸・縦軸が移る先)。矩形は 4 つの角 (角を丸めても同じ箱)、線と
     /// 点は 2 つの端 (点は 2 つが重なる)、楕円は 2x2 を掛けた外接、扇は中心と弧の両端と、
-    /// 弧の上で各軸が極値になる点である。
+    /// 弧の上で各軸が極値になる点 (弦で結んだ形 `.chord`・`.open` は中心を除く) である。
     func addGeometry(to box: inout PlaneBox?) {
         let origin = SIMD2(offset.x, offset.y)
         let columnU = SIMD2(linear.x, linear.y)
@@ -130,7 +136,10 @@ extension FormInstance {
             box.include(origin - reach)
             box.include(origin + reach)
         case Kind.arc.rawValue:
-            box.include(origin)
+            // 中心を箱に入れるのは扇を塗る形 (`.pie` と引数なしの既定・塗りが扇)。弧の両端を弦で結ぶ形
+            // (`.chord`・`.open`) は、弧と弦だけが幾何で、中心は入らない。**塗りや輪郭を止めても変わらない**
+            // — 箱は閉じ方が決める幾何の外接で、描く設定には依らない (矩形が `noFill()` でも同じ箱なのと同じ)
+            if !arcClosure.fillsChord { box.include(origin) }
             let start = offset.z
             let sweep = offset.w
             box.include(place(halfU * RuntimeMath.cos(start), halfV * RuntimeMath.sin(start)))
