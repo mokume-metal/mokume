@@ -878,7 +878,7 @@ struct DensityInvarianceTests {
                     canvas.popMatrix()
                 }
                 #expect(canvas.flatInstances.count == 9, "回した置き場所を畳んでいない: \(canvas.flatInstances.count)")
-                #expect(canvas.thinFillInstances.count == 8)
+                #expect(canvas.thinFillSpans.count == 8)
                 if frame == 0 { shape = canvas.createShape { canvas.rect(0, 0, 40, 1) } }
                 canvas.resetShader()
                 for index in 0..<3 { canvas.shape(shape, 10 + Float(index) * 30, 80) }

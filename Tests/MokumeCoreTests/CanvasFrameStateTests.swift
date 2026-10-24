@@ -341,9 +341,12 @@ extension CanvasTests {
                     c.stroke(.linear(red: 1, green: 1, blue: 1))
                 }),
                 ("flatInstances", end, all, { c, _ in c.flatInstances.append(.identity) }),
-                ("thinFillInstances", end, all, { c, _ in
-                    c.thinFillInstances.append(
+                ("thinFillRecords", end, all, { c, _ in
+                    c.thinFillRecords.append(
                         .unitSquare(around: .zero, inverse: matrix_identity_float2x2, coverage: 0.5))
+                }),
+                ("thinFillSpans", end, all, { c, _ in
+                    c.thinFillSpans.append(Canvas.ThinFillSpan(first: 0, count: 1))
                 }),
                 ("coverageSpans", end, all, { c, _ in
                     c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
@@ -524,7 +527,7 @@ extension CanvasTests {
                 "atlas": construction, "timebase": "時刻と刻み。ランタイムが進め、描き場所は作った面と共有する (#1467)",
                 "placementKey": "\(construction)。置いた側の記録が置いた描き場所を見分ける通し番号 (#2306)",
                 "vertexStorage": resource, "flatInstanceStorage": resource,
-                "thinFillInstanceStorage": resource,
+                "thinFillRecordStorage": resource, "thinFillSpanStorage": resource,
                 "formInstanceStorage": resource, "solidVertexStorage": resource,
                 "solidIndexStorage": resource, "solidInstanceStorage": resource,
                 "solidSweepStorage": resource,
@@ -601,6 +604,8 @@ extension CanvasTests {
                 "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
                 "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
                 "coverageStorage": resource, "thinStrokesRebuilt": count,
+                "thinFillMemo": "細い塗りの記述の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#2208)",
+                "thinFillRecordsBuilt": count,
                 "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
                 "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
                 "shapeMarks": "形の組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす。閉包なので境目をまたがない",

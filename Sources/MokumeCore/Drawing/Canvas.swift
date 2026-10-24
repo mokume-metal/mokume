@@ -119,10 +119,20 @@ public final class Canvas {
     /// 頂点) はここを指す。毎フレーム置き直すので、溜め場を捨てても消えない。
     var flatInstances: [FlatInstance] = [.identity]
     private let flatInstanceStorage: GrowableBuffer
-    /// 細い塗りの雛形の置き場所ごとの記述 (#2208)。**細い塗りの雛形の置き場所を足すたびに 1 つ足し**、
-    /// 雛形が始まる位置を列が持つ (``Batch/thinFillStart``)。細い塗りの雛形が無いフレームは空。
-    var thinFillInstances: [ThinFillRecord] = []
-    private let thinFillInstanceStorage: GrowableBuffer
+    /// 細い塗りの雛形の記述の置き場 (#2208)。**置き場所の記述は ``thinFillSpans`` が引く**ので、1 つの
+    /// 置き場所が持つ記述は 1 つとは限らない (いまは塗りの 1 つだけ。線の片は、同じ置き場所の続きの
+    /// 記述になる)。細い塗りの雛形が無いフレームは空。
+    var thinFillRecords: [ThinFillRecord] = []
+    private let thinFillRecordStorage: GrowableBuffer
+    /// 細い塗りの雛形の置き場所ごとの、記述の先頭と数 (#2208)。**細い塗りの雛形の置き場所を足すたびに
+    /// 1 つ足し**、雛形が始まる位置を列が持つ (``Batch/thinFillStart``・平面の置き場所と同じ引き方)。
+    var thinFillSpans: [ThinFillSpan] = []
+    private let thinFillSpanStorage: GrowableBuffer
+    /// 直前に求めた細い塗りの記述 (``thinFillRecord(of:drawn:)``)。**向きと寸法が同じ置き場所は記述も
+    /// 同じ**なので、続けて同じ置き場所が来る間は求め直さない。
+    var thinFillMemo: ThinFillMemo?
+    /// 細い塗りの記述を求めた数 (検査用)。控えが効いている間は増えない。
+    var thinFillRecordsBuilt = 0
     /// 細い塗りの広げ方を頂点段へ移した畳みを使うか (#2208)。偽にすると、畳みの鍵に 2x2 そのものを
     /// 入れて CPU が置き場所ごとに片を組み直す、これまでの形に戻る。検査が両者の画素を比べる。
     var expandsThinFillsInVertexStage = true
@@ -260,7 +270,7 @@ public final class Canvas {
         var strokeStart: Int
         /// 置き場所の並びの中で、この雛形が始まる位置。
         var instanceStart: Int
-        /// 細い塗りの記述の並びの中で、この雛形が始まる位置 (#2208)。
+        /// 置き場所ごとの記述の先頭と数 (``Canvas/thinFillSpans``) の並びの中で、この雛形が始まる位置 (#2208)。
         var thinFillStart = 0
         /// 細い塗りの雛形が貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
@@ -1822,9 +1832,9 @@ public final class Canvas {
         /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
         /// 細い塗りの雛形の列か (#2208)。真なら塗りの頂点は「片の番号と角の番号」で、頂点関数が置き場所
-        /// ごとの記述 (``Canvas/thinFillInstances``) から片を組む。
+        /// ごとの記述 (``Canvas/thinFillRecords``) から片を組む。
         var thinFillExpands = false
-        /// その記述の、この列の先頭の位置。
+        /// その先頭と数の並びの、この列の先頭の位置。
         var thinFillStart = 0
         /// 広げた片の貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
@@ -2418,8 +2428,10 @@ public final class Canvas {
             stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidSweeps")
         self.flatInstanceStorage = storage(
             stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
-        self.thinFillInstanceStorage = storage(
-            stride: MemoryLayout<ThinFillRecord>.stride, minimum: 16, label: "thinFillInstances")
+        self.thinFillRecordStorage = storage(
+            stride: MemoryLayout<ThinFillRecord>.stride, minimum: 16, label: "thinFillRecords")
+        self.thinFillSpanStorage = storage(
+            stride: MemoryLayout<ThinFillSpan>.stride, minimum: 16, label: "thinFillSpans")
         self.formInstanceStorage = storage(
             stride: MemoryLayout<FormInstance>.stride, minimum: 256, label: "formInstances")
         self.solidInstanceStorage = storage(
@@ -2944,7 +2956,8 @@ public final class Canvas {
         // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
         list(&flatInstances, resettingTo: [FlatInstance.identity])
-        list(&thinFillInstances)
+        list(&thinFillRecords)
+        list(&thinFillSpans)
         list(&formInstances)
         // 列は数えない。溜めたものを閉じて束ねるだけで、置いたものではない — 数えると、区間の
         // 外で `blendMode()` を書いて列を閉じただけで量が増える。列があれば、束ねた中身が上の
@@ -4684,11 +4697,13 @@ public final class Canvas {
                     geometry.flatInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
-                // 細い塗りの雛形の列は、置き場所ごとの記述を雛形が始まる位置から渡す (#2208)
+                // 細い塗りの雛形の列は、記述の置き場全体と、雛形が始まる位置からの置き場所ごとの
+                // 先頭と数を渡す (#2208)
+                bind(geometry.thinFillRecords.gpuAddress, ShapePipeline.thinFillBufferIndex)
                 bind(
-                    geometry.thinFillInstances.gpuAddress
-                        + UInt64(batch.thinFillStart * MemoryLayout<ThinFillRecord>.stride),
-                    ShapePipeline.thinFillBufferIndex)
+                    geometry.thinFillSpans.gpuAddress
+                        + UInt64(batch.thinFillStart * MemoryLayout<ThinFillSpan>.stride),
+                    ShapePipeline.thinFillSpanBufferIndex)
             case .form:
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
@@ -4994,8 +5009,10 @@ public final class Canvas {
         let flatInstanceBuffer = try flatInstanceStorage.write(
             flatInstances, holding: flatInstances.count)
         // 細い塗りの記述。**無いフレームも 1 つだけ書く** — 頂点関数は列の旗を見て読まないが、口には何かを束ねる
-        let thinFillBuffer = try thinFillInstanceStorage.write(
-            thinFillInstances, holding: max(thinFillInstances.count, 1))
+        let thinFillRecordBuffer = try thinFillRecordStorage.write(
+            thinFillRecords, holding: max(thinFillRecords.count, 1))
+        let thinFillSpanBuffer = try thinFillSpanStorage.write(
+            thinFillSpans, holding: max(thinFillSpans.count, 1))
         // 光の置き場。列は自分の区間を指す
         let lightsBuffer = try lightStorageBuffer.write(
             lightStorage, holding: max(lightStorage.count, 1))
@@ -5004,7 +5021,7 @@ public final class Canvas {
         return GeometryBuffers(
             flatVertices: buffer, coverages: coverageBuffer, formInstances: formBuffer,
             solidInstances: solid.instances, flatInstances: flatInstanceBuffer,
-            thinFillInstances: thinFillBuffer,
+            thinFillRecords: thinFillRecordBuffer, thinFillSpans: thinFillSpanBuffer,
             solidVertices: solid.vertices, solidIndices: solid.indices)
     }
 
@@ -5187,7 +5204,8 @@ public final class Canvas {
         let formInstances: any MTLBuffer
         let solidInstances: any MTLBuffer
         let flatInstances: any MTLBuffer
-        let thinFillInstances: any MTLBuffer
+        let thinFillRecords: any MTLBuffer
+        let thinFillSpans: any MTLBuffer
         let solidVertices: any MTLBuffer
         let solidIndices: any MTLBuffer
     }

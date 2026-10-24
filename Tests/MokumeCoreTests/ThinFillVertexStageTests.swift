@@ -54,7 +54,7 @@ struct ThinFillVertexStageTests {
             // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
             #expect(canvas.openFlat != nil, "細い楕円が畳まれない")
             #expect(canvas.flatInstances.count == count + 1, "置き場所: \(canvas.flatInstances.count)")
-            #expect(canvas.thinFillInstances.count == count, "記述: \(canvas.thinFillInstances.count)")
+            #expect(canvas.thinFillSpans.count == count, "記述: \(canvas.thinFillSpans.count)")
             #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
         }
     }
@@ -79,15 +79,25 @@ struct ThinFillVertexStageTests {
             }
             #expect(canvas.openFlat != nil, "細い rect が畳まれない")
             #expect(canvas.flatInstances.count == count + 1, "置き場所: \(canvas.flatInstances.count)")
-            #expect(canvas.thinFillInstances.count == count)
+            #expect(canvas.thinFillSpans.count == count)
             #expect(canvas.openFlat?.key.thinFillCapacity == 1)
         }
     }
 
-    /// 同じ楕円は、置き場所の拡大で描く画素での長さが違っても (片の数が 1 から上限まで変わっても)、
-    /// 1 つの雛形に畳まれる。使わない片は頂点段が潰す。
-    @Test("長さが拡大で変わる細い楕円は、片の数によらず 1 つの雛形に畳まれる")
-    func ellipsesOfAnyLengthFoldIntoOneTemplate() throws {
+    /// 長さ `length` (描く画素) の細い楕円を、回転を変えて 1 つ置く。
+    private func placeEllipse(_ canvas: Canvas, length: Float, at index: Int) {
+        canvas.pushMatrix()
+        canvas.translate(64, 64)
+        canvas.rotate(Float(index) * 0.3)
+        canvas.scale(length / 40, length / 40)
+        canvas.ellipse(0, 0, 40, 0.5)
+        canvas.popMatrix()
+    }
+
+    /// 片の数の区間は 1・10・64 の 3 つで、**雛形は区間が上がるときだけ開き直す**。小さい区間の置き場所は
+    /// 大きい区間の雛形に受ける (使わない片は頂点段が潰す)。
+    @Test("片の数の区間が下がる並びは、1 つの雛形に畳まれる")
+    func descendingLengthsFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 1)
         let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
@@ -95,18 +105,110 @@ struct ThinFillVertexStageTests {
             canvas.noStroke()
             canvas.fill(255)
             canvas.shader(shader)
+            // 長さ 60 (64 の区間)・30 (64)・6 (10 の区間)・0.4 (1 の区間) を、大きいほうから
+            for (index, length) in [Float(60), 50, 40, 30, 20, 6, 5, 4, 0.4, 0.3].enumerated() {
+                placeEllipse(canvas, length: length, at: index)
+            }
+            #expect(canvas.thinFillSpans.count == 10, "記述: \(canvas.thinFillSpans.count)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+        }
+    }
+
+    @Test("区間が上がるときだけ雛形が開き直り、上がった後は交互に置いても割れない")
+    func regionsSplitOnlyWhenRising() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let shader = try canvas.makeShader(Self.plain)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(shader)
+            // 小さい区間を 3 つずつ、大きい区間へ上がりながら: 区間ごとに 1 度開くだけ
+            for (index, length) in [Float(0.4), 0.3, 0.2, 6, 5, 4, 50, 40, 30].enumerated() {
+                placeEllipse(canvas, length: length, at: index)
+            }
+            #expect(canvas.thinFillSpans.count == 9, "記述: \(canvas.thinFillSpans.count)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+            // 上がった後は、小さい区間と大きい区間が交互に来ても割れない
+            let before = canvas.outlinesAssembledThisFrame
             for index in 0..<12 {
+                placeEllipse(canvas, length: index % 2 == 0 ? 55 : 0.5, at: index)
+            }
+            #expect(canvas.outlinesAssembledThisFrame == before, "交互の置き場所で雛形が割れた")
+            #expect(canvas.thinFillSpans.count == 21)
+        }
+    }
+
+    /// 1 画素より小さい円や短い楕円は、置き場所ごとに 64 片ぶん (384 頂点) の頂点関数を回さない。
+    @Test("小さい円・短い楕円の雛形は、それぞれ 1 片・10 片ぶんの頂点だけを持つ")
+    func smallShapesTemplatesStayCompact() throws {
+        for (length, pieces) in [(Float(0.4), 1), (6, 10), (40, 64)] {
+            let canvas = try Self.makeCanvas(density: 1)
+            let shader = try canvas.makeShader(Self.plain)
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noStroke()
+                canvas.fill(255)
+                canvas.shader(shader)
+                let before = canvas.vertices.count
+                for index in 0..<20 { placeEllipse(canvas, length: length, at: index) }
+                #expect(canvas.thinFillSpans.count == 20)
+                #expect(
+                    canvas.vertices.count - before == pieces * 6,
+                    "長さ \(length): 頂点 \(canvas.vertices.count - before)")
+                #expect(canvas.openFlat?.key.thinFillCapacity == pieces)
+            }
+        }
+    }
+
+    /// 向きと寸法が同じ置き場所は記述も同じ。続けて置くあいだは求め直さない。
+    @Test("向きと寸法が同じ置き場所は、細い塗りの記述を求め直さない")
+    func sameOrientationReusesTheRecord() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let shader = try canvas.makeShader(Self.plain)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(shader)
+            let before = canvas.thinFillRecordsBuilt
+            for index in 0..<30 {
                 canvas.pushMatrix()
-                canvas.translate(64, 64)
-                canvas.rotate(Float(index) * 0.3)
-                // 長さ 6〜60 画素 (短い楕円・長い楕円・片の数の上限)
-                let scale = 0.15 + Float(index) * 0.13
-                canvas.scale(scale, scale)
-                canvas.ellipse(0, 0, 40, 0.5)
+                canvas.translate(10 + Float(index) * 3, 40)
+                canvas.ellipse(0, 0, 8, 0.4)
                 canvas.popMatrix()
             }
-            #expect(canvas.thinFillInstances.count == 12, "記述: \(canvas.thinFillInstances.count)")
-            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+            #expect(canvas.thinFillRecordsBuilt - before == 1, "求めた数: \(canvas.thinFillRecordsBuilt - before)")
+            #expect(canvas.thinFillSpans.count == 30)
+            // 向きが変われば求め直す (最初の置き場所は回転 0 で、直前と同じ向きなので控えが効く)
+            let rotating = canvas.thinFillRecordsBuilt
+            for index in 0..<30 {
+                canvas.pushMatrix()
+                canvas.translate(10 + Float(index) * 3, 80)
+                canvas.rotate(Float(index) * 0.2)
+                canvas.ellipse(0, 0, 8, 0.4)
+                canvas.popMatrix()
+            }
+            #expect(canvas.thinFillRecordsBuilt - rotating == 29)
+        }
+    }
+
+    /// 置き場所の記述の並びは「先頭と数」で引く。塗りは 1 つの記述だが、並びは複数の記述を持てる形である。
+    @Test("置き場所の記述は、先頭と数で引ける並びで足される")
+    func spansIndexTheirRecords() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let shader = try canvas.makeShader(Self.plain)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(shader)
+            for index in 0..<5 { placeEllipse(canvas, length: 40, at: index) }
+            #expect(canvas.thinFillSpans.count == 5)
+            #expect(canvas.thinFillRecords.count == 5)
+            for (index, span) in canvas.thinFillSpans.enumerated() {
+                #expect(span.first == UInt32(index) && span.count == 1)
+            }
         }
     }
 
@@ -186,7 +288,7 @@ struct ThinFillVertexStageTests {
             scatter(
                 canvas, scale: { (1 + Float($0 % 3) * 0.2, 1 + Float($0 % 4) * 0.1) }
             ) { canvas.ellipse(0, 0, 26, 0.5) }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
     }
 
@@ -196,25 +298,25 @@ struct ThinFillVertexStageTests {
             scatter(canvas, spin: 0.37, scale: { (0.5 + Float($0 % 7) * 0.15, 1) }) {
                 canvas.ellipse(0, 0, 8, 0.4)
             }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
         try expectSame("小さい円") { canvas in
             scatter(canvas, spin: 0.5, scale: { (0.3 + Float($0 % 5) * 0.13, 1) }) {
                 canvas.circle(0, 0, 1)
             }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
         try expectSame("細長い rect") { canvas in
             scatter(canvas, spin: 0.29, scale: { (1 + Float($0 % 3) * 0.1, 1) }) {
                 canvas.rect(-12, -0.4, 24, 0.8)
             }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
         try expectSame("短い rect") { canvas in
             scatter(canvas, spin: 0.33, scale: { (1 + Float($0 % 4) * 0.2, 1) }) {
                 canvas.rect(-3, -0.4, 6, 0.8)
             }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
     }
 
@@ -222,11 +324,11 @@ struct ThinFillVertexStageTests {
     func halfDensityKeepsItsPixels() throws {
         try expectSame("細かさ 0.5 の rect", density: 0.5) { canvas in
             scatter(canvas, spin: 0.23) { canvas.rect(-14, -0.5, 28, 1) }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
         try expectSame("細かさ 0.5 の楕円", density: 0.5) { canvas in
             scatter(canvas, spin: 0.23) { canvas.ellipse(0, 0, 28, 0.8) }
-            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillInstances.count == 30, "畳まれていない")
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
         }
     }
 
@@ -237,6 +339,191 @@ struct ThinFillVertexStageTests {
         }
         try expectSame("貼る絵の楕円", texture: true) { canvas in
             scatter(canvas, spin: 0.27) { canvas.ellipse(0, 0, 20, 0.7) }
+        }
+    }
+
+    // MARK: - 変換・置き方の幅
+
+    /// 置き場所ごとに `transform` で変換を替えて、`draw` を 30 回置く。
+    private func place(
+        _ canvas: Canvas, count: Int = 30, transform: (Canvas, Int) -> Void, draw: () -> Void
+    ) {
+        for index in 0..<count {
+            canvas.pushMatrix()
+            canvas.translate(16 + Float(index % 6) * 19, 16 + Float(index / 6) * 19)
+            transform(canvas, index)
+            draw()
+            canvas.popMatrix()
+        }
+    }
+
+    @Test("負の倍率・鏡映で置いた細い塗りも、CPU で組み直す畳みと画素が同じ")
+    func mirroredPlacementsKeepTheirPixels() throws {
+        for (name, flip) in [
+            ("x を反転", { (c: Canvas, i: Int) in c.scale(-1, 1); c.rotate(Float(i) * 0.31) }),
+            ("y を反転", { (c: Canvas, i: Int) in c.scale(1, -1); c.rotate(Float(i) * 0.31) }),
+            ("負の一様な倍率", { (c: Canvas, i: Int) in c.rotate(Float(i) * 0.31); c.scale(-0.8, -0.8) }),
+            ("反転と縦横違いの倍率", { (c: Canvas, i: Int) in c.scale(-1.3, 0.7); c.rotate(Float(i) * 0.31) }),
+        ] {
+            try expectSame("鏡映の長い楕円 (\(name))") { canvas in
+                place(canvas, transform: flip) { canvas.ellipse(0, 0, 24, 0.5) }
+                #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+            }
+            try expectSame("鏡映の短い楕円 (\(name))", texture: true) { canvas in
+                place(canvas, transform: flip) { canvas.ellipse(0, 0, 8, 0.4) }
+            }
+            try expectSame("鏡映の rect (\(name))") { canvas in
+                place(canvas, transform: flip) { canvas.rect(-10, -0.4, 20, 0.8) }
+            }
+        }
+    }
+
+    @Test("極端な回転と剪断で置いた細い塗りも、CPU で組み直す畳みと画素が同じ")
+    func shearedPlacementsKeepTheirPixels() throws {
+        let shears: [(String, (Canvas, Int) -> Void)] = [
+            ("x の剪断", { c, i in c.rotate(Float(i) * 0.41); c.shearX(1.2) }),
+            ("y の剪断", { c, i in c.shearY(-0.9); c.rotate(Float(i) * 0.41) }),
+            ("回した後の縦横違いの倍率", { c, i in c.rotate(Float(i) * 0.53 + 0.7); c.scale(3, 0.2) }),
+            ("ほぼ潰れた変換", { c, i in c.rotate(Float(i) * 0.19); c.scale(1, 0.02) }),
+        ]
+        for (name, shear) in shears {
+            try expectSame("剪断の長い楕円 (\(name))") { canvas in
+                place(canvas, transform: shear) { canvas.ellipse(0, 0, 26, 0.5) }
+            }
+            try expectSame("剪断の rect (\(name))") { canvas in
+                place(canvas, transform: shear) { canvas.rect(-12, -0.4, 24, 0.8) }
+            }
+            try expectSame("剪断の貼る絵の rect (\(name))", texture: true) { canvas in
+                place(canvas, transform: shear) { canvas.rect(-6, -0.4, 12, 0.8) }
+            }
+        }
+    }
+
+    @Test("細い塗りと輪郭が同じ雛形にあっても、CPU で組み直す畳みと画素が同じ")
+    func fillAndStrokeShareATemplate() throws {
+        try expectSame("細い塗り + 輪郭の楕円") { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(2)
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.ellipse(0, 0, 26, 0.5)
+            }
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+        }
+        try expectSame("細い塗り + 輪郭の rect") { canvas in
+            canvas.stroke(0, 255, 0)
+            canvas.strokeWeight(1.5)
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.rect(-12, -0.4, 24, 0.8)
+            }
+        }
+    }
+
+    /// 貼る絵と輪郭を同時に持つ図形と、破線の輪郭を持つ図形は畳まない (線の経路の決定を待つ・決定 2a)。
+    /// 頂点段の広げ方は当たらず、直す前と同じ CPU の経路のままである。
+    @Test("貼る絵と輪郭、破線の輪郭を持つ細い塗りは畳まず、頂点段の広げ方は当たらない")
+    func strokedTexturedAndDashedFillsStayOnTheCPURoute() throws {
+        try expectSame("貼る絵 + 輪郭", texture: true) { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(2)
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.ellipse(0, 0, 26, 0.5)
+            }
+            #expect(canvas.thinFillSpans.isEmpty, "貼る絵と輪郭の図形が畳まれた")
+        }
+        try expectSame("破線の輪郭") { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(2)
+            canvas.strokeDash(4, 3)
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.ellipse(0, 0, 26, 0.5)
+            }
+            #expect(canvas.thinFillSpans.isEmpty, "破線の輪郭の図形が畳まれた")
+        }
+    }
+
+    @Test("一周の arc は楕円と同じに畳み、扇は畳まない")
+    func fullTurnArcsFoldAndFansDoNot() throws {
+        try expectSame("一周の arc") { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.arc(0, 0, 26, 0.5, 0, 2 * Float.pi)
+            }
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+        }
+        try expectSame("扇") { canvas in
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.arc(0, 0, 26, 0.5, 0, Float.pi)
+            }
+            #expect(canvas.thinFillSpans.isEmpty, "扇が頂点段で広げられた")
+        }
+    }
+
+    @Test("置き場所の上限で雛形を開き直しても、CPU で組み直す畳みと画素が同じ")
+    func reopeningAtTheInstanceLimitKeepsPixels() throws {
+        try expectSame("上限 7 で開き直す") { canvas in
+            canvas.instanceCapacity = 7
+            place(canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }) {
+                canvas.ellipse(0, 0, 26, 0.5)
+            }
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+            // 6 つの雛形に割れて、どれも自分の記述の先頭を指している
+            if canvas.expandsThinFillsInVertexStage {
+                let starts = canvas.batches.map(\.thinFillStart).filter { $0 > 0 }
+                #expect(starts == starts.sorted() && Set(starts).count == starts.count)
+            }
+        }
+    }
+
+    @Test("畳む細い塗りと畳まない細い塗り、細くない塗りが混ざっても、画素が同じ")
+    func foldedAndUnfoldedFillsMix() throws {
+        try expectSame("畳む細い楕円と細くない同じ楕円") { canvas in
+            place(
+                canvas,
+                transform: { c, i in
+                    c.rotate(Float(i) * 0.27)
+                    if i % 3 == 0 { c.scale(1, 14) }
+                }
+            ) { canvas.ellipse(0, 0, 26, 0.5) }
+        }
+        try expectSame("畳む細い楕円と寸法がばらばらで畳まない細い楕円") { canvas in
+            var index = 0
+            place(
+                canvas, transform: { c, i in c.rotate(Float(i) * 0.27) }
+            ) {
+                index += 1
+                // 3 つに 1 つは寸法が違い、別の鍵になって畳まれない
+                canvas.ellipse(0, 0, index % 3 == 0 ? 20 + Float(index) : 26, 0.5)
+            }
+        }
+    }
+
+    @Test("極端な寸法の細い塗りは、有限でない記述を作らない")
+    func extremeSizesNeverMakeNonFiniteRecords() {
+        let big: [Float] = [1e30, 1e37, 1.6e38, 1.75e38, 2e38, 3e38, Float.greatestFiniteMagnitude]
+        let thin: [Float] = [0.2, 1e-30, 1e-38]
+        let linears: [simd_float2x2] = [
+            matrix_identity_float2x2, simd_float2x2(SIMD2(0.866, 0.5), SIMD2(-0.5, 0.866)),
+            simd_float2x2(SIMD2(1e-20, 0), SIMD2(0, 1e-20)), simd_float2x2(SIMD2(1e20, 0), SIMD2(0, 1e-20)),
+        ]
+        for length in big {
+            for width in thin {
+                for linear in linears {
+                    for named in [
+                        Canvas.Outline.NamedFill(
+                            isEllipse: false, center: SIMD2(length, width), half: SIMD2(length, width)),
+                        Canvas.Outline.NamedFill(
+                            isEllipse: true, center: .zero, half: SIMD2(length, width)),
+                        Canvas.Outline.NamedFill(
+                            isEllipse: false, center: .zero, half: SIMD2(width, length)),
+                    ] {
+                        guard let record = Canvas.thinFillRecord(named, by: linear) else { continue }
+                        #expect(record.isFinite, "\(named) \(linear)")
+                        #expect(
+                            record.pieces().allSatisfy {
+                                $0.coverage.isFinite && $0.corners.0.x.isFinite && $0.corners.2.y.isFinite
+                            }, "\(named) \(linear)")
+                    }
+                }
+            }
         }
     }
 
@@ -251,7 +538,7 @@ struct ThinFillVertexStageTests {
             let s = sin(angle)
             let linear = simd_float2x2(SIMD2(c, s), SIMD2(-s, c))
             let record = try #require(Canvas.thinFillRecord(named, by: linear))
-            #expect(record.pieceCount <= Canvas.ThinFillRecord.capacity(isEllipse: true))
+            #expect(record.pieceCount <= Canvas.ThinFillRecord.capacity(forPieces: record.pieceCount))
             #expect(record.pieces().count <= record.pieceCount)
             #expect(record.pieces().allSatisfy { $0.coverage > 0 && $0.coverage <= 1.0001 })
         }

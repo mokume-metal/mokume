@@ -63,6 +63,13 @@ struct ThinFillRecord {
     float4 table2;
 };
 
+/// 細い塗りの置き場所 1 つが持つ記述の並び (#2208): `thinFills` の `first` から `count` 個。
+/// 並びは Swift 側の `Canvas.ThinFillSpan` と一致する。
+struct ThinFillSpan {
+    uint first;
+    uint count;
+};
+
 /// 片の角 (刻みの位置 `along`・帯の幅の向きの位置 `offset`) を形自身の座標で返す。
 static inline float2 mokume_thinFillCorner(ThinFillRecord record, float along, float offset) {
     float2 axis = record.centerAxis.zw;
@@ -84,7 +91,8 @@ vertex ShapeFragmentIn shapeVertexMain(
     constant FlatFrame &frame [[buffer(1)]],
     constant FlatInstance *instances [[buffer(10)]],
     constant float *coverages [[buffer(12)]],
-    constant ThinFillRecord *thinFills [[buffer(13)]])
+    constant ThinFillRecord *thinFills [[buffer(13)]],
+    constant ThinFillSpan *thinFillSpans [[buffer(14)]])
 {
     ShapeVertex vertex_in = vertices[index];
     FlatInstance placement = instances[instance];
@@ -97,8 +105,16 @@ vertex ShapeFragmentIn shapeVertexMain(
     float thinCoverage = 1.0;
     bool expandsThin = frame.thinFill != 0 && index < frame.strokeStart;
     if (expandsThin) {
-        ThinFillRecord record = thinFills[instance];
+        // 置き場所の記述は、先頭から順に片の数を引いて、片が入る記述を探す (塗りの置き場所は記述が 1 つ)
+        ThinFillSpan recordSpan = thinFillSpans[instance];
+        uint slot = recordSpan.first;
+        uint lastSlot = recordSpan.first + max(recordSpan.count, 1u) - 1u;
         float piece = vertex_in.position.x;
+        while (slot < lastSlot && piece >= thinFills[slot].layout.w) {
+            piece -= thinFills[slot].layout.w;
+            slot += 1u;
+        }
+        ThinFillRecord record = thinFills[slot];
         uint corner = uint(vertex_in.position.y);
         float origin = record.layout.x;
         float span = record.layout.y;
@@ -117,9 +133,9 @@ vertex ShapeFragmentIn shapeVertexMain(
             float chord = thin * precise::sqrt(max(0.0, fma(-ratio, ratio, 1.0)));
             cover = chord > 0.0 ? precise::divide(chord, width) : 0.0;
         } else if (mode == 2) {
-            uint slot = uint(piece);
-            float4 row = slot < 4 ? record.table0 : (slot < 8 ? record.table1 : record.table2);
-            cover = row[slot & 3u];
+            uint entry = uint(piece);
+            float4 row = entry < 4 ? record.table0 : (entry < 8 ? record.table1 : record.table2);
+            cover = row[entry & 3u];
         }
         bool alive = piece < record.layout.w && (mode == 0 || cover > 0.0);
         if (alive) {

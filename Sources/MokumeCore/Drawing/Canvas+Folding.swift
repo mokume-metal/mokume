@@ -167,16 +167,16 @@ extension Canvas {
             ringSegments = ringSplitMemo.count(forRadius: radius, scale: scale)
         }
         // 細い塗り: 広げ方を頂点段へ移した畳みでは、置き場所ごとの記述を求める (#2208)。雛形の鍵には
-        // 片の数の上限の区間だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
+        // 片の数の区間 (1・10・64) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
         var thinFill: ThinFillRecord?
         var thinFillCapacity = 0
         var fillLinear: ThinFold?
         if expandsThinFillsInVertexStage {
-            if style.hasFill, let named = form.namedFill,
-                let record = Self.thinFillRecord(named, by: drawnLinear(transform.matrix))
+            if style.hasFill,
+                let record = thinFillRecord(of: form, drawn: drawnLinear(transform.matrix))
             {
                 thinFill = record
-                thinFillCapacity = ThinFillRecord.capacity(isEllipse: named.isEllipse)
+                thinFillCapacity = ThinFillRecord.capacity(forPieces: record.pieceCount)
             }
         } else {
             fillLinear = thinFillLinear(form)
@@ -223,11 +223,11 @@ extension Canvas {
         if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         notePaintPlacement()
 
-        // 開いている雛形と同じ形なら、置き場所を足すだけで済む
-        if openFlat?.key == key {
+        // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数の区間が小さい
+        // 置き場所も大きい区間の雛形に受ける** (区間が上がったときだけ、新しい雛形になる)
+        if let open = openFlat, open.key.holds(key) {
             appendFolded(
-                placement(at: anchor), key: key, thinFill: thinFill,
-                outline: { makeOutline(ringSegments) })
+                placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
             return
         }
         let outline = makeOutline(ringSegments)
@@ -235,7 +235,7 @@ extension Canvas {
         // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
         // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
         // 畳む前より遅い ([#424](https://github.com/mokume-metal/mokume/issues/424))
-        if let waiting = pendingFlat, waiting.key == key,
+        if let waiting = pendingFlat, let joined = waiting.key.joined(with: key),
             waiting.vertexEnd == vertices.count, waiting.batchCount == batches.count
         {
             // 1 つ目の頂点を溜め場から抜き、雛形として積み直す。抜けるのは**まだ列が
@@ -243,10 +243,10 @@ extension Canvas {
             vertices.removeLast(vertices.count - waiting.vertexStart)
             trimCoverage(to: waiting.vertexStart)
             pendingFlat = nil
-            openFlatTemplate(key: key, outline: outline)
+            openFlatTemplate(key: joined, outline: outline)
             flatInstances.append(waiting.placement)
-            if let record = waiting.thinFill { thinFillInstances.append(record) }
-            appendFolded(placement(at: anchor), key: key, thinFill: thinFill, outline: { outline })
+            if let record = waiting.thinFill { addThinFill(record) }
+            appendFolded(placement(at: anchor), thinFill: thinFill, outline: { outline })
             return
         }
 
@@ -270,16 +270,17 @@ extension Canvas {
     /// 開き直すのは、畳まない経路へ落とすと**上限をまたいだ図形だけ組み立て方が
     /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
     private func appendFolded(
-        _ placement: FlatInstance, key: FlatKey, thinFill: ThinFillRecord?,
+        _ placement: FlatInstance, thinFill: ThinFillRecord?,
         outline makeOutline: () -> Outline
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
-            openFlatTemplate(key: key, outline: makeOutline())
+            // 開き直す雛形は、開いていた雛形の区間を引き継ぐ (区間が上がった後に小さい区間へ戻さない)
+            openFlatTemplate(key: open.key, outline: makeOutline())
         }
         flatInstances.append(placement)
         // 細い塗りの雛形は、置き場所ごとの記述を同じ番号で足す (#2208)
-        if let thinFill { thinFillInstances.append(thinFill) }
+        if let thinFill { addThinFill(thinFill) }
     }
 
     /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
@@ -332,7 +333,7 @@ extension Canvas {
 
         openFlat = OpenFlat(
             key: key, strokeStart: strokeStart, instanceStart: flatInstances.count,
-            thinFillStart: thinFillInstances.count, thinFillUV: thinFillUV)
+            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV)
     }
 
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。

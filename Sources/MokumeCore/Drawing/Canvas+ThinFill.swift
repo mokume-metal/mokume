@@ -21,6 +21,27 @@ extension Canvas {
         var coverage: Float
     }
 
+    /// 細い塗りの雛形の置き場所 1 つが持つ記述の並び: ``Canvas/thinFillRecords`` の `first` から `count` 個
+    /// ([#2208])。**並びは Shapes.metal の `ThinFillSpan` と一致していなければならない。**
+    ///
+    /// 置き場所の片は、記述の並びの順に数える — 片 `k` は、先頭の記述から順に片の数を引いていって、
+    /// 引ききれなくなった記述の `k` 番目である。塗りは 1 つの記述 (`count` は 1) だが、1 つの置き場所が
+    /// 複数の記述を持てる並びにしてあるのは、線 (#2172) が太さの違う区間ごとの記述を同じ置き場所に
+    /// 並べて当てられるようにするため。口・列の引き方・頂点段の数え方はそのまま使え、増えるのは記述の
+    /// 種別だけである。
+    struct ThinFillSpan {
+        var first: UInt32
+        var count: UInt32
+    }
+
+    /// 直前に求めた細い塗りの記述の控え。向きと寸法 (``Canvas/FlatForm``) と、描く画素へ写す 2x2 が
+    /// 同じなら記述も同じ (記述は 2 つだけで決まる)。
+    struct ThinFillMemo {
+        var form: FlatForm
+        var drawn: simd_float2x2
+        var record: ThinFillRecord?
+    }
+
     /// 細い塗りの片の**記述**。置き場所 1 つぶん ([#2208])。
     ///
     /// 片は、描く画素の空間の 2 つの基底 (`axis` と `across`) で表した帯の列で、`origin` から
@@ -95,11 +116,26 @@ extension Canvas {
         /// 片の数。
         var pieceCount: Int { Int(layout.w) }
 
-        /// 雛形が持つ片の数。**形の種類だけで決まる** (矩形は 1・楕円は上限の ``Canvas/thinEllipseSliceLimit``)。
-        /// 置き場所ごとに片の数が変わっても雛形を割らない代わりに、使わない片は頂点段が潰す。
-        static func capacity(isEllipse: Bool) -> Int {
-            isEllipse ? Canvas.thinEllipseSliceLimit : 1
+        /// 記述の数がどれも有限か。**有限でない記述は置かない** — 頂点段へ渡すと、片の角が非数になって
+        /// 面のどこにも出ない (か、画面の端まで伸びる)。片の端は `span × 片の番号 / 割る数` で出すので、
+        /// 掛け算 (`span × 割る数`) があふれる記述も置かない。
+        var isFinite: Bool {
+            func finite(_ value: SIMD4<Float>) -> Bool { all((value - value) .== SIMD4<Float>(repeating: 0)) }
+            return (layout.y * layout.z).isFinite && finite(inverse) && finite(centerAxis) && finite(acrossSlopeSide) && finite(layout)
+                && finite(coverageMode) && finite(table0) && finite(table1) && finite(table2)
         }
+
+        /// 雛形が持つ片の数の区間: 1・``shortCapacity``・上限の ``Canvas/thinEllipseSliceLimit``。
+        /// **置き場所の片の数が入る最小の区間を雛形の鍵に入れる。** 置き場所ごとに片の数が変わっても
+        /// 同じ区間に収まる間は雛形を割らず、使わない片は頂点段が潰す。区間は 3 つだけなので、拡大で
+        /// 区間を跨いでも割れるのは高々 2 回で、大きい区間の雛形は小さい区間の置き場所も受ける
+        /// (``Canvas/FlatKey/holds(_:)``)。小さい区間の置き場所を、いつも 64 片ぶんの頂点で流さないための区間である。
+        static func capacity(forPieces count: Int) -> Int {
+            count <= 1 ? 1 : (count <= shortCapacity ? shortCapacity : Canvas.thinEllipseSliceLimit)
+        }
+
+        /// 長い向きが短い楕円 (``Canvas/thinFillShortSpan`` 未満) が使いうる片の数の上限。
+        static let shortCapacity = Int(Canvas.thinFillShortSpan)
 
         /// 片 `k` の被覆。**置かない片は 0 以下** (表の 0・弦が 0 の端)。
         func coverage(of index: Int, from: Float, to: Float) -> Float {
@@ -222,8 +258,29 @@ extension Canvas {
     ) -> ThinFillRecord? {
         let determinant = simd_determinant(linear)
         guard determinant != 0, determinant.isFinite, isFinite(named) else { return nil }
-        return named.isEllipse
+        let record =
+            named.isEllipse
             ? thinEllipseRecord(named, by: linear) : thinRectRecord(named, by: linear)
+        // 極端な寸法や変換で、広げた帯の長さや逆行列があふれた記述は置かない (周から三角形に割る)
+        guard let record, record.isFinite else { return nil }
+        return record
+    }
+
+    /// 置き場所 `form` の細い塗りの記述。**向きと寸法が同じ置き場所が続く間は、直前の記述を使い回す** —
+    /// 記述を求めるには倍精度の特異値と弦の積分 (短い楕円は `pow` と `asin` を最大 22 回) が要り、畳める
+    /// 場面の置き場所ごとの費用の大半だった (#2208)。細くなければ `nil`。
+    func thinFillRecord(of form: FlatForm, drawn: simd_float2x2) -> ThinFillRecord? {
+        if let memo = thinFillMemo, memo.form == form, memo.drawn == drawn { return memo.record }
+        thinFillRecordsBuilt += 1
+        let record = form.namedFill.flatMap { Self.thinFillRecord($0, by: drawn) }
+        thinFillMemo = ThinFillMemo(form: form, drawn: drawn, record: record)
+        return record
+    }
+
+    /// 置き場所の記述を 1 つ足す。**置き場所ごとに 1 度**呼ぶ (先頭と数は、足した記述から決まる)。
+    func addThinFill(_ record: ThinFillRecord) {
+        thinFillSpans.append(ThinFillSpan(first: UInt32(thinFillRecords.count), count: 1))
+        thinFillRecords.append(record)
     }
 
     /// 長い向きが短いとみなす、列 (行) の向きの長さの上限 (描く画素)。これ以上長い形は長い向きの
@@ -756,5 +813,23 @@ extension Canvas.FlatForm {
                     isEllipse: true, center: SIMD2(0, 0), half: SIMD2(radiusX, radiusY))
                 : nil
         }
+    }
+}
+
+extension Canvas.FlatKey {
+    /// 細い塗りの片の数の区間だけが違う鍵なら、大きいほうの区間にした鍵 (#2208)。細い塗りかどうかが
+    /// 違うか、区間以外が違えば `nil`。
+    func joined(with other: Canvas.FlatKey) -> Canvas.FlatKey? {
+        guard (thinFillCapacity > 0) == (other.thinFillCapacity > 0) else { return nil }
+        var widest = self
+        widest.thinFillCapacity = max(thinFillCapacity, other.thinFillCapacity)
+        var same = other
+        same.thinFillCapacity = widest.thinFillCapacity
+        return widest == same ? widest : nil
+    }
+
+    /// この鍵の雛形が `other` の置き場所も受けられるか。区間以外が同じで、この雛形の区間が `other` 以上。
+    func holds(_ other: Canvas.FlatKey) -> Bool {
+        joined(with: other)?.thinFillCapacity == thinFillCapacity
     }
 }
