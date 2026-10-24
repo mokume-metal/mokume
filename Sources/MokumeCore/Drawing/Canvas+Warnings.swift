@@ -248,10 +248,11 @@ extension Canvas {
         ///
         /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
         case strokeDashTooFine
-        /// 光の枝を外した立体のパイプラインを組めず、その立体を既定のパイプラインで描いた ([#1795])。
-        /// 絵は同じで、速さだけが戻る。
+        /// 特化した立体のパイプライン (光の枝を外した組・ブレンドを外した組) を組めず、その立体を既定の
+        /// パイプラインで描いた ([#1795]・[#2366])。絵は同じで、速さだけが戻る。
         ///
         /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+        /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
         case solidVariantUnavailable
         /// ``rect(_:_:_:_:_:)`` の角の半径に負の値・数でない値が渡され、0 に丸めた ([#2757])。
         /// 角を丸めない 4 引数と同じ絵になる。

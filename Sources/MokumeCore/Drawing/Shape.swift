@@ -106,6 +106,17 @@ public struct Shape {
     let thinnestRecordedFill: Float
     /// 平面の部分の幾何の外接 (``bounds``)。焼くときに求めて持つ (``measureBounds(vertices:strokeRanges:forms:geometryForms:)``)。
     let planeBox: PlaneBox?
+    /// 立体の頂点が、全部 α がちょうど 1 か (数でない値は偽)。立体の頂点が無ければ真。
+    ///
+    /// 置くたびに頂点を読み直さずに、不透明な列かを決められる (``Canvas/isOpaqueFill(_:closing:)``・
+    /// [#2366])。**形全体で 1 つ** — 区間ごとには持たず、1 つでも透ける頂点があれば形のどの区間も偽に
+    /// 倒す (偽は今までどおりブレンドで描くだけ)。
+    ///
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    let solidAlphaIsOne: Bool
+    /// 立体の頂点が、全部同じ読み取り位置を指すならその位置。違う位置があれば `nil`。
+    /// 頂点が無ければ `nil`。上の ``solidAlphaIsOne`` と同じ口で使う (焼き場の白い区画かの判定)。
+    let solidCommonUV: SIMD2<Float>?
 
     /// 区間を塗るもの一式。
     ///
@@ -246,6 +257,16 @@ public struct Shape {
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
         self.solidParts = solidParts
+        // 立体の頂点の色と読み取り位置を 1 度だけ読む (閉包を渡さずにループで・#1779)
+        var opaque = true
+        var commonUV: SIMD2<Float>? = solidVertices.first?.uv
+        for vertex in solidVertices {
+            if vertex.color.w != 1 { opaque = false }
+            if vertex.uv != commonUV { commonUV = nil }
+            if !opaque && commonUV == nil { break }
+        }
+        solidAlphaIsOne = opaque
+        solidCommonUV = commonUV
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
