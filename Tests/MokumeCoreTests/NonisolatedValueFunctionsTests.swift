@@ -90,7 +90,9 @@ struct NonisolatedValueFunctionsTests {
     /// 完了条件 2: 複数のスレッドから同時に言っても、落ちず、注意は**ちょうど 1 度**出る。
     ///
     /// 控えの型を直に使う。検査どうしで共有する本物の控えだと、先に別の検査が同じ鍵を鳴らしていれば
-    /// 並列の呼び出しが無くても緑になるので、この検査だけの控えと溜め場で数える。
+    /// 並列の呼び出しが無くても緑になるので、この検査だけの控えと溜め場で数える。溜め場を差した
+    /// 並列の呼び出しは `withTaskGroup` で書く — 子のタスクはタスクローカル値を引き継ぐが、
+    /// `concurrentPerform` の作業スレッドは引き継がず、どの溜め場に入るかが勝ち負けで変わる。
     @Test("複数のスレッドから同じ注意を同時に言っても、文面はちょうど 1 度だけ組まれ、1 度だけ出る")
     func warningsAreSaidExactlyOnceAcrossThreads() async {
         let log = SharedWarningLog<Int>()
@@ -177,6 +179,9 @@ struct NonisolatedValueFunctionsTests {
             slow.signal()
         }
         #expect(building.wait(timeout: .now() + 10) == .success)
+        // 言っている最中の鍵は、写しに載らない (載るのは、文面が届いた後)
+        let during = log.snapshot
+        #expect(!during.hasWarned(1) && during.message(for: 1) == nil, "言い終える前に写しへ載った")
         let quick = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
             for _ in 0..<1000 { log.warnOnce(2, "already said") }

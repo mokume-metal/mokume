@@ -32,18 +32,9 @@ nonisolated struct WarningLog<Key: Hashable> {
     /// 言う数に上限を置く — ``count(where:)``)。
     private var said: [Key: String] = [:]
 
-    /// 言う権利を取る。まだ言っていなければ、空の文面で控えに載せて `true`。言ってあれば `false`。
-    ///
-    /// ``SharedWarningLog`` が、**錠の中では「初めてか」の確かめと印だけを行い、文面の組み立てと
-    /// 標準エラーへの書き込みを錠の外で行う**ために分けた入口。載せた空の文面は、
-    /// ``record(_:_:)`` が言った文面に置き換える。
-    mutating func claim(_ key: Key) -> Bool {
-        guard said[key] == nil else { return false }
-        said[key] = ""
-        return true
-    }
-
-    /// ``claim(_:)`` で取った鍵に、言った文面を控える。
+    /// 言った文面を控える。``SharedWarningLog`` が、**文面の組み立てと標準エラーへの書き込みを
+    /// 錠の外で済ませた後**に載せるための入口。``warnOnce(_:_:)`` を通らずに載せるので、
+    /// 呼ぶ側が「同じ鍵を 2 度載せない」ことを守る。
     mutating func record(_ key: Key, _ text: String) { said[key] = text }
 
     /// まだ言っていなければ、その注意を 1 度だけ言う。2 度目からは何もしない。
@@ -89,13 +80,35 @@ nonisolated extension WarningLog: Sendable where Key: Sendable {}
 /// プロセスで 1 つの錠を取ると、全スレッドが 1 本の錠に並ぶ ([#2389] の反証)。そこで、
 ///
 /// 1. **言う権利を取った鍵は、錠を取らずに抜ける。** その鍵を、追記するだけの連結リストに公開してあり、
-///    先にそれを錠なしで辿る。載っていれば、言うのは別のスレッドが済ませたか、いま言っている最中である
-///    (読み出しは取得順序で、載せる側は公開順序なので、載った鍵は必ず見える)
-/// 2. **初めての回だけ錠を取る。** 錠の中は「この鍵は初めてか」の確かめと印 (``WarningLog/claim(_:)``)
-///    だけで、**文面の組み立てと標準エラーへの書き込みは錠の外**で行う。文面の中から同じ控えの口を
-///    呼んでも錠の再入にならず、標準エラーが詰まっても、言わない回を巻き込んで止めない
+///    先にそれを錠なしで辿る。載っていれば、言うのは別のスレッドが済ませたか、いま言っている最中である。
+///    **見えるのは「公開された番地を読めたなら、節の中身が読める」ところまでで** (読み出しは取得順序、
+///    載せる側は公開順序)、載せた直後の鍵を別のスレッドが必ず見られるとは限らない。古い「無い」を
+///    読んだ回は、次の 2 の錠の中の確かめが受け止めるので、注意が 2 度出ることは無い
+/// 2. **初めての回だけ錠を取る。** 錠の中は「この鍵は初めてか」の確かめと印だけで、**文面の組み立てと
+///    標準エラーへの書き込みは錠の外**で行う。文面の中から同じ控えの口を呼んでも錠の再入にならず、
+///    標準エラーが詰まっても、言わない回を巻き込んで止めない
 ///
 /// 言う権利を取るのは 1 スレッドだけなので、文面の組み立ても 1 度だけである。
+///
+/// ## 写しが答えるのは、言い終えた鍵だけ
+///
+/// 権利を取ってから言い終えるまでには隙間がある。その間の鍵は、``snapshot`` に**載らない** —
+/// 写しで `hasWarned` が真なら、文面は標準エラーと溜め場へ届いた後で、`message(for:)` は
+/// 空でない文面を返す。権利だけを取った鍵は別に持つ (錠の中の `pending`)。
+///
+/// ## 鍵は、値を持たない有限の enum にする
+///
+/// 公開した節は返さない (読む側が錠なしで辿るため、返す時期を決められない)。``WarningLog`` の
+/// 「値を持つ鍵は、呼ぶ側が言う数に上限を置く」口 (行き先ごとに 1 度言う `URL` の鍵など) は、
+/// **ここへ置かない**。`==` が反射的でない鍵も同じで、呼ぶたびに節が増える。上限を越えて公開しようと
+/// すると、debug では `assert` で止まる (``maximumKeys``)。
+///
+/// ## 溜め場を差し替えて数える検査
+///
+/// 文面が届く溜め場 (``Diagnostics/digest``) は、**権利を取ったスレッドのタスクローカル値**で決まる。
+/// 溜め場を差し替えて並列の呼び出しを数える検査は、`withTaskGroup` の子のタスクで言わせる
+/// (子は引き継ぐ)。`DispatchQueue.concurrentPerform` の作業スレッドは引き継がないので、どの溜め場に
+/// 入るかがスレッドの勝ち負けで変わる。
 ///
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
@@ -111,7 +124,17 @@ nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
         let next = Atomic<UInt>(0)
     }
 
-    private let log = Mutex(WarningLog<Key>())
+    /// 言い終えた控えと、権利だけを取って言っている最中の鍵。**錠の中でだけ触る。**
+    private struct State: Sendable {
+        var said = WarningLog<Key>()
+        var pending = Set<Key>()
+        var published = 0
+    }
+
+    /// 公開できる鍵の数の上限 (debug で `assert` する)。数えるのは、値を持たない有限の enum の事情の種類。
+    static var maximumKeys: Int { 256 }
+
+    private let state = Mutex(State())
     /// 先頭の節の番地。0 は何も載っていない。
     private let first = Atomic<UInt>(0)
 
@@ -153,17 +176,25 @@ nonisolated final class SharedWarningLog<Key: Hashable & Sendable>: Sendable {
     /// まだ言っていなければ、その注意を 1 度だけ言う。
     func warnOnce(_ key: Key, _ message: @autoclosure () -> String) {
         guard !isPublished(key) else { return }
-        let isFirst = log.withLock { log in
-            guard log.claim(key) else { return false }
+        let isFirst = state.withLock { state in
+            guard !state.said.hasWarned(key), state.pending.insert(key).inserted else { return false }
+            assert(
+                state.published < Self.maximumKeys,
+                "SharedWarningLog の鍵が \(Self.maximumKeys) を超えた。値を持つ鍵は WarningLog に置き、呼ぶ側が上限を置く")
+            state.published += 1
             publish(key)
             return true
         }
         guard isFirst else { return }
+        // 先に届けてから控える。写しに載った鍵は、文面が届いた後である
         let text = message()
-        log.withLock { $0.record(key, text) }
         Diagnostics.warn(text)
+        state.withLock { state in
+            state.pending.remove(key)
+            state.said.record(key, text)
+        }
     }
 
-    /// いま言ってある注意の写し。**検査が読む。**
-    var snapshot: WarningLog<Key> { log.withLock { $0 } }
+    /// いま言い終えている注意の写し。**検査が読む。** 言っている最中の鍵は載らない。
+    var snapshot: WarningLog<Key> { state.withLock { $0.said } }
 }

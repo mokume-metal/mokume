@@ -60,8 +60,10 @@ package enum AtomicFile {
     ///
     /// 静的に持つのは、書く口に持ち主の面が無いからである。この型は隔離を外していない (パッケージの
     /// 既定隔離の main actor・ADR-0010 決定 1) ので、共有しても競合しない。
-    /// 隔離の外から呼ばれる口の控えは、`Mutex` で守る ``SharedWarningLog`` に置く
-    /// (``NumberValues``・``ColorValues``・``PaletteValues``・#2389)。
+    /// 隔離の外から呼ばれる口の控えは、`Mutex` で守る `SharedWarningLog` に置く
+    /// (`NumberValues`・`ColorValues`・`PaletteValues`・#2389)。ただし鍵が**値を持たない有限の enum**
+    /// の口に限る — ここの鍵のような置き場所 (`URL`) は数に上限が無いので、`SharedWarningLog` に
+    /// 置かない (公開した鍵を返さないため)。
     private static var failures = WarningLog<URL>()
 
     /// 一時ファイルの名前に足す連番。**共有しても競合しない** (``failures`` と同じ理由)。
