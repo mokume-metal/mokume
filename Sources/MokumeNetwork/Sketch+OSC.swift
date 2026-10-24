@@ -24,7 +24,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var osc: OSCPort?
     ///     var size: Float = 0.5
-    ///     func setup() { osc = try? createOSC(listen: 9000, send: ("127.0.0.1", 7000)) }
+    ///     func setup() throws { osc = try createOSC(listen: 9000, send: ("127.0.0.1", 7000)) }
     ///     func draw() {
     ///         for message in osc?.messages ?? [] where message.address == "/size" {
     ///             size = message.float(0) ?? size
@@ -96,7 +96,7 @@ extension Sketch {
     /// ```swift
     /// final class Sender: Sketch {
     ///     var osc: OSCPort?
-    ///     func setup() { osc = try? createOSC(send: ("127.0.0.1", 7000)) }
+    ///     func setup() throws { osc = try createOSC(send: ("127.0.0.1", 7000)) }
     ///     func draw() { osc?.send("/size", mouseX / width) }
     /// }
     /// ```

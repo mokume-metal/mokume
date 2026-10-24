@@ -45,7 +45,25 @@ public protocol Sketch: AnyObject, SketchPart {
     var plugins: [any Plugin] { get }
 
     /// 一度だけ呼ばれる。
-    func setup()
+    ///
+    /// **`throws` で書ける。** 読み込みの失敗を `try?` で捨てずに、`try` で書いて投げられる。投げたら、
+    /// ``draw()`` を 1 度も呼ばずにスケッチは起動の失敗として止まり、投げた失敗の全文 (何を読めなかったかと、
+    /// 次にすること) が標準エラーに出る。窓で走らせても `mokume render` で書き出しても、同じ文面で止まる。
+    ///
+    /// <!-- example: 文脈 var cat: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     cat = try loadImage("assets/cat.png")   // 無ければ、起動の失敗として止まる
+    /// }
+    ///
+    /// func draw() {
+    ///     image(cat, 0, 0)
+    /// }
+    /// ```
+    ///
+    /// 投げる型は問わない (``ImageFailure``・``ShaderFailure`` などをそのまま通せる)。投げない `func setup()` は
+    /// これまでどおり書けて、同じように呼ばれる。`async` にはできない。
+    func setup() throws
 
     /// フレームごとに呼ばれる。
     func draw()
@@ -220,7 +238,7 @@ public protocol Sketch: AnyObject, SketchPart {
 extension Sketch {
     public var settings: SketchSettings { SketchSettings() }
     public var plugins: [any Plugin] { [] }
-    public func setup() {}
+    public func setup() throws {}
     public func draw() {}
     public func mousePressed() {}
     public func mouseReleased() {}
@@ -601,7 +619,9 @@ extension SketchPart {
     /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
     /// アプリの起動・窓の作成・``Sketch/setup()`` の中で済む計算にかかった時間は乗らない — 数え始める
     /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
-    /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。
+    /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。`mokume watch --keep-time` で作り直した
+    /// 後の最初のフレームは、前の世代の作者の時計の続きの秒 (止めていれば止めた秒) になり、
+    /// ``Sketch/setup()`` の中で読む ``time`` もその秒である (``pauseTime()`` の「書き出しと作り直し」)。
     ///
     /// 窓に出して動かしている間は、既定で**実際に流れた時間**で、フレームが何枚落ちても
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
@@ -612,7 +632,7 @@ extension SketchPart {
     /// ([#2390](https://github.com/mokume-metal/mokume/issues/2390))。``Sketch/draw()`` が走った時刻ではない。
     /// main が他の仕事 (イベント・タイマー) で数ミリ秒遅れても、時刻は表示の刻みの間隔のまま進み、
     /// 表示が刻みを飛ばしたときは飛んだ枚数ぶん進んで、表示の時刻と合ったままになる。
-    /// 最初の枚が 0 で、その起点は ``Sketch/setup()`` の後である。
+    /// 最初の枚が 0 で (`--keep-time` の引き継ぎを除く)、その起点は ``Sketch/setup()`` の後である。
     ///
     /// - **表示の時刻と合うのは、その刻みに間に合った枚だけ** — 描き終えて差し出せた枚である。
     ///   遅れた枚は後の刻みで表示されるが、時刻は予定のままである
@@ -627,7 +647,8 @@ extension SketchPart {
     ///
     /// 窓でもフレームの時計を選べる (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``)。
     /// そのときと書き出し (`mokume render`) では `(frameCount − 1) / fps` で、重いフレームでも 1 枚に
-    /// 1/fps 秒しか進まない (処理落ち)。
+    /// 1/fps 秒しか進まない (処理落ち)。止める・飛ぶ (``pauseTime()`` / ``jumpTime(_:)``) と、`--keep-time` で
+    /// 引き継いだ秒が乗った実行では、その分の原点のずれがこの式に足される。
     ///
     /// 作品の側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///

@@ -21,14 +21,16 @@ final class TypeAndWeight: Sketch {
         SketchSettings(width: 960, height: 540, title: "type and weight")
     }
 
-    /// 可変書体。読めなければ `nil` で、既定の書体のまま描く (読めない環境でも落ちない)。
-    private var variable: Font?
+    /// 可変書体。
+    private var variable: Font!
     /// 太さが 3 つしかない書体。
-    private var fixed: Font?
+    private var fixed: Font!
 
-    func setup() {
-        variable = try? loadFont("/System/Library/Fonts/SFNS.ttf")
-        fixed = try? loadFont("/System/Library/Fonts/Helvetica.ttc")
+    /// **読めなければ投げる。** 書体は macOS に同梱のファイルなので、読めないのは環境が想定と違うとき。
+    /// 起動の失敗として止まり、読めなかった場所と事情が出る
+    func setup() throws {
+        variable = try loadFont("/System/Library/Fonts/SFNS.ttf")
+        fixed = try loadFont("/System/Library/Fonts/Helvetica.ttc")
     }
 
     func draw() {
@@ -43,7 +45,7 @@ final class TypeAndWeight: Sketch {
 
     /// 字ごとに時間差で太さが脈打つ見出し。
     private func pulsingHeadline() {
-        if let variable { textFont(variable) } else { noTextFont() }
+        textFont(variable)
         textSize(120)
         var x: Float = 60
         for (index, letter) in "mokume".enumerated() {
@@ -56,7 +58,7 @@ final class TypeAndWeight: Sketch {
     }
 
     /// 太さを 100 から 900 まで並べた 1 行。
-    private func weightRamp(font: Font?, label: String, top: Float) {
+    private func weightRamp(font: Font, label: String, top: Float) {
         noTextFont()
         textWeight(400)
         textSize(14)
@@ -65,7 +67,7 @@ final class TypeAndWeight: Sketch {
 
         for (index, weight) in [100, 300, 500, 700, 900].enumerated() {
             let x = 60 + Float(index) * 180
-            if let font { textFont(font) } else { noTextFont() }
+            textFont(font)
             textSize(38)
             textWeight(weight)
             fill(242, 242, 242)

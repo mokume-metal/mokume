@@ -877,6 +877,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "receiveShadow": SCENE,
     "surroundings": SCENE,
     "effects": SCENE,
+    "filter": (FIGURE, "呼んだ時点の絵へ掛け、掛けた絵は次のフレームへ持ち越す。寿命は置いたもの (set と同じ) の側で、持ち越しを約束する区間でも掛かる (#2455)"),
     "clip": SCENE,
     "noClip": SCENE,
     "particles": (SCENE, "表に無い。フレームの中でだけ扱い、外では注意して無視する (Canvas.isShaping の説明が挙げる「粒」)。1 フレーム進めるので、置くだけの図形とは寿命が違う"),

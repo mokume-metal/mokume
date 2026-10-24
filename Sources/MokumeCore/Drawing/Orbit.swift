@@ -90,8 +90,8 @@ public struct Orbit: Equatable, Sendable {
     /// ```swift
     /// var bunny: Model?
     ///
-    /// func setup() {
-    ///     bunny = try? loadModel("assets/bunny.obj")
+    /// func setup() throws {
+    ///     bunny = try loadModel("assets/bunny.obj")
     ///     if let bunny { orbit = .fitting(bunny) }   // 起動直後から全体が見える
     /// }
     ///

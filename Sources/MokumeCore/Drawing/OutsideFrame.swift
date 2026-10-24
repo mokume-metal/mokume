@@ -13,7 +13,7 @@ extension Canvas {
     /// **鍵は種類ごとに分けたままにしてある** — 光の注意が視点の注意を黙らせないことを
     /// `WarnOnceTests` が契約として見ている。ここが畳むのは文面だけである。
     ///
-    /// **シーンの記述 (``placing``・``pixelWrite`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
+    /// **シーンの記述 (``placing``・``pixelWrite``・``filter`` を除く 12 種) の第 2 文は、断った場面を名乗らず、
     /// どの口でも同じ 1 文で「フレームの外で呼ばれた」とだけ言う** ([#2723])。
     ///
     /// - **場面**: 断るのは `setup()` の中だけではない。止まっている間 (`noLoop()`) の入力の
@@ -27,7 +27,7 @@ extension Canvas {
     ///   偽になるので、どの口でも真の「呼ばれた」にそろえる
     ///
     /// 場面を名乗る文面は、#2723 が文面を直すだけと決めたので別の Issue ([#2780]) に分けた。そこで
-    /// 描き場所の面だけ、14 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
+    /// 描き場所の面だけ、15 種に共通の 1 文で `beginDraw()` と `endDraw()` を案内する
     /// (``drawingTargetNotice``)。本体の面は上の文のまま — 場面を言い分けない。
     ///
     /// [#947]: https://github.com/mokume-metal/mokume/issues/947
@@ -49,6 +49,11 @@ extension Canvas {
         ///
         /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
         case debug
+        /// 呼んだ時点の絵へ効果を掛けた (``Canvas/filter(_:)``)。**シーンの記述ではない** — 掛けた絵は次の
+        /// フレームへ残るので、寿命は置いたもの (``placing``) の側にある。持ち越しを約束する区間でも掛けられ、
+        /// 断るのはその外だけなので、文面は置ける場面を名乗る。鍵を ``effects`` と分けるのは、直す先の口が
+        /// 違う (`effects()` は毎フレーム書き直す) からである。
+        case filter
         /// 図形・絵・背景を置いた ([#1672])。**シーンの記述ではない** — 置いたものは、持ち越しを
         /// 約束する区間 (本体の `setup()` と止まっている間のコールバック・描き場所の
         /// `beginDraw()`〜`endDraw()`) ならフレームの外でも置ける。断るのはその外だけなので、
@@ -63,7 +68,7 @@ extension Canvas {
         /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         case pixelWrite
 
-        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 14 種で共通の
+        /// **自分でフレームを開く面が断ったときの文。種類ごとに主語を持ち、直し先の案内は 15 種で共通の
         /// 型にする** ([#2780])。自分でフレームを開く面とは、描き場所 (`createGraphics`) と、直に使う
         /// ``Canvas`` (`init(target:gpu:)`) である — ランタイムが持ち越しの区間を約束する本体の面
         /// (``Canvas/isRuntimeSurface``) ではない。
@@ -83,6 +88,7 @@ extension Canvas {
             case .style: subject = "Pushing and popping style only works inside a frame"
             case .clip: subject = "The clip is written again every frame"
             case .effects: subject = "Effects are written again every frame"
+            case .filter: subject = "filter() applies to the picture drawn so far, inside a frame"
             case .light: subject = "Lights are placed again every frame"
             case .surroundings: subject = "The surroundings are placed again every frame"
             case .shadow: subject = "Shadows are written again every frame"
@@ -96,7 +102,7 @@ extension Canvas {
             return subject + ". " + Self.drawingTargetTail
         }
 
-        /// ``drawingTargetNotice`` の、14 種で共通の直し先の案内。
+        /// ``drawingTargetNotice`` の、15 種で共通の直し先の案内。
         static let drawingTargetTail =
             "On a surface you open yourself, call this between beginDraw() and endDraw(), or "
             + "inside its draw { }. This was called outside them, so it belongs to no frame, and "
@@ -110,6 +116,7 @@ extension Canvas {
             case .style: .styleOutsideFrame
             case .clip: .clipOutsideFrame
             case .effects: .effectsOutsideFrame
+            case .filter: .filterOutsideFrame
             case .light: .lightOutsideFrame
             case .surroundings: .surroundingsOutsideFrame
             case .shadow: .shadowOutsideFrame
@@ -149,6 +156,10 @@ extension Canvas {
             case .effects:
                 "Effects are written again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"
+            case .filter:
+                "filter() applies to the picture drawn so far, so call it in setup(), draw() or an "
+                    + "input callback, or between beginDraw() and endDraw() on a drawing target. This "
+                    + "was called outside all of them, so it belongs to no frame, and was ignored"
             case .light:
                 "Lights are placed again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"

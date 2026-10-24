@@ -9,10 +9,10 @@ import Foundation
 ///
 /// <!-- example: 文脈 var quakes: JSONObject? -->
 /// ```swift
-/// func setup() {
+/// func setup() throws {
 ///     // 応答は { "features": [ { "properties": { "mag": 5.5, "place": "Off the coast" },
 ///     //                         "geometry": { "coordinates": [142.4, 38.3, 10] } }, … ] } の形
-///     quakes = try? loadJSONObject("data/quakes.geojson")
+///     quakes = try loadJSONObject("data/quakes.geojson")
 /// }
 ///
 /// func draw() {

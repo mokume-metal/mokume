@@ -12,7 +12,7 @@
 /// 180 度反転し、値を保つのではなく引数の意味が変わってしまうためである。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-enum HueSaturationBrightness {
+nonisolated enum HueSaturationBrightness {
     /// 色相の 1 周。
     static let turn: Float = 360
     /// 彩度・明度の目盛りの上端。
@@ -124,7 +124,7 @@ enum HueSaturationBrightness {
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func color(
+public nonisolated func color(
     hue: some ScalarConvertible, saturation: some ScalarConvertible, brightness: some ScalarConvertible,
     alpha: some ScalarConvertible = 255
 ) -> LinearRGBA {
@@ -164,21 +164,21 @@ public func color(
 /// 持つ色も 0 になる — 契約は ``red(_:)`` と同じ。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func hue(_ color: LinearRGBA) -> Float {
+public nonisolated func hue(_ color: LinearRGBA) -> Float {
     values(of: color).hue
 }
 
 /// 彩度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 色域の外の色では 100 を超えることがある (書いた値が保たれているため)。
-public func saturation(_ color: LinearRGBA) -> Float {
+public nonisolated func saturation(_ color: LinearRGBA) -> Float {
     values(of: color).saturation
 }
 
 /// 明度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 表示範囲を超えた明るさでは 100 を超えることがある。
-public func brightness(_ color: LinearRGBA) -> Float {
+public nonisolated func brightness(_ color: LinearRGBA) -> Float {
     values(of: color).brightness
 }
 
@@ -187,7 +187,7 @@ public func brightness(_ color: LinearRGBA) -> Float {
 /// 原色の行列・伝達関数 3 回) を 3 度払う。まとめて読んだ 3 成分は、別々に読んだ値と同じ。
 ///
 /// [#1787]: https://github.com/mokume-metal/mokume/issues/1787
-private func values(of color: LinearRGBA)
+private nonisolated func values(of color: LinearRGBA)
     -> (hue: Float, saturation: Float, brightness: Float)
 {
     let components = DisplayScale.readComponents(color)

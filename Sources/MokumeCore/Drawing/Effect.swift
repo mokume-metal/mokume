@@ -5,7 +5,8 @@ import simd
 
 /// 描いた絵にかける効果。
 ///
-/// 使い方は ``SketchPart/effects(_:)`` にある。
+/// 使い方は ``SketchPart/effects(_:)`` (フレームの終わりに掛ける) と ``SketchPart/filter(_:)`` (呼んだ時点で掛ける)、
+/// 絵ごとに掛ける ``Image/filtered(_:)`` にある。
 ///
 /// ## 数の意味は名前が決める
 ///
@@ -17,6 +18,9 @@ import simd
 ///   (`Pixel` の `position` / `size`) も出す画素で届く
 /// - 増減を表す数 (``adjust(brightness:contrast:saturation:)``) は **0 が無効**で、
 ///   正で増え負で減る
+/// - 2 値化のしきい値 (``threshold(level:)``) の `level` は 0…1 の明るさで、**無効の値を持たない** —
+///   0 なら、明るさが 0 以上の画素 (不透明度が 0 でない画素のほとんど) が白になり、1 なら 1 の画素だけが
+///   白になる。範囲の外は端へ締める
 ///
 /// ## 受け取れない数
 ///
@@ -29,8 +33,8 @@ import simd
 ///   (`invert(amount: 3)` は「amount は 0…1 だが 3.0 が渡された。1 を使った」)。説明に書いた
 ///   範囲でも言う — 書いた値と違う値が効いたことを知る手段が、他に無いため
 ///
-/// **散文の約束にしていない。** 全部の組み込みの効果について「無効の値なら絵が
-/// 1 ビットも変わらない」を検査が見ている。
+/// **散文の約束にしていない。** 無効の値を持つ組み込みの効果すべてについて「無効の値なら絵が
+/// 1 ビットも変わらない」を検査が見ている (無効の値を持たない ``threshold(level:)`` を除く)。
 public enum Effect {
     /// ぼかす。`radius` は出す画素で、0 なら効かない。
     ///
@@ -39,6 +43,9 @@ public enum Effect {
     /// 半径で揃えてあるが、絵は全解像度で回したものとは同じにならない。
     case blur(radius: Float)
     /// 明るいところをにじませる。`radius` は出す画素。
+    ///
+    /// `threshold` はにじませる明るさの下限で、**この明るさを越えた分だけがにじむ** (範囲を決めず、締めない)。
+    /// 2 値化の ``threshold(level:)`` の `level` (明るさ以上を白にする境目) とは別の量である。
     case bloom(amount: Float, threshold: Float = 0.7, radius: Float = 12)
     /// 色を反転する。**アルファは動かない。**
     case invert(amount: Float = 1)
@@ -50,6 +57,24 @@ public enum Effect {
     case fringe(amount: Float)
     /// 明るさ・対比・彩度を動かす。**どれも 0 が無効。**
     case adjust(brightness: Float = 0, contrast: Float = 0, saturation: Float = 0)
+    /// 2 値化する。**明るさが `level` 以上の画素は白、未満は黒にし、アルファは動かさない。**
+    ///
+    /// `level` は 0…1 で、明るさは ``brightness(_:)`` と同じ物差し (乗算を戻した表示の色の 3 成分の最大) で
+    /// 比べる。`brightness(c) / 100 >= level` の画素が白になる。Processing の `filter(THRESHOLD, level)` と
+    /// 同じ量で、`level` が 0 なら明るさが 0 以上の画素がすべて白に、1 なら 1 の画素だけが白になる。
+    /// 範囲の外は端へ締める。
+    ///
+    /// 白は不透明度ぶんの白 (乗算済み) で、半透明の画素は半透明のまま 2 値になる。**不透明度 0 の画素は
+    /// そのまま通す** — 透明な地へ加算した光も 2 値にしない (効果の段は入りに無い明るさを作らない・
+    /// ADR-0011 決定 1。ほかの効果も同じ)。明るさが負の画素 (`.subtract` で引いた分) は、`level` が 0 でも
+    /// 未満なので黒になる。
+    ///
+    /// 面の画素は半精度で持つので、`level` の 1/1024 手前から白とする — `fill(128)` に `level: 128 / 255` の
+    /// ようなちょうどの値は白になる (8 ビットの隣り合う目盛りは取り違えない)。半透明の画素も、不透明度で
+    /// 割り戻さずに比べるので、同じように成り立つ。**ただし、乗算済みの色が半精度の正規数の下限 (約 6e-5) に
+    /// 近いほど暗く薄い画素** (たとえば不透明度 0.05 の `1 / 255` の灰) **は、半精度の丸めが幅を越えるので、
+    /// ちょうどの値が白にならないことがある。**
+    case threshold(level: Float)
     /// 利用者が書いた効果。
     case custom(EffectShader)
 
@@ -126,6 +151,9 @@ public enum Effect {
             return [
                 EffectPass(control: Self.control(kind: .adjust, brightness, contrast, saturation))
             ]
+        case .threshold(let level):
+            // 比べるのは線形へ戻した値 (エンコードは単調なので答えは変わらない)。0 以下は 0 のまま
+            return [EffectPass(control: Self.control(kind: .threshold, TransferFunction.decode(level)))]
         case .custom(let shader):
             return [EffectPass(control: Self.control(kind: .copy), shader: shader)]
         }
@@ -185,12 +213,12 @@ extension Effect {
     /// - `amount` は 0…1。1 を越えた値は 1 と同じ絵になる (負の値は、締める前から 0 と同じ
     ///   く効かない)。越えたまま通すと、反転や周辺減光が負の光を作る
     /// - `radius` は ``maxRadius`` まで。締めても絵は変わらない (そちらの説明)
-    /// - `threshold` と ``adjust(brightness:contrast:saturation:)`` の 3 つは範囲を決めて
-    ///   いないので、締めない
+    /// - ``bloom(amount:threshold:radius:)`` の `threshold` と ``adjust(brightness:contrast:saturation:)`` の
+    ///   3 つは範囲を決めていないので、締めない。2 値化の ``threshold(level:)`` の `level` は 0…1 へ締める
     ///
     /// **締めたときは言う** ([#1842]・[ADR-0020] 決定 5)。説明に範囲と締め方を書いていても、書いた値と
     /// 違う値が効いたことを利用者が知る手段が他に無い。何を締めたかは `roundings` が返し、
-    /// ``Canvas/effects(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
+    /// ``Canvas/effects(_:)`` と ``Canvas/filter(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
     /// 負の `radius`) は言わない。
     ///
     /// 利用者の効果 (``custom(_:)``) は数を持たないので、そのまま通す。
@@ -223,6 +251,9 @@ extension Effect {
         case .adjust(let brightness, let contrast, let saturation):
             guard brightness.isFinite, contrast.isFinite, saturation.isFinite else { return nil }
             return self
+        case .threshold(let level):
+            guard level.isFinite else { return nil }
+            return .threshold(level: Self.clampAmount(level))
         case .custom:
             return self
         }
@@ -269,6 +300,13 @@ extension Effect {
             return [amount(.roundedMonochromeAmount, "monochrome", value)].compactMap { $0 }
         case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", value)].compactMap { $0 }
         case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", value)].compactMap { $0 }
+        case .threshold(let value):
+            guard value.isFinite, value < 0 || value > 1 else { return [] }
+            return [
+                Rounding(
+                    warning: .roundedThresholdLevel, quantity: "the threshold level", range: "0 to 1",
+                    passed: value, used: value < 0 ? 0 : 1)
+            ]
         case .adjust, .custom: return []
         }
     }
@@ -292,6 +330,7 @@ extension Effect {
         case .vignette: "vignette"
         case .fringe: "fringe"
         case .adjust: "adjust"
+        case .threshold: "threshold"
         case .custom: "custom"
         }
     }
@@ -379,6 +418,8 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     case accumulate = 12
     /// 縮める / 広げる。大きなぼかしが縮めた絵の上で回るための段 ([#755])。
     case resize = 13
+    /// 2 値化 (``Effect/threshold(level:)``)。
+    case threshold = 14
 
     /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
     var value: Float { Float(rawValue) }
@@ -399,6 +440,7 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
         case .enlarge: "kEffectEnlarge"
         case .accumulate: "kEffectAccumulate"
         case .resize: "kEffectResize"
+        case .threshold: "kEffectThreshold"
         }
     }
 }
