@@ -119,6 +119,26 @@ public final class Canvas {
     /// 頂点) はここを指す。毎フレーム置き直すので、溜め場を捨てても消えない。
     var flatInstances: [FlatInstance] = [.identity]
     private let flatInstanceStorage: GrowableBuffer
+    /// 細い塗りの雛形の記述の置き場 (#2208)。**置き場所の記述は ``thinFillSpans`` が引く**ので、1 つの
+    /// 置き場所が持つ記述は 1 つとは限らない (いまは塗りの 1 つだけ。線の片は、同じ置き場所の続きの
+    /// 記述になる)。細い塗りの雛形が無いフレームは空。
+    var thinFillRecords: [ThinFillRecord] = []
+    private let thinFillRecordStorage: GrowableBuffer
+    /// 細い塗りの雛形の置き場所ごとの、記述の先頭と数 (#2208)。**細い塗りの雛形の置き場所を足すたびに
+    /// 1 つ足し**、雛形が始まる位置を列が持つ (``Batch/thinFillStart``・平面の置き場所と同じ引き方)。
+    var thinFillSpans: [ThinFillSpan] = []
+    private let thinFillSpanStorage: GrowableBuffer
+    /// 直前に求めた細い塗りの記述 (``thinFillRecord(of:drawn:)``)。**向きと寸法が同じ置き場所は記述も
+    /// 同じ**なので、続けて同じ置き場所が来る間は求め直さない。
+    var thinFillMemo: ThinFillMemo?
+    /// 直前に足した記述の ``thinFillRecords`` での位置 (同じ記述を足し直さない・``addThinFill(_:)``)。
+    /// フレームの境目で溜め場を空にするとき、一緒に忘れる。
+    var lastThinFillRecord: Int?
+    /// 細い塗りの記述を求めた数 (検査用)。控えが効いている間は増えない。
+    var thinFillRecordsBuilt = 0
+    /// 細い塗りの広げ方を頂点段へ移した畳みを使うか (#2208)。偽にすると、畳みの鍵に 2x2 そのものを
+    /// 入れて CPU が置き場所ごとに片を組み直す、これまでの形に戻る。検査が両者の画素を比べる。
+    var expandsThinFillsInVertexStage = true
 
     /// いま開いている平面の雛形。
     ///
@@ -253,6 +273,8 @@ public final class Canvas {
         /// 溜め場の中でこの図形が占めている区間。**抜けるのは末尾にいる間だけ。**
         var vertexStart: Int
         var vertexEnd: Int
+        /// 細い塗りの雛形の鍵なら、この図形の記述 (畳むときに置き場所の記述になる・#2208)。
+        var thinFill: ThinFillPlacing?
         /// 置いた時点の列の数。**列が閉じていたら抜けない** (閉じた列の区間が動く)。
         var batchCount: Int
     }
@@ -265,6 +287,10 @@ public final class Canvas {
         var strokeStart: Int
         /// 置き場所の並びの中で、この雛形が始まる位置。
         var instanceStart: Int
+        /// 置き場所ごとの記述の先頭と数 (``Canvas/thinFillSpans``) の並びの中で、この雛形が始まる位置 (#2208)。
+        var thinFillStart = 0
+        /// 細い塗りの雛形が貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
+        var thinFillUV: SIMD4<Float>?
     }
 
     /// 平面を畳む鍵。**これが等しい図形どうしだけが 1 つの雛形に収まる。**
@@ -311,8 +337,16 @@ public final class Canvas {
         /// 置き場所の変換で描く画素 1 画素より細くなる塗りを持つなら、その変換 (#1934)。細い塗りの
         /// 広げ方は帯の向き (描く画素の軸との角度) で決まるので、**2x2 がそのまま同じ置き場所だけを
         /// 畳む** (鍵は 2x2 そのもの・``thinFillLinear(_:)``)。細くならなければ `nil` で、これまで
-        /// どおり変換の違う置き場所も同じ雛形に畳む。
+        /// どおり変換の違う置き場所も同じ雛形に畳む。**広げ方を頂点段へ移した畳み (``thinFillCapacity``・
+        /// #2208) では使わない** — ``expandsThinFillsInVertexStage`` を偽にした検査用の形だけが入れる。
         var fillLinear: ThinFold?
+        /// 頂点段で広げる細い塗りの雛形が持つ片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ・#2208・``ThinFillRecord/capacity(forPieces:)``)。
+        /// **この区間だけは、大きい区間の雛形が小さい区間の置き場所も受ける** (``joined(with:)``・``holds(_:)``)。
+        /// 置き場所の 2x2 は鍵に入らない —
+        /// 広げ方は置き場所ごとの記述 (``ThinFillRecord``) が持つので、回転だけが違う置き場所も 1 つの雛形に
+        /// 畳まれる。細い塗りでなければ 0 で、これまでどおり。``expandsThinFillsInVertexStage`` を偽にすると
+        /// 0 のまま (``fillLinear`` を使う)。
+        var thinFillCapacity = 0
         /// 塗りに貼る絵の面。**どの絵かまで鍵に入る。** 読み取り位置が寸法から決まる
         /// うえ、面そのものが列を分けるためである。有無しか持たないと、雛形を開いた
         /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
@@ -326,8 +360,9 @@ public final class Canvas {
 
     /// 細い線を持つ雛形の鍵 (#1637)。**比べるのは回転に依らない部分** (``rotationFreeKey(_:)``)
     /// だけで、雛形を組むのは最初の置き場所の 2x2 (``linear``) である。片は描く画素の空間で
-    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。細い塗り (#1934) は回転で広げ方が
-    /// 変わるので、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``)。
+    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。細い塗りは頂点段で置き場所ごとに広げる
+    /// ので鍵に変換を入れない (#2208・``FlatKey/thinFillCapacity``)。広げ方を頂点段へ移さない形
+    /// (検査用) だけが、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``・#1934)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
@@ -1837,6 +1872,13 @@ public final class Canvas {
         /// 閉じた時点の値で決まり、描き切りは述語を評価し直さない。立体の列を閉じる経路
         /// (``Canvas/closeSolidBatch()``) だけが入れる。
         var solidVariant: ShapePipeline.SolidVariantKey?
+        /// 細い塗りの雛形の列か (#2208)。真なら塗りの頂点は「片の番号と角の番号」で、頂点関数が置き場所
+        /// ごとの記述 (``Canvas/thinFillRecords``) から片を組む。
+        var thinFillExpands = false
+        /// その先頭と数の並びの、この列の先頭の位置。
+        var thinFillStart = 0
+        /// 広げた片の貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
+        var thinFillUV: SIMD4<Float>?
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -2427,6 +2469,10 @@ public final class Canvas {
             stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidSweeps")
         self.flatInstanceStorage = storage(
             stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
+        self.thinFillRecordStorage = storage(
+            stride: MemoryLayout<ThinFillRecord>.stride, minimum: 16, label: "thinFillRecords")
+        self.thinFillSpanStorage = storage(
+            stride: MemoryLayout<ThinFillSpan>.stride, minimum: 16, label: "thinFillSpans")
         self.formInstanceStorage = storage(
             stride: MemoryLayout<FormInstance>.stride, minimum: 256, label: "formInstances")
         self.solidInstanceStorage = storage(
@@ -2952,6 +2998,9 @@ public final class Canvas {
         // **何も動かさない置き場所は置き直す。** 畳めない列がこれを指すので、
         // 空のまま次の列を閉じると、束ねる先の無い添字が残る
         list(&flatInstances, resettingTo: [FlatInstance.identity])
+        list(&thinFillRecords)
+        list(&thinFillSpans)
+        if emptying { lastThinFillRecord = nil }
         list(&formInstances)
         // 列は数えない。溜めたものを閉じて束ねるだけで、置いたものではない — 数えると、区間の
         // 外で `blendMode()` を書いて列を閉じただけで量が増える。列があれば、束ねた中身が上の
@@ -4815,6 +4864,13 @@ public final class Canvas {
                     geometry.flatInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FlatInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
+                // 細い塗りの雛形の列は、記述の置き場全体と、雛形が始まる位置からの置き場所ごとの
+                // 先頭と数を渡す (#2208)
+                bind(geometry.thinFillRecords.gpuAddress, ShapePipeline.thinFillBufferIndex)
+                bind(
+                    geometry.thinFillSpans.gpuAddress
+                        + UInt64(batch.thinFillStart * MemoryLayout<ThinFillSpan>.stride),
+                    ShapePipeline.thinFillSpanBufferIndex)
             case .form:
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
@@ -5124,6 +5180,11 @@ public final class Canvas {
         if let baked { solid = baked } else { solid = try uploadSolids() }
         let flatInstanceBuffer = try flatInstanceStorage.write(
             flatInstances, holding: flatInstances.count)
+        // 細い塗りの記述。**無いフレームも 1 つだけ書く** — 頂点関数は列の旗を見て読まないが、口には何かを束ねる
+        let thinFillRecordBuffer = try thinFillRecordStorage.write(
+            thinFillRecords, holding: max(thinFillRecords.count, 1))
+        let thinFillSpanBuffer = try thinFillSpanStorage.write(
+            thinFillSpans, holding: max(thinFillSpans.count, 1))
         // 光の置き場。列は自分の区間を指す
         let lightsBuffer = try lightStorageBuffer.write(
             lightStorage, holding: max(lightStorage.count, 1))
@@ -5132,6 +5193,7 @@ public final class Canvas {
         return GeometryBuffers(
             flatVertices: buffer, coverages: coverageBuffer, formInstances: formBuffer,
             solidInstances: solid.instances, flatInstances: flatInstanceBuffer,
+            thinFillRecords: thinFillRecordBuffer, thinFillSpans: thinFillSpanBuffer,
             solidVertices: solid.vertices, solidIndices: solid.indices)
     }
 
@@ -5198,7 +5260,9 @@ public final class Canvas {
                 projection: jittered(batch.matrix, drawingInFrame: drawingInFrame),
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
                 strokeShift: solidStrokeShift,
-                unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage)
+                unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage,
+                thinFill: batch.thinFillExpands ? (batch.thinFillUV == nil ? 1 : 2) : 0,
+                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0))
             matrices.contents().advanced(by: matrixOffset)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
 
@@ -5312,6 +5376,8 @@ public final class Canvas {
         let formInstances: any MTLBuffer
         let solidInstances: any MTLBuffer
         let flatInstances: any MTLBuffer
+        let thinFillRecords: any MTLBuffer
+        let thinFillSpans: any MTLBuffer
         let solidVertices: any MTLBuffer
         let solidIndices: any MTLBuffer
     }

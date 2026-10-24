@@ -850,9 +850,10 @@ struct DensityInvarianceTests {
     /// 置き続けるかぎり 1 度しか組み直さない** (#1934)。細かさ 0.5 では高さ 1 の `rect` がいつも細い
     /// 側に入るので、補いが速い経路を外すと、`texture()` の小さな `rect` を並べる絵がかえって遅くなる。
     ///
-    /// 細い塗りの広げ方は帯の向きで決まるので、線 (`thinStrokesKeepTheFastRoutes`) と違って、回転
-    /// だけが違う置き場所は同じ雛形に畳まない。ここで見るのは平行移動だけが違う置き場所である。
-    @Test("細かさ 0.5 の細い塗りも、畳み・組み直しの控えの速い経路を通る (#1934)")
+    /// 畳んだ置き場所は、広げ方を置き場所ごとの記述で頂点段へ渡すので、平行移動だけでなく回転だけが
+    /// 違う置き場所も同じ雛形に畳む (#2208)。保持した形は頂点を CPU が置き場所ごとに写して積むので、
+    /// 同じ大きさ・向きで置き続けるかぎり 1 度しか組み直さない (向きを変えれば向きごとに 1 度)。
+    @Test("細かさ 0.5 の細い塗りも、畳み・組み直しの控えの速い経路を通る (#1934・#2208)")
     func thinFillsKeepTheFastRoutes() throws {
         let canvas = try Self.makeCanvas(density: 0.5)
         let plain = try canvas.makeShader(
@@ -868,6 +869,16 @@ struct DensityInvarianceTests {
                 // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
                 #expect(canvas.openFlat != nil, "細い塗りの rect が畳まれない")
                 #expect(canvas.flatInstances.count == 5, "畳んだ置き場所の数: \(canvas.flatInstances.count)")
+                // 回転だけが違う置き場所も、同じ雛形に畳む (#2208)
+                for index in 0..<4 {
+                    canvas.pushMatrix()
+                    canvas.translate(16 + Float(index) * 20, 40)
+                    canvas.rotate(Float(index) * 0.4 + 0.1)
+                    canvas.rect(0, 0, 12, 1)
+                    canvas.popMatrix()
+                }
+                #expect(canvas.flatInstances.count == 9, "回した置き場所を畳んでいない: \(canvas.flatInstances.count)")
+                #expect(canvas.thinFillSpans.count == 8)
                 if frame == 0 { shape = canvas.createShape { canvas.rect(0, 0, 40, 1) } }
                 canvas.resetShader()
                 for index in 0..<3 { canvas.shape(shape, 10 + Float(index) * 30, 80) }
