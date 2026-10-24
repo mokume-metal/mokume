@@ -17,7 +17,7 @@
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [#911]: https://github.com/mokume-metal/mokume/issues/911
-enum ColorPrimaries {
+nonisolated enum ColorPrimaries {
     /// 線形 sRGB → 線形 Display P3 (行ごと)。
     private static let workingFromSRGBRows: [SIMD3<Double>] = [
         SIMD3(0.822_461_968_714_362_4, 0.177_538_031_285_637_9, 0),

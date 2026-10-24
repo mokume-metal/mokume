@@ -10,7 +10,7 @@
 /// 鍵で数える仕組みそのものは ``WarningLog`` が持つ ([#833])。
 ///
 /// [#833]: https://github.com/mokume-metal/mokume/issues/833
-enum NumberValues {
+nonisolated enum NumberValues {
     /// 1 度だけ言う注意の種類。**事情ごとに数える** — 1 つの鍵を共有すると、先に
     /// 鳴ったほうが後の事情を永久に黙らせる。
     enum Warning: Hashable {
@@ -53,10 +53,19 @@ enum NumberValues {
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
-    private(set) static var warnings = WarningLog<Warning>()
+    ///
+    /// **複数のスレッドから同時に言える** ([#2389]): ここの口は `nonisolated` で、`concurrentPerform` や
+    /// TaskGroup から並べて呼ばれうる。控えは ``SharedWarningLog`` が `Mutex` で守り、同じ注意は
+    /// 1 度だけ出る。`warnings` は検査が読む写しである。
+    ///
+    /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
+    private static let shared = SharedWarningLog<Warning>()
+
+    /// 言った注意の写し。**検査が読む。**
+    static var warnings: WarningLog<Warning> { shared.snapshot }
 
     static func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
-        warnings.warnOnce(warning, message())
+        shared.warnOnce(warning, message())
     }
 }
 
@@ -99,7 +108,7 @@ enum NumberValues {
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
-public let PI: Float = .pi
+public nonisolated let PI: Float = .pi
 
 /// 円周率の半分 (π/2)。90 度。
 ///
@@ -108,14 +117,14 @@ public let PI: Float = .pi
 /// ```
 ///
 /// 角度 0 は右向きなので、12 時を上にしたいときの戻し量にもなる (``PI`` の作例)。
-public let HALF_PI: Float = .pi / 2
+public nonisolated let HALF_PI: Float = .pi / 2
 
 /// 円周率の 4 分の 1 (π/4)。45 度。
 ///
 /// ```swift
 /// rotate(QUARTER_PI)
 /// ```
-public let QUARTER_PI: Float = .pi / 4
+public nonisolated let QUARTER_PI: Float = .pi / 4
 
 /// 円周率の 2 倍 (2π)。1 周。
 ///
@@ -124,7 +133,7 @@ public let QUARTER_PI: Float = .pi / 4
 /// ```
 ///
 /// 範囲を 1 周へ写すときにも使う — `map(i, 0, n, 0, TWO_PI)`。``TAU`` と同じ値。
-public let TWO_PI: Float = .pi * 2
+public nonisolated let TWO_PI: Float = .pi * 2
 
 /// 1 周 (2π)。``TWO_PI`` と同じ値。
 ///
@@ -133,7 +142,7 @@ public let TWO_PI: Float = .pi * 2
 /// ```
 ///
 /// Processing・p5.js が `TWO_PI` と並べて持つ別名。
-public let TAU: Float = .pi * 2
+public nonisolated let TAU: Float = .pi * 2
 
 // MARK: - 角度の単位を直す
 
@@ -151,7 +160,7 @@ public let TAU: Float = .pi * 2
 /// 読める ([ADR-0033] 決定 4 が `colorMode()` を持たないのと同じ理由)。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func radians(_ degrees: some ScalarConvertible) -> Float { degrees.asFloat * .pi / 180 }
+public nonisolated func radians(_ degrees: some ScalarConvertible) -> Float { degrees.asFloat * .pi / 180 }
 
 /// ラジアンを度に直す。``radians(_:)`` の逆。
 ///
@@ -161,7 +170,7 @@ public func radians(_ degrees: some ScalarConvertible) -> Float { degrees.asFloa
 ///
 /// 角度を**読みたい**ときのためにある — 画面に出す、度で書かれた表と突き合わせる、
 /// といった用途である。描く口へ渡す値は直さなくてよい。
-public func degrees(_ radians: some ScalarConvertible) -> Float { radians.asFloat * 180 / .pi }
+public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { radians.asFloat * 180 / .pi }
 
 // MARK: - 値を別の範囲へ写す
 
@@ -186,8 +195,29 @@ public func degrees(_ radians: some ScalarConvertible) -> Float { radians.asFloa
 /// 手本は ±∞ や NaN を返すが、``Sketch/draw()`` から毎フレーム呼ばれる口が数でない値を
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
+/// **値だけを扱うので、`nonisolated` の文脈からも呼べる** ([#2389])。数と色の関数 (`map`・`lerp`・
+/// `constrain`・`norm`・`smoothstep`・`color`・`lerpColor` ほか) は、スケッチの状態を読まないので、
+/// 画素を計算するループを `DispatchQueue.concurrentPerform` や TaskGroup で分けて回せる。
+/// **これは明示的に選ぶ人向けの道で、スケッチを書くだけなら要らない** ([ADR-0001] 原則 1) —
+/// 並行性の注釈を書かなくても、いつもどおり書ける。
+///
+/// ```swift
+/// import Dispatch
+///
+/// DispatchQueue.concurrentPerform(iterations: 256) { x in
+///     _ = color(map(x, 0, 255, 0, 255), 64, 128)
+/// }
+/// ```
+///
+/// 分けた先の閉包は `@Sendable` で、**スケッチの状態 (`width`・`fill` など) は読めない**。
+/// 読みたい値は、分ける前に変数へ取り出しておく。スケッチの口 (`circle` など) を呼ぶ閉包を
+/// `DispatchQueue` へ渡すと、main actor の閉包なので、実行時の隔離の検査で落ちる (SE-0423)。
+/// 描くのは分けた先ではなく、結果を持ち帰ってからにする。
+///
+/// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
+/// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func map(
+public nonisolated func map(
     _ value: some ScalarConvertible, _ inLow: some ScalarConvertible, _ inHigh: some ScalarConvertible,
     _ outLow: some ScalarConvertible, _ outHigh: some ScalarConvertible
 ) -> Float {
@@ -221,7 +251,7 @@ public func map(
 ///
 /// [#1283]: https://github.com/mokume-metal/mokume/issues/1283
 /// [#1476]: https://github.com/mokume-metal/mokume/issues/1476
-private func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
+private nonisolated func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
     let span = high - low
     return span.isFinite
         ? (value - low) / span
@@ -251,7 +281,7 @@ private func proportion(_ value: Float, _ low: Float, _ high: Float) -> Float {
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
+public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
     let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
     guard start.isFinite, stop.isFinite, amount.isFinite else {
         NumberValues.warnOnce(
@@ -285,7 +315,7 @@ public func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible
 ///
 /// [#1312]: https://github.com/mokume-metal/mokume/issues/1312
 /// [#1453]: https://github.com/mokume-metal/mokume/issues/1453
-func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
+nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
     let span = stop - start
     guard span.isFinite else { return (1 - amount) * start + amount * stop }
     // 幅が無ければ、どこを取っても始まり。比が ∞ で来ても `0 × ∞` の NaN を作らない
@@ -311,7 +341,7 @@ func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> Float {
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func constrain(_ value: some ScalarConvertible, _ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
+public nonisolated func constrain(_ value: some ScalarConvertible, _ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
     let (value, low, high) = (value.asFloat, low.asFloat, high.asFloat)
     guard value.isFinite, low.isFinite, high.isFinite else {
         NumberValues.warnOnce(
@@ -349,7 +379,7 @@ public func constrain(_ value: some ScalarConvertible, _ low: some ScalarConvert
 /// 言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func norm(_ value: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible) -> Float {
+public nonisolated func norm(_ value: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible) -> Float {
     let (value, start, stop) = (value.asFloat, start.asFloat, stop.asFloat)
     guard value.isFinite, start.isFinite, stop.isFinite else {
         NumberValues.warnOnce(
@@ -395,7 +425,7 @@ public func norm(_ value: some ScalarConvertible, _ start: some ScalarConvertibl
 /// 曲線を通さずに、窓の中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, _ x: some ScalarConvertible) -> Float {
+public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, _ x: some ScalarConvertible) -> Float {
     let (edge0, edge1, x) = (edge0.asFloat, edge1.asFloat, x.asFloat)
     guard edge0.isFinite, edge1.isFinite, x.isFinite else {
         NumberValues.warnOnce(
@@ -465,7 +495,7 @@ public func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConv
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-public func damp(
+public nonisolated func damp(
     _ current: some ScalarConvertible, _ target: some ScalarConvertible, _ lambda: some ScalarConvertible,
     _ dt: some ScalarConvertible
 ) -> Float {
@@ -509,7 +539,7 @@ public func damp(
 /// 時刻を 0 以上 1 未満へ巡らせる口は別にある。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func pingpong(_ t: some ScalarConvertible, _ length: some ScalarConvertible) -> Float {
+public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some ScalarConvertible) -> Float {
     let (t, length) = (t.asFloat, length.asFloat)
     guard t.isFinite, length.isFinite else {
         NumberValues.warnOnce(
@@ -558,7 +588,7 @@ public func pingpong(_ t: some ScalarConvertible, _ length: some ScalarConvertib
 /// **名前と並びは Unity・Godot に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
+public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
     let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
     guard start.isFinite, stop.isFinite, amount.isFinite else {
         NumberValues.warnOnce(
@@ -611,7 +641,7 @@ public func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConver
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func dist(
+public nonisolated func dist(
     _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible
 ) -> Float {
     let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
@@ -635,7 +665,7 @@ public func dist(
 ///
 /// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
 /// 返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
-public func mag(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+public nonisolated func mag(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
     let (x, y) = (x.asFloat, y.asFloat)
     guard x.isFinite, y.isFinite else {
         NumberValues.warnOnce(
@@ -653,7 +683,7 @@ public func mag(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Flo
 /// `2^100` 未満ならそのまま開くので、`3, 4` から 5 がちょうど返る。外 (2 乗が溢れる大きい値・
 /// 0 や非正規数に潰れる小さい値) は、2 の冪で寄せて測るので、有限の距離は有限で返り、**0 になるのは
 /// 0 ベクトルだけ**。結果が `Float` の範囲を越えるなら ∞ になる (差が溢れて ∞ になった入力も ∞)。
-private func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
+private nonisolated func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
     Vector2.measuredLength(of: SIMD2(dx, dy))
 }
 
@@ -672,7 +702,7 @@ private func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func sq(_ value: some ScalarConvertible) -> Float {
+public nonisolated func sq(_ value: some ScalarConvertible) -> Float {
     let value = value.asFloat
     guard value.isFinite else {
         NumberValues.warnOnce(
@@ -703,7 +733,7 @@ public func sq(_ value: some ScalarConvertible) -> Float {
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func fract(_ value: some ScalarConvertible) -> Float {
+public nonisolated func fract(_ value: some ScalarConvertible) -> Float {
     let value = value.asFloat
     guard value.isFinite else {
         NumberValues.warnOnce(
@@ -738,7 +768,7 @@ public func fract(_ value: some ScalarConvertible) -> Float {
 /// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public func mod(_ value: some ScalarConvertible, _ divisor: some ScalarConvertible) -> Float {
+public nonisolated func mod(_ value: some ScalarConvertible, _ divisor: some ScalarConvertible) -> Float {
     let (value, divisor) = (value.asFloat, divisor.asFloat)
     guard value.isFinite, divisor.isFinite else {
         NumberValues.warnOnce(
@@ -761,7 +791,7 @@ public func mod(_ value: some ScalarConvertible, _ divisor: some ScalarConvertib
 /// `divisor` と食い違うときだけ `divisor` を足す。余りそのものは正確 (丸めない)。足した結果が
 /// `divisor` ちょうどに丸まったら 0 へ畳む — 半開区間を外れた値を返さない。
 /// `HueSaturationBrightness.wrapped` が #1533 で踏んだ境界と同じである。
-func foldedIntoPeriod(_ value: Float, by divisor: Float) -> Float {
+nonisolated func foldedIntoPeriod(_ value: Float, by divisor: Float) -> Float {
     let remainder = value.truncatingRemainder(dividingBy: divisor)
     // 余りが 0 なら符号の食い違いは起きない (-0 を返さないよう、0 は 0 で返す)
     guard remainder != 0 else { return 0 }
