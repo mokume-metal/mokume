@@ -2284,8 +2284,8 @@ static inline FormField mokume_cornerField(float2 q, float2 axisX, float2 axisY)
 ///   最近点がどちらの端の側にあるか (弧の真ん中の向きとの外積の符号) でその直線を選ぶ。**楕円の帯でも
 ///   端の切り口の位置は厳密** (端の法線の直線が帯の両縁と直角に交わる)
 /// - **project** (線の長さに半分の太さを足す): square の帯に、端から接線の向きに半分の太さだけ出る長方形
-///   (幅は太さ) を足す。長方形は弧に沿って曲がらず、まっすぐ出る — 太い線で小さな円弧を引いても、端は
-///   弧の延長でなく接線の延長になる
+///   (幅は太さ) を足す (距離場の和集合)。長方形は弧に沿って曲がらず、まっすぐ出る — 太い線で小さな円弧を
+///   引いても、端は弧の延長でなく接線の延長になる
 ///
 /// `isThin` / `thinCoverage` は、帯が描く画素で 1 画素より細いとき (`2 · 太さの半分 < 画素の法線向きの幅`・
 /// 線の細い枝と同じ境目) に、縁 1 本の距離場の代わりに**両縁を見る**被覆 (帯の被覆 × 端の切り口の被覆) を返す
@@ -2297,10 +2297,8 @@ static inline FormField mokume_cornerField(float2 q, float2 axisX, float2 axisY)
 /// [#1451]: https://github.com/mokume-metal/mokume/issues/1451
 static inline FormField mokume_arcBandField(
     float2 p, float2 radii, float4 directions, float2 middle, float sweep, bool exact,
-    float halfWeight, uint cap, float4 rows, thread bool &isThin, thread float &thinCoverage,
-    thread float &extraCoverage)
+    float halfWeight, uint cap, float4 rows, thread bool &isThin, thread float &thinCoverage)
 {
-    extraCoverage = 0.0;
     float2 direction1 = directions.xy;
     float2 direction2 = directions.zw;
     float2 end1 = radii * direction1;
@@ -2330,10 +2328,15 @@ static inline FormField mokume_arcBandField(
     //   平面の距離のほうが大きいので変わらない: 端から平面に沿って u、法線の向きに c 進んだ画素の端の点までの距離は
     //   √(c² + u²) ≤ c + 太さの半分)
     // - 最近点が弧の中なら、端の点から遠い画素は切り口と関係が無いので使わない
+    // **「端の近く」の幅は画素の大きさ (描く画素 1 つが形の座標でいくつか) で測る。** 形の座標の定数にすると、
+    // 縮めて描く場面 (`scale(0.05)`) では端の角の画素が圏外になって切り口が効かず、拡げて描く場面
+    // (`scale(400)`) では守りが一度も効かない。切り口の位置の画素は、端から太さの半分の所の帯の角で、
+    // 縁の被覆が広がる幅 (半画素寄せ + 斜めの画素の半分の対角 ≈ 1.2 画素) より余裕を持って 2 画素を取る
+    float pixel = max(length(rows.xy), length(rows.zw));
     float toCapEnd = length(p - capEnd);
     float capPlane = dot(p - capEnd, capOutward);
     float capDistance = footOnArc
-        ? (toCapEnd < halfWeight + 2.0 ? capPlane : -1e6)
+        ? (toCapEnd < halfWeight + 2.0 * pixel ? capPlane : -1e6)
         : max(capPlane, toCapEnd - halfWeight);
 
     if (cap == kFormCapRound && !footOnArc) {
@@ -2371,21 +2374,27 @@ static inline FormField mokume_arcBandField(
     FormField band = mokume_cornerField(
         float2(reach.distance - halfWeight, capDistance), reach.gradient, capOutward);
     if (cap == kFormCapProject) {
-        // 端から接線の向きに半分の太さだけ出る長方形 (幅は太さ)。2 つの端の両方を足す。**長方形の被覆は帯の
-        // 被覆に足す** (`extraCoverage`)。距離場の和集合 (小さいほう) にすると、帯の切り口と長方形の辺が
-        // 同じ直線の上で接する画素が、どちらの縁も半分ずつ数えて継ぎ目に 0.5 が残る
+        // 端から接線の向きに半分の太さだけ出る長方形 (幅は太さ)。2 つの端の両方を足す。**帯とは距離場の和集合
+        // (小さいほう) で合わせる** — 被覆を足し算で重ねると、ほぼ一周の弧 (隙間が太さより狭く、長方形どうしや
+        // 反対の端の帯と重なる) で縁の画素を和で数えて過大になる。真の被覆は和集合である。
+        //
+        // 和集合にすると、帯の切り口と長方形の辺が同じ直線の上で接する継ぎ目の画素が、どちらの縁も半分ずつ数えて
+        // 0.5 になる。**長方形を切り口の内側へ 1 画素ぶん延ばして重ねて潰す** (延ばした所は帯の中なので形は変わらない。
+        // 帯の外へはみ出すのは、弧が接線から離れる分 `(1 画素)² / 2 半径` だけで、半径が数画素あれば 0.1 画素に満たない)
+        float overlap = pixel;
         for (uint end = 0; end < 2; end++) {
             float2 point = end == 0 ? end1 : end2;
             float2 direction = end == 0 ? direction1 : direction2;
             float2 outward = end == 0 ? -tangent1 : tangent2;
             float2 normal = mokume_direction(direction / radii, float2(1.0, 0.0));
             float2 relative = p - point;
-            float along = dot(relative, outward) - 0.5 * halfWeight;
+            float boxLength = halfWeight + overlap;
+            float along = dot(relative, outward) - 0.5 * (halfWeight - overlap);
             float sideways = dot(relative, normal);
             FormField box = mokume_cornerField(
-                float2(abs(sideways) - halfWeight, abs(along) - 0.5 * halfWeight),
+                float2(abs(sideways) - halfWeight, abs(along) - 0.5 * boxLength),
                 normal * (sideways < 0.0 ? -1.0 : 1.0), outward * (along < 0.0 ? -1.0 : 1.0));
-            extraCoverage += mokume_formCoverage(box, rows, false);
+            if (box.distance < band.distance) { band = box; }
         }
     }
     return band;
@@ -2512,8 +2521,6 @@ static inline FormPaint mokume_formPaint(
     // 画面で 1 画素より細い線と点は、距離場を通さずに被覆を出す (線の枝の説明)
     bool isThinLine = false;
     float thinLineCoverage = 0.0;
-    // 外縁の被覆に足す分 (開いた弧の帯の project の端が出す長方形・`mokume_arcBandField`)。ほかの形は 0
-    float outerExtra = 0.0;
     // 画面で 1 画素より細い塗りも同じ (`rect` の塗りの説明)
     bool isThinFill = false;
     float thinFillCoverage = 0.0;
@@ -2703,7 +2710,7 @@ static inline FormPaint mokume_formPaint(
                 float thinBandCoverage = 0.0;
                 outer = mokume_arcBandField(
                     q, form.size.xy, in.sectorDirections, in.arcMid, form.offset.w, exactRing,
-                    halfWeight, form.meta.y, in.inverseRows, thinBand, thinBandCoverage, outerExtra);
+                    halfWeight, form.meta.y, in.inverseRows, thinBand, thinBandCoverage);
                 if (thinBand) {
                     isThinLine = true;
                     thinLineCoverage = thinBandCoverage;
@@ -2819,7 +2826,7 @@ static inline FormPaint mokume_formPaint(
             isThinFill ? thinFillCoverage : mokume_formCoverage(fill, in.inverseRows, fillLinear);
     }
     if (kFormHasStroke) {
-        float outerCoverage = min(mokume_formCoverage(outer, in.inverseRows, outerLinear) + outerExtra, 1.0);
+        float outerCoverage = mokume_formCoverage(outer, in.inverseRows, outerLinear);
         float innerEdge = mokume_formCoverage(inner, in.inverseRows, innerLinear);
         float innerCoverage = isThinHole ? thinHoleCoverage : min(innerEdge, holeCap);
         // 尖りの先では縁 1 本の値も上限の積 (長方形で数える) も穴を過大に数える (`ellipse(0, 0, 40, 10)`・

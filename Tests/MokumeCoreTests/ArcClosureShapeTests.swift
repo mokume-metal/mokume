@@ -180,6 +180,21 @@ struct ArcClosureShapeTests {
             }
         }
 
+        /// 塗りと輪郭の和集合の被覆。4x4 の標本で、塗りは寄せず、輪郭は画面で半画素寄せて評価する。塗りと輪郭が
+        /// 重なる画素の面積 (扇の塗りに食い込む端など) を、真の和集合で数える。
+        func unionCoverage(x: Int, y: Int) -> Double {
+            let base = SIMD2(Double(x), Double(y)) - center
+            let n = 4
+            var inside = 0
+            for j in 0..<n {
+                for i in 0..<n {
+                    let at = base + SIMD2((Double(i) + 0.5) / Double(n), (Double(j) + 0.5) / Double(n))
+                    if fills(at) || strokes(at - SIMD2(0.5, 0.5)) { inside += 1 }
+                }
+            }
+            return Double(inside) / Double(n * n)
+        }
+
         /// 画素 `(x, y)` の被覆。8x8 の標本。**輪郭は画面で半画素寄せて評価する** (ADR-0039 決定 2)。
         func coverage(x: Int, y: Int, stroke: Bool) -> Double {
             let shift = stroke ? SIMD2(0.5, 0.5) : .zero
@@ -218,18 +233,30 @@ struct ArcClosureShapeTests {
 
     /// 描いた絵と定義の食い違い。絵が 0 でも 1 でもない画素と、定義が 0 でも 1 でもない画素だけを数える
     /// (中身の画素は食い違えば最悪値に出る)。
+    ///
+    /// - Parameters:
+    ///   - scale: 描く前に掛ける拡大。形の座標を `1 / scale` にして描くので、画素に出る大きさは変わらない。
+    ///     縮めて (`0.05`) も拡げて (`400`) も、画素の幾何は同じ定義と合うはず。
+    ///   - union: 塗りと輪郭を両方持たせ、和集合の被覆と比べる (`stroke` は読まない)。
     private func measure(
-        _ spec: Arc, style: Style, weight: Float, stroke: Bool, size: Int = 96
+        _ spec: Arc, style: Style, weight: Float, stroke: Bool, size: Int = 96, scale: Float = 1,
+        union: Bool = false
     ) throws -> Measured {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
         let placed = SIMD2<Float>(Float(size) / 2 + 0.37, Float(size) / 2 - 0.39)
         try canvas.draw {
             canvas.background(black)
             canvas.translate(placed.x, placed.y)
-            if stroke {
+            canvas.scale(scale, scale)
+            if union {
+                canvas.fill(white)
+                canvas.stroke(white)
+                canvas.strokeWeight(weight / scale)
+                canvas.strokeCap(style.cap)
+            } else if stroke {
                 canvas.noFill()
                 canvas.stroke(white)
-                canvas.strokeWeight(weight)
+                canvas.strokeWeight(weight / scale)
                 canvas.strokeCap(style.cap)
             } else {
                 canvas.noStroke()
@@ -237,7 +264,7 @@ struct ArcClosureShapeTests {
             }
             // 座標の読み方は既定の中心 + 幅と高さ。置き場所は translate で決める
             let (x, y) = (Float(0), Float(0))
-            let (w, h) = (2 * Float(spec.radii.x), 2 * Float(spec.radii.y))
+            let (w, h) = (2 * Float(spec.radii.x) / scale, 2 * Float(spec.radii.y) / scale)
             let (a, b) = (Float(spec.start), Float(spec.start + spec.sweep))
             if let mode = style.mode {
                 canvas.arc(x, y, w, h, a, b, mode)
@@ -258,7 +285,8 @@ struct ArcClosureShapeTests {
             for x in max(low.x, 0)..<min(high.x, size) {
                 let drawn = Double(pixels[x, y].red)
                 // 定義は標本の数えなので、まず絵が 0 / 1 の画素は軽く済ませる
-                let expected = reference.coverage(x: x, y: y, stroke: stroke)
+                let expected =
+                    union ? reference.unionCoverage(x: x, y: y) : reference.coverage(x: x, y: y, stroke: stroke)
                 let error = abs(drawn - expected)
                 if drawn > 0.002 && drawn < 0.998 || expected > 0.002 && expected < 0.998 {
                     measured.edgePixels += 1
@@ -326,5 +354,112 @@ struct ArcClosureShapeTests {
         #expect(
             measured.rootMeanSquare < 0.08,
             "\(spec) \(String(describing: mode)): 縁の二乗平均 \(measured.rootMeanSquare)")
+    }
+
+    // MARK: - 画素の大きさに従う守り・和集合
+
+    /// 端の形の守り (開いた弧の帯の切り口を使う範囲) は、形の座標の定数でなく画素の大きさで測る (#2428 の反証)。
+    /// 縮めて描く (`scale(0.05)`) と角の画素が圏外になって切り口が効かず、拡げて描く (`scale(400)`) と守りが
+    /// 一度も効かず遠い画素に切り口が及ぶ。どちらも画素の幾何は同じなので、同じ定義と合う。
+    @Test(
+        "端の形のある開いた弧の帯は、縮めて描いても拡げて描いても、真の幾何と画素の被覆が合う",
+        arguments: [Float(0.05), 400],
+        [Arc.all[1], Arc.all[3]])
+    func capGuardFollowsThePixelSize(_ scale: Float, _ spec: Arc) throws {
+        for cap in [StrokeCap.square, .project] {
+            let style = Style(mode: .open, cap: cap)
+            let measured = try measure(spec, style: style, weight: 7, stroke: true, scale: scale)
+            #expect(
+                measured.worst < 0.4,
+                "\(spec) \(style) 拡大 \(scale): 最悪 \(measured.worst) \(measured.worstAt) 縁の二乗平均 \(measured.rootMeanSquare)")
+            #expect(
+                measured.rootMeanSquare < 0.06,
+                "\(spec) \(style) 拡大 \(scale): 縁の二乗平均 \(measured.rootMeanSquare) (最悪 \(measured.worst) \(measured.worstAt))")
+        }
+    }
+
+    /// project の端の長方形は、帯との和集合で数える (足し算だと、重なる所の縁の画素が過大になる)。ほぼ一周の弧で
+    /// 隙間が太さより狭いと、両端の長方形どうしが重なる。
+    @Test(
+        "ほぼ一周の弧の project の端は、重なる長方形も和集合で数える",
+        arguments: [0.14, 0.3], [nil, .open] as [ArcMode?])
+    func nearlyFullTurnProjectCountsTheUnion(_ gap: Double, _ mode: ArcMode?) throws {
+        let spec = Arc(name: "円・ほぼ一周 (隙間 \(gap))", radii: SIMD2(30, 30), start: 0.3, sweep: 2 * .pi - gap)
+        let style = Style(mode: mode, cap: .project)
+        let measured = try measure(spec, style: style, weight: 7, stroke: true)
+        #expect(
+            measured.worst < 0.3,
+            "\(spec) \(style): 最悪 \(measured.worst) \(measured.worstAt) 縁の二乗平均 \(measured.rootMeanSquare)")
+        #expect(
+            measured.rootMeanSquare < 0.05,
+            "\(spec) \(style): 縁の二乗平均 \(measured.rootMeanSquare) (最悪 \(measured.worst) \(measured.worstAt))")
+    }
+
+    /// 楕円の弧では、端の接線が半径と直交しないので、project の長方形が既定の扇の塗りに食い込む。塗りと輪郭の
+    /// 重なりは、塗りと輪郭を足した被覆でなく、真の和集合の被覆と合う。
+    @Test(
+        "楕円の弧の project の端は、扇の塗りに食い込んでも、塗りと輪郭の和集合の被覆と合う",
+        arguments: [Arc.all[3], Arc.all[4], Arc(name: "楕円・扁平な弧", radii: SIMD2(36, 12), start: 0.2, sweep: 2.0)])
+    func ellipticalProjectEndsOverlapTheFill(_ spec: Arc) throws {
+        let style = Style(mode: nil, cap: .project)
+        let measured = try measure(spec, style: style, weight: 7, stroke: true, union: true)
+        #expect(
+            measured.worst < 0.4,
+            "\(spec) \(style): 最悪 \(measured.worst) \(measured.worstAt) 縁の二乗平均 \(measured.rootMeanSquare)")
+        #expect(
+            measured.rootMeanSquare < 0.06,
+            "\(spec) \(style): 縁の二乗平均 \(measured.rootMeanSquare) (最悪 \(measured.worst) \(measured.worstAt))")
+    }
+
+    /// 同じ幾何を、`scale` で縮めて・拡げて描いた絵の赤成分 (形の座標を `1 / scale` にするので、画素に出る大きさは同じ)。
+    private func render(_ spec: Arc, cap: StrokeCap, weight: Float, scale: Float) throws -> [Float] {
+        let size = 96
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.translate(Float(size) / 2 + 0.37, Float(size) / 2 - 0.39)
+            canvas.scale(scale, scale)
+            canvas.noFill()
+            canvas.stroke(white)
+            canvas.strokeWeight(weight / scale)
+            canvas.strokeCap(cap)
+            canvas.arc(
+                0, 0, 2 * Float(spec.radii.x) / scale, 2 * Float(spec.radii.y) / scale,
+                Float(spec.start), Float(spec.start + spec.sweep), .open)
+        }
+        let pixels = try canvas.target.readPixels()
+        var out: [Float] = []
+        out.reserveCapacity(size * size)
+        for y in 0..<size {
+            for x in 0..<size { out.append(Float(pixels[x, y].red)) }
+        }
+        return out
+    }
+
+    /// 端の切り口を使う範囲 (端の近く) は、画素の大きさで測る。形の座標の定数 (かつては太さの半分 + 2) だと、
+    /// 縮めて描くと角の画素が圏外になり、拡げて描くと守りが一度も効かない。同じ幾何は、縮めても拡げても、拡大 1 と
+    /// 同じ絵になる (長い軸と短い軸の差が大きい楕円は、端の法線の直線が弧の反対側へも伸びる)。
+    ///
+    /// **旧い式でもこの組では差が出なかった** — 守りが効く画素 (切り口の外側で最近点が弧の中) は、
+    /// 帯の縁の半画素に数画素あるだけで、被覆の差は 0.001 に収まる。画素の大きさで測る直しは、定数の次元を
+    /// 揃える (形の座標の長さを画素の長さと混ぜない) もので、絵が変わることを示す組は見つかっていない。
+    @Test("端の形のある開いた弧の帯は、縮めても拡げても、拡大しない絵と同じになる", arguments: [Float(0.05), 400])
+    func capGuardIsScaleInvariant(_ scale: Float) throws {
+        let arcs = [
+            Arc(name: "細長い楕円・大きい弧", radii: SIMD2(40, 10), start: 0.2, sweep: 4.5),
+            Arc(name: "楕円・ほぼ一周", radii: SIMD2(44, 20), start: 0.1, sweep: 5.9),
+            Arc(name: "扁平な楕円・半周", radii: SIMD2(44, 8), start: 2.5, sweep: 3.3),
+        ]
+        for spec in arcs {
+            for cap in [StrokeCap.square, .project] {
+                for weight in [Float(1.3), 7] {
+                    let base = try render(spec, cap: cap, weight: weight, scale: 1)
+                    let scaled = try render(spec, cap: cap, weight: weight, scale: scale)
+                    var worst: Float = 0
+                    for (a, b) in zip(base, scaled) { worst = max(worst, abs(a - b)) }
+                    #expect(worst < 0.02, "\(spec) \(cap) 太さ \(weight) 拡大 \(scale): 拡大 1 との最大差 \(worst)")
+                }
+            }
+        }
     }
 }
