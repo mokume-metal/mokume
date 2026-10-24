@@ -167,6 +167,8 @@ extension Canvas {
     }
 
     func encodeEffects(into commands: any MTL4CommandBuffer) throws(RenderFailure) -> Bool {
+        // 頼まれた効果が無ければ何も積まない (省く判定と同じ述語・``Canvas/encodesEffects``・#2787)
+        guard encodesEffects else { return false }
         // **半径は出す画素で書かれている** ([#1545])。段は描く細かさの絵の上で回るので、
         // 展開する前に描く画素へ換算する (縮め幅もこの半径で決まる)
         let scale = effectRadiusScale

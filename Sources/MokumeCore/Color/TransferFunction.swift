@@ -10,7 +10,7 @@ import Foundation
 /// 片方だけ直して食い違うことが起きないよう、離して置かない。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-enum TransferFunction {
+nonisolated enum TransferFunction {
     /// 直線の区間と曲線の区間の境目 (線形側)。
     static let linearThreshold: Float = 0.003_130_8
     /// 直線の区間の傾き。
