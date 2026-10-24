@@ -67,13 +67,18 @@ public final class SketchRuntime {
     /// 進めた回 (``advanceForPresence()``) が使う。
     var setupFailureHandler: ((RenderFailure) -> Void)?
     /// 外から止められているか (``pause()``)。
-    private var isPaused = false
+    private var isPaused = false {
+        // 止まった枚の秒を次の世代へ渡す (`watch --keep-time`・#2414)。止まったかどうかは両方から決まる
+        didSet { timing.noteStill(isHeldStill) }
+    }
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
     /// 意味の違いは ``resume()`` の説明にある。
     ///
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    private(set) var isLooping = true
+    private(set) var isLooping = true {
+        didSet { timing.noteStill(isHeldStill) }
+    }
     /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
     /// **窓・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
     /// いるので、絵が窓へ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
@@ -558,6 +563,8 @@ public final class SketchRuntime {
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
     ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ・``ClockHandover``)。
+    ///     **書き出しの子には渡さない。** 省けば 0 秒から始まる。
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
@@ -573,6 +580,7 @@ public final class SketchRuntime {
         onScreen: Bool = false,
         persistsParams: Bool = true,
         opensFacets: Bool = true,
+        handover: ClockHandover? = nil,
         presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
@@ -593,7 +601,8 @@ public final class SketchRuntime {
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
-        self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.timing = FrameTiming(
+            clock: clock, frameRate: settings.frameRate, now: now, handover: handover)
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
@@ -670,6 +679,9 @@ public final class SketchRuntime {
         // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
         // (ADR-0030 決定 6)
         let restoration = paramStore?.restore() ?? .init()
+        // **前の世代の作者の時計を入れるのも `setup()` より先** (`watch --keep-time`・#2414)。`setup()` の
+        // `pauseTime()`・`playTime()`・`jumpTime(_:)` が、前の世代の状態によらず通常どおり効く
+        timing.beginHandover()
         // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)。
         // **投げたら控えて、最初のフレームが投げ直す** (``setupFailure``・#2401)
         do {
