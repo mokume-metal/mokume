@@ -518,7 +518,9 @@ struct PixelGridTests {
         @MainActor func draw(on canvas: Canvas) {
             let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
             if let arc {
-                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y))
+                // 扇の周の帯 (中心の角・2 本の半径・穴) を見る形。閉じ方を渡さない既定は開いた弧の帯で、
+                // こうした部分を持たない (弦で結んだ形と開いた弧は `ArcClosureShapeTests` が見る・#2428)
+                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y), .pie)
             } else if isEllipse {
                 canvas.ellipse(0, 0, size.x, size.y)
             } else {
@@ -557,7 +559,7 @@ struct PixelGridTests {
     }
 
     /// 点 `p` が楕円の扇 (中心を含む) の内か。**扇の内外は、中心から弧の端へ向かう 2 本の半直線で
-    /// 決める** (角は媒介変数の角・`mokume_sectorField` の説明)。
+    /// 決める** (角は媒介変数の角・`mokume_arcRegionField` の説明)。
     nonisolated static func sectorContains(
         _ p: SIMD2<Double>, radii: SIMD2<Double>, start: Double, sweep: Double
     ) -> Bool {

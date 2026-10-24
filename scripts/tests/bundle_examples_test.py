@@ -291,7 +291,7 @@ class 本物の木(unittest.TestCase):
 
     def test_複数ある口は番号つきで別々に並ぶ(self):
         spellings = {e.spelling for e in self.entries}
-        for heading, count in (("circle(_:_:_:)", 2), ("rect(_:_:_:_:)", 2), ("arc(_:_:_:_:_:_:)", 4)):
+        for heading, count in (("circle(_:_:_:)", 2), ("rect(_:_:_:_:)", 2), ("arc(_:_:_:_:_:_:)", 6)):
             self.assertEqual(
                 {s for s in spellings if s.startswith(heading + "#")},
                 {f"{heading}#{n}" for n in range(1, count + 1)},
