@@ -5,7 +5,7 @@ import Foundation
 import simd
 
 /// 表示できる範囲を超えた明るさの丸め方。
-public enum ToneMapping: Sendable, Equatable, CaseIterable {
+public nonisolated enum ToneMapping: Sendable, Equatable, CaseIterable {
     /// 範囲の外だけを端に寄せる。**0…1 の内側は 1 ビットも変えない。**
     case clip
     /// 明るいところを、範囲へ入るまでなめらかに寄せる。
@@ -35,7 +35,7 @@ public enum ToneMapping: Sendable, Equatable, CaseIterable {
 /// 作業空間そのものだからである ([ADR-0011] 決定 3)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
-struct Brightness: Equatable, Sendable {
+nonisolated struct Brightness: Equatable, Sendable {
     /// 画面全体の明るさの倍率。
     var exposure: Float = 1
     /// 範囲を超えた明るさの丸め方。
@@ -149,7 +149,7 @@ struct Brightness: Equatable, Sendable {
 /// 並びは `Display/Shaders/Present.metal` の `Brightness` と一致していなければならない
 /// (``ShapeVertex`` と同じ理由で、`ShaderInterfaceTests` が反射と突き合わせる)。
 /// 組み立てるのは ``Brightness/write(to:)`` の 1 か所だけである。
-struct PackedBrightness {
+nonisolated struct PackedBrightness {
     /// 画面全体の明るさの倍率。
     var exposure: Float
     /// 寄せ始める明るさ (``Brightness/knee``)。
