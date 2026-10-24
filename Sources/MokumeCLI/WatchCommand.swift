@@ -662,18 +662,10 @@ enum WatchCommand {
         // **映っている前の世代が自分で消えた回も、台へ伝える** (#2983)。`departed()` は起こした子だけを見る
         session.relinquishIfOutgoingDeparted()
         if let departure = session.departed() {
-            let line: String
-            if departure.neverShowedAFrame {
-                // **起動できなかった子は、作り直しが通らなかった回と同じに扱う** (#2401)。前の版を残し、
-                // 起動できなかったと言う。前の世代を畳むと、`setup()` の書き損じ 1 つで絵が凍る
-                let kept = session.keepPreviousAfterFailedStart()
-                line = failedStartLine(departure, holdingPrevious: kept)
-            } else {
-                // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
-                // 合図はもう来ないので、ここで畳む (#1142)
-                await retire(after: session)
-                line = departedLine(departure)
-            }
+            // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
+            // 合図はもう来ないので、ここで畳む (#1142)
+            await retire(after: session)
+            let line = departedLine(departure)
             say(line)
             viewer?.firstFrame.settle()
             showInPreview(line, false)
@@ -969,20 +961,6 @@ enum WatchCommand {
                 + "frozen where it stopped. Save and it gets rebuilt and started again"
             : "The running sketch exited on its own (code \(departure.status)) — the drawing "
                 + "is frozen where it stopped. Save and it gets rebuilt and started again"
-    }
-
-    /// 起こした子が、絵を 1 枚も出さずに消えた (起動できなかった) ことを名乗る行 ([#2401])。
-    ///
-    /// **作り直しが通らなかった回と同じ言い方で、前の版が残っているかを続ける** (``holdingLine``・
-    /// ``nothingRunningLine``)。起動できなかった理由は、子が標準エラーに出した起動の失敗の全文にある — ここは
-    /// 起きたことと、次の一手 (直して保存) を言う。
-    ///
-    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
-    static func failedStartLine(_ departure: WatchSession.Departure, holdingPrevious: Bool) -> String {
-        let what = departure.wasSignalled
-            ? "The new version crashed while starting (signal \(departure.status); the reason is above)"
-            : "The new version could not start (exit code \(departure.status); the reason is above)"
-        return what + " — " + (holdingPrevious ? holdingLine : nothingRunningLine)
     }
 
     /// 強制終了しても消えなかったことを名乗る行。

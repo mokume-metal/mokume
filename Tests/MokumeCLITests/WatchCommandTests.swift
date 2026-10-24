@@ -543,22 +543,6 @@ struct WatchCommandTests {
         #expect(crashed.contains("11"))
     }
 
-    /// **起動できなかった子は、作り直しが通らなかった回と同じ言い方で、前の版が残っているかを続ける** (#2401)。
-    /// 「自分で消えた・絵が凍っている」とは言わない。
-    @Test("起動できなかった子は、起動できなかったと名乗り、前の版が残っているかを作り直しの失敗と同じ言葉で続ける")
-    func namesAChildThatCouldNotStart() {
-        let ended = WatchSession.Departure(status: 1, wasSignalled: false, neverShowedAFrame: true)
-        let crashed = WatchSession.Departure(status: 11, wasSignalled: true, neverShowedAFrame: true)
-        let kept = WatchCommand.failedStartLine(ended, holdingPrevious: true)
-        let none = WatchCommand.failedStartLine(ended, holdingPrevious: false)
-        #expect(kept.contains("could not start") && kept.contains("1"))
-        #expect(kept.hasSuffix(WatchCommand.holdingLine), Comment(rawValue: kept))
-        #expect(none.hasSuffix(WatchCommand.nothingRunningLine), Comment(rawValue: none))
-        #expect(!kept.contains("frozen") && !kept.contains("exited on its own"), "自分で消えた言い方が混ざっている: \(kept)")
-        let crash = WatchCommand.failedStartLine(crashed, holdingPrevious: true)
-        #expect(crash != kept && crash.contains("11") && crash.contains("crashed"), Comment(rawValue: crash))
-    }
-
     // MARK: - 作り直しを途中で止めたとき (#1147)
 
     /// **失敗と読み違えない。** 端末の要約は `Build failed:` で始まるので、止めた回が同じ
