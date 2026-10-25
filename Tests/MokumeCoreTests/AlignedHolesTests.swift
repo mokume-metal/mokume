@@ -4,6 +4,8 @@
 import Testing
 import simd
 
+// 他アカウントからのPRnoテスト
+
 @testable import MokumeCore
 
 /// 穴が縦や横に揃って並ぶ形の三角形化 ([#2508])。CPU だけで確かめる。
