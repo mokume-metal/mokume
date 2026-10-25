@@ -335,6 +335,17 @@ struct CommandQueueGateWordingTests {
         #expect(!FileManager.default.fileExists(atPath: path.path), "差し込みの期限切れが記録を書いた")
     }
 
+    /// OS の事情を文にするのは `Diagnostics.posixReason` だけ (#3153)。普通の errno では `strerror` と
+    /// 文面が同じなので、違いが出る知らない番号 (`strerror` は `Unknown error: 9999`) で見る。
+    @Test("書けなかった事情の文は、知らない番号でも Diagnostics.posixReason と同じになる")
+    func theReasonIsNamedByPosixReason() {
+        #expect(Diagnostics.posixReason(9999) == "error 9999", "前提: 知らない番号は error <番号> と名乗る")
+        #expect(ExpiryRecord.reason(9999) == Diagnostics.posixReason(9999), "\(ExpiryRecord.reason(9999))")
+        // 普通の errno は、これまでと同じ文面のまま
+        #expect(ExpiryRecord.reason(ENOENT) == Diagnostics.posixReason(ENOENT))
+        #expect(ExpiryRecord.reason(ENOSPC).contains("space"), Comment(rawValue: ExpiryRecord.reason(ENOSPC)))
+    }
+
     @Test("作った後に書き損ねたときは、止まらないとは言わず、読めない記録が残ると言う")
     func aHalfWrittenRecordIsNamedForWhatItIs() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

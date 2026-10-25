@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// GPU の待ちが期限を越えたことを、プロセスの外に 1 つだけ残す記録 ([#2235])。
 ///
@@ -130,7 +131,10 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
         return .written
     }
 
-    private static func reason(_ code: Int32) -> String { String(cString: strerror(code)) }
+    /// 書けなかった事情の文。OS の事情を文にするのは ``Diagnostics/posixReason(_:)`` だけにする
+    /// ([#2839](https://github.com/mokume-metal/mokume/issues/2839))。`strerror` は静的な緩衝を返すので
+    /// 別の糸から同時に呼ぶと書き換わり、知らない番号の文面も口によって割れる。
+    static func reason(_ code: Int32) -> String { Diagnostics.posixReason(code) }
 
     /// 手元の時間帯の `2026-10-22T09:00:00+0900`。`gpu-slot.py` の `time.strftime("%Y-%m-%dT%H:%M:%S%z")` と揃える。
     static func timestamp(_ date: Date) -> String {
