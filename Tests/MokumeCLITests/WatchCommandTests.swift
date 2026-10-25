@@ -319,6 +319,21 @@ struct WatchCommandTests {
         #expect(line.hasSuffix("(Permission denied)"), "原因が切れている: \(line)")
     }
 
+    /// **最初の絵を出す前に終わった子は、場所が長くても終わり方 (終了コード・合図) がプレビューの行に残る**
+    /// (#3172 の反証)。末尾を残す詰め方だけでは、理由の末尾の「it exited with code 7 before …」が削られる。
+    @Test("絵を出す前に終わった子の理由は、長い場所でも終わり方を残して詰める", arguments: [
+        ("it exited with code 7", "code 7"), ("it crashed (signal 11)", "signal 11"),
+    ])
+    func theWayAChildEndedSurvivesTheNoticeLimit(how: String, kept: String) throws {
+        let place = "/Users/someone/Documents/sketches/a-project-with-a-rather-long-name/inner"
+        let reason = "Could not start sketch in \(place): \(how)" + BuildReport.firstFrameSuffix
+        let line = try #require(WatchCommand.notice(for: notStarted(reason: reason), holdingPrevious: false))
+        #expect(line.count <= BuildReport.noticeLimit, "\(line)")
+        #expect(line.contains(kept), "終わり方が落ちている: \(line)")
+        #expect(line.hasSuffix("before drawing its first frame"), "\(line)")
+        #expect(line.hasPrefix("Could not start sketch"), "\(line)")
+    }
+
     /// スキーマの代表例に載っている、実際の理由。
     private static func exampleReason() throws -> String {
         let url = URL(fileURLWithPath: #filePath)

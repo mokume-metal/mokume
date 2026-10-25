@@ -481,6 +481,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 乗り換えるのは ``promoteIfReady()`` で、控えた世代が 1 枚書いてからである。
     private func adopt(_ manifest: SharedFrameSurface.Manifest) {
+        // 見張りが「乗り換えない」と決めた世代 (起動に失敗して前の版を戻した回の、死んだ子) の目録は採らない
+        if let pid = manifest.pid, abandonedPIDs.contains(pid) { return }
         // **控えていた世代は捨てる。** 重ねるのは 2 つまでで、まだ 1 枚も出していない
         // 世代を積み上げても、出る絵は増えない
         if let waiting = incoming {
@@ -539,6 +541,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
         if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
         relinquishedLegacyIDs = nil
+        abandonedPIDs.removeAll()
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -652,6 +655,23 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 映している世代の目録が番号を名乗れば、手放す世代のときだけ下ろす — 映っている生きた世代に誤って
     /// 当てない。番号を名乗らない世代 (古いライブラリ) は照合できないので下ろす。まだ採っていない目録も、
     /// 手放した番号のものは生まれたときから手放した扱いにする。
+    /// 見張りが乗り換えないと決めた世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 乗り換えで捨てる。
+    private var abandonedPIDs: Set<Int32> = []
+
+    /// 見張りが、控えている世代へ乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **起動に失敗した新しい版を捨てて、前の版を現役に戻した回に呼ぶ。** 失敗した子が 1 枚書いてから死ぬと、
+    /// 台はその子の目録へ乗り換え、動いている前の版の代わりに死んだ子の最後の絵を映す。控えている目録が
+    /// その番号なら捨て、まだ採っていない目録もその番号なら採らない。映している世代には触らない。
+    func abandonIncoming(pids: [Int32]) {
+        abandonedPIDs.formUnion(pids)
+        guard let waiting = incoming, let pid = waiting.pid, pids.contains(pid) else { return }
+        retiredLookups += waiting.lookup.lookups
+        try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
+        incoming = nil
+    }
+
     func relinquishSource(pids: [Int32]) {
         relinquishedPIDs.formUnion(pids)
         let matches = source?.pid.map { pids.contains($0) } ?? true

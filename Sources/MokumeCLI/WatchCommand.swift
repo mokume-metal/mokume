@@ -465,6 +465,11 @@ enum WatchCommand {
             window?.relinquishGeneration(pids: pids)
             preview?.relinquishGeneration(pids: pids)
         }
+        // **起動に失敗した版を捨てて前の版を戻した回は、台がその子の絵へ乗り換えない** (#3172)
+        session.abandonsIncoming = { [weak window, weak preview] pids in
+            window?.abandonGeneration(pids: pids)
+            preview?.abandonGeneration(pids: pids)
+        }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
