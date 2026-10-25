@@ -18,11 +18,14 @@ import MokumeDiagnostics
 ///
 /// - **実時間** (窓に出しながら動かす) では、ラックを音の流れ (``RackPlayer``) へ入れて実際に鳴らす。
 ///   標本は音の側のスレッドが作る
-/// - **フレームの数え方** (書き出し・検査) では**鳴らさず**、ラックの標本を「絶対のフレーム番号 ×
+/// - **フレームの数え方** (書き出し・検査) では、ふだんは**鳴らさず**、ラックの標本を「絶対のフレーム番号 ×
 ///   標本化率 ÷ fps」の位置まで進める。区間がフレームの番号だけで決まるので、同じ設定から何度書き出しても
-///   同じ値になる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)
+///   同じ値になる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。**`.mov` を録り始めて音声トラックが付くと**
+///   (``SoundTrackMixer``・[#3125])、ラックを機材に出さない音の流れ (``RackPlayer``) へ入れ、窓ごとに描いて動画へ
+///   載せる。位置は今の位置から続くので、解析の値は途切れない
 /// - 出力が開けないときは、鳴らさずに実時間で進め、そのことを 1 度だけ知らせる
 ///
+/// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SynthStage: Inlet {
@@ -183,10 +186,26 @@ final class SynthStage: Inlet {
         } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
             // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
             pace = .frames(perSecond: max(1, frameRate), origin: frame)
+            // 音声トラックを載せる録りのために、混ぜ役へ名乗る。音声トラックが始まっていれば、最初からその流れで鳴る
+            if let mixer = SoundTrackMixer.mixer(for: owner) {
+                mixer.register(stage: self)
+                if let flow = mixer.flow { speak(through: flow) }
+            }
         } else {
             // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
             speak(through: .speakers)
         }
+    }
+
+    /// 音声トラックが始まった ([#3125])。鳴らさずに数で進めていたラックを、機材に出さない流れへ入れる。
+    ///
+    /// ラックが作った標本の数 (``SynthRack/rendered``) はそのまま続くので、位置も解析の値も途切れない。操作の列に
+    /// 溜まっている頼みは、流れが描く最初の窓の先頭から効く。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func joinTrack(_ flow: SoundFlow) {
+        guard !isClosed, case .frames = pace else { return }
+        speak(through: flow)
     }
 
     func supply() {

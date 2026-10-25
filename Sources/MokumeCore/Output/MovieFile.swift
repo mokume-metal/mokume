@@ -174,6 +174,12 @@ nonisolated final class MovieFile: MovieOutput {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    /// 音声トラックの入力 ([#3125])。音を載せない録りでは `nil` (入力を作らず、映像のバイトも変わらない)。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    private let soundInput: AVAssetWriterInput?
+    /// 最初の窓の先頭の時刻。区間の始まりは、これと最初の映像の時刻の早いほう。
+    private let soundStart: CMTime?
     private let frameDuration: Double
     /// 最初の 1 枚を受け取ったか。**区間の始まりは最初のフレームの時刻**で、
     /// 0 ではない — 途中から撮り始めた動画の頭に、何も無い時間を作らないため。
@@ -358,8 +364,30 @@ nonisolated final class MovieFile: MovieOutput {
         ]
     }
 
+    /// 音声トラックの時刻の刻み (標本化率)。時刻は標本の番号 ÷ 標本化率で、映像と同じく絶対の時刻。
+    static let soundTimescale = CMTimeScale(SoundWindow.sampleRate)
+
+    /// 音声トラックの出力設定。**流れの形式のまま** — LPCM・32 ビット浮動小数点・48 kHz・2 チャンネル。AAC や整数への
+    /// 丸めは使わない ([ADR-0042] 決定 6 の改訂)。
+    ///
+    /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+    static func soundSettings() -> [String: Any] {
+        [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: SoundWindow.sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+    }
+
+    /// - Parameters:
+    ///   - soundStart: 音声トラックを付けるとき、最初の窓の先頭の標本の番号。`nil` なら付けない。
     init(
-        path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444
+        path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444,
+        soundStart: Int? = nil
     ) throws(MovieWriteFailure) {
         // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
         // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
@@ -433,6 +461,23 @@ nonisolated final class MovieFile: MovieOutput {
             ])
         guard writer.canAdd(input) else { throw .destinationUnavailable(path: path) }
         writer.add(input)
+        if let soundStart, format == .proRes4444 {
+            let sound = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.soundSettings())
+            // **音声の入力だけ実時間にする** ([#3125] の測定)。映像と音声を 1 つの仕事から交互に足すと、両方が
+            // 実時間でない (`false`) 入力では 1.1〜1.7 秒で双方の用意が戻らず止まる。音声だけ `true` にすれば、
+            // 音声が映像より 0〜2 フレーム先行しても止まらず完走した。用意の待ちは映像と同じ読み直しで待つ
+            //
+            // [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+            sound.expectsMediaDataInRealTime = true
+            // 音声の入力は刻みを変えられない (既定が標本化率)。時刻は標本の番号 ÷ 標本化率で渡す
+            guard writer.canAdd(sound) else { throw .destinationUnavailable(path: path) }
+            writer.add(sound)
+            soundInput = sound
+            self.soundStart = CMTime(value: CMTimeValue(soundStart), timescale: Self.soundTimescale)
+        } else {
+            soundInput = nil
+            self.soundStart = nil
+        }
         guard writer.startWriting() else {
             throw .writeFailed(path: path, reason: failureReason)
         }
@@ -454,7 +499,9 @@ nonisolated final class MovieFile: MovieOutput {
             guard writerStatus == .writing else {
                 throw .writeFailed(path: path, reason: failureReason)
             }
-            writer.startSession(atSourceTime: stamp)
+            // 区間の始まりは、映像の最初の時刻と音声の最初の時刻の早いほう (音声の窓の先頭は標本に切り捨てるので、
+            // 映像より最大 1 標本ぶん早い)
+            writer.startSession(atSourceTime: soundStart.map { CMTimeMinimum($0, stamp) } ?? stamp)
             hasStarted = true
         }
         // 読み直して待つ。合図で待つ形を採らない理由は型の冒頭にある (#979)。
@@ -485,6 +532,75 @@ nonisolated final class MovieFile: MovieOutput {
         }
     }
 
+    /// 音の 1 窓を書き足す。**最初の映像を書き足した後に呼ぶ** (区間は映像の最初の時刻で始まる)。
+    ///
+    /// 時刻は窓の先頭の標本の番号 ÷ 標本化率で、映像と同じ絶対の時刻。詰まっているあいだは映像と同じく
+    /// 読み直して待ち、writer が止まっていれば writer の理由で書き損じにする。音声トラックを付けていなければ
+    /// 何もしない。
+    func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure) {
+        guard let soundInput else { return }
+        guard hasStarted else {
+            throw .writeFailed(path: path, reason: "a sound window came before the first picture")
+        }
+        while writerStatus == .writing, !soundInput.isReadyForMoreMediaData {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        guard writerStatus == .writing else {
+            throw .writeFailed(path: path, reason: failureReason)
+        }
+        guard let buffer = Self.soundBuffer(of: window) else {
+            throw .writeFailed(path: path, reason: "could not make a sample buffer of the sound")
+        }
+        guard soundInput.append(buffer) else {
+            throw .writeFailed(path: path, reason: failureReason)
+        }
+    }
+
+    /// 窓を、2 チャンネルが交互に並ぶ LPCM の標本の束にする (``soundSettings()`` と同じ形)。
+    static func soundBuffer(of window: SoundWindow) -> CMSampleBuffer? {
+        let count = window.count
+        guard count > 0, window.right.count == count else { return nil }
+        var description = AudioStreamBasicDescription(
+            mSampleRate: Float64(SoundWindow.sampleRate), mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 8,
+            mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2, mBitsPerChannel: 32,
+            mReserved: 0)
+        var format: CMAudioFormatDescription?
+        guard
+            CMAudioFormatDescriptionCreate(
+                allocator: nil, asbd: &description, layoutSize: 0, layout: nil, magicCookieSize: 0,
+                magicCookie: nil, extensions: nil, formatDescriptionOut: &format) == noErr,
+            let format
+        else { return nil }
+        var interleaved = [Float](repeating: 0, count: count * 2)
+        for index in 0..<count {
+            interleaved[2 * index] = window.left[index]
+            interleaved[2 * index + 1] = window.right[index]
+        }
+        let bytes = interleaved.count * MemoryLayout<Float>.size
+        var block: CMBlockBuffer?
+        guard
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil,
+                customBlockSource: nil, offsetToData: 0, dataLength: bytes,
+                flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+            let block
+        else { return nil }
+        let copied = interleaved.withUnsafeBytes {
+            CMBlockBufferReplaceDataBytes(
+                with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes)
+        }
+        guard copied == noErr else { return nil }
+        var sample: CMSampleBuffer?
+        guard
+            CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: count,
+                presentationTimeStamp: CMTime(value: CMTimeValue(window.start), timescale: soundTimescale),
+                packetDescriptions: nil, sampleBufferOut: &sample) == noErr
+        else { return nil }
+        return sample
+    }
+
     /// 書き終える。**ファイルが閉じてから返る。**
     ///
     /// - Parameter time: 最後のフレームの時刻。ここに 1 フレームぶんを足したところが
@@ -502,6 +618,7 @@ nonisolated final class MovieFile: MovieOutput {
             throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         input.markAsFinished()
+        soundInput?.markAsFinished()
         writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
