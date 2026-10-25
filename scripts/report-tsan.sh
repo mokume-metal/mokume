@@ -16,8 +16,12 @@
 # 最初の報告の塊を抜いて載せる。末尾の tail だけでは、塊が出力の途中に埋もれる。
 #
 # 発信の実体は scripts/report-check-failure.sh が持ち、ここが持つのは**固定タイトルと本文**
-# だけである (report-release-check.sh と同じ分け方)。鍵は本文で、競合の箇所か落ちた検査が
-# 変われば追記になり、同じ落ち方が続く間は本文の区画だけが書き換わる (#2708)。
+# だけである (report-release-check.sh と同じ分け方)。
+#
+# **鍵は本文ではなく、結論・`SUMMARY:` の行・落ちた検査の文面にする** (#2708)。最初の報告の
+# 塊は pid とアドレスを持ち、回ごとに揺れるので、本文を鍵にすると同じ競合でも毎回コメントに
+# なる。`SUMMARY:` の行は箇所 (ファイル・行・関数) だけを持つ。競合の箇所か落ちた検査が
+# 変われば追記になり、同じ落ち方が続く間は本文の区画だけが書き換わる。
 #
 # 呼ぶのは host-scheduled.yml の tsan-report で、GitHub ホストのジョブである。
 # **`issues: write` を持つのはそのジョブだけ**で、検査を走らせる tsan には持たせない。
@@ -45,7 +49,13 @@ here="$(dirname "${BASH_SOURCE[0]}")"
 
 body=$(mktemp)
 log=$(mktemp)
-trap 'rm -f "$body" "$log"' EXIT
+key=$(mktemp)
+trap 'rm -f "$body" "$log" "$key"' EXIT
+
+summaries() {
+  [ -s "$LOG" ] || return 0
+  grep -o 'SUMMARY: ThreadSanitizer:.*' "$LOG" | sort -u || true
+}
 
 # 端末出力の末尾。上限は report-check-failure.sh の 200 行に収める
 {
@@ -76,11 +86,12 @@ BODY
   printf '## TSan の報告\n\n'
   if [ -s "$LOG" ] && grep -q 'ThreadSanitizer' "$LOG"; then
     printf '競合した箇所 (`SUMMARY:` の行・重複を畳んだ):\n\n```\n'
-    grep -o 'SUMMARY: ThreadSanitizer:.*' "$LOG" | sort -u | sed -n '1,40p' || true
+    summaries | sed -n '1,40p'
     printf '```\n\n最初の報告:\n\n```\n'
     # 塊は `WARNING: ThreadSanitizer:` から `SUMMARY: ThreadSanitizer:` まで。長すぎる塊は切る
     awk '/WARNING: ThreadSanitizer:/ { on = 1 } on { print; n++ } /SUMMARY: ThreadSanitizer:/ && on { exit } n >= 80 { exit }' "$LOG"
     printf '```\n\n'
+    printf '**下の「落ちた検査」が空でも赤である。** TSan は検査の値が合っていても、競合を見つけると検査のプロセスを止める (終了コード 134・signal 6)。\n\n'
   else
     printf 'test-log に TSan の報告は無い — 競合ではなく、ビルドか検査そのものが落ちたか、切れた。下の落ちた検査と出力を読む\n\n'
   fi
@@ -103,9 +114,15 @@ BODY
 BODY
 } > "$body"
 
+{
+  printf '%s\n' "$RESULT"
+  summaries
+  python3 "$here/read-test-record.py" --failure-messages "$RECORD"
+} > "$key"
+
 bash "$here/report-check-failure.sh" \
   --title "$TITLE" \
   --log "$log" \
   --body-file "$body" \
-  --key-file "$body" \
+  --key-file "$key" \
   --source '.github/workflows/host-scheduled.yml の tsan-report が自動起票した (#3220)'
