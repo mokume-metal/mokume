@@ -11,7 +11,7 @@ import Testing
 /// 手で行うので実機では組み合わせを回せない。判断を ``GamepadSlots`` に閉じてあるので、ここで
 /// 全部の道を通す。
 @Suite("ゲームパッドの識別子")
-struct GamepadSlotsTests {
+nonisolated struct GamepadSlotsTests {
     @Test("同じ機種の 2 台は、繋がった順に #1 と #2 になる。違う機種は別に数える")
     func numbersPerModel() {
         var slots = GamepadSlots()

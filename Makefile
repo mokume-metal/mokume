@@ -435,9 +435,11 @@ TEST_TSAN_ARGS ?=
 #       `.success` を期待する検査は赤になり、**`.failure` を期待する検査は中身が走らないまま
 #       緑になる** (偽りの緑)。DYLD_INSERT_LIBRARIES を渡しても子へは届かなかった。
 #       exit test を足したらここにも足す — 漏れは scripts/tests/host_scheduled_workflow_test.py が止める
-#   自分へ非同期の合図を送り、子が止まるのを期限つきで待つ検査 … TSan の下では受け口は走るが
-#       (報告の stack に出る)、子が期限内に消えない。原因は追っていない。受け口が errno を
-#       戻さない報告 (signal handler spoils errno) は本物の欠陥で、#3234 で直す
+#   自分へ非同期の合図を送り、子が止まるのを期限つきで待つ検査 … 受け口が errno を戻さない報告
+#       (signal handler spoils errno) は本物の欠陥で、#3234 で直した。それでも子が期限内に消えない:
+#       TSan は合図の受け口を、受けた糸の次の intercept 呼び出しまで遅らせる。受けた主糸は
+#       ExitWait.wait() (DispatchSemaphore) で止まったままなので、受け口は子が安全網で落とされた後に
+#       走り、そこで撃つ kill は ESRCH になる (#3234 の実測)。errno とは別の原因で、TSan の下では戻せない
 #
 # 綴りは swift test --skip の正規表現で、`<Suite>/<関数>` に当てる
 TSAN_SKIP := SecondRunTests/ \

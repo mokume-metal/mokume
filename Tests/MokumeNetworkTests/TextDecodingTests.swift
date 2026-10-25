@@ -7,7 +7,7 @@ import Testing
 
 /// 届いたバイト列を文字列に読む決まり (#2018)。通信はしない。
 @Suite("文字列の読み方")
-struct TextDecodingTests {
+nonisolated struct TextDecodingTests {
     private func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
 
     private func lines(_ cut: (lines: [[UInt8]], overlong: Int)) -> [String] {

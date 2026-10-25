@@ -18,7 +18,7 @@ import simd
 ///
 /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
 @Suite("揃って並ぶ穴の三角形化")
-struct AlignedHolesTests {
+nonisolated struct AlignedHolesTests {
     /// 外周と穴の組。穴は外周と逆回り。
     nonisolated struct Scene: CustomTestStringConvertible, Sendable {
         var name: String

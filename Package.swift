@@ -121,8 +121,11 @@ let package = Package(
             name: "reference-sketches", dependencies: ["mokume"], path: "Sketches",
             exclude: ["data"], swiftSettings: .mokume),
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
+        // 検査が入力を seed つきで生成して縮める道具 (#3207 の提案 1・#3216)。product には含めない。
+        // 検査の target だけが依存する (依存は足さず Foundation だけ)
+        .target(name: "MokumeProbe", path: "Tests/MokumeProbe", swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches"],
+            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches", "MokumeProbe"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
@@ -153,6 +156,10 @@ extension [SwiftSetting] {
     /// - ADR-0009: Swift 6 言語モード (並行性の検査はエラーとして働く)
     /// - ADR-0010 決定 1: スケッチは main actor 既定 — ターゲット単位の既定隔離を
     ///   main actor にすることで、利用者のコードに並行性の注釈が現れない
+    ///
+    /// **検査のターゲットにも同じ既定が効く。** 注釈の無い suite は main actor の上で 1 本ずつ
+    /// 走るので、CPU だけで済む suite は `nonisolated struct` にして並列に走らせる。main actor の
+    /// 口を呼ぶ検査と、GPU を使う入れ子の suite だけに `@MainActor` を付ける (#3196)
     static var mokume: [SwiftSetting] {
         [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
     }

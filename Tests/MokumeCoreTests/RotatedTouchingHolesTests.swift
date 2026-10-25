@@ -21,7 +21,7 @@ import simd
 ///
 /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
 @Suite("回した座標の穴の触れ方")
-struct RotatedTouchingHolesTests {
+nonisolated struct RotatedTouchingHolesTests {
     nonisolated static let outer: [SIMD2<Float>] = [
         SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200),
     ]
