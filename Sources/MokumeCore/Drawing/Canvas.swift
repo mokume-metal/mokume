@@ -1706,7 +1706,8 @@ public final class Canvas {
     var framePersists = false
     /// ベクター (SVG) へ書く図形を控えている途中の状態 ([#3139])。**ランタイムが `draw()` の前に立て、
     /// 後で下ろす** (``beginVectorWindow(pending:)``・``endVectorWindow()``)。頼まれていないフレームは
-    /// `capture` が nil のままで、置く口が読むのはこの 1 回だけである。フレームを出るときに下ろす。
+    /// `capture` が nil のままで、置く口が払うのは `capture` と「置いた」印の読みだけ。印を立てる書き込みは
+    /// 窓ごとに 1 度である。フレームを出るときに下ろす。
     ///
     /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
     var vector = VectorWindow()
@@ -2980,6 +2981,9 @@ public final class Canvas {
     func replaceSurface(with content: SurfaceContent) {
         if style.clip == nil {
             discardPending()
+            // 画面が溜めた図形を捨てるのと同じく、ベクターに控えた図形も捨てる。残すと、ペンプロッタは
+            // 画面に無い線を引く (#3139)。切り抜きがあるときは中だけの置き換えで、外の図形は画面に残る
+            discardVectorFigures()
             if case .color(let color) = content {
                 pendingBackground = color
                 return

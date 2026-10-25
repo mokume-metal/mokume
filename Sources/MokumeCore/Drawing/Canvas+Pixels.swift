@@ -93,8 +93,6 @@ extension Canvas {
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         guard admitsPixelWrite() else { return }
-        // 画素の書き込みはベクターへ書けない (#3139)
-        noteVectorDrop(.pixels)
         loadPixelsIfNeeded()
         target.pixels[x, y] = color
     }
@@ -132,6 +130,10 @@ extension Canvas {
         // 読めば最初の描き切りは書く前に済み、写しもいまの絵になる。取り直さない窓でも、GPU が
         // 写しへ読み戻している途中に書かない (`pixels` が待つ)
         if loading { _ = pixels }
+        // 画素の書き込みはベクターへ書けない (#3139)。**名乗りはこの合流点で数える** — 書く口は
+        // `set(_:_:_:)` と、窓 (``pixels``) の添字・`fill(_:)`・`update(_:)` の 3 つが、どれもここへ着く。
+        // `set(_:_:_:)` の中だけで数えると、窓から書いた画素は黙って SVG から抜ける
+        noteVectorDrop(.pixels)
         return true
     }
 

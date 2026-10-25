@@ -60,6 +60,10 @@ nonisolated struct VectorColor: Sendable, Equatable {
             opacity: min(alpha, 1))
     }
 
+    /// 書いても見えないか。**不透明度は 1/1000 の桁で書く** (``SVGWriter``) ので、それより薄いものは
+    /// `0` と書かれる。数でない不透明度も見えないものに数える。
+    var isInvisible: Bool { !(opacity >= 0.0005) }
+
     init(red: UInt8, green: UInt8, blue: UInt8, opacity: Float) {
         self.red = red
         self.green = green

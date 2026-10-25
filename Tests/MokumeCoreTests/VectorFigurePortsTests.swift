@@ -157,6 +157,11 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.shape(shape) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: [Placement(x: 1, y: 1)]) } == 1)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
+        // 画素の窓 (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
+        // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)
+        #expect(try handled(canvas) { $0.pixels[1, 1] = .linear(red: 1, green: 0, blue: 0) } == 1)
+        #expect(try handled(canvas) { $0.pixels.fill(.linear(red: 0, green: 1, blue: 0)) } == 1)
+        #expect(try handled(canvas) { $0.pixels.update { _, _, color in color } } == 1)
         #expect(try handled(canvas) { $0.filter([.threshold(level: 0.5)]) } == 1)
         #expect(try handled(canvas) { $0.particles(dust) } == 1)
     }

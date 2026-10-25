@@ -533,6 +533,8 @@ struct VectorCaptureTests {
         let harness = try Harness()
         let picture = try harness.canvas.createGraphics(8, 8)
         let (figures, drops) = try harness.capture { canvas in
+            // 輪郭は貼る絵にも勾配にも関わらず書かれる (下の `texturesAndGradientsDropOnlyTheFill`)。ここは塗りだけ見る
+            canvas.noStroke()
             canvas.texture(picture)
             canvas.rect(0, 0, 10, 10)
             canvas.triangle(0, 0, 5, 0, 0, 5)
@@ -613,6 +615,260 @@ struct VectorCaptureTests {
         }
         #expect(figures.isEmpty)
         #expect(drops == [.retainedShape, .retainedShape, .retainedShape])
+    }
+
+    // MARK: - 反証の直し (#3139)
+
+    @Test("画素の窓への書き込み (添字・fill・update) も、set と同じく画素の書き込みとして名乗る")
+    func pixelWindowWritesAreNamed() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.set(1, 1, red)
+            canvas.pixels[2, 2] = red
+            canvas.pixels.fill(blue)
+            canvas.pixels.update { _, _, color in color }
+        }
+        #expect(figures.isEmpty)
+        #expect(drops.filter { $0 == .pixels }.count == 4, "set・添字・fill・update の 4 つが数えられる: \(drops)")
+    }
+
+    @Test("background() は、それより前に置いた図形と、書けなかった名乗りを、画面と同じく消す")
+    func backgroundErasesEarlierFigures() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.stroke(0)
+            canvas.line(0, 0, 10, 0)  // A: 画面から消える
+            canvas.text("a", 10, 10)  // 消える図形の名乗りも消える
+            canvas.background(255)
+            canvas.line(0, 10, 20, 10)  // B
+        }
+        try #require(figures.count == 1, "B だけが残る")
+        #expect(figures[0].subpaths[0].points == [SIMD2(0, 10), SIMD2(20, 10)])
+        #expect(drops.isEmpty, "\(drops)")
+    }
+
+    @Test("切り抜きの中だけの background() は中だけの塗り直しなので、先に置いた図形を残す")
+    func clippedBackgroundKeepsEarlierFigures() throws {
+        let harness = try Harness()
+        let (figures, _) = try harness.capture { canvas in
+            canvas.stroke(0)
+            canvas.line(0, 0, 10, 0)  // A: 切り抜きの外にも続く
+            canvas.clip(0, 0, 50, 50)
+            canvas.background(255)
+            canvas.noClip()
+            canvas.line(0, 10, 20, 10)  // B
+        }
+        #expect(figures.count == 2)
+    }
+
+    /// 端の形ごとの、点 1 つの輪郭。画面は孤立した端を `round` なら円・それ以外なら正方形で置く。
+    @Test("点 1 つの輪郭は、端の形を画面と同じに読み替えて書く", arguments: [StrokeCap.round, .square, .project])
+    func singlePointsReadTheCapLikeTheScreen(cap: StrokeCap) throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.stroke(0)
+            canvas.strokeWeight(10)
+            canvas.strokeCap(cap)
+            canvas.beginShape(.points)  // 点の形
+            canvas.vertex(50, 50)
+            canvas.endShape()
+            canvas.beginShape()  // 頂点が 1 つの形
+            canvas.vertex(50, 20)
+            canvas.endShape()
+            canvas.draw(Canvas.Outline(points: [SIMD2(50, 80)], isClosed: false, fills: false))  // 周の道
+            canvas.point(10, 10)  // 基本図形の道 (前から読み替えている)
+        }
+        #expect(drops.isEmpty)
+        try #require(figures.count == 4)
+        let expected: StrokeCap = cap == .round ? .round : .project
+        for figure in figures {
+            #expect(figure.stroke?.cap == expected, "\(String(describing: figure.stroke?.cap))")
+            #expect(figure.subpaths[0].points.count == 1)
+        }
+    }
+
+    /// 上の読み替えの根拠: 画面は `square` の孤立した点を、`project` と同じ正方形で出す。
+    @Test("画面は、点 1 つを端が round なら円で、square・project なら正方形で出す", arguments: [StrokeCap.round, .square, .project])
+    func theScreenDrawsASinglePointAsSquareOrDisc(cap: StrokeCap) throws {
+        let harness = try Harness()
+        var corner: Float = 0
+        try harness.canvas.draw {
+            let canvas = harness.canvas
+            canvas.background(255)
+            canvas.stroke(0)
+            canvas.strokeWeight(20)
+            canvas.strokeCap(cap)
+            canvas.beginShape(.points)
+            canvas.vertex(50, 50)
+            canvas.endShape()
+            // 中心から (+9, -9) の画素。円の半径 10 の外 (距離 12.7)、正方形の半幅 10 の内
+            corner = canvas.get(59, 40).red
+        }
+        if cap == .round {
+            #expect(corner > 0.9, "円の外は白のまま: \(corner)")
+        } else {
+            #expect(corner < 0.1, "正方形の角は塗られる: \(corner)")
+        }
+    }
+
+    /// 基本図形・周・頂点の形の、塗りと輪郭を両方持つ置き方。
+    private var shapes: [(name: String, place: (Canvas) -> Void)] {
+        [
+            ("rect", { $0.rect(10, 10, 30, 20) }),
+            ("rounded rect", { $0.rect(10, 10, 30, 20, 5) }),
+            ("ellipse", { $0.ellipse(30, 30, 30, 20) }),
+            ("pie", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .pie) }),
+            ("default arc", { $0.arc(30, 30, 30, 20, 0.2, 2.2) }),
+            ("chord", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .chord) }),
+            ("open arc", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .open) }),
+            ("full turn arc", { $0.arc(30, 30, 30, 20, 0, 7) }),
+            ("triangle", { $0.triangle(0, 0, 10, 0, 0, 10) }),
+            (
+                "shape",
+                {
+                    $0.beginShape()
+                    $0.vertex(0, 0)
+                    $0.vertex(15, 5)
+                    $0.vertex(5, 15)
+                    $0.endShape(.close)
+                }
+            ),
+        ]
+    }
+
+    @Test("貼る絵・勾配は塗りにしか効かない: 輪郭は書き、塗りだけを名指しで落とす")
+    func texturesAndGradientsDropOnlyTheFill() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let gradient = Gradient.linearGradient(
+            [(LinearRGBA.linear(red: 1, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 0, green: 0, blue: 1), 1)],
+            from: [0, 0], to: [10, 0])
+        for (name, place) in shapes {
+            for (paint, kind) in [("texture", VectorDrop.texture), ("gradient", .gradient)] {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.noTexture()
+                    canvas.fill(red)
+                    if paint == "texture" { canvas.texture(picture) } else { canvas.fill(gradient) }
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(2)
+                    place(canvas)
+                }
+                #expect(figures.count == 1, "\(name) + \(paint): 輪郭は書く \(figures.count)")
+                #expect(figures.first?.fill == nil, "\(name) + \(paint)")
+                #expect(figures.first?.stroke?.color == VectorColor(blue), "\(name) + \(paint)")
+                #expect(drops == [kind], "\(name) + \(paint): 塗りを 1 度だけ名指す \(drops)")
+            }
+        }
+    }
+
+    @Test("矩形・楕円の輪郭は、貼る絵が効いても真の形 (周を刻んだ折れ線でない) で書く")
+    func theStrokeOfAShadedFormKeepsItsTrueShape() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let (figures, _) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.texture(picture)
+            canvas.stroke(blue)
+            canvas.rect(10, 10, 30, 20)
+            canvas.ellipse(60, 30, 30, 20)
+        }
+        try #require(figures.count == 2)
+        #expect(figures[0].subpaths[0].points == [SIMD2(10, 10), SIMD2(40, 10), SIMD2(40, 30), SIMD2(10, 30)])
+        #expect(figures[0].subpaths[0].isClosed)
+        #expect(figures[1].subpaths[0].curves.count == 4, "楕円は 3 次ベジェ 4 つ")
+    }
+
+    @Test("利用者の断片・通常以外の混ぜ方・切り抜きは輪郭にも効くので、図形ごと 1 つと数えて落とす")
+    func whatTouchesTheStrokeDropsTheWholeFigureOnce() throws {
+        let harness = try Harness()
+        let shader = try harness.canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let settings: [(String, VectorDrop, (Canvas) -> Void)] = [
+            ("shader", .shader, { $0.shader(shader) }),
+            ("blend mode", .blendMode, { $0.blendMode(.add) }),
+            ("clip", .clip, { $0.clip(0, 0, 90, 90) }),
+        ]
+        for (name, place) in shapes {
+            for (setting, kind, apply) in settings {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.resetShader()
+                    canvas.blendMode(.blend)
+                    canvas.noClip()
+                    canvas.fill(red)
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(2)
+                    apply(canvas)
+                    place(canvas)
+                    canvas.resetShader()
+                    canvas.blendMode(.blend)
+                    canvas.noClip()
+                }
+                #expect(figures.isEmpty, "\(name) + \(setting)")
+                #expect(drops == [kind], "\(name) + \(setting): 1 つの図形は 1 つ \(drops)")
+            }
+        }
+    }
+
+    @Test("破線で塗りもある図形は、書けない設定が効いても 1 つと数える")
+    func aDashedFilledFigureIsCountedOnce() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(2)
+            canvas.strokeDash(4, 2)
+            canvas.blendMode(.add)
+            canvas.rect(10, 10, 30, 20)
+            canvas.ellipse(60, 30, 30, 20)
+            canvas.blendMode(.blend)
+            canvas.texture(picture)
+            canvas.rect(10, 50, 30, 20)
+        }
+        #expect(drops == [.blendMode, .blendMode, .texture], "矩形 1・楕円 1・貼る絵の矩形 1: \(drops)")
+        #expect(figures.count == 1, "貼る絵の矩形は、塗りを落として破線の輪郭だけ書く")
+        #expect(figures.first?.stroke?.dash == [4, 2])
+    }
+
+    @Test("見えない (不透明度 0 の) 線と塗りは書かず、両方見えない図形は要素にならない")
+    func invisibleColoursAreNotWritten() throws {
+        let harness = try Harness()
+        let svg = try harness.svg { canvas in
+            canvas.fill(red)
+            canvas.stroke(.display(red: 1, green: 1, blue: 1, alpha: 0))
+            canvas.rect(0, 0, 10, 10)  // 塗りだけ
+            canvas.noFill()
+            canvas.stroke(.display(red: 1, green: 0, blue: 0, alpha: 0))
+            canvas.line(0, 0, 10, 10)  // 何も見えない
+            canvas.fill(.display(red: 1, green: 0, blue: 0, alpha: 0.0001))
+            canvas.noStroke()
+            canvas.rect(20, 0, 10, 10)  // 1/1000 に満たない薄さ
+            canvas.beginShape()
+            canvas.stroke(.display(red: 0, green: 0, blue: 0, alpha: 0))
+            canvas.vertex(0, 0)
+            canvas.vertex(5, 5)
+            canvas.endShape()
+        }
+        let elements = SVG.elements(svg)
+        #expect(elements.count == 1, "\(svg)")
+        #expect(SVG.attribute("fill", in: elements.first ?? "") == "#ff0000")
+        #expect(SVG.attribute("stroke", in: elements.first ?? "") == nil)
+        #expect(!svg.contains("opacity=\"0\""), "不透明度 0 の要素を書かない: \(svg)")
+    }
+
+    @Test("Image.save は .svg の名前を受けず、PNG の中身を .svg の名前で書かない")
+    func imageSaveRefusesAnSVGName() throws {
+        let harness = try Harness()
+        let image = try harness.canvas.createImage(4, 4)
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mokume-svg-image-\(ProcessInfo.processInfo.processIdentifier)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("x.svg").path
+        #expect(throws: ImageFailure.self) { try image.save(path) }
+        #expect(!FileManager.default.fileExists(atPath: path))
+        // PNG は今までどおり
+        let png = directory.appendingPathComponent("x.png").path
+        try image.save(png)
+        #expect(FileManager.default.fileExists(atPath: png))
     }
 
     // MARK: - 5 画面は変わらない

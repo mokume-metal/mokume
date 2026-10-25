@@ -189,9 +189,9 @@ extension Canvas {
     ) {
         // 区間の外では、畳む相手の控えも雛形も動かさない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
-        // ここへ来るのは貼る絵か断片が効いている図形だけ (``formAllowed(fills:)``)。ベクターには書けないので
-        // 数えて落とし、内側で通る `draw(_ outline:)` が 2 度控えないよう止める (#3139)
-        let heldVector = suspendVectorDroppingShadedFigure()
+        // ここへ来るのは貼る絵か断片が効いている図形だけ (``formAllowed(fills:)``)。塗りはベクターへ書けないので
+        // 数えて落とし、輪郭は真の形で書く。内側で通る `draw(_ outline:)` が 2 度控えないよう止める (#3139)
+        let heldVector = suspendVectorRecordingShadedFigure(form, at: anchor)
         defer { resumeVector(heldVector) }
         let hasStroke = style.hasStroke && style.strokeWeight > 0
         // 拡大率は置き場所ごとに 1 度だけ求める。鍵・周・円板のどれもこの値から分割数を決める

@@ -250,15 +250,21 @@ extension Canvas {
         cornerRadius: Float = 0, outline: @autoclosure () -> Outline
     ) {
         guard canPlace else { return warnOutsideFrame(.placing) }
-        appendForm(
-            kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
-            cornerRadius: cornerRadius, strokes: false)
-        outlinesAssembledThisFrame += 1
-        let ring = outline()
-        // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の周と破線の指定を控える (#3139)
-        if let sink = vectorSink() {
-            recordVectorOutline(sink, ring, fills: false, strokes: true)
+        // 塗りと輪郭は別の口が控えるが、**図形は 1 つ**。書けないものは 1 度だけ数える (#3139)
+        var ring: Outline?
+        countingOneVectorFigure {
+            appendForm(
+                kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
+                cornerRadius: cornerRadius, strokes: false)
+            outlinesAssembledThisFrame += 1
+            let made = outline()
+            ring = made
+            // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の周と破線の指定を控える
+            if let sink = vectorSink() {
+                recordVectorOutline(sink, made, fills: false, strokes: true)
+            }
         }
+        guard let ring else { return }
         strokeOutline(ring)
     }
 }

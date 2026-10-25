@@ -290,6 +290,69 @@ struct VectorSaveTests {
         }
     }
 
+    // MARK: - background() と save (反証の直し)
+
+    /// 画面は `background()` で前の図形を消す。ペンプロッタは画面に無い線を引かない。
+    @Test("background() が画面を塗り直すと、それより前の図形は書かれない (save の前でも後でも)")
+    func backgroundErasesWhatCameBefore() throws {
+        try withTemporaryDirectory("mokume-svg-erased") { directory in
+            let afterURL = directory.appendingPathComponent("after.svg")
+            let beforeURL = directory.appendingPathComponent("before.svg")
+            let sketch = PlotterSketch()
+            sketch.onDraw = { sketch in
+                sketch.stroke(0)
+                sketch.line(0, 0, 10, 0)  // A
+                sketch.background(255)  // A を画面から消す
+                sketch.save(beforeURL.path)  // 呼ぶ前に残っているものは無い
+                sketch.line(0, 10, 20, 10)  // B
+                sketch.save(afterURL.path)
+                sketch.line(0, 20, 30, 20)  // C
+                sketch.background(255)  // B・C も消す
+                sketch.line(0, 30, 40, 30)  // D
+            }
+            let runtime = try makeRuntime(sketch)
+            let (_, lines) = saying {
+                try? runtime.advance()
+                runtime.closePlugins()
+            }
+            #expect(try elements(of: beforeURL).map { SVG.attribute("d", in: $0) } == ["M0 30L40 30"])
+            #expect(try elements(of: afterURL).map { SVG.attribute("d", in: $0) } == ["M0 30L40 30"])
+            // before.svg は、呼ぶ前の A が画面から消えているので「呼ぶ前に置いた」とは言わない。
+            // after.svg は B を置いた後に呼んだので、1 度言う
+            let said = late(lines)
+            #expect(said.count == 1 && said.first?.contains("after.svg") == true, "\(lines)")
+        }
+    }
+
+    // MARK: - 同じ行き先へ 2 回
+
+    @Test("同じ draw() で同じファイルへ 2 回頼むと、先の頼みを書き、後の頼みが何も変えなかったと 1 度言う")
+    func askingTwiceForTheSameFileWritesTheFirstAndSaysSo() throws {
+        try withTemporaryDirectory("mokume-svg-twice") { directory in
+            let url = directory.appendingPathComponent("plot.svg")
+            let sketch = PlotterSketch()
+            sketch.onDraw = { sketch in
+                sketch.stroke(0)
+                sketch.save(url.path)
+                sketch.line(0, 0, 10, 0)  // A
+                // 同じファイルを別の綴りで頼む
+                sketch.save(directory.path + "/./plot.svg")
+                sketch.line(0, 10, 20, 10)  // B
+            }
+            let runtime = try makeRuntime(sketch)
+            let (_, lines) = saying {
+                for _ in 0..<3 { try? runtime.advance() }
+                runtime.closePlugins()
+            }
+            #expect(
+                try elements(of: url).map { SVG.attribute("d", in: $0) } == ["M0 0L10 0", "M0 10L20 10"],
+                "先の頼みが書かれ、A も B も欠けない")
+            let said = lines.filter { $0.contains("called twice") }
+            #expect(said.count == 1, "毎フレームではなく 1 度: \(lines)")
+            #expect(said.first?.contains("the later call changed nothing") == true, "\(said)")
+        }
+    }
+
     // MARK: - 8 書けない図形
 
     @Test("書けない図形は、種類と数を 1 度だけ名乗る")
@@ -566,6 +629,72 @@ struct VectorRecorderTests {
             #expect(recorder.imageFailureMessage(for: blocked)?.contains("blocked.svg") == true)
             #expect(recorder.hasFailedToWrite)
         }
+    }
+
+    @Test("同じ行き先を 2 回頼まれたら、先の頼みだけを書く。別の綴りでも同じ行き先と見る")
+    func theFirstOfTwoRequestsForOneFileIsWritten() throws {
+        try withTemporaryDirectory("mokume-svg-recorder-twice") { directory in
+            func figure(_ x: Float) -> VectorFigure {
+                VectorFigure(
+                    subpaths: [VectorSubpath(points: [SIMD2(x, 0), SIMD2(x, 10)], isClosed: false)],
+                    fill: nil,
+                    stroke: VectorStroke(color: VectorColor(.display(red: 0, green: 0, blue: 0)), width: 1, cap: .round, join: .miter))
+            }
+            let capture = VectorCapture()
+            capture.figures = [figure(1), figure(2), figure(3)]
+            let path = directory.appendingPathComponent("plot.svg").path
+            let spelled = directory.path + "/./plot.svg"
+            let other = directory.appendingPathComponent("other.svg").path
+            capture.requests = [
+                .init(path: path, figureStart: 0, dropStart: 0, placedBefore: false),
+                .init(path: spelled, figureStart: 2, dropStart: 0, placedBefore: true),
+                .init(path: other, figureStart: 1, dropStart: 0, placedBefore: false),
+            ]
+            let recorder = FrameRecorder()
+            recorder.writeVectors(capture, width: 100, height: 80)
+            recorder.close()
+            #expect(SVG.elements(try String(contentsOfFile: path, encoding: .utf8)).count == 3, "多い側 (先の頼み)")
+            #expect(SVG.elements(try String(contentsOfFile: other, encoding: .utf8)).count == 2, "別の行き先は別")
+            let destination = FrameWriter.destination(of: path)
+            let said = try #require(recorder.warnings.message(for: .vectorAskedTwice(destination: destination)))
+            #expect(said.contains(path) && said.contains(spelled), "\(said)")
+            // 書かなかった頼みの「呼ぶ前に置いた」知らせは言わない
+            #expect(!recorder.warnings.hasWarned(.vectorPlacedBefore(destination: destination)))
+        }
+    }
+
+    @Test("ファイル名の上限 (255) ちょうどの SVG は書け、1 字越えれば断る")
+    func aNameAtTheLimitIsWritten() throws {
+        try withTemporaryDirectory("mokume-svg-limit") { directory in
+            let capture = VectorCapture()
+            capture.figures = [
+                VectorFigure(
+                    subpaths: [VectorSubpath(points: [SIMD2(0, 0), SIMD2(1, 1)], isClosed: false)], fill: nil,
+                    stroke: VectorStroke(color: VectorColor(.display(red: 0, green: 0, blue: 0)), width: 1, cap: .round, join: .miter))
+            ]
+            func name(_ length: Int) -> String { String(repeating: "a", count: length - 4) + ".svg" }
+            let atLimit = directory.appendingPathComponent(name(FileNameLength.limit)).path
+            capture.requests = [.init(path: atLimit, figureStart: 0, dropStart: 0, placedBefore: false)]
+            let recorder = FrameRecorder()
+            #expect(recorder.acceptsVector(atLimit))
+            recorder.writeVectors(capture, width: 10, height: 10)
+            recorder.close()
+            // `.atomic` の書き込みは一時ファイルを経由する。**上限ちょうどでも、書けたことと名乗りが揃う**
+            #expect(!recorder.hasFailedToWrite, "名乗った書き損じ: \(recorder.imageFailureMessage(for: atLimit) ?? "")")
+            #expect(FileManager.default.fileExists(atPath: atLimit), "255 字のファイル名が書かれていない")
+            #expect(!recorder.acceptsVector(directory.appendingPathComponent(name(FileNameLength.limit + 1)).path))
+        }
+    }
+
+    @Test(".svg の連番は撮り始めず、理由を言う")
+    func anSVGSeriesIsNotStarted() {
+        let recorder = FrameRecorder()
+        recorder.beginRecord("out/frame-####.svg", at: 0)
+        #expect(!recorder.isRecording)
+        #expect(recorder.warnings.hasWarned(.vectorSeries))
+        let said = recorder.warnings.message(for: .vectorSeries) ?? ""
+        #expect(said.contains("save(\"plot.svg\")") && said.contains("Not starting"), "\(said)")
+        recorder.close()
     }
 
     @Test("拡張子で振り分ける")

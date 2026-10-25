@@ -471,13 +471,10 @@ extension Canvas {
             sink.drops.append(.solid)
             return
         }
-        let strokes = style.hasStroke && style.strokeWeight > 0
-        let fills = style.hasFill && primitives.contains { $0.fills }
-        guard fills || strokes else { return }
-        if let blocked = vectorBlocker(fills: fills) {
-            sink.drops.append(blocked)
-            return
-        }
+        let wantsStroke = style.hasStroke && style.strokeWeight > 0
+        let wantsFill = style.hasFill && primitives.contains { $0.fills }
+        guard let writable = vectorWritable(fills: wantsFill, strokes: wantsStroke, into: sink) else { return }
+        let (fills, strokes) = writable
         let place = vectorPlacer()
         func placed(_ indices: some Sequence<Int>) -> [SIMD2<Float>]? {
             var result = [SIMD2<Float>]()
@@ -497,7 +494,7 @@ extension Canvas {
                 subpaths.append(VectorSubpath(points: loop, isClosed: true))
             }
             var fill: VectorFill?
-            if primitive.fills, style.hasFill, let first = primitive.ring.first {
+            if fills, primitive.fills, let first = primitive.ring.first {
                 let color = points[first].fill
                 if primitive.ring.contains(where: { points[$0].fill != color }) {
                     sink.drops.append(.vertexColours)
@@ -512,10 +509,10 @@ extension Canvas {
                     let local = primitive.ring.map { SIMD2(points[$0].position.x, points[$0].position.y) }
                     dash = vectorDash(of: local, isClosed: primitive.isClosed)
                 }
-                stroke = vectorStroke(dash: dash)
+                stroke = vectorStroke(cap: primitive.ring.count == 1 ? vectorPointCap : nil, dash: dash)
             }
             guard fill != nil || stroke != nil else { continue }
-            sink.figures.append(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke))
+            sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke))
         }
     }
 

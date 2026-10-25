@@ -1100,6 +1100,17 @@ VECTOR_EXEMPT: dict[str, str] = {
 }
 
 
+# 「図形」の種類ではないが、図形や画素を置く口 (#3139)。**`check_vector_ports` が「図形」の口と同じに見る。**
+# `PORT_KINDS` の種類は 1 つの口に 1 つしか付けられないので、別の種類の口が図形を置くことは
+# ここで名指す。口の呼び出しは関数でなく値の使い方 (`canvas.pixels.fill(…)`) でもよい。
+VECTOR_ALSO: dict[str, str] = {
+    "pixels": (
+        "「読み取り」の口だが、返す窓 (Pixels) への書き込み (添字・fill・update) は画素を置くことに含まれる (#1603)。"
+        "窓から書いても、set と同じく SVG に書けないものとして名乗る"
+    ),
+}
+
+
 def port_kind(entry: str | tuple[str, str]) -> str:
     """表の 1 行から種類を取る。理由つきの行は (種類, 理由) の組で書く。"""
     return entry[0] if isinstance(entry, tuple) else entry
@@ -1171,6 +1182,7 @@ def check_vector_ports(
     vector_test: str,
     kinds: dict[str, str | tuple[str, str]] = PORT_KINDS,
     exempt: dict[str, str] = VECTOR_EXEMPT,
+    also: dict[str, str] = VECTOR_ALSO,
 ) -> list[str]:
     """「図形」の公開の口が、SVG の書き出しの検査で呼ばれているか (#3139)。
 
@@ -1182,6 +1194,9 @@ def check_vector_ports(
     照合の作法は `check_port_kinds` と同じ — コメントを落とし、呼び出しの形 (`$0.` / `canvas.` /
     `sketch.` に続く `名前(`) だけを数え、**多重定義の数だけ呼び出しを求める**。外す口は理由つきで
     `VECTOR_EXEMPT` に書き、表に残った古い名前も上げる。
+
+    **「図形」でない種類の口が図形や画素を置くとき** (`pixels` の窓への書き込み) は、`VECTOR_ALSO` へ理由つきで
+    載せる。種類は 1 つの口に 1 つしか付けられず、種類で絞ると、別の種類の口は黙って見られなくなる (#3139 の反証)。
     """
     code = re.sub(r"/\*.*?\*/", "", vector_test, flags=re.DOTALL)
     code = re.sub(r"//[^\n]*", "", code)
@@ -1198,12 +1213,22 @@ def check_vector_ports(
             problems.append(
                 f"{base} は VECTOR_EXEMPT に載っているが、PORT_KINDS の「{FIGURE}」の口ではない。表から外す (#3139)"
             )
+    for base, reason in sorted(also.items()):
+        if not reason.strip():
+            problems.append(f"{base} は VECTOR_ALSO に理由なしで載っている (#3139)")
+        if base not in overloads:
+            problems.append(
+                f"{base} は VECTOR_ALSO に載っているが、{ENTRY_TYPE} にも {LOWER_TYPE} にも公開の口が無い。表から外す (#3139)"
+            )
     for base, entry in sorted(kinds.items()):
-        if port_kind(entry) != FIGURE or base in exempt or base not in overloads:
+        listed_also = base in also
+        if (port_kind(entry) != FIGURE and not listed_also) or base in exempt or base not in overloads:
             continue
         wanted = overloads[base].get(LOWER_TYPE) or overloads[base][ENTRY_TYPE]
+        # 「図形」の口は呼び出しの形 (`名前(`)。別の種類の口 (`VECTOR_ALSO`) は値の使い方でもよい
+        use = r"\b" if listed_also else r"\s*\("
         calls = len(re.findall(
-            rf"(?<![A-Za-z0-9_])(?:\$0|canvas|sketch)\.{re.escape(base)}\s*\(", code))
+            rf"(?<![A-Za-z0-9_])(?:\$0|canvas|sketch)\.{re.escape(base)}{use}", code))
         if calls >= wanted:
             continue
         problems.append(

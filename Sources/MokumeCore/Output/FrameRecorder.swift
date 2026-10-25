@@ -178,6 +178,12 @@ final class FrameRecorder: Outlet {
         case vectorLeftOut(destination: String)
         /// 次の `draw()` が来ないまま終わった `save("x.svg")`。
         case unwrittenVectors
+        /// 同じ `draw()` で同じ行き先へ 2 回頼んだ `save("x.svg")`。**行き先ごとに 1 度言う** ([#3139])。
+        ///
+        /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        case vectorAskedTwice(destination: String)
+        /// 連番の綴りに `.svg` を渡した `beginRecord`。
+        case vectorSeries
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -384,8 +390,19 @@ final class FrameRecorder: Outlet {
     func writeVectors(_ capture: VectorCapture, width: Float, height: Float) {
         // 前に頼んだ SVG の書き損じがあれば、先に名乗る (静止画は届いた絵のたびに取り込む)
         absorbOutcomes()
+        // **同じ行き先へ 2 回頼まれたら、先の頼みを書く。** 頼みは時間順に並び、後の頼みの図形は先の頼みの
+        // 図形の後ろ半分なので、先の頼みを書けば何も欠けない。後の頼みを書くと、先の頼みと後の頼みの間に
+        // 置いた図形が、黙って消える。書かなかったほうは、行き先ごとに 1 度だけ名乗る
+        var firstAsked: [String: String] = [:]
         for request in capture.requests {
             let destination = FrameWriter.destination(of: request.path)
+            if let first = firstAsked[destination] {
+                warnOnce(
+                    .vectorAskedTwice(destination: destination),
+                    Self.vectorAskedTwiceNotice(first: first, later: request.path))
+                continue
+            }
+            firstAsked[destination] = request.path
             if request.placedBefore {
                 warnOnce(
                     .vectorPlacedBefore(destination: destination),
@@ -402,6 +419,19 @@ final class FrameRecorder: Outlet {
                 { SVGWriter.render(figures, width: width, height: height) }, to: request.path,
                 settlingInto: shotOutcomes)
         }
+    }
+
+    /// `.svg` の連番 (`beginRecord`) と `Image.save` を断る理由 (1 文)。
+    nonisolated static let vectorSeriesReason =
+        "an .svg is the lines of one draw(), not a picture, and a series or an image file is written as PNG "
+        + "pictures (an .svg name would hold a PNG). Call save(\"plot.svg\") inside the sketch to write the lines"
+
+    /// 同じ行き先へ 2 回頼んだ `save("x.svg")` の 1 行。**どちらが書かれたかを名指す。**
+    static func vectorAskedTwiceNotice(first: String, later: String) -> String {
+        let spelling = first == later ? "\"\(first)\"" : "\"\(first)\" and \"\(later)\""
+        return "save(\(spelling)) was called twice in one draw() for the same file. The file holds what is "
+            + "drawn from the first call to the end of draw(); the later call changed nothing. "
+            + "Call save() once per file"
     }
 
     /// 呼ぶ前に図形を置いていた `save("x.svg")` の 1 行。
@@ -460,6 +490,14 @@ final class FrameRecorder: Outlet {
             warnOnce(
                 .fileNameTooLong,
                 "beginRecord(\"\(pattern)\"): \(Self.tooLongReason(long)). Not starting")
+            return
+        }
+        // **`.svg` の連番は受けない** ([#3139])。連番は PNG の絵を書くので、受けると PNG の中身が `.svg` の名前で
+        // 黙って並ぶ。線を書く口は `save("x.svg")` で、1 回の `draw()` に 1 枚 (連番のベクターは範囲外)
+        //
+        // [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        if Self.isVector(pattern) {
+            warnOnce(.vectorSeries, "beginRecord(\"\(pattern)\"): \(Self.vectorSeriesReason). Not starting")
             return
         }
         // **配る形 (GIF・MP4) は `mokume render` だけが頼む** ([#2440])。決めた枚数を書く入口 (`frameCount`)

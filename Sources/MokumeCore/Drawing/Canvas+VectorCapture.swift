@@ -14,8 +14,8 @@
 // 設定 (断片・貼る絵・勾配・通常以外の混ぜ方・切り抜き) で数えて落とす。
 //
 // **控えるのは観測であって、組み立てを変えない。** 控えた後も図形はいままでどおり 1 本の組み立てを
-// 通って描かれる。頼まれていないフレームが払うのは、各口の先頭で `vector.capture` が nil かを読む
-// 1 回だけである。
+// 通って描かれる。頼まれていないフレームが払うのは、各口の先頭の読み (`vector.capture` が nil か・
+// 「置いた」印が立っているか) だけで、書き込みは窓ごとの 1 度 (印を立てる) に限る。
 //
 // [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
 // [#3139]: https://github.com/mokume-metal/mokume/issues/3139
@@ -41,6 +41,17 @@ final class VectorCapture {
     var figures: [VectorFigure] = []
     var drops: [VectorDrop] = []
     var requests: [Request] = []
+
+    /// 図形を 1 つ足す。**画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
+    /// `stroke-opacity="0"` で書くと、不透明度を無視する取り込み側が線を引く。両方とも見えなければ、
+    /// 図形ごと足さない (``VectorColor/isInvisible``)。
+    func add(_ figure: VectorFigure) {
+        var figure = figure
+        if let fill = figure.fill, fill.color.isInvisible { figure.fill = nil }
+        if let stroke = figure.stroke, stroke.color.isInvisible { figure.stroke = nil }
+        guard figure.fill != nil || figure.stroke != nil else { return }
+        figures.append(figure)
+    }
 }
 
 extension Canvas {
@@ -83,6 +94,25 @@ extension Canvas {
         vector.capture = capture
     }
 
+    /// 画面が溜めた図形を捨てる口 (`background()` の塗り直し) で、控えた図形も捨てる。
+    ///
+    /// 塗り直しは、それより前に置いた図形をすべて画面から消す (``replaceSurface(with:)``)。ペンプロッタは画面に
+    /// 無い線を引くので、控えもそこで切る。**頼みの始まりはすべて、いまの末尾へ寄せる** — 捨てた図形は
+    /// どの頼みにも入らず、捨てた図形の「書けなかった」名乗りも言わない (画面から消えたものは、書けなかった
+    /// ことにならない)。呼ぶ前に置いた図形の知らせ (``VectorWindow/placedBefore``) も同じ理由で下ろす。
+    ///
+    /// 地の塗りそのものは、今までどおり書かず、知らせない (メンテナの決定・2026-10-23)。
+    func discardVectorFigures() {
+        vector.placedBefore = false
+        guard let capture = vector.capture else { return }
+        capture.figures.removeAll(keepingCapacity: true)
+        capture.drops.removeAll(keepingCapacity: true)
+        for index in capture.requests.indices {
+            capture.requests[index].figureStart = 0
+            capture.requests[index].dropStart = 0
+        }
+    }
+
     /// 窓を閉じて、控えを渡す。頼まれていなければ nil。
     func endVectorWindow() -> VectorCapture? {
         defer { vector = VectorWindow() }
@@ -102,7 +132,8 @@ extension Canvas {
     func vectorSink() -> VectorCapture? {
         guard !recordingShape else { return nil }
         if let capture = vector.capture { return capture }
-        vector.placedBefore = true
+        // 印は 1 度立てれば足りる。図形ごとに同じ値を書かない
+        if !vector.placedBefore { vector.placedBefore = true }
         return nil
     }
 
@@ -111,7 +142,7 @@ extension Canvas {
         guard !recordingShape else { return }
         if let capture = vector.capture {
             capture.drops.append(kind)
-        } else {
+        } else if !vector.placedBefore {
             vector.placedBefore = true
         }
     }
@@ -132,11 +163,53 @@ extension Canvas {
         return suspendVector()
     }
 
-    /// 貼る絵か断片の図形 (``draw(folding:at:outline:)``) を数えて落とし、内側の口で 2 度控えないよう止める。
-    func suspendVectorDroppingShadedFigure() -> VectorCapture? {
+    /// 貼る絵か断片が効いている基本図形 (``draw(folding:at:)``) を控え、内側の口で 2 度控えないよう止める。
+    ///
+    /// ここへ来るのは、断片 (勾配を含む) が効いているか、貼る絵が塗りに効いている図形だけ
+    /// (``formAllowed(fills:)``)。**書けない設定が効くのは塗りだけとは限らない** — 貼る絵と勾配は塗りにしか
+    /// 効かないので、輪郭は書き、塗りだけを名指しで落とす。利用者の断片と混ぜ方と切り抜きは輪郭にも効くので、
+    /// 図形ごと落とす (``vectorWritable(fills:strokes:into:)``)。輪郭は、周を刻んだ折れ線でなく
+    /// 真の形 (矩形・楕円・弧) で書く。
+    func suspendVectorRecordingShadedFigure(_ form: FlatForm, at anchor: SIMD2<Float>) -> VectorCapture? {
         guard let sink = vectorSink() else { return nil }
-        if style.hasFill || (style.hasStroke && style.strokeWeight > 0) {
-            sink.drops.append(vectorBlocker(fills: true) ?? .texture)
+        let fills = style.hasFill
+        let strokes = style.hasStroke && style.strokeWeight > 0
+        if let writable = vectorWritable(fills: fills, strokes: strokes, into: sink) {
+            switch form {
+            case .rect(let width, let height):
+                let half = SIMD2(width / 2, height / 2)
+                let corners = [
+                    anchor, anchor + SIMD2(width, 0), anchor + SIMD2(width, height), anchor + SIMD2(0, height),
+                ]
+                writeVectorForm(
+                    sink, kind: .rect, center: anchor + half, half: half, axis: SIMD2(1, 0), arc: .zero,
+                    arcClosure: .pie, cornerRadius: 0, fills: writable.fills, strokes: writable.strokes,
+                    cap: style.strokeCap, dash: writable.strokes ? vectorDash(of: corners, isClosed: true) : [])
+            case .ellipse(let radiusX, let radiusY):
+                writeVectorForm(
+                    sink, kind: .ellipse, center: anchor, half: SIMD2(radiusX, radiusY), axis: SIMD2(1, 0),
+                    arc: .zero, arcClosure: .pie, cornerRadius: 0, fills: writable.fills,
+                    strokes: writable.strokes, cap: style.strokeCap,
+                    dash: writable.strokes
+                        ? vectorDash(
+                            of: ringOutlineForDash(
+                                radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, piece: .sector,
+                                at: anchor
+                            ).points, isClosed: true) : [])
+            case .arc(let radiusX, let radiusY, let start, let sweep):
+                // 一周ぶんは楕円。ここへ来る弧は、一周か扇 (`.pie`) か、輪郭の無い弧だけ
+                let isFullTurn = sweep >= 2 * .pi
+                let ring = writable.strokes
+                    ? ringOutlineForDash(
+                        radiusX: radiusX, radiusY: radiusY, start: isFullTurn ? 0 : start,
+                        sweep: isFullTurn ? 2 * .pi : sweep, piece: .sector, at: anchor)
+                    : nil
+                writeVectorForm(
+                    sink, kind: isFullTurn ? .ellipse : .arc, center: anchor, half: SIMD2(radiusX, radiusY),
+                    axis: SIMD2(1, 0), arc: isFullTurn ? .zero : SIMD2(start, sweep), arcClosure: .pie,
+                    cornerRadius: 0, fills: writable.fills, strokes: writable.strokes, cap: style.strokeCap,
+                    dash: ring.map { vectorDash(of: $0.points, isClosed: $0.isClosed) } ?? [])
+            }
         }
         return suspendVector()
     }
@@ -184,6 +257,42 @@ extension Canvas {
         return nil
     }
 
+    /// 塗りと輪郭のうち、書けるほうを返す。**書けないものがあれば、図形 1 つにつき 1 度だけ名指しで数える。**
+    ///
+    /// - 輪郭が書けない設定 (利用者の断片・通常以外の混ぜ方・切り抜き) は、塗りにも同じに効くので、図形ごと
+    ///   落とす。
+    /// - 貼る絵と勾配は塗りにしか効かない。輪郭を持つ図形は、塗りだけを落として輪郭を書く
+    ///   (黙って輪郭まで失わない)。
+    /// - 図形の塗りと輪郭を何度かの口に分けて控える図形 (破線で塗りもある図形・弧) は、
+    ///   ``countingOneVectorFigure(_:)`` で括り、同じ図形を 2 度数えない。
+    ///
+    /// 書くものが無ければ nil。
+    func vectorWritable(
+        fills: Bool, strokes: Bool, into sink: VectorCapture
+    ) -> (fills: Bool, strokes: Bool)? {
+        guard fills || strokes else { return nil }
+        if strokes, vectorBlocker(fills: false) != nil {
+            if let blocked = vectorBlocker(fills: fills) { sink.drops.append(blocked) }
+            return nil
+        }
+        if fills, let blocked = vectorBlocker(fills: true) {
+            sink.drops.append(blocked)
+            return strokes ? (fills: false, strokes: true) : nil
+        }
+        return (fills, strokes)
+    }
+
+    /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数える。**
+    ///
+    /// 破線で塗りもある図形は塗りと輪郭を別々に、既定の弧は扇の塗りと開いた弧の輪郭を別々に控える。
+    /// それぞれが同じ理由 (利用者の断片など) で落とすと、見た目は 1 つの図形なのに 2 と数えてしまう。
+    func countingOneVectorFigure(_ body: () -> Void) {
+        guard let sink = vectorSink() else { return body() }
+        let before = sink.drops.count
+        body()
+        if sink.drops.count - before > 1 { sink.drops.removeSubrange((before + 1)...) }
+    }
+
     /// 輪郭の破線を、画面と同じく刻めるか。刻めるなら、拡大率を掛けた破線の長さと間隔。
     ///
     /// 画面は、刻む数が上限 (``maxDashPieces``) を越えるときと刻めない折れ線 (点が 2 つに満たない・
@@ -214,6 +323,13 @@ extension Canvas {
             cap: cap ?? style.strokeCap, join: style.strokeJoin, dash: dash)
     }
 
+    /// 点 1 つの輪郭の端。**孤立した端は、長さちょうどで切る形 (`square`) も正方形で出す。**
+    ///
+    /// 画面は、隣の点を持たない端を `round` なら円板・それ以外なら正方形で置く (``appendPointForm(_:)`` と
+    /// 周の端 `strokeCapShape`)。`square` は「線の長さちょうど」で、線が無ければ長さが決まらないからである。
+    /// SVG の `butt` は長さ 0 の線を何も描かないので、`project` (SVG の `square`) に読み替えて書く。
+    var vectorPointCap: StrokeCap { style.strokeCap == .round ? .round : .project }
+
     /// いまの設定の塗り。
     func vectorFill(color: LinearRGBA? = nil, evenOdd: Bool = false) -> VectorFill {
         VectorFill(color: VectorColor(color ?? style.fill), evenOdd: evenOdd)
@@ -230,16 +346,24 @@ extension Canvas {
         axis: SIMD2<Float>, arc: SIMD2<Float>, arcClosure: FormInstance.ArcClosure,
         cornerRadius: Float, fills: Bool, strokes: Bool, cap: StrokeCap
     ) {
-        if let blocked = vectorBlocker(fills: fills) {
-            sink.drops.append(blocked)
-            return
-        }
+        guard let writable = vectorWritable(fills: fills, strokes: strokes, into: sink) else { return }
+        writeVectorForm(
+            sink, kind: kind, center: center, half: half, axis: axis, arc: arc, arcClosure: arcClosure,
+            cornerRadius: cornerRadius, fills: writable.fills, strokes: writable.strokes, cap: cap)
+    }
+
+    /// 書けると分かった基本図形を、図形にして控える (``recordVectorForm``)。
+    func writeVectorForm(
+        _ sink: VectorCapture, kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
+        axis: SIMD2<Float>, arc: SIMD2<Float>, arcClosure: FormInstance.ArcClosure,
+        cornerRadius: Float, fills: Bool, strokes: Bool, cap: StrokeCap, dash: [Float] = []
+    ) {
         let place = vectorPlacer()
         let fill = fills ? vectorFill() : nil
-        let stroke = strokes ? vectorStroke(cap: cap) : nil
+        let stroke = strokes ? vectorStroke(cap: cap, dash: dash) : nil
 
         func single(_ subpath: VectorSubpath) {
-            sink.figures.append(VectorFigure(subpaths: [subpath], fill: fill, stroke: stroke))
+            sink.add(VectorFigure(subpaths: [subpath], fill: fill, stroke: stroke))
         }
 
         switch kind {
@@ -310,15 +434,15 @@ extension Canvas {
         }
         if let fill, let stroke {
             if fillShape == strokeShape {
-                sink.figures.append(VectorFigure(subpaths: [fillShape], fill: fill, stroke: stroke))
+                sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: stroke))
             } else {
-                sink.figures.append(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
-                sink.figures.append(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
+                sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
+                sink.add(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
             }
         } else if let fill {
-            sink.figures.append(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
+            sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
         } else if let stroke {
-            sink.figures.append(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
+            sink.add(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
         }
     }
 
@@ -332,7 +456,7 @@ extension Canvas {
         let ends = [place(a), place(b)]
         guard ends.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
         let dash = vectorDash(of: [a, b], isClosed: false)
-        sink.figures.append(
+        sink.add(
             VectorFigure(
                 subpaths: [VectorSubpath(points: ends, isClosed: false)], fill: nil,
                 stroke: vectorStroke(dash: dash)))
@@ -349,10 +473,8 @@ extension Canvas {
         _ sink: VectorCapture, _ outline: Outline, fills: Bool, strokes: Bool
     ) {
         guard !outline.points.isEmpty, fills || strokes else { return }
-        if let blocked = vectorBlocker(fills: fills) {
-            sink.drops.append(blocked)
-            return
-        }
+        guard let writable = vectorWritable(fills: fills, strokes: strokes, into: sink) else { return }
+        let (fills, strokes) = writable
         let place = vectorPlacer()
         var points = [SIMD2<Float>]()
         points.reserveCapacity(outline.points.count)
@@ -362,10 +484,12 @@ extension Canvas {
             points.append(placed)
         }
         let dash = strokes ? vectorDash(of: outline.points, isClosed: outline.isClosed) : []
-        sink.figures.append(
+        sink.add(
             VectorFigure(
                 subpaths: [VectorSubpath(points: points, isClosed: outline.isClosed)],
-                fill: fills ? vectorFill() : nil, stroke: strokes ? vectorStroke(dash: dash) : nil))
+                fill: fills ? vectorFill() : nil,
+                stroke: strokes
+                    ? vectorStroke(cap: points.count == 1 ? vectorPointCap : nil, dash: dash) : nil))
     }
 
     // MARK: - 曲線
