@@ -35,6 +35,12 @@ import MokumeDiagnostics
 /// ものには触れない。一覧を引くのはプロセスごと・名前ごとに 1 度だけにしてある — 観測の列は
 /// 毎フレーム書くので、書くたびに引くとその分だけ撮影が遅れる。
 ///
+/// **呼んだ糸が読むのは最初の ``syncSweepBudget`` 件までで、残りは裏の列で続ける** ([#3176])。物の溜まった
+/// ディレクトリ (`$TMPDIR` の 14 万件) の全件を同期に引くと、その 1 回が秒の単位で呼んだ糸を止めた。
+/// 小さなディレクトリは戻る前に片付け終わるので、今の区画では従来と同じである。
+///
+/// [#3176]: https://github.com/mokume-metal/mokume/issues/3176
+///
 /// [#1150]: https://github.com/mokume-metal/mokume/pull/1150
 /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
 /// [#1198]: https://github.com/mokume-metal/mokume/issues/1198
