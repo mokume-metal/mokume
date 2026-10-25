@@ -161,6 +161,16 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 既定の口は、見張りに起こされたときだけ区画へ置く (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
     var noteStartFailure: (String) -> Void = { noteOwnStartFailure($0) }
 
+    /// 最初の絵を出したことを、見張りへ渡す口 (``Sketch/main()`` が置いた起動中の印を消す)。**検査から差し替える。**
+    var markFirstFrame: () -> Void = {
+        if SharedFrameSurface.launchOwner != nil { WorkDirectory.clearStarting() }
+    }
+
+    /// 最初の絵を出したか。**最初の `advance` と差し出しが例外なく戻ったら、1 度だけ ``markFirstFrame`` を呼ぶ。**
+    /// 差し出しが何も出さずに戻る回(窓が見えていない・待ちに入る)でも立つ — 印を消す側に倒した安全側の読みで、
+    /// 見張りは印が残っていた子だけを「最初の絵の前に終わった」と読む。
+    private var hasPresentedFirstFrame = false
+
     /// 書き出す経路で、描けなかったフレームの数。
     private var framesFailedToDraw = 0
 
@@ -989,6 +999,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             return
         }
         noteFrameRecovery()
+        if !hasPresentedFirstFrame {
+            hasPresentedFirstFrame = true
+            markFirstFrame()
+        }
     }
 
     /// ``Sketch/setup()`` が投げたので、起動できなかったことを言って 0 以外で終わる ([#2401])。
@@ -1166,6 +1180,12 @@ extension Sketch {
         // 組み立てより前に断る。組み立てが投げると下の `exit(1)` が、走っている 1 つ目を
         // 後始末なしに落とす
         guard !SketchApplication.refusesSecondRun() else { return }
+        // **起動中の印を、できるだけ早く置く** ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+        // スケッチの組み立て (`Self()`)・GPU の確保・窓の用意より前に置けば、そこで失敗して終わった子も、
+        // 見張りは最初の絵の前に終わったと読める(置くのは見張りに起こされた子だけ)。最初の絵を出したら
+        // 消える(``SketchApplication``)。これより前に死ぬ子(動的リンクの失敗・`main()` に届く前の大域の
+        // 初期化)は置けず、今までどおり「自分で消えた」と読まれる
+        markOwnStarting()
         do {
             let gpu = try RenderDevice()
             let application = try SketchApplication(sketch: Self(), gpu: gpu)
@@ -1190,6 +1210,12 @@ extension Sketch {
 /// 出さないと読む人に打つ手が残らない ([#600](https://github.com/mokume-metal/mokume/issues/600))。
 func startupFailureText(_ failure: RenderFailure) -> String {
     "The sketch could not start.\n\(failure)\n"
+}
+
+/// このプロセスが起動中であることを、見張りの区画へ置く (``Sketch/main()``)。**見張りに起こされていなければ
+/// 置かない** (``WorkDirectory/markStarting(forProcess:under:owner:)``)。
+func markOwnStarting() {
+    WorkDirectory.markStarting(owner: SharedFrameSurface.launchOwner)
 }
 
 /// このプロセスの起動の失敗を、見張りの区画へ置く。**見張りに起こされていなければ置かない**
