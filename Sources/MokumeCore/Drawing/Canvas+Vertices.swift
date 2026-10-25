@@ -412,6 +412,10 @@ extension Canvas {
         for hole in shapeHoles { points += hole }
         guard !points.isEmpty else { return }
         let primitives = builtPrimitives(closed: closed)
+        // ベクターへ書くなら、三角形に割る前の周と穴をここで控える。割った後は三角形の頂点だけが残る (#3139)
+        if let sink = vectorSink() {
+            recordVectorShape(sink, primitives: primitives, points: points, evenOdd: evenOdd)
+        }
 
         // **塗る三角形を先に全部求める。** 面の向きは形の全体から求めるので、出す前に
         // 揃っている必要がある — 3 つずつ独立に処理すると、帯状・扇状に並べたときに
@@ -449,6 +453,66 @@ extension Canvas {
                     emitStroke(primitive, points: points, placed: placed)
                 }
             }
+        }
+    }
+
+    /// 並べ終えた頂点を、ベクターへ控える ([#3139])。**原始形 1 つが図形 1 つ**で、周と穴は 1 つの道に並べる。
+    ///
+    /// - 奥行きを持つ頂点の形は立体として数えて落とす。
+    /// - 塗りの色は最初の頂点の色。頂点ごとに色が違えば、そのことを数える (落としてはいない)。
+    /// - 穴のある形は `evenodd` で塗る (穴の向きによらず抜ける)。穴の無い形は、塗りの規則の選び方
+    ///   (``endShape(_:evenOdd:)``) に従う。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    private func recordVectorShape(
+        _ sink: VectorCapture, primitives: [Primitive], points: [BuildingVertex], evenOdd: Bool
+    ) {
+        if shapeHasDepth {
+            sink.drops.append(.solid)
+            return
+        }
+        let wantsStroke = style.hasStroke && style.strokeWeight > 0
+        let wantsFill = style.hasFill && primitives.contains { $0.fills }
+        guard let writable = vectorWritable(fills: wantsFill, strokes: wantsStroke, into: sink) else { return }
+        let (fills, strokes) = writable
+        let place = vectorPlacer()
+        func placed(_ indices: some Sequence<Int>) -> [SIMD2<Float>]? {
+            var result = [SIMD2<Float>]()
+            for index in indices {
+                let position = points[index].position
+                let moved = place(SIMD2(position.x, position.y))
+                guard moved.x.isFinite, moved.y.isFinite else { return nil }
+                result.append(moved)
+            }
+            return result
+        }
+        for primitive in primitives {
+            guard let ring = placed(primitive.ring), !ring.isEmpty else { continue }
+            var subpaths = [VectorSubpath(points: ring, isClosed: primitive.isClosed)]
+            for hole in primitive.holes {
+                guard let loop = placed(hole), !loop.isEmpty else { continue }
+                subpaths.append(VectorSubpath(points: loop, isClosed: true))
+            }
+            var fill: VectorFill?
+            if fills, primitive.fills, let first = primitive.ring.first {
+                let color = points[first].fill
+                if primitive.ring.contains(where: { points[$0].fill != color }) {
+                    sink.drops.append(.vertexColours)
+                }
+                fill = vectorFill(color: color, evenOdd: evenOdd || primitive.holes.contains { !$0.isEmpty })
+            }
+            var stroke: VectorStroke?
+            if strokes {
+                // 破線は形自身の座標の長さで刻む (画面の道と同じ判定)
+                var dash: [Float] = []
+                if style.strokeDash != nil {
+                    let local = primitive.ring.map { SIMD2(points[$0].position.x, points[$0].position.y) }
+                    dash = vectorDash(of: local, isClosed: primitive.isClosed)
+                }
+                stroke = vectorStroke(cap: primitive.ring.count == 1 ? vectorPointCap : nil, dash: dash)
+            }
+            guard fill != nil || stroke != nil else { continue }
+            sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke))
         }
     }
 

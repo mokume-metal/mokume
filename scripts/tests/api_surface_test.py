@@ -852,6 +852,38 @@ class 公開の口の種類(unittest.TestCase):
         symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
         self.assertEqual(api.check_port_kinds(symbols, "", {}), [])
 
+    def test_図形でない種類の口も_VECTOR_ALSO_なら_SVG_の検査に名前を求める(self):
+        """`pixels` は「読み取り」だが、窓への書き込みが画素を置く。種類で絞ると黙って見られない (#3139 の反証)。"""
+        symbols = [symbol("pixels", owner="Canvas"), symbol("pixels", owner="Sketch")]
+        kinds = {"pixels": api.READING}
+        also = {"pixels": "窓への書き込みが画素を置く"}
+        problems = api.check_vector_ports(symbols, "", kinds, {}, also)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("pixels", problems[0])
+        # 値の使い方 (関数の呼び出しでなく) でも、口を呼んだと数える
+        self.assertEqual(api.check_vector_ports(symbols, "{ $0.pixels[1, 1] = c }", kinds, {}, also), [])
+        self.assertEqual(api.check_vector_ports(symbols, "{ canvas.pixels.fill(c) }", kinds, {}, also), [])
+        # 名前の一部や、コメントの中は数えない
+        for source in ["// $0.pixels.fill(c)", "$0.pixelsPerRow", "mypixels"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_vector_ports(symbols, source, kinds, {}, also)), 1)
+        # 種類が「読み取り」のままで VECTOR_ALSO に載せなければ、これまでどおり見ない
+        self.assertEqual(api.check_vector_ports(symbols, "", kinds, {}, {}), [])
+
+    def test_VECTOR_ALSO_は理由なしでは載せられず_古い名前も名乗る(self):
+        symbols = [symbol("pixels", owner="Canvas")]
+        kinds = {"pixels": api.READING}
+        problems = api.check_vector_ports(symbols, "$0.pixels", kinds, {}, {"pixels": " ", "gone": "理由"})
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(any("理由なし" in p for p in problems))
+        self.assertTrue(any("gone" in p for p in problems))
+
+    def test_いまの_VECTOR_ALSO_は表の口を指す(self):
+        for base, reason in api.VECTOR_ALSO.items():
+            with self.subTest(base=base):
+                self.assertIn(base, api.PORT_KINDS)
+                self.assertTrue(reason.strip())
+
     def test_いまの検査を読める(self):
         # 置き場を取り違えると、シーンの記述が全部「名前が無い」になる
         self.assertIn("SceneOutsideFrameTests", api.SCENE_TEST.read_text(encoding="utf-8"))

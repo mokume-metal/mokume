@@ -160,6 +160,8 @@ extension Canvas {
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
     /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
     func place(_ shape: SolidShape) {
+        // 立体はベクターへ書けない (#3139)
+        noteVectorDrop(.solid)
         if style.hasFill {
             if sharesUnitShapes, !recordingShape, let (unit, scale) = shape.unitScaling {
                 placeMesh(.mesh(unit), unitScale: scale) { solidMesh(for: unit) }
