@@ -83,7 +83,29 @@ package enum AtomicFile {
     ///
     /// 控えるのは高々名前の種類の数 (目録・撮った絵の番号・つまみの状態など) で、書くたびには
     /// 増えない。
-    private static var swept = Set<URL>()
+    ///
+    /// **錠で守る。** 裏の続きが、ディレクトリを開けなかった回に名前を外す (次に置くときに読み直す) ため。
+    nonisolated private static let swept = SweptNames()
+
+    /// 片付けた置き場所の控え。
+    nonisolated final class SweptNames: @unchecked Sendable {
+        private let lock = NSLock()
+        private var urls = Set<URL>()
+
+        /// 入れる。初めてなら `true`。
+        func insert(_ url: URL) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return urls.insert(url).inserted
+        }
+
+        /// 外す (片付けられなかった名前を、次に置くときに読み直す)。
+        func remove(_ url: URL) {
+            lock.lock()
+            defer { lock.unlock() }
+            urls.remove(url)
+        }
+    }
 
     /// 中身を原子的に置く。途中のディレクトリは必要なら作る。
     package static func write(_ data: Data, to url: URL) throws {
@@ -206,7 +228,7 @@ package enum AtomicFile {
     /// (``FrameObserver``) でも、読みの回数と握る `DIR` が名前の数に比例しない。片付けるのは今までどおり
     /// 「頼まれた名前の一時ファイル」だけで、他の名前のものには触れない。
     private static func sweepAbandonedTemporaries(of url: URL) {
-        guard swept.insert(url).inserted else { return }
+        guard swept.insert(url) else { return }
         if continuations.adopt(url) { return }
         guard let rest = beginSweep(of: url, budget: syncSweepBudget) else { return }
         // `DIR` は握り続けない。続きは走るときに開き直す (積まれている間に fd を持たない)
@@ -215,7 +237,7 @@ package enum AtomicFile {
     }
 
     /// 裏で続ける片付けの、ディレクトリごとの控え。
-    static let continuations = Continuations()
+    nonisolated static let continuations = Continuations()
 
     /// 呼んだ糸で片付ける件数の上限。**小さなディレクトリ (今の区画はすべてここ) は、戻る前に片付け終わる**
     /// ので、書いた直後に残りを読む検査も、従来の振る舞いのままである。検査だけが下げる。
@@ -248,42 +270,64 @@ package enum AtomicFile {
     nonisolated final class Continuations: @unchecked Sendable {
         private let lock = NSLock()
         private var pending: [String: [URL]] = [:]
+        /// 1 周読み終えるたびに呼ぶ継ぎ目 (ディレクトリの鍵と周の番号)。**検査だけが差す** — 1 周目と 2 周目の間に名前を足すため。
+        nonisolated(unsafe) var afterPass: (@Sendable (_ key: String, _ pass: Int) -> Void)?
 
-        /// 検査が見る: 積まれている・走っている続きの数と、それが探す名前の数。
-        var counts: (directories: Int, names: Int) {
+        /// ディレクトリの鍵。**`/tmp/x` と `/private/tmp/x`・`a/../b` を同じ鍵にする。**
+        static func key(of directory: URL) -> String {
+            directory.resolvingSymlinksInPath().standardizedFileURL.path
+        }
+
+        /// 検査が見る: そのディレクトリの続きが探している名前の数 (積まれていなければ 0)。
+        /// **鍵ごとに引く** — プロセスで共有する控えの全体は、並走する他の検査の続きで揺れる。
+        func names(in directory: URL) -> Int {
             lock.lock()
             defer { lock.unlock() }
-            return (pending.count, pending.values.reduce(0) { $0 + $1.count })
+            return pending[Self.key(of: directory)]?.count ?? 0
         }
 
         /// 同じディレクトリの続きが在れば、その名前の集合に足す。
         func adopt(_ url: URL) -> Bool {
+            let key = Self.key(of: url.deletingLastPathComponent())
             lock.lock()
             defer { lock.unlock() }
-            let key = url.deletingLastPathComponent().path
             guard pending[key] != nil else { return false }
             pending[key]?.append(url)
             return true
         }
 
-        /// そのディレクトリの続きを積む。
+        /// そのディレクトリの続きを積む。**在れば足すだけ** (積み直さない)。
         func begin(_ url: URL) {
             let directory = url.deletingLastPathComponent()
+            let key = Self.key(of: directory)
             lock.lock()
-            pending[directory.path] = [url]
+            if pending[key] != nil {
+                pending[key]?.append(url)
+                lock.unlock()
+                return
+            }
+            pending[key] = [url]
             lock.unlock()
-            AtomicFile.sweepQueue.async { [self] in run(directory) }
+            AtomicFile.sweepQueue.async { [self] in run(directory, key: key) }
         }
 
-        private func run(_ directory: URL) {
-            let key = directory.path
+        private func run(_ directory: URL, key: String) {
             let me = getpid()
             var covered = 0
+            var pass = 0
             while true {
                 lock.lock()
                 let batch = Array((pending[key] ?? [])[covered...])
                 lock.unlock()
-                Sweep(in: directory, for: batch, me: me)?.finish()
+                if let sweep = Sweep(in: directory, for: batch, me: me) {
+                    sweep.finish()
+                } else {
+                    // 開けなかった (fd の枯渇・ディレクトリが消えた)。この回の名前は片付いていないので、
+                    // 控えから外して、次に同じ名前を置くときに読み直す
+                    for url in batch { AtomicFile.swept.remove(url) }
+                }
+                afterPass?(key, pass)
+                pass += 1
                 covered += batch.count
                 lock.lock()
                 if (pending[key]?.count ?? 0) == covered {
@@ -313,20 +357,58 @@ package enum AtomicFile {
         /// ここまでに読んだ件数。**検査が、呼んだ糸の読みに上限があることを見る。**
         private(set) var entriesRead = 0
 
+        /// 開いている `DIR` の数 (ディレクトリの鍵ごと)。**検査が、積まれている間に握っていないこと・同時に
+        /// 1 本までであることを、プロセス全体の fd の数に頼らず見る。**
+        nonisolated static let handles = HandleLog()
+
+        private let key: String
+
         init?(in directory: URL, for urls: [URL], me: pid_t) {
             guard let handle = opendir(directory.path) else { return nil }
             self.urls = urls
             self.directory = directory
             self.me = me
             self.handle = handle
+            self.key = Continuations.key(of: directory)
+            Self.handles.opened(key)
         }
 
         deinit { close() }
 
         /// `DIR` を閉じる。
         func close() {
-            if let handle { closedir(handle) }
-            handle = nil
+            guard let handle else { return }
+            closedir(handle)
+            self.handle = nil
+            Self.handles.closed(key)
+        }
+
+        /// 開いている `DIR` の数とその最大を、鍵ごとに数える。
+        nonisolated final class HandleLog: @unchecked Sendable {
+            private let lock = NSLock()
+            private var held: [String: Int] = [:]
+            private var peak: [String: Int] = [:]
+
+            func opened(_ key: String) {
+                lock.lock()
+                defer { lock.unlock() }
+                held[key, default: 0] += 1
+                peak[key] = max(peak[key] ?? 0, held[key] ?? 0)
+            }
+
+            func closed(_ key: String) {
+                lock.lock()
+                defer { lock.unlock() }
+                held[key, default: 1] -= 1
+            }
+
+            /// そのディレクトリで、いま開いている数と、これまでの最大。
+            func counts(in directory: URL) -> (held: Int, peak: Int) {
+                lock.lock()
+                defer { lock.unlock() }
+                let key = Continuations.key(of: directory)
+                return (held[key] ?? 0, peak[key] ?? 0)
+            }
         }
 
         /// 最大 `limit` 件を読んで片付ける。**消すのは、その回の分を読み終えてから** — 読みながら消すと、
