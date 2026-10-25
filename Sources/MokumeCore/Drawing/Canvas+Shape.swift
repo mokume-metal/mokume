@@ -108,6 +108,8 @@ extension Canvas {
         recordingShape = savedRecording
         // 断った `beginDraw()` の数は、一番外の出口で下ろす (#2834)
         if !savedRecording { refusedBeginDrawsInsideShape = 0 }
+        // 記録の中で積んだまま抜けた段は、名指してから捨てる (#2399)
+        warnIfStacksLeftOpen(before: "createShape { … }")
         restore(savedStacks)
         closeBatch()
         // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**

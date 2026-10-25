@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "mutants": [
+    {
+      "id": "2280-observe-negative-time",
+      "origin": "#2278",
+      "file": "Sources/MokumeCLI/MCP/Tools.swift",
+      "find": "value.doubleValue.isFinite, value.doubleValue >= 0,",
+      "replace": "value.doubleValue.isFinite,",
+      "gpu": false,
+      "note": "observe が負の秒を断らずに送る (ObserveTests.rejectsInvalidTimeArguments が殺すはず)"
+    },
+    {
+      "id": "2280-observe-time-with-count",
+      "origin": "#2278",
+      "file": "Sources/MokumeCLI/MCP/Tools.swift",
+      "find": "guard let value = JSONRPC.number(raw), value.doubleValue == 1 else {",
+      "replace": "guard JSONRPC.number(raw) != nil else {",
+      "gpu": false,
+      "note": "time と count=2 / every=2 の併用を断らずに送る (ObserveTests.rejectsInvalidTimeArguments が殺すはず)"
+    },
+    {
+      "id": "2281-toolversion-current-time",
+      "origin": "#2278",
+      "file": "Sources/MokumeCLI/ToolVersion.swift",
+      "find": "return \"local build (\\(modified.map { Timestamp.text($0) } ?? DoctorCommand.unknown))\"",
+      "replace": "return \"local build (\\(Timestamp.text(Date())))\"",
+      "gpu": false,
+      "note": "手元ビルドの名乗りが組んだ日時ではなく現在時刻を出す (ToolVersionTests.addsTheBuildTimeToALocalBuild が殺すはず)"
+    },
+    {
+      "id": "2282-doctor-last-ignored-place",
+      "origin": "#2278",
+      "file": "Sources/MokumeCLI/DoctorCommand.swift",
+      "find": "place: emptyPlace ? nil : parsed.positional, currentDirectory: currentDirectory)",
+      "replace": "place: emptyPlace ? nil : (parsed.ignored.last ?? parsed.positional), currentDirectory: currentDirectory)",
+      "gpu": false,
+      "note": "doctor が 2 つ目 (無視したはずの) 引数を場所として診る (ArgumentsTests.theDoctorVerbStillTakesOnePlace が殺すはず)"
+    },
+    {
+      "id": "2283-analysis-window-rounds-up",
+      "origin": "#2278",
+      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
+      "find": "let end = Int((time * Double(sampleRate)).rounded(.down))",
+      "replace": "let end = Int((time * Double(sampleRate)).rounded(.up))",
+      "gpu": false,
+      "note": "時刻から窓の末尾への丸めが切り上げになり、まだ届いていない標本まで窓が 1 つずれる (AudioAnalysisTests.fractionalTimesEndAtTheLastArrivedSample が殺すはず)"
+    },
+    {
+      "id": "2284-reverb-wet-unclamped",
+      "origin": "#2278",
+      "file": "Sources/MokumeAudio/SynthEffects.swift",
+      "find": "self.wet = min(max(wet, 0), 1)",
+      "replace": "self.wet = wet",
+      "gpu": false,
+      "note": "リバーブの wet を 0…1 へ締めず、範囲外の設定がそのまま効く (SynthKernelTests.reverbStaysBounded が殺すはず)"
+    },
+    {
+      "id": "2285-rack-capacity-63",
+      "origin": "#2278",
+      "file": "Sources/MokumeAudio/SynthRack.swift",
+      "find": "static let capacity = 64",
+      "replace": "static let capacity = 63",
+      "gpu": false,
+      "note": "同時に生きる節の上限が 63 に減る (SynthRackTests.capacityIsBounded が殺すはず)"
+    },
+    {
+      "id": "2286-stall-threshold-fixed",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Display/FrameDriver.swift",
+      "find": "4 / Double(max(1, frameRate))",
+      "replace": "4.0",
+      "gpu": false,
+      "note": "停滞の閾値がフレームレートに追随せず常に 4 秒になる (FrameDriverTests.stallThresholdFollowsTheTargetFrameRate が殺すはず)"
+    },
+    {
+      "id": "2287-orbit-tilt-uses-x-sensitivity",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Drawing/Orbit.swift",
+      "find": "let tilt = dragY * sensitivity.y * Self.radiansPerPixel",
+      "replace": "let tilt = dragY * sensitivity.x * Self.radiansPerPixel",
+      "gpu": true,
+      "note": "orbitControl の縦の回転に横の感度が掛かる (OrbitSensitivityTests の「縦の感度は縦にだけ効き…」が殺すはず)"
+    },
+    {
+      "id": "2288-remote-params-keep-stale-boxes",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Parameters/RemoteParams.swift",
+      "find": "guard incoming != signature else {",
+      "replace": "guard incoming != signature, !incoming.isEmpty else {",
+      "gpu": false,
+      "note": "宣言が 0 件に減ってもつまみの箱を組み直さず、前の箱が残る (RemoteParamsTests.staysEmptyWithoutDeclarations が殺すはず)"
+    },
+    {
+      "id": "2289-svg-empty-text-unreadable",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/SVG/SVGFile.swift",
+      "find": "static func parse(_ text: String, path: String) throws(DataFailure) -> Drawing {\n        let reader = Reader()",
+      "replace": "static func parse(_ text: String, path: String) throws(DataFailure) -> Drawing {\n        if text.isEmpty { throw .unreadable(path: path) }\n        let reader = Reader()",
+      "gpu": false,
+      "note": "空の SVG を malformed ではなく unreadable で投げる (SVGFileTests.emptyTextThrowsMalformed が殺すはず)"
+    },
+    {
+      "id": "2290-shadow-bias-accepts-infinity",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Drawing/Canvas+Shadow.swift",
+      "find": "guard amount.isFinite, amount >= 0 else { return warnBadShadow(\"shadowBias\") }",
+      "replace": "guard amount >= 0 else { return warnBadShadow(\"shadowBias\") }",
+      "gpu": true,
+      "note": "shadowBias が無限大を受け付ける (ShadowTests.brokenShadowSettingsAreIgnored が殺すはず)"
+    },
+    {
+      "id": "2291-cast-shadow-ignored",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Drawing/Canvas+Shadow.swift",
+      "find": "if enabled != style.castsShadow { closeBatch() }\n        style.castsShadow = enabled",
+      "replace": "if true != style.castsShadow { closeBatch() }\n        style.castsShadow = true",
+      "gpu": true,
+      "note": "castShadow(false) を無視し、外したはずの形も影を落とす (ShadowTests.excludedShapesCastNothing が殺すはず)"
+    },
+    {
+      "id": "2292-glyph-index-high-surrogate-only",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Text/Typeface.swift",
+      "find": "CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)",
+      "replace": "CTFontGetGlyphsForCharacters(font, &units, &glyphs, 1)",
+      "gpu": true,
+      "note": "補助面の文字でサロゲート対の先頭だけを渡し、絵文字の字形が引けなくなる (TextTests の色付き字形の 4 本が殺すはず)"
+    },
+    {
+      "id": "2293-fragment-always-lit",
+      "origin": "#2278",
+      "file": "Sources/MokumeCore/Drawing/ShapePipeline.swift",
+      "find": "lit: formFlags == nil ? !unlit && shapeLit(forVertexFunction: vertexFunctionName) : nil)",
+      "replace": "lit: formFlags == nil ? true : nil)",
+      "gpu": false,
+      "note": "三角形の経路の断片を常に光の枝つきで組む (UnlitFragmentTests.theAssemblyPassesTheLightingDecisionThrough が殺すはず)"
+    },
+    {
+      "id": "2916-writer-overwrites-reader-window",
+      "origin": "#2916",
+      "file": "Sources/MokumeAudio/SampleRing.swift",
+      "find": "let next = windows[back]",
+      "replace": "let next = windows[front]",
+      "gpu": false,
+      "note": "書き手が読み手の持つ面へ書き、読み取り中の標本を上書きする (SampleRingTests の「読み手が窓を持ったまま止まっても…」が決定的に殺すはず。並行の競合そのものは TSan でしか見えない)"
+    },
+    {
+      "id": "2928-undeliverable-never-retires",
+      "origin": "#2928",
+      "file": "Sources/MokumeCLI/WatchSession.swift",
+      "find": "if let pid, pid != waiting.processIdentifier { return nil }\n        return await retireAsPromoted()",
+      "replace": "if let pid, pid != waiting.processIdentifier { return nil }\n        return nil",
+      "gpu": false,
+      "note": "道具の窓が受け取れない世代でも前の世代を退役させず、見張りが黙る (WatchSessionTests の受け取れない知らせの検査が殺すはず)"
+    },
+    {
+      "id": "2983-session-does-not-relinquish",
+      "origin": "#2983",
+      "file": "Sources/MokumeCLI/WatchSession.swift",
+      "find": "if hadOutgoing || !extraLetGo.isEmpty { relinquishesDisplay(extraLetGo + retiredPIDs) }",
+      "replace": "_ = retiredPIDs",
+      "gpu": false,
+      "note": "前の世代を畳んでも台へ手放した世代を伝えず、カーソルの頼みが残る (WatchSessionTests.anUndeliverableNoticeTellsTheDisplayWhichGenerationWasRetired が殺すはず)"
+    },
+    {
+      "id": "2983-stage-reads-released-requests",
+      "origin": "#2983",
+      "file": "Sources/MokumeCore/Display/SharedFrameStage.swift",
+      "find": "if !isReleased(source) {",
+      "replace": "if true {",
+      "gpu": true,
+      "note": "手放した世代の面からもカーソルの頼みを読み直し、捕まえ・隠しが戻る (SharedFrameStageTests の「映している世代を手放したと伝えられたら…」が殺すはず)"
+    },
+    {
+      "id": "2226-box-coverage-always-aligned",
+      "origin": "#2226",
+      "file": "Sources/MokumeCore/Drawing/Shaders/Shapes.metal",
+      "find": "if (mokume_rowsAlignToPixels(rows)) {\n        return mokume_spanCoverage(at.x / unitsPerPixel.x, extent.x / unitsPerPixel.x)",
+      "replace": "if (true) {\n        return mokume_spanCoverage(at.x / unitsPerPixel.x, extent.x / unitsPerPixel.x)",
+      "gpu": true,
+      "note": "回した 1 画素より細い線・点・塗りを軸に沿った箱として数え、45° で置く位置により濃さが振れる (FormShapeTests・DensityInvarianceTests の回した細い形の検査が殺すはず)"
+    },
+    {
+      "id": "2226-thin-line-not-routed",
+      "origin": "#2226",
+      "file": "Sources/MokumeCore/Drawing/FormInstance.swift",
+      "find": "guard meta.w & Self.strokesFlag != 0 else { return false }\n            return isThin(\n                half: SIMD2(0, size.z), unitsPerDrawnPixel: unitsPerDrawnPixel, axes: .y, curved: reachCurved)",
+      "replace": "return false",
+      "gpu": true,
+      "note": "1 画素より細い線と点を細い枝の列へ送らない (FormShapeTests.thinLineJudgementLeansToIncluding が殺すはず。suite は GPU で条件づけ)"
+    },
+    {
+      "id": "1637-thin-stroke-never-widened",
+      "origin": "#1637",
+      "file": "Sources/MokumeCore/Drawing/Canvas+ThinStroke.swift",
+      "find": "guard drawnWeight > 0, drawnWeight < 1, drawnWeight.isFinite else { return nil }",
+      "replace": "guard drawnWeight > 0, drawnWeight < 0, drawnWeight.isFinite else { return nil }",
+      "gpu": true,
+      "note": "三角形の経路の 1 描く画素より細い線を広げず、pixelDensity 0.5 で置く座標の偶奇により消える (DensityInvarianceTests が殺すはず)"
+    },
+    {
+      "id": "1637-thin-stroke-full-coverage",
+      "origin": "#1637",
+      "file": "Sources/MokumeCore/Drawing/Canvas+ThinStroke.swift",
+      "find": "coverage = isPoint ? drawnWeight * drawnWeight : drawnWeight",
+      "replace": "coverage = 1",
+      "gpu": true,
+      "note": "細い線を 1 画素へ広げたまま被覆を掛けず、太さに比例しない濃さで出る (DensityInvarianceTests の量の検査が殺すはず)"
+    },
+    {
+      "id": "2991-edge-coverage-linear",
+      "origin": "#2991",
+      "file": "Sources/MokumeCore/Drawing/Shaders/Shapes.metal",
+      "find": "if (kFormHasObliqueEdge && !linear) {",
+      "replace": "if (kFormHasObliqueEdge && !linear && false) {",
+      "gpu": true,
+      "note": "斜めの縁の被覆を面積ではなく線形の渡しで数え、45° で光の量が振れる (ExactEdgeCoverageTests が殺すはず)"
+    },
+    {
+      "id": "2997-touch-tolerance-exact",
+      "origin": "#2997",
+      "file": "Sources/MokumeCore/Drawing/Triangulation.swift",
+      "find": "static func rounding(of magnitude: Float) -> Float { magnitude * roundingScale }",
+      "replace": "static func rounding(of magnitude: Float) -> Float { magnitude * 0 }",
+      "gpu": false,
+      "note": "穴の触れ方を厳密な一致でだけ数え、回した座標の触れ合う穴が畳む道へ落ちて形が抜ける (RotatedTouchingHolesTests が殺すはず)"
+    },
+    {
+      "id": "2997-vertex-touch-exact",
+      "origin": "#2997",
+      "file": "Sources/MokumeCore/Drawing/Triangulation+Crossings.swift",
+      "find": "let meets = adjacent ? a == c : simd_distance(a, c) <= nearVertices",
+      "replace": "let meets = a == c",
+      "gpu": false,
+      "note": "頂点どうしの触れ方だけを厳密な一致に戻す (RotatedTouchingHolesTests の頂点が触れる場面が殺すはず。T 字だけの場面は緑のままでありうる)"
+    },
+    {
+      "id": "3022-attribute-note-keeps-whitespace",
+      "origin": "#3022",
+      "file": "Sources/MokumeCore/SVG/SVGFile.swift",
+      "find": "\"<\\(element) \\(name)=\\\"\\(value.trimmingCharacters(in: .whitespacesAndNewlines))\\\">\"",
+      "replace": "\"<\\(element) \\(name)=\\\"\\(value)\\\">\"",
+      "gpu": false,
+      "note": "読めない属性の名乗りが値の前後の空白を落とさない (SVGFileTests の #3022 の名乗りの検査が殺すはず)"
+    },
+    {
+      "id": "2494-stl-control-bytes-unrecognized",
+      "origin": "#2494",
+      "file": "Sources/MokumeCore/Model/ModelFile+STL.swift",
+      "find": "return isSolid ? .text : .unrecognized\n    }",
+      "replace": "let controlFree = !head.prefix(84).contains { ($0 < 0x20 && $0 != 0x09 && $0 != 0x0A && $0 != 0x0D) || $0 == 0x7F }\n        return isSolid && controlFree ? .text : .unrecognized\n    }",
+      "gpu": false,
+      "note": "頭に FF・VT・NUL・DEL を持つ文字の STL を文字と見分けず読めないとする (STLModelTests.controlBytesInTheNameDoNotMakeItBinary が殺すはず)"
+    }
+  ]
+}

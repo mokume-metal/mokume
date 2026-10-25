@@ -17,6 +17,9 @@ public struct PixelBuffer: Equatable, Sendable {
     public let height: Int
 
     /// 画素の成分列。1 画素あたり 4 成分 (赤・緑・青・不透明度) が並ぶ。
+    ///
+    /// 成分は線形・アルファ乗算済み (型の説明のとおり)。乗算前の色を 0–255 の目盛りで読むなら、
+    /// `buffer[x: x, y: y]` を ``red(_:)`` ほかで読む (不透明度 0 の画素は 0 を返す)。
     public let components: [Float16]
 
     nonisolated init(width: Int, height: Int, components: [Float16]) {

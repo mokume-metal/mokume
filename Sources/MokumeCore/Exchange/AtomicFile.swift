@@ -35,6 +35,16 @@ import MokumeDiagnostics
 /// ものには触れない。一覧を引くのはプロセスごと・名前ごとに 1 度だけにしてある — 観測の列は
 /// 毎フレーム書くので、書くたびに引くとその分だけ撮影が遅れる。
 ///
+/// **呼んだ糸が読むのは最初の ``syncSweepBudget`` 件までで、残りは裏の列で続ける** ([#3176])。物の溜まった
+/// ディレクトリ (`$TMPDIR` の 14 万件) の全件を同期に引くと、その 1 回が秒の単位で呼んだ糸を止めた。
+/// 小さなディレクトリは戻る前に片付け終わるので、今の区画では従来と同じである。
+///
+/// **大きなディレクトリで最初の件数の外にある分は、続きが走り切った回か、後の回に片付く。** 続きが走り切る前に
+/// 終わる短命のプロセスでは、その回は片付かない。短命の書き口 (`APIListLocator` の取り置き・`Facets` の要求) が
+/// 置くのは区画 (`.mokume/<区画>/`) の中の小さなディレクトリで、件数に収まるので、その場で片付く。
+///
+/// [#3176]: https://github.com/mokume-metal/mokume/issues/3176
+///
 /// [#1150]: https://github.com/mokume-metal/mokume/pull/1150
 /// [#1219]: https://github.com/mokume-metal/mokume/issues/1219
 /// [#1198]: https://github.com/mokume-metal/mokume/issues/1198
@@ -73,7 +83,29 @@ package enum AtomicFile {
     ///
     /// 控えるのは高々名前の種類の数 (目録・撮った絵の番号・つまみの状態など) で、書くたびには
     /// 増えない。
-    private static var swept = Set<URL>()
+    ///
+    /// **錠で守る。** 裏の続きが、ディレクトリを開けなかった回に名前を外す (次に置くときに読み直す) ため。
+    nonisolated private static let swept = SweptNames()
+
+    /// 片付けた置き場所の控え。
+    nonisolated final class SweptNames: @unchecked Sendable {
+        private let lock = NSLock()
+        private var urls = Set<URL>()
+
+        /// 入れる。初めてなら `true`。
+        func insert(_ url: URL) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return urls.insert(url).inserted
+        }
+
+        /// 外す (片付けられなかった名前を、次に置くときに読み直す)。
+        func remove(_ url: URL) {
+            lock.lock()
+            defer { lock.unlock() }
+            urls.remove(url)
+        }
+    }
 
     /// 中身を原子的に置く。途中のディレクトリは必要なら作る。
     package static func write(_ data: Data, to url: URL) throws {
@@ -171,7 +203,7 @@ package enum AtomicFile {
     ///
     /// - Returns: その置き場所の一時ファイルでなければ `nil`。**名前の形が違うものは
     ///   片付けの対象にしない** — 誰が置いたか分からないものは消さない。
-    static func writer(ofTemporary name: String, for url: URL) -> pid_t? {
+    nonisolated static func writer(ofTemporary name: String, for url: URL) -> pid_t? {
         let prefix = ".\(url.lastPathComponent)."
         let suffix = ".tmp"
         guard name.count > prefix.count + suffix.count, name.hasPrefix(prefix),
@@ -185,16 +217,250 @@ package enum AtomicFile {
     }
 
     /// 書いている途中に落とされた書き手の一時ファイルを消す。**プロセスごと・名前ごとに 1 度だけ。**
+    ///
+    /// **呼んだ糸が読むのは最初の ``syncSweepBudget`` 件まで。** 残りは裏の列で続ける
+    /// ([#3176](https://github.com/mokume-metal/mokume/issues/3176))。ここは `reserve` から main で
+    /// 同期に呼ばれ、置き場所のディレクトリを全件引く。`$TMPDIR` のように物の溜まった所 (14 万件) だと、
+    /// その 1 回が約 1 秒、窓の最初の枚を詰まらせた。
+    ///
+    /// **続きは、ディレクトリごとに 1 本だけ。** 同じディレクトリで続きが積まれている・走っている間に別の
+    /// 名前が来たら、読まずに、その続きが探す名前に足す (``Continuations``)。枚ごとに名前が変わる呼び手
+    /// (``FrameObserver``) でも、読みの回数と握る `DIR` が名前の数に比例しない。片付けるのは今までどおり
+    /// 「頼まれた名前の一時ファイル」だけで、他の名前のものには触れない。
     private static func sweepAbandonedTemporaries(of url: URL) {
-        guard swept.insert(url).inserted else { return }
-        let directory = url.deletingLastPathComponent()
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        let me = getpid()
-        for name in names {
-            guard let writer = writer(ofTemporary: name, for: url), writer != me,
-                !isRunning(writer)
-            else { continue }
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        guard swept.insert(url) else { return }
+        if continuations.adopt(url) { return }
+        guard let rest = beginSweep(of: url, budget: syncSweepBudget) else { return }
+        // `DIR` は握り続けない。続きは走るときに開き直す (積まれている間に fd を持たない)
+        rest.close()
+        continuations.begin(url)
+    }
+
+    /// 裏で続ける片付けの、ディレクトリごとの控え。
+    nonisolated static let continuations = Continuations()
+
+    /// 呼んだ糸で片付ける件数の上限。**小さなディレクトリ (今の区画はすべてここ) は、戻る前に片付け終わる**
+    /// ので、書いた直後に残りを読む検査も、従来の振る舞いのままである。検査だけが下げる。
+    static var syncSweepBudget = 1024
+
+    /// 裏で続ける片付けを走らせる列。直列にするのは、大きなディレクトリを名前ごとに引き直す呼び手
+    /// (``FrameObserver`` の枚ごとの名前) の読み出しが、並んで機械を占めないため。
+    nonisolated static let sweepQueue = DispatchQueue(label: "mokume.atomic-file.sweep", qos: .utility)
+
+    /// 裏の片付けが済むまで待つ。**検査だけが呼ぶ。**
+    static func settleSweeps() { sweepQueue.sync {} }
+
+    /// 片付けを始める。最初の `budget` 件までを呼んだ糸で読み、読み切れなければ続きを返す。
+    ///
+    /// - Returns: 読み切ったら `nil`。続きがあれば、その続きを ``Sweep/finish()`` で終えられる。
+    nonisolated static func beginSweep(of url: URL, budget: Int) -> Sweep? {
+        guard let sweep = Sweep(in: url.deletingLastPathComponent(), for: [url], me: getpid())
+        else { return nil }
+        return sweep.read(upTo: budget) ? nil : sweep
+    }
+
+    /// 裏の続きを、ディレクトリごとに 1 本にまとめる控え ([#3176](https://github.com/mokume-metal/mokume/issues/3176))。
+    ///
+    /// 続きは、名前の集合を持つ。走っている続きがある間に同じディレクトリで別の名前が来たら、新しい続きを
+    /// 積まずに集合へ足す。続きは「走り始めた時点の集合」で 1 回読み、読み終えたとき集合が増えていれば、
+    /// 増えた分だけでもう 1 回読む。**片付けるのは頼まれた名前の一時ファイルだけ** (他の名前のものには触れない)
+    /// ので、約束は変わらない。
+    ///
+    /// 呼ぶのは main (`adopt`・`begin`) と裏の列 (`run`) で、錠で守る。
+    nonisolated final class Continuations: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: [String: [URL]] = [:]
+        /// 1 周読み終えるたびに呼ぶ継ぎ目 (ディレクトリの鍵と周の番号)。**検査だけが差す** — 1 周目と 2 周目の間に名前を足すため。
+        nonisolated(unsafe) var afterPass: (@Sendable (_ key: String, _ pass: Int) -> Void)?
+
+        /// ディレクトリの鍵。**`/tmp/x` と `/private/tmp/x`・`a/../b` を同じ鍵にする。**
+        static func key(of directory: URL) -> String {
+            directory.resolvingSymlinksInPath().standardizedFileURL.path
+        }
+
+        /// 検査が見る: そのディレクトリの続きが探している名前の数 (積まれていなければ 0)。
+        /// **鍵ごとに引く** — プロセスで共有する控えの全体は、並走する他の検査の続きで揺れる。
+        func names(in directory: URL) -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return pending[Self.key(of: directory)]?.count ?? 0
+        }
+
+        /// 同じディレクトリの続きが在れば、その名前の集合に足す。
+        func adopt(_ url: URL) -> Bool {
+            let key = Self.key(of: url.deletingLastPathComponent())
+            lock.lock()
+            defer { lock.unlock() }
+            guard pending[key] != nil else { return false }
+            pending[key]?.append(url)
+            return true
+        }
+
+        /// そのディレクトリの続きを積む。**在れば足すだけ** (積み直さない)。
+        func begin(_ url: URL) {
+            let directory = url.deletingLastPathComponent()
+            let key = Self.key(of: directory)
+            lock.lock()
+            if pending[key] != nil {
+                pending[key]?.append(url)
+                lock.unlock()
+                return
+            }
+            pending[key] = [url]
+            lock.unlock()
+            AtomicFile.sweepQueue.async { [self] in run(directory, key: key) }
+        }
+
+        private func run(_ directory: URL, key: String) {
+            let me = getpid()
+            var covered = 0
+            var pass = 0
+            while true {
+                lock.lock()
+                let batch = Array((pending[key] ?? [])[covered...])
+                lock.unlock()
+                if let sweep = Sweep(in: directory, for: batch, me: me) {
+                    sweep.finish()
+                } else {
+                    // 開けなかった (fd の枯渇・ディレクトリが消えた)。この回の名前は片付いていないので、
+                    // 控えから外して、次に同じ名前を置くときに読み直す
+                    for url in batch { AtomicFile.swept.remove(url) }
+                }
+                afterPass?(key, pass)
+                pass += 1
+                covered += batch.count
+                lock.lock()
+                if (pending[key]?.count ?? 0) == covered {
+                    pending[key] = nil
+                    lock.unlock()
+                    return
+                }
+                lock.unlock()
+            }
+        }
+    }
+
+    /// ディレクトリを `readdir` で 1 件ずつ見て、落とされた書き手の一時ファイルを消す途中の状態。
+    ///
+    /// **名前の文字列は、`.…tmp` の形をしたものだけ作る** — 全件分を作ると、`contentsOfDirectory` は
+    /// 14 万件で約 340 ms、名前の頭と尻を先に見る読み方は約 59 ms だった (どちらも件数に比例する。呼んだ糸の
+    /// 上限を決めているのは ``AtomicFile/syncSweepBudget`` である)。消す条件は変えない: 持ち主の名前の形を
+    /// 満たし、自分のものでなく、もう居ないと言い切れるものだけ。
+    ///
+    /// 呼んだ糸と裏の列が順に使う (同時には使わない) ので、`@unchecked Sendable` で足りる。
+    nonisolated final class Sweep: @unchecked Sendable {
+        /// 探す一時ファイルの持ち主の置き場所 (どれも `directory` の直下)。
+        private let urls: [URL]
+        private let directory: URL
+        private let me: pid_t
+        private var handle: UnsafeMutablePointer<DIR>?
+        /// ここまでに読んだ件数。**検査が、呼んだ糸の読みに上限があることを見る。**
+        private(set) var entriesRead = 0
+
+        /// 開いている `DIR` の数 (ディレクトリの鍵ごと)。**検査が、積まれている間に握っていないこと・同時に
+        /// 1 本までであることを、プロセス全体の fd の数に頼らず見る。**
+        nonisolated static let handles = HandleLog()
+
+        private let key: String
+
+        init?(in directory: URL, for urls: [URL], me: pid_t) {
+            guard let handle = opendir(directory.path) else { return nil }
+            self.urls = urls
+            self.directory = directory
+            self.me = me
+            self.handle = handle
+            self.key = Continuations.key(of: directory)
+            Self.handles.opened(key)
+        }
+
+        deinit { close() }
+
+        /// `DIR` を閉じる。
+        func close() {
+            guard let handle else { return }
+            closedir(handle)
+            self.handle = nil
+            Self.handles.closed(key)
+        }
+
+        /// 開いている `DIR` の数とその最大を、鍵ごとに数える。
+        nonisolated final class HandleLog: @unchecked Sendable {
+            private let lock = NSLock()
+            private var held: [String: Int] = [:]
+            private var peak: [String: Int] = [:]
+
+            func opened(_ key: String) {
+                lock.lock()
+                defer { lock.unlock() }
+                held[key, default: 0] += 1
+                peak[key] = max(peak[key] ?? 0, held[key] ?? 0)
+            }
+
+            func closed(_ key: String) {
+                lock.lock()
+                defer { lock.unlock() }
+                held[key, default: 1] -= 1
+            }
+
+            /// そのディレクトリで、いま開いている数と、これまでの最大。
+            func counts(in directory: URL) -> (held: Int, peak: Int) {
+                lock.lock()
+                defer { lock.unlock() }
+                let key = Continuations.key(of: directory)
+                return (held[key] ?? 0, peak[key] ?? 0)
+            }
+        }
+
+        /// 最大 `limit` 件を読んで片付ける。**消すのは、その回の分を読み終えてから** — 読みながら消すと、
+        /// ネットワーク越しのファイルシステム (SMB・NFS) で後ろの項目を飛ばすことがある。
+        ///
+        /// - Returns: ディレクトリを読み切ったか。
+        func read(upTo limit: Int) -> Bool {
+            guard let handle else { return true }
+            var remaining = limit
+            var abandoned: [String] = []
+            var finished = false
+            while remaining > 0 {
+                guard let entry = readdir(handle) else {
+                    finished = true
+                    break
+                }
+                remaining -= 1
+                entriesRead += 1
+                if let name = abandonedTemporary(entry) { abandoned.append(name) }
+            }
+            if finished { close() }
+            for name in abandoned {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+            }
+            return finished
+        }
+
+        /// 残りを読み切る。
+        func finish() { _ = read(upTo: .max) }
+
+        /// 消してよい一時ファイルなら、その名前。
+        private func abandonedTemporary(_ entry: UnsafeMutablePointer<dirent>) -> String? {
+            let length = Int(entry.pointee.d_namlen)
+            // `.<名前>.<pid>-<連番>.tmp` は、点で始まり `.tmp` で終わる。それ以外は文字列にしない
+            let name: String? = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: UInt8.self, capacity: length + 1) { bytes in
+                    guard length > 5, bytes[0] == UInt8(ascii: "."),
+                        bytes[length - 4] == UInt8(ascii: "."), bytes[length - 3] == UInt8(ascii: "t"),
+                        bytes[length - 2] == UInt8(ascii: "m"), bytes[length - 1] == UInt8(ascii: "p")
+                    else { return nil }
+                    return String(decoding: UnsafeBufferPointer(start: bytes, count: length), as: UTF8.self)
+                }
+            }
+            guard let name else { return nil }
+            for url in urls {
+                if let writer = AtomicFile.writer(ofTemporary: name, for: url), writer != me,
+                    !AtomicFile.isRunning(writer)
+                {
+                    return name
+                }
+            }
+            return nil
         }
     }
 
@@ -203,7 +469,7 @@ package enum AtomicFile {
     ///
     /// 合図 0 は何も送らず、宛先が在るかだけを問う。他の利用者のプロセスは `EPERM` で
     /// 返るが、それも「居る」である。
-    static func isRunning(_ pid: pid_t) -> Bool {
+    nonisolated static func isRunning(_ pid: pid_t) -> Bool {
         // **宛先を確かめてから問う。** 0 以下は自分のプロセスグループや全体を指す
         guard pid > 0 else { return true }
         return kill(pid, 0) == 0 || errno != ESRCH
