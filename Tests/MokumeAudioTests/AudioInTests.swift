@@ -13,8 +13,8 @@ final class SilentAudioSource: AudioSource {
     let initial: SourceState
     init(_ initial: SourceState) { self.initial = initial }
     var sampleRate: Float { 0 }
-    func start(into input: ExternalInput<[Float]>, at time: Double) { input.setState(initial) }
-    func pump(into input: ExternalInput<[Float]>, at time: Double) {}
+    func start(into input: ExternalInput<AudioSpan>, at time: Double) { input.setState(initial) }
+    func pump(into input: ExternalInput<AudioSpan>, at time: Double) {}
     func stop() {}
 }
 
@@ -24,15 +24,15 @@ final class UnpluggedAudioSource: AudioSource {
     private var pumped = 0
     init(after: Int) { self.after = after }
     var sampleRate: Float { 48_000 }
-    func start(into input: ExternalInput<[Float]>, at time: Double) { input.setState(.running) }
-    func pump(into input: ExternalInput<[Float]>, at time: Double) {
+    func start(into input: ExternalInput<AudioSpan>, at time: Double) { input.setState(.running) }
+    func pump(into input: ExternalInput<AudioSpan>, at time: Double) {
         // 開いていない (止めた・開き直されていない) 出どころは何も入れない
         guard input.state == .running else { return }
         pumped += 1
         if pumped > after {
             input.setState(.disconnected)
         } else {
-            input.send(sine(band: 20))
+            input.send(AudioSpan(window: sine(band: 20)))
         }
     }
     func stop() {}
@@ -56,6 +56,7 @@ struct Received: Equatable {
     var time: Float
     var level: Float
     var rms: Float
+    var peak: Float
     var spectrum: [Float]
 }
 
@@ -122,7 +123,7 @@ struct AudioInTests {
                 guard let audio else { return }
                 received.append(
                     Received(
-                        time: sketch.time, level: audio.level, rms: audio.rms,
+                        time: sketch.time, level: audio.level, rms: audio.rms, peak: audio.peak,
                         spectrum: audio.spectrum))
             })
         runtime.closePlugins()
@@ -131,19 +132,28 @@ struct AudioInTests {
 
     // MARK: - フレームの時刻の窓 (水準 2)
 
-    @Test("標本列の解析は、開いてからそのフレームの時刻までで終わる窓の値になる")
+    @Test("標本列の解析は、前のフレームの時刻からそのフレームの時刻までの区間の値になる。標本が進まない最初のフレームは無音")
     func samplesFollowFrameTime() throws {
         let (received, openedAt) = try record(frames: 6) {
             try $0.createAudioIn(samples: chord, sampleRate: 48_000)
         }
         #expect(received.count == 6)
+        var covered = 0
+        var expected = AudioLevels.silence
         for frame in received {
-            let expected = AudioAnalysis.analyze(
-                AudioAnalysis.window(
-                    of: chord, sampleRate: 48_000, endingAt: Double(frame.time) - Double(openedAt)))
+            let end = RecordedSource.index(
+                at: Double(frame.time) - Double(openedAt), sampleRate: 48_000)
+            // 標本が進まなかったフレーム (開いた最初のフレーム) は、前の値 (最初は無音) のまま
+            if end > covered {
+                expected = AudioAnalysis.analyze(span(of: chord, from: covered, to: end))
+                covered = end
+            }
             #expect(frame.level == expected.level)
+            #expect(frame.peak == expected.peak)
             #expect(frame.spectrum == expected.spectrum)
         }
+        #expect(received[0].level == 0 && received[0].peak == 0)
+        #expect(covered > 3000, "区間が 1 フレームぶんずつ進んでいる")
         // 拍で揺れているので、フレームごとに値が動いている
         #expect(Set(received.map(\.level)).count > 1)
     }
@@ -181,13 +191,12 @@ struct AudioInTests {
 
         // 観測の枚の draw() が見る時刻は観測の秒で、次の枚は作者の時計へ戻っている
         #expect(times == [5, Float(4.0 / 60)])
-        // 次の枚が読む窓は、起点 (作者の時計の 3/60 秒) から 1/60 秒のところで終わる
-        let expected = AudioAnalysis.analyze(
-            AudioAnalysis.window(
-                of: chord, sampleRate: 48_000,
-                endingAt: Double(Float(4.0 / 60)) - Double(Float(3.0 / 60))))
-        #expect(expected.level > 0, "窓が空なら、起点の違いを見分けられない")
-        #expect(levels.last == expected.level, "起点が観測の秒のままだと窓が空になる: \(levels)")
+        // 次の枚が読む区間は、起点 (作者の時計の 3/60 秒) から 1/60 秒までで、頭から標本が進んだぶんになる
+        let end = RecordedSource.index(
+            at: Double(Float(4.0 / 60)) - Double(Float(3.0 / 60)), sampleRate: 48_000)
+        let expected = AudioAnalysis.analyze(span(of: chord, from: 0, to: end))
+        #expect(expected.level > 0, "区間が空なら、起点の違いを見分けられない")
+        #expect(levels.last == expected.level, "起点が観測の秒のままだと区間が空になる: \(levels)")
     }
 
     @Test("音声ファイルを固定の時計で 2 度回すと、同じフレームが同じ値を受け取る")
@@ -214,11 +223,12 @@ struct AudioInTests {
         let runtime = try run(
             frames: 3,
             setup: { audio = try $0.createAudioIn(samples: chord, sampleRate: 48_000) },
-            draw: { _ in
-                #expect(audio?.isNewFrame == true)
+            draw: { sketch in
+                // 開いた最初のフレームは標本が進まない (区間が空) ので、何も届かない。2 フレーム目から届く
+                #expect(audio?.isNewFrame == (sketch.frameCount > 1))
                 arrivals.append(audio?.lastArrival?.frame)
             })
-        #expect(arrivals == [1, 2, 3])
+        #expect(arrivals == [nil, 2, 3])
         #expect(audio?.state == .running)
         #expect(audio?.report?.name == "audio (samples)")
         #expect(audio?.sampleRate == 48_000)
@@ -305,7 +315,7 @@ struct AudioInTests {
                 switch sketch.frameCount {
                 case 1:
                     // 届いたが、まだ読まれていない大きな音を残したまま外す
-                    audio.input.send(sine(band: 20))
+                    audio.input.send(AudioSpan(window: sine(band: 20)))
                     sketch.detach(audio)
                 case 2:
                     sketch.attach(audio)

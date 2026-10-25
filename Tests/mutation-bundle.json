@@ -40,11 +40,11 @@
     {
       "id": "2283-analysis-window-rounds-up",
       "origin": "#2278",
-      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
-      "find": "let end = Int((time * Double(sampleRate)).rounded(.down))",
-      "replace": "let end = Int((time * Double(sampleRate)).rounded(.up))",
+      "file": "Sources/MokumeAudio/AudioSource.swift",
+      "find": "max(0, Int((time * Double(sampleRate)).rounded(.down)))",
+      "replace": "max(0, Int((time * Double(sampleRate)).rounded(.up)))",
       "gpu": false,
-      "note": "時刻から窓の末尾への丸めが切り上げになり、まだ届いていない標本まで窓が 1 つずれる (AudioAnalysisTests.fractionalTimesEndAtTheLastArrivedSample が殺すはず)"
+      "note": "時刻から区間の末尾への丸めが切り上げになり、まだ届いていない標本まで区間が 1 つずれる (AudioAnalysisTests.samplesArrivedByATimeRoundDown が殺すはず)"
     },
     {
       "id": "2284-reverb-wet-unclamped",

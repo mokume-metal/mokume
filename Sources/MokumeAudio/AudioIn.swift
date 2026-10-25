@@ -32,9 +32,21 @@ import MokumeDiagnostics
 /// 0〜1 の値は、-60 dBFS を 0、0 dBFS を 1 として dB で線形に写し、外は丸める。履歴に
 /// 依らないので、同じ音はいつも同じ値になる。生の値をそのまま 0〜1 として使うと、普通の
 /// 音量では小さいところに張り付く (全振幅の正弦波でも ``rms`` は約 0.707 にしかならない)。
+/// 区間の最大の振幅 ``peak`` は生の値だけを持ち、0〜1 へ写した値は足さない (全振幅で 1 になる)。
 ///
-/// 解析は、そのフレームで終わる 1024 標本の窓 (48 kHz で約 21 ミリ秒) に Hann の窓を掛けて行う。
-/// 帯域は 512 本で、帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz である。
+/// ## 解析するのは、前のフレーム以後の全標本
+///
+/// 各フレームでは、**前のフレームの区間の終わりからこのフレームの区間の終わりまでの全標本**を解析する
+/// (24 fps なら 2000 標本。窓 1 つしか見ないと、立ち上がりの鋭い音を見落とす)。マイクの標本は、出どころ
+/// が届けた単位 (チャンクの長さ) ではなく、最初に受け取った標本を 0 とした通し番号で数える。
+///
+/// - ``rms``・``decibels``・``level``・``peak`` は区間全体の値
+/// - ``spectrum`` は、標本 0 から 512 標本ごとに置いた 1024 標本の窓 (Hann の窓を掛ける。48 kHz で約 21 ミリ秒)
+///   のうち、終わりが区間に入るものの平均。``spectrumLevels`` はその平均を写したもの。区間が 512 標本より短い
+///   (48 kHz で 93.75 fps より速い) ときは、区間の終わりまでに終わった最後の窓を使う
+/// - 帯域は 512 本で、帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz である
+/// - 新しい標本が届かなかったフレームは、値が前のまま (``isNewFrame`` が false)
+/// - 長く止まった後は、区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する
 ///
 /// ## 来ないことには理由がある
 ///
@@ -51,7 +63,7 @@ public final class AudioIn: Inlet {
     /// このフレームで新しい音が解析されたか。
     public private(set) var isNewFrame = false
 
-    let input: ExternalInput<[Float]>
+    let input: ExternalInput<AudioSpan>
     private let source: any AudioSource
     private weak var owner: (any Sketch)?
     /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
@@ -81,11 +93,16 @@ public final class AudioIn: Inlet {
 
     // MARK: - 生の値
 
-    /// 窓の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
+    /// 区間の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
     public var rms: Float { levels.rms }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
     public var decibels: Float { levels.decibels }
-    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。
+    /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。
+    ///
+    /// 立ち上がりの鋭い音 (キックなど) が、区間のどこにあっても拾う。``rms`` は区間の長さで薄まるが、これは薄まらない。
+    public var peak: Float { levels.peak }
+    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
+    /// 窓の平均。
     public var spectrum: [Float] { levels.spectrum }
 
     // MARK: - 0〜1 へ写した値
@@ -134,8 +151,8 @@ public final class AudioIn: Inlet {
 
     public func supply() {
         source.pump(into: input, at: Double(owner?.time ?? 0))
-        if let window = input.take() {
-            levels = AudioAnalyzer.shared.analyze(window)
+        if let span = input.take() {
+            levels = AudioAnalyzer.shared.analyze(span)
             isNewFrame = true
         } else {
             isNewFrame = false

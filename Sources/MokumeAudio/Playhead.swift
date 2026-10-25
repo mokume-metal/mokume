@@ -80,7 +80,7 @@ nonisolated struct Playhead: Equatable {
     }
 
     /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓。**いま鳴っている音**の
-    /// 窓で、入力の窓 (``AudioAnalysis/window(of:sampleRate:endingAt:)``) と同じく古い順に並ぶ。
+    /// 窓で、古い順に並ぶ。
     ///
     /// - 止まっていれば全部 0
     /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り
@@ -90,13 +90,30 @@ nonisolated struct Playhead: Equatable {
         -> [Float]
     {
         guard isPlaying, !samples.isEmpty else { return Array(repeating: 0, count: size) }
-        let played = max(0, played)
-        return (0..<size).map { offset in
-            let step = played - size + offset
-            let index = start + step
-            guard step >= 0 else { return leapt && 0 <= index && index < samples.count ? samples[index] : 0 }
-            if isLooping { return samples[index % samples.count] }
-            return index < samples.count ? samples[index] : 0
+        let end = start + max(0, played)
+        return (0..<size).map { sample(at: end - size + $0, in: samples) }
+    }
+
+    /// 区切りの中で `played` 標本鳴ったところまでの、解析する区間。`covered` は前のフレームの区間の終わり。
+    ///
+    /// **番号は ``start`` + 鳴った標本の数** (ファイルの位置。ループで頭へ戻っても戻さない通し番号) で、
+    /// 窓の格子 (``AudioAnalysis/hop`` ごと) もこの番号に置く。標本は ``window(of:after:size:)`` と同じ決まりで
+    /// 読む (始まりより前は 0、飛んで始めた区切りはファイルの標本)。止まっていれば呼ばない。
+    func span(of samples: [Float], from covered: Int, after played: Int) -> AudioSpan {
+        let to = start + max(0, played)
+        let from = AudioAnalysis.limited(from: min(max(covered, 0), to), to: to)
+        let first = AudioAnalysis.firstNeeded(from: from)
+        return AudioSpan(
+            base: first, samples: (first..<to).map { sample(at: $0, in: samples) }, from: from)
+    }
+
+    /// 区切りの通し番号 `index` (``start`` + 鳴った標本の数) の標本。
+    private func sample(at index: Int, in samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        guard index >= start else {
+            return leapt && 0 <= index && index < samples.count ? samples[index] : 0
         }
+        if isLooping { return samples[index % samples.count] }
+        return index < samples.count ? samples[index] : 0
     }
 }
