@@ -1704,6 +1704,12 @@ public final class Canvas {
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     var framePersists = false
+    /// ベクター (SVG) へ書く図形を控えている途中の状態 ([#3139])。**ランタイムが `draw()` の前に立て、
+    /// 後で下ろす** (``beginVectorWindow(pending:)``・``endVectorWindow()``)。頼まれていないフレームは
+    /// `capture` が nil のままで、置く口が読むのはこの 1 回だけである。フレームを出るときに下ろす。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    var vector = VectorWindow()
     /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
     ///
     /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
@@ -3852,6 +3858,7 @@ public final class Canvas {
         warnIfStacksLeftOpen(before: "the frame")
         isDrawing = false
         framePersists = false
+        vector = VectorWindow()
         // 組み立ての出口まで待たせた `endDraw()` と、待たせた捨てる印は、もう対象のフレームが無い (#1855・#2509)
         frameEndAwaitingShape = false
         dropAwaitingShape = false

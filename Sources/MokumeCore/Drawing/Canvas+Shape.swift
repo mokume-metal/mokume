@@ -571,6 +571,8 @@ extension Canvas {
             warnBadPlacement(geometry: badGeometry, fill: badFill)
         }
         guard !usable.isEmpty else { return }
+        // 保持した形は周と穴を持たないので、ベクターへ書けない (#3139)
+        for _ in usable { noteVectorDrop(.retainedShape) }
 
         // 描かずに幾何だけ持つ置き場所 (``Shape/geometryForms``) は、記録の中で置くときだけ、外側の記録へ
         // 置き場所の変換を掛けて引き継ぐ (外接のため・#2428)。描く区間には載らない

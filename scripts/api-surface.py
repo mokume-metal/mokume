@@ -1081,6 +1081,25 @@ SCENE_TEST = (
 )
 
 
+# 「図形」の口を、口ごとに SVG の書き出しへ向けて呼ぶ検査 (#3139)。**名前がここに字面で現れること**を
+# `check_vector_ports` が求める
+VECTOR_TEST = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "Tests"
+    / "MokumeCoreTests"
+    / "VectorFigurePortsTests.swift"
+)
+
+# SVG の書き出しの検査から外す「図形」の口と、その理由 (#3139)。**理由なしには外せない** — 外した口は、
+# 呼んでも控えも名乗りも起きないことを許すことになる。
+VECTOR_EXEMPT: dict[str, str] = {
+    "background": (
+        "画面全体の塗りで、図形を置く 3 つの口 (基本図形・頂点の形・周) のどれも通らない。"
+        "SVG には書かず、警告もしない (SVG を開く道具の地の色になる)。メンテナの決定 (2026-10-23)・完了条件 15"
+    ),
+}
+
+
 def port_kind(entry: str | tuple[str, str]) -> str:
     """表の 1 行から種類を取る。理由つきの行は (種類, 理由) の組で書く。"""
     return entry[0] if isinstance(entry, tuple) else entry
@@ -1143,6 +1162,54 @@ def check_port_kinds(
             f"{base} はシーンの記述なのに、フレームの外で呼ぶと注意が出るかを見る検査 "
             f"({SCENE_TEST.name}) の呼び出しが {calls} 本で、多重定義 {wanted} 本に足りない。"
             "口ごとの表に行を足す (ADR-0021 決定 4・#1670)"
+        )
+    return problems
+
+
+def check_vector_ports(
+    symbols: list[dict],
+    vector_test: str,
+    kinds: dict[str, str | tuple[str, str]] = PORT_KINDS,
+    exempt: dict[str, str] = VECTOR_EXEMPT,
+) -> list[str]:
+    """「図形」の公開の口が、SVG の書き出しの検査で呼ばれているか (#3139)。
+
+    `save("x.svg")` は、図形を置く口の内側で控える。**置く口を足した日に控えを足し忘れると、その図形だけ
+    が黙って書かれない** (ADR-0023 の改訂 (2026-10-23))。控えるか、名指しで落とす(`noteVectorDrop`)かの
+    どちらかを口ごとに選び、選んだ結果を検査が見る。口の列挙の元は `PORT_KINDS` の「図形」の行で、
+    口を足すと `check_port_kinds` が分類を求めるので、図形の口は足した時点でここへ来る。
+
+    照合の作法は `check_port_kinds` と同じ — コメントを落とし、呼び出しの形 (`$0.` / `canvas.` /
+    `sketch.` に続く `名前(`) だけを数え、**多重定義の数だけ呼び出しを求める**。外す口は理由つきで
+    `VECTOR_EXEMPT` に書き、表に残った古い名前も上げる。
+    """
+    code = re.sub(r"/\*.*?\*/", "", vector_test, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    overloads: dict[str, dict[str, int]] = {}
+    for symbol in symbols:
+        if layer(symbol) in {ENTRY_TYPE, LOWER_TYPE}:
+            counts = overloads.setdefault(title(symbol).split("(")[0], {})
+            counts[layer(symbol)] = counts.get(layer(symbol), 0) + 1
+    problems = []
+    for base, reason in sorted(exempt.items()):
+        if not reason.strip():
+            problems.append(f"{base} は VECTOR_EXEMPT に理由なしで載っている (#3139)")
+        if base not in kinds or port_kind(kinds[base]) != FIGURE:
+            problems.append(
+                f"{base} は VECTOR_EXEMPT に載っているが、PORT_KINDS の「{FIGURE}」の口ではない。表から外す (#3139)"
+            )
+    for base, entry in sorted(kinds.items()):
+        if port_kind(entry) != FIGURE or base in exempt or base not in overloads:
+            continue
+        wanted = overloads[base].get(LOWER_TYPE) or overloads[base][ENTRY_TYPE]
+        calls = len(re.findall(
+            rf"(?<![A-Za-z0-9_])(?:\$0|canvas|sketch)\.{re.escape(base)}\s*\(", code))
+        if calls >= wanted:
+            continue
+        problems.append(
+            f"{base} は図形の口なのに、SVG の書き出しの検査 ({VECTOR_TEST.name}) の呼び出しが {calls} 本で、"
+            f"多重定義 {wanted} 本に足りない。控えるか名指しで落とすかを選び、検査に行を足す。"
+            "書き出さない口なら VECTOR_EXEMPT へ理由つきで (ADR-0023 の改訂 (2026-10-23)・#3139)"
         )
     return problems
 
@@ -1267,6 +1334,7 @@ def main() -> int:
         + check_sketch_coverage(symbols, read_sketches(SKETCHES), requirements=requirements)
         + check_settings_form(symbols, SKETCHES)
         + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))
+        + check_vector_ports(symbols, VECTOR_TEST.read_text(encoding="utf-8"))
     )
     if problems:
         print("公開 API が規範に沿っていない:", file=sys.stderr)

@@ -93,6 +93,8 @@ extension Canvas {
         //
         // [#1672]: https://github.com/mokume-metal/mokume/issues/1672
         guard admitsPixelWrite() else { return }
+        // 画素の書き込みはベクターへ書けない (#3139)
+        noteVectorDrop(.pixels)
         loadPixelsIfNeeded()
         target.pixels[x, y] = color
     }
