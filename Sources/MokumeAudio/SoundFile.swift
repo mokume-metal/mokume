@@ -49,9 +49,20 @@ import MokumeDiagnostics
 ///
 /// ## 解析するのは、いま鳴っている音
 ///
-/// 各フレームでは、再生位置で終わる 1024 標本の窓に音量を掛け、``AudioIn`` と同じ解析に通す。
-/// 止まっている間の値は無音 (``level`` が 0) になる。左右のあるファイルは左右のまま鳴らし、
-/// 解析はチャンネルを平均して行う。
+/// 各フレームでは、**前のフレームの再生位置から、このフレームの再生位置までに鳴った全標本**(区間)に
+/// 音量を掛け、``AudioIn`` と同じ解析に通す。止まっている間の値は無音 (``level`` が 0) になる。
+/// 左右のあるファイルは左右のまま鳴らし、解析はチャンネルを平均して行う。
+///
+/// - ``rms``・``decibels``・``level``・``peak`` は区間全体の値。``spectrum`` は、**ファイルの位置 0 から
+///   512 標本ごと**に置いた 1024 標本の窓のうち、終わりが区間に入るものの平均 (鳴らし始めた位置から始めても、
+///   格子はファイルの位置に置く。ループで頭へ戻った後は、戻らずに数え続ける)
+/// - 鳴らし始めた最初のフレームの区間は、鳴らし始めてから進んだ分。``jump(_:)`` を挟んだフレームの区間は、
+///   飛ぶ前の区切りで前のフレームからそのフレームまで鳴り続けていた分 (飛ぶ前の位置の音)。飛び先の区間は
+///   その次のフレームから始まる (窓の前の部分はファイルの標本で埋める)
+/// - 1 度だけ鳴らして鳴り終わったフレームは、ファイルの終わりまでの区間を解析してから止まる (1 フレームより
+///   短い一発音の ``peak`` も出る)。次のフレームからは無音
+/// - **読まれなかったフレームの区間は解かず、次のフレームの値に混ぜない**。読んだ値は、毎フレーム解析した
+///   ときと同じ。長く止まった後は、区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する
 ///
 /// ## エフェクトに通す
 ///
@@ -101,9 +112,11 @@ import MokumeDiagnostics
 ///
 /// 窓に出して動かしている間は実際に鳴らし、解析の位置は実際に鳴った標本の数から読む。書き出し
 /// (`mokume render`) と、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
-/// ``SketchPart/clock``) では**鳴らさず**、位置を「鳴らし始めてから進んだフレームの数 × 標本化率
-/// ÷ fps」で決める。どちらも同じ位置から同じ窓を切り出すので、書き出した絵は実時間で鳴らした
-/// ときと同じ時刻の音で動き、何度書き出しても同じになる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。
+/// ``SketchPart/clock``) では**鳴らさず**、位置を「鳴らし始めたフレームから進んだ標本の数」で決める。
+/// 数は絶対のフレーム番号 `N` から求めた標本の位置 `⌊N × 標本化率 ÷ fps⌋` の差で、鳴らし始めたフレームが
+/// 標本の継ぎ目の途中にあっても、フレームの窓の継ぎ目 ([ADR-0042] 決定 6 の「時刻の対応」) とずれない。
+/// どちらも同じ位置から同じ区間を切り出すので、書き出した絵は実時間で鳴らしたときと同じ時刻の音で動き、
+/// 何度書き出しても同じになる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。
 ///
 /// エフェクトへ通したファイルは、位置をどの流れでも**ラックの節が描いた標本の数**から読む (固定の時計では
 /// ラックが同じフレームの数で進み、実時間では打ち切り — 2 秒を超える停止の後は 2 秒ぶんずつ — も節と
@@ -121,6 +134,7 @@ import MokumeDiagnostics
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 public final class SoundFile: Inlet, EffectInput {
     /// ファイルの標本化率 (Hz)。帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
@@ -149,7 +163,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// 鳴っている間に頼まれた飛び先 (標本)。次のフレームの ``supply()`` で、そこから区切りを始め直す。
     private var pendingJump: Int?
     private var volume: Float = 1
-    /// フレームの頭の窓と、読まれたときに解いた値 (``DeferredLevels``)。
+    /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
@@ -164,6 +178,13 @@ public final class SoundFile: Inlet, EffectInput {
     private var frame = 0
     /// 最後のフレームで読んだ、区切りの中で鳴った標本の数。
     private var lastPlayed = 0
+    /// 前のフレームの区間の終わり (区切りの通し番号 = 開始位置 + 鳴った標本の数)。区切りを始め直すと、始まりの位置に戻る。
+    private var covered = 0
+    /// エフェクトに通されたとき (``route(into:)``) の、引き継ぐ解析済みの終わり。次の ``beginSegment()`` で使う。
+    private var continuedCoverage: Int?
+    /// 止める (``pause()``・``stop()``) 操作の時点で、まだ解析していなかった区間 (前のフレーム以後、止めた位置まで)。
+    /// 次の ``supply()`` が、止める前に鳴っていた分として見せてから無音にする (鳴り終わりと同じ形)。
+    private var stoppedTail: AudioSpan?
     private var noticed: Set<Notice> = []
     /// エフェクトへ通されたとき (``SoundEffect/process(_:)``) に足す、ラックの節。通されるまでは `nil`。
     private var feed: Feed?
@@ -334,7 +355,9 @@ public final class SoundFile: Inlet, EffectInput {
     /// ```
     ///
     /// 鳴っている間なら、次のフレームでその位置から鳴り、解析の値もその位置の音になる。そのフレームの
-    /// 窓は、飛び先で終わるファイルの窓である (飛ぶ前からそこまで鳴っていたのと同じ)。止まっている間
+    /// 区間は、飛ぶ前の区切りで前のフレームからそのフレームまで鳴り続けていた分 (飛ぶ前の位置の音)。次の
+    /// フレームの区間が飛び先から始まる (そこに終わりが入る窓の前の部分は、飛ぶ前からそこまで鳴っていたのと
+    /// 同じく、ファイルの標本で埋める)。止まっている間
     /// (``pause()`` の後・``stop()`` の後・鳴り終わった後) は位置だけを動かし、鳴らさない。次の
     /// ``play()`` か ``loop()`` がそこから鳴らす。
     ///
@@ -422,11 +445,19 @@ public final class SoundFile: Inlet, EffectInput {
 
     // MARK: - 生の値
 
-    /// 窓の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
+    /// 区間の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
     public var rms: Float { levels.rms }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
     public var decibels: Float { levels.decibels }
-    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。
+    /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。写し方は ``AudioIn/peak`` と同じで、
+    /// 音量 (``amp(_:)``) を掛けた後の値。
+    ///
+    /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解くので、`draw()` が読まなかった
+    /// フレームの区間は解かれず、次のフレームの値にも混ざらない — `if 条件 { use(song.peak) }` で条件が偽だった
+    /// フレームのキックは、後から読んでも落ちたままである。取りこぼしたくない値は、毎フレーム読む。
+    public var peak: Float { levels.peak }
+    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
+    /// 窓の平均。
     public var spectrum: [Float] { levels.spectrum }
 
     // MARK: - 0〜1 へ写した値
@@ -464,27 +495,46 @@ public final class SoundFile: Inlet, EffectInput {
         // 列が詰まっている間に控えた操作は、詰まりが解けたここで、頼んだ順に効かせる
         drainDeferred()
         // 前のフレームで飛ぶよう頼まれていれば、このフレームを飛び先から始まる区切りの頭にする
-        // (``position`` がちょうど飛び先になり、窓は飛び先で終わる)。列が詰まっていれば、解けるまで待つ
+        // (``position`` がちょうど飛び先になり、区間は飛び先から始まる)。列が詰まっていれば、解けるまで待つ
         if let target = pendingJump, !isCongested {
             pendingJump = nil
+            // 飛ぶ前の区切りは、前のフレームからこのフレームまで鳴り続けていた。その分が、このフレームの区間になる
+            // (飛び先の区間はまだ空)
+            holdPlayedSegment()
             playhead.jump(to: target)
             beginSegment()
         }
         guard playhead.isPlaying else {
-            deferred.silence()
+            // 止める操作の時点で解析していなかった分があれば、それを見せてから無音にする (1 フレームだけ)
+            if let tail = stoppedTail, !tail.isEmpty { deferred.hold(tail) } else { deferred.silence() }
+            stoppedTail = nil
             return
         }
         let played = played()
         lastPlayed = played
-        // 鳴り終わったフレームからは無音 (``isPlaying`` が `false` の間、値は鳴っていない音のもの)
-        if playhead.settle(after: played) {
-            halt()
-            deferred.silence()
-            return
-        }
-        let window = playhead.window(of: samples, after: played)
-        // **窓は音量を掛けた形でフレームの頭に決め、解析は読まれたときまで遅らせる** (#2379)
-        deferred.hold(volume == 1 ? window : vDSP.multiply(volume, window))
+        // **区間は音量を掛けた形でフレームの頭に決め、解析は読まれたときまで遅らせる** (#2379)。標本が
+        // 進まなかったフレーム (飛び先から始まる最初のフレームなど) の空の区間は、前の値を保つ
+        holdPlayedSegment(after: played)
+        // 鳴り終わったフレームは、終わりまでの区間を解析してから止まる (1 フレームより短い一発音の peak も出る)。
+        // 次のフレームからは無音 (``isPlaying`` が `false` の間、値は鳴っていない音のもの)
+        if playhead.settle(after: played) { halt() }
+    }
+
+    /// 区切りの中で `played` 標本鳴ったところまでの、前のフレーム以後の区間を置く。
+    private func holdPlayedSegment(after played: Int? = nil) {
+        guard playhead.isPlaying else { return }
+        let span = playhead.span(of: samples, from: covered, after: played ?? self.played())
+        covered = span.to
+        deferred.hold(volume == 1 ? span : span.scaled(by: volume))
+    }
+
+    /// 止める操作の時点までの、前のフレーム以後の区間を控える。**止める前に鳴っていた分を、取りこぼさない。**
+    /// 実際に鳴らしている間は、フレームの頭から ``pause()``・``stop()`` を呼ぶまでに数 ms 鳴っている。
+    private func holdTail() {
+        guard playhead.isPlaying else { return }
+        let span = playhead.span(of: samples, from: covered, after: played())
+        covered = span.to
+        stoppedTail = volume == 1 ? span : span.scaled(by: volume)
     }
 
     /// いまの再生位置 (標本)。飛び先を待っている間も、まだ動いていない位置を返す。検査が読む。
@@ -501,6 +551,7 @@ public final class SoundFile: Inlet, EffectInput {
         feed = nil
         pace = nil
         playhead.stop()
+        stoppedTail = nil
         deferred.silence()
     }
 
@@ -535,7 +586,11 @@ public final class SoundFile: Inlet, EffectInput {
         else { return refuse(.fileCapacity) }
 
         // 位置は、時計を切り替える前の測り方で読む
-        let position = playhead.position(after: played())
+        let playedNow = played()
+        let position = playhead.position(after: playedNow)
+        // 区間の番号は、ファイルの位置の通し番号 (``Playhead/span(of:from:after:)``)。ループで頭へ戻った後は通し番号が
+        // 位置より大きいので、区切りを始め直しても番号がずれないよう、解析済みの終わりを位置の側へ寄せる
+        let shifted = min(max(covered - (playhead.start + max(0, playedNow) - position), 0), position)
         let wasPlaying = playhead.isPlaying
         if case .speaker(let player) = pace { player.leave() }
         pace = .routed
@@ -545,6 +600,9 @@ public final class SoundFile: Inlet, EffectInput {
             // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
             playhead.jump(to: position)
             lastPlayed = 0
+            // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)
+            covered = shifted
+            continuedCoverage = shifted
             feed?.waitsForInput = true
         }
         return node
@@ -687,8 +745,10 @@ public final class SoundFile: Inlet, EffectInput {
     private func played() -> Int {
         switch pace {
         case .frames(let frameRate, let origin):
-            // 整数のフレーム数から掛けて割る。秒を足し込まないので、何フレーム目でも丸めがずれない
-            return Int((Double(frame - origin) * Double(sampleRate) / Double(frameRate)).rounded(.down))
+            // 絶対のフレーム番号から掛けて割った位置の差。秒を足し込まないので、何フレーム目でも丸めがずれず、
+            // 窓の継ぎ目 (``FrameSamples``) とも揃う
+            return FrameSamples.count(
+                from: origin, to: frame, perSecond: frameRate, sampleRate: Double(sampleRate))
         case .realTime(let origin):
             return Int(((now() - origin) * Double(sampleRate)).rounded(.down))
         case .speaker(let player):
@@ -737,10 +797,14 @@ public final class SoundFile: Inlet, EffectInput {
         case .play(let looping):
             // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
             pendingJump = nil
+            // 頭から (止めた位置から) 鳴らし直すので、エフェクトへ通したときの引き継ぎ値は古い位置のもの
+            continuedCoverage = nil
             playhead.play(looping: looping)
             beginSegment()
         case .pause:
             guard playhead.isPlaying else { return }
+            continuedCoverage = nil
+            holdTail()
             playhead.pause(after: played())
             // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
             if let target = pendingJump {
@@ -750,9 +814,12 @@ public final class SoundFile: Inlet, EffectInput {
             halt()
         case .stop:
             pendingJump = nil
+            continuedCoverage = nil
+            holdTail()
             playhead.stop()
             halt()
         case .jump(let target):
+            continuedCoverage = nil
             if playhead.isPlaying {
                 pendingJump = target
             } else {
@@ -764,6 +831,10 @@ public final class SoundFile: Inlet, EffectInput {
     /// 区切りを始め直す。いまのフレーム (鳴らしているなら、いま) が区切りの始まりになる。
     private func beginSegment() {
         lastPlayed = 0
+        // 通された (``route(into:)``) ときは、解析済みの終わりを引き継ぐ。そうでなければ新しい区切りの始まり
+        covered = continuedCoverage ?? playhead.start
+        continuedCoverage = nil
+        stoppedTail = nil
         // 足し直した後に初めて鳴らすとき、ここで器を読み直す
         if case .unloaded(let flow) = pace { loadPlayer(through: flow) }
         switch pace {
