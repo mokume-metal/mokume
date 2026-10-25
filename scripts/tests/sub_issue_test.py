@@ -251,6 +251,31 @@ class SubIssueTest(unittest.TestCase):
                 self.assertIn("--attach <番号>", proc.stderr)
                 self.assertNotIn("api ", calls, "使い方の誤りなのに GitHub を叩いている")
 
+    def test_dash_leading_positional_is_a_usage_error_without_calling_gh(self):
+        # 慣習の `--help` を題や親番号として読むと、「--help」という題の Issue が立つ (#3047)
+        cases = (
+            ("題が選択肢の綴り", ("74", "--help")),
+            ("題が -h", ("74", "-h")),
+            ("題が - 単独", ("74", "-")),
+            ("親番号が選択肢の綴り", ("--help", "ci: 直す")),
+        )
+        for label, args in cases:
+            with self.subTest(label):
+                self.log.write_text("", encoding="utf-8")
+                proc = subprocess.run(
+                    ["/bin/bash", str(SCRIPT), *args],
+                    capture_output=True, text=True, env=self.env(),
+                )
+                self.assertEqual(proc.returncode, 64, proc.stderr)
+                self.assertIn("使い方: sub-issue.sh", proc.stderr)
+                self.assertEqual(self.log.read_text(encoding="utf-8"), "", "gh が呼ばれてはならない")
+
+    def test_dash_leading_option_value_is_still_accepted(self):
+        # `--body` の箇条書き `- …` は正当な値。位置引数だけを見る
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "- 箇条書き")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("issue create", calls)
+
 
 if __name__ == "__main__":
     unittest.main()

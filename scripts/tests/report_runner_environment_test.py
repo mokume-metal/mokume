@@ -5,7 +5,7 @@
 
 `scripts/report-runner-environment.sh` が持つのは**固定タイトルと本文**だけで、起票の手続きは
 `report-check-failure.sh` が持つ (そちらは `report_check_failure_test.py` が留める)。
-ここで固定するのは、この発信に固有の 5 つ:
+ここで固定するのは、この発信に固有の 7 つ:
 
   1. 固定タイトルが `fix(` で始まる — triage.sh は接頭辞から型を推定する
   2. 開いた同じ Issue が無ければ起票し、本文に前検査の理由が載る
@@ -14,6 +14,9 @@
      「解消したら閉じる」を言う。当番 (stall-watch) を走らせれば掛け直されるとは言わない —
      当番は名乗るだけで掛け直さない (#2614)
   5. 理由が空なら使い方の誤りで止まる — 空の理由で起票しない
+  6. `-` で始まる値 (`--help`・`-h`・`--anything`・`-` 単独) は理由として読まず、gh を呼ばずに 64 で止まる —
+     慣習の `--help` 1 回が、着手可の印つきの偽の障害 Issue にならない (#3047)
+  7. 前検査が書く通常の理由 (`console:`・`screens:`・`metal:`・`gpu-slot:` 始まり) は今どおり起票へ渡る
 
 偽 gh は PATH の先頭に置いた同型のスタブ (`scheduled_report_test.py` と同じ形)。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -144,6 +147,28 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         r = self.run_script("")
         self.assertEqual(r.returncode, 64)
         self.assertEqual(self.created(), [])
+
+    def test_ハイフンで始まる値は理由として読まず_gh_も呼ばずに使い方の誤りで止まる(self):
+        # 慣習の `--help` を理由として読むと、verify: triaged つきの偽の障害 Issue が立つ (#3047)
+        for arg in ("--help", "-h", "--anything", "-"):
+            with self.subTest(arg=arg):
+                self.log.write_text("")
+                r = self.run_script(arg)
+                self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+                self.assertIn("使い方: report-runner-environment.sh <前検査の理由>", r.stderr)
+                self.assertIn("- で始まる値は理由として読まない", r.stderr)
+                self.assertEqual(self.log.read_text(), "", "gh が呼ばれてはならない")
+
+    def test_前検査が書く通常の理由は今どおり渡る(self):
+        # runner-preflight.sh は各条件を `<名前>: …` で書き、` / ` でつなぐ。`-` では始まらない
+        for name in ("console", "screens", "metal", "gpu-slot"):
+            with self.subTest(name=name):
+                self.log.write_text("")
+                reason = f"{name}: 理由の本文 / metal: Metal の既定のデバイスが取れない"
+                r = self.run_script(reason)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(len(self.created()), 1)
+                self.assertIn(reason, self.body.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
