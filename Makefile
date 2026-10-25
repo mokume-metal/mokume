@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math attach-result api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled test-tsan examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math attach-result api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -400,6 +400,66 @@ test-release: ## release でテストを回す (性能の計測用。ci-check �
 test-release-scheduled: ## 定期の release の検査 (専用機の schedule が走らせる)
 	$(MAKE) test-release
 	$(MAKE) gpu-ran TEST_RECORD=$(TEST_RECORD_RELEASE)
+
+# ThreadSanitizer で組んだ検査を回す (#3220)。**定期の TSan の範囲の正本はここ 1 箇所**で、
+# workflow (.github/workflows/host-scheduled.yml)・起票の本文 (scripts/report-tsan.sh)・手元の
+# 再現がみなこの的を指す。**ci-check には入れない** — 組み直しと TSan の遅さで所要が数倍に
+# なるので、ホストの macOS の定期の job だけで回す。塞ぐ実害は #2916 (SampleRing のデータ競合。
+# 値の整合しか見ない検査は緑のまま通した)。
+#
+# **見るのは CPU の suite である。** GitHub ホストでは RenderDevice.isAvailable が偽で描画の
+# 検査は飛ぶ — Metal の内部で TSan が誤報する懸念 (#1772) をそこで避けている。**手元で素で
+# 打つと描画の検査も TSan の下で走る**ので、絞るなら TEST_TSAN_ARGS (swift test へそのまま渡す。
+# 例: `--filter SampleRingTests`) を使う。
+#
+# **置き場を .build/tsan に分ける。** sanitizer の有無で成果物が別物になるので、普段の .build を
+# 共有すると、手元で打つたびに次の make test が全部を組み直す。記録・端末出力の綴りも
+# debug / release と分ける (#1089 と同じ理由)。
+#
+# 「どれかのモジュールが組めず・走らず、残りだけで緑」を止めるため、CPU のモジュールごとに
+# 代表の Suite が passed であることを記録から確かめる (gpu-ran と同じ読み手)。モジュールを
+# 足したら TSAN_SUITES にも代表を足す
+TSAN_SCRATCH := $(CURDIR)/.build/tsan
+TEST_RECORD_TSAN_BASE := .build/test-results-tsan.xml
+TEST_RECORD_TSAN := .build/test-results-tsan-swift-testing.xml
+TEST_LOG_TSAN := .build/test-log-tsan.txt
+TSAN_SUITES := MokumeCoreTests.JSONReadingTests MokumeCLITests.ArgumentsTests \
+	MokumeAudioTests.SampleRingTests MokumeNetworkTests.OSCCodecTests
+TEST_TSAN_ARGS ?=
+
+# **TSan の下では成り立たない検査を、理由つきで外す** (#3220 の実測)。外したものは debug の
+# make test (ci-check) で今までどおり走るので、失うのは「TSan の下で」の分だけである。
+#
+#   exit test (`#expect(processExitsWith:)`) … 子のプロセスは TSan の runtime を起動の時点で
+#       受け継がず、`Interceptors are not working` で中身を 1 行も走らせずに SIGABRT で止まる。
+#       `.success` を期待する検査は赤になり、**`.failure` を期待する検査は中身が走らないまま
+#       緑になる** (偽りの緑)。DYLD_INSERT_LIBRARIES を渡しても子へは届かなかった。
+#       exit test を足したらここにも足す — 漏れは scripts/tests/host_scheduled_workflow_test.py が止める
+#   自分へ非同期の合図を送り、子が止まるのを期限つきで待つ検査 … TSan の下では受け口は走るが
+#       (報告の stack に出る)、子が期限内に消えない。原因は追っていない。受け口が errno を
+#       戻さない報告 (signal handler spoils errno) は本物の欠陥で、#3234 で直す
+#
+# 綴りは swift test --skip の正規表現で、`<Suite>/<関数>` に当てる
+TSAN_SKIP := SecondRunTests/ \
+	FrameRingWriteGateTests/anUnguardedWriteStopsInsideTheTests \
+	NonisolatedValueFunctionsTests/realMouthsSayOncePerMouthAcrossThreads \
+	WarningDigestTests/standardErrorStillGetsOneLine \
+	RunCommandTests/aStopSignalTakesTheSketchDownToo \
+	RenderCommandTests/aSigintToTheToolStopsTheChild
+
+test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の job が走らせる。ci-check には含まれない)
+	@mkdir -p .build
+	@rm -f $(TEST_RECORD_TSAN)
+	set -o pipefail; swift build --build-tests --sanitize=thread --scratch-path $(TSAN_SCRATCH) 2>&1 | tee $(TEST_LOG_TSAN)
+	set -o pipefail; python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
+		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
+		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); exit $$code; }
+	@python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS)
+	@if [ -z "$(TEST_TSAN_ARGS)" ]; then for suite in $(TSAN_SUITES); do \
+		read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD_TSAN) $$suite); \
+		[ "$$verdict" = passed ] || { echo "代表の検査 ($$suite) が $$verdict — そのモジュールが TSan の下で走っていない ($(TEST_RECORD_TSAN))"; exit 1; }; \
+		echo "ok: $$suite が TSan の下で通った"; \
+	done; fi
 
 # 外のパッケージ mokume-syphon の main を、この木に向けて組み、GPU の検査まで走らせる (#1973)。
 # 本体の変更が mokume-syphon の振る舞いを壊したかは、API の一覧の差分には出ない

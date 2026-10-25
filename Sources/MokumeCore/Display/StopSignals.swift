@@ -110,12 +110,18 @@ package nonisolated enum StopSignals {
     /// 控えた時から受け口が変わった合図。**変わっていなければ空。**
     ///
     /// 比べるのは行き先・旗・遮る合図で、控えた受け口と同じなら「戻っている」とみなす。
+    ///
+    /// **行き先が既定か無視なら、遮る合図は比べない。** 遮る合図は受け口が走る間だけ効くので、
+    /// 受け口が無ければ意味を持たない。ThreadSanitizer の下では、既定へ戻した受け口の遮る合図が
+    /// 全部を立てた形で読める (素の build では 0) ため、比べるとプロセスで最初に受け口を置いて
+    /// 戻した検査が「戻っていない」と赤になった (#3220)。
     static func changed(since snapshot: [(number: Int32, previous: sigaction)]) -> [Int32] {
         snapshot.compactMap { number, previous in
             let now = current(number)
+            let handles = !isDefault(now) && !isIgnored(now)
             let same =
                 address(of: now) == address(of: previous) && now.sa_flags == previous.sa_flags
-                && now.sa_mask == previous.sa_mask
+                && (!handles || now.sa_mask == previous.sa_mask)
             return same ? nil : number
         }
     }
