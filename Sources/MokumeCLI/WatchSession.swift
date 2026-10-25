@@ -313,8 +313,9 @@ final class WatchSession {
 
     /// 道具の窓へ、「新しい子を起こした」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// 引数は起こした子の番号。台は、乗り換えないと決めた世代の番号の覚え (``abandonsIncoming``) からこの番号を
-    /// 外す — 番号は使い回されるので、残すと同じ番号を得た新しい子の目録を黙って捨てる。
+    /// 引数は起こした子の番号。台は、乗り換えないと決めた世代 (``abandonsIncoming``) と手放した世代
+    /// (``relinquishesDisplay``) の番号の覚えからこの番号を外す — 番号は使い回されるので、残すと同じ番号を得た
+    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
     var expectsGeneration: ([Int32]) -> Void = { _ in }
 
     /// 世代の子の番号。居なければ空。

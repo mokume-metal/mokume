@@ -858,6 +858,34 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **手放した番号の覚えも、新しい子を起こしたら外す** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 番号が一周して同じ番号を得た新しい子を、生まれたときから手放した扱いにして頼みを読まないままにしない。
+    @Test("新しい子を起こしたと伝えた番号は、手放した世代の覚えからも外れ、その子の頼みを読む")
+    func aRecycledPidIsNotRelinquishedForever() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            _ = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-recycled-relinquished"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            // 子 (200) が消えて手放した。番号が一周して、新しい子が 200 を得る
+            stage.relinquishSource(pids: [200])
+            stage.expectGeneration(pids: [200])
+            let fresh = try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            #expect(stage.pointerLockRequested, "新しい子を手放した扱いにして、頼みを読まなかった")
+
+            // 伝えなければ、従来どおり生まれたときから手放した扱い
+            stage.relinquishSource(pids: [300, 200])
+            let stale = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 300 && !stage.pointerLockRequested)
+            _ = (fresh, stale)
+        }
+    }
+
     @Test("受け取れない知らせに、読めた目録の子の番号が添い、読めない目録・名乗らない目録では nil")
     func undeliverableCarriesTheWriterPid() throws {
         try withFacet { facet in

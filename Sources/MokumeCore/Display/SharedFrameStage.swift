@@ -699,10 +699,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// **この番号を、乗り換えないと決めた世代から外す。** 番号は使い回されるので、起動に失敗した子の番号が
-    /// 残っていると、同じ番号を得た新しい子の目録を ``adopt(_:)`` が黙って捨てる。
+    /// **この番号を、乗り換えないと決めた世代 (``abandonedPIDs``) と手放した世代 (``relinquishedPIDs``) の
+    /// 覚えから外す。** 番号は使い回されるので、起動に失敗した子の番号が残っていると、同じ番号を得た新しい子の
+    /// 目録を ``adopt(_:)`` が黙って捨て、手放した番号が残っていると、新しい子を生まれたときから手放した扱いに
+    /// して頼みを読まない。
     func expectGeneration(pids: [Int32]) {
         abandonedPIDs.subtract(pids)
+        relinquishedPIDs.subtract(pids)
     }
 
     /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを

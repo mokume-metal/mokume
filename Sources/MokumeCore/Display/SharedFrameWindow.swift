@@ -124,8 +124,8 @@ public final class SharedFrameWindow {
 
     /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// その番号を、乗り換えないと決めた世代から外す。番号は使い回されるので、残すと同じ番号の新しい子の目録を
-    /// 黙って捨てる。
+    /// その番号を、乗り換えないと決めた世代と手放した世代の覚えから外す。番号は使い回されるので、残すと同じ番号の
+    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
     ///
     /// - Parameter pids: 起こした子の番号。
     public func expectGeneration(pids: [Int32]) {
