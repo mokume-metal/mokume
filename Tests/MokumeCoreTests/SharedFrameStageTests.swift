@@ -689,6 +689,41 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **1 枚目を出した知らせは、その世代の目録が名乗った子の番号を添え、世代ごとに 1 度だけ出る**
+    /// ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。乗り換えの合図は、出している世代が無いと絵を
+    /// 待たずに出るので、見張りが「絵を出す前に終わった子」を読む根拠はこちらである。
+    @Test("1 枚目を出した知らせに、目録が名乗った子の番号が添う。世代ごとに 1 度で、名乗らない目録は nil")
+    func shownCarriesTheWriterPid() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            // 目録だけで、まだ 1 枚も書いていない世代
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-shown"))
+            defer { stage.close() }
+            stage.open()
+            var told: [Int32?] = []
+            stage.onGenerationShown = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(told.isEmpty, "絵を出す前に、1 枚目を出したと知らせた: \(told)")
+
+            try draw(first, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told == [ProcessInfo.processInfo.processIdentifier], "\(told)")
+            try draw(first, frame: 2, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told.count == 1, "同じ世代で 2 度知らせた: \(told)")
+
+            // 番号を書かない子へ入れ替わる
+            let silent = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":\#(silent.ids),"width":32,"height":32}"#, in: facet)
+            try draw(silent, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told.count == 2 && told[1] == nil, "\(told)")
+        }
+    }
+
     @Test("受け取れない知らせに、読めた目録の子の番号が添い、読めない目録・名乗らない目録では nil")
     func undeliverableCarriesTheWriterPid() throws {
         try withFacet { facet in

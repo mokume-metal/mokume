@@ -193,8 +193,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``promoteIfReady()``)、入れ替わりの知らせでは子の `setup()` の間を覆えない。
     /// 受け取る側 (プレビューの「起こしている」表示) が畳む合図はこちらである。
     ///
+    /// **引数は、1 枚目を出した世代の目録が名乗った子の番号** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。見張りは、子が絵を出す前に終わったかをこの知らせで読む
+    /// (目録は `setup()` より前に置かれるので、乗り換えの知らせは絵が出た時点を指さない)。
+    ///
     /// [#2875]: https://github.com/mokume-metal/mokume/issues/2875
-    var onGenerationShown: (() -> Void)?
+    var onGenerationShown: ((Int32?) -> Void)?
     /// いま出している世代の絵を、もう 1 枚でも出したか。**採用のたびに下ろす。**
     private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
@@ -427,7 +431,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
                 gpu.awaitSettlement(of: lastFrameSubmission, by: self)
                 if !shownCurrentGeneration {
                     shownCurrentGeneration = true
-                    onGenerationShown?()
+                    onGenerationShown?(source.pid)
                 }
             }
             noteRecovery()

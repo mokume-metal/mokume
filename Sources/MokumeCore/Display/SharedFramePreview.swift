@@ -116,7 +116,10 @@ public final class SharedFramePreview {
     /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、
     /// 「絵が見えるようになった」を待つ側はこちらを使う
     /// ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
-    public var onGenerationShown: (() -> Void)? {
+    ///
+    /// **引数は、1 枚目を出した世代の目録が名乗った子の番号** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。見張りは、その子が絵を出す前に終わったかを、これで読む。
+    public var onGenerationShown: ((Int32?) -> Void)? {
         get { stage.onGenerationShown }
         set { stage.onGenerationShown = newValue }
     }

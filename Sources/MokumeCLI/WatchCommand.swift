@@ -503,10 +503,15 @@ enum WatchCommand {
         }
         // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
         // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown(_:)``)
-        window.onGenerationShown = { [weak preview] in
+        //
+        // **見張りへも、1 枚目を出した子の番号で伝える** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+        // 子が絵を出す前に終わったかは、乗り換えの合図ではなくこの知らせで読む
+        window.onGenerationShown = { [weak preview, weak session] pid in
+            session?.generationShown(pid: pid)
             if firstFrame.shown(.window) { preview?.report(nil, spinning: false) }
         }
-        preview.onGenerationShown = { [weak preview] in
+        preview.onGenerationShown = { [weak preview, weak session] pid in
+            session?.generationShown(pid: pid)
             if firstFrame.shown(.preview) { preview?.report(nil, spinning: false) }
         }
         // **出す前に繋ぐ。** 出してから繋ぐと、その隙間に閉じられたぶんが素通りする
@@ -717,13 +722,22 @@ enum WatchCommand {
         // **映っている前の世代が自分で消えた回も、台へ伝える** (#2983)。`departed()` は起こした子だけを見る
         session.relinquishIfOutgoingDeparted()
         if let departure = session.departed() {
-            // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
-            // 合図はもう来ないので、ここで畳む (#1142)
-            await retire(after: session)
-            let line = departedLine(departure)
-            say(line)
-            viewer?.firstFrame.settle()
-            showInPreview(line, false)
+            if departure.failedToStart, let report = departure.report {
+                // **最初の絵を出す前に失敗で終わった子は、起こせなかった回である** (#3172)。作り直しが通らなかった
+                // 回と同じ言葉で言う。前の版を残せた回は、そのまま走らせ続ける — 畳むのは、残せなかった回だけ
+                if !departure.keptPrevious { await retire(after: session) }
+                for line in failedStartLines(departure) { say(line) }
+                viewer?.firstFrame.settle()
+                showInPreview(notice(for: report, holdingPrevious: departure.keptPrevious), false)
+            } else {
+                // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
+                // 合図はもう来ないので、ここで畳む (#1142)
+                await retire(after: session)
+                let line = departedLine(departure)
+                say(line)
+                viewer?.firstFrame.settle()
+                showInPreview(line, false)
+            }
         }
         // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
         // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
@@ -957,6 +971,18 @@ enum WatchCommand {
             lines.append(reason)
             if holdingPrevious { lines.append(holdingLine) }
         }
+        return lines
+    }
+
+    /// 最初の絵を出す前に終わった子 (起こせなかった回) を、端末に出す行 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **作り直しが通らなかった回と同じ言葉で終える。** 前の版を残したなら ``holdingLine``、居なければ
+    /// ``nothingRunningLine`` — 前の版が居ない最初の子が起動できなかった回は、後者で「次の一手」まで言う。
+    /// 子の標準エラーに理由の全文があるので、ここは終わり方だけを言う。
+    static func failedStartLines(_ departure: WatchSession.Departure) -> [String] {
+        guard let report = departure.report else { return [] }
+        var lines = reportLines(report, holdingPrevious: departure.keptPrevious)
+        if !departure.keptPrevious { lines.append(nothingRunningLine) }
         return lines
     }
 
