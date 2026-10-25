@@ -18,7 +18,8 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        variant: [A-now, B-one-pass, W-wmo-tests, G-line-tables, I-incremental]
+        variant: [A-now, B-one-pass, G-line-tables, BG-one-pass-line-tables]
+        round: [2, 3]
     steps:
       - uses: actions/checkout@v7
       - name: measure
@@ -46,6 +47,8 @@ jobs:
               step tests --build-tests $SG ;;
             B-one-pass)
               step both --build-tests $SG ;;
+            BG-one-pass-line-tables)
+              step both --build-tests $SG -Xswiftc -gline-tables-only ;;
             W-wmo-tests)
               python3 -c 'import pathlib; p = pathlib.Path("Package.swift"); s = p.read_text(); n = s.replace("exclude: [\"scene-ledger.txt\"], swiftSettings: .mokume),", "exclude: [\"scene-ledger.txt\"], swiftSettings: .mokume + [.unsafeFlags([\"-wmo\"])]),", 1); assert n != s; p.write_text(n)'
               step build $SG
