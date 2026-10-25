@@ -64,6 +64,24 @@ SwiftPM が `--xunit-output` で自分でファイルへ書く記録は、同じ
 (引き金と、本物の赤) を先に並べる。この回の GPU の検査は赤も緑も読めないので、走らせ直すまで
 保証が欠けていることを言う。関所の文面そのものを検査する Suite (`GATE_TEXT_SUITES`) の赤は
 畳まない。
+
+## 1 本で長い検査 (`--slow <記録> [<秒>]`・#3194)
+
+`make test` が、`swift test` が終わった回の最後に呼ぶ (緑でも赤でも)。1 本で N 秒 (既定 5) 以上かかった検査を、
+長い順に `<秒>s  <classname>/<name>` で出す。検査が 1 本ずつ重くなっても誰も気付かないまま、
+test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計の 57% を占めていたのに、名指し
+されたのは手の集計だけだった。秒は `<testcase time="…">` で、並行して走る検査では main actor
+などの待ちも含む (壁時計の始まりから終わりまで)。
+
+`$GITHUB_STEP_SUMMARY` があれば、同じ一覧を Markdown の表でそこへ追記する。PR の run を
+開けば見えるようにするためで、workflow の側には何も足さない (`make` が環境変数を継ぐ)。
+
+**黙って空を出さない。** 記録が無い・読めない・検査が 1 件も無い・どの検査も `time` を
+持たない、はそれぞれ名乗る (要約にも書く)。`time` の綴りが変わった日に「長い検査は無い」と
+読めてしまうと、見張りが黙って止まる。N 秒以上が無い回も、無いと言う。
+
+**警告だけで、終了コードは常に 0** — 段の結末は変えない。赤にするか・予算を設けるかは、
+名乗らせた後の実測で別に決める。
 """
 
 import os
@@ -95,6 +113,10 @@ GATE_TEXT_SUITES = frozenset(
         "MokumeCoreTests.StartupFailureTests",
     }
 )
+# 1 本で長い検査の閾値の既定 (秒)。Makefile の TEST_SLOW_SECONDS が上書きする
+SLOW_SECONDS = 5.0
+# 一覧に載せる上限。手元の記録 (10-19) で 5 秒以上は 26 件だった
+MAX_SLOW = 50
 
 
 def verdict(cases, classname):
@@ -247,9 +269,91 @@ def failure_messages(path, shots_artifact="ledger-shots"):
     return "\n".join(out).rstrip()
 
 
+def code_span(text):
+    """表の 1 マスに置く code span。中の backtick より長い囲いにし、`|` は表を割らないよう逃がす。"""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    tick = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return "%s%s%s%s%s" % (tick, pad, text.replace("|", "\\|"), pad, tick)
+
+
+def slow(path, threshold=SLOW_SECONDS):
+    """1 本で threshold 秒以上かかった検査を長い順に。(端末の文, 要約の Markdown) を返す。"""
+    title = "1 本 %g 秒以上の検査" % threshold
+
+    def cannot(reason):
+        return (
+            "%sを読めない: %s (%s)" % (title, reason, path),
+            "### %s\n\n読めない: %s (`%s`)" % (title, reason, path),
+        )
+
+    try:
+        if os.path.getsize(path) == 0:
+            return cannot("記録が無い")
+        cases = list(ET.parse(path).getroot().iter("testcase"))
+    except OSError:
+        return cannot("記録が無い")
+    except ET.ParseError:
+        return cannot("記録が壊れている — 途中で切れているか、閉じていない")
+    if not cases:
+        return cannot("記録に検査が 1 件も無い")
+    timed = []
+    for case in cases:
+        try:
+            timed.append((float(case.get("time")), case.get("classname", ""), case.get("name", "")))
+        except (TypeError, ValueError):
+            continue  # 飛ばした検査は time を持たない
+    if not timed:
+        return cannot("記録の検査 %d 件のどれも時間 (time) を持たない — 記録の書式が変わった可能性がある" % len(cases))
+
+    total = sum(t for t, _, _ in timed)
+    hits = sorted((c for c in timed if c[0] >= threshold), key=lambda c: -c[0])
+    if not hits:
+        line = "%sは無い (記録の検査 %d 件・合計 %.1f 秒)" % (title, len(cases), total)
+        return line, "### %s\n\n無い (記録の検査 %d 件・合計 %.1f 秒)" % (title, len(cases), total)
+
+    spent = sum(t for t, _, _ in hits)
+    share = "合計 %.1f 秒 = 記録の検査時間 %.1f 秒の %d%%" % (spent, total, round(100 * spent / total) if total else 0)
+    shown = hits[:MAX_SLOW]
+    rest = len(hits) - len(shown)
+    text = ["%s (%d 件・%s・長い順。警告だけで段の結末は変えない・#3194):" % (title, len(hits), share)]
+    text += ["  %7.1fs  %s/%s" % c for c in shown]
+    md = [
+        "### %s (%d 件)" % (title, len(hits)),
+        "",
+        "%s。長い順。警告だけで、段の結末は変えない (#3194)。" % share,
+        "",
+        "| 秒 | 検査 |",
+        "| ---: | --- |",
+    ]
+    md += ["| %.1f | %s / %s |" % (t, code_span(c), code_span(n)) for t, c, n in shown]
+    if rest:
+        text.append("  ほか %d 件は記録を読む" % rest)
+        md += ["", "ほか %d 件は記録を読む" % rest]
+    return "\n".join(text), "\n".join(md)
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "--failures":
         print(failures(argv[2]))
+        return 0
+    if len(argv) in (3, 4) and argv[1] == "--slow":
+        try:
+            threshold = float(argv[3]) if len(argv) == 4 else SLOW_SECONDS
+            if not threshold >= 0:
+                raise ValueError
+        except ValueError:
+            print("1 本で長い検査の閾値は 0 以上の秒数で渡す: '%s'" % argv[3])
+            return 0
+        text, md = slow(argv[2], threshold)
+        print(text)
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            try:
+                with open(summary, "a", encoding="utf-8") as f:
+                    f.write(md + "\n\n")
+            except OSError as e:
+                print("job の要約へ書けなかった (%s): %s" % (summary, e))
         return 0
     if len(argv) in (3, 4) and argv[1] == "--failure-messages":
         print(failure_messages(*argv[2:]))
