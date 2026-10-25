@@ -121,6 +121,8 @@ public final class InputState {
     enum Warning: Hashable {
         /// 当てると、見せる量か配る量が有限でなくなる移動・スクロール・ピンチを捨てた (``apply(_:)``・#2731)。
         case nonFiniteEvent
+        /// パスが 1 本も無いファイルの落としを捨てた (``apply(_:)``・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+        case emptyFileDrop
         /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
     }
@@ -373,6 +375,15 @@ public final class InputState {
         case .mouseUp(let x, let y, let button) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
             applied = .mouseUp(x: self.x, y: self.y, button: button)
+        case .fileDropped(let paths, _, _) where paths.isEmpty:
+            // **パスが 1 本も無い落としは当てない。** 作例の `paths[0]` を落とすだけで、何も届けるものが無い。
+            // 窓 (`SketchSurface`) と外から送る線 (`RawInputEvent`) は入口で断るが、検めは当てる直前のここでも
+            // 持つ — 公開の ``enqueue(_:)`` へ直に積まれても、`fileDropped([])` は呼ばれない
+            warnings.warnOnce(
+                .emptyFileDrop,
+                "Dropped a fileDropped input event with no paths: there is nothing to hand to "
+                    + "fileDropped(_:) (later events like this are dropped without saying so again)")
+            return nil
         case .fileDropped(let paths, let x, let y) where !(x.isFinite && y.isFinite):
             // 落としたパスは届ける。位置だけを前の値のままにする (押下・解放と同じ扱い)
             warnPositionKept(event)

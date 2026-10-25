@@ -143,10 +143,11 @@
           "paths": {
             "type": ["array", "null"],
             "items": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^/"
             },
             "minItems": 1,
-            "description": "For fileDropped, the absolute paths of the files that were dropped on the window, in the order they were dropped (several files dropped together are one event). The sketch receives them in `fileDropped(_ paths: [String])`, and they can be handed to `loadImage`, `loadTable` and the like as they are. **Only the paths travel, never the contents.** The sketch's own window takes file URLs only (a string or a web URL dropped from a browser is refused, and a drop of no files is not sent). The position of the drop is x and y, and mouseX / mouseY move there before the call (mouseMoved() is not called). **An empty array, a null, or an array with an element that is not a string counts that one fileDropped in ignored.** **Read on fileDropped only**: on any other type it is not read, whatever its value, and the reply's warnings name it. macOS windows receive drops; how iOS and the SketchView host do is not decided yet (#2604, #2605)."
+            "description": "For fileDropped, the absolute paths of the files that were dropped on the window, in the order they were dropped (several files dropped together are one event). The sketch receives them in `fileDropped(_ paths: [String])`, and they can be handed to `loadImage`, `loadTable` and the like as they are. **Only the paths travel, never the contents.** The sketch's own window takes file URLs only (a string or a web URL dropped from a browser is refused, and a drop of no files is not sent). The position of the drop is x and y, and mouseX / mouseY move there before the call (mouseMoved() is not called). **An empty array, a null, an array with an element that is not a string, and an array with an element that is not an absolute path (one that does not start with `/`: an empty string, a URL, a relative path) count that one fileDropped in ignored**, since a window only ever hands over absolute file paths. **Read on fileDropped only**: on any other type it is not read, whatever its value, and the reply's warnings name it. macOS windows receive drops; how iOS and the SketchView host do is not decided yet (#2604, #2605)."
           },
           "dx": {
             "type": ["number", "null"],

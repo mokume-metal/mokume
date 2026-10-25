@@ -34,6 +34,13 @@ public enum InputEvent: Equatable, Sendable {
     case keyUp(code: Key)
 }
 
+extension String {
+    /// 絶対パスの綴りか (`/` で始まる)。**窓の落としはファイルの URL だけを受け、パスは必ず絶対パスになる**
+    /// ので、外から送る線も同じ約束を守らせる — 空文字列・`https://…`・相対パスは、窓なら届かないもので、
+    /// 作例の `loadImage(paths[0])` が別のものを読む元になる。
+    var isAbsolutePath: Bool { hasPrefix("/") }
+}
+
 /// 外から送られてきた 1 件を解く。
 ///
 /// **知らない種別も、知らない鍵も、壊れた 1 件も無視する** ([ADR-0018] 決定 3)。
@@ -49,7 +56,9 @@ public enum InputEvent: Equatable, Sendable {
 ///
 /// `amount` (ピンチの量) も省略に意味が無い。量の無いピンチは何も動かさず、送り手には `accepted: 1` が
 /// 返るので、省いた 1 件を読めない 1 件として数える。`paths` (落としたファイルの並び) も同じで、
-/// 無い・空の落としは何も届けず、スケッチの `paths[0]` を落とすだけなので読めない 1 件にする。
+/// 無い・空の落としは何も届けず、スケッチの `paths[0]` を落とすだけなので読めない 1 件にする。要素が
+/// 絶対パス (`/` で始まる) でないもの — 空文字列・`https://…`・相対パス — を含む落としも、窓なら届かない
+/// ものなので読めない 1 件にする。
 /// `clickCount` は省略が自然に読める (単発の 1)。
 /// **この 3 つは、読む種別 (`pinched`・`fileDropped`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
 ///
@@ -169,7 +178,8 @@ struct RawInputEvent: Decodable {
         case .fileDropped:
             // 位置を持つ種別なので x・y は要る (0 は左上であって「無い」ではない)。パスの無い・空の落としは
             // スケッチの `paths[0]` を落とすだけで何も届けないので、読めない 1 件にする
-            guard let x, let y, let paths, !paths.isEmpty else { return nil }
+            guard let x, let y, let paths, !paths.isEmpty, paths.allSatisfy(\.isAbsolutePath)
+            else { return nil }
             return .fileDropped(paths: paths, x: x, y: y)
         case .keyDown:
             guard let code else { return nil }

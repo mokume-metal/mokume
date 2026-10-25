@@ -89,6 +89,18 @@ struct FileDroppedInputTests {
         #expect(message?.contains("fileDropped") == true, "\(String(describing: message))")
     }
 
+    @Test("パスの無い落としは合流点で捨てる。fileDropped は呼ばず、位置も動かさず、1 度だけ言う")
+    func anEmptyDropIsRefusedAtTheConfluence() {
+        let state = InputState()
+        run(state, [.mouseMoved(x: 40, y: 50)])
+        // 入口 (窓・線) を通らず、公開の enqueue へ直に積まれても
+        let seen = run(
+            state, [.fileDropped(paths: [], x: 5, y: 6), .fileDropped(paths: [], x: 7, y: 8)])
+        #expect(seen.isEmpty, "fileDropped([]) が呼ばれた: \(seen)")
+        #expect(state.x == 40 && state.y == 50, "捨てた落としが位置を動かした")
+        #expect(state.warnings.message(for: .emptyFileDrop) != nil, "言っていない")
+    }
+
     @Test("溜めきれず押し出された落としも、位置は当てる (呼び出しだけが落ちる)")
     func anOverflowedDropStillMovesThePosition() {
         let state = InputState()
@@ -141,6 +153,21 @@ struct FileDroppedWireTests {
             try decode(#"{"type": "fileDropped", "paths": null, "x": 1, "y": 2}"#).event == nil)
         #expect(try decode(#"{"type": "fileDropped", "paths": ["/tmp/a.png"], "y": 2}"#).event == nil)
         #expect(try decode(#"{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 1}"#).event == nil)
+    }
+
+    @Test(
+        "絶対パスでない要素 (空文字列・URL・相対パス) を含む落としは、読めない 1 件",
+        arguments: [#""""#, #""https://example.com/a.png""#, #""a/b.png""#, #""file:///tmp/a.png""#])
+    func nonAbsolutePathsAreUnreadable(element: String) throws {
+        #expect(
+            try decode(#"{"type": "fileDropped", "paths": [\#(element)], "x": 1, "y": 2}"#).event
+                == nil)
+        // 絶対パスと混ざっていても、その 1 件ごと読めない
+        #expect(
+            try decode(
+                #"{"type": "fileDropped", "paths": ["/tmp/a.png", \#(element)], "x": 1, "y": 2}"#
+            ).event == nil)
+        #expect(String("/tmp/a.png").isAbsolutePath && !String("a/b.png").isAbsolutePath)
     }
 
     @Test("文字列でない要素を含むパスの並びは、解けない 1 件")
@@ -311,6 +338,16 @@ struct FileDroppedSurfaceTests {
         #expect(SketchSurface.droppedPaths(from: board).isEmpty)
     }
 
+    @Test("ドラッグの中身にファイルの URL があるかは、パスにせずに問える")
+    func askingWhetherThereAreFilesDoesNotNeedThePaths() {
+        #expect(SketchSurface.hasDroppedFiles(in: FakeDraggingInfo.files(["/tmp/a.png"]).draggingPasteboard))
+        #expect(!SketchSurface.hasDroppedFiles(in: FakeDraggingInfo.text("hello").draggingPasteboard))
+        let board = NSPasteboard(name: NSPasteboard.Name("mokume.test.\(UUID().uuidString)"))
+        board.clearContents()
+        board.writeObjects([URL(string: "https://example.com/a.png")! as NSURL])
+        #expect(!SketchSurface.hasDroppedFiles(in: board), "https の URL をファイルと読んだ")
+    }
+
     @Test(
         "ファイルでない中身のドラッグは断る。ファイルは受ける",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
@@ -343,6 +380,48 @@ struct FileDroppedSurfaceTests {
                 try JSONDecoder().decode(RawInputEvent.self, from: Data(echoed.utf8)).event
                     == .fileDropped(paths: ["/tmp/a.png"], x: input.x, y: input.y), "\(echoed)")
         }
+    }
+
+    /// 押下・解放は ``SketchSurface`` の `pressPoint` を通り、ポインタを捕まえている間は位置を動かさない
+    /// (`mouseX` は捕まえた点のまま)。落としも同じ道を通る。
+    @Test(
+        "ポインタを捕まえている間の落としは、捕まえた点を名乗る",
+        .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
+    func aDropWhileThePointerIsLockedKeepsTheLockedPoint() throws {
+        // 本番の口は検査を走らせている人のカーソルを奪うので、記録するだけの口へ差し替える
+        let fake = PointerLockTests.FakeSystem()
+        let lock = PointerLock(system: fake.system, arbiter: PointerLock.Arbiter())
+        let input = InputState()
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: 64, height: 64), device: device, input: input,
+            canvasSize: (64, 64), pointerLock: lock)
+        surface.wantsLayer = true
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.titled],
+            backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = surface
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+
+        // 捕まえる前に名乗った位置 (5, 6)。捕まえた時点の位置になる
+        surface.deliver(.mouseMoved(x: 5, y: 6))
+        let ready = PointerLock.Situation(isKeyWindow: true, pointerIsInside: true)
+        lock.update(requested: true, in: ready)
+        lock.notePress(in: ready)
+        try #require(lock.isLocked)
+
+        lines.removeAll()
+        #expect(
+            surface.performDragOperation(
+                FakeDraggingInfo.files(["/tmp/a.png"], at: NSPoint(x: 10, y: 44))))
+        let echoed = try #require(lines.first)
+        #expect(
+            try JSONDecoder().decode(RawInputEvent.self, from: Data(echoed.utf8)).event
+                == .fileDropped(paths: ["/tmp/a.png"], x: 5, y: 6),
+            "捕まえている間なのに、窓の座標を写した: \(echoed)")
     }
 
     @Test(
