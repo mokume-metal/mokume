@@ -294,6 +294,10 @@ public final class InputState {
             // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
             // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
             break
+        case .fileSelected(let path):
+            // 状態は動かさない。待っている ``SketchPart/selectInput(_:)`` を終えるのは配り先 (`SketchRuntime`)
+            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))
+            dispatch(.fileSelected(path: path))
         case .fileDropped(let paths, _, _):
             // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない
             // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
@@ -452,6 +456,8 @@ public final class InputState {
             // 落とした所へ位置を動かす。**動いた量には足さない** — 押下と同じく、飛んだぶんは移動ではない
             self.x = x
             self.y = y
+        case .fileSelected:
+            break
         case .mouseMovedBy(let dx, let dy):
             // **位置は動かさない** (#1144)。捕まえている間の窓は位置を名乗らないので、
             // ここで足し込むと mouseX が捕まえた点から離れていく
@@ -513,7 +519,7 @@ public final class InputState {
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
         case .pinched(let amount):
             amount.isFinite && (pinch + amount).isFinite && (pinchScale * (1 + Double(amount))).isFinite
-        case .keyDown, .keyUp:
+        case .keyDown, .keyUp, .fileSelected:
             true
         }
     }

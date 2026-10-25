@@ -30,6 +30,13 @@ public enum InputEvent: Equatable, Sendable {
     /// 窓は ``SketchSurface`` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
     /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として落とす。
     case fileDropped(paths: [String], x: Float, y: Float)
+    /// ファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) の結果。選んだファイルの絶対パスで、
+    /// **取り消しは `nil`** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// 線では `paths` の配列で運ぶ — 選んだ 1 本か、空の配列 (取り消し)。`paths` の無い出来事と、2 本以上
+    /// の出来事は読めない 1 件にする。待っている ``SketchPart/selectInput(_:)`` が無いときは、合流点が
+    /// 捨てる。
+    case fileSelected(path: String?)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
     case keyUp(code: Key)
 }
@@ -50,8 +57,11 @@ public enum InputEvent: Equatable, Sendable {
 /// `amount` (ピンチの量) も省略に意味が無い。量の無いピンチは何も動かさず、送り手には `accepted: 1` が
 /// 返るので、省いた 1 件を読めない 1 件として数える。`paths` (落としたファイルの並び) も同じで、
 /// 無い・空の落としは何も届けず、スケッチの `paths[0]` を落とすだけなので読めない 1 件にする。
+/// 選んだ結果 (`fileSelected`) の `paths` は、**空の配列が取り消し**という意味を持つ。だから空は読めるが、
+/// **無い (書き忘れ) は取り消しと読まず**読めない 1 件にし、2 本以上も 1 本を選ばせる口の結果として
+/// 読めないので読めない 1 件にする (先頭の 1 本を黙って取らない)。
 /// `clickCount` は省略が自然に読める (単発の 1)。
-/// **この 3 つは、読む種別 (`pinched`・`fileDropped`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
+/// **この 3 つは、読む種別 (`pinched`・`fileDropped` と `fileSelected`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
 ///
 /// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
@@ -100,7 +110,7 @@ struct RawInputEvent: Decodable {
             switch key {
             case CodingKeys.amount.stringValue: kind == .pinched
             case CodingKeys.clickCount.stringValue: kind == .mouseDown
-            case CodingKeys.paths.stringValue: kind == .fileDropped
+            case CodingKeys.paths.stringValue: kind == .fileDropped || kind == .fileSelected
             default: true
             }
         }
@@ -123,7 +133,7 @@ struct RawInputEvent: Decodable {
         clickCount =
             kind == .mouseDown ? try container.decodeIfPresent(Int.self, forKey: .clickCount) : nil
         paths =
-            kind == .fileDropped
+            kind == .fileDropped || kind == .fileSelected
             ? try container.decodeIfPresent([String].self, forKey: .paths) : nil
     }
 
@@ -171,6 +181,11 @@ struct RawInputEvent: Decodable {
             // スケッチの `paths[0]` を落とすだけで何も届けないので、読めない 1 件にする
             guard let x, let y, let paths, !paths.isEmpty else { return nil }
             return .fileDropped(paths: paths, x: x, y: y)
+        case .fileSelected:
+            // 空の配列は取り消し。`paths` が無い・null は書き忘れなので取り消しと読まない。2 本以上は
+            // 1 本を選ばせる口の結果として読めない (先頭の 1 本を黙って取らない)
+            guard let paths, paths.count <= 1 else { return nil }
+            return .fileSelected(path: paths.first)
         case .keyDown:
             guard let code else { return nil }
             return .keyDown(

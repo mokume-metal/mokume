@@ -43,6 +43,7 @@ extension InputEvent {
         case .scrolled: .scrolled
         case .pinched: .pinched
         case .fileDropped: .fileDropped
+        case .fileSelected: .fileSelected
         case .keyDown: .keyDown
         case .keyUp: .keyUp
         }
@@ -64,6 +65,9 @@ extension InputEvent {
                 ("paths", "[" + paths.map { Self.quoted($0) }.joined(separator: ",") + "]"),
                 ("x", Self.number(x)), ("y", Self.number(y)),
             ]
+        case .fileSelected(let path):
+            // 取り消しは空の配列。鍵ごと省くと書き忘れと見分けが付かない
+            [("paths", "[" + (path.map { Self.quoted($0) } ?? "") + "]")]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):

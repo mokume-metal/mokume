@@ -372,7 +372,7 @@ extension SketchSurface {
             heldButtons.remove(button)
         case .mouseMoved(let x, let y): lastPoint = (x, y)
         case .fileDropped(_, let x, let y): lastPoint = (x, y)
-        case .mouseMovedBy, .scrolled, .pinched: break
+        case .mouseMovedBy, .scrolled, .pinched, .fileSelected: break
         }
     }
 
