@@ -396,20 +396,51 @@ float2 solidStrokeOnScreen(float3 v, constant SolidStrokePlacement &s) {
     return float2(dot(v, s.right.xyz) * s.down.w, dot(v, s.down.xyz));
 }
 
+/// 向きの決定 (同じ向きか・どちら回りか・潰れているか) に使う内積と外積。**CPU の式と同じ順の、融合しない
+/// 積と和で書く** (#3165)。組み込みの `dot` / `cross` は `#pragma METAL fp contract(off)` の下でも積和へ縮約
+/// されうるので、決定に使う式は明示する。積和の順を固定する前例は `mokume_thinFillCorner` (`math_mode(safe)` と
+/// `contract(off)` を併記する)。3 成分の `dot` は `(x + y) + z`、外積の各成分は `a.y * b.z - a.z * b.y`。
+/// CPU の `StrokeCamera.screenNormal` も、同じ明示の式で書いてある (simd の `cross` は clang が縮約するので使わない)。
+static inline float solidStrokeDot2(float2 a, float2 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return a.x * b.x + a.y * b.y;
+}
+
+static inline float solidStrokeDot3(float3 a, float3 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return (a.x * b.x + a.y * b.y) + a.z * b.z;
+}
+
+static inline float3 solidStrokeCross3(float3 a, float3 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
 /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1) を `normal` に入れる。
 /// CPU の `StrokeCamera.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+///
+/// **演算の順と丸めを CPU に揃える (#3165)。** 腕の向きは「値が等しいか」で同じ向きかを決める
+/// (`Canvas.screenCorner`) ので、理屈では同じ向きの 2 本 (透視で、目と同じ直線に載る 2 点から出る腕など)
+/// は、CPU と同じく 1 ビットも違わずに求めねばならない。Shapes は既定の fast-math で組むので、積和の縮約
+/// (`dot` / `cross` を明示の積と和で書く) と、`length` / 割り算の近似 (`precise::` で正しく丸める) が、
+/// 理屈では等しい 2 本の向きを 1 ビット違えて、同じ向きへ折り返す角の形を食い違わせていた。
 bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &normal) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
     float3 along = b - a;
     float2 raw;
     if (s.eye.w != 0) {
-        float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
-        raw = float2(dot(plane, s.right.xyz) * s.forward.w, dot(plane, s.down.xyz));
+        float3 plane = solidStrokeCross3(a - s.eye.xyz, b - s.eye.xyz);
+        raw = float2(solidStrokeDot3(plane, s.right.xyz) * s.forward.w, solidStrokeDot3(plane, s.down.xyz));
     } else {
-        raw = float2(-dot(along, s.down.xyz) * s.forward.w, dot(along, s.right.xyz));
+        raw = float2(-solidStrokeDot3(along, s.down.xyz) * s.forward.w, solidStrokeDot3(along, s.right.xyz));
     }
-    float size = length(raw);
-    if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
-    normal = raw / size;
+    float size = precise::sqrt(raw.x * raw.x + raw.y * raw.y);
+    if (!(solidStrokeDot3(along, along) > 0 && size > 0 && isfinite(size))) return false;
+    normal = float2(precise::divide(raw.x, size), precise::divide(raw.y, size));
     return true;
 }
 
@@ -459,9 +490,22 @@ constant float2 kSolidStrokeDisc[17] = {
     float2(1.0, -3.019916e-07),
 };
 
+/// 軸ごとに倍率を掛けた形自身の座標を、置き場所の行列で世界の座標へ移す。**CPU の `matrix * SIMD4(point, 1)`
+/// と同じ積和の順を `fma` で固定する** (#3165): 列 0 の積から始め、列 1・列 2 を `fma` で足し、最後に列 3 を
+/// 足す (CPU の `simd` の行列とベクトルの積が、そう縮約されることを `swiftc -O` のアセンブリで確かめた)。
+/// 位置が 1 ulp ずれると、同じ位置の点か (`samePoint`)・画面で潰れた辺か・同じ向きの腕かの判定が分かれる。
+float3 solidStrokeMatrixPoint(float3 scaled, constant SolidStrokePlacement &s) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    float4 sum = s.matrix[0] * scaled.x;
+    sum = fma(s.matrix[1], float4(scaled.y), sum);
+    sum = fma(s.matrix[2], float4(scaled.z), sum);
+    return (sum + s.matrix[3]).xyz;
+}
+
 /// 骨の点の位置 (形自身の座標) を、置いた後の世界の座標へ移す。
 float3 solidStrokePlaced(float3 shape, constant SolidStrokePlacement &s) {
-    return (s.matrix * float4(shape * s.shapeScale.xyz, 1)).xyz;
+    return solidStrokeMatrixPoint(shape * s.shapeScale.xyz, s);
 }
 
 /// 頂点関数が向きを控える腕の数。辺が 4 本の格子の点と、画面で重なる 2 点 (辺 3 本 + 3 本) まで
@@ -532,11 +576,16 @@ bool solidStrokeArmKept(
     return true;
 }
 
-float solidStrokeCross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
+/// 2 本の向きの外積 (回る向きの判定)。CPU の `widestGap` の `cross` と同じ、融合しない積と差 (#3165)。
+float solidStrokeCross(float2 a, float2 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return a.x * b.y - a.y * b.x;
+}
 
 /// 骨の 2 点を結ぶ辺が画面で潰れているか。**辺の両端が同じ答えを得るよう、記録の位置が小さい点を
-/// 先にして同じ式で判定する** — 引数の順を入れ替えると、fast-math の積和の縮約で外積が 0 に
-/// なるかどうかが端ごとに食い違いうる
+/// 先にして同じ式で判定する** — 引数の順を入れ替えると、積の丸めの向きが変わって外積が 0 に
+/// なるかどうかが端ごとに食い違いうる (`solidStrokeNormal` は積と和を明示した式で、順を入れ替えれば値が変わる)
 bool solidStrokeEdgeCollapsed(
     float3 p, uint recordP, float3 q, uint recordQ, constant SolidStrokePlacement &s)
 {
@@ -546,7 +595,7 @@ bool solidStrokeEdgeCollapsed(
 
 /// 骨の点の奥行き (視点からの、視線に沿った距離)。CPU の `strokeNet` に渡す奥行きと同じ式
 float solidStrokeDepth(float3 p, constant SolidStrokePlacement &s) {
-    return dot(p - s.eye.xyz, s.forward.xyz);
+    return solidStrokeDot3(p - s.eye.xyz, s.forward.xyz);
 }
 
 /// 網の点に置く形 (CPU の `Canvas.screenCorner` と同じ手順)。
@@ -986,7 +1035,7 @@ SolidStrokeCorner solidStrokeCornerShape(
         result.kind = 4;
     } else {
         // 角度を求めずに外積の符号で、時計回りの端と反時計回りの端を前から探す。等しい向きは
-        // 外積を見ない (fast-math は積和を縮約するので、等しい 2 本の外積が 0 にならない)
+        // 外積を見ない (CPU の `widestGap` と同じ手順で、値が等しい 2 本は外積の丸めを経ずに同じ向きと決める)
         float2 first;
         solidStrokeArmToward(g, a, words, s, first);
         for (uint t = a + 1; t < g.arms; t++) {
@@ -1033,12 +1082,12 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     uint corner = corners[index % 6];
     float3 shapeA = piece.a.xyz * s.shapeScale.xyz;
     float3 shapeB = piece.b.xyz * s.shapeScale.xyz;
-    float3 a = (s.matrix * float4(shapeA, 1)).xyz;
+    float3 a = solidStrokeMatrixPoint(shapeA, s);
     float3 world = a;
     float3 shape = shapeA;
     float halfWeight = s.parameters.x / 2;
     if (piece.a.w == 0) {
-        float3 b = (s.matrix * float4(shapeB, 1)).xyz;
+        float3 b = solidStrokeMatrixPoint(shapeB, s);
         float3 side;
         // CPU が積まない帯は面積0にする。角は独立した部品のまま残る。
         if (solidStrokeAcross(a, b, s, side)) {
@@ -1100,13 +1149,18 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             float2 inward = armOwn + armOther;
             if (built && !(inward.x == 0 && inward.y == 0)) {
                 float2 sideOwn = solidStrokeOnScreen(acrossOwn, s);
-                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)
+                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)。**向きが等しいかは値で見る**
+                // (CPU の `joinRim` では、等しい向きの内積 `dot(外側の縁の法線, inward)` がちょうど 0 で、縁は
+                // 裏返らない)。内積を縮約すると 0 にならず、符号が 2 本で食い違うと縁が同じ側に揃って折り返しの
+                // 先の延びが消える。内積は融合しない明示の式 (`solidStrokeDot2`) で書いて CPU と同じ値にするが、
+                // 等しい向きは内積を見ずに分けたままにする二重の守りを置く (#3165)
+                bool foldsBack = all(armOwn == armOther);
                 float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
-                if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
+                if (!foldsBack && solidStrokeDot2(outerOwn, inward) > 0) outerOwn = -outerOwn;
                 float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
-                if (dot(outerOther, inward) > 0) outerOther = -outerOther;
+                if (!foldsBack && solidStrokeDot2(outerOther, inward) > 0) outerOther = -outerOther;
                 // 丸めで −1…1 を越えると、同じ向きへ折り返す角で平方根が数でなくなる
-                float cosine = clamp(dot(outerOwn, outerOther), -1.0f, 1.0f);
+                float cosine = clamp(solidStrokeDot2(outerOwn, outerOther), -1.0f, 1.0f);
                 float2 cut;
                 float2 middle;
                 if (cosine >= 0) {
