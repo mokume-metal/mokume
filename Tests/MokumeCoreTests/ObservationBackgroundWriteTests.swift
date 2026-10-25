@@ -228,3 +228,53 @@ struct ObservationBackgroundWriteTests {
         #expect(!reason.isEmpty)
     }
 }
+
+/// 観測の絵を置けなかった事情は、OS の文面で名乗る (#3211・#2839)。`"\(error)"` は `POSIXError` や
+/// `NSError` の中身をそのまま並べ、言語の設定に左右されうる説明も混ざる。GPU は要らない。
+@Suite("観測の絵を置けなかった事情の文")
+struct ObservationPlacementWordingTests {
+    private func makeFacet() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-observe-wording-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private let image = DisplayImage(width: 2, height: 2, bytes: [UInt8](repeating: 255, count: 16))
+
+    @Test("置く準備で断った理由 (書く先がディレクトリ) は、Is a directory と名乗る")
+    func aDestinationThatIsADirectoryIsNamedInCWords() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        try FileManager.default.createDirectory(
+            at: facet.appendingPathComponent("frame-000.png"), withIntermediateDirectories: true)
+        let observer = FrameObserver(directory: facet, writesInBackground: true)
+        _ = observer.enqueueFrame(image, at: 0)
+        guard case .failed(_, let reason)? = observer.settleWrites(.block) else {
+            Issue.record("置けなかったことが決着に現れない")
+            return
+        }
+        #expect(reason == "Is a directory", Comment(rawValue: reason))
+    }
+
+    /// 一時ファイルは書けて、置き換えだけが転ぶ形: 行き先のファイルを変更不可 (`UF_IMMUTABLE`) にする。
+    /// 置き換えの失敗は Cocoa の失敗で、下に `EPERM` を持つ。
+    @Test("置く段で転んだ理由 (置き換えの失敗) も、Foundation の説明ではなく OS の文面で名乗る")
+    func aFailureWhilePlacingIsNamedInCWords() throws {
+        let facet = try makeFacet()
+        let destination = facet.appendingPathComponent("frame-000.png")
+        try Data("old".utf8).write(to: destination)
+        try #require(chflags(destination.path, UInt32(UF_IMMUTABLE)) == 0, "行き先を変更不可にできない")
+        defer {
+            chflags(destination.path, 0)
+            try? FileManager.default.removeItem(at: facet)
+        }
+        let observer = FrameObserver(directory: facet, writesInBackground: true)
+        _ = observer.enqueueFrame(image, at: 0)
+        guard case .failed(_, let reason)? = observer.settleWrites(.block) else {
+            Issue.record("置けなかったことが決着に現れない")
+            return
+        }
+        #expect(reason == "Permission denied", Comment(rawValue: reason))
+    }
+}

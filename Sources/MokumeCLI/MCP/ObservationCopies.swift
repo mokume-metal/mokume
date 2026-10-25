@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import mokume
 
 /// 窓口が呼び手へ渡す、観測の絵の写し ([#2992](https://github.com/mokume-metal/mokume/issues/2992))。
@@ -116,7 +117,7 @@ final class ObservationCopies {
             }
         } catch {
             try? FileManager.default.removeItem(at: directory)
-            return .failed(reason: "the picture could not be copied (\(error.localizedDescription))")
+            return .failed(reason: "the picture could not be copied (\(Diagnostics.failureText(error)))")
         }
         order.removeAll { $0.id == id }
         order.append((id, names.count))

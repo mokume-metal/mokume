@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 観測の区画 (`.mokume/observe`) を見張り、要求に応える。
 ///
@@ -179,7 +180,7 @@ final class FrameObserver {
             placement = try AtomicFile.reserve(url)
         } catch {
             // 置く準備で転んだ (書く先がディレクトリ・ディレクトリを作れない)。頼まずに決着を置く
-            outcome.fail("\(error)", at: url.path)
+            outcome.fail(Diagnostics.failureText(error), at: url.path)
             return name
         }
         // 背圧。ここで待つのは main actor なので、フレームが遅くなる代わりに抱える枚数は上限を超えない
@@ -191,7 +192,7 @@ final class FrameObserver {
                 try placement.place { try PNGFile.write(image, to: $0) }
                 outcome.succeed()
             } catch {
-                outcome.fail("\(error)", at: url.path)
+                outcome.fail(Diagnostics.failureText(error), at: url.path)
             }
             release()
         }
