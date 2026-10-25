@@ -84,6 +84,8 @@ extension Canvas {
     /// [#1524]: https://github.com/mokume-metal/mokume/issues/1524
     public func filter(_ effects: [Effect]) {
         guard admitsFilter() else { return }
+        // 画素へ掛ける効果はベクターへ書けない (#3139)
+        noteVectorDrop(.filter)
         let accepted = acceptedEffects(effects, calledBy: "filter")
         guard !accepted.isEmpty else { return }
         do {

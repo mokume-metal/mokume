@@ -160,6 +160,8 @@ extension Canvas {
     /// [#1862]: https://github.com/mokume-metal/mokume/issues/1862
     /// [#2386]: https://github.com/mokume-metal/mokume/issues/2386
     func place(_ shape: SolidShape) {
+        // 立体はベクターへ書けない (#3139)
+        noteVectorDrop(.solid)
         if style.hasFill {
             if sharesUnitShapes, !recordingShape, let (unit, scale) = shape.unitScaling {
                 placeMesh(.mesh(unit), unitScale: scale) { solidMesh(for: unit) }
@@ -1257,6 +1259,12 @@ struct StrokeCamera {
         SIMD2(dot(vector, right) / pixelAspect, dot(vector, down))
     }
 
+    /// 外積。**成分ごとの積と差を明示し、縮約しない** (#3165)。simd の `cross` は clang が積和へ縮約する
+    /// ので、GPU (`Shapes.metal` の `solidStrokeCross3`) と最終ビットが違いうる。Swift の式は縮約されない。
+    static func crossUnfused(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+    }
+
     /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1)。決まらなければ `nil`。
     ///
     /// 視点の座標で取った垂線の横の成分に `pixelAspect` を掛けてから正規化する。透視は目と線を含む
@@ -1268,7 +1276,7 @@ struct StrokeCamera {
     func screenNormal(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD2<Float>? {
         let normal: SIMD2<Float>
         if isPerspective {
-            let plane = cross(a - eye, b - eye)
+            let plane = Self.crossUnfused(a - eye, b - eye)
             normal = SIMD2(dot(plane, right) * pixelAspect, dot(plane, down))
         } else {
             let along = b - a

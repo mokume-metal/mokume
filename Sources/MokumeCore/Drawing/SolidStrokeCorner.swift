@@ -62,8 +62,8 @@ extension Canvas {
     /// 同じ向きかは**値が等しいか**で見る。許容差は置かない — 画面で潰れたかを
     /// 長さがちょうど 0 かで見ること (`screenNormal`)、同じ位置の点を同じ点と見るときに位置が
     /// 等しいかで見ること (`strokeNet` の `samePoint`)、2D の三角形分割で折り返す角を外積がちょうど 0
-    /// かで見ること (`Triangulation.dropFlatCorners`) に揃える。値で比べるので、外積の積和の縮約
-    /// (GPU の fast-math) にも左右されない。
+    /// かで見ること (`Triangulation.dropFlatCorners`) に揃える。GPU も腕の向きを、CPU と同じ順の融合しない
+    /// 積と和で求めるので (`Shapes.metal` の `solidStrokeNormal`・#3165)、値は両者で 1 ビットも違わない。
     ///
     /// 数えた向きの数で、置く形が決まる:
     ///
@@ -140,7 +140,7 @@ extension Canvas {
             first = index
         }
         // 残りがすべて、時計回りの端から反時計回りに 180° 未満 (か同じ向き) に収まるか。等しい
-        // 向きは外積を見ずに通す — GPU は積和を縮約するので、等しい 2 本の外積が 0 にならない
+        // 向きは外積を見ずに通す — GPU も同じ手順で、値が等しい 2 本は外積の丸めを経ずに通す
         for index in kept where index != first && arms[index] != arms[first] {
             let turn = cross(arms[first], arms[index])
             guard turn > 0 || (turn == 0 && dot(arms[first], arms[index]) > 0) else { return nil }
