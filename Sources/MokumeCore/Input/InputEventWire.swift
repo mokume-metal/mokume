@@ -42,6 +42,7 @@ extension InputEvent {
         case .mouseMovedBy: .mouseMovedBy
         case .scrolled: .scrolled
         case .pinched: .pinched
+        case .fileDropped: .fileDropped
         case .keyDown: .keyDown
         case .keyUp: .keyUp
         }
@@ -58,6 +59,11 @@ extension InputEvent {
             [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
         case .pinched(let amount):
             [("amount", Self.number(amount))]
+        case .fileDropped(let paths, let x, let y):
+            [
+                ("paths", "[" + paths.map { Self.quoted($0) }.joined(separator: ",") + "]"),
+                ("x", Self.number(x)), ("y", Self.number(y)),
+            ]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):
@@ -80,7 +86,7 @@ extension InputEvent {
     /// **これは窓からは届かない守りである** ([#2777](https://github.com/mokume-metal/mokume/issues/2777))。
     /// 窓の位置と量は `SurfaceMapping` が写し、大きさのどれかが 0 なら送らないので、ここへ来る値は
     /// 有限である。届いたとしても、合流点 (``InputState``・[#2731](https://github.com/mokume-metal/mokume/issues/2731))
-    /// とは扱いが違う — 合流点は移動とスクロールを捨て、押下と解放は位置だけを捨てて前の位置のままにするが、
+    /// とは扱いが違う — 合流点は移動とスクロールを捨て、押下・解放・ファイルの落としは位置だけを捨てて前の位置のままにするが、
     /// 線は 0 にして (0, 0) として当てる。行を壊さないことを優先して残してある。
     private static func number(_ value: Float) -> String {
         value.isFinite ? "\(value)" : "0"

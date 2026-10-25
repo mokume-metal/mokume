@@ -35,6 +35,9 @@ enum InputCallback: Equatable, Sendable {
     case mouseDragged(deltaX: Float, deltaY: Float)
     /// スクロールされた。**その 1 件ぶんの量**を運ぶ。
     case mouseWheel(deltaX: Float, deltaY: Float)
+    /// ファイルが落とされた。落とした所は、呼ぶ前に ``InputState/x``・``InputState/y`` へ当たっている
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。**その 1 件ぶんのパス**を運ぶ。
+    case fileDropped(paths: [String])
     /// キーが押された。
     case keyPressed
     /// キーが離された。

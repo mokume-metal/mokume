@@ -23,6 +23,13 @@ public enum InputEvent: Equatable, Sendable {
     /// `NSEvent.magnification` と同じ量である ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
     /// スケッチからはフレームの合計 (``SketchPart/pinch``) として読む。
     case pinched(amount: Float)
+    /// 窓へファイルが落とされた。`paths` は**ファイルの絶対パスだけ** (中身は運ばない)。落とした
+    /// 所は `x`・`y` で、スケッチからは ``SketchPart/mouseX``・``SketchPart/mouseY`` に当たる
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    ///
+    /// 窓は ``SketchSurface`` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
+    /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として落とす。
+    case fileDropped(paths: [String], x: Float, y: Float)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
     case keyUp(code: Key)
 }
@@ -41,8 +48,10 @@ public enum InputEvent: Equatable, Sendable {
 /// `accepted: 1` が返るので誰も気付けない ([#322](https://github.com/mokume-metal/mokume/issues/322))。
 ///
 /// `amount` (ピンチの量) も省略に意味が無い。量の無いピンチは何も動かさず、送り手には `accepted: 1` が
-/// 返るので、省いた 1 件を読めない 1 件として数える。`clickCount` は省略が自然に読める (単発の 1)。
-/// **この 2 つは、読む種別 (`pinched`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
+/// 返るので、省いた 1 件を読めない 1 件として数える。`paths` (落としたファイルの並び) も同じで、
+/// 無い・空の落としは何も届けず、スケッチの `paths[0]` を落とすだけなので読めない 1 件にする。
+/// `clickCount` は省略が自然に読める (単発の 1)。
+/// **この 3 つは、読む種別 (`pinched`・`fileDropped`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
 ///
 /// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
@@ -68,9 +77,10 @@ struct RawInputEvent: Decodable {
     let isRepeat: Bool?
     let amount: Float?
     let clickCount: Int?
+    let paths: [String]?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount
+        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount, paths
     }
 
     /// 読む鍵 (宣言順)。スキーマ (`input-request.schema.json`) の出来事の `properties` と同じ集合で、
@@ -79,7 +89,8 @@ struct RawInputEvent: Decodable {
 
     /// 種別 `type` の出来事が読む鍵 (宣言順)。知らない鍵の名乗りが並べる。
     ///
-    /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ読む** ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ、`paths` は `fileDropped` でだけ読む**
+    /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762)・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す (値の型が違っても
     /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、釦が押されたまま残る)。
     /// 種別が欠けた・知らない出来事は、どの種別の鍵か決まらないので、すべての鍵を読む鍵として扱う (名乗りに出さない)。
@@ -89,6 +100,7 @@ struct RawInputEvent: Decodable {
             switch key {
             case CodingKeys.amount.stringValue: kind == .pinched
             case CodingKeys.clickCount.stringValue: kind == .mouseDown
+            case CodingKeys.paths.stringValue: kind == .fileDropped
             default: true
             }
         }
@@ -110,6 +122,9 @@ struct RawInputEvent: Decodable {
         amount = kind == .pinched ? try container.decodeIfPresent(Float.self, forKey: .amount) : nil
         clickCount =
             kind == .mouseDown ? try container.decodeIfPresent(Int.self, forKey: .clickCount) : nil
+        paths =
+            kind == .fileDropped
+            ? try container.decodeIfPresent([String].self, forKey: .paths) : nil
     }
 
     /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
@@ -151,6 +166,11 @@ struct RawInputEvent: Decodable {
             // 量の 0 は動いていない — 省略は読めるが、量の無いピンチは何も起こさないので落とす
             guard let amount else { return nil }
             return .pinched(amount: amount)
+        case .fileDropped:
+            // 位置を持つ種別なので x・y は要る (0 は左上であって「無い」ではない)。パスの無い・空の落としは
+            // スケッチの `paths[0]` を落とすだけで何も届けないので、読めない 1 件にする
+            guard let x, let y, let paths, !paths.isEmpty else { return nil }
+            return .fileDropped(paths: paths, x: x, y: y)
         case .keyDown:
             guard let code else { return nil }
             return .keyDown(

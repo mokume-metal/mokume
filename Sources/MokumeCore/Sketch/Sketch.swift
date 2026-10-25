@@ -189,6 +189,45 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 確かめている限り気付けない。
     func mouseWheel(deltaX: Float, deltaY: Float)
 
+    /// 窓へファイルが落とされたとき呼ばれる。**落とされたファイルの絶対パス**を受け取る (複数まとめて
+    /// 落とせば 1 回の呼び出しに並ぶ。空にはならない)。
+    ///
+    /// <!-- example: 文脈 var photo: Image? -->
+    /// ```swift
+    /// func fileDropped(_ paths: [String]) {
+    ///     photo = try? loadImage(paths[0])
+    /// }
+    ///
+    /// func draw() {
+    ///     background(20)
+    ///     if let photo {
+    ///         image(photo, 0, 0, width, height)
+    ///     } else {
+    ///         fill(200)
+    ///         text("写真をここへ落とす", 20, 40)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 落とした所へ ``SketchPart/mouseX``・``SketchPart/mouseY`` が動く — 呼ばれた中から読める
+    /// (Processing の `mousePressed()` の中で `mouseX` を読むのと同じ書き方)。位置は引数にしない。
+    /// ``mouseMoved()`` は呼ばれない。渡るのは**パスだけ**で、ファイルの中身は読まない — 読むのは作者で、
+    /// ``SketchPart/loadImage(_:)``・``SketchPart/loadTable(_:header:)`` など、パスを取る口にそのまま渡せる。
+    /// ファイルの URL だけを受け、ブラウザから落とした文字列や URL は受けない。
+    ///
+    /// **綴りは `func fileDropped(_ paths: [String])` と書く。** この口は何もしない既定の実装を持つので、
+    /// ラベルを違えて `func fileDropped(paths: [String])` と書いても、コンパイルは通るが一度も呼ばれない
+    /// (``mouseWheel(deltaX:deltaY:)`` と同じ罠)。p5.js の `drop` は要素のメソッドで、中身を持つ `p5.File` を
+    /// 渡すので、名前も渡すものも違う。
+    ///
+    /// **macOS の窓で受ける** (自前の窓と、`mokume watch` の道具の窓)。iOS・`SketchView` のホストからの
+    /// 受け方と、セキュリティスコープ付きの URL は、まだ決めていない
+    /// ([#2604](https://github.com/mokume-metal/mokume/issues/2604)・[#2605](https://github.com/mokume-metal/mokume/issues/2605))。
+    /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
+    ///
+    /// ``SketchPart/noLoop()`` で止めている間も呼ばれる。
+    func fileDropped(_ paths: [String])
+
     /// キーが押された瞬間に呼ばれる。**押した 1 回だけで、押しっぱなしでは呼び直さない。**
     ///
     /// <!-- example: 文脈 var showsGrid = false -->
@@ -247,6 +286,7 @@ extension Sketch {
     public func mouseMoved(deltaX: Float, deltaY: Float) {}
     public func mouseDragged(deltaX: Float, deltaY: Float) {}
     public func mouseWheel(deltaX: Float, deltaY: Float) {}
+    public func fileDropped(_ paths: [String]) {}
     public func keyPressed() {}
     public func keyReleased() {}
     public func keyTyped() {}

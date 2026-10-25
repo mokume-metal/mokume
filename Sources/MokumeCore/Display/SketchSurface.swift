@@ -99,6 +99,8 @@ final class SketchSurface: NSView {
         self.canvasWidth = Double(canvasSize.0)
         self.canvasHeight = Double(canvasSize.1)
         super.init(frame: frame)
+        // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)
+        registerForDraggedTypes([.fileURL])
         // **終わるときに放す** — 終わりの経路 (× の確定・Ctrl-C・`terminate(_:)`) は窓を閉じずに
         // プロセスを畳むことがあり、窓が閉じる知らせだけでは取りこぼす
         NotificationCenter.default.addObserver(
@@ -239,7 +241,12 @@ extension SketchSurface {
 
     /// 出来事の起きた場所を、キャンバスの座標で返す。写せなければ `nil`。
     private func canvasLocation(of event: NSEvent) -> (x: Float, y: Float)? {
-        let point = convert(event.locationInWindow, from: nil)
+        canvasLocation(atWindowPoint: event.locationInWindow)
+    }
+
+    /// 窓の座標 (左下原点) の 1 点を、キャンバスの座標で返す。写せなければ `nil`。
+    private func canvasLocation(atWindowPoint windowPoint: NSPoint) -> (x: Float, y: Float)? {
+        let point = convert(windowPoint, from: nil)
         return mapping.canvasPoint(x: Double(point.x), y: Double(point.y))
     }
 
@@ -364,6 +371,7 @@ extension SketchSurface {
             lastPoint = (x, y)
             heldButtons.remove(button)
         case .mouseMoved(let x, let y): lastPoint = (x, y)
+        case .fileDropped(_, let x, let y): lastPoint = (x, y)
         case .mouseMovedBy, .scrolled, .pinched: break
         }
     }
@@ -404,6 +412,44 @@ extension SketchSurface {
     /// 窓の大きさでは変えない。
     override func magnify(with event: NSEvent) {
         deliver(.pinched(amount: Float(event.magnification)))
+    }
+
+    // MARK: ファイルのドロップ
+
+    /// ドラッグされている中身から、ファイルの絶対パスを取り出す。**ファイルの URL だけ** — ブラウザから
+    /// 落とした文字列や `https://` の URL は含まれず、空になる (``draggingEntered(_:)`` が断る)。
+    ///
+    /// ファイルの中身は運ばない。パスは `loadImage(_:)` などがそのまま読める形である
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    static func droppedPaths(from pasteboard: NSPasteboard) -> [String] {
+        let urls =
+            pasteboard.readObjects(
+                forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        return (urls ?? []).map(\.path)
+    }
+
+    /// ファイルを引きずって窓へ入った。**ファイルの URL が 1 本もなければ断る** — 落とす先に見せない。
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        Self.droppedPaths(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    /// ファイルが落とされた。**1 回の落としを 1 件の出来事にして**、合流点と運び先へ流す。
+    ///
+    /// 自前の窓も道具の窓も同じ ``SketchSurface`` なので、ここ 1 か所で両方に効く — 道具の窓では
+    /// ``relay`` が `wireLine` を子へ渡す ([ADR-0032] 決定 4)。パスが 0 本の落としは送らない。
+    /// 落とした所を写せないとき (面の大きさが 0) も送らず、断る。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let paths = Self.droppedPaths(from: sender.draggingPasteboard)
+        guard !paths.isEmpty, let point = canvasLocation(atWindowPoint: sender.draggingLocation)
+        else { return false }
+        deliver(.fileDropped(paths: paths, x: point.x, y: point.y))
+        return true
     }
 
     // MARK: キー

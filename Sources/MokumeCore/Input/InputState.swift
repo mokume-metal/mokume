@@ -29,6 +29,8 @@ import Foundation
 /// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。釦の
 ///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすと釦が押されたまま残り
 ///   (``enqueue(_:)`` の「どの種別も状態だけは残す」・#935 と同じ理由)、押下と解放の組も崩れる
+/// - **ファイルの落とし** (`fileDropped`) も、位置が有限でなければ位置だけを捨てる。落としたパスは
+///   届き、`fileDropped(_:)` は 1 回呼ばれる ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
 ///
 /// **範囲の外の位置は丸めない** — 極端でも有限に収まる値は、窓から来る値と同じに当てて配る。
 @MainActor
@@ -292,6 +294,10 @@ public final class InputState {
             // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
             // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
             break
+        case .fileDropped(let paths, _, _):
+            // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない
+            // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
+            dispatch(.fileDropped(paths: paths))
         }
     }
 
@@ -367,6 +373,10 @@ public final class InputState {
         case .mouseUp(let x, let y, let button) where !(x.isFinite && y.isFinite):
             warnPositionKept(event)
             applied = .mouseUp(x: self.x, y: self.y, button: button)
+        case .fileDropped(let paths, let x, let y) where !(x.isFinite && y.isFinite):
+            // 落としたパスは届ける。位置だけを前の値のままにする (押下・解放と同じ扱い)
+            warnPositionKept(event)
+            applied = .fileDropped(paths: paths, x: self.x, y: self.y)
         default:
             guard keepsQuantitiesFinite(event) else {
                 warnings.warnOnce(
@@ -382,12 +392,13 @@ public final class InputState {
         return applied
     }
 
-    /// 位置が有限でない押下・解放の位置だけを捨てたことを、1 度だけ言う。
+    /// 位置が有限でない押下・解放・ファイルの落としの位置だけを捨てたことを、1 度だけ言う。
     private func warnPositionKept(_ event: InputEvent) {
         warnings.warnOnce(
             .nonFinitePosition,
             "The input event \(Self.spelled(event)) has a position that is not a finite number, "
-                + "so its button change was applied and the mouse position was left where it was "
+                + "so the event was applied (its button change, or its dropped paths) and "
+                + "the mouse position was left where it was "
                 + "(later events like this are handled the same way without saying so again)")
     }
 
@@ -401,6 +412,9 @@ public final class InputState {
                 + (clickCount == 1 ? "" : ", clickCount: \(clickCount)") + ")"
         case .mouseUp(let x, let y, let button):
             "mouseUp(x: \(x), y: \(y), button: \(spelled(button)))"
+        case .fileDropped(let paths, let x, let y):
+            // パスは件数だけ名乗る (警告の文面に作者のファイル名を広げない)
+            "fileDropped(\(paths.count) paths, x: \(x), y: \(y))"
         default:
             "\(event)"
         }
@@ -432,6 +446,10 @@ public final class InputState {
             pressedButtons.remove(button)
         case .mouseMoved(let x, let y):
             accumulateMotion(deltaX: x - self.x, deltaY: y - self.y)
+            self.x = x
+            self.y = y
+        case .fileDropped(_, let x, let y):
+            // 落とした所へ位置を動かす。**動いた量には足さない** — 押下と同じく、飛んだぶんは移動ではない
             self.x = x
             self.y = y
         case .mouseMovedBy(let dx, let dy):
@@ -471,7 +489,7 @@ public final class InputState {
     /// **状態はいつも有限である** (有限でなくなる出来事は当てないので)。だから足した後の和が有限
     /// なら、足した差も有限で、配る量 (差と、スクロールの 1 件ぶん) も有限になる。見るのは:
     ///
-    /// - 押下と解放: 位置そのもの。有限でなければ ``apply(_:)`` が先に位置だけを捨てるので、
+    /// - 押下・解放・ファイルの落とし: 位置そのもの。有限でなければ ``apply(_:)`` が先に位置だけを捨てるので、
     ///   ここへは有限の位置しか来ない
     /// - 位置の移動: 位置と、当てる前との差を足した後の ``movedX`` (押していれば ``dragX`` も)
     /// - 相対の移動: 足した後の ``movedX`` (押していれば ``dragX`` も)
@@ -484,7 +502,8 @@ public final class InputState {
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     private func keepsQuantitiesFinite(_ event: InputEvent) -> Bool {
         switch event {
-        case .mouseDown(let x, let y, _, _), .mouseUp(let x, let y, _):
+        case .mouseDown(let x, let y, _, _), .mouseUp(let x, let y, _),
+            .fileDropped(_, let x, let y):
             x.isFinite && y.isFinite
         case .mouseMoved(let x, let y):
             x.isFinite && y.isFinite && keepsMotionFinite(deltaX: x - self.x, deltaY: y - self.y)

@@ -149,6 +149,8 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 
 代償: 入力の出来事の種類が 1 つ増えるので、スキーマの版が変わる。自前の窓と道具の窓の 2 か所に同じ受けを書く。窓を持たない子からダイアログを誰が出すかの設計が要る (`selectInput` の Feature が決める。決定論は注入の道があれば保てる)。
 
+実装の注記 ([#3061](https://github.com/mokume-metal/mokume/issues/3061)・ドロップ): 基準 3 の「`Codable` な入力の出来事に乗る」は、`InputEvent` に `Codable` 準拠を足すことではなく、`wireLine` の 1 行に書けて `RawInputEvent` で同じ値に読み戻せること (`decode(event.wireLine).event == event`) と読む。前例は `pinched` ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。代償の「スキーマの版が変わる」は予測で、実装では `$id` と `schemaVersion` を動かさずに種別 `fileDropped` と鍵 `paths` を足した (古い受け手は知らない種別として 1 件を `ignored` に数える)。「2 か所に同じ受けを書く」も、自前の窓と道具の窓が同じ `SketchSurface` を作るので、受けは 1 か所で済んだ。
+
 この改訂の PR で、改訂の見出しが上限 (5 つ) に達していた本 ADR の経緯を [history/0041.md](history/0041.md) へ移した ([docs/decisions/AGENTS.md](AGENTS.md) の手順)。
 
 #### 改訂 (2026-10-23) — 書き出しの動画に音声を載せる行を、標準へ移す
