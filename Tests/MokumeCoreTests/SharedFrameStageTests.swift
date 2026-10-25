@@ -724,6 +724,48 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **乗り換えないと決めた世代は、控えを捨て、後から来ても採らない** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証)。
+    /// 起動に失敗した新しい版を捨てて前の版を戻したのに、台が 1 枚書いて死んだ子の絵へ乗り換えると、動いている前の版の
+    /// 代わりに死んだ子の絵を映す。
+    @Test("乗り換えないと伝えた世代は、控えていれば捨て、まだ採っていなければ採らず、映している世代には触らない")
+    func anAbandonedGenerationIsNeverPromoted() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shown = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("abandon"))
+            defer { stage.close() }
+            var promotions = 0
+            stage.onGenerationPromoted = { _ in promotions += 1 }
+            stage.displayLinkFired()
+            #expect(promotions == 1)
+
+            // すでに控えている世代 (まだ 1 枚も書いていない)
+            let dying = try publish(in: facet, gpu: gpu, pid: 4242, frames: 0, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.hasIncoming)
+            stage.abandonIncoming(pids: [4242])
+            #expect(!stage.hasIncoming, "控えを捨てていない")
+            _ = dying
+            // 1 枚書いて死んでも、乗り換えない
+            try draw(dying, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(promotions == 1, "捨てた世代へ乗り換えた")
+
+            // まだ採っていない目録も、採らない
+            let late = try publish(in: facet, gpu: gpu, pid: 4243, frames: 1, pointerLock: false)
+            stage.abandonIncoming(pids: [4243])
+            stage.displayLinkFired()
+            #expect(!stage.hasIncoming && promotions == 1, "後から来た目録を採った")
+            _ = late
+
+            // 別の番号の世代へは、これまでどおり乗り換える。映していた世代には触っていない
+            _ = try publish(in: facet, gpu: gpu, pid: 4244, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(promotions == 2, "別の世代へ乗り換えられなくなった")
+            _ = shown
+        }
+    }
+
     @Test("受け取れない知らせに、読めた目録の子の番号が添い、読めない目録・名乗らない目録では nil")
     func undeliverableCarriesTheWriterPid() throws {
         try withFacet { facet in

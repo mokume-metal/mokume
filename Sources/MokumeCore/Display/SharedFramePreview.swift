@@ -111,6 +111,16 @@ public final class SharedFramePreview {
         stage.relinquishSource(pids: pids)
     }
 
+    /// 見張りが、控えている世代へ乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回に呼ぶ。失敗した子の目録が控えにあれば捨て、
+    /// 後から来ても採らない。映している世代 (前の版) には触らない。
+    ///
+    /// - Parameter pids: 乗り換えない世代の子の番号。
+    public func abandonGeneration(pids: [Int32]) {
+        stage.abandonIncoming(pids: pids)
+    }
+
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。
     ///
     /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、

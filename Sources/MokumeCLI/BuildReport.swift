@@ -214,6 +214,17 @@ struct BuildReport: Encodable, Equatable {
     var notStartedNotice: String? {
         guard let head = notStartedHead else { return nil }
         if head.hasPrefix(Self.stopRequestedNotice) { return head }
+        // **最初の絵を出す前に終わった子は、終わり方 (終了コード・合図) を詰めても残す** (#3172)。理由は
+        // `Could not start <道具> in <場所>: it exited with code 7 before drawing its first frame` で、場所が
+        // 長いと、末尾を残す詰め方でも終わり方が落ちる。場所を落として頭だけを詰める
+        if head.hasSuffix(Self.firstFrameSuffix), let cut = head.range(of: ": it ", options: .backwards) {
+            var lead = String(head[..<cut.lowerBound])
+            if let place = lead.range(of: " in ") { lead = String(lead[..<place.lowerBound]) }
+            let tail = String(head[cut.lowerBound...])
+            if tail.count < Self.noticeLimit - 12 {
+                return Self.abbreviated(lead, to: Self.noticeLimit - tail.count) + tail
+            }
+        }
         let tool = "Could not start"
         let line =
             head.hasPrefix(tool)
@@ -248,6 +259,10 @@ struct BuildReport: Encodable, Equatable {
             return nil
         }
     }
+
+    /// 最初の絵を出す前に失敗で終わった子の理由の結び。理由の組み立て (``WatchSession/failedStartReason(tool:place:departure:)``)
+    /// と、プレビューの詰め方 (``notStartedNotice``) が同じ綴りを見る。
+    static let firstFrameSuffix = " before drawing its first frame"
 
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。
     static let stopRequestedNotice =

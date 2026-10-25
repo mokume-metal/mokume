@@ -305,6 +305,12 @@ final class WatchSession {
     /// 乗り換えて頼みを読まない)。
     var relinquishesDisplay: ([Int32]) -> Void = { _ in }
 
+    /// 道具の窓へ、「この世代へは乗り換えない」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回(``departed()``)だけが呼ぶ。台は、失敗した子が
+    /// 1 枚書いてから死ぬと、動いている前の版でなくその子の最後の絵へ乗り換える。引数は失敗した子の番号。
+    var abandonsIncoming: ([Int32]) -> Void = { _ in }
+
     /// 世代の子の番号。居なければ空。
     private func generationPIDs(of process: Process?) -> [Int32] {
         process.map { [$0.processIdentifier] } ?? []
@@ -585,15 +591,17 @@ final class WatchSession {
         case .exited(let status): departure = Departure(status: status, wasSignalled: false)
         case .signalled(let signal): departure = Departure(status: signal, wasSignalled: true)
         }
-        // **子が自分で置いた理由があれば、起動できなかった回である** ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
-        // 窓の無い見張りは 1 枚目の合図が来ないので、合図からは読めない
+        // **子が自分で置いた理由を読む** ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。置いた子は、
+        // 窓のある見張りでは起動できなかった回の確かな証拠になる (合図の推定より先に効く)
         let note = takeStartFailureNote(of: gone)
         // **最初の絵を出す前に、失敗で終わった子は、起こせなかった回である** (#3172)。終了コード 0 は
-        // 自分から終わったので、絵を出す前でも含めない
-        guard
-            note != nil
-                || (!hasShownFirstFrame(gone) && (departure.wasSignalled || departure.status != 0))
-        else {
+        // 自分から終わったので、絵を出す前でも含めない。**終われと言われた合図 (Ctrl-C など) で落ちた子も
+        // 含めない** — 見張りが終わる合図は子にも届き、道具が `stopped()` を立てる前にここへ来うる
+        let failed =
+            departure.wasSignalled
+            ? !Self.endingSignals.contains(departure.status) : departure.status != 0
+        // 理由を置いた子は、窓のある見張りでは確かに起動できなかった。窓の無い見張りは対象外 (#3222)
+        guard (overlapsGenerations && note != nil) || (!hasShownFirstFrame(gone) && failed) else {
             // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
             // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
             // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
@@ -610,9 +618,19 @@ final class WatchSession {
     ///
     /// **窓の無い見張りでは、誰も知らせてくれない** (``overlapsGenerations``)。そこは子が自分の窓を持つので、
     /// 出したものとして扱い、今までどおり「自分で消えた」と読む。
+    ///
+    /// **倒れた子 (自分の窓に描く) は、目印があれば出した扱いにする。** 目印を見つけて前の世代を畳むのは巡回の
+    /// 別の口 (``retireAfterFallback()``) で、子が目印を置いてから見つかるまでに終わると、先にここへ来る。
     private func hasShownFirstFrame(_ process: Process) -> Bool {
-        !overlapsGenerations || shownPIDs.contains(process.processIdentifier)
+        if !overlapsGenerations || shownPIDs.contains(process.processIdentifier) { return true }
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: process.processIdentifier,
+            under: WatchCommand.viewportFacet(under: facetBase))
+        return FileManager.default.fileExists(atPath: marker.path)
     }
+
+    /// 見張りを終わらせる合図。**この合図で落ちた子は、起動に失敗したのではない。**
+    private static let endingSignals: Set<Int32> = [SIGINT, SIGTERM, SIGHUP]
 
     /// 道具の窓が、世代の 1 枚目の絵を出した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
@@ -641,6 +659,7 @@ final class WatchSession {
             return false
         }
         relinquishesDisplay([gone.processIdentifier])
+        abandonsIncoming([gone.processIdentifier])
         child = previous
         outgoing = nil
         awaitingPromotion = false
@@ -723,7 +742,7 @@ final class WatchSession {
             departure.wasSignalled
             ? "it crashed (signal \(departure.status))" : "it exited with code \(departure.status)"
         return CommandFailure.cannotLaunch(
-            tool: tool, place: place, reason: "\(how) before drawing its first frame"
+            tool: tool, place: place, reason: how + BuildReport.firstFrameSuffix
         ).message
     }
 
@@ -1363,8 +1382,6 @@ final class WatchSession {
         let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
-        // **倒れた子は自分の窓に絵を出す**ので、絵を出す前に終わった子とは読まない (#3172)。台からの合図は来ない
-        shownPIDs.insert(waiting.processIdentifier)
         // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
         // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
         // 倒れた子 (自分の窓を開く) は目録を置かないので、台が採ることは無い。手放す世代に含めてよい
@@ -1420,6 +1437,9 @@ final class WatchSession {
         previous: FallbackPrevious, outcome: StopOutcome?
     ) {
         awaitingPromotion = false
+        // **乗り換えたとみなした子は、絵を出した扱いにする** (#3172)。倒れた子は自分の窓に描き、受け取れない
+        // 世代は描いていても台の合図が来ない — どちらも、後で終わっても絵を出す前に失敗した子とは読まない
+        if let waiting = child { shownPIDs.insert(waiting.processIdentifier) }
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
         let hadOutgoing = outgoing != nil

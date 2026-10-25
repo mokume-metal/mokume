@@ -1232,12 +1232,15 @@ struct WatchSessionTests {
             previousShown: true)
         defer { session.stopBlocking() }
         var told: [[Int32]] = []
+        var abandoned: [[Int32]] = []
         session.relinquishesDisplay = { told.append($0) }
+        session.abandonsIncoming = { abandoned.append($0) }
         waitUntilGone(second)
 
         let departure = try #require(session.departed())
         #expect(departure.failedToStart && departure.keptPrevious)
         #expect(told == [[second.processIdentifier]], "前の版の頼みまで手放した: \(told)")
+        #expect(abandoned == [[second.processIdentifier]], "台に、死んだ子へ乗り換えないと伝えていない: \(abandoned)")
         #expect(session.child === first, "前の版を現役に戻していない")
         #expect(session.outgoing == nil)
         #expect(first.isRunning)
@@ -1264,12 +1267,15 @@ struct WatchSessionTests {
             previousShown: false)
         defer { session.stopBlocking() }
         var told: [[Int32]] = []
+        var abandoned = 0
         session.relinquishesDisplay = { told.append($0) }
+        session.abandonsIncoming = { _ in abandoned += 1 }
         waitUntilGone(second)
 
         let departure = try #require(session.departed())
         #expect(departure.failedToStart && !departure.keptPrevious)
         #expect(told == [[second.processIdentifier, first.processIdentifier]], "\(told)")
+        #expect(abandoned == 0, "戻していないのに、乗り換えないと伝えた")
         #expect(session.child === second)
         #expect(WatchCommand.failedStartLines(departure).last == WatchCommand.nothingRunningLine)
     }
@@ -1332,6 +1338,58 @@ struct WatchSessionTests {
         waitUntilGone(second)
 
         #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **「乗り換えたとみなす」もう 1 つの口 (受け取れない世代) も、絵を出した扱いにする。** 描いていても台の合図が
+    /// 来ないので、後で失敗で終わっても、絵を出す前に失敗したとは読まない (#3172 の反証)。
+    @Test("受け取れない世代として乗り換えたとみなした子は、後で失敗で終わっても起動できなかったとは読まない")
+    func anUndeliverableChildIsNotReadAsFailingToStart() async throws {
+        let ready = Ready()
+        let (session, _, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; read line; exit 3"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        let waiting = session.waitingGeneration
+        #expect(await session.retireAfterUndeliverable(waiting: waiting) != nil)
+        session.send("go\n")
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **倒れた子が目印を置いてから巡回が見つけるまでに終わっても、起動できなかったとは読まない。** 巡回は
+    /// 子の離脱を、倒れた子の口より先に見る。
+    @Test("倒れた目印を置いた子は、巡回が目印を見つける前に失敗で終わっても、起動できなかったとは読まない")
+    func aFallenChildThatEndedBeforeTheStepSawItsMarker() async throws {
+        let ready = Ready()
+        let (session, _, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; read line; exit 3"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        _ = try placeFellBackMarker(of: second, for: session)
+        // 映っているのは前の世代なので、書き込みは新しい子の管へ直接送る
+        try (second.standardInput as? Pipe)?.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **見張りを終える合図 (Ctrl-C など) は子にも届く。** 道具が終わりの印を立てる前に子の離脱を見ても、
+    /// 起動に失敗したとは名乗らない (記録も書き換えない)。
+    @Test("終わりの合図で落ちた子は、絵を出す前でも起動できなかったとは読まず、記録を書き換えない", arguments: [SIGINT, SIGTERM, SIGHUP])
+    func aChildEndedByAStopSignalDidNotFailToStart(signal: Int32) async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; kill -\(signal) $$"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(!departure.failedToStart, "終わりの合図で落ちた子を、起動できなかったと読んだ")
+        #expect(departure.wasSignalled && departure.status == signal)
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
     }
 
     /// 番号を名乗らない古いライブラリの子の合図は、最後に起こした子のものと読む。
@@ -1405,10 +1463,10 @@ struct WatchSessionTests {
             "読んだ理由を消していない")
     }
 
-    /// **窓の無い見張りでも、子が理由を置いていれば起動できなかった回である。** 1 枚目の合図が来ない
-    /// 実行でも、子の申告は届く。
-    @Test("窓の無い見張りでも、子が理由を置いて終わったなら、起動できなかった回として記録する")
-    func aWindowlessSessionReadsTheChildsOwnReason() async throws {
+    /// **窓の無い見張りは、子が理由を置いても従来どおり** (#3222 へ分けた)。置かれた理由は読んで消すが、
+    /// 起動できなかった回にはしない。
+    @Test("窓の無い見張りでは、子が理由を置いて終わっても、従来どおり自分で消えたと読み、理由は消す")
+    func aWindowlessSessionKeepsReadingADepartureAsBefore() async throws {
         let ready = Ready()
         let (directory, script) = try failingWithNote("assembly failed\\n")
         let session = WatchSession(
@@ -1419,10 +1477,12 @@ struct WatchSessionTests {
         ready.waitForLast()
         waitUntilGone(child)
 
-        let departure = try #require(session.departed())
-        #expect(departure.failedToStart && !departure.keptPrevious)
-        #expect((departure.report?.notStartedReason ?? "").hasSuffix("\nassembly failed"))
-        #expect(try recordedStatus(of: session)["launched"] as? Bool == false)
+        #expect(session.departed() == WatchSession.Departure(status: 1, wasSignalled: false))
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
+        let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: WorkDirectory.startFailureURL(forProcess: child.processIdentifier, under: facet).path))
     }
 
     /// **次の子の理由と取り違えない。** 読まれずに残った理由は、次の子を起こす前に掃く。
@@ -1480,7 +1540,7 @@ struct WatchSessionTests {
         waitUntilGone(first, timeout: keeps ? 0.3 : 2)
         #expect(first.isRunning == keeps, "前の版の扱いが違う (残す: \(keeps))")
         let shown = try #require(lines.last)
-        #expect(shown.0?.hasPrefix("Rebuilt, but could not start") == true, "\(lines)")
+        #expect(shown.0?.hasPrefix("Could not start sh: it exited with code 1") == true, "\(lines)")
         #expect(!shown.1, "回る印を止めていない")
     }
 
