@@ -437,6 +437,7 @@ struct MovieTests {
         var movie: Movie?
         var notices: [String] = []
         var states: [SourceState] = []
+        var times: [Float] = []
         var pixels: [[LinearRGBA]] = []
         let runtime = try run(
             frames: 60,
@@ -452,6 +453,7 @@ struct MovieTests {
             draw: { sketch in
                 guard let movie else { return }
                 states.append(movie.state)
+                times.append(movie.time)
                 pixels.append(Self.pixels(of: movie.image))
                 // 50 枚目で頭へ飛ぶ
                 if sketch.frameCount == 50 { movie.jump(0) }
@@ -464,6 +466,54 @@ struct MovieTests {
         #expect(pixels[broke] == pixels[broke - 1])
         // 頭へ飛べば読み直して戻る
         #expect(states.last == .running)
+        // **読めなくなってから読み直して読めるまでは、毎フレーム disconnected のまま** (#2908)。読み直しを
+        // 試さずに待っているフレームは、読めていないのに running へ戻ってはならない。戻ってよいのは、手前へ
+        // 戻ったか、読めなくなった所から 1 秒より先へ進んで読み直したフレームだけ
+        let recovered = try #require(
+            states.indices.dropFirst(broke).first { states[$0] == .running }, "読み直しても running に戻らない")
+        #expect(recovered > broke + 1, "読めなくなった次のフレームで running に戻った: \(states)")
+        #expect(states[broke..<recovered].allSatisfy { $0 == .disconnected })
+        let wentBack = times[recovered] < times[broke]
+        let farEnough = Double(times[recovered]) >= Double(times[broke]) + MovieReader.retryDistance - 0.05
+        #expect(wentBack || farEnough, "\(times[broke]) 秒で読めなくなり、\(times[recovered]) 秒で戻った")
+        runtime.closePlugins()
+    }
+
+    @Test("コマを変換できない間は、新しいコマが来ないフレームも disconnected のまま、読めれば running へ戻る (#2908)")
+    func unconvertibleFrameKeepsDisconnected() async throws {
+        let url = try await TestMovie.write(frames: 30, width: 64, height: 48, pixel: TestMovie.noise)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var movie: Movie?
+        var failing = true
+        var notices: [String] = []
+        var states: [SourceState] = []
+        let converter = FrameConverter(width: 64, height: 48, alpha: .straight)
+        // 動画は 30 fps、時計は 60 fps — 1 枚おきのフレームは「前と同じコマ」になる
+        let runtime = try run(
+            frames: 40, frameRate: 60,
+            setup: { sketch in
+                let reader = try MovieReader(url: url, path: "unconvertible.mov")
+                reader.conversion = { buffer throws(FrameConverter.Failure) in
+                    if failing { throw .unsupportedFormat(0) }
+                    return try converter.convert(buffer)
+                }
+                let made = Movie(
+                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    name: "video: unconvertible.mov", owner: sketch, warn: { notices.append($0) })
+                sketch.attach(made)
+                made.loop()
+                movie = made
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                states.append(movie.state)
+                // 20 枚目の後から変換できるようになる
+                if sketch.frameCount == 20 { failing = false }
+            })
+        #expect(states.count == 40)
+        #expect(states.prefix(20).allSatisfy { $0 == .disconnected }, "\(states)")
+        #expect(states.suffix(10).allSatisfy { $0 == .running }, "\(states)")
+        #expect(notices.count == 1, "\(notices)")
         runtime.closePlugins()
     }
 

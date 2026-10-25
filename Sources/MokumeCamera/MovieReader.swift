@@ -112,6 +112,15 @@ final class MovieReader {
     private let keyFrames: KeyFrameIndex?
     /// 読み直した回数 (作るときに開いた分は数えない)。**検査が読む。**
     private(set) var restarts = 0
+    /// 読めなくなって止まっていて、読み直しを試す位置にまだ届いていないか。
+    ///
+    /// **``picture(at:)`` の `nil` は「前と同じコマ」でも返る**ので、`nil` からは「読めているが新しい
+    /// コマが無い」と「試さずに待っている」が分からない。後者の間は読めていないので、``Movie`` は
+    /// ``SourceState/disconnected`` のまま保つ (#2908)。読み直して読めれば下りる。
+    ///
+    /// 変換できないコマは、これではなく「渡し済み」の印で表す。渡せていないコマは次のフレームも
+    /// 変換を試して投げる (``picture(at:)``)。
+    private(set) var isWaitingToRetry = false
 
     /// 開いて、最初のコマまで読む。
     ///
@@ -179,7 +188,8 @@ final class MovieReader {
         let target = position + Playhead.tolerance
         do {
             if reader == nil {
-                // 読めなくなった後。手前へ戻るか、十分先へ進むまでは試さない
+                // 読めなくなった後。手前へ戻るか、十分先へ進むまでは試さない (``isWaitingToRetry`` は
+                // 投げたときに立てたまま。ここでは下ろさない)
                 if let current, target >= current.time, target < retryAfter { return nil }
                 try restart(at: position)
             } else if needsRestart(to: target) {
@@ -195,15 +205,31 @@ final class MovieReader {
             output = nil
             upcoming = nil
             retryAfter = target + Self.retryDistance
+            isWaitingToRetry = true
             throw error
         }
+        // 投げずにここへ来たのは、読めている (読み直して読めた) とき
+        isWaitingToRetry = false
         guard let current, current.serial != handed else { return nil }
-        handed = current.serial
+        let image: DisplayImage
         do {
-            return try converter.convert(current.buffer)
+            image = try convert(current.buffer)
         } catch {
+            // **渡し済みの印は、変換が通った後に書く。** 先に書くと、変換できないコマは次のフレームで
+            // 「前と同じコマ」の `nil` になり、読めていないのに ``Movie`` が running と名乗る (#2908)。
+            // 書かなければ、変換できる間は毎フレーム試して投げる
             throw Failure(reason: error.description)
         }
+        handed = current.serial
+        return image
+    }
+
+    /// コマの変換。既定は ``converter``。**検査が、変換できない動画を作らずに失敗を差し込む。**
+    var conversion: ((CVPixelBuffer) throws(FrameConverter.Failure) -> DisplayImage)?
+
+    private func convert(_ buffer: CVPixelBuffer) throws(FrameConverter.Failure) -> DisplayImage {
+        if let conversion { return try conversion(buffer) }
+        return try converter.convert(buffer)
     }
 
     /// 読むのをやめる。
@@ -216,6 +242,7 @@ final class MovieReader {
         // 戻さない限り「まだ試さない」が続き、読めていないのに ``Movie`` が running と名乗る。
         // 足し直した最初のフレームで読み直し、読めなければ改めて disconnected になる
         retryAfter = 0
+        isWaitingToRetry = false
     }
 
     // MARK: - 読む
