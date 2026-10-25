@@ -43,8 +43,9 @@ jobs:
   # **continue-on-error を付けない** — 赤が success に化けると起票の job が走らない。
   tsan:
     runs-on: macos-26
-    # 期限は実測 (#3220 の PR) から決めた。既定 (360 分) のまま止まると、ホストの macOS の枠を塞ぐ
-    timeout-minutes: 60
+    # 実測は 31.6 分と 40 分 (組み立て 8〜12 分・実行 25〜30 分・#3220 の PR)。揺れの上に余裕を
+    # 持たせる。既定 (360 分) のまま止まると、ホストの macOS の枠を塞ぐ
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       # 端末出力は make が .build/test-log-tsan.txt に残す (起票の本文が TSan の報告を抜く)
