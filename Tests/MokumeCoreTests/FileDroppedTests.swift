@@ -268,6 +268,22 @@ struct FileDroppedSurfaceTests {
             input: input, canvasSize: (64, 64))
     }
 
+    /// 窓に載せた面。落とした所を写すには、面が層を持ち窓に載っている必要がある。
+    private func withWindowedSurface(
+        _ input: InputState, _ body: (SketchSurface) throws -> Void
+    ) throws {
+        let surface = try makeSurface(input)
+        surface.wantsLayer = true
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.titled],
+            backing: .buffered, defer: true)
+        // 素の `NSWindow` は閉じたら自分を解放する。こちらが強い参照を持ったまま閉じると過剰に解放される (#705)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = surface
+        try body(surface)
+    }
+
     @Test(
         "面はファイルの URL を受けるよう登録している",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
@@ -310,30 +326,23 @@ struct FileDroppedSurfaceTests {
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
     func aDropReachesTheConfluenceAndTheRelay() throws {
         let input = InputState()
-        let surface = try makeSurface(input)
-        surface.wantsLayer = true
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64), styleMask: [.titled],
-            backing: .buffered, defer: true)
-        // 素の `NSWindow` は閉じたら自分を解放する。こちらが強い参照を持ったまま閉じると過剰に解放される (#705)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        window.contentView = surface
-        var lines: [String] = []
-        surface.relay = { lines.append($0) }
-        // 窓の座標は左下原点。面と窓が同じ大きさ (64 四方) なので、窓の (10, 44) はキャンバスの (10, 20)
-        let accepted = surface.performDragOperation(
-            FakeDraggingInfo.files(["/tmp/a.png"], at: NSPoint(x: 10, y: 44)))
-        #expect(accepted)
-        var seen: [InputCallback] = []
-        input.beginFrame { seen.append($0) }
-        #expect(seen == [.fileDropped(paths: ["/tmp/a.png"])])
-        #expect(abs(input.x - 10) < 0.01 && abs(input.y - 20) < 0.01, "(\(input.x), \(input.y))")
-        #expect(lines.count == 1, "\(lines)")
-        let echoed = try #require(lines.first)
-        #expect(
-            try JSONDecoder().decode(RawInputEvent.self, from: Data(echoed.utf8)).event
-                == .fileDropped(paths: ["/tmp/a.png"], x: input.x, y: input.y), "\(echoed)")
+        try withWindowedSurface(input) { surface in
+            var lines: [String] = []
+            surface.relay = { lines.append($0) }
+            // 窓の座標は左下原点。面と窓が同じ大きさ (64 四方) なので、窓の (10, 44) はキャンバスの (10, 20)
+            let accepted = surface.performDragOperation(
+                FakeDraggingInfo.files(["/tmp/a.png"], at: NSPoint(x: 10, y: 44)))
+            #expect(accepted)
+            var seen: [InputCallback] = []
+            input.beginFrame { seen.append($0) }
+            #expect(seen == [.fileDropped(paths: ["/tmp/a.png"])])
+            #expect(abs(input.x - 10) < 0.01 && abs(input.y - 20) < 0.01, "(\(input.x), \(input.y))")
+            #expect(lines.count == 1, "\(lines)")
+            let echoed = try #require(lines.first)
+            #expect(
+                try JSONDecoder().decode(RawInputEvent.self, from: Data(echoed.utf8)).event
+                    == .fileDropped(paths: ["/tmp/a.png"], x: input.x, y: input.y), "\(echoed)")
+        }
     }
 
     @Test(
@@ -341,14 +350,18 @@ struct FileDroppedSurfaceTests {
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
     func aNonFileDropSendsNothing() throws {
         let input = InputState()
-        let surface = try makeSurface(input)
-        var lines: [String] = []
-        surface.relay = { lines.append($0) }
-        #expect(!surface.performDragOperation(FakeDraggingInfo.text("https://example.com/a.png")))
-        #expect(lines.isEmpty)
-        var seen: [InputCallback] = []
-        input.beginFrame { seen.append($0) }
-        #expect(seen.isEmpty)
+        try withWindowedSurface(input) { surface in
+            var lines: [String] = []
+            surface.relay = { lines.append($0) }
+            // 落とした所は写せる位置にする (写せないから断った、と取り違えないため)
+            let dragging = FakeDraggingInfo.text(
+                "https://example.com/a.png", at: NSPoint(x: 10, y: 44))
+            #expect(!surface.performDragOperation(dragging))
+            #expect(lines.isEmpty)
+            var seen: [InputCallback] = []
+            input.beginFrame { seen.append($0) }
+            #expect(seen.isEmpty)
+        }
     }
 
     @Test(
