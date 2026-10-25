@@ -76,17 +76,26 @@ struct AudioIntervalTests {
         #expect(levels.spectrumLevels == window.spectrumLevels)
     }
 
-    @Test("連続するフレームの区間では、どの窓も 1 度ずつ、どれかのフレームに入る (24・30・60・144 fps)")
+    @Test("連続するフレームの区間では、終わりが入る格子の窓が重ならず欠けず並ぶ (24・30・60・144 fps)")
     func everyGridWindowBelongsToExactlyOneFrame() {
         for fps in [24, 30, 60, 144] {
-            var counted = 0
-            var covered = 0
+            // フレーム f の区間は、独立に整数で数えた [(f-1)·48000/fps, f·48000/fps)。窓の番号は実装が選ぶ
+            var next = 1  // 次のフレームが持つはずの最初の窓の番号 (窓 0 は終わりが標本 0 で、どの区間にも入らない)
+            var framesWithoutWindows = 0
             for frame in 1...(fps * 2) {
-                let end = FrameSamples.start(ofFrame: frame, perSecond: fps, sampleRate: 48_000)
-                counted += end / AudioAnalysis.hop - covered / AudioAnalysis.hop
-                covered = end
+                let from = (frame - 1) * 48_000 / fps
+                let to = frame * 48_000 / fps
+                guard let windows = AudioAnalysis.windowsEnding(from: from, to: to) else {
+                    framesWithoutWindows += 1
+                    continue
+                }
+                #expect(windows.lowerBound == next, "\(fps) fps frame \(frame): 前のフレームの続きから (重ならず欠けず)")
+                next = windows.upperBound + 1
             }
-            #expect(counted == covered / AudioAnalysis.hop, "\(fps) fps")
+            // 最後の窓は、最後の区間の終わり 2 秒ぶんの格子の窓まで来ている
+            #expect(next - 1 == 2 * 48_000 / AudioAnalysis.hop, "\(fps) fps")
+            // 144 fps だけ、窓が 0 本のフレームがある (1 フレーム 333 標本が hop 512 より短い)
+            #expect((framesWithoutWindows > 0) == (fps == 144), "\(fps) fps: 窓が 0 本のフレーム \(framesWithoutWindows)")
         }
     }
 
@@ -124,10 +133,10 @@ struct AudioIntervalTests {
         let source = RecordedSource(samples: stream, sampleRate: 48_000)
         let input = ExternalInput<AudioSpan>(name: "samples", state: .running)
         let analyzer = AudioAnalyzer()
-        source.start(into: input, at: 0)
+        // 固定の時計の 24 fps: 作者の時計の秒 = フレームの番号 ÷ 24。区間の終わりはちょうど frame·2000
+        source.start(into: input, at: SourceClock(seconds: 0, perSecond: 24))
         for frame in 1..<frames {
-            // 区間の終わりが frame·2000 になる時刻 (標本の間に落とす)
-            source.pump(into: input, at: (Double(frame * perFrame) + 0.5) / 48_000)
+            source.pump(into: input, at: SourceClock(seconds: Double(frame) / 24, perSecond: 24))
             guard let span = input.take() else {
                 Issue.record("frame \(frame): 区間が入らない")
                 continue
@@ -136,6 +145,60 @@ struct AudioIntervalTests {
             #expect(levels.peak == 0.5, "frame \(frame): peak \(levels.peak)")
             #expect(levels.level > 0.7, "frame \(frame): level \(levels.level)")
         }
+    }
+
+    // MARK: - 作者の時計の位置 (固定の時計)
+
+    @Test("作者の時計の位置 (秒 × fps) の頭の標本は、止めも飛びもしない間、フレームの番号の式 ⌊N·sr/fps⌋ と 1 標本も違わない")
+    func theAuthorsPositionMatchesTheFrameFormula() {
+        for fps in [24, 30, 60, 100, 144] {
+            for frame in 0...5000 {
+                // 固定の時計の秒は N / fps (倍精度)。fps を掛け戻した位置が N の近くでずれても、式と同じ標本になる
+                let seconds = Double(frame) / Double(fps)
+                let position = FrameSamples.start(
+                    ofPosition: seconds * Double(fps), perSecond: fps, sampleRate: 48_000)
+                #expect(position == frame * 48_000 / fps, "\(fps) fps frame \(frame)")
+            }
+        }
+        // フレームの途中 (14.4 フレーム目 = 0.1 秒、144 fps) は、4800 標本ちょうど
+        #expect(FrameSamples.start(ofPosition: 0.1 * 144, perSecond: 144, sampleRate: 48_000) == 4800)
+    }
+
+    @Test("時刻を指定した観測の枚は、指定の秒で終わる 1 フレームぶんの区間を別に見せ、通常の続きの区間は観測の有無で変わらない")
+    func anObservationIsSolvedApartFromTheNormalSpans() {
+        let stream = Self.noise(count: 400_000)
+        func run(observingAt observed: Int?) -> [AudioSpan] {
+            let source = RecordedSource(samples: stream, sampleRate: 48_000)
+            let input = ExternalInput<AudioSpan>(name: "samples", state: .running)
+            source.start(into: input, at: SourceClock(seconds: 0, perSecond: 60))
+            var spans: [AudioSpan] = []
+            for frame in 1...6 {
+                source.pump(
+                    into: input,
+                    at: SourceClock(
+                        seconds: Double(frame) / 60, perSecond: 60, observed: frame == observed ? 5 : nil))
+                if let span = input.take() { spans.append(span) }
+            }
+            return spans
+        }
+        let plain = run(observingAt: nil)
+        let observed = run(observingAt: 3)
+        #expect(plain.count == 6 && observed.count == 6)
+        for (index, (a, b)) in zip(plain, observed).enumerated() {
+            var bare = b
+            bare.observation = nil
+            #expect(a == bare, "枚 \(index + 1): 通常の続きが観測で動いた")
+            #expect((b.observation != nil) == (index == 2))
+        }
+        // 5 秒 = 300 フレーム目: その 1 フレーム前の頭から 300 フレーム目の頭まで (整数で独立に数える)
+        guard let shown = observed[2].observation else {
+            Issue.record("観測の枚に区間が無い")
+            return
+        }
+        #expect(shown.from == 299 * 800)
+        #expect(shown.base + shown.samples.count == 300 * 800)
+        let wanted: [Float] = (299 * 800..<300 * 800).map { stream[$0] }
+        #expect(Array(shown.samples.suffix(800)) == wanted)
     }
 
     // MARK: - 供給の単位に依らない (条件 2)
@@ -156,7 +219,7 @@ struct AudioIntervalTests {
             let base = written
             source.ring.write(count: count, hostTime: UInt64(base)) { stream[base + $0] }
             written += count
-            let end = FrameSamples.start(ofFrame: frame, perSecond: fps, sampleRate: 48_000)
+            let end = frame * 48_000 / fps  // 独立に整数で数えた ⌊N·48000/fps⌋
             if written == end {
                 source.pump(into: input, at: 0)
                 let span = try #require(input.take())
@@ -317,7 +380,7 @@ struct AudioIntervalTests {
         var previous: AudioLevels?
         var zeroWindowFrames = 0
         for frame in 1...144 {
-            let end = FrameSamples.start(ofFrame: frame, perSecond: 144, sampleRate: 48_000)
+            let end = frame * 48_000 / 144  // 独立に整数で数えた ⌊N·48000/fps⌋
             let levels = analyzer.analyze(span(of: stream, from: covered, to: end))
             let windows = end / 512 - covered / 512
             if windows == 0 {
@@ -466,15 +529,12 @@ struct AudioIntervalTests {
         let stage = makeStage(fps: 144, origin: origin)
         let osc = SinOsc(stage: stage)
         osc.play(440, 0.5)
-        let base = FrameSamples.start(ofFrame: origin, perSecond: 144, sampleRate: 48_000)
+        let base = origin * 48_000 / 144
         for frame in origin...(origin + 150) {
             stage.frame = frame
             stage.supply()
-            // 始めた位置 (標本 base) + ラックが作った標本の数 = フレーム N の窓の先頭 ⌊N·sr/fps⌋
-            #expect(
-                base + stage.rack.rendered
-                    == FrameSamples.start(ofFrame: frame, perSecond: 144, sampleRate: 48_000),
-                "frame \(frame)")
+            // 始めた位置 (標本 base) + ラックが作った標本の数 = フレーム N の窓の先頭 ⌊N·sr/fps⌋ (整数で独立に数える)
+            #expect(base + stage.rack.rendered == frame * 48_000 / 144, "frame \(frame)")
         }
         stage.close()
         // 丸めて足すと 1 秒で 48000 にならない (47952) — 直に求めれば 144 フレームで 48000 ちょうど
@@ -488,7 +548,7 @@ struct AudioIntervalTests {
         let origin = 5
         let drifting = (origin...(origin + 150)).filter { frame in
             let old = Int((Double(frame - origin) * 48_000 / 144).rounded(.down))
-            return old != FrameSamples.count(from: origin, to: frame, perSecond: 144, sampleRate: 48_000)
+            return old != frame * 48_000 / 144 - origin * 48_000 / 144
         }
         #expect(!drifting.isEmpty, "旧式が食い違うフレームがあるから、式を替えた")
     }

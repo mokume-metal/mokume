@@ -230,7 +230,7 @@ struct SoundFileTests {
         #expect(heard.count == 40)
         // draw() の frameCount 5 (フレーム 4) で呼んだ play() が、窓 4 の先頭から鳴らす
         for (index, frame) in heard.enumerated() where index >= 5 {
-            let expected = FrameSamples.count(from: 4, to: index, perSecond: 144, sampleRate: 48_000)
+            let expected = index * 48_000 / 144 - 4 * 48_000 / 144  // 整数で独立に数えた絶対の窓の先頭の差
             #expect(frame.position == expected, "frame \(index)")
         }
         #expect(heard[6].position == 667, "旧式 ⌊(N - origin)·sr/fps⌋ なら 666")
@@ -291,6 +291,40 @@ struct SoundFileTests {
         // 止めていた間は鳴っていないので 0
         let resumed = span(from: 1600, to: 2400) { $0 < 1600 ? 0 : chord[$0] }
         #expect(heard[5].spectrum == AudioAnalysis.analyze(resumed).spectrum)
+    }
+
+    /// 実際に鳴らしている間は、フレームの頭の `supply()` から `pause()`・`stop()` を呼ぶまでに標本が鳴っている。その分の
+    /// 区間を解析せずに無音にすると、鳴り終わり (終わりまでの区間を解析してから止まる) と形が揃わない。
+    @Test("鳴らしている最中に pause()・stop() すると、止める前に鳴っていた分の区間が次のフレームで解析され、その次から無音になる")
+    func stoppingAnalysesWhatPlayedBeforeIt() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for stopping in ["pause", "stop"] {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var sound: SoundFile?
+            let heard = try record(
+                frames: 6,
+                { sketch in
+                    let made = try sketch.loadSound(url.path, flow: flow)
+                    made.play()
+                    sound = made
+                    return made
+                },
+                between: { frame in
+                    // 1 フレームぶん鳴らしてから止める。フレーム 3 の `supply()` の後に 800 標本鳴っている
+                    _ = try render(flow, Self.perFrame)
+                    if frame == 3 {
+                        if stopping == "pause" { sound?.pause() } else { sound?.stop() }
+                    }
+                })
+            #expect(heard.count == 6)
+            // フレーム 3 の supply() は [800, 1600) を解析済み。止めた位置は 2400 なので、[1600, 2400) が残る
+            let tail = expected(chord, previous: 1600, played: 2400)
+            #expect(tail.peak > 0 && tail.level > 0)
+            #expect(heard[3].level == tail.level && heard[3].peak == tail.peak, "\(stopping): 止める前に鳴っていた分")
+            #expect(!heard[3].isPlaying)
+            #expect(heard[4].level == 0 && heard[5].level == 0, "\(stopping): その次から無音")
+        }
     }
 
     @Test("1 度だけなら終わりで止まって無音になり、ループなら継ぎ目を越えて鳴り続ける")

@@ -44,11 +44,26 @@ nonisolated struct AudioSpan: Equatable, Sendable {
     var to: Int { base + samples.count }
     /// 区間に標本が 1 つも無いか。
     var isEmpty: Bool { from >= to }
+    /// 時刻を指定した観測の枚だけが持つ、見せる区間 (指定の秒で終わる 1 フレームぶん)。
+    ///
+    /// 上の区間 (通常の続き) とは別に解かれ、通常の続きの値を動かさない。観測の枚の後の通常の枚は、観測が無かった
+    /// ときと同じ値になる。
+    var observation: Observation?
 
-    init(base: Int, samples: [Float], from: Int) {
+    /// 観測の枚が見せる区間。``AudioSpan`` と同じ決まりで標本を持つ (この型の中に同じ型は置けないので別の型)。
+    nonisolated struct Observation: Equatable, Sendable {
+        var base: Int
+        var samples: [Float]
+        var from: Int
+
+        var span: AudioSpan { AudioSpan(base: base, samples: samples, from: from) }
+    }
+
+    init(base: Int, samples: [Float], from: Int, observation: Observation? = nil) {
         self.base = base
         self.samples = samples
         self.from = from
+        self.observation = observation
     }
 
     /// 標本列の全部を 1 つの区間にする (頭が標本 0)。
@@ -190,14 +205,21 @@ nonisolated enum AudioAnalysis {
         let to = span.to
         let from = min(max(span.from, to - maxSpan, span.base), to)
         let interval = span.samples[(from - span.base)..<(to - span.base)]
-        // 窓 k は標本 [hop·k − windowSize, hop·k)。終わりが区間 [from, to) に入るのは、
-        // k が from / hop + 1 から to / hop まで (連続する区間で数えると、過不足なく並ぶ)
-        let first = from / hop + 1
+        // 終わりが入る窓が 0 本なら、区間の終わりまでに終わった最後の窓 (まだ 1 本も終わっていなければ無し)
         let last = to / hop
-        let windows: ClosedRange<Int>? =
-            first <= last ? first...last : (last >= 1 ? last...last : nil)
+        let windows = windowsEnding(from: from, to: to) ?? (last >= 1 ? last...last : nil)
         return levels(
             interval: interval, windows: windows, in: span, using: transform, scratch: &scratch)
+    }
+
+    /// 区間 `[from, to)` に終わりが入る格子の窓の番号。入る窓が無ければ `nil`。
+    ///
+    /// 窓 `k` は標本 `[hop·k − windowSize, hop·k)`。終わり `hop·k` が区間に入るのは、`k` が `from / hop + 1` から
+    /// `to / hop` まで。連続する区間で数えると、どの窓も 1 度ずつ、どれかの区間に入る。
+    static func windowsEnding(from: Int, to: Int) -> ClosedRange<Int>? {
+        let first = from / hop + 1
+        let last = to / hop
+        return first <= last ? first...last : nil
     }
 
     /// 窓 1 つ (``windowSize`` 標本。足りなければ前を 0 で埋める) を解析する。窓の全体が区間。
