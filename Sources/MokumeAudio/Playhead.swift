@@ -79,36 +79,29 @@ nonisolated struct Playhead: Equatable {
         return true
     }
 
-    /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓。**いま鳴っている音**の
-    /// 窓で、古い順に並ぶ。
-    ///
-    /// - 止まっていれば全部 0
-    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り
-    ///   (``leapt``) は、始まりより前をファイルの標本で埋める (ファイルの頭より前は 0)
-    /// - 1 度だけなら、終わりより後は 0。ループなら頭へ戻って続ける
-    func window(of samples: [Float], after played: Int, size: Int = AudioAnalysis.windowSize)
-        -> [Float]
-    {
-        guard isPlaying, !samples.isEmpty else { return Array(repeating: 0, count: size) }
-        let end = start + max(0, played)
-        return (0..<size).map { sample(at: end - size + $0, in: samples) }
-    }
-
     /// 区切りの中で `played` 標本鳴ったところまでの、解析する区間。`covered` は前のフレームの区間の終わり。
     ///
     /// **番号は ``start`` + 鳴った標本の数** (ファイルの位置。ループで頭へ戻っても戻さない通し番号) で、
     /// 窓の格子 (``AudioAnalysis/hop`` ごと) もこの番号に置く。標本は ``window(of:after:size:)`` と同じ決まりで
     /// 読む (始まりより前は 0、飛んで始めた区切りはファイルの標本)。止まっていれば呼ばない。
     func span(of samples: [Float], from covered: Int, after played: Int) -> AudioSpan {
-        let to = start + max(0, played)
+        // 1 度だけなら、ファイルの終わりより先は無い (終わりまでを区間にする)
+        let reached = start + max(0, played)
+        let to = isLooping ? reached : min(reached, length)
         let from = AudioAnalysis.limited(from: min(max(covered, 0), to), to: to)
         let first = AudioAnalysis.firstNeeded(from: from)
         return AudioSpan(
             base: first, samples: (first..<to).map { sample(at: $0, in: samples) }, from: from)
     }
 
-    /// 区切りの通し番号 `index` (``start`` + 鳴った標本の数) の標本。
-    private func sample(at index: Int, in samples: [Float]) -> Float {
+    /// 区切りの通し番号 `index` (``start`` + 鳴った標本の数) の標本。**区間 (``span(of:from:after:)``) の標本の決まりの正本。**
+    ///
+    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り (``leapt``) は、
+    ///   ファイルの標本で埋める (ファイルの頭より前は 0)
+    /// - 1 度だけなら、終わりより後は 0。ループなら頭へ戻って続ける
+    ///
+    /// 検査が、区切りの中の標本の並びを直に読むのにも使う。
+    func sample(at index: Int, in samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0 }
         guard index >= start else {
             return leapt && 0 <= index && index < samples.count ? samples[index] : 0

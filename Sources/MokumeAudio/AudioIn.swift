@@ -47,6 +47,8 @@ import MokumeDiagnostics
 /// - 帯域は 512 本で、帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz である
 /// - 新しい標本が届かなかったフレームは、値が前のまま (``isNewFrame`` が false)
 /// - 長く止まった後は、区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する
+/// - **高い fps では区間が短い。** 120 fps なら 1 フレームは 400 標本で、低い音 (55 Hz の 1 周期は約 870 標本) の
+///   ``rms``・``level`` は、区間の中の位相で揺れる。``spectrum`` は窓の平均なので区間の長さに依らず滑らか
 ///
 /// ## 来ないことには理由がある
 ///
@@ -146,11 +148,11 @@ public final class AudioIn: Inlet {
         openedAt = now()
         // **起点は作者の時計の秒** — 時刻を指定した観測の枚の `draw()` で作ったものが、観測の秒を起点として
         // 残さない (#2357)。読む位置 (``supply()``) は見せる時刻で決める
-        source.start(into: input, at: Double(owner?.authorTime ?? 0))
+        source.start(into: input, at: clock())
     }
 
     public func supply() {
-        source.pump(into: input, at: Double(owner?.time ?? 0))
+        source.pump(into: input, at: clock())
         if let span = input.take() {
             levels = AudioAnalyzer.shared.analyze(span)
             isNewFrame = true
@@ -159,6 +161,16 @@ public final class AudioIn: Inlet {
         }
         if state != .running { levels = .silence }
         noticeIfStuck()
+    }
+
+    /// 出どころに渡す、いまの時計の位置。**秒は作者の時計** (観測の秒を状態に積まない)。固定の時計は、フレームの番号で
+    /// 区間を数える (``SourceClock``)。観測の枚も通常の枚と同じ番号・作者の時計の秒を持つので、区間は通常の枚と
+    /// 変わらず、次の枚の区間を歪めない。
+    private func clock() -> SourceClock {
+        guard let owner else { return SourceClock(seconds: 0) }
+        return SourceClock(
+            seconds: Double(owner.authorTime), frame: max(0, owner.frameCount - 1),
+            perSecond: owner.clock.soundFrameRate(onScreen: owner.isOnScreen))
     }
 
     public func close() {
