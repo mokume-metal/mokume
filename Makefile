@@ -317,14 +317,24 @@ TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
 # 単位で赤になったためである。枠の数は MOKUME_GPU_SLOTS (既定 3) で、空くまで待ち、待つ側が
 # 期限を持つ (仕組みは scripts/gpu-slot.py の冒頭)。ビルドは枠の外に置く — CPU の段で、
 # 待たせる理由が無い
+#
+# **終わりに、1 本で TEST_SLOW_SECONDS 秒以上かかった検査を長い順に名乗る** (#3194)。検査が
+# 1 本ずつ重くなっても誰も気付かず、test 段が 3 週間で約 2 倍になった (#3190)。GitHub の上では
+# 同じ一覧を job の要約にも書く。警告だけで段の終了コードは変えない (読み手は常に 0 で終わる)。
+# 赤の経路でも名乗る — 記録が残る普通の赤では、重さも読む材料になる。記録が無い・読めない回は、
+# 読み手もそう名乗る (黙って「長い検査は無い」と読ませない)。仕組みは scripts/read-test-record.py
+TEST_SLOW_SECONDS ?= 5
+
 test:
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD)
 	@touch .build/test-started
 	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
 	set -o pipefail; env $(METAL_VALIDATION) python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
-		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; exit $$code; }
+		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; \
+			python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS); exit $$code; }
 	@bash scripts/test-vanished.sh 0 $(TEST_RECORD) .build/test-log.txt .build/test-started
+	@python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS)
 
 # 描画の検査が実際に走ったかを、test の記録から確かめる (#878)。専用機の描画ジョブ
 # (.github/workflows/render.yml) が test の後に走らせる。**ci-check の既定の並びには
