@@ -177,6 +177,8 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventT
     let idleAfter: TimeInterval
     /// 送り元の黙りを測る時計 (``DatagramListener`` へそのまま渡す)。
     private let now: @Sendable () -> TimeInterval
+    /// 受け口を作る手続き (``DatagramListener`` へそのまま渡す)。`nil` なら本物のポートを開く。
+    private let acceptor: DatagramListener.Acceptor?
     private let decode: Decode
     private let status: ListenerStatus
     private var listener: DatagramListener?
@@ -188,6 +190,7 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventT
         label: String, port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
+        acceptor: DatagramListener.Acceptor? = nil,
         decode: @escaping Decode, warn: @escaping @Sendable (String) -> Void
     ) {
         self.port = port
@@ -195,6 +198,7 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventT
         self.retryAfter = retryAfter
         self.idleAfter = idleAfter
         self.now = now
+        self.acceptor = acceptor
         self.decode = decode
         status = ListenerStatus(label: label, port: port, retryAfter: retryAfter, warn: warn)
     }
@@ -230,7 +234,8 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventT
             },
             changed: { [status] event in
                 status.apply(event, to: queue)
-            })
+            },
+            acceptor: acceptor)
         self.listener = listener
         listener.start()
     }

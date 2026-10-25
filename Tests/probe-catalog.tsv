@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 約束を書いて探させる検査の帰属の表 (#3207 の K2)。足した suite を 1 行ずつ載せ、どの提案の
+# どの sub-issue から来たかを引く。提案 6 (#3221) の道具は、この表で「殺した検査 → 提案」を
+# 1 回の実行の記録 (xunit) から引く。
+#
+# 列はタブ区切りで、suite の型名・提案の名・sub-issue の番号。整合は
+# scripts/tests/probe_catalog_test.py が見る (行の suite が Tests/ に無い・生成器を使う suite が
+# 表に無い、のどちらでも赤)。
+DatagramListenerFakeTests	network	3219

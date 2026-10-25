@@ -9,11 +9,12 @@ extension DatagramSource where Message == String {
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
+        acceptor: DatagramListener.Acceptor? = nil,
         warn: @escaping @Sendable (String) -> Void
     ) -> DatagramSource<String> {
         DatagramSource(
             label: "UDP", port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
-            now: now, decode: TextDecoding.datagram, warn: warn)
+            now: now, acceptor: acceptor, decode: TextDecoding.datagram, warn: warn)
     }
 }
 
