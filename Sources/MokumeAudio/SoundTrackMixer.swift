@@ -26,7 +26,7 @@ import MokumeDiagnostics
 ///
 /// **操作が効く時刻は操作ごとに違う** ([ADR-0042] 決定 6 の改訂「操作が効く時刻」)。フレーム `N` の `draw()` が
 /// 頼んだ、鳴らす (`play()`・`loop()`)・止める (`pause()`・`stop()`)・音量 (`amp(_:)`)・合成の変更は、窓 `N` の
-/// 先頭から効く。飛ぶ (`jump(_:)`) は鳴っている間は次のフレームの頭で効くので、窓 `N + 1` の先頭から効く。
+/// 先頭から効く (音量は窓 `N` の先頭から、そのうちになめらかに変わる)。飛ぶ (`jump(_:)`) は鳴っている間は次のフレームの頭で効くので、窓 `N + 1` の先頭から効く。
 ///
 /// 録りが終わった後 (または録りが窓を頼まないフレーム) は、音源の位置が止まらないよう、流れを描き進めて捨てる
 /// (``supply()``)。描けなかった分は、後の窓で描き足して流れの時間を戻す (``TrackFlow``)。
@@ -55,7 +55,7 @@ final class SoundTrackMixer: Inlet, SoundSource {
         standardFormatWithSampleRate: Double(SoundWindow.sampleRate), channels: 2)!
 
     /// 音声トラックの流れを作った直後に呼ぶ手 (検査)。流れを受けつけなくするなど、流れの状況を作る。
-    nonisolated(unsafe) static var flowMadeForTesting: ((SoundFlow) -> Void)?
+    var flowMadeForTesting: ((SoundFlow) -> Void)?
 
     private weak var owner: (any Sketch)?
     /// 音声トラックが始まったとき作る、機材に出さない流れ。始まるまで `nil`。
@@ -148,7 +148,7 @@ final class SoundTrackMixer: Inlet, SoundSource {
             return
         }
         self.frameRate = frameRate
-        Self.flowMadeForTesting?(made)
+        flowMadeForTesting?(made)
         // 流れの時間は、最初の窓の先頭の標本から数える
         let first = max(0, (owner?.frameCount ?? 1) - 1)
         track = TrackFlow(flow: made, base: SoundWindow.start(ofFrame: first, frameRate: frameRate))

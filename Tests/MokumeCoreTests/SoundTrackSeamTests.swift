@@ -248,4 +248,36 @@ struct SoundTrackSeamTests {
         #expect(try await hear(url).trackCount == 0)
         #expect(probe.windows.isEmpty)
     }
+
+    /// 録りを止めるフレームの `draw()` で音源を足す。足した音源は `beginTrack` を呼ばれていない。
+    final class LateAttach: Sketch {
+        var path = ""
+        var first = Probe()
+        var late = Probe()
+        var settings: SketchSettings { SketchSettings(width: 64, height: 48, frameRate: 60) }
+        func setup() { attach(first) }
+        func draw() {
+            background(30, 30, 40)
+            if frameCount == 1 { beginRecord(path) }
+            if frameCount == 6 {
+                attach(late)
+                endRecord()
+            }
+        }
+    }
+
+    @Test("録りの終わりは、beginTrack を呼んだ音源にだけ届く。止めるフレームで足した音源には、始まりも終わりも届かない")
+    func endTrackReachesOnlyTheSourcesThatBegan() throws {
+        let url = temporaryMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sketch = LateAttach()
+        sketch.path = url.path
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
+        for _ in 0..<7 { try runtime.advance() }
+        runtime.closePlugins()
+        #expect(sketch.first.begun == [60] && sketch.first.ended == 1)
+        #expect(sketch.late.begun.isEmpty, "止めるフレームで足した音源に beginTrack が届いた")
+        #expect(sketch.late.ended == 0, "beginTrack を呼んでいない音源に endTrack が届いた")
+    }
 }
