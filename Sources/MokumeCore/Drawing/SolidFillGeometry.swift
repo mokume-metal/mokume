@@ -28,12 +28,20 @@ import Metal
     /// 持っている添字の写し (CPU 側)。**形の配列を共有するだけで、追加の複写ではない。**
     /// 影を持ち越すとき (`Canvas.keepCasters`) が区画へ写す元になる。
     let indices: [UInt32]
+    /// 持っている頂点の写し (CPU 側・#3201)。**保持した形の置き場だけが持ち、モデルの塗りは `nil`。**
+    /// 裏 → 表の描き分けの畳み (``Canvas/uploadSweeps()``) が、溜め場ではなくここから頂点の向きと
+    /// 同じ値の頂点を読む。形の配列を共有するだけで追加の複写ではないが、利用者が形を手放しても
+    /// 置き場が生きている間は残る。
+    let sourceVertices: [SolidVertex]?
     private let gpu: RenderDevice
 
-    init(vertices: [SolidVertex], indices: [UInt32] = [], gpu: RenderDevice) throws(RenderFailure) {
+    init(
+        vertices: [SolidVertex], indices: [UInt32] = [], keepsSource: Bool = false, gpu: RenderDevice
+    ) throws(RenderFailure) {
         self.gpu = gpu
         count = vertices.count
         self.indices = indices
+        sourceVertices = keepsSource ? vertices : nil
         let vertexBytes = vertices.count * MemoryLayout<SolidVertex>.stride
         indexElementOffset = vertexBytes / MemoryLayout<UInt32>.stride
         buffer = try gpu.makeReadableBuffer(

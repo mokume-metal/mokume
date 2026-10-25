@@ -53,7 +53,8 @@ extension Canvas {
             + shape.solidIndices.count * MemoryLayout<UInt32>.stride
         guard placedBefore, bytes >= retainedSolidThreshold, bytes <= modelFills.budget / 2,
             let made = try? SolidFillGeometry(
-                vertices: shape.solidVertices, indices: shape.solidIndices, gpu: gpu)
+                vertices: shape.solidVertices, indices: shape.solidIndices, keepsSource: true,
+                gpu: gpu)
         else { return nil }
         modelFills.insert(made, for: key)
         return made
@@ -61,16 +62,14 @@ extension Canvas {
 
     /// `run` を置き場から読んで置けるなら、その置き場。
     ///
-    /// 置けるのは、**不透明で裏面を描き分けない区間**だけである。裏面が絵に出うる部品 (記録のときに透ける・
-    /// 絵を貼る・重ねる以外の混ぜ方・利用者の断片) と、透ける色の置き場所は、裏 → 表の描き分けとその畳み
-    /// (``SolidSweep``) が溜め場の頂点と添字を読むので、従来の経路に残す。線の片を含む区間と記録の中は、
+    /// 裏面が絵に出うる区間 (透ける色の置き場所・記録のとき透ける・絵を貼る・重ねる以外の混ぜ方・利用者の
+    /// 断片) も置ける ([#3201])。裏 → 表の描き分けとその畳み (``SolidSweep``) は、置き場の列では
+    /// 置き場が持つ頂点と添字の写しから組む (``Canvas/uploadSweeps()``)。線の片を含む区間と記録の中は、
     /// 呼ぶ側 (``placeSolid(_:of:instances:carriesParts:)``) がここへ来る前に分けている。
-    func ownedFill(
-        for run: Shape.Run, of shape: Shape, parts: [SolidPart], instances: some Collection<SolidInstance>
-    ) -> SolidFillGeometry? {
+    ///
+    /// [#3201]: https://github.com/mokume-metal/mokume/issues/3201
+    func ownedFill(for shape: Shape) -> SolidFillGeometry? {
         guard retainsShapeSolids else { return nil }
-        for part in parts where part.showsBackFaces { return nil }
-        for instance in instances where !(instance.color.w == 1) { return nil }
         return retainedFill(of: shape)
     }
 
