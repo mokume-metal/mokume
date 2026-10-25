@@ -196,18 +196,38 @@ final class InputInbox {
         }
         var accepted = 0
         var ignored = 0
-        for entry in request.events {
+        // **選ばせる頼みを待っているか** (``SketchPart/selectInput(_:)``)。待ちは 1 つなので、1 件の結果が待ちを
+        // 終えたら、同じ要求の次の結果は待つ相手がいない
+        var awaitsSelection = state.selection.isAwaiting
+        var unawaited: [Int] = []
+        for (index, entry) in request.events.enumerated() {
             // **知らない種別も解けなかったものも捨てるが、その 1 件だけ。** 残りは通す
             guard let event = entry.event else {
                 ignored += 1
                 continue
             }
+            // **待っている `selectInput` が無いときの結果は、捨てて名乗る** (#3062)。取り消しも結果なので、
+            // 黙って積むと、次に頼んだ `selectInput` を古い結果が終えてしまう
+            if case .fileSelected = event {
+                guard awaitsSelection else {
+                    ignored += 1
+                    unawaited.append(index)
+                    continue
+                }
+                awaitsSelection = false
+            }
             state.enqueue(event)
             accepted += 1
         }
+        var warnings = request.unknownKeyWarnings
+        for index in unawaited.prefix(InputRequest.namedEventLimit) {
+            warnings.append(
+                "events[\(index)]: A fileSelected event was dropped because no selectInput() is waiting "
+                    + "for a result (it counts in ignored)")
+        }
         let report = InputReport(
             id: request.id, accepted: accepted, ignored: ignored, dropped: state.droppedEvents,
-            warnings: request.unknownKeyWarnings)
+            warnings: warnings)
         write(report)
         return report
     }

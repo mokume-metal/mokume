@@ -35,6 +35,10 @@
       "y": 180.0
     },
     {
+      "type": "fileSelected",
+      "paths": ["/tmp/a.csv"]
+    },
+    {
       "type": "keyDown",
       "code": 49,
       "characters": " ",

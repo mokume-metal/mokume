@@ -176,6 +176,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     var presentQuestion: @MainActor (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void =
         CloseQuestion.presentSheet
 
+    /// ファイルを選ばせるダイアログの出し方 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    /// **検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
+    var filePicker: any FilePicker = OpenPanelPicker()
+    /// いま出しているダイアログの頼みの通し番号と、それを結果ごと捨てて閉じる口。
+    private var shownSelection: (serial: Int, dismiss: @MainActor () -> Void)?
+
     /// 閉じてよいと確定したときの行き先。
     ///
     /// **道具立てごと終わらせる。** 窓を畳むだけでは後始末を通らず、差込口も駆動源も
@@ -290,6 +296,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// - `brightness`: 出力段の明るさ (`exposure()`・`toneMapping()`)。止まっている間に変えても絵が変わる
     /// - `drawable`: 窓の面の大きさ。変わったら出し直す (共有面は `nil`)
     /// - `pointerLock`・`cursorHidden`: 共有面に絵と一緒に載る要求。窓へは渡す経路が別なので `false`
+    /// - `selection`: 共有面に絵と一緒に載る、ファイルを選ばせる頼み。窓へは渡す経路が別なので `nil`
     struct ShownFrame: Equatable {
         let target: ObjectIdentifier
         let revision: UInt64
@@ -297,6 +304,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let drawable: CGSize?
         let pointerLock: Bool
         let cursorHidden: Bool
+        let selection: SelectionBroker.Request?
     }
 
     /// 名乗ってよい速さ。**測れていなければ `nil`。**
@@ -903,10 +911,33 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 毎リフレッシュ渡すのは、窓が前に出たか・ポインタが面の上かが、要求と関係なく変わるため
     /// である。
     private func followPointerLockRequest() {
-        guard case .window(_, let surface, _) = outlet else { return }
+        guard case .window(let window, let surface, _) = outlet else { return }
         surface.followPointerLock(requested: runtime.pointerLockRequested)
         // 矢印を隠す要求も同じ経路で渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))
         surface.followCursorHiding(requested: runtime.cursorHidingRequested)
+        followSelectionRequest(window: window, surface: surface)
+    }
+
+    /// スケッチのファイルを選ばせる頼み (``SketchPart/selectInput(_:)``) を、自分の窓で出す
+    /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// **頼みの番号が変わったら出す。** 同じ番号の間は出し直さない (結果の出来事が合流点に当たるまで、頼みは残る)。
+    /// 頼みが無くなった・別の番号になったら、出しているダイアログは結果ごと捨てて閉じる。結果は**同じ形の
+    /// 出来事**にして自分の合流点へ積む — 外から送られた結果と同じ道を通る。共有面の経路は頼みを面の属性に
+    /// 載せて道具の窓へ渡す (``presentFrame()``)。
+    private func followSelectionRequest(window: NSWindow, surface: SketchSurface) {
+        let pending = runtime.input.selection.pending
+        if let shown = shownSelection, shown.serial != pending?.serial {
+            shown.dismiss()
+            shownSelection = nil
+        }
+        guard let pending, shownSelection == nil else { return }
+        let serial = pending.serial
+        let dismiss = filePicker.pick(prompt: pending.prompt, over: window) { [weak surface] path in
+            surface?.deliver(.fileSelected(path: path))
+        }
+        // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、返ってから控える
+        shownSelection = (serial, dismiss)
     }
 
     /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**
@@ -1027,7 +1058,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // 捕まえ・矢印の要求も入る — 飛ばすと、止めたスケッチがカーソルを捕まえる・放すのが道具に届かない
             let shown = shownFrame(
                 drawable: nil, pointerLock: runtime.pointerLockRequested,
-                cursorHidden: runtime.cursorHidingRequested)
+                cursorHidden: runtime.cursorHidingRequested,
+                selection: runtime.input.selection.pending)
             if runtime.isHeldStill, shown == lastShown {
                 let droppedBefore = shared.droppedBurns
                 try shared.publishPending()
@@ -1039,7 +1071,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             lastShown = nil
             if try shared.write(
                 runtime.target, using: presenter, numbers: runtime.frameNumbers,
-                pointerLock: shown.pointerLock, cursorHidden: shown.cursorHidden)
+                pointerLock: shown.pointerLock, cursorHidden: shown.cursorHidden,
+                selection: shown.selection)
             {
                 lastShown = shown
             }
@@ -1055,7 +1088,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。窓の面の大きさ・明るさの
             // 設定も鍵に入る。GPU が前の present を打ち切っていたら、次の書き込みは来ないので出し直す
             let shown = shownFrame(
-                drawable: layer.drawableSize, pointerLock: false, cursorHidden: false)
+                drawable: layer.drawableSize, pointerLock: false, cursorHidden: false,
+                selection: nil)
             if hasPresented, runtime.isHeldStill, shown == lastShown {
                 if gpu.undelivered(presenter.lastSubmission) != true { return }
                 lastShown = nil
@@ -1075,12 +1109,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// いま出そうとしている絵の鍵 (``ShownFrame``)。**絵そのものは読まない** — 描画先の番号と明るさの
     /// 設定を読むだけで、追い付きの済んだ後 (``presentFrame()``) に呼ぶ。
-    private func shownFrame(drawable: CGSize?, pointerLock: Bool, cursorHidden: Bool) -> ShownFrame {
+    private func shownFrame(
+        drawable: CGSize?, pointerLock: Bool, cursorHidden: Bool, selection: SelectionBroker.Request?
+    ) -> ShownFrame {
         let target = runtime.target
         return ShownFrame(
             target: ObjectIdentifier(target), revision: target.contentRevision,
             brightness: target.brightness, drawable: drawable, pointerLock: pointerLock,
-            cursorHidden: cursorHidden)
+            cursorHidden: cursorHidden, selection: selection)
     }
 
     /// 描けなかったことを 1 度だけ言う。

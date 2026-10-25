@@ -62,6 +62,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         /// 大きさを前提にした初めの位置 (``nudge``) のままだと、作品の窓が高いスケッチで
         /// 2 枚が重なる (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``)。
         var placesBeneathRequestedArtwork = false
+        /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んだら、この窓が出すか。
+        ///
+        /// **作品の窓だけが出す** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。作品の窓とプレビューは
+        /// 同じ面の頼みを読むので、両方が出すとパネルが 2 枚出る。作品の窓は直に走らせた窓と同じ見え方で、
+        /// ダイアログもそこに出る。
+        var showsSelectionDialogs = false
     }
 
     /// × を押された人に問う言葉。
@@ -253,6 +259,14 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``SharedFrameSurface/cursorHiddenAttribute``・[#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     /// 読み方と渡し方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
     private(set) var cursorHiddenRequested = false
+    /// 出している世代のスケッチが、いま待っているファイルを選ばせる頼みと、その世代の子の番号。**面の属性から読む**
+    /// (``SharedFrameSurface/selectInputAttribute``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
+    private(set) var selectionRequested: (pid: Int32?, request: SelectionBroker.Request)?
+    /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
+    var filePicker: any FilePicker = OpenPanelPicker()
+    /// いま出しているダイアログ。頼みの出どころの世代の子の番号と通し番号、結果ごと捨てて閉じる口。
+    private var shownSelection: (pid: Int32?, serial: Int, dismiss: @MainActor () -> Void)?
     /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
     private var failures = FrameFailureLog()
 
@@ -419,6 +433,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         defer {
             self.view?.followPointerLock(requested: pointerLockRequested)
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
+            self.followSelectionRequest()
         }
         guard let source, let newest = source.lookup.newest() else { return }
         // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
@@ -449,6 +464,33 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
+    // MARK: - ファイルを選ばせる
+
+    /// スケッチのファイルを選ばせる頼みを、この窓で出す ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// **出すのは `showsSelectionDialogs` の窓だけで、同じ頼み (子の番号と通し番号の組) は 1 度だけ出す。**
+    /// 頼みが無くなった・別の頼みになったら、出しているダイアログは結果ごと捨てて閉じる。結果は入力の出来事を
+    /// 1 行にして子へ渡す (``onInput``) — 子が結果で待ちを終える。**頼んだ世代が入れ替わった後に届いた結果は
+    /// 子へ渡さない** (新しい子は待っていない)。
+    private func followSelectionRequest() {
+        guard look.showsSelectionDialogs else { return }
+        let wanted = selectionRequested
+        if let shown = shownSelection,
+            wanted == nil || wanted?.pid != shown.pid || wanted?.request.serial != shown.serial
+        {
+            shown.dismiss()
+            shownSelection = nil
+        }
+        guard let wanted, shownSelection == nil, let view, view.window != nil else { return }
+        let (pid, serial) = (wanted.pid, wanted.request.serial)
+        let dismiss = filePicker.pick(prompt: wanted.request.prompt, over: view.window) {
+            [weak self] path in
+            guard let self, self.source?.pid == pid else { return }
+            self.view?.deliver(.fileSelected(path: path))
+        }
+        shownSelection = (pid, serial, dismiss)
+    }
+
     // MARK: - 速さ
 
     /// いま名乗ってよい速さ。**しばらく新しい絵が来なければ `nil`** (``RemoteTempo``)。
@@ -470,6 +512,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         if !isReleased(source) {
             pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
             cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+            selectionRequested = SharedFrameSurface.selectionRequest(on: surface).map {
+                (source?.pid, $0)
+            }
         }
         guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
@@ -619,6 +664,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private func releaseInheritedRequests() {
         pointerLockRequested = false
         cursorHiddenRequested = false
+        selectionRequested = nil
         // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
         if let pid = source?.pid {
             relinquishedPIDs.insert(pid)

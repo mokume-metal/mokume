@@ -123,12 +123,20 @@ public final class InputState {
         case nonFiniteEvent
         /// パスが 1 本も無いファイルの落としを捨てた (``apply(_:)``・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
         case emptyFileDrop
+        /// 待っている ``SketchPart/selectInput(_:)`` が無いときに届いた結果を捨てた
+        /// (``dispatchCallbacks(for:before:to:)``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+        case unawaitedSelection
         /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
+
+    /// ファイルを選ばせる頼みの待ち (``SketchPart/selectInput(_:)``)。結果は入力の出来事
+    /// (``InputEvent/fileSelected(path:)``) としてここへ届くので、待ちも合流点が持つ
+    /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    let selection = SelectionBroker()
 
     public init() {}
 
@@ -298,7 +306,15 @@ public final class InputState {
             break
         case .fileSelected(let path):
             // 状態は動かさない。待っている ``SketchPart/selectInput(_:)`` を終えるのは配り先 (`SketchRuntime`)
-            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))
+            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。**待っていなければ配らず、1 度だけ言う** —
+            // 道具の窓から子の標準入力で届く結果は、子が入れ替わった後や取り下げた後にも届きうる
+            guard selection.isAwaiting else {
+                warnings.warnOnce(
+                    .unawaitedSelection,
+                    "Dropped a fileSelected input event: no selectInput() is waiting for a result "
+                        + "(later events like this are dropped without saying so again)")
+                return
+            }
             dispatch(.fileSelected(path: path))
         case .fileDropped(let paths, _, _):
             // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない

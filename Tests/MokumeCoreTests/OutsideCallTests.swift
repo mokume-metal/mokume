@@ -19,6 +19,11 @@ private let outsideCallNotices: [OutsideCall: String] = [
         "noLoop() is only accepted from inside setup(), draw() or an input callback such as "
             + "mousePressed(). This call was made from outside them, so it was ignored. A Task "
             + "started in one of them runs after it returns, and counts as outside",
+    .selectInput:
+        "selectInput() is only accepted from inside setup(), draw() or an input callback such as "
+            + "mousePressed(), or from a Task started in one of them. This call was made from "
+            + "somewhere else (an initialiser, after the sketch ended, or Task.detached), so no "
+            + "dialog was asked for and it returned nil",
     .loop:
         "loop() is only accepted from inside setup(), draw() or an input callback such as "
             + "mousePressed(). This call was made from outside them, so it was ignored. A Task "
@@ -64,7 +69,7 @@ private let outsideCallNotices: [OutsideCall: String] = [
 /// 文面そのものの検査。**GPU は要らない** ので、GPU の無い環境でも走る。
 @Suite("呼び出しの外から頼んだときの文面")
 struct OutsideCallNoticeTests {
-    @Test("11 通とも原文のまま")
+    @Test("12 通とも原文のまま")
     func noticesKeepTheirWording() {
         for (call, original) in outsideCallNotices {
             #expect(call.notice == original, "\(call) の文面が変わっている")

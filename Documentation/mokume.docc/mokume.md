@@ -367,6 +367,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 | --- | --- | --- |
 | p5 `keyIsDown(code)` | ``Keyboard/isPressed(_:)`` | `keyboard.isPressed(.arrowLeft)` と ``SketchPart/keyboard`` に問う |
 | p5 `drop(callback)` (落とした `p5.File` を受ける) | ``Sketch/fileDropped(_:)`` | `func fileDropped(_ paths: [String])` と書く (ラベルを付けると呼ばれない)。渡るのは中身ではなく絶対パスで、`loadImage(paths[0])` のようにそのまま読む。落とした所は ``SketchPart/mouseX``・``SketchPart/mouseY`` から読む |
+| `selectInput(prompt, callback)` | ``SketchPart/selectInput(_:)`` | コールバックの代わりに `async` で結果を返す。`Task { if let path = await selectInput("CSV を選ぶ") { … } }` と書き、取り消せば `nil`。パスは絶対パスで、`loadTable(path)` などにそのまま渡せる |
 | `keyCode == UP` | ``SketchPart/keyCode`` | `keyCode == .arrowUp` と ``Key`` で書く |
 | `mouseButton == LEFT` | ``SketchPart/mouseButton`` | `mouseButton == .left` と ``MouseButton`` で書く |
 | p5 `mouseIsPressed` | ``SketchPart/isMousePressed`` | `isMousePressed` を読む |
@@ -966,6 +967,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Sketch/mouseClicked()``
 - ``Sketch/mouseWheel(deltaX:deltaY:)``
 - ``Sketch/fileDropped(_:)``
+- ``SketchPart/selectInput(_:)``
 - ``Sketch/mouseMoved()``
 - ``Sketch/mouseMoved(deltaX:deltaY:)``
 - ``Sketch/mouseDragged(deltaX:deltaY:)``

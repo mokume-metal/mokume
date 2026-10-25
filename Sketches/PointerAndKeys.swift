@@ -67,6 +67,16 @@ import mokume
 /// 捕まえている間も隠れ、N で `cursor()` に戻しても捕まえている間は隠れたまま、放した後に
 /// 矢印が出る。**絵には出さない** — 触らずに書き出した絵 (台帳の 1 枚) は変えない。
 ///
+/// ## ファイルを選ぶ
+///
+/// O でファイルを選ばせるダイアログを出す (`selectInput(_:)`・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+/// 選ぶ間もフレームは回り、選ぶと左の列にファイル名が、取り消すと「取り消した」が出る。選んでいる間に
+/// もう一度 O を押すと、前の待ちは取り消しで終わる。外から結果を送るなら:
+///
+/// ```
+/// {"id":"s1","events":[{"type":"fileSelected","paths":["/tmp/a.csv"]}]}
+/// ```
+///
 /// ## ファイルを落とす
 ///
 /// ファイルを窓へ落とすと、落とした所に四角い枠が付き、左の列にファイル名が出る
@@ -105,6 +115,8 @@ final class PointerAndKeys: Sketch {
     var lastKeyCode: Int?
     /// 最後に離したキー。``lastKeyCode`` と違って押したときには入れ替わらない。
     var lastReleased: Key?
+    /// 選ばせるダイアログの状態の文。**選ぶまで・選んだ後だけ出す** — 触らずに書き出した絵は変えない。
+    var selection = ""
     /// 落とされたファイルの名前と、落とした点。**出来事として溜める**。
     var dropped: [(name: String, x: Float, y: Float)] = []
 
@@ -226,6 +238,16 @@ final class PointerAndKeys: Sketch {
             looking.toggle()
             // 頼むのは `draw()` (毎フレーム)。やめるときはここで取り下げる
             if !looking { exitPointerLock() }
+        case .o:
+            // `Task` を起こして待つ。待つ間も `draw()` は回り続け、左の列が「選んでいる」を出す
+            selection = "選んでいる…"
+            Task {
+                if let path = await selectInput("ファイルを選ぶ") {
+                    selection = "選んだ \(path.split(separator: "/").last.map(String.init) ?? path)"
+                } else {
+                    selection = "取り消した"
+                }
+            }
         case .n:
             cursorHidden.toggle()
             if cursorHidden { noCursor() } else { cursor() }
@@ -401,6 +423,10 @@ final class PointerAndKeys: Sketch {
         // 最後に落としたファイルの名前。**落としたときだけ出す**
         if let last = dropped.last {
             text("落とした \(last.name)  (\(dropped.count) 件)", 24, 428)
+        }
+
+        if !selection.isEmpty {
+            text(selection, 24, 460)
         }
 
         // 溜まっている出来事の数。状態ではなく、起きたことの数である

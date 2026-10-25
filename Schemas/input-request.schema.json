@@ -24,7 +24,7 @@
           "type"
         ],
         "additionalProperties": false,
-        "description": "A key not listed here is not read: the event is taken without it (it is not ignored, and the request does not fail), and the reply's warnings name the key with the event's position (events[0]) and the keys that are read. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y (a fileDropped too: it says where the files were dropped); keys need code, because 0 is the top left of the surface and the A key, not the absence of a value; pinched needs amount, because a pinch with no amount moves nothing; fileDropped needs paths, and an empty array counts as unreadable, because a drop of no files moves nothing and would only make a sketch's paths[0] fail. button (0 = the left, primary button), clickCount (1 = a single press), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code, amount) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
+        "description": "A key not listed here is not read: the event is taken without it (it is not ignored, and the request does not fail), and the reply's warnings name the key with the event's position (events[0]) and the keys that are read. **A field with no meaningful default is required for its type**, and an event missing one counts as unreadable in ignored (the rest still go through). Positions need x and y (a fileDropped too: it says where the files were dropped); keys need code, because 0 is the top left of the surface and the A key, not the absence of a value; pinched needs amount, because a pinch with no amount moves nothing; fileDropped needs paths, and an empty array counts as unreadable, because a drop of no files moves nothing and would only make a sketch's paths[0] fail; fileSelected needs paths too, but there an empty array is read: it is the cancel of the dialog. button (0 = the left, primary button), clickCount (1 = a single press), dx and dy (0 = no movement), characters (empty) and isRepeat (false) read naturally when left out, so they are optional, and **a null for one of them reads as left out**. A null for a required field (x, y, code, amount) is the same as leaving it out: that one event counts in ignored. mouseMoved says where the pointer went (x and y); mouseMovedBy says how far it moved (dx and dy) without moving the position, which is what the sketch's own window sends while it holds the pointer (requestPointerLock()).",
         "allOf": [
           {
             "if": {
@@ -83,7 +83,34 @@
             "then": {
               "required": [
                 "paths"
-              ]
+              ],
+              "properties": {
+                "paths": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "enum": ["fileSelected"]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "paths"
+              ],
+              "properties": {
+                "paths": {
+                  "maxItems": 1
+                }
+              }
             }
           },
           {
@@ -115,6 +142,7 @@
               "scrolled",
               "pinched",
               "fileDropped",
+              "fileSelected",
               "keyDown",
               "keyUp"
             ]
@@ -146,8 +174,7 @@
               "type": "string",
               "pattern": "^/"
             },
-            "minItems": 1,
-            "description": "For fileDropped, the absolute paths of the files that were dropped on the window, in the order they were dropped (several files dropped together are one event). The sketch receives them in `fileDropped(_ paths: [String])`, and they can be handed to `loadImage`, `loadTable` and the like as they are. **Only the paths travel, never the contents.** The sketch's own window takes file URLs only (a string or a web URL dropped from a browser is refused, and a drop of no files is not sent). The position of the drop is x and y, and mouseX / mouseY move there before the call (mouseMoved() is not called). **An empty array, a null, an array with an element that is not a string, and an array with an element that is not an absolute path (one that does not start with `/`: an empty string, a URL, a relative path) count that one fileDropped in ignored**, since a window only ever hands over absolute file paths. **Read on fileDropped only**: on any other type it is not read, whatever its value, and the reply's warnings name it. macOS windows receive drops; how iOS and the SketchView host do is not decided yet (#2604, #2605)."
+            "description": "For fileDropped, the absolute paths of the files that were dropped on the window, in the order they were dropped (several files dropped together are one event). The sketch receives them in `fileDropped(_ paths: [String])`, and they can be handed to `loadImage`, `loadTable` and the like as they are. **Only the paths travel, never the contents.** The sketch's own window takes file URLs only (a string or a web URL dropped from a browser is refused, and a drop of no files is not sent). The position of the drop is x and y, and mouseX / mouseY move there before the call (mouseMoved() is not called). **An empty array, a null, an array with an element that is not a string, and an array with an element that is not an absolute path (one that does not start with `/`: an empty string, a URL, a relative path) count that one fileDropped in ignored**, since a window only ever hands over absolute file paths. **Read on fileDropped only**: on any other type it is not read, whatever its value, and the reply's warnings name it. macOS windows receive drops; how iOS and the SketchView host do is not decided yet (#2604, #2605). **For fileSelected, the result of the dialog that selectInput(_:) asks for: one path (the file that was chosen) or an empty array (cancelled, which makes selectInput return nil).** A fileSelected without paths is not read as a cancel — a forgotten key must not end a wait silently — so it counts in ignored, and so does one with two or more paths (selectInput chooses one file) or with an element that is not an absolute path. A fileSelected that arrives when no selectInput is waiting is dropped, counted in ignored, and named in the reply's warnings. Only one selectInput is waited for at a time. **Read on fileDropped and fileSelected only**: on any other type paths is not read."
           },
           "dx": {
             "type": ["number", "null"],

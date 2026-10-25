@@ -31,14 +31,20 @@ enum OutsideCall: CaseIterable {
     case endRecord
     case attach
     case detach
+    case selectInput
 
-    /// 言う中身。**11 通を完全な文として持つ** (ADR-0038 決定 3・``Canvas/OutsideFrame`` と同じ形)。
+    /// 言う中身。**12 通を完全な文として持つ** (ADR-0038 決定 3・``Canvas/OutsideFrame`` と同じ形)。
     ///
     /// 書き出しの 3 つは行き先 (`save("…")` の引数) を名乗らない。断る理由は呼んだ場所で、
     /// 行き先ではないためである。例に挙げるコールバックは、進行の口が `mousePressed()`
     /// (手本の Redraw / Loop の形)、時刻の口と書き出しの口が `keyPressed()` (キーで止める・撮る形)。
     var notice: String {
         switch self {
+        case .selectInput:
+            "selectInput() is only accepted from inside setup(), draw() or an input callback such as "
+                + "mousePressed(), or from a Task started in one of them. This call was made from "
+                + "somewhere else (an initialiser, after the sketch ended, or Task.detached), so no "
+                + "dialog was asked for and it returned nil"
         case .noLoop:
             "noLoop() is only accepted from inside setup(), draw() or an input callback such as "
                 + "mousePressed(). This call was made from outside them, so it was ignored. A Task "

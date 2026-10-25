@@ -142,6 +142,20 @@ final class SharedFrameSurface {
     /// — 古いライブラリの子は載せないので、道具の窓は隠さない。
     static let cursorHiddenAttribute = "mokume.cursorHidden"
 
+    /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んでいるときの、頼みの通し番号を載せる
+    /// 属性の名前 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// ``pointerLockAttribute`` と同じ形で、**ダイアログを出すのは道具の窓である** (ADR-0032 決定 1・決定 4)。
+    /// 窓を持たない子の頼みを渡す新しい通信路は作らず、絵と同じ面に載せる。番号は 1 から数え、頼むたびに
+    /// 進む。**待っている間は載せ続け、結果が届いて待ちが終われば属性ごと消す。** 読み手は番号が前に見たものと
+    /// 違うときだけダイアログを出す (世代の子の番号と組にして覚える)。**載っていなければ頼んでいない** — 古い
+    /// ライブラリの子は載せない。
+    static let selectInputAttribute = "mokume.selectInput"
+
+    /// ``selectInputAttribute`` の頼みに添える文言を載せる属性の名前。**番号より先に載せる** — 読み手は番号を
+    /// 見て文言を読むので、番号が見えた面では文言も揃っている。
+    static let selectInputPromptAttribute = "mokume.selectInputPrompt"
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -257,6 +271,8 @@ final class SharedFrameSurface {
         let numbers: FrameNumbers
         let pointerLock: Bool
         let cursorHidden: Bool
+        /// 待っているファイルを選ばせる頼み (``selectInputAttribute``)。
+        let selection: SelectionBroker.Request?
         /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
         let number: Int
     }
@@ -556,7 +572,8 @@ final class SharedFrameSurface {
     @discardableResult
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
-        pointerLock: Bool = false, cursorHidden: Bool = false
+        pointerLock: Bool = false, cursorHidden: Bool = false,
+        selection: SelectionBroker.Request? = nil
     ) throws(RenderFailure) -> Bool {
         try publishPending()
         writes += 1
@@ -575,7 +592,7 @@ final class SharedFrameSurface {
         pending.append(
             Burn(
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
-                cursorHidden: cursorHidden, number: writes))
+                cursorHidden: cursorHidden, selection: selection, number: writes))
         nextSlot = (index + 1) % slots.count
         return true
     }
@@ -631,6 +648,7 @@ final class SharedFrameSurface {
         Self.publish(burn.numbers, to: slot.surface)
         Self.publishPointerLock(burn.pointerLock, to: slot.surface)
         Self.publishCursorHidden(burn.cursorHidden, to: slot.surface)
+        Self.publishSelection(burn.selection, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
@@ -704,6 +722,29 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
     static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
         number(cursorHiddenAttribute, on: surface)?.intValue == 1
+    }
+
+    /// ファイルを選ばせる頼みを面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、消さなければ
+    /// 前に載せた頼みが残る (``publishPointerLock(_:to:)`` と同じ)。文言を番号より先に載せる。
+    static func publishSelection(_ request: SelectionBroker.Request?, to surface: IOSurfaceRef) {
+        guard let request else {
+            IOSurfaceRemoveValue(surface, selectInputAttribute as CFString)
+            IOSurfaceRemoveValue(surface, selectInputPromptAttribute as CFString)
+            return
+        }
+        IOSurfaceSetValue(surface, selectInputPromptAttribute as CFString, request.prompt as CFString)
+        IOSurfaceSetValue(surface, selectInputAttribute as CFString, NSNumber(value: request.serial))
+    }
+
+    /// 引いた面が名乗っているファイルを選ばせる頼み。読み手の側の規則 (``publishSelection(_:to:)`` と対)。
+    ///
+    /// - Returns: 載っていない面は `nil` (頼んでいない)。番号が正の整数でなければ頼みとして読まない。
+    static func selectionRequest(on surface: IOSurfaceRef) -> SelectionBroker.Request? {
+        guard let serial = number(selectInputAttribute, on: surface)?.intValue, serial > 0 else {
+            return nil
+        }
+        let prompt = IOSurfaceCopyValue(surface, selectInputPromptAttribute as CFString) as? String
+        return SelectionBroker.Request(serial: serial, prompt: prompt ?? "")
     }
 
     /// 測れた数だけを載せる。測れていなければ**消す**。

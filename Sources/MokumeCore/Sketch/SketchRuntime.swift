@@ -1152,6 +1152,7 @@ public final class SketchRuntime {
         case .mouseWheel(let deltaX, let deltaY):
             sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)
         case .fileDropped(let paths): sketch.fileDropped(paths)
+        case .fileSelected(let path): input.selection.resolve(path)
         case .keyPressed: sketch.keyPressed()
         case .keyReleased: sketch.keyReleased()
         case .keyTyped: sketch.keyTyped()
@@ -2404,6 +2405,8 @@ public final class SketchRuntime {
             runningSketch = previous
             shapeAssemblyListener = previousListener
         }
-        try LaunchingSketch.$canvas.withValue(canvas, operation: body)
+        try LaunchingSketch.$canvas.withValue(canvas) {
+            try LaunchingSketch.$selection.withValue(input.selection, operation: body)
+        }
     }
 }
