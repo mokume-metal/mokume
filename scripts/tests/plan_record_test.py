@@ -1160,6 +1160,36 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("# #N 短い説明", result.stderr)
 
+    def test_send_back_names_the_summary_lines(self):
+        """差し戻しの文面が、プランの先頭に置く要約の 2 行を名指す (#3188)。
+
+        AGENTS.md「説明と報告」は長いコメントの先頭に 2 行を求めるが、プランを書く場で
+        それが見えないと、着手時のプランは見出しから始まったままになる (#3184 の実例)。
+        書き直す瞬間に読む文面で伝える。Bug の約束と範囲の差し戻しも同じ。
+        """
+        for result in (
+            self.capture("番号も現況も書かない計画。\n", recheck=False),
+            self.capture(self.BUG_PLAN + "直す。\n", FAKE_GH_ISSUE="12", FAKE_GH_ISSUE_TYPE="Bug"),
+        ):
+            with self.subTest(stderr=result.stderr[:40]):
+                self.assertEqual(result.returncode, 2)
+                self.assertSays(result.stderr, "**要約**:")
+                self.assertSays(result.stderr, "**人が判断すること**:")
+
+    def test_capture_puts_the_summary_lines_right_after_the_heading(self):
+        """先頭に書いた要約の 2 行は、見出し「## 着手時のプラン」の直後にそのまま出る (#3188)。
+
+        並べ替えも判定もしない。書き手が先頭に置けば、投稿でも人が最初に読む位置に来る。
+        """
+        plan = "**要約**: 直す。\n**人が判断すること**: なし\n\n# #12 見出し\n"
+        result = self.capture(plan, FAKE_GH_ISSUE="12")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        lines = self.records()[0].read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[1], "## 着手時のプラン")
+        self.assertEqual(lines[2], "")
+        self.assertTrue(lines[3].startswith("**要約**:"), lines[:6])
+        self.assertTrue(lines[4].startswith("**人が判断すること**:"), lines[:6])
+
     # --- 名乗りが 2 つ以上あれば確定しない (#646) ----------------------------
     # プランは設計を説明する文書なので番号の例示が自然に出る。本来の対象が 2 番目以降に
     # 現れると、最初の 1 件だけを採る規則では無関係な Issue を指した。投稿済みプラン
@@ -1954,6 +1984,18 @@ class PreApprovalCheckTest(HookFixture, unittest.TestCase):
                 result = self.precheck(plan, recheck=False)
                 self.assertIsNone(self.denial(result), result.stdout)
 
+    def test_send_back_before_approval_names_the_summary_lines(self):
+        """承認の前の差し戻しにも、先頭に置く要約の 2 行の案内が出る (#3188)。"""
+        reason = self.denial(self.precheck("番号も現況も書かない計画。\n", recheck=False))
+        self.assertIsNotNone(reason, "承認の前に差し戻していない")
+        self.assertSays(reason, "**要約**:")
+        self.assertSays(reason, "**人が判断すること**:")
+
+    def test_a_plan_without_the_summary_lines_is_not_sent_back(self):
+        """要約の 2 行は案内するだけで、判定はしない (#3188・#3150 の「機構は足さない」)。"""
+        result = self.precheck("# #12 を直す\n")
+        self.assertIsNone(self.denial(result), result.stdout)
+
     def test_a_bug_plan_without_the_promise_or_its_scope_is_sent_back_before_approval(self):
         """約束と範囲は別々に問う。足りないほうだけを名乗る (capture と同じ)。"""
         promise, scope = "破られた約束 (", "約束が及ぶ範囲 ("
@@ -2372,6 +2414,20 @@ class ExplicitPlanTest(HookFixture, unittest.TestCase):
         result = self.run_hook("codex-stop", {"cwd": str(self.repo), "session_id": "session-one"})
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("まだ GitHub に残っていません", result.stderr)
+
+    def test_usage_names_the_summary_lines(self):
+        """register の使い方が、プランの先頭に置く要約の 2 行を名指す (#3188)。
+
+        Codex はプランを本文ファイルに書いてから register するので、本文の書き方を
+        最初に読むのはこの使い方である。
+        """
+        result = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "register", "--no-such-option"],
+            cwd=self.repo, env=self.env(), capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertSays(result.stderr, "**要約**:")
+        self.assertSays(result.stderr, "**人が判断すること**:")
 
     def test_codex_stop_does_not_claim_claude_records(self):
         self.assertEqual(self.capture("#12 の変更").returncode, 2)
