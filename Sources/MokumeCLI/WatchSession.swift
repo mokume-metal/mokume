@@ -484,6 +484,7 @@ final class WatchSession {
     /// 書かないと区画には前の見張りの記録が残る (#1147 と同じ理由)。
     @discardableResult
     func start() async -> BuildReport {
+        discardStaleNotStartedRecord()
         let stamp = await takeStamp()
         guard !stopRequested else {
             return finish(
@@ -493,6 +494,25 @@ final class WatchSession {
                     timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil)))
         }
         return await rebuildAndReplace(stamp: stamp, initial: true)
+    }
+
+    /// 前の見張りが残した「起動できなかった」記録 (`ok: true`・`launched: false`) を、始めるときに消す
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// 前の見張りが止まった後も記録は残る。新しい見張りは錠を持つので、最初の作り直し (cold build で数十秒) の間、
+    /// 窓口は錠を見て前の回の理由で「直して保存せよ」と答えてしまう。**消せば記録の無い状態になり**、窓口は
+    /// 元の案内に、`build_status` と `doctor` は「まだ作り直しが無い」に倒れる (どちらも記録の無い状態を扱える)。
+    /// 作り直しが通らなかった記録 (`ok: false`)・起こした記録は、この誤答を起こさないので残す。
+    ///
+    /// 同じ見張りの作り直しの最中に窓口が「直して保存せよ」と言う小さな窓 (子を起こせば `launched: true` に変わる)
+    /// は、扱わない。
+    private func discardStaleNotStartedRecord() {
+        let url = BuildReport.statusURL(under: facetBase)
+        guard let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ok"] as? Bool == true, object["launched"] as? Bool == false
+        else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// 最初の作り直しを始める前に終われと言われた回の記録の本文。**失敗とは違う言葉で始める**

@@ -1529,6 +1529,37 @@ struct WatchSessionTests {
         #expect(reason.hasSuffix("\n" + BuildReport.sketchReportedPrefix + "boom here"), "\(reason)")
     }
 
+    /// **前の見張りが残した「起動できなかった」記録は、始めるときに消える** (反証 2 回目の指摘 1)。新しい見張りの
+    /// 最初の作り直しの間、前の回の理由で窓口が答えない。作り直しの失敗・起こした記録は残す。
+    @Test("見張りの開始は、前の見張りが残した起動できなかった記録を、最初の作り直しの前に消す", arguments: [
+        (true, false, true), (false, false, false), (true, true, false),
+    ])
+    func startDiscardsAStaleNotStartedRecord(ok: Bool, launched: Bool, discarded: Bool) async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
+        let url = BuildReport.statusURL(under: directory)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let stale: [String: Any] = [
+            "schemaVersion": 1, "ok": ok, "status": 0, "output": "old", "configuration": "debug",
+            "launched": launched, "notStartedReason": "Could not start sketch in /s: old", "timings": ["buildMs": 1],
+        ]
+        try JSONSerialization.data(withJSONObject: stale).write(to: url)
+        var base = hooks(scripted: Scripted(["echo ready; read line"]), ready: ready)
+        let rebuild = base.rebuild
+        var existedAtRebuild: [Bool] = []
+        base.rebuild = { directory throws(CommandFailure) in
+            existedAtRebuild.append(FileManager.default.fileExists(atPath: url.path))
+            return try await rebuild(directory)
+        }
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: base, stopTimeout: 0.5)
+        defer { session.stopBlocking() }
+
+        await session.start()
+        #expect(existedAtRebuild == [!discarded], "最初の作り直しの時点の記録の有無が違う: \(existedAtRebuild)")
+    }
+
     /// **子が理由を置いたなら、1 枚目を出した扱いの子でも起動できなかった回である** (合図の推定より先に効く)。
     /// 乗り換えの合図が先に来た子も、倒れた目印を置いた子 (自分の窓に描く) も、理由が在れば確かな証拠になる。
     @Test("1 枚目を出した扱いの子や倒れた目印のある子でも、理由を置いて終わったなら起動できなかった回と読む", arguments: [false, true])

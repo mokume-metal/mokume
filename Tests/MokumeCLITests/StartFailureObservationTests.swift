@@ -68,6 +68,7 @@ struct StartFailureObservationTests {
         let text = Tools(facets: facets, makeID: { "H" }).call("observe", arguments: [:]).text
         #expect(!text.contains("is not running"), "走っていないと断定した: \(text)")
         #expect(text.contains("newest version"), "新しい版が起動しなかったと言わない: \(text)")
+        #expect(text.contains("version from before"), "前の版が走り続けることがあるのを添えない: \(text)")
     }
 
     /// **子が理由を置けなかった回 (落ちた・実行できない成果物) に、無い言葉を約束しない** (反証 1 回目の指摘 3)。

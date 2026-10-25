@@ -130,6 +130,34 @@ struct WatchPlaceLockTests {
         #expect(!WatchPlaceLock.isHeld(under: base))
     }
 
+    /// **窓口の共有の探りと重なっても、実在しない先客で断られない** (反証 2 回目の指摘 2)。探りはすぐ離す。
+    @Test("窓口の共有の探りと重なっても、先客が居なければ見張りは断られず、錠が取れる")
+    func aSharedProbeDoesNotRefuseAClaim() throws {
+        let base = try makeSketch()
+        try FileManager.default.createDirectory(
+            at: WorkDirectory.root(under: base), withIntermediateDirectories: true)
+        let lock = WatchPlaceLock.lockURL(under: base)
+        try Data("99999999\n".utf8).write(to: lock)
+        let probe = open(lock.path, O_RDONLY | O_CLOEXEC)
+        #expect(probe >= 0)
+        #expect(flock(probe, LOCK_SH | LOCK_NB) == 0)
+        // 探りは少し後に離れる
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.02) { close(probe) }
+
+        let watch = try WatchPlaceLock.claim(under: base)
+        defer { watch.release() }
+        #expect(WatchPlaceLock.isHeld(under: base), "取れたのに持たれていないと読んだ")
+    }
+
+    /// 先客が居る (pid が書かれていない別の見張りでも、錠が離れない) なら、取り直しの後で今までどおり断る。
+    @Test("錠が離れないままなら、取り直しの後で断る")
+    func aClaimIsStillRefusedWhileTheLockStaysHeld() throws {
+        let base = try makeSketch()
+        let other = try OtherWatch(holding: base)
+        defer { other.leave() }
+        #expect(throws: CommandFailure.self) { _ = try WatchPlaceLock.claim(under: base) }
+    }
+
     /// pid が読めない・別人のものでも、錠が掛かっていれば持たれている (判定は錠である)。
     @Test("別の記述が錠を掛けていれば、pid が書かれていなくても持たれていると読む")
     func aHeldLockWithoutAPidIsHeld() throws {

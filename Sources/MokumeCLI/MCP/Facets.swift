@@ -396,6 +396,9 @@ struct Facets {
 
             \(account)
 
+            The version from before keeps running if it had drawn (see `build_status`); otherwise nothing is \
+            running. If one is running but gave no answer, it is busy rather than gone.
+
             Fix the cause and save: the watching `\(Command.name) watch` rebuilds and starts it again, and this \
             answer goes away once it does.
             """

@@ -70,8 +70,18 @@ nonisolated final class WatchPlaceLock {
             else { return WatchPlaceLock(descriptor: -1) }
             let opened = open(lock.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
             guard opened >= 0 else { return WatchPlaceLock(descriptor: -1) }
-            guard flock(opened, LOCK_EX | LOCK_NB) == 0 else {
-                let reason = errno
+            var locked = flock(opened, LOCK_EX | LOCK_NB) == 0
+            var reason = locked ? 0 : errno
+            // **先客が居ないと読めるのに断られたなら、窓口の共有の探り (``isHeld(under:)``) と重なっただけかもしれない。**
+            // 探りはすぐ離すので、短く取り直す。先客が生きていれば (pid が居る) 待たずに断る
+            var waited = 0
+            while !locked, reason == EWOULDBLOCK, waited < contendedRetries, !holderIsAlive(lock) {
+                waited += 1
+                usleep(contendedPause)
+                locked = flock(opened, LOCK_EX | LOCK_NB) == 0
+                reason = locked ? 0 : errno
+            }
+            guard locked else {
                 close(opened)
                 // **先客が居るときだけ断る。** それ以外の失敗は確かめられないので、取れたことにする
                 guard reason == EWOULDBLOCK else { return WatchPlaceLock(descriptor: -1) }
@@ -89,6 +99,16 @@ nonisolated final class WatchPlaceLock {
         }
         // 取り直しても落ち着かない場所は、確かめられない
         return WatchPlaceLock(descriptor: -1)
+    }
+
+    /// 先客と読めるものを待たずに断るのをやめて、取り直す回数と間隔 (マイクロ秒)。合わせて 100 ms ほど。
+    private static let contendedRetries = 10
+    private static let contendedPause: useconds_t = 10_000
+
+    /// 錠ファイルに書かれた pid のプロセスが居るか。**書かれていない・読めないときは居ないと読む。**
+    private static func holderIsAlive(_ lock: URL) -> Bool {
+        guard let pid = holder(of: lock), pid > 0 else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
     }
 
     /// 開いている記述と、パスが指すファイルが同じか。パスが無ければ違う。
@@ -112,9 +132,10 @@ nonisolated final class WatchPlaceLock {
     /// 「起動できなかった」を答えてしまう。錠はプロセスの終わりにカーネルが外すので、`SIGKILL` で消えた
     /// 見張りは持っていないと読める (pid の生死を当てにしない)。
     ///
-    /// - **錠を取りに行かない。** 取ると、同じ瞬間に見張りを始めた `claim(under:)` を断らせうる。先に
-    ///   錠ファイルに書かれた pid が居なければ、錠に触れずに「持たれていない」と答える。居るときだけ、
-    ///   共有の錠を試して (すぐ離す)、断られれば持たれていると読む。
+    /// - **排他の錠は取らない。** 先に錠ファイルに書かれた pid が居なければ、錠に触れずに「持たれていない」と
+    ///   答える。居る (または読めない) ときだけ、**共有の錠を試して (すぐ離し)**、断られれば持たれていると読む。
+    ///   その一瞬に別の見張りが `claim(under:)` を打つと、`claim` は先客が居ないと読める間 (pid が無い・居ない)
+    ///   は短く取り直すので、実在しない先客で断らない。
     /// - **確かめられなければ、持たれていないと読む** (錠ファイルが無い・開けない・`flock` が使えない場所)。
     ///   窓口はそのとき、記録を使わず元の案内に倒れる。
     static func isHeld(under base: URL) -> Bool {
