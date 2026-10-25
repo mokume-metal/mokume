@@ -7,7 +7,7 @@ import Testing
 
 /// 再生位置の移り変わり (#1979)。純粋な型なので、機材も GPU も要らない。
 @Suite("再生位置")
-struct PlayheadTests {
+nonisolated struct PlayheadTests {
     /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓 (古い順)。止まっていれば全部 0。標本の決まりは
     /// ``Playhead/sample(at:in:)`` — 区間 (``Playhead/span(of:from:after:)``) と同じ。
     private func windowOf(_ head: Playhead, after played: Int, size: Int) -> [Float] {

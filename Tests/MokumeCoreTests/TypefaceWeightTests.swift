@@ -8,7 +8,7 @@ import Testing
 /// 太さの物差しと、面の選び方 (#2445)。**合成の材料で見る** — どの機械でも同じ答えを返し、
 /// CoreText にも GPU にも触れない (`styledFace` の検査と同じ作り)。
 @Suite("書体の太さの物差し")
-struct TypefaceWeightTests {
+nonisolated struct TypefaceWeightTests {
     @Test("CoreText の太さの印は、CSS の 100〜900 へ折れ線で写る", arguments: [
         (-0.8, 100.0), (-0.6, 200), (-0.4, 300), (0, 400), (0.23, 500), (0.3, 600), (0.4, 700),
         (0.56, 800), (0.62, 900),

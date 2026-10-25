@@ -95,6 +95,94 @@ nonisolated public enum WorkDirectory {
         facet.appendingPathComponent(".fell-back.\(pid)")
     }
 
+    /// 見張りが作り直しの結果を置く区画の名前。**綴りはここ 1 つ** — 書く側 (見張り) と、起動に
+    /// 失敗した子が理由を置く側 (``noteStartFailure(_:forProcess:under:)``) が別のプロセスである。
+    package static let buildFacetName = "build"
+
+    /// 区画 `build` の中の、**起動できなかった子が自分の理由を置く**ファイル
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// 子が自分の pid で置き、見張りは終わった子の pid のものを読んで消す。**中身は理由の全文 (UTF-8 の
+    /// 文字列) で、JSON ではない** (`Schemas/` に仕様は無い・``fellBackURL(forProcess:under:)`` と同じ)。
+    /// pid を名前に持つので、前の子の理由を次の子のものと取り違えず、時計も要らない。点で始めるのは
+    /// 記録 (`status.json`) と並んで読み手の目に入らないため。
+    ///
+    /// **子の標準エラーを親が読み解く形は取らない。** 理由は子が自分で渡す。
+    package static func startFailureURL(forProcess pid: Int32, under facet: URL) -> URL {
+        facet.appendingPathComponent(".start-failure.\(pid)")
+    }
+
+    /// 起動できなかった理由 (全文) を、見張りの区画 `build` へ置く。
+    ///
+    /// **置くのは、見張りに起こされた子だけである。** 見張りの外の実行 (`mokume run`・`render`・手で起こした
+    /// 子) が前の見張りの残した区画に置くと、読む者も掃く者も居ないファイルが溜まる。起こし方は
+    /// ``SharedFrameSurface/launchOwner`` (`MOKUME_VIEWPORT_OWNER`) が伝える — 見張りは窓の有る無しに
+    /// よらず子へ渡す。
+    ///
+    /// **区画が既に在るときだけ置く。** `build` は見張りが子を起こす前に作るもので、子が作ると、無い場所に
+    /// 区画を生やすことになる (区画の有無は他の区画では「効かせる」印である・ADR-0018 決定 2)。
+    /// 書けない場所では黙って諦める — 理由は標準エラーに出ている。
+    ///
+    /// - Parameters:
+    ///   - text: 理由の全文。
+    ///   - base: 区画の基準。検査から差し替える。
+    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。** 検査から渡す。
+    package static func noteStartFailure(
+        _ text: String, forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base, owner: String?
+    ) {
+        guard owner != nil else { return }
+        let facet = facet(buildFacetName, under: base)
+        guard directoryExists(at: facet) else { return }
+        try? Data(text.utf8).write(
+            to: startFailureURL(forProcess: pid, under: facet), options: .atomic)
+    }
+
+    /// 区画 `build` の中の、**まだ最初の絵を出していない子**の印
+    /// ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+    ///
+    /// 子が `Sketch.main()` の頭で自分の pid で置き (``markStarting(forProcess:under:owner:)``)、最初の絵を出したら消す。見張りも、読んだ子の印は消す。**中身は空で、在ることが知らせである**
+    /// (JSON ではない・``fellBackURL(forProcess:under:)`` と同じ)。見張りは終わった子の印が残っていれば、その子は
+    /// 最初の絵を出す前に終わったと読む — 台 (道具の窓) が最初の絵を知らせてくれない、窓の無い見張りと自分の窓に
+    /// 倒れた子のための合図である。
+    ///
+    /// **「出した」ではなく「まだ出していない」を運ぶ。** 道具と別の版のライブラリで組まれた子は印を置かない。
+    /// 「出した」を要求すると、そういう子が長く走った後に落ちても「起動できなかった」と言い切ってしまう。
+    /// 印を置かない子は今までどおり読まれる。
+    ///
+    /// **綴りはここ 1 箇所** (置く側の子と見る側の見張りが別のプロセス)。
+    package static func startingURL(forProcess pid: Int32, under facet: URL) -> URL {
+        facet.appendingPathComponent(".starting.\(pid)")
+    }
+
+    /// このプロセスが起動中であることを、見張りの区画 `build` に置く。
+    ///
+    /// **置くのは、見張りに起こされた子だけで、区画が既に在るときだけである** (``noteStartFailure(_:forProcess:under:owner:)``
+    /// と同じ規則)。書けなければ黙って諦める — 印が無い子は今までどおり読まれる。
+    ///
+    /// - Parameters:
+    ///   - base: 区画の基準。検査から差し替える。
+    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。**
+    package static func markStarting(
+        forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base, owner: String?
+    ) {
+        guard owner != nil else { return }
+        let facet = facet(buildFacetName, under: base)
+        guard directoryExists(at: facet) else { return }
+        _ = FileManager.default.createFile(
+            atPath: startingURL(forProcess: pid, under: facet).path, contents: Data())
+    }
+
+    /// 最初の絵を出したので、起動中の印を消す。**印が無ければ何もしない。**
+    package static func clearStarting(
+        forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base
+    ) {
+        let url = startingURL(forProcess: pid, under: facet(buildFacetName, under: base))
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// その場所がディレクトリとして在るか。
     ///
     /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の

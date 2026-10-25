@@ -10,7 +10,7 @@ import Testing
 /// 型なので、GPU も音の流れも要らない。値の確かめ方は、解析 (``AudioAnalysis``) を通して周波数の
 /// 側から見るものと、標本の値そのものを見るものに分ける。
 @Suite("合成の素")
-struct SynthKernelTests {
+nonisolated struct SynthKernelTests {
     private static let rate = 48_000.0
 
     /// 周波数 `frequency` の波形を `count` 標本作る (位相は 0 から)。

@@ -15,7 +15,7 @@ import simd
 ///
 /// [#2655]: https://github.com/mokume-metal/mokume/issues/2655
 @Suite("T 字に触れる穴の塗り")
-struct TJunctionHolesTests {
+nonisolated struct TJunctionHolesTests {
     nonisolated static let outer: [SIMD2<Float>] = [
         SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200),
     ]

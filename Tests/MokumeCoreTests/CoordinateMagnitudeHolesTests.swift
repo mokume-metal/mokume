@@ -10,7 +10,7 @@ import simd
 ///
 /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
 @Suite("座標の桁が大きい穴の塗り")
-struct CoordinateMagnitudeHolesTests {
+nonisolated struct CoordinateMagnitudeHolesTests {
     /// 座標の写し方。`x * scale + offset` を縦横とも同じに掛ける。
     nonisolated struct Mapping: CustomTestStringConvertible, Sendable {
         var name: String

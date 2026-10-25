@@ -71,7 +71,7 @@ nonisolated enum Wire {
 /// 当たったら、そこから後ろを捨て、読めたものだけを返す。推して読み進めて、ずれた位置から
 /// 間違った値を出してはいけない。
 @Suite("OSC の読み書き")
-struct OSCCodecTests {
+nonisolated struct OSCCodecTests {
     // MARK: - 書いた形が仕様どおりか
 
     @Test("小数 1 つのメッセージは、仕様の並びのバイト列になる")
