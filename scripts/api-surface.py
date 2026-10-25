@@ -1232,7 +1232,7 @@ def check_vector_ports(
         if calls >= wanted:
             continue
         problems.append(
-            f"{base} は図形の口なのに、SVG の書き出しの検査 ({VECTOR_TEST.name}) の呼び出しが {calls} 本で、"
+            f"{base} は図形や画素を置く口なのに、SVG の書き出しの検査 ({VECTOR_TEST.name}) の呼び出しが {calls} 本で、"
             f"多重定義 {wanted} 本に足りない。控えるか名指しで落とすかを選び、検査に行を足す。"
             "書き出さない口なら VECTOR_EXEMPT へ理由つきで (ADR-0023 の改訂 (2026-10-23)・#3139)"
         )
