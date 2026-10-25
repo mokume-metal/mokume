@@ -678,7 +678,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 2, log: log
+            within: 10, patience: 0.1, log: log
         ) { warn in
             made += 1
             // 最初の送り元は、送れないと名乗って何も出さない
@@ -705,7 +705,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 4, log: log
+            within: 20, patience: 10, log: log
         ) { warn in
             made += 1
             return ScriptedSender(raw: raw, port: port, complaint: warn)
@@ -768,7 +768,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 3, to: udp, senders: &senders,
-            within: 1.2, log: log
+            within: 3, patience: 0.05, log: log
         ) { warn in
             made += 1
             return ScriptedSender(
@@ -780,7 +780,7 @@ struct UDPPortTests {
             try await requireReceived(received, expecting: 3, log: log, udp: udp, port: port, told: told)
         }
         #expect(text.contains("3 通のうち読めたのは 2 通"), "名乗り: \(text)")
-        #expect(text.contains("期限 1.2 秒"), "名乗り: \(text)")
+        #expect(text.contains("期限 3.0 秒"), "名乗り: \(text)")
         // 受け口: 状態・移り変わり・受け入れた数・黙りで閉じた数・終わって外れた数・いま持つ数 (受け入れた送り元は 1 つ)
         #expect(text.contains("受け口 (1 通の前): running") && text.contains("移り変わり "), "名乗り: \(text)")
         #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")

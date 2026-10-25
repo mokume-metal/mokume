@@ -284,7 +284,7 @@ func requireCounted(
 /// 繋ぎに行く側 `client` (``TCPClient``・``WebSocketClient``) を、受け口 `server` が `count` 人として数えるのを、
 /// 期限まで待つ。数えなければ、**両側の様子を名乗って 1 つで止まる** (``requireCounted(_:count:within:told:what:others:)``・#3104)。
 ///
-/// `PeerGroup.reach(on:told:replacements:within:)` (#2940) は検査の側の相手 (``LoopbackPeer``) を束ねる。
+/// `PeerGroup.reach(on:told:replacements:within:patience:endsAtLimit:)` (#2940) は検査の側の相手 (``LoopbackPeer``) を束ねる。
 /// こちらは繋ぎに行くのが製品の ``ClientSource`` で、検査が `retryAfter` (0.05 秒)・`connectTimeout`
 /// (0.3 秒) を縮めている (`StreamClientTests`)。**繋ぎ直しは、その縮めた既定のもの以外を足さない。**
 ///
@@ -372,7 +372,7 @@ nonisolated extension NWConnection.State {
 /// 待ちの上限が 10 秒なのは、以前の `clients(_, reach:)` の 5 秒に、替える分の猶予 (3 回 × 約 2.5 秒) を
 /// 載せるため。5 秒のままでは、1 回替えて新しい相手の繋ぎを待つ時間が残らない。
 ///
-/// 相手は ``subscript(_:)`` で読む。**``reach(on:told:replacements:within:)`` の後に読む** — 替えると
+/// 相手は ``subscript(_:)`` で読む。**``reach(on:told:replacements:within:patience:endsAtLimit:)`` の後に読む** — 替えると
 /// 同じ番号の相手が別のものになる。
 final class PeerGroup<Peer: LoopbackPeer> {
     private(set) var peers: [Peer]
@@ -402,6 +402,8 @@ final class PeerGroup<Peer: LoopbackPeer> {
     /// - Parameters:
     ///   - patience: 替えるまでの猶予。省略は `within` を替える回数 + 1 で割った間。
     ///   - endsAtLimit: 繋がっていない相手がみな上限まで替えられ、さらに猶予が過ぎたら、期限を待たずに名乗る。
+    ///     **繋ぎに時間のかかる本物の相手 (``StreamClient`` など) に短い `patience` と一緒に使うと、遅れて繋がる
+    ///     最後の 1 人を猶予で打ち切る。** 作り物の相手 (状態が決まっている) の、上限を見る検査のための口。
     func reach(
         on server: TextPort, told: Told? = nil, replacements: Int = 3, within seconds: TimeInterval = 10,
         patience explicitPatience: TimeInterval? = nil, endsAtLimit: Bool = false
@@ -410,7 +412,8 @@ final class PeerGroup<Peer: LoopbackPeer> {
         let patience = explicitPatience ?? seconds / Double(replacements + 1)
         var attempts = [Int](repeating: 1, count: expected)
         var since = [Date](repeating: Date(), count: expected)
-        let deadline = Date().addingTimeInterval(seconds)
+        let started = Date()
+        let deadline = started.addingTimeInterval(seconds)
         while Date() < deadline {
             server.supply()
             if server.connected == expected, peers.allSatisfy(\.isReady) { return }
@@ -443,7 +446,7 @@ final class PeerGroup<Peer: LoopbackPeer> {
         let lines = told.map { "\($0.lines)" } ?? "知らせを持たない"
         try #require(
             counted == expected && ready,
-            "\(expected) 人のうち、受け口が数えたのは \(counted) 人 (受け口の状態: \(server.state)\(traceText(server.source))・替えたのは \(replaced) 回・期限 \(seconds) 秒)。相手の様子: \(statesText)。同じ told の全行: \(lines)"
+            "\(expected) 人のうち、受け口が数えたのは \(counted) 人 (受け口の状態: \(server.state)\(traceText(server.source))・替えたのは \(replaced) 回・待った \(String(format: "%.1f", Date().timeIntervalSince(started))) 秒/期限 \(seconds) 秒)。相手の様子: \(statesText)。同じ told の全行: \(lines)"
         )
     }
 
@@ -648,7 +651,7 @@ func landing(
         })
 }
 
-/// 送り手の様子を数える記録 (#3001)。送り元の補助 (``sendAndCollect(_:expecting:to:senders:replacements:within:label:log:makeSender:)``・
+/// 送り手の様子を数える記録 (#3001)。送り元の補助 (``sendAndCollect(_:expecting:to:senders:replacements:within:patience:endsAtLimit:label:log:makeSender:)``・
 /// `OSCPortTests` の `sendNumberedBurst`・``collect(_:count:within:label:log:)``) が、前提の段で見たことを足す。
 ///
 /// 補助は読まれなかった番号があっても、期限で読まれた分だけを返す (救わない・期限を延ばさない)。
@@ -982,6 +985,8 @@ func requireRawArrival(
 /// - Parameters:
 ///   - patience: 替えるまでの猶予。省略は `within` を替える回数 + 1 で割った間。
 ///   - endsAtLimit: 上限まで替えた後、さらに猶予が過ぎても替えたくなる状態なら、期限を待たずに返る。
+///     **遅れて読まれる本物の送り元に短い `patience` と一緒に使うと、読まれる前に打ち切る。** 作り物の送り元
+///     (名乗って出さない) の、上限を見る検査のための口。
 func sendAndCollect(
     _ datagrams: [[UInt8]], expecting count: Int, to port: TextPort,
     senders: inout [any DatagramSending], replacements: Int = 3, within seconds: TimeInterval = 10,
