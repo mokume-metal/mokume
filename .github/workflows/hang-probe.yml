@@ -1,0 +1,36 @@
+# 使い捨て (#3199 の固まりの切り分け)。merge しない
+name: Hang probe
+on:
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift build --build-tests 2>&1 | tail -3
+      - name: ターゲットごとに幅 8 で走らせ、固まったら stack を取る
+        run: |
+          for t in FrameRateProbeTests MokumeGamepadTests MokumeAudioTests MokumeCameraTests MokumeNetworkTests MokumeCLITests MokumeCoreTests ALL; do
+            filter=$t; [ "$t" = ALL ] && filter='.'
+            echo "::group::$t"
+            SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=8 swift test --skip-build --filter "$filter" > "log-$t.txt" 2>&1 &
+            pid=$!
+            begin=$SECONDS; end=$((SECONDS + 600))
+            until ! kill -0 $pid 2>/dev/null || [ "$SECONDS" -ge "$end" ]; do sleep 5; done
+            if kill -0 $pid 2>/dev/null; then
+              echo "HANG $t after 600s"
+              tail -5 "log-$t.txt"
+              for p in $(pgrep -f 'swiftpm-testing-helper|\.xctest'); do echo "--- sample $p"; sample $p 3 2>/dev/null | grep -vE '^\s*$' | head -400; done
+              pkill -f 'swiftpm-testing-helper|\.xctest'; kill $pid 2>/dev/null; wait $pid 2>/dev/null
+            else
+              wait $pid; echo "DONE $t exit $? in $((SECONDS - begin))s: $(grep -oE 'Test run with [0-9]+ tests.*after [0-9.]+ seconds' log-$t.txt | tail -1)"
+            fi
+            echo "::endgroup::"
+          done

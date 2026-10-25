@@ -93,6 +93,7 @@ jobs:
   # 1 本ずつ走る。8 にするのは、同期の検査が Swift の協調プール (コア数) で頭打ちになり、幅が
   # 効くのは待つ検査がどれだけ重なるかの上限だから。専用機の render は 1 のまま
   ci-check:
+    if: false
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
