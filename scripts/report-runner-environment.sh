@@ -30,8 +30,15 @@ set -euo pipefail
 # 接頭辞が `fix(` なので triage.sh が Bug を付ける — 動いていたものが止まった事象である
 readonly TITLE="fix(render): 専用機の環境が壊れていて、merge queue の render が前検査で落ちている"
 
+# 引数を理由の値として読んで起票まで進む入口なので、`-` で始まる値 (慣習の `--help` や
+# `-h`) を理由として読まない。読むと verify: triaged つきの偽の障害 Issue が立つ (#3047)。
+# runner-preflight.sh が書く理由は `<名前>: …` で始まり、`-` では始まらない
 [ $# -eq 1 ] && [ -n "$1" ] || {
   echo "使い方: report-runner-environment.sh <前検査の理由>" >&2
+  exit 64
+}
+[[ "$1" != -* ]] || {
+  echo "使い方: report-runner-environment.sh <前検査の理由> (- で始まる値は理由として読まない: $1)" >&2
   exit 64
 }
 REASON="$1"

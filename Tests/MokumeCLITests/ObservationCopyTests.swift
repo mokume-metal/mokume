@@ -232,6 +232,35 @@ struct ObservationCopyTests {
         #expect(outcome.text.contains("until the next request"), "次の要求までと言わない: \(outcome.text)")
     }
 
+    /// 写せなかった事情は、下に POSIX の失敗があれば OS の文面で名乗る (#3211・#2839)。
+    /// `localizedDescription` は言語の設定に左右され、Cocoa の失敗なら「ファイルを保存できませんでした」とだけ言う。
+    @Test("写せなかった事情は、下に POSIX の失敗があれば Foundation の説明ではなく OS の文面で名乗る")
+    func aFailedCopyIsNamedInCWords() throws {
+        let place = makePlace()
+        defer { try? FileManager.default.removeItem(at: place.directory) }
+        stage(place, pictures: [("frame-000.png", "X")])
+        place.copies.copyItem = { _, _ in
+            throw NSError(
+                domain: NSCocoaErrorDomain, code: CocoaError.fileWriteUnknown.rawValue,
+                userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC))])
+        }
+        let outcome = place.copies.copy(names: ["frame-000.png"], from: place.facet, id: "H")
+        guard case .failed(let reason) = outcome else {
+            Issue.record("写せなかったのに、写せたと言う: \(outcome)")
+            return
+        }
+        #expect(reason == "No space left on device", Comment(rawValue: reason))
+
+        // 窓口の応答では、前置きは外側の 1 つだけ (内側も持つと二重に出る)
+        let answer = place.tools.call("observe", arguments: [:])
+        #expect(
+            answer.text.contains("The picture could not be copied (No space left on device)"),
+            Comment(rawValue: answer.text))
+        #expect(
+            answer.text.lowercased().components(separatedBy: "could not be copied").count == 2,
+            "前置きが二重に出る: \(answer.text)")
+    }
+
     @Test("区画の外へ抜ける絵の名前は写さず、区画の場所と次の要求までと返す")
     func aNameThatLeavesTheFacetIsNotCopied() throws {
         let place = makePlace()

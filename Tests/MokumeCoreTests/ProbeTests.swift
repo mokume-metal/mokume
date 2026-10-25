@@ -116,54 +116,12 @@ struct ProbeTests {
         let misnamed = Probe.run("density", suite: "ProbeTests", key: "a", axes: Self.axes, cases: 5, environment: Self.quiet) { _ in .pass }
         #expect(try #require(misnamed.failure).contains("表では提案 probe"))
     }
-}
 
-/// 帰属の表 `Tests/probe-catalog.tsv` と、木の中の検査が食い違わない (#3207 の K2)。
-@Suite("帰属の表の行の suite は Tests/ に在り、Probe.run を呼ぶ suite はすべて表に載っている")
-struct ProbeCatalogTests {
-    /// `Tests/` の Swift の原文 (MokumeProbe 自身は除く)。
-    private static func testSources() throws -> [(path: String, text: String)] {
-        let root = ProbeCatalog.url.deletingLastPathComponent()
-        let walker = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
-        var out: [(String, String)] = []
-        for case let file as URL in walker
-        where file.pathExtension == "swift" && !file.path.contains("/MokumeProbe/") {
-            out.append((file.path, try String(contentsOf: file, encoding: .utf8)))
-        }
-        return out
-    }
-
-    @Test("表の書式が崩れていない")
-    func catalogParses() throws {
-        let rows = try ProbeCatalog.entries()
-        #expect(!rows.isEmpty)
-        #expect(Set(rows.map(\.suite)).count == rows.count, "同じ suite が 2 行ある")
+    /// 表と木の整合 (行の suite の有無・呼び出し元の載せ忘れ) は scripts/tests/probe_catalog_test.py が
+    /// 見る。ここで見るのは、実行時に表を読む Swift の読み手が崩れた行を黙って飛ばさないこと。
+    @Test("帰属の表の読み手は、この木の表を読め、崩れた行は読めないと投げる")
+    func catalogReaderRefusesBrokenRows() throws {
+        #expect(try ProbeCatalog.entries().contains { $0.suite == "ProbeTests" && $0.name == "probe" })
         #expect(throws: ProbeCatalog.CatalogError.self) { _ = try ProbeCatalog.entries(text: "A\tdensity\n") }
-    }
-
-    @Test("表の行の suite が Tests/ の中に型として在る")
-    func everyRowHasASuite() throws {
-        let sources = try Self.testSources().map(\.text).joined(separator: "\n")
-        for row in try ProbeCatalog.entries() {
-            let declared = ["struct", "final class", "class", "enum"].contains { sources.contains("\($0) \(row.suite) ") || sources.contains("\($0) \(row.suite){") }
-            #expect(declared, "\(row.suite) は表に在るが Tests/ に無い")
-        }
-    }
-
-    @Test("Probe.run に渡す suite の名がすべて表に載っている")
-    func everyCallerIsListed() throws {
-        let listed = Set(try ProbeCatalog.entries().map(\.suite))
-        let pattern = try Regex(#"Probe\.run\([^)]*?suite:\s*"([^"]+)""#)
-        var callers = 0
-        for (path, text) in try Self.testSources() {
-            for match in text.matches(of: pattern) {
-                guard let name = match.output[1].substring.map(String.init) else { continue }
-                // 自己の検査が断られる形を見るための名前
-                if name == "NotInTheCatalog" { continue }
-                callers += 1
-                #expect(listed.contains(name), "\(URL(fileURLWithPath: path).lastPathComponent) が表に無い suite \(name) で Probe.run を呼ぶ")
-            }
-        }
-        #expect(callers > 0, "Probe.run の呼び出しを 1 つも見つけられない (読み方が崩れている)")
     }
 }

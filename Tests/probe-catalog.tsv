@@ -1,9 +1,15 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# 帰属の表 (#3207 の K2)。生成の仕組み (Tests/MokumeProbe) を使う suite を 1 行ずつ載せる。
-# 列はタブ区切り: suite の型名 / 提案の名 (赤の文面の [名 seed=…] と同じ) / sub-issue の番号。
-# 提案の名: density・coverage・watch・network・parse・mutation (#3207 の提案 1〜6)、probe は道具の自己の検査。
-# 行の suite が Tests/ に無い・Probe.run を呼ぶ suite が表に無い、のどちらも ProbeCatalogTests が赤にする。
+# 約束を書いて探させる検査の帰属の表 (#3207 の K2)。足した suite を 1 行ずつ載せ、どの提案の
+# どの sub-issue から来たかを引く。提案 6 (#3221) の道具は、この表で「殺した検査 → 提案」を
+# 1 回の実行の記録 (xunit) から引く。
+#
+# 列はタブ区切りで、suite の型名・提案の名・sub-issue の番号。提案の名は赤の文面の
+# [名 seed=…] と同じで、density・coverage・watch・network・parse・mutation (#3207 の提案 1〜6)、
+# probe は生成器 (Tests/MokumeProbe) の自己の検査。整合は scripts/tests/probe_catalog_test.py が
+# 見る (行の suite が Tests/ に無い・生成器を使う suite が表に無い、のどちらでも赤)。表に無い
+# suite から Probe.run を呼ぶと、実行時にも述語を回す前に赤になる (Tests/MokumeProbe/ProbeCatalog.swift)。
+DatagramListenerFakeTests	network	3219
 DensityInvarianceTests	density	3216
 ProbeTests	probe	3216

@@ -34,6 +34,62 @@ nonisolated enum Datagram {
     static func fits(_ count: Int) -> Bool { count < sizeLimit }
 }
 
+/// UDP の受け口が送り元ごとに持つ流れ (既定は `NWConnection`)。``DatagramListener`` が触るのは
+/// この 4 つだけで、検査は疑似の流れを差し出して、受けの順序と時刻を自分で決める (#3219)。
+nonisolated protocol DatagramFlow: AnyObject, Sendable {
+    /// 送り元の名乗り (`127.0.0.1:51234`)。診断に出す。
+    var sender: String { get }
+    /// 始める。失敗・取り消しで終わったら `ended` を呼ぶ。どちらも `queue` の上で。
+    func start(queue: DispatchQueue, ended: @escaping @Sendable () -> Void)
+    /// datagram を 1 つ待つ。返るのは中身 (空の datagram は `nil`)・流れの終わりを名乗ったか・失敗したか。
+    func receive(_ completion: @escaping @Sendable (_ content: Data?, _ isFinal: Bool, _ failed: Bool) -> Void)
+    /// 閉じる。待っている受けは `content == nil`・失敗なしで返る (Network.framework の実測の形)。
+    func cancel()
+}
+
+nonisolated extension NWConnection: DatagramFlow {
+    var sender: String { DatagramListener.describe(endpoint) }
+
+    func start(queue: DispatchQueue, ended: @escaping @Sendable () -> Void) {
+        stateUpdateHandler = { state in
+            switch state {
+            case .failed, .cancelled:
+                ended()
+            default:
+                break
+            }
+        }
+        start(queue: queue)
+    }
+
+    func receive(_ completion: @escaping @Sendable (_ content: Data?, _ isFinal: Bool, _ failed: Bool) -> Void) {
+        receiveMessage { content, context, _, error in
+            completion(content, context?.isFinal == true, error != nil)
+        }
+    }
+}
+
+/// UDP の受け口 (既定は ``PortListener``)。開く・開き直す・移り変わりを知らせるのは受け口の側で、
+/// 受け入れた流れを ``DatagramListener`` へ渡す (#3219)。
+nonisolated protocol DatagramAccepting: AnyObject, Sendable {
+    /// 頼んだポート。0 なら OS が空いている番号を選ぶ。
+    var port: Int { get }
+    /// 受けるアドレス。`nil` ならすべての口。
+    var host: String? { get }
+    /// 失敗したとき、何秒後に開き直すか。
+    var retryAfter: TimeInterval { get }
+    /// 開き始める。待たずに返る。受け入れた流れは `accepting` へ、持ち主の待ち行列の上で渡す。
+    func startAccepting(_ accepting: @escaping @Sendable (any DatagramFlow) -> Void)
+    /// 閉じる。**持ち主の待ち行列の上で呼ぶ。** 以後は開き直さない。
+    func cancel()
+}
+
+nonisolated extension PortListener: DatagramAccepting {
+    func startAccepting(_ accepting: @escaping @Sendable (any DatagramFlow) -> Void) {
+        start { connection in accepting(connection) }
+    }
+}
+
 /// UDP のポートを 1 つ開いて、届いた datagram を 1 つずつ渡す。
 ///
 /// **ポートが使えなくても投げない。** 開く・使用中を見分ける・開き直すのは ``PortListener`` の
@@ -45,6 +101,22 @@ nonisolated final class DatagramListener: @unchecked Sendable {
 
     /// 受け口の移り変わり。
     typealias Event = PortListener.Event
+
+    /// 受け口を作る手続き。持ち主の待ち行列・移り変わりの知らせ・受け口が失敗して閉じた知らせを受け取る。
+    /// 既定 (``portListener(port:host:retryAfter:)``) は本物のポートを開く。検査は疑似の受け口を返す (#3219)。
+    typealias Acceptor = @Sendable (
+        _ queue: DispatchQueue, _ changed: @escaping @Sendable (Event) -> Void,
+        _ closed: @escaping @Sendable () -> Void
+    ) -> any DatagramAccepting
+
+    /// 本物の UDP のポートを開く受け口。
+    static func portListener(port: Int, host: String?, retryAfter: TimeInterval) -> Acceptor {
+        { queue, changed, closed in
+            PortListener(
+                port: port, host: host, retryAfter: retryAfter, queue: queue, parameters: { .udp },
+                changed: changed, closed: closed)
+        }
+    }
 
     /// 頼んだポート。0 なら OS が空いている番号を選ぶ。
     var port: Int { opener.port }
@@ -87,9 +159,9 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     /// 空で流れが閉じたと知らせた送り元 (``closedByEmpty``)。同じ送り元には 2 度言わない。
     private var toldEmptyClosed = EmptyClosedSenders(limit: DatagramListener.emptyClosedLimit)
     /// 受け口。閉じたときの知らせに自分を渡すので、他をすべて決めた後に作る。
-    private var opener: PortListener!
+    private var opener: (any DatagramAccepting)!
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
-    private var ledger: SenderLedger<NWConnection>
+    private var ledger: SenderLedger<any DatagramFlow>
     private var stopped = false
 
     /// - Parameters:
@@ -104,33 +176,33 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///     (`127.0.0.1:51234`) で呼ぶ。**同じ送り元には 1 度だけ** (覚える数は ``emptyClosedLimit``)。
     ///     ``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
+    ///   - acceptor: 受け口を作る手続き。`nil` なら本物のポートを開く (``portListener(port:host:retryAfter:)``)。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = systemClock,
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
         closedByEmpty: @escaping @Sendable (String) -> Void = { _ in },
-        changed: @escaping @Sendable (Event) -> Void
+        changed: @escaping @Sendable (Event) -> Void,
+        acceptor: Acceptor? = nil
     ) {
         self.idleAfter = idleAfter
         self.now = now
         self.received = received
         self.closedByEmpty = closedByEmpty
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
-        opener = PortListener(
-            port: port, host: host, retryAfter: retryAfter, queue: queue,
-            parameters: { .udp }, changed: changed,
-            closed: { [weak self] in self?.listenerClosed() })
+        let make = acceptor ?? Self.portListener(port: port, host: host, retryAfter: retryAfter)
+        opener = make(queue, changed, { [weak self] in self?.listenerClosed() })
     }
 
     /// 開き始める。待たずに返る。
     func start() {
-        opener.start { [weak self] connection in
+        opener.startAccepting { [weak self] flow in
             guard let self else {
-                connection.cancel()
+                flow.cancel()
                 return
             }
-            accept(connection)
+            accept(flow)
         }
     }
 
@@ -168,33 +240,26 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         for connection in ledger.removeAll() { connection.cancel() }
     }
 
-    private func accept(_ connection: NWConnection) {
+    private func accept(_ connection: any DatagramFlow) {
         guard !stopped else {
             connection.cancel()
             return
         }
         for idle in ledger.admit(connection, at: now()) { idle.cancel() }
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
+        connection.start(queue: queue) { [weak self, weak connection] in
             guard let self, let connection else { return }
-            switch state {
-            case .failed, .cancelled:
-                ledger.ended(connection)
-            default:
-                break
-            }
+            ledger.ended(connection)
         }
-        connection.start(queue: queue)
         receive(on: connection)
     }
 
     /// 送り元の繋ぎから、datagram を 1 つずつ読み続ける。扱いは ``completion(content:isFinal:failed:held:)``。
-    private func receive(on connection: NWConnection) {
-        connection.receiveMessage { [weak self, weak connection] content, context, _, error in
+    private func receive(on connection: any DatagramFlow) {
+        connection.receive { [weak self, weak connection] content, isFinal, failed in
             let hostTime = mach_absolute_time()
             guard let self, let connection, !stopped else { return }
             let completion = Self.completion(
-                content: content, isFinal: context?.isFinal == true, failed: error != nil,
-                held: ledger.holds(connection))
+                content: content, isFinal: isFinal, failed: failed, held: ledger.holds(connection))
             switch completion {
             case .ended:
                 connection.cancel()
@@ -212,7 +277,7 @@ nonisolated final class DatagramListener: @unchecked Sendable {
             // 空の直後に同じ送り元から届いたものは、Network.framework が捨てうる (#2363)。
             // 何が落ちたかは見えないので、流れが閉じたことを送り元ごとに 1 度だけ言う
             if completion.closesFlowOnEmpty {
-                let sender = Self.describe(connection.endpoint)
+                let sender = connection.sender
                 if toldEmptyClosed.insert(sender) { closedByEmpty(sender) }
             }
         }
@@ -312,7 +377,10 @@ nonisolated struct SenderTally: Sendable, Equatable {
 /// 閉じてよい送り元を決める。
 ///
 /// 繋ぎの型に依らない値で、時刻は呼ぶ側が渡す。検査は繋ぎも時計も無しに、閉じる判断を回せる。
-nonisolated struct SenderLedger<Sender: AnyObject> {
+/// 送り元は参照の同一性で見分ける。`Sender: AnyObject` で縛らないのは、受け口が持つ送り元が
+/// クラスに縛った protocol の存在型 (`any DatagramFlow`) で、Swift はそれを `AnyObject` の制約に
+/// 当てはめないからである (#3219)。
+nonisolated struct SenderLedger<Sender> {
     /// 数の目安 (``DatagramListener/connectionLimit``)。
     let limit: Int
     /// 何秒黙っていた送り元を、閉じてよいとするか。
@@ -350,19 +418,19 @@ nonisolated struct SenderLedger<Sender: AnyObject> {
 
     /// 送り元を持っているか。黙りで閉じた・失敗や取り消しで外れた・受け口ごと閉じた後は偽。
     func holds(_ sender: Sender) -> Bool {
-        entries.contains { $0.sender === sender }
+        entries.contains { Self.same($0.sender, sender) }
     }
 
     /// 送り元から読んだ。
     mutating func heard(_ sender: Sender, at time: TimeInterval) {
-        guard let index = entries.firstIndex(where: { $0.sender === sender }) else { return }
+        guard let index = entries.firstIndex(where: { Self.same($0.sender, sender) }) else { return }
         entries[index].heard = time
     }
 
     /// 失敗・取り消しで終わった送り元を外す。台帳に居なければ (黙りで閉じた後・受け口ごと
     /// 閉じた後なら) 何もしない。
     mutating func ended(_ sender: Sender) {
-        guard let index = entries.firstIndex(where: { $0.sender === sender }) else { return }
+        guard let index = entries.firstIndex(where: { Self.same($0.sender, sender) }) else { return }
         entries.remove(at: index)
         tally.ended += 1
     }
@@ -371,6 +439,11 @@ nonisolated struct SenderLedger<Sender: AnyObject> {
     mutating func removeAll() -> [Sender] {
         defer { entries.removeAll() }
         return entries.map(\.sender)
+    }
+
+    /// 同じ送り元か。送り元はクラスの値なので、参照で比べる。
+    private static func same(_ lhs: Sender, _ rhs: Sender) -> Bool {
+        (lhs as AnyObject) === (rhs as AnyObject)
     }
 }
 

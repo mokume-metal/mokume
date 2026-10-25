@@ -18,11 +18,12 @@ extension DatagramSource where Message == OSCMessage {
         port: Int, host: String? = nil, retryAfter: TimeInterval = defaultRetry,
         idleAfter: TimeInterval = DatagramListener.defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
+        acceptor: DatagramListener.Acceptor? = nil,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.init(
             label: "OSC", port: port, host: host, retryAfter: retryAfter, idleAfter: idleAfter,
-            now: now,
+            now: now, acceptor: acceptor,
             decode: { bytes in
                 let decoded = OSCCodec.decode(bytes)
                 return (decoded.messages, decoded.readable ? 0 : 1)

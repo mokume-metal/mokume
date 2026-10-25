@@ -7,7 +7,7 @@ import Foundation
 ///
 /// 1 行が 1 つの suite で、列はタブ区切りの `suite の型名`・`提案の名`・`sub-issue の番号`。`#` で
 /// 始まる行と空行は読まない。生成の仕組み (``Probe``) を使う suite は、ここに載っていなければ
-/// 述語を回す前に赤になる。逆向き (表の行の suite が `Tests/` に無い) は `ProbeCatalogTests` が見る。
+/// 述語を回す前に赤になる。表と木の整合は `scripts/tests/probe_catalog_test.py` が見る。
 ///
 /// 表は木の中のテキストで、検査のプロセスはこのファイルの場所 (`#filePath`) から読む
 /// (`SceneLedgerTests` の台帳と同じ読み方)。

@@ -77,27 +77,6 @@ struct UDPPortTests {
         #expect(udp.messages.isEmpty)
     }
 
-    @Test("UTF-8 として読めない datagram は捨てて数え、前後の datagram は届く")
-    func unreadableIsDiscardedAndCounted() async throws {
-        let told = Told()
-        let (udp, port) = try await listening(told: told)
-        defer { udp.close() }
-        var senders: [any DatagramSending] = []
-        defer { for sender in senders { sender.stop() } }
-
-        let log = SendLog()
-        let received = try await sendAndCollect(
-            [
-                Array("before".utf8),
-                [0x68, 0xFF, 0xFE, 0x0A],  // 'h' と、UTF-8 に現れないバイト
-                Array("after".utf8),
-            ], expecting: 2, to: udp, senders: &senders, log: log
-        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
-        try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port, told: told)
-        #expect(received == ["before", "after"])
-        #expect(udp.input.unreadable == 1)
-    }
-
     @Test("空の datagram は、Network.framework が送り元の流れの終わりと名乗っても空の文字列として届き、後から届いたものも受ける")
     func emptyDatagramIsAnEmptyString() async throws {
         let told = Told()
@@ -150,109 +129,6 @@ struct UDPPortTests {
         #expect(Listener.completion(content: Data([7]), isFinal: false, failed: true, held: true) == .ended)
     }
 
-    @Test("受け口が失敗して閉じたら、送り元を台帳から外して閉じ、待っていた受けを空のメッセージにしない")
-    func closedListenerDropsItsSenders() async throws {
-        let received = Mutex<[String]>([])
-        let bound = Mutex<Int?>(nil)
-        let events = Mutex<[String]>([])
-        let emptyClosed = Mutex<[String]>([])
-        let listener = DatagramListener(
-            port: 0, host: "127.0.0.1", retryAfter: 0.05,
-            received: { bytes, _ in received.withLock { $0.append(String(decoding: bytes, as: UTF8.self)) } },
-            closedByEmpty: { sender in emptyClosed.withLock { $0.append(sender) } },
-            changed: { event in
-                events.withLock { $0.append("\(event)") }
-                if case .ready(let port) = event { bound.withLock { $0 = port } }
-            })
-        listener.start()
-        defer { listener.stop() }
-        try await requireWait(
-            "受け口が ready にならなかった", detail: { "受けた移り変わり: \(events.withLock { $0 })" },
-            until: { bound.withLock { $0 } != nil })
-        let port = try #require(bound.withLock { $0 })
-        let peer = try RawDatagramSocket()
-        defer { peer.release() }
-
-        let direct = landing(
-            of: listener, port: port, events: { events.withLock { $0 } },
-            probeArrived: { received.withLock { $0.contains("probe") } })
-        #expect(peer.send(Array("a".utf8), to: port) == 1)
-        try await requireRawArrival(
-            "受け口が a を 1 通読まなかった (読めたもの: \(received.withLock { $0 }))", from: peer, landing: direct
-        ) { received.withLock { $0 } == ["a"] }
-        #expect(listener.connectionCount == 1)
-
-        // 受け口が失敗して閉じたときに PortListener が呼ぶ手続きを、受け口を本当に失敗させずに呼ぶ。
-        // 閉じた繋ぎの待っていた受けは、空の datagram と同じ形で返る
-        listener.onQueue { listener.listenerClosed() }
-        #expect(listener.connectionCount == 0)
-        // 閉じた流れが片付くのを待ってから送る。直後に送ると、b は閉じた繋ぎの待っていた受けで
-        // 届くことも、閉じかけの流れに入って届かないこともある (実測)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(peer.send(Array("b".utf8), to: port) == 1)
-        try await requireRawArrival(
-            "受け口を閉じて外した後の b を読まなかった (読めたもの: \(received.withLock { $0 }))", from: peer,
-            landing: direct
-        ) { received.withLock { $0.count } >= 2 }
-        #expect(received.withLock { $0 } == ["a", "b"])
-        // 外した繋ぎは閉じたので、b は新しい送り元として受け直している。外した数は ended に入れない
-        #expect(listener.tally.accepted == 2)
-        #expect(listener.tally.ended == 0)
-        // こちらが閉じた繋ぎなので、空の直後の落ちを名乗らない (#2363)
-        #expect(emptyClosed.withLock { $0 }.isEmpty)
-    }
-
-    /// 1 つの送り元から、流れができてから空を送って閉じ、閉じてから次を送る、の 1 周。空が閉じるのを
-    /// `tally.ended` で待つ (閉じる前に次を送ると、次が落ちうる)。
-    private func cycle(
-        _ index: Int, from peer: RawDatagramSocket, to port: Int, through udp: UDPPort,
-        source: DatagramSource<String>, endedBefore: Int, told: Told
-    ) async throws -> [String] {
-        #expect(peer.send(Array("x\(index)".utf8), to: port) == 2)
-        var received = try await heard(udp, count: 1, port: port, told: told, from: peer, "(x\(index))")
-        #expect(peer.send([], to: port) == 0)
-        received += try await heard(udp, count: 1, port: port, told: told, from: peer, "(x\(index) の後の空)")
-        try await requireWait(
-            "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
-            until: { source.tally.ended >= endedBefore + 1 })
-        return received
-    }
-
-    @Test("空で流れが閉じたら、落ちたかもしれないことを受け口と送り元つきで、送り元ごとに 1 度だけ診断に出す (#2363)")
-    func emptyClosedFlowIsToldOncePerSender() async throws {
-        let told = Told()
-        let (udp, port) = try await listening(told: told)
-        defer { udp.close() }
-        let source = try #require(udp.source as? DatagramSource<String>)
-        let peer = try RawDatagramSocket()
-        defer { peer.release() }
-        let other = try RawDatagramSocket()
-        defer { other.release() }
-
-        // 1 つの送り元から、空で流れが閉じるのを 3 度。空は messages に入り、診断は 1 度だけ
-        for index in 0..<3 {
-            let received = try await cycle(
-                index, from: peer, to: port, through: udp, source: source, endedBefore: index, told: told)
-            #expect(received == ["x\(index)", ""])
-        }
-        try await requireTold(
-            containing: "empty datagram", told: told, tracing: source) { udp.state }
-        #expect(told.lines.count == 1)
-        let first = try #require(told.lines.first)
-        #expect(first.hasPrefix("udp :\(port): an empty datagram from 127.0.0.1:\(peer.port) closed its flow"))
-        #expect(first.contains("may have been dropped"))
-
-        // 別の送り元は、その送り元について 1 度。もとの送り元はもう言わない
-        _ = try await cycle(0, from: other, to: port, through: udp, source: source, endedBefore: 3, told: told)
-        try await requireTold(
-            containing: "empty datagram", count: 2, told: told, tracing: source) { udp.state }
-        #expect(told.lines.count == 2)
-        #expect(told.lines.last?.contains("127.0.0.1:\(other.port)") == true)
-        _ = try await cycle(9, from: peer, to: port, through: udp, source: source, endedBefore: 4, told: told)
-        #expect(told.lines.count == 2)
-        #expect(udp.input.unreadable == 0)
-    }
-
     @Test("空を渡して流れを閉じる扱いだけが名乗る。終わりを名乗らない空・こちらが閉じた繋ぎ・失敗は名乗らない (#2363)")
     func onlyTheEmptyThatClosesTheFlowAnnounces() {
         typealias Listener = DatagramListener
@@ -289,27 +165,6 @@ struct UDPPortTests {
         var many = EmptyClosedSenders(limit: DatagramListener.emptyClosedLimit)
         for index in 0..<10_000 { _ = many.insert("s\(index)") }
         #expect(many.count == DatagramListener.emptyClosedLimit)
-    }
-
-    @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
-    func oversizedDatagramIsDiscardedAndCounted() async throws {
-        let told = Told()
-        let (udp, port) = try await listening(told: told)
-        defer { udp.close() }
-        let peer = try RawDatagramSocket()
-        defer { peer.release() }
-
-        // macOS の受け口は 9216 バイトを超えるものを先頭 9216 バイトに黙って切る。切れたものと
-        // ちょうど 9216 バイトのものは見分けられないので、9216 バイトから捨てる
-        for size in [1000, 9215, 9216, 9217, 20000, 65507] {
-            #expect(peer.send([UInt8](repeating: 0x61, count: size), to: port) == size)
-        }
-        #expect(peer.send(Array("after".utf8), to: port) == 5)
-        let received = try await heard(udp, count: 3, port: port, told: told, from: peer, "(1000・9215・after)")
-        #expect(received.map(\.utf8.count) == [1000, 9215, 5])
-        #expect(received.last == "after")
-        #expect(udp.input.unreadable == 4)
-        #expect(told.lines.isEmpty)
     }
 
     @Test("前提: macOS の受け口は 9216 バイトを超える datagram を、先頭 9216 バイトに切って渡す")
@@ -678,7 +533,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 2, log: log
+            within: 10, patience: 0.1, log: log
         ) { warn in
             made += 1
             // 最初の送り元は、送れないと名乗って何も出さない
@@ -705,7 +560,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 2, to: udp, senders: &senders,
-            within: 4, log: log
+            within: 20, patience: 10, log: log
         ) { warn in
             made += 1
             return ScriptedSender(raw: raw, port: port, complaint: warn)
@@ -737,9 +592,11 @@ struct UDPPortTests {
         var made = 0
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        // 回数は時計に頼らない (#3215): 猶予は短く決め、上限まで替えて返るのを待つ。`within` は上限に届かな
+        // かった回にだけ効く外枠で、遅い機械でも 3 つ目を作る前に期限が来ない広さにする
         let received = try await sendAndCollect(
             [Array("a".utf8)], expecting: 1, to: udp, senders: &senders, replacements: 2,
-            within: 0.6
+            within: 10, patience: 0.05, endsAtLimit: true
         ) { warn in
             made += 1
             return ScriptedSender(raw: nil, port: port, complaint: warn)
@@ -766,7 +623,7 @@ struct UDPPortTests {
         let log = SendLog()
         let received = try await sendAndCollect(
             [Array("a".utf8), Array("b".utf8)], expecting: 3, to: udp, senders: &senders,
-            within: 1.2, log: log
+            within: 3, patience: 0.05, log: log
         ) { warn in
             made += 1
             return ScriptedSender(
@@ -778,7 +635,7 @@ struct UDPPortTests {
             try await requireReceived(received, expecting: 3, log: log, udp: udp, port: port, told: told)
         }
         #expect(text.contains("3 通のうち読めたのは 2 通"), "名乗り: \(text)")
-        #expect(text.contains("期限 1.2 秒"), "名乗り: \(text)")
+        #expect(text.contains("期限 3.0 秒"), "名乗り: \(text)")
         // 受け口: 状態・移り変わり・受け入れた数・黙りで閉じた数・終わって外れた数・いま持つ数 (受け入れた送り元は 1 つ)
         #expect(text.contains("受け口 (1 通の前): running") && text.contains("移り変わり "), "名乗り: \(text)")
         #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
