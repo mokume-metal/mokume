@@ -1027,7 +1027,7 @@ extension Canvas {
         }
         // 形の立体の頂点と添字を GPU の置き場に持てる区間は、溜め場へ積まずにそこから読む (#2791)。
         // 粒の板など ``placeSolid`` を部品なしで呼ぶ口は、これまでの経路のまま
-        let owned = carriesParts ? ownedFill(for: run, of: shape, parts: parts, instances: instances) : nil
+        let owned = carriesParts ? ownedFill(for: shape) : nil
         var remaining = instances[...]
         while let first = remaining.first {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —

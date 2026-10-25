@@ -37,7 +37,10 @@ extension Canvas {
     /// 描く呼び出しを省ける数が添字の列を組む費用に見合わないとき
     /// (``SolidSweep/paysOff(instances:passes:programLength:vertices:)``)、写しにする三角形の 3 点で
     /// 向きを形から求めたかが揃わないとき (``SolidSweep/appendProgram(_:indices:vertexBase:vertices:to:)``)、
-    /// 頂点を自分の置き場から読む列 (GPU が持つモデル) と引数を GPU が書く列 (粒) のときである。
+    /// 頂点を自分の置き場から読む列のうち、CPU の写しを持たないもの (GPU が持つモデル) と、引数を GPU が
+    /// 書く列 (粒) のときである。保持した形の置き場の列は、置き場の写しから組む ([#3201])。
+    ///
+    /// [#3201]: https://github.com/mokume-metal/mokume/issues/3201
     func uploadSweeps() throws(RenderFailure) -> SweepUploads {
         guard sweepPolicy != .never else { return .none }
         var program: [UInt32] = []
@@ -55,7 +58,20 @@ extension Canvas {
     private func sweepDraws(
         for batch: Batch, into program: inout [UInt32]
     ) -> [Int: SweepDraw] {
-        guard batch.ownVertices == nil, batch.indirectArguments == nil else { return [:] }
+        guard batch.indirectArguments == nil else { return [:] }
+        // 頂点と添字を読む元。溜め場の列は溜め場から、保持した形を置き場に持つ列は置き場の写しから読む。
+        // 置き場の列の頂点の番号は形の中の番号のままで、描くときも置き場の先頭から数える
+        // (``Canvas/encodeBackThenFront``) ので、溜め場の位置は混ざらない
+        let source: (vertices: [SolidVertex], indices: [UInt32])
+        if batch.ownVertices == nil {
+            source = (solidVertices, solidIndices)
+        } else if case .retainedGeometry = batch.solidSource, let fill = batch.fillGeometry,
+            let vertices = fill.sourceVertices
+        {
+            source = (vertices, fill.indices)
+        } else {
+            return [:]
+        }
         let run = batch.run
         let parts = SolidSweep.Parts(run: run, backFaceParts: batch.backFaceParts)
         let runs = SolidSweep.runs(
@@ -70,7 +86,7 @@ extension Canvas {
         var allParts = Built.unbuilt
         var someParts = Built.unbuilt
         var draws: [Int: SweepDraw] = [:]
-        let indices: [UInt32]? = run.isIndexed ? solidIndices : nil
+        let indices: [UInt32]? = run.isIndexed ? source.indices : nil
         /// 頂点ごとの描くときの番号 (最初に要るとき 1 度だけ作る)。
         var vertices: [UInt32]?
 
@@ -92,7 +108,7 @@ extension Canvas {
                             instances: item.instances.count, passes: passes.count,
                             programLength: length, vertices: run.count)
                 else { continue }
-                let table = vertices ?? sweepVertexTable(for: run)
+                let table = vertices ?? sweepVertexTable(for: run, in: source.vertices)
                 vertices = table
                 let start = program.count
                 let usable = SolidSweep.appendProgram(
@@ -124,12 +140,12 @@ extension Canvas {
     /// 番号が印の桁に届く列は組まない (空の表を返し、置き場所ごとに描く)。
     ///
     /// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
-    private func sweepVertexTable(for run: Shape.Run) -> [UInt32] {
+    private func sweepVertexTable(for run: Shape.Run, in source: [SolidVertex]) -> [UInt32] {
         let range = run.start..<(run.start + run.count)
-        guard range.lowerBound >= 0, range.upperBound <= solidVertices.count,
+        guard range.lowerBound >= 0, range.upperBound <= source.count,
             range.upperBound < Int(SolidSweep.flipsNormal)
         else { return [] }
-        let block = solidVertices[range]
+        let block = source[range]
         var table: [UInt32]
         if run.isIndexed {
             table = Array(UInt32(range.lowerBound)..<UInt32(range.upperBound))

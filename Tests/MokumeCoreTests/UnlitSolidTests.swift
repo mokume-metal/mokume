@@ -651,6 +651,54 @@ struct UnlitSolidTests {
         #expect(!tinted.isEmpty && tinted.allSatisfy { $0?.opaque != true })
     }
 
+    @Test("置き場に持った保持形も、全部の頂点と置き場所の α がちょうど 1 のときだけブレンドなしで描く (#3201)")
+    func retainedFillsAreUnblendedOnlyWhenEveryColorIsOpaque() throws {
+        /// 3 フレーム続けて置き (2 フレーム目で置き場に昇格する)、最後のフレームの置き場から読む列の鍵を返す。
+        func variants(
+            secondAlpha: Float, placement fill: LinearRGBA? = nil
+        ) throws -> (keys: [ShapePipeline.SolidVariantKey?], made: Int) {
+            let canvas = try makeCanvas()
+            canvas.retainedSolidThreshold = 0
+            var shape: Shape?
+            var found: [ShapePipeline.SolidVariantKey?] = []
+            for _ in 0..<3 {
+                found = []
+                try canvas.draw {
+                    canvas.noStroke()
+                    let made = shape ?? canvas.createShape {
+                        canvas.fill(.display(red: 1, green: 0, blue: 0))
+                        canvas.box(20)
+                        canvas.fill(.display(red: 0, green: 0.5, blue: 1, alpha: secondAlpha))
+                        canvas.push()
+                        canvas.translate(14, 6, -10)
+                        canvas.box(20)
+                        canvas.pop()
+                    }
+                    shape = made
+                    canvas.shape(made, at: [Placement(x: 30, y: 30, fill: fill)])
+                    canvas.closeBatch()
+                    for batch in canvas.batches {
+                        if case .retainedGeometry = batch.solidSource { found.append(batch.solidVariant) }
+                    }
+                }
+            }
+            return (found, canvas.modelFills.made)
+        }
+        let opaque = try variants(secondAlpha: 1)
+        #expect(opaque.made >= 1 && !opaque.keys.isEmpty, "置き場に持たれていない")
+        #expect(opaque.keys.allSatisfy { $0?.opaque == true }, "不透明な置き場の列をブレンドありで描いた")
+        let translucentVertex = try variants(secondAlpha: 0.5)
+        #expect(translucentVertex.made >= 1 && !translucentVertex.keys.isEmpty, "置き場に持たれていない")
+        #expect(
+            translucentVertex.keys.allSatisfy { $0?.opaque != true }, "透ける頂点を持つ置き場の列をブレンドなしにした")
+        // 置き場所の色が透ける (``Placement/fill``) ときも、頂点が不透明でもブレンドを残す
+        let translucentPlacement = try variants(
+            secondAlpha: 1, placement: .display(red: 1, green: 1, blue: 1, alpha: 0.5))
+        #expect(translucentPlacement.made >= 1 && !translucentPlacement.keys.isEmpty, "置き場に持たれていない")
+        #expect(
+            translucentPlacement.keys.allSatisfy { $0?.opaque != true }, "透ける置き場所の置き場の列をブレンドなしにした")
+    }
+
     @Test("保持した形は、頂点が不透明でも透けていても、ブレンドなしで画素が全部同じ")
     func retainedShapesKeepTheirPixels() throws {
         for alpha in [Float(1), 0.5] {
