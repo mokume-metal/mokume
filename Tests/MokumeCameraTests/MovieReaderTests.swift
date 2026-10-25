@@ -173,10 +173,24 @@ struct MovieReaderTests {
         }
         let failed = try #require(failedAt, "壊した範囲を読んでも投げなかった")
         let restarts = reader.restarts
+        // 投げた直後も、試さずに待っている間も、待ちを名乗る (``Movie`` が running に戻さない根拠、#2908)
+        #expect(reader.isWaitingToRetry, "投げた後は待ちを名乗る")
         _ = try? reader.picture(at: failed + 0.5)
         #expect(reader.restarts == restarts, "0.5 秒先では試さない")
+        #expect(reader.isWaitingToRetry, "試さずに nil を返す間は待ちを名乗る")
+        // 試した結果また読めなければ、待ちのまま (この壊し方では、先から読み直しても読めない)
         _ = try? reader.picture(at: failed + MovieReader.retryDistance + 0.1)
         #expect(reader.restarts == restarts + 1, "1 秒より先では試す")
+        #expect(reader.isWaitingToRetry, "読み直しても読めなければ待ちのまま")
+        // 頭へ戻って読み直し、読めたら下りる
+        _ = try reader.picture(at: 0)
+        #expect(!reader.isWaitingToRetry, "読み直して読めたら待ちを下ろす")
+        // 読めなくなって待っている動画を閉じると、待ちも戻る (#3122 の retryAfter と揃う)
+        _ = try? reader.picture(at: failed + 0.01)
+        _ = try? reader.picture(at: failed + 0.5)
+        #expect(reader.isWaitingToRetry, "閉じる前は待っている — 比べる前提")
+        reader.close()
+        #expect(!reader.isWaitingToRetry)
     }
 
     // MARK: - 鍵のコマで読み進めるか読み直すかを決める (#2764)

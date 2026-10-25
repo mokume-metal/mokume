@@ -437,6 +437,7 @@ struct MovieTests {
         var movie: Movie?
         var notices: [String] = []
         var states: [SourceState] = []
+        var times: [Float] = []
         var pixels: [[LinearRGBA]] = []
         let runtime = try run(
             frames: 60,
@@ -452,6 +453,7 @@ struct MovieTests {
             draw: { sketch in
                 guard let movie else { return }
                 states.append(movie.state)
+                times.append(movie.time)
                 pixels.append(Self.pixels(of: movie.image))
                 // 50 枚目で頭へ飛ぶ
                 if sketch.frameCount == 50 { movie.jump(0) }
@@ -464,6 +466,16 @@ struct MovieTests {
         #expect(pixels[broke] == pixels[broke - 1])
         // 頭へ飛べば読み直して戻る
         #expect(states.last == .running)
+        // **読めなくなってから読み直して読めるまでは、毎フレーム disconnected のまま** (#2908)。読み直しを
+        // 試さずに待っているフレームは、読めていないのに running へ戻ってはならない。戻ってよいのは、手前へ
+        // 戻ったか、読めなくなった所から 1 秒より先へ進んで読み直したフレームだけ
+        let recovered = try #require(
+            states.indices.dropFirst(broke).first { states[$0] == .running }, "読み直しても running に戻らない")
+        #expect(recovered > broke + 1, "読めなくなった次のフレームで running に戻った: \(states)")
+        #expect(states[broke..<recovered].allSatisfy { $0 == .disconnected })
+        let wentBack = times[recovered] < times[broke]
+        let farEnough = Double(times[recovered]) >= Double(times[broke]) + MovieReader.retryDistance - 0.05
+        #expect(wentBack || farEnough, "\(times[broke]) 秒で読めなくなり、\(times[recovered]) 秒で戻った")
         runtime.closePlugins()
     }
 

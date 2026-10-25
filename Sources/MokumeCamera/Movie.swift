@@ -165,7 +165,9 @@ public final class Movie: Inlet {
         let position = shown == author ? advanced : playhead.position(at: Double(shown))
         do {
             if let picture = try reader.picture(at: position) { input.send(picture) }
-            if input.state == .disconnected { input.setState(.running) }
+            // 読めなくなって、読み直しを試す位置にまだ届いていない間は、試さずに `nil` が返るだけで
+            // 読めてはいない。戻すのは読み直して読めたフレームだけ (#2908)
+            if input.state == .disconnected, !reader.isWaitingToRetry { input.setState(.running) }
         } catch {
             input.setState(.disconnected)
             noticeOnce(error, at: position)
