@@ -178,10 +178,16 @@ struct MovieReaderTests {
         _ = try? reader.picture(at: failed + 0.5)
         #expect(reader.restarts == restarts, "0.5 秒先では試さない")
         #expect(reader.isWaitingToRetry, "試さずに nil を返す間は待ちを名乗る")
-        // 試した結果また読めなければ、待ちのまま (この壊し方では、先から読み直しても読めない)
-        _ = try? reader.picture(at: failed + MovieReader.retryDistance + 0.1)
+        // 1 秒より先では試し、待ちの印は試した結果に従う。壊れた所の先から読み直して読めるかは
+        // 機械 (OS の復号器) に依る — 手元では読めず、専用機では読めた (PR #3214 の queue)
+        var retryThrew = false
+        do {
+            _ = try reader.picture(at: failed + MovieReader.retryDistance + 0.1)
+        } catch {
+            retryThrew = true
+        }
         #expect(reader.restarts == restarts + 1, "1 秒より先では試す")
-        #expect(reader.isWaitingToRetry, "読み直しても読めなければ待ちのまま")
+        #expect(reader.isWaitingToRetry == retryThrew, "読み直しても読めなければ待ちのまま、読めたら下りる")
         // 頭へ戻って読み直し、読めたら下りる
         _ = try reader.picture(at: 0)
         #expect(!reader.isWaitingToRetry, "読み直して読めたら待ちを下ろす")
