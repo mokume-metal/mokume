@@ -244,12 +244,20 @@ struct OSCPortTests {
     /// ``requireSent(_:_:log:landing:)`` で名乗って止まる。**名乗らない送り元を替えず、期限を延ばさず、
     /// 救わない**のは、ここでも同じ。
     ///
-    /// - Parameter makeSender: 番号と、何度目の送り元か (1 から) と、送れないときの知らせの行き先を受けて、
-    ///   送り元を作る。知らせは `told` にも流す。
+    /// 替えた回数を数える検査は、期限の内側に回数を置かない (#3215)。`endsAtLimit` を渡すと、上限まで替えた番号が
+    /// また名乗り、最後に替えてから `patience` が過ぎたところで、期限を待たずに返る (`within` は届かなかった
+    /// ときだけ効く外枠)。名乗らずに読まれない番号は、期限を待たずに「読まれなかった」と数える。
+    ///
+    /// - Parameters:
+    ///   - makeSender: 番号と、何度目の送り元か (1 から) と、送れないときの知らせの行き先を受けて、
+    ///     送り元を作る。知らせは `told` にも流す。
+    ///   - patience: `endsAtLimit` のとき、最後に替えてから返るまでに置く猶予。替えた送り元の通が読まれるのを待つ。
+    ///   - endsAtLimit: 上限まで替えた番号がまた名乗ったら、猶予の後に期限を待たずに返る。
     private func sendNumberedBurst(
         count: Int, address: String = "/from", through osc: OSCPort,
         senders: inout [any DatagramSending], told: Told,
-        replacements: Int = 3, within seconds: TimeInterval = 10, log: SendLog = SendLog(),
+        replacements: Int = 3, within seconds: TimeInterval = 10,
+        patience: TimeInterval = 0.2, endsAtLimit: Bool = false, log: SendLog = SendLog(),
         makeSender:
             (_ index: Int, _ attempt: Int, _ warn: @escaping @Sendable (String) -> Void) ->
             any DatagramSending
@@ -278,18 +286,28 @@ struct OSCPortTests {
         var heard = Set<Int>()
         let started = Date()
         let deadline = started.addingTimeInterval(seconds)
+        var lastReplaced = started
+        var limitHit = false
         while heard.count < count, Date() < deadline {
             osc.supply()
             heard.formUnion(osc.messages.filter { $0.address == address }.compactMap { $0.int(0) })
             let blocked = stuck.withLock { names in defer { names = [] }; return names }
-            for index in blocked.sorted() where !heard.contains(index) && attempts[index] <= replacements {
+            for index in blocked.sorted() where !heard.contains(index) {
+                // 上限まで替えた番号が、また名乗った (上限が無ければもう 1 度替える所)
+                guard attempts[index] <= replacements else {
+                    limitHit = true
+                    continue
+                }
                 attempts[index] += 1
                 current.withLock { $0[index] = attempts[index] }
                 senders[first + index].stop()
                 let opened = sender(index)
                 senders[first + index] = opened
                 opened.send(try Wire.encoded(OSCMessage(address, index)))
+                lastReplaced = Date()
             }
+            // 上限に届いた後、替えた送り元の通が読まれる猶予を置いてから返る (期限は届かなかったときの外枠)
+            if endsAtLimit, limitHit, Date().timeIntervalSince(lastReplaced) >= patience { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         let missing = (0..<count).filter { !heard.contains($0) }
@@ -870,8 +888,10 @@ struct OSCPortTests {
         defer { for sender in senders { sender.stop() } }
         let log = SendLog()
         let count = 4
+        // 替えた回数は時計に頼らない (#3215): 2 番が上限まで替えて名乗ったら、猶予の後に返る。10 秒は届かなかった回の外枠
         let heard = try await sendNumberedBurst(
-            count: count, through: osc, senders: &senders, told: told, within: 1, log: log
+            count: count, through: osc, senders: &senders, told: told, within: 10, endsAtLimit: true,
+            log: log
         ) { index, attempt, warn in
             switch index {
             case 0: return ScriptedSender(raw: raw, port: port, complaint: nil)
@@ -889,7 +909,7 @@ struct OSCPortTests {
                 osc: osc, port: port, told: told)
         }
         #expect(text.contains("送り元 4 本のうち読めたのは 2 本"), "名乗り: \(text)")
-        #expect(text.contains("期限 1.0 秒"), "名乗り: \(text)")
+        #expect(text.contains("期限 10.0 秒"), "名乗り: \(text)")
         // 読めなかった番号と、そのうち名乗った送り元 (番号つき)
         #expect(
             text.contains("/from: 読めたのは 2/4・読めなかった 2 本 [2…3]・うち名乗った [2]・名乗らずに黙っている [3]"),
