@@ -152,7 +152,7 @@ extension SketchPart {
     ///
     /// 描く状態としての関係は 3 つある。
     ///
-    /// - ``pushStyle()`` と ``popStyle()`` で積み降ろされる。`pushStyle()` の後に勾配を塗り、`popStyle()` で
+    /// - ``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` で積み降ろされる。`pushStyle()` の後に勾配を塗り、`popStyle()` で
     ///   戻すと、前の色 (か勾配) で塗る
     /// - ``createShape(_:)`` の中で塗った勾配は形に焼き付き、形を ``Placement`` で動かしたり回したりすると
     ///   勾配も一緒に動く。外で決めた勾配は、組み立ての中では形自身の座標で読み直す
@@ -486,7 +486,7 @@ extension SketchPart {
     /// 破線を置かずに実線へ戻し、1 度だけ知らせる。1 つの線が刻む数が 16384 を越えるほど細かい破線
     /// (長さ 1 の線を 1e5 の長さに引くなど) も、その線を実線で引き、1 度だけ知らせる。
     ///
-    /// ``noStrokeDash()`` で実線へ戻せる。``pushStyle()`` と ``popStyle()`` で積み降ろされる。
+    /// ``noStrokeDash()`` で実線へ戻せる。``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` で積み降ろされる。
     /// 保持した形 (``createShape(_:)``) を組み立てる間に指定した破線は、形の線に焼き付く。
     ///
     /// - Note: 破線は**フレームを越える**。一度書けば、書き換えるまで残る。
@@ -606,7 +606,7 @@ extension SketchPart {
     /// 切り抜きは面に沿った矩形しか持てないので、``rotate(_:)`` や ``shearX(_:)`` を掛けた
     /// 矩形は表せない — 角を写しても、回した矩形にはならない。
     ///
-    /// 積み降ろし (``pushStyle()``) で戻るので、入れ子にして元へ帰れる。
+    /// 積み降ろし (``pushStyle(fileID:line:)``) で戻るので、入れ子にして元へ帰れる。
     ///
     /// 面の外へ出た指定は面の内側へ収める。下は、左上と右下の隅へはみ出した指定
     /// (`clip(-60, -60, 200, 150)` と `clip(300, 200, 200, 200)`) で塗り直したもの。面の内側の
@@ -971,10 +971,10 @@ extension SketchPart {
     /// - 材質 (``shininess(_:)`` / ``metalness(_:)`` / `ambient` / `emissive`) と、影を落とす / 受ける設定
     ///   (``castShadow(_:)`` / ``receiveShadow(_:)``)
     ///
-    /// **変換は積まない。** 変換は ``pushMatrix()`` が積み、``push()`` がスタイルと変換の両方を積む。
+    /// **変換は積まない。** 変換は ``pushMatrix(fileID:line:)`` が積み、``push(fileID:line:)`` がスタイルと変換の両方を積む。
     ///
     /// 下は、積んだ後で塗り・線の太さ・矩形の読み方 (`rectMode(.center)`) を変えて描き、
-    /// ``popStyle()`` で降ろしたもの。左は積んだ後の設定 (水色・太い線・中心を指す)、右は積む前の
+    /// ``popStyle(fileID:line:)`` で降ろしたもの。左は積んだ後の設定 (水色・太い線・中心を指す)、右は積む前の
     /// 設定 (橙色・細い線・左上を指す) で描かれる。
     ///
     /// @Row {
@@ -1007,13 +1007,17 @@ extension SketchPart {
     ///   捨てられるので、`pushStyle()` と `popStyle()` は同じフレームの中で釣り合わせる。
     ///   降ろし忘れても次のフレームへは積み上がらない。
     // shot: 1 snippet=793f4c1c
-    public func pushStyle() { Self.liveCanvas()?.pushStyle() }
+    public func pushStyle(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "pushStyle()")?.pushStyle(fileID: fileID, line: line)
+    }
 
-    /// 積んでおいたスタイルへ戻す。積んでいなければ何もしない。
+    /// 積んでおいたスタイルへ戻す。
     ///
-    /// ``pushStyle()`` が積む設定 (塗り・線・座標の読み方・切り抜き・混ぜ方・文字・画像の色・
+    /// 積んでいなければ何もせず、呼んだ行を名指して 1 度だけ注意する。
+    ///
+    /// ``pushStyle(fileID:line:)`` が積む設定 (塗り・線・座標の読み方・切り抜き・混ぜ方・文字・画像の色・
     /// 塗りの絵・材質・影の設定) が、すべて積んだときへ戻る。**変換は戻さない** — 変換は
-    /// ``popMatrix()`` が戻し、``pop()`` が両方を戻す。
+    /// ``popMatrix(fileID:line:)`` が戻し、``pop(fileID:line:)`` が両方を戻す。
     ///
     /// 積んだ分だけ、1 段ずつ戻る。下は 2 段積んでから青で描き、1 つ降ろすと黄、もう 1 つ降ろすと
     /// 積む前の橙へ戻る。
@@ -1042,7 +1046,8 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 積んでいなければ何も起きない。下は塗りを水色へ変えた後で `popStyle()` を呼んだもの。
+    /// 積んでいなければ何も起きない (呼んだ行を名指して 1 度だけ注意する)。下は塗りを水色へ変えた後で
+    /// `popStyle()` を呼んだもの。
     /// 積んでいないので、橙へも既定の白へも戻らず、水色のまま続く。
     ///
     /// @Row {
@@ -1065,5 +1070,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=e3863d1c
     // shot: 2 snippet=967253ab
-    public func popStyle() { Self.liveCanvas()?.popStyle() }
+    public func popStyle(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "popStyle()")?.popStyle(fileID: fileID, line: line)
+    }
 }

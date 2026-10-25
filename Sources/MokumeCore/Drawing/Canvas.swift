@@ -1565,18 +1565,47 @@ public final class Canvas {
     /// 丸ごと戻すときは ``currentStyle`` を通す — 列を閉じる条件はそこにある。
     var style = Style()
     var transform = Transform.identity
-    private var transformStack: [Transform] = []
-    private var styleStack: [Style] = []
+    private var transformStack: [(Transform, StackSite)] = []
+    private var styleStack: [(Style, StackSite)] = []
+
+    /// 積んだ段を、積んだ口と呼んだ場所とともに持つ ([#2399])。積んだまま捨てるときの注意が、
+    /// 対の無い最後の段を名指すために使う。
+    ///
+    /// **順の番号は 2 本の積み場を通して数える。** `pushMatrix()` と `pushStyle()` を混ぜて積むと、
+    /// どちらの積み場の頭が後に積んだ段かは、積み場を見ただけでは決まらない。
+    ///
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    struct StackSite {
+        let call: StaticString
+        let fileID: StaticString
+        let line: UInt
+        let order: Int
+
+        /// 注意の文面に差す場所 (`Module/File.swift:12`)。
+        var location: String { "\(fileID):\(line)" }
+    }
+
+    /// 積んだ段に振る順の番号の次の値。面をまたいで数えてよい — 比べるのは同じ面の段どうしだけである。
+    private static var nextStackOrder = 0
+
+    private static func stackSite(_ call: StaticString, _ fileID: StaticString, _ line: UInt) -> StackSite {
+        defer { nextStackOrder += 1 }
+        return StackSite(call: call, fileID: fileID, line: line, order: nextStackOrder)
+    }
+
+    /// 2 本の積み場の中身。
+    typealias Stacks = (transforms: [(Transform, StackSite)], styles: [(Style, StackSite)])
 
     /// 積んだ履歴を取り出して空にする。**戻すのは ``restore(_:)``。**
     ///
-    /// 形の組み立てが、記録の間だけ積み降ろしを切り離すために使う ([#1172]) — 記録の中の
-    /// `pop()` が記録より前に積んだ段を取らず、記録の中で積んだまま抜けた段が、あとの
-    /// `pop()` に拾われないようにする。**2 本まとめて出し入れする**のは、積んだ事実が
-    /// 変換とスタイルのどちらに属するかによらないためである ([ADR-0021] 決定 4 の追補)。
+    /// 形の組み立てと、閉包で戻す ``push(_:)`` が、本体の間だけ積み降ろしを切り離すために使う
+    /// ([#1172]・[#2399]) — 本体の中の `pop()` が本体より前に積んだ段を取らず、本体の中で積んだ
+    /// まま抜けた段が、あとの `pop()` に拾われないようにする。**2 本まとめて出し入れする**のは、
+    /// 積んだ事実が変換とスタイルのどちらに属するかによらないためである ([ADR-0021] 決定 4 の追補)。
     ///
     /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
-    func takeStacks() -> (transforms: [Transform], styles: [Style]) {
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    func takeStacks() -> Stacks {
         let taken = (transforms: transformStack, styles: styleStack)
         transformStack.removeAll(keepingCapacity: true)
         styleStack.removeAll(keepingCapacity: true)
@@ -1584,9 +1613,37 @@ public final class Canvas {
     }
 
     /// 取り出しておいた積み履歴へ戻す。
-    func restore(_ stacks: (transforms: [Transform], styles: [Style])) {
+    func restore(_ stacks: Stacks) {
         transformStack = stacks.transforms
         styleStack = stacks.styles
+    }
+
+    /// 積んだまま残った段があれば、対の無い最後の段を名指して 1 度だけ知らせる ([#2399])。
+    /// 段は捨てない — 捨てるのは呼ぶ側 (フレームの頭・``restore(_:)``)。
+    ///
+    /// `ended` は、段を捨てることになった区切りの名前 (`the frame`・`createShape { }` など)。
+    ///
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    func warnIfStacksLeftOpen(before ended: String) {
+        let sites = [transformStack.last?.1, styleStack.last?.1].compactMap { $0 }
+        guard let last = sites.max(by: { $0.order < $1.order }) else { return }
+        warnOnce(
+            .pushLeftOpen,
+            "\(last.call) at \(last.location) was not matched by a pop() before \(ended) ended, so "
+                + "what it saved was dropped and never restored. Make sure every path reaches the "
+                + "pop() (an early return or a thrown error skips it), or wrap the drawing in "
+                + "push { … }, which restores the state however the block ends")
+    }
+
+    /// 戻す段が無いのに降ろしたことを、呼んだ場所を名指して 1 度だけ知らせる ([#2399])。
+    ///
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    private func warnPopWithoutPush(_ call: StaticString, _ fileID: StaticString, _ line: UInt) {
+        warnOnce(
+            .popWithoutPush,
+            "\(call) at \(fileID):\(line) had nothing to restore — no push() earlier in this frame "
+                + "or block was left to match it — so it did nothing. Pair each pop() with a push() "
+                + "on the same path, or wrap the drawing in push { … } instead of pairing them by hand")
     }
     /// このフレームで画素を読める状態にしたか。フレームごとに戻る。
     var hasLoadedPixels = false
@@ -2712,44 +2769,118 @@ public final class Canvas {
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
-    /// 積んである変換 (``pushMatrix()``) は捨てない — 戻す先は残る。
+    /// 積んである変換 (``pushMatrix(fileID:line:)``) は捨てない — 戻す先は残る。
     public func resetMatrix() {
         guard isShaping else { return warnOutsideFrame(.transform) }
         transform.reset()
     }
 
-    public func pushMatrix() {
-        guard isShaping else { return warnOutsideFrame(.transform) }
-        transformStack.append(transform)
+    /// `fileID`・`line` は呼んだ場所で、積んだまま終わったときの注意が名指す ([#2399])。
+    ///
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    public func pushMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
+        pushTransform(Self.stackSite("pushMatrix()", fileID, line))
     }
 
-    public func popMatrix() {
+    /// 積む段が無ければ、呼んだ場所 (`fileID`・`line`) を名指して 1 度だけ注意し、何もしない ([#2399])。
+    ///
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    public func popMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
+        if popTransform() == false { warnPopWithoutPush("popMatrix()", fileID, line) }
+    }
+
+    /// いまのスタイルを積んでおく。`fileID`・`line` は ``pushMatrix(fileID:line:)`` と同じ。
+    public func pushStyle(fileID: StaticString = #fileID, line: UInt = #line) {
+        pushStyleEntry(Self.stackSite("pushStyle()", fileID, line))
+    }
+
+    /// 積む段が無いときは ``popMatrix(fileID:line:)`` と同じく注意する。
+    public func popStyle(fileID: StaticString = #fileID, line: UInt = #line) {
+        if popStyleEntry() == false { warnPopWithoutPush("popStyle()", fileID, line) }
+    }
+
+    /// 変換とスタイルの両方を積んでおく。`fileID`・`line` は ``pushMatrix(fileID:line:)`` と同じ。
+    public func push(fileID: StaticString = #fileID, line: UInt = #line) {
+        let site = Self.stackSite("push()", fileID, line)
+        pushTransform(site)
+        pushStyleEntry(site)
+    }
+
+    /// 変換とスタイルの両方を戻す。**どちらにも戻す段が無いときだけ**注意する — 変換だけ積んで
+    /// `pop()` で戻すのは、積み場が独立なので誤りではない。
+    public func pop(fileID: StaticString = #fileID, line: UInt = #line) {
+        let transformRestored = popTransform()
+        let styleRestored = popStyleEntry()
+        if transformRestored == false, styleRestored == false { warnPopWithoutPush("pop()", fileID, line) }
+    }
+
+    /// `body` の間だけ変換とスタイルを積み、`body` を抜けたら戻す ([#2399])。**戻すのは、`body` が
+    /// 途中で `return` しても投げても同じ** — 投げたら、戻してから同じエラーを投げ直す。
+    ///
+    /// `body` の中の積み降ろしは `body` の中で閉じる (形の組み立てと同じ切り離し・[#1172])。中の
+    /// 余分な `pop()` は外で積んだ段を取らずに注意し、中で積んだまま抜けた段は注意して捨てる。
+    /// ただし `body` が投げて抜けたときは言わない — 投げて対を飛ばしたのを戻すのがこの口の役目である。
+    ///
+    /// **`body` の中でこの面のフレームが閉じたら戻さない** (`endDraw()` と `beginDraw()` を挟んだ
+    /// とき)。控えた状態は閉じたフレームのもので、次のフレームへ書き戻すと ADR-0021 決定 4 に反する。
+    /// フレームの外では ``push(fileID:line:)`` と同じく注意して、`body` だけを走らせる。
+    ///
+    /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
+    /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+    public func push(_ body: () throws -> Void) rethrows {
+        guard isShaping else {
+            warnOutsideFrame(.transform)
+            warnOutsideFrame(.style)
+            return try body()
+        }
+        let savedTransform = transform
+        let savedStyle = currentStyle
+        let savedStacks = takeStacks()
+        let frame = framesDrawn
+        var finished = false
+        defer {
+            // 閉じたフレームの状態は戻さない。中で開き直したフレームの段は、そのフレームのもの
+            if framesDrawn == frame, isShaping {
+                if finished { warnIfStacksLeftOpen(before: "push { … }") }
+                restore(savedStacks)
+                transform = savedTransform
+                currentStyle = savedStyle
+            }
+        }
+        try body()
+        finished = true
+    }
+
+    /// 段を積む。フレームの外では注意して積まない。
+    private func pushTransform(_ site: StackSite) {
         guard isShaping else { return warnOutsideFrame(.transform) }
-        guard let restored = transformStack.popLast() else { return }
+        transformStack.append((transform, site))
+    }
+
+    private func pushStyleEntry(_ site: StackSite) {
+        guard isShaping else { return warnOutsideFrame(.style) }
+        styleStack.append((currentStyle, site))
+    }
+
+    /// 段を降ろして戻す。戻したら `true`、戻す段が無ければ `false`、フレームの外なら注意して `nil`。
+    private func popTransform() -> Bool? {
+        guard isShaping else {
+            warnOutsideFrame(.transform)
+            return nil
+        }
+        guard let (restored, _) = transformStack.popLast() else { return false }
         transform = restored
+        return true
     }
 
-    /// いまのスタイルを積んでおく。
-    public func pushStyle() {
-        guard isShaping else { return warnOutsideFrame(.style) }
-        styleStack.append(currentStyle)
-    }
-
-    public func popStyle() {
-        guard isShaping else { return warnOutsideFrame(.style) }
-        guard let restored = styleStack.popLast() else { return }
+    private func popStyleEntry() -> Bool? {
+        guard isShaping else {
+            warnOutsideFrame(.style)
+            return nil
+        }
+        guard let (restored, _) = styleStack.popLast() else { return false }
         currentStyle = restored
-    }
-
-    /// 変換とスタイルの両方を積んでおく。
-    public func push() {
-        pushMatrix()
-        pushStyle()
-    }
-
-    public func pop() {
-        popMatrix()
-        popStyle()
+        return true
     }
 
     // MARK: - 図形
@@ -3699,6 +3830,11 @@ public final class Canvas {
     ///
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     private func leaveFrame() {
+        // 積んだまま終わった段は、ここで名指す ([#2399])。捨てるのは次のフレームの頭 (下の
+        // 「頭でだけ戻す状態」) だが、そこで言うと `noLoop()` で次のフレームが来ないときに黙る
+        //
+        // [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+        warnIfStacksLeftOpen(before: "the frame")
         isDrawing = false
         framePersists = false
         // 組み立ての出口まで待たせた `endDraw()` と、待たせた捨てる印は、もう対象のフレームが無い (#1855・#2509)

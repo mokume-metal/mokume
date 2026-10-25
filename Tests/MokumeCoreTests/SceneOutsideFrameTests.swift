@@ -84,6 +84,8 @@ struct SceneOutsideFrameTests {
             Mouth("pushStyle", .style) { $0.pushStyle() },
             Mouth("popStyle", .style) { $0.popStyle() },
             Mouth("push", .transform, .style) { $0.push() },
+            // 閉包で戻す口 (#2399)。フレームの外では注意して、本体だけを走らせる
+            Mouth("push { }", .transform, .style) { $0.push() {} },
             Mouth("pop", .transform, .style) { $0.pop() },
             // 切り抜き (#1505)
             Mouth("clip", .clip) { $0.clip(0, 0, 8, 8) },

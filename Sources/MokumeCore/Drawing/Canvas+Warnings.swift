@@ -337,6 +337,17 @@ extension Canvas {
         ///
         /// [#1591]: https://github.com/mokume-metal/mokume/issues/1591
         case shapeNotEnded
+        /// 戻す段が無いのに ``pop(fileID:line:)``・``popMatrix(fileID:line:)``・``popStyle(fileID:line:)``
+        /// を呼んだ ([#2399])。何もしない。3 つの口は同じ「対の無い降ろし」を言うので鍵を共有する。
+        ///
+        /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+        case popWithoutPush
+        /// 積んだ段を降ろさないまま、フレーム・形の組み立て・``push(_:)`` の本体が終わった ([#2399])。
+        /// 段は戻さずに捨てる。**``popWithoutPush`` とは鍵を分ける** — 早期 `return` は片方だけを
+        /// 起こすが、余分な `pop()` と取り違えた積み忘れは両方を起こし、共有すると先の側がもう片方を黙らせる。
+        ///
+        /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
+        case pushLeftOpen
         /// ``beginShape(_:)`` で開いた形を ``endShape(_:)`` で閉じないまま、同じ本体の中で
         /// ``beginShape(_:)`` をもう一度呼んだ ([#1608])。前の形は描かずに捨てる。
         ///

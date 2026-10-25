@@ -523,7 +523,7 @@ extension SketchPart {
     /// 囲みの箱から決まる。円柱と円錐は側面の一周と蓋の円、輪は 2 つの一周を読む。
     ///
     /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
-    /// ``noTexture()`` を呼ぶまで続き、``push()`` / ``pop()`` で積める。
+    /// ``noTexture()`` を呼ぶまで続き、``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
     // shot: 1 snippet=c9428b67
     // shot: 2 snippet=f943b654
     // shot: 3 snippet=beee00de
@@ -659,7 +659,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 貼る絵は ``push()`` / ``pop()`` で積めるので、`push()` の中で呼んだ `noTexture()` は
+    /// 貼る絵は ``push(fileID:line:)`` / ``pop(fileID:line:)`` で積めるので、`push()` の中で呼んだ `noTexture()` は
     /// `pop()` で元に戻る。下の絵は、貼ったまま 3 つ目の四角を置くとき、2 つ目だけを
     /// `push()` と `pop()` で挟んで絵を外している。
     ///
