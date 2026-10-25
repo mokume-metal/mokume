@@ -171,7 +171,7 @@ package enum AtomicFile {
     ///
     /// - Returns: その置き場所の一時ファイルでなければ `nil`。**名前の形が違うものは
     ///   片付けの対象にしない** — 誰が置いたか分からないものは消さない。
-    static func writer(ofTemporary name: String, for url: URL) -> pid_t? {
+    nonisolated static func writer(ofTemporary name: String, for url: URL) -> pid_t? {
         let prefix = ".\(url.lastPathComponent)."
         let suffix = ".tmp"
         guard name.count > prefix.count + suffix.count, name.hasPrefix(prefix),
@@ -185,15 +185,100 @@ package enum AtomicFile {
     }
 
     /// 書いている途中に落とされた書き手の一時ファイルを消す。**プロセスごと・名前ごとに 1 度だけ。**
+    ///
+    /// **呼んだ糸が読むのは最初の ``syncSweepBudget`` 件まで。** 残りは裏の列で続ける
+    /// ([#3176](https://github.com/mokume-metal/mokume/issues/3176))。ここは `reserve` から main で
+    /// 同期に呼ばれ、置き場所のディレクトリを全件引く。`$TMPDIR` のように物の溜まった所 (14 万件) だと、
+    /// その 1 回が約 1 秒、窓の最初の枚を詰まらせた。
     private static func sweepAbandonedTemporaries(of url: URL) {
         guard swept.insert(url).inserted else { return }
-        let directory = url.deletingLastPathComponent()
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        let me = getpid()
-        for name in names {
-            guard let writer = writer(ofTemporary: name, for: url), writer != me,
-                !isRunning(writer)
-            else { continue }
+        guard let rest = beginSweep(of: url, budget: syncSweepBudget) else { return }
+        sweepQueue.async { rest.finish() }
+    }
+
+    /// 呼んだ糸で片付ける件数の上限。**小さなディレクトリ (今の区画はすべてここ) は、戻る前に片付け終わる**
+    /// ので、書いた直後に残りを読む検査も、従来の振る舞いのままである。検査だけが下げる。
+    static var syncSweepBudget = 1024
+
+    /// 裏で続ける片付けを走らせる列。直列にするのは、大きなディレクトリを名前ごとに引き直す呼び手
+    /// (``FrameObserver`` の枚ごとの名前) の読み出しが、並んで機械を占めないため。
+    static let sweepQueue = DispatchQueue(label: "mokume.atomic-file.sweep", qos: .utility)
+
+    /// 裏の片付けが済むまで待つ。**検査だけが呼ぶ。**
+    static func settleSweeps() { sweepQueue.sync {} }
+
+    /// 片付けを始める。最初の `budget` 件までを呼んだ糸で読み、読み切れなければ続きを返す。
+    ///
+    /// - Returns: 読み切ったら `nil`。続きがあれば、その続きを ``Sweep/finish()`` で終えられる。
+    nonisolated static func beginSweep(of url: URL, budget: Int) -> Sweep? {
+        guard let sweep = Sweep(of: url, me: getpid()) else { return nil }
+        return sweep.read(upTo: budget) ? nil : sweep
+    }
+
+    /// ディレクトリを `readdir` で 1 件ずつ見て、落とされた書き手の一時ファイルを消す途中の状態。
+    ///
+    /// **名前の文字列は、`.…tmp` の形をしたものだけ作る** — 全件分を作ると、`contentsOfDirectory` は
+    /// 14 万件で約 340 ms、名前の頭と尻を先に見る読み方は約 59 ms だった (どちらも件数に比例する。呼んだ糸の
+    /// 上限を決めているのは ``AtomicFile/syncSweepBudget`` である)。消す条件は変えない: 持ち主の名前の形を
+    /// 満たし、自分のものでなく、もう居ないと言い切れるものだけ。
+    ///
+    /// 呼んだ糸と裏の列が順に使う (同時には使わない) ので、`@unchecked Sendable` で足りる。
+    nonisolated final class Sweep: @unchecked Sendable {
+        private let url: URL
+        private let directory: URL
+        private let me: pid_t
+        private var handle: UnsafeMutablePointer<DIR>?
+        /// ここまでに読んだ件数。**検査が、呼んだ糸の読みに上限があることを見る。**
+        private(set) var entriesRead = 0
+
+        init?(of url: URL, me: pid_t) {
+            let directory = url.deletingLastPathComponent()
+            guard let handle = opendir(directory.path) else { return nil }
+            self.url = url
+            self.directory = directory
+            self.me = me
+            self.handle = handle
+        }
+
+        deinit { if let handle { closedir(handle) } }
+
+        /// 最大 `limit` 件を読んで片付ける。
+        ///
+        /// - Returns: ディレクトリを読み切ったか。
+        func read(upTo limit: Int) -> Bool {
+            guard let handle else { return true }
+            var remaining = limit
+            while remaining > 0 {
+                guard let entry = readdir(handle) else {
+                    closedir(handle)
+                    self.handle = nil
+                    return true
+                }
+                remaining -= 1
+                entriesRead += 1
+                visit(entry)
+            }
+            return false
+        }
+
+        /// 残りを読み切る。
+        func finish() { _ = read(upTo: .max) }
+
+        private func visit(_ entry: UnsafeMutablePointer<dirent>) {
+            let length = Int(entry.pointee.d_namlen)
+            // `.<名前>.<pid>-<連番>.tmp` は、点で始まり `.tmp` で終わる。それ以外は文字列にしない
+            let name: String? = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: UInt8.self, capacity: length + 1) { bytes in
+                    guard length > 5, bytes[0] == UInt8(ascii: "."),
+                        bytes[length - 4] == UInt8(ascii: "."), bytes[length - 3] == UInt8(ascii: "t"),
+                        bytes[length - 2] == UInt8(ascii: "m"), bytes[length - 1] == UInt8(ascii: "p")
+                    else { return nil }
+                    return String(decoding: UnsafeBufferPointer(start: bytes, count: length), as: UTF8.self)
+                }
+            }
+            guard let name, let writer = AtomicFile.writer(ofTemporary: name, for: url), writer != me,
+                !AtomicFile.isRunning(writer)
+            else { return }
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
     }
@@ -203,7 +288,7 @@ package enum AtomicFile {
     ///
     /// 合図 0 は何も送らず、宛先が在るかだけを問う。他の利用者のプロセスは `EPERM` で
     /// 返るが、それも「居る」である。
-    static func isRunning(_ pid: pid_t) -> Bool {
+    nonisolated static func isRunning(_ pid: pid_t) -> Bool {
         // **宛先を確かめてから問う。** 0 以下は自分のプロセスグループや全体を指す
         guard pid > 0 else { return true }
         return kill(pid, 0) == 0 || errno != ESRCH
