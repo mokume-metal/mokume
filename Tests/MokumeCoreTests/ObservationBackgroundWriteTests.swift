@@ -258,7 +258,7 @@ struct ObservationPlacementWordingTests {
     }
 
     /// 一時ファイルは書けて、置き換えだけが転ぶ形: 行き先のファイルを変更不可 (`UF_IMMUTABLE`) にする。
-    /// 置き換えの失敗は Cocoa の失敗で、下に `EPERM` を持つ。
+    /// 置き換えの失敗は Cocoa の失敗で、下に `EACCES` (13) を持つ。
     @Test("置く段で転んだ理由 (置き換えの失敗) も、Foundation の説明ではなく OS の文面で名乗る")
     func aFailureWhilePlacingIsNamedInCWords() throws {
         let facet = try makeFacet()

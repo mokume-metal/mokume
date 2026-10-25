@@ -249,9 +249,16 @@ struct ObservationCopyTests {
             Issue.record("写せなかったのに、写せたと言う: \(outcome)")
             return
         }
+        #expect(reason == "No space left on device", Comment(rawValue: reason))
+
+        // 窓口の応答では、前置きは外側の 1 つだけ (内側も持つと二重に出る)
+        let answer = place.tools.call("observe", arguments: [:])
         #expect(
-            reason == "the picture could not be copied (No space left on device)",
-            Comment(rawValue: reason))
+            answer.text.contains("The picture could not be copied (No space left on device)"),
+            Comment(rawValue: answer.text))
+        #expect(
+            answer.text.lowercased().components(separatedBy: "could not be copied").count == 2,
+            "前置きが二重に出る: \(answer.text)")
     }
 
     @Test("区画の外へ抜ける絵の名前は写さず、区画の場所と次の要求までと返す")

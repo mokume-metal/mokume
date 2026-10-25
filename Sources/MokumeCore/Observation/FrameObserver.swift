@@ -180,7 +180,7 @@ final class FrameObserver {
             placement = try AtomicFile.reserve(url)
         } catch {
             // 置く準備で転んだ (書く先がディレクトリ・ディレクトリを作れない)。頼まずに決着を置く
-            outcome.fail(Diagnostics.failureText(error), at: url.path)
+            outcome.fail(Self.reason(placing: error, at: url), at: url.path)
             return name
         }
         // 背圧。ここで待つのは main actor なので、フレームが遅くなる代わりに抱える枚数は上限を超えない
@@ -192,11 +192,20 @@ final class FrameObserver {
                 try placement.place { try PNGFile.write(image, to: $0) }
                 outcome.succeed()
             } catch {
-                outcome.fail(Diagnostics.failureText(error), at: url.path)
+                outcome.fail(Self.reason(placing: error, at: url), at: url.path)
             }
             release()
         }
         return name
+    }
+
+    /// 絵を置けなかった事情の文。**書く失敗の口 (``Diagnostics/writingPosixReason(_:at:)``) を先に通す** —
+    /// 置き換えて書く (`.atomic`) と、見てから置き換えるまでの間に行き先がディレクトリになった失敗は、
+    /// 下の番号が ENOENT になり、そのまま言うと在るものを無いと言う (#2839)。`reason` でなく
+    /// `failureText` に落とすのは、`Could not take the image: <事情>` に埋まる文で、`reason` の型名の前置きが
+    /// `ImageWriteFailure` の既存の文面を変えるため (#3211)。
+    nonisolated private static func reason(placing error: any Error, at url: URL) -> String {
+        Diagnostics.writingPosixReason(error, at: url) ?? Diagnostics.failureText(error)
     }
 
     /// 頼んだ書き込みの決着。

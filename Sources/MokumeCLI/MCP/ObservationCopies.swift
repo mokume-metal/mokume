@@ -117,7 +117,7 @@ final class ObservationCopies {
             }
         } catch {
             try? FileManager.default.removeItem(at: directory)
-            return .failed(reason: "the picture could not be copied (\(Diagnostics.failureText(error)))")
+            return .failed(reason: Diagnostics.failureText(error))
         }
         order.removeAll { $0.id == id }
         order.append((id, names.count))
