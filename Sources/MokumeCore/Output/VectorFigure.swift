@@ -107,6 +107,8 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
     case gradient
     case blendMode
     case clip
+    /// このフレームに掛けた効果 (`effects()`)。出力段の手前に立つ段で、ベクターには効かない。
+    case effects
     /// 頂点ごとに塗りの色が違う形。最初の頂点の色で書いた (落としてはいない)。
     case vertexColours
 
@@ -125,6 +127,7 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
         case .gradient: "shape with a gradient fill"
         case .blendMode: "shape with a blend mode other than the normal one"
         case .clip: "shape inside a clip"
+        case .effects: "effects() call"
         case .vertexColours: "shape with a different fill colour at each vertex"
         }
     }

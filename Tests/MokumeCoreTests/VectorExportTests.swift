@@ -517,8 +517,10 @@ struct VectorCaptureTests {
             canvas.rect(10, 10, 5, 5)
             canvas.blendMode(.blend)
             canvas.rect(20, 10, 5, 5)
+            canvas.effects([.threshold(level: 0.5)])
         }
         #expect(figures.count == 1, "書けるのは通常の混ぜ方の矩形だけ")
+        #expect(drops.filter { $0 == .effects }.count == 1, "効果は出力段の手前に立つので、書かずに名乗る")
         #expect(drops.filter { $0 == .text }.count == 2)
         #expect(drops.filter { $0 == .image }.count == 1)
         #expect(drops.filter { $0 == .solid }.count == 1)

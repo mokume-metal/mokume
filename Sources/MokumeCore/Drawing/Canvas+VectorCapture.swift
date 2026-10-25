@@ -83,6 +83,9 @@ extension Canvas {
     /// 窓を閉じて、控えを渡す。頼まれていなければ nil。
     func endVectorWindow() -> VectorCapture? {
         defer { vector = VectorWindow() }
+        // 効果 (`effects()`) は出力段の手前に立つ段で、ベクターには効かない。このフレームに掛けていれば、
+        // 書けなかったものとして数える (``filter(_:)`` は呼んだ時点で数えている)
+        if let capture = vector.capture, !pendingEffects.isEmpty { capture.drops.append(.effects) }
         return vector.capture
     }
 
