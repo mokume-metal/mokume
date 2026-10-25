@@ -112,21 +112,35 @@ struct SelectInputWireTests {
 @Suite("ファイルを選ばせる: 待ち")
 @MainActor
 struct SelectionBrokerTests {
+    /// 待ちの結果を控える箱。**`await task.value` で待たない** — 壊れた待ちは返らず、検査が固まって赤にならない。
+    @MainActor final class Outcome {
+        var value: String??
+    }
+
+    private func ask(_ broker: SelectionBroker, _ prompt: String) -> Outcome {
+        let outcome = Outcome()
+        Task { outcome.value = .some(await broker.request(prompt)) }
+        return outcome
+    }
+
     @Test("頼むと待ちが立ち、結果で終わる。取り消しは nil")
     func aRequestWaitsForItsResult() async {
         let broker = SelectionBroker()
         #expect(!broker.isAwaiting && broker.pending == nil)
-        let first = Task { await broker.request("pick") }
+        let first = ask(broker, "pick")
         #expect(await eventually { broker.isAwaiting })
         #expect(broker.pending == SelectionBroker.Request(serial: 1, prompt: "pick"))
+        #expect(first.value == nil, "結果が来ないうちに戻った")
         #expect(broker.resolve("/tmp/a.csv"))
-        #expect(await first.value == "/tmp/a.csv")
+        #expect(await eventually { first.value != nil })
+        #expect(first.value == .some("/tmp/a.csv"))
         #expect(!broker.isAwaiting && broker.pending == nil, "終わった待ちの頼みが残っている")
 
-        let second = Task { await broker.request("again") }
+        let second = ask(broker, "again")
         #expect(await eventually { broker.pending?.serial == 2 }, "通し番号が進まない")
         #expect(broker.resolve(nil))
-        #expect(await second.value == nil)
+        #expect(await eventually { second.value != nil })
+        #expect(second.value == .some(nil))
     }
 
     @Test("待っていないときの結果は、何も終えない")
@@ -138,14 +152,16 @@ struct SelectionBrokerTests {
     @Test("待ちの最中にもう 1 度頼むと、前の待ちは nil で終わり、新しい頼みが立つ")
     func aSecondRequestEndsTheFirstWithNil() async {
         let broker = SelectionBroker()
-        let first = Task { await broker.request("one") }
+        let first = ask(broker, "one")
         #expect(await eventually { broker.isAwaiting })
-        let second = Task { await broker.request("two") }
+        let second = ask(broker, "two")
         #expect(await eventually { broker.pending?.serial == 2 })
-        #expect(await first.value == nil, "前の待ちが終わらない")
+        #expect(await eventually { first.value != nil }, "前の待ちが終わらない")
+        #expect(first.value == .some(nil))
         #expect(broker.pending == SelectionBroker.Request(serial: 2, prompt: "two"))
         #expect(broker.resolve("/tmp/b.csv"))
-        #expect(await second.value == "/tmp/b.csv", "結果が前の待ちへ渡った")
+        #expect(await eventually { second.value != nil })
+        #expect(second.value == .some("/tmp/b.csv"), "結果が前の待ちへ渡った")
     }
 }
 
