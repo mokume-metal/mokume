@@ -123,9 +123,12 @@ final class MovieWriter {
     ///   - from: 録りを頼まれたフレーム。1 枚も届かなかったときの、落ちた数の幅の
     ///     始まりになる (``RecordedSpan``)。
     ///   - format: 書くファイルの形。
+    ///   - open: 最初の絵でファイルを開く手の差し替え (検査)。空なら本物を開く。絵と最初の窓の先頭の標本 (音声トラックを
+    ///     付けるとき) を受ける。
     init(
         path: String, frameRate: Int, limit: Int = MovieWriter.defaultLimit, from: Int = 1,
-        format: Format = .proRes4444
+        format: Format = .proRes4444,
+        open: (@Sendable (_ image: DisplayImage, _ soundStart: Int?) throws -> any MovieOutput)? = nil
     ) {
         self.path = path
         pressure = Backpressure(limit: limit)
@@ -185,15 +188,19 @@ final class MovieWriter {
                         if let file {
                             opened = file
                         } else {
-                            switch format {
-                            case .proRes4444, .h264:
-                                opened = try MovieFile(
-                                    path: path, width: image.width, height: image.height,
-                                    frameRate: frameRate, format: format == .h264 ? .h264 : .proRes4444,
-                                    soundStart: format == .proRes4444 && !soundStopped
-                                        ? waiting.first?.start : nil)
-                            case .gif:
-                                opened = try GIFFile(path: path, frameRate: frameRate)
+                            let soundStart = format == .proRes4444 && !soundStopped ? waiting.first?.start : nil
+                            if let open {
+                                opened = try open(image, soundStart)
+                            } else {
+                                switch format {
+                                case .proRes4444, .h264:
+                                    opened = try MovieFile(
+                                        path: path, width: image.width, height: image.height,
+                                        frameRate: frameRate, format: format == .h264 ? .h264 : .proRes4444,
+                                        soundStart: soundStart)
+                                case .gif:
+                                    opened = try GIFFile(path: path, frameRate: frameRate)
+                                }
                             }
                             file = opened
                         }

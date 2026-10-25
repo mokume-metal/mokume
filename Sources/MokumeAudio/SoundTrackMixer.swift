@@ -54,6 +54,9 @@ final class SoundTrackMixer: Inlet, SoundSource {
     private static let silentFormat = AVAudioFormat(
         standardFormatWithSampleRate: Double(SoundWindow.sampleRate), channels: 2)!
 
+    /// 音声トラックの流れを作った直後に呼ぶ手 (検査)。流れを受けつけなくするなど、流れの状況を作る。
+    nonisolated(unsafe) static var flowMadeForTesting: ((SoundFlow) -> Void)?
+
     private weak var owner: (any Sketch)?
     /// 音声トラックが始まったとき作る、機材に出さない流れ。始まるまで `nil`。
     private(set) var track: TrackFlow?
@@ -145,6 +148,7 @@ final class SoundTrackMixer: Inlet, SoundSource {
             return
         }
         self.frameRate = frameRate
+        Self.flowMadeForTesting?(made)
         // 流れの時間は、最初の窓の先頭の標本から数える
         let first = max(0, (owner?.frameCount ?? 1) - 1)
         track = TrackFlow(flow: made, base: SoundWindow.start(ofFrame: first, frameRate: frameRate))
