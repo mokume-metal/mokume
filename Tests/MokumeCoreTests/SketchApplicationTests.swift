@@ -171,6 +171,42 @@ struct SketchApplicationTests {
         #expect(abs(x - 480) < 1 && abs(y - 270) < 1, "(\(x), \(y))")
     }
 
+    /// `setup()` で `selectInput` を頼む (`Task` から) スケッチ。
+    private final class SelectAsker: Sketch {
+        var result: String??
+        func setup() {
+            Task { result = .some(await selectInput("pick")) }
+        }
+    }
+
+    /// **スケッチ自身の窓は、頼まれたファイルを選ばせるダイアログを自分の窓に出し、結果を同じ形の出来事にして
+    /// 自分の合流点へ積む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。同じ頼みを出し直さず、
+    /// 結果が当たって頼みが消えたら、出していたダイアログを閉じる。
+    @Test("スケッチの窓は頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える")
+    func theWindowShowsTheSelectionAndEndsTheWait() async throws {
+        let sketch = SelectAsker()
+        let application = try makeApplication(sketch)
+        let picker = FakeFilePicker()
+        application.filePicker = picker
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        for _ in 0..<8 { await Task.yield() }
+        application.displayLinkFired()
+        #expect(picker.shown.map(\.prompt) == ["pick"], "頼みの窓に出ていない")
+        application.displayLinkFired()
+        #expect(picker.shown.count == 1, "同じ頼みを出し直した")
+        #expect(sketch.result == nil)
+
+        picker.answer(0, "/tmp/a.csv")
+        application.displayLinkFired()
+        application.displayLinkFired()
+        for _ in 0..<8 { await Task.yield() }
+        #expect(sketch.result == .some("/tmp/a.csv"), "結果で待ちが終わらない")
+        application.displayLinkFired()
+        #expect(picker.shown.count == 1, "終わった頼みをまた出した")
+    }
+
     /// **窓が key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
     /// 離したキーは窓へ届かないので、流さないと押されたまま残る。
     @Test("窓が退く知らせで、押していたキーの解放が流れる")
