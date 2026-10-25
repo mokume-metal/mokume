@@ -110,7 +110,7 @@ circle(200, 150, 20 + pow(2, level))
 
 **置いたもの (図形・絵・背景・画素の書き込み・呼んだ時点で効果を掛ける ``SketchPart/filter(_:)``) は設定ではなく、次に描くフレームに出る。** `setup()` と、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックで置いたものは、次に描くフレームへ持ち越される — `setup()` だけで 1 枚を描ける。描き場所では ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。それ以外 (描き場所の対の外・`Task` の続きなど) で置いたものは、警告を出して無視する。
 
-**寿命と、積めるかどうかは別の話である。** 変換はフレームを越えないが ``SketchPart/pushMatrix()`` で積める。積んだものもフレームの頭で空に戻るので、`draw()` の中で戻し忘れても次のフレームへは残らない。
+**寿命と、積めるかどうかは別の話である。** 変換はフレームを越えないが ``SketchPart/pushMatrix(fileID:line:)`` で積める。積んだものもフレームの頭で空に戻るので、`draw()` の中で戻し忘れても次のフレームへは残らない。
 
 **どこに書けるかは寿命を表さない。** 切り抜き (``SketchPart/clip(_:_:_:_:)``) は塗りや線と同じところに書けるが、シーンの記述なので越えない。
 
@@ -565,12 +565,13 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 ### 積んで戻す
 
-- ``SketchPart/pushMatrix()``
-- ``SketchPart/popMatrix()``
-- ``SketchPart/pushStyle()``
-- ``SketchPart/popStyle()``
-- ``SketchPart/push()``
-- ``SketchPart/pop()``
+- ``SketchPart/pushMatrix(fileID:line:)``
+- ``SketchPart/popMatrix(fileID:line:)``
+- ``SketchPart/pushStyle(fileID:line:)``
+- ``SketchPart/popStyle(fileID:line:)``
+- ``SketchPart/push(fileID:line:)``
+- ``SketchPart/pop(fileID:line:)``
+- ``SketchPart/push(_:)``
 
 ### 切り抜く
 

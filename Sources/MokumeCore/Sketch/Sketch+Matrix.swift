@@ -69,7 +69,7 @@ extension SketchPart {
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
-    /// 積んである変換 (``pushMatrix()``) は捨てないので、戻す先は残る。
+    /// 積んである変換 (``pushMatrix(fileID:line:)``) は捨てないので、戻す先は残る。
     ///
     /// **どれだけ重ねていても 1 回で戻る。** 下の例は原点を動かして回した後に呼んで
     /// いるので、最後の四角は面の左上を原点とする素の座標で描かれる。
@@ -101,7 +101,7 @@ extension SketchPart {
 
     /// いまの変換を積んでおく。
     ///
-    /// ``popMatrix()`` と対で使う。**挟んだ中で何を掛けても、外へ出れば元に戻る** ので、
+    /// ``popMatrix(fileID:line:)`` と対で使う。**挟んだ中で何を掛けても、外へ出れば元に戻る** ので、
     /// 図形ごとに変換を掛けたいときに前の状態を数えなくて済む。
     ///
     /// @Row {
@@ -158,12 +158,16 @@ extension SketchPart {
     /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻るので、戻し忘れても次のフレームへは残らない。
     // shot: 1 snippet=ec08da66
     // shot: 2 snippet=f32daf1c
-    public func pushMatrix() { Self.liveCanvas()?.pushMatrix() }
+    public func pushMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "pushMatrix()")?.pushMatrix(fileID: fileID, line: line)
+    }
 
-    /// 積んでおいた変換へ戻す。積んでいなければ何もしない。
+    /// 積んでおいた変換へ戻す。
+    ///
+    /// 積んでいなければ何もせず、呼んだ行を名指して 1 度だけ注意する。
     ///
     /// **積んでいないときに呼んでも落ちない。** 何もせずそのまま進むので、対にし忘れた
-    /// 場合は「戻らない」ことだけが起きる — 下の例は ``pushMatrix()`` を呼んでいないので、
+    /// 場合は「戻らない」ことだけが起きる — 下の例は ``pushMatrix(fileID:line:)`` を呼んでいないので、
     /// 2 つ目の四角も回した座標系のまま描かれる。
     ///
     /// @Row {
@@ -189,14 +193,20 @@ extension SketchPart {
     ///
     /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻る。
     // shot: 1 snippet=2d914404
-    public func popMatrix() { Self.liveCanvas()?.popMatrix() }
+    public func popMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "popMatrix()")?.popMatrix(fileID: fileID, line: line)
+    }
 
     /// 変換とスタイルの**両方**を積んでおく。
     ///
-    /// 片方だけを積みたいときは ``pushMatrix()`` / ``pushStyle()`` を使う。
+    /// 片方だけを積みたいときは ``pushMatrix(fileID:line:)`` / ``pushStyle(fileID:line:)`` を使う。
     ///
-    /// **``pushMatrix()`` との違いは、色や線の太さも一緒に戻ること。** 下の例は挟んだ
-    /// 中で原点も色も太さも変えているが、``pop()`` の後の四角は**どれも元のまま**で
+    /// 対の ``pop(fileID:line:)`` を通らないままフレームが終わると、`push()` を呼んだ行を名指して
+    /// 1 度だけ注意する。部品の早期 `return` で対が崩れやすいときは、閉包で戻す ``push(_:)`` を使う。
+    /// `fileID`・`line` はこの名指しのためのもので、書かずに呼ぶ (呼んだ場所が入る)。
+    ///
+    /// **``pushMatrix(fileID:line:)`` との違いは、色や線の太さも一緒に戻ること。** 下の例は挟んだ
+    /// 中で原点も色も太さも変えているが、``pop(fileID:line:)`` の後の四角は**どれも元のまま**で
     /// 描かれる。
     ///
     /// @Row {
@@ -224,18 +234,22 @@ extension SketchPart {
     /// }
     ///
     /// - Note: **積んだ履歴はフレームを越えない。** 変換もスタイルも、積んだ事実は `draw()` の頭で
-    ///   捨てられるので、``push()`` と ``pop()`` は同じフレームの中で釣り合わせる。
+    ///   捨てられるので、``push(fileID:line:)`` と ``pop(fileID:line:)`` は同じフレームの中で釣り合わせる。
     ///   スタイルそのもの (塗り・線・混ぜ方) はフレームを越える (切り抜き・材質・影を落とす / 受ける
     ///   設定は、そのフレームの中だけ)。
-    ///   ``pop()`` を忘れると、``push()`` の後に変えた塗りや混ぜ方が次のフレームへ持ち越される
+    ///   ``pop(fileID:line:)`` を忘れると、``push(fileID:line:)`` の後に変えた塗りや混ぜ方が次のフレームへ持ち越される
     ///   (たとえば `push(); blendMode(.add)` のまま終えると、次のフレームの頭から
     ///   加算が効き続ける)。変換だけは頭で戻る。
     // shot: 1 snippet=2665a2c3
-    public func push() { Self.liveCanvas()?.push() }
+    public func push(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "push()")?.push(fileID: fileID, line: line)
+    }
 
-    /// 積んでおいた変換とスタイルの両方へ戻す。積んでいなければ何もしない。
+    /// 積んでおいた変換とスタイルの両方へ戻す。
     ///
-    /// **``push()`` と対で使う。** 積んでいないときに呼んでも落ちず、何もせず進む。
+    /// 積んでいなければ何もせず、呼んだ行を名指して 1 度だけ注意する。
+    ///
+    /// **``push(fileID:line:)`` と対で使う。** 積んでいないときに呼んでも落ちず、何もせず進む (変換もスタイルも積んでいなかったときだけ、呼んだ行を名指して 1 度だけ注意する)。
     /// 下の例は 2 段積んで 2 段戻しているので、3 つの四角がそれぞれ別の段の状態で
     /// 描かれる。
     ///
@@ -267,12 +281,59 @@ extension SketchPart {
     /// }
     ///
     /// - Note: **積んだ履歴はフレームを越えない。** 変換もスタイルも、積んだ事実は `draw()` の頭で
-    ///   捨てられるので、``push()`` と ``pop()`` は同じフレームの中で釣り合わせる。
+    ///   捨てられるので、``push(fileID:line:)`` と ``pop(fileID:line:)`` は同じフレームの中で釣り合わせる。
     ///   スタイルそのもの (塗り・線・混ぜ方) はフレームを越える (切り抜き・材質・影を落とす / 受ける
     ///   設定は、そのフレームの中だけ)。
-    ///   ``push()`` の後に変えた塗りや混ぜ方は、``pop()`` を忘れると次のフレームへ持ち越される
+    ///   ``push(fileID:line:)`` の後に変えた塗りや混ぜ方は、``pop(fileID:line:)`` を忘れると次のフレームへ持ち越される
     ///   (たとえば `push(); blendMode(.add)` のまま終えると、次のフレームの頭から加算が効き続ける)。
     ///   変換だけは頭で戻る。
     // shot: 1 snippet=45e99a0e
-    public func pop() { Self.liveCanvas()?.pop() }
+    public func pop(fileID: StaticString = #fileID, line: UInt = #line) {
+        Self.liveCanvas(.act, "pop()")?.pop(fileID: fileID, line: line)
+    }
+
+    /// 閉包の間だけ変換とスタイルを積み、閉包を抜けたら戻す。
+    ///
+    /// **``push(fileID:line:)`` と ``pop(fileID:line:)`` の対を、閉包の範囲で書く形。** 閉包を抜けると、
+    /// 途中で `return` しても投げても、積んだときの変換とスタイルへ戻る。手で対にすると、部品の
+    /// 早期 `return` が `pop()` を飛ばし、後に描く図形へ移動や塗りが漏れる。下の例は真ん中の回で
+    /// 描かずに抜けるが、下の段の円は 3 つとも同じ灰色で、同じ高さに並ぶ。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     fill(140, 153, 178)
+    ///     for i in 0..<3 {
+    ///         push {
+    ///             translate(80 + i * 120, 110)
+    ///             fill(242, 115, 64)
+    ///             guard i != 1 else { return }  // 真ん中は描かずに抜ける
+    ///             square(-35, -35, 70)
+    ///         }
+    ///         // 抜け方によらず、移動と橙の塗りは戻っている
+    ///         circle(80 + i * 120, 220, 40)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上の段は左と右にだけ橙色の正方形があり、真ん中は空いている。下の段には灰色の円が 3 つ、同じ高さに等間隔で並ぶ | symmetric=x -->
+    ///     ![上の段は左と右にだけ橙色の正方形があり、真ん中は空いている。下の段には灰色の円が 3 つ、同じ高さに等間隔で並ぶ](https://i.gyazo.com/89f86602b563b243ae1b3b1bf07da19e.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 戻すのは ``push(fileID:line:)`` が積むものと同じ (変換とスタイル) で、光・視点・置いた図形は
+    /// 戻らない。閉包が投げたら、戻してから同じエラーを呼び出し元へ投げ直す。閉包の中の積み降ろしは
+    /// 閉包の中で閉じる — 中の余分な `pop()` は外で積んだ段を取らない。
+    ///
+    /// - Note: 描き場所の ``Canvas/draw(_:)`` とは役目が違う。あちらは描き場所の 1 フレームを開いて
+    ///   閉じ、こちらはフレームを開かず、いま描いている面の状態を閉包の範囲で戻すだけである。描き場所の
+    ///   `draw { }` の中でも、その描き場所の `push { }` として使える。
+    // shot: 1 snippet=720a4372
+    public func push(_ body: () throws -> Void) rethrows {
+        guard let canvas = Self.liveCanvas(.act, "push()") else { return try body() }
+        try canvas.push(body)
+    }
 }
