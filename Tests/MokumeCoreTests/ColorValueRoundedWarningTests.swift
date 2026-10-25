@@ -15,7 +15,7 @@ import Testing
 ///
 /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
 @Suite("色の値を作る口が言う、締めた・丸めた注意", .ownWarningDigest)
-struct ColorValueRoundedWarningTests {
+nonisolated struct ColorValueRoundedWarningTests {
     @Test("不透明度の判定は、範囲の外だけが締めた値を返す")
     func opacityJudgement() {
         #expect(DisplayScale.roundedOpacity(-0.5) == 0)

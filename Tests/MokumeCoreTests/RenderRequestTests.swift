@@ -13,7 +13,7 @@ import Testing
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 @Suite("書き出しの頼み")
-struct RenderRequestTests {
+nonisolated struct RenderRequestTests {
     @Test("環境の値へ載せて読み戻すと、同じ頼みに戻る")
     func theEnvironmentValueRoundTrips() throws {
         let request = try #require(
@@ -109,6 +109,7 @@ struct RenderRequestTests {
 
     /// 起動の行が出す文面に、読めなかった値と、直し方が載る。
     @Test("断った起動の文面は、読めなかった値と環境変数の名前を名乗る")
+    @MainActor
     func theRefusalNamesTheValueAndTheVariable() {
         let value = "not a request"
         let text = startupFailureText(.unreadableRenderRequest(value: value))

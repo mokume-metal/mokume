@@ -13,7 +13,7 @@ import Testing
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 @Suite("色相・彩度・明度の面")
-struct HueSaturationBrightnessTests {
+nonisolated struct HueSaturationBrightnessTests {
     private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-5)
         -> Bool
     {

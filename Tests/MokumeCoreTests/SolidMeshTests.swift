@@ -11,7 +11,7 @@ import simd
 /// 絵にする前の段階で確かめられることは、ここで確かめる — 失敗が「どの形の、どの
 /// 性質が壊れたか」という言葉で返るので、原因に辿り着くのが速い。
 @Suite("立体の形")
-struct SolidMeshTests {
+nonisolated struct SolidMeshTests {
 
     // MARK: - 分けかたの意味
 
@@ -282,6 +282,7 @@ struct SolidMeshTests {
     }
 
     @Test("読み込んだモデルにも同じ規則が効く")
+    @MainActor
     func modelEdgesFollowTheSameRule() throws {
         // 四角錐: 底の縁 4 + 斜めの稜 4。底の四角を割った対角線は無い
         let model = Model.make(

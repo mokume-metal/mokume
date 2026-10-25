@@ -153,6 +153,10 @@ extension [SwiftSetting] {
     /// - ADR-0009: Swift 6 言語モード (並行性の検査はエラーとして働く)
     /// - ADR-0010 決定 1: スケッチは main actor 既定 — ターゲット単位の既定隔離を
     ///   main actor にすることで、利用者のコードに並行性の注釈が現れない
+    ///
+    /// **検査のターゲットにも同じ既定が効く。** 注釈の無い suite は main actor の上で 1 本ずつ
+    /// 走るので、CPU だけで済む suite は `nonisolated struct` にして並列に走らせる。main actor の
+    /// 口を呼ぶ検査と、GPU を使う入れ子の suite だけに `@MainActor` を付ける (#3196)
     static var mokume: [SwiftSetting] {
         [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
     }

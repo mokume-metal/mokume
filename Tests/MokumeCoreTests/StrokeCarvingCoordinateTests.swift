@@ -13,7 +13,7 @@ import simd
 ///
 /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
 @Suite("線の片の引き算: 遠い座標")
-struct StrokeCarvingCoordinateTests {
+nonisolated struct StrokeCarvingCoordinateTests {
     /// 出てきた片の、符号付きの面積 (`Double`・最初の点からの差で足す)。
     private nonisolated static func area(_ points: [SIMD2<Float>]) -> Double {
         let origin = SIMD2<Double>(points[0])
