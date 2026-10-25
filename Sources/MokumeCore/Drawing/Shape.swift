@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Metal
+import Synchronization
 
 /// 組み立て終えた形。
 ///
@@ -117,6 +118,13 @@ public struct Shape {
     /// 立体の頂点が、全部同じ読み取り位置を指すならその位置。違う位置があれば `nil`。
     /// 頂点が無ければ `nil`。上の ``solidAlphaIsOne`` と同じ口で使う (焼き場の白い区画かの判定)。
     let solidCommonUV: SIMD2<Float>?
+    /// 立体の頂点と添字の見分け。**作った形ごとに違い、再び使われない** (#2791)。
+    ///
+    /// 立体の頂点・添字・部品・線は作った後に変わらない (`let`) ので、この番号が同じなら中身も同じである。
+    /// 形を値として写しても番号は付いてくる。GPU の置き場 (``Canvas/modelFills``) と影の指紋が、頂点を
+    /// 読み直さずに「同じ形」を見分ける鍵にする。形を組み立てる口は ``init`` の 1 つだけなので、
+    /// 中身の違う形が同じ番号を持つ経路は無い。
+    let solidGeometryID: Int
 
     /// 区間を塗るもの一式。
     ///
@@ -267,6 +275,17 @@ public struct Shape {
         }
         solidAlphaIsOne = opaque
         solidCommonUV = commonUV
+        solidGeometryID = Self.nextSolidGeometryID()
+    }
+
+    /// 立体の見分けの元。**`Canvas` ごとではなく、プロセスで 1 つ** (``Model/nextIdentity()`` と同じ作法・#1846)。
+    ///
+    /// 形は `Sendable` な値で、組み立てる口はどの隔離から呼ばれても番号が重ならないよう、原子的に数える。
+    nonisolated private static let solidGeometryIDs = Atomic<Int>(0)
+
+    /// 次の見分け。**呼ぶたびに違う値を返す** (1 から始まる)。
+    nonisolated static func nextSolidGeometryID() -> Int {
+        solidGeometryIDs.add(1, ordering: .relaxed).newValue
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。

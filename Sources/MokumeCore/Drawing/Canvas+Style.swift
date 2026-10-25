@@ -357,7 +357,7 @@ extension Canvas {
         let instanceCount = open.external?.count ?? (solidInstances.count - open.instanceStart)
         guard open.vertexCount > 0, instanceCount > 0 else { return }
         let indexStart = open.indexStart ?? 0
-        let indexCount = open.indexStart.map { solidIndices.count - $0 } ?? 0
+        let indexCount = open.ownIndexCount ?? open.indexStart.map { solidIndices.count - $0 } ?? 0
         // **外の置き場から置き場所を取る列は添字を持てない。** 粒が GPU に書かせる
         // 引数は `MTLDrawPrimitivesIndirectArguments` で、添字版とは構造体が違う —
         // 混ぜると引数を読み違えて、絵だけが黙って崩れる
@@ -439,7 +439,7 @@ extension Canvas {
                     range: open.vertexStart..<(open.vertexStart + open.vertexCount), isIndexed: false,
                     showsBackFaces: false, insideOut: winding == .inward)
             ]
-        case .retained, .freeform:
+        case .retained, .retainedGeometry, .freeform:
             return open.parts
         }
     }

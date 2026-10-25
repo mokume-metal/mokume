@@ -1365,7 +1365,7 @@ extension Canvas {
         switch open.source {
         case .mesh, .model:
             return true
-        case .retained:
+        case .retained, .retainedGeometry:
             return open.retainedVerticesAreOpaque && (!onAtlas || open.retainedReadsWhiteCell)
         case .freeform:
             for index in open.vertexStart..<(open.vertexStart + open.vertexCount) {

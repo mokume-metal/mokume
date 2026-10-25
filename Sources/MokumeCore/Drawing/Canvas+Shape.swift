@@ -1025,6 +1025,9 @@ extension Canvas {
             }
             return
         }
+        // 形の立体の頂点と添字を GPU の置き場に持てる区間は、溜め場へ積まずにそこから読む (#2791)。
+        // 粒の板など ``placeSolid`` を部品なしで呼ぶ口は、これまでの経路のまま
+        let owned = carriesParts ? ownedFill(for: run, of: shape, parts: parts, instances: instances) : nil
         var remaining = instances[...]
         while let first = remaining.first {
             // **頂点は列ごとに 1 度だけ置く。** 上限に達したら列を閉じて置き直す —
@@ -1036,7 +1039,9 @@ extension Canvas {
             //
             // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
             let mirrored = first.isMirrored
-            let start = openRetainedSolid(run, of: shape, mirrored: mirrored)
+            let start =
+                owned.map { openOwnedRetainedSolid(run, of: shape, in: $0, mirrored: mirrored) }
+                ?? openRetainedSolid(run, of: shape, mirrored: mirrored)
             // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ。
             // 置き場所の色で立つ部品は、置き場所の印 (``OpenSolid/backFaceInstances``) で表す —
             // 部品に印を付けると、同じ列の不透明の置き場所まで 2 回で描く

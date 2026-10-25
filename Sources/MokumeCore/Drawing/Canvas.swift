@@ -544,6 +544,9 @@ public final class Canvas {
         /// 読み込んだモデルの塗りの頂点を持つ GPU の置き場 (``SolidFillGeometry``)。持っていれば、
         /// 列は溜め場ではなくここから頂点を読む。閉じた列へそのまま渡し、所有させる。
         var fillGeometry: SolidFillGeometry?
+        /// 添字を ``fillGeometry`` の置き場から読む列の、添字の数 (#2791)。`nil` なら溜め場の添字
+        /// (``indexStart`` から末尾まで)。置き場から読む列の添字は溜め場へ積まないので、末尾との差では数えられない。
+        var ownIndexCount: Int?
         /// 単位の形の頂点を、置き場所の軸ごとの寸法 (``SolidInstance/normal0``〜`normal2` の `w`) で
         /// 広げて描く列か (``Batch/usesUnitShape``)。
         var usesUnitShape = false
@@ -575,6 +578,10 @@ public final class Canvas {
         /// 保持した形の区間。**呼ぶたびに番号が変わる**ので、続けて置いても
         /// 別の列になる (同じ形かどうかを値の比較で調べない)。
         case retained(serial: Int)
+        /// 保持した形の立体の区間のうち、頂点と添字を GPU の置き場に持つもの (#2791)。**形の見分け
+        /// (``Shape/solidGeometryID``) が鍵**で、置くたびには変わらない。中身は作った後に変わらないので、
+        /// 影の指紋は頂点を読まずにこの番号で代表できる。
+        case retainedGeometry(id: Int)
         /// 読み込んだモデル。同じモデルが続く間は頂点を置き直さない。
         case model(identity: Int)
     }
@@ -632,6 +639,16 @@ public final class Canvas {
     }
     /// 保持した形を置くたびに増える番号。
     var retainedSerial = 0
+    /// 保持した形の立体の塗りを、GPU の置き場に持って使い回すか (#2791)。**検査と計測だけが切り替える口**
+    /// で、公開しない。偽にすると、置くたびに頂点と添字を溜め場へ積む従来の経路を通る — 2 つの経路の絵が
+    /// 全バイトで一致することを、同じビルドの中で比べる物差し。
+    var retainsShapeSolids = true
+    /// 置き場に持つ形の大きさの下限 (頂点と添字のバイト数・#2791)。**小さい形は置き場を作る費用が
+    /// 溜め場へ積む費用に見合わない**ので、従来の経路のまま置く。
+    var retainedSolidThreshold = Canvas.defaultRetainedSolidThreshold
+    /// 前のフレームにも置かれた形の見分け (#2791)。置き場を作るのは 2 フレーム続けて置かれた形だけで、
+    /// 毎フレーム組み直す形に作っては捨てない。
+    var solidPromotion = SolidPromotion()
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
     let solidVertexStorage: GrowableBuffer
     private let solidIndexStorage: GrowableBuffer
@@ -2019,6 +2036,9 @@ public final class Canvas {
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
+
+        /// 添字を溜め場ではなく自分の置き場から読む列なら、その置き場 (#2791)。モデルの塗りは添字を持たない。
+        var ownedIndices: SolidFillGeometry? { run.isIndexed ? fillGeometry : nil }
 
         /// 頂点を溜め場から読む列か。**詰め直すとき (`Canvas.compact(_:)`) に頂点を区画へ写して、
         /// 頭 (`run.start`) を 0 へ置き直すのは、この列だけである。**
@@ -4985,15 +5005,18 @@ public final class Canvas {
                 draws += 1
             } else if batch.drawsBackThenFront {
                 draws += encodeBackThenFront(
-                    batch, indices: geometry.solidIndices,
+                    batch, indices: batch.ownedIndices?.buffer ?? geometry.solidIndices,
+                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
                     sweeps: prepared.sweeps.draws(forBatch: index), sweepBuffer: prepared.sweeps.buffer,
                     on: encoder)
                 // 置き場所ごとに捨て方を書き換えるので、次の列は設定し直す
                 memory.forgetCullMode()
             } else {
+                // 添字を自分の置き場に持つ列 (保持した形の塗り・#2791) は、そこから読む
                 encodeSolidDraw(
-                    run, instances: 0..<batch.instanceCount, indices: geometry.solidIndices,
-                    on: encoder)
+                    run, instances: 0..<batch.instanceCount,
+                    indices: batch.ownedIndices?.buffer ?? geometry.solidIndices,
+                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0, on: encoder)
                 draws += 1
             }
         }
@@ -5072,7 +5095,7 @@ public final class Canvas {
     ///
     /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
     private func encodeBackThenFront(
-        _ batch: Batch, indices: any MTLBuffer, sweeps: [Int: SweepDraw],
+        _ batch: Batch, indices: any MTLBuffer, indexBase: Int = 0, sweeps: [Int: SweepDraw],
         sweepBuffer: (any MTLBuffer)?, on encoder: any MTL4RenderCommandEncoder
     ) -> Int {
         let run = batch.run
@@ -5080,7 +5103,9 @@ public final class Canvas {
         var draws = 0
         func draw(_ range: Range<Int>?, _ culled: MTLCullMode, _ instances: Range<Int>) {
             encoder.setCullMode(culled)
-            encodeSolidDraw(run, section: range, instances: instances, indices: indices, on: encoder)
+            encodeSolidDraw(
+                run, section: range, instances: instances, indices: indices, indexBase: indexBase,
+                on: encoder)
             draws += 1
         }
         let runs = SolidSweep.runs(
@@ -5492,7 +5517,7 @@ public final class Canvas {
 
     /// 落とす列 1 つを、区画へ寄せた形に詰め直したもの。控えるときと、その回の列の指紋を取る
     /// ときが同じ形を通る (同じ列なら、どちらで取っても同じ指紋になる)。
-    private struct CompactCaster {
+    struct CompactCaster {
         var batch: Batch
         var vertices: ArraySlice<SolidVertex>
         var indices: [UInt32]
@@ -5512,12 +5537,20 @@ public final class Canvas {
     ///
     /// [#2023]: https://github.com/mokume-metal/mokume/issues/2023
     /// [#2043]: https://github.com/mokume-metal/mokume/issues/2043
-    private func compact(_ batch: Batch) -> CompactCaster {
+    func compact(_ batch: Batch, forDigest: Bool = false) -> CompactCaster {
         var moved = batch
         var run = batch.run
         var vertices: ArraySlice<SolidVertex> = []
         var indices: [UInt32] = []
-        if batch.run.isIndexed {
+        if let own = batch.ownedIndices {
+            // 添字を自分の置き場に持つ列 (#2791)。頂点は置き場にあり、添字の値は置き場の番号のまま
+            // 使える。指紋は形の見分けで取る (``casterDigest(_:)``) ので、指紋だけのときは添字を
+            // 取り出さない — 影の持ち越しが区画へ写すときだけ要る
+            if !forDigest {
+                indices = Array(own.indices[batch.run.indexStart..<(batch.run.indexStart + batch.run.indexCount)])
+            }
+            run.indexStart = 0
+        } else if batch.run.isIndexed {
             let range = batch.run.indexStart..<(batch.run.indexStart + batch.run.indexCount)
             var low = UInt32.max
             var high: UInt32 = 0
@@ -5771,7 +5804,9 @@ public final class Canvas {
             encodeCaster(
                 batch,
                 from: CasterSource(
-                    vertices: solidBuffer.gpuAddress, indices: solidIndexBuffer, indexBase: 0,
+                    vertices: solidBuffer.gpuAddress,
+                    indices: batch.ownedIndices?.buffer ?? solidIndexBuffer,
+                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
                     instances: instanceBuffer.gpuAddress,
                     values: batchValues.gpuAddress + detailOffset),
                 on: encoder)
@@ -5905,7 +5940,7 @@ public final class Canvas {
         guard frameCasters.chainValid else { return (nil, nil) }
         var chain = frameCasters.chain
         for batch in casting {
-            guard let digest = casterDigest(compact(batch)) else { return (nil, nil) }
+            guard let digest = casterDigest(compact(batch, forDigest: true)) else { return (nil, nil) }
             chain.mix(digest)
         }
         let holds = chain.finish()
@@ -5922,7 +5957,7 @@ public final class Canvas {
     ///
     /// 区画へ寄せた形 (``CompactCaster``) から取るので、溜め場のどこに居たかは入らない — 同じ列を
     /// 控える前に取っても控えた後に取っても同じ値になる。
-    private func casterDigest(_ caster: CompactCaster) -> UInt64? {
+    func casterDigest(_ caster: CompactCaster) -> UInt64? {
         let batch = caster.batch
         guard batch.instances == nil else { return nil }
         var hasher = ShadowBakeHasher()
@@ -5941,7 +5976,10 @@ public final class Canvas {
         // 組み直すフレーム (面の張り替え・粗さの切り替え) は `index(_:)` がまさに
         // 誘う書き方で、これを混ぜないと前のフレームの影が居座る
         hasher.mix(UInt64(batch.run.indexCount))
-        caster.indices.withUnsafeBytes { hasher.mix($0) }
+        // 形の見分けで代表できる列は、添字を読まない (#2791)
+        if case .retainedGeometry = batch.solidSource {} else {
+            caster.indices.withUnsafeBytes { hasher.mix($0) }
+        }
         // **頂点は出どころで代表できるなら舐めない。** 組み込みの形の頂点は寸法から
         // 決まり、読み込んだモデルは読んだ後に変わらない。その場で並べた頂点と
         // 保持した形 (置くたびに番号が変わる) だけ中身を読む
@@ -5952,6 +5990,10 @@ public final class Canvas {
         case .model(let identity):
             hasher.mix(2)
             hasher.mix(UInt64(identity))
+        case .retainedGeometry(let id):
+            // 保持した形の頂点と添字は作った後に変わらない。見分けが同じなら中身も同じ (#2791)
+            hasher.mix(5)
+            hasher.mix(UInt64(id))
         case .freeform, .retained, nil:
             hasher.mix(3)
             caster.vertices.withUnsafeBytes { hasher.mix($0) }
