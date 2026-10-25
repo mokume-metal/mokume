@@ -542,7 +542,7 @@ extension Canvas {
     /// 形は、順の入れ替わる相手が無いので、置き場所の並び全体を 1 度で積み、描く回数は 1 回である。
     ///
     /// 立体の区間を置き場所を外に回して置くと、立体の区間も置き場所ごとに
-    /// ``openRetainedSolid(_:of:mirrored:external:)`` を通る — 頂点と添字を置き場所の数だけ溜め場へ写す
+    /// ``openRetainedSolid(_:of:mirrored:external:isParticles:)`` を通る — 頂点と添字を置き場所の数だけ溜め場へ写す
     /// (区間ごとに 1 度だったのが、区間 × 置き場所になる)。部品と線の走査も置き場所ごとに走り、半透明の
     /// 部品は 1 列に置き場所 1 つになる (1 つずつ置いたときと同じ費用)。
     ///
@@ -996,7 +996,7 @@ extension Canvas {
     /// 数だけ増える。
     func placeSolid(
         _ run: Shape.Run, of shape: Shape, instances: some Collection<SolidInstance>,
-        carriesParts: Bool = false
+        carriesParts: Bool = false, isParticles: Bool = false
     ) {
         beginSolids()
         let parts = carriesParts ? shape.solidParts(in: run) : []
@@ -1041,7 +1041,7 @@ extension Canvas {
             let mirrored = first.isMirrored
             let start =
                 owned.map { openOwnedRetainedSolid(run, of: shape, in: $0, mirrored: mirrored) }
-                ?? openRetainedSolid(run, of: shape, mirrored: mirrored)
+                ?? openRetainedSolid(run, of: shape, mirrored: mirrored, isParticles: isParticles)
             // 部品を列の描く単位へ写す。頂点も添字も、形の中の位置から写した先までずらすだけ。
             // 置き場所の色で立つ部品は、置き場所の印 (``OpenSolid/backFaceInstances``) で表す —
             // 部品に印を付けると、同じ列の不透明の置き場所まで 2 回で描く
@@ -1262,7 +1262,8 @@ extension Canvas {
     /// [#1649]: https://github.com/mokume-metal/mokume/issues/1649
     @discardableResult
     func openRetainedSolid(
-        _ run: Shape.Run, of shape: Shape, mirrored: Bool, external: ExternalInstances? = nil
+        _ run: Shape.Run, of shape: Shape, mirrored: Bool, external: ExternalInstances? = nil,
+        isParticles: Bool = false
     ) -> Int {
         closeBatch()
         let start = solidVertices.count
@@ -1292,7 +1293,7 @@ extension Canvas {
         // 不透明な列の判定が頂点を読み直さずに済むよう、形が持つ答えを写す (#2366)
         openSolid?.retainedVerticesAreOpaque = shape.solidAlphaIsOne
         openSolid?.retainedReadsWhiteCell = shape.solidCommonUV == whiteUV
-        openSolid?.isParticles = placingParticles
+        openSolid?.isParticles = isParticles
         return instanceStart
     }
 

@@ -441,10 +441,6 @@ public final class Canvas {
     /// **同じ形が続く間は、頂点を置き直さずに置き場所だけを足す。** 形が変わったら
     /// (あるいは列を分ける設定が変わったら) 閉じて開き直す。
     var openSolid: OpenSolid?
-    /// 粒の板を置いている間だけ真。開く列に ``OpenSolid/isParticles`` として写る
-    /// (``placeFromGPU(_:_:)``・``placeFromCPU(_:)``)。粒の板は保持した形として置くので、
-    /// 形を置く口の側からは粒かどうかが分からない。
-    var placingParticles = false
     /// 1 つの列に入れる置き場所の上限。
     ///
     /// **仕組みの都合ではなく規律である。** 無制限にすると「まとめきれずに列を分ける」
@@ -503,11 +499,13 @@ public final class Canvas {
         /// ([#1564](https://github.com/mokume-metal/mokume/issues/1564))。
         var mayShowBackFaces = false
         /// 保持した形の頂点が、全部 α がちょうど 1 か (``Shape/solidAlphaIsOne``)。**保持した形の列だけが
-        /// 使う** — 形を置く側が、列を開くときに写す (``Canvas/openRetainedSolid(_:of:mirrored:external:)``)。
+        /// 使う** — 形を置く側が、列を開くときに写す (``Canvas/openRetainedSolid(_:of:mirrored:external:isParticles:)``)。
         /// 不透明な列の判定 (``Canvas/isOpaqueFill(_:closing:)``・#2366) が、頂点を列ごとに読み直さずに済む。
         var retainedVerticesAreOpaque = false
-        /// 粒の板の列か (``Canvas/placingParticles``)。列を閉じるとき、混ぜ方が順に依らなければ
-        /// 奥行きを読むだけで描く列にする (``Batch/readsDepthOnly``・#3107)。
+        /// 粒の板の列か。粒の板は保持した形として置くので、形を置く口の側からは粒かどうかが分からない —
+        /// 粒を置く口が ``Canvas/openRetainedSolid(_:of:mirrored:external:isParticles:)`` に渡す。
+        /// 列を閉じるとき、混ぜ方が順に依らなければ奥行きを読むだけで描く列にする
+        /// (``Batch/readsDepthOnly``・#3107)。
         var isParticles = false
         /// 保持した形の頂点が、全部同じ読み取り位置 (焼き場の白い区画) を指すか。上と同じ口で写す。
         var retainedReadsWhiteCell = false

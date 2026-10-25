@@ -276,8 +276,6 @@ extension Canvas {
         _ particles: Particles, _ draw: Particles.Draw
     ) -> Int? {
         guard let run = particles.quad.runs.first, run.source == .solid else { return nil }
-        placingParticles = true
-        defer { placingParticles = false }
         replaying(CollectionOfOne(run)) { run in
             // 頂点の積み直しは保持した形と同じ手順を通す。置き場所の行列は GPU が組むので、
             // 鏡映の符号は CPU では決まらず、列は鏡映しないものとして開く (前からこの扱い)
@@ -285,7 +283,8 @@ extension Canvas {
                 run, of: particles.quad, mirrored: false,
                 external: ExternalInstances(
                     instances: draw.instances, count: particles.capacity,
-                    arguments: draw.arguments))
+                    arguments: draw.arguments),
+                isParticles: true)
             closeBatch()
         }
         return run.count
@@ -304,10 +303,8 @@ extension Canvas {
             from: read(particles.state), transform: transform.matrix,
             basis: currentCamera.basis, lifeStep: Particles.lifeStep(of: frameStep))
         guard !places.isEmpty else { return }
-        placingParticles = true
-        defer { placingParticles = false }
         replaying(CollectionOfOne(run)) { run in
-            placeSolid(run, of: particles.quad, instances: places)
+            placeSolid(run, of: particles.quad, instances: places, isParticles: true)
         }
     }
 
