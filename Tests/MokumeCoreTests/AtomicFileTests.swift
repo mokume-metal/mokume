@@ -192,6 +192,240 @@ struct AtomicFileTests {
             == [inFlight.lastPathComponent, otherName.lastPathComponent].sorted())
     }
 
+    // MARK: - 片付けの読みは、呼んだ糸で件数に上限を持つ (#3176)
+
+    /// 終わって回収した子の番号 (= もう居ない書き手)。
+    private func goneWriter() throws -> pid_t {
+        let (gone, exited) = try launch("/usr/bin/true")
+        exited.wait()
+        return gone.processIdentifier
+    }
+
+    /// 置き場所の隣に、居ない書き手の一時ファイルを `count` 個と、関係のない物を `fillers` 個置く。
+    private func crowd(_ facet: URL, for url: URL, writer: pid_t, abandoned count: Int, fillers: Int) throws {
+        for sequence in 1...count {
+            try Data("half".utf8).write(to: AtomicFile.temporaryURL(for: url, writer: writer, sequence: sequence))
+        }
+        for index in 0..<fillers {
+            try Data().write(to: facet.appendingPathComponent("filler-\(index).dat"))
+        }
+    }
+
+    /// **件数に依らず返るのは、呼んだ糸が読む件数に上限があるから。** 時間で見ると機械の混み具合に左右される
+    /// ので、読んだ件数で見る (14 万件のディレクトリでは、全件を読む `contentsOfDirectory` が約 340 ms だった)。
+    @Test("読みきれないディレクトリでは、呼んだ糸が読むのは予算までで、続きが残りを片付ける")
+    func theCallingThreadReadsOnlyUpToTheBudget() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let url = facet.appendingPathComponent("frame-000.png")
+        try crowd(facet, for: url, writer: try goneWriter(), abandoned: 40, fillers: 300)
+
+        let rest = try #require(
+            AtomicFile.beginSweep(of: url, budget: 16), "予算より多い件数があるのに、呼んだ糸で読みきった")
+        #expect(rest.entriesRead <= 16, "呼んだ糸が予算を越えて読んだ: \(rest.entriesRead)")
+        #expect(try temporaries(in: facet).count >= 40 - 16, "予算の外の分まで、呼んだ糸で片付けた")
+
+        rest.finish()
+        #expect(try temporaries(in: facet).isEmpty, "続きが居ない書き手の分を片付けていない")
+        #expect(rest.entriesRead >= 340, "続きが読みきっていない: \(rest.entriesRead)")
+    }
+
+    @Test("予算に収まるディレクトリは、戻る前に片付け終わる (続きは無い)")
+    func aSmallDirectoryIsSweptBeforeReturning() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let url = facet.appendingPathComponent("frame-000.png")
+        try crowd(facet, for: url, writer: try goneWriter(), abandoned: 5, fillers: 10)
+
+        #expect(AtomicFile.beginSweep(of: url, budget: 1024) == nil, "予算に収まるのに続きを残した")
+        #expect(try temporaries(in: facet).isEmpty, "戻る前に片付け終わっていない")
+    }
+
+    /// 置く口から見て: 裏の列を止めておくと、置く口は続きを待たずに返り、続きが走れば片付く。
+    @Test("置く口は、予算の外の片付けを待たずに返り、裏の列が走れば残りも片付く")
+    func writingDoesNotWaitForTheRestOfTheSweep() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let url = facet.appendingPathComponent("frame-000.png")
+        try crowd(facet, for: url, writer: try goneWriter(), abandoned: 100, fillers: 300)
+
+        let saved = AtomicFile.syncSweepBudget
+        AtomicFile.syncSweepBudget = 16
+        defer { AtomicFile.syncSweepBudget = saved }
+        // 裏の列を止める。置く口が続きを待つ形なら、ここで返らず検査が止まる (期限で殺される)
+        let hold = DispatchSemaphore(value: 0)
+        AtomicFile.sweepQueue.async { hold.wait() }
+        defer { hold.signal() }
+
+        try AtomicFile.write(Data("frame".utf8), to: url)
+        #expect(try Data(contentsOf: url) == Data("frame".utf8))
+        // 呼んだ糸が読んだのは予算まで。残りの居ない書き手の分は、続きが走るまで残る
+        #expect(try temporaries(in: facet).count >= 100 - 16, "予算の外の分まで、置く口が片付けた")
+
+        hold.signal()
+        AtomicFile.settleSweeps()
+        #expect(try temporaries(in: facet).isEmpty, "続きが片付けていない")
+    }
+
+    /// **続きの経路でも、生きている書き手の一時ファイルは消さない** (重なっている別の世代が書いている途中のもの)。
+    @Test("続きの経路でも、生きている書き手の一時ファイルは残し、居ない書き手の分だけ消す")
+    func theContinuationKeepsTemporariesOfLiveWriters() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let url = facet.appendingPathComponent("frame-000.png")
+        let (alive, _) = try launch("/bin/sleep", ["30"])
+        defer { alive.terminate() }
+        let inFlight = AtomicFile.temporaryURL(for: url, writer: alive.processIdentifier, sequence: 3)
+        try Data("half".utf8).write(to: inFlight)
+        try crowd(facet, for: url, writer: try goneWriter(), abandoned: 40, fillers: 300)
+
+        let rest = try #require(AtomicFile.beginSweep(of: url, budget: 16))
+        rest.finish()
+        #expect(try temporaries(in: facet) == [inFlight.lastPathComponent], "生きている書き手の分を消した")
+    }
+
+    /// **名前が増えても、続きはディレクトリごとに 1 本で、`DIR` を握る数も増えない** — 枚ごとに名前が変わる呼び手
+    /// (観測の絵) が、撮る速さが片付けを上回ったときに fd を溜めない。片付けるのは頼まれた名前の分だけ。
+    @Test("同じディレクトリで名前が増えても、続きは 1 本で、開いている fd は増えない")
+    func oneContinuationPerDirectoryWhateverTheNames() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let gone = try goneWriter()
+        let names = (0..<40).map { "frame-\($0).png" }
+        for name in names {
+            for sequence in 1...2 {
+                try Data("half".utf8).write(
+                    to: AtomicFile.temporaryURL(
+                        for: facet.appendingPathComponent(name), writer: gone, sequence: sequence))
+            }
+        }
+        // 頼まれない名前の分は、続きが走っても触れない
+        let unasked = AtomicFile.temporaryURL(
+            for: facet.appendingPathComponent("other.json"), writer: gone, sequence: 1)
+        try Data("half".utf8).write(to: unasked)
+        for index in 0..<300 { try Data().write(to: facet.appendingPathComponent("filler-\(index).dat")) }
+
+        let saved = AtomicFile.syncSweepBudget
+        AtomicFile.syncSweepBudget = 16
+        defer { AtomicFile.syncSweepBudget = saved }
+        let hold = DispatchSemaphore(value: 0)
+        AtomicFile.sweepQueue.async { hold.wait() }
+        defer { hold.signal() }
+
+        for name in names { try AtomicFile.write(Data(), to: facet.appendingPathComponent(name)) }
+        // 数えるのは、このディレクトリの鍵の行だけ (プロセスで共有する控えの全体は、並走する検査で揺れる)
+        #expect(AtomicFile.Sweep.handles.counts(in: facet).held == 0, "続きが積まれている間に DIR を握っている")
+        #expect(
+            AtomicFile.continuations.names(in: facet) == names.count,
+            "続きが 1 本にまとまっていない: \(AtomicFile.continuations.names(in: facet))")
+        // 呼んだ糸が読んだのは最初の名前の予算まで。あとの名前は読まずに集合へ足しただけ
+        #expect(try temporaries(in: facet).count >= 2 * names.count + 1 - 16, "続きの外で片付けた")
+
+        hold.signal()
+        AtomicFile.settleSweeps()
+        #expect(try temporaries(in: facet) == [unasked.lastPathComponent], "頼まれた名前の分だけが消えるはず")
+        #expect(AtomicFile.continuations.names(in: facet) == 0, "続きが片付いても控えが残る")
+        // 名前が 40 でも、同時に開いた DIR は 1 本まで
+        let handles = AtomicFile.Sweep.handles.counts(in: facet)
+        #expect(handles.held == 0 && handles.peak <= 1, "\(handles)")
+    }
+
+    /// **1 周目を読んでいる間に来た名前は、2 周目で片付く。片付け終えた後に来た名前は、呼んだ糸が自分で読む。**
+    @Test("続きが読んでいる間に足された名前は 2 周目で片付き、控えが空になった後の名前は新しい続きになる")
+    func namesAddedDuringAPassAreSweptByTheNextPassAndLaterOnesStartOver() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let gone = try goneWriter()
+        let first = facet.appendingPathComponent("frame-000.png")
+        let second = facet.appendingPathComponent("frame-001.png")
+        let third = facet.appendingPathComponent("frame-002.png")
+        for url in [first, second, third] {
+            for sequence in 1...20 {
+                try Data("half".utf8).write(
+                    to: AtomicFile.temporaryURL(for: url, writer: gone, sequence: sequence))
+            }
+        }
+        for index in 0..<300 { try Data().write(to: facet.appendingPathComponent("filler-\(index).dat")) }
+
+        let saved = AtomicFile.syncSweepBudget
+        AtomicFile.syncSweepBudget = 16
+        defer {
+            AtomicFile.syncSweepBudget = saved
+            AtomicFile.continuations.afterPass = nil
+        }
+        // 1 周目の後 (列の上) で 2 つ目の名前を足す。**1 周目の集合は 1 つ目だけ**なので、2 つ目は 2 周目でしか片付かない
+        let key = AtomicFile.Continuations.key(of: facet)
+        AtomicFile.continuations.afterPass = { passKey, pass in
+            if passKey == key, pass == 0 { _ = AtomicFile.continuations.adopt(second) }
+        }
+        let hold = DispatchSemaphore(value: 0)
+        AtomicFile.sweepQueue.async { hold.wait() }
+        defer { hold.signal() }
+        try AtomicFile.write(Data(), to: first)
+        hold.signal()
+        AtomicFile.settleSweeps()
+        let left = try temporaries(in: facet)
+        #expect(
+            left.filter { $0.hasPrefix(".frame-000.png.") || $0.hasPrefix(".frame-001.png.") }.isEmpty,
+            "2 周目が足された名前を片付けていない: \(left.count) 個残る")
+        #expect(left.count == 20, "頼まれていない名前の分に触れた: \(left.count)")
+        #expect(AtomicFile.continuations.names(in: facet) == 0)
+
+        // 控えが空になった後に来た名前は、呼んだ糸が自分で読んで、新しい続きを積む (足すだけで終わらせない)
+        AtomicFile.continuations.afterPass = nil
+        let again = DispatchSemaphore(value: 0)
+        AtomicFile.sweepQueue.async { again.wait() }
+        defer { again.signal() }
+        try AtomicFile.write(Data(), to: third)
+        #expect(AtomicFile.continuations.names(in: facet) == 1, "控えが空の後なのに、新しい続きを積んでいない")
+        again.signal()
+        AtomicFile.settleSweeps()
+        #expect(try temporaries(in: facet).isEmpty, "新しい続きが片付けていない")
+    }
+
+    /// **開けなかった回の名前は、片付けた名前に数えない** — 次に同じ名前を置くときに読み直す。
+    @Test("続きがディレクトリを開けなかったときは、その名前を片付け済みにせず、次に置くときに読み直す")
+    func aNameWhoseDirectoryCouldNotBeOpenedIsReadAgain() throws {
+        let facet = try makeFacet()
+        let moved = facet.deletingLastPathComponent()
+            .appendingPathComponent("moved-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: facet)
+            try? FileManager.default.removeItem(at: moved)
+        }
+        let url = facet.appendingPathComponent("frame-000.png")
+        try crowd(facet, for: url, writer: try goneWriter(), abandoned: 40, fillers: 300)
+
+        let saved = AtomicFile.syncSweepBudget
+        AtomicFile.syncSweepBudget = 16
+        defer { AtomicFile.syncSweepBudget = saved }
+        let hold = DispatchSemaphore(value: 0)
+        AtomicFile.sweepQueue.async { hold.wait() }
+        defer { hold.signal() }
+        try AtomicFile.write(Data(), to: url)
+        // 続きが走る前にディレクトリを動かして、開けなくする
+        try FileManager.default.moveItem(at: facet, to: moved)
+        hold.signal()
+        AtomicFile.settleSweeps()
+        try FileManager.default.moveItem(at: moved, to: facet)
+        #expect(try temporaries(in: facet).count >= 40 - 16, "前提: 開けなかった回は何も片付けない")
+
+        try AtomicFile.write(Data(), to: url)
+        AtomicFile.settleSweeps()
+        #expect(try temporaries(in: facet).isEmpty, "開けなかった名前が、片付け済みのまま二度と読まれない")
+    }
+
+    @Test("ディレクトリの鍵は、/private の有無・.. ・同じ道の別の綴りで割れない")
+    func theDirectoryKeyIsNormalised() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let key = AtomicFile.Continuations.key(of: facet)
+        #expect(AtomicFile.Continuations.key(of: URL(fileURLWithPath: "/private" + facet.path)) == key)
+        #expect(
+            AtomicFile.Continuations.key(of: facet.appendingPathComponent("sub/..", isDirectory: true)) == key)
+        #expect(AtomicFile.Continuations.key(of: URL(fileURLWithPath: facet.path + "//")) == key)
+    }
+
     @Test("一時ファイルの名前から書き手を引くのは、その置き場所の形をしたものだけ")
     func readsTheWriterOnlyFromItsOwnTemporaries() {
         let url = URL(fileURLWithPath: "/facet/report.json")
