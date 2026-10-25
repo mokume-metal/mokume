@@ -44,11 +44,26 @@ nonisolated struct AudioSpan: Equatable, Sendable {
     var to: Int { base + samples.count }
     /// 区間に標本が 1 つも無いか。
     var isEmpty: Bool { from >= to }
+    /// 時刻を指定した観測の枚だけが持つ、見せる区間 (指定の秒で終わる 1 フレームぶん)。
+    ///
+    /// 上の区間 (通常の続き) とは別に解かれ、通常の続きの値を動かさない。観測の枚の後の通常の枚は、観測が無かった
+    /// ときと同じ値になる。
+    var observation: Observation?
 
-    init(base: Int, samples: [Float], from: Int) {
+    /// 観測の枚が見せる区間。``AudioSpan`` と同じ決まりで標本を持つ (この型の中に同じ型は置けないので別の型)。
+    nonisolated struct Observation: Equatable, Sendable {
+        var base: Int
+        var samples: [Float]
+        var from: Int
+
+        var span: AudioSpan { AudioSpan(base: base, samples: samples, from: from) }
+    }
+
+    init(base: Int, samples: [Float], from: Int, observation: Observation? = nil) {
         self.base = base
         self.samples = samples
         self.from = from
+        self.observation = observation
     }
 
     /// 標本列の全部を 1 つの区間にする (頭が標本 0)。
@@ -198,14 +213,21 @@ nonisolated enum AudioAnalysis {
         let to = span.to
         let from = min(max(span.from, to - maxSpan, span.base), to)
         let interval = span.samples[(from - span.base)..<(to - span.base)]
-        // 窓 k は標本 [hop·k − windowSize, hop·k)。終わりが区間 [from, to) に入るのは、
-        // k が from / hop + 1 から to / hop まで (連続する区間で数えると、過不足なく並ぶ)
-        let first = from / hop + 1
+        // 終わりが入る窓が 0 本なら、区間の終わりまでに終わった最後の窓 (まだ 1 本も終わっていなければ無し)
         let last = to / hop
-        let windows: ClosedRange<Int>? =
-            first <= last ? first...last : (last >= 1 ? last...last : nil)
+        let windows = windowsEnding(from: from, to: to) ?? (last >= 1 ? last...last : nil)
         return levels(
             interval: interval, windows: windows, in: span, using: transform, scratch: &scratch)
+    }
+
+    /// 区間 `[from, to)` に終わりが入る格子の窓の番号。入る窓が無ければ `nil`。
+    ///
+    /// 窓 `k` は標本 `[hop·k − windowSize, hop·k)`。終わり `hop·k` が区間に入るのは、`k` が `from / hop + 1` から
+    /// `to / hop` まで。連続する区間で数えると、どの窓も 1 度ずつ、どれかの区間に入る。
+    static func windowsEnding(from: Int, to: Int) -> ClosedRange<Int>? {
+        let first = from / hop + 1
+        let last = to / hop
+        return first <= last ? first...last : nil
     }
 
     /// 窓 1 つ (``windowSize`` 標本。足りなければ前を 0 で埋める) を解析する。窓の全体が区間。
@@ -356,15 +378,12 @@ final class AudioAnalyzer {
 /// (次のフレームの値に混ぜない)。**空の区間は置き換えない** — 標本が 1 つも進まなかったフレーム
 /// (飛び先から始まる最初のフレームなど) は、前のフレームの値のまま。
 ///
-/// 波形 (``waveform()``) は、置いた区間の終わりの標本をそのまま返す。解析はしない。
-///
-/// 拍 (``isBeat()``) は**履歴を持つ**ので、値と違って読まれなかったフレームの区間も順に処理する。
-/// 最初に読まれたフレームで状態を作り (そのフレームの区間から)、以後は区間を置くたび (``hold(_:)``) に
-/// 処理する。一度も読まれなければ処理は 0 回 (``beatSteps``)。
+/// 波形 (``waveform()``) と拍 (``isBeat``) は ``SoundTrace`` が持つ。波形は置いた区間の終わりの標本をそのまま
+/// 返し、拍は**履歴を持つ**ので、値と違って読まれなかったフレームの区間も、置くたびに必ず処理する。
 ///
 /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
 struct DeferredLevels {
-    /// 置かれた最新の (空でない) 区間。解いた後も、波形のために残す。
+    /// 置かれた最新の (空でない) 区間。解いた後も、残す。
     private var span: AudioSpan?
     /// ``span`` を解いたか。
     private var isSolved = true
@@ -372,45 +391,53 @@ struct DeferredLevels {
     private var solved = AudioLevels.silence
     /// 解いた回数。検査が読む。
     private(set) var analyses = 0
-    /// 波形の控え (``hold(_:)`` で捨てる)。
-    private var waveformCache: [Float]?
-    /// 拍の状態。``isBeat()`` が最初に読まれるまで `nil`。
-    private var beat: BeatTracker?
-    /// このフレームの区間に拍があったか。
-    private var beatNow = false
+    /// 波形と拍。
+    private var trace = SoundTrace()
 
-    /// 拍の状態が区間を処理した回数。**検査が読む** — 一度も読まれなければ 0。
-    var beatSteps: Int { beat?.calls ?? 0 }
-
-    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら値と波形は変えない
-    /// (そのフレームに拍は無い)。
-    mutating func hold(_ span: AudioSpan) {
-        guard !span.isEmpty else {
-            beatNow = false
-            return
-        }
-        self.span = span
-        isSolved = false
-        waveformCache = nil
-        beatNow = beat?.process(span) ?? false
+    /// 鳴り始める前が無音と分かっている音源か (``SoundTrace/beginsSilent``)。
+    var beginsSilent: Bool {
+        get { trace.beginsSilent }
+        set { trace.beginsSilent = newValue }
     }
 
-    /// 無音にする。拍の履歴も捨てる (次に鳴り始めるのは、流れの最初から)。
+    /// 拍の状態が区間を処理した回数。**検査が読む** — 区間を置くたびに 1 回ずつ増える。
+    var beatSteps: Int { trace.beatSteps }
+
+    /// フレームの頭。このフレームの拍を消す。
+    mutating func beginFrame() {
+        trace.beginFrame()
+    }
+
+    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら値と波形は変えない。
+    mutating func hold(_ span: AudioSpan) {
+        guard !span.isEmpty else { return }
+        self.span = span
+        isSolved = false
+        trace.hold(span)
+    }
+
+    /// 無音にする。波形は 0 になるが、拍の履歴は残る (止めた位置から続けるとき、履歴は続く)。
     mutating func silence() {
         span = nil
         isSolved = true
         solved = .silence
-        waveformCache = nil
-        beat?.reset(fresh: true)
-        beatNow = false
+        trace.clear()
     }
 
-    /// 標本の流れが途切れた (区切りを始め直した)。拍の履歴を捨てる。値と波形は変えない。
-    ///
-    /// - Parameter fresh: 新しい流れが、音源の最初から始まるか (ファイルの頭から鳴らすとき)。
-    mutating func restartStream(fresh: Bool) {
-        beat?.reset(fresh: fresh)
-        beatNow = false
+    /// 閉じた・外した。無音にして、拍の履歴も捨てる (次に鳴り始めるのは、流れの最初から)。
+    mutating func forget() {
+        silence()
+        trace.forget()
+    }
+
+    /// 標本の流れが終わった (一発音の終わり・ループしないファイルの終わり)。端数のブロックの拍を、このフレームに足す。
+    mutating func endStream() {
+        trace.end()
+    }
+
+    /// 区間の番号の付け直しで流れが続くとき、続きの番号を伝える (``SoundTrace/rebase(to:)``)。
+    mutating func rebase(to position: Int) {
+        trace.rebase(to: position)
     }
 
     /// 読まれた値。区間が残っていればここで 1 回だけ解く。
@@ -425,19 +452,9 @@ struct DeferredLevels {
 
     /// 区間の終わりの ``AudioAnalysis/windowSize`` 標本 (古い順)。何も鳴っていなければ全部 0。
     mutating func waveform() -> [Float] {
-        if let waveformCache { return waveformCache }
-        let tail = span?.tail(AudioAnalysis.windowSize) ?? [Float](repeating: 0, count: AudioAnalysis.windowSize)
-        waveformCache = tail
-        return tail
+        trace.waveform()
     }
 
-    /// このフレームの区間に拍があったか。**最初に読まれたときに、拍の状態を作る**。
-    mutating func isBeat() -> Bool {
-        if beat == nil {
-            // 何も置かれていなければ流れの最初。置かれていれば、曲の途中から読み始めたことになる
-            beat = BeatTracker(fresh: span.map { $0.from == 0 } ?? true)
-            if let span { beatNow = beat?.process(span) ?? false }
-        }
-        return beatNow
-    }
+    /// このフレームの区間に拍があったか。
+    var isBeat: Bool { trace.isBeat }
 }

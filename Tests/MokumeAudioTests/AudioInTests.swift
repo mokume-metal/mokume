@@ -173,11 +173,13 @@ struct AudioInTests {
         }
     }
 
-    /// 時刻を指定した観測の枚で、``SketchPart/time`` は観測の秒になる。標本列の区間は作者の時計の枚の番号で
-    /// 数えるので、観測の枚も次の通常の枚も、観測の無い回と同じ区間を解く。
-    @Test("時刻を指定した観測の枚を挟んでも、標本列の入り口の区間は観測の無い回と同じ")
-    func anObservedFrameDoesNotBendTheWindows() throws {
-        func run(observingAt frame: Int?) throws -> [Float] {
+    /// 時刻を指定した観測の枚で、``SketchPart/time`` は観測の秒になる。標本列の入り口は、観測の枚には指定の秒で終わる
+    /// 1 フレームぶんの区間の値を見せ (映すコマと音の窓だけが指定の秒で決まる)、通常の続きは作者の時計の枚の番号で
+    /// 数える。観測の枚の後の通常の枚は、観測の無い回と同じ値になる。
+    @Test("時刻を指定した観測の枚は、指定の秒で終わる 1 フレームぶんの区間の値を見せ、その後の通常の枚の値は観測の有無で変わらない")
+    func anObservedFrameShowsTheIntervalEndingAtTheRequestedTime() throws {
+        /// `pausing` を指定すると、その枚の `draw()` で時間を止める (観測の後の通常の枚の区間が空になる)
+        func run(observingAt frame: Int?, pausingAt pausing: Int? = nil) throws -> [Float] {
             let facet = FileManager.default.temporaryDirectory
                 .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
@@ -185,8 +187,9 @@ struct AudioInTests {
             var audio: AudioIn?
             var seen: [Float] = []
             AudioSketch.onSetup = { sketch in audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
-            AudioSketch.onDraw = { _ in
+            AudioSketch.onDraw = { sketch in
                 if let audio { seen.append(audio.level) }
+                if sketch.frameCount == pausing { sketch.pauseTime() }
             }
             let runtime = try SketchRuntime(
                 sketch: AudioSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
@@ -202,11 +205,22 @@ struct AudioInTests {
             runtime.closePlugins()
             return seen
         }
-        let plain = try run(observingAt: nil)
-        let observed = try run(observingAt: 4)
-        #expect(plain.count == 8 && observed.count == 8)
-        #expect(plain.last ?? 0 > 0)
-        #expect(observed == plain, "観測の枚が区間を歪めた: \(observed) 対 \(plain)")
+        // 5 秒 = 60 fps の 300 フレーム目。その 1 フレーム前の頭 (299·800) から 300·800 までの区間 (ファイルは繰り返す)
+        let shown = AudioAnalysis.analyze(span(of: chord, from: 299 * 800, to: 300 * 800, loops: true)).level
+        for pausing in [nil, 2] as [Int?] {
+            let plain = try run(observingAt: nil, pausingAt: pausing)
+            let observed = try run(observingAt: 4, pausingAt: pausing)
+            let label = pausing.map { "枚 \($0) で時間を止める" } ?? "止めない"
+            #expect(plain.count == 8 && observed.count == 8, "\(label)")
+            #expect(plain.last ?? 0 > 0, "\(label)")
+            // 観測の枚 (4 番目) は、指定の秒で終わる区間の値
+            #expect(observed[3] == shown, "\(label): 観測の枚の値 \(observed[3]) 対 \(shown)")
+            #expect(plain[3] != shown, "\(label): 観測の値が通常の値と違うから、取り違えを見分けられる")
+            // 他の枚は観測の有無で変わらない。時間を止めているときは、観測の枚の次の枚が空の区間で前の値を保つ
+            for index in observed.indices where index != 3 {
+                #expect(observed[index] == plain[index], "\(label): 枚 \(index + 1) が観測で変わった")
+            }
+        }
     }
 
     /// 観測の枚の `draw()` で作った入り口の起点が、観測の秒 (5 秒) になって残っていた。起点は作者の時計の秒
@@ -242,16 +256,15 @@ struct AudioInTests {
 
         // 観測の枚の draw() が見る時刻は観測の秒で、次の枚は作者の時計へ戻っている
         #expect(times == [5, Float(4.0 / 60)])
-        // 次の枚が読む区間は、起点 (作者の時計の 3/60 秒) から 1/60 秒までで、頭から標本が進んだぶんになる
-        let end = RecordedSource.index(
-            at: Double(Float(4.0 / 60)) - Double(Float(3.0 / 60)), sampleRate: 48_000)
-        let expected = AudioAnalysis.analyze(span(of: chord, from: 0, to: end))
+        // 次の枚が読む区間は、起点 (作者の時計の 3/60 秒) から 4/60 秒まで = 1 フレームぶん (800 標本) の頭からの区間
+        let expected = AudioAnalysis.analyze(span(of: chord, from: 0, to: 800))
         #expect(expected.level > 0, "区間が空なら、起点の違いを見分けられない")
         #expect(levels.last == expected.level, "起点が観測の秒のままだと区間が空になる: \(levels)")
     }
 
-    /// 出どころへ渡す時計の位置は、観測の枚でも作者の時計の秒・通常の枚の番号・固定の時計の fps である。
-    @Test("時刻を指定した観測の枚でも、出どころへ渡す時計の位置は作者の時計の秒とフレームの番号のまま")
+    /// 出どころへ渡す時計の位置は、観測の枚でも作者の時計の秒・固定の時計の fps で、観測の秒は ``SourceClock/observed`` に
+    /// 別に載る (観測の枚だけ)。
+    @Test("時刻を指定した観測の枚でも、出どころへ渡す時計の秒は作者の時計のままで、観測の秒は観測の枚にだけ載る")
     func theSourceIsHandedTheAuthorsClockOnAnObservedFrame() throws {
         let facet = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
@@ -273,11 +286,12 @@ struct AudioInTests {
             try runtime.advance()
         }
         runtime.closePlugins()
-        #expect(spy.pumped.map(\.frame) == [0, 1, 2, 3, 4, 5])
+        #expect(spy.pumped.count == 6)
         #expect(spy.pumped.allSatisfy { $0.perSecond == 60 })
-        // 観測の秒 (5) は渡らない。秒は作者の時計 (フレーム番号 ÷ 60)
-        for clock in spy.pumped {
-            #expect(abs(clock.seconds - Double(clock.frame) / 60) < 1e-6, "\(clock)")
+        // 秒は作者の時計 (フレーム番号 ÷ 60)。観測の秒 (5) は観測の枚 (4 番目) の observed にだけ載る
+        for (index, clock) in spy.pumped.enumerated() {
+            #expect(abs(clock.seconds - Double(index) / 60) < 1e-9, "\(clock)")
+            #expect(clock.observed == (index == 3 ? 5 : nil), "\(clock)")
         }
     }
 
@@ -302,6 +316,61 @@ struct AudioInTests {
         let slow = try flags(fps: 24)
         #expect(slow == (try flags(fps: 24)))
         #expect(slow.filter { $0 }.count == starts.count)
+    }
+
+    /// 固定の時計 (`mokume render` と同じ数え方) でも、標本列の入り口は作者の時計の止める・飛ぶに従う。フレーム数ではなく
+    /// 作者の時計の位置で区間を数えるので、止めた間は標本が進まず、飛んだら飛び先から数え直す。
+    @Test("固定の時計でも、標本列の入り口は pauseTime()・playTime()・jumpTime(_:) に従う (144 fps)")
+    func samplesFollowTheAuthorsClockOnTheFixedClock() throws {
+        var audio: AudioIn?
+        var heard: [(level: Float, peak: Float, isNew: Bool)] = []
+        AudioSketch.onSetup = { sketch in audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+        AudioSketch.onDraw = { sketch in
+            guard let audio else { return }
+            heard.append((audio.level, audio.peak, audio.isNewFrame))
+            switch sketch.frameCount {
+            case 4: sketch.pauseTime()
+            case 7: sketch.playTime()
+            case 10: sketch.jumpTime(15.0 / 128)  // 16.875 フレーム目 (Float で正確): フレームの途中へ飛ぶ
+            case 13: sketch.jumpTime(7.0 / 128)  // 7.875 フレーム目: 過去へ飛ぶ
+            default: break
+            }
+        }
+        let runtime = try SketchRuntime(
+            sketch: AudioSketch(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 144))
+        for _ in 0..<18 { try runtime.advance() }
+        runtime.closePlugins()
+
+        // 作者の時計の位置 (1/8 フレーム単位の整数)。枚 f (0 始まり) の位置を、実装を通さずに並べる:
+        // 0〜3 は進み、4〜6 は 3 で止まり、7〜9 は 4・5・6、10 で 15/128 秒 (16.875 フレーム) へ飛び、
+        // 13 で 7/128 秒 (7.875 フレーム) へ戻って、以後は 1 枚ずつ進む
+        var units: [Int] = [0, 8, 16, 24, 24, 24, 24, 32, 40, 48, 135, 143, 151, 63]
+        while units.count < 18 { units.append(units.last! + 8) }
+        #expect(heard.count == 18)
+        var covered = 0
+        for (index, frame) in heard.enumerated() {
+            // 1 フレーム = 48000/144 標本、位置は 1/8 フレーム単位なので units × 48000 ÷ (8 × 144)
+            let end = units[index] * 48_000 / 1_152
+            var expected: AudioLevels?
+            if end < covered { covered = end }  // 過去へ飛んだら、そこから数え直す (空の区間)
+            if end > covered {
+                #expect(end - covered <= AudioAnalysis.maxSpan, "枚 \(index)")
+                expected = AudioAnalysis.analyze(span(of: chord, from: covered, to: end, loops: true))
+                covered = end
+            }
+            #expect(frame.isNew == (expected != nil), "枚 \(index): 標本が進んだ枚だけ新しい値")
+            if let expected {
+                #expect(frame.level == expected.level, "枚 \(index)")
+                #expect(frame.peak == expected.peak, "枚 \(index)")
+            } else if index > 0 {
+                // 標本が進まなかった枚は、前の枚の値のまま
+                #expect(frame.level == heard[index - 1].level, "枚 \(index)")
+            }
+        }
+        // 止めた間 (4〜6) と、過去へ飛んだ直後 (13) は標本が進まない
+        #expect(heard[4...6].allSatisfy { !$0.isNew } && !heard[13].isNew)
+        // 例が意味を持つ: 区間のどれも空でなく、値が動いている
+        #expect(Set(heard.map(\.level)).count > 3)
     }
 
     @Test("音声ファイルを固定の時計で 2 度回すと、同じフレームが同じ値を受け取る")

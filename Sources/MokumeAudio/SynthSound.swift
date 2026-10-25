@@ -92,6 +92,9 @@ public class SynthSound: EffectInput {
         self.stage = stage
         self.node = node
         self.name = name
+        // 鳴らし始める前の出口は無音 (ラックが 0 を書いている)。最初の区間の始まりが出口の標本 0 でなくても、
+        // 最初の立ち上がりを拍にする
+        deferred.beginsSilent = true
         if node == nil { stage.noticeCapacity() }
         stage.register(self)
     }
@@ -103,6 +106,9 @@ public class SynthSound: EffectInput {
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
     public var decibels: Float { levels.decibels }
     /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。写し方は ``AudioIn/peak`` と同じ。
+    ///
+    /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解くので、`draw()` が読まなかった
+    /// フレームの区間は解かれず、次のフレームの値にも混ざらない。取りこぼしたくない値は、毎フレーム読む。
     public var peak: Float { levels.peak }
     /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
     /// 窓の平均。
@@ -178,10 +184,12 @@ public class SynthSound: EffectInput {
     /// ので、固定の時計の書き出しの水準 2 を名乗れるのはファイル・標本列・合成音)。手本は Minim の `BeatDetect`、
     /// p5.sound の `PeakDetect`、Processing Sound の `BeatDetector`。感度の口は持たない。
     ///
-    /// **最初に読んだフレームから**履歴を溜め始める (読まない音源は何も払わない)。以後は読まないフレームの区間も
-    /// 順に処理するので、読む間隔を変えても拍の位置は変わらない。読み始めてから約 85 ミリ秒は出ない。長く止まって
-    /// 標本を落としたとき (区間の上限を越えたとき) は、履歴を捨てて始め直し、落とした区間では拍を出さない。
-    public var isBeat: Bool { deferred.isBeat() }
+    /// **鳴らし始めたとき** (エフェクトなら入力を繋いだとき) から履歴を溜め、読まないフレームの区間も毎フレーム処理する。
+    /// どのフレームから読み始めても拍の有無は変わらず、読む間隔を変えても拍の位置は同じ (費用は標本あたり二乗和 1 回で、
+    /// 1 フレームに数 µs)。鳴らす前は無音なので、最初の立ち上がりも拍になる。止めても履歴は続き、鳴らし直せば
+    /// 続きから判定する。標本を落としたとき (区間の上限を越えたとき) は、履歴を捨てて始め直し、落とした区間では
+    /// 拍を出さない。区間の上限があるので、約 7.8 fps (48 kHz) より遅いフレームでは区間の頭が落ち続け、拍は fps に依る。
+    public var isBeat: Bool { deferred.isBeat }
 
     /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
     var beatSteps: Int { deferred.beatSteps }
@@ -201,6 +209,7 @@ public class SynthSound: EffectInput {
     ///
     /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
     func refresh() {
+        deferred.beginFrame()
         guard let node else {
             deferred.silence()
             return
@@ -217,7 +226,7 @@ public class SynthSound: EffectInput {
 
     /// スケッチが終わった。以後の値は無音。
     func silence() {
-        deferred.silence()
+        deferred.forget()
     }
 
     // MARK: - 音の側へ渡す

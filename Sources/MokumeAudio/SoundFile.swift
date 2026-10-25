@@ -182,6 +182,9 @@ public final class SoundFile: Inlet, EffectInput {
     private var covered = 0
     /// エフェクトに通されたとき (``route(into:)``) の、引き継ぐ解析済みの終わり。次の ``beginSegment()`` で使う。
     private var continuedCoverage: Int?
+    /// 止める (``pause()``・``stop()``) 操作の時点で、まだ解析していなかった区間 (前のフレーム以後、止めた位置まで)。
+    /// 次の ``supply()`` が、止める前に鳴っていた分として見せてから無音にする (鳴り終わりと同じ形)。
+    private var stoppedTail: AudioSpan?
     private var noticed: Set<Notice> = []
     /// エフェクトへ通されたとき (``SoundEffect/process(_:)``) に足す、ラックの節。通されるまでは `nil`。
     private var feed: Feed?
@@ -449,6 +452,10 @@ public final class SoundFile: Inlet, EffectInput {
     public var decibels: Float { levels.decibels }
     /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。写し方は ``AudioIn/peak`` と同じで、
     /// 音量 (``amp(_:)``) を掛けた後の値。
+    ///
+    /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解くので、`draw()` が読まなかった
+    /// フレームの区間は解かれず、次のフレームの値にも混ざらない — `if 条件 { use(song.peak) }` で条件が偽だった
+    /// フレームのキックは、後から読んでも落ちたままである。取りこぼしたくない値は、毎フレーム読む。
     public var peak: Float { levels.peak }
     /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
     /// 窓の平均。
@@ -524,10 +531,18 @@ public final class SoundFile: Inlet, EffectInput {
     /// ので、固定の時計の書き出しの水準 2 を名乗れるのはファイル・標本列・合成音)。手本は Minim の `BeatDetect`、
     /// p5.sound の `PeakDetect`、Processing Sound の `BeatDetector`。感度の口は持たない。
     ///
-    /// **最初に読んだフレームから**履歴を溜め始める (読まない音源は何も払わない)。以後は読まないフレームの区間も
-    /// 順に処理するので、読む間隔を変えても拍の位置は変わらない。読み始めてから約 85 ミリ秒は出ない。長く止まって
+    /// **鳴り始めたときから**履歴を溜め、読まないフレームの区間も毎フレーム処理する。どのフレームから読み始めても
+    /// 拍の有無は変わらず、読む間隔を変えても拍の位置は同じ (費用は標本あたり二乗和 1 回で、1 フレームに数 µs)。
+    /// 履歴は区間の番号 (ファイルの位置) の連続で見る。ループで頭へ戻っても、止めた位置から続けても、出力機材が
+    /// 替わって鳴らし直しても履歴は続く。頭から鳴らし直す・飛ぶと捨てて始め直し、飛び先から約 85 ミリ秒は
+    /// 出ない (ファイルの頭からなら最初の立ち上がりも拍になる)。飛ぶフレームには、飛ぶ前の区間の拍が残る。
+    /// ループしないファイルの終わりでは、閉じていない端数のブロックも判定する。
     /// 標本を落としたとき (区間の上限を越えたとき) は、履歴を捨てて始め直し、落とした区間では拍を出さない。
-    public var isBeat: Bool { deferred.isBeat() }
+    /// 区間の上限があるので、約 7.8 fps (48 kHz) より遅いフレームでは区間の頭が落ち続け、拍は fps に依る。
+    ///
+    /// **判定は音量 (``amp(_:)``) を掛けた後の標本で行う** (``level``・``waveform`` と同じ標本)。音量を急に動かすと
+    /// 拍が出る・消える (-60 dBFS 相当を越えない小さい音量では出ない)。
+    public var isBeat: Bool { deferred.isBeat }
 
     /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
     var beatSteps: Int { deferred.beatSteps }
@@ -552,6 +567,7 @@ public final class SoundFile: Inlet, EffectInput {
     }
 
     public func supply() {
+        deferred.beginFrame()
         if let owner { frame = Self.frameIndex(of: owner) }
         // 節が位置を決めているときは、ステージのラックをこのフレームまで進めてから読む。ステージと
         // このファイルのどちらが先に `supply()` を受けても、同じ位置になる
@@ -570,7 +586,9 @@ public final class SoundFile: Inlet, EffectInput {
             beginSegment()
         }
         guard playhead.isPlaying else {
-            deferred.silence()
+            // 止める操作の時点で解析していなかった分があれば、それを見せてから無音にする (1 フレームだけ)
+            if let tail = stoppedTail, !tail.isEmpty { deferred.hold(tail) } else { deferred.silence() }
+            stoppedTail = nil
             return
         }
         let played = played()
@@ -580,7 +598,11 @@ public final class SoundFile: Inlet, EffectInput {
         holdPlayedSegment(after: played)
         // 鳴り終わったフレームは、終わりまでの区間を解析してから止まる (1 フレームより短い一発音の peak も出る)。
         // 次のフレームからは無音 (``isPlaying`` が `false` の間、値は鳴っていない音のもの)
-        if playhead.settle(after: played) { halt() }
+        if playhead.settle(after: played) {
+            // 鳴り終わった。閉じていない端数のブロックにだけある立ち上がりも、このフレームの拍にする
+            deferred.endStream()
+            halt()
+        }
     }
 
     /// 区切りの中で `played` 標本鳴ったところまでの、前のフレーム以後の区間を置く。
@@ -589,6 +611,15 @@ public final class SoundFile: Inlet, EffectInput {
         let span = playhead.span(of: samples, from: covered, after: played ?? self.played())
         covered = span.to
         deferred.hold(volume == 1 ? span : span.scaled(by: volume))
+    }
+
+    /// 止める操作の時点までの、前のフレーム以後の区間を控える。**止める前に鳴っていた分を、取りこぼさない。**
+    /// 実際に鳴らしている間は、フレームの頭から ``pause()``・``stop()`` を呼ぶまでに数 ms 鳴っている。
+    private func holdTail() {
+        guard playhead.isPlaying else { return }
+        let span = playhead.span(of: samples, from: covered, after: played())
+        covered = span.to
+        stoppedTail = volume == 1 ? span : span.scaled(by: volume)
     }
 
     /// いまの再生位置 (標本)。飛び先を待っている間も、まだ動いていない位置を返す。検査が読む。
@@ -605,7 +636,8 @@ public final class SoundFile: Inlet, EffectInput {
         feed = nil
         pace = nil
         playhead.stop()
-        deferred.silence()
+        stoppedTail = nil
+        deferred.forget()
     }
 
     // MARK: - エフェクトへ通す
@@ -654,9 +686,10 @@ public final class SoundFile: Inlet, EffectInput {
             playhead.jump(to: position)
             lastPlayed = 0
             // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)。標本の流れは続く (飛んだのではない)
-            // ので、拍の履歴は捨てない
+            // ので、番号の付け直しを拍の状態にも伝えて、履歴を捨てさせない
             covered = shifted
             continuedCoverage = shifted
+            deferred.rebase(to: shifted)
             feed?.waitsForInput = true
         }
         return node
@@ -851,10 +884,14 @@ public final class SoundFile: Inlet, EffectInput {
         case .play(let looping):
             // 飛び先を待つのは鳴っている間だけで、鳴っている最中の play() / loop() は頭から鳴らし直す
             pendingJump = nil
+            // 頭から (止めた位置から) 鳴らし直すので、エフェクトへ通したときの引き継ぎ値は古い位置のもの
+            continuedCoverage = nil
             playhead.play(looping: looping)
             beginSegment()
         case .pause:
             guard playhead.isPlaying else { return }
+            continuedCoverage = nil
+            holdTail()
             playhead.pause(after: played())
             // 同じフレームで先に飛ぶよう頼まれていれば、止めた位置はその飛び先にする
             if let target = pendingJump {
@@ -864,9 +901,12 @@ public final class SoundFile: Inlet, EffectInput {
             halt()
         case .stop:
             pendingJump = nil
+            continuedCoverage = nil
+            holdTail()
             playhead.stop()
             halt()
         case .jump(let target):
+            continuedCoverage = nil
             if playhead.isPlaying {
                 pendingJump = target
             } else {
@@ -878,15 +918,12 @@ public final class SoundFile: Inlet, EffectInput {
     /// 区切りを始め直す。いまのフレーム (鳴らしているなら、いま) が区切りの始まりになる。
     private func beginSegment() {
         lastPlayed = 0
-        // 通された (``route(into:)``) ときは、解析済みの終わりを引き継ぐ (標本の流れは続く)。そうでなければ新しい
-        // 区切りの始まりで、標本の流れが途切れるので、拍の履歴を捨てる
-        if let continued = continuedCoverage {
-            covered = continued
-            continuedCoverage = nil
-        } else {
-            covered = playhead.start
-            deferred.restartStream(fresh: playhead.start == 0)
-        }
+        // 通された (``route(into:)``) ときは、解析済みの終わりを引き継ぐ。そうでなければ新しい区切りの始まり。
+        // 拍の履歴が続くかは、ここでは決めない — 次の区間の始まりが前の区間の終わりに続いているか (番号の連続) を
+        // ``BeatTracker`` が見る。同じ位置から続けば残り、頭から鳴らし直す・飛ぶと捨てる
+        covered = continuedCoverage ?? playhead.start
+        continuedCoverage = nil
+        stoppedTail = nil
         // 足し直した後に初めて鳴らすとき、ここで器を読み直す
         if case .unloaded(let flow) = pace { loadPlayer(through: flow) }
         switch pace {
@@ -926,6 +963,9 @@ public final class SoundFile: Inlet, EffectInput {
                     + "heard. Its position still follows the clock, and its analysis keeps working")
         }
         beginSegment()
+        // 位置は連続している (止めた位置からそのまま鳴らし直す)。区間の番号だけ、ループで頭へ戻った分を畳み直すので、
+        // 流れが続くことを拍の状態に伝える
+        deferred.rebase(to: covered)
     }
 
     private func notice(_ kind: Notice, _ message: String) {
