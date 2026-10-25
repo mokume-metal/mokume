@@ -56,8 +56,10 @@ struct ThinFillVertexStageTests {
             #expect(canvas.openFlat != nil, "細い楕円が畳まれない")
             #expect(canvas.flatInstances.count == count + 1, "置き場所: \(canvas.flatInstances.count)")
             #expect(canvas.thinFillSpans.count == count, "記述: \(canvas.thinFillSpans.count)")
-            // 長さ 40 は、刻みの端の丸めで 40〜41 片の区間 (40 か 48)
-            #expect([40, 48].contains(canvas.openFlat?.key.thinFillCapacity ?? 0))
+            // 長さ 40 は、刻みの端の丸めで 40〜41 片。雛形は置いた中でいちばん多い片の数を持つ (#3178)
+            let widest = canvas.thinFillRecords.map(\.pieceCount).max() ?? 0
+            #expect([40, 41].contains(widest), "片の数: \(widest)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == widest)
         }
     }
 
@@ -96,9 +98,9 @@ struct ThinFillVertexStageTests {
         canvas.popMatrix()
     }
 
-    /// 片の数の区間は 1・10・64 の 3 つで、**雛形は区間が上がるときだけ開き直す**。小さい区間の置き場所は
-    /// 大きい区間の雛形に受ける (使わない片は頂点段が潰す)。
-    @Test("片の数の区間が下がる並びは、1 つの雛形に畳まれる")
+    /// 雛形の片の数は置き場所の片の数そのもので、**雛形は片の数が上がるときだけ開き直す**。片の数が小さい
+    /// 置き場所は大きい片の数の雛形に受ける (使わない片は頂点段が潰す)。
+    @Test("片の数が下がる並びは、1 つの雛形に畳まれる")
     func descendingLengthsFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 1)
         let shader = try canvas.makeShader(Self.plain)
@@ -107,16 +109,21 @@ struct ThinFillVertexStageTests {
             canvas.noStroke()
             canvas.fill(255)
             canvas.shader(shader)
-            // 長さ 60 (64 の区間)・30 (64)・6 (10 の区間)・0.4 (1 の区間) を、大きいほうから
+            // 長さ 60 から 0.3 まで、大きいほうから: 最初の雛形 1 つに全部受ける
+            let outlines = canvas.outlinesAssembledThisFrame
             for (index, length) in [Float(60), 50, 40, 30, 20, 6, 5, 4, 0.4, 0.3].enumerated() {
                 placeEllipse(canvas, length: length, at: index)
             }
             #expect(canvas.thinFillSpans.count == 10, "記述: \(canvas.thinFillSpans.count)")
-            #expect(canvas.openFlat?.key.thinFillCapacity == Canvas.thinEllipseSliceLimit)
+            let widest = canvas.thinFillRecords.map(\.pieceCount).max() ?? 0
+            #expect((60...61).contains(widest), "片の数: \(widest)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == widest)
+            // 周を組んだのは 2 回だけ: 畳む相手を待って置いた 1 つ目と、雛形 (下がる並びは開き直さない)
+            #expect(canvas.outlinesAssembledThisFrame - outlines == 2, "周を組んだ数: \(canvas.outlinesAssembledThisFrame - outlines)")
         }
     }
 
-    @Test("区間が上がるときだけ雛形が開き直り、上がった後は交互に置いても割れない")
+    @Test("片の数が上がるときだけ雛形が開き直り、上がった後は交互に置いても割れない")
     func regionsSplitOnlyWhenRising() throws {
         let canvas = try Self.makeCanvas(density: 1)
         let shader = try canvas.makeShader(Self.plain)
@@ -125,27 +132,30 @@ struct ThinFillVertexStageTests {
             canvas.noStroke()
             canvas.fill(255)
             canvas.shader(shader)
-            // 小さい区間を 3 つずつ、大きい区間へ上がりながら: 区間ごとに 1 度開くだけ
+            // 小さい片の数から 3 つずつ上がりながら: 上がるたびに 1 度開くだけ
             for (index, length) in [Float(0.4), 0.3, 0.2, 6, 5, 4, 50, 40, 30].enumerated() {
                 placeEllipse(canvas, length: length, at: index)
             }
             #expect(canvas.thinFillSpans.count == 9, "記述: \(canvas.thinFillSpans.count)")
-            // 長さ 50 は 56 片の区間。後の 40・30 は同じ雛形に受ける
-            #expect(canvas.openFlat?.key.thinFillCapacity == 56)
-            // 上がった後は、小さい区間と大きい区間が交互に来ても割れない
+            // 長さ 50 の片の数が雛形の片の数。後の 40・30 は同じ雛形に受ける
+            let widest = canvas.thinFillRecords.map(\.pieceCount).max() ?? 0
+            #expect((50...51).contains(widest), "片の数: \(widest)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == widest)
+            // 上がった後は、小さい片の数と大きい片の数が交互に来ても割れない
             let before = canvas.outlinesAssembledThisFrame
             for index in 0..<12 {
-                placeEllipse(canvas, length: index % 2 == 0 ? 55 : 0.5, at: index)
+                placeEllipse(canvas, length: index % 2 == 0 ? 45 : 0.5, at: index)
             }
             #expect(canvas.outlinesAssembledThisFrame == before, "交互の置き場所で雛形が割れた")
             #expect(canvas.thinFillSpans.count == 21)
         }
     }
 
-    /// 1 画素より小さい円や短い楕円は、置き場所ごとに 64 片ぶん (384 頂点) の頂点関数を回さない。
-    @Test("小さい円・短い楕円の雛形は、それぞれ 1 片・10 片ぶんの頂点だけを持つ")
+    /// 1 画素より小さい円や短い楕円は、置き場所ごとに 64 片ぶん (384 頂点) の頂点関数を回さない。雛形が持つ片の数は
+    /// 置き場所の片の数そのもので、余分な片 (頂点関数と図形の組み立てを通る) を流さない (#3178)。
+    @Test("小さい円・短い楕円の雛形は、置き場所の片の数ぶんの頂点だけを持つ")
     func smallShapesTemplatesStayCompact() throws {
-        for (length, pieces) in [(Float(0.4), 1), (6, 10), (14, 16), (39.5, 40), (63.5, 64)] {
+        for (length, pieces) in [(Float(0.4), 1...1), (6, 6...7), (14, 14...15), (39.5, 39...40), (63.5, 63...64)] {
             let canvas = try Self.makeCanvas(density: 1)
             let shader = try canvas.makeShader(Self.plain)
             try canvas.draw {
@@ -154,12 +164,21 @@ struct ThinFillVertexStageTests {
                 canvas.fill(255)
                 canvas.shader(shader)
                 let before = canvas.vertices.count
-                for index in 0..<20 { placeEllipse(canvas, length: length, at: index) }
+                // 片の数が上がるたびに雛形が開き直るので、開いた雛形の片の数を控える
+                var opened: [Int] = []
+                for index in 0..<20 {
+                    placeEllipse(canvas, length: length, at: index)
+                    if let capacity = canvas.openFlat?.key.thinFillCapacity, opened.last != capacity {
+                        opened.append(capacity)
+                    }
+                }
                 #expect(canvas.thinFillSpans.count == 20)
                 #expect(
-                    canvas.vertices.count - before == pieces * 6,
-                    "長さ \(length): 頂点 \(canvas.vertices.count - before)")
-                #expect(canvas.openFlat?.key.thinFillCapacity == pieces)
+                    canvas.vertices.count - before == opened.reduce(0, +) * 6,
+                    "長さ \(length): 頂点 \(canvas.vertices.count - before)・雛形の片の数 \(opened)")
+                #expect(pieces.contains(opened.last ?? 0), "長さ \(length): 片の数 \(opened)")
+                // 上がるのは 1 回だけ (回転で片の数が 1 つ変わる)
+                #expect(opened.count <= 2, "長さ \(length): 雛形が \(opened.count) 回開いた")
             }
         }
     }
