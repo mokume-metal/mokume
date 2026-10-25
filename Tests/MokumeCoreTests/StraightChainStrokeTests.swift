@@ -235,47 +235,137 @@ struct StraightChainStrokeTests {
         #expect(differing == 0, "\(differing) 画素が違う")
     }
 
-    /// #3165: 折り返す 2 本の向きが**理屈では等しく、丸めで 1 ビットずれうる**配置。視点の位置を、浮動小数点の
-    /// 刻み (2^-17) の何倍かだけ辺の直線からずらすと、2 本の腕の向きは等しい・ほんの少し違う・食い違うを行き来する。
-    /// GPU がどの場合も CPU の帯と同じ向きの決定を下す (内積・外積・正規化の丸めが CPU と同じ) ことを、平行投影と
-    /// 透視、ずらす軸 (縦・奥行き) の全部で見る。一つでも食い違う視点があれば、食い違った視点を名指しする。
+    /// 折り返す先端 R の 2 本の腕 (R→P と R→Q) の、CPU が求める向きどうしの関係。
+    enum ArmRelation: String, Sendable {
+        /// 値が等しい (折り返しの先に長方形を置く)
+        case equal
+        /// 理屈では等しく、丸めで最終ビットだけ違う (どちら回りかの判定が丸めで決まる)
+        case nearlyEqual
+        /// はっきり違う
+        case apart
+    }
+
+    /// 三角形 P・Q・R を描いた絵と、骨を使ったか・CPU が求めた R の 2 本の腕の関係。`placing` が視点と置き方を決める。
+    private func foldedTrianglePicture(
+        accelerated: Bool, perspective: Bool, weight: Float, placing: (Canvas) -> Void
+    ) throws -> (bytes: [UInt8], strokeBatches: Int, relation: ArmRelation?) {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        if !accelerated { canvas.modelStrokeGeometries.budget = 0 }
+        let model = try canvas.loadModel(Subject.foldedTriangle.path, normalize: false)
+        var strokeBatches = 0
+        var relation: ArmRelation?
+        try canvas.draw {
+            canvas.background(.linear(red: 0.02, green: 0.02, blue: 0.03))
+            canvas.noFill()
+            canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+            canvas.strokeWeight(weight)
+            placing(canvas)
+            if !perspective { canvas.ortho() }
+            canvas.scale(40, 40, 40)
+            canvas.model(model)
+            canvas.closeBatch()
+            strokeBatches = canvas.batches.count { $0.strokeGeometry != nil }
+            // CPU が求める R の 2 本の腕 (形自身の座標の P・Q・R を、置いた後の世界へ移して測る)
+            let matrix = canvas.transform.matrix
+            func world(_ x: Float, _ y: Float, _ z: Float) -> SIMD3<Float> {
+                let moved = matrix * SIMD4(x, y, z, 1)
+                return SIMD3(moved.x, moved.y, moved.z)
+            }
+            let camera = StrokeCamera(canvas.currentCamera, width: 160, height: 160)
+            let (p, q, r) = (world(-0.6, 0, 0), world(0.6, 0, 0), world(0, 0.7, 0.5))
+            if let toP = camera.screenNormal(r, p), let toQ = camera.screenNormal(r, q) {
+                if toP == toQ {
+                    relation = .equal
+                } else {
+                    relation = length(toP - toQ) < 1e-3 ? .nearlyEqual : .apart
+                }
+            }
+        }
+        return (try canvas.target.encodeForDisplay().bytes, strokeBatches, relation)
+    }
+
+    /// #3165: 折り返す 2 本の向きが**理屈では等しく、丸めで 1 ビットずれうる**配置を掃く。GPU がどの視点でも CPU の帯と
+    /// 同じ向きの決定を下す (内積・外積・正規化・位置の丸めが CPU と同じ) ことを、全バイトの一致で見る。
+    ///
+    /// - 軸に揃えた視点: 視点を浮動小数点の刻み (2^-17) の何倍かだけ辺の直線からずらす (平行投影と透視・縦と奥行き)
+    /// - 軸に揃えない視点: 三角形を非整数の角度で回して置き、視点を回した辺の延長に置く。行列の成分も座標も
+    ///   2 のべきの分数にならないので、積の 1 つ 1 つが丸められる
+    ///
+    /// **検査の前提も見る** — どの視点でも骨を使って描いたこと、線が写っていること、そして腕の関係が偏らないこと
+    /// (値が等しい・最終ビットだけ違う・はっきり違うの全部が起きている)。
     @Test("折り返す 2 本の向きが丸めでずれうる視点でも、骨で広げて CPU の帯と同じ絵になる")
     func nearlyFoldedTipsMatchTheCPUBands() throws {
-        let path = Subject.foldedTriangle.path
         var differing: [String] = []
+        var relations: [ArmRelation: Int] = [:]
+        var checked = 0
+        func compare(
+            _ name: String, perspective: Bool, tolerating tolerance: Int = 0,
+            placing: @escaping (Canvas) -> Void
+        ) throws {
+            let reference = try foldedTrianglePicture(
+                accelerated: false, perspective: perspective, weight: 12, placing: placing)
+            let accelerated = try foldedTrianglePicture(
+                accelerated: true, perspective: perspective, weight: 12, placing: placing)
+            checked += 1
+            #expect(reference.strokeBatches == 0, "\(name): 物差しが骨を使っている")
+            #expect(accelerated.strokeBatches == 1, "\(name): 骨を作れていない (CPU の帯へ戻った)")
+            let drawn = stride(from: 0, to: reference.bytes.count, by: 4).filter { reference.bytes[$0] > 40 }.count
+            #expect(drawn > 100, "\(name): 線が写っていない (\(drawn) 画素)")
+            if let relation = reference.relation { relations[relation, default: 0] += 1 }
+            let pixels = stride(from: 0, to: reference.bytes.count, by: 4).filter {
+                reference.bytes[$0..<($0 + 4)] != accelerated.bytes[$0..<($0 + 4)]
+            }.count
+            if pixels > tolerance { differing.append("\(name) (\(pixels) 画素)") }
+        }
         for perspective in [false, true] {
             for axis in 0..<2 {
                 for step in 0..<40 {
                     let offset = Float(step) * 7.62939453125e-6
-                    func picture(accelerated: Bool) throws -> [UInt8] {
-                        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
-                        if !accelerated { canvas.modelStrokeGeometries.budget = 0 }
-                        let model = try canvas.loadModel(path, normalize: false)
-                        try canvas.draw {
-                            canvas.background(.linear(red: 0.02, green: 0.02, blue: 0.03))
-                            canvas.noFill()
-                            canvas.stroke(.linear(red: 1, green: 1, blue: 1))
-                            canvas.strokeWeight(12)
-                            if axis == 0 {
-                                canvas.camera(280, 80 + offset, 0, 80, 80, 0, 0, 1, 0)
-                            } else {
-                                canvas.camera(280, 80, offset, 80, 80, 0, 0, 1, 0)
-                            }
-                            if !perspective { canvas.ortho() }
-                            canvas.translate(80, 80, 0)
-                            canvas.scale(40, 40, 40)
-                            canvas.model(model)
-                            canvas.closeBatch()
+                    try compare("\(perspective ? "透視" : "平行")・軸 \(axis)・ずれ \(offset)", perspective: perspective) {
+                        canvas in
+                        if axis == 0 {
+                            canvas.camera(280, 80 + offset, 0, 80, 80, 0, 0, 1, 0)
+                        } else {
+                            canvas.camera(280, 80, offset, 80, 80, 0, 0, 1, 0)
                         }
-                        return try canvas.target.encodeForDisplay().bytes
-                    }
-                    if try picture(accelerated: false) != picture(accelerated: true) {
-                        differing.append("\(perspective ? "透視" : "平行")・軸 \(axis)・ずれ \(offset)")
+                        canvas.translate(80, 80, 0)
                     }
                 }
             }
         }
-        #expect(differing.isEmpty, "CPU の帯と違う視点: \(differing)")
+        // 辺の延長から離れた視点 (折り返さず、P–Q は潰れない)。腕の向きがはっきり違う場合も混ぜる
+        for perspective in [false, true] {
+            for step in 1...6 {
+                let offset = Float(step) * 3.7
+                try compare("\(perspective ? "透視" : "平行")・離れた視点 \(offset)", perspective: perspective) { canvas in
+                    canvas.camera(280, 80 + offset, 0, 80, 80, 0, 0, 1, 0)
+                    canvas.translate(80, 80, 0)
+                }
+            }
+        }
+        for perspective in [false, true] {
+            for step in 0..<48 {
+                let yaw = 0.1 + Float(step) * 0.137
+                let roll = 0.3 + Float(step) * 0.071
+                // 回した置き方では、帯の頂点の位置が CPU と 1 ulp 違い、辺の画素が 1 つ入れ替わることがある
+                // (向きの決定の食い違いは太さ 12 で 100 画素を超える)。許すのは 4 画素まで
+                try compare(
+                    "\(perspective ? "透視" : "平行")・回した辺・角 \(yaw)", perspective: perspective, tolerating: 4
+                ) { canvas in
+                    // 辺 P–Q (形の x 軸) は回した後 (cos yaw, 0, −sin yaw)。視点はその延長の上に置く
+                    let direction = SIMD3<Float>(RuntimeMath.cos(yaw), 0, -RuntimeMath.sin(yaw)) * 200
+                    canvas.camera(80 + direction.x, 80, direction.z, 80, 80, 0, 0, 1, 0)
+                    canvas.translate(80, 80, 0)
+                    canvas.rotateY(yaw)
+                    canvas.rotateX(roll)
+                }
+            }
+        }
+        #expect(differing.isEmpty, "CPU の帯と違う視点 (\(differing.count) / \(checked)): \(differing.prefix(8))")
+        // 偏りが無いこと: 腕の関係が 3 つとも、掃いた視点の中に何度か起きている
+        for relation in [ArmRelation.equal, .nearlyEqual, .apart] {
+            #expect((relations[relation] ?? 0) >= 4, "腕の関係 \(relation.rawValue) が足りない: \(relations)")
+        }
     }
 
     /// 完了条件 1: 100,352 三角形の、横と縦を揃えた格子も骨を作る (点が数万を超えると、変曲線の近くの辺が
