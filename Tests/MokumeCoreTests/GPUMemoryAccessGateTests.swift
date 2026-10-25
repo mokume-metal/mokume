@@ -99,7 +99,7 @@ struct GPUMemoryAccessGateTests {
             reason: "骨は作成時だけ新しい置き場へ書き、その後は変更しない (#1738)。控えと描画列が所有し、投入完了までは HeldFrame が列ごと保持する。追い出し後の解放は RenderDevice.retire が待つ"),
         Permit(
             file: "Drawing/SolidFillGeometry.swift", discipline: .waitedElsewhere,
-            reason: "モデルの塗りの頂点は作成時だけ新しい置き場へ書き、その後は変更しない (#1749)。控えと描画列が所有し、投入完了までは HeldFrame が列ごと保持する。追い出し後の解放は RenderDevice.retire が待つ"),
+            reason: "モデルの塗りの頂点と、保持した形の立体の頂点・添字は、作成時だけ新しい置き場へ書き、その後は変更しない (#1749・#2791)。控えと描画列が所有し、投入完了までは HeldFrame が列ごと保持する。追い出し後の解放は RenderDevice.retire が待つ"),
         Permit(
             file: "Drawing/Canvas.swift", discipline: .ring,
             reason: "描き切りの先頭で環を 1 つ進め、そのスロットを読む投入だけを待ってから頂点・列ごとの値・uniforms を書く (#754)。init の書き込みは作成時だけ"),

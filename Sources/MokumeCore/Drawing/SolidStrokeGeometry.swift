@@ -268,7 +268,7 @@ extension Canvas {
     func gpuStrokeStyleAllows(_ source: SolidSource) -> Bool {
         switch source {
         case .mesh, .model: break
-        case .freeform, .retained: return false
+        case .freeform, .retained, .retainedGeometry: return false
         }
         return currentShader == nil && style.stroke.alpha == 1 && style.strokeJoin == .miter
             && style.blendMode == .blend && style.picture == nil
