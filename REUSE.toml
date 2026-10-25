@@ -43,6 +43,8 @@ path = [
   "Package.resolved",
   "Schemas/examples/observe-request-time.json",
   "Schemas/examples/observe-report-time.json",
+  # 変異の固定の束 (scripts/mutate.py が読む)。JSON はコメントを持てない
+  "Tests/mutation-bundle.json",
   # 参照スケッチが読むデータ (式で合成した値)。CSV はコメントを持てず、文字のファイルは
   # 1 行ずつ読んで描くので、ヘッダを置くと絵に出る
   "Sketches/data/temperatures.csv",
