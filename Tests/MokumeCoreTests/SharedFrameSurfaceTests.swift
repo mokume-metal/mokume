@@ -625,6 +625,50 @@ struct SharedFrameSurfaceTests {
         }
     }
 
+    /// **警告の件数と最後の 1 行も、絵と同じ面で運ばれる** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 言っていなければ鍵ごと省き (最後の 1 行)、面が使い回されても前の文面は残らない。
+    @Test("警告の件数と最後の 1 行が面で運ばれ、言っていなければ文面は載らず、使い回しでも残らない")
+    func theSurfaceCarriesTheWarnings() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            // 面を 1 周させる。最初の面にだけ警告を載せ、1 周して戻ってきた同じ面には載せない
+            for frame in 1...SharedFrameSurface.slotCount {
+                var numbers = Self.numbers(frame: frame)
+                if frame == 1 {
+                    numbers.warningCount = 3
+                    numbers.lastWarning = "Transforms are written again every frame — 日本語も"
+                }
+                Self.awaitOutcomes(gpu)
+                try shared.write(source, using: presenter, numbers: numbers)
+            }
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let reused = shared.ids[0]
+            let carried = try #require(SharedFrameSurface.numbers(of: reused))
+            #expect(carried.warningCount == 3)
+            #expect(carried.lastWarning == "Transforms are written again every frame — 日本語も")
+
+            // 1 周して同じ面へ「何も言っていない」を書く
+            Self.awaitOutcomes(gpu)
+            try shared.write(
+                source, using: presenter, numbers: Self.numbers(frame: SharedFrameSurface.slotCount + 1))
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+            #expect(newest.id == reused, "面が 1 周していない — この検査が何も見ていない")
+            let cleared = try #require(SharedFrameSurface.numbers(of: reused))
+            #expect(cleared.warningCount == 0)
+            #expect(cleared.lastWarning == nil, "前の文面が残っている")
+            let surface = try #require(IOSurfaceLookup(reused))
+            let key = SharedFrameSurface.TempoAttribute.lastWarning as CFString
+            #expect(IOSurfaceCopyValue(surface, key) == nil, "文面は鍵ごと無いこと")
+        }
+    }
+
     @Test("面の番号と大きさが区画に置かれる")
     func theManifestCarriesTheIdsAndSize() throws {
         try withFacet { directory in

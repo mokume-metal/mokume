@@ -32,9 +32,13 @@ final class KnobOverlay: NSView {
     /// 別の問いである (数字だけの面が出る場合がある)。
     let knobCount: Int
 
-    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil) {
+    init(
+        boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil,
+        warnings: (() -> WarningSummary?)? = nil
+    ) {
         knobCount = boxes.count
-        hosting = NSHostingView(rootView: KnobPanel(boxes: boxes, numbers: numbers))
+        hosting = NSHostingView(
+            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warnings))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]

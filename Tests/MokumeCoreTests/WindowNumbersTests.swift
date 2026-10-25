@@ -277,4 +277,33 @@ struct WindowNumbersSourceTests {
         #expect(object["heaviestFrame"] == nil)
         #expect(object["thermalState"] != nil)
     }
+
+    // MARK: - 警告の欄 (#3087)
+
+    @Test("警告を 1 つも言っていなければ、欄は出さない")
+    func noWarningsNoReadout() {
+        #expect(KnobText.warnings(nil) == nil)
+    }
+
+    /// 件数は数だけを差し込む (単複で語を選ばない・ADR-0038 決定 3)。最後の 1 行は端末に出た文面のまま。
+    @Test("件数と最後の 1 行を、文面を言い換えずに出す")
+    func warningsShowTheCountAndTheLastLine() throws {
+        let line = "Transforms are written again every frame, so call this from draw()."
+        let shown = try #require(KnobText.warnings(WarningSummary(count: 1, last: line)))
+        #expect(shown.count == "1")
+        #expect(shown.last == line)
+        #expect(try #require(KnobText.warnings(WarningSummary(count: 12, last: line))).count == "12")
+    }
+
+    @Test("最後の 1 行の改行は畳み、長ければ末尾を省く")
+    func warningLinesAreFlattenedAndCut() throws {
+        let folded = try #require(KnobText.warnings(WarningSummary(count: 1, last: "first\nsecond")))
+        #expect(folded.last == "first second")
+
+        let long = String(repeating: "x", count: KnobText.warningLineLimit + 50)
+        let cut = try #require(KnobText.warnings(WarningSummary(count: 1, last: long))).last
+        #expect(cut.count == KnobText.warningLineLimit)
+        #expect(cut.hasSuffix("…"))
+        #expect(cut.hasPrefix("xxxx"), "頭を残していない")
+    }
 }

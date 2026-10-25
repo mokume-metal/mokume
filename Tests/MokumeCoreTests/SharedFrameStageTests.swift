@@ -620,6 +620,44 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **子が言った警告は、道具の窓が控えて出す** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 速さと違い古くならない (``RemoteTempo`` の鮮度の外) ので、次の世代の絵が来るまで残り、
+    /// 新しい世代が何も言っていなければ消える。
+    @Test("子が言った警告は台が控え、新しい世代の絵が来て何も言っていなければ消える")
+    func theStageKeepsTheWarningsUntilTheNextGenerationDraws() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("warnings"))
+            defer { stage.close() }
+            stage.open()
+            #expect(stage.warnings == nil, "絵が来る前から警告を名乗った")
+
+            var spoken = SharedFrameSurfaceTests.numbers(frame: 1)
+            spoken.warningCount = 2
+            spoken.lastWarning = "Transforms are written again every frame"
+            try draw(first, frame: 1, gpu: gpu, numbers: spoken)
+            stage.displayLinkFired()
+            #expect(
+                stage.warnings
+                    == WarningSummary(count: 2, last: "Transforms are written again every frame"))
+
+            // 同じ世代の次の枚数 (何も言い足さない) でも残る
+            var again = SharedFrameSurfaceTests.numbers(frame: 2)
+            again.warningCount = spoken.warningCount
+            again.lastWarning = spoken.lastWarning
+            try draw(first, frame: 2, gpu: gpu, numbers: again)
+            stage.displayLinkFired()
+            #expect(stage.warnings?.count == 2)
+
+            // 何も言っていない新しい世代の絵が来れば、前の世代の警告は消える
+            let next = try publish(in: facet, gpu: gpu, pid: 300, frames: 0, pointerLock: false)
+            try draw(next, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.warnings == nil, "新しい世代が何も言っていないのに、前の世代の警告が残っている")
+        }
+    }
+
     /// **受け取れない知らせの経路も同じ形** ([#2928] の経路・[#2983])。生きた前の世代の次の 1 枚で頼みが
     /// 戻らない。
     ///
@@ -1568,13 +1606,15 @@ struct SharedFrameStageTests {
     /// 見えない — ここが見ているのは読み手の乗り換えであって、書き手の遅れ方ではない。
     private func draw(
         _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
-        height: Int = 32, pointerLock: Bool = false, cursorHidden: Bool = false
+        height: Int = 32, pointerLock: Bool = false, cursorHidden: Bool = false,
+        numbers: FrameNumbers? = nil
     ) throws {
         let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(
-            source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
+            source, using: presenter,
+            numbers: numbers ?? SharedFrameSurfaceTests.numbers(frame: frame),
             pointerLock: pointerLock, cursorHidden: cursorHidden)
         // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
         awaitOutcomes(gpu)

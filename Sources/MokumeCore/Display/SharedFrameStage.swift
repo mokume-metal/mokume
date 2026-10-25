@@ -454,6 +454,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// いま名乗ってよい速さ。**しばらく新しい絵が来なければ `nil`** (``RemoteTempo``)。
     var numbers: FrameNumbers? { tempo.numbers(now: CACurrentMediaTime()) }
 
+    /// 走らせている子が言った警告。**古くなっても消えず、次に子が入れ替わって絵が来るまで残る** (#3087)。
+    /// 1 つも言っていなければ `nil`。
+    private(set) var warnings: WarningSummary?
+
     /// 新しい絵が来ていれば、その面に載っている速さを読む。
     ///
     /// **新しい枚数のときだけ引く。** 同じ絵に対して引き直しても数字は変わらないので、
@@ -473,6 +477,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
         guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
+        // **手放した世代の面からは読まない** — 畳まれる世代の最後の数枚で、新しい世代の控えを上書きしない
+        if !isReleased(source) {
+            warnings = numbers.lastWarning.flatMap { last in
+                numbers.warningCount > 0 ? WarningSummary(count: numbers.warningCount, last: last) : nil
+            }
+        }
     }
 
     // MARK: - 差し出し元

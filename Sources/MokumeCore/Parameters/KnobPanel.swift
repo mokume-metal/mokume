@@ -33,6 +33,9 @@ struct KnobPanel: View {
     /// **`nil` を返してよい。** 走っているのが別のプロセスのときは「まだ何も届いていない」
     /// 「もう届かなくなった」があり、そのとき数字を出せば嘘になる (``RemoteTempo``)。
     var numbers: (() -> FrameNumbers?)?
+    /// 走らせているスケッチが言った警告を読む口 (#3087)。**無いか、1 つも言っていなければ欄ごと出さない。**
+    /// 数字と違い、古くなっても消えない (``WarningSummary``)。
+    var warnings: (() -> WarningSummary?)?
 
     /// 面の横幅。行の折り返しではなく窓の隅に収まる大きさで決める。
     static let width: CGFloat = 260
@@ -43,7 +46,7 @@ struct KnobPanel: View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
                 if let numbers {
-                    NumbersReadout(read: numbers)
+                    NumbersReadout(read: numbers, readWarnings: warnings)
                     // **並ぶものが無ければ仕切らない。** つまみを 1 つも宣言していない
                     // スケッチでも数字は出す (道具の窓に限る — ADR-0032 決定 1) ので、
                     // 何も無い側を仕切る線が残る
@@ -73,20 +76,35 @@ struct KnobPanel: View {
 /// 落としても数字そのものは正しい。
 private struct NumbersReadout: View {
     let read: () -> FrameNumbers?
+    let readWarnings: (() -> WarningSummary?)?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: Self.interval)) { _ in
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                ForEach(KnobText.numbers(read()), id: \.label) { cell in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    ForEach(KnobText.numbers(read()), id: \.label) { cell in
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(cell.label)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                            Text(cell.value)
+                                .monospacedDigit()
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                // 警告は数字の下に 1 欄: 件数と、端末に出た最後の 1 行 (#3087)
+                if let warnings = KnobText.warnings(readWarnings?()) {
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(cell.label)
+                        Text("warnings")
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
-                        Text(cell.value)
-                            .monospacedDigit()
+                        (Text(warnings.count).monospacedDigit() + Text(" — ") + Text(warnings.last))
+                            .lineLimit(3)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: 0)
             }
         }
     }

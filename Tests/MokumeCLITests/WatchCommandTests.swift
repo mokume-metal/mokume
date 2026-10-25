@@ -280,6 +280,58 @@ struct WatchCommandTests {
         #expect(line.contains(WatchCommand.nothingRunningLine), "\(line)")
     }
 
+    // MARK: - 通らなかったビルドの最初の error: の行 (#3087)
+
+    private func failed(_ output: String) -> BuildReport {
+        .failed(
+            status: 1, output: output, stamp: nil, configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+    }
+
+    /// 例: 桁つきの `<パス>:<行>:<桁>: error: <文>`。手前の警告や note は拾わず、最初の 1 本を言い換えずに出す。
+    @Test("通らなかった回の行に、最初の error: の行 (ファイル・行・桁・文) を添える")
+    func addsTheFirstErrorLineToTheFailedBuildNotice() throws {
+        let first = "/work/Sources/App/main.swift:12:5: error: cannot find 'circel' in scope"
+        let output = """
+            Building for debugging...
+            /work/Sources/App/main.swift:3:9: warning: variable 'x' was never used
+            \(first)
+                circel(0, 0, 50)
+                ^~~~~~
+            /work/Sources/App/main.swift:20:1: error: expected '}' at end of brace statement
+            error: fatalError
+            """
+        let line = try #require(WatchCommand.notice(for: failed(output), holdingPrevious: true))
+        #expect(line == "The build failed — " + WatchCommand.holdingLine + "\n" + first, "\(line)")
+        let nothing = try #require(WatchCommand.notice(for: failed(output), holdingPrevious: false))
+        #expect(nothing.hasSuffix("\n" + first), "\(nothing)")
+    }
+
+    @Test("桁の無い形も拾い、色の制御列は落とす")
+    func readsTheErrorLineWithoutAColumnAndStripsColour() throws {
+        #expect(failed("a.swift:7: error: boom").firstErrorLine == "a.swift:7: error: boom")
+        let coloured = "\u{1B}[1m/w/a.swift:7:2: \u{1B}[0;1;31merror: \u{1B}[0;1mboom\u{1B}[0m"
+        #expect(failed(coloured).firstErrorLine == "/w/a.swift:7:2: error: boom")
+    }
+
+    /// ファイルと行が付かない `error:` の行 (リンクの失敗など)・`error:` が無い失敗は、今の行のまま。
+    @Test("ファイルと行の付かない error: や error: の無い失敗は、今の行のまま")
+    func leavesTheLineAloneWithoutAFileAndLine() {
+        for output in ["", "error: link command failed", "ld: symbol(s) not found\nerror: fatalError"] {
+            let line = WatchCommand.notice(for: failed(output), holdingPrevious: true)
+            #expect(line == "The build failed — " + WatchCommand.holdingLine, "\(output)")
+        }
+    }
+
+    @Test("長い error: の行は末尾を省く")
+    func cutsALongErrorLine() throws {
+        let long = "/w/a.swift:1:1: error: " + String(repeating: "y", count: 400)
+        let error = try #require(failed(long).firstErrorLine)
+        #expect(error.count == BuildReport.errorLineLimit)
+        #expect(error.hasSuffix("…"))
+        #expect(error.hasPrefix("/w/a.swift:1:1: error: yyy"))
+    }
+
     /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つの窓が独立に合図を出すので
     /// 2 度目では畳まない。作り直しが始まった後に遅れて来た合図でも畳まない — 畳むと、
     /// 作り直しの行が消える。

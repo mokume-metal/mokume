@@ -42,6 +42,10 @@ package nonisolated final class WarningDigest: @unchecked Sendable {
     private var lines: [String] = []
     /// 上限を越えて、溜めなかった数。
     private var dropped = 0
+    /// 言われた数と最後の文面。**``takeUnreported()`` が空にしない。** 窓が数えるもので、観測が持っていく行を
+    /// 奪わない (#3087)。
+    private var spoken = 0
+    private var latest: String?
 
     package init(limit: Int = WarningDigest.defaultLimit) {
         precondition(limit > 0, "a digest that keeps nothing cannot name what it left out")
@@ -52,11 +56,24 @@ package nonisolated final class WarningDigest: @unchecked Sendable {
     package func record(_ message: String) {
         lock.lock()
         defer { lock.unlock() }
+        spoken += 1
+        latest = message
         if lines.count < limit {
             lines.append(message)
         } else {
             dropped += 1
         }
+    }
+
+    /// これまでに言われた警告の数と、最後の 1 行 ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    ///
+    /// **読んでも空にしない。** ``takeUnreported()`` は観測が 1 度だけ載せるために返して空にするが、
+    /// こちらは窓のためのもので、観測の `warnings` から行を奪わない。上限にも縛られない — 数は言われた回数
+    /// そのもので、最後の 1 行は溜め場が上限で捨てた後に言われたものでも残る。
+    package func summary() -> (count: Int, last: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (spoken, latest)
     }
 
     /// 溜めた行を言った順に返して、空にする。上限を越えていたら、最後に越えた数を名乗る 1 行を足す。

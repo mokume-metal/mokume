@@ -233,6 +233,32 @@ struct BuildReport: Encodable, Equatable {
         return Self.abbreviated(line, to: Self.noticeLimit)
     }
 
+    /// 通らなかった作り直しの出力のうち、**最初の `error:` の行** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 無ければ `nil`。
+    ///
+    /// 拾う形は `<パス>:<行>:<桁>: error: <文>` (桁の無い `<パス>:<行>: error: <文>` も)。ファイルと行が付かない
+    /// `error:` の行 (リンクの失敗など) は拾わない — 窓の行は、直す場所が分かる行だけを出す。端末に出た行を
+    /// 言い換えず、色の制御列だけを落とす。長ければ末尾を省く (``errorLineLimit``)。
+    var firstErrorLine: String? {
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = Self.stripEscapes(String(raw)).trimmingCharacters(in: .whitespaces)
+            guard line.range(of: #":\d+(:\d+)?: error: "#, options: .regularExpression) != nil else {
+                continue
+            }
+            return line.count > Self.errorLineLimit
+                ? String(line.prefix(Self.errorLineLimit - 1)) + "…" : line
+        }
+        return nil
+    }
+
+    /// 窓の行に出す `error:` の行の長さの上限。
+    static let errorLineLimit = 160
+
+    /// 色の制御列 (`ESC [ … m`) を落とす。`swift build` の出力は端末向けに色が付くことがある。
+    private static func stripEscapes(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+    }
+
     /// 長い 1 行を、頭と末尾を残して中を詰める。
     static func abbreviated(_ line: String, to limit: Int) -> String {
         guard line.count > limit else { return line }
