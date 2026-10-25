@@ -396,26 +396,50 @@ float2 solidStrokeOnScreen(float3 v, constant SolidStrokePlacement &s) {
     return float2(dot(v, s.right.xyz) * s.down.w, dot(v, s.down.xyz));
 }
 
+/// 向きの決定 (同じ向きか・どちら回りか・潰れているか) に使う内積と外積。**CPU の Swift (`simd` の
+/// `dot` / `cross`) と同じ順の、融合しない積と和で書く** (#3165)。組み込みの `dot` / `cross` は
+/// `#pragma METAL fp contract(off)` の下でも積和へ縮約されうるので、決定に使う式は明示する。積和の順を
+/// 固定する前例は `mokume_thinFillCorner` (`math_mode(safe)` と `contract(off)` を併記する)。
+/// 3 成分の `dot` は `(x + y) + z`、外積の各成分は `a.y * b.z - a.z * b.y` で、CPU と丸めが揃う。
+static inline float solidStrokeDot2(float2 a, float2 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return a.x * b.x + a.y * b.y;
+}
+
+static inline float solidStrokeDot3(float3 a, float3 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return (a.x * b.x + a.y * b.y) + a.z * b.z;
+}
+
+static inline float3 solidStrokeCross3(float3 a, float3 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
 /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1) を `normal` に入れる。
 /// CPU の `StrokeCamera.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
 ///
 /// **演算の順と丸めを CPU に揃える (#3165)。** 腕の向きは「値が等しいか」で同じ向きかを決める
 /// (`Canvas.screenCorner`) ので、理屈では同じ向きの 2 本 (透視で、目と同じ直線に載る 2 点から出る腕など)
 /// は、CPU と同じく 1 ビットも違わずに求めねばならない。Shapes は既定の fast-math で組むので、積和の縮約
-/// (`contract(off)` で止める) と、`length` / 割り算の近似 (`precise::` で正しく丸める) が、理屈では等しい
-/// 2 本の向きを 1 ビット違えて、同じ向きへ折り返す角の形を食い違わせていた。
+/// (`dot` / `cross` を明示の積と和で書く) と、`length` / 割り算の近似 (`precise::` で正しく丸める) が、
+/// 理屈では等しい 2 本の向きを 1 ビット違えて、同じ向きへ折り返す角の形を食い違わせていた。
 bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &normal) {
+#pragma METAL fp math_mode(safe)
 #pragma METAL fp contract(off)
     float3 along = b - a;
     float2 raw;
     if (s.eye.w != 0) {
-        float3 plane = cross(a - s.eye.xyz, b - s.eye.xyz);
-        raw = float2(dot(plane, s.right.xyz) * s.forward.w, dot(plane, s.down.xyz));
+        float3 plane = solidStrokeCross3(a - s.eye.xyz, b - s.eye.xyz);
+        raw = float2(solidStrokeDot3(plane, s.right.xyz) * s.forward.w, solidStrokeDot3(plane, s.down.xyz));
     } else {
-        raw = float2(-dot(along, s.down.xyz) * s.forward.w, dot(along, s.right.xyz));
+        raw = float2(-solidStrokeDot3(along, s.down.xyz) * s.forward.w, solidStrokeDot3(along, s.right.xyz));
     }
     float size = precise::sqrt(raw.x * raw.x + raw.y * raw.y);
-    if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
+    if (!(solidStrokeDot3(along, along) > 0 && size > 0 && isfinite(size))) return false;
     normal = float2(precise::divide(raw.x, size), precise::divide(raw.y, size));
     return true;
 }
@@ -539,7 +563,12 @@ bool solidStrokeArmKept(
     return true;
 }
 
-float solidStrokeCross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
+/// 2 本の向きの外積 (回る向きの判定)。CPU の `widestGap` の `cross` と同じ、融合しない積と差 (#3165)。
+float solidStrokeCross(float2 a, float2 b) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return a.x * b.y - a.y * b.x;
+}
 
 /// 骨の 2 点を結ぶ辺が画面で潰れているか。**辺の両端が同じ答えを得るよう、記録の位置が小さい点を
 /// 先にして同じ式で判定する** — 引数の順を入れ替えると、fast-math の積和の縮約で外積が 0 に
@@ -553,7 +582,7 @@ bool solidStrokeEdgeCollapsed(
 
 /// 骨の点の奥行き (視点からの、視線に沿った距離)。CPU の `strokeNet` に渡す奥行きと同じ式
 float solidStrokeDepth(float3 p, constant SolidStrokePlacement &s) {
-    return dot(p - s.eye.xyz, s.forward.xyz);
+    return solidStrokeDot3(p - s.eye.xyz, s.forward.xyz);
 }
 
 /// 網の点に置く形 (CPU の `Canvas.screenCorner` と同じ手順)。
@@ -1113,11 +1142,11 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 // 揃って折り返しの先の延びが消えるので、等しい向きは内積を見ずに分けたままにする (#3165)
                 bool foldsBack = all(armOwn == armOther);
                 float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
-                if (!foldsBack && dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
+                if (!foldsBack && solidStrokeDot2(outerOwn, inward) > 0) outerOwn = -outerOwn;
                 float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
-                if (!foldsBack && dot(outerOther, inward) > 0) outerOther = -outerOther;
+                if (!foldsBack && solidStrokeDot2(outerOther, inward) > 0) outerOther = -outerOther;
                 // 丸めで −1…1 を越えると、同じ向きへ折り返す角で平方根が数でなくなる
-                float cosine = clamp(dot(outerOwn, outerOther), -1.0f, 1.0f);
+                float cosine = clamp(solidStrokeDot2(outerOwn, outerOther), -1.0f, 1.0f);
                 float2 cut;
                 float2 middle;
                 if (cosine >= 0) {

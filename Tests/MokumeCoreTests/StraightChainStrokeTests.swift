@@ -235,6 +235,49 @@ struct StraightChainStrokeTests {
         #expect(differing == 0, "\(differing) 画素が違う")
     }
 
+    /// #3165: 折り返す 2 本の向きが**理屈では等しく、丸めで 1 ビットずれうる**配置。視点の位置を、浮動小数点の
+    /// 刻み (2^-17) の何倍かだけ辺の直線からずらすと、2 本の腕の向きは等しい・ほんの少し違う・食い違うを行き来する。
+    /// GPU がどの場合も CPU の帯と同じ向きの決定を下す (内積・外積・正規化の丸めが CPU と同じ) ことを、平行投影と
+    /// 透視、ずらす軸 (縦・奥行き) の全部で見る。一つでも食い違う視点があれば、食い違った視点を名指しする。
+    @Test("折り返す 2 本の向きが丸めでずれうる視点でも、骨で広げて CPU の帯と同じ絵になる")
+    func nearlyFoldedTipsMatchTheCPUBands() throws {
+        let path = Subject.foldedTriangle.path
+        var differing: [String] = []
+        for perspective in [false, true] {
+            for axis in 0..<2 {
+                for step in 0..<40 {
+                    let offset = Float(step) * 7.62939453125e-6
+                    func picture(accelerated: Bool) throws -> [UInt8] {
+                        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+                        if !accelerated { canvas.modelStrokeGeometries.budget = 0 }
+                        let model = try canvas.loadModel(path, normalize: false)
+                        try canvas.draw {
+                            canvas.background(.linear(red: 0.02, green: 0.02, blue: 0.03))
+                            canvas.noFill()
+                            canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+                            canvas.strokeWeight(12)
+                            if axis == 0 {
+                                canvas.camera(280, 80 + offset, 0, 80, 80, 0, 0, 1, 0)
+                            } else {
+                                canvas.camera(280, 80, offset, 80, 80, 0, 0, 1, 0)
+                            }
+                            if !perspective { canvas.ortho() }
+                            canvas.translate(80, 80, 0)
+                            canvas.scale(40, 40, 40)
+                            canvas.model(model)
+                            canvas.closeBatch()
+                        }
+                        return try canvas.target.encodeForDisplay().bytes
+                    }
+                    if try picture(accelerated: false) != picture(accelerated: true) {
+                        differing.append("\(perspective ? "透視" : "平行")・軸 \(axis)・ずれ \(offset)")
+                    }
+                }
+            }
+        }
+        #expect(differing.isEmpty, "CPU の帯と違う視点: \(differing)")
+    }
+
     /// 完了条件 1: 100,352 三角形の、横と縦を揃えた格子も骨を作る (点が数万を超えると、変曲線の近くの辺が
     /// 偶然に同じ直線へ並ぶ)。
     @Test("横と縦を揃えた大きな格子も、骨を作って GPU で広げる")
