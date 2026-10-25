@@ -124,7 +124,7 @@ AGENTS = REPO / "AGENTS.md"
 SECTION_LIMIT = 1500
 
 # 越えたときに名乗る降ろし先 (AGENTS.md 冒頭の宣言と同じ 3 つ)
-OFFLOAD = "決定の根拠は ADR、経緯と実測は Issue / PR、機構の内部と手順はスクリプトの冒頭コメントと --help"
+OFFLOAD = "決定の根拠は ADR、経緯と実測は Issue / PR、機構の内部と手順はスクリプトの冒頭コメント"
 
 # 増分の宣言 (冒頭の「1.」)。行全体で一致させる。`\d` は全角数字にも一致するので使わない
 DECLARATION = re.compile(r"AGENTS\.md の増分: ([+-]?[0-9]+)")

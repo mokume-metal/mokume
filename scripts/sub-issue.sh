@@ -68,6 +68,10 @@ link_to_parent() { # $1=子の番号
 }
 
 PARENT="${1:?親 Issue 番号が必要}"; shift
+# 位置引数の親番号とタイトルは、値として読んで起票まで進む。`-` で始まるのは慣習の `--help` などの
+# 選択肢の綴りで、そのまま題や親にすると「--help」という題の Issue が立つ (#3047)。
+# 選択肢の値 (`--body` の箇条書き `- …` など) は正当に `-` で始まりうるので、ここでは見ない
+case "$PARENT" in -*) usage_error "親番号は - で始まる値を読まない: $PARENT" ;; esac
 
 # 既に在る Issue を繋ぐ口 (冒頭の「--attach」)。作成と型の継承は通らない
 if [ "${1:-}" = --attach ]; then
@@ -87,6 +91,7 @@ if [ "${1:-}" = --attach ]; then
 fi
 
 TITLE="${1:?タイトルが必要}"; shift
+case "$TITLE" in -*) usage_error "タイトルは - で始まる値を読まない: $TITLE" ;; esac
 
 BODY="" BODY_FILE="" TYPE="" IS_TEST=false
 LABELS=() WITH=()
