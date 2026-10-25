@@ -12,6 +12,9 @@ import mokume
 /// 潰れる**が、そこから出た粒は四角のまま残る。止まった 1 枚では違いが読めないので、
 /// `--frames` の連番で見る。
 ///
+/// 案内の輪と床の線は**粒より先に描く**。加算の粒は奥行きを読むが書かない (`particles(_:)` の
+/// 説明) ので、線を後に描くと、手前の粒に隠れるはずの線が粒の上に出てしまう。
+///
 /// 噴き口は 3 つ。真ん中の**球** (`.sphere`) は奥行きを持つ場所から出るので、どこから
 /// 見ても丸い雲になる。**円** (`.circle`) と**線** (`.line`) は面の上から出るので、
 /// 視点を回すと形が薄くなる — 3 つを並べると、粒が空間のどこに居るかが形の変わり方で
@@ -73,6 +76,25 @@ final class SparksInSpace: Sketch {
             core.x + distance * sin(yaw), core.y - distance * 0.1, distance * cos(yaw),
             core.x, core.y, 0, 0, 1, 0)
 
+        // 案内の輪と床の線。**立体の線として置く**ので視点を通り、真横から見ると潰れる。
+        // 潰れた輪の上に四角い粒が残るのが、板が視点を向いている証拠である。
+        // **粒より先に描く** — 加算の粒は奥行きを書かないので、後に描いた奥の線は粒の上に出る
+        // (``particles(_:)`` の説明)。先に描けば、輪より手前の粒が輪を隠す
+        noFill()
+        stroke(140, 180, 255, 120)
+        strokeWeight(1.5)
+        beginShape()
+        for index in 0..<96 {
+            let angle = Float(index) / 96 * 2 * Float.pi
+            vertex(core.x + cos(angle) * disc, core.y + sin(angle) * disc, 0)
+        }
+        endShape(.close)
+        stroke(150, 255, 190, 150)
+        beginShape(.lines)
+        vertex(ground.from, ground.y, 0)
+        vertex(ground.to, ground.y, 0)
+        endShape()
+
         // 球: 奥行きを持つ場所から出る。**どこから見ても丸い**
         emit(
             sparks, from: .sphere(core.x, core.y, 0, radius: 60),
@@ -107,23 +129,6 @@ final class SparksInSpace: Sketch {
             color: color(200, 150, 255))
         force(nebula, .wander(strength: 25), .drag(1.2))
         particles(nebula)
-
-        // 案内の輪と床の線。**立体の線として置く**ので視点を通り、真横から見ると潰れる。
-        // 潰れた輪の上に四角い粒が残るのが、板が視点を向いている証拠である
-        noFill()
-        stroke(140, 180, 255, 120)
-        strokeWeight(1.5)
-        beginShape()
-        for index in 0..<96 {
-            let angle = Float(index) / 96 * 2 * Float.pi
-            vertex(core.x + cos(angle) * disc, core.y + sin(angle) * disc, 0)
-        }
-        endShape(.close)
-        stroke(150, 255, 190, 150)
-        beginShape(.lines)
-        vertex(ground.from, ground.y, 0)
-        vertex(ground.to, ground.y, 0)
-        endShape()
 
         // 字は画面に貼り付けて読みたいので、視点を戻してから書く
         camera()

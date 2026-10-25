@@ -535,7 +535,7 @@ struct ParticleTests {
             var randomness = Randomness(seed: 1649)
             try placing(state, on: canvas)({
                 canvas.emit(
-                    dust, from: .point(32, 32), toward: .plane(0...0), rate: 600, speed: 0...0,
+                    dust, from: .point(32, 32), toward: .plane(0...0), rate: 3000, speed: 0...0,
                     life: 5...5, size: 20...20, color: .linear(red: 1, green: 1, blue: 1),
                     using: &randomness)
                 canvas.particles(dust)
@@ -784,15 +784,34 @@ struct ParticleTests {
         }
     }
 
-    /// 乗算・スクリーンの粒も、奥行きを書かない。灰色の下地に、粒の無い (アルファ 0 の) ときの角の色と、
-    /// 粒を手前で先に描いたときの角の色を比べる — 切られると同じになる。
-    @Test("乗算・スクリーンの粒も、奥行きを書かない", arguments: [BlendMode.multiply, .screen])
-    func otherOrderIndependentModesDoNotWriteDepth(mode: BlendMode) throws {
-        let none = try corner(
+    /// 粒の無い (アルファ 0 の) ときの角の色。灰色の下地 `backdrop` に、手前で先に描く小さい粒と奥の大きい粒を
+    /// 出した絵の、角の色と比べる — 奥の粒が切られると同じになる。
+    private func cornerWithoutParticles(mode: BlendMode, backdrop: Float) throws -> [UInt8] {
+        try corner(
             mode: mode, smallZ: 8, bigZ: -8, smallFirst: true,
-            color: LinearRGBA(straightRed: 0.5, green: 0.5, blue: 0.5, alpha: 0), backdrop: 0.3)
+            color: LinearRGBA(straightRed: 0.5, green: 0.5, blue: 0.5, alpha: 0), backdrop: backdrop)
+    }
+
+    /// 減算・乗算・スクリーンの粒も、奥行きを書かない (不透明な下地の上で)。
+    @Test("減算・乗算・スクリーンの粒も、奥行きを書かない", arguments: [BlendMode.subtract, .multiply, .screen])
+    func otherOrderIndependentModesDoNotWriteDepth(mode: BlendMode) throws {
+        let none = try cornerWithoutParticles(mode: mode, backdrop: 0.3)
         let drawn = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: true, backdrop: 0.3)
         #expect(none != drawn, "\(mode) の粒が角で切られた \(drawn)")
+    }
+
+    /// 順に依る混ぜ方の粒は、これまでどおり奥行きを書く — 手前の粒の透明な角が奥の粒を切る。
+    /// 下地は、粒の色 0.5 で絵が変わる明るさにする (最も暗くする `.darkest` だけ明るい下地)。
+    @Test(
+        "最も明るくする・最も暗くする・差・除外の粒は、奥行きを書く (今までどおり)",
+        arguments: [(BlendMode.lightest, Float(0.3)), (.darkest, 0.8), (.difference, 0.3), (.exclusion, 0.3)])
+    func orderDependentModesStillWriteDepth(mode: BlendMode, backdrop: Float) throws {
+        let none = try cornerWithoutParticles(mode: mode, backdrop: backdrop)
+        let drawn = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: true, backdrop: backdrop)
+        #expect(none == drawn, "\(mode) の粒が角で切られていない \(drawn) / 粒なし \(none)")
+        // 対照: 奥の粒を先に描けば角に出る — 比べる前提 (粒が絵を変える) が崩れていない
+        let uncut = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: false, backdrop: backdrop)
+        #expect(none != uncut, "\(mode) の粒が絵を変えていない \(uncut)")
     }
 
     /// `.blend` の不透明な粒は、前後が今までどおり — 手前の粒が奥の粒を隠す。
