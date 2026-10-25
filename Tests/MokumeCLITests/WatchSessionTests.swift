@@ -1099,9 +1099,9 @@ struct WatchSessionTests {
     /// `first` が映っていた前の世代 (`outgoing`)、`second` が最後に起こした世代 (`child`)。
     @MainActor
     private func previousAndNew(
-        _ scripted: Scripted, ready: Ready, previousShown: Bool
+        _ scripted: Scripted, ready: Ready, previousShown: Bool, directory: URL? = nil
     ) async throws -> (session: WatchSession, first: Process, second: Process) {
-        let session = try windowed(scripted, ready: ready)
+        let session = try windowed(scripted, ready: ready, directory: directory)
         await session.start()
         ready.waitForLast()
         let first = try #require(session.child)
@@ -1795,6 +1795,74 @@ struct WatchSessionTests {
         let departure = try #require(session.departed())
         #expect(
             departure.failedToStart == !shownByStage, "窓のある子の読みが、台の知らせに従わない: \(departure)")
+    }
+
+    /// **巡回が倒れた目印を先に見て消した後でも、起動中の印で読む** (#3222 の反証)。巡回は子の離脱の後に倒れた子の
+    /// 口(`retireAfterFallback()`)を呼び、目印を消して前の世代を畳み、倒れた子を「乗り換えた」とみなす。その後で
+    /// `setup()` が投げて 1 枚も出さずに死んだ子は、起動できなかった回である。
+    @Test("倒れた目印を巡回が先に見て消した後でも、起動中の印を残して死んだ倒れた子は起動できなかった回と読む")
+    func aFallenChildSeenByTheStepIsStillReadByItsStartingMark() async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
+        let mark = startingPrefix(in: directory)
+        let (session, _, second) = try await previousAndNew(
+            Scripted([
+                "echo ready; read line",
+                "echo ready; : > '\(mark)'$$; read line; exit 3",
+            ]), ready: ready, previousShown: true, directory: directory)
+        defer { session.stopBlocking() }
+        _ = try placeFellBackMarker(of: second, for: session)
+        #expect(await session.retireAfterFallback() != nil, "検査の前提: 巡回が目印を見た")
+        try (second.standardInput as? Pipe)?.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        waitUntilGone(second)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart, "目印を消した後の倒れた子を、自分で消えたと読んだ")
+        // 読んだ印は消す(死んだ pid の印を、次の作り直しまで残さない)
+        let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: WorkDirectory.startingURL(forProcess: second.processIdentifier, under: facet).path))
+    }
+
+    /// 巡回が見た後でも、1 枚目を出して印を消した倒れた子は、これまでどおり自分で消えたと読む。
+    @Test("倒れた目印を巡回が先に見た後、印を消した(1 枚目を出した)倒れた子は、自分で消えたと読む")
+    func aFallenChildThatDrewAfterTheStepSawItIsDeparted() async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
+        let mark = startingPrefix(in: directory)
+        let (session, _, second) = try await previousAndNew(
+            Scripted([
+                "echo ready; read line",
+                "echo ready; : > '\(mark)'$$; read line; rm -f '\(mark)'$$; exit 3",
+            ]), ready: ready, previousShown: true, directory: directory)
+        defer { session.stopBlocking() }
+        _ = try placeFellBackMarker(of: second, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        try (second.standardInput as? Pipe)?.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// 「乗り換えたとみなす」もう 1 つの口(受け取れない世代)も同じ根: 台が何も言えない子は、起動中の印で読む。
+    @Test("受け取れない世代として乗り換えたとみなした子も、起動中の印を残して死んだら起動できなかった回と読む")
+    func anUndeliverableChildIsReadByItsStartingMark() async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
+        let mark = startingPrefix(in: directory)
+        let (session, _, second) = try await previousAndNew(
+            Scripted([
+                "echo ready; read line",
+                "echo ready; : > '\(mark)'$$; read line; exit 3",
+            ]), ready: ready, previousShown: true, directory: directory)
+        defer { session.stopBlocking() }
+        let waiting = session.waitingGeneration
+        #expect(await session.retireAfterUndeliverable(waiting: waiting) != nil)
+        try (second.standardInput as? Pipe)?.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        waitUntilGone(second)
+
+        #expect(try #require(session.departed()).failedToStart)
     }
 
     /// **番号は使い回される。** 止めた子・見ずに消えた子の印を残すと、同じ番号を巡り当てた新しい子が、

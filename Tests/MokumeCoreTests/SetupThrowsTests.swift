@@ -427,21 +427,20 @@ struct SetupThrowsTests {
 
     // MARK: - 起動中の印を見張りへ渡す (#3222)
 
-    /// 子は起動の頭で印を置き、最初の絵を出したら 1 度だけ消す。見張りは窓の無い見張りと倒れた子について、
+    /// 子は `Sketch.main()` の頭で印を置き (`markOwnStarting`)、最初の絵を出したら 1 度だけ消す。見張りは窓の無い見張りと倒れた子について、
     /// 印が残ったまま終わった子を「最初の絵の前に終わった」と読む。
     @Test("最初の絵を出したら、起動中の印を 1 度だけ消す")
     func theFirstFrameClearsTheStartingMark() throws {
         let application = try SketchApplication(sketch: Quiet(), gpu: RenderDevice())
         var events: [String] = []
-        application.markStarting = { events.append("starting") }
         application.markFirstFrame = { events.append("first") }
         application.exitProcess = { _ in }
         application.didFinishLaunching()
-        #expect(events == ["starting"], "最初の絵の前に印を消した: \(events)")
+        #expect(events.isEmpty, "最初の絵の前に印を消した: \(events)")
         application.displayLinkFired()
         application.displayLinkFired()
         application.displayLinkFired()
-        #expect(events == ["starting", "first"], "印を 1 度だけ消していない: \(events)")
+        #expect(events == ["first"], "印を 1 度だけ消していない: \(events)")
         application.willTerminate()
     }
 
@@ -449,13 +448,12 @@ struct SetupThrowsTests {
     func aFailedSetupLeavesTheStartingMark() throws {
         let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
         var events: [String] = []
-        application.markStarting = { events.append("starting") }
         application.markFirstFrame = { events.append("first") }
         application.noteStartFailure = { _ in }
         application.exitProcess = { _ in events.append("exit") }
         application.didFinishLaunching()
         application.displayLinkFired()
-        #expect(events == ["starting", "exit"], "印を消した: \(events)")
+        #expect(events == ["exit"], "印を消した: \(events)")
     }
 
     // MARK: - 起動中の印の置き場 (WorkDirectory)

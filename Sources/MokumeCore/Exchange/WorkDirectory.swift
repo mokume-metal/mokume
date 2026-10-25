@@ -141,7 +141,7 @@ nonisolated public enum WorkDirectory {
     /// 区画 `build` の中の、**まだ最初の絵を出していない子**の印
     /// ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
     ///
-    /// 子が起動の頭で自分の pid で置き、最初の絵を出したら消す。**中身は空で、在ることが知らせである**
+    /// 子が `Sketch.main()` の頭で自分の pid で置き (``markStarting(forProcess:under:owner:)``)、最初の絵を出したら消す。見張りも、読んだ子の印は消す。**中身は空で、在ることが知らせである**
     /// (JSON ではない・``fellBackURL(forProcess:under:)`` と同じ)。見張りは終わった子の印が残っていれば、その子は
     /// 最初の絵を出す前に終わったと読む — 台 (道具の窓) が最初の絵を知らせてくれない、窓の無い見張りと自分の窓に
     /// 倒れた子のための合図である。
