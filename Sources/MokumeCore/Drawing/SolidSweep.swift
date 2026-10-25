@@ -34,13 +34,15 @@ import Metal
 /// - 置き場所が少ない連なり。省ける呼び出しより添字の列を組む費用が高い (``paysOff(instances:passes:programLength:vertices:)``)。
 /// - 写しにする三角形の 3 点で、向きを形から求めたかが揃わない形 (一部の頂点にだけ `normal()` を書いた
 ///   `beginShape` の形など)。断片は 3 点の間で補間した印で裏返すので、頂点ごとの印では合わせられない。
-/// - 頂点を自分の置き場から読む列 (GPU が持つモデル) と、引数を GPU が書く列 (粒)。
+/// - 頂点を自分の置き場から読む列のうち、CPU の写しを持たないもの (GPU が持つモデル) と、引数を GPU が
+///   書く列 (粒)。保持した形の置き場の列は、置き場の写しから組む ([#3201])。
 ///
 /// この型が持つのは GPU に触れない部分 (連なりの割り方・描く順・添字の列の組み立て・使う判定)。添字の列を
 /// 組んで置き場へ写すのは ``Canvas/uploadSweeps()``、描くのは `Canvas.encodeBackThenFront` である。
 ///
 /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
 /// [#2222]: https://github.com/mokume-metal/mokume/issues/2222
+/// [#3201]: https://github.com/mokume-metal/mokume/issues/3201
 enum SolidSweep {
     /// 描き方の違う置き場所の連なり。
     struct Run: Equatable {
