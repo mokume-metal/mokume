@@ -71,6 +71,13 @@ public final class AudioIn: Inlet {
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
     private var levels = AudioLevels.silence
+    /// 最新の (空でない) 区間。波形と拍に使う。
+    private var latest: AudioSpan?
+    private var waveformCache: [Float]?
+    /// 拍の状態。``isBeat`` が最初に読まれるまで `nil`。
+    private var beat: BeatTracker?
+    private var beatNow = false
+    private var warnedEnergy = false
     private var openedAt: TimeInterval?
     private var warnedWaiting = false
     private var warnedDenied = false
@@ -111,6 +118,87 @@ public final class AudioIn: Inlet {
     public var level: Float { levels.level }
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。写し方は ``level`` と同じ。
     public var spectrumLevels: [Float] { levels.spectrumLevels }
+
+    // MARK: - 帯域・波形・拍
+
+    /// 周波数の範囲 `low`〜`high` (Hz) の大きさを 0〜1 で返す。低音の脈動を、帯域の番号を割り出さずに取る。
+    ///
+    /// <!-- example: 文脈 var mic: AudioIn? -->
+    /// ```swift
+    /// if let mic { circle(width / 2, height / 2, 100 + mic.energy(from: 20, to: 140) * 300) }
+    /// ```
+    ///
+    /// 区間の ``spectrum`` の、中心がその範囲に入る帯域 (帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz) の振幅の
+    /// 平均を、``level`` と同じ dB の固定範囲 (-60 dBFS が 0、0 dBFS が 1) で写した値で、履歴に依らない。別の
+    /// 解析は走らせない。手本は p5.sound の `getEnergy`。
+    ///
+    /// - 範囲に中心が入る帯域が無ければ、範囲の中点にいちばん近い 1 帯域の値
+    /// - 逆順 (`low` が `high` より大きい) は入れ替える。0 Hz〜標本化率の半分の外へはみ出す分は端へ寄せ、
+    ///   範囲が全部外なら 0
+    /// - 数でない値・無限の値は 0 を返し、そのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func energy(from low: Float, to high: Float) -> Float {
+        let result = AudioAnalysis.energy(of: levels.spectrum, from: low, to: high, sampleRate: sampleRate)
+        if !result.isNumber, !warnedEnergy {
+            warnedEnergy = true
+            warn("energy() got a value that is not a number, or an infinite one, so it returns 0")
+        }
+        return result.value
+    }
+
+    /// 区間の終わりの 1024 標本 (古い順)。波形を描くのに使う。
+    ///
+    /// <!-- example: 文脈 var mic: AudioIn? -->
+    /// ```swift
+    /// if let mic {
+    ///     noFill()
+    ///     stroke(255)
+    ///     beginShape()
+    ///     for (i, s) in mic.waveform.enumerated() { vertex(Float(i) / 1024 * width, height * 0.8 + s * 100) }
+    ///     endShape()
+    /// }
+    /// ```
+    ///
+    /// 標本は解析と同じもの (チャンネルを平均したもの。音量は掛けた後)。標本 0 より前は 0。標本が進まな
+    /// かったフレームは前のまま。何も鳴っていなければ 1024 個の 0。手本は p5.sound の `waveform()` と
+    /// Processing Sound の `Waveform`。
+    public var waveform: [Float] {
+        if let waveformCache { return waveformCache }
+        let tail = latest?.tail(AudioAnalysis.windowSize) ?? [Float](repeating: 0, count: AudioAnalysis.windowSize)
+        waveformCache = tail
+        return tail
+    }
+
+    /// このフレームの区間に拍があったか。区間に拍が 1 つ以上あれば `true` (複数あっても 1 回に畳む)。
+    ///
+    /// <!-- example: 文脈 var mic: AudioIn?; var flash: Float = 0 -->
+    /// ```swift
+    /// if mic?.isBeat == true { flash = 1 }
+    /// flash *= 0.9
+    /// background(30 + flash * 200, 30, 40)
+    /// ```
+    ///
+    /// 拍は、ブロックごとのエネルギーが直近の平均を急に上回ったところ。ブロックは音源の標本 0 から 512 標本ごと
+    /// に区切った固定の列で、**判定は届いた単位ではなくこの列の順にだけ進む**。同じ標本列からは、fps や
+    /// 届くチャンクの長さが違っても同じ標本位置で拍が出る (``AudioIn`` のマイクを除く — 到着が実時間で決まる
+    /// ので、固定の時計の書き出しの水準 2 を名乗れるのはファイル・標本列・合成音)。手本は Minim の `BeatDetect`、
+    /// p5.sound の `PeakDetect`、Processing Sound の `BeatDetector`。感度の口は持たない。
+    ///
+    /// **最初に読んだフレームから**履歴を溜め始める (読まない音源は何も払わない)。以後は読まないフレームの区間も
+    /// 順に処理するので、読む間隔を変えても拍の位置は変わらない。読み始めてから約 85 ミリ秒は出ない。長く止まって
+    /// 標本を落としたとき (``AudioAnalysis`` の上限) は、履歴を捨てて始め直し、落とした区間では拍を出さない。
+    public var isBeat: Bool {
+        if beat == nil {
+            // 何も届いていなければ流れの最初。届いていれば、途中から読み始めたことになる
+            beat = BeatTracker(fresh: latest.map { $0.from == 0 } ?? true)
+            if let latest { beatNow = beat?.process(latest) ?? false }
+        }
+        return beatNow
+    }
+
+    /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
+    var beatSteps: Int { beat?.calls ?? 0 }
 
     // MARK: - 出どころ
 
@@ -153,11 +241,15 @@ public final class AudioIn: Inlet {
         source.pump(into: input, at: Double(owner?.time ?? 0))
         if let span = input.take() {
             levels = AudioAnalyzer.shared.analyze(span)
+            latest = span
+            waveformCache = nil
+            beatNow = beat?.process(span) ?? false
             isNewFrame = true
         } else {
             isNewFrame = false
+            beatNow = false
         }
-        if state != .running { levels = .silence }
+        if state != .running { forgetSound() }
         noticeIfStuck()
     }
 
@@ -166,7 +258,16 @@ public final class AudioIn: Inlet {
         input.setState(.stopped)
         // 届いて読まれなかった音は捨てる。足し直した最初の ``supply()`` に、外す前の音を出さない
         input.discardWaiting()
+        forgetSound()
+    }
+
+    /// 値・波形・拍の履歴を捨てて、無音にする。
+    private func forgetSound() {
         levels = .silence
+        latest = nil
+        waveformCache = nil
+        beat?.reset(fresh: true)
+        beatNow = false
     }
 
     public var report: SourceReport? { input.report }

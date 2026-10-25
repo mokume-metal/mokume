@@ -514,6 +514,47 @@ struct SoundFileTests {
         #expect(duration == 10.0)
     }
 
+    // MARK: - 拍 (#3137)
+
+    @Test("isBeat: クリック列のファイルを 60 fps と 24 fps で回すと、拍の数はどちらもクリックの数。読まなければ処理は 0 回。飛んだ先と鳴らし直しでも履歴を捨てる")
+    func beatsFromAFile() throws {
+        // 最初のクリックはファイルの頭のすぐ後 (履歴の無い、流れの最初の立ち上がり)
+        let starts = [1_000, 12_000, 36_511, 60_001, 84_479]
+        let stream = AudioFeatureTests.clicks(at: starts, count: 144_000)
+        let url = try writeWAV(stream, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        func run(fps: Int, read: Bool, at frame: Int? = nil, _ act: @escaping (SoundFile) -> Void = { _ in })
+            throws -> (beats: Int, steps: Int)
+        {
+            var sound: SoundFile?
+            var beats = 0
+            let runtime = try self.run(
+                frames: fps * 3, clock: .frameIndex(frameRate: fps),
+                setup: { sketch in
+                    sound = try sketch.loadSound(url.path)
+                    sound?.play()
+                },
+                draw: { sketch in
+                    guard let sound else { return }
+                    if read, sound.isBeat { beats += 1 }
+                    if sketch.frameCount == frame { act(sound) }
+                })
+            let steps = sound?.beatSteps ?? -1
+            runtime.closePlugins()
+            return (beats, steps)
+        }
+        #expect(try run(fps: 60, read: true).beats == starts.count)
+        #expect(try run(fps: 24, read: true).beats == starts.count)
+        #expect(try run(fps: 60, read: false).steps == 0, "読まない音源は拍の処理が 0 回")
+        // 3 つ目のクリックの後 (frameCount 50 = 0.82 秒) に 2 秒の位置 (無音) へ飛ぶと、4・5 番目のクリックは聞こえない
+        let jumped = try run(fps: 60, read: true, at: 50) { $0.jump(2.0) }
+        #expect(jumped.beats == 3, "\(jumped)")
+        // 同じところで頭から鳴らし直すと、ファイルの頭の立ち上がり (履歴の無い流れの最初) も拍になる
+        let replayed = try run(fps: 60, read: true, at: 50) { $0.play() }
+        #expect(replayed.beats == 3 + starts.count, "\(replayed)")
+    }
+
     @Test("鳴っている間の jump(5) は、呼んだ直後から 5.0 を返し、次のフレームでちょうど 5.0 から鳴って、解析の区間は 5.0 秒から始まる")
     func jumpWhilePlayingLandsOnTheNextFrame() throws {
         let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)

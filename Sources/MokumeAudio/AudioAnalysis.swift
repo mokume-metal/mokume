@@ -56,6 +56,14 @@ nonisolated struct AudioSpan: Equatable, Sendable {
         self.init(base: 0, samples: window, from: 0)
     }
 
+    /// 区間の終わりで終わる `count` 標本 (古い順)。標本 0 より前と、持っていない前の履歴は 0。
+    func tail(_ count: Int) -> [Float] {
+        let start = to - count
+        if start >= base { return Array(samples[(start - base)...]) }
+        let missing = min(base - start, count)
+        return [Float](repeating: 0, count: missing) + samples.suffix(count - missing)
+    }
+
     /// 全部の標本に `gain` を掛けた区間。
     func scaled(by gain: Float) -> AudioSpan {
         AudioSpan(base: base, samples: vDSP.multiply(gain, samples), from: from)
@@ -265,6 +273,36 @@ nonisolated enum AudioAnalysis {
         }
     }
 
+    /// 周波数の範囲 `low`〜`high` (Hz) の大きさ。`spectrum` の、中心がその範囲に入る帯域の振幅の**平均**を、
+    /// ``level(_:)`` と同じ dB の固定範囲で 0〜1 に写したもの。
+    ///
+    /// - 範囲に中心が入る帯域が無ければ、範囲の中点にいちばん近い 1 帯域
+    /// - 逆順は入れ替える。0〜標本化率の半分の外へはみ出す分は端へ寄せる。範囲が全部外なら 0
+    /// - 標本化率がまだ分からない (0) なら 0
+    /// - 数でない値・無限の値は 0 で、`isNumber` が `false` (呼ぶ側が 1 度だけ知らせる)
+    static func energy(
+        of spectrum: [Float], from low: Float, to high: Float, sampleRate: Float
+    ) -> (value: Float, isNumber: Bool) {
+        guard low.isFinite, high.isFinite else { return (0, false) }
+        guard sampleRate > 0, sampleRate.isFinite, spectrum.count == bandCount else { return (0, true) }
+        let nyquist = sampleRate / 2
+        var lower = min(low, high)
+        var upper = max(low, high)
+        guard upper >= 0, lower <= nyquist else { return (0, true) }
+        lower = max(lower, 0)
+        upper = min(upper, nyquist)
+        let width = sampleRate / Float(windowSize)
+        var first = Int((lower / width).rounded(.up))
+        var last = min(Int((upper / width).rounded(.down)), bandCount - 1)
+        if first > last {
+            first = min(max(Int(((lower + upper) / 2 / width).rounded()), 0), bandCount - 1)
+            last = first
+        }
+        var total: Float = 0
+        for band in first...last { total += spectrum[band] }
+        return (level(decibels(total / Float(last - first + 1))), true)
+    }
+
     /// 振幅を dBFS にする。
     static func decibels(_ amplitude: Float) -> Float {
         guard amplitude > 0 else { return floorDecibels }
@@ -318,34 +356,88 @@ final class AudioAnalyzer {
 /// (次のフレームの値に混ぜない)。**空の区間は置き換えない** — 標本が 1 つも進まなかったフレーム
 /// (飛び先から始まる最初のフレームなど) は、前のフレームの値のまま。
 ///
+/// 波形 (``waveform()``) は、置いた区間の終わりの標本をそのまま返す。解析はしない。
+///
+/// 拍 (``isBeat()``) は**履歴を持つ**ので、値と違って読まれなかったフレームの区間も順に処理する。
+/// 最初に読まれたフレームで状態を作り (そのフレームの区間から)、以後は区間を置くたび (``hold(_:)``) に
+/// 処理する。一度も読まれなければ処理は 0 回 (``beatSteps``)。
+///
 /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
 struct DeferredLevels {
-    /// まだ解いていない、フレームの頭の区間。
+    /// 置かれた最新の (空でない) 区間。解いた後も、波形のために残す。
     private var span: AudioSpan?
+    /// ``span`` を解いたか。
+    private var isSolved = true
     /// 解いた値、または無音。
     private var solved = AudioLevels.silence
     /// 解いた回数。検査が読む。
     private(set) var analyses = 0
+    /// 波形の控え (``hold(_:)`` で捨てる)。
+    private var waveformCache: [Float]?
+    /// 拍の状態。``isBeat()`` が最初に読まれるまで `nil`。
+    private var beat: BeatTracker?
+    /// このフレームの区間に拍があったか。
+    private var beatNow = false
 
-    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら何もしない。
+    /// 拍の状態が区間を処理した回数。**検査が読む** — 一度も読まれなければ 0。
+    var beatSteps: Int { beat?.calls ?? 0 }
+
+    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら値と波形は変えない
+    /// (そのフレームに拍は無い)。
     mutating func hold(_ span: AudioSpan) {
-        guard !span.isEmpty else { return }
+        guard !span.isEmpty else {
+            beatNow = false
+            return
+        }
         self.span = span
+        isSolved = false
+        waveformCache = nil
+        beatNow = beat?.process(span) ?? false
     }
 
-    /// 無音にする。
+    /// 無音にする。拍の履歴も捨てる (次に鳴り始めるのは、流れの最初から)。
     mutating func silence() {
         span = nil
+        isSolved = true
         solved = .silence
+        waveformCache = nil
+        beat?.reset(fresh: true)
+        beatNow = false
+    }
+
+    /// 標本の流れが途切れた (区切りを始め直した)。拍の履歴を捨てる。値と波形は変えない。
+    ///
+    /// - Parameter fresh: 新しい流れが、音源の最初から始まるか (ファイルの頭から鳴らすとき)。
+    mutating func restartStream(fresh: Bool) {
+        beat?.reset(fresh: fresh)
+        beatNow = false
     }
 
     /// 読まれた値。区間が残っていればここで 1 回だけ解く。
     mutating func levels() -> AudioLevels {
-        if let held = span {
+        if !isSolved, let held = span {
             solved = AudioAnalyzer.shared.analyze(held)
             analyses += 1
-            span = nil
+            isSolved = true
         }
         return solved
+    }
+
+    /// 区間の終わりの ``AudioAnalysis/windowSize`` 標本 (古い順)。何も鳴っていなければ全部 0。
+    mutating func waveform() -> [Float] {
+        if let waveformCache { return waveformCache }
+        let tail = span?.tail(AudioAnalysis.windowSize) ?? [Float](repeating: 0, count: AudioAnalysis.windowSize)
+        waveformCache = tail
+        return tail
+    }
+
+    /// このフレームの区間に拍があったか。**最初に読まれたときに、拍の状態を作る**。
+    mutating func isBeat() -> Bool {
+        if beat == nil {
+            // 何も置かれていなければ流れの最初。置かれていれば、曲の途中から読み始めたことになる
+            beat = BeatTracker(fresh: span.map { $0.from == 0 } ?? true)
+            if let span { beatNow = beat?.process(span) ?? false }
+        }
+        return beatNow
     }
 }
