@@ -17,7 +17,8 @@ jobs:
       - run: swift build --build-tests 2>&1 | tail -3
       - name: ターゲットごとに幅 8 で走らせ、固まったら stack を取る
         run: |
-          for t in FrameRateProbeTests MokumeGamepadTests MokumeAudioTests MokumeCameraTests MokumeNetworkTests MokumeCLITests MokumeCoreTests ALL; do
+          set +e
+          for t in FrameRateProbeTests MokumeGamepadTests MokumeAudioTests MokumeCameraTests MokumeCameraTests MokumeNetworkTests MokumeCLITests MokumeCoreTests ALL; do
             filter=$t; [ "$t" = ALL ] && filter='.'
             echo "::group::$t"
             SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=8 swift test --skip-build --filter "$filter" > "log-$t.txt" 2>&1 &
