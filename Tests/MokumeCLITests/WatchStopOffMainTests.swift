@@ -105,7 +105,12 @@ struct WatchStopOffMainTests {
     ///
     /// **同じ走者の他の検査が main を数秒塞ぐことがある** (見張りの口の検査は本物の `swift` を
     /// 起こす)。期限が短いと、検査が印を見る前に実装が子を落としてしまう。
-    private static let stopTimeout: TimeInterval = 30
+    ///
+    /// **120 秒にしたのは、並列の幅を広げたホスト (3 コア) で 30 秒を越えたから** (#3196)。
+    /// 入れ子の `swift build` と重なると子の立ち上げと印の待ちが遅れ、「退役の途中の子」の検査が
+    /// 36.7 秒で、退役の子が期限で落とされた後に `isRunning` を見て赤になった (#3199 の
+    /// run 40183767303)
+    private static let stopTimeout: TimeInterval = 120
 
     // MARK: - 差し替え
 

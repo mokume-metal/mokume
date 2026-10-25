@@ -20,7 +20,7 @@ import Testing
 ///
 /// [#2377]: https://github.com/mokume-metal/mokume/issues/2377
 @Suite("入口の変換の表引き")
-struct ColorDecodeTableTests {
+nonisolated struct ColorDecodeTableTests {
     /// 変更前の ``LinearRGBA/display(red:green:blue:alpha:)``。常に `decode` を通す。
     private func reference(_ red: Float, _ green: Float, _ blue: Float, _ alpha: Float = 1)
         -> LinearRGBA

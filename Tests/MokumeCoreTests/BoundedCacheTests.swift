@@ -12,7 +12,7 @@ import Testing
 ///
 /// [#1602]: https://github.com/mokume-metal/mokume/issues/1602
 @Suite("上限つきの控え")
-struct BoundedCacheTests {
+nonisolated struct BoundedCacheTests {
     /// 重さを値そのものとする控え。
     private func weighted(budget: Int) -> BoundedCache<String, Int> {
         BoundedCache(budget: budget) { $0 }

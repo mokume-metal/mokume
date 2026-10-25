@@ -380,4 +380,113 @@ struct SetupThrowsTests {
         #expect(statuses == [1])
         #expect(closesWhenExiting == [1], "終わる前に差込口が閉じられていない: \(closesWhenExiting)")
     }
+    // MARK: - 起動の失敗を見張りへ渡す (#3169)
+
+    @Test("窓の経路は、setup() が投げたら、終わる前に理由の全文を見張りへ渡す")
+    func theApplicationHandsTheReasonOverBeforeExiting() throws {
+        let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
+        var order: [String] = []
+        var notes: [String] = []
+        application.noteStartFailure = {
+            notes.append($0)
+            order.append("note")
+        }
+        application.exitProcess = { _ in order.append("exit") }
+        application.didFinishLaunching()
+        application.displayLinkFired()
+        #expect(order == ["note", "exit"], "理由を渡してから終わっていない: \(order)")
+        let note = try #require(notes.first)
+        #expect(note.hasPrefix("setup() threw, so the sketch did not start:"), "\(note)")
+        #expect(note.count > "setup() threw, so the sketch did not start: ".count, "理由が空: \(note)")
+    }
+
+    /// `Sketch.main()` の catch は `exit(1)` で呼べないので、置く処理は 1 つの関数に括ってある。
+    @Test("起動の失敗を言う関数は、標準エラーと同じ中身の全文を見張りへ渡す")
+    func reportStartFailureHandsTheWholeFailureOver() {
+        let failure = RenderFailure.setupFailed(reason: "could not read assets/cat.png\n  detail")
+        var notes: [String] = []
+        reportStartFailure(failure, note: { notes.append($0) })
+        #expect(notes == ["\(failure)"])
+        #expect(notes.first?.contains("detail") == true, "全文を渡していない: \(notes)")
+    }
+
+    /// 理由が改行で始まる子で、1 行目が名乗りだけになると、1 行に削る経路と見張りの頭の 1 行が理由を落とす。
+    @Test("setup() が改行や空白で始まる理由を投げても、1 行目に理由の最初の行が入る")
+    func aLeadingNewlineInTheReasonDoesNotEmptyTheFirstLine() {
+        let failure = RenderFailure.setupFailed(reason: "\n  could not read assets/cat.png\n")
+        let text = "\(failure)"
+        #expect(
+            text.split(separator: "\n", omittingEmptySubsequences: false).first
+                == "setup() threw, so the sketch did not start: could not read assets/cat.png",
+            "\(text)")
+        #expect(failure.headline == "setup() threw, so the sketch did not start: could not read assets/cat.png")
+        #expect(
+            "\(RenderFailure.setupFailed(reason: " \n "))" == "setup() threw, so the sketch did not start",
+            "空の理由で余計な : が残る")
+    }
+
+    // MARK: - 起動中の印を見張りへ渡す (#3222)
+
+    /// 子は `Sketch.main()` の頭で印を置き (`markOwnStarting`)、最初の絵を出したら 1 度だけ消す。見張りは窓の無い見張りと倒れた子について、
+    /// 印が残ったまま終わった子を「最初の絵の前に終わった」と読む。
+    @Test("最初の絵を出したら、起動中の印を 1 度だけ消す")
+    func theFirstFrameClearsTheStartingMark() throws {
+        let application = try SketchApplication(sketch: Quiet(), gpu: RenderDevice())
+        var events: [String] = []
+        application.markFirstFrame = { events.append("first") }
+        application.exitProcess = { _ in }
+        application.didFinishLaunching()
+        #expect(events.isEmpty, "最初の絵の前に印を消した: \(events)")
+        application.displayLinkFired()
+        application.displayLinkFired()
+        application.displayLinkFired()
+        #expect(events == ["first"], "印を 1 度だけ消していない: \(events)")
+        application.willTerminate()
+    }
+
+    @Test("setup() が投げて最初の絵を出せなければ、起動中の印は消さずに終わる")
+    func aFailedSetupLeavesTheStartingMark() throws {
+        let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
+        var events: [String] = []
+        application.markFirstFrame = { events.append("first") }
+        application.noteStartFailure = { _ in }
+        application.exitProcess = { _ in events.append("exit") }
+        application.didFinishLaunching()
+        application.displayLinkFired()
+        #expect(events == ["exit"], "印を消した: \(events)")
+    }
+
+    // MARK: - 起動中の印の置き場 (WorkDirectory)
+
+    private func makeBase() throws -> (base: URL, facet: URL) {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-starting-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return (base, WorkDirectory.facet(WorkDirectory.buildFacetName, under: base))
+    }
+
+    @Test("見張りに起こされた子が、区画 build が在るときだけ、自分の pid で起動中の印を置き、消せる")
+    func theStartingMarkIsPlacedByAChildOfTheWatcherAndCleared() throws {
+        let (base, facet) = try makeBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let url = WorkDirectory.startingURL(forProcess: 4242, under: facet)
+
+        // 区画が無い場所には作らない (区画の有無は「効かせる」印になりうる)
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: "mokume watch")
+        #expect(!FileManager.default.fileExists(atPath: facet.path), "区画を生やした")
+
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        // 見張りに起こされていない子 (run・render・手で起こした子) は置かない
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path), "見張りに起こされていない子が置いた")
+
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: "mokume watch")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(WorkDirectory.startingURL(forProcess: 4243, under: facet) != url, "pid が名前に入っていない")
+
+        WorkDirectory.clearStarting(forProcess: 4242, under: base)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        // 無くても落ちない
+        WorkDirectory.clearStarting(forProcess: 4242, under: base)
+    }
 }
