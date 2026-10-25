@@ -30,7 +30,7 @@ import MokumeDiagnostics
 ///
 /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-final class SoundTrackMixer: SoundSource {
+final class SoundTrackMixer: Inlet, SoundSource {
     /// スケッチごとの混ぜ役。**弱く持つ** (``SynthStage/stages`` と同じ理由)。
     private static var mixers: [ObjectIdentifier: Weak] = [:]
 

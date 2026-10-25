@@ -27,7 +27,7 @@ struct SoundTrackSeamTests {
     }
 
     /// 公開の口だけで作った音源。外のパッケージが書く形と同じ。
-    final class Probe: SoundSource {
+    final class Probe: Inlet, SoundSource {
         private(set) var begun: [Int] = []
         private(set) var windows: [(frame: Int, start: Int, count: Int)] = []
         private(set) var ended = 0

@@ -10,7 +10,7 @@
 /// ``SoundSource`` が、渡された窓へ自分の音を**足す**。Core はすべての音源が足した和を音声トラックへ書く。
 ///
 /// ```swift
-/// final class Tone: SoundSource {
+/// final class Tone: Inlet, SoundSource {
 ///     private var phase: Float = 0
 ///     func supply() {}
 ///     func mix(into window: inout SoundWindow) {
@@ -67,10 +67,12 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
     }
 }
 
-/// 音を出す入り口 — 書き出しの動画の音声トラックへ、音を窓ごとに載せる差込口。
+/// 音を出す入り口の印 — 書き出しの動画の音声トラックへ、音を窓ごとに載せる差込口。
 ///
-/// ``Inlet`` の一種で、音の流れ (再生・合成・エフェクトを通した音) を持つ入り口が準拠する。**組み込みの
-/// 音の入り口も外のパッケージの音源も、同じこの口を通る** ([ADR-0024] 決定 10)。
+/// 音の流れ (再生・合成・エフェクトを通した音) を持つ入り口 (``Inlet``) が、``Inlet`` に加えて準拠する。
+/// **組み込みの音の入り口も外のパッケージの音源も、同じこの口を通る** ([ADR-0024] 決定 10)。``Inlet`` を
+/// 継がない独立の protocol なのは、``Inlet`` の準拠が既定でメインアクターに隔離されるので、継ぐと準拠の隔離が
+/// 食い違うため (Swift 6.3 で「隔離された準拠に依る」と断られる)。
 ///
 /// ## 載せる条件と時刻
 ///
@@ -85,7 +87,7 @@ public nonisolated struct SoundWindow: Sendable, Equatable {
 /// 動画の書き損じと同じく、音声の書き損じも `mokume render` の終了コードに現れる。
 ///
 /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
-public protocol SoundSource: Inlet {
+public protocol SoundSource: AnyObject {
     /// 音声トラックが始まる。最初の窓 (``SoundWindow/frame``) の直前に 1 度呼ばれる。録りの途中で足された
     /// 音源には、足された直後に呼ばれる。`frameRate` は録りの fps。
     func beginTrack(frameRate: Int)
