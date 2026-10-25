@@ -8,7 +8,7 @@ import Testing
 import mokume
 
 @Suite("パッケージの骨格")
-struct PackageStructureTests {
+nonisolated struct PackageStructureTests {
     @Test("アンブレラ 1 つで描画コアの API に届く")
     func umbrellaReExportsCore() {
         // 層をまたいだ依存はビルドが担保するので (ADR-0016 影響)、ここで見るのは

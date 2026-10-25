@@ -9,7 +9,7 @@ import Testing
 /// 型に収まらない数の読み分け (#2805)。Foundation の内部の誤りの字面に頼るので、
 /// その形が変わったら、ここが赤くなって気付く。
 @Suite("外から置かれた数の読み分け")
-struct WireNumberTests {
+nonisolated struct WireNumberTests {
     private enum Key: String, CodingKey { case number }
 
     private struct Read<Number: Decodable & Equatable>: Decodable {
