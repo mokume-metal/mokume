@@ -347,6 +347,137 @@ class ReadFailureMessagesTest(unittest.TestCase):
         self.assertIn("記録を読めなかった", self.read(RECORD_TRUNCATED))
 
 
+def _timed(name, seconds, classname="MokumeCoreTests.CanvasTests"):
+    return '    <testcase classname="%s" name="%s" time="%s" />\n' % (classname, name, seconds)
+
+
+SLOW_TITLE = "1 本 5 秒以上の検査"
+
+
+class ReadSlowTest(unittest.TestCase):
+    """`read-test-record.py --slow` — 1 本で長い検査を長い順に名乗る口 (#3194)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.summary = self.root / "summary.md"
+
+    def read(self, content, *threshold, summary=True):
+        path = self.root / "record.xml"
+        if content is not None:
+            path.write_text(content, encoding="utf-8")
+        env = dict(os.environ)
+        env.pop("GITHUB_STEP_SUMMARY", None)
+        if summary:
+            env["GITHUB_STEP_SUMMARY"] = str(self.summary)
+        proc = subprocess.run(
+            ["python3", str(READER), "--slow", str(path), *threshold],
+            capture_output=True, text=True, env=env,
+        )
+        # 呼ぶ側 (make test) との約束 — 警告だけで、段の終了コードを変えない
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def written(self):
+        return self.summary.read_text(encoding="utf-8") if self.summary.exists() else ""
+
+    def test_lists_the_slow_ones_longest_first(self):
+        out = self.read(_record(
+            _timed("quick()", "0.2"),
+            _timed("ledger()", "63.18", "MokumeCoreTests.SceneLedgerTests"),
+            _timed("edge()", "5"),
+            _timed("bundle()", "145.5", "MokumeCLITests.TemplateBuildTests"),
+            _timed("under()", "4.99"),
+        ))
+        lines = out.splitlines()
+        self.assertIn(SLOW_TITLE + " (3 件", lines[0])
+        # 合計と、記録の検査時間に占める割合 (213.68 / 218.87)
+        self.assertIn("合計 213.7 秒 = 記録の検査時間 218.9 秒の 98%", lines[0])
+        self.assertEqual(
+            [l.split()[1] for l in lines[1:]],
+            [
+                "MokumeCLITests.TemplateBuildTests/bundle()",
+                "MokumeCoreTests.SceneLedgerTests/ledger()",
+                "MokumeCoreTests.CanvasTests/edge()",
+            ],
+        )
+        self.assertEqual(lines[1].split()[0], "145.5s")
+        # ちょうど閾値は入り、届かないものは入らない
+        self.assertNotIn("under()", out)
+        self.assertNotIn("quick()", out)
+
+    def test_writes_the_same_list_to_the_job_summary(self):
+        self.read(_record(_timed("bundle()", "145.5"), _timed("quick()", "0.1")))
+        md = self.written()
+        self.assertIn("### " + SLOW_TITLE + " (1 件)", md)
+        self.assertIn("| 145.5 | `MokumeCoreTests.CanvasTests` / `bundle()` |", md)
+        self.assertNotIn("quick()", md)
+        # 前の step が書いたものを消さずに足す
+        self.read(_record(_timed("again()", "9")))
+        md = self.written()
+        self.assertIn("bundle()", md)
+        self.assertIn("again()", md)
+
+    def test_does_not_touch_a_summary_outside_github(self):
+        out = self.read(_record(_timed("bundle()", "145.5")), summary=False)
+        self.assertIn("bundle()", out)
+        self.assertFalse(self.summary.exists())
+
+    def test_the_threshold_is_given_in_seconds(self):
+        out = self.read(_record(_timed("a()", "2.5"), _timed("b()", "1.5")), "2")
+        self.assertIn("1 本 2 秒以上の検査 (1 件", out)
+        self.assertIn("a()", out)
+        self.assertNotIn("b()", out)
+        # 数でない閾値は、黙って既定へ落とさずに名乗る
+        out = self.read(_record(_timed("a()", "9")), "five")
+        self.assertIn("閾値は 0 以上の秒数で渡す: 'five'", out)
+        self.assertNotIn("a()", out)
+
+    def test_says_none_when_nothing_is_slow(self):
+        out = self.read(_record(_timed("a()", "0.1"), _timed("b()", "0.3")))
+        self.assertEqual(out.strip(), SLOW_TITLE + "は無い (記録の検査 2 件・合計 0.4 秒)")
+        self.assertIn("無い (記録の検査 2 件", self.written())
+
+    def test_names_a_record_it_cannot_read(self):
+        """記録が無い・壊れている・中身が無いときに、黙って「長い検査は無い」を出さない。"""
+        cases = [
+            ("無い", None, "記録が無い"),
+            ("空", "", "記録が無い"),
+            ("見出しだけ", RECORD_TRUNCATED, "記録が壊れている"),
+            ("閉じていない", RECORD_UNCLOSED, "記録が壊れている"),
+            ("検査が無い", _record(), "記録に検査が 1 件も無い"),
+            # time の綴りが変わった日 (飛ばした検査は今も time を持たない)
+            ("time が無い", _record('    <testcase classname="A" name="b()" duration="9" />\n'),
+             "記録の検査 1 件のどれも時間 (time) を持たない"),
+        ]
+        for label, content, reason in cases:
+            with self.subTest(label):
+                self.summary.unlink(missing_ok=True)
+                (self.root / "record.xml").unlink(missing_ok=True)
+                out = self.read(content)
+                self.assertIn(SLOW_TITLE + "を読めない: " + reason, out)
+                self.assertNotIn("は無い", out)
+                self.assertIn("読めない: " + reason, self.written())
+
+    def test_skipped_cases_without_time_do_not_hide_the_rest(self):
+        skipped = '    <testcase classname="A" name="skipped()">\n      <skipped />\n    </testcase>\n'
+        out = self.read(_record(skipped, _timed("slow()", "7")))
+        self.assertIn("slow()", out)
+        self.assertIn("(1 件", out)
+
+    def test_caps_the_list(self):
+        out = self.read(_record(*[_timed("t%d()" % i, str(6 + i)) for i in range(53)]))
+        self.assertIn("(53 件", out)
+        self.assertIn("ほか 3 件は記録を読む", out)
+        self.assertEqual(out.count("s  MokumeCoreTests.CanvasTests/"), 50)
+        self.assertIn("ほか 3 件は記録を読む", self.written())
+
+    def test_table_cells_survive_pipes_and_backticks(self):
+        self.read(_record(_timed("pick(`a`|b)", "9")))
+        self.assertIn("``pick(`a`\\|b)``", self.written())
+
+
 class MakeTestTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -402,6 +533,8 @@ class MakeTestTest(unittest.TestCase):
             MOKUME_GPU_SLOT_DIR=str(self.root / "gpu-slots"),
             MOKUME_GPU_SLOT_LOG=str(self.root / "gpu-slot.jsonl"),
         )
+        # CI の hooks-test の中で走っても、本物の job の要約へ書かない (#3194)
+        env.pop("GITHUB_STEP_SUMMARY", None)
         env.update(extra_env or {})
         env.pop("FAKE_RECORD", None)
         if record is not None:
@@ -586,6 +719,33 @@ class MakeTestTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assert_not_vanished(out)
 
+
+    # --- 1 本で長い検査 (#3194) ---------------------------------------------
+
+    def test_names_the_slow_tests_at_the_end_of_a_green_run(self):
+        record = _record(_timed("draws()", "0.1"), _timed("bundles()", "145.5", "MokumeCLITests.TemplateBuildTests"))
+        summary = self.root / "summary.md"
+        code, out = self.run_make(0, record=record, extra_env={"GITHUB_STEP_SUMMARY": str(summary)})
+        self.assertEqual(code, 0, out)
+        tail = out.rstrip().splitlines()[-2:]
+        self.assertIn(SLOW_TITLE + " (1 件", tail[0])
+        self.assertIn("145.5s  MokumeCLITests.TemplateBuildTests/bundles()", tail[1])
+        self.assertIn("| 145.5 | `MokumeCLITests.TemplateBuildTests` / `bundles()` |", summary.read_text())
+
+    def test_the_threshold_comes_from_the_make_variable(self):
+        record = _record(_timed("draws()", "2"))
+        code, out = self.run_make(0, record=record, extra_env={"TEST_SLOW_SECONDS": "1"})
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 本 1 秒以上の検査 (1 件", out)
+
+    def test_names_the_slow_tests_without_changing_a_red_exit(self):
+        record = _record(_timed("bundles()", "145.5"), FAILED_CASE)
+        code, out = self.run_make(1, record=record)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 1", out)
+        self.assertIn(SLOW_TITLE + " (1 件", out)
+        self.assertIn("bundles()", out)
+        self.assert_not_vanished(out)
 
 if __name__ == "__main__":
     unittest.main()
