@@ -737,9 +737,11 @@ struct UDPPortTests {
         var made = 0
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        // 回数は時計に頼らない (#3215): 猶予は短く決め、上限まで替えて返るのを待つ。`within` は上限に届かな
+        // かった回にだけ効く外枠で、遅い機械でも 3 つ目を作る前に期限が来ない広さにする
         let received = try await sendAndCollect(
             [Array("a".utf8)], expecting: 1, to: udp, senders: &senders, replacements: 2,
-            within: 0.6
+            within: 10, patience: 0.05, endsAtLimit: true
         ) { warn in
             made += 1
             return ScriptedSender(raw: nil, port: port, complaint: warn)

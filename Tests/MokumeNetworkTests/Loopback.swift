@@ -394,11 +394,20 @@ final class PeerGroup<Peer: LoopbackPeer> {
     ///
     /// 数えない理由を 1 つで名乗って止まる (`#require`): 受け口の状態・数・替えた回数と、相手ごとの
     /// 状態 (名乗った理由を含む)。受け口側の原因か相手側の原因かは、これで読み分ける。
+    ///
+    /// 替える回数を数える検査は、期限の内側に回数を置かない (#3215)。`patience` で猶予を短く決め、
+    /// `endsAtLimit` で「全員が上限まで替えた後、さらに猶予が過ぎた」所で期限を待たずに名乗って止まり、
+    /// `within` は届かなかったときだけ効く外枠にする。
+    ///
+    /// - Parameters:
+    ///   - patience: 替えるまでの猶予。省略は `within` を替える回数 + 1 で割った間。
+    ///   - endsAtLimit: 繋がっていない相手がみな上限まで替えられ、さらに猶予が過ぎたら、期限を待たずに名乗る。
     func reach(
-        on server: TextPort, told: Told? = nil, replacements: Int = 3, within seconds: TimeInterval = 10
+        on server: TextPort, told: Told? = nil, replacements: Int = 3, within seconds: TimeInterval = 10,
+        patience explicitPatience: TimeInterval? = nil, endsAtLimit: Bool = false
     ) async throws {
         let expected = peers.count
-        let patience = seconds / Double(replacements + 1)
+        let patience = explicitPatience ?? seconds / Double(replacements + 1)
         var attempts = [Int](repeating: 1, count: expected)
         var since = [Date](repeating: Date(), count: expected)
         let deadline = Date().addingTimeInterval(seconds)
@@ -415,6 +424,16 @@ final class PeerGroup<Peer: LoopbackPeer> {
                 replaced += 1
                 peers[index].close()
                 peers[index] = make()
+            }
+            if endsAtLimit {
+                let waiting = peers.indices.filter { !peers[$0].isReady }
+                if !waiting.isEmpty,
+                    waiting.allSatisfy({
+                        attempts[$0] > replacements && now.timeIntervalSince(since[$0]) >= patience
+                    })
+                {
+                    break
+                }
             }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -954,16 +973,26 @@ func requireRawArrival(
 /// 送り元は `senders` の末尾へ足す。呼ぶ側が検査の終わりに閉じる。名乗りは送り元の側の話なので、
 /// 受け口の知らせ (`told`) には流さず、`log` に数える (替えた回数・替えた後に読めた数・送り元の跡も。
 /// 読まれなかった回は、呼ぶ側が ``requireSent(_:_:log:landing:)`` で名乗る — #3001)。
+///
+/// **替える回数を数える検査は、期限の内側に回数を置かない** (#3215)。猶予は既定で期限から割り出すので、
+/// 期限を短くすると遅い機械で上限に届く前に期限が来る。そういう検査は `patience` で猶予を短く決め、
+/// `endsAtLimit` で「上限まで替えた後もう 1 度替えたくなる所」で返らせ、`within` は上限に届かなかったとき
+/// だけ効く外枠にする。
+///
+/// - Parameters:
+///   - patience: 替えるまでの猶予。省略は `within` を替える回数 + 1 で割った間。
+///   - endsAtLimit: 上限まで替えた後、さらに猶予が過ぎても替えたくなる状態なら、期限を待たずに返る。
 func sendAndCollect(
     _ datagrams: [[UInt8]], expecting count: Int, to port: TextPort,
     senders: inout [any DatagramSending], replacements: Int = 3, within seconds: TimeInterval = 10,
+    patience explicitPatience: TimeInterval? = nil, endsAtLimit: Bool = false,
     label: String = "列", log: SendLog = SendLog(),
     makeSender: (_ warn: @escaping @Sendable (String) -> Void) -> any DatagramSending
 ) async throws -> [String] {
     let stuck = Mutex(false)
     let current = Mutex(1)
     var attempt = 1
-    let patience = seconds / Double(replacements + 1)
+    let patience = explicitPatience ?? seconds / Double(replacements + 1)
     let started = Date()
     func open() -> any DatagramSending {
         let mine = attempt
@@ -984,15 +1013,18 @@ func sendAndCollect(
     while received.count < count, Date() < deadline {
         port.supply()
         received += port.messages
-        if received.isEmpty, attempt <= replacements, stuck.withLock({ $0 }),
-            Date().timeIntervalSince(since) >= patience
-        {
-            attempt += 1
-            current.withLock { $0 = attempt }
-            stuck.withLock { $0 = false }
-            since = Date()
-            senders[index].stop()
-            senders[index] = open()
+        if received.isEmpty, stuck.withLock({ $0 }), Date().timeIntervalSince(since) >= patience {
+            if attempt <= replacements {
+                attempt += 1
+                current.withLock { $0 = attempt }
+                stuck.withLock { $0 = false }
+                since = Date()
+                senders[index].stop()
+                senders[index] = open()
+            } else if endsAtLimit {
+                // 上限まで替えた後も、さらに猶予が過ぎた (上限が無ければもう 1 度替える所)
+                break
+            }
         }
         try await Task.sleep(for: .milliseconds(10))
     }

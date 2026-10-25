@@ -463,7 +463,7 @@ struct TCPServerTests {
         #expect(made == 2)
     }
 
-    @Test("束は、替える回数に上限を持ち、越えたら受け口の数・相手の様子を名乗って期限で止まる")
+    @Test("束は、替える回数に上限を持ち、越えたら受け口の数・相手の様子を名乗って止まる")
     func peerGroupStopsReplacingAtTheLimit() async throws {
         let room = ScriptedRoom()
         let server = try room.server()
@@ -476,7 +476,10 @@ struct TCPServerTests {
         }
         defer { peers.closeAll() }
         try await withKnownIssue {
-            try await peers.reach(on: server, replacements: 2, within: 0.6)
+            // 回数は時計に頼らない (#3215): 猶予は短く決め、上限まで替えて名乗るのを待つ。`within` は
+            // 上限に届かなかった回にだけ効く外枠
+            try await peers.reach(
+                on: server, replacements: 2, within: 10, patience: 0.05, endsAtLimit: true)
         } matching: {
             Self.isNotReached($0)
         }
