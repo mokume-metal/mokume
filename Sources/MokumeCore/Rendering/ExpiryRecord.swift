@@ -85,10 +85,12 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
 
     /// 記録を書く。**上書きせず** (`O_EXCL`)、**ディスクまで落とす** (`F_FULLFSYNC`)。投げない。
     ///
+    /// - Parameter rawOpen: 開く口。**検査だけが差す** — 開けない事情に知らない番号を載せるため。
     /// - Parameter rawWrite: 書く口。**検査だけが差す** — 作った後に書き損ねる形 (ディスクが満杯) を作るため。
     @discardableResult
     func write(
         after wait: CommandQueueGate.Wait, limit: Duration, at date: Date = Date(),
+        rawOpen: (String) -> Int32 = { open($0, O_WRONLY | O_CREAT | O_EXCL, 0o644) },
         rawWrite: (Int32, UnsafeRawPointer, Int) -> Int = { Foundation.write($0, $1, $2) }
     ) -> Outcome {
         var entry: [String: Any] = [
@@ -107,7 +109,7 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
                 withJSONObject: entry, options: [.sortedKeys, .withoutEscapingSlashes])
         else { return .failed(reason: "could not encode the record", createdFile: false) }
 
-        let descriptor = open(path.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        let descriptor = rawOpen(path.path)
         guard descriptor >= 0 else {
             if errno == EEXIST { return .alreadyThere }
             return .failed(reason: Self.reason(errno), createdFile: false)
@@ -134,7 +136,7 @@ nonisolated struct ExpiryRecord: Sendable, Equatable {
     /// 書けなかった事情の文。OS の事情を文にするのは ``Diagnostics/posixReason(_:)`` だけにする
     /// ([#2839](https://github.com/mokume-metal/mokume/issues/2839))。`strerror` は静的な緩衝を返すので
     /// 別の糸から同時に呼ぶと書き換わり、知らない番号の文面も口によって割れる。
-    static func reason(_ code: Int32) -> String { Diagnostics.posixReason(code) }
+    private static func reason(_ code: Int32) -> String { Diagnostics.posixReason(code) }
 
     /// 手元の時間帯の `2026-10-22T09:00:00+0900`。`gpu-slot.py` の `time.strftime("%Y-%m-%dT%H:%M:%S%z")` と揃える。
     static func timestamp(_ date: Date) -> String {

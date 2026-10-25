@@ -336,14 +336,33 @@ struct CommandQueueGateWordingTests {
     }
 
     /// OS の事情を文にするのは `Diagnostics.posixReason` だけ (#3153)。普通の errno では `strerror` と
-    /// 文面が同じなので、違いが出る知らない番号 (`strerror` は `Unknown error: 9999`) で見る。
-    @Test("書けなかった事情の文は、知らない番号でも Diagnostics.posixReason と同じになる")
-    func theReasonIsNamedByPosixReason() {
+    /// 文面が同じなので、違いが出る知らない番号 (`strerror` は `Unknown error: 9999`) を、開く口・書く口の
+    /// 差し込みで書き損ねの経路へ通して見る。
+    @Test("書けなかった事情の文は、開く口でも書く口でも、知らない番号を Diagnostics.posixReason と同じに名乗る")
+    func theReasonIsNamedByPosixReason() throws {
         #expect(Diagnostics.posixReason(9999) == "error 9999", "前提: 知らない番号は error <番号> と名乗る")
-        #expect(ExpiryRecord.reason(9999) == Diagnostics.posixReason(9999), "\(ExpiryRecord.reason(9999))")
-        // 普通の errno は、これまでと同じ文面のまま
-        #expect(ExpiryRecord.reason(ENOENT) == Diagnostics.posixReason(ENOENT))
-        #expect(ExpiryRecord.reason(ENOSPC).contains("space"), Comment(rawValue: ExpiryRecord.reason(ENOSPC)))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let record = ExpiryRecord(path: directory.appendingPathComponent("wait-expired.json"), wrapper: nil)
+
+        // 開けない形 (`open` が知らない番号で失敗する)
+        let opened = record.write(
+            after: .finishing, limit: .seconds(5),
+            rawOpen: { _ in
+                errno = 9999
+                return -1
+            })
+        #expect(opened == .failed(reason: "error 9999", createdFile: false), "\(opened)")
+
+        // 作った後に書き損ねる形 (`write` が知らない番号で失敗する)
+        let written = record.write(
+            after: .finishing, limit: .seconds(5),
+            rawWrite: { _, _, _ in
+                errno = 9999
+                return -1
+            })
+        #expect(written == .failed(reason: "error 9999", createdFile: true), "\(written)")
     }
 
     @Test("作った後に書き損ねたときは、止まらないとは言わず、読めない記録が残ると言う")
