@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: Host scheduled
+
+# GitHub ホストの macOS で、**merge の前には重すぎる検査**を定期に回す置き場 (#3220)。
+# 検査ごとに「走らせる job」と「赤を起票する job」の 2 本を置く。後から足す検査
+# (変異の定期・#3221 など) も、同じ形の 2 本をこのファイルへ足す — workflow を検査ごとに
+# 増やさない (起動の時刻・権限の分け方・起票の形を 1 箇所で読めるようにするため)。
+#
+# **専用機 (render.yml) には載せない。** 専用機の定期は描画の検査のためのもので、schedule で
+# 起動する専用機の job は scheduled-debug / scheduled-release に限っている (ADR-0019 決定 7・
+# scripts/tests/render_workflow_test.py の約束 10)。ここの検査は GPU を要さない。
+#
+# **release.yml の release-check には足さない。** あちらは版の関門で、赤なら版が出ない。
+# TSan の赤 (誤報を含む) で版を止める理由は無く、release の計測の器に sanitizer の費用も
+# 乗せたくない。止めたいものが違うので、関門の外に置く。
+#
+# ホストの macOS は公開リポジトリでは従量課金が無いが、同時 5 本の枠を PR の ci-check と
+# 分け合う。PR の少ない時間帯に置き、各 job に timeout-minutes を持たせて枠を塞がない。
+
+on:
+  schedule:
+    # 日次 19:29 UTC (≒ 04:29 JST)。毎時 0 分を外し、他の定期 (release の 01:41・
+    # ruleset-drift の 03:17・publication の 04:23・render の 2,8,14,20 時 13 分・
+    # stall-watch の 7,22,37,52 分) とも重ねない
+    - cron: "29 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ThreadSanitizer で組んだ CPU の suite を回す (#3220)。塞ぐ実害は #2916 — SampleRing の
+  # データ競合を、値の整合しか見ない検査が緑のまま通した。範囲の正本は Makefile の test-tsan。
+  #
+  # **runs-on は macos-26 (ADR-0009 の下限) にする。** ホストでは RenderDevice.isAvailable が
+  # 偽で描画の検査が飛び、Metal の内部での TSan の誤報 (#1772 の懸念) も避けられる。
+  # **continue-on-error を付けない** — 赤が success に化けると起票の job が走らない。
+  tsan:
+    runs-on: macos-26
+    # 期限は実測 (#3220 の PR) から決めた。既定 (360 分) のまま止まると、ホストの macOS の枠を塞ぐ
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      # 端末出力は make が .build/test-log-tsan.txt に残す (起票の本文が TSan の報告を抜く)
+      - name: TSan で検査する
+        run: |
+          started=$(date +%s)
+          set +e
+          make test-tsan
+          status=$?
+          set -e
+          printf '### TSan の検査の所要\n\n%d 秒 (組み立てと実行・終了コード %d)\n\n' \
+            "$(( $(date +%s) - started ))" "$status" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tsan-record
+          path: |
+            .build/test-results-tsan-swift-testing.xml
+            .build/test-log-tsan.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  # 緑で終わらなかった tsan を起票する (または開いた Issue へ追記する)。
+  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる tsan には持たせない
+  # (release.yml の release-check-report と同じ分け方)。落ちた (failure) 回に加え、切れた
+  # (cancelled) 回も起票する。`!=` で書かない: skipped で起票する。always() を外さない:
+  # 暗黙の success() が足され、赤の回に skipped になる
+  tsan-report:
+    needs: tsan
+    if: >-
+      always()
+      && (needs.tsan.result == 'failure' || needs.tsan.result == 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 赤のときの起票 (#3220)
+    steps:
+      - uses: actions/checkout@v7
+      # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: tsan-record
+          path: record
+      # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (release.yml と同じ)
+      - name: 赤を発信する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.tsan.result }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          xml=$(find_one record test-results-tsan-swift-testing.xml)
+          log=$(find_one record test-log-tsan.txt)
+          bash scripts/report-tsan.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
