@@ -398,7 +398,14 @@ float2 solidStrokeOnScreen(float3 v, constant SolidStrokePlacement &s) {
 
 /// 線分 a–b を画面に写したときの垂線の、画面の画素で測った成分 (横, 縦・長さ 1) を `normal` に入れる。
 /// CPU の `StrokeCamera.screenNormal` と同じ式。画面での長さが 0 の線 (と長さ 0 の線分) なら偽。
+///
+/// **演算の順と丸めを CPU に揃える (#3165)。** 腕の向きは「値が等しいか」で同じ向きかを決める
+/// (`Canvas.screenCorner`) ので、理屈では同じ向きの 2 本 (透視で、目と同じ直線に載る 2 点から出る腕など)
+/// は、CPU と同じく 1 ビットも違わずに求めねばならない。Shapes は既定の fast-math で組むので、積和の縮約
+/// (`contract(off)` で止める) と、`length` / 割り算の近似 (`precise::` で正しく丸める) が、理屈では等しい
+/// 2 本の向きを 1 ビット違えて、同じ向きへ折り返す角の形を食い違わせていた。
 bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thread float2 &normal) {
+#pragma METAL fp contract(off)
     float3 along = b - a;
     float2 raw;
     if (s.eye.w != 0) {
@@ -407,9 +414,9 @@ bool solidStrokeNormal(float3 a, float3 b, constant SolidStrokePlacement &s, thr
     } else {
         raw = float2(-dot(along, s.down.xyz) * s.forward.w, dot(along, s.right.xyz));
     }
-    float size = length(raw);
+    float size = precise::sqrt(raw.x * raw.x + raw.y * raw.y);
     if (!(dot(along, along) > 0 && size > 0 && isfinite(size))) return false;
-    normal = raw / size;
+    normal = float2(precise::divide(raw.x, size), precise::divide(raw.y, size));
     return true;
 }
 
@@ -1100,11 +1107,15 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             float2 inward = armOwn + armOther;
             if (built && !(inward.x == 0 && inward.y == 0)) {
                 float2 sideOwn = solidStrokeOnScreen(acrossOwn, s);
-                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)
+                // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)。**向きが等しいかは値で見る**
+                // (CPU の `joinRim` では、等しい向きの内積 `dot(外側の縁の法線, inward)` がちょうど 0 で、縁は
+                // 裏返らない)。GPU の `dot` は積和を縮約して 0 にならず、符号が 2 本で食い違うと縁が同じ側に
+                // 揃って折り返しの先の延びが消えるので、等しい向きは内積を見ずに分けたままにする (#3165)
+                bool foldsBack = all(armOwn == armOther);
                 float2 outerOwn = firstHalf ? float2(-armOwn.y, armOwn.x) : float2(armOwn.y, -armOwn.x);
-                if (dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
+                if (!foldsBack && dot(outerOwn, inward) > 0) outerOwn = -outerOwn;
                 float2 outerOther = firstHalf ? float2(armOther.y, -armOther.x) : float2(-armOther.y, armOther.x);
-                if (dot(outerOther, inward) > 0) outerOther = -outerOther;
+                if (!foldsBack && dot(outerOther, inward) > 0) outerOther = -outerOther;
                 // 丸めで −1…1 を越えると、同じ向きへ折り返す角で平方根が数でなくなる
                 float cosine = clamp(dot(outerOwn, outerOther), -1.0f, 1.0f);
                 float2 cut;

@@ -81,10 +81,9 @@ struct StraightChainStrokeTests {
         /// 相手の辺の先 (P・A) はどちらも辺が 3 本以上ある。**同じ半平面に載る腕はどれも画面で同じ向き**
         /// になるので、群の腕は 1 本と数え、端の円板を置く。
         case plate
-
-        /// 軸に沿って見ると、歯の先 (辺が 2 本、同じ向きに折り返す点) の端が CPU と GPU で数画素違う。群の
-        /// 鎖とは別の既存の差で、鎖の形は画面の中心の近くに出るので、櫛は中心の近くだけを比べる。
-        var comparesOnlyNearTheCenter: Bool { self == .comb || self == .combMirrored }
+        /// 三角形 1 枚 P(−0.6, 0, 0)・Q(0.6, 0, 0)・R(0, 0.7, 0.5)。x 軸に沿って見ると P・Q が画面の 1 点に
+        /// 重なり、R の 2 辺は画面で同じ向きへ折り返す (#3165)。
+        case foldedTriangle
 
         var path: String {
             switch self {
@@ -111,6 +110,9 @@ struct StraightChainStrokeTests {
                     f 2 8 9
 
                     """, as: "plate.obj")
+            case .foldedTriangle:
+                StraightChainStrokeTests.written(
+                    "v -0.6 0 0\nv 0.6 0 0\nv 0 0.7 0.5\nf 1 2 3\n", as: "folded-triangle.obj")
             case .comb:
                 StraightChainStrokeTests.written(
                     StraightChainStrokeTests.comb(angles: [0.0, 2.2, 1.0, 1.1, 1.2]), as: "comb.obj")
@@ -210,11 +212,25 @@ struct StraightChainStrokeTests {
         #expect(accelerated.strokeBatches == 1, "骨を作れていない (CPU の帯へ戻った)")
         #expect(reference.drawn > 30, "線が写っていない (\(reference.drawn) 画素)")
         let differing = stride(from: 0, to: reference.bytes.count, by: 4).filter { offset in
-            if subject.comparesOnlyNearTheCenter {
-                let pixel = offset / 4
-                guard abs(pixel % 160 - 80) <= 18, abs(pixel / 160 - 80) <= 18 else { return false }
-            }
             return reference.bytes[offset..<(offset + 4)] != accelerated.bytes[offset..<(offset + 4)]
+        }.count
+        #expect(differing == 0, "\(differing) 画素が違う")
+    }
+
+    /// #3165: 同じ側へ折り返す 2 辺 (辺 2 本が画面で同じ向きへ折り返す点) の先端の端の形。三角形 P・Q・R を平行投影で
+    /// 辺 P–Q に沿って見ると、R の 2 辺は画面で同じ向きに折り返す。CPU の帯は折り返しの先に太さの半分の √2 倍だけ延ばした
+    /// 長方形を置くが、GPU の骨は置けず (腕の向きが 1 ビット食い違い、縁が同じ側へ揃った)、端の形 3 種とも 17 画素違った。
+    /// 太さは Issue の再現と同じ 5 (`matchesTheCPUBands` は 16)。
+    @Test("同じ側へ折り返す 2 辺の先端も、骨で広げて CPU の帯と同じ絵になる", arguments: [StrokeCap.round, .square, .project])
+    func aTipFoldingBackMatchesTheCPUBands(cap: StrokeCap) throws {
+        let path = Subject.foldedTriangle.path
+        let reference = try render(path, .orthoAlongX, cap: cap, weight: 5, accelerated: false)
+        let accelerated = try render(path, .orthoAlongX, cap: cap, weight: 5, accelerated: true)
+        #expect(reference.strokeBatches == 0, "物差しが骨を使っている")
+        #expect(accelerated.strokeBatches == 1, "骨を作れていない (CPU の帯へ戻った)")
+        #expect(reference.drawn > 30, "線が写っていない (\(reference.drawn) 画素)")
+        let differing = stride(from: 0, to: reference.bytes.count, by: 4).filter {
+            reference.bytes[$0..<($0 + 4)] != accelerated.bytes[$0..<($0 + 4)]
         }.count
         #expect(differing == 0, "\(differing) 画素が違う")
     }
