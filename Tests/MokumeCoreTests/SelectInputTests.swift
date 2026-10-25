@@ -49,6 +49,10 @@ final class FakeFilePicker: FilePicker {
 
     /// 利用者が答えたことにする。閉じられた後の答えは届かない (本物と同じ)。
     func answer(_ index: Int, _ path: String?) {
+        guard shown.indices.contains(index) else {
+            Issue.record("\(index) 枚目のダイアログは出ていない (出た数: \(shown.count))")
+            return
+        }
         guard !shown[index].dismissed else { return }
         shown[index].completion(path)
     }
