@@ -511,6 +511,11 @@ public final class SketchRuntime {
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。**観測の指定秒が描き直す枚でも作者の時計の値。**
     /// 本体が持つ状態 (動画の再生位置・録った音の起点) はこちらで進める。
     var authorTime: Float { timing.authorTime }
+    /// 作者の時計の上の、いまのフレームの時刻 (倍精度)。
+    var authorSeconds: Double { timing.seconds }
+    /// 時刻を指定した観測の枚の指定の秒。``time`` と同じ約束で、観測の秒を読むのは ``Sketch/draw()`` と
+    /// 入り口の供給の間だけ。
+    var observedSeconds: Double? { showsObservedTime ? timing.observedSeconds : nil }
     /// ``Sketch/draw()`` と入り口の供給が、観測の秒を読んでいる間だけ立つ。``time`` を参照。
     private var showsObservedTime = false
     /// 前のフレームからの経過 (**秒**)。p5.js の `deltaTime` はミリ秒なので、写すときは係数を 1000 倍する

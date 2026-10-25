@@ -112,8 +112,13 @@ struct SynthSoundTests {
         let rack = SynthRack(sampleRate: 48_000)
         let node = try build(rack)
         guard frame > 0 else { return .silence }
-        rack.advance(frames: frame * perFrame)
-        return AudioAnalysis.analyze(node.meter.snapshot(since: (frame - 1) * perFrame).span)
+        // 区間は実装の取り出し (`snapshot(since:)`) を通さず、1 フレームずつ集めた出口の標本から切る
+        var stream: [Float] = []
+        for _ in 0..<frame {
+            rack.advance(frames: perFrame)
+            stream += node.meter.snapshot(perFrame).samples
+        }
+        return AudioAnalysis.analyze(span(of: stream, from: (frame - 1) * perFrame, to: frame * perFrame))
     }
 
     // MARK: - 走っている実行の外から作る (#2740)

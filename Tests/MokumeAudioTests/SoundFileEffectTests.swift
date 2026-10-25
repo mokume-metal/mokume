@@ -916,4 +916,42 @@ struct SoundFileEffectTests {
             }
         }
     }
+
+    /// エフェクトへ通すと、解析済みの終わりを引き継ぐ値 (`continuedCoverage`) を立てる。入力に選ばれるまでの間に
+    /// `play()`・`loop()` で頭から鳴らし直すと、その区切りの始まりは頭なのに、古い位置が解析済みの終わりとして残り、
+    /// 最初の区間が欠ける。
+    @Test("通した後、入力に選ばれる前に loop() で頭から鳴らし直しても、最初の区間は頭から解析される")
+    func restartingBeforeTheInputIsChosenDropsTheInheritedCoverage() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var song: SoundFile?
+        var stage: SynthStage?
+        var seen: [(level: Float, position: Int)] = []
+        let runtime = try run(
+            frames: 6,
+            setup: { sketch in
+                stage = SynthStage.stage(for: sketch)
+                let loaded = try sketch.loadSound(url.path)
+                loaded.loop()
+                song = loaded
+            },
+            draw: { sketch in
+                guard let song, let stage else { return }
+                seen.append((song.level, song.samplePosition))
+                if sketch.frameCount == 4 {
+                    // 通す (節を入力に選ぶ前) → 頭から鳴らし直す
+                    _ = song.route(into: stage)
+                    song.loop()
+                }
+            })
+        runtime.closePlugins()
+        #expect(seen.count == 6)
+        // フレーム 5 の区間は、頭から鳴った分 [0, 位置)。古い位置 (3200) が解析済みの終わりとして残ると、区間が空になって
+        // フレーム 4 の値のまま動かない
+        let position = seen[4].position
+        #expect(position > 0 && position < 3200, "頭から鳴らし直した位置: \(position)")
+        let head = AudioAnalysis.analyze(span(of: chord, from: 0, to: position, loops: true))
+        #expect(head.level > 0)
+        #expect(seen[4].level == head.level, "最初の区間が欠けた: \(seen[4].level) 対 \(head.level)")
+    }
 }
