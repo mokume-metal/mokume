@@ -8,6 +8,14 @@ import Testing
 /// 再生位置の移り変わり (#1979)。純粋な型なので、機材も GPU も要らない。
 @Suite("再生位置")
 struct PlayheadTests {
+    /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓 (古い順)。止まっていれば全部 0。標本の決まりは
+    /// ``Playhead/sample(at:in:)`` — 区間 (``Playhead/span(of:from:after:)``) と同じ。
+    private func windowOf(_ head: Playhead, after played: Int, size: Int) -> [Float] {
+        guard head.isPlaying else { return [Float](repeating: 0, count: size) }
+        let end = head.start + max(0, played)
+        return (0..<size).map { head.sample(at: end - size + $0, in: indices) }
+    }
+
     /// 標本の値が「位置 + 1」になる列 (1, 2, 3, …)。窓を見れば、どこを切り出したかが読める。
     /// 0 を含めないので、窓の 0 は「鳴っていない」としか読めない。
     private let indices: [Float] = (0..<2000).map { Float($0 + 1) }
@@ -88,24 +96,24 @@ struct PlayheadTests {
     func windowEndsWherePlayed() {
         var head = Playhead(length: 2000)
         // 止まっている間は全部 0
-        #expect(head.window(of: indices, after: 500, size: 4) == [0, 0, 0, 0])
+        #expect(windowOf(head, after: 500, size: 4) == [0, 0, 0, 0])
         head.play(looping: false)
-        #expect(head.window(of: indices, after: 6, size: 4) == [3, 4, 5, 6])
+        #expect(windowOf(head, after: 6, size: 4) == [3, 4, 5, 6])
         // 鳴らし始めた直後は、まだ鳴っていない前を 0 で埋める
-        #expect(head.window(of: indices, after: 2, size: 4) == [0, 0, 1, 2])
+        #expect(windowOf(head, after: 2, size: 4) == [0, 0, 1, 2])
         // 1 度だけなら、終わりより後は 0
-        #expect(head.window(of: indices, after: 2002, size: 4) == [1999, 2000, 0, 0])
+        #expect(windowOf(head, after: 2002, size: 4) == [1999, 2000, 0, 0])
 
         head.stop()
         head.play(looping: true)
-        #expect(head.window(of: indices, after: 2002, size: 4) == [1999, 2000, 1, 2])
+        #expect(windowOf(head, after: 2002, size: 4) == [1999, 2000, 1, 2])
 
         // 途中から鳴らし直すと、窓は止めた位置から始まる区切りで切る
         head.pause(after: 2700)
         head.play(looping: true)
         #expect(head.start == 700)
-        #expect(head.window(of: indices, after: 2, size: 4) == [0, 0, 701, 702])
-        #expect(head.window(of: indices, after: 1302, size: 4) == [1999, 2000, 1, 2])
+        #expect(windowOf(head, after: 2, size: 4) == [0, 0, 701, 702])
+        #expect(windowOf(head, after: 1302, size: 4) == [1999, 2000, 1, 2])
     }
 
     // MARK: - 飛ぶ (#2464)
@@ -120,7 +128,7 @@ struct PlayheadTests {
         head.play(looping: false)
         #expect(head.position(after: 300) == 1500)
         // 止まっている間に飛んでから鳴らした区切りは、普通に鳴らし始めたのと同じく前を 0 で埋める
-        #expect(head.window(of: indices, after: 2, size: 4) == [0, 0, 1201, 1202])
+        #expect(windowOf(head, after: 2, size: 4) == [0, 0, 1201, 1202])
 
         head.stop()
         head.jump(to: -50)
@@ -137,16 +145,16 @@ struct PlayheadTests {
         #expect(head.isPlaying)
         #expect(head.position(after: 0) == 1000)
         // 飛び先で終わる窓 (1000 標本目の手前 4 つ)
-        #expect(head.window(of: indices, after: 0, size: 4) == [997, 998, 999, 1000])
-        #expect(head.window(of: indices, after: 2, size: 4) == [999, 1000, 1001, 1002])
+        #expect(windowOf(head, after: 0, size: 4) == [997, 998, 999, 1000])
+        #expect(windowOf(head, after: 2, size: 4) == [999, 1000, 1001, 1002])
 
         head.jump(to: 2)
-        #expect(head.window(of: indices, after: 0, size: 4) == [0, 0, 1, 2])
+        #expect(windowOf(head, after: 0, size: 4) == [0, 0, 1, 2])
 
         // 止めて鳴らし直せば、また普通の区切り (前は 0)
         head.pause(after: 0)
         head.play(looping: false)
-        #expect(head.window(of: indices, after: 0, size: 4) == [0, 0, 0, 0])
+        #expect(windowOf(head, after: 0, size: 4) == [0, 0, 0, 0])
     }
 
     @Test("長さ 0 を渡しても、1 標本として扱って割り算で落ちない")

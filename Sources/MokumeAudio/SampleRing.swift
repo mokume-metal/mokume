@@ -80,6 +80,8 @@ nonisolated final class SampleRing: @unchecked Sendable {
     var total: Int { written.load(ordering: .acquiring) }
 
     /// 最新の count 個。まだ書かれていない分を前の 0 で埋め、古い順に写す。
+    ///
+    /// **本番は使わない** (解析は ``snapshot(since:)`` で、前のフレーム以後の区間を写す)。検査が、出口の標本を直に読むのに使う。
     func latest(_ count: Int) -> [Float] { snapshot(count).samples }
 
     /// 最新の公開面を受け取る。読み手は 1 つだけで、再入しない。
@@ -106,6 +108,9 @@ nonisolated final class SampleRing: @unchecked Sendable {
     }
 
     /// 標本・総数・hostTime を一緒に写す。読み手は 1 つだけで、再入しない。
+    ///
+    /// **本番は使わない** (``snapshot(since:)`` が同じ面の受け取り方をする)。検査が、面を取り合う書き手と読み手の安全を
+    /// 見るのに使う。
     /// afterAcquiring は、検査が面を受け取った直後で読み手を止めるための口 (#2916)。
     func snapshot(_ count: Int, afterAcquiring: () -> Void = {}) -> Snapshot {
         precondition((0...capacity).contains(count))

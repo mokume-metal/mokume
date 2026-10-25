@@ -13,8 +13,21 @@ final class SilentAudioSource: AudioSource {
     let initial: SourceState
     init(_ initial: SourceState) { self.initial = initial }
     var sampleRate: Float { 0 }
-    func start(into input: ExternalInput<AudioSpan>, at time: Double) { input.setState(initial) }
-    func pump(into input: ExternalInput<AudioSpan>, at time: Double) {}
+    func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) { input.setState(initial) }
+    func pump(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {}
+    func stop() {}
+}
+
+/// 受け取った時計の位置を控えるだけの出どころ。
+final class ClockSpyAudioSource: AudioSource {
+    var sampleRate: Float { 48_000 }
+    private(set) var opened: SourceClock?
+    private(set) var pumped: [SourceClock] = []
+    func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
+        opened = clock
+        input.setState(.running)
+    }
+    func pump(into input: ExternalInput<AudioSpan>, at clock: SourceClock) { pumped.append(clock) }
     func stop() {}
 }
 
@@ -24,8 +37,8 @@ final class UnpluggedAudioSource: AudioSource {
     private var pumped = 0
     init(after: Int) { self.after = after }
     var sampleRate: Float { 48_000 }
-    func start(into input: ExternalInput<AudioSpan>, at time: Double) { input.setState(.running) }
-    func pump(into input: ExternalInput<AudioSpan>, at time: Double) {
+    func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) { input.setState(.running) }
+    func pump(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
         // 開いていない (止めた・開き直されていない) 出どころは何も入れない
         guard input.state == .running else { return }
         pumped += 1
@@ -96,25 +109,25 @@ func writeWAV(_ samples: [Float], sampleRate: Double) throws -> URL {
 )
 struct AudioInTests {
     private func run(
-        frames: Int, setup: @escaping (AudioSketch) throws -> Void,
+        frames: Int, clock: Clock? = nil, setup: @escaping (AudioSketch) throws -> Void,
         draw: @escaping (AudioSketch) -> Void = { _ in }
     ) throws -> SketchRuntime {
         AudioSketch.onSetup = setup
         AudioSketch.onDraw = draw
-        let runtime = try SketchRuntime(sketch: AudioSketch(), gpu: try RenderDevice())
+        let runtime = try SketchRuntime(sketch: AudioSketch(), gpu: try RenderDevice(), clock: clock)
         for _ in 0..<frames { try runtime.advance() }
         return runtime
     }
 
     /// 作る口で作った入り口を回し、フレームごとに受け取った値を返す。
     private func record(
-        frames: Int, _ make: @escaping (AudioSketch) throws -> AudioIn
+        frames: Int, clock: Clock? = nil, _ make: @escaping (AudioSketch) throws -> AudioIn
     ) throws -> (received: [Received], openedAt: Float) {
         var audio: AudioIn?
         var openedAt: Float = -1
         var received: [Received] = []
         let runtime = try run(
-            frames: frames,
+            frames: frames, clock: clock,
             setup: { sketch in
                 openedAt = sketch.time
                 audio = try make(sketch)
@@ -132,30 +145,68 @@ struct AudioInTests {
 
     // MARK: - フレームの時刻の窓 (水準 2)
 
-    @Test("標本列の解析は、前のフレームの時刻からそのフレームの時刻までの区間の値になる。標本が進まない最初のフレームは無音")
-    func samplesFollowFrameTime() throws {
-        let (received, openedAt) = try record(frames: 6) {
-            try $0.createAudioIn(samples: chord, sampleRate: 48_000)
-        }
-        #expect(received.count == 6)
-        var covered = 0
-        var expected = AudioLevels.silence
-        for frame in received {
-            let end = RecordedSource.index(
-                at: Double(frame.time) - Double(openedAt), sampleRate: 48_000)
-            // 標本が進まなかったフレーム (開いた最初のフレーム) は、前の値 (最初は無音) のまま
-            if end > covered {
-                expected = AudioAnalysis.analyze(span(of: chord, from: covered, to: end))
-                covered = end
+    @Test("標本列の解析は、固定の時計の 60・30・24・144 fps で、前のフレームの ⌊N·sr/fps⌋ から今の ⌊N·sr/fps⌋ までの区間の値になる。標本が進まない最初のフレームは無音")
+    func samplesFollowTheFrameWindows() throws {
+        for fps in [60, 30, 24, 144] {
+            let (received, _) = try record(frames: 40, clock: .frameIndex(frameRate: fps)) {
+                try $0.createAudioIn(samples: chord, sampleRate: 48_000)
             }
-            #expect(frame.level == expected.level)
-            #expect(frame.peak == expected.peak)
-            #expect(frame.spectrum == expected.spectrum)
+            #expect(received.count == 40)
+            var covered = 0
+            var expected = AudioLevels.silence
+            for (index, frame) in received.enumerated() {
+                // 絶対のフレーム番号から、整数で ⌊N·48000/fps⌋ (独立に数える。浮動小数の秒は通さない)
+                let end = index * 48_000 / fps
+                // 標本が進まなかったフレーム (開いた最初のフレーム) は、前の値 (最初は無音) のまま
+                if end > covered {
+                    expected = AudioAnalysis.analyze(span(of: chord, from: covered, to: end, loops: true))
+                    covered = end
+                }
+                #expect(frame.level == expected.level, "\(fps) fps frame \(index)")
+                #expect(frame.peak == expected.peak, "\(fps) fps frame \(index)")
+                #expect(frame.spectrum == expected.spectrum, "\(fps) fps frame \(index)")
+            }
+            #expect(received[0].level == 0 && received[0].peak == 0)
+            #expect(covered > 10_000)
+            // 拍で揺れているので、フレームごとに値が動いている
+            #expect(Set(received.map(\.level)).count > 1)
         }
-        #expect(received[0].level == 0 && received[0].peak == 0)
-        #expect(covered > 3000, "区間が 1 フレームぶんずつ進んでいる")
-        // 拍で揺れているので、フレームごとに値が動いている
-        #expect(Set(received.map(\.level)).count > 1)
+    }
+
+    /// 時刻を指定した観測の枚で、``SketchPart/time`` は観測の秒になる。標本列の区間は作者の時計の枚の番号で
+    /// 数えるので、観測の枚も次の通常の枚も、観測の無い回と同じ区間を解く。
+    @Test("時刻を指定した観測の枚を挟んでも、標本列の入り口の区間は観測の無い回と同じ")
+    func anObservedFrameDoesNotBendTheWindows() throws {
+        func run(observingAt frame: Int?) throws -> [Float] {
+            let facet = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: facet) }
+            var audio: AudioIn?
+            var seen: [Float] = []
+            AudioSketch.onSetup = { sketch in audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+            AudioSketch.onDraw = { _ in
+                if let audio { seen.append(audio.level) }
+            }
+            let runtime = try SketchRuntime(
+                sketch: AudioSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+                observer: FrameObserver(directory: facet))
+            for index in 1...8 {
+                if index == frame {
+                    // この枚を、時刻 5 の観測の枚にする (作者の時計では 0.07 秒ほど)
+                    try AtomicFile.write(
+                        Data(#"{"id":"o","time":5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+                }
+                try runtime.advance()
+            }
+            runtime.closePlugins()
+            return seen
+        }
+        let plain = try run(observingAt: nil)
+        let observed = try run(observingAt: 4)
+        #expect(plain.count == 8 && observed.count == 8)
+        #expect(plain.last ?? 0 > 0)
+        #expect(observed == plain, "観測の枚が区間を歪めた: \(observed) 対 \(plain)")
     }
 
     /// 観測の枚の `draw()` で作った入り口の起点が、観測の秒 (5 秒) になって残っていた。起点は作者の時計の秒
@@ -197,6 +248,37 @@ struct AudioInTests {
         let expected = AudioAnalysis.analyze(span(of: chord, from: 0, to: end))
         #expect(expected.level > 0, "区間が空なら、起点の違いを見分けられない")
         #expect(levels.last == expected.level, "起点が観測の秒のままだと区間が空になる: \(levels)")
+    }
+
+    /// 出どころへ渡す時計の位置は、観測の枚でも作者の時計の秒・通常の枚の番号・固定の時計の fps である。
+    @Test("時刻を指定した観測の枚でも、出どころへ渡す時計の位置は作者の時計の秒とフレームの番号のまま")
+    func theSourceIsHandedTheAuthorsClockOnAnObservedFrame() throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let spy = ClockSpyAudioSource()
+        AudioSketch.onSetup = { sketch in
+            sketch.attach(AudioIn(device: nil, name: "spy", source: spy, owner: sketch, warn: { _ in }))
+        }
+        AudioSketch.onDraw = { _ in }
+        let runtime = try SketchRuntime(
+            sketch: AudioSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 },
+            observer: FrameObserver(directory: facet))
+        for index in 1...6 {
+            if index == 4 {
+                try AtomicFile.write(
+                    Data(#"{"id":"o","time":5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+            }
+            try runtime.advance()
+        }
+        runtime.closePlugins()
+        #expect(spy.pumped.map(\.frame) == [0, 1, 2, 3, 4, 5])
+        #expect(spy.pumped.allSatisfy { $0.perSecond == 60 })
+        // 観測の秒 (5) は渡らない。秒は作者の時計 (フレーム番号 ÷ 60)
+        for clock in spy.pumped {
+            #expect(abs(clock.seconds - Double(clock.frame) / 60) < 1e-6, "\(clock)")
+        }
     }
 
     @Test("音声ファイルを固定の時計で 2 度回すと、同じフレームが同じ値を受け取る")

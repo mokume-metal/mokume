@@ -63,7 +63,7 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 
     // MARK: - AudioSource (main actor から)
 
-    func start(into input: ExternalInput<AudioSpan>, at time: Double) {
+    func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
         self.input.withLock { $0 = input }
         control.async { [self] in
             known = Set(CoreAudioDevices.allObjects())
@@ -82,7 +82,7 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
     /// 区間の始まりは `lastTotal` — 届いた単位 (チャンクの長さ) には依らない。環の通し番号がそのまま音源の
     /// 標本の番号で、最初に受け取った標本が 0 になる。新しい標本が無いフレームは何も入れず、値は前のまま
     /// (``AudioIn/isNewFrame`` が false)。長く止まった後は、``AudioAnalysis/maxSpan`` 標本に切る。
-    func pump(into input: ExternalInput<AudioSpan>, at time: Double) {
+    func pump(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
         let total = ring.total
         // 公開直後は通知の総数が遅れることがある。既に受け取った区間を送り直さない。
         guard total > lastTotal else { return }
