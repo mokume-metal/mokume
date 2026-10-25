@@ -21,12 +21,15 @@ import MokumeDiagnostics
 ///
 /// ## 窓
 ///
-/// 窓はフレームごとに、`draw()` の後・次のフレームの供給の前に描く (``mix(into:)``)。フレーム `N` の
-/// `draw()` が頼んだ操作 (鳴らす・止める・飛ぶ・音量・合成の変更) は、窓 `N` の先頭から効く。描くのは流れの
+/// 窓はフレームごとに、`draw()` の後・次のフレームの供給の前に描く (``mix(into:)``)。描くのは流れの
 /// `renderOffline` で、窓の割り方に依らず同じ標本になる (一括で描いても、窓ごとに描いても一致する)。
 ///
-/// 録りが終わった後 (または録りが窓を頼まないフレーム) は、音源の位置が止まらないよう、窓を描いて捨てる
-/// (``supply()``)。
+/// **操作が効く時刻は操作ごとに違う** ([ADR-0042] 決定 6 の改訂「操作が効く時刻」)。フレーム `N` の `draw()` が
+/// 頼んだ、鳴らす (`play()`・`loop()`)・止める (`pause()`・`stop()`)・音量 (`amp(_:)`)・合成の変更は、窓 `N` の
+/// 先頭から効く。飛ぶ (`jump(_:)`) は鳴っている間は次のフレームの頭で効くので、窓 `N + 1` の先頭から効く。
+///
+/// 録りが終わった後 (または録りが窓を頼まないフレーム) は、音源の位置が止まらないよう、流れを描き進めて捨てる
+/// (``supply()``)。描けなかった分は、後の窓で描き足して流れの時間を戻す (``TrackFlow``)。
 ///
 /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
@@ -53,10 +56,10 @@ final class SoundTrackMixer: Inlet, SoundSource {
 
     private weak var owner: (any Sketch)?
     /// 音声トラックが始まったとき作る、機材に出さない流れ。始まるまで `nil`。
-    private(set) var flow: SoundFlow?
+    private(set) var track: TrackFlow?
+    /// 音声トラックが始まったときの流れ。始まるまで `nil`。
+    var flow: SoundFlow? { track?.flow }
     private var frameRate = 0
-    /// 次に描く窓の番号。窓は順に描き、頼まれなかった窓は描いて捨てる。
-    private var nextWindow = 0
     private var stages: [WeakStage] = []
     private var files: [WeakFile] = []
     private var noticed = false
@@ -68,8 +71,11 @@ final class SoundTrackMixer: Inlet, SoundSource {
 
     /// `sketch` の混ぜ役。まだ無ければ作って、走っているスケッチへ足す。足せなければ `nil`。
     ///
-    /// **音源を足す口 (``SoundFile/open()``・``SynthStage/open()``) から呼ぶ** — 走っている実行の中で、音源が
-    /// 並びへ入る前に足されるので、混ぜ役は音源より先に `supply()` を受ける (窓を描いてから、音源が値を更新する)。
+    /// **音源を足す口 (``SoundFile/open()``・``SynthStage/open()``) から、録りが音を載せるかどうかに依らず呼ぶ**
+    /// — 混ぜ役が入り口として居ることが「スケッチに音源が居る」という印で、載せない録り (実時間の時計・画面へ
+    /// 出す録り・MP4・GIF・連番) が、音源が居ることを 1 度だけ名乗れる (``FrameRecorder/decideSound(hasSources:fixedClock:)``)。
+    /// 走っている実行の中で、音源が並びへ入る前に足されるので、混ぜ役は音源より先に `supply()` を受ける
+    /// (窓を描いてから、音源が値を更新する)。
     static func mixer(for sketch: any Sketch) -> SoundTrackMixer? {
         let key = ObjectIdentifier(sketch)
         if let existing = mixers[key]?.mixer, !existing.isClosed, existing.owner === sketch {
@@ -110,13 +116,15 @@ final class SoundTrackMixer: Inlet, SoundSource {
     // MARK: - SoundSource
 
     func supply() {
-        guard flow != nil, let owner else { return }
-        // 録りが窓を頼まなかったフレームの窓は、描いて捨てる (音源の位置は描いた標本の数から読む)
-        discardWindows(before: max(0, owner.frameCount - 1))
+        guard let track, let owner else { return }
+        // 録りが窓を頼まなかったフレームの分は、流れを描き進めて捨てる (音源の位置は描いた標本の数から読む)
+        let frame = max(0, owner.frameCount - 1)
+        let complete = track.advance(to: SoundWindow.start(ofFrame: frame, frameRate: frameRate), keeping: 0).complete
+        if !complete { noticeIncomplete() }
     }
 
     func beginTrack(frameRate: Int) {
-        guard flow == nil else {
+        guard track == nil else {
             // 2 本目の録り。流れは続いている
             self.frameRate = frameRate
             return
@@ -136,73 +144,91 @@ final class SoundTrackMixer: Inlet, SoundSource {
             notice("The audio flow of the recording could not be started, so the sound is not in the movie")
             return
         }
-        flow = made
         self.frameRate = frameRate
-        nextWindow = max(0, (owner?.frameCount ?? 1) - 1)
+        // 流れの時間は、最初の窓の先頭の標本から数える
+        let first = max(0, (owner?.frameCount ?? 1) - 1)
+        track = TrackFlow(flow: made, base: SoundWindow.start(ofFrame: first, frameRate: frameRate))
         for entry in stages { entry.stage?.joinTrack(made) }
         for entry in files { entry.file?.joinTrack(made) }
     }
 
     func mix(into window: inout SoundWindow) {
-        guard flow != nil else { return }
-        discardWindows(before: window.frame)
-        let (left, right) = render(count: window.count)
+        guard let track else { return }
+        let rendered = track.advance(to: window.start + window.count, keeping: window.count)
+        if !rendered.complete { noticeIncomplete() }
         for index in 0..<window.count {
-            window.left[index] += left[index]
-            window.right[index] += right[index]
+            window.left[index] += rendered.left[index]
+            window.right[index] += rendered.right[index]
         }
-        nextWindow = window.frame + 1
     }
 
     func endTrack() {}
 
     func close() {
         isClosed = true
-        flow = nil
+        track = nil
     }
 
-    // MARK: - 描く
-
-    private func discardWindows(before frame: Int) {
-        while nextWindow < frame {
-            _ = render(count: SoundWindow.count(ofFrame: nextWindow, frameRate: frameRate))
-            nextWindow += 1
-        }
-    }
-
-    /// 流れから `count` 標本を描く。描けなかった分は無音で埋め、1 度だけ知らせる。
-    private func render(count: Int) -> (left: [Float], right: [Float]) {
-        var left: [Float] = []
-        var right: [Float] = []
-        left.reserveCapacity(count)
-        right.reserveCapacity(count)
-        if let flow, flow.start() {
-            let engine = flow.engine
-            while left.count < count {
-                let chunk = min(4096, count - left.count)
-                guard
-                    let buffer = AVAudioPCMBuffer(
-                        pcmFormat: engine.manualRenderingFormat, frameCapacity: AVAudioFrameCount(chunk)),
-                    (try? engine.renderOffline(AVAudioFrameCount(chunk), to: buffer)) == .success,
-                    buffer.frameLength > 0, let data = buffer.floatChannelData
-                else { break }
-                let frames = Int(buffer.frameLength)
-                left.append(contentsOf: UnsafeBufferPointer(start: data[0], count: frames))
-                right.append(
-                    contentsOf: UnsafeBufferPointer(start: data[buffer.format.channelCount > 1 ? 1 : 0], count: frames))
-            }
-        }
-        if left.count < count {
-            notice("The audio flow could not render some of the sound, so a stretch of the recording is silent")
-            left += [Float](repeating: 0, count: count - left.count)
-            right += [Float](repeating: 0, count: count - right.count)
-        }
-        return (left, right)
+    private func noticeIncomplete() {
+        notice("The audio flow could not render some of the sound, so a stretch of the recording is silent")
     }
 
     private func notice(_ message: String) {
         guard !noticed else { return }
         noticed = true
         Diagnostics.warn(message)
+    }
+}
+
+/// 機材に出さない流れを、音声トラックの始まりの標本から数えて描き進める。
+///
+/// **流れの時間を、標本の番号で持つ。** 描けなかった窓 (`renderOffline` が失敗した) の分を無音で埋めるだけだと、流れの
+/// 時間が遅れたまま以後の窓を描き、音源の位置も窓の時刻より遅れて、恒久的に早く鳴ってしまう。描き進めた数を
+/// ``rendered`` に持ち、次の窓では目的地 (窓の終わり) まで描き足す: 遅れた分は捨て、窓の長さぶんの最後だけを返すので、
+/// 失敗した窓の音だけが無音になり、以後の窓は元の時刻に戻る。
+final class TrackFlow {
+    let flow: SoundFlow
+    /// 流れの時間の原点 (最初の窓の先頭の標本の番号)。
+    let base: Int
+    /// 原点から描き進めた標本の数。
+    private(set) var rendered = 0
+    /// 流れから `count` 標本を `buffer` へ描く。描けたら `true`。**検査が差し替える。**
+    var renderChunk: (AVAudioEngine, AVAudioFrameCount, AVAudioPCMBuffer) -> Bool = { engine, count, buffer in
+        (try? engine.renderOffline(count, to: buffer)) == .success
+    }
+
+    init(flow: SoundFlow, base: Int) {
+        self.flow = flow
+        self.base = base
+    }
+
+    /// 絶対の標本 `end` まで描き進め、その手前の `count` 標本を返す。描いた分より前は捨てる。
+    ///
+    /// - Returns: 左右の標本 (描けなかった分は無音) と、`end` まで描き切れたか。
+    func advance(to end: Int, keeping count: Int) -> (left: [Float], right: [Float], complete: Bool) {
+        let target = max(0, end - base)
+        let keptFrom = target - count
+        var left = [Float](repeating: 0, count: count)
+        var right = [Float](repeating: 0, count: count)
+        guard rendered < target else { return (left, right, true) }
+        guard flow.start() else { return (left, right, false) }
+        let engine = flow.engine
+        while rendered < target {
+            let chunk = min(4096, target - rendered)
+            guard
+                let buffer = AVAudioPCMBuffer(
+                    pcmFormat: engine.manualRenderingFormat, frameCapacity: AVAudioFrameCount(chunk)),
+                renderChunk(engine, AVAudioFrameCount(chunk), buffer),
+                buffer.frameLength > 0, let data = buffer.floatChannelData
+            else { return (left, right, false) }
+            let frames = min(Int(buffer.frameLength), chunk)
+            let rightData = buffer.format.channelCount > 1 ? data[1] : data[0]
+            for index in 0..<frames where rendered + index >= keptFrom {
+                left[rendered + index - keptFrom] = data[0][index]
+                right[rendered + index - keptFrom] = rightData[index]
+            }
+            rendered += frames
+        }
+        return (left, right, true)
     }
 }

@@ -539,6 +539,9 @@ nonisolated final class MovieFile: MovieOutput {
     /// 何もしない。
     func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure) {
         guard let soundInput else { return }
+        // **0 標本の窓は書かずに飛ばす。** fps が標本化率を越える (48000 を越える) と、`⌊N·sr/fps⌋` が進まない
+        // フレームがあり、窓の長さが 0 になる。標本の束は作れないので、書き損じにせず、継ぎ目が詰まるだけにする
+        guard window.count > 0 else { return }
         guard hasStarted else {
             throw .writeFailed(path: path, reason: "a sound window came before the first picture")
         }

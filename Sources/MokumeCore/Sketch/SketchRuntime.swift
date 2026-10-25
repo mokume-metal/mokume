@@ -108,8 +108,11 @@ public final class SketchRuntime {
     private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
     private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
-    /// 音声トラックの `beginTrack` を呼んだ音源 (``stepSoundTrack()``)。
-    private var soundTrackBegun: Set<ObjectIdentifier> = []
+    /// 音声トラックの `beginTrack` を呼んだ音源 (``stepSoundTrack()``)。**`endTrack` はここに居る音源にだけ届ける**
+    /// (呼んでいない音源に終わりを伝えない)。番地 (`ObjectIdentifier`) で持つと、解放された音源の番地を別の
+    /// 音源が使い回したとき、`beginTrack` を呼ばれていないのに「呼んだ」と取り違えるので、音源そのものを持って
+    /// 同一かを `===` で比べる (録りが終われば手放す)。
+    private var soundTrackBegun: [any SoundSource] = []
     /// 差込口を巡回している深さ (``whileVisitingSeams(_:)``)。
     ///
     /// **巡回の最中に並びを変えてはいけない。** 巡回は並びを `inout` で渡しているので、
@@ -1132,7 +1135,8 @@ public final class SketchRuntime {
         }
         switch recorder.soundTrack {
         case .carrying(let frameRate):
-            for source in sources where soundTrackBegun.insert(ObjectIdentifier(source)).inserted {
+            for source in sources where !soundTrackBegun.contains(where: { $0 === source }) {
+                soundTrackBegun.append(source)
                 source.beginTrack(frameRate: frameRate)
             }
             var window = SoundWindow(frame: frame - 1, frameRate: frameRate)
@@ -1148,10 +1152,9 @@ public final class SketchRuntime {
     /// 音声トラックを始めた音源へ、録りが終わったと伝える。
     private func endSoundTrack() {
         guard !soundTrackBegun.isEmpty else { return }
+        let begun = soundTrackBegun
         soundTrackBegun.removeAll()
-        for entry in inlets {
-            (entry.seam as? any SoundSource)?.endTrack()
-        }
+        for source in begun { source.endTrack() }
     }
 
     /// 拡大した字の焼きを、次のフレームへ送ってよいか ([#2446])。**このフレームの絵を、次のフレームが描き直す

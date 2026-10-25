@@ -87,6 +87,7 @@ final class SynthStage: Inlet {
     private enum Notice: Hashable {
         case noOutput
         case capacity
+        case cannotCarry
     }
 
     /// - Parameter owner: 持ち主のスケッチ。**検査だけが `nil` で作る** (スケッチを走らせずに、`pace` と
@@ -181,16 +182,17 @@ final class SynthStage: Inlet {
     func open() throws {
         guard let owner else { return }
         frame = Self.frameIndex(of: owner)
+        // **音を出す入り口が居ることを、録りが載せるかどうかに依らず混ぜ役に名乗らせる** (載せない録りが、音源が
+        // 居ることを 1 度だけ名乗れる・[#3125])
+        let mixer = SoundTrackMixer.mixer(for: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
         } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
             // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
             pace = .frames(perSecond: max(1, frameRate), origin: frame)
             // 音声トラックを載せる録りのために、混ぜ役へ名乗る。音声トラックが始まっていれば、最初からその流れで鳴る
-            if let mixer = SoundTrackMixer.mixer(for: owner) {
-                mixer.register(stage: self)
-                if let flow = mixer.flow { speak(through: flow) }
-            }
+            mixer?.register(stage: self)
+            if let flow = mixer?.flow { joinTrack(flow) }
         } else {
             // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
             speak(through: .speakers)
@@ -202,10 +204,22 @@ final class SynthStage: Inlet {
     /// ラックが作った標本の数 (``SynthRack/rendered``) はそのまま続くので、位置も解析の値も途切れない。操作の列に
     /// 溜まっている頼みは、流れが描く最初の窓の先頭から効く。
     ///
+    /// **入れられなくても、位置は数で進め続ける** (``Pace/frames``)。鳴らさずに実時間へ落とすと、その録りの間だけ
+    /// 解析の位置が壁時計で進み、同じ設定から同じ値にならない。音が動画に入らないことを、事情どおりに 1 度だけ
+    /// 知らせる。
+    ///
     /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
     func joinTrack(_ flow: SoundFlow) {
         guard !isClosed, case .frames = pace else { return }
-        speak(through: flow)
+        guard let player = RackPlayer(flow: flow, rack: rack) else {
+            notice(
+                .cannotCarry,
+                "The synthesized sounds could not be put in the recording: the audio flow of the recording "
+                    + "could not take them, so they are not in the movie. Their position still follows the "
+                    + "frames, and their analysis keeps working")
+            return
+        }
+        pace = .speaker(player)
     }
 
     func supply() {

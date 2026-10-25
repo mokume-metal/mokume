@@ -51,12 +51,24 @@ final class MovieWriter {
     /// 出来ている」という保証だけである。
     nonisolated static let closeLimitSeconds = 30.0
 
-    /// 符号化へ渡す 1 つ。**絵と音の窓は同じ 1 本の列に、頼んだ順に並ぶ** — 音の窓は 1 フレームぶんで、
-    /// 絵より 0〜2 フレーム先に積まれる (窓は `draw()` の後に積み、絵は少し遅れて届く)。
+    /// 符号化へ渡す 1 つ。絵と音の窓は同じ 1 本の列に、頼んだ順に並ぶ。窓は 1 フレームぶんで、`draw()` の後に積まれ、
+    /// 絵は少し遅れて届くので、**列の上では窓のほうが先に来る**。書き手は窓を控えて、絵に合わせた順で書く
+    /// (``soundLead``)。
     private enum Job: Sendable {
-        case picture(DisplayImage, time: Double)
+        case picture(DisplayImage, frame: Int, time: Double)
         case sound(SoundWindow)
     }
+
+    /// 音の窓を、書けた絵より何フレームぶん先まで書いてよいか。
+    ///
+    /// フレーム `N` の絵 (番号 `N`) と同じ時刻の窓は、番号 `N - 1` である。絵が `N` まで書けたら、窓は
+    /// `N - 1 + soundLead` まで書く。**音声の先行は、測って止まらないと分かった 0〜2 フレームに抑える**
+    /// ([#3125] の測定)。絵は窓より遅れて届き、遅れの幅は決まっていない (書き出しの背圧しだい) ので、窓を届いた
+    /// 順にそのまま書くと、先行がこれを越えて、映像を待つ音声の入力が用意を待ち続けうる。窓を控えて、絵が書けるたびに
+    /// ここまでを書く。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    nonisolated static let soundLead = 2
 
     /// 抱える枚数の上限と、終わったものの数え方。
     private let pressure: Backpressure
@@ -134,21 +146,40 @@ final class MovieWriter {
             // 分からず、開いた後は変えられない
             var file: (any MovieOutput)?
             var lastTime = 0.0
-            // ファイルが開く前 (最初の絵の前) に来た音の窓。最初の窓の先頭が音声トラックの始まりになる
-            var pendingSound: [SoundWindow] = []
+            // 最初の絵を書けたか。**音の窓は、これが立つまで書かない** (区間は最初の絵で始まる)
+            var started = false
+            // 書き手へ渡す順を待っている音の窓 (番号の順)。**書けた分だけ消す**
+            var waiting: [SoundWindow] = []
+            // 音声トラックの書き込みを止めたか。書き損じた後や、最初の絵が書けなかったとき立つ
+            var soundStopped = false
+            // 書けた絵のうち、最も新しいフレームの番号
+            var newest = 0
+
+            /// 控えの窓のうち、番号が `limit` 以下のものを順に書く。**書き損じたら音声トラックを止める**
+            /// (映像と同じ道で名乗る)。書き損じた窓を控えに残すと、次の絵のときに同じ窓を二重に書くか、飛ばして
+            /// 後の窓を先に書いて順序が乱れる。
+            func drainSound(through limit: Int) async {
+                guard started, !soundStopped, let file else { return }
+                while let window = waiting.first, window.frame <= limit {
+                    do {
+                        try await file.appendSound(window)
+                        waiting.removeFirst()
+                    } catch {
+                        outcome.fail("Could not write \(path): \(error)", at: path)
+                        soundStopped = true
+                        waiting.removeAll()
+                        return
+                    }
+                }
+            }
+
             for await job in stream {
                 switch job {
                 case .sound(let window):
-                    guard let file else {
-                        pendingSound.append(window)
-                        continue
-                    }
-                    do {
-                        try await file.appendSound(window)
-                    } catch {
-                        outcome.fail("Could not write \(path): \(error)", at: path)
-                    }
-                case .picture(let image, let time):
+                    guard !soundStopped else { continue }
+                    waiting.append(window)
+                    await drainSound(through: newest - 1 + Self.soundLead)
+                case .picture(let image, let frame, let time):
                     do {
                         let opened: any MovieOutput
                         if let file {
@@ -159,7 +190,8 @@ final class MovieWriter {
                                 opened = try MovieFile(
                                     path: path, width: image.width, height: image.height,
                                     frameRate: frameRate, format: format == .h264 ? .h264 : .proRes4444,
-                                    soundStart: format == .proRes4444 ? pendingSound.first?.start : nil)
+                                    soundStart: format == .proRes4444 && !soundStopped
+                                        ? waiting.first?.start : nil)
                             case .gif:
                                 opened = try GIFFile(path: path, frameRate: frameRate)
                             }
@@ -167,17 +199,25 @@ final class MovieWriter {
                         }
                         try await opened.append(image, at: time)
                         lastTime = time
-                        // 最初の絵を書いた後 (区間が始まった後) に、先に来ていた窓を書く
-                        for window in pendingSound { try await opened.appendSound(window) }
-                        pendingSound.removeAll()
+                        started = true
+                        newest = max(newest, frame)
                         outcome.succeed()
+                        await drainSound(through: newest - 1 + Self.soundLead)
                     } catch {
                         outcome.fail("Could not write \(path): \(error)", at: path)
+                        // **最初の絵が書けなかったら、音声は書かない。** 書けなかった絵の分の窓を控えたまま
+                        // 後の絵で書くと、窓が欠けたり順序が乱れたりする。書き損じは絵の側が名乗っている
+                        if !started {
+                            soundStopped = true
+                            waiting.removeAll()
+                        }
                     }
                     release()
                 }
             }
             if let file {
+                // 残りの窓 (最後の絵より先の分) を書いてから閉じる
+                await drainSound(through: .max)
                 do {
                     try await file.finish(lastFrameAt: lastTime)
                 } catch {
@@ -198,7 +238,7 @@ final class MovieWriter {
         guard case .recording = stage else { return }
         pressure.take()
         span.accept(frame)
-        continuation.yield(.picture(image, time: time))
+        continuation.yield(.picture(image, frame: frame, time: time))
     }
 
     /// 音の 1 窓を書き足すよう頼む ([#3125])。**背圧は掛けない** — 窓は 1 フレームに 1 つで、絵の背圧が間接に
