@@ -578,7 +578,8 @@ struct ThinFillVertexStageTests {
     private func expectSameAsUnfolded(
         _ name: String, density: Float = 1, texture: Bool = false, stroke: Bool = false,
         size: (width: Float, height: Float, radius: Float), spin: Float = 0.21,
-        scale: (Int) -> (Float, Float) = { _ in (1, 1) }
+        scale: (Int) -> (Float, Float) = { _ in (1, 1) }, mode: ShapeMode = .corner,
+        foldsAtTheEnd: Bool = true
     ) throws {
         func picture(folding: Bool) throws -> PixelBuffer {
             try self.picture(density: density, expands: true, texture: texture) { canvas in
@@ -589,7 +590,15 @@ struct ThinFillVertexStageTests {
                 self.scatter(canvas, spin: spin, scale: scale) {
                     let (w, h) = (size.width, size.height)
                     if folding {
-                        canvas.rect(-w / 2, -h / 2, w, h, size.radius)
+                        // 矩形の座標の読み方 (`rectMode`) は、周を組む前に決まる
+                        canvas.rectMode(mode)
+                        switch mode {
+                        case .corner: canvas.rect(-w / 2, -h / 2, w, h, size.radius)
+                        case .center: canvas.rect(0, 0, w, h, size.radius)
+                        case .corners: canvas.rect(-w / 2, -h / 2, w / 2, h / 2, size.radius)
+                        case .radius: canvas.rect(0, 0, w / 2, h / 2, size.radius)
+                        }
+                        canvas.rectMode(.corner)
                         return
                     }
                     let radius = min(size.radius, w / 2, h / 2)
@@ -599,7 +608,7 @@ struct ThinFillVertexStageTests {
                         Canvas.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
                             .moved(by: SIMD2(-w / 2, -h / 2)))
                 }
-                if folding {
+                if folding, foldsAtTheEnd {
                     #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
                 }
             }
@@ -613,7 +622,13 @@ struct ThinFillVertexStageTests {
             if unfolded.components[index] > 0 { lit += 1 }
         }
         #expect(lit > 0, "\(name): 絵が空")
-        #expect(differing == 0, "\(name): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
+        // 塗りだけの場面は許容 0。**輪郭つきの場面は、縁の画素 1 つの入れ替わりを許す** (3 成分 = 1 画素まで)。
+        // 畳んだ雛形は輪郭の頂点を「雛形の座標を置き場所の行列で移す」順で置き、畳まずに置く道は「位置を足してから
+        // 移す」順なので、輪郭の縁の頂点が 1 ulp 違い、縁の画素が入れ替わることがある (角を丸めない `rect` を畳んだ
+        // 絵と畳まない絵は、輪郭つきでもっと大きく違う — 角丸の畳みが新しく持ち込んだ食い違いではない)
+        let allowed = stroke ? 3 : 0
+        #expect(
+            differing <= allowed, "\(name): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
     }
 
     @Test("畳んだ角丸 rect は、畳まずに置いた絵と画素が同じ")
@@ -629,6 +644,25 @@ struct ThinFillVertexStageTests {
         try expectSameAsUnfolded("輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.3)
         try expectSameAsUnfolded("輪郭つきの細くない角丸 rect", stroke: true, size: (16, 10, 3), spin: 0.3)
         try expectSameAsUnfolded("貼る絵の細くない角丸 rect", texture: true, size: (16, 10, 3), spin: 0.27)
+        // 鏡映 (行列式が負)・縦横で倍率の違う輪郭つき・半径が短い辺の半分ちょうど (円板状) の向き
+        try expectSameAsUnfolded(
+            "鏡映した細い角丸 rect", size: (28, 0.8, 0.3), spin: 0.31, scale: { _ in (-1, 1) })
+        try expectSameAsUnfolded(
+            "鏡映した輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.31,
+            scale: { (-1 - Float($0 % 3) * 0.2, 1) }, foldsAtTheEnd: false)
+        try expectSameAsUnfolded(
+            "縦横で倍率の違う輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.27,
+            scale: { (1.3 + Float($0 % 4) * 0.1, 0.5 + Float($0 % 3) * 0.2) }, foldsAtTheEnd: false)
+        try expectSameAsUnfolded(
+            "縦横で倍率の違う輪郭つきの細くない角丸 rect", stroke: true, size: (16, 10, 3), spin: 0.27,
+            scale: { (1.3 + Float($0 % 4) * 0.1, 0.5 + Float($0 % 3) * 0.2) }, foldsAtTheEnd: false)
+        try expectSameAsUnfolded("半径が高さの半分ちょうどの細い角丸 rect", size: (28, 0.8, 0.4), spin: 0.29)
+        try expectSameAsUnfolded("半径が高さの半分ちょうどの角丸 rect (円板状)", size: (16, 10, 5), spin: 0.29)
+        try expectSameAsUnfolded("半径が高さの半分ちょうどの輪郭つき角丸 rect", stroke: true, size: (16, 10, 5), spin: 0.29)
+        try expectSameAsUnfolded("半径が幅と高さの半分ちょうど (円) の角丸 rect", size: (10, 10, 5), spin: 0.29)
+        // rectMode: 中心と半幅・半高の読み方、対角の 2 つの角の読み方でも、同じ矩形が畳まれる
+        try expectSameAsUnfolded("rectMode(.center) の細い角丸 rect", size: (28, 0.8, 0.3), spin: 0.33, mode: .center)
+        try expectSameAsUnfolded("rectMode(.corners) の細い角丸 rect", size: (28, 0.8, 0.3), spin: 0.33, mode: .corners)
     }
 
     @Test("角丸 rect の細い塗りは、CPU で組み直す畳みと画素が同じ")
