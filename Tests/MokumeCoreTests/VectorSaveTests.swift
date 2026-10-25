@@ -92,6 +92,33 @@ struct VectorSaveTests {
         }
     }
 
+    /// 呼んだ時点は行き先ごとに決まる。**先に頼んだ行き先は後に置いた図形も受け、後で頼んだ行き先は
+    /// 呼んだ時点から後ろだけを受ける。**
+    @Test("draw() の中で 2 回呼べば、それぞれが呼んだ時点から後ろを書く")
+    func twoCallsEachStartWhereTheyWereMade() throws {
+        try withTemporaryDirectory("mokume-svg-two") { directory in
+            let earlyURL = directory.appendingPathComponent("early.svg")
+            let lateURL = directory.appendingPathComponent("late.svg")
+            let sketch = PlotterSketch()
+            sketch.onDraw = { sketch in
+                sketch.stroke(0)
+                sketch.save(earlyURL.path)
+                sketch.line(0, 0, 10, 0)  // A
+                sketch.save(lateURL.path)
+                sketch.line(0, 10, 20, 10)  // B
+            }
+            let runtime = try makeRuntime(sketch)
+            let (_, lines) = saying {
+                try? runtime.advance()
+                runtime.closePlugins()
+            }
+            #expect(try elements(of: earlyURL).map { SVG.attribute("d", in: $0) } == ["M0 0L10 0", "M0 10L20 10"])
+            #expect(try elements(of: lateURL).map { SVG.attribute("d", in: $0) } == ["M0 10L20 10"])
+            // 2 つ目は、呼ぶ前に A を置いていたので知らせる。1 つ目は何も置く前に呼んだので知らせない
+            #expect(late(lines).count == 1 && late(lines).first?.contains("late.svg") == true, "\(lines)")
+        }
+    }
+
     @Test("draw() の先頭で呼べば、その draw() が置いた図形がすべて入り、背景があっても知らせない")
     func savingFirstWritesEverythingAndSaysNothing() throws {
         try withTemporaryDirectory("mokume-svg-first") { directory in
@@ -384,6 +411,66 @@ struct VectorSaveTests {
             runtime.closePlugins()
             let elements = try elements(of: url)
             #expect(elements.map { SVG.attribute("d", in: $0) } == ["M0 0L12 0"], "\(elements)")
+        }
+    }
+
+    @Test("書き出し先が既にディレクトリなら、黙らずに書き損じとして名乗る")
+    func aDirectoryInTheWayIsNamed() throws {
+        try withTemporaryDirectory("mokume-svg-directory") { directory in
+            let taken = directory.appendingPathComponent("taken.svg", isDirectory: true)
+            try FileManager.default.createDirectory(at: taken, withIntermediateDirectories: true)
+            let sketch = PlotterSketch()
+            sketch.onDraw = { sketch in
+                sketch.save(taken.path)
+                sketch.line(0, 0, 10, 0)
+            }
+            let runtime = try makeRuntime(sketch)
+            let (_, lines) = saying {
+                try? runtime.advance()
+                runtime.closePlugins()
+            }
+            #expect(lines.filter { $0.contains("Could not write") && $0.contains("taken.svg") }.count == 1, "\(lines)")
+        }
+    }
+
+    // MARK: - 5 画面は変わらない
+
+    /// **`save("x.svg")` の有無で、同じスケッチの画素が一致する** (控えるだけで、組み立てを別の経路にしない)。
+    /// 窓を開いて控える道と、控えない道の両方を、本物のランタイムで回す (GPU を使う。単発で 1 回)。
+    @Test("save(\"x.svg\") の有無で、同じスケッチの画素が一致する")
+    func savingDoesNotChangeThePicture() throws {
+        try withTemporaryDirectory("mokume-svg-pixels") { directory in
+            @MainActor func pixels(saving: Bool) throws -> [UInt8] {
+                let sketch = PlotterSketch()
+                sketch.onDraw = { sketch in
+                    if saving { sketch.save(directory.appendingPathComponent("p.svg").path) }
+                    sketch.background(30)
+                    sketch.fill(.display(red: 1, green: 0.5, blue: 0.2, alpha: 0.7))
+                    sketch.stroke(.display(red: 0.2, green: 0.8, blue: 1))
+                    sketch.strokeWeight(3)
+                    sketch.rect(10, 10, 40, 30, 6)
+                    sketch.ellipse(70, 30, 30, 20)
+                    sketch.arc(30, 60, 30, 30, 0.3, 2.5)
+                    sketch.strokeDash(4, 3)
+                    sketch.line(5, 70, 90, 40)
+                    sketch.noStrokeDash()
+                    sketch.push()
+                    sketch.translate(70, 60)
+                    sketch.rotate(0.5)
+                    sketch.triangle(0, 0, 20, 0, 0, 20)
+                    sketch.pop()
+                    sketch.text("a", 5, 20)
+                }
+                let runtime = try makeRuntime(sketch)
+                for _ in 0..<3 { try runtime.advance() }
+                let bytes = try runtime.target.encodeForDisplay().bytes
+                runtime.closePlugins()
+                return bytes
+            }
+            let withSave = try pixels(saving: true)
+            let without = try pixels(saving: false)
+            #expect(withSave == without)
+            #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("p.svg").path))
         }
     }
 

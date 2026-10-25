@@ -73,10 +73,13 @@ extension Canvas {
     /// `draw()` の中で頼まれた。呼んだ時点から控え始める。
     func startVectorCapture(path: String) {
         let capture = vector.capture ?? VectorCapture()
+        // 呼ぶ前に置いた図形が無いか。別の頼みが先に控え始めていれば、控えた図形も数える (その図形は、
+        // いま頼んだ行き先には入らない)
+        let placedBefore = vector.placedBefore || !(capture.figures.isEmpty && capture.drops.isEmpty)
         capture.requests.append(
             VectorCapture.Request(
                 path: path, figureStart: capture.figures.count, dropStart: capture.drops.count,
-                placedBefore: vector.placedBefore))
+                placedBefore: placedBefore))
         vector.capture = capture
     }
 

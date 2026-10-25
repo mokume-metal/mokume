@@ -550,6 +550,22 @@ struct VectorCaptureTests {
         #expect(drops.filter { $0 == .clip }.count == 1)
     }
 
+    @Test("利用者の断片が効いた図形は、塗りも輪郭も線も、断片として数えて書かない")
+    func userShadersAreCounted() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            let paint = try! canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+            canvas.shader(paint)
+            canvas.rect(0, 0, 10, 10)
+            canvas.line(0, 0, 10, 10)
+            canvas.point(5, 5)
+            canvas.resetShader()
+            canvas.rect(20, 0, 10, 10)
+        }
+        #expect(figures.count == 1)
+        #expect(drops.filter { $0 == .shader }.count == 3)
+    }
+
     @Test("頂点ごとに塗りの色が違う形は、最初の頂点の色で書き、そのことを数える")
     func perVertexColoursUseTheFirstVertex() throws {
         let harness = try Harness()
