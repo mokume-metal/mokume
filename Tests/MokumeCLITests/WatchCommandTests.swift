@@ -211,6 +211,28 @@ struct WatchCommandTests {
         }
     }
 
+    /// **見張りの終わりに、読まれずに残った起動の失敗の理由を掃く** (#3169)。止めている最中に失敗した子の理由は、
+    /// 巡回が読む前に見張りが終わると誰にも読まれない。
+    @Test("見張りの後始末は、読まれずに残った起動の失敗の理由を掃く")
+    func teardownSweepsUnreadStartFailureNotes() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let directory = try makeDirectory()
+        let session = WatchSession(directory: directory, context: testContext(), hooks: Stub().hooks())
+        let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let stray = WorkDirectory.startFailureURL(forProcess: 99999, under: facet)
+        try Data("left behind".utf8).write(to: stray)
+        let record = BuildReport.statusURL(under: directory)
+        try Data("{}".utf8).write(to: record)
+        WatchCommand.teardownDone = false
+
+        WatchCommand.teardown(session, nil)
+
+        #expect(!FileManager.default.fileExists(atPath: stray.path), "残った理由を掃いていない")
+        #expect(FileManager.default.fileExists(atPath: record.path), "記録まで消した")
+    }
+
     /// **二度返しても落ちない。** 終わりの経路は 2 つある (巡回が抜けた・道具立てが
     /// 終わらせた) ので、返す側は何度呼ばれてもよい形でなければならない。
     @Test("断りを二度返しても落ちない")

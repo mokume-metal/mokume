@@ -114,17 +114,24 @@ nonisolated public enum WorkDirectory {
 
     /// 起動できなかった理由 (全文) を、見張りの区画 `build` へ置く。
     ///
-    /// **区画が既に在るときだけ置く。** `build` は見張りが作るもので、子が作ると、無い場所に
+    /// **置くのは、見張りに起こされた子だけである。** 見張りの外の実行 (`mokume run`・`render`・手で起こした
+    /// 子) が前の見張りの残した区画に置くと、読む者も掃く者も居ないファイルが溜まる。起こし方は
+    /// ``SharedFrameSurface/launchOwner`` (`MOKUME_VIEWPORT_OWNER`) が伝える — 見張りは窓の有る無しに
+    /// よらず子へ渡す。
+    ///
+    /// **区画が既に在るときだけ置く。** `build` は見張りが子を起こす前に作るもので、子が作ると、無い場所に
     /// 区画を生やすことになる (区画の有無は他の区画では「効かせる」印である・ADR-0018 決定 2)。
-    /// 見張りに起こされていない実行・書けない場所では黙って諦める — 理由は標準エラーに出ている。
+    /// 書けない場所では黙って諦める — 理由は標準エラーに出ている。
     ///
     /// - Parameters:
     ///   - text: 理由の全文。
     ///   - base: 区画の基準。検査から差し替える。
+    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。** 検査から渡す。
     package static func noteStartFailure(
         _ text: String, forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
-        under base: URL = WorkDirectory.base
+        under base: URL = WorkDirectory.base, owner: String?
     ) {
+        guard owner != nil else { return }
         let facet = facet(buildFacetName, under: base)
         guard directoryExists(at: facet) else { return }
         try? Data(text.utf8).write(

@@ -105,6 +105,31 @@ nonisolated final class WatchPlaceLock {
         return Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// その場所を、いま見張りが持っているか ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// **窓口 (MCP) が、見張りの残した記録 (`build/status.json`) を「いまの話」として読んでよいかを見る。**
+    /// 記録は見張りが終わっても残るので、見張りを止めた後に手で起こし直した作品の件に、止まる前の
+    /// 「起動できなかった」を答えてしまう。錠はプロセスの終わりにカーネルが外すので、`SIGKILL` で消えた
+    /// 見張りは持っていないと読める (pid の生死を当てにしない)。
+    ///
+    /// - **錠を取りに行かない。** 取ると、同じ瞬間に見張りを始めた `claim(under:)` を断らせうる。先に
+    ///   錠ファイルに書かれた pid が居なければ、錠に触れずに「持たれていない」と答える。居るときだけ、
+    ///   共有の錠を試して (すぐ離す)、断られれば持たれていると読む。
+    /// - **確かめられなければ、持たれていないと読む** (錠ファイルが無い・開けない・`flock` が使えない場所)。
+    ///   窓口はそのとき、記録を使わず元の案内に倒れる。
+    static func isHeld(under base: URL) -> Bool {
+        let lock = lockURL(under: base)
+        if let pid = holder(of: lock), pid > 0, kill(pid, 0) != 0, errno == ESRCH { return false }
+        let probe = open(lock.path, O_RDONLY | O_CLOEXEC)
+        guard probe >= 0 else { return false }
+        defer { close(probe) }
+        if flock(probe, LOCK_SH | LOCK_NB) == 0 {
+            flock(probe, LOCK_UN)
+            return false
+        }
+        return errno == EWOULDBLOCK
+    }
+
     /// 手放す。**見張りが終わるとき、後始末の後に呼ぶ。** 呼ばなくても、プロセスの終わりが外す。
     func release() {
         guard descriptor >= 0 else { return }

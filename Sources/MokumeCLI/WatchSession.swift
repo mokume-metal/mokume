@@ -675,6 +675,10 @@ final class WatchSession {
     ///
     /// - Returns: 端末とプレビューの言葉の材料にする記録。書かなかったときも、同じ形のものを返す。
     ///
+    /// **記録に書かない回は、子の理由を記録に載せない。** 区画に在る記録 (`ok: false`) は直すべき作り直しの失敗を
+    /// 持ち、子の理由で上書きすると直すものが隠れる。子の理由は読んだ時点で消してあり (次に残らない)、返す記録の
+    /// 本文には載るので、端末の言葉の材料としては失われない。
+    ///
     /// - Parameter note: 子が自分で置いた理由の全文 (``takeStartFailureNote(of:)``)。あれば、理由の 2 行目に頭の
     ///   1 行を載せ、全文を作り直しの出力の前に置く (#3169)。
     private func recordFailedStart(
@@ -683,7 +687,13 @@ final class WatchSession {
         var reason = Self.failedStartReason(
             tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
             departure: departure)
-        if let head = note.flatMap(BuildReport.firstLine) { reason += "\n" + head }
+        // **子の言葉の頭の行には、見分ける頭を付ける** — 窓口は、この行が有るときだけ「子自身の言葉」を案内する。
+        // 理由が改行で始まる子の言葉でも、頭の 1 行は最初の空でない行である
+        if let head = note?.split(whereSeparator: \.isNewline)
+            .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
+        {
+            reason += "\n" + BuildReport.sketchReportedPrefix + head
+        }
         let account = note.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
         guard let last = lastReport, last.ok, last.launched else {
             return .notStarted(
@@ -720,9 +730,22 @@ final class WatchSession {
         WorkDirectory.facet(WorkDirectory.buildFacetName, under: facetBase)
     }
 
-    /// 区画 `build` の、読まれずに残った理由を掃く。**新しい子を起こす前**に掃く — 見ずに残った理由 (道具の
-    /// 知らない世代・読む前に消えた子) があると、あとで同じ pid を巡り当てた別の子が、起動できなかったと読まれる。
-    private func sweepStartFailureNotes() {
+    /// 区画 `build` を子を起こす前に用意し、読まれずに残った理由を掃く。
+    ///
+    /// **区画を用意するのは見張りで、子は作らない** (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
+    /// 最初の世代では区画は、子を起こした後の記録の書き込みで初めてできるので、用意しないと、速く落ちる子
+    /// (組み立てが投げる・`setup()` が投げる) の理由は置き場が無く捨てられる。
+    ///
+    /// **新しい子を起こす前に掃く** — 見ずに残った理由 (道具の知らない世代・読む前に消えた子・止めている最中に
+    /// 失敗した子) があると、あとで同じ pid を巡り当てた別の子が、起動できなかったと読まれる。見張りが終わる
+    /// ときにも掃く (``WatchCommand/teardown(_:_:created:keepTimeFile:)``)。
+    func prepareStartFailureNotes() {
+        try? FileManager.default.createDirectory(at: buildFacet, withIntermediateDirectories: true)
+        sweepStartFailureNotes()
+    }
+
+    /// 区画 `build` の、読まれずに残った理由を掃く。
+    func sweepStartFailureNotes() {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: buildFacet.path)
         else { return }
         let prefix = WorkDirectory.startFailureURL(forProcess: 0, under: buildFacet)
@@ -1272,7 +1295,7 @@ final class WatchSession {
         // 何が起きたかを読める
         // **新しい子を起こす前に、古い目印を掃く** (#2350)。後の子が同じ pid を巡り当てても、倒れたと読まれない
         sweepFellBackMarkers(keeping: nil)
-        sweepStartFailureNotes()
+        prepareStartFailureNotes()
         // **絵を出したと覚えるのは、生きている世代のぶんだけ。** 番号は使い回されるので、居なくなった世代の
         // 覚えを残すと、同じ番号の新しい子を、もう絵を出したと読む (#3172)
         shownPIDs.formIntersection([child, outgoing].compactMap { $0?.processIdentifier })

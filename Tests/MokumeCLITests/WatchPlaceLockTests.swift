@@ -94,6 +94,51 @@ struct WatchPlaceLockTests {
         second.release()
     }
 
+    // MARK: - 持たれているかを読む (#3169)
+
+    /// 窓口が、見張りの残した記録を「いまの話」として読んでよいかを決める。
+    @Test("見張りが持っている間は持たれていると読み、手放せば持たれていないと読む")
+    func isHeldFollowsTheHolder() throws {
+        let base = try makeSketch()
+        #expect(!WatchPlaceLock.isHeld(under: base), "錠ファイルが無いのに持たれていると読んだ")
+
+        let watch = try WatchPlaceLock.claim(under: base)
+        #expect(WatchPlaceLock.isHeld(under: base), "持っているのに持たれていないと読んだ")
+        watch.release()
+        #expect(!WatchPlaceLock.isHeld(under: base), "手放したのに持たれていると読んだ")
+    }
+
+    /// **読んだことが、見張りを始める側を断らせない。** 読みは錠を残さない。
+    @Test("持たれているかを読んだ後も、錠は取れる")
+    func readingDoesNotLeaveALock() throws {
+        let base = try makeSketch()
+        let watch = try WatchPlaceLock.claim(under: base)
+        #expect(WatchPlaceLock.isHeld(under: base))
+        watch.release()
+        #expect(!WatchPlaceLock.isHeld(under: base))
+        let again = try WatchPlaceLock.claim(under: base)
+        again.release()
+    }
+
+    /// 錠ファイルに居ない pid が書かれていて、誰も持っていない場所 (`SIGKILL` で消えた見張りの跡)。
+    @Test("錠ファイルが残っても、持つ者が居なければ持たれていないと読む")
+    func aLeftoverLockFileIsNotHeld() throws {
+        let base = try makeSketch()
+        try FileManager.default.createDirectory(
+            at: WorkDirectory.root(under: base), withIntermediateDirectories: true)
+        try Data("99999999\n".utf8).write(to: WatchPlaceLock.lockURL(under: base))
+        #expect(!WatchPlaceLock.isHeld(under: base))
+    }
+
+    /// pid が読めない・別人のものでも、錠が掛かっていれば持たれている (判定は錠である)。
+    @Test("別の記述が錠を掛けていれば、pid が書かれていなくても持たれていると読む")
+    func aHeldLockWithoutAPidIsHeld() throws {
+        let base = try makeSketch()
+        let other = try OtherWatch(holding: base)
+        defer { other.leave() }
+        #expect(WatchPlaceLock.isHeld(under: base))
+    }
+
     @Test("場所が違えば、互いに断らない")
     func differentPlacesDoNotRefuseEachOther() throws {
         let one = try makeSketch()

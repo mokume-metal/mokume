@@ -1425,12 +1425,12 @@ struct WatchSessionTests {
 
     // MARK: - 起動できなかった子の理由 (#3169)
 
-    /// 区画 `build` を作った場所と、そこへ理由を置いて終わる子の中身を用意する。**子は自分の pid で置く**
-    /// (本番の `WorkDirectory.noteStartFailure` と同じ名前)。
+    /// 理由を置いて終わる子の中身と、その場所を用意する。**子は自分の pid で置く** (本番の
+    /// `WorkDirectory.noteStartFailure` と同じ名前)。**区画 `build` は作らない** — 最初の世代の速い失敗でも
+    /// 理由が届くには、見張りが子を起こす前に用意しなければならない (#3169)。
     private func failingWithNote(_ lines: String) throws -> (directory: URL, script: String) {
         let directory = try makeDirectory()
         let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         let name = WorkDirectory.startFailureURL(forProcess: 0, under: facet).path.dropLast()
         return (directory, "echo ready; printf '\(lines)' > '\(name)'$$; exit 1")
     }
@@ -1441,6 +1441,8 @@ struct WatchSessionTests {
     func theReasonTheChildHandedOverLandsInTheRecord() async throws {
         let ready = Ready()
         let (directory, script) = try failingWithNote("setup() threw: boom\\n  detail line\\n")
+        let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        #expect(!FileManager.default.fileExists(atPath: facet.path), "前提: 区画 build はまだ無い (最初の世代)")
         let session = try windowed(Scripted([script]), ready: ready, directory: directory)
         defer { session.stopBlocking() }
         await session.start()
@@ -1453,10 +1455,117 @@ struct WatchSessionTests {
         let head = "Could not start sh in \(directory.path): it exited with code 1 before drawing its first frame"
         let recorded = try recordedStatus(of: session)
         #expect(recorded["launched"] as? Bool == false)
-        #expect(recorded["notStartedReason"] as? String == head + "\nsetup() threw: boom")
+        let sketchReported = BuildReport.sketchReportedPrefix + "setup() threw: boom"
+        #expect(recorded["notStartedReason"] as? String == head + "\n" + sketchReported)
         let output = try #require(recorded["output"] as? String)
-        #expect(output.hasPrefix(head + "\nsetup() threw: boom\n\nsetup() threw: boom\n  detail line\n\n"), "\(output)")
+        #expect(
+            output.hasPrefix(head + "\n" + sketchReported + "\n\nsetup() threw: boom\n  detail line\n\n"),
+            "\(output)")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: WorkDirectory.startFailureURL(forProcess: child.processIdentifier, under: facet).path),
+            "読んだ理由を消していない")
+    }
+
+    /// **子を起こす時点で、区画 `build` が在る** (反証 1 回目の指摘 4)。子は区画を作らず、在るときだけ理由を置く。
+    /// 最初の世代では記録の書き込みで初めてできるので、見張りが先に用意しないと、速く落ちる子の理由は捨てられる。
+    @Test("最初の世代でも、子を起こす時点で区画 build が在る")
+    func theBuildFacetExistsWhenTheFirstChildIsLaunched() async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
         let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        var base = hooks(scripted: Scripted(["echo ready; read line"]), ready: ready)
+        let launch = base.launch
+        var existedAtLaunch: [Bool] = []
+        base.launch = { executable, directory, stamp, rate throws(CommandFailure) in
+            existedAtLaunch.append(WorkDirectory.directoryExists(at: facet))
+            return try launch(executable, directory, stamp, rate)
+        }
+        let session = WatchSession(
+            directory: directory, context: testContext(), hooks: base, stopTimeout: 0.5)
+        session.overlapsGenerations = true
+        defer { session.stopBlocking() }
+        #expect(!WorkDirectory.directoryExists(at: facet), "前提: 区画 build はまだ無い")
+
+        await session.start()
+        #expect(existedAtLaunch == [true], "子を起こす前に区画 build を用意していない: \(existedAtLaunch)")
+    }
+
+    /// **理由が空行や空白で始まっても、頭の行は最初の中身のある行である** (反証 1 回目の指摘 8 の見張り側)。
+    @Test("子の理由が空行で始まっても、記録の頭の行は最初の中身のある行になる")
+    func theHeadLineSkipsLeadingBlankLines() async throws {
+        let ready = Ready()
+        let (directory, script) = try failingWithNote("\\n  \\n   boom here\\nmore\\n")
+        let session = try windowed(Scripted([script]), ready: ready, directory: directory)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        #expect(try #require(session.departed()).failedToStart)
+        let reason = try #require(try recordedStatus(of: session)["notStartedReason"] as? String)
+        #expect(reason.hasSuffix("\n" + BuildReport.sketchReportedPrefix + "boom here"), "\(reason)")
+    }
+
+    /// **子が理由を置いたなら、1 枚目を出した扱いの子でも起動できなかった回である** (合図の推定より先に効く)。
+    /// 乗り換えの合図が先に来た子も、倒れた目印を置いた子 (自分の窓に描く) も、理由が在れば確かな証拠になる。
+    @Test("1 枚目を出した扱いの子や倒れた目印のある子でも、理由を置いて終わったなら起動できなかった回と読む", arguments: [false, true])
+    func aReasonOutweighsTheShownGuess(fellBack: Bool) async throws {
+        let ready = Ready()
+        let (directory, script0) = try failingWithNote("boom\\n")
+        let script = script0.replacingOccurrences(of: "echo ready;", with: "echo ready; read line;")
+        let session = try windowed(Scripted([script]), ready: ready, directory: directory)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        if fellBack {
+            let viewport = WatchCommand.viewportFacet(under: session.facetBase)
+            try FileManager.default.createDirectory(at: viewport, withIntermediateDirectories: true)
+            try Data().write(
+                to: WorkDirectory.fellBackURL(forProcess: child.processIdentifier, under: viewport))
+        } else {
+            session.generationShown(pid: child.processIdentifier)
+        }
+        session.send("go\n")
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart, "理由を置いたのに起動できなかった回と読まなかった")
+        let reason = try #require(try recordedStatus(of: session)["notStartedReason"] as? String)
+        #expect(reason.hasSuffix(BuildReport.sketchReportedPrefix + "boom"), "\(reason)")
+    }
+
+    /// **記録に書かない回は、子の理由を記録に載せない** (反証 1 回目の指摘 7)。作り直しが通らなかった回の
+    /// 記録 (`ok: false`) は直すものを持つので、子の理由で上書きしない。理由は読んで消し、端末の言葉の材料
+    /// (返す記録) には載せる。
+    @Test("作り直しが通らなかった記録の上には、子の理由を書かず、読んで消し、返す記録にだけ載せる")
+    func aFailedRebuildRecordIsNotOverwrittenByTheChildsReason() async throws {
+        let ready = Ready()
+        let directory = try makeDirectory()
+        let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: directory)
+        let name = WorkDirectory.startFailureURL(forProcess: 0, under: facet).path.dropLast()
+        let scripted = Scripted(["echo ready; read line; printf 'boom\\n' > '\(name)'$$; exit 1"])
+        let session = try windowed(scripted, ready: ready, directory: directory)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        // 作り直しが通らなかった回の記録 (`ok: false`) を、子が終わる前に置く
+        scripted.rebuildStatus = 1
+        scripted.stamp = "s1"
+        await session.tick()
+        #expect(try recordedStatus(of: session)["ok"] as? Bool == false)
+        session.send("go\n")
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart)
+        let recorded = try recordedStatus(of: session)
+        #expect(recorded["ok"] as? Bool == false, "失敗した作り直しの記録を上書きした")
+        #expect(!(recorded["output"] as? String ?? "").contains("boom"), "子の理由を記録に載せた")
+        #expect(departure.report?.output.contains("boom") == true, "返す記録に子の理由が無い")
         #expect(
             !FileManager.default.fileExists(
                 atPath: WorkDirectory.startFailureURL(forProcess: child.processIdentifier, under: facet).path),
