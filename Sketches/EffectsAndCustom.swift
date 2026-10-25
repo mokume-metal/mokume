@@ -26,39 +26,37 @@ final class EffectsAndCustom: Sketch {
     private static let panel = (width: 288, height: 200)
 
     /// 描き直して使い回す 1 枚。
-    private var stage: Canvas?
+    private var stage: Canvas!
     /// 自分で書いた効果。格子の升ごとに真ん中の色で塗りつぶす。
-    private var mosaic: EffectShader?
+    private var mosaic: EffectShader!
 
-    func setup() {
-        stage = try? createGraphics(Self.panel.width, Self.panel.height)
+    /// **作れなければ投げる。** 読み込みや組み立ての失敗は、`try` で書いて `setup()` から投げると、
+    /// 起動の失敗として止まり、理由 (組めなかった断片の行) がそのまま出る。`try?` で捨てて Optional で持つと、
+    /// 何も描かれないだけで理由が消える
+    func setup() throws {
+        stage = try createGraphics(Self.panel.width, Self.panel.height)
 
         // **書くのは `effect` 1 本だけ。** 前置きは自動で足され、`mokume_at` で
         // 入りの絵のほかの場所を読める。組み込みの効果も同じ規約で書いてある
-        do {
-            mosaic = try makeEffect(
-                """
-                float4 effect(Pixel in, Values values) {
-                    // 升の大きさを 0…1 の位置へ直す。升の真ん中の色を読む
-                    float2 cell = values.cell / in.size;
-                    float2 centre = (floor(in.place / cell) + 0.5) * cell;
-                    float4 tint = mokume_at(in, centre);
-                    // 升の縁を少し落とす。**色を読む位置が升ごとに 1 つ**なのが、縁で分かる
-                    float2 inside = fract(in.place / cell);
-                    float seam = step(0.1, inside.x) * step(0.1, inside.y);
-                    return float4(tint.rgb * mix(0.55, 1.0, seam), tint.a);
-                }
-                """,
-                name: "mosaic", values: ["cell": 12])
-        } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
-            print(error)
-        }
+        mosaic = try makeEffect(
+            """
+            float4 effect(Pixel in, Values values) {
+                // 升の大きさを 0…1 の位置へ直す。升の真ん中の色を読む
+                float2 cell = values.cell / in.size;
+                float2 centre = (floor(in.place / cell) + 0.5) * cell;
+                float4 tint = mokume_at(in, centre);
+                // 升の縁を少し落とす。**色を読む位置が升ごとに 1 つ**なのが、縁で分かる
+                float2 inside = fract(in.place / cell);
+                float seam = step(0.1, inside.x) * step(0.1, inside.y);
+                return float4(tint.rgb * mix(0.55, 1.0, seam), tint.a);
+            }
+            """,
+            name: "mosaic", values: ["cell": 12])
     }
 
     /// 6 枚に掛ける並び。**並びは値**なので、組み込みも自作も同じ形で書ける。
     private var looks: [(caption: String, effects: [Effect])] {
-        var looks: [(caption: String, effects: [Effect])] = [
+        [
             ("そのまま", []),
             (".blur(radius: 6)", [.blur(radius: 6)]),
             (".invert()", [.invert()]),
@@ -67,13 +65,11 @@ final class EffectsAndCustom: Sketch {
                 ".adjust(明るさ・対比・彩度)",
                 [.adjust(brightness: 0.12, contrast: 0.6, saturation: 0.8)]
             ),
+            (".custom(モザイク)", [.custom(mosaic)]),
         ]
-        if let mosaic { looks.append((".custom(モザイク)", [.custom(mosaic)])) }
-        return looks
     }
 
     func draw() {
-        guard let stage else { return }
         background(8, 10, 16)
 
         let gap = (x: Float(24), y: Float(60))

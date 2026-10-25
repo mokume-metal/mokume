@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Testing
 
 @testable import MokumeCore
@@ -21,7 +22,15 @@ struct ScreenDisplayLinkTests {
     /// 進められた回数だけ数える持ち主。
     @MainActor private final class Counter: ScreenDisplayLinkOwner {
         var advances = 0
-        func displayLinkFired() { advances += 1 }
+        /// 進められた時刻 (`ProcessInfo.systemUptime`)。見張りがいつ引き受けたかを見る検査が読む。
+        var times: [Double] = []
+        /// 持ち主へ運ばれた表示の予定の時刻 (運ばれなかった回は `nil`)。
+        var displayTimes: [Double?] = []
+        func displayLinkFired(at displayTime: Double?) {
+            advances += 1
+            times.append(ProcessInfo.processInfo.systemUptime)
+            displayTimes.append(displayTime)
+        }
     }
 
     private let rate = 60
@@ -33,6 +42,45 @@ struct ScreenDisplayLinkTests {
         let counter = Counter()
         link.owner = counter
         return (link, counter)
+    }
+
+    /// **表示のリフレッシュが運ぶ予定の時刻は、そのまま持ち主へ届く** ([#2390])。コールバックが走った
+    /// 時刻 (`at`) へ置き換えない。予備の回には予定の時刻が無いので、持ち主は `nil` を受ける。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示の予定の時刻は持ち主へそのまま届き、予備の回は時刻を持たない")
+    func theDisplayTimeReachesTheOwner() {
+        let (link, counter) = makeLink()
+        // コールバックは予定の時刻より後に、揺れて来る
+        link.advanceFromDisplayLink(at: 100.004, displayTime: 100.017)
+        link.advanceFromDisplayLink(at: 100.021, displayTime: 100.034)
+        #expect(counter.displayTimes == [100.017, 100.034])
+
+        // 時刻を渡さない呼び方 (検査) は、持ち主へ時刻を運ばない
+        link.advanceFromDisplayLink(at: 100.04)
+        #expect(counter.displayTimes.last == .some(nil))
+
+        // 止まった後の予備の回
+        link.advanceFromFallbackIfStalled(at: 100.04 + FrameDriver.stallThreshold(frameRate: rate) * 2)
+        #expect(counter.advances == 4)
+        #expect(counter.displayTimes.last == .some(nil))
+    }
+
+    /// 表示のリフレッシュ (`CADisplayLink`) の作り物。予定の時刻だけを持つ。
+    private struct FakeRefresh: DisplayRefresh {
+        let targetTimestamp: Double
+    }
+
+    /// **表示のリフレッシュのコールバックは、そのリフレッシュの `targetTimestamp` を持ち主へ運ぶ** ([#2390])。
+    /// コールバックが走った時刻 (`at`) や、前の回の時刻を運ばない。運ぶ行を現在時刻に戻すと赤くなる。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    @Test("表示のリフレッシュのコールバックは、そのリフレッシュの予定の時刻を持ち主へ運ぶ")
+    func theRefreshCarriesItsTargetTimestamp() {
+        let (link, counter) = makeLink()
+        link.refreshed(by: FakeRefresh(targetTimestamp: 200.017))
+        link.refreshed(by: FakeRefresh(targetTimestamp: 200.034))
+        #expect(counter.displayTimes == [200.017, 200.034])
     }
 
     /// **二重に回ると、絵を出す枚数と入れ替わりの判定が二重になる。** 予備は表示の
@@ -125,5 +173,119 @@ struct ScreenDisplayLinkTests {
         #expect(link.owner == nil)
         // 進める先が無くても落ちない (予備の刻みはタイマーから来るので、ここを通りうる)
         link.advanceFromFallbackIfStalled(at: 1_000)
+    }
+
+    // MARK: - 見張りの形 (#2368)
+
+    /// 窓も画面も使わない — 画面が無い駆動源 (`attach(to: nil)`) は予備だけが回る。
+    ///
+    /// **時計の速さを前提にしない。** 混んだ CI 機では、0.6 秒で 20 回の刻みが 12 回しか
+    /// 来なかった (#2969 の run 39332498928)。回数が揃うまで回し、期限を越えたら止める。
+    /// 刻みを送った時刻を返すので、見張りが起きてよい間 (閾値を越えた刻みの隙間) を
+    /// 検査の側で数えられる。
+    private func runMainLoop(
+        until done: () -> Bool, deadline seconds: Double = 10,
+        every tick: Double? = nil, _ body: (@MainActor @Sendable () -> Void)? = nil
+    ) -> [Double] {
+        let ticks = TickLog()
+        var ticker: Timer?
+        if let tick, let body {
+            let timer = Timer(timeInterval: tick, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    ticks.times.append(ProcessInfo.processInfo.systemUptime)
+                    body()
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            ticker = timer
+        }
+        let end = Date(timeIntervalSinceNow: seconds)
+        while !done(), Date() < end {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        }
+        ticker?.invalidate()
+        return ticks.times
+    }
+
+    @MainActor private final class TickLog { var times: [Double] = [] }
+
+    private var threshold: Double { FrameDriver.stallThreshold(frameRate: rate) }
+
+    /// **見張りが起きてよい回数の上限。** 見張りは最後の刻みから閾値だけ経たないと起きないので、
+    /// 隙間が閾値に届かない区間では 0 回、届いた隙間では間隔ごとに 1 回まで。
+    /// 時計の読みの差を見込んで、閾値の 9 割から数える。
+    private func allowedFallbackAdvances(between times: [Double]) -> Int {
+        zip(times, times.dropFirst()).reduce(0) { sum, pair in
+            let gap = pair.1 - pair.0
+            guard gap >= threshold * 0.9 else { return sum }
+            return sum + Int(gap / interval) + 1
+        }
+    }
+
+    /// **健全な間、予備のタイマーは起きない。** 目標フレーム間隔で回して空振りさせていた頃は、
+    /// 表示のリフレッシュの倍の起床だった (tolerance を持たせても減らなかった・#2368)。
+    @Test("表示のリフレッシュが来ている間は、予備のタイマーが 1 回も起きない")
+    func theWatchdogDoesNotWakeWhileTheDisplayLinkIsAlive() throws {
+        let (link, counter) = makeLink()
+        let start = ProcessInfo.processInfo.systemUptime
+        link.attach(to: nil)
+        defer { link.invalidate() }
+        let ticks = runMainLoop(until: { counter.advances >= 20 }, every: interval) {
+            link.advanceFromDisplayLink()
+        }
+        let stop = ProcessInfo.processInfo.systemUptime
+        try #require(counter.advances >= 20, "期限までにリフレッシュの代わりが 20 回来なかった (\(counter.advances))")
+        // 前提: 刻みの隙間 (繋いだ時点と止めた時点を含む) が閾値に届いたなら、そこで起きるのは正しい
+        let allowed = allowedFallbackAdvances(between: [start] + ticks + [stop])
+        #expect(
+            counter.advances - ticks.count <= allowed,
+            "健全なのに予備が \(counter.advances - ticks.count) 回進めた (隙間から許す数 \(allowed))")
+        if allowed == 0 {
+            #expect(link.fallbackFires == 0, "健全なのに予備のタイマーが \(link.fallbackFires) 回起きた")
+        }
+    }
+
+    /// 途切れたら、閾値の後に起きて、以後は目標フレーム間隔より速くは進めない。戻ったら下りる。
+    @Test("表示のリフレッシュが途切れたら、閾値の後に起きて目標フレーム間隔で進める")
+    func theWatchdogTakesOverAfterTheThresholdAndKeepsTheRate() throws {
+        let (link, counter) = makeLink()
+        link.attach(to: nil)
+        defer { link.invalidate() }
+        // 途切れる前の健全な区間
+        let healthy = runMainLoop(until: { counter.advances >= 10 }, every: interval) {
+            link.advanceFromDisplayLink()
+        }
+        try #require(counter.advances >= 10, "期限までに健全な区間の刻みが揃わなかった (\(counter.advances))")
+        let before = counter.advances
+        let lastTick = try #require(healthy.last)
+
+        // 途切れた。閾値を越えたら引き受けて進める。何回進めたかは時計の速さで変わるので、
+        // 回数が揃うまで待ち、かかった時間から速すぎないことを見る
+        _ = runMainLoop(until: { counter.advances - before >= 13 })
+        let stalledFor = ProcessInfo.processInfo.systemUptime - lastTick
+        let taken = counter.advances - before
+        try #require(taken >= 13, "途切れた後に予備が引き受けていない (\(taken))")
+        let firstTaken = counter.times[before]
+        #expect(
+            firstTaken - lastTick >= threshold * 0.9,
+            "閾値 (\(threshold) 秒) より前に引き受けた (\(firstTaken - lastTick) 秒)")
+        #expect(
+            taken <= Int(stalledFor / interval) + 2,
+            "予備が間隔より速く進めている (\(taken) 回 / \(stalledFor) 秒)")
+
+        // 戻ったら下りる: 最初の刻みより後に進めた回数は、刻みの数と、刻みの隙間が閾値に
+        // 届いた分だけに収まる。最初の刻みまでは引き受けたままなので、その間の分は数えない
+        let driven = counter.advances
+        let resumed = runMainLoop(until: { counter.advances - driven >= 15 }, every: interval) {
+            link.advanceFromDisplayLink()
+        }
+        let stop = ProcessInfo.processInfo.systemUptime
+        let firstTick = try #require(resumed.first, "期限までに刻みが戻らなかった")
+        let afterReturn = counter.times[driven...].filter { $0 >= firstTick }.count
+        try #require(resumed.count >= 10, "期限までに刻みが戻らなかった (\(resumed.count))")
+        let allowed = allowedFallbackAdvances(between: resumed + [stop])
+        #expect(
+            afterReturn - resumed.count <= allowed,
+            "表示のリフレッシュが戻ったのに予備も \(afterReturn - resumed.count) 回進めた (隙間から許す数 \(allowed))")
     }
 }

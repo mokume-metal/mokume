@@ -246,6 +246,89 @@ struct MovieTests {
         #expect(movie?.state == .stopped)
     }
 
+    @Test("外して足し直すと、動いているに戻り、観測の名乗りも動いているになって、コマがまた届く (#3122)")
+    func reattachedMovieIsRunningAgain() async throws {
+        let url = try await TestMovie.write(frames: 12)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var movie: Movie?
+        var states: [SourceState] = []
+        var reported: [SourceState?] = []
+        var arrivals: [Int?] = []
+        let runtime = try run(
+            frames: 9,
+            setup: { sketch in
+                movie = try sketch.createVideo(url.path)
+                movie?.loop()
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                // 3 フレーム目で外し、6 フレーム目で足し直す
+                if sketch.frameCount == 3 { sketch.detach(movie) }
+                if sketch.frameCount == 6 { sketch.attach(movie) }
+                states.append(movie.state)
+                reported.append(movie.report?.state)
+                arrivals.append(movie.lastArrival?.frame)
+            })
+        let running = SourceState.running
+        let stopped = SourceState.stopped
+        #expect(states == [running, running, stopped, stopped, stopped, running, running, running, running])
+        #expect(reported == states)
+        // 外している間はコマが届かず、足し直した後にまた届く
+        #expect(Array(arrivals.prefix(5)) == [1, 2, 3, 3, 3])
+        #expect(arrivals.last == 9)
+        runtime.closePlugins()
+        #expect(movie?.state == .stopped)
+    }
+
+    @Test("読めなくなっていた動画を外して足し直した後、読めない所へ進めば、また読めなくなったと名乗る (#3122)")
+    func reattachedDamagedMovieNoticesTheDamageAgain() async throws {
+        let url = try await TestMovie.write(frames: 60, width: 64, height: 48, pixel: TestMovie.noise)
+        let broken = try TestMovie.damaged(url, from: 0.3, to: 0.6)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: broken)
+        }
+        var movie: Movie?
+        var phase = 0
+        var afterReattach: [SourceState] = []
+        let runtime = try run(
+            frames: 60,
+            setup: { sketch in
+                let reader = try MovieReader(url: broken, path: "broken.mov")
+                let made = Movie(
+                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    name: "video: broken.mov", owner: sketch, warn: { _ in })
+                sketch.attach(made)
+                made.loop()
+                movie = made
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                switch phase {
+                case 0:
+                    // 読めなくなったところで止め、外す
+                    if movie.state == .disconnected {
+                        movie.pause()
+                        sketch.detach(movie)
+                        phase = 1
+                    }
+                case 1:
+                    // 足し直して、また流す
+                    sketch.attach(movie)
+                    movie.loop()
+                    phase = 2
+                default:
+                    afterReattach.append(movie.state)
+                }
+            })
+        #expect(phase == 2, "読めなくなるところまで進まなかった")
+        #expect(afterReattach.count >= 10)
+        // 足し直した直後に読みに行き、読めない所で disconnected になる。外す前の「まだ試さない」を持ち越すと、
+        // 約 1 秒ぶんの間、読みに行かずに絵が止まったまま動いていると名乗る
+        #expect(afterReattach.prefix(5).contains(.disconnected), "\(afterReattach)")
+        runtime.closePlugins()
+    }
+
     // MARK: - 作れないとき・読めなくなったとき
 
     @Test("見つからない・中身が動画でない・映像が無いときは、作るときに投げる")
@@ -306,6 +389,40 @@ struct MovieTests {
         for failure in failures {
             #expect(!failure.description.contains("damaged"), "\(failure)")
             #expect(!failure.description.contains("format"), "\(failure)")
+        }
+    }
+
+    /// 親のフォルダに入れず在るかを確かめられない動画は、見つからないとは言わず、`unopenable` で入れない場所を
+    /// 名乗る ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。`createVideo` の `assetURL` の写し。
+    @Test("入れない親の下の動画は、unopenable で入れない場所を名乗り、見つからないとは言わない")
+    func unreachableParentIsNamedNotMissing() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-movie-unreachable-\(UUID().uuidString)")
+        let assets = folder.appendingPathComponent("assets")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: assets.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        try Data("this is not a movie".utf8).write(to: assets.appendingPathComponent("clip.mov"))
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: assets.path)
+        // root で走ると権利を外しても入れる。入れてしまうと、検査が見たいものを見ていない
+        try #require(
+            access(assets.appendingPathComponent("probe").path, F_OK) != 0 && errno == EACCES,
+            "入れない親を作れていない")
+
+        let name = assets.appendingPathComponent("clip.mov").path
+        var failures: [MovieFailure] = []
+        let runtime = try run(frames: 1, setup: { sketch in
+            do throws(MovieFailure) { _ = try sketch.createVideo(name) } catch { failures.append(error) }
+        })
+        runtime.closePlugins()
+        let reason = AssetOpening.unreachableReason(String(cString: strerror(EACCES)))
+        #expect(failures == [.unopenable(path: name, location: name, reason: reason)])
+        for failure in failures {
+            for phrase in ["was found", "Cannot find", "resources"] {
+                #expect(!failure.description.contains(phrase), "\(failure)")
+            }
         }
     }
 

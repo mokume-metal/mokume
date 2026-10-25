@@ -24,6 +24,24 @@ protocol MessageSource<Message>: AnyObject {
     func stop()
 }
 
+/// 受け口・繋ぎが受けた移り変わりの数と、最後のもの。**読むだけの値** — 振る舞いを決めない。
+///
+/// 知らせ (``ListenerStatus``・``ConnectorStatus`` の `tellOnce`) は、同じ種類を受けられるまで 1 度しか
+/// 言わない。そのため知らせの行だけでは、「使用中が続いている」「開き直しが止まった」「手放す前の 1 行が
+/// 残っているだけ」を読み分けられない。移り変わりの数は、開き直しのたびに増える (止まれば増えない)。
+/// 検査が、受け口が期限までに `running` にならなかった回の名乗りに載せる (#2945)。
+nonisolated struct EventTrace: Sendable, Equatable {
+    /// 受けた移り変わりの数 (知らせなかったものも数える)。
+    var count = 0
+    /// 最後に受けた移り変わり。まだ 1 つも受けていなければ `nil`。
+    var last: String?
+}
+
+/// 移り変わりの跡 (``EventTrace``) を読める出どころ。
+protocol EventTracing: AnyObject {
+    var trace: EventTrace { get }
+}
+
 /// 記録したメッセージの列を、フレームごとに 1 束ずつ入れる出どころ。**ポートも開かない。**
 ///
 /// `batches[i]` は、開いてから i 回目の取り出しで届く。終わりまで行けば始まりへ戻る。どの束が
@@ -70,6 +88,7 @@ nonisolated final class ListenerStatus: Sendable {
     private let told = Mutex<Set<String>>([])
     /// 実際に開いたポート。開くまで `nil`。
     private let bound = Mutex<Int?>(nil)
+    private let events = Mutex(EventTrace())
 
     init(
         label: String, port: Int, retryAfter: TimeInterval,
@@ -84,8 +103,15 @@ nonisolated final class ListenerStatus: Sendable {
     /// 実際に開いたポート。0 を頼んだときに、OS が選んだ番号を知るために使う。
     var boundPort: Int? { bound.withLock { $0 } }
 
+    /// 受けた移り変わりの跡。読むだけ。
+    var trace: EventTrace { events.withLock { $0 } }
+
     /// 移り変わりを状態に写し、初めてのものなら知らせる。
     func apply<Value>(_ event: PortListener.Event, to queue: ExternalQueue<Value>) {
+        events.withLock {
+            $0.count += 1
+            $0.last = "\(event)"
+        }
         switch event {
         case .ready(let opened):
             bound.withLock { $0 = opened }
@@ -112,6 +138,18 @@ nonisolated final class ListenerStatus: Sendable {
         }
     }
 
+    /// 空の datagram で送り元の流れが閉じたことを、診断に 1 行出す (#2363)。同じ送り元に 2 度言わないのは、
+    /// 呼ぶ側 (``DatagramListener``) が覚えている。
+    ///
+    /// 何が落ちたかは分からない (空の直後に同じ送り元から届いたものを、Network.framework は黙って捨てうる)
+    /// ので、「落ちたかもしれない」と言う。名乗る受け口の名は、作る口が付ける名 (`udp :6000`・`osc :9000`) と同じ綴り。
+    func tellEmptyClosed(from sender: String) {
+        warn(
+            "\(label.lowercased()) :\(boundPort ?? port): an empty datagram from \(sender) closed "
+                + "its flow, so datagrams that arrived from the same sender right after it (within "
+                + "about 1 ms) may have been dropped. Said once per sender")
+    }
+
     private func tellOnce(_ key: String, _ message: String) {
         let first = told.withLock { $0.insert(key).inserted }
         if first { warn(message) }
@@ -124,7 +162,9 @@ nonisolated final class ListenerStatus: Sendable {
 /// 文字列にする。読めなかった数は列に数える。**上限 (``Datagram/sizeLimit``) に入らない datagram は、
 /// 切れた疑いがあるので読まずに捨てて、読めなかった数に入れる。** ポートが使用中・拒まれた・
 /// 失敗したときは ``ListenerStatus`` が状態に写し、それぞれ 1 度だけ知らせる。
-nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unchecked Sendable {
+nonisolated final class DatagramSource<Message: Sendable>: MessageSource, EventTracing,
+    @unchecked Sendable
+{
     // `@unchecked Sendable`: 可変の状態は ``listener`` だけで、main actor (start / stop) でだけ
     // 触る。受け口の手続きが触るのは ``status`` (錠を持つ) と列 (それ自身が錠を持つ) だけ。
 
@@ -162,6 +202,9 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
     /// 実際に開いたポート。0 を頼んだときに、OS が選んだ番号を知るために使う。
     var boundPort: Int? { status.boundPort }
 
+    /// 受け口の移り変わりの跡 (``EventTracing``)。
+    var trace: EventTrace { status.trace }
+
     /// 受け口がいま持っている送り元の数 (検査が上限を確かめるため)。
     var connectionCount: Int { listener?.connectionCount ?? 0 }
 
@@ -181,6 +224,9 @@ nonisolated final class DatagramSource<Message: Sendable>: MessageSource, @unche
                 let decoded = decode(bytes)
                 for message in decoded.messages { queue.send(message, hostTime: hostTime) }
                 queue.discardUnreadable(decoded.unreadable)
+            },
+            closedByEmpty: { [status] sender in
+                status.tellEmptyClosed(from: sender)
             },
             changed: { [status] event in
                 status.apply(event, to: queue)

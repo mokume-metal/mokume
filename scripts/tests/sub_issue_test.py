@@ -24,6 +24,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "sub-issue.sh"
 
+# 署名の名乗りに効く env (scripts/agent-signature.sh。#3149)
+AGENT_ENV = [
+    "MOKUME_AGENT_NAME", "MOKUME_AGENT_URL", "MOKUME_AGENT_MODEL",
+    "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "AI_AGENT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CONFIG_DIR",
+    "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_HOME",
+]
+SIGNATURE = "<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>"
+
 # 偽 gh。sub-issue.sh が呼ぶのは 4 つ:
 #   gh issue view <親> -R <repo> --json issueType --jq ... → 親の型
 #   gh issue create ...                                    → 作成した URL
@@ -60,13 +68,20 @@ class SubIssueTest(unittest.TestCase):
         self.log = Path(self.tmp.name) / "gh.log"
         self.log.touch()
 
-    def run_sub_issue(self, *args, parent_type="", link_error="", link_body=""):
-        env = dict(os.environ)
+    def env(self, parent_type="", link_error="", link_body="", **agent):
+        # 検査自体がエージェントのセッションから走るので、署名に効く env は消してから
+        # 要るものだけ立てる (既定は人の実行)
+        env = {k: v for k, v in os.environ.items() if k not in AGENT_ENV}
+        env.update(agent)
         env["PATH"] = f"{self.bindir}:{env['PATH']}"
         env["FAKE_GH_LOG"] = str(self.log)
         env["FAKE_PARENT_TYPE"] = parent_type
         env["FAKE_LINK_ERROR"] = link_error
         env["FAKE_LINK_BODY"] = link_body
+        return env
+
+    def run_sub_issue(self, *args, parent_type="", link_error="", link_body="", **agent):
+        env = self.env(parent_type, link_error, link_body, **agent)
         proc = subprocess.run(
             ["/bin/bash", str(SCRIPT), "74", *args],
             capture_output=True,
@@ -115,6 +130,82 @@ class SubIssueTest(unittest.TestCase):
         proc, calls = self.run_sub_issue("test: 動作を確かめる", "--test")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("test: test:", self.create_call(calls))
+
+    # --- エージェントの署名 (#3149) ------------------------------------------
+    # sub-issue は中の gh で作るので、素の gh issue create を見るフックには見えない。
+    # 以前は 11 件中 9 件が無署名で、ready-queue がエージェントの起票と読めなかった
+
+    def test_agent_run_signs_the_body(self):
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CLAUDECODE="1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"本文\n\n---\n{SIGNATURE}", calls)
+
+    def test_agent_run_signs_a_body_file_and_an_empty_body(self):
+        body = Path(self.tmp.name) / "body.md"
+        body.write_text("ファイルの本文\n", encoding="utf-8")
+        proc, calls = self.run_sub_issue("ci: 直す", "--body-file", str(body), CLAUDECODE="1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"ファイルの本文\n\n---\n{SIGNATURE}", calls)
+        self.assertNotIn("--body-file", calls, "署名を足す前のファイルを渡している")
+        self.log.write_text("", encoding="utf-8")
+        proc, calls = self.run_sub_issue("ci: 直す", CLAUDECODE="1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"--body ---\n{SIGNATURE}", calls)
+
+    def test_human_run_is_not_signed(self):
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Assisted by", calls, "人の実行に署名を付けている")
+
+    def test_codex_home_alone_is_not_an_agent(self):
+        """CODEX_HOME は人もシェルの設定で立てる。それだけでは Codex の署名を付けない (反証の #7)。"""
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CODEX_HOME="/tmp/codex")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("Assisted by", calls)
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CODEX_SANDBOX="seatbelt")
+        self.assertIn("Assisted by [OpenAI Codex]", calls)
+
+    def test_body_from_process_substitution_and_stdin(self):
+        """ファイルでない本文の口 (`<(…)`・`-`) も読む (反証の #10)。"""
+        proc = subprocess.run(
+            ["/bin/bash", "-c", f'bash "{SCRIPT}" 74 "ci: 直す" --body-file <(printf "置換の本文")'],
+            capture_output=True, text=True, env=self.env(CLAUDECODE="1"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"置換の本文\n\n---\n{SIGNATURE}", self.log.read_text(encoding="utf-8"))
+        proc = subprocess.run(
+            ["/bin/bash", str(SCRIPT), "74", "ci: 直す", "--body-file", "-"],
+            input="標準入力の本文", capture_output=True, text=True, env=self.env(),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--body 標準入力の本文", self.log.read_text(encoding="utf-8"))
+
+    def test_body_and_body_file_together_is_a_usage_error(self):
+        proc, calls = self.run_sub_issue("ci: 直す", "--body", "x", "--body-file", "/dev/null")
+        self.assertEqual(proc.returncode, 64, proc.stderr)
+        self.assertNotIn("issue create", calls)
+
+    def test_existing_signature_is_not_duplicated(self):
+        proc, calls = self.run_sub_issue(
+            "ci: 直す", "--body", f"本文\n\n---\n{SIGNATURE}", CLAUDECODE="1"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(calls.count("Assisted by"), 1)
+
+    def test_other_agents_name_themselves(self):
+        proc, calls = self.run_sub_issue(
+            "ci: 直す", "--body", "本文", MOKUME_AGENT_NAME="Grok CLI", MOKUME_AGENT_MODEL="grok-5"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("<sub>🤖 Assisted by Grok CLI (grok-5)</sub>", calls)
+
+    def test_with_names_collaborators(self):
+        proc, calls = self.run_sub_issue(
+            "ci: 直す", "--body", "本文", "--with", "OpenAI Codex (gpt-6-astra)", CLAUDECODE="1"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("(https://claude.com/claude-code) and OpenAI Codex (gpt-6-astra)</sub>", calls)
+        self.assertNotIn("--with", calls, "--with を gh へ渡している")
 
     # --- 紐づけ -------------------------------------------------------------
 

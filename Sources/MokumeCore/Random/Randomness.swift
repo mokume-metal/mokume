@@ -11,13 +11,36 @@
 /// 出て、載せ替えても再現が壊れない。
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
-struct Randomness: Sendable {
+nonisolated struct Randomness: Sendable {
     private var state: UInt64
 
     /// **種を決めなければ 0** — 時刻から作らない (原則 2)。
     init(seed: Int = 0) {
         // 種 0 でも列が縮退しないよう、1 歩進めた位置から始める
         state = UInt64(bitPattern: Int64(seed)) &+ 0x9E37_79B9_7F4A_7C15
+    }
+
+    /// 種と番号から、**番号ごとに独立した列**を作る (``RandomSource/init(seed:index:)``)。
+    ///
+    /// 状態を `seed + index * 定数` のように足し合わせると、隣り合う番号の列が 1 つずれただけの同じ列に
+    /// なる (SplitMix64 の状態は定数ずつ進むため) — 連番の種で「ほとんど揃った」列を踏む。そこで
+    /// 種と番号をそれぞれ撹拌 (SplitMix64 の出力と同じ混ぜ方) してから合わせ、もう一度撹拌して状態にする。
+    /// 隣の種・隣の番号でも、列は重ならず相関しない。
+    init(seed: Int, index: Int) {
+        let seedBits = UInt64(bitPattern: Int64(seed))
+        let indexBits = UInt64(bitPattern: Int64(index))
+        // 番号の側は別の定数で撹拌して、(種, 番号) の組が入れ替わっても同じ状態にならないようにする
+        let mixedSeed = Self.mix(seedBits &+ 0x9E37_79B9_7F4A_7C15)
+        let mixedIndex = Self.mix(indexBits &+ 0xD1B5_4A32_D192_ED03)
+        state = Self.mix(mixedSeed ^ (mixedIndex &* 0x94D0_49BB_1331_11EB &+ 0xBF58_476D_1CE4_E5B9))
+    }
+
+    /// SplitMix64 の出力の混ぜ方 (状態を進めずに、値だけを撹拌する)。
+    private static func mix(_ value: UInt64) -> UInt64 {
+        var z = value
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 
     /// 次の 64 ビット。

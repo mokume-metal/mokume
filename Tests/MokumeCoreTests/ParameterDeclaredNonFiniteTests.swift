@@ -39,8 +39,8 @@ struct ParameterDeclaredNonFiniteTests {
     final class BornBad: Sketch {
         @Param var number: Double = -.infinity
         @Param var single: Float = .infinity
-        @Param var pair: SIMD2<Float> = SIMD2(1, .nan)
-        @Param var triple: SIMD3<Float> = SIMD3(1, 2, .infinity)
+        @Param var pair: Vector2 = Vector2(1, Float.nan)
+        @Param var triple: Vector3 = Vector3(1, 2, Float.infinity)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: .nan)
     }
 
@@ -52,7 +52,7 @@ struct ParameterDeclaredNonFiniteTests {
 
     /// 端が非有限の範囲を、`Float` の組と整数の値に書いた形。
     final class InfRangeTyped: Sketch {
-        @Param(-Double.infinity...0) var pair: SIMD2<Float> = SIMD2(-1, -2)
+        @Param(-Double.infinity...0) var pair: Vector2 = Vector2(-1, -2)
         @Param(0...Int.max) var big: Int = 3
     }
 
@@ -122,8 +122,8 @@ struct ParameterDeclaredNonFiniteTests {
         let sketch = BornBad()
         #expect(sketch.number == 0)
         #expect(sketch.single == 0)
-        #expect(sketch.pair == SIMD2(0, 0))
-        #expect(sketch.triple == SIMD3(0, 0, 0))
+        #expect(sketch.pair == Vector2(0, 0))
+        #expect(sketch.triple == Vector3(0, 0, 0))
         #expect(sketch.tint == LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
         #expect(sketch.params.allSatisfy { $0.value.hasOnlyFiniteNumbers })
     }
@@ -142,7 +142,7 @@ struct ParameterDeclaredNonFiniteTests {
         #expect(radius.warnings.message(for: .bornNotFinite) == line)
         #expect(radius.warnings.hasWarned(.notFinite))
 
-        let pair = try box("pair", of: BornBad(), as: SIMD2<Float>.self)
+        let pair = try box("pair", of: BornBad(), as: Vector2.self)
         #expect(try #require(pair.warnings.message(for: .bornNotFinite)).contains("pair"))
     }
 
@@ -253,11 +253,11 @@ struct ParameterDeclaredNonFiniteTests {
     @Test("Float の組に書いた範囲も同じ。整数で書いた範囲は変わらない")
     func tuplesFoldAndIntegerRangesStay() throws {
         let sketch = InfRangeTyped()
-        let pair = try box("pair", of: sketch, as: SIMD2<Float>.self)
+        let pair = try box("pair", of: sketch, as: Vector2.self)
         #expect(pair.declaration.range == nil)
         #expect(KnobKind.forDeclaration(pair.declaration) == .none(.rangeNotFinite))
         #expect(pair.warnings.hasWarned(.rangeNotFinite))
-        #expect(pair.write(.vector2(SIMD2(3, -4))) == .clamped(requested: .vector2(SIMD2(3, -4)), applied: .vector2(SIMD2(0, -4))))
+        #expect(pair.write(.vector2(Vector2(3, -4))) == .clamped(requested: .vector2(Vector2(3, -4)), applied: .vector2(Vector2(0, -4))))
 
         let big = try box("big", of: sketch, as: Int.self)
         #expect(big.range == ParamRange(0...Int.max))
@@ -336,5 +336,84 @@ struct ParameterDeclaredNonFiniteTests {
             #expect(line.contains("gave no finite zero"))
             #expect(!line.contains("starts at"), "畳めていないのに畳んだと言った: \(line)")
         }
+    }
+
+    // MARK: - 畳めなかった宣言は、保存と応答から外す (#2858)
+
+    /// 零を断る型の `a` を NaN で生ませ、有限の `count` と並べる。
+    final class Unfoldable: Sketch {
+        @Param var a: NoZero = NoZero(.nan)
+        @Param var count: Int = 3
+    }
+
+    /// 読み戻した零が非有限の型 (`NaNZero`) でも同じ。
+    final class UnfoldableNaNZero: Sketch {
+        @Param var b: NaNZero = NaNZero(.infinity)
+        @Param var count: Int = 3
+    }
+
+    /// 保存と応答が、`a` を載せず `count` だけを書けることを見る。
+    private func expectOnlyCountIsSavedAndReplied(for sketch: any Sketch, left name: String) throws {
+        let directory = try makeDirectory()
+        let saved = directory.appendingPathComponent("params.json")
+        var warnings: [String] = []
+        let store = ParamStore(
+            registry: ParamRegistry(of: sketch), at: saved, warn: { warnings.append($0) })
+        store.flushNow()
+        #expect(store.writeCount == 1, "保存が書けなかった: \(warnings)")
+        #expect(warnings.isEmpty, "保存が書けなかった: \(warnings)")
+        let values = try jsonObject(at: saved)
+        #expect(entry("count", in: values, under: "values")?["value"] as? Int == 3)
+        #expect(entry(name, in: values, under: "values") == nil, "畳めなかった宣言を保存に載せた")
+
+        let facet = directory.appendingPathComponent("params", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        ParamSurface(directory: facet, sketch: sketch).start()
+        let reply = try jsonObject(at: facet.appendingPathComponent("report.json"))
+        #expect(entry("count", in: reply, under: "params")?["value"] as? Int == 3)
+        #expect(entry(name, in: reply, under: "params") == nil, "畳めなかった宣言を応答に載せた")
+    }
+
+    @Test("零を断る型の宣言が NaN で生まれても、保存と応答は count だけを書ける (a は外す)")
+    func anUnfoldableDeclarationIsLeftOutOfSavingAndReply() throws {
+        try expectOnlyCountIsSavedAndReplied(for: Unfoldable(), left: "a")
+        try expectOnlyCountIsSavedAndReplied(for: UnfoldableNaNZero(), left: "b")
+    }
+
+    @Test("外した宣言は、有限の値を代入するか外から書き込むと、次の保存と応答に戻る")
+    func anUnfoldableDeclarationComesBackOnceFinite() throws {
+        let sketch = Unfoldable()
+        let registry = ParamRegistry(of: sketch)
+        #expect(registry.declarations.map(\.name) == ["count"])
+
+        sketch.a = NoZero(2)
+        #expect(registry.declarations.map(\.name) == ["a", "count"])
+        #expect(registry.declarations.first?.value == .float(2))
+
+        let other = Unfoldable()
+        let otherRegistry = ParamRegistry(of: other)
+        #expect(otherRegistry.write(.float(5), to: "a") == .applied, "外している間も外からの書き込みは効く")
+        #expect(otherRegistry.declarations.map(\.name) == ["a", "count"])
+        #expect(other.a.length == 5)
+
+        // 戻った後に、また非有限を書かれても前の値を保つので、外れない
+        sketch.a = NoZero(.nan)
+        #expect(registry.declarations.map(\.name) == ["a", "count"])
+    }
+
+    @Test("畳めなかったことを言う警告は、外したことと戻る条件を事実どおりに言い、止まるとは言わない")
+    func theWarningSaysWhatWasLeftOut() throws {
+        let refusing = ParamBox<NoZero>(name: "a", value: NoZero(.nan))
+        let line = try #require(refusing.warnings.message(for: .bornNotFinite))
+        #expect(line.contains("left out of the saved values and the knob reply"))
+        #expect(line.contains("until it holds a finite number"))
+        #expect(!line.contains("cannot be saved"), "止まると言った: \(line)")
+        #expect(!line.contains("\n"))
+    }
+
+    @Test("有限に畳めた型は外さない。零へ畳んだ宣言は保存にも応答にも載る")
+    func aFoldedDeclarationStaysInTheRegistry() {
+        let registry = ParamRegistry(of: Bad())
+        #expect(registry.declarations.map(\.name) == ["radius", "count"])
     }
 }

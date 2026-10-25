@@ -23,8 +23,8 @@ struct ParamValueWireTests {
         case .bool: .bool(true)
         case .string: .string("あ\"い")
         case .color: .color(LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1))
-        case .vec2: .vector2(SIMD2(1.5, -2.5))
-        case .vec3: .vector3(SIMD3(1.5, -2.5, 3.5))
+        case .vec2: .vector2(Vector2(1.5, -2.5))
+        case .vec3: .vector3(Vector3(1.5, -2.5, 3.5))
         }
     }
 
@@ -57,15 +57,29 @@ struct ParamValueWireTests {
     }
 
     /// 観測が差し出す値は、つまみの値の**真部分集合**である。綴りも形も分け合う。
+    ///
+    /// **期待する綴りは、被検査のコードから写さず、具体の JSON で書く。** 両辺を同じ計算で出すと、
+    /// 変換が値を取り違えても (`bool` を反転しても) 両辺が一緒に動いて通る。観測の値と、同じ値の
+    /// つまみの値の、2 通りの出し方がどちらも具体の JSON に一致することを見る。
     @Test(
         "観測の値は、つまみの値と同じ綴りと形で出る",
         arguments: [
-            ExposedValue.float(1.5), .int(-7), .string("あ"), .bool(true),
+            (ExposedValue.float(1.5), ParamValue.float(1.5), #"{"type":"float","value":1.5}"#),
+            (.int(-7), .int(-7), #"{"type":"int","value":-7}"#),
+            (.string("あ"), .string("あ"), #"{"type":"string","value":"あ"}"#),
+            (.bool(true), .bool(true), #"{"type":"bool","value":true}"#),
+            (.bool(false), .bool(false), #"{"type":"bool","value":false}"#),
         ])
-    func exposedValuesSpeakTheSameWire(exposed: ExposedValue) throws {
-        let object = try encoded(exposed)
-        #expect(object["type"] as? String == exposed.typeName)
-        #expect(try encoded(exposed.paramValue) as NSDictionary == object as NSDictionary)
+    func exposedValuesSpeakTheSameWire(
+        exposed: ExposedValue, knob: ParamValue, wire: String
+    ) throws {
+        let expected = try #require(
+            try JSONSerialization.jsonObject(with: Data(wire.utf8)) as? [String: Any])
+        #expect(try encoded(exposed) as NSDictionary == expected as NSDictionary, "観測の値の綴り")
+        #expect(try encoded(knob) as NSDictionary == expected as NSDictionary, "つまみの値の綴り")
+        // 観測の値からつまみの値へ移しても、同じ値のまま
+        #expect(exposed.paramValue == knob, "観測の値をつまみの値へ移した結果")
+        #expect(exposed.typeName == expected["type"] as? String)
     }
 
     /// 知らない綴りは読めない。**面が知らない型を黙って通すと、後で値の意味が割れる。**

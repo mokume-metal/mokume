@@ -540,10 +540,10 @@ struct TransformFormulaTests {
                 if kind == .solid { canvas.lights() }
             }
             let places = [
-                Placement(x: 24, y: 24, scale: 1.7, rotation: SIMD3(0, 0, 0.4)),
-                Placement(x: 70, y: 28, scale: 0.6, rotation: SIMD3(0, 0, -1.1)),
-                Placement(x: 36, y: 70, scale: 2.3, rotation: SIMD3(0, 0, 2.0)),
-                Placement(x: 75.5, y: 72.25, scale: 1.25, rotation: SIMD3(0, 0, 0.9)),
+                Placement(x: 24, y: 24, scale: 1.7, rotation: Vector3(0, 0, 0.4)),
+                Placement(x: 70, y: 28, scale: 0.6, rotation: Vector3(0, 0, -1.1)),
+                Placement(x: 36, y: 70, scale: 2.3, rotation: Vector3(0, 0, 2.0)),
+                Placement(x: 75.5, y: 72.25, scale: 1.25, rotation: Vector3(0, 0, 0.9)),
             ]
 
             let placedCanvas = try makeCanvas(width: 96, height: 96)
@@ -562,7 +562,7 @@ struct TransformFormulaTests {
                     canvas.push()
                     canvas.translate(place.x, place.y, place.z)
                     canvas.rotateZ(place.rotation.z)
-                    canvas.scale(place.scale, place.scale, place.scale)
+                    canvas.scale(place.scale.x, place.scale.y, place.scale.z)
                     canvas.shape(shape)
                     canvas.pop()
                 }

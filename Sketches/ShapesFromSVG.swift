@@ -39,9 +39,12 @@ final class ShapesFromSVG: Sketch {
         // いる。**普通のスケッチにこの書き出しは要らない** — 手元にあるファイルの場所を
         // `loadShape` へ渡すだけでよい
         logo = try? loadShape(Self.written(Self.logoSource, as: "mokume-reference-logo.svg"))
-        if let read = try? loadShape(Self.written(Self.markSource, as: "mokume-reference-mark.svg")) {
-            // 印の viewBox は 64 四方。読んだ形を組み立ての中で置き直すと、中心が原点に来る
-            mark = createShape { shape(read, -32, -32) }
+        if let read = try? loadShape(Self.written(Self.markSource, as: "mokume-reference-mark.svg")),
+            let box = read.bounds
+        {
+            // 読んだ形の外接の中心を、組み立ての中で原点へ寄せる。ファイルを開いて確かめた寸法を
+            // コードへ写さずに済む
+            mark = createShape { shape(read, -box.center.x, -box.center.y) }
         }
         // 読んでいる間フレームを止めない読み方。読み解きは別の仕事で回り、形にするのは届いた後
         let wavePath = Self.written(Self.waveSource, as: "mokume-reference-wave.svg")
@@ -75,7 +78,7 @@ final class ShapesFromSVG: Sketch {
                     Placement(
                         x: 900 + column * 170, y: 130 + row * 170,
                         scale: 1.2 + 0.3 * Float(index % 3),
-                        rotation: SIMD3(0, 0, time * (0.4 + 0.2 * Float(index)) + Float(index)),
+                        rotation: Vector3(0, 0, time * (0.4 + 0.2 * Float(index)) + Float(index)),
                         fill: Self.tints[index]))
             }
             shape(mark, at: places)

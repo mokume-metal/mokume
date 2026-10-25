@@ -10,6 +10,8 @@ import QuartzCore
 /// 時刻の出どころを変えれば、絵が再現するかどうかが変わる。
 public enum Clock: Equatable, Sendable {
     /// 実際に流れた時間。画面に出しながら動かすときの既定。
+    ///
+    /// 窓では、その枚が表示される予定の時刻で進む (``SketchPart/time``)。
     case wallClock
 
     /// フレーム番号から導く。
@@ -146,6 +148,11 @@ final class FrameTiming {
     /// [#2413]: https://github.com/mokume-metal/mokume/issues/2413
     private var started: Double
     private var previous: Double
+    /// 直近の枚の「表示の予定の時刻 − 現在時刻」(秒・0 以上)。**予定の時刻を運ばなかった枚は 0。**
+    /// 外から止めて再開したときに、起点を予定の時刻の軸へ据えるのに使う (``resync()``・[#2390])。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    private var displayLead: Double = 0
 
     /// これまでに進めたフレームの数。最初のフレームの最中は 1。
     private(set) var frameCount = 0
@@ -197,7 +204,11 @@ final class FrameTiming {
     /// ([#2328])。観測の枚を除けば、``time`` の倍精度の元である。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
-    private var seconds: Double = 0
+    private(set) var seconds: Double = 0
+    /// いまの枚の、``time`` が示す時刻 (倍精度)。観測の指定秒が描き直す枚では、その指定秒 (``time`` と同じ)
+    /// で、それ以外は ``seconds`` と同じ。周期の位相 (``SketchPart/phase(period:)``) は、``time`` が
+    /// 示す秒から巡らせるのでこちらを読む。
+    private(set) var shownSeconds: Double = 0
     /// いまの枚の、作者の時計の上の時刻 (単精度)。**観測の指定秒が描き直す枚でも作者の時計の値**で、
     /// 観測の枚を除けば ``time`` と同じ値である。``draw()`` の外 (入力のコールバック) と、本体が
     /// 持つ状態 (動画の再生位置・録った音の起点) が読む — 観測の秒を状態として積まないために
@@ -205,6 +216,22 @@ final class FrameTiming {
     var authorTime: Float { Float(seconds) }
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
+    /// 作り直しをまたいで作者の時計を渡す先と元 (`mokume watch --keep-time`・``ClockHandover``)。旗の無い実行は `nil`。
+    private let handover: ClockHandover?
+    /// 前の世代から引き継ぐ作者の時計を、まだ最初の枚で始め直していないか。立つのは ``handover`` があるときだけで、
+    /// 最初の ``advance(at:)`` で下りる。
+    private var awaitsHandover: Bool
+    /// `setup()` の前に読んだ、前の世代の作者の時計 (``beginHandover()``)。
+    private var predecessor: ClockHandover.Predecessor?
+    /// ``beginHandover()`` を済ませたか。
+    private var hasBegunHandover = false
+    /// 枚が止まっているか (``SketchPart/noLoop()``・外からの停止)。``noteStill(_:)`` が受ける。
+    /// 次の世代へ渡す (``ClockHandover/Snapshot/isStill``) — 止まっている間は枚が来ないので、前の世代が
+    /// 回り続けているとは言えない。
+    private var isStill = false
+    /// 最初の枚の前に、作者が ``pauseTime()``・``playTime()``・``jumpTime(_:)`` を呼んだか。
+    /// 呼んでいれば、最初の枚で前の世代のファイルを読み直して始め直さず、作者の明示を優先する。
+    private var authorTouchedClock = false
     /// 次の枚で飛ぶ先の秒 (``jumpTime(_:)``)。1 枚で落ちる。
     private var pendingJump: Double?
     /// 数でない飛び先を知らせたか (``jumpTime(_:)``)。2 回目からは言わない。
@@ -227,13 +254,19 @@ final class FrameTiming {
     ///     フレームレートで進む。
     ///   - now: 実時間の出どころ。
     ///   - warn: 作者への知らせの出口。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ)。`setup()` の
+    ///     前 (``beginHandover()``) に前の世代の秒を入れ、最初の枚がその続きから始まり、以後の作者の時計を書く。
+    ///     省けば 0 秒から始まり、何も書かない ([#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     init(
         clock: Clock, frameRate: Int = 60,
         now: @escaping () -> Double = { CACurrentMediaTime() },
-        warn: @escaping (String) -> Void = Diagnostics.warn
+        warn: @escaping (String) -> Void = Diagnostics.warn,
+        handover: ClockHandover? = nil
     ) {
         self.clock = clock
         self.warn = warn
+        self.handover = handover
+        self.awaitsHandover = handover != nil
         self.maximumDeltaTime = Self.maximumDeltaTime(frameRate: frameRate)
         // `max(1, …)` は、組み立て (`SketchRuntime.checkFrameRates`) が 1 未満を断っているので届かない (#1642)。割り算の守りとして残す
         self.frameInterval = 1 / Double(max(1, frameRate))
@@ -258,24 +291,47 @@ final class FrameTiming {
     /// 指定秒を描く)。
     ///
     /// [#2328]: https://github.com/mokume-metal/mokume/issues/2328
-    func advance(at requestedTime: Float? = nil) {
-        let now = now()
+    ///
+    /// - Parameters:
+    ///   - requestedTime: 観測の指定秒。
+    ///   - displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。**実時間の
+    ///     時計 (``Clock/wallClock``) だけが読む** ([#2390])。窓・共有面の経路で、表示のリフレッシュが運んだ
+    ///     回が渡す。`nil` (予備のタイマーが進めた回・直に回す面) は現在時刻で代える。コールバックが走った
+    ///     時刻は main が他の仕事で遅れたぶん揺れるが、予定の時刻は表示の刻みの間隔のまま並ぶ。
+    ///     **どちらの回でも ``time`` は前の枚より小さくならない** — 予定の時刻は現在時刻より先なので、
+    ///     予備の回の現在時刻が前の枚の予定を下回ることがあり、そのときは前の枚の時刻に留める。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(at requestedTime: Float? = nil, displayTime: Double? = nil) {
+        // 実時間の時計の、この枚の時刻。**前の枚より前へは戻さない** (上の `displayTime`)。
+        // フレームの時計は時刻を読まない
+        let current = now()
+        var moment = max(displayTime ?? current, previous)
         if frameCount == 0, clock == .wallClock {
             // **最初の枚を起点にする** ([#2413])。時刻は時計によらず 0 から始まり (``SketchPart/time``
-            // の約束)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
+            // の約束。`watch --keep-time` で前の世代から引き継ぐ実行だけは、下で原点を前の世代の秒に置き直す)、経過は止めていたところから描く 1 枚と同じく目標の 1 フレームぶん —
             // 作ってからここまでの間 (起動・窓・`setup()`) は、描いていた時間ではない。
             // フレーム番号の時計は既に 0 と 1 フレームぶんなので、寄せるものが無い
             //
+            // **起点は予定の時刻と、ここでの現在時刻の遅いほう** ([#2390])。予定の時刻は表示のリフレッシュが
+            // 来た時点で決まっていて、`setup()` (最初の枚の中・先に呼んだ `start()`・止まっている間のコールバック)
+            // はその後に走る。予定の時刻だけを起点にすると、`setup()` にかかった時間が 2 枚目の ``time`` と
+            // ``deltaTime`` に戻る (#2413 の退行)。`setup()` が刻みの内に収まるなら予定の時刻のままで、
+            // 2 枚目の経過は表示の刻みの間隔になる
+            //
             // [#2413]: https://github.com/mokume-metal/mokume/issues/2413
-            started = now
+            // [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+            moment = max(moment, current)
+            started = moment
             stepsOneFrame = true
         }
+        displayLead = displayTime.map { max(0, $0 - current) } ?? 0
         frameCount += 1
         defer { stepsOneFrame = false }
         let raw: Double
         switch clock {
         case .wallClock:
-            raw = now - started
+            raw = moment - started
         case .frameIndex(let frameRate):
             // 時計の刻みも組み立てで検めている。`max(1, …)` は割り算の守り (#1642)。
             // 最初のフレームを 0 秒にする
@@ -292,14 +348,33 @@ final class FrameTiming {
             } else {
                 // **経過には上限を置く。** 止まっていた時間まるごとを渡すと、積分している
                 // 側 (粒・視点) が 1 枚で吹き飛ぶ
-                step = .seconds(min(max(0, now - previous), maximumDeltaTime))
+                step = .seconds(min(max(0, moment - previous), maximumDeltaTime))
             }
-            previous = now
+            previous = moment
         case .frameIndex(let frameRate):
             // 止めていたところから描く 1 枚も、既に 1 フレームぶんしか進まないので
             // ``stepOneFrameNext()`` は効かせるものが無い。見せる `deltaTime` は
             // `Float(1 / rate)` のまま (``FrameStep/deltaTime``)
             step = .frame(perSecond: max(1, frameRate))
+        }
+        if awaitsHandover {
+            // **前の世代の作者の時計から始める** (`watch --keep-time`・[#2414])。最初の枚だけ。原点のずれを、この枚の
+            // 秒が前の世代の秒になるように置く。止めていれば止める。
+            //
+            // **`setup()` が時計に触っていなければ、いま読み直して始め直す。** `setup()` の前に読んだ値は、ビルドの後で
+            // 前の世代がまだ回っている間に取ったもので、最初の枚が出るまでに前の世代で止めた・再開した・飛んだ分と、
+            // 外挿できないフレームの時計の乗り換えの隙間が抜ける。触っていれば、`setup()` の前に読んだ値を土台にして、
+            // 作者が頼んだ止めた秒・飛び先を次の分岐が上書きする (作者が明示したものを優先する)
+            //
+            // [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+            awaitsHandover = false
+            beginHandover()
+            let source = authorTouchedClock ? predecessor : (handover?.predecessor() ?? predecessor)
+            if let source {
+                let start = source.start(at: moment)
+                offset = start.seconds - raw
+                if !authorTouchedClock { heldAt = start.isHeld ? start.seconds : nil }
+            }
         }
         if let target = pendingJump ?? heldAt {
             // 飛んだ枚と止めている枚。**ずれを毎枚寄せ直す** — 再開した次の枚は、
@@ -310,26 +385,80 @@ final class FrameTiming {
         }
         seconds = raw + offset
         time = Float(seconds)
+        shownSeconds = seconds
         if let requestedTime {
             // 観測の指定秒は、見せる時刻と経過だけを上書きする。作者の時計 (`seconds`・
             // `offset`) は上で観測が無い枚と同じに進めてあり、次の枚はそこから続く
             time = requestedTime
+            shownSeconds = Double(requestedTime)
             step = .seconds(0)
         }
         // **見せる経過そのものを足す** — 止めた枚・飛んだ枚・観測の枚は 0 で、積み上げは動かない
         elapsed += step.seconds
+        // 次の世代へ渡す作者の時計 (観測の指定秒ではなく、作者の時計の秒)。書くかどうかの判断は口の側
+        publishHandover(at: moment)
+    }
+
+    /// 次の世代へ渡す作者の時計を、いまの状態で口へ渡す。
+    private func publishHandover(at moment: Double) {
+        guard let handover else { return }
+        let kind: ClockHandover.Kind
+        switch clock {
+        case .wallClock: kind = .realtime
+        case .frameIndex(let frameRate): kind = .frames(interval: 1 / Double(max(1, frameRate)))
+        }
+        handover.publish(
+            seconds: seconds, isHeld: heldAt != nil, isStill: isStill, kind: kind, frames: frameCount,
+            at: moment)
+    }
+
+    /// 枚が止まった・動き出したことを受ける (`noLoop()`・`loop()`・外からの停止と再開)。
+    ///
+    /// 止まった枚は、窓に出ている最後の枚の秒のままである。前の世代が枚を出し続けているとは言えないので、
+    /// 次の世代は止まっていた間の時間を足さず、この秒から始める ([#2414])。**止まったときに、その枚の秒を書く** —
+    /// 止まった後は ``advance(at:displayTime:)`` が来ないので、次の枚を待てない。動き出したときは書かない:
+    /// 次の枚の ``advance(at:displayTime:)`` が、その枚の秒とともに書く。最初の枚の前は秒がまだ無いので、
+    /// 控えるだけで書かない (最初の枚が書く)。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    func noteStill(_ still: Bool) {
+        guard isStill != still else { return }
+        isStill = still
+        guard still, frameCount > 0 else { return }
+        publishHandover(at: now())
+    }
+
+    /// **`setup()` の前に**、前の世代の作者の時計を時計へ入れる (`watch --keep-time`・[#2414])。
+    ///
+    /// ここで入れておくと、`setup()` から見える ``seconds`` と止めているかが引き継いだ値になり、`setup()` で
+    /// 作者が呼ぶ ``pauseTime()``・``playTime()``・``jumpTime(_:)`` が、前の世代の状態によらず通常どおり
+    /// 効く。入れないと、`setup()` の ``pauseTime()`` が 0 秒で止め、最初の枚の引き継ぎがそれを上書きする。
+    /// 何度呼んでもよい (2 度目からは何もしない)。引き継ぎの口が無い実行では何もしない。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    func beginHandover() {
+        guard let handover, !hasBegunHandover else { return }
+        hasBegunHandover = true
+        predecessor = handover.predecessor()
+        guard let predecessor else { return }
+        let start = predecessor.start(at: now())
+        seconds = start.seconds
+        shownSeconds = start.seconds
+        heldAt = start.isHeld ? start.seconds : nil
     }
 
     /// 次の枚から時刻を止める。止めた秒は**いまの枚の作者の時計の秒** (``seconds``) で、
     /// 描画は続く。ふだんは ``time`` と同じ値で、観測の指定秒が描き直す枚でだけ違う。
     /// 止めている間の経過は 0 である。既に止めていれば何もしない。
     func pauseTime() {
+        if awaitsHandover { authorTouchedClock = true }
         // 同じ枚で先に飛ぶ先を頼まれていれば、そこで止める
         if heldAt == nil { heldAt = pendingJump ?? seconds }
     }
 
     /// 止めた秒から時刻を進め直す。止めていなければ何もしない。
     func playTime() {
+        if awaitsHandover { authorTouchedClock = true }
         heldAt = nil
     }
 
@@ -349,6 +478,7 @@ final class FrameTiming {
             warnedJump = true
             return warn("jumpTime(): \(target) is not a time, so the time does not jump")
         }
+        if awaitsHandover { authorTouchedClock = true }
         pendingJump = target
         if heldAt != nil { heldAt = target }
     }
@@ -358,8 +488,15 @@ final class FrameTiming {
     ///
     /// 実時間で動かしているときにしか効かない — フレーム番号から導く時刻は
     /// そもそも実時間に依存しないので、寄せ直すものがない。
+    ///
+    /// **起点は、次の枚が使う時間軸に据える** ([#2390])。窓の経路の次の枚は表示の予定の時刻で進み、それは
+    /// 現在時刻より約 1 刻み先にある。現在時刻に据えると最初の経過が 1〜2 刻みぶんになるので、直近の枚で
+    /// 見た「予定の時刻と現在時刻の差」(``displayLead``) だけ先に据える。**前の枚より前へは戻さない**
+    /// (戻すと、前の枚の予定の時刻と今の間が経過に入る)。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func resync() {
-        previous = now()
+        previous = max(previous, now() + displayLead)
     }
 
     /// 次の ``advance()`` の経過 (``deltaTime``) を、目標の 1 フレームぶんにする。

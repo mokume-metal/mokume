@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import Synchronization
 import Testing
 import simd
@@ -42,7 +43,7 @@ struct ModelLoadingTests {
         let measured = highest - lowest
         // 200 × 120 でも 120 × 200 でも、短いほうの半分 = 60
         #expect(abs(simd_reduce_max(measured) - 60) < 1e-3)
-        #expect(abs(simd_reduce_max(model.size) - 60) < 1e-3)
+        #expect(abs(simd_reduce_max(model.size.simd) - 60) < 1e-3)
     }
 
     @Test("整えずに読むと、ファイルの大きさのまま")
@@ -50,7 +51,7 @@ struct ModelLoadingTests {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
         let model = try canvas.loadModel(ModelFixture.pyramid, normalize: false)
         // 元の四角錐は幅 2・高さ 1.6・奥行き 2
-        #expect(simd_length(model.size - SIMD3(2, 1.6, 2)) < 1e-3)
+        #expect(simd_length(model.size.simd - SIMD3(2, 1.6, 2)) < 1e-3)
     }
 
     /// 既知のモデルと、その中身から数えた値。**どちらも注釈の行 (`#`) は数えない。**
@@ -98,6 +99,82 @@ struct ModelLoadingTests {
         // 名前は読み込んだときに渡した道筋そのもの
         #expect(model.name == known.path)
         #expect(model.skippedLines == known.skippedLines)
+    }
+
+    // MARK: - 壊れた行は、読み込んだときに 1 度だけ知らせる (#2565)
+
+    /// 面から読んだとき、そのファイルについて言った知らせ (言っていなければ `nil`)。
+    private func notice(_ canvas: Canvas, _ path: String) -> String? {
+        canvas.warnings.message(for: .modelSkipped(path: path))
+    }
+
+    @Test("意図して読まない行だけの OBJ は、知らせず、skippedLines は今までどおり数える (#2565)")
+    func intendedSkipsDoNotWarn() throws {
+        let path = ModelFixture.writtenUniquely(
+            Data(ModelFixture.barePyramid(extra: ["mtllib a.mtl", "usemtl m", "o x", "g y", "s 1"]).utf8),
+            extension: "obj")
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+        let model = try canvas.loadModel(path)
+        #expect(model.skippedLines == 5)
+        #expect(notice(canvas, path) == nil)
+        // 書き出した四角錐 (材質などを含む) も鳴らない
+        let pyramid = try canvas.loadModel(ModelFixture.pyramid)
+        #expect(pyramid.skippedLines == 4)
+        #expect(notice(canvas, ModelFixture.pyramid) == nil)
+    }
+
+    @Test("壊れた行があれば、パスと何を・何行目かを名乗る知らせが 1 度だけ出る (loadModel・requestModel とも) (#2565)")
+    func brokenLinesWarnOncePerFile() async throws {
+        let path = ModelFixture.writtenUniquely(
+            Data(
+                ModelFixture.barePyramid(extra: [
+                    "mtllib a.mtl", "v 0x10 0 0", "f 1 2 99", "vv 1 2 3", "vv 4 5 6",
+                ]).utf8),
+            extension: "obj")
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+        let model = try canvas.loadModel(path)
+        // 壊れた 4 行 (v・f・vv 2 行) に、読み飛ばした mtllib を足した数。**値は今までの数え方のまま**。
+        // 読めない v を指す面はなく、`f 1 2 99` は範囲の外
+        #expect(model.skippedLines == 5)
+        let first = try #require(notice(canvas, path))
+        #expect(first.contains(path))
+        #expect(first.contains("\"v\" line that could not be read (line 12)"))
+        #expect(first.contains("(line 13)"))
+        #expect(first.contains("(2 times, first at line 14)"))
+        #expect(!first.contains("mtllib a.mtl"))
+
+        // 控えから返っても、同じ名前を別の整え方で読み直しても、2 度目は出ない (言った文面のまま)
+        _ = try canvas.loadModel(path)
+        _ = try canvas.loadModel(path, normalize: false)
+        _ = try await canvas.requestModel(path)
+        #expect(notice(canvas, path) == first)
+
+        // 待たない読み方で初めて読んだ面でも、同じ知らせが出る
+        let other = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+        _ = try await other.requestModel(path)
+        #expect(notice(other, path) == first)
+    }
+
+    @Test("バイナリの STL の座標が数でない面は、読み飛ばした面として知らせる (#2565)")
+    func skippedSTLFacesWarn() throws {
+        var facets = [
+            ModelFixture.Facet(
+                normal: SIMD3(0, 0, 1), corners: [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)]),
+            ModelFixture.Facet(
+                normal: SIMD3(0, 0, 1), corners: [SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0)]),
+        ]
+        let clean = ModelFixture.writtenUniquely(ModelFixture.binarySTL(facets), extension: "stl")
+        facets[1].corners[2] = SIMD3(0, .nan, 1)
+        let broken = ModelFixture.writtenUniquely(ModelFixture.binarySTL(facets), extension: "stl")
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 120)
+
+        #expect(try canvas.loadModel(clean).skippedLines == 0)
+        #expect(notice(canvas, clean) == nil)
+        let model = try canvas.loadModel(broken)
+        #expect(model.skippedLines == 1)
+        let said = try #require(notice(canvas, broken))
+        #expect(said.contains(broken))
+        #expect(said.contains("a face or element that could not be read"))
     }
 
     /// 待たない読み方は、解釈を別の仕事として回す。**STL を読む Model I/O もそこで走る**ので、

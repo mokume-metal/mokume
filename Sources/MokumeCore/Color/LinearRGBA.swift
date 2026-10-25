@@ -16,13 +16,14 @@
 /// **比べる・符号化する適合と、成分から直に作る口は隔離の外に置く** ([#2600])。値型の見た目
 /// (``Rect/fill``・``Circle/fill``) として、隔離の外で作られ・比べられ・符号化される。
 /// `Codable` の形は格納している 4 成分 (線形・アルファ乗算済み) のままである。原色の移し替えを
-/// 通る口 (``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) は main actor に
-/// 残る ([#2389])。
+/// 通る口 (``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) も隔離の外から呼べる
+/// ([#2389])。持ち主の無い注意の控えは `Mutex` で守り、並べて呼んでも注意は 1 度だけ出る
+/// (`SharedWarningLog`)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
-public struct LinearRGBA: Sendable {
+public nonisolated struct LinearRGBA: Sendable {
     /// 赤成分 (線形・アルファ乗算済み)。
     public var red: Float
     /// 緑成分 (線形・アルファ乗算済み)。
@@ -168,7 +169,7 @@ public struct LinearRGBA: Sendable {
     }
 
     /// 完全に透明な色。
-    public static let transparent = LinearRGBA(
+    public nonisolated static let transparent = LinearRGBA(
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
 
     /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。

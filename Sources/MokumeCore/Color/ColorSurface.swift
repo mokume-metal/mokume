@@ -21,7 +21,7 @@ import MokumeDiagnostics
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-enum DisplayScale {
+nonisolated enum DisplayScale {
     /// 素の数値の目盛りの上端。
     static let maximum: Float = 255
 
@@ -56,6 +56,20 @@ enum DisplayScale {
         let sRGB = ColorPrimaries.sRGB(
             fromWorking: SIMD3(straight(color.red), straight(color.green), straight(color.blue)))
         return SIMD3(component(sRGB.x), component(sRGB.y), component(sRGB.z))
+    }
+
+    /// 0–255 の不透明度が範囲の外なら、締めた値 (0 か 255)。範囲の中・数でない値・無限なら `nil`。
+    ///
+    /// **締めたことを言う受け口が使う判定** ([#1842])。締める計算そのものは別の場所にあり
+    /// (``LinearRGBA/init(straightRed:green:blue:alpha:)``・``fading(_:by:)``)、ここはその範囲と
+    /// 同じ `0…255` を 1 か所で名乗る。数でない値・無限は締めずに断る側 (決定 9) なので `nil`。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    static func roundedOpacity(_ alpha: Float) -> Int? {
+        guard alpha.isFinite else { return nil }
+        if alpha < 0 { return 0 }
+        if alpha > maximum { return Int(maximum) }
+        return nil
     }
 
     /// 素の数値から作業空間の色を作る。**非有限の値が混じっていたら作らない。**
@@ -111,7 +125,7 @@ enum DisplayScale {
 /// 作る口には持ち主が無い。鍵で数える形は同じで、控えだけをここに置く ([#833])。
 ///
 /// [#833]: https://github.com/mokume-metal/mokume/issues/833
-enum ColorValues {
+nonisolated enum ColorValues {
     /// 1 度だけ言う注意の種類。**口ごとに数える** — 1 つの旗を共有すると、
     /// 先に鳴った口が後の口を永久に黙らせる。
     enum Warning: Hashable {
@@ -125,13 +139,71 @@ enum ColorValues {
         ///
         /// [#2422]: https://github.com/mokume-metal/mokume/issues/2422
         case notANumberFading
+
+        /// 素の数値の口 (``color(_:_:_:_:)``) の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// 数でない値の注意と、締めた注意は鍵を分ける。言う事情が別で、先に鳴ったほうが
+        /// 他方を永久に黙らせないため。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedOpacity
+        /// 色の値と不透明度の口 (``color(_:_:)``) の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedFading
+        /// 色相・彩度・明度の口の彩度が負で、0 へ丸めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedSaturation
+        /// 色相・彩度・明度の口の明度が負で、0 へ丸めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBrightness
+        /// 色相・彩度・明度の口の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedHSBOpacity
+        /// 2 色の間を取る口の `amount` が 0…1 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedLerpColor
     }
 
     /// 言った注意の控え。書き換えるのは ``warnOnce(_:_:)`` だけ。
-    private(set) static var warnings = WarningLog<Warning>()
+    ///
+    /// **複数のスレッドから同時に言える** ([#2389]): ここの口は `nonisolated` で、`concurrentPerform` や
+    /// TaskGroup から並べて呼ばれうる。控えは ``SharedWarningLog`` が `Mutex` で守り、同じ注意は
+    /// 1 度だけ出る。`warnings` は検査が読む写しである。
+    ///
+    /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
+    private static let shared = SharedWarningLog<Warning>()
+
+    /// 言った注意の写し。**検査が読む。**
+    static var warnings: WarningLog<Warning> { shared.snapshot }
 
     static func warnOnce(_ warning: Warning, _ message: @autoclosure () -> String) {
-        warnings.warnOnce(warning, message())
+        shared.warnOnce(warning, message())
+    }
+
+    /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1842])。
+    ///
+    /// 面を持つ口の ``Canvas/warnRounded(_:_:_:takes:passed:used:)`` と同じ順 (口の名前・量・
+    /// 受け取れる範囲・渡した値・使った値) で名乗る。値を作る口には持ち主が無いので、控えは
+    /// ここに置く。`name` は括弧まで含む (`color()`・`color(hue:saturation:brightness:)`)。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    static func warnRounded(
+        _ warning: Warning, _ name: String, _ quantity: String, takes range: String,
+        passed: some CustomStringConvertible, used: some CustomStringConvertible
+    ) {
+        warnOnce(
+            warning, "\(name): \(quantity) takes \(range), but \(passed) was passed, so \(used) was used")
+    }
+
+    /// 0–255 の不透明度が範囲の外なら、締めたことを言う。範囲の中なら何も言わない。
+    static func warnIfOpacityRounded(_ warning: Warning, _ name: String, passed alpha: Float) {
+        guard let used = DisplayScale.roundedOpacity(alpha) else { return }
+        warnRounded(warning, name, "the opacity", takes: "0 to 255", passed: alpha, used: used)
     }
 }
 
@@ -153,13 +225,24 @@ enum ColorValues {
 ///
 /// **不透明度は 0–255 に締める。色の成分は締めない。** `color(255, 204, 0, 400)` は
 /// 不透明度 255 と同じ色になり、`color(510, 0, 0)` の赤は 510 のまま残る
-/// ([ADR-0033] 決定 3 の改訂・決定 6)。
+/// ([ADR-0033] 決定 3 の改訂・決定 6)。**不透明度を締めたときは、口の名前・範囲・渡した値を 1 度だけ
+/// 知らせる** (ADR-0020 決定 5)。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func color(
+public nonisolated func color(
     _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
 ) -> LinearRGBA {
     let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
+    ColorValues.warnIfOpacityRounded(.roundedOpacity, "color()", passed: alpha)
+    return makeColor(red: red, green: green, blue: blue, alpha: alpha)
+}
+
+/// 素の数値から色を作る。数でない値・無限なら 1 度だけ言って透明な色を返す。**不透明度が範囲の外
+/// のときに言うのは受け口の側** — ``color(_:_:_:_:)`` と ``color(hue:saturation:brightness:alpha:)``
+/// が、それぞれの鍵で先に言う ([#1842])。
+///
+/// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+nonisolated func makeColor(red: Float, green: Float, blue: Float, alpha: Float) -> LinearRGBA {
     guard let made = DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha)
     else {
         ColorValues.warnOnce(
@@ -177,8 +260,9 @@ public func color(
 /// let veil = color(0, 64)
 /// ```
 ///
-/// **不透明度は 0–255 に締める。灰色の値は締めない** (``color(_:_:_:_:)`` と同じ)。
-public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
+/// **不透明度は 0–255 に締める (締めたときは 1 度だけ知らせる)。灰色の値は締めない**
+/// (``color(_:_:_:_:)`` と同じ)。
+public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
     let gray = gray.asFloat
     return color(gray, gray, gray, alpha.asFloat)
 }
@@ -191,7 +275,7 @@ public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertibl
 /// ```
 ///
 /// ``SketchPart/fill(_:_:)-(LinearRGBA,_)`` の色の値と不透明度の形と同じ式で、描く状態ではなく**色の値**を作る。
-/// ``Placement/init(x:y:z:scale:rotation:fill:)`` の `fill` や
+/// ``Placement/fill`` や
 /// ``SketchPart/emit(_:from:toward:rate:speed:life:size:color:)`` の `color`、``lerpColor(_:_:_:)`` の
 /// 両端のように、色の値を受ける口へ薄めた色を渡したいときに使う。色の成分 (乗算済み) を手で縮める
 /// 必要は無い。
@@ -230,14 +314,16 @@ public func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertibl
 ///
 /// **範囲の外は締める。色の成分は締めない** — 不透明度の 400 は 255 と同じで `c` のまま、-100 は 0 と
 /// 同じで完全な透明になる (掛ける率を 0–1 に締める)。成分は掛けるだけなので、255 を越える明るさの色は
-/// 越えたまま薄まる ([ADR-0033] 決定 3 の改訂・決定 6)。
+/// 越えたまま薄まる ([ADR-0033] 決定 3 の改訂・決定 6)。**締めたときは、口の名前・範囲・渡した値を
+/// 1 度だけ知らせる** (ADR-0020 決定 5)。
 ///
 /// **不透明度が数でない値・無限のときは受けず、透明な色を返す** (``color(_:_:_:_:)`` と同じ扱いで、
 /// 注意は 1 度だけ言う)。`c` の成分は検めない — 受ける口が断る。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 // shot: 1 snippet=8273a2d1
-public func color(_ color: LinearRGBA, _ alpha: some ScalarConvertible) -> LinearRGBA {
+public nonisolated func color(_ color: LinearRGBA, _ alpha: some ScalarConvertible) -> LinearRGBA {
+    ColorValues.warnIfOpacityRounded(.roundedFading, "color()", passed: alpha.asFloat)
     guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
         ColorValues.warnOnce(
             .notANumberFading,
@@ -256,7 +342,7 @@ public func color(_ color: LinearRGBA, _ alpha: some ScalarConvertible) -> Linea
 /// 読むのは下位 24 bit で、上位は落とす。手本 (Processing) の習慣で不透明度を
 /// 上位バイトに付けた `0xFFFF_CC00` を渡しても、色は同じ `0xFF_CC00` になる。
 /// 不透明度を変えたいときは ``color(_:_:_:_:)`` を使う。
-public func color(hex: Int) -> LinearRGBA {
+public nonisolated func color(hex: Int) -> LinearRGBA {
     let bits = hex & 0xFF_FFFF
     return color(
         Float((bits >> 16) & 0xFF), Float((bits >> 8) & 0xFF), Float(bits & 0xFF))
@@ -283,7 +369,7 @@ public func color(hex: Int) -> LinearRGBA {
 ///   `lerpColor(.transparent, color(255, 0, 0), 0.5)` は不透明度が半分の赤のままで、手本の
 ///   ように暗い赤にはならない ([ADR-0011] 決定 4)
 ///
-/// **`amount` は 0…1 に締める** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
+/// **`amount` は 0…1 に締める (締めたときは 1 度だけ知らせる)** — `lerpColor(a, b, 2)` は `b` を返す。0…1 の外へ伸ばす
 /// ``lerp(_:_:_:)`` とはここが違うが、手本も `lerpColor` では締める。締めないと、不透明度の
 /// 違う 2 色から 0–255 の外の不透明度ができる ([ADR-0033] 決定 3 の改訂・決定 7 の改訂)。
 ///
@@ -299,7 +385,7 @@ public func color(hex: Int) -> LinearRGBA {
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func lerpColor(
+public nonisolated func lerpColor(
     _ start: LinearRGBA, _ stop: LinearRGBA, _ amount: some ScalarConvertible
 ) -> LinearRGBA {
     let given = amount.asFloat
@@ -312,6 +398,10 @@ public func lerpColor(
         return start
     }
     let amount = min(max(given, 0), 1)
+    if amount != given {
+        ColorValues.warnRounded(
+            .roundedLerpColor, "lerpColor()", "amount", takes: "0 to 1", passed: given, used: Int(amount))
+    }
     // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
     // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
     return LinearRGBA(
@@ -340,17 +430,17 @@ public func lerpColor(
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func red(_ color: LinearRGBA) -> Float {
+public nonisolated func red(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).x
 }
 
 /// 緑の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
-public func green(_ color: LinearRGBA) -> Float {
+public nonisolated func green(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).y
 }
 
 /// 青の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
-public func blue(_ color: LinearRGBA) -> Float {
+public nonisolated func blue(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).z
 }
 
@@ -365,7 +455,7 @@ public func blue(_ color: LinearRGBA) -> Float {
 /// (``LinearRGBA/init(premultipliedRed:green:blue:alpha:)``) で作った色は締めずに読む。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func alpha(_ color: LinearRGBA) -> Float {
+public nonisolated func alpha(_ color: LinearRGBA) -> Float {
     guard color.alpha.isFinite else { return 0 }
     return color.alpha * DisplayScale.maximum
 }

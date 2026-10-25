@@ -42,6 +42,12 @@ nonisolated final class GamepadInbox: Sendable {
         changes.setState(state)
     }
 
+    /// まだ取り出されていない傾きと釦の押し離しを、読まずに捨てる (``Gamepad/close()``)。
+    func discardWaiting() {
+        stick.discardWaiting()
+        changes.discardWaiting()
+    }
+
     /// 出どころの状態。
     var state: SourceState { changes.state }
 
@@ -99,6 +105,10 @@ final class RecordedGamepadSource: GamepadSource {
     }
 
     func start(into inbox: GamepadInbox) {
+        // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は続け、押していた釦の記憶は捨てる
+        // (パッドの側は外すときに押した記憶を消すので、同じ釦を押し続ける列は押し直しとして届ける)
+        stopped = false
+        held = []
         inbox.setState(inputs.isEmpty ? .unavailable : .running)
     }
 
@@ -112,7 +122,7 @@ final class RecordedGamepadSource: GamepadSource {
             return
         }
         inbox.setState(.running)
-        inbox.stick.send(input.leftStick)
+        inbox.stick.send(input.leftStick.simd)
         // 並べる順を名前で固定する。集合の順は回ごとに変わりうる
         for button in held.subtracting(input.pressed).sorted(by: Self.byName) {
             inbox.changes.send(.released(button))

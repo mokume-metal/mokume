@@ -135,7 +135,7 @@ extension SketchPart {
     ///     func setup() {
     ///         let front = currentCamera
     ///         var above = front
-    ///         above.eye += SIMD3(-150, -200, 0)
+    ///         above.eye += Vector3(-150, -200, 0)
     ///         views = [front, above]
     ///     }
     ///
@@ -159,6 +159,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=4861898c
+    // shot: 後で撮る
     public var currentCamera: Camera {
         Self.liveCanvas(.read(returning: "the camera that fits a 1×1 surface"))?.currentCamera
             ?? Camera.fitting(width: 1, height: 1)

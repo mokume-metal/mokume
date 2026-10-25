@@ -24,6 +24,7 @@
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import fcntl
 import os
 import re
 import shutil
@@ -299,11 +300,44 @@ class ReadFailureMessagesTest(unittest.TestCase):
         """畳む目印は Swift の文面の写しなので、本物から外れたら黙って畳まなくなる。"""
         swift = (REPO / "Sources" / "MokumeCore" / "Rendering" / "RenderFailure.swift").read_text(encoding="utf-8")
         reader = READER.read_text(encoding="utf-8")
-        marker = 'GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"'
+        marker = 'GATE_CLOSED_OWN = "A wait for the GPU went past its limit earlier in this process"'
         self.assertIn(marker, reader)
         self.assertIn("A wait for the GPU went past its limit earlier in this process", swift)
+        # gpu-slot の記録で止まった別の回の断り (#2235)。畳む目印は 2 つ目の句
+        record_marker = 'GATE_CLOSED_RECORD = "A wait for the GPU went past its limit in another run under gpu-slot.py"'
+        self.assertIn(record_marker, reader)
+        self.assertIn("A wait for the GPU went past its limit \\(origin)", swift)
+        self.assertIn('"in another run under gpu-slot.py (record: \\(record))"', swift)
         self.assertIn("(the first was ", GATE_CLOSED_MESSAGE)
         self.assertIn("first = closure.map { \" (\\($0.summary))\" }", swift)
+
+    def test_folds_the_record_refusals_and_names_the_record(self):
+        """gpu-slot の記録で止まった断り (別の回・自分の回) も、関所が閉じた後として畳み、記録が残ることを言う (#2235)。"""
+        other = (
+            "A wait for the GPU went past its limit in another run under gpu-slot.py (record: /slots/wait-expired.json),"
+            " so no new drawing foundation is set up.\nA person checks that the GPU answers, and then deletes that record;"
+            " starting this process again does not remove it."
+        )
+        own = (
+            "A wait for the GPU went past its limit earlier in this process (the first was while waiting for the GPU to"
+            " finish, past 5.0 seconds, at 2026-10-22T09:00:00+0900), and gpu-slot.py's record (/slots/wait-expired.json)"
+            " stops later runs too, so no new drawing foundation is set up."
+        )
+        out = self.read(
+            _record(
+                _failed("MokumeCoreTests.CanvasTests", "a()", other),
+                _failed("MokumeCoreTests.CanvasTests", "b()", own),
+                FAILED_CASE,
+            )
+        )
+        self.assertIn("環境で成り立たなかった回", out)
+        self.assertIn("落ちた 3 件のうち 2 件", out)
+        self.assertIn("gpu-slot の期限切れの記録が残っている", out)
+        self.assertIn("人が GPU の答えを確かめて記録を消すまで", out)
+        # 自分の印だけの回 (記録を持たない) には、記録の一文を足さない
+        plain = self.read(_record(_failed("MokumeCoreTests.CanvasTests", "a()", GATE_CLOSED_MESSAGE), FAILED_CASE))
+        self.assertIn("環境で成り立たなかった回", plain)
+        self.assertNotIn("gpu-slot の期限切れの記録が残っている", plain)
 
     def test_names_green_missing_and_unreadable(self):
         # 無い記録を先に見る (read は同じ置き場へ書くので、後に回すと前の記録が残る)
@@ -350,7 +384,7 @@ class MakeTestTest(unittest.TestCase):
         path.write_text(body)
         path.chmod(0o755)
 
-    def run_make(self, test_exit, record=None, console="", build_exit=0, fail=""):
+    def run_make(self, test_exit, record=None, console="", build_exit=0, fail="", extra_env=None):
         env = dict(os.environ)
         env.pop("MAKEFLAGS", None)
         env.pop("MFLAGS", None)
@@ -368,6 +402,7 @@ class MakeTestTest(unittest.TestCase):
             MOKUME_GPU_SLOT_DIR=str(self.root / "gpu-slots"),
             MOKUME_GPU_SLOT_LOG=str(self.root / "gpu-slot.jsonl"),
         )
+        env.update(extra_env or {})
         env.pop("FAKE_RECORD", None)
         if record is not None:
             self.record_src.write_text(record, encoding="utf-8")
@@ -401,6 +436,39 @@ class MakeTestTest(unittest.TestCase):
         self.assertEqual(self.evidence_dirs(), [], out)
 
     # --- 名乗る回 -----------------------------------------------------------
+
+    def test_gpu_slot_stopped_by_an_expiry_record_is_not_a_vanished_run(self):
+        """gpu-slot が、期限切れの記録 (76) で検査を起こさなかった回は、「消えた」と名乗らない (#2235)。"""
+        slots = self.root / "gpu-slots"
+        slots.mkdir()
+        (slots / "wait-expired.json").write_text("{}", encoding="utf-8")
+        code, out = self.run_make(0, record=RECORD_ALL_PASSED)
+        # make は recipe の失敗を 2 で返す。gpu-slot の 76 は make の出力に残る
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 76", out)
+        self.assert_not_vanished(out)
+        self.assertIn("検査のプロセスは起こされなかった", out)
+        self.assertIn("消えた回 (#1527) ではない", out)
+        # 検査は起きていない。build は走るが、test は走らない
+        calls = (self.root / "swift-calls.txt").read_text()
+        self.assertNotIn("--skip-build", calls)
+
+    def test_gpu_slot_that_could_not_get_a_slot_is_not_a_vanished_run(self):
+        """gpu-slot が枠を期限まで取れなかった回 (75) も、検査は起きていないので「消えた」と名乗らない (#2235)。"""
+        slots = self.root / "gpu-slots"
+        slots.mkdir()
+        with open(slots / "slot-0.lock", "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)  # 枠 1 つを、この検査が握る
+            code, out = self.run_make(
+                0, record=RECORD_ALL_PASSED,
+                extra_env={"MOKUME_GPU_SLOTS": "1", "MOKUME_GPU_SLOT_WAIT": "0.3", "MOKUME_GPU_SLOT_POLL": "0.05"})
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 75", out)
+        self.assert_not_vanished(out)
+        self.assertIn("検査のプロセスは起こされなかった", out)
+        self.assertIn("枠を期限まで取れなかった", out)
+        self.assertIn("消えた回 (#1527) ではない", out)
+        self.assertNotIn("--skip-build", (self.root / "swift-calls.txt").read_text())
 
     def test_no_record(self):
         code, out = self.run_make(1, console="✔ Test draws() passed")

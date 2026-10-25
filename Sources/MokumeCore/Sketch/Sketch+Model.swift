@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
-    /// func setup() {
-    ///     head = try? loadModel("assets/head.obj")
+    /// func setup() throws {
+    ///     head = try loadModel("assets/head.obj")
     /// }
     /// func draw() {
     ///     lights()
@@ -22,7 +22,9 @@ extension SketchPart {
     ///
     /// 読むのは **OBJ (.obj)** と **STL (.stl)** で、拡張子で読み分ける (大文字小文字は
     /// 問わない)。どちらも形 (頂点・面・面の向き) と展開だけを読み、材質・テクスチャ・物体の
-    /// 区切りは読み飛ばす (何を読み飛ばしたかは ``Model/skippedLines``)。面の向きが書かれて
+    /// 区切りは読み飛ばす (何を読み飛ばしたかは ``Model/skippedLines``)。**壊れた行 (読めない `v`・`vn`・
+    /// `vt`・`f`・OBJ の仕様に無い語・STL の読み飛ばした面) があれば、読み込んだときにファイルにつき 1 度、何を・
+    /// 何回・最初はどの行かを診断に出す。** `mtllib`・`usemtl` など意図して読まない行だけなら出ない。面の向きが書かれて
     /// いなければ**形から求める**ので、向きの無いモデルでも立体らしく光が付く。
     ///
     /// **OBJ の面の角で、読み取り位置 (`vt`) や向き (`vn`) の番号が数として読めない・範囲の
@@ -32,16 +34,18 @@ extension SketchPart {
     /// 壊れた番号は知らされない。
     ///
     /// **STL は 3D プリンタ向けに配られる形式で、文字の STL もバイナリの STL も読む。**
-    /// OBJ と違うところが 3 つある:
+    /// OBJ と違うところが 2 つある:
     ///
     /// - **面ごとに平らに光る。** STL は点を共有しないので、隣の面と向きが均されない
     ///   (OBJ で向きを書かない形は、点を共有する面どうしで均される)。展開も持たないので、
     ///   貼る絵は囲みの箱の位置で乗る
     /// - **縦軸の約束が無い。** 3D プリンタ向けの STL は z を上に書くことが多いので、そのまま
     ///   置くと寝て見える。起こすなら `rotateX` で 4 分の 1 回す
-    /// - **文字の STL で数として読めない座標は 0 として読まれる** (読み手の Model I/O がそう
-    ///   読む)。OBJ のように読み飛ばして数えはしない。バイナリの STL で座標が数でない面は
-    ///   読み飛ばし、``Model/skippedLines`` に数える (面ごとに 1)
+    ///
+    /// **座標が読めない面は、OBJ の読めない行と同じに読み飛ばし、``Model/skippedLines`` に面ごとに 1 数える。**
+    /// 文字の STL では `vertex` の行の欄が、ちょうど 3 つの有限な 10 進の数でない面 (`0x10`・`nan`・`a`・
+    /// 欄が 2 つなど)、バイナリの STL では座標が数でない面。読み込んだときに診断にも出る。`facet normal` の欄が
+    /// 読めない文字の STL の面は残し、向きは書いていないのと同じ (形から求めた両面) になる。
     ///
     /// 読めない STL (壊れている・途中で切れた文字の STL・空のファイル・小文字の `solid` で始まらない
     /// 文字の STL) は ``ModelFailure/unreadable(path:)`` を投げる。面を 1 つも持たない STL は
@@ -69,7 +73,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
     ///         for s in [1, 30] {
     ///             let obj = """
@@ -85,7 +89,7 @@ extension SketchPart {
     ///                 f 2 3 4 5
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
-    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///             pyramids.append(try! loadModel(path))
     ///         }
     ///     }
@@ -120,7 +124,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 同じ角錐を、大きさだけ変えて 2 つの OBJ に書く (y が上向き)
     ///         for s in [1, 30] {
     ///             let obj = """
@@ -136,7 +140,7 @@ extension SketchPart {
     ///                 f 2 3 4 5
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
-    ///             try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///             pyramids.append(try! loadModel(path, normalize: false))
     ///         }
     ///     }
@@ -180,13 +184,22 @@ extension SketchPart {
     /// - Note: 読めても面が 1 つも無いことがある (``Model/isEmpty``)。そのときは
     ///   投げずに、置いたときに警告する — 「読めなかった」と「読めたが見えない」は
     ///   別の話なので、区別できるようにしてある。
+    ///
+    /// - Note: **`normalize` の既定が手本と逆である。** p5.js の `loadModel(path, normalize)` は
+    ///   整えないのが既定 (`false`) で、こちらは整えるのが既定 (`true`) になる。座標が画素のこの面では、
+    ///   整えないと 2 単位ほどのモデルがほぼ点になり、失敗ではないので原因に辿り着けないためである。
+    ///   p5.js のコードを写して大きさがずれたら、`normalize: false` を渡す。ラベルが付くのは、p5.js の
+    ///   側が版で割れていて (1.x は 2 番目、2.x は 3 番目の位置引数か `options`)、どちらの位置にも
+    ///   写せないからである ([ADR-0020] 決定 1)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// - Throws: 見つからないとき・見つかったが開けないとき (ディレクトリだった・読む権利が無い。解けた
     ///   場所が載る ``ModelFailure/unopenable(path:location:reason:)``)・読めないとき・対応していない
     ///   形式のときに ``ModelFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=422c10b2
-    // shot: 2 snippet=c25f28d8
+    // shot: 1 snippet=f06ca23f
+    // shot: 2 snippet=3d711263
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         Self.noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
         return try Self.resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
@@ -201,6 +214,10 @@ extension SketchPart {
     /// **`setup()` の中で `Task` を起こし、そこから呼ぶ。** 呼び方と届く前の扱いは
     /// ``requestImage(_:)`` と同じで、届くまでの ``Sketch/draw()`` はモデルが無いまま呼ばれ、
     /// 置くのは `draw()` の中である。
+    ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
+    /// 後に届いても落ちず、モデルはそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。
     ///
     /// <!-- example: 文脈 var head: Model? -->
     /// ```swift
@@ -218,9 +235,14 @@ extension SketchPart {
     /// > Note: 届いたモデルの整え方と見え方は ``loadModel(_:normalize:)`` と同じなので、絵は
     /// > そちらを見ること。届くフレームは実行ごとに違うので、この口だけの絵は撮っていない。
     ///
+    /// - Note: **`normalize` の既定は手本 (p5.js の `loadModel`) と逆で、整えるのが既定である。**
+    ///   理由と直し方は ``loadModel(_:normalize:)`` の 2 つ目の Note。
+    ///
     /// - Throws: ``loadModel(_:normalize:)`` と同じ (``ModelFailure``)。
     ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadModel(_:normalize:)
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
@@ -246,7 +268,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let obj = """
     ///             v 0 3 0
     ///             v -1 0 -1
@@ -260,7 +282,7 @@ extension SketchPart {
     ///             f 2 3 4 5
     ///             """
     ///         let path = NSTemporaryDirectory() + "pyramid.obj"
-    ///         try? obj.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         try obj.write(toFile: path, atomically: true, encoding: .utf8)
     ///         pyramid = try! loadModel(path)
     ///     }
     ///
@@ -288,6 +310,6 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=84b7a99d
+    // shot: 1 snippet=f81bf796
     public func model(_ model: Model) { Self.liveCanvas()?.model(model) }
 }

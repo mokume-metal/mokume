@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import Synchronization
 import simd
 
 /// 図形を描くためのパイプラインと、資源の受け渡し口。
@@ -16,7 +17,8 @@ import simd
 /// ## 持ち主は ``RenderDevice`` で、面は分け合う ([#2785])
 ///
 /// ここが抱えるのは**組み上がったら変わらないもの**だけ — ライブラリ・組み立て器・
-/// パイプライン 33 本・奥行きの扱い。組み込みの原文からできる値で、面にも利用者の断片にも
+/// パイプライン・奥行きの扱い (基本図形のパイプラインは使うときに 1 本ずつ組んで控える・
+/// 組んだ 1 本は変わらない — [#3114])。組み込みの原文からできる値で、面にも利用者の断片にも
 /// 依らない。なので ``RenderDevice/shapePipeline(pixelFormat:)`` が GPU ごと・出力形式ごとに
 /// 1 つ組み、面は何枚作っても同じものを使う。面を作るたびに組み直すと、描き場所を動的に
 /// 作る場面が、寸法にも内容にも依らない費用を払い続ける。
@@ -25,6 +27,7 @@ import simd
 /// ので、分け合うと面どうしで束ねが漏れる。面が自分の分を作る (``makeArgumentTable(gpu:)``)。
 ///
 /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+/// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
 final class ShapePipeline {
     /// 同じ絵を描く、**混ぜ方ごとに分かれたパイプラインの組**。
     ///
@@ -77,15 +80,53 @@ final class ShapePipeline {
         /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
         /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
         func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
-            batch.run.mode == .replace && batch.thinCoverage ? composite : state(for: batch.run.mode)
+            state(in: Column(drawing: batch))
         }
 
         /// その混ぜ方で描くパイプライン。
         func state(for mode: BlendMode) -> any MTLRenderPipelineState {
-            switch mode {
+            state(in: Column(mode))
+        }
+
+        /// その列のパイプライン。
+        private func state(in column: Column) -> any MTLRenderPipelineState {
+            switch column {
             case .blend: blend
             case .replace: replace
-            default: composite
+            case .composite: composite
+            }
+        }
+
+        /// 3 本のうちの 1 本を指す列。**混ぜ方からどの本へ行くかを決めるのはここ 1 か所**で、
+        /// 3 本を一度に組む経路 (``init(_:)``) も、基本図形を 1 本ずつ組む経路
+        /// (``ShapePipeline/formState(for:mode:)``・#3114) も、この並びを使う。
+        enum Column: CaseIterable, Sendable {
+            case composite, blend, replace
+
+            init(_ mode: BlendMode) {
+                switch mode {
+                case .blend: self = .blend
+                case .replace: self = .replace
+                default: self = .composite
+                }
+            }
+
+            /// **その列を描く列。** 置き換える列のうち、細い線を広げた頂点を持つ列だけは下地を読む列
+            /// (`composite`) で描く (#1637・``BlendStates/drawing(_:)``)。**列を選ぶのはここ 1 か所**で、
+            /// 3 本一組で描く経路も、特化した 1 本を選ぶ経路 (``ShapePipeline/SolidVariantKey``・#1795) も
+            /// この列を通る — 例外を写し持つと、片方だけが直されて絵が割れる。
+            init(drawing batch: Canvas.Batch) {
+                self = batch.run.mode == .replace && batch.thinCoverage ? .composite : .init(batch.run.mode)
+            }
+
+            /// ``ShapePipeline/blendPlans(pixelFormat:label:vertexFunctionName:fragmentFunctionName:blendFragmentFunctionName:replaceFragmentFunctionName:formFlags:unlit:)``
+            /// が返す 3 本の中での位置。
+            var planIndex: Int {
+                switch self {
+                case .composite: 0
+                case .blend: 1
+                case .replace: 2
+                }
             }
         }
     }
@@ -121,6 +162,10 @@ final class ShapePipeline {
     static let numbersBufferIndex = 11
     /// 平面の頂点ごとの被覆を渡す口の番号 (シェーダ側の `buffer(12)`・#1637)。
     static let coverageBufferIndex = 12
+    /// 細い塗りの雛形の、記述の置き場を渡す口の番号 (シェーダ側の `buffer(13)`・#2208)。
+    static let thinFillBufferIndex = 13
+    /// 細い塗りの雛形の、置き場所ごとの記述の先頭と数を渡す口の番号 (シェーダ側の `buffer(14)`・#2208)。
+    static let thinFillSpanBufferIndex = 14
     /// 読む面を渡す口の番号 (シェーダ側の `texture(0)`)。
     static let textureIndex = 0
     /// 焼き付けた影を渡す口の番号 (シェーダ側の `texture(1)`)。
@@ -137,7 +182,7 @@ final class ShapePipeline {
 
     /// 引数のテーブルに束ねられる置き場の数。上の口の番号はすべてこれより小さい
     /// (`ShaderInterfaceTests` が、入口の関数が宣言する番号と突き合わせる)。
-    static let bufferBindCount = 13
+    static let bufferBindCount = 15
     /// 引数のテーブルに束ねられる面の数。利用者の面の口が最後に並ぶ。
     static let textureBindCount = surfaceTextureIndex + surfaceCapacity
 
@@ -181,26 +226,191 @@ final class ShapePipeline {
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
-    private let formStatesByFlags: [UInt32: BlendStates]
+    ///
+    /// ## 組むのは使うときで、1 本ずつ ([#3114])
+    ///
+    /// 組は 12 組 × 3 本 = 36 本あり、全部を ``Canvas`` を作るときに組むと、Metal のコンパイルの
+    /// キャッシュが無いとき (版を上げた直後・初めて開く `.app`) に起動が 1.5 秒延びた (#2991)。
+    /// 旗の組は絵の中身で決まり、混ぜ方も絵ごとなので、1 つの絵が使う組は数本しかない。
+    /// **最初にその旗・その混ぜ方で描くフレームの頭 (``Canvas`` の溜めた列の用意) で組み、
+    /// 控えて使い回す。** 起動で組むのは ``defaultFormKey`` の 1 本だけ。
+    ///
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
+    private let formPipelines: Mutex<[FormKey: any MTLRenderPipelineState]>
+
+    /// 立体の塗りを、列の中身に合わせて特化したパイプライン ([#1795]・[#2366])。
+    ///
+    /// 立体の塗りの既定の組 (``solidStates``・``unitShapeStates``) は、光・周囲・背景のどれも通り、
+    /// 混ぜ方ごとに固定機能のブレンドを付けた形で組む。列の中身が分かれば、その組より軽い組で描ける:
+    ///
+    /// - **光も周囲も置かない列** (``SolidVariantKey/unlit``・#1795): 光の枝を function constant で
+    ///   外す。枝は必ず偽なので画素は変わらず、塗りが律速の場面で断片の費用だけが減る
+    /// - **不透明と CPU で分かる列** (``SolidVariantKey/opaque``・#2366): ブレンドを外す。Apple GPU
+    ///   (TBDR) の隠面除去は、遮る側になれるのがブレンドなし・捨てなしの断片だけなので、奥から手前へ
+    ///   重ねても隠れた層の断片を走らせずに済む。α がちょうど 1 の source-over と書き込みは一致する
+    ///
+    /// **組むのは使うときに 1 本ずつ** (基本図形と同じ・[#3114]) で、起動では 1 本も組まない。
+    /// 特化できる列の無い絵は、1 本も組まない。
+    ///
+    /// **組めなかった鍵は控えて、組み直さない。** 描く側は、組めなかった鍵の列を既定の組 (起動で
+    /// 組み済み・画素は同じ) で描く。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
+    private let solidVariantPipelines: Mutex<SolidVariantPipelines>
+
+    /// ``solidVariantPipelines`` の中身。
+    struct SolidVariantPipelines {
+        var built: [SolidVariantKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵と、その失敗。毎フレーム組み直さない。失敗まで持つのは、控えがデバイスで共有なので、
+        /// 組もうとしなかった 2 つ目以降のキャンバスにも「組めていない」と言わせるため。
+        var failed: [SolidVariantKey: RenderFailure] = [:]
+        /// 検査が組む失敗を差し込む口 (``failBuildingSolidVariantsForTesting(_:)``)。製品では常に `nil`。
+        var failureForTesting: RenderFailure?
+    }
+
+    /// 特化した立体の塗りのパイプライン 1 本の鍵。
+    struct SolidVariantKey: Hashable, Sendable {
+        /// 単位の形の頂点関数 (``unitShapeVertexFunctionName``) で組むか。偽なら ``solidVertexFunctionName``。
+        let isUnitShape: Bool
+        /// 光の枝を外すか (#1795)。
+        let unlit: Bool
+        /// ブレンドを外すか (#2366)。**重ねる列 (`.blend`) だけが不透明でありうる** ので、真の鍵の
+        /// 列は `blend` に決まる。
+        let opaque: Bool
+        /// **その列を描く列** (``BlendStates/Column/init(drawing:)``)。
+        let column: BlendStates.Column
+    }
+
+    /// 積む列が使う、特化した立体のパイプラインを、積む前に組み済みにして返す。
+    ///
+    /// **投げない。** 組めなかった鍵は返す辞書に載せず (``SolidVariantPreparation/failure`` に最初の失敗を持たせる)、
+    /// 描く側が既定の組へ戻る — 特化は速さだけを変えるので、組めないことでフレームを落とさない。
+    /// **組むときは錠を持たない** (コンパイルの間、ほかの読み手を止めない)。
+    func prepareSolidVariants(_ keys: [SolidVariantKey]) -> SolidVariantPreparation {
+        var preparation = SolidVariantPreparation()
+        for key in keys where preparation.states[key] == nil {
+            let lookup = solidVariantPipelines.withLock { pipelines -> SolidVariantLookup in
+                if let state = pipelines.built[key] { return .built(state) }
+                if let failure = pipelines.failed[key] { return .failed(failure) }
+                return .missing(pipelines.failureForTesting)
+            }
+            switch lookup {
+            case .built(let state):
+                preparation.states[key] = state
+            case .failed(let failure):
+                // 組み直さない。ただし、このキャンバスにも 1 度言えるよう、控えた失敗を返す
+                preparation.failure = preparation.failure ?? failure
+                continue
+            case .missing(let injected):
+                do throws(RenderFailure) {
+                    if let injected { throw injected }
+                    let state = try Self.makeSolidVariantState(
+                        compiler: compiler, vertexLibrary: vertexLibrary,
+                        unitShapeLibrary: unitShapeLibrary, pixelFormat: pixelFormat, key: key)
+                    // 同時に組んだ側があれば、先に控えた 1 本を使う
+                    preparation.states[key] = solidVariantPipelines.withLock { pipelines in
+                        if let existing = pipelines.built[key] { return existing }
+                        pipelines.built[key] = state
+                        return state
+                    }
+                } catch {
+                    solidVariantPipelines.withLock { $0.failed[key] = error }
+                    preparation.failure = preparation.failure ?? error
+                }
+            }
+        }
+        return preparation
+    }
+
+    /// ``prepareSolidVariants(_:)`` が控えを引いた結果。
+    private enum SolidVariantLookup {
+        case built(any MTLRenderPipelineState)
+        case failed(RenderFailure)
+        case missing(RenderFailure?)
+    }
+
+    /// ``prepareSolidVariants(_:)`` の答え。
+    struct SolidVariantPreparation {
+        /// 組み済みの鍵と、その 1 本。
+        var states: [SolidVariantKey: any MTLRenderPipelineState] = [:]
+        /// 組めなかった鍵の最初の失敗。
+        var failure: RenderFailure?
+    }
+
+    /// 組み済みの特化した立体のパイプラインの本数 (検査用)。
+    var builtSolidVariantCount: Int { solidVariantPipelines.withLock { $0.built.count } }
+
+    /// 特化した立体のパイプラインを組むとき、この失敗を投げさせる (検査用・`nil` で戻す)。
+    /// 組めなかったときに既定の組で描き続けることを、検査から作る穴 (`failureForTesting` と同じ形)。
+    /// 公開はしない。
+    func failBuildingSolidVariantsForTesting(_ failure: RenderFailure?) {
+        solidVariantPipelines.withLock { $0.failureForTesting = failure }
+    }
+
+    /// 基本図形のパイプライン 1 本の鍵 — 旗の組と、混ぜ方の列。
+    struct FormKey: Hashable, Sendable {
+        let flags: UInt32
+        let column: BlendStates.Column
+    }
+
+    /// **起動で組む 1 本。** 既定の描き方 (塗りも輪郭もあり・重ねる) で `circle` を描く列 —
+    /// 楕円は縁が軸に斜めになりうる形なので、旗に斜めの縁が立つ。ほかは使うときに組む。
+    static let defaultFormKey = FormKey(
+        flags: FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.obliqueEdgesFlag,
+        column: .blend)
 
     /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
     /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
     /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)`` は輪郭の無い形に「含まない」と答える)。
-    static let formFlagCombinations: [UInt32] = [
-        FormInstance.fillsFlag, FormInstance.strokesFlag,
-        FormInstance.fillsFlag | FormInstance.strokesFlag,
-        FormInstance.fillsFlag | FormInstance.thinFillsFlag,
-        FormInstance.strokesFlag | FormInstance.thinFillsFlag,
-        FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
-    ]
+    ///
+    /// **縁が画素の軸に斜めになりうる形を含むか** (``FormInstance/obliqueEdgesFlag``・#2991) でも分かれ、
+    /// 上の 6 つのそれぞれに、斜めの縁の枝を残した組がある (12 組)。
+    static let formFlagCombinations: [UInt32] = {
+        let base: [UInt32] = [
+            FormInstance.fillsFlag, FormInstance.strokesFlag,
+            FormInstance.fillsFlag | FormInstance.strokesFlag,
+            FormInstance.fillsFlag | FormInstance.thinFillsFlag,
+            FormInstance.strokesFlag | FormInstance.thinFillsFlag,
+            FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.thinFillsFlag,
+        ]
+        return base + base.map { $0 | FormInstance.obliqueEdgesFlag }
+    }()
 
-    /// その旗の組で描くパイプラインの 3 本組。
-    func formStates(for flags: UInt32) -> BlendStates {
-        guard let states = formStatesByFlags[flags] else {
-            preconditionFailure("no form pipeline was built for the flag combination \(flags)")
+    /// その旗の組・その混ぜ方で描くパイプライン。**まだ組んでいなければここで組む** (#3114)。
+    ///
+    /// 組むのは数十 ms (キャッシュが無いとき) で、描くフレームの頭でそれを払う。
+    /// ``Canvas`` は積む前に ``prepareForms(_:)`` で組み済みにするので、積む側は組み済みの
+    /// 1 本を引くだけである (``builtFormState(for:mode:)``)。
+    func formState(for flags: UInt32, mode: BlendMode) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let key = FormKey(flags: flags, column: .init(mode))
+        return try formPipelines.withLock { (built) throws(RenderFailure) in
+            if let state = built[key] { return state }
+            let state = try Self.makeFormState(
+                compiler: compiler, vertexLibrary: vertexLibrary, pixelFormat: pixelFormat, key: key)
+            built[key] = state
+            return state
         }
-        return states
     }
+
+    /// 組み済みの 1 本。組んでいなければ ``prepareForms(_:)`` を呼び忘れている。
+    func builtFormState(for flags: UInt32, mode: BlendMode) -> any MTLRenderPipelineState {
+        let key = FormKey(flags: flags, column: .init(mode))
+        guard let state = formPipelines.withLock({ $0[key] }) else {
+            preconditionFailure(
+                "the form pipeline for flags \(flags) (\(key.column)) was not prepared before encoding")
+        }
+        return state
+    }
+
+    /// 積む列が使う基本図形のパイプラインを、積む前に組み済みにする。
+    func prepareForms(_ uses: some Sequence<(flags: UInt32, mode: BlendMode)>) throws(RenderFailure) {
+        for use in uses { _ = try formState(for: use.flags, mode: use.mode) }
+    }
+
+    /// いまの組み済みの本数 (検査用)。
+    var builtFormStateCount: Int { formPipelines.withLock { $0.count } }
 
     /// 平面の奥行きの扱い — **常に通し、書かない**。
     ///
@@ -269,20 +479,17 @@ final class ShapePipeline {
         self.shadowState = try Self.makeDepthOnlyState(
             compiler: compiler, vertexLibrary: library, label: "mokume.shadow",
             vertexFunctionName: Self.solidVertexFunctionName)
-        // 旗の組ごとに 1 組。旗 1 (塗りだけ)・2 (輪郭だけ)・3 (両方) と、それぞれに
-        // 1 画素より細い塗り・帯の細い穴の枝を残したもの (5・6・7)
-        var formStates: [UInt32: BlendStates] = [:]
-        for flags in Self.formFlagCombinations {
-            formStates[flags] = try Self.makeBlendStates(
-                compiler: compiler, vertexLibrary: library, fragmentLibrary: library,
-                pixelFormat: pixelFormat, label: "mokume.forms.\(flags)",
-                vertexFunctionName: Self.formVertexFunctionName,
-                fragmentFunctionName: Self.formFragmentFunctionName,
-                blendFragmentFunctionName: Self.formBlendFragmentFunctionName,
-                replaceFragmentFunctionName: Self.formReplaceFragmentFunctionName,
-                formFlags: flags)
-        }
-        self.formStatesByFlags = formStates
+        // 基本図形の組 (旗の組 12 × 混ぜ方 3 列) は使うときに 1 本ずつ組む (#3114)。
+        // ここで組むのは既定の描き方の 1 本だけ
+        let defaultKey = Self.defaultFormKey
+        self.formPipelines = Mutex([
+            defaultKey: try Self.makeFormState(
+                compiler: compiler, vertexLibrary: library, pixelFormat: pixelFormat,
+                key: defaultKey)
+        ])
+
+        // 光の枝を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
+        self.solidVariantPipelines = Mutex(SolidVariantPipelines())
 
         let flat = MTLDepthStencilDescriptor()
         flat.label = "mokume.depth.flat"
@@ -401,27 +608,74 @@ final class ShapePipeline {
         return BlendStates(built)
     }
 
+    /// 基本図形のパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ ``blendPlans`` を通り、
+    /// 旗の組と列だけを選ぶ。
+    private static func makeFormState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, pixelFormat: MTLPixelFormat,
+        key: FormKey
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let plans = blendPlans(
+            pixelFormat: pixelFormat, label: "mokume.forms.\(key.flags)",
+            vertexFunctionName: formVertexFunctionName,
+            fragmentFunctionName: formFragmentFunctionName,
+            blendFragmentFunctionName: formBlendFragmentFunctionName,
+            replaceFragmentFunctionName: formReplaceFragmentFunctionName, formFlags: key.flags)
+        return try plans[key.column.planIndex].makeNow(
+            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
+    }
+
+    /// 特化した立体の塗りのパイプライン 1 本をその場で組む。組み方は 3 本一組のときと同じ
+    /// ``blendPlans`` を通り、列だけを選ぶ。ブレンドを外す組 (``SolidVariantKey/opaque``) は、重ねる列の
+    /// 断片 (下地を読まず、捨てもしない) をブレンドなしで組む ([#1795]・[#2366])。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    private static func makeSolidVariantState(
+        compiler: any MTL4Compiler, vertexLibrary: any MTLLibrary, unitShapeLibrary: any MTLLibrary,
+        pixelFormat: MTLPixelFormat, key: SolidVariantKey
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        let vertexFunctionName =
+            key.isUnitShape ? unitShapeVertexFunctionName : solidVertexFunctionName
+        var label = key.isUnitShape ? "mokume.unit-shapes" : "mokume.solids"
+        if key.unlit { label += ".unlit" }
+        let plan: StatePlan
+        if key.opaque {
+            plan = Self.plan(
+                label: label + ".opaque", vertexFunctionName: vertexFunctionName,
+                fragmentFunctionName: flatDirectFragmentFunctionName, sourceOver: false,
+                formFlags: nil, unlit: key.unlit, pixelFormat: pixelFormat)
+        } else {
+            plan = blendPlans(
+                pixelFormat: pixelFormat, label: label, vertexFunctionName: vertexFunctionName,
+                unlit: key.unlit)[key.column.planIndex]
+        }
+        // 頂点関数は単位の形だけ別のライブラリにあり、断片はどちらも Shapes にある
+        return try plan.makeNow(
+            compiler: compiler, vertexLibrary: key.isUnitShape ? unitShapeLibrary : vertexLibrary,
+            fragmentLibrary: vertexLibrary)
+    }
+
     /// 3 本の組み方。`composite`・`blend`・`replace` の順 (``BlendStates/init(_:)`` が読む順)。
     private static func blendPlans(
         pixelFormat: MTLPixelFormat, label: String, vertexFunctionName: String,
         fragmentFunctionName: String = ShapePipeline.flatFragmentFunctionName,
         blendFragmentFunctionName: String = ShapePipeline.flatDirectFragmentFunctionName,
         replaceFragmentFunctionName: String = ShapePipeline.flatReplaceFragmentFunctionName,
-        formFlags: UInt32? = nil
+        formFlags: UInt32? = nil, unlit: Bool = false
     ) -> [StatePlan] {
         [
             plan(
                 label: label, vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: fragmentFunctionName, sourceOver: false,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
             plan(
                 label: "\(label).blend", vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: blendFragmentFunctionName, sourceOver: true,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
             plan(
                 label: "\(label).replace", vertexFunctionName: vertexFunctionName,
                 fragmentFunctionName: replaceFragmentFunctionName, sourceOver: false,
-                formFlags: formFlags, pixelFormat: pixelFormat),
+                formFlags: formFlags, unlit: unlit, pixelFormat: pixelFormat),
         ]
     }
 
@@ -431,6 +685,9 @@ final class ShapePipeline {
     static let formHasStrokeConstantIndex = 1
     /// 1 画素より細い塗りを含むかを渡す function constant の番号 (シェーダ側の `kFormHasThinFill`)。
     static let formHasThinFillConstantIndex = 2
+    /// 縁が画素の軸に斜めになりうる形を含むかを渡す function constant の番号 (シェーダ側の
+    /// `kFormHasObliqueEdge`・#2991)。
+    static let formHasObliqueEdgeConstantIndex = 3
     /// 光と周囲を受けうるかを渡す function constant の番号 (シェーダ側の `kShapeLitValue`)。
     /// 利用者の断片が宣言する番号と重ならないよう、大きく取ってある。
     static let shapeLitConstantIndex = 65000
@@ -473,15 +730,17 @@ final class ShapePipeline {
     ///
     /// - 基本図形の断片 (`formFlags` あり) は旗だけを受け取り、`kShapeLitValue` を読まない
     /// - 三角形の経路の断片は光の有無だけを受け取り、`kFormHas*` を読まない
-    ///   (値は ``shapeLit(forVertexFunction:)``)
+    ///   (値は ``shapeLit(forVertexFunction:)``。**`unlit` は、光も周囲も置かない列だと呼ぶ側が
+    ///   言い切れるとき**で、頂点関数が枝を残す立体の塗りも枝を外して組む・[#1795])
     ///
     /// [#2293]: https://github.com/mokume-metal/mokume/issues/2293
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
     static func fragmentConstants(
-        vertexFunctionName: String, formFlags: UInt32?
+        vertexFunctionName: String, formFlags: UInt32?, unlit: Bool = false
     ) -> FragmentConstants {
         FragmentConstants(
             formFlags: formFlags,
-            lit: formFlags == nil ? shapeLit(forVertexFunction: vertexFunctionName) : nil)
+            lit: formFlags == nil ? !unlit && shapeLit(forVertexFunction: vertexFunctionName) : nil)
     }
 
     /// 断片を旗の組と光の有無で特化する記述。
@@ -537,6 +796,7 @@ final class ShapePipeline {
             values.append(.init(index: formHasFillConstantIndex, value: (formFlags & FormInstance.fillsFlag) != 0))
             values.append(.init(index: formHasStrokeConstantIndex, value: (formFlags & FormInstance.strokesFlag) != 0))
             values.append(.init(index: formHasThinFillConstantIndex, value: (formFlags & FormInstance.thinFillsFlag) != 0))
+            values.append(.init(index: formHasObliqueEdgeConstantIndex, value: (formFlags & FormInstance.obliqueEdgesFlag) != 0))
         }
         if let lit = constants.lit {
             values.append(.init(index: shapeLitConstantIndex, value: lit))
@@ -678,13 +938,14 @@ final class ShapePipeline {
 
     private static func plan(
         label: String, vertexFunctionName: String, fragmentFunctionName: String,
-        sourceOver: Bool, formFlags: UInt32?, pixelFormat: MTLPixelFormat
+        sourceOver: Bool, formFlags: UInt32?, unlit: Bool, pixelFormat: MTLPixelFormat
     ) -> StatePlan {
         StatePlan(
             label: label, vertexFunctionName: vertexFunctionName,
             fragmentFunctionName: fragmentFunctionName,
             specialization: specializationValues(
-                fragmentConstants(vertexFunctionName: vertexFunctionName, formFlags: formFlags)),
+                fragmentConstants(
+                    vertexFunctionName: vertexFunctionName, formFlags: formFlags, unlit: unlit)),
             sourceOver: sourceOver, pixelFormat: pixelFormat)
     }
 

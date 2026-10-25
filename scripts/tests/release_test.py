@@ -99,7 +99,8 @@ class NotesTests(unittest.TestCase):
     def test_drops_the_license_header(self):
         notes = release.notes([self.fragment("a.feature.md", "足した")])
         self.assertNotIn("SPDX", notes)
-        self.assertIn("- 足した", notes)
+        self.assertIn("足した", notes)
+        self.assertNotIn("- 足した", notes)
 
     def test_keeps_entries_with_an_unknown_category(self):
         # 知らない分類を落とすと「書いたのにノートに出ない」が黙って起きる
@@ -107,76 +108,52 @@ class NotesTests(unittest.TestCase):
         self.assertIn("塞いだ", notes)
 
 
-def lines_outside_their_item(notes: str) -> list[str]:
-    """箇条書きの外へ出てしまった行 (#446)。
+class EntryTests(unittest.TestCase):
+    """項目は箇条書きに入れず、畳みと段落を空行で区切って並べる (#3011)。"""
 
-    CommonMark / GFM は、リストの中で**空行のあとに列 0 から始まる行**が来たところで
-    リストを終える。その行は書いた人の意図では項目の中身なので、外に出ていたら壊れて
-    いる。見出しと、次の項目そのものは対象外。
-    """
-    escaped: list[str] = []
-    in_list = False
-    after_blank = False
-    for line in notes.split("\n"):
-        if line.startswith("## "):
-            in_list = False
-        elif line.startswith("- "):
-            in_list = True
-        elif line.strip() and in_list and after_blank and not line.startswith(" "):
-            escaped.append(line)
-        after_blank = not line.strip()
-    return escaped
+    def test_a_single_sentence_entry_is_a_paragraph(self):
+        self.assertEqual(release.as_entry("足した。"), "足した。")
 
+    def test_a_hard_wrapped_single_sentence_is_kept_as_written(self):
+        self.assertEqual(release.as_entry("折り返した\n続き。"), "折り返した\n続き。")
 
-class ListItemTests(unittest.TestCase):
-    """本文を 1 つの項目に収める (#446)。"""
-
-    def test_a_single_paragraph_entry_is_untouched(self):
-        # 直す前の出力と 1 文字も変わらないこと。v0.1.0 のノートは全件この形だった
-        self.assertEqual(release.as_list_item("足した。"), "- 足した。")
-
-    def test_a_multi_paragraph_entry_stays_in_its_item(self):
+    def test_a_multi_paragraph_entry_folds_without_a_list_or_indent(self):
         self.assertEqual(
-            release.as_list_item("1 段落目。\n\n2 段落目。"),
-            "- <details><summary>1 段落目。</summary>\n"
+            release.as_entry("1 段落目。\n\n2 段落目。"),
+            "<details><summary>1 段落目。</summary>\n"
             "\n"
-            "  2 段落目。\n"
+            "2 段落目。\n"
             "\n"
-            "  </details>",
-        )
-
-    def test_a_hard_wrapped_paragraph_stays_in_its_item(self):
-        self.assertEqual(
-            release.as_list_item("折り返した\n続き。"), "- 折り返した\n  続き。"
+            "</details>",
         )
 
     def test_a_blank_line_carries_no_trailing_space(self):
-        for line in release.as_list_item("上。\n\n下。").split("\n"):
+        for line in release.as_entry("上。\n\n下。").split("\n"):
             self.assertEqual(line, line.rstrip())
 
-    def test_the_detector_catches_the_shape_this_bug_produced(self):
-        # 検出器そのものが効いていることを、壊れた形を直に渡して見る。
-        # これが空を返すなら、下の本物の断片に対する検査も何も見ていない
-        broken = "## 新機能\n\n- 1 段落目。\n\n2 段落目。\n- 次の項目。\n"
-        self.assertEqual(lines_outside_their_item(broken), ["2 段落目。"])
+    def test_entries_are_separated_by_a_blank_line(self):
+        # 区切らないと、`</details>` の後の段落が HTML の塊に呑まれて Markdown として描かれない
+        self.assertEqual(
+            release.entries_of(["上。続き。", "下。"]),
+            "<details><summary>上。</summary>\n\n続き。\n\n</details>\n\n下。",
+        )
 
-    def test_the_detector_passes_a_well_formed_list(self):
-        fixed = "## 新機能\n\n- 1 段落目。\n\n  2 段落目。\n- 次の項目。\n"
-        self.assertEqual(lines_outside_their_item(fixed), [])
-
-    def test_no_real_fragment_escapes_its_item(self):
-        # 本物の changelog.d を材料にする。壊れ方は個々の断片ではなく、
-        # 断片と組み方の組み合わせで出るため
-        fragments = release.all_fragments()
-        self.assertGreater(len(fragments), 0, "断片が 1 つも読めていない")
-        escaped = lines_outside_their_item(release.notes(fragments))
-        self.assertEqual(escaped, [], f"{len(escaped)} 行が項目の外へ出ている")
+    def test_real_notes_carry_no_list_around_the_folds(self):
+        # 本物の changelog.d で組み、畳みが箇条書きに入らず、どの `</details>` の後も空行か
+        # 本文の終わりであること
+        lines = release.notes(release.all_fragments()).split("\n")
+        self.assertGreater(lines.count("</details>"), 0, "畳んだ項目が 1 つも無い")
+        self.assertEqual([line for line in lines if line.startswith("- <details>")], [])
+        unseparated = [
+            following for line, following in zip(lines, lines[1:])
+            if line == "</details>" and following.strip()
+        ]
+        self.assertEqual(unseparated, [], f"{len(unseparated)} 件の畳みの直後に空行が無い")
 
 
 def folded_body(item: str) -> str:
-    """畳んだ項目の、開いた中身 (2 桁の下げを戻したもの)。"""
-    inside = item[item.index("</summary>") + len("</summary>"): item.index("</details>")]
-    return "\n".join(line.removeprefix("  ") for line in inside.split("\n")).strip()
+    """畳んだ項目の、開いた中身。"""
+    return item[item.index("</summary>") + len("</summary>"): item.index("</details>")].strip()
 
 
 class InlineHtmlTests(unittest.TestCase):
@@ -235,30 +212,30 @@ class SummaryTests(unittest.TestCase):
         )
 
     def test_a_single_sentence_entry_is_not_folded(self):
-        self.assertNotIn("<details>", release.as_list_item("足した。"))
-        self.assertNotIn("<details>", release.as_list_item("足した。\n"))
+        self.assertNotIn("<details>", release.as_entry("足した。"))
+        self.assertNotIn("<details>", release.as_entry("足した。\n"))
 
     def test_the_summary_and_the_folded_body_make_the_whole_entry(self):
         # 開いた中身は要約の後から始まり、要約と合わせて全文になる (#2871)
         entry = "変えた。\n\n移行:\n\n- `a` は `b` へ\n- `c` は消えた"
-        item = release.as_list_item(entry)
-        self.assertTrue(item.startswith("- <details><summary>変えた。</summary>\n\n  移行:\n"))
+        item = release.as_entry(entry)
+        self.assertTrue(item.startswith("<details><summary>変えた。</summary>\n\n移行:\n"))
         self.assertEqual(folded_body(item), "移行:\n\n- `a` は `b` へ\n- `c` は消えた")
 
     def test_a_summary_cut_mid_paragraph_opens_on_the_rest_of_it(self):
-        item = release.as_list_item("足した。使い方はこう。\n\n次の段落。")
+        item = release.as_entry("足した。使い方はこう。\n\n次の段落。")
         self.assertEqual(folded_body(item), "使い方はこう。\n\n次の段落。")
 
     def test_no_item_carries_a_separate_label_line(self):
         # 「詳しく」の札の行は出ない。要約そのものが開く札になる (#2871)
-        item = release.as_list_item("変えた。続き。")
-        self.assertEqual(item.split("\n")[0], "- <details><summary>変えた。</summary>")
+        item = release.as_entry("変えた。続き。")
+        self.assertEqual(item.split("\n")[0], "<details><summary>変えた。</summary>")
         self.assertNotIn("詳しく", item)
 
     def test_real_summaries_carry_no_raw_markdown(self):
         # 本物の changelog.d で、`<summary>` に描かれない Markdown の記号が残らないこと
         rendered = release.notes(release.all_fragments())
-        summaries = re.findall(r"^- <details><summary>(.*?)</summary>$", rendered, flags=re.MULTILINE)
+        summaries = re.findall(r"^<details><summary>(.*?)</summary>$", rendered, flags=re.MULTILINE)
         self.assertGreater(len(summaries), 0, "畳んだ項目が 1 つも無い")
         raw = [s for s in summaries if re.search(r"\*\*|`|\]\(", re.sub(r"<code>.*?</code>", "", s))]
         self.assertEqual(raw, [], f"{len(raw)} 件の要約に Markdown の記号が残っている")
@@ -521,7 +498,7 @@ class PicturesTests(unittest.TestCase):
         # 断片だけのノートは、節を足す前と 1 文字も変わらない
         fragment = self.root / "a.feature.md"
         fragment.write_text("足した\n", encoding="utf-8")
-        self.assertEqual(release.notes([fragment], self.section()), "## 新機能\n\n- 足した\n")
+        self.assertEqual(release.notes([fragment], self.section()), "## 新機能\n\n足した\n")
 
     def test_the_section_follows_the_fragments(self):
         self.merge(10, "Sources/MokumeCore/Circle.swift", "![絵](https://i.gyazo.com/a.png)")

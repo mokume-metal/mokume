@@ -131,6 +131,11 @@ import MokumeDiagnostics
     /// 止まった発行口を溜める側に数える ([#2052])。土台の初期化子も、同じ時点から
     /// ``RenderFailure/gpuNotResponding`` で断る。
     ///
+    /// **別のプロセスの期限切れの記録 (`scripts/gpu-slot.py` の下・#2235) だけがあるときは、`true` を返す**
+    /// (発行口は作らない)。`false` にすると、`.enabled(if: RenderDevice.isAvailable, …)` の GPU の suite が
+    /// 「GPU が無い実行環境」として全部飛び、`swift test` が緑で終わる。名乗って止まるのは、土台の初期化子が
+    /// ``RenderFailure/gpuNotResponding`` で断って suite が赤になる形である。
+    ///
     /// [ADR-0009]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0009-platform-floor-and-toolchain.md
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     public nonisolated static var isAvailable: Bool {
@@ -140,6 +145,11 @@ import MokumeDiagnostics
     /// ``isAvailable`` の中身。発行口の関所を差し替えられる形で、検査はここを呼ぶ。
     nonisolated static func isAvailable(on device: (any MTLDevice)?, through gate: CommandQueueGate) -> Bool {
         guard let device else { return false }
+        // **記録だけがあるときは、装置が在ると答える** (発行口は作らない・#2235)。`.enabled(if: isAvailable)` の
+        // GPU の suite が、記録のせいで「GPU が無い実行環境」として全部飛ぶと、`swift test` が 0 で終わって緑に
+        // なる。止まるのは名乗って赤にする形でなければならない — 土台を作る所 (`makeQueue`) が
+        // ``RenderFailure/gpuNotResponding`` で断るので、suite は走って赤になる。自分の印は、今までどおり偽
+        if gate.onlyAnotherRunsRecord { return true }
         return (try? gate.makeQueue(on: device)) != nil
     }
 
@@ -179,6 +189,10 @@ import MokumeDiagnostics
     /// ([#728](https://github.com/mokume-metal/mokume/issues/728))。
     let shaders: ShaderLibraries
 
+    /// ``Image/filtered(_:)`` の作業の面の置き場。**弱くしか持たない** — 面は GPU を強く持つので、強く持つと
+    /// 循環する (``FilterWorkspaces``)。
+    let filterWorkspaces = FilterWorkspaces()
+
     /// 組み込みの図形のパイプライン。出力形式ごとに 1 つ、最初に頼まれたときに組む ([#2785])。
     ///
     /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
@@ -187,8 +201,10 @@ import MokumeDiagnostics
     /// 組み込みの図形を描くパイプライン。**この GPU の上で出力形式ごとに 1 度だけ組み、面が分け合う**
     /// ([#2785])。
     ///
-    /// 面を作るたびに組み直していたものは、組み込みのライブラリ 2 本とパイプライン 33 本で、面の寸法にも
+    /// 面を作るたびに組み直していたものは、組み込みのライブラリ 2 本とパイプラインで、面の寸法にも
     /// 内容にも依らない。最初の面が払う生成はそのまま残る — 遅らせて描画中の停止へ移さない。
+    /// **例外は基本図形の旗の組 (12 組 × 3 本)** で、全部を組むとキャッシュの無い起動が 1.5 秒延びる
+    /// ので、使うフレームの頭で 1 本ずつ組む ([#3114])。
     /// **組めたものだけを控える**ので、失敗したときは次の面がもう 1 度試す。
     ///
     /// 抱えるのはこの GPU が生きている間だけで、GPU を畳めば一緒に畳まれる。パイプラインは
@@ -196,6 +212,7 @@ import MokumeDiagnostics
     /// (``ShaderLibraries`` の型の説明と同じ理由)。
     ///
     /// [#2785]: https://github.com/mokume-metal/mokume/issues/2785
+    /// [#3114]: https://github.com/mokume-metal/mokume/issues/3114
     func shapePipeline(pixelFormat: MTLPixelFormat) throws(RenderFailure) -> ShapePipeline {
         if let made = shapePipelines[pixelFormat] { return made }
         let pipeline = try ShapePipeline(gpu: self, pixelFormat: pixelFormat)
@@ -456,6 +473,71 @@ import MokumeDiagnostics
     /// [#1594]: https://github.com/mokume-metal/mokume/issues/1594
     private let completionNotices = CoalescedNotices()
 
+    /// 投入ごとの GPU の始めと終わりの時刻の記録 ([#2378])。ハンドラが書き、main actor が読む。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    private let gpuTimes = GPUTimeLog()
+
+    /// フレームごとの最初の投入の番号。``markFrameStart()`` が積む。**直近の ``rememberedFrames`` 個まで。**
+    private var frameFirstSubmissions: [UInt64] = []
+    /// ``markFrameStart()`` を呼んだ回数。``GPUFrameTime/frame`` の数え方の元。
+    private var framesMarked = 0
+
+    /// 覚えておくフレームの区切りの数。フレームの幅を問うのは直近の数フレームだけなので小さい。
+    static let rememberedFrames = 64
+
+    /// 新しいフレームが始まる。**ここから先に投入するものが、そのフレームの投入である** ([#2378])。
+    ///
+    /// 区切りは番号を 1 つ控えるだけで、GPU も結末も待たない。投入の結末が届く前に呼ばれてよい。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    func markFrameStart() {
+        frameFirstSubmissions.append(submissionCount + 1)
+        framesMarked += 1
+        if frameFirstSubmissions.count > Self.rememberedFrames {
+            frameFirstSubmissions.removeFirst(frameFirstSubmissions.count - Self.rememberedFrames)
+        }
+    }
+
+    /// 1 フレームの GPU 時間 (投入の幅)。
+    struct GPUFrameTime: Equatable {
+        /// ``markFrameStart()`` を呼んだ順の番号 (最初のフレームが 1)。
+        let frame: Int
+        /// そのフレームの投入の `min(start)`〜`max(end)`。
+        let span: GPUTimeLog.Span
+
+        /// 幅 (ミリ秒)。**投入の幅であって、GPU の稼働時間でも使用率でもない**
+        /// (投入と投入の隙間を含む・``GPUTimeLog``)。
+        var milliseconds: Double { span.width * 1000 }
+    }
+
+    /// 結末が揃っている完了フレームの GPU 時間を、古いほうから並べたもの ([#2378])。
+    /// **問い合わせるだけで待たない。** 直近 ``rememberedFrames`` 個のフレームのうち、揃っているものだけ。
+    ///
+    /// 「完了フレーム」は、次のフレームが始まった (``markFrameStart()``) フレームである — 進行中の
+    /// フレームには、まだ投入が増えうる。**値は 1〜2 フレーム遅れて揃う** (結末は投入より後に届く)
+    /// ので、直近のフレームは含まれないことがある。投入の無かったフレーム (止めている間など)・結末が
+    /// 揃っていないフレームは飛ばす。内部の数で、公開せず、観測の報告にも出さない (#2534)。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    var completedGPUFrameTimes: [GPUFrameTime] {
+        let marks = frameFirstSubmissions
+        guard marks.count >= 2 else { return [] }
+        var times: [GPUFrameTime] = []
+        for index in 0..<(marks.count - 1) {
+            guard let span = gpuTimes.span(of: marks[index]..<marks[index + 1]) else { continue }
+            // 控えの先頭が何番目のフレームかは、積んだ回数と控えの数から出る
+            times.append(GPUFrameTime(frame: framesMarked - marks.count + index + 1, span: span))
+        }
+        return times
+    }
+
+    /// 結末が揃っている最も新しい完了フレームの GPU 時間 ([#2378])。**待たない。**
+    /// ``completedGPUFrameTimes`` の最後。
+    ///
+    /// [#2378]: https://github.com/mokume-metal/mokume/issues/2378
+    var lastGPUFrameTime: GPUFrameTime? { completedGPUFrameTimes.last }
+
     /// 診断: 届いた完了の知らせの数 (投入の結末を受け取るハンドラが呼ばれた数)。
     var arrivedNoticeCount: Int { completionNotices.arrived }
 
@@ -517,7 +599,12 @@ import MokumeDiagnostics
     ) -> MTL4CommitOptions {
         let options = MTL4CommitOptions()
         options.addFeedbackHandler {
-            @Sendable [commandFaults, completionNotices, weak self] (feedback: any MTL4CommitFeedback) in
+            @Sendable [commandFaults, completionNotices, gpuTimes, weak self] (feedback: any MTL4CommitFeedback) in
+            // **GPU の時刻を記す** (#2378)。1 行で、待たず、main actor へも渡さない。結末の検査用の
+            // 差し込みとは独立に、届いたものを必ず記す
+            gpuTimes.note(
+                submission, start: feedback.gpuStartTime, end: feedback.gpuEndTime,
+                failed: feedback.error != nil)
             // **結末を記してから知らせを積む** (#2199)。知らせは main actor で記帳の取り消しを照会する
             // (`releaseOnNotice`) ので、先に積むと、記す前に走って結末を「まだ」と読み、取り消しが次の照会
             // まで遅れる。頭で照会しない口 (止まっている間の追い付き・出す先を読む口) は、知らせの照会に頼る。
@@ -710,13 +797,16 @@ import MokumeDiagnostics
     ///
     /// **発行口は解放せず、関所へ返す** ([#2054])。待ちを済ませてから手放しても、発行口を解放した
     /// 直後に同じプロセスの別の土台へ投入した仕事が、GPU の hang や page fault で打ち切られた。
-    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:)``)。
+    /// 関所は、後から何本かが手放されるまで解放を遅らせる (``CommandQueueGate/retire(_:pastDeadline:)``)。
     /// 返す前に常駐の集合を発行口から外す。付けたままだと、遅らせている間、この土台の資源まで
     /// 生き延びる。**待ちが期限を越えたときは外さない** — 実行中のコマンドが踏んでいる集合を外すと、
-    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。
+    /// その結果が未定義になる (``releaseResidency(of:)`` と同じ)。**期限を越えて手放した発行口は、
+    /// 環にも入れない** — 後から別の土台が手放されても押し出されず、プロセスの終わりまで関所が持つ
+    /// ([#2235])。実行中の仕事を載せたまま集合ごと解放しないためである。
     ///
     /// [#2052]: https://github.com/mokume-metal/mokume/issues/2052
     /// [#2054]: https://github.com/mokume-metal/mokume/issues/2054
+    /// [#2235]: https://github.com/mokume-metal/mokume/issues/2235
     isolated deinit {
         var finished = isIdle
         if !finished {
@@ -730,7 +820,8 @@ import MokumeDiagnostics
             queue.removeResidencySet(residencySet)
             queue.removeResidencySet(drawableResidency)
         }
-        queueGate.retire(queue)
+        // 期限切れの枝は、環に入れずプロセスの終わりまで持たせる (#2235)
+        queueGate.retire(queue, pastDeadline: !finished)
     }
 
     // MARK: - リソース
@@ -1062,18 +1153,32 @@ import MokumeDiagnostics
     private func signalReached(_ value: UInt64, while wait: CommandQueueGate.Wait) -> Bool {
         let milliseconds = UInt64((signalWaitLimit / .milliseconds(1)).rounded(.up))
         guard !completion.wait(untilSignaledValue: value, timeoutMS: milliseconds) else { return true }
-        if queueGate.close(after: wait, limit: signalWaitLimit), unansweredSubmissionsForTesting == 0 {
-            Diagnostics.warn(Self.closingNotice(after: wait, limit: signalWaitLimit))
+        // 検査の差し込み (答えの来ない投入) の期限切れは、知らせと同じく記録も書かない (#2235)
+        if queueGate.close(
+            after: wait, limit: signalWaitLimit, writesRecord: unansweredSubmissionsForTesting == 0),
+            unansweredSubmissionsForTesting == 0
+        {
+            Diagnostics.warn(
+                Self.closingNotice(
+                    after: wait, limit: signalWaitLimit,
+                    record: queueGate.expiryRecordExists ? queueGate.expiryRecordPath?.path : nil))
         }
         return false
     }
 
     /// 関所に印を立てた時に出す 1 行。**どちらの場合もありうると名乗り、起こし直すよう促す**
     /// (上の ``signalReached(_:while:)``)。
-    static func closingNotice(after wait: CommandQueueGate.Wait, limit: Duration) -> String {
-        "Waiting for the GPU went past \(limit) while \(wait.phrase). That can be one frame drawing too much or a GPU"
+    ///
+    /// - Parameter record: `scripts/gpu-slot.py` の下で記録を書いたなら、その置き場。**記録は起こし直しでは
+    ///   消えず、人が GPU の答えを確かめて消すまで、以後の検査・計測が止まる**と言い、起こし直せとは言わない (#2235)。
+    static func closingNotice(after wait: CommandQueueGate.Wait, limit: Duration, record: String? = nil) -> String {
+        let head =
+            "Waiting for the GPU went past \(limit) while \(wait.phrase). That can be one frame drawing too much or a GPU"
             + " that stopped answering, and the two look the same from here, so from now on this process sets up no"
-            + " new drawing foundation — start it again to set one up"
+            + " new drawing foundation"
+        guard let record else { return head + " — start it again to set one up" }
+        return head + ", and tests and measurements started by gpu-slot.py stop too until a person checks that the GPU"
+            + " answers and deletes the record (\(record)) — starting this process again does not remove it"
     }
 
     /// 指定した置き場から投入したコマンドが終わるまで待つ。
@@ -1149,12 +1254,18 @@ import MokumeDiagnostics
     ///
     /// **緩めてよいのは、どの投入が書いたかを自分で憶えているものだけである。** いま
     /// 名指しできるのは 2 つ — フレームごとに書く置き場の環 (#754) と、出口へ渡す絵
-    /// ([#927])。数の並びと画像 (粒を含む) は、書く口が待たずに控えを積み、描き切りが
-    /// 環に載った置き場から GPU 側のコピーで届ける ([#749]) ので、ここにもどこにも
-    /// 待ちを持たない。字形の面は今までどおり ``settle()`` で全完了を待つ — どの投入に
-    /// 属するかを名乗れないものは、いつ読まれ終わるかも名乗れない。
+    /// ([#927])。数の並びと画像 (粒を含む)・字形の面は、書く口が待たずに控えを積み、
+    /// 描き切りが環に載った置き場から GPU 側のコピーで届ける ([#749]・[#1792]) ので、**書く口は**
+    /// 名指しの待ちを持たない。字形の面は以前、全完了を待って直に書いていた — どの投入に属するかを
+    /// 名乗れないものは、いつ読まれ終わるかも名乗れない。いまは画像と同じ扱いで、焼く口は待たない。
+    ///
+    /// **全完了を待つ口は、控えの側に 2 つ残る** (``settle()``)。控えに載せられない大きさの逃げ道
+    /// (``PendingUpload/uploadDirectly()``・字形の頁は積みすぎたときも) と、控えの置き場が足りなくて
+    /// 取り直すとき (``GrowableBuffer``・置き場は縮まないので、育ちきった後は起きない)。どちらも
+    /// 起きる回数に上限がある。
     ///
     /// [#749]: https://github.com/mokume-metal/mokume/issues/749
+    /// [#1792]: https://github.com/mokume-metal/mokume/issues/1792
     /// [#754]: https://github.com/mokume-metal/mokume/issues/754
     /// [#927]: https://github.com/mokume-metal/mokume/issues/927
     func waitForSubmission(_ submission: UInt64) throws(RenderFailure) {
@@ -1391,7 +1502,8 @@ import MokumeDiagnostics
     ///
     /// **毎フレーム書く口はこれを通らない。** 数の並びと画像は控えを積むだけで、描き切りが
     /// GPU 側のコピーで届ける ([#749])。ここを通るのは、控えに載せられないほど大きい
-    /// 書き込みの逃げ道と、読み戻しの口 (描き切りを通らない) と、字形の面である。
+    /// 書き込みの逃げ道 (字形の面の、積みすぎた控えも含む) と、読み戻しの口 (描き切りを通らない) である。
+    /// 控えの置き場を取り直すとき (``GrowableBuffer``) も、取り直す前に全完了を待つ。
     ///
     /// **`@discardableResult` は付けない。** 返り値を捨てるには `_ =` と書くことになり、
     /// 「待たずに書いた」経路が字面に残る。

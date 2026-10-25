@@ -274,7 +274,7 @@ struct ParameterEnumStoreTests {
 struct ParameterStepTests {
     final class Dense: Sketch {
         @Param(0...1, step: 0.05) var density: Double = 0.4
-        @Param(-1...1, step: 0.25) var drift: SIMD2<Float> = SIMD2(0, 0)
+        @Param(-1...1, step: 0.25) var drift: Vector2 = Vector2(0, 0)
         @Param(0...8) var weight: Float = 2
         @Param(1...8) var count: Int = 3
     }
@@ -345,8 +345,8 @@ struct ParameterStepTests {
         let sketch = Dense()
         sketch.density = 0.37
         #expect(sketch.density == 0.37)
-        sketch.drift = SIMD2(0.1, -0.9)
-        #expect(sketch.drift == SIMD2(0.1, -0.9))
+        sketch.drift = Vector2(0.1, -0.9)
+        #expect(sketch.drift == Vector2(0.1, -0.9))
     }
 
     private func makeFile() throws -> URL {
@@ -407,7 +407,7 @@ struct ParameterStepTests {
         #expect(flag.warnings.hasWarned(.step))
         // 実数の組は付けられる
         let pair = ParamBox(
-            name: "p", value: SIMD2<Float>(0, 0), range: ParamRange(-1...1), step: 0.25)
+            name: "p", value: Vector2(0, 0), range: ParamRange(-1...1), step: 0.25)
         #expect(pair.step == 0.25)
     }
 

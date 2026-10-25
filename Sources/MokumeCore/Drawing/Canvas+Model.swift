@@ -83,7 +83,32 @@ extension Canvas {
     /// 両方に効く。
     private func remember(_ model: Model, path: String, normalize: Bool) -> Model {
         modelCache.insert(model, for: ModelRequest(path: path, normalize: normalize))
+        noteMalformed(model, path: path)
         return model
+    }
+
+    /// 壊れて読み飛ばしたものがあれば、そのファイルにつき 1 度知らせる (#2565)。
+    ///
+    /// SVG の ``noteSkipped(_:path:)`` と同じ形で、`loadModel`・`requestModel` のどちらもここを通る。
+    /// **意図して読まない行 (`mtllib` など) は知らせない** — 書き出したファイルにはほぼ必ずあり、鳴ると壊れた
+    /// 行と見分けられない。``Model/skippedLines`` の値はそのままである。
+    private func noteMalformed(_ model: Model, path: String) {
+        guard !model.malformed.isEmpty else { return }
+        warnOnce(.modelSkipped(path: path), Self.modelSkippedNotice(model, path: path))
+    }
+
+    /// 壊れて読み飛ばしたものの知らせ。**何を・何回・最初はどの行か**を並べる。
+    static func modelSkippedNotice(_ model: Model, path: String) -> String {
+        let listing = model.malformed.map { note in
+            switch (note.count, note.line) {
+            case (1, let line?): "\(note.what) (line \(line))"
+            case (_, let line?): "\(note.what) (\(note.count) times, first at line \(line))"
+            case (1, nil): note.what
+            case (_, nil): "\(note.what) (\(note.count) times)"
+            }
+        }.joined(separator: ", ")
+        return "\"\(path)\": read the model, but skipped what looks broken: \(listing). "
+            + "Lines mokume does not read on purpose (mtllib, usemtl, o, g, s and the like) are not reported"
     }
 
     /// 面が 1 つも無いモデルを置いたことを、初回だけ知らせる。

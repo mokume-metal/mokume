@@ -27,6 +27,8 @@ import simd
 /// | 線の半画素の寄せ | ``Outline/thickLine``・``Outline/thickQuad`` | 形 |
 /// | 線・輪郭・点の太さ (距離関数の経路・#1488) | ``Amount/line``・``Amount/rectOutline``・``Amount/point`` | 量 |
 /// | 細い塗り (距離関数の経路・#1477) | ``Amount/thinFill`` | 量 |
+/// | 45° に回した細い線・塗り・点 (距離関数の経路・#2226) | ``Amount/diagonalLine`` ほか、`diagonal` の行すべて | 量 (±5%) |
+/// | 斜めの縁・細い枝の境目 (距離関数の経路・#2991) | `ExactEdgeCoverageTests` (回した輪郭・線を 16 通りの置き方で面積の 1 ± 0.03・境目の両側の差 0.01 以下) | 量 |
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
 /// | 効果の半径 (#1545) | ``Outline/blur`` | 形 (2 つの濃さで切る) |
@@ -42,7 +44,7 @@ import simd
 ///
 /// - **量** (太さ・面積の口): 描く面 (`Canvas.target`) の線形の値を足す。線は、線を横切る列の
 ///   和が「太さ × 細かさ」の ±10%、点と軸に沿わない塗りは全体の和が「面積 × 細かさの 2 乗」の
-///   ±10%。置く位置を
+///   ±10% (45° に回した ``Amount/diagonalLine`` ほかは ±5%・楕円は ±6%)。置く位置を
 ///   出す画素で 0.5 ずつ (描く画素で 0.25 ずつ) ずらして、どの位置でも成り立つことを見る
 ///   (細かさ 1 の 1 画素より細い線も、同じ式で見る — `strokeWeight` の説明は経路も細かさも
 ///   限らない)
@@ -86,6 +88,12 @@ struct DensityInvarianceTests {
         case rectOutline = "rect の輪郭 (距離関数)"
         case point = "point (距離関数)"
         case thinFill = "細い塗り (距離関数)"
+        // 45° に回した細い形 (#2226)。置く位置で光の量が振れないことを、回さない行より狭い幅で見る
+        case diagonalLine = "rotate(π/4) の細い line (距離関数)"
+        case diagonalFill = "rotate(π/4) の細い rect の塗り (距離関数)"
+        case diagonalEllipseAcross = "rotate(π/4) の細い ellipse の塗り・細い向きが y (距離関数)"
+        case diagonalEllipseAlong = "rotate(π/4) の細い ellipse の塗り・細い向きが x (距離関数)"
+        case diagonalPoint = "rotate(π/4) の point (距離関数)"
         // 三角形の経路 (#1637)
         case quad = "quad の輪郭 (三角形の経路)"
         case triangle = "triangle の輪郭 (三角形の経路)"
@@ -131,7 +139,9 @@ struct DensityInvarianceTests {
         /// で置いた行は、光の量も半分になる。
         var crossings: Double {
             switch self {
-            case .point, .shaderPoint, .shaderSquarePoint, .rotatedShaderPoint, .squashedShaderPoint: 0
+            case .point, .shaderPoint, .shaderSquarePoint, .rotatedShaderPoint, .squashedShaderPoint,
+                .diagonalPoint:
+                0
             case .line, .thinFill, .shaderLine, .shaderFill, .textureFill, .foldedFill, .squashedFill,
                 .retainedFill:
                 1
@@ -148,9 +158,38 @@ struct DensityInvarianceTests {
         var isFill: Bool {
             switch self {
             case .thinFill, .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill,
-                .retainedFill, .shaderEllipse:
+                .retainedFill, .shaderEllipse, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong:
                 true
             default: false
+            }
+        }
+
+        /// 光の量が理想の量から外れてよい割合。
+        ///
+        /// 45° に回した細い形 (#2226) は、回さない形より狭い ±5% で見る。画素の格子と形の向きが
+        /// 揃わないので、画素ごとの重なりを画素の軸に沿った正方形で数えないと、置く位置で
+        /// 0.7〜1.4 倍に振れる。
+        var tolerance: Double {
+            switch self {
+            case .diagonalLine, .diagonalFill, .diagonalPoint:
+                0.05
+            // 楕円の塗りは「画素の中のいちばん広い所を取る」近似で、軸に沿った同じ楕円でも多めに出る
+            // (長さ 20 で +4.7%・長さ 40 で +2.7%)。回した楕円はそれと同程度に収める
+            case .diagonalEllipseAcross, .diagonalEllipseAlong:
+                0.06
+            default: 0.1
+            }
+        }
+
+        /// 置く位置のずらし (描く画素ではなく、出す画素で見た y の向き)。
+        ///
+        /// 45° の形は y を 1 ずらすと画素の格子の 1 周期ぶん動いて元に戻る。位相を一巡するには、
+        /// 0.25 刻みで 1 周期より先まで見る。
+        var offsets: [Float] {
+            switch self {
+            case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint:
+                [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
+            default: [0, 0.5, 1, 1.5]
             }
         }
 
@@ -163,6 +202,9 @@ struct DensityInvarianceTests {
             switch self {
             case .rotatedFill: 60
             case .shaderEllipse: Double.pi / 4 * 88
+            // 回した細い形 (#2226)。長さ 40 の帯と、長さ 40 の楕円 (面積は π/4 × 長さ × 太さ)
+            case .diagonalLine, .diagonalFill: 40
+            case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
             default: nil
             }
         }
@@ -179,6 +221,29 @@ struct DensityInvarianceTests {
                 canvas.noStroke()
                 canvas.fill(255)
                 canvas.rect(20, y, 88, weight)
+            case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint:
+                // 画素の格子と向きが揃う 45° に回す。帯の中心を (64, 64 + ずらし) に置く
+                canvas.translate(64, 64 + offset)
+                canvas.rotate(Float.pi / 4)
+                switch self {
+                case .diagonalLine:
+                    canvas.strokeCap(.square)
+                    canvas.line(-20, 0, 20, 0)
+                case .diagonalFill:
+                    canvas.noStroke()
+                    canvas.fill(255)
+                    canvas.rect(-20, -weight / 2, 40, weight)
+                case .diagonalEllipseAcross:
+                    canvas.noStroke()
+                    canvas.fill(255)
+                    canvas.ellipse(0, 0, 40, weight)
+                case .diagonalEllipseAlong:
+                    canvas.noStroke()
+                    canvas.fill(255)
+                    canvas.ellipse(0, 0, weight, 40)
+                default:
+                    canvas.point(0, 0)
+                }
             case .quad: canvas.quad(20, y, 108, y, 108, y + 40, 20, y + 40)
             case .triangle: canvas.triangle(20, y, 108, y, 20, y + 60)
             case .polygon:
@@ -344,7 +409,7 @@ struct DensityInvarianceTests {
             }
             // 面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)
             if mouth.fillArea != nil, weight * density >= 1 { continue }
-            for offset in [Float(0), 0.5, 1, 1.5] {
+            for offset in mouth.offsets {
                 let canvas = try Self.makeCanvas(density: density)
                 try Self.draw(on: canvas) {
                     canvas.background(0)
@@ -362,7 +427,7 @@ struct DensityInvarianceTests {
                 } else {
                     (measured, expected) = (Self.columnSum(pixels, density: density), drawn * mouth.crossings)
                 }
-                if abs(measured - expected) > 0.1 * expected {
+                if abs(measured - expected) > mouth.tolerance * expected {
                     broken.append("細かさ \(density)・ずらし \(offset): \(measured) (期待 \(expected))")
                 }
             }
@@ -785,9 +850,10 @@ struct DensityInvarianceTests {
     /// 置き続けるかぎり 1 度しか組み直さない** (#1934)。細かさ 0.5 では高さ 1 の `rect` がいつも細い
     /// 側に入るので、補いが速い経路を外すと、`texture()` の小さな `rect` を並べる絵がかえって遅くなる。
     ///
-    /// 細い塗りの広げ方は帯の向きで決まるので、線 (`thinStrokesKeepTheFastRoutes`) と違って、回転
-    /// だけが違う置き場所は同じ雛形に畳まない。ここで見るのは平行移動だけが違う置き場所である。
-    @Test("細かさ 0.5 の細い塗りも、畳み・組み直しの控えの速い経路を通る (#1934)")
+    /// 畳んだ置き場所は、広げ方を置き場所ごとの記述で頂点段へ渡すので、平行移動だけでなく回転だけが
+    /// 違う置き場所も同じ雛形に畳む (#2208)。保持した形は頂点を CPU が置き場所ごとに写して積むので、
+    /// 同じ大きさ・向きで置き続けるかぎり 1 度しか組み直さない (向きを変えれば向きごとに 1 度)。
+    @Test("細かさ 0.5 の細い塗りも、畳み・組み直しの控えの速い経路を通る (#1934・#2208)")
     func thinFillsKeepTheFastRoutes() throws {
         let canvas = try Self.makeCanvas(density: 0.5)
         let plain = try canvas.makeShader(
@@ -803,6 +869,16 @@ struct DensityInvarianceTests {
                 // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開いて置き場所を足す
                 #expect(canvas.openFlat != nil, "細い塗りの rect が畳まれない")
                 #expect(canvas.flatInstances.count == 5, "畳んだ置き場所の数: \(canvas.flatInstances.count)")
+                // 回転だけが違う置き場所も、同じ雛形に畳む (#2208)
+                for index in 0..<4 {
+                    canvas.pushMatrix()
+                    canvas.translate(16 + Float(index) * 20, 40)
+                    canvas.rotate(Float(index) * 0.4 + 0.1)
+                    canvas.rect(0, 0, 12, 1)
+                    canvas.popMatrix()
+                }
+                #expect(canvas.flatInstances.count == 9, "回した置き場所を畳んでいない: \(canvas.flatInstances.count)")
+                #expect(canvas.thinFillSpans.count == 8)
                 if frame == 0 { shape = canvas.createShape { canvas.rect(0, 0, 40, 1) } }
                 canvas.resetShader()
                 for index in 0..<3 { canvas.shape(shape, 10 + Float(index) * 30, 80) }

@@ -120,7 +120,7 @@ struct TextOutlineSpacingTests {
         for (plain, even) in zip(corners, spaced) {
             #expect(even.points.count > plain.points.count, "辺の途中にも点がある")
             // 最後の点から最初の点へ戻る間も含めて、どの間隔も 6 画素以下
-            let widest = gaps(even.points).max() ?? 0
+            let widest = gaps(even.outline).max() ?? 0
             #expect(widest <= 6 + 1e-3, "間隔 \(widest) が 6 を越えた")
         }
     }

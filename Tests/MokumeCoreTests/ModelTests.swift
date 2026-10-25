@@ -28,6 +28,54 @@ struct ModelTests {
         #expect(parsed.skippedLines == 4)
     }
 
+    // MARK: - 壊れた行の材料 (#2565)
+
+    /// 仕様にあっていま読まない語。書き出したファイルにほぼ必ずある。
+    private static let intended = ["mtllib a.mtl", "usemtl m", "o x", "g y", "s 1"]
+
+    @Test("意図して読まない行 (mtllib・usemtl・o・g・s) は数えるが、壊れた行とは言わない (#2565)")
+    func intendedSkipsAreCountedButNotMalformed() {
+        let parsed = ModelFile.parse(ModelFixture.barePyramid(extra: Self.intended))
+        #expect(parsed.skippedLines == 5)
+        #expect(parsed.malformed.isEmpty)
+        // 仕様の語は、どれも壊れた行ではない
+        let spec = ["vp 0 0", "p 1", "l 1 2", "call a.obj", "csh -x", "lod 1", "mg 1 0", "end"]
+        let more = ModelFile.parse(ModelFixture.barePyramid(extra: spec))
+        #expect(more.skippedLines == spec.count)
+        #expect(more.malformed.isEmpty)
+    }
+
+    @Test("読めない v は、種類・数・最初の行を壊れた行として持ち、skippedLines も増える (#2565)")
+    func unreadablePositionIsMalformed() {
+        let clean = ModelFile.parse(ModelFixture.barePyramid(extra: Self.intended))
+        let parsed = ModelFile.parse(ModelFixture.barePyramid(extra: Self.intended + ["v 0x10 0 0"]))
+        #expect(parsed.skippedLines == clean.skippedLines + 1)
+        #expect(parsed.malformed.count == 1)
+        #expect(parsed.malformed.first?.count == 1)
+        #expect(parsed.malformed.first?.line == 16)  // 頂点 5 + 面 5 + 足した 5 行の次
+        #expect(parsed.malformed.first?.what.contains("\"v\"") == true)
+    }
+
+    @Test("範囲の外の角を持つ f・仕様に無い語の行も壊れた行で、種類ごとに数と最初の行を持つ (#2565)")
+    func brokenFacesAndUnknownKeywordsAreMalformed() {
+        let parsed = ModelFile.parse(
+            ModelFixture.barePyramid(extra: [
+                "f 1 2 99", "vv 1 2 3", "mtllib a.mtl", "f 1 2", "vx 1", "vt 0.5 abc", "vn 1 2",
+            ]))
+        // f が 2 行 (範囲の外・角が 2 つ)・仕様に無い語が 2 行・vt・vn が 1 行ずつ。mtllib は含まない
+        #expect(parsed.skippedLines == 7)
+        let byKind = Dictionary(
+            uniqueKeysWithValues: parsed.malformed.map { ($0.what.split(separator: " ")[1], $0) })
+        #expect(byKind["\"f\""]?.count == 2)
+        #expect(byKind["\"f\""]?.line == 11)
+        #expect(byKind["line"]?.count == 2)  // 仕様に無い語: "a line starting with an unknown keyword"
+        #expect(byKind["line"]?.line == 12)
+        #expect(byKind["\"vt\""]?.line == 16)
+        #expect(byKind["\"vn\""]?.line == 17)
+        #expect(parsed.malformed.map(\.count).reduce(0, +) == 6)
+        #expect(parsed.malformed.contains { $0.what.contains("\"vv\"") })
+    }
+
     /// **拡張子で読み手を選ぶようになっても、OBJ は自前の読み手で読む** (#1966)。Model I/O も
     /// OBJ を読めるが、読み飛ばした行の数・`vt` の縦の向き・負の番号の扱いが変わる。検体の 3 つは
     /// それぞれを含む (読み飛ばす行 / 縦を裏返す `vt` と負の番号 / 角ごとに欠けた `vt`)。
@@ -181,6 +229,8 @@ struct ModelTests {
         let parsed = ModelFile.parse(base + "\n" + line)
         var expected = plain
         expected.skippedLines += skipped
+        // 壊れた行の材料 (`malformed`) は、読み込みの知らせの検査 (#2565) が見る。ここは形と数だけ
+        expected.malformed = parsed.malformed
         #expect(parsed == expected, "\(line)")
     }
 
@@ -333,6 +383,7 @@ struct ModelTests {
         let broken = ModelFile.parse(base + "\n" + face + "\n" + line)
         var expected = plain
         expected.skippedLines += 1
+        expected.malformed = broken.malformed  // 壊れた行の材料 (#2565) は、知らせの検査が見る
         #expect(broken == expected, "\(line.debugDescription)")
     }
 
@@ -669,7 +720,7 @@ struct ModelTests {
         #expect(abs(max(measured.x, max(measured.y, measured.z)) - 60) < 0.001)
         #expect(abs((highest.x + lowest.x) / 2) < 0.001, "中心が原点に来ていない")
         #expect(abs((highest.y + lowest.y) / 2) < 0.001)
-        #expect(model.center == .zero)
+        #expect(model.center == Vector3(0, 0, 0))
         #expect(abs(model.size.x - measured.x) < 0.001, "報告した大きさが頂点と食い違う")
         // **軸の比が変わらない。** 元は 2 x 1.6 x 2 なので、縮めても同じ比のまま
         #expect(abs(measured.x / measured.y - 2 / 1.6) < 0.001)
@@ -788,7 +839,7 @@ struct ModelTests {
                 // 整えたのと逆の手順 (縦を戻し、縮めたぶん広げ、中心を戻す)
                 let back =
                     SIMD3(point.position.x, -point.position.y, point.position.z) / scale
-                    + raw.center
+                    + raw.center.simd
                 let first = index / 3 * 3
                 let same = raw.mesh.points[first..<(first + 3)].first {
                     distance($0.position, back) < 1e-4

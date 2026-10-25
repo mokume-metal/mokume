@@ -78,7 +78,7 @@ struct TCPServerTests {
             port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     // MARK: - 受ける
@@ -90,13 +90,13 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("0.25\nhit\r\n\n")
         peer.send("0.")
         peer.send("75\n")
-        let received = await collect(server, count: 4)
+        let received = try await requireCollected(server, count: 4)
         #expect(received == ["0.25", "hit", "", "0.75"])
         #expect(server.lastArrival != nil)
         #expect(server.report == SourceReport(name: "tcp :0", state: .running, lastArrival: server.lastArrival))
@@ -110,17 +110,17 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         first.send("0.5")
         first.finish()
-        #expect(await collect(server, count: 1) == ["0.5"])
-        #expect(await clients(server, reach: 1))
-        #expect(await until { first.closedByPeer })
+        #expect(try await requireCollected(server, count: 1) == ["0.5"])
+        try await peers.requireCount(on: server, equals: 1, told: told)
+        try await requireWait("閉じた相手の繋ぎを、受け口が閉じ返さなかった") { first.closedByPeer }
 
         second.close()
-        #expect(await clients(server, reach: 0))
+        try await peers.requireCount(on: server, equals: 0, told: told)
         #expect(server.state == .running)  // 受け口は開いたまま。次の相手を待つ
     }
 
@@ -131,16 +131,20 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("before\n")
         peer.send([0x68, 0xFF, 0x0A])  // 'h' と、UTF-8 に現れないバイト
         peer.send([UInt8](repeating: 0x61, count: StreamListener.lineLimit + 10) + [0x0A])
         peer.send("after\n")
-        let received = await collect(server, count: 2)
+        let received = try await requireCollected(server, count: 2)
         #expect(received == ["before", "after"])
-        #expect(await until { server.input.unreadable == 2 })
+        try await requireWait(
+            "読めない行が 2 つと数えられなかった", detail: { "数えた数: \(server.input.unreadable)" }
+        ) {
+            server.input.unreadable == 2
+        }
     }
 
     // MARK: - 書く
@@ -152,12 +156,17 @@ struct TCPServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         server.write("hit\n")
         server.write("size 0.5")
-        #expect(await until { first.received == "hit\nsize 0.5" && second.received == "hit\nsize 0.5" })
+        try await requireWait(
+            "2 人の相手が同じ書き込みを受け取らなかった",
+            detail: { "1 人目: \(first.received.debugDescription)・2 人目: \(second.received.debugDescription)" }
+        ) {
+            first.received == "hit\nsize 0.5" && second.received == "hit\nsize 0.5"
+        }
         #expect(told.lines.isEmpty)
     }
 
@@ -173,12 +182,14 @@ struct TCPServerTests {
 
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         server.write("c")
-        #expect(await until { peer.received == "c" })
+        try await requireWait("相手が書き込みを受け取らなかった", detail: { "受け取った: \(peer.received.debugDescription)" }) {
+            peer.received == "c"
+        }
         peer.close()
-        #expect(await clients(server, reach: 0))
+        try await peers.requireCount(on: server, equals: 0, told: told)
 
         server.write("d")
         server.write("e")
@@ -192,14 +203,14 @@ struct TCPServerTests {
         let (server, port) = try await listening(told: told)
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.close()
         #expect(server.state == .stopped)
         #expect(server.clientCount == 0)
         #expect(server.messages.isEmpty)
-        #expect(await until { peer.closedByPeer })
+        try await requireWait("止めた受け口が相手の繋ぎを閉じなかった") { peer.closedByPeer }
         server.write("late\n")
         server.write("later\n")
         #expect(told.count(containing: "This TCP server is stopped") == 1)
@@ -232,6 +243,58 @@ struct TCPServerTests {
         #expect(present.written == ["hit\n"])
     }
 
+    @Test("外して足し直した (close の後に open が来る) 入り口は、また書け、受け取りも戻る。外し直せばまた 1 度だけ知らせて書かない (#3122)")
+    func reopenedServerWritesAgain() throws {
+        let told = Told()
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5204, name: "tcp :5204", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil, warn: told.append)
+        try server.open()
+        server.write("before")
+        server.supply()
+        #expect(server.messages == ["a"])
+
+        server.close()
+        #expect(server.state == .stopped)
+        server.write("while closed 1")
+        server.write("while closed 2")
+        #expect(room.written == ["before"])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try server.open()
+        #expect(server.state == .running)
+        server.write("after")
+        server.supply()
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["before", "after"])
+
+        // 外し直せば、また書かず、また 1 度だけ知らせる
+        server.close()
+        server.write("again")
+        #expect(room.written == ["before", "after"])
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
+        let room = RecordingBroadcaster(clientCount: 1)
+        let server = TCPServer(
+            port: 5205, name: "tcp :5205", source: RecordedSource<String>(batches: [["a"]]),
+            clients: room, owner: nil)
+        try server.open()
+        server.stop()
+        #expect(server.state == .running, "外で呼んだ stop() は何も止めない")
+
+        server.close()
+        try server.open()
+        server.supply()
+        server.write("back")
+        #expect(server.state == .running)
+        #expect(server.messages == ["a"])
+        #expect(room.written == ["back"])
+    }
+
     // MARK: - 注入
 
     @Test("同じ行の列は、ポートで受けても注入しても同じ結果になる")
@@ -241,10 +304,10 @@ struct TCPServerTests {
         defer { live.close() }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: live)
+        try await peers.reach(on: live, told: told)
         let peer = peers[0]
         peer.send(textScript.map { $0 + "\n" }.joined())
-        let received = await collect(live, count: textScript.count)
+        let received = try await requireCollected(live, count: textScript.count)
 
         let injected = IdleSketch().createTCPServer(messages: textScript.map { [$0] })
         try injected.open()
@@ -275,7 +338,7 @@ struct TCPServerTests {
         try server.open()
         defer { server.close() }
 
-        #expect(await until { told.count(containing: "TCP cannot listen on port \(port) because another app is using it") == 1 })
+        try await requireTold(containing: "TCP cannot listen on port \(port) because another app is using it", told: told, tracing: source) { server.state }
         #expect(server.state == .unavailable)
         // 開き直しを何度か重ねても、知らせは増えない
         try await Task.sleep(for: .milliseconds(300))
@@ -283,13 +346,64 @@ struct TCPServerTests {
         #expect(server.state == .unavailable)
 
         holder.release()
-        #expect(await until { server.state == .running })
+        try await requireState(told: told, tracing: source) { server.state }
         let peers = PeerGroup { StreamClient(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.send("back\n")
-        #expect(await collect(server, count: 1) == ["back"])
+        #expect(try await requireCollected(server, count: 1) == ["back"])
+    }
+
+    @Test("受け口が期限までに running にならなければ、状態と受け口の知らせの全行を名乗って 1 つで止まる (#2945)")
+    func requireStateNamesTheStateAndWhatWasTold() async throws {
+        let told = Told()
+        // 番号を握ったまま手放さないので、受け口は開けない
+        let holder = try PortHolder(port: 0, stream: true)
+        defer { holder.release() }
+        let port = holder.port
+        let source = StreamSource(kind: .tcp, port: port, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
+        let server = TCPServer(
+            port: port, name: "tcp :\(port)", source: source, clients: source, owner: nil,
+            warn: told.append)
+        try server.open()
+        defer { server.close() }
+        // 使用中と知らせるまでは普通に待つ。名乗りは、その後の短い期限で通して確かめる
+        try await requireTold(containing: "another app is using it", count: 1, exactly: false, told: told, tracing: source) { server.state }
+
+        let said = Mutex("")
+        try await withKnownIssue {
+            try await requireState(told: told, within: 0.2, tracing: source) { server.state }
+        } matching: { issue in
+            said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return issue.comments.contains { $0.rawValue.contains("受け口が running にならなかった") }
+        }
+        let text = said.withLock { $0 }
+        #expect(text.contains("状態: unavailable"), "名乗り: \(text)")
+        #expect(text.contains("TCP cannot listen on port \(port) because another app is using it"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.2 秒"), "名乗り: \(text)")
+        // 口の中の移り変わり: 使用中を受けた回数 (開き直しのたびに増える) と、最後のもの
+        #expect(text.contains("移り変わり ") && text.contains("最後: portInUse"), "名乗り: \(text)")
+        #expect(text.contains("同じ told の全行"), "名乗り: \(text)")
+
+        // 知らせは 1 度でも、使用中のあいだは開き直すたびに移り変わりの数が増える (止まれば増えない)
+        try await requireWait("受け口の移り変わりが 3 回に届かなかった", detail: { "回数: \(source.trace.count)" }) {
+            source.trace.count >= 3
+        }
+
+        // 知らせを待つ側も、言われなかったら状態と移り変わりと told の全行を名乗って止まる
+        let toldSaid = Mutex("")
+        try await withKnownIssue {
+            try await requireTold(
+                containing: "never said", told: told, within: 0.1, tracing: source
+            ) { server.state }
+        } matching: { issue in
+            toldSaid.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
+            return issue.comments.contains { $0.rawValue.contains("「never said」を含む知らせが 1 回出なかった") }
+        }
+        let toldText = toldSaid.withLock { $0 }
+        #expect(toldText.contains("状態: unavailable") && toldText.contains("最後: portInUse"), "名乗り: \(toldText)")
+        #expect(toldText.contains("another app is using it"), "名乗り: \(toldText)")
     }
 
     // MARK: - 相手の束 (#2940)
@@ -380,9 +494,11 @@ struct TCPServerTests {
             ScriptedPeer(.trouble("waiting (scripted)"), in: room)
         }
         defer { peers.closeAll() }
+        let told = Told()
+        told.append("scripted note")
         let said = Mutex("")
         try await withKnownIssue {
-            try await peers.reach(on: server, replacements: 0, within: 0.2)
+            try await peers.reach(on: server, told: told, replacements: 0, within: 0.2)
         } matching: { issue in
             said.withLock { $0 = issue.comments.map(\.rawValue).joined(separator: "\n") }
             return Self.isNotReached(issue)
@@ -391,6 +507,8 @@ struct TCPServerTests {
         #expect(text.contains("2 人のうち、受け口が数えたのは 0 人"))
         #expect(text.contains("受け口の状態: ") && text.contains("running"))
         #expect(text.contains("#0 waiting (scripted)") && text.contains("#1 waiting (scripted)"))
+        // 渡した知らせの全行を載せる
+        #expect(text.contains("同じ told の全行: [\"scripted note\"]"), "名乗り: \(text)")
     }
 
     // MARK: - 作る口

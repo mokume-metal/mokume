@@ -13,7 +13,7 @@
 /// }
 /// ```
 ///
-/// 描く・入力を読むといった語彙 (``SketchPart/fill(_:)``・``SketchPart/circle(_:_:_:)``・
+/// 描く・入力を読むといった語彙 (``SketchPart/fill(_:)-(LinearRGBA)``・``SketchPart/circle(_:_:_:)``・
 /// ``SketchPart/mouseX`` など) は、スケッチが継ぐ ``SketchPart`` に置いてある。自分で書いた型も
 /// `: SketchPart` と名乗れば、その中から同じ語彙を使える。
 ///
@@ -45,7 +45,25 @@ public protocol Sketch: AnyObject, SketchPart {
     var plugins: [any Plugin] { get }
 
     /// 一度だけ呼ばれる。
-    func setup()
+    ///
+    /// **`throws` で書ける。** 読み込みの失敗を `try?` で捨てずに、`try` で書いて投げられる。投げたら、
+    /// ``draw()`` を 1 度も呼ばずにスケッチは起動の失敗として止まり、投げた失敗の全文 (何を読めなかったかと、
+    /// 次にすること) が標準エラーに出る。窓で走らせても `mokume render` で書き出しても、同じ文面で止まる。
+    ///
+    /// <!-- example: 文脈 var cat: Image! -->
+    /// ```swift
+    /// func setup() throws {
+    ///     cat = try loadImage("assets/cat.png")   // 無ければ、起動の失敗として止まる
+    /// }
+    ///
+    /// func draw() {
+    ///     image(cat, 0, 0)
+    /// }
+    /// ```
+    ///
+    /// 投げる型は問わない (``ImageFailure``・``ShaderFailure`` などをそのまま通せる)。投げない `func setup()` は
+    /// これまでどおり書けて、同じように呼ばれる。`async` にはできない。
+    func setup() throws
 
     /// フレームごとに呼ばれる。
     func draw()
@@ -220,7 +238,7 @@ public protocol Sketch: AnyObject, SketchPart {
 extension Sketch {
     public var settings: SketchSettings { SketchSettings() }
     public var plugins: [any Plugin] { [] }
-    public func setup() {}
+    public func setup() throws {}
     public func draw() {}
     public func mousePressed() {}
     public func mouseReleased() {}
@@ -330,7 +348,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// `shader()` を付けた図形・立体の線では 1 行か 2 行で塗られる (縁を滑らかにするのは距離関数の
     /// 経路だけである)。塗りも同じで、`rect`・`ellipse` などの基本図形を描く画素で 1 画素より細く
     /// 描いた塗りは、面積に比例した濃さで出る (`shader()` や `texture()` を付けた長い形は、置く位置に
-    /// よって 1 割ほど揺れる。扇形 (一周でない `arc`) は付けるかによらず約束の外で、`triangle`・`quad`・
+    /// よって 1 割ほど揺れる。扇形 (一周でない `arc`。`.chord`・`.open` の弦で結んだ形も) は付けるかによらず約束の外で、`triangle`・`quad`・
     /// `beginShape` は描く画素の格子で丸まる)。
     /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``SketchPart/clip(_:_:_:_:)``)・
     /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
@@ -558,7 +576,7 @@ extension SketchPart {
         // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
         // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
         guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
-        return runtime.canvas
+        return runtime.activeCanvas
     }
 
     /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
@@ -586,8 +604,13 @@ extension SketchPart {
     /// `true` になるのは ``SketchSettings/upscale`` に ``Upscale/temporal`` を
     /// 選び、かつ実際に拡大が立っているときだけである。
     ///
+    /// ``draw(into:_:)`` の閉包の中でも、答えは本体の面のもの。スケッチの設定で決まる値で、描き場所は
+    /// 拡大を立てないので、向き先を読むと閉包の中と外で答えが割れる。
+    ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public var usesFrameHistory: Bool { Self.liveCanvas(.read(returning: "false"))?.usesFrameHistory ?? false }
+    public var usesFrameHistory: Bool {
+        Self.liveRuntime(.read(returning: "false"))?.canvas.usesFrameHistory ?? false
+    }
 
     /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
     public var frameCount: Int { Self.liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }
@@ -596,22 +619,51 @@ extension SketchPart {
     /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
     /// アプリの起動・窓の作成・``Sketch/setup()`` の中で済む計算にかかった時間は乗らない — 数え始める
     /// のは最初のフレームからである。ただし ``Sketch/setup()`` で ``jumpTime(_:)`` した最初のフレームは
-    /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。
+    /// 飛び先の秒、時刻を指定した観測が撮る最初のフレームはその秒になる。`mokume watch --keep-time` で作り直した
+    /// 後の最初のフレームは、前の世代の作者の時計の続きの秒 (止めていれば止めた秒) になり、
+    /// ``Sketch/setup()`` の中で読む ``time`` もその秒である (``pauseTime()`` の「書き出しと作り直し」)。
     ///
     /// 窓に出して動かしている間は、既定で**実際に流れた時間**で、フレームが何枚落ちても
     /// 復帰した瞬間に追いつく。**揃えたいものはここから導く** ([ADR-0025] 決定 6) —
     /// 実時間の時計で複数の実行を並べたときに合うのはこの値で、``deltaTime`` を足し込んで作った
     /// 状態ではない。
     ///
+    /// **窓に出している間の実時間の時計では、その枚が表示される予定の時刻である**
+    /// ([#2390](https://github.com/mokume-metal/mokume/issues/2390))。``Sketch/draw()`` が走った時刻ではない。
+    /// main が他の仕事 (イベント・タイマー) で数ミリ秒遅れても、時刻は表示の刻みの間隔のまま進み、
+    /// 表示が刻みを飛ばしたときは飛んだ枚数ぶん進んで、表示の時刻と合ったままになる。
+    /// 最初の枚が 0 で (`--keep-time` の引き継ぎを除く)、その起点は ``Sketch/setup()`` の後である。
+    ///
+    /// - **表示の時刻と合うのは、その刻みに間に合った枚だけ** — 描き終えて差し出せた枚である。
+    ///   遅れた枚は後の刻みで表示されるが、時刻は予定のままである
+    /// - **共有面 (`mokume watch` のプレビュー) では、スケッチ側の刻みの予定の時刻である。** 揺れは窓と同じく
+    ///   取れるが、道具の窓に出る時刻とは 1〜2 刻みずれうる (絵はスケッチ側の刻みで焼き、公開は次の刻みで、
+    ///   出すのは道具の側の画面の刻みである)
+    /// - **現在時刻で進む回がある。** 表示のリフレッシュが止まって予備のタイマーが進めた回と、名乗りの
+    ///   メニューが開いている間にプレビューを動かす回である。どちらの回でも時刻は前の枚より小さくならず、
+    ///   予定の時刻が現在時刻より先にある間の切り替わりでは経過が 0 の枚が出うる
+    /// - **窓の数字 (fps・1 枚の ms) と観測の応答の `frameRate`・`frameTimeMs` は、描いた時刻 (コールバックの
+    ///   時点) で数える。** 予定の時刻の列で数えると main の遅れが見えなくなるので、時刻の軸とは揃えない
+    ///
     /// 窓でもフレームの時計を選べる (``SketchSettings/clock`` を ``SketchSettings/ClockMode/frames``)。
     /// そのときと書き出し (`mokume render`) では `(frameCount − 1) / fps` で、重いフレームでも 1 枚に
-    /// 1/fps 秒しか進まない (処理落ち)。
+    /// 1/fps 秒しか進まない (処理落ち)。止める・飛ぶ (``pauseTime()`` / ``jumpTime(_:)``) と、`--keep-time` で
+    /// 引き継いだ秒が乗った実行では、その分の原点のずれがこの式に足される。
     ///
     /// 作品の側から止める・飛ぶこともできる (``pauseTime()`` / ``jumpTime(_:)``)。
     ///
-    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` の中だけである。** 入力の
-    /// コールバックが読むのは作者の時計の秒で、`keyPressed()` の `jumpTime(time + 0.25)` が作者の時計を
-    /// 観測の秒へ飛ばさない。動画の再生位置と録った音の起点も、作者の時計の秒で進む。
+    /// **長く走らせるほど、`Float` の刻みは粗くなる。** 時計の中は `Double` の秒だが、ここへ渡すときに
+    /// `Float` へ落ちるので、約 1.5 日を超えると刻みは約 15.6 ms (60 fps の 1 フレームとほぼ同じ)、
+    /// 約 3 日を超えると約 31 ms、約 6 日を超えると約 62.5 ms (実質 16 fps)、約 24 日を超えると約 250 ms
+    /// になる。`sin(time * 0.8)` も `noise(time * 0.5)` も、その刻みの段になる ([ADR-0025] 決定 6 の表)。
+    /// **周期のある動きは ``phase(period:)`` で書く** — 倍精度の秒から周期の位相を取るので、何日走らせても
+    /// 刻みは周期の長さで決まる。周期の無い使い方 (`noise(time)`) は、長い展示なら日に 1 度は
+    /// 起こし直す。
+    ///
+    /// **時刻を指定した観測の枚では、観測の秒を読むのは ``Sketch/draw()`` と、その直前の入り口の供給
+    /// (``Inlet/supply()``) の間だけである。** 入力のコールバックが読むのは作者の時計の秒で、
+    /// `keyPressed()` の `jumpTime(time + 0.25)` が作者の時計を観測の秒へ飛ばさない。動画の再生位置と
+    /// 録った音の起点も、作者の時計の秒で進む。入り口や部品が状態を進めるなら、``authorTime`` を読む。
     ///
     /// ```swift
     /// circle(sin(time) * 200 + width / 2, height / 2, 40)
@@ -619,12 +671,40 @@ extension SketchPart {
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
-    /// 作者の時計の上の、いまのフレームの時刻 (秒)。**時刻を指定した観測の枚でも作者の時計の値**で、
-    /// 観測でない枚では ``time`` と同じ値。
+    /// 作者の時計の上の、いまのフレームの時刻 (秒)。入り口・部品が、再生位置や起点といった**状態**を
+    /// 進めるための秒である。**描く値には ``time`` を使う。**
     ///
-    /// 本体の上に載る部品 (動画・録った音) が、再生位置や起点という**状態**を進めるのに読む。
-    /// ``time`` を読むと、観測の枚の指定秒が状態として残る ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
-    package var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
+    /// **時刻を指定した観測の枚でも作者の時計の値**で、観測でない枚では ``time`` と同じ値である。
+    /// ``time`` は、観測の枚の ``Sketch/draw()`` と、その直前の入り口の供給 (``Inlet/supply()``) の間だけ
+    /// 観測の指定秒になるので、状態の進みに使うと、観測が済んだ後も指定秒が状態に残る
+    /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。``jumpTime(_:)`` と ``pauseTime()`` には
+    /// ``time`` と同じく従う。
+    ///
+    /// 動画のような入り口は、状態を ``authorTime`` で進め、映すコマだけを ``time`` で決める。観測で撮った
+    /// 1 枚は指定の秒の絵になり、観測の後の枚は作者の時計に沿って続く。最後に値を受け取った時刻のような
+    /// 状態も、こちらで積む (``ExternalInput`` と ``ExternalQueue`` は、受け取った時刻をこの秒で積む)。
+    /// **描く値に使うと、観測で撮った 1 枚が指定の秒の絵にならない。**
+    ///
+    /// 走っていないとき (`init` の中・終わった後) に読むと 0 を返し、1 度だけ知らせる (``time`` と同じ)。
+    ///
+    /// ```swift
+    /// final class Playhead: Inlet {
+    ///     weak var owner: (any Sketch)?
+    ///     private var position: Float = 0
+    ///
+    ///     func supply() {
+    ///         guard let owner else { return }
+    ///         position = owner.authorTime  // 状態は作者の時計で進める
+    ///         let shown = owner.time       // 映すものは time (観測の枚では観測の秒) から決める
+    ///         // …shown のコマを映す
+    ///         _ = shown
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ADR-0045 決定 9 の 2026-10-18 と 2026-10-20 の改訂が正典である
+    /// ([ADR-0045](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0045-game-direction.md))。
+    public var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
     /// 前のフレームからの経過 (**秒**)。
     ///
     /// **p5.js の `deltaTime` はミリ秒で、単位が 1000 倍違う。** p5.js から写した係数は 1000 倍して
@@ -637,6 +717,11 @@ extension SketchPart {
     /// にした窓) では、**常にちょうど 1 / fps 秒**である。重いフレームの後でも変わらない。
     ///
     /// 以下は、窓の既定の**実時間の時計** (``Clock/wallClock``) の話である。
+    ///
+    /// **窓に出している間は、経過は表示の刻みの間隔である** ([#2390](https://github.com/mokume-metal/mokume/issues/2390))。
+    /// ``Sketch/draw()`` が走った時刻の差ではなく、その枚が表示される予定の時刻 (``time`` と同じ時刻) の差なので、
+    /// main が他の仕事で遅れても揺れない。60 Hz なら、ふだんは 1/60 秒に揃い、表示が刻みを飛ばしたときだけ
+    /// 飛んだ枚数ぶん跳ぶ。共有面・現在時刻で進む回・間に合わなかった枚の扱いは ``time`` にある。
     ///
     /// **最初のフレームは、時計 (``clock``) によらず 1 フレームぶんである。** 窓に出して動かして
     /// いる間は目標の 1 フレームぶん (``SketchSettings/frameRate`` 分の 1 秒) で、アプリの起動や
@@ -716,7 +801,7 @@ extension SketchPart {
     /// 走っている実行の面。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
     @MainActor
     static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
-        liveRuntime(use, call)?.canvas
+        liveRuntime(use, call)?.activeCanvas
     }
 
     /// 資源を作る口 (``createGraphics(_:_:)`` など) が使う面。**外から呼ばれたら、口ごとに 1 度だけ

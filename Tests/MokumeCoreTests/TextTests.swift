@@ -639,7 +639,9 @@ struct TextTests {
         #expect(message.contains("\"あ\" (U+3042)"), "\(message)")
         #expect(message.contains("\"Helvetica-Oblique\", the face drawn for .italic"), "\(message)")
         #expect(message.contains("\"HiraginoSans-W3\" (regular weight, upright)"), "\(message)")
-        #expect(!message.contains("family"), "\(message)")
+        // 家族 (HiraginoSans-W3 の家族) に斜体の面が無いことは、頼んだ面を欠く文に続けて名乗る (#2924)。
+        // 面を欠くと言う文 (`the face drawn for .italic`) は家族に無いとは言わない
+        #expect(message.contains("The family of \"HiraginoSans-W3\" has no .italic face"), "\(message)")
         // 次のフレームで別の字が代わりの書体へ落ちても、2 度目は言わない (最初の文面のまま)
         try canvas.draw { canvas.text("もくめ", 20, 50) }
         #expect(canvas.warnings.message(for: .missingFallbackTypefaceStyle) == message)
@@ -860,8 +862,11 @@ struct TextTests {
         #expect(message == nil, "\(item.style) の「\(item.string)」(\(fallback)) で鳴った: \(message ?? "")")
     }
 
-    /// 代わりの書体から字を引く口。どれも同じ `Typeface.glyph(for:)` を通る。
-    nonisolated static var glyphReadingEntries: [String] { ["text", "textWidth", "textBounds", "textOutline"] }
+    /// 代わりの書体から字を引く口。`text` 系は同じ `Typeface.glyph(for:)` を、`shapedText` 系は組版した結果の
+    /// 代わりの書体の区間を `glyph(for:)` と同じ約束で扱う (#2404)。
+    nonisolated static var glyphReadingEntries: [String] {
+        ["text", "textWidth", "textBounds", "textOutline", "shapedText", "shapedTextWidth", "shapedTextBounds"]
+    }
 
     @Test("どの口から先に引いても、代わりの書体の面の警告は 1 度出る", arguments: glyphReadingEntries)
     func theFallbackWarningComesFromEveryEntry(_ entry: String) throws {
@@ -874,6 +879,9 @@ struct TextTests {
             case "textWidth": _ = canvas.textWidth("aあ")
             case "textBounds": _ = canvas.textBounds("aあ", 20, 50)
             case "textOutline": _ = canvas.textOutline("aあ", 20, 50)
+            case "shapedText": try canvas.draw { canvas.shapedText("aあ", 20, 50) }
+            case "shapedTextWidth": _ = canvas.shapedTextWidth("aあ")
+            case "shapedTextBounds": _ = canvas.shapedTextBounds("aあ", 20, 50)
             default: Issue.record("知らない口 \(entry)")
             }
         }
@@ -1710,33 +1718,26 @@ struct TextTests {
         [8192, 1e18, 1e20, .greatestFiniteMagnitude]
     }
 
-    @Test("待てなかったら、字形を焼かない")
-    func doesNotBakeAGlyphWhenTheWaitFails() throws {
+    /// #934 の「待てなければ焼かない」は、#1792 で手放した (画像が #749 で選んだのと同じ交換)。
+    /// 焼く口は GPU を待たないので、完了を待てない状況でも字形は焼けて、控えに積まれる。
+    /// 待ちの期限は描き切りが持ち、打ち切りの後の届け直しは `GlyphBakeDeliveryTests` が見る。
+    @Test("GPU の完了を待てない状況でも、焼く口は待たずに字形を焼いて控えへ積む")
+    func bakesAGlyphEvenWhenTheWaitWouldFail() throws {
         let canvas = try makeCanvas()
         let resolved = try #require(canvas.typeface.glyph(for: "M"))
         let key = GlyphAtlas.Key(
             fontKey: resolved.fontKey, size: 32, style: .normal, glyph: resolved.glyph)
 
         canvas.gpu.failSettleForTesting = .timedOut(seconds: 5)
-        let refused = canvas.atlas.entry(for: key, font: resolved.font)
+        let settles = canvas.gpu.settleCalls
+        let baked = canvas.atlas.entry(for: key, font: resolved.font)
         canvas.gpu.failSettleForTesting = nil
-        guard case .unbakeable = refused else {
-            Issue.record(
-                """
-                GPU の完了を待てなかったのに、面は「\(refused)」と答えた。
-
-                焼いていない場所を字形として返すと、前のフレームがまだ読んでいるかも
-                しれない面へ書いたうえ、その領域をそのまま描くことになる
-                ([#934](https://github.com/mokume-metal/mokume/issues/934))。
-                """)
+        guard case .found = baked else {
+            Issue.record("GPU の完了を待てなくても焼けるはずが、面は「\(baked)」と答えた")
             return
         }
-
-        // 引けなかった字形は控えに残らないので、次の機会に焼き直せる
-        guard case .found = canvas.atlas.entry(for: key, font: resolved.font) else {
-            Issue.record("待てるようになった後も焼けていない")
-            return
-        }
+        #expect(canvas.gpu.settleCalls == settles, "焼く口が GPU の完了を待とうとした")
+        #expect(canvas.atlas.page.pendingRegionCount == 1, "焼いた画素を控えへ積んでいない")
     }
 
     @Test("焼き場に入りきらない字形は、理由を『大きすぎる』として名乗る", arguments: overwhelmingSizes)

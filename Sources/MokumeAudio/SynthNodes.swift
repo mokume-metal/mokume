@@ -31,7 +31,8 @@ nonisolated enum SynthParam: UInt8, Sendable {
 
 /// ラックの節 (音源かエフェクト)。**音の側のスレッドだけが状態を触る。**
 ///
-/// 主スレッドが読んでよいのは、作るときに決まって変わらない ``id`` と ``meter`` だけである。
+/// 主スレッドが読んでよいのは、作るときに決まって変わらない ``id`` と ``meter`` (と、ファイルの節が
+/// 原子値で返す進み具合 — ``FileNode/played(generation:)``) だけである。
 /// 値を変えるときは、``SynthRack`` の列へ操作を渡す。
 nonisolated class RackNode {
     let id: Int
@@ -51,6 +52,11 @@ nonisolated class RackNode {
     /// 何も出していない (出口が全部 0) と決まっているか。音源が止まっているとき。
     var isIdle: Bool { false }
 
+    /// 鳴り終えたか (これからは出口が 0 のままか)。**音源だけが答える。** 手放された音源の節は、
+    /// これが `true` になってから置き場へ返る (``SynthRack`` の「手放した音源の節を返す」)。エフェクトは
+    /// 尾を出すので `false` のままで、返らない。
+    var isFinished: Bool { false }
+
     func apply(_ param: SynthParam, _ value: Float) {}
 
     /// 鳴らし始める (音源)。
@@ -61,6 +67,9 @@ nonisolated class RackNode {
 
     /// 包絡を頭から始める (音源)。
     func trigger() {}
+
+    /// 区切りを始める (ファイルの音源)。`bits` の読み方は ``FileNode/segment(start:looping:generation:)``。
+    func begin(_ bits: UInt64) {}
 
     /// 入力が無い状態から入力が入ったとき。前の状態を持ち越さない (エフェクト)。
     func reset() {}
@@ -124,10 +133,13 @@ nonisolated final class SourceNode: RackNode {
     private var rightGain: Float = 0
     private var panApplied: Float = .nan
 
-    init(id: Int, sampleRate: Double, meter: SampleRing, kind: Kind) {
+    /// - Parameter serial: 作った順の通し番号 (0 から)。ノイズの種はこれから決める。**置き場の番号
+    ///   (`id`) から決めない** — 返った置き場の再利用で、同じ順に作っても番号が変わるため。何も返さない
+    ///   間は通し番号と番号が一致する。
+    init(id: Int, serial: Int, sampleRate: Double, meter: SampleRing, kind: Kind) {
         self.kind = kind
-        // 種は節の番号から決める。同じ順に作れば同じ音になる
-        noise = NoiseKernel(seed: UInt64(id) &* 0x1_0000_0001 &+ 0x6D6F_6B75_6D65)
+        // 種は作った順から決める。同じ順に作れば同じ音になる
+        noise = NoiseKernel(seed: UInt64(serial) &* 0x1_0000_0001 &+ 0x6D6F_6B75_6D65)
         smoothing = Float(1 - RuntimeMath.exp(-1 / (0.005 * sampleRate)))
         super.init(id: id, sampleRate: sampleRate, meter: meter)
     }
@@ -135,6 +147,10 @@ nonisolated final class SourceNode: RackNode {
     override var isSource: Bool { true }
 
     override var isIdle: Bool { gateTarget == 0 && gate == 0 }
+
+    /// 止めて消えたか、包絡が終わって無音になったか。包絡が終わった音は、次に ``trigger()`` されるまで
+    /// 無音のまま (``start()`` では戻らない)。
+    override var isFinished: Bool { isIdle || (shaped && !shapeActive) }
 
     override func apply(_ param: SynthParam, _ value: Float) {
         switch param {

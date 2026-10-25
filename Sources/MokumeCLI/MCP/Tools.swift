@@ -26,6 +26,10 @@ struct Tools {
     var apiList: APIListLocator
     /// 識別子の作り手。検査から固定できるようにする。
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
+    /// 取り消して区画に置いたままにした要求 (``AbandonedRequests``)。道具を走らせる手だけが触る。
+    let abandoned = AbandonedRequests()
+    /// 呼び手へ渡す観測の絵の写し (``ObservationCopies``)。窓口 1 つにつき 1 つの置き場。
+    var copies = ObservationCopies()
 
     /// 既定では 2 つの軸は重なる (区画の基準がパッケージの場所と同じ)。
     init(
@@ -64,17 +68,30 @@ struct Tools {
         var description: String {
             switch self {
             case .observe:
-                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it."
+                "Take a shot of the running sketch. Returns where the image is, along with a breakdown (frame number, time, size, a summary of the image, how hard it is working, the values the sketch exposed, and the source stamp). One shot of the current frame by default. Set count to 2 or more to take shots in succession without stopping the frames, and a catalogue in the order taken comes back — one frame cannot tell you whether motion is right, so use this for anything that moves. A stopped sketch still returns the last frame it drew. With time, redraw exactly one frame at those seconds (deltaTime=0). This changes the shown picture and retains draw side effects; it is not a rewind. noLoop stays stopped. External pause and recording refuse it. A null for an optional field (time / scale / count / every) reads the same as leaving it out; a name this tool does not list is refused, and so is a value of the wrong type."
             case .buildStatus:
                 "Return the result of the most recent build (whether it passed, whether the sketch was started, the exit code, the output, a breakdown of how long it took, and the source stamp). A build that passed but did not start the sketch (ok true, launched false) leaves the drawing frozen; notStartedReason says why. Read this when you want to know why the drawing did not change."
             case .input:
-                "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow). An event missing one is counted in ignored and the rest still go through. mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. keyPressed() fires only when a key that is not held goes down, so a repeat (isRepeat true) reaches keyTyped() alone. The modifier keys (56 / 60 = Shift, 59 / 62 = Control, 58 / 61 = Option, 55 / 54 = Command) only change which keys are held, which the sketch reads with keyboard.isPressed(.shift). button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
+                "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / pinched / keyDown / keyUp. The three positional types need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow); pinched needs amount (the change in magnification, as a trackpad pinch gives it: 0.1 = opened to 1.1 times, negative = closed; the sketch reads a frame's total as pinch). An event missing one is counted in ignored and the rest still go through. A mouseDown can also carry clickCount (1 for a single press, the default; 2 for the second press of a double-click; a value that is not a non-negative integer counts that event in ignored). amount is read on pinched only and clickCount on mouseDown only: on any other type they are not read and the reply's warnings name them. mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. keyPressed() fires only when a key that is not held goes down, so a repeat (isRepeat true) reaches keyTyped() alone. The modifier keys (56 / 60 = Shift, 59 / 62 = Control, 58 / 61 = Option, 55 / 54 = Command) only change which keys are held, which the sketch reads with keyboard.isPressed(.shift). button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
             case .reference:
                 "Return a document this interface serves. With no argument you get the list; pass name for one of them. Pass api for the public API of the version currently depended on (which types and functions exist, and how to call them). Pass startup for the things decided the moment a process starts (the ones that have no effect while it runs). The rest are surface specs (the shape of requests and replies)."
             }
         }
 
+        /// 引数の形。**余りの名前は断る** (`additionalProperties: false`・#2486)。
         var inputSchema: [String: Any] {
+            var schema = properties
+            schema["additionalProperties"] = false
+            return schema
+        }
+
+        /// 受ける名前 (`inputSchema` の `properties` のキー)。**受ける名前の正典はここ 1 つ**で、
+        /// `Tools.call` が余りを断るときも、この一覧を見る。
+        var acceptedArguments: [String] {
+            ((properties["properties"] as? [String: Any]) ?? [:]).keys.sorted()
+        }
+
+        private var properties: [String: Any] {
             switch self {
             case .observe:
                 [
@@ -147,19 +164,50 @@ struct Tools {
     static let definitions: [[String: Any]] = ToolName.allCases.map(\.definition)
 
     /// 道具を呼ぶ。
-    func call(_ name: String, arguments: [String: Any]) -> (text: String, isError: Bool) {
+    ///
+    /// - Parameter cancellation: 立てられたら、区画を待つ道具は待ちを切って戻る
+    ///   ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。戻った答えは窓口が書かない。
+    func call(
+        _ name: String, arguments: [String: Any], cancellation: Cancellation? = nil
+    ) -> (text: String, isError: Bool) {
         guard let tool = ToolName(rawValue: name) else {
             return ("There is no such tool: \(name)", true)
         }
+        // **余りの名前は、値によらず (`null` でも) 道具を走らせずに断る** (#2486)。黙って捨てると、
+        // `scal` の綴り違いが既定で撮る頼みに化け、撮る側の警告にも載らない。範囲は `arguments` の
+        // 直下だけで、`input` の各出来事の中の欄は区画の読み手が扱う
+        let unknown = arguments.keys.filter { !tool.acceptedArguments.contains($0) }.sorted()
+        if !unknown.isEmpty { return (Self.unknownArgumentsText(unknown, tool: tool), true) }
         switch tool {
-        case .observe: return observe(arguments)
+        case .observe: return observe(arguments, cancellation: cancellation)
         case .buildStatus: return buildStatus()
-        case .input: return sendInput(arguments)
+        case .input: return sendInput(arguments, cancellation: cancellation)
         case .reference: return reference(arguments)
         }
     }
 
-    private func observe(_ arguments: [String: Any]) -> (String, Bool) {
+    /// 余りの引数を断る文。知らない名前と、受ける名前を言う。
+    static func unknownArgumentsText(_ unknown: [String], tool: ToolName) -> String {
+        let accepted = tool.acceptedArguments
+        let names = unknown.joined(separator: ", ")
+        let lead = unknown.count == 1 ? "Unknown argument: \(names)." : "Unknown arguments: \(names)."
+        return accepted.isEmpty
+            ? "\(lead) \(tool.rawValue) takes no arguments."
+            : "\(lead) \(tool.rawValue) accepts \(accepted.joined(separator: ", "))."
+    }
+
+    /// 値が `null` の欄を「渡していない」ことにする (#2393)。
+    ///
+    /// **省略可能な欄の `null` は、型の誤りではなく省略と同じに読む。** LLM は省略できる欄に
+    /// `null` を入れることがあり、断ると呼び出しが失敗する。型の違う値 (`"3"`・`true`) は断る
+    /// ままである (#2408)。必須の欄 (`events`) の `null` は省略ではないので、`input` では使わず、
+    /// 従来どおり `events needs an array of events` と断る。
+    static func droppingNulls(_ arguments: [String: Any]) -> [String: Any] {
+        arguments.filter { !($0.value is NSNull) }
+    }
+
+    private func observe(_ given: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
+        let arguments = Self.droppingNulls(given)
         let id = makeID()
         var request: [String: Any] = ["id": id]
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
@@ -170,9 +218,9 @@ struct Tools {
         // 同じキーを 2 度書いた行の後ろの値のように木から落ちた数は見ないが、落ちた数は
         // ここへも届かない。`Tools` を直に呼ぶ口 (検査・将来の呼び元) のためにも判定は持つ。
         // 範囲では切らない — 範囲の外は撮る側が
-        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は従来どおり省略と同じに
-        // 読む (方針は #2393 で決める)
-        if let raw = arguments["scale"], !(raw is NSNull) {
+        // 等倍で書いて警告で名乗る (observe-request の約束)。`null` は入口で落としてあり、
+        // 省略と同じに読む (#2393)
+        if let raw = arguments["scale"] {
             guard let scale = JSONRPC.number(raw), scale.doubleValue.isFinite else {
                 return ("scale must be a finite number", true)
             }
@@ -212,7 +260,7 @@ struct Tools {
         let report: [String: Any]
         switch roundTrip(
             facet: facets.observeFacet, entry: StartupReads.observe, request: request, id: id,
-            extraWait: Self.extraWait(count: count, every: every))
+            extraWait: Self.extraWait(count: count, every: every), cancellation: cancellation)
         {
         case .refused(let text): return (text, true)
         case .answered(let answer): report = answer
@@ -232,25 +280,93 @@ struct Tools {
         let manifestMissing = names.isEmpty
         if manifestMissing, let single = report["image"] as? String { names = [single] }
 
+        // **絵は区画から自分の置き場へ写し、写し終えた後に応答がまだ自分の識別子かを確かめてから渡す**
+        // (#2992)。区画の中の場所をそのまま返すと、呼び手が読む前に別の書き手の撮り始めで同じ名前へ
+        // 書き直される。掃除は応答を先に消すので、写した後も応答が自分のままなら、写している間に
+        // 掃除は始まっていない
+        var location = facets.observeFacet
+        var elsewhere: String?
+        if manifestMissing, !names.isEmpty {
+            // **目録を書かない版 (#408 より前) は、応答を消さずに絵を先に上書きする。** 応答が自分の
+            // 識別子のままでも他人の絵でありうるので、写した後の確かめは何も言えない。写さず、
+            // 区画の場所と、確かめられないことを名乗る (補ったら名乗る・ADR-0018 決定 6)
+            elsewhere = Self.notCopiedNote(
+                reason: """
+                    This reply has no catalogue, so the library that wrote it overwrites a picture \
+                    in place before it writes its reply, and a copy cannot be checked as this request's picture
+                    """)
+        } else if !names.isEmpty {
+            switch copies.copy(names: names, from: facets.observeFacet, id: id) {
+            case .copied(let directory):
+                guard answerIsStillMine(id) else {
+                    copies.discard(id: id)
+                    return (facets.contestedWhileCopying(StartupReads.observe, repeatable: requestedTime == nil), true)
+                }
+                location = directory
+            case .failed(let reason):
+                // 掃除が始まっていて写せなかった回は取り合い。応答が自分のままなら掃除ではなく、
+                // 取り合ったとは言えない (読めない・容量など)。区画の場所を返し、次の要求までと添える
+                guard answerIsStillMine(id) else {
+                    return (facets.contestedWhileCopying(StartupReads.observe, repeatable: requestedTime == nil), true)
+                }
+                elsewhere = Self.notCopiedNote(reason: "The picture could not be copied (\(reason))")
+            }
+        }
+
         if names.isEmpty {
             lines.append("No image could be taken")
         } else if names.count == 1 {
-            lines.append("Image: \(facets.observeFacet.appendingPathComponent(names[0]).path)")
+            lines.append("Image: \(location.appendingPathComponent(names[0]).path)")
         } else {
             // 何枚あるかを先に言う。頼んだ枚数と食い違っていたら、そこで気付ける
             lines.append(
                 """
-                Images (\(names.count)): \(facets.observeFacet.path)/
+                Images (\(names.count)): \(location.path)/
                   \(names.joined(separator: " "))
                 """)
         }
+        if let elsewhere { lines.append(elsewhere) }
         // **黙って寛容にはしない。** 目録は面の仕様が要求しているもの (ADR-0018 決定 4) で、
         // 無いまま読めたのは読み手が補ったからである。補ったことは読み手が名乗る
         if manifestMissing, !names.isEmpty {
             lines.append(Self.manifestMissingNote(count: count ?? 1))
         }
-        lines.append(pretty(report))
+        lines.append(pretty(Self.namingPlaces(report, under: location)))
         return (lines.joined(separator: "\n\n"), false)
+    }
+
+    /// 応答の `image` と `frames[].image` を、返す場所の絶対の綴りに書き換える (#2992)。
+    ///
+    /// 応答の名前は区画からの相対で、窓口が渡す絵は区画の外の写しにある。**本文の JSON だけが区画を
+    /// 基準にしたままだと、読み手が組み立てた場所は上書きされうる区画の中を指す。**
+    static func namingPlaces(_ report: [String: Any], under location: URL) -> [String: Any] {
+        func place(_ name: Any?) -> Any? {
+            guard let name = name as? String else { return name }
+            return location.appendingPathComponent(name).path
+        }
+        var shown = report
+        if let image = report["image"] { shown["image"] = place(image) }
+        if let frames = report["frames"] as? [[String: Any]] {
+            shown["frames"] = frames.map { frame -> [String: Any] in
+                var frame = frame
+                if let image = frame["image"] { frame["image"] = place(image) }
+                return frame
+            }
+        }
+        return shown
+    }
+
+    /// 区画の応答が、いまも自分の要求のものか。
+    private func answerIsStillMine(_ id: String) -> Bool {
+        facets.read(WorkDirectory.reportURL(under: facets.observeFacet))?["id"] as? String == id
+    }
+
+    /// 絵を写せず、区画の中の場所を返すときに添える。**黙って区画を指さない。**
+    static func notCopiedNote(reason: String) -> String {
+        """
+        \(reason), so the path above is inside the sketch's facet. \
+        It holds this picture only until the next request is placed there; read or copy it before then.
+        """
     }
 
     /// 版だけで成功とは判断しない。旧版は未知の要求を無視するため、適用の印と絵の時刻を照合する。
@@ -362,14 +478,14 @@ struct Tools {
         return (pretty(status), false)
     }
 
-    private func sendInput(_ arguments: [String: Any]) -> (String, Bool) {
+    private func sendInput(_ arguments: [String: Any], cancellation: Cancellation?) -> (String, Bool) {
         guard let events = arguments["events"] as? [[String: Any]] else {
             return ("events needs an array of events", true)
         }
         let id = makeID()
         switch roundTrip(
             facet: facets.inputFacet, entry: StartupReads.input,
-            request: ["id": id, "events": events], id: id)
+            request: ["id": id, "events": events], id: id, cancellation: cancellation)
         {
         case .refused(let text): return (text, true)
         case .answered(let report): return (pretty(report), false)
@@ -396,17 +512,42 @@ struct Tools {
     /// 変わるので、控える場所を間違えると読み手を直らない道へ送る。
     private func roundTrip(
         facet: URL, entry: StartupReads.Entry, request: [String: Any], id: String,
-        extraWait: TimeInterval = 0
+        extraWait: TimeInterval = 0, cancellation: Cancellation? = nil
     ) -> Exchange {
         let existed = facets.hasFacet(facet)
+        // 撮り直してよいのは、副作用を残さない観測だけ。`time` 付きは 1 フレームを描き直す (#2857)
+        let repeatable = entry == StartupReads.observe && request["time"] == nil
         do {
-            guard
-                let report = try facets.exchange(
-                    facet: facet, request: request, id: id, extraWait: extraWait)
-            else {
-                return .refused(facets.notRunning(entry, existed: existed))
+            switch try facets.exchange(
+                facet: facet, request: request, id: id, extraWait: extraWait,
+                isCancelled: { cancellation?.isCancelled == true })
+            {
+            case .answered(let report):
+                abandoned.clear(facet: facet)
+                return .answered(report)
+            case .cancelled(let placed):
+                // **置いた後に切った要求は、スケッチが撮り終えるまで区画を塞ぎうる** (#3030)。覚えて
+                // おき、次の呼び出しが時間切れになったときに「応えない」と取り違えない
+                if placed { abandoned.abandon(facet: facet, id: id) }
+                // 窓口は取り消された要求に答えを書かない。この文は呼ぶ側にだけ届く
+                return .refused("The call was cancelled")
+            case .contested:
+                return .refused(facets.contested(entry, repeatable: repeatable))
+            case .timedOut(let replaced):
+                // 前に取り消した要求の応答がまだ出ていなければ、スケッチはそれを撮っている
+                if !replaced, let earlier = abandoned.id(for: facet) {
+                    if facets.read(WorkDirectory.reportURL(under: facet))?["id"] as? String == earlier {
+                        abandoned.clear(facet: facet)  // 撮り終えている。いまの無応答は別の理由
+                    } else {
+                        return .refused(facets.stillTaking(entry, cancelledID: earlier))
+                    }
+                }
+                // 期限の時点で別の書き手が要求を置き換えていたら、走っていないとは言わず、取り合いとして答える
+                return .refused(
+                    replaced
+                        ? facets.replacedAtDeadline(entry, repeatable: repeatable)
+                        : facets.notRunning(entry, existed: existed))
             }
-            return .answered(report)
         } catch {
             // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
             // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・
@@ -418,12 +559,12 @@ struct Tools {
         }
     }
 
-    private func reference(_ arguments: [String: Any]) -> (String, Bool) {
+    private func reference(_ given: [String: Any]) -> (String, Bool) {
+        let arguments = Self.droppingNulls(given)
         let name = arguments["name"] as? String
         // **文字列でない名前は断る。** 「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として
-        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は従来どおり省略と同じに読む
-        // (方針は #2393 で決める)
-        if let raw = arguments["name"], !(raw is NSNull), name == nil {
+        // 返り、頼み方を誤ったことに気付けない (#2319)。`null` は入口で落としてあり、省略と同じに読む (#2393)
+        if arguments["name"] != nil, name == nil {
             return ("name must be a string (a document's name). Omit it to get the list.", true)
         }
         // 公開 API は面の仕様と出所が違う (版ごとの資産) が、**入口は 1 つに保つ**

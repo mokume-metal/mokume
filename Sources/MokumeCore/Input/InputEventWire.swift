@@ -41,6 +41,7 @@ extension InputEvent {
         case .mouseMoved: .mouseMoved
         case .mouseMovedBy: .mouseMovedBy
         case .scrolled: .scrolled
+        case .pinched: .pinched
         case .keyDown: .keyDown
         case .keyUp: .keyUp
         }
@@ -49,8 +50,14 @@ extension InputEvent {
     /// 種別ごとに要る値。**読み手が「省略の意味が無い」とした鍵は必ず載せる。**
     private var wireFields: [(String, String)] {
         switch self {
-        case .mouseDown(let x, let y, let button), .mouseUp(let x, let y, let button):
+        case .mouseDown(let x, let y, let button, let clickCount):
+            // **押した回数は単発 (1) なら載せない** — 省略が単発と読めるので、これまでの 1 行と同じになる
             [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
+                + (clickCount == 1 ? [] : [("clickCount", "\(clickCount)")])
+        case .mouseUp(let x, let y, let button):
+            [("x", Self.number(x)), ("y", Self.number(y)), ("button", "\(button.rawValue)")]
+        case .pinched(let amount):
+            [("amount", Self.number(amount))]
         case .mouseMoved(let x, let y):
             [("x", Self.number(x)), ("y", Self.number(y))]
         case .mouseMovedBy(let dx, let dy), .scrolled(let dx, let dy):
@@ -68,7 +75,13 @@ extension InputEvent {
     /// 数の書き方。
     ///
     /// **有限でない値は 0 にする。** JSON に `nan` も `inf` も無いので、そのまま書くと
-    /// 行ごと解けなくなる — 1 件が消えるのは、位置が 0 になるより分かりにくい。
+    /// 行ごと解けなくなる。
+    ///
+    /// **これは窓からは届かない守りである** ([#2777](https://github.com/mokume-metal/mokume/issues/2777))。
+    /// 窓の位置と量は `SurfaceMapping` が写し、大きさのどれかが 0 なら送らないので、ここへ来る値は
+    /// 有限である。届いたとしても、合流点 (``InputState``・[#2731](https://github.com/mokume-metal/mokume/issues/2731))
+    /// とは扱いが違う — 合流点は移動とスクロールを捨て、押下と解放は位置だけを捨てて前の位置のままにするが、
+    /// 線は 0 にして (0, 0) として当てる。行を壊さないことを優先して残してある。
     private static func number(_ value: Float) -> String {
         value.isFinite ? "\(value)" : "0"
     }

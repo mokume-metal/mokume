@@ -86,12 +86,14 @@ final class WatchSession {
         ///   丸ごと乗る ([#1067](https://github.com/mokume-metal/mokume/issues/1067))。
         /// - Parameter running: 走っている `swift` を掴む先。**導き手と同じものを渡す** —
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
+        /// - Parameter keepTime: 作り直しをまたいで作者の時計を渡すファイルの絶対パス (`watch --keep-time`)。
+        ///   起こす子ごとに環境変数で渡す (``StartupReads/keepTime``・#2414)。省けば渡さない。
         /// - Parameter stamps: 世代の読み手。**1 つを持ち回る** — 属性の変わらないファイルを
         ///   巡回のたびに読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)。
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
-            stamps: SourceStamp.Reader = SourceStamp.Reader()
+            stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil
         ) -> Hooks {
             Hooks(
                 rebuild: { directory throws(CommandFailure) in
@@ -132,7 +134,8 @@ final class WatchSession {
                         stamp: stamp, reportingRate: rate, viewportOwner: WatchSession.viewportOwnerName,
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
-                        assetOrigin: (try? resolver.current())?.context.assets.url?.path)
+                        assetOrigin: (try? resolver.current())?.context.assets.url?.path,
+                        keepTime: keepTime)
                     do {
                         try process.run()
                     } catch {
@@ -276,6 +279,25 @@ final class WatchSession {
     /// 入れ替わりの合図は道具の窓から来るので ([ADR-0032] 決定 1)、窓が出せなかった実行では
     /// 誰も知らせてくれない — そこでは今までどおり、止めてから起こす。
     var overlapsGenerations = false
+
+    /// 道具の窓へ、「いま映している世代を手放した」と伝える口 ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    ///
+    /// 台は、畳まれた世代・もう居ない世代のカーソルの頼み (捕まえる・隠す) を、読み直す契機が来ないまま
+    /// 持ち続ける。受け取れない世代の知らせ (#2928) は台が自分で気付くが、次の 3 つは台を通らないので、
+    /// ここから伝える — 倒れた子 (``retireAfterFallback()``)・子の離脱 (``departed()``)・乗り換えの合図が来ない
+    /// まま次の保存が来て映っている世代を畳んだ回 (``rebuild``)。窓を出せた見張りだけが繋ぐ
+    /// (``WatchCommand``)。**頼みを下ろすだけで、最後の絵も入力の宛先も変えない。**
+    ///
+    /// **引数は、手放す世代の子の番号である** (#2982)。台は、いま映している世代の目録が名乗る番号と照合し、
+    /// 手放す世代でなければ当てない (映っている生きた世代の頼みを手放させない)。まだ採っていない目録も、
+    /// 手放した番号のものは生まれたときから手放した扱いにする (離脱の知らせが台の拍より先に来ても、死んだ子へ
+    /// 乗り換えて頼みを読まない)。
+    var relinquishesDisplay: ([Int32]) -> Void = { _ in }
+
+    /// 世代の子の番号。居なければ空。
+    private func generationPIDs(of process: Process?) -> [Int32] {
+        process.map { [$0.processIdentifier] } ?? []
+    }
 
     /// 新しい絵が出るまでを測っている、差し替えを始めた時刻。**測らない回は `nil`。**
     ///
@@ -532,11 +554,32 @@ final class WatchSession {
             !isBringingDown(gone)
         else { return nil }
         hasNamedDeparture = true
+        // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
+        // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
+        // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
+        relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
         switch ChildEnding(of: gone) {
         case .exited(let status): return Departure(status: status, wasSignalled: false)
         case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
         }
     }
+
+    /// 映っている前の世代 (``outgoing``) が自分で終わった・落ちたとき、台へその番号で伝える
+    /// ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    ///
+    /// ``departed()`` は ``child`` だけを見る。乗り換えを待つ間に映っている前の世代が消えても、台は消えた
+    /// 世代の頼みを持ち続ける。**1 世代につき 1 度だけ伝える。** 止めている最中の世代 (道具が畳む回) は
+    /// 畳む側の口が伝えるので、ここでは見ない。
+    func relinquishIfOutgoingDeparted() {
+        guard let gone = outgoing, !gone.isRunning, gone !== stoppingChild, !isBringingDown(gone),
+            gone !== relinquishedOutgoing
+        else { return }
+        relinquishedOutgoing = gone
+        relinquishesDisplay([gone.processIdentifier])
+    }
+
+    /// 消えたことを台へ伝え済みの前の世代。
+    private var relinquishedOutgoing: Process?
 
     /// 走らせているものを終わらせる。
     ///
@@ -1010,14 +1053,27 @@ final class WatchSession {
 
         let relaunchStarted = hooks.now()
         // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
-        // いると、次の合図はそちらのものかもしれない — 目録は世代の印を持たない
+        // いると、次の合図はそちらのものかもしれない。新しいライブラリの子は目録が子の番号を名乗り、
+        // 合図は待っている世代のものだけを受ける (``generationPromoted(pid:)``・#2982) が、番号を
+        // 名乗らない古いライブラリの子は印が無いので、ここでは区別できる回だけを測る
         let measuresFirstFrame =
             overlapsGenerations && hasSeenPromotion
             && !(awaitingPromotion && child?.isRunning == true)
         if overlapsGenerations {
             // **止めるのは、新しい世代が画面に出てからである** (#1142)。合図が来ないまま
             // 次の保存が来た回は、ここで必ず止める — 重ねるのは 1 世代だけである
+            // **映っている世代が、まだ乗り換えを待っている回だけ。** 乗り換えの合図の後は、止め終えるまで
+            // `outgoing` が残るが、台は既に新しい子へ映している — そこで伝えると、生きて映っている世代の
+            // 頼みを手放させる (#2983)
+            let displayedGenerationRetired = outgoing != nil && awaitingPromotion
+            let retiredPIDs = generationPIDs(of: outgoing)
             await retireOutgoing()
+            // **映っていた世代を、乗り換えの合図が来ないまま畳んだ回** — 台は畳まれた世代の頼みを持ち続け、
+            // 読み直す契機も来ない (#2983)
+            // **待った後にもう 1 度、乗り換えを待っているかを見る。** 止めている間に台が次の世代へ乗り換えて
+            // (合図が走って待ちが下りて) いれば、映っているのは生きている新しい世代である。番号を名乗る世代は
+            // 台が番号で外すが、名乗らない世代 (古いライブラリ) は、ここで外さないと手放させてしまう
+            if displayedGenerationRetired && awaitingPromotion { relinquishesDisplay(retiredPIDs) }
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
@@ -1093,7 +1149,15 @@ final class WatchSession {
     ///
     /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
     @discardableResult
-    func generationPromoted() async -> StopOutcome? {
+    func generationPromoted(pid: Int32? = nil) async -> StopOutcome? {
+        // **合図が名乗った子が、待っている世代でなければ受けない** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        // 保存を続けた回、前の世代 (C) が 1 枚焼いて乗り換えた合図は、待っている次の世代 (D) のものでは
+        // ない。待ちを下ろして C を畳むと、D が倒れても受け取れなくても、見張りはもう待っていないので
+        // 何もせず、道具の窓には畳まれた C の絵が凍る。映る世代が変わっただけなので、待ちも前の世代も
+        // そのままにする。番号を名乗らない合図 (古いライブラリの子) は今までの推定
+        if let pid, awaitingPromotion, let waiting = child, pid != waiting.processIdentifier {
+            return nil
+        }
         // **時刻は退役より先に取る。** 退役は期限つきで子の終わりを待つので、後に取ると
         // 止める待ちが絵の出た時刻に乗る
         let now = hooks.now()
@@ -1131,11 +1195,70 @@ final class WatchSession {
         let marker = WorkDirectory.fellBackURL(forProcess: waiting.processIdentifier, under: facet)
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
         try? FileManager.default.removeItem(at: marker)
+        // 倒れた子は目録を置かないので、台は前の世代 (畳まれる) を映したまま頼みを持ち続ける (#2983)。
+        // **前の世代を止めた後に伝える** — 止める前に伝えると、止まるまでに書く 1 枚で台が読み直す
+        // 倒れた子 (自分の窓を開く) は目録を置かないので、台が採ることは無い。手放す世代に含めてよい
+        return await retireAsPromoted(letGo: [waiting.processIdentifier])
+    }
+
+    /// 起こした子の絵を道具の窓が受け取れないと知らされていたら、**乗り換えの合図を待たずに**
+    /// 前の世代を退役させる ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    ///
+    /// 知らされる形は、目録が読めない・目録は読めたが番号の面を引けない (``UndeliverableGeneration``)
+    /// の 2 つで、どちらも道具の側で決まる失敗である。同じ目録を読み直しても変わらない (目録の書き手は
+    /// 原子的に置く) ので、時計は要らない。**1 枚も焼かない形はここへ来ない** — `setup()` が長いのと
+    /// 固まったのとは時計なしに見分けられず、前の世代を畳むと絵が凍る (ADR-0032 決定 3)。
+    /// 倒れた子 (``retireAfterFallback()``) と同じく、**乗り換えたとみなす**。代償は、道具の窓には
+    /// 最後の絵が残り、窓の入力は絵の出ない新しい子へ届くこと。
+    ///
+    /// **乗り換えを待っている、生きている世代のぶんだけ受ける。** 知らせは世代の印を持たないので、
+    /// 待っていない回 (前の世代・次の世代・重ねない見張り) は何もしない。子が既に居ない回は
+    /// 「子の離脱」の口 (``departed()``) が畳む — ここでも名乗ると二重になる。窓ごとに知らせが来るので
+    /// (作品の窓とプレビューは独立に目録を読む)、2 度目は待ちが下りていて何もしない。
+    ///
+    /// - Parameter pid: 知らせが読めた目録の子の番号。**あれば、待っている世代でなければ受けない** (#2982)。
+    /// - Returns: 受けなかったなら `nil`。受けたなら、前の世代を畳んだかと、その結果
+    ///   (**名乗るのは口の側**・``retireOutgoing()``)。
+    func retireAfterUndeliverable(
+        waiting: Process?, pid: Int32? = nil
+    ) async -> (previous: FallbackPrevious, outcome: StopOutcome?)? {
+        // **知らせを受けた時点の世代と、いまの世代が同じときだけ。** 知らせは世代の印を持たず、`Task` で
+        // 遅れて捌かれる — 作り直しの続きが先に走ると、前の世代 (C) の知らせが次の世代 (D) に当たる
+        // (``waitingGeneration``)。**止めている最中・終えている最中も受けない** (``departed()`` と同じ関所):
+        // 見張りを終える間に名乗ったり畳んだりすると、止める順序を横から割る
+        guard let waiting, waiting === child, awaitingPromotion, waiting.isRunning,
+            !stopRequested, waiting !== stoppingChild, !isBringingDown(waiting)
+        else { return nil }
+        // **目録が名乗った子が、待っている世代でなければ受けない** (#2982)。読めない目録・番号を名乗らない
+        // 子 (古いライブラリ) は `nil` で、上の「知らせを受けた時点の世代」の照合だけに頼る
+        if let pid, pid != waiting.processIdentifier { return nil }
+        return await retireAsPromoted()
+    }
+
+    /// 乗り換えを待っている、最後に起こした世代。待っていなければ `nil`。
+    ///
+    /// **窓の知らせを受けた時点で、同期に控える** — 捌くのは `Task` で遅れるので、その間に世代が
+    /// 入れ替わっても、知らせが出た世代を ``retireAfterUndeliverable(waiting:)`` が見分けられる。
+    var waitingGeneration: Process? { awaitingPromotion ? child : nil }
+
+    /// 乗り換えを待つ世代を、窓へ乗り換えたものとみなして、前の世代を畳む。
+    ///
+    /// ``retireAfterFallback()`` と ``retireAfterUndeliverable()`` の共通の尾。
+    /// ``generationPromoted()`` とは違い、**新しい絵は出ていない**ので記録へは足さない
+    /// (``hasSeenPromotion`` も立てない)。
+    private func retireAsPromoted(letGo extraLetGo: [Int32] = []) async -> (
+        previous: FallbackPrevious, outcome: StopOutcome?
+    ) {
         awaitingPromotion = false
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
         let hadOutgoing = outgoing != nil
+        let retiredPIDs = generationPIDs(of: outgoing)
         let outcome = await retireOutgoing()
+        // **畳んだ前の世代を台へ伝える。** 台が畳んだ世代を映しているかもしれない (台は乗り換えを待たせた
+        // 世代より先に、前の世代の次の世代へ乗り換えうる)。乗り換えを待っている世代は、これから書くので
+        // 含めない (#2983)
+        if hadOutgoing || !extraLetGo.isEmpty { relinquishesDisplay(extraLetGo + retiredPIDs) }
         // **畳んだ結果で言う。** 畳めずに置いていく (`abandoned`) ときに、止めたとは言えない
         let previous: FallbackPrevious =
             switch (hadOutgoing, outcome) {

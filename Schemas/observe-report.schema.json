@@ -27,7 +27,7 @@
     "image": {
       "type": "string",
       "minLength": 1,
-      "description": "The file name of the last image taken, relative to this reply. Omitted when the declared number of shots did not come together, so a reader may treat the absence of this key as failure. Each entry in frames carries its own name, so a reader never has to construct one."
+      "description": "The file name of the last image taken, relative to this reply. Omitted when the declared number of shots did not come together, so a reader may treat the absence of this key as failure. Each entry in frames carries its own name, so a reader never has to construct one. The next request rewrites the same names, so a reader that hands an image on copies it first and then checks that the reply's id is still its own (ADR-0018 decision 3, the 2026-10-22 revision)."
     },
     "frame": {
       "type": "integer",
@@ -200,7 +200,7 @@
           "image": {
             "type": "string",
             "minLength": 1,
-            "description": "This image's file name, relative to the reply."
+            "description": "This image's file name, relative to the reply. The next request rewrites the same names, so a reader that hands the image on copies it first and then checks that the reply's id is still its own."
           },
           "frame": {
             "type": "integer",

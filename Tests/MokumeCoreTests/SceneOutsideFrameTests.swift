@@ -124,6 +124,7 @@ struct SceneOutsideFrameTests {
             // 無視する口 (`Canvas.isShaping` の説明が挙げる並び)
             Mouth("particles", .particles) { $0.particles(try $0.makeParticles(count: 4)) },
             Mouth("force", .particles) { $0.force(try $0.makeParticles(count: 4), [.gravity(0, 90)]) },
+            Mouth("force(variadic)", .particles) { $0.force(try $0.makeParticles(count: 4), .gravity(0, 90)) },
             Mouth("compute(1D)", .compute) { canvas in
                 let heat = try canvas.makeNumbers(count: 4)
                 let ramp = try canvas.makeComputation(Self.ramp, name: "ramp", values: ["scale": 1])
@@ -269,7 +270,7 @@ struct SceneOutsideFrameTests {
 
     /// 無視したこと =**シーンの記述がどれも既定のまま**であること。口ごとに見る先を選ばず
     /// 全部を見るので、別の種類の状態へ漏れて効いた場合も拾う。積んだ履歴は外から読めない
-    /// ので、ここでは見ない (`CanvasTests.transformsOutsideAFrameLeaveThePictureAlone`)。
+    /// ので、ここでは見ない (`CanvasTests.StackAndFrame.transformsOutsideAFrameLeaveThePictureAlone`)。
     private func expectUntouched(_ canvas: Canvas, after name: String) {
         #expect(canvas.transform == .identity, "\(name) で変換が効いている")
         #expect(canvas.cameraStorage == nil, "\(name) で視点が効いている")

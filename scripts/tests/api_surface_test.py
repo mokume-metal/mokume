@@ -119,6 +119,17 @@ class ApiSurfaceTests(unittest.TestCase):
         symbols = [symbol("tint(_:)", owner="Sketch"), symbol("tint(_:)", owner="Canvas")]
         self.assertEqual(api.check_forwarding(symbols, set()), [])
 
+    def test_理由つきの許可表に載せた口は転送の検査から外す(self):
+        symbols = [
+            symbol("draw(into:_:)", owner="SketchPart"),
+            symbol("draw(_:)", owner="Canvas"),
+        ]
+        self.assertIn("draw(into:_:)", api.FORWARDING_ALLOWLIST)
+        self.assertEqual(api.check_forwarding(symbols, set()), [])
+        # 表に無い同じ形の口は、これまでどおり見つかる
+        other = [symbol("stamp(into:_:)", owner="SketchPart"), symbol("stamp(_:)", owner="Canvas")]
+        self.assertEqual(len(api.check_forwarding(other, set())), 1)
+
     def test_プロトコルの要件は転送の検査から外す(self):
         symbols = [
             symbol("draw()", owner="Sketch", precise="requirement"),
@@ -307,6 +318,95 @@ class ApiSurfaceTests(unittest.TestCase):
         symbols = [symbol("shape(_:)", owner="Sketch", takes=("Mesh", "s:6Mokume4MeshV"))]
         self.assertEqual(api.check_foreign_vocabulary(symbols, {"s:6Mokume4MeshV"}), [])
 
+    # ---- Float で連続量を受ける口 (ADR-0035 の改訂 2026-10-20 / #2525)
+
+    def test_Sketch_の口が連続量を_Float_で受けると見つける(self):
+        symbols = [symbol("jump(_:)", owner="SketchPart", parameters=["Float"])]
+        problems = api.check_float_ports(symbols, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("SketchPart.jump(_:)", problems[0])
+        self.assertIn("ScalarConvertible", problems[0])
+
+    def test_Canvas_と_Transform_とトップレベルの口も見る(self):
+        for owner in ("Canvas", "Transform", "LinearRGBA", None):
+            with self.subTest(owner):
+                symbols = [symbol("move(by:)", owner=owner, parameters=["Float"])]
+                self.assertEqual(len(api.check_float_ports(symbols, set())), 1)
+
+    def test_総称で受けている口は通す(self):
+        symbols = [symbol("jump(_:)", owner="SketchPart", parameters=["some ScalarConvertible"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_Float_を含む複合の型も見つける(self):
+        for written in ("Float?", "[Float]", "SIMD2<Float>", "Float..."):
+            with self.subTest(written):
+                symbols = [symbol("move(_:)", owner="SketchPart", parameters=[written])]
+                self.assertEqual(len(api.check_float_ports(symbols, set())), 1)
+
+    def test_名前に_Float_を含むだけの型は見つけない(self):
+        symbols = [symbol("move(_:)", owner="SketchPart", parameters=["FloatingPoint", "Floating"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_ClosedRange_Float_は据え置く(self):
+        # 決定 5 (2026-10-05 の改訂)。`emit` の speed・life・size
+        symbols = [symbol("emit(_:)", owner="SketchPart", parameters=["ClosedRange<Float>"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_public_init_は決定_5_で通す(self):
+        symbols = [symbol("init(pixelDensity:)", owner="Canvas", kind="swift.init", parameters=["Float"])]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_利用者が実装する口の引数は通す(self):
+        # mouseMoved(deltaX:deltaY:) のようにプロトコルの要件とその既定の実装。引数は mokume が渡す
+        hook = symbol(
+            "mouseMoved(deltaX:deltaY:)", owner="Sketch", precise="s:hook",
+            parameters=["Float", "Float"])
+        self.assertEqual(api.check_float_ports([hook], {"s:hook"}), [])
+        self.assertEqual(len(api.check_float_ports([hook], set())), 2)
+
+    def test_データや設定の型は射程の外(self):
+        for owner in ("Table", "Numbers", "TextBounds", "Orbit", "Placement", "SketchSettings"):
+            with self.subTest(owner):
+                symbols = [symbol("set(_:)", owner=owner, parameters=["Float"])]
+                self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_音とカメラなど_MokumeCore_の外が足した口は射程の外(self):
+        # MokumeAudio が SketchPart へ足した口。Sketch の面でも、別ターゲットの面である
+        added = symbol("play(volume:)", owner="SketchPart", parameters=["Float"])
+        added[api.MODULE_KEY] = "MokumeAudio"
+        self.assertEqual(api.check_float_ports([added], set()), [])
+        added[api.MODULE_KEY] = "MokumeCore"
+        self.assertEqual(len(api.check_float_ports([added], set())), 1)
+
+    def test_例外表に載っている口は通す(self):
+        # 表に載る「口 → 理由」の組は実在するものを使う。表ごと消えたらこちらが赤くなる
+        self.assertIn("LinearRGBA.display(red:green:blue:alpha:)", api.FLOAT_ALLOWLIST)
+        symbols = [
+            symbol(
+                "display(red:green:blue:alpha:)", owner="LinearRGBA",
+                parameters=["Float", "Float", "Float", "Float"])
+        ]
+        self.assertEqual(api.check_float_ports(symbols, set()), [])
+
+    def test_Float_の例外の理由が空なら表として成立しない(self):
+        for name, reason in api.FLOAT_ALLOWLIST.items():
+            with self.subTest(name):
+                self.assertTrue(reason.strip(), f"{name} に理由が書かれていない")
+
+    def test_読み込みは宣言したモジュールを足す(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory)
+            (graphs / "MokumeCore.symbols.json").write_text(
+                json.dumps({"symbols": [symbol("a(_:)", owner="Sketch", precise="s:a")]}),
+                encoding="utf-8")
+            (graphs / "MokumeAudio@MokumeCore.symbols.json").write_text(
+                json.dumps({"symbols": [symbol("b(_:)", owner="Sketch", precise="s:b")]}),
+                encoding="utf-8")
+            found = {api.title(entry): entry[api.MODULE_KEY]
+                     for module in ("MokumeCore", "MokumeAudio")
+                     for entry in api.load_symbols(graphs, module)}
+            self.assertEqual(found, {"a(_:)": "MokumeCore", "b(_:)": "MokumeAudio"})
+
     def test_USR_からモジュール名を取る(self):
         self.assertEqual(api.module_of("s:10Foundation3URLV"), "Foundation")
         self.assertEqual(api.module_of("s:6Mokume4MeshV"), "Mokume")
@@ -431,6 +531,108 @@ class 参照スケッチからの呼び出し(unittest.TestCase):
     def test_Sketch以外の型のメンバは見ない(self):
         symbols = [symbol("encodeForDisplay()", owner="RenderTarget")]
         self.assertEqual(api.check_sketch_coverage(symbols, "", {}), [])
+
+    def test_関数のメンバは_局所変数の同じ綴りでは呼んだことにしない(self):
+        """`phase(period:)` は誰も呼ばないのに、`let phase = …` の局所変数で通っていた (#3026)。"""
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["let phase = Float(index) / Float(count)", "var phase: Float = 0", "phase += 1"]:
+            with self.subTest(source=source):
+                problems = api.check_sketch_coverage(symbols, source, {})
+                self.assertEqual(len(problems), 1)
+                self.assertIn("Sketch.phase", problems[0])
+
+    def test_関数のメンバは_呼び出しの形で書かれたときに呼んだことにする(self):
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["phase(period: 4)", "let x = phase(period: 4)", "let phase = 1\nlet y = phase(period: 2)"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_末尾の閉包で呼ぶ関数のメンバは_呼んだことにする(self):
+        symbols = [symbol("createShape(_:)", owner="Sketch", parameters=["() -> Void"])]
+        for source in ["let s = createShape { box(11) }", "createShape{ box(11) }"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_呼び出しの形でも_名前の一部だけでは呼んだことにしない(self):
+        symbols = [symbol("phase(period:)", owner="Sketch")]
+        for source in ["rephase(period: 4)", "_phase(period: 4)", "phased(period: 4)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+
+    def test_性質のメンバは_いままでどおり字面で数える(self):
+        """括弧を持たない口 (`time`・`width`) は、呼び出しの形では書かれない。"""
+        symbols = [symbol("time", owner="Sketch", kind="swift.property")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "let t = time", {}), [])
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "", {})), 1)
+
+    def test_同じ基底名に性質もあれば_字面で数える(self):
+        symbols = [symbol("count", owner="Sketch", kind="swift.property", precise="a"),
+                   symbol("count(of:)", owner="Sketch", precise="b")]
+        self.assertEqual(api.check_sketch_coverage(symbols, "let n = count", {}), [])
+
+    # ---- 反証の指摘 (#3026) ----
+
+    def test_受け手つきの別の型の呼び出しは_数えない(self):
+        """`canvas.requestModel(` は `Canvas` の口で、`Sketch.requestModel` の呼び出しではない。"""
+        symbols = [symbol("requestModel(_:)", owner="Sketch")]
+        for source in ["Task { try await canvas.requestModel(path) }", "surface.requestModel(path)",
+                       "a.b.requestModel(path)", "(canvas).requestModel(path)"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        for source in ["requestModel(path)", "self.requestModel(path)", "let m = try await requestModel(path)",
+                       "sketch.requestModel(path)", "{ $0.requestModel(path) }"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
+
+    def test_末尾の閉包の波括弧は_最後の引数が閉包の口だけが受ける(self):
+        closure = [symbol("withScope(_:)", owner="Sketch", parameters=["() -> Void"])]
+        self.assertEqual(api.check_sketch_coverage(closure, "withScope { box(1) }", {}), [])
+        plain = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        for source in ["if phase {", "switch phase {", "while phase {", "for i in 0..<phase {",
+                       "guard phase else { return }", "let x = phase { 1 }"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(plain, source, {})), 1)
+        self.assertEqual(api.check_sketch_coverage(plain, "phase(period: 4)", {}), [])
+
+    def test_宣言_文字列_列挙子は_呼び出しに数えない(self):
+        symbols = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        for source in ["func phase(period: Float) -> Float { 0 }", 'let name = "phase(period:)"',
+                       "let d = Direction.phase(period: 2)", "case .phase(let p): break",
+                       "// phase(period: 4)\nlet note = \"\"\"\nphase(period: 4)\n\"\"\""]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        # 文字列補間の中はコード
+        self.assertEqual(api.check_sketch_coverage(symbols, 'let s = "\\(phase(period: 2))"', {}), [])
+
+    def test_作者が書くコールバックは_宣言で数える(self):
+        """`draw()` は作者が `func draw()` と書く口で、スケッチは呼ばない。プロトコルの要件か既定の実装。"""
+        symbols = [symbol("draw()", owner="Sketch")]
+        requirements = {"s:Sketchdraw()"}
+        self.assertEqual(api.check_sketch_coverage(symbols, "override func draw() {}", {}, requirements), [])
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "let d = draw()", {}, requirements)), 1)
+        # 性質の要件 (`var settings: …`) と初期化子 (`init(`) も、宣言で数える
+        props = [symbol("settings", owner="Sketch", kind="swift.property"), symbol("init()", owner="Sketch")]
+        required = {"s:Sketchsettings", "s:Sketchinit()"}
+        self.assertEqual(api.check_sketch_coverage(
+            props, "var settings: SketchSettings { .init() }\nrequired init() { super.init() }", {}, required), [])
+        self.assertEqual(len(api.check_sketch_coverage(props, "let s = settings\nsuper.init()", {}, required)), 2)
+        # 要件でない関数は、宣言だけでは数えない (呼ばれていない)
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "func draw() {}", {})), 1)
+
+    def test_関数を値として渡す形は_数えない(self):
+        """代償: `values.map(phase)` は呼び出しの形ではない。示したいなら `phase(period: …)` と呼ぶ。"""
+        symbols = [symbol("phase(period:)", owner="Sketch", parameters=["Float"])]
+        self.assertEqual(len(api.check_sketch_coverage(symbols, "values.map(phase)", {})), 1)
+
+    def test_性質は_宣言の左辺とラベルと受け手つきでは数えない(self):
+        symbols = [symbol("time", owner="Sketch", kind="swift.property")]
+        for source in ["let time = 1", "var time: Float = 0", "for time in 0..<3 {}", "case time",
+                       "draw(time: 3)", "(time: 1)", "canvas.time", "other.time * 2"]:
+            with self.subTest(source=source):
+                self.assertEqual(len(api.check_sketch_coverage(symbols, source, {})), 1)
+        for source in ["let x = time * 2", "self.time", "sin(time)", 'let s = "\\(time)"', "a ? time : b"]:
+            with self.subTest(source=source):
+                self.assertEqual(api.check_sketch_coverage(symbols, source, {}), [])
 
     def test_いまの参照スケッチを読める(self):
         # 置き場を取り違えると全部が「呼ばれていない」になる。読めていることだけを見る

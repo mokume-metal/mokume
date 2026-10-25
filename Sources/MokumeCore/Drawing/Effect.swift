@@ -5,7 +5,8 @@ import simd
 
 /// 描いた絵にかける効果。
 ///
-/// 使い方は ``SketchPart/effects(_:)`` にある。
+/// 使い方は ``SketchPart/effects(_:)`` (フレームの終わりに掛ける) と ``SketchPart/filter(_:)`` (呼んだ時点で掛ける)、
+/// 絵ごとに掛ける ``Image/filtered(_:)`` にある。
 ///
 /// ## 数の意味は名前が決める
 ///
@@ -17,6 +18,9 @@ import simd
 ///   (`Pixel` の `position` / `size`) も出す画素で届く
 /// - 増減を表す数 (``adjust(brightness:contrast:saturation:)``) は **0 が無効**で、
 ///   正で増え負で減る
+/// - 2 値化のしきい値 (``threshold(level:)``) の `level` は 0…1 の明るさで、**無効の値を持たない** —
+///   0 なら、明るさが 0 以上の画素 (不透明度が 0 でない画素のほとんど) が白になり、1 なら 1 の画素だけが
+///   白になる。範囲の外は端へ締める
 ///
 /// ## 受け取れない数
 ///
@@ -25,9 +29,12 @@ import simd
 /// - **`amount` は 0…1 の外なら端へ締める。** 1 を越えれば 1 と同じ絵で、負なら効かない
 /// - `radius` は 131072 画素 (面の辺の上限の 8 倍) まで。それより大きくしても絵は
 ///   変わらない
+/// - **締めたときは、効果・量・範囲・渡した値・使った値を 1 度だけ警告する**
+///   (`invert(amount: 3)` は「amount は 0…1 だが 3.0 が渡された。1 を使った」)。説明に書いた
+///   範囲でも言う — 書いた値と違う値が効いたことを知る手段が、他に無いため
 ///
-/// **散文の約束にしていない。** 全部の組み込みの効果について「無効の値なら絵が
-/// 1 ビットも変わらない」を検査が見ている。
+/// **散文の約束にしていない。** 無効の値を持つ組み込みの効果すべてについて「無効の値なら絵が
+/// 1 ビットも変わらない」を検査が見ている (無効の値を持たない ``threshold(level:)`` を除く)。
 public enum Effect {
     /// ぼかす。`radius` は出す画素で、0 なら効かない。
     ///
@@ -36,6 +43,9 @@ public enum Effect {
     /// 半径で揃えてあるが、絵は全解像度で回したものとは同じにならない。
     case blur(radius: Float)
     /// 明るいところをにじませる。`radius` は出す画素。
+    ///
+    /// `threshold` はにじませる明るさの下限で、**この明るさを越えた分だけがにじむ** (範囲を決めず、締めない)。
+    /// 2 値化の ``threshold(level:)`` の `level` (明るさ以上を白にする境目) とは別の量である。
     case bloom(amount: Float, threshold: Float = 0.7, radius: Float = 12)
     /// 色を反転する。**アルファは動かない。**
     case invert(amount: Float = 1)
@@ -47,6 +57,24 @@ public enum Effect {
     case fringe(amount: Float)
     /// 明るさ・対比・彩度を動かす。**どれも 0 が無効。**
     case adjust(brightness: Float = 0, contrast: Float = 0, saturation: Float = 0)
+    /// 2 値化する。**明るさが `level` 以上の画素は白、未満は黒にし、アルファは動かさない。**
+    ///
+    /// `level` は 0…1 で、明るさは ``brightness(_:)`` と同じ物差し (乗算を戻した表示の色の 3 成分の最大) で
+    /// 比べる。`brightness(c) / 100 >= level` の画素が白になる。Processing の `filter(THRESHOLD, level)` と
+    /// 同じ量で、`level` が 0 なら明るさが 0 以上の画素がすべて白に、1 なら 1 の画素だけが白になる。
+    /// 範囲の外は端へ締める。
+    ///
+    /// 白は不透明度ぶんの白 (乗算済み) で、半透明の画素は半透明のまま 2 値になる。**不透明度 0 の画素は
+    /// そのまま通す** — 透明な地へ加算した光も 2 値にしない (効果の段は入りに無い明るさを作らない・
+    /// ADR-0011 決定 1。ほかの効果も同じ)。明るさが負の画素 (`.subtract` で引いた分) は、`level` が 0 でも
+    /// 未満なので黒になる。
+    ///
+    /// 面の画素は半精度で持つので、`level` の 1/1024 手前から白とする — `fill(128)` に `level: 128 / 255` の
+    /// ようなちょうどの値は白になる (8 ビットの隣り合う目盛りは取り違えない)。半透明の画素も、不透明度で
+    /// 割り戻さずに比べるので、同じように成り立つ。**ただし、乗算済みの色が半精度の正規数の下限 (約 6e-5) に
+    /// 近いほど暗く薄い画素** (たとえば不透明度 0.05 の `1 / 255` の灰) **は、半精度の丸めが幅を越えるので、
+    /// ちょうどの値が白にならないことがある。**
+    case threshold(level: Float)
     /// 利用者が書いた効果。
     case custom(EffectShader)
 
@@ -123,6 +151,9 @@ public enum Effect {
             return [
                 EffectPass(control: Self.control(kind: .adjust, brightness, contrast, saturation))
             ]
+        case .threshold(let level):
+            // 比べるのは線形へ戻した値 (エンコードは単調なので答えは変わらない)。0 以下は 0 のまま
+            return [EffectPass(control: Self.control(kind: .threshold, TransferFunction.decode(level)))]
         case .custom(let shader):
             return [EffectPass(control: Self.control(kind: .copy), shader: shader)]
         }
@@ -227,15 +258,18 @@ extension Effect {
     /// - `amount` は 0…1。1 を越えた値は 1 と同じ絵になる (負の値は、締める前から 0 と同じ
     ///   く効かない)。越えたまま通すと、反転や周辺減光が負の光を作る
     /// - `radius` は ``maxRadius`` まで。締めても絵は変わらない (そちらの説明)
-    /// - `threshold` と ``adjust(brightness:contrast:saturation:)`` の 3 つは範囲を決めて
-    ///   いないので、締めない
+    /// - ``bloom(amount:threshold:radius:)`` の `threshold` と ``adjust(brightness:contrast:saturation:)`` の
+    ///   3 つは範囲を決めていないので、締めない。2 値化の ``threshold(level:)`` の `level` は 0…1 へ締める
     ///
-    /// **締めるときは言わない** (#1478 の不透明度と同じ)。説明どおりの扱いで、失われる
-    /// 意図が無い。
+    /// **締めたときは言う** ([#1842]・[ADR-0020] 決定 5)。説明に範囲と締め方を書いていても、書いた値と
+    /// 違う値が効いたことを利用者が知る手段が他に無い。何を締めたかは `roundings` が返し、
+    /// ``Canvas/effects(_:)`` と ``Canvas/filter(_:)`` が 1 度だけ言う。範囲の中の値・締めない量 (`threshold`・``adjust(brightness:contrast:saturation:)``・
+    /// 負の `radius`) は言わない。
     ///
     /// 利用者の効果 (``custom(_:)``) は数を持たないので、そのまま通す。
     ///
     /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     var accepted: Effect? {
         switch self {
@@ -262,8 +296,63 @@ extension Effect {
         case .adjust(let brightness, let contrast, let saturation):
             guard brightness.isFinite, contrast.isFinite, saturation.isFinite else { return nil }
             return self
+        case .threshold(let level):
+            guard level.isFinite else { return nil }
+            return .threshold(level: Self.clampAmount(level))
         case .custom:
             return self
+        }
+    }
+
+    /// ``accepted`` が締める値を 1 つ。``Canvas/effects(_:)`` が初回だけ言うために読む ([#1842])。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    struct Rounding {
+        /// 注意の鍵。効果と量ごとに分ける。
+        var warning: Canvas.Warning
+        /// 文面に入る量の名前 (`the invert amount`)。
+        var quantity: String
+        /// 受け取れる範囲の文面。
+        var range: String
+        var passed: Float
+        var used: Int
+    }
+
+    /// ``accepted`` が締める値のうち、いま範囲の外にあるもの。**数でない値・無限を持つ効果は空**
+    /// (その効果は外すので、締める値が無い)。範囲の中の値・締めない量は含めない。
+    var roundings: [Rounding] {
+        func amount(_ warning: Canvas.Warning, _ effect: String, _ value: Float) -> Rounding? {
+            guard value.isFinite, value < 0 || value > 1 else { return nil }
+            return Rounding(
+                warning: warning, quantity: "the \(effect) amount", range: "0 to 1", passed: value,
+                used: value < 0 ? 0 : 1)
+        }
+        func radius(_ warning: Canvas.Warning, _ effect: String, _ value: Float) -> Rounding? {
+            guard value.isFinite, value > Self.maxRadius else { return nil }
+            return Rounding(
+                warning: warning, quantity: "the \(effect) radius", range: "up to \(Int(Self.maxRadius))",
+                passed: value, used: Int(Self.maxRadius))
+        }
+        switch self {
+        case .blur(let value):
+            return [radius(.roundedBlurRadius, "blur", value)].compactMap { $0 }
+        case .bloom(let value, let threshold, let reach):
+            guard threshold.isFinite else { return [] }
+            return [amount(.roundedBloomAmount, "bloom", value), radius(.roundedBloomRadius, "bloom", reach)]
+                .compactMap { $0 }
+        case .invert(let value): return [amount(.roundedInvertAmount, "invert", value)].compactMap { $0 }
+        case .monochrome(let value):
+            return [amount(.roundedMonochromeAmount, "monochrome", value)].compactMap { $0 }
+        case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", value)].compactMap { $0 }
+        case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", value)].compactMap { $0 }
+        case .threshold(let value):
+            guard value.isFinite, value < 0 || value > 1 else { return [] }
+            return [
+                Rounding(
+                    warning: .roundedThresholdLevel, quantity: "the threshold level", range: "0 to 1",
+                    passed: value, used: value < 0 ? 0 : 1)
+            ]
+        case .adjust, .custom: return []
         }
     }
 
@@ -286,6 +375,7 @@ extension Effect {
         case .vignette: "vignette"
         case .fringe: "fringe"
         case .adjust: "adjust"
+        case .threshold: "threshold"
         case .custom: "custom"
         }
     }
@@ -307,8 +397,9 @@ struct EffectPass {
     enum Slot: Equatable {
         /// いまの絵。
         case current
-        /// 次の絵。ここへ書くと往復が 1 つ進む。**並びの最後なら描く先そのもの**へ書く
-        /// (入りの絵は描く先から写した控えなので、読んでいる面へ書くことにはならない・#1469)。
+        /// 次の絵。ここへ書くと往復が 1 つ進む。**並びの最後なら出す面** (``EffectPipeline/carry(startingTransparent:)``) へ
+        /// 書き、書けたら描く先と面を取り替える (入りの絵は描く先で、書く先は別の面なので、読んでいる面へ
+        /// 書くことにはならない・#1469・#2388)。
         case next
         /// 脇の絵。`level` が 1 以上なら 1 / 2^level に縮めた絵 (#755)。
         case side(Int, level: Int)
@@ -384,12 +475,14 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
     case accumulate = 12
     /// 縮める / 広げる。大きなぼかしが縮めた絵の上で回るための段 ([#755])。
     case resize = 13
+    /// 2 値化 (``Effect/threshold(level:)``)。
+    case threshold = 14
     /// 隣り合う画素ごとの効果 (反転・単色化・周辺減光・色調整) を 1 段にまとめたもの ([#2371])。
     /// 設定の頭が (種類, 段の数)、続く `float4` が段ごとの (種類, p0, p1, p2)。利用者の並びには
     /// 現れず、``Canvas`` が段を組む前にまとめる。
     ///
     /// [#2371]: https://github.com/mokume-metal/mokume/issues/2371
-    case fused = 14
+    case fused = 15
 
     /// 断片へ渡す形。設定の枠が `Float` なので、そこへ入る形で名乗る。
     var value: Float { Float(rawValue) }
@@ -410,6 +503,7 @@ enum BuiltinEffectKind: UInt32, CaseIterable, Hashable {
         case .enlarge: "kEffectEnlarge"
         case .accumulate: "kEffectAccumulate"
         case .resize: "kEffectResize"
+        case .threshold: "kEffectThreshold"
         case .fused: "kEffectFused"
         }
     }

@@ -518,7 +518,9 @@ struct PixelGridTests {
         @MainActor func draw(on canvas: Canvas) {
             let size = SIMD2<Float>(Float(half.x * 2), Float(half.y * 2))
             if let arc {
-                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y))
+                // 扇の周の帯 (中心の角・2 本の半径・穴) を見る形。閉じ方を渡さない既定は開いた弧の帯で、
+                // こうした部分を持たない (弦で結んだ形と開いた弧は `ArcClosureShapeTests` が見る・#2428)
+                canvas.arc(0, 0, size.x, size.y, Float(arc.x), Float(arc.x + arc.y), .pie)
             } else if isEllipse {
                 canvas.ellipse(0, 0, size.x, size.y)
             } else {
@@ -557,7 +559,7 @@ struct PixelGridTests {
     }
 
     /// 点 `p` が楕円の扇 (中心を含む) の内か。**扇の内外は、中心から弧の端へ向かう 2 本の半直線で
-    /// 決める** (角は媒介変数の角・`mokume_sectorField` の説明)。
+    /// 決める** (角は媒介変数の角・`mokume_arcRegionField` の説明)。
     nonisolated static func sectorContains(
         _ p: SIMD2<Double>, radii: SIMD2<Double>, start: Double, sweep: Double
     ) -> Bool {
@@ -748,11 +750,12 @@ struct PixelGridTests {
                 return SIMD2(c * d.x + s * d.y, -s * d.x + c * d.y)
             }
             let shift = local(origin + 0.5)
+            // 塗りに入る点では帯の距離を解かない (楕円の真の距離は点ごとに二分法を回す・#3010)
             func covered(_ point: SIMD2<Double>) -> Bool {
                 let p = local(point)
+                if fills && shape.inFill(p) { return true }
                 let q = p - shift
-                let inBand = boundary.map { $0(q) <= halfWeight } ?? shape.inBand(q)
-                return (fills && shape.inFill(p)) || inBand
+                return boundary.map { $0(q) <= halfWeight } ?? shape.inBand(q)
             }
             let reach = max(shape.half.x, shape.half.y) + halfWeight + 2
             let lowest = max(0, Int(min(origin.x, origin.y) - reach))
@@ -760,16 +763,18 @@ struct PixelGridTests {
             for y in lowest..<highest {
                 for x in lowest..<highest {
                     // 画素の中心から帯の縁までの距離が 0.9 画素より離れていれば、1/8 画素広げた四角
-                    // (中心から 0.9 画素の内に収まる) は丸ごと帯の中か外で、標本を見なくてよい
+                    // (中心から 0.9 画素の内に収まる) は丸ごと帯の中か外で、標本を見なくてよい。
+                    // 丸ごと帯の中なら塗りの有無によらず覆われる。帯の外は塗りが覆いうるので、塗りの
+                    // 無い形だけで決める (#3010)
                     let centerDistance = boundary.map {
                         $0(local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift)
                     }
                     var inside = true
                     var decided = false
-                    if let centerDistance, !fills {
+                    if let centerDistance {
                         if centerDistance <= halfWeight - 0.9 {
                             decided = true
-                        } else if centerDistance > halfWeight + 0.9 {
+                        } else if !fills, centerDistance > halfWeight + 0.9 {
                             inside = false
                             decided = true
                         }
@@ -1251,18 +1256,33 @@ struct PixelGridTests {
             for y in 10..<150 {
                 for x in 10..<150 {
                     let center = local(SIMD2(Double(x) + 0.5, Double(y) + 0.5)) - shift
-                    // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) を縁の渡し (1 画素の
-                    // 線形の傾き) に通した値 — 描く側の被覆の式 (`ramp(外縁) − ramp(内縁)`) と同じ形で、
-                    // 距離の値と弧の候補の取り違えだけを見る (画素の真の面積とは、斜めの縁の渡しの粗さ
-                    // だけ違うので、面積では比べない)
+                    // 帯の縁から 1 画素の内だけ見る。期待する被覆は、真の距離 (64 bit) と、その画面での勾配
+                    // (中心差分) から、縁 1 本ごとに「半平面と画素の正方形の重なりの面積」を取り、外縁の面積 −
+                    // 内縁の面積とした値 — 描く側の被覆の式 (`mokume_pixelCdf` の差・#2991) と同じ形で、
+                    // 距離の値と弧の候補の取り違えだけを見る。画素の真の面積とは、縁を直線とみなす分だけ違う
                     guard arcEnds.contains(where: { simd_distance($0, center) <= 8 }) else { continue }
                     let distance = boundary(center)
                     guard abs(distance - halfWeight) <= 1 else { continue }
                     // 中心の角 (2 本の半径が交わる先) は、描く側が画素の中を標本で数える (`mokume_sectorApex`) ので、
                     // 縁の渡しの式の期待値では測れない。この検査が見るのは弧の候補の取り違えなので外す
                     guard simd_length(center) > 4 else { continue }
-                    func ramp(_ value: Double) -> Double { min(1, max(0, 0.5 - value)) }
-                    let truth = max(0, ramp(distance - halfWeight) - ramp(distance + halfWeight))
+                    // 画面の勾配 (画素あたりの距離の増え方)。距離は形自身の座標で測るので、画面の点から写して差分を取る
+                    func distanceAt(_ point: SIMD2<Double>) -> Double { boundary(local(point) - shift) }
+                    let here = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
+                    // 距離は弧からの**符号なしの**距離で、弧の上に折れ目がある。中心差分は折れ目で 0 になるので、
+                    // 前後の片側差分の大きいほうを取る (成分の符号は面積に効かない)
+                    let step = 1e-3
+                    func slope(_ axis: SIMD2<Double>) -> Double {
+                        let here0 = distanceAt(here)
+                        return max(
+                            abs(distanceAt(here + axis * step) - here0),
+                            abs(here0 - distanceAt(here - axis * step))) / step
+                    }
+                    let gradient = SIMD2(slope(SIMD2(1, 0)), slope(SIMD2(0, 1)))
+                    let truth = max(
+                        0,
+                        Self.halfPlaneArea(distance - halfWeight, gradient)
+                            - Self.halfPlaneArea(distance + halfWeight, gradient))
                     let error = abs(Double(pixels[x, y].red) - truth)
                     if error > worst {
                         worst = error
@@ -1272,6 +1292,20 @@ struct PixelGridTests {
             }
         }
         return (worst, at)
+    }
+
+    /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_pixelCdf` の写し・
+    /// 64 bit・#2991)。
+    nonisolated static func halfPlaneArea(_ c: Double, _ g: SIMD2<Double>) -> Double {
+        let hi = max(abs(g.x), abs(g.y)), lo = min(abs(g.x), abs(g.y))
+        if hi < 1e-12 { return c > 0 ? 0 : 1 }
+        let s = 0.5 * (hi + lo), u = abs(c)
+        if u >= s { return c > 0 ? 0 : 1 }
+        // 軸に沿う縁 (短辺 0) は、幅 hi の線形の渡し
+        if lo <= 1e-9 * hi { return min(1, max(0, 0.5 - c / hi)) }
+        let k = 0.5 * (hi - lo), ramp = s - u
+        let tail = u >= k ? ramp * ramp / (2 * lo * hi) : 0.5 - u / hi
+        return c > 0 ? tail : 1 - tail
     }
 
     nonisolated static let approximateArcEdgeShapes: [SeamShape] = ([

@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math api-list reference example-shots example-shots-check cli-dist reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math attach-result api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -72,7 +72,7 @@ CI_CHECK_SKIP ?=
 #     macOS に残る hooks-test の各段の検査 (adrs_test など) が持つ。ubuntu の段が起こす
 #     scripts/*.sh のどれにもその検査があることは ci_workflow_test.py が見る
 #   - drawing-evidence は CI ではどちらでも理由を述べて 0 で抜ける (上の並びの注釈)。ubuntu に置く
-CI_STATIC_STEPS := schemas tool-language isolated-deinit runtime-math entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
+CI_STATIC_STEPS := schemas tool-language isolated-deinit runtime-math attach-result entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
 CI_CHECK_HOST ?=
 
 # **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
@@ -98,7 +98,7 @@ CI_CHECK_HOST ?=
 #      --failure-messages <記録> (80 件を超えたぶんは件数だけ) で出る。環境由来の赤
 #      (他のセッションの GPU 負荷など) が約 70 本並ぶ中に本物が 1 本混ざることがあり、
 #      先頭 10 行で「2 本」と読んだ PR #1997 は本物 (StartupReadsTests) を見落とした
-CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit runtime-math reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
+CI_CHECK_ALL := $(filter-out $(CI_CHECK_SKIP),build test examples shaders params schemas api tool-language isolated-deinit runtime-math attach-result reference entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test drawing-evidence)
 ifeq ($(CI_CHECK_HOST),)
 CI_CHECK_STEPS := $(CI_CHECK_ALL)
 else ifeq ($(CI_CHECK_HOST),ubuntu)
@@ -483,6 +483,17 @@ isolated-deinit: ## Sources/ の isolated deinit が隔離を明示した型の�
 runtime-math: ## 本体の超越関数が RuntimeMath を通さずに直に呼ばれていないかを検査する
 	python3 scripts/check-runtime-math.py
 
+# 作る口が公開の `attach` の返す `false` を捨てていないかを見る (#2794)。外で呼ばれると黙って
+# 足されていない入り口を返し、警告も利用者が呼んでいない `attach()` を名乗る。#2740 で直した翌日に、
+# シリアル (#2297)・ゲームパッド (#2295) が古い形を写して merge され、口を手で並べた外での検査は赤くならなかった。
+# 作る口は、確かめて足すまでを 1 回で行う `package` の道具 (`Sketch+Seams.swift` の `attached` など) を通る。
+#
+# **段 1 を採っている** (ADR-0008 決定 5) — 木の字句だけを読む、runtime-math と同じ形
+# (「既存の責務を広げる」)。対象は Sources/ の Swift すべてで (置き場の名前の一覧を持たない)、受け手の綴りを読まず
+# `calledAs:` を持たない `attach` の呼び出し・参照を赤にする。組み上げは要らない
+attach-result: ## 道具を通さない attach の呼び出し・参照 (返す false を捨てる素の口) が無いかを検査する
+	python3 scripts/check-attach-result.py
+
 api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m)) \
 		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
@@ -529,7 +540,7 @@ REFERENCE_OMIT := \
 	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
 	InputState InputEvent \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
-	ParamBox
+	ParamBox UndeliverableGeneration
 
 reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公開時の基準パス)
 	rm -rf "$(REFERENCE_GRAPHS)" "$(or $(OUT),$(REFERENCE_OUT))"
@@ -574,7 +585,19 @@ reference: build ## 参照の面を組み立てる (OUT= 置き場 / BASE= 公�
 CLI_STAGE := .build/dist/stage
 CLI_ASSET := .build/dist/mokume-macos-arm64.tar.gz
 
-cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
+# 道具に同梱する作例の束 (#2436)。**説明文 (`///`) の中の例から作る生成物** で、コミットしない。
+# `mokume examples` と `mokume new --from` が読む。束は道具の資源 (`mokume_MokumeCLI.bundle`) に
+# 入るので、**組む前に作る** — 配布物 (cli-dist) は先にこれを呼ぶ。手元の `swift build` で試すときは
+# これを打ってから組む (束が無い組み立ては、束が無いと名乗る)。選ぶ規則と形は
+# scripts/bundle-examples.py の冒頭。組めることは MokumeCLITests が、全部の例を `--from` で作って見る
+cli-examples: ## 道具に同梱する作例の束を作る (Sources/MokumeCLI/Examples)
+	python3 scripts/bundle-examples.py
+
+# **版と SHA を渡したときだけ** (RELEASE_VERSION=v0.29.0 RELEASE_SHA=<commit>)、実行ファイルの隣に
+# 1 行の `mokume.release` を置いて tarball に入れる (#2887)。道具は ToolVersion がそれを読んで
+# `<版> (release <短い SHA>)` と名乗る。渡さない手元の組み立ては、今までどおり local build と
+# 名乗る。stage は追跡外 (.build の下) なので、リポジトリのファイルは版ごとに変わらない
+cli-dist: cli-examples ## 道具の配布物を束ねる (OUT=path で置き場を指定。版は RELEASE_VERSION・RELEASE_SHA)
 	swift build -c release --product mokume-cli
 	rm -rf "$(CLI_STAGE)"
 	mkdir -p "$(CLI_STAGE)" "$(dir $(CLI_ASSET))"
@@ -586,13 +609,27 @@ cli-dist: ## 道具の配布物を束ねる (OUT=path で置き場を指定)
 		exit 1; \
 	fi; \
 	for bundle in $$bundles; do cp -R ".build/release/$$bundle" "$(CLI_STAGE)/"; done; \
+	meta=""; \
+	if [ -n "$(RELEASE_VERSION)$(RELEASE_SHA)" ]; then \
+		{ printf '%s\n' "$(RELEASE_VERSION)" | grep -Eq '^v?[0-9][0-9A-Za-z.+_-]*$$' && \
+		printf '%s\n' "$(RELEASE_SHA)" | grep -Eq '^[0-9a-fA-F]{7,40}$$'; } || { \
+			echo "RELEASE_VERSION (例 v0.29.0) と RELEASE_SHA (16 進 7〜40 文字) は両方を正しい形で渡す" >&2; exit 1; }; \
+		echo "$(RELEASE_VERSION) $(RELEASE_SHA)" > "$(CLI_STAGE)/mokume.release"; \
+		meta="mokume.release"; \
+	fi; \
 	asset="$(or $(OUT),$(CLI_ASSET))"; \
-	COPYFILE_DISABLE=1 tar -czf "$$asset" -C "$(CLI_STAGE)" mokume $$bundles; \
+	COPYFILE_DISABLE=1 tar -czf "$$asset" -C "$(CLI_STAGE)" mokume $$meta $$bundles; \
 	listed="$$(tar tzf "$$asset")"; \
+	if [ -n "$$meta" ]; then \
+		printf '%s\n' "$$listed" | grep -qx "mokume.release" || { \
+			echo "版の 1 行ファイル (mokume.release) が資産に入っていない: $$asset" >&2; exit 1; }; \
+	fi; \
 	for bundle in $$bundles; do \
 		printf '%s\n' "$$listed" | grep -q "^$$bundle/" || { \
 			echo "束ねたはずの $$bundle が資産に入っていない: $$asset" >&2; exit 1; }; \
 	done; \
+	printf '%s\n' "$$listed" | grep -q "^mokume_MokumeCLI.bundle/.*Examples/index.tsv$$" || { \
+		echo "作例の束 (Examples/index.tsv) が資産に入っていない: $$asset" >&2; exit 1; }; \
 	echo "束ねた: $$asset"; \
 	echo "入れた束: $$(echo $$bundles | tr '\n' ' ')"
 

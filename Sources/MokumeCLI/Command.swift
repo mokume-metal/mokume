@@ -49,7 +49,7 @@ enum Command {
     /// ``dispatch(_:)`` の網羅 `switch` と ``usageEntry`` の両方が**コンパイラに
     /// 問われる** — 案内に並べないなら、並べないと書くことになる。
     enum Verb: String, CaseIterable {
-        case new, run, watch, render, mcp, bundle, doctor, help, version
+        case new, examples, run, watch, render, mcp, bundle, doctor, help, version
 
         /// 慣習の綴り。名前とは別に受けるだけで、案内には並べない。
         var aliases: [String] {
@@ -74,11 +74,20 @@ enum Command {
             switch self {
             case .new:
                 (
-                    "new <name> [--path <directory>] [--local <library path>]",
+                    "new <name> [--from <example>] [--path <directory>] [--local <library path>]",
                     """
-                    Create a sketch package. Pass --local to point at this repository (for development).
+                    Create a sketch package. Pass --from to start from one of the examples (see examples)
+                    instead of the spinning circle. Pass --local to point at this repository (for development).
                     --local goes into the new Package.swift as is, so a relative one starts from the
                     new sketch, not from where you run this
+                    """
+                )
+            case .examples:
+                (
+                    "examples",
+                    """
+                    List the examples that ship with the tool, by the names the reference uses.
+                    Open one as a new sketch with new <name> --from <example>
                     """
                 )
             case .run:
@@ -94,8 +103,24 @@ enum Command {
                 )
             case .watch:
                 (
-                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>]",
-                    "Rebuild the sketch and swap it in whenever you save"
+                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>] [--keep-time]",
+                    """
+                    Rebuild the sketch and swap it in whenever you save.
+                    Pass --keep-time to carry the sketch's clock across a rebuild: the new version starts
+                    from where the old one was (a time you stopped with pauseTime() stays stopped), instead
+                    of at 0. It carries only that clock's seconds and whether it is stopped, not frameCount,
+                    random numbers or anything built up from deltaTime; with clock .frames the time continues
+                    from the carried second while frameCount starts at 1 again, and a pauseTime(), playTime()
+                    or jumpTime() in setup() wins. If the old version crashed or had stopped drawing
+                    with noLoop(), the new one starts from the second it last wrote or last showed,
+                    without the time that passed. run and render always start at 0.
+                    What it watches: Package.swift, every .swift under Sources/, and the regular files
+                    under Sources/<target>/assets/ (not hidden files or symbolic links). A .metal
+                    fragment is not rebuilt: it swaps in while the sketch keeps running.
+                    A change anywhere else does not rebuild — resources Package.swift declares outside
+                    assets/ (.process("Resources"), .copy("data.json"), a changed path:), Package.resolved,
+                    a dependency given by path (--local). Stop watch and start it again after those
+                    """
                 )
             case .render:
                 (
@@ -106,9 +131,14 @@ enum Command {
                     """
                     Build the sketch and write its motion at a fixed frame rate, with no window.
                     The time the sketch sees steps by 1/fps per frame, so the same arguments give
-                    the same motion. --out takes a .mov, or a numbered series with a run of # in
-                    the file name for the number (out/frame-####.png). Ends by itself after
-                    fps × seconds frames
+                    the same motion. --out takes a .mov (ProRes 4444) or a numbered series with a
+                    run of # in the file name for the number (out/frame-####.png) — the forms to
+                    keep, which give the same pixels from the same arguments — or a .mp4 (H.264)
+                    or .gif to share, which do not promise that. A .gif holds 256 colours, shows
+                    colour as sRGB, and writes each pixel opaque or transparent (alpha 128 or
+                    more is opaque), and its frame time is a whole number of 1/100 seconds, so
+                    --fps must divide 100 (50, 25, 20 …); a .mp4 writes colour as sRGB with no
+                    transparency. Ends by itself after fps × seconds frames
                     """
                 )
             case .mcp:
@@ -155,6 +185,8 @@ enum Command {
         switch verb {
         case .new:
             try NewCommand.run(rest)
+        case .examples:
+            try ExamplesCommand.run(rest)
         case .run:
             try RunCommand.run(rest)
         case .watch:

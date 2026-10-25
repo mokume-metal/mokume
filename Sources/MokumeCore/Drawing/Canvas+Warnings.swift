@@ -24,6 +24,23 @@ extension Canvas {
         case notANumberBackground
         /// 画像に掛ける色に、数でない値・無限の値が渡された。
         case notANumberTint
+        /// 塗りの不透明度が 0–255 の外で、締めた ([#1842])。**数でない値の注意とは鍵を分ける** —
+        /// あちらは塗りを変えずに断り、こちらは締めて塗る。口ごとに数える (下の 3 つも同じ)。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedFillOpacity
+        /// 線の色の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedStrokeOpacity
+        /// 下地の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBackgroundOpacity
+        /// 画像に掛ける色の不透明度が 0–255 の外で、締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedTintOpacity
         /// 底上げの光に、数でない値・無限の値が渡された。
         case notANumberAmbientLight
         /// 向きを持つ光に、数でない値・無限の値が渡された。
@@ -44,8 +61,19 @@ extension Canvas {
         /// 自分で出す光に、数でない値・無限の値が渡された。
         case notANumberEmissive
 
+        /// 勾配 (``Gradient``) を受けられなかった。区切りが無い・数でない値・点がつぶれている (#2433)。
+        case badGradient
+        /// 勾配の区切りが多すぎて、位置の小さい順に上限までを使った (#2433)。
+        case tooManyGradientStops
+        /// 勾配の断片を組めなかった (#2433)。
+        case gradientUnavailable
+
         /// 面の無いモデルを置いた。
         case emptyModel
+        /// 読んだモデルに、壊れて読み飛ばした行 (読めない頂点・面・仕様に無い語) や面があった (#2565)。
+        /// **ファイルの名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
+        /// 意図して読まない行 (`mtllib`・`usemtl` など) では言わない。
+        case modelSkipped(path: String)
         /// 読んだ SVG に描けないものがあって捨てた、または描くものが 1 つも無かった。**ファイルの
         /// 名前ごとに 1 度** — 名前はスケッチの文字に書かれたものなので、鍵の数はフレームで増えない。
         case svgSkipped(path: String)
@@ -101,12 +129,48 @@ extension Canvas {
         ///
         /// [#1544]: https://github.com/mokume-metal/mokume/issues/1544
         case badEffect
+        /// 効果の `amount` が 0…1 の外で、端へ締めた ([#1842])。効果と量ごとに鍵を分ける —
+        /// 別の効果の注意を黙らせない。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBloomAmount
+        case roundedInvertAmount
+        case roundedMonochromeAmount
+        case roundedVignetteAmount
+        case roundedFringeAmount
+        /// ``Effect/threshold(level:)`` の `level` が 0…1 の外で、端へ締めた。
+        case roundedThresholdLevel
+        /// 効果の `radius` が ``Effect/maxRadius`` を越え、そこへ締めた ([#1842])。
+        ///
+        /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+        case roundedBlurRadius
+        case roundedBloomRadius
         /// フレームの外で効果を決めた ([#1605])。
         ///
         /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
         case effectsOutsideFrame
-        /// 効果を通せなかった。
+        /// 効果を通せなかった (フレームの終わりの ``Canvas/effects(_:)``)。
         case effectFailed
+        /// ``Canvas/filter(_:)`` が、持ち越しを約束する区間の外で呼ばれた。置いたもの (``OutsideFrame/placing``) と
+        /// 同じ区間で許すので、シーンの記述の鍵 (``effectsOutsideFrame``) とは分ける — 直す先の言い方が違う。
+        case filterOutsideFrame
+        /// ``Canvas/filter(_:)`` が効果を通せなかった。``effectFailed`` と文面が違う (こちらは絵がそのまま残る)。
+        case filterFailed
+        /// ``Canvas/filter(_:)`` が呼んだ投入を、GPU が打ち切った。絵は掛ける前のまま残る (打ち切られた投入は
+        /// 1 画素も書かない)。
+        case filterDropped
+        /// 受け口の注意 (``badEffect``・`rounded…`) を、``Canvas/effects(_:)`` ではなく ``Canvas/filter(_:)`` と
+        /// ``Image/filtered(_:)`` の口から言うときの鍵。**口ごとに鍵を分ける** — `effects()` で 1 度出した注意が、
+        /// 同じ面の `filter()` の注意を面の寿命のあいだ黙らせない (失敗の鍵と区間の外の鍵を分けたのと同じ理由)。
+        /// 文面は呼んだ口の名前を名乗るので、どちらの口の書き違えかを指さす。
+        indirect case filterSide(Warning)
+        /// 作業の面を作れず、``Image/filtered(_:)`` が効果を掛けない写しを返した。大きさごとに 1 度だけ言う。
+        case filteredWorkspaceUnavailable
+        /// GPU が打ち切った効果のフレームの後に、次のフレームがもう戻していた ([#2388])。効果が焼き込まれたまま
+        /// 残りうる。
+        ///
+        /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+        case effectBakedAfterDrop
         /// 拡大を通せなかった。
         case upscaleFailed
         /// 止まっている間のコールバックが書いた画素を、配った直後に描く先へ書き戻せなかった
@@ -175,6 +239,21 @@ extension Canvas {
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
         case badStrokeWeight
+        /// ``strokeDash(_:_:)`` に負の値・数でない値・無限・両方 0 が渡され、破線を置かずに実線へ
+        /// 戻した ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case badStrokeDash
+        /// 破線が線の長さに対して細かすぎ、刻む数が上限を越えるので、その線を実線で引いた ([#2835])。
+        ///
+        /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
+        case strokeDashTooFine
+        /// 特化した立体のパイプライン (光の枝を外した組・ブレンドを外した組) を組めず、その立体を既定の
+        /// パイプラインで描いた ([#1795]・[#2366])。絵は同じで、速さだけが戻る。
+        ///
+        /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+        /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+        case solidVariantUnavailable
         /// ``rect(_:_:_:_:_:)`` の角の半径に負の値・数でない値が渡され、0 に丸めた ([#2757])。
         /// 角を丸めない 4 引数と同じ絵になる。
         ///
@@ -316,6 +395,21 @@ extension Canvas {
         ///
         /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
         case missingTypefaceStyle
+        /// ``Canvas/textWeight(_:)`` の太さに、書体が近い面を持っていなかった ([#2445])。持つ面のうち最も近い
+        /// ものを使ったが、頼んだ太さから大きく離れている。
+        ///
+        /// **``missingTypefaceStyle`` と鍵を分ける** — 太字の面の知らせが、太さの知らせを黙らせない。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case missingTypefaceWeight
+        /// ``Canvas/textWeight(_:)`` に、100〜900 の外の値が渡され、範囲の端へ丸めた ([#2445])。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case badTextWeight
+        /// ``Canvas/textWeight(_:)`` に、数でない値・無限が渡された。太さは前のまま ([#2445])。
+        ///
+        /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+        case notANumberTextWeight
         /// 指定した書体が覆えず別の書体から引いた字の面が、``Canvas/textStyle(_:)`` の太さ・傾きを
         /// 持っていなかった ([#2561])。色の字形を持つ書体から引いた字と、墨を持たない字は数えない
         /// (``Typeface/lacksStyle(fallback:glyph:requested:)``)。
@@ -355,16 +449,24 @@ extension Canvas {
         ///
         /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
         case atlasFullInOneFrame
+        /// 拡大した字 (`textSize()` × `scale()`) が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で
+        /// 描かれた ([#2446])。**``atlasFullInOneFrame`` とは鍵を分ける** — あちらは字が欠ける知らせで、
+        /// こちらは欠けずに縁がぼける知らせである。
+        ///
+        /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+        case softEnlargedText
 
         /// 形の組み立て (``createShape(_:)``) の中で塗り直した ([#1588])。塗り 1 色の背景と周囲の
         /// 背景が鍵を共有する。種類と文面は ``InsideShape`` が持つ。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
         case backgroundInsideShape
-        /// 形の組み立ての中で画素を読み書きした ([#1588])。`get` / `set` / `pixels` /
-        /// `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。
+        /// 形の組み立ての中で、**組み立てている面自身の**画素を読み書きした ([#1588])。`get` / `set` /
+        /// `pixels` / `loadPixels()` の 4 つが鍵を共有する (``vertexOutsideShape`` の前例)。組み立ての
+        /// 途中の本体に置かれた描き場所の画素は、読み書きしても言わない ([#2203])。
         ///
         /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
+        /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
         case pixelsInsideShape
         /// 形の組み立ての途中で溜め場が描き切られるか捨てられ、記録したものを失って空の形を返した
         /// ([#1588])。**mokume の不具合のときだけ出る** — 写しを持てなかった置いた描き場所の描き換えも、
@@ -395,6 +497,7 @@ extension Canvas {
         case cameraInsideShape
         case clipInsideShape
         case effectsInsideShape
+        case filterInsideShape
         case lightInsideShape
         case surroundingsInsideShape
         case shadowInsideShape
@@ -438,6 +541,21 @@ extension Canvas {
             "\(entry.rawValue)(): got a value that is not a number, or an infinite one, so \(entry.outcome)")
     }
 
+    /// 不透明度を締めたことを、初回だけ知らせる ([#1842])。**範囲の中・数でない値は何も言わない**
+    /// (数でない値は ``warnNotANumberColor(_:)`` が断る側)。
+    ///
+    /// 文面は ``warnRounded(_:_:_:takes:passed:used:)`` で組む。0–255 の目盛りの数の形も、色の値と
+    /// 不透明度の形 (`fill(c, alpha)`) も、同じ鍵・同じ文面で言う。
+    ///
+    /// [#1842]: https://github.com/mokume-metal/mokume/issues/1842
+    func warnRoundedOpacity(_ entry: ColorEntry, passed alpha: Float) {
+        guard let warning = entry.roundedOpacityWarning,
+            let used = DisplayScale.roundedOpacity(alpha)
+        else { return }
+        warnRounded(
+            warning, entry.rawValue, "the opacity", takes: "0 to 255", passed: alpha, used: used)
+    }
+
     /// 色を受ける口。注意の鍵と、断ったときに何を残したかを持つ。
     enum ColorEntry: String {
         case fill, stroke, background, tint
@@ -456,6 +574,17 @@ extension Canvas {
             case .spotLight: .notANumberSpotLight
             case .ambient: .notANumberAmbient
             case .emissive: .notANumberEmissive
+            }
+        }
+
+        /// 不透明度を締めたときの鍵。不透明度を持たない口 (光と質感) は `nil`。
+        var roundedOpacityWarning: Warning? {
+            switch self {
+            case .fill: .roundedFillOpacity
+            case .stroke: .roundedStrokeOpacity
+            case .background: .roundedBackgroundOpacity
+            case .tint: .roundedTintOpacity
+            case .ambientLight, .directionalLight, .pointLight, .spotLight, .ambient, .emissive: nil
             }
         }
 

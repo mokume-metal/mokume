@@ -9,10 +9,9 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var notes: String? -->
     /// ```swift
-    /// func setup() {
-    ///     if let url = try? assetURL("assets/notes.txt") {
-    ///         notes = try? String(contentsOf: url, encoding: .utf8)
-    ///     }
+    /// func setup() throws {
+    ///     let url = try assetURL("assets/notes.txt")
+    ///     notes = try String(contentsOf: url, encoding: .utf8)
     /// }
     /// ```
     ///
@@ -29,14 +28,14 @@ extension SketchPart {
     /// ``DataFailure/unopenable(path:location:reason:)`` など・
     /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
     ///
-    /// - Throws: どこにも無いとき。説明には探した場所が載る。
+    /// **見つからないと言うのは、本当に無いときだけ** ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
+    /// 候補の場所に入れず (親のフォルダに入る権利が無いなど) 在るかを確かめられないときは、そこで探すのを
+    /// 止め、その場所と OS の事情を ``AssetFailure/unreachable(path:location:reason:)`` で名乗る。
+    /// 入れない親の下では、在るファイルと無いファイルの区別が付かない。
+    ///
+    /// - Throws: どこにも無いとき (説明には探した場所が載る)、または候補の場所に入れないとき。
     // shot: 撮れない 返すのはファイルの場所で、解く先の資材ファイルがこのリポジトリの例には無い
     public func assetURL(_ path: String) throws(AssetFailure) -> URL {
-        let searched = ImageFile.candidates(for: path)
-        guard let url = searched.first(where: { FileManager.default.fileExists(atPath: $0.path) })
-        else {
-            throw .notFound(path: path, searched: searched.map(\.path))
-        }
-        return url
+        try AssetLookup.locate(ImageFile.search(for: path), path: path)
     }
 }

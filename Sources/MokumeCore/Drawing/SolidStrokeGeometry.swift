@@ -28,6 +28,14 @@ import simd
     /// `(点 i の位置, 辺の数)` に続けて、隣ごとに `(隣の位置, 隣の記録の位置)` を辺の順に並べる。
     /// 画面で潰れた辺の先の点 (隣) の隣まで引けるので、画面で重なる 2 点を 1 点として形を置ける。
     /// 位置は `float4` の並びでの番号で、片 1 つは 3 つ分を占める。
+    ///
+    /// **同じ直線に載る向かい側の 2 辺 (対) を持つ点の記録は、隣の後ろに対の相手の語を続ける** ([#2989])。
+    /// 見出しの語の辺の数を 0.5 だけ大きくして (小数部が 0.5) 印にし、隣 4 つごとに 1 語、成分に隣の番号
+    /// (対の相手。無ければ −1) を入れる。視線をその直線に沿わせると、対の 2 辺は続けて画面で潰れ、
+    /// 3 点以上が 1 つの群になる。頂点関数 (`solidStrokeRunStep`) は潰れた辺を対の相手をたどって何段でも
+    /// 進み、群の外へ出る辺を腕に数える。**記録は鎖の長さに比例して増えるだけで、鎖の組ごとの記録は持たない。**
+    ///
+    /// [#2989]: https://github.com/mokume-metal/mokume/issues/2989
     struct Piece {
         var a: SIMD4<Float>
         var b: SIMD4<Float>
@@ -46,17 +54,30 @@ import simd
     ///   ここで戻れる。**この guard は、腕の無い群が GPU に来ないことの前提でもある。** 頂点関数
     ///   (`solidStrokeCornerShape`) は群に数える腕が 1 本も無いときに何も置かない (向きの無い点の
     ///   正方形は持たない・#2823)。外すなら、端の形 (`strokeCap`) を骨が扱う設計が先に要る
-    /// - 同じ直線に載る 2 本の辺が集まる点を持つ網。視線をその直線に沿わせると、潰れた辺が 2 本
-    ///   続いて 3 点が画面で重なる。頂点関数は潰れた辺の先を 1 段しか引かないので、CPU の骨
-    ///   (`strokeNet` は群を何段でもまとめる) へ戻す。組み込みの立体の稜線には無い
-    init?(net: SolidEdges, gpu: RenderDevice) throws(RenderFailure) {
+    /// - 同じ直線に**同じ側へ重なる** 2 本の辺が集まる点、長さ 0 の辺を持つ点、1 本の辺が 2 つの対に入る点を
+    ///   持つ網。向かい側へ抜ける 2 辺 (対) は、視線をその直線に沿わせると潰れた辺が続くが、頂点関数が対の相手を
+    ///   たどって何段でも引く (``Piece`` の説明・#2989)。同じ側へ折り返す辺は、たどる道が分かれるので CPU の骨
+    ///   (`strokeNet` は群を何段でもまとめる) へ戻す (``straightPairs(_:)``)
+    ///
+    /// - Parameter byteLimit: 骨の置き場の大きさの上限 (バイト)。**超えるなら作らずに `nil`** — 読み込んだ
+    ///   モデルのように網が大きく、控えの予算を食い合う相手 (``Canvas/modelStrokeGeometries``・#2907)
+    ///   が渡す。大きさは片と点の記録の数から先に決まるので、超えるなら配列を作る前に戻る。`nil` なら
+    ///   上限を持たない (組み込みの立体の稜線は小さい)
+    init?(net: SolidEdges, gpu: RenderDevice, byteLimit: Int? = nil) throws(RenderFailure) {
         let shared = SolidStrokeNet(points: net.points, edges: net.edges)
         let points = net.points.indices
         guard !net.edges.isEmpty, points.allSatisfy({ shared.degree(of: $0) != 1 }),
-            !Self.hasStraightPair(shared)
+            let straight = Self.straightPairs(shared)
         else { return nil }
         let corners = points.filter { shared.degree(of: $0) > 0 }
-        let discs = corners.filter { shared.mayEndAsOneBand($0) }
+        // 端の円板を置く容量。群の腕が 1 本に揃うのは、群が同じ平面に載る配置のときだけで、その点は
+        // `mayEndAsOneBand` が決める。**同じ直線の鎖につながる点は、鎖の先の腕まで同じ向きに揃いうる**
+        // (視線を鎖に沿わせると、鎖を含む半平面の腕はどれも画面で同じ向き) ので、辺が 2 本までの点で、
+        // 鎖の辺で隣と対になっていれば容量を持たせる。辺が 3 本以上の点は腕が 1 本に揃わない
+        let chainAdjacent = Self.chainAdjacentPoints(shared, straight)
+        let discs = corners.filter {
+            shared.mayEndAsOneBand($0) || (shared.degree(of: $0) <= 2 && chainAdjacent[$0])
+        }
         // 円板の片 8 つは下限の分割数の半分 (揃える相手は `Piece` の説明の円板の項)
         let pieceCount = net.edges.count + corners.count * 2 + discs.count * 8
         // 点の記録の位置 (`float4` の並びでの番号)
@@ -64,8 +85,12 @@ import simd
         var cursor = pieceCount * 3
         for index in corners {
             records[index] = cursor
-            cursor += 1 + shared.degree(of: index)
+            cursor += 1 + shared.degree(of: index) + Self.pairWordCount(shared.degree(of: index), paired: straight.paired[index])
         }
+        // 骨の置き場の大きさ。配列を作る前に、上限を超えるなら戻る
+        let wordCount = cursor - pieceCount * 3
+        let totalBytes = pieceCount * MemoryLayout<Piece>.stride + wordCount * MemoryLayout<SIMD4<Float>>.stride
+        if let byteLimit, totalBytes > byteLimit { return nil }
         var pieces: [Piece] = []
         pieces.reserveCapacity(pieceCount)
         for (a, b) in net.edges {
@@ -85,11 +110,20 @@ import simd
             }
         }
         var words: [SIMD4<Float>] = []
-        words.reserveCapacity(cursor - pieceCount * 3)
+        words.reserveCapacity(wordCount)
         for index in corners {
-            words.append(SIMD4(net.points[index], Float(shared.degree(of: index))))
+            let degree = shared.degree(of: index)
+            // 小数部の 0.5 は、隣の後ろに対の相手の語が続く印 (`Piece` の説明)
+            words.append(SIMD4(net.points[index], Float(degree) + (straight.paired[index] ? 0.5 : 0)))
             for neighbor in shared.neighbors(of: index) {
                 words.append(SIMD4(net.points[neighbor], Float(records[neighbor])))
+            }
+            guard straight.paired[index] else { continue }
+            let start = shared.starts[index]
+            for group in stride(from: 0, to: degree, by: 4) {
+                var packed = SIMD4<Float>(repeating: -1)
+                for lane in 0..<min(4, degree - group) { packed[lane] = Float(straight.partners[start + group + lane]) }
+                words.append(packed)
             }
         }
         self.gpu = gpu
@@ -106,21 +140,59 @@ import simd
         }
     }
 
-    /// 同じ直線に載る 2 本の辺が集まる点を持つか。傾きの差は稜線の「同じ平面」と同じ許容差で見る
+    /// 同じ直線の鎖の辺で隣とつながる点 (対の辺の先の点か、自分が対を持つ点)。
+    private static func chainAdjacentPoints(
+        _ net: SolidStrokeNet, _ straight: (partners: [Int], paired: [Bool])
+    ) -> [Bool] {
+        var adjacent = straight.paired
+        for index in net.points.indices where straight.paired[index] {
+            let start = net.starts[index]
+            for (offset, neighbor) in net.neighbors(of: index).enumerated() where straight.partners[start + offset] >= 0 {
+                adjacent[neighbor] = true
+            }
+        }
+        return adjacent
+    }
+
+    /// 隣の並びの後ろに続く、対の相手の語の数。4 つの隣ごとに 1 語 (`float4` の成分に隣の番号か −1 を入れる)。
+    private static func pairWordCount(_ degree: Int, paired: Bool) -> Int { paired ? (degree + 3) / 4 : 0 }
+
+    /// 同じ直線に載る 2 本の辺の対を、点ごとに探す。傾きの差は稜線の「同じ平面」と同じ許容差で見る
     /// (``SolidEdges/coplanarAngle``)。
-    private static func hasStraightPair(_ net: SolidStrokeNet) -> Bool {
+    ///
+    /// 対は、**点の向かい側へ抜ける 2 辺** (内積が負) である。視線をその直線に沿わせると、2 辺が
+    /// 続けて画面で潰れ、3 点以上が 1 つの群になる (頂点関数が対の相手をたどって何段でも引く・
+    /// ``Piece`` の説明の対の項)。
+    ///
+    /// **対にできない配置は `nil` で、骨を作らない** (CPU の帯へ戻る)。
+    /// - 長さが 0 の辺を含む組: 辺が視点によらず潰れ、鎖が直線に沿った 1 本の道にならない
+    /// - 同じ側へ折り返す 2 辺 (内積が正): 直線の上で重なり、たどる道が分かれる
+    /// - 1 本の辺が 2 つの対に入る点: 向かい側が 2 本あり、鎖が枝分かれする
+    ///
+    /// - Returns: `partners[starts[i] + k]` が、点 i の k 番目の隣と対になる隣の番号 (無ければ −1)。
+    ///   `paired[i]` は、点 i が対を 1 つでも持つか
+    private static func straightPairs(_ net: SolidStrokeNet) -> (partners: [Int], paired: [Bool])? {
         let threshold = Float(RuntimeMath.sin(SolidEdges.coplanarAngle))
+        var partners = [Int](repeating: -1, count: net.neighbors.count)
+        var paired = [Bool](repeating: false, count: net.points.count)
         for index in net.points.indices {
             let neighbors = net.neighbors(of: index)
+            let start = net.starts[index]
             for (offset, first) in neighbors.enumerated() {
                 let a = net.points[first] - net.points[index]
-                for second in neighbors.dropFirst(offset + 1) {
+                for (later, second) in neighbors.enumerated() where later > offset {
                     let b = net.points[second] - net.points[index]
-                    if length(cross(a, b)) <= threshold * length(a) * length(b) { return true }
+                    guard length(cross(a, b)) <= threshold * length(a) * length(b) else { continue }
+                    guard length(a) > 0, length(b) > 0, dot(a, b) < 0,
+                        partners[start + offset] < 0, partners[start + later] < 0
+                    else { return nil }
+                    partners[start + offset] = later
+                    partners[start + later] = offset
+                    paired[index] = true
                 }
             }
         }
-        return false
+        return (partners, paired)
     }
 
     isolated deinit { gpu.retire(buffer) }
@@ -154,10 +226,10 @@ struct SolidStrokePlacement {
         forward = SIMD4(camera.forward, pixelAspect)
         switch camera.projection {
         case .perspective(let fov, _, let near, _):
-            eye = SIMD4(camera.eye, 1)
+            eye = SIMD4(camera.eye.simd, 1)
             parameters = SIMD4(weight, 2 * RuntimeMath.tan(fov / 2), near, height)
         case .orthographic(_, _, let bottom, let top, _, _):
-            eye = SIMD4(camera.eye, 0)
+            eye = SIMD4(camera.eye.simd, 0)
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
         self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
@@ -190,8 +262,14 @@ extension Canvas {
     /// いまのスタイルが、組み込みの形の線を GPU で広げてよいものか。**記録の間かどうかは見ない**
     /// — その場で描くとき (``placeGPUStroke(of:mesh:)``) と、保持した形に覚えるとき
     /// (`rememberGPUStroke`) の 2 か所が同じ条件を読む。
+    ///
+    /// **読み込んだモデルも通す** (#2907)。ただし保持した形の線 (`rememberGPUStroke`) は組み込みの形だけを
+    /// 覚える — 置くときに形を作り直す口 (`SolidShape.make()`) を、モデルは持たない。
     func gpuStrokeStyleAllows(_ source: SolidSource) -> Bool {
-        guard case .mesh = source else { return false }
+        switch source {
+        case .mesh, .model: break
+        case .freeform, .retained: return false
+        }
         return currentShader == nil && style.stroke.alpha == 1 && style.strokeJoin == .miter
             && style.blendMode == .blend && style.picture == nil
     }
@@ -239,6 +317,7 @@ extension Canvas {
     private func sharedGPUStrokeGeometry(
         of source: SolidSource, mesh: () -> SolidMesh
     ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
+        if case .model = source { return modelStrokeGeometry(of: source, mesh: mesh) }
         let key: SolidSource
         let geometryScale: SIMD3<Float>
         if let (unit, scale) = unitEdgeScaling(of: source) {
@@ -261,6 +340,34 @@ extension Canvas {
             guard let made = try SolidStrokeGeometry(net: net, gpu: gpu) else { return nil }
             solidStrokeGeometry.insert(made, for: key)
             return (made, geometryScale)
+        } catch {
+            // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
+            return nil
+        }
+    }
+
+    /// 読み込んだモデルの稜線の骨 (#2907)。控えは組み込みの立体とは別 (``modelStrokeGeometries``)。
+    ///
+    /// **作れなければ `nil`** — 呼ぶ側は CPU の帯へ戻り、同じ絵を保つ。戻る網は 3 つで、開いた端を持つ・
+    /// 同じ側へ折り返す 2 辺が集まる (どちらも ``SolidStrokeGeometry/init(net:gpu:byteLimit:)``)、骨が
+    /// 控えの予算の半分を超える (追い出し合って毎フレーム作り直すのを避ける・塗りの置き場
+    /// ``modelFills`` と同じ)。**作れなかったことも控える**ので、次のフレームからは網を調べ直さない。
+    /// 置き場を確保できなかったときだけは控えない (一時の失敗かもしれない)。
+    private func modelStrokeGeometry(
+        of source: SolidSource, mesh: () -> SolidMesh
+    ) -> (SolidStrokeGeometry, SIMD3<Float>)? {
+        let unscaled = SIMD3<Float>(repeating: 1)
+        switch modelStrokeGeometries[source] {
+        case .bone(let cached): return (cached, unscaled)
+        case .refused: return nil
+        case nil: break
+        }
+        let net = solidEdges(of: source, mesh: mesh)
+        do {
+            let made = try SolidStrokeGeometry(
+                net: net, gpu: gpu, byteLimit: modelStrokeGeometries.budget / 2)
+            modelStrokeGeometries.insert(made.map { .bone($0) } ?? .refused, for: source)
+            return made.map { ($0, unscaled) }
         } catch {
             // 控えを確保できなければ従来の組み立てへ戻す。描画自体の失敗は従来側が伝える。
             return nil
@@ -297,5 +404,21 @@ extension Canvas {
     /// と置き場所 (``openGPUStroke``) の 2 か所が同じものを読む。
     private func gpuStrokeThin(_ weight: Float) -> ThinStroke? {
         ThinStroke(drawnWeight: drawnSolidWeight(weight), isPoint: false)
+    }
+}
+
+/// 読み込んだモデルの骨の控えの値 (``Canvas/modelStrokeGeometries``)。**骨が作れなかったことも持つ**
+/// ので、作れない網が毎フレーム骨を作りかけない。
+enum ModelStrokeBone {
+    case bone(SolidStrokeGeometry)
+    /// 骨を作らない網。開いた端・同じ側へ折り返す 2 辺・予算の半分を超える大きさ。CPU の帯へ戻る
+    case refused
+
+    /// 控えでの重さ。作れなかった記録は件数が溜まらない程度の固定値。
+    @MainActor var weight: Int {
+        switch self {
+        case .bone(let geometry): geometry.buffer.length + 256
+        case .refused: 64
+        }
     }
 }

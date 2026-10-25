@@ -37,6 +37,12 @@ struct FlatFrame {
     float2 unitsPerDrawnPixel;
     /// 平面の頂点ごとの被覆 (`coverages`) を読むか。0 なら読まずに 1 とする (#1637)。
     uint readsCoverage;
+    /// 塗りの頂点を、置き場所ごとの記述 (`ThinFillRecord`) から頂点段で広げるか (#2208)。0 は広げない。
+    /// 1 と 2 なら、`strokeStart` より前の頂点の `position` は「片の番号と角の番号」で、頂点段が片の
+    /// 角を組む。2 は貼る絵があり、読み取り位置を `thinFillUV` の箱から作る。
+    uint thinFill;
+    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
+    float4 thinFillUV;
 };
 
 struct SolidVertex {
@@ -120,6 +126,7 @@ vertex ShapeFragmentIn unitShapeVertexMain(
     out.shapePosition = vertex_in.shapePosition;
     out.shapeNormal = flipsNormal ? -vertex_in.shapeNormal : vertex_in.shapeNormal;
     out.coverage = isStroke ? vertex_in.stroke : 1.0;
+    out.particleAge = 0.0;
     return out;
 }
 

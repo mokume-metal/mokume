@@ -21,8 +21,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var lines: [String] = [] -->
     /// ```swift
-    /// func setup() {
-    ///     lines = (try? loadStrings("data/poem.txt")) ?? []
+    /// func setup() throws {
+    ///     lines = try loadStrings("data/poem.txt")
     /// }
     ///
     /// func draw() {
@@ -74,6 +74,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadStrings(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
     /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 文字列が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestStrings(_ path: String) async throws(DataFailure) -> [String] {
         try await requestParsed(path) { text throws(DataFailure) in TextFile.lines(of: text) }
@@ -113,8 +121,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
-    /// func setup() {
-    ///     table = try? loadTable("data/temperatures.csv", header: true)
+    /// func setup() throws {
+    ///     table = try loadTable("data/temperatures.csv", header: true)
     /// }
     ///
     /// func draw() {
@@ -191,6 +199,14 @@ extension SketchPart {
     /// 読み方と失敗は ``loadTable(_:header:)`` と同じ。呼び方と届く前の扱いは
     /// ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
     /// 大きな表を読んでもフレームが詰まらない。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ表を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestTable(_ path: String, header: Bool = false) async throws(DataFailure) -> Table {
         Table(
@@ -203,18 +219,14 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var table: Table? -->
     /// ```swift
-    /// func setup() {
-    ///     do {
-    ///         var read = try loadTable("data/temperatures.csv", header: true)
-    ///         read.addColumn("mean")
-    ///         for (i, row) in read.rows.enumerated() {
-    ///             read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
-    ///         }
-    ///         try saveTable(read, "out/temperatures-with-mean.csv")
-    ///         table = read
-    ///     } catch {
-    ///         print(error)
+    /// func setup() throws {
+    ///     var read = try loadTable("data/temperatures.csv", header: true)
+    ///     read.addColumn("mean")
+    ///     for (i, row) in read.rows.enumerated() {
+    ///         read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
     ///     }
+    ///     try saveTable(read, "out/temperatures-with-mean.csv")
+    ///     table = read
     /// }
     /// ```
     ///
@@ -243,8 +255,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var weather: JSONObject? -->
     /// ```swift
-    /// func setup() {
-    ///     weather = try? loadJSONObject("data/weather.json")
+    /// func setup() throws {
+    ///     weather = try loadJSONObject("data/weather.json")
     /// }
     ///
     /// func draw() {
@@ -258,7 +270,8 @@ extension SketchPart {
     /// ```
     ///
     /// 値はキーで取り出す (``JSONObject/getJSONObject(_:)`` で入れ子へ降り、
-    /// ``JSONObject/getFloat(_:)`` で数を取る)。読む前に応答の形を型として宣言しなくてよい。
+    /// ``JSONObject/getFloat(_:)`` で数を、``JSONObject/getString(_:)`` で文字を取り、
+    /// ``JSONObject/getJSONArray(_:)`` で配列を回す)。読む前に応答の形を型として宣言しなくてよい。
     ///
     /// **名前が `http://` か `https://` で始まれば、その URL から読む。** それ以外はファイルの
     /// 名前で、探す場所は ``loadImage(_:)`` と同じ (``assetURL(_:)``)。
@@ -271,7 +284,7 @@ extension SketchPart {
     /// ## 読み方
     ///
     /// - 文字は UTF-8 (ファイルも URL の本文も)。先頭の BOM は読み飛ばす
-    /// - **最上位はオブジェクト (`{…}`) でなければならない**
+    /// - **最上位はオブジェクト (`{…}`) でなければならない** (配列の JSON は ``loadJSONArray(_:)``)
     /// - 入れ子は、最上位の下に 512 段まで。`Double` に収まらない数 (`1e400`・`-1e400`) は、
     ///   符号によらず読めない
     ///
@@ -286,13 +299,15 @@ extension SketchPart {
     ///   ``DataFailure/unreachable(url:reason:)``
     /// - UTF-8 の文字として読めない: ``DataFailure/unreadable(path:)``
     /// - JSON として壊れている・`Double` に収まらない数がある・最上位がオブジェクトでない:
-    ///   ``DataFailure/malformed(path:line:reason:)`` (壊れていた行が載る)
+    ///   ``DataFailure/malformed(path:line:reason:)`` (壊れていた行が載る)。最上位が配列だったときは、
+    ///   理由が ``loadJSONArray(_:)`` を案内する
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadJSONObject(_ path: String) throws(DataFailure) -> JSONObject {
         Self.noticeBlockingLoad("loadJSONObject(_:)", instead: "requestJSONObject(_:)")
-        return JSONObject(try JSONFile.parseObject(try readText(path), path: path))
+        return JSONObject(
+            try JSONFile.parseObject(try readText(path), path: path, instead: "loadJSONArray(_:)"))
     }
 
     /// JSON のファイルか URL を読み、オブジェクトにする。**読んでいる間、他の仕事を止めない。**
@@ -327,12 +342,148 @@ extension SketchPart {
     /// 読み方と失敗は ``loadJSONObject(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
     /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
     /// 値が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
     public func requestJSONObject(_ path: String) async throws(DataFailure) -> JSONObject {
         JSONObject(
             try await requestParsed(path) { text throws(DataFailure) in
-                try JSONFile.parseObject(text, path: path)
+                try JSONFile.parseObject(text, path: path, instead: "requestJSONArray(_:)")
             })
+    }
+
+    /// JSON のファイルか URL を読み、最上位が配列の JSON を配列にする。読み終わるまで返らない。
+    ///
+    /// <!-- example: 文脈 var scores: JSONArray? -->
+    /// ```swift
+    /// func setup() throws {
+    ///     // ファイルの中身は [{"name": "Ann", "score": 12}, {"name": "Bo", "score": 7}] の形
+    ///     scores = try loadJSONArray("data/scores.json")
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     guard let scores else { return }
+    ///     for (i, entry) in scores.enumerated() {
+    ///         text("\(entry.getString("name")): \(entry.getInt("score"))", 20, 30 + Float(i) * 24)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 配列は `for-in` で回せ、要素は ``JSONObject`` として渡る (``JSONArray``)。最上位が配列でなく
+    /// オブジェクトの JSON (`{…}`) は ``loadJSONObject(_:)`` で読む。
+    ///
+    /// 名前の扱い (`http://` か `https://` で始まれば URL から読み、届くまで返らない。最長 60 秒)・
+    /// 探す場所・文字の読み方・読めないときに投げる失敗は ``loadJSONObject(_:)`` と同じである。
+    /// 違うのは最上位だけで、**配列でない JSON (オブジェクト・数・文字) は**
+    /// ``DataFailure/malformed(path:line:reason:)`` で、最上位の値が始まる行を添えて投げる。理由は、
+    /// オブジェクトだったときに ``loadJSONObject(_:)`` を案内する。
+    ///
+    /// **`draw()` の中で呼ぶと、フレームが止まる**ので、``loadJSONObject(_:)`` と同じく口の名前で
+    /// 1 度だけ知らせ、``requestJSONArray(_:)`` を案内する。
+    ///
+    /// - Throws: ``DataFailure``。投げる場合は ``loadJSONObject(_:)`` と同じ。
+    // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
+    public func loadJSONArray(_ path: String) throws(DataFailure) -> JSONArray {
+        Self.noticeBlockingLoad("loadJSONArray(_:)", instead: "requestJSONArray(_:)")
+        return JSONArray(
+            try JSONFile.parseArray(try readText(path), path: path, instead: "loadJSONObject(_:)"))
+    }
+
+    /// JSON のファイルか URL を読み、最上位が配列の JSON を配列にする。**読んでいる間、他の仕事を止めない。**
+    ///
+    /// <!-- example: 文脈 var scores: JSONArray? -->
+    /// ```swift
+    /// func setup() {
+    ///     Task { scores = try? await requestJSONArray("https://scores.example/top.json") }
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     guard let scores else { return }
+    ///     for (i, entry) in scores.enumerated() {
+    ///         text("\(entry.getString("name")): \(entry.getInt("score"))", 20, 30 + Float(i) * 24)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 読み方と失敗は ``loadJSONArray(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)``
+    /// と同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は
+    /// 値が無いまま呼ばれる。
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
+    // shot: 撮れない 読んだ値を返す口で、例の URL は引けない名前なので応答が届かない
+    public func requestJSONArray(_ path: String) async throws(DataFailure) -> JSONArray {
+        JSONArray(
+            try await requestParsed(path) { text throws(DataFailure) in
+                try JSONFile.parseArray(text, path: path, instead: "requestJSONObject(_:)")
+            })
+    }
+
+    /// JSON の文字を読み、オブジェクトにする。ファイルも URL も読まない。
+    ///
+    /// <!-- example: 文脈 var level = 0 as Float -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     // 通信で届いた文字 (たとえばブラウザが送ってきた JSON)
+    ///     let message = "{\"level\": 0.8, \"name\": \"slider\"}"
+    ///     if let object = try? parseJSONObject(message) {
+    ///         level = object.getFloat("level")
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// TCP・UDP・WebSocket で届くのは文字なので、その文字を ``JSONObject`` にする口である。読み方と
+    /// 壊れたときの失敗は ``loadJSONObject(_:)`` と同じで、**最上位はオブジェクト (`{…}`) でなければ
+    /// ならない** (配列は ``parseJSONArray(_:)``)。壊れた文字は
+    /// ``DataFailure/malformed(path:line:reason:)`` で、壊れていた行を添えて投げる。**`path` には
+    /// 口の名前** (`"parseJSONObject(_:)"`) が入る — 文字には名前が無い。
+    ///
+    /// ファイルを読まず待たないので、`draw()` の中で呼んでも知らせない。
+    ///
+    /// - Throws: ``DataFailure/malformed(path:line:reason:)``。
+    // shot: 撮れない 文字を読んだ値を返す口で、描き場所には触れない
+    public func parseJSONObject(_ text: String) throws(DataFailure) -> JSONObject {
+        JSONObject(
+            try JSONFile.parseObject(
+                text, path: "parseJSONObject(_:)", instead: "parseJSONArray(_:)"))
+    }
+
+    /// JSON の文字を読み、最上位が配列の JSON を配列にする。ファイルも URL も読まない。
+    ///
+    /// <!-- example: 文脈 var levels: [Float] = [] -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     let message = "[0.2, 0.5, 0.9]"
+    ///     if let array = try? parseJSONArray(message) {
+    ///         levels = (0..<array.count).map { array.getFloat($0) }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// 読み方と失敗は ``parseJSONObject(_:)`` と同じで、**最上位は配列 (`[…]`) でなければならない**
+    /// (オブジェクトは ``parseJSONObject(_:)``)。壊れた文字・配列でない文字は
+    /// ``DataFailure/malformed(path:line:reason:)`` で、`path` には口の名前 (`"parseJSONArray(_:)"`)
+    /// が入る。
+    ///
+    /// - Throws: ``DataFailure/malformed(path:line:reason:)``。
+    // shot: 撮れない 文字を読んだ値を返す口で、描き場所には触れない
+    public func parseJSONArray(_ text: String) throws(DataFailure) -> JSONArray {
+        JSONArray(
+            try JSONFile.parseArray(
+                text, path: "parseJSONArray(_:)", instead: "parseJSONObject(_:)"))
     }
 
     // MARK: - XML
@@ -341,8 +492,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var sky: XML? -->
     /// ```swift
-    /// func setup() {
-    ///     sky = try? loadXML("data/constellation.xml")
+    /// func setup() throws {
+    ///     sky = try loadXML("data/constellation.xml")
     /// }
     ///
     /// func draw() {
@@ -354,8 +505,9 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 子の要素は名前で取り出し (``XML/getChildren(_:)``)、属性は数として読む
-    /// (``XML/getFloat(_:)``)。
+    /// 子の要素は名前で取り出し (``XML/getChildren(_:)``・最初の 1 つは ``XML/getChild(_:)``)、属性は
+    /// 数として (``XML/getFloat(_:)``)・文字として (``XML/getString(_:)``) 読む。要素の中の文字は
+    /// ``XML/getContent()`` で読む。
     ///
     /// URL の扱い (`http://` か `https://` で始まる名前は URL から読み、届くまで返らない) と、
     /// 探す場所は ``loadJSONObject(_:)`` と同じ。
@@ -369,7 +521,7 @@ extension SketchPart {
     /// - 行の終わりは LF・CRLF・CR のどれでもよい。壊れた行は、どれで改行した文書でも同じ行を名乗る
     /// - **外の実体 (`<!ENTITY … SYSTEM …>`) は読まない。** XML の中に書かれた名前から、手元の
     ///   ファイルや外の URL を読みに行かない
-    /// - 持つのは要素の名前・属性・子の要素。実体参照 (`&amp;`) は解いた値になる
+    /// - 持つのは要素の名前・属性・子の要素・要素の直下の文字。実体参照 (`&amp;`) は解いた値になる
     /// - 入れ子は、根の下に 512 段まで
     ///
     /// ## 読めないときは投げる
@@ -404,6 +556,14 @@ extension SketchPart {
     ///
     /// 読み方と失敗は ``loadXML(_:)`` と同じ。呼び方と届く前の扱いは ``requestImage(_:)`` と
     /// 同じで、**`setup()` の中で `Task` を起こし、そこから呼ぶ。**
+    ///
+    /// **呼んだ `Task` を取り消したときの扱いは、名前で違う。** ファイルは取消を見ないので、読み終えて値か
+    /// 失敗を返す。URL は受け取りを呼んだ `Task` の中で待つので、取り消すと受け取りをやめて
+    /// ``DataFailure/unreachable(url:reason:)`` を投げる (理由は `cancelled`)。スケッチが終わった
+    /// 後に届いても、値はそのまま返る。取消の扱いは [#2760] と合わせて決めるので、いまの振る舞いで
+    /// あって約束ではない。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func requestXML(_ path: String) async throws(DataFailure) -> XML {
         XML(
@@ -452,6 +612,9 @@ extension SketchPart {
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
             }
         }
     }

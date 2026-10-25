@@ -36,6 +36,11 @@ extension Canvas {
         var fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]?
         /// 塗りを持つか。線と点は持たない。
         var fills: Bool
+        /// 輪郭を引くか。偽なら、いまの設定が輪郭を引くときも塗りだけを出す。
+        ///
+        /// 円弧の既定 (塗りは扇・輪郭は開いた弧) は、扇の塗りと開いた弧の輪郭を別の周にして、
+        /// 扇の塗りの側がこれを偽にする (``Ring/Piece``)。
+        var strokes: Bool
         /// 点ごとに、折れ目の形によらず円板で埋めるか。曲線の刻みの点
         /// (``BuildingVertex/isCurveStep``) と、扇の 3 つの角 (中心と弧の両端・#1486) がそう。
         /// 空ならどの点も角。
@@ -75,6 +80,21 @@ extension Canvas {
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
+            /// 弧のどの部分を周にするか。**円弧は閉じ方 (``ArcMode``) ごとに、塗りの周と輪郭の周が別になる**
+            /// (既定は塗りが扇・輪郭が開いた弧) ので、周の元が部分まで持つ。保持した形の刻み直しも、
+            /// 同じ部分を作り直す。一周は楕円と同じ形で、部分によらない。
+            enum Piece: Equatable {
+                /// 扇。塗りも輪郭も持つ (`.pie`)。
+                case sector
+                /// 扇の塗りだけ (既定の塗り)。
+                case sectorFill
+                /// 弧の両端を弦で結んだ形。塗りも輪郭も持つ (`.chord`)。
+                case chord
+                /// 弦で結んだ形の塗りだけ (`.open` の塗り)。
+                case chordFill
+                /// 開いた弧の輪郭だけ (既定と `.open` の輪郭)。
+                case arcLine
+            }
             var radiusX: Float
             var radiusY: Float
             var start: Float
@@ -82,6 +102,8 @@ extension Canvas {
             var sweep: Float
             /// 一周ぶんの分割数。点はこの数で刻んである (``Canvas/segmentCount(forRadius:scale:)``)。
             var segments: Int
+            /// 弧のどの部分を周にするか。
+            var piece: Piece
         }
 
         /// 名指しの基本図形の塗りの形。形自身の座標で、中心と半幅・半高 (楕円は半径) を持つ。
@@ -96,7 +118,8 @@ extension Canvas {
         init(
             points: [SIMD2<Float>], isClosed: Bool, fanCenter: SIMD2<Float>? = nil,
             fillTriangles: [(SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)]? = nil,
-            fills: Bool = true, curveSteps: [Bool] = [], cornerDiagonals: [SIMD2<Float>] = [],
+            fills: Bool = true, strokes: Bool = true, curveSteps: [Bool] = [],
+            cornerDiagonals: [SIMD2<Float>] = [],
             strokesAsOneRegion: Bool = false, ring: Ring? = nil, namedFill: NamedFill? = nil
         ) {
             self.points = points
@@ -104,6 +127,7 @@ extension Canvas {
             self.fanCenter = fanCenter
             self.fillTriangles = fillTriangles
             self.fills = fills
+            self.strokes = strokes
             self.curveSteps = curveSteps
             self.cornerDiagonals = cornerDiagonals
             self.strokesAsOneRegion = strokesAsOneRegion
@@ -119,7 +143,8 @@ extension Canvas {
                 points: points.map { $0 + offset }, isClosed: isClosed,
                 fanCenter: fanCenter.map { $0 + offset },
                 fillTriangles: fillTriangles?.map { ($0.0 + offset, $0.1 + offset, $0.2 + offset) },
-                fills: fills, curveSteps: curveSteps, cornerDiagonals: cornerDiagonals,
+                fills: fills, strokes: strokes, curveSteps: curveSteps,
+                cornerDiagonals: cornerDiagonals,
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
@@ -135,7 +160,7 @@ extension Canvas {
         if outline.fills, style.hasFill {
             fillInterior(outline, thinFillMatrix: recordingShape ? nil : transform.matrix)
         }
-        if style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
+        if outline.strokes, style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
     }
 
     /// 形自身の座標で作った周を、置き場所へ置く。**同じ形が続く間は畳む。**
@@ -166,6 +191,24 @@ extension Canvas {
         if let radius = form.ringRadius {
             ringSegments = ringSplitMemo.count(forRadius: radius, scale: scale)
         }
+        // 細い塗り: 広げ方を頂点段へ移した畳みでは、置き場所ごとの記述を求める (#2208)。雛形の鍵には
+        // 片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
+        var thinFill: ThinFillPlacing?
+        var thinFillCapacity = 0
+        var fillLinear: ThinFold?
+        if expandsThinFillsInVertexStage {
+            if style.hasFill,
+                let record = thinFillRecord(of: form, drawn: drawnLinear(transform.matrix))
+            {
+                // 位置と平行移動は記述の外に持つ — 位置が違うだけの置き場所は同じ記述を指す
+                let columns = transform.matrix.columns
+                thinFill = ThinFillPlacing(
+                    record: record, anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y))
+                thinFillCapacity = ThinFillRecord.capacity(forPieces: record.pieceCount)
+            }
+        } else {
+            fillLinear = thinFillLinear(form)
+        }
         let key = FlatKey(
             form: form,
             hasFill: style.hasFill,
@@ -173,11 +216,14 @@ extension Canvas {
             strokeWeight: style.strokeWeight,
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
-            ringSegments: ringSegments,
+            // 頂点段で広げる細い塗りは周を刻まない。貼る絵が無く輪郭も無ければ、刻み方の違う置き場所も
+            // 1 つの雛形に畳む (貼る絵の読み取り位置は周の囲みの箱から作るので、絵があれば刻み方も鍵に残す)
+            ringSegments: thinFillCapacity > 0 && !hasStroke && style.picture == nil ? 0 : ringSegments,
             discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(),
-            fillLinear: thinFillLinear(form),
+            fillLinear: fillLinear,
+            thinFillCapacity: thinFillCapacity,
             texture: style.hasFill ? style.picture?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
@@ -185,8 +231,11 @@ extension Canvas {
         // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
-        guard !(key.texture != nil && key.hasStroke), !recordingShape else {
-            return draw(makeOutline(key.ringSegments).moved(by: anchor))
+        // **破線の輪郭は畳まない** ([#2835])。破線の片は置き場所ごとの輪郭から刻むので、雛形にならない
+        guard !(key.texture != nil && key.hasStroke), !recordingShape,
+            !(hasStroke && style.strokeDash != nil)
+        else {
+            return draw(makeOutline(ringSegments).moved(by: anchor))
         }
 
         // **畳んだ置き場所は ``beginFlat()`` も ``useTexture(_:)`` も通らない**ので、描き場所を
@@ -202,18 +251,19 @@ extension Canvas {
         if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         notePaintPlacement()
 
-        // 開いている雛形と同じ形なら、置き場所を足すだけで済む
-        if openFlat?.key == key {
+        // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数の区間が小さい
+        // 置き場所も大きい区間の雛形に受ける** (区間が上がったときだけ、新しい雛形になる)
+        if let open = openFlat, open.key == key || open.key.holds(key) {
             appendFolded(
-                placement(at: anchor), key: key, outline: { makeOutline(key.ringSegments) })
+                placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
             return
         }
-        let outline = makeOutline(key.ringSegments)
+        let outline = makeOutline(ringSegments)
 
         // **2 つ目が来てから畳む。** 1 つ目で雛形を開くと、矩形と円を交互に置いた絵で
         // 図形の数だけ列が分かれる — 平面は元から 1 つの列にまとまるので、それは
         // 畳む前より遅い ([#424](https://github.com/mokume-metal/mokume/issues/424))
-        if let waiting = pendingFlat, waiting.key == key,
+        if let waiting = pendingFlat, let joined = waiting.key.joined(with: key),
             waiting.vertexEnd == vertices.count, waiting.batchCount == batches.count
         {
             // 1 つ目の頂点を溜め場から抜き、雛形として積み直す。抜けるのは**まだ列が
@@ -221,9 +271,10 @@ extension Canvas {
             vertices.removeLast(vertices.count - waiting.vertexStart)
             trimCoverage(to: waiting.vertexStart)
             pendingFlat = nil
-            openFlatTemplate(key: key, outline: outline)
+            openFlatTemplate(key: joined, outline: outline)
             flatInstances.append(waiting.placement)
-            appendFolded(placement(at: anchor), key: key, outline: { outline })
+            if let waitingFill = waiting.thinFill { addThinFill(waitingFill) }
+            appendFolded(placement(at: anchor), thinFill: thinFill, outline: { outline })
             return
         }
 
@@ -238,7 +289,8 @@ extension Canvas {
         }
         pendingFlat = PendingFlat(
             key: key, outline: outline, placement: placement(at: anchor),
-            vertexStart: vertexStart, vertexEnd: vertices.count, batchCount: batches.count)
+            vertexStart: vertexStart, vertexEnd: vertices.count, thinFill: thinFill,
+            batchCount: batches.count)
     }
 
     /// 畳んだ置き場所を 1 つ足す。**上限に達していたら、同じ形のまま雛形を開き直す。**
@@ -246,13 +298,17 @@ extension Canvas {
     /// 開き直すのは、畳まない経路へ落とすと**上限をまたいだ図形だけ組み立て方が
     /// 変わってしまう**ためである。周は上限に達したときしか要らないので閉包で受け取る。
     private func appendFolded(
-        _ placement: FlatInstance, key: FlatKey, outline makeOutline: () -> Outline
+        _ placement: FlatInstance, thinFill: ThinFillPlacing?,
+        outline makeOutline: () -> Outline
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
-            openFlatTemplate(key: key, outline: makeOutline())
+            // 開き直す雛形は、開いていた雛形の区間を引き継ぐ (区間が上がった後に小さい区間へ戻さない)
+            openFlatTemplate(key: open.key, outline: makeOutline())
         }
         flatInstances.append(placement)
+        // 細い塗りの雛形は、置き場所ごとの記述を同じ番号で足す (#2208)
+        if let thinFill { addThinFill(thinFill) }
     }
 
     /// 雛形を 1 つ積んで開く。**開いていた列は閉じる。**
@@ -284,8 +340,15 @@ extension Canvas {
         templateStrokeMatrix = key.strokeLinear.map { Self.placementMatrix($0.linear) }
         outlinesAssembledThisFrame += 1
         // 細い塗りの雛形は、鍵の変換で細さを測って広げる (#1934・``FlatKey/fillLinear``)
+        var thinFillUV: SIMD4<Float>?
         if key.hasFill {
-            fillInterior(outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+            if key.thinFillCapacity > 0 {
+                // 頂点は「片の番号と角の番号」で、片は頂点段が置き場所ごとの記述から組む (#2208)
+                thinFillUV = fillThinTemplate(capacity: key.thinFillCapacity, outline: outline)
+            } else {
+                fillInterior(
+                    outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+            }
         }
         let strokeStart = vertices.count
         // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)
@@ -297,7 +360,8 @@ extension Canvas {
         style.stroke = savedStroke
 
         openFlat = OpenFlat(
-            key: key, strokeStart: strokeStart, instanceStart: flatInstances.count)
+            key: key, strokeStart: strokeStart, instanceStart: flatInstances.count,
+            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV)
     }
 
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
@@ -330,8 +394,8 @@ extension Canvas {
         let columns = transform.matrix.columns
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
-            offset: transform.apply(x: anchor.x, y: anchor.y),
-            fill: style.fill, stroke: style.stroke)
+            offset: transform.placed(x: anchor.x, y: anchor.y),
+            fill: fillVertexColor, stroke: style.stroke)
     }
 
     /// 周の内側を塗る。
@@ -368,13 +432,14 @@ extension Canvas {
             RingFillRange(
                 start..<vertices.count,
                 recipe: RingFillRecipe(
-                    outline: outline, color: style.fill, hasPicture: style.picture != nil,
+                    outline: outline, color: fillVertexColor, hasPicture: style.picture != nil,
                     transform: transform, uv: whiteUV)))
     }
 
     private func fillInteriorTriangles(_ outline: Outline) {
         let points = outline.points
         guard points.count >= 3 else { return }
+        let fillColor = fillVertexColor
         if let triangles = outline.fillTriangles {
             let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
             for (a, b, c) in triangles {
@@ -382,14 +447,14 @@ extension Canvas {
                 var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
                 if let uvOf { uvs = (uvOf(a), uvOf(b), uvOf(c)) }
                 appendTriangle(
-                    transform.apply(x: a.x, y: a.y), transform.apply(x: b.x, y: b.y),
-                    transform.apply(x: c.x, y: c.y),
-                    colors: (style.fill, style.fill, style.fill), uvs: uvs)
+                    transform.placed(x: a.x, y: a.y), transform.placed(x: b.x, y: b.y),
+                    transform.placed(x: c.x, y: c.y),
+                    colors: (fillColor, fillColor, fillColor), uvs: uvs)
             }
             return
         }
         let pivot = outline.fanCenter ?? points[0]
-        let center = transform.apply(x: pivot.x, y: pivot.y)
+        let center = transform.placed(x: pivot.x, y: pivot.y)
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
         let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
         guard ring.count >= 2 else { return }
@@ -402,19 +467,19 @@ extension Canvas {
         {
             var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             if let uvOf { uvs = (uvOf(pivot), uvOf(bSource), uvOf(cSource)) }
-            appendTriangle(a, b, c, colors: (style.fill, style.fill, style.fill), uvs: uvs)
+            appendTriangle(a, b, c, colors: (fillColor, fillColor, fillColor), uvs: uvs)
         }
 
-        var previous = transform.apply(x: ring[0].x, y: ring[0].y)
+        var previous = transform.placed(x: ring[0].x, y: ring[0].y)
         var previousSource = ring[0]
         for point in ring.dropFirst() {
-            let current = transform.apply(x: point.x, y: point.y)
+            let current = transform.placed(x: point.x, y: point.y)
             place(center, previous, previousSource, current, point)
             previous = current
             previousSource = point
         }
         if outline.fanCenter != nil, outline.isClosed {
-            let first = transform.apply(x: ring[0].x, y: ring[0].y)
+            let first = transform.placed(x: ring[0].x, y: ring[0].y)
             place(center, previous, previousSource, first, ring[0])
         }
     }
@@ -433,8 +498,10 @@ extension Canvas {
     }
 
     /// 楕円・弧の周を、一周を `ring.segments` 個に刻んだ周にする。**中心は原点。**
-    /// 一周ならば中心は周に含めず、弧ならば中心を最初の点にする (扇の 3 つの角のうち
-    /// 中心と、弧の両端が周の点になる・#1486)。周の点はどれも刻みで、角は 1 つも無い (#1423)。
+    /// 一周ならば中心は周に含めず、弧ならば部分 (``Outline/Ring/Piece``) で決まる。扇は中心を
+    /// 最初の点にする (扇の 3 つの角のうち中心と、弧の両端が周の点になる・#1486)。弦は弧の点だけを
+    /// 閉じ、開いた弧は閉じない。周の点はどれも刻みで、角は 1 つも無い (#1423)。弦の両端 (弦と弧が作る角) も
+    /// 丸く繋ぐ (扇の角と同じ)。
     ///
     /// 周を組む口 (`ellipse` / `arc`) と、保持した形を置くときに刻み直す口
     /// (``Outline/Ring``・#1645) が同じ周を作る。
@@ -443,10 +510,31 @@ extension Canvas {
             center: SIMD2(0, 0), radiusX: ring.radiusX, radiusY: ring.radiusY, from: ring.start,
             sweep: ring.sweep, fullTurn: ring.segments)
         let isFullTurn = ring.sweep >= 2 * .pi
+        if !isFullTurn {
+            switch ring.piece {
+            case .sector, .sectorFill:
+                break
+            case .chord, .chordFill:
+                // 弧の点だけを閉じる。最初の点からの扇で塗れる (弦で切った弧は凸)。**弦と弧が出会う 2 つの角も、
+                // 折れ目の形によらず丸く繋ぐ** — 距離関数の経路は輪郭を距離の帯で出すので、扇の角と同じく丸くなる。
+                // **弧の点が 2 個 (細い掃引) でも閉じる** — 弦と弧の 2 辺の周で、距離関数の経路の閉じた弓形と揃う
+                // (開いた線にすると、輪郭が `strokeCap` の端を持つ線分で出る・#2428)
+                return Outline(
+                    points: arcPoints, isClosed: true, strokes: ring.piece == .chord,
+                    curveSteps: Array(repeating: true, count: arcPoints.count),
+                    strokesAsOneRegion: true, ring: ring)
+            case .arcLine:
+                return Outline(
+                    points: arcPoints, isClosed: false, fills: false,
+                    curveSteps: Array(repeating: true, count: arcPoints.count),
+                    strokesAsOneRegion: true, ring: ring)
+            }
+        }
         let points = isFullTurn ? arcPoints : [SIMD2(0, 0)] + arcPoints
         // 一周は楕円と同じ形で、`fill` の説明が名指す基本図形に入る。扇は入らない (#1934)
         return Outline(
             points: points, isClosed: true, fanCenter: SIMD2(0, 0),
+            strokes: ring.piece != .sectorFill,
             curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
             ring: ring,
             namedFill: isFullTurn

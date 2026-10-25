@@ -119,17 +119,27 @@ extension Canvas {
     func emit(
         _ particles: Particles, from source: Emitter, toward heading: Heading, rate: Float,
         speed: ClosedRange<Float>, life: ClosedRange<Float>, size: ClosedRange<Float>,
-        color: LinearRGBA?, using randomness: inout Randomness
+        color: LinearRGBA?, frame: Int? = nil, using randomness: inout Randomness
     ) {
         guard admits(.particles) else { return }
         // 繰り越しは、このフレームで何回目の呼び出しかで分けて引く (#1468)。フレームの
-        // 境目は描き切りで進む番号で、焼き場の頁を替えたフレームの判定と同じ作法。
+        // 境目は**スケッチのフレーム番号**で数える (``SketchRuntime/frameCount``)。面ごとの描き切りの
+        // 番号 (``framesDrawn``) で数えると、同じ群へ本体と ``SketchPart/draw(into:_:)`` の閉包の中から
+        // 出したとき、面が替わるたびに数え直して呼んだ順の分けが崩れる (#2454)。`frame` を省くと面の描き切りの
+        // 数で、面を直に回す検査のための既定である (スケッチの口は必ず渡す)。
         // 刻みは秒に直さずに渡す。単精度の秒を足し合わせると、fps によって毎秒 1 個ずれる (#1640)。
         // 数でない値・無限は受け口 (`Particles.emit`) が検めて断る (#1623)
         particles.emit(
-            rate: rate, over: frameStep, frame: framesDrawn, from: source, toward: heading,
+            rate: rate, over: frameStep, frame: frame ?? framesDrawn, from: source, toward: heading,
             speed: speed, life: life, size: size, color: color, fill: style.fill,
             using: &randomness)
+    }
+
+    /// 粒に力を効かせる。
+    ///
+    /// ``SketchPart/force(_:_:)`` と同じ可変長の形。描き場所の中でだけ積める (`beginDraw()` と `endDraw()` の間)。
+    public func force(_ particles: Particles, _ forces: Force...) {
+        force(particles, forces)
     }
 
     /// 力を積む。
@@ -290,7 +300,7 @@ extension Canvas {
         guard let run = particles.quad.runs.first, run.source == .solid else { return }
         let places = particles.living(
             from: read(particles.state), transform: transform.matrix,
-            basis: currentCamera.basis)
+            basis: currentCamera.basis, lifeStep: Particles.lifeStep(of: frameStep))
         guard !places.isEmpty else { return }
         replaying(CollectionOfOne(run)) { run in
             placeSolid(run, of: particles.quad, instances: places)

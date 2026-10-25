@@ -80,7 +80,8 @@ struct NameCorrespondenceTests {
         #expect(lines.dropFirst().first == "")
         #expect(lines.last == "Tool: \(ToolVersion.describe())")
         // 口の行は 2 字下げ、説明は 6 字下げ (畳む前と同じ)
-        #expect(usage.contains("\n  new <name> [--path <directory>] [--local <library path>]\n"))
+        #expect(usage.contains(
+                "\n  new <name> [--from <example>] [--path <directory>] [--local <library path>]\n"))
         #expect(
             usage.contains(
                 "\n      -c takes debug or release (defaults to whatever the toolchain uses).\n"))
@@ -118,8 +119,9 @@ struct NameCorrespondenceTests {
             let fromSchema = try #require(declared[name] as? [String: Any], "\(name)")
             let fromWindow = try #require(announced[name] as? [String: Any], "\(name)")
             // **型も突き合わせる。** 面の仕様が型を広げても、窓口の `inputSchema` との差が見えなくなる
-            // のを防ぐ。`null` の差だけは既知の差 — 面の仕様は省略できる欄の `null` を受けると書き、
-            // 窓口がそれを省略と読むようにするのは #2393 で揃える。`null` 以外の型の差は赤にする
+            // のを防ぐ。`null` の差だけは許す — 面の仕様は省略できる欄の `null` を受けると書き、
+            // 窓口はそれを省略と読む (#2393) が、`inputSchema` には `null` を型として書かない。
+            // `null` 以外の型の差は赤にする
             let schemaTypes = types(fromSchema["type"])
             #expect(
                 schemaTypes.subtracting(["null"]) == types(fromWindow["type"]).subtracting(["null"]),
@@ -220,12 +222,17 @@ struct NameCorrespondenceTests {
         defer { try? FileManager.default.removeItem(at: place) }
 
         let tools = Tools(facets: Facets(directory: place, waitLimit: 0.2), makeID: { "fixed" })
+        // 知らない道具への応えの文面を、先に読む。**その文面が実際に出ること**を見てから、
+        // 一覧の道具がその文面を返さないことを見る (文面を写したまま古びると、否定が何も見ない)
+        let unknown = tools.call("なにか", arguments: [:])
+        #expect(unknown.isError)
+        let notKnown = "There is no such tool"
+        try #require(unknown.text.contains(notKnown), "知らない道具への応えの文面が変わった: \(unknown.text)")
         for name in Tools.ToolName.allCases.map(\.rawValue) {
             let outcome = tools.call(name, arguments: [:])
             // 走っていないので失敗して構わない。**知らない道具だとは言わないこと**を見る
-            #expect(!outcome.text.contains("知らない道具です"), "\(name) に応えていない")
+            #expect(!outcome.text.contains(notKnown), "\(name) に応えていない")
             #expect(!outcome.text.isEmpty, "\(name) が何も言わない")
         }
-        #expect(tools.call("なにか", arguments: [:]).isError)
     }
 }

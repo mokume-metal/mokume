@@ -267,6 +267,7 @@ nonisolated final class ConnectorStatus: Sendable {
     private let told = Mutex<Set<String>>([])
     /// 一度でも繋がったか。繋がる前の失敗は `unavailable`、繋がった後は `disconnected` と名乗る。
     private let hasConnected = Mutex(false)
+    private let events = Mutex(EventTrace())
 
     init(
         label: String, target: String, retryAfter: TimeInterval,
@@ -278,7 +279,14 @@ nonisolated final class ConnectorStatus: Sendable {
         self.warn = warn
     }
 
+    /// 受けた移り変わりの跡。読むだけ。
+    var trace: EventTrace { events.withLock { $0 } }
+
     func apply<Value>(_ event: ConnectorEvent, to queue: ExternalQueue<Value>) {
+        events.withLock {
+            $0.count += 1
+            $0.last = "\(event)"
+        }
         let seconds = Int(retryAfter.rounded(.up))
         switch event {
         case .connected:
@@ -314,7 +322,7 @@ nonisolated final class ConnectorStatus: Sendable {
 /// サーバへ繋ぎに行く出どころ。届いた文字列を列へ入れ、繋がっている間はサーバへ書ける。
 ///
 /// 繋げない・切れたときは ``ConnectorStatus`` が状態に写し、それぞれ 1 度だけ知らせる。
-nonisolated final class ClientSource: MessageSource, Broadcasting, @unchecked Sendable {
+nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態は ``connector`` だけで、main actor (start / stop / 書く・
     // 数える) でだけ触る。繋ぎの手続きが触るのは ``status`` (錠を持つ) と列 (それ自身が錠を持つ) だけ。
 
@@ -325,6 +333,9 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, @unchecked Se
     let connectTimeout: TimeInterval
     private let status: ConnectorStatus
     private var connector: StreamConnector?
+
+    /// 繋ぎの移り変わりの跡 (``EventTracing``)。
+    var trace: EventTrace { status.trace }
 
     /// 繋ぎ直しの間隔 (秒)。**固定で、設定する口は無い** (#2470)。
     static var defaultRetry: TimeInterval { 1 }

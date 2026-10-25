@@ -15,13 +15,18 @@
       "type": "mouseDown",
       "x": 320.0,
       "y": 180.0,
-      "button": 0
+      "button": 0,
+      "clickCount": 1
     },
     {
       "type": "mouseUp",
       "x": 320.0,
       "y": 180.0,
       "button": 0
+    },
+    {
+      "type": "pinched",
+      "amount": 0.1
     },
     {
       "type": "keyDown",

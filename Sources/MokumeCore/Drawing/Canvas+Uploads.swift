@@ -16,13 +16,16 @@ typealias EncodedUploads = [(owner: any PendingUpload, generation: UInt64, direc
 // **書く口は待たない** ([#749])。控えを写す置き場は環 (`FrameRing`) に載った
 // ``GrowableBuffer`` で、写すのは描き切りが環を進めて待った後か、読み戻しが投入済みの
 // 全部を待った後に限る。届けるコピーは投入の順に走るので、前に投入した仕事は古い値を、
-// このコマンドとその後の仕事は新しい値を読む。**数の並びでは、これが CPU が呼んだ順と揃う** —
+// このコマンドとその後の仕事は新しい値を読む。**ただし順を守らせるのは、コピーの前に積む待ち
+// (`barrier`) である** — 積まなければ、前の仕事が読んでいる最中に上書きしうる ([#341])。
+// **数の並びでは、これが CPU が呼んだ順と揃う** —
 // 書く口が、書く前に頼まれてその並びに触れる計算を先に投入するからである (`Numbers.write`・
 // [#1687])。画像は描き切りの時点の画素を送る約束で、呼んだ順には揃えない (#749)。
 //
 // 形は描き場所への画素の書き戻し (`RenderTarget.encodePixelWriteBack`) と同じで、写す
 // → 続く段が待つ仕掛けを積む → **投入した後で**控えを下ろす ([#1183])。
 //
+// [#341]: https://github.com/mokume-metal/mokume/issues/341
 // [#749]: https://github.com/mokume-metal/mokume/issues/749
 // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
 // [#1687]: https://github.com/mokume-metal/mokume/issues/1687
@@ -37,8 +40,8 @@ extension Canvas {
     func encodeUploads(into commands: any MTL4CommandBuffer) throws(RenderFailure)
         -> EncodedUploads
     {
+        guard encodesUploads else { return [] }
         let owners = gpu.pendingUploads.owners
-        guard !owners.isEmpty else { return [] }
 
         var uploaded: EncodedUploads = []
         var staged: [(owner: any PendingUpload, offset: Int)] = []
@@ -91,6 +94,15 @@ extension Canvas {
         guard let encoder = commands.makeComputeCommandEncoder() else {
             throw .encoderUnavailable
         }
+        // **コピーの前に、前の仕事が読み終わるのを待つ** ([#341]・#1792 の反証)。同じコマンドの中でも、
+        // 前に投入したコマンドとも、encoder をまたぐ依存はこの世代では自動では張られない — 「コピーは
+        // 投入の順に走る」だけでは、前のフレームの描きがまだ読んでいる画素・値を上書きしうる。上書きされる
+        // のは、書き換えた画像・数の並びと、打ち切りの後に届け直す字形の区画である。待つのは断片・計算・
+        // blit の段で、頂点段は面も控えも読まない。費用は PR #3110 の本文にある
+        encoder.barrier(
+            afterQueueStages: [.dispatch, .fragment, .blit], beforeStages: .blit,
+            visibilityOptions: .device)
+        uploadWaitsEncoded += 1
         for item in cpuStaged {
             let generation = item.owner.stageUpload(
                 into: bytes.advanced(by: item.offset), of: staging, at: item.offset,

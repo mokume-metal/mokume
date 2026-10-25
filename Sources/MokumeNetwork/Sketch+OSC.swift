@@ -16,14 +16,15 @@ import MokumeDiagnostics
 // [ADR-0041]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md
 extension Sketch {
 
-    /// OSC を受けるポートを開く。届いたメッセージは ``OSCPort/messages`` から読み、
-    /// ``OSCPort/send(_:_:)`` で `send` の宛先へ送る。
+    /// OSC を受けるポートを開く。届いたメッセージは ``OSCPort/messages`` から読み (連続値は
+    /// ``OSCPort/latest(_:)`` で宛名から最新の 1 つを引ける)、``OSCPort/send(_:_:)`` で `send` の宛先へ送る。
+    /// 送るだけなら ``createOSC(send:)``。
     ///
     /// ```swift
     /// final class Remote: Sketch {
     ///     var osc: OSCPort?
     ///     var size: Float = 0.5
-    ///     func setup() { osc = try? createOSC(listen: 9000, send: ("127.0.0.1", 7000)) }
+    ///     func setup() throws { osc = try createOSC(listen: 9000, send: ("127.0.0.1", 7000)) }
     ///     func draw() {
     ///         for message in osc?.messages ?? [] where message.address == "/size" {
     ///             size = message.float(0) ?? size
@@ -42,7 +43,8 @@ extension Sketch {
     ///   符号化して 9216 バイト以上になるメッセージ (大きな blob など) は送らず、知らせる
     /// - 空の datagram (0 バイト) は読めないパケットとして数える。ただし macOS の受け口は、空の
     ///   datagram を受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間)
-    ///   に同じ送り元から届いたものは、数えず診断にも出さずに落ちる
+    ///   に同じ送り元から届いたものは、数えずに落ちる。落ちた数は分からないので、空で流れが閉じたとき、
+    ///   落ちたかもしれないことを送り元ごとに 1 度だけ診断に出す (実際には何も落ちていなくても出る)
     /// - **ポートを他のアプリが使っていても作れる。** ``OSCPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
     /// - 送り先を自分のポート (`("127.0.0.1", listen と同じ番号)`) にすれば、自分で送って自分で
@@ -75,16 +77,56 @@ extension Sketch {
                 throw .invalidHost(destination.host)
             }
         }
-        try requireAttachable(OSCFailure.self, calledAs: #function)
-        let outbound = destination.map {
-            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+        return try attached(OSCFailure.self, calledAs: #function) {
+            let outbound = destination.map {
+                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+            }
+            return OSCPort(
+                port: port, name: "osc :\(port)",
+                source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
+                outbound: outbound, owner: self)
         }
-        let osc = OSCPort(
-            port: port, name: "osc :\(port)",
-            source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
-            outbound: outbound, owner: self)
-        attach(osc)
-        return osc
+    }
+
+    /// 受けずに、送るだけの OSC の入り口を作る。**受けるポートを開かない。**
+    ///
+    /// TouchDesigner や Max へ値を送るだけのスケッチが、使っていないポートを選ばずに済む。``OSCPort/send(_:_:)`` は
+    /// ``createOSC(listen:send:)`` と同じ送り手を通る。
+    ///
+    /// ```swift
+    /// final class Sender: Sketch {
+    ///     var osc: OSCPort?
+    ///     func setup() throws { osc = try createOSC(send: ("127.0.0.1", 7000)) }
+    ///     func draw() { osc?.send("/size", mouseX / width) }
+    /// }
+    /// ```
+    ///
+    /// - ``OSCPort/port`` は `nil`、``OSCPort/messages`` は常に空、``OSCPort/latest(_:)`` は常に `nil`
+    /// - 受け口ではないので、観測の応答の `inputs` に行を出さない。``OSCPort/state`` は、動いている間は
+    ///   ``SourceState/running``、止めたら ``SourceState/stopped``
+    /// - **送れないことは ``OSCPort/state`` に出ない。** 送れないとき (宛先で誰も受けていない・このアプリに
+    ///   ローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ診断に出す
+    ///
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
+    ///
+    /// - Parameter destination: 送り先のホストとポート。
+    /// - Throws: 送り先のポートの番号が 1〜65535 に入っていない・ホストが空のとき。使える値を
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
+    ///   ``OSCFailure/notRunning(call:)`` (プロセスは落ちない)。
+    public func createOSC(send destination: (host: String, port: Int)) throws(OSCFailure) -> OSCPort {
+        guard Endpoint.usablePorts.contains(destination.port) else {
+            throw .invalidPort(destination.port)
+        }
+        guard Endpoint.isUsable(host: destination.host) else {
+            throw .invalidHost(destination.host)
+        }
+        return try attached(OSCFailure.self, calledAs: #function) {
+            OSCPort(
+                port: nil, name: "osc (send only)", source: SendOnlySource(),
+                outbound: DatagramSender(
+                    host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) }),
+                owner: self)
+        }
     }
 
     /// 記録したメッセージの列を、受けたかのように流す。**ポートを開かない。**

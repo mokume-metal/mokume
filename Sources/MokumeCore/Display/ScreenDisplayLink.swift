@@ -6,16 +6,41 @@ import QuartzCore
 
 /// 表示のリフレッシュを受け取る側。
 ///
-/// **`CADisplayLink` が渡してくる仕掛けは渡さない。** 持ち主は 2 つあるが (走っている
-/// スケッチと、別のプロセスの絵を出す台)、どちらも受け取った仕掛けを使っていない。
-/// 要る日が来たら足す ([ADR-0001] 原則 4)。
+/// **`CADisplayLink` が渡してくる仕掛けは渡さない。** 渡すのは、そのリフレッシュで描いた枚が
+/// **表示される予定の時刻** (`targetTimestamp`) だけである ([#2390])。実時間の時計 (``Clock/wallClock``)
+/// の ``SketchPart/time``・``SketchPart/deltaTime`` は、コールバックが走った時刻ではなくこの時刻で進む。
+/// 持ち主は 2 つあるが (走っているスケッチと、別のプロセスの絵を出す台)、時刻を使うのは走っている
+/// スケッチだけで、台は受け取って捨てる。仕掛けそのものを要る日が来たら足す ([ADR-0001] 原則 4)。
 ///
+/// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 @MainActor
 protocol ScreenDisplayLinkOwner: AnyObject {
     /// リフレッシュが来た。
-    func displayLinkFired()
+    ///
+    /// - Parameter displayTime: この回で描く枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    ///   表示のリフレッシュが運んだ回だけが持つ。**予備のタイマーが進めた回は `nil`** — 予定の時刻が無いので、
+    ///   持ち主は現在時刻で代える。
+    func displayLinkFired(at displayTime: Double?)
 }
+
+extension ScreenDisplayLinkOwner {
+    /// 時刻を持たないリフレッシュ (予備の回・検査の呼び出し)。
+    func displayLinkFired() {
+        displayLinkFired(at: nil)
+    }
+}
+
+/// 表示のリフレッシュが運ぶ、その回で描く枚が表示される予定の時刻。`CADisplayLink` が満たす。
+///
+/// 検査が `CADisplayLink` を作らずに、運ぶ行 (``ScreenDisplayLink/refreshed(by:)``) を確かめるための継ぎ目である。
+@MainActor
+protocol DisplayRefresh {
+    /// 予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    var targetTimestamp: CFTimeInterval { get }
+}
+
+extension CADisplayLink: DisplayRefresh {}
 
 /// フレームの駆動源を**画面**のリフレッシュに紐づけ、窓が移った先へ張り替える。
 ///
@@ -181,42 +206,89 @@ final class ScreenDisplayLink: NSObject {
     }
 
     @objc private func step(_ link: CADisplayLink) {
-        advanceFromDisplayLink()
+        refreshed(by: link)
+    }
+
+    /// 表示のリフレッシュが来た (`CADisplayLink` のコールバックの本体)。
+    ///
+    /// **表示の予定の時刻を運ぶ** ([#2390])。コールバックが走った時刻は、main が他の仕事で遅れたぶん
+    /// 揺れるが、`targetTimestamp` は表示の刻みの間隔のまま並ぶ。`CADisplayLink` は検査から作れないので、
+    /// 運ぶ行は ``DisplayRefresh`` を受けるここに置き、検査は作り物のリフレッシュを渡す。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func refreshed(by refresh: some DisplayRefresh) {
+        advanceFromDisplayLink(displayTime: refresh.targetTimestamp)
     }
 
     // MARK: - 予備の駆動源
 
     /// 予備の駆動源を回し始める。**張り直しでは前のものを畳んでから。**
     ///
-    /// **表示のリフレッシュが生きている間は空振りするだけ**なので、目標フレーム間隔で
-    /// 細かく回してよい。止まっている間はこの間隔がそのままフレームレートになる。
+    /// **見張りの形である。** 表示のリフレッシュが生きている間は、リフレッシュが来るたびに
+    /// 次の発火を「いま + 止まりの閾値」へ送るので、予備のタイマーは**健全な間は 1 回も
+    /// 起きない** (``advanceFromDisplayLink(at:)``)。目標フレーム間隔で回し続けて空振りさせる
+    /// 形では、tolerance を持たせても起床がリフレッシュの倍 (60 fps で 120 回/秒) のまま
+    /// 減らなかった ([#2368])。リフレッシュが途切れたときにだけ、閾値の後で最初に起き、
+    /// 以後は目標フレーム間隔で進める — 止まっている間はこの間隔がそのままフレームレートに
+    /// なるので、粗くしない ([ADR-0012] 決定 5)。
     ///
     /// `.common` へ載せるのは、メニューを開いている間も回すためである — 名乗りの
     /// メニューを開いたまま画面が消えることは普通に起きる。
     ///
     /// **繋いだ時点を起点にする。** 0 のままだと、表示のリフレッシュが始まる前の
     /// 1 回目で必ず予備が引き受けることになる。
+    ///
+    /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
+    /// [ADR-0012]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0012-view-layer.md
     private func startFallback() {
         fallbackTimer?.invalidate()
         lastAdvancedAt = CACurrentMediaTime()
         isDrivenByFallback = false
         let timer = Timer(
-            timeInterval: FrameDriver.fallbackInterval(frameRate: fallbackFrameRate), repeats: true
+            fire: Date(timeIntervalSinceNow: fallbackStallThreshold),
+            interval: FrameDriver.fallbackInterval(frameRate: fallbackFrameRate), repeats: true
         ) { [weak self] timer in
             // **持ち主ごと消えていたら、自分を畳む。** 実行ループがこの仕掛けを持つので、
             // 畳まないと誰も進めないまま回り続ける (`deinit` からは止められない・下記)
             guard let self else { return timer.invalidate() }
-            MainActor.assumeIsolated { self.advanceFromFallbackIfStalled() }
+            MainActor.assumeIsolated { self.fallbackFired() }
         }
         RunLoop.main.add(timer, forMode: .common)
         fallbackTimer = timer
     }
 
+    private var fallbackStallThreshold: Double {
+        FrameDriver.stallThreshold(frameRate: fallbackFrameRate)
+    }
+
+    /// 予備のタイマーが起きた回数。**検査が読む** — 健全な間は増えないこと (見張りの形)。
+    private(set) var fallbackFires = 0
+
+    /// 予備のタイマーが起きた。
+    ///
+    /// **引き受けなかったときは、見張りに戻る。** 起きたのに止まっていなかった (主の実行ループが
+    /// 塞がっていた直後など) なら、次は「最後に進めた時刻 + 閾値」まで眠る。
+    private func fallbackFired() {
+        fallbackFires += 1
+        advanceFromFallbackIfStalled()
+        guard !isDrivenByFallback else { return }
+        let remaining = lastAdvancedAt + fallbackStallThreshold - CACurrentMediaTime()
+        let floor = FrameDriver.fallbackInterval(frameRate: fallbackFrameRate)
+        fallbackTimer?.fireDate = Date(timeIntervalSinceNow: max(remaining, floor))
+    }
+
     /// 表示のリフレッシュが来た。**検査からは時刻を渡して呼ぶ。**
-    func advanceFromDisplayLink(at now: Double = CACurrentMediaTime()) {
+    ///
+    /// - Parameters:
+    ///   - now: 現在時刻。止まっているかの見張りだけが読む。
+    ///   - displayTime: この回で描く枚が表示される予定の時刻 (`targetTimestamp`)。持ち主へそのまま運ぶ。
+    ///     省くと持ち主は現在時刻で進む。
+    func advanceFromDisplayLink(at now: Double = CACurrentMediaTime(), displayTime: Double? = nil) {
         // **表示のリフレッシュが生きている。** 予備が引き受けていたなら、ここで下りる
         isDrivenByFallback = false
-        advance(at: now)
+        // **見張りを送る。** 次に起きるのは、このリフレッシュから閾値だけ経ったとき
+        fallbackTimer?.fireDate = Date(timeIntervalSinceNow: fallbackStallThreshold)
+        advance(at: now, displayTime: displayTime)
     }
 
     /// 予備の機会が来た。**止まっていなければ何もしない。**
@@ -224,17 +296,18 @@ final class ScreenDisplayLink: NSObject {
         guard
             FrameDriver.shouldAdvanceFromFallback(
                 now: now, lastAdvancedAt: lastAdvancedAt,
-                stallThreshold: FrameDriver.stallThreshold(frameRate: fallbackFrameRate),
+                stallThreshold: fallbackStallThreshold,
                 isAlreadyDriving: isDrivenByFallback)
         else { return }
         isDrivenByFallback = true
-        advance(at: now)
+        // 予備には表示の予定の時刻が無い。持ち主は現在時刻で代える
+        advance(at: now, displayTime: nil)
     }
 
     /// 持ち主を 1 回進める。**どちらの駆動源から来ても、通る道は同じ。**
-    private func advance(at now: Double) {
+    private func advance(at now: Double, displayTime: Double?) {
         lastAdvancedAt = now
-        owner?.displayLinkFired()
+        owner?.displayLinkFired(at: displayTime)
     }
 
     // `deinit { invalidate() }` は置かない。実行ループが仕掛けを持っている間 `deinit` は

@@ -63,7 +63,7 @@ struct OrbitFitAndPanTests {
             eye: orbit.eye, center: orbit.center, up: orbit.up,
             projection: Camera.defaultPerspective(width: width, height: height))
         let matrix = camera.viewProjection(width: width, height: height)
-        for corner in Self.corners(model.size / 2, around: model.center) {
+        for corner in Self.corners(model.size.simd / 2, around: model.center.simd) {
             let clip = matrix * SIMD4(corner, 1)
             #expect(clip.w > 0, "\(size) の隅 \(corner) が目の後ろにある")
             let ndc = SIMD3(clip.x, clip.y, clip.z) / clip.w
@@ -77,7 +77,7 @@ struct OrbitFitAndPanTests {
     func distanceJustFitsTheSphere() {
         let model = Self.box(SIMD3(2, 2, 2), width: 640, height: 480)
         let orbit = Orbit.fitting(model)
-        let radius = length(model.size) / 2
+        let radius = length(model.size.simd) / 2
         #expect(orbit.center == model.center)
         #expect(abs(orbit.distance - radius / RuntimeMath.sin(Float.pi / 6)) < 1e-3)
         #expect(orbit.yaw == 0 && orbit.pitch == 0)
@@ -90,7 +90,7 @@ struct OrbitFitAndPanTests {
         let empty = Model.make(name: "empty", parsed: ModelFile.parse(""), fitting: 300)
         let orbit = Orbit.fitting(empty)
         #expect(orbit.distance == 1)
-        #expect(orbit.center == .zero)
+        #expect(orbit.center == Vector3(0, 0, 0))
         #expect(orbit.eye.x.isFinite && orbit.eye.y.isFinite && orbit.eye.z.isFinite)
     }
 
@@ -99,7 +99,7 @@ struct OrbitFitAndPanTests {
         let orbit = Orbit.fitting(width: 640, height: 480)
         let distance = Camera.fittingDistance(height: 480)
         #expect(orbit == Orbit(
-            center: SIMD3(320, 240, 0), distance: distance,
+            center: Vector3(320, 240, 0), distance: distance,
             minimumDistance: distance / 10, maximumDistance: distance * 10))
     }
 
@@ -144,13 +144,13 @@ struct OrbitFitAndPanTests {
         orbit.pitch = 0.3
         orbit.distance *= 2
         let view = Self.view(of: orbit, width: 640, height: 480)
-        let step = view.worldPerPixel(at: orbit.center, width: 640, height: 480)
-        let before = orbit.center
+        let step = view.worldPerPixel(at: orbit.center.simd, width: 640, height: 480)
+        let before = orbit.center.simd
         orbit.pan(dragX: 30, dragY: 0, through: view, width: 640, height: 480)
         let expected = before - view.right * (30 * step.x)
-        #expect(length(orbit.center - expected) < 1e-3)
+        #expect(length(orbit.center.simd - expected) < 1e-3)
         // 遠ざけたので、1 画素は世界の 1 より長い
-        #expect(length(orbit.center - before) > 30)
+        #expect(length(orbit.center.simd - before) > 30)
     }
 
     @Test("動かした先が有限にならなければ、見ている先を動かさない", arguments: [Float.infinity, .nan, 3e38])

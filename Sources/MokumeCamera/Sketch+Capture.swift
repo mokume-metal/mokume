@@ -17,7 +17,7 @@ extension Sketch {
     /// ```swift
     /// final class Mirror: Sketch {
     ///     var camera: Capture?
-    ///     func setup() { camera = try? createCapture(mirrored: true) }
+    ///     func setup() throws { camera = try createCapture(mirrored: true) }
     ///     func draw() {
     ///         if let camera { image(camera.image, 0, 0) }
     ///     }
@@ -55,13 +55,14 @@ extension Sketch {
     public func createCapture(
         _ width: Int = 640, _ height: Int = 480, device: CaptureDevice? = nil, mirrored: Bool = false
     ) throws(ImageFailure) -> Capture {
-        let capture = Capture(
-            image: try createImage(width, height, calledAs: #function), device: device,
-            name: device.map { "camera: \($0.name)" } ?? "camera",
-            source: CameraSource(device: device, width: width, height: height), mirrored: mirrored,
-            owner: self)
-        attach(capture)
-        return capture
+        let call = #function
+        return try attachedOnSurface(ImageFailure.self, calledAs: call) { () throws(ImageFailure) -> Capture in
+            Capture(
+                image: try createImage(width, height, calledAs: call), device: device,
+                name: device.map { "camera: \($0.name)" } ?? "camera",
+                source: CameraSource(device: device, width: width, height: height), mirrored: mirrored,
+                owner: self)
+        }
     }
 
     /// 記録した絵の列を、カメラの代わりに流す。**機材も許可も使わない。**
@@ -74,9 +75,9 @@ extension Sketch {
     /// ```swift
     /// final class Replay: Sketch {
     ///     var camera: Capture?
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let red = DisplayImage(width: 4, height: 4, bytes: Array(repeating: [255, 0, 0, 255], count: 16).flatMap { $0 })
-    ///         camera = try? createCapture(frames: [red])
+    ///         camera = try createCapture(frames: [red])
     ///     }
     ///     func draw() {
     ///         if let camera { image(camera.image, 0, 0, width, height) }
@@ -96,13 +97,14 @@ extension Sketch {
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createCapture(frames: [DisplayImage], mirrored: Bool = false) throws(ImageFailure) -> Capture {
-        let capture = Capture(
-            image: try createImage(
-                frames.first?.width ?? 0, frames.first?.height ?? 0, calledAs: #function),
-            device: nil, name: "camera (frames)", source: FramesSource(frames: frames),
-            mirrored: mirrored, owner: self)
-        attach(capture)
-        return capture
+        let call = #function
+        return try attachedOnSurface(ImageFailure.self, calledAs: call) { () throws(ImageFailure) -> Capture in
+            Capture(
+                image: try createImage(
+                    frames.first?.width ?? 0, frames.first?.height ?? 0, calledAs: call),
+                device: nil, name: "camera (frames)", source: FramesSource(frames: frames),
+                mirrored: mirrored, owner: self)
+        }
     }
 
     /// 繋がっているカメラの一覧。``createCapture(_:_:device:mirrored:)`` で 1 台を選ぶのに使う。各機材が出せる形式

@@ -806,9 +806,9 @@ extension Canvas {
     /// 作らない — 置かれずに捨てられる形のために GPU の置き場を確保しない。骨が作れない
     /// 稜線 (開いた端) は、置くときに CPU の帯へ戻る。
     private func rememberGPUStroke(of source: SolidSource, from start: Int) {
-        guard recordingShape, gpuStrokeStyleAllows(source), solidVertices.count > start else {
-            return
-        }
+        guard recordingShape, case .mesh = source, gpuStrokeStyleAllows(source),
+            solidVertices.count > start
+        else { return }
         recordedGPUStrokes.append(
             RetainedGPUStroke(
                 source: source, matrix: transform.matrix, weight: style.strokeWeight,
@@ -1214,7 +1214,7 @@ struct StrokeCamera {
     private let near: Float
 
     init(_ camera: Camera, width: Float, height: Float) {
-        eye = camera.eye
+        eye = camera.eye.simd
         forward = camera.forward
         right = camera.right
         down = camera.down
@@ -1277,5 +1277,102 @@ struct StrokeCamera {
         let size = length(normal)
         guard size > 0, size.isFinite else { return nil }
         return SIMD2(normal.x / size, normal.y / size)
+    }
+}
+
+extension Canvas {
+    /// この立体の列を描く、特化したパイプラインの鍵 ([#1795]・[#2366])。特化できる列でなければ `nil`。
+    /// **列を閉じるときに 1 度だけ出して列に持たせる** (``Batch/solidVariant``) — 描き切りは列ごとに
+    /// 述語を評価し直さない。`isOpaqueFill` は「塗りの α がちょうど 1 と CPU で分かる列か」
+    /// (``isOpaqueFill(_:closing:)``)。
+    ///
+    /// - **光の枝を外す** (#1795): 断片が光の枝に入る条件の否定そのもの (`mokume_shapeColor`) — 光が
+    ///   1 つも効かず (`lighting.count == 0`)、周囲を置かず、列が周囲そのものを出す背景でもない。値は列を
+    ///   閉じた時点のもので、列ごとに渡る値と同じなので、枝は必ず偽になる。外しても画素は変わらない
+    /// - **ブレンドを外す** (#2366): 重ねる列で、塗りの α がちょうど 1 の列。α = 1 の source-over は
+    ///   `source + destination × 0` で、ブレンドなしの書き込みと一致する
+    ///
+    /// **約束の外が 1 つある: 下地の画素が数でない値・無限のとき。** ブレンドありは `0 × NaN`・`0 × Inf` が
+    /// 数でない値になり、箱の上まで数でない値で埋まる。ブレンドなしは下地を読まないので、箱は有限の色で出る。
+    /// 下地が有限の画素では 1 ビットも違わない。数でない値は利用者の計算 (画素の書き込みなど) が作るもので、
+    /// 箱の上まで染めることを守る理由が無いので、ブレンドなしの結果を採る (`UnlitSolidTests` が違いを固定する)。
+    ///
+    /// 対象は組み込みの塗りだけである。**利用者の断片の列は、利用者の `shader()` を載せた
+    /// パイプラインで描く** (``Shader``) ので外す。GPU で広げる立体の輪郭 (``Batch/strokeGeometry``) は
+    /// 元から枝を外した組で描き、**ブレンドなしの対象からは外す — 輪郭の頂点には被覆 (`coverage`) が付き、
+    /// 1 未満になりうる縁では被覆が α を下げるので、塗りの α が 1 でも画素の α は 1 にならない**
+    /// (下地を引く列でなければ、縁が下地と混ざらず画素が変わる)。GPU が色を書く粒 (外の置き場所) も
+    /// CPU は α を知らないので外す。
+    /// **面を置き換える板** (``Batch/replacesSurface``・`background(色)` を切り抜きの下で呼んだとき) は
+    /// この経路を通らない — 列を閉じる側 (``closeSolidBatch()``) が出さないので、光を置いた絵の
+    /// 背景の置き換えが組を 1 本増やすこともない。
+    ///
+    /// **列の選び方は既定の組と同じ** (``ShapePipeline/BlendStates/Column/init(drawing:)``)。細い線を
+    /// 広げた頂点を持つ置き換える列は下地を読む列で描くので、鍵の列もそれに従う。細い線の被覆を持つ列は
+    /// ブレンドなしにしない (被覆は α を下げる)。
+    ///
+    /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    func solidVariantKey(
+        of batch: Batch, opaque isOpaqueFill: @autoclosure () -> Bool
+    ) -> ShapePipeline.SolidVariantKey? {
+        guard batch.source == .solid && batch.strokeGeometry == nil && batch.run.paint.shader == nil
+        else { return nil }
+        let unlit =
+            specializesUnlitSolids && batch.lightRange.isEmpty
+            && !(batch.surroundings.topAndPresence.w > 0.5)
+            && !(batch.surroundings.horizonAndBackdrop.w > 0.5)
+        // 頂点と置き場所を読む判定は、ほかの条件が揃ったときだけ走らせる
+        let unblended =
+            specializesOpaqueSolids && batch.run.mode == .blend && !batch.thinCoverage
+            && isOpaqueFill()
+        guard unlit || unblended else { return nil }
+        return ShapePipeline.SolidVariantKey(
+            isUnitShape: batch.usesUnitShape, unlit: unlit, opaque: unblended,
+            column: .init(drawing: batch))
+    }
+
+    /// 閉じようとしている立体の列の塗りが、どの画素でも α がちょうど 1 と CPU で分かるか ([#2366])。
+    ///
+    /// **ちょうど 1 だけ**を不透明と数える。`1` を超える不透明度は締めずに渡る (``LinearRGBA``) 口で、
+    /// source-over は `source + destination × (1 − α)` と下地を引くが、ブレンドなしは `source` をそのまま
+    /// 書くので、画素が変わる。数でない値も偽に倒す。裏面を捨てる判定 (``Batch/cullMode``・`< 1`) は別の
+    /// 話で、あちらは今のまま残す — 裏面を捨てた列でも、ここで偽になれば今までどおりブレンドで描く。
+    ///
+    /// 見るのは、画素の α を決める 3 つ:
+    ///
+    /// 1. **置き場所の色** — 組み込みの形・読み込んだモデル・保持した形の置き場所 (外の置き場所は見えないので
+    ///    偽)。
+    /// 2. **頂点の色** — その場で並べた頂点 (輪郭の頂点を含む) は列の頂点を全部見る。保持した形は、置く形が
+    ///    持つ判定 (``Shape/solidAlphaIsOne``) を列を開くときに写してある。組み込みの形・読み込んだモデルの
+    ///    頂点は白。
+    /// 3. **読む面** — 焼き場の白い区画か、白い 1 画素の絵だけ。貼る絵は透けた画素を持ちうる。
+    ///
+    /// 混ぜ方・断片・細い線の被覆は鍵を作る側が見る (``solidVariantKey(of:opaque:)``)。
+    ///
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    func isOpaqueFill(_ open: OpenSolid, closing batch: Batch) -> Bool {
+        let onAtlas = batch.run.texture.texture === atlas.texture
+        guard open.external == nil, open.strokeGeometry == nil,
+            onAtlas || batch.run.texture.texture === blankPicture?.held.texture
+        else { return false }
+        // 置き場所の色
+        for index in batch.instanceStart..<(batch.instanceStart + batch.instanceCount)
+        where solidInstances[index].color.w != 1 {
+            return false
+        }
+        // 頂点の色。焼き場の面を読む列は、読み取り位置が白い区画を指しているかも見る
+        switch open.source {
+        case .mesh, .model:
+            return true
+        case .retained:
+            return open.retainedVerticesAreOpaque && (!onAtlas || open.retainedReadsWhiteCell)
+        case .freeform:
+            for index in open.vertexStart..<(open.vertexStart + open.vertexCount) {
+                let vertex = solidVertices[index]
+                if vertex.color.w != 1 || (onAtlas && vertex.uv != whiteUV) { return false }
+            }
+            return true
+        }
     }
 }

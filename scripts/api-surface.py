@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import importlib.util
 import json
 import pathlib
 import re
@@ -47,6 +48,9 @@ ENTRY_TYPE = "Sketch"
 ENTRY_TYPES = {ENTRY_TYPE, "SketchPart"}
 # 転送先の層。ここは常に Swift の慣行が正
 LOWER_TYPE = "Canvas"
+
+# `load_symbols` が各宣言へ足す、宣言したモジュールの名前の鍵
+MODULE_KEY = "_module"
 
 KIND_ORDER = [
     "swift.protocol",
@@ -89,6 +93,9 @@ def load_symbols(graphs: pathlib.Path, module: str) -> list[dict]:
                 continue
             if "::SYNTHESIZED::" in symbol["identifier"]["precise"]:
                 continue
+            # どのモジュールが足した宣言かを持たせる (`MokumeAudio@MokumeCore` は MokumeAudio が
+            # MokumeCore の型へ足した口)。Float 固定の口の検査は MokumeCore だけを見る
+            symbol[MODULE_KEY] = module
             symbols.append(symbol)
     # プロトコルの要件と既定の実装は同じ名前で 2 度出る。一覧では 1 つに畳む。
     # **引数の型まで見て畳む** — 名前だけで畳むと、同名で引数型の違う宣言が 1 本に
@@ -328,6 +335,16 @@ def check_onoff(symbols: list[dict]) -> list[str]:
     return problems
 
 
+# 転送の対称性から外してよい上の層の口と、その理由 (ADR-0020 決定 1)。
+#
+# 作法は FOREIGN_ALLOWLIST と同じ — **対象と理由を組で書く**。同じ基底名を下の層が持つのに引数ラベルが
+# 違う口は、上で書けたコードが下で書けない食い違いに見える。ここへ載せられるのは、同じ名前を下の層に
+# 持たせる代わりに**意味が違う別の口**である場合に限る。
+FORWARDING_ALLOWLIST = {
+    "draw(into:_:)": "Canvas.draw(_:) は描き場所のフレームを開くだけで、中の素の呼び出しは本体へ行く。draw(into:) は同じフレームを開いたうえで、スケッチの口を描き場所へ向ける別の口 (ADR-0023 決定 1・#2454)。同じ名前・同じラベルにすると、中の素の呼び出しの向き先が層で割れる",
+}
+
+
 def check_forwarding(symbols: list[dict], requirements: set[str]) -> list[str]:
     """ADR-0020 決定 1: 下の層が上の層の転送先なら、同じ名前・同じ引数ラベルを保つ。
 
@@ -347,7 +364,7 @@ def check_forwarding(symbols: list[dict], requirements: set[str]) -> list[str]:
     problems = []
     for name in sorted(entry):
         base = name.split("(")[0]
-        if base not in lower_bases or name in lower:
+        if base not in lower_bases or name in lower or name in FORWARDING_ALLOWLIST:
             continue
         problems.append(
             f"{ENTRY_TYPE}.{name} と {LOWER_TYPE}.{sorted(lower_bases[base])[0]} で"
@@ -505,6 +522,84 @@ def check_foreign_vocabulary(
     return problems
 
 
+# 連続量を `Float` で受ける口を見張る対象 (ADR-0035 決定 2 の改訂 2026-10-20 / #2525)。
+#
+# 見るのは「利用者が変数を渡す」口で、次の持ち主の MokumeCore の宣言である — Sketch の面・Canvas・
+# `Transform`・`LinearRGBA` と、どの型にも属さないトップレベルの口。**これより外の型は見ない**:
+# `Table`・`Numbers`・`TextBounds`・`Orbit`・`Placement`・`Force`・`SketchSettings` などは、
+# データや設定の値を作る口で、描く口と同じ約束 (「変数を渡すときは型を気にしなくてよい」) の射程に
+# 入れていない (ADR-0035 決定 5・#2644 が仕分けた)。音とカメラ (MokumeAudio・MokumeCamera) も別ターゲットの
+# 別の面で、射程の外と決めた (同改訂)。
+FLOAT_PORT_OWNERS = {"", "Canvas", "Transform", "LinearRGBA"} | ENTRY_TYPES
+FLOAT_PORT_MODULE = "MokumeCore"
+FLOAT_TYPE = re.compile(r"\bFloat\b")
+CLOSED_RANGE_OF_FLOAT = re.compile(r"^ClosedRange<Float>\??$")
+
+# `Float` で受けてよい口と、その理由。作法は FOREIGN_ALLOWLIST と同じ — **対象と理由を組で書く**。
+# ここへ 1 行足すたびに判断が入るのが狙いで、書けるのは「`some ScalarConvertible` では書けない・
+# 書いてはならない理由」に限る。キーは `持ち主.名前(ラベル)` (トップレベルは `(トップレベル).名前(ラベル)`)。
+#
+# 次の 3 つは表を使わず、ここで通す (どれも ADR-0035 の決定が名指ししているので、口ごとの理由を
+# 持たない):
+#   - **数え上げ** (決定 2) は `Int` で受ける口で、そもそも `Float` を取らない
+#   - **`ClosedRange<Float>`** (決定 5・2026-10-05 の改訂) — protocol では覆えない
+#   - **public init** (決定 5) — 同じく覆えない。enum の case ペイロードも決定 5 だが、持ち主が
+#     見る対象に入っていない
+#   - **利用者が実装する口** (プロトコルの要件とその既定の実装。`mouseMoved(deltaX:deltaY:)` など)。
+#     引数は mokume が渡す値で、利用者が渡す口ではない
+FLOAT_ALLOWLIST = {
+    "SketchPart.expose(_:_:)": "Float・Double・Int・String の口が並ぶ組で、変数はどの型で持っていても対応する口へ入る (ADR-0030)。1 本の総称に畳むと String の口との並びが崩れる",
+    "LinearRGBA.display(red:green:blue:alpha:)": "0–1 の目盛りの口で、0–255 の数を `n / 255` で直して渡す書き方が自然に出る。広げると整数リテラルの割り算が黙って 0 (黒・透明) になる — このリポジトリの中だけで 7 行と ADR-0033 の例 (ADR-0035 決定 2 の改訂 2026-10-20 で据え置き)",
+    "LinearRGBA.linear(red:green:blue:)": "display(red:green:blue:alpha:) と同じ理由で据え置く",
+    "(トップレベル).paletteLerp(_:_:)": "区切りの位置は配列の要素 `[(LinearRGBA, Float)]` の中にあり、protocol では覆えない。勾配 (`Gradient.linearGradient(_:from:to:)`) の区切りと同じ形に揃える (#2424・#2433)。割合 `amount` は `some ScalarConvertible` で受けている",
+}
+
+
+def float_parameters(symbol: dict) -> list[tuple[str, str]]:
+    """引数のうち、型の綴りに `Float` を含むものの (名前, 型の綴り)。"""
+    found = []
+    for parameter in (symbol.get("functionSignature") or {}).get("parameters", []):
+        spelling = "".join(
+            fragment.get("spelling", "") for fragment in parameter.get("declarationFragments", []))
+        written = spelling.split(":", 1)[-1].strip()
+        if FLOAT_TYPE.search(written):
+            found.append((parameter.get("name") or "_", written))
+    return found
+
+
+def check_float_ports(symbols: list[dict], requirements: set[str]) -> list[str]:
+    """連続量を `Float` で受ける引数は、`some ScalarConvertible` に広げてあること (ADR-0035 決定 1・2)。
+
+    塞ぐ実害は、広げたはずの約束 (「変数を渡すときは型を気にしなくてよい」) が、足された口で
+    黙って破れること。#2255 (11 の口) と #2524 (#2526 が取りこぼした 3 の口) は、どちらも反証役が
+    後から見つけた。検査が無いと、足した本人にも見えない — 組み立ては通り、`Double` の変数を
+    渡した利用者だけが赤くなる。
+    """
+    problems = []
+    for symbol in symbols:
+        if symbol.get(MODULE_KEY, FLOAT_PORT_MODULE) != FLOAT_PORT_MODULE:
+            continue
+        if owner(symbol) not in FLOAT_PORT_OWNERS:
+            continue
+        if symbol["kind"]["identifier"] == "swift.init":
+            continue
+        if symbol["identifier"]["precise"] in requirements:
+            continue
+        name = f"{owner(symbol) or '(トップレベル)'}.{title(symbol)}"
+        if name in FLOAT_ALLOWLIST:
+            continue
+        for label, written in float_parameters(symbol):
+            if CLOSED_RANGE_OF_FLOAT.match(written):
+                continue
+            problems.append(
+                f"{name}: 引数 {label} が {written} で連続量を受けている。変数を渡すときに "
+                "Float(…) と書かせる口になる (ADR-0035 決定 1・2)。`some ScalarConvertible` で受けて "
+                "`.asFloat` で Float に直す。Float でなければならない理由があるなら、"
+                "scripts/api-surface.py の FLOAT_ALLOWLIST に理由つきで載せる"
+            )
+    return problems
+
+
 # 参照スケッチ。作者向けの面は、絵か操作で示せるものをすべてここから呼ぶ (#1350)
 SKETCHES = pathlib.Path(__file__).resolve().parents[1] / "Sketches"
 
@@ -524,21 +619,82 @@ UNSHOWN = {
     "audioInputDevices": "captureDevices と同じ理由",
     "loadSound": "音声ファイルはリポジトリに置けず (check-no-binaries)、参照スケッチの読む資材が無い。鳴らさずに解析する形は createAudioIn(samples:) が示す。再生と解析はテストが見る",
     "clock": "時刻の出どころを名乗る口で、--render では片方 (frameIndex) しか絵に出ない (usesFrameHistory と同じ)。正しさはテストが見る",
+    "authorTime": "入り口・部品が状態を進めるのに読む秒で、観測の枚でないと time と同じ値になり、--render の絵では time と違いが出ない。観測の枚での違いはテストが見る (#2900)",
     "displays": "captureDevices と同じ理由 (繋がっているディスプレイに依る。全画面の作例は SketchSettings.fullScreen の説明文が持つ・#2020)",
     "gamepads": "繋がっているパッドに依り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。同じ動きは gamepad-and-players が createGamepad(inputs:) の記録した入力で示す (#1965)",
     "createTCPClient": "繋ぎ先のサーバが要り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。記録した列を流す形 (messages:) と手元の TCPServer との往復はテストが回す (#2470)",
     "createWebSocketClient": "createTCPClient と同じ理由",
     "assetURL": "資材の在処を返す口で、絵にならない。正しさはテストが見る",
+    "requestModel": "モデルが届くフレームが実行ごとに違い、--render と台帳で同じ絵を回せない (口の説明の Note)。`Task` の中から Sketch の口を呼ぶのは走っている状態の外になりうる (#1367)。参照スケッチ (CrowdAndModel) は描き場所 (canvas) を先に取って、同じ非同期の読み込みを Canvas の口で示す。絵は loadModel が見る",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
     "loadEffect": "loadShader と同じ理由",
     "usesFrameHistory": "--render の「同じ番号のフレームは同じ絵」を崩す",
     "main": "入口は Sketches/main.swift が持つ",
+    "loadJSONArray": "最上位が配列の JSON を読む口で、読む先が要る。絵にする作例 (地震の GeoJSON) を参照スケッチの 1 枚に足すと台帳の絵が動くので、読み方と知らせはテストが見る (#2466)",
+    "requestJSONArray": "loadJSONArray と同じ理由 (待たない版は書き出しの絵では受け取る番が回らない)",
+    "parseJSONObject": "通信で届いた文字を読む口で、届く文字を参照スケッチが持たない。読み方はテストが見る (#2466)",
+    "parseJSONArray": "parseJSONObject と同じ理由",
 }
 
 
+def _blank_comments():
+    """check-tool-language.py の字句の読みを取り込む (`check-runtime-math.py` と同じ形)。
+
+    ファイル名にハイフンがあるので importlib で読む。写さない — 文字列の中身まで塗る引数
+    (`strings=True`) もそこにある。
+    """
+    path = pathlib.Path(__file__).resolve().parent / "check-tool-language.py"
+    spec = importlib.util.spec_from_file_location("check_tool_language", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.blank_comments
+
+
+blank_comments = _blank_comments()
+
+# 参照スケッチの中の 1 つの名前の出方。前の宣言の語 (`let name`・`func name`・`case name`・
+# `for name`) と、`self.` だけを許す受け手と、後ろの `(`・`{`・ラベルの `:` を 1 度に読む
+SKETCH_RECEIVERS = r"(?:self|sketch|\$0)"
+
+
+def _sketch_name_pattern(name: str) -> re.Pattern:
+    return re.compile(
+        rf"(?P<declaration>\b(?:func|let|var|case|for)\s+)?"
+        # 前が `.` や識別子の文字なら、受け手つき (別の型の口)・列挙子・別の名前。**スケッチを指す
+        # 受け手だけは許す** (`self.`・参照スケッチが `Sketch` を引数に取る閉包の `sketch.`・`$0.`)
+        rf"(?<![\w.])(?:{SKETCH_RECEIVERS}\.)?(?P<name>{re.escape(name)})(?![\w])"
+        rf"(?P<after>\s*[({{]|:(?!:))?"
+    )
+
+
+def _sketch_member_uses(code: str, name: str, kind: str, closure_last: bool) -> bool:
+    """参照スケッチの `code` が、メンバ `name` を使っているか。`kind` は呼び出しの数え方。
+
+    - `callback`: 作者が書く口 (プロトコルの要件と既定の実装)。宣言 (`func`・`var`・`let` の
+      `name`、`init` は `init(`) で書かれたとき
+    - `function`: 呼び出しの形 `name(`、最後の引数が閉包の口だけは末尾の閉包 `name {` も
+    - `property`: 宣言の左辺 (`let/var/for/case name`)・引数のラベル (`name:`) 以外の出方
+    """
+    for match in _sketch_name_pattern(name).finditer(code):
+        declaration = (match.group("declaration") or "").strip()
+        after = (match.group("after") or "").strip()
+        if kind == "callback":
+            if declaration in ("func", "var", "let") or (name == "init" and after == "("):
+                return True
+        elif declaration:
+            continue
+        elif kind == "function":
+            if after == "(" or (after == "{" and closure_last):
+                return True
+        elif after != ":":
+            return True
+    return False
+
+
 def check_sketch_coverage(
-    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN
+    symbols: list[dict], sources: str, unshown: dict[str, str] = UNSHOWN,
+    requirements: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
     """`Sketch` の公開メンバが、参照スケッチのどこかで呼ばれているか (#1358)。
 
@@ -546,16 +702,52 @@ def check_sketch_coverage(
     ものが無く、100 件を超える空白が溜まった (#1350)。空白は不具合も隠す — スケッチから
     呼べる場所の無い口が、スケッチへ足すまで誰にも見つからなかった (#1367)。
 
-    見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントは
-    落としてから照合するが、**文字列の中に書いた名前は「呼ばれた」に数える** — 取り
-    こぼすのは名前を文字列にだけ書いたときで、そこまでは追わない。
+    見るのは基底名 (引数部を落とした名前) の字面で、列挙の case までは見ない。コメントと
+    文字列の中身は空けてから照合する (`check-runtime-math.py` と同じ前処理)。文字列補間
+    `"\\(…)"` の中はコードなので数える。
+
+    **口の種類ごとに、数える出方を変える** (#3026)。名前の字面だけで見ると、同じ綴りの局所変数
+    (`let phase = …`) で通ってしまい、どのスケッチも呼ばない `phase(period:)` が検査を抜けた。
+
+    - **関数のメンバ** (引数部を持つもの) は、呼び出しの形 `phase(` で書かれたときだけ数える。
+      最後の引数が閉包の口 (`createShape { … }`) だけは、末尾の閉包 `name {` も数える —
+      それ以外の口は `if phase {` を呼び出しと読まない。シンボルグラフの宣言から決める。
+      前が `.` の呼び出し (`canvas.requestModel(`) は別の型の口なので数えない。数える受け手は
+      スケッチを指すもの (`self.`・`sketch.`・`$0.`) だけである。参照スケッチは `Sketch` を引数に
+      取る閉包を並べる作りがあり、`$0.ellipsoid(…)` は `Sketch` の口の呼び出しである
+    - **作者が書く口** (プロトコルの要件とその既定の実装。`setup`・`draw`・`mouse*`・`settings`・
+      `init` など) は、スケッチが呼ぶものではなく書くものなので、宣言で数える。表は持たず、
+      シンボルグラフの関係 (`requirements`) から決める
+    - **性質** (`time`・`width` のように括弧を持たないもの) は、宣言の左辺 (`let time = …`) と
+      引数のラベル (`time:`) 以外の出方を数える。同じ基底名に性質もあるときも性質として数える
+
+    **数えないもの (代償)**: 関数を値として渡す形 (`values.map(phase)`) は呼び出しの形ではない
+    ので数えない。示したいなら `phase(period: …)` と呼ぶ。多重定義は基底名に畳むので、片方の
+    引数の形だけが呼ばれていても通る ([#3035](https://github.com/mokume-metal/mokume/issues/3035))。
+    根は字句の照合である — コンパイラが解いた参照 (index store) で引けば、局所変数・受け手・
+    宣言を取り違えない。残した道として #3026 に書いた。
     """
-    code = re.sub(r"/\*.*?\*/", "", sources, flags=re.DOTALL)
-    code = re.sub(r"//[^\n]*", "", code)
-    bases = {title(s).split("(")[0] for s in symbols if layer(s) == ENTRY_TYPE}
+    code = blank_comments(sources, strings=True)
+    # 基底名 → (口の種類, 最後の引数が閉包の宣言があるか)
+    flags: dict[str, dict[str, bool]] = {}
+    for member in symbols:
+        if layer(member) != ENTRY_TYPE:
+            continue
+        base = title(member).split("(")[0]
+        seen = flags.setdefault(base, {"required": False, "property": False, "closure": False})
+        seen["required"] |= member["identifier"]["precise"] in requirements
+        seen["property"] |= "(" not in title(member)
+        seen["closure"] |= _ends_with_closure(member)
+    members = {
+        base: (
+            "callback" if seen["required"] else "property" if seen["property"] else "function",
+            seen["closure"])
+        for base, seen in flags.items()
+    }
     problems = []
-    for base in sorted(bases - unshown.keys()):
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])", code):
+    for base in sorted(members.keys() - unshown.keys()):
+        kind, closure_last = members[base]
+        if _sketch_member_uses(code, base, kind, closure_last):
             continue
         problems.append(
             f"{ENTRY_TYPE}.{base} が参照スケッチ (Sketches/) から呼ばれていない。"
@@ -563,6 +755,16 @@ def check_sketch_coverage(
             "scripts/api-surface.py の UNSHOWN に載せる (#1358)"
         )
     return problems
+
+
+def _ends_with_closure(symbol: dict) -> bool:
+    """最後の引数の型が閉包か (末尾の閉包で呼べるか)。型の綴りに `->` を含むかで見る。"""
+    parameters = (symbol.get("functionSignature") or {}).get("parameters", [])
+    if not parameters:
+        return False
+    spelling = "".join(
+        fragment.get("spelling", "") for fragment in parameters[-1].get("declarationFragments", []))
+    return "->" in spelling.split(":", 1)[-1]
 
 
 # 公開の口が何の仕事をするかの種類 (#1670)。**寿命の約束 (ADR-0021 決定 4) は種類ごとに
@@ -602,6 +804,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "strokeWeight": DRAWING_STYLE,
     "strokeCap": DRAWING_STYLE,
     "strokeJoin": DRAWING_STYLE,
+    "strokeDash": DRAWING_STYLE,
+    "noStrokeDash": DRAWING_STYLE,
     "blendMode": DRAWING_STYLE,
     "rectMode": DRAWING_STYLE,
     "ellipseMode": DRAWING_STYLE,
@@ -612,6 +816,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "textAlign": DRAWING_STYLE,
     "textLeading": DRAWING_STYLE,
     "textStyle": DRAWING_STYLE,
+    "textWeight": DRAWING_STYLE,
     "textWrap": DRAWING_STYLE,
     "tint": DRAWING_STYLE,
     "noTint": DRAWING_STYLE,
@@ -628,6 +833,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "curveDetail": (DRAWING_STYLE, "表に無い。曲線の頂点の細かさで、線の太さと同じくスタイルとして持ち越す"),
     "curveTightness": (DRAWING_STYLE, "curveDetail と同じ理由"),
     "randomSeed": (DRAWING_STYLE, "表の「揺らぎの種」と同じく、乱数の流れの種で持ち越す"),
+    "randomSource": (DRAWING_STYLE, "randomSeed と同じ列を値として出し入れする。代入は種を書くのと同じで持ち越す"),
     "orbit": (DRAWING_STYLE, "視点を操る道具の状態で、フレームを越えて持ち越す (setup() で書く例がある)。視点そのものを書くのは orbitControl"),
     # シーンの記述 — 表の「視点・投影・光・材質・変換・影・周囲の光・効果・切り抜き」
     "camera": SCENE,
@@ -671,6 +877,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "receiveShadow": SCENE,
     "surroundings": SCENE,
     "effects": SCENE,
+    "filter": (FIGURE, "呼んだ時点の絵へ掛け、掛けた絵は次のフレームへ持ち越す。寿命は置いたもの (set と同じ) の側で、持ち越しを約束する区間でも掛かる (#2455)"),
     "clip": SCENE,
     "noClip": SCENE,
     "particles": (SCENE, "表に無い。フレームの中でだけ扱い、外では注意して無視する (Canvas.isShaping の説明が挙げる「粒」)。1 フレーム進めるので、置くだけの図形とは寿命が違う"),
@@ -697,6 +904,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "sphere": FIGURE,
     "square": FIGURE,
     "text": FIGURE,
+    "shapedText": FIGURE,
     "torus": FIGURE,
     "triangle": FIGURE,
     "set": (FIGURE, "画素の書き込み。#1603 の決定 (2b) で「置くこと」に含む"),
@@ -705,6 +913,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "beginContour": FIGURE,
     "endContour": FIGURE,
     "vertex": FIGURE,
+    "bezier": FIGURE,
     "bezierVertex": FIGURE,
     "quadraticVertex": FIGURE,
     "curveVertex": FIGURE,
@@ -717,6 +926,8 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "pixelHeight": READING,
     "frameCount": READING,
     "time": READING,
+    "phase": (READING, "時計の秒から周期の位相を取って返す。time を巡らせた値で、値を返すだけ"),
+    "authorTime": (READING, "time を観測の枚でも作者の時計の秒で返す。入り口・部品が状態を進めるのに読む (ADR-0045 決定 9)"),
     "deltaTime": READING,
     "clock": (READING, "時刻の出どころを値で返す。外の時間で動くもの (音声ファイルの再生) を作る側が読む"),
     "mouseX": READING,
@@ -729,6 +940,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "movedY": READING,
     "scrollX": READING,
     "scrollY": READING,
+    "pinch": READING,
     "mouseButton": READING,
     "isMousePressed": READING,
     "key": READING,
@@ -748,10 +960,12 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "spacePosition": READING,
     "currentCamera": READING,
     "textWidth": READING,
+    "shapedTextWidth": READING,
     "textAscent": READING,
     "textDescent": READING,
     "textOutline": (READING, "文字の輪郭を値で返す。置くのは作者"),
     "textBounds": (READING, "墨の範囲を値で返す。置くのは作者"),
+    "shapedTextBounds": (READING, "組版した墨の範囲を値で返す。置くのは作者"),
     "usesFrameHistory": READING,
     "defaultSolidDetail": READING,
     "output": (READING, "描き先 (RenderTarget) を返す。作るのは面の組み立て"),
@@ -790,6 +1004,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "gamepads": (RESOURCE, "繋がったパッドごとに入り口を作って走っているスケッチへ足し、一覧で返す"),
     "createShape": RESOURCE,
     "loadImage": RESOURCE,
+    "loadFont": RESOURCE,
     "requestImage": RESOURCE,
     "loadModel": RESOURCE,
     "requestModel": RESOURCE,
@@ -801,6 +1016,10 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "requestJSONObject": (RESOURCE, "loadJSONObject と同じ理由"),
     "loadXML": (RESOURCE, "loadJSONObject と同じ理由"),
     "requestXML": (RESOURCE, "loadJSONObject と同じ理由"),
+    "loadJSONArray": (RESOURCE, "loadJSONObject と同じ理由"),
+    "requestJSONArray": (RESOURCE, "loadJSONObject と同じ理由"),
+    "parseJSONObject": (READING, "文字から値を作って返す。ファイルにも描き場所にも触れない"),
+    "parseJSONArray": (READING, "parseJSONObject と同じ理由"),
     "loadShape": RESOURCE,
     "requestShape": RESOURCE,
     "loadShader": RESOURCE,
@@ -1037,16 +1256,15 @@ def main() -> int:
         return 0
 
     owned = load_owned_identifiers(arguments.graphs)
+    requirements = set().union(*(load_requirements(arguments.graphs, module) for module in modules))
     problems = (
         check_onoff(symbols)
-        + check_forwarding(
-            symbols,
-            set().union(*(load_requirements(arguments.graphs, module) for module in modules)),
-        )
+        + check_forwarding(symbols, requirements)
         + check_doc_canon(symbols)
         + check_type_closure(symbols, owned)
         + check_foreign_vocabulary(symbols, owned, own_modules(arguments.graphs))
-        + check_sketch_coverage(symbols, read_sketches(SKETCHES))
+        + check_float_ports(symbols, requirements)
+        + check_sketch_coverage(symbols, read_sketches(SKETCHES), requirements=requirements)
         + check_settings_form(symbols, SKETCHES)
         + check_port_kinds(symbols, SCENE_TEST.read_text(encoding="utf-8"))
     )

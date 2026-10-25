@@ -67,11 +67,12 @@ struct EffectSpecializationTests {
         ("vignette", [.vignette(amount: 0.65)], 1),
         ("fringe", [.fringe(amount: 0.7)], 1),
         ("adjust", [.adjust(brightness: 0.1, contrast: 0.2, saturation: -0.3)], 1),
+        ("threshold", [.threshold(level: 0.5)], 1),
         ("拡大 (細かさ 0.5)", [.invert(amount: 0.3)], 0.5),
         ("並び", [.invert(), .monochrome(amount: 0.5), .vignette(amount: 0.5), .adjust(brightness: 0.1)], 1),
     ]
 
-    @Test("特化したパイプラインは、全種入りの 1 本と 1 ビットも違わない絵を出す", arguments: Array(0..<10))
+    @Test("特化したパイプラインは、全種入りの 1 本と 1 ビットも違わない絵を出す", arguments: Array(0..<11))
     func specializedMatchesGeneral(_ index: Int) throws {
         let item = Self.effects[index]
         let general = try bits(item.effects, specialized: false, density: item.density)

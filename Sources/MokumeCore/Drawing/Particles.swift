@@ -44,6 +44,12 @@ struct Particle {
     var alpha: Float = 0
     /// 粒ごとの個体差。揺らぎが粒ごとに違う向きを向くための種。
     var seed: Float = 0
+    /// 生まれたときの ``life`` (``life`` と同じ単位)。**年齢の物差し**で、年齢は
+    /// 「使った寿命 ÷ これ」になる (``Particles/age(life:born:)``)。0 なら年齢は 0。
+    ///
+    /// ``span`` (秒) は使わない。フレーム番号から導く時計の ``life`` は回数で、秒の ``span`` から
+    /// 回数への換算を GPU が持たずに済むようにするため。
+    var born: Float = 0
 }
 
 /// 端数を繰り越しながら、1 フレームに出す数を決める。
@@ -268,7 +274,7 @@ public final class Particles {
     ///
     /// [#1468]: https://github.com/mokume-metal/mokume/issues/1468
     private var cadences: [EmissionCadence] = []
-    /// 呼んだ順を数えているフレーム (面の `Canvas.framesDrawn`)。変わったら数え直す。
+    /// 呼んだ順を数えているフレーム (スケッチのフレーム番号・#2454)。変わったら数え直す。
     private var cadenceFrame: Int?
     /// `cadenceFrame` のフレームで、これまでに数えた `emit` の回数。
     private var emitsThisFrame = 0
@@ -526,7 +532,7 @@ public final class Particles {
                 + "drew the particles; forces added before it take effect in the next call")
     }
 
-    /// この 1 フレームで出す数。`frame` は呼んだ面のフレーム番号で、同じ番号のうちに
+    /// この 1 フレームで出す数。`frame` はスケッチのフレーム番号で、同じ番号のうちに
     /// 呼ばれた順で繰り越しを引き分ける (`cadences` の説明)。**0 個に終わる呼び出しも
     /// 1 回と数える** — 数えないと、出なかった噴き口の後ろの繰り越しが 1 つずつ前へずれる。
     func count(rate: Float, over step: FrameStep, frame: Int) -> Int {
@@ -687,7 +693,7 @@ public final class Particles {
                     vx: direction.x * rate, vy: direction.y * rate, vz: direction.z * rate,
                     life: remaining, span: span, size: extent,
                     red: color.red, green: color.green, blue: color.blue, alpha: color.alpha,
-                    seed: randomness.unitValue()))
+                    seed: randomness.unitValue(), born: remaining))
         }
     }
 
@@ -822,8 +828,11 @@ public final class Particles {
     /// 生きている粒の置き場所を、番号の順に作る。**参照の描画経路と検査が使う。**
     ///
     /// GPU の `mokume_particles` と**同じ式**で組む (``billboard(x:y:z:size:transform:basis:)``)。
+    ///
+    /// - Parameter lifeStep: 読む状態が進んだ 1 回で減らした寿命 (``lifeStep(of:)``)。**読むのは進めた後の
+    ///   状態**なので、年齢は進める前の寿命 (`life + lifeStep`) から求める。
     func living(
-        from values: [Float], transform: simd_float4x4, basis: simd_float3x3
+        from values: [Float], transform: simd_float4x4, basis: simd_float3x3, lifeStep: Float
     ) -> [SolidInstance] {
         var places: [SolidInstance] = []
         places.reserveCapacity(capacity / 8)
@@ -832,18 +841,30 @@ public final class Particles {
             for index in 0..<min(capacity, slots.count) {
                 let particle = slots[index]
                 guard particle.life > 0 else { continue }
-                places.append(
-                    SolidInstance(
-                        matrix: Self.billboard(
-                            x: particle.x, y: particle.y, z: particle.z, size: particle.size,
-                            transform: transform, basis: basis),
-                        normalMatrix: basis,
-                        color: LinearRGBA(
-                            premultipliedRed: particle.red, green: particle.green,
-                            blue: particle.blue, alpha: particle.alpha)))
+                var place = SolidInstance(
+                    matrix: Self.billboard(
+                        x: particle.x, y: particle.y, z: particle.z, size: particle.size,
+                        transform: transform, basis: basis),
+                    normalMatrix: basis,
+                    color: LinearRGBA(
+                        premultipliedRed: particle.red, green: particle.green,
+                        blue: particle.blue, alpha: particle.alpha))
+                place.normal0.w = Self.age(life: particle.life + lifeStep, born: particle.born)
+                places.append(place)
             }
         }
         return places
+    }
+
+    /// 粒の年齢 (0…1)。断片の `in.particle.age` になる。
+    ///
+    /// 生まれたときの寿命 `born` に対する、使った寿命の割合で、`life` は**進める前の寿命**。出して
+    /// 最初に描かれるフレームで 0 になり、寿命が尽きる直前に 1 へ近づく (描かれる粒の `life` は進めた後
+    /// も正なので、1 には届かない)。`born` が 0 の粒は 0。
+    ///
+    /// **GPU 側 (`Shaders/Computations/Particles.metal`) と同じ式でなければならない。**
+    static func age(life: Float, born: Float) -> Float {
+        born > 0 ? min(max(1 - life / born, 0), 1) : 0
     }
 
     /// 粒 1 つの板を置く行列。**板は視点の枠に沿う** (#1043)。

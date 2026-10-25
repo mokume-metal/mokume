@@ -47,7 +47,36 @@ import MokumeDiagnostics
     /// 読むときは写し (``pixelMirror``) を取る。
     ///
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
-    let texture: any MTLTexture
+    ///
+    /// **効果を通すフレームでは、効果の控え (``StageImage``) と取り替わる** ([#2388])。取り替えるのは
+    /// ``exchangeTexture(with:)`` だけで、窓・書き出し・読む画素はどれも、そのときの
+    /// この面を読めばよい (読む口に手は入れない)。
+    ///
+    /// **面を持ち歩く側は、面を値で写し取らない。** 取り替えた後は、組んだ時点の面が控えの面になる。
+    /// 面を溜める側は ``HeldTexture`` で描き場所そのものを持ち (読むたびに ``texture`` を引く)、
+    /// 取り替えの相手 (``exchangePartner``) は、この描き場所が生きている間は生きている。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    private(set) var texture: any MTLTexture
+
+    /// この面と取り替わる面 (効果の控え) の持ち主 ([#2388])。**強く持つ。**
+    ///
+    /// 取り替えると、組んだ時点の面は相手の面になり、相手の持ち主 (``Canvas`` の効果のパイプライン) が
+    /// 死ぬとき面を常駐から退かせる (``StageImage``)。面を溜める側 (``HeldTexture``) は持ち主をこの描き場所
+    /// として抱えるので、描き場所だけが生き残って相手が先に死ぬと、読む面が常駐から外れる ([#1079]・
+    /// [#1178] と同じ型の穴)。ここで抱えれば、2 枚の面は同じ寿命で、この描き場所が死ぬとき一緒に退く。
+    /// 取り替えた最初のとき (``exchangeTexture(with:)``) に結ぶ。
+    ///
+    /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
+    /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    private(set) var exchangePartner: StageImage?
+
+    /// 打ち切られた投入の取り消しで、面の中身が変わったと名乗った回数 (``noteTextureReplaced()`` を呼んだ回数・
+    /// 作ってから通算)。``contentRevision`` の一部。**取り替え (``exchangeTexture(with:)``) の回数ではない** —
+    /// 通常の取り替えは投入が面を名乗る番号 (``lastWriteSubmission``) で足りて、ここは進めない。頭で戻した回の
+    /// 打ち切りは面を取り替え直さないが、中身は変わるので数える。
+    private var texturesReplaced: UInt64 = 0
 
     /// 奥行きを覚えておく面。
     ///
@@ -78,20 +107,46 @@ import MokumeDiagnostics
     /// ``Canvas/settlePlacersBeforeChange()`` を通った後は空になるので、関所を通さずに出す先を書く口は、
     /// ここで debug の検査が落とす (release では何もしない)。
     ///
-    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 3 系統である。描く先への
+    /// **出す先を書く口の登録簿を兼ねる。** 呼ぶのは、出す先を書く最下層の 5 系統である。描く先への
     /// パスの記述 (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``。描き切りと ``fill(with:)``)・
     /// 画素の書き戻し (``encodePixelWriteBack(into:)``)・``Canvas`` の拡大 (`encodeUpscale`・
-    /// `encodeEnlargement`)。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
+    /// `encodeEnlargement`)・面の取り替え (``exchangeTexture(with:)``・[#2388])・効果を通した絵での上書き
+    /// (``copy(_:into:in:)``・[#2455])。出す先を書く口を足すときは、書く前に関所を通し、最下層がここを呼ぶ
     /// ことを確かめる。関所はコマンドを開く前に通す要があり、最下層の中へ畳めないので、口ごとに
     /// 呼ぶ形が残る。その足し忘れを、ここが捕まえる。出す先を**読む**口の登録簿は対になる側で、
     /// ``catchUpWithDrawnPicture()`` が指す ([#2104])。
     ///
     /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
     /// [#2104]: https://github.com/mokume-metal/mokume/issues/2104
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    /// [#2455]: https://github.com/mokume-metal/mokume/issues/2455
     func assertPlacersSettledBeforeWriting() {
         assert(
             drawer?.placers.isEmpty ?? true,
             "A door that writes a canvas output must call Canvas.settlePlacersBeforeChange() first")
+    }
+
+    /// 面から面へ全体を写す blit を、前後の関所つきで積む。
+    ///
+    /// **写し先が描く先 (``RenderTarget``) なら、出す先を書く口なので、書く前に関所を通したことを検算する**
+    /// (``assertPlacersSettledBeforeWriting()``)。呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す。
+    /// 写し先を効果の控え (``StageImage``) とするときは検算は要らない。**面を書く blit はこの 1 本で、検算を
+    /// 持たない写しを別に置かない** — 描く先を渡せば登録簿を素通りして書けてしまう。
+    /// 段が書き終わるのを待ち、写し終わるのを後の段が待つ。
+    static func copy(
+        _ source: any MTLTexture, into destination: any EffectSurface, in commands: any MTL4CommandBuffer
+    ) throws(RenderFailure) {
+        (destination as? RenderTarget)?.assertPlacersSettledBeforeWriting()
+        guard let encoder = commands.makeComputeCommandEncoder() else {
+            throw .encoderUnavailable
+        }
+        encoder.barrier(
+            afterQueueStages: [.fragment, .blit], beforeStages: .blit, visibilityOptions: .device)
+        encoder.copy(sourceTexture: source, destinationTexture: destination.texture)
+        encoder.barrier(
+            afterStages: .blit, beforeQueueStages: [.vertex, .fragment, .blit],
+            visibilityOptions: .device)
+        encoder.endEncoding()
     }
 
     /// 画素の写し。**頼まれてはじめて作り、以後は使い回す。**
@@ -199,6 +254,28 @@ import MokumeDiagnostics
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private(set) var lastWriteSubmission: UInt64 = 0
 
+    /// この面の絵が変わったことの印 — 窓と出口へ出し直すかを決める番号 ([#2367])。
+    ///
+    /// **増える一方で、絵が変わるたびに増える。** 2 つの足し合わせである:
+    ///
+    /// - GPU への書き込み: ``lastWriteSubmission`` (投入が面を名乗るたびに進む。写しの有効性を
+    ///   決める番号と同じ・#2786)
+    /// - CPU の画素の書き込み: ``PixelMirror/cpuWriteCount`` (``Pixels`` へ書くたびに進む)。書いた画素は
+    ///   次に GPU がこの面へ触るまで戻らないので、面に着く前の書き込みを数える
+    /// - 投入を介さない面の持ち替え: 打ち切られた投入の取り替えを戻すとき (``noteTextureReplaced()``・
+    ///   [#2388])。持ち替えは投入の番号を進めないので、別に数える
+    ///
+    /// 止まっている間のスケッチが、この番号が前に出したときと同じなら、窓の present も共有面の写しも
+    /// 飛ばす (``SketchApplication``)。**番号を上げる場所はこの 3 つの口だけである** — 面を変える口を
+    /// 足したら、どれかを通す。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
+    var contentRevision: UInt64 {
+        lastWriteSubmission &+ (pixelMirror?.cpuWriteCount ?? 0) &+ texturesReplaced
+    }
+
     /// 面を塗って始めた投入の番号。打ち切られていれば、この面へ書いた投入の打ち切りとして数える
     /// (塗る口は面の持ち主を知らないので、打ち切りの記録に面が添えられない)。
     private var clearSubmission: UInt64 = 0
@@ -286,7 +363,8 @@ import MokumeDiagnostics
     /// - 前に ``RenderDevice/settle()`` が成功した後に、新しい投入が無い (``RenderDevice/isSettledThroughLatest``)。
     ///   投入は 1 本の道が ``RenderDevice/submissionCount`` を進めるので、見落とさない
     /// - 打ち切られた読み戻しの照会 (``RenderDevice/revokeDroppedDeliveries()``) を通した後でも、写しが
-    ///   最新である (CPU が書いたままか、いまの投入まで映してある)
+    ///   最新である (CPU が書いたままか、この面への最後の書き込み以後に映してある。別の面への投入では
+    ///   崩れない・``mirrorIsCurrent(_:)``・#2786)
     /// - 写しが同じである (窓は写しごとに不変)
     ///
     /// どれかが崩れていれば、今までどおりの遅い道 (待つ・映し直す・警告する) を通る。
@@ -295,15 +373,18 @@ import MokumeDiagnostics
     var pixels: Pixels {
         if let window = readableWindow, gpu.isSettledThroughLatest {
             gpu.revokeDroppedDeliveries()
-            if let mirror = pixelMirror, window.mirror === mirror,
-                mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount
-            {
+            if let mirror = pixelMirror, window.mirror === mirror, mirrorIsCurrent(mirror) {
                 return window
             }
         }
         gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading pixels")
         do {
             let mirror = try mirrorForReading()
+            // **写しが同じなら、窓も同じでよい** (窓は写しごとに不変)。別の面への投入で高速路の
+            // 「新しい投入が無い」が崩れた回でも、窓の作り直しを払わない ([#2786])
+            //
+            // [#2786]: https://github.com/mokume-metal/mokume/issues/2786
+            if let window = readableWindow, window.mirror === mirror { return window }
             let window = Pixels(
                 base: mirror.storage.contents(), width: width, height: height,
                 bytesPerRow: mirror.bytesPerRow, mirror: mirror)
@@ -326,10 +407,34 @@ import MokumeDiagnostics
         return mirror
     }
 
+    /// 写しが、この面のいまの中身を映しているか。**読み戻しを積み直す要否も、前に返した窓を
+    /// 使い回してよいかも、この 1 つの式で決める** (``mirrorForReading()``・``pixels``)。
+    ///
+    /// 見るのは**この面への書き込み**である — ``lastWriteSubmission`` 以後に映していれば、その後に
+    /// 同じ ``RenderDevice`` へ積まれた別の面への投入 (描画・計算・アップロード) があっても、この面の
+    /// 中身は変わっていない。かつては土台の投入の通し番号 (`gpu.submissionCount`) と比べていたので、
+    /// 別の面が動くたびに静止した面の写しが無効になり、全面を読み戻し直していた ([#2786])。
+    ///
+    /// - CPU が書いたまま戻していない写しは CPU の側が最新なので、映し直さない。
+    /// - 映した番号 (``PixelMirror/syncedThrough``) が 0 の写しは、まだ映していない、捨てた書き込みを載せて
+    ///   いる、打ち切られた読み戻しの中身を載せているかもしれない — 無効である。
+    /// - 描き切りの末尾に読み戻しを積む投入は、面を書く投入でもある。同じ番号で映してあるので、
+    ///   等号を許す。
+    ///
+    /// **打ち切られた書き込みも ``lastWriteSubmission`` を進める** (投入が名乗る・``noteWritten(by:)``)
+    /// ので、写しは無効のままになる。内容の有効性は番号で、打ち切りの記録は ``heldDrop`` が持つ — 混ぜない。
+    ///
+    /// [#2786]: https://github.com/mokume-metal/mokume/issues/2786
+    private func mirrorIsCurrent(_ mirror: PixelMirror) -> Bool {
+        mirror.hasPendingWrites
+            || (mirror.syncedThrough > 0 && mirror.syncedThrough >= lastWriteSubmission)
+    }
+
     /// いまの絵を映した写し。**呼ぶ前に ``RenderDevice/settle()`` が済んでいること。**
     ///
     /// CPU が書いたまま戻していない写しは CPU の側が最新なので、映し直さない。それ以外で、
-    /// 最後に映した投入より新しい投入があれば、読み戻しを 1 本積んで終わるまで待つ。
+    /// この面への最後の書き込みより前にしか映していなければ (``mirrorIsCurrent(_:)``)、読み戻しを
+    /// 1 本積んで終わるまで待つ。
     ///
     /// **「映した」の印は結末を見ずに付ける。** 結末が届くのは後なので、ここでは待たない。読み戻しが
     /// 打ち切られていたと分かったら、投げる読む口の判定 (``judgeDroppedWork()``) が印を下ろす
@@ -340,9 +445,7 @@ import MokumeDiagnostics
         // 打ち切られた読み戻しの「映した」を、映し直すかを見る前に下ろす (#2199)
         gpu.revokeDroppedDeliveries()
         let mirror = try mirrorHolding()
-        if mirror.hasPendingWrites || mirror.syncedThrough == gpu.submissionCount {
-            return mirror
-        }
+        if mirrorIsCurrent(mirror) { return mirror }
         let submission = try gpu.withCommands { commands throws(RenderFailure) in
             try encodePixelReadback(into: commands)
             return gpu.commit(commands)
@@ -672,6 +775,16 @@ import MokumeDiagnostics
 
     // MARK: - 投げる読む口の判定 (#1932)
 
+    /// 打ち切りの判定の範囲を、いま土台に積まれている最後の投入の後から始める。**これより前の投入は、次の
+    /// 読み出しの判定に入れない。**
+    ///
+    /// 使い回す作業の面 (``Image/filtered(_:)``) のように、中身を毎回すべて書き直してから読む面が使う。
+    /// 範囲を捨てるのは、面を作ってからの別の面の投入 (スケッチ本体の描画など) の打ち切りで、この読み出しが
+    /// 巻き添えになって投げないため。この呼び出しの後に積んだ投入 (描画・読み戻し) は判定に入る。
+    func judgeDroppedWorkFromNow() {
+        judgedThrough = gpu.submissionCount
+    }
+
     /// 前の判定でこの面へ書いた投入の打ち切りを見つけたまま、この面へ書く新しい投入が無ければ、
     /// 同じ理由で投げる。**投げる読む口の頭で、何かを積む前に呼ぶ。**
     ///
@@ -689,6 +802,44 @@ import MokumeDiagnostics
     /// ``RenderDevice/commit(_:retaining:writing:)`` が呼ぶ。
     func noteWritten(by submission: UInt64) {
         lastWriteSubmission = submission
+    }
+
+    /// 面を、効果の控え `partner` の面と取り替える ([#2388])。**写さない。**
+    ///
+    /// ``Canvas/exchangeTargetWithCarry()`` だけが呼ぶ。2 回取り替えれば元の面である。**初めて取り替える
+    /// とき、相手をこの描き場所に結ぶ** (``exchangePartner``)。
+    ///
+    /// **出す先を書き換える口なので、置いた側が居ないことを検算する** ([#1942]・
+    /// ``assertPlacersSettledBeforeWriting()``)。呼ぶ側は ``Canvas/settlePlacersBeforeChange()`` を先に通す
+    /// (描き切りの頭・打ち切りの取り消し ``Canvas/carryDropped(_:)``)。
+    ///
+    /// 2 枚の面は同じ形 (大きさ・形式) でなければならない — 描く細かさの控えとだけ取り替える。
+    ///
+    /// [#1942]: https://github.com/mokume-metal/mokume/issues/1942
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    func exchangeTexture(with partner: StageImage) {
+        assertPlacersSettledBeforeWriting()
+        assert(
+            partner.width == width && partner.height == height
+                && partner.texture.pixelFormat == texture.pixelFormat,
+            "A target only exchanges its surface with a surface of the same shape")
+        if exchangePartner !== partner { exchangePartner = partner }
+        swap(&texture, &partner.texture)
+    }
+
+    /// 面の中身を、投入を介さずに別の絵へ持ち替えた ([#2388])。**写しの「映した」を下ろし、
+    /// 出し直す印 (``contentRevision``) を進める。**
+    ///
+    /// 持ち替えは ``exchangeTexture(with:)`` を、打ち切られた投入の記帳を取り消すとき (``Canvas/carryDropped(_:)``)
+    /// にもう一度呼ぶ。投入が書いた面の番号 (``lastWriteSubmission``) は進まないので、映してある写しを
+    /// 新しいと見誤らないように下ろし、止まっている間の窓が出し直せるように印を進める。CPU が書いた
+    /// まま戻していない写しは CPU の側が最新なので触らない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    func noteTextureReplaced() {
+        texturesReplaced &+= 1
+        guard let pixelMirror, !pixelMirror.hasPendingWrites else { return }
+        pixelMirror.syncedThrough = 0
     }
 
     /// 投げる読む口が、返す絵の拠った範囲の投入を判定する。**範囲の投入を待ち終えてから呼ぶ。**
@@ -744,6 +895,20 @@ import MokumeDiagnostics
     let bytesPerRow: Int
     /// CPU が書いたまま、まだテクスチャへ戻していないか。
     var hasPendingWrites = false
+    /// CPU が写しへ書いた回数 (作ってから通算)。``RenderTarget/contentRevision`` の一部。
+    ///
+    /// 書き込み待ちの旗とは別に数える: 旗は戻すと下りるが、この数は下りない。窓へ出す側は「前に出した
+    /// ときから書かれたか」を見るので、書き込み待ちが戻された後でも、書いた事実が残らなければならない。
+    private(set) var cpuWriteCount: UInt64 = 0
+
+    /// CPU が写しへ書いた。**書く口 (``Pixels``) はすべてここを通る** — 旗を直に立てると数えそびれ、
+    /// 止まっている間に書いた画素が窓にも出口にも出ない ([#2367])。
+    ///
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
+    func noteCPUWrite() {
+        hasPendingWrites = true
+        cpuWriteCount &+= 1
+    }
     /// この番号までの投入の結果を映している。0 は面を映していない — まだ 1 度も映していないか、
     /// 捨てた書き込みを載せている (``RenderTarget/discardPixelWrites()``) か、打ち切られた読み戻しの
     /// 中身を載せているかもしれない (``RenderTarget/judgeDroppedWork()``・#1932)。

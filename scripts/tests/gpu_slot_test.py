@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: MIT
 """`scripts/gpu-slot.py` — GPU の検査を、機械全体で共有する枠を取ってから走らせる包みの検査 (#1898)。
 
-守るのは 6 つ。
+守るのは 7 つ。
 - 枠の数より多くは同時に走らない
 - 持ち主が殺されれば、枠が返る
 - 待つ側が期限を持つ
 - 子の終了コードをそのまま返す
 - 起動元 (親プロセスの連鎖・エージェントの出所) を、再起動で消えない記録に残す (#2059)
 - 窓つきの計測 (`--exclusive`) は、GPU の検査と同時に走らない (#2052)
+- GPU の待ちが期限を越えた記録があれば、次の検査・計測は名乗って始めずに止まる (#2235)
 
 Swift も GPU も要らない。子には、合図のファイルを待つだけの小さな Python を走らせる。
 置き場は検査ごとの一時ディレクトリで、本物の枠 (`~/Library/Caches/mokume/gpu-slots`) にも
@@ -18,6 +19,7 @@ Swift も GPU も要らない。子には、合図のファイルを待つだけ
 """
 
 import fcntl
+import importlib.util
 import json
 import os
 import select
@@ -28,6 +30,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "gpu-slot.py"
@@ -632,6 +635,235 @@ class ParallelizationWidthTest(unittest.TestCase):
 
     def test_an_empty_width_is_treated_as_unset(self):
         self.assertEqual(self._child_sees({self.VARIABLE: ""}), "1")
+
+
+class ExpiryRecordTest(SlotHarness):
+    """GPU の待ちが期限を越えたプロセスの記録 (`wait-expired.json`) を、次の検査・計測が名乗って止まること (#2235)。
+
+    子は偽物で、Swift の `ExpiryRecord` が書く形の JSON を、渡された書き先へ自分で書く。本物の GPU も
+    Swift も要らない。"""
+
+    EXIT_GPU_STUCK = 76
+
+    # 子が見た、記録の書き先と包みの pid を出す
+    SEES = (
+        "import os, json\n"
+        "print(json.dumps({'path': os.environ.get('MOKUME_GPU_SLOT_EXPIRY_RECORD'),"
+        " 'pid': os.environ.get('MOKUME_GPU_SLOT_PID')}))\n"
+    )
+    # 子が、期限を越えたと名乗って記録を書く (Swift の `ExpiryRecord.write` と同じ項目)
+    WRITES = (
+        "import os, json\n"
+        "path = os.environ['MOKUME_GPU_SLOT_EXPIRY_RECORD']\n"
+        "open(path, 'x').write(json.dumps({'event': 'wait-expired', 'time': '2026-10-22T09:00:00+0900',"
+        " 'pid': os.getpid(), 'cwd': os.getcwd(), 'wait': 'waiting for the GPU to finish', 'limit': '5 seconds',"
+        " 'gpu_slot_pid': int(os.environ['MOKUME_GPU_SLOT_PID'])}))\n"
+    )
+
+    @property
+    def record(self):
+        return self.slots / "wait-expired.json"
+
+    def _write_record(self, **fields):
+        self.slots.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "event": "wait-expired", "time": "2026-10-22T09:00:00+0900", "pid": 4242, "cwd": "/work/tree",
+            "wait": "waiting for the GPU to finish", "limit": "5 seconds", "gpu_slot_pid": 1,
+        }
+        entry.update(fields)
+        self.record.write_text(json.dumps(entry), encoding="utf-8")
+
+    def _run_wrapper(self, child_source, exclusive=False, **options):
+        mode = ["--exclusive"] if exclusive else []
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *mode, "--", sys.executable, "-c", child_source],
+            env=self._environment(**options), capture_output=True, text=True, timeout=30,
+        )
+
+    def _never_ran(self, result):
+        """子 (`SEES` を出すもの) が起きていないこと。"""
+        self.assertNotIn("MOKUME_GPU_SLOT_EXPIRY_RECORD", result.stdout)
+        self.assertEqual(result.stdout, "")
+
+    def test_a_record_stops_the_run_before_the_child_starts(self):
+        self._write_record()
+        result = self._run_wrapper(self.SEES + "print('child ran')")
+        self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+        self._never_ran(result)
+        # 名乗りは、記録の場所・中身 (時刻・pid・cwd・待ち・期限)・人が確かめてから消すこと
+        for text in (str(self.record), "2026-10-22T09:00:00+0900", "pid 4242", "/work/tree", "5 seconds", "人が確かめてから消す"):
+            self.assertIn(text, result.stderr)
+        # 確かめることを先に言い、場所を示すだけにする。読んだエージェントが、確かめずにそのまま打てる削除の
+        # 1 行は出さない
+        self.assertLess(result.stderr.index("確かめること"), result.stderr.index(f"記録のファイル: {self.record}"))
+        for line in result.stderr.splitlines():
+            self.assertNotRegex(line.strip(), r"^(rm|unlink|/bin/rm)\b", f"そのまま打てる削除の行がある: {line}")
+
+    def test_a_record_stops_the_exclusive_measurement_too(self):
+        self._write_record()
+        result = self._run_wrapper(self.SEES, exclusive=True)
+        self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+        self._never_ran(result)
+        self.assertIn("計測", result.stderr)
+        self.assertIn(str(self.record), result.stderr)
+
+    def test_without_a_record_the_child_runs_as_before(self):
+        for exclusive in (False, True):
+            with self.subTest(exclusive=exclusive):
+                result = self._run_wrapper(self.SEES, exclusive=exclusive)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                seen = json.loads(result.stdout)
+                # 子が書き先と包みの pid を受け取る。書き先は置き場の中の 1 つ
+                self.assertEqual(seen["path"], str(self.record.absolute()))
+                self.assertTrue(seen["pid"].isdigit(), seen)
+                self.assertFalse(self.record.exists(), "子が書かなければ、記録は作られない")
+
+    def test_removing_the_record_lets_the_next_run_through(self):
+        self._write_record()
+        self.assertEqual(self._run_wrapper(self.SEES).returncode, self.EXIT_GPU_STUCK)
+        self.record.unlink()
+        self.assertEqual(self._run_wrapper(self.SEES).returncode, 0)
+
+    def test_an_unreadable_record_still_stops_the_run(self):
+        # 在るのに読めない記録を、無いものとして素通ししない
+        self.slots.mkdir(parents=True)
+        self.record.write_text("not json", encoding="utf-8")
+        result = self._run_wrapper(self.SEES)
+        self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+        self._never_ran(result)
+        self.assertIn("読めない", result.stderr)
+
+    def test_a_record_that_appears_while_waiting_for_a_slot_stops_the_run(self):
+        """枠を待つ間に別のプロセスが期限を越えた回は、枠が取れても起こさず、枠を返す。"""
+        holder, holder_started, holder_release = self._start("holder", slots="1")
+        self.assertTrue(_wait_for(holder_started.exists), "1 本目が走らない")
+        waiting, waiting_started, _ = self._start("waiting", slots="1")
+        said = _Said(waiting)
+        self._assert_waiting(said, waiting_started, "空くのを待っている", "枠 1 なのに 2 本目が走った")
+        self._write_record()
+        holder_release.touch()
+        self.assertEqual(holder.wait(timeout=10), 0)
+        self.assertEqual(waiting.wait(timeout=10), self.EXIT_GPU_STUCK, said.finish())
+        self.assertFalse(waiting_started.exists(), "記録が現れた後に、待っていた子が起きた")
+        # 枠は返っている (記録を消せば、次はすぐ走る)
+        self.record.unlink()
+        self.assertEqual(self._run_wrapper(self.SEES, slots="1").returncode, 0)
+
+    def test_a_symlink_record_stops_the_run_whether_it_is_broken_or_alive(self):
+        """リンクは辿らず、在るものとして数える。Swift の関所 (lstat) と前検査 (`-L`) と同じ読み方 (#2235)。
+
+        辿ると、壊れたリンクを「無い」と読んで子を起こし、関所が止める記録をこの包みが素通しする。"""
+        self.slots.mkdir(parents=True)
+        elsewhere = self.root / "elsewhere.json"
+        for name, target in (("broken", self.root / "no-such-file.json"), ("alive", elsewhere)):
+            with self.subTest(link=name):
+                elsewhere.write_text(json.dumps({"event": "wait-expired", "pid": 1}), encoding="utf-8")
+                self.record.symlink_to(target)
+                result = self._run_wrapper(self.SEES)
+                self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+                self._never_ran(result)
+                self.assertIn("読めない", result.stderr)  # 辿らないので、中身は読めない記録として止める
+                self.assertIn(str(self.record), result.stderr)
+                self.record.unlink()
+                self.assertTrue(elsewhere.exists(), "リンクの先まで消した")
+
+    def _gpu_slot_module(self):
+        spec = importlib.util.spec_from_file_location("gpu_slot_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_completing_the_record_does_not_bring_back_one_removed_meanwhile(self):
+        """起動元を足す間 (読んでから置き換えるまで) に、人が記録を消したら、書き戻さない (#2235)。"""
+        module = self._gpu_slot_module()
+        self.slots.mkdir(parents=True)
+        mine = {"event": "wait-expired", "gpu_slot_pid": os.getpid(), "wait": "w", "limit": "5 seconds"}
+        origin = {"lineage": [{"pid": 1}], "agent": {}}
+
+        def person_removes_it(descriptor):
+            self.record.unlink()  # 読んだ後、置き換える前に、人が消す
+
+        with mock.patch.dict(os.environ, {"MOKUME_GPU_SLOT_DIR": str(self.slots)}):
+            self.record.write_text(json.dumps(mine), encoding="utf-8")
+            with mock.patch.object(module, "_fullsync", side_effect=person_removes_it):
+                module._complete_expiry(origin)
+            self.assertFalse(self.record.exists(), "消した記録を書き戻した")
+            self.assertEqual([p.name for p in self.slots.iterdir()], [], "下書きが残った")
+
+            # 消されなければ、起動元が足される (対照)
+            self.record.write_text(json.dumps(mine), encoding="utf-8")
+            module._complete_expiry(origin)
+            self.assertEqual(json.loads(self.record.read_text(encoding="utf-8"))["lineage"], [{"pid": 1}])
+
+    def test_completing_the_record_does_not_follow_a_link(self):
+        module = self._gpu_slot_module()
+        self.slots.mkdir(parents=True)
+        elsewhere = self.root / "elsewhere.json"
+        elsewhere.write_text(json.dumps({"gpu_slot_pid": os.getpid()}), encoding="utf-8")
+        self.record.symlink_to(elsewhere)
+        with mock.patch.dict(os.environ, {"MOKUME_GPU_SLOT_DIR": str(self.slots)}):
+            module._complete_expiry({"lineage": [], "agent": {}})
+        self.assertNotIn("lineage", json.loads(elsewhere.read_text(encoding="utf-8")))
+        self.assertTrue(self.record.is_symlink())
+
+    def test_a_record_stops_the_run_without_waiting_for_a_slot(self):
+        """記録があれば、枠が空くのを待たずに止まる (枠を取る前に見る)。"""
+        holder, holder_started, _ = self._start("holder", slots="1")
+        self.assertTrue(_wait_for(holder_started.exists), "1 本目が走らない")
+        self._write_record()
+        # 枠は 1 本とも握られている。待つなら、期限 (30 秒) まで返らない
+        result = self._run_wrapper(self.SEES, slots="1", wait="30")
+        self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+        self.assertNotIn("空くのを待っている", result.stderr)
+        self.assertIsNone(holder.poll(), "持ち主が終わっている (待ちの検査にならない)")
+
+    def test_a_run_inside_the_exclusive_also_stops_at_a_record(self):
+        """計測の内側で起こした包みは、枠は取らないが、記録は見て止まる (1 つの計測が何本も起こす)。"""
+        for exclusive in (False, True):
+            with self.subTest(exclusive=exclusive):
+                self._write_record()
+                result = self._run_wrapper(
+                    self.SEES, exclusive=exclusive, extra={"MOKUME_GPU_SLOT_EXCLUSIVE": "4242"})
+                self.assertEqual(result.returncode, self.EXIT_GPU_STUCK, result.stderr)
+                self._never_ran(result)
+                self.assertIn(str(self.record), result.stderr)
+                self.assertNotIn("そのまま走らせる", result.stderr)
+                self.record.unlink()
+                # 記録が無ければ、今までどおり枠を取らずにそのまま走らせる
+                clear = self._run_wrapper(
+                    self.SEES, exclusive=exclusive, extra={"MOKUME_GPU_SLOT_EXCLUSIVE": "4242"})
+                self.assertEqual(clear.returncode, 0, clear.stderr)
+                self.assertIn("そのまま走らせる", clear.stderr)
+
+    def test_the_wrapper_adds_the_origin_to_the_record_its_child_wrote(self):
+        result = self._run_wrapper(self.WRITES)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(self.record.read_text(encoding="utf-8"))
+        # 子が書いた項目は残り、包みが起動元 (「起動元の記録」と同じ項目) を足す
+        self.assertEqual(record["wait"], "waiting for the GPU to finish")
+        self.assertIn("lineage", record)
+        self.assertTrue(record["lineage"], "親プロセスの連鎖が空")
+        self.assertIn("agent", record)
+        # 次の実行は、その記録で止まる
+        self.assertEqual(self._run_wrapper(self.SEES).returncode, self.EXIT_GPU_STUCK)
+
+    def test_the_wrapper_leaves_a_record_it_did_not_ask_for(self):
+        # 別の包みの子が書いた記録 (gpu_slot_pid が違う) に、起動元を足さない
+        self._write_record(gpu_slot_pid=1)
+        before = self.record.read_text(encoding="utf-8")
+        # 記録で止まるので、子は起きない。止まった包みは、記録に触らない
+        self.assertEqual(self._run_wrapper(self.SEES).returncode, self.EXIT_GPU_STUCK)
+        self.assertEqual(self.record.read_text(encoding="utf-8"), before)
+
+    def test_stopping_is_recorded_in_the_launch_log(self):
+        self._write_record()
+        self.assertEqual(self._run_wrapper(self.SEES).returncode, self.EXIT_GPU_STUCK)
+        refused = [entry for entry in self._entries() if entry["event"] == "refused"]
+        self.assertEqual(len(refused), 1, refused)
+        self.assertEqual(refused[0]["reason"], "wait-expired")
+        self.assertIn("lineage", refused[0])
+        # 子は起きていないので、take は無い
+        self.assertEqual([entry for entry in self._entries() if entry["event"] == "take"], [])
 
 
 class MakefileWiringTest(unittest.TestCase):

@@ -1463,21 +1463,168 @@ struct STLModelTests {
         #expect(parsed.skippedLines == 2)
     }
 
-    /// **説明に書いた約束を固定する** (`loadModel` の説明・changelog)。0 にするのは読み手の
-    /// Model I/O で、こちらでは拾えない。Model I/O が読み方を変えたら、ここが赤くなって説明の
-    /// 直し時を知らせる。
-    @Test("ASCII の STL で数として読めない座標は 0 として読まれ、面は残る")
-    func asciiNonNumbersBecomeZero() throws {
-        // (0, 1, 0) の y を `nan` に、(0, 0, 1) を丸ごと文字にする。どちらも 0 になれば (0, 0, 0)
-        var text = ModelFixture.asciiSTL(Self.tetrahedron)
-        text = text.replacingOccurrences(of: "vertex 0.0 1.0 0.0", with: "vertex 0.0 nan 0.0")
-        text = text.replacingOccurrences(of: "vertex 0.0 0.0 1.0", with: "vertex a b c")
-        let parsed = try read(Data(text.utf8))
-        let expected = Self.tetrahedron.flatMap(\.corners).map { corner in
-            corner == SIMD3(0, 1, 0) || corner == SIMD3(0, 0, 1) ? SIMD3<Float>.zero : corner
+    // MARK: - 文字の STL の読めない座標は、面ごと読み飛ばして数える (#2567)
+
+    /// 面ごとに違う位置を持つ文字の STL を組む。`faces[i]` は `facet normal` の後ろの欄と、3 つの `vertex` の後ろの欄の
+    /// 綴り。位置は面の番号で決まる (面 i は x が 10 i から) ので、どの面が残ったかを座標から読める。
+    static func spelledSTL(_ faces: [(normal: String, vertices: [String])]) -> String {
+        var lines = ["solid spelled"]
+        for face in faces {
+            lines.append("  facet normal \(face.normal)")
+            lines.append("    outer loop")
+            for vertex in face.vertices { lines.append("      vertex \(vertex)") }
+            lines.append("    endloop")
+            lines.append("  endfacet")
         }
-        #expect(parsed.positions == expected)
+        lines.append("endsolid spelled")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// 面 `index` の、読める頂点の綴り (x が 10 × index から)。
+    static func readable(_ index: Int) -> [String] {
+        let x = 10 * index
+        return ["\(x) 0 0", "\(x + 1) 0 0", "\(x) 1 0"]
+    }
+
+    /// 面 `index` の、読める頂点の位置。
+    static func corners(_ index: Int) -> [SIMD3<Float>] {
+        let x = Float(10 * index)
+        return [SIMD3(x, 0, 0), SIMD3(x + 1, 0, 0), SIMD3(x, 1, 0)]
+    }
+
+    /// 読めない座標の綴り。16 進・16 進の指数・NUL の後ろ・`nan`・文字・欄が 2 つ・欄が 4 つ・`inf`・空の座標。
+    nonisolated static let unreadableVertices = [
+        "0x10 0.0 0.0", "0x1p3 0 0", "3\0abc 0 0", "0.0 nan 0.0", "a b c", "1 2", "1 2 3 4", "inf 0 0",
+        "+-1 0 0", "1e 0 0", "vertex",
+    ]
+
+    @Test("文字の STL で座標が読めない面は、残りの面をファイルの順に返し、skippedLines に面ごとに 1 数える", arguments: unreadableVertices)
+    func unreadableCoordinatesAreSkippedAndCounted(spelling: String) throws {
+        // 4 面のうち、面 1 の 2 つ目の頂点だけを読めない綴りにする
+        var faces = (0..<4).map { (normal: "0 0 1", vertices: Self.readable($0)) }
+        faces[1].vertices[1] = spelling
+        let parsed = try read(Data(Self.spelledSTL(faces).utf8))
+        #expect(parsed.positions == [0, 2, 3].flatMap(Self.corners), "\(spelling.debugDescription)")
+        #expect(parsed.skippedLines == 1)
+        #expect(parsed.malformed.map(\.count) == [1])
+        // 残った面の向きは書かれたまま (面を落としても、他の面の向きは動かない)
+        #expect(parsed.derivedNormals == Array(repeating: false, count: 9))
+        #expect(parsed.normals == Array(repeating: SIMD3<Float>(0, 0, 1), count: 9))
+    }
+
+    @Test("10 進の綴り (符号・指数・小数点だけの桁) は、いままでと同じ位置で読み、数えない")
+    func decimalSpellingsAreReadAsBefore() throws {
+        let faces = [
+            (normal: "0 0 1", vertices: ["1.5 -2 3e1", "+4 .5 6.", "-0.25E-1 7e+2 8"]),
+            (normal: "-1.5e0 +0 1", vertices: ["  9\t10  11 ", "12 13 14", "15 16 17"]),
+        ]
+        let parsed = try read(Data(Self.spelledSTL(faces).utf8))
+        #expect(
+            parsed.positions == [
+                SIMD3(1.5, -2, 30), SIMD3(4, 0.5, 6), SIMD3(-0.025, 700, 8), SIMD3(9, 10, 11), SIMD3(12, 13, 14),
+                SIMD3(15, 16, 17),
+            ])
         #expect(parsed.skippedLines == 0)
+        #expect(parsed.malformed.isEmpty)
+        #expect(parsed.derivedNormals == Array(repeating: false, count: 6))
+    }
+
+    @Test("facet normal の欄が読めない面は残り、向きは書いていないのと同じ (形から求めた両面) になる")
+    func unreadableNormalsAreDerived() throws {
+        let spellings = ["0x10 0 0", "nan 0 0", "a b c", "0 0", "0 0 1 1", "1e39 0 0", "normal"]
+        for spelling in spellings {
+            var faces = (0..<3).map { (normal: "0 0 1", vertices: Self.readable($0)) }
+            faces[1].normal = spelling
+            let parsed = try read(Data(Self.spelledSTL(faces).utf8))
+            // 面は 3 つとも残り、数えない
+            #expect(parsed.positions == (0..<3).flatMap(Self.corners), "\(spelling)")
+            #expect(parsed.skippedLines == 0, "\(spelling)")
+            // 面 1 の 3 角だけが、形から求めた向き (z+) の両面。ほかの面は書いた向きのまま
+            #expect(parsed.derivedNormals == [false, false, false, true, true, true, false, false, false], "\(spelling)")
+            #expect(parsed.normals[3...5].allSatisfy { $0 == SIMD3(0, 0, 1) }, "\(spelling)")
+        }
+    }
+
+    @Test("座標が読めない面と、読み手が自分で落とす面 (1e39) が混ざっても、残る面と数が合う")
+    func readerSkippedAndUnreadableFacetsMix() throws {
+        // 面 0 は 1e39 (読み手が落とす)・面 1 は 16 進・面 2 は読める・面 3 は nan・面 4 は 1e39 と 16 進・面 5 は読める
+        var faces = (0..<6).map { (normal: "0 0 1", vertices: Self.readable($0)) }
+        faces[0].vertices[0] = "1e39 0 0"
+        faces[1].vertices[2] = "0x10 1 0"
+        faces[3].vertices[1] = "nan 0 0"
+        faces[4].vertices[0] = "1e39 0 0"
+        faces[4].vertices[1] = "0x10 0 0"
+        faces[5].normal = "0x1 0 0"
+        let parsed = try read(Data(Self.spelledSTL(faces).utf8))
+        #expect(parsed.positions == [2, 5].flatMap(Self.corners))
+        #expect(parsed.skippedLines == 4)
+        // 面 5 の向きは読めないので求め直す。面 2 は書いたまま
+        #expect(parsed.derivedNormals == [false, false, false, true, true, true])
+    }
+
+    @Test("通読の 10 進の照合は DecimalText と同じ答えを返し、有限と言い切るのは本当に有限なときだけ")
+    func scanDecimalSpellingMatchesDecimalText() {
+        var state: UInt64 = 7
+        func next(_ bound: Int) -> Int {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Int(state >> 33) % bound
+        }
+        let alphabet = Array("0123456789012345+-.eE xX_")
+        var corpus = ["", ".", "+", "e5", "1e", "1e+", "5.", ".5", "-.5e-3", "1e39", "1e38", "9e37", "99999999999999999999999999999999999999",
+            "3.4028235e38", "1e-50", "0x10", "nan", "inf", "+-1", "1.2.3", "1,5", "١٢٣"]
+        for _ in 0..<30_000 {
+            corpus.append(String((0..<(1 + next(9))).map { _ in alphabet[next(alphabet.count)] }))
+        }
+        for text in corpus {
+            let expected = DecimalText.spelled(text) != nil
+            let spelled = Array(text.utf8)
+            let (valid, surelyFinite) = spelled.withUnsafeBufferPointer { buffer in
+                // 空の綴りは基底の番地を持たないので、1 バイトの置き場を借りる。語の途中の区切り (`1 2`) は
+                // 語が終わる所なので、綴り全体を読み切れたときだけ合うとする
+                var padded = Array(buffer) + [0]
+                return padded.withUnsafeMutableBufferPointer { padded in
+                    var index = 0
+                    let read = ModelFile.scanDecimal(padded.baseAddress!, from: &index, end: spelled.count)
+                    let whole = read.valid && index == spelled.count
+                    return (whole, whole && read.surelyFinite)
+                }
+            }
+            #expect(valid == expected, "\(text.debugDescription)")
+            if surelyFinite {
+                #expect(valid && (Float(text) ?? .infinity).isFinite, "\(text.debugDescription)")
+            }
+        }
+    }
+
+    @Test("読み手は文字の STL の面をファイルの順に返す (読めない座標の面を通し番号で落とす前提)")
+    func readerReturnsTextFacetsInFileOrder() throws {
+        let faces = (0..<12).map { (normal: "0 0 1", vertices: Self.readable($0)) }
+        let parsed = try read(Data(Self.spelledSTL(faces).utf8))
+        #expect(parsed.positions == (0..<12).flatMap(Self.corners))
+        #expect(parsed.skippedLines == 0)
+        // 数字の綴りが長さを変えても (桁の違う座標・面の順が逆の座標) 順は動かない
+        let reversed = (0..<12).reversed().map { (normal: "0 0 1", vertices: Self.readable($0)) }
+        let back = try read(Data(Self.spelledSTL(reversed).utf8))
+        #expect(back.positions == (0..<12).reversed().flatMap(Self.corners))
+    }
+
+    @Test("読めない座標の面の控えは、通読の区切りの幅によらず同じ")
+    func unreadableFacetsDoNotDependOnTheChunk() throws {
+        var faces = (0..<5).map { (normal: "0 0 1", vertices: Self.readable($0)) }
+        faces[1].vertices[0] = "0x10 0 0"
+        faces[2].normal = "q 0 0"
+        faces[3].vertices[2] = "1e39 1 0"
+        let text = Self.spelledSTL(faces)
+        for chunk in [1, 2, 3, 7, 64, 127, 128, 129, 255, 300, 1 << 20] {
+            let scan = try #require(Self.textScan(text, chunk: chunk), "chunk \(chunk)")
+            #expect(scan.unreadableFacets == [1, 3], "chunk \(chunk)")
+            #expect(scan.readerSkippedFacets == [3], "chunk \(chunk)")
+            #expect(scan.unwrittenNormals == [2], "chunk \(chunk)")
+            #expect(scan.shape.facets == 5, "chunk \(chunk)")
+        }
+        // 読めない面が無ければ、控えは空 (通読が余計な状態を持たない)
+        let clean = try #require(Self.textScan(Self.spelledSTL(Array(faces.prefix(1))), chunk: 7))
+        #expect(clean.unreadableFacets.isEmpty && clean.readerSkippedFacets.isEmpty && clean.unwrittenNormals.isEmpty)
     }
 
     // MARK: - 写せなかった要素を数える (#2566)

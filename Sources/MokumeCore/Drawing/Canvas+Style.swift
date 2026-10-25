@@ -16,12 +16,20 @@ extension Canvas {
     public func fill(_ color: LinearRGBA) {
         // 数でない成分・無限の成分は、塗りを変えずに断る。数の形と同じ鍵で言う (#1706)
         guard color.isFinite else { return warnNotANumberColor(.fill) }
+        // 勾配で塗っていれば、色に替わる前に列を閉じる (``setGradient(_:)``)
+        setGradient(nil)
         style.fill = color
         style.hasFill = true
+        syncGradientShader()
     }
 
     /// 図形の内側を塗らない。
-    public func noFill() { style.hasFill = false }
+    public func noFill() {
+        // 勾配で塗っている列は、塗らない設定に替わる前に閉じる。勾配は覚えておく
+        if paintsWithGradient { closeBatch() }
+        style.hasFill = false
+        syncGradientShader()
+    }
 
     public func stroke(_ color: LinearRGBA) {
         guard color.isFinite else { return warnNotANumberColor(.stroke) }
@@ -215,6 +223,8 @@ extension Canvas {
     /// 位置は**その並びの中で**数える。平面と立体は別の並びに溜まるので、それぞれの
     /// 最後の列の終わりが次の列の始まりになる。
     func closeBatch() {
+        // 先送りした四角の列は、閉じる (#2446)。閉じる列が無くても下ろす
+        deferredRunOpen = false
         // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
         defer { openBatchHasThinCoverage = false }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
@@ -260,6 +270,12 @@ extension Canvas {
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 細い塗りの雛形の列は、塗りの頂点を頂点段で組む (#2208)
+        if let template, template.key.thinFillCapacity > 0 {
+            batches[batches.count - 1].thinFillExpands = true
+            batches[batches.count - 1].thinFillStart = template.thinFillStart
+            batches[batches.count - 1].thinFillUV = template.thinFillUV
+        }
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。
@@ -274,8 +290,9 @@ extension Canvas {
 
     /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。
     private var livePaint: Shape.Paint {
+        // 勾配の断片は、値をいまの勾配から出す (``gradientValues``)
         Shape.Paint(
-            shader: currentShader, values: currentShader?.packedValues ?? [],
+            shader: currentShader, values: gradientValues ?? currentShader?.packedValues ?? [],
             surfaces: snapshotSurfaces(), numbers: currentNumbers)
     }
 
@@ -377,6 +394,11 @@ extension Canvas {
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry, usesUnitShape: open.usesUnitShape))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 特化できる列か (光の枝を外す・ブレンドを外す) は、ここで 1 度だけ決める (#1795・#2366)。
+        // 細い線の被覆は直前に移したので、その後
+        let closed = batches.count - 1
+        batches[closed].solidVariant = solidVariantKey(
+            of: batches[closed], opaque: isOpaqueFill(open, closing: batches[closed]))
         warnIfMaterialCannotShow()
     }
 
@@ -506,6 +528,9 @@ extension Canvas {
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     func beginFlat() {
+        // 先送りした四角だけの列へ、ほかの平面の頂点を足さない (#2446)。要る段の画素へ置き直すとき、列ごと
+        // 読む面を差し替えるので、紛れ込んだ頂点の読む位置が合わなくなる
+        if deferredRunOpen && !isPlacingDeferredGlyph { closeBatch() }
         notePaintPlacement()
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ
@@ -566,6 +591,26 @@ extension Canvas {
 
     /// 線の折れ目の形。
     public func strokeJoin(_ join: StrokeJoin) { style.strokeJoin = join }
+
+    public func strokeDash(_ length: some ScalarConvertible, _ gap: some ScalarConvertible) {
+        let (length, gap) = (length.asFloat, gap.asFloat)
+        // 負の値・数でない値・無限・両方 0 は、破線を置かず実線へ戻して 1 度知らせる (#2835)。
+        // `>=` は NaN も弾く。足して溢れる周期も、刻めないので同じに扱う
+        guard length >= 0, gap >= 0, length.isFinite, gap.isFinite, (length + gap).isFinite,
+            length + gap > 0
+        else {
+            warnOnce(
+                .badStrokeDash,
+                "strokeDash(): the length and the gap take finite values of 0 or more (not both "
+                    + "0), but \(length) and \(gap) were passed, so the line was drawn solid")
+            style.strokeDash = nil
+            return
+        }
+        // 間隔が 0 なら途切れない。実線と同じ指定なので、刻まない
+        style.strokeDash = gap == 0 ? nil : StrokeDash(length: length, gap: gap)
+    }
+
+    public func noStrokeDash() { style.strokeDash = nil }
 
     /// 矩形に渡す座標の読み方。
     public func rectMode(_ mode: ShapeMode) { style.rectMode = mode }

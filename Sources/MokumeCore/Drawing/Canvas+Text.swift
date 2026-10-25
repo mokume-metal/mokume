@@ -18,11 +18,14 @@ extension Canvas {
             warnMissingFontOnce(name)
             return
         }
-        style.fontName = resolved
+        style.fontSelection = .named(resolved)
     }
 
+    /// ファイルから読んだ書体 (``Font``) を使う。
+    public func textFont(_ font: Font) { style.fontSelection = .file(font) }
+
     /// 既定の書体へ戻す。
-    public func noTextFont() { style.fontName = nil }
+    public func noTextFont() { style.fontSelection = nil }
 
     /// これから描く文字の大きさ (画素)。
     public func textSize(_ size: some ScalarConvertible) {
@@ -31,7 +34,33 @@ extension Canvas {
     }
 
     /// これから描く文字の太さと傾き。
+    ///
+    /// **太さ (``textWeight(_:)``) とは後から書いたほうが勝つ。** 太さを頼んでいても、これを書くと
+    /// 太さの指定は外れる。
     public func textStyle(_ style: TextStyle) { self.style.textStyle = style }
+
+    /// これから描く文字の太さ (100〜900)。
+    ///
+    /// 整数に丸め、100 未満・900 超は端へ丸めて 1 度知らせる。数でない値は 1 度知らせて、前の太さのまま。
+    public func textWeight(_ weight: some ScalarConvertible) {
+        let value = weight.asFloat
+        guard value.isFinite else {
+            warnOnce(
+                .notANumberTextWeight,
+                "textWeight(): got \(value), which is not a number a weight can be, so the weight was left as it was")
+            return
+        }
+        let (rounded, wasOutside) = TypefaceWeight.clamped(value)
+        if wasOutside {
+            warnRounded(
+                .badTextWeight, "textWeight", "the weight",
+                takes: "\(TypefaceWeight.range.lowerBound) to \(TypefaceWeight.range.upperBound)",
+                passed: value, used: rounded)
+        }
+        // 傾きは、太さの前に頼んだ斜体を残す
+        let italic = style.textStyle == .italic || style.textStyle == .boldItalic
+        style.textFace = .weight(rounded, italic: italic)
+    }
 
     /// 文字列を、指定した位置のどちら側へ置くか。
     public func textAlign(
@@ -103,7 +132,7 @@ extension Canvas {
     /// 文字列の送り幅 (画素)。
     ///
     /// **Unicode のスカラ 1 つずつの送り幅の合計**なので、部分に切って足しても全体と一致する。
-    /// 組版をしないので、複数のスカラでできた絵文字の幅は部品の幅の和になる。
+    /// 組版をしないので、複数のスカラでできた絵文字の幅は部品の幅の和になる (組版した幅は ``shapedTextWidth(_:)``)。
     /// 末尾の空白も幅に数える。改行を含む文字列では、いちばん長い行の幅を返す。
     ///
     /// **大きさ 0 では 0 を返す** (高さと深さも同じ)。描く口と同じ見張りで帰る — 大きさ 0 を
@@ -131,7 +160,8 @@ extension Canvas {
     ///
     /// 縦の基準は ``textAlign(_:_:)`` が決める。既定は**基準線** — `y` が字の乗る線になる。
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
-    /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる)。
+    /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる。
+    /// 組版して描くのは ``shapedText(_:_:_:)``)。
     public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
@@ -156,7 +186,7 @@ extension Canvas {
     /// 中へ置く計算で、基準線ではなく上端から決まる。
     ///
     /// [#895]: https://github.com/mokume-metal/mokume/issues/895
-    private func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
+    func firstBaseline(at y: Float, face: Typeface, lines: Int) -> Float {
         // 最初の行の基準線から、最後の行の基準線までの距離。1 行なら掛けずに 0 — 行送りが
         // 何であれ、1 行の塊に広がりは無い
         let span = lines > 1 ? Float(lines - 1) * resolvedTextLeading : 0
@@ -195,10 +225,15 @@ extension Canvas {
         guard !line.isEmpty else { return }
 
         var pen = penStart(at: x, face: face, line: line)
+        // 変換が字を拡げる量から、焼く段を決める。**行ごとに 1 度** (行の中で変換は変わらない・#2446)
+        let step = glyphStep
 
         for scalar in line.unicodeScalars {
             // 同じ頁で引いたことのある字は、書体も焼き場も引かない (``Typeface/placed``)
-            if let placed = face.placed[scalar], placed.pageSerial == atlas.pageSerial {
+            let known = step == 0
+                ? face.placed[scalar]
+                : face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)]
+            if let placed = known, placed.pageSerial == atlas.pageSerial {
                 if !placed.entry.isBlank {
                     appendGlyphQuad(placed.entry, penX: pen, baseline: baseline, color: color)
                 }
@@ -206,12 +241,31 @@ extension Canvas {
                 continue
             }
             guard let resolved = face.glyph(for: scalar) else { continue }
-            if let entry = glyphEntry(for: resolved) {
+            if let found = glyphLookup(for: resolved, step: step) {
+                let entry = found.entry
                 // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
-                face.placed[scalar] = PlacedGlyph(
+                let placed = PlacedGlyph(
                     pageSerial: atlas.pageSerial, entry: entry, advance: resolved.advance)
+                if step == 0 {
+                    face.placed[scalar] = placed
+                } else if found.settled {
+                    // 頼んだ段について答えが決まったときだけ。上限を越えて先送りした字と、頁が溢れて低い段で
+                    // 描いた字は控えない (次のフレームで頼んだ段を焼き直す)。1 字の大きさで段を下げた字は
+                    // 決まった答えなので控える — 毎フレーム外接矩形と大きさの判定をやり直さない
+                    face.placedScaled[ScaledGlyphKey(scalar: scalar, step: step)] = placed
+                }
                 if !entry.isBlank {
-                    appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+                    // 先送りした字は、先送りした字だけの列へ置く。フレームの終わりに絵が残るなら、そこで
+                    // 払う (``settleDeferredGlyphs(baking:)``)
+                    if let key = found.deferredKey, prepareDeferredRun() {
+                        let start = appendGlyphQuad(
+                            entry, penX: pen, baseline: baseline, color: color, inDeferredRun: true)
+                        noteDeferredGlyph(
+                            start: start, placedWith: entry, key: key, font: resolved.font,
+                            penX: pen, baseline: baseline, color: color)
+                    } else {
+                        appendGlyphQuad(entry, penX: pen, baseline: baseline, color: color)
+                    }
                 }
             }
             pen += resolved.advance
@@ -339,6 +393,12 @@ extension Canvas {
     /// 改行しない空白 (U+00A0・U+202F・U+2007) は字と同じに扱い、切れ目にせず、消費も
     /// 削りもしない ([#1540])。
     ///
+    /// **`.word` の切れ目は、空白だけでなく Unicode の行分割の規則 (UAX #14) が決める**
+    /// ([#2448])。切れ目の候補は `lastWordBreak(in:after:upTo:breaks:)` が返し、空白の無い切れ目
+    /// (和文の字と字の間) では何も消費しない。1 語 (切れ目と切れ目の間) が幅より長いときは、
+    /// いままでどおり文字の切れ目へ倒れる。位置の計算は字ごとの送り幅の和のままである。
+    ///
+    /// [#2448]: https://github.com/mokume-metal/mokume/issues/2448
     /// [#1412]: https://github.com/mokume-metal/mokume/issues/1412
     /// [#1419]: https://github.com/mokume-metal/mokume/issues/1419
     /// [#1424]: https://github.com/mokume-metal/mokume/issues/1424
@@ -355,36 +415,26 @@ extension Canvas {
             var start = paragraph.startIndex
             var index = paragraph.startIndex
             var width: Float = 0
-            var lastSpace: String.Index?
+            // 段落の切れ目の候補。**溢れて初めて数える** — 1 行に収まる段落は、
+            // 切れ目を数える費用を払わない
+            var breaks: [WordBreak]?
 
             while index < paragraph.endIndex {
                 let character = paragraph[index]
                 let step = face.advance(of: String(character))
 
-                // **切れ目は、幅を測る前に憶える。** 幅を超えたのが空白そのものだった
-                // とき、その空白は「ここまでが 1 行」の合図であって、次の行へ送る
-                // 対象ではない
-                //
-                // **切れ目は、続いた空白の先頭に置く。** 溢れる直前に見た空白を切れ目に
-                // すると、それより前の空白が行の末尾に残り、右揃え・中央揃えの行が
-                // その幅だけずれる ([#1412])。段落の頭の空白 (字下げ) は、前に語が
-                // 無いので切れ目にしない
-                if character.isBreakingSpace, index > start,
-                    !paragraph[paragraph.index(before: index)].isBreakingSpace
-                {
-                    lastSpace = index
-                }
-
                 // **1 文字だけの行は折らない。** 幅より広い字はそのままはみ出させる
                 if width + step > limit, index > start {
-                    if style.textWrap == .word, let space = lastSpace, space > start {
-                        lines.append(paragraph[start..<space])
-                        var next = space
-                        while next < paragraph.endIndex, paragraph[next].isBreakingSpace {
-                            next = paragraph.index(after: next)
-                        }
-                        start = next
-                        index = next
+                    // **語の切れ目は、溢れた字の手前までで最後の切れ目。** 幅を超えたのが
+                    // 切れ目の空白そのものだったとき、その空白は「ここまでが 1 行」の合図
+                    // であって、次の行へ送る対象ではない — 切れ目は空白の手前に置く
+                    if style.textWrap == .word,
+                        let cut = Self.lastWordBreak(
+                            in: paragraph, after: start, upTo: index, breaks: &breaks)
+                    {
+                        lines.append(paragraph[start..<cut.end])
+                        start = cut.next
+                        index = cut.next
                     } else {
                         // **文字の切れ目でも、切れ目の空白はまとめて消費する** ([#1424])。
                         // 行の末尾に収まった空白 (`index` の前) も、溢れた空白 (`index` から
@@ -402,7 +452,6 @@ extension Canvas {
                         start = index
                     }
                     width = 0
-                    lastSpace = nil
                     continue
                 }
 
@@ -454,6 +503,103 @@ extension Canvas {
         }
         return trimmed > start ? trimmed : end
     }
+
+    /// 語の切れ目 1 つ。**行が `end` で終わり、次の行が `next` から始まる。**
+    ///
+    /// `end` と `next` の間にあるのは、切れ目に続く折ってよい空白 (`Character.isBreakingSpace`)
+    /// だけで、どちらの行にも入らない。空白の無い切れ目 (和文の字と字の間など) は `end == next`
+    /// で、何も消費しない。
+    struct WordBreak {
+        var end: String.Index
+        var next: String.Index
+    }
+
+    /// `start` から数えて、`limit` より前で最後の語の切れ目を返す。無ければ `nil`。
+    ///
+    /// **語の切れ目は Unicode の行分割の規則 (UAX #14) で決める** ([#2448])。組版はせずに
+    /// 切れ目だけを `CFStringTokenizer` (`kCFStringTokenizerUnitLineBreak`) から借りる — 位置を
+    /// 決める計算は、いまも字ごとの送り幅の和のままである (``Typeface`` の加法性の決定)。
+    /// 規則は、行頭に来てはいけない字 (「、」「。」「」」) と行末に残してはいけない字 (「「」) を
+    /// 切れ目の前後に置かず、空白の無い和文には字と字の間に切れ目を置き、改行しない空白
+    /// (U+00A0・U+202F・U+2007) の前後では切らない。
+    ///
+    /// 切れ目は、切れ目に続く空白の手前 (`end`) に置く。`start` と同じかその手前に `end` が
+    /// 来る切れ目は、行が空になるので数えない — 段落の頭の空白 (字下げ) の後ろの切れ目も
+    /// 同じ理由で、前に語が無いので切れ目にしない。
+    ///
+    /// 段落ごとに最初に呼ばれたときだけ切れ目を数え、`breaks` に残す。
+    ///
+    /// [#2448]: https://github.com/mokume-metal/mokume/issues/2448
+    private static func lastWordBreak(
+        in paragraph: Substring, after start: String.Index, upTo limit: String.Index,
+        breaks: inout [WordBreak]?
+    ) -> WordBreak? {
+        let candidates: [WordBreak]
+        if let cached = breaks {
+            candidates = cached
+        } else {
+            candidates = wordBreaks(in: paragraph)
+            breaks = candidates
+        }
+        // `end` は昇順に並ぶので、`limit` 以下で最後のものを二分探索する
+        var low = 0
+        var high = candidates.count
+        while low < high {
+            let middle = (low + high) / 2
+            if candidates[middle].end <= limit {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        guard low > 0, candidates[low - 1].end > start else { return nil }
+        return candidates[low - 1]
+    }
+
+    /// 段落の語の切れ目を、前から順に並べて返す。
+    ///
+    /// UAX #14 の切れ目の単位は、続く空白までを含む (「語 」)。単位の終わりが次の行の
+    /// 始まり (`next`) で、末尾の折ってよい空白を除いた位置が行の終わり (`end`) である。
+    /// 字の境界に載らない位置 (結合文字列の途中) の切れ目と、空白しか無い単位 (段落の頭の
+    /// 字下げ)、段落の終わりで終わる空白の無い単位は、切れ目にしない。
+    private static func wordBreaks(in paragraph: Substring) -> [WordBreak] {
+        let units = Array(paragraph.utf16)
+        guard
+            let text = units.withUnsafeBufferPointer({
+                CFStringCreateWithCharacters(nil, $0.baseAddress, units.count)
+            })
+        else { return [] }
+        let tokenizer = CFStringTokenizerCreate(
+            nil, text, CFRange(location: 0, length: units.count),
+            kCFStringTokenizerUnitLineBreak, nil)
+
+        var result: [WordBreak] = []
+        var unitStart = paragraph.startIndex
+        var startIsBoundary = true
+        var offset = 0
+        while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
+            let range = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            // 単位は隙間なく並ぶ。隙間があれば、その単位は飛ばす (切れ目が減るだけで、
+            // 溢れた行は文字の切れ目へ倒れる)
+            let contiguous = range.location == offset
+            offset = range.location + range.length
+            let unitEnd = paragraph.utf16.index(paragraph.startIndex, offsetBy: offset)
+            let endIsBoundary = unitEnd.samePosition(in: paragraph.base) != nil
+            let usable = contiguous && startIsBoundary && endIsBoundary
+            let previousStart = unitStart
+            unitStart = unitEnd
+            startIsBoundary = endIsBoundary
+            guard usable else { continue }
+
+            var end = unitEnd
+            while end > previousStart, paragraph[paragraph.index(before: end)].isBreakingSpace {
+                end = paragraph.index(before: end)
+            }
+            guard end > previousStart, end < paragraph.endIndex else { continue }
+            result.append(WordBreak(end: end, next: unitEnd))
+        }
+        return result
+    }
 }
 
 // MARK: - 輪郭
@@ -471,7 +617,7 @@ extension Canvas {
     /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
     /// 三角の穴は ``TextContour/isHole`` の立った周として現れない (重ねて塗れば絵は
     /// 合う)。同じ既定の書体でも `o` や `D` は外周と穴に分かれる。字を「外周 + 穴」の
-    /// 1 つの形として扱いたいなら、``textFont(_:)`` で書体を指定する — `Helvetica`
+    /// 1 つの形として扱いたいなら、``textFont(_:)-(String)`` で書体を指定する — `Helvetica`
     /// などでは `A` が外周 1 つと穴 1 つになる。
     ///
     /// **色やビットマップの字形を持つ書体の字 (絵文字) は周を返さない** (送りは進める)。描かれるのは
@@ -526,9 +672,9 @@ extension Canvas {
             var rings = Self.rings(of: path, originX: pen, baseline: baseline)
             if let spacing {
                 rings = rings.map { ring in
-                    let (points, capped) = Self.resample(ring.points, spacing: spacing)
+                    let (points, capped) = Self.resample(ring.outline, spacing: spacing)
                     tooFine = tooFine || capped
-                    return TextContour(points: points, isHole: ring.isHole)
+                    return TextContour(outline: points, isHole: ring.isHole)
                 }
             }
             contours += rings.filter { !$0.isHole }
@@ -614,10 +760,15 @@ extension Canvas {
     public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
         var box = CGRect.null
         let face = typeface
+        // 拡大した字 (段 0 より上) は、`text()` が別の鍵の画素で焼く。**段 0 の画素を預けても引き取られない**
+        // ので、預けない (#2560・#2446)。墨の測りは段 0 のまま
+        let keepsPixels = glyphStep == 0
         forEachGlyph(in: string, x.asFloat, y.asFloat) { scalar, resolved, path, pen, baseline in
             let measured =
                 Typeface.measuresByDrawing(resolved, path: path)
-                ? face.drawnInk(of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved))
+                ? face.drawnInk(
+                    of: scalar, resolved, keeping: atlas, as: glyphKey(for: resolved),
+                    keepsPixels: keepsPixels)
                 : path?.boundingBoxOfPath
             guard let glyph = measured else { return }
             // 道筋を持つが面積の無い字 (点 1 つだけの道筋) は墨に数えない
@@ -714,7 +865,7 @@ extension Canvas {
         }
         close()
 
-        return rings.map { TextContour(points: $0, isHole: signedArea(of: $0) < 0) }
+        return rings.map { TextContour(outline: $0, isHole: signedArea(of: $0) < 0) }
     }
 
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は

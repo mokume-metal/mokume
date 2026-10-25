@@ -51,9 +51,10 @@ struct ContourFillTests {
     ///   - rings: 最初が外周、残りが穴。画面の座標で渡す。
     ///   - draw: 周の置き方。既定は平面の `vertex(x, y)` で並べる。
     private func tally(
-        _ rings: [[SIMD2<Float>]],
+        _ rings: [[SIMD2<Float>]], side: Int? = nil,
         drawing draw: ((Canvas, [[SIMD2<Float>]]) -> Void)? = nil
     ) throws -> Tally {
+        let size = side ?? self.size
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
         try canvas.draw {
             canvas.background(black)
@@ -296,5 +297,54 @@ struct ContourFillTests {
         let result = try tally([square] + [first, second, third].map(counterClockwise))
         #expect(result.missing == 0)
         #expect(result.spilled == 0)
+    }
+
+    /// 回した座標の、島を囲む穴 ([#2997])。#2656 の場面 (a) (外周と、T 字で触れ合って島を囲む 2 つの穴) を
+    /// 43.3° 回すと、丸めで T 字が厳密には載らず、触れ方を組み直しへ送る判定が外れて、畳む道で島の塗りが
+    /// 裏返った (塗りが 44,800 になり、期待の 36,800 を越えた)。CPU の検査 (`RotatedTouchingHolesTests`) の
+    /// 写しが Canvas の道と同じ結果になることを、画素で 1 場面だけ確かめる。
+    ///
+    /// [#2997]: https://github.com/mokume-metal/mokume/issues/2997
+    @Test("回した座標で T 字に触れ合って島を囲む穴も、穴だけが抜ける (#2997)")
+    func aRotatedIslandIsPunched() throws {
+        let rings = (
+            [RotatedTouchingHolesTests.outer] + [
+                RotatedTouchingHolesTests.arrowhead, RotatedTouchingHolesTests.beamT,
+            ]
+        ).map { RotatedTouchingHolesTests.rotated($0, by: 43.3) }
+        let result = try tally(rings, side: 200)
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+    }
+
+    /// 2 つの穴が 2 点で触れ合って囲んだ島 ([#2656])。島は「穴と穴の間」で、外周と穴の間と同じに塗られる。
+    /// 三角形の面積は `IslandHolesTests` が CPU だけで数えるので、ここは画素に出ることを 1 場面で確かめる。
+    ///
+    /// 穴 A (矢じり) の下の 2 つの角 (60,100)・(140,100) が、穴 B の辺 (40,100)–(160,100) の途中に載る
+    /// (T 字)。島は (60,100)(100,80)(140,100)。どちらの穴も外周と逆回り。
+    ///
+    /// [#2656]: https://github.com/mokume-metal/mokume/issues/2656
+    @Test("穴が 2 点で触れ合って囲んだ島は、塗られ、穴の内側だけが抜ける (#2656)")
+    func anIslandBetweenTouchingHolesIsPainted() throws {
+        let side = 200
+        let outer: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200)]
+        let rings = [outer] + IslandHolesTests.tJunctions
+        let result = try tally(rings, side: side)
+        #expect(result.missing == 0)
+        #expect(result.spilled == 0)
+
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: side, height: side)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noStroke()
+            canvas.fill(white)
+            placeFlat(canvas, rings)
+        }
+        let pixels = try canvas.target.readPixels()
+        func isPainted(_ x: Int, _ y: Int) -> Bool { pixels.components[(y * side + x) * 4] > 0.5 }
+        #expect(isPainted(100, 95), "島の内側")
+        #expect(!isPainted(100, 70), "穴 A の内側")
+        #expect(!isPainted(100, 120), "穴 B の内側")
+        #expect(isPainted(100, 30), "穴の外")
     }
 }

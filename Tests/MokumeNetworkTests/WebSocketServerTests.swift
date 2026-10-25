@@ -21,7 +21,7 @@ struct WebSocketServerTests {
             port: port, name: "websocket :\(port)", source: source, clients: source, owner: nil,
             warn: told.append)
         try server.open()
-        return (server, try await boundPort(of: server, source: source))
+        return (server, try await boundPort(of: server, source: source, told: told))
     }
 
     // MARK: - 受ける
@@ -33,12 +33,12 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port, path: "/remote") }  // どのパスでも同じ受け口に届く
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         for text in ["0.25", "hit\n", "a\nb", ""] { peer.send(text) }
         peer.sendBinary(Array("0.75\r\n".utf8))  // binary も UTF-8 として読む
-        let received = await collect(server, count: 5)
+        let received = try await requireCollected(server, count: 5)
         #expect(received == ["0.25", "hit", "a\nb", "", "0.75"])
         #expect(server.lastArrival != nil)
         #expect(server.report == SourceReport(name: "websocket :0", state: .running, lastArrival: server.lastArrival))
@@ -52,14 +52,18 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         peer.send("before")
         peer.sendBinary([0x68, 0xFF, 0xFE])
         peer.send("after")
-        #expect(await collect(server, count: 2) == ["before", "after"])
-        #expect(await until { server.input.unreadable == 1 })
+        #expect(try await requireCollected(server, count: 2) == ["before", "after"])
+        try await requireWait(
+            "読めないメッセージが 1 つと数えられなかった", detail: { "数えた数: \(server.input.unreadable)" }
+        ) {
+            server.input.unreadable == 1
+        }
     }
 
     // MARK: - 書く
@@ -71,12 +75,17 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup(2) { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let (first, second) = (peers[0], peers[1])
 
         server.send("hit")
         server.send("size 0.5\n")
-        #expect(await until { first.received.count == 2 && second.received.count == 2 })
+        try await requireWait(
+            "2 人の相手が 2 通ずつ受け取らなかった",
+            detail: { "1 人目: \(first.received)・2 人目: \(second.received)" }
+        ) {
+            first.received.count == 2 && second.received.count == 2
+        }
         #expect(first.received == ["hit", "size 0.5\n"])
         #expect(second.received == ["hit", "size 0.5\n"])
         #expect(told.lines.isEmpty)
@@ -89,12 +98,14 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.send("")
         server.send("x")
-        #expect(await until { peer.received.count == 2 })
+        try await requireWait("相手が 2 通受け取らなかった", detail: { "受け取った: \(peer.received)" }) {
+            peer.received.count == 2
+        }
         #expect(peer.received == ["", "x"])
         #expect(told.lines.isEmpty)
     }
@@ -106,10 +117,10 @@ struct WebSocketServerTests {
         defer { server.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.close()
-        #expect(await clients(server, reach: 0))
+        try await peers.requireCount(on: server, equals: 0, told: told)
         #expect(server.state == .running)  // 受け口は開いたまま。次の相手を待つ
 
         server.send("a")
@@ -118,10 +129,12 @@ struct WebSocketServerTests {
 
         let nextPeers = PeerGroup { BrowserSocket(port: port) }
         defer { nextPeers.closeAll() }
-        try await nextPeers.reach(on: server)
+        try await nextPeers.reach(on: server, told: told)
         let next = nextPeers[0]
         server.send("c")
-        #expect(await until { next.received == ["c"] })
+        try await requireWait("新しい相手が書き込みを受け取らなかった", detail: { "受け取った: \(next.received)" }) {
+            next.received == ["c"]
+        }
     }
 
     @Test("止めたら相手は切れ、state は stopped・clientCount は 0 で、send は 1 度だけ知らせる")
@@ -130,13 +143,13 @@ struct WebSocketServerTests {
         let (server, port) = try await listening(told: told)
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
 
         server.close()
         #expect(server.state == .stopped)
         #expect(server.clientCount == 0)
-        #expect(await until { peer.closedByPeer })
+        try await requireWait("止めた受け口が相手の繋ぎを閉じなかった") { peer.closedByPeer }
         server.send("late")
         server.send("later")
         #expect(told.count(containing: "This WebSocket server is stopped") == 1)
@@ -186,10 +199,10 @@ struct WebSocketServerTests {
         defer { live.close() }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: live)
+        try await peers.reach(on: live, told: told)
         let peer = peers[0]
         for text in textScript { peer.send(text) }
-        let received = await collect(live, count: textScript.count)
+        let received = try await requireCollected(live, count: textScript.count)
 
         let injected = IdleSketch().createWebSocketServer(messages: textScript.map { [$0] })
         try injected.open()
@@ -219,19 +232,19 @@ struct WebSocketServerTests {
         try server.open()
         defer { server.close() }
 
-        #expect(await until { told.count(containing: "WebSocket cannot listen on port \(port) because another app is using it") == 1 })
+        try await requireTold(containing: "WebSocket cannot listen on port \(port) because another app is using it", told: told, tracing: source) { server.state }
         #expect(server.state == .unavailable)
         try await Task.sleep(for: .milliseconds(300))
         #expect(told.count(containing: "another app is using it") == 1)
 
         holder.release()
-        #expect(await until { server.state == .running })
+        try await requireState(told: told, tracing: source) { server.state }
         let peers = PeerGroup { BrowserSocket(port: port) }
         defer { peers.closeAll() }
-        try await peers.reach(on: server)
+        try await peers.reach(on: server, told: told)
         let peer = peers[0]
         peer.send("back")
-        #expect(await collect(server, count: 1) == ["back"])
+        #expect(try await requireCollected(server, count: 1) == ["back"])
     }
 
     // MARK: - 作る口

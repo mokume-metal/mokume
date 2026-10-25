@@ -43,10 +43,16 @@ struct SeedScopes {
 
     /// 種を書く。**組み立ての中で、その段で最初に書くときだけ、書く直前の列を控える。**
     mutating func write(seed: Int, over randomness: inout Randomness) {
+        write(replacing: Randomness(seed: seed), over: &randomness)
+    }
+
+    /// 列を丸ごと置き換える (``SketchPart/randomSource`` に新しい乱数源を代入したとき)。種を書くのと
+    /// 同じ規則で、組み立ての中なら**その段で最初に書くときだけ**、書く直前の列を控える。
+    mutating func write(replacing line: Randomness, over randomness: inout Randomness) {
         if let last = marks.indices.last, marks[last].randomness == nil {
             marks[last].randomness = randomness
         }
-        randomness = Randomness(seed: seed)
+        randomness = line
     }
 
     /// 組み立てを抜ける。その段で種を書いていれば、書く直前の列へ戻す。書いていなければ列には触らない。

@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var grain: Image? -->
     /// ```swift
-    /// func setup() {
-    ///     grain = try? loadImage("assets/grain.png")
+    /// func setup() throws {
+    ///     grain = try loadImage("assets/grain.png")
     /// }
     /// ```
     ///
@@ -33,7 +33,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 横 120・縦 80 画素の絵を、一時ディレクトリへ PNG で書き出す
     ///         let (w, h) = (120, 80)
     ///         var bytes: [UInt8] = []
@@ -44,9 +44,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -72,7 +72,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 横だけ 2 倍の 240 画素にする
     ///         let (w, h) = (240, 80)
     ///         var bytes: [UInt8] = []
@@ -83,9 +83,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -111,7 +111,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 縦だけ 2 倍の 160 画素にする
     ///         let (w, h) = (120, 160)
     ///         var bytes: [UInt8] = []
@@ -122,9 +122,9 @@ extension SketchPart {
     ///         }
     ///         let path = NSTemporaryDirectory() + "tile-\(w)x\(h).png"
     ///         let picture = DisplayImage(width: w, height: h, bytes: bytes)
-    ///         try? PNGFile.write(picture, to: URL(fileURLWithPath: path))
+    ///         try PNGFile.write(picture, to: URL(fileURLWithPath: path))
     ///
-    ///         tile = try? loadImage(path)
+    ///         tile = try loadImage(path)
     ///     }
     ///
     ///     func draw() {
@@ -163,9 +163,9 @@ extension SketchPart {
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
     /// [#886]: https://github.com/mokume-metal/mokume/issues/886
-    // shot: 1 snippet=33373ac5
-    // shot: 2 snippet=57be30b4
-    // shot: 3 snippet=78ae8dd3
+    // shot: 1 snippet=d21cd07f
+    // shot: 2 snippet=75a302ec
+    // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
         Self.noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
         return try Self.resourceCanvas(ImageFailure.self).loadImage(path)
@@ -209,6 +209,44 @@ extension SketchPart {
     /// スケッチが終わった後に届いても落ちない。絵はそのまま返り、置く ``Sketch/draw()`` が
     /// もう来ないだけである。
     ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらない。** 絵は読み終えて返り、取り消した
+    /// ことが失敗として返ることはない (読み込みは取消を見ない)。取消の扱いは [#2760] と合わせて
+    /// 決めるので、これは**いまの振る舞いであって約束ではない**。
+    ///
+    /// ## 続けて要求し直すとき
+    ///
+    /// 取り消しても前の読み込みは届く。**別の絵を要求し直すときは、要求に番号を付けて、
+    /// 届いたものが最後の要求のものかを照合する。** 下の例は ``Sketch/keyPressed()`` ごとに
+    /// 別の絵を要求し直し、遅れて届いた前の絵を採らない。前の `Task` を取り消すのは、その結果を
+    /// もう使わないと自分で決めたことを示すためで、止めるのは番号の照合である。
+    ///
+    /// <!-- example: 文脈 var photo: Image?; var loading: Task<Void, Never>?; var latest = 0 -->
+    /// ```swift
+    /// func showPhoto(_ path: String) {
+    ///     loading?.cancel()
+    ///     latest += 1
+    ///     let mine = latest
+    ///     loading = Task {
+    ///         let arrived = try? await requestImage(path)
+    ///         guard mine == latest else { return }
+    ///         photo = arrived
+    ///     }
+    /// }
+    ///
+    /// func setup() {
+    ///     showPhoto("assets/morning.png")
+    /// }
+    ///
+    /// func keyPressed() {
+    ///     showPhoto("assets/evening.png")
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     if let photo { image(photo, 0, 0) }
+    /// }
+    /// ```
+    ///
     /// > Note: 届いた絵の見え方は ``loadImage(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは絵の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
@@ -216,6 +254,8 @@ extension SketchPart {
     /// - Throws: ``loadImage(_:)`` と同じ (``ImageFailure``)。
     ///   走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
         try await Self.loadingCanvas(ImageFailure.self).requestImage(path)

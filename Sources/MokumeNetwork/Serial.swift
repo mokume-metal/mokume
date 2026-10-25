@@ -14,8 +14,8 @@ import MokumeCore
 /// final class Knob: Sketch {
 ///     var port: Serial?
 ///     var x: Float = 0
-///     func setup() {
-///         if let first = serialPorts().first { port = try? createSerial(first, baudRate: 9600) }
+///     func setup() throws {
+///         if let first = serialPorts().first { port = try createSerial(first, baudRate: 9600) }
 ///     }
 ///     func draw() {
 ///         background(0)
@@ -58,7 +58,7 @@ import MokumeCore
 /// | ``SourceState/running`` | 受けている |
 /// | ``SourceState/unavailable`` | 開く途中か、ポートが繋がっていないか、他のアプリ (Arduino IDE のシリアルモニタなど) が使っている。挿されたら・空けば受け始める |
 /// | ``SourceState/disconnected`` | 受けていたポートが抜かれた。挿し直せば受け始める |
-/// | ``SourceState/stopped`` | ``stop()`` した |
+/// | ``SourceState/stopped`` | ``stop()`` した (足し直しても戻らない)。ランタイムが外した (``SketchPart/detach(_:)-(Inlet)``) だけなら、足し直せば受け始める |
 ///
 /// 繋がっていない・使用中・開けないときは、理由ごとに 1 度だけ診断に出す。受け始めたら、
 /// また言えるように戻る。**機材がボーレートを受け付けないときだけは、開き直さない** — 開くたびに
@@ -74,6 +74,8 @@ public final class Serial: Inlet {
     let input: ExternalQueue<String>
     let source: any MessageSource<String>
     private weak var owner: (any Sketch)?
+    /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
+    private var stoppedByUser = false
 
     /// - Parameters:
     ///   - input: 列。検査が知らせの行き先を差し替えるときに渡す。省けば `name` で作る。
@@ -94,15 +96,25 @@ public final class Serial: Inlet {
     /// 止める。ポートを閉じ、以後 ``lines`` は空のまま。閉じたポートは、他のアプリ (Arduino IDE の
     /// 書き込みなど) が開けるようになる。
     ///
+    /// **利用者が止めたものは、足し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で足し直しても、
+    /// ポートを開かず ``lines`` は空のままで、``state`` は ``SourceState/stopped`` のまま (止めたのは利用者の意思なので、
+    /// 足し直しで戻さない)。受け始めるには、新しく作る。
+    ///
+    /// **ランタイムが外した場合は別である。** ``SketchPart/detach(_:)-(Inlet)`` で外しただけ (``stop()`` は呼んで
+    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で足し直せば、また受け始める。実行が終わったものは足し直す先が無い。
+    ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと何もせず、`Serial.stop()` のように型を付けた名前で 1 度だけ警告する。
+    /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`Serial.stop()` のように型を付けた名前で 1 度だけ警告する。
     public func stop() {
-        owner?.detach(self, calledAs: "Serial.stop()")
+        // 印は、外す頼みが実行に届いたときだけ立てる。外で呼んで警告だけ出した回に立てると、走っているポートが止まる
+        if owner?.detach(self, calledAs: "Serial.stop()") == true { stoppedByUser = true }
     }
 
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。利用者が ``stop()`` したものは開き直さない
+        guard !stoppedByUser else { return }
         source.start(into: input)
     }
 
@@ -114,6 +126,8 @@ public final class Serial: Inlet {
     public func close() {
         source.stop()
         input.setState(.stopped)
+        // 届いて読まれなかった行は捨てる。足し直した最初の ``supply()`` に、外す前のものを出さない
+        input.discardWaiting()
         lines = []
     }
 

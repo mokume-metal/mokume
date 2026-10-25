@@ -105,8 +105,8 @@ extension ParamValue {
     /// 成分から組を組み立てる。成分の数が 2 でも 3 でもなければ `nil`。
     fileprivate init?(components: [Float]) {
         switch components.count {
-        case 2: self = .vector2(SIMD2(components[0], components[1]))
-        case 3: self = .vector3(SIMD3(components[0], components[1], components[2]))
+        case 2: self = .vector2(Vector2(components[0], components[1]))
+        case 3: self = .vector3(Vector3(components[0], components[1], components[2]))
         default: return nil
         }
     }

@@ -30,6 +30,17 @@ public final class SketchRuntime {
     public let sketch: any Sketch
     /// 描いている面。
     public let canvas: Canvas
+    /// ``SketchPart/draw(into:_:)`` の閉包の間だけ立つ、スケッチの口の向き先。立っていなければ本体の面
+    /// (``canvas``) へ向く。**入れ子では内側の向き先が立ち、抜けると 1 つ前へ戻る** ([#2454])。
+    ///
+    /// 向き先を引く口は ``activeCanvas`` 1 つだけで、描く・状態を書く・面の大きさを読むスケッチの口
+    /// (``SketchPart/liveCanvas(_:_:)``・``SketchPart/canvas``・`emit`・`orbitControl`) がここを通る。
+    /// ランタイム自身の描き切り・時刻・出力は本体の面 (``canvas``) のままで、向き先に左右されない。
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    var drawingInto: Canvas?
+    /// スケッチの口が、いま描く面。``drawingInto`` が立っていればそれ、なければ本体の面。
+    var activeCanvas: Canvas { drawingInto ?? canvas }
     /// 出す先。**画面も保存も観測もこの 1 枚を受け取る** ([ADR-0023] 決定 2)。
     ///
     /// 描く細かさを下げているときは、拡大の段を通ったあとの絵である。出口ごとに
@@ -44,14 +55,48 @@ public final class SketchRuntime {
     private let timing: FrameTiming
     private let now: () -> Double
     private var hasSetUp = false
+    /// ``Sketch/setup()`` が投げた失敗 ([#2401])。立っていれば、フレームは `draw()` を呼ばずにこれを投げる。
+    ///
+    /// ``start()`` は投げない (公開の口で、呼ぶ側が多い) ので、控えておいて最初のフレームが投げる。
+    /// 控えは消えない — 呼び直しても同じ失敗が返り、`draw()` は呼ばれない。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private(set) var setupFailure: RenderFailure?
+    /// ``setupFailure`` を、フレームを投げて受ける道 (``advance()``) の外で見つけたときに知らせる先。窓の経路
+    /// (``SketchApplication``) が差し、起動の失敗として終わらせる。名乗りのメニューが開いている間に別の駆動源が
+    /// 進めた回 (``advanceForPresence()``) が使う。
+    var setupFailureHandler: ((RenderFailure) -> Void)?
     /// 外から止められているか (``pause()``)。
-    private var isPaused = false
+    private var isPaused = false {
+        // 止まった枚の秒を次の世代へ渡す (`watch --keep-time`・#2414)。止まったかどうかは両方から決まる
+        didSet { timing.noteStill(isHeldStill) }
+    }
     /// 作者が回しているか (``noLoop()`` で `false`)。**外の停止とは別に持つ** —
     /// 意味の違いは ``resume()`` の説明にある。
     ///
     /// 読むのは書き出しの経路である — 止まったスケッチは決めた枚数まで進まないので、そこで
     /// 書き出しを終える (`SketchApplication`・[#1282](https://github.com/mokume-metal/mokume/issues/1282))。
-    private(set) var isLooping = true
+    private(set) var isLooping = true {
+        didSet { timing.noteStill(isHeldStill) }
+    }
+    /// 拡大した字の焼きを、次のフレームへ送ってよい組み方か ([#2446](https://github.com/mokume-metal/mokume/issues/2446))。
+    /// **窓・共有面で走らせる `SketchApplication` だけが立てる。** 先送りした字は次のフレームが焼き直すまでぼけて
+    /// いるので、絵が窓へ出るだけで、そのフレームを次のフレームが描き直すと分かる走らせ方にしか許さない。
+    /// 組み込み (検査・外から `pause()`・画素を読む使い方) と書き出す経路は既定のまま、先送りせず焼き切る。
+    var defersEnlargedGlyphBakes = false
+    /// 1 枚だけ描いて書き出す口 (``renderFrame(to:)``) の最中か。**書き出す絵は残る**ので、拡大した字の焼きを
+    /// 次のフレームへ送らない (``canDeferEnlargedGlyphs``・[#2446](https://github.com/mokume-metal/mokume/issues/2446))。
+    private var exportsOneFrame = false
+    /// 観測がいま描いているフレームを撮るか (要求を拾った・列を撮っている最中・目録の決着を待っている)。
+    /// **撮った絵は残る**ので、拡大した字の焼きを次のフレームへ送らない。``runFrame()`` が描く前に決める。
+    private var frameIsObserved = false
+    /// 止まっているか — 作者が `noLoop()` で止めた、または外から ``pause()`` されている。
+    ///
+    /// 窓と出口は、止まっている間に絵が変わっていなければ出し直さない (``SketchApplication``・
+    /// [#2367](https://github.com/mokume-metal/mokume/issues/2367))。**走っている間は変わっていなくても
+    /// 出す** — 道具が読む速さ・時刻は枚数が上がったときだけ更新されるので、何も描かない回まで飛ばすと
+    /// 走っているのに止まって見える。
+    var isHeldStill: Bool { !isLooping || isPaused }
     /// 止まっている間に 1 枚だけ描き直すよう頼まれているか (``redraw()``)。
     private var redrawRequested = false
     /// 指定時刻の1枚の最中は連続録画を始めない。通常の時刻へ戻るので順序を保証できない。
@@ -357,6 +402,10 @@ public final class SketchRuntime {
     /// 視点を操る道具の状態。**フレームを越える** — 引きずった角度が積み上がる先なので、
     /// 視点 (シーンの記述) と違ってフレームごとには戻らない。まだ触っていなければ `nil`。
     var orbit: Orbit?
+    /// 視点を戻す先。**最初に `orbitControl()` を呼んだフレームの ``orbit``** (`setup()` で書いた値か既定)。
+    /// ダブルクリックで戻す先になる ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
+    /// **1 度控えたきりで、後から `orbit` を書き換えても変わらない** (決定どおり。`orbitControl` と `orbit` の説明が代償として名乗る)。
+    var orbitHome: Orbit?
     /// 視点を操る道具を、最後に進めたフレーム。
     ///
     /// 1 フレームに 2 回呼ばれても 2 回ぶん回さないための目印。同じ引きずった量を
@@ -368,6 +417,9 @@ public final class SketchRuntime {
     /// 揺らぎ (``Canvas/noiseSeed(_:)``) と違って断片へは届かない。断片には列が無く
     /// (画素どうしが独立している)、**値の一致がそもそも定義できない**ためである。
     var randomness = Randomness()
+    /// 乱数の列が**置き換えられた回数**。``randomSource`` で取り出した写しが、この列の続きか (印が同じ)、
+    /// 自分で作ったもの・古い写し (印が違う) かを見分ける。値には効かない。
+    var randomLine: UInt64 = 0
     /// 形の組み立ての中で書いた乱数の種と揺らぎの設定の控え。出口で ``randomness`` と、本体の面の
     /// 揺らぎの設定を戻す (`SketchRuntime+ShapeSeed.swift`・
     /// [#1936](https://github.com/mokume-metal/mokume/issues/1936)・[#2041](https://github.com/mokume-metal/mokume/issues/2041))。
@@ -383,11 +435,26 @@ public final class SketchRuntime {
     private var measuredValues: [String: ExposedValue] = [:]
     /// 続けて撮っている最中の列。撮り終えるまで次の要求を拾わない。
     private var capture: FrameCapture?
+    /// 撮り終えて、**書き込みの決着を待っている目録** ([#2381])。全部の書き込みが決着してから書く。
+    ///
+    /// 撮り終えた時点に組んでおく (フレーム・時刻・負荷はその時点のもの)。決着を待つ間に進んだフレームの
+    /// 数字を載せない。決着するまで次の要求は拾わない — 次の撮影の `clearProducts()` が、前の撮影の
+    /// 書き込みが走っている最中に絵を消すと、古い絵と新しい目録が組になる。
+    ///
+    /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+    private var settling: ObservationReport?
     /// メニューバーで名乗る係。**組み立てのときには何も出さない** — 出すのは
     /// ``SketchPresence/grace`` 秒ぶん進み続けてからである。
     private lazy var presence = SketchPresence(source: self)
     /// 最初に ``advance()`` が呼ばれた時刻。名乗りの経過はここを起点に測る。
     private var firstAdvanceAt: Double?
+    /// 名乗りが読む実時間の出どころ。**既定は実時間の単調な時計で、internal の初期化子だけが差し替える**
+    /// (検査が実時間も偽れるように・[#3119])。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    private let presenceClock: () -> Double
+    /// 最初に ``advance()`` が呼ばれたときの ``presenceClock`` の読み。``firstAdvanceAt`` と対で立つ。
+    private var firstAdvanceRealAt: Double?
     /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
     private var isAdvancingFrame = false
     /// 描き終えた (描けなかったものも含む) 最後のフレームの番号。**録りの幅の終わりになる。**
@@ -436,6 +503,9 @@ public final class SketchRuntime {
     /// 観測の秒へ飛ぶ ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。観測でない枚では
     /// どちらも同じ値である。
     public var time: Float { showsObservedTime ? timing.time : timing.authorTime }
+    /// ``time`` が示す秒を、倍精度のまま持つもの。``time`` と同じ約束で読み分ける (観測の秒を読むのは
+    /// ``Sketch/draw()`` と入り口の供給の間だけ)。周期の位相 (``SketchPart/phase(period:)``) が読む。
+    var timeSeconds: Double { showsObservedTime ? timing.shownSeconds : timing.seconds }
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。**観測の指定秒が描き直す枚でも作者の時計の値。**
     /// 本体が持つ状態 (動画の再生位置・録った音の起点) はこちらで進める。
     var authorTime: Float { timing.authorTime }
@@ -466,12 +536,22 @@ public final class SketchRuntime {
     ///   - gpu: 描画の土台。
     ///   - clock: 時刻の出どころ。省略すると設定のフレームレートから導く
     ///     **再現する時計**になる — 画面に出す経路が実時間を選ぶ。
+    ///   - persistsParams: 合わせたつまみの値の保存 (`.mokume/state/params.json`) を持つか。
+    ///     既定は持つ — 起動で保存から値を戻し、変わった値を書く (窓の経路と同じ・
+    ///     [ADR-0030](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md) 決定 6)。
+    ///     **`false` なら読みも書きもしない**。撮り直せば同じ絵になることを名乗る書き出し
+    ///     (同じ番号のフレームを描く参照スケッチ・説明文の例の撮影) は、撮った人の手元にだけ在る
+    ///     保存で絵が変わらないよう、これで組む ([#1832](https://github.com/mokume-metal/mokume/issues/1832))。
+    ///     作品の `@Param` は宣言した既定値で動く。
     public convenience init(
         sketch: any Sketch,
         gpu: RenderDevice,
-        clock: Clock? = nil
+        clock: Clock? = nil,
+        persistsParams: Bool = true
     ) throws(RenderFailure) {
-        try self.init(sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() })
+        try self.init(
+            sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
+            persistsParams: persistsParams)
     }
 
     /// 実時間の出どころを差し替えられる入口 (検査用)。
@@ -482,15 +562,26 @@ public final class SketchRuntime {
     ///   - onScreen: 画面へ出しながら回すか (``isOnScreen``)。**窓・共有面の経路だけが立てる。**
     ///     立てて `clock` を省くと、時計は作品の設定 (``SketchSettings/clock``) から決まる
     ///     (``Clock/launching(_:frameRate:)``)。設定はここで 1 度だけ読む ([#1642])。
+    ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
+    ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ・``ClockHandover``)。
+    ///     **書き出しの子には渡さない。** 省けば 0 秒から始まる。
+    ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
+    ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
+    ///     保存された値の復元は区画と別の口なので、偽でも戻る。
     ///
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
+    /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
         clock: Clock?,
         now: @escaping () -> Double,
         displays: () -> [Display] = { Display.connected },
-        onScreen: Bool = false
+        onScreen: Bool = false,
+        persistsParams: Bool = true,
+        opensFacets: Bool = true,
+        handover: ClockHandover? = nil,
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -510,21 +601,29 @@ public final class SketchRuntime {
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
             upscale: settings.upscale)
-        self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
+        self.timing = FrameTiming(
+            clock: clock, frameRate: settings.frameRate, now: now, handover: handover)
         self.isOnScreen = onScreen || clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
-        self.observer = FrameObserver.makeIfEnabled()
-        self.inbox = InputInbox.makeIfEnabled()
+        self.presenceClock = presenceClock
+        // **観測・入力・つまみの区画は、書き出しの子には開かない** (`opensFacets`・#1619)。書き出しは
+        // 外から届くものを水準 2 (同じ引数から同じ動き) を壊すものとして断る (ADR-0032「書き出す起こし方」)。
+        // 区画を開くと、見張りの世代交代の瞬間に要求を取り合い (入力・つまみの値が絵に混ざる)、
+        // 見張りの目録 (`params/report.json`) も起動しただけで書き換える。**保存された値は区画と別の口
+        // (`ParamStore`) なので、下で戻る**
+        self.observer = opensFacets ? FrameObserver.makeIfEnabled() : nil
+        self.inbox = opensFacets ? InputInbox.makeIfEnabled() : nil
         // **管はここで開かない。** 開いてよいかは出口で決まり、出口を決めるのは窓を持つ
         // 側である (``relayToolInput(from:)``・#2024)
         self.relayed = nil
         // 索引は 1 度だけ引き、保存と面と窓が同じものを持ち回る
         let registry = ParamRegistry(of: sketch)
         self.paramRegistry = registry
-        let store = ParamStore.makeIfNeeded(for: registry)
+        // **保存を持たない組み方では、読みも書きもしない** (`persistsParams`・#1832)
+        let store = persistsParams ? ParamStore.makeIfNeeded(for: registry) : nil
         self.paramStore = store
-        self.params = ParamSurface.makeIfEnabled(for: registry, store: store)
+        self.params = opensFacets ? ParamSurface.makeIfEnabled(for: registry, store: store) : nil
         canvas.isRuntimeSurface = true
     }
 
@@ -538,7 +637,8 @@ public final class SketchRuntime {
         inbox: InputInbox? = nil,
         params: ParamSurface? = nil,
         paramStore: ParamStore? = nil,
-        displays: () -> [Display] = { Display.connected }
+        displays: () -> [Display] = { Display.connected },
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
@@ -558,6 +658,7 @@ public final class SketchRuntime {
         self.isOnScreen = clock == .wallClock
         self.budget = FrameBudget(frameRate: settings.frameRate)
         self.now = now
+        self.presenceClock = presenceClock
         self.observer = observer
         self.inbox = inbox
         self.relayed = nil
@@ -578,8 +679,17 @@ public final class SketchRuntime {
         // **戻すのは setup より先。** setup も最初の draw も、復元された値を見る
         // (ADR-0030 決定 6)
         let restoration = paramStore?.restore() ?? .init()
-        // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)
-        withActiveRuntime { carryingOver { sketch.setup() } }
+        // **前の世代の作者の時計を入れるのも `setup()` より先** (`watch --keep-time`・#2414)。`setup()` の
+        // `pauseTime()`・`playTime()`・`jumpTime(_:)` が、前の世代の状態によらず通常どおり効く
+        timing.beginHandover()
+        // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)。
+        // **投げたら控えて、最初のフレームが投げ直す** (``setupFailure``・#2401)
+        do {
+            try withActiveRuntime { try carryingOver { try sketch.setup() } }
+        } catch {
+            // 文面は ``Diagnostics/failureText(_:)`` の読み方 1 つ (型を問わず全文・`NSError` はダンプしない)
+            setupFailure = .setupFailed(reason: Diagnostics.failureText(error))
+        }
         // 最初の応答は setup のあとに書く。setup で決めた値が、外から読める最初の
         // 姿になる
         params?.start(after: restoration)
@@ -640,7 +750,8 @@ public final class SketchRuntime {
     ///
     /// 終わりの経路は塞がずに見に来る (``Patience/peek``・[#978])。**呼び直せば続きから
     /// 見る** — 差込口を閉じるのは最初の 1 回だけで、2 回目からは撮る係の待ちだけを見る
-    /// (差込口の `close()` は「一度だけ呼ばれる」約束である)。
+    /// (終わりの処理で、同じ差込口の `close()` を 2 度呼ばない。外して足し直したときに
+    /// `open()` がもう 1 度来る約束とは別の話である — ``Inlet/open()``)。
     ///
     /// **待つのは撮る係だけで、差込口とつまみは先に済ませる。** 撮る係の待ちは動画を閉じ
     /// 終えるまでかかりうるので、その後ろに置くと、待っている間にプロセスが殺されたときに
@@ -674,6 +785,9 @@ public final class SketchRuntime {
         }
         guard settleWithoutAnotherFrame(outcomes) else { return false }
         closingOutcomesGiveUpAt = nil
+        // 撮り終えた観測の書き込みが決着していなければ、決着させて目録を書く ([#2381])。**終わる前に
+        // 目録を書かないと、読み手は絵が揃ったのに目録が来ないまま待つ**
+        if let observer, !settleObservation(patience, through: observer) { return false }
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
@@ -686,6 +800,7 @@ public final class SketchRuntime {
         params?.flushIfChanged()
         outlets.removeAll()
         inlets.removeAll()
+        SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
@@ -720,11 +835,26 @@ public final class SketchRuntime {
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     public func advance() throws(RenderFailure) {
+        try advance(displayTime: nil)
+    }
+
+    /// フレームを 1 つ進める。実時間の時計では、その枚の時刻を `displayTime` にする。
+    ///
+    /// **窓・共有面の経路が、表示のリフレッシュが運んだ「その枚が表示される予定の時刻」を渡す口**である
+    /// ([#2390])。コールバックが走った時刻は main が他の仕事で遅れたぶん揺れ、``SketchPart/deltaTime`` の
+    /// 揺れとして作品に見える。予定の時刻は表示の刻みの間隔のまま並ぶ。フレームの時計・書き出し・観測の指定秒の
+    /// 値は変わらない (``FrameTiming/advance(at:displayTime:)``)。
+    ///
+    /// - Parameter displayTime: この枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
+    ///   `nil` (予備のタイマーが進めた回・直に回す面) なら現在時刻。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
+    func advance(displayTime: Double?) throws(RenderFailure) {
         // **描く前に済ませる。** 名乗りのメニューが開くとしたらこの中なので、そのとき
         // ``target`` には直前のフレームが揃っている。止めている間も名乗りは続ける —
         // 止まっているスケッチも、居座っていることに変わりはない
         updatePresence()
-        try runFrame()
+        try runFrame(displayTime: displayTime)
     }
 
     /// フレームを 1 つ進める本体。**名乗りの世話は含まない。**
@@ -732,14 +862,25 @@ public final class SketchRuntime {
     /// 分けてあるのは、名乗りのメニューが開いている間だけ**ここが別の駆動源から呼ばれる**
     /// ためである (``advanceForPresence()``)。``advance()`` ごと呼ぶと、追跡ループの中で
     /// 名乗りの世話が入れ子になる。
-    private func runFrame() throws(RenderFailure) {
+    private func runFrame(displayTime: Double? = nil) throws(RenderFailure) {
         // **閉じ終えるのを待っている間は進めない** ([#978])。待ちは塞がずに見に来る形なので、
         // その間も駆動源 (画面の link・予備の Timer・名乗りのメニューの Timer) は呼んでくる。
         // 進めると `draw()` が新しい録りや `save()` を頼み、誰にも閉じられないまま終わる。
         // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
-        let observation = capture == nil ? takeObservationRequest() : nil
+        let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
+        // **`setup()` が投げているなら、どの枝にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
+        // (`setup()` で `noLoop()` を呼んでから投げる形はここ) のどれも、この失敗より先に動かない — 動くと、
+        // 入力が失敗したスケッチへ配られ、窓は終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
+        // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。
+        //
+        // **ここで見えるのは 2 枚目以降。** ``setupFailure`` が立つのは ``start()`` の中で、`start()` を呼ぶ最初の
+        // 場所はこの先にある。最初のフレームで `setup()` を走らせる枝は、走らせた直後に自分で見て投げる —
+        // 通常の枝は下の ``drawSketchFrame(deliveredInput:at:displayTime:)``、時刻指定の観測の枝は
+        // `start()` の直後、外から止められた枝・作者が止めた枝の観測の一枚描きは、応えた直後。見落とすと、
+        // 窓の経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
+        try throwSetupFailure(answering: observation)
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -754,6 +895,9 @@ public final class SketchRuntime {
             if closingRecorder != nil { refusal = "Cannot draw at a specified time while recording is closing" }
             if refusal == nil {
                 start() // setupが録画を始める場合も、指定の絵を描く前に断る。
+                // **`setup()` が投げたなら、断って返らず投げる** (#2401)。ここは最初のフレームでしか通らない
+                // 頭の検査の外なので、自分で見る。返ってしまうと、窓の経路は絵を出しに進む
+                try throwSetupFailure(answering: observation)
                 if recorder?.isRecording == true {
                     refusal = "Cannot draw at a specified time while recording"
                 }
@@ -771,7 +915,12 @@ public final class SketchRuntime {
         guard closingRecorder == nil, !outletsClosing else { return }
         observingAtTime = requestedTime != nil
         let keepStopped = observingAtTime && !isLooping
-        defer { observingAtTime = false }
+        // 撮る絵は残る。拡大した字の焼きを次へ送らない (#2446)
+        frameIsObserved = observation != nil || capture != nil || settling != nil
+        defer {
+            observingAtTime = false
+            frameIsObserved = false
+        }
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
@@ -789,6 +938,8 @@ public final class SketchRuntime {
             takeFragmentChangesWithoutAFrame()
             settleWithoutAnotherFrame()
             serveObservationIfRequested(request: observation)
+            // 観測の一枚描きが最初のフレームで `setup()` を走らせて、投げたなら、応えた後で投げる (#2401)
+            if let setupFailure { throw setupFailure }
             return
         }
         // **作者が止めている間も入力は配る** (``deliverWhileStopped()``)。配ったコールバックが
@@ -810,6 +961,7 @@ public final class SketchRuntime {
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
                     serveObservationIfRequested(request: observation)
+                    if let setupFailure { throw setupFailure }  // 上の外の停止の枝と同じ (#2401)
                     return
                 }
                 deliveredInput = true
@@ -823,7 +975,7 @@ public final class SketchRuntime {
         }
         var drawFailure: RenderFailure?
         do {
-            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime)
+            try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime, displayTime: displayTime)
         } catch {
             drawFailure = error
         }
@@ -854,6 +1006,18 @@ public final class SketchRuntime {
         if let drawFailure { throw drawFailure }
     }
 
+    /// ``setup()`` が投げているなら、観測の要求には失敗を載せて応え、同じ失敗を投げる ([#2401])。
+    ///
+    /// 立っていなければ何もしない。``runFrame(displayTime:)`` の頭と、時刻指定の観測の枝が `start()` を
+    /// 呼んだ直後に使う。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    private func throwSetupFailure(answering observation: ObservationRequest?) throws(RenderFailure) {
+        guard let setupFailure else { return }
+        serveObservationIfRequested(request: observation, drawFailure: setupFailure)
+        throw setupFailure
+    }
+
     /// フレームを 1 枚描く手順。**正本はここ 1 つ。**
     ///
     /// 通常のフレーム (``runFrame()``) と、観測がまだ 1 枚も描いていないスケッチを
@@ -867,7 +1031,9 @@ public final class SketchRuntime {
     /// - Parameter deliveredInput: このフレームの入力を、止まっている間に既に当てて配ったか
     ///   (``deliverWhileStopped()``)。当て直すと、前のフレームからの動き (`pmouseX`・
     ///   引きずった量・スクロール) が描くフレームから消える。
-    private func drawSketchFrame(deliveredInput: Bool = false, at requestedTime: Float? = nil) throws(RenderFailure) {
+    private func drawSketchFrame(
+        deliveredInput: Bool = false, at requestedTime: Float? = nil, displayTime: Double? = nil
+    ) throws(RenderFailure) {
         // **このフレームの絵が拠る投入は、ここより後に積まれる** (#2743)。出口へ配る前の判定の範囲の
         // 始まりである。`setup()` で積んだものが入るのは、`setup()` をここ (下の `start()`) で走らせる
         // とき — ふつうの最初のフレーム — だけで、先に `start()` を呼んだ使い方 (公開の `start()`・時刻を
@@ -875,15 +1041,20 @@ public final class SketchRuntime {
         // 置いたものは最初のフレームの描き切りが描くので、そちらは範囲に入る
         frameDrawnAfter = target.gpu.submissionCount
         start()
+        // **`setup()` が投げたなら、1 枚も描かない** (#2401)。時計も進めず、`draw()` も呼ばない
+        if let setupFailure { throw setupFailure }
         // **測るのは `setup()` の後から** — `setup()` は描いていた時間ではない (``FrameBudget``)
         frameWorkBegan = now()
-        timing.advance(at: requestedTime)
+        timing.advance(at: requestedTime, displayTime: displayTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
         canvas.frameStep = timing.step
+        // このフレームの絵を次のフレームが描き直すと分かっているときだけ、拡大した字の焼きを次へ送ってよい。
+        // 残る絵 (書き出す・撮る・止める・形に記録する) は要る段で焼き切る (#2446)
+        canvas.atlas.mayDeferScaledBakes = canDeferEnlargedGlyphs(at: requestedTime)
         // **入力の配布も入り口の供給も、描き始めた中で行う。**
         //
         // ランタイムが差さっていないと `mousePressed()` の中で `width` を読んだだけで
@@ -908,9 +1079,31 @@ public final class SketchRuntime {
                 // 入力のコールバック (上の配り) では言わない (``BlockingLoads``)
                 blockingLoads.isDrawing = true
                 defer { blockingLoads.isDrawing = false }
+                // 作者の `draw()` の区間 (Instruments・#2378)
+                let drawInterval = FrameSignposts.beginDraw()
+                defer { FrameSignposts.endDraw(drawInterval) }
                 sketch.draw()
+                // **`draw()` の中で後から決まったことは、ここで知る。** `noLoop()` で止めた・`save()` や
+                // `beginRecord()` で撮ると頼んだフレームは、描き直されずに残る。そのフレームで先送りした字は、
+                // フレームの終わりに払う (``Canvas/settleDeferredGlyphs(baking:)``・#2446)
+                canvas.framePersists = !isLooping || recorder?.isIdle == false
             }
         }
+    }
+
+    /// 拡大した字の焼きを、次のフレームへ送ってよいか ([#2446])。**このフレームの絵を、次のフレームが描き直す
+    /// と分かっているときだけ** — 近い段の画素で置いた字は、次のフレームが焼き直すまでぼけているので、
+    /// 残る絵に載せてはいけない。
+    ///
+    /// 許すのは、窓・共有面へ出しながら回している間 (``defersEnlargedGlyphBakes``) で、作者が止めておらず・外から止めて
+    /// おらず・時刻を指しておらず・観測が撮らず・撮る係 (`save()`・`beginRecord()`・`mokume render`) が
+    /// 頼まれておらず・1 枚の書き出しでもないフレームだけである。書き出す・撮る・止める絵と、
+    /// `draw()` の中で後から `noLoop()`・`save()` を呼ぶ絵は、既定で許さない側に倒れる。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    private func canDeferEnlargedGlyphs(at requestedTime: Float?) -> Bool {
+        defersEnlargedGlyphBakes && isLooping && !isPaused && requestedTime == nil && !frameIsObserved
+            && !exportsOneFrame && recorder?.isIdle != false && closingRecorder == nil
     }
 
     /// 作者が止めている間に届いた入力を引き取り、コールバックを配る。
@@ -1305,9 +1498,12 @@ public final class SketchRuntime {
                 } failure: {
                     $0.failure
                 }
+                // **渡し終えた絵は、巡回の後に当てる外しより前に落とす。** 巡回の最中に頼まれた
+                // ``detachNow(_:)-(any Outlet)`` は、まだ誰にも渡していない絵だけを外す出口へ渡すので、
+                // 渡し終えた絵が残っていると同じ絵を 2 度渡す (#2246)。渡している最中に決着した絵
+                // (出口の中から呼び直された分) は残り、次の巡回で渡す
+                self.readyOutletFrames.removeFirst(count)
             }
-            // 渡している最中に決着した絵 (出口の中から呼び直された分) は、次の巡回で渡す
-            readyOutletFrames.removeFirst(count)
         }
     }
 
@@ -1335,6 +1531,11 @@ public final class SketchRuntime {
         return attachNow(outlet)
     }
 
+    /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
+    package func isAttached(_ inlet: any Inlet) -> Bool {
+        inlets.contains { $0.seam === inlet }
+    }
+
     /// 入り口を並びから外して閉じる。転送 (正本は ``SketchPart/detach(_:)-(Inlet)``)。
     public func detach(_ inlet: any Inlet) {
         guard seamVisitDepth == 0 else {
@@ -1357,13 +1558,15 @@ public final class SketchRuntime {
     private func attachNow(_ inlet: any Inlet) -> Bool {
         guard admits(inlet) else { return false }
         if let index = inlets.firstIndex(where: { $0.seam === inlet }) {
-            // **居れば開き直さない** (`open()` は一度だけ)。続けて転んで外されていれば、
+            // **居れば開き直さない** (開いているものを重ねて足しても `open()` は呼ばない。外して足し直したときは
+            // ここに来ず、下で `open()` をもう 1 度呼ぶ — ``Inlet/open()``)。続けて転んで外されていれば、
             // 数え直して入れ直す (撮る係の ``rejoin(_:into:)`` と同じ)
             if !inlets[index].health.isAttached { inlets[index].health = SeamHealth() }
             return true
         }
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
+        SeamHomes.record(inlet, in: self)
         return true
     }
 
@@ -1376,6 +1579,7 @@ public final class SketchRuntime {
         }
         guard Self.open(outlet, opening: outlet.open) else { return false }
         outlets.append((outlet, SeamHealth()))
+        SeamHomes.record(outlet, in: self)
         outletJoinedAt[ObjectIdentifier(outlet)] = timing.frameCount
         return true
     }
@@ -1383,6 +1587,7 @@ public final class SketchRuntime {
     private func detachNow(_ inlet: any Inlet) {
         guard let index = inlets.firstIndex(where: { $0.seam === inlet }) else { return }
         inlets.remove(at: index)
+        SeamHomes.forget(inlet)
         inlet.close()
     }
 
@@ -1391,9 +1596,41 @@ public final class SketchRuntime {
         guard outlet !== recorder,
             let index = outlets.firstIndex(where: { $0.seam === outlet })
         else { return }
+        // **外す直前に描き終えた絵を、先に渡す。** 描けた絵を落とさない (ADR-0024 決定 10・撮る係の
+        // ``endRecord()`` と同じ向き)。渡すのは外す出口にだけで、ほかの出口は今までどおり次の巡回で受け取る
+        if outlets[index].health.isAttached { handOverPendingFrames(to: outlet) }
+        // 渡している最中に出口が自分で外れていれば、閉じるのは 1 度だけ
+        guard let index = outlets.firstIndex(where: { $0.seam === outlet }) else { return }
         outlets.remove(at: index)
+        SeamHomes.forget(outlet)
         outletJoinedAt[ObjectIdentifier(outlet)] = nil
         outlet.close()
+    }
+
+    /// 描き終えて、まだ誰にも渡していない絵を、`outlet` にだけ渡す ([#2246])。外す出口が、外す直前に
+    /// 描き終えた最後の絵を受け取ってから閉じるためである。
+    ///
+    /// **配り方は ``deliverPendingToOutlets(_:)`` と同じ。** 控えを古い順に決着させ (投入を名指しで待つ・
+    /// 打ち切られた絵は配らない・待つのは結末だけ。止め際と同じ ``OutcomePatience/wait``)、足される前に
+    /// 描いた絵は渡さない (``outletJoinedAt``)。決着させた絵は ``readyOutletFrames`` に残るので、外さない出口は
+    /// 今までどおり次の巡回で同じ絵を受け取る (欠けも二重も無い)。
+    ///
+    /// **渡している間の足し・外しは、終わってから当てる** (``whileVisitingSeams(_:)``)。この出口の `receive` が
+    /// 別の差込口を足したり外したりしても、並びを巡回の最中に書き換えない。
+    ///
+    /// [#2246]: https://github.com/mokume-metal/mokume/issues/2246
+    private func handOverPendingFrames(to outlet: any Outlet) {
+        settlePendingOutletFrames(.wait)
+        let joinedAt = outletJoinedAt[ObjectIdentifier(outlet)]
+        let frames = readyOutletFrames
+        guard !frames.isEmpty else { return }
+        whileVisitingSeams {
+            for pending in frames {
+                // 足される前に描いた絵は渡さない
+                if let joinedAt, pending.frame < joinedAt { continue }
+                outlet.receive(OutputFrame(image: pending.image, frame: pending.frame, time: pending.time))
+            }
+        }
     }
 
     /// 足してよいか。**閉じた後は断る** — 足したものを閉じる者がもう居ない。
@@ -1424,19 +1661,35 @@ public final class SketchRuntime {
     ///
     /// 起点は**最初のフレーム**で、組み立てた時刻ではない。1 枚も描かないまま持っている
     /// ランタイム (検査が作るもの) は走っているとは言えないため。
+    ///
+    /// **経過は「作者の時計 (``now``) での経過」と「実時間での経過」の小さいほうで数える** ([#3119])。
+    /// ``now`` は検査が差し替えて進められる (`.wallClock` の週をまたぐ検査など)。それだけで名乗ると、
+    /// プロセス全体の状態 (活性化の方針・状態バー・出来事の取り出し) が変わり、同じプロセスで窓を
+    /// 開閉する検査の run loop が止まって `exit(0)` で要約を残さず終わる ([#1527])。逆に ``now`` を
+    /// 止めた検査 (`now: { 0 }`) は、実時間だけで数えると混んだ機械で 30 秒を越えて名乗ってしまう
+    /// (直す前は経過 0 で名乗らなかった)。**両方が猶予を越えたときだけ名乗る**。本番の ``now`` は
+    /// `CACurrentMediaTime()` で、実時間と同じ値を返すので、振る舞いは変わらない。
+    ///
+    /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
+    /// [#1527]: https://github.com/mokume-metal/mokume/issues/1527
     private func updatePresence() {
-        let now = self.now()
-        guard let started = firstAdvanceAt else {
-            firstAdvanceAt = now
+        guard firstAdvanceAt != nil else {
+            firstAdvanceAt = now()
+            firstAdvanceRealAt = presenceClock()
             return
         }
-        presence.advanced(runningFor: now - started)
+        presence.advanced(runningFor: presenceElapsed)
     }
 
-    /// 走り続けている時間 (秒)。名乗りが読む。
+    /// 名乗っているか。検査が読む (名乗りの本体 ``presence`` は持たせたまま外へ出さない)。
+    var isPresenceAnnounced: Bool { presence.isAnnounced }
+
+    /// 走り続けている時間 (秒)。名乗りが読む。最初のフレームの前は 0。
+    ///
+    /// 作者の時計での経過と実時間での経過の**小さいほう** (``updatePresence()``)。戻った時計で負にしない。
     var presenceElapsed: Double {
-        guard let firstAdvanceAt else { return 0 }
-        return now() - firstAdvanceAt
+        guard let firstAdvanceAt, let firstAdvanceRealAt else { return 0 }
+        return max(0, min(now() - firstAdvanceAt, presenceClock() - firstAdvanceRealAt))
     }
 
     /// 名乗りのメニューが開いている間、プレビューを動かすために呼ばれる。
@@ -1447,9 +1700,20 @@ public final class SketchRuntime {
     ///
     /// 逆に窓を開かない経路では、メニューを開いた時点で `advance()` が AppKit の追跡ループ
     /// の中で止まっている。**そのままではプレビューが静止画になる**ので、ここが進める。
+    ///
+    /// **この回は表示の予定の時刻を持たず、現在時刻で進む** ([#2390])。時刻は前の枚より小さくならない
+    /// (``SketchPart/time``)。
+    ///
+    /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
         guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
-        try? runFrame()
+        do throws(RenderFailure) {
+            try runFrame()
+        } catch {
+            // **`setup()` が投げた失敗は捨てない** ([#2401])。直らない失敗なので、窓の経路へ知らせて終わらせる。
+            // それ以外の失敗は、次の回でやり直す
+            if case .setupFailed = error { setupFailureHandler?(error) }
+        }
     }
 
     /// これだけ描かれていなければ「誰も進めていない」とみなす (秒)。
@@ -1494,6 +1758,8 @@ public final class SketchRuntime {
         // 速さは**いつでも**数える。窓は観測が無くても数字を出すためで、ここを
         // 観測に紐づけると窓が自分で測り直すことになる (源が 2 つに割れる)
         tempo.record(now: now())
+        // GPU 時間を数えるフレームの区切り (#2378)。投入を待たず、番号を 1 つ控えるだけ
+        target.gpu.markFrameStart()
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
         // **測った値はここで差し戻す。** 差し出した値はフレームごとに消えるが、測った値は
@@ -1534,7 +1800,11 @@ public final class SketchRuntime {
     public var isRunning: Bool { !isPaused }
 
     /// 作者の口の転送 (正本は ``SketchPart/noLoop()``)。
-    func noLoop() { isLooping = false }
+    func noLoop() {
+        isLooping = false
+        // このフレームの残りの字も、次が来ないので要る段で焼き切る (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
+    }
 
     /// 作者の口の転送 (正本は ``SketchPart/loop()``)。
     func loop() {
@@ -1581,6 +1851,9 @@ public final class SketchRuntime {
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     public func renderFrame(to url: URL) throws {
+        // 書き出す絵は残る。拡大した字の焼きを次へ送らない (#2446)
+        exportsOneFrame = true
+        defer { exportsOneFrame = false }
         try advance()
         try PNGFile.write(try target.encodeToImageAndRead(avoiding: outletStorageToAvoid()), to: url)
     }
@@ -1593,18 +1866,30 @@ public final class SketchRuntime {
         // 「そのフレームの絵」ではなく前の絵が書かれる (#927・#2743)
         requireRecorder().save(path, at: timing.frameCount)
         attachRecorderIfNeeded()
+        // 撮る絵は残る。これより後に置く字は、先送りせず要る段で焼く (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
     }
 
     /// 連番を始める。転送 (正本は ``SketchPart/beginRecord(_:)``)。
     public func beginRecord(_ pattern: String) {
+        beginRecord(pattern, rendering: nil)
+    }
+
+    /// 連番か動画を始める。**`rendering` は、`mokume render` が先に知っている枚数** ([#2440]) —
+    /// 配る形 (GIF・MP4) は、枚数を知っている入口だけが頼める。
+    ///
+    /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
+    func beginRecord(_ pattern: String, rendering frameCount: Int?) {
         guard !observingAtTime else {
             Diagnostics.warn("beginRecord(): cannot start recording in a specified-time observation; start on a normal frame")
             return
         }
         // **頼まれたフレームを一緒に渡す** (`save(_:)` と同じ理由)。番号が無いと、撮る係が
         // 前から並びに居たときに 1 つ前の絵から録る (#1456)
-        requireRecorder().beginRecord(pattern, at: timing.frameCount)
+        requireRecorder().beginRecord(pattern, at: timing.frameCount, rendering: frameCount)
         attachRecorderIfNeeded()
+        // 撮る絵は残る。これより後に置く字は、先送りせず要る段で焼く (#2446)
+        canvas.atlas.mayDeferScaledBakes = false
     }
 
     /// 連番を止める。転送 (正本は ``SketchPart/endRecord()``)。
@@ -1806,15 +2091,28 @@ public final class SketchRuntime {
         request: ObservationRequest?, drawFailure: RenderFailure? = nil, appliedTime: Float? = nil
     ) {
         guard let observer else { return }
+        // **書き込みの決着を待っている間は、決着を見るだけ** ([#2381])。塞がずに見に来て、フレームは進める
+        //
+        // [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+        if settling != nil {
+            settleObservation(.peek, through: observer)
+            return
+        }
         if capture != nil {
             continueCapture(through: observer, drawFailure: drawFailure)
             return
         }
         guard let request else { return }
         // **通常のフレームと同じ手順で描く。** 手順をここへ写すと、段を足すたびに
-        // 片方だけ腐る (#808)
+        // 片方だけ腐る (#808)。**失敗は握りつぶさず、応えに載せる** — `setup()` が投げたのに「撮れた」と
+        // 答えない ([#2401])
+        var drawFailure = drawFailure
         if drawFailure == nil, timing.frameCount == 0 {
-            try? drawSketchFrame()
+            do throws(RenderFailure) {
+                try drawSketchFrame()
+            } catch {
+                drawFailure = error
+            }
         }
         beginCapture(for: request, through: observer, drawFailure: drawFailure, appliedTime: appliedTime)
     }
@@ -1857,7 +2155,7 @@ public final class SketchRuntime {
             // 途中で描けなくなったら、そこまでの絵は目録に残したまま打ち切る。
             // 絵が揃っていないことは「宣言した数と合わない」で読み手に伝わる
             capture = nil
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
                 warnings: pending.warnings + ["Drawing this frame failed: \(drawFailure)"])
             return
@@ -1879,19 +2177,24 @@ public final class SketchRuntime {
             // まだ配っていない前のフレームの絵は上書きしない (#2743)
             let image = try target.encodeToImageAndRead(
                 scaledBy: pending.scale, avoiding: outletStorageToAvoid())
-            let name = try observer.writeFrame(image, at: pending.frames.count)
+            // **PNG の符号化とファイルの置き換えは、フレームの外で行う** ([#2381])。ここで払うのは読み戻しと
+            // 統計 (64x64 だけ拾う) で、置けたかどうかは撮り終えた後に見る (``settleObservation(_:through:)``)
+            //
+            // [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+            let stats = FrameStats.summarize(image)
+            let name = observer.enqueueFrame(image, at: pending.frames.count)
             pending.frames.append(
                 ObservationReport.CapturedFrame(
                     image: name,
                     frame: timing.frameCount,
                     time: Double(timing.time),
-                    stats: FrameStats.summarize(image),
+                    stats: stats,
                     values: exposedValues.isEmpty ? nil : exposedValues))
         } catch {
             // 採れなくても黙らない。読み手が「まだか / 失敗か / 死んだか」を
             // 区別できるようにするため (ADR-0018 決定 3)
             capture = nil
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: false,
                 warnings: pending.warnings + ["Could not take the image: \(error)"])
             return
@@ -1901,7 +2204,7 @@ public final class SketchRuntime {
             capture = nil
             // 描けてはいるが直っていないもの (組み立てに失敗した断片など) は、
             // 目録の警告として出す。**絵が出ているぶん、これが無いと気付けない**
-            finish(
+            finishCapture(
                 id: pending.id, through: observer, frames: pending.frames, complete: true,
                 warnings: pending.warnings + canvas.shaderFailures
                     + Self.repetitionWarnings(pending.frames), appliedTime: pending.appliedTime)
@@ -1909,6 +2212,50 @@ public final class SketchRuntime {
         }
         pending.wait = pending.every - 1
         capture = pending
+    }
+
+    /// 撮り終えた列の目録を、**頼んだ書き込みが全部決着してから**書く ([#2381])。
+    ///
+    /// 目録は撮り終えた時点で組む。書き込みを頼んでいなければ (描けなかった・1 枚も撮れなかった)
+    /// その場で書く。頼んでいれば、決着するまで ``settling`` に置き、``settleObservation(_:through:)``
+    /// が書く。
+    ///
+    /// [#2381]: https://github.com/mokume-metal/mokume/issues/2381
+    private func finishCapture(
+        id: String, through observer: FrameObserver,
+        frames: [ObservationReport.CapturedFrame], complete: Bool, warnings: [String],
+        appliedTime: Float? = nil
+    ) {
+        let snapshot = report(
+            id: id, frames: frames, complete: complete, warnings: warnings, appliedTime: appliedTime)
+        guard observer.hasPendingWrites else {
+            observer.finish(snapshot)
+            return
+        }
+        settling = snapshot
+        // 裏で続けない観測は、撮り終えたフレームのうちに決着まで待つ (``FrameObserver/writesInBackground``)
+        if !observer.writesInBackground { settleObservation(.block, through: observer) }
+    }
+
+    /// 決着を待っている目録があれば、書き込みの決着を見て、決着していれば書く。
+    ///
+    /// **全枚が置けたなら、組んでおいた目録をそのまま書く。** 置けなかった枚があれば、その枚の手前で
+    /// 目録を終え (``ObservationReport/truncated(after:because:)``)、理由を警告で返す — 今と同じく
+    /// `complete` の鍵が無く、絵が揃っていないことが読み手に伝わる (ADR-0018 決定 3)。
+    ///
+    /// - Returns: 決着したか (待っているものが無い・書いた)。``Patience/peek`` なら、まだなら `false`。
+    @discardableResult
+    private func settleObservation(_ patience: Patience, through observer: FrameObserver) -> Bool {
+        guard let snapshot = settling else { return true }
+        guard let settlement = observer.settleWrites(patience) else { return false }
+        settling = nil
+        switch settlement {
+        case .written:
+            observer.finish(snapshot)
+        case .failed(let index, let reason):
+            observer.finish(snapshot.truncated(after: index, because: reason))
+        }
+        return true
     }
 
     /// 目録を書いて、この要求を終える。
@@ -2022,11 +2369,11 @@ public final class SketchRuntime {
     /// 下ろし損ねると、`Task` の続きのような区間の外で置いたものまで持ち越してしまう。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-    private func carryingOver(_ body: () -> Void) {
+    private func carryingOver(_ body: () throws -> Void) rethrows {
         let previous = canvas.carriesOver
         canvas.carriesOver = true
         defer { canvas.carriesOver = previous }
-        body()
+        try body()
     }
 
     /// いま走っているランタイムとして自分を差し込んでから `body` を実行する。
@@ -2047,7 +2394,7 @@ public final class SketchRuntime {
     ///
     /// [#1367]: https://github.com/mokume-metal/mokume/issues/1367
     /// [#2041]: https://github.com/mokume-metal/mokume/issues/2041
-    func withActiveRuntime(_ body: () -> Void) {
+    func withActiveRuntime(_ body: () throws -> Void) rethrows {
         let previous = runningSketch
         let previousListener = shapeAssemblyListener
         runningSketch = self
@@ -2056,6 +2403,6 @@ public final class SketchRuntime {
             runningSketch = previous
             shapeAssemblyListener = previousListener
         }
-        LaunchingSketch.$canvas.withValue(canvas, operation: body)
+        try LaunchingSketch.$canvas.withValue(canvas, operation: body)
     }
 }

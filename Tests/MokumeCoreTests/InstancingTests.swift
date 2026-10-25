@@ -31,7 +31,7 @@ struct InstancingTests {
             let row = Float(index / 6)
             return Placement(
                 x: 12 + column * 14, y: 12 + row * 14, z: 0,
-                rotation: SIMD3(0.3, Float(index) * 0.2, 0))
+                rotation: Vector3(0.3, Float(index) * 0.2, 0))
         }
     }
 

@@ -29,7 +29,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var server: TCPServer?
     ///     var size: Float = 0.5
-    ///     func setup() { server = try? createTCPServer(5204) }
+    ///     func setup() throws { server = try createTCPServer(5204) }
     ///     func draw() {
     ///         for line in server?.messages ?? [] { size = Float(line) ?? size }
     ///         circle(width / 2, height / 2, size * height)
@@ -61,10 +61,7 @@ extension Sketch {
     ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createTCPServer(_ port: Int) throws(NetworkFailure) -> TCPServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let server = tcpServer(port: port)
-        attach(server)
-        return server
+        return try attached(NetworkFailure.self, calledAs: #function) { tcpServer(port: port) }
     }
 
     /// ``createTCPServer(_:)`` が足すもの (番号は検めてある)。ポートは足したときに開く。走らせずに中身を
@@ -82,7 +79,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var socket: WebSocketServer?
     ///     var size: Float = 0.5
-    ///     func setup() { socket = try? createWebSocketServer(8025) }
+    ///     func setup() throws { socket = try createWebSocketServer(8025) }
     ///     func draw() {
     ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
     ///         circle(width / 2, height / 2, size * height)
@@ -118,10 +115,7 @@ extension Sketch {
     ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createWebSocketServer(_ port: Int) throws(NetworkFailure) -> WebSocketServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let server = webSocketServer(port: port)
-        attach(server)
-        return server
+        return try attached(NetworkFailure.self, calledAs: #function) { webSocketServer(port: port) }
     }
 
     /// ``createWebSocketServer(_:)`` が足すもの (番号は検めてある)。``tcpServer(port:)`` と同じく、検査も使う。
@@ -207,7 +201,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var link: TCPClient?
     ///     var size: Float = 0.5
-    ///     func setup() { link = try? createTCPClient("127.0.0.1", 7000) }
+    ///     func setup() throws { link = try createTCPClient("127.0.0.1", 7000) }
     ///     func draw() {
     ///         for line in link?.messages ?? [] { size = Float(line) ?? size }
     ///         background(20)
@@ -247,10 +241,7 @@ extension Sketch {
     public func createTCPClient(_ host: String, _ port: Int) throws(NetworkFailure) -> TCPClient {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         guard Endpoint.isUsable(host: host) else { throw .invalidHost(host) }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let client = tcpClient(host: host, port: port)
-        attach(client)
-        return client
+        return try attached(NetworkFailure.self, calledAs: #function) { tcpClient(host: host, port: port) }
     }
 
     /// ``createTCPClient(_:_:)`` が足すもの (値は検めてある)。繋ぐのは足したときに始める。検査も使う。
@@ -272,7 +263,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var socket: WebSocketClient?
     ///     var size: Float = 0.5
-    ///     func setup() { socket = try? createWebSocketClient("wss://relay.example/room") }
+    ///     func setup() throws { socket = try createWebSocketClient("wss://relay.example/room") }
     ///     func draw() {
     ///         for text in socket?.messages ?? [] { size = Float(text) ?? size }
     ///         background(20)
@@ -311,10 +302,9 @@ extension Sketch {
         if let port = parsed.port, !Endpoint.usablePorts.contains(port) {
             throw .invalidPort(port)
         }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let client = webSocketClient(url: url, parsed: parsed)
-        attach(client)
-        return client
+        return try attached(NetworkFailure.self, calledAs: #function) {
+            webSocketClient(url: url, parsed: parsed)
+        }
     }
 
     /// ``createWebSocketClient(_:)`` が足すもの (値は検めてある)。``tcpClient(host:port:)`` と同じく、検査も使う。
@@ -389,7 +379,7 @@ extension Sketch {
     /// final class Remote: Sketch {
     ///     var udp: UDPPort?
     ///     var size: Float = 0.5
-    ///     func setup() { udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
+    ///     func setup() throws { udp = try createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
     ///     func draw() {
     ///         for text in udp?.messages ?? [] { size = Float(text) ?? size }
     ///         circle(width / 2, height / 2, size * height)
@@ -411,7 +401,8 @@ extension Sketch {
     ///   送らず、知らせる
     /// - 空の datagram (0 バイト) は空の文字列 `""` になる。ただし macOS の受け口は、空の datagram
     ///   を受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ
-    ///   送り元から届いたものは、数えず診断にも出さずに落ちる。`""` を送った直後に同じポートから
+    ///   送り元から届いたものは、数えずに落ちる。落ちた数は分からないので、空で流れが閉じたとき、落ちたかも
+    ///   しれないことを送り元ごとに 1 度だけ診断に出す (実際には何も落ちていなくても出る)。`""` を送った直後に同じポートから
     ///   送ったものも、相手が mokume の受け口なら落ちうる
     /// - **ポートを他のアプリが使っていても作れる。** ``TextPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
@@ -442,16 +433,15 @@ extension Sketch {
                 throw .invalidHost(destination.host)
             }
         }
-        try requireAttachable(NetworkFailure.self, calledAs: #function)
-        let outbound = destination.map {
-            DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+        return try attached(NetworkFailure.self, calledAs: #function) {
+            let outbound = destination.map {
+                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+            }
+            return UDPPort(
+                port: port, name: "udp :\(port)",
+                source: DatagramSource<String>.text(port: port, warn: { Diagnostics.warn($0) }),
+                outbound: outbound, owner: self)
         }
-        let udp = UDPPort(
-            port: port, name: "udp :\(port)",
-            source: DatagramSource<String>.text(port: port, warn: { Diagnostics.warn($0) }),
-            outbound: outbound, owner: self)
-        attach(udp)
-        return udp
     }
 
     /// 記録した文字列の列を、UDP で受けたかのように流す。**ポートを開かない。**

@@ -20,6 +20,22 @@ public enum ImageWriteFailure: Error, Equatable, Sendable {
     case writeFailed(path: String)
 }
 
+extension ImageWriteFailure: CustomStringConvertible {
+    /// 人が読む文面。**1 行で、行き先は載せない** — 書き出しの警告 (`"Could not write <行き先>: …"`)・観測の
+    /// 書き出しの結末・``Image/save(_:)`` の ``ImageFailure/unwritable(path:reason:)`` は、どれも行き先を別に
+    /// 持っているので、この句を理由として入れる。文面の正本はここ 1 つ ([#2401])。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    public var description: String {
+        switch self {
+        case .malformedImage(let width, let height, let byteCount):
+            "the picture is malformed (\(width)x\(height), \(byteCount) bytes)"
+        case .destinationUnavailable: "the destination could not be opened"
+        case .writeFailed: "the file could not be written"
+        }
+    }
+}
+
 /// 絵を PNG として書き出す。
 ///
 /// **隔離の外に置く** — 読む側の `ImageFile` と対称にしておくと、書き出しを

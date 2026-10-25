@@ -387,8 +387,8 @@ struct UpscaleTests {
         // **パイプラインは拡大のために立つが、効果を通す前の絵の控えは作らない** (#1469)。
         // 写しも戻しも積まない
         #expect(pipeline.carriesBuilt == 0)
-        #expect(canvas.effectCarriesEncoded == 0)
-        #expect(canvas.effectCarryRestoresEncoded == 0)
+        #expect(canvas.effectOutputsExchanged == 0)
+        #expect(canvas.effectRestoresExchanged == 0)
     }
 
     // MARK: - 効果と同居すること

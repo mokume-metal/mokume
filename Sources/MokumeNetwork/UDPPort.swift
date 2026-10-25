@@ -15,14 +15,16 @@ import MokumeDiagnostics
 ///
 /// **空の datagram (0 バイト) は空の文字列 `""` になる。** ただし macOS の受け口は、空の datagram を
 /// 受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ送り元から
-/// 届いたものは届かない。この落ちは受け口から見えないので、数えず診断にも出ない。``send(_:)`` で
+/// 届いたものは届かない。この落ちた数は受け口から見えないので数えない。代わりに、空で流れが閉じたとき、
+/// 落ちたかもしれないことを**送り元ごとに 1 度だけ**診断に出す (受け口と送り元を名乗る。覚える送り元は 256 までで、
+/// 超えたら先に覚えた送り元から忘れる。実際には何も落ちていなくても出る)。``send(_:)`` で
 /// `""` を送った直後に同じポートから送ったものも、相手が mokume の受け口なら落ちうる。
 ///
 /// ```swift
 /// final class Remote: Sketch {
 ///     var udp: UDPPort?
 ///     var size: Float = 0.5
-///     func setup() { udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
+///     func setup() throws { udp = try createUDP(listen: 6000, send: ("127.0.0.1", 6001)) }
 ///     func draw() {
 ///         for text in udp?.messages ?? [] { size = Float(text) ?? size }
 ///         circle(width / 2, height / 2, size * height)
@@ -41,6 +43,10 @@ import MokumeDiagnostics
 /// 空けた次の送信まで拒まれずに終わって初めて「送れた」と読む)。
 public final class UDPPort: TextPort {
     private let outbound: (any DatagramSending)?
+
+    /// 送り手が見たことの跡。送り手が跡を持たなければ (記録するだけの送り手・送り先の無い入り口) `nil`。
+    /// 検査が、送ったものが受け口で読まれなかった回の名乗りに載せる (#3001)。読むだけで、振る舞いを決めない。
+    var sendTrace: SendTrace? { (outbound as? SendTracing)?.sendTrace }
 
     init(
         port: Int?, name: String, source: any MessageSource<String>,

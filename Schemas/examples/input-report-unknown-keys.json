@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "9c4e2f",
+  "accepted": 1,
+  "ignored": 0,
+  "dropped": 0,
+  "warnings": [
+    "events[0]: Not read, so the event was taken without them: buton (the keys read are type, x, y, button, dx, dy, code, characters, isRepeat, clickCount)"
+  ]
+}

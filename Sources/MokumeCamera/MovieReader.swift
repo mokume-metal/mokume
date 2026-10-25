@@ -212,6 +212,10 @@ final class MovieReader {
         reader = nil
         output = nil
         upcoming = nil
+        // **読み直しを試してよい位置も戻す** (#3122)。読めなくなって止まっていた動画を外して足し直すと、
+        // 戻さない限り「まだ試さない」が続き、読めていないのに ``Movie`` が running と名乗る。
+        // 足し直した最初のフレームで読み直し、読めなければ改めて disconnected になる
+        retryAfter = 0
     }
 
     // MARK: - 読む

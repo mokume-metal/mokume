@@ -9,6 +9,8 @@ SPDX-License-Identifier: MIT
 
 採用 (2026-08-27) / 改訂 (2026-09-09): 決定 4 に FileWatcher の例外を追補 ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-10-03): 決定 4 の例外を、OS の受け口が待ち行列やスレッドを決めるもの一般へ広げる ([ADR-0042](0042-camera-and-audio-standard.md)) / 改訂あり (本文の「改訂 (日付)」見出し)
 
+改訂の経緯 (当初の決定・各改訂の理由・置き換わった決定) は [history/0010.md](history/0010.md) にある。本文は現行の決定を書く。
+
 ## 文脈
 
 [ADR-0009](0009-platform-floor-and-toolchain.md) により Swift 6 言語モードを day 1 から使う。言語レベルの並行性検査はエラーとして働き、隔離されていない可変のグローバル状態や、隔離境界をまたぐ非 `Sendable` な値の受け渡しはコンパイルを通らない。
@@ -65,7 +67,17 @@ SPDX-License-Identifier: MIT
 
 **代償:** 同じ値型に、どこからでも呼べるメンバーと main だけのメンバーが混ざる。学生のスケッチは main で動くので、書き味には出ない。スケッチを書く人が並行性の注釈を書かないこと (上の決定と影響節の受け入れ検査) は変わらない。
 
-**範囲の外:** 既存の関数 (`map`・`lerp`・`color`・`noise`) を main actor の外へ出すかは、ゲームの方向と独立しているので [#2389](https://github.com/mokume-metal/mokume/issues/2389) で決める。
+#### 改訂 (2026-10-23) — 値だけを扱う数と色の関数も main actor の外に置く ([#2389](https://github.com/mokume-metal/mokume/issues/2389))
+
+上の改訂は、既存の関数 (`map`・`lerp`・`color` など) を main actor の外へ出すかを範囲の外に置いた。**決めた: 値を受けて値を返すだけのトップレベルの数と色の関数は `nonisolated` にする。** 対象は `map`・`lerp`・`constrain`・`norm`・`smoothstep`・`radians`・`degrees`・`damp`・`pingpong`・`lerpAngle`・`dist`・`mag`・`sq`・`fract`・`mod`・`bezierPoint`・`bezierTangent`、`color` の各口・`lerpColor`・`paletteLerp`、色の成分の読み出し (`red` ほか・`hue` ほか)、原色の移し替えを通る `LinearRGBA.display(...)`、作業空間の画素を表示形式へ移す `OutputStage.encode(_:)`、円周率の定数 (`PI` ほか) である。
+
+- **隔離が要る理由は、注意を 1 度だけ言う記録だけだった。** 記録 (`NumberValues`・`ColorValues`・`PaletteValues` の `warnings`) は `static var` で、main actor でしか触れなかった。`Mutex` で守る控え (`SharedWarningLog`) に替え、複数のスレッドから同時に言っても注意は 1 度だけ出る。スケッチを書く人の書き味は変わらない
+- **理由は実測にある。** 1080p の全画素を `noise`→`map`→`color` で埋めるループは、main の 1 本で 169 ms、写しを `concurrentPerform` で 64 分割すると 11.3 ms だった (#2389 の 2026-10-12 のコメント)。並列にできる口が無いと、画素を計算する仕事を P コアと E コアに分けられない。いちばん使われる `map` と `color` が main 隔離だったことが、その邪魔になっていた
+- **範囲:** スケッチの状態 (描く状態・`noise` の種と細かさ) を読む `Sketch` / `Canvas` / `SketchPart` のメンバーは main actor に残る。`noise` のメソッドは種を読むので、並列から呼べない。値で持つ揺らぎは新しい値型として #2418 が決める (上の改訂のとおり `nonisolated` で生まれる)
+- **これは明示的に選ぶ人向けの道である** ([ADR-0001](0001-founding-principles.md) 原則 1)。スケッチは変わらず注釈なしで書ける。`concurrentPerform` に渡す閉包は `@Sendable` になり、スケッチの口を呼ぶ main actor の閉包を渡すと実行時の隔離の検査で落ちる (SE-0423)。`map` の説明文がこれを名乗る
+
+退けた案: **しない。** 並列に回したい人は値型 (`Vector2` など) と値の揺らぎで書き、`map`・`color` は自前で写す。写しを 1 本で回すだけでも 18% 速かった (139 対 169 ms) うえ、写しはライブラリとの一致を人が保つことになる。**代償:** 数と色の関数の隔離が、同じ名前のメソッド (`noise` ほか) と食い違う。
+
 
 ### 2. 暗黙のアクティブコンテキストは main actor 隔離のグローバルとして正式化する
 
@@ -77,29 +89,17 @@ SPDX-License-Identifier: MIT
 
 **この決定に機械検査は付けない** ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 1・5)。隔離の検査はコンパイラが既に担っており、自作の lint が見るのは「escape hatch を書いたか」という字面だけである。実際に escape hatch が増え始めたら、そのとき実害を名指しして Issue から機構を足す。
 
-### 4. 並列は actor と structured concurrency で明示分離する
+### 4. 並列は actor と Task で明示分離する (2026-10-21 改訂)
 
-GPU コマンドの生成、書き出し、観測、アセット読み込みなど main actor の外で進める処理は、actor または structured concurrency (`Task` / `TaskGroup`) で明示的に分離する。分離した境界を越える値は `Sendable` を満たす形で設計する。**`DispatchQueue` を新たに導入しない。**
+GPU コマンドの生成、書き出し、観測、アセット読み込みなど main actor の外で進める処理は、actor または `Task` (`Task {}`・`Task.detached {}`・`TaskGroup`) で明示的に分離する。分離した境界を越える値は `Sendable` を満たす形で設計する。**`DispatchQueue` を新たに導入しない。**
 
-#### 改訂 (2026-10-03) — 例外は 1 本ではなくなった。条件で認める
+**`Task {}` と `Task.detached {}` は非構造化タスクで、起こした側の寿命にも取消にも結ばれない** ([SE-0304](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md))。起こした側を取り消しても止まらず、起こした側が終わっても走り続ける。構造化されているのは `TaskGroup` と `async let` だけで、子が親の範囲の中で終わる。ここで求めているのは、**どこで走るかを書いて分離すること**で、寿命を呼んだ側へ結ぶことではない。`Task {}` が main actor を引き継ぐときは、作っただけで重い仕事が main の外へ出るわけでもない。待つ読み込みの口 (決定 6) は、いまは呼んだ `Task` の取消を見ない ([#2920](https://github.com/mokume-metal/mokume/issues/2920))。取消を口に伝えるかは [#2760](https://github.com/mokume-metal/mokume/issues/2760) と合わせて決める。
 
-**現行の扱い: OS の受け口が待ち行列やスレッドを決めるものは、[ADR-0042](0042-camera-and-audio-standard.md) 決定 7 の条件をすべて満たすときに限って認める。** 条件は、受ける点でしかないこと・境界を越えるのが `Sendable` な値か合図だけであること・利用者に漏らさないこと・realtime スレッドで確保もロック待ちも dispatch もしないこと・置くのは本体の上に載る別ターゲットだけであること、の 5 つである。**MokumeCore の中の例外は、下の追補のファイルの見張り 1 本のまま増やさない。**
+**当初の見出しと文言は、`Task` / `TaskGroup` を structured concurrency の例に挙げていた。** 決定の中身 (分離する・境界を越える値は `Sendable`・`DispatchQueue` を新たに導入しない) は変えず、`Task {}` が非構造化だと分かる言葉に直しただけである。見出しの綴りの経緯は [history/0010.md](history/0010.md)。
 
-**下の追補は、ファイルの見張りを「この決定に対する唯一の例外」と数えていた。** カメラと音を標準の機能に入れると ([ADR-0041](0041-standard-scope-map.md))、その数え方が成り立たなくなった。カメラの受け取り (`AVCaptureVideoDataOutput`) は待ち行列を引数に取り、音の入力と出力は OS の realtime スレッドで呼ばれる。どちらも、ファイルの見張りと同じく**並列の設計ではなく OS の受け口の形**で、「渡さない」「呼ばれない」は選べない。
+#### 例外は 1 本ではなくなった。条件で認める
 
-**理由は動いていない。** 禁じているのは自前の並列を待ち行列で組むことで、追補が挙げた守り (受ける点でしかない・値を渡さない・callback を漏らさない) は ADR-0042 決定 7 の条件にそのまま入っている。変わったのは、例外を 1 本ずつ数える形から、条件で認める形にしたことだけである。
-
-#### 追補 (2026-09-09) — 見張りの待ち行列だけは例外である
-
-`Sources/MokumeCore/Drawing/FileWatcher.swift` が `DispatchQueue` を 1 本持っている ([#733](https://github.com/mokume-metal/mokume/issues/733))。**この決定に対する唯一の例外**だった (2026-10-03 の改訂で、条件で認める形へ移った)。ほかの並列は宣言どおり分けてある — `FrameWriter` と `MovieWriter` は待ち方を semaphore に寄せ、コードのコメントで本決定を引いて「`DispatchQueue` は足さない」と名乗っている。
-
-**例外が要るのは、ここが並列の設計ではなく OS の受け口だからである。** ファイルの保存を拾う口は `DispatchSource.makeFileSystemObjectSource(fileDescriptor:eventMask:queue:)` で、**待ち行列を引数に取ることが API の形そのもの**である。actor で包んでも `AsyncSequence` に包んでも、その内側でこの引数を埋めることは避けられない — 選べるのは「どの待ち行列を渡すか」だけで、「渡さない」は選べない。**この決定が禁じた「新たに導入する」— 自前の並列を待ち行列で組む — には当たらない。**
-
-**主キューを渡す形は成立しない。** 主キューが捌かれるのは窓のある実行だけで、検査の実行では捌かれず、**実装が正しくても保存が届かない**ことを実測している (同ファイルの「主キューへ直に載せない」節)。逃げ道が塞がっているという意味でも、ここは選択ではない。
-
-**そして決定 4 が守ろうとしたものは、例外の下でも守られている。** 待ち行列は出来事を受ける点でしかなく、拾った先は `Task { @MainActor in … }` で main actor へ渡る。境界を越えるのは「変化があった」という合図だけで (`@Sendable () -> Void`)、値は渡らないので `Sendable` の要求も自明に満たされる。決定 5 に触れないのも、この口が internal で、callback が利用者へ漏れないためである。
-
-**何が示されたら畳むか**: ファイルの変化を待ち行列なしに待てる口 (`AsyncSequence` を直に返すもの) が使えるようになったとき。そのときはこの例外を消し、決定 4 を例外なしに戻す。
+**現行の扱い: OS の受け口が待ち行列やスレッドを決めるものは、[ADR-0042](0042-camera-and-audio-standard.md) 決定 7 の条件をすべて満たすときに限って認める。** 条件は、受ける点でしかないこと・境界を越えるのが `Sendable` な値か合図だけであること・利用者に漏らさないこと・realtime スレッドで確保もロック待ちも dispatch もしないこと・置くのは本体の上に載る別ターゲットだけであること、の 5 つである。**MokumeCore の中の例外は、ファイルの見張り 1 本 (追補 (2026-09-09)。[history/0010.md](history/0010.md)) のまま増やさない。**
 
 ### 5. 継続的な値の流れは AsyncSequence を一級 API とする
 
@@ -164,7 +164,7 @@ func draw() {
 
 - 本 ADR が守られているかの受け入れ検査は「**利用者が書くスケッチに並行性の注釈が現れないこと**」である。ライブラリ内部がどれだけ正しくても、注釈がスケッチ側へ漏れた時点で原則 1 に反する
 - 決定 1・2 により、描画順は main actor 上で直列に確定する。これは決定論 ([ADR-0001](0001-founding-principles.md) 原則 2) と同じ方向を向く — 非同期に描画順が乱れる余地を構造的に持たない
-- 決定 4 の例外は `FileWatcher` の 1 本だけである。**数が増えたらこの追補を疑う** — 「OS の受け口だから」で通る箇所が積み上がるなら、境界の引き方を決め直す必要があるという合図である
+- 決定 4 の例外は `FileWatcher` の 1 本だけである。**数が増えたらこの例外を認めた経緯 (追補 (2026-09-09)・[history/0010.md](history/0010.md)) を疑う** — 「OS の受け口だから」で通る箇所が積み上がるなら、境界の引き方を決め直す必要があるという合図である
 - 決定 4 により、観測・書き出し機構 (原則 3) は「main actor の外から来るもの」として境界を先に設計することになる。ビュー層 ([#135](https://github.com/mokume-metal/mokume/issues/135)) と GPU 応用の設計は、この境界の上に載る
 - 決定 5 により、周辺モジュール (ネットワーク・MIDI・オーディオ) の公開 API 形が先に決まる。下層フレームワークが callback を要求しても、それがユーザーへ漏れることはない
 - 決定 3・6 により、当面は機械検査を持たない領域が 2 つ残る (escape hatch の使用・同期ローダの誤用)。**どちらも実害が出たら Issue から機構を足す**。この ADR は監視すべき対象を名指ししておく役目も持つ

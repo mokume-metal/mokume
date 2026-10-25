@@ -33,6 +33,9 @@ struct ShapeFragmentIn {
     /// まま届く。細い線でなければ 1 で、掛けても 1 ビットも変わらない。三角形の中で変わらない
     /// 値なので補間しない (補間すると 1 が 1 でなくなりうる)。
     float coverage [[flat]];
+    /// 粒の年齢 (0…1)。**粒を描くときだけ**値を持ち、ほかの頂点関数は 0 を書く。1 つの粒の板の
+    /// 頂点はどれも同じ値なので、補間しない。
+    float particleAge [[flat]];
 };
 
 /// 置いた光 1 つぶん。並びは Swift 側の `Light` と一致する。
@@ -331,6 +334,16 @@ static inline float4 mokume_sample(texture2d<float> surface, float2 spot) {
     return surface.sample(kSurfaceSampler, spot);
 }
 
+/// 粒を描くときだけ意味を持つ値 (``Fragment/particle``)。
+struct FragmentParticle {
+    /// 寿命に沿って 0 から 1 へ進む値。**出して最初に描かれるフレームで 0**、寿命の尽きる直前に 1 に
+    /// 近づき、0…1 の外へは出ない。
+    ///
+    /// フェード (`1.0 - in.particle.age`)・寿命の終わりへの縮み・色の移り変わりが、断片 1 本で書ける。
+    /// **粒でない形 (平面・立体・字・画像) では常に 0** なので、同じ断片をどの形に当てても組み上がる。
+    float age;
+};
+
 /// 1 画素ぶんの入力。**利用者の断片が受け取るのはこれだけ。**
 struct Fragment {
     /// 面の中の位置 (画素・左上が原点)。**画素はスケッチの座標と同じ出す画素** (#1639) で、
@@ -394,6 +407,8 @@ struct Fragment {
     /// 重ねる枚数と、1 枚ごとの弱まり。置いた時点に `noiseDetail()` が決めていたもの。
     uint noiseOctaves;
     float noiseFalloff;
+    /// 粒を描くときだけ意味を持つ値。粒でない形では 0。
+    FragmentParticle particle;
     /// 計算が書いた数の並び。`numbers()` で渡したものが届く。
     ///
     /// **渡していなければ 1 個の 0 を指す。** 何も指さない状態にすると、渡し忘れた
@@ -866,6 +881,7 @@ static inline float4 mokume_shapeColor(
     f.noiseOctaves = lighting.noiseOctaves;
     f.noiseFalloff = lighting.noiseFalloff;
     f.numbers = numbers;
+    f.particle.age = in.particleAge;
 
     // **被覆は断片の後で掛ける** (#1637)。乗算済みの色なので、全成分に掛ければ画素の
     // 一部だけを覆った色になる

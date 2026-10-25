@@ -27,6 +27,20 @@ final class Hello: Sketch {
 }
 ```
 
+### 最初の円の次に読む順
+
+**最初の円が動いたら、次に読む節は、作品を組み立てる順で選ぶ。** 下の Topics は口の種類ごとに多くの節へ分かれているので、どこから読むかは自分では決めにくい。ブロック崩しの作例 ([`Sketches/BricksAndBall.swift`](https://github.com/mokume-metal/mokume/blob/main/Sketches/BricksAndBall.swift)) は 3 段に分けて書いてあり、段の名は `// MARK:` に付けてある。段ごとに、読む節と、道具で開ける短い例を挙げる。
+
+| 段 | その段で書くこと | 読む節 | 道具で開く例 |
+| --- | --- | --- | --- |
+| 1. 関数で描く | 面とスコアを、`background`・`text` などの関数を呼んで描く | [スケッチを書く](#スケッチを書く)・[下地と色](#下地と色)・[文字を描く](#文字を描く) | `text(_:_:_:)#1` |
+| 2. 値で判定し、描くときは `fill()` に従わせる | パドルと球を値で持ち、`intersects` で当て、`fill()` で色を決めてから `draw()` で描く | [図形を値で持ち歩いて当てる](#図形を値で持ち歩いて当てる)・[入力を受ける](#入力を受ける)・[面の大きさと時間](#面の大きさと時間) | `Circle.intersects(_:)#2` |
+| 3. 物体ごとに見た目を持たせる | ブロックごとに色を値へ持たせ、`draw()` だけで描く | [図形を値で持ち歩いて当てる](#図形を値で持ち歩いて当てる) | `Rect.fill` |
+
+**例は `mokume examples` が並べる綴りで引く。** `mokume examples` で一覧を出し (`grep` で絞れる)、`mokume new <名前> --from <例>` で 1 本のスケッチにできる。番号を添えた綴りはシェルで引用符が要る (`--from 'text(_:_:_:)#1'`)。道具が開くのは各口の説明文の例で、作例の全体ではない — 段を通して読むときは、上のリンクの作例を開く。
+
+節の中身はここに写さない。各 API の振る舞いと例は、リンク先の説明が持つ。
+
 ### 自作の型で語彙を使う
 
 **自分で書いた型に `: SketchPart` を付けると、その中でも `fill()`・`circle()`・`mouseX`・`random()` がそのまま使える。** Processing でタブに書いたクラスの中から `fill()` を呼ぶのと同じ書き方になる。``Sketch`` は ``SketchPart`` を継いでいるので、スケッチの中では何も付けずに使える。
@@ -75,6 +89,8 @@ circle(200, 150, 20 + pow(2, level))
 
 [mokume の入口](../../) — 入れ方と最初の 1 本はこちら。
 
+**ここに並ぶ口の例を開いて始めるなら**、道具に `mokume examples` で一覧を出させ、`mokume new <名前> --from <例>` で 1 本のスケッチにできる。例の名前は、このページの見出しと同じ綴りである (`triangle` など)。
+
 **この面に出ている説明は、すべてソースの `///` から組み立てられている。** 説明を直したいときは実装の隣を直す。機械が一度に読むための一覧が要るときは、版ごとの Release に載る公開 API の一覧を使う — こちらは人が読むための面で、同じ説明の別の配り方になっている。
 
 ### 状態の寿命
@@ -92,7 +108,7 @@ circle(200, 150, 20 + pow(2, level))
 
 `setup()` は最初のフレームが始まる前に走り、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックもフレームの外で走るので、**そこで書いたシーンの記述はどのフレームにも属さない**。黙って捨てず、警告を出して無視する。描き場所 (``SketchPart/createGraphics(_:_:)``) では、視点・光・変換・粒・計算などのシーンの記述も ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ効く — `draw()` の中に居ても、その対の外で書けば同じ警告を出して無視する。
 
-**置いたもの (図形・絵・背景・画素の書き込み) は設定ではなく、次に描くフレームに出る。** `setup()` と、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックで置いたものは、次に描くフレームへ持ち越される — `setup()` だけで 1 枚を描ける。描き場所では ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。それ以外 (描き場所の対の外・`Task` の続きなど) で置いたものは、警告を出して無視する。
+**置いたもの (図形・絵・背景・画素の書き込み・呼んだ時点で効果を掛ける ``SketchPart/filter(_:)``) は設定ではなく、次に描くフレームに出る。** `setup()` と、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックで置いたものは、次に描くフレームへ持ち越される — `setup()` だけで 1 枚を描ける。描き場所では ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。それ以外 (描き場所の対の外・`Task` の続きなど) で置いたものは、警告を出して無視する。
 
 **寿命と、積めるかどうかは別の話である。** 変換はフレームを越えないが ``SketchPart/pushMatrix()`` で積める。積んだものもフレームの頭で空に戻るので、`draw()` の中で戻し忘れても次のフレームへは残らない。
 
@@ -104,6 +120,11 @@ circle(200, 150, 20 + pow(2, level))
 
 `mokume watch` で `.swift` を保存すると、スケッチは新しいプロセスで作り直される。
 資材の置き場 (`Sources/<名前>/assets/`) のファイルを足したり保存したりしたときも、ビルドが資材を写し直すので同じく作り直す。
+
+見張るのは次の3つで、これが約束である。`Package.swift`、`Sources/` の下の `.swift` (隠しファイルと包みの中を除く)、`Sources/<名前>/assets/` の下の普通のファイル (隠しファイル・`.metal`・シンボリックリンクを除く)。
+
+**範囲の外を変えても作り直さない。** `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)、置き場の中のシンボリックリンク、`Package.resolved`、パスで指した依存 (`--local` の mokume のチェックアウト) である。たとえば `resources: [.process("Resources")]` を宣言した作品で `Sources/<名前>/Resources/data.json` を保存しても、作り直しは起きない。外を変えたときは `mokume watch` を起こし直す。範囲を `Package.swift` の宣言から導く形は、宣言を変えた作品が出てから決める。
+
 **フレームを越える状態も、この作り直しでは最初から始まる。** 本体が引き継ぐのは次の2種類である。
 
 | 残るもの | 引き継ぎ方 |
@@ -111,13 +132,24 @@ circle(200, 150, 20 + pow(2, level))
 | ``Param(name:)`` の保存済みの値 | `.mokume/state/params.json` から、起動時に1回、名前と型が一致する値を戻す |
 | `watch` が持つ作品の窓 | スケッチを入れ替えても窓は残るため、位置・全画面・置いた画面を保つ |
 
-それ以外は引き継がない。作者の変数や配列、`frameCount` と `time`、乱数の列、描いた絵、
+それ以外は引き継がない。作者の変数や配列、`frameCount` と `time` (下の `--keep-time` を除く)、乱数の列、描いた絵、
 ``SketchPart/createGraphics(_:_:)`` の中身、粒や計算の状態、`orbitControl` で回した視点は、
 新しいスケッチの初期状態から始まる。窓に絵が途切れず表示されていても、内部の状態を運んでいるわけではない。
 
 例えば、`@Param` で球の半径を調整し、自分の変数 `playhead` で再生位置を持っている作品で、
 Swift の色を変えて保存すると、保存済みの半径と窓は残るが、`playhead` はコードの初期値へ戻る。
 作者の任意の状態を作り直しの後へ運ぶ口は、いまの本体には無い。
+
+**`mokume watch --keep-time` なら、作者の時計だけは運ぶ。** 既定は上のとおり 0 秒から始まる。旗を付けると、
+新しい世代の最初の枚の `time` が、前の世代が描いていた秒の続きになり、`pauseTime()` で止めていれば止めた秒のまま出る。
+12 秒で一巡する作品の 8 秒目で止めたまま、色を書き換えて保存して詰められる。運ぶのは**作者の時計の秒と、止めているか**
+の 2 つだけである。`frameCount`・乱数の列・`deltaTime` で積んだ状態 (`Countdown` を含む)・作者の変数は運ばない。
+フレームの時計 (`SketchSettings` の `clock` を `.frames` にした作品) でも同じで、`time` は引き継いだ秒から `1/fps` ずつ進むが、
+`frameCount` は 1 から数え直すので、`.frames` で状態を積んで書いたゲームでは時刻だけが続きになる。
+`setup()` で `pauseTime()`・`playTime()`・`jumpTime(_:)` を呼べば、前の世代が止めていても回っていても、そちらが勝つ
+(`setup()` の中で読む `time` も、前の世代の続きの秒である)。前の世代が落ちて居なくなっているときや、`noLoop()` で枚が止まっているときは、居なかった・止まっていた間を足さず、最後に
+書いた秒・窓に出ている枚の秒から始まる (静的な作品を眺めてから保存しても、保存のたびに絵が変わらない)。旗の無い `watch`・`run`・`render` は変わらず 0 秒から始まり、
+`mokume render` で書き出した絵は変わらない。
 
 **`.metal` の断片を保存したときは、プロセスを作り直さない。** 走らせたまま断片を差し替えるので、
 上に挙げたプロセス内の状態は残る。
@@ -165,11 +197,14 @@ rotate(Float.pi / 4)      // 型を名乗っても通る
 
 `pow(2, 3)` のようにリテラルだけを渡す計算の関数も、同じ理由で型が決まらず組めない (上の「`import mokume` で通る語彙」)。
 
-**2. 割り算は、片方に小数点を付ける。** 整数だけの式は整数のまま計算され、`1 / 2` は 0 になる。
+**2. 割り算は、片方に小数点を付ける。** 渡す先が型を決めない口 (mokume の描く口・数の口) へ、
+整数リテラルだけの式を渡すと、整数のまま計算され、`1 / 2` は 0 になる。型を名乗った文脈
+(`let r: Float = 1 / 2`) では、同じ式が小数で計算される。
 **エラーにならず**、描かれる絵で気付くことになる。
 
 ```swift
-circle(width / 2, height / 2, 1 / 2)     // 直径が 0 になり、何も描かれない
+let r: Float = 1 / 2                     // 0.5 (型を名乗った文脈では小数で計算される)
+circle(width / 2, height / 2, 1 / 2)     // 0 になり、直径が 0 で何も描かれない (渡す先が型を決めないので Int で計算される)
 circle(width / 2, height / 2, 1.0 / 2)   // 0.5 が渡る
 ```
 
@@ -284,6 +319,22 @@ let turn = width / 400                   // Float
 rotate(turn * .pi)                       // 他の項が Float なら .pi のままで通る
 ```
 
+**Swift 標準の乱数は、種に従わない。** `randomElement()`・`shuffled()`・`Float.random(in:)` は、引数を
+省くと Swift が持つ別の乱数で引く。**コンパイルは通り、注意も出ず、走らせるたびに絵が変わる** — 同じ入力から
+同じ絵になる約束 (``SketchPart/randomSeed(_:)``) が、黙って外れる。同じ列で引かせるには、`using:` に
+``SketchPart/randomSource`` を渡す。
+
+```swift
+randomSeed(7)
+let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]
+fill(palette.randomElement(using: &randomSource)!)   // 種に従う。走らせるたびに同じ色
+fill(palette.randomElement()!)                       // 種に従わない。走らせるたびに違う色
+```
+
+部品ごと・花ごとに別の列が要るなら、値として持てる ``RandomSource`` を作る (`RandomSource(seed: 7, index: i)`)。
+スケッチの乱数 (``SketchPart/random()``) を何回引いても、その列は動かない。揺らぎも同じで、種と細かさを
+値として持つ ``NoiseField`` がある (``SketchPart/noiseSeed(_:)`` に触れずに、板ごとに別の種で引ける)。
+
 ### 手本の名前から引く
 
 **Processing・p5.js の名前で書いて通らない・動きが違うときに、mokume のどの口へ直すかを引く表である。** 名前は手本から採っているので、多くはそのまま写せる。ここに並ぶのは、写すと黙ってずれるか、綴りが変わる口だけである。違う理由と詳しい振る舞いは、リンク先の説明にある。
@@ -319,7 +370,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 | `mouseButton == LEFT` | ``SketchPart/mouseButton`` | `mouseButton == .left` と ``MouseButton`` で書く |
 | p5 `mouseIsPressed` | ``SketchPart/isMousePressed`` | `isMousePressed` を読む |
 | `size(w, h)`・`frameRate(n)`・`fullScreen()` | ``Sketch/settings`` | 呼ばずに `settings` で返す (`SketchSettings(width: w, height: h, frameRate: n)`・``SketchSettings/fullScreen(_:)``) |
-| `PVector`・`p5.Vector` と `mag()` | ``Vector2`` と ``Vector2/length`` | `Vector2(x, y)` で作り、長さは `v.length` で読む |
+| `PVector`・`p5.Vector` と `mag()` | ``Vector2``・``Vector3`` と ``Vector2/length`` | `Vector2(x, y)`・`Vector3(x, y, z)` で作り、平面の長さは `v.length` で読む |
 | `colorMode(HSB)` | ``color(hue:saturation:brightness:alpha:)`` | 色の体系を切り替えず、色相・彩度・明度で作る色にだけラベルを付ける |
 | p5 `textToContours`・`textToPoints` | ``SketchPart/textOutline(_:_:_:)`` | 返る点は曲線をほどいた折れ目の点で、間隔は揃っていない。等間隔の点は ``SketchPart/textOutline(_:_:_:spacing:)`` の `spacing:` に画素で渡す (`sampleFactor` は書体の単位に対する比なので、画素へ直す) |
 | p5 `spotLight(…, angle, concentration)` | ``SketchPart/spotLight(_:_:_:_:_:_:_:angle:)`` | 角度に `angle:` を付ける。`concentration` は渡さない |
@@ -352,6 +403,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/canvas``
 - ``SketchPart/frameCount``
 - ``SketchPart/time``
+- ``SketchPart/phase(period:)``
+- ``SketchPart/authorTime``
 - ``SketchPart/deltaTime``
 - ``SketchPart/clock``
 - ``Clock``
@@ -380,7 +433,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/background(_:)-9jeha``
 - ``SketchPart/background(_:_:)``
 - ``SketchPart/background(_:_:_:_:)``
-- ``SketchPart/fill(_:)``
+- ``SketchPart/fill(_:)-(LinearRGBA)``
+- ``SketchPart/fill(_:)-(Gradient)``
 - ``SketchPart/fill(_:_:)-(ScalarConvertible,_)``
 - ``SketchPart/fill(_:_:)-(LinearRGBA,_)``
 - ``SketchPart/fill(_:_:_:_:)``
@@ -398,6 +452,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/exposure(_:)``
 - ``SketchPart/toneMapping(_:)``
 - ``LinearRGBA``
+- ``Gradient``
 - ``BlendMode``
 - ``ToneMapping``
 
@@ -411,6 +466,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``color(hex:)``
 - ``color(hue:saturation:brightness:alpha:)``
 - ``lerpColor(_:_:_:)``
+- ``paletteLerp(_:_:)``
 - ``red(_:)``
 - ``green(_:)``
 - ``blue(_:)``
@@ -424,6 +480,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/strokeWeight(_:)``
 - ``SketchPart/strokeCap(_:)``
 - ``SketchPart/strokeJoin(_:)``
+- ``SketchPart/strokeDash(_:_:)``
+- ``SketchPart/noStrokeDash()``
 - ``StrokeCap``
 - ``StrokeJoin``
 
@@ -435,10 +493,13 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/circle(_:_:_:)``
 - ``SketchPart/ellipse(_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:)``
+- ``SketchPart/arc(_:_:_:_:_:_:_:)``
+- ``ArcMode``
 - ``SketchPart/triangle(_:_:_:_:_:_:)``
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
 - ``SketchPart/line(_:_:_:_:)``
+- ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 
 ### 座標の読み方
 
@@ -452,6 +513,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Rect``
 - ``Circle``
 - ``Vector2``
+- ``Vector3``
 
 ### 自分で形を組む
 
@@ -467,6 +529,8 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/curveVertex(_:_:)``
 - ``SketchPart/curveDetail(_:)``
 - ``SketchPart/curveTightness(_:)``
+- ``bezierPoint(_:_:_:_:_:)``
+- ``bezierTangent(_:_:_:_:_:)``
 - ``SketchPart/beginContour()``
 - ``SketchPart/endContour()``
 - ``SketchPart/endShape(_:)``
@@ -518,9 +582,11 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/text(_:_:_:)``
 - ``SketchPart/text(_:_:_:_:_:)``
 - ``SketchPart/textSize(_:)``
-- ``SketchPart/textFont(_:)``
+- ``SketchPart/textFont(_:)-(String)``
+- ``SketchPart/textFont(_:)-(Font)``
 - ``SketchPart/noTextFont()``
 - ``SketchPart/textStyle(_:)``
+- ``SketchPart/textWeight(_:)``
 - ``SketchPart/textAlign(_:_:)``
 - ``SketchPart/textLeading(_:)``
 - ``SketchPart/textWrap(_:)``
@@ -530,6 +596,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/textOutline(_:_:_:)``
 - ``SketchPart/textOutline(_:_:_:spacing:)``
 - ``SketchPart/textBounds(_:_:_:)``
+- ``SketchPart/shapedText(_:_:_:)``
+- ``SketchPart/shapedTextWidth(_:)``
+- ``SketchPart/shapedTextBounds(_:_:_:)``
+- ``SketchPart/loadFont(_:)``
+- ``Font``
+- ``FontFailure``
 - ``TextStyle``
 - ``TextWrap``
 - ``TextFlow``
@@ -598,6 +670,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``Sketch/createBandPass()``
 - ``Sketch/createReverb()``
 - ``Sketch/createDelay()``
+- ``EffectInput``
 - ``SynthSound``
 - ``SynthSource``
 - ``Oscillator``
@@ -620,6 +693,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 ### OSC で他の道具とやりとりする
 
 - ``Sketch/createOSC(listen:send:)``
+- ``Sketch/createOSC(send:)``
 - ``Sketch/createOSC(messages:)``
 - ``OSCPort``
 - ``OSCMessage``
@@ -698,9 +772,14 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 
 - ``SketchPart/loadJSONObject(_:)``
 - ``SketchPart/requestJSONObject(_:)``
+- ``SketchPart/parseJSONObject(_:)``
+- ``SketchPart/loadJSONArray(_:)``
+- ``SketchPart/requestJSONArray(_:)``
+- ``SketchPart/parseJSONArray(_:)``
 - ``SketchPart/loadXML(_:)``
 - ``SketchPart/requestXML(_:)``
 - ``JSONObject``
+- ``JSONArray``
 - ``XML``
 
 ### 立体を置く
@@ -787,9 +866,12 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/random(_:)-([Element])``
 - ``SketchPart/shuffle(_:)``
 - ``SketchPart/randomSeed(_:)``
+- ``SketchPart/randomSource``
+- ``RandomSource``
 - ``SketchPart/noise(_:_:_:_:)``
 - ``SketchPart/noiseSeed(_:)``
 - ``SketchPart/noiseDetail(_:_:)``
+- ``NoiseField``
 
 ### 角度と数を直す
 
@@ -821,6 +903,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``SketchPart/shader(_:)``
 - ``SketchPart/resetShader()``
 - ``SketchPart/effects(_:)``
+- ``SketchPart/filter(_:)``
 - ``SketchPart/loadEffect(_:values:)``
 - ``SketchPart/makeEffect(_:name:values:)``
 - ``SketchPart/makeNumbers(count:)``
@@ -862,6 +945,7 @@ rotate(turn * .pi)                       // 他の項が Float なら .pi のま
 - ``MouseButton``
 - ``SketchPart/scrollX``
 - ``SketchPart/scrollY``
+- ``SketchPart/pinch``
 - ``SketchPart/dragX``
 - ``SketchPart/dragY``
 - ``SketchPart/movedX``

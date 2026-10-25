@@ -22,6 +22,45 @@ enum WatchCommand {
     /// 所要時間に検出の時間が出るので、足りなければ実測を根拠に差し替えられる。
     static let interval: TimeInterval = 0.25
 
+    /// 作り直しをまたいで作者の時計を渡す旗 (値を取らない)。**`watch` だけが受ける** — `run`・`render` は
+    /// 知らない選択肢として断る。
+    static let keepTimeFlag = "--keep-time"
+
+    /// `watch` が足す選択肢 (走らせる部分の選択肢 ``Invocation/options`` に足して解く)。
+    @MainActor static var options: [Arguments.Option] {
+        [
+            Arguments.Option([keepTimeFlag], isSwitch: true) {
+                "\($0) takes no value"
+            }
+        ]
+    }
+
+    /// 世代をまたいで作者の時計を渡すファイルの場所。見張り 1 本ごとに別 (プロセス番号で分ける)。
+    ///
+    /// **専用の小さなディレクトリの中に置く。** 書く側 (`AtomicFile`) は、落とされた書き手が残した一時ファイルを
+    /// 探すために、最初に置くときファイルの隣を 1 度だけ引く — 一時ディレクトリの直下に置くと、物が溜まった
+    /// 一時ディレクトリ (実測で 14 万件) を最初の枚の中で引いて、窓の枚が 1 秒詰まった。錠のファイルと
+    /// 書きかけの一時ファイルも同じディレクトリに入るので、後始末はディレクトリごと消すだけで済む。
+    static func keepTimeFile() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(keepTimeFilePrefix)\(getpid())", isDirectory: true)
+            .appendingPathComponent("clock", isDirectory: false)
+    }
+
+    /// 時計を渡すディレクトリの名前の前置き (`keepTimeFile()` が見張りの pid を続ける)。
+    private static let keepTimeFilePrefix = "mokume-keep-time-"
+
+    /// 時計を渡すファイルと、それに付いてくるもの (書く側が隣に持つ錠のファイルと、書いている途中に落とされた子が
+    /// 残した一時ファイル) を、専用のディレクトリごと消す。
+    ///
+    /// **無ければ何もしない・2 度消しても害は無い** (終わりの経路が 2 つある — `run` の戻りと `teardown`)。
+    /// 消すのは名前が前置きで始まるディレクトリだけ — 場所の取り違えで一時ディレクトリそのものを消さない。
+    static func removeKeepTimeFiles(_ file: URL) {
+        let directory = file.deletingLastPathComponent()
+        guard directory.lastPathComponent.hasPrefix(keepTimeFilePrefix) else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     /// 終わりの合図として受けるもの。
     ///
     /// **端末が消える形 (SIGHUP) がいちばん多い。** 見張りを起こした端末やセッションが
@@ -48,7 +87,8 @@ enum WatchCommand {
         watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) },
         claiming: (URL) throws(CommandFailure) -> WatchPlaceLock = { try WatchPlaceLock.claim(under: $0) }
     ) throws(CommandFailure) {
-        let invocation = try Invocation.parse(arguments)
+        let (invocation, values) = try Invocation.parse(arguments, adding: options)
+        let keepsTime = values[keepTimeFlag] != nil
         let directory = try invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
@@ -87,9 +127,18 @@ enum WatchCommand {
         let place = try claiming(facetBase)
         defer { place.release() }
 
+        // **世代をまたいで時計を渡すファイル** (`--keep-time`・#2414)。始める前に消す (前の見張りの時計から
+        // 始めない) し、終わりでも消す。旗の無い見張りは何も作らず、子にも渡さない
+        let keepTimeFile = keepsTime ? Self.keepTimeFile() : nil
+        if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) }
+        // **終わる経路は 2 つある。** ここは巡回を抜けて戻る道で、Dock の「終了」・ログアウト・システム終了は
+        // `run()` から戻らず `teardown` だけを通る — 消す処理はそちらにも載せてある (2 度消しても害は無い)
+        defer { if let keepTimeFile { Self.removeKeepTimeFiles(keepTimeFile) } }
+
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
-            reportsRate: true, hooks: .live(resolver: resolver, running: running))
+            reportsRate: true,
+            hooks: .live(resolver: resolver, running: running, keepTime: keepTimeFile?.path))
         say("Watching: \(directory.path)")
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
@@ -148,14 +197,14 @@ enum WatchCommand {
                 session.noteStopRequested()
             },
             isFinished: { session.finishStage == .done },
-            teardown: { teardown(session, viewer, created: prepared) })
+            teardown: { teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile) })
         NSApplication.shared.delegate = delegate
 
         // **巡回に入る前に断る。** 窓が覆われてから立てるのでは遅い — App Nap は
         // 起動から 30〜60 秒で入る (#1199)
         refuseThrottling()
         watching(session, viewer)
-        teardown(session, viewer, created: prepared)
+        teardown(session, viewer, created: prepared, keepTimeFile: keepTimeFile)
     }
 
     /// 置き場の断片を元から読ませる先を決められなかったときに名乗る 1 行 ([#2517](https://github.com/mokume-metal/mokume/issues/2517))。
@@ -224,7 +273,10 @@ enum WatchCommand {
     ///
     /// - Parameter created: `prepareFacets(under:)` が置いた区画。**畳むのはこれだけ** —
     ///   人が置いたものは残す。
-    static func teardown(_ session: WatchSession, _ viewer: Viewer?, created: [URL] = []) {
+    /// - Parameter keepTimeFile: `--keep-time` の時計のファイル。置いていかない。
+    static func teardown(
+        _ session: WatchSession, _ viewer: Viewer?, created: [URL] = [], keepTimeFile: URL? = nil
+    ) {
         guard !teardownDone else { return }
         teardownDone = true
         // **断りを返す。** 終わりの経路は 2 つある (巡回が抜けた / 道具立てが終わらせた)
@@ -239,6 +291,9 @@ enum WatchCommand {
         // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
         if viewer != nil { try? FileManager.default.removeItem(at: viewportFacet(for: session)) }
         for facet in created { try? FileManager.default.removeItem(at: facet) }
+        // **時計を渡すファイルも置いていかない** (`--keep-time`・#2414)。Dock の「終了」・ログアウト・システム終了は
+        // `run()` の `defer` を通らない。子は `finishBlocking` が止め終えているので、もう書く者は居ない
+        if let keepTimeFile { removeKeepTimeFiles(keepTimeFile) }
     }
 
     /// 後始末を済ませたか。**印は 1 プロセスに 1 つ** (終わりの合図と同じ扱い)。
@@ -404,19 +459,47 @@ enum WatchCommand {
         // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
+        // **畳んだ・居なくなった世代の頼みを、両方の台で下ろす** (#2983)。台の知らせを通らない 3 つの口
+        // (倒れた子・子の離脱・合図の来ないまま次の保存) から ``WatchSession`` が呼ぶ
+        session.relinquishesDisplay = { [weak window, weak preview] pids in
+            window?.relinquishGeneration(pids: pids)
+            preview?.relinquishGeneration(pids: pids)
+        }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
         // 合図は窓の側の同期の呼び出しなので、待つ仕事は `Task` へ渡す
         let viewer = Viewer(window: window, preview: preview)
         let firstFrame = viewer.firstFrame
-        window.onGenerationPromoted = { [weak session] in
+        // **合図が名乗った子の番号を渡す** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        // 見張りは、待っている世代のものだけを受ける
+        window.onGenerationPromoted = { [weak session] pid in
             firstFrame.promoted(.window)
-            Task { @MainActor in await retire(after: session) }
+            Task { @MainActor in await retire(after: session, pid: pid) }
         }
-        preview.onGenerationPromoted = { [weak session] in
+        preview.onGenerationPromoted = { [weak session] pid in
             firstFrame.promoted(.preview)
-            Task { @MainActor in await retire(after: session) }
+            Task { @MainActor in await retire(after: session, pid: pid) }
+        }
+        // **乗り換えの合図が来ない 2 つの形** (目録が読めない・面を引けない) は、道具の窓だけが知る
+        // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。名乗って、乗り換えたとみなす。
+        // 窓ごとに来るので、畳むのは 1 度である (``WatchSession/retireAfterUndeliverable()``)
+        //
+        // **知らせを受けた時点で、待っている世代を同期に控える。** 捌くのは `Task` で遅れ、知らせは世代の
+        // 印を持たないので、作り直しの続きが先に走ると前の世代の知らせが次の世代に当たる
+        window.onGenerationUndeliverable = { [weak session] cause, pid in
+            let waiting = session?.waitingGeneration
+            Task { @MainActor in
+                await retireUndeliverable(
+                    cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
+            }
+        }
+        preview.onGenerationUndeliverable = { [weak session] cause, pid in
+            let waiting = session?.waitingGeneration
+            Task { @MainActor in
+                await retireUndeliverable(
+                    cause, session: session, waiting: waiting, pid: pid, viewer: viewer)
+            }
         }
         // **どちらの窓が先に出しても畳む。** 2 つの窓は独立に 1 枚目を出すので合図は 2 度来るが、
         // 畳むのは待っている間の 1 度だけである (``FirstFrameWait/shown(_:)``)
@@ -487,8 +570,76 @@ enum WatchCommand {
     /// **名乗るのは口の側である** — ``WatchSession`` は判断だけを持ち、出力を持たない
     /// (#732 が終わり方について定めた分担を、差し替えの側でもそのまま使う)。新しい絵が
     /// 出るまでの記録もこの合図で足される (#930)。
-    static func retire(after session: WatchSession?) async {
-        announce(await session?.generationPromoted())
+    ///
+    /// - Parameter pid: 合図が名乗った子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    ///   名乗らない子の合図は `nil` で、今までどおり待っている世代のものと読む。
+    static func retire(after session: WatchSession?, pid: Int32? = nil) async {
+        announce(await session?.generationPromoted(pid: pid))
+    }
+
+    /// 道具の窓が新しい世代の絵を受け取れないと知らされたとき、前の世代を畳み、端末とプレビューへ名乗る
+    /// ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    ///
+    /// **乗り換えを待っている、生きている世代のときだけ動く** (``WatchSession/retireAfterUndeliverable()``)。
+    /// 窓ごとに呼ばれるので、2 度目以降は何もしない。名乗るのも 1 度である。
+    ///
+    /// - Parameter waiting: 知らせを受けた時点で乗り換えを待っていた世代 (``WatchSession/waitingGeneration``)。
+    /// - Parameter pid: 知らせが読めた目録の子の番号 (#2982)。待っている世代でなければ何もしない。
+    ///   読めない目録・番号を名乗らない子なら `nil` で、今までの推定。
+    /// - Parameter preview: プレビューへ出す口。検査から差し替える (``step(_:viewer:stopped:preview:)`` と同じ)。
+    static func retireUndeliverable(
+        _ cause: UndeliverableGeneration, session: WatchSession?, waiting: Process?,
+        pid: Int32? = nil, viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
+    ) async {
+        guard let session,
+            let undelivered = await session.retireAfterUndeliverable(waiting: waiting, pid: pid)
+        else { return }
+        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
+        announce(undelivered.outcome)
+        say(undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: true))
+        viewer?.firstFrame.settle()
+        showInPreview(
+            undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: false), false)
+    }
+
+    /// 道具の窓が新しい世代の絵を受け取れないとき、見張りが名乗る行 (#2928)。
+    ///
+    /// **理由の候補は、版のずれの可能性を断定せずに挙げる** (ADR-0018 決定 6)。目録が読めない形では、
+    /// 台が理由と同じ候補を端末へ名乗り済み (#2889) なので、**端末の行は候補を繰り返さず**そちらを指す。
+    /// プレビューには端末が見えないので、どちらの形でも候補を言う。
+    static func undeliverableLine(
+        previous: WatchSession.FallbackPrevious, cause: UndeliverableGeneration, inTerminal: Bool
+    ) -> String {
+        var line =
+            (previous == .none ? "The sketch" : "The new version")
+            + " is running, but this window could not receive its frames"
+        switch previous {
+        case .none: break
+        case .stopped:
+            line += " — the previous version is stopped, so its last picture stays here "
+                + "and input goes to the new version"
+        case .left:
+            line += " — the previous version could not be stopped and keeps running"
+        }
+        // 台が理由を端末へ名乗り済みの形 (読めない目録) では、端末の行は理由を繰り返さずそちらを指す
+        if inTerminal, cause != .noSurface, cause != .unusableSurface {
+            return line + " (the reason is above)"
+        }
+        switch cause {
+        case .unreadableManifest:
+            return line + ": its manifest could not be read. The sketch may depend on a different "
+                + "version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        case .unreadableFile:
+            // 版の形とは関係が無い (権限・置き場) ので、版の案内は付けない
+            return line + ": its manifest file could not be read (see the terminal for the reason)"
+        case .noSurface:
+            return line + ": none of the surfaces it names could be looked up. The sketch may depend "
+                + "on a different version of mokume than this tool — try `mokume doctor <sketch directory>`"
+        case .unusableSurface:
+            // 面は引けたので、版の形とは関係が無い (道具の GPU の事情)
+            return line + ": the surfaces it names were found, but this tool's GPU could not turn "
+                + "them into pictures"
+        }
     }
 
     /// 前の世代を畳んだ結果のうち、人が知るべきもの (期限に掛かった) だけを名乗る。
@@ -563,6 +714,8 @@ enum WatchCommand {
         // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
         // `willRebuild` が上書きする (#1103)
+        // **映っている前の世代が自分で消えた回も、台へ伝える** (#2983)。`departed()` は起こした子だけを見る
+        session.relinquishIfOutgoingDeparted()
         if let departure = session.departed() {
             // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
             // 合図はもう来ないので、ここで畳む (#1142)

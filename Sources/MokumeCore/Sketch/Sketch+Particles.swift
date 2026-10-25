@@ -7,8 +7,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var dust: Particles! -->
     /// ```swift
-    /// func setup() {
-    ///     dust = try? makeParticles(count: 20000)
+    /// func setup() throws {
+    ///     dust = try makeParticles(count: 20000)
     /// }
     /// ```
     ///
@@ -37,11 +37,11 @@ extension SketchPart {
     ///     var glow: Particles!
     ///     var flat: Particles!
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         blendMode(.add)
-    ///         glow = try? makeParticles(count: 3000)
+    ///         glow = try makeParticles(count: 3000)
     ///         blendMode(.blend)
-    ///         flat = try? makeParticles(count: 3000)
+    ///         flat = try makeParticles(count: 3000)
     ///     }
     ///
     ///     func draw() {
@@ -67,6 +67,46 @@ extension SketchPart {
     ///   }
     /// }
     ///
+    /// ## 寿命に沿って薄くする (`in.particle.age`)
+    ///
+    /// 粒の塗りの断片は、その粒の年齢 `in.particle.age` を読める。出して最初に描かれる
+    /// フレームで 0、寿命が尽きる直前に 1 へ近づく (0…1 の外へは出ない)。`1.0 - in.particle.age`
+    /// を色に掛ければ、寿命の終わりへ向けて薄くなって溶ける。**断片は作る前に当てる**ので、
+    /// 年齢は粒ごとに断片へ届く値で、断片の値を変える必要は無い。粒でない形 (平面・立体) に同じ
+    /// 断片を当てたときは、`in.particle.age` は 0 として読める。
+    ///
+    /// 粒の板の `in.uv` は板の中で変わらない (白い区画を指す 1 点) ので、丸く柔らかい粒は
+    /// 板の中の位置 `in.shapePosition` (`plane(1, 1)` の板で ±0.5) から作る。
+    ///
+    /// ```swift
+    /// var smoke: Particles!
+    ///
+    /// func setup() throws {
+    ///     let soft = try makeShader("""
+    ///         float4 paint(Fragment in, Values values) {
+    ///             float r = length(in.shapePosition.xy) * 2.0;
+    ///             return in.color * (1.0 - smoothstep(0.0, 1.0, r)) * (1.0 - in.particle.age);
+    ///         }
+    ///         """)
+    ///     shader(soft)
+    ///     blendMode(.add)
+    ///     smoke = try makeParticles(count: 12_000)
+    ///     blendMode(.blend)
+    ///     resetShader()
+    /// }
+    ///
+    /// func draw() {
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     emit(smoke, from: .line(80, 250, 400, 250),
+    ///          toward: .plane((-.pi / 2 - 0.3)...(-.pi / 2 + 0.3)),
+    ///          rate: 500, speed: 50...90, life: 3...5, size: 24...48,
+    ///          color: color(200, 220, 255, 30))
+    ///     force(smoke, .gravity(0, -50), .drag(0.8))
+    ///     particles(smoke)
+    /// }
+    /// ```
+    ///
     /// ## 枠は環状に回る
     ///
     /// 出した粒は空いている枠へ順に入り、末尾まで行くと先頭へ戻る。**まだ生きている粒を
@@ -82,11 +122,9 @@ extension SketchPart {
     ///     ```swift
     ///     var jets: [Particles] = []
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         for count in [100, 300, 900] {
-    ///             if let jet = try? makeParticles(count: count) {
-    ///                 jets.append(jet)
-    ///             }
+    ///             try jets.append(makeParticles(count: count))
     ///         }
     ///     }
     ///
@@ -120,8 +158,8 @@ extension SketchPart {
     ///   (``RenderFailure/invalidCount(_:)``) に ``RenderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=ed20505f
-    // shot: 2 snippet=ee77bf99
+    // shot: 1 snippet=0e79847d
+    // shot: 2 snippet=a7e250e1
     public func makeParticles(count: Int) throws(RenderFailure) -> Particles {
         try Self.resourceCanvas(RenderFailure.self).makeParticles(count: count)
     }
@@ -156,8 +194,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -201,8 +239,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -235,8 +273,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -272,8 +310,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -302,8 +340,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -332,8 +370,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dust: Particles!
     ///
-    ///     func setup() {
-    ///         dust = try? makeParticles(count: 2000)
+    ///     func setup() throws {
+    ///         dust = try makeParticles(count: 2000)
     ///     }
     ///
     ///     func draw() {
@@ -383,12 +421,12 @@ extension SketchPart {
     /// どれも 0 以上の量である。負の `rate` は 0 (出さない) として、`life`・`size` は引いた
     /// 値の 0 より下を 0 として、`from` の円・球の負の半径は絶対値として扱い、引数ごとに
     /// 1 度だけ知らせる。
-    // shot: 1 snippet=ea2ac744
-    // shot: 2 snippet=96807c6d
-    // shot: 3 snippet=45749861
-    // shot: 4 snippet=d90706a7
-    // shot: 5 snippet=52ae58cc
-    // shot: 6 snippet=906d03c4
+    // shot: 1 snippet=2a198641
+    // shot: 2 snippet=da72b046
+    // shot: 3 snippet=6b64360d
+    // shot: 4 snippet=7b1e1b92
+    // shot: 5 snippet=7998306b
+    // shot: 6 snippet=90be3e77
     public func emit(
         _ particles: Particles, from source: Emitter,
         toward heading: Heading = .plane(0...(2 * Float.pi)),
@@ -399,9 +437,9 @@ extension SketchPart {
         color: LinearRGBA? = nil
     ) {
         guard let runtime = Self.liveRuntime() else { return }
-        runtime.canvas.emit(
+        runtime.activeCanvas.emit(
             particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
-            size: size, color: color, using: &runtime.randomness)
+            size: size, color: color, frame: runtime.frameCount, using: &runtime.randomness)
     }
 
     /// 粒に力を効かせる。
@@ -425,10 +463,10 @@ extension SketchPart {
     ///     var falling: Particles!
     ///     var blown: Particles!
     ///
-    ///     func setup() {
-    ///         plain = try? makeParticles(count: 1000)
-    ///         falling = try? makeParticles(count: 1000)
-    ///         blown = try? makeParticles(count: 1000)
+    ///     func setup() throws {
+    ///         plain = try makeParticles(count: 1000)
+    ///         falling = try makeParticles(count: 1000)
+    ///         blown = try makeParticles(count: 1000)
     ///     }
     ///
     ///     func draw() {
@@ -466,9 +504,9 @@ extension SketchPart {
     ///     var every: Particles!
     ///     var once: Particles!
     ///
-    ///     func setup() {
-    ///         every = try? makeParticles(count: 1000)
-    ///         once = try? makeParticles(count: 1000)
+    ///     func setup() throws {
+    ///         every = try makeParticles(count: 1000)
+    ///         once = try makeParticles(count: 1000)
     ///     }
     ///
     ///     func draw() {
@@ -511,8 +549,8 @@ extension SketchPart {
     ///
     /// 有限の力でも、足し合わせや積分が `Float` で溢れるほど大きければ、**溢れるフレームは
     /// 粒を動かさない** — 粒の位置と速度が数でなくなることは無い。
-    // shot: 1 snippet=4426839e
-    // shot: 2 snippet=878e959d
+    // shot: 1 snippet=cb617257
+    // shot: 2 snippet=bf8728e5
     public func force(_ particles: Particles, _ forces: Force...) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.force(particles, forces)
@@ -578,9 +616,9 @@ extension SketchPart {
     ///     var once: Particles!
     ///     var twice: Particles!
     ///
-    ///     func setup() {
-    ///         once = try? makeParticles(count: 1000)
-    ///         twice = try? makeParticles(count: 1000)
+    ///     func setup() throws {
+    ///         once = try makeParticles(count: 1000)
+    ///         twice = try makeParticles(count: 1000)
     ///     }
     ///
     ///     func draw() {
@@ -636,8 +674,8 @@ extension SketchPart {
     ///     ```swift
     ///     var dots: Particles!
     ///
-    ///     func setup() {
-    ///         dots = try? makeParticles(count: 100)
+    ///     func setup() throws {
+    ///         dots = try makeParticles(count: 100)
     ///     }
     ///
     ///     func draw() {
@@ -673,11 +711,11 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 水色の枠が 3 つ。左は傾き、中は縦に細く、右は 2 倍に大きい。枠の中の橙色の四角い粒は 3 つずつで、どれも傾かず痩せず、右だけが 2 倍の大きさ -->
-    ///     ![水色の枠が 3 つ。左は傾き、中は縦に細く、右は 2 倍に大きい。枠の中の橙色の四角い粒は 3 つずつで、どれも傾かず痩せず、右だけが 2 倍の大きさ](https://i.gyazo.com/310068f9460e5cf42e5f9e344f47ff7c.png)
+    ///     ![水色の枠が 3 つ。左は傾き、中は縦に細く、右は 2 倍に大きい。枠の中の橙色の四角い粒は 3 つずつで、どれも傾かず痩せず、右だけが 2 倍の大きさ](https://i.gyazo.com/169732caa5255db188a2f598bfc49524.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=07f084f9
-    // shot: 2 snippet=468ad272
+    // shot: 1 snippet=23168877
+    // shot: 2 snippet=7099ec83
     public func particles(_ particles: Particles) { Self.liveCanvas()?.particles(particles) }
 }

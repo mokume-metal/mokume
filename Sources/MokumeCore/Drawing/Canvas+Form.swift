@@ -37,6 +37,10 @@ extension Canvas {
         ///
         /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
         var hasThinFill = false
+        /// この列に、縁が画素の軸に斜めになりうる図形が 1 つでもあるか
+        /// (``FormInstance/mayHaveObliqueEdge(unitsPerDrawnPixel:)``・#2991)。立っていれば、閉じるときに
+        /// ``FormInstance/obliqueEdgesFlag`` を足す。``hasThinFill`` と同じく、変わっても列を切らない。
+        var hasObliqueEdge = false
     }
 
     /// 基本図形をこの経路で描いてよいか。
@@ -63,7 +67,7 @@ extension Canvas {
     /// 足す (``OpenForm/hasThinFill``)。
     ///
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
-    func beginForm(flags: UInt32, thinFill: Bool) {
+    func beginForm(flags: UInt32, thinFill: Bool, obliqueEdge: Bool) {
         if openSource != .form {
             closeBatch()
             openSource = .form
@@ -77,6 +81,7 @@ extension Canvas {
             openForm = OpenForm(instanceStart: formInstances.count, flags: flags)
         }
         if thinFill { openForm?.hasThinFill = true }
+        if obliqueEdge { openForm?.hasObliqueEdge = true }
     }
 
     /// 開いている基本図形の列を閉じる。
@@ -115,7 +120,8 @@ extension Canvas {
                 castsShadow: false,
                 instanceStart: open.instanceStart,
                 instanceCount: count,
-                formFlags: open.flags | (open.hasThinFill ? FormInstance.thinFillsFlag : 0)))
+                formFlags: open.flags | (open.hasThinFill ? FormInstance.thinFillsFlag : 0)
+                    | (open.hasObliqueEdge ? FormInstance.obliqueEdgesFlag : 0)))
     }
 
     /// 基本図形を 1 つ置く。
@@ -125,20 +131,24 @@ extension Canvas {
     ///   - half: 半幅・半高 (楕円は半径。線は半分の長さと 0)。
     ///   - axis: 形自身の横軸の向き (長さ 1)。線だけが線の向きを渡す。
     ///   - arc: 扇形の開始角と掃引。
+    ///   - arcClosure: 扇形の閉じ方 (``FormInstance/ArcClosure``・#2428)。扇形以外では読まない。
     ///   - fills: この形が塗りを持ちうるか (線と点は持たない)。
     ///   - cornerRadius: 矩形の角の半径 (形自身の座標。半幅・半高の小さいほう以下に締めてある・
     ///     #2757)。矩形以外と、角を丸めない矩形は 0。
     ///   - cap: 端の形。渡さなければいまの設定。点は孤立した端として `square` を `project` に読み替える。
+    ///   - strokes: 輪郭を引くか。偽なら、いまの設定が輪郭を引くときも塗りだけを置く。破線の図形が、
+    ///     塗りをここで置き、輪郭は破線の片で引くのに使う (``strokeDashedFormOutline(_:)``・#2835)。
     func appendForm(
         _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
         axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero,
-        fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0
+        arcClosure: FormInstance.ArcClosure = .pie,
+        fills: Bool, cap: StrokeCap? = nil, cornerRadius: Float = 0, strokes: Bool = true
     ) {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         // **色は `Optional` にしない。** 持つかどうかは旗で渡す (``FormInstance/init``)
         let drawsFill = fills && style.hasFill
-        let drawsStroke = style.hasStroke && style.strokeWeight > 0
+        let drawsStroke = strokes && style.hasStroke && style.strokeWeight > 0
         guard drawsFill || drawsStroke else { return }
 
         // いまの変換の 2x2 に、形自身の横軸の向きを掛ける (線以外は単位)
@@ -149,8 +159,8 @@ extension Canvas {
         let y = c0 * (-axis.y) + c1 * axis.x
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
-            offset: transform.apply(x: center.x, y: center.y), half: half, arc: arc,
-            halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
+            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
+            arcClosure: arcClosure, halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
             fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,
             cap: cap ?? style.strokeCap, join: style.strokeJoin)
@@ -162,8 +172,29 @@ extension Canvas {
         // 細い塗りと、輪郭の帯の細い穴 (#2186) は同じ旗に乗る (``FormInstance/thinFillsFlag``)
         beginForm(
             flags: instance.meta.w,
-            thinFill: instance.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel))
+            thinFill: instance.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel),
+            obliqueEdge: instance.mayHaveObliqueEdge(unitsPerDrawnPixel: unitsPerDrawnPixel))
         formInstances.append(instance)
+    }
+
+    /// 基本図形の幾何だけを、保持する形の記録へ足す。**何も描かない** (``Shape/geometryForms``・#2428)。
+    ///
+    /// 描く経路が置き場所を足さない (三角形の経路・塗りを止めた破線の輪郭) 円弧が、記録の間だけ呼ぶ。
+    /// 外接を閉じ方の幾何から求めるための置き場所で、描く旗 (塗り・輪郭) は持たない。引数は ``appendForm`` と同じ。
+    func noteGeometryForm(
+        _ kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>, arc: SIMD2<Float>,
+        arcClosure: FormInstance.ArcClosure
+    ) {
+        guard recordingShape else { return }
+        let columns = transform.matrix.columns
+        let instance = FormInstance(
+            kind: kind, linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
+            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
+            arcClosure: arcClosure, halfWeight: 0, fill: .zero, stroke: .zero, fills: false,
+            strokes: false, cap: style.strokeCap, join: style.strokeJoin)
+        guard instance.isPlaceable, half.x.isFinite, half.y.isFinite, arc.x.isFinite, arc.y.isFinite
+        else { return }
+        recordedGeometryForms.append(instance)
     }
 
     /// 線を基本図形として置く。長さが 0 でも端の形ぶんは出る (点と同じ規則)。

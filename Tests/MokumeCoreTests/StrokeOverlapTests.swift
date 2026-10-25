@@ -322,12 +322,19 @@ struct StrokeOverlapTests {
         }
         #expect(overpainted(ellipse).count <= 5, "ellipse: \(overpainted(ellipse).count)")
         #expect(painted(ellipse) == 2747)
-        let arc = try translucent(shaded: true) { canvas in
-            canvas.strokeWeight(20)
-            canvas.arc(80, 80, 100, 6, 0, Float.pi)
+        // 扇の周 (`.pie`・起票時の値) と、引数なしの既定 (輪郭は開いた弧の帯・#2428) の両方
+        for (mode, count) in [(ArcMode.pie, 2572), (nil, 2308)] as [(ArcMode?, Int)] {
+            let arc = try translucent(shaded: true) { canvas in
+                canvas.strokeWeight(20)
+                if let mode {
+                    canvas.arc(80, 80, 100, 6, 0, Float.pi, mode)
+                } else {
+                    canvas.arc(80, 80, 100, 6, 0, Float.pi)
+                }
+            }
+            #expect(overpainted(arc).count <= 5, "arc \(String(describing: mode)): \(overpainted(arc).count)")
+            #expect(painted(arc) == count, "arc \(String(describing: mode)): \(painted(arc))")
         }
-        #expect(overpainted(arc).count <= 5, "arc: \(overpainted(arc).count)")
-        #expect(painted(arc) == 2572)
     }
 
     // MARK: - 反証で足した口
@@ -355,6 +362,110 @@ struct StrokeOverlapTests {
             canvas.quad(20, 20, 140, 140, 140, 20, 20, 140)
         }
         #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
+    }
+
+    // MARK: - #1910: beginShape(.quads) の輪郭は quad() と同じ規則
+
+    /// 凹んだ 4 点 (`concaveQuadBlendsOnce` と同じ形)。
+    private static let concave: [(Float, Float)] = [(20, 80), (140, 40), (60, 80), (140, 120)]
+    /// 辺が交差する 4 点 (砂時計)。
+    private static let crossed: [(Float, Float)] = [(20, 20), (140, 140), (140, 20), (20, 140)]
+
+    private static func quadVertices(_ canvas: Canvas, _ points: [(Float, Float)]) {
+        canvas.beginShape(.quads)
+        for (x, y) in points { canvas.vertex(x, y) }
+        canvas.endShape()
+    }
+
+    private static func quadCall(_ canvas: Canvas, _ p: [(Float, Float)]) {
+        canvas.quad(p[0].0, p[0].1, p[1].0, p[1].1, p[2].0, p[2].1, p[3].0, p[3].1)
+    }
+
+    @Test("beginShape(.quads) の凹んだ 4 点の半透明の線は、quad() と同じく 1 回だけ混ぜる (起票時は 149 画素が 2 回)")
+    func concaveQuadsBlendOnce() throws {
+        let byQuads = try translucent { canvas in
+            canvas.strokeWeight(20)
+            Self.quadVertices(canvas, Self.concave)
+        }
+        let byCall = try translucent { canvas in
+            canvas.strokeWeight(20)
+            Self.quadCall(canvas, Self.concave)
+        }
+        #expect(painted(byQuads) > 0)
+        #expect(overpainted(byQuads).count <= 5, "quads: \(overpainted(byQuads).count)")
+        #expect(differingPixels(byQuads, byCall) == 0, "quad() との差: \(differingPixels(byQuads, byCall))")
+    }
+
+    @Test("beginShape(.quads) の辺が交差する 4 点は、quad() と同じく交点で 2 回混ぜる")
+    func crossedQuadsBlendTwiceAtTheCrossing() throws {
+        let byQuads = try translucent { canvas in
+            canvas.strokeWeight(10)
+            Self.quadVertices(canvas, Self.crossed)
+        }
+        let byCall = try translucent { canvas in
+            canvas.strokeWeight(10)
+            Self.quadCall(canvas, Self.crossed)
+        }
+        #expect(abs(byQuads[80, 80].red - Self.twice) <= 0.01, "交点: \(byQuads[80, 80].red)")
+        #expect(differingPixels(byQuads, byCall) == 0, "quad() との差: \(differingPixels(byQuads, byCall))")
+    }
+
+    /// `.polygon` は周をなす読み方のまま (#1536 判断 1)。同じ凹んだ 4 点は、起票時と同じ重なりを 2 回混ぜる。
+    @Test("beginShape(.polygon) の凹んだ 4 点は変わらず、向かい合う辺の重なりを 2 回混ぜる")
+    func concavePolygonStillBlendsTwice() throws {
+        let pixels = try translucent { canvas in
+            canvas.strokeWeight(20)
+            canvas.beginShape(.polygon)
+            for (x, y) in Self.concave { canvas.vertex(x, y) }
+            canvas.endShape(.close)
+        }
+        #expect(overpainted(pixels).count == 149, "polygon: \(overpainted(pixels).count)")
+    }
+
+    /// 四角どうしは別々の輪郭。1 枚の中だけが 1 領域で、重なる 2 枚は別々の図形と同じく 2 回混ぜる。
+    @Test("1 つの beginShape(.quads) に並べた重なる四角 2 枚は、別々の quad() と同じ絵になり、重なりは 2 回混ぜる")
+    func overlappingQuadsAreSeparateRegions() throws {
+        let first: [(Float, Float)] = [(40, 40), (100, 40), (100, 100), (40, 100)]
+        let second: [(Float, Float)] = [(70, 70), (130, 70), (130, 130), (70, 130)]
+        let byQuads = try translucent { canvas in
+            canvas.strokeWeight(10)
+            Self.quadVertices(canvas, first + second)
+        }
+        let byCalls = try translucent { canvas in
+            canvas.strokeWeight(10)
+            Self.quadCall(canvas, first)
+            Self.quadCall(canvas, second)
+        }
+        // 1 枚目の右の辺 (x = 100) と 2 枚目の上の辺 (y = 70) が交わる所
+        #expect(abs(byQuads[100, 70].red - Self.twice) <= 0.01, "重なり: \(byQuads[100, 70].red)")
+        #expect(abs(byQuads[40, 40].red - Self.once) <= 0.01, "1 枚の中の角: \(byQuads[40, 40].red)")
+        #expect(differingPixels(byQuads, byCalls) == 0, "quad() 2 回との差: \(differingPixels(byQuads, byCalls))")
+    }
+
+    @Test("半透明の線で記録した .quads の保持した形も、quad() と同じく 1 回だけ混ぜる")
+    func recordedConcaveQuadsBlendOnce() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(20)
+                Self.quadVertices(canvas, Self.concave)
+            }
+        }
+        try canvas.draw {
+            canvas.background(black)
+            canvas.shape(shape)
+        }
+        let pixels = try canvas.target.readPixels()
+        let byCall = try translucent { canvas in
+            canvas.strokeWeight(20)
+            Self.quadCall(canvas, Self.concave)
+        }
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).count <= 5, "recorded: \(overpainted(pixels).count)")
+        #expect(differingPixels(pixels, byCall) == 0, "quad() との差: \(differingPixels(pixels, byCall))")
     }
 
     /// 引き算は変換の前の座標で行う。回して伸ばしても重ね塗りは出ない。
@@ -680,7 +791,7 @@ struct StrokeOverlapTests {
             { Self.opaqueShape($0, weight: 16, Self.closedSquare) },
             at: [
                 Placement(
-                    x: 30, y: 10, scale: 0.8, rotation: SIMD3(0, 0, 0.4), fill: Self.veil)
+                    x: 30, y: 10, scale: 0.8, rotation: Vector3(0, 0, 0.4), fill: Self.veil)
             ])
         #expect(painted(pixels) > 0)
         #expect(overpainted(pixels).count == 0, "\(overpainted(pixels).count)")
@@ -1005,7 +1116,7 @@ struct StrokeOverlapTests {
         let tinted = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
         for placement in [
             Placement(), Placement(fill: tinted),
-            Placement(x: 12, y: 8, scale: 0.9, rotation: SIMD3(0, 0, 0.3)),
+            Placement(x: 12, y: 8, scale: 0.9, rotation: Vector3(0, 0, 0.3)),
         ] {
             let pixels = try drawn(canvas, shape, at: [placement])
             #expect(painted(pixels) > 0)

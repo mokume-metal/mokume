@@ -27,13 +27,18 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 機能を作る側は、同じ呼び出しを作る口 (`createCapture()` のような) の中に置く。
+    /// 機能を作る側は、同じ呼び出しを作る口の中に置く。**返す `false` を捨てない** — 走っている実行の外から
+    /// 呼ばれると足されず、捨てた口は生きていない入り口を黙って返す。足せたかを見て、足せなければ作る口が
+    /// 自分の名前で断る。このリポジトリのパッケージの作る口は、確かめて足すまでを 1 回で行う内部の道具を通り、
+    /// 素の `attach` を呼ばない (#2794)。
     ///
     /// - 呼んだ時点で ``Inlet/open()`` する。投げたら診断に出して `false` を返す
     ///   ([ADR-0024] 決定 7)
     /// - `setup()` や入力のコールバックの中で足せば、そのフレームの `draw()` の前から
     ///   ``Inlet/supply()`` が呼ばれる。`draw()` の中で足せば、次のフレームから
     /// - 同じものを 2 度足しても 1 つのまま (開き直さない)
+    /// - ``detach(_:)-(Inlet)`` で外した入り口を足し直せば、``Inlet/open()`` がもう 1 度呼ばれて、また ``Inlet/supply()`` が
+    ///   呼ばれる (入り口は ``Inlet/close()`` を最後と思い込まない約束である)
     /// - ``Inlet/supply()`` の中から頼んだときは、その巡回が終わってから開いて足す
     ///   (戻り値は `true`。開けなければ診断に出る)
     /// - ``Sketch/plugins`` で宣言したものと同じ並びに入る。閉じるのは ``detach(_:)-(Inlet)`` か、
@@ -148,9 +153,15 @@ extension SketchPart {
 
     /// 入り口を外して閉じる。
     ///
-    /// ``Inlet/close()`` を 1 度だけ呼び、以後 ``Inlet/supply()`` は呼ばれない。並びに
+    /// ``Inlet/close()`` を 1 度だけ呼び、以後 ``Inlet/supply()`` は呼ばれない。外した入り口は
+    /// ``attach(_:)-(Inlet)`` で足し直せ、足し直せば ``Inlet/open()`` がもう 1 度呼ばれる。並びに
     /// 居なければ何もしない。``Inlet/supply()`` の中から頼んだときは、その巡回が終わって
     /// から外す。
+    ///
+    /// **走っている実行の中で起こした `Task` の続きからも外せる** (`Task.detached` からも)。足した実行を
+    /// 差込口が控えているので、実行が走っている間は、呼んだ場所によらず外れる。`setup()`・`draw()`・
+    /// 入力のコールバックの外でも効くのは、**足した実行が走っている間だけ**である。足していない入り口と、
+    /// スケッチが終わった後 (終わりの処理が既に閉じている) は何もせず、そのことを診断に出す。
     ///
     /// 下の例は、呼ばれた回数を数える入り口を `setup()` で足し、30 フレーム目の `draw()` で
     /// 外している。上の灰色の棒はフレームの数、下の棒は入り口が数えた回数で、閉じた入り口は
@@ -179,6 +190,7 @@ extension SketchPart {
     ///         private(set) var count = 0
     ///         private(set) var isClosed = false
     ///         func supply() { count += 1 }
+    ///         func open() { isClosed = false }
     ///         func close() { isClosed = true }
     ///     }
     ///     ```
@@ -189,9 +201,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4e5e0378
+    // shot: 1 snippet=56e84096
     public func detach(_ inlet: any Inlet) {
-        guard let runtime = runningSketch else {
+        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(inlet)
@@ -202,6 +214,13 @@ extension SketchPart {
     /// 下の例は、受け取ったフレームの番号を控える出口を `setup()` で足し、40 フレーム目の
     /// `draw()` で外している。上の列は描いたフレーム、下の列は出口が受け取ったフレームで、
     /// 閉じた出口は色を変える。
+    ///
+    /// **外す直前に描き終えた絵は、外す出口に渡してから閉じる。** 出口へは、描き終えた絵が 1 枚遅れて
+    /// 渡る (次のフレームの終わりか、スケッチの終わりで届く) ので、そのまま閉じると最後の 1 枚が
+    /// 届かない。下の例で 40 フレーム目に外すと、出口は 39 フレーム目までを受け取ってから閉じる
+    /// (連番を書き出す出口なら、最後の 1 枚が欠けない)。渡すのは外す出口だけで、ほかの出口は今までどおり
+    /// 次のフレームの終わりで同じ絵を受け取る。足したフレームより前に描いた絵は、外すときにも渡さない
+    /// (``attach(_:)-(Outlet)``)。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -226,6 +245,7 @@ extension SketchPart {
     ///         private(set) var frames: [Int] = []
     ///         private(set) var isClosed = false
     ///         func receive(_ frame: OutputFrame) { frames.append(frame.frame) }
+    ///         func open() { isClosed = false }
     ///         func close() { isClosed = true }
     ///     }
     ///     ```
@@ -236,9 +256,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=751061ce
+    // shot: 1 snippet=463f1630
     public func detach(_ outlet: any Outlet) {
-        guard let runtime = runningSketch else {
+        guard let runtime = SeamHomes.runtime(of: outlet) ?? runningSketch else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(outlet)
@@ -255,8 +275,9 @@ extension SketchPart {
     /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げる作る口)。足せなければ、`call` の名前で
     /// 1 度だけ警告して `notRunning(call:)` を投げる (文面は ``OutsideRun/notAttachedNotice(_:)``)。
     ///
-    /// ファイルを読む・ポートを開く前に呼ぶ。足すのはその後の ``attach(_:)-(Inlet)`` で、同じ所から続けて呼ぶので
-    /// 足せる。#2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
+    /// ファイルを読む・ポートを開く前に呼ぶ。**作る口が直に呼ぶのではなく、確かめて足すまでを 1 回で行う
+    /// ``attached(_:calledAs:making:)`` が呼ぶ** (確かめと足すを分けると、足した結果の `false` を捨てる古い形を写す・#2794)。
+    /// #2683 の ``requireSurface(_:calledAs:)`` と同じ形で、理由が面でないことだけが違う。
     package func requireAttachable<Failure: NotRunningFailure>(
         _ failure: Failure.Type, calledAs call: String
     ) throws(Failure) {
@@ -265,6 +286,61 @@ extension SketchPart {
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
         }
+    }
+
+    /// **確かめて、作って、足すまでを 1 回で行う** (投げる作る口・[#2794])。足せなければ、作る前に ``requireAttachable(_:calledAs:)`` と
+    /// 同じく `call` の名前で 1 度だけ警告して `notRunning(call:)` を投げる。足せる所なら `make` で入り口を作り、足して返す。
+    ///
+    /// **作る口は、公開の ``attach(_:)-(Inlet)`` を素で呼ばず、これを通る。** 素の `attach` は足せなかったとき
+    /// (`false`) を返すだけで、呼ぶ側が捨てると黙って生きていない入り口を返す。確かめるのと足すのが 2 回の呼びに
+    /// 分かれると、新しい口が古い形を写す (#2297・#2295)。写しは `scripts/check-attach-result.py` が `ci-static` で赤くする。
+    ///
+    /// 足した結果の `false` は、ここで 1 か所だけ捨てる (`attachAfterCheck(_:)`)。`false` になるのは、閉じた後で断られたとき
+    /// (入り口の `state` は変わらず、診断に 1 行だけ出る) と、`open()` が投げたとき (入り口の `state` が言う。ポートが
+    /// 使用中なら `unavailable` など) で、どちらも作る口は作ったものをそのまま返す。
+    ///
+    /// - Parameters:
+    ///   - failure: 投げる型。呼ぶ口の `throws` の型を渡す。
+    ///   - call: エラーと警告に載せる口の名前。呼ぶ側の `#function` が入る。
+    ///   - make: 入り口を作る。ファイルを読む・ポートを開く仕事は、確かめた後のここに置く。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () throws(Failure) -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        return attachAfterCheck(try make())
+    }
+
+    /// ``attached(_:calledAs:making:)`` の、作るのが投げない口。足せない所で投げるのは確かめだけ。
+    package func attached<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () -> Part
+    ) throws(Failure) -> Part {
+        try requireAttachable(failure, calledAs: call)
+        return attachAfterCheck(make())
+    }
+
+    /// ``attached(_:calledAs:making:)`` の、**面を取れる所かを確かめる** 版 (投げる作る口・[#2794])。絵の置き場 (面) の上に
+    /// 作る入り口 (``Capture``・``Movie``) の道具である。
+    ///
+    /// 確かめるのは ``requireSurface(_:calledAs:)`` で、外で呼んだときの警告は資源を作る口の名乗り (`thrown`) のまま変わらない
+    /// (``attached(_:calledAs:making:)`` の確かめは、足せない所の名乗り `thrownUnattached` になる)。面を取れなければ
+    /// `make` の前に断るので、ファイルを開くなどの重い仕事も走らない。**確かめは道具自身が行う** — 作る側が先に確かめたことを
+    /// 前提にしない。足した結果の `false` は ``attached(_:calledAs:making:)`` と同じ 1 か所で捨てる。
+    ///
+    /// [#2794]: https://github.com/mokume-metal/mokume/issues/2794
+    package func attachedOnSurface<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () throws(Failure) -> Part
+    ) throws(Failure) -> Part {
+        try requireSurface(failure, calledAs: call)
+        return attachAfterCheck(try make())
+    }
+
+    /// 確かめた所から、作った入り口を続けて足す。**足せなかった結果 (`false`) を捨てるのは、作る口の道具のうちここだけ**で、
+    /// ``attached(_:calledAs:making:)``・``attachedOnSurface(_:calledAs:making:)`` だけが呼ぶ。確かめてから続けて呼ぶので足せる。
+    private func attachAfterCheck<Part: Inlet>(_ part: Part) -> Part {
+        _ = attach(part)
+        return part
     }
 
     /// 走っている実行へ入り口を足せる所から呼ばれたかを確かめる (投げない作る口)。足せなければ、`call` の名前で
@@ -295,17 +371,27 @@ extension SketchPart {
     /// 入り口を、走っている実行から外す (止める口 `stop()`)。外から呼ばれたら、利用者が呼んでいない `detach()` ではなく
     /// `call` の名前で 1 度だけ警告し、何もしない ([#2793])。
     ///
-    /// 外で断ること自体は ``detach(_:)-(Inlet)`` と同じ約束で、変わるのは名乗りだけである。`call` は型を付けた口の名前
+    /// 走っている実行が足した入り口なら、`Task` の中からでも外れる (``detach(_:)-(Inlet)`` と同じ)。外で断るのは、足していない入り口と
+    /// 後片付けの後だけで、変わるのは名乗りだけである。`call` は型を付けた口の名前
     /// (`AudioIn.stop()` など)。型を付けるのは、``OutsideRun`` が口の名前ごとに 1 度だけ言うので、`Task` の中で
     /// `mic.stop(); camera.stop()` と続けて呼んだとき、先に言った型が後の型を黙らせないためである
     /// (`Countdown.restart()` と同じ)。警告は「何もしなかった」と言う (``OutsideRun/Use/act``) ので、呼んだ場所が `Task` の中でも、
     /// スケッチが終わった後 (終わりの処理が既に閉じている) でも事実である。
     ///
+    /// 戻り値は、外す頼みが**並びに居る入り口を外したか** (外から呼んで警告だけ出して何もしなかった・並びに居ない入り口だった
+    /// ら `false`)。利用者が呼ぶ `stop()` が、実際に止めたときだけ「利用者が止めた」印を立てるために使う。印を無条件に立てると、
+    /// 外で呼んで何も止まらなかった回にも印が立ち、足していない入り口に呼んだ `stop()` が、後で足したその入り口を止めたままにする
+    /// (#3122)。外す頼みが巡回の最中で後回しになった場合も、頼んだ時点で並びに居れば `true`。
+    ///
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
-    package func detach(_ inlet: any Inlet, calledAs call: String) {
-        guard let runtime = runningSketch else {
-            return OutsideRun.log.warn(call, .act)
+    @discardableResult
+    package func detach(_ inlet: any Inlet, calledAs call: String) -> Bool {
+        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
+            OutsideRun.log.warn(call, .act)
+            return false
         }
+        let wasAttached = runtime.isAttached(inlet)
         runtime.detach(inlet)
+        return wasAttached
     }
 }

@@ -29,7 +29,7 @@
 ///   }
 /// }
 ///
-/// 見た目は ``fill`` で値に持たせられる。持たせない値は、描いた時点の ``SketchPart/fill(_:)``
+/// 見た目は ``fill`` で値に持たせられる。持たせない値は、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)``
 /// に従う。
 ///
 /// **隔離の外に置く** ([ADR-0010] 決定 1 の改訂)。判定と移動はどこからでも呼べ、走っている
@@ -84,7 +84,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=36d281b2
     public var radius: Float
-    /// この円の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)`` に従う。
+    /// この円の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)`` に従う。
     ///
     /// 値が持つ塗りは、``SketchPart/noFill()`` の中でもその色で塗る。描いた後の塗りの状態は
     /// 呼ぶ前と同じである ([ADR-0045] 決定 6)。``Shape`` の色が形の中に焼き付くのと同じ規則で、
@@ -361,7 +361,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
 
     /// 走っているスケッチへ描く。
     ///
-    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)`` で塗り、輪郭は今の
+    /// 値の ``fill`` があればその色で、無ければ今の ``SketchPart/fill(_:)-(LinearRGBA)`` で塗り、輪郭は今の
     /// ``SketchPart/stroke(_:)`` に従う。``SketchPart/ellipseMode(_:)`` が何であっても、値の
     /// 中心と半径のとおりに描く (警告もしない)。描いた後の塗りと描き方の状態は呼ぶ前と同じである。
     ///

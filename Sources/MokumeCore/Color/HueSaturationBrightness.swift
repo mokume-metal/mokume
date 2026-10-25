@@ -12,7 +12,7 @@
 /// 180 度反転し、値を保つのではなく引数の意味が変わってしまうためである。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-enum HueSaturationBrightness {
+nonisolated enum HueSaturationBrightness {
     /// 色相の 1 周。
     static let turn: Float = 360
     /// 彩度・明度の目盛りの上端。
@@ -116,14 +116,15 @@ enum HueSaturationBrightness {
 /// **彩度と明度は上へ突き抜けられる。** `brightness: 150` は表示範囲を超えた明るさ、
 /// `saturation: 120` は色域の外の色を指す — 作業空間はどちらも保つ ([ADR-0011] 決定 1)。
 /// 負の値だけは 0 として扱う (負にすると色相が 180 度回ってしまい、値を保つのではなく
-/// 引数の意味が変わるため)。
+/// 引数の意味が変わるため)。**丸めたときは、1 度だけ知らせる** (`saturation: -20` なら、彩度が 0 以上を
+/// 取ることと、渡した値と、0 を使ったことを言う。彩度・明度・不透明度は別々に数える)。
 ///
-/// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になる
-/// ([ADR-0033] 決定 3 の改訂)。
+/// **不透明度は 0–255 に締める** (``color(_:_:_:_:)`` と同じ)。`alpha: 400` は 255 と同じ色になり、
+/// 締めたときは 1 度だけ知らせる ([ADR-0033] 決定 3 の改訂)。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func color(
+public nonisolated func color(
     hue: some ScalarConvertible, saturation: some ScalarConvertible, brightness: some ScalarConvertible,
     alpha: some ScalarConvertible = 255
 ) -> LinearRGBA {
@@ -136,9 +137,20 @@ public func color(
                 + "one, so transparent was returned")
         return .transparent
     }
+    // 丸めたことを言う ([#1842])。上へ突き抜ける値は丸めないので言わない
+    let name = "color(hue:saturation:brightness:)"
+    if saturation < 0 {
+        ColorValues.warnRounded(
+            .roundedSaturation, name, "saturation", takes: "0 or more", passed: saturation, used: 0)
+    }
+    if brightness < 0 {
+        ColorValues.warnRounded(
+            .roundedBrightness, name, "brightness", takes: "0 or more", passed: brightness, used: 0)
+    }
+    ColorValues.warnIfOpacityRounded(.roundedHSBOpacity, name, passed: alpha)
     let parts = HueSaturationBrightness.components(
         hue: hue, saturation: saturation, brightness: brightness)
-    return color(parts.red, parts.green, parts.blue, alpha)
+    return makeColor(red: parts.red, green: parts.green, blue: parts.blue, alpha: alpha)
 }
 
 // MARK: - 色相・彩度・明度で読む
@@ -152,21 +164,21 @@ public func color(
 /// 持つ色も 0 になる — 契約は ``red(_:)`` と同じ。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public func hue(_ color: LinearRGBA) -> Float {
+public nonisolated func hue(_ color: LinearRGBA) -> Float {
     values(of: color).hue
 }
 
 /// 彩度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 色域の外の色では 100 を超えることがある (書いた値が保たれているため)。
-public func saturation(_ color: LinearRGBA) -> Float {
+public nonisolated func saturation(_ color: LinearRGBA) -> Float {
     values(of: color).saturation
 }
 
 /// 明度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 表示範囲を超えた明るさでは 100 を超えることがある。
-public func brightness(_ color: LinearRGBA) -> Float {
+public nonisolated func brightness(_ color: LinearRGBA) -> Float {
     values(of: color).brightness
 }
 
@@ -175,7 +187,7 @@ public func brightness(_ color: LinearRGBA) -> Float {
 /// 原色の行列・伝達関数 3 回) を 3 度払う。まとめて読んだ 3 成分は、別々に読んだ値と同じ。
 ///
 /// [#1787]: https://github.com/mokume-metal/mokume/issues/1787
-private func values(of color: LinearRGBA)
+private nonisolated func values(of color: LinearRGBA)
     -> (hue: Float, saturation: Float, brightness: Float)
 {
     let components = DisplayScale.readComponents(color)

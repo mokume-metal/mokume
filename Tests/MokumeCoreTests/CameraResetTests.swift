@@ -65,8 +65,8 @@ struct CameraResetTests {
         #expect(abs(reset.eye.x - 32) < tolerance)
         #expect(abs(reset.eye.y - 32) < tolerance)
         #expect(abs(reset.eye.z - distance) < tolerance)
-        #expect(reset.center == SIMD3<Float>(32, 32, 0))
-        #expect(reset.up == SIMD3<Float>(0, 1, 0))
+        #expect(reset.center == Vector3(32, 32, 0))
+        #expect(reset.up == Vector3(0, 1, 0))
     }
 
     // MARK: - 投影は残る
@@ -87,7 +87,7 @@ struct CameraResetTests {
 
         let reset = try #require(camera)
         #expect(abs(reset.eye.z - distance) < tolerance)
-        #expect(reset.center == SIMD3<Float>(32, 32, 0))
+        #expect(reset.center == Vector3(32, 32, 0))
         // 既定の平行投影の範囲は、既定の視点を中心に面 1 枚ぶん (64 × 64)。だから
         // **奥行きによらず、空間の座標がそのまま画面の座標になる**
         for (x, y, z) in seen {

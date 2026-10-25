@@ -12,7 +12,7 @@ import MokumeCore
 ///
 /// ```swift
 /// final class TwoPlayers: Sketch {
-///     var pos: [SIMD2<Float>] = [[300, 300], [900, 300]]
+///     var pos: [Vector2] = [[300, 300], [900, 300]]
 ///     func draw() {
 ///         background(0)
 ///         for (i, pad) in gamepads().prefix(2).enumerated() {
@@ -35,7 +35,7 @@ import MokumeCore
 /// | ``SourceState/running`` | 繋がっている |
 /// | ``SourceState/disconnected`` | 抜かれた。挿し直せば戻る |
 /// | ``SourceState/unavailable`` | 走っていないスケッチから作った・記録した列が空 |
-/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``) |
+/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。足し直せば戻る |
 ///
 /// 許可は要らない。**入力が届くのは、スケッチの窓が前面にある間だけ**である (GameController の
 /// 既定。窓のキーやマウスと同じ)。
@@ -59,13 +59,18 @@ public final class Gamepad: Inlet {
     ///
     /// **縦軸は下向き**で、手前に倒すと正になる (``SketchPart/mouseY`` と同じ約束)。だから
     /// `pos += pad.leftStick * 8` で、倒した向きへ画面の上の点が動く。
-    public private(set) var leftStick: SIMD2<Float> = .zero
+    public private(set) var leftStick: Vector2 = Vector2(0, 0)
 
     let inbox: GamepadInbox
     private let source: any GamepadSource
     private var pressed: Set<GamepadButton> = []
-    /// 外された。``Sketch/gamepads()`` は外されたものを返さず、作り直す。
+    /// 外されている (``close()`` の後で、まだ足し直されていない)。``Sketch/gamepads()`` は外されているものを
+    /// 返さず、作り直す。**足し直せば (``open()``) 戻る** ので、外して足し直したパッドは一覧に同じ物のまま居て、
+    /// 同じ機材が 2 台にならない (#3122)。
     private(set) var isClosed = false
+    /// このパッドを一覧に載せている係 (``Sketch/gamepads()`` が作ったパッドだけ。記録のパッドは一覧に載らない)。
+    /// 足し直されたとき (``open()``)、外されている間に一覧が代わりに作ったパッドを外して、同じ機材を 1 台に戻す。
+    weak var roster: GamepadRoster?
 
     init(id: String, name: String, source: any GamepadSource) {
         self.id = id
@@ -92,12 +97,16 @@ public final class Gamepad: Inlet {
     // MARK: - Inlet
 
     public func open() throws {
+        // 足し直しでも呼ばれる (``close()`` の後の 2 度目)。外されていた印を戻す
+        isClosed = false
         source.start(into: inbox)
+        // 外されている間に一覧を呼んでいれば、同じ識別子の代わりが作られている。足し直した側を 1 台に戻す
+        roster?.reclaim(self)
     }
 
     public func supply() {
         source.pump(into: inbox)
-        if let tilt = inbox.stick.take() { leftStick = tilt }
+        if let tilt = inbox.stick.take() { leftStick = Vector2(tilt) }
         for change in inbox.changes.take() {
             switch change {
             case .pressed(let button): pressed.insert(button)
@@ -111,7 +120,9 @@ public final class Gamepad: Inlet {
         isClosed = true
         source.stop()
         inbox.setState(.stopped)
-        leftStick = .zero
+        // 届いて読まれなかった釦と傾きは捨てる。足し直した最初の ``supply()`` に、外す前のものを当てない
+        inbox.discardWaiting()
+        leftStick = Vector2(0, 0)
         pressed.removeAll()
     }
 

@@ -283,7 +283,7 @@ extension Canvas {
     func discardOpenShape() {
         isBuildingShape = false
         // 読むのは組み立ての間だけ (`beginShape()` が書き直す) だが、既定へ戻しておく。
-        // 境目の検査 (`CanvasTests.frameStateResetsAtEveryBoundary`) が、組み立ての状態を
+        // 境目の検査 (`CanvasTests.FrameState.frameStateResetsAtEveryBoundary`) が、組み立ての状態を
         // 1 つの群として既定に戻ったかで見る
         shapeKind = .polygon
         shapePoints.removeAll(keepingCapacity: true)
@@ -300,7 +300,7 @@ extension Canvas {
     ///
     /// **並びは ``discardOpenShape()`` と同じである。** 組み立ての状態を足したら 3 か所
     /// (ここ・``takeOpenShape()``・``restoreOpenShape(_:)``) と `discardOpenShape()` に足す。
-    /// 落とすと、`CanvasTests.createShapeKeepsTheOuterOpenShape` が既定のままのものを名乗って赤になる。
+    /// 落とすと、`CanvasTests.FrameState.createShapeKeepsTheOuterOpenShape` が既定のままのものを名乗って赤になる。
     ///
     /// [#1607]: https://github.com/mokume-metal/mokume/issues/1607
     struct OpenShape {
@@ -654,15 +654,11 @@ extension Canvas {
             fillSplit(split, flat: all, global: nil, points: &points, into: &triangles)
             return
         }
-        let merged = Triangulation.mergeHoles(
+        let folded = Triangulation.foldHoles(
             outer: Array(primitive.ring), holes: primitive.holes, points: all,
             comparisons: &pointScansThisFrame)
-        pointScansThisFrame += merged.count
-        var flattened: [SIMD2<Float>] = []
-        flattened.reserveCapacity(merged.count)
-        for index in merged { flattened.append(basis.flatten(points[index].position)) }
-        for (a, b, c) in Triangulation.triangulate(flattened, comparisons: &pointScansThisFrame) {
-            triangles.append((merged[a], merged[b], merged[c]))
+        for (a, b, c) in folded.triangles {
+            triangles.append((folded.ring[a], folded.ring[b], folded.ring[c]))
         }
     }
 
@@ -1066,9 +1062,9 @@ extension Canvas {
             } else {
                 let (a, b, c) = triangle
                 appendTriangle(
-                    transform.apply(x: points[a].position.x, y: points[a].position.y),
-                    transform.apply(x: points[b].position.x, y: points[b].position.y),
-                    transform.apply(x: points[c].position.x, y: points[c].position.y),
+                    transform.placed(x: points[a].position.x, y: points[a].position.y),
+                    transform.placed(x: points[b].position.x, y: points[b].position.y),
+                    transform.placed(x: points[c].position.x, y: points[c].position.y),
                     colors: (points[a].fill, points[b].fill, points[c].fill),
                     uvs: readsUV ? (uv(a)!, uv(b)!, uv(c)!) : nil)
             }
@@ -1076,17 +1072,30 @@ extension Canvas {
     }
 
     /// 線を出す。**穴の縁も輪郭を持つ。**
+    ///
+    /// **`.quads` の四角 1 枚の輪郭は、`quad()` と同じ規則で混ぜる** ([#1910])。辺が交差しない 4 点は
+    /// 線全体を 1 回だけ混ぜ、辺が交差する 4 点 (砂時計) は交点で 2 回混ぜる。四角どうしは別々の輪郭
+    /// なので、重なれば 2 回混ぜる。`.polygon` などの周は変えない (任意多角形は、線に沿って離れた
+    /// 部分が交わる所を別々の線と同じく 2 回混ぜる・[#1536])。
+    ///
+    /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
+    /// [#1910]: https://github.com/mokume-metal/mokume/issues/1910
     private func emitStroke(
         _ primitive: Primitive, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
-        strokeRing(primitive.ring, closed: primitive.isClosed, points: points, placed: placed)
+        strokeRing(
+            primitive.ring, closed: primitive.isClosed, points: points, placed: placed,
+            isQuad: primitive.splitsAsQuad)
         for hole in primitive.holes {
             strokeRing(hole[...], closed: true, points: points, placed: placed)
         }
     }
 
+    /// - Parameter isQuad: 四角の列の 1 枚か (`Primitive.splitsAsQuad`)。平面の 4 点で辺が交差しなければ、
+    ///   輪郭を 1 つの領域として混ぜる (`quad()` と同じ判定 ``Canvas/quadCrosses(_:)``)。
     private func strokeRing(
-        _ ring: ArraySlice<Int>, closed: Bool, points: [BuildingVertex], placed: [PlacedVertex]
+        _ ring: ArraySlice<Int>, closed: Bool, points: [BuildingVertex], placed: [PlacedVertex],
+        isQuad: Bool = false
     ) {
         guard !ring.isEmpty else { return }
         var curveSteps: [Bool] = []
@@ -1109,7 +1118,9 @@ extension Canvas {
             flatRing.reserveCapacity(ring.count)
             for index in ring { flatRing.append(SIMD2(points[index].position.x, points[index].position.y)) }
             strokeOutline(
-                Outline(points: flatRing, isClosed: closed, fills: false, curveSteps: curveSteps))
+                Outline(
+                    points: flatRing, isClosed: closed, fills: false, curveSteps: curveSteps,
+                    strokesAsOneRegion: isQuad && flatRing.count == 4 && !Self.quadCrosses(flatRing)))
         }
     }
 
@@ -1155,7 +1166,7 @@ extension Canvas {
         }
         if hasDepth { shapeHasDepth = true }
         let vertex = BuildingVertex(
-            position: position, normal: currentNormal, uv: uv, fill: style.fill,
+            position: position, normal: currentNormal, uv: uv, fill: fillVertexColor,
             isCurveStep: isCurveStep)
         if holePoints != nil {
             holePoints?.append(vertex)

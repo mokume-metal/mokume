@@ -20,8 +20,12 @@ import Observation
 /// 未満)。作るのを初期化の 1 度にし、以後は同じものを渡す。
 ///
 /// key path は構造で等しさを判定するので、観測の登録と通知は macro の展開と一致する。
-/// setter は `Value` が `Equatable` を要求しないので、展開と同じく常に通知する
-/// (`shouldNotifyObservers` が常に真になる形)。
+/// **値が同じ再代入は通知しない** ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
+/// `Value` は `Equatable` を要求しないので、等しさは**面に出る表現** (`ParamValue`) で見る — 展開が
+/// `Equatable` な値にだけやる `shouldNotifyObservers` と同じ形である。通知しないだけで、値は置く
+/// (面に出ない部分を持つ自作の型の値や `-0.0` を落とさない)。通知は窓の更新・応答の書き直し
+/// (`mokume watch` の下では毎フレーム)・保存の印のすべてを起こすので、`size = min(size, 100)` の
+/// ように値を保つ書き方は、これらを毎フレーム起こしていた。
 ///
 /// ## 非有限の数は載せない ([#2271])
 ///
@@ -38,11 +42,12 @@ import Observation
 /// init accessor を通って置き場の初期化へ入り、setter は走らない。前の値が無いので「保つ」が
 /// 成り立たないから、**初期化の 1 点で別の形に畳み、置き場ごとに 1 度だけ名乗る** ([ADR-0030] 決定 3):
 ///
-/// - **値が非有限なら、型の零を載せる** (`0`・`SIMD2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
+/// - **値が非有限なら、型の零を載せる** (`0`・`Vector2(0, 0)`・4 成分とも 0 の色)。作者が書いた値では
 ///   なくなるが、非有限は保存も応答も書けないので、書いた値のまま残す道が無い。零は宣言した範囲の
 ///   外にもなりうる (範囲は値の不変条件ではない)。自分で書いた ``ParamRepresentable`` が有限の零を
-///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る
-///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858) で扱いを決める)
+///   くれないときは畳めず、書かれた値のまま置いて「畳めなかった」と名乗る。**その宣言だけを保存と応答
+///   から外し** (``ParamRegistry/declarations`` の 1 点)、他の値は書ける。値が有限になれば戻る
+///   ([#2858](https://github.com/mokume-metal/mokume/issues/2858))
 /// - **範囲の端が非有限なら、その範囲を面に出さない** (`0...Double.infinity`)。つまみは出ず
 ///   ([ADR-0030] 決定 8)、応答は `min` / `max` を書かない。外からの書き込みは、有限の端があれば
 ///   今までどおりそこへ収める (`-5` → `0`)。両端とも非有限なら収める相手が無い
@@ -70,6 +75,9 @@ public final class ParamBox<Value> {
     /// 1 度だけ標準エラーへ名乗る。置かなかったときは変化の通知も出さない (値が動いていない)。
     /// 有限の値は範囲の外でも素通しする ([ADR-0030] 決定 3)。
     ///
+    /// **面に出る表現が今と同じ値を書いたときも、変化の通知は出さない** (値は置く)。窓の更新・応答の
+    /// 書き直し・保存を起こさない ([#2382](https://github.com/mokume-metal/mokume/issues/2382))。
+    ///
     /// この関所が塞ぐのは、値が**変わる**入口 (setter・`_modify`・``write(_:)``) である。
     /// 置き場が**生まれる**ときの値 (宣言の初期値・`init` の中の代入) は前の値が無いので、非有限なら
     /// 型の零を載せて 1 度名乗る ([#2394](https://github.com/mokume-metal/mokume/issues/2394))。
@@ -82,8 +90,14 @@ public final class ParamBox<Value> {
         }
         set {
             // 置かないときは変化の通知も出さない (値は動いていない)
-            guard toParam(newValue).hasOnlyFiniteNumbers else {
+            let offered = toParam(newValue)
+            guard offered.hasOnlyFiniteNumbers else {
                 refuse(newValue, keeping: storedValue)
+                return
+            }
+            // 面に出る姿が同じなら通知しない。値は置く (面に出ない部分・零の符号を落とさない)
+            guard offered != toParam(storedValue) else {
+                storedValue = newValue
                 return
             }
             observation.withMutation(of: self, keyPath: valueKeyPath) {
@@ -98,9 +112,14 @@ public final class ParamBox<Value> {
             // 形ではなくなるが、値は小さく、通知の順 (willSet → 置く → didSet) は同じである
             var working = storedValue
             yield &working
-            if toParam(working).hasOnlyFiniteNumbers {
-                observation.withMutation(of: self, keyPath: valueKeyPath) {
+            let offered = toParam(working)
+            if offered.hasOnlyFiniteNumbers {
+                if offered == toParam(storedValue) {
                     storedValue = working
+                } else {
+                    observation.withMutation(of: self, keyPath: valueKeyPath) {
+                        storedValue = working
+                    }
                 }
             } else {
                 refuse(working, keeping: storedValue)
@@ -160,7 +179,8 @@ public final class ParamBox<Value> {
         let offered = toParam(value)
         let valueIsFinite = offered.hasOnlyFiniteNumbers
         // 零を読み戻せない型・読み戻した零が非有限の型 (自分で書いた ``ParamRepresentable``) は、
-        // 畳めないので書かれた値のまま置き、そう名乗る。型から作れる値が他に無い (#2858)
+        // 畳めないので書かれた値のまま置き、そう名乗る。型から作れる値が他に無い。保存と応答からは
+        // ``ParamRegistry/declarations`` が外す (#2858)
         let zero = valueIsFinite ? nil : fromParam(offered.zero).flatMap { toParam($0).hasOnlyFiniteNumbers ? $0 : nil }
         let born = zero ?? value
         self.storedValue = born
@@ -184,8 +204,8 @@ public final class ParamBox<Value> {
                 .bornNotFinite,
                 zero == nil
                     ? "The knob \"\(name)\" was declared with \(value), which is not a finite number, and its type "
-                        + "gave no finite zero to start at instead, so it stays at \(value): the values cannot be "
-                        + "saved and the knob reply cannot be placed while it does (said once for this knob)"
+                        + "gave no finite zero to start at instead, so it stays at \(value) and is left out of the "
+                        + "saved values and the knob reply until it holds a finite number (said once for this knob)"
                     : "The knob \"\(name)\" was declared with \(value), which is not a finite number, so it "
                         + "starts at \(born) (said once for this knob)")
         }
@@ -322,10 +342,10 @@ extension ParamBox: DeclaredParam {
             // 整数は `Int` のまま収める (`Double` を通すと 2^53 を超える整数が丸まる・#2478)
             settled = .int(range.clamped(number))
         case .vector2(let vector):
-            settled = .vector2(SIMD2(range.clamped(vector.x), range.clamped(vector.y)))
+            settled = .vector2(Vector2(range.clamped(vector.x), range.clamped(vector.y)))
         case .vector3(let vector):
             settled = .vector3(
-                SIMD3(range.clamped(vector.x), range.clamped(vector.y), range.clamped(vector.z)))
+                Vector3(range.clamped(vector.x), range.clamped(vector.y), range.clamped(vector.z)))
         case .bool, .string, .color:
             return (incoming, .applied)
         }

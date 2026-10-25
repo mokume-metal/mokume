@@ -54,9 +54,10 @@ struct ParameterStoreTests {
     /// 非有限の数を宣言として返す代役の置き場。
     ///
     /// **`@Param` はもう非有限を載せない** — 値を書き換える口 ([#2271](https://github.com/mokume-metal/mokume/issues/2271))
-    /// でも、生まれのときの値 (初期値・`init` の中の代入・[#2394](https://github.com/mokume-metal/mokume/issues/2394))
-    /// でもである。だから符号化の守り (#2263) は `@Param` からは踏めない。関所を抜けた非有限が
-    /// 届いても保存が黙って止まらないことを、関所の外の口 (``DeclaredParam`` の別の実装) から見る。
+    /// でも、生まれのときの値の大半 ([#2394](https://github.com/mokume-metal/mokume/issues/2394)) でもである。
+    /// 載りうるのは零へ畳めない自作の型だけで ([#2858](https://github.com/mokume-metal/mokume/issues/2858))、
+    /// 外すのは ``ParamRegistry/declarations`` の 1 点である。そこを抜けた非有限が保存を止めないことを、
+    /// 関所の外の口 (``DeclaredParam`` の別の実装) から見る。
     @MainActor
     final class Unbounded: DeclaredParam {
         var number: Double = .nan
@@ -68,15 +69,15 @@ struct ParameterStoreTests {
         func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
     }
 
-    /// 符号化に失敗する値を 2 番目に持つスケッチ (拒まれた値の名前を、先頭以外でも引けること)。
+    /// 非有限になりうる値を 2 番目に持つスケッチ (外した後も、並びの順で他の値を書けること)。
     final class Unencodable: Sketch {
         @Param(1...8) var count: Int = 3
         let radius = Unbounded()
     }
 
-    /// 符号化の失敗を黙って捨てない (#2263)。
-    @Test("値を符号化できなければ、型と理由を 1 行言い、書かない")
-    func failingToEncodeSaysWhy() throws {
+    /// 非有限の値の宣言は、保存から外す (#2858)。符号化の守り (#2263) には届かせない。
+    @Test("値が非有限の宣言は保存から外し、他の値は書く。有限になれば次の保存に戻る")
+    func aNonFiniteDeclarationIsLeftOutOfSaving() throws {
         let url = try makeFile()
         let sketch = Unencodable()
         var warnings: [String] = []
@@ -84,35 +85,64 @@ struct ParameterStoreTests {
             registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
         store.flushNow()
 
-        #expect(store.writeCount == 0)
-        #expect(!FileManager.default.fileExists(atPath: url.path))
-        try #require(warnings.count == 1, "符号化に失敗したのに黙っていた")
-        let line = warnings[0]
-        #expect(!line.contains("\n"))
-        #expect(line.contains("EncodingError"))
-        #expect(line.contains("nan"))
-        #expect(line.contains("`radius`"), "どの値が拒まれたかを言わない: \(line)")
-        #expect(line.contains(url.path))
+        #expect(store.writeCount == 1, "他の値まで書けなくなった: \(warnings)")
+        #expect(warnings.isEmpty)
+        func names() throws -> [String] {
+            let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+            return (object?["values"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+        }
+        #expect(try names() == ["count"])
+
+        sketch.radius.number = 10
+        store.flushNow()
+        #expect(try names() == ["count", "radius"])
+    }
+
+    /// 符号化の守りが、拒まれた値の名前を引けること (#2263)。非有限の宣言は
+    /// ``ParamRegistry/declarations`` が外す (#2858) ので、保存の経路ではこの枝へ届かない。
+    /// 絞っていない並び (``ParamStore/Saved``) を直に符号化して、守りの関数を確かめる。
+    @Test("符号化が非有限の値を拒んだとき、守りは拒まれた値の名前を引ける")
+    func theEncodingGuardNamesTheRefusedValue() throws {
+        let saved = ParamStore.Saved(values: [
+            .init(name: "count", value: .int(3)), .init(name: "radius", value: .float(.nan)),
+        ])
+        let error = try #require(
+            { () -> (any Error)? in
+                do { _ = try JSONEncoder().encode(saved) } catch { return error }
+                return nil
+            }(), "非有限の値を符号化できてしまった")
+        #expect(ParamStore.offender(of: error, in: saved) == "radius")
+
+        // 並びの外で拒まれた (名前の引けない) エラーは名指さない
+        let elsewhere = EncodingError.invalidValue(
+            0, .init(codingPath: [], debugDescription: "not in the values"))
+        #expect(ParamStore.offender(of: elsewhere, in: saved) == nil)
     }
 
     /// 面からの要求は当てるたびに書くので、書けない値が残ると入力ごとに同じ行が流れる。
     @Test("書けない理由が変わらなければ、書けるまで繰り返し言わない")
     func theSameWriteFailureIsSaidOnce() throws {
         let url = try makeFile()
-        let sketch = Unencodable()
+        let directory = url.deletingLastPathComponent()
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        }
+        let sketch = Knobbed()
         var warnings: [String] = []
         let store = ParamStore(
             registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) })
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
         store.flushNow()
         sketch.count = 5
         store.flushNow()
         #expect(warnings.count == 1, "同じ理由を繰り返した: \(warnings)")
 
         // 書ければ忘れる。また書けなくなったら、また言う
-        sketch.radius.number = 10
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
         store.flushNow()
         #expect(store.writeCount == 1)
-        sketch.radius.number = .nan
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
         store.flushNow()
         #expect(warnings.count == 2)
     }
@@ -302,16 +332,16 @@ struct ParameterStoreTests {
     @Test("範囲が縮んだ組は、成分ごとに収めたうえで収めたことを返す")
     func narrowedRangesClampVectorsAndSaySo() async throws {
         final class Wide: Sketch {
-            @Param(-4...4) var pair: SIMD2<Float> = SIMD2(0, 0)
+            @Param(-4...4) var pair: Vector2 = Vector2(0, 0)
         }
         final class Narrow: Sketch {
-            @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
+            @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
         }
         let url = try makeFile()
         let wide = Wide()
         let saving = store(for: wide, at: url)
         saving.restore()
-        wide.pair = SIMD2(3, -0.5)
+        wide.pair = Vector2(3, -0.5)
         await settle(saving)
 
         let narrow = Narrow()
@@ -319,9 +349,9 @@ struct ParameterStoreTests {
         #expect(restoration.discarded.isEmpty)
         #expect(
             restoration.clamped == [
-                .init(name: "pair", requested: .vector2(SIMD2(3, -0.5)), value: .vector2(SIMD2(1, -0.5)))
+                .init(name: "pair", requested: .vector2(Vector2(3, -0.5)), value: .vector2(Vector2(1, -0.5)))
             ])
-        #expect(narrow.pair == SIMD2(1, -0.5))
+        #expect(narrow.pair == Vector2(1, -0.5))
     }
 
     @Test("読めない保存は捨てて、既定値で始まる")
@@ -451,8 +481,8 @@ struct ParameterStoreTests {
             @Param var flag: Bool = false
             @Param(choices: ["a", "b"]) var word: String = "a"
             @Param var tint: LinearRGBA = .linear(red: 0.1, green: 0.2, blue: 0.3)
-            @Param(-1...1) var pair: SIMD2<Float> = SIMD2(0, 0)
-            @Param(-1...1) var triple: SIMD3<Float> = SIMD3(0, 0, 0)
+            @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
+            @Param(-1...1) var triple: Vector3 = Vector3(0, 0, 0)
         }
         let url = try makeFile()
         let before = Every()
@@ -463,8 +493,8 @@ struct ParameterStoreTests {
         before.flag = true
         before.word = "b"
         before.tint = .linear(red: 0.4, green: 0.5, blue: 0.6)
-        before.pair = SIMD2(0.25, -0.5)
-        before.triple = SIMD3(0.1, 0.2, 0.3)
+        before.pair = Vector2(0.25, -0.5)
+        before.triple = Vector3(0.1, 0.2, 0.3)
         await settle(saving)
 
         let after = Every()
@@ -474,8 +504,8 @@ struct ParameterStoreTests {
         #expect(after.flag == true)
         #expect(after.word == "b")
         #expect(after.tint == .linear(red: 0.4, green: 0.5, blue: 0.6))
-        #expect(after.pair == SIMD2(0.25, -0.5))
-        #expect(after.triple == SIMD3(0.1, 0.2, 0.3))
+        #expect(after.pair == Vector2(0.25, -0.5))
+        #expect(after.triple == Vector3(0.1, 0.2, 0.3))
     }
 
     /// 保存は区画ではない。**保存したことで、外からの操作が有効にならない。**
@@ -600,8 +630,8 @@ struct ParameterStoreTests {
     /// 宣言は組と色を持つ (#2805 の反証で見つかった、成分や整数の読み違いの経路)。
     final class Shaped: Sketch {
         @Param(0...10) var count: Int = 3
-        @Param var pair: SIMD2<Float> = SIMD2(1, 2)
-        @Param var triple: SIMD3<Float> = SIMD3(1, 2, 3)
+        @Param var pair: Vector2 = Vector2(1, 2)
+        @Param var triple: Vector3 = Vector3(1, 2, 3)
         @Param var tint: LinearRGBA = LinearRGBA(premultipliedRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)
         @Param var spinning: Bool = true
     }
@@ -624,7 +654,7 @@ struct ParameterStoreTests {
 
         #expect(discarded == [["name": name, "reason": reason]])
         #expect(sketch.spinning == false, "同じ保存の読めた値まで捨てた")
-        #expect(sketch.count == 3 && sketch.pair == SIMD2(1, 2) && sketch.triple == SIMD3(1, 2, 3))
+        #expect(sketch.count == 3 && sketch.pair == Vector2(1, 2) && sketch.triple == Vector3(1, 2, 3))
         let line = try #require(warnings.first)
         #expect(warnings.count == 1)
         #expect(!line.contains("not valid JSON"), "数の読み違いを JSON でないと言った: \(line)")

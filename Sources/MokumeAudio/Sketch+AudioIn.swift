@@ -50,8 +50,8 @@ extension Sketch {
     ///
     /// <!-- example: 文脈 var song: AudioIn? -->
     /// ```swift
-    /// func setup() {
-    ///     song = try? createAudioIn(file: "assets/song.wav")
+    /// func setup() throws {
+    ///     song = try createAudioIn(file: "assets/song.wav")
     /// }
     /// func draw() {
     ///     background(0)
@@ -76,10 +76,11 @@ extension Sketch {
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
-        try requireAttachable(AudioFailure.self, calledAs: #function)
-        let decoded = try AudioFile.read(audioURL(file), path: file)
-        return attachRecorded(
-            samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
+        return try attached(AudioFailure.self, calledAs: #function) { () throws(AudioFailure) -> AudioIn in
+            let decoded = try AudioFile.read(audioURL(file), path: file)
+            return recordedAudioIn(
+                samples: decoded.samples, sampleRate: decoded.sampleRate, name: "audio file: \(file)")
+        }
     }
 
     /// 手元の標本列を、マイクの代わりに解析する。**鳴らさない。機材も許可も使わない。**
@@ -87,13 +88,13 @@ extension Sketch {
     /// ```swift
     /// final class Beat: Sketch {
     ///     var beat: AudioIn?
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 440 Hz の音を、1 秒に 2 回大きくする
     ///         let samples = (0..<48_000).map { index -> Float in
     ///             let t = Float(index) / 48_000
     ///             return sin(2 * .pi * 440 * t) * (0.5 + 0.5 * cos(2 * .pi * 2 * t))
     ///         }
-    ///         beat = try? createAudioIn(samples: samples, sampleRate: 48_000)
+    ///         beat = try createAudioIn(samples: samples, sampleRate: 48_000)
     ///     }
     ///     func draw() {
     ///         background(0)
@@ -113,8 +114,9 @@ extension Sketch {
     public func createAudioIn(samples: [Float], sampleRate: Float) throws(AudioFailure) -> AudioIn {
         guard !samples.isEmpty else { throw .empty }
         guard sampleRate > 0, sampleRate.isFinite else { throw .invalidSampleRate(sampleRate) }
-        try requireAttachable(AudioFailure.self, calledAs: #function)
-        return attachRecorded(samples: samples, sampleRate: sampleRate, name: "audio (samples)")
+        return try attached(AudioFailure.self, calledAs: #function) {
+            recordedAudioIn(samples: samples, sampleRate: sampleRate, name: "audio (samples)")
+        }
     }
 
     /// 繋がっている音の入力の機材の一覧。``createAudioIn(device:)`` で 1 つを選ぶのに使う。
@@ -136,15 +138,17 @@ extension Sketch {
         } catch {
             switch error {
             case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+            case .unreachable(let path, let location, let reason):
+                throw .unopenable(
+                    path: path, location: location, reason: AssetOpening.unreachableReason(reason))
             }
         }
     }
 
-    private func attachRecorded(samples: [Float], sampleRate: Float, name: String) -> AudioIn {
-        let audio = AudioIn(
+    /// 記録した標本から入り口を作る。足すのは呼ぶ側の ``attached(_:calledAs:making:)``。
+    private func recordedAudioIn(samples: [Float], sampleRate: Float, name: String) -> AudioIn {
+        AudioIn(
             device: nil, name: name,
             source: RecordedSource(samples: samples, sampleRate: sampleRate), owner: self)
-        attach(audio)
-        return audio
     }
 }

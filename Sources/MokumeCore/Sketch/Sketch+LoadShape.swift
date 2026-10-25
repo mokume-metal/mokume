@@ -11,8 +11,8 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var logo: Shape? -->
     /// ```swift
-    /// func setup() {
-    ///     logo = try? loadShape("assets/logo.svg")
+    /// func setup() throws {
+    ///     logo = try loadShape("assets/logo.svg")
     /// }
     ///
     /// func draw() {
@@ -43,9 +43,11 @@ extension SketchPart {
     ///   ``Placement/scale``。**拡大しても滑らかに出る** — 矩形・円・楕円は距離関数で描き、
     ///   曲線は 20 倍に拡大しても折れ目が見えない細かさで刻む
     /// - **色**: SVG に書いた塗りと線の色が形に焼き付く (``createShape(_:)`` と同じ)。
-    ///   置く前の ``fill(_:)`` は効かない。置き場所ごとに変えるなら ``Placement/fill`` で
+    ///   置く前の ``fill(_:)-(LinearRGBA)`` も ``fill(_:)-(Gradient)`` も効かない (読んだ SVG は
+    ///   記録した塗りで出る)。置き場所ごとに変えるなら ``Placement/fill`` で
     ///   **色を掛ける**。色を丸ごと差し替えたいなら、白で描いた SVG を読んで掛ける色を渡す —
-    ///   白に掛けた色はそのまま出る
+    ///   白に掛けた色はそのまま出る。**読んだ SVG を勾配で塗る口はまだ無い**。SVG に書いた
+    ///   `<linearGradient>`・`<radialGradient>` も、いまは読まない ([#3031])
     ///
     /// 下の 4 枚は、例がその場で書き出した SVG — 80×50 の `viewBox` に、橙の正方形と水色の円を
     /// 1 つずつ描いたもの — を読んで置いたもので、1 枚ごとに SVG の中身か置き方を 1 か所だけ
@@ -59,7 +61,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -67,8 +69,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -85,7 +87,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る -->
-    ///     ![橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る](https://i.gyazo.com/a7d69881928db10e8d13184bc1a69b56.png)
+    ///     ![橙の正方形と水色の円の図案が、等倍で 2 か所に置かれている。どちらも白い点 (置いた位置) が図案の左上の角に来る](https://i.gyazo.com/d19553e685d6b212c30523284316e642.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -98,7 +100,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -106,8 +108,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark-160x100.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -122,7 +124,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま -->
-    ///     ![width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま](https://i.gyazo.com/dadd62bdbc531b3d34c4415d648ae0f6.png)
+    ///     ![width と height を viewBox の 2 倍にした SVG は、同じ図案が縦横 2 倍で置かれる。白い点 (置いた位置) は左上の角のまま](https://i.gyazo.com/5290a86233ae8cfc2c7dbc5e806894af.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -135,7 +137,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="#f27340"/>
@@ -143,8 +145,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -160,12 +162,12 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか -->
-    ///     ![scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか](https://i.gyazo.com/eb6b95f5b69a4b76cf50a85e90fd0b1f.png)
+    ///     ![scale(3, 3) で 3 倍に置いた図案。円の縁は、同じ大きさで circle() を描いたときと同じく滑らか](https://i.gyazo.com/fccc62c786bae8b3f4e12b38119134a6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
-    /// 白で描いた SVG なら、置き場所ごとに色を渡して染められる。置く前の ``fill(_:)`` は効かない。
+    /// 白で描いた SVG なら、置き場所ごとに色を渡して染められる。置く前の ``fill(_:)-(LinearRGBA)`` や ``fill(_:)-(Gradient)`` は効かない。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -173,7 +175,7 @@ extension SketchPart {
     ///     ```swift
     ///     import Foundation
     ///
-    ///     func setup() {
+    ///     func setup() throws {
     ///         let svg = """
     ///             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 50">
     ///               <rect x="0" y="0" width="50" height="50" fill="white"/>
@@ -181,8 +183,8 @@ extension SketchPart {
     ///             </svg>
     ///             """
     ///         let path = NSTemporaryDirectory() + "mark-white.svg"
-    ///         try? svg.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         mark = try? loadShape(path)
+    ///         try svg.write(toFile: path, atomically: true, encoding: .utf8)
+    ///         mark = try loadShape(path)
     ///     }
     ///
     ///     func draw() {
@@ -196,21 +198,25 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる -->
-    ///     ![白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる](https://i.gyazo.com/53b595fc4a7f9c2072d57df4dbfcf724.png)
+    ///     ![白で描いた図案が 2 つ。左は置く前に fill で橙を選んでも白のまま、右は置き場所に橙を渡したので、正方形も円も橙に染まる](https://i.gyazo.com/6ece90babe0ee924a5c088f934b49fd4.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
-    /// 呼んだときの描き方 (``fill(_:)``・``blendMode(_:)``・``shader(_:)``・``texture(_:)-(Image)`` など)
+    /// 呼んだときの描き方 (``fill(_:)-(LinearRGBA)``・``blendMode(_:)``・``shader(_:)``・``texture(_:)-(Image)`` など)
     /// には左右されない。同じファイルからは、いつ読んでも同じ形ができる。
     ///
     /// ## 読むもの
     ///
     /// - 形: `path` (`d` の命令すべて — 相対の座標・省略した書き方・弧を含む)・`rect`
-    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`
+    ///   (角丸を含む)・`circle`・`ellipse`・`line`・`polyline`・`polygon`。形の寸法の負の値は SVG 2
+    ///   では無効で、`rect` の `width` / `height` と `circle` の `r` が負なら何も描かず、`rect` の
+    ///   `rx` / `ry` と `ellipse` の `rx` / `ry` が負なら書いていないものとして読む (もう片方があればその値になる)。
+    ///   どれも、捨てたものとして知らせる
     /// - 入れ物: `g`・`a`・入れ子の `svg`・`switch` (拡張を求めない最初の子)。`transform`
     ///   (`matrix` / `translate` / `scale` / `rotate` / `skewX` / `skewY`)・`viewBox`・
-    ///   `preserveAspectRatio` が効く
+    ///   `preserveAspectRatio` が効く (`preserveAspectRatio` の値は SVG のとおり大文字小文字を区別し、
+    ///   `XMINYMID` のような綴りは読めない値として知らせ、書いていないとき (`xMidYMid meet`) と同じに写す)
     /// - 塗りと線: 色 (`#rgb` / `#rrggbb` と不透明度つきの形・`rgb()` / `rgba()`・名前の色・
     ///   `currentColor`)・`fill-opacity` / `stroke-opacity` / `opacity`・`stroke-width`・
     ///   `stroke-linecap`・`stroke-linejoin`・`fill-rule`
@@ -228,6 +234,21 @@ extension SketchPart {
     /// いるだけで、ロゴ全体が読めなくなることはない。塗りが `url(#a) red` のように代わりの色を
     /// 持っていれば、その色で塗る。
     ///
+    /// **読まない性質のうち、形の大きさ・位置が黙って変わるものも知らせる。** CSS (`style` 属性・`<style>`) で
+    /// 書いた幾何の性質 (`rect` の `width` / `height` / `x` / `y` / `rx` / `ry`・`circle` の `cx` / `cy` / `r`・
+    /// `ellipse` の `cx` / `cy` / `rx` / `ry`・`path` の `d`・入れ子の `<svg>` の `x` / `y`) は、属性の値で描き、
+    /// `CSS property "width"` の形で知らせる。CSS の変換 (`transform`・`translate`・`rotate`・`scale`) は掛けずに
+    /// 知らせ、`transform` 属性を掛ける要素の `transform-origin` / `transform-box` (属性でも CSS でも) と、
+    /// `<svg>` の `transform` 属性も知らせる (変換は掛けない)。描き方だけを変える性質 (`paint-order` など) は
+    /// 知らせない。
+    ///
+    /// CSS の全体キーワード (`inherit`・`initial`・`unset`・`revert`・`revert-layer`) は、勝てば、属性・`style` 属性・
+    /// `<style>` のどこに書いても CSS のとおり効く。`initial` は性質の初めの値 (`fill` なら黒)、`unset` は受け継ぐ
+    /// 性質なら親の値・そうでなければ初めの値で、`revert`・`revert-layer` は `unset` と同じに読む (SVG には UA の
+    /// 値も層も無い)。`marker-start` などは、SVG では受け継ぐ性質だが、描けない効果として要素ごとに数えるので受け
+    /// 継がない側に置く。形の長さの属性では、`auto` を取る口 (`width`・`rx` など) は `auto`、取らない口
+    /// (`x`・`cx`・`r` など) は 0 と読む。
+    ///
     /// 描くものが 1 つも無いファイルは空の形 (``Shape/isEmpty``) になり、同じく知らせる。
     ///
     /// **近似で描いたことも知らせる。** 群や、塗りと線を両方持つ要素の `opacity` は、SVG ならひとまとめに
@@ -241,6 +262,8 @@ extension SketchPart {
     ///
     /// - 群に掛けた `opacity` は、子の色ひとつずつに掛ける。子どうしが重なった所は SVG より濃く出る
     /// - 尖った角が切られる長さは ``StrokeJoin/miter`` のもので、`stroke-miterlimit` は読まない
+    /// - 根と入れ子の `<svg>` の `width` / `height` を CSS で負の値に書くと、何も描かず知らせる。
+    ///   ブラウザは CSS の負の宣言を無効として捨て、属性か `auto` の大きさで描く
     ///
     /// ## 読めないときは投げる
     ///
@@ -264,10 +287,12 @@ extension SketchPart {
     /// ファイルをもう一度読む。毎フレーム呼ばず、`setup()` で読んで持ち回る。
     ///
     /// - Throws: 上のどれか (``DataFailure``)。
-    // shot: 1 snippet=002b4165
-    // shot: 2 snippet=bbba0594
-    // shot: 3 snippet=b33c97d0
-    // shot: 4 snippet=8ae46fb2
+    ///
+    /// [#3031]: https://github.com/mokume-metal/mokume/issues/3031
+    // shot: 1 snippet=0a647cc6
+    // shot: 2 snippet=2487b4f6
+    // shot: 3 snippet=847c2a54
+    // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         Self.noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)
@@ -296,6 +321,10 @@ extension SketchPart {
     /// 呼び方と届く前の扱いは ``requestImage(_:)`` と同じで、**`setup()` の中で `Task` を起こし、
     /// そこから呼ぶ。** 届くまでの ``Sketch/draw()`` は形が無いまま呼ばれ、置くのは `draw()` の中である。
     ///
+    /// **呼んだ `Task` を取り消しても、読み込みは止まらず、読み終えて返る。** スケッチが終わった
+    /// 後に届いても落ちず、形はそのまま返る (``requestImage(_:)`` と同じ)。取消の扱いは
+    /// [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。
+    ///
     /// > Note: 届いた形の見え方は ``loadShape(_:)`` と同じなので、絵はそちらを見ること。
     /// > 何枚目のフレームで届くかは SVG の大きさとフレームの間隔で変わり、同じ条件でも実行ごとに
     /// > ずれうるので、この口だけの絵は撮っていない。
@@ -303,6 +332,8 @@ extension SketchPart {
     /// - Throws: ``loadShape(_:)`` と同じ (``DataFailure``)。ただし走っていないときは、ファイルを
     ///   読む前に投げる。走っている実行から起こしていない所 (`init`・後片付けの後・`Task.detached`)
     ///   で呼ぶと ``DataFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
         let surface = try Self.loadingCanvas(DataFailure.self)

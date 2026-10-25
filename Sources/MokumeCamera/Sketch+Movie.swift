@@ -21,8 +21,8 @@ extension Sketch {
     /// final class Overlay: Sketch {
     ///     var settings: SketchSettings { SketchSettings(width: 1280, height: 720) }
     ///     var clip: Movie?
-    ///     func setup() {
-    ///         clip = try? createVideo("assets/clip.mov")
+    ///     func setup() throws {
+    ///         clip = try createVideo("assets/clip.mov")
     ///         clip?.loop()
     ///     }
     ///     func draw() {
@@ -55,31 +55,34 @@ extension Sketch {
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createVideo(_ file: String) throws(MovieFailure) -> Movie {
-        // 映す絵を作る面を取れなければ、ファイルを開く (最初のコマまで読む) 前に断る
-        try requireSurface(MovieFailure.self, calledAs: #function)
-        let url: URL
-        do {
-            url = try assetURL(file)
-        } catch {
-            switch error {
-            case .notFound(let path, let searched): throw .notFound(path: path, searched: searched)
+        let call = #function
+        // 映す絵を作る面を取れなければ、`attachedOnSurface` がファイルを開く (最初のコマまで読む) 前に断る
+        return try attachedOnSurface(MovieFailure.self, calledAs: call) { () throws(MovieFailure) -> Movie in
+            let url: URL
+            do throws(AssetFailure) {
+                url = try assetURL(file)
+            } catch {
+                switch error {
+                case .notFound(let path, let searched): throw MovieFailure.notFound(path: path, searched: searched)
+                case .unreachable(let path, let location, let reason):
+                    throw MovieFailure.unopenable(
+                        path: path, location: location, reason: AssetOpening.unreachableReason(reason))
+                }
             }
-        }
-        let reader = try MovieReader(url: url, path: file)
-        let image: Image
-        do {
-            image = try createImage(reader.width, reader.height, calledAs: #function)
-        } catch {
-            // **大きさの失敗だけを言い換える。** 面を取れないことまで大きさの話にすると、利用者は
-            // 置ける大きさを探しに行く (#2683 の反証 1)
-            switch error {
-            case .notRunning(let call): throw .notRunning(call: call)
-            case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable:
-                throw .unplaceable(width: reader.width, height: reader.height)
+            let reader = try MovieReader(url: url, path: file)
+            let image: Image
+            do throws(ImageFailure) {
+                image = try createImage(reader.width, reader.height, calledAs: call)
+            } catch {
+                // **大きさの失敗だけを言い換える。** 面を取れないことまで大きさの話にすると、利用者は
+                // 置ける大きさを探しに行く (#2683 の反証 1)
+                switch error {
+                case .notRunning(let named): throw MovieFailure.notRunning(call: named)
+                case .notFound, .unopenable, .undecodable, .unplaceable, .unwritable:
+                    throw MovieFailure.unplaceable(width: reader.width, height: reader.height)
+                }
             }
+            return Movie(image: image, reader: reader, name: "video: \(file)", owner: self)
         }
-        let movie = Movie(image: image, reader: reader, name: "video: \(file)", owner: self)
-        attach(movie)
-        return movie
     }
 }

@@ -100,21 +100,26 @@ nonisolated public enum StartupReads {
     public static let observe = Entry(
         name: "Observation facet", origin: .facet, key: "observe", decidedBy: .user,
         note: "Present at launch turns observation on. Creating it while the sketch runs "
-            + "has no effect",
+            + "has no effect. A sketch that render starts does not open it",
         readSite: "Sources/MokumeCore/Observation/FrameObserver.swift")
 
     /// 入力の区画。
     public static let input = Entry(
         name: "Input facet", origin: .facet, key: "input", decidedBy: .user,
         note: "Present at launch lets input reach the sketch. Creating it while the sketch "
-            + "runs has no effect",
+            + "runs has no effect. A sketch that render starts does not open it, so input "
+            + "never mixes into what it writes",
         readSite: "Sources/MokumeCore/Input/InputInbox.swift")
 
     /// つまみの区画。
     public static let params = Entry(
         name: "Knob facet", origin: .facet, key: "params", decidedBy: .user,
         note: "Present at launch lets declared values be read and written from outside. "
-            + "Creating it while the sketch runs has no effect",
+            + "Creating it while the sketch runs has no effect. A sketch that render starts "
+            + "does not open it (saved values are still restored, as they do not go through it). "
+            + "Only the run that holds the facet writes the catalogue (report.json). A run started "
+            + "by hand where watch is running (swift run, run) is outside the promise: while the "
+            + "watcher's generations swap, it may take over the requests of any of the three facets",
         readSite: "Sources/MokumeCore/Parameters/ParamSurface.swift")
 
     /// 絵を渡す面の区画。
@@ -187,6 +192,23 @@ nonisolated public enum StartupReads {
             + "passes it only for watch, and the sketch takes it out of its own environment once read",
         readSite: "Sources/MokumeCore/Drawing/ShaderOrigin.swift")
 
+    /// 作り直しをまたいで、作者の時計を渡すファイル — `mokume watch --keep-time` ([#2414])。
+    ///
+    /// 見張りは旗 `--keep-time` のときだけ、世代をまたいで 1 つの場所を子へ渡す。受けた子は、最初の枚の前に
+    /// そのファイルから前の世代の作者の時計 (秒と、止めているか) を読み、毎枚ではなく必要なときに自分のを書く
+    /// (``ClockHandover``)。値は絶対パスで、渡すのは `watch` の旗のときだけ (``viewportOwner`` と同じく、
+    /// 渡さなければ親の環境に在っても落とす)。**受け取った子は読んだ時点で自分の環境から消す** — 合図は
+    /// その子 1 つのもので、スケッチがさらに起こすプロセスへは継がせない。
+    ///
+    /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
+    public static let keepTime = Entry(
+        name: "Keep time", origin: .environment, key: "MOKUME_KEEP_TIME", decidedBy: .tool,
+        note: "Where to hand the author's clock (seconds, and whether it is paused) from one "
+            + "generation of the sketch to the next, so a rebuild does not send time back to 0. "
+            + "The value is a file's absolute path, and the tool passes it only for watch "
+            + "--keep-time, and the sketch takes it out of its own environment once read",
+        readSite: "Sources/MokumeCore/Sketch/ClockHandover.swift")
+
     /// 走っている速さの名乗り。
     public static let frameRateNotice = Entry(
         name: "Frame rate notice", origin: .environment, key: "MOKUME_REPORT_RATE", decidedBy: .tool,
@@ -216,17 +238,23 @@ nonisolated public enum StartupReads {
     /// 描いたら自分で終わる。時刻はフレーム番号から導く ([ADR-0032] 決定 1 の表の `render`
     /// の行)。値の形は読み手 (`RenderRequest`) が持ち、道具も同じ型で組む。
     ///
+    /// **利用者の区画 (`observe` / `input` / `params`) も、在っても開かない** ([#1619])。外から届く
+    /// 入力とつまみの値が書き出しに混ざると、同じ引数から同じ動きが出ない (水準 2)。保存された値は
+    /// 区画と別の口なので、これまでどおり戻る。
+    ///
+    /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     public static let render = Entry(
         name: "Render", origin: .environment, key: "MOKUME_RENDER", decidedBy: .tool,
         note: "Writes a fixed number of frames at a fixed frame rate and then ends, with no "
             + "window. The value is the frame rate, the frame count and where to write, and "
-            + "the tool passes it only for render",
+            + "the tool passes it only for render. It does not open the observation, input "
+            + "or knob facets even when they are present",
         readSite: "Sources/MokumeCore/Display/RenderRequest.swift")
 
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, observe, input, params, viewport,
+        assetOrigin, keepTime, observe, input, params, viewport,
     ]
 }

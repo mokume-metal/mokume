@@ -45,8 +45,8 @@ extension Sketch {
     /// final class Knob: Sketch {
     ///     var port: Serial?
     ///     var x: Float = 0
-    ///     func setup() {
-    ///         if let first = serialPorts().first { port = try? createSerial(first, baudRate: 9600) }
+    ///     func setup() throws {
+    ///         if let first = serialPorts().first { port = try createSerial(first, baudRate: 9600) }
     ///     }
     ///     func draw() {
     ///         background(0)
@@ -87,14 +87,13 @@ extension Sketch {
     ///   ``SerialFailure/notRunning(call:)`` (プロセスは落ちない)。
     public func createSerial(_ port: SerialPort, baudRate: Int) throws(SerialFailure) -> Serial {
         guard baudRate >= 1 else { throw .invalidBaudRate(baudRate) }
-        // ポートを開く前に断る。足すのはその後の `attach` で、同じ所から続けて呼ぶので足せる
-        try requireAttachable(SerialFailure.self, calledAs: #function)
-        let serial = Serial(
-            name: "serial: \(port.id)",
-            source: SerialSource(path: port.id, baudRate: baudRate, warn: { Diagnostics.warn($0) }),
-            owner: self)
-        attach(serial)
-        return serial
+        // ポートを開く前に断る (`attached` が確かめてから作る)
+        return try attached(SerialFailure.self, calledAs: #function) {
+            Serial(
+                name: "serial: \(port.id)",
+                source: SerialSource(path: port.id, baudRate: baudRate, warn: { Diagnostics.warn($0) }),
+                owner: self)
+        }
     }
 
     /// 記録した行の列を、シリアルポートから届いたかのように流す。**ポートを開かない。**

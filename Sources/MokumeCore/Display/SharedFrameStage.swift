@@ -86,12 +86,17 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// いま見ている差し出し元。
     private struct Source {
         let ids: [UInt32]
+        /// 面を引いたまま持ち続ける読み手。**番号の組が変わる (= 別の世代) までは引き直さない**
+        /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
+        let lookup: SharedFrameSurface.Lookup
         let width: Int
         let height: Int
         /// 番号ごとのテクスチャ。引けなかった面は入らない。
         let frames: [UInt32: Frame]
         /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
         let windowScale: Float?
+        /// 目録を置いた子の番号。**名乗らない子 (古いライブラリ) なら `nil`** (#2982)。
+        let pid: Int32?
     }
 
     private let gpu: RenderDevice
@@ -126,6 +131,15 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// まだ出していない世代を控えているか。**検査から見る。**
     var hasIncoming: Bool { incoming != nil }
 
+    /// 面を引いた (`IOSurfaceLookup`) 回数。出している世代と控えている世代の合計。**検査から
+    /// 見る** — 番号の組が変わらない間は、リフレッシュを重ねても増えないこと
+    /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
+    var surfaceLookups: Int {
+        retiredLookups + (source?.lookup.lookups ?? 0) + (incoming?.lookup.lookups ?? 0)
+    }
+    /// 手放した世代が引いた回数。``surfaceLookups`` を世代の入れ替わりをまたいで数えるため。
+    private var retiredLookups = 0
+
     /// 問いの出し方。**検査から差し替える** — 既定は窓へシートを下ろすので、そのままでは
     /// 「押した後どうなるか」を検められない (`WatchSession.Hooks` と同じ流儀)。
     var presentQuestion: @MainActor (CloseQuestion, NSWindow, @escaping (Bool) -> Void) -> Void =
@@ -156,7 +170,23 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **知らせるだけで、止めるのはここではない。** 古い子を止めるのは道具 (`WatchCommand`)
     /// の仕事で、この台は絵の出口しか知らない。
-    var onGenerationPromoted: (() -> Void)?
+    ///
+    /// **引数は、乗り換えた世代の目録が名乗った子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。受け取る側は、番号があれば待っている世代のものかを照合する。
+    var onGenerationPromoted: ((Int32?) -> Void)?
+    /// 控えた世代の絵を、この台が受け取れないことの知らせ ([#2928])。
+    ///
+    /// **乗り換えの知らせが来ない形のうち、道具だけが知る 2 つ** (``UndeliverableGeneration``)。
+    /// 子は自分の目録が読まれないことも、面が引けないことも知らないので、子からの申告は届かない。
+    /// **知らせるだけで、前の世代を畳むのはここではない** (``onGenerationPromoted`` と同じ分担)。
+    /// どの世代の知らせかは、目録が番号を名乗れば照合できる (下の引数)。名乗らなければ、受け取る側が
+    /// 「乗り換えを待っている世代」だけを見る。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    ///
+    /// **2 つ目の引数は、読めた目録が名乗った子の番号** (#2982)。読めない目録の知らせ・番号を名乗らない
+    /// 子の目録では `nil`。
+    var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)?
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ ([#2875])。
     ///
     /// **入れ替わりの知らせとは別に持つ。** 最初の世代は絵が来る前に採用されるので
@@ -169,7 +199,16 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
     /// 確定させずに次の機会へ回る (``WatchedFile``)。
-    private let manifest: WatchedFile<SharedFrameSurface.Manifest>
+    ///
+    /// **読めない改訂は、台が名乗る** ([#2889]): 作ったときに渡す口で、台の `warn` へ流す。`lazy` なのは、
+    /// 口が台自身を指すため (初期化の後でないと自分を取れない)。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private lazy var manifest = WatchedFile<SharedFrameSurface.Manifest>(
+        url: facet.appendingPathComponent(SharedFrameSurface.manifestName)
+    ) { [weak self] failure in self?.noteUnreadableManifest(failure) }
+    /// 道具の端末への名乗り。**検査から差し替える** — 既定は標準エラー。
+    var warn: (String) -> Void = Diagnostics.warn
     /// 最後に画面へ出した枚数。**同じ絵を二度出さない**ための目印。
     ///
     /// **差し出しを投入した直後に記し、結末は後で見る** ([#2735])。投入を GPU が打ち切ったら、
@@ -234,8 +273,6 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         self.gpu = gpu
         self.facet = facet
         self.look = look
-        self.manifest = WatchedFile(
-            url: facet.appendingPathComponent(SharedFrameSurface.manifestName))
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         super.init()
         screenLink.owner = self
@@ -276,6 +313,13 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
         // **面はスケッチの窓と同じものを使う。** 画素形式・色空間・EDR の既定を 1 か所に
         // 保つためで、別に作ると片方だけが規範から外れる (ADR-0011)
+        //
+        // **渡す `InputState` は溜め置きでしかない** ([#2777])。出来事は `relay` の線で子へ渡り、
+        // こちらの状態は誰も流し込まない (`beginFrame` を呼ぶ者が居ない)。上限 (4096 件) に達すると
+        // 最も古い 1 件を溢れの経路で当て、その和が収まらなければ `Dropped the input event` と警告
+        // しうるが、それは 4096 件前の出来事についてで、子へ届いた出来事を指さない
+        //
+        // [#2777]: https://github.com/mokume-metal/mokume/issues/2777
         let view = SketchSurface(
             frame: NSRect(origin: .zero, size: window.contentLayoutRect.size),
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
@@ -343,6 +387,11 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
 
     // MARK: - 駆動
 
+    /// 表示の予定の時刻は使わない (この台は絵を作っていない・``ScreenDisplayLinkOwner``)。
+    func displayLinkFired(at displayTime: Double?) {
+        displayLinkFired()
+    }
+
     func displayLinkFired() {
         // **結末の届いた差し出しを、出すかを決める前に照らす** ([#2735])。打ち切られていれば
         // ``submissionSettled(_:dropped:)`` が記しを戻し、このリフレッシュが同じ枚を出し直す。
@@ -360,10 +409,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             self.view?.followPointerLock(requested: pointerLockRequested)
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
         }
-        guard let source, let newest = SharedFrameSurface.newest(among: source.ids) else { return }
+        guard let source, let newest = source.lookup.newest() else { return }
         // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
         // 無くても、走っている側が名乗ったことは変わらない
-        readNumbers(from: newest)
+        readNumbers(from: newest, in: source.lookup)
         guard let view, let layer = view.metalLayer,
             newest.frame != lastFrame, let frame = source.frames[newest.id]
         else { return }
@@ -396,13 +445,20 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// **新しい枚数のときだけ引く。** 同じ絵に対して引き直しても数字は変わらないので、
     /// 毎リフレッシュ読むぶんだけ無駄になる。
-    private func readNumbers(from newest: (id: UInt32, frame: Int)) {
+    private func readNumbers(
+        from newest: (id: UInt32, frame: Int), in lookup: SharedFrameSurface.Lookup
+    ) {
         guard newest.frame != lastSeenFrame else { return }
         lastSeenFrame = newest.frame
-        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む
-        pointerLockRequested = SharedFrameSurface.pointerLockRequested(of: newest.id)
-        cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(of: newest.id)
-        guard let numbers = SharedFrameSurface.numbers(of: newest.id) else { return }
+        // `newest` を返した面は握っているので、引き直さない (#2368)
+        guard let surface = lookup.surface(newest.id) else { return }
+        // 捕まえの要求も同じ面に載っている。速さが載っていない面でも読む。**手放した世代の面からは
+        // 読まない** — 畳まれる世代の最後の数枚で頼みが戻る (#2983)
+        if !isReleased(source) {
+            pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
+            cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+        }
+        guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
         tempo.record(numbers, at: CACurrentMediaTime())
     }
 
@@ -424,22 +480,37 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // **控えていた世代は捨てる。** 重ねるのは 2 つまでで、まだ 1 枚も出していない
         // 世代を積み上げても、出る絵は増えない
         if let waiting = incoming {
+            retiredLookups += waiting.lookup.lookups
             try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
             incoming = nil
         }
         var frames: [UInt32: Frame] = [:]
+        var anyLookedUp = false
         for id in manifest.ids {
-            guard let frame = makeFrame(id: id, width: manifest.width, height: manifest.height)
-            else { continue }
+            let made = makeFrame(id: id, width: manifest.width, height: manifest.height)
+            anyLookedUp = anyLookedUp || made.lookedUp
+            guard let frame = made.frame else { continue }
             frames[id] = frame
         }
         guard !frames.isEmpty else {
-            // 引けなかった = 置いた側が既に居ない。**直前の絵はそのまま残す** (決定 6)
+            // **直前の絵はそのまま残す** (決定 6)。引けなかったのは、置いた側が既に居ない (子の側で
+            // 決まる — 道具の側の「子の離脱」が畳む) か、子は生きているのに引けない (面が全域でない
+            // など・道具の側だけが知る) か、面は引けたが絵にできない (道具の GPU の事情) かのどれかで、
+            // あとの 2 つは知らせないと乗り換えの合図が来ない
+            // ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。どれかは受け取る側が決める
+            //
+            // **目録は読めたので、寸法は分かる。** 受け取る側が前の世代を畳むなら、入力を受けるのは
+            // この寸法の新しい子なので、入力の写し (キャンバスの寸法) を追随させる。前の世代のカーソルの
+            // 頼みは下ろす (``releaseInheritedRequests()``)
+            view?.setCanvasSize((manifest.width, manifest.height))
+            releaseInheritedRequests()
+            onGenerationUndeliverable?(anyLookedUp ? .unusableSurface : .noSurface, manifest.pid)
             return
         }
         incoming = Source(
-            ids: manifest.ids, width: manifest.width, height: manifest.height, frames: frames,
-            windowScale: manifest.windowScale)
+            ids: manifest.ids, lookup: SharedFrameSurface.Lookup(ids: manifest.ids),
+            width: manifest.width, height: manifest.height, frames: frames,
+            windowScale: manifest.windowScale, pid: manifest.pid)
     }
 
     /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
@@ -452,13 +523,18 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 最初の 1 回がそれに当たる。
     private func promoteIfReady() {
         guard let waiting = incoming else { return }
-        if source != nil, SharedFrameSurface.newest(among: waiting.ids) == nil { return }
+        if source != nil, waiting.lookup.newest() == nil { return }
         // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
         if let previous = source {
+            retiredLookups += previous.lookup.lookups
             try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
         }
         source = waiting
         incoming = nil
+        // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
+        // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
+        if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
+        relinquishedLegacyIDs = nil
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -471,7 +547,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         lastFrame = 0
         lastSeenFrame = 0
         shownCurrentGeneration = false
-        onGenerationPromoted?()
+        onGenerationPromoted?(waiting.pid)
     }
 
     /// 出す世代が頼む窓の大きさに合わせる (``Look/followsRequestedSize``)。プレビューなら、
@@ -498,20 +574,112 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     var defaults: UserDefaults = .standard
 
     /// 番号から面を引き、差し出せる形にする。
-    private func makeFrame(id: UInt32, width: Int, height: Int) -> Frame? {
-        guard let surface = IOSurfaceLookup(id) else { return nil }
+    ///
+    /// - Returns: `lookedUp` は面を引けたか。引けても絵にできなければ `frame` は `nil` (道具の GPU の事情)。
+    private func makeFrame(id: UInt32, width: Int, height: Int) -> (frame: Frame?, lookedUp: Bool) {
+        guard let surface = IOSurfaceLookup(id) else { return (nil, false) }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: RenderTarget.pixelFormat, width: width, height: height, mipmapped: false)
         descriptor.usage = [.shaderRead]
         guard
             let texture = gpu.device.makeTexture(
                 descriptor: descriptor, iosurface: surface, plane: 0)
-        else { return nil }
+        else { return (nil, true) }
         gpu.makeResident(texture)
-        return Frame(texture: texture, width: width, height: height)
+        return (Frame(texture: texture, width: width, height: height), true)
+    }
+
+    /// 前の世代のカーソルの頼み (捕まえる・隠す) を下ろす ([#2928])。
+    ///
+    /// **新しい世代の絵を受け取れないと知ったとき**に呼ぶ。見張りがその世代へ乗り換えたとみなして
+    /// 前の世代を畳むと、前の世代はもう絵を書かないので、頼みを読み直す契機 (``readNumbers(from:in:)``
+    /// は新しい枚数のときだけ読む) が来ず、窓はカーソルを捕まえたまま・隠したままになる。
+    ///
+    /// **写しを空にするだけでは足りない** ([#2983])。止めるまでに前の世代が書く 1 枚 (止まらない子は
+    /// 数秒書き続ける) で、同じ面から頼みを読み直して戻る。だから**手放した世代の面を覚え**
+    /// (``relinquishedPIDs``・``relinquishedLegacyIDs``)、その世代からは次に乗り換えるまで頼みを読まない。
+    ///
+    /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    private func releaseInheritedRequests() {
+        pointerLockRequested = false
+        cursorHiddenRequested = false
+        // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
+        if let pid = source?.pid {
+            relinquishedPIDs.insert(pid)
+        } else {
+            relinquishedLegacyIDs = source?.ids
+        }
+    }
+
+    /// 番号を名乗らない世代 (古いライブラリ) の、頼みを手放した面の番号。**その世代が出している間は、頼みを
+    /// 読まない。** 面の番号は再利用されうるので、**乗り換えで捨てる** (``promoteIfReady()``)。
+    private var relinquishedLegacyIDs: [UInt32]?
+    /// 見張りが手放した世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// **まだ採っていない目録も、この番号を名乗れば生まれたときから手放した扱いにする** — 離脱の知らせが
+    /// 台の拍より先に来ると、台は死んだ子 (1 枚書いてすぐ死んだ) へ乗り換えてその頼みを読む。別の番号の
+    /// 世代へ乗り換えたら捨てる (番号の使い回しで、無関係な世代を手放したことにしない)。
+    private var relinquishedPIDs: Set<Int32> = []
+
+    /// この世代の頼みを読まないか。
+    private func isReleased(_ generation: Source?) -> Bool {
+        guard let generation else { return false }
+        if let pid = generation.pid { return relinquishedPIDs.contains(pid) }
+        return relinquishedLegacyIDs == generation.ids
+    }
+
+    /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
+    /// 次の乗り換えまで読まない。**
+    ///
+    /// 受け取れない知らせ (``releaseInheritedRequests()``) の経路は台が自分で気付いたが、次の 3 つは
+    /// 台を通らない: 作り直した子が窓へ倒れた回・子が消えた回・乗り換えの合図が来ないまま次の保存が来て
+    /// 映っている世代を畳んだ回。どれも畳まれた世代はもう絵を書かず、頼みを読み直す契機
+    /// (``readNumbers(from:in:)`` は新しい枚数のときだけ読む) が来ないので、窓がカーソルを捕まえたまま・
+    /// 隠したままになる。**最後の絵と入力の写しの寸法は残す** (ADR-0032 決定 6)。寸法を変える材料
+    /// (新しい子の目録) が、この口には無い。
+    ///
+    /// **生きて書き続ける世代へ誤って当たると、その世代は次の乗り換えまで頼めない** — 捕まえは押し直す
+    /// まで戻らない (``SketchSurface/followPointerLock(requested:)``)。呼ぶのは、見張りが畳む・居なくなったと
+    /// 決めた世代についてだけである。
+    ///
+    /// [#2983]: https://github.com/mokume-metal/mokume/issues/2983
+    ///
+    /// **`pids` は手放す世代の子の番号** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    /// 映している世代の目録が番号を名乗れば、手放す世代のときだけ下ろす — 映っている生きた世代に誤って
+    /// 当てない。番号を名乗らない世代 (古いライブラリ) は照合できないので下ろす。まだ採っていない目録も、
+    /// 手放した番号のものは生まれたときから手放した扱いにする。
+    func relinquishSource(pids: [Int32]) {
+        relinquishedPIDs.formUnion(pids)
+        let matches = source?.pid.map { pids.contains($0) } ?? true
+        if matches { releaseInheritedRequests() }
     }
 
     // MARK: - 言うこと
+
+    /// 読めない目録を掴んだことを、改訂ごとに 1 度言う ([#2889])。
+    ///
+    /// **差し出し元は変えない** — 読めない目録からは乗り換え先が分からないので、直前の絵を出したままにする
+    /// (ADR-0032 決定 6)。名乗りの文面は ``UnreadableRevision`` で、つまみの応答と揃える。
+    /// 「目録が読めない回」を知る口はここだけである。
+    ///
+    /// [#2889]: https://github.com/mokume-metal/mokume/issues/2889
+    private func noteUnreadableManifest(_ failure: UnreadableRevision.Failure) {
+        // **作品の窓とプレビューは、それぞれ台を持ち、同じ目録を別々に読む**ので、同じ改訂は台ごとに
+        // 1 度ずつ (高々 2 行) 名乗る。文面もそう言う (「1 度」と言い切ると、2 行出て偽になる)
+        warn(
+            UnreadableRevision.notice(
+                of: "The shared-frame manifest", at: manifest.url, failure: failure,
+                saidBy: "each window"))
+        // 読めない目録は乗り換えの合図も起こさないので、前の世代が残る ([#2928])。**名乗りは上で済んで
+        // いる** — 受け取る側は同じ候補を端末へ 2 度言わない (``UndeliverableGeneration``)
+        //
+        // [#2928]: https://github.com/mokume-metal/mokume/issues/2928
+        releaseInheritedRequests()
+        switch failure {
+        case .cannotDecode: onGenerationUndeliverable?(.unreadableManifest, nil)
+        case .cannotRead: onGenerationUndeliverable?(.unreadableFile, nil)
+        }
+    }
 
     /// 出せなかったことを 1 度だけ言う。**握り潰すと、絵が止まった理由がどこにも残らない。**
     private func noteFailure(_ failure: RenderFailure) {
@@ -586,4 +754,20 @@ extension SharedFrameStage: SettlementObserver {
         else { return }
         lastFrame = 0
     }
+}
+
+/// 道具の窓が新しい世代の絵を受け取れないと、道具だけが知る形 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+///
+/// 乗り換えの合図が来ないので、知らせないと前の世代が残り、プレビューの「起こしている」が終わらない。
+/// **1 枚も焼かない形は含めない** — `setup()` が長いのと固まったのとは時計なしに見分けられず、
+/// 時計で見切らない (ADR-0032 決定 3)。
+public enum UndeliverableGeneration: Sendable, Equatable {
+    /// 目録が読めない (版が違う・形が違う)。**台は理由と候補を端末へ名乗り済み** (#2889)。
+    case unreadableManifest
+    /// 目録がファイルとして読めない (権限・置き場がディレクトリ)。**台は理由を端末へ名乗り済み。** 版の形とは関係が無い。
+    case unreadableFile
+    /// 目録は読めたが、番号の面を 1 枚も引けない。**台は何も言っていない。**
+    case noSurface
+    /// 面は引けたが、絵にできない (道具の GPU が面から質感を作れない)。版の形とは関係が無い。**台は何も言っていない。**
+    case unusableSurface
 }

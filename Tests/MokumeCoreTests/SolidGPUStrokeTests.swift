@@ -43,10 +43,13 @@ struct SolidGPUStrokeTests {
                 == Canvas.solidDiscFloorUnits.map { [$0.x.bitPattern, $0.y.bitPattern] })
     }
 
-    /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本
-    /// 続く。GPU の頂点関数は潰れた辺の先を 1 段しか引かないので、骨を作らずに CPU の骨へ戻す。
-    @Test("同じ直線に載る 2 本の辺を持つ網は、GPU の骨を作らない")
-    func straightPairsStayOnTheCPU() throws {
+    /// 同じ直線に載る 2 本の辺が集まる点を持つ網は、視線をその直線に沿わせると潰れた辺が 2 本以上続く。
+    /// 頂点関数は潰れた辺を対の相手をたどって何段でも引くので、骨を作る ([#2989])。
+    /// 絵が CPU の帯と一致することは `StraightChainStrokeTests` が見る。
+    ///
+    /// [#2989]: https://github.com/mokume-metal/mokume/issues/2989
+    @Test("同じ直線に載る 2 本の辺を持つ網も、GPU の骨を作る")
+    func straightPairsMakeABone() throws {
         // 直線 a–m–b を稜にして、折れた 2 枚ずつで挟む (稜線は a–m と m–b の 2 本に分かれる)
         let (a, m, b) = (SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(2, 0, 0))
         let (up, side) = (SIMD3<Float>(1, 1, 0), SIMD3<Float>(1, 0, 1))
@@ -58,9 +61,27 @@ struct SolidGPUStrokeTests {
         }
         let net = SolidEdges(SolidMesh(points: points))
         #expect(!net.edges.isEmpty)
-        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) == nil)
+        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) != nil)
         let box = SolidEdges(SolidShape.box(width: 2, height: 2, depth: 2).make())
         #expect(try SolidStrokeGeometry(net: box, gpu: RenderDevice()) != nil)
+    }
+
+    /// 骨を作らない配置。**直線の上で同じ側へ重なる 2 辺** (T 字の継ぎ目: 長い辺の途中に別の点が載る) は、
+    /// 視線をその直線に沿わせたとき、たどる道が分かれるので、CPU の帯へ戻す。
+    @Test("同じ側へ折り返す 2 本の辺を持つ網は、GPU の骨を作らない")
+    func foldedStraightPairsStayOnTheCPU() throws {
+        // P–Q と P–R は同じ向きに重なる (Q は P–R の途中)
+        let (p, q, r) = (SIMD3<Float>(0, 0, 0), SIMD3<Float>(1, 0, 0), SIMD3<Float>(2, 0, 0))
+        let (x, y) = (SIMD3<Float>(0.5, 1, 0), SIMD3<Float>(1, -1, 0))
+        var points: [SolidMesh.Point] = []
+        for triangle in [[p, r, x], [p, q, y]] {
+            for corner in triangle {
+                points.append(SolidMesh.Point(position: corner, normal: .zero, uv: .zero))
+            }
+        }
+        let net = SolidEdges(SolidMesh(points: points))
+        #expect(!net.edges.isEmpty)
+        #expect(try SolidStrokeGeometry(net: net, gpu: RenderDevice()) == nil)
     }
 
     @Test("同じ球は列をまたいで頂点と骨を共用する")
@@ -119,6 +140,52 @@ struct SolidGPUStrokeTests {
         }
         #expect(different == 0, "GPU と CPU で異なる画素: \(different)")
     }
+
+    /// 頂点関数が向きを控える腕は 8 本までで (`kSolidStrokeCachedArms`)、越えた腕は引くたびに骨の
+    /// 点から引き直す (#2973)。腕が 9 本以上集まる点は、組み込みの網では球の極と円錐の頂点くらいにしか
+    /// 無い。球の極は腕が全周に並んで角の形が他の腕の帯に隠れ、`matchesCPU` の絵には引き直しの誤りが
+    /// 出ない。
+    ///
+    /// ここでは、軸を画面に沿わせて横から見た円錐 (分割 18) に太い線を引く。頂点に 18 本の腕が集まり、
+    /// 底の輪へ扇に開く (画面で 180° を越える隙間が反対側に空く) ので、頂点の角の形は**扇の両端の 2 本**で
+    /// 決まる。両端の腕の 1 本は 9 本目以降 (引き直す側) にあり、**引き直した腕を数え損なうと、角の形が
+    /// 内側の腕で決まって頂点の尖りが変わる**。引き直しの経路を `return false` に壊す・控えの最後の
+    /// 値を返すに壊すと、この検査が赤になる (どちらも他の突き合わせは緑のまま・PR に書いた)。
+    /// 絵に出るのは頂点の尖りの十数画素なので、太さは 40 と太くしてある。
+    @Test("腕が控えの 8 本を越える頂点の角も、従来の CPU 経路と同じ絵になる", arguments: [false, true])
+    func manyArmsMatchCPU(orthographic: Bool) throws {
+        var images: [DisplayImage] = []
+        for gpu in [false, true] {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)
+            let passThrough = try Self.passThrough(canvas)
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                if !gpu { canvas.shader(passThrough) }
+                if orthographic { canvas.ortho() }
+                canvas.noFill()
+                canvas.stroke(.linear(red: 1, green: 1, blue: 1))
+                canvas.strokeWeight(40)
+                canvas.translate(100, 100, 0)
+                canvas.cone(60, 60, detail: 18)
+                canvas.closeBatch()
+                // GPU の側は線を GPU で広げ、CPU の側 (利用者の断片つき) は広げない
+                let strokes = canvas.batches.compactMap(\.strokeGeometry)
+                #expect(strokes.count == (gpu ? 1 : 0))
+            }
+            images.append(try canvas.target.encodeForDisplay())
+        }
+        var different = 0
+        var lit = 0
+        for y in 0..<200 {
+            for x in 0..<200 {
+                if images[0][x, y] != images[1][x, y] { different += 1 }
+                if images[1][x, y] != images[1][0, 0] { lit += 1 }
+            }
+        }
+        #expect(lit > 500, "線が描かれていない (描かれた画素 \(lit))")
+        #expect(different == 0, "GPU と CPU で異なる画素: \(different)")
+    }
+
     @Test("線だけ・半透明の塗り・平面の挿入と途中の読み出しを並べ替えない")
     func orderAndFlush() throws {
         var pictures: [[UInt8]] = []

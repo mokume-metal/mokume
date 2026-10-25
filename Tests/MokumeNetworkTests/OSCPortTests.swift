@@ -111,23 +111,29 @@ nonisolated final class PortHolder: Sendable {
 ///
 /// `raw` があればそれで受け口へ出し、無ければ何も出さない。`complaint` があれば、送るとき (と、
 /// `complainsOnStop` なら閉じるとき) に送れないと名乗る。
-nonisolated final class ScriptedSender: DatagramSending {
+nonisolated final class ScriptedSender: DatagramSending, SendTracing {
     private let raw: RawDatagramSocket?
     private let port: Int
     private let complaint: (@Sendable (String) -> Void)?
     private let complainsOnStop: Bool
+    private let traced: Mutex<SendTrace>
 
+    /// - Parameter trace: 名乗りに載る送り手の跡 (``SendTrace``)。送るたびに `issued` が増える。
     init(
         raw: RawDatagramSocket?, port: Int, complaint: (@Sendable (String) -> Void)?,
-        complainsOnStop: Bool = false
+        complainsOnStop: Bool = false, trace: SendTrace = SendTrace()
     ) {
         self.raw = raw
         self.port = port
         self.complaint = complaint
         self.complainsOnStop = complainsOnStop
+        traced = Mutex(trace)
     }
 
+    var sendTrace: SendTrace { traced.withLock { $0 } }
+
     func send(_ bytes: [UInt8]) {
+        traced.withLock { $0.issued += 1 }
         complaint?("Could not send to 127.0.0.1:\(port) (Address already in use)")
         _ = raw?.send(bytes, to: port)
     }
@@ -152,7 +158,7 @@ nonisolated final class Told: Sendable {
 /// **空きポートの番号を先に選んで手放し、あとから開く形にしない。** 手放してから開くまでの間に
 /// 別のプロセス (並行する他のセッションの検査など) がその番号を取ると、使用中として断られて
 /// 落ちる (#2359)。番号は 0 を頼んで、開いた後に読む。
-nonisolated final class AimedSender: DatagramSending {
+nonisolated final class AimedSender: DatagramSending, SendTracing {
     private let target = Mutex<DatagramSender?>(nil)
     private let warn: @Sendable (String) -> Void
 
@@ -165,6 +171,9 @@ nonisolated final class AimedSender: DatagramSending {
 
     func send(_ bytes: [UInt8]) { target.withLock { $0?.send(bytes) } }
     func stop() { target.withLock { $0?.stop() } }
+
+    /// 向けた先の送り手の跡。まだ向けていなければ空 (名乗りでは「出 0」)。
+    var sendTrace: SendTrace { target.withLock { $0?.sendTrace ?? SendTrace() } }
 }
 
 /// 検査から動かせる時計 (秒)。受け口が送り元の黙りを測る時計の代わりに渡す。
@@ -197,14 +206,17 @@ final class IdleSketch: Sketch {
 @Suite("OSC の入り口", .serialized)
 struct OSCPortTests {
     /// フレームを回すように取り出しを続け、`count` 個届くまで (か期限まで) 集める。
-    private func collect(_ osc: OSCPort, count: Int) async -> [OSCMessage] {
-        var received: [OSCMessage] = []
-        _ = await until {
+    ///
+    /// 読めた数と待った秒数を `log` に数える (読まれなかった回の名乗りの材料 — #3001)。足りなくても名乗らずに
+    /// 短い列を返すので、`log` は必須で、呼ぶ側が ``requireSent(_:_:log:landing:)`` で名乗る (#3124)。
+    private func collect(
+        _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, label: String = "送り",
+        log: SendLog
+    ) async -> [OSCMessage] {
+        await collectCounting(count: count, within: seconds, label: label, log: log) {
             osc.supply()
-            received += osc.messages
-            return received.count >= count
+            return osc.messages
         }
-        return received
     }
 
     /// 番号を載せた OSC (`address <番号>`) を `count` 個の送り元から 1 通ずつ送り、番号が全部読まれるまで
@@ -227,12 +239,17 @@ struct OSCPortTests {
     ///
     /// 送り元は番号の順に `senders` の末尾へ足す。呼ぶ側が検査の終わりに閉じる。
     ///
+    /// 読まれなかった回の名乗り (#3001) のため、読まれなかった番号・替えた回数・替えた後に読まれた番号・
+    /// 送り元ごとの名乗りの行と跡 (``SendTrace``) を、宛名 (`address`) の名で `log` に数える。呼ぶ側が
+    /// ``requireSent(_:_:log:landing:)`` で名乗って止まる。**名乗らない送り元を替えず、期限を延ばさず、
+    /// 救わない**のは、ここでも同じ。
+    ///
     /// - Parameter makeSender: 番号と、何度目の送り元か (1 から) と、送れないときの知らせの行き先を受けて、
     ///   送り元を作る。知らせは `told` にも流す。
     private func sendNumberedBurst(
         count: Int, address: String = "/from", through osc: OSCPort,
         senders: inout [any DatagramSending], told: Told,
-        replacements: Int = 3, within seconds: TimeInterval = 10,
+        replacements: Int = 3, within seconds: TimeInterval = 10, log: SendLog = SendLog(),
         makeSender:
             (_ index: Int, _ attempt: Int, _ warn: @escaping @Sendable (String) -> Void) ->
             any DatagramSending
@@ -244,11 +261,14 @@ struct OSCPortTests {
         var attempts = [Int](repeating: 1, count: count)
         func sender(_ index: Int) -> any DatagramSending {
             let attempt = attempts[index]
-            return makeSender(index, attempt) { line in
+            let opened = makeSender(index, attempt) { line in
                 told.append(line)
+                log.complain(line, label: address, index: index)
                 guard current.withLock({ $0[index] }) == attempt else { return }
                 stuck.withLock { _ = $0.insert(index) }
             }
+            log.watch(address, index: index, sender: opened)
+            return opened
         }
         for index in 0..<count {
             let opened = sender(index)
@@ -256,7 +276,8 @@ struct OSCPortTests {
             opened.send(try Wire.encoded(OSCMessage(address, index)))
         }
         var heard = Set<Int>()
-        let deadline = Date().addingTimeInterval(seconds)
+        let started = Date()
+        let deadline = started.addingTimeInterval(seconds)
         while heard.count < count, Date() < deadline {
             osc.supply()
             heard.formUnion(osc.messages.filter { $0.address == address }.compactMap { $0.int(0) })
@@ -271,7 +292,36 @@ struct OSCPortTests {
             }
             try await Task.sleep(for: .milliseconds(10))
         }
+        let missing = (0..<count).filter { !heard.contains($0) }
+        log.record(
+            label: address, expected: count, heard: count - missing.count, missing: missing,
+            replacements: attempts.reduce(0) { $0 + $1 - 1 },
+            heardAfterReplacement: (0..<count).filter { heard.contains($0) && attempts[$0] > 1 }.count,
+            waited: Date().timeIntervalSince(started), limit: seconds)
         return heard
+    }
+
+    /// 送りの前提 (送った番号・通が読まれる) が満たされなかった回の名乗り (#3001)。受け口は `osc`、素の socket の
+    /// 1 通は `port` へ送る。名乗りの中身と救わない理由は ``requireSent(_:_:log:landing:)``。
+    private func requireHeard(
+        _ ok: Bool, _ what: @autoclosure () -> String, log: SendLog, osc: OSCPort, port: Int, told: Told
+    ) async throws {
+        try await requireSent(
+            ok, what(), log: log, landing: landing(of: osc, port: port, told: told))
+    }
+
+    /// 素の socket から送った通が `count` 通読まれるのを待つ。読まれなければ、受け口の様子と素の 1 通の前後の
+    /// 受け入れの差を名乗って 1 つで止まる (#3105)。名乗りは ``requireSent(_:_:log:landing:)``・
+    /// 素の socket の記録は ``collectOrName(_:count:within:landing:_:)`` と同じ。
+    private func heard(
+        _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, port: Int, told: Told,
+        from peer: RawDatagramSocket, _ note: String = ""
+    ) async throws -> [OSCMessage] {
+        try await collectOrName(
+            count: count, within: seconds, from: peer, landing: landing(of: osc, port: port, told: told), note
+        ) { count, seconds, label, log in
+            await collect(osc, count: count, within: seconds, label: label, log: log)
+        }
     }
 
     /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
@@ -286,22 +336,24 @@ struct OSCPortTests {
         let aimed = AimedSender(warn: told.append)
         let osc = try loopback(
             port: 0, told: told, outbound: aimed, idleAfter: idleAfter, now: now)
-        let running = await until { osc.state == .running }
-        guard running else {
+        do {
+            try await requireState(told: told, tracing: osc.source) { osc.state }
+        } catch {
             osc.close()
-            throw ListeningFailure(state: osc.state)
+            throw error
         }
         guard let port = (osc.source as? NetworkOSCSource)?.boundPort else {
             osc.close()
-            throw ListeningFailure(state: osc.state)
+            throw MissingPort(state: osc.state, told: told.lines)
         }
         aimed.aim(at: port)
         return (osc, port)
     }
 
-    /// 受け始められなかった。`state` はそのときの状態。
-    private struct ListeningFailure: Error {
+    /// `running` になったのに、開いたポートの番号を読めなかった。
+    private struct MissingPort: Error {
         let state: SourceState
+        let told: [String]
     }
 
     /// 127.0.0.1 の `port` で受け、送り先も同じポートにした入り口。開いて返す (受け始めるのは待たない)。
@@ -363,12 +415,17 @@ struct OSCPortTests {
     @Test("自分で送ったメッセージを、自分のポートで受ける")
     func sendsToItselfAndReceives() async throws {
         let told = Told()
-        let osc = try await listening(told: told).osc
+        let (osc, port) = try await listening(told: told)
         defer { osc.close() }
+        let log = SendLog()
+        log.watch { osc.sendTrace }
 
         osc.send("/size", Float(0.25))
         osc.send("/hit", 1)
-        let received = await collect(osc, count: 2)
+        let received = await collect(osc, count: 2, log: log)
+        try await requireHeard(
+            received.count >= 2, "2 通のうち読めたのは \(received.count) 通", log: log, osc: osc, port: port,
+            told: told)
         #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
         #expect(osc.lastArrival != nil)
         #expect(osc.report == SourceReport(name: "osc :0", state: .running, lastArrival: osc.lastArrival))
@@ -379,15 +436,99 @@ struct OSCPortTests {
         #expect(osc.messages.isEmpty)
     }
 
+    @Test("外して足し直した (close の後に open が来る) 入り口は、受け取りも送信も戻る。外し直せばまた 1 度だけ知らせて送らない (#3122)")
+    func reopenedPortSendsAgain() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000",
+            source: RecordedSource<OSCMessage>(batches: [[OSCMessage("/a", 1)]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try osc.open()
+        osc.send("/before", 1)
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+
+        osc.close()
+        #expect(osc.state == .stopped)
+        osc.send("/while-closed", 1)
+        osc.send("/while-closed", 2)
+        #expect(recording.sent == [try OSCCodec.encode(OSCMessage("/before", 1))])
+        #expect(told.count(containing: "is stopped") == 1)
+
+        try osc.open()
+        #expect(osc.state == .running)
+        osc.send("/after", 2)
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+        #expect(
+            recording.sent == [
+                try OSCCodec.encode(OSCMessage("/before", 1)), try OSCCodec.encode(OSCMessage("/after", 2)),
+            ])
+        #expect(told.count(containing: "is stopped") == 1, "足し直した後に送れたので、新しい知らせは出ない")
+
+        // 外し直せば、また送らず、また 1 度だけ知らせる
+        osc.close()
+        osc.send("/again", 3)
+        #expect(recording.sent.count == 2)
+        #expect(told.count(containing: "is stopped") == 2)
+    }
+
+    @Test("外して足し直した入り口は、外す前に溜まっていたメッセージを出さず、足し直した後に届いたものだけを出す (#3122)")
+    func reopenedPortDoesNotDeliverWhatWaitedBeforeClose() throws {
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000", source: RecordedSource<OSCMessage>(batches: [[]]),
+            outbound: nil, owner: nil)
+        try osc.open()
+        osc.input.send(OSCMessage("/stale", 1))
+        osc.close()
+
+        try osc.open()
+        osc.supply()
+        #expect(osc.messages.isEmpty, "外す前に溜まっていた分は、足し直した最初のフレームに出ない")
+        #expect(osc.latest("/stale") == nil)
+
+        osc.input.send(OSCMessage("/fresh", 2))
+        osc.supply()
+        #expect(osc.messages == [OSCMessage("/fresh", 2)])
+    }
+
+    @Test("実行に足されていない (外で呼んだ) stop() は何も止めず、利用者が止めた印も立てない。外して足し直せば戻る (#3122)")
+    func stopWithoutARunDoesNotStick() throws {
+        let told = Told()
+        let recording = RecordingSender()
+        let osc = OSCPort(
+            port: 6000, name: "osc :6000",
+            source: RecordedSource<OSCMessage>(batches: [[OSCMessage("/a", 1)]]),
+            outbound: recording, owner: nil, warn: told.append)
+        try osc.open()
+        osc.stop()
+        #expect(osc.state == .running, "外で呼んだ stop() は何も止めない")
+
+        // 外して足し直せば戻る (印が立っていれば、ここで戻らない)
+        osc.close()
+        try osc.open()
+        osc.supply()
+        osc.send("/back", 1)
+        #expect(osc.state == .running)
+        #expect(osc.messages == [OSCMessage("/a", 1)])
+        #expect(recording.sent == [try OSCCodec.encode(OSCMessage("/back", 1))])
+    }
+
     @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
     func injectedMessagesGiveTheSameOutcome() async throws {
         let told = Told()
-        let live = try await listening(told: told).osc
+        let (live, port) = try await listening(told: told)
         defer { live.close() }
+        let log = SendLog()
+        log.watch { live.sendTrace }
         for message in Self.script {
             live.send(message)
         }
-        let received = await collect(live, count: Self.script.count)
+        let received = await collect(live, count: Self.script.count, log: log)
+        try await requireHeard(
+            received.count >= Self.script.count, "\(Self.script.count) 通のうち読めたのは \(received.count) 通",
+            log: log, osc: live, port: port, told: told)
 
         let injected = OSCPort(
             port: nil, name: "osc (recorded)",
@@ -423,6 +564,113 @@ struct OSCPortTests {
         #expect(osc.state == .running)
     }
 
+    // MARK: - 最新の 1 つ (#2469)
+
+    /// 注入した列を流す入り口。走っているスケッチへは足さず、`supply()` を自分で呼ぶ。
+    private func replay(
+        _ batches: [[OSCMessage]], told: Told = Told()
+    ) throws -> OSCPort {
+        let osc = OSCPort(
+            port: nil, name: "osc (recorded)", source: RecordedSource<OSCMessage>(batches: batches),
+            outbound: nil, owner: nil, warn: told.append)
+        try osc.open()
+        return osc
+    }
+
+    @Test("latest は、フレームの頭で宛名ごとの最後に届いた 1 つに更新され、何も届かないフレームは前のまま")
+    func latestFollowsTheFramesAndKeepsTheLastValue() throws {
+        let batches = [
+            [OSCMessage("/1/fader1", Float(0.2)), OSCMessage("/1/fader1", Float(0.7))],
+            [],
+            [OSCMessage("/1/fader2", 1)],
+        ]
+        let osc = try replay(batches)
+        #expect(osc.latest("/1/fader1") == nil, "取り出す前は何も無い")
+
+        osc.supply()
+        // 同じフレームで後に届いたもの。落とさない列は今までどおり両方を持つ
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2") == nil)
+        #expect(osc.messages == batches[0])
+
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2") == nil)
+        #expect(osc.messages.isEmpty)
+
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+        #expect(osc.latest("/1/fader2")?.float(0) == 1)
+
+        // 終わりまで行けば始まりへ戻り、新しい値が前の値を置き換える
+        osc.supply()
+        #expect(osc.latest("/1/fader1")?.float(0) == 0.7)
+    }
+
+    @Test("latest は宛名を文字どおりに引き、ワイルドカードも、前方一致も、一致しない宛名も nil")
+    func latestDoesNotMatchWildcards() throws {
+        let osc = try replay([[OSCMessage("/1/fader1", Float(0.5)), OSCMessage("/hit", 1)]])
+        osc.supply()
+        for address in ["/1/*", "/*", "/1/fader", "/1/fader1/", "/1/fader?", "/1/fader[1]", "", "/HIT"] {
+            #expect(osc.latest(address) == nil, "\(address)")
+        }
+        #expect(osc.latest("/hit") == OSCMessage("/hit", 1))
+    }
+
+    @Test("同じ列からは、何度回しても同じフレームで同じ latest になる")
+    func latestIsDeterministicForTheSameBatches() throws {
+        let batches = [
+            [OSCMessage("/a", Float(0.1))], [OSCMessage("/a", Float(0.9)), OSCMessage("/b", 2)], [],
+        ]
+        func run() throws -> [[String: Float?]] {
+            let osc = try replay(batches)
+            return (0..<5).map { _ in
+                osc.supply()
+                return ["/a": osc.latest("/a")?.float(0), "/b": osc.latest("/b")?.float(0)]
+            }
+        }
+        let first = try run()
+        #expect(first == (try run()))
+        #expect(first[0]["/a"] == 0.1)
+        #expect(first[1]["/a"] == 0.9)
+    }
+
+    @Test("stop() の後は latest も空になる")
+    func latestIsEmptyAfterStop() throws {
+        let osc = try replay([[OSCMessage("/a", 1)]])
+        osc.supply()
+        #expect(osc.latest("/a") != nil)
+        osc.close()
+        #expect(osc.latest("/a") == nil)
+        osc.supply()
+        #expect(osc.latest("/a") == nil)
+    }
+
+    @Test("覚える宛名は 4096 まで。超えた新しい宛名は覚えずに 1 度だけ知らせ、覚えた宛名は更新し、messages は落とさない")
+    func latestRemembersAtMostTheAddressLimit() throws {
+        let limit = OSCPort.latestAddressLimit
+        let told = Told()
+        let fill = (0..<limit).map { OSCMessage("/n/\($0)", $0) }
+        let beyond = [OSCMessage("/extra/1", 1), OSCMessage("/extra/2", 2)]
+        let update = [OSCMessage("/n/0", -1)]
+        let osc = try replay([fill, beyond, update, beyond], told: told)
+        osc.supply()
+        #expect(osc.latest("/n/\(limit - 1)")?.int(0) == limit - 1)
+        #expect(told.lines.isEmpty)
+
+        osc.supply()
+        #expect(osc.messages == beyond, "messages は落とさない")
+        #expect(osc.latest("/extra/1") == nil)
+        #expect(osc.latest("/extra/2") == nil)
+        #expect(told.count(containing: "remembers the latest message of \(limit) addresses") == 1)
+        #expect(told.lines.first?.contains("/extra/1") == true)
+
+        osc.supply()
+        #expect(osc.latest("/n/0")?.int(0) == -1, "覚えた宛名は上限に達しても更新する")
+        osc.supply()
+        #expect(told.lines.count == 1, "続けて届いても 2 度は言わない")
+    }
+
     // MARK: - 読めないものは打ち切る
 
     @Test("読めない部分を含むパケットは、そこから後ろを捨てて数える。前と次のパケットは届く")
@@ -439,10 +687,15 @@ struct OSCPortTests {
         ])
         let raw = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
         defer { raw.stop() }
+        let log = SendLog()
+        log.watch(sender: raw)
         raw.send(broken)
         raw.send(try Wire.encoded(next))
 
-        let received = await collect(osc, count: 2)
+        let received = await collect(osc, count: 2, log: log)
+        try await requireHeard(
+            received.count >= 2, "2 パケットのうち読めたのは \(received.count) 通 (前と次の 2 つが届く前提)", log: log,
+            osc: osc, port: port, told: told)
         #expect(received == [before, next])
         #expect(osc.input.unreadable == 1)
     }
@@ -464,7 +717,7 @@ struct OSCPortTests {
         for packet in [blob, bundle, try Wire.encoded(next)] {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        let received = await collect(osc, count: 1)
+        let received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(/next)")
         #expect(received == [next])
         #expect(osc.input.unreadable == 2)
         #expect(told.lines.isEmpty)
@@ -484,18 +737,51 @@ struct OSCPortTests {
         let message = OSCMessage("/m", arguments: [])
         let packet = try Wire.encoded(message)
         #expect(peer.send(packet, to: port) == packet.count)
-        var received = await collect(osc, count: 1)
+        var received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(/m)")
         #expect(peer.send([], to: port) == 0)
-        #expect(await until { osc.input.unreadable == 1 })
+        try await requireRawArrival(
+            "受け口が空を読めないものとして数えなかった (数えた数: \(osc.input.unreadable))", from: peer,
+            landing: landing(of: osc, port: port, told: told)
+        ) { osc.input.unreadable == 1 }
 
         // 終わりを名乗った空を数えたら、その流れを閉じる。閉じた後に届いたものは、新しい流れで受ける
-        #expect(await until { source.tally.ended >= 1 })
+        try await requireWait(
+            "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+            until: { source.tally.ended >= 1 })
         for _ in 0..<5 {
             #expect(peer.send(packet, to: port) == packet.count)
         }
-        received += await collect(osc, count: 5)
+        received += try await heard(osc, count: 5, port: port, told: told, from: peer, "(空の後の /m 5 通)")
         #expect(received == Array(repeating: message, count: 6))
         #expect(osc.input.unreadable == 1)
+    }
+
+    @Test("OSC でも、空で流れが閉じたら受け口と送り元つきで 1 度だけ診断に出し、空を読めないとして数えるのは今までどおり (#2363)")
+    func emptyClosedFlowIsToldOnceForOSC() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let source = try #require(osc.source as? NetworkOSCSource)
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
+
+        for index in 0..<3 {
+            #expect(peer.send(packet, to: port) == packet.count)
+            let received = try await heard(osc, count: 1, port: port, told: told, from: peer, "(\(index) 周目の /m)")
+            #expect(received == [OSCMessage("/m", arguments: [])])
+            #expect(peer.send([], to: port) == 0)
+            try await requireWait(
+                "終わりを名乗った空の後、流れが閉じなかった", detail: { "ended: \(source.tally.ended)" },
+                until: { source.tally.ended >= index + 1 })
+        }
+        // 空を読めないとして数えるのは今までどおり (その診断 `osc :<port>: … could not be read …` は列が
+        // 次に読まれたときに、1 秒に 1 度までにまとめて出る)。送り元ごとの診断はそれとは別に、1 度だけ
+        osc.supply()
+        #expect(osc.input.unreadable == 3)
+        #expect(told.count(containing: "empty datagram") == 1)
+        let line = try #require(told.lines.first { $0.contains("empty datagram") })
+        #expect(line.hasPrefix("osc :\(port): an empty datagram from 127.0.0.1:\(peer.port) closed its flow"))
     }
 
     @Test("番号つきの送りは、送れないと名乗った番号だけを新しい送り元に替えて全部を読む")
@@ -510,8 +796,9 @@ struct OSCPortTests {
         var attempts: [Int: Int] = [:]
         var senders: [any DatagramSending] = []
         defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
         let heard = try await sendNumberedBurst(
-            count: count, through: osc, senders: &senders, told: told
+            count: count, through: osc, senders: &senders, told: told, log: log
         ) { index, attempt, warn in
             attempts[index] = attempt
             // 奇数の番号の最初の送り元は、送れないと名乗って何も出さない。作り物の送り元だけで確かめる
@@ -519,6 +806,9 @@ struct OSCPortTests {
             let cannot = index % 2 == 1 && attempt == 1
             return ScriptedSender(raw: cannot ? nil : raw, port: port, complaint: cannot ? warn : nil)
         }
+        try await requireHeard(
+            heard == Set(0..<count), "送り元 \(count) 本のうち読めたのは \(heard.count) 本", log: log,
+            osc: osc, port: port, told: told)
         #expect(heard == Set(0..<count))
         // 替えたのは名乗った奇数の番号だけで、1 回で足りた
         #expect(attempts == Dictionary(uniqueKeysWithValues: (0..<count).map { ($0, $0 % 2 == 1 ? 2 : 1) }))
@@ -566,8 +856,118 @@ struct OSCPortTests {
         #expect(attempts == [1, 2])
     }
 
-    @Test("多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる")
-    func manySendersAreAllHeardThenSwept() async throws {
+    @Test("番号つきの送りで読まれない番号があれば、読めなかった番号と名乗った送り元・送り元の様子・受け口の様子・素の socket の 1 通を名乗って 1 つで止まる")
+    func requireHeardNamesBothSidesAndStops() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let raw = try RawDatagramSocket()
+        defer { raw.release() }
+
+        // 0 番は読まれる。1 番は最初の送り元が名乗って出ず、替えた先で読まれる。2 番は名乗り続けて替える
+        // 上限まで読まれない。3 番は名乗らずに出ない (替えない。繋ぎは `preparing` のまま)
+        var senders: [any DatagramSending] = []
+        defer { for sender in senders { sender.stop() } }
+        let log = SendLog()
+        let count = 4
+        let heard = try await sendNumberedBurst(
+            count: count, through: osc, senders: &senders, told: told, within: 1, log: log
+        ) { index, attempt, warn in
+            switch index {
+            case 0: return ScriptedSender(raw: raw, port: port, complaint: nil)
+            case 1: return ScriptedSender(raw: attempt == 1 ? nil : raw, port: port, complaint: attempt == 1 ? warn : nil)
+            case 2: return ScriptedSender(raw: nil, port: port, complaint: warn)
+            default:
+                return ScriptedSender(raw: nil, port: port, complaint: nil, trace: SendTrace(state: "preparing"))
+            }
+        }
+        #expect(heard == [0, 1])
+
+        let text = try await said {
+            try await requireHeard(
+                heard == Set(0..<count), "送り元 \(count) 本のうち読めたのは \(heard.count) 本", log: log,
+                osc: osc, port: port, told: told)
+        }
+        #expect(text.contains("送り元 4 本のうち読めたのは 2 本"), "名乗り: \(text)")
+        #expect(text.contains("期限 1.0 秒"), "名乗り: \(text)")
+        // 読めなかった番号と、そのうち名乗った送り元 (番号つき)
+        #expect(
+            text.contains("/from: 読めたのは 2/4・読めなかった 2 本 [2…3]・うち名乗った [2]・名乗らずに黙っている [3]"),
+            "名乗り: \(text)")
+        // 替えたのは 1 番が 1 回・2 番が 3 回 (上限)。替えた後に読まれたのは 1 番だけ
+        #expect(text.contains("替えた 4 回・替えた後に読めた 1 本"), "名乗り: \(text)")
+        #expect(text.contains("出どころは区別できない"), "名乗り: \(text)")
+        // 送り元の様子は、読めなかった側と読めた側に分けて数える
+        #expect(
+            text.contains(
+                "読めなかった側の送り元の様子 {出 1・誤り無し 0・誤り 0・最後 preparing}×1 {出 1・誤り無し 0・誤り 0・最後 知らせ無し}×1"),
+            "名乗り: \(text)")
+        #expect(text.contains("読めた側の送り元の様子 {出 1・誤り無し 0・誤り 0・最後 知らせ無し}×2"), "名乗り: \(text)")
+        // 名乗りは 1 番が 1 行・2 番が 4 行。名乗った送り元は 1 番と 2 番
+        #expect(text.contains("名乗った送り元 /from[1…2]・名乗り 5 行") && text.contains("Could not send to 127.0.0.1:\(port)"), "名乗り: \(text)")
+        // 受け口の様子 (送り手の名乗りは受け口の知らせに数えない)
+        #expect(text.contains("受け口 (1 通の前): running") && text.contains("移り変わり "), "名乗り: \(text)")
+        #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
+        #expect(text.contains("受け口の知らせは 0 行"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1"), "名乗り: \(text)")
+    }
+
+    @Test("素の socket から送った通が読まれなければ、受け口の様子と素の 1 通の前後の受け入れの差を名乗り、送り手の欄は様子を読めない送り元と言って 1 つで止まる (#3105)")
+    func rawSocketShortReadNamesTheReceiver() async throws {
+        let told = Told()
+        let (osc, port) = try await listening(told: told)
+        defer { osc.close() }
+        let peer = try RawDatagramSocket()
+        defer { peer.release() }
+        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
+
+        // 1 通だけ送って 2 通を期待する (2 通目は来ない)
+        #expect(peer.send(packet, to: port) == packet.count)
+        let text = try await said {
+            _ = try await heard(osc, count: 2, within: 0.5, port: port, told: told, from: peer, "(2 通目は送っていない)")
+        }
+        #expect(text.contains("素の socket から送った 2 通のうち読めたのは 1 通(2 通目は送っていない)"), "名乗り: \(text)")
+        #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
+        #expect(text.contains("受け口 (1 通の前): running") && text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
+        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1 (新しい送り元を受けられた)"), "名乗り: \(text)")
+        // 送り手の欄: 素の socket は名乗りも替えも持たない。黙っているとは言わない
+        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
+        #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
+        // 送った socket の sendto の戻り: 送れていたので、読めなかった理由は受け口側と読める
+        #expect(text.contains("sendto は 1 回とも成功 (計 \(packet.count) バイト)"), "名乗り: \(text)")
+
+        // 受け口が受けない形 (閉じた受け口) は、素の 1 通も読まれず、受け口側と読み分けられる
+        osc.close()
+        let closed = try await said {
+            _ = try await heard(osc, count: 1, within: 0.3, port: port, told: told, from: peer)
+        }
+        #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
+        #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
+    }
+
+    /// 黙りの検査の場面。送る送り元の数と、最初の `/late` が既存の繋ぎで渡される形にするか。
+    struct SweepScenario: CustomTestStringConvertible, Sendable {
+        /// 最初に送る送り元の数。目安 (64) を超えるか、受け入れが目安に届かない数。
+        var sending: Int
+        /// 最初の `/late` を、最初の送り元と同じ source のソケットから出す。受け口はその datagram を
+        /// 既存の繋ぎで渡し、受け入れは起きない (#2225 の揺れを決定的に作る)。
+        var reusesASource = false
+
+        var testDescription: String {
+            "送り元 \(sending) 本" + (reusesASource ? "・最初の /late は既存の繋ぎで渡される" : "")
+        }
+    }
+
+    @Test(
+        "多くの送り元から一度に届いても 1 つも落とさず、黙った送り元は次の受け入れで閉じる",
+        arguments: [
+            SweepScenario(sending: DatagramListener.connectionLimit + 6),
+            SweepScenario(sending: DatagramListener.connectionLimit - 10),
+            SweepScenario(sending: DatagramListener.connectionLimit + 6, reusesASource: true),
+        ]
+    )
+    func manySendersAreAllHeardThenSwept(_ scenario: SweepScenario) async throws {
+        let count = scenario.sending
         let told = Told()
         // 黙りは手で進める時計で測る。本物の時計だと、受け入れが遅い機械 (負荷のある CI) では
         // 70 本を受け入れる途中で最初の送り元が `idleAfter` 秒黙ったことになって閉じられ、
@@ -581,15 +981,25 @@ struct OSCPortTests {
         // 送り手ごとに別のポートから送る (使い捨てのソケットで送るスクリプトと同じ形)。
         // 目安の数を超えても、黙っていない送り元は閉じない — 閉じると読む前の datagram を捨てる。
         // 時計は止めたままなので、受け入れにどれだけ掛かっても黙った送り元は居ない
-        let count = DatagramListener.connectionLimit + 6
         var burst: [any DatagramSending] = []
         defer { for sender in burst { sender.stop() } }
+        // 既存の繋ぎで渡される形では、0 番の送り元だけ source が固定のソケットで送る
+        let reused = try RawDatagramSocket()
+        defer { reused.release() }
+        let burstLog = SendLog()
         let heard = try await sendNumberedBurst(
-            count: count, through: osc, senders: &burst, told: told
-        ) { _, _, warn in
-            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+            count: count, through: osc, senders: &burst, told: told, log: burstLog
+        ) { index, _, warn in
+            if scenario.reusesASource, index == 0 {
+                return ScriptedSender(raw: reused, port: port, complaint: nil)
+            }
+            return DatagramSender(host: "127.0.0.1", port: port, warn: warn)
         }
-        #expect(heard == Set(0..<count))
+        // 前提 (送った番号が全部読まれる — #2225 の約束そのもの): 満たされなかった回は、受け口側と送り手側の
+        // 様子を名乗って止まる。期限は延ばさず、名乗らない送り元は替えず、救わない (#3001)
+        try await requireHeard(
+            heard == Set(0..<count), "送り元 \(count) 本のうち読めたのは \(heard.count) 本", log: burstLog,
+            osc: osc, port: port, told: told)
         // 受け入れた送り元を 1 本も外していない — 黙りでも (時計が止まっていて誰も黙っていない)、
         // 失敗でも。受け入れた数と持っている数が等しいことで、数え方の外で閉じる経路も捕まえる。
         // 受け入れた数が送り元の数 (70) に届くことは求めない: 負荷の下では Network.framework の
@@ -601,24 +1011,96 @@ struct OSCPortTests {
         #expect(tally.ended == 0)
         #expect(source.connectionCount == tally.accepted)
 
-        // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
-        // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
-        clock.advance(by: idleAfter)
-        // この送り元も出ないことがある。同じ補助で、送れないと名乗ったら替えて待つ
+        // **黙った送り元を閉じるのは、台帳の数が目安 (64) に届いているときの、次の受け入れだけ**
+        // (`SenderLedger.admit`)。受け入れた数が目安に届かなかった回 (上の注の揺れ) では、次の受け入れが
+        // 起きても何も閉じない。主題を見る前に、その前提を 2 つ満たす。
+        //
+        // 1 つ目: 台帳が目安に届くまで足す。時計は止めたままなので、足す間は何も閉じない。
+        // 足す送り元も**全部読まれる**ことを前提にする: 読まれていない繋ぎは `admit` が閉じないので、
+        // 台帳の数が主題の数え方とずれる。回ごとに宛名を変え、期限切れの後に遅れて届いた datagram が
+        // 次の回の番号に数えられないようにする
+        var fillers: [any DatagramSending] = []
+        defer { for sender in fillers { sender.stop() } }
+        let fillDeadline = Date().addingTimeInterval(15)
+        var fillRounds = 0
+        var unheardFillers = 0
+        let fillLog = SendLog()
+        while source.connectionCount < DatagramListener.connectionLimit, Date() < fillDeadline {
+            fillRounds += 1
+            let need = DatagramListener.connectionLimit - source.connectionCount
+            let filled = try await sendNumberedBurst(
+                count: need, address: "/fill\(fillRounds)", through: osc, senders: &fillers,
+                told: told, within: 5, log: fillLog
+            ) { _, _, warn in
+                DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+            }
+            unheardFillers += need - filled.count
+        }
+        let full = source.connectionCount
+        try await requireHeard(
+            full >= DatagramListener.connectionLimit,
+            "台帳が目安 (\(DatagramListener.connectionLimit)) に届かない (\(full)) — 黙った送り元を閉じる前提が無い",
+            log: fillLog, osc: osc, port: port, told: told)
+        try await requireHeard(
+            unheardFillers == 0,
+            "足した送り元のうち \(unheardFillers) 本が読まれていない — 読む前の繋ぎは閉じないので、閉じる数を数えられない",
+            log: fillLog, osc: osc, port: port, told: told)
+        let closedBefore = source.tally.closedIdle
+        #expect(closedBefore == 0)
+
+        // 2 つ目: `/late` が**新しい受け入れを起こす**。この送り元も出ないことがあり、出ても受け口が
+        // 既存の繋ぎで渡して繋ぎを作らないことがある (#2225)。受け入れが起きなかった回は何も閉じて
+        // いないので、替えた送り元でやり直せる (回数と期限を持つ)。
+        //
+        // **やり直す前に、時計をもう `idleAfter` 秒進める。** 既存の繋ぎで渡された datagram は、その
+        // 繋ぎを「いま読んだ」ことにする (`receive` が時計で印を付ける) ので、その繋ぎは黙っていない。
+        // 進め直せば、またちょうど `idleAfter` 秒黙った繋ぎになり、閉じる数を台帳の数で数えられる。
+        // 回ごとに宛名を変え、前の回の遅れて届いた datagram を数えない
         var lateSenders: [any DatagramSending] = []
         defer { for sender in lateSenders { sender.stop() } }
-        let lateHeard = try await sendNumberedBurst(
-            count: 1, address: "/late", through: osc, senders: &lateSenders, told: told
-        ) { _, _, warn in
-            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+        let lateDeadline = Date().addingTimeInterval(15)
+        var acceptedBefore = source.tally.accepted
+        var lateHeard: Set<Int> = []
+        var attempts = 0
+        let lateLog = SendLog()
+        while attempts < 5, Date() < lateDeadline {
+            attempts += 1
+            // ちょうど `idleAfter` 秒黙った後に新しい送り元が来たら、黙っていた送り元を閉じてから
+            // 受ける (閉じるのは `idleAfter` 秒「以上」黙った送り元)
+            clock.advance(by: idleAfter)
+            acceptedBefore = source.tally.accepted
+            let attempt = attempts
+            // この送り元も出ないことがある。同じ補助で、送れないと名乗ったら替えて待つ
+            lateHeard = try await sendNumberedBurst(
+                count: 1, address: "/late\(attempt)", through: osc, senders: &lateSenders,
+                told: told, within: 5, log: lateLog
+            ) { _, _, warn in
+                if scenario.reusesASource, attempt == 1 {
+                    return ScriptedSender(raw: reused, port: port, complaint: nil)
+                }
+                return DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+            }
+            if source.tally.accepted > acceptedBefore { break }
+            #expect(source.connectionCount == full, "受け入れが起きていないのに台帳が動いた")
         }
-        #expect(lateHeard == [0])
-        #expect(source.connectionCount == 1)
+        let acceptedByLate = source.tally.accepted - acceptedBefore
+        try await requireHeard(
+            acceptedByLate > 0,
+            "/late が新しい受け入れを起こさなかった (\(attempts) 回) — 既存の繋ぎで渡された。黙った送り元を閉じる契機が来ない",
+            log: lateLog, osc: osc, port: port, told: told)
+        if scenario.reusesASource {
+            #expect(attempts >= 2, "前提: 最初の /late は既存の繋ぎで渡され、受け入れを起こさない")
+        }
+        try await requireHeard(
+            lateHeard == [0], "/late の番号が読まれていない (読めたのは \(lateHeard.sorted()))", log: lateLog,
+            osc: osc, port: port, told: told)
+        // 主題: 黙っていた送り元は全部閉じ、受け入れた新しい送り元だけが残る
+        #expect(source.tally.closedIdle == closedBefore + full)
+        #expect(source.connectionCount == acceptedByLate)
 
         // 黙りで閉じた送り元の待っていた受けは、空の datagram と同じ形 (content も error も nil) で
         // 返る。届いていない空を読めない数に足さない (#2324 の直しの反対側。実測で 70 個湧いた)
-        let phantom = await until(1) { osc.input.unreadable > 0 }
-        #expect(!phantom)
+        #expect(await doesNotHappen(within: 1) { osc.input.unreadable > 0 })
     }
 
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
@@ -635,13 +1117,16 @@ struct OSCPortTests {
         // 黙りを測る (読んだ送り元が 1 つ以上あれば、黙りで閉じる相手がいる)
         var burst: [any DatagramSending] = []
         defer { for sender in burst { sender.stop() } }
+        let burstLog = SendLog()
         let heard = try await sendNumberedBurst(
             count: DatagramListener.connectionLimit, through: osc, senders: &burst, told: told,
-            within: 5
+            within: 5, log: burstLog
         ) { _, _, warn in
             DatagramSender(host: "127.0.0.1", port: port, warn: warn)
         }
-        try #require(!heard.isEmpty, "1 通も読めていない — 黙りを測る相手がいない")
+        try await requireHeard(
+            !heard.isEmpty, "1 通も読めていない — 黙りを測る相手がいない", log: burstLog, osc: osc, port: port,
+            told: told)
 
         // **集め終えた後の閉じを測る。** 本物の時計で `idleAfter` が 0.05 秒なので、集めている最中に
         // 受け入れが目安に達して閉じが起きうる。その分を数えないよう、ここの数を基準にする
@@ -650,16 +1135,49 @@ struct OSCPortTests {
         // `idleAfter` より長く黙ってから、新しい送り元を 1 本ずつ足す。待つほど黙りは長くなる
         // だけなので、遅い機械でも閉じる側へしか進まない。読めなかった送り元や、別の送り元の繋ぎで
         // 渡された分で台帳が目安に届いていなくても、足すうちに届く
+        //
+        // **閉じなかった回が、主題の赤か前提の欠けかを見分ける。** 閉じるのは、台帳の数が目安に届いて
+        // いるときの次の受け入れだけ (`SenderLedger.admit`)。届いた後に新しい受け入れが起きたのに
+        // 閉じなければ主題の赤で、届かなかった・届いた後に受け入れが起きなかった回は前提の欠けである
+        //
+        // 足す送り元も本物の ``DatagramSender`` なので、出ない回がある。前提が欠けた回は、送り手の跡と受け口の
+        // 様子を名乗って止まる (#3001)。名乗りの「読めた数」は、足し始めてからの受け入れの増えで数える
+        // (足した 1 通ごとの読みは見ない)
         var late: [DatagramSender] = []
         defer { for sender in late { sender.stop() } }
+        let lateLog = SendLog()
+        let lateStarted = Date()
+        let acceptedAtStart = source.tally.accepted
+        var acceptedWhenFull: Int?
         for index in 0..<DatagramListener.connectionLimit
         where source.tally.closedIdle == closedWhileCollecting {
             try await Task.sleep(for: .milliseconds(index == 0 ? 100 : 10))
+            if acceptedWhenFull == nil, source.connectionCount >= DatagramListener.connectionLimit {
+                acceptedWhenFull = source.tally.accepted
+            }
             let sender = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
             late.append(sender)
+            lateLog.watch("/late", index: index, sender: sender)
             sender.send(try Wire.encoded(OSCMessage("/late", index)))
         }
-        #expect(await until { source.tally.closedIdle > closedWhileCollecting })
+        try await requireArrival(
+            "黙った送り元が次の受け入れで閉じられなかった",
+            until: { source.tally.closedIdle > closedWhileCollecting }
+        ) {
+            lateLog.record(
+                label: "/late", expected: late.count,
+                heard: min(source.tally.accepted - acceptedAtStart, late.count), missing: nil,
+                replacements: 0, heardAfterReplacement: 0,
+                waited: Date().timeIntervalSince(lateStarted), limit: 0)
+            try await requireHeard(
+                acceptedWhenFull != nil,
+                "台帳が目安 (\(DatagramListener.connectionLimit)) に届かなかった (\(source.connectionCount)) — 黙った送り元を閉じる前提が無い",
+                log: lateLog, osc: osc, port: port, told: told)
+            let atLimit = try #require(acceptedWhenFull)
+            try await requireHeard(
+                source.tally.accepted > atLimit, "台帳が目安に届いた後、新しい受け入れが起きなかった — 閉じる契機が来ていない",
+                log: lateLog, osc: osc, port: port, told: told)
+        }
         #expect(source.connectionCount < DatagramListener.connectionLimit)
     }
 
@@ -673,7 +1191,7 @@ struct OSCPortTests {
         let osc = try loopback(port: port, told: told)
         defer { osc.close() }
 
-        #expect(await until { told.count(containing: "another app is using it") == 1 })
+        try await requireTold(containing: "another app is using it", told: told, tracing: osc.source) { osc.state }
         #expect(osc.state == .unavailable)
         // 開き直しを何度か重ねても、知らせは増えない
         try await Task.sleep(for: .milliseconds(300))
@@ -681,9 +1199,15 @@ struct OSCPortTests {
         #expect(osc.state == .unavailable)
 
         holder.release()
-        #expect(await until { osc.state == .running })
+        try await requireState(told: told, tracing: osc.source) { osc.state }
+        let log = SendLog()
+        log.watch { osc.sendTrace }
         osc.send("/back", 1)
-        #expect(await collect(osc, count: 1) == [OSCMessage("/back", 1)])
+        let received = await collect(osc, count: 1, log: log)
+        try await requireHeard(
+            received.count >= 1, "1 通のうち読めたのは \(received.count) 通 (空いたポートで受け始めた後)", log: log,
+            osc: osc, port: port, told: told)
+        #expect(received == [OSCMessage("/back", 1)])
     }
 
     // MARK: - 作る口
@@ -708,6 +1232,61 @@ struct OSCPortTests {
                 try sketch.createOSC(listen: 1, send: ("127.0.0.1", 65535))
             }
         }
+    }
+
+    @Test("createOSC(send:) は送り先の値を検め、走っていない所では呼んだ口の名前で notRunning を投げる (#2469)")
+    func sendOnlyCreationRefusesUnusableValues() {
+        let sketch = IdleSketch()
+        #expect(throws: OSCFailure.invalidPort(0)) { try sketch.createOSC(send: ("127.0.0.1", 0)) }
+        #expect(throws: OSCFailure.invalidPort(65536)) { try sketch.createOSC(send: ("127.0.0.1", 65536)) }
+        #expect(throws: OSCFailure.invalidHost(" ")) { try sketch.createOSC(send: (" ", 7000)) }
+        // 値の検めを通った後、ポートも開かずに断る。両端の 1 と 65535 は使える
+        OutsideRun.$current.withValue(OutsideRun()) {
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(send:)")) {
+                try sketch.createOSC(send: ("127.0.0.1", 65535))
+            }
+            #expect(throws: OSCFailure.notRunning(call: "createOSC(send:)")) {
+                try sketch.createOSC(send: ("localhost", 1))
+            }
+        }
+    }
+
+    @Test("送るだけの入り口は、受けるポートを開かず、何も受けず、観測の inputs に行を出さず、送ったものは宛先で受けられる (#2469)")
+    func sendOnlyPortSendsWithoutListening() async throws {
+        let told = Told()
+        let receiver = try await listening(told: told)
+        defer { receiver.osc.close() }
+
+        // `createOSC(send:)` が組むのと同じ部品 (何も受けない出どころ・共通の送り手)
+        let sender = OSCPort(
+            port: nil, name: "osc (send only)", source: SendOnlySource(),
+            outbound: DatagramSender(host: "127.0.0.1", port: receiver.port, warn: told.append),
+            owner: nil, warn: told.append)
+        try sender.open()
+        #expect(sender.port == nil)
+        #expect(sender.state == .running)
+        #expect(sender.report == nil, "受け口ではないので、inputs に載らない")
+
+        let log = SendLog()
+        log.watch { sender.sendTrace }
+        sender.send("/size", Float(0.25))
+        sender.send("/hit", 1)
+        let received = await collect(receiver.osc, count: 2, log: log)
+        try await requireHeard(
+            received.count >= 2, "2 通のうち読めたのは \(received.count) 通 (送るだけの入り口から)", log: log,
+            osc: receiver.osc, port: receiver.port, told: told)
+        #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
+
+        sender.supply()
+        #expect(sender.messages.isEmpty)
+        #expect(sender.latest("/size") == nil)
+        #expect(sender.lastArrival == nil)
+        #expect(told.lines.isEmpty)
+
+        sender.close()
+        #expect(sender.state == .stopped)
+        sender.send("/late", 1)
+        #expect(told.count(containing: "is stopped") == 1)
     }
 
     // MARK: - 送れないとき
@@ -802,12 +1381,17 @@ struct OSCPortTests {
     @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
     func oversizedSendLeavesTheDestinationReachable() async throws {
         let told = Told()
-        let osc = try await listening(told: told).osc
+        let (osc, port) = try await listening(told: told)
         defer { osc.close() }
+        let log = SendLog()
+        log.watch { osc.sendTrace }
 
         osc.send(OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
         osc.send("/after", 1)
-        let received = await collect(osc, count: 1)
+        let received = await collect(osc, count: 1, log: log)
+        try await requireHeard(
+            received.count >= 1, "1 通のうち読めたのは \(received.count) 通 (上限に入らない 1 通の後に送った分)", log: log,
+            osc: osc, port: port, told: told)
         #expect(received == [OSCMessage("/after", 1)])
         #expect(osc.input.unreadable == 0)
         #expect(told.lines.count == 1)

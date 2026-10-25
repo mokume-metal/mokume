@@ -8,34 +8,68 @@ import mokume
 ///
 /// 標準入出力で行区切りの JSON-RPC をやりとりする。手続きは 4 つだけ —
 /// 繋ぎ始めの挨拶・生きているかの確かめ (`ping`)・道具立ての一覧・呼び出し。
+///
+/// **読みと実行を分ける** ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。
+/// 読み取りは 1 本の手 (``Inbox/feed(readLine:writer:)``) が受け持ち、道具を走らせる手 (``serve()``)
+/// は従来どおり 1 本ずつ、届いた順に走らせて答える。読み取りの手が**その場で済ませる**のは 2 つだけ:
+///
+/// - `ping` — 道具が走っている間も、空の結果で速やかに答える (MCP 2024-11-05 の Ping)
+/// - `notifications/cancelled` — 実行中 (または走るのを待っている) 要求の ``Cancellation`` を立てる。
+///   走っている道具は区画を待つ合間に印を見て待ちを切り、**取り消された要求には答えない**
+///   (MCP の取り消しの扱い)。知らない `id`・答え終えた `id` の取り消しは何もしない
+///
+/// それ以外 (`initialize`・`tools/list`・`tools/call`・壊れた行への誤り) は、読んだ順に 1 本ずつ答える。
+/// 区画は要求も応答も 1 枚しか持たないので、道具を並行には走らせない。標準出力へ書くのは
+/// ``SerialWriter`` の 1 か所で、2 つの手の書き込みが 1 行の中で混ざらない。
+///
+/// **取り消しが切れるのは区画を待つ道具 (`observe`・`input`) の待ち。** 置いた要求は区画に残り、
+/// スケッチが後から応えうる (次の要求が置き換える)。**続けて撮る観測を取り消すと、スケッチは撮り終える
+/// まで区画を塞ぐ** (取り消しはスケッチへ届かない・#3030)。窓口はそれを覚え (``AbandonedRequests``)、
+/// 次の呼び出しがその間に時間切れになったら「応えない」ではなく、前に取り消した要求をまだ撮っていると
+/// 案内する。公開 API の取得のように区画を待たない道具は、
+/// 走り終えるまで切れない — その間も `ping` には答える。
 struct MCPServer {
     /// 名乗る版。手続きの版であって、この道具の版ではない。
     static let protocolVersion = "2024-11-05"
 
     let tools: Tools
-    /// 1 行読む。終わりなら `nil`。
-    var readLine: () -> String?
-    /// 1 行書く。
-    var write: (String) -> Void
+    /// 1 行読む。終わりなら `nil`。**読み取りの手から呼ばれる** (呼ぶ手は 1 本だけ)。
+    var readLine: @Sendable () -> String?
+    /// 1 行書く。**2 つの手から呼ばれるが、``SerialWriter`` が 1 行ずつに直列化する。**
+    var write: @Sendable (String) -> Void
 
     /// 終わりが来るまで応え続ける。
     func serve() {
-        while let line = readLine() {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            switch JSONRPC.parse(trimmed) {
-            case .call(let call):
-                guard let response = respond(to: call) else { continue }
-                write(response)
-            case .refused(let reply):
-                // **1 行の壊れで繋がりを切らない。** 切ると、繋いでいる側からは
-                // 何が起きたのか分からなくなる。黙りもしない — 誤りを 1 行返して次の行へ
-                // 進む。黙ると、繋いでいる側は来ない答えを待ち続ける (#2317)
-                write(reply)
-            case .response:
-                // 応答には答えない。窓口は要求を出さないので、待っている応答も無い
-                continue
+        let writer = SerialWriter(write)
+        let inbox = Inbox()
+        let readLine = self.readLine
+        Thread.detachNewThread { inbox.feed(readLine: readLine, writer: writer) }
+        while let item = inbox.next() {
+            // 走る前に取り消されていたら、走らせず答えない
+            if item.cancellation?.isCancelled != true {
+                answer(item, writer: writer)
             }
+            // 答えを書いた後に外す。**同じ印のときだけ** (``Inbox/retire(_:)``)
+            inbox.retire(item)
+        }
+    }
+
+    /// 積まれた 1 件に答える。
+    private func answer(_ item: Inbox.Item, writer: SerialWriter) {
+        switch JSONRPC.parse(item.line) {
+        case .call(let call):
+            guard let response = respond(to: call, cancellation: item.cancellation) else { return }
+            // **走っている間に取り消された要求には答えない。** 取り消した側は答えを待っていない
+            guard item.cancellation?.isCancelled != true else { return }
+            writer.send(response)
+        case .refused(let reply):
+            // **1 行の壊れで繋がりを切らない。** 切ると、繋いでいる側からは
+            // 何が起きたのか分からなくなる。黙りもしない — 誤りを 1 行返して次の行へ
+            // 進む。黙ると、繋いでいる側は来ない答えを待ち続ける (#2317)
+            writer.send(reply)
+        case .response:
+            // 応答には答えない。窓口は要求を出さないので、待っている応答も無い
+            return
         }
     }
 
@@ -46,25 +80,31 @@ struct MCPServer {
     /// の枝が通知にも `"id": null` で答え、`tools/call` は道具まで走らせていた (#2317)。
     /// MCP 2024-11-05 の通知 (`notifications/` の 4 つ) に、下の枝の名前のものは無い。
     /// 名前によらず、知らない通知と同じく黙って捨てる
-    func respond(to call: JSONRPC.Call) -> String? {
+    func respond(to call: JSONRPC.Call, cancellation: Cancellation? = nil) -> String? {
         // JSON-RPC 2.0 §4.1 — 通知には、手続きの名前によらず答えない
         guard call.expectsResponse else { return nil }
         switch call.method {
         case "ping":
             // 空の結果で速やかに答える (MCP 2024-11-05 の Ping・#2318)。窓口は挨拶の
             // 前後で状態を変えないので、挨拶の前でも同じ答えになる
-            return JSONRPC.response(id: call.id, result: [:])
+            return JSONRPC.pingResponse(id: call.id)
         case "initialize":
-            return JSONRPC.response(
-                id: call.id,
-                result: [
-                    "protocolVersion": Self.protocolVersion,
-                    "capabilities": ["tools": [:] as [String: Any]],
-                    // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
-                    // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
-                    // 古いままである (#634)
-                    "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
-                ])
+            var result: [String: Any] = [
+                "protocolVersion": Self.protocolVersion,
+                "capabilities": ["tools": [:] as [String: Any]],
+                // **繋いだ側が古い窓口を判別できる唯一の手掛かり。** 接続は
+                // 張ったまま保たれるので、道具を更新しても繋がっている窓口は
+                // 古いままである (#634)
+                "serverInfo": ["name": "mokume", "version": ToolVersion.describe()],
+            ]
+            // **立てた場所とそこがスケッチかは、`serverInfo` ではなく `instructions` で名乗る**
+            // (#2797)。`instructions` は 2024-11-05 の `InitializeResult` にある欄で、繋いだ側が
+            // システムプロンプトへ足してよい。標準エラーや通知はクライアント次第で届かない。
+            // 事実は起動の時点で 1 度決めた ``InterfacePlace`` から取り、後から追わない
+            if let place = tools.facets.place {
+                result["instructions"] = place.instructions
+            }
+            return JSONRPC.response(id: call.id, result: result)
         case "tools/list":
             return JSONRPC.response(id: call.id, result: ["tools": Tools.definitions])
         case "tools/call":
@@ -82,7 +122,7 @@ struct MCPServer {
                 return JSONRPC.failure(
                     id: call.id, code: -32602, message: "arguments must be an object")
             }
-            let outcome = tools.call(name, arguments: arguments)
+            let outcome = tools.call(name, arguments: arguments, cancellation: cancellation)
             return JSONRPC.response(
                 id: call.id,
                 result: [
@@ -157,6 +197,9 @@ enum MCPCommand {
         let given = WorkDirectory.given != nil
         // 窓口を立てた場所と、そこがスケッチかも同じく起動の時点で決め、案内が名乗る (#2487)
         let place = InterfacePlace.at(directories.package)
+        // 信号で終わった窓口の観測の写しの置き場を、立てるときに 1 度だけ掃く (一時の場所の一覧は
+        // 重いので、道具の束を作るたびにはしない・#3131)
+        ObservationCopies.sweepStale(in: FileManager.default.temporaryDirectory)
         let server = MCPServer(
             tools: Tools(
                 facets: Facets(

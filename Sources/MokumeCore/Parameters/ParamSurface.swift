@@ -309,9 +309,19 @@ final class ParamSurface: DeclarationWatcher {
     /// 端末にしか出ないので、外から読む側にも同じことが見えている必要がある。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    ///
+    /// **権利 (``FacetClaim``) を持たなければ書かない** ([#2227](https://github.com/mokume-metal/mokume/issues/2227))。
+    /// 応答は見張りのプレビューがつまみを並べる元で、書き込みは権利を持つ実行へ届く。権利を
+    /// 持たない実行 (居合わせた `run` / `swift run`・重なっている間の次の世代) が書くと、並ぶつまみと
+    /// 効く先が割れる。書けなかった最初の応答は、権利を取った最初の機会 (``drain()``・
+    /// ``flushIfChanged()``) に、戻せなかったものも載せて書く。
     func start(after restoration: ParamStore.Restoration = .init()) {
-        publish(clamped: restoration.clamped, discarded: restoration.discarded)
+        unpublishedStart = restoration
+        publish()
     }
+
+    /// 最初の応答を、権利が無くてまだ書けていない。書けたら `nil`。
+    private var unpublishedStart: ParamStore.Restoration?
 
     /// 要求が来ていれば書き込み、応答を書く。値が変わっていれば応答を書き直す。
     ///
@@ -332,7 +342,7 @@ final class ParamSurface: DeclarationWatcher {
                 return apply(ParamRequest(id: id, values: [.nameless]))
             }
         }
-        guard valuesChanged else { return nil }
+        guard valuesChanged || unpublishedStart != nil else { return nil }
         return publish()
     }
 
@@ -345,7 +355,7 @@ final class ParamSurface: DeclarationWatcher {
     @discardableResult
     func flushIfChanged() -> ParamReport? {
         takeDeclarationChange()
-        guard valuesChanged else { return nil }
+        guard valuesChanged || unpublishedStart != nil else { return nil }
         return publish()
     }
 
@@ -356,7 +366,7 @@ final class ParamSurface: DeclarationWatcher {
     /// 書いた順に当たるので、後のほうが残る (`ParamRequest.valuesInApplicationOrder`)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    private func apply(_ request: ParamRequest) -> ParamReport {
+    private func apply(_ request: ParamRequest) -> ParamReport? {
         var rejected: [ParamReport.Rejection] = []
         var clamped: [ParamReport.Clamp] = []
         for entry in request.valuesInApplicationOrder {
@@ -395,12 +405,18 @@ final class ParamSurface: DeclarationWatcher {
         return publish(rejected: rejected, clamped: clamped)
     }
 
-    /// いまの姿を書き出す。
+    /// いまの姿を書き出す。**権利を持たなければ書かず `nil`** (``start(after:)``)。
+    ///
+    /// 書けなかった間に控えた変化 (値・最初の応答に載せるもの) は、書けるまで残る。
     @discardableResult
     private func publish(
-        rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = [],
-        discarded: [ParamReport.Rejection] = []
-    ) -> ParamReport {
+        rejected: [ParamReport.Rejection] = [], clamped: [ParamReport.Clamp] = []
+    ) -> ParamReport? {
+        guard requests.canAnswer() else { return nil }
+        let first = unpublishedStart
+        unpublishedStart = nil
+        let clamped = (first?.clamped ?? []) + clamped
+        let discarded = first?.discarded ?? []
         let revision = Self.advanced(self.revision ?? Self.revisionLeft(in: reportURL))
         self.revision = revision
         valuesChanged = false

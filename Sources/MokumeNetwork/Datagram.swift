@@ -5,6 +5,7 @@ import Darwin
 import Foundation
 import MokumeDiagnostics
 import Network
+import Synchronization
 
 // UDP の受け・送り。**中身のバイト列をどう読むかは持たない** — 上の層 (OSC の ``OSCCodec``・
 // 文字列の ``TextDecoding``) が決める。ポートを開く部分は TCP・WebSocket と ``PortListener`` を
@@ -67,6 +68,11 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     /// 届いた間は数がこれを超えてよく、黙った後の次の受け入れで戻る。
     static let connectionLimit = 64
 
+    /// 「空で流れが閉じた」と知らせた送り元を覚えておく数の上限。覚えておくのは、同じ送り元に 2 度
+    /// 言わないためで、空を送る送り元が際限なく変わっても状態が増えない。**超えたら、先に覚えた送り元から
+    /// 忘れる。** 忘れた送り元がまた空で流れを閉じたら、もう 1 度言う (#2363)。
+    static let emptyClosedLimit = 256
+
     /// 黙っている送り元を閉じてよいとするまでの秒数 (既定)。
     static let defaultIdleAfter: TimeInterval = 5
 
@@ -77,6 +83,9 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.mokume.network.listener")
     private let now: @Sendable () -> TimeInterval
     private let received: @Sendable ([UInt8], UInt64) -> Void
+    private let closedByEmpty: @Sendable (String) -> Void
+    /// 空で流れが閉じたと知らせた送り元 (``closedByEmpty``)。同じ送り元には 2 度言わない。
+    private var toldEmptyClosed = EmptyClosedSenders(limit: DatagramListener.emptyClosedLimit)
     /// 受け口。閉じたときの知らせに自分を渡すので、他をすべて決めた後に作る。
     private var opener: PortListener!
     /// 送り元と、最後に読んだ時刻 (``now`` の目盛り)。
@@ -91,17 +100,22 @@ nonisolated final class DatagramListener: @unchecked Sendable {
     ///   - now: 送り元の黙りを測る時計 (秒)。既定は ``systemClock``。検査は手で進める時計を
     ///     渡し、受け入れの速さに依らずに黙りを決める (#2225)。``queue`` の上で呼ばれる。
     ///   - received: 届いた datagram と、届いた瞬間の host time。``queue`` の上で呼ばれる。
+    ///   - closedByEmpty: 終わりを名乗った空の datagram を渡してこちらで流れを閉じたとき、その送り元
+    ///     (`127.0.0.1:51234`) で呼ぶ。**同じ送り元には 1 度だけ** (覚える数は ``emptyClosedLimit``)。
+    ///     ``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
     init(
         port: Int, host: String?, retryAfter: TimeInterval,
         idleAfter: TimeInterval = defaultIdleAfter,
         now: @escaping @Sendable () -> TimeInterval = systemClock,
         received: @escaping @Sendable ([UInt8], UInt64) -> Void,
+        closedByEmpty: @escaping @Sendable (String) -> Void = { _ in },
         changed: @escaping @Sendable (Event) -> Void
     ) {
         self.idleAfter = idleAfter
         self.now = now
         self.received = received
+        self.closedByEmpty = closedByEmpty
         ledger = SenderLedger(limit: Self.connectionLimit, idleAfter: idleAfter)
         opener = PortListener(
             port: port, host: host, retryAfter: retryAfter, queue: queue,
@@ -195,7 +209,21 @@ nonisolated final class DatagramListener: @unchecked Sendable {
                 received(bytes, hostTime)
                 connection.cancel()
             }
+            // 空の直後に同じ送り元から届いたものは、Network.framework が捨てうる (#2363)。
+            // 何が落ちたかは見えないので、流れが閉じたことを送り元ごとに 1 度だけ言う
+            if completion.closesFlowOnEmpty {
+                let sender = Self.describe(connection.endpoint)
+                if toldEmptyClosed.insert(sender) { closedByEmpty(sender) }
+            }
         }
+    }
+
+    /// 送り元の名乗り (`127.0.0.1:51234`・IPv6 は `[::1]:51234`)。診断に出す。
+    static func describe(_ endpoint: NWEndpoint) -> String {
+        guard case .hostPort(let host, let port) = endpoint else { return "\(endpoint)" }
+        // 範囲指定 (`fe80::1%en0`) の `%` 以降は、診断の読み手に要らない
+        let address = "\(host)".split(separator: "%", maxSplits: 1).first.map(String.init) ?? "\(host)"
+        return address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)"
     }
 
     /// 受けの完了 1 つの扱い。
@@ -208,6 +236,14 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         case ended
         /// こちらが閉じた繋ぎの、待っていた受けの返り。何も渡さない。
         case abandoned
+
+        /// 空の datagram を渡して流れを閉じる扱いか。**この扱いだけが、空の直後に届いたものが落ちたかも
+        /// しれないことを名乗る** (#2363)。終わりを名乗らない空 (流れが続く)・こちらが閉じた繋ぎ
+        /// (黙りで閉じた・受け口が失敗した)・空を含まない流れの終わりでは、何も落ちた疑いが無い。
+        var closesFlowOnEmpty: Bool {
+            if case .last = self { return true }
+            return false
+        }
     }
 
     /// 受けの完了が渡したもの (`content`・文脈の `isFinal`・失敗したか) と、その繋ぎをまだ台帳に
@@ -236,6 +272,27 @@ nonisolated final class DatagramListener: @unchecked Sendable {
         if let content { return .datagram([UInt8](content)) }
         guard held else { return .abandoned }
         return isFinal ? .last([]) : .datagram([])
+    }
+}
+
+/// 「空で流れが閉じた」と知らせた送り元の覚え (#2363)。同じ送り元に 2 度言わず、**覚える数に上限を持つ**。
+/// 上限を超えたら、先に覚えた送り元から忘れる (忘れた送り元がまた閉じたら、もう 1 度言う)。
+nonisolated struct EmptyClosedSenders {
+    let limit: Int
+    private var order: [String] = []
+    private var known: Set<String> = []
+
+    init(limit: Int) { self.limit = max(1, limit) }
+
+    /// 覚えている数。
+    var count: Int { order.count }
+
+    /// `sender` を覚える。まだ知らなければ真 (言う)、覚えていれば偽 (もう言った)。
+    mutating func insert(_ sender: String) -> Bool {
+        guard known.insert(sender).inserted else { return false }
+        order.append(sender)
+        if order.count > limit { known.remove(order.removeFirst()) }
+        return true
     }
 }
 
@@ -325,14 +382,38 @@ protocol DatagramSending: AnyObject, Sendable {
     func stop()
 }
 
+/// 送り手が見たことの跡。**読むだけの値** — 振る舞いを決めない。
+///
+/// 送れないと名乗る知らせ (``DatagramSender`` の `warn`) は、繋ぎが `waiting` のときと、宛先の失敗が返った
+/// ときにしか出ない。繋ぎが `preparing` のまま進まないときや、誤り無しに完了したのに受け口で読まれない
+/// ときは黙る。検査が、送った datagram が読まれなかった回の名乗りに載せて、「送り手で出なかった」と
+/// 「出たが受け口で落ちた」を読み分ける (#3001)。
+nonisolated struct SendTrace: Sendable, Equatable {
+    /// ``DatagramSending/send(_:)`` を呼んだ数。
+    var issued = 0
+    /// 誤り無しで終わった送信の完了の数。UDP の「誤り無し」は手元のソケットから出たことだけを言う。
+    var completed = 0
+    /// 誤りつきで終わった送信の完了の数 (捨てた繋ぎに積まれていたものも数える)。
+    var failed = 0
+    /// 繋ぎが最後に名乗った状態 (`preparing`・`ready`・`waiting(…)`・`failed(…)`・`cancelled`)。
+    /// まだ何も名乗っていなければ `nil`。
+    var state: String?
+}
+
+/// 送り手の跡 (``SendTrace``) を読める送り手。
+nonisolated protocol SendTracing: AnyObject {
+    var sendTrace: SendTrace { get }
+}
+
 /// UDP で 1 つの宛先 (ホストとポート) へ送る。
 ///
 /// **送れなくても投げない。** 送れないときは理由を添えて 1 度だけ知らせ、送れたら、また知らせられる
 /// ように戻す。知らせるのは 2 つの形である。
 ///
-/// - **繋ぎが失敗した** (`failed`。宛先で誰も受けていない `connection refused` など) — 繋ぎを捨て、
-///   次に送るときに繋ぎ直す。**送れたと読めるのは、繋ぎが ``confirmAfter`` 秒以上、拒まれずに
-///   送れ続けたとき**である (下の「UDP の送れた」)
+/// - **送りや繋ぎが失敗した** (宛先で誰も受けていない `connection refused` など。実測では、拒否は
+///   繋ぎが `ready` のまま**次の送信の完了の誤り**として返る。繋ぎそのものが `failed` になる形も同じに
+///   扱う) — 繋ぎは OS 側ではまだ使えるが、こちらは捨てて、次に送るときに繋ぎ直す。**送れたと読めるのは、
+///   繋ぎが ``confirmAfter`` 秒以上、拒まれずに送れ続けたとき**である (下の「UDP の送れた」)
 /// - **繋ぎが待っている** (`waiting`。`Network is down` など) — 繋ぎは Network.framework が自分で
 ///   待ち続けるので捨てない。待っている間は送ったものの完了が 1 度も返らず、知らせなければ**黙って
 ///   消える**。ネットワークが生きているのに待つなら、このアプリにローカルネットワークの許可が
@@ -342,7 +423,7 @@ protocol DatagramSending: AnyObject, Sendable {
 /// ## UDP の送れた
 ///
 /// UDP の送信の完了は「手元のソケットから出た」ことしか言わない。宛先で誰も受けていない拒否は
-/// **次の送信**の失敗として返り、繋ぎはそのまま使える (macOS 27.0.1 で、受け手の居ないポートへ
+/// **次の送信**の失敗として返り、OS の繋ぎはそのまま使える (macOS 27.0.1 で、受け手の居ないポートへ
 /// 繋ぎを捨てずに送ると、完了が成功・拒否を交互に返すのを実測した)。完了が誤り無しで返ったことを
 /// 「送れた」と読むと、誰にも届いていないのに送るたびに戻って、1 度だけのはずの診断が出直す
 /// (#2326)。
@@ -356,10 +437,13 @@ protocol DatagramSending: AnyObject, Sendable {
 ///
 /// **捨てた繋ぎ (いまの繋ぎでないもの) に返った完了は、いまの繋ぎの話ではないので無視する。** 繋ぎを
 /// 捨てると、その繋ぎに積まれていた送信の完了が `ECANCELED` などの誤りで返る。それを送れない理由として
-/// 名乗らず、いまの繋ぎの数え方も崩さない。
+/// 名乗らず、いまの繋ぎの数え方も崩さない。**繋ぎの状態 (`failed`・`waiting`) も同じ**で、捨てた繋ぎから
+/// 遅れて届いたものは読まない。捨てる繋ぎは `cancel()` するので、以後は `cancelled` になるはずだが、
+/// 状態の知らせは待ち行列を通って遅れうるので、いまの繋ぎかを確かめる守りを置く (実測した形ではない —
+/// #3045)。待ちの名乗りを誤り無しの完了で戻すのも、いまの繋ぎの完了だけである。
 ///
 /// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
-nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
+nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態 (``connection``・``warned``) は ``queue`` の上でだけ触る。
 
     let host: String
@@ -380,6 +464,21 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     private var refused = false
     /// いまの繋ぎで、最初に誤り無く終わった送信の完了の時刻。繋ぎを捨てる・失敗が返るたびに消える。
     private var unrefutedSince: TimeInterval?
+    /// 送り手が見たことの跡 (``SendTrace``)。検査が待ち行列の外から読むので、錠を持つ。
+    private let traced = Mutex(SendTrace())
+
+    /// 送り手が見たことの跡。読むだけで、振る舞いを決めない。
+    var sendTrace: SendTrace { traced.withLock { $0 } }
+
+    /// 繋ぎが名乗った状態を跡に残す。**跡だけ**で、読み替え (``changed(to:on:)``) には触れない。
+    func noted(_ state: NWConnection.State) {
+        traced.withLock { $0.state = "\(state)" }
+    }
+
+    /// 送信の完了を跡に残す。**跡だけ**で、読み替え (``finished(sending:on:issuedAt:)``) には触れない。
+    func noted(completion error: NWError?) {
+        traced.withLock { if error == nil { $0.completed += 1 } else { $0.failed += 1 } }
+    }
 
     /// - Parameters:
     ///   - confirmAfter: 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
@@ -397,12 +496,14 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     }
 
     func send(_ bytes: [UInt8]) {
+        traced.withLock { $0.issued += 1 }
         queue.async { [self] in
             let connection = connection ?? open()
             let issued = now()
             connection.send(
                 content: Data(bytes),
                 completion: .contentProcessed { [weak self, weak connection] error in
+                    self?.noted(completion: error)
                     self?.finished(sending: error, on: connection, issuedAt: issued)
                 })
         }
@@ -429,6 +530,7 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
             host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any,
             using: .udp)
         opened.stateUpdateHandler = { [weak self, weak opened] state in
+            self?.noted(state)
             self?.changed(to: state, on: opened)
         }
         opened.start(queue: queue)
@@ -444,7 +546,13 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
     }
 
     /// 繋ぎの移り変わりを読む。送れない形なら 1 度だけ知らせる。
+    ///
+    /// **いまの繋ぎからの移り変わりだけを読む。** 捨てた繋ぎ (弱参照が消えたものも含む) の状態は、
+    /// 完了と同じく、いまの繋ぎの話ではない。捨てた繋ぎから遅れて `failed` や `waiting` が届くと、
+    /// 送れたと読んで戻った後に言い直し、待ちの名乗りを拒否へ読み替えてしまう。捨てる繋ぎは `cancel()` する
+    /// ので届かないはずの形への守りで、実測した赤の根ではない (#3045)。
     func changed(to state: NWConnection.State, on opened: NWConnection?) {
+        guard isCurrent(opened) else { return }
         switch state {
         case .waiting(let error):
             // 繋ぎは Network.framework が自分で待ち続ける。捨てずに、送れないことだけを言う
@@ -471,12 +579,12 @@ nonisolated final class DatagramSender: DatagramSending, @unchecked Sendable {
                 if isCurrent(sent) { unrefutedSince = unrefutedSince ?? now() }
                 return
             }
+            // 捨てた繋ぎの完了は、待ちの名乗りも戻さず、いまの繋ぎの数え方にも入れない
+            guard isCurrent(sent) else { return }
             guard refused else {
                 warned = false
                 return
             }
-            // 捨てた繋ぎの完了は、いまの繋ぎの数え方に入れない
-            guard isCurrent(sent) else { return }
             let completed = now()
             let since = unrefutedSince ?? completed
             unrefutedSince = since

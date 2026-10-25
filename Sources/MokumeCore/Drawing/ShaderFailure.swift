@@ -10,6 +10,10 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
     /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
     /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
+    ///
+    /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
+    /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
+    /// 「見つかった」と言わず、資源の宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 開けたが、中身を UTF-8 の文字として読めない (Shift_JIS で保存した断片など)。UTF-8 で保存し直す
     /// (``DataFailure/unreadable(path:)`` と同じ形・

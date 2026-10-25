@@ -24,18 +24,25 @@ struct ShapePipelineSharingTests {
     ///
     /// 奥行きの扱いは含めない手もある (`includingDepth: false`)。同じ物理 GPU の上で作った別の
     /// ``RenderDevice`` のあいだでは、同じ記述の奥行きの扱いを Metal が同じ実体で返すことがある。
-    private func objects(of pipeline: ShapePipeline, includingDepth: Bool = true) -> [ObjectIdentifier] {
-        let groups =
-            [
-                pipeline.states, pipeline.solidStates, pipeline.unitShapeStates,
-                pipeline.solidStrokeStates,
-            ] + ShapePipeline.formFlagCombinations.map { pipeline.formStates(for: $0) }
+    private func objects(
+        of pipeline: ShapePipeline, includingDepth: Bool = true
+    ) throws -> [ObjectIdentifier] {
+        let groups = [
+            pipeline.states, pipeline.solidStates, pipeline.unitShapeStates,
+            pipeline.solidStrokeStates,
+        ]
         var all: [ObjectIdentifier] = []
         for group in groups {
             all += [
                 ObjectIdentifier(group.composite), ObjectIdentifier(group.blend),
                 ObjectIdentifier(group.replace),
             ]
+        }
+        // 基本図形は旗の組 12 × 混ぜ方 3 列を、使うときに 1 本ずつ組む (#3114)
+        for flags in ShapePipeline.formFlagCombinations {
+            for mode: BlendMode in [.multiply, .blend, .replace] {
+                all.append(ObjectIdentifier(try pipeline.formState(for: flags, mode: mode)))
+            }
         }
         all += [
             ObjectIdentifier(pipeline.unitShapeShadowState),
@@ -65,11 +72,11 @@ struct ShapePipelineSharingTests {
 
         #expect(surfaces.count == 12)
         #expect(gpu.shaders.librariesBuilt == builtAfterFirst, "面を足してライブラリを組み直した")
-        let reference = objects(of: first.pipeline)
-        #expect(reference.count == 30 + 3 + 3, "混ぜ方別 10 組 (30 本) + 影 3 本 + 奥行きの扱い 3 つ")
+        let reference = try objects(of: first.pipeline)
+        #expect(reference.count == 48 + 3 + 3, "混ぜ方別 16 組 (48 本・基本図形は旗の組 12 組) + 影 3 本 + 奥行きの扱い 3 つ")
         for surface in surfaces {
             #expect(surface.pipeline === first.pipeline)
-            let own = objects(of: surface.pipeline)
+            let own = try objects(of: surface.pipeline)
             #expect(own == reference, "パイプラインが面ごとの実体になっている")
         }
     }
@@ -83,9 +90,9 @@ struct ShapePipelineSharingTests {
         #expect(a.pipeline !== b.pipeline)
         #expect(first.shaders.librariesBuilt["Shapes"] == 1)
         #expect(second.shaders.librariesBuilt["Shapes"] == 1)
-        #expect(
-            Set(objects(of: a.pipeline, includingDepth: false))
-                .isDisjoint(with: objects(of: b.pipeline, includingDepth: false)))
+        let aObjects = try objects(of: a.pipeline, includingDepth: false)
+        let bObjects = try objects(of: b.pipeline, includingDepth: false)
+        #expect(Set(aObjects).isDisjoint(with: bObjects))
     }
 
     @Test("引数のテーブルは分け合わない — 面ごとに持つ")

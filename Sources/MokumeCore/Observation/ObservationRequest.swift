@@ -204,44 +204,20 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         }
     }
 
-    /// 要求にあった、読まない鍵 (名前順)。
-    ///
-    /// **断らず、読まないだけにする** ([ADR-0018] 決定 3「知らないキーは無視する」。新しい書き手が足した
-    /// キーを古いスケッチが断らない)。ただし黙って捨てない — `sacle` のような綴りの誤りが、警告なしの
-    /// 等倍になる ([#2392])。名乗りは ``unknownKeysWarning`` が応答の `warnings` に載せる。
-    private nonisolated static func unknownKeys(in decoder: any Decoder) throws -> [String] {
-        let all = try decoder.container(keyedBy: AnyKey.self)
-        return all.allKeys.map(\.stringValue)
-            .filter { CodingKeys(rawValue: $0) == nil }
-            .sorted()
-    }
-
-    private struct AnyKey: CodingKey {
-        let stringValue: String
-        var intValue: Int? { nil }
-        init?(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { nil }
-    }
-
-    /// 名乗る名前の数と、1 つあたりの長さの上限。書き手が置いた長さのまま応答へ返さない。
-    private nonisolated static let namedKeyLimit = 5
-    private nonisolated static let namedKeyLength = 32
-
-    /// 名乗る名前を、上限で切って並べる。
-    private nonisolated static func named(_ keys: [String]) -> String {
-        let shown = keys.prefix(namedKeyLimit).map { key in
-            key.count > namedKeyLength ? "\(key.prefix(namedKeyLength))…" : key
-        }
-        let rest = keys.count - shown.count
-        return shown.joined(separator: ", ") + (rest > 0 ? " and \(rest) more" : "")
-    }
-
     /// 読まなかった鍵を名乗る警告。なければ `nil`。
+    ///
+    /// 数え方と文面は区画の共通の口 (``UnknownKeys``) で、入力の要求と同じものを使う ([#2843])。
+    ///
+    /// [#2843]: https://github.com/mokume-metal/mokume/issues/2843
     var unknownKeysWarning: String? {
-        guard !unknownKeys.isEmpty else { return nil }
-        let known = CodingKeys.allCases.map(\.rawValue).joined(separator: ", ")
-        return "Not read, so the request was taken without them: \(Self.named(unknownKeys)) (the keys read are \(known))"
+        UnknownKeys.warning(unknown: unknownKeys, in: "request", known: Self.readKeys)
     }
+
+    /// この版が読む鍵 (宣言順)。**スキーマの `properties` と同じ集合である** — 名乗りの文面が並べる
+    /// ので、割れると名乗りが嘘になる。一致は検査が見る ([#2843])。
+    ///
+    /// [#2843]: https://github.com/mokume-metal/mokume/issues/2843
+    package static var readKeys: [String] { UnknownKeys.readKeys(CodingKeys.self) }
 
     /// 読めなかった理由に、知らない鍵の名乗りを添える。**読めない要求の応答にも名乗る** (#2392) —
     /// 型の誤りを直した次の応答で初めて `sacle` が出る、という 2 度手間にしない。場所と元の説明は保つ。
@@ -250,7 +226,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         func context(_ context: DecodingError.Context) -> DecodingError.Context {
             .init(
                 codingPath: context.codingPath,
-                debugDescription: "\(context.debugDescription); keys not read: \(named(keys))",
+                debugDescription: "\(context.debugDescription); keys not read: \(UnknownKeys.named(keys))",
                 underlyingError: context.underlyingError)
         }
         switch error {
@@ -264,7 +240,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let unknownKeys = try Self.unknownKeys(in: decoder)
+        let unknownKeys = try UnknownKeys.names(in: decoder, known: CodingKeys.self)
         do {
             self.id = try container.decode(String.self, forKey: .id)
             self.scale = try Self.scale(in: container, forKey: .scale) ?? 1

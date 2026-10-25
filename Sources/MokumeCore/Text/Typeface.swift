@@ -7,12 +7,27 @@ import MokumeDiagnostics
 
 /// どの書体を、どの大きさ・太さで使うかの指定。
 struct TypefaceRequest: Hashable, Sendable {
-    /// 書体の名前。`nil` はこの環境の既定の書体。
+    /// 書体の名前。`nil` はこの環境の既定の書体。``file`` があれば使わない。
     var name: String?
+    /// ファイルから読んだ書体 ([#2445])。あれば ``name`` より先に使う。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    var file: Font?
     /// 大きさ (画素)。
     var size: Float
-    /// 太さと傾き。
+    /// 太さと傾き。**``weight`` を頼んだなら太字を含まない** (呼ぶ側 (`Canvas`) が落とす)。太さを
+    /// 頼んだ面と太字の面を、同じ面に別々の鍵で作らないため。
     var style: TextStyle
+    /// 頼んだ太さ (100〜900 の整数)。`nil` は頼んでいない (``style`` の太字か否かで決まる)。
+    var weight: Int?
+
+    init(name: String?, file: Font? = nil, size: Float, style: TextStyle, weight: Int? = nil) {
+        self.name = name
+        self.file = file
+        self.size = size
+        self.style = style
+        self.weight = weight
+    }
 }
 
 /// 1 文字ぶんの引き当て結果。
@@ -28,6 +43,12 @@ struct ResolvedGlyph {
     var advance: Float
     /// 字形を焼き分けるための鍵になる、書体の識別名。
     var fontKey: String
+}
+
+/// 拡大した段の字形を引く鍵 (``Typeface/placedScaled``)。
+struct ScaledGlyphKey: Hashable {
+    var scalar: Unicode.Scalar
+    var step: Int
 }
 
 /// 焼き場で引いた字形と、それを引いた頁 (``Typeface/placed``)。
@@ -47,12 +68,16 @@ struct PlacedGlyph {
 /// 幅を合計する場所を散らすと、症状は「整列が数画素ずれる」という形で出る —
 /// 決定的だが小さく、枠を描いて拡大しないと見えない種類の壊れ方になる。
 ///
-/// ## 組版はしない
+/// ## 引き当ては組版しない
 ///
-/// 引き当ては**Unicode スカラ 1 つずつ**で、合字・字形の入れ替え・複雑な文字体系の
-/// 並べ替えは行わない。組版の結果を使うと合字には強くなるが、**部分の幅を足しても
+/// ``glyph(for:)``・``advance(of:)`` の引き当ては**Unicode スカラ 1 つずつ**で、合字・字形の入れ替え・
+/// 複雑な文字体系の並べ替えは行わない。組版の結果を使うと合字には強くなるが、**部分の幅を足しても
 /// 全体の幅に一致しなくなる** (加法性が失われる)。両方は成り立たないので、
-/// 加法性のほうを選んでいる。
+/// ``glyph(for:)`` 系 (`text()`・`textWidth()`・`textBounds()`) は加法性のほうを選んでいる。
+/// **組版した結果が要る口は別にある** — ``shape(_:)`` (`shapedText()`・`shapedTextWidth()`・
+/// `shapedTextBounds()`。[#2404]) は、1 行を CoreText に組ませて字形の列と幅を返す。
+///
+/// [#2404]: https://github.com/mokume-metal/mokume/issues/2404
 final class Typeface {
     let request: TypefaceRequest
     /// 引き当ての出発点になる書体。
@@ -78,11 +103,32 @@ final class Typeface {
     /// [#1783]: https://github.com/mokume-metal/mokume/issues/1783
     var placed: [Unicode.Scalar: PlacedGlyph] = [:]
 
+    /// ``placed`` の、拡大した段 (0 より上) の字形の控え ([#2446])。**頁の通し番号が一致し、頼んだ段に
+    /// ついて答えが決まった字形だけが入る** (``Canvas/GlyphLookup``)。1 字の大きさで段を下げた字形は決まった
+    /// 答えとして入るが、上限を越えて近い段で描いた字形と、頁が溢れて低い段で描いた字形は入れない
+    /// (次のフレームで頼んだ段を焼くため)。段 0 は ``placed`` を使い、これまでの経路を変えない。
+    ///
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
+    var placedScaled: [ScaledGlyphKey: PlacedGlyph] = [:]
+
     /// 頼まれた太さ・傾きの面を、書体が持っていなかったか ([#2444])。持っていなければ ``base`` は
     /// 元の面か、引けた片方の性質だけの面で、それを知らせるのは書体を作らせた側 (`Canvas`) である。
     ///
     /// [#2444]: https://github.com/mokume-metal/mokume/issues/2444
     let lacksRequestedStyle: Bool
+
+    /// 頼んだ太さに対して、実際に使った面の太さ (CSS の数)。太さを頼んでいなければ `nil` ([#2445])。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    let usedWeight: Int?
+
+    /// 頼んだ太さから、使った太さが大きく離れたか。持つ面に近い太さが無かった ([#2445])。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    var lacksRequestedWeight: Bool {
+        guard let wanted = request.weight, let used = usedWeight else { return false }
+        return abs(used - wanted) > TypefaceWeight.noticeableGap
+    }
 
     /// 代わりの書体から引いた字の面が、頼んだ太さ・傾きを欠くときに呼ぶ口 ([#2561])。渡すのは
     /// この書体・その字・字を引いた書体で、知らせるのは書体を作らせた側 (`Canvas`) である。
@@ -91,14 +137,15 @@ final class Typeface {
     /// 必ず決めさせる (知らせない検査は空の口を渡す)。
     ///
     /// [#2561]: https://github.com/mokume-metal/mokume/issues/2561
-    private let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
+    let onFallbackLackingStyle: (Typeface, Unicode.Scalar, CTFont) -> Void
 
     init(
         request: TypefaceRequest,
         onFallbackLackingStyle: @escaping (Typeface, Unicode.Scalar, CTFont) -> Void
     ) {
         self.request = request
-        (self.base, self.lacksRequestedStyle) = Self.makeFont(request)
+        let made = Self.makeFont(request)
+        (self.base, self.lacksRequestedStyle, self.usedWeight) = (made.font, made.lacksStyle, made.usedWeight)
         self.ascent = Float(CTFontGetAscent(base))
         self.descent = Float(CTFontGetDescent(base))
         self.onFallbackLackingStyle = onFallbackLackingStyle
@@ -112,6 +159,49 @@ final class Typeface {
         case .italic: .traitItalic
         case .boldItalic: [.traitBold, .traitItalic]
         }
+    }
+
+    /// 代わりの書体の**家族に、頼んだ太さ・傾きの面が無いか** ([#2924])。
+    ///
+    /// 面の引き方は、同じ家族の中で頼んだ面を引き直す (``styledFace(of:traits:copy:)``) のと同じ —
+    /// 家族が頼んだ面を持たなければ、`CTFontCreateCopyWithSymbolicTraits` は `nil` か、頼んだ性質を
+    /// 欠く面を返す (ハングルの AppleMyungjo の太字・タイ文字の Ayuthaya の太字)。**家族が面を持つのに、
+    /// その面が字形だけを持たないときは、欠かない** — 知らせが「家族に面が無い」と言い間違えない。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    static func familyLacksFace(of font: CTFont, requested: CTFontSymbolicTraits) -> Bool {
+        guard !requested.isEmpty else { return false }
+        let face = CTFontCreateCopyWithSymbolicTraits(font, CTFontGetSize(font), nil, requested, requested)
+        return face.map { !CTFontGetSymbolicTraits($0).contains(requested) } ?? true
+    }
+
+    /// その字を頼んだ面で持つ書体の例 (`textFont()` に渡せる名前) を、環境から引く ([#2924])。**固定の
+    /// 表は持たない。** 公開の書体 `Helvetica` の頼んだ面を引く元にして ``CTFontCreateForString`` を引き、
+    /// 返った書体が**字形と頼んだ面の両方を持つときだけ**名乗る。持たなければ `nil` (例を挙げない)。
+    ///
+    /// **引く元を `Helvetica` にする理由:** システムの UI 書体を引く元にすると、返る代わりは内部名
+    /// (`.AppleSDGothicNeoI-Bold`・`.ThonburiUI-Bold`。macOS 27 で実測) の書体で、`textFont()` が断る名前なので
+    /// 挙げられない (名前から引き直すと別の書体が返る)。`Helvetica` からは、公開の名前
+    /// (`AppleSDGothicNeo-Bold`・`Thonburi-Bold`) の書体が返る。例は CoreText がその字に選んだ書体で、
+    /// 例の表ではない。
+    ///
+    /// 描く書体は変えない — 知らせの文面で、作者が `textFont()` へ渡せる名前を挙げるためだけに引く。
+    /// `.` で始まる内部名や、環境が名前から引けない名前は挙げない (渡し直せない)。
+    ///
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
+    static func exampleTypeface(for scalar: Unicode.Scalar, requested: CTFontSymbolicTraits, size: CGFloat)
+        -> String?
+    {
+        guard !requested.isEmpty else { return nil }
+        let origin = CTFontCreateWithName("Helvetica" as CFString, size, nil)
+        let base = CTFontCreateCopyWithSymbolicTraits(origin, size, nil, requested, requested) ?? origin
+        let text = String(scalar) as CFString
+        let found = CTFontCreateForString(base, text, CFRangeMake(0, CFStringGetLength(text)))
+        let name = CTFontCopyPostScriptName(found) as String
+        guard CTFontGetSymbolicTraits(found).contains(requested), glyphIndex(of: scalar, in: found) != 0,
+            !name.hasPrefix("."), exists(name: name)
+        else { return nil }
+        return name
     }
 
     /// 代わりの書体 (``glyph(for:)`` が、この書体が覆えない字を引いた別の書体) から引いた字が、
@@ -148,9 +238,24 @@ final class Typeface {
         return !path.isEmpty
     }
 
+    /// 書体を作った結果。
+    struct MadeFont {
+        var font: CTFont
+        /// 頼んだ太字・斜体の面が無く、引けた面で描くか。
+        var lacksStyle: Bool
+        /// 太さを頼んだとき、使った面の太さ (CSS の数)。頼んでいなければ `nil`。
+        var usedWeight: Int?
+    }
+
     /// 名前と大きさと太さから書体を作る。太さ・傾きの面が無ければ、引けた面と「無かった」を返す。
-    private static func makeFont(_ request: TypefaceRequest) -> (font: CTFont, lacksStyle: Bool) {
+    ///
+    /// **太さ (``TypefaceRequest/weight``) を頼んだなら、太字の面の代わりにその太さを使う。** 傾きの面は
+    /// 先に選び、その面を頼んだ太さへ寄せる (``TypefaceWeight/weighted(_:weight:)``)。
+    private static func makeFont(_ request: TypefaceRequest) -> MadeFont {
         let size = CGFloat(request.size)
+        if let file = request.file {
+            return makeFileFont(file, size: size, request: request)
+        }
         let base: CTFont
         if let name = request.name {
             base = CTFontCreateWithName(name as CFString, size, nil)
@@ -161,10 +266,74 @@ final class Typeface {
         }
 
         let traits = traits(of: request.style)
-        guard !traits.isEmpty else { return (base, false) }
-        return styledFace(of: base, traits: traits) {
-            CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
+        let (styled, lacksStyle): (CTFont, Bool)
+        if traits.isEmpty {
+            (styled, lacksStyle) = (base, false)
+        } else {
+            (styled, lacksStyle) = styledFace(of: base, traits: traits) {
+                CTFontCreateCopyWithSymbolicTraits(base, size, nil, $0, $0)
+            }
         }
+        guard let weight = request.weight else { return MadeFont(font: styled, lacksStyle: lacksStyle, usedWeight: nil) }
+        let weighted = TypefaceWeight.weighted(styled, weight: weight)
+        return MadeFont(font: weighted.font, lacksStyle: lacksStyle, usedWeight: weighted.used)
+    }
+
+    /// ファイルから読んだ書体の面を作る ([#2445])。
+    ///
+    /// **ファイルの書体は登録しないので、CoreText は兄弟の面を引けない** (`CTFontCreateCopyWithSymbolicTraits`
+    /// は、登録された家族の中を探す)。面は、ファイルが持つ面から自分で選ぶ。
+    ///
+    /// - **可変書体** (面は 1 つ): 軸を既定値へ置いた面が既定の面で、太さは `wght` 軸で動かす。太字は 700。
+    ///   斜体の面は持てない (傾きは別のファイル)。
+    /// - **それ以外**: 頼んだ太さ (太字は 700・何も頼まなければ 400) に最も近い面を、傾きが合う面から選ぶ
+    ///   (``TypefaceWeight/nearest(among:weight:italic:)``)。
+    ///
+    /// 太字・斜体の面が無ければ引けた面で描き、「無かった」を返す (`textStyle()` の警告になる)。
+    ///
+    /// [#2445]: https://github.com/mokume-metal/mokume/issues/2445
+    private static func makeFileFont(_ file: Font, size: CGFloat, request: TypefaceRequest) -> MadeFont {
+        let style = request.style
+        let wantsBold = style == .bold || style == .boldItalic
+        let wantsItalic = style == .italic || style == .boldItalic
+        let target = request.weight ?? (wantsBold ? TypefaceWeight.bold : TypefaceWeight.regular)
+
+        if file.isVariable, let face = file.faces.first {
+            let probe = CTFontCreateWithFontDescriptor(face.descriptor, size, nil)
+            let axes = TypefaceWeight.axes(of: probe)
+            // 全軸を既定値へ置く。ファイルが返す記述子は名前つきのインスタンスの 1 つで、既定とは限らない
+            var values = Dictionary(uniqueKeysWithValues: axes.map { ($0.identifier, $0.initial) })
+            var used: Int?
+            if request.weight != nil || wantsBold,
+                let axis = axes.first(where: { $0.identifier == TypefaceWeight.axisIdentifier })
+            {
+                let value = min(max(Double(target), axis.minimum), axis.maximum)
+                values[TypefaceWeight.axisIdentifier] = value
+                used = Int(value.rounded())
+            }
+            let font = TypefaceWeight.copy(of: probe, size: size, axes: values)
+            // 軸の無い書体 (幅だけの軸など) は太字にできない。傾きは持てない
+            let lacksBold = request.weight == nil && wantsBold && used == nil
+            return MadeFont(
+                font: font, lacksStyle: lacksBold || (wantsItalic && !face.trait.italic),
+                usedWeight: request.weight == nil ? nil : (used ?? Int(face.trait.weight.rounded())))
+        }
+
+        let traits = file.faces.map(\.trait)
+        guard let index = TypefaceWeight.nearest(among: traits, weight: target, italic: wantsItalic) else {
+            // 面が 1 つも無いファイルは読み込みが断っているので、ここへは来ない
+            return MadeFont(
+                font: CTFontCreateUIFontForLanguage(.system, size, nil)
+                    ?? CTFontCreateWithName("Helvetica" as CFString, size, nil),
+                lacksStyle: false, usedWeight: nil)
+        }
+        let chosen = traits[index]
+        let font = CTFontCreateWithFontDescriptor(file.faces[index].descriptor, size, nil)
+        let lacksBold = request.weight == nil && wantsBold && chosen.weight < 600
+        let lacksItalic = wantsItalic && !chosen.italic
+        return MadeFont(
+            font: font, lacksStyle: lacksBold || lacksItalic,
+            usedWeight: request.weight == nil ? nil : Int(chosen.weight.rounded()))
     }
 
     /// 頼んだ太さ・傾きの面を選ぶ。`copy` は、その性質の面を頼んだときの CoreText の答え。
@@ -304,9 +473,12 @@ final class Typeface {
         var advance = CGSize.zero
         CTFontGetAdvancesForGlyphs(font, .horizontal, &index, &advance, 1)
 
+        // ファイルから読んだ書体の字は、同じ PostScript 名のインストール済みの書体と焼き場で混ざらない
+        // よう、ファイルの同一性を鍵に含める。代わりの書体 (``fellBack``) はこの環境の書体で、名前だけ ([#2445])
+        var fontKey = (CTFontCopyPostScriptName(font) as String?) ?? ""
+        if !fellBack, let file = request.file { fontKey += "#" + file.identity }
         let entry = ResolvedGlyph(
-            font: font, glyph: glyph, advance: Float(advance.width),
-            fontKey: (CTFontCopyPostScriptName(font) as String?) ?? "")
+            font: font, glyph: glyph, advance: Float(advance.width), fontKey: fontKey)
         resolved[scalar] = entry
         if fallbackLacksStyle { onFallbackLackingStyle(self, scalar, font) }
         return entry
@@ -324,8 +496,12 @@ final class Typeface {
     ///
     /// **引き直した面は、同じ家族の公開の面とは限らない。** 面は `copy` が返した書体で、CoreText が
     /// 内部の面を返すこともある (Times New Roman の太字は、家族名 `.Times Fallback` の `.TimesFB-Bold`)。
-    /// 家族をまたいで探し直すことはしない — 代わりの書体が太字を持たない家族 (ハングルの
-    /// AppleMyungjo など) は、引き直しても細いまま残る。
+    /// **家族をまたいで探し直すことはしない** — 代わりの書体が太字を持たない家族 (ハングルの
+    /// AppleMyungjo・タイ文字の Ayuthaya など) は、引き直しても細いまま残る。理由は 2 つある。
+    /// CoreText の候補の列 (`CTFontCopyDefaultCascadeList`) に、その字を太字で持つ別の家族が入っていない
+    /// (Apple Chancery・Zapfino の「한」は列の中で AppleMyungjo だけが字形を持つ)。列の外から代役を
+    /// 決めると、指定した書体から離れる ([#2924])。細いままの字は、知らせ (``onFallbackLackingStyle``) が
+    /// 「代わりの書体の家族に面が無い」ことと、その字を頼んだ面で持つ書体の例を名乗る。
     ///
     /// 引き直した面は、頼んだ性質を**写す前の面より多く**持つときだけ採る。別の面へ入れ替わるだけで
     /// 何も頼みに近づかない引き直し (斜体の面が無くて太さの違う面が返る、など) は採らない。
@@ -338,6 +514,7 @@ final class Typeface {
     ///
     /// [#2770]: https://github.com/mokume-metal/mokume/issues/2770
     /// [#2562]: https://github.com/mokume-metal/mokume/issues/2562
+    /// [#2924]: https://github.com/mokume-metal/mokume/issues/2924
     static func restyledFallback(
         _ font: CTFont, glyph: CGGlyph, requested: CTFontSymbolicTraits,
         copy: (CTFontSymbolicTraits) -> CTFont?, glyphIndex: (CTFont) -> CGGlyph
@@ -358,6 +535,11 @@ final class Typeface {
     /// (空白など)。**描く道具を作れずに描けなかった字は控えず、次に引き直す** (焼き場が
     /// `.unbakeable` を控えないのと同じ)。
     private var drawnInks: [Unicode.Scalar: CGRect?] = [:]
+    /// 組版した字形の墨の控え (``ink(of:keeping:as:)``)。
+    var shapedInks: [ShapedInkKey: CGRect?] = [:]
+    /// 組版した 1 行の控え (``shape(_:)``)。重さは字形の数で、予算を超えたら古い順に 1 件ずつ捨てる。
+    var shaped = BoundedCache<ShapedLineKey, ShapedLine>(
+        budget: Typeface.shapedBudget, weight: { max(1, $0.glyphs.count) })
 
     /// その字形を、**道筋ではなく描いて測るか** ([#2308])。
     ///
@@ -377,7 +559,7 @@ final class Typeface {
         path == nil || CTFontGetSymbolicTraits(resolved.font).contains(.traitColorGlyphs)
     }
 
-    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:)``)
+    /// 字形を**焼き場と同じ描き方** (``GlyphAtlas/render(glyph:font:width:height:penX:penY:scale:)``)
     /// で描いた墨の範囲を、字形の座標 (書き始めと基準線から測り、上向き) で返す。墨が無ければ
     /// `nil` ([#2308])。
     ///
@@ -390,22 +572,24 @@ final class Typeface {
     /// 入らない大きさの字は、描かずに外接矩形を墨とする — 墨を含む、送り幅の升目ぶん広い枠に
     /// なる。描く道具を作れなかったときも `nil` を返すが、控えないので次に呼べば描き直す。
     ///
-    /// **描いた画素は焼き場に預ける** (`atlas`・`key`・[#2560])。控え (`drawnInks`) は書体ごと、書体は
+    /// **描いた画素は焼き場に預ける** (`atlas`・`key`・[#2560])。`keepsPixels` が偽なら預けない — 呼ぶ側が
+    /// 拡大して描くときは、`text()` が別の鍵 (拡大の段) の画素を焼くので、預けても引き取られない ([#2446])。控え (`drawnInks`) は書体ごと、書体は
     /// 大きさごとなので、`textSize()` を毎フレーム動かすと控えは外れ、測るたびに描き直す。その大きさの
     /// 字を `text()` が焼くときは、同じ升目に同じ描き方で描くので、預けた画素をそのまま使えば CPU で
     /// 描くのは 1 回で済む (``GlyphAtlas/keepRendered(_:for:)``)。
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     /// [#2560]: https://github.com/mokume-metal/mokume/issues/2560
+    /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     func drawnInk(
         of scalar: Unicode.Scalar, _ resolved: ResolvedGlyph, keeping atlas: GlyphAtlas,
-        as key: GlyphAtlas.Key
+        as key: GlyphAtlas.Key, keepsPixels: Bool = true
     ) -> CGRect? {
         if let cached = drawnInks[scalar] { return cached }
         switch Self.draw(resolved, on: atlas) {
         case .ink(let ink, let rendered):
             drawnInks[scalar] = ink
-            if let rendered { atlas.keepRendered(rendered, for: key) }
+            if keepsPixels, let rendered { atlas.keepRendered(rendered, for: key) }
             return ink
         case .failed:
             return nil
@@ -414,12 +598,12 @@ final class Typeface {
 
     /// 描いて測った結果。描けなかったこと (`failed`) と、描いて墨が無かったこと (`ink(nil)`) を分ける。
     /// 描いたときは、その画素も一緒に返す (焼き場へ預ける)。
-    private enum Drawing {
+    enum Drawing {
         case ink(CGRect?, GlyphAtlas.Rendered?)
         case failed
     }
 
-    private static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
+    static func draw(_ resolved: ResolvedGlyph, on atlas: GlyphAtlas) -> Drawing {
         var glyph = resolved.glyph
         let bounds = CTFontGetBoundingRectsForGlyphs(resolved.font, .horizontal, &glyph, nil, 1)
         guard bounds.width > 0, bounds.height > 0, bounds.width.isFinite, bounds.height.isFinite
@@ -466,7 +650,7 @@ final class Typeface {
     }
 
     /// 書体の中での字形の番号。持っていなければ 0。
-    private static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
+    static func glyphIndex(of scalar: Unicode.Scalar, in font: CTFont) -> CGGlyph {
         var units = Array(String(scalar).utf16)
         var glyphs = [CGGlyph](repeating: 0, count: units.count)
         CTFontGetGlyphsForCharacters(font, &units, &glyphs, units.count)

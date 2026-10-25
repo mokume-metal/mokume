@@ -19,7 +19,7 @@ public struct PixelBuffer: Equatable, Sendable {
     /// 画素の成分列。1 画素あたり 4 成分 (赤・緑・青・不透明度) が並ぶ。
     public let components: [Float16]
 
-    init(width: Int, height: Int, components: [Float16]) {
+    nonisolated init(width: Int, height: Int, components: [Float16]) {
         self.width = width
         self.height = height
         self.components = components
@@ -32,7 +32,7 @@ public struct PixelBuffer: Equatable, Sendable {
     /// どの口で読んでも答えは変わらない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public subscript(x: Int, y: Int) -> LinearRGBA {
+    public nonisolated subscript(x: Int, y: Int) -> LinearRGBA {
         // 置き場の位置を求める掛け算より先に見る。大きな位置では掛け算のほうが溢れて落ちる
         guard x >= 0, y >= 0, x < width, y < height else { return .transparent }
         let base = (y * width + x) * 4

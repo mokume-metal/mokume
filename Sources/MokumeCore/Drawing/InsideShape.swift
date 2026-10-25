@@ -9,8 +9,9 @@ extension Canvas {
     /// 捨てる口を記録の途中で通すと、控えた区間が溜め場の外を指す** — 出口の切り出しが
     /// `Range requires lowerBound <= upperBound` で落ちていた。直す先は口ごとに分かれる。
     ///
-    /// - 塗り直し (``background``) と画素の口 (``pixels``) は、呼ばれた時点で断る。どちらも形に
-    ///   焼き付く先が無い — 塗り直しは面全体を描き直すことで、画素はまだ描いていない形を読めない
+    /// - 塗り直し (``background``) と、組み立てている面自身の画素の口 (``pixels``) は、呼ばれた時点で断る。
+    ///   どちらも形に焼き付く先が無い — 塗り直しは面全体を描き直すことで、画素はまだ描いていない形を
+    ///   読めない。別の面 (先に置いた描き場所) の画素は断らない ([#2203])
     /// - 描き切りそのものは断れない口がある。揺らぎの設定の書き換えと置いた描き場所の描き換えは、
     ///   置いた時点のものを列が持ち歩くので描き切らず、組み立ての中で自分のフレームを閉じること
     ///   (`endDraw()`) は出口まで待たせる ([#1855]・``frameEnd``)。置いた側が写しを持てない描き換えも、
@@ -30,6 +31,7 @@ extension Canvas {
     /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
     /// [#1855]: https://github.com/mokume-metal/mokume/issues/1855
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
     /// [#2850]: https://github.com/mokume-metal/mokume/issues/2850
     enum InsideShape: CaseIterable {
         /// 塗り直した。塗り 1 色の背景と周囲の背景の 2 系統が鍵を共有する。
@@ -100,6 +102,9 @@ extension Canvas {
         case clip
         /// 効果を頼んだ。
         case effects
+        /// 呼んだ時点の絵へ効果を掛けた (``Canvas/filter(_:)``)。描き切ってから掛けるので、組み立ての中では
+        /// 断る。フレームの外での扱いは口が自分で持つ (持ち越しを約束する区間では許す)。
+        case filter
         /// 光を置いた・外した。
         case light
         /// 周囲の光を置いた。
@@ -136,7 +141,7 @@ extension Canvas {
             case .particles: .particles
             case .compute: .compute
             case .debug: .debug
-            case .background, .pixels, .drawnOut, .frameEnd, .frameStart, .brightness: nil
+            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness: nil
             }
         }
 
@@ -151,6 +156,7 @@ extension Canvas {
             case .camera: .cameraInsideShape
             case .clip: .clipInsideShape
             case .effects: .effectsInsideShape
+            case .filter: .filterInsideShape
             case .light: .lightInsideShape
             case .surroundings: .surroundingsInsideShape
             case .shadow: .shadowInsideShape
@@ -196,6 +202,9 @@ extension Canvas {
             case .effects:
                 "Effects do nothing inside createShape { }. A shape cannot hold effects, so write "
                     + "them before or after building the shape"
+            case .filter:
+                "filter() does nothing inside createShape { }. It applies effects to the picture drawn "
+                    + "so far, which a shape has not drawn yet, so call it before or after building the shape"
             case .light:
                 "Lights do nothing inside createShape { }. A shape cannot hold a light, so place "
                     + "it before or after building the shape"

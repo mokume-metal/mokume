@@ -24,6 +24,7 @@ discover するので、ここに 1 ファイル置けば CI にも載る (ADR-0
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -153,6 +154,54 @@ class PlaceAndAnswerTest(unittest.TestCase):
         (self.observe / "report.json").write_text("{壊れた")
         self.assertIsNone(observe_lib.answered(self.observe, "a", 0.05))
 
+    def test_place_returns_what_the_report_echoed_before(self):
+        """置く直前の応答の識別子を返す。取り合いの見分けに使う (#2857)。"""
+        self.assertIsNone(observe_lib.place(self.observe, {"id": "a"}))
+        (self.observe / "report.json").write_text(json.dumps({"id": "old"}))
+        self.assertEqual(observe_lib.place(self.observe, {"id": "b"}), "old")
+
+    def test_a_later_request_by_another_writer_is_contested(self):
+        """**別の書き手の応答 b1 の後に b2 が置かれても見逃さない** (#2857)。
+
+        自分には report=b1・request=b2 しか見えない。応答の識別子と request.json の識別子が
+        一致しなくても、置く直前の応答でも自分の応答でもない応答が見え、request.json が自分の
+        要求でなければ取り合い。`None` (応えなかった) と取り違えない。
+        """
+        (self.observe / "report.json").write_text(json.dumps({"id": "before"}))
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        observe_lib.place(self.observe, {"id": "b2"})
+        (self.observe / "report.json").write_text(json.dumps({"id": "b1"}))
+        with self.assertRaises(observe_lib.Contested):
+            observe_lib.answered(self.observe, "mine", 5, before=before)
+
+    def test_an_answer_to_someone_else_while_my_request_stands_is_not_a_contest(self):
+        """request.json がまだ自分の要求なら、別の識別子の応答が見えても待つ。"""
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        (self.observe / "report.json").write_text(json.dumps({"id": "b1"}))
+        self.assertIsNone(observe_lib.answered(self.observe, "mine", 0.05, before=before))
+
+    def test_the_echo_from_before_is_not_a_contest(self):
+        (self.observe / "report.json").write_text(json.dumps({"id": "before"}))
+        before = observe_lib.place(self.observe, {"id": "mine"})
+        observe_lib.place(self.observe, {"id": "b2"})
+        self.assertIsNone(observe_lib.answered(self.observe, "mine", 0.05, before=before))
+
+    def test_a_broken_request_is_not_mine(self):
+        """壊れた・識別子の無い request.json は自分の要求ではない。応答が別の識別子ならば取り合い。"""
+        for broken in ("{壊れた", json.dumps({"events": []})):
+            with self.subTest(broken=broken):
+                before = observe_lib.place(self.observe, {"id": "mine"})
+                (self.observe / "request.json").write_text(broken)
+                (self.observe / "report.json").write_text(json.dumps({"id": "theirs"}))
+                with self.assertRaises(observe_lib.Contested):
+                    observe_lib.answered(self.observe, "mine", 5, before=before)
+                (self.observe / "report.json").unlink()
+
+    def test_my_own_answer_wins_even_if_the_request_was_replaced(self):
+        (self.observe / "report.json").write_text(json.dumps({"id": "mine", "frame": 1}))
+        observe_lib.place(self.observe, {"id": "b2"})
+        self.assertEqual(observe_lib.answered(self.observe, "mine", 1, before=None)["frame"], 1)
+
     def test_the_deadline_is_honoured(self):
         """固まりうる待ちには待つ側が期限を持たせる (AGENTS.md)。"""
         started = time.monotonic()
@@ -179,6 +228,148 @@ class PlaceAndAnswerTest(unittest.TestCase):
         with mock.patch.object(time, "time", side_effect=lambda: 1.7e9 + next(calls) * 86400):
             answer = observe_lib.answered(self.observe, "a", 5)
         self.assertEqual(answer, {"id": "a"})
+
+
+class CopyBeforeUseTest(unittest.TestCase):
+    """返された絵は、写してから渡す (#2992)。
+
+    区画の絵は固定名で、別の書き手の撮り始めが応答を消して書き直す。写した後に応答が
+    自分の識別子のままなら、写した絵はすべて自分の撮影のもの (掃除は応答を先に消す)。
+    **別の書き手が割り込む瞬間は `shutil.copy` を差し替えて作る** (時計に頼らない)。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.observe,) = facets(self.root, "observe")
+        self.out = self.root / "out"
+
+    def stage(self, identifier, pictures):
+        for name, content in pictures.items():
+            (self.observe / name).write_text(content)
+        report = {
+            "id": identifier,
+            "image": list(pictures)[-1],
+            "frames": [{"image": name} for name in pictures],
+        }
+        (self.observe / "report.json").write_text(json.dumps(report))
+        return report
+
+    def sweep(self, pictures, writer="theirs"):
+        """別の書き手の撮り始め: 応答を消し、同じ名前を別の中身で書き直し、自分の応答を置く。"""
+        (self.observe / "report.json").unlink(missing_ok=True)
+        for name, content in pictures.items():
+            (self.observe / name).write_text(content)
+        (self.observe / "report.json").write_text(json.dumps({"id": writer}))
+
+    def copy_then(self, action, only_after=0):
+        """`shutil.copy` を本物のまま呼び、`only_after` 回目の呼びの後に `action` を走らせる。"""
+        real, calls = shutil.copy, []
+
+        def copy(source, destination, **kwargs):
+            result = real(source, destination, **kwargs)
+            calls.append(source)
+            if len(calls) > only_after:
+                action()
+            return result
+
+        return mock.patch.object(shutil, "copy", side_effect=copy)
+
+    def test_the_copy_keeps_the_picture_after_the_next_writer_overwrites_it(self):
+        report = self.stage("mine", {"frame-000.png": "X"})
+        taken = observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+        self.sweep({"frame-000.png": "Y"})
+        self.assertEqual(taken.read_text(), "X")
+
+    def test_a_sweep_while_copying_is_contested_and_no_path_is_returned(self):
+        report = self.stage("mine", {"frame-000.png": "X"})
+        with self.copy_then(lambda: self.sweep({"frame-000.png": "Y"})):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+
+    def test_another_identifier_while_copying_is_contested(self):
+        report = self.stage("mine", {"frame-000.png": "X"})
+        action = lambda: (self.observe / "report.json").write_text(json.dumps({"id": "theirs"}))
+        with self.copy_then(action):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+
+    def test_a_series_is_copied_whole_then_checked(self):
+        pictures = {"a.png": "1", "b.png": "2", "c.png": "3"}
+        report = self.stage("mine", pictures)
+        taken = observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertEqual([p.name for p in taken], ["a.png", "b.png", "c.png"])
+        self.sweep({"a.png": "x", "b.png": "y", "c.png": "z"})
+        self.assertEqual([p.read_text() for p in taken], ["1", "2", "3"])
+
+    def test_a_sweep_in_the_middle_of_a_series_is_contested(self):
+        report = self.stage("mine", {"a.png": "1", "b.png": "2", "c.png": "3"})
+        with self.copy_then(lambda: self.sweep({"a.png": "x"}), only_after=1):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_images(self.observe, report, "mine", self.out)
+
+    def test_a_vanished_picture_after_a_sweep_is_contested_not_a_plain_error(self):
+        report = self.stage("mine", {"a.png": "1"})
+        (self.observe / "report.json").unlink()   # 掃除は応答を先に消す
+        (self.observe / "a.png").unlink()
+        with self.assertRaises(observe_lib.Contested):
+            observe_lib.copy_images(self.observe, report, "mine", self.out)
+
+    def test_a_missing_picture_with_my_answer_standing_is_unverified_not_contested(self):
+        """応答が自分のままなら掃除ではない。取り合いと偽らず、区画の場所を `sources` で渡す。"""
+        report = self.stage("mine", {"a.png": "1"})
+        (self.observe / "a.png").unlink()
+        with self.assertRaises(observe_lib.Unverified) as caught:
+            observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertEqual(caught.exception.sources, [self.observe / "a.png"])
+        self.assertNotIsInstance(caught.exception, observe_lib.Contested)
+
+    def test_a_name_that_leaves_the_facet_is_unverified_like_a_failed_copy(self):
+        """素のファイル名でない名前は写さない。応答が自分のままなら、写せなかった回と同じ扱い。"""
+        report = {"id": "mine", "image": "../report.json", "frames": [{"image": "../report.json"}]}
+        (self.observe / "report.json").write_text(json.dumps(report))
+        with self.assertRaises(observe_lib.Unverified):
+            observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+        self.assertFalse((self.out / "f.png").exists())
+
+    def test_a_name_that_leaves_the_facet_after_a_sweep_is_contested(self):
+        report = {"id": "mine", "image": "../x", "frames": [{"image": "../x"}]}
+        (self.observe / "report.json").write_text(json.dumps({"id": "theirs"}))
+        with self.assertRaises(observe_lib.Contested):
+            observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+
+    def test_a_reply_without_a_catalogue_is_not_checked_so_it_is_not_copied(self):
+        """#408 より前の版は応答を消さずに絵を先に上書きする。確かめは何も言えないので写さない。"""
+        (self.observe / "frame.png").write_text("X")
+        report = {"id": "mine", "image": "frame.png"}
+        (self.observe / "report.json").write_text(json.dumps(report))
+        with self.assertRaises(observe_lib.Unverified) as caught:
+            observe_lib.copy_image(self.observe, report, "mine", self.out / "f.png")
+        self.assertEqual(caught.exception.sources, [self.observe / "frame.png"])
+        self.assertFalse((self.out / "f.png").exists())
+        with self.assertRaises(observe_lib.Unverified):
+            observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertFalse(self.out.exists())
+
+    def test_a_contested_copy_leaves_nothing_behind(self):
+        """取り合った回は、渡さない写しを `destination` / `into` に残さない。"""
+        report = self.stage("mine", {"a.png": "1", "b.png": "2"})
+        with self.copy_then(lambda: self.sweep({"a.png": "x"}), only_after=1):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_images(self.observe, report, "mine", self.out)
+        self.assertEqual(sorted(p.name for p in self.out.iterdir()), [])
+        single = self.stage("mine", {"c.png": "3"})
+        with self.copy_then(lambda: self.sweep({"c.png": "y"})):
+            with self.assertRaises(observe_lib.Contested):
+                observe_lib.copy_image(self.observe, single, "mine", self.out / "f.png")
+        self.assertFalse((self.out / "f.png").exists())
+
+    def test_no_image_is_none_and_the_catalogue_comes_first(self):
+        self.assertIsNone(observe_lib.copy_image(self.observe, {"id": "mine"}, "mine", self.out / "f"))
+        self.assertEqual(observe_lib.image_names({"image": "z.png", "frames": [{"image": "a.png"}]}), ["a.png"])
+        self.assertEqual(observe_lib.image_names({"image": "z.png"}), ["z.png"])
+        self.assertEqual(observe_lib.image_names({}), [])
 
 
 class RoundtripTest(unittest.TestCase):

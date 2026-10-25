@@ -16,6 +16,9 @@ enum NewCommand {
         /// **相対なら、作られるスケッチから見た相対である** (CONTRIBUTING)。`Package.swift` の
         /// `.package(path:)` へそのまま入り、SwiftPM はそれをパッケージの場所から解く。
         var local: String?
+        /// 作例の綴り (`--from`・#2436)。同梱した例 (``Examples``) の 1 本から始める。
+        /// 無ければ、ひな形の回る円。
+        var from: String?
 
         /// 作るスケッチの場所。`--path` を走らせた場所から解き、名前を足す (#2323)。
         ///
@@ -25,13 +28,23 @@ enum NewCommand {
         }
     }
 
-    static func run(_ arguments: [String]) throws(CommandFailure) {
+    /// - Parameter examples: 同梱した作例の束を引く手。検査が差し替える。
+    static func run(
+        _ arguments: [String],
+        examples: () throws(CommandFailure) -> Examples.Catalogue = { () throws(CommandFailure) in
+            try Examples.bundled()
+        }
+    ) throws(CommandFailure) {
         let options = try parse(arguments)
+        // **何かを作る前に例を引く。** 知らない名前・決まらない名前・束が無いは、ここで断る
+        // (部分的なパッケージを残さない — #2436)
+        var example: Examples.Chosen?
+        if let spelling = options.from { example = try examples().select(spelling) }
         let root = try options.root()
         guard !FileManager.default.fileExists(atPath: root.path) else {
             throw .directoryExists(path: root.path)
         }
-        for (path, contents) in try files(for: options) {
+        for (path, contents) in try files(for: options, example: example) {
             let url = root.appendingPathComponent(path)
             do {
                 try FileManager.default.createDirectory(
@@ -69,6 +82,9 @@ enum NewCommand {
             Arguments.Option(["--local"], takesPlace: true) {
                 "\($0) needs the library's path after it"
             },
+            Arguments.Option(["--from"]) {
+                "\($0) needs an example after it (\(Command.name) examples lists them)"
+            },
         ]
     }
 
@@ -85,17 +101,29 @@ enum NewCommand {
         guard length <= maximumNameLength else { throw .nameTooLong(name: name, length: length) }
         if let reason = unusableReason(name: name) { throw .unusableName(name: name, reason: reason) }
         return Options(
-            name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"])
+            name: name, path: parsed.values["--path"] ?? ".", local: parsed.values["--local"],
+            from: parsed.values["--from"])
     }
 
     /// 作るファイルと中身。
     ///
     /// - Parameter base: 走らせた場所。`--local` の名前を作る場所から解くのに要る。
-    static func files(for options: Options, base: URL? = GivenPath.currentDirectory)
-        throws(CommandFailure) -> [(String, String)]
-    {
+    /// - Parameter example: `--from` で引いた例 (``Examples/Catalogue/select(_:)``)。あれば、ひな形の
+    ///   `Sketch.swift` の代わりに、この例を `@main` を持つ 1 本として置く。
+    static func files(
+        for options: Options, base: URL? = GivenPath.currentDirectory,
+        example: Examples.Chosen? = nil
+    ) throws(CommandFailure) -> [(String, String)] {
         let target = options.name
         let type = typeName(for: options.name)
+        // **例が使う型の名前は、作るクラスの名前にできない** (#2436)。クラスが同じ名前の型を隠し、
+        // 例が組めなくなる。ひな形の側の衝突 (``unusableReason(name:)``) と同じ形の断り方
+        if let example, example.mentions(type) {
+            throw .unusableName(
+                name: options.name,
+                reason:
+                    "The example \(example.spelling) uses a type called \(type), the same as the sketch's class would be.")
+        }
         // **`--local` から来る値は Swift の文字列として逃がす** (#2322)。生のまま貼ると、
         // `"` を含む場所で Package.swift が読めなくなる。名前 (`NAME`・`TARGET`) は
         // ``isValid(name:)`` が `"` を通さないので逃がす必要が無い
@@ -124,11 +152,18 @@ enum NewCommand {
             "DEPENDENCY": dependency,
             "PACKAGE": swiftStringContents(identity),
         ]
+        // 例があれば、ひな形の回る円の代わりに 1 本として置く。差し込みはひな形と同じ ``Templates/substitute(_:_:)``
+        let sketchSource: String
+        if let example {
+            sketchSource = Templates.substitute(example.source, ["TYPE": type, "NAME": options.name])
+        } else {
+            sketchSource = try Templates.render("Sketch.swift.template", values)
+        }
         return [
             ("Package.swift", try Templates.render("Package.swift.template", values)),
             (
                 "Sources/\(target)/\(type).swift",
-                try Templates.render("Sketch.swift.template", values)
+                sketchSource
             ),
             (".gitignore", try Templates.render("gitignore.template", values)),
             // 宣言した置き場は実在しなければならない。空のままでも道具立てが
@@ -285,7 +320,7 @@ enum NewCommand {
         "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
         "AVFAudio", "Observation", "SwiftUI", "Accelerate", "AVFoundation", "Network", "CoreText",
         "ImageIO", "IOSurface", "CoreMedia", "CoreAudio", "VideoToolbox", "UniformTypeIdentifiers",
-        "ModelIO", "IOKit", "CoreVideo", "GameController",
+        "ModelIO", "IOKit", "CoreVideo", "GameController", "os",
         // ライブラリのソースが import する swift-syntax のモジュール
         "SwiftSyntax", "SwiftSyntaxMacros", "SwiftCompilerPlugin", "SwiftDiagnostics",
     ]

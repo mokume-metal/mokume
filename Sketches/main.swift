@@ -56,7 +56,9 @@ if arguments.first == "--render" {
         let gpu = try RenderDevice()
         // 外と実物でやりとりするものは書き出さない (ReferenceSketch.reachesOutside)
         for entry in catalogue where !entry.reachesOutside {
-            let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu)
+            // **つまみの保存を持たない** (#1832)。撮り直せば同じ絵になると名乗るので、撮った人の手元にだけ
+            // 在る `.mokume/state/params.json` で絵が変わらず、先に撮ったスケッチの値を後のスケッチが戻さない
+            let runtime = try SketchRuntime(sketch: entry.make(), gpu: gpu, persistsParams: false)
             guard let frames else {
                 // **同じ番号のフレームを描く。** 時計はフレーム番号から導くので、
                 // 何度撮っても同じ絵になる

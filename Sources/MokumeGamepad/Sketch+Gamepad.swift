@@ -21,7 +21,7 @@ extension Sketch {
     ///
     /// ```swift
     /// final class TwoPlayers: Sketch {
-    ///     var pos: [SIMD2<Float>] = [[300, 300], [900, 300]]
+    ///     var pos: [Vector2] = [[300, 300], [900, 300]]
     ///     func draw() {
     ///         background(0)
     ///         for (i, pad) in gamepads().prefix(2).enumerated() {
@@ -133,12 +133,23 @@ final class GamepadRoster {
             if let pad = pads[id]?.pad, !pad.isClosed { return pad }
             let pad = Gamepad(
                 id: id, name: "gamepad: \(id)", source: ControllerSource(id: id, hub: hub))
+            pad.roster = self
             // 走っていなければ足せない (上で言った)。次に呼ばれたとき作り直す
             if sketch.attach(pad, calledAs: call, returning: Self.inertPads) {
                 pads[id] = WeakPad(pad: pad)
             }
             return pad
         }
+    }
+
+    /// 足し直されたパッド (``Gamepad/open()``) を、その機材の 1 台に戻す。
+    ///
+    /// **同じ機材のパッドは常に 1 台。** 外されている間に ``gamepads(for:from:calledAs:)`` を呼ぶと、外されたものの代わりを
+    /// 同じ識別子で作って足す (既存の約束)。その後で元のパッドが足し直されると、2 台が生きて同じ入力を受ける。
+    /// そこで足し直した側が 1 台に戻り、代わりに作ったものは外す。
+    func reclaim(_ pad: Gamepad) {
+        if let current = pads[pad.id]?.pad, current !== pad, !current.isClosed { owner?.detach(current) }
+        pads[pad.id] = WeakPad(pad: pad)
     }
 
     /// 足されなかったときに返すものの綴り。

@@ -11,7 +11,7 @@ import Testing
 /// たびに 1 つずつ足されてきた (#836 の断片と数の並び・#1172 の積み履歴・#1607 の組み立て中の
 /// 形)。一覧の外にあった状態は、描き方なら外へ漏れ (#1646 の曲線の細かさ)、形に焼き付かない
 /// ものなら黙って消えるかフレームに効いていた (#1529 の切り抜き・光)。フレームの境目で同じ形を
-/// 塞いだ ``CanvasTests/everyStoredPropertyIsClassified()`` (#1671) と同じく、**`Canvas` の格納と
+/// 塞いだ ``CanvasTests/FrameState/everyStoredPropertyIsClassified()`` (#1671) と同じく、**`Canvas` の格納と
 /// `Style` のフィールドを 1 つ残らずここで分ける。** 格納を 1 つ足したら、ここで止まる。
 ///
 /// [#1684]: https://github.com/mokume-metal/mokume/issues/1684
@@ -50,7 +50,8 @@ enum ShapeExit {
     /// 描き切る逃げ道は、ここの全部を預けて引き戻す** (``Canvas/ShapeMark``・``Canvas/HeldBuild``・#2850)。
     static let poolStorageNames = [
         "vertices", "solidVertices", "solidIndices", "formInstances", "solidInstances", "batches",
-        "recordedStrokeRanges", "recordedFillRanges", "recordedSolidStrokes", "recordedGPUStrokes",
+        "recordedStrokeRanges", "recordedFillRanges", "recordedGeometryForms", "recordedSolidStrokes",
+        "recordedGPUStrokes",
     ]
 
     static var table: [(name: String, exit: ShapeExit)] {
@@ -70,12 +71,17 @@ enum ShapeExit {
             ("style.strokeWeight", { c, _ in c.strokeWeight(7) }),
             ("style.strokeCap", { c, _ in c.strokeCap(.square) }),
             ("style.strokeJoin", { c, _ in c.strokeJoin(.bevel) }),
+            ("style.strokeDash", { c, _ in c.strokeDash(4, 2) }),
             ("style.rectMode", { c, _ in c.rectMode(.center) }),
             ("style.ellipseMode", { c, _ in c.ellipseMode(.corner) }),
             ("style.blendMode", { c, _ in c.blendMode(.add) }),
-            ("style.fontName", { c, _ in c.textFont("Helvetica") }),
+            // 名前かファイルかは 1 つの値 (#2445)。ファイルで汚す
+            ("style.fontSelection", { c, _ in
+                if let font = try? Font.load("/System/Library/Fonts/Helvetica.ttc") { c.textFont(font) }
+            }),
             ("style.textSize", { c, _ in c.textSize(30) }),
-            ("style.textStyle", { c, _ in c.textStyle(.bold) }),
+            // 太字か太さかは 1 つの値 (#2445)。太さで汚す
+            ("style.textFace", { c, _ in c.textWeight(300) }),
             ("style.horizontalTextAlign", { c, _ in c.textAlign(.right, .top) }),
             ("style.verticalTextAlign", { c, _ in c.textAlign(.right, .top) }),
             ("style.textLeading", { c, _ in c.textLeading(40) }),
@@ -83,6 +89,8 @@ enum ShapeExit {
             ("style.imageMode", { c, _ in c.imageMode(.center) }),
             ("style.tint", { c, _ in c.tint(red) }),
             ("style.picture", { c, f in c.texture(f.sheet) }),
+            // 勾配は塗りと同じ描き方。形に焼き付く (`currentShader` の戻しと、`currentStyle` の戻しが揃える)
+            ("style.gradient", { c, _ in c.fill(.linearGradient([(red, Float(0)), (.linear(red: 0, green: 0, blue: 1), Float(1))], from: [0, 0], to: [10, 0])) }),
             // 貼る絵で輪郭なしの 1 つを置くと、読む面が替わる (輪郭は焼き場の面へ戻す)
             ("style.hasStroke", { c, _ in c.noStroke() }),
             ("currentTexture", { c, _ in c.rect(0, 0, 3, 3) }),
@@ -100,7 +108,7 @@ enum ShapeExit {
             // 本体のフレームが始まる所で捨てることになったフレームを出口まで待たせる印 (#2509)。
             // 一番外の出口が捨てて下ろす
             "dropAwaitingShape",
-            // 組み立て中の形 (#1607)。``CanvasTests/shapeState`` と同じ群
+            // 組み立て中の形 (#1607)。``CanvasTests/FrameState/shapeState`` と同じ群
             "isBuildingShape", "shapeKind", "currentNormal", "shapePoints", "shapeHasDepth",
             "shapeIndices", "shapeHoles", "holePoints", "curveGuides",
             // 溜め場 (``poolStorageNames``)。記録したぶんを形として抜き、組み立て前の長さへ戻す
@@ -148,26 +156,35 @@ enum ShapeExit {
             "frameRing": construction, "pipeline": construction, "argumentTable": construction,
             "projection": construction,
             "atlas": construction, "timebase": "時刻と刻み。ランタイムが進める",
+            "sketchTimeLease": "draw(into:) の閉包を抜けた後も開いていたフレームのために、借りた時刻の置き場を手放す処理 (#2454)。フレームを出る道が呼んで下ろす。組み立ての出口は触らない",
             "placementKey": "\(construction)。置いた側の記録が置いた描き場所を見分ける通し番号 (#2306)",
             "vertexStorage": resource, "flatInstanceStorage": resource,
+            "thinFillRecordStorage": resource, "thinFillSpanStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,
             "solidSweepStorage": resource,
             "lightStorageBuffer": resource, "lightingStorage": resource, "materialStorage": resource,
-            "surroundingsStorage": resource, "shadowMatrixStorage": resource,
+            "surroundingsStorage": resource,
             "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,
             "valuesStorage": resource, "matrixStorage": resource, "computeValuesStorage": resource,
             "uploadStorage": resource, "effectPipelineStorage": resource,
             "imageInputPass": resource, "imageInputUnavailable": resource,
-            "computePipelineStorage": resource, "unbakedShadowTexture": resource,
-            "emptyNumbers": resource, "blankPicture": resource, "shadowMap": resource,
+            "computePipelineStorage": resource,
+            "emptyNumbers": resource, "blankPicture": resource,
             "whiteUV": "焼き場の白い区画の位置。面を広げたときだけ変わる",
             "imageCache": cache, "modelCache": cache, "solidMeshes": cache, "solidEdges": cache,
-            "typefaces": cache, "solidStrokeGeometry": cache, "modelFills": cache,
-            "lastShadowBakeKey": cache, "discOffsets": cache,
+            "typefaces": cache, "solidStrokeGeometry": cache, "modelStrokeGeometries": cache, "modelFills": cache,
+            "gradientShaderStorage": "勾配で塗る断片 (#2433)。初めて勾配で塗るときに組み、面と同じだけ生きる。作り直さないために持つ",
+            "gradientShaderFailed": "勾配の断片を組めなかった印 (#2433)。組めない面では組み直さない",
+            "paintsWithGradient": "いまの断片が勾配の断片かの写し (#2433)。`currentShader` を替えるたびに導き直す (出口の戻しも通る)",
+            "discOffsets": cache,
             "ringSplitMemo": "分割数の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#1645)",
             "discSplitMemo": "ringSplitMemo と同じ",
             "atlasPageFrame": "焼き場の頁を作ったフレームの番号。番号どうしで比べる",
+            "deferredRuns": "先送りして置いた四角の列の控え (#2446)。組み立ての中では先送りしない (形に焼き付く) ので記録は増えず、入口より前の頂点と列の位置は組み立てで動かない",
+            "deferredRunOpen": "先送りした四角の列を開いているかの印 (#2446)。組み立ての中では先送りしないので立たず、列を閉じるとき (closeBatch) に下りる",
+            "isPlacingDeferredGlyph": "先送りした四角を置いている最中の印 (#2446)。置く呼び出しの中だけ立ち、抜ける前に戻る",
+            "framePersists": "ランタイムが draw() の後ろで書く、絵が残るかの印 (#2446)。形に焼き付く値を生まず、フレームを出るとき下ろす",
             "retainedSerial": "保持した形を置くたびの通し番号。組み立ての中で置いた形も数える",
             "pendingDiscards": "溜め場を捨てた通し番号。出口が入口と比べ、捨てていたら空の形を返す (#1588)",
             "framesDrawn": frame, "isDrawing": frame, "beginDrawFrame": frame,
@@ -175,17 +192,15 @@ enum ShapeExit {
             "carriesOver": "持ち越しの区間の印。ランタイムがコールバックの出入口で対で書く (#1672)",
             "isRuntimeSurface": "ランタイムの本体の面かの印。作ったときに 1 度だけ立て、形の組み立ての出入口では動かない (#2780)",
             "carriedOverAmount": "持ち越しの区間で置いた量の印。フレームの頭の検めが読む (#1672)",
-            "shadowMapsBuilt": count,
-            "shadowBarriersEncoded": count, "shadowBakesEncoded": count, "shadowBakesReused": count,
             "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,
-            "effectCarriesEncoded": count, "effectCarryRestoresEncoded": count,
+            "effectOutputsExchanged": count, "effectRestoresExchanged": count, "effectRestoreBarriersEncoded": count,
             "effectChangesKeptEncoded": count, "effectCarryDrawsEncoded": count,
             "depthLoadsEncoded": count, "depthStoresEncoded": count,
             "effectBarriersEncoded": count, "effectPassesEncoded": count,
             "computeEncodersOpened": count, "computeEncodersClosed": count,
             "earlySubmissionsAttempted": count, "earlySubmissionFailedFrame": count,
-            "computeBarriersEncoded": count, "uploadBarriersEncoded": count,
+            "computeBarriersEncoded": count, "uploadBarriersEncoded": count, "uploadWaitsEncoded": count,
             "lastComputeBarrierQueueStages": "最後に積んだ投入の最後の口が待たせる段 (#1687)。積むたびに上書きし、検査が読む。組み立ての中で書く口が無い",
             "glyphQuadsPlaced": count, "drawCallsInLastFrame": count,
             "flatVerticesInLastFrame": count, "flatOutlinesInLastFrame": count,
@@ -203,11 +218,12 @@ enum ShapeExit {
             "placedPictureCopiesFree": resource, "placedPictureCopiesInUse": resource,
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
-            "placedPictureCopyLimitReached": count, "shadowBakesAdded": count,
-            "shadowMapHolds": count, "shadowRebakeBarriersEncoded": count,
-            "shadowBakedSince": flush, "shadowBakedThrough": flush, "upscaledBy": flush,
-            "carriedBy": flush,
-            "shadowsEverEnabled": "影を 1 度でも有効にした面の印。面と同じだけ生き、組み立ての中の shadows() は断られるので立たない",
+            "placedPictureCopyLimitReached": count, "upscaledBy": flush,
+            "carriedFlush": flush, "carriedAwaitingOutcome": flush,
+            // #2455 (filter() の投入の記帳と、Image.filtered() の作業の面)
+            "filterSubmissions": flush, "beforeFilterCommitForTesting": "検査の差し込み。filter() の投入の直前に呼ぶだけで、組み立てに関わらない",
+            "filterWorkspaces": resource,
+            "shadowBake": "影の焼き付けが持ち越す格納 (#2257)。焼いた面・記帳・資源・数えの全部が面と同じだけ生き、組み立ての中の shadows() は断られるので焼き付けは組み立てに関わらない。投入の範囲 (bakedSince・bakedThrough) は描き切りの印と同じく、組み立ての中では動かない",
             "shaders": "この面が作った断片 (弱く持つ)。観測へ失敗を載せる",
             "effectShaders": "この面が作った効果 (弱く持つ)。観測へ失敗を載せる",
             "computations": "この面が作った計算 (弱く持つ)。観測へ失敗を載せる",
@@ -218,6 +234,9 @@ enum ShapeExit {
             "placingCatchUpDeferred": flush,
             "lightStorage": "光の置き場。記録の中で閉じた立体の列もいまの光を写すが、列ごと形へ抜くので読まれず、フレームの頭で空になる",
             "solidMeshRanges": unused, "flatInstances": unused, "pendingFlat": unused,
+            "thinFillRecords": unused, "thinFillSpans": unused, "lastThinFillRecord": unused,
+            "thinFillMemo": "細い塗りの記述の直前の問い合わせ 1 件。中身は入力で決まる (#2208)",
+            "thinFillRecordsBuilt": count,
             "buildingFlatTemplate": unused,
             "openSource": "開いている列。入口と出口で閉じ (closeBatch)、記録の中で開いた列は形の区間になる",
             "openForm": "openSource と同じ", "openSolid": "openSource と同じ",
@@ -229,10 +248,11 @@ enum ShapeExit {
             "solidStrokeCapture": transient,
             "stopsOnPlacementOutsideRegions": testing,
             "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
-            "sweepPolicy": testing, "sharesUnitShapes": testing,
+            "sweepPolicy": testing, "sharesUnitShapes": testing, "specializesUnlitSolids": testing, "specializesOpaqueSolids": testing,
+            "expandsThinFillsInVertexStage": testing,
             "uploadByteLimit": testing, "failureForTesting": testing,
             "placesRetainedStrokesOnGPU": testing,
-            "failEffectPassForTesting": testing, "failImageInputForTesting": testing,
+            "failEffectPassForTesting": testing, "failAfterEffectsForTesting": testing, "failImageInputForTesting": testing,
             "failEarlySubmissionForTesting": testing, "failPlacedPictureCopyForTesting": testing,
         ]
         return restored.map { ($0.0, .restore($0.1)) }
@@ -270,7 +290,7 @@ enum ShapeExit {
         names { if case .refuse = $0 { true } else { false } }
     }
 
-    /// 渡した名前の綴り。**同じ面の上で比べる** (``CanvasTests`` の綴りと同じ)。
+    /// 渡した名前の綴り。**同じ面の上で比べる** (``CanvasTests/FrameState`` の綴りと同じ)。
     static func fingerprint(of canvas: Canvas, _ names: Set<String>) -> [String: String] {
         var prints: [String: String] = [:]
         for child in Mirror(reflecting: canvas).children {
@@ -326,26 +346,34 @@ extension ShapeExit {
             "pointerLockRequested": "カーソルを捕まえる要求 (requestPointerLock)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#1144)",
             "cursorHidingRequested": "矢印のカーソルを隠す要求 (noCursor)。窓が読み、形に焼き付く値を生まない。組み立ての中で呼んでも外の要求としてそのまま効く (#2439)",
             "timing": control, "now": control, "tempo": control, "budget": control,
-            "frameWorkBegan": control, "firstAdvanceAt": control,
+            "frameWorkBegan": control, "firstAdvanceAt": control, "firstAdvanceRealAt": control, "presenceClock": control,
             "lastFrameAt": control, "drawnThrough": control, "isAdvancingFrame": control,
             "hasSetUp": control, "isPaused": control, "isLooping": control,
             "redrawRequested": control, "observingAtTime": control, "showsObservedTime": control,
+            "defersEnlargedGlyphBakes": "先送りを許す組み方か (#2446)。窓・共有面の経路が組み立てのときに 1 度だけ立てる実行の制御で、形に焼き付く値を生まない",
+            "exportsOneFrame": "1 枚の書き出しの最中の印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
+            "frameIsObserved": "観測が撮るフレームの印 (#2446)。拡大した字の焼きを次へ送らないために読む実行の制御で、形に焼き付く値を生まない",
             "presence": control,
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
-            "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording,
+            "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording, "settling": observation,
             "frameDrawnAfter": recording, "readyOutletFrames": recording,
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,
             "outletHeldDrop": recording, "outletFramesDropped": recording,
             "outletsClosing": recording, "closingOutcomesGiveUpAt": recording,
             "lastFrameFailedToDraw": recording,
             "exposedValues": observation, "measuredValues": observation,
+            "drawingInto": "draw(into:) の閉包の間だけ立つスケッチの口の向き先 (#2454)。閉包を抜けるときに 1 つ前へ戻す実行の制御で、形に焼き付く値を生まない",
             "orbit": "視点を操る道具の状態。フレームを越える。`orbit = …` の setter は組み立ての中でも断られず、出口でも戻らない。形には焼き付かない — 視点を書くのは `camera` で、`camera` は組み立ての中では断られる (`orbitControl()` は視点を書く前に断る・#1670)",
             "orbitAdvancedAt": "orbit と同じ (道具を最後に進めたフレーム)。`orbitControl()` が書く",
+            "orbitHome": "orbit と同じ (ダブルクリックで戻る始めの視点・#2762)。`orbitControl()` が最初の呼び出しで 1 度だけ控える。組み立ての中では `orbitControl()` が視点を書く前に断るので、形には焼き付かない",
             "warnings": "ランタイムが 1 度だけ言った注意の控え (走っている最中の枚数の代入・#1323)。形に焼き付く値を生まない",
             "blockingLoads": "draw() の中の同期の読み込みを 1 度だけ言う控え (#2601)。形に焼き付く値を生まない",
+            "setupFailure": "setup() が投げた失敗の控え (#2401)。最初のフレームの start() が 1 度だけ立て、消えない。出口で戻すと投げ続ける約束が壊れる。形に焼き付く値を生まない",
+            "setupFailureHandler": "setup() の失敗を advance() の外で見つけたときの知らせ先 (#2401)。窓の経路が組み立てのときに 1 度だけ差す実行の制御で、形に焼き付く値を生まない",
             "seedScopes":"組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",
+            "randomLine": "乱数の列の出どころの印 (randomSource の写しが列の続きかを見分ける・#2418)。出口で戻さず、出口の仕組み (shapeAssemblyEnded) が進める — 戻した列は抜ける前の写しの続きではないため。形に焼き付く値を生まない",
         ]
         let restored: (String, RuntimeExit) = (
             "randomness",

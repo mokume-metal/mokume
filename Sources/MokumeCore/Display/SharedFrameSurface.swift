@@ -177,16 +177,25 @@ final class SharedFrameSurface {
         /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
         /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
         let windowScale: Float?
+        /// この目録を置いた子のプロセスの番号。**どの世代の目録かを、読み手が照合する印である**
+        /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+        ///
+        /// 目録は書き手の世代の印を持たなかったので、道具の窓から見張りへの合図 (乗り換えた・受け取れない)
+        /// は、見張りが届いた時点で待っている世代に当てはめるしかなかった — 保存を続けた並びで、前の
+        /// 世代の合図が次の世代のものと読まれる。**無くても絵は出る** (``windowScale`` と同じ足し方 —
+        /// 版は据え置き)。書かない古いライブラリの子は `nil` で、読み手は今までの推定に倒れる。
+        let pid: Int32?
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, ids, width, height, windowScale
+            case schemaVersion, ids, width, height, windowScale, pid
         }
 
-        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil) {
+        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil, pid: Int32? = nil) {
             self.ids = ids
             self.width = width
             self.height = height
             self.windowScale = windowScale
+            self.pid = pid
         }
 
         /// **版が違えば読まない。** 知らない形を推測で解くと、食い違いが絵の壊れ方として出る。
@@ -217,6 +226,10 @@ final class SharedFrameSurface {
             // ので、開けない値は「頼まれていない」として扱う
             let scale = try? container.decodeIfPresent(Float.self, forKey: .windowScale)
             windowScale = scale.flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            // **番号も読めなくても目録ごと捨てない。** 整数でない・正でない値は「印が無い」として扱い、
+            // 読み手は推定に倒れる
+            let writer = try? container.decodeIfPresent(Int32.self, forKey: .pid)
+            pid = writer.flatMap { $0 }.flatMap { $0 > 0 ? $0 : nil }
         }
     }
 
@@ -274,6 +287,11 @@ final class SharedFrameSurface {
     private var heldCursor = 0
     /// 読み手が掴んでいるかもしれない面に当たって、焼きを見送った回数 (作ってから通算)。**検査から読む。**
     private(set) var burnsDeferred = 0
+    /// GPU が打ち切った焼きを、名乗らずに捨てた回数 (作ってから通算)。
+    ///
+    /// 呼び手 (``SketchApplication``) が、止まっている間に同じ絵を焼き直さない代わりに、捨てた焼きを
+    /// 見つけて焼き直すために読む ([#2367](https://github.com/mokume-metal/mokume/issues/2367))。
+    private(set) var droppedBurns = 0
     /// 書き込みの通し番号。**1 から数える。** 焼いた面が名乗る枚数はこれで決まる。
     private var writes = 0
     /// 最後に名乗った面の枚数 (その面を焼いた書き込みの通し番号)。**1 から数える** — 0 は「まだ
@@ -509,29 +527,37 @@ final class SharedFrameSurface {
     /// が持つので、ここは名乗らない — 判断が呼び手にある口だけが `throws` である (#989)。
     func publishManifest() throws {
         try AtomicFile.writeJSON(
-            Manifest(ids: ids, width: width, height: height, windowScale: windowScale),
+            Manifest(
+                ids: ids, width: width, height: height, windowScale: windowScale,
+                pid: ProcessInfo.processInfo.processIdentifier),
             to: manifestURL)
     }
 
     /// 描いた絵を次の面へ焼き、**前に焼いた 1 枚を差し出す。**
     ///
     /// 焼く投入は待たない。いま焼いた絵が名乗るのは次の書き込みのときである ([#748])。
-    /// 走っているスケッチは止めている間も毎リフレッシュここを通るので、控えた 1 枚は
-    /// 次のリフレッシュで出る。焼きの結末がまだ届いていなければもう 1 回遅れ、GPU が打ち切って
-    /// いれば名乗らずに次に焼いた面が出る ([#2735]・``publishPending()``)。
+    /// 走っているスケッチは毎リフレッシュここを通るので、控えた 1 枚は次のリフレッシュで出る。
+    /// **止まっている間は絵が変わらない限りここを通らない** ([#2367]) — 最後に変わった後の 1 回を焼いたら、
+    /// 呼び手は以後 ``publishPending()`` だけを呼んで控えを名乗らせる。焼きの結末がまだ届いていなければもう
+    /// 1 回遅れ、GPU が打ち切っていれば名乗らずに捨てる (``droppedBurns``)。次に焼いた面が出る
+    /// ([#2735]・``publishPending()``)。
     ///
     /// [#748]: https://github.com/mokume-metal/mokume/issues/748
+    /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
+    /// - Returns: 焼いたら `true`。読み手が掴んでいるかもしれない面に当たって見送ったら `false` —
+    ///   呼び手は、この絵を出したことにせず、次のリフレッシュでもう一度試す。
     /// - Parameters:
     ///   - numbers: この絵を描いたときの速さ。絵と一緒に控え、絵と一緒に載せる。
     ///   - pointerLock: この絵を描いたときに、スケッチがカーソルを捕まえるよう頼んでいたか
     ///     (``pointerLockAttribute``)。速さと同じく絵と一緒に載せる。
     ///   - cursorHidden: この絵を描いたときに、スケッチが矢印のカーソルを隠すよう頼んでいたか
     ///     (``cursorHiddenAttribute``)。捕まえの要求と同じく絵と一緒に載せる。
+    @discardableResult
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
         pointerLock: Bool = false, cursorHidden: Bool = false
-    ) throws(RenderFailure) {
+    ) throws(RenderFailure) -> Bool {
         try publishPending()
         writes += 1
         // 読み手が掴んでいるかもしれない面を記す: いまの最新と、直前 2 回の書き込みのときの最新
@@ -543,7 +569,7 @@ final class SharedFrameSurface {
         let index = nextSlot
         guard !heldSlots.contains(index), !pending.contains(where: { $0.slot == index }) else {
             burnsDeferred += 1
-            return
+            return false
         }
         let submission = try presenter.draw(source, into: slots[index].texture)
         pending.append(
@@ -551,6 +577,7 @@ final class SharedFrameSurface {
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
                 cursorHidden: cursorHidden, number: writes))
         nextSlot = (index + 1) % slots.count
+        return true
     }
 
     /// 控えている面を、焼いた順に名乗らせる。控えが無ければ何もしない。
@@ -581,6 +608,7 @@ final class SharedFrameSurface {
             case false?:
                 name(burn)
             case true?:
+                droppedBurns += 1
                 continue
             case nil:
                 // 後に焼いた面が無ければ、次の書き込みまで遅らせる。あれば見送る
@@ -708,28 +736,65 @@ final class SharedFrameSurface {
 
     /// いま読むべき面の番号と、その面が名乗っている枚数。読み手の側の規則。
     ///
-    /// **書き手と同じ規則をここに置く。** 読む側 (道具) は別のプロセスなので、規則が
-    /// 2 か所に分かれると片方だけ直したときに静かに食い違う。
+    /// **その場で面を引き直す。** 続けて読む読み手 (``SharedFrameStage``) は ``Lookup`` を
+    /// 持ち続けて引き直しを省く — 同じ規則をそちらが持つので、ここは 1 回かぎりの口である。
     ///
     /// - Returns: 掴むべき面の番号と枚数。まだ 1 枚も書かれていなければ `nil`。
     static func newest(among ids: [UInt32]) -> (id: UInt32, frame: Int)? {
-        var best: (id: UInt32, frame: Int)?
-        for id in ids {
-            guard let surface = IOSurfaceLookup(id) else { continue }
-            let value = IOSurfaceCopyValue(surface, frameAttribute as CFString) as? NSNumber
-            let frame = value?.intValue ?? 0
-            // **まだ 1 枚も書かれていない面は掴まない。** 属性が無ければ 0 が返るので、
-            // 起動した直後に読みに来た読み手は「まだ無い」を受け取る
-            guard frame > 0 else { continue }
-            // **新しいかどうかは、既に選んだものとだけ比べる。** 「無ければ 0」と畳むと
-            // 上の判定が二重になり、片方を壊しても検査が赤くならない
-            guard let chosen = best else {
-                best = (id, frame)
-                continue
-            }
-            if frame > chosen.frame { best = (id, frame) }
+        Lookup(ids: ids).newest()
+    }
+
+    /// 番号の組を引いた面を**持ち続ける**読み手。
+    ///
+    /// 毎リフレッシュ `IOSurfaceLookup` を面の数だけ出していた ([#2368])。面は参照計数で、
+    /// 載せた属性 (枚数・速さ・要求) は握っている参照からも読めるので、引くのは番号の組が
+    /// 変わるまで 1 回ずつでよい。**引けなかった番号は持たず、次の機会に引き直す** — 置いた側が
+    /// まだ作っていないだけかもしれない。
+    ///
+    /// **握ったままでも面は生き続ける** (書き手が畳んでも参照計数が残る)。この読み手が
+    /// 手放されれば参照も手放される。
+    ///
+    /// [#2368]: https://github.com/mokume-metal/mokume/issues/2368
+    @MainActor
+    final class Lookup {
+        let ids: [UInt32]
+        private var held: [UInt32: IOSurfaceRef] = [:]
+        /// `IOSurfaceLookup` を呼んだ回数。**検査が読む** — 番号の組が変わらない間は増えないこと。
+        private(set) var lookups = 0
+
+        init(ids: [UInt32]) {
+            self.ids = ids
         }
-        return best
+
+        /// 番号の面。持っていなければ 1 度引く。引けなければ `nil` (持たない)。
+        func surface(_ id: UInt32) -> IOSurfaceRef? {
+            if let surface = held[id] { return surface }
+            lookups += 1
+            guard let surface = IOSurfaceLookup(id) else { return nil }
+            held[id] = surface
+            return surface
+        }
+
+        /// いま読むべき面の番号と、その面が名乗っている枚数。規則は ``SharedFrameSurface/newest(among:)``。
+        func newest() -> (id: UInt32, frame: Int)? {
+            var best: (id: UInt32, frame: Int)?
+            for id in ids {
+                guard let surface = surface(id) else { continue }
+                let value = IOSurfaceCopyValue(surface, frameAttribute as CFString) as? NSNumber
+                let frame = value?.intValue ?? 0
+                // **まだ 1 枚も書かれていない面は掴まない。** 属性が無ければ 0 が返るので、
+                // 起動した直後に読みに来た読み手は「まだ無い」を受け取る
+                guard frame > 0 else { continue }
+                // **新しいかどうかは、既に選んだものとだけ比べる。** 「無ければ 0」と畳むと
+                // 上の判定が二重になり、片方を壊しても検査が赤くならない
+                guard let chosen = best else {
+                    best = (id, frame)
+                    continue
+                }
+                if frame > chosen.frame { best = (id, frame) }
+            }
+            return best
+        }
     }
 
     /// 面が名乗っている速さ。読み手の側の規則。
@@ -741,8 +806,13 @@ final class SharedFrameSurface {
     ///   載っていないことがある** — 起動直後と止めている間は測れていないので、書き手が
     ///   鍵ごと省く。
     static func numbers(of id: UInt32) -> FrameNumbers? {
-        guard let surface = IOSurfaceLookup(id),
-            let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
+        guard let surface = IOSurfaceLookup(id) else { return nil }
+        return numbers(on: surface)
+    }
+
+    /// 引いた面が名乗っている速さ。載っていなければ `nil`。
+    static func numbers(on surface: IOSurfaceRef) -> FrameNumbers? {
+        guard let count = number(TempoAttribute.frameCount, on: surface)?.intValue,
             let time = number(TempoAttribute.time, on: surface)?.doubleValue
         else { return nil }
         return FrameNumbers(

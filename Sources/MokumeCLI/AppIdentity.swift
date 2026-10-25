@@ -140,6 +140,14 @@ nonisolated struct AppIdentity: Equatable {
     /// 止まる場所 (ビルドと署名の前) と、署名済みの `.app` が残らないことだけである (#2501)。
     /// **これは `--out` が APFS のときの話である。** exFAT・FAT32 のように名前を分解しない形で
     /// 数える置き場では、成功していた名前 (`が` × 120 など) を断ることがある (#2773)。
+    ///
+    /// **この定数は名前だけを見るので、検めを通っても組み立ての後で落ちうる形がある** (#2773・
+    /// メンテナの決定 = 名前の判定は定数のまま保つ)。長さ以外の理由で APFS がファイル名にできない名前
+    /// (分解後に結合文字が 32 個以上続くもの・非文字・未割り当ての字は `Illegal byte sequence`)、
+    /// `--out` が深くて `<name>.app` の中のパスが 1024 バイト (PATH_MAX) を越えるとき。
+    /// 置く場所での試し書きや、Unicode の規則の写しは採らなかった (覆えるのは名前 2 つまでで、
+    /// 規則は APFS と Swift の Unicode の版のずれを確かめる手段が無い)。落ちたときは
+    /// ``BundleCommand/run(_:)`` が理由を名乗り、紙は署名の前に書くので署名済みの `.app` は残らない。
     static let maximumNameLength = 239
 
     /// 名乗れる中身があるなら、前後を落とした文字列。無ければ `nil`。
@@ -147,6 +155,10 @@ nonisolated struct AppIdentity: Equatable {
         let text = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? nil : text
     }
+
+    /// `mokume bundle` が書いた `.app` の印 (`Info.plist` の鍵)。作り直すときに消してよいかの確かめに使う。
+    /// 内部の鍵で、README には出さない。
+    static let bundledMarkKey = "MokumeBundled"
 
     /// 包みが名乗るための一覧。
     ///
@@ -158,6 +170,9 @@ nonisolated struct AppIdentity: Equatable {
     ///
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+    ///
+    /// **mokume だけが書く印 (``bundledMarkKey``) を入れる** (#2500)。作り直すとき、消してよいのが
+    /// 前の版の自分の出力だけであることを、識別子に依らずに確かめるために ``BundleCommand`` が読む。
     func infoPlist(executable: String, minimumSystemVersion: String) -> [String: Any] {
         var plist: [String: Any] = [
             "CFBundleExecutable": executable,
@@ -171,6 +186,7 @@ nonisolated struct AppIdentity: Equatable {
             "LSMinimumSystemVersion": minimumSystemVersion,
             // 画面の密度に合わせて描く。これが無いと、細かい画面で引き伸ばされた絵になる
             "NSHighResolutionCapable": true,
+            Self.bundledMarkKey: true,
         ]
         if let cameraUsage { plist["NSCameraUsageDescription"] = cameraUsage }
         if let microphoneUsage { plist["NSMicrophoneUsageDescription"] = microphoneUsage }

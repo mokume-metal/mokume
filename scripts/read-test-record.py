@@ -77,7 +77,12 @@ LEDGER_LINE = re.compile(r"^\s+(\S+ [0-9a-f]{64}(?: os=\d+)?)\s*$")
 MAX_MESSAGES = 80
 # 関所が閉じた後の失敗の文面の頭 (RenderFailure.notResponding)。英語の文面を写しているので、
 # 本物と合っていることは scripts/tests/test_vanished_test.py が Sources から確かめる
-GATE_CLOSED = "A wait for the GPU went past its limit earlier in this process"
+GATE_CLOSED_OWN = "A wait for the GPU went past its limit earlier in this process"
+# 別の回が残した gpu-slot の記録で止まった断り (RenderFailure.notResponding の record の枝・#2235)
+GATE_CLOSED_RECORD = "A wait for the GPU went past its limit in another run under gpu-slot.py"
+GATE_CLOSED = (GATE_CLOSED_OWN, GATE_CLOSED_RECORD)
+# gpu-slot の記録が絡む断りの目印。記録は起こし直しでは消えず、人が消すまで次の回も止まる
+GATE_RECORD = "gpu-slot.py"
 # 最初の期限切れの要約 (CommandQueueGate.Closure.summary)。文面の括弧の中にある
 GATE_FIRST = re.compile(r"\((the first was [^)]*)\)")
 # 関所の文面そのものを検査する Suite。落ちると文面を失敗の文に載せるが、関所が閉じた巻き込み
@@ -190,7 +195,7 @@ def failure_messages(path, shots_artifact="ledger-shots"):
                 ledger_lines.append(m.group(1))
 
     def swept(f):
-        return GATE_CLOSED in f[2] and f[0] not in GATE_TEXT_SUITES
+        return any(marker in f[2] for marker in GATE_CLOSED) and f[0] not in GATE_TEXT_SUITES
 
     gate = [f for f in found if swept(f)]
     rest = [f for f in found if not swept(f)]
@@ -208,6 +213,12 @@ def failure_messages(path, shots_artifact="ledger-shots"):
         ]
         if first:
             out += ["最初の期限切れ: %s。" % first.group(1), ""]
+        if any(GATE_RECORD in f[2] for f in gate):
+            out += [
+                "**gpu-slot の期限切れの記録が残っている。** 専用機では、人が GPU の答えを確かめて記録を消すまで、"
+                "次の job も前検査 (`runner-preflight.sh`) が `gpu-slot:` で止める。走らせ直すだけでは直らない (#2235)。",
+                "",
+            ]
         out += [
             "関所の分を除いた %d 件 (引き金になった期限切れと、それ以外の赤) を先に並べ、関所の分は 1 例だけ載せる。"
             % len(rest),

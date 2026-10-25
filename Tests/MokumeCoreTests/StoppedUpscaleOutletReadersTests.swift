@@ -156,9 +156,9 @@ struct StoppedUpscaleOutletReadersTests {
             reason: "出力段 (encodeToImage・encodeForDisplay・writePNG)。組む前に catchUpWithDrawnPicture() を通る (#1882)"),
         // MARK: ランタイムの配った後
         Reader(
-            file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 2,
+            file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 3,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",
-            reason: "窓 (presenter.present) と共有の面 (shared.write)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906)"),
+            reason: "窓 (presenter.present) と共有の面 (shared.write)、止まっている間に出し直すかの鍵 (shownFrame・描画先の番号と明るさだけを読み、絵は読まない)。advance() がコールバックを配った直後と止めている間に catchUpOutputWithoutThrowing() を済ませた後に呼ぶ (#1882・#1906・#2367)"),
         Reader(
             file: "MokumeCore/Display/FramePresenter.swift", token: ".setSource(", count: 1,
             catchUp: .afterDelivery, vouchedIn: "MokumeCore/Sketch/SketchRuntime.swift",

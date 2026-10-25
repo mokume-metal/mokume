@@ -41,6 +41,13 @@ public struct Shape {
     /// 頂点を持たない — 置くときは 2x2 と平行移動に置き場所の変換を掛けるだけで、
     /// 円をいくつ含む形でも置く費用は同じである (``FormInstance``)。
     let forms: [FormInstance]
+    /// **描かない**置き場所。外接 (``bounds``) のためだけに幾何を持つ (#2428)。
+    ///
+    /// 円弧は、距離関数の経路で描くなら ``forms`` の置き場所が幾何を持つ。三角形の経路 (`texture()` /
+    /// `shader()`) と、塗りを止めた破線の輪郭では、置き場所が無く、頂点や周の点だけが残るので、それらから外接を
+    /// 求めると閉じ方でなく経路に従ってしまう (塗りを止めた既定の弧が、扇の中心を落とす)。ここに足した置き場所は
+    /// ``runs`` に載らず、置いても描かない。外接の和と、入れ子の記録へ引き継ぐ(`Canvas.shape(_:at:)`)ときの変換だけに使う。
+    let geometryForms: [FormInstance]
     /// 頂点の並びを、面と混ぜ方の変わり目で区切ったもの。
     let runs: [Run]
     /// ``vertices`` のうち**輪郭の頂点**の区間。
@@ -97,6 +104,19 @@ public struct Shape {
     /// ``RingFillRecipe/recordedFillSpan``)。置く行列でこれが描く画素で 1 画素以上なら、どの塗りも
     /// 細くならないので区間を走査しない。名指しの基本図形の塗りが無ければ無限大。
     let thinnestRecordedFill: Float
+    /// 平面の部分の幾何の外接 (``bounds``)。焼くときに求めて持つ (``measureBounds(vertices:strokeRanges:forms:geometryForms:)``)。
+    let planeBox: PlaneBox?
+    /// 立体の頂点が、全部 α がちょうど 1 か (数でない値は偽)。立体の頂点が無ければ真。
+    ///
+    /// 置くたびに頂点を読み直さずに、不透明な列かを決められる (``Canvas/isOpaqueFill(_:closing:)``・
+    /// [#2366])。**形全体で 1 つ** — 区間ごとには持たず、1 つでも透ける頂点があれば形のどの区間も偽に
+    /// 倒す (偽は今までどおりブレンドで描くだけ)。
+    ///
+    /// [#2366]: https://github.com/mokume-metal/mokume/issues/2366
+    let solidAlphaIsOne: Bool
+    /// 立体の頂点が、全部同じ読み取り位置を指すならその位置。違う位置があれば `nil`。
+    /// 頂点が無ければ `nil`。上の ``solidAlphaIsOne`` と同じ口で使う (焼き場の白い区画かの判定)。
+    let solidCommonUV: SIMD2<Float>?
 
     /// 区間を塗るもの一式。
     ///
@@ -194,9 +214,17 @@ public struct Shape {
         vertices: [ShapeVertex], solidVertices: [SolidVertex] = [],
         solidIndices: [UInt32] = [], forms: [FormInstance] = [], runs: [Run],
         strokeRanges: [StrokeRange] = [], fillRanges: [RingFillRange] = [],
-        solidStrokes: [SolidStrokePiece] = [],
-        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = []
+        geometryForms: [FormInstance] = [], solidStrokes: [SolidStrokePiece] = [],
+        gpuStrokes: [RetainedGPUStroke] = [], solidParts: [SolidPart] = [],
+        planeBox knownBox: PlaneBox?? = nil
     ) {
+        // 繋ぐだけの組 (`group`) は子の外接の和を渡す。渡さなければ焼いた並びから求める
+        planeBox =
+            knownBox
+            ?? Self.measureBounds(
+                vertices: vertices, strokeRanges: strokeRanges, forms: forms,
+                geometryForms: geometryForms)
+        self.geometryForms = geometryForms
         self.vertices = vertices
         self.solidVertices = solidVertices
         self.solidIndices = solidIndices
@@ -229,6 +257,16 @@ public struct Shape {
         self.solidStrokes = solidStrokes
         self.gpuStrokes = gpuStrokes
         self.solidParts = solidParts
+        // 立体の頂点の色と読み取り位置を 1 度だけ読む (閉包を渡さずにループで・#1779)
+        var opaque = true
+        var commonUV: SIMD2<Float>? = solidVertices.first?.uv
+        for vertex in solidVertices {
+            if vertex.color.w != 1 { opaque = false }
+            if vertex.uv != commonUV { commonUV = nil }
+            if !opaque && commonUV == nil { break }
+        }
+        solidAlphaIsOne = opaque
+        solidCommonUV = commonUV
     }
 
     /// 頂点の区間 `runRange` に収まる輪郭のうち、引く素材を持つもの。頂点の並びの順。
@@ -264,6 +302,37 @@ public struct Shape {
         }
         return found
     }
+
+    /// 平面の部分の外接矩形。**線の太さを含まない**幾何の外接で、形自身の座標のまま返す (置く場所の
+    /// 変換は掛かっていない)。
+    ///
+    /// 読み込んだ SVG (``SketchPart/loadShape(_:)``) の寸法や、組み立てた形の広がりを問うのに使う。
+    /// たとえば形の中心を原点へ寄せて置き直すなら、`shape(read, -box.center.x, -box.center.y)` と
+    /// 書ける。ファイルを開いて確かめた寸法をコードへ写さずに済む。
+    ///
+    /// - **線の太さを含まない。** `strokeWeight(8)` で描いても、`rect(10, 20, 100, 50)` の外接は
+    ///   `Rect(left: 10, top: 20, width: 100, height: 50)` のまま。線の端や折れ目の張り出しも含まない
+    /// - **基本図形はその形が描く幾何で外接する。** `circle(0, 0, 40)` は `(-20, -20, 40, 40)`、
+    ///   `arc(0, 0, 100, 100, 0, .pi / 2)` は楕円全体の箱ではなく、中心と弧が作る扇の箱 `(0, 0, 50, 50)`
+    ///   (弧の端の三角関数は `Float` の丸めぶんだけずれる)。**中心を箱に入れるのは扇を塗る形 (閉じ方を渡さない
+    ///   `arc` と `.pie`) で、`.chord`・`.open` は弧と弦だけの箱になる。** 箱は閉じ方が決める幾何の外接で、
+    ///   `noFill()` や `noStroke()` にしても、`texture()`・`shader()`・`strokeDash()` を付けて三角形や破線の片で
+    ///   描いても変わらない (`arc` だけは、描く経路が違っても外接を閉じ方の幾何から求める)。角を丸めた `rect` は
+    ///   丸めない `rect` と同じ箱になる
+    /// - **組み立ての中の変換 (`translate`・`scale`・`rotate`) は掛かった後の座標で外接する。**
+    ///   `createShape { translate(50, 0); rect(0, 0, 10, 10) }` は `(50, 0, 10, 10)`。回した矩形は、
+    ///   回した後の軸に沿った外接になる
+    /// - **字と画像は、置く矩形の外接である** (字の墨の部分だけの箱ではない)。`texture()` や
+    ///   `shader()` を効かせた円など、距離関数でなく多角形で描く基本図形 (`arc` を除く) は、刻んだ周の点の外接に
+    ///   なり、真の外接より刻みの分だけ小さくなりうる
+    /// - **立体は見ない。** 立体の頂点は箱に入らず、平面の部分が無い形 (`Shape.empty`・立体だけの形・
+    ///   塗りも線も描かない図形だけの形) は `nil` を返す。1 点だけの形 (`point`) は幅も高さも 0 の矩形を返す
+    ///
+    /// ``group(_:)`` と `+` で繋いだ形は、子の外接の和になる。置き直し (``SketchPart/shape(_:_:_:)``) で
+    /// 位置や大きさを変えるときは、返した矩形に同じ変換を掛けて使う。
+    ///
+    /// 焼くときに求めて持つので、何度問うても費用は変わらない。
+    public var bounds: Rect? { planeBox?.rect }
 
     /// 何も入っていない形。
     public static let empty = Shape(vertices: [], runs: [])
@@ -303,16 +372,19 @@ public struct Shape {
         var solidVertices: [SolidVertex] = []
         var solidIndices: [UInt32] = []
         var forms: [FormInstance] = []
+        var geometryForms: [FormInstance] = []
         var runs: [Run] = []
         var strokeRanges: [StrokeRange] = []
         var fillRanges: [RingFillRange] = []
         var solidStrokes: [SolidStrokePiece] = []
         var gpuStrokes: [RetainedGPUStroke] = []
         var solidParts: [SolidPart] = []
+        var box: PlaneBox?
         vertices.reserveCapacity(shapes.reduce(0) { $0 + $1.vertices.count })
         forms.reserveCapacity(shapes.reduce(0) { $0 + $1.forms.count })
 
         for shape in shapes {
+            box = PlaneBox.union(box, shape.planeBox)
             let flatOffset = vertices.count
             let solidOffset = solidVertices.count
             let indexOffset = solidIndices.count
@@ -323,6 +395,7 @@ public struct Shape {
             // ずらすと繋いだ 2 つ目以降が 1 つ目の頂点を指す (``solidIndices``)
             solidIndices.append(contentsOf: shape.solidIndices.map { $0 + UInt32(solidOffset) })
             forms.append(contentsOf: shape.forms)
+            geometryForms.append(contentsOf: shape.geometryForms)
             // 引く素材は区間の番号を持たないので、区間だけをずらして持ち越す (箱は共有する)
             strokeRanges.append(
                 contentsOf: shape.strokeRanges.map { $0.shifted(by: flatOffset) })
@@ -357,8 +430,8 @@ public struct Shape {
         return Shape(
             vertices: vertices, solidVertices: solidVertices, solidIndices: solidIndices,
             forms: forms, runs: runs, strokeRanges: strokeRanges, fillRanges: fillRanges,
-            solidStrokes: solidStrokes,
-            gpuStrokes: gpuStrokes, solidParts: solidParts)
+            geometryForms: geometryForms, solidStrokes: solidStrokes,
+            gpuStrokes: gpuStrokes, solidParts: solidParts, planeBox: .some(box))
     }
 
     /// 2 つの形を 1 つに畳む。
@@ -470,12 +543,61 @@ struct ByIdentityOrNone<Object: AnyObject>: Equatable {
 /// 比べるのは面の同一性だけである。同じ面なら持ち主も同じなので、畳めるかの判定
 /// (``Shape/Run/sameSettings(as:)``) は面だけを持っていた頃と変わらない。
 ///
+/// ## 描き場所の面は、読むたびに引く ([#2388])
+///
+/// 描き場所 (``RenderTarget``) の面は、効果を通すフレームで効果の控えと取り替わる
+/// (``Canvas/exchangeTargetWithCarry()``)。組んだ時点の面を値で持ち歩くと、取り替えた後は効果を通す前の
+/// 絵 (や書かれていない面) を読み、置いた時点の写しを取る判定 (``Canvas``・描き場所の面と `===` で比べる) からも
+/// 外れる。そこで持ち主が描き場所なら**描き場所そのものを持ち**、面は ``texture`` を読むたびに引く —
+/// 取り替わらなかった頃の「同じ描き場所なら同じ面」が、取り替えの後も成り立つ。面を持たないので、
+/// 取り替えの相手の面 (``RenderTarget/exchangePartner``) の寿命も、描き場所と一緒に抱えることになる。
+///
+/// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
 /// [#1079]: https://github.com/mokume-metal/mokume/issues/1079
 /// [#1178]: https://github.com/mokume-metal/mokume/issues/1178
 struct HeldTexture: Equatable {
-    let texture: any MTLTexture
+    /// 面の出どころ。**描き場所だけは、面を持たずに描き場所そのものを持つ** (``texture``)。
+    private enum Source {
+        /// 取り替わらない面 (画像・字形の頁・写し) と、その持ち主。
+        case fixed(texture: any MTLTexture, owner: AnyObject)
+        /// 描き場所。面は読むたびに引く。
+        case rendered(RenderTarget)
+    }
+
+    private let source: Source
+
+    /// 面と、その面を常駐させている持ち主の組を作る。持ち主が描き場所 (``RenderTarget``) なら、
+    /// 渡した面は使わず、描き場所のいまの面を読む組になる (``texture``)。
+    init(texture: any MTLTexture, owner: AnyObject) {
+        if let target = owner as? RenderTarget {
+            source = .rendered(target)
+        } else {
+            source = .fixed(texture: texture, owner: owner)
+        }
+    }
+
     /// 死ぬと面を常駐から退かせるもの。この組が生きている間は死なない。
-    let owner: AnyObject
+    var owner: AnyObject {
+        switch source {
+        case .fixed(_, let owner): owner
+        case .rendered(let target): target
+        }
+    }
+
+    /// 読む面。**持ち主が描き場所なら、読む時点の描き場所の面** ([#2388])。
+    ///
+    /// 描き場所の面は、効果を通すフレームで効果の控えと取り替わる (``Canvas/exchangeTargetWithCarry()``)
+    /// ので、組んだ時点の面を持ち歩くと、取り替えた後に効果を通す前の絵 (や、書かれていない面) を読む。
+    /// 描き場所は「いまの絵」を読ませる約束なので、**読むたびに引く** — 保持した形も、断片へ渡した面も、
+    /// 置いた時点の写しを取る判定 (``Canvas``) も、同じ面を見る。画像・字形の頁・写しの面は取り替わらない。
+    ///
+    /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
+    var texture: any MTLTexture {
+        switch source {
+        case .fixed(let texture, _): texture
+        case .rendered(let target): target.texture
+        }
+    }
 
     /// 引数表へ束ねる番地。
     var gpuResourceID: MTLResourceID { texture.gpuResourceID }

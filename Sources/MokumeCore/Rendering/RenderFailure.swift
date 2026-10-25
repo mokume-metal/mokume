@@ -209,6 +209,15 @@ public enum RenderFailure: Error, Equatable, Sendable {
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     case unreadableRenderRequest(value: String)
+
+    /// ``Sketch/setup()`` が投げたので、スケッチは `draw()` を 1 度も呼ばずに止まった ([#2401])。
+    ///
+    /// `reason` は投げた失敗の全文 (`loadImage` の失敗なら、何を読めなかったかと次にすること)。**どの経路で
+    /// 走らせても** — 窓・書き出し・`SketchRuntime` を直に回す検査 — 同じ失敗がここへ畳まれる。投げた型は
+    /// 問わないので、運ぶのは文面だけである。
+    ///
+    /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
+    case setupFailed(reason: String)
 }
 
 extension RenderFailure: CustomStringConvertible {
@@ -305,7 +314,10 @@ extension RenderFailure: CustomStringConvertible {
             report it with this message at https://github.com/mokume-metal/mokume/issues
             """
         case .gpuNotResponding:
-            Self.notResponding(after: CommandQueueGate.process.closure)
+            Self.notResponding(
+                after: CommandQueueGate.process.closure,
+                record: CommandQueueGate.process.expiryRecordExists
+                    ? CommandQueueGate.process.expiryRecordPath?.path : nil)
         case .invalidSize(let width, let height):
             """
             That is not a valid size for a render target: \(width)×\(height)
@@ -385,12 +397,17 @@ extension RenderFailure: CustomStringConvertible {
             """
         case .notRunning(let call):
             OutsideRun.notRunningNotice(call)
+        case .setupFailed(let reason):
+            // **投げた失敗の全文をそのまま運ぶ** — 次にすることは投げた側の文面が持っている。
+            // 1 行に削る経路 (`headline`) は先頭行だけを使うので、何が起きたかと投げた失敗の最初の行を
+            // 1 行目に入れる (名乗りだけが先頭に来ると、理由が落ちる)
+            "setup() threw, so the sketch did not start: \(reason)"
         case .unreadableRenderRequest(let value):
             """
             The sketch was asked to render, but it cannot read or write what it was asked: \(value)
             \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> — a whole \
-            frame rate and frame count above 0, and a .mov (at most \(RenderRequest.movieFrameRateLimit) \
-            frames per second) or a numbered series (out/frame-####.png). If the tool and the \
+            frame rate and frame count above 0, and a .mov or .mp4 (at most \(RenderRequest.movieFrameRateLimit) \
+            frames per second), a .gif (a frame rate that divides 100) or a numbered series (out/frame-####.png). If the tool and the \
             sketch use different versions of mokume, bring them to the same one (`mokume doctor` \
             shows both); if the variable was set by hand, unset it to run with a window.
             """
@@ -425,7 +442,27 @@ extension RenderFailure: CustomStringConvertible {
     ///
     /// 付随値は持たない。文面は、プロセスで 1 つの関所が控えた最初の待ちを読む (公開の case に足さない
     /// ため)。検査が自前の関所を渡した土台の断りは、その関所ではなく、プロセスの関所を読む。
-    nonisolated static func notResponding(after closure: CommandQueueGate.Closure?) -> String {
+    ///
+    /// **記録 (`record`) があるとき** (`scripts/gpu-slot.py` の下の検査・計測が残す記録・#2235) は、プロセスを
+    /// 起こし直しても記録は消えないので、起こし直しとは言わず、人が GPU の答えを確かめて記録を消すよう言う。
+    /// このプロセスが印を立てていれば (`closure`) 「earlier in this process」と、立てていなければ別の回の記録
+    /// だと言う — **実際に合わせる**。**頭の句は、検査の記録を読む側 (`scripts/read-test-record.py` の
+    /// `GATE_CLOSED`) が畳む 2 つのどちらかにする。**
+    nonisolated static func notResponding(
+        after closure: CommandQueueGate.Closure?, record: String? = nil
+    ) -> String {
+        if let record {
+            let origin =
+                closure.map {
+                    "earlier in this process (\($0.summary)), and gpu-slot.py's record (\(record)) stops later runs too"
+                } ?? "in another run under gpu-slot.py (record: \(record))"
+            return """
+                A wait for the GPU went past its limit \(origin), so no new drawing foundation is set up.
+                That can be one frame drawing too much or a GPU that stopped answering, and the two look the same from \
+                here. New work piled onto a GPU that does not answer can freeze the whole Mac. A person checks that the GPU \
+                answers, and then deletes that record; starting this process again does not remove it.
+                """
+        }
         let first = closure.map { " (\($0.summary))" } ?? ""
         return """
             A wait for the GPU went past its limit earlier in this process, so no new drawing foundation is set up in it\(first).

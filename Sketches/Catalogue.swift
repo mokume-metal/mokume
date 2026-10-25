@@ -39,9 +39,12 @@ nonisolated let stillFrame = 45
 nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "shapes-and-style") { ShapesAndStyle() },
     ReferenceSketch(name: "curves-and-vertices") { CurvesAndVertices() },
+    ReferenceSketch(name: "curve-and-flight") { CurveAndFlight() },
     ReferenceSketch(name: "color-and-scale") { ColorAndScale() },
     ReferenceSketch(name: "type-and-imagery") { TypeAndImagery() },
     ReferenceSketch(name: "type-and-measure") { TypeAndMeasure() },
+    ReferenceSketch(name: "type-and-weight") { TypeAndWeight() },
+    ReferenceSketch(name: "type-and-shaping") { TypeAndShaping() },
     ReferenceSketch(name: "textured-surfaces") { TexturedSurfaces() },
     ReferenceSketch(name: "pixels-and-paint") { PixelsAndPaint() },
     ReferenceSketch(name: "noise-and-seed") { NoiseAndSeed() },
@@ -76,6 +79,9 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "parts-and-formats") { PartsAndFormats() },
     ReferenceSketch(name: "shapes-from-svg") { ShapesFromSVG() },
     ReferenceSketch(name: "chance-and-choice") { ChanceAndChoice() },
+    ReferenceSketch(name: "dash-and-grid") { DashAndGrid() },
+    ReferenceSketch(name: "seeds-and-fields") { SeedsAndFields() },
+    ReferenceSketch(name: "filter-and-gauge") { FilterAndGauge() },
     // 遊べる作例。書き出しは触っていない (球が出る前の) 1 枚で、台帳には「走っても落ちない」として載る
     ReferenceSketch(name: "bricks-and-ball") { BricksAndBall() },
 ]
