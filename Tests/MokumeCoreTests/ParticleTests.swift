@@ -713,6 +713,214 @@ struct ParticleTests {
         }
     }
 
+    // MARK: - 奥行き (#3107)
+
+    /// 角が透明な、丸く硬い粒。板の中の位置 (`in.shapePosition`) から円を作り、外は透明にする。
+    /// **断片で捨てない** (`discard` ではなく透明な色を返す) ので、角も奥行きを書きうる。
+    private static let roundBody = """
+        float4 paint(Fragment in, Values values) {
+            float r = length(in.shapePosition.xy) * 2.0;
+            return r < 1.0 ? in.color : float4(0.0);
+        }
+        """
+
+    /// 丸い粒を、`mode` で混ぜるものとして作る。作ったあとの状態は作る前に戻す。
+    private func makeRound(_ canvas: Canvas, mode: BlendMode, count: Int = 64) throws -> Particles {
+        canvas.shader(try canvas.makeShader(Self.roundBody))
+        canvas.blendMode(mode)
+        let round = try canvas.makeParticles(count: count)
+        canvas.blendMode(.blend)
+        canvas.resetShader()
+        return round
+    }
+
+    /// 画素 (`x`, `y`) の色 (表示用 8 bit の 3 成分)。
+    private func color(_ bytes: [UInt8], _ x: Int, _ y: Int, width: Int = 64) -> [UInt8] {
+        let index = (y * width + x) * 4
+        return Array(bytes[index..<(index + 3)])
+    }
+
+    /// 同じ点に、大きさの違う 2 つの丸い粒を、`smallZ` と `bigZ` の奥行きで重ねて描き、
+    /// 小さい粒の板の角 (円の外) の画素の色を返す。`smallFirst` で、先に描く (枠の若い) 側を選ぶ。
+    ///
+    /// 角の画素は、小さい粒の円の外・大きい粒の円の内にある。**小さい粒が手前で先に描かれる組**では、
+    /// 小さい粒の板の透明な角が奥行きを書くと、あとに描く大きい粒がその角で切られる。
+    private func corner(
+        mode: BlendMode, smallZ: Float, bigZ: Float, smallFirst: Bool,
+        color: LinearRGBA = .linear(red: 0.5, green: 0.5, blue: 0.5),
+        backdrop: Float = 0, route: Canvas.ParticleRoute = .instanced
+    ) throws -> [UInt8] {
+        let canvas = try makeCanvas()
+        canvas.particleRoute = route
+        let round = try makeRound(canvas, mode: mode)
+        var randomness = Randomness(seed: 3107)
+        try canvas.draw {
+            canvas.background(.linear(red: backdrop, green: backdrop, blue: backdrop))
+            let small = (z: smallZ, size: Float(20))
+            let big = (z: bigZ, size: Float(40))
+            for puff in smallFirst ? [small, big] : [big, small] {
+                canvas.emit(
+                    round, from: .point(32, 32, puff.z), toward: .plane(0...0), rate: 300, speed: 0...0,
+                    life: 5...5, size: puff.size...puff.size, color: color, using: &randomness)
+            }
+            canvas.particles(round)
+        }
+        let bytes = try canvas.target.encodeForDisplay().bytes
+        return self.color(bytes, 32 + 9, 32 + 9)
+    }
+
+    /// 奥行きがずれた加算の粒は、手前の粒の透明な角で奥の粒を切らない。**小さい粒を手前に置いても
+    /// 奥に置いても、どちらを先に描いても、大きい粒の円の内側なら角にも色が残る。**
+    @Test(
+        "加算の粒は、奥行きがずれても、手前の粒の透明な角の内側に奥の粒が残る",
+        arguments: [Float(8), Float(-8)], [true, false])
+    func additiveParticlesKeepTheFarOneInsideTheNearOnesCorner(smallZ: Float, smallFirst: Bool) throws {
+        for route in [Canvas.ParticleRoute.instanced, .reference] {
+            let lit = try corner(
+                mode: .add, smallZ: smallZ, bigZ: -smallZ, smallFirst: smallFirst, route: route)
+            #expect(
+                lit.allSatisfy { $0 > 40 },
+                "角の色が欠けた \(lit) (小さい粒の奥行き \(smallZ)・先に描く: \(smallFirst)・\(route))")
+        }
+    }
+
+    /// 粒の無い (アルファ 0 の) ときの角の色。灰色の下地 `backdrop` に、手前で先に描く小さい粒と奥の大きい粒を
+    /// 出した絵の、角の色と比べる — 奥の粒が切られると同じになる。
+    private func cornerWithoutParticles(mode: BlendMode, backdrop: Float) throws -> [UInt8] {
+        try corner(
+            mode: mode, smallZ: 8, bigZ: -8, smallFirst: true,
+            color: LinearRGBA(straightRed: 0.5, green: 0.5, blue: 0.5, alpha: 0), backdrop: backdrop)
+    }
+
+    /// 減算・乗算・スクリーンの粒も、奥行きを書かない (不透明な下地の上で)。
+    @Test("減算・乗算・スクリーンの粒も、奥行きを書かない", arguments: [BlendMode.subtract, .multiply, .screen])
+    func otherOrderIndependentModesDoNotWriteDepth(mode: BlendMode) throws {
+        let none = try cornerWithoutParticles(mode: mode, backdrop: 0.3)
+        let drawn = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: true, backdrop: 0.3)
+        #expect(none != drawn, "\(mode) の粒が角で切られた \(drawn)")
+    }
+
+    /// 順に依る混ぜ方の粒は、これまでどおり奥行きを書く — 手前の粒の透明な角が奥の粒を切る。
+    /// 下地は、粒の色 0.5 で絵が変わる明るさにする (最も暗くする `.darkest` だけ明るい下地)。
+    @Test(
+        "最も明るくする・最も暗くする・差・除外の粒は、奥行きを書く (今までどおり)",
+        arguments: [(BlendMode.lightest, Float(0.3)), (.darkest, 0.8), (.difference, 0.3), (.exclusion, 0.3)])
+    func orderDependentModesStillWriteDepth(mode: BlendMode, backdrop: Float) throws {
+        let none = try cornerWithoutParticles(mode: mode, backdrop: backdrop)
+        let drawn = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: true, backdrop: backdrop)
+        #expect(none == drawn, "\(mode) の粒が角で切られていない \(drawn) / 粒なし \(none)")
+        // 対照: 奥の粒を先に描けば角に出る — 比べる前提 (粒が絵を変える) が崩れていない
+        let uncut = try corner(mode: mode, smallZ: 8, bigZ: -8, smallFirst: false, backdrop: backdrop)
+        #expect(none != uncut, "\(mode) の粒が絵を変えていない \(uncut)")
+    }
+
+    /// `.blend` の不透明な粒は、前後が今までどおり — 手前の粒が奥の粒を隠す。
+    @Test("重ねる (.blend) 粒は、手前の粒の角でも奥の粒を切る (今までどおり)")
+    func blendParticlesStillWriteDepth() throws {
+        // 小さい粒を手前で先に描く。角の画素は、手前の板の透明な角が奥行きを書き、奥の粒は切られて黒のまま
+        let corner = try corner(mode: .blend, smallZ: 8, bigZ: -8, smallFirst: true)
+        #expect(corner == [0, 0, 0], "\(corner)")
+    }
+
+    /// 雲を `rotateY()` で傾けると、粒の奥行きは z に散る。**傾けても、角の内側に奥の粒が残る。**
+    @Test(
+        "変換で傾けて奥行きが散っても、加算の粒は角の内側に奥の粒が残る",
+        arguments: [Float(8), Float(-8)], [true, false])
+    func additiveParticlesStayWhenTheTransformSpreadsDepth(smallX: Float, smallFirst: Bool) throws {
+        let canvas = try makeCanvas()
+        let round = try makeRound(canvas, mode: .add)
+        var randomness = Randomness(seed: 3108)
+        try canvas.draw {
+            canvas.background(.display(red: 0, green: 0, blue: 0))
+            canvas.translate(32, 32, 0)
+            // 傾けると、粒の x が奥行きになる。2 つは画面の同じ点で、奥行きだけが違う
+            canvas.rotateY(Float.pi / 2)
+            let small = (x: smallX, size: Float(20))
+            let big = (x: -smallX, size: Float(40))
+            for puff in smallFirst ? [small, big] : [big, small] {
+                canvas.emit(
+                    round, from: .point(puff.x, 0, 0), toward: .plane(0...0), rate: 300, speed: 0...0,
+                    life: 5...5, size: puff.size...puff.size, color: .linear(red: 0.5, green: 0.5, blue: 0.5),
+                    using: &randomness)
+            }
+            canvas.particles(round)
+        }
+        let bytes = try canvas.target.encodeForDisplay().bytes
+        let lit = color(bytes, 32 + 9, 32 + 9)
+        #expect(lit.allSatisfy { $0 > 40 }, "角の色が欠けた \(lit) (小さい粒の x \(smallX)・先に描く: \(smallFirst))")
+    }
+
+    /// 粒より前に描いた不透明な立体の奥にある粒は、奥行きを読むので隠れる。粒を出さない絵と、
+    /// 箱の奥に粒を出した絵が、箱の真ん中で同じになる。
+    @Test("粒より前に描いた不透明な立体の奥にある加算の粒は、隠れる")
+    func particlesBehindAnOpaqueSolidAreStillHidden() throws {
+        func middle(emitting: Bool) throws -> [UInt8] {
+            let canvas = try makeCanvas()
+            let round = try makeRound(canvas, mode: .add)
+            var randomness = Randomness(seed: 3109)
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                canvas.noStroke()
+                canvas.fill(.display(red: 1, green: 0, blue: 0))
+                canvas.translate(32, 32, 0)
+                canvas.box(40)
+                // 箱の奥 (箱の手前の面は z = 20)
+                canvas.emit(
+                    round, from: .point(0, 0, -40), toward: .plane(0...0), rate: emitting ? 300 : 0,
+                    speed: 0...0, life: 5...5, size: 20...20, color: .linear(red: 0.5, green: 0.5, blue: 0.5),
+                    using: &randomness)
+                canvas.particles(round)
+            }
+            return color(try canvas.target.encodeForDisplay().bytes, 32, 32)
+        }
+        let without = try middle(emitting: false)
+        let with = try middle(emitting: true)
+        #expect(without[0] > 100, "箱が描かれていない — 比べる前提が崩れている \(without)")
+        #expect(with == without, "箱の奥の粒が透けた \(with) / 粒なし \(without)")
+    }
+
+    /// 2 つの雲を別々に描いた絵の和が、一緒に描いた絵になる — **加算は順に依らない**。`.sphere` で
+    /// 奥行きへ吹き出させた雲を傾けても成り立つ。奥行きを書くと、あとに描く雲が前の雲の板の透明な
+    /// 角で切られ、和より暗くなる。
+    @Test("奥行きへ散らした 2 つの加算の雲は、別々に描いた絵の和になる")
+    func tiltedSphereCloudsAddUp() throws {
+        func draw(_ clouds: [Int]) throws -> [Float] {
+            let canvas = try makeCanvas()
+            let round = try makeRound(canvas, mode: .add, count: 128)
+            var seeds = [Randomness(seed: 71), Randomness(seed: 72)]
+            let all = [round, try makeRound(canvas, mode: .add, count: 128)]
+            try canvas.draw {
+                canvas.background(.display(red: 0, green: 0, blue: 0))
+                canvas.translate(32, 32, 0)
+                canvas.rotateY(0.9)
+                canvas.rotateX(0.4)
+                for index in clouds {
+                    canvas.emit(
+                        all[index], from: .sphere(0, 0, 0, radius: 12), toward: .sphere, rate: 3000,
+                        speed: 0...0, life: 5...5, size: 14...14,
+                        color: .linear(red: 0.005, green: 0.008, blue: 0.01), using: &seeds[index])
+                }
+                for index in clouds { canvas.particles(all[index]) }
+            }
+            let pixels = try canvas.target.readPixels()
+            var values: [Float] = []
+            for y in 0..<pixels.height {
+                for x in 0..<pixels.width {
+                    let pixel = pixels[x, y]
+                    values.append(contentsOf: [pixel.red, pixel.green, pixel.blue])
+                }
+            }
+            return values
+        }
+        let first = try draw([0])
+        let second = try draw([1])
+        let both = try draw([0, 1])
+        #expect(first.contains { $0 > 0.01 }, "雲が描かれていない — 比べる前提が崩れている")
+        var worst: Float = 0
+        for index in both.indices { worst = max(worst, abs(both[index] - (first[index] + second[index]))) }
+        #expect(worst < 0.01, "別々に描いた和と食い違う (最大 \(worst))")
+    }
+
     // MARK: - 板の向き
 
     /// 1 点に止まった粒を 1 フレーム描いて、粒が占める画素の数を返す。

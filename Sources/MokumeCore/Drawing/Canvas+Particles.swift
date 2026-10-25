@@ -283,7 +283,8 @@ extension Canvas {
                 run, of: particles.quad, mirrored: false,
                 external: ExternalInstances(
                     instances: draw.instances, count: particles.capacity,
-                    arguments: draw.arguments))
+                    arguments: draw.arguments),
+                isParticles: true)
             closeBatch()
         }
         return run.count
@@ -303,7 +304,7 @@ extension Canvas {
             basis: currentCamera.basis, lifeStep: Particles.lifeStep(of: frameStep))
         guard !places.isEmpty else { return }
         replaying(CollectionOfOne(run)) { run in
-            placeSolid(run, of: particles.quad, instances: places)
+            placeSolid(run, of: particles.quad, instances: places, isParticles: true)
         }
     }
 

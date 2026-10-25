@@ -423,6 +423,17 @@ final class ShapePipeline {
     /// 立体の奥行きの扱い — **手前だけを通し、書く**。
     let solidDepthState: (any MTLDepthStencilState)?
 
+    /// 順に依らない混ぜ方で積む粒の列の奥行きの扱い — **手前だけを通し、書かない** ([#3107])。
+    ///
+    /// 粒の板は透明な角を持つ柔らかい粒でありうるが、奥行きの書き込みは断片が捨てない限り角にも及ぶ。
+    /// 書くと、手前の粒の透明な角が後に描く奥の粒を奥行きで切り、加算の重なりに四角い欠けが出る。
+    /// GPU が枠の順に並べて描く粒は、作品側が奥から並べられない ([ADR-0021] 決定 2)。読むのは保つので、
+    /// 粒より前に描いた立体の奥にある粒は隠れる。対象は ``Canvas/Batch/readsDepthOnly``。
+    ///
+    /// [#3107]: https://github.com/mokume-metal/mokume/issues/3107
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    let solidReadOnlyDepthState: (any MTLDepthStencilState)?
+
     /// 面を置き換える列の奥行きの扱い — **常に通し、書く** (`Canvas.Batch.replacesSurface`・[#1685])。
     ///
     /// 置き換えは、先に描いた立体の奥行きに左右されない。比べると、途中の描き切りで載った
@@ -502,6 +513,12 @@ final class ShapePipeline {
         solid.depthCompareFunction = .lessEqual
         solid.isDepthWriteEnabled = true
         self.solidDepthState = gpu.device.makeDepthStencilState(descriptor: solid)
+
+        let readOnly = MTLDepthStencilDescriptor()
+        readOnly.label = "mokume.depth.solid-read-only"
+        readOnly.depthCompareFunction = .lessEqual
+        readOnly.isDepthWriteEnabled = false
+        self.solidReadOnlyDepthState = gpu.device.makeDepthStencilState(descriptor: readOnly)
 
         let replacing = MTLDepthStencilDescriptor()
         replacing.label = "mokume.depth.replace"

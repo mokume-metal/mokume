@@ -394,6 +394,8 @@ extension Canvas {
                 strokeGeometry: open.strokeGeometry, strokePlacement: open.strokePlacement,
                 fillGeometry: open.fillGeometry, usesUnitShape: open.usesUnitShape))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        // 粒の列は、順に依らない混ぜ方なら奥行きを読むだけで描く (#3107)
+        batches[batches.count - 1].readsDepthOnly = open.isParticles && style.blendMode.isOrderIndependent
         // 特化できる列か (光の枝を外す・ブレンドを外す) は、ここで 1 度だけ決める (#1795・#2366)。
         // 細い線の被覆は直前に移したので、その後
         let closed = batches.count - 1
