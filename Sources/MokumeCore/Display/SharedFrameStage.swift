@@ -131,11 +131,18 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// まだ出していない世代を控えているか。**検査から見る。**
     var hasIncoming: Bool { incoming != nil }
 
+    /// いま映している世代の目録が名乗った子の番号。**検査から見る。**
+    var displayedPID: Int32? { source?.pid }
+
+    /// 乗り換えた直前の世代を、常駐させたまま持っているか (``superseded``)。**検査から見る。**
+    var holdsSupersededSource: Bool { superseded != nil }
+
     /// 面を引いた (`IOSurfaceLookup`) 回数。出している世代と控えている世代の合計。**検査から
     /// 見る** — 番号の組が変わらない間は、リフレッシュを重ねても増えないこと
     /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
     var surfaceLookups: Int {
         retiredLookups + (source?.lookup.lookups ?? 0) + (incoming?.lookup.lookups ?? 0)
+            + (superseded?.lookup.lookups ?? 0)
     }
     /// 手放した世代が引いた回数。``surfaceLookups`` を世代の入れ替わりをまたいで数えるため。
     private var retiredLookups = 0
@@ -431,6 +438,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
                 gpu.awaitSettlement(of: lastFrameSubmission, by: self)
                 if !shownCurrentGeneration {
                     shownCurrentGeneration = true
+                    // 1 枚目を出した世代が死んでも、見張りは前の版を戻さない。直前の世代はもう要らない (#3172)
+                    releaseSuperseded()
                     onGenerationShown?(source.pid)
                 }
             }
@@ -530,11 +539,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private func promoteIfReady() {
         guard let waiting = incoming else { return }
         if source != nil, waiting.lookup.newest() == nil { return }
-        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
-        if let previous = source {
-            retiredLookups += previous.lookup.lookups
-            try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
-        }
+        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる。ただし**直前の
+        // 世代は、乗り換えた世代が 1 枚目を出すまで持つ** (``superseded``・#3172)。もう 1 つ前の世代はここで外す
+        releaseSuperseded()
+        superseded = source
         source = waiting
         incoming = nil
         // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
@@ -635,6 +643,68 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         return relinquishedLegacyIDs == generation.ids
     }
 
+    /// 見張りが乗り換えないと決めた世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// **乗り換えで捨てる。** 乗り換えの無いまま起動の失敗が重なっても溜まりすぎず、番号が一周しても新しい子の
+    /// 目録を捨てないよう、見張りが新しい子を起こしたときにその番号を外す (``expectGeneration(pids:)``)。
+    private var abandonedPIDs: Set<Int32> = []
+
+    /// 乗り換えた直前の世代。**乗り換えた世代が 1 枚目を出すまで、常駐を外さずに持つ** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 乗り換えた世代が 1 枚も出さずに死ぬと、見張りは起動に失敗した版を捨てて前の版を現役に戻す。台は
+    /// その子の目録へ乗り換え済みでも、動いている前の版へ映し直せなければならない
+    /// (``abandonIncoming(pids:)``)。目録は死んだ子のもので上書きされ、前の版は目録を置き直さないので、
+    /// 乗り換えの時点で持っているものを手放さないのが唯一の道である。**1 枚目を出したら外す** (見張りが
+    /// 前の版を戻すのも、1 枚目の前に終わった子についてだけ)。次の乗り換えでも外す。
+    private var superseded: Source?
+
+    /// 乗り換えた直前の世代の常駐を外す。
+    private func releaseSuperseded() {
+        guard let previous = superseded else { return }
+        retiredLookups += previous.lookup.lookups
+        try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
+        superseded = nil
+    }
+
+    /// 見張りが、乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **起動に失敗した新しい版を捨てて、前の版を現役に戻した回に呼ぶ。** 失敗した子が 1 枚書いてから死ぬと、
+    /// 台はその子の目録へ乗り換え、動いている前の版の代わりに死んだ子の最後の絵を映す。次の 3 つを同じ番号で行う。
+    /// - まだ採っていない目録がその番号なら採らない (``abandonedPIDs``)
+    /// - 控えている世代がその番号なら捨てる
+    /// - **映している世代がその番号なら、直前の世代 (``superseded``) へ映し直す。** 乗り換えは済み、描画が
+    ///   見送られた (面が取れない拍) 子でも、1 枚目の合図は鳴らない — 控えを捨てるだけでは覆えない。
+    ///   直前の世代の常駐を外していないので、そのまま映せる。番号を名乗らない世代 (古いライブラリ) は
+    ///   照合できないので映し直さない
+    func abandonIncoming(pids: [Int32]) {
+        abandonedPIDs.formUnion(pids)
+        if let waiting = incoming, let pid = waiting.pid, pids.contains(pid) {
+            retiredLookups += waiting.lookup.lookups
+            try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
+            incoming = nil
+        }
+        guard let dead = source, let pid = dead.pid, pids.contains(pid), let previous = superseded
+        else { return }
+        retiredLookups += dead.lookup.lookups
+        try? gpu.releaseResidency(of: dead.frames.values.map(\.texture))
+        source = previous
+        superseded = nil
+        // 乗り換えと同じく、枚数の数え直しと窓の大きさの追随を、映し直した世代に対して行う。前の版は
+        // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
+        lastFrame = 0
+        lastSeenFrame = 0
+        shownCurrentGeneration = true
+        view?.setCanvasSize((previous.width, previous.height))
+        followRequestedSize(of: previous)
+    }
+
+    /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **この番号を、乗り換えないと決めた世代から外す。** 番号は使い回されるので、起動に失敗した子の番号が
+    /// 残っていると、同じ番号を得た新しい子の目録を ``adopt(_:)`` が黙って捨てる。
+    func expectGeneration(pids: [Int32]) {
+        abandonedPIDs.subtract(pids)
+    }
+
     /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを
     /// 次の乗り換えまで読まない。**
     ///
@@ -655,23 +725,6 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// 映している世代の目録が番号を名乗れば、手放す世代のときだけ下ろす — 映っている生きた世代に誤って
     /// 当てない。番号を名乗らない世代 (古いライブラリ) は照合できないので下ろす。まだ採っていない目録も、
     /// 手放した番号のものは生まれたときから手放した扱いにする。
-    /// 見張りが乗り換えないと決めた世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
-    /// 乗り換えで捨てる。
-    private var abandonedPIDs: Set<Int32> = []
-
-    /// 見張りが、控えている世代へ乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
-    ///
-    /// **起動に失敗した新しい版を捨てて、前の版を現役に戻した回に呼ぶ。** 失敗した子が 1 枚書いてから死ぬと、
-    /// 台はその子の目録へ乗り換え、動いている前の版の代わりに死んだ子の最後の絵を映す。控えている目録が
-    /// その番号なら捨て、まだ採っていない目録もその番号なら採らない。映している世代には触らない。
-    func abandonIncoming(pids: [Int32]) {
-        abandonedPIDs.formUnion(pids)
-        guard let waiting = incoming, let pid = waiting.pid, pids.contains(pid) else { return }
-        retiredLookups += waiting.lookup.lookups
-        try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
-        incoming = nil
-    }
-
     func relinquishSource(pids: [Int32]) {
         relinquishedPIDs.formUnion(pids)
         let matches = source?.pid.map { pids.contains($0) } ?? true

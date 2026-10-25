@@ -1112,6 +1112,27 @@ struct WatchSessionTests {
         return (session, first, second)
     }
 
+    /// **子を起こすたびに、その番号を台へ伝える** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証 2 回目)。
+    /// 台は、乗り換えないと決めた世代の番号の覚えからそれを外す — 番号が一周して同じ番号を得た新しい子の目録を捨てない。
+    @Test("子を起こすたびに、起こした子の番号を台へ伝える")
+    func everyLaunchedChildIsAnnouncedToTheStage() async throws {
+        let ready = Ready()
+        let scripted = Scripted(["echo ready; read line", "echo ready; read line"])
+        let session = try windowed(scripted, ready: ready)
+        defer { session.stopBlocking() }
+        var expected: [[Int32]] = []
+        session.expectsGeneration = { expected.append($0) }
+        await session.start()
+        ready.waitForLast()
+        let first = try #require(session.child)
+        #expect(expected == [[first.processIdentifier]], "\(expected)")
+        scripted.stamp = "s1"
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        #expect(expected == [[first.processIdentifier], [second.processIdentifier]], "\(expected)")
+    }
+
     /// **最初の絵を出す前に失敗で終わった子は、起動できなかった回である** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     /// 前の版が居ない最初の子の言い方も、ここで固定する: 要約・理由・「何も走っていない、直して保存」の順。
     @Test("最初の絵を出す前に失敗で終わった子は、起動できなかった回として記録し、前の版が居ないと端末に言う")

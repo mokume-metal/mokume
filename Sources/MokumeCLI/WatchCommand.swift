@@ -470,6 +470,11 @@ enum WatchCommand {
             window?.abandonGeneration(pids: pids)
             preview?.abandonGeneration(pids: pids)
         }
+        // **新しい子を起こしたら、その番号を乗り換えない世代から外す** (#3172)。番号は使い回される
+        session.expectsGeneration = { [weak window, weak preview] pids in
+            window?.expectGeneration(pids: pids)
+            preview?.expectGeneration(pids: pids)
+        }
         // **2 つの窓は独立に入れ替わりを見る**ので合図は 2 度来る。退役は冪等である
         //
         // **止める待ちは main actor を塞がない** ([#2576](https://github.com/mokume-metal/mokume/issues/2576))。
