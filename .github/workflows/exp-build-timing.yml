@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て: ci-check の build・テストのビルドの組み方を GitHub の macOS runner で比べる (#3190 の案 C)。
+# merge しない。結果を #3190 に載せたら PR ごと閉じる。
+name: exp-build-timing
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/exp-build-timing.yml]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        variant: [A-now, B-one-pass, W-wmo-tests, G-line-tables, I-incremental]
+    steps:
+      - uses: actions/checkout@v7
+      - name: measure
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -u
+          SG="-Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc $PWD/.build/symbol-graphs"
+          R="$RUNNER_TEMP/result.txt"; : > "$R"
+          note() { echo "$*" | tee -a "$R"; }
+          step() { # 名前 引数...
+            local name=$1; shift
+            local t0=$SECONDS
+            swift build "$@" > "$RUNNER_TEMP/$name.log" 2>&1; local rc=$?
+            note "$VARIANT $name rc=$rc wall=$((SECONDS - t0))s compiling=$(grep -c ' Compiling ' "$RUNNER_TEMP/$name.log") $(grep -o 'Build complete! ([0-9.]*s' "$RUNNER_TEMP/$name.log" | tail -1)"
+            [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/$name.log"
+          }
+          note "$VARIANT cores=$(sysctl -n hw.ncpu) mem=$(( $(sysctl -n hw.memsize) / 1073741824 ))G $(swift --version 2>&1 | head -1)"
+          t0=$SECONDS; swift package resolve > /dev/null 2>&1; note "$VARIANT resolve wall=$((SECONDS - t0))s"
+          touchall() { find Sources Tests Package.swift -type f -exec touch {} +; }
+          F=Sources/MokumeCore/Color/HueSaturationBrightness.swift
+          case "$VARIANT" in
+            A-now)
+              step build $SG
+              step tests --build-tests $SG ;;
+            B-one-pass)
+              step both --build-tests $SG ;;
+            W-wmo-tests)
+              python3 -c 'import pathlib; p = pathlib.Path("Package.swift"); s = p.read_text(); n = s.replace("exclude: [\"scene-ledger.txt\"], swiftSettings: .mokume),", "exclude: [\"scene-ledger.txt\"], swiftSettings: .mokume + [.unsafeFlags([\"-wmo\"])]),", 1); assert n != s; p.write_text(n)'
+              step build $SG
+              step tests --build-tests $SG ;;
+            G-line-tables)
+              step build $SG -Xswiftc -gline-tables-only
+              step tests --build-tests $SG -Xswiftc -gline-tables-only ;;
+            I-incremental)
+              H="-Xswiftc -enable-incremental-file-hashing"
+              step clean --build-tests $SG $H
+              note "$VARIANT build-dir $(du -sh .build | cut -f1)"
+              t0=$SECONDS; tar -cf - .build | zstd -T0 -q -o "$RUNNER_TEMP/b.tzst"; note "$VARIANT pack wall=$((SECONDS - t0))s size=$(du -h "$RUNNER_TEMP/b.tzst" | cut -f1)"
+              t0=$SECONDS; mkdir -p "$RUNNER_TEMP/un" && zstd -dc "$RUNNER_TEMP/b.tzst" | tar -xf - -C "$RUNNER_TEMP/un"; note "$VARIANT unpack wall=$((SECONDS - t0))s"
+              touchall; step touched-nochange --build-tests $SG $H
+              touchall; printf '\nprivate func _expBodyProbe() -> Int { 1 }\n' >> "$F"; step core-private --build-tests $SG $H
+              G=$(ls Tests/MokumeCoreTests/*.swift | head -1)
+              touchall; printf '\n// probe\n' >> "$G"; step test-file --build-tests $SG $H
+              touchall; printf '\npublic func _expPublicProbe() -> Int { 2 }\n' >> "$F"; step core-public --build-tests $SG $H ;;
+          esac
+          cat "$R" >> "$GITHUB_STEP_SUMMARY"
