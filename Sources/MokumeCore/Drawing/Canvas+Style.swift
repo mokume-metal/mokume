@@ -270,6 +270,7 @@ extension Canvas {
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        batches[batches.count - 1].readsDepthOnly = open.isParticles && style.blendMode.isOrderIndependent
         // 細い塗りの雛形の列は、塗りの頂点を頂点段で組む (#2208)
         if let template, template.key.thinFillCapacity > 0 {
             batches[batches.count - 1].thinFillExpands = true

@@ -441,6 +441,10 @@ public final class Canvas {
     /// **同じ形が続く間は、頂点を置き直さずに置き場所だけを足す。** 形が変わったら
     /// (あるいは列を分ける設定が変わったら) 閉じて開き直す。
     var openSolid: OpenSolid?
+    /// 粒の板を置いている間だけ真。開く列に ``OpenSolid/isParticles`` として写る
+    /// (``placeFromGPU(_:_:)``・``placeFromCPU(_:)``)。粒の板は保持した形として置くので、
+    /// 形を置く口の側からは粒かどうかが分からない。
+    var placingParticles = false
     /// 1 つの列に入れる置き場所の上限。
     ///
     /// **仕組みの都合ではなく規律である。** 無制限にすると「まとめきれずに列を分ける」
@@ -502,6 +506,9 @@ public final class Canvas {
         /// 使う** — 形を置く側が、列を開くときに写す (``Canvas/openRetainedSolid(_:of:mirrored:external:)``)。
         /// 不透明な列の判定 (``Canvas/isOpaqueFill(_:closing:)``・#2366) が、頂点を列ごとに読み直さずに済む。
         var retainedVerticesAreOpaque = false
+        /// 粒の板の列か (``Canvas/placingParticles``)。列を閉じるとき、混ぜ方が順に依らなければ
+        /// 奥行きを読むだけで描く列にする (``Batch/readsDepthOnly``・#3107)。
+        var isParticles = false
         /// 保持した形の頂点が、全部同じ読み取り位置 (焼き場の白い区画) を指すか。上と同じ口で写す。
         var retainedReadsWhiteCell = false
         /// 置き場所で置く組み込みの形・読み込んだモデルの、巻き方の向き (``SolidWinding``)。
@@ -2033,6 +2040,16 @@ public final class Canvas {
         /// [#1657]: https://github.com/mokume-metal/mokume/issues/1657
         /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
         var replacesSurface = false
+        /// 奥行きを読むだけで書かない列か ([#3107])。粒の列で、混ぜ方が順に依らないもの
+        /// (``BlendMode/isOrderIndependent``) だけが立つ。
+        ///
+        /// 粒の板の透明な角が奥行きを書くと、後に描く奥の粒が切られて加算の重なりに欠けが出る。
+        /// GPU が並べる粒は作品側が奥から並べられないので、書かないことで直す。読むのは保つ
+        /// (粒より前に描いた立体の奥の粒は隠れる)。描くときの状態は
+        /// ``ShapePipeline/solidReadOnlyDepthState``。
+        ///
+        /// [#3107]: https://github.com/mokume-metal/mokume/issues/3107
+        var readsDepthOnly = false
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
@@ -4916,7 +4933,9 @@ public final class Canvas {
                 }
                 use(
                     depth: batch.replacesSurface
-                        ? pipeline.replaceDepthState : pipeline.solidDepthState)
+                        ? pipeline.replaceDepthState
+                        : batch.readsDepthOnly
+                            ? pipeline.solidReadOnlyDepthState : pipeline.solidDepthState)
                 // 引数を GPU が書く列 (粒) は、列の頭までを番地へ足す (``Batch/vertexBaseShift``)
                 bind(
                     (batch.ownVertices ?? geometry.solidVertices).gpuAddress

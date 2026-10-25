@@ -1292,6 +1292,7 @@ extension Canvas {
         // 不透明な列の判定が頂点を読み直さずに済むよう、形が持つ答えを写す (#2366)
         openSolid?.retainedVerticesAreOpaque = shape.solidAlphaIsOne
         openSolid?.retainedReadsWhiteCell = shape.solidCommonUV == whiteUV
+        openSolid?.isParticles = placingParticles
         return instanceStart
     }
 

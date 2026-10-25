@@ -93,6 +93,26 @@ public nonisolated enum BlendMode: Sendable, Equatable, CaseIterable {
     /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
     case replace
 
+    /// 同じ下地に重ねる粒の順を入れ替えても、混ぜた結果が変わらないか ([#3107])。
+    ///
+    /// 粒の列が奥行きを書かないでよいか (``Canvas/Batch/readsDepthOnly``) を決める。**式は
+    /// `mokume_composite` の W3C の一般式で、2 つの粒を逆の順に重ねて確かめてある:**
+    ///
+    /// - `.add`・`.multiply`・`.screen`: どの下地の上でも順に依らない
+    /// - `.subtract`: 不透明な下地 (αb = 1) の上では `下地 − α·色` の和で順に依らない。透けた下地の上では
+    ///   途中のアルファが順で変わり、差がわずかに出るが、奥行きを書いて切るよりは欠けが無い
+    /// - `.lightest`・`.darkest`: 半透明の粒の混ぜ方が `mix` を挟むので依る (下地 0 に、色 1・α 0.5 と
+    ///   色 0.5・α 1 を重ねると、順で 0.5 と 0.75)。`.difference`・`.exclusion` も依る
+    /// - `.blend`・`.replace`: 後に描いたものが前を覆うので、順がそのまま絵になる
+    ///
+    /// [#3107]: https://github.com/mokume-metal/mokume/issues/3107
+    var isOrderIndependent: Bool {
+        switch self {
+        case .add, .subtract, .multiply, .screen: true
+        case .blend, .lightest, .darkest, .difference, .exclusion, .replace: false
+        }
+    }
+
     /// シェーダへ渡す番号。
     ///
     /// **正本は `Shaders/Kinds.metal`** (`kBlend` …) で、ここはその写しである。割れたら
