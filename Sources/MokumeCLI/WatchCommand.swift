@@ -456,6 +456,15 @@ enum WatchCommand {
         // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
         window.onInput = { [weak session] in session?.send($0) }
         preview.onInput = { [weak session] in session?.send($0) }
+        // **子の上限を越える 1 行は管へ流さない** (`WatchSession.send(_:)`)。1 度だけ名乗る
+        var saidOversized = false
+        session.onOversizedInput = { bytes in
+            guard !saidOversized else { return }
+            saidOversized = true
+            say(
+                "Dropped an input event of \(bytes) bytes: the sketch reads at most "
+                    + "\(InputWire.lineLimit) bytes for one (for example, far too many files dropped at once)")
+        }
         // **窓が出せたときだけ世代を重ねる。** 前の世代を畳む合図はこの窓から来るので、
         // 出せなかった実行で重ねると、止める者の居ない子が残る (#1142)
         session.overlapsGenerations = true
@@ -731,6 +740,8 @@ enum WatchCommand {
         // `willRebuild` が上書きする (#1103)
         // **映っている前の世代が自分で消えた回も、台へ伝える** (#2983)。`departed()` は起こした子だけを見る
         session.relinquishIfOutgoingDeparted()
+        // **書き残した入力の続きを、管に空きができたら書き切る** (`WatchSession.send(_:)`)
+        session.flushPendingInput()
         if let departure = session.departed() {
             if departure.failedToStart, let report = departure.report {
                 // **最初の絵を出す前に失敗で終わった子は、起こせなかった回である** (#3172)。作り直しが通らなかった

@@ -3,6 +3,13 @@
 
 import Foundation
 
+/// 子の標準入力へ流す 1 行の大きさの上限。
+package enum InputWire {
+    /// 子が行の終わりを待って溜めてよい上限 (バイト)。**越えると子は溜めたぶんを全部捨てる**
+    /// (``StandardInputEvents``)。書き手は、これを越える 1 行を管へ流さない。
+    package static let lineLimit = 1 << 20
+}
+
 /// 出来事を 1 行にする。
 ///
 /// ## なぜ書く側もここに置くのか

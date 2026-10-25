@@ -64,7 +64,7 @@ final class SketchSurface: NSView {
     /// カーソルを捕まえるかの判定 ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     /// **この面が観たこと** (押された・Escape・窓が退いた・畳まれる) を伝え、スケッチの要求は
     /// 窓を持つ側が ``followPointerLock(requested:)`` で渡す。
-    let pointerLock = PointerLock()
+    let pointerLock: PointerLock
 
     /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     /// ``pointerLock`` と同じく、スケッチの要求は窓を持つ側が ``followCursorHiding(requested:)`` で渡し、
@@ -93,7 +93,11 @@ final class SketchSurface: NSView {
     /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
 
-    init(frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int)) {
+    init(
+        frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int),
+        pointerLock: PointerLock = PointerLock()
+    ) {
+        self.pointerLock = pointerLock
         self.device = device
         self.input = input
         self.canvasWidth = Double(canvasSize.0)
@@ -291,8 +295,14 @@ extension SketchSurface {
     /// 押下・解放が名乗る位置。**捕まえている間は、捕まえた時点の位置** (#1144) — 位置を写し
     /// 直さず、最後に名乗った位置をそのまま使う。`mouseX` は捕まえている間動かない約束である。
     private func pressPoint(of event: NSEvent) -> (x: Float, y: Float)? {
+        pressPoint(atWindowPoint: event.locationInWindow)
+    }
+
+    /// 窓の座標の 1 点を、押下・解放と同じ規則で名乗る位置にする。ファイルの落としも通る
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    private func pressPoint(atWindowPoint windowPoint: NSPoint) -> (x: Float, y: Float)? {
         if pointerLock.isLocked { return lastPoint }
-        return canvasLocation(of: event)
+        return canvasLocation(atWindowPoint: windowPoint)
     }
 
     /// 押しが面そのものに当たったか (重ねた面の上ではないか)。
@@ -428,9 +438,16 @@ extension SketchSurface {
         return (urls ?? []).map(\.path)
     }
 
+    /// ドラッグされている中身に、ファイルの URL が 1 本でもあるか。**引きずっている間は動くたびに問われる**ので、
+    /// 全部を読んでパスにせず、読めるかだけを問う。
+    static func hasDroppedFiles(in pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+    }
+
     /// ファイルを引きずって窓へ入った。**ファイルの URL が 1 本もなければ断る** — 落とす先に見せない。
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        Self.droppedPaths(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+        Self.hasDroppedFiles(in: sender.draggingPasteboard) ? .copy : []
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -446,7 +463,8 @@ extension SketchSurface {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         let paths = Self.droppedPaths(from: sender.draggingPasteboard)
-        guard !paths.isEmpty, let point = canvasLocation(atWindowPoint: sender.draggingLocation)
+        // 落とした所は、押下と同じ規則で名乗る — ポインタを捕まえている間は、捕まえた点で動かない
+        guard !paths.isEmpty, let point = pressPoint(atWindowPoint: sender.draggingLocation)
         else { return false }
         deliver(.fileDropped(paths: paths, x: point.x, y: point.y))
         return true
