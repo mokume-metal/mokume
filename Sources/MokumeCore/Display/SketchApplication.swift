@@ -1001,6 +1001,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard !isTerminating else { return }
         isTerminating = true
         FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+        WorkDirectory.noteStartFailure("\(failure)")
         runtime.closePlugins()
         screenLink.invalidate()
         exitProcess(1)
@@ -1168,6 +1169,7 @@ extension Sketch {
             application.run()
         } catch {
             FileHandle.standardError.write(Data(startupFailureText(error).utf8))
+            WorkDirectory.noteStartFailure("\(error)")
             exit(1)
         }
     }

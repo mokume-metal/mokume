@@ -95,6 +95,42 @@ nonisolated public enum WorkDirectory {
         facet.appendingPathComponent(".fell-back.\(pid)")
     }
 
+    /// 見張りが作り直しの結果を置く区画の名前。**綴りはここ 1 つ** — 書く側 (見張り) と、起動に
+    /// 失敗した子が理由を置く側 (``noteStartFailure(_:forProcess:under:)``) が別のプロセスである。
+    package static let buildFacetName = "build"
+
+    /// 区画 `build` の中の、**起動できなかった子が自分の理由を置く**ファイル
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// 子が自分の pid で置き、見張りは終わった子の pid のものを読んで消す。**中身は理由の全文 (UTF-8 の
+    /// 文字列) で、JSON ではない** (`Schemas/` に仕様は無い・``fellBackURL(forProcess:under:)`` と同じ)。
+    /// pid を名前に持つので、前の子の理由を次の子のものと取り違えず、時計も要らない。点で始めるのは
+    /// 記録 (`status.json`) と並んで読み手の目に入らないため。
+    ///
+    /// **子の標準エラーを親が読み解く形は取らない。** 理由は子が自分で渡す。
+    package static func startFailureURL(forProcess pid: Int32, under facet: URL) -> URL {
+        facet.appendingPathComponent(".start-failure.\(pid)")
+    }
+
+    /// 起動できなかった理由 (全文) を、見張りの区画 `build` へ置く。
+    ///
+    /// **区画が既に在るときだけ置く。** `build` は見張りが作るもので、子が作ると、無い場所に
+    /// 区画を生やすことになる (区画の有無は他の区画では「効かせる」印である・ADR-0018 決定 2)。
+    /// 見張りに起こされていない実行・書けない場所では黙って諦める — 理由は標準エラーに出ている。
+    ///
+    /// - Parameters:
+    ///   - text: 理由の全文。
+    ///   - base: 区画の基準。検査から差し替える。
+    package static func noteStartFailure(
+        _ text: String, forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base
+    ) {
+        let facet = facet(buildFacetName, under: base)
+        guard directoryExists(at: facet) else { return }
+        try? Data(text.utf8).write(
+            to: startFailureURL(forProcess: pid, under: facet), options: .atomic)
+    }
+
     /// その場所がディレクトリとして在るか。
     ///
     /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の

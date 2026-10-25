@@ -99,7 +99,7 @@ struct BuildReport: Encodable, Equatable {
     /// 別々に組むと基準を揃えても同じ形で割れる
     /// ([#730](https://github.com/mokume-metal/mokume/issues/730))。
     static func statusURL(under facetBase: URL) -> URL {
-        WorkDirectory.facet("build", under: facetBase)
+        WorkDirectory.facet(WorkDirectory.buildFacetName, under: facetBase)
             .appendingPathComponent("status.json", isDirectory: false)
     }
 

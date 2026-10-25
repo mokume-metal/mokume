@@ -302,6 +302,9 @@ struct Facets {
     ///   案 B) — 組み上げた実行ファイルをその場所から起こすと、スケッチの区画もそこに置かれて
     ///   正しく繋がるので、断らずに候補の 1 つとして並べる
     func notRunning(_ entry: StartupReads.Entry, existed: Bool) -> String {
+        // **見張りが、起こせなかったと記録に書いていれば、4 つの候補を並べずにそれを言う** (#3169)。
+        // 「応えない」と案内すると、作者は端末を見に行かないと何が起きたか分からない
+        if let notStarted = notStartedAnswer() { return notStarted }
         // **読めたなら原因は確定している。** 候補を並べる前に、そう言う
         if let package = place?.directory,
             DependencyFacets.lacks(entry, forPackageAt: package) == true
@@ -340,6 +343,29 @@ struct Facets {
         return ([opening] + items + [
             "What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`."
         ]).joined(separator: "\n\n")
+    }
+
+    /// 作り直しの記録が、子を起こせなかったと名乗っているときの答え ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    /// **そうでなければ `nil`。**
+    ///
+    /// 組み立ての失敗も `setup()` が投げた失敗も、見張りは起動できなかった回として記録に書く (`ok: true`・
+    /// `launched: false`・`notStartedReason`)。理由の最初の行をここで言い、全文 (子が自分で渡した文面) は
+    /// 記録の `output` で読めるので、`build_status` を指す。**子の標準エラーは読まない** — 理由は区画を通って届く。
+    /// 次の作り直しが通れば記録は起動した回に書き換わり、この答えは出なくなる。
+    func notStartedAnswer() -> String? {
+        guard let status = read(buildStatus), status["ok"] as? Bool == true,
+            status["launched"] as? Bool == false,
+            let reason = status["notStartedReason"] as? String, !reason.isEmpty
+        else { return nil }
+        return """
+            The sketch is not running: the last build passed, but the sketch was not started.
+
+            \(reason)
+
+            The sketch's own account of what went wrong follows the reason in `output` of `build_status` \
+            (\(BuildReport.statusRelativePath)). Fix the cause and save: a watching `\(Command.name) watch` \
+            rebuilds and starts it again, and this answer goes away once it does.
+            """
     }
 
     /// 1 つ目の可能性。区画の基準がスケッチでない場所に落ちていれば (`outside`)、その場所の話と
