@@ -32,7 +32,7 @@
     },
     "ok": {
       "type": "boolean",
-      "description": "Whether the build succeeded. When false, the version from before keeps running if one was running; on the first build, or after the running sketch exited on its own, nothing is running."
+      "description": "Whether the build succeeded. When false, the version from before keeps running if one was running; on the first build, or after the running sketch exited on its own, nothing is running. A sketch that was started but ended before it drew its first frame does not make this false: the build did succeed, and that case is recorded as launched false with a notStartedReason."
     },
     "status": {
       "type": "integer",
@@ -57,13 +57,13 @@
     },
     "launched": {
       "type": "boolean",
-      "description": "Whether the swapped-in sketch came up. If absent, the writer predates this field (read ok alone). ok true with this false means it built but is not running, which is the one shape where a frozen drawing reads as success. It is not in required because putting it there would stop older writers' records from validating (the shape ADR-0018 decision 5's revision hit with frames)."
+      "description": "Whether the swapped-in sketch came up. If absent, the writer predates this field (read ok alone). ok true with this false means it built but is not running, which is the one shape where a frozen drawing reads as success. It is also the shape of a sketch that was started but failed (a nonzero exit code, or a signal) before it drew its first frame: the record written when it was started is rewritten with launched false and the reason in notStartedReason, and the version from before keeps running if it had drawn a frame, otherwise nothing is running. A sketch that exited with code 0 on its own is not recorded this way. It is not in required because putting it there would stop older writers' records from validating (the shape ADR-0018 decision 5's revision hit with frames)."
     },
     "notStartedReason": {
       "type": "string",
       "minLength": 1,
       "pattern": "^[^\\n]+(\\n[^\\n]+)*$",
-      "description": "Why the sketch was not started, when the build passed but the sketch was not started (ok true, launched false). Non-empty, and never contains a blank line; it can span several lines and the first line is the headline. It is the same text that leads output. Absent when the sketch was started and when the build failed, and also in records written before this field existed. It is not in required because putting it there would stop older writers' records from validating (the same reason as launched). This is what tells a record that names its reason from an old one that does not."
+      "description": "Why the sketch was not started, when the build passed but the sketch was not started (ok true, launched false), including a sketch that ended with a failure before it drew its first frame. Non-empty, and never contains a blank line; it can span several lines and the first line is the headline. It is the same text that leads output. Absent when the sketch was started (a record written when it was started is rewritten to carry this field if the sketch is then found to have failed before drawing its first frame) and when the build failed, and also in records written before this field existed. It is not in required because putting it there would stop older writers' records from validating (the same reason as launched). This is what tells a record that names its reason from an old one that does not."
     },
     "timings": {
       "type": "object",

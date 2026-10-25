@@ -131,11 +131,18 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// まだ出していない世代を控えているか。**検査から見る。**
     var hasIncoming: Bool { incoming != nil }
 
+    /// いま映している世代の目録が名乗った子の番号。**検査から見る。**
+    var displayedPID: Int32? { source?.pid }
+
+    /// 乗り換えた直前の世代を、常駐させたまま持っているか (``superseded``)。**検査から見る。**
+    var holdsSupersededSource: Bool { superseded != nil }
+
     /// 面を引いた (`IOSurfaceLookup`) 回数。出している世代と控えている世代の合計。**検査から
     /// 見る** — 番号の組が変わらない間は、リフレッシュを重ねても増えないこと
     /// ([#2368](https://github.com/mokume-metal/mokume/issues/2368))。
     var surfaceLookups: Int {
         retiredLookups + (source?.lookup.lookups ?? 0) + (incoming?.lookup.lookups ?? 0)
+            + (superseded?.lookup.lookups ?? 0)
     }
     /// 手放した世代が引いた回数。``surfaceLookups`` を世代の入れ替わりをまたいで数えるため。
     private var retiredLookups = 0
@@ -193,8 +200,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``promoteIfReady()``)、入れ替わりの知らせでは子の `setup()` の間を覆えない。
     /// 受け取る側 (プレビューの「起こしている」表示) が畳む合図はこちらである。
     ///
+    /// **引数は、1 枚目を出した世代の目録が名乗った子の番号** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 名乗らない子 (古いライブラリ) は `nil`。見張りは、子が絵を出す前に終わったかをこの知らせで読む
+    /// (目録は `setup()` より前に置かれるので、乗り換えの知らせは絵が出た時点を指さない)。
+    ///
     /// [#2875]: https://github.com/mokume-metal/mokume/issues/2875
-    var onGenerationShown: (() -> Void)?
+    var onGenerationShown: ((Int32?) -> Void)?
     /// いま出している世代の絵を、もう 1 枚でも出したか。**採用のたびに下ろす。**
     private var shownCurrentGeneration = false
     /// 区画に置かれた目録の見張り。**変わったときだけ読み直す** — 書きかけを掴んだ改訂は、
@@ -427,7 +438,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
                 gpu.awaitSettlement(of: lastFrameSubmission, by: self)
                 if !shownCurrentGeneration {
                     shownCurrentGeneration = true
-                    onGenerationShown?()
+                    // 1 枚目を出した世代が死んでも、見張りは前の版を戻さない。直前の世代はもう要らない (#3172)
+                    releaseSuperseded()
+                    onGenerationShown?(source.pid)
                 }
             }
             noteRecovery()
@@ -477,6 +490,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 乗り換えるのは ``promoteIfReady()`` で、控えた世代が 1 枚書いてからである。
     private func adopt(_ manifest: SharedFrameSurface.Manifest) {
+        // 見張りが「乗り換えない」と決めた世代 (起動に失敗して前の版を戻した回の、死んだ子) の目録は採らない
+        if let pid = manifest.pid, abandonedPIDs.contains(pid) { return }
         // **控えていた世代は捨てる。** 重ねるのは 2 つまでで、まだ 1 枚も出していない
         // 世代を積み上げても、出る絵は増えない
         if let waiting = incoming {
@@ -524,17 +539,17 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private func promoteIfReady() {
         guard let waiting = incoming else { return }
         if source != nil, waiting.lookup.newest() == nil { return }
-        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる
-        if let previous = source {
-            retiredLookups += previous.lookup.lookups
-            try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
-        }
+        // **前の面を常駐から外す。** 外さないと、見張っている間ずっと死んだ面が積み上がる。ただし**直前の
+        // 世代は、乗り換えた世代が 1 枚目を出すまで持つ** (``superseded``・#3172)。もう 1 つ前の世代はここで外す
+        releaseSuperseded()
+        superseded = source
         source = waiting
         incoming = nil
         // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
         // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
         if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
         relinquishedLegacyIDs = nil
+        abandonedPIDs.removeAll()
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
@@ -626,6 +641,71 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         guard let generation else { return false }
         if let pid = generation.pid { return relinquishedPIDs.contains(pid) }
         return relinquishedLegacyIDs == generation.ids
+    }
+
+    /// 見張りが乗り換えないと決めた世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// **乗り換えで捨てる。** 乗り換えの無いまま起動の失敗が重なっても溜まりすぎず、番号が一周しても新しい子の
+    /// 目録を捨てないよう、見張りが新しい子を起こしたときにその番号を外す (``expectGeneration(pids:)``)。
+    private var abandonedPIDs: Set<Int32> = []
+
+    /// 乗り換えた直前の世代。**乗り換えた世代が 1 枚目を出すまで、常駐を外さずに持つ** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 乗り換えた世代が 1 枚も出さずに死ぬと、見張りは起動に失敗した版を捨てて前の版を現役に戻す。台は
+    /// その子の目録へ乗り換え済みでも、動いている前の版へ映し直せなければならない
+    /// (``abandonIncoming(pids:)``)。目録は死んだ子のもので上書きされ、前の版は目録を置き直さないので、
+    /// 乗り換えの時点で持っているものを手放さないのが唯一の道である。**1 枚目を出したら外す** (見張りが
+    /// 前の版を戻すのも、1 枚目の前に終わった子についてだけ)。次の乗り換えでも外す。
+    private var superseded: Source?
+
+    /// 乗り換えた直前の世代の常駐を外す。
+    private func releaseSuperseded() {
+        guard let previous = superseded else { return }
+        retiredLookups += previous.lookup.lookups
+        try? gpu.releaseResidency(of: previous.frames.values.map(\.texture))
+        superseded = nil
+    }
+
+    /// 見張りが、乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **起動に失敗した新しい版を捨てて、前の版を現役に戻した回に呼ぶ。** 失敗した子が 1 枚書いてから死ぬと、
+    /// 台はその子の目録へ乗り換え、動いている前の版の代わりに死んだ子の最後の絵を映す。次の 3 つを同じ番号で行う。
+    /// - まだ採っていない目録がその番号なら採らない (``abandonedPIDs``)
+    /// - 控えている世代がその番号なら捨てる
+    /// - **映している世代がその番号なら、直前の世代 (``superseded``) へ映し直す。** 乗り換えは済み、描画が
+    ///   見送られた (面が取れない拍) 子でも、1 枚目の合図は鳴らない — 控えを捨てるだけでは覆えない。
+    ///   直前の世代の常駐を外していないので、そのまま映せる。番号を名乗らない世代 (古いライブラリ) は
+    ///   照合できないので映し直さない
+    func abandonIncoming(pids: [Int32]) {
+        abandonedPIDs.formUnion(pids)
+        if let waiting = incoming, let pid = waiting.pid, pids.contains(pid) {
+            retiredLookups += waiting.lookup.lookups
+            try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
+            incoming = nil
+        }
+        guard let dead = source, let pid = dead.pid, pids.contains(pid), let previous = superseded
+        else { return }
+        retiredLookups += dead.lookup.lookups
+        try? gpu.releaseResidency(of: dead.frames.values.map(\.texture))
+        source = previous
+        superseded = nil
+        // 乗り換えと同じく、枚数の数え直しと窓の大きさの追随を、映し直した世代に対して行う。前の版は
+        // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
+        lastFrame = 0
+        lastSeenFrame = 0
+        shownCurrentGeneration = true
+        view?.setCanvasSize((previous.width, previous.height))
+        followRequestedSize(of: previous)
+    }
+
+    /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **この番号を、乗り換えないと決めた世代 (``abandonedPIDs``) と手放した世代 (``relinquishedPIDs``) の
+    /// 覚えから外す。** 番号は使い回されるので、起動に失敗した子の番号が残っていると、同じ番号を得た新しい子の
+    /// 目録を ``adopt(_:)`` が黙って捨て、手放した番号が残っていると、新しい子を生まれたときから手放した扱いに
+    /// して頼みを読まない。
+    func expectGeneration(pids: [Int32]) {
+        abandonedPIDs.subtract(pids)
+        relinquishedPIDs.subtract(pids)
     }
 
     /// 見張りが、いま映している世代を手放したと知らされた ([#2983])。**頼みを下ろし、その世代の頼みを

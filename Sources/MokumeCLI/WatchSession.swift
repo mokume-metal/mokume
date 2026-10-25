@@ -194,6 +194,17 @@ final class WatchSession {
         /// **読む人が次にすることが変わる。** 落ちたのなら端末を遡る先があり、自分から
         /// 終わったのならスケッチの側にそう書いてある。
         var wasSignalled: Bool
+        /// **最初の絵を出す前に**、失敗で (0 以外の終了コードか合図で) 終わったか
+        /// ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+        ///
+        /// 走っていた子が自分で消えたのとは別の出来事で、**起こせなかった**回として扱う。終了コード 0 で
+        /// 終わった子は、絵を出す前でも含めない — 自分から終わるのは起動の失敗ではない。
+        var failedToStart = false
+        /// 起動できなかった回に、前の版を残して現役に戻したか。**戻したなら、前の版の頼みも台でそのまま効く。**
+        var keptPrevious = false
+        /// 起動できなかった回の記録 (`failedToStart` のときだけ)。**区画に書いたのと同じもの**で、端末とプレビューの
+        /// 言葉はここから組む。手前に作り直しの失敗の記録が挟まっていたときは書かないが、言葉の材料としては持つ。
+        var report: BuildReport?
     }
 
     /// 止まるのを待つ上限 (秒)。
@@ -294,6 +305,19 @@ final class WatchSession {
     /// 乗り換えて頼みを読まない)。
     var relinquishesDisplay: ([Int32]) -> Void = { _ in }
 
+    /// 道具の窓へ、「この世代へは乗り換えない」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回(``departed()``)だけが呼ぶ。台は、失敗した子が
+    /// 1 枚書いてから死ぬと、動いている前の版でなくその子の最後の絵へ乗り換える。引数は失敗した子の番号。
+    var abandonsIncoming: ([Int32]) -> Void = { _ in }
+
+    /// 道具の窓へ、「新しい子を起こした」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 引数は起こした子の番号。台は、乗り換えないと決めた世代 (``abandonsIncoming``) と手放した世代
+    /// (``relinquishesDisplay``) の番号の覚えからこの番号を外す — 番号は使い回されるので、残すと同じ番号を得た
+    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
+    var expectsGeneration: ([Int32]) -> Void = { _ in }
+
     /// 世代の子の番号。居なければ空。
     private func generationPIDs(of process: Process?) -> [Int32] {
         process.map { [$0.processIdentifier] } ?? []
@@ -312,6 +336,16 @@ final class WatchSession {
     /// 待たずに乗り換える (`SharedFrameStage.promoteIfReady()`) ので、最初に目録を置いた
     /// 世代の合図は「絵が出た」ではなく「目録が読めた」になる。
     private var hasSeenPromotion = false
+
+    /// 1 枚目の絵を道具の窓に出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **「絵を出す前に終わった」の根拠はこれである。** 乗り換えの合図 (``hasSeenPromotion``) は使えない —
+    /// 出している世代が無い台は 1 枚目を待たずに乗り換えるので、最初の世代の合図は「目録が読めた」で、
+    /// `setup()` の前に来る。起こした世代が生きている間だけ覚える (``generationShown(pid:)``・
+    /// ``launchChild(_:)``)。
+    private var shownPIDs: Set<Int32> = []
+    /// 最後に起こした子の道具の名前。起動できなかった回の理由に使う。
+    private var launchedTool: String?
 
     /// 消えたことを既に名乗ったか。**子が入れ替わると下りる。**
     private var hasNamedDeparture = false
@@ -546,6 +580,11 @@ final class WatchSession {
     /// **1 度きりなのは、巡回が 0.25 秒ごとに回るからである。** 消えた状態はそのまま続く
     /// ので、印を持たないと同じ 1 行を毎秒 4 回出し続ける。印は子が入れ替われば下りる。
     ///
+    /// **最初の絵を出す前に失敗で終わった子は、走っていた子が消えたのではなく、起こせなかった回である**
+    /// ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。根拠は「その子が 1 枚目を出したか」
+    /// (``generationShown(pid:)``) で、乗り換えの合図ではない。この回は前の版を現役に戻し
+    /// (``Departure/keptPrevious``)、記録を起こせなかった回の形で書き直す。終了コード 0 の子は含めない。
+    ///
     /// 名乗るのは口の側である — このクラスは判断だけを持ち、出力を持たない。
     func departed() -> Departure? {
         // **道具が止めている最中の子は、消えたと名乗らない。** 止める待ちが main actor を塞がなく
@@ -554,14 +593,119 @@ final class WatchSession {
             !isBringingDown(gone)
         else { return nil }
         hasNamedDeparture = true
-        // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
-        // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
-        // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
-        relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
+        var departure: Departure
         switch ChildEnding(of: gone) {
-        case .exited(let status): return Departure(status: status, wasSignalled: false)
-        case .signalled(let signal): return Departure(status: signal, wasSignalled: true)
+        case .exited(let status): departure = Departure(status: status, wasSignalled: false)
+        case .signalled(let signal): departure = Departure(status: signal, wasSignalled: true)
         }
+        // **最初の絵を出す前に、失敗で終わった子は、起こせなかった回である** (#3172)。終了コード 0 は
+        // 自分から終わったので、絵を出す前でも含めない。**終われと言われた合図 (Ctrl-C など) で落ちた子も
+        // 含めない** — 見張りが終わる合図は子にも届き、道具が `stopped()` を立てる前にここへ来うる
+        let failed =
+            departure.wasSignalled
+            ? !Self.endingSignals.contains(departure.status) : departure.status != 0
+        guard !hasShownFirstFrame(gone), failed else {
+            // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
+            // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
+            // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
+            relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
+            return departure
+        }
+        departure.failedToStart = true
+        departure.keptPrevious = restorePreviousGeneration(afterLosing: gone)
+        departure.report = recordFailedStart(of: gone, departure)
+        return departure
+    }
+
+    /// その子が、道具の窓に 1 枚目の絵を出したか。
+    ///
+    /// **窓の無い見張りでは、誰も知らせてくれない** (``overlapsGenerations``)。そこは子が自分の窓を持つので、
+    /// 出したものとして扱い、今までどおり「自分で消えた」と読む。
+    ///
+    /// **倒れた子 (自分の窓に描く) は、目印があれば出した扱いにする。** 目印を見つけて前の世代を畳むのは巡回の
+    /// 別の口 (``retireAfterFallback()``) で、子が目印を置いてから見つかるまでに終わると、先にここへ来る。
+    private func hasShownFirstFrame(_ process: Process) -> Bool {
+        if !overlapsGenerations || shownPIDs.contains(process.processIdentifier) { return true }
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: process.processIdentifier,
+            under: WatchCommand.viewportFacet(under: facetBase))
+        return FileManager.default.fileExists(atPath: marker.path)
+    }
+
+    /// 見張りを終わらせる合図。**この合図で落ちた子は、起動に失敗したのではない。**
+    private static let endingSignals: Set<Int32> = [SIGINT, SIGTERM, SIGHUP]
+
+    /// 道具の窓が、世代の 1 枚目の絵を出した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 窓ごとに知らせが来る (作品の窓とプレビュー) ので、2 度呼ばれる。控えるだけで、冪等である。
+    ///
+    /// - Parameter pid: 1 枚目を出した世代の目録が名乗った子の番号。名乗らない子 (古いライブラリ) は
+    ///   `nil` で、最後に起こした子のものと読む (他の合図の推定と同じ)。
+    func generationShown(pid: Int32?) {
+        guard let pid = pid ?? child?.processIdentifier else { return }
+        shownPIDs.insert(pid)
+    }
+
+    /// 起こせなかった子の代わりに、映っていた前の世代を現役へ戻す。
+    ///
+    /// **戻せるのは、1 枚目を出していて、生きていて、道具が止めている最中でない前の世代だけである。** 1 枚も出して
+    /// いない前の世代は、台が次の目録 (消えた子の目録) で控えを捨てていて、映せない。戻したときは**台へ手放すのは
+    /// 消えた子だけ**にする — 前の版の `noCursor()` とポインタの捕まえは、そのまま効く。戻さないときは、今までどおり
+    /// 前の世代の頼みも手放し、口の側が前の世代を畳む。
+    ///
+    /// - Returns: 前の版を残したか。
+    private func restorePreviousGeneration(afterLosing gone: Process) -> Bool {
+        guard let previous = outgoing, previous.isRunning, previous !== stoppingChild,
+            !isBringingDown(previous), shownPIDs.contains(previous.processIdentifier)
+        else {
+            relinquishesDisplay([gone.processIdentifier] + generationPIDs(of: outgoing))
+            return false
+        }
+        relinquishesDisplay([gone.processIdentifier])
+        abandonsIncoming([gone.processIdentifier])
+        child = previous
+        outgoing = nil
+        awaitingPromotion = false
+        // 戻した子が後で消えたときは、また名乗る (``child`` が入れ替わると印は下りる)
+        return true
+    }
+
+    /// 起動できなかった回を、作り直しが通って子を起こせなかった回 (``BuildReport/notStarted(reason:buildOutput:stamp:configuration:timings:)``)
+    /// の形で書く ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// **直前の記録が、その子を起こした回 (`ok`・`launched`) のときだけ上書きする。** その子を起こした後に
+    /// 作り直しが通らなかった回の記録 (`ok: false`) は、直すべきものを本文に持つので消さない。
+    ///
+    /// - Returns: 端末とプレビューの言葉の材料にする記録。書かなかったときも、同じ形のものを返す。
+    private func recordFailedStart(of gone: Process, _ departure: Departure) -> BuildReport {
+        let reason = Self.failedStartReason(
+            tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
+            departure: departure)
+        guard let last = lastReport, last.ok, last.launched else {
+            return .notStarted(
+                reason: reason, buildOutput: "", stamp: lastStamp, configuration: configurationName,
+                timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil))
+        }
+        var timings = last.timings
+        timings.firstFrameMs = nil
+        return finish(
+            .notStarted(
+                reason: reason, buildOutput: last.output, stamp: last.stamp,
+                configuration: last.configuration, timings: timings))
+    }
+
+    /// 最初の絵を出す前に終わった子の、起こせなかった理由。
+    ///
+    /// **既存の「起こせなかった」と同じ頭で言う** (``CommandFailure/cannotLaunch(tool:place:reason:)``)。
+    /// プレビューの短縮もこの頭を見る。子の標準エラーは親が読み解かない — どう終わったかだけを言い、
+    /// 理由の全文は子が端末へ出している。
+    static func failedStartReason(tool: String, place: String, departure: Departure) -> String {
+        let how =
+            departure.wasSignalled
+            ? "it crashed (signal \(departure.status))" : "it exited with code \(departure.status)"
+        return CommandFailure.cannotLaunch(
+            tool: tool, place: place, reason: how + BuildReport.firstFrameSuffix
+        ).message
     }
 
     /// 映っている前の世代 (``outgoing``) が自分で終わった・落ちたとき、台へその番号で伝える
@@ -1090,6 +1234,10 @@ final class WatchSession {
         // 何が起きたかを読める
         // **新しい子を起こす前に、古い目印を掃く** (#2350)。後の子が同じ pid を巡り当てても、倒れたと読まれない
         sweepFellBackMarkers(keeping: nil)
+        // **絵を出したと覚えるのは、生きている世代のぶんだけ。** 番号は使い回されるので、居なくなった世代の
+        // 覚えを残すと、同じ番号の新しい子を、もう絵を出したと読む (#3172)
+        shownPIDs.formIntersection([child, outgoing].compactMap { $0?.processIdentifier })
+        launchedTool = executable.lastPathComponent
         var launchFailure: CommandFailure?
         do throws(CommandFailure) {
             child = try hooks.launch(
@@ -1101,6 +1249,7 @@ final class WatchSession {
         // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
+        expectsGeneration(generationPIDs(of: child))
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
         awaitingPromotion = overlapsGenerations && child != nil
 
@@ -1250,6 +1399,9 @@ final class WatchSession {
         previous: FallbackPrevious, outcome: StopOutcome?
     ) {
         awaitingPromotion = false
+        // **乗り換えたとみなした子は、絵を出した扱いにする** (#3172)。倒れた子は自分の窓に描き、受け取れない
+        // 世代は描いていても台の合図が来ない — どちらも、後で終わっても絵を出す前に失敗した子とは読まない
+        if let waiting = child { shownPIDs.insert(waiting.processIdentifier) }
         // **測らない。** 道具の窓に新しい絵は出ないので、待っていた数字の行き先は無い
         firstFrameSince = nil
         let hadOutgoing = outgoing != nil

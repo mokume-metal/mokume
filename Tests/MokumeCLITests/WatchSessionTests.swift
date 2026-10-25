@@ -1032,6 +1032,435 @@ struct WatchSessionTests {
         #expect(session.departed() == nil)
     }
 
+    // MARK: - 最初の絵を出す前に終わった子 (#3172)
+
+    /// 起こすたびに別の中身を走らせる外側。**起こした順に使い、足りなければ最後のものを使う。**
+    @MainActor
+    final class Scripted {
+        let scripts: [String]
+        var launches = 0
+        /// 作り直しの終了コード。0 以外なら、作り直しが通らなかった回を作れる。
+        var rebuildStatus: Int32 = 0
+        /// 変えた回だけ作り直す。
+        var stamp = "s0"
+        init(_ scripts: [String]) { self.scripts = scripts }
+    }
+
+    @MainActor
+    private func hooks(scripted: Scripted, ready: Ready) -> WatchSession.Hooks {
+        WatchSession.Hooks(
+            rebuild: { directory in
+                RunCommand.Rebuilt(
+                    status: scripted.rebuildStatus, output: "build output",
+                    executable: scripted.rebuildStatus == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
+                    binPath: directory, product: "sketch")
+            },
+            launch: { executable, _, _, _ throws(CommandFailure) in
+                let script = scripted.scripts[min(scripted.launches, scripted.scripts.count - 1)]
+                scripted.launches += 1
+                let process = Process()
+                process.executableURL = executable
+                process.arguments = ["-c", script]
+                let pipe = Pipe()
+                process.standardInput = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                } catch {
+                    throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
+                }
+                ready.pipes.append(pipe)
+                return process
+            },
+            now: { 0 },
+            stamp: { _ in scripted.stamp })
+    }
+
+    /// 窓のある見張り (世代を重ねる) を、起こすたびに別の中身を走らせる外側で組む。
+    @MainActor
+    private func windowed(_ scripted: Scripted, ready: Ready) throws -> WatchSession {
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(scripted: scripted, ready: ready), stopTimeout: 0.5)
+        session.overlapsGenerations = true
+        return session
+    }
+
+    /// 区画の記録 (`status.json`) を読む。
+    private func recordedStatus(of session: WatchSession) throws -> [String: Any] {
+        let data = try Data(contentsOf: BuildReport.statusURL(under: session.facetBase))
+        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// 窓のある見張りで、前の版の後に新しい版を起こした形を作る (次の保存を 1 回通した後)。返り値の
+    /// `first` が映っていた前の世代 (`outgoing`)、`second` が最後に起こした世代 (`child`)。
+    @MainActor
+    private func previousAndNew(
+        _ scripted: Scripted, ready: Ready, previousShown: Bool
+    ) async throws -> (session: WatchSession, first: Process, second: Process) {
+        let session = try windowed(scripted, ready: ready)
+        await session.start()
+        ready.waitForLast()
+        let first = try #require(session.child)
+        if previousShown { session.generationShown(pid: first.processIdentifier) }
+        scripted.stamp = "s1"
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        #expect(session.outgoing === first)
+        return (session, first, second)
+    }
+
+    /// **子を起こすたびに、その番号を台へ伝える** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証 2 回目)。
+    /// 台は、乗り換えないと決めた世代の番号の覚えからそれを外す — 番号が一周して同じ番号を得た新しい子の目録を捨てない。
+    @Test("子を起こすたびに、起こした子の番号を台へ伝える")
+    func everyLaunchedChildIsAnnouncedToTheStage() async throws {
+        let ready = Ready()
+        let scripted = Scripted(["echo ready; read line", "echo ready; read line"])
+        let session = try windowed(scripted, ready: ready)
+        defer { session.stopBlocking() }
+        var expected: [[Int32]] = []
+        session.expectsGeneration = { expected.append($0) }
+        await session.start()
+        ready.waitForLast()
+        let first = try #require(session.child)
+        #expect(expected == [[first.processIdentifier]], "\(expected)")
+        scripted.stamp = "s1"
+        await session.tick()
+        ready.waitForLast()
+        let second = try #require(session.child)
+        #expect(expected == [[first.processIdentifier], [second.processIdentifier]], "\(expected)")
+    }
+
+    /// **最初の絵を出す前に失敗で終わった子は、起動できなかった回である** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 前の版が居ない最初の子の言い方も、ここで固定する: 要約・理由・「何も走っていない、直して保存」の順。
+    @Test("最初の絵を出す前に失敗で終わった子は、起動できなかった回として記録し、前の版が居ないと端末に言う")
+    func aChildThatFailsBeforeItsFirstFrameDidNotStart() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; exit 7"]), ready: ready)
+        defer { session.stopBlocking() }
+        var told: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+        let started = await session.start()
+        #expect(started.launched)
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart, "絵を出す前に失敗で終わった子を、自分で消えたと読んだ")
+        #expect(!departure.keptPrevious)
+        #expect(told == [[child.processIdentifier]], "\(told)")
+
+        let report = try #require(departure.report)
+        let reason =
+            "Could not start sh in \(session.directory.path): it exited with code 7 before drawing its first frame"
+        // 作り直しは通ったが起こせなかった回の形 (`ok: true, launched: false, notStartedReason`)
+        #expect(report.ok && !report.launched)
+        #expect(report.notStartedReason == reason)
+        #expect(report.output == reason + "\n\n" + started.output)
+        #expect(report.stamp == started.stamp)
+        let recorded = try recordedStatus(of: session)
+        #expect(recorded["ok"] as? Bool == true)
+        #expect(recorded["launched"] as? Bool == false, "区画の記録が起動した回のまま")
+        #expect(recorded["notStartedReason"] as? String == reason)
+
+        #expect(
+            WatchCommand.failedStartLines(departure)
+                == [report.summary, reason, WatchCommand.nothingRunningLine])
+        #expect(report.summary.hasPrefix("Rebuilt, but could not start it: "))
+        #expect(!session.keepsPreviousRunning)
+        // 同じ消え方は 1 度だけ
+        #expect(session.departed() == nil)
+    }
+
+    @Test("1 枚目を出した後に失敗で終わった子は、これまでどおり自分で消えたと読み、記録は起動した回のまま")
+    func aChildThatEndedAfterItsFirstFrameIsStillNamedAsDeparted() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; read line; exit 7"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        session.generationShown(pid: child.processIdentifier)
+        session.send("go\n")
+        waitUntilGone(child)
+
+        #expect(session.departed() == WatchSession.Departure(status: 7, wasSignalled: false))
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
+    }
+
+    /// **自分から終わるのは、起動の失敗ではない。** 絵を出す前に `exit(0)` した子を「起動できなかった」と
+    /// 名乗らない。
+    @Test("絵を出す前に終了コード 0 で終わった子は、起動できなかったとは名乗らない")
+    func aChildThatExitedZeroBeforeItsFirstFrameDidNotFailToStart() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; exit 0"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        #expect(session.departed() == WatchSession.Departure(status: 0, wasSignalled: false))
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
+    }
+
+    @Test("絵を出す前に落ちた子は、落ちたと名乗って起動できなかった回にする")
+    func aChildThatCrashedBeforeItsFirstFrameDidNotStart() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; kill -SEGV $$"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart && departure.wasSignalled && departure.status == SIGSEGV)
+        #expect(
+            departure.report?.notStartedReason?.hasSuffix(
+                "it crashed (signal \(SIGSEGV)) before drawing its first frame") == true,
+            "\(String(describing: departure.report?.notStartedReason))")
+    }
+
+    /// **窓の無い見張りは、1 枚目の合図が誰からも来ない。** 子が自分の窓に描くので、絵を出す前に
+    /// 終わった回と読まず、今までどおり自分で消えたと読む (でないと、走っていた子が消えるたびに
+    /// 起動できなかったと誤読する)。
+    @Test("窓の無い見張りでは、失敗で終わった子を起動できなかったとは読まない")
+    func aWindowlessSessionNeverReadsADepartureAsFailingToStart() async throws {
+        let ready = Ready()
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(),
+            hooks: hooks(scripted: Scripted(["echo ready; exit 7"]), ready: ready))
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+        #expect(session.departed() == WatchSession.Departure(status: 7, wasSignalled: false))
+    }
+
+    /// **前の版を残して現役に戻す。** 台へ手放すのは起動できなかった子だけで、前の版のカーソルの頼みは
+    /// そのまま効く。端末は、作り直しが通らなかった回と同じ「前の版のまま待つ」と言う。
+    @Test("起動できなかった回は、1 枚目を出していた前の版を現役に戻し、台へはできなかった子だけを手放す")
+    func aFailedStartKeepsThePreviousVersion() async throws {
+        let ready = Ready()
+        let (session, first, second) = try await previousAndNew(
+            Scripted(["echo ready; read line; exit 0", "echo ready; exit 1"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        var told: [[Int32]] = []
+        var abandoned: [[Int32]] = []
+        session.relinquishesDisplay = { told.append($0) }
+        session.abandonsIncoming = { abandoned.append($0) }
+        waitUntilGone(second)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart && departure.keptPrevious)
+        #expect(told == [[second.processIdentifier]], "前の版の頼みまで手放した: \(told)")
+        #expect(abandoned == [[second.processIdentifier]], "台に、死んだ子へ乗り換えないと伝えていない: \(abandoned)")
+        #expect(session.child === first, "前の版を現役に戻していない")
+        #expect(session.outgoing == nil)
+        #expect(first.isRunning)
+        #expect(session.keepsPreviousRunning)
+        #expect(session.waitingGeneration == nil, "戻した後も乗り換えを待っている")
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == false)
+        let report = try #require(departure.report)
+        #expect(
+            WatchCommand.failedStartLines(departure)
+                == [report.summary, try #require(report.notStartedReason), WatchCommand.holdingLine])
+
+        // 戻した版が後で自分から消えたら、またそれを名乗る (1 枚目を出した版なので、自分で消えた)
+        session.send("go\n")
+        waitUntilGone(first)
+        #expect(session.departed() == WatchSession.Departure(status: 0, wasSignalled: false))
+    }
+
+    /// **1 枚も出していない前の版は戻さない。** 台は次の目録で控えを捨てていて、戻しても映せない。
+    @Test("1 枚目を出していない前の版は戻さず、前の版の頼みも手放す")
+    func aFailedStartDoesNotKeepAPreviousVersionThatNeverDrew() async throws {
+        let ready = Ready()
+        let (session, first, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; exit 1"]), ready: ready,
+            previousShown: false)
+        defer { session.stopBlocking() }
+        var told: [[Int32]] = []
+        var abandoned = 0
+        session.relinquishesDisplay = { told.append($0) }
+        session.abandonsIncoming = { _ in abandoned += 1 }
+        waitUntilGone(second)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart && !departure.keptPrevious)
+        #expect(told == [[second.processIdentifier, first.processIdentifier]], "\(told)")
+        #expect(abandoned == 0, "戻していないのに、乗り換えないと伝えた")
+        #expect(session.child === second)
+        #expect(WatchCommand.failedStartLines(departure).last == WatchCommand.nothingRunningLine)
+    }
+
+    /// 戻せないほど前の版が既に居なければ、戻さない。
+    @Test("前の版が既に居なければ、戻さない")
+    func aFailedStartDoesNotKeepAPreviousVersionThatIsGone() async throws {
+        let ready = Ready()
+        let (session, first, second) = try await previousAndNew(
+            Scripted(["echo ready; read line; exit 0", "echo ready; exit 1"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        session.send("go\n")
+        waitUntilGone(first)
+        waitUntilGone(second)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart && !departure.keptPrevious)
+        #expect(session.child === second)
+    }
+
+    /// **直すべき作り直しの失敗を、起動の失敗で消さない。** その子を起こした後に作り直しが通らなかった回の
+    /// 記録 (`ok: false`) は、本文に直すものを持つ。
+    @Test("起こした後に作り直しが通らなかった回の記録は、起動できなかった子の名乗りで消さない")
+    func aFailedStartDoesNotOverwriteALaterBuildFailure() async throws {
+        let ready = Ready()
+        let scripted = Scripted(["echo ready; read line; exit 3"])
+        let session = try windowed(scripted, ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        scripted.rebuildStatus = 1
+        scripted.stamp = "s1"
+        let failed = try #require(await session.tick())
+        #expect(!failed.ok)
+        session.send("go\n")
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(departure.failedToStart)
+        let recorded = try recordedStatus(of: session)
+        #expect(recorded["ok"] as? Bool == false, "作り直しの失敗の記録を上書きした")
+        #expect((recorded["output"] as? String)?.contains("build output") == true)
+        // 言葉の材料としては、起動できなかった形を持つ
+        #expect(departure.report?.notStartedReason != nil)
+    }
+
+    /// **倒れた子 (自分の窓を開いた) は、絵を出したものとして扱う。** 台からの合図は来ない。
+    @Test("倒れた子は、台から 1 枚目の合図が来なくても、起動できなかったとは読まない")
+    func aFallenChildIsNotReadAsFailingToStart() async throws {
+        let ready = Ready()
+        let (session, _, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; read line; exit 3"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        _ = try placeFellBackMarker(of: second, for: session)
+        #expect(await session.retireAfterFallback() != nil)
+        session.send("go\n")
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **「乗り換えたとみなす」もう 1 つの口 (受け取れない世代) も、絵を出した扱いにする。** 描いていても台の合図が
+    /// 来ないので、後で失敗で終わっても、絵を出す前に失敗したとは読まない (#3172 の反証)。
+    @Test("受け取れない世代として乗り換えたとみなした子は、後で失敗で終わっても起動できなかったとは読まない")
+    func anUndeliverableChildIsNotReadAsFailingToStart() async throws {
+        let ready = Ready()
+        let (session, _, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; read line; exit 3"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        let waiting = session.waitingGeneration
+        #expect(await session.retireAfterUndeliverable(waiting: waiting) != nil)
+        session.send("go\n")
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **倒れた子が目印を置いてから巡回が見つけるまでに終わっても、起動できなかったとは読まない。** 巡回は
+    /// 子の離脱を、倒れた子の口より先に見る。
+    @Test("倒れた目印を置いた子は、巡回が目印を見つける前に失敗で終わっても、起動できなかったとは読まない")
+    func aFallenChildThatEndedBeforeTheStepSawItsMarker() async throws {
+        let ready = Ready()
+        let (session, _, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; read line; exit 3"]), ready: ready,
+            previousShown: true)
+        defer { session.stopBlocking() }
+        _ = try placeFellBackMarker(of: second, for: session)
+        // 映っているのは前の世代なので、書き込みは新しい子の管へ直接送る
+        try (second.standardInput as? Pipe)?.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        waitUntilGone(second)
+
+        #expect(session.departed() == WatchSession.Departure(status: 3, wasSignalled: false))
+    }
+
+    /// **見張りを終える合図 (Ctrl-C など) は子にも届く。** 道具が終わりの印を立てる前に子の離脱を見ても、
+    /// 起動に失敗したとは名乗らない (記録も書き換えない)。
+    @Test("終わりの合図で落ちた子は、絵を出す前でも起動できなかったとは読まず、記録を書き換えない", arguments: [SIGINT, SIGTERM, SIGHUP])
+    func aChildEndedByAStopSignalDidNotFailToStart(signal: Int32) async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; kill -\(signal) $$"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        waitUntilGone(child)
+
+        let departure = try #require(session.departed())
+        #expect(!departure.failedToStart, "終わりの合図で落ちた子を、起動できなかったと読んだ")
+        #expect(departure.wasSignalled && departure.status == signal)
+        #expect(try recordedStatus(of: session)["launched"] as? Bool == true)
+    }
+
+    /// 番号を名乗らない古いライブラリの子の合図は、最後に起こした子のものと読む。
+    @Test("番号を名乗らない 1 枚目の合図は、最後に起こした子のものと読む")
+    func aShownSignalWithoutAPidCountsForTheLatestChild() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; read line; exit 7"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        session.generationShown(pid: nil)
+        session.send("go\n")
+        waitUntilGone(child)
+        #expect(session.departed() == WatchSession.Departure(status: 7, wasSignalled: false))
+    }
+
+    /// **別の子の合図は、この子の分に数えない。** 前の版が出した合図で、起こしたばかりの子を絵を
+    /// 出したと読まない。
+    @Test("別の子の 1 枚目の合図は、この子が絵を出した根拠にならない")
+    func aShownSignalForAnotherChildDoesNotCount() async throws {
+        let ready = Ready()
+        let session = try windowed(Scripted(["echo ready; read line; exit 7"]), ready: ready)
+        defer { session.stopBlocking() }
+        await session.start()
+        let child = try #require(session.child)
+        ready.waitForLast()
+        session.generationShown(pid: child.processIdentifier &+ 1)
+        session.send("go\n")
+        waitUntilGone(child)
+        #expect(try #require(session.departed()).failedToStart)
+    }
+
+    /// 口の側 (巡回の 1 拍) を通す: 前の版を残した回は畳まず、プレビューへ起こせなかったと出す。
+    @Test("巡回は、起動できなかった回に前の版を残せれば畳まず、残せなければ畳む", arguments: [true, false])
+    func theStepKeepsOrRetiresThePreviousVersion(keeps: Bool) async throws {
+        let ready = Ready()
+        let (session, first, second) = try await previousAndNew(
+            Scripted(["echo ready; read line", "echo ready; exit 1"]), ready: ready,
+            previousShown: keeps)
+        defer { session.stopBlocking() }
+        waitUntilGone(second)
+        var lines: [(String?, Bool)] = []
+        #expect(await WatchCommand.step(session, stopped: { false }, preview: { lines.append(($0, $1)) }))
+
+        waitUntilGone(first, timeout: keeps ? 0.3 : 2)
+        #expect(first.isRunning == keeps, "前の版の扱いが違う (残す: \(keeps))")
+        let shown = try #require(lines.last)
+        #expect(shown.0?.hasPrefix("Could not start sh: it exited with code 1") == true, "\(lines)")
+        #expect(!shown.1, "回る印を止めていない")
+    }
+
     // MARK: - 世代の重なり
 
     /// **止めてから起こすと、新しい子が最初の絵を焼くまで絵が途切れる** (手元では 417 ms・

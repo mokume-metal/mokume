@@ -689,6 +689,203 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **1 枚目を出した知らせは、その世代の目録が名乗った子の番号を添え、世代ごとに 1 度だけ出る**
+    /// ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。乗り換えの合図は、出している世代が無いと絵を
+    /// 待たずに出るので、見張りが「絵を出す前に終わった子」を読む根拠はこちらである。
+    @Test("1 枚目を出した知らせに、目録が名乗った子の番号が添う。世代ごとに 1 度で、名乗らない目録は nil")
+    func shownCarriesTheWriterPid() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            // 目録だけで、まだ 1 枚も書いていない世代
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-shown"))
+            defer { stage.close() }
+            stage.open()
+            var told: [Int32?] = []
+            stage.onGenerationShown = { told.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.hasSource)
+            #expect(told.isEmpty, "絵を出す前に、1 枚目を出したと知らせた: \(told)")
+
+            try draw(first, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told == [ProcessInfo.processInfo.processIdentifier], "\(told)")
+            try draw(first, frame: 2, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told.count == 1, "同じ世代で 2 度知らせた: \(told)")
+
+            // 番号を書かない子へ入れ替わる
+            let silent = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+            try place(
+                manifest: #"{"schemaVersion":1,"ids":\#(silent.ids),"width":32,"height":32}"#, in: facet)
+            try draw(silent, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(told.count == 2 && told[1] == nil, "\(told)")
+        }
+    }
+
+    /// **乗り換えないと決めた世代は、控えを捨て、後から来ても採らない** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証)。
+    /// 起動に失敗した新しい版を捨てて前の版を戻したのに、台が 1 枚書いて死んだ子の絵へ乗り換えると、動いている前の版の
+    /// 代わりに死んだ子の絵を映す。
+    @Test("乗り換えないと伝えた世代は、控えていれば捨て、まだ採っていなければ採らず、映している世代には触らない")
+    func anAbandonedGenerationIsNeverPromoted() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shown = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("abandon"))
+            defer { stage.close() }
+            var promotions = 0
+            stage.onGenerationPromoted = { _ in promotions += 1 }
+            stage.displayLinkFired()
+            #expect(promotions == 1)
+
+            // すでに控えている世代 (まだ 1 枚も書いていない)
+            let dying = try publish(in: facet, gpu: gpu, pid: 4242, frames: 0, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.hasIncoming)
+            stage.abandonIncoming(pids: [4242])
+            #expect(!stage.hasIncoming, "控えを捨てていない")
+            _ = dying
+            // 1 枚書いて死んでも、乗り換えない
+            try draw(dying, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(promotions == 1, "捨てた世代へ乗り換えた")
+
+            // まだ採っていない目録も、採らない
+            let late = try publish(in: facet, gpu: gpu, pid: 4243, frames: 1, pointerLock: false)
+            stage.abandonIncoming(pids: [4243])
+            stage.displayLinkFired()
+            #expect(!stage.hasIncoming && promotions == 1, "後から来た目録を採った")
+            _ = late
+
+            // 別の番号の世代へは、これまでどおり乗り換える。映していた世代には触っていない
+            _ = try publish(in: facet, gpu: gpu, pid: 4244, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(promotions == 2, "別の世代へ乗り換えられなくなった")
+            _ = shown
+        }
+    }
+
+    /// **乗り換え済みで描画が見送られた子が死んでも、前の版へ映し直す** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証 2 回目)。
+    /// 台は乗り換えた拍に描画を試し、面が取れなければ 1 枚目の合図は鳴らない。見張りはその子を「絵を出す前に
+    /// 終わった」と読んで前の版を戻すので、台も死んだ子の目録を映したままではいけない。
+    @Test("乗り換え済みで描画が見送られた子を乗り換えないと伝えると、前の版へ映し直し、前の版の頼みが効く")
+    func anAbandonedPromotedGenerationReturnsToThePreviousOne() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            // 窓を開かない台: 乗り換えても描画は見送られ、1 枚目の合図は鳴らない
+            let previous = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("abandon-promoted"))
+            defer { stage.close() }
+            var shown = 0
+            stage.onGenerationShown = { _ in shown += 1 }
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100 && stage.pointerLockRequested, "検査の前提: 前の版が頼んでいる")
+
+            // 死んだ子が 1 枚書いて乗り換えられ、見張りの伝える順 (手放す → 乗り換えない)
+            _ = try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200 && shown == 0, "検査の前提: 乗り換え済みで合図は鳴っていない")
+            stage.relinquishSource(pids: [200])
+            stage.abandonIncoming(pids: [200])
+            #expect(stage.displayedPID == 100, "死んだ子の目録を映したまま: \(String(describing: stage.displayedPID))")
+            #expect(!stage.holdsSupersededSource)
+
+            // 前の版が生きて書き続ける: 頼みが戻り、死んだ子の目録は採り直さない
+            try draw(previous, frame: 2, gpu: gpu, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.pointerLockRequested, "前の版の頼みが効かない")
+            #expect(stage.displayedPID == 100 && !stage.hasIncoming)
+
+            // 別の番号の世代へは、これまでどおり乗り換える
+            _ = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 300)
+        }
+    }
+
+    /// **直前の世代を持つのは、乗り換えた世代が 1 枚目を出すまで** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 出した後に終わった子は「自分で消えた」と読まれ、見張りは前の版を戻さない — 持ち続けると、常駐が積み上がる。
+    @Test("乗り換えた世代が 1 枚目を出したら、直前の世代の常駐を外す。出した世代は乗り換えないと伝えても戻さない")
+    func theSupersededGenerationIsReleasedOnceTheNewOneHasShown() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let first = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("superseded-released"))
+            defer { stage.close() }
+            stage.open()
+            stage.displayLinkFired()
+            #expect(!stage.holdsSupersededSource, "最初の世代に直前は無い")
+
+            // 控えは 1 枚も書いていない: 乗り換えない
+            let next = try publish(in: facet, gpu: gpu, pid: 200, frames: 0, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100 && stage.hasIncoming)
+            try draw(next, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            #expect(!stage.holdsSupersededSource, "1 枚目を出したのに直前の世代を持っている")
+
+            stage.abandonIncoming(pids: [200])
+            #expect(stage.displayedPID == 200, "1 枚目を出した世代を、前の版へ戻した")
+            _ = first
+        }
+    }
+
+    /// **乗り換えないと決めた番号は、新しい子を起こしたら外す** ([#3172](https://github.com/mokume-metal/mokume/issues/3172) の反証 2 回目)。
+    /// 番号は使い回される。起動の失敗が乗り換えの無いまま重なっても、同じ番号を得た新しい子の目録を黙って捨てない。
+    @Test("新しい子を起こしたと伝えた番号は、乗り換えないと決めた世代から外れ、その目録を採る")
+    func aRecycledPidIsNotAbandonedForever() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            _ = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-recycled"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            // 起動に失敗した子 (200) を乗り換えない。乗り換えの無いまま、番号が一周して新しい子が 200 を得る
+            stage.abandonIncoming(pids: [200])
+            stage.expectGeneration(pids: [200])
+            _ = try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200, "新しい子の目録を捨てた")
+
+            // 伝えなければ、従来どおり採らない
+            stage.abandonIncoming(pids: [300])
+            _ = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: false)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200 && !stage.hasIncoming)
+        }
+    }
+
+    /// **手放した番号の覚えも、新しい子を起こしたら外す** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// 番号が一周して同じ番号を得た新しい子を、生まれたときから手放した扱いにして頼みを読まないままにしない。
+    @Test("新しい子を起こしたと伝えた番号は、手放した世代の覚えからも外れ、その子の頼みを読む")
+    func aRecycledPidIsNotRelinquishedForever() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            _ = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("pid-recycled-relinquished"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+
+            // 子 (200) が消えて手放した。番号が一周して、新しい子が 200 を得る
+            stage.relinquishSource(pids: [200])
+            stage.expectGeneration(pids: [200])
+            let fresh = try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            #expect(stage.pointerLockRequested, "新しい子を手放した扱いにして、頼みを読まなかった")
+
+            // 伝えなければ、従来どおり生まれたときから手放した扱い
+            stage.relinquishSource(pids: [300, 200])
+            let stale = try publish(in: facet, gpu: gpu, pid: 300, frames: 1, pointerLock: true)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 300 && !stage.pointerLockRequested)
+            _ = (fresh, stale)
+        }
+    }
+
     @Test("受け取れない知らせに、読めた目録の子の番号が添い、読めない目録・名乗らない目録では nil")
     func undeliverableCarriesTheWriterPid() throws {
         try withFacet { facet in
