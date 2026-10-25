@@ -479,6 +479,44 @@ struct MovieTests {
         runtime.closePlugins()
     }
 
+    @Test("コマを変換できない間は、新しいコマが来ないフレームも disconnected のまま、読めれば running へ戻る (#2908)")
+    func unconvertibleFrameKeepsDisconnected() async throws {
+        let url = try await TestMovie.write(frames: 30, width: 64, height: 48, pixel: TestMovie.noise)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var movie: Movie?
+        var failing = true
+        var notices: [String] = []
+        var states: [SourceState] = []
+        let converter = FrameConverter(width: 64, height: 48, alpha: .straight)
+        // 動画は 30 fps、時計は 60 fps — 1 枚おきのフレームは「前と同じコマ」になる
+        let runtime = try run(
+            frames: 40, frameRate: 60,
+            setup: { sketch in
+                let reader = try MovieReader(url: url, path: "unconvertible.mov")
+                reader.conversion = { buffer throws(FrameConverter.Failure) in
+                    if failing { throw .unsupportedFormat(0) }
+                    return try converter.convert(buffer)
+                }
+                let made = Movie(
+                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    name: "video: unconvertible.mov", owner: sketch, warn: { notices.append($0) })
+                sketch.attach(made)
+                made.loop()
+                movie = made
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                states.append(movie.state)
+                // 20 枚目の後から変換できるようになる
+                if sketch.frameCount == 20 { failing = false }
+            })
+        #expect(states.count == 40)
+        #expect(states.prefix(20).allSatisfy { $0 == .disconnected }, "\(states)")
+        #expect(states.suffix(10).allSatisfy { $0 == .running }, "\(states)")
+        #expect(notices.count == 1, "\(notices)")
+        runtime.closePlugins()
+    }
+
     @Test("数でない位置へ飛ぶと位置は変わらず、1 度だけ知らせる")
     func jumpToNotANumberIsNoticed() async throws {
         let url = try await TestMovie.write(frames: 10)
