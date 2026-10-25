@@ -11,7 +11,7 @@ import Testing
 /// vImage で写した結果を、1 バイトずつ写すループ (以前の実装そのもの) と全バイトで
 /// 突き合わせる (#1754)。
 @Suite("符号化器へ渡す並び")
-struct MovieFileSwizzleTests {
+nonisolated struct MovieFileSwizzleTests {
 
     /// 詰め物の目印。写す側が詰め物へ書けば、この値が崩れる。
     private static let untouched: UInt8 = 0xA5

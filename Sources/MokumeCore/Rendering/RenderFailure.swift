@@ -401,7 +401,10 @@ extension RenderFailure: CustomStringConvertible {
             // **投げた失敗の全文をそのまま運ぶ** — 次にすることは投げた側の文面が持っている。
             // 1 行に削る経路 (`headline`) は先頭行だけを使うので、何が起きたかと投げた失敗の最初の行を
             // 1 行目に入れる (名乗りだけが先頭に来ると、理由が落ちる)
-            "setup() threw, so the sketch did not start: \(reason)"
+            //
+            // **前後の空白と改行を落として繋ぐ。** 改行で始まる理由を繋ぐと 1 行目が名乗りだけになり、
+            // 1 行に削る経路も、見張りの記録の頭の 1 行も、理由を落とす
+            Self.setupFailedText(reason)
         case .unreadableRenderRequest(let value):
             """
             The sketch was asked to render, but it cannot read or write what it was asked: \(value)
@@ -479,6 +482,13 @@ extension RenderFailure: CustomStringConvertible {
     /// が同じであることは、その 1 文が同じであることで表す。
     private nonisolated static let exhaustedAdvice =
         "The GPU may have run out of resources — close any sketch still running and try again."
+
+    /// `setup()` が投げた失敗の文面。**理由の前後の空白と改行を落とす。** 空なら名乗りだけにする。
+    private nonisolated static func setupFailedText(_ reason: String) -> String {
+        let reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lead = "setup() threw, so the sketch did not start"
+        return reason.isEmpty ? lead : lead + ": " + reason
+    }
 
     /// 繋がっているディスプレイを 1 行に並べる。1 枚も無ければ `none`。
     private nonisolated static func listing(_ displays: [Display]) -> String {

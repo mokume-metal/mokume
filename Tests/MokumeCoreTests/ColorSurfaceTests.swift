@@ -15,7 +15,7 @@ import Testing
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 @Suite("色を指定する面")
-struct ColorSurfaceTests {
+nonisolated struct ColorSurfaceTests {
     /// 成分ごとの差。0–255 の割り算とリテラルの 0–1 は最下位ビットで揺れるので、
     /// 「同じ色か」を等値では見ない。
     private func isSame(_ one: LinearRGBA, _ other: LinearRGBA, within tolerance: Float = 1e-6)
@@ -50,6 +50,7 @@ struct ColorSurfaceTests {
     }
 
     @Test("数で書いた色は sRGB の原色の値として作業空間へ入る")
+    @MainActor
     func numbersAreSRGBPrimaries() {
         // 期待値は CoreGraphics に変換させて導く。実装の行列を使わないので、行列の係数が
         // 誤っていても一致しない (ADR-0011 決定 3)

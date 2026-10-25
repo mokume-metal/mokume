@@ -15,7 +15,7 @@ import Testing
 ///
 /// [#1788]: https://github.com/mokume-metal/mokume/issues/1788
 @Suite("0 の軸を引かない揺らぎ")
-struct NoiseFlatAxesTests {
+nonisolated struct NoiseFlatAxesTests {
     /// 変える前の重ね方。**どの軸も 3 次元の層で引く。**
     private func threeDimensional(_ noise: ValueNoise, _ x: Float, _ y: Float, _ z: Float) -> Float {
         guard x.isFinite, y.isFinite, z.isFinite else { return 0 }

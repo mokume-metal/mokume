@@ -20,7 +20,7 @@ import simd
 ///
 /// [#2647]: https://github.com/mokume-metal/mokume/issues/2647
 @Suite("辺を共有する穴の塗り")
-struct SharedEdgeHolesTests {
+nonisolated struct SharedEdgeHolesTests {
     private nonisolated static func rectangle(
         _ x0: Float, _ y0: Float, _ x1: Float, _ y1: Float
     ) -> [SIMD2<Float>] {

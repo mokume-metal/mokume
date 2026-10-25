@@ -11,7 +11,7 @@ import Testing
 /// 壊れた CSV を投げるのは、読み進めると値が 1 列ずつずれた表が黙って返るためである
 /// (``TableFile`` の冒頭)。ここでは「投げる」ことと、壊れていた行を名乗ることを見る。
 @Suite("CSV の読み解き")
-struct TableFileTests {
+nonisolated struct TableFileTests {
     private func parse(_ text: String, header: Bool = false) throws(DataFailure) -> TableFile.Parsed {
         try TableFile.parse(text, header: header, path: "t.csv")
     }

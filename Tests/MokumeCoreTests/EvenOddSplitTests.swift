@@ -18,7 +18,7 @@ import simd
 ///
 /// [#2880]: https://github.com/mokume-metal/mokume/issues/2880
 @Suite("偶奇の塗りで分ける")
-struct EvenOddSplitTests {
+nonisolated struct EvenOddSplitTests {
     /// 一筆書きの五芒星 (#2880 の最小の再現と同じ点。SVG の座標で縦軸は下向き)。
     nonisolated static let pentagram: [SIMD2<Float>] = [
         SIMD2(120, 15), SIMD2(160, 140), SIMD2(55, 65), SIMD2(185, 65), SIMD2(80, 140),
