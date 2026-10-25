@@ -85,6 +85,13 @@ jobs:
   # ので、build の段が無ければ最初の段が swift build を自分で走らせる (約 1.5 分。2 段目以降は
   # 何もしない)。これらは render が見ない検査で、合流して初めて赤になる組み合わせ (片方の PR が
   # API を改名し、もう片方が旧名の例を足す) を拾うのは merge queue の役目である。
+  #
+  # **Swift Testing の並列の幅を、ここでだけ広げる** (#3196)。`make test` の起動元
+  # (scripts/gpu-slot.py) は既定で幅を 1 に縛る。全検査が GPU で重なると機械ごと落ちる (#1999)・
+  # キューの解放の周りで GPU の仕事が打ち切られる (#2007) ためで、このホストには GPU が無く
+  # (描画の検査は飛ぶ)、その元が無い。幅 1 のままだと、main actor から外した CPU だけの suite も
+  # 1 本ずつ走る。8 にするのは、同期の検査が Swift の協調プール (コア数) で頭打ちになり、幅が
+  # 効くのは待つ検査がどれだけ重なるかの上限だから。専用機の render は 1 のまま
   ci-check:
     runs-on: macos-26
     steps:
@@ -93,6 +100,7 @@ jobs:
         env:
           CI_CHECK_HOST: macos
           CI_CHECK_SKIP: ${{ github.event_name == 'merge_group' && 'build test' || '' }}
+          SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH: "8"
 
   # 木だけを読む段 (#2612)。SPDX の宣言漏れやリンク切れのような安い赤を、macOS の枠の待ちと
   # build・test の後ではなく、数分で返す。どの段をここへ出したかと理由は Makefile の
