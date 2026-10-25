@@ -9,17 +9,25 @@ import Testing
 /// 保持した立体の塗りを GPU の置き場に持って使い回す (#2791)。
 ///
 /// 物差しは **置き場を持たない従来の経路** (`retainsShapeSolids = false`・置くたびに溜め場へ積む) で、
-/// どの場面でも、2 つの経路の絵が全バイトで一致することを見る。置き場に持てない場面 (透ける色・絵を貼った形・
-/// 線を含む区間) は、持たずに従来の経路で描くことも見る。
+/// どの場面でも、2 つの経路の絵が全バイトで一致することを見る。裏面を描き分ける区間 (透ける色・絵を貼った形・
+/// 断片や重ねる以外の混ぜ方・#3201) も置き場に持ち、その畳み (``SolidSweep``) は置き場の写しから組む —
+/// 畳まない / 畳む (`sweepPolicy`) の両方で比べる。置き場に持てない場面 (線を含む区間) は、持たずに従来の
+/// 経路で描くことも見る。
 @Suite("保持した立体の塗りの置き場", .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct RetainedSolidFillTests {
-    private func makeCanvas(retaining: Bool = true) throws -> Canvas {
+    private func makeCanvas(
+        retaining: Bool = true, sweep: SolidSweepPolicy = .automatic
+    ) throws -> Canvas {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 96, height: 96)
         canvas.retainsShapeSolids = retaining
+        canvas.sweepPolicy = sweep
         // 検査の形は小さいので、下限は外す (下限そのものは専用の検査が見る)
         canvas.retainedSolidThreshold = 0
         return canvas
     }
+
+    /// 半透明の置き場所の色。
+    private let veil = LinearRGBA(premultipliedRed: 0.45, green: 0.35, blue: 0.2, alpha: 0.5)
 
     /// 4 色に塗り分けた絵。
     private func quadrants(_ canvas: Canvas) throws -> Image {
@@ -45,11 +53,11 @@ struct RetainedSolidFillTests {
         /// 鏡映して置く (表の巻き方が変わる)。
         case mirrored
         /// 混ぜ方の違う 2 区間の形を、2 つの置き場所で置く (置き場所ごとに区間を一巡する)。重ねる混ぜ方の区間は
-        /// 裏面が絵に出うるので置き場に持たず、もう一方の区間だけを持つ。
+        /// 裏面が絵に出うる (どちらの区間も置き場に持つ・#3201)。
         case multiRun
         /// 違う形を 3 つ置く。
         case multiShape
-        /// 記録のとき断片と値を載せた形。置く前に生きている断片の値を変える (断片は裏面が絵に出うるので置き場に持たない)。
+        /// 記録のとき断片と値を載せた形。置く前に生きている断片の値を変える (断片は裏面が絵に出うる)。
         case shaderValues
         /// 同じ奥行きの 2 枚を、記録した順に重ねる。
         case sameDepth
@@ -59,24 +67,45 @@ struct RetainedSolidFillTests {
         case shadowMoving
         /// 影を落とす形を置いた後で画素を読み (途中の描き切り)、その後に床を置く。
         case shadowAfterFlush
-        /// 透ける色で置く (置き場に持たない)。
+        /// 透ける色で置く。
         case translucentTint
-        /// 絵を貼った形 (置き場に持たない)。
+        /// 絵を貼った形。
         case textured
+        /// 同じ奥行きの透ける 2 枚を、置いた順に重ねる。
+        case sameDepthTranslucent
+        /// 奥から手前へ、重なる透ける球を 12 か所に置く (畳むと 1 回の描く呼び出しにまとまる連なり)。
+        case overlappingTinted
+        /// 鏡映して置いた透ける球と、鏡映しない透ける球 (列が割れる)。
+        case mirroredTinted
+        /// 溜め場に組み込みの透ける球を積んだ後で、透ける保持形を置く (溜め場の位置が 0 でない)。
+        case afterPoolTinted
+        /// 添字を持つ区間に部品が載る形 (球と、番号で指した四角を同じ区間に記録する) を透ける色で置く。
+        case indexedParts
+        /// 1 つの形に奥から記録した 2 つの透ける球 (部品が 2 つ)。
+        case twoParts
+        /// 透ける色の形が影を落とし、床で受ける。動かない。
+        case shadowTinted
+        /// 透ける色の形が影を落とし、置き場所を回す。
+        case shadowTintedMoving
+        /// 透ける色の形が影を落とした後で画素を読み (途中の描き切り)、その後に床を置く。
+        case shadowTintedAfterFlush
         /// 線を含む形 (置き場に持たない)。
         case stroked
 
         /// 置き場に持てる場面か。
         var retains: Bool {
             switch self {
-            case .translucentTint, .textured, .stroked, .shaderValues: false
+            case .stroked: false
             default: true
             }
         }
         /// 溜め場に即時の立体 (組み込みの形) を置かない場面。置き場に持った後の溜め場が空になる。
         var hasOnlyRetained: Bool {
             switch self {
-            case .sphere, .indexedQuad, .mirrored, .multiShape, .sameDepth: true
+            case .sphere, .indexedQuad, .mirrored, .multiShape, .sameDepth, .translucentTint, .textured,
+                .multiRun, .shaderValues, .sameDepthTranslucent, .overlappingTinted, .mirroredTinted,
+                .indexedParts, .twoParts:
+                true
             default: false
             }
         }
@@ -86,6 +115,8 @@ struct RetainedSolidFillTests {
         var pictures: [[UInt8]]
         var staged: [Int]
         var draws: [Int]
+        /// 積んだ描く呼び出しの数 (畳むと減る)。
+        var encoded: [Int]
         var made: Int
         var bakesEncoded: Int
         var bakesReused: Int
@@ -106,8 +137,10 @@ struct RetainedSolidFillTests {
     }
 
     /// 場面を 4 フレーム回し、フレームごとの絵を返す。
-    private func play(_ scene: Scene, retaining: Bool) throws -> Outcome {
-        let canvas = try makeCanvas(retaining: retaining)
+    private func play(
+        _ scene: Scene, retaining: Bool, sweep: SolidSweepPolicy = .automatic
+    ) throws -> Outcome {
+        let canvas = try makeCanvas(retaining: retaining, sweep: sweep)
         let ball = canvas.createShape {
             canvas.noStroke()
             canvas.fill(.linear(red: 0.9, green: 0.7, blue: 0.4))
@@ -183,6 +216,48 @@ struct RetainedSolidFillTests {
                     canvas.noTexture()
                 }
             ]
+        case .sameDepthTranslucent:
+            shapes = [
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(.linear(red: 1, green: 1, blue: 1))
+                    canvas.plane(40, 40)
+                },
+                canvas.createShape {
+                    canvas.noStroke()
+                    canvas.fill(.linear(red: 1, green: 1, blue: 1))
+                    canvas.plane(24, 24)
+                },
+            ]
+        case .indexedParts:
+            let shape = canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(.linear(red: 0.9, green: 0.7, blue: 0.4))
+                // 番号で指した四角が先に列を添字の列にし、続く球の部品も添字で数える
+                canvas.beginShape(.triangles)
+                for point in [(-24, -24), (-8, -24), (-24, -8), (-8, -8)] as [(Float, Float)] {
+                    canvas.vertex(point.0, point.1, 0)
+                }
+                for number in [0, 1, 2, 1, 3, 2] { canvas.index(number) }
+                canvas.endShape()
+                canvas.sphere(14, detail: 8)
+            }
+            // 場面の前提: 添字を持つ区間に、添字で数える部品が載っている
+            let indexedRun = shape.runs.contains { $0.isIndexed }
+            #expect(indexedRun, "添字を持つ区間になっていない")
+            let indexedPart = shape.solidParts.contains { $0.isIndexed }
+            #expect(indexedPart, "添字で数える部品が載っていない")
+            shapes = [shape]
+        case .twoParts:
+            shapes = [
+                canvas.createShape {
+                    canvas.noStroke()
+                    for (red, blue, z) in [(0, 255, Float(-14)), (255, 0, Float(14))] {
+                        canvas.fill(red, 0, blue, 128)
+                        canvas.push(); canvas.translate(0, 0, z); canvas.sphere(14, detail: 12); canvas.pop()
+                    }
+                }
+            ]
         case .stroked:
             shapes = [
                 canvas.createShape {
@@ -199,6 +274,7 @@ struct RetainedSolidFillTests {
         var pictures: [[UInt8]] = []
         var staged: [Int] = []
         var draws: [Int] = []
+        var encoded: [Int] = []
         for frame in 0..<4 {
             try canvas.draw {
                 canvas.background(.linear(red: 0.02, green: 0.02, blue: 0.03))
@@ -231,35 +307,75 @@ struct RetainedSolidFillTests {
                 case .sameDepth:
                     canvas.shape(shapes[0], 48, 48)
                     canvas.shape(shapes[1], 52, 52)
-                case .shadowStatic, .shadowMoving, .shadowAfterFlush:
+                case .shadowStatic, .shadowMoving, .shadowAfterFlush, .shadowTinted, .shadowTintedMoving,
+                    .shadowTintedAfterFlush:
+                    let tinted = scene == .shadowTinted || scene == .shadowTintedMoving
+                        || scene == .shadowTintedAfterFlush
                     canvas.directionalLight(.linear(red: 0.8, green: 0.8, blue: 0.8), -0.6, 0.6, -0.5)
                     canvas.shadows(true)
                     canvas.castShadow(true)
                     canvas.push()
                     canvas.translate(48, 40, 0)
-                    if scene == .shadowMoving { canvas.rotateY(0.3 + Float(frame) * 0.4) }
-                    canvas.shape(ball)
+                    if scene == .shadowMoving || scene == .shadowTintedMoving {
+                        canvas.rotateY(0.3 + Float(frame) * 0.4)
+                    }
+                    if tinted {
+                        canvas.shape(ball, at: [Placement(fill: veil)])
+                    } else {
+                        canvas.shape(ball)
+                    }
                     canvas.pop()
-                    if scene == .shadowAfterFlush { _ = canvas.get(0, 0) }
+                    if scene == .shadowAfterFlush || scene == .shadowTintedAfterFlush {
+                        _ = canvas.get(0, 0)
+                    }
                     canvas.castShadow(false)
                     canvas.push(); canvas.translate(48, 48, -30); canvas.plane(90, 90); canvas.pop()
                 case .translucentTint:
                     canvas.shape(
-                        shapes[0],
-                        at: [
+                        shapes[0], at: [Placement(x: 30, y: 48, fill: veil), Placement(x: 66, y: 48)])
+                case .sameDepthTranslucent:
+                    canvas.shape(
+                        shapes[0], at: [Placement(x: 48, y: 48, fill: LinearRGBA(premultipliedRed: 0.5, green: 0, blue: 0, alpha: 0.5))])
+                    canvas.shape(
+                        shapes[1], at: [Placement(x: 52, y: 52, fill: LinearRGBA(premultipliedRed: 0, green: 0, blue: 0.5, alpha: 0.5))])
+                case .overlappingTinted:
+                    var list: [Placement] = []
+                    for index in 0..<12 {
+                        let t = Float(index)
+                        list.append(
                             Placement(
-                                x: 30, y: 48,
-                                fill: LinearRGBA(premultipliedRed: 0.45, green: 0.35, blue: 0.2, alpha: 0.5)),
-                            Placement(x: 66, y: 48),
-                        ])
+                                x: 30 + t * 3, y: 40 + t * 2, z: -30 + t * 5,
+                                fill: LinearRGBA(
+                                    premultipliedRed: 0.1 + t * 0.03, green: 0.3, blue: 0.5 - t * 0.03, alpha: 0.5)))
+                    }
+                    canvas.shape(shapes[0], at: list)
+                case .mirroredTinted:
+                    canvas.push(); canvas.translate(30, 48, 0)
+                    canvas.shape(ball, at: [Placement(fill: veil), Placement(x: 8, y: 6, fill: veil)])
+                    canvas.pop()
+                    canvas.push(); canvas.translate(66, 48, 0); canvas.scale(-1, 1, 1)
+                    canvas.shape(ball, at: [Placement(fill: veil), Placement(x: 8, y: 6, fill: veil)])
+                    canvas.pop()
+                case .afterPoolTinted:
+                    canvas.push(); canvas.translate(24, 30, 0); canvas.fill(255, 200, 120, 128)
+                    canvas.sphere(12); canvas.pop()
+                    canvas.shape(ball, at: [Placement(x: 56, y: 56, fill: veil), Placement(x: 70, y: 50, fill: veil)])
+                case .indexedParts:
+                    canvas.shape(
+                        shapes[0], at: [Placement(x: 30, y: 48, fill: veil), Placement(x: 66, y: 48, fill: veil)])
+                case .twoParts:
+                    canvas.shape(
+                        shapes[0],
+                        at: [Placement(x: 30, y: 48), Placement(x: 66, y: 48, rotation: Vector3(0, 0.5, 0))])
                 }
                 staged.append(canvas.solidVertices.count)
             }
             draws.append(canvas.drawCallsInLastFrame)
+            encoded.append(canvas.drawsEncodedInLastFrame)
             pictures.append(try canvas.target.encodeForDisplay().bytes)
         }
         return Outcome(
-            pictures: pictures, staged: staged, draws: draws, made: canvas.modelFills.made,
+            pictures: pictures, staged: staged, draws: draws, encoded: encoded, made: canvas.modelFills.made,
             bakesEncoded: canvas.shadowBakesEncoded, bakesReused: canvas.shadowBakesReused)
     }
 
@@ -267,10 +383,12 @@ struct RetainedSolidFillTests {
         stride(from: 0, to: a.count, by: 4).filter { a[$0..<($0 + 4)] != b[$0..<($0 + 4)] }.count
     }
 
-    @Test("置き場に持っても、持たないときと同じ絵・同じ描く回数になる", arguments: Scene.allCases)
-    func retainingDrawsTheSamePicture(_ scene: Scene) throws {
-        let reference = try play(scene, retaining: false)
-        let retained = try play(scene, retaining: true)
+    @Test(
+        "置き場に持っても、持たないときと同じ絵・同じ描く回数になる (裏 → 表の畳みの有無の両方で)",
+        arguments: Scene.allCases, [SolidSweepPolicy.never, .always])
+    func retainingDrawsTheSamePicture(_ scene: Scene, _ sweep: SolidSweepPolicy) throws {
+        let reference = try play(scene, retaining: false, sweep: sweep)
+        let retained = try play(scene, retaining: true, sweep: sweep)
         // 物差しに形が写っていること (背景以外の画素)
         let drawn = stride(from: 0, to: reference.pictures[0].count, by: 4).filter {
             reference.pictures[0][$0] > 40 || reference.pictures[0][$0 + 1] > 40
@@ -279,9 +397,11 @@ struct RetainedSolidFillTests {
         #expect(drawn > 50, "物差しに形が写っていない — 比べる前提が崩れている (\(drawn) 画素)")
         for frame in 0..<4 {
             let count = differing(reference.pictures[frame], retained.pictures[frame])
-            #expect(count == 0, "\(scene.rawValue): \(frame) 枚目で \(count) 画素が違う")
+            #expect(count == 0, "\(scene.rawValue)/\(sweep): \(frame) 枚目で \(count) 画素が違う")
         }
         #expect(retained.draws == reference.draws, "\(scene.rawValue): 描く回数が違う \(retained.draws) / \(reference.draws)")
+        // 積んだ描く呼び出しの数も同じ (畳みが置き場の列でも同じ連なりに効く)
+        #expect(retained.encoded == reference.encoded, "\(scene.rawValue)/\(sweep): 積んだ呼び出しの数が違う \(retained.encoded) / \(reference.encoded)")
         #expect(reference.made == 0)
         if scene.retains {
             #expect(retained.made >= 1, "\(scene.rawValue): 置き場に持てていない")
@@ -295,18 +415,38 @@ struct RetainedSolidFillTests {
     }
 
     @Test("影の焼き直しを省く判定は、置き場に持っても持たなくても同じに効く",
-        arguments: [Scene.shadowStatic, .shadowMoving, .shadowAfterFlush])
+        arguments: [
+            Scene.shadowStatic, .shadowMoving, .shadowAfterFlush, .shadowTinted, .shadowTintedMoving,
+            .shadowTintedAfterFlush,
+        ])
     func shadowReuseIsUnchanged(_ scene: Scene) throws {
         let reference = try play(scene, retaining: false)
         let retained = try play(scene, retaining: true)
         // 置き場に持った瞬間 (2 フレーム目) は、頂点で取っていた指紋が形の見分けで取る指紋に替わるので、
         // 1 度だけ焼き直す。それ以降は、持たない経路と同じ回数だけ焼き、同じ回数だけ使い回す
-        let promotion = scene == .shadowMoving ? 0 : 1
-        #expect(reference.bakesEncoded == (scene == .shadowMoving ? 4 : 1))
+        let moving = scene == .shadowMoving || scene == .shadowTintedMoving
+        let promotion = moving ? 0 : 1
+        #expect(reference.bakesEncoded == (moving ? 4 : 1))
         #expect(retained.bakesEncoded == reference.bakesEncoded + promotion, "焼き直しの回数が違う")
         #expect(
             retained.bakesEncoded + retained.bakesReused == reference.bakesEncoded + reference.bakesReused,
             "焼き付けを問われた回数が違う")
+    }
+
+    @Test(
+        "裏面を描き分ける区間は、置き場に持った形でも畳んで描ける (置き場の写しから畳みを組んでいる)",
+        arguments: [Scene.overlappingTinted, .indexedParts, .twoParts, .multiRun, .textured, .shaderValues])
+    func theSweepIsBuiltFromTheFill(_ scene: Scene) throws {
+        let off = try play(scene, retaining: false, sweep: .always)
+        let on = try play(scene, retaining: true, sweep: .always)
+        let apart = try play(scene, retaining: true, sweep: .never)
+        #expect(on.made >= 1)
+        #expect(on.encoded == off.encoded, "\(scene.rawValue): 畳んだ呼び出しの数が違う \(on.encoded) / \(off.encoded)")
+        // 置き場に持った後のフレームで、畳まないときより呼び出しが少ない (置き場の列が畳めている)
+        #expect(
+            on.encoded[1...].allSatisfy { $0 < apart.encoded[1] },
+            "\(scene.rawValue): 置き場の列が畳めていない \(on.encoded) / \(apart.encoded)")
+        for frame in 0..<4 { #expect(differing(off.pictures[frame], on.pictures[frame]) == 0) }
     }
 
     @Test("別の形に差し替えたら、影を焼き直す (形の見分けが指紋に効く)")
