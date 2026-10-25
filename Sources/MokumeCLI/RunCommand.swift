@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import Synchronization
 import mokume
 
 /// 走らせているスケッチの番号。**居なければ 0。**
@@ -10,7 +11,14 @@ import mokume
 /// **シグナルのハンドラから読むので、置き場はグローバルに 1 つ。** ハンドラは文脈を
 /// 捕まえられない ([#1171](https://github.com/mokume-metal/mokume/issues/1171))。
 /// `private` にしないのは検査から読むため (`watchStopRequested` と同じ作法)。
-nonisolated(unsafe) var runChildPID: pid_t = 0
+nonisolated var runChildPID: pid_t {
+    get { runChildPIDCell.load(ordering: .relaxed) }
+    set { runChildPIDCell.store(newValue, ordering: .relaxed) }
+}
+
+/// ``runChildPID`` の実体。**受け口 (任意の糸で走る) が読み、main が書く**ので、素の変数ではなく
+/// atomic にする (#3234 の反証)。受け口はこの実体を直に読む。
+nonisolated let runChildPIDCell = Atomic<pid_t>(0)
 
 /// 受けた終わりの合図の番号。**受けていなければ 0。**
 nonisolated(unsafe) var runStopSignal: sig_atomic_t = 0
@@ -660,7 +668,7 @@ enum RunCommand {
                 runStopSignal = received
                 // **宛先を確かめてから撃つ。** `kill(0, …)` は自分のプロセスグループごと
                 // 落とす (`WatchSession` の強制終了と同じ注意)
-                let pid = runChildPID
+                let pid = runChildPIDCell.load(ordering: .relaxed)
                 if pid > 0 { kill(pid, SIGTERM) }
             }
             // 受け口が待ちへ割り込んでも、呼び出しが `EINTR` で失敗して見えないようにする
