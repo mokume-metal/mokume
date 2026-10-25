@@ -273,6 +273,31 @@ struct KnobOverlayLayoutTests {
         #expect(panel.frame.maxY == host.bounds.height - KnobOverlay.inset)
     }
 
+    /// **後から来た警告で欄が伸びたら、枠も伸びる** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 枠の丈は置いたときに 1 度測るだけなので、測り直さないと欄は窓の下に切れて見えない。上端は動かさない。
+    @Test("警告が後から来て欄が伸びたら、丈を測り直す。無くなれば元に戻り、上端は動かさない")
+    func growsWhenTheWarningsArriveLater() throws {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 2_000))
+        let panel = KnobOverlay(boxes: [], numbers: { nil })
+        panel.attach(to: host)
+        let bare = panel.frame.height
+        let top = host.bounds.height - KnobOverlay.inset
+
+        panel.show(warnings: WarningSummary(count: 1, last: "short"))
+        let one = panel.frame.height
+        #expect(one > bare, "欄が伸びたのに枠が伸びていない: \(bare) → \(one)")
+        #expect(panel.frame.maxY == top)
+
+        // 3 行に折り返す長さ (上限の 3 行まで伸びる)
+        panel.show(warnings: WarningSummary(count: 9, last: String(repeating: "wide words ", count: 12)))
+        let many = panel.frame.height
+        #expect(many > one, "行が増えたのに枠が伸びていない: \(one) → \(many)")
+        #expect(panel.frame.maxY == top)
+
+        panel.show(warnings: nil)
+        #expect(panel.frame.height == bare, "欄が消えたのに枠が縮んでいない")
+    }
+
     @Test("窓の大きさが変われば置き直す")
     func repositionsWhenTheWindowResizes() throws {
         let (panel, host) = try place(inHostOfHeight: 2_000)

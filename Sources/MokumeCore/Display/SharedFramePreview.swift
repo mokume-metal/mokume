@@ -42,7 +42,8 @@ public final class SharedFramePreview {
     static let nudge = WindowPlacement.nudgeBelow(
         artworkHeight: SharedFrameWindow.defaultSize.height, previewHeight: defaultSize.height)
 
-    private let stage: SharedFrameStage
+    /// 検査が拍を打つために見える (`displayLinkFired()`)。
+    let stage: SharedFrameStage
     private let notice = NoticeOverlay()
     /// 面越しのつまみ。区画を渡されたときだけ在る。
     private let params: RemoteParams?
@@ -187,6 +188,9 @@ public final class SharedFramePreview {
     /// 必要がある。
     var asksBeforeClosing: Bool { stage.asksBeforeClosing }
 
+    /// 重ねている面の丈。**検査から見る** — 警告が後から来て欄が伸びたときに、枠が追い付いているかを見る。
+    var panelHeight: CGFloat? { knobs?.frame.height }
+
     /// 並んでいるつまみの数。**面が出ていることとは別に見る** — 宣言が 1 つも無いときは
     /// 「面は出るがつまみは 0」であり、これを 1 つの真偽で表すと区別が付かない。
     var knobCount: Int { knobs?.knobCount ?? 0 }
@@ -205,15 +209,17 @@ public final class SharedFramePreview {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     private func refreshKnobs(force: Bool = false) {
         guard let params, let host = stage.host else { return }
-        guard params.refresh() || force else { return }
-        knobs?.removeFromSuperview()
-        // **数字は面から読む。** 数えているのは走っている側で、こちらは読み手である
-        // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
-        let overlay = KnobOverlay(
-            boxes: params.boxes, numbers: { [stage] in stage.numbers },
-            warnings: { [stage] in stage.warnings })
-        overlay.attach(to: host)
-        knobs = overlay
+        if params.refresh() || force {
+            knobs?.removeFromSuperview()
+            // **数字は面から読む。** 数えているのは走っている側で、こちらは読み手である
+            // ([ADR-0030] 決定 7) — 届いていなければ `nil` が返り、面は「—」と描く
+            let overlay = KnobOverlay(boxes: params.boxes, numbers: { [stage] in stage.numbers })
+            overlay.attach(to: host)
+            knobs = overlay
+        }
+        // **警告は拍ごとに押し込む** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。欄が出入りすると
+        // 面の丈が変わるので、顔ぶれが変わらなくても枠を置き直す必要がある (面が作り直されたときも、ここで載る)
+        knobs?.show(warnings: stage.warnings)
     }
 
     /// 重ねる 1 行を差し替える。

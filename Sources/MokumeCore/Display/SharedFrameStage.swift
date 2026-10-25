@@ -475,14 +475,18 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
             cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
         }
-        guard let numbers = SharedFrameSurface.numbers(on: surface) else { return }
-        tempo.record(numbers, at: CACurrentMediaTime())
+        let numbers = SharedFrameSurface.numbers(on: surface)
+        // **警告の控えは、数字が載っていない面でも新しい世代の値にする。** 速さを載せない古いライブラリの子は
+        // ここで抜けるので、先に抜けると前の世代の警告が残る (#3087)。載っていなければ空。
         // **手放した世代の面からは読まない** — 畳まれる世代の最後の数枚で、新しい世代の控えを上書きしない
         if !isReleased(source) {
-            warnings = numbers.lastWarning.flatMap { last in
-                numbers.warningCount > 0 ? WarningSummary(count: numbers.warningCount, last: last) : nil
+            warnings = numbers.flatMap { numbers in
+                guard numbers.warningCount > 0, let last = numbers.lastWarning else { return nil }
+                return WarningSummary(count: numbers.warningCount, last: last)
             }
         }
+        guard let numbers else { return }
+        tempo.record(numbers, at: CACurrentMediaTime())
     }
 
     // MARK: - 差し出し元
@@ -555,6 +559,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         superseded = source
         source = waiting
         incoming = nil
+        // **前の世代の警告は捨てる** (#3087)。新しい世代の値は、同じリフレッシュの ``readNumbers(from:in:)`` が
+        // 面から読み直す。数字の載らない面 (古いライブラリの子) が読み直しの前に抜けても、前の世代のものを残さない
+        warnings = nil
         // 手放した番号の世代へ乗り換えたときだけ、番号を残す (それ以外なら、もう要らない)。面の番号の覚えは
         // 乗り換えで必ず捨てる (使い回しで、後の生きた世代の頼みを読まないままにしない)
         if let pid = waiting.pid, relinquishedPIDs.contains(pid) {} else { relinquishedPIDs.removeAll() }
@@ -698,6 +705,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         try? gpu.releaseResidency(of: dead.frames.values.map(\.texture))
         source = previous
         superseded = nil
+        // 死んだ世代の警告を捨てる。前の版の値は、次のリフレッシュが前の版の面から読み直す (#3087)
+        warnings = nil
         // 乗り換えと同じく、枚数の数え直しと窓の大きさの追随を、映し直した世代に対して行う。前の版は
         // もう 1 枚目を出している (出していなければ見張りは戻さない) ので、合図は鳴らし直さない
         lastFrame = 0

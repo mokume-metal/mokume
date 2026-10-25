@@ -32,13 +32,13 @@ final class KnobOverlay: NSView {
     /// 別の問いである (数字だけの面が出る場合がある)。
     let knobCount: Int
 
-    init(
-        boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil,
-        warnings: (() -> WarningSummary?)? = nil
-    ) {
+    /// 警告の欄に出す値 (#3087)。数字を出す面 (道具の窓) だけが使う。
+    private let warningFeed = WarningFeed()
+
+    init(boxes: [any DeclaredParam], numbers: (() -> FrameNumbers?)? = nil) {
         knobCount = boxes.count
         hosting = NSHostingView(
-            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warnings))
+            rootView: KnobPanel(boxes: boxes, numbers: numbers, warnings: warningFeed))
         super.init(frame: NSRect(origin: .zero, size: hosting.fittingSize))
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]
@@ -73,6 +73,19 @@ final class KnobOverlay: NSView {
     /// 必要が無い。
     func attach(to host: NSView) {
         host.addSubview(self)
+        reposition()
+    }
+
+    /// 警告の欄に出すものを差し替える ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    ///
+    /// **欄が出入りしたり行が増えたりすると面の丈が変わる。** 枠の丈は置いたときに 1 度測って決めるので、
+    /// 値を替えただけでは枠が追い付かず、後から来た警告は窓の下に切れて見えない。**変わったら丈を測り直して
+    /// 置き直す。** 同じ値なら何もしない (呼ぶ側は拍ごとに押し込んでよい)。
+    func show(warnings: WarningSummary?) {
+        guard warningFeed.summary != warnings else { return }
+        warningFeed.summary = warnings
+        // 値を替えた直後の組み直しを済ませてから測る
+        hosting.layoutSubtreeIfNeeded()
         reposition()
     }
 

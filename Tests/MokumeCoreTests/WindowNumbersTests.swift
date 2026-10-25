@@ -300,9 +300,9 @@ struct WindowNumbersSourceTests {
         let folded = try #require(KnobText.warnings(WarningSummary(count: 1, last: "first\nsecond")))
         #expect(folded.last == "first second")
 
-        let long = String(repeating: "x", count: KnobText.warningLineLimit + 50)
+        let long = String(repeating: "x", count: WarningSummary.lineLimit + 50)
         let cut = try #require(KnobText.warnings(WarningSummary(count: 1, last: long))).last
-        #expect(cut.count == KnobText.warningLineLimit)
+        #expect(cut.count == WarningSummary.lineLimit)
         #expect(cut.hasSuffix("…"))
         #expect(cut.hasPrefix("xxxx"), "頭を残していない")
     }

@@ -669,6 +669,33 @@ struct SharedFrameSurfaceTests {
         }
     }
 
+    /// **書き手が、読み手の出す長さに切ってから載せる** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 属性は毎フレーム書き直すので、上限の無い文面を載せ続けない。長さの上限は読み手と 1 つの定数 (``WarningSummary/lineLimit``)。
+    @Test("長い警告の文面は、読み手の出す長さに切って載せる。改行は畳む")
+    func theSurfaceCutsALongWarningBeforeCarryingIt() throws {
+        try withFacet { directory in
+            let gpu = try RenderDevice()
+            let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+            try source.fill(with: .linear(red: 0, green: 0, blue: 0))
+            let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+            let shared = try SharedFrameSurface(gpu: gpu, width: 16, height: 8, at: directory)
+            var numbers = Self.numbers(frame: 1)
+            numbers.warningCount = 1
+            numbers.lastWarning = "head\nsecond line " + String(repeating: "x", count: 5000)
+            try shared.write(source, using: presenter, numbers: numbers)
+            Self.awaitOutcomes(gpu)
+            try shared.publishPending()
+            let newest = try #require(SharedFrameSurface.newest(among: shared.ids))
+            let carried = try #require(SharedFrameSurface.numbers(of: newest.id))
+            let last = try #require(carried.lastWarning)
+            #expect(last.count == WarningSummary.lineLimit, "載せた長さ: \(last.count)")
+            #expect(last.hasPrefix("head second line xxx"), "頭を残していない・改行を畳んでいない")
+            #expect(last.hasSuffix("…"))
+            // 読み手が通しても変わらない (書き手の切り方と読み手の切り方は同じ)
+            #expect(WarningSummary.line(last) == last)
+        }
+    }
+
     @Test("面の番号と大きさが区画に置かれる")
     func theManifestCarriesTheIdsAndSize() throws {
         try withFacet { directory in

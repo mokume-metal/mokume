@@ -52,13 +52,8 @@ enum KnobText {
     /// 改行は畳み、長ければ末尾を省く。
     static func warnings(_ summary: WarningSummary?) -> (count: String, last: String)? {
         guard let summary else { return nil }
-        let flat = summary.last.split(whereSeparator: \.isNewline).joined(separator: " ")
-        let last = flat.count > warningLineLimit ? String(flat.prefix(warningLineLimit - 1)) + "…" : flat
-        return (String(summary.count), last)
+        return (String(summary.count), WarningSummary.line(summary.last))
     }
-
-    /// 警告の 1 行を省かずに出す長さ。
-    static let warningLineLimit = 140
 
     /// 値を 1 行で。**桁を揃える** — 引いている最中に幅が伸び縮みすると読みにくい。
     static func value(of value: ParamValue) -> String {

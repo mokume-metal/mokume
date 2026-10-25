@@ -663,9 +663,13 @@ final class SharedFrameSurface {
         set(numbers.heaviestFrame.map(Double.init), as: TempoAttribute.heaviestFrame, on: surface)
         IOSurfaceSetValue(
             surface, TempoAttribute.warningCount as CFString, NSNumber(value: numbers.warningCount))
-        // **文面は言っていなければ消す。** 面は使い回されるので、消さなければ前の文面が残る
+        // **文面は言っていなければ消す。** 面は使い回されるので、消さなければ前の文面が残る。
+        // **載せる前に、読み手が出す長さに切る** (``WarningSummary/line(_:)``)。毎フレーム書き直す属性に、
+        // 上限の無い文面を載せ続けない
         if let last = numbers.lastWarning {
-            IOSurfaceSetValue(surface, TempoAttribute.lastWarning as CFString, last as CFString)
+            IOSurfaceSetValue(
+                surface, TempoAttribute.lastWarning as CFString,
+                WarningSummary.line(last) as CFString)
         } else {
             IOSurfaceRemoveValue(surface, TempoAttribute.lastWarning as CFString)
         }

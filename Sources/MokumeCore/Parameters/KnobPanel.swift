@@ -3,6 +3,17 @@
 
 import SwiftUI
 
+/// 警告の欄に出す値の置き場 ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+///
+/// 欄は数字の下に出入りして**面の丈を変える**ので、値は読み手が引くのではなく重ねる側 (``KnobOverlay``) が
+/// 押し込む — 押し込んだ側が、丈を測り直して枠を置き直せる (``KnobOverlay/show(warnings:)``)。数字のように
+/// 一定の間隔で引き直す形では、欄が伸びても枠が伸びない。
+@MainActor
+@Observable
+final class WarningFeed {
+    var summary: WarningSummary?
+}
+
 /// 窓に重ねる、宣言した値のつまみ。
 ///
 /// **入口はここ 1 つで、型ごとの名前に分けない** ([ADR-0030] 決定 8)。宣言側で型は
@@ -33,9 +44,9 @@ struct KnobPanel: View {
     /// **`nil` を返してよい。** 走っているのが別のプロセスのときは「まだ何も届いていない」
     /// 「もう届かなくなった」があり、そのとき数字を出せば嘘になる (``RemoteTempo``)。
     var numbers: (() -> FrameNumbers?)?
-    /// 走らせているスケッチが言った警告を読む口 (#3087)。**無いか、1 つも言っていなければ欄ごと出さない。**
+    /// 走らせているスケッチが言った警告の置き場 (#3087)。**無いか、1 つも言っていなければ欄ごと出さない。**
     /// 数字と違い、古くなっても消えない (``WarningSummary``)。
-    var warnings: (() -> WarningSummary?)?
+    var warnings: WarningFeed?
 
     /// 面の横幅。行の折り返しではなく窓の隅に収まる大きさで決める。
     static let width: CGFloat = 260
@@ -46,7 +57,7 @@ struct KnobPanel: View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 10) {
                 if let numbers {
-                    NumbersReadout(read: numbers, readWarnings: warnings)
+                    NumbersReadout(read: numbers, warnings: warnings)
                     // **並ぶものが無ければ仕切らない。** つまみを 1 つも宣言していない
                     // スケッチでも数字は出す (道具の窓に限る — ADR-0032 決定 1) ので、
                     // 何も無い側を仕切る線が残る
@@ -76,7 +87,7 @@ struct KnobPanel: View {
 /// 落としても数字そのものは正しい。
 private struct NumbersReadout: View {
     let read: () -> FrameNumbers?
-    let readWarnings: (() -> WarningSummary?)?
+    let warnings: WarningFeed?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: Self.interval)) { _ in
@@ -94,13 +105,13 @@ private struct NumbersReadout: View {
                     Spacer(minLength: 0)
                 }
                 // 警告は数字の下に 1 欄: 件数と、端末に出た最後の 1 行 (#3087)
-                if let warnings = KnobText.warnings(readWarnings?()) {
+                if let warnings = KnobText.warnings(warnings?.summary) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("warnings")
                             .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
                         (Text(warnings.count).monospacedDigit() + Text(" — ") + Text(warnings.last))
-                            .lineLimit(3)
+                            .lineLimit(Self.warningLines)
                             .truncationMode(.tail)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -111,6 +122,8 @@ private struct NumbersReadout: View {
 
     /// 読み直す間隔 (秒)。人が読める速さで足り、これより速くしても読めない。
     private static let interval: Double = 0.5
+    /// 警告の欄の行数の上限。
+    private static let warningLines = 3
 }
 
 /// 宣言 1 つぶんの行。
