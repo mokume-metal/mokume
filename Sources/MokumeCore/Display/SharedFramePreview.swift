@@ -114,11 +114,22 @@ public final class SharedFramePreview {
     /// 見張りが、控えている世代へ乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回に呼ぶ。失敗した子の目録が控えにあれば捨て、
-    /// 後から来ても採らない。映している世代 (前の版) には触らない。
+    /// 後から来ても採らない。**既に乗り換えて映している世代がその子なら、前の版へ映し直す** — 子が 1 枚書いて
+    /// 乗り換えた後、描画が見送られた拍に死ぬと、1 枚目の合図は鳴らない。
     ///
     /// - Parameter pids: 乗り換えない世代の子の番号。
     public func abandonGeneration(pids: [Int32]) {
         stage.abandonIncoming(pids: pids)
+    }
+
+    /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// その番号を、乗り換えないと決めた世代と手放した世代の覚えから外す。番号は使い回されるので、残すと同じ番号の
+    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
+    ///
+    /// - Parameter pids: 起こした子の番号。
+    public func expectGeneration(pids: [Int32]) {
+        stage.expectGeneration(pids: pids)
     }
 
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。

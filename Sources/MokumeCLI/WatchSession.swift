@@ -311,6 +311,13 @@ final class WatchSession {
     /// 1 枚書いてから死ぬと、動いている前の版でなくその子の最後の絵へ乗り換える。引数は失敗した子の番号。
     var abandonsIncoming: ([Int32]) -> Void = { _ in }
 
+    /// 道具の窓へ、「新しい子を起こした」と伝える口 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    ///
+    /// 引数は起こした子の番号。台は、乗り換えないと決めた世代 (``abandonsIncoming``) と手放した世代
+    /// (``relinquishesDisplay``) の番号の覚えからこの番号を外す — 番号は使い回されるので、残すと同じ番号を得た
+    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
+    var expectsGeneration: ([Int32]) -> Void = { _ in }
+
     /// 世代の子の番号。居なければ空。
     private func generationPIDs(of process: Process?) -> [Int32] {
         process.map { [$0.processIdentifier] } ?? []
@@ -1311,6 +1318,7 @@ final class WatchSession {
         // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
+        expectsGeneration(generationPIDs(of: child))
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
         awaitingPromotion = overlapsGenerations && child != nil
 
