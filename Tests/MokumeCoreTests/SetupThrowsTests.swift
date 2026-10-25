@@ -424,4 +424,71 @@ struct SetupThrowsTests {
             "\(RenderFailure.setupFailed(reason: " \n "))" == "setup() threw, so the sketch did not start",
             "空の理由で余計な : が残る")
     }
+
+    // MARK: - 起動中の印を見張りへ渡す (#3222)
+
+    /// 子は起動の頭で印を置き、最初の絵を出したら 1 度だけ消す。見張りは窓の無い見張りと倒れた子について、
+    /// 印が残ったまま終わった子を「最初の絵の前に終わった」と読む。
+    @Test("最初の絵を出したら、起動中の印を 1 度だけ消す")
+    func theFirstFrameClearsTheStartingMark() throws {
+        let application = try SketchApplication(sketch: Quiet(), gpu: RenderDevice())
+        var events: [String] = []
+        application.markStarting = { events.append("starting") }
+        application.markFirstFrame = { events.append("first") }
+        application.exitProcess = { _ in }
+        application.didFinishLaunching()
+        #expect(events == ["starting"], "最初の絵の前に印を消した: \(events)")
+        application.displayLinkFired()
+        application.displayLinkFired()
+        application.displayLinkFired()
+        #expect(events == ["starting", "first"], "印を 1 度だけ消していない: \(events)")
+        application.willTerminate()
+    }
+
+    @Test("setup() が投げて最初の絵を出せなければ、起動中の印は消さずに終わる")
+    func aFailedSetupLeavesTheStartingMark() throws {
+        let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
+        var events: [String] = []
+        application.markStarting = { events.append("starting") }
+        application.markFirstFrame = { events.append("first") }
+        application.noteStartFailure = { _ in }
+        application.exitProcess = { _ in events.append("exit") }
+        application.didFinishLaunching()
+        application.displayLinkFired()
+        #expect(events == ["starting", "exit"], "印を消した: \(events)")
+    }
+
+    // MARK: - 起動中の印の置き場 (WorkDirectory)
+
+    private func makeBase() throws -> (base: URL, facet: URL) {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-starting-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return (base, WorkDirectory.facet(WorkDirectory.buildFacetName, under: base))
+    }
+
+    @Test("見張りに起こされた子が、区画 build が在るときだけ、自分の pid で起動中の印を置き、消せる")
+    func theStartingMarkIsPlacedByAChildOfTheWatcherAndCleared() throws {
+        let (base, facet) = try makeBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let url = WorkDirectory.startingURL(forProcess: 4242, under: facet)
+
+        // 区画が無い場所には作らない (区画の有無は「効かせる」印になりうる)
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: "mokume watch")
+        #expect(!FileManager.default.fileExists(atPath: facet.path), "区画を生やした")
+
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        // 見張りに起こされていない子 (run・render・手で起こした子) は置かない
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path), "見張りに起こされていない子が置いた")
+
+        WorkDirectory.markStarting(forProcess: 4242, under: base, owner: "mokume watch")
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(WorkDirectory.startingURL(forProcess: 4243, under: facet) != url, "pid が名前に入っていない")
+
+        WorkDirectory.clearStarting(forProcess: 4242, under: base)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        // 無くても落ちない
+        WorkDirectory.clearStarting(forProcess: 4242, under: base)
+    }
 }

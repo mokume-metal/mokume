@@ -161,6 +161,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 既定の口は、見張りに起こされたときだけ区画へ置く (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
     var noteStartFailure: (String) -> Void = { noteOwnStartFailure($0) }
 
+    /// 起動中であることを、見張りへ渡す口 (``declareStarting()``)。**検査から差し替える** — 既定の口は、
+    /// 見張りに起こされたときだけ区画へ置く (``WorkDirectory/markStarting(forProcess:under:owner:)``)。
+    var markStarting: () -> Void = { WorkDirectory.markStarting(owner: SharedFrameSurface.launchOwner) }
+
+    /// 最初の絵を出したことを、見張りへ渡す口 (起動中の印を消す)。**検査から差し替える。**
+    var markFirstFrame: () -> Void = {
+        if SharedFrameSurface.launchOwner != nil { WorkDirectory.clearStarting() }
+    }
+
+    /// 最初の絵を出したか。**出したら 1 度だけ ``markFirstFrame`` を呼ぶ。**
+    private var hasPresentedFirstFrame = false
+
     /// 書き出す経路で、描けなかったフレームの数。
     private var framesFailedToDraw = 0
 
@@ -620,6 +632,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **画面の出口が外のプロセスに在れば、窓は作らない** ([ADR-0032] 決定 1)。駆動源は
     /// 窓ではなく画面に紐づくので (下記)、窓が無くてもそのまま繋がる。
     func didFinishLaunching() {
+        // **起動中の印を、最初のフレーム (= `setup()`) より前に置く** (#3222)。窓の経路にも共有面の経路にも、
+        // 書き出す経路にも先立つ (置くのは見張りに起こされた子だけ)
+        declareStarting()
         switch outlet {
         case .shared:
             screenLink.attach(to: NSScreen.main)
@@ -989,6 +1004,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             return
         }
         noteFrameRecovery()
+        if !hasPresentedFirstFrame {
+            hasPresentedFirstFrame = true
+            markFirstFrame()
+        }
+    }
+
+    /// 起動中であることを見張りへ渡す ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+    ///
+    /// 最初の絵を出す前に終わった子を、見張りは区画の印の残りで読む。窓の無い見張りと自分の窓へ倒れた子は、
+    /// 道具の窓の知らせが来ないので、これが唯一の合図になる。**最初の絵を出せば消える** (``advanceAndPresent(displayTime:)``)。
+    func declareStarting() {
+        markStarting()
     }
 
     /// ``Sketch/setup()`` が投げたので、起動できなかったことを言って 0 以外で終わる ([#2401])。

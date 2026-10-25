@@ -138,6 +138,51 @@ nonisolated public enum WorkDirectory {
             to: startFailureURL(forProcess: pid, under: facet), options: .atomic)
     }
 
+    /// 区画 `build` の中の、**まだ最初の絵を出していない子**の印
+    /// ([#3222](https://github.com/mokume-metal/mokume/issues/3222))。
+    ///
+    /// 子が起動の頭で自分の pid で置き、最初の絵を出したら消す。**中身は空で、在ることが知らせである**
+    /// (JSON ではない・``fellBackURL(forProcess:under:)`` と同じ)。見張りは終わった子の印が残っていれば、その子は
+    /// 最初の絵を出す前に終わったと読む — 台 (道具の窓) が最初の絵を知らせてくれない、窓の無い見張りと自分の窓に
+    /// 倒れた子のための合図である。
+    ///
+    /// **「出した」ではなく「まだ出していない」を運ぶ。** 道具と別の版のライブラリで組まれた子は印を置かない。
+    /// 「出した」を要求すると、そういう子が長く走った後に落ちても「起動できなかった」と言い切ってしまう。
+    /// 印を置かない子は今までどおり読まれる。
+    ///
+    /// **綴りはここ 1 箇所** (置く側の子と見る側の見張りが別のプロセス)。
+    package static func startingURL(forProcess pid: Int32, under facet: URL) -> URL {
+        facet.appendingPathComponent(".starting.\(pid)")
+    }
+
+    /// このプロセスが起動中であることを、見張りの区画 `build` に置く。
+    ///
+    /// **置くのは、見張りに起こされた子だけで、区画が既に在るときだけである** (``noteStartFailure(_:forProcess:under:owner:)``
+    /// と同じ規則)。書けなければ黙って諦める — 印が無い子は今までどおり読まれる。
+    ///
+    /// - Parameters:
+    ///   - base: 区画の基準。検査から差し替える。
+    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。**
+    package static func markStarting(
+        forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base, owner: String?
+    ) {
+        guard owner != nil else { return }
+        let facet = facet(buildFacetName, under: base)
+        guard directoryExists(at: facet) else { return }
+        _ = FileManager.default.createFile(
+            atPath: startingURL(forProcess: pid, under: facet).path, contents: Data())
+    }
+
+    /// 最初の絵を出したので、起動中の印を消す。**印が無ければ何もしない。**
+    package static func clearStarting(
+        forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
+        under base: URL = WorkDirectory.base
+    ) {
+        let url = startingURL(forProcess: pid, under: facet(buildFacetName, under: base))
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// その場所がディレクトリとして在るか。
     ///
     /// **ファイルが在るだけでは真にしない。** 区画は必ずディレクトリなので、同じ名前の
