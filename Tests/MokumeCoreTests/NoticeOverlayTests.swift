@@ -64,4 +64,15 @@ struct NoticeOverlayVisibilityTests {
         notice.show("作り直しに失敗", spinning: false)
         #expect(!notice.isSpinning)
     }
+
+    /// **2 行の行は 2 行ぶんの丈を取る** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。通らなかった
+    /// ビルドの行は、2 行目に最初の `error:` の行を添える。1 行ぶんの丈のままだと 2 行目が切れる。
+    @Test("改行を含む行は、1 行の行より丈を取る")
+    func aTwoLineNoticeTakesMoreHeight() {
+        let one = NoticeOverlay()
+        one.show("The build failed", spinning: false)
+        let two = NoticeOverlay()
+        two.show("The build failed\n/work/main.swift:12:5: error: cannot find 'circel' in scope", spinning: false)
+        #expect(two.frame.height > one.frame.height, "\(two.frame.height) vs \(one.frame.height)")
+    }
 }
