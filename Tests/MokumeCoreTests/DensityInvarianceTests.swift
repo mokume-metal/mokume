@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import MokumeProbe
 import Testing
 import simd
 
@@ -27,7 +28,7 @@ import simd
 /// | 線の半画素の寄せ | ``Outline/thickLine``・``Outline/thickQuad`` | 形 |
 /// | 線・輪郭・点の太さ (距離関数の経路・#1488) | ``Amount/line``・``Amount/rectOutline``・``Amount/point`` | 量 |
 /// | 細い塗り (距離関数の経路・#1477) | ``Amount/thinFill`` | 量 |
-/// | 45° に回した細い線・塗り・点 (距離関数の経路・#2226) | ``Amount/diagonalLine`` ほか、`diagonal` の行すべて | 量 (±5%) |
+/// | 回した細い線・塗り・点 (距離関数の経路・#2226) | ``Amount/diagonalLine`` ほか、`diagonal` の行すべて | 量 (±5%) |
 /// | 斜めの縁・細い枝の境目 (距離関数の経路・#2991) | `ExactEdgeCoverageTests` (回した輪郭・線を 16 通りの置き方で面積の 1 ± 0.03・境目の両側の差 0.01 以下) | 量 |
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
@@ -44,10 +45,10 @@ import simd
 ///
 /// - **量** (太さ・面積の口): 描く面 (`Canvas.target`) の線形の値を足す。線は、線を横切る列の
 ///   和が「太さ × 細かさ」の ±10%、点と軸に沿わない塗りは全体の和が「面積 × 細かさの 2 乗」の
-///   ±10% (45° に回した ``Amount/diagonalLine`` ほかは ±5%・楕円は ±6%)。置く位置を
-///   出す画素で 0.5 ずつ (描く画素で 0.25 ずつ) ずらして、どの位置でも成り立つことを見る
-///   (細かさ 1 の 1 画素より細い線も、同じ式で見る — `strokeWeight` の説明は経路も細かさも
-///   限らない)
+///   ±10% (回した ``Amount/diagonalLine`` ほかは ±5%・楕円は ±6%)。太さ・細かさ・置く位置・
+///   角度・縦横の倍率は **seed つきで生成し**、赤なら縮めた置き方を名乗る (#3216・``axes``)。
+///   直した Bug の置き方は固定の例 (``FixedPose``) に名指しで残す (細かさ 1 の 1 画素より細い
+///   線も、同じ式で見る — `strokeWeight` の説明は経路も細かさも限らない)
 /// - **形** (位置・矩形の口): 出す面 (`Canvas.output`) を 50% で白黒にした形を、細かさ 1 の
 ///   同じ絵 (切り抜きは同じ細かさの `rect`) と比べる。縁のずれは描く画素の半分 (細かさ 1 で
 ///   0・0.5 で 1 出す画素) まで許す。比べる相手の値がちょうど半分に近い画素 (0.45…0.55) は、
@@ -88,12 +89,13 @@ struct DensityInvarianceTests {
         case rectOutline = "rect の輪郭 (距離関数)"
         case point = "point (距離関数)"
         case thinFill = "細い塗り (距離関数)"
-        // 45° に回した細い形 (#2226)。置く位置で光の量が振れないことを、回さない行より狭い幅で見る
-        case diagonalLine = "rotate(π/4) の細い line (距離関数)"
-        case diagonalFill = "rotate(π/4) の細い rect の塗り (距離関数)"
-        case diagonalEllipseAcross = "rotate(π/4) の細い ellipse の塗り・細い向きが y (距離関数)"
-        case diagonalEllipseAlong = "rotate(π/4) の細い ellipse の塗り・細い向きが x (距離関数)"
-        case diagonalPoint = "rotate(π/4) の point (距離関数)"
+        // 回した細い形 (#2226)。置く位置と角度で光の量が振れないことを、回さない行より狭い幅で見る。
+        // 角度は ``Pose/angle`` で生成する (π/4 は固定の例 ``FixedPose`` に残る)
+        case diagonalLine = "rotate(θ) の細い line (距離関数)"
+        case diagonalFill = "rotate(θ) の細い rect の塗り (距離関数)"
+        case diagonalEllipseAcross = "rotate(θ) の細い ellipse の塗り・細い向きが y (距離関数)"
+        case diagonalEllipseAlong = "rotate(θ) の細い ellipse の塗り・細い向きが x (距離関数)"
+        case diagonalPoint = "rotate(θ) の point (距離関数)"
         // 三角形の経路 (#1637)
         case quad = "quad の輪郭 (三角形の経路)"
         case triangle = "triangle の輪郭 (三角形の経路)"
@@ -104,16 +106,17 @@ struct DensityInvarianceTests {
         case shaderPoint = "shader() の point (三角形の経路)"
         case shaderSquarePoint = "shader() の四角い point (三角形の経路)"
         // 回した変換・縦横で倍率の違う変換の点。描く画素の軸に沿った正方形にして、面積で出す
-        case rotatedShaderPoint = "rotate(π/4) の shader() の point (三角形の経路)"
-        case squashedShaderPoint = "scale(1, 0.1) の shader() の point (三角形の経路)"
+        case rotatedShaderPoint = "rotate(θ) の shader() の point (三角形の経路)"
+        case squashedShaderPoint = "scale(1, s) の shader() の point (三角形の経路)"
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
         case box = "noFill() の box の稜線 (立体の線)"
         // 縦と横で倍率の違う変換。細さは線の向きに垂直に測る (距離関数の経路が軸ごとに測るのと
         // 同じ測り方)。距離関数の経路の同じ行は置かない — 描く画素で 0.07 より細い線では 10% を
         // 越えて少なく出て (縁の遊び 1/256 によるとみられる)、この物差しの幅に収まらない
-        case stretchedQuad = "scale(4, 0.25) の quad の輪郭 (三角形の経路)"
-        case squashedQuad = "scale(1, 0.1) の quad の輪郭 (三角形の経路)"
+        // 倍率は ``Pose/squash`` で生成する (scale(4, 0.25)・scale(1, 0.1) は固定の例に残る)
+        case stretchedQuad = "scale(1/s, s) の quad の輪郭 (三角形の経路)"
+        case squashedQuad = "scale(1, s) の quad の輪郭 (三角形の経路)"
         // 被覆は断片の後で掛ける。断片が `in.color` を掛けなくても、`in.color.a` を読んでも同じ量
         case shaderOwnColor = "in.color を使わない shader() の quad の輪郭 (三角形の経路)"
         case shaderReadsAlpha = "in.color.a の 2 乗を返す shader() の quad の輪郭 (三角形の経路)"
@@ -125,8 +128,8 @@ struct DensityInvarianceTests {
         case shaderFill = "shader() の細い rect の塗り (三角形の経路)"
         case textureFill = "texture() の細い rect の塗り (三角形の経路)"
         case foldedFill = "shader() の細い rect を畳んだ雛形 (三角形の経路)"
-        case rotatedFill = "rotate(π/4) の shader() の細い rect (三角形の経路)"
-        case squashedFill = "scale(1, 0.1) の shader() の細い rect (三角形の経路)"
+        case rotatedFill = "rotate(θ) の shader() の細い rect (三角形の経路)"
+        case squashedFill = "scale(1, s) の shader() の細い rect (三角形の経路)"
         case retainedFill = "shader() で記録した rect を縮めて置く保持した形 (三角形の経路)"
         case shaderEllipse = "shader() の細長い ellipse の塗り (三角形の経路)"
 
@@ -135,9 +138,9 @@ struct DensityInvarianceTests {
         /// 閉じた四角の輪郭は上と下の辺の 2 本、箱は正面と背面の上下の稜線の 4 本が見る列を
         /// 横切る。三角形は上の辺と斜めの辺の 2 本で、斜めの辺は列で測ると太さの 1 / cos 倍になる。
         ///
-        /// 縦横で倍率の違う変換の行は、横の辺の太さが縦の倍率ぶん細る。半透明の色 (不透明度 0.5)
-        /// で置いた行は、光の量も半分になる。
-        var crossings: Double {
+        /// 縦横で倍率の違う変換の行は、横の辺の太さが縦の倍率 `squash` ぶん細る。半透明の色
+        /// (不透明度 0.5) で置いた行は、光の量も半分になる。
+        func crossings(squash: Float) -> Double {
             switch self {
             case .point, .shaderPoint, .shaderSquarePoint, .rotatedShaderPoint, .squashedShaderPoint,
                 .diagonalPoint:
@@ -147,12 +150,32 @@ struct DensityInvarianceTests {
                 1
             case .triangle: 1 + (1 + Double(60 * 60) / Double(88 * 88)).squareRoot()
             case .box: 4
-            case .stretchedQuad: 2 * 0.25
-            case .squashedQuad: 2 * 0.1
+            case .stretchedQuad, .squashedQuad: 2 * Double(squash)
             case .nestedTranslucent: 2 * 0.5
             default: 2
             }
         }
+
+        /// 回転を持つ口か (``Pose/angle`` を使う)。
+        var rotates: Bool {
+            switch self {
+            case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
+                .rotatedShaderPoint, .rotatedFill:
+                true
+            default: false
+            }
+        }
+
+        /// 縦横で倍率の違う変換を持つ口か (``Pose/squash`` を使う)。
+        var squashes: Bool {
+            switch self {
+            case .stretchedQuad, .squashedQuad, .squashedShaderPoint, .squashedFill: true
+            default: false
+            }
+        }
+
+        /// 点の面積が理想の何倍になるか (縦横で倍率の違う変換の点は、縦の倍率ぶん縮む)。
+        func areaFactor(squash: Float) -> Double { self == .squashedShaderPoint ? Double(squash) : 1 }
 
         /// 塗りで量を出す口か (線の太さの代わりに塗りの幅で書く)。
         var isFill: Bool {
@@ -181,7 +204,8 @@ struct DensityInvarianceTests {
             }
         }
 
-        /// 置く位置のずらし (描く画素ではなく、出す画素で見た y の向き)。
+        /// 固定の例 (``FixedPose``) で置く位置のずらし (描く画素ではなく、出す画素で見た y の向き)。
+        /// 生成する検査は ``Pose/offset`` を連続の範囲から作る。
         ///
         /// 45° の形は y を 1 ずらすと画素の格子の 1 周期ぶん動いて元に戻る。位相を一巡するには、
         /// 0.25 刻みで 1 周期より先まで見る。
@@ -210,8 +234,11 @@ struct DensityInvarianceTests {
         }
 
         @MainActor
-        func draw(on canvas: Canvas, weight: Float, offset: Float) throws {
+        func draw(on canvas: Canvas, _ pose: Pose) throws {
+            let (weight, offset, angle, squash) = (pose.weight, pose.offset.y, pose.angle, pose.squash)
             let y = 40 + offset
+            // x のずらしは形ごと動かす。線の口が見る列 (x = 54…74) は形の端から離れている
+            canvas.translate(pose.offset.x, 0)
             canvas.strokeWeight(weight)
             switch self {
             case .line: canvas.line(20, y, 108, y)
@@ -222,9 +249,9 @@ struct DensityInvarianceTests {
                 canvas.fill(255)
                 canvas.rect(20, y, 88, weight)
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint:
-                // 画素の格子と向きが揃う 45° に回す。帯の中心を (64, 64 + ずらし) に置く
+                // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す
                 canvas.translate(64, 64 + offset)
-                canvas.rotate(Float.pi / 4)
+                canvas.rotate(angle)
                 switch self {
                 case .diagonalLine:
                     canvas.strokeCap(.square)
@@ -271,7 +298,7 @@ struct DensityInvarianceTests {
             case .rotatedShaderPoint, .squashedShaderPoint:
                 canvas.shader(try Self.plainShader(canvas))
                 canvas.translate(64 + offset, 64 + offset)
-                if self == .rotatedShaderPoint { canvas.rotate(Float.pi / 4) } else { canvas.scale(1, 0.1) }
+                if self == .rotatedShaderPoint { canvas.rotate(angle) } else { canvas.scale(1, squash) }
                 canvas.point(0, 0)
             case .shaderSquarePoint:
                 canvas.shader(try Self.plainShader(canvas))
@@ -297,7 +324,7 @@ struct DensityInvarianceTests {
                 canvas.translate(64, 64 + offset, -20)
                 canvas.box(40)
             case .stretchedQuad, .squashedQuad:
-                let (sx, sy): (Float, Float) = self == .squashedQuad ? (1, 0.1) : (4, 0.25)
+                let (sx, sy): (Float, Float) = self == .squashedQuad ? (1, squash) : (1 / squash, squash)
                 canvas.translate(20, y)
                 canvas.scale(sx, sy)
                 canvas.quad(0, 0, 88 / sx, 0, 88 / sx, 40 / sy, 0, 40 / sy)
@@ -322,13 +349,13 @@ struct DensityInvarianceTests {
                 canvas.shape(outer)
             case .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill, .retainedFill,
                 .shaderEllipse:
-                try drawFill(on: canvas, weight: weight, offset: offset)
+                try drawFill(on: canvas, weight: weight, offset: offset, angle: angle, squash: squash)
             }
         }
 
         /// 三角形の経路の細い塗りの行 (#1934)。白で塗り、輪郭は持たない。
         @MainActor
-        private func drawFill(on canvas: Canvas, weight: Float, offset: Float) throws {
+        private func drawFill(on canvas: Canvas, weight: Float, offset: Float, angle: Float, squash: Float) throws {
             let y = 40 + offset
             canvas.noStroke()
             canvas.fill(255)
@@ -346,13 +373,13 @@ struct DensityInvarianceTests {
                 canvas.rect(20, y, 88, weight)
             case .rotatedFill:
                 canvas.translate(64 + offset, 64 + offset)
-                canvas.rotate(Float.pi / 4)
+                canvas.rotate(angle)
                 canvas.rect(-30, -weight / 2, 60, weight)
             case .squashedFill:
-                // 縦の倍率 0.1 で、描く画素での幅が `weight × 細かさ` になる
+                // 縦の倍率 `squash` で、描く画素での幅が `weight × 細かさ` になる
                 canvas.translate(20, y)
-                canvas.scale(1, 0.1)
-                canvas.rect(0, 0, 88, weight * 10)
+                canvas.scale(1, squash)
+                canvas.rect(0, 0, 88, weight / squash)
             case .retainedFill:
                 // 幅を倍で記録し、半分に縮めて置く。置いた後の幅が `weight` になる。記録の中で
                 // 効いている断片が形に焼き付く (三角形の経路で記録する)
@@ -394,45 +421,155 @@ struct DensityInvarianceTests {
         return total
     }
 
-    /// 太さ・面積の口が、細かさと置く位置によらず、描く画素での太さ (面積) ぶんの濃さで出る。
+    /// 量の口を置く置き方。生成する検査は座標ごとに範囲から作り、固定の例は ``FixedPose`` が作る。
+    struct Pose: Sendable, CustomStringConvertible {
+        /// 太さ (塗りの口は幅)。出す画素で書く。
+        var weight: Float
+        /// 細かさ (`pixelDensity`)。
+        var density: Float
+        /// 置く位置のずらし。出す画素で書く。
+        var offset: SIMD2<Float>
+        /// 回転を持つ口 (``Amount/rotates``) の角度。
+        var angle: Float
+        /// 縦横で倍率の違う変換を持つ口 (``Amount/squashes``) の縦の倍率。
+        var squash: Float
+
+        var description: String {
+            "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)"
+        }
+    }
+
+    /// 生成する座標と範囲 (#3216 の条件 2)。**範囲は口の説明が約束している範囲そのもの** で、狭めた
+    /// 所は理由をここに書く。
+    ///
+    /// - 太さ: `strokeWeight` の説明は経路も細かさも限らない。ただし描く画素で 0.07 より細い線は、
+    ///   縁の遊び (1/256) で 10% を越えて少なく出ることが分かっていて、この物差しの幅の約束の外に
+    ///   置いている (``Amount/stretchedQuad`` の注釈)。そこで太さは描く画素で 0.07 以上を見る
+    ///   (下回った入力は ``Probe/Outcome/skip``)。上は出す画素で 1 まで — 点と面全体で見る塗りは
+    ///   描く画素で 1 以上を見ない (ADR-0039 決定 3) ので、それより太い線を足しても見る行が増えない
+    /// - 細かさ: `pixelDensity` は `(0, 1]` を受ける (`Canvas.swift` の検め)。出す面 128 が描く画素の
+    ///   整数になる 1/128 刻みで選ぶ。0.25 より細かくない面は描く面が 32 画素未満になり、線の口が
+    ///   見る列 (x = 54…74) が 5 列を切るので見ない
+    /// - ずらし: 出す画素で `[0, 2)` の 2 次元。描く画素の格子の位相を、細かさ 0.5 でも 1 周期より先まで回る
+    /// - 角度: `[0, π/2)`。正方形の格子は π/2 で元に戻る
+    /// - 倍率: `[0.1, 1)`。固定の例の 0.1 と 0.25 を含む。0.1 未満は ``Amount/stretchedQuad`` の
+    ///   縦の辺が出す面 (128) を越える
+    static let axes = [
+        ProbeAxis("weight", 0.07..<1.0001, simplest: 1),
+        ProbeAxis("density", 0.25..<1.0001, simplest: 1, step: 1.0 / 128),
+        ProbeAxis("dx", 0..<2, simplest: 0),
+        ProbeAxis("dy", 0..<2, simplest: 0),
+        ProbeAxis("angle", 0..<(Double.pi / 2), simplest: 0),
+        ProbeAxis("squash", 0.1..<1, simplest: 0.5),
+    ]
+
+    /// PR・queue で口ごとに回す件数 (固定の seed)。定期の検査は `MOKUME_PROBE_SCALE` で増やす。
+    ///
+    /// 生成に置き換える前の格子は、口ごとに太さ 3 × 細かさ 2 × ずらし 4 (回した口は 8) の 24〜48 回を
+    /// 描いていた。同じ程度に収める (#3216 の条件 5)。
+    static let generatedCases = 32
+
+    /// 量の口を置き方 `pose` で描き、約束と比べる。生成する検査も固定の例も、ここを通る。
+    @MainActor
+    static func measure(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
+        let (weight, density) = (pose.weight, pose.density)
+        let drawn = Double(weight * density)
+        // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)
+        if drawn < 0.07 { return .skip }
+        // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
+        // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
+        let areaFactor = mouth.areaFactor(squash: pose.squash)
+        let crossings = mouth.crossings(squash: pose.squash)
+        if crossings == 0, drawn * areaFactor.squareRoot() >= 1 { return .skip }
+        // 面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)
+        if mouth.fillArea != nil, drawn >= 1 { return .skip }
+        let canvas = try makeCanvas(density: density)
+        try draw(on: canvas) {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            try mouth.draw(on: canvas, pose)
+        }
+        let pixels = try canvas.target.readPixels()
+        let (measured, expected): (Double, Double)
+        if let area = mouth.fillArea {
+            (measured, expected) = (totalSum(pixels), area * drawn * Double(density))
+        } else if crossings == 0 {
+            (measured, expected) = (totalSum(pixels), drawn * drawn * areaFactor)
+        } else {
+            (measured, expected) = (columnSum(pixels, density: density), drawn * crossings)
+        }
+        if abs(measured - expected) > mouth.tolerance * expected {
+            return .fail("光の量 \(measured) (期待 \(expected)・許容 ±\(mouth.tolerance))")
+        }
+        return .pass
+    }
+
+    /// 太さ・面積の口が、細かさ・置く位置・角度・倍率によらず、描く画素での太さ (面積) ぶんの濃さで出る。
+    ///
+    /// 置き方は seed つきで生成する (#3216)。赤なら、縮めた置き方と seed を `[density seed=…]` で名乗る。
+    /// 同じ赤は `MOKUME_PROBE_SEED=<その seed>` と `--filter` で、その 1 件だけを走らせて再現する。
+    /// **許容の幅は緩めない** — 生成した置き方で越えたら Bug として起票し、その置き方を
+    /// ``fixedPosesKeepTheirWeight(_:)`` の固定の例に `withKnownIssue` で足す (条件 3)。
     @Test(
-        "太さ・面積の口は、細かさと置く位置によらず描く画素での太さ (面積) ぶんの濃さで出る",
-        arguments: Amount.allCases, [Float(1), 0.5, 0.2])
-    func amountKeepsItsWeight(_ mouth: Amount, _ weight: Float) throws {
+        "太さ・面積の口は、細かさ・置く位置・角度・倍率によらず描く画素での太さ (面積) ぶんの濃さで出る",
+        arguments: Amount.allCases)
+    func amountKeepsItsWeight(_ mouth: Amount) throws {
+        let report = try Probe.run(
+            "density", suite: "DensityInvarianceTests", key: "amount/\(mouth)", axes: Self.axes,
+            cases: Self.generatedCases
+        ) { input in
+            let pose = Pose(
+                weight: input.float("weight"), density: input.float("density"),
+                offset: SIMD2(input.float("dx"), input.float("dy")),
+                angle: mouth.rotates ? input.float("angle") : 0,
+                squash: mouth.squashes ? input.float("squash") : 1)
+            return try Self.measure(mouth, pose)
+        }
+        #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
+        // 生成した置き方の大半が約束の外へ落ちると、探したと名乗りながら何も見ない
+        #expect(report.ran * 2 >= report.ran + report.skipped, "\(mouth.rawValue): 見たのは \(report.ran) 件・約束の外 \(report.skipped) 件")
+    }
+
+    /// 固定の例: Bug を名乗る置き方の格子 (#3216 の条件 6)。
+    ///
+    /// 生成に置き換える前に、角度と倍率を固定の値で回していた行である。生成の範囲に含まれるが、
+    /// 直した Bug の入力として名指しで残す。格子は置き換える前と同じ (太さ 3 × 細かさ 2 × ずらし)。
+    struct FixedPose: Sendable, CustomTestStringConvertible {
+        let mouth: Amount
+        let angle: Float
+        let squash: Float
+        /// この置き方を直した Bug。
+        let issue: Int
+
+        var testDescription: String { "#\(issue) \(mouth.rawValue)・角度 \(angle)・倍率 \(squash)" }
+
+        nonisolated static let all: [FixedPose] =
+            [Amount.diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint].map {
+                FixedPose(mouth: $0, angle: .pi / 4, squash: 1, issue: 2226)
+            } + [
+                FixedPose(mouth: .rotatedShaderPoint, angle: .pi / 4, squash: 1, issue: 1637),
+                FixedPose(mouth: .squashedShaderPoint, angle: 0, squash: 0.1, issue: 1637),
+                FixedPose(mouth: .stretchedQuad, angle: 0, squash: 0.25, issue: 1637),
+                FixedPose(mouth: .squashedQuad, angle: 0, squash: 0.1, issue: 1637),
+                FixedPose(mouth: .rotatedFill, angle: .pi / 4, squash: 1, issue: 1934),
+                FixedPose(mouth: .squashedFill, angle: 0, squash: 0.1, issue: 1934),
+            ]
+    }
+
+    @Test("固定の例: 直した Bug の置き方の格子でも、描く画素での太さ (面積) ぶんの濃さで出る", arguments: FixedPose.all)
+    func fixedPosesKeepTheirWeight(_ row: FixedPose) throws {
         var broken: [String] = []
-        for density in Self.densities {
-            // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
-            // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
-            let areaFactor: Double = mouth == .squashedShaderPoint ? 0.1 : 1
-            if mouth.crossings == 0, Double(weight * density) * areaFactor.squareRoot() >= 1 {
-                continue
-            }
-            // 面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)
-            if mouth.fillArea != nil, weight * density >= 1 { continue }
-            for offset in mouth.offsets {
-                let canvas = try Self.makeCanvas(density: density)
-                try Self.draw(on: canvas) {
-                    canvas.background(0)
-                    canvas.noFill()
-                    canvas.stroke(255)
-                    try mouth.draw(on: canvas, weight: weight, offset: offset)
-                }
-                let pixels = try canvas.target.readPixels()
-                let drawn = Double(weight * density)
-                let (measured, expected): (Double, Double)
-                if let area = mouth.fillArea {
-                    (measured, expected) = (Self.totalSum(pixels), area * drawn * Double(density))
-                } else if mouth.crossings == 0 {
-                    (measured, expected) = (Self.totalSum(pixels), drawn * drawn * areaFactor)
-                } else {
-                    (measured, expected) = (Self.columnSum(pixels, density: density), drawn * mouth.crossings)
-                }
-                if abs(measured - expected) > mouth.tolerance * expected {
-                    broken.append("細かさ \(density)・ずらし \(offset): \(measured) (期待 \(expected))")
+        for weight in [Float(1), 0.5, 0.2] {
+            for density in Self.densities {
+                for offset in row.mouth.offsets {
+                    let pose = Pose(
+                        weight: weight, density: density, offset: SIMD2(0, offset), angle: row.angle, squash: row.squash)
+                    if case .fail(let text) = try Self.measure(row.mouth, pose) { broken.append("\(pose): \(text)") }
                 }
             }
         }
-        #expect(broken.isEmpty, "\(mouth.rawValue)・太さ \(weight): \(broken.joined(separator: " / "))")
+        #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
     }
 
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
