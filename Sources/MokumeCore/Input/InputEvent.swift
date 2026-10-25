@@ -36,7 +36,12 @@ public enum InputEvent: Equatable, Sendable {
     /// 線では `paths` の配列で運ぶ — 選んだ 1 本か、空の配列 (取り消し)。`paths` の無い出来事と、2 本以上
     /// の出来事は読めない 1 件にする。待っている ``SketchPart/selectInput(_:)`` が無いときは、合流点が
     /// 捨てる。
-    case fileSelected(path: String?)
+    ///
+    /// `serial` は**どの頼みへの答えか** (``SketchPart/selectInput(_:)`` の頼みの通し番号)。**省ける** —
+    /// 道具の窓が子へ送る結果は載せ、外から送る結果は載せなくてよい。載っていれば、合流点は**いまの待ちと番号が
+    /// 同じときだけ**待ちを終え、違う番号の結果 (前の待ちの古い答え・待ちが終わった後の送り直し) は黙って捨てる。
+    /// 載っていなければ今の待ちへ届く。番号があるので、道具は頼みが残っている間、落ちた結果を送り直せる。
+    case fileSelected(path: String?, serial: Int? = nil)
     case keyDown(code: Key, characters: String, isRepeat: Bool)
     case keyUp(code: Key)
 }
@@ -69,8 +74,11 @@ extension String {
 /// 選んだ結果 (`fileSelected`) の `paths` は、**空の配列が取り消し**という意味を持つ。だから空は読めるが、
 /// **無い (書き忘れ) は取り消しと読まず**読めない 1 件にし、2 本以上も 1 本を選ばせる口の結果として
 /// 読めないので読めない 1 件にする (先頭の 1 本を黙って取らない)。要素が絶対パスでない結果も読めない。
+/// `serial` (どの頼みへの答えか) は省ける。載せるなら正の整数 — 0 や負の番号は頼みの番号ではないので、
+/// 読めない 1 件にする (番号なしと読むと、狙った待ちではない待ちを終えうる)。
 /// `clickCount` は省略が自然に読める (単発の 1)。
-/// **この 3 つは、読む種別 (`pinched`・`fileDropped` と `fileSelected`・`mouseDown`) でだけ読む** (``readKeys(forType:)``)。
+/// **`amount`・`clickCount`・`paths`・`serial` は、それぞれ読む種別 (`pinched`・`mouseDown`・
+/// `fileDropped` と `fileSelected`・`fileSelected`) でだけ読む** (``readKeys(forType:)``)。
 ///
 /// 一方 `button` の 0 は主釦 (左)、`dx` の 0 は動いていない (スクロールでも、相対の移動
 /// `mouseMovedBy` でも)、`isRepeat` の false は押しっぱなしでない — こちらは省略が自然に
@@ -97,9 +105,10 @@ struct RawInputEvent: Decodable {
     let amount: Float?
     let clickCount: Int?
     let paths: [String]?
+    let serial: Int?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount, paths
+        case type, x, y, button, dx, dy, code, characters, isRepeat, amount, clickCount, paths, serial
     }
 
     /// 読む鍵 (宣言順)。スキーマ (`input-request.schema.json`) の出来事の `properties` と同じ集合で、
@@ -108,7 +117,8 @@ struct RawInputEvent: Decodable {
 
     /// 種別 `type` の出来事が読む鍵 (宣言順)。知らない鍵の名乗りが並べる。
     ///
-    /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ、`paths` は `fileDropped` でだけ読む**
+    /// **`amount` は `pinched` でだけ、`clickCount` は `mouseDown` でだけ、`paths` は `fileDropped` と `fileSelected` で、
+    /// `serial` は `fileSelected` でだけ読む**
     /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762)・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す (値の型が違っても
     /// 解けない 1 件にしない — `mouseUp` の `"clickCount": 1.5` で解放が落ちると、釦が押されたまま残る)。
@@ -120,6 +130,7 @@ struct RawInputEvent: Decodable {
             case CodingKeys.amount.stringValue: kind == .pinched
             case CodingKeys.clickCount.stringValue: kind == .mouseDown
             case CodingKeys.paths.stringValue: kind == .fileDropped || kind == .fileSelected
+            case CodingKeys.serial.stringValue: kind == .fileSelected
             default: true
             }
         }
@@ -144,6 +155,8 @@ struct RawInputEvent: Decodable {
         paths =
             kind == .fileDropped || kind == .fileSelected
             ? try container.decodeIfPresent([String].self, forKey: .paths) : nil
+        serial =
+            kind == .fileSelected ? try container.decodeIfPresent(Int.self, forKey: .serial) : nil
     }
 
     /// 線の番号を釦にする。**番号を型へ絞る関所は、ここと窓 (`SketchSurface`) の 2 つだけ。**
@@ -195,7 +208,9 @@ struct RawInputEvent: Decodable {
             // 空の配列は取り消し。`paths` が無い・null は書き忘れなので取り消しと読まない。2 本以上は
             // 1 本を選ばせる口の結果として読めない (先頭の 1 本を黙って取らない)
             guard let paths, paths.count <= 1, paths.allSatisfy(\.isAbsolutePath) else { return nil }
-            return .fileSelected(path: paths.first)
+            // 番号は省ける。載せるなら頼みの番号 (1 から数える) でなければならない
+            if let serial, serial < 1 { return nil }
+            return .fileSelected(path: paths.first, serial: serial)
         case .keyDown:
             guard let code else { return nil }
             return .keyDown(

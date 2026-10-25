@@ -40,7 +40,7 @@ enum InputCallback: Equatable, Sendable {
     case fileDropped(paths: [String])
     /// 選ばせるダイアログの結果が届いた。選んだ絶対パスか、取り消しの `nil`
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。待っている ``SketchPart/selectInput(_:)`` を終える。
-    case fileSelected(path: String?)
+    case fileSelected(path: String?, serial: Int?)
     /// キーが押された。
     case keyPressed
     /// キーが離された。

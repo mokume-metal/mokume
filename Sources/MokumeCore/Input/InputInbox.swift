@@ -196,34 +196,38 @@ final class InputInbox {
         }
         var accepted = 0
         var ignored = 0
-        // **選ばせる頼みを待っているか** (``SketchPart/selectInput(_:)``)。待ちは 1 つなので、1 件の結果が待ちを
+        // **いま待っている選ばせる頼みの番号** (``SketchPart/selectInput(_:)``)。待ちは 1 つなので、1 件の結果が待ちを
         // 終えたら、同じ要求の次の結果は待つ相手がいない
-        var awaitsSelection = state.selection.isAwaiting
-        var unawaited: [Int] = []
+        var awaitedSerial = state.selection.pending?.serial
+        var unawaited: [(index: Int, numbered: Bool)] = []
         for (index, entry) in request.events.enumerated() {
             // **知らない種別も解けなかったものも捨てるが、その 1 件だけ。** 残りは通す
             guard let event = entry.event else {
                 ignored += 1
                 continue
             }
-            // **待っている `selectInput` が無いときの結果は、捨てて名乗る** (#3062)。取り消しも結果なので、
-            // 黙って積むと、次に頼んだ `selectInput` を古い結果が終えてしまう
-            if case .fileSelected = event {
-                guard awaitsSelection else {
+            // **待っている `selectInput` が無い・番号が合わない結果は、捨てて名乗る** (#3062)。取り消しも結果なので、
+            // 黙って積むと、次に頼んだ `selectInput` を古い結果が終えてしまう。番号なしはいまの待ちへ、番号つきは
+            // その番号の待ちへだけ届く
+            if case .fileSelected(_, let serial) = event {
+                guard let waiting = awaitedSerial, serial == nil || serial == waiting else {
                     ignored += 1
-                    unawaited.append(index)
+                    unawaited.append((index, serial != nil))
                     continue
                 }
-                awaitsSelection = false
+                awaitedSerial = nil
             }
             state.enqueue(event)
             accepted += 1
         }
         var warnings = request.unknownKeyWarnings
-        for index in unawaited.prefix(InputRequest.namedEventLimit) {
+        for (index, numbered) in unawaited.prefix(InputRequest.namedEventLimit) {
             warnings.append(
-                "events[\(index)]: A fileSelected event was dropped because no selectInput() is waiting "
-                    + "for a result (it counts in ignored)")
+                "events[\(index)]: A fileSelected event was dropped because "
+                    + (numbered
+                        ? "no selectInput() with its serial is waiting for a result"
+                        : "no selectInput() is waiting for a result")
+                    + " (it counts in ignored)")
         }
         let report = InputReport(
             id: request.id, accepted: accepted, ignored: ignored, dropped: state.droppedEvents,

@@ -287,7 +287,8 @@ struct SharedFrameStageTests {
             #expect(picker.shown.count == 1, "同じ頼みを出し直した")
 
             picker.answer(0, "/tmp/a.csv")
-            #expect(lines == [InputEvent.fileSelected(path: "/tmp/a.csv").wireLine], "\(lines)")
+            #expect(
+                lines == [InputEvent.fileSelected(path: "/tmp/a.csv", serial: 1).wireLine], "\(lines)")
 
             // 結果が届いて頼みが消え、次の頼み (2) が来る
             try draw(child, frame: 4, gpu: gpu)
@@ -305,7 +306,138 @@ struct SharedFrameStageTests {
             picker.answer(1, "/tmp/stale.csv")
             #expect(lines.isEmpty, "閉じたダイアログの結果が子へ渡った")
             picker.answer(2, nil)
-            #expect(lines == [InputEvent.fileSelected(path: nil).wireLine], "取り消しは空の配列の 1 行")
+            #expect(
+                lines == [InputEvent.fileSelected(path: nil, serial: 3).wireLine],
+                "取り消しは空の配列の 1 行で、頼みの番号を載せる")
+        }
+    }
+
+    /// **結果の 1 行は落ちうる** ([#3062]): 管が一杯・書き残しの間・子の溢れ。頼みが面に残っている間は、間合いを置いて
+    /// 送り直す。頼みが消えたら止める。
+    ///
+    /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
+    @Test("答えた結果は、頼みが面に残る間だけ間合いを置いて送り直す。頼みが消えたら止める")
+    func theAnswerIsResentWhileTheRequestStaysPosted() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let child = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look("resend", selects: true))
+            defer { stage.close() }
+            let picker = FakeFilePicker()
+            stage.filePicker = picker
+            var clock = 100.0
+            stage.now = { clock }
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open()
+            stage.displayLinkFired()
+            let request = SelectionBroker.Request(serial: 1, prompt: "pick")
+            try draw(child, frame: 2, gpu: gpu, selection: request)
+            stage.displayLinkFired()
+            picker.answer(0, "/tmp/a.csv")
+            let line = InputEvent.fileSelected(path: "/tmp/a.csv", serial: 1).wireLine
+            #expect(lines == [line])
+
+            // 間合いの前は送り直さない。頼みが残っていても毎フレームは送らない
+            try draw(child, frame: 3, gpu: gpu, selection: request)
+            clock += SharedFrameStage.selectionResendInterval / 2
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(lines == [line], "間合いの前に送り直した: \(lines.count) 行")
+
+            // 間合いが過ぎたら、頼みが残っているので送り直す (落ちた 1 行の代わり)
+            clock += SharedFrameStage.selectionResendInterval
+            stage.displayLinkFired()
+            #expect(lines == [line, line], "落ちた結果を送り直さない")
+            stage.displayLinkFired()
+            #expect(lines.count == 2, "同じ間合いの中でもう 1 度送った")
+            #expect(picker.shown.count == 1, "答えた頼みを出し直した")
+
+            // 子が結果を受けて頼みを消したら、もう送らない
+            try draw(child, frame: 4, gpu: gpu)
+            clock += SharedFrameStage.selectionResendInterval * 4
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(lines.count == 2, "頼みが消えた後も送り直した")
+        }
+    }
+
+    @Test("答える前は送り直さない。頼んだ世代が入れ替わったら、送り直さない")
+    func nothingIsResentBeforeAnswerOrAfterTheGenerationChanged() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let child = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look("resend-none", selects: true))
+            defer { stage.close() }
+            let picker = FakeFilePicker()
+            stage.filePicker = picker
+            var clock = 0.0
+            stage.now = { clock }
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open()
+            stage.displayLinkFired()
+            try draw(
+                child, frame: 2, gpu: gpu, selection: SelectionBroker.Request(serial: 1, prompt: "pick"))
+            stage.displayLinkFired()
+            clock += SharedFrameStage.selectionResendInterval * 10
+            stage.displayLinkFired()
+            #expect(lines.isEmpty, "答えていないのに送った")
+
+            picker.answer(0, nil)
+            #expect(lines.count == 1)
+            stage.relinquishSource(pids: [100])
+            clock += SharedFrameStage.selectionResendInterval * 10
+            for _ in 0..<3 { stage.displayLinkFired() }
+            #expect(lines.count == 1, "手放した世代へ送り直した")
+        }
+    }
+
+    /// **ファイルのシートが付いている間も、× は閉じる問いへ進む** ([#3062])。付いたシートがあると
+    /// `windowShouldClose` は黙って false を返し、× が効かない窓になっていた。
+    ///
+    /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
+    @Test("ファイルを選ぶシートが付いていても、× は問いへ進み、ダイアログは取り消しとして子へ渡る")
+    func closingWithTheFileSheetUpAsksTheQuestion() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let child = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let stage = try SharedFrameStage(
+                gpu: gpu, facet: facet, look: look("close-sheet", selects: true))
+            defer { stage.close() }
+            let picker = FakeFilePicker()
+            stage.filePicker = picker
+            var asked = 0
+            stage.presentQuestion = { _, _, _ in asked += 1 }
+            stage.askBeforeClosing(question) {}
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open()
+            stage.displayLinkFired()
+            try draw(
+                child, frame: 2, gpu: gpu, selection: SelectionBroker.Request(serial: 4, prompt: "pick"))
+            stage.displayLinkFired()
+            try #require(picker.shown.count == 1)
+            // 本物のシートが窓に付いた状態にする (ファイルのシートの代わり)
+            let window = try #require(stage.window)
+            let sheet = NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 80, height: 40), styleMask: [.titled],
+                backing: .buffered, defer: true)
+            window.beginSheet(sheet, completionHandler: nil)
+            defer { if let attached = window.attachedSheet { window.endSheet(attached) } }
+            try #require(window.attachedSheet != nil)
+
+            #expect(try !asksToClose(stage))
+            #expect(asked == 1, "ファイルのシートが付いていると × が効かない")
+            #expect(picker.dismissals == 1, "ファイルのダイアログを取り消していない")
+            #expect(
+                lines == [InputEvent.fileSelected(path: nil, serial: 4).wireLine],
+                "取り消しとして子へ渡らない: \(lines)")
+
+            // 問いのシートが出ている間の 2 度目の × は、問いを重ねない
+            #expect(try !asksToClose(stage))
+            #expect(asked == 1, "問いを二重に出した")
+            #expect(lines.count == 1)
         }
     }
 

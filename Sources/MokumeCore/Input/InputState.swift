@@ -134,7 +134,7 @@ public final class InputState {
     private(set) var warnings = WarningLog<Warning>()
 
     /// ファイルを選ばせる頼みの待ち (``SketchPart/selectInput(_:)``)。結果は入力の出来事
-    /// (``InputEvent/fileSelected(path:)``) としてここへ届くので、待ちも合流点が持つ
+    /// (``InputEvent/fileSelected(path:serial:)``) としてここへ届くので、待ちも合流点が持つ
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     let selection = SelectionBroker()
 
@@ -304,18 +304,24 @@ public final class InputState {
             // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
             // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
             break
-        case .fileSelected(let path):
+        case .fileSelected(let path, let serial):
             // 状態は動かさない。待っている ``SketchPart/selectInput(_:)`` を終えるのは配り先 (`SketchRuntime`)
-            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。**待っていなければ配らず、1 度だけ言う** —
-            // 道具の窓から子の標準入力で届く結果は、子が入れ替わった後や取り下げた後にも届きうる
-            guard selection.isAwaiting else {
+            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))
+            if let serial {
+                // **番号つきの結果は、いまの待ちの番号と同じときだけ配る。** 違うもの (前の待ちの古い答え・
+                // 待ちが終わった後の送り直し) は黙って捨てる — 道具の窓は頼みが残る間、落ちた結果を送り直すので、
+                // 重なって届くのは正しい道で、警告にすると毎回言うことになる
+                guard selection.pending?.serial == serial else { return }
+            } else if !selection.isAwaiting {
+                // **番号なし (外から送る結果) は、待っていなければ配らず、1 度だけ言う** — 子が入れ替わった後や
+                // 取り下げた後にも届きうる
                 warnings.warnOnce(
                     .unawaitedSelection,
                     "Dropped a fileSelected input event: no selectInput() is waiting for a result "
                         + "(later events like this are dropped without saying so again)")
                 return
             }
-            dispatch(.fileSelected(path: path))
+            dispatch(.fileSelected(path: path, serial: serial))
         case .fileDropped(let paths, _, _):
             // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない
             // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))

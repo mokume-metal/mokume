@@ -36,7 +36,8 @@
     },
     {
       "type": "fileSelected",
-      "paths": ["/tmp/a.csv"]
+      "paths": ["/tmp/a.csv"],
+      "serial": 1
     },
     {
       "type": "keyDown",

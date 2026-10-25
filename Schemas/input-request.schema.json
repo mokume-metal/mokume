@@ -109,6 +109,9 @@
               "properties": {
                 "paths": {
                   "maxItems": 1
+                },
+                "serial": {
+                  "minimum": 1
                 }
               }
             }
@@ -175,6 +178,10 @@
               "pattern": "^/"
             },
             "description": "For fileDropped, the absolute paths of the files that were dropped on the window, in the order they were dropped (several files dropped together are one event). The sketch receives them in `fileDropped(_ paths: [String])`, and they can be handed to `loadImage`, `loadTable` and the like as they are. **Only the paths travel, never the contents.** The sketch's own window takes file URLs only (a string or a web URL dropped from a browser is refused, and a drop of no files is not sent). The position of the drop is x and y, and mouseX / mouseY move there before the call (mouseMoved() is not called). **An empty array, a null, an array with an element that is not a string, and an array with an element that is not an absolute path (one that does not start with `/`: an empty string, a URL, a relative path) count that one fileDropped in ignored**, since a window only ever hands over absolute file paths. **Read on fileDropped only**: on any other type it is not read, whatever its value, and the reply's warnings name it. macOS windows receive drops; how iOS and the SketchView host do is not decided yet (#2604, #2605). **For fileSelected, the result of the dialog that selectInput(_:) asks for: one path (the file that was chosen) or an empty array (cancelled, which makes selectInput return nil).** A fileSelected without paths is not read as a cancel — a forgotten key must not end a wait silently — so it counts in ignored, and so does one with two or more paths (selectInput chooses one file) or with an element that is not an absolute path. A fileSelected that arrives when no selectInput is waiting is dropped, counted in ignored, and named in the reply's warnings. Only one selectInput is waited for at a time. **Read on fileDropped and fileSelected only**: on any other type paths is not read."
+          },
+          "serial": {
+            "type": ["integer", "null"],
+            "description": "For fileSelected, which request the result answers: the serial number of the selectInput(_:) request (they count from 1 and go up each time the sketch asks). **Optional.** The tool's window, which shows the dialog when the sketch runs under `mokume watch`, sends it with the result it passes to the sketch; a result you send from outside can leave it out. With a serial, the result ends the wait only if the serial is the one being waited for now; a result for any other request (an old answer to a request that was replaced, or a repeat of one that already ended the wait) is dropped without a warning, because the window sends the result again for as long as the request is still posted, in case the line was lost. Over `.mokume/input` and MCP, a result whose serial is not the one waiting counts in ignored and is named in the reply's warnings. Without a serial, the result goes to the wait there is now. An integer below 1 counts that one fileSelected in ignored. **Read on fileSelected only**: on any other type it is not read, whatever its value, and the reply's warnings name it."
           },
           "dx": {
             "type": ["number", "null"],

@@ -46,6 +46,14 @@ extension SketchPart {
     /// 結果を送るまで返らない — 検査や自動操縦は、`.mokume/input` や MCP の `input` で `fileSelected` を送って
     /// 待ちを終えられる。
     ///
+    /// 道具の窓が子へ送る結果には、頼みの通し番号 (`"serial"`) が載る。**番号が合わない結果は黙って捨てられる**
+    /// ので、頼み直した後に前の頼みの古い答えが届いても、新しい待ちは終わらない。管が一杯などで結果の 1 行が
+    /// 落ちても、道具は頼みが残っている間は送り直すので、待ちは永久には続かない。外から送る結果は `serial`
+    /// を省いてよく、省くといまの待ちへ届く。
+    ///
+    /// **限界: 道具の窓がこの口を知らない古い版だと、ダイアログは出ず、待ちは終わらない。** 子は道具の版を知れず、
+    /// 頼みを面に載せても読む者がいない。新しい `mokume` を起こし直すか、外から結果を送れば待ちは終わる。
+    ///
     /// ## 待てるのは 1 つ
     ///
     /// 1 度に待てる `selectInput` は 1 つ。待っている間にもう 1 度呼ぶと、**前の待ちは `nil` (取り消しと同じ)
@@ -63,15 +71,17 @@ extension SketchPart {
     /// `selectFolder` はまだ無い。
     ///
     /// - Parameter prompt: ダイアログに添える文言。
-    /// - Returns: 選んだファイルの絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、ダイアログを
-    ///   頼まずに `nil` (口ごとに 1 度だけ警告する)。
+    /// - Returns: 選んだファイルの絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、あるいは実行が
+    ///   終わった後に呼んだら、ダイアログを頼まず待たずに `nil` (口ごとに 1 度だけ警告する)。待っている最中に実行が
+    ///   終わったときも、待ちは `nil` で終わる。
     ///
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     /// [#2604]: https://github.com/mokume-metal/mokume/issues/2604
     /// [#2605]: https://github.com/mokume-metal/mokume/issues/2605
     // shot: 撮れない 結果が選んだ人の手元のファイルで、ダイアログは窓の外に出る
     public func selectInput(_ prompt: String) async -> String? {
-        guard let selection = LaunchingSketch.selection else {
+        // **終わった実行の頼みも、外からの呼び出しと同じに扱う** — 結果を届ける合流点はもう配られず、待てば返らない
+        guard let selection = LaunchingSketch.selection, !selection.isEnded else {
             OutsideRun.log.warn(.selectInput)
             return nil
         }

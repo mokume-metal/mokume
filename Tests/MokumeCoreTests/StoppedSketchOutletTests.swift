@@ -108,9 +108,9 @@ struct StoppedSketchOutletTests {
         }
 
         /// 道具の窓が拾った選ばせる結果を送る。
-        func answer(_ path: String?) throws {
+        func answer(_ path: String?, serial: Int? = nil) throws {
             try pipe.fileHandleForWriting.write(
-                contentsOf: Data(InputEvent.fileSelected(path: path).wireLine.utf8))
+                contentsOf: Data(InputEvent.fileSelected(path: path, serial: serial).wireLine.utf8))
         }
 
         var pointerLockOnNewest: Bool? {
@@ -271,13 +271,28 @@ struct StoppedSketchOutletTests {
             #expect(child.namedFrame == named + 1, "頼みが出口に出ていない / 2 回出た (\(named) → \(child.namedFrame))")
             #expect(sketch.selected.isEmpty)
 
-            try child.answer("/tmp/a.csv")
+            // 道具の窓は頼みの番号を載せ、頼みが残る間は送り直す: 同じ行が 2 度届いても待ちを終えるのは 1 度
+            try child.answer("/tmp/a.csv", serial: 1)
+            try child.answer("/tmp/a.csv", serial: 1)
             #expect(await eventually { child.refresh(); return sketch.selected.count == 1 })
             #expect(await eventually { child.refresh(); return child.selectionOnNewest == nil })
             child.refresh(8)
             #expect(sketch.selected == ["/tmp/a.csv"], "結果の 1 行で待ちが終わらない")
             #expect(child.selectionOnNewest == nil, "終わった頼みが面に残っている")
             #expect(child.namedFrame == named + 2)
+            child.refresh(8)
+            #expect(sketch.selected == ["/tmp/a.csv"], "送り直しの 2 行目で 2 度終えた")
+
+            // 頼み直した待ち (2 番) を、1 番への古い答えは終えない。2 番の答えは終える
+            try child.click()
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest?.serial == 2 })
+            try child.answer("/tmp/old.csv", serial: 1)
+            child.refresh(8)
+            #expect(sketch.selected == ["/tmp/a.csv"], "古い番号の答えが新しい待ちを終えた")
+            #expect(child.selectionOnNewest?.serial == 2)
+            try child.answer("/tmp/b.csv", serial: 2)
+            #expect(await eventually { child.refresh(); return sketch.selected.count == 2 })
+            #expect(sketch.selected == ["/tmp/a.csv", "/tmp/b.csv"])
         }
     }
 

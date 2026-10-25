@@ -70,12 +70,38 @@ struct SelectInputWireTests {
             InputEvent.fileSelected(path: "/tmp/a.csv"),
             .fileSelected(path: "/tmp/he said \"hi\" 日本語.csv"),
             .fileSelected(path: nil),
+            .fileSelected(path: "/tmp/a.csv", serial: 3),
+            .fileSelected(path: nil, serial: 12),
         ] {
             #expect(try decode(event.wireLine).event == event, "\(event)")
             #expect(event.wireLine.filter { $0 == "\n" }.count == 1)
         }
         #expect(InputEvent.fileSelected(path: nil).wireLine.contains(#""paths":[]"#), "取り消しは空の配列")
         #expect(InputEvent.fileSelected(path: nil).wireType == .fileSelected)
+        #expect(!InputEvent.fileSelected(path: nil).wireLine.contains("serial"), "番号なしの結果に番号を書いた")
+        #expect(InputEvent.fileSelected(path: nil, serial: 4).wireLine.contains(#""serial":4"#))
+    }
+
+    @Test("頼みの番号 serial は省ける。載せるなら正の整数で、fileSelected でだけ読む")
+    func theSerialIsOptionalAndPositive() throws {
+        #expect(
+            try decode(#"{"type": "fileSelected", "paths": ["/tmp/a.csv"], "serial": 2}"#).event
+                == .fileSelected(path: "/tmp/a.csv", serial: 2))
+        #expect(
+            try decode(#"{"type": "fileSelected", "paths": [], "serial": null}"#).event
+                == .fileSelected(path: nil, serial: nil), "null は省いたのと同じ")
+        // 0 や負の番号は頼みの番号ではない。番号なしと読むと、狙った待ちではない待ちを終えうる
+        for serial in ["0", "-1"] {
+            #expect(
+                try decode(#"{"type": "fileSelected", "paths": [], "serial": \#(serial)}"#).event
+                    == nil, "serial \(serial)")
+        }
+        #expect(throws: DecodingError.self) {
+            try decode(#"{"type": "fileSelected", "paths": [], "serial": 1.5}"#)
+        }
+        #expect(RawInputEvent.readKeys(forType: "fileSelected").contains("serial"))
+        #expect(!RawInputEvent.readKeys(forType: "fileDropped").contains("serial"))
+        #expect(!RawInputEvent.readKeys(forType: "mouseUp").contains("serial"))
     }
 
     @Test("外から送る形 {type, paths} が読める。空の配列は取り消し")
@@ -153,6 +179,40 @@ struct SelectionBrokerTests {
         #expect(!broker.resolve("/tmp/a.csv"))
     }
 
+    @Test("番号つきの結果は、番号が同じ待ちだけを終える。違う番号は何も終えない")
+    func aNumberedResultEndsOnlyItsOwnWait() async {
+        let broker = SelectionBroker()
+        let first = ask(broker, "one")
+        #expect(await eventually { broker.pending?.serial == 1 })
+        let second = ask(broker, "two")
+        #expect(await eventually { broker.pending?.serial == 2 })
+        #expect(await eventually { first.value != nil })
+        // 1 番への古い答えは、2 番の待ちを終えない
+        #expect(!broker.resolve("/tmp/old.csv", serial: 1))
+        #expect(broker.isAwaiting && second.value == nil, "古い番号の答えが新しい待ちを終えた")
+        // 番号なし (外から) は今の待ちへ、番号が合えば終わる
+        #expect(broker.resolve("/tmp/new.csv", serial: 2))
+        #expect(await eventually { second.value != nil })
+        #expect(second.value == .some("/tmp/new.csv"))
+        // 終わった待ちの番号の送り直しは、何も終えない
+        #expect(!broker.resolve("/tmp/new.csv", serial: 2))
+    }
+
+    @Test("実行が終わると、待ちは nil で終わり、その後の頼みは待たずに nil を返す")
+    func endingTheRunEndsTheWaitAndRefusesTheNext() async {
+        let broker = SelectionBroker()
+        let waiting = ask(broker, "one")
+        #expect(await eventually { broker.isAwaiting })
+        broker.end()
+        #expect(await eventually { waiting.value != nil }, "実行が終わっても待ちが終わらない")
+        #expect(waiting.value == .some(nil))
+        #expect(broker.isEnded && broker.pending == nil)
+        let after = ask(broker, "two")
+        #expect(await eventually { after.value != nil }, "終わった実行で頼むと待たされる")
+        #expect(after.value == .some(nil))
+        #expect(!broker.isAwaiting)
+    }
+
     @Test("待ちの最中にもう 1 度頼むと、前の待ちは nil で終わり、新しい頼みが立つ")
     func aSecondRequestEndsTheFirstWithNil() async {
         let broker = SelectionBroker()
@@ -189,8 +249,43 @@ struct SelectInputInputTests {
         let waiting = Task { await state.selection.request("pick") }
         #expect(await eventually { state.selection.isAwaiting })
         let awaited = run(state, [.fileSelected(path: "/tmp/a.csv")])
-        #expect(awaited == [.fileSelected(path: "/tmp/a.csv")])
+        #expect(awaited == [.fileSelected(path: "/tmp/a.csv", serial: nil)])
         waiting.cancel()
+    }
+
+    @Test("番号つきの結果は、いまの待ちの番号と同じときだけ配る。違う番号と送り直しは黙って捨てる")
+    func aNumberedResultIsDeliveredOnlyToItsOwnWait() async {
+        let state = InputState()
+        // 待ちが無いときの番号つき (送り直しの遅れ) は、警告にしない
+        #expect(run(state, [.fileSelected(path: "/tmp/a.csv", serial: 1)]).isEmpty)
+        #expect(state.warnings.message(for: .unawaitedSelection) == nil, "送り直しを警告にした")
+
+        let first = Task { await state.selection.request("one") }
+        #expect(await eventually { state.selection.pending?.serial == 1 })
+        // 1 番の答えが溜まりにある間に頼み直す
+        state.enqueue(.fileSelected(path: "/tmp/old.csv", serial: 1))
+        let second = Task { await state.selection.request("two") }
+        #expect(await eventually { state.selection.pending?.serial == 2 })
+        var seen: [InputCallback] = []
+        state.beginFrame { seen.append($0) }
+        #expect(seen.isEmpty, "古い答えが新しい待ちを終えた: \(seen)")
+        #expect(state.selection.isAwaiting)
+        #expect(state.warnings.message(for: .unawaitedSelection) == nil)
+
+        // 2 番の答えは終え、同じ答えの送り直しは (待ちが終わった後なので) 配らず、警告もしない
+        // (配り先 `SketchRuntime` と同じに、配られた結果で待ちを終える)
+        for _ in 0..<2 { state.enqueue(.fileSelected(path: "/tmp/b.csv", serial: 2)) }
+        var answered: [InputCallback] = []
+        state.beginFrame { callback in
+            answered.append(callback)
+            if case .fileSelected(let path, let serial) = callback {
+                state.selection.resolve(path, serial: serial)
+            }
+        }
+        #expect(answered == [.fileSelected(path: "/tmp/b.csv", serial: 2)], "\(answered)")
+        #expect(state.warnings.message(for: .unawaitedSelection) == nil)
+        first.cancel()
+        second.cancel()
     }
 
     @Test("区画から送ると、待っているときだけ accepted。待っていない・2 本は ignored で、待ちが無い件は名乗る")
@@ -225,7 +320,39 @@ struct SelectInputInputTests {
         #expect(during.accepted == 1 && during.ignored == 2, "\(during)")
         var seen: [InputCallback] = []
         state.beginFrame { seen.append($0) }
-        #expect(seen == [.fileSelected(path: nil)])
+        #expect(seen == [.fileSelected(path: nil, serial: nil)])
+        waiting.cancel()
+    }
+
+    @Test("区画から送る番号つきの結果は、番号が合うときだけ accepted。合わないものは ignored で名乗る")
+    func theInboxChecksTheSerial() async throws {
+        let facet = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-select-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let inbox = InputInbox(directory: facet)
+        let state = InputState()
+        func send(_ id: String, _ events: String) throws -> InputReport {
+            try AtomicFile.write(
+                Data(#"{"id":"\#(id)","events":[\#(events)]}"#.utf8),
+                to: facet.appendingPathComponent("request.json"))
+            return try #require(inbox.drain(into: state))
+        }
+
+        let waiting = Task { await state.selection.request("pick") }
+        #expect(await eventually { state.selection.pending?.serial == 1 })
+        // 番号が違う結果は待ちを終えない。合う結果は 1 件通り、同じ要求の次は待つ相手がいない
+        let report = try send(
+            "s1",
+            #"{"type":"fileSelected","paths":["/tmp/old.csv"],"serial":7},"#
+                + #"{"type":"fileSelected","paths":["/tmp/a.csv"],"serial":1},"#
+                + #"{"type":"fileSelected","paths":["/tmp/a.csv"],"serial":1}"#)
+        #expect(report.accepted == 1 && report.ignored == 2, "\(report)")
+        let warnings = try #require(report.warnings)
+        #expect(warnings.count == 2 && warnings[0].contains("serial"), "\(warnings)")
+        var seen: [InputCallback] = []
+        state.beginFrame { seen.append($0) }
+        #expect(seen == [.fileSelected(path: "/tmp/a.csv", serial: 1)], "\(seen)")
         waiting.cancel()
     }
 }
@@ -254,18 +381,38 @@ struct SelectInputAttributeTests {
         SharedFrameSurface.publishSelection(nil, to: surface)
         #expect(SharedFrameSurface.selectionRequest(on: surface) == nil)
         #expect(IOSurfaceCopyValue(surface, SharedFrameSurface.selectInputAttribute as CFString) == nil)
+    }
+
+    /// **番号と文言は 1 つの属性に入れる。** 別々の属性にすると、書き換えと読みが重なったときに、
+    /// 番号は前の頼みのまま文言だけ次の頼みのものを読んで、別の頼みの文言でダイアログが出うる。
+    @Test("頼みの番号と文言は 1 つの値に入り、頼み直しでは組ごと入れ替わる")
+    func theSerialAndThePromptTravelTogether() throws {
+        let surface = try makeSurface()
+        SharedFrameSurface.publishSelection(SelectionBroker.Request(serial: 1, prompt: "one"), to: surface)
+        SharedFrameSurface.publishSelection(SelectionBroker.Request(serial: 2, prompt: "two"), to: surface)
         #expect(
-            IOSurfaceCopyValue(surface, SharedFrameSurface.selectInputPromptAttribute as CFString)
-                == nil)
+            SharedFrameSurface.selectionRequest(on: surface)
+                == SelectionBroker.Request(serial: 2, prompt: "two"))
+        // 番号の属性が単独の数ではない (文言を別の属性に載せていない)
+        let value = IOSurfaceCopyValue(surface, SharedFrameSurface.selectInputAttribute as CFString)
+        #expect(value is NSDictionary, "番号と文言が 1 つの値に入っていない: \(String(describing: value))")
+        #expect(IOSurfaceCopyValue(surface, "mokume.selectInputPrompt" as CFString) == nil)
     }
 
     @Test("載っていない面・正でない番号の面は、頼んでいないと読む")
     func readsNothingFromAnUnrequestedSurface() throws {
         let surface = try makeSurface()
         #expect(SharedFrameSurface.selectionRequest(on: surface) == nil)
+        let zero: [String: Any] = [SharedFrameSurface.selectInputSerialKey: NSNumber(value: 0)]
         IOSurfaceSetValue(
-            surface, SharedFrameSurface.selectInputAttribute as CFString, NSNumber(value: 0))
+            surface, SharedFrameSurface.selectInputAttribute as CFString, zero as CFDictionary)
         #expect(SharedFrameSurface.selectionRequest(on: surface) == nil)
+        // 番号の無い・数でない値も頼みとして読まない
+        for value: Any in [["prompt": "x"], ["serial": "3", "prompt": "x"], 3] {
+            IOSurfaceSetValue(
+                surface, SharedFrameSurface.selectInputAttribute as CFString, value as CFTypeRef)
+            #expect(SharedFrameSurface.selectionRequest(on: surface) == nil, "\(value)")
+        }
     }
 }
 
@@ -376,6 +523,66 @@ struct SelectInputSketchTests {
         try await press(runtime)
         #expect(sketch.results.isEmpty)
         #expect(runtime.input.selection.isAwaiting)
+    }
+
+    @Test("古い番号の結果は、頼み直した後の待ちを終えない。番号つきの送り直しは警告せず待ちを 1 度だけ終える")
+    func aStaleOrRepeatedNumberedResultDoesNotDisturbTheWait() async throws {
+        let facet = try makeFacet()
+        let sketch = Asker()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try await press(runtime)
+        // 頼み直した (前の待ちは nil で終わる)。その後に、1 番への答え (管や溜まりに残っていた行) が届く
+        try await press(runtime)
+        runtime.input.enqueue(.fileSelected(path: "/tmp/old.csv", serial: 1))
+        try runtime.advance()
+        #expect(await eventually { sketch.results.count == 1 })
+        #expect(sketch.results == [nil], "前の待ちが nil で終わるだけのはず: \(sketch.results)")
+        #expect(runtime.input.selection.pending?.serial == 2, "古い答えが新しい待ちを終えた")
+
+        // 2 番の答えが 2 度届く (送り直し)。待ちを終えるのは 1 度で、警告は出ない
+        runtime.input.enqueue(.fileSelected(path: "/tmp/b.csv", serial: 2))
+        runtime.input.enqueue(.fileSelected(path: "/tmp/b.csv", serial: 2))
+        try runtime.advance()
+        #expect(await eventually { sketch.results.count == 2 })
+        #expect(sketch.results == [nil, "/tmp/b.csv"])
+        try runtime.advance()
+        #expect(runtime.input.warnings.message(for: .unawaitedSelection) == nil, "送り直しを警告にした")
+    }
+
+    @Test("実行が終わった後の呼び出しは待たずに nil を返し、終わるときの待ちは nil で終わる")
+    func afterTheRunEndsItReturnsNil() async throws {
+        let facet = try makeFacet()
+        let sketch = Asker()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try await press(runtime)
+        runtime.closePlugins()
+        #expect(await eventually { sketch.results.count == 1 }, "終わった実行で待ちが残っている")
+        #expect(sketch.results == [nil])
+
+        // 終わった後に呼ぶと、待たずに nil。言うのは 1 度。**戻りを `await` で待たず箱で見る** — 壊れた実装は返らない
+        let log = OutsideRun()
+        let broker = runtime.input.selection
+        let box = SelectionBrokerTests.Outcome()
+        let second = SelectionBrokerTests.Outcome()
+        Task {
+            await OutsideRun.$current.withValue(log) {
+                await LaunchingSketch.$selection.withValue(broker) {
+                    struct Part: SketchPart {}
+                    box.value = .some(await Part().selectInput("x"))
+                    second.value = .some(await Part().selectInput("y"))
+                }
+            }
+        }
+        #expect(await eventually { second.value != nil }, "終わった実行で頼むと待たされる")
+        #expect(box.value == .some(nil) && second.value == .some(nil))
+        #expect(log.messages.count == 1, "\(log.messages)")
+        #expect(!broker.isAwaiting)
     }
 
     @Test("走っている実行の外から呼ぶと、頼まずに nil を返し、1 度だけ警告する")

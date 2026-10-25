@@ -179,8 +179,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ファイルを選ばせるダイアログの出し方 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     /// **検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
     var filePicker: any FilePicker = OpenPanelPicker()
-    /// いま出しているダイアログの頼みの通し番号と、それを結果ごと捨てて閉じる口。
-    private var shownSelection: (serial: Int, dismiss: @MainActor () -> Void)?
+    /// いま出しているダイアログの頼みの通し番号と、それを結果ごと捨てて閉じる口。答えた後は `answered`。
+    private var shownSelection: (serial: Int, dismiss: @MainActor () -> Void, answered: Bool)?
+    /// 閉じる問いのシートを出している間か。付いているシートが問いのものか、ファイルを選ばせるものかを分ける
+    /// (``shouldClose(_:)``)。
+    private var isAskingToClose = false
 
     /// 閉じてよいと確定したときの行き先。
     ///
@@ -755,8 +758,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard let closeQuestion, !isTerminating else { return true }
         // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
         // 頼む経路は残る (`performClose(_:)` など)
-        guard sender.attachedSheet == nil else { return false }
+        //
+        // **ただし付いているのがファイルを選ばせるシートなら、それを取り消して問いへ進む** — 黙って × が効かない
+        // 窓にしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
+        if sender.attachedSheet != nil {
+            guard !isAskingToClose, cancelOpenSelectionDialog() else { return false }
+        }
+        isAskingToClose = true
         presentQuestion(closeQuestion, sender) { [weak self] confirmed in
+            self?.isAskingToClose = false
             // **問いが出ている間に終わりが始まっていたら、答えで終わりを重ねない** —
             // シートは窓にだけ掛かるので、出ている間も Dock からの終了は届く
             guard confirmed, let self, !self.isTerminating else { return }
@@ -933,11 +943,35 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         guard let pending, shownSelection == nil else { return }
         let serial = pending.serial
-        let dismiss = filePicker.pick(prompt: pending.prompt, over: window) { [weak surface] path in
-            surface?.deliver(.fileSelected(path: path))
+        // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、先に控えてから出す
+        shownSelection = (serial, {}, false)
+        let dismiss = filePicker.pick(prompt: pending.prompt, over: window) {
+            [weak self, weak surface] path in
+            // 番号を載せる — 頼み直しの後に、前の頼みへの答えが溜まりに残っても、新しい待ちを終えない
+            self?.markSelectionAnswered(serial: serial)
+            surface?.deliver(.fileSelected(path: path, serial: serial))
         }
-        // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、返ってから控える
-        shownSelection = (serial, dismiss)
+        shownSelection?.dismiss = dismiss
+    }
+
+    private func markSelectionAnswered(serial: Int) {
+        if shownSelection?.serial == serial { shownSelection?.answered = true }
+    }
+
+    /// 窓の × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す** (取り消しは
+    /// 利用者がダイアログを取り消したのと同じ結果として渡す)。
+    ///
+    /// シートが付いている間 ``shouldClose(_:)`` は閉じる問いを出さないので、黙って × が効かなくなる
+    /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// - Returns: 取り消したか。答え済みの (もう閉じている) ダイアログ・出していないときは `false`。
+    private func cancelOpenSelectionDialog() -> Bool {
+        guard let shown = shownSelection, !shown.answered, case .window(_, let surface, _) = outlet
+        else { return false }
+        shown.dismiss()
+        markSelectionAnswered(serial: shown.serial)
+        surface.deliver(.fileSelected(path: nil, serial: shown.serial))
+        return true
     }
 
     /// 書き出す経路で、もう描かないか。**決めた枚数を描いた後と、終わりに向かっている間。**

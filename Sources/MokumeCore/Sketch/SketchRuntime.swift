@@ -803,6 +803,8 @@ public final class SketchRuntime {
         SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
+        // **終わった実行の `selectInput` は待たせない** — 結果を届ける合流点はもう配られず、待てば返らない
+        input.selection.end()
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         if let recorder {
@@ -1152,7 +1154,7 @@ public final class SketchRuntime {
         case .mouseWheel(let deltaX, let deltaY):
             sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)
         case .fileDropped(let paths): sketch.fileDropped(paths)
-        case .fileSelected(let path): input.selection.resolve(path)
+        case .fileSelected(let path, let serial): input.selection.resolve(path, serial: serial)
         case .keyPressed: sketch.keyPressed()
         case .keyReleased: sketch.keyReleased()
         case .keyTyped: sketch.keyTyped()
