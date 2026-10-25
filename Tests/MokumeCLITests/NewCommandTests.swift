@@ -294,6 +294,15 @@ struct NewCommandTests {
         }
     }
 
+    @Test("案内は、既定値を変えても絵が変わらないとき保存値を疑うよう書いている")
+    func theGuidePointsAtSavedParamsWhenTheDefaultDoesNotShow() throws {
+        let text = try guide("AGENTS.md")
+        #expect(text.contains(".mokume/state/params.json"))
+        // 保存値が既定値に勝つこと、消す前に人へ確かめることまで書いてあるか (#3034)
+        #expect(text.contains("保存値がコードの既定値に勝つ"))
+        #expect(text.contains("人に確かめてから"))
+    }
+
     @Test("案内は本体を正典として指し、規約を写さない")
     func theGuidePointsAtTheCanon() throws {
         let text = try guide("AGENTS.md")
