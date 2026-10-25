@@ -96,6 +96,41 @@ final class FrameWriter {
     ///
     /// [#1626]: https://github.com/mokume-metal/mokume/issues/1626
     func write(_ image: DisplayImage, to path: String, settlingInto slot: OutcomeSlot? = nil) {
+        let encode = encode
+        enqueue(to: path, settlingInto: slot) { url in try encode(image, url) }
+    }
+
+    /// 文字列などの中身を、ファイルにするよう頼む。**中身を組むのも隔離の外で行う** ([#3139])。
+    ///
+    /// 道は絵と同じ — 同じ背圧・同じ行き先ごとの畳み (``WriteLanes``)・同じ決着の器。ベクター
+    /// (SVG) は、1 万本の線で数 MB の文字列になる。組むのをフレームの中で済ませると、その時間が
+    /// フレームに載る。
+    ///
+    /// - Parameter make: 書く中身を組む関数。**フレームの外で呼ばれる。** 書く前に畳まれた頼みでは
+    ///   呼ばれない。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    func writeData(
+        _ make: @escaping @Sendable () -> Data, to path: String, settlingInto slot: OutcomeSlot? = nil
+    ) {
+        enqueue(to: path, settlingInto: slot) { url in
+            do {
+                try make().write(to: url, options: .atomic)
+            } catch {
+                throw Reason(description: Diagnostics.reason(error))
+            }
+        }
+    }
+
+    /// 名乗りの文面だけを運ぶ失敗。ファイルに書けなかった理由は OS の文面で言う (``Diagnostics/reason(_:)``)。
+    private struct Reason: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    /// 書く仕事を、背圧と行き先ごとの順番待ちに載せて走らせる。
+    private func enqueue(
+        to path: String, settlingInto slot: OutcomeSlot?, _ work: @escaping @Sendable (URL) throws -> Void
+    ) {
         // 背圧。ここで待つのは main actor なので、フレームが遅くなる代わりに
         // 抱える枚数は上限を超えない
         pressure.take()
@@ -105,7 +140,6 @@ final class FrameWriter {
         let release = pressure.release
         let lastOutcome = slot ?? lastOutcome
         let path = path
-        let encode = encode
         // **同じ行き先へは 1 本ずつ書き、書いている間に頼まれたものは最後の 1 つを残して
         // 畳む** (#1627)。畳まれた頼みは書かずに枠を返す — 後に頼んだ絵が残るので、書く
         // 必要が無い
@@ -123,7 +157,7 @@ final class FrameWriter {
                 return
             }
             do {
-                try encode(image, url)
+                try work(url)
                 lastOutcome.succeed()
             } catch {
                 lastOutcome.fail("Could not write \(path): \(error)", at: destination)

@@ -194,6 +194,22 @@ final class FrameRecorder: Outlet {
         case carriedShot(destination: String)
         /// 上限 (``carriedShotLimit``) を越えて名乗らなかった持ち越しが、何枚あったか。
         case unnamedCarriedShots
+        /// `draw()` の中で呼ぶ前に図形を置いていた `save("x.svg")`。**行き先ごとに 1 度言う** ([#3139])。
+        ///
+        /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        case vectorPlacedBefore(destination: String)
+        /// ベクターに書けない図形があった `save("x.svg")`。**行き先ごとに 1 度言う** ([#3139])。
+        ///
+        /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        case vectorLeftOut(destination: String)
+        /// 次の `draw()` が来ないまま終わった `save("x.svg")`。
+        case unwrittenVectors
+        /// 同じ `draw()` で同じ行き先へ 2 回頼んだ `save("x.svg")`。**行き先ごとに 1 度言う** ([#3139])。
+        ///
+        /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        case vectorAskedTwice(destination: String)
+        /// 連番の綴りに `.svg` を渡した `beginRecord`。
+        case vectorSeries
     }
 
     /// 言った注意の控え。**検査が読む。**
@@ -358,6 +374,122 @@ final class FrameRecorder: Outlet {
         oneShots.append((frame, path))
     }
 
+    // MARK: - ベクター ([#3139])
+
+    /// 行き先の綴りがベクター (SVG) か。**拡張子で振り分ける** (ADR-0023 の改訂 (2026-10-23))。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    nonisolated static func isVector(_ path: String) -> Bool {
+        path.lowercased().hasSuffix(".svg")
+    }
+
+    /// `draw()` の外で頼まれた SVG の行き先。**次の `draw()` が丸ごと控える。**
+    private var pendingVectors: [String] = []
+
+    /// ベクターの行き先を受けてよいか。作れない長さの名前は受けず、書き損じとして行き先ごとに名乗る。
+    ///
+    /// SVG は ImageIO を通らないので、ファイル名の上限はファイルシステムのもの
+    /// (``FileNameLength/limit``) である。
+    func acceptsVector(_ path: String) -> Bool {
+        guard let long = Self.tooLong(path, limit: FileNameLength.limit) else { return true }
+        noteImageFailure(
+            WriteFailure(
+                destination: FrameWriter.destination(of: path),
+                reason: "save(\"\(path)\"): \(Self.tooLongReason(long)). Nothing was saved"))
+        return false
+    }
+
+    /// `draw()` の外で頼まれた SVG を、次の `draw()` まで預かる。
+    func holdVector(_ path: String) { pendingVectors.append(path) }
+
+    /// 預かっている行き先を渡す。**渡したら空になる。**
+    func takePendingVectors() -> [String] {
+        defer { pendingVectors.removeAll() }
+        return pendingVectors
+    }
+
+    /// `draw()` の終わりで、控えた図形を SVG にして書くよう頼む。
+    ///
+    /// 組みも書き込みも隔離の外で走る (``FrameWriter/writeData(_:to:settlingInto:)``)。行き先ごとに、
+    /// 頼まれた時点から後ろの図形だけを渡す。決着は静止画と同じ器 (``shotOutcomes``) に置くので、書き損じは
+    /// ``noteImageFailure(_:)`` が同じ道で名乗る。
+    func writeVectors(_ capture: VectorCapture, width: Float, height: Float) {
+        // 前に頼んだ SVG の書き損じがあれば、先に名乗る (静止画は届いた絵のたびに取り込む)
+        absorbOutcomes()
+        // **同じ行き先へ 2 回頼まれたら、先の頼みを書く。** 頼みは時間順に並び、後の頼みの図形は先の頼みの
+        // 図形の後ろ半分なので、先の頼みを書けば何も欠けない。後の頼みを書くと、先の頼みと後の頼みの間に
+        // 置いた図形が、黙って消える。書かなかったほうは、行き先ごとに 1 度だけ名乗る
+        var firstAsked: [String: String] = [:]
+        for request in capture.requests {
+            let destination = FrameWriter.destination(of: request.path)
+            if let first = firstAsked[destination] {
+                warnOnce(
+                    .vectorAskedTwice(destination: destination),
+                    Self.vectorAskedTwiceNotice(first: first, later: request.path))
+                continue
+            }
+            firstAsked[destination] = request.path
+            if request.placedBefore {
+                warnOnce(
+                    .vectorPlacedBefore(destination: destination),
+                    Self.vectorPlacedBeforeNotice(path: request.path))
+            }
+            let dropped = capture.drops[request.dropStart...]
+            if !dropped.isEmpty {
+                warnOnce(
+                    .vectorLeftOut(destination: destination),
+                    Self.vectorLeftOutNotice(path: request.path, dropped: dropped))
+            }
+            let figures = capture.figures[request.figureStart...]
+            writer.writeData(
+                { SVGWriter.render(figures, width: width, height: height) }, to: request.path,
+                settlingInto: shotOutcomes)
+        }
+    }
+
+    /// `.svg` の連番 (`beginRecord`) と `Image.save` を断る理由 (1 文)。
+    nonisolated static let vectorSeriesReason =
+        "an .svg is the lines of one draw(), not a picture, and a series or an image file is written as PNG "
+        + "pictures (an .svg name would hold a PNG). Call save(\"plot.svg\") inside the sketch to write the lines"
+
+    /// 同じ行き先へ 2 回頼んだ `save("x.svg")` の 1 行。**どちらが書かれたかを名指す。**
+    static func vectorAskedTwiceNotice(first: String, later: String) -> String {
+        let spelling = first == later ? "\"\(first)\"" : "\"\(first)\" and \"\(later)\""
+        return "save(\(spelling)) was called twice in one draw() for the same file. The file holds what is "
+            + "drawn from the first call to the end of draw(); the later call changed nothing. "
+            + "Call save() once per file"
+    }
+
+    /// 呼ぶ前に図形を置いていた `save("x.svg")` の 1 行。
+    static func vectorPlacedBeforeNotice(path: String) -> String {
+        "save(\"\(path)\") was called in draw() after something had already been drawn, and what came "
+            + "before the call is not in the file: an SVG written by save() holds what is drawn from the "
+            + "call to the end of draw(). Call it first in draw()"
+    }
+
+    /// 書けない図形があった `save("x.svg")` の 1 行。**種類と数を名指す。**
+    static func vectorLeftOutNotice(path: String, dropped: ArraySlice<VectorDrop>) -> String {
+        var counts: [VectorDrop: Int] = [:]
+        for kind in dropped { counts[kind, default: 0] += 1 }
+        func list(_ written: Bool) -> String {
+            VectorDrop.allCases
+                .filter { counts[$0] != nil && $0.isWrittenDifferently == written }
+                .map { "\($0.noun) x\(counts[$0] ?? 0)" }
+                .joined(separator: ", ")
+        }
+        var parts: [String] = []
+        let left = list(false)
+        if !left.isEmpty {
+            parts.append("left out of the file because an SVG cannot hold them: \(left)")
+        }
+        let different = list(true)
+        if !different.isEmpty {
+            parts.append("written in the colour of the first vertex: \(different)")
+        }
+        return "save(\"\(path)\"): " + parts.joined(separator: "; ")
+            + ". An SVG written by save() holds lines and flat filled shapes only (they are still on the screen)"
+    }
+
     /// 連番か動画を始める。**行き先の綴りが形を決める。**
     ///
     /// `.mov` なら動画、ファイル名に `#` を含むなら連番 (置き場の名前の `#` は数えない・
@@ -384,6 +516,14 @@ final class FrameRecorder: Outlet {
             warnOnce(
                 .fileNameTooLong,
                 "beginRecord(\"\(pattern)\"): \(Self.tooLongReason(long)). Not starting")
+            return
+        }
+        // **`.svg` の連番は受けない** ([#3139])。連番は PNG の絵を書くので、受けると PNG の中身が `.svg` の名前で
+        // 黙って並ぶ。線を書く口は `save("x.svg")` で、1 回の `draw()` に 1 枚 (連番のベクターは範囲外)
+        //
+        // [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+        if Self.isVector(pattern) {
+            warnOnce(.vectorSeries, "beginRecord(\"\(pattern)\"): \(Self.vectorSeriesReason). Not starting")
             return
         }
         // **配る形 (GIF・MP4) は `mokume render` だけが頼む** ([#2440])。決めた枚数を書く入口 (`frameCount`)
@@ -924,6 +1064,15 @@ final class FrameRecorder: Outlet {
                 "save(\(paths)): the sketch ended before the picture reached this outlet, "
                     + "so nothing was written")
             oneShots.removeAll()
+        }
+        // 次の `draw()` が来なかった SVG の頼みも、黙って捨てない (#3139)
+        if !pendingVectors.isEmpty {
+            let paths = pendingVectors.map { "\"\($0)\"" }.joined(separator: ", ")
+            warnOnce(
+                .unwrittenVectors,
+                "save(\(paths)): the sketch ended before the next draw(), so nothing was written "
+                    + "(a save() outside draw() writes the next draw())")
+            pendingVectors.removeAll()
         }
         // 上限を越えて名乗らなかった書き損じを、ここで 1 行にまとめる (#1709)
         reportUnnamedImageFailures()

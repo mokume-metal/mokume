@@ -561,6 +561,7 @@ extension CanvasTests {
                 "deferredRunOpen": "先送りした四角の列を開いているかの印 (#2446)。列を閉じるとき (closeBatch) と、溜め場を捨てるときに下りる。境目では常に既定",
                 "isPlacingDeferredGlyph": transient,
                 "framePersists": "ランタイムが draw() の後ろで書く、絵が残るかの印 (#2446)。フレームを出る道 (leaveFrame) で下ろすので、境目では常に既定",
+                "vector": "SVG へ控える途中の状態 (#3139)。ランタイムが draw() の前に立て、後で下ろす。フレームを出る道 (leaveFrame) でも下ろすので、境目では常に既定。控えるのは観測で、描く道を変えない",
                 "retainedSerial": "保持した形を置くたびの通し番号",
                 "retainsShapeSolids": "保持した形の立体を置き場に持つかの切り替え (#2791)。検査と計測だけが書く口で、フレームに属さない",
                 "retainedSolidThreshold": "置き場に持つ形の大きさの下限 (#2791)。検査と計測だけが書く値で、フレームに属さない",

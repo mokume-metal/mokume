@@ -272,12 +272,19 @@ import simd
     /// スケッチの ``SketchPart/save(_:)`` はフレームの外で書くので予約するだけで、呼んだ時点では
     /// 失敗が分からない。**この口は呼んだその場で書く**ので、書けなければその場で投げる。
     ///
+    /// **名前が `.svg` で終わるものは受けない。** この口は PNG の絵を書くので、`.svg` の名前では PNG の中身が
+    /// 黙って並ぶ。図形の線を SVG に書くのはスケッチの ``SketchPart/save(_:)`` で、`save("plot.svg")` と呼ぶ。
+    ///
     /// - Parameter path: 書き出す先。
     /// - Throws: 書けなかったとき ``ImageFailure/unwritable(path:reason:)``。行き先と事情が載る。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     // shot: 撮れない 結果が絵ではなくファイルになる
     public func save(_ path: String) throws(ImageFailure) {
+        // `.svg` の名前で PNG の中身を書かない (#3139)。線を書く口は、スケッチの `save("plot.svg")`
+        guard !FrameRecorder.isVector(path) else {
+            throw .unwritable(path: path, reason: FrameRecorder.vectorSeriesReason)
+        }
         let components = workingPixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
         let picture = OutputStage.encode(PixelBuffer(width: width, height: height, components: components))
         let url = FrameWriter.url(for: path)

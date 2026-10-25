@@ -170,6 +170,8 @@ extension Canvas {
     /// [#1870]: https://github.com/mokume-metal/mokume/issues/1870
     public func particles(_ particles: Particles) {
         guard admits(.particles) else { return }
+        // 粒はベクターへ書けない (#3139)
+        noteVectorDrop(.particles)
         // 組を選べなければ、力を取り出さずに帰る。積んだ力は次の呼び出しに効く
         let draw: Particles.Draw
         do {
