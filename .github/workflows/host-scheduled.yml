@@ -25,6 +25,8 @@ on:
     # stall-watch の 7,22,37,52 分) とも重ねない
     - cron: "29 19 * * *"
   workflow_dispatch:
+  # 使い捨ての計測 (#3220): PR の契機で走らせる。merge しない
+  pull_request:
 
 permissions:
   contents: read
@@ -78,7 +80,7 @@ jobs:
   tsan-report:
     needs: tsan
     if: >-
-      always()
+      false
       && (needs.tsan.result == 'failure' || needs.tsan.result == 'cancelled')
     runs-on: ubuntu-latest
     permissions:
