@@ -637,6 +637,7 @@ enum RunCommand {
     /// 終わりの合図を受けたら、走らせているスケッチへ SIGTERM を渡す受け口を置く。
     ///
     /// **ハンドラでは印を立てて `kill` を撃つだけにする** (どちらも async-signal-safe)。
+    /// `kill` が書く errno は、入口で退避して出口で戻す (#3234)。
     /// 子が消えれば待ちが戻り、後は ``launch(_:in:environment:forwarding:)`` が終わらせる。
     ///
     /// **子が SIGTERM に応えなければ、道具も待ち続ける。** 孤児は残らず道具ごと見えて
@@ -651,6 +652,11 @@ enum RunCommand {
         return signals.map { number in
             var action = sigaction()
             action.__sigaction_u.__sa_handler = { received in
+                // **割り込んだ先の errno を変えずに戻る** (#3234)。`kill` は失敗すると errno を
+                // 書くので、退避して戻さないと、割り込まれた呼び出しの後に errno を読む側が
+                // この受け口の失敗を自分のものと読む
+                let saved = errno
+                defer { errno = saved }
                 runStopSignal = received
                 // **宛先を確かめてから撃つ。** `kill(0, …)` は自分のプロセスグループごと
                 // 落とす (`WatchSession` の強制終了と同じ注意)
