@@ -427,12 +427,32 @@ TSAN_SUITES := MokumeCoreTests.JSONReadingTests MokumeCLITests.ArgumentsTests \
 	MokumeAudioTests.SampleRingTests MokumeNetworkTests.OSCCodecTests
 TEST_TSAN_ARGS ?=
 
+# **TSan の下では成り立たない検査を、理由つきで外す** (#3220 の実測)。外したものは debug の
+# make test (ci-check) で今までどおり走るので、失うのは「TSan の下で」の分だけである。
+#
+#   exit test (`#expect(processExitsWith:)`) … 子のプロセスは TSan の runtime を起動の時点で
+#       受け継がず、`Interceptors are not working` で中身を 1 行も走らせずに SIGABRT で止まる。
+#       `.success` を期待する検査は赤になり、**`.failure` を期待する検査は中身が走らないまま
+#       緑になる** (偽りの緑)。DYLD_INSERT_LIBRARIES を渡しても子へは届かなかった。
+#       exit test を足したらここにも足す — 漏れは scripts/tests/host_scheduled_workflow_test.py が止める
+#   自分へ非同期の合図を送り、子が止まるのを期限つきで待つ検査 … TSan の下では受け口は走るが
+#       (報告の stack に出る)、子が期限内に消えない。原因は追っていない。受け口が errno を
+#       戻さない報告 (signal handler spoils errno) は本物の欠陥で、#3234 で直す
+#
+# 綴りは swift test --skip の正規表現で、`<Suite>/<関数>` に当てる
+TSAN_SKIP := SecondRunTests/ \
+	FrameRingWriteGateTests/anUnguardedWriteStopsInsideTheTests \
+	NonisolatedValueFunctionsTests/realMouthsSayOncePerMouthAcrossThreads \
+	WarningDigestTests/standardErrorStillGetsOneLine \
+	RunCommandTests/aStopSignalTakesTheSketchDownToo \
+	RenderCommandTests/aSigintToTheToolStopsTheChild
+
 test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の job が走らせる。ci-check には含まれない)
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD_TSAN)
 	set -o pipefail; swift build --build-tests --sanitize=thread --scratch-path $(TSAN_SCRATCH) 2>&1 | tee $(TEST_LOG_TSAN)
 	set -o pipefail; python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
-		$(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
+		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
 		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); exit $$code; }
 	@python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS)
 	@if [ -z "$(TEST_TSAN_ARGS)" ]; then for suite in $(TSAN_SUITES); do \

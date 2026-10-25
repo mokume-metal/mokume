@@ -14,6 +14,9 @@
      切れた (`cancelled`) ときだけ走る。`if:` は always() を持つ — 無ければ暗黙の success() で、
      赤の回に skipped になる
   4. 起票の job は、artifact の名前と記録の綴りを tsan / Makefile と揃えて読む
+  5. exit test (`#expect(processExitsWith:)`) を持つ検査は、どれも Makefile の TSAN_SKIP に
+     載る — TSan の下では子が中身を走らせずに止まり、`.failure` を期待する検査は偽って緑に
+     なる (#3220 の実測)。足した exit test を TSAN_SKIP に載せ忘れると、ここが赤になる
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -27,6 +30,30 @@ import render_workflow_test as workflow
 REPO = Path(__file__).resolve().parents[2]
 HOST = REPO / ".github" / "workflows" / "host-scheduled.yml"
 MAKEFILE = REPO / "Makefile"
+TESTS = REPO / "Tests"
+
+
+def tsan_skip(makefile):
+    """Makefile の TSAN_SKIP の並び (行継ぎを畳む)。"""
+    m = re.search(r"(?ms)^TSAN_SKIP := (.*?)(?<!\\)\n", makefile)
+    return m.group(1).replace("\\\n", " ").split()
+
+
+def exit_tests(root):
+    """exit test を持つ (Suite の型名, 関数名) の集合。関数は宣言の後で最初に出たものに帰す。"""
+    found = set()
+    for path in root.rglob("*.swift"):
+        suite = function = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^(?:final class|struct|class) (\w+)", line)
+            if m:
+                suite = m.group(1)
+            m = re.search(r"\bfunc (\w+)\(", line)
+            if m:
+                function = m.group(1)
+            if "processExitsWith" in line and suite and function:
+                found.add((suite, function))
+    return found
 
 
 class HostScheduledWorkflowTest(unittest.TestCase):
@@ -76,6 +103,22 @@ class HostScheduledWorkflowTest(unittest.TestCase):
         self.assertIn(Path(record).name, report)
         self.assertIn(Path(log).name, report)
         self.assertIn("scripts/report-tsan.sh", report)
+
+
+    def test_exit_test_は_TSan_の下から外す(self):
+        skip = tsan_skip(MAKEFILE.read_text(encoding="utf-8"))
+        found = exit_tests(TESTS)
+        self.assertTrue(found, "Tests/ に exit test が 1 つも見つからない — 読み方が壊れている")
+        missing = sorted(
+            f"{suite}/{function}"
+            for suite, function in found
+            if f"{suite}/{function}" not in skip and f"{suite}/" not in skip
+        )
+        self.assertEqual(missing, [], "Makefile の TSAN_SKIP に足す (理由は TSAN_SKIP の上)")
+
+    def test_TSAN_SKIP_の読み方(self):
+        text = "TSAN_SKIP := A/ \\\n\tB/c \\\n\tD/e\n\nNEXT := x\n"
+        self.assertEqual(tsan_skip(text), ["A/", "B/c", "D/e"])
 
 
 if __name__ == "__main__":
