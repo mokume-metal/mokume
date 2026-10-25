@@ -225,6 +225,11 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ([#2604](https://github.com/mokume-metal/mokume/issues/2604)・[#2605](https://github.com/mokume-metal/mokume/issues/2605))。
     /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
     ///
+    /// **`mokume watch` の道具の窓では、1 回の落としが大きすぎると届かない。** 窓が拾った落としは、子の標準入力へ
+    /// 1 行にして渡る。その 1 行が 1 MiB (1,048,576 バイト・長いパスでおよそ 5000 本以上) を越えると、子へ
+    /// 流さずに捨て、`mokume watch` が 1 度だけ `Dropped an input event of N bytes: …` と名乗る。分けて
+    /// 送ることはしない — 1 回の落としは 1 回の呼び出しのままである。直に走らせた窓には、この上限は無い。
+    ///
     /// ``SketchPart/noLoop()`` で止めている間も呼ばれる。
     func fileDropped(_ paths: [String])
 
