@@ -378,13 +378,16 @@ public final class Canvas {
     /// 足さない ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。
     enum FlatForm: Equatable {
         case rect(width: Float, height: Float)
+        /// 4 つの角を `radius` で丸めた矩形。`radius` は 0 より大きく、幅・高さの半分以下 (``Canvas/rect(_:_:_:_:_:)``)
+        case roundedRect(width: Float, height: Float, radius: Float)
         case ellipse(radiusX: Float, radiusY: Float)
         case arc(radiusX: Float, radiusY: Float, start: Float, sweep: Float)
 
-        /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。
+        /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。角丸の矩形は、角の弧の半径で刻む。
         var ringRadius: Float? {
             switch self {
             case .rect: nil
+            case .roundedRect(_, _, let radius): radius
             case .ellipse(let radiusX, let radiusY), .arc(let radiusX, let radiusY, _, _):
                 max(radiusX, radiusY)
             }
@@ -398,7 +401,8 @@ public final class Canvas {
             case .rect:
                 Canvas.strokePlacesDiscs(
                     pointCount: 4, isClosed: true, hasJoinCurveSteps: false, cap: cap, join: join)
-            case .ellipse, .arc:
+            case .ellipse, .arc, .roundedRect:
+                // 角丸の矩形の周も、点がどれも刻み (角の弧の点) で、角は 1 つも無い
                 Canvas.strokePlacesDiscs(
                     pointCount: 3, isClosed: true, hasJoinCurveSteps: true, cap: cap, join: join)
             }

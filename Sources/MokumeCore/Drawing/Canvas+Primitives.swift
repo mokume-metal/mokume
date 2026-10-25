@@ -71,13 +71,14 @@ extension Canvas {
                 fills: true, cornerRadius: radius)
         }
         // 角を丸めた矩形は、貼る絵 (`texture()`) か利用者の断片 (`shader()`) が効いている間だけ
-        // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。畳まない
+        // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。**角を丸めない矩形と
+        // 同じく畳む** (#3170)。周は形自身の座標で作って左上の角を置き場所として渡し、角の弧の刻みは
+        // 鍵が持つ数 (置き場所の拡大で決まる整数) で刻む
         if radius > 0 {
-            let segments = Self.segmentCount(
-                forRadius: radius, scale: Self.splitScale(of: transform.matrix))
-            return draw(
+            return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
+                segments in
                 Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
-                    .moved(by: SIMD2(box.x, box.y)))
+            }
         }
         // 周は**形自身の座標**で作り、左上の角を置き場所として渡す。畳まないときは
         // 角を足し戻すだけなので、絵は 1 ビットも変わらない (足す順が入れ替わるだけ)

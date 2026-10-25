@@ -544,6 +544,131 @@ struct ThinFillVertexStageTests {
         }
     }
 
+    // MARK: - 角丸の rect (#3170)
+
+    /// 場面 R の角丸版: 細かさ 0.5・全部違う回転の `rect(-20, -0.5, 40, 1, 0.4)` を 10,000 個。
+    @Test("回転が全部違う細い角丸 rect は、1 つの雛形に畳まれる")
+    func rotatedRoundedRectsFoldIntoOneTemplate() throws {
+        let canvas = try Self.makeCanvas(density: 0.5)
+        let shader = try canvas.makeShader(Self.plain)
+        let count = 10_000
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(shader)
+            for index in 0..<count {
+                canvas.pushMatrix()
+                canvas.translate(64, 64)
+                canvas.rotate(Float(index) * 0.113 + 0.02)
+                canvas.rect(-20, -0.5, 40, 1, 0.4)
+                canvas.popMatrix()
+            }
+            #expect(canvas.openFlat != nil, "細い角丸 rect が畳まれない")
+            #expect(canvas.flatInstances.count == count + 1, "置き場所: \(canvas.flatInstances.count)")
+            #expect(canvas.thinFillSpans.count == count, "記述: \(canvas.thinFillSpans.count)")
+            #expect(canvas.openFlat?.key.thinFillCapacity == 1)
+            // 周は雛形の 1 回だけ (置き場所ごとに組み直さない)
+            #expect(canvas.outlinesAssembledThisFrame < 10, "周を組んだ数: \(canvas.outlinesAssembledThisFrame)")
+        }
+    }
+
+    /// 畳まずに置く道 (角丸の周を作って直に `draw(_:)` へ渡す。畳む前の `rect` が通っていた道) と、
+    /// 畳んで置いた絵を比べる。**許容は 0。**
+    private func expectSameAsUnfolded(
+        _ name: String, density: Float = 1, texture: Bool = false, stroke: Bool = false,
+        size: (width: Float, height: Float, radius: Float), spin: Float = 0.21,
+        scale: (Int) -> (Float, Float) = { _ in (1, 1) }
+    ) throws {
+        func picture(folding: Bool) throws -> PixelBuffer {
+            try self.picture(density: density, expands: true, texture: texture) { canvas in
+                if stroke {
+                    canvas.stroke(200)
+                    canvas.strokeWeight(0.7)
+                }
+                self.scatter(canvas, spin: spin, scale: scale) {
+                    let (w, h) = (size.width, size.height)
+                    if folding {
+                        canvas.rect(-w / 2, -h / 2, w, h, size.radius)
+                        return
+                    }
+                    let radius = min(size.radius, w / 2, h / 2)
+                    let segments = Canvas.segmentCount(
+                        forRadius: radius, scale: Canvas.splitScale(of: canvas.transform.matrix))
+                    canvas.draw(
+                        Canvas.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
+                            .moved(by: SIMD2(-w / 2, -h / 2)))
+                }
+                if folding {
+                    #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                }
+            }
+        }
+        let unfolded = try picture(folding: false)
+        let folded = try picture(folding: true)
+        var differing = 0
+        var lit = 0
+        for index in unfolded.components.indices {
+            if unfolded.components[index] != folded.components[index] { differing += 1 }
+            if unfolded.components[index] > 0 { lit += 1 }
+        }
+        #expect(lit > 0, "\(name): 絵が空")
+        #expect(differing == 0, "\(name): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
+    }
+
+    @Test("畳んだ角丸 rect は、畳まずに置いた絵と画素が同じ")
+    func roundedRectsKeepTheirPixelsWhenFolded() throws {
+        try expectSameAsUnfolded("細い角丸 rect", size: (28, 0.8, 0.3))
+        try expectSameAsUnfolded(
+            "倍率の違う細い角丸 rect", size: (28, 0.8, 0.3), scale: { (1 + Float($0 % 3) * 0.2, 1 + Float($0 % 4) * 0.1) })
+        try expectSameAsUnfolded("細かさ 0.5 の細い角丸 rect", density: 0.5, size: (28, 1, 0.4), spin: 0.23)
+        try expectSameAsUnfolded("貼る絵の細い角丸 rect", texture: true, size: (20, 1, 0.4), spin: 0.27)
+        // 細くない角丸 rect (周を刻む数が鍵に入る)・半径が短い辺の半分に締まる rect・輪郭つき
+        try expectSameAsUnfolded("細くない角丸 rect", size: (16, 10, 3), spin: 0.3)
+        try expectSameAsUnfolded("半径が締まる角丸 rect", size: (16, 10, 100), spin: 0.3)
+        try expectSameAsUnfolded("輪郭つきの細い角丸 rect", stroke: true, size: (28, 0.8, 0.3), spin: 0.3)
+        try expectSameAsUnfolded("輪郭つきの細くない角丸 rect", stroke: true, size: (16, 10, 3), spin: 0.3)
+        try expectSameAsUnfolded("貼る絵の細くない角丸 rect", texture: true, size: (16, 10, 3), spin: 0.27)
+    }
+
+    @Test("角丸 rect の細い塗りは、CPU で組み直す畳みと画素が同じ")
+    func roundedRectFillsKeepTheirPixels() throws {
+        try expectSame("細い角丸 rect") { canvas in
+            scatter(canvas, spin: 0.29, scale: { (1 + Float($0 % 3) * 0.1, 1) }) {
+                canvas.rect(-12, -0.4, 24, 0.8, 0.3)
+            }
+            #expect(!canvas.expandsThinFillsInVertexStage || canvas.thinFillSpans.count == 30, "畳まれていない")
+        }
+        try expectSame("貼る絵の細い角丸 rect", texture: true) { canvas in
+            scatter(canvas, spin: 0.27) { canvas.rect(-10, -0.5, 20, 1, 0.4) }
+        }
+    }
+
+    @Test("角丸 rect は、半径の違う置き場所が別の雛形になり、角丸でない rect とも混ざらない")
+    func roundedRectsKeepTheirOwnTemplates() throws {
+        let canvas = try Self.makeCanvas(density: 1)
+        let shader = try canvas.makeShader(Self.plain)
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            canvas.shader(shader)
+            var keys: [Canvas.FlatKey] = []
+            for radius in [Float(0.2), 0.3, 0] {
+                // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開く
+                for _ in 0..<3 { canvas.rect(10, 10, 28, 0.8, radius) }
+                if let key = canvas.openFlat?.key { keys.append(key) }
+            }
+            // 半径 0.2・0.3 の角丸と、角丸でない rect (半径 0) は、それぞれ別の雛形の鍵
+            #expect(keys.count == 3, "雛形の鍵の数: \(keys.count)")
+            if keys.count == 3 {
+                #expect(keys[0].form == .roundedRect(width: 28, height: 0.8, radius: 0.2))
+                #expect(keys[1].form == .roundedRect(width: 28, height: 0.8, radius: 0.3))
+                #expect(keys[2].form == .rect(width: 28, height: 0.8))
+            }
+        }
+    }
+
     @Test("極端な寸法の細い塗りは、有限でない記述を作らない")
     func extremeSizesNeverMakeNonFiniteRecords() {
         let big: [Float] = [1e30, 1e37, 1.6e38, 1.75e38, 2e38, 3e38, Float.greatestFiniteMagnitude]
