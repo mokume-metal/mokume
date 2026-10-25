@@ -156,6 +156,13 @@ struct DensityInvarianceTests {
             }
         }
 
+        /// 距離関数の経路の口か (縁を面積で数え、描く画素で 1 以上の太さでも量が保たれる)。
+        var isDistanceField: Bool { rawValue.hasSuffix("(距離関数)") }
+
+        /// 生成する太さの上限 (出す画素)。理由は ``DensityInvarianceTests/axes(for:)`` の注釈。
+        /// 点は描く画素で 1 以上を見ないので、距離関数の経路でも 1 まで。
+        var maxWeight: Double { isDistanceField && crossings(squash: 1) != 0 ? 4 : 1 }
+
         /// 回転を持つ口か (``Pose/angle`` を使う)。
         var rotates: Bool {
             switch self {
@@ -445,8 +452,10 @@ struct DensityInvarianceTests {
     /// - 太さ: `strokeWeight` の説明は経路も細かさも限らない。ただし描く画素で 0.07 より細い線は、
     ///   縁の遊び (1/256) で 10% を越えて少なく出ることが分かっていて、この物差しの幅の約束の外に
     ///   置いている (``Amount/stretchedQuad`` の注釈)。そこで太さは描く画素で 0.07 以上を見る
-    ///   (下回った入力は ``Probe/Outcome/skip``)。上は出す画素で 1 まで — 点と面全体で見る塗りは
-    ///   描く画素で 1 以上を見ない (ADR-0039 決定 3) ので、それより太い線を足しても見る行が増えない
+    ///   (下回った入力は ``Probe/Outcome/skip``)。上は口の経路で分ける (``Amount/maxWeight``):
+    ///   三角形の経路の縁には AA が無く、描く画素で 1 以上の太さは格子で丸まる (ADR-0039 決定 3)
+    ///   ので出す画素で 1 まで。距離関数の経路の線と塗りは縁を面積で数えるので 4 まで見る —
+    ///   回した形の縁 1 本の式 (#2991) は、描く画素で 1 に近い太さから先でしか通らない
     /// - 細かさ: `pixelDensity` は `(0, 1]` を受ける (`Canvas.swift` の検め)。出す面 128 が描く画素の
     ///   整数になる 1/128 刻みで選ぶ。0.25 より細かくない面は描く面が 32 画素未満になり、線の口が
     ///   見る列 (x = 54…74) が 5 列を切るので見ない
@@ -454,14 +463,14 @@ struct DensityInvarianceTests {
     /// - 角度: `[0, π/2)`。正方形の格子は π/2 で元に戻る
     /// - 倍率: `[0.1, 1)`。固定の例の 0.1 と 0.25 を含む。0.1 未満は ``Amount/stretchedQuad`` の
     ///   縦の辺が出す面 (128) を越える
-    static let axes = [
-        ProbeAxis("weight", 0.07..<1.0001, simplest: 1),
+    static func axes(for mouth: Amount) -> [ProbeAxis] { [
+        ProbeAxis("weight", 0.07..<(mouth.maxWeight + 0.0001), simplest: 1),
         ProbeAxis("density", 0.25..<1.0001, simplest: 1, step: 1.0 / 128),
         ProbeAxis("dx", 0..<2, simplest: 0),
         ProbeAxis("dy", 0..<2, simplest: 0),
         ProbeAxis("angle", 0..<(Double.pi / 2), simplest: 0),
         ProbeAxis("squash", 0.1..<1, simplest: 0.5),
-    ]
+    ] }
 
     /// PR・queue で口ごとに回す件数 (固定の seed)。定期の検査は `MOKUME_PROBE_SCALE` で増やす。
     ///
@@ -481,8 +490,9 @@ struct DensityInvarianceTests {
         let areaFactor = mouth.areaFactor(squash: pose.squash)
         let crossings = mouth.crossings(squash: pose.squash)
         if crossings == 0, drawn * areaFactor.squareRoot() >= 1 { return .skip }
-        // 面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)
-        if mouth.fillArea != nil, drawn >= 1 { return .skip }
+        // 三角形の経路の面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)。
+        // 距離関数の経路の塗りは縁を面積で数えるので、太くても見る
+        if mouth.fillArea != nil, !mouth.isDistanceField, drawn >= 1 { return .skip }
         let canvas = try makeCanvas(density: density)
         try draw(on: canvas) {
             canvas.background(0)
@@ -516,7 +526,7 @@ struct DensityInvarianceTests {
         arguments: Amount.allCases)
     func amountKeepsItsWeight(_ mouth: Amount) throws {
         let report = try Probe.run(
-            "density", suite: "DensityInvarianceTests", key: "amount/\(mouth)", axes: Self.axes,
+            "density", suite: "DensityInvarianceTests", key: "amount/\(mouth)", axes: Self.axes(for: mouth),
             cases: Self.generatedCases
         ) { input in
             let pose = Pose(
