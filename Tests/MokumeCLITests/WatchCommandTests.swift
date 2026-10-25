@@ -323,13 +323,46 @@ struct WatchCommandTests {
         }
     }
 
-    @Test("長い error: の行は末尾を省く")
-    func cutsALongErrorLine() throws {
-        let long = "/w/a.swift:1:1: error: " + String(repeating: "y", count: 400)
+    /// **肝心なのは末尾の文**なので、長いときは中を詰める (プレビューの他の行と同じ規則・同じ上限)。末尾を省くと、
+    /// 幅の狭いプレビューで文が先に落ちる。
+    @Test("長い error: の行は、頭のパスと末尾の文を残して中を詰める。上限は他の行と同じ")
+    func abbreviatesALongErrorLineInTheMiddle() throws {
+        let place = "/Users/someone/Repos/a-long-project-name/.build/checkouts/Sources/Sketch/Deeply/Nested/main.swift"
+        let sentence = "cannot find 'circel' in scope"
+        let long = "\(place):12:5: error: \(sentence)"
         let error = try #require(failed(long).firstErrorLine)
-        #expect(error.count == BuildReport.errorLineLimit)
-        #expect(error.hasSuffix("…"))
-        #expect(error.hasPrefix("/w/a.swift:1:1: error: yyy"))
+        #expect(error == BuildReport.abbreviated(long, to: BuildReport.noticeLimit), "\(error)")
+        #expect(error.count == BuildReport.noticeLimit, "\(error)")
+        #expect(error.hasSuffix(sentence), "文が落ちた: \(error)")
+        #expect(error.hasPrefix("/Users/someone/Repos/"), "頭を残していない: \(error)")
+        // 上限に収まる行は、そのまま
+        let short = "/w/a.swift:1:1: error: boom"
+        #expect(failed(short).firstErrorLine == short)
+    }
+
+    /// **行の頭からパス・行番号 1 以上を求める。** ファイルを指さない疑似位置 (`<unknown>:0:`)・行 0・
+    /// 文中にたまたま `:1: error: ` を含む警告や注記は、ファイルと行の付いた `error:` ではない。
+    @Test("疑似位置・行 0・文中に error: を含む警告や注記・字下げした行は拾わず、次の本物を拾う")
+    func skipsLinesThatAreNotARealFileAndLine() throws {
+        let real = "/w/Sources/App/main.swift:9:3: error: expected expression"
+        let decoys = [
+            "<unknown>:0: error: unable to load standard library",
+            "<module-includes>:1:1: error: umbrella header not found",
+            "/w/a.swift:0: error: no line",
+            "/w/a.swift:0:4: error: no line either",
+            "/w/a.swift:3:9: warning: this mentions /w/b.swift:1: error: inside a sentence",
+            "/w/a.swift:3:9: note: see also b.swift:2:2: error: here",
+            "  /w/c.swift:5:5: error: indented code echo",
+            "error: /w/lib.c:1:10 'x.h' file not found",
+        ]
+        let output = decoys.joined(separator: "\n") + "\n" + real
+        #expect(failed(output).firstErrorLine == real)
+        for decoy in decoys {
+            #expect(failed(decoy).firstErrorLine == nil, "拾ってはいけない行を拾った: \(decoy)")
+            #expect(
+                WatchCommand.notice(for: failed(decoy), holdingPrevious: true)
+                    == "The build failed — " + WatchCommand.holdingLine, "\(decoy)")
+        }
     }
 
     /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つの窓が独立に合図を出すので
