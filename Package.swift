@@ -121,8 +121,11 @@ let package = Package(
             name: "reference-sketches", dependencies: ["mokume"], path: "Sketches",
             exclude: ["data"], swiftSettings: .mokume),
         .executableTarget(name: "frame-rate-probe", dependencies: ["mokume"], swiftSettings: .mokume),
+        // 検査が入力を seed つきで生成して縮める道具 (#3207 の提案 1・#3216)。product には含めない。
+        // 検査の target だけが依存する (依存は足さず Foundation だけ)
+        .target(name: "MokumeProbe", path: "Tests/MokumeProbe", swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches"],
+            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches", "MokumeProbe"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
