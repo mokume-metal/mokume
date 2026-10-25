@@ -484,6 +484,7 @@ final class WatchSession {
     /// 書かないと区画には前の見張りの記録が残る (#1147 と同じ理由)。
     @discardableResult
     func start() async -> BuildReport {
+        discardStaleNotStartedRecord()
         let stamp = await takeStamp()
         guard !stopRequested else {
             return finish(
@@ -493,6 +494,25 @@ final class WatchSession {
                     timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil)))
         }
         return await rebuildAndReplace(stamp: stamp, initial: true)
+    }
+
+    /// 前の見張りが残した「起動できなかった」記録 (`ok: true`・`launched: false`) を、始めるときに消す
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// 前の見張りが止まった後も記録は残る。新しい見張りは錠を持つので、最初の作り直し (cold build で数十秒) の間、
+    /// 窓口は錠を見て前の回の理由で「直して保存せよ」と答えてしまう。**消せば記録の無い状態になり**、窓口は
+    /// 元の案内に、`build_status` と `doctor` は「まだ作り直しが無い」に倒れる (どちらも記録の無い状態を扱える)。
+    /// 作り直しが通らなかった記録 (`ok: false`)・起こした記録は、この誤答を起こさないので残す。
+    ///
+    /// 同じ見張りの作り直しの最中に窓口が「直して保存せよ」と言う小さな窓 (子を起こせば `launched: true` に変わる)
+    /// は、扱わない。
+    private func discardStaleNotStartedRecord() {
+        let url = BuildReport.statusURL(under: facetBase)
+        guard let data = try? Data(contentsOf: url),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ok"] as? Bool == true, object["launched"] as? Bool == false
+        else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// 最初の作り直しを始める前に終われと言われた回の記録の本文。**失敗とは違う言葉で始める**
@@ -598,13 +618,17 @@ final class WatchSession {
         case .exited(let status): departure = Departure(status: status, wasSignalled: false)
         case .signalled(let signal): departure = Departure(status: signal, wasSignalled: true)
         }
+        // **子が自分で置いた理由を読む** ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。置いた子は、
+        // 窓のある見張りでは起動できなかった回の確かな証拠になる (合図の推定より先に効く)
+        let note = takeStartFailureNote(of: gone)
         // **最初の絵を出す前に、失敗で終わった子は、起こせなかった回である** (#3172)。終了コード 0 は
         // 自分から終わったので、絵を出す前でも含めない。**終われと言われた合図 (Ctrl-C など) で落ちた子も
         // 含めない** — 見張りが終わる合図は子にも届き、道具が `stopped()` を立てる前にここへ来うる
         let failed =
             departure.wasSignalled
             ? !Self.endingSignals.contains(departure.status) : departure.status != 0
-        guard !hasShownFirstFrame(gone), failed else {
+        // 理由を置いた子は、窓のある見張りでは確かに起動できなかった。窓の無い見張りは対象外 (#3222)
+        guard (overlapsGenerations && note != nil) || (!hasShownFirstFrame(gone) && failed) else {
             // 映っている世代が消えた回も、乗り換えを待つ世代が消えて前の世代を畳む回も、台は手放した世代の
             // 頼みを持ち続ける (#2983)。**消えた子の番号を渡す** — 台はまだ採っていないその子の目録も、
             // 生まれたときから手放した扱いにする (#2982)。畳まれる前の世代の番号も添える
@@ -613,7 +637,7 @@ final class WatchSession {
         }
         departure.failedToStart = true
         departure.keptPrevious = restorePreviousGeneration(afterLosing: gone)
-        departure.report = recordFailedStart(of: gone, departure)
+        departure.report = recordFailedStart(of: gone, departure, note: note)
         return departure
     }
 
@@ -677,21 +701,85 @@ final class WatchSession {
     /// 作り直しが通らなかった回の記録 (`ok: false`) は、直すべきものを本文に持つので消さない。
     ///
     /// - Returns: 端末とプレビューの言葉の材料にする記録。書かなかったときも、同じ形のものを返す。
-    private func recordFailedStart(of gone: Process, _ departure: Departure) -> BuildReport {
-        let reason = Self.failedStartReason(
+    ///
+    /// **記録に書かない回は、子の理由を記録に載せない。** 区画に在る記録 (`ok: false`) は直すべき作り直しの失敗を
+    /// 持ち、子の理由で上書きすると直すものが隠れる。子の理由は読んだ時点で消してあり (次に残らない)、返す記録の
+    /// 本文には載るので、端末の言葉の材料としては失われない。
+    ///
+    /// - Parameter note: 子が自分で置いた理由の全文 (``takeStartFailureNote(of:)``)。あれば、理由の 2 行目に頭の
+    ///   1 行を載せ、全文を作り直しの出力の前に置く (#3169)。
+    private func recordFailedStart(
+        of gone: Process, _ departure: Departure, note: String?
+    ) -> BuildReport {
+        var reason = Self.failedStartReason(
             tool: launchedTool ?? context.product ?? "sketch", place: directory.path,
             departure: departure)
+        // **子の言葉の頭の行には、見分ける頭を付ける** — 窓口は、この行が有るときだけ「子自身の言葉」を案内する。
+        // 理由が改行で始まる子の言葉でも、頭の 1 行は最初の空でない行である
+        if let head = note?.split(whereSeparator: \.isNewline)
+            .map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty })
+        {
+            reason += "\n" + BuildReport.sketchReportedPrefix + head
+        }
+        let account = note.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
         guard let last = lastReport, last.ok, last.launched else {
             return .notStarted(
-                reason: reason, buildOutput: "", stamp: lastStamp, configuration: configurationName,
+                reason: reason, buildOutput: account, stamp: lastStamp,
+                configuration: configurationName,
                 timings: .init(detectMs: nil, buildMs: 0, relaunchMs: nil))
         }
         var timings = last.timings
         timings.firstFrameMs = nil
         return finish(
             .notStarted(
-                reason: reason, buildOutput: last.output, stamp: last.stamp,
-                configuration: last.configuration, timings: timings))
+                reason: reason,
+                buildOutput: account.isEmpty ? last.output : account + "\n\n" + last.output,
+                stamp: last.stamp, configuration: last.configuration, timings: timings))
+    }
+
+    /// 終わった子が自分で置いた、起動できなかった理由を読んで消す
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。**無ければ `nil`。**
+    ///
+    /// 置き場は区画 `build` の ``WorkDirectory/startFailureURL(forProcess:under:)``。子の標準エラーは読まない —
+    /// 理由は子が区画へ渡す。読んだら消す (次の子の理由と取り違えない・記録に移った)。
+    private func takeStartFailureNote(of process: Process) -> String? {
+        let url = WorkDirectory.startFailureURL(
+            forProcess: process.processIdentifier, under: buildFacet)
+        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        try? FileManager.default.removeItem(at: url)
+        return text
+    }
+
+    /// 作り直しの記録と、起動できなかった子の理由を置く区画 `build`。
+    private var buildFacet: URL {
+        WorkDirectory.facet(WorkDirectory.buildFacetName, under: facetBase)
+    }
+
+    /// 区画 `build` を子を起こす前に用意し、読まれずに残った理由を掃く。
+    ///
+    /// **区画を用意するのは見張りで、子は作らない** (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
+    /// 最初の世代では区画は、子を起こした後の記録の書き込みで初めてできるので、用意しないと、速く落ちる子
+    /// (組み立てが投げる・`setup()` が投げる) の理由は置き場が無く捨てられる。
+    ///
+    /// **新しい子を起こす前に掃く** — 見ずに残った理由 (道具の知らない世代・読む前に消えた子・止めている最中に
+    /// 失敗した子) があると、あとで同じ pid を巡り当てた別の子が、起動できなかったと読まれる。見張りが終わる
+    /// ときにも掃く (``WatchCommand/teardown(_:_:created:keepTimeFile:)``)。
+    func prepareStartFailureNotes() {
+        try? FileManager.default.createDirectory(at: buildFacet, withIntermediateDirectories: true)
+        sweepStartFailureNotes()
+    }
+
+    /// 区画 `build` の、読まれずに残った理由を掃く。
+    func sweepStartFailureNotes() {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: buildFacet.path)
+        else { return }
+        let prefix = WorkDirectory.startFailureURL(forProcess: 0, under: buildFacet)
+            .lastPathComponent.dropLast()  // `.start-failure.`
+        for name in names where name.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: buildFacet.appendingPathComponent(name))
+        }
     }
 
     /// 最初の絵を出す前に終わった子の、起こせなかった理由。
@@ -1234,6 +1322,7 @@ final class WatchSession {
         // 何が起きたかを読める
         // **新しい子を起こす前に、古い目印を掃く** (#2350)。後の子が同じ pid を巡り当てても、倒れたと読まれない
         sweepFellBackMarkers(keeping: nil)
+        prepareStartFailureNotes()
         // **絵を出したと覚えるのは、生きている世代のぶんだけ。** 番号は使い回されるので、居なくなった世代の
         // 覚えを残すと、同じ番号の新しい子を、もう絵を出したと読む (#3172)
         shownPIDs.formIntersection([child, outgoing].compactMap { $0?.processIdentifier })

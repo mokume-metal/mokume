@@ -157,6 +157,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 既定のままでは、揃わなかった回を検めるたびに検査のプロセスが終わる。
     var exitProcess: @MainActor (Int32) -> Void = { exit($0) }
 
+    /// 起動できなかった理由を、見張りへ渡す口 (``reportStartFailure(_:note:)``)。**検査から差し替える** —
+    /// 既定の口は、見張りに起こされたときだけ区画へ置く (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
+    var noteStartFailure: (String) -> Void = { noteOwnStartFailure($0) }
+
     /// 書き出す経路で、描けなかったフレームの数。
     private var framesFailedToDraw = 0
 
@@ -1000,7 +1004,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private func stopForSetupFailure(_ failure: RenderFailure) {
         guard !isTerminating else { return }
         isTerminating = true
-        FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+        reportStartFailure(failure, note: noteStartFailure)
         runtime.closePlugins()
         screenLink.invalidate()
         exitProcess(1)
@@ -1167,7 +1171,7 @@ extension Sketch {
             let application = try SketchApplication(sketch: Self(), gpu: gpu)
             application.run()
         } catch {
-            FileHandle.standardError.write(Data(startupFailureText(error).utf8))
+            reportStartFailure(error)
             exit(1)
         }
     }
@@ -1186,4 +1190,25 @@ extension Sketch {
 /// 出さないと読む人に打つ手が残らない ([#600](https://github.com/mokume-metal/mokume/issues/600))。
 func startupFailureText(_ failure: RenderFailure) -> String {
     "The sketch could not start.\n\(failure)\n"
+}
+
+/// このプロセスの起動の失敗を、見張りの区画へ置く。**見張りに起こされていなければ置かない**
+/// (``WorkDirectory/noteStartFailure(_:forProcess:under:owner:)``)。
+func noteOwnStartFailure(_ text: String) {
+    WorkDirectory.noteStartFailure(text, owner: SharedFrameSurface.launchOwner)
+}
+
+/// 起動できなかったことを、標準エラーへ言い、見張りへも渡す ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+///
+/// **組み立ての失敗 (``Sketch/main()``) と `setup()` の失敗 (`stopForSetupFailure`) の 2 か所が、ここを通る。**
+/// 呼び出しを 1 行にしてあるのは、`exit` の前で呼べない呼び出し元の代わりに、検査がここを見るため。
+/// 見張りへ渡すのは理由の全文 (標準エラーに出した文面と同じ中身) で、渡すかどうかは `note` が決める
+/// (既定は、見張りに起こされたときだけ区画へ置く)。
+///
+/// - Parameter note: 理由の全文を受ける口。
+func reportStartFailure(
+    _ failure: RenderFailure, note: (String) -> Void = { noteOwnStartFailure($0) }
+) {
+    FileHandle.standardError.write(Data(startupFailureText(failure).utf8))
+    note("\(failure)")
 }

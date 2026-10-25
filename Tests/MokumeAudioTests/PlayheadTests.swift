@@ -7,7 +7,7 @@ import Testing
 
 /// 再生位置の移り変わり (#1979)。純粋な型なので、機材も GPU も要らない。
 @Suite("再生位置")
-struct PlayheadTests {
+nonisolated struct PlayheadTests {
     /// 標本の値が「位置 + 1」になる列 (1, 2, 3, …)。窓を見れば、どこを切り出したかが読める。
     /// 0 を含めないので、窓の 0 は「鳴っていない」としか読めない。
     private let indices: [Float] = (0..<2000).map { Float($0 + 1) }

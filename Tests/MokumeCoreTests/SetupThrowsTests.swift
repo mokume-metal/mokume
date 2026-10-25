@@ -380,4 +380,48 @@ struct SetupThrowsTests {
         #expect(statuses == [1])
         #expect(closesWhenExiting == [1], "終わる前に差込口が閉じられていない: \(closesWhenExiting)")
     }
+    // MARK: - 起動の失敗を見張りへ渡す (#3169)
+
+    @Test("窓の経路は、setup() が投げたら、終わる前に理由の全文を見張りへ渡す")
+    func theApplicationHandsTheReasonOverBeforeExiting() throws {
+        let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
+        var order: [String] = []
+        var notes: [String] = []
+        application.noteStartFailure = {
+            notes.append($0)
+            order.append("note")
+        }
+        application.exitProcess = { _ in order.append("exit") }
+        application.didFinishLaunching()
+        application.displayLinkFired()
+        #expect(order == ["note", "exit"], "理由を渡してから終わっていない: \(order)")
+        let note = try #require(notes.first)
+        #expect(note.hasPrefix("setup() threw, so the sketch did not start:"), "\(note)")
+        #expect(note.count > "setup() threw, so the sketch did not start: ".count, "理由が空: \(note)")
+    }
+
+    /// `Sketch.main()` の catch は `exit(1)` で呼べないので、置く処理は 1 つの関数に括ってある。
+    @Test("起動の失敗を言う関数は、標準エラーと同じ中身の全文を見張りへ渡す")
+    func reportStartFailureHandsTheWholeFailureOver() {
+        let failure = RenderFailure.setupFailed(reason: "could not read assets/cat.png\n  detail")
+        var notes: [String] = []
+        reportStartFailure(failure, note: { notes.append($0) })
+        #expect(notes == ["\(failure)"])
+        #expect(notes.first?.contains("detail") == true, "全文を渡していない: \(notes)")
+    }
+
+    /// 理由が改行で始まる子で、1 行目が名乗りだけになると、1 行に削る経路と見張りの頭の 1 行が理由を落とす。
+    @Test("setup() が改行や空白で始まる理由を投げても、1 行目に理由の最初の行が入る")
+    func aLeadingNewlineInTheReasonDoesNotEmptyTheFirstLine() {
+        let failure = RenderFailure.setupFailed(reason: "\n  could not read assets/cat.png\n")
+        let text = "\(failure)"
+        #expect(
+            text.split(separator: "\n", omittingEmptySubsequences: false).first
+                == "setup() threw, so the sketch did not start: could not read assets/cat.png",
+            "\(text)")
+        #expect(failure.headline == "setup() threw, so the sketch did not start: could not read assets/cat.png")
+        #expect(
+            "\(RenderFailure.setupFailed(reason: " \n "))" == "setup() threw, so the sketch did not start",
+            "空の理由で余計な : が残る")
+    }
 }
