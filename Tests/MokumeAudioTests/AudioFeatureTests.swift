@@ -322,65 +322,289 @@ struct AudioFeatureTests {
         #expect(tracker.beats.count == 1 && abs(tracker.beats[0] - 84_479) <= 512, "\(tracker.beats)")
     }
 
+    // MARK: - isBeat: 流れの扱い (番号の連続・端数・数でない標本・低い fps)
+
+    /// `fps` の固定の時計のフレームの終わりで区切った区間を、供給する側と同じく上限 (``AudioAnalysis/maxSpan``) で切って返す。
+    private static func cappedSpans(of stream: [Float], fps: Int) -> [AudioSpan] {
+        var covered = 0
+        return frameEnds(fps: fps, upTo: stream.count).map { end in
+            defer { covered = end }
+            return span(of: stream, from: AudioAnalysis.limited(from: covered, to: end), to: end)
+        }
+    }
+
+    @Test("標本の流れの終わりで、閉じていない端数のブロック (512 標本未満) にだけある立ち上がりも拍になる。終わった後は履歴を捨てて始め直す")
+    func finishClosesTheFragment() {
+        // 20 ブロックと 200 標本。クリックは端数のブロック [10240, 10440) の中で立ち上がる
+        let count = 20 * 512 + 200
+        let stream = Self.clicks(at: [10_250], count: count)
+        var tracker = BeatTracker()
+        let inSpan = tracker.process(span(of: stream, from: 0, to: count))
+        #expect(!inSpan, "端数のブロックは区間では閉じない")
+        let atEnd = tracker.finish()
+        #expect(atEnd)
+        #expect(tracker.beats.count == 1 && abs(tracker.beats[0] - 10_250) <= AudioAnalysis.hop, "\(tracker.beats)")
+        // 端数が無ければ、終わっても何も出ない
+        var whole = BeatTracker()
+        _ = whole.process(span(of: [Float](repeating: 0, count: 5120), from: 0, to: 5120))
+        let wholeEnd = whole.finish()
+        #expect(!wholeEnd)
+        // 終わった後は、続く番号でも履歴を捨てて始め直す (途中からの始め直しなので、すぐ後のクリックは出ない)
+        var continued = tracker
+        // (拍の直後に数えないブロックも捨てる。クリックは、それが過ぎた後、始め直しの 8 ブロックの内に置く)
+        let more = Self.clicks(at: [count + 3_900], count: count + 6_000)
+        let afterEnd = continued.process(span(of: more, from: count, to: count + 6_000))
+        #expect(!afterEnd)
+        // 頭から鳴らし直すと、最初の立ち上がりも拍になる
+        let again = Self.clicks(at: [1_000], count: 4096)
+        let replayed = tracker.process(span(of: again, from: 0, to: 4096))
+        #expect(replayed)
+    }
+
+    @Test("数でない標本・無限の標本は 0 として数え、履歴に残さない (その後の拍を約 1 秒隠さない)")
+    func nonFiniteSamplesCountAsZero() {
+        var stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
+        var zeroed = stream
+        // 最初のクリックの手前に、数でない標本と無限の標本の列を置く
+        for index in 5000..<5600 {
+            stream[index] = index % 3 == 0 ? .nan : (index % 3 == 1 ? .infinity : -.infinity)
+            zeroed[index] = 0
+        }
+        let ends = Self.frameEnds(fps: 60, upTo: stream.count)
+        let reference = beatPositions(of: zeroed, endingAt: ends)
+        #expect(reference.count == Self.clickStarts.count)
+        #expect(beatPositions(of: stream, endingAt: ends) == reference)
+    }
+
+    @Test("始まりの前が無音なら、状態をどの標本から作っても同じ拍になる (全くの無音は履歴に入れない)")
+    func leadingSilenceDoesNotDependOnWhereTheTrackerStarted() {
+        // 大きな音と小さな音を近く置く。小さな音が拍になるかは、履歴に何ブロック入っているかで決まる
+        for quiet: Float in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4] {
+            var stream = [Float](repeating: 0, count: 60_000)
+            for index in 12_000..<13_536 { stream[index] = 0.5 * sin(Float(index) * 0.3) }
+            for index in 19_000..<19_600 { stream[index] = quiet * sin(Float(index) * 0.3) }
+            func beats(startingAt start: Int) -> [Int] {
+                var tracker = BeatTracker(fresh: true)
+                var found: [Int] = []
+                var position = start
+                while position < stream.count {
+                    let end = min(position + 700, stream.count)
+                    _ = tracker.process(span(of: stream, from: position, to: end))
+                    found += tracker.beats
+                    position = end
+                }
+                return found
+            }
+            let reference = beats(startingAt: 0)
+            #expect(!reference.isEmpty)
+            for start in [3000, 7001, 11_111] {
+                #expect(beats(startingAt: start) == reference, "小さい音 \(quiet)・始まり \(start)")
+            }
+        }
+    }
+
+    @Test("番号を付け直しても流れが続くとき rebase(to:) を伝えると履歴は続き、伝えなければ捨てて始め直す")
+    func rebaseKeepsTheHistory() {
+        let stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
+        let offset = 20_000
+        func run(rebase: Bool) -> [Int] {
+            var tracker = BeatTracker()
+            var found: [Int] = []
+            // クリック 2 (36511) の手前まで、元の番号で続ける
+            for piece in Self.spans(of: stream, endingAt: [12_000, 24_000, 36_000]) {
+                _ = tracker.process(piece)
+                found += tracker.beats
+            }
+            // 以後は番号を offset だけ付け直す (標本は同じ)
+            if rebase { tracker.rebase(to: 36_000 - offset) }
+            for (from, to) in [(36_000, 40_000), (40_000, 60_000)] {
+                _ = tracker.process(span(from: from - offset, to: to - offset) { stream[$0 + offset] })
+                found += tracker.beats
+            }
+            return found
+        }
+        let continued = run(rebase: true)
+        // クリック 1 (12000)・クリック 2 (36511 → 付け直した番号で 16511)
+        #expect(continued.count == 2 && abs(continued[1] - (36_511 - offset)) <= AudioAnalysis.hop, "\(continued)")
+        // 伝えなければ、番号が飛んだ (標本を落とした) と見なして始め直し、直後のクリック 2 は見逃す
+        #expect(run(rebase: false).count == 1)
+    }
+
+    @Test("低い fps (約 7.8 fps 未満) は、区間の上限で頭が落ちて履歴を捨て続ける: 取りこぼすことはあっても、偽の拍も重複も出ない")
+    func belowTheSpanLimitBeatsAreMissedButNeverInvented() {
+        let stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
+        let reference = beatPositions(of: stream, endingAt: Self.frameEnds(fps: 60, upTo: stream.count))
+        #expect(reference.count == Self.clickStarts.count)
+        func positions(fps: Int) -> [Int] {
+            var tracker = BeatTracker()
+            var found: [Int] = []
+            for piece in Self.cappedSpans(of: stream, fps: fps) {
+                _ = tracker.process(piece)
+                found += tracker.beats
+            }
+            return found
+        }
+        // 7.8 fps より速ければ、区間の頭は落ちず、60 fps と同じ
+        #expect(positions(fps: 10) == reference)
+        // 5 fps は 1 フレームが 9600 標本で上限 (6144) を越える
+        for fps in [5, 3] {
+            let found = positions(fps: fps)
+            #expect(found.count <= Self.clickStarts.count, "\(fps) fps: \(found)")
+            #expect(found.count == Set(found).count, "重複: \(found)")
+            for beat in found {
+                #expect(
+                    Self.clickStarts.contains { abs(beat - $0) <= AudioAnalysis.hop }, "\(fps) fps: 偽の拍 \(beat)")
+            }
+            // 同じ fps で 2 度回せば同じ (欠けるのは決まっている)
+            #expect(positions(fps: fps) == found)
+        }
+    }
+
     // MARK: - isBeat: 音源の口
 
-    @Test("AudioIn: isBeat は読んだフレームから状態を作り、読まなければ処理は 0 回。読む間隔を変えても拍のフレームは同じ")
-    func audioInBeatReadsLazily() throws {
+    @Test("AudioIn: isBeat は読まなくても毎フレーム進み、どのフレームから読み始めても、読む間隔を変えても、拍のフレームは同じ")
+    func audioInBeatAdvancesWhetherOrNotRead() throws {
         let stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
         let ends = Self.frameEnds(fps: 60, upTo: stream.count)
         let spans = Self.spans(of: stream, endingAt: ends)
 
-        func run(readEvery step: Int?) throws -> (flags: [Int], steps: Int) {
+        func run(readFrom first: Int?, every step: Int = 1) throws -> (flags: [Int], steps: Int) {
             let audio = try makeAudioIn()
             var flags: [Int] = []
             for (frame, span) in spans.enumerated() {
                 audio.input.send(span)
                 audio.supply()
-                if let step, frame % step == 0, audio.isBeat { flags.append(frame) }
+                if let first, frame >= first, (frame - first) % step == 0, audio.isBeat { flags.append(frame) }
             }
             return (flags, audio.beatSteps)
         }
-        let never = try run(readEvery: nil)
-        #expect(never.steps == 0, "一度も読まない音源は処理が 0 回")
-        let every = try run(readEvery: 1)
+        let never = try run(readFrom: nil)
+        #expect(never.steps == spans.count, "読まなくても、区間が届くたびに処理する")
+        let every = try run(readFrom: 0)
         #expect(every.flags.count == Self.clickStarts.count, "\(every.flags)")
-        #expect(every.steps == spans.count, "読み始めた後は毎フレームの区間を処理する")
-        let second = try run(readEvery: 2)
+        #expect(every.steps == spans.count)
+        // どのフレームから読み始めても、それ以後の拍のフレームは同じ。拍のフレームの直前・拍のフレーム自体から読んでも
+        for first in every.flags + [every.flags[1] - 1, 40, 200] {
+            #expect(
+                try run(readFrom: first).flags == every.flags.filter { $0 >= first }, "\(first) フレーム目から読み始める")
+        }
+        let second = try run(readFrom: 0, every: 2)
         #expect(second.flags == every.flags.filter { $0 % 2 == 0 }, "読む間隔を変えても、拍の位置は同じ")
-        #expect(second.steps == spans.count, "読まないフレームの区間も処理する")
-        let third = try run(readEvery: 3)
+        let third = try run(readFrom: 0, every: 3)
         #expect(third.flags == every.flags.filter { $0 % 3 == 0 })
         // 拍があったフレームの次のフレームには、拍は無い (1 つのクリックを 2 度数えない)
         #expect(zip(every.flags, every.flags.dropFirst()).allSatisfy { $1 - $0 > 1 })
     }
 
-    @Test("SynthSound: 0.5 秒ごとの短い音は拍になり、30 fps でも 60 fps でも同じ数で、読まなければ処理は 0 回")
+    @Test("AudioIn: 空の区間のフレームには拍が無く、前のフレームの拍を持ち越さない (最初に読むフレームでも)")
+    func audioInEmptyFrameHasNoBeat() throws {
+        let stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
+        let audio = try makeAudioIn()
+        // 最初のクリック (12000) のブロックを閉じる区間を、読まずに置く
+        audio.input.send(span(of: stream, from: 0, to: 11_000))
+        audio.supply()
+        audio.input.send(span(of: stream, from: 11_000, to: 12_400))
+        audio.supply()
+        // 次のフレームは標本が進まない (空の区間)。ここで初めて読んでも、前の区間の拍は持ち越さない
+        audio.input.send(span(of: stream, from: 12_400, to: 12_400))
+        audio.supply()
+        #expect(audio.isBeat == false)
+    }
+
+    @Test("AudioIn: 時刻を指定した観測の枚は、指定の秒で終わる区間の波形と拍を見せ、通常の続きの拍は動かさない")
+    func audioInObservationShowsItsOwnBeatAndWaveform() throws {
+        let stream = Self.clicks(at: Self.clickStarts, count: 5 * Self.rate)
+        func observation(_ from: Int, _ to: Int) -> AudioSpan.Observation {
+            let piece = span(of: stream, from: from, to: to)
+            return AudioSpan.Observation(base: piece.base, samples: piece.samples, from: piece.from)
+        }
+        // 通常の続きだけを回した相手 (観測の枚が続きを動かさないことを見る)
+        func recorded() throws -> AudioIn {
+            let audio = AudioIn(
+                device: nil, name: "samples", source: RecordedSource(samples: stream, sampleRate: 48_000),
+                owner: nil, warn: { _ in })
+            try audio.open()
+            return audio
+        }
+        let plain = try recorded()
+        let audio = try recorded()
+        func send(_ from: Int, _ to: Int, observing seen: AudioSpan.Observation? = nil) {
+            var piece = span(of: stream, from: from, to: to)
+            plain.input.send(piece)
+            plain.supply()
+            piece.observation = seen
+            audio.input.send(piece)
+            audio.supply()
+        }
+        var end = 0
+        while end + 800 <= 20_000 {
+            send(end, end + 800)
+            end += 800
+        }
+        // 通常の続き (20000..<20800) には拍が無いが、観測は最初のクリックの拍があった区間を見せる
+        send(20_000, 20_800, observing: observation(11_500, 12_300))
+        #expect(audio.isBeat && !plain.isBeat)
+        #expect(audio.waveform == Array(stream[(12_300 - 1024)..<12_300]))
+        // 帯域の大きさも、見せる区間 (クリックがある) のもの。通常の続きの区間は無音
+        #expect(audio.energy(from: 0, to: 24_000) > 0 && plain.energy(from: 0, to: 24_000) == 0)
+        // 次の通常の枚は、観測が無かったときと同じ (波形は通常の区間に戻り、拍は無い)
+        send(20_800, 21_600)
+        #expect(!audio.isBeat && audio.waveform == plain.waveform)
+        // 拍の無い区間を見せる観測の枚は、通常の続きに拍 (2 つ目のクリック) があっても false
+        end = 21_600
+        while end + 800 < 36_000 {
+            send(end, end + 800)
+            end += 800
+        }
+        send(end, 37_000, observing: observation(15_000, 15_800))
+        #expect(plain.isBeat, "通常の続きには拍がある")
+        #expect(audio.isBeat == false)
+        #expect(audio.beatSteps == plain.beatSteps, "観測の枚が続きの処理を増減しない")
+        // 続きの拍の状態は動いていない: 次の拍 (3 つ目のクリック) は同じフレームに出る
+        var flags: [Bool] = []
+        end = 37_000
+        while end + 800 <= 62_000 {
+            send(end, end + 800)
+            flags.append(audio.isBeat)
+            #expect(audio.isBeat == plain.isBeat)
+            end += 800
+        }
+        #expect(flags.filter { $0 }.count == 1)
+    }
+
+    @Test("SynthSound: 0.5 秒ごとの短い音は拍になり、30 fps でも 60 fps でも同じ数。読まなくても処理は進み、どのフレームから読み始めても同じ")
     func synthSoundBeats() {
-        func run(fps: Int, read: Bool) -> (beats: Int, steps: Int) {
+        func run(fps: Int, readFrom: Int?) -> (frames: [Int], steps: Int) {
             let stage = SynthStage(owner: nil, flow: nil, now: { 0 }, warn: { _ in })
             stage.pace = .frames(perSecond: fps, origin: 0)
             let osc = SinOsc(stage: stage)
             osc.set(1000, 0.5)
             let env = Env()
-            var beats = 0
+            var frames: [Int] = []
             for frame in 0..<(fps * 4) {
                 stage.frame = frame
                 stage.supply()
-                if read, osc.isBeat { beats += 1 }
-                // 0.5 秒ごとに 10 ms の音。最初は 0.5 秒目 (履歴が溜まってから)
+                if let readFrom, frame >= readFrom, osc.isBeat { frames.append(frame) }
+                // 0.5 秒ごとに 10 ms の音。最初は 0.5 秒目 (鳴らす前は無音)
                 if (frame - fps / 2) % (fps / 2) == 0, frame >= fps / 2 {
                     env.play(osc, 0.001, 0.008, 1, 0.001)
                 }
             }
             let steps = osc.beatSteps
             stage.close()
-            return (beats, steps)
+            return (frames, steps)
         }
-        let slow = run(fps: 30, read: true)
-        let fast = run(fps: 60, read: true)
-        #expect(slow.beats == 7, "0.5 秒ごとに 7 つ鳴らした: \(slow.beats)")
-        #expect(fast.beats == slow.beats)
-        #expect(run(fps: 30, read: false).steps == 0)
-        #expect(slow.steps > 0)
+        let slow = run(fps: 30, readFrom: 0)
+        let fast = run(fps: 60, readFrom: 0)
+        #expect(slow.frames.count == 7, "0.5 秒ごとに 7 つ鳴らした: \(slow.frames)")
+        #expect(fast.frames.count == slow.frames.count)
+        // 読まなくても処理は進む (鳴らし始めてから毎フレーム)
+        #expect(run(fps: 30, readFrom: nil).steps > 0)
+        // 最初の音の直後のフレームから読み始めても、最初の音が拍になる (後から読んでも履歴は同じ)
+        for first in [slow.frames[0], slow.frames[0] + 1, 20] {
+            #expect(
+                run(fps: 30, readFrom: first).frames == slow.frames.filter { $0 >= first },
+                "\(first) フレーム目から読み始める")
+        }
     }
 }
