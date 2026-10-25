@@ -191,17 +191,14 @@ struct SketchApplicationTests {
         application.didFinishLaunching()
         defer { application.willTerminate() }
 
-        for _ in 0..<8 { await Task.yield() }
-        application.displayLinkFired()
+        #expect(await eventually { application.displayLinkFired(); return !picker.shown.isEmpty })
         #expect(picker.shown.map(\.prompt) == ["pick"], "頼みの窓に出ていない")
         application.displayLinkFired()
         #expect(picker.shown.count == 1, "同じ頼みを出し直した")
         #expect(sketch.result == nil)
 
         picker.answer(0, "/tmp/a.csv")
-        application.displayLinkFired()
-        application.displayLinkFired()
-        for _ in 0..<8 { await Task.yield() }
+        #expect(await eventually { application.displayLinkFired(); return sketch.result != nil })
         #expect(sketch.result == .some("/tmp/a.csv"), "結果で待ちが終わらない")
         application.displayLinkFired()
         #expect(picker.shown.count == 1, "終わった頼みをまた出した")

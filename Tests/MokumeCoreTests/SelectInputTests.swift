@@ -14,6 +14,16 @@ import Testing
 /// 外から送る線・待ちの管理・合流点・面の属性を固める。本物の `NSOpenPanel` は人の操作を待つので、
 /// ``FakeFilePicker`` に差し替えて、頼みが出る・結果が戻るところまでを見る。ダイアログが道具の窓の前に
 /// 出るかは人の手 (PR 本文の「確認してほしい点」)。
+/// 条件が満たされるまで、期限つきで待つ。**`Task` が走る順は他の検査と重なると変わる**ので、`yield` の回数に頼らない。
+@MainActor
+func eventually(_ seconds: Double = 5, _ condition: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now + .seconds(seconds)
+    while !condition(), ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
+    return condition()
+}
+
 @MainActor
 final class FakeFilePicker: FilePicker {
     struct Shown {
@@ -102,26 +112,19 @@ struct SelectInputWireTests {
 @Suite("ファイルを選ばせる: 待ち")
 @MainActor
 struct SelectionBrokerTests {
-    /// 待ちが頼みを控えるところまで、実行を進める。
-    private func settle() async {
-        for _ in 0..<5 { await Task.yield() }
-    }
-
     @Test("頼むと待ちが立ち、結果で終わる。取り消しは nil")
     func aRequestWaitsForItsResult() async {
         let broker = SelectionBroker()
         #expect(!broker.isAwaiting && broker.pending == nil)
         let first = Task { await broker.request("pick") }
-        await settle()
-        #expect(broker.isAwaiting)
+        #expect(await eventually { broker.isAwaiting })
         #expect(broker.pending == SelectionBroker.Request(serial: 1, prompt: "pick"))
         #expect(broker.resolve("/tmp/a.csv"))
         #expect(await first.value == "/tmp/a.csv")
         #expect(!broker.isAwaiting && broker.pending == nil, "終わった待ちの頼みが残っている")
 
         let second = Task { await broker.request("again") }
-        await settle()
-        #expect(broker.pending?.serial == 2, "通し番号が進まない")
+        #expect(await eventually { broker.pending?.serial == 2 }, "通し番号が進まない")
         #expect(broker.resolve(nil))
         #expect(await second.value == nil)
     }
@@ -136,9 +139,9 @@ struct SelectionBrokerTests {
     func aSecondRequestEndsTheFirstWithNil() async {
         let broker = SelectionBroker()
         let first = Task { await broker.request("one") }
-        await settle()
+        #expect(await eventually { broker.isAwaiting })
         let second = Task { await broker.request("two") }
-        await settle()
+        #expect(await eventually { broker.pending?.serial == 2 })
         #expect(await first.value == nil, "前の待ちが終わらない")
         #expect(broker.pending == SelectionBroker.Request(serial: 2, prompt: "two"))
         #expect(broker.resolve("/tmp/b.csv"))
@@ -164,7 +167,7 @@ struct SelectInputInputTests {
         #expect(state.warnings.message(for: .unawaitedSelection) != nil)
 
         let waiting = Task { await state.selection.request("pick") }
-        for _ in 0..<5 { await Task.yield() }
+        #expect(await eventually { state.selection.isAwaiting })
         let awaited = run(state, [.fileSelected(path: "/tmp/a.csv")])
         #expect(awaited == [.fileSelected(path: "/tmp/a.csv")])
         waiting.cancel()
@@ -192,7 +195,7 @@ struct SelectInputInputTests {
         #expect(warnings.count == 1 && warnings[0].hasPrefix("events[0]: "), "\(warnings)")
 
         let waiting = Task { await state.selection.request("pick") }
-        for _ in 0..<5 { await Task.yield() }
+        #expect(await eventually { state.selection.isAwaiting })
         // 待っている: 2 本は読めない 1 件、取り消しの空の配列は 1 件通り、同じ要求の 2 件目は待つ相手がいない
         let during = try send(
             "s2",
@@ -280,14 +283,12 @@ struct SelectInputSketchTests {
             to: facet.appendingPathComponent("request.json"))
     }
 
-    private func settle() async {
-        for _ in 0..<8 { await Task.yield() }
-    }
-
+    /// 押して、頼みの通し番号が進む (= 新しい `selectInput` が頼みを立てる) まで待つ。
     private func press(_ runtime: SketchRuntime) async throws {
+        let before = runtime.input.selection.pending?.serial ?? 0
         runtime.input.enqueue(.mouseDown(x: 1, y: 1, button: .left))
         try runtime.advance()
-        await settle()
+        #expect(await eventually { (runtime.input.selection.pending?.serial ?? 0) > before })
     }
 
     @Test("selectInput は頼みを立てて待ち、注入した結果で終わる。取り消しは nil", arguments: [false, true])
@@ -305,7 +306,7 @@ struct SelectInputSketchTests {
 
         try send(#"{"type":"fileSelected","paths":["/tmp/a.csv"]}"#, id: "r1", to: facet)
         try runtime.advance()
-        await settle()
+        #expect(await eventually { sketch.results.count == 1 })
         #expect(sketch.results == ["/tmp/a.csv"])
         #expect(runtime.input.selection.pending == nil)
 
@@ -313,7 +314,7 @@ struct SelectInputSketchTests {
         try await press(runtime)
         try send(#"{"type":"fileSelected","paths":[]}"#, id: "r2", to: facet)
         try runtime.advance()
-        await settle()
+        #expect(await eventually { sketch.results.count == 2 })
         #expect(sketch.results == ["/tmp/a.csv", nil])
     }
 
@@ -327,11 +328,12 @@ struct SelectInputSketchTests {
         try runtime.advance()
         try await press(runtime)
         try await press(runtime)
+        #expect(await eventually { sketch.results.count == 1 })
         #expect(sketch.results == [nil], "前の待ちが終わらない")
         #expect(runtime.input.selection.pending?.serial == 2)
         try send(#"{"type":"fileSelected","paths":["/tmp/b.csv"]}"#, id: "r1", to: facet)
         try runtime.advance()
-        await settle()
+        #expect(await eventually { sketch.results.count == 2 })
         #expect(sketch.results == [nil, "/tmp/b.csv"])
     }
 

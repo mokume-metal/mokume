@@ -262,8 +262,8 @@ struct StoppedSketchOutletTests {
             let named = child.namedFrame
 
             try child.click()
-            child.refresh(2)
-            for _ in 0..<8 { await Task.yield() }
+            // `Task` が走る順は他の検査と重なると変わるので、頼みが面に載るまで期限つきで回す
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest != nil })
             child.refresh(8)
             #expect(
                 child.selectionOnNewest == SelectionBroker.Request(serial: 1, prompt: "pick"),
@@ -272,8 +272,8 @@ struct StoppedSketchOutletTests {
             #expect(sketch.selected.isEmpty)
 
             try child.answer("/tmp/a.csv")
-            child.refresh(8)
-            for _ in 0..<8 { await Task.yield() }
+            #expect(await eventually { child.refresh(); return sketch.selected.count == 1 })
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest == nil })
             child.refresh(8)
             #expect(sketch.selected == ["/tmp/a.csv"], "結果の 1 行で待ちが終わらない")
             #expect(child.selectionOnNewest == nil, "終わった頼みが面に残っている")
