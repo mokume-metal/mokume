@@ -1,6 +1,7 @@
 # mokume
 
 [![Release](https://img.shields.io/github/v/release/mokume-metal/mokume?label=version)](https://github.com/mokume-metal/mokume/releases/latest)
+[![Release workflow](https://github.com/mokume-metal/mokume/actions/workflows/release.yml/badge.svg?branch=main&event=schedule)](https://github.com/mokume-metal/mokume/actions/workflows/release.yml?query=event%3Aschedule)
 [![Reference](https://img.shields.io/badge/reference-DocC-8A2BE2)](https://mokume.org/documentation/mokume/)
 [![Swift 6.2+](https://img.shields.io/badge/Swift-6.2%2B-F05138?logo=swift&logoColor=white)](https://www.swift.org)
 [![Platform macOS 26+](https://img.shields.io/badge/platform-macOS%2026%2B%20%C2%B7%20Apple%20Silicon-blue?logo=apple)](https://developer.apple.com/macos/)
