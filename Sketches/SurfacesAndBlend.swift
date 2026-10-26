@@ -40,48 +40,40 @@ final class SurfacesAndBlend: Sketch {
     /// 板の寸法。読み取り位置をここから作るので、形と塗りで同じ数を使う。
     private static let board = (width: Float(300), depth: Float(190))
 
-    func setup() {
-        guard let grain = bakeGrain(), let smudge = paintSmudge() else { return }
+    func setup() throws {
+        let grain = try bakeGrain()
+        let smudge = try paintSmudge()
         self.grain = grain
         self.smudge = smudge
-        scuff = paintScuff()
+        scuff = try paintScuff()
 
         // **形自身の座標から読む位置を作る** ので、板を回しても模様は面に留まる
         let place = """
             float2 spot = in.shapePosition.xz * values.scale + 0.5;
             """
-        do {
-            plain = try makeShader(
-                """
-                float4 paint(Fragment in, Values values, Surfaces surfaces) {
-                    \(place)
-                    float4 wood = mokume_sample(surfaces.grain, spot);
-                    return float4(wood.rgb * in.color.rgb, in.color.a);
-                }
-                """,
-                name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
-        } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
-            print(error)
-        }
-        do {
-            blended = try makeShader(
-                """
-                float4 paint(Fragment in, Values values, Surfaces surfaces) {
-                    \(place)
-                    float4 wood = mokume_sample(surfaces.grain, spot);
-                    // 汚しは濃さとして効かせる。**2 枚が別の役目を持つ**ので、
-                    // 片方だけ届かなくなったときに絵の変わり方で読み分けられる
-                    float dirt = mokume_sample(surfaces.smudge, spot).r;
-                    return float4(
-                        wood.rgb * mix(1.0, dirt, values.amount) * in.color.rgb, in.color.a);
-                }
-                """,
-                name: "blended", values: settingsForBoard,
-                surfaces: ["grain": .image(grain), "smudge": .graphics(smudge)])
-        } catch {
-            print(error)
-        }
+        plain = try makeShader(
+            """
+            float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                \(place)
+                float4 wood = mokume_sample(surfaces.grain, spot);
+                return float4(wood.rgb * in.color.rgb, in.color.a);
+            }
+            """,
+            name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
+        blended = try makeShader(
+            """
+            float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                \(place)
+                float4 wood = mokume_sample(surfaces.grain, spot);
+                // 汚しは濃さとして効かせる。**2 枚が別の役目を持つ**ので、
+                // 片方だけ届かなくなったときに絵の変わり方で読み分けられる
+                float dirt = mokume_sample(surfaces.smudge, spot).r;
+                return float4(
+                    wood.rgb * mix(1.0, dirt, values.amount) * in.color.rgb, in.color.a);
+            }
+            """,
+            name: "blended", values: settingsForBoard,
+            surfaces: ["grain": .image(grain), "smudge": .graphics(smudge)])
     }
 
     private var settingsForBoard: [String: ShaderValue] {
@@ -152,8 +144,8 @@ final class SurfacesAndBlend: Sketch {
     }
 
     /// 木目を焼く。**断片の中で作り直さない** — これを渡せることが #407 の要点である。
-    private func bakeGrain() -> Image? {
-        guard let image = try? createImage(256, 256) else { return nil }
+    private func bakeGrain() throws -> Image {
+        let image = try createImage(256, 256)
         for y in 0..<256 {
             for x in 0..<256 {
                 // 年輪の中心を板の外に置くと、弧が横切る挽いた板らしい面になる
@@ -172,8 +164,8 @@ final class SurfacesAndBlend: Sketch {
     }
 
     /// 汚しを描く。**描いた面をそのまま渡す**ので、書き出して読み直す手間が要らない。
-    private func paintSmudge() -> Canvas? {
-        guard let canvas = try? createGraphics(256, 256) else { return nil }
+    private func paintSmudge() throws -> Canvas {
+        let canvas = try createGraphics(256, 256)
         canvas.beginDraw()
         canvas.background(255, 255, 255)
         canvas.noStroke()
@@ -192,8 +184,8 @@ final class SurfacesAndBlend: Sketch {
 
     /// もう 1 枚の汚しを描く。**斜めの擦り傷**で、染みとは違う向きの模様にする —
     /// 差し替えたことが板の上で読めるように。
-    private func paintScuff() -> Canvas? {
-        guard let canvas = try? createGraphics(256, 256) else { return nil }
+    private func paintScuff() throws -> Canvas {
+        let canvas = try createGraphics(256, 256)
         canvas.beginDraw()
         canvas.background(255, 255, 255)
         canvas.strokeWeight(5)

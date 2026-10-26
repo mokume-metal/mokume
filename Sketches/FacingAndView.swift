@@ -34,21 +34,15 @@ final class FacingAndView: Sketch {
     /// 最初のフレームの視点。**視点はフレームを越えない**ので、持ち続けたいものは値で持つ。
     private var resting: Camera?
 
-    func setup() {
+    func setup() throws {
         // 向きの成分は −1…1 なので、0…1 へ寄せてから色にする
-        painters = Self.fields.map { (field, _) -> Shader? in
-            do {
-                return try makeShader(
-                    """
-                    float4 paint(Fragment in, Values values) {
-                        return float4(in.\(field) * 0.5 + 0.5, 1.0);
-                    }
-                    """)
-            } catch {
-                // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
-                print(error)
-                return nil
-            }
+        painters = try Self.fields.map { (field, _) -> Shader? in
+            return try makeShader(
+                """
+                float4 paint(Fragment in, Values values) {
+                    return float4(in.\(field) * 0.5 + 0.5, 1.0);
+                }
+                """)
         }
     }
 

@@ -35,10 +35,11 @@ final class TypeAndImagery: Sketch {
     private var loaded: Image?
     /// ファイルから、待たずに読んだ絵。**届くまでは nil**
     private var requested: Image?
+    private var requestFailure: String?
     /// 届くまで代わりに置く絵。
     private var pending: Image?
 
-    func setup() {
+    func setup() throws {
         leaf = createShape {
             fill(115, 217, 128)
             stroke(31, 89, 56)
@@ -61,11 +62,11 @@ final class TypeAndImagery: Sketch {
             })
 
         // 絵を自分で組み立てる。画素へ直に書ける
-        let image = try? createImage(64, 64)
+        let image = try createImage(64, 64)
         for y in 0..<64 {
             for x in 0..<64 {
                 let wave = 0.5 + 0.5 * sin(Float(x) * 0.2) * cos(Float(y) * 0.2)
-                image?.set(x, y, .display(red: wave, green: 0.35, blue: 1 - wave))
+                image.set(x, y, .display(red: wave, green: 0.35, blue: 1 - wave))
             }
         }
         swatch = image
@@ -82,22 +83,29 @@ final class TypeAndImagery: Sketch {
         // ので、画素の並びをここで組んで書き出してから読んでいる。**普通のスケッチに
         // 書き出しは要らない** — 手元にあるファイルの場所を渡すだけでよい
         let picture = Self.picture()
-        written = try? createImage(picture.width, picture.height)
+        written = try createImage(picture.width, picture.height)
         written?.write(picture)
         let folder = FileManager.default.temporaryDirectory
         let loadedURL = folder.appendingPathComponent("mokume-reference-picture.png")
-        try? PNGFile.write(picture, to: loadedURL)
-        loaded = try? loadImage(loadedURL.path)
+        try PNGFile.write(picture, to: loadedURL)
+        loaded = try loadImage(loadedURL.path)
 
         // 待たずに読むほうは別のファイルにする — 同じファイルは控えに当たり、
         // 別の仕事を起こさずに返るため
         let requestedURL = folder.appendingPathComponent("mokume-reference-picture-requested.png")
-        try? PNGFile.write(picture, to: requestedURL)
-        pending = try? createImage(picture.width, picture.height)
+        pending = try createImage(picture.width, picture.height)
         pending?.fill(color(64, 76, 102))
         // 待つのは Task の仕事。届くまでは下の draw() が仮の絵を置く
+        // 3枚目は追加の比較。失敗しても左の2枚を見られるように続ける。
+        let surface = canvas
         Task {
-            requested = try? await requestImage(requestedURL.path)
+            do {
+                try PNGFile.write(picture, to: requestedURL)
+                requested = try await surface.requestImage(requestedURL.path)
+            } catch {
+                requestFailure = "requestImage (失敗・ログ参照)"
+                print("type-and-imagery: requestImage: \(error)")
+            }
         }
     }
 
@@ -201,7 +209,7 @@ final class TypeAndImagery: Sketch {
         fill(153, 166, 191)
         for (index, entry) in [
             (written, "write"), (loaded, "loadImage"),
-            (requested ?? pending, requested == nil ? "requestImage (届く前)" : "requestImage"),
+            (requested ?? pending, requestFailure ?? (requested == nil ? "requestImage (届く前)" : "requestImage")),
         ].enumerated() {
             let x = 48 + Float(index) * 130
             if let picture = entry.0 { image(picture, x, 580) }

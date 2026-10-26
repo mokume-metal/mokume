@@ -26,8 +26,8 @@ final class BeatAndWaveform: Sketch {
     /// 拍で 1 に戻り、フレームごとに 0.9 倍ずつ消える光。
     private var flash: Float = 0
 
-    func setup() {
-        song = try? createAudioIn(samples: Self.pattern(), sampleRate: Self.rate)
+    func setup() throws {
+        song = try createAudioIn(samples: Self.pattern(), sampleRate: Self.rate)
     }
 
     func draw() {

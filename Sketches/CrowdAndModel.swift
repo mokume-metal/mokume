@@ -38,20 +38,21 @@ final class CrowdAndModel: Sketch {
     private var rawGem: Model?
     /// 読んでいる間フレームを止めずに読むモデル。**届くまでは `nil`**
     private var ripple: Model?
+    private var rippleFailure: String?
     /// 貼る絵。**1 度だけ焼く。** 上端を明るく・左端を赤くしてあるので、展開が
     /// どこを読んでいるかが絵から分かる
     private var pattern: Image?
 
-    func setup() {
+    func setup() throws {
         // **リポジトリには資材ファイルを置けない** (`scripts/check-no-binaries.sh` が
         // `.obj` を弾く) ので、検体をここで書き出してから読んでいる。**普通のスケッチに
         // この 2 行は要らない** — 手元にあるファイルの場所を `loadModel` へ渡すだけでよい
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mokume-reference-gem.obj")
-        try? Self.gemSource.write(to: url, atomically: true, encoding: .utf8)
-        gem = try? loadModel(url.path)
+        try Self.gemSource.write(to: url, atomically: true, encoding: .utf8)
+        gem = try loadModel(url.path)
         // 整えない読み方。**同じファイルでも整え方が違えば別のモデル**として読まれる
-        rawGem = try? loadModel(url.path, normalize: false)
+        rawGem = try loadModel(url.path, normalize: false)
 
         // 面の多いモデルは、読んでいる間フレームを止めない読み方で読む。解釈は別の仕事で
         // 回り、届いたら次のフレームから置かれる
@@ -61,16 +62,24 @@ final class CrowdAndModel: Sketch {
         // 状態の外になるので落ちる (#1367)。描き場所そのものは走っている外でも読める
         let rippleURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mokume-reference-ripple.obj")
-        try? Self.rippleSource(steps: 48).write(to: rippleURL, atomically: true, encoding: .utf8)
+        // 波板は追加の装飾。失敗しても同期のモデルと群は動かし続ける。
         let surface = canvas
-        Task { ripple = try? await surface.requestModel(rippleURL.path) }
+        Task {
+            do {
+                try Self.rippleSource(steps: 48).write(to: rippleURL, atomically: true, encoding: .utf8)
+                ripple = try await surface.requestModel(rippleURL.path)
+            } catch {
+                rippleFailure = "読み込み失敗 (ログを参照)"
+                print("crowd-and-model: requestModel: \(error)")
+            }
+        }
 
         // **始めの視点を手で置く。** 注視点のまわりを少し見下ろし、離したあとは 1 フレーム
         // ごとに速さを 9 割保って流れる (既定の 0 では、離したところで止まる)
         orbit.pitch = 0.3
         orbit.inertia = 0.9
 
-        let image = try? createImage(128, 128)
+        let image = try createImage(128, 128)
         for y in 0..<128 {
             for x in 0..<128 {
                 // 縞に加えて、**上端を白く・左端を赤く**する。展開がどこを読んで
@@ -78,7 +87,7 @@ final class CrowdAndModel: Sketch {
                 let ring: Float = sin(Float(x) * 0.5) > 0 ? 0.85 : 0.25
                 let top = y < 12
                 let left = x < 12
-                image?.set(
+                image.set(
                     x, y,
                     .display(
                         red: top ? 1 : (left ? 0.95 : ring * 0.5),
@@ -213,7 +222,7 @@ final class CrowdAndModel: Sketch {
             model(ripple)
             captions.append(("requestModel", Self.describe(ripple), rippleAt.x, rippleAt.y))
         } else {
-            captions.append(("requestModel", "読み込み中…", rippleAt.x, rippleAt.y))
+            captions.append(("requestModel", rippleFailure ?? "読み込み中…", rippleAt.x, rippleAt.y))
         }
         pop()
 

@@ -29,13 +29,20 @@ final class SerialAndKnob: Sketch {
     private var port: Serial?
     /// 開いたポートの識別子。開いていなければ空。
     private var opened = ""
+    private var openFailure: String?
     /// 円の中心の横の位置。届いた値 (0〜1023) を幅に写したもの。
     private var x: Float = 0
 
     func setup() {
         if let first = serialPorts().first {
-            port = try? createSerial(first, baudRate: 9600)
             opened = first.id
+            // 実機が無くても窓を見られる例なので、開けない場合も状態と理由を出して続ける。
+            do {
+                port = try createSerial(first, baudRate: 9600)
+            } catch {
+                openFailure = "開けませんでした (ログを参照)"
+                print("serial-and-knob: \(first.id): \(error)")
+            }
         }
     }
 
@@ -59,5 +66,6 @@ final class SerialAndKnob: Sketch {
         fill(200)
         text(opened.isEmpty ? "no serial port" : opened, 48, 34)
         if port?.state == .disconnected { text("切断", 48, 64) }
+        if let openFailure { text(openFailure, 48, 64) }
     }
 }
