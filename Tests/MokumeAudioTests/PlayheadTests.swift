@@ -184,6 +184,33 @@ nonisolated struct PlayheadTests {
         #expect(renumbered.number(after: 0) != head.number(after: 0))
     }
 
+    @Test("止めて途中から鳴らし直した区切りを始め直しても、元の始まりより前は 0 のまま、元の始まりから後ろはファイルの標本 (#3268)")
+    func carryKeepsTheFloorOfTheOriginalSegment() {
+        // 止めた位置 500 から鳴らし直し、300 標本鳴った (位置 800)。元の区切りは始まりより前を 0 で埋める
+        var head = Playhead(length: 2000)
+        head.play(looping: true)
+        head.pause(after: 500)
+        head.play(looping: true)
+        let before = head
+        head.carry(after: 300)
+        #expect(head.filledFrom == 500)
+        for index in [400, 499, 500, 501, 799, 800] {
+            #expect(head.sample(at: index, in: indices) == before.sample(at: index, in: indices), "番号 \(index)")
+        }
+        #expect(head.sample(at: 499, in: indices) == 0)
+        #expect(head.sample(at: 500, in: indices) == 501)
+        // 飛んで始めた区切りは、頭 (番号 0) から埋まる。さらに始め直しても変わらない
+        var leapt = Playhead(length: 2000)
+        leapt.play(looping: true)
+        leapt.jump(to: 1000)
+        leapt.carry(after: 300)
+        #expect(leapt.filledFrom == 0)
+        #expect(leapt.sample(at: 5, in: indices) == 6)
+        // 操作が番号を数え直したら、元に戻る
+        head.jump(to: 100)
+        #expect(head.filledFrom == 0)
+    }
+
     @Test("位置の側で始め直した区切りは、止める・鳴らし直す・飛ぶ・止めるで番号を数え直す")
     func carryIsForgottenByTheOperationsThatRestartTheNumbering() {
         func carried() -> Playhead {
