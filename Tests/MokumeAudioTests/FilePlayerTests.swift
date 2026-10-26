@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 import AVFAudio
+import Foundation
+import Synchronization
 import Testing
 
 @testable import MokumeAudio
@@ -37,6 +39,31 @@ func render(_ flow: SoundFlow, _ frames: Int) throws -> [Float] {
         remaining -= chunk
     }
     return left
+}
+
+/// CPU に負荷を掛ける。コア数の 2 倍の busy スレッドを回し、`stop()` か期限で止まる。
+///
+/// 負荷の重い機械でだけ起きる競合 (#3277) を、手元でも起こすため。**期限を持つ** — 止め忘れても、
+/// 検査が終わった後に回り続けない。
+nonisolated final class CPULoad: @unchecked Sendable {
+    private let running = Atomic<Bool>(true)
+
+    init(deadline: TimeInterval = 60) {
+        let until = Date().addingTimeInterval(deadline)
+        for _ in 0..<(ProcessInfo.processInfo.activeProcessorCount * 2) {
+            Thread.detachNewThread { [self] in
+                var x: UInt64 = 0x9E37_79B9_7F4A_7C15
+                while running.load(ordering: .relaxed) {
+                    for _ in 0..<10_000 { x = x &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407 }
+                    if x == 0 || Date() > until { break }
+                }
+            }
+        }
+    }
+
+    func stop() {
+        running.store(false, ordering: .relaxed)
+    }
 }
 
 /// 実際に鳴らす (#1979)。manual rendering (offline) の流れで回すので、出力の機材にも GPU にも
@@ -94,17 +121,27 @@ struct FilePlayerTests {
         player.leave()
     }
 
-    /// 描いている途中の流れへ鳴らし始めても、直後の最初の窓の先頭の標本から鳴る (#3270)。命令の取り込みが
-    /// 描くのに間に合わないと、窓まるごと無音になる。M3 Max でも 10% 前後で起きるので、回数で数える。
-    @Test("描いている途中の流れへ鳴らし始めると、直後に描いた窓の先頭の標本から鳴る")
-    func startsAtTheFirstSampleOfTheNextWindow() throws {
+    /// 描いている途中の流れへ鳴らし始めても、直後の最初の窓の先頭の標本から鳴る (#3270・#3277)。
+    /// `AVAudioPlayerNode` の命令の取り込みが描くのに間に合わないと、窓まるごと無音になった (M3 Max で
+    /// 5〜10%)。命令を原子値で渡す形では起きないので、回数で数える。
+    ///
+    /// **負荷なしと負荷ありの両方を回す。** 負荷なしは、`AVAudioPlayerNode` に戻すと確かに赤になる側 (負荷を
+    /// 掛けると呼ぶ側も遅れて、取り込みが間に合ってしまい、赤になる回が減る)。負荷ありは、実コア数の 2 倍の
+    /// busy スレッドを回した重い機械でも、窓の先頭から鳴ることを見る側。
+    @Test(
+        "描いている途中の流れへ鳴らし始めると、直後に描いた窓の先頭の標本から鳴る",
+        arguments: [false, true])
+    func startsAtTheFirstSampleOfTheNextWindow(underLoad: Bool) throws {
+        let attempts = 200
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800))
         buffer.frameLength = 4800
         let channels = try #require(buffer.floatChannelData)
         for channel in 0..<2 { for index in 0..<4800 { channels[channel][index] = 0.25 } }
+        let load = underLoad ? CPULoad() : nil
+        defer { load?.stop() }
         var silentWindows = 0
-        for _ in 0..<100 {
+        for _ in 0..<attempts {
             let flow = try makeFlow()
             // 書き出しの音声トラックと同じく、何も出さない節も繋いでおく (``SoundTrackMixer`` の無音の節)
             let silent = AVAudioSourceNode { _, _, _, list in
@@ -121,7 +158,78 @@ struct FilePlayerTests {
             if !window.allSatisfy({ $0 == 0.25 }) { silentWindows += 1 }
             player.leave()
         }
-        #expect(silentWindows == 0, "100 回のうち \(silentWindows) 回、窓の先頭から鳴らなかった")
+        #expect(silentWindows == 0, "\(attempts) 回のうち \(silentWindows) 回、窓の先頭から鳴らなかった")
+    }
+
+    @Test("途中から鳴らす・ループの折り返しは、描き出しの区切りをまたいでも同じ標本になる")
+    func loopWrapsAcrossRenderChunks() throws {
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: try rampBuffer(1000)))
+        player.play(from: 600, looping: true)
+        // 7 標本ずつ描く: 器の終わり (1000) と描き出しの区切りが揃わない
+        var heard: [Float] = []
+        for _ in 0..<300 { heard += try render(flow, 7) }
+        let expected = (0..<2100).map { Float(($0 + 600) % 1000) / 1000 }
+        expectNear(heard, expected)
+        #expect(player.played == 2100)
+        player.leave()
+    }
+
+    @Test("始まりが器の外なら頭から鳴る。1 度だけなら、終わりより後は無音のまま数え続ける")
+    func startOutsideTheBufferPlaysFromTheHead() throws {
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: try rampBuffer(1000)))
+        player.play(from: 1000, looping: false)
+        let heard = try render(flow, 1200)
+        expectNear(Array(heard.prefix(1000)), (0..<1000).map { Float($0) / 1000 })
+        #expect(heard.suffix(200).allSatisfy { $0 == 0 })
+        #expect(player.played == 1200, "鳴らし終えた後も、止めるまで描いた数は進む")
+        player.play(from: -5, looping: false)
+        expectNear(Array(try render(flow, 10)), (0..<10).map { Float($0) / 1000 })
+        player.leave()
+    }
+
+    @Test("同じ描き出しの前に命令が重なったら、最後の命令だけが効く")
+    func onlyTheLastOrderBeforeARenderTakesEffect() throws {
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: try rampBuffer(1000)))
+        player.play(from: 100, looping: false)
+        player.play(from: 400, looping: false)
+        expectNear(try render(flow, 5), (400..<405).map { Float($0) / 1000 })
+        // 同じ位置から鳴らし直しても、区切りは始め直す (同じ語を出しても、前の区切りの続きにならない)
+        player.play(from: 400, looping: false)
+        #expect(player.played == 0)
+        expectNear(try render(flow, 5), (400..<405).map { Float($0) / 1000 })
+        // 止めてから鳴らし直す: 止めた命令は流れず、鳴らし直しだけが効く
+        player.halt()
+        player.play(from: 200, looping: false)
+        #expect(player.played == 0)
+        expectNear(try render(flow, 5), (200..<205).map { Float($0) / 1000 })
+        // 鳴らしてすぐ止める: 無音のまま、描いた数は読めない
+        player.play(from: 300, looping: false)
+        player.halt()
+        #expect(player.played == nil)
+        #expect(try render(flow, 50).allSatisfy { $0 == 0 })
+        player.leave()
+    }
+
+    @Test("1 チャンネルの器も、そのまま鳴る")
+    func playsAMonoBuffer() throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1000))
+        buffer.frameLength = 1000
+        let data = try #require(buffer.floatChannelData)
+        for index in 0..<1000 { data[0][index] = Float(index) / 1000 }
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+        player.play(from: 0, looping: false)
+        // 1 チャンネルの音は、流れの混ぜる節が左右へ振り分ける (振り分けの大きさは問わず、形だけを見る)
+        let heard = try render(flow, 500)
+        #expect(heard.count == 500)
+        #expect(heard[0] == 0)
+        #expect(heard.dropFirst().allSatisfy { $0 > 0 })
+        #expect(zip(heard, heard.dropFirst()).allSatisfy { $0 < $1 }, "傾きが保たれる")
+        player.leave()
     }
 
     @Test("止めると無音になり、描いた数は読めなくなる")
@@ -149,26 +257,5 @@ struct FilePlayerTests {
         let worst = zip(tail, expected).map { abs($0 - $1) }.max() ?? 1
         #expect(worst < 1e-4)
         player.leave()
-    }
-
-    @Test("後ろ側を指す器は、元の器を手放しても同じ標本を指し続ける")
-    func tailKeepsTheSourceAlive() throws {
-        var tail: AVAudioPCMBuffer?
-        do {
-            let buffer = try rampBuffer(1000)
-            tail = FilePlayer.tail(of: buffer, from: 990)
-        }
-        let kept = try #require(tail)
-        #expect(kept.frameLength == 10)
-        let data = try #require(kept.floatChannelData)
-        #expect((0..<10).map { data[1][$0] } == (990..<1000).map { Float($0) / 1000 })
-    }
-
-    @Test("後ろ側は、始まりが 0 以下か終わり以上なら作らない (器そのものを鳴らす)")
-    func tailBoundaries() throws {
-        let buffer = try rampBuffer(1000)
-        #expect(FilePlayer.tail(of: buffer, from: 0) == nil)
-        #expect(FilePlayer.tail(of: buffer, from: 1000) == nil)
-        #expect(FilePlayer.tail(of: buffer, from: 999)?.frameLength == 1)
     }
 }
