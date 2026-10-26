@@ -89,6 +89,8 @@ struct SoundFileEffectTests {
         var heard = Stereo()
         var filter: LowPass?
         var song: SoundFile?
+        /// ファイルの `isBeat` が立ったフレーム (`frameCount`)。
+        var beats: [Int] = []
     }
 
     /// ファイルを読み、`LowPass` を足して回し、フレームごとの値を返す。
@@ -132,6 +134,7 @@ struct SoundFileEffectTests {
                         level: song.level, spectrum: song.spectrum))
                 result.effect.append(
                     Effected(rms: filter.rms, level: filter.level, spectrum: filter.spectrum))
+                if song.isBeat { result.beats.append(sketch.frameCount) }
                 if route, let routeAt, sketch.frameCount == routeAt { filter.process(song) }
                 act(song, sketch.frameCount)
             },
@@ -353,6 +356,18 @@ struct SoundFileEffectTests {
         let tail = Array(late.heard.left.suffix(AudioAnalysis.windowSize))
         let worst = zip(tail, outlet).map { abs($0 - $1 * Self.center) }.max() ?? 1
         #expect(worst < 1e-5, "通した後も、ファイルの音が直に聞こえている: \(worst)")
+    }
+
+    @Test("ループで何周かした後にエフェクトへ通しても、通した番号の付け直しで拍の履歴を捨てず、通さないときと同じフレームに拍が出る")
+    func routingALoopedFileKeepsTheBeatHistory() throws {
+        // 0.5 秒 (24000 標本) の音に 1 つのクリック。60 fps で 1 周 30 フレーム
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [3_000], count: 24_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let plain = try take(frames: 150, url: url, route: false)
+        #expect(plain.beats.count >= 4, "\(plain.beats)")
+        // 2 周と少し (75 フレーム目) で通す。通した後の周でも、拍は通さないときと同じフレームに出る
+        let late = try take(frames: 150, url: url, routeAt: 75)
+        #expect(late.beats == plain.beats, "\(late.beats) / \(plain.beats)")
     }
 
     @Test("止めるとエフェクトの出口も無音になり、鳴らし直すと戻る (固定の時計でも実際に鳴らす流れでも)")

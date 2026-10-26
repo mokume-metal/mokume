@@ -71,6 +71,14 @@ nonisolated struct AudioSpan: Equatable, Sendable {
         self.init(base: 0, samples: window, from: 0)
     }
 
+    /// 区間の終わりで終わる `count` 標本 (古い順)。標本 0 より前と、持っていない前の履歴は 0。
+    func tail(_ count: Int) -> [Float] {
+        let start = to - count
+        if start >= base { return Array(samples[(start - base)...]) }
+        let missing = min(base - start, count)
+        return [Float](repeating: 0, count: missing) + samples.suffix(count - missing)
+    }
+
     /// 全部の標本に `gain` を掛けた区間。
     func scaled(by gain: Float) -> AudioSpan {
         AudioSpan(base: base, samples: vDSP.multiply(gain, samples), from: from)
@@ -287,6 +295,36 @@ nonisolated enum AudioAnalysis {
         }
     }
 
+    /// 周波数の範囲 `low`〜`high` (Hz) の大きさ。`spectrum` の、中心がその範囲に入る帯域の振幅の**平均**を、
+    /// ``level(_:)`` と同じ dB の固定範囲で 0〜1 に写したもの。
+    ///
+    /// - 範囲に中心が入る帯域が無ければ、範囲の中点にいちばん近い 1 帯域
+    /// - 逆順は入れ替える。0〜標本化率の半分の外へはみ出す分は端へ寄せる。範囲が全部外なら 0
+    /// - 標本化率がまだ分からない (0) なら 0
+    /// - 数でない値・無限の値は 0 で、`isNumber` が `false` (呼ぶ側が 1 度だけ知らせる)
+    static func energy(
+        of spectrum: [Float], from low: Float, to high: Float, sampleRate: Float
+    ) -> (value: Float, isNumber: Bool) {
+        guard low.isFinite, high.isFinite else { return (0, false) }
+        guard sampleRate > 0, sampleRate.isFinite, spectrum.count == bandCount else { return (0, true) }
+        let nyquist = sampleRate / 2
+        var lower = min(low, high)
+        var upper = max(low, high)
+        guard upper >= 0, lower <= nyquist else { return (0, true) }
+        lower = max(lower, 0)
+        upper = min(upper, nyquist)
+        let width = sampleRate / Float(windowSize)
+        var first = Int((lower / width).rounded(.up))
+        var last = min(Int((upper / width).rounded(.down)), bandCount - 1)
+        if first > last {
+            first = min(max(Int(((lower + upper) / 2 / width).rounded()), 0), bandCount - 1)
+            last = first
+        }
+        var total: Float = 0
+        for band in first...last { total += spectrum[band] }
+        return (level(decibels(total / Float(last - first + 1))), true)
+    }
+
     /// 振幅を dBFS にする。
     static func decibels(_ amplitude: Float) -> Float {
         guard amplitude > 0 else { return floorDecibels }
@@ -340,34 +378,83 @@ final class AudioAnalyzer {
 /// (次のフレームの値に混ぜない)。**空の区間は置き換えない** — 標本が 1 つも進まなかったフレーム
 /// (飛び先から始まる最初のフレームなど) は、前のフレームの値のまま。
 ///
+/// 波形 (``waveform()``) と拍 (``isBeat``) は ``SoundTrace`` が持つ。波形は置いた区間の終わりの標本をそのまま
+/// 返し、拍は**履歴を持つ**ので、値と違って読まれなかったフレームの区間も、置くたびに必ず処理する。
+///
 /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
 struct DeferredLevels {
-    /// まだ解いていない、フレームの頭の区間。
+    /// 置かれた最新の (空でない) 区間。解いた後も、残す。
     private var span: AudioSpan?
+    /// ``span`` を解いたか。
+    private var isSolved = true
     /// 解いた値、または無音。
     private var solved = AudioLevels.silence
     /// 解いた回数。検査が読む。
     private(set) var analyses = 0
+    /// 波形と拍。
+    private var trace = SoundTrace()
 
-    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら何もしない。
+    /// 鳴り始める前が無音と分かっている音源か (``SoundTrace/beginsSilent``)。
+    var beginsSilent: Bool {
+        get { trace.beginsSilent }
+        set { trace.beginsSilent = newValue }
+    }
+
+    /// 拍の状態が区間を処理した回数。**検査が読む** — 区間を置くたびに 1 回ずつ増える。
+    var beatSteps: Int { trace.beatSteps }
+
+    /// フレームの頭。このフレームの拍を消す。
+    mutating func beginFrame() {
+        trace.beginFrame()
+    }
+
+    /// このフレームの区間を置く。前の区間が解かれていなくても捨てる。空の区間なら値と波形は変えない。
     mutating func hold(_ span: AudioSpan) {
         guard !span.isEmpty else { return }
         self.span = span
+        isSolved = false
+        trace.hold(span)
     }
 
-    /// 無音にする。
+    /// 無音にする。波形は 0 になるが、拍の履歴は残る (止めた位置から続けるとき、履歴は続く)。
     mutating func silence() {
         span = nil
+        isSolved = true
         solved = .silence
+        trace.clear()
+    }
+
+    /// 閉じた・外した。無音にして、拍の履歴も捨てる (次に鳴り始めるのは、流れの最初から)。
+    mutating func forget() {
+        silence()
+        trace.forget()
+    }
+
+    /// 標本の流れが終わった (一発音の終わり・ループしないファイルの終わり)。端数のブロックの拍を、このフレームに足す。
+    mutating func endStream() {
+        trace.end()
+    }
+
+    /// 区間の番号の付け直しで流れが続くとき、続きの番号を伝える (``SoundTrace/rebase(to:)``)。
+    mutating func rebase(to position: Int) {
+        trace.rebase(to: position)
     }
 
     /// 読まれた値。区間が残っていればここで 1 回だけ解く。
     mutating func levels() -> AudioLevels {
-        if let held = span {
+        if !isSolved, let held = span {
             solved = AudioAnalyzer.shared.analyze(held)
             analyses += 1
-            span = nil
+            isSolved = true
         }
         return solved
     }
+
+    /// 区間の終わりの ``AudioAnalysis/windowSize`` 標本 (古い順)。何も鳴っていなければ全部 0。
+    mutating func waveform() -> [Float] {
+        trace.waveform()
+    }
+
+    /// このフレームの区間に拍があったか。
+    var isBeat: Bool { trace.isBeat }
 }
