@@ -690,24 +690,19 @@ public final class SoundFile: Inlet, EffectInput {
 
         // 位置は、時計を切り替える前の測り方で読む
         let playedNow = played()
-        let position = playhead.position(after: playedNow)
-        // 区間の番号は、ファイルの位置の通し番号 (``Playhead/span(of:from:after:)``)。ループで頭へ戻った後は通し番号が
-        // 位置より大きいので、区切りを始め直しても番号がずれないよう、解析済みの終わりを位置の側へ寄せる
-        let shifted = min(max(covered - (playhead.start + max(0, playedNow) - position), 0), position)
         let wasPlaying = playhead.isPlaying
         if case .speaker(let player) = pace { player.leave() }
         pace = .routed
         feed = Feed(stage: stage, node: node)
         if wasPlaying {
-            // いまの位置から区切りを始め直す。窓は、始まりより前もファイルの標本で埋める (``Playhead/jump(to:)``)
+            // いまの位置から区切りを始め直す。窓は、始まりより前もファイルの標本で埋める (``Playhead/carry(after:)``)
             // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
-            playhead.jump(to: position)
+            playhead.carry(after: playedNow)
             lastPlayed = 0
             // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)。標本の流れは続く (飛んだのではない)
-            // ので、番号の付け直しを拍の状態にも伝えて、履歴を捨てさせない
-            covered = shifted
-            continuedCoverage = shifted
-            deferred.rebase(to: shifted)
+            // ので、**区間の番号も続ける** — 番号を位置の側へ付け直すと、ループで何周かした後は窓の格子が
+            // ずれて、通さないときと別の値になる (#3268)。番号が続くので、拍の状態にも伝えなくてよい (履歴は捨てられない)
+            continuedCoverage = covered
             feed?.waitsForInput = true
         }
         return node
@@ -827,10 +822,13 @@ public final class SoundFile: Inlet, EffectInput {
         player.volume = volume
         let wasPlaying = playhead.isPlaying
         // 位置は、切り替える前の測り方 (フレームの数) で読む
-        let position = playhead.position(after: played())
+        let playedNow = played()
         pace = .speaker(player)
         if wasPlaying {
-            playhead.jump(to: position)
+            // 同じ音が続くので、区間の番号も続ける (``Playhead/carry(after:)``)。位置の側へ付け直すと、ループで何周かした後は
+            // 窓の格子がずれて、載せないときと別の値になる (#3268)
+            playhead.carry(after: playedNow)
+            continuedCoverage = covered
             beginSegment()
         }
     }
