@@ -311,7 +311,8 @@ struct GlyphScaleBakeTests {
     ///   - persists: このフレームの絵が次のフレームに描き直されずに残るか (`draw()` の後ろでランタイムが書く)。
     ///   - midFlush: 字を置いた後、フレームの途中で描き切る (`loadPixels()`)。
     private func drawSix(
-        _ canvas: Canvas, scale: Float, persists: Bool = false, midFlush: Bool = false
+        _ canvas: Canvas, scale: Float, persists: Bool = false, midFlush: Bool = false,
+        shaped: Bool = false
     ) throws -> Int {
         let before = canvas.glyphQuadsPlaced
         try canvas.draw {
@@ -320,7 +321,7 @@ struct GlyphScaleBakeTests {
             canvas.textSize(16)
             canvas.translate(4, 60)
             canvas.scale(scale, scale)
-            canvas.text("abcdef", 0, 0)
+            if shaped { canvas.shapedText("abcdef", 0, 0) } else { canvas.text("abcdef", 0, 0) }
             if midFlush { canvas.loadPixels() }
             canvas.framePersists = persists
         }
@@ -426,9 +427,9 @@ struct GlyphScaleBakeTests {
     // MARK: - 絵が残るフレームは、先送りした字を払う
 
     /// 6 字を 4 倍で描く参照の絵 (先送りせず、全部を要る段で焼く)。
-    private func referenceImage() throws -> DisplayImage {
+    private func referenceImage(shaped: Bool = false) throws -> DisplayImage {
         let canvas = try makeCanvas(width: 400, height: 128)
-        #expect(try drawSix(canvas, scale: 4) == 6)
+        #expect(try drawSix(canvas, scale: 4, shaped: shaped) == 6)
         return try canvas.target.encodeForDisplay()
     }
 
@@ -677,6 +678,8 @@ struct GlyphScaleBakeTests {
         var stopsAfterDrawing = false
         /// `draw()` の最後に `save()` を頼む先。
         var savesTo: String?
+        /// 字を `shapedText()` で描くか (偽なら `text()`)。
+        var shaped = false
         /// 描き始めたときに先送りが許されていたかを読む口。
         var readsDeferral: (() -> Bool)?
         var seen: [Bool] = []
@@ -689,7 +692,7 @@ struct GlyphScaleBakeTests {
             textSize(16)
             translate(4, 60)
             scale(4, 4)
-            text("abcdef", 0, 0)
+            if shaped { shapedText("abcdef", 0, 0) } else { text("abcdef", 0, 0) }
             if let savesTo { save(savesTo) }
             if stopsAfterDrawing { noLoop() }
         }
@@ -833,6 +836,309 @@ struct GlyphScaleBakeTests {
         #expect(scaledBakedCount(runtime) == 6)
         #expect(runtime.canvas.atlas.owedGlyphCount == 0)
         #expect(try runtime.target.encodeForDisplay() == reference)
+    }
+
+    // MARK: - 組版した文字列 (shapedText) も同じ段で焼く (#3251)
+
+    /// `shapedText()` の 1 字を、`scale(8)` で描いた行の真ん中の縁 (`scaledGlyphEdgesAreSharp` の組版版)。
+    @Test("拡大した shapedText の縁は鮮明で、伸ばしてぼけない")
+    func shapedTextEdgesAreSharp() throws {
+        let canvas = try makeCanvas(width: 160, height: 160)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(12)
+            canvas.translate(60, 140)
+            canvas.scale(8, 8)
+            canvas.shapedText("I", 0, 0)
+        }
+        let image = try canvas.target.encodeForDisplay()
+        let row = 100
+        let inked = (0..<image.width).filter { image[$0, row].red > 200 }.count
+        #expect(inked >= 6, "検査の前提: 棒に墨が乗っていない (\(inked))")
+        let soft = edgePixels(image, row: row)
+        #expect(soft <= 4, "縁の中間の画素が \(soft) ある — 伸ばしてぼけている")
+    }
+
+    /// 完了条件 3: `scale(5, 5)` で同じ文字列を `text()` と `shapedText()` で描くと、どちらも段 > 0 の鍵で焼かれ、
+    /// 段 0 では焼かれない。
+    @Test("scale(5) の shapedText は text() と同じく、段 > 0 の鍵で焼く")
+    func shapedTextBakesUnderTheStep() throws {
+        for shaped in [false, true] {
+            let canvas = try makeCanvas(width: 200, height: 200)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(14)
+                canvas.translate(4, 150)
+                canvas.scale(5, 5)
+                if shaped { canvas.shapedText("Ag", 0, 0) } else { canvas.text("Ag", 0, 0) }
+            }
+            for scalar: Unicode.Scalar in ["A", "g"] {
+                let baked = bakedSteps(canvas, scalar, size: 14)
+                #expect(
+                    baked.count == 1 && baked[0] > 0,
+                    "shaped=\(shaped) \(scalar): 段 > 0 の鍵だけで焼くはず: \(baked)")
+            }
+        }
+    }
+
+    /// 単純な ASCII 1 字は、組版の位置も `text()` と同じなので、絵が 1 画素も違わない。
+    @Test("拡大した ASCII 1 字は、shapedText と text() で同じ絵になる")
+    func shapedTextMatchesTextForOneGlyph() throws {
+        func picture(shaped: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas(width: 200, height: 200)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(14)
+                canvas.translate(10, 150)
+                canvas.scale(5, 5)
+                if shaped { canvas.shapedText("M", 0, 0) } else { canvas.text("M", 0, 0) }
+            }
+            return try canvas.target.encodeForDisplay()
+        }
+        #expect(try picture(shaped: true) == (try picture(shaped: false)))
+    }
+
+    /// 完了条件 2: 等倍で描いた行 (段 0 の控えを持つ) を拡大して描き直すと拡大段の字形で描かれ、段を替えて戻っても
+    /// 取り違えない。同じ段へ戻れば焼き直さない。
+    @Test("等倍で描いた shapedText の行を拡大して描き直すと、拡大段の字形で描かれる")
+    func aShapedLineDrawnAtOneToOneIsRebakedWhenEnlarged() throws {
+        let canvas = try makeCanvas(width: 200, height: 200)
+        func frame(scale: Float) throws -> DisplayImage {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(14)
+                canvas.translate(10, 150)
+                canvas.scale(scale, scale)
+                canvas.shapedText("M", 0, 0)
+            }
+            return try canvas.target.encodeForDisplay()
+        }
+        let small = try frame(scale: 1)
+        #expect(bakedSteps(canvas, "M", size: 14) == [0])
+        let large = try frame(scale: 5)
+        let steps = bakedSteps(canvas, "M", size: 14)
+        #expect(steps.count == 2 && steps[0] == 0 && steps[1] > 0, "拡大した段で焼いていない: \(steps)")
+        let baked = canvas.atlas.bakedCount
+        // 戻っても、段ごとの控えが取り違えない (等倍の絵は最初と同じ、拡大の絵は 1 回目と同じ)
+        #expect(try frame(scale: 1) == small)
+        #expect(try frame(scale: 5) == large)
+        #expect(canvas.atlas.bakedCount == baked, "同じ段へ戻って焼き直した")
+        // 検査の前提: 拡大の絵は、段 0 を伸ばした絵と違う
+        #expect(large != small)
+    }
+
+    /// 完了条件 1: 上限を越えた分は、焼いてある近い段 (無ければ段 0) で描いて欠けず、次のフレームで先に焼く
+    /// (`text()` の `bakesPerFrameAreCappedWithoutDroppingGlyphs` の組版版)。控えは、決まった答えのときだけ入る。
+    @Test("shapedText も、1 フレームに新しく焼く数の上限を越えた分は、欠けずに描いて次のフレームへ送る")
+    func shapedTextBakesPerFrameAreCappedWithoutDroppingGlyphs() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(canvas, scale: 2, shaped: true) == 6, "上限を越えた字が欠けた")
+        #expect(scaledBakedCount(canvas) == 2, "上限を越えて焼いた: \(scaledBakedCount(canvas))")
+        #expect(try drawSix(canvas, scale: 2, shaped: true) == 6)
+        #expect(scaledBakedCount(canvas) == 4)
+        #expect(try drawSix(canvas, scale: 2, shaped: true) == 6)
+        #expect(scaledBakedCount(canvas) == 6)
+        let settled = canvas.atlas.bakedCount
+        #expect(try drawSix(canvas, scale: 2, shaped: true) == 6)
+        #expect(canvas.atlas.bakedCount == settled, "揃った後は焼き直さない")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+    }
+
+    /// 完了条件 1: 絵が残るフレームは、先送りして近い段で置いた四角をフレームの終わりに払い、先送りしなかった絵と
+    /// 1 画素も違わない。
+    @Test("shapedText も、絵が残るフレームは先送りした字を払い、先送りしなかった絵と同じになる")
+    func aFrameThatPersistsPaysTheDeferredShapedGlyphs() throws {
+        let reference = try referenceImage(shaped: true)
+
+        let soft = try makeCanvas(width: 400, height: 128)
+        soft.atlas.scaledBakesPerFrame = 2
+        soft.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(soft, scale: 4, persists: false, shaped: true) == 6)
+        #expect(scaledBakedCount(soft) == 2)
+        #expect(try soft.target.encodeForDisplay() != reference, "検査の前提: 先送りした絵がぼけていない")
+
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(canvas, scale: 4, persists: true, shaped: true) == 6, "字が欠けた")
+        #expect(scaledBakedCount(canvas) == 6, "払っていない: \(scaledBakedCount(canvas))")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+        #expect(canvas.deferredRuns.isEmpty)
+        #expect(try canvas.target.encodeForDisplay() == reference, "払った絵が、先送りしなかった絵と違う")
+        #expect(canvas.warnings.message(for: .softEnlargedText) == nil)
+    }
+
+    @Test("shapedText も、フレームの途中で描き切るときは、その前に先送りした字を払う")
+    func aMidFramePassPaysTheDeferredShapedGlyphs() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        #expect(try drawSix(canvas, scale: 4, persists: false, midFlush: true, shaped: true) == 6)
+        #expect(scaledBakedCount(canvas) == 6, "途中の描き切りの前に払っていない")
+        #expect(canvas.atlas.owedGlyphCount == 0)
+        #expect(try canvas.target.encodeForDisplay() == (try referenceImage(shaped: true)))
+    }
+
+    /// 完了条件 3 の確かめ方: `noLoop()` と書き出しで、繰り越した字が解決される。
+    @Test("shapedText も、noLoop() で止めた絵と renderFrame(to:) の絵は、先送りしなかった絵と同じになる")
+    func shapedTextIsSettledByNoLoopAndRenderFrame() throws {
+        let plainSketch = Zoom()
+        plainSketch.shaped = true
+        let plain = try makeZoom(plainSketch, onScreen: false)
+        try plain.advance()
+        let reference = try plain.target.encodeForDisplay()
+
+        let stopping = Zoom()
+        stopping.shaped = true
+        stopping.stopsAfterDrawing = true
+        let stopped = try makeZoom(stopping)
+        try stopped.advance()
+        #expect(stopping.seen == [true], "検査の前提: 描き始めは先送りが許されている")
+        #expect(scaledBakedCount(stopped) == 6, "止めたフレームの字が、近い段のまま残った")
+        #expect(stopped.canvas.atlas.owedGlyphCount == 0)
+        #expect(try stopped.target.encodeForDisplay() == reference)
+
+        let rendering = Zoom()
+        rendering.shaped = true
+        let runtime = try makeZoom(rendering)
+        let file = try temporaryDirectory().appendingPathComponent("frame.png")
+        try runtime.renderFrame(to: file)
+        #expect(scaledBakedCount(runtime) == 6)
+        #expect(runtime.canvas.atlas.owedGlyphCount == 0)
+        #expect(try runtime.target.encodeForDisplay() == reference)
+    }
+
+    // MARK: - 組版した文字列の反証の直し (#3251)
+
+    /// 拡大して `shapedText()` を描くとき、`shapedTextBounds` が段 0 の画素を預けても引き取られない。預けない
+    /// (`textBounds` と同じ・#2560・#2446)。
+    @Test("拡大した字の shapedTextBounds は、段 0 の画素を預けない")
+    func shapedTextBoundsDoesNotKeepPixelsForAnEnlargedText() throws {
+        let canvas = try makeCanvas(width: 200, height: 200)
+        try canvas.draw {
+            canvas.textSize(24)
+            canvas.scale(4, 4)
+            _ = canvas.shapedTextBounds("🌲", 0, 0)
+        }
+        #expect(canvas.atlas.keptCount == 0, "引き取られない画素を預けた")
+        let plain = try makeCanvas(width: 200, height: 200)
+        try plain.draw {
+            plain.textSize(24)
+            _ = plain.shapedTextBounds("🌲", 0, 0)
+        }
+        #expect(plain.atlas.keptCount == 1, "拡大しないときは、これまでどおり預ける")
+    }
+
+    /// 拡大を動かし続けても、1 行が抱える拡大した段の控えは上限で止まる。上限の中の段を行き来するなら焼き直さない。
+    @Test("shapedText の行が抱える拡大した段の控えは、段の数の上限で止まる")
+    func aShapedLineKeepsAtMostAFewScaledSteps() throws {
+        let canvas = try makeCanvas(width: 200, height: 200)
+        func frame(scale: Float) throws {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(12)
+                canvas.translate(4, 190)
+                canvas.scale(scale, scale)
+                canvas.shapedText("M", 0, 0)
+            }
+        }
+        for scale: Float in [2, 3, 4, 5, 6, 7, 8] { try frame(scale: scale) }
+        let line = canvas.typeface.shape("M")
+        #expect(line.placedScaled.count == ShapedLine.scaledStepLimit, "段の控えが上限で止まっていない: \(line.placedScaled.keys.sorted())")
+        // 直近の段は残っていて、行き来しても焼き直さない
+        let baked = canvas.atlas.bakedCount
+        try frame(scale: 8)
+        try frame(scale: 7)
+        try frame(scale: 8)
+        #expect(canvas.atlas.bakedCount == baked, "直近の段を焼き直した")
+        #expect(line.placedScaled.count == ShapedLine.scaledStepLimit)
+    }
+
+    /// 拡大しすぎの知らせは、呼んだ口の名前で名乗る。
+    @Test("拡大しすぎの知らせは、text() と shapedText() のどちらで描いたかを名乗る")
+    func theSoftEnlargedWarningNamesTheCaller() throws {
+        for shaped in [false, true] {
+            let canvas = try makeCanvas(width: 200, height: 200)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(24)
+                canvas.scale(60, 60)
+                if shaped { canvas.shapedText("M", 0, 0) } else { canvas.text("M", 0, 0) }
+            }
+            let message = try #require(canvas.warnings.message(for: .softEnlargedText), "shaped=\(shaped)")
+            #expect(message.hasPrefix(shaped ? "shapedText():" : "text():"), "shaped=\(shaped): \(message)")
+        }
+    }
+
+    /// 先送りした字を払えなかったときの知らせも、その字を置いた口の名前で名乗る。
+    @Test("先送りした字を払えなかった知らせは、shapedText() と名乗る")
+    func anUnpaidShapedRunNamesShapedText() throws {
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 2
+        canvas.atlas.mayDeferScaledBakes = true
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(white)
+            canvas.textSize(16)
+            canvas.translate(4, 60)
+            canvas.scale(4, 4)
+            canvas.shapedText("abcdef", 0, 0)
+            // 控えと食い違わせる (払えない列にする)
+            canvas.vertices[canvas.deferredRuns[0].glyphs[0].start].position.x += 1
+            canvas.framePersists = true
+        }
+        let message = try #require(canvas.warnings.message(for: .softEnlargedText), "払えなかった知らせが出ていない")
+        #expect(message.hasPrefix("shapedText():"), "\(message)")
+    }
+
+    /// 色字 (絵文字)・別の書体へ切り替わる字・合字や結合記号を含む行でも、拡大した段で焼き、先送りした字を払い、
+    /// 等倍と拡大を交互に描いても焼き直さず、絵が取り違えない。
+    @Test("色字・別書体の字・合字を含む shapedText の行も、払った絵が先送りしなかった絵と同じで、段を行き来しても焼き直さない",
+        arguments: ["a🌲b", "漢a字", "office ﬁ", "e\u{0301}xe\u{0301}"])
+    func richShapedLinesAreSettledAndKeptPerStep(line: String) throws {
+        func picture(_ canvas: Canvas, scale: Float, persists: Bool) throws -> DisplayImage {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(white)
+                canvas.textSize(16)
+                canvas.translate(4, 70)
+                canvas.scale(scale, scale)
+                canvas.shapedText(line, 0, 0)
+                canvas.framePersists = persists
+            }
+            return try canvas.target.encodeForDisplay()
+        }
+        // 参照: 先送りしない
+        let plain = try makeCanvas(width: 400, height: 128)
+        let reference = try picture(plain, scale: 4, persists: false)
+        let referenceSmall = try picture(plain, scale: 1, persists: false)
+        #expect(reference != referenceSmall, "検査の前提: 拡大の絵が等倍の絵と違う")
+
+        // 先送りして払う
+        let canvas = try makeCanvas(width: 400, height: 128)
+        canvas.atlas.scaledBakesPerFrame = 1
+        canvas.atlas.mayDeferScaledBakes = true
+        let settled = try picture(canvas, scale: 4, persists: true)
+        #expect(canvas.atlas.owedGlyphCount == 0, "払っていない")
+        #expect(canvas.deferredRuns.isEmpty)
+        #expect(settled == reference, "払った絵が、先送りしなかった絵と違う")
+
+        // 等倍 → 拡大 → 等倍 → 拡大: 段ごとの控えが取り違えず、焼き直さない
+        let small = try picture(canvas, scale: 1, persists: true)
+        #expect(small == referenceSmall)
+        let baked = canvas.atlas.bakedCount
+        #expect(try picture(canvas, scale: 4, persists: true) == reference)
+        #expect(try picture(canvas, scale: 1, persists: true) == small)
+        #expect(try picture(canvas, scale: 4, persists: true) == reference)
+        #expect(canvas.atlas.bakedCount == baked, "段を行き来して焼き直した")
     }
 
     // MARK: - 測る側が預ける画素
