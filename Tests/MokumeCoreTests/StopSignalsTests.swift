@@ -46,6 +46,29 @@ struct StopSignalsTests {
         #expect(StopSignals.isDefault(StopSignals.current(SIGINT)), "受け口を戻していない")
     }
 
+    /// 受け口が無ければ遮る合図は効かないので、そこだけ違っても戻ったとみなす (#3220)。
+    /// ThreadSanitizer の下では、既定へ戻した受け口の遮る合図が全部を立てた形で読める。
+    @Test("既定か無視の受け口は、遮る合図だけが違っても戻ったとみなし、受け口があれば違いを拾う")
+    func comparesTheMaskOnlyForAHandler() {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        for disposition in [SIG_DFL, SIG_IGN] {
+            signal(SIGTERM, disposition)
+            let snapshot = StopSignals.snapshot([SIGTERM])
+            var action = StopSignals.current(SIGTERM)
+            action.sa_mask = ~0
+            sigaction(SIGTERM, &action, nil)
+            #expect(StopSignals.changed(since: snapshot).isEmpty)
+        }
+
+        StopSignals.install()
+        let snapshot = StopSignals.snapshot([SIGTERM])
+        var action = StopSignals.current(SIGTERM)
+        action.sa_mask = ~0
+        sigaction(SIGTERM, &action, nil)
+        #expect(StopSignals.changed(since: snapshot) == [SIGTERM], "受け口がある合図の遮る合図の違いを見落とした")
+    }
+
     /// **実際に合図を送る。** 受け口が置かれていなければ、送った瞬間に検査のプロセスごと
     /// 落ちる — だから送る前に、置かれたことを `#require` で確かめる。
     @Test("合図を受けると旗が立ち、読むと下りる")

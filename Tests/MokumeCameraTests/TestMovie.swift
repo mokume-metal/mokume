@@ -333,9 +333,30 @@ nonisolated enum TestMovie {
     }
 
     /// 動画を頭から順に全部読み、枚ごとの表示時刻と絵を返す。**比べる相手で、読み手とは別に読む。**
+    ///
+    /// **読み進める同期の待ち (`copyNextSampleBuffer`) は、Swift の協調プールの外で回す** (#3196)。
+    /// 協調プールのスレッドはコア数 (ホストの runner で 3 本) しか無く、並列の幅を広げると、
+    /// この待ちが全部を塞ぐ。そのとき main で `MovieReader.inspect` が待つ読み込みの仕事 (`Task.detached`)
+    /// が走れず、検査全体が止まった (#3199 の run 40159542555)。GCD のキューは協調プールと別に
+    /// スレッドを足せる
     static func reference(_ url: URL) async throws -> [(time: Double, picture: DisplayImage)] {
         let asset = AVURLAsset(url: url)
-        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        // トラックを読み込みの側へ渡す箱。**渡した後は、こちらからは触らない**
+        nonisolated final class Handoff: @unchecked Sendable {
+            let track: AVAssetTrack
+            init(_ track: AVAssetTrack) { self.track = track }
+        }
+        let handoff = Handoff(try #require(try await asset.loadTracks(withMediaType: .video).first))
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try readAll(asset, handoff.track) })
+            }
+        }
+    }
+
+    private static func readAll(
+        _ asset: AVURLAsset, _ track: AVAssetTrack
+    ) throws -> [(time: Double, picture: DisplayImage)] {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(
             track: track,

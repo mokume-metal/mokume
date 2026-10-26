@@ -104,14 +104,21 @@ struct SynthSoundTests {
         return osc
     }
 
-    /// 同じ設定を、ラックだけで進めたときの `frame` 番目 (0 始まり) のフレームの解析の値。
+    /// 同じ設定を、ラックだけで進めたときの `frame` 番目 (0 始まり) のフレームの解析の値。前のフレームから
+    /// このフレームまでに出口に出た標本が区間で、最初のフレームは標本が進んでいない空の区間 (無音のまま)。
     private func expected(
         frame: Int, perFrame: Int = Self.perFrame, _ build: (SynthRack) throws -> RackNode
     ) throws -> AudioLevels {
         let rack = SynthRack(sampleRate: 48_000)
         let node = try build(rack)
-        rack.advance(frames: frame * perFrame)
-        return AudioAnalysis.analyze(node.meter.latest(AudioAnalysis.windowSize))
+        guard frame > 0 else { return .silence }
+        // 区間は実装の取り出し (`snapshot(since:)`) を通さず、1 フレームずつ集めた出口の標本から切る
+        var stream: [Float] = []
+        for _ in 0..<frame {
+            rack.advance(frames: perFrame)
+            stream += node.meter.snapshot(perFrame).samples
+        }
+        return AudioAnalysis.analyze(span(of: stream, from: (frame - 1) * perFrame, to: frame * perFrame))
     }
 
     // MARK: - 走っている実行の外から作る (#2740)
@@ -589,8 +596,9 @@ struct SynthSoundTests {
         runtime.closePlugins()
 
         #expect(unread?.analyses == 0)
-        #expect(read?.analyses == frames)
-        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames, "解析は共有の解析器を通る")
+        // 最初のフレームは標本が進んでいない空の区間で、解く物が無い
+        #expect(read?.analyses == frames - 1)
+        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames - 1, "解析は共有の解析器を通る")
     }
 
     /// **遅らせた解析は、フレームの頭の窓を解く。** 読む前に音だけが先へ進んでも (実時間の再生では

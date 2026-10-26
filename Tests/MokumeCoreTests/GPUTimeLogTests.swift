@@ -12,7 +12,7 @@ import Testing
 /// 重なりを二重に数えず、投入の隙間は含む。ここで見るのは、その定義どおりに出ることと、**届いていない
 /// 投入があるときに小さな幅を返さない**こと (欠けたまま返すと、実際より軽く見える)。
 @Suite("フレームの GPU 時間 (投入の幅)")
-struct GPUTimeLogTests {
+nonisolated struct GPUTimeLogTests {
     @Test("1 つの投入の幅は end − start")
     func oneSubmission() throws {
         let log = GPUTimeLog()

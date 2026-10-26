@@ -57,6 +57,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "sparks-in-space") { SparksInSpace() },
     ReferenceSketch(name: "glow-and-detail") { GlowAndDetail() },
     ReferenceSketch(name: "sound-and-level") { SoundAndLevel() },
+    ReferenceSketch(name: "beat-and-waveform") { BeatAndWaveform() },
     ReferenceSketch(name: "synth-and-filter") { SynthAndFilter() },
     ReferenceSketch(name: "table-and-text") { TableAndText() },
     ReferenceSketch(name: "json-and-xml") { JSONAndXML() },

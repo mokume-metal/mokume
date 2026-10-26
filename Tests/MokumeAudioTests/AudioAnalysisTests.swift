@@ -71,126 +71,121 @@ struct AudioAnalysisTests {
         #expect(AudioAnalysis.analyze(long) == AudioAnalysis.analyze(sine(band: 8)))
     }
 
-    // MARK: - 時刻の窓
+    // MARK: - 標本列の時刻
 
-    @Test("窓は時刻で終わる。始まりより前は 0、終わりより後は始まりへ戻る")
-    func windowEndsAtTime() {
-        // 標本 i の値は i + 1 (0 の埋めと見分けるため)
-        let samples = (1...2000).map(Float.init)
-        // 1 秒 = 1000 標本。0.5 秒で終わる窓は、最初の 500 標本が後ろに並び、前は 0
-        let early = AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.5)
-        #expect(early.count == AudioAnalysis.windowSize)
-        #expect(early.last == 500)
-        #expect(early[AudioAnalysis.windowSize - 500] == 1)
-        #expect(early[AudioAnalysis.windowSize - 501] == 0)
-        // 2.5 秒は 2500 標本目まで。2000 を越えた分は始まりへ戻る
-        let wrapped = AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 2.5)
-        #expect(wrapped.last == 500)
-        #expect(wrapped[AudioAnalysis.windowSize - 500] == 1)
-        #expect(wrapped[AudioAnalysis.windowSize - 501] == 2000)
-    }
-
-    /// **標本の間に落ちる時刻は、その時刻までに届いた標本で切る** (切り捨て)。上の検査は
-    /// 積が整数になる時刻しか使わないので、丸めの向きはここで固める。AudioIn と SoundFile の
-    /// 検査は期待値をこの関数で作るので、向きを取り違えても両辺が揃って動き、気付けない
-    /// (#2283)。
-    @Test("標本の間に落ちる時刻は、そこまでに届いた標本で終わる")
-    func fractionalTimesEndAtTheLastArrivedSample() {
-        let samples = (1...2000).map(Float.init)
+    @Test("時刻までに届いた標本の数は、標本の間に落ちる時刻を切り捨てる。負の時刻は 0")
+    func samplesArrivedByATimeRoundDown() {
+        // 1 秒 = 1000 標本
+        #expect(RecordedSource.index(at: 0.5, sampleRate: 1000) == 500)
         // 500.4 標本ぶん: 500 標本目までが届いている
-        #expect(AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.5004).last == 500)
+        #expect(RecordedSource.index(at: 0.5004, sampleRate: 1000) == 500)
         // 499.6 標本ぶん: 500 標本目はまだ届いていない
-        #expect(AudioAnalysis.window(of: samples, sampleRate: 1000, endingAt: 0.4996).last == 499)
+        #expect(RecordedSource.index(at: 0.4996, sampleRate: 1000) == 499)
+        #expect(RecordedSource.index(at: -1, sampleRate: 1000) == 0)
     }
 
     // MARK: - 遅らせた解析と、使い回す変換 (#2379)
 
-    /// **使い回す変換で解いた値が、毎回作る変換で解いた値とビット一致する** ([#2379])。製品の経路は
-    /// ``AudioAnalyzer`` の 1 つの setup を使い回すので、同じ窓を何度も、別の窓を挟んでも、
-    /// 毎回作る参照の形 (``AudioAnalysis/analyze(_:)``) と同じ値でなければならない。
-    ///
-    /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
-    @Test("使い回す変換の解析は、毎回作る変換の解析と、窓を替えて繰り返してもビット一致する")
+    /// 解析の入力にする区間。無音・正弦波・インパルス・固定乱数 (種が決まっているので何度作っても同じ)。
+    /// 区間の始まりも、窓の格子の境界の上・途中・履歴が標本 0 に届かない所を混ぜる。
+    static var probeSpans: [(name: String, span: AudioSpan)] {
+        var state: UInt32 = 20_261_022
+        let noise = (0..<3000).map { _ -> Float in
+            state = state &* 1_664_525 &+ 1_013_904_223
+            return Float(Int32(bitPattern: state)) / Float(Int32.max) * 0.5
+        }
+        var impulse = [Float](repeating: 0, count: 3000)
+        impulse[1500] = 1
+        return [
+            ("無音", span(of: [Float](repeating: 0, count: 3000), from: 700, to: 2900)),
+            ("正弦波", span(of: sine(band: 40, amplitude: 0.5, count: 3000), from: 1024, to: 2600)),
+            ("インパルス", span(of: impulse, from: 1000, to: 2100)),
+            ("固定乱数", span(of: noise, from: 100, to: 2800)),
+            ("始まり", span(of: noise, from: 0, to: 800)),
+        ]
+    }
+
+    @Test("使い回す変換の解析は、毎回作る変換の解析と、区間を替えて繰り返してもビット一致する")
     func sharedTransformMatchesTheFreshOne() {
-        let windows = [sine(band: 32), sine(band: 7, amplitude: 0.3), sine(band: 100, amplitude: 0.8)]
+        let spans = Self.probeSpans.map(\.span)
         for _ in 0..<3 {
-            for window in windows {
-                #expect(AudioAnalyzer.shared.analyze(window) == AudioAnalysis.analyze(window))
+            for span in spans {
+                #expect(AudioAnalyzer.shared.analyze(span) == AudioAnalysis.analyze(span))
             }
         }
     }
 
-    /// **解析は読まれたときだけ、1 回だけ。窓は置いたときのもの** (``DeferredLevels``)。
-    @Test("遅らせた解析は、読まれたときに 1 回だけ、最後に置かれた窓を解く")
-    func deferredLevelsSolveOnceOnReadFromTheLatestWindow() {
+    /// **解析は読まれたときだけ、1 回だけ。区間は置いたときのもの** (``DeferredLevels``)。
+    @Test("遅らせた解析は、読まれたときに 1 回だけ、最後に置かれた区間を解く")
+    func deferredLevelsSolveOnceOnReadFromTheLatestSpan() {
         var deferred = DeferredLevels()
-        let first = sine(band: 12)
-        let second = sine(band: 40, amplitude: 0.5)
+        let first = Self.probeSpans[1].span
+        let second = Self.probeSpans[3].span
 
-        // 読まれる前は何も解かない。窓を置き換えても同じ
+        // 読まれる前は何も解かない。区間を置き換えても同じ
         deferred.hold(first)
         deferred.hold(second)
         #expect(deferred.analyses == 0)
 
-        // 読むと最後の窓を解き、同じ窓を何度読んでも解析は 1 回
+        // 読むと最後の区間を解き (毎フレーム解析したのとビット一致)、同じ区間を何度読んでも解析は 1 回
         let solved = deferred.levels()
         #expect(solved == AudioAnalysis.analyze(second))
         #expect(deferred.levels() == solved)
         #expect(deferred.analyses == 1)
 
-        // 次の窓を置いて、読まれなければ解かない
+        // 次の区間を置いて、読まれなければ解かない
         deferred.hold(first)
         #expect(deferred.analyses == 1)
         #expect(deferred.levels() == AudioAnalysis.analyze(first))
         #expect(deferred.analyses == 2)
     }
 
-    // MARK: - 作業領域の再利用 (#3086)
+    @Test("空の区間は置き換えず、前の値 (解かれていない区間も) をそのまま保つ")
+    func emptySpanKeepsThePreviousValue() {
+        var deferred = DeferredLevels()
+        let loud = Self.probeSpans[1].span
+        let empty = AudioSpan(base: 0, samples: Array(repeating: 0, count: 2000), from: 2000)
+        #expect(empty.isEmpty)
 
-    /// 解析の入力にする窓。無音・正弦波・インパルス・固定乱数 (種が決まっているので何度作っても同じ)。
-    private static var probeWindows: [(name: String, window: [Float])] {
-        var state: UInt32 = 20_261_022
-        let noise = (0..<AudioAnalysis.windowSize).map { _ -> Float in
-            state = state &* 1_664_525 &+ 1_013_904_223
-            return Float(Int32(bitPattern: state)) / Float(Int32.max) * 0.5
-        }
-        var impulse = [Float](repeating: 0, count: AudioAnalysis.windowSize)
-        impulse[AudioAnalysis.windowSize / 2] = 1
-        return [
-            ("無音", [Float](repeating: 0, count: AudioAnalysis.windowSize)),
-            ("正弦波", sine(band: 40, amplitude: 0.5)),
-            ("インパルス", impulse),
-            ("固定乱数", noise),
-        ]
+        // 解かれていない区間は、空の区間を置いても残り、読まれたときに解かれる
+        deferred.hold(loud)
+        deferred.hold(empty)
+        #expect(deferred.levels() == AudioAnalysis.analyze(loud))
+        // 解いた後も、空の区間は値を変えない
+        deferred.hold(empty)
+        #expect(deferred.levels() == AudioAnalysis.analyze(loud))
+        #expect(deferred.analyses == 1)
     }
 
-    @Test("使い回す作業領域で解析した値は、毎回作る参照の値とビット一致する (前の窓の値を持ち越さない)")
+    // MARK: - 作業領域の再利用 (#3086)
+
+    @Test("使い回す作業領域で解析した値は、毎回作る参照の値とビット一致する (前の区間の値を持ち越さない)")
     func reusedScratchMatchesTheReference() {
         let analyzer = AudioAnalyzer()
-        // 大きな値の後に無音・インパルスが来ても、前の窓が残らない順で、2 周する
-        let windows = Self.probeWindows
-        for window in windows + windows.reversed() + windows {
-            let reference = AudioAnalysis.analyze(window.window)
-            let reused = analyzer.analyze(window.window)
-            #expect(reused == reference, "\(window.name)")
+        // 大きな値の後に無音・インパルスが来ても、前の区間が残らない順で、2 周する
+        let probes = Self.probeSpans
+        for probe in probes + probes.reversed() + probes {
+            let reference = AudioAnalysis.analyze(probe.span)
+            let reused = analyzer.analyze(probe.span)
+            #expect(reused == reference, "\(probe.name)")
         }
-        #expect(analyzer.analyses == 12)
+        #expect(analyzer.analyses == 15)
     }
 
     @Test("保存した前フレームの値は、次の解析で変わらない")
     func savedLevelsAreIndependentOfTheNextAnalysis() {
         let analyzer = AudioAnalyzer()
-        let loud = Self.probeWindows[3].window
+        let loud = Self.probeSpans[3].span
         let first = analyzer.analyze(loud)
         let saved = first
         let expected = AudioAnalysis.analyze(loud)
-        // 別の窓を解析しても、保存した値の配列は書き換わらない
-        for window in Self.probeWindows { _ = analyzer.analyze(window.window) }
+        // 別の区間を解析しても、保存した値の配列は書き換わらない
+        for probe in Self.probeSpans { _ = analyzer.analyze(probe.span) }
         #expect(first.spectrum == expected.spectrum)
         #expect(first.spectrumLevels == expected.spectrumLevels)
         #expect(saved == expected)
         // 続けて解析した 2 つの値は別の配列になる (片方を書き換えても他方に響かず、どちらも参照の値)
-        let tone = Self.probeWindows[1].window
+        let tone = Self.probeSpans[1].span
         var second = analyzer.analyze(loud)
         let third = analyzer.analyze(tone)
         #expect(second == expected)
@@ -200,13 +195,25 @@ struct AudioAnalysisTests {
         #expect(analyzer.analyze(loud) == expected)
     }
 
-    @Test("無音にすると、置かれていた窓を解かずに捨て、無音を返す")
-    func silencingDropsTheHeldWindow() {
+    @Test("無音にすると、置かれていた区間を解かずに捨て、無音を返す")
+    func silencingDropsTheHeldSpan() {
         var deferred = DeferredLevels()
         #expect(deferred.levels() == .silence)
-        deferred.hold(sine(band: 12))
+        deferred.hold(Self.probeSpans[1].span)
         deferred.silence()
         #expect(deferred.levels() == .silence)
         #expect(deferred.analyses == 0)
     }
+}
+
+/// 標本の流れ `sample` (通し番号から標本を返す) の通し番号 `from`..<`to` を、解析する区間にする
+/// (供給する側と同じ履歴を添える)。
+func span(from: Int, to: Int, sample: (Int) -> Float) -> AudioSpan {
+    let first = AudioAnalysis.firstNeeded(from: from)
+    return AudioSpan(base: first, samples: (first..<to).map(sample), from: from)
+}
+
+/// 標本列 `samples` の通し番号 `from`..<`to` を、解析する区間にする。`loops` なら終わりから頭へ戻って続ける。
+func span(of samples: [Float], from: Int, to: Int, loops: Bool = false) -> AudioSpan {
+    span(from: from, to: to) { loops ? samples[$0 % samples.count] : samples[$0] }
 }

@@ -9,7 +9,7 @@ import simd
 /// 単位の形 × 軸ごとの倍率が、寸法ごとに組んだ形と 1 ビットも違わないこと (#1862・#2386)。
 /// GPU は要らない — 塗りの頂点関数と線の骨が広げる前の値を、CPU の組み立てと突き合わせる。
 @Suite("単位の形と倍率 (#2386)")
-struct UnitShapeScalingTests {
+nonisolated struct UnitShapeScalingTests {
     /// 再現できる乱数 (SplitMix64)。寸法を 0.001〜3000 の対数で散らす。
     private struct Dimensions {
         var state: UInt64

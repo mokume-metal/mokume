@@ -7,7 +7,7 @@ import Testing
 
 /// 読み出した画素 (``PixelBuffer``) の検査。値を直に組むので GPU を要さない。
 @Suite("読み出した画素")
-struct PixelBufferTests {
+nonisolated struct PixelBufferTests {
     /// 幅と高さを違えた小さな画素。縦横を取り違えると範囲の判定がずれる。
     ///
     /// `nonisolated` なのは、検査の引数の並びが隔離の外で組まれるため。

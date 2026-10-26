@@ -326,12 +326,17 @@ final class PointerAndKeys: Sketch {
             circle(point.x, point.y, 6)
         }
 
-        // 落としたファイルの枠。**落とした間だけ描く** — 触らずに書き出した絵は変えない
-        noFill()
-        stroke(120, 230, 160, 200)
-        strokeWeight(2)
-        for drop in dropped {
-            square(drop.x - 20, drop.y - 20, 40)
+        // 落としたファイルの枠。**落とした間だけ、描き方を保って描く** — 塗りや線を変えたまま
+        // 後の図形へ持ち越すと、触らずに書き出した絵 (台帳の 1 枚) まで変わる
+        if !dropped.isEmpty {
+            push {
+                noFill()
+                stroke(120, 230, 160, 200)
+                strokeWeight(2)
+                for drop in dropped {
+                    square(drop.x - 20, drop.y - 20, 40)
+                }
+            }
         }
 
         // 矢印で動かす四角。押している矢印があれば明るくなる

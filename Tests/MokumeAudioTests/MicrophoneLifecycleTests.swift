@@ -11,7 +11,7 @@ import MokumeCore
 /// 許可は 1 度答えると戻せず、抜き差しは手で行うので、実機では組み合わせを回せない。
 /// 判断を ``MicrophoneLifecycle`` に閉じてあるので、ここで全部の道を通す。
 @Suite("マイクの状態の移り変わり")
-struct MicrophoneLifecycleTests {
+nonisolated struct MicrophoneLifecycleTests {
     @Test("許可が未決定なら、許可を求めて待つ")
     func undecidedAsksAndWaits() {
         var lifecycle = MicrophoneLifecycle()
