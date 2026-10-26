@@ -30,6 +30,15 @@ jobs:
       - run: |
           mkdir -p .build
           make test-release 2>&1 | tee .build/test-log.txt
+      # assertion/buildの失敗でも、読めた件数・欠落とSHA/構成/入力条件を残す。
+      - name: 全探索の記録をまとめる
+        if: always()
+        run: |
+          mkdir -p .build
+          result=0
+          python3 scripts/check-geometry-record.py .build/test-results-geometry-swift-testing.xml --configuration debug --summary .build/geometry-debug.md || result=1
+          python3 scripts/check-geometry-record.py .build/test-results-release-swift-testing.xml --configuration release --summary .build/geometry-release.md || result=1
+          exit "$result"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
