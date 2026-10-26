@@ -22,7 +22,12 @@ final class ShapedLine {
     /// 行の送り幅 (画素)。カーニング・合字を含む。
     let width: Float
     /// 字形ごとに焼き場で引いた結果の控え。頁の通し番号が一致する間だけ使える (``Typeface/placed`` と同じ約束)。
+    /// 段 0 (`textSize` の大きさのまま) の字形を入れる。
     var placed: [PlacedGlyph?]
+    /// ``placed`` の、拡大した段 (0 より上) の控え (#3251)。**段をキーに、字形ごとの控えの並びを持つ** —
+    /// ``Typeface/placedScaled`` が (字・段) をキーに持つのと同じ約束で、頼んだ段について答えが決まった字形
+    /// (``Canvas/GlyphLookup/settled``) だけが入る。使った段の数だけ並びが増える。
+    var placedScaled: [Int: [PlacedGlyph?]] = [:]
 
     init(glyphs: [Glyph], width: Float) {
         self.glyphs = glyphs

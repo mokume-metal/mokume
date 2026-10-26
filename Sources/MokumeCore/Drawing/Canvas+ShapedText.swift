@@ -86,27 +86,50 @@ extension Canvas {
     }
 
     /// 組版した 1 行を置く。字形は組版が決めた位置 (`x`・`y`) に置く。
+    ///
+    /// **字を焼く段と先送りは `text()` の ``drawLine(_:face:x:baseline:color:)`` と同じ** (#3251) — 変換が字を拡げる
+    /// 量から焼く段を行ごとに 1 度決め、段 > 0 の字形は拡大に合わせた画素で引く。上限を越えて近い段で置いた字は、
+    /// 先送りした四角として控え、フレームの終わりに払う (``settleDeferredGlyphs(baking:)``)。
     private func drawShapedLine(_ line: ShapedLine, x: Float, baseline: Float, color: LinearRGBA) {
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard !line.glyphs.isEmpty else { return }
         let pen = shapedPenStart(at: x, width: line.width)
+        // 変換が字を拡げる量から、焼く段を決める。**行ごとに 1 度** (行の中で変換は変わらない・#2446)
+        let step = glyphStep
 
         for (index, glyph) in line.glyphs.enumerated() {
-            let entry: GlyphAtlas.Entry
-            // 同じ頁で引いたことのある字形は、焼き場を引かない
-            if let placed = line.placed[index], placed.pageSerial == atlas.pageSerial {
-                entry = placed.entry
-            } else if let found = glyphEntry(for: glyph.resolved) {
-                // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
-                line.placed[index] = PlacedGlyph(
-                    pageSerial: atlas.pageSerial, entry: found, advance: 0)
-                entry = found
-            } else {
+            let penX = pen + glyph.x
+            let glyphBaseline = baseline - glyph.y
+            // 同じ頁で、同じ段で引いたことのある字形は、焼き場を引かない
+            let known = step == 0 ? line.placed[index] : line.placedScaled[step]?[index]
+            if let placed = known, placed.pageSerial == atlas.pageSerial {
+                if !placed.entry.isBlank {
+                    appendGlyphQuad(placed.entry, penX: penX, baseline: glyphBaseline, color: color)
+                }
                 continue
             }
+            guard let found = glyphLookup(for: glyph.resolved, step: step) else { continue }
+            let entry = found.entry
+            // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
+            let placed = PlacedGlyph(pageSerial: atlas.pageSerial, entry: entry, advance: 0)
+            if step == 0 {
+                line.placed[index] = placed
+            } else if found.settled {
+                // 頼んだ段について答えが決まったときだけ (`text()` の ``Typeface/placedScaled`` と同じ)。
+                // 先送りした字と、頁が溢れて低い段で描いた字は控えない — 次のフレームで頼んだ段を焼き直す
+                line.placedScaled[step, default: Array(repeating: nil, count: line.glyphs.count)][index] = placed
+            }
             if !entry.isBlank {
-                appendGlyphQuad(
-                    entry, penX: pen + glyph.x, baseline: baseline - glyph.y, color: color)
+                // 先送りした字は、先送りした字だけの列へ置き、フレームの終わりに絵が残るなら払う
+                if let key = found.deferredKey, prepareDeferredRun() {
+                    let start = appendGlyphQuad(
+                        entry, penX: penX, baseline: glyphBaseline, color: color, inDeferredRun: true)
+                    noteDeferredGlyph(
+                        start: start, placedWith: entry, key: key, font: glyph.resolved.font,
+                        penX: penX, baseline: glyphBaseline, color: color)
+                } else {
+                    appendGlyphQuad(entry, penX: penX, baseline: glyphBaseline, color: color)
+                }
             }
         }
     }
