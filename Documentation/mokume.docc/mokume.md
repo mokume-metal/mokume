@@ -356,6 +356,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 | --- | --- | --- |
 | `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録る間を 2 つで挟む。`####` はフレーム番号ではなく、録りの中の通し番号 (0 から) |
 | p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
+| p5.js 2D の `background(0, 20)` (前の絵に薄く重ねて残像になる) | ``SketchPart/background(_:_:)`` (面を置き換える) | 残像にならない。薄い四角を `rect` で重ねて作る (作り方は ``SketchPart/background(_:_:)`` の例) |
+| `setup()` で書いた `translate`・`rotate`・視点 (以降の絵に効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` で書くと警告して無視する。`draw()` の中で書く。1 枚だけ描くなら `draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
 | p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |
 | Processing `keyPressed()` (押したままで連射) | ``Sketch/keyPressed()`` (押した 1 回だけ) | 押している間ずっと効かせるものは、`draw()` で `keyboard.isPressed(_:)` を読む |
 
