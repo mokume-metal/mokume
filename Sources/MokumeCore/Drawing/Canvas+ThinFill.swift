@@ -138,23 +138,19 @@ extension Canvas {
                 && finite(coverageMode) && finite(table0) && finite(table1) && finite(table2)
         }
 
-        /// 雛形が持つ片の数の区間: 1・``shortCapacity``・16 と、そこから 8 刻みで上限の
-        /// ``Canvas/thinEllipseSliceLimit`` まで (計 9 つ)。
-        /// **置き場所の片の数が入る最小の区間を雛形の鍵に入れる。** 置き場所ごとに片の数が変わっても
-        /// 同じ区間に収まる間は雛形を割らず、使わない片は頂点段が潰す。大きい区間の雛形は小さい区間の
-        /// 置き場所も受ける (``Canvas/FlatKey/holds(_:)``) ので、割れるのは区間が上がるときだけである。区間が下がる・
-        /// 同じ区間の置き場所は割れず、**区間が上がり続ける 1 つの並びの中なら高々 8 回**で済む (置き場所の
-        /// 並びが途中で別の図形に変わって雛形を閉じれば、そこから数え直しになる)。
-        /// 区間の目的は、小さい円や短い楕円を、いつも 64 片ぶん (384 頂点) の頂点関数で流さず、長い楕円も使わない片を 8 片未満に抑えること (頂点関数の費用が頂点数にほぼ比例するため)。
+        /// 雛形が持つ片の数: 置き場所の片の数そのもの (上限は ``Canvas/thinEllipseSliceLimit``)。
+        /// **置き場所の片の数を雛形の鍵に入れる。** 置き場所ごとに片の数が変わっても、小さい置き場所は
+        /// 大きい片の数の雛形に受ける (``Canvas/FlatKey/holds(_:)``) ので、割れるのは片の数が上がるときだけで、
+        /// 使わない片は頂点段が潰す。片の数が上がり続ける 1 つの並びの中なら、雛形の開き直しは高々
+        /// 上限 - 1 回 (置き場所の並びが途中で別の図形に変わって雛形を閉じれば、そこから数え直しになる)。
+        ///
+        /// **使わない片は頂点段が潰しても、頂点の数には数えられ、頂点関数と図形の組み立てを通る**
+        /// (面積 0 でも省けない)。かつては 1・10・16 と 8 刻みで 64 までの 9 つの区間に丸め、開き直しを高々
+        /// 8 回に抑えていたが、長さ 40 の楕円 (40〜41 片) が 48 片の雛形で 17% 余分な頂点を流し、GPU のフレーム時間が
+        /// CPU で組み直す形より 9% 長かった (#3178)。片の数そのものにすれば、余分は上がる途中の 1 回ぶんだけになる。
         static func capacity(forPieces count: Int) -> Int {
-            if count <= 1 { return 1 }
-            if count <= shortCapacity { return shortCapacity }
-            if count <= 16 { return 16 }
-            return min((count + 7) & ~7, Canvas.thinEllipseSliceLimit)
+            min(max(count, 1), Canvas.thinEllipseSliceLimit)
         }
-
-        /// 長い向きが短い楕円 (``Canvas/thinFillShortSpan`` 未満) が使いうる片の数の上限。
-        static let shortCapacity = Int(Canvas.thinFillShortSpan)
 
         /// 片 `k` の被覆。**置かない片は 0 以下** (表の 0・弦が 0 の端)。
         func coverage(of index: Int, from: Float, to: Float) -> Float {
@@ -862,8 +858,8 @@ extension Canvas.FlatForm {
 }
 
 extension Canvas.FlatKey {
-    /// 細い塗りの片の数の区間だけが違う鍵なら、大きいほうの区間にした鍵 (#2208)。細い塗りかどうかが
-    /// 違うか、区間以外が違えば `nil`。
+    /// 細い塗りの片の数だけが違う鍵なら、大きいほうの片の数にした鍵 (#2208)。細い塗りかどうかが
+    /// 違うか、片の数以外が違えば `nil`。
     func joined(with other: Canvas.FlatKey) -> Canvas.FlatKey? {
         guard (thinFillCapacity > 0) == (other.thinFillCapacity > 0) else { return nil }
         var widest = self
@@ -873,7 +869,7 @@ extension Canvas.FlatKey {
         return widest == same ? widest : nil
     }
 
-    /// この鍵の雛形が `other` の置き場所も受けられるか。区間以外が同じで、この雛形の区間が `other` 以上。
+    /// この鍵の雛形が `other` の置き場所も受けられるか。片の数以外が同じで、この雛形の片の数が `other` 以上。
     func holds(_ other: Canvas.FlatKey) -> Bool {
         joined(with: other)?.thinFillCapacity == thinFillCapacity
     }
