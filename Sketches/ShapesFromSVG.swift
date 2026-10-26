@@ -16,6 +16,11 @@ import mokume
 /// **上端の波は書き出しの絵には出ない。** 読んでいる間フレームを止めない読み方
 /// (`requestShape`) で読んでいて、書き出しはフレームを続けて進めるだけで読み終わりを受け取る
 /// 番が回らない (`crowd-and-model` の波打つ板と同じ)。窓で走らせれば、起動して間もなく現れる。
+/// 確認: `swift run reference-sketches shapes-from-svg` で上端に波が現れることを見る。
+/// 左のロゴ・中央の拡大・右の回る印は同期読み込みで、波だけが非同期の到着後に加わる。
+/// 到着の実時間は固定しない。`--render` の静止画・連番は波の未到着像を撮るので、
+/// 枚数を増やすだけでは成功後を確認できない。失敗の切り分けには資源の診断も要る。
+///
 final class ShapesFromSVG: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 1200, height: 600, title: "shapes from svg")

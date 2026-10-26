@@ -42,6 +42,14 @@ import mokume
 /// [#2580]: https://github.com/mokume-metal/mokume/issues/2580
 /// [#2598]: https://github.com/mokume-metal/mokume/issues/2598
 /// [#2763]: https://github.com/mokume-metal/mokume/issues/2763
+/// 確認: `swift run reference-sketches bricks-and-ball` で窓を開く。
+/// 最初の約1秒は球が静止する。← → でパドルを球の下へ運び、衝突後に上昇すること、
+/// ブロックが消えるごとに SCORE が10増えることを見る。次はパドルを端に寄せて失球させ、
+/// BALLS が1減り、球が出発点で約1秒待って再開することを見る。0になったら return で
+/// SCORE 0 / BALLS 3 とブロックが戻る。expose でも score / balls / ballY を対応させる。
+/// `--render /tmp/mokume-frames --frames 150` は無操作での初動まで。45枚目は待機中で、
+/// パドル操作後の成功は保証しない。窓の実時間で待つ秒数は決定論の入力ではない。
+///
 final class BricksAndBall: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 480, height: 270, title: "bricks and ball", clock: .frames)

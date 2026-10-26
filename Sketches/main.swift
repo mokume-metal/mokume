@@ -10,7 +10,17 @@
 //   swift run reference-sketches            一覧
 //   swift run reference-sketches <名前>      窓を開いて走らせる
 //   swift run reference-sketches --render <置き場>              1 枚ずつ書き出す
-//   swift run reference-sketches --render <置き場> --frames 90  連番で書き出す (動きの証跡用)
+//   swift run reference-sketches --render <置き場> --frames 150  連番で書き出す (動きの証跡用)
+//
+// 観測する範囲:
+// - 静止画は共通の45枚目 (既定60 fpsなら約0.73秒)。配置の比較用で、状態遷移は見ない。
+// - 連番は f.0000.png から。150枚で約2.5秒、300枚で約5秒を60 fpsで再生できる。
+//   面の差し替え・ゲームパッドは150枚、周囲の3種類は300枚。各例の冒頭に見る区間がある。
+// - --render は外部接続を除く全例を出す。名前で1例に絞る入口ではないため、枚数を増やすと
+//   全例ぶんの描画時間・PNG保存量が増える。確認したい切り替わりの直後までに留める。
+// - キー・マウス操作、非同期読込の成功後は名前を指定して窓で見る。連番の枚数を増やしても
+//   main actor に読み込み完了を受け取る番は回らない。窓で待つ実時間は固定の入力ではない。
+// この案内は手動確認用。台帳の45枚目を遅らせたり、新しい必須検査を設けたりはしない。
 
 import AppKit
 import Foundation

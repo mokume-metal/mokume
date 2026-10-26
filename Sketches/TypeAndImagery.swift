@@ -16,6 +16,10 @@ import mokume
 ///
 /// その右は、`imageMode(.center)` で白い点を中心に置いた**左上の切り出し** (引数 9 つの
 /// `image`)、`Image.get` で絵の 1 画素を読んだ色の円、`+` で葉と茎を 1 つに畳んだ形。
+/// 確認: `swift run reference-sketches type-and-imagery` で窓を開き、下段右の仮の絵が
+/// 左・中央と同じ色の絵へ替わることを見る。到着の実時間は固定しない。
+/// `--render` は枚数を増やしても未到着の像を撮る。失敗と未到着の区別は資源の診断も要る。
+///
 final class TypeAndImagery: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 720, title: "type and imagery")
