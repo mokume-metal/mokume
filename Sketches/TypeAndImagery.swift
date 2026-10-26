@@ -97,11 +97,10 @@ final class TypeAndImagery: Sketch {
         pending?.fill(color(64, 76, 102))
         // 待つのは Task の仕事。届くまでは下の draw() が仮の絵を置く
         // 3枚目は追加の比較。失敗しても左の2枚を見られるように続ける。
-        let surface = canvas
         Task {
             do {
                 try PNGFile.write(picture, to: requestedURL)
-                requested = try await surface.requestImage(requestedURL.path)
+                requested = try await requestImage(requestedURL.path)
             } catch {
                 requestFailure = "requestImage (失敗・ログ参照)"
                 print("type-and-imagery: requestImage: \(error)")
