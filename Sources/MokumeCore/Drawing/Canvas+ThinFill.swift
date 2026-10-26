@@ -843,7 +843,9 @@ extension Canvas.FlatForm {
     /// 広げる。扇 (一周でない弧) は `nil`。
     var namedFill: Canvas.Outline.NamedFill? {
         switch self {
-        case .rect(let width, let height):
+        case .rect(let width, let height), .roundedRect(let width, let height, _):
+            // 角丸の矩形の細い塗りは、角を丸めない矩形と同じ帯で広げる (周の閉包の ``Canvas/roundedRectOutline`` も
+            // 同じ `namedFill` を持つ)
             Canvas.Outline.NamedFill(
                 isEllipse: false, center: SIMD2(width / 2, height / 2),
                 half: SIMD2(width / 2, height / 2))
