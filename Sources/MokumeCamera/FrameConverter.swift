@@ -76,18 +76,42 @@ nonisolated final class FrameConverter {
         let colorSpace: String?
     }
 
-    /// 乗算を戻した元を置く器。**毎枚確保しない** (4K で 33 MB)。大きさが変わったときだけ取り直す。
-    private var straightened: (pointer: UnsafeMutableRawPointer, capacity: Int)?
+    /// 毎枚確保しない器。**足りないときだけ取り直す** (4K で 1 枚 33 MB)。
+    private struct Reusable {
+        private var storage: (pointer: UnsafeMutableRawPointer, capacity: Int)?
 
-    private func scratch(byteCount: Int) -> UnsafeMutableRawPointer {
-        if let straightened, straightened.capacity >= byteCount { return straightened.pointer }
-        straightened?.pointer.deallocate()
-        let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: 16)
-        straightened = (pointer, byteCount)
-        return pointer
+        /// 先頭のアドレス (まだ確保していなければ `nil`)。検査が「取り直していない」を見るための口。
+        var address: UnsafeRawPointer? { storage.map { UnsafeRawPointer($0.pointer) } }
+
+        /// `byteCount` バイト以上の器。**中身は前の枚のまま**で、0 では埋めない (呼ぶ側が全部書く)。
+        mutating func pointer(byteCount: Int) -> UnsafeMutableRawPointer {
+            if let storage, storage.capacity >= byteCount { return storage.pointer }
+            storage?.pointer.deallocate()
+            let pointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: 16)
+            storage = (pointer, byteCount)
+            return pointer
+        }
+
+        func release() { storage?.pointer.deallocate() }
     }
 
-    deinit { straightened?.pointer.deallocate() }
+    /// 乗算を戻した元を置く器。
+    private var straightened = Reusable()
+
+    /// 大きさが違う元を、元の大きさのまま変換して置く器 (切り取って縮める前)。
+    ///
+    /// ``straightened`` とは別にする — 乗算を戻した元は、同じ呼び出しの中で変換の入力として
+    /// 読まれ続けるので、変換の行き先にはできない。**代償:** 大きさが違う元が一度でも来たら、
+    /// このインスタンスが生きている間、元の大きさ 1 枚分 (4K で 33 MB) を持ち続ける。
+    private var resized = Reusable()
+
+    /// 検査用: 大きさが違う元の変換に使う器の先頭のアドレス。続けて呼んで変わらなければ、取り直していない。
+    var resizedBufferAddress: UnsafeRawPointer? { resized.address }
+
+    deinit {
+        straightened.release()
+        resized.release()
+    }
 
     init(width: Int, height: Int, alpha: Alpha = .opaque) {
         self.width = width
@@ -112,7 +136,7 @@ nonisolated final class FrameConverter {
         if alpha == .straight, sourceCount == 1, Self.declaresPremultipliedAlpha(buffer) {
             let rowBytes = Int(sources[0].width) * 4
             var target = vImage_Buffer(
-                data: scratch(byteCount: rowBytes * Int(sources[0].height)),
+                data: straightened.pointer(byteCount: rowBytes * Int(sources[0].height)),
                 height: sources[0].height, width: sources[0].width, rowBytes: rowBytes)
             let unpremultiplied = vImageUnpremultiplyData_RGBA8888(
                 &sources[0], &target, vImage_Flags(kvImageNoFlags))
@@ -127,32 +151,29 @@ nonisolated final class FrameConverter {
                 vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
             }
         }
-        // 大きさが違えば、元の大きさで変換してから切り取って縮める
-        var full = [UInt8](repeating: 0, count: sourceWidth * sourceHeight * 4)
-        let converted = full.withUnsafeMutableBytes { raw in
-            var destination = vImage_Buffer(
-                data: raw.baseAddress, height: vImagePixelCount(sourceHeight),
-                width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
-            return vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
-        }
+        // 大きさが違えば、元の大きさで変換してから切り取って縮める。**変換の行き先は持ち回しの器**
+        // (毎枚 0 埋めで確保しない)。全部を書き直すので、前の枚の中身は誰も読まない
+        let full = resized.pointer(byteCount: sourceWidth * sourceHeight * 4)
+        var destination = vImage_Buffer(
+            data: full, height: vImagePixelCount(sourceHeight),
+            width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
+        let converted = vImageConvert_AnyToAny(
+            converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
         guard converted == kvImageNoError else { throw .conversion(converted) }
         return try Self.picture(width: width, height: height, alpha: alpha, scaled: true) { destination in
-            full.withUnsafeMutableBytes { raw in
-                var whole = vImage_Buffer(
-                    data: raw.baseAddress, height: vImagePixelCount(sourceHeight),
-                    width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
-                // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
-                // 不透明な画素の縁へにじむ
-                if alpha == .straight {
-                    let premultiplied = vImagePremultiplyData_RGBA8888(
-                        &whole, &whole, vImage_Flags(kvImageNoFlags))
-                    guard premultiplied == kvImageNoError else { return premultiplied }
-                }
-                var crop = Self.centreCrop(
-                    of: raw.baseAddress!, width: sourceWidth, height: sourceHeight,
-                    toAspectOf: width, height)
-                return vImageScale_ARGB8888(&crop, &destination, nil, vImage_Flags(kvImageNoFlags))
+            var whole = vImage_Buffer(
+                data: full, height: vImagePixelCount(sourceHeight),
+                width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
+            // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
+            // 不透明な画素の縁へにじむ
+            if alpha == .straight {
+                let premultiplied = vImagePremultiplyData_RGBA8888(
+                    &whole, &whole, vImage_Flags(kvImageNoFlags))
+                guard premultiplied == kvImageNoError else { return premultiplied }
             }
+            var crop = Self.centreCrop(
+                of: full, width: sourceWidth, height: sourceHeight, toAspectOf: width, height)
+            return vImageScale_ARGB8888(&crop, &destination, nil, vImage_Flags(kvImageNoFlags))
         }
     }
 
@@ -219,32 +240,42 @@ nonisolated final class FrameConverter {
 
     /// 詰め物の無い `width * height * 4` の器を作り、`fill` に書かせて返す。
     ///
+    /// **器は 0 で埋めずに確保する** (録画側の読み戻しと同じ・#2372)。`fill` が全画素を書き、
+    /// 不透明度も続く処理が決めるので、前の中身は誰も読まない。vImage が失敗したら 1 バイトも
+    /// 書けたことにせず (`initializedCount` を 0 のまま)、空の配列を捨てて断る。
+    ///
     /// - Parameters:
     ///   - alpha: ``Alpha/opaque`` なら不透明度を 255 に埋める。
     ///   - scaled: `fill` が乗算したまま縮めた絵を書くとき `true`。乗算を戻す。
     ///   - fill: 器へ書き、vImage の結果を返す。
-    private static func picture(
+    ///
+    /// 検査が失敗の道を直に突くため、`private` にしていない。
+    static func picture(
         width: Int, height: Int, alpha: Alpha, scaled: Bool = false,
         fill: (inout vImage_Buffer) -> vImage_Error
     ) throws(Failure) -> DisplayImage {
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let status = bytes.withUnsafeMutableBytes { raw in
+        var status = kvImageNoError
+        let bytes = [UInt8](unsafeUninitializedCapacity: width * height * 4) { buffer, initializedCount in
+            initializedCount = 0
             var destination = vImage_Buffer(
-                data: raw.baseAddress, height: vImagePixelCount(height),
+                data: buffer.baseAddress, height: vImagePixelCount(height),
                 width: vImagePixelCount(width), rowBytes: width * 4)
-            let filled = fill(&destination)
-            guard filled == kvImageNoError else { return filled }
-            switch alpha {
-            case .opaque:
-                // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
-                // バイトが 0x8、最後のバイトが 0x1
-                return vImageOverwriteChannelsWithScalar_ARGB8888(
-                    255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
-            case .straight:
-                guard scaled else { return kvImageNoError }
-                return vImageUnpremultiplyData_RGBA8888(
-                    &destination, &destination, vImage_Flags(kvImageNoFlags))
+            status = fill(&destination)
+            if status == kvImageNoError {
+                switch alpha {
+                case .opaque:
+                    // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
+                    // バイトが 0x8、最後のバイトが 0x1
+                    status = vImageOverwriteChannelsWithScalar_ARGB8888(
+                        255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
+                case .straight:
+                    if scaled {
+                        status = vImageUnpremultiplyData_RGBA8888(
+                            &destination, &destination, vImage_Flags(kvImageNoFlags))
+                    }
+                }
             }
+            if status == kvImageNoError { initializedCount = buffer.count }
         }
         guard status == kvImageNoError else { throw .conversion(status) }
         return DisplayImage(width: width, height: height, bytes: bytes)
