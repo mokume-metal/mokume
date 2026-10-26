@@ -118,6 +118,37 @@ extension SampleRingTests {
         #expect(ring.latest(0).isEmpty)
     }
 
+    /// 標本の値を通し番号と同じにして書く。区間の写しが、通し番号どおりの標本を、折り返しの前後・ちょうど
+    /// 容量・0 件・直後のどれでも返すこと (環の折り返しを、剰余ではなく高々 2 区間の連続コピーで写す・#3255)。
+    @Test("区間の写しは、折り返しの前後でも通し番号どおりの標本を返す", arguments: [3, 8, 16, 100])
+    func snapshotSinceCopiesTheWrappedSpan(capacity: Int) {
+        let ring = SampleRing(capacity: capacity)
+        var end = 0
+        var previous = 0
+        // 書く数を変えて、折り返しの位置を毎回ずらす (容量ちょうど・1 つ・容量より長い書き込みを含む)
+        for count in [1, capacity - 1, 2, capacity, 5, 3 * capacity + 1, 0, 7, capacity + 1, 1] {
+            let start = end
+            end += count
+            ring.write(count: count, hostTime: UInt64(end)) { Float(start + $0) }
+            let (span, hostTime) = ring.snapshot(since: previous)
+            let from = max(min(AudioAnalysis.limited(from: previous, to: end), end), end - capacity)
+            let first = max(AudioAnalysis.firstNeeded(from: from), end - capacity, 0)
+            #expect(span.base == first, "capacity \(capacity), end \(end)")
+            #expect(span.from == from)
+            #expect(span.samples == (first..<end).map(Float.init), "capacity \(capacity), end \(end)")
+            #expect(hostTime == UInt64(end))
+            previous = end
+        }
+    }
+
+    @Test("区間が空なら、空の標本を返す")
+    func snapshotSinceOfNothingIsEmpty() {
+        let ring = SampleRing(capacity: 8)
+        let (span, _) = ring.snapshot(since: 0)
+        #expect(span.samples.isEmpty)
+        #expect(span.isEmpty)
+    }
+
     @Test("単一書き手/読み手の並行中も、標本・総数・時刻は同じ連続窓を指す")
     func concurrentSnapshots() async {
         let valid = await Task.detached { Self.stressSnapshots() }.value
