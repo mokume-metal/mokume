@@ -88,7 +88,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
     static let capacity = 64
     /// 1 度に作る標本の数の上限。これより長い区切りは分けて作る。
     static let chunk = 512
-    /// 出口の標本の写しの長さ (標本)。解析の窓 (1024) の 8 倍。
+    /// 出口の標本の写しの長さ (標本)。解析の窓 (1024) の 8 倍で、解析の区間の上限 (``AudioAnalysis/maxSpan``) と、
+    /// その前の履歴 (最初の窓の頭まで。最大 1535 標本) が収まる。48 kHz で約 0.17 秒。
     static let meterCapacity = AudioAnalysis.windowSize * 8
     /// 操作の列の長さ。2 のべき乗。
     private static let queueCapacity = 4096

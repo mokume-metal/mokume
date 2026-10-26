@@ -99,7 +99,7 @@ struct BuildReport: Encodable, Equatable {
     /// 別々に組むと基準を揃えても同じ形で割れる
     /// ([#730](https://github.com/mokume-metal/mokume/issues/730))。
     static func statusURL(under facetBase: URL) -> URL {
-        WorkDirectory.facet("build", under: facetBase)
+        WorkDirectory.facet(WorkDirectory.buildFacetName, under: facetBase)
             .appendingPathComponent("status.json", isDirectory: false)
     }
 
@@ -263,6 +263,14 @@ struct BuildReport: Encodable, Equatable {
     /// 最初の絵を出す前に失敗で終わった子の理由の結び。理由の組み立て (``WatchSession/failedStartReason(tool:place:departure:)``)
     /// と、プレビューの詰め方 (``notStartedNotice``) が同じ綴りを見る。
     static let firstFrameSuffix = " before drawing its first frame"
+
+    /// 起動できなかった理由の 2 行目の頭。**子が自分で渡した理由の最初の行**が続く
+    /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    ///
+    /// 見張りが書き (``WatchSession``)、窓口が読む (``Facets/notStartedAnswer()``)。**この行が有るときだけ、
+    /// 子の言葉が `output` の頭に続く。** 子が理由を置けなかった回 (落ちた・起こせなかった) の理由には無いので、
+    /// 窓口は無い言葉を約束しない。
+    static let sketchReportedPrefix = "The sketch reported: "
 
     /// 終われと言われた後に作り直しが通った回の、起こさなかった理由 (本文の頭に置く)。
     static let stopRequestedNotice =

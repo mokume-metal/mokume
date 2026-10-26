@@ -19,7 +19,7 @@ import simd
 ///
 /// [#1538]: https://github.com/mokume-metal/mokume/issues/1538
 @Suite("交わった周を分ける: 縮退した入力")
-struct NonzeroSplitTests {
+nonisolated struct NonzeroSplitTests {
     private typealias Triangle = (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)
 
     /// 回り数との食い違い。
@@ -475,6 +475,7 @@ struct NonzeroSplitTests {
     /// 交点の読み取り位置。片方の端だけに書かれた辺は、書かれていない端を倒れ先で埋めて
     /// から補間する。捨てると、交点が形の囲みの箱の値へ倒れ、継ぎ目が出る。
     @Test("片方の端だけに読み取り位置が書かれた辺でも、交点の読み取り位置を補間する")
+    @MainActor
     func crossingsInterpolateAHalfWrittenEdge() throws {
         let white = LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
         func point(_ x: Float, _ y: Float, uv: SIMD2<Float>?) -> BuildingVertex {

@@ -307,6 +307,14 @@ jobs:
     concurrency:
       group: render-scheduled-debug
       cancel-in-progress: false
+    # 入力を生成する検査 (Tests/MokumeProbe・#3207) は、PR・queue では固定の seed で回し、
+    # 新しい seed と多い件数はこの定期の検査だけで回す (#3207 の判断 2)。赤の文面が名乗る seed を
+    # MOKUME_PROBE_SEED に渡せば、同じ入力の 1 件だけを再現できる。step は render / render-pr と
+    # 揃える約束 (render_workflow_test.py の 13) なので、違いはジョブの env に置く。倍率は、この
+    # ジョブの枠 (30 分) の残り 8〜12 分に増分が収まる値に置く (#3216)
+    env:
+      MOKUME_PROBE_FRESH: "1"
+      MOKUME_PROBE_SCALE: "4"
     steps:
       - uses: actions/checkout@v7
       # 検査を走らせられる環境かを先に見る (#2588。render と同じ)

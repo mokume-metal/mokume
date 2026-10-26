@@ -8,7 +8,7 @@ import Testing
 
 /// 受け口が持つ送り元の台帳 (#2225)。繋ぎも時計も使わず、閉じる判断と数だけを見る。
 @Suite("送り元の台帳")
-struct SenderLedgerTests {
+nonisolated struct SenderLedgerTests {
     /// 台帳に載せる送り元の代わり。
     final class Peer {
         let name: String

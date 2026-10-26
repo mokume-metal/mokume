@@ -25,7 +25,7 @@ import simd
 ///
 /// [#2656]: https://github.com/mokume-metal/mokume/issues/2656
 @Suite("穴が囲んだ島の塗り")
-struct IslandHolesTests {
+nonisolated struct IslandHolesTests {
     nonisolated static let outer: [SIMD2<Float>] = [
         SIMD2(0, 0), SIMD2(200, 0), SIMD2(200, 200), SIMD2(0, 200),
     ]

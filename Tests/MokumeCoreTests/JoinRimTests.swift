@@ -11,7 +11,7 @@ import simd
 ///
 /// [#1644]: https://github.com/mokume-metal/mokume/issues/1644
 @Suite("折れ目の形の式")
-struct JoinRimTests {
+nonisolated struct JoinRimTests {
     /// 同じ向きへ折り返す角では cos が −1 になる。丸めで −1 を越えると平方根が数でなく
     /// なっていた (整数の向き 1640 通りのうち 296 通り)。
     @Test("同じ向きへ折り返す角でも、どの向きでも数でない点を返さず、帯を同じ長さだけ延ばす", arguments: [StrokeJoin.miter, .bevel])

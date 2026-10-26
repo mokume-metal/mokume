@@ -35,18 +35,24 @@ import MokumeDiagnostics
 ///
 /// ## 解析するのは、その音の出口
 ///
-/// 各フレームでは、その音の出口で終わる 1024 標本の窓を ``AudioIn`` と同じ解析に通す。窓を切るのは
-/// フレームの頭で、**解析は値が読まれたときまで遅らせる** — 値を読まない音の解析は走らず、読んでも
-/// 結果は毎フレーム解析したのと同じである。
+/// 各フレームでは、**前のフレームからその音の出口に出た全標本**(区間)を ``AudioIn`` と同じ解析に通す。
+/// 区間を切るのはフレームの頭で、**解析は値が読まれたときまで遅らせる** — 値を読まない音の解析は走らず、
+/// 読んでも結果は毎フレーム解析したのと同じである。読まれなかったフレームの区間は解かず、次のフレームの
+/// 値に混ぜない。
 /// オシレータとノイズなら音量と包絡を掛けた後 (定位を掛ける前)、エフェクトなら処理した後の
 /// 音である。鳴っていない間は無音 (``level`` が 0) になる。
 ///
+/// 値の意味は ``AudioIn`` と同じで、``rms``・``decibels``・``level``・``peak`` は区間全体、
+/// ``spectrum`` は区間に終わりが入る 512 標本ごとの窓の平均である。窓を置く格子の原点 (標本 0) は、
+/// その音の出口が最初に標本を出したところ。標本が進まなかったフレームは前の値のまま。長く止まった後は、
+/// 区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する。
+///
 /// ## 書き出しでも解析できる
 ///
-/// 窓に出して動かしている間は実際に鳴らし、窓は実際に鳴った標本から取る。書き出し
+/// 窓に出して動かしている間は実際に鳴らし、区間は実際に鳴った標本から取る。書き出し
 /// (`mokume render`) と、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
-/// ``SketchPart/clock``) では**鳴らさず**、標本を「フレームの番号 × 標本化率 ÷ fps」まで進めて窓を
-/// 取る。何を作ってどう操作したかが同じなら、何度書き出しても同じ値になる ([ADR-0028] 決定 7・
+/// ``SketchPart/clock``) では**鳴らさず**、標本を「絶対のフレーム番号 × 標本化率 ÷ fps」の位置まで進めて
+/// 区間を取る。何を作ってどう操作したかが同じなら、何度書き出しても同じ値になる ([ADR-0028] 決定 7・
 /// [ADR-0025] の水準 2)。
 ///
 /// 音を進めるのは音の時計で、``SketchPart/time`` ではない。``SketchPart/pauseTime()`` と
@@ -73,11 +79,13 @@ public class SynthSound: EffectInput {
     /// 鳴らし始めた (エフェクトなら入力を繋いだ) か。解析はここから始める。
     var isActive = false
 
-    /// フレームの頭の窓と、読まれたときに解いた値 (``DeferredLevels``)。
+    /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
+    /// 前のフレームの区間の終わり (出口の標本の通し番号)。
+    private var covered = 0
     private var noticed: Set<String> = []
 
     init(stage: SynthStage, node: RackNode?, name: String) {
@@ -90,11 +98,17 @@ public class SynthSound: EffectInput {
 
     // MARK: - 生の値
 
-    /// 窓の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
+    /// 区間の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
     public var rms: Float { levels.rms }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
     public var decibels: Float { levels.decibels }
-    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。
+    /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。写し方は ``AudioIn/peak`` と同じ。
+    ///
+    /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解くので、`draw()` が読まなかった
+    /// フレームの区間は解かれず、次のフレームの値にも混ざらない。取りこぼしたくない値は、毎フレーム読む。
+    public var peak: Float { levels.peak }
+    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
+    /// 窓の平均。
     public var spectrum: [Float] { levels.spectrum }
 
     // MARK: - 0〜1 へ写した値
@@ -111,18 +125,26 @@ public class SynthSound: EffectInput {
 
     // MARK: - ステージとの受け渡し
 
-    /// フレームごとに、最新の窓を切り出す。**解析は値が読まれたときまで遅らせる** ([#2379])。
+    /// フレームごとに、前のフレーム以後の標本を区間として切り出す。**解析は値が読まれたときまで遅らせる** ([#2379])。
     ///
-    /// 窓はここ (フレームの頭) で決める。読まれたときに引き直すと、フレームの途中で進んだ標本を
-    /// 拾って値が変わる。
+    /// 区間はここ (フレームの頭) で決める。読まれたときに引き直すと、フレームの途中で進んだ標本を
+    /// 拾って値が変わる。鳴らし始める前も、区間の終わりは追い続ける (鳴らし始めた最初のフレームの区間は、
+    /// 前のフレームからの分だけ)。
     ///
     /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
     func refresh() {
-        guard isActive, let node else {
+        guard let node else {
             deferred.silence()
             return
         }
-        deferred.hold(node.meter.latest(AudioAnalysis.windowSize))
+        guard isActive else {
+            deferred.silence()
+            covered = node.meter.total
+            return
+        }
+        let snapshot = node.meter.snapshot(since: covered)
+        covered = snapshot.span.to
+        deferred.hold(snapshot.span)
     }
 
     /// スケッチが終わった。以後の値は無音。

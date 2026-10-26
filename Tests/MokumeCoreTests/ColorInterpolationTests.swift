@@ -19,7 +19,7 @@ import Testing
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 @Suite("2 色の間を取る")
-struct ColorInterpolationTests {
+nonisolated struct ColorInterpolationTests {
     /// 0–255 の読み出しは転送関数と原色の行列を往復するので、最下位で揺れる。
     private func isNear(_ one: Float, _ other: Float, within tolerance: Float = 0.05) -> Bool {
         abs(one - other) < tolerance

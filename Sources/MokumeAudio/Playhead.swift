@@ -6,7 +6,7 @@
 /// 位置は「区切り」で持つ。区切りは鳴らし始めた位置 (``start``) から始まり、そこから鳴った
 /// 標本の数 (`played`) は呼ぶ側が測って渡す — 実際に鳴らしているなら player が描いた数、
 /// 書き出しならフレームの数から決めた数である。どちらで測っても、同じ `played` からは
-/// 同じ位置と同じ窓が出る。だから書き出しの解析は、実時間の再生と同じ時刻の窓から取られる。
+/// 同じ位置と同じ区間 (``span(of:from:after:)``) が出る。だから書き出しの解析は、実時間の再生と同じ位置の区間から取られる。
 ///
 /// 鳴らし始めるたびに区切りを始め直し、止めるときは区切りを締めて位置を ``start`` に残す。
 nonisolated struct Playhead: Equatable {
@@ -79,24 +79,34 @@ nonisolated struct Playhead: Equatable {
         return true
     }
 
-    /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓。**いま鳴っている音**の
-    /// 窓で、入力の窓 (``AudioAnalysis/window(of:sampleRate:endingAt:)``) と同じく古い順に並ぶ。
+    /// 区切りの中で `played` 標本鳴ったところまでの、解析する区間。`covered` は前のフレームの区間の終わり。
     ///
-    /// - 止まっていれば全部 0
-    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り
-    ///   (``leapt``) は、始まりより前をファイルの標本で埋める (ファイルの頭より前は 0)
+    /// **番号は ``start`` + 鳴った標本の数** (ファイルの位置。ループで頭へ戻っても戻さない通し番号) で、
+    /// 窓の格子 (``AudioAnalysis/hop`` ごと) もこの番号に置く。標本は ``sample(at:in:)`` の決まりで
+    /// 読む (始まりより前は 0、飛んで始めた区切りはファイルの標本)。止まっていれば呼ばない。
+    func span(of samples: [Float], from covered: Int, after played: Int) -> AudioSpan {
+        // 1 度だけなら、ファイルの終わりより先は無い (終わりまでを区間にする)
+        let reached = start + max(0, played)
+        let to = isLooping ? reached : min(reached, length)
+        let from = AudioAnalysis.limited(from: min(max(covered, 0), to), to: to)
+        let first = AudioAnalysis.firstNeeded(from: from)
+        return AudioSpan(
+            base: first, samples: (first..<to).map { sample(at: $0, in: samples) }, from: from)
+    }
+
+    /// 区切りの通し番号 `index` (``start`` + 鳴った標本の数) の標本。**区間 (``span(of:from:after:)``) の標本の決まりの正本。**
+    ///
+    /// - 区切りの始まりより前は 0 (まだ鳴らしていない)。ただし鳴っている間に飛んで始めた区切り (``leapt``) は、
+    ///   ファイルの標本で埋める (ファイルの頭より前は 0)
     /// - 1 度だけなら、終わりより後は 0。ループなら頭へ戻って続ける
-    func window(of samples: [Float], after played: Int, size: Int = AudioAnalysis.windowSize)
-        -> [Float]
-    {
-        guard isPlaying, !samples.isEmpty else { return Array(repeating: 0, count: size) }
-        let played = max(0, played)
-        return (0..<size).map { offset in
-            let step = played - size + offset
-            let index = start + step
-            guard step >= 0 else { return leapt && 0 <= index && index < samples.count ? samples[index] : 0 }
-            if isLooping { return samples[index % samples.count] }
-            return index < samples.count ? samples[index] : 0
+    ///
+    /// 検査が、区切りの中の標本の並びを直に読むのにも使う。
+    func sample(at index: Int, in samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        guard index >= start else {
+            return leapt && 0 <= index && index < samples.count ? samples[index] : 0
         }
+        if isLooping { return samples[index % samples.count] }
+        return index < samples.count ? samples[index] : 0
     }
 }

@@ -6,7 +6,7 @@ import Testing
 @testable import MokumeCore
 
 @Suite("作業空間の色")
-struct LinearRGBATests {
+nonisolated struct LinearRGBATests {
     @Test("乗算していない成分は、境界でアルファを乗算される")
     func straightIsPremultipliedAtTheBoundary() {
         let color = LinearRGBA(straightRed: 1, green: 0.5, blue: 0, alpha: 0.5)

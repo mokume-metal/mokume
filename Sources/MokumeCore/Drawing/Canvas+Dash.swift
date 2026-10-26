@@ -199,6 +199,9 @@ extension Canvas {
         // 区間の外では置かない (``Canvas/canPlace``・#1672)。片ごとに言わせず、先に 1 度だけ断る
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard style.hasStroke, style.strokeWeight > 0 else { return }
+        // ベクターへ書くなら、片に分ける前の線と破線の指定を控える。片は控えずに置く (#3139)
+        let held = suspendVectorRecordingDashedLine(a, b)
+        defer { resumeVector(held) }
         switch Self.dashPieces(of: [a, b], by: dash) {
         case .pieces(let pieces):
             for piece in pieces {
@@ -247,10 +250,21 @@ extension Canvas {
         cornerRadius: Float = 0, outline: @autoclosure () -> Outline
     ) {
         guard canPlace else { return warnOutsideFrame(.placing) }
-        appendForm(
-            kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
-            cornerRadius: cornerRadius, strokes: false)
-        outlinesAssembledThisFrame += 1
-        strokeOutline(outline())
+        // 塗りと輪郭は別の口が控えるが、**図形は 1 つ**。書けないものは 1 度だけ数える (#3139)
+        var ring: Outline?
+        countingOneVectorFigure {
+            appendForm(
+                kind, center: center, half: half, arc: arc, arcClosure: arcClosure, fills: true,
+                cornerRadius: cornerRadius, strokes: false)
+            outlinesAssembledThisFrame += 1
+            let made = outline()
+            ring = made
+            // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の周と破線の指定を控える
+            if let sink = vectorSink() {
+                recordVectorOutline(sink, made, fills: false, strokes: true)
+            }
+        }
+        guard let ring else { return }
+        strokeOutline(ring)
     }
 }

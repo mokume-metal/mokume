@@ -18,8 +18,8 @@ import MokumeDiagnostics
 ///
 /// - **実時間** (窓に出しながら動かす) では、ラックを音の流れ (``RackPlayer``) へ入れて実際に鳴らす。
 ///   標本は音の側のスレッドが作る
-/// - **フレームの数え方** (書き出し・検査) では**鳴らさず**、ラックの標本を「フレームの番号 ×
-///   標本化率 ÷ fps」まで進める。窓がフレームの番号だけで決まるので、同じ設定から何度書き出しても
+/// - **フレームの数え方** (書き出し・検査) では**鳴らさず**、ラックの標本を「絶対のフレーム番号 ×
+///   標本化率 ÷ fps」の位置まで進める。区間がフレームの番号だけで決まるので、同じ設定から何度書き出しても
 ///   同じ値になる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)
 /// - 出力が開けないときは、鳴らさずに実時間で進め、そのことを 1 度だけ知らせる
 ///
@@ -203,10 +203,11 @@ final class SynthStage: Inlet {
     private func advanceClock() {
         switch pace {
         case .frames(let frameRate, let origin):
-            // 整数のフレーム数から掛けて割る。秒を足し込まないので、何フレーム目でも丸めがずれない
+            // 絶対のフレーム番号から掛けて割った位置の差。秒を足し込まないので、何フレーム目でも丸めがずれず、
+            // 窓の継ぎ目 (``FrameSamples``) とも揃う
             advance(
-                to: Int(
-                    (Double(frame - origin) * rack.sampleRate / Double(frameRate)).rounded(.down)))
+                to: FrameSamples.count(
+                    from: origin, to: frame, perSecond: frameRate, sampleRate: rack.sampleRate))
         case .realTime(let origin, let base):
             // **1 フレームに 1 回だけ。** ファイルの側からも呼ばれる (``catchUpForFiles()``) ので、数えないと
             // 1 回の進みを 2 秒で打ち切る約束 (``advance(to:)``) が、1 フレームに 2 回ぶんになる

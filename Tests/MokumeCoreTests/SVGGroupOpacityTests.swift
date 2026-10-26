@@ -11,7 +11,7 @@ import Testing
 ///
 /// **描く絵は変えない** — 名乗りは読み解きの結果への追加の欄で、描くものは触らない。
 @Suite("群の opacity の近似の名乗り")
-struct SVGGroupOpacityTests {
+nonisolated struct SVGGroupOpacityTests {
     private func document(_ body: String) throws -> SVGFile.Drawing {
         try SVGFile.parse(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\">\n\(body)\n</svg>",
@@ -210,6 +210,7 @@ struct SVGGroupOpacityTests {
     }
 
     @Test("文面に opacity と最初の行が載る。近似が無ければ文面は無い")
+    @MainActor
     func noticeNamesOpacityAndTheFirstLine() throws {
         let drawing = try document(
             """

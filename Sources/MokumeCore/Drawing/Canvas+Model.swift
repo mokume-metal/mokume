@@ -61,6 +61,8 @@ extension Canvas {
     public func model(_ model: Model) {
         guard style.hasFill || style.hasStroke else { return }
         guard !model.isEmpty else { return warnEmptyModel(model) }
+        // 立体はベクターへ書けない (#3139)
+        noteVectorDrop(.solid)
         if style.hasFill {
             // 向きを形から求めたか (両面か) は角ごとに点が持つ (#2342)
             placeMesh(.model(identity: model.identity), winding: { model.winding }) {

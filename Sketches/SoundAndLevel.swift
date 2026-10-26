@@ -9,12 +9,14 @@ import mokume
 /// 右の目盛りは同じ音を dB で 0〜1 に写した `level` である。生の振幅は普通の音量では
 /// 小さいところに留まり、全振幅の正弦波でも 0.707 までしか届かない。`level` は
 /// -60〜0 dBFS を目盛りいっぱいに使う。円の大きさは `level` で、右の帯は帯域ごとの
-/// `spectrumLevels` である。
+/// `spectrumLevels` である。生の目盛りに重ねた白い横線は `peak` — 前のフレーム以後の
+/// 区間の標本の絶対値の最大で、半秒ごとの低い拍の立ち上がりが、区間のどこにあっても
+/// `rms` より高く出る。
 ///
 /// 音はマイクではなく、`setup()` で合成した 2 秒の標本列を `createAudioIn(samples:)` で
-/// 流している。**どの窓を解析するかはフレームの時刻だけで決まる**ので、書き出すたびに
-/// 同じ絵になる ([ADR-0028] 決定 7)。マイクで動かすなら、作る 1 行を `createAudioIn()` に
-/// 替えるだけでよい。
+/// 流している。解析するのは前のフレーム以後の全標本で、**どの区間を解析するかはフレームの
+/// 時刻だけで決まる**ので、書き出すたびに同じ絵になる ([ADR-0028] 決定 7)。マイクで動かすなら、
+/// 作る 1 行を `createAudioIn()` に替えるだけでよい。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SoundAndLevel: Sketch {
@@ -45,6 +47,9 @@ final class SoundAndLevel: Sketch {
         // 中: 生の値と、0〜1 へ写した値を同じ高さの目盛りで並べる
         meter(x: 440, value: sound.rms, red: 120, green: 160, blue: 220)
         meter(x: 480, value: sound.level, red: 232, green: 170, blue: 92)
+        // 区間の最大の振幅 `peak` を、生の目盛りに横線で重ねる
+        fill(255)
+        rect(432, 460 - constrain(sound.peak, 0, 1) * 380 - 1, 40, 2)
 
         // 右: 帯域ごとの大きさ (0〜1 へ写した値)。帯域 k の真ん中は k × 48000 ÷ 1024 Hz
         let levels = sound.spectrumLevels

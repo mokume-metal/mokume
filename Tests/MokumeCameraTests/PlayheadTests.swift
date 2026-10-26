@@ -7,7 +7,7 @@ import Testing
 
 /// 動画のどこを映すか (#1960)。時計にも AVFoundation にも触れないので、GPU も動画も要らない。
 @Suite("動画の再生位置")
-struct PlayheadTests {
+nonisolated struct PlayheadTests {
     /// 時刻の並びで進め、映す位置の並びを返す。
     private func advance(_ head: inout Playhead, _ times: [Double]) -> [Double] {
         times.map { head.advance(to: $0) }

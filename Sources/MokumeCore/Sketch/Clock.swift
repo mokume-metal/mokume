@@ -75,6 +75,14 @@ extension SketchPart {
     /// 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。音の口が鳴らすかを決めるのに読む
     /// (``Clock/soundFrameRate(onScreen:)``)。走っていなければ `false`。
     package var isOnScreen: Bool { runningSketch?.isOnScreen ?? false }
+
+    /// 作者の時計の上の、いまのフレームの時刻 (倍精度の秒)。止める・飛ぶ (``pauseTime()``・``jumpTime(_:)``) を
+    /// 含み、時刻を指定した観測の枚でも観測の秒に置き換えない。単精度の ``authorTime`` では、音の標本の位置を
+    /// 窓の継ぎ目 (``FrameSamples``) と 1 標本も違わずに数えられない。走っていなければ 0。
+    package var authorSeconds: Double { runningSketch?.authorSeconds ?? 0 }
+
+    /// 時刻を指定した観測の枚の、**`draw()` と入り口の供給の間だけ**の指定の秒。それ以外は `nil`。
+    package var observedSeconds: Double? { runningSketch?.observedSeconds }
 }
 
 /// 1 フレームの長さ。
@@ -214,6 +222,11 @@ final class FrameTiming {
     /// 持つ状態 (動画の再生位置・録った音の起点) が読む — 観測の秒を状態として積まないために
     /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
     var authorTime: Float { Float(seconds) }
+    /// いまの枚が時刻を指定した観測の枚なら、その指定の秒。そうでなければ `nil`。
+    ///
+    /// 作者の時計の秒 (``seconds``) と別に持つ。音の入り口が、観測の枚だけ「指定の秒で終わる区間」を別に解く
+    /// のに読む (通常の枚の続きは作者の時計で数える)。
+    private(set) var observedSeconds: Double?
     /// 作者が止めた秒 (``pauseTime()``)。止めていなければ `nil`。
     private var heldAt: Double?
     /// 作り直しをまたいで作者の時計を渡す先と元 (`mokume watch --keep-time`・``ClockHandover``)。旗の無い実行は `nil`。
@@ -386,6 +399,7 @@ final class FrameTiming {
         seconds = raw + offset
         time = Float(seconds)
         shownSeconds = seconds
+        observedSeconds = requestedTime.map { Double($0) }
         if let requestedTime {
             // 観測の指定秒は、見せる時刻と経過だけを上書きする。作者の時計 (`seconds`・
             // `offset`) は上で観測が無い枚と同じに進めてあり、次の枚はそこから続く
