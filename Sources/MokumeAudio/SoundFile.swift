@@ -701,7 +701,8 @@ public final class SoundFile: Inlet, EffectInput {
     /// ``FilePlayer`` へ切り替える。**位置は今の位置から続く。**
     ///
     /// 器は最初に開いたときに手放しているので、読み込んだファイルから 1 度だけ読み直す (`draw()` を止める
-    /// 同期の読み込みだが、録りの頭の 1 回なので、`loadSound(_:)` と同じく 1 度だけ知らせる・[#2601])。
+    /// 同期の読み込みだが、録りの頭の 1 回である。画面へ出す実行では `loadSound(_:)` と同じく 1 度だけ知らせ、
+    /// 書き出しでは知らせない — ``noticeRereadForTrack()``・[#2601])。
     /// エフェクトへ通したファイルは、ラックの節が鳴らすのでここでは何もしない。
     ///
     /// **載せられなくても、位置は数で進め続ける** (``Pace/frames``)。読み直せない・流れが受けてくれないときは、
@@ -716,11 +717,7 @@ public final class SoundFile: Inlet, EffectInput {
         if let held = buffer {
             loaded = held
         } else {
-            if let owner {
-                type(of: owner).noticeBlockingLoad(
-                    "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)",
-                    instead: nil)
-            }
+            noticeRereadForTrack()
             switch reloadBuffer() {
             case .success(let reloaded):
                 loaded = reloaded
@@ -749,6 +746,20 @@ public final class SoundFile: Inlet, EffectInput {
             playhead.jump(to: position)
             beginSegment()
         }
+    }
+
+    /// 録りの頭で器を読み直すことを、``BlockingLoads`` に知らせる。**画面へ出す実行だけ** ([#3125])。
+    ///
+    /// 同期の読み込みが困るのは、画面へ出しながら回すとき (フレームが遅れて見える) である。書き出し
+    /// (`mokume render`・画面へ出さない固定の時計) は、フレームの番号で進めて絵を抜かないので、読み直す間待つ
+    /// だけで、`setup()` で読むよう案内しても当たらない。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func noticeRereadForTrack() {
+        guard let owner, owner.isOnScreen else { return }
+        type(of: owner).noticeBlockingLoad(
+            "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)",
+            instead: nil)
     }
 
     /// 足し直した後に初めて鳴らすとき、器を読み直して player を作る。

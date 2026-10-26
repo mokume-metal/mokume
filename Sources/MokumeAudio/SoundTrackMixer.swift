@@ -31,6 +31,13 @@ import MokumeDiagnostics
 /// 録りが終わった後 (または録りが窓を頼まないフレーム) は、音源の位置が止まらないよう、流れを描き進めて捨てる
 /// (``supply()``)。描けなかった分は、後の窓で描き足して流れの時間を戻す (``TrackFlow``)。
 ///
+/// **限界**: `renderOffline` が続けて失敗する間は、その窓が無音のまま動画に書かれ、そのことを 1 度だけ診断に
+/// 出す。**`mokume render` の終了コードには現れない** — 終了コードは動画へ書けなかったときに立ち、無音の窓も
+/// 書けた窓である。流れが回復すれば、失敗した窓だけが無音で、以後の窓は元の時刻に戻る。
+///
+/// **動画の長さで切る**: 音声トラックの長さは映像と同じで、書き出しで絵が描けず落ちた末尾のフレームの窓は、描いて
+/// 書くが、その音は動画に残らない。
+///
 /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SoundTrackMixer: Inlet, SoundSource {

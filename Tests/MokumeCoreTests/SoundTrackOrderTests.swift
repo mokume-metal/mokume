@@ -170,6 +170,64 @@ struct SoundTrackOrderTests {
         #expect(movie.takeFailure()?.contains("sound 2 refused") == true)
     }
 
+    // MARK: - 絵が落ちた末尾
+
+    @Test("末尾の絵が落ちても、窓は描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)")
+    func theSoundOfADroppedTailPictureIsCutAtTheVideoLength() async throws {
+        guard MovieFile.isAvailable else { return }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mokume-sound-tail-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("tail.mov").path
+
+        // 60 fps・48000 Hz は 1 フレームがちょうど 800 標本。窓は 0〜9 の 10 個、絵は 1〜9 の 9 枚 (10 枚目が落ちた)
+        let rate = 60
+        let windows = 10
+        let movie = MovieWriter(path: path, frameRate: rate)
+        for frame in 0..<windows {
+            var window = SoundWindow(frame: frame, frameRate: rate)
+            for index in 0..<window.count {
+                window.left[index] = 0.25
+                window.right[index] = -0.25
+            }
+            movie.writeSound(window)
+            if frame < windows - 1 {
+                movie.write(
+                    DisplayImage(width: 64, height: 48, bytes: [UInt8](repeating: 40, count: 64 * 48 * 4)),
+                    frame: frame + 1, time: Double(frame) / Double(rate))
+            }
+        }
+        movie.finish()
+        #expect(movie.takeFailure() == nil)
+
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let videoRange = try await video.load(.timeRange)
+        let audioRange = try await audio.load(.timeRange)
+        // 映像は 9 フレームぶん (9/60 秒)。音声トラックも同じ長さで、10 個目の窓の音は残らない
+        #expect(abs(videoRange.duration.seconds - 9.0 / 60.0) < 1e-6, "映像 \(videoRange.duration.seconds) 秒")
+        #expect(
+            abs(audioRange.duration.seconds - videoRange.duration.seconds) < 1e-6,
+            "音声 \(audioRange.duration.seconds) 秒 (映像 \(videoRange.duration.seconds) 秒)")
+        #expect(abs(audioRange.start.seconds - videoRange.start.seconds) < 1e-6)
+
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: audio,
+            outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32,
+                AVLinearPCMIsFloatKey: true, AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+            ])
+        reader.add(output)
+        try #require(reader.startReading())
+        var read = 0
+        while let buffer = output.copyNextSampleBuffer() { read += CMSampleBufferGetNumSamples(buffer) }
+        #expect(read == (windows - 1) * 800, "\(read) 標本 (期待 \((windows - 1) * 800))")
+    }
+
     // MARK: - 0 標本の窓
 
     @Test("fps が標本化率を越えて窓が 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる")

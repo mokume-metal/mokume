@@ -439,18 +439,22 @@ struct SoundTrackOperationsTests {
         #expect(!said.contains { $0.contains("No audio output") }, "\(said)")
     }
 
-    @Test("録りの頭で音声ファイルを読み直すのは draw() を止める同期の読み込みなので、loadSound と同じく 1 度だけ知らせる。録らなければ知らせない")
-    func rereadingTheFileForTheRecordingIsNoticedAsABlockingLoad() throws {
+    @Test("録りの頭で音声ファイルを読み直すのは同期の読み込みだが、書き出し (画面へ出さない固定の時計) では知らせない。録っても録らなくても出ない")
+    func rereadingTheFileForTheRecordingIsNotNoticedWhenRendering() throws {
         let wav = try writeWAV(chord, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
         let call = "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)"
 
-        func message(recording: Bool) throws -> String? {
+        func run(recording: Bool) throws -> (said: String?, trackBegun: Bool) {
             let url = temporaryMovie()
             defer { try? FileManager.default.removeItem(at: url) }
+            var trackBegun = false
             SoundSketch.onSetup = { sketch in try sketch.loadSound(wav.path).loop() }
             SoundSketch.onDraw = { sketch in
                 if recording, sketch.frameCount == 3 { sketch.beginRecord(url.path) }
+                if recording, sketch.frameCount == 5 {
+                    trackBegun = SoundTrackMixer.mixer(for: sketch)?.track != nil
+                }
                 if recording, sketch.frameCount == 8 { sketch.endRecord() }
             }
             let runtime = try SketchRuntime(
@@ -458,9 +462,31 @@ struct SoundTrackOperationsTests {
             for _ in 0..<10 { try runtime.advance() }
             let said = runtime.blockingLoads.message(for: call)
             runtime.closePlugins()
-            return said
+            return (said, trackBegun)
         }
-        #expect(try message(recording: true) == BlockingLoads.notice(call, instead: nil))
-        #expect(try message(recording: false) == nil)
+        // 録りは本当に始まって (器は読み直されている)、読み直しの知らせだけが出ない
+        let recorded = try run(recording: true)
+        #expect(recorded.trackBegun, "音声トラックが始まっていない")
+        #expect(recorded.said == nil)
+        #expect(try run(recording: false).said == nil)
+    }
+
+    @Test("画面へ出す実行では、録りの頭の読み直しを、loadSound と同じく 1 度だけ知らせる")
+    func rereadingTheFileForTheRecordingIsNoticedOnScreen() throws {
+        let wav = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: wav) }
+        let call = "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)"
+
+        var file: SoundFile?
+        SoundSketch.onSetup = { sketch in file = try sketch.loadSound(wav.path) }
+        SoundSketch.onDraw = { sketch in
+            if sketch.frameCount == 3 { file?.noticeRereadForTrack() }
+        }
+        // 実時間の時計は画面へ出す扱い
+        let runtime = try SketchRuntime(sketch: SoundSketch(), gpu: try RenderDevice(), clock: .wallClock)
+        #expect(runtime.isOnScreen)
+        for _ in 0..<5 { try runtime.advance() }
+        #expect(runtime.blockingLoads.message(for: call) == BlockingLoads.notice(call, instead: nil))
+        runtime.closePlugins()
     }
 }
