@@ -287,6 +287,54 @@ class DrawingEvidenceTest(unittest.TestCase):
         for line in lines:
             self.assertIn("--paginate", line, f"ページングを通していない呼び出し: {line}")
 
+    # --- pr-gate の事前取得 (#3261) ---------------------------------------------
+
+    def snapshot(self, *, body="", labels=(), files=DRAWING_FILES, number=101):
+        """pr-gate の pr-snapshot step が置くのと同じ形の置き場。"""
+        snap = self.root / "snap"
+        snap.mkdir(exist_ok=True)
+        (snap / f"view-{number}.json").write_text(json.dumps({
+            "number": number, "title": "t", "body": body,
+            "labels": [{"name": n} for n in labels],
+        }))
+        (snap / f"files-{number}.txt").write_text("".join(f"{f}\n" for f in files))
+        return {"MOKUME_PR_SNAPSHOT_DIR": str(snap)}
+
+    def gh_made(self):
+        return self.calls.read_text(encoding="utf-8") if self.calls.exists() else ""
+
+    def test_事前取得があれば_メタデータも一覧も_gh_に聞かず_事前取得で判定する(self):
+        # 生の応答は絵つき・描画なし (通る)。事前取得は描画に触れて絵が無い — 読まれていれば赤になる
+        r = self.run_script(
+            body="![a](https://example.invalid/a.png)", files=OTHER_FILES,
+            **self.snapshot(body="", files=DRAWING_FILES))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("絵が無い", r.stderr)
+        made = self.gh_made()
+        self.assertNotIn("pr view", made)
+        self.assertNotIn("/files", made)
+
+    def test_事前取得の_ラベルで例外にできる(self):
+        r = self.run_script(body="", **self.snapshot(labels=["no-visual-change"]))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("pr view", self.gh_made())
+
+    def test_事前取得が欠けていれば_自前で取り直して同じ判定になる(self):
+        """**緩む方向へは倒れない。** 置き場が空でも、描画に触れて絵が無い PR は赤のまま。"""
+        empty = self.root / "empty"
+        empty.mkdir()
+        r = self.run_script(body="", MOKUME_PR_SNAPSHOT_DIR=str(empty))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        made = self.gh_made()
+        self.assertIn("pr view", made)
+        self.assertIn("/files", made)
+
+    def test_番号を名指しされない手元の経路は_事前取得を読まない(self):
+        """手元から素で打つ経路 (現在のブランチの PR) は今までと同じ。番号が無いので置き場の引きようが無い。"""
+        r = self.run_script(body="", args=(), **self.snapshot(body="![a](https://example.invalid/a.png)"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("pr view", self.gh_made())
+
     def test_一覧が読めなければ判定しない(self):
         """**読めなかったことを「触れていない」と混ぜない。**
 

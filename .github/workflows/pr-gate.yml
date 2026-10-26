@@ -113,15 +113,42 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
-      # **タイトルは API から読む** — ペイロードの title は rerun で古いタイトルを再生する (#699)。
-      # step の名前は scripts/stall-watch.sh の bad-title が読む (TITLE_STEP)。改名するときは同時に直す
-      - name: pr-title (Conventional Commits)
+      # 3 つの判定が読む PR の材料 (メタデータ・変更ファイル) を、ここで 1 回だけ取る (#3261)。
+      # 取らないと、同じ PR のメタデータを 3 回・変更ファイルを 2 回、数秒のうちに別々に取る。
+      # 置き場は MOKUME_PR_SNAPSHOT_DIR で、以降の step へ渡す。読み手は scripts/pr-files.sh
+      # (置き場が未設定・欠けているときは従来どおり自分で取る)。**この step が落ちれば job は赤で、
+      # 後ろの 3 つも !cancelled() で走る — 環境変数が立たないので自前取得になり、緩みもしない**
+      # (continue-on-error は使わない)。判定は既定ブランチの scripts で走るので、このファイルを
+      # 変える PR 自身の run では読み手が古く、事前取得は使われない (効くのは merge 後の PR から)
+      - name: pr-snapshot
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          . scripts/pr-files.sh
+          dir="$RUNNER_TEMP/pr-snapshot"
+          mkdir -p "$dir"
+          # 欄は 3 つの読み手 (title の step・review-gate・drawing-evidence) の和集合
+          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
+            --json title,body,labels,number,latestReviews,closingIssuesReferences,baseRefName,headRefOid,createdAt \
+            >"$dir/view-$PR_NUMBER.json"
+          pr_files "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$dir/files-$PR_NUMBER.txt"
+          echo "MOKUME_PR_SNAPSHOT_DIR=$dir" >>"$GITHUB_ENV"
+
+      # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
+      # **タイトルは API から読む** — ペイロードの title は rerun で古いタイトルを再生する (#699)。
+      # 上の pr-snapshot が取った JSON があればその .title を、無ければ REST で自分で取る。
+      # step の名前は scripts/stall-watch.sh の bad-title が読む (TITLE_STEP)。改名するときは同時に直す
+      - name: pr-title (Conventional Commits)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "${MOKUME_PR_SNAPSHOT_DIR:-}" ] ||
+            ! title=$(jq -er .title "$MOKUME_PR_SNAPSHOT_DIR/view-$PR_NUMBER.json"); then
+            title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          fi
           if grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+' <<<"$title"; then
             echo "ok: $title"
           else

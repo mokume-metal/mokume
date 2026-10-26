@@ -242,7 +242,7 @@ class ReviewGateTest(unittest.TestCase):
 
     def run_gate(self, pr, issue=None, all_files=None, record_calls=None,
                  issues=None, issue_fail=None, agents=None, compare_fail=None,
-                 run_id=None, job=None):
+                 run_id=None, job=None, extra_env=None):
         """`all_files` は **`--paginate` を通した一覧** (#793)。
 
         省略すると `pr` が持つ `files` と同じものになる。上限を越える PR を装うときだけ
@@ -290,6 +290,8 @@ class ReviewGateTest(unittest.TestCase):
         env.pop("GITHUB_JOB", None)
         if job is not None:
             env["GITHUB_JOB"] = job
+        env.pop("MOKUME_PR_SNAPSHOT_DIR", None)
+        env.update(extra_env or {})
         return subprocess.run(
             ["/bin/bash", str(SCRIPT), "12"], capture_output=True, text=True, env=env
         )
@@ -962,6 +964,54 @@ class ReviewGateTest(unittest.TestCase):
             record_calls=calls,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        assert_files_call_paginates(self, calls)
+
+    # --- pr-gate の事前取得 (#3261) ---------------------------------------------
+
+    def snapshot_dir(self, pr, files):
+        """pr-gate の pr-snapshot step が置くのと同じ形の置き場 (PR 12)。"""
+        snap = self.bindir.parent / "snap"
+        snap.mkdir(exist_ok=True)
+        (snap / "view-12.json").write_text(
+            json.dumps({**json.loads(pr), "number": 12, "title": "t"}), encoding="utf-8")
+        (snap / "files-12.txt").write_text("".join(f"{f}\n" for f in files), encoding="utf-8")
+        return snap
+
+    def test_snapshot_is_what_gets_judged_and_gh_is_not_asked_again(self):
+        """事前取得があれば PR のメタデータも変更ファイルも gh に聞かない。判定は事前取得のほうで下る。"""
+        calls = self.bindir.parent / "gh-calls.txt"
+        snap = self.snapshot_dir(pr_json(body="Issue に触れていない本文", closes=()), ["README.md"])
+        # 生の応答は通る PR。事前取得が読まれていれば、紐づけが無いので差し戻される
+        proc = self.run_gate(
+            pr_json(files=["README.md"]), issue_json(TRIAGED), record_calls=calls,
+            extra_env={"MOKUME_PR_SNAPSHOT_DIR": str(snap)})
+        self.assert_blocked(proc, "Issue に紐づいていない")
+        made = calls.read_text(encoding="utf-8") if calls.exists() else ""
+        self.assertNotIn("pr view", made)
+        self.assertNotIn("/files", made)
+
+    def test_snapshot_that_passes_still_reads_the_issue_live(self):
+        calls = self.bindir.parent / "gh-calls.txt"
+        pr = pr_json(files=["README.md"])
+        proc = self.run_gate(
+            pr, issue_json(TRIAGED), record_calls=calls,
+            extra_env={"MOKUME_PR_SNAPSHOT_DIR": str(self.snapshot_dir(pr, ["README.md"]))})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        made = calls.read_text(encoding="utf-8")
+        self.assertNotIn("pr view", made)
+        self.assertNotIn("/files", made)
+        self.assertIn("issue view 12", made)  # Issue の型とラベルは判定の時点の値で読む
+
+    def test_missing_snapshot_falls_back_to_gh_and_judges_the_same(self):
+        calls = self.bindir.parent / "gh-calls.txt"
+        empty = self.bindir.parent / "empty"
+        empty.mkdir()
+        proc = self.run_gate(
+            pr_json(files=["README.md"]), issue_json(TRIAGED), record_calls=calls,
+            extra_env={"MOKUME_PR_SNAPSHOT_DIR": str(empty)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        made = calls.read_text(encoding="utf-8")
+        self.assertIn("pr view", made)
         assert_files_call_paginates(self, calls)
 
     def test_changes_requested_blocks_even_with_an_approval(self):

@@ -238,8 +238,16 @@ if [ -n "$pr" ]; then args=("$pr" "${args[@]}"); fi
 # 「描画に触れない」と答えてしまう。読めなかったとだけ言って放棄する
 #
 # **読めなかった理由 (gh の stderr) は捨てずに添える** (#2614)。放棄して 0 で抜ける振る舞いは同じ
+#
+# **番号を名指しされたときは、pr-gate の先頭が取った事前取得を読める** (#3261。無ければ
+# gh pr view と同じ)。名指しが無い (手元) 経路は今までどおり gh を直に呼ぶ
 pr_err=$(mktemp)
-if ! pr_json=$(gh pr view "${args[@]}" 2>"$pr_err"); then
+if [ -n "$pr" ]; then
+  fetch_pr_json() { pr_view_json "$REPO" "$pr" "body,labels,number"; }
+else
+  fetch_pr_json() { gh pr view "${args[@]}"; }
+fi
+if ! pr_json=$(fetch_pr_json 2>"$pr_err"); then
   why=$(tr '\n' ' ' <"$pr_err" | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/ $//')
   rm -f "$pr_err"
   if [ -n "$pr" ]; then give_up "PR #$pr を読めなかった (${why:-gh は理由を出さなかった})"; fi
