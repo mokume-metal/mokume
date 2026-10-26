@@ -295,6 +295,29 @@ struct AudioInTests {
         }
     }
 
+    /// 水準 2 (ADR-0025): 同じスケッチを 2 回書き出すと同じ拍で光り、fps を変えても拍の数と標本位置は同じ。
+    @Test("標本列の isBeat は、固定の時計で 2 度回すと同じフレームで立ち、60 fps と 24 fps で拍の数が同じ")
+    func isBeatIsRepeatableUnderTheFixedClock() throws {
+        let starts = [12_000, 36_511, 60_001, 84_479, 108_545]
+        let clicks = AudioFeatureTests.clicks(at: starts, count: 144_000)
+        func flags(fps: Int) throws -> [Bool] {
+            var audio: AudioIn?
+            var seen: [Bool] = []
+            let runtime = try run(
+                frames: fps * 3, clock: .frameIndex(frameRate: fps),
+                setup: { audio = try $0.createAudioIn(samples: clicks, sampleRate: 48_000) },
+                draw: { _ in seen.append(audio?.isBeat ?? false) })
+            runtime.closePlugins()
+            return seen
+        }
+        let first = try flags(fps: 60)
+        #expect(first == (try flags(fps: 60)), "2 回目が違う")
+        #expect(first.filter { $0 }.count == starts.count)
+        let slow = try flags(fps: 24)
+        #expect(slow == (try flags(fps: 24)))
+        #expect(slow.filter { $0 }.count == starts.count)
+    }
+
     /// 固定の時計 (`mokume render` と同じ数え方) でも、標本列の入り口は作者の時計の止める・飛ぶに従う。フレーム数ではなく
     /// 作者の時計の位置で区間を数えるので、止めた間は標本が進まず、飛んだら飛び先から数え直す。
     @Test("固定の時計でも、標本列の入り口は pauseTime()・playTime()・jumpTime(_:) に従う (144 fps)")

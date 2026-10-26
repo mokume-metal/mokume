@@ -569,6 +569,171 @@ struct SoundFileTests {
         #expect(duration == 10.0)
     }
 
+    // MARK: - 拍 (#3137)
+
+    /// クリック列のファイルを `fps` の固定の時計で回し、拍のあったフレーム (`frameCount`) を返す。
+    ///
+    /// - Parameters:
+    ///   - readFrom: 読み始めるフレーム (それまでは読まない)。`nil` なら一度も読まない。
+    ///   - frame: `act` を呼ぶフレーム。
+    private func beatFrames(
+        url: URL, fps: Int, seconds: Int = 3, readFrom: Int? = 0, looping: Bool = false,
+        at frame: Int? = nil, _ act: @escaping (SoundFile) -> Void = { _ in }
+    ) throws -> (frames: [Int], steps: Int) {
+        var sound: SoundFile?
+        var frames: [Int] = []
+        let runtime = try run(
+            frames: fps * seconds, clock: .frameIndex(frameRate: fps),
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path)
+                if looping { sound?.loop() } else { sound?.play() }
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                if let readFrom, sketch.frameCount >= readFrom, sound.isBeat { frames.append(sketch.frameCount) }
+                if sketch.frameCount == frame { act(sound) }
+            })
+        let steps = sound?.beatSteps ?? -1
+        runtime.closePlugins()
+        return (frames, steps)
+    }
+
+    @Test("isBeat: クリック列のファイルを 60 fps と 24 fps で回すと、拍の数はどちらもクリックの数。読まなくても処理は進み、どのフレームから読み始めても同じ。飛んだ先と鳴らし直しでは履歴を捨てる")
+    func beatsFromAFile() throws {
+        // 最初のクリックはファイルの頭のすぐ後 (履歴の無い、流れの最初の立ち上がり)
+        let starts = [1_000, 12_000, 36_511, 60_001, 84_479]
+        let stream = AudioFeatureTests.clicks(at: starts, count: 144_000)
+        let url = try writeWAV(stream, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let reference = try beatFrames(url: url, fps: 60)
+        #expect(reference.frames.count == starts.count, "\(reference.frames)")
+        #expect(try beatFrames(url: url, fps: 24).frames.count == starts.count)
+        let unread = try beatFrames(url: url, fps: 60, readFrom: nil)
+        #expect(unread.steps > 0, "読まなくても、区間が置かれるたびに拍の処理を進める")
+        #expect(unread.steps == reference.steps)
+        // どのフレームから読み始めても、それ以後の拍のフレームは同じ (拍のフレーム自体から読み始めても)
+        for first in [reference.frames[1], reference.frames[1] + 1, reference.frames[2] - 1, 100] {
+            #expect(
+                try beatFrames(url: url, fps: 60, readFrom: first).frames == reference.frames.filter { $0 >= first },
+                "\(first) フレーム目から読み始める")
+        }
+        // 3 つ目のクリックの後 (frameCount 50 = 0.82 秒) に 2 秒の位置 (無音) へ飛ぶと、4・5 番目のクリックは聞こえない
+        let jumped = try beatFrames(url: url, fps: 60, at: 50) { $0.jump(2.0) }
+        #expect(jumped.frames.count == 3, "\(jumped.frames)")
+        // 同じところで頭から鳴らし直すと、ファイルの頭の立ち上がり (履歴の無い流れの最初) も拍になる
+        let replayed = try beatFrames(url: url, fps: 60, at: 50) { $0.play() }
+        #expect(replayed.frames.count == 3 + starts.count, "\(replayed.frames)")
+    }
+
+    @Test("isBeat: 飛ぶフレームには、飛ぶ前の区間で見つけた拍が残る (飛び先の履歴だけを捨てる)")
+    func jumpKeepsTheBeatBeforeTheJump() throws {
+        let starts = [12_000, 36_511, 60_001]
+        let url = try writeWAV(AudioFeatureTests.clicks(at: starts, count: 144_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let plain = try beatFrames(url: url, fps: 60)
+        #expect(plain.frames.count == starts.count)
+        // 各クリックの拍が出るフレームの 1 つ前に、無音の位置へ飛ぶように頼む。頼んだ次のフレームが飛ぶフレームで、
+        // そのフレームの区間は飛ぶ前の続き。拍はそのフレームに出る
+        for beat in plain.frames {
+            let jumped = try beatFrames(url: url, fps: 60, at: beat - 1) { $0.jump(2.5) }
+            #expect(jumped.frames.contains(beat), "\(beat) フレーム目の拍が飛ぶフレームで消えた: \(jumped.frames)")
+            #expect(jumped.frames.filter { $0 > beat }.isEmpty, "飛び先 (無音) に拍は無い")
+        }
+    }
+
+    @Test("isBeat: 鳴り続ける間は、ループで頭へ戻っても履歴は続き、周ごとに同じ位置の拍が出る")
+    func beatsContinueAcrossLoops() throws {
+        // 0.5 秒 (24000 標本) の音に 1 つのクリック。3 秒で 6 周する
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [3_000], count: 24_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let looped = try beatFrames(url: url, fps: 60, looping: true)
+        #expect(looped.frames.count == 6, "\(looped.frames)")
+        // 周の長さは 30 フレーム。ブロックの境目は周の長さの割り切れない分だけずれるので、拍のフレームは 1 つまでずれる
+        #expect(zip(looped.frames, looped.frames.dropFirst()).allSatisfy { 30...31 ~= $1 - $0 }, "\(looped.frames)")
+    }
+
+    @Test("isBeat: ループしないファイルの終わりの、閉じていない端数のブロックにだけある立ち上がりも拍になる")
+    func beatInTheFinalFragmentOfAFile() throws {
+        // 20 ブロックと 200 標本。クリックは最後の端数のブロック [10240, 10440) の中で立ち上がる
+        let count = 20 * 512 + 200
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [10_250], count: count), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let ended = try beatFrames(url: url, fps: 60, seconds: 1)
+        #expect(ended.frames.count == 1, "\(ended.frames)")
+        // 鳴り終わったフレームに出る: 10440 標本は 13.05 フレーム目
+        #expect(ended.frames == [15], "\(ended.frames)")
+    }
+
+    @Test("isBeat: 出力の機材が替わって鳴らし直しても、位置が連続するので履歴は続く (ループの何周目でも)")
+    func beatsSurviveRestartingTheOutput() throws {
+        // 0.5 秒の音に 1 つのクリック。ループで 3 周した後に出力を止める
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [3_000], count: 24_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        func frames(restartingAt restart: Int?) throws -> [Int] {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var sound: SoundFile?
+            var found: [Int] = []
+            let runtime = try run(
+                frames: 150,
+                setup: { sketch in
+                    sound = try sketch.loadSound(url.path, flow: flow)
+                    sound?.loop()
+                },
+                draw: { sketch in
+                    if sound?.isBeat == true { found.append(sketch.frameCount) }
+                },
+                between: { frame in
+                    _ = try render(flow, Self.perFrame)
+                    // 出力の機材が替わると、流れは自分で止まる。次の supply() が鳴らし直す
+                    if frame == restart { flow.engine.stop() }
+                })
+            runtime.closePlugins()
+            return found
+        }
+        let plain = try frames(restartingAt: nil)
+        #expect(plain.count >= 4, "\(plain)")
+        // 4 周目の鳴らし直し (93 フレーム目。次のクリックの 3 フレーム前) の直後のクリックも、履歴が続くので拍になる。
+        // 履歴を捨てると、約 85 ミリ秒 (5 フレーム) の間は出ない
+        let restarted = try frames(restartingAt: 93)
+        // 鳴らし直した流れは出力の時計が始め直しになるので、拍のフレームは 1 つまでずれる。数は変わらない
+        #expect(restarted.count == plain.count, "鳴らし直しの前後で拍が欠けた: \(restarted) / \(plain)")
+        #expect(zip(restarted, plain).allSatisfy { abs($0 - $1) <= 1 }, "\(restarted) / \(plain)")
+    }
+
+    @Test("isBeat: 鳴らしている最中の pause() の直前に鳴った分 (止めた最後の区間) の拍は、止めたフレームに出る")
+    func beatInTheLastIntervalBeforeStopping() throws {
+        // 1900 標本にクリックの立ち上がり。ブロック [1536, 2048) は 2048 で閉じる
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [1_900], count: 144_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var sound: SoundFile?
+        var seen: [(position: Int, isBeat: Bool, isPlaying: Bool)] = []
+        let runtime = try run(
+            frames: 6,
+            setup: { sketch in
+                sound = try sketch.loadSound(url.path, flow: flow)
+                sound?.play()
+            },
+            draw: { sketch in
+                guard let sound else { return }
+                seen.append((sound.samplePosition, sound.isBeat, sound.isPlaying))
+                if sketch.frameCount == 3 {
+                    // フレームの頭の後に 700 標本鳴ってから止める。止める前に鳴っていた分 (1600..<2300) に、拍がある
+                    _ = try? render(flow, 700)
+                    sound.pause()
+                }
+            },
+            between: { frame in
+                if frame < 3 { _ = try render(flow, Self.perFrame) }
+            })
+        runtime.closePlugins()
+        #expect(seen.map(\.isPlaying) == [true, true, true, false, false, false], "\(seen)")
+        #expect(seen[2].isBeat == false, "止める前の区間にはまだ拍が無い: \(seen)")
+        #expect(seen[3].isBeat, "止めた最後の区間の拍が、止めたフレームに出ない: \(seen)")
+        #expect(seen[4].isBeat == false)
+    }
+
     @Test("鳴っている間の jump(5) は、呼んだ直後から 5.0 を返し、次のフレームでちょうど 5.0 から鳴って、解析の区間は 5.0 秒から始まる")
     func jumpWhilePlayingLandsOnTheNextFrame() throws {
         let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
