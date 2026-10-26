@@ -94,6 +94,36 @@ struct FilePlayerTests {
         player.leave()
     }
 
+    /// 描いている途中の流れへ鳴らし始めても、直後の最初の窓の先頭の標本から鳴る (#3270)。命令の取り込みが
+    /// 描くのに間に合わないと、窓まるごと無音になる。M3 Max でも 10% 前後で起きるので、回数で数える。
+    @Test("描いている途中の流れへ鳴らし始めると、直後に描いた窓の先頭の標本から鳴る")
+    func startsAtTheFirstSampleOfTheNextWindow() throws {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800))
+        buffer.frameLength = 4800
+        let channels = try #require(buffer.floatChannelData)
+        for channel in 0..<2 { for index in 0..<4800 { channels[channel][index] = 0.25 } }
+        var silentWindows = 0
+        for _ in 0..<100 {
+            let flow = try makeFlow()
+            // 書き出しの音声トラックと同じく、何も出さない節も繋いでおく (``SoundTrackMixer`` の無音の節)
+            let silent = AVAudioSourceNode { _, _, _, list in
+                for buffer in UnsafeMutableAudioBufferListPointer(list) {
+                    if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+                }
+                return noErr
+            }
+            #expect(flow.join(silent, format: format))
+            let player = try #require(FilePlayer(flow: flow, buffer: buffer))
+            _ = try render(flow, 2400)
+            player.play(from: 0, looping: false)
+            let window = try render(flow, 800)
+            if !window.allSatisfy({ $0 == 0.25 }) { silentWindows += 1 }
+            player.leave()
+        }
+        #expect(silentWindows == 0, "100 回のうち \(silentWindows) 回、窓の先頭から鳴らなかった")
+    }
+
     @Test("止めると無音になり、描いた数は読めなくなる")
     func haltSilences() throws {
         let flow = try makeFlow()

@@ -130,11 +130,12 @@ struct SoundTrackOperationsTests {
         for index in 3..<6 {
             #expect(matches(left, window: index) { Self.value((index - 3) * 800 + $0) }, "窓 \(index) の play")
         }
-        // 音量は窓 6 の先頭から変わり始める。なめらかに変わる (約 600 標本かけて 1 倍から 0.5 倍へ) ので、窓 6 の
-        // 先頭は元の音量のまま、終わりは半分になっている
+        // 音量は窓 6 で変わる。約束は「窓 6 より前は前の音量 (上の 3..<6)・窓 6 の終わりには新しい音量・その間は一方向」
+        // だけで、変わり方の形 (直線か曲線か) と長さ (窓の何標本かけるか) は OS の実装に依るので決め打ちしない
         let ratios = (0..<800).map { left[6 * 800 + $0] / Self.value(3 * 800 + $0) }
-        #expect(abs(ratios[0] - 1) < 1e-3 && ratios[0] > ratios[400] && abs(ratios[799] - 0.5) < 1e-6, "窓 6 の音量の変わり方")
+        #expect(ratios.allSatisfy { $0 > 0.5 - 1e-3 && $0 < 1 + 1e-3 }, "窓 6 の音量は 1 倍と 0.5 倍の間にある")
         #expect(zip(ratios, ratios.dropFirst()).allSatisfy { $0 >= $1 - 1e-6 }, "音量は一方向に変わる")
+        #expect(abs(ratios[799] - 0.5) < 1e-6, "窓 6 の終わりには新しい音量に着いている (\(ratios[799]))")
         for index in 7..<9 {
             #expect(matches(left, window: index) { 0.5 * Self.value((index - 3) * 800 + $0) }, "窓 \(index) の amp")
         }
