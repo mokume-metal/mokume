@@ -108,10 +108,21 @@ import MokumeDiagnostics
 ///
 /// Processing Sound では、`LowPass`・`Reverb` などの `process(_:)` が `SoundFile` を受ける。
 ///
-/// ## 書き出しでは鳴らさない
+/// ## 書き出しでは、音を動画の音声トラックへ載せる
 ///
-/// 窓に出して動かしている間は実際に鳴らし、解析の位置は実際に鳴った標本の数から読む。書き出し
-/// (`mokume render`) と、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
+/// 窓に出して動かしている間は実際に鳴らし、解析の位置は実際に鳴った標本の数から読む。**固定の時計で `.mov` へ
+/// 書き出す (`mokume render --out x.mov`・`beginRecord("x.mov")`) と、再生した音は動画の音声トラックに載る**
+/// (LPCM・32 ビット浮動小数点・48 kHz・2 チャンネル。左右のあるファイルは左右のまま載る)。
+///
+/// **操作が効く時刻は、操作ごとに違う。** フレーム `N` の `draw()` が頼んだ ``play()``・``loop()``・``pause()``・
+/// ``stop()``・``amp(_:)`` は、窓 `N` の先頭の標本から効く (音量は窓 `N` の先頭から変わり始め、窓 `N` の終わりまでに新しい音量に着く。途中の形と長さは OS に依るので約束しない)。**``jump(_:)`` は、鳴っている間は次のフレームの頭で効く
+/// ので、窓 `N + 1` の先頭の標本から効く** (窓 `N` は飛ぶ前の位置のまま鳴る。止まっている間は位置だけが動き、
+/// 鳴らさない)。
+///
+/// 載るのは、録りを頼んだフレームの `draw()` が終わった時点で音の流れに音源がある録りで、実時間の時計・MP4・GIF・
+/// 連番の録りには載らない (音源があれば、そのことを 1 度だけ知らせる)。
+///
+/// 録っていない書き出しと、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
 /// ``SketchPart/clock``) では**鳴らさず**、位置を「鳴らし始めたフレームから進んだ標本の数」で決める。
 /// 数は絶対のフレーム番号 `N` から求めた標本の位置 `⌊N × 標本化率 ÷ fps⌋` の差で、鳴らし始めたフレームが
 /// 標本の継ぎ目の途中にあっても、フレームの窓の継ぎ目 ([ADR-0042] 決定 6 の「時刻の対応」) とずれない。
@@ -264,6 +275,7 @@ public final class SoundFile: Inlet, EffectInput {
     private enum Notice: Hashable {
         case noOutput
         case cannotReload
+        case cannotCarry
         case volumeOutOfRange
         case volumeNotANumber
         case jumpNotANumber
@@ -552,11 +564,17 @@ public final class SoundFile: Inlet, EffectInput {
     public func open() throws {
         guard let owner else { return }
         frame = Self.frameIndex(of: owner)
+        // **音を出す入り口が居ることを、録りが載せるかどうかに依らず混ぜ役に名乗らせる** — 載せない録り (実時間の
+        // 時計・画面へ出す録り・MP4・GIF・連番) が、音源が居ることを 1 度だけ名乗れる ([#3125])
+        let mixer = SoundTrackMixer.mixer(for: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
         } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
             // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
             pace = .frames(perSecond: max(1, frameRate), origin: frame)
+            // 音声トラックを載せる録りのために、混ぜ役へ名乗る。音声トラックが始まっていれば、最初からその流れで鳴る
+            mixer?.register(file: self)
+            if let flow = mixer?.flow { joinTrack(flow) }
         } else {
             // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
             speak(through: .speakers)
@@ -764,6 +782,71 @@ public final class SoundFile: Inlet, EffectInput {
             .noOutput,
             "No audio output could be opened, so \"\(name)\" is not heard. Its position still "
                 + "follows the clock, and its analysis keeps working")
+    }
+
+    /// 音声トラックが始まった ([#3125])。鳴らさずに数で位置を進めていたファイルを、機材に出さない流れの
+    /// ``FilePlayer`` へ切り替える。**位置は今の位置から続く。**
+    ///
+    /// 器は最初に開いたときに手放しているので、読み込んだファイルから 1 度だけ読み直す (`draw()` を止める
+    /// 同期の読み込みだが、録りの頭の 1 回である。画面へ出す実行では `loadSound(_:)` と同じく 1 度だけ知らせ、
+    /// 書き出しでは知らせない — ``noticeRereadForTrack()``・[#2601])。
+    /// エフェクトへ通したファイルは、ラックの節が鳴らすのでここでは何もしない。
+    ///
+    /// **載せられなくても、位置は数で進め続ける** (``Pace/frames``)。読み直せない・流れが受けてくれないときは、
+    /// 鳴らさずに実時間へ落とさず — 実時間にすると、その録りの間だけ解析の位置が壁時計で進み、同じ設定から同じ値に
+    /// ならない — 音が動画に入らないことを、事情どおりに 1 度だけ知らせる。
+    ///
+    /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func joinTrack(_ flow: SoundFlow) {
+        guard case .frames = pace else { return }
+        let loaded: AVAudioPCMBuffer
+        if let held = buffer {
+            loaded = held
+        } else {
+            noticeRereadForTrack()
+            switch reloadBuffer() {
+            case .success(let reloaded):
+                loaded = reloaded
+            case .failure(let why):
+                notice(
+                    .cannotCarry,
+                    "\"\(name)\" could not be read again to put it in the recording, so its sound is not in "
+                        + "the movie (\(why)). Its position still follows the frames, and its analysis keeps working")
+                return
+            }
+        }
+        guard let player = FilePlayer(flow: flow, buffer: loaded) else {
+            notice(
+                .cannotCarry,
+                "\"\(name)\" could not be put in the recording: the audio flow of the recording could not "
+                    + "take it, so its sound is not in the movie. Its position still follows the frames, and "
+                    + "its analysis keeps working")
+            return
+        }
+        player.volume = volume
+        let wasPlaying = playhead.isPlaying
+        // 位置は、切り替える前の測り方 (フレームの数) で読む
+        let position = playhead.position(after: played())
+        pace = .speaker(player)
+        if wasPlaying {
+            playhead.jump(to: position)
+            beginSegment()
+        }
+    }
+
+    /// 録りの頭で器を読み直すことを、``BlockingLoads`` に知らせる。**画面へ出す実行だけ** ([#3125])。
+    ///
+    /// 同期の読み込みが困るのは、画面へ出しながら回すとき (フレームが遅れて見える) である。書き出し
+    /// (`mokume render`・画面へ出さない固定の時計) は、フレームの番号で進めて絵を抜かないので、読み直す間待つ
+    /// だけで、`setup()` で読むよう案内しても当たらない。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func noticeRereadForTrack() {
+        guard let owner, owner.isOnScreen else { return }
+        type(of: owner).noticeBlockingLoad(
+            "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)",
+            instead: nil)
     }
 
     /// 足し直した後に初めて鳴らすとき、器を読み直して player を作る。

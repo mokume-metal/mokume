@@ -23,6 +23,8 @@ final class SoundFlow {
     let isOffline: Bool
     /// 流れに入っている節の数。
     private var members = 0
+    /// 節を受けつけない流れにする (検査)。出力が開けない・流れを始められない状況を、機材によらず作る。
+    var refusesNodesForTesting = false
 
     private init(engine: AVAudioEngine, isOffline: Bool) {
         self.engine = engine
@@ -63,6 +65,7 @@ final class SoundFlow {
     /// - Returns: 鳴らせる状態になったか。始められなければ節を外して `false` を返す
     ///   (出力の機材が無い・開けない)。
     func join(_ node: AVAudioNode, format: AVAudioFormat) -> Bool {
+        guard !refusesNodesForTesting else { return false }
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
         members += 1

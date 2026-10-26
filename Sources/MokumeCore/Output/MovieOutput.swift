@@ -13,6 +13,14 @@
 nonisolated protocol MovieOutput: AnyObject {
     /// 1 枚を書き足す。**時刻はフレーム自身のもの。**
     func append(_ image: DisplayImage, at time: Double) async throws(MovieWriteFailure)
+    /// 音の 1 窓を書き足す ([#3125])。**音声トラックを持たない書き手 (GIF・配る形の MP4) は何もしない。**
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure)
     /// 書き終える。**ファイルが閉じてから返る。** `lastFrameAt` は最後のフレームの時刻。
     func finish(lastFrameAt time: Double) async throws(MovieWriteFailure)
+}
+
+extension MovieOutput {
+    func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure) {}
 }

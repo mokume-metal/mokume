@@ -59,6 +59,24 @@ final class FrameRecorder: Outlet {
     /// [#1456]: https://github.com/mokume-metal/mokume/issues/1456
     private var recordingFrom = 0
 
+    /// 音声トラックを付けるかの決まり ([#3125])。**頼まれたフレームの `draw()` が終わった時点で決まる**
+    /// (``decideSound(hasSources:fixedClock:)``)。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    enum SoundTrackState: Equatable {
+        /// まだ決めていない (録りを頼まれたフレームの `draw()` が終わっていない)。
+        case undecided
+        /// 載せる。`frameRate` は録りの fps。
+        case carrying(frameRate: Int)
+        /// 載せない。
+        case declined
+    }
+    private(set) var soundTrack = SoundTrackState.undecided
+    /// 撮っている動画が、音を載せられる形か (固定の時計の `.mov`。配る形・連番は載せない)。
+    private var movieCarriesSound = false
+    /// 撮っている動画か連番の行き先 (注意に載せる)。
+    private var recordingDestination = ""
+
     /// 撮っている連番の番号の幅。落ちた数はここから導く (``RecordedSpan``)。
     private var sequenceSpan: RecordedSpan?
 
@@ -137,6 +155,14 @@ final class FrameRecorder: Outlet {
     enum Warning: Hashable {
         /// 撮っている最中に撮り始めようとした。
         case alreadyRecording
+        /// 音の流れに音源があるのに、この録りは音を載せない (固定の時計の `.mov` だけが載せる・[#3125])。
+        ///
+        /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+        case soundNotCarried
+        /// 録りの途中で足された音源は、音声トラックが無いので載せない ([#3125])。
+        ///
+        /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+        case soundAddedLate
         /// 番号の入る場所が無い名前で撮り始めようとした。
         case patternWithoutNumber
         /// `.mov` に書ける速さ (``FrameRecorder/movieFrameRateLimit``) を越える fps で撮り始めようとした。
@@ -514,6 +540,7 @@ final class FrameRecorder: Outlet {
                 path: pattern, frameRate: frameRate, from: frame,
                 format: distribution == .gif ? .gif : .h264)
             recordingFrom = frame
+            startSoundDecision(for: pattern, carries: false)
             forgetWarnings()
             return
         }
@@ -529,6 +556,7 @@ final class FrameRecorder: Outlet {
             }
             movie = MovieWriter(path: pattern, frameRate: frameRate, from: frame)
             recordingFrom = frame
+            startSoundDecision(for: pattern, carries: true)
             forgetWarnings()
             return
         }
@@ -544,7 +572,74 @@ final class FrameRecorder: Outlet {
         self.sequence = sequence
         sequenceSpan = RecordedSpan(from: frame)
         recordingFrom = frame
+        startSoundDecision(for: pattern, carries: false)
         forgetWarnings()
+    }
+
+    // MARK: - 音声トラック ([#3125])
+
+    /// 録りが始まった。音声トラックの決まりを白紙に戻す。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    private func startSoundDecision(for pattern: String, carries: Bool) {
+        soundTrack = .undecided
+        movieCarriesSound = carries
+        recordingDestination = pattern
+    }
+
+    /// 録りを頼まれたフレームから後の `draw()` が終わるまでは、音声トラックを決めない。
+    /// 最初に録る絵のフレームの番号 (``SketchRuntime`` の `frameCount`)。
+    var firstRecordedFrame: Int { max(recordingFrom, 1) }
+
+    /// **録りを頼まれたフレームの `draw()` が終わった時点で**、音声トラックを付けるか決める。1 度だけ決まる。
+    ///
+    /// 載せるのは、固定の時計で画面へ出さずに書く `.mov` で、音の流れに音源が居るとき。音源が居なければ付けない
+    /// (途中で足された音源は載らず、``noteLateSound()`` が 1 度だけ名乗る)。**載せない録り** (実時間の時計・
+    /// 画面へ出す録り・配る形の MP4・GIF・連番) で音源が居れば、載せないことを 1 度だけ名乗る (どちらも
+    /// ``warnings``)。
+    ///
+    /// - Parameters:
+    ///   - hasSources: スケッチに音を出す入り口 (``SoundSource``) が居るか。
+    ///   - fixedClock: 固定の時計で、画面へ出さずに回しているか。
+    /// - Returns: 音声トラックを付けたか。
+    @discardableResult
+    func decideSound(hasSources: Bool, fixedClock: Bool) -> Bool {
+        guard soundTrack == .undecided, isRecording else { return false }
+        if movie != nil, movieCarriesSound, fixedClock {
+            guard hasSources else {
+                soundTrack = .declined
+                return false
+            }
+            soundTrack = .carrying(frameRate: frameRate)
+            return true
+        }
+        soundTrack = .declined
+        if hasSources {
+            warnOnce(
+                .soundNotCarried,
+                "beginRecord(\"\(recordingDestination)\"): this recording does not carry sound, so it has no "
+                    + "audio track. Only a .mov written with a fixed clock that is not shown on screen "
+                    + "carries the sound of the sketch's sound sources (not a wall clock, an MP4, a GIF "
+                    + "or a numbered series)")
+        }
+        return false
+    }
+
+    /// 録りの途中で音源が足されたが、音声トラックが無いので載せない、と 1 度だけ名乗る。
+    func noteLateSound() {
+        // 載せない録り (配る形・連番・実時間) は、決めたときに名乗っている
+        guard movieCarriesSound else { return }
+        warnOnce(
+            .soundAddedLate,
+            "beginRecord(\"\(recordingDestination)\"): a sound source was added after the recording began "
+                + "without an audio track, so its sound is not in the movie. Create it before the frame "
+                + "that calls beginRecord() ends")
+    }
+
+    /// 音の 1 窓を、載せる録りへ書く。載せていなければ何もしない。
+    func writeSound(_ window: SoundWindow) {
+        guard case .carrying = soundTrack else { return }
+        movie?.writeSound(window)
     }
 
     /// 行き先の綴りが動画か (``beginRecord(_:at:)`` の規則)。
@@ -794,6 +889,7 @@ final class FrameRecorder: Outlet {
         self.sequence = nil
         sequenceSpan = nil
         sequenceFailure = nil
+        soundTrack = .undecided
         if let lastFrame { span.expect(through: lastFrame) }
         reportDropped(sequence.pattern, accepted: span.accepted, dropped: span.dropped)
     }
@@ -825,6 +921,8 @@ final class FrameRecorder: Outlet {
         if let lastFrame { movie.expectFrames(through: lastFrame) }
         guard movie.finish(patience) else { return false }
         self.movie = nil
+        soundTrack = .undecided
+        movieCarriesSound = false
         movieFailure = nil
         reportDropped(movie.path, accepted: movie.acceptedFrames, dropped: movie.droppedFrames)
         if let failure = movie.takeFailure() {
