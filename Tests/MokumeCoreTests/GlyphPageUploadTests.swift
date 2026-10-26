@@ -26,10 +26,16 @@ struct GlyphPageUploadTests {
         return page
     }
 
+    /// 持ち回すバイト数が、区画から数え直した値と一致すること (積む・届ける・直接書く・打ち切りで戻す、のどの後でも)。
+    private func expectBytesMatch(_ page: GlyphPage, _ note: Comment? = nil, sourceLocation: SourceLocation = #_sourceLocation) {
+        #expect(page.pendingUploadByteCount == page.recountedPendingBytes, note, sourceLocation: sourceLocation)
+    }
+
     @Test("途中の世代まで届けたら、それ以後の区画だけが控えに残る")
     func keepsWhatIsNewerThanTheGeneration() throws {
         let page = try stagedPage(5)
         #expect(page.markUploaded(through: 3, by: 7))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 2)
         #expect(page.pendingGenerations == [4, 5], "届けていない新しい区画が残る")
         #expect(page.deliveredRegionCount == 3)
@@ -39,9 +45,11 @@ struct GlyphPageUploadTests {
     func emptiesWhenEverythingIsDelivered() throws {
         let page = try stagedPage(4)
         #expect(page.markUploaded(through: 4, by: 1))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 0)
         #expect(page.deliveredRegionCount == 4)
         page.stage(x: 0, y: 0, width: 2, height: 2, pixels: [SIMD4<Float16>](repeating: .zero, count: 4))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 1)
     }
 
@@ -49,16 +57,19 @@ struct GlyphPageUploadTests {
     func nothingToDeliver() throws {
         let page = try stagedPage(3)
         #expect(!page.markUploaded(through: 0, by: 1))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 3)
         #expect(page.deliveredRegionCount == 0)
         let empty = try stagedPage(0)
         #expect(!empty.markUploaded(through: 9, by: 1))
+        expectBytesMatch(empty)
     }
 
     @Test("直接書いた分は控えから外れるが、投入に載らず、届けた側に残らない")
     func directWritesAreNotTrackedAsDelivered() throws {
         let page = try stagedPage(4)
         #expect(!page.markUploaded(through: 2, by: nil))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 2)
         #expect(page.deliveredRegionCount == 0)
     }
@@ -67,13 +78,17 @@ struct GlyphPageUploadTests {
     func droppedSubmissionsReturnTheirRegions() throws {
         let page = try stagedPage(5)
         #expect(page.markUploaded(through: 2, by: 7))
+        expectBytesMatch(page)
         #expect(page.markUploaded(through: 4, by: 8))
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 1)
         page.submissionSettled(7, dropped: true)
+        expectBytesMatch(page)
         #expect(page.pendingRegionCount == 3)
         #expect(page.pendingGenerations == [1, 2, 5])
         #expect(page.deliveredRegionCount == 2)
         page.submissionSettled(8, dropped: false)
+        expectBytesMatch(page)
         #expect(page.deliveredRegionCount == 0)
         #expect(page.pendingRegionCount == 3)
         #expect(page.pendingGenerations == [1, 2, 5])
@@ -83,10 +98,36 @@ struct GlyphPageUploadTests {
     func mixedGenerationsKeepTheirOrder() throws {
         let page = try stagedPage(6)
         #expect(page.markUploaded(through: 2, by: 1))
+        expectBytesMatch(page)
         page.submissionSettled(1, dropped: true)  // 控え: 1 2 3 4 5 6
         page.stage(x: 0, y: 0, width: 2, height: 2, pixels: [SIMD4<Float16>](repeating: .zero, count: 4))
+        expectBytesMatch(page)
         #expect(page.pendingGenerations == [1, 2, 3, 4, 5, 6, 7])
         #expect(page.markUploaded(through: 4, by: 2))
+        expectBytesMatch(page)
         #expect(page.pendingGenerations == [5, 6, 7])
+    }
+
+    @Test("上限を越えて直接書いた分も、持ち回すバイト数がずれない")
+    func directUploadKeepsTheByteCount() throws {
+        let page = try GlyphPage(side: 64, gpu: RenderDevice())
+        page.pendingRegionLimit = 2
+        for _ in 0..<7 {
+            page.stage(x: 0, y: 0, width: 2, height: 2, pixels: [SIMD4<Float16>](repeating: .zero, count: 4))
+            expectBytesMatch(page)
+        }
+        #expect(page.directWrites > 0, "検査の前提: 直接書く道を通っていない")
+        #expect(page.pendingRegionCount <= 2)
+    }
+
+    @Test("バイト数は積むたびに増え、全部届けると 0 に戻る")
+    func byteCountFollowsTheRegions() throws {
+        let page = try stagedPage(3)
+        #expect(page.pendingUploadByteCount == 3 * 4 * GlyphAtlas.bytesPerPixel)
+        #expect(page.markUploaded(through: .max, by: 1))
+        #expect(page.pendingUploadByteCount == 0)
+        page.submissionSettled(1, dropped: true)
+        #expect(page.pendingUploadByteCount == 3 * 4 * GlyphAtlas.bytesPerPixel)
+        expectBytesMatch(page)
     }
 }

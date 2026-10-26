@@ -64,6 +64,10 @@ import Metal
 
     /// まだ届けていない区画。
     private var pending: [Region] = []
+    /// ``pending`` の画素のバイト数の合計。**積む・届ける・届け直すたびに足し引きして持つ** —
+    /// `stage` が 1 区画積むたびに全区画を足し直すと、多くの字を初めて焼くフレーム (区画の上限まで)
+    /// で O(n^2) になる。控えを動かす口は、この 3 つ (`stage`・`markUploaded`・`submissionSettled`) だけである。
+    private var pendingBytes = 0
     /// 投入に載せて届けた区画。**その投入の結末が届くまで持つ** (打ち切られたら控えへ戻す)。
     private var delivered: [(submission: UInt64, regions: [Region])] = []
     private var lastGeneration: UInt64 = 0
@@ -99,6 +103,7 @@ import Metal
             Region(
                 x: x, y: y, width: width, height: height, pixels: pixels,
                 generation: lastGeneration))
+        pendingBytes += pixels.count * GlyphAtlas.bytesPerPixel
         gpu.pendingUploads.enqueue(self)
         // 積みすぎた分だけは、ここで待って届ける。待てなければ控えに残す (#934)
         if pending.count > pendingRegionLimit || pendingUploadByteCount > pendingByteLimit,
@@ -119,7 +124,10 @@ import Metal
 }
 
 extension GlyphPage: PendingUpload {
-    var pendingUploadByteCount: Int { pending.reduce(0) { $0 + $1.byteCount } }
+    var pendingUploadByteCount: Int { pendingBytes }
+
+    /// 控えを区画から数え直したバイト数。**検査が読む** — 持ち回す ``pendingBytes`` とずれないことを見る。
+    var recountedPendingBytes: Int { pending.reduce(0) { $0 + $1.byteCount } }
 
     func stageUpload(
         into bytes: UnsafeMutableRawPointer, of staging: any MTLBuffer, at offset: Int,
@@ -166,17 +174,18 @@ extension GlyphPage: PendingUpload {
 
     @discardableResult
     func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
-        // **1 回の走査**で、届けた区画を取り出し、残りを先頭へ詰める。残りを詰めるだけで控えの容量は
-        // 手放さない (通常のフレームは全部届くので、控えは空になって次のフレームが同じ置き場へ積む)。
-        // 直接書いた分 (`submission == nil`) は投入に載らず、届けた区画の配列を作らない
+        // **1 回の走査**で、届けた区画を取り出し、残りを先頭へ詰める。直接書いた分 (`submission == nil`) は
+        // 投入に載らず、届けた区画の配列を作らない。届けた区画の配列は、最初の 1 区画が届くと分かった
+        // ところで、残りの区画数を上限に 1 回だけ確保する (何も届かない呼び出しでは確保しない)
         guard !pending.isEmpty else { return false }
         var reached: [Region] = []
-        if submission != nil { reached.reserveCapacity(pending.count) }
         var kept = 0
         var anyReached = false
         for index in pending.indices {
             if pending[index].generation <= generation {
+                if !anyReached, submission != nil { reached.reserveCapacity(pending.count - index) }
                 anyReached = true
+                pendingBytes -= pending[index].byteCount
                 if submission != nil { reached.append(pending[index]) }
             } else {
                 if kept != index { pending[kept] = pending[index] }
@@ -208,6 +217,7 @@ extension GlyphPage: PendingUpload {
             return true
         }
         guard !returned.isEmpty else { return }
+        pendingBytes += returned.reduce(0) { $0 + $1.byteCount }
         // 積んだ順を保つ — 届け直しの後で、後に積んだ区画が先に届いてもよいが、順は崩さない
         pending = (returned + pending).sorted { $0.generation < $1.generation }
         gpu.pendingUploads.enqueue(self)
