@@ -854,6 +854,14 @@ struct OSCPortTests {
         #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
     }
 
+    /// **送り元は、送り元ごとの素の socket (``RawDatagramSocket``) から送る** (#3160)。`DatagramSender`
+    /// (Network.framework の繋ぎ) を 64 本ほど同時に開くと、全段が並走する CI では新しい繋ぎが
+    /// `Address already in use` の `waiting` のまま出ないことがあり (受け口は running で、素の 1 通は
+    /// 受け入れられていた)、作り直しても救えなかった。この検査の主役は本番の時計で黙りを閉じる受け口で、
+    /// 送り元は代役にすぎない。素の socket は `sendto` の戻りで成否が分かるので、送り手の事情では赤に
+    /// ならない。**`DatagramSender` を多く同時に開く形は、ここでは見ない** (製品では送り先 1 つにつき送り元は
+    /// 1 つで、その数は実需の外)。送り元は 1 本ずつ別の socket で、別のポートから出る — 1 つを使い回すと
+    /// 受け口からは 1 つの送り元に見え、台帳が目安に届かず黙りの約束を見なくなる。
     @Test("本番の時計のままでも、読んだ後に黙った送り元は次の受け入れで閉じる")
     func idleSendersAreSweptOnTheDefaultClock() async throws {
         let told = Told()
@@ -869,16 +877,25 @@ struct OSCPortTests {
         // 黙りを測る (読んだ送り元が 1 つ以上あれば、黙りで閉じる相手がいる)
         var burst: [any DatagramSending] = []
         defer { for sender in burst { sender.stop() } }
+        let burstSockets = try (0..<DatagramListener.connectionLimit).map { _ in try RawDatagramSocket() }
+        defer { for socket in burstSockets { socket.release() } }
+        var lateSockets: [RawDatagramSocket] = []
+        defer { for socket in lateSockets { socket.release() } }
+        // 素の socket の `sendto` が失敗していたら、読めなかった理由は受け口ではなく送り手側
+        func sendtoFailures() -> String {
+            let failed = (burstSockets + lateSockets).reduce(0) { $0 + $1.sendRecord.failures }
+            return failed == 0 ? "" : " (素の socket の sendto が \(failed) 回失敗した — 送り手で出なかった)"
+        }
         let burstLog = SendLog()
         let heard = try await sendNumberedBurst(
             count: DatagramListener.connectionLimit, through: osc, senders: &burst, told: told,
             within: 5, log: burstLog
-        ) { _, _, warn in
-            DatagramSender(host: "127.0.0.1", port: port, warn: warn)
+        ) { index, _, _ in
+            ScriptedSender(raw: burstSockets[index], port: port, complaint: nil)
         }
         try await requireHeard(
-            !heard.isEmpty, "1 通も読めていない — 黙りを測る相手がいない", log: burstLog, osc: osc, port: port,
-            told: told)
+            !heard.isEmpty, "1 通も読めていない — 黙りを測る相手がいない\(sendtoFailures())", log: burstLog,
+            osc: osc, port: port, told: told)
 
         // **集め終えた後の閉じを測る。** 本物の時計で `idleAfter` が 0.05 秒なので、集めている最中に
         // 受け入れが目安に達して閉じが起きうる。その分を数えないよう、ここの数を基準にする
@@ -892,10 +909,10 @@ struct OSCPortTests {
         // いるときの次の受け入れだけ (`SenderLedger.admit`)。届いた後に新しい受け入れが起きたのに
         // 閉じなければ主題の赤で、届かなかった・届いた後に受け入れが起きなかった回は前提の欠けである
         //
-        // 足す送り元も本物の ``DatagramSender`` なので、出ない回がある。前提が欠けた回は、送り手の跡と受け口の
+        // 足す送り元も、1 本ずつ新しい素の socket から送る。前提が欠けた回は、送り手の跡と受け口の
         // 様子を名乗って止まる (#3001)。名乗りの「読めた数」は、足し始めてからの受け入れの増えで数える
         // (足した 1 通ごとの読みは見ない)
-        var late: [DatagramSender] = []
+        var late: [ScriptedSender] = []
         defer { for sender in late { sender.stop() } }
         let lateLog = SendLog()
         let lateStarted = Date()
@@ -907,7 +924,9 @@ struct OSCPortTests {
             if acceptedWhenFull == nil, source.connectionCount >= DatagramListener.connectionLimit {
                 acceptedWhenFull = source.tally.accepted
             }
-            let sender = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
+            let socket = try RawDatagramSocket()
+            lateSockets.append(socket)
+            let sender = ScriptedSender(raw: socket, port: port, complaint: nil)
             late.append(sender)
             lateLog.watch("/late", index: index, sender: sender)
             sender.send(try Wire.encoded(OSCMessage("/late", index)))
@@ -923,11 +942,11 @@ struct OSCPortTests {
                 waited: Date().timeIntervalSince(lateStarted), limit: 0)
             try await requireHeard(
                 acceptedWhenFull != nil,
-                "台帳が目安 (\(DatagramListener.connectionLimit)) に届かなかった (\(source.connectionCount)) — 黙った送り元を閉じる前提が無い",
+                "台帳が目安 (\(DatagramListener.connectionLimit)) に届かなかった (\(source.connectionCount)) — 黙った送り元を閉じる前提が無い\(sendtoFailures())",
                 log: lateLog, osc: osc, port: port, told: told)
             let atLimit = try #require(acceptedWhenFull)
             try await requireHeard(
-                source.tally.accepted > atLimit, "台帳が目安に届いた後、新しい受け入れが起きなかった — 閉じる契機が来ていない",
+                source.tally.accepted > atLimit, "台帳が目安に届いた後、新しい受け入れが起きなかった — 閉じる契機が来ていない\(sendtoFailures())",
                 log: lateLog, osc: osc, port: port, told: told)
         }
         #expect(source.connectionCount < DatagramListener.connectionLimit)
