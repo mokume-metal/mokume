@@ -76,8 +76,9 @@ name: Render
 # 1 台で、runner は queued の job を先着順に拾わない — queue の先頭の render が、後から
 # 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (60 分) で弾かれた。
 # 拾う順は変えられないので、積む job を絞る。判断は scripts/render-turn.sh が持つ:
-#   - render (merge_group) — 1 つ前の group の run が終わるまで積まない。group は queue の
-#     順に 1 本ずつ専用機に載る
+#   - render (merge_group) — 前の group のうち終わっていないものが runner の数 (リポジトリの
+#     変数 RENDER_TURN_SLOTS・既定 1) 未満になるまで積まない。既定では 1 つ前の group の run が
+#     終わるまで待ち、group は queue の順に 1 本ずつ専用機に載る (#3319・ADR-0019 決定 7 の改訂 (2026-10-27))
 #   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)
 #   - scheduled-* — merge_group の run が残っている間は待つ
 # 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
@@ -135,6 +136,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           BASE_REF: ${{ github.event.merge_group.base_ref }}
+          # 専用機で並走させる merge_group の render の数 (#3319)。runner の数に合わせて
+          # リポジトリの変数で切り替える。未設定なら 1 (scripts/render-turn.sh の「並走の数」)
+          RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
         run: |
           case "$EVENT" in
             merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" "$BASE_REF" ;;

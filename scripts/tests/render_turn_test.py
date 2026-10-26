@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/render-turn.sh (専用機へ積む順番の門番) の検査 (#2062)。
 
-固定したいのは七つ。
+固定したいのは八つ。
 
 1. **先頭の group は待たない。** base sha が main の先端なら、前の group の run が (人の
    rerun で) 走っていても、すぐに通す
@@ -18,6 +18,9 @@
    in_progress でも見送る (門番で待っている group の run は in_progress)
 6. **wait は merge_group の run が無くなるまで待ってから通す**
 7. **使い方の誤りだけ非 0 (2)**
+8. **merge_group は RENDER_TURN_SLOTS (N) 本まで並走する** (#3319)。前の group を base sha の
+   親を辿って N 段まで遡り、終わっていない run を持つ group が N 本未満なら通す。base ref の
+   先端に着いたら遡らない。未設定なら 1 で、親を引かない (今までと同じ呼び出し)
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は絞り込みそのものを踏む (queue_sweep_test.py と同じ理由)。応答は呼ばれた回数で
@@ -53,7 +56,11 @@ done
 
 all="$*"
 case "$all" in
-  *"/actions/workflows/render.yml/runs?event=merge_group&head_sha="*) kind=prev ;;
+  *"/actions/workflows/render.yml/runs?event=merge_group&head_sha="*)
+    # prev-<sha>-<回>.json があればその sha 専用の応答 (並走の検査)、無ければ prev
+    sha=${all#*head_sha=}; sha=${sha%%&*}
+    if compgen -G "$DATA/prev-$sha-*.json" > /dev/null; then kind=prev-$sha; else kind=prev; fi ;;
+  *"/commits/"*) sha=${all#*/commits/}; sha=${sha%% *}; kind=commit-$sha ;;
   *"/actions/workflows/render.yml/runs?event=merge_group&status="*)
     kind=${all#*status=}; kind=${kind%%&*} ;;
   *"/git/matching-refs/heads/main"*) kind=tip ;;
@@ -74,6 +81,11 @@ else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
 """
 
 BASE = "354c03f3f696172be44123d56c4cdfc90d536bb6"
+# 並走の検査の queue: main の先端 TIP ← G1 (head は G1_HEAD) ← G2 (head は BASE) ← 自分。
+# 自分の base は G2 の head で、その親が G1 の head
+G1_HEAD = "1" * 40
+TIP = "0" * 40
+G1 = "gh-readonly-queue/main/pr-1250-" + TIP
 PREV = "gh-readonly-queue/main/pr-1257-c3af40e4d7db9d77266c48b3d84a98f30f8e9daf"
 OTHER = "gh-readonly-queue/main/pr-1260-0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
 
@@ -116,6 +128,17 @@ class RenderTurnTest(unittest.TestCase):
             json.dumps({"workflow_runs": runs}), encoding="utf-8"
         )
 
+    def answer_for(self, sha, round_no, runs):
+        """head_sha=<sha> の run の <round_no> 回目以降の応答を置く。"""
+        (self.data / f"prev-{sha}-{round_no}.json").write_text(
+            json.dumps({"workflow_runs": runs}), encoding="utf-8"
+        )
+
+    def parent(self, sha, parent_sha):
+        (self.data / f"commit-{sha}-1.json").write_text(
+            json.dumps({"sha": sha, "parents": [{"sha": parent_sha}]}), encoding="utf-8"
+        )
+
     def turn(self, *args, **extra):
         env = dict(os.environ)
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
@@ -127,6 +150,7 @@ class RenderTurnTest(unittest.TestCase):
         env.pop("GITHUB_REPOSITORY", None)
         env.pop("RENDER_TURN_LIMIT", None)
         env.pop("GH_FAIL", None)
+        env.pop("RENDER_TURN_SLOTS", None)
         env.update({k: str(v) for k, v in extra.items()})
         return subprocess.run(
             ["/bin/bash", str(TURN), *args],
@@ -236,6 +260,81 @@ class RenderTurnTest(unittest.TestCase):
         self.assertNotIn("::warning::", r.stdout)
         self.assertIn("引き直す", r.stdout)
         self.assertEqual(len(self.calls_of("head_sha=")), 2, r.stdout)
+
+    # --- 並走 (RENDER_TURN_SLOTS) ----------------------------------------------
+
+    def test_既定の_1_では親を引かない(self):
+        self.answer("prev", 1, [run_of(11, PREV, "completed", "success")])
+        self.turn("merge_group", BASE)
+        self.assertEqual(self.calls_of("/commits/"), [])
+
+    def test_空の値は_1_として扱う(self):
+        self.answer("prev", 1, [run_of(11, PREV, "in_progress")])
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS="", RENDER_TURN_LIMIT=0)
+        self.assertIn("待っていた相手", self.summary.read_text(encoding="utf-8"), r.stdout)
+
+    def queue_of_two(self):
+        self.main_tip(TIP)
+        self.parent(BASE, G1_HEAD)
+
+    def test_2_本なら前の_group_が走っていても通る(self):
+        self.queue_of_two()
+        self.answer_for(BASE, 1, [run_of(12, PREV, "in_progress")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "completed", "success")])
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "true")
+        self.assertEqual(len(self.calls_of(f"head_sha={BASE}")), 1, r.stdout)
+        self.assertIn("2 本未満", self.summary.read_text(encoding="utf-8"))
+
+    def test_2_本とも走っていれば先の_group_が終わるまで待つ(self):
+        self.queue_of_two()
+        self.answer_for(BASE, 1, [run_of(12, PREV, "in_progress")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress")])
+        self.answer_for(G1_HEAD, 3, [run_of(11, G1, "completed", "success")])
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true")
+        # G2 (BASE) は走ったままでも、G1 が終わった 3 周目で通る
+        self.assertEqual(len(self.calls_of(f"head_sha={G1_HEAD}")), 3, r.stdout)
+        self.assertIn(f"待っている相手: 11 {G1} 12 {PREV}", r.stdout)
+
+    def test_2_本とも走ったまま上限を越えたら通す(self):
+        self.queue_of_two()
+        self.answer_for(BASE, 1, [run_of(12, PREV, "in_progress")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress")])
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2, RENDER_TURN_LIMIT=0)
+        self.assertEqual(self.go(), "true")
+        self.assertIn("::warning::", r.stdout)
+
+    def test_先端に着いたらそれより前は遡らない(self):
+        """自分の base の親が main の先端なら、前の group は 1 本だけ。"""
+        self.main_tip(G1_HEAD)
+        self.parent(BASE, G1_HEAD)
+        self.answer_for(BASE, 1, [run_of(12, PREV, "in_progress")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress")])
+        r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=2)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of(f"head_sha={G1_HEAD}"), [])
+
+    def test_3_本目の_group_は_N_段より前を数えない(self):
+        """N=1 なら、さらに前の group が走っていても 1 つ前が終わっていれば通る。"""
+        self.queue_of_two()
+        self.answer_for(BASE, 1, [run_of(12, PREV, "completed", "success")])
+        self.answer_for(G1_HEAD, 1, [run_of(11, G1, "in_progress")])
+        r = self.turn("merge_group", BASE)
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of(f"head_sha={G1_HEAD}"), [])
+
+    def test_並走の数が整数でなければ_2_で終わる(self):
+        for bad in ["0", "abc", "-1", "2x", "01"]:
+            r = self.turn("merge_group", BASE, RENDER_TURN_SLOTS=bad)
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIn("RENDER_TURN_SLOTS", r.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_render_yml_は変数を門番へ渡す(self):
+        wf = (REPO / ".github" / "workflows" / "render.yml").read_text(encoding="utf-8")
+        self.assertIn("RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}", wf)
 
     # --- yield ---------------------------------------------------------------
 

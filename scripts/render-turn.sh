@@ -8,7 +8,7 @@
 #   render-turn.sh yield
 #   render-turn.sh wait
 #
-# 専用機は 1 台で、必須の render (merge_group)・情報の render-pr (pull_request)・定期の
+# 専用機は 1 台 (runner は RENDER_TURN_SLOTS 本・下の「並走の数」) で、必須の render (merge_group)・情報の render-pr (pull_request)・定期の
 # scheduled-* (schedule) が取り合う。**runner は queued の job を先着順に拾わない。**
 # 2026-10-04 の実測では、queue の先頭の render が待つ間に、専用機は後から積まれた job を
 # 6 本 (render-pr 4・後ろの group の render 2) と 7 本 (render-pr 2・後ろの group の
@@ -22,10 +22,11 @@
 # ## mode
 #
 #   merge_group  base sha が base ref (既定 refs/heads/main) の先端なら、自分が先頭なので
-#                待たない。そうでなければ、自分の base sha を head に持つ merge_group の
-#                run (1 つ前の group) が終わるまで待つ。group は queue の順に 1 本ずつ
-#                専用機に積まれる。先端と先に比べるので、merge 済みの前の group の run を
-#                人が走らせ直していても、先頭は待たない
+#                待たない。そうでなければ、自分より前の N 本 (RENDER_TURN_SLOTS) の group の
+#                run のうち、終わっていないものが N 本未満になるまで待つ。N=1 なら 1 つ前の
+#                group の run (自分の base sha を head に持つ merge_group の run) が終わるまで
+#                待ち、group は queue の順に 1 本ずつ専用機に積まれる。先端と先に比べるので、
+#                merge 済みの前の group の run を人が走らせ直していても、先頭は待たない
 #   yield        merge_group の run が 1 本でも終わっていなければ go=false を出して抜ける
 #                (render-pr は見送る。必須ではないので merge の可否は変わらない)
 #   wait         merge_group の run が 1 本でも終わっていなければ、終わるまで待つ
@@ -34,6 +35,20 @@
 # 待つ相手は render job ではなく **run** で見る。group の run は門番で待っている間も
 # in_progress なので、「専用機に積まれる予定の render」まで数えられる。job で見ると、
 # 前の render が終わってから次の門番が気付くまでの隙間に render-pr が入り込む。
+#
+# ## 並走の数 (RENDER_TURN_SLOTS・#3319)
+#
+# 専用機の runner の数に合わせる (#2252 の案 3-a)。**守るのは「専用機に積まれた job
+# (queued + in_progress) の数が runner の数を越えない」で、越えなければ拾う順は問題に
+# ならない。** merge_group の門番は、前の group を N 段まで遡って、終わっていない run を
+# 持つ group を数える。N 段目の前の group は、N-1 段目の base sha の親 (queue の squash の
+# commit は親 1 つで、親が 1 つ前の group の base sha) を head に持つ run で引く。base ref の
+# 先端に着いたら、それより前の group は merge 済みなので遡らない。
+#
+# 未設定か空なら 1 (今までどおり 1 本ずつ)。1 以上の整数でなければ使い方の誤り (2) で止め、
+# 黙って並走させない。render.yml はリポジトリの変数 vars.RENDER_TURN_SLOTS を渡すので、
+# runner を足した後の切り替えと戻しは変数だけで行う。yield と wait は N を見ない (merge_group
+# の run が 1 本でも残っていれば見送る・待つ)。
 #
 # ## 前の group の run が見つからないとき
 #
@@ -61,10 +76,11 @@
 #
 # 60 秒おきに引く (RENDER_TURN_INTERVAL で差し替え)。GITHUB_TOKEN の REST の上限は
 # リポジトリで 1 時間 1,000 件を共有する (review-gate・queue-sweep も同じ枠)。1 周に引くのは
-# merge_group で 2 件 (先端と前の run)、yield / wait で 2 件 (queued と in_progress) なので、
-# 門番 1 本で 1 時間 120 件になる。同時に待つ merge_group の門番は、queue が同時に組む
-# group の数 (main-protection.json の max_entries_to_build) より 1 本少ない。その数が 5 で
-# 門番が 4 本と定期の門番 1 本が同時に待っても約 600 件で、枠の内に収まる。
+# merge_group で 2N 件 (先端・前の N 本の run・遡るための親 N-1 件)、yield / wait で 2 件
+# (queued と in_progress) なので、N=1 の門番 1 本で 1 時間 120 件、N=2 で 240 件になる。
+# 同時に待つ merge_group の門番は、queue が同時に組む group の数 (main-protection.json の
+# max_entries_to_build) より N 本少ない。今の 2 なら N=1 で 1 本 (120 件)、N=2 では待つ門番が
+# 無い。定期の門番 1 本を足しても枠の内に収まる。
 #
 # ## 判定できないときは通す
 #
@@ -128,6 +144,14 @@ LIMIT_SECONDS=$((${RENDER_TURN_LIMIT:-$limit_default} * 60))
 READ_ATTEMPTS="${RENDER_TURN_READ_ATTEMPTS:-3}"
 # 先頭でないのに前の group の run が無いとき、作られるのを待つ猶予 (秒)
 MISSING_GRACE="${RENDER_TURN_MISSING_GRACE:-300}"
+# 専用機で同時に走らせる merge_group の render の数 (上の「並走の数」)
+SLOTS="${RENDER_TURN_SLOTS:-1}"
+case "$SLOTS" in
+  "" | *[!0-9]* | 0*)
+    echo "render-turn: RENDER_TURN_SLOTS は 1 以上の整数で渡す: '${RENDER_TURN_SLOTS}'" >&2
+    exit 2
+    ;;
+esac
 
 # 「まだ終わっていない」run の status。一覧 API の status は 1 つしか取らないので並べて引く
 # (queue-sweep.sh と同じ)。render.yml の run は environment も run 単位の concurrency も
@@ -152,23 +176,36 @@ unreadable() { # $1=何を読めなかったか
 
 # 待つ相手を 1 行ずつ「<id> <head_branch>」で出す。読めなければ非 0
 blocking_runs() {
-  local active got out="" tip
+  local active got out="" tip sha=${base:-} step busy=0 open
   case "$mode" in
     merge_group)
       # 先端と先に比べる: 先頭なら、前の group の run の状態によらず待たない
       tip=$(gh api "repos/$REPO/git/matching-refs/${base_ref#refs/}" \
         --jq ".[] | select(.ref == \"$base_ref\") | .object.sha") || return 1
-      [ "$tip" != "$base" ] || return 0
-      got=$(gh api "$RUNS?event=merge_group&head_sha=$base&per_page=100" \
-        --jq '.workflow_runs[] | "\(.id) \(.status) \(.head_branch)"') || return 1
-      if [ -z "$got" ]; then
-        # 先頭でないのに前の group の run が無い: まだ作られていない (組み直しの直後)
-        if [ "$SECONDS" -lt "$MISSING_GRACE" ]; then
-          echo "- (前の group の run がまだ作られていない: head_sha=${base:0:8})"
+      # 前の group を N 段まで遡り、終わっていない run を持つ group を数える
+      for ((step = 1; step <= SLOTS; step++)); do
+        [ "$sha" != "$tip" ] || break
+        got=$(gh api "$RUNS?event=merge_group&head_sha=$sha&per_page=100" \
+          --jq '.workflow_runs[] | "\(.id) \(.status) \(.head_branch)"') || return 1
+        if [ -z "$got" ]; then
+          # 先頭でないのに前の group の run が無い: まだ作られていない (組み直しの直後)
+          if [ "$SECONDS" -lt "$MISSING_GRACE" ]; then
+            out+="- (前の group の run がまだ作られていない: head_sha=${sha:0:8})"$'\n'
+            busy=$((busy + 1))
+          fi
+        else
+          open=$(awk '$2 != "completed" { print $1, $3 }' <<<"$got")
+          if [ -n "$open" ]; then
+            out+="$open"$'\n'
+            busy=$((busy + 1))
+          fi
         fi
-        return 0
-      fi
-      out=$(awk '$2 != "completed" { print $1, $3 }' <<<"$got")
+        [ "$step" -lt "$SLOTS" ] || break
+        sha=$(gh api "repos/$REPO/commits/$sha" --jq '.parents[0].sha') || return 1
+        [ -n "$sha" ] || return 1
+      done
+      # 終わっていない group が N 本未満なら、自分の分の runner が空いている
+      [ "$busy" -ge "$SLOTS" ] || return 0
       ;;
     *)
       for active in $ACTIVE_STATUSES; do
@@ -194,7 +231,13 @@ while :; do
 
   if [ -z "$blockers" ]; then
     case "$mode" in
-      merge_group) say "前の group の render は終わっている (または自分が先頭)。$((SECONDS / 60)) 分待った" ;;
+      merge_group)
+        if [ "$SLOTS" -eq 1 ]; then
+          say "前の group の render は終わっている (または自分が先頭)。$((SECONDS / 60)) 分待った"
+        else
+          say "前の $SLOTS 本の group のうち、終わっていない render は $SLOTS 本未満 (または自分が先頭)。$((SECONDS / 60)) 分待った"
+        fi
+        ;;
       *) say "merge queue の render は走っていない。$((SECONDS / 60)) 分待った" ;;
     esac
     finish true

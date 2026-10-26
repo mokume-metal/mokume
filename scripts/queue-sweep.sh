@@ -38,7 +38,7 @@
 #
 # ## 門番より前に積まれた render-pr を退かせる (#2064)
 #
-# 専用機は 1 台で、**runner は queued の job を先着順に拾わない** (#2062)。render.yml の
+# 専用機の runner は、**queued の job を先着順に拾わない** (#2062)。render.yml の
 # 門番 (scripts/render-turn.sh の yield) は、merge_group の run が残っていれば render-pr を
 # 見送る。ただし判定は **積む前の 1 回だけ**で、merge queue が空いている間に門番を通って
 # 専用機の queue に入った render-pr は、後からできた先頭の render と取り合う。2026-10-04 には
