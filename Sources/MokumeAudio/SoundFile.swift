@@ -822,10 +822,13 @@ public final class SoundFile: Inlet, EffectInput {
         player.volume = volume
         let wasPlaying = playhead.isPlaying
         // 位置は、切り替える前の測り方 (フレームの数) で読む
-        let position = playhead.position(after: played())
+        let playedNow = played()
         pace = .speaker(player)
         if wasPlaying {
-            playhead.jump(to: position)
+            // 同じ音が続くので、区間の番号も続ける (``Playhead/carry(after:)``)。位置の側へ付け直すと、ループで何周かした後は
+            // 窓の格子がずれて、載せないときと別の値になる (#3268)
+            playhead.carry(after: playedNow)
+            continuedCoverage = covered
             beginSegment()
         }
     }

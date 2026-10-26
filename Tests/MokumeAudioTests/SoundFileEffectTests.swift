@@ -388,10 +388,11 @@ struct SoundFileEffectTests {
 
     /// 通した回と通さない回を比べる形 (#3268)。
     enum RoutedAnalysis: CaseIterable, CustomTestStringConvertible {
-        case afterTwoLaps, afterManyLaps, nearTheSeam, firstLap, playedOnce, afterJump
+        case afterOneLap, afterTwoLaps, afterManyLaps, nearTheSeam, firstLap, playedOnce, afterJump
 
         var testDescription: String {
             switch self {
+            case .afterOneLap: "1 周した後"
             case .afterTwoLaps: "2 周した後"
             case .afterManyLaps: "5 周した後"
             case .nearTheSeam: "ちょうど 2 周した継ぎ目 (窓の頭が前の周に掛かる)"
@@ -405,6 +406,7 @@ struct SoundFileEffectTests {
         /// 通すフレーム。1 周は 60 フレーム (1 秒の雑音を 60 fps・800 標本で)。
         var routeAt: Int {
             switch self {
+            case .afterOneLap: 80
             case .afterTwoLaps: 130
             case .afterManyLaps: 305
             case .nearTheSeam: 121
@@ -435,6 +437,53 @@ struct SoundFileEffectTests {
         // 値が動いている (一致が自明でない)
         #expect(Set(plain.file.map(\.level)).count > 10)
         let found = mismatches(late, plain, from: shape.routeAt)
+        #expect(found.isEmpty, "食い違い \(found.count) 件: \(found.prefix(8))")
+    }
+
+    /// 音声トラックが始まって、鳴らさずに数で進めていたファイルが機材に出さない流れの `FilePlayer` へ切り替わる (#3125)
+    /// ときも、ループで何周かした後で、載せない回と同じ値になる (#3268 の兄弟の口)。
+    @Test("ループで何周かした後に音声トラックへ載せても、載せた後のすべてのフレームの level・rms・peak・spectrum が載せないときと一致する")
+    func joiningTheTrackKeepsTheAnalysis() throws {
+        let url = try writeWAV(Self.noise, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let frames = 200
+        let joinAt = 130
+        func moments(join: Bool) throws -> [Moment] {
+            var seen: [Moment] = []
+            var song: SoundFile?
+            let flow = try offline()
+            let runtime = try run(
+                frames: frames,
+                setup: { sketch in
+                    let loaded = try sketch.loadSound(url.path)
+                    loaded.loop()
+                    song = loaded
+                },
+                draw: { sketch in
+                    guard let song else { return }
+                    seen.append(
+                        Moment(
+                            isPlaying: song.isPlaying, position: song.samplePosition, level: song.level,
+                            rms: song.rms, peak: song.peak, spectrum: song.spectrum))
+                    if join, sketch.frameCount == joinAt { song.joinTrack(flow) }
+                },
+                between: { frame in
+                    if join, frame >= joinAt { _ = try renderStereo(flow, Self.perFrame) }
+                })
+            runtime.closePlugins()
+            return seen
+        }
+        let plain = try moments(join: false)
+        let joined = try moments(join: true)
+        var found: [String] = []
+        for index in joinAt..<frames {
+            let (a, b) = (joined[index], plain[index])
+            if a.level != b.level { found.append("\(index):level") }
+            if a.rms != b.rms { found.append("\(index):rms") }
+            if a.peak != b.peak { found.append("\(index):peak") }
+            if a.spectrum != b.spectrum { found.append("\(index):spectrum") }
+            if a.position != b.position { found.append("\(index):position") }
+        }
         #expect(found.isEmpty, "食い違い \(found.count) 件: \(found.prefix(8))")
     }
 
