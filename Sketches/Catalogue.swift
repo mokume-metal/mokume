@@ -37,6 +37,10 @@ nonisolated struct ReferenceSketch: Sendable, CustomStringConvertible {
 nonisolated let stillFrame = 45
 
 nonisolated let catalogue: [ReferenceSketch] = [
+    ReferenceSketch(name: "raster-and-edges") { RasterAndEdges() },
+    ReferenceSketch(name: "raster-and-edges-075") { RasterAndEdges(density: 0.75) },
+    ReferenceSketch(name: "raster-and-edges-050") { RasterAndEdges(density: 0.5) },
+    ReferenceSketch(name: "alpha-and-layers") { AlphaAndLayers() },
     ReferenceSketch(name: "shapes-and-style") { ShapesAndStyle() },
     ReferenceSketch(name: "curves-and-vertices") { CurvesAndVertices() },
     ReferenceSketch(name: "curve-and-flight") { CurveAndFlight() },
