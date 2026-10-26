@@ -248,8 +248,9 @@ strip_html_comments() {
   '
 }
 
-pr_json=$(gh pr view "$PR" -R "$REPO" \
-  --json body,labels,latestReviews,closingIssuesReferences,baseRefName,headRefOid,createdAt)
+# pr-gate の先頭が取った事前取得があればそれを読む (#3261。無ければ gh pr view と同じ)
+pr_json=$(pr_view_json "$REPO" "$PR" \
+  body,labels,latestReviews,closingIssuesReferences,baseRefName,headRefOid,createdAt)
 pr_labels=$(jq -r '[.labels[].name] | join("\n")' <<<"$pr_json")
 # **変更ファイルだけ別の口から取る** (#793)。同じ gh pr view にまとめると呼び出しは
 # 1 回で済むが、files は GraphQL の接続で上限があり、大きな PR では後半が落ちる —

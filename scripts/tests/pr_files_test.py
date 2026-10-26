@@ -21,9 +21,15 @@
 discover するので、ここに 1 ファイル置けば CI にも載る (`bash_invocation_test.py` /
 `surface_vocabulary_test.py` と同じ構え・ADR-0008 決定 5 段 1)。
 
+もう 1 つ、**事前取得を読む道** (#3261) も固定する。pr-gate は先頭の step が PR のメタデータと
+変更ファイルを 1 回だけ取って `MOKUME_PR_SNAPSHOT_DIR` へ置き、3 つの判定がそれを読む。読む道は
+(a) 置き場が未設定なら今までと同じ (b) 置き場にその PR のものがあれば gh を呼ばない (c) 無い・読めない・
+形が合わない (別の PR・欄が足りない・壊れた JSON) なら、緩む方向へは倒さず、警告を出して自前で取る、の 3 つ。
+
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import json
 import os
 import re
 import subprocess
@@ -39,6 +45,9 @@ LIB = SCRIPTS / "pr-files.sh"
 FAKE_GH = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
 [ -z "${GH_FAILS:-}" ] || { echo "gh: 500" >&2; exit 1; }
+case "$1 $2" in
+  "pr view") view=${FAKE_VIEW:-}; printf '%s\\n' "${view:-null}"; exit 0 ;;
+esac
 printf '%s\\n' ${FAKE_FILES:-}
 """
 
@@ -108,6 +117,171 @@ class PrFilesTest(unittest.TestCase):
 
     def test_a_missing_number_is_refused(self):
         proc = self.call("owner/name", "")
+        self.assertNotEqual(proc.returncode, 0)
+
+
+class SnapshotTest(unittest.TestCase):
+    """事前取得 (`MOKUME_PR_SNAPSHOT_DIR`・#3261) を読む道。偽の gh の呼び出しの記録で、gh を呼んだかを見る。"""
+
+    FIELDS = "title,body,labels,number"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text(FAKE_GH, encoding="utf-8")
+        gh.chmod(0o755)
+        self.calls = root / "gh-calls.txt"
+        self.snap = root / "snap"
+        self.snap.mkdir()
+        self.env = dict(os.environ)
+        self.env.pop("MOKUME_PR_SNAPSHOT_DIR", None)
+        self.env.update(
+            PATH=f"{bin_dir}:{os.environ['PATH']}",
+            GH_CALLS=str(self.calls),
+            FAKE_FILES="live-a live-b",
+            FAKE_VIEW='{"number": 7, "title": "live"}',
+        )
+
+    def gh_calls(self):
+        return self.calls.read_text(encoding="utf-8").splitlines() if self.calls.exists() else []
+
+    def call(self, fn, *args, snapshot=True, **env):
+        self.env.update(env)
+        if snapshot:
+            self.env["MOKUME_PR_SNAPSHOT_DIR"] = str(self.snap)
+        quoted = " ".join(f'"{a}"' for a in args)
+        return subprocess.run(
+            ["/bin/bash", "-c", f'. "{LIB}"\n{fn} {quoted}'],
+            capture_output=True, text=True, env=self.env,
+        )
+
+    def put_files(self, number, text, view=True):
+        """変更ファイルの事前取得を置く。`view` なら同じ PR のメタデータも置く (揃っているときだけ読まれる)。"""
+        (self.snap / f"files-{number}.txt").write_text(text, encoding="utf-8")
+        if view:
+            self.put_view(number, json.dumps({"number": number, "title": "t"}))
+
+    def put_view(self, number, text):
+        (self.snap / f"view-{number}.json").write_text(text, encoding="utf-8")
+
+    # --- pr_files ---
+
+    def test_unset_directory_is_the_same_as_before(self):
+        self.put_files(7, "snap-a\n")
+        proc = self.call("pr_files", "o/r", "7", snapshot=False)
+        self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
+        self.assertEqual(len(self.gh_calls()), 1)
+        self.assertEqual(proc.stderr, "")
+
+    def test_a_snapshot_is_read_without_calling_gh(self):
+        self.put_files(7, "snap-a\nsnap-b\n")
+        proc = self.call("pr_files", "o/r", "7")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.split(), ["snap-a", "snap-b"])
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_an_empty_snapshot_is_an_empty_pr_not_a_missing_one(self):
+        """変更ファイルが 0 件の PR の事前取得は空ファイル。**欠けた** のとは別 (欠けたら取り直す)。"""
+        self.put_files(7, "")
+        proc = self.call("pr_files", "o/r", "7")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_a_missing_snapshot_falls_back_to_gh_and_says_so(self):
+        """**緩む方向へは倒れない。** 欠けたら従来の自前取得に戻る (空の一覧と読まない)。"""
+        proc = self.call("pr_files", "o/r", "7")
+        self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
+        self.assertEqual(len(self.gh_calls()), 1)
+        self.assertIn("事前取得", proc.stderr)
+
+    def test_files_without_the_matching_view_are_not_trusted(self):
+        """**途中で落ちた回の半端なファイルを、空の一覧と読まない。**
+
+        pr-snapshot は files を先に・view を後に置く。view が無い files は書き終わりが分からない
+        (空なら「変更ファイル 0 件」と読まれ、絵や AGENTS.md の検査が黙って外れる)。
+        """
+        for text in ("", "partial\n"):
+            with self.subTest(text=text):
+                self.calls.unlink(missing_ok=True)
+                self.put_files(7, text, view=False)
+                proc = self.call("pr_files", "o/r", "7")
+                self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
+                self.assertEqual(len(self.gh_calls()), 1)
+
+    def test_another_prs_snapshot_is_not_read(self):
+        self.put_files(8, "other-pr\n")
+        proc = self.call("pr_files", "o/r", "7")
+        self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
+        self.assertEqual(len(self.gh_calls()), 1)
+
+    def test_a_missing_snapshot_and_a_failing_gh_is_still_a_failure(self):
+        proc = self.call("pr_files", "o/r", "7", GH_FAILS="1")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "")
+
+    # --- pr_view_json ---
+
+    def view(self, **extra):
+        return {"number": 7, "title": "snap", "body": "b", "labels": [], **extra}
+
+    def test_view_unset_directory_calls_gh_pr_view(self):
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS, snapshot=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn('"live"', proc.stdout)
+        self.assertEqual(self.gh_calls(), [f"pr view 7 --json {self.FIELDS} -R o/r"])
+
+    def test_view_without_a_repository_drops_the_dash_r(self):
+        self.call("pr_view_json", "", "7", self.FIELDS, snapshot=False)
+        self.assertEqual(self.gh_calls(), [f"pr view 7 --json {self.FIELDS}"])
+
+    def test_view_snapshot_is_read_without_calling_gh(self):
+        self.put_view(7, json.dumps(self.view()))
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS)
+        self.assertEqual(json.loads(proc.stdout)["title"], "snap")
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_view_snapshot_with_extra_fields_serves_a_narrower_request(self):
+        self.put_view(7, json.dumps(self.view(headRefOid="abc")))
+        proc = self.call("pr_view_json", "o/r", "7", "body,number")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_view_snapshot_missing_a_field_falls_back(self):
+        """欠けた欄を null と読ませない (読み手の jq が黙って緩む)。"""
+        self.put_view(7, json.dumps(self.view()))
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS + ",headRefOid")
+        self.assertIn('"live"', proc.stdout)
+        self.assertEqual(len(self.gh_calls()), 1)
+        self.assertIn("事前取得", proc.stderr)
+
+    def test_view_snapshot_with_a_null_field_falls_back(self):
+        """キーがあっても値が null なら欠けと同じ (`latestReviews: null` を「レビューなし」と読ませない)。"""
+        self.put_view(7, json.dumps(self.view(labels=None)))
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS)
+        self.assertIn('"live"', proc.stdout)
+        self.assertEqual(len(self.gh_calls()), 1)
+        # 空の配列・空の文字列は null ではない
+        self.calls.unlink(missing_ok=True)
+        self.put_view(7, json.dumps(self.view(body="", labels=[])))
+        self.call("pr_view_json", "o/r", "7", self.FIELDS)
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_view_snapshot_of_another_number_or_broken_json_falls_back(self):
+        for text in (json.dumps(self.view(number=8)), "{not json", "", "[]"):
+            with self.subTest(text=text):
+                self.calls.unlink(missing_ok=True)
+                self.put_view(7, text)
+                proc = self.call("pr_view_json", "o/r", "7", self.FIELDS)
+                self.assertIn('"live"', proc.stdout)
+                self.assertEqual(len(self.gh_calls()), 1)
+
+    def test_view_missing_snapshot_and_a_failing_gh_is_still_a_failure(self):
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS, GH_FAILS="1")
         self.assertNotEqual(proc.returncode, 0)
 
 

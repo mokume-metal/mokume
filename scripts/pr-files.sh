@@ -38,6 +38,17 @@
 # `local-render: success` を打っていた — 上の落ち方 (#793) と同じく、**どれも赤く
 # ならずに緩む方向**である。
 #
+# **PR の材料を 1 回で取る事前取得を読む** (#3261)。pr-gate は 3 つの判定が同じ PR の
+# メタデータと変更ファイルを別々に取っていた (PR のメタデータ 3 回・一覧 2 回)。先頭の
+# pr-snapshot step が 1 回ずつ取って `MOKUME_PR_SNAPSHOT_DIR` の下へ置き (`files-<番号>.txt`・
+# `view-<番号>.json`)、以降はここが読む。**置き場が未設定なら今までと同じ**で、手元から単体で
+# 呼んだときの使い方は変わらない。
+#
+# **事前取得が欠けても緩む方向へは倒さない。** 置き場が設定されているのに、その PR のファイルが
+# 無い・読めない・形が合わないときは、警告を出して従来の自前取得に戻る (取得 step が落ちた回は
+# job が赤で、後ろの判定は環境変数が無いまま走る = 自前取得になる)。番号を名前に含めるので、
+# 別の PR の事前取得を読むこともない。
+#
 # テストは scripts/tests/pr_files_test.py。
 
 # PR の変更ファイルのパスを 1 行 1 件で stdout へ。読めなければ非 0 で、何も出さない。
@@ -52,6 +63,41 @@
 # ここは材料を渡すだけである。
 pr_files() { # $1=owner/repo (空可) $2=PR 番号
   local repo=${1:-} number=${2:?PR 番号が必要}
+  if [ -n "${MOKUME_PR_SNAPSHOT_DIR:-}" ]; then
+    local snapshot="$MOKUME_PR_SNAPSHOT_DIR/files-$number.txt"
+    # **同じ PR のメタデータ (view-<番号>.json) も揃っているときだけ読む。** pr-snapshot は
+    # 一時の名前へ書いて、files を先に・view を後に置く。view が無いのは、途中で落ちた回の
+    # 半端な files であり、空のファイルを「変更ファイル 0 件」と読むと、絵や AGENTS.md の検査が
+    # 黙って外れる
+    if [ -r "$snapshot" ] && [ -r "$MOKUME_PR_SNAPSHOT_DIR/view-$number.json" ]; then
+      cat "$snapshot"
+      return
+    fi
+    echo "pr-files: 事前取得 $snapshot が揃っていない — 自分で取り直す" >&2
+  fi
   [ -n "$repo" ] || repo='{owner}/{repo}'
   gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'
+}
+
+# PR のメタデータを JSON で stdout へ。読めなければ非 0。`gh pr view --json` の代わり。
+#   $1 = owner/repo (**空でよい** — 空なら -R を付けず、gh が解く)
+#   $2 = PR 番号
+#   $3 = --json の欄 (カンマ区切り)
+#
+# 事前取得 (view-<番号>.json) が**番号と欄を満たすときだけ**それを返す。欄が足りない・値が null の
+# ものを返すと、読み手の jq が null を「無い」と読んで黙って緩む。満たさなければ警告して gh を呼ぶ。
+pr_view_json() { # $1=owner/repo (空可) $2=PR 番号 $3=--json の欄
+  local repo=${1:-} number=${2:?PR 番号が必要} fields=${3:?--json の欄が必要}
+  if [ -n "${MOKUME_PR_SNAPSHOT_DIR:-}" ]; then
+    local snapshot="$MOKUME_PR_SNAPSHOT_DIR/view-$number.json"
+    if [ -r "$snapshot" ] && jq -e --argjson n "$number" --arg fields "$fields" \
+      '.number == $n and (. as $o | $fields | split(",") | all(. as $k | $o[$k] != null))' "$snapshot" >/dev/null 2>&1; then
+      cat "$snapshot"
+      return
+    fi
+    echo "pr-files: 事前取得 $snapshot が無い・読めない・番号か欄が合わない — 自分で取り直す" >&2
+  fi
+  local args=("$number" --json "$fields")
+  if [ -n "$repo" ]; then args+=(-R "$repo"); fi
+  gh pr view "${args[@]}"
 }
