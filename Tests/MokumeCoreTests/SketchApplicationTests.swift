@@ -171,6 +171,74 @@ struct SketchApplicationTests {
         #expect(abs(x - 480) < 1 && abs(y - 270) < 1, "(\(x), \(y))")
     }
 
+    /// `setup()` で `selectInput` を頼む (`Task` から) スケッチ。
+    private final class SelectAsker: Sketch {
+        var result: String??
+        func setup() {
+            Task { result = .some(await selectInput("pick")) }
+        }
+    }
+
+    /// **スケッチ自身の窓は、頼まれたファイルを選ばせるダイアログを自分の窓に出し、結果を同じ形の出来事にして
+    /// 自分の合流点へ積む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。同じ頼みを出し直さず、
+    /// 結果が当たって頼みが消えたら、出していたダイアログを閉じる。
+    @Test("スケッチの窓は頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える")
+    func theWindowShowsTheSelectionAndEndsTheWait() async throws {
+        let sketch = SelectAsker()
+        let application = try makeApplication(sketch)
+        let picker = FakeFilePicker()
+        application.filePicker = picker
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        #expect(await eventually { application.displayLinkFired(); return !picker.shown.isEmpty })
+        #expect(picker.shown.map(\.prompt) == ["pick"], "頼みの窓に出ていない")
+        application.displayLinkFired()
+        #expect(picker.shown.count == 1, "同じ頼みを出し直した")
+        #expect(sketch.result == nil)
+
+        picker.answer(0, "/tmp/a.csv")
+        #expect(await eventually { application.displayLinkFired(); return sketch.result != nil })
+        #expect(sketch.result == .some("/tmp/a.csv"), "結果で待ちが終わらない")
+        application.displayLinkFired()
+        #expect(picker.shown.count == 1, "終わった頼みをまた出した")
+    }
+
+    /// **ファイルのシートが付いている間も、× は閉じる問いへ進む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    /// シートが付いていると `windowShouldClose` は問わずに false を返し、× が黙って効かなくなっていた。
+    /// ファイルのダイアログは取り消しとして渡り、待ちは `nil` で終わる。
+    @Test("ファイルを選ぶシートが付いていても、× は問いへ進み、待ちは nil で終わる")
+    func closingWithTheFileSheetUpAsksTheQuestion() async throws {
+        let sketch = SelectAsker()
+        let application = try makeApplication(sketch)
+        let picker = FakeFilePicker()
+        application.filePicker = picker
+        var asked = 0
+        application.closeQuestion = Self.question
+        application.presentQuestion = { _, _, _ in asked += 1 }
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+        #expect(await eventually { application.displayLinkFired(); return !picker.shown.isEmpty })
+
+        let window = try #require(application.window)
+        let sheet = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 80, height: 40), styleMask: [.titled],
+            backing: .buffered, defer: true)
+        window.beginSheet(sheet, completionHandler: nil)
+        defer { if let attached = window.attachedSheet { window.endSheet(attached) } }
+        try #require(window.attachedSheet != nil)
+
+        #expect(try !asksToClose(application))
+        #expect(asked == 1, "ファイルのシートが付いていると × が効かない")
+        #expect(picker.dismissals == 1, "ファイルのダイアログを取り消していない")
+        #expect(await eventually { application.displayLinkFired(); return sketch.result != nil })
+        #expect(sketch.result == .some(nil), "取り消しとして待ちが終わらない")
+
+        // 問いが出ている間の 2 度目の × は、問いを重ねない
+        #expect(try !asksToClose(application))
+        #expect(asked == 1, "問いを二重に出した")
+    }
+
     /// **窓が key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
     /// 離したキーは窓へ届かないので、流さないと押されたまま残る。
     @Test("窓が退く知らせで、押していたキーの解放が流れる")

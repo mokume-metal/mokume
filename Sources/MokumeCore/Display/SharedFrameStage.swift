@@ -62,6 +62,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         /// 大きさを前提にした初めの位置 (``nudge``) のままだと、作品の窓が高いスケッチで
         /// 2 枚が重なる (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``)。
         var placesBeneathRequestedArtwork = false
+        /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んだら、この窓が出すか。
+        ///
+        /// **作品の窓だけが出す** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。作品の窓とプレビューは
+        /// 同じ面の頼みを読むので、両方が出すとパネルが 2 枚出る。作品の窓は直に走らせた窓と同じ見え方で、
+        /// ダイアログもそこに出る。
+        var showsSelectionDialogs = false
     }
 
     /// × を押された人に問う言葉。
@@ -121,6 +127,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// **実際に窓を畳むのはここではない。** 見張りは子を止め、区画を片付けてから畳む
     /// 必要があるので、台が先に閉じると後始末の順が壊れる ([ADR-0032] 決定 1)。
     private var onCloseConfirmed: (() -> Void)?
+    /// 閉じる問いのシートを出している間か。**付いているシートが問いのものか、ファイルを選ばせるものかを分ける**
+    /// (``shouldClose(_:)``)。
+    private var isAskingToClose = false
     /// 問いを持っているか。**検査から見る** (`SharedFramePreview.hasPanel` と同じ扱い)。
     var asksBeforeClosing: Bool { closeQuestion != nil }
 
@@ -253,6 +262,39 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// (``SharedFrameSurface/cursorHiddenAttribute``・[#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     /// 読み方と渡し方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
     private(set) var cursorHiddenRequested = false
+    /// 出している世代のスケッチが、いま待っているファイルを選ばせる頼みと、その世代の子の番号。**面の属性から読む**
+    /// (``SharedFrameSurface/selectInputAttribute``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    /// 読み方は ``pointerLockRequested`` と同じで、**自分が映す世代の頼みに従う**。検査から読む。
+    private(set) var selectionRequested: (pid: Int32?, request: SelectionBroker.Request)?
+    /// ファイルを選ばせるダイアログの出し方。**検査から差し替える** — 本物の `NSOpenPanel` は人の操作を待つ。
+    var filePicker: any FilePicker = OpenPanelPicker()
+    /// いま出している (出していた) ダイアログ。**頼みが面から消えるまで持つ** — 答えた後も、頼みが残っている間は
+    /// 結果を送り直すため、また同じ頼みを出し直さないための印でもある。
+    private var shownSelection: ShownSelection?
+
+    private struct ShownSelection {
+        /// 頼みの出どころの世代の子の番号。
+        let pid: Int32?
+        /// 頼みの通し番号。
+        let serial: Int
+        /// 結果ごと捨てて閉じる口。
+        var dismiss: @MainActor () -> Void
+        /// 利用者が答えた結果と、最後に子へ送った時刻。**答えるまでは `nil`。** 取り消しは `path` が `nil`。
+        var answer: (path: String?, sentAt: CFTimeInterval)?
+    }
+
+    /// いまの時刻 (秒)。**検査から差し替える** — 結果の送り直しの間合いを、待たずに進める。
+    var now: () -> CFTimeInterval = { CACurrentMediaTime() }
+
+    /// 子へ送った結果を、頼みがまだ面に残っているとき送り直す間合い (秒)。
+    ///
+    /// **結果の 1 行は落ちうる** — 子の標準入力の管が一杯のとき・書き残しの間・子の合流点の溢れ・外から止められて
+    /// いる間 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。落ちると頼みが面に残ったままになるので、
+    /// それを「届かなかった」の印にして送り直す。間合いは**普段の届き方より十分に長く**取る: 届けば子は次の
+    /// フレームで待ちを終え、頼みを消した絵を差し出し、台がそれを読むまでに数フレームかかる。その間に送り直しても
+    /// 子は番号の違う (終わった) 結果として黙って捨てるので害は無いが、毎フレーム送る理由も無い。半秒なら、
+    /// 落ちた結果は次の瞬きの間に届き、管を埋めている子 (重いフレームの最中) に毎秒 2 行以上は積まない。
+    static let selectionResendInterval: CFTimeInterval = 0.5
     /// 続けて差し出せなかった数。**始まりと終わりだけ**言うために持つ。
     private var failures = FrameFailureLog()
 
@@ -419,6 +461,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         defer {
             self.view?.followPointerLock(requested: pointerLockRequested)
             self.view?.followCursorHiding(requested: cursorHiddenRequested)
+            self.followSelectionRequest()
         }
         guard let source, let newest = source.lookup.newest() else { return }
         // **面に載ったもの (速さ・捕まえの要求) は、窓の有無と関係なく読む。** 絵を出す先が
@@ -449,6 +492,79 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         }
     }
 
+    // MARK: - ファイルを選ばせる
+
+    /// スケッチのファイルを選ばせる頼みを、この窓で出す ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// **出すのは `showsSelectionDialogs` の窓だけで、同じ頼み (子の番号と通し番号の組) は 1 度だけ出す。**
+    /// 頼みが無くなった・別の頼みになったら、出しているダイアログは結果ごと捨てて閉じる。結果は入力の出来事を
+    /// 1 行にして子へ渡す (``onInput``) — 子が結果で待ちを終える。**頼んだ世代が入れ替わった後に届いた結果は
+    /// 子へ渡さない** (新しい子は待っていない)。
+    ///
+    /// **結果には頼みの通し番号を載せ、頼みが面に残っている間は送り直す** (``selectionResendInterval``)。
+    /// 1 行が落ちても待ちは永久には続かない。子は番号が違う結果を黙って捨てるので、送り直しが重なっても待ちを
+    /// 終えるのは 1 度である。
+    private func followSelectionRequest() {
+        guard look.showsSelectionDialogs else { return }
+        let wanted = selectionRequested
+        if let shown = shownSelection,
+            wanted == nil || wanted?.pid != shown.pid || wanted?.request.serial != shown.serial
+        {
+            shown.dismiss()
+            shownSelection = nil
+        }
+        resendSelectionAnswer()
+        guard let wanted, shownSelection == nil, let view, view.window != nil else { return }
+        let (pid, serial) = (wanted.pid, wanted.request.serial)
+        // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、先に控えてから出す
+        shownSelection = ShownSelection(pid: pid, serial: serial, dismiss: {})
+        let dismiss = filePicker.pick(prompt: wanted.request.prompt, over: view.window) {
+            [weak self] path in
+            self?.answerSelection(path, pid: pid, serial: serial)
+        }
+        shownSelection?.dismiss = dismiss
+    }
+
+    /// 利用者がダイアログに答えた (取り消しは `nil`)。子へ 1 度送り、頼みが残る間の送り直しの印を立てる。
+    private func answerSelection(_ path: String?, pid: Int32?, serial: Int) {
+        guard let shown = shownSelection, shown.pid == pid, shown.serial == serial,
+            shown.answer == nil
+        else { return }
+        shownSelection?.answer = (path, now())
+        sendSelectionAnswer(path, pid: pid, serial: serial)
+    }
+
+    /// 結果を 1 行にして子へ渡す。**頼んだ世代が入れ替わっていたら渡さない。**
+    private func sendSelectionAnswer(_ path: String?, pid: Int32?, serial: Int) {
+        guard source?.pid == pid else { return }
+        onInput?(InputEvent.fileSelected(path: path, serial: serial).wireLine)
+    }
+
+    /// 答えた結果を、頼みがまだ面に残っていて、間合いが過ぎていれば送り直す。
+    private func resendSelectionAnswer() {
+        guard let shown = shownSelection, let answer = shown.answer,
+            now() - answer.sentAt >= Self.selectionResendInterval
+        else { return }
+        shownSelection?.answer = (answer.path, now())
+        sendSelectionAnswer(answer.path, pid: shown.pid, serial: shown.serial)
+    }
+
+    /// 窓の × が押されたとき、**ファイルを選ばせるシートが付いているなら、それを取り消す。**
+    ///
+    /// シートが付いている間 `windowShouldClose` は閉じる問いを出さないので、黙って × が効かなくなる
+    /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。取り消しは利用者がダイアログを取り消したのと
+    /// 同じ結果として子へ渡す (待ちが `nil` で終わる)。
+    ///
+    /// - Returns: 取り消したか。答え済みの (もう閉じている) ダイアログ・出していないときは `false`。
+    private func cancelOpenSelectionDialog() -> Bool {
+        guard look.showsSelectionDialogs, let shown = shownSelection, shown.answer == nil else {
+            return false
+        }
+        shown.dismiss()
+        answerSelection(nil, pid: shown.pid, serial: shown.serial)
+        return true
+    }
+
     // MARK: - 速さ
 
     /// いま名乗ってよい速さ。**しばらく新しい絵が来なければ `nil`** (``RemoteTempo``)。
@@ -474,6 +590,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         if !isReleased(source) {
             pointerLockRequested = SharedFrameSurface.pointerLockRequested(on: surface)
             cursorHiddenRequested = SharedFrameSurface.cursorHiddenRequested(on: surface)
+            selectionRequested = SharedFrameSurface.selectionRequest(on: surface).map {
+                (source?.pid, $0)
+            }
         }
         let numbers = SharedFrameSurface.numbers(on: surface)
         // **警告の控えは、数字が載っていない面でも新しい世代の値にする。** 速さを載せない古いライブラリの子は
@@ -636,6 +755,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     private func releaseInheritedRequests() {
         pointerLockRequested = false
         cursorHiddenRequested = false
+        selectionRequested = nil
         // **番号を名乗る世代は子の番号で、名乗らない世代 (古いライブラリ) は面の番号で覚える**
         if let pid = source?.pid {
             relinquishedPIDs.insert(pid)
@@ -812,8 +932,15 @@ extension SharedFrameStage {
         guard let question = closeQuestion else { return true }
         // **問いを二重に出さない。** 下りている間 AppKit は親窓の操作を吸うが、閉じるよう
         // 頼む経路は残る (`performClose(_:)` など)
-        guard sender.attachedSheet == nil else { return false }
+        //
+        // **ただし付いているのがファイルを選ばせるシートなら、それを取り消して問いへ進む** — 黙って × が効かない
+        // 窓にしない (#3062)。問いのシートが付いている間は、今までどおり受け流す
+        if sender.attachedSheet != nil {
+            guard !isAskingToClose, cancelOpenSelectionDialog() else { return false }
+        }
+        isAskingToClose = true
         presentQuestion(question, sender) { [weak self] confirmed in
+            self?.isAskingToClose = false
             guard confirmed else { return }
             self?.onCloseConfirmed?()
         }

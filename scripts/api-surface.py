@@ -1057,6 +1057,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "mouseDragged": ASSEMBLY,
     "mouseWheel": ASSEMBLY,
     "fileDropped": ASSEMBLY,
+    "selectInput": (ASSEMBLY, "窓へファイルを選ばせるダイアログを頼み、結果を待つ。絵にもフレームの状態にも触れない (結果は入力の出来事として届く・#3062)"),
     "requestPointerLock": (ASSEMBLY, "窓へカーソルを捕まえるよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#1144)"),
     "exitPointerLock": (ASSEMBLY, "requestPointerLock と同じ理由 (頼みを取り下げる)"),
     "noCursor": (ASSEMBLY, "窓へ矢印のカーソルを隠すよう頼む。絵にもフレームの状態にも触れず、窓の無い実行では何もしない (#2439)"),

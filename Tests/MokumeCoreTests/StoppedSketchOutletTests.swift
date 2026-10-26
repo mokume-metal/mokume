@@ -9,10 +9,12 @@ import Testing
 
 /// `noLoop()` で止めた絵を 1 回描いたきりの、あるいは何かを押すたびに変わるスケッチ。
 private final class StoppedSketch: Sketch {
-    enum Reaction { case none, set, lock, unlock, exposure }
+    enum Reaction { case none, set, lock, unlock, exposure, select }
 
     var reaction = Reaction.none
     private(set) var draws = 0
+    /// `selectInput` が返した結果 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    private(set) var selected: [String?] = []
 
     var settings: SketchSettings { SketchSettings(width: 32, height: 32) }
 
@@ -37,6 +39,7 @@ private final class StoppedSketch: Sketch {
         case .lock: requestPointerLock()
         case .unlock: exitPointerLock()
         case .exposure: exposure(0.5)
+        case .select: Task { selected.append(await selectInput("pick")) }
         }
     }
 }
@@ -95,6 +98,21 @@ struct StoppedSketchOutletTests {
             return SharedFrameSurface.newest(among: manifest.ids)?.frame ?? 0
         }
 
+        /// 共有面が名乗っている、ファイルを選ばせる頼み。
+        var selectionOnNewest: SelectionBroker.Request? {
+            guard let manifest = SharedFrameSurface.readManifest(at: facet),
+                let newest = SharedFrameSurface.newest(among: manifest.ids),
+                let surface = IOSurfaceLookup(newest.id)
+            else { return nil }
+            return SharedFrameSurface.selectionRequest(on: surface)
+        }
+
+        /// 道具の窓が拾った選ばせる結果を送る。
+        func answer(_ path: String?, serial: Int? = nil) throws {
+            try pipe.fileHandleForWriting.write(
+                contentsOf: Data(InputEvent.fileSelected(path: path, serial: serial).wireLine.utf8))
+        }
+
         var pointerLockOnNewest: Bool? {
             guard let manifest = SharedFrameSurface.readManifest(at: facet),
                 let newest = SharedFrameSurface.newest(among: manifest.ids)
@@ -119,6 +137,23 @@ struct StoppedSketchOutletTests {
         try #require(!application.endsAfterLastWindowClosed, "共有面の経路になっていない")
         try body(
             Child(application: application, gpu: gpu, facet: facet, pipe: pipe))
+    }
+
+    private func withChildAsync(
+        _ sketch: any Sketch, _ body: (Child) async throws -> Void
+    ) async throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let pipe = Pipe()
+        defer { try? pipe.fileHandleForWriting.close() }
+        let gpu = try RenderDevice()
+        let application = try SketchApplication(sketch: sketch, gpu: gpu)
+        application.onStopSignal = { Issue.record("検査は合図を送っていないのに、終わりを頼んだ") }
+        application.toolInput = pipe.fileHandleForReading.fileDescriptor
+        defer { application.willTerminate() }
+        application.resolveOutlet(at: facet, owner: "mokume watch")
+        try #require(!application.endsAfterLastWindowClosed, "共有面の経路になっていない")
+        try await body(Child(application: application, gpu: gpu, facet: facet, pipe: pipe))
     }
 
     /// 止まって落ち着くまで回す。**最後に描いた後の 1 回を焼き、次のリフレッシュで名乗らせる**までに
@@ -209,6 +244,55 @@ struct StoppedSketchOutletTests {
             child.refresh(8)
             #expect(child.pointerLockOnNewest == false, "取り下げた捕まえが面に残っている")
             #expect(child.namedFrame == named + 2)
+        }
+    }
+
+    /// **`noLoop()` で止めたスケッチが頼んだ `selectInput` も、道具へ届く** ([#3062])。頼みは絵と一緒に面の
+    /// 属性に載るので、止まっている間は絵が変わらないと出ない — 頼みが焼き直しの鍵に入っていなければ、
+    /// 止めたスケッチのダイアログは出ない。結果は道具の窓が子の標準入力へ書く 1 行で届き、待ちを終える。
+    ///
+    /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
+    @Test("止まっている間に頼んだ selectInput が面に載り、結果の 1 行で待ちが終わると載らなくなる")
+    func aSelectionAskedWhileStoppedReachesTheToolAndEnds() async throws {
+        let sketch = StoppedSketch()
+        sketch.reaction = .select
+        try await withChildAsync(sketch) { child in
+            settle(child)
+            try #require(child.selectionOnNewest == nil)
+            let named = child.namedFrame
+
+            try child.click()
+            // `Task` が走る順は他の検査と重なると変わるので、頼みが面に載るまで期限つきで回す
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest != nil })
+            child.refresh(8)
+            #expect(
+                child.selectionOnNewest == SelectionBroker.Request(serial: 1, prompt: "pick"),
+                "止まっている間に頼んだダイアログが面に載っていない")
+            #expect(child.namedFrame == named + 1, "頼みが出口に出ていない / 2 回出た (\(named) → \(child.namedFrame))")
+            #expect(sketch.selected.isEmpty)
+
+            // 道具の窓は頼みの番号を載せ、頼みが残る間は送り直す: 同じ行が 2 度届いても待ちを終えるのは 1 度
+            try child.answer("/tmp/a.csv", serial: 1)
+            try child.answer("/tmp/a.csv", serial: 1)
+            #expect(await eventually { child.refresh(); return sketch.selected.count == 1 })
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest == nil })
+            child.refresh(8)
+            #expect(sketch.selected == ["/tmp/a.csv"], "結果の 1 行で待ちが終わらない")
+            #expect(child.selectionOnNewest == nil, "終わった頼みが面に残っている")
+            #expect(child.namedFrame == named + 2)
+            child.refresh(8)
+            #expect(sketch.selected == ["/tmp/a.csv"], "送り直しの 2 行目で 2 度終えた")
+
+            // 頼み直した待ち (2 番) を、1 番への古い答えは終えない。2 番の答えは終える
+            try child.click()
+            #expect(await eventually { child.refresh(); return child.selectionOnNewest?.serial == 2 })
+            try child.answer("/tmp/old.csv", serial: 1)
+            child.refresh(8)
+            #expect(sketch.selected == ["/tmp/a.csv"], "古い番号の答えが新しい待ちを終えた")
+            #expect(child.selectionOnNewest?.serial == 2)
+            try child.answer("/tmp/b.csv", serial: 2)
+            #expect(await eventually { child.refresh(); return sketch.selected.count == 2 })
+            #expect(sketch.selected == ["/tmp/a.csv", "/tmp/b.csv"])
         }
     }
 

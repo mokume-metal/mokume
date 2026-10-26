@@ -606,6 +606,10 @@ var runningSketch: SketchRuntime?
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 enum LaunchingSketch {
     @TaskLocal static var canvas: Canvas?
+    /// ファイルを選ばせる頼みの待ち (``SketchPart/selectInput(_:)``)。**中で起こされた `Task` が、差し込みが外れた
+    /// 後もこの待ちへ頼めるようにする** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。待つ側は
+    /// 絵を描かず、頼んで結果を待つだけなので、描く順の性質に触れない。
+    @TaskLocal static var selection: SelectionBroker?
 }
 
 extension SketchPart {

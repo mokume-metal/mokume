@@ -62,7 +62,8 @@ public final class SharedFrameWindow {
             gpu: gpu, facet: facet,
             look: SharedFrameStage.Look(
                 title: title, autosaveName: WindowPlacement.autosaveName,
-                defaultSize: Self.defaultSize, followsRequestedSize: true))
+                defaultSize: Self.defaultSize, followsRequestedSize: true,
+                showsSelectionDialogs: true))
     }
 
     /// 作品の窓が拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、

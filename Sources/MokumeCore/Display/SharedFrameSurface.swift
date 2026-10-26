@@ -146,6 +146,25 @@ final class SharedFrameSurface {
     /// — 古いライブラリの子は載せないので、道具の窓は隠さない。
     static let cursorHiddenAttribute = "mokume.cursorHidden"
 
+    /// スケッチがファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) を頼んでいるときの、頼みを載せる
+    /// 属性の名前 ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    ///
+    /// ``pointerLockAttribute`` と同じ形で、**ダイアログを出すのは道具の窓である** (ADR-0032 決定 1・決定 4)。
+    /// 窓を持たない子の頼みを渡す新しい通信路は作らず、絵と同じ面に載せる。値は**頼みの通し番号と文言を 1 つの
+    /// 辞書にまとめたもの** (``selectInputSerialKey``・``selectInputPromptKey``)。番号と文言を別の属性にすると、
+    /// 面の書き換えと読みが重なったときに、番号は前の頼みのまま文言だけ次の頼みのものを読んで、別の頼みの
+    /// 文言でダイアログが出うる (書く順と読む順をどう選んでも、食い違う窓が残る)。1 つの属性なら、読み手は常に
+    /// 組を読む。
+    ///
+    /// 番号は 1 から数え、頼むたびに進む。**待っている間は載せ続け、結果が届いて待ちが終われば属性ごと消す。**
+    /// 読み手は番号が前に見たものと違うときだけダイアログを出す (世代の子の番号と組にして覚える)。**載っていなければ
+    /// 頼んでいない** — 古いライブラリの子は載せない。
+    static let selectInputAttribute = "mokume.selectInput"
+    /// ``selectInputAttribute`` の辞書の鍵 — 頼みの通し番号 (整数)。
+    static let selectInputSerialKey = "serial"
+    /// ``selectInputAttribute`` の辞書の鍵 — ダイアログに添える文言 (文字列)。
+    static let selectInputPromptKey = "prompt"
+
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
@@ -261,6 +280,8 @@ final class SharedFrameSurface {
         let numbers: FrameNumbers
         let pointerLock: Bool
         let cursorHidden: Bool
+        /// 待っているファイルを選ばせる頼み (``selectInputAttribute``)。
+        let selection: SelectionBroker.Request?
         /// 焼いた書き込みの通し番号 (``writes``)。名乗るときの枚数になる。
         let number: Int
     }
@@ -560,7 +581,8 @@ final class SharedFrameSurface {
     @discardableResult
     func write(
         _ source: RenderTarget, using presenter: FramePresenter, numbers: FrameNumbers,
-        pointerLock: Bool = false, cursorHidden: Bool = false
+        pointerLock: Bool = false, cursorHidden: Bool = false,
+        selection: SelectionBroker.Request? = nil
     ) throws(RenderFailure) -> Bool {
         try publishPending()
         writes += 1
@@ -579,7 +601,7 @@ final class SharedFrameSurface {
         pending.append(
             Burn(
                 slot: index, submission: submission, numbers: numbers, pointerLock: pointerLock,
-                cursorHidden: cursorHidden, number: writes))
+                cursorHidden: cursorHidden, selection: selection, number: writes))
         nextSlot = (index + 1) % slots.count
         return true
     }
@@ -635,6 +657,7 @@ final class SharedFrameSurface {
         Self.publish(burn.numbers, to: slot.surface)
         Self.publishPointerLock(burn.pointerLock, to: slot.surface)
         Self.publishCursorHidden(burn.cursorHidden, to: slot.surface)
+        Self.publishSelection(burn.selection, to: slot.surface)
         IOSurfaceSetValue(
             slot.surface, Self.frameAttribute as CFString, NSNumber(value: frameNumber))
     }
@@ -720,6 +743,34 @@ final class SharedFrameSurface {
     /// 引いた面が名乗っている矢印を隠す要求。載っていなければ `false`。
     static func cursorHiddenRequested(on surface: IOSurfaceRef) -> Bool {
         number(cursorHiddenAttribute, on: surface)?.intValue == 1
+    }
+
+    /// ファイルを選ばせる頼みを面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、消さなければ
+    /// 前に載せた頼みが残る (``publishPointerLock(_:to:)`` と同じ)。番号と文言は 1 つの値に入れる
+    /// (``selectInputAttribute``)。
+    static func publishSelection(_ request: SelectionBroker.Request?, to surface: IOSurfaceRef) {
+        guard let request else {
+            IOSurfaceRemoveValue(surface, selectInputAttribute as CFString)
+            return
+        }
+        let value: [String: Any] = [
+            selectInputSerialKey: NSNumber(value: request.serial),
+            selectInputPromptKey: request.prompt,
+        ]
+        IOSurfaceSetValue(surface, selectInputAttribute as CFString, value as CFDictionary)
+    }
+
+    /// 引いた面が名乗っているファイルを選ばせる頼み。読み手の側の規則 (``publishSelection(_:to:)`` と対)。
+    ///
+    /// - Returns: 載っていない面は `nil` (頼んでいない)。番号が正の整数でない値は頼みとして読まない。
+    ///   文言の無い頼みは、文言を空にして読む (番号が頼みの本体で、文言は添え書き)。
+    static func selectionRequest(on surface: IOSurfaceRef) -> SelectionBroker.Request? {
+        guard let value = IOSurfaceCopyValue(surface, selectInputAttribute as CFString)
+                as? [String: Any],
+            let serial = (value[selectInputSerialKey] as? NSNumber)?.intValue, serial > 0
+        else { return nil }
+        return SelectionBroker.Request(
+            serial: serial, prompt: value[selectInputPromptKey] as? String ?? "")
     }
 
     /// 測れた数だけを載せる。測れていなければ**消す**。

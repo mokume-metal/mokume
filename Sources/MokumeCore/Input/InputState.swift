@@ -123,12 +123,20 @@ public final class InputState {
         case nonFiniteEvent
         /// パスが 1 本も無いファイルの落としを捨てた (``apply(_:)``・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。
         case emptyFileDrop
+        /// 待っている ``SketchPart/selectInput(_:)`` が無いときに届いた結果を捨てた
+        /// (``dispatchCallbacks(for:before:to:)``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+        case unawaitedSelection
         /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
     }
 
     /// 1 度だけ言った注意の控え。**検査が読む。**
     private(set) var warnings = WarningLog<Warning>()
+
+    /// ファイルを選ばせる頼みの待ち (``SketchPart/selectInput(_:)``)。結果は入力の出来事
+    /// (``InputEvent/fileSelected(path:serial:)``) としてここへ届くので、待ちも合流点が持つ
+    /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
+    let selection = SelectionBroker()
 
     public init() {}
 
@@ -296,6 +304,24 @@ public final class InputState {
             // 読むのはフレームの合計 (``pinch``) だけ。1 件ぶんを配る口は、作例が来てから
             // ([#2762](https://github.com/mokume-metal/mokume/issues/2762))
             break
+        case .fileSelected(let path, let serial):
+            // 状態は動かさない。待っている ``SketchPart/selectInput(_:)`` を終えるのは配り先 (`SketchRuntime`)
+            // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))
+            if let serial {
+                // **番号つきの結果は、いまの待ちの番号と同じときだけ配る。** 違うもの (前の待ちの古い答え・
+                // 待ちが終わった後の送り直し) は黙って捨てる — 道具の窓は頼みが残る間、落ちた結果を送り直すので、
+                // 重なって届くのは正しい道で、警告にすると毎回言うことになる
+                guard selection.pending?.serial == serial else { return }
+            } else if !selection.isAwaiting {
+                // **番号なし (外から送る結果) は、待っていなければ配らず、1 度だけ言う** — 子が入れ替わった後や
+                // 取り下げた後にも届きうる
+                warnings.warnOnce(
+                    .unawaitedSelection,
+                    "Dropped a fileSelected input event: no selectInput() is waiting for a result "
+                        + "(later events like this are dropped without saying so again)")
+                return
+            }
+            dispatch(.fileSelected(path: path, serial: serial))
         case .fileDropped(let paths, _, _):
             // 落とした所は当てた後なので、呼ばれた中から ``x``・``y`` で読める。`mouseMoved()` は呼ばない
             // ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
@@ -463,6 +489,8 @@ public final class InputState {
             // 落とした所へ位置を動かす。**動いた量には足さない** — 押下と同じく、飛んだぶんは移動ではない
             self.x = x
             self.y = y
+        case .fileSelected:
+            break
         case .mouseMovedBy(let dx, let dy):
             // **位置は動かさない** (#1144)。捕まえている間の窓は位置を名乗らないので、
             // ここで足し込むと mouseX が捕まえた点から離れていく
@@ -524,7 +552,7 @@ public final class InputState {
             (scrollX + dx).isFinite && (scrollY + dy).isFinite
         case .pinched(let amount):
             amount.isFinite && (pinch + amount).isFinite && (pinchScale * (1 + Double(amount))).isFinite
-        case .keyDown, .keyUp:
+        case .keyDown, .keyUp, .fileSelected:
             true
         }
     }
