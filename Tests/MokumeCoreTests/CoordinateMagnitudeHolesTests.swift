@@ -186,8 +186,10 @@ nonisolated struct CoordinateMagnitudeHolesTests {
     /// 写す前に誤る場面は無い (T 字を含む 78 は #2655 で直った)。比べる相手の集合が、この判定
     /// (相対誤差・`Double` の標本) と `AlignedHolesTests.tJunctionScenesDoNotRegress` で食い違わない
     /// ことの確かめである。
-    @Test("写す前に誤る場面は無い")
+    @Test("写す前に誤る場面は無い", .enabled(if: GeometryExploration.enabled, GeometryExploration.reason))
     func wrongBeforeMapping() {
+        #expect(Self.probes.count == 1133, "全探索の場面数: \(Self.probes.count)")
+        #expect(Self.nearMappings.count == 3 && Self.farMappings.count == 5)
         let wrong = Self.probes.filter { Self.isWrong(Self.judge($0, Self.identity)) }.map(\.name)
         #expect(wrong == [])
     }
@@ -195,6 +197,7 @@ nonisolated struct CoordinateMagnitudeHolesTests {
     /// 2 のべきでない拡大と、原点から 1e4 までの平行移動。
     @Test(
         "写す前に正しかった場面は、拡大と 1e4 の平行移動で新しく誤らない",
+        .enabled(if: GeometryExploration.enabled, GeometryExploration.reason),
         arguments: nearMappings)
     func scaledOrNearbyScenesStayRight(_ mapping: Mapping) {
         let wrong = Self.newlyWrong(mapping)
@@ -207,10 +210,26 @@ nonisolated struct CoordinateMagnitudeHolesTests {
     /// [#2725]: https://github.com/mokume-metal/mokume/issues/2725
     @Test(
         "写す前に正しかった場面は、原点から 1e5 離しても新しく誤らない (#2725)",
+        .enabled(if: GeometryExploration.enabled, GeometryExploration.reason),
         arguments: farMappings)
     func farTranslatedScenesStayRight(_ mapping: Mapping) {
         let wrong = Self.newlyWrong(mapping)
         #expect(wrong.isEmpty, "新しく誤る \(wrong.count) 場面: \(wrong.prefix(5))")
+    }
+
+    /// 全探索の入力から固定した頂点接触・T 字の回帰。全変換で独立した Double の物差しを使う。
+    /// 既知の最小再現 2 本は下にそのまま残す。結果を見て「正しかった場面」だけには絞らない。
+    @Test("固定した穴の接触と T 字は、全ての拡大・平行移動で正しい (#3338)")
+    func fixedScenesStayRightUnderEveryMapping() {
+        let indices = [0, 78, 95, 168, 207, 214, 399, 400, 478, 799]
+        let mappings = [Self.identity] + Self.nearMappings + Self.farMappings
+        #expect(mappings.count == 9)
+        for index in indices {
+            for mapping in mappings {
+                let result = Self.judge(Self.probes[index], mapping)
+                #expect(!Self.isWrong(result), "場面 \(Self.probes[index].name) / \(mapping.name): \(result)")
+            }
+        }
     }
 
     /// 以前に誤っていた最小の場面: 外周 320 四方に、40×20 の長方形の穴が 1 つ

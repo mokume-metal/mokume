@@ -83,14 +83,17 @@ jobs:
       || (github.event.pull_request.merged
       && contains(github.event.pull_request.labels.*.name, 'release:now'))
     runs-on: macos-26
-    # いまは約 12 分。既定 (360 分) のまま止まると、ホストの macOS の枠 (5 本) を塞ぐ
-    timeout-minutes: 40
+    # #3338: 同じSHAのdebug全探索もここで確認する。ビルド2構成を含め60分で止める。
+    timeout-minutes: 60
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # 日次と版の前に同じSHAのdebug全探索を通す (#3338)。別の時刻の成功は流用しない。
+      - name: 図形の全探索 (debug)
+        run: make test-geometry-exploration
       # 端末出力を test-log に残す (起票の本文が末尾を載せる)。pipefail が make の赤を通す (#2609)
       - run: |
           mkdir -p .build
@@ -102,6 +105,10 @@ jobs:
           path: |
             .build/test-results-release-swift-testing.xml
             .build/test-log.txt
+            .build/test-results-geometry-swift-testing.xml
+            .build/test-log-geometry.txt
+            .build/geometry-debug.md
+            .build/geometry-release.md
           if-no-files-found: ignore
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
           include-hidden-files: true
@@ -138,7 +145,10 @@ jobs:
           find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
           xml=$(find_one record test-results-release-swift-testing.xml)
           log=$(find_one record test-log.txt)
-          bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
+          geometry=$(find_one record test-results-geometry-swift-testing.xml)
+          geometry_log=$(find_one record test-log-geometry.txt)
+          bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}" \
+            "${geometry:-record/geometry-missing.xml}" "${geometry_log:-record/geometry-missing.txt}"
 
   # **版を出す run を 1 本ずつ並べる** (#2666)。日次と release:now の run が重なると、どちらも
   # 同じ版を決め、後から push した側が既にあるタグで赤くなる。release-check (約 15 分) が

@@ -55,6 +55,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
         # 版の判定 (release.py) より前に置く — 出すものが無い日も走る
         self.assertNotIn("release.py", check)
 
+    def test_図形探索は版と同じ_SHAで実行し記録と報告を残す(self):
+        check = self.jobs["release-check"]
+        self.assertLess(check.index("make test-geometry-exploration"), check.index("make test-release"))
+        for name in ("test-results-geometry-swift-testing.xml", "test-log-geometry.txt",
+                     "geometry-debug.md", "geometry-release.md"):
+            self.assertIn(name, check)
+        report = self.jobs["release-check-report"]
+        self.assertIn("test-results-geometry-swift-testing.xml", report)
+        self.assertIn("geometry-missing.xml", report)
+        makefile = (REPO / "Makefile").read_text()
+        self.assertIn("env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release", makefile)
+        self.assertIn("env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread", makefile)
+        self.assertIn("scripts/check-geometry-record.py $(GEOMETRY_RECORD)", makefile)
+        self.assertIn("scripts/check-geometry-record.py $(TEST_RECORD_RELEASE)", makefile)
+
     def test_release_check_の赤を緑に化かさない(self):
         # continue-on-error があると、検査が赤でも release-check が success になり、版が出る
         self.assertNotIn("continue-on-error", self.jobs["release-check"])

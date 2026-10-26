@@ -329,11 +329,16 @@ nonisolated struct NonzeroSplitTests {
     /// 反証役の実験台と同じ作り方の、無作為に交わる周。種を固定した有限の組で回し、
     /// **組み直す経路が、いまの手順 (分けずに耳切り) より悪くなる周が 1 つも無い**ことと、
     /// 形の外を塗る周が無いことを見る。
-    @Test("無作為に交わる周を塗っても、いまの手順より悪くならない")
+    @Test("無作為に交わる周を塗っても、いまの手順より悪くならない", .enabled(if: GeometryExploration.enabled, GeometryExploration.reason))
     func randomCrossingRingsNeverGetWorse() {
+        checkRandomCrossingRingsNeverGetWorse()
+    }
+
+    private func checkRandomCrossingRingsNeverGetWorse(selected: Set<Int>? = nil) {
         var random = Seeded(state: 1618)
         var worse: [String] = []
         var spilled: [String] = []
+        var checked = 0
         for trial in 0..<400 {
             let grid = trial % 2 == 0 ? 16 : 160
             let scale = Float(160 / grid)
@@ -346,11 +351,15 @@ nonisolated struct NonzeroSplitTests {
                         Float(Int.random(in: 0..<grid, using: &random))) * scale
                 })
             }
+            // 生成は飛ばさず同じ seed の同じ trial を再現する。日次は全件を判定する。
+            guard selected?.contains(trial) ?? true else { continue }
+            checked += 1
             let now = coverage(rings, triangles(rings).triangles, steps: 40)
             let before = coverage(rings, legacyTriangles(rings), steps: 40)
             if now.mismatched > before.mismatched + 2 { worse.append("\(trial): \(now) / \(before)") }
             if now.spilled > 2 { spilled.append("\(trial): \(now)") }
         }
+        #expect(checked == (selected?.count ?? 400))
         #expect(worse.isEmpty, "\(worse.count) 件: \(worse.prefix(3))")
         #expect(spilled.isEmpty, "\(spilled.count) 件: \(spilled.prefix(3))")
     }
@@ -358,10 +367,15 @@ nonisolated struct NonzeroSplitTests {
     /// 外周の中に逆回りの三角形の穴を 1〜3 つ置いた、無作為の形 (#1886)。穴どうしが
     /// 触れる・重なる形も混ざる。`mergeHoles` の橋が、先に畳んだ穴の入口の写しを取り違える・
     /// 別の穴が触れる点へ穴の中を通って架かると崩れていた。
-    @Test("外周の中に穴を幾つか置いた無作為の形を、回り数どおりに覆う")
+    @Test("外周の中に穴を幾つか置いた無作為の形を、回り数どおりに覆う", .enabled(if: GeometryExploration.enabled, GeometryExploration.reason))
     func randomHolesFollowNonzero() {
+        checkRandomHolesFollowNonzero()
+    }
+
+    private func checkRandomHolesFollowNonzero(selected: Set<Int>? = nil) {
         var random = Seeded(state: 77)
         var failures: [String] = []
+        var checked = 0
         for trial in 0..<600 {
             let count = Int.random(in: 8...45, using: &random)
             var outer: [SIMD2<Float>] = []
@@ -385,10 +399,22 @@ nonisolated struct NonzeroSplitTests {
                 }
                 rings.append(triangle)
             }
+            // 生成は飛ばさず同じ seed の同じ trial を再現する。日次は全件を判定する。
+            guard selected?.contains(trial) ?? true else { continue }
+            checked += 1
             let result = coverage(rings, triangles(rings).triangles, steps: 40)
             if result.mismatched > 0 { failures.append("\(trial): \(result)") }
         }
+        #expect(checked == (selected?.count ?? 600))
         #expect(failures.isEmpty, "\(failures.count) 件: \(failures.prefix(3))")
+    }
+
+    /// 無作為探索の固定 seed から、疎密・穴の数が異なる入力を毎回残す (#3338)。
+    /// 既知の交差・縮退・接触の名指し回帰も全て毎回のままにする。
+    @Test("固定 seed の交差と穴の回帰入力は毎回正しく塗れる (#3338)")
+    func fixedGeneratedScenesFollowNonzero() {
+        checkRandomCrossingRingsNeverGetWorse(selected: Set([0, 1, 2, 3, 4, 5, 77, 99, 199, 399]))
+        checkRandomHolesFollowNonzero(selected: Set([0, 1, 2, 3, 4, 5, 77, 99, 199, 399, 599]))
     }
 
     /// 穴 2 つが 1 点で触れる。組み直すと、繋ぎ方の規則は穴を触れる点で 1 つの周に繋ぐ
