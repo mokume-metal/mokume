@@ -48,22 +48,35 @@ struct StopSignalsTests {
 
     /// 受け口が無ければ遮る合図は効かないので、そこだけ違っても戻ったとみなす (#3220)。
     /// ThreadSanitizer の下では、既定へ戻した受け口の遮る合図が全部を立てた形で読める。
+    ///
+    /// **受け口の段の前に、`SIGTERM` を既定へ戻す** (#3280)。無視の段の後に残った `SIG_IGN` のままだと、
+    /// ``StopSignals/install()`` は「無視で継いだ合図」として何も置かず、受け口が無いので違いは
+    /// 拾えない。**行き先の列は関数ポインタの配列で回さない** — 最適化の無い build (debug) では、先頭の
+    /// `SIG_DFL` (nil) だけで反復が終わることを観測した。`SIG_IGN` の段が走らないまま緑になり、release
+    /// でだけ走って赤になった。
     @Test("既定か無視の受け口は、遮る合図だけが違っても戻ったとみなし、受け口があれば違いを拾う")
-    func comparesTheMaskOnlyForAHandler() {
+    func comparesTheMaskOnlyForAHandler() throws {
         let kept = SignalState.current()
         defer { kept.restore() }
-        for disposition in [SIG_DFL, SIG_IGN] {
-            signal(SIGTERM, disposition)
+        for ignored in [false, true] {
+            signal(SIGTERM, ignored ? SIG_IGN : SIG_DFL)
             let snapshot = StopSignals.snapshot([SIGTERM])
             var action = StopSignals.current(SIGTERM)
             action.sa_mask = ~0
             sigaction(SIGTERM, &action, nil)
-            #expect(StopSignals.changed(since: snapshot).isEmpty)
+            #expect(
+                StopSignals.changed(since: snapshot).isEmpty,
+                "\(ignored ? "無視" : "既定")の受け口を、遮る合図の違いだけで戻っていないと読んだ")
         }
 
+        // 直前の段が `SIG_IGN` を残しているので、受け口を置ける形 (既定) に戻してから置く
+        signal(SIGTERM, SIG_DFL)
         StopSignals.install()
+        let handler = StopSignals.current(SIGTERM)
+        try #require(
+            !StopSignals.isDefault(handler) && !StopSignals.isIgnored(handler), "SIGTERM に受け口が置かれていない")
         let snapshot = StopSignals.snapshot([SIGTERM])
-        var action = StopSignals.current(SIGTERM)
+        var action = handler
         action.sa_mask = ~0
         sigaction(SIGTERM, &action, nil)
         #expect(StopSignals.changed(since: snapshot) == [SIGTERM], "受け口がある合図の遮る合図の違いを見落とした")
