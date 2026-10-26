@@ -242,9 +242,12 @@ enum GPUGateScan {
 
     static func violations(in source: String) -> [Violation] {
         let code = strippingCommentsAndStrings(Array(source))
+        let positions = occurrences(of: root, in: code)
+        // GPU を作らない原文には違反が無い。文字列と注釈を除いた後で判定する。
+        guard !positions.isEmpty else { return [] }
         let types = typeScopes(in: code)
 
-        return occurrences(of: root, in: code).compactMap { position -> Violation? in
+        return positions.compactMap { position -> Violation? in
             let line = lineNumber(of: position, in: code)
             guard let innermost = innermostType(containing: position, among: types) else {
                 return Violation(line: line, reason: .outsideAnyType)
@@ -499,8 +502,9 @@ enum GPUGateScan {
 
     private static func occurrences(of needle: [Character], in code: [Character]) -> [Int] {
         guard code.count >= needle.count else { return [] }
+        if needle.isEmpty { return Array(0...code.count) }
         return (0...(code.count - needle.count)).filter {
-            Array(code[$0..<($0 + needle.count)]) == needle
+            code[$0] == needle[0] && code[$0..<($0 + needle.count)].elementsEqual(needle)
         }
     }
 
@@ -512,8 +516,9 @@ enum GPUGateScan {
 extension Array where Element == Character {
     fileprivate func contains(subsequence needle: [Character]) -> Bool {
         guard count >= needle.count else { return false }
+        if needle.isEmpty { return true }
         return (0...(count - needle.count)).contains {
-            Array(self[$0..<($0 + needle.count)]) == needle
+            self[$0] == needle[0] && self[$0..<($0 + needle.count)].elementsEqual(needle)
         }
     }
 }
