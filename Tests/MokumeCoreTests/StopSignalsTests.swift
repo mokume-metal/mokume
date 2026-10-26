@@ -53,13 +53,22 @@ struct StopSignalsTests {
     /// ``StopSignals/install()`` は「無視で継いだ合図」として何も置かず、受け口が無いので違いは
     /// 拾えない。**行き先の列は関数ポインタの配列で回さない** — 最適化の無い build (debug) では、先頭の
     /// `SIG_DFL` (nil) だけで反復が終わることを観測した。`SIG_IGN` の段が走らないまま緑になり、release
-    /// でだけ走って赤になった。
+    /// でだけ走って赤になった。仕組みは未確認の読み: `SIG_IGN` は番地 1 の関数ポインタで、`[sig_t?]` を
+    /// `for` で回すと `next()` が `Optional<Optional<関数ポインタ>>` を返し、2 要素目 (`.some(.some(SIG_IGN))`)
+    /// のビット列が外側の `.none` と重なるため、-Onone では反復が先頭で打ち切られる。
+    ///
+    /// **段ごとに、行き先が本当にそうなったことを確かめる。** 置けていなければ段が空振りして緑のまま
+    /// 見逃す (debug で緑だったのはそれ)。
     @Test("既定か無視の受け口は、遮る合図だけが違っても戻ったとみなし、受け口があれば違いを拾う")
     func comparesTheMaskOnlyForAHandler() throws {
         let kept = SignalState.current()
         defer { kept.restore() }
         for ignored in [false, true] {
             signal(SIGTERM, ignored ? SIG_IGN : SIG_DFL)
+            let placed = StopSignals.current(SIGTERM)
+            try #require(
+                ignored ? StopSignals.isIgnored(placed) : StopSignals.isDefault(placed),
+                "SIGTERM を\(ignored ? "無視" : "既定")にできていない")
             let snapshot = StopSignals.snapshot([SIGTERM])
             var action = StopSignals.current(SIGTERM)
             action.sa_mask = ~0
