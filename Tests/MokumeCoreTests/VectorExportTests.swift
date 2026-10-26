@@ -797,45 +797,192 @@ struct VectorCaptureTests {
         #expect(drops == [.texture, .shader], "\(drops)")
     }
 
-    @Test("畳む道が控える角丸の矩形の輪郭は、貼る絵の無いときの角丸と同じ真の形の要素になる (#3170)")
-    func theFoldingPathWritesTheTrueRoundedRect() throws {
+    /// 輪郭の要素が通る道ごとに確かめる、塗りと輪郭を両方持つ基本図形。**実際の公開の口** (`rect(…, r)`・
+    /// `ellipse`・`arc`) で置く。
+    private var outlinedShapes: [(name: String, place: (Canvas) -> Void)] {
+        [
+            ("rect", { $0.rect(10, 10, 30, 20) }),
+            ("rounded rect", { $0.rect(10, 10, 30, 20, 5) }),
+            ("ellipse", { $0.ellipse(30, 30, 30, 20) }),
+            ("circle", { $0.circle(30, 30, 24) }),
+            ("pie", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .pie) }),
+            ("default arc", { $0.arc(30, 30, 30, 20, 0.2, 2.2) }),
+            ("chord", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .chord) }),
+            ("open arc", { $0.arc(30, 30, 30, 20, 0.2, 2.2, .open) }),
+            ("full turn arc", { $0.arc(30, 30, 30, 20, 0, 7) }),
+        ]
+    }
+
+    /// 図形を 1 つ、輪郭の設定を変えて置き、控えた図形と書けなかったものを返す。
+    ///
+    /// - `shaded`: 貼る絵 (`texture()`)・勾配・利用者の断片 (`shader()`) のどれが塗りに効くか。
+    /// - `dashed`: 破線の輪郭か。
+    /// - `filled`: 塗りがあるか。
+    /// - `transformed`: 回転と拡大を掛けるか (置くときの変換が点にも破線の長さにも当たる)。
+    private func outlinedFigures(
+        _ harness: Harness, _ place: (Canvas) -> Void, shaded: Shading? = nil, dashed: Bool,
+        filled: Bool = true, transformed: Bool = false
+    ) throws -> (figures: [VectorFigure], drops: [VectorDrop]) {
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let shader = try harness.canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let gradient = Gradient.linearGradient(
+            [(LinearRGBA.linear(red: 1, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 0, green: 0, blue: 1), 1)],
+            from: [0, 0], to: [10, 0])
+        return try harness.capture { canvas in
+            canvas.noTexture()
+            canvas.resetShader()
+            if filled { canvas.fill(red) } else { canvas.noFill() }
+            canvas.stroke(blue)
+            canvas.strokeWeight(2)
+            if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+            switch shaded {
+            case .texture: canvas.texture(picture)
+            case .shader: canvas.shader(shader)
+            case .gradient: canvas.fill(gradient)
+            case nil: break
+            }
+            if transformed {
+                canvas.translate(20, 5)
+                canvas.rotate(0.3)
+                canvas.scale(1.5, 1.5)
+            }
+            place(canvas)
+            canvas.resetShader()
+            canvas.noTexture()
+        }
+    }
+
+    enum Shading { case texture, shader, gradient }
+
+    @Test("貼る絵・勾配が効く輪郭つきの図形は、効かない同じ図形と同じ真の形で書き、塗りだけを名指しで落とす (#3271・#3295)")
+    func aShadedFigureWithAStrokeWritesTheTrueShape() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                for transformed in [false, true] {
+                    // 基準: 塗りの無い同じ図形 (貼る絵が無ければ距離関数の道)
+                    let (reference, _) = try outlinedFigures(
+                        harness, place, dashed: dashed, filled: false, transformed: transformed)
+                    try #require(reference.count == 1, "\(name)")
+                    for (shading, dropped) in [(Shading.texture, VectorDrop.texture), (.gradient, .gradient)] {
+                        let label = "\(name) \(shading) dashed=\(dashed) transformed=\(transformed)"
+                        let (figures, drops) = try outlinedFigures(
+                            harness, place, shaded: shading, dashed: dashed, transformed: transformed)
+                        try #require(figures.count == 1, "\(label): \(figures)")
+                        #expect(figures[0] == reference[0], "\(label)")
+                        #expect(
+                            figures[0].subpaths[0].curves.isEmpty == (name == "rect"),
+                            "\(label): 曲線の図形は折れ線でなく 3 次ベジェ")
+                        #expect(figures[0].fill == nil, "\(label)")
+                        #expect(figures[0].stroke?.dash.isEmpty == !dashed, "\(label)")
+                        #expect(drops == [dropped], "\(label): 塗りを 1 度だけ名指す \(drops)")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("利用者の断片は輪郭にも効くので、輪郭つきの図形も図形ごと 1 度だけ名指しで落とす (#3271・#3139 の決定 3)")
+    func aShaderOnAFigureWithAStrokeDropsTheWholeFigure() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                let (figures, drops) = try outlinedFigures(harness, place, shaded: .shader, dashed: dashed)
+                #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
+                #expect(drops == [.shader], "\(name) dashed=\(dashed): \(drops)")
+            }
+        }
+    }
+
+    @Test("破線の図形は、実線の同じ図形と同じ真の形 (折れ線でない)・同じ起点で、破線の指定だけが載る (#3271・#3295)")
+    func aDashedFigureWritesTheTrueShapeAndStart() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for transformed in [false, true] {
+                let label = "\(name) transformed=\(transformed)"
+                let (solid, _) = try outlinedFigures(
+                    harness, place, dashed: false, filled: false, transformed: transformed)
+                let (dashed, drops) = try outlinedFigures(
+                    harness, place, dashed: true, filled: true, transformed: transformed)
+                try #require(solid.count == 1, "\(label)")
+                // 塗り → 輪郭の順。輪郭は塗りの後
+                try #require(dashed.count == 2, "\(label): \(dashed)")
+                #expect(dashed[0].stroke == nil && dashed[0].fill != nil, "\(label)")
+                #expect(dashed[1].fill == nil, "\(label)")
+                #expect(dashed[1].subpaths == solid[0].subpaths, "\(label): 輪郭の道が実線と同じ")
+                #expect(
+                    dashed[1].subpaths[0].curves.isEmpty == (name == "rect"),
+                    "\(label): 曲線の図形は折れ線でなく 3 次ベジェ")
+                let scale: Float = transformed ? 1.5 : 1
+                #expect(dashed[1].stroke?.dash == [6 * scale, 3 * scale], "\(label)")
+                #expect(dashed[1].stroke?.width == solid[0].stroke?.width, "\(label)")
+                #expect(drops.isEmpty, "\(label): \(drops)")
+            }
+        }
+    }
+
+    @Test("数でない変換の下では、貼る絵が効く図形も破線の図形も書かない (旧い道と同じ・#3271)")
+    func aNonFiniteTransformWritesNothing() throws {
         let harness = try Harness()
         let picture = try harness.canvas.createGraphics(8, 8)
-        for dashed in [false, true] {
-            // 基準: 貼る絵が無ければ距離関数の道で、輪郭は角丸の矩形そのもの (3 次ベジェ) で書く
-            let (reference, _) = try harness.capture { canvas in
-                canvas.noTexture()
-                canvas.noFill()
-                canvas.stroke(blue)
-                canvas.strokeWeight(2)
-                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
-                canvas.rect(10, 10, 30, 20, 5)
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                for shaded in [false, true] {
+                    let (figures, _) = try harness.capture { canvas in
+                        canvas.noTexture()
+                        canvas.fill(red)
+                        canvas.stroke(blue)
+                        canvas.strokeWeight(2)
+                        if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                        if shaded { canvas.texture(picture) }
+                        canvas.translate(Float.nan, 0)
+                        place(canvas)
+                        canvas.noTexture()
+                    }
+                    #expect(figures.isEmpty, "\(name) dashed=\(dashed) shaded=\(shaded): \(figures)")
+                }
             }
-            // 畳む道が呼ぶ控え (`draw(folding:at:)` の入り口) を、同じ形・同じ置き場所で直接呼ぶ。
-            // 塗りだけの角丸しか畳まない (`placeRect`) ので、輪郭つきはこの口を直接叩いて確かめる
-            let (figures, drops) = try harness.capture { canvas in
-                canvas.fill(red)
-                canvas.texture(picture)
-                canvas.stroke(blue)
-                canvas.strokeWeight(2)
-                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
-                let held = canvas.suspendVectorRecordingShadedFigure(
-                    .roundedRect(width: 30, height: 20, radius: 5), at: SIMD2(10, 10))
-                canvas.resumeVector(held)
-            }
-            try #require(figures.count == 1 && reference.count == 1, "dashed=\(dashed)")
-            if dashed {
-                // 破線の角丸は、画面が刻んだ周を折れ線で書く道を通る (始点も違う) ので、道そのものは比べず、
-                // 破線の長さと間隔が揃うことを見る
-                #expect(figures[0].stroke == reference[0].stroke)
-            } else {
-                #expect(figures[0] == reference[0])
-            }
-            #expect(figures[0].subpaths[0].curves.filter { $0 }.count == 4, "角は 3 次ベジェ 4 つ (折れ線でない)")
-            #expect(figures[0].fill == nil)
-            #expect(figures[0].stroke?.dash.isEmpty == !dashed, "dashed=\(dashed)")
-            #expect(drops == [.texture], "塗りを 1 度だけ名指す \(drops)")
         }
+    }
+
+    @Test("書けない設定が効く破線の輪郭を控える口は、落とした印を 1 度だけ付ける (括りに頼らない・#3271)")
+    func theDashedFormRecorderCountsABlockedStrokeOnce() throws {
+        let harness = try Harness()
+        let canvas = harness.canvas
+        var drops: [VectorDrop] = []
+        _ = try harness.capture { canvas in
+            canvas.noFill()
+            canvas.stroke(blue)
+            canvas.strokeWeight(2)
+            canvas.strokeDash(6, 3)
+            canvas.blendMode(.add)
+            let sink = try! #require(canvas.vector.capture)
+            let outline = canvas.ringOutlineForDash(
+                radiusX: 15, radiusY: 10, start: 0, sweep: 2 * .pi, piece: .sector, at: SIMD2(30, 30))
+            canvas.recordVectorDashedForm(
+                sink, kind: .ellipse, center: SIMD2(30, 30), half: SIMD2(15, 10), arc: .zero,
+                arcClosure: .pie, cornerRadius: 0, outline: outline)
+            drops = sink.drops
+            canvas.blendMode(.blend)
+        }
+        _ = canvas
+        #expect(drops == [.blendMode], "\(drops)")
+    }
+
+    @Test("輪郭の太さが 0 の角丸 rect は、貼る絵が効いても輪郭を書かず、塗りだけを名指しで落とす (#3271)")
+    func aShadedRoundedRectWithoutAStrokeWritesNothing() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(0)
+            canvas.texture(picture)
+            canvas.rect(10, 10, 30, 20, 5)
+            canvas.noTexture()
+        }
+        #expect(figures.isEmpty, "\(figures)")
+        #expect(drops == [.texture], "\(drops)")
     }
 
     @Test("利用者の断片・通常以外の混ぜ方・切り抜きは輪郭にも効くので、図形ごと 1 つと数えて落とす")
@@ -940,6 +1087,7 @@ struct VectorCaptureTests {
         func picture(capturing: Bool) throws -> [UInt8] {
             let harness = try Harness(width: 96, height: 96)
             let canvas = harness.canvas
+            let paper = try canvas.createGraphics(8, 8)
             try canvas.draw {
                 if capturing {
                     canvas.beginVectorWindow(pending: [])
@@ -955,7 +1103,16 @@ struct VectorCaptureTests {
                 canvas.strokeDash(4, 3)
                 canvas.line(5, 90, 90, 60)
                 canvas.rect(50, 50, 30, 30)
+                // 控えの位置を動かした道 (#3271・#3295): 破線の角丸・楕円・弧と、貼る絵が効く輪郭つきの角丸・弧
+                canvas.rect(50, 8, 36, 14, 4)
+                canvas.ellipse(22, 30, 16, 12)
+                canvas.arc(75, 36, 20, 14, 0.4, 2.6)
                 canvas.noStrokeDash()
+                canvas.texture(paper)
+                canvas.rect(4, 44, 24, 16, 5)
+                canvas.arc(40, 80, 24, 16, 0.3, 2.6)
+                canvas.arc(70, 90, 24, 12, 0.3, 2.6, .chord)
+                canvas.noTexture()
                 canvas.push()
                 canvas.translate(70, 70)
                 canvas.rotate(0.5)

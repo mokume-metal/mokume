@@ -259,9 +259,11 @@ extension Canvas {
             outlinesAssembledThisFrame += 1
             let made = outline()
             ring = made
-            // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の周と破線の指定を控える
+            // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の形と破線の指定を控える
             if let sink = vectorSink() {
-                recordVectorOutline(sink, made, fills: false, strokes: true)
+                recordVectorDashedForm(
+                    sink, kind: kind, center: center, half: half, arc: arc, arcClosure: arcClosure,
+                    cornerRadius: cornerRadius, outline: made)
             }
         }
         guard let ring else { return }

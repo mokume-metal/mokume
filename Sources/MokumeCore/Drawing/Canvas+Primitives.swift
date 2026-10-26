@@ -87,6 +87,13 @@ extension Canvas {
             }
             let segments = Self.segmentCount(
                 forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+            // ベクターへは、周を刻んだ折れ線でなく**角丸の矩形そのもの**を書く (#3271)。控えは描く前に済ませ、
+            // 内側の `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。
+            // 区間の外では置かないので、控えもしない (``Canvas/canPlace``・#1672)
+            guard canPlace else { return warnOutsideFrame(.placing) }
+            let heldVector = suspendVectorRecordingShadedFigure(
+                .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y))
+            defer { resumeVector(heldVector) }
             return draw(
                 Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
                     .moved(by: SIMD2(box.x, box.y)))
@@ -308,21 +315,26 @@ extension Canvas {
                 radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, piece: piece,
                 at: center)
         }
-        // 塗りの部分と輪郭の部分は別の口が控えるが、**弧は 1 つの図形**。書けないものは 1 度だけ数える (#3139)
-        countingOneVectorFigure {
-            switch mode {
-            case nil:
-                draw(outline(.sectorFill))
-                draw(outline(.arcLine))
-            case .chord:
-                draw(outline(.chord))
-            case .open:
-                draw(outline(.chordFill))
-                draw(outline(.arcLine))
-            case .pie:
-                // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
-                preconditionFailure("a pie is placed as a single form")
-            }
+        // ベクターへは、塗りの部分と輪郭の部分を別々の折れ線でなく、**弧 1 つを閉じ方どおりの真の形**で書く
+        // (貼る絵の無い同じ弧と同じ要素・#3295)。塗りは落とし、輪郭だけ書く。描く前に控えを済ませ、内側の
+        // `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。書けないものは
+        // 図形 1 つにつき 1 度だけ数える (#3139)
+        let held = suspendVectorRecordingShadedFigure(
+            .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep), at: center,
+            arcClosure: mode.map(\.closure) ?? .standard)
+        defer { resumeVector(held) }
+        switch mode {
+        case nil:
+            draw(outline(.sectorFill))
+            draw(outline(.arcLine))
+        case .chord:
+            draw(outline(.chord))
+        case .open:
+            draw(outline(.chordFill))
+            draw(outline(.arcLine))
+        case .pie:
+            // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
+            preconditionFailure("a pie is placed as a single form")
         }
     }
 
@@ -517,7 +529,7 @@ extension ArcMode {
 
 extension FormInstance.ArcClosure {
     /// 三角形の経路 (破線の輪郭) が輪郭として刻む周の部分。
-    fileprivate var strokePiece: Canvas.Outline.Ring.Piece {
+    var strokePiece: Canvas.Outline.Ring.Piece {
         switch self {
         case .pie: .sector
         case .chord: .chord
