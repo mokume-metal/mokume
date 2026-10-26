@@ -551,29 +551,102 @@ final class WatchSession {
     /// 呼ぶ側は既定で `SIGPIPE` を無視しておく必要がある ([WatchCommand] が置く) —
     /// 無視しないと、畳まれた管へ書いた**こちらが死ぬ**。
     ///
-    /// **塞がらない。** ここは NSView の出来事から main で同期に呼ばれるので、待つと
+    /// **塞がない。** ここは NSView の出来事から main で同期に呼ばれるので、待つと
     /// 窓・保存の検出・巡回がまとめて止まる。読まない子でも戻れるのは、迎えるときに
     /// 書き口へ印を立ててあるからである (``unblockWriting(to:)``)。
+    ///
+    /// ## 書き始めた 1 行は、書き切る
+    ///
+    /// 小さい 1 行 (キー・マウス・ピンチ) は PIPE_BUF (512 バイト) 以下で、非閉塞の管への書き込みは
+    /// 「全部書く」か「EAGAIN で何も書かない」かのどちらかである。**ファイルの落とし (`fileDropped`) の
+    /// 1 行は本数に比例して伸びる** ので、それを越えると、短く書けて**行の途中で止まる**ことがある。
+    /// 書き残しを捨てると、改行の無い断片が子の溜まりに残り、**次の 1 行の頭に継ぎ足されて両方を壊す**
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。だから短く書けたら**残りを持ち**、
+    /// 管に空きができたとき (次の呼び出しと ``flushPendingInput()``) に続きを書く。続きが残っている間に
+    /// 来た行は、割り込ませずに捨てる — 「溜めて後から流さない」ままで、続きを持つのは書き始めた 1 行だけである。
+    ///
+    /// **子の上限 (``InputWire/lineLimit``) を越える 1 行は管へ流さず、捨てて名乗る** (``onOversizedInput``)。
+    /// 流すと子は溜めたぶんを全部捨て、残りは行の頭を失った断片として届く。
     func send(_ line: String) {
         // **画面に出ている世代へ送る。** 退役待ちが居る間は、まだ前の世代が映っている —
         // 入れ替わりと退役は同じ合図で起きるので、宛先は画面と一致する (#1142)
         let target = outgoing ?? child
-        guard let pipe = target?.standardInput as? Pipe, let data = line.data(using: .utf8) else {
+        guard let target, target.standardInput is Pipe, let data = line.data(using: .utf8) else {
+            return
+        }
+        // 書き残しは、書き始めた子のものである。宛先が変わったら捨てる (前の子は畳まれる)
+        if let unsent, unsent.target !== target { self.unsent = nil }
+        // **書き残した続きを先に書く。** 行の途中に他の行を入れない
+        flushPendingInput()
+        guard unsent == nil else { return }
+        guard data.count <= InputWire.lineLimit else {
+            onOversizedInput?(data.count)
             return
         }
         // **失敗を握り潰す。** 相手が畳んだ (EPIPE)・管が一杯 (EAGAIN) のどちらでも、
-        // することは同じ「この 1 件を捨てる」である
-        //
-        // **1 度だけ書く。** 道具立ての `FileHandle.write(contentsOf:)` は、書けなかった
-        // ぶんをどう扱うか (投げるか・回り続けるか) が内部に依る — 塞がらないことが
-        // ここの要点なので、`write(2)` を 1 回呼んで戻り値の扱いを自分で持つ (#1296)
-        //
-        // **半分だけ書かれることは無い。** 1 件は PIPE_BUF (512 バイト) より十分に小さく、
-        // 非閉塞の管への書き込みはその大きさまで「全部書く」か EAGAIN で何も書かないかの
-        // どちらかである — 捨てた 1 件が、次の 1 件の頭に継ぎ足される形にはならない
-        let descriptor = pipe.fileHandleForWriting.fileDescriptor
-        _ = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        // することは同じ「この 1 件を捨てる」である (書き始めたものは、下で続きを持つ)
+        let written = Self.write(data, to: target)
+        if written > 0, written < data.count {
+            unsent = (target, data.dropFirst(written))
+        }
     }
+
+    /// 書き残した 1 行の続きを、書けるだけ書く。**塞がない。** 続きが無ければ何もしない。
+    ///
+    /// 見張りの巡回が刻みごとに呼ぶ (``WatchCommand/step(_:viewer:stopped:)``)。次の出来事が来なくても、
+    /// 子が管を読み始めれば行は書き切られる。子が畳んだ・入れ替わったときは続きを捨てる。
+    func flushPendingInput() {
+        guard let pending = unsent else { return }
+        guard pending.target === (outgoing ?? child), pending.target.isRunning else {
+            unsent = nil
+            return
+        }
+        let written = Self.write(pending.rest, to: pending.target)
+        if written < 0 {
+            unsent = nil
+        } else if written >= pending.rest.count {
+            unsent = nil
+        } else if written > 0 {
+            unsent = (pending.target, pending.rest.dropFirst(written))
+        }
+    }
+
+    /// 書き残している続きの長さ (バイト)。**検査から読む。**
+    var unsentInputBytes: Int { unsent?.rest.count ?? 0 }
+
+    /// 子の管へ、書けるだけ書く。**塞がない** (書き口には ``unblockWriting(to:)`` が印を立ててある)。
+    ///
+    /// `FileHandle.write(contentsOf:)` は書けなかったぶんをどう扱うか (投げるか・回り続けるか) が内部に依る —
+    /// 塞がらないことがここの要点なので、`write(2)` を呼んで戻り値の扱いを自分で持つ (#1296)。
+    ///
+    /// - Returns: 書けたバイト数。管が畳まれた (EPIPE) などで書けなくなったら `-1`。
+    private static func write(_ data: Data, to process: Process) -> Int {
+        guard let pipe = process.standardInput as? Pipe else { return -1 }
+        let descriptor = pipe.fileHandleForWriting.fileDescriptor
+        return data.withUnsafeBytes { buffer -> Int in
+            var done = 0
+            while done < buffer.count {
+                let count = Darwin.write(descriptor, buffer.baseAddress! + done, buffer.count - done)
+                if count > 0 {
+                    done += count
+                } else if count < 0, errno == EINTR {
+                    continue
+                } else if count < 0, errno == EAGAIN {
+                    break
+                } else {
+                    return -1
+                }
+            }
+            return done
+        }
+    }
+
+    /// 書き残した 1 行の続きと、その宛先。
+    private var unsent: (target: Process, rest: Data)?
+
+    /// 子の上限 (``InputWire/lineLimit``) を越えるので管へ流さず捨てた 1 行の大きさ (バイト) を伝える先。
+    /// 見張りの口 (``WatchCommand``) が、利用者へ名乗る。
+    var onOversizedInput: ((Int) -> Void)?
 
     /// 迎えた子の**書き口**を、塞がない形にする。
     ///

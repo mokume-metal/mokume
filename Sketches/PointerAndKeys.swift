@@ -67,6 +67,17 @@ import mokume
 /// 捕まえている間も隠れ、N で `cursor()` に戻しても捕まえている間は隠れたまま、放した後に
 /// 矢印が出る。**絵には出さない** — 触らずに書き出した絵 (台帳の 1 枚) は変えない。
 ///
+/// ## ファイルを落とす
+///
+/// ファイルを窓へ落とすと、落とした所に四角い枠が付き、左の列にファイル名が出る
+/// (`fileDropped(_:)`・[#3061](https://github.com/mokume-metal/mokume/issues/3061))。落とした所へ
+/// `mouseX` / `mouseY` も動く。何も落とさない間は何も出ないので、触らずに書き出した絵は変わらない。
+/// 外から送るなら:
+///
+/// ```
+/// {"id":"d1","events":[{"type":"fileDropped","paths":["/tmp/a.png"],"x":480,"y":300}]}
+/// ```
+///
 /// 下の行の「動いた量」はフレームの合計 (`movedX`)、「1 件ずつの和」はそのフレームに
 /// `mouseMoved(deltaX:deltaY:)` と `mouseDragged(deltaX:deltaY:)` へ渡った量の和で、2 つは
 /// 一致する。針は見回している間だけ描く — 触らずに書き出した絵は変わらない。
@@ -94,6 +105,8 @@ final class PointerAndKeys: Sketch {
     var lastKeyCode: Int?
     /// 最後に離したキー。``lastKeyCode`` と違って押したときには入れ替わらない。
     var lastReleased: Key?
+    /// 落とされたファイルの名前と、落とした点。**出来事として溜める**。
+    var dropped: [(name: String, x: Float, y: Float)] = []
 
     /// 回しているか。**止めた・再開したを自分で覚える** — 進行の口は頼むだけで、
     /// いまの状態を読む口は無い。
@@ -173,6 +186,16 @@ final class PointerAndKeys: Sketch {
     /// [#807]: https://github.com/mokume-metal/mokume/issues/807
     func mouseWheel(deltaX: Float, deltaY: Float) {
         size = constrain(size + deltaY * 4, 20, 400)
+    }
+
+    /// ファイルが落とされた。渡るのは絶対パスだけなので、枠に出す名前は最後の要素を切り出す。
+    /// 位置は呼ばれた中の `mouseX` / `mouseY` で、落とした所に動いている。
+    func fileDropped(_ paths: [String]) {
+        for path in paths {
+            let name = path.split(separator: "/").last.map(String.init) ?? path
+            dropped.append((name, mouseX, mouseY))
+        }
+        while dropped.count > Self.keepAtMost { dropped.removeFirst() }
     }
 
     /// **文字を生むキーだけが呼ぶ。** 矢印やファンクションキーではここへ来ない。
@@ -281,6 +304,19 @@ final class PointerAndKeys: Sketch {
             circle(point.x, point.y, 6)
         }
 
+        // 落としたファイルの枠。**落とした間だけ、描き方を保って描く** — 塗りや線を変えたまま
+        // 後の図形へ持ち越すと、触らずに書き出した絵 (台帳の 1 枚) まで変わる
+        if !dropped.isEmpty {
+            push {
+                noFill()
+                stroke(120, 230, 160, 200)
+                strokeWeight(2)
+                for drop in dropped {
+                    square(drop.x - 20, drop.y - 20, 40)
+                }
+            }
+        }
+
         // 矢印で動かす四角。押している矢印があれば明るくなる
         let steering = [Key.arrowLeft, .arrowRight, .arrowUp, .arrowDown].filter(keyboard.isPressed)
         fill(steering.isEmpty ? color(140, 120, 230, 180) : color(190, 170, 255, 240))
@@ -367,6 +403,10 @@ final class PointerAndKeys: Sketch {
             24, 396)
         deliveredX = 0
         deliveredY = 0
+        // 最後に落としたファイルの名前。**落としたときだけ出す**
+        if let last = dropped.last {
+            text("落とした \(last.name)  (\(dropped.count) 件)", 24, 428)
+        }
 
         // 溜まっている出来事の数。状態ではなく、起きたことの数である
         fill(150, 165, 190)

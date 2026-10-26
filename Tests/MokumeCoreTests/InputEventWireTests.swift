@@ -34,6 +34,7 @@ struct InputEventWireTests {
         case .mouseMovedBy: .mouseMovedBy(dx: -3.5, dy: 12.75)
         case .scrolled: .scrolled(dx: 1.5, dy: -2.25)
         case .pinched: .pinched(amount: -0.25)
+        case .fileDropped: .fileDropped(paths: ["/tmp/a.png", "/tmp/b c.png"], x: 10, y: 20.5)
         case .keyDown: .keyDown(code: .enter, characters: "a", isRepeat: true)
         case .keyUp: .keyUp(code: .escape)
         }

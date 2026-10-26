@@ -1220,6 +1220,7 @@ public final class SketchRuntime {
             sketch.mouseDragged(deltaX: deltaX, deltaY: deltaY)
         case .mouseWheel(let deltaX, let deltaY):
             sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)
+        case .fileDropped(let paths): sketch.fileDropped(paths)
         case .keyPressed: sketch.keyPressed()
         case .keyReleased: sketch.keyReleased()
         case .keyTyped: sketch.keyTyped()

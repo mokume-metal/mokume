@@ -144,6 +144,33 @@ struct SketchApplicationTests {
             ])
     }
 
+    /// **スケッチ自身の窓でも、落としたファイルは面へ届く** ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    /// 道具の窓 (`SharedFrameStageTests`) と同じ形で、窓から取り出した面へ落としを渡して運び先まで見る。
+    @Test("スケッチの窓へ落としたファイルも、面へ届く")
+    func droppedFilesReachTheSurfaceThroughTheWindow() throws {
+        let application = try makeApplication(Blank())
+        application.didFinishLaunching()
+        defer { application.willTerminate() }
+
+        let window = try #require(application.window)
+        let surface = try #require(window.contentView as? SketchSurface)
+        #expect(surface.registeredDraggedTypes.contains(.fileURL), "ファイルを受けるよう登録されていない")
+        var lines: [String] = []
+        surface.relay = { lines.append($0) }
+        let center = surface.convert(NSPoint(x: surface.bounds.midX, y: surface.bounds.midY), to: nil)
+        let dragging = FakeDraggingInfo.files(["/tmp/a.png", "/tmp/b.png"], at: center)
+        #expect(surface.performDragOperation(dragging))
+        let raw = try JSONDecoder().decode(
+            RawInputEvent.self, from: Data(try #require(lines.first).utf8))
+        guard case .fileDropped(let paths, let x, let y)? = raw.event else {
+            Issue.record("落としではない: \(lines)")
+            return
+        }
+        #expect(lines.count == 1 && paths == ["/tmp/a.png", "/tmp/b.png"])
+        // 面の真ん中を落とした。描く大きさ (既定は 960x540) の真ん中に写る
+        #expect(abs(x - 480) < 1 && abs(y - 270) < 1, "(\(x), \(y))")
+    }
+
     /// **窓が key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
     /// 離したキーは窓へ届かないので、流さないと押されたまま残る。
     @Test("窓が退く知らせで、押していたキーの解放が流れる")

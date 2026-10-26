@@ -48,7 +48,7 @@ final class StandardInputEvents {
     /// **際限なく伸びないようにする。** 改行を含まないものを流し込まれ続けると、
     /// ここだけが太り続ける。越えたら溜めていたぶんを捨てる — 途中まで読んだ 1 件は
     /// どのみち解けない。
-    static let pendingLimit = 1 << 20
+    static let pendingLimit = InputWire.lineLimit
 
     private let descriptor: Int32
     /// まだ行になっていないぶん。

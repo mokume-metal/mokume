@@ -2772,6 +2772,125 @@ struct WatchSessionTests {
         }
     }
 
+    /// 目印のファイルが現れるまで読まず、現れたら標準入力を全部ファイルへ写す子の台本。
+    /// 待ちは子の中にあり、検査が終わるときに ``WatchSession/stopBlocking()`` が子ごと止める。
+    private func readsWhenFlagged(flag: URL, out: URL) -> String {
+        "echo ready; while [ ! -e '\(flag.path)' ]; do sleep 0.02; done; exec cat > '\(out.path)'"
+    }
+
+    /// 線の 1 行 (CLI の側からは `InputEvent.wireLine` が見えないので、同じ形を手で組む)。
+    private static func dropLine(paths: [String]) -> String {
+        let list = paths.map { "\"\($0)\"" }.joined(separator: ",")
+        return #"{"type":"fileDropped","paths":["# + list + #"],"x":10.0,"y":20.0}"# + "\n"
+    }
+
+    private static func moveLine(_ x: Int, _ y: Int) -> String {
+        #"{"type":"mouseMoved","x":"# + "\(x).0" + #","y":"# + "\(y).0" + "}\n"
+    }
+
+    /// ファイルが `size` バイトになるのを、期限つきで待つ。
+    private func waitForFile(_ url: URL, size: Int, seconds: Double = 15) -> Data? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let data = try? Data(contentsOf: url), data.count >= size { return data }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return try? Data(contentsOf: url)
+    }
+
+    /// **大きな 1 行は、短く書けても、書き切る** ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    ///
+    /// `fileDropped` の 1 行はパスの本数に比例して伸びる。管の容量 (64KB) を越える行は、非閉塞の `write` が
+    /// 行の途中で短く戻ることがある。残りを捨てると、改行の無い断片が子の溜まりに残り、次の 1 行の頭に
+    /// 継ぎ足されて両方を壊す。書き残しの間は他の行を割り込ませず、読み始めた子へ残りを書き切る。
+    @Test("管の容量を越える 1 行は、短く書けても残りを持ち、子が読み始めたら書き切る。間の行は割り込まない")
+    @MainActor
+    func aLongLineIsWrittenToTheEndWithoutInterleaving() async throws {
+        let ready = Ready()
+        let folder = try makeDirectory()
+        let flag = folder.appendingPathComponent("go-\(UUID().uuidString)")
+        let out = folder.appendingPathComponent("out-\(UUID().uuidString).txt")
+        let session = WatchSession(
+            directory: folder, context: testContext(),
+            hooks: hooks(running: readsWhenFlagged(flag: flag, out: out), ready: ready),
+            stopTimeout: 1)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        signal(SIGPIPE, SIG_IGN)
+
+        // 長いパス 2000 本 (約 400KB・子の上限 1MiB の内側)。管の容量 64KB を大きく越える
+        let paths = (0..<2000).map { "/tmp/" + String(repeating: "d\($0)/", count: 40) + "file.png" }
+        let long = Self.dropLine(paths: paths)
+        #expect(long.utf8.count > 300_000 && long.utf8.count < InputWire.lineLimit)
+        session.send(long)
+        #expect(
+            session.unsentInputBytes > 0 && session.unsentInputBytes < long.utf8.count,
+            "短く書けて残りを持つはずが、残り \(session.unsentInputBytes) バイト")
+
+        // 書き残している間に来た行は、行の途中に入れず捨てる
+        let between = Self.moveLine(1, 2)
+        session.send(between)
+
+        // 子が読み始める。続きは巡回 (flushPendingInput) が、期限つきで書く
+        FileManager.default.createFile(atPath: flag.path, contents: Data())
+        let deadline = Date().addingTimeInterval(15)
+        while session.unsentInputBytes > 0, Date() < deadline {
+            session.flushPendingInput()
+            usleep(10_000)
+        }
+        #expect(session.unsentInputBytes == 0, "続きを書き切れなかった")
+        // 書き切った後の行は、そのまま続く
+        let after = Self.moveLine(3, 4)
+        session.send(after)
+        try (session.child?.standardInput as? Pipe)?.fileHandleForWriting.close()
+
+        let expected = Data((long + after).utf8)
+        let written = try #require(waitForFile(out, size: expected.count))
+        #expect(written == expected, "子に届いた行が、書いたものと違う (\(written.count) / \(expected.count) バイト)")
+    }
+
+    /// **子の上限を越える 1 行は流さず、名乗る。** 流すと子は溜めたぶんを全部捨て、残りが行の頭を失った断片として届く。
+    @Test("子の上限を越える 1 行は管へ流さず、大きさを名乗り、次の行は通る")
+    @MainActor
+    func anOversizedLineIsRefusedAndTheNextOneGoesThrough() async throws {
+        let ready = Ready()
+        let folder = try makeDirectory()
+        let flag = folder.appendingPathComponent("go-\(UUID().uuidString)")
+        let out = folder.appendingPathComponent("out-\(UUID().uuidString).txt")
+        let session = WatchSession(
+            directory: folder, context: testContext(),
+            hooks: hooks(running: readsWhenFlagged(flag: flag, out: out), ready: ready),
+            stopTimeout: 1)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        FileManager.default.createFile(atPath: flag.path, contents: Data())
+
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        signal(SIGPIPE, SIG_IGN)
+
+        var refused: [Int] = []
+        session.onOversizedInput = { refused.append($0) }
+        let huge = Self.dropLine(
+            paths: Array(repeating: "/tmp/" + String(repeating: "x", count: 200), count: 6000))
+        #expect(huge.utf8.count > InputWire.lineLimit)
+        session.send(huge)
+        #expect(refused == [huge.utf8.count])
+        #expect(session.unsentInputBytes == 0)
+
+        let small = Self.moveLine(5, 6)
+        session.send(small)
+        try (session.child?.standardInput as? Pipe)?.fileHandleForWriting.close()
+        let expected = Data(small.utf8)
+        let written = try #require(waitForFile(out, size: expected.count))
+        #expect(written == expected, "上限を越えた行が流れた、または次の行が届かなかった")
+    }
+
     /// **置いていかない。** 入れ替わりの合図が来る前に終わることがある。
     @Test("終わるときは、控えている子も置いていかない")
     func stoppingAlsoBringsDownTheOutgoingChild() async throws {

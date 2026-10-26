@@ -38,6 +38,8 @@ struct CallbackDeliveryTests {
         case mouseMovedBy(deltaX: Float, deltaY: Float)
         case mouseDragged(deltaX: Float, deltaY: Float)
         case mouseWheel(deltaX: Float, deltaY: Float)
+        /// `fileDropped(_:)`。呼ばれた中で読んだ `mouseX`・`mouseY` も控える ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
+        case fileDropped(paths: [String], mouseX: Float, mouseY: Float)
         /// どのキーが動いたかは ``Sketch/keyCode`` から読む (口の約束どおり)。
         case keyPressed(Key?)
         case keyReleased(Key?)
@@ -48,10 +50,15 @@ struct CallbackDeliveryTests {
     /// 呼ばれた順に、名前と値を控えるだけのスケッチ。
     final class Recorder: Sketch {
         var calls: [Call] = []
+        /// `setup()` で ``Sketch/noLoop()`` を呼ぶか。
+        var stopsInSetup = false
         init() {}
         var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
 
-        func setup() { calls.append(.setup) }
+        func setup() {
+            calls.append(.setup)
+            if stopsInSetup { noLoop() }
+        }
         func draw() {
             calls.append(.draw(frame: frameCount))
             background(.display(red: 0, green: 0, blue: 0))
@@ -68,6 +75,9 @@ struct CallbackDeliveryTests {
         }
         func mouseWheel(deltaX: Float, deltaY: Float) {
             calls.append(.mouseWheel(deltaX: deltaX, deltaY: deltaY))
+        }
+        func fileDropped(_ paths: [String]) {
+            calls.append(.fileDropped(paths: paths, mouseX: mouseX, mouseY: mouseY))
         }
         func keyPressed() { calls.append(.keyPressed(keyCode)) }
         func keyReleased() { calls.append(.keyReleased(keyCode)) }
@@ -145,6 +155,30 @@ struct CallbackDeliveryTests {
                 // (``Sketch/mousePressed()`` の「`draw()` の直前に、届いた順で呼ばれる」)
                 .draw(frame: 2),
             ])
+    }
+
+    /// 外から落としを送ると、**次のフレームの頭**で `fileDropped(_:)` が 1 回、`draw()` より先に呼ばれ、
+    /// その中で落とした所が `mouseX`・`mouseY` から読める。`mouseMoved()` は呼ばれない
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。止めている間 (`noLoop()`) も届く。
+    @Test("落としは fileDropped(_:) に届き、中で mouseX・mouseY が落とした所になる", arguments: [false, true])
+    func aDropArrivesByNameWithItsPosition(stopped: Bool) throws {
+        let facet = try makeFacet()
+        let sketch = Recorder()
+        sketch.stopsInSetup = stopped
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try send(
+            #"{"type":"fileDropped","paths":["/tmp/a.png","/tmp/b.png"],"x":10,"y":20}"#,
+            id: "f1", to: facet)
+        try runtime.advance()
+        let expected: [Call] = [
+            .setup, .draw(frame: 1),
+            .fileDropped(paths: ["/tmp/a.png", "/tmp/b.png"], mouseX: 10, mouseY: 20),
+        ]
+        // 回っているときは、同じフレームの draw() より先に呼ばれる。止めている間は draw() を呼ばない
+        #expect(sketch.calls == expected + (stopped ? [] : [.draw(frame: 2)]), "\(sketch.calls)")
     }
 
     /// ``Sketch/keyPressed()`` の説明が勧める「1 回だけ効かせる」書き方を、そのまま写した

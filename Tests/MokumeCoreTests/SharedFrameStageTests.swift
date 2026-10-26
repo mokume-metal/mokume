@@ -219,6 +219,40 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **道具の窓へ落としたファイルは、運び先 (子の標準入力へ書く 1 行) へ行く。**
+    ///
+    /// 窓は `SketchSurface` で、落としの受けはそこに 1 か所だけある。道具の窓の面が別の型になれば、
+    /// 受けが片方だけ抜けるので、窓から取り出した面に直に落としを渡して運び先まで見る
+    /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。本物のドラッグの身振りは人の手。
+    @Test("道具の窓へ落としたファイルは、運び先へ行く")
+    func droppedFilesReachTheRelayThroughTheWindow() throws {
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look("drop"))
+            var lines: [String] = []
+            stage.onInput = { lines.append($0) }
+            stage.open()
+            defer { stage.close() }
+            let window = try #require(stage.window)
+            let surface = try #require(window.contentView as? SketchSurface)
+            #expect(surface.registeredDraggedTypes.contains(.fileURL), "ファイルを受けるよう登録されていない")
+            let center = NSPoint(
+                x: surface.bounds.midX, y: surface.bounds.midY)
+            let dragging = FakeDraggingInfo.files(["/tmp/a.png"], at: surface.convert(center, to: nil))
+            #expect(surface.draggingEntered(dragging) == .copy)
+            #expect(surface.performDragOperation(dragging))
+            #expect(lines.count == 1, "\(lines)")
+            let raw = try JSONDecoder().decode(
+                RawInputEvent.self, from: Data(try #require(lines.first).utf8))
+            guard case .fileDropped(let paths, let x, let y)? = raw.event else {
+                Issue.record("落としではない: \(lines)")
+                return
+            }
+            #expect(paths == ["/tmp/a.png"])
+            // 面の真ん中を落とした。描く大きさ (最初の絵が来るまでの仮の 1x1) の真ん中に写る
+            #expect(abs(x - 0.5) < 0.01 && abs(y - 0.5) < 0.01, "(\(x), \(y))")
+        }
+    }
+
     /// **つまみはプレビューにだけ出る** ([ADR-0032] 決定 5)。見張りから本番を回している
     /// 間、つまみが本番の画面に出てはならない。
     @Test("宣言があればプレビューにつまみが出て、作品の窓には出ない")

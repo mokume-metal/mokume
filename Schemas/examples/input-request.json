@@ -29,6 +29,12 @@
       "amount": 0.1
     },
     {
+      "type": "fileDropped",
+      "paths": ["/tmp/a.png"],
+      "x": 320.0,
+      "y": 180.0
+    },
+    {
       "type": "keyDown",
       "code": 49,
       "characters": " ",
