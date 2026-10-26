@@ -32,9 +32,23 @@ import MokumeDiagnostics
 /// 0〜1 の値は、-60 dBFS を 0、0 dBFS を 1 として dB で線形に写し、外は丸める。履歴に
 /// 依らないので、同じ音はいつも同じ値になる。生の値をそのまま 0〜1 として使うと、普通の
 /// 音量では小さいところに張り付く (全振幅の正弦波でも ``rms`` は約 0.707 にしかならない)。
+/// 区間の最大の振幅 ``peak`` は生の値だけを持ち、0〜1 へ写した値は足さない (全振幅で 1 になる)。
 ///
-/// 解析は、そのフレームで終わる 1024 標本の窓 (48 kHz で約 21 ミリ秒) に Hann の窓を掛けて行う。
-/// 帯域は 512 本で、帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz である。
+/// ## 解析するのは、前のフレーム以後の全標本
+///
+/// 各フレームでは、**前のフレームの区間の終わりからこのフレームの区間の終わりまでの全標本**を解析する
+/// (24 fps なら 2000 標本。窓 1 つしか見ないと、立ち上がりの鋭い音を見落とす)。マイクの標本は、出どころ
+/// が届けた単位 (チャンクの長さ) ではなく、最初に受け取った標本を 0 とした通し番号で数える。
+///
+/// - ``rms``・``decibels``・``level``・``peak`` は区間全体の値
+/// - ``spectrum`` は、標本 0 から 512 標本ごとに置いた 1024 標本の窓 (Hann の窓を掛ける。48 kHz で約 21 ミリ秒)
+///   のうち、終わりが区間に入るものの平均。``spectrumLevels`` はその平均を写したもの。区間が 512 標本より短い
+///   (48 kHz で 93.75 fps より速い) ときは、区間の終わりまでに終わった最後の窓を使う
+/// - 帯域は 512 本で、帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz である
+/// - 新しい標本が届かなかったフレームは、値が前のまま (``isNewFrame`` が false)
+/// - 長く止まった後は、区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する
+/// - **高い fps では区間が短い。** 120 fps なら 1 フレームは 400 標本で、低い音 (55 Hz の 1 周期は約 870 標本) の
+///   ``rms``・``level`` は、区間の中の位相で揺れる。``spectrum`` は窓の平均なので区間の長さに依らず滑らか
 ///
 /// ## 来ないことには理由がある
 ///
@@ -51,14 +65,17 @@ public final class AudioIn: Inlet {
     /// このフレームで新しい音が解析されたか。
     public private(set) var isNewFrame = false
 
-    let input: ExternalInput<[Float]>
+    let input: ExternalInput<AudioSpan>
     private let source: any AudioSource
     private weak var owner: (any Sketch)?
     /// 利用者が ``stop()`` を呼んだ。**足し直しの ``open()`` でも戻さない** (利用者の意思として粘る)。
     private var stoppedByUser = false
     private let now: () -> TimeInterval
     private let warn: (String) -> Void
+    /// 通常の枚の続きの最新の値。時刻を指定した観測の枚は、これを動かさない。
     private var levels = AudioLevels.silence
+    /// いま見せる値。観測の枚だけ、指定の秒で終わる区間の値で、それ以外は ``levels``。
+    private var shown = AudioLevels.silence
     private var openedAt: TimeInterval?
     private var warnedWaiting = false
     private var warnedDenied = false
@@ -81,19 +98,25 @@ public final class AudioIn: Inlet {
 
     // MARK: - 生の値
 
-    /// 窓の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
-    public var rms: Float { levels.rms }
+    /// 区間の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
+    public var rms: Float { shown.rms }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
-    public var decibels: Float { levels.decibels }
-    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。
-    public var spectrum: [Float] { levels.spectrum }
+    public var decibels: Float { shown.decibels }
+    /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。
+    ///
+    /// 立ち上がりの鋭い音 (キックなど) が、区間のどこにあっても拾う。``rms`` は区間の長さで薄まるが、これは薄まらない。
+    /// マイク・標本列は毎フレーム解くので、取りこぼしはない。
+    public var peak: Float { shown.peak }
+    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
+    /// 窓の平均。
+    public var spectrum: [Float] { shown.spectrum }
 
     // MARK: - 0〜1 へ写した値
 
     /// 音の大きさを 0〜1 にしたもの。-60 dBFS 以下で 0、0 dBFS で 1。
-    public var level: Float { levels.level }
+    public var level: Float { shown.level }
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。写し方は ``level`` と同じ。
-    public var spectrumLevels: [Float] { levels.spectrumLevels }
+    public var spectrumLevels: [Float] { shown.spectrumLevels }
 
     // MARK: - 出どころ
 
@@ -129,19 +152,37 @@ public final class AudioIn: Inlet {
         openedAt = now()
         // **起点は作者の時計の秒** — 時刻を指定した観測の枚の `draw()` で作ったものが、観測の秒を起点として
         // 残さない (#2357)。読む位置 (``supply()``) は見せる時刻で決める
-        source.start(into: input, at: Double(owner?.authorTime ?? 0))
+        source.start(into: input, at: clock())
     }
 
     public func supply() {
-        source.pump(into: input, at: Double(owner?.time ?? 0))
-        if let window = input.take() {
-            levels = AudioAnalyzer.shared.analyze(window)
+        source.pump(into: input, at: clock())
+        if let span = input.take() {
+            // 通常の続きは、観測の枚でも通常の枚と同じに解く。観測の枚で標本が進んでいない (空の区間) ときは前の値のまま
+            if !span.isEmpty || span.observation == nil { levels = AudioAnalyzer.shared.analyze(span) }
+            // 時刻を指定した観測の枚だけは、指定の秒で終わる区間を別に解いて見せる (通常の続きは動かさない)
+            shown = span.observation.map { AudioAnalyzer.shared.analyze($0.span) } ?? levels
             isNewFrame = true
         } else {
+            shown = levels
             isNewFrame = false
         }
-        if state != .running { levels = .silence }
+        if state != .running {
+            levels = .silence
+            shown = .silence
+        }
         noticeIfStuck()
+    }
+
+    /// 出どころに渡す、いまの時計の位置。**秒は作者の時計の倍精度の秒**で、止める・飛ぶに従い、観測の秒を状態に積まない。
+    /// 固定の時計は、秒に fps を掛けたフレームの位置から区間を整数で数える (``SourceClock``)。時刻を指定した観測の枚は、
+    /// 通常の枚と同じ区間を数えたうえで、指定の秒を ``SourceClock/observed`` で渡す。
+    private func clock() -> SourceClock {
+        guard let owner else { return SourceClock(seconds: 0) }
+        return SourceClock(
+            seconds: owner.authorSeconds,
+            perSecond: owner.clock.soundFrameRate(onScreen: owner.isOnScreen),
+            observed: owner.observedSeconds)
     }
 
     public func close() {
@@ -150,6 +191,7 @@ public final class AudioIn: Inlet {
         // 届いて読まれなかった音は捨てる。足し直した最初の ``supply()`` に、外す前の音を出さない
         input.discardWaiting()
         levels = .silence
+        shown = .silence
     }
 
     public var report: SourceReport? { input.report }

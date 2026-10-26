@@ -27,6 +27,7 @@ struct Heard: Equatable {
     var position: Int
     var level: Float
     var rms: Float
+    var peak: Float
     var spectrum: [Float]
 }
 
@@ -128,7 +129,7 @@ struct SoundFileTests {
                 heard.append(
                     Heard(
                         isPlaying: sound.isPlaying, position: sound.samplePosition, level: sound.level,
-                        rms: sound.rms, spectrum: sound.spectrum))
+                        rms: sound.rms, peak: sound.peak, spectrum: sound.spectrum))
                 act(sound, sketch.frameCount)
             },
             between: between)
@@ -136,15 +137,17 @@ struct SoundFileTests {
         return heard
     }
 
-    /// 頭から鳴らし始めて `played` 標本鳴ったときの、実時間の再生の窓を解析した値。
-    private func expected(_ samples: [Float], played: Int) -> AudioLevels {
-        AudioAnalysis.analyze(
-            AudioAnalysis.window(of: samples, sampleRate: 48_000, endingAt: Double(played) / 48_000))
+    /// 頭から鳴らし始めて、`played` 標本のところまで鳴ったフレームの値。前のフレームは `previous` 標本のところ。
+    /// 標本が進んでいない (`previous == played`) フレームは、解析する標本が無く、前の値のまま。
+    private func expected(
+        _ samples: [Float], previous: Int, played: Int, loops: Bool = false
+    ) -> AudioLevels {
+        AudioAnalysis.analyze(span(of: samples, from: previous, to: played, loops: loops))
     }
 
     // MARK: - 書き出し (固定の時計) の窓
 
-    @Test("固定の時計で 2 度書き出すと同じ値になり、鳴らし始めてからの経過で終わる窓の値になる")
+    @Test("固定の時計で 2 度書き出すと同じ値になり、前のフレームから鳴らし始めてからの経過までの区間の値になる")
     func exportIsRepeatable() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -160,8 +163,11 @@ struct SoundFileTests {
         for (index, frame) in first.enumerated() {
             let played = index * Self.perFrame
             #expect(frame.position == played)
-            let levels = expected(chord, played: played)
+            // 鳴らし始めた最初のフレームは、まだ 1 標本も鳴っていない空の区間で、無音のまま
+            let levels = index == 0
+                ? .silence : expected(chord, previous: played - Self.perFrame, played: played)
             #expect(frame.level == levels.level, "frame \(index + 1)")
+            #expect(frame.peak == levels.peak, "frame \(index + 1)")
             #expect(frame.spectrum == levels.spectrum, "frame \(index + 1)")
         }
         // 拍で揺れる音なので、フレームごとに値が動いている
@@ -206,6 +212,28 @@ struct SoundFileTests {
             return sound
         }
         #expect(heard.map(\.position) == [0, 1600, 3200])
+    }
+
+    /// **区間の境界は、絶対のフレーム番号の式 ⌊N·sr/fps⌋ の差で数える** ([#3136] の条件 8・ADR-0042 の「時刻の対応」)。
+    /// 鳴らし始めたフレームからの差で数えると、48000 Hz・144 fps (1 フレーム 333.33 標本) では、載せる窓の
+    /// 継ぎ目と最大 1 標本ずれる。
+    ///
+    /// [#3136]: https://github.com/mokume-metal/mokume/issues/3136
+    @Test("途中のフレームから鳴らし始めた位置は、絶対のフレーム番号の窓の継ぎ目と揃う (48000 Hz・144 fps)")
+    func positionLinesUpWithTheAbsoluteWindows() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let heard = try record(
+            frames: 40, clock: .frameIndex(frameRate: 144),
+            { try $0.loadSound(url.path) },
+            act: { sound, frameCount in if frameCount == 5 { sound.play() } })
+        #expect(heard.count == 40)
+        // draw() の frameCount 5 (フレーム 4) で呼んだ play() が、窓 4 の先頭から鳴らす
+        for (index, frame) in heard.enumerated() where index >= 5 {
+            let expected = index * 48_000 / 144 - 4 * 48_000 / 144  // 整数で独立に数えた絶対の窓の先頭の差
+            #expect(frame.position == expected, "frame \(index)")
+        }
+        #expect(heard[6].position == 667, "旧式 ⌊(N - origin)·sr/fps⌋ なら 666")
     }
 
     @Test("作品が時刻を止めても、音は止まらずに進む")
@@ -259,9 +287,44 @@ struct SoundFileTests {
         // 止まっている間は無音で、鳴っている間は音がある (頭のフレームは鳴らし始めた瞬間で、まだ無音)
         #expect(heard[3].level == 0 && heard[4].level == 0 && heard[7].level == 0)
         #expect(heard[1].level > 0 && heard[5].level > 0 && heard[8].level > 0)
-        // 続きから鳴らした窓は、止めた位置から始まる区切りで切る (止めていた間は鳴っていない)
-        let resumed = Array(repeating: Float(0), count: 1024 - 800) + chord[1600..<2400]
+        // 続きから鳴らした区間は、止めた位置から始まる区切りで切る。止めた位置より前の窓の部分は、
+        // 止めていた間は鳴っていないので 0
+        let resumed = span(from: 1600, to: 2400) { $0 < 1600 ? 0 : chord[$0] }
         #expect(heard[5].spectrum == AudioAnalysis.analyze(resumed).spectrum)
+    }
+
+    /// 実際に鳴らしている間は、フレームの頭の `supply()` から `pause()`・`stop()` を呼ぶまでに標本が鳴っている。その分の
+    /// 区間を解析せずに無音にすると、鳴り終わり (終わりまでの区間を解析してから止まる) と形が揃わない。
+    @Test("鳴らしている最中に pause()・stop() すると、止める前に鳴っていた分の区間が次のフレームで解析され、その次から無音になる")
+    func stoppingAnalysesWhatPlayedBeforeIt() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for stopping in ["pause", "stop"] {
+            let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+            var sound: SoundFile?
+            let heard = try record(
+                frames: 6,
+                { sketch in
+                    let made = try sketch.loadSound(url.path, flow: flow)
+                    made.play()
+                    sound = made
+                    return made
+                },
+                between: { frame in
+                    // 1 フレームぶん鳴らしてから止める。フレーム 3 の `supply()` の後に 800 標本鳴っている
+                    _ = try render(flow, Self.perFrame)
+                    if frame == 3 {
+                        if stopping == "pause" { sound?.pause() } else { sound?.stop() }
+                    }
+                })
+            #expect(heard.count == 6)
+            // フレーム 3 の supply() は [800, 1600) を解析済み。止めた位置は 2400 なので、[1600, 2400) が残る
+            let tail = expected(chord, previous: 1600, played: 2400)
+            #expect(tail.peak > 0 && tail.level > 0)
+            #expect(heard[3].level == tail.level && heard[3].peak == tail.peak, "\(stopping): 止める前に鳴っていた分")
+            #expect(!heard[3].isPlaying)
+            #expect(heard[4].level == 0 && heard[5].level == 0, "\(stopping): その次から無音")
+        }
     }
 
     @Test("1 度だけなら終わりで止まって無音になり、ループなら継ぎ目を越えて鳴り続ける")
@@ -280,7 +343,10 @@ struct SoundFileTests {
         #expect(once.map(\.isPlaying) == [true, true, true, false, false])
         #expect(once.map(\.position) == [0, 800, 1600, 0, 0])
         #expect(once[2].level > 0)
-        #expect(once[3].level == 0 && once[4].level == 0)
+        // 鳴り終わったフレームは、終わりまでの区間 (1600..<2000) を解析してから止まる。次のフレームからは無音
+        let tail = expected(short, previous: 1600, played: 2000)
+        #expect(once[3].level == tail.level && once[3].peak == tail.peak && once[3].level > 0)
+        #expect(once[4].level == 0 && once[4].peak == 0)
 
         let looped = try record(frames: 6) { sketch in
             let sound = try sketch.loadSound(url.path)
@@ -289,10 +355,29 @@ struct SoundFileTests {
         }
         #expect(looped.allSatisfy { $0.isPlaying })
         #expect(looped.map(\.position) == [0, 800, 1600, 400, 1200, 0])
-        // 継ぎ目を越えた窓は、終わりの後に頭が続く
-        let seam = (1376..<2000).map { short[$0] } + (0..<400).map { short[$0] }
-        #expect(looped[3].spectrum == AudioAnalysis.analyze(seam).spectrum)
+        // 継ぎ目を越えた区間 (1600..<2400) は、終わりの後に頭が続く。窓の格子はファイルの位置を戻さずに数える
+        let seam = expected(short, previous: 1600, played: 2400, loops: true)
+        #expect(looped[3].spectrum == seam.spectrum)
+        #expect(looped[3].peak == seam.peak)
         #expect(looped[3].level > 0)
+    }
+
+    /// 1 フレームより短い一発音は、鳴り終わったフレームの区間 (鳴り始めてから終わりまで) に入る。窓の終わりで見ていたときは、
+    /// 鳴り終わったフレームを無音に戻して、peak が一度も出なかった。
+    @Test("24 fps で 20 ミリ秒の一発音を鳴らすと、鳴り終わったフレームの peak に出て、次のフレームから無音になる")
+    func aOneShotShorterThanAFrameIsSeen() throws {
+        let click = [Float](repeating: 0.5, count: 960)
+        let url = try writeWAV(click, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let heard = try record(frames: 4, clock: .frameIndex(frameRate: 24)) { sketch in
+            let sound = try sketch.loadSound(url.path)
+            sound.play()
+            return sound
+        }
+        #expect(heard.map(\.isPlaying) == [true, false, false, false])
+        #expect(heard[0].peak == 0, "鳴らし始めた最初のフレームは標本が進まない")
+        #expect(heard[1].peak == 0.5 && heard[1].rms == 0.5, "鳴り終わったフレーム: \(heard[1])")
+        #expect(heard[2].peak == 0 && heard[3].peak == 0)
     }
 
     @Test("音量は解析の値にも掛かり、0〜1 の外は丸め、数でない値は無視して、それぞれ 1 度だけ知らせる")
@@ -371,8 +456,9 @@ struct SoundFileTests {
         runtime.closePlugins()
 
         #expect(unread?.analyses == 0)
-        #expect(read?.analyses == frames)
-        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames, "解析は共有の解析器を通る")
+        // 鳴らし始めた最初のフレームは標本が進んでいない空の区間で、解く物が無い
+        #expect(read?.analyses == frames - 1)
+        #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames - 1, "解析は共有の解析器を通る")
     }
 
     /// **音量はフレームの頭の値で窓に掛かる。** 読む前に `amp()` で変えても、そのフレームの値は
@@ -483,7 +569,7 @@ struct SoundFileTests {
         #expect(duration == 10.0)
     }
 
-    @Test("鳴っている間の jump(5) は、呼んだ直後から 5.0 を返し、次のフレームでちょうど 5.0 から鳴って、解析は 5.0 秒で終わる窓になる")
+    @Test("鳴っている間の jump(5) は、呼んだ直後から 5.0 を返し、次のフレームでちょうど 5.0 から鳴って、解析の区間は 5.0 秒から始まる")
     func jumpWhilePlayingLandsOnTheNextFrame() throws {
         let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -494,11 +580,18 @@ struct SoundFileTests {
         // 呼んだ直後 (同じフレームの続き) から飛び先を見せる
         #expect(seen[2].afterAct == 5)
         #expect(seen.allSatisfy { $0.isPlaying })
+        // 飛んだフレームの区間は、飛ぶ前の区切りで前のフレームから鳴り続けていた分 (1600..<2400)。飛び先の区間は
+        // 次のフレームから (飛び先から始まる)
+        let oldTail = AudioAnalysis.analyze(span(of: Self.tenSeconds, from: 1600, to: 2400))
+        #expect(seen[3].level == oldTail.level && seen[3].spectrum == oldTail.spectrum)
+        #expect(seen[2].level > 0 && seen[3].level != seen[2].level)
+        // 次のフレームの区間は飛び先から始まる。窓の前の部分は、飛ぶ前からそこまで鳴っていたのと同じく、
+        // ファイルの標本で埋める (飛び先の前の標本は 0 でない)
         let landing = AudioAnalysis.analyze(
-            AudioAnalysis.window(of: Self.tenSeconds, sampleRate: 48_000, endingAt: 5.0))
-        #expect(seen[3].level == landing.level)
-        #expect(seen[3].spectrum == landing.spectrum)
-        #expect(seen[3].level > 0)
+            span(of: Self.tenSeconds, from: 240_000, to: 240_800))
+        #expect(seen[4].level == landing.level)
+        #expect(seen[4].spectrum == landing.spectrum)
+        #expect(seen[4].level > 0)
 
         // 実際に鳴らす経路でも同じ値になり、飛んだフレームから 5 秒の位置の音が鳴る
         let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)

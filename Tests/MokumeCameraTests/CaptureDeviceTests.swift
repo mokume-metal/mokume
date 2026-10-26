@@ -7,7 +7,7 @@ import Testing
 
 /// カメラ 1 台の値 (``CaptureDevice``) と、出せる形式 (``CaptureFormat``) の並べ方 (#2453)。機材も GPU も要らない。
 @Suite("カメラ機材の形式")
-struct CaptureDeviceTests {
+nonisolated struct CaptureDeviceTests {
     private let hd = CaptureFormat(width: 1280, height: 720, frameRates: 1...30)
     private let full = CaptureFormat(width: 1920, height: 1080, frameRates: 1...30)
 

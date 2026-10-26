@@ -37,7 +37,7 @@ nonisolated enum SynthParam: UInt8, Sendable {
 nonisolated class RackNode {
     let id: Int
     let sampleRate: Double
-    /// 出口の標本の写し。音の側が書き、フレームの側が最新の窓を読む。
+    /// 出口の標本の写し。音の側が書き、フレームの側が前のフレーム以後の区間を読む。
     let meter: SampleRing
 
     init(id: Int, sampleRate: Double, meter: SampleRing) {

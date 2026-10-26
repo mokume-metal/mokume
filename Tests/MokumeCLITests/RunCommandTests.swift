@@ -719,6 +719,38 @@ struct RunCommandTests {
         #expect(after.__sigaction_u.__sa_handler == nil, "走り終えた後に、合図の受け口を元へ戻していない")
     }
 
+    /// **受け口は割り込んだ先の errno を変えずに戻る** (#3234)。
+    ///
+    /// 受け口は子へ `kill` を撃つ。`kill` は失敗すると errno を書くので、戻さなければ、割り込まれた
+    /// 呼び出しの後に errno を読むコード (`waitpid` の失敗の読み)が、受け口の失敗を自分のものと読む。
+    /// 子の宛先を存在しえない番号にして `kill` を `ESRCH` で失敗させ、受け口を直に呼んで、置いた errno が残るのを見る。
+    ///
+    /// **合図は送らない** — 受け口を置いたまま直に呼ぶので、走者へ届く合図は無い。
+    @Test("終わりの合図の受け口は、子へ撃つ kill が失敗しても、割り込んだ先の errno を変えない")
+    func theStopReceiverLeavesErrnoAlone() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+
+        // **再利用されえない番号で `kill` を `ESRCH` にする。** 回収した子の番号は、別のプロセスへ
+        // 再利用されると無関係なプロセスへ SIGTERM が飛ぶ。pid は 99999 で巻き戻るので、それを
+        // 越える番号は存在しない
+        let gone: pid_t = 2_000_000_000
+        try #require(kill(gone, 0) != 0 && errno == ESRCH, "存在しえない番号が在る")
+
+        let replaced = RunCommand.installStopForwarding([SIGTERM])
+        defer { RunCommand.restoreStopHandlers(replaced) }
+        let handler = try #require(RunCommand.currentAction(SIGTERM).__sigaction_u.__sa_handler)
+
+        runChildPID = gone
+        errno = EBADF
+        handler(SIGTERM)
+        let after = errno
+        runChildPID = 0
+
+        #expect(after == EBADF, "受け口が errno を書き換えた (\(after): \(String(cString: strerror(after))))")
+        #expect(runStopSignal == SIGTERM, "受け口が印を立てていない")
+    }
+
     /// **無視で継いだ SIGINT には受け口を置かない** — 背面 (`&`) で起こされた起動の約束を
     /// 上書きしない (子の `StopSignals.install` と同じ規則・判定も同じ `StopSignals.isIgnored`)。
     @Test("SIGINT は、無視で継いでいなければ受けて子へ渡す")

@@ -51,6 +51,11 @@ struct Facets {
     /// 「窓口の場所 = スケッチの場所」を前提にせず、この事実から組む。`nil` は場所を知らない
     /// 呼び手で、場所の話をしない (``Tools`` は組むときに必ず埋める)。
     var place: InterfacePlace?
+    /// 区画の基準に、作り直しを見張っている見張り (`watch`) が今居るか。**検査から差し替える。**
+    ///
+    /// 作り直しの記録を「いまの話」として読んでよいかを決める (``notStartedAnswer()``)。既定は
+    /// 場所の錠を見る (``WatchPlaceLock/isHeld(under:)``)。
+    var isWatching: @Sendable (URL) -> Bool = { WatchPlaceLock.isHeld(under: $0) }
 
     /// 区画の基準が、スケッチでない窓口の場所に落ちているか。
     ///
@@ -302,6 +307,9 @@ struct Facets {
     ///   案 B) — 組み上げた実行ファイルをその場所から起こすと、スケッチの区画もそこに置かれて
     ///   正しく繋がるので、断らずに候補の 1 つとして並べる
     func notRunning(_ entry: StartupReads.Entry, existed: Bool) -> String {
+        // **見張りが、起こせなかったと記録に書いていれば、4 つの候補を並べずにそれを言う** (#3169)。
+        // 「応えない」と案内すると、作者は端末を見に行かないと何が起きたか分からない
+        if let notStarted = notStartedAnswer() { return notStarted }
         // **読めたなら原因は確定している。** 候補を並べる前に、そう言う
         if let package = place?.directory,
             DependencyFacets.lacks(entry, forPackageAt: package) == true
@@ -340,6 +348,60 @@ struct Facets {
         return ([opening] + items + [
             "What gets decided at launch is listed in `reference`, under `\(Tools.startupDocument)`."
         ]).joined(separator: "\n\n")
+    }
+
+    /// 作り直しの記録が、子を起こせなかったと名乗っているときの答え ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
+    /// **そうでなければ `nil`** (元の案内へ落ちる)。
+    ///
+    /// 組み立ての失敗も `setup()` が投げた失敗も、見張りは起動できなかった回として記録に書く (`ok: true`・
+    /// `launched: false`・`notStartedReason`)。理由をここで言い、子が自分で渡した言葉があれば (理由に
+    /// ``BuildReport/sketchReportedPrefix`` の行がある) 全文は記録の `output` で読めるので、`build_status` を指す。
+    /// **子の標準エラーは読まない** — 理由は区画を通って届く。
+    ///
+    /// **答えるのは、次の 3 つが揃うときだけである。**
+    /// - **記録を書いた見張りが今も居る** (``isWatching``)。記録は見張りが終わっても残る。見張りを止めた後に
+    ///   手で起こし直した作品が応えないとき、止まる前の記録で「見張りが作り直す」と答えると、起動し直しを
+    ///   勧める元の案内 (#227) も、依存の不足 (``DependencyFacets``) の案内も隠れる
+    /// - **終われと言われて起こさなかった回ではない** (``BuildReport/stopRequestedNotice``)。起動の失敗ではなく、
+    ///   「save すれば作り直す」とも言えない
+    /// - 理由が空でない
+    ///
+    /// **走っていないとは断定しない。** 見張りは前の版を残して走らせ続けることがある (#3172)。記録からは
+    /// その有無が読めないので、新しい版が起動しなかったことと、この呼び出しに誰も応えなかったことだけを言う。
+    /// **無い言葉を約束しない** — 子が理由を置けなかった回 (落ちた・実行できない成果物) には、子の言葉が無い。
+    /// 次の作り直しが通れば記録は起動した回に書き換わり、この答えは出なくなる。
+    func notStartedAnswer() -> String? {
+        guard let status = read(buildStatus), status["ok"] as? Bool == true,
+            status["launched"] as? Bool == false,
+            let reason = status["notStartedReason"] as? String, !reason.isEmpty,
+            !reason.hasPrefix(BuildReport.stopRequestedNotice), isWatching(directory)
+        else { return nil }
+        let hasSketchAccount = reason.split(whereSeparator: \.isNewline)
+            .contains { $0.hasPrefix(BuildReport.sketchReportedPrefix) }
+        let account =
+            hasSketchAccount
+            ? """
+                The sketch's own account of what went wrong follows the reason in `output` of \
+                `build_status` (\(BuildReport.statusRelativePath)).
+                """
+            : """
+                The sketch left no account of its own; what it printed before it ended is in the \
+                terminal that runs `\(Command.name) watch`.
+                """
+        return """
+            The newest version of the sketch was not started, and nothing answered this request. The last build \
+            passed, but starting it failed.
+
+            \(reason)
+
+            \(account)
+
+            The version from before keeps running if it had drawn (see `build_status`); otherwise nothing is \
+            running. If one is running but gave no answer, it is busy rather than gone.
+
+            Fix the cause and save: the watching `\(Command.name) watch` rebuilds and starts it again, and this \
+            answer goes away once it does.
+            """
     }
 
     /// 1 つ目の可能性。区画の基準がスケッチでない場所に落ちていれば (`outside`)、その場所の話と

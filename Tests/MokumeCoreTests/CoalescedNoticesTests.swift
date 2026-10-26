@@ -12,7 +12,7 @@ import Testing
 /// `FrameSyncTests` が見る。ここは、合図が知らせより遅れる並び (実物では起こせる保証が
 /// 無い) で、**控えるのが届いた最大の番号であること**を決定的に押さえる。
 @Suite("完了の知らせの合体")
-struct CoalescedNoticesTests {
+nonisolated struct CoalescedNoticesTests {
     @Test("走っていない知らせがある間は、新しく積まない")
     func onlyOneNoticeIsQueuedAtATime() {
         let notices = CoalescedNotices()

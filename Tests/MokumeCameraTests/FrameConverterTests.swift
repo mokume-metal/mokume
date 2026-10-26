@@ -13,7 +13,7 @@ import MokumeCore
 /// ``DisplayImage`` の値は Display P3 の原色として読まれるので、カメラ (Rec.709 / sRGB) の
 /// 絵は原色を移してから渡す (ADR-0011 の入口の表)。
 @Suite("カメラの 1 枚の変換")
-struct FrameConverterTests {
+nonisolated struct FrameConverterTests {
     /// BGRA の器を作る。`colorSpace` を渡せば、その色空間を名乗らせる。
     private func buffer(
         width: Int, height: Int, colorSpace: CFString? = nil,

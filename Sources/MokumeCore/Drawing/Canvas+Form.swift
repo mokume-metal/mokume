@@ -169,6 +169,14 @@ extension Canvas {
             style.strokeWeight.isFinite, arc.x.isFinite, arc.y.isFinite
         else { return }
 
+        // ベクターへ書くなら、割る前の形をここで控える (控えるのは観測で、描く道は変えない・#3139)
+        if let sink = vectorSink() {
+            recordVectorForm(
+                sink, kind: kind, center: center, half: half, axis: axis, arc: arc,
+                arcClosure: arcClosure, cornerRadius: cornerRadius, fills: drawsFill,
+                strokes: drawsStroke, cap: cap ?? style.strokeCap)
+        }
+
         // 細い塗りと、輪郭の帯の細い穴 (#2186) は同じ旗に乗る (``FormInstance/thinFillsFlag``)
         beginForm(
             flags: instance.meta.w,

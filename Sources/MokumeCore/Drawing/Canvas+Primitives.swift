@@ -308,18 +308,21 @@ extension Canvas {
                 radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, piece: piece,
                 at: center)
         }
-        switch mode {
-        case nil:
-            draw(outline(.sectorFill))
-            draw(outline(.arcLine))
-        case .chord:
-            draw(outline(.chord))
-        case .open:
-            draw(outline(.chordFill))
-            draw(outline(.arcLine))
-        case .pie:
-            // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
-            preconditionFailure("a pie is placed as a single form")
+        // 塗りの部分と輪郭の部分は別の口が控えるが、**弧は 1 つの図形**。書けないものは 1 度だけ数える (#3139)
+        countingOneVectorFigure {
+            switch mode {
+            case nil:
+                draw(outline(.sectorFill))
+                draw(outline(.arcLine))
+            case .chord:
+                draw(outline(.chord))
+            case .open:
+                draw(outline(.chordFill))
+                draw(outline(.arcLine))
+            case .pie:
+                // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
+                preconditionFailure("a pie is placed as a single form")
+            }
         }
     }
 
