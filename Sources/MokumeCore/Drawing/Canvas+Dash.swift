@@ -261,18 +261,9 @@ extension Canvas {
             ring = made
             // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の形と破線の指定を控える
             if let sink = vectorSink() {
-                if kind == .rect, cornerRadius > 0,
-                    let writable = vectorWritable(fills: false, strokes: true, into: sink)
-                {
-                    // 角丸の矩形は、画面が刻んだ周の折れ線でなく、実線の角丸と同じ真の形 (3 次ベジェ) で書く (#3271)。
-                    // 破線の長さは、画面が刻む周から (刻めないときに実線で引く判定も画面と同じ)
-                    writeVectorForm(
-                        sink, kind: .rect, center: center, half: half, axis: SIMD2(1, 0), arc: .zero,
-                        arcClosure: .pie, cornerRadius: cornerRadius, fills: false, strokes: writable.strokes,
-                        cap: style.strokeCap, dash: vectorDash(of: made.points, isClosed: made.isClosed))
-                } else {
-                    recordVectorOutline(sink, made, fills: false, strokes: true)
-                }
+                recordVectorDashedForm(
+                    sink, kind: kind, center: center, half: half, arc: arc, arcClosure: arcClosure,
+                    cornerRadius: cornerRadius, outline: made)
             }
         }
         guard let ring else { return }

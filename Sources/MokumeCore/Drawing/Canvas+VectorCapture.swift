@@ -170,7 +170,12 @@ extension Canvas {
     /// 効かないので、輪郭は書き、塗りだけを名指しで落とす。利用者の断片と混ぜ方と切り抜きは輪郭にも効くので、
     /// 図形ごと落とす (``vectorWritable(fills:strokes:into:)``)。輪郭は、周を刻んだ折れ線でなく
     /// 真の形 (矩形・楕円・弧) で書く。
-    func suspendVectorRecordingShadedFigure(_ form: FlatForm, at anchor: SIMD2<Float>) -> VectorCapture? {
+    ///
+    /// - Parameter arcClosure: 弧の閉じ方。輪郭の形と破線を刻む周の部分が閉じ方で決まる
+    ///   (``Canvas/placeArcInParts``が呼ぶ既定・`.chord`・`.open`)。弧以外では読まない。
+    func suspendVectorRecordingShadedFigure(
+        _ form: FlatForm, at anchor: SIMD2<Float>, arcClosure: FormInstance.ArcClosure = .pie
+    ) -> VectorCapture? {
         guard let sink = vectorSink() else { return nil }
         let fills = style.hasFill
         let strokes = style.hasStroke && style.strokeWeight > 0
@@ -215,16 +220,18 @@ extension Canvas {
                                 at: anchor
                             ).points, isClosed: true) : [])
             case .arc(let radiusX, let radiusY, let start, let sweep):
-                // 一周ぶんは楕円。ここへ来る弧は、一周か扇 (`.pie`) か、輪郭の無い弧だけ
+                // 一周ぶんは楕円。一周でない弧は、閉じ方 (`arcClosure`) の形で書く
                 let isFullTurn = sweep >= 2 * .pi
                 let ring = writable.strokes
                     ? ringOutlineForDash(
                         radiusX: radiusX, radiusY: radiusY, start: isFullTurn ? 0 : start,
-                        sweep: isFullTurn ? 2 * .pi : sweep, piece: .sector, at: anchor)
+                        sweep: isFullTurn ? 2 * .pi : sweep,
+                        piece: isFullTurn ? .sector : arcClosure.strokePiece, at: anchor)
                     : nil
                 writeVectorForm(
                     sink, kind: isFullTurn ? .ellipse : .arc, center: anchor, half: SIMD2(radiusX, radiusY),
-                    axis: SIMD2(1, 0), arc: isFullTurn ? .zero : SIMD2(start, sweep), arcClosure: .pie,
+                    axis: SIMD2(1, 0), arc: isFullTurn ? .zero : SIMD2(start, sweep),
+                    arcClosure: isFullTurn ? .pie : arcClosure,
                     cornerRadius: 0, fills: writable.fills, strokes: writable.strokes, cap: style.strokeCap,
                     dash: ring.map { vectorDash(of: $0.points, isClosed: $0.isClosed) } ?? [])
             }
@@ -377,6 +384,14 @@ extension Canvas {
         cornerRadius: Float, fills: Bool, strokes: Bool, cap: StrokeCap, dash: [Float] = []
     ) {
         let place = vectorPlacer()
+        // 数でない・桁あふれした座標の図形は書かない (``recordVectorOutline`` と同じ約束・#3271)。形の外接の
+        // 4 隅 (線は両端) を置いて見る — 形の点はどれも外接の中にあるので、隅が有限なら全部有限である
+        guard
+            Self.vectorFormExtent(kind: kind, center: center, half: half, axis: axis).allSatisfy({
+                let placed = place($0)
+                return placed.x.isFinite && placed.y.isFinite
+            }), cornerRadius.isFinite, arc.x.isFinite, arc.y.isFinite
+        else { return }
         let fill = fills ? vectorFill() : nil
         let stroke = strokes ? vectorStroke(cap: cap, dash: dash) : nil
 
@@ -412,6 +427,20 @@ extension Canvas {
             let points = ends[0] == ends[1] ? [ends[0]] : ends
             single(VectorSubpath(points: points, isClosed: false))
         }
+    }
+
+    /// 基本図形の外接を作る点 (形自身の座標)。線は両端、ほかは外接の矩形の 4 隅。
+    static func vectorFormExtent(
+        kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>, axis: SIMD2<Float>
+    ) -> [SIMD2<Float>] {
+        if kind == .line {
+            let tip = axis * half.x
+            return [center - tip, center + tip]
+        }
+        return [
+            center - half, center + half, SIMD2(center.x + half.x, center.y - half.y),
+            SIMD2(center.x - half.x, center.y + half.y),
+        ]
     }
 
     /// 弧を控える。**閉じ方で、塗りの形と輪郭の形が違う。**
@@ -464,6 +493,27 @@ extension Canvas {
         }
     }
 
+    /// 破線の輪郭の基本図形 (矩形・角丸の矩形・楕円・弧) を控える (``appendDashedForm``)。
+    ///
+    /// **実線の同じ図形と同じ真の形 (3 次ベジェ) に、破線の指定を載せて書く** (#3271・#3295)。画面が刻んだ
+    /// 周の折れ線では書かない。破線の長さは、画面が刻む周 (`outline`) から求める — 刻めないときに実線で引く
+    /// 判定も画面と同じになる。書けない設定は、ここで 1 度だけ数える。
+    ///
+    /// 角を丸めない矩形は、周の点そのもの (形の角と同じ点) を書く。
+    func recordVectorDashedForm(
+        _ sink: VectorCapture, kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>,
+        arc: SIMD2<Float>, arcClosure: FormInstance.ArcClosure, cornerRadius: Float, outline: Outline
+    ) {
+        guard let writable = vectorWritable(fills: false, strokes: true, into: sink) else { return }
+        guard kind != .rect || cornerRadius > 0 else {
+            return writeVectorOutline(sink, outline, fills: false, strokes: writable.strokes)
+        }
+        writeVectorForm(
+            sink, kind: kind, center: center, half: half, axis: SIMD2(1, 0), arc: arc,
+            arcClosure: arcClosure, cornerRadius: cornerRadius, fills: false, strokes: writable.strokes,
+            cap: style.strokeCap, dash: vectorDash(of: outline.points, isClosed: outline.isClosed))
+    }
+
     /// 破線の線を控える。**片に分ける前の線と、破線の指定を控える。**
     func recordVectorDashedLine(_ sink: VectorCapture, _ a: SIMD2<Float>, _ b: SIMD2<Float>) {
         if let blocked = vectorBlocker(fills: false) {
@@ -492,7 +542,11 @@ extension Canvas {
     ) {
         guard !outline.points.isEmpty, fills || strokes else { return }
         guard let writable = vectorWritable(fills: fills, strokes: strokes, into: sink) else { return }
-        let (fills, strokes) = writable
+        writeVectorOutline(sink, outline, fills: writable.fills, strokes: writable.strokes)
+    }
+
+    /// 書けると分かった周を、図形にして控える (``recordVectorOutline``)。
+    func writeVectorOutline(_ sink: VectorCapture, _ outline: Outline, fills: Bool, strokes: Bool) {
         let place = vectorPlacer()
         var points = [SIMD2<Float>]()
         points.reserveCapacity(outline.points.count)
