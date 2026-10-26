@@ -41,25 +41,35 @@ func render(_ flow: SoundFlow, _ frames: Int) throws -> [Float] {
     return left
 }
 
-/// CPU に負荷を掛ける。コア数の 2 倍の busy スレッドを回し、`stop()` か期限で止まる。
+/// CPU に負荷を掛ける。コア数ちょうどの busy スレッドを回し、`stop()` か期限で止まる。
 ///
-/// 負荷の重い機械でだけ起きる競合 (#3277) を、手元でも起こすため。**期限を持つ** — 止め忘れても、
-/// 検査が終わった後に回り続けない。
+/// 負荷の重い機械でだけ起きる競合 (#3277) を、手元でも起こすため。**数をコア数に留め、掛ける間を検査の
+/// ループの間だけにする** — 並走する他の suite (期限つきの待ちを持つもの) を、少ないコアの CI で揺らさない。
+/// **期限を持つ** — 止め忘れても、検査が終わった後に回り続けない。**期限で切れたことは黙らない**
+/// (``expired``) — 検査の側が、負荷が最後まで掛かっていたかを見る。
 nonisolated final class CPULoad: @unchecked Sendable {
     private let running = Atomic<Bool>(true)
+    private let cut = Atomic<Bool>(false)
 
     init(deadline: TimeInterval = 60) {
         let until = Date().addingTimeInterval(deadline)
-        for _ in 0..<(ProcessInfo.processInfo.activeProcessorCount * 2) {
+        for _ in 0..<ProcessInfo.processInfo.activeProcessorCount {
             Thread.detachNewThread { [self] in
                 var x: UInt64 = 0x9E37_79B9_7F4A_7C15
                 while running.load(ordering: .relaxed) {
                     for _ in 0..<10_000 { x = x &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407 }
-                    if x == 0 || Date() > until { break }
+                    if x == 0 { break }
+                    if Date() > until {
+                        cut.store(true, ordering: .relaxed)
+                        break
+                    }
                 }
             }
         }
     }
+
+    /// 期限で負荷が切れたか。`true` なら、その後の回は負荷なしで走ったことになる。
+    var expired: Bool { cut.load(ordering: .relaxed) }
 
     func stop() {
         running.store(false, ordering: .relaxed)
@@ -126,8 +136,9 @@ struct FilePlayerTests {
     /// 5〜10%)。命令を原子値で渡す形では起きないので、回数で数える。
     ///
     /// **負荷なしと負荷ありの両方を回す。** 負荷なしは、`AVAudioPlayerNode` に戻すと確かに赤になる側 (負荷を
-    /// 掛けると呼ぶ側も遅れて、取り込みが間に合ってしまい、赤になる回が減る)。負荷ありは、実コア数の 2 倍の
-    /// busy スレッドを回した重い機械でも、窓の先頭から鳴ることを見る側。
+    /// 掛けると呼ぶ側も遅れて、取り込みが間に合ってしまい、赤になる回が減る) で、退行の検知役。負荷ありは、
+    /// コア数ぶんの busy スレッドを回した重い機械でも、窓の先頭から鳴ることを見る確認役 (検知役ではない)。
+    /// 負荷が期限で切れたら、負荷なしで走った回が混じるので、黙らず失敗にする。
     @Test(
         "描いている途中の流れへ鳴らし始めると、直後に描いた窓の先頭の標本から鳴る",
         arguments: [false, true])
@@ -138,6 +149,7 @@ struct FilePlayerTests {
         buffer.frameLength = 4800
         let channels = try #require(buffer.floatChannelData)
         for channel in 0..<2 { for index in 0..<4800 { channels[channel][index] = 0.25 } }
+        // 負荷を掛けるのは、このループの間だけ
         let load = underLoad ? CPULoad() : nil
         defer { load?.stop() }
         var silentWindows = 0
@@ -158,6 +170,9 @@ struct FilePlayerTests {
             if !window.allSatisfy({ $0 == 0.25 }) { silentWindows += 1 }
             player.leave()
         }
+        let loadWasCut = load?.expired ?? false
+        load?.stop()
+        #expect(!loadWasCut, "負荷が期限で切れた: 残りの回は負荷なしで走った")
         #expect(silentWindows == 0, "\(attempts) 回のうち \(silentWindows) 回、窓の先頭から鳴らなかった")
     }
 
@@ -175,18 +190,43 @@ struct FilePlayerTests {
         player.leave()
     }
 
-    @Test("始まりが器の外なら頭から鳴る。1 度だけなら、終わりより後は無音のまま数え続ける")
-    func startOutsideTheBufferPlaysFromTheHead() throws {
+    /// 器の外の始まり (`start >= length`・負) の振る舞いは、ここで固定しない: 非ループの `start == length` は
+    /// 頭から鳴るが、ラックの節 (``FileNode``) は終わりに寄せて無音になる。どちらにそろえるかは #3303 で決める。
+    @Test("1 度だけなら、器の終わりより後は無音のまま、止めるまで描いた数が進む")
+    func playedOnceKeepsCountingAfterTheEnd() throws {
         let flow = try makeFlow()
         let player = try #require(FilePlayer(flow: flow, buffer: try rampBuffer(1000)))
-        player.play(from: 1000, looping: false)
-        let heard = try render(flow, 1200)
-        expectNear(Array(heard.prefix(1000)), (0..<1000).map { Float($0) / 1000 })
+        player.play(from: 400, looping: false)
+        let heard = try render(flow, 800)
+        expectNear(Array(heard.prefix(600)), (400..<1000).map { Float($0) / 1000 })
         #expect(heard.suffix(200).allSatisfy { $0 == 0 })
-        #expect(player.played == 1200, "鳴らし終えた後も、止めるまで描いた数は進む")
-        player.play(from: -5, looping: false)
-        expectNear(Array(try render(flow, 10)), (0..<10).map { Float($0) / 1000 })
+        #expect(player.played == 800, "鳴らし終えた後も、止めるまで描いた数は進む")
         player.leave()
+    }
+
+    @Test("音の側は、無音だけを書いた描き出しで無音の印を返す (止めている間・鳴らし終えた後)")
+    func voiceReportsSilentRenders() throws {
+        let voice = try #require(FileVoice(buffer: try rampBuffer(100)))
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let out = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64))
+        out.frameLength = 64
+        let list = UnsafeMutableAudioBufferListPointer(out.mutableAudioBufferList)
+        let data = try #require(out.floatChannelData)
+        func render() -> Bool {
+            for channel in 0..<2 { for index in 0..<64 { data[channel][index] = 9 } }
+            return voice.render(frames: 64, into: list)
+        }
+        func isAllZero() -> Bool { (0..<2).allSatisfy { channel in (0..<64).allSatisfy { data[channel][$0] == 0 } } }
+        // まだ何も頼まれていない
+        #expect(render() && isAllZero())
+        voice.send(.play(start: 0, looping: false), generation: 1)
+        #expect(!render(), "音が出る描き出しは無音ではない")
+        #expect(!render(), "器の終わりが途中に来る描き出しは、前半が音")
+        #expect(render() && isAllZero(), "鳴らし終えた後は無音")
+        voice.send(.play(start: 0, looping: true), generation: 2)
+        #expect(!render() && !render() && !render(), "ループは鳴り続ける")
+        voice.send(.halt, generation: 3)
+        #expect(render() && isAllZero(), "止めたら無音")
     }
 
     @Test("同じ描き出しの前に命令が重なったら、最後の命令だけが効く")

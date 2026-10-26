@@ -97,8 +97,10 @@ final class FilePlayer {
     nonisolated private static func makeNode(voice: FileVoice, format: AVAudioFormat)
         -> AVAudioSourceNode
     {
-        AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
-            voice.render(frames: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(bufferList))
+        AVAudioSourceNode(format: format) { isSilence, _, frameCount, bufferList in
+            // 無音だけを書いたときは、混ぜる側が読まずに飛ばせるよう印を立てる (止めている間・鳴らし終えた後)
+            isSilence.pointee = ObjCBool(
+                voice.render(frames: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(bufferList)))
             return noErr
         }
     }
@@ -204,12 +206,15 @@ nonisolated final class FileVoice: @unchecked Sendable {
     // MARK: - 音の側
 
     /// 描き出し 1 回ぶんの標本を渡す。**待たず、確保しない。**
-    func render(frames: Int, into output: UnsafeMutableAudioBufferListPointer) {
+    ///
+    /// - Returns: 無音だけを書いたか (止めている・鳴らし終えて何も出なかった)。
+    @discardableResult
+    func render(frames: Int, into output: UnsafeMutableAudioBufferListPointer) -> Bool {
         let word = command.load(ordering: .acquiring)
         if word != applied { begin(word) }
         guard active, frames > 0 else {
             Self.silence(output, channels: 0..<output.count, from: 0, to: frames)
-            return
+            return true
         }
         let copied = min(channelCount, output.count)
         var made = 0
@@ -234,6 +239,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
         count += frames
         let bounded = UInt64(count) & Self.startMask
         progress.store(generation << Self.startBits | bounded, ordering: .releasing)
+        return made == 0
     }
 
     /// 新しい命令を適用する。
@@ -243,7 +249,7 @@ nonisolated final class FileVoice: @unchecked Sendable {
         active = word & Self.haltedBit == 0 && length > 0
         guard active else { return }
         let start = Int(word & Self.startMask)
-        // 範囲の外なら頭から (``play(from:looping:)`` の約束)
+        // 範囲の外は頭から (旧実装と同じ。ラックの節 (``FileNode``) とそろえるかは #3303 で決める)
         position = start > 0 && start < length ? start : 0
         looping = word & Self.loopingBit != 0
         count = 0
