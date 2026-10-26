@@ -72,6 +72,8 @@ struct SoundFileEffectTests {
         var isPlaying: Bool
         var position: Int
         var level: Float
+        var rms: Float
+        var peak: Float
         var spectrum: [Float]
     }
 
@@ -131,7 +133,7 @@ struct SoundFileEffectTests {
                 result.file.append(
                     Moment(
                         isPlaying: song.isPlaying, position: song.samplePosition,
-                        level: song.level, spectrum: song.spectrum))
+                        level: song.level, rms: song.rms, peak: song.peak, spectrum: song.spectrum))
                 result.effect.append(
                     Effected(rms: filter.rms, level: filter.level, spectrum: filter.spectrum))
                 if song.isBeat { result.beats.append(sketch.frameCount) }
@@ -368,6 +370,72 @@ struct SoundFileEffectTests {
         // 2 周と少し (75 フレーム目) で通す。通した後の周でも、拍は通さないときと同じフレームに出る
         let late = try take(frames: 150, url: url, routeAt: 75)
         #expect(late.beats == plain.beats, "\(late.beats) / \(plain.beats)")
+    }
+
+    /// 通した後のフレームの `Moment` を、通さない回と比べて、食い違った項目を `フレーム番号:項目` で返す (#3268)。
+    private func mismatches(_ late: Take, _ plain: Take, from frame: Int) -> [String] {
+        var found: [String] = []
+        for index in frame..<min(late.file.count, plain.file.count) {
+            let (a, b) = (late.file[index], plain.file[index])
+            if a.level != b.level { found.append("\(index):level") }
+            if a.rms != b.rms { found.append("\(index):rms") }
+            if a.peak != b.peak { found.append("\(index):peak") }
+            if a.spectrum != b.spectrum { found.append("\(index):spectrum") }
+            if a.position != b.position || a.isPlaying != b.isPlaying { found.append("\(index):position") }
+        }
+        return found
+    }
+
+    /// 通した回と通さない回を比べる形 (#3268)。
+    enum RoutedAnalysis: CaseIterable, CustomTestStringConvertible {
+        case afterTwoLaps, afterManyLaps, nearTheSeam, firstLap, playedOnce, afterJump
+
+        var testDescription: String {
+            switch self {
+            case .afterTwoLaps: "2 周した後"
+            case .afterManyLaps: "5 周した後"
+            case .nearTheSeam: "ちょうど 2 周した継ぎ目 (窓の頭が前の周に掛かる)"
+            case .firstLap: "1 周目"
+            case .playedOnce: "ループしない"
+            case .afterJump: "jump の後 (ループ)"
+            }
+        }
+
+        var frames: Int { self == .afterManyLaps ? 330 : 200 }
+        /// 通すフレーム。1 周は 60 フレーム (1 秒の雑音を 60 fps・800 標本で)。
+        var routeAt: Int {
+            switch self {
+            case .afterTwoLaps: 130
+            case .afterManyLaps: 305
+            case .nearTheSeam: 121
+            case .firstLap: 30
+            case .playedOnce: 20
+            case .afterJump: 150
+            }
+        }
+        var start: (SoundFile) -> Void { self == .playedOnce ? { $0.play() } : { $0.loop() } }
+        var act: (SoundFile, Int) -> Void {
+            self == .afterJump ? { song, frame in if frame == 40 { song.jump(0.3) } } : { _, _ in }
+        }
+    }
+
+    @Test(
+        "ループ再生のファイルを何周かした後に通しても、通した後のすべてのフレームの level・rms・peak・spectrum が通さないときと一致する",
+        arguments: RoutedAnalysis.allCases, [false, true])
+    func routingKeepsTheAnalysis(_ shape: RoutedAnalysis, offlineFlow: Bool) throws {
+        // 1 秒 (48000 標本) の雑音。格子の間隔 (512) で割り切れないので、通し番号と位置の番号の食い違いが値に出る
+        let url = try writeWAV(Self.noise, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let plain = try take(
+            frames: shape.frames, flow: offlineFlow ? try offline() : nil, url: url, route: false,
+            start: shape.start, act: shape.act)
+        let late = try take(
+            frames: shape.frames, flow: offlineFlow ? try offline() : nil, url: url,
+            routeAt: shape.routeAt, start: shape.start, act: shape.act)
+        // 値が動いている (一致が自明でない)
+        #expect(Set(plain.file.map(\.level)).count > 10)
+        let found = mismatches(late, plain, from: shape.routeAt)
+        #expect(found.isEmpty, "食い違い \(found.count) 件: \(found.prefix(8))")
     }
 
     @Test("止めるとエフェクトの出口も無音になり、鳴らし直すと戻る (固定の時計でも実際に鳴らす流れでも)")

@@ -157,6 +157,73 @@ nonisolated struct PlayheadTests {
         #expect(windowOf(head, after: 0, size: 4) == [0, 0, 0, 0])
     }
 
+    @Test("ループで何周かした後に位置の側で区切りを始め直しても、区間の番号と標本は続く (#3268)")
+    func carryKeepsTheNumbering() {
+        var head = Playhead(length: 2000)
+        head.play(looping: true)
+        // 2 周と 600 標本 (番号 4600・位置 600)
+        let before = head
+        head.carry(after: 4600)
+        #expect(head.start == 600)
+        #expect(head.shift == 4000)
+        #expect(head.position(after: 0) == 600)
+        #expect(head.position(after: 1700) == 300, "位置は長さで巡る")
+        // 番号は、始め直す前と同じ
+        #expect(head.number(after: 0) == 4600)
+        #expect(head.number(after: 1000) == before.number(after: 5600))
+        // 区間 (番号・標本) が、始め直さなかったときと一致する。始まりより前の窓の頭も前の周の音で埋まる
+        for played in [0, 300, 1000, 2500] {
+            #expect(
+                head.span(of: indices, from: 4000, after: played)
+                    == before.span(of: indices, from: 4000, after: 4600 + played), "鳴った数 \(played)")
+        }
+        // 位置の側へ番号を戻すと、窓の格子 (hop) が (周回数 × 長さ) mod hop だけずれる: 4000 mod 512 = 416
+        var renumbered = before
+        renumbered.jump(to: 600)
+        #expect(renumbered.number(after: 0) == 600)
+        #expect(renumbered.number(after: 0) != head.number(after: 0))
+    }
+
+    @Test("位置の側で始め直した区切りは、止める・鳴らし直す・飛ぶ・止めるで番号を数え直す")
+    func carryIsForgottenByTheOperationsThatRestartTheNumbering() {
+        func carried() -> Playhead {
+            var head = Playhead(length: 2000)
+            head.play(looping: true)
+            head.carry(after: 4600)
+            return head
+        }
+        var played = carried()
+        played.play(looping: true)
+        #expect(played.shift == 0 && played.start == 0)
+        var jumped = carried()
+        jumped.jump(to: 100)
+        #expect(jumped.shift == 0 && jumped.number(after: 0) == 100)
+        var paused = carried()
+        paused.pause(after: 700)
+        #expect(paused.shift == 0 && paused.start == 1300)
+        var stopped = carried()
+        stopped.stop()
+        #expect(stopped.shift == 0)
+    }
+
+    @Test("1 度だけ鳴らしているときと、止まっているときは、番号を持ち越さない")
+    func carryDoesNothingWithoutALoop() {
+        var once = Playhead(length: 2000)
+        once.play(looping: false)
+        once.carry(after: 700)
+        #expect(once.shift == 0 && once.start == 700)
+        #expect(once.number(after: 300) == 1000)
+        #expect(once.number(after: 5000) == 2000, "1 度だけなら、終わりで止まる")
+        var stopped = Playhead(length: 2000)
+        stopped.carry(after: 700)
+        #expect(stopped.start == 0 && stopped.shift == 0 && !stopped.leapt)
+        // ループでも、1 周目なら番号は位置のまま
+        var firstLap = Playhead(length: 2000)
+        firstLap.play(looping: true)
+        firstLap.carry(after: 1500)
+        #expect(firstLap.shift == 0 && firstLap.start == 1500)
+    }
+
     @Test("長さ 0 を渡しても、1 標本として扱って割り算で落ちない")
     func emptyLengthIsGuarded() {
         var head = Playhead(length: 0)
