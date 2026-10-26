@@ -61,6 +61,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for name in ("test-results-geometry-swift-testing.xml", "test-log-geometry.txt",
                      "geometry-debug.md", "geometry-release.md"):
             self.assertIn(name, check)
+        summary = check[check.index("- name: 全探索の記録をまとめる"):check.index("- uses: actions/upload-artifact")]
+        self.assertIn("if: always()", summary)
+        self.assertIn("--configuration debug --summary .build/geometry-debug.md || result=1", summary)
+        self.assertIn("--configuration release --summary .build/geometry-release.md || result=1", summary)
+        self.assertIn('exit "$result"', summary)
         report = self.jobs["release-check-report"]
         self.assertIn("test-results-geometry-swift-testing.xml", report)
         self.assertIn("geometry-missing.xml", report)
