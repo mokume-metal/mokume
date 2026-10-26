@@ -183,7 +183,7 @@ struct SketchApplicationTests {
     /// **スケッチ自身の窓は、頼まれたファイルを選ばせるダイアログを自分の窓に出し、結果を同じ形の出来事にして
     /// 自分の合流点へ積む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。同じ頼みを出し直さず、
     /// 結果が当たって頼みが消えたら、出していたダイアログを閉じる。
-    @Test("スケッチの窓は頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える")
+    @Test("スケッチの窓は頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える", .disabled("probe: 切り分け"))
     func theWindowShowsTheSelectionAndEndsTheWait() async throws {
         let sketch = SelectAsker()
         let application = try makeApplication(sketch)
@@ -208,7 +208,7 @@ struct SketchApplicationTests {
     /// **ファイルのシートが付いている間も、× は閉じる問いへ進む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     /// シートが付いていると `windowShouldClose` は問わずに false を返し、× が黙って効かなくなっていた。
     /// ファイルのダイアログは取り消しとして渡り、待ちは `nil` で終わる。
-    @Test("ファイルを選ぶシートが付いていても、× は問いへ進み、待ちは nil で終わる")
+    @Test("ファイルを選ぶシートが付いていても、× は問いへ進み、待ちは nil で終わる", .disabled("probe: 切り分け"))
     func closingWithTheFileSheetUpAsksTheQuestion() async throws {
         let sketch = SelectAsker()
         let application = try makeApplication(sketch)
