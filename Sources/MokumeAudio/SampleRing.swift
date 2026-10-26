@@ -103,7 +103,17 @@ nonisolated final class SampleRing: @unchecked Sendable {
         // 容量から溢れて書き換わった古い標本は読まない
         let from = max(min(AudioAnalysis.limited(from: previous, to: to), to), to - capacity)
         let first = max(AudioAnalysis.firstNeeded(from: from), to - capacity, 0)
-        let samples = (first..<to).map { window.storage[$0 % capacity] }
+        // 環の中の連続した高々 2 区間 (後ろ→折り返して頭) を、剰余なしで写す。0 埋めの確保も挟まない
+        let count = to - first
+        let samples = [Float](unsafeUninitializedCapacity: count) { buffer, initialized in
+            initialized = 0
+            guard count > 0, let out = buffer.baseAddress else { return }
+            let start = first % capacity
+            let head = min(count, capacity - start)
+            out.update(from: window.storage + start, count: head)
+            if head < count { (out + head).update(from: window.storage, count: count - head) }
+            initialized = count
+        }
         return (AudioSpan(base: first, samples: samples, from: from), window.hostTime)
     }
 

@@ -251,6 +251,73 @@ import simd
     /// 字形すべての分を除いた残りしか使えず、先送りした字形は、自分より長く先送りした字形の分を除いた残りを使う。
     private var owedLastFrame: [Key: Owed] = [:]
     private var owedThisFrame: [Key: Owed] = [:]
+    /// `owedLastFrame` を先送りの長さ (age) で数えた累積。``admitScaledBake(_:bytes:frame:deferrable:)`` が
+    /// 「自分より長く先送りした字形の分」を、全件を走らずに引く。`owedLastFrame` を動かすたびに合わせる。
+    private var owedLastFrameTotals = OwedTotals()
+
+    /// 先送りの長さごとの (数・バイト) の累積。age は昇順・重複なしで、各 age について「その age 以上」の
+    /// 合計を持つ。引くのは二分探索、字形が 1 つ消えるときの更新は、その age 以下の累積から引くだけである
+    /// (全件の走査も、フレームの頭での前計算も要らない — 字形は判定の途中で消える)。
+    private struct OwedTotals {
+        private var ages: [Int] = []
+        private var countFrom: [Int] = []
+        private var bytesFrom: [Int] = []
+
+        /// 先送りの履歴から作り直す (フレームが替わって `owedLastFrame` を差し替えたとき)。
+        ///
+        /// **置き場を持ち回す** (`removeAll(keepingCapacity:)`)。先送りが続くフレームごとに辞書や配列を
+        /// 確保し直さない。age は小さい数が少数なので、二分探索で挿し込む (並べ替えの一時配列も要らない)。
+        mutating func rebuild(_ owed: some Sequence<Owed>) {
+            ages.removeAll(keepingCapacity: true)
+            countFrom.removeAll(keepingCapacity: true)
+            bytesFrom.removeAll(keepingCapacity: true)
+            for entry in owed {
+                var low = 0
+                var high = ages.count
+                while low < high {
+                    let middle = (low + high) / 2
+                    if ages[middle] < entry.age { low = middle + 1 } else { high = middle }
+                }
+                if low < ages.count, ages[low] == entry.age {
+                    countFrom[low] += 1
+                    bytesFrom[low] += entry.bytes
+                } else {
+                    ages.insert(entry.age, at: low)
+                    countFrom.insert(1, at: low)
+                    bytesFrom.insert(entry.bytes, at: low)
+                }
+            }
+            // 「その age 以上」の累積へ (大きい age から足していく)
+            if ages.count > 1 {
+                for index in stride(from: ages.count - 2, through: 0, by: -1) {
+                    countFrom[index] += countFrom[index + 1]
+                    bytesFrom[index] += bytesFrom[index + 1]
+                }
+            }
+        }
+
+        init() {}
+
+        /// `age` より長く先送りした字形の数とバイト数。
+        func longer(than age: Int) -> (count: Int, bytes: Int) {
+            var low = 0
+            var high = ages.count
+            while low < high {
+                let middle = (low + high) / 2
+                if ages[middle] > age { high = middle } else { low = middle + 1 }
+            }
+            return low == ages.count ? (0, 0) : (countFrom[low], bytesFrom[low])
+        }
+
+        /// 先送りの履歴から外れた字形の分を引く。
+        mutating func remove(_ owed: Owed) {
+            guard let index = ages.firstIndex(of: owed.age) else { return }
+            for position in 0...index {
+                countFrom[position] -= 1
+                bytesFrom[position] -= owed.bytes
+            }
+        }
+    }
 
     /// 検査が読む: 先送りして焼けていない字形の数。
     var owedGlyphCount: Int { owedLastFrame.count + owedThisFrame.count }
@@ -261,6 +328,7 @@ import simd
         scaledBakesThisFrame = 0
         scaledBytesThisFrame = 0
         owedLastFrame = owedThisFrame
+        owedLastFrameTotals.rebuild(owedLastFrame.values)
         owedThisFrame = [:]
     }
 
@@ -275,12 +343,8 @@ import simd
         let age = owedLastFrame[identity]?.age ?? 0
         var allowed = true
         if mayDeferScaledBakes && deferrable {
-            var reservedCount = 0
-            var reservedBytes = 0
-            for (other, owed) in owedLastFrame where other != identity && owed.age > age {
-                reservedCount += 1
-                reservedBytes += owed.bytes
-            }
+            // 自分より長く先送りした字形の分。表から引く (先送りの全件を走らない)
+            let (reservedCount, reservedBytes) = owedLastFrameTotals.longer(than: age)
             let countFits = scaledBakesThisFrame + reservedCount < scaledBakesPerFrame
             // 1 フレームの最初の 1 字は、量が枠を越えても焼く (1 字の大きさは別に頭打ちにしてある)
             let first = scaledBytesThisFrame == 0 && reservedBytes == 0
@@ -293,7 +357,7 @@ import simd
         }
         scaledBakesThisFrame += 1
         scaledBytesThisFrame += bytes
-        owedLastFrame.removeValue(forKey: identity)
+        if let paid = owedLastFrame.removeValue(forKey: identity) { owedLastFrameTotals.remove(paid) }
         return true
     }
 
@@ -304,7 +368,7 @@ import simd
         openBudget(frame: frame)
         var identity = key
         identity.step = 0
-        owedLastFrame.removeValue(forKey: identity)
+        if let paid = owedLastFrame.removeValue(forKey: identity) { owedLastFrameTotals.remove(paid) }
         owedThisFrame.removeValue(forKey: identity)
     }
 

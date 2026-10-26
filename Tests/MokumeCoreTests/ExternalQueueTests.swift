@@ -70,6 +70,50 @@ struct ExternalQueueTests {
             probe.lines == ["probe: 1 was dropped because 3 were already waiting to be read (1 in all)"])
     }
 
+    /// 環が折り返したどの位置 (head) でも、届いた順に全部を返し、最後に届いた時刻を記録する。取り出した後も
+    /// 環は使い続けられる (容量を手放さないので、次の周回は前の周回の中身を引きずらない・#3255)。
+    @Test("環のどこで折り返していても、届いた順に取り出し、最後の時刻を記録する", arguments: [1, 2, 3, 4, 7])
+    func takesInOrderAtEveryWrapPosition(capacity: Int) {
+        let probe = Probe()
+        let queue = probe.queue(capacity: capacity)
+        var next = 0
+        // 溜める数を 0 から capacity の 3 倍まで変える。周回ごとに折り返しの位置が動く
+        for count in 0...(capacity * 3) {
+            let sent = Array(next..<(next + count))
+            for value in sent { queue.send(value, hostTime: UInt64(1000 + value)) }
+            next += count
+            let kept = Array(sent.suffix(capacity))
+            #expect(queue.take() == kept, "capacity \(capacity), count \(count)")
+            #expect(queue.take() == [], "取り出した後は空")
+            if let last = kept.last {
+                #expect(queue.lastArrival?.hostTime == UInt64(1000 + last), "capacity \(capacity), count \(count)")
+            }
+        }
+    }
+
+    @Test("取り出しても、環の容量は手放さない (高頻度の受信が毎フレーム置き場を取り直さない)")
+    func takeKeepsTheRingCapacity() {
+        let queue = Probe().queue(capacity: 64)
+        for value in 0..<40 { queue.send(value) }
+        let grown = queue.retainedCapacity
+        #expect(grown >= 40)
+        _ = queue.take()
+        #expect(queue.retainedCapacity == grown)
+        queue.discardWaiting()
+        #expect(queue.retainedCapacity == grown)
+    }
+
+    @Test("読まずに捨てた後も、環は届いた順のまま使える")
+    func discardWaitingKeepsTheRingUsable() {
+        let queue = Probe().queue(capacity: 3)
+        for value in 1...5 { queue.send(value) }  // 折り返した状態
+        queue.discardWaiting()
+        for value in 10...11 { queue.send(value) }
+        #expect(queue.take() == [10, 11])
+        for value in 20...24 { queue.send(value) }
+        #expect(queue.take() == [22, 23, 24])
+    }
+
     @Test("上限が 1 より小さければ 1 にする")
     func capacityIsAtLeastOne() {
         let queue = Probe().queue(capacity: 0)

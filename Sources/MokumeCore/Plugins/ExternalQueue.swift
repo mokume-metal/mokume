@@ -154,6 +154,8 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
     var overflowed: Int { waiting.withLock { $0.overflowed } }
     /// 読めずに捨てた数 (始まってからの累計)。
     var unreadable: Int { waiting.withLock { $0.unreadable } }
+    /// 検査が読む: 環が手放さずに持っている容量(取り出した後も下がらない)。
+    var retainedCapacity: Int { waiting.withLock { $0.retainedCapacity } }
 
     /// 前に知らせた後に増えた分を、間隔を空けて 1 行で言う。
     private func tellDiscards(overflowed: Int, unreadable: Int) {
@@ -195,6 +197,8 @@ private nonisolated struct Waiting<Value: Sendable>: Sendable {
 
     init(capacity: Int) { self.capacity = capacity }
 
+    var retainedCapacity: Int { ring.capacity }
+
     mutating func append(_ value: Value, hostTime: UInt64) {
         guard ring.count == capacity else {
             ring.append((value, hostTime))
@@ -205,20 +209,37 @@ private nonisolated struct Waiting<Value: Sendable>: Sendable {
         overflowed += 1
     }
 
-    /// 溜まっているものを捨てる。数えた累計は変えない。
+    /// 溜まっているものを捨てる。数えた累計は変えない。**環の容量は手放さない** — 高頻度で届くものが
+    /// 毎フレーム、環の置き場を解放して取り直さない。
     mutating func removeAll() {
-        ring.removeAll()
+        ring.removeAll(keepingCapacity: true)
         head = 0
     }
 
     /// 届いた順に全部を取り出し、空にする。
+    ///
+    /// 環が折り返していても、古い順の 2 区間を 1 つの配列へ直に写す (中間の配列を挟まない)。
     mutating func drain() -> (
         values: [Value], lastHostTime: UInt64?, overflowed: Int, unreadable: Int
     ) {
-        let ordered = ring[head...] + ring[..<head]
-        ring.removeAll()
-        head = 0
-        return (ordered.map(\.value), ordered.last?.hostTime, overflowed, unreadable)
+        let count = ring.count
+        let values = [Value](unsafeUninitializedCapacity: count) { buffer, initialized in
+            guard let out = buffer.baseAddress else { return }
+            var next = 0
+            for index in head..<count {
+                (out + next).initialize(to: ring[index].value)
+                next += 1
+            }
+            for index in 0..<head {
+                (out + next).initialize(to: ring[index].value)
+                next += 1
+            }
+            initialized = count
+        }
+        // いちばん新しいもの: 折り返していれば head の 1 つ前、そうでなければ末尾
+        let lastHostTime = count == 0 ? nil : ring[head == 0 ? count - 1 : head - 1].hostTime
+        removeAll()
+        return (values, lastHostTime, overflowed, unreadable)
     }
 }
 
