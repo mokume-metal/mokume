@@ -69,7 +69,7 @@ final class Game: Sketch {
 
 語彙は、呼んだ時点で走っているスケッチへ描き、そのスケッチの状態を読む。付けずに `fill()` を書くと「`fill` が見つからない」で止まる。色を作る ``color(_:_:_:_:)`` のような純粋な計算は、付けなくてもどこからでも呼べる。
 
-**走る前 (部品の `init()` の中) に呼んでも落ちない。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。どちらも口ごとに 1 度だけ警告し、警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める。後片付けの後と、``Sketch/draw()`` で起こした `Task` の中から呼んだときも同じである。面から作る資源 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など) は、返すものを作れないので、口ごとに 1 度だけ警告して型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す。音・通信・シリアルの作る口 (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)``・``Sketch/createSerial(_:baudRate:)`` など) も、スケッチの `init()` などで呼ぶと、作ったものを走っているスケッチへ足せないので、同じく口ごとに 1 度だけ警告して ``AudioFailure/notRunning(call:)``・``SerialFailure/notRunning(call:)`` などを投げる。投げない口は、口ごとに 1 度だけ警告して、足されていないものを返す — 合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを返す。入力の止める口 ``AudioIn/stop()``・``Capture/stop()``・``Serial/stop()`` なども、外で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する。止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。
+**語彙を使えるのは、走っているスケッチの中 (``Sketch/setup()``・``Sketch/draw()``・入力のコールバック) である。** 部品の `init()` の中・後片付けの後・``Sketch/draw()`` で起こした `Task` の中から呼んでも落ちない — 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。どちらも口ごとに 1 度だけ警告し、警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める。面から作る資源 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など) は、返すものを作れないので、口ごとに 1 度だけ警告して型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。**止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。** 音・通信・シリアルなど、口ごとの返り方は[走っていないときに語彙を呼ぶと](#走っていないときに語彙を呼ぶと)にある。
 
 ### `import mokume` で通る語彙
 
@@ -115,6 +115,18 @@ circle(200, 150, 20 + pow(2, level))
 **どこに書けるかは寿命を表さない。** 切り抜き (``SketchPart/clip(_:_:_:_:)``) は塗りや線と同じところに書けるが、シーンの記述なので越えない。
 
 一つひとつの寿命は、それぞれの説明に付けた `Note` が持つ。
+
+### 走っていないときに語彙を呼ぶと
+
+**走っているスケッチの外 (部品の `init()` の中・後片付けの後・``Sketch/draw()`` で起こした `Task` の中) から呼んだときの返り方は、口の種類で決まる。** どれもプロセスは落ちず、口ごとに 1 度だけ警告する。
+
+- **読み取りと描く口。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める
+- **面から作る資源** (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など)。返すものを作れないので、型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す
+- **音・通信・シリアルの作る口** (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)``・``Sketch/createSerial(_:baudRate:)`` など)。スケッチの `init()` などで呼ぶと、作ったものを走っているスケッチへ足せないので、同じく ``AudioFailure/notRunning(call:)``・``SerialFailure/notRunning(call:)`` などを投げる
+- **投げない作る口**は、足されていないものを返す。合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを返す
+- **入力の止める口** (``AudioIn/stop()``・``Capture/stop()``・``Serial/stop()`` など)。外で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する
+
+**止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。**
 
 ### 作り直しを越えるもの
 
@@ -178,8 +190,9 @@ MCP が作品側の mokume の更新を案内する。`time` を省けば、通�
 
 ### Swift で 3 つだけ違うこと
 
-Processing や p5.js から来て最初に踏むのは、mokume の約束ではなく Swift の決まりである。
-次の 3 つを知っていれば足りる。
+Processing や p5.js から来て最初に踏みやすい 3 つを挙げる。どれも、Swift の決まり (型推論・エラーの扱い) と、
+mokume が API をどう選んだか (数は `Float` も `Double` も受ける・失敗は投げる) が組み合わさって起こる。
+全部ではない — 数の型を混ぜる計算などは、次の節 (数の型) にある。
 
 **1. `.pi` だけでは型が決まらず、コンパイルエラーになる。** 描く口と数の口は `Float` も `Double` も受けるので、
 `.pi` がどちらか決まらないからである。`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` の定数を使うか、
@@ -356,6 +369,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 | --- | --- | --- |
 | `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録る間を 2 つで挟む。`####` はフレーム番号ではなく、録りの中の通し番号 (0 から) |
 | p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
+| p5.js 2D の `background(0, 20)` (前の絵に薄く重ねて残像になる) | ``SketchPart/background(_:_:)`` (面を置き換える) | 残像にならない。薄い四角を `rect` で重ねて作る (作り方は ``SketchPart/background(_:_:)`` の例) |
+| `setup()` で書いた `translate`・`rotate`・視点 (以降の絵に効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` で書くと警告して無視する。`draw()` の中で書く。1 枚だけ描くなら `draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
 | p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |
 | Processing `keyPressed()` (押したままで連射) | ``Sketch/keyPressed()`` (押した 1 回だけ) | 押している間ずっと効かせるものは、`draw()` で `keyboard.isPressed(_:)` を読む |
 

@@ -72,6 +72,8 @@ struct SoundFileEffectTests {
         var isPlaying: Bool
         var position: Int
         var level: Float
+        var rms: Float
+        var peak: Float
         var spectrum: [Float]
     }
 
@@ -131,7 +133,7 @@ struct SoundFileEffectTests {
                 result.file.append(
                     Moment(
                         isPlaying: song.isPlaying, position: song.samplePosition,
-                        level: song.level, spectrum: song.spectrum))
+                        level: song.level, rms: song.rms, peak: song.peak, spectrum: song.spectrum))
                 result.effect.append(
                     Effected(rms: filter.rms, level: filter.level, spectrum: filter.spectrum))
                 if song.isBeat { result.beats.append(sketch.frameCount) }
@@ -368,6 +370,158 @@ struct SoundFileEffectTests {
         // 2 周と少し (75 フレーム目) で通す。通した後の周でも、拍は通さないときと同じフレームに出る
         let late = try take(frames: 150, url: url, routeAt: 75)
         #expect(late.beats == plain.beats, "\(late.beats) / \(plain.beats)")
+    }
+
+    /// 通した後のフレームの `Moment` を、通さない回と比べて、食い違った項目を `フレーム番号:項目` で返す (#3268)。
+    private func mismatches(_ late: Take, _ plain: Take, from frame: Int) -> [String] {
+        var found: [String] = []
+        for index in frame..<min(late.file.count, plain.file.count) {
+            let (a, b) = (late.file[index], plain.file[index])
+            if a.level != b.level { found.append("\(index):level") }
+            if a.rms != b.rms { found.append("\(index):rms") }
+            if a.peak != b.peak { found.append("\(index):peak") }
+            if a.spectrum != b.spectrum { found.append("\(index):spectrum") }
+            if a.position != b.position || a.isPlaying != b.isPlaying { found.append("\(index):position") }
+        }
+        return found
+    }
+
+    /// 通した回と通さない回を比べる形 (#3268)。
+    enum RoutedAnalysis: CaseIterable, CustomTestStringConvertible {
+        case afterOneLap, afterTwoLaps, afterManyLaps, nearTheSeam, firstLap, playedOnce, afterJump
+        /// 止めて途中から鳴らし直した区切りは、始まりより前を 0 で埋める。再開の 1 フレーム後・2 フレーム後に通す
+        case resumedOneFrameBefore, resumedTwoFramesBefore
+        /// 止まっている間に飛んでから鳴らし直した区切り
+        case jumpedWhileStopped
+        /// ループで何周かした後に、止めて鳴らし直してすぐ通す
+        case resumedAfterLaps
+
+        var testDescription: String {
+            switch self {
+            case .afterOneLap: "1 周した後"
+            case .afterTwoLaps: "2 周した後"
+            case .afterManyLaps: "5 周した後"
+            case .nearTheSeam: "ちょうど 2 周した継ぎ目 (窓の頭が前の周に掛かる)"
+            case .firstLap: "1 周目"
+            case .playedOnce: "ループしない"
+            case .afterJump: "jump の後 (ループ)"
+            case .resumedOneFrameBefore: "止めて鳴らし直した 1 フレーム後"
+            case .resumedTwoFramesBefore: "止めて鳴らし直した 2 フレーム後"
+            case .jumpedWhileStopped: "止まっている間に飛んで鳴らし直した 1 フレーム後"
+            case .resumedAfterLaps: "何周かした後に止めて鳴らし直した 1 フレーム後"
+            }
+        }
+
+        var frames: Int { self == .afterManyLaps ? 330 : 200 }
+        /// 通すフレーム。1 周は 60 フレーム (1 秒の雑音を 60 fps・800 標本で)。
+        var routeAt: Int {
+            switch self {
+            case .afterOneLap: 80
+            case .afterTwoLaps: 130
+            case .afterManyLaps: 305
+            case .nearTheSeam: 121
+            case .firstLap: 30
+            case .playedOnce: 20
+            case .afterJump: 150
+            case .resumedOneFrameBefore, .jumpedWhileStopped: 51
+            case .resumedTwoFramesBefore: 52
+            case .resumedAfterLaps: 136
+            }
+        }
+        var start: (SoundFile) -> Void { self == .playedOnce ? { $0.play() } : { $0.loop() } }
+        var act: (SoundFile, Int) -> Void {
+            switch self {
+            case .afterJump:
+                { song, frame in if frame == 40 { song.jump(0.3) } }
+            case .resumedOneFrameBefore, .resumedTwoFramesBefore:
+                { song, frame in
+                    if frame == 40 { song.pause() }
+                    if frame == 50 { song.loop() }
+                }
+            case .jumpedWhileStopped:
+                { song, frame in
+                    if frame == 40 { song.pause() }
+                    if frame == 41 { song.jump(0.3) }
+                    if frame == 50 { song.loop() }
+                }
+            case .resumedAfterLaps:
+                { song, frame in
+                    if frame == 130 { song.pause() }
+                    if frame == 135 { song.loop() }
+                }
+            default:
+                { _, _ in }
+            }
+        }
+    }
+
+    @Test(
+        "ループ再生のファイルを何周かした後に通しても、通した後のすべてのフレームの level・rms・peak・spectrum が通さないときと一致する",
+        arguments: RoutedAnalysis.allCases, [false, true])
+    func routingKeepsTheAnalysis(_ shape: RoutedAnalysis, offlineFlow: Bool) throws {
+        // 1 秒 (48000 標本) の雑音。格子の間隔 (512) で割り切れないので、通し番号と位置の番号の食い違いが値に出る
+        let url = try writeWAV(Self.noise, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let plain = try take(
+            frames: shape.frames, flow: offlineFlow ? try offline() : nil, url: url, route: false,
+            start: shape.start, act: shape.act)
+        let late = try take(
+            frames: shape.frames, flow: offlineFlow ? try offline() : nil, url: url,
+            routeAt: shape.routeAt, start: shape.start, act: shape.act)
+        // 値が動いている (一致が自明でない)
+        #expect(Set(plain.file.map(\.level)).count > 10)
+        let found = mismatches(late, plain, from: shape.routeAt)
+        #expect(found.isEmpty, "食い違い \(found.count) 件: \(found.prefix(8))")
+    }
+
+    /// 音声トラックが始まって、鳴らさずに数で進めていたファイルが機材に出さない流れの `FilePlayer` へ切り替わる (#3125)
+    /// ときも、ループで何周かした後で、載せない回と同じ値になる (#3268 の兄弟の口)。
+    @Test(
+        "音声トラックへ載せても、載せた後のすべてのフレームの level・rms・peak・spectrum が載せないときと一致する",
+        arguments: RoutedAnalysis.allCases)
+    func joiningTheTrackKeepsTheAnalysis(_ shape: RoutedAnalysis) throws {
+        let url = try writeWAV(Self.noise, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let frames = shape.frames
+        let joinAt = shape.routeAt
+        func moments(join: Bool) throws -> [Moment] {
+            var seen: [Moment] = []
+            var song: SoundFile?
+            let flow = try offline()
+            let runtime = try run(
+                frames: frames,
+                setup: { sketch in
+                    let loaded = try sketch.loadSound(url.path)
+                    shape.start(loaded)
+                    song = loaded
+                },
+                draw: { sketch in
+                    guard let song else { return }
+                    seen.append(
+                        Moment(
+                            isPlaying: song.isPlaying, position: song.samplePosition, level: song.level,
+                            rms: song.rms, peak: song.peak, spectrum: song.spectrum))
+                    if join, sketch.frameCount == joinAt { song.joinTrack(flow) }
+                    shape.act(song, sketch.frameCount)
+                },
+                between: { frame in
+                    if join, frame >= joinAt { _ = try renderStereo(flow, Self.perFrame) }
+                })
+            runtime.closePlugins()
+            return seen
+        }
+        let plain = try moments(join: false)
+        let joined = try moments(join: true)
+        var found: [String] = []
+        for index in joinAt..<frames {
+            let (a, b) = (joined[index], plain[index])
+            if a.level != b.level { found.append("\(index):level") }
+            if a.rms != b.rms { found.append("\(index):rms") }
+            if a.peak != b.peak { found.append("\(index):peak") }
+            if a.spectrum != b.spectrum { found.append("\(index):spectrum") }
+            if a.position != b.position { found.append("\(index):position") }
+        }
+        #expect(found.isEmpty, "食い違い \(found.count) 件: \(found.prefix(8))")
     }
 
     @Test("止めるとエフェクトの出口も無音になり、鳴らし直すと戻る (固定の時計でも実際に鳴らす流れでも)")

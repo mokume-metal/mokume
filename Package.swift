@@ -160,6 +160,13 @@ extension [SwiftSetting] {
     /// **検査のターゲットにも同じ既定が効く。** 注釈の無い suite は main actor の上で 1 本ずつ
     /// 走るので、CPU だけで済む suite は `nonisolated struct` にして並列に走らせる。main actor の
     /// 口を呼ぶ検査と、GPU を使う入れ子の suite だけに `@MainActor` を付ける (#3196)
+    ///
+    /// **隔離に触ったら、下限の Xcode でも組む。** ホストの `ci-check` は下限の Xcode (runner
+    /// image の既定。版はそのログの `/Applications/Xcode_*.app` で分かる) で組むので、手元の既定が
+    /// 新しいと、下限でだけ拒まれる隔離の誤り (例: `[#IsolatedConformances]`・#3199) が手元を
+    /// 素通りする。下限の Xcode が手元にあれば `DEVELOPER_DIR=<下限の Xcode>/Contents/Developer
+    /// swift build --build-tests --scratch-path <.build と別の置き場>` で確かめる (`.build` を
+    /// 共有すると、版の違うコンパイラの成果物が混ざって両方の組み直しになる)
     static var mokume: [SwiftSetting] {
         [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
     }
