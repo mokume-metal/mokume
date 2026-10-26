@@ -79,6 +79,8 @@ struct SoundTrackSeamTests {
         _ sketch: Recorder, clock: Clock = .frameIndex(frameRate: 60), frames: Int,
         before close: (SketchRuntime) -> Void = { _ in }
     ) throws {
+        HangProbe.canary("soundtrack-seam")
+        HangProbe.arm("soundtrack-seam")
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: clock)
         for _ in 0..<frames { try runtime.advance() }
         close(runtime)

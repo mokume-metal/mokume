@@ -22,6 +22,7 @@ import Testing
 struct SharedFrameStageTests {
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
     private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
+        HangProbe.canary("stage-facet")
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

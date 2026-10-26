@@ -41,6 +41,7 @@ struct SketchApplicationTests {
     ///
     /// [#1937]: https://github.com/mokume-metal/mokume/issues/1937
     private func makeApplication(_ sketch: any Sketch) throws -> SketchApplication {
+        HangProbe.canary("makeApplication:\(type(of: sketch))")
         let application = try SketchApplication(sketch: sketch, gpu: RenderDevice())
         application.onStopSignal = {
             Issue.record(
@@ -507,6 +508,7 @@ struct SketchApplicationTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         Recording.path = directory.appendingPathComponent("quit.mov").path
+        HangProbe.arm("quit-test")
 
         let application = try makeApplication(Recording())
         var replies = 0
