@@ -1,0 +1,48 @@
+# #3338 の使い捨て検証。release-check の実体だけを実行し、版は出さない。
+name: Probe daily 3338
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: probe-daily-3338-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  release-check:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-26
+    # #3338: 同じSHAのdebug全探索もここで確認する。ビルド2構成を含め60分で止める。
+    timeout-minutes: 60
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # 日次と版の前に同じSHAのdebug全探索を通す (#3338)。別の時刻の成功は流用しない。
+      - name: 図形の全探索 (debug)
+        run: make test-geometry-exploration
+      # 端末出力を test-log に残す (起票の本文が末尾を載せる)。pipefail が make の赤を通す (#2609)
+      - run: |
+          mkdir -p .build
+          make test-release 2>&1 | tee .build/test-log.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-check-record
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+            .build/test-results-geometry-swift-testing.xml
+            .build/test-log-geometry.txt
+            .build/geometry-debug.md
+            .build/geometry-release.md
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
