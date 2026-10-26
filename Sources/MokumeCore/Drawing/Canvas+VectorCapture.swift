@@ -185,6 +185,23 @@ extension Canvas {
                     sink, kind: .rect, center: anchor + half, half: half, axis: SIMD2(1, 0), arc: .zero,
                     arcClosure: .pie, cornerRadius: 0, fills: writable.fills, strokes: writable.strokes,
                     cap: style.strokeCap, dash: writable.strokes ? vectorDash(of: corners, isClosed: true) : [])
+            case .roundedRect(let width, let height, let radius):
+                // 畳むのは塗りだけの角丸 (#3170) なので、いまは輪郭を持つ角丸は来ない (塗りは落とすので何も書かない)。
+                // 来たときも、他の形と同じく輪郭は真の形 (角丸の矩形・貼る絵の無い角丸が書くものと同じ) で書く。
+                // 破線は、画面が刻む角丸の周 (``placeRect`` が破線の輪郭に使うものと同じ刻み) から作る
+                let half = SIMD2(width / 2, height / 2)
+                let outline =
+                    writable.strokes
+                    ? Self.roundedRectOutline(
+                        width: width, height: height, radius: radius,
+                        segments: Self.segmentCount(
+                            forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+                    ).moved(by: anchor) : nil
+                writeVectorForm(
+                    sink, kind: .rect, center: anchor + half, half: half, axis: SIMD2(1, 0), arc: .zero,
+                    arcClosure: .pie, cornerRadius: radius, fills: writable.fills,
+                    strokes: writable.strokes, cap: style.strokeCap,
+                    dash: outline.map { vectorDash(of: $0.points, isClosed: $0.isClosed) } ?? [])
             case .ellipse(let radiusX, let radiusY):
                 writeVectorForm(
                     sink, kind: .ellipse, center: anchor, half: SIMD2(radiusX, radiusY), axis: SIMD2(1, 0),
