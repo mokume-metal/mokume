@@ -1086,7 +1086,11 @@ enum WatchCommand {
     ///   止まっている → 何も出ない」になる ([#2574](https://github.com/mokume-metal/mokume/issues/2574))。
     static func notice(for outcome: BuildReport, holdingPrevious: Bool) -> String? {
         guard outcome.ok else {
-            return "The build failed — " + (holdingPrevious ? holdingLine : nothingRunningLine)
+            let line = "The build failed — " + (holdingPrevious ? holdingLine : nothingRunningLine)
+            // **直す場所が分かる最初の `error:` の行を、2 行目に添える** (#3087)。無い失敗 (リンクの失敗など) は
+            // 今の行のまま
+            guard let error = outcome.firstErrorLine else { return line }
+            return line + "\n" + error
         }
         return outcome.notStartedNotice
     }

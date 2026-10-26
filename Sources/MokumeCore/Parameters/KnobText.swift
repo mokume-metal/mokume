@@ -45,6 +45,16 @@ enum KnobText {
         ]
     }
 
+    /// 警告の欄に出す 2 つ: 件数と最後の 1 行 ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// **言っていなければ `nil`** (欄ごと出さない)。
+    ///
+    /// **単複で語を選ばず、数だけを差し込む** (ADR-0038 決定 3)。最後の 1 行は端末に出た文面のままで、
+    /// 改行は畳み、長ければ末尾を省く。
+    static func warnings(_ summary: WarningSummary?) -> (count: String, last: String)? {
+        guard let summary else { return nil }
+        return (String(summary.count), WarningSummary.line(summary.last))
+    }
+
     /// 値を 1 行で。**桁を揃える** — 引いている最中に幅が伸び縮みすると読みにくい。
     static func value(of value: ParamValue) -> String {
         switch value {
