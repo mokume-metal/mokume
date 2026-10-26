@@ -26,8 +26,32 @@ final class ShapedLine {
     var placed: [PlacedGlyph?]
     /// ``placed`` の、拡大した段 (0 より上) の控え (#3251)。**段をキーに、字形ごとの控えの並びを持つ** —
     /// ``Typeface/placedScaled`` が (字・段) をキーに持つのと同じ約束で、頼んだ段について答えが決まった字形
-    /// (``Canvas/GlyphLookup/settled``) だけが入る。使った段の数だけ並びが増える。
-    var placedScaled: [Int: [PlacedGlyph?]] = [:]
+    /// (``Canvas/GlyphLookup/settled``) だけが入る。**段の数は ``scaledStepLimit`` までで、超えたら古い段から
+    /// 捨てる** — 拡大を動かし続ける絵が、通った段の数だけ控えを溜めないように (組版の控えの重みは字形の数で
+    /// 数えるので、1 行が抱える控えは段 0 を含めて字形の数の (1 + 上限) 倍までに収まる)。
+    private(set) var placedScaled: [Int: [PlacedGlyph?]] = [:]
+    /// ``placedScaled`` の段を、入れた順に。
+    private var scaledOrder: [Int] = []
+    /// 1 行が拡大した段の控えを持つ段の数。拡大を少し動かしたとき (隣り合う段を行き来するとき) に、焼き直さず
+    /// 控えから引ける数。
+    static let scaledStepLimit = 4
+
+    /// 拡大した段の字形の控えを引く。
+    func scaledPlacement(step: Int, at index: Int) -> PlacedGlyph? {
+        placedScaled[step]?[index]
+    }
+
+    /// 拡大した段の字形を控える。新しい段で上限を超えたら、いちばん古い段を捨てる。
+    func notePlacedScaled(_ placed: PlacedGlyph, step: Int, at index: Int) {
+        if placedScaled[step] == nil {
+            if scaledOrder.count >= Self.scaledStepLimit {
+                placedScaled[scaledOrder.removeFirst()] = nil
+            }
+            scaledOrder.append(step)
+            placedScaled[step] = Array(repeating: nil, count: glyphs.count)
+        }
+        placedScaled[step]?[index] = placed
+    }
 
     init(glyphs: [Glyph], width: Float) {
         self.glyphs = glyphs
@@ -289,9 +313,13 @@ extension Typeface {
     /// 道筋で描く字形は道筋の外接、色やビットマップの字形・道筋を持たない字形は焼き場と同じ描き方で描いた墨。
     /// 控えは (書体・字形の番号) ごとで、描くのは字形の種類ごとに 1 度だけである。
     ///
+    /// 描いた画素は焼き場に預ける。`keepsPixels` が偽なら預けない — 呼ぶ側が拡大して描くときは、
+    /// `shapedText()` が別の鍵 (拡大の段) の画素を焼くので、預けても引き取られない (``Typeface/drawnInk``)。
+    ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
     func ink(
-        of glyph: ResolvedGlyph, keeping atlas: GlyphAtlas, as key: GlyphAtlas.Key
+        of glyph: ResolvedGlyph, keeping atlas: GlyphAtlas, as key: GlyphAtlas.Key,
+        keepsPixels: Bool = true
     ) -> CGRect? {
         let path = CTFontCreatePathForGlyph(glyph.font, glyph.glyph, nil)
         guard Self.measuresByDrawing(glyph, path: path) else { return path?.boundingBoxOfPath }
@@ -300,7 +328,7 @@ extension Typeface {
         switch Self.draw(glyph, on: atlas) {
         case .ink(let ink, let rendered):
             shapedInks[inkKey] = ink
-            if let rendered { atlas.keepRendered(rendered, for: key) }
+            if keepsPixels, let rendered { atlas.keepRendered(rendered, for: key) }
             return ink
         case .failed:
             return nil

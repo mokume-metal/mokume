@@ -50,6 +50,9 @@ extension Canvas {
         let leading = resolvedTextLeading
         var baseline = firstBaseline(at: y, face: face, lines: lines.count)
         var box = CGRect.null
+        // 拡大した字 (段 0 より上) は、`shapedText()` が別の鍵の画素で焼く。**段 0 の画素を預けても引き取られない**
+        // ので、預けない (`textBounds` と同じ・#2560・#2446)。墨の測りは段 0 のまま
+        let keepsPixels = glyphStep == 0
 
         for line in lines {
             let shaped = face.shape(String(line))
@@ -58,7 +61,8 @@ extension Canvas {
                 let resolved = glyph.resolved
                 guard
                     let ink = face.ink(
-                        of: resolved, keeping: atlas, as: glyphKey(for: resolved)),
+                        of: resolved, keeping: atlas, as: glyphKey(for: resolved),
+                        keepsPixels: keepsPixels),
                     !ink.isNull, ink.width > 0 || ink.height > 0
                 else { continue }
                 // 字形の座標は基準線から上向き。面の縦向きへ折り返す (`textBounds` と同じ)
@@ -101,14 +105,14 @@ extension Canvas {
             let penX = pen + glyph.x
             let glyphBaseline = baseline - glyph.y
             // 同じ頁で、同じ段で引いたことのある字形は、焼き場を引かない
-            let known = step == 0 ? line.placed[index] : line.placedScaled[step]?[index]
+            let known = step == 0 ? line.placed[index] : line.scaledPlacement(step: step, at: index)
             if let placed = known, placed.pageSerial == atlas.pageSerial {
                 if !placed.entry.isBlank {
                     appendGlyphQuad(placed.entry, penX: penX, baseline: glyphBaseline, color: color)
                 }
                 continue
             }
-            guard let found = glyphLookup(for: glyph.resolved, step: step) else { continue }
+            guard let found = glyphLookup(for: glyph.resolved, step: step, from: .shapedText) else { continue }
             let entry = found.entry
             // 引いた後の頁の番号で控える — 引く途中で頁を広げていれば、番号も新しい
             let placed = PlacedGlyph(pageSerial: atlas.pageSerial, entry: entry, advance: 0)
@@ -117,7 +121,7 @@ extension Canvas {
             } else if found.settled {
                 // 頼んだ段について答えが決まったときだけ (`text()` の ``Typeface/placedScaled`` と同じ)。
                 // 先送りした字と、頁が溢れて低い段で描いた字は控えない — 次のフレームで頼んだ段を焼き直す
-                line.placedScaled[step, default: Array(repeating: nil, count: line.glyphs.count)][index] = placed
+                line.notePlacedScaled(placed, step: step, at: index)
             }
             if !entry.isBlank {
                 // 先送りした字は、先送りした字だけの列へ置き、フレームの終わりに絵が残るなら払う
@@ -126,7 +130,7 @@ extension Canvas {
                         entry, penX: penX, baseline: glyphBaseline, color: color, inDeferredRun: true)
                     noteDeferredGlyph(
                         start: start, placedWith: entry, key: key, font: glyph.resolved.font,
-                        penX: penX, baseline: glyphBaseline, color: color)
+                        penX: penX, baseline: glyphBaseline, color: color, from: .shapedText)
                 } else {
                     appendGlyphQuad(entry, penX: penX, baseline: glyphBaseline, color: color)
                 }

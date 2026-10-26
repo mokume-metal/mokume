@@ -236,12 +236,27 @@ extension Canvas {
     /// [#1342]: https://github.com/mokume-metal/mokume/issues/1342
     /// [#1460]: https://github.com/mokume-metal/mokume/issues/1460
     /// [#1492]: https://github.com/mokume-metal/mokume/issues/1492
-    func glyphLookup(for resolved: ResolvedGlyph, step: Int) -> GlyphLookup? {
+    func glyphLookup(
+        for resolved: ResolvedGlyph, step: Int, from caller: GlyphCaller = .text
+    ) -> GlyphLookup? {
         guard step > 0 else {
             return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
                 .map { GlyphLookup(entry: $0, settled: true) }
         }
-        return scaledGlyphLookup(for: resolved, step: step)
+        return scaledGlyphLookup(for: resolved, step: step, from: caller)
+    }
+
+    /// 字を引く口。**拡大しすぎの知らせが、呼んだ口の名前で名乗る**のに使う (#3251)。
+    enum GlyphCaller {
+        case text
+        case shapedText
+
+        var name: String {
+            switch self {
+            case .text: "text()"
+            case .shapedText: "shapedText()"
+            }
+        }
     }
 
     /// 段 0 の字形を引く (``glyphLookup(for:step:)`` の段 0)。検査が使う。
@@ -264,7 +279,9 @@ extension Canvas {
     ///    低い段へ下がり、最後は段 0
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
-    private func scaledGlyphLookup(for resolved: ResolvedGlyph, step: Int) -> GlyphLookup? {
+    private func scaledGlyphLookup(
+        for resolved: ResolvedGlyph, step: Int, from caller: GlyphCaller
+    ) -> GlyphLookup? {
         let wanted = glyphKey(for: resolved, step: step)
         if let found = atlas.cachedEntry(for: wanted) {
             atlas.noteBaked(wanted, frame: framesDrawn)
@@ -272,7 +289,7 @@ extension Canvas {
         }
 
         let plan = atlas.plan(for: wanted, font: resolved.font)
-        if plan.step < step { warnSoftEnlargedTextOnce() }
+        if plan.step < step { warnSoftEnlargedTextOnce(from: caller) }
         let target = glyphKey(for: resolved, step: plan.step)
         if plan.step == 0 {
             atlas.noteBaked(wanted, frame: framesDrawn)
@@ -305,7 +322,7 @@ extension Canvas {
             if let entry = bakedGlyph(for: key, font: resolved.font, reportsFull: false) {
                 return GlyphLookup(entry: entry, settled: current == plan.step)
             }
-            if current == plan.step { warnSoftEnlargedTextOnce() }
+            if current == plan.step { warnSoftEnlargedTextOnce(from: caller) }
             current = max(0, current - GlyphAtlas.stepsPerOctave)
         }
         return bakedGlyph(for: glyphKey(for: resolved), font: resolved.font)
@@ -330,6 +347,8 @@ extension Canvas {
         var baseline: Float
         var color: LinearRGBA
         var transform: Transform
+        /// 置いた口。払えなかったときの知らせが、その口の名前で名乗る。
+        var caller: GlyphCaller = .text
     }
 
     /// 先送りした四角だけを並べた 1 つの列 ([#2446])。**頁が替わっても置き直せるように、先送りした四角は
@@ -354,12 +373,13 @@ extension Canvas {
     /// ``appendGlyphQuad(_:penX:baseline:color:inDeferredRun:)`` が頂点の位置を返したとき) だけ呼ぶ。
     func noteDeferredGlyph(
         start: Int?, placedWith entry: GlyphAtlas.Entry, key: GlyphAtlas.Key, font: CTFont,
-        penX: Float, baseline: Float, color: LinearRGBA
+        penX: Float, baseline: Float, color: LinearRGBA, from caller: GlyphCaller = .text
     ) {
         guard let start, start + 6 <= vertices.count else { return }
         let glyph = DeferredGlyph(
             start: start, key: key, font: font, topLeft: vertices[start].position,
-            uvMin: entry.uvMin, penX: penX, baseline: baseline, color: color, transform: transform)
+            uvMin: entry.uvMin, penX: penX, baseline: baseline, color: color, transform: transform,
+            caller: caller)
         if deferredRunOpen, !deferredRuns.isEmpty {
             deferredRuns[deferredRuns.count - 1].glyphs.append(glyph)
         } else {
@@ -384,9 +404,9 @@ extension Canvas {
         let runs = deferredRuns
         deferredRuns.removeAll(keepingCapacity: true)
         guard baking else { return }
-        var unpaid = false
-        for run in runs where !payDeferredRun(run) { unpaid = true }
-        if unpaid { warnSoftEnlargedTextOnce() }
+        var unpaid: GlyphCaller?
+        for run in runs where !payDeferredRun(run) { unpaid = unpaid ?? run.glyphs.first?.caller ?? .text }
+        if let unpaid { warnSoftEnlargedTextOnce(from: unpaid) }
     }
 
     /// 先送りした四角の列を 1 つ払う (``settleDeferredGlyphs(baking:)``)。置き直せたか。
@@ -461,10 +481,10 @@ extension Canvas {
     /// 拡大した字が、1 字の大きさか頁の上限で、頼んだ段より低い段の画素で描かれたことを、初回だけ知らせる。
     /// **原因が拡大 (`scale()` と `textSize()` の積) であることを名乗る** — 字は欠けず、伸ばして描くので
     /// 縁がぼける。次の一手 (拡大か `textSize()` を下げる・字の種類を減らす) が打てる文面にする。
-    private func warnSoftEnlargedTextOnce() {
+    private func warnSoftEnlargedTextOnce(from caller: GlyphCaller) {
         warnOnce(
             .softEnlargedText,
-            "text(): the text is enlarged (textSize() times scale()) beyond what the baking area keeps "
+            "\(caller.name): the text is enlarged (textSize() times scale()) beyond what the baking area keeps "
                 + "sharp: a single glyph is baked at most \(atlas.scaledBakeByteLimit >> 20) MiB, and "
                 + "enlarged glyphs use only the top \(Int(GlyphAtlas.scaledPageShare * 100))% of the "
                 + "area. The glyphs are still drawn, from a smaller image, so their edges look soft — "
