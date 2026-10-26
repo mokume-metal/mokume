@@ -108,6 +108,11 @@ public final class SketchRuntime {
     private var outlets: [(seam: any Outlet, health: SeamHealth)] = []
     /// 登録された入り口。同じく宣言順。
     private var inlets: [(seam: any Inlet, health: SeamHealth)] = []
+    /// 音声トラックの `beginTrack` を呼んだ音源 (``stepSoundTrack()``)。**`endTrack` はここに居る音源にだけ届ける**
+    /// (呼んでいない音源に終わりを伝えない)。番地 (`ObjectIdentifier`) で持つと、解放された音源の番地を別の
+    /// 音源が使い回したとき、`beginTrack` を呼ばれていないのに「呼んだ」と取り違えるので、音源そのものを持って
+    /// 同一かを `===` で比べる (録りが終われば手放す)。
+    private var soundTrackBegun: [any SoundSource] = []
     /// 差込口を巡回している深さ (``whileVisitingSeams(_:)``)。
     ///
     /// **巡回の最中に並びを変えてはいけない。** 巡回は並びを `inout` で渡しているので、
@@ -796,6 +801,8 @@ public final class SketchRuntime {
         // **撮る係はここでは閉じない。** 並びに居れば同じ `close()` が塞いで待つので、
         // 下で選んだ待ち方で閉じる
         for entry in outlets where entry.seam !== recorder { entry.seam.close() }
+        // 音声トラックを始めた音源へ、録りが終わると伝えてから閉じる
+        endSoundTrack()
         for entry in inlets { entry.seam.close() }
         // **まとめている途中の保存を落とさない。** 引いたつまみの最後の 1 手だけが
         // 消えると、直したはずの値が次の起動で戻っていない形で出る
@@ -1097,8 +1104,62 @@ public final class SketchRuntime {
                 // `beginRecord()` で撮ると頼んだフレームは、描き直されずに残る。そのフレームで先送りした字は、
                 // フレームの終わりに払う (``Canvas/settleDeferredGlyphs(baking:)``・#2446)
                 canvas.framePersists = !isLooping || recorder?.isIdle == false
+                // **このフレームの音の窓は、`draw()` の後・次のフレームの供給の前に描く** ([#3125])。
+                // `draw()` が頼んだ操作は、この窓の先頭から効く
+                stepSoundTrack()
             }
         }
+    }
+
+    // MARK: - 音声トラック ([#3125])
+
+    /// 音声トラックの窓を、音源に描かせて録りへ書く。**`draw()` の直後に呼ぶ。**
+    ///
+    /// 録りを頼まれたフレームの `draw()` が終わった時点で、載せるかを決める (``FrameRecorder/decideSound(hasSources:fixedClock:)``)。
+    /// 載せるなら、音源 (``SoundSource`` の入り口) の `beginTrack` を呼び、以後は毎フレーム、フレームの番号の窓へ
+    /// すべての音源が足した和を書く。録りの途中で足された音源は、トラックがあれば載る (足された直後に
+    /// `beginTrack` を呼ぶ)。録りが終われば `endTrack` を呼ぶ。
+    ///
+    /// 音源が無く、録りも載せないスケッチは、ここで何も払わない (入り口の並びを 1 度なめるだけ)。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    private func stepSoundTrack() {
+        guard let recorder, recorder.isRecording else {
+            endSoundTrack()
+            return
+        }
+        let frame = timing.frameCount
+        guard frame >= recorder.firstRecordedFrame else { return }
+        let sources = inlets.compactMap { entry in
+            entry.health.isAttached ? entry.seam as? any SoundSource : nil
+        }
+        if recorder.soundTrack == .undecided {
+            recorder.decideSound(
+                hasSources: !sources.isEmpty,
+                fixedClock: clock.soundFrameRate(onScreen: isOnScreen) != nil)
+        }
+        switch recorder.soundTrack {
+        case .carrying(let frameRate):
+            for source in sources where !soundTrackBegun.contains(where: { $0 === source }) {
+                soundTrackBegun.append(source)
+                source.beginTrack(frameRate: frameRate)
+            }
+            var window = SoundWindow(frame: frame - 1, frameRate: frameRate)
+            for source in sources { source.mix(into: &window) }
+            recorder.writeSound(window)
+        case .declined:
+            if !sources.isEmpty { recorder.noteLateSound() }
+        case .undecided:
+            break
+        }
+    }
+
+    /// 音声トラックを始めた音源へ、録りが終わったと伝える。
+    private func endSoundTrack() {
+        guard !soundTrackBegun.isEmpty else { return }
+        let begun = soundTrackBegun
+        soundTrackBegun.removeAll()
+        for source in begun { source.endTrack() }
     }
 
     /// 拡大した字の焼きを、次のフレームへ送ってよいか ([#2446])。**このフレームの絵を、次のフレームが描き直す
@@ -1944,6 +2005,7 @@ public final class SketchRuntime {
         // **止めたフレームを一緒に渡す。** 撮る係が途中で外れていると最後の絵が届かないので、
         // どこまでが録りの幅かを教えないと、末尾の欠けが落ちた数に入らない (#1626)
         recorder.endRecord(through: drawnThrough)
+        endSoundTrack()
     }
 
     /// 撮る係が言った注意の控え。撮る係がまだ無いか、閉じ終えて手放した後は `nil`。**検査が読む。**

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AVFAudio
+import Foundation
 
 /// 読み込んだ音を、音の流れ (``SoundFlow``) で実際に鳴らす。AVFAudio で鳴らすのはこの型だけ
 /// である ([ADR-0042] 決定 6 の「薄い層に閉じる」)。
@@ -58,6 +59,20 @@ final class FilePlayer {
             player.scheduleBuffer(buffer, at: nil, options: looping ? .loops : [])
         }
         player.play()
+        if flow.isOffline { Self.letTheStartBeTaken() }
+    }
+
+    /// 機材に出さない流れでは、``AVAudioPlayerNode/play()`` の命令を player が取り込むのを待つ。
+    ///
+    /// **描いている途中の流れへ鳴らし始める命令は、player の側のスレッドで取り込まれる。** 呼んだ直後に
+    /// `renderOffline` を呼ぶと、取り込みが描くのに間に合わず、窓まるごと (数百標本) 無音になることがある
+    /// (M3 Max で 400 回のうち 10% 前後・負荷が重いほど増える。命令を取り込んだことを知る手立ては見つからず、
+    /// 呼び直し・`isPlaying` を待つ・時刻を指して始めるのは効かなかった)。描くのは呼んだ側が進める流れなので
+    /// 待っても時間は進まず、待つのは窓を書き出す側の数 ms だけである。実機に出す流れは時計で進むので要らない。
+    ///
+    /// 100 µs でも 1200 回で 1 度も落ちなかったが、取り込みが遅れる上限は分からないので、数十倍の余裕を取る。
+    private static func letTheStartBeTaken() {
+        Thread.sleep(forTimeInterval: 0.005)
     }
 
     /// 止める。積んだ区切りは捨てる。

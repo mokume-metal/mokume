@@ -778,6 +778,66 @@ struct VectorCaptureTests {
         #expect(figures[1].subpaths[0].curves.count == 4, "楕円は 3 次ベジェ 4 つ")
     }
 
+    @Test("塗りだけの角丸の矩形は畳む道を通っても、貼る絵・断片の塗りを 1 度だけ名指しで落とし、図形は書かない (#3170)")
+    func aFoldedRoundedRectDropsOnlyTheFill() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let shader = try harness.canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.noStroke()
+            canvas.fill(red)
+            canvas.texture(picture)
+            canvas.rect(10, 10, 30, 20, 5)
+            canvas.noTexture()
+            canvas.shader(shader)
+            canvas.rect(10, 10, 30, 20, 5)
+            canvas.resetShader()
+        }
+        #expect(figures.isEmpty, "塗りしか無い図形は、塗りを落とせば何も残らない")
+        #expect(drops == [.texture, .shader], "\(drops)")
+    }
+
+    @Test("畳む道が控える角丸の矩形の輪郭は、貼る絵の無いときの角丸と同じ真の形の要素になる (#3170)")
+    func theFoldingPathWritesTheTrueRoundedRect() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        for dashed in [false, true] {
+            // 基準: 貼る絵が無ければ距離関数の道で、輪郭は角丸の矩形そのもの (3 次ベジェ) で書く
+            let (reference, _) = try harness.capture { canvas in
+                canvas.noTexture()
+                canvas.noFill()
+                canvas.stroke(blue)
+                canvas.strokeWeight(2)
+                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                canvas.rect(10, 10, 30, 20, 5)
+            }
+            // 畳む道が呼ぶ控え (`draw(folding:at:)` の入り口) を、同じ形・同じ置き場所で直接呼ぶ。
+            // 塗りだけの角丸しか畳まない (`placeRect`) ので、輪郭つきはこの口を直接叩いて確かめる
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.fill(red)
+                canvas.texture(picture)
+                canvas.stroke(blue)
+                canvas.strokeWeight(2)
+                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                let held = canvas.suspendVectorRecordingShadedFigure(
+                    .roundedRect(width: 30, height: 20, radius: 5), at: SIMD2(10, 10))
+                canvas.resumeVector(held)
+            }
+            try #require(figures.count == 1 && reference.count == 1, "dashed=\(dashed)")
+            if dashed {
+                // 破線の角丸は、画面が刻んだ周を折れ線で書く道を通る (始点も違う) ので、道そのものは比べず、
+                // 破線の長さと間隔が揃うことを見る
+                #expect(figures[0].stroke == reference[0].stroke)
+            } else {
+                #expect(figures[0] == reference[0])
+            }
+            #expect(figures[0].subpaths[0].curves.filter { $0 }.count == 4, "角は 3 次ベジェ 4 つ (折れ線でない)")
+            #expect(figures[0].fill == nil)
+            #expect(figures[0].stroke?.dash.isEmpty == !dashed, "dashed=\(dashed)")
+            #expect(drops == [.texture], "塗りを 1 度だけ名指す \(drops)")
+        }
+    }
+
     @Test("利用者の断片・通常以外の混ぜ方・切り抜きは輪郭にも効くので、図形ごと 1 つと数えて落とす")
     func whatTouchesTheStrokeDropsTheWholeFigureOnce() throws {
         let harness = try Harness()

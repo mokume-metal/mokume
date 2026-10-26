@@ -895,7 +895,15 @@ struct ScaledDiscTests {
                     (.ellipse(radiusX: 2, radiusY: 2), 8, Array(repeating: true, count: 8)),
                     (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3), 6, Array(repeating: true, count: 6)),
                 ]
-                for (form, count, steps) in forms {
+                // 角丸の矩形は、実際の周 (角の弧の点がどれも刻み) の点の数と刻みで突き合わせる (#3170)。
+                // 半径が短い辺の半分ちょうどの周 (弧の端が重なる点を 1 つに畳む) も含める
+                var roundedForms = forms
+                for (width, height, radius) in [(Float(4), Float(3), Float(1)), (4, 2, 1), (3, 3, 1.5)] {
+                    let outline = Canvas.roundedRectOutline(width: width, height: height, radius: radius, segments: 16)
+                    roundedForms.append(
+                        (.roundedRect(width: width, height: height, radius: radius), outline.points.count, outline.curveSteps))
+                }
+                for (form, count, steps) in roundedForms {
                     let rule = form.placesDiscs(cap: cap, join: join)
                     let actual = placed(count: count, closed: true, steps: steps)
                     if rule != actual { mismatches.append("\(form) \(cap) \(join) 規則\(rule) 骨\(actual)") }

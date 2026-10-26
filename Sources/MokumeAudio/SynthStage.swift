@@ -18,11 +18,14 @@ import MokumeDiagnostics
 ///
 /// - **実時間** (窓に出しながら動かす) では、ラックを音の流れ (``RackPlayer``) へ入れて実際に鳴らす。
 ///   標本は音の側のスレッドが作る
-/// - **フレームの数え方** (書き出し・検査) では**鳴らさず**、ラックの標本を「絶対のフレーム番号 ×
+/// - **フレームの数え方** (書き出し・検査) では、ふだんは**鳴らさず**、ラックの標本を「絶対のフレーム番号 ×
 ///   標本化率 ÷ fps」の位置まで進める。区間がフレームの番号だけで決まるので、同じ設定から何度書き出しても
-///   同じ値になる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)
+///   同じ値になる ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。**`.mov` を録り始めて音声トラックが付くと**
+///   (``SoundTrackMixer``・[#3125])、ラックを機材に出さない音の流れ (``RackPlayer``) へ入れ、窓ごとに描いて動画へ
+///   載せる。位置は今の位置から続くので、解析の値は途切れない
 /// - 出力が開けないときは、鳴らさずに実時間で進め、そのことを 1 度だけ知らせる
 ///
+/// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SynthStage: Inlet {
@@ -84,6 +87,7 @@ final class SynthStage: Inlet {
     private enum Notice: Hashable {
         case noOutput
         case capacity
+        case cannotCarry
     }
 
     /// - Parameter owner: 持ち主のスケッチ。**検査だけが `nil` で作る** (スケッチを走らせずに、`pace` と
@@ -178,15 +182,44 @@ final class SynthStage: Inlet {
     func open() throws {
         guard let owner else { return }
         frame = Self.frameIndex(of: owner)
+        // **音を出す入り口が居ることを、録りが載せるかどうかに依らず混ぜ役に名乗らせる** (載せない録りが、音源が
+        // 居ることを 1 度だけ名乗れる・[#3125])
+        let mixer = SoundTrackMixer.mixer(for: owner)
         if let injectedFlow {
             speak(through: injectedFlow)
         } else if let frameRate = owner.clock.soundFrameRate(onScreen: owner.isOnScreen) {
             // 書き出しの経路。鳴らさずに、フレームの数から位置を決める
             pace = .frames(perSecond: max(1, frameRate), origin: frame)
+            // 音声トラックを載せる録りのために、混ぜ役へ名乗る。音声トラックが始まっていれば、最初からその流れで鳴る
+            mixer?.register(stage: self)
+            if let flow = mixer?.flow { joinTrack(flow) }
         } else {
             // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
             speak(through: .speakers)
         }
+    }
+
+    /// 音声トラックが始まった ([#3125])。鳴らさずに数で進めていたラックを、機材に出さない流れへ入れる。
+    ///
+    /// ラックが作った標本の数 (``SynthRack/rendered``) はそのまま続くので、位置も解析の値も途切れない。操作の列に
+    /// 溜まっている頼みは、流れが描く最初の窓の先頭から効く。
+    ///
+    /// **入れられなくても、位置は数で進め続ける** (``Pace/frames``)。鳴らさずに実時間へ落とすと、その録りの間だけ
+    /// 解析の位置が壁時計で進み、同じ設定から同じ値にならない。音が動画に入らないことを、事情どおりに 1 度だけ
+    /// 知らせる。
+    ///
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
+    func joinTrack(_ flow: SoundFlow) {
+        guard !isClosed, case .frames = pace else { return }
+        guard let player = RackPlayer(flow: flow, rack: rack) else {
+            notice(
+                .cannotCarry,
+                "The synthesized sounds could not be put in the recording: the audio flow of the recording "
+                    + "could not take them, so they are not in the movie. Their position still follows the "
+                    + "frames, and their analysis keeps working")
+            return
+        }
+        pace = .speaker(player)
     }
 
     func supply() {

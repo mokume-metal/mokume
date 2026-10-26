@@ -1013,6 +1013,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Plugin``
 - ``PluginRegistry``
 - ``Inlet``
+- ``SoundSource``
+- ``SoundWindow``
 - ``Outlet``
 - ``SketchPart/attach(_:)-7pu5o``
 - ``SketchPart/attach(_:)-998z2``

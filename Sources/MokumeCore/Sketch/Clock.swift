@@ -57,14 +57,16 @@ extension Clock {
 
     /// 音 (音声ファイルの再生・合成音) をフレームの数で進めるなら、その刻み。実際に鳴らすなら `nil`。
     ///
-    /// **鳴らさずに数で進めるのは、フレームの時計で、かつ画面へ出していないときだけ** — 書き出しと、
-    /// 窓を持たずに直に回す実行である。フレームの時計を選んだ窓 (``SketchSettings/ClockMode/frames``)
+    /// **機材に鳴らさずに数で進めるのは、フレームの時計で、かつ画面へ出していないときだけ** — 書き出しと、
+    /// 窓を持たずに直に回す実行である (`.mov` を録っていれば、その間は機材に出さない流れで描いて音声トラックへ
+    /// 載せる・[#3125])。フレームの時計を選んだ窓 (``SketchSettings/ClockMode/frames``)
     /// は鳴らす。時計だけで決めると、その窓が無音になる ([#2601])。代償として、処理落ちの間は音が
     /// 実時間で進み、絵とずれる。
     ///
     /// - Parameter onScreen: 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。
     ///
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
+    /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
     package func soundFrameRate(onScreen: Bool) -> Int? {
         guard case .frameIndex(let frameRate) = self, !onScreen else { return nil }
         return frameRate

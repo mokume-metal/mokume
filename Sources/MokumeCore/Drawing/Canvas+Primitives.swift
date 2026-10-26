@@ -71,8 +71,20 @@ extension Canvas {
                 fills: true, cornerRadius: radius)
         }
         // 角を丸めた矩形は、貼る絵 (`texture()`) か利用者の断片 (`shader()`) が効いている間だけ
-        // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。畳まない
+        // ここへ来る。距離関数の経路に入れないので、角を円弧の刻みで繋いだ周で描く。
         if radius > 0 {
+            // **塗りだけのときは、角を丸めない矩形と同じく畳む** (#3170)。周は形自身の座標で作って左上の角を
+            // 置き場所として渡し、角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。
+            // **輪郭があれば畳まず、置き場所ごとに組む。** 畳んだ雛形は輪郭の頂点を「雛形の座標を置き場所の
+            // 行列で移す」順で置き、畳まない道は「位置を足してから移す」順で置くので、縁の頂点が 1 ulp 違い、
+            // 縁の画素が畳まない絵と変わりうる (16×10・半径 5・`strokeWeight(0.7)`・回転 0.29 で 3 成分)。
+            // 絵を動かさない約束 (完了条件 2) を守るため、輪郭つきは今までの道に残す
+            if !(style.hasStroke && style.strokeWeight > 0) {
+                return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
+                    segments in
+                    Self.roundedRectOutline(width: w, height: h, radius: radius, segments: segments)
+                }
+            }
             let segments = Self.segmentCount(
                 forRadius: radius, scale: Self.splitScale(of: transform.matrix))
             return draw(
