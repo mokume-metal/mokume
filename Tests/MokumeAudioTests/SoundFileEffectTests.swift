@@ -89,6 +89,8 @@ struct SoundFileEffectTests {
         var heard = Stereo()
         var filter: LowPass?
         var song: SoundFile?
+        /// ファイルの `isBeat` が立ったフレーム (`frameCount`)。
+        var beats: [Int] = []
     }
 
     /// ファイルを読み、`LowPass` を足して回し、フレームごとの値を返す。
@@ -132,6 +134,7 @@ struct SoundFileEffectTests {
                         level: song.level, spectrum: song.spectrum))
                 result.effect.append(
                     Effected(rms: filter.rms, level: filter.level, spectrum: filter.spectrum))
+                if song.isBeat { result.beats.append(sketch.frameCount) }
                 if route, let routeAt, sketch.frameCount == routeAt { filter.process(song) }
                 act(song, sketch.frameCount)
             },
@@ -353,6 +356,18 @@ struct SoundFileEffectTests {
         let tail = Array(late.heard.left.suffix(AudioAnalysis.windowSize))
         let worst = zip(tail, outlet).map { abs($0 - $1 * Self.center) }.max() ?? 1
         #expect(worst < 1e-5, "通した後も、ファイルの音が直に聞こえている: \(worst)")
+    }
+
+    @Test("ループで何周かした後にエフェクトへ通しても、通した番号の付け直しで拍の履歴を捨てず、通さないときと同じフレームに拍が出る")
+    func routingALoopedFileKeepsTheBeatHistory() throws {
+        // 0.5 秒 (24000 標本) の音に 1 つのクリック。60 fps で 1 周 30 フレーム
+        let url = try writeWAV(AudioFeatureTests.clicks(at: [3_000], count: 24_000), sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let plain = try take(frames: 150, url: url, route: false)
+        #expect(plain.beats.count >= 4, "\(plain.beats)")
+        // 2 周と少し (75 フレーム目) で通す。通した後の周でも、拍は通さないときと同じフレームに出る
+        let late = try take(frames: 150, url: url, routeAt: 75)
+        #expect(late.beats == plain.beats, "\(late.beats) / \(plain.beats)")
     }
 
     @Test("止めるとエフェクトの出口も無音になり、鳴らし直すと戻る (固定の時計でも実際に鳴らす流れでも)")
@@ -915,5 +930,43 @@ struct SoundFileEffectTests {
                 #expect(gaps.max() == 0, "\(fps) fps は割り切れるので同じ位置: \(gaps)")
             }
         }
+    }
+
+    /// エフェクトへ通すと、解析済みの終わりを引き継ぐ値 (`continuedCoverage`) を立てる。入力に選ばれるまでの間に
+    /// `play()`・`loop()` で頭から鳴らし直すと、その区切りの始まりは頭なのに、古い位置が解析済みの終わりとして残り、
+    /// 最初の区間が欠ける。
+    @Test("通した後、入力に選ばれる前に loop() で頭から鳴らし直しても、最初の区間は頭から解析される")
+    func restartingBeforeTheInputIsChosenDropsTheInheritedCoverage() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var song: SoundFile?
+        var stage: SynthStage?
+        var seen: [(level: Float, position: Int)] = []
+        let runtime = try run(
+            frames: 6,
+            setup: { sketch in
+                stage = SynthStage.stage(for: sketch)
+                let loaded = try sketch.loadSound(url.path)
+                loaded.loop()
+                song = loaded
+            },
+            draw: { sketch in
+                guard let song, let stage else { return }
+                seen.append((song.level, song.samplePosition))
+                if sketch.frameCount == 4 {
+                    // 通す (節を入力に選ぶ前) → 頭から鳴らし直す
+                    _ = song.route(into: stage)
+                    song.loop()
+                }
+            })
+        runtime.closePlugins()
+        #expect(seen.count == 6)
+        // フレーム 5 の区間は、頭から鳴った分 [0, 位置)。古い位置 (3200) が解析済みの終わりとして残ると、区間が空になって
+        // フレーム 4 の値のまま動かない
+        let position = seen[4].position
+        #expect(position > 0 && position < 3200, "頭から鳴らし直した位置: \(position)")
+        let head = AudioAnalysis.analyze(span(of: chord, from: 0, to: position, loops: true))
+        #expect(head.level > 0)
+        #expect(seen[4].level == head.level, "最初の区間が欠けた: \(seen[4].level) 対 \(head.level)")
     }
 }

@@ -213,6 +213,8 @@ extension Canvas {
         let right = min(max(left, sourceX + sourceWidth), full.x)
         let bottom = min(max(top, sourceY + sourceHeight), full.y)
         guard right > left, bottom > top else { return }
+        // 絵はベクターへ埋め込まない (#3139)
+        noteVectorDrop(.image)
 
         // **置き先も、切り出しを締めた割合で締める** (#1532)。締めずに置くと、重なった分が
         // 置き先いっぱいに引き伸ばされ、はみ出した量で倍率と縦横比が変わる。倍率は

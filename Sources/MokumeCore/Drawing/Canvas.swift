@@ -324,7 +324,7 @@ public final class Canvas {
         var strokeWeight: Float
         var strokeCap: StrokeCap
         var strokeJoin: StrokeJoin
-        /// 楕円・弧の周を、一周でいくつに刻むか。矩形は周を刻まないので 0。
+        /// 楕円・弧・角丸の矩形の周を、一周でいくつに刻むか (角丸の矩形は角の弧の半径で刻む)。角を丸めない矩形は周を刻まないので 0。
         var ringSegments: Int
         /// 輪郭の円板 (丸い端・丸い折れ目・周の刻み) の周を、一周でいくつに刻むか。円板を置かない
         /// 輪郭 (丸めない矩形・輪郭の無い図形) は 0 で、拡大の違いで雛形を割らない。
@@ -378,13 +378,16 @@ public final class Canvas {
     /// 足さない ([ADR-0008](docs/decisions/0008-mechanism-needs-demonstrated-harm.md))。
     enum FlatForm: Equatable {
         case rect(width: Float, height: Float)
+        /// 4 つの角を `radius` で丸めた矩形。`radius` は 0 より大きく、幅・高さの半分以下 (``Canvas/rect(_:_:_:_:_:)``)
+        case roundedRect(width: Float, height: Float, radius: Float)
         case ellipse(radiusX: Float, radiusY: Float)
         case arc(radiusX: Float, radiusY: Float, start: Float, sweep: Float)
 
-        /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。
+        /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。角丸の矩形は、角の弧の半径で刻む。
         var ringRadius: Float? {
             switch self {
             case .rect: nil
+            case .roundedRect(_, _, let radius): radius
             case .ellipse(let radiusX, let radiusY), .arc(let radiusX, let radiusY, _, _):
                 max(radiusX, radiusY)
             }
@@ -398,7 +401,8 @@ public final class Canvas {
             case .rect:
                 Canvas.strokePlacesDiscs(
                     pointCount: 4, isClosed: true, hasJoinCurveSteps: false, cap: cap, join: join)
-            case .ellipse, .arc:
+            case .ellipse, .arc, .roundedRect:
+                // 角丸の矩形の周も、点がどれも刻み (角の弧の点) で、角は 1 つも無い
                 Canvas.strokePlacesDiscs(
                     pointCount: 3, isClosed: true, hasJoinCurveSteps: true, cap: cap, join: join)
             }
@@ -1704,6 +1708,13 @@ public final class Canvas {
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     var framePersists = false
+    /// ベクター (SVG) へ書く図形を控えている途中の状態 ([#3139])。**ランタイムが `draw()` の前に立て、
+    /// 後で下ろす** (``beginVectorWindow(pending:)``・``endVectorWindow()``)。頼まれていないフレームは
+    /// `capture` が nil のままで、置く口が払うのは `capture` と「置いた」印の読みだけ。印を立てる書き込みは
+    /// 窓ごとに 1 度である。フレームを出るときに下ろす。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    var vector = VectorWindow()
     /// 字形を四角として置くか。**台帳の指紋を採るときだけ下ろす** ([#1559])。
     ///
     /// 字形を画素にするのは OS (CoreGraphics) で、書体の輪郭と送り幅が同じでも、焼いた画素は
@@ -2974,6 +2985,9 @@ public final class Canvas {
     func replaceSurface(with content: SurfaceContent) {
         if style.clip == nil {
             discardPending()
+            // 画面が溜めた図形を捨てるのと同じく、ベクターに控えた図形も捨てる。残すと、ペンプロッタは
+            // 画面に無い線を引く (#3139)。切り抜きがあるときは中だけの置き換えで、外の図形は画面に残る
+            discardVectorFigures()
             if case .color(let color) = content {
                 pendingBackground = color
                 return
@@ -3852,6 +3866,7 @@ public final class Canvas {
         warnIfStacksLeftOpen(before: "the frame")
         isDrawing = false
         framePersists = false
+        vector = VectorWindow()
         // 組み立ての出口まで待たせた `endDraw()` と、待たせた捨てる印は、もう対象のフレームが無い (#1855・#2509)
         frameEndAwaitingShape = false
         dropAwaitingShape = false

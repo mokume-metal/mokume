@@ -20,7 +20,7 @@ struct MicrophoneSourceReattachTests {
     @Test("止める前に環へ届いて入れ物へ送っていない標本は、止めた後の取り出しで送らない。止めた後に書かれたものは送る")
     func stopDropsWhatWasWrittenButNotSent() {
         let source = MicrophoneSource(device: nil)
-        let input = ExternalInput<[Float]>(name: "microphone", state: .running)
+        let input = ExternalInput<AudioSpan>(name: "microphone", state: .running)
 
         // 1 つ目は送って読まれる。2 つ目は環に届いたが、まだ送っていない
         write(source, count: 1024, value: 0.5, hostTime: 1)
@@ -37,13 +37,13 @@ struct MicrophoneSourceReattachTests {
         source.pump(into: input, at: 0)
         let window = input.take()
         #expect(window != nil)
-        #expect(window?.last == 0.25)
+        #expect(window?.samples.last == 0.25)
     }
 
     @Test("何も書かれていないまま止めても、止めた後に書かれたものは送る")
     func stopWithNothingWrittenKeepsTheNextOne() {
         let source = MicrophoneSource(device: nil)
-        let input = ExternalInput<[Float]>(name: "microphone", state: .running)
+        let input = ExternalInput<AudioSpan>(name: "microphone", state: .running)
         source.stop()
         write(source, count: 256, value: 0.5, hostTime: 1)
         source.pump(into: input, at: 0)

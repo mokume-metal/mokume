@@ -80,16 +80,41 @@ nonisolated final class SampleRing: @unchecked Sendable {
     var total: Int { written.load(ordering: .acquiring) }
 
     /// 最新の count 個。まだ書かれていない分を前の 0 で埋め、古い順に写す。
+    ///
+    /// **本番は使わない** (解析は ``snapshot(since:)`` で、前のフレーム以後の区間を写す)。検査が、出口の標本を直に読むのに使う。
     func latest(_ count: Int) -> [Float] { snapshot(count).samples }
 
-    /// 標本・総数・hostTime を一緒に写す。読み手は 1 つだけで、再入しない。
-    /// afterAcquiring は、検査が面を受け取った直後で読み手を止めるための口 (#2916)。
-    func snapshot(_ count: Int, afterAcquiring: () -> Void = {}) -> Snapshot {
-        precondition((0...capacity).contains(count))
+    /// 最新の公開面を受け取る。読み手は 1 つだけで、再入しない。
+    private func acquireFront() -> Window {
         if middle.load(ordering: .acquiring) & Self.unread != 0 {
             front = middle.exchange(front, ordering: .acquiringAndReleasing) & ~Self.unread
         }
-        let window = windows[front]
+        return windows[front]
+    }
+
+    /// 前の読み取りの総数 `previous` 以後に書かれた標本を、解析する区間として写す (最大 `AudioAnalysis.maxSpan`
+    /// 標本。足りない前の履歴は、解析が最初の窓の頭まで読むぶんを添える)。
+    ///
+    /// 総数は面を受け取った後で決まるので、区間の終わり (`span.to`) は、この呼び出しで読んだ総数になる。
+    /// 呼ぶ側が先に読んだ ``total`` とは、書き手が進んでいれば違う。読み手は 1 つだけで、再入しない。
+    func snapshot(since previous: Int) -> (span: AudioSpan, hostTime: UInt64) {
+        let window = acquireFront()
+        let to = window.total
+        // 容量から溢れて書き換わった古い標本は読まない
+        let from = max(min(AudioAnalysis.limited(from: previous, to: to), to), to - capacity)
+        let first = max(AudioAnalysis.firstNeeded(from: from), to - capacity, 0)
+        let samples = (first..<to).map { window.storage[$0 % capacity] }
+        return (AudioSpan(base: first, samples: samples, from: from), window.hostTime)
+    }
+
+    /// 標本・総数・hostTime を一緒に写す。読み手は 1 つだけで、再入しない。
+    ///
+    /// **本番は使わない** (``snapshot(since:)`` が同じ面の受け取り方をする)。検査が、面を取り合う書き手と読み手の安全を
+    /// 見るのに使う。
+    /// afterAcquiring は、検査が面を受け取った直後で読み手を止めるための口 (#2916)。
+    func snapshot(_ count: Int, afterAcquiring: () -> Void = {}) -> Snapshot {
+        precondition((0...capacity).contains(count))
+        let window = acquireFront()
         afterAcquiring()
         let samples = (0..<count).map { offset in
             let index = window.total - count + offset

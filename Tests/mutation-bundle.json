@@ -40,11 +40,11 @@
     {
       "id": "2283-analysis-window-rounds-up",
       "origin": "#2278",
-      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
-      "find": "let end = Int((time * Double(sampleRate)).rounded(.down))",
-      "replace": "let end = Int((time * Double(sampleRate)).rounded(.up))",
+      "file": "Sources/MokumeAudio/AudioSource.swift",
+      "find": "max(0, Int((time * Double(sampleRate)).rounded(.down)))",
+      "replace": "max(0, Int((time * Double(sampleRate)).rounded(.up)))",
       "gpu": false,
-      "note": "時刻から窓の末尾への丸めが切り上げになり、まだ届いていない標本まで窓が 1 つずれる (AudioAnalysisTests.fractionalTimesEndAtTheLastArrivedSample が殺すはず)"
+      "note": "時刻から区間の末尾への丸めが切り上げになり、まだ届いていない標本まで区間が 1 つずれる (AudioAnalysisTests.samplesArrivedByATimeRoundDown が殺すはず)"
     },
     {
       "id": "2284-reverb-wet-unclamped",
@@ -252,6 +252,51 @@
       "replace": "let controlFree = !head.prefix(84).contains { ($0 < 0x20 && $0 != 0x09 && $0 != 0x0A && $0 != 0x0D) || $0 == 0x7F }\n        return isSolid && controlFree ? .text : .unrecognized\n    }",
       "gpu": false,
       "note": "頭に FF・VT・NUL・DEL を持つ文字の STL を文字と見分けず読めないとする (STLModelTests.controlBytesInTheNameDoNotMakeItBinary が殺すはず)"
+    },
+    {
+      "id": "3136-frame-samples-start-rounds-up",
+      "origin": "#3136",
+      "file": "Sources/MokumeAudio/FrameSamples.swift",
+      "find": "Int((Double(frame) * sampleRate / Double(perSecond)).rounded(.down))",
+      "replace": "Int((Double(frame) * sampleRate / Double(perSecond)).rounded(.up))",
+      "gpu": false,
+      "note": "固定の時計のフレームの頭の標本が切り上げになり、窓の継ぎ目 ⌊N·sr/fps⌋ と 1 標本ずれる (AudioIntervalTests.stagePositionsLineUpWithTheAbsoluteWindows が殺すはず)"
+    },
+    {
+      "id": "3136-author-position-no-snap",
+      "origin": "#3136",
+      "file": "Sources/MokumeAudio/FrameSamples.swift",
+      "find": "abs(position - snapped) < 1e-6 ? snapped : position",
+      "replace": "position",
+      "gpu": false,
+      "note": "作者の時計の位置 (秒 × fps) の浮動小数のずれを整数の標本へ寄せず、窓の継ぎ目と 1 標本ずれる (AudioIntervalTests.theAuthorsPositionMatchesTheFrameFormula が殺すはず)"
+    },
+    {
+      "id": "3136-span-first-window-off-by-one",
+      "origin": "#3136",
+      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
+      "find": "let first = from / hop + 1",
+      "replace": "let first = from / hop",
+      "gpu": false,
+      "note": "区間の最初の窓の番号が 1 つ前になり、前のフレームの最後の窓が重ねて入る (AudioIntervalTests.everyGridWindowBelongsToExactlyOneFrame と spanMatchesAWindowByWindowBruteForce が殺すはず)"
+    },
+    {
+      "id": "3136-span-last-window-excludes-end",
+      "origin": "#3136",
+      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
+      "find": "let last = to / hop\n        return first <= last ? first...last : nil",
+      "replace": "let last = (to - 1) / hop\n        return first <= last ? first...last : nil",
+      "gpu": false,
+      "note": "区間の最後の窓の番号が、区間の終わりちょうどで終わる窓を落とし、その窓がどのフレームにも入らない (AudioIntervalTests.everyGridWindowBelongsToExactlyOneFrame が殺すはず)"
+    },
+    {
+      "id": "3136-span-no-fallback-window",
+      "origin": "#3136",
+      "file": "Sources/MokumeAudio/AudioAnalysis.swift",
+      "find": "?? (last >= 1 ? last...last : nil)",
+      "replace": "?? nil",
+      "gpu": false,
+      "note": "窓が 0 本のフレームで、区間の終わりまでに終わった最後の窓へ代えず spectrum が 0 になる (AudioIntervalTests.framesShorterThanTheHop が殺すはず)"
     }
   ]
 }
