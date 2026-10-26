@@ -238,6 +238,7 @@ jobs:
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
+          HANG_PROBE_KEEP_ANIMATIONS: "1"
       - name: 落ちた検査の文面を要約へ書く
         if: failure()
         run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
