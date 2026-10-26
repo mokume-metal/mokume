@@ -1,6 +1,11 @@
 name: Close cleanup
 
-# close された Issue から status: in progress を外す (#72)。
+# close の後始末を受け持つ。
+#
+# 1. close された Issue から status: in progress を外す (#72)
+# 2. merge されずに close された PR の head ブランチを消す (#3281)
+#
+# ## 1. status: in progress
 #
 # このラベルは「open かつ着手中」を並行セッションへ知らせる印で、外すのは規約上
 # 人間とエージェントの手作業だった。外し忘れると閉じた Issue に印が残り、次の
@@ -16,13 +21,28 @@ name: Close cleanup
 # parent-guard.yml も issues: closed で走る。open な子を残した親を completed で
 # close した場合、あちらが reopen する一方でこちらはラベルを外す。結果は
 # 「open かつ着手中でない」で、作業が止まった実態と合うため許容する。
+#
+# ## 2. merge されなかった PR の head ブランチ
+#
+# merge された PR のブランチはリポジトリ設定の delete_branch_on_merge が消すが、merge
+# されずに close された PR のブランチは誰も消さず、リモートに溜まっていた (#3281 の時点で
+# 5 本・最古は 1 か月前)。消しても失うものは無い — PR のコミットは refs/pull/N/head に
+# 残り、PR 画面の「Restore branch」で戻せる。
+#
+# 触らないもの: fork から出た PR (このリポジトリのブランチではない)・head が既定ブランチ・
+# 同じ head の PR がまだ open のもの (閉じて作り直した PR。ブランチを消すとその PR まで
+# 閉じる)。**PR の無いブランチは消さない** — リモートを消すと手元の同名ブランチが
+# [gone] になり、手元の掃除 (git gone-clean) が未 merge の作業を手元からも消すため。
 
 on:
   issues:
     types: [closed]
+  pull_request:
+    types: [closed]
 
+# 権限は job ごとに持たせる (使う分だけ。scripts/tests/workflow_permissions_test.py)
 permissions:
-  issues: write
+  contents: read
 
 # run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
 defaults:
@@ -34,8 +54,10 @@ jobs:
     # ラベルが無ければ job ごとスキップする (API を叩かない・実行ログも汚さない)。
     # 式全体のクォートは必須 — ラベル名の `: ` があるとクォート無しでは YAML と
     # して不正になり、workflow file issue で run が空振りする (#66 と同じクラス)
-    if: "contains(github.event.issue.labels.*.name, 'status: in progress')"
+    if: "github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'status: in progress')"
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - name: status in progress を外す
         env:
@@ -45,3 +67,33 @@ jobs:
         # ブロックスカラーで書く。1 行に畳むとラベル名の `: ` で YAML が壊れる
         run: |
           gh issue edit "$NUM" -R "$REPO" --remove-label "status: in progress"
+
+  delete-unmerged-head:
+    if: >-
+      github.event_name == 'pull_request' &&
+      !github.event.pull_request.merged &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: head ブランチを消す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          open=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq length)
+          if [ "$open" -gt 0 ]; then
+            echo "同じ head の PR がまだ open なので残す: $BRANCH"
+            exit 0
+          fi
+          # 既に消えていれば (人が先に消した・Restore せずに再度 close) 何もしない
+          if ! gh api "repos/$REPO/git/ref/heads/$BRANCH" --silent 2>/dev/null; then
+            echo "既に無い: $BRANCH"
+            exit 0
+          fi
+          gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" --silent
+          echo "消した: $BRANCH ($SHA)。戻すときは PR 画面の Restore branch か git push origin $SHA:refs/heads/$BRANCH"
