@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Accelerate
 import CoreGraphics
 import CoreVideo
 import Testing
@@ -257,5 +258,90 @@ nonisolated struct FrameConverterTests {
         }
         // 右の画素は不透明な赤のまま
         #expect(near(rgba(picture, 2, 1), [255, 0, 0, 255], within: 4))
+    }
+
+    // MARK: - 確保 (#3252)
+
+    /// 場所によって色が変わる、不透明度つきの BGRA。大きさが違っても同じ式で作る。
+    private func patterned(width: Int, height: Int) throws -> CVPixelBuffer {
+        try alphaBuffer(
+            width: width, height: height, mode: kCVImageBufferAlphaChannelMode_StraightAlpha
+        ) { x, y in
+            (
+                red: UInt8((x * 37 + y * 11) % 256), green: UInt8((x * 5 + y * 53) % 256),
+                blue: UInt8((x * 91 + y * 7) % 256), alpha: UInt8(40 + (x * 13 + y * 29) % 216)
+            )
+        }
+    }
+
+    @Test("大きさの違う元を同じ大きさで続けて呼んでも、一時の器を取り直さない")
+    func keepsTheResizeBufferForTheSameSize() throws {
+        let converter = FrameConverter(width: 2, height: 2)
+        #expect(converter.resizedBufferAddress == nil, "大きさが同じ経路は器を使わない")
+        let source = try patterned(width: 8, height: 4)
+        _ = try converter.convert(source)
+        let first = try #require(converter.resizedBufferAddress)
+        for _ in 0..<3 { _ = try converter.convert(source) }
+        #expect(converter.resizedBufferAddress == first)
+        // 小さい元でも、足りているので取り直さない
+        _ = try converter.convert(try patterned(width: 4, height: 4))
+        #expect(converter.resizedBufferAddress == first)
+    }
+
+    @Test("頼んだ大きさと同じ元は、一時の器を使わない")
+    func exactSizeSourcesNeedNoResizeBuffer() throws {
+        let converter = FrameConverter(width: 8, height: 4)
+        _ = try converter.convert(try patterned(width: 8, height: 4))
+        #expect(converter.resizedBufferAddress == nil)
+    }
+
+    /// 持ち回す器の前の中身が、次の枚へ漏れない。大きい元 → 小さい元 → 大きい元 → 同じ大きさ、
+    /// の順に 1 つの変換器へ渡し、毎回まっさらな変換器と 1 バイトも変わらないことを見る。
+    @Test("大きさ違いを続けて呼んでも、まっさらな変換器と 1 バイトも変わらない", arguments: [
+        FrameConverter.Alpha.opaque, FrameConverter.Alpha.straight,
+    ])
+    func reusedConverterMatchesAFreshOne(alpha: FrameConverter.Alpha) throws {
+        let reused = FrameConverter(width: 4, height: 4, alpha: alpha)
+        let sizes = [(8, 4), (16, 9), (6, 6), (4, 4), (8, 4), (5, 11), (16, 9), (4, 4)]
+        for (width, height) in sizes {
+            let source = try patterned(width: width, height: height)
+            let expected = try FrameConverter(width: 4, height: 4, alpha: alpha).convert(source)
+            let actual = try reused.convert(source)
+            #expect(actual == expected, "\(width)x\(height) \(alpha)")
+            #expect(actual.bytes.count == 4 * 4 * 4)
+        }
+    }
+
+    /// 出力の配列は 0 埋めの確保を挟まない。**全部のバイトを書き切っていること**を、確保の前に
+    /// ごみ (0xCD) を詰めて捨てた直後の確保で見る (書き残しがあればごみが残る)。
+    @Test("出力の配列は、未初期化の確保でも全部のバイトを書き切る", arguments: [
+        FrameConverter.Alpha.opaque, FrameConverter.Alpha.straight,
+    ])
+    func writesEveryByteOfTheOutput(alpha: FrameConverter.Alpha) throws {
+        let source = try alphaBuffer(
+            width: 32, height: 32, mode: kCVImageBufferAlphaChannelMode_StraightAlpha
+        ) { _, _ in (red: 10, green: 20, blue: 30, alpha: 255) }
+        for (width, height) in [(32, 32), (16, 16), (24, 16)] {
+            let converter = FrameConverter(width: width, height: height, alpha: alpha)
+            for _ in 0..<8 {
+                // 同じ大きさの配列にごみを詰めて、すぐ手放す (malloc の空き札に残る)
+                for _ in 0..<16 { _ = [UInt8](repeating: 0xCD, count: width * height * 4) }
+                let picture = try converter.convert(source)
+                #expect(!picture.bytes.contains(0xCD), "\(width)x\(height) \(alpha)")
+            }
+        }
+    }
+
+    @Test("vImage が失敗したら、書けたことにせず変換の失敗として断る")
+    func aFailingFillIsRefused() {
+        #expect(throws: FrameConverter.Failure.conversion(-21772)) {
+            try FrameConverter.picture(width: 4, height: 4, alpha: .opaque) { _ in -21772 }
+        }
+        // 失敗した後も次の呼び出しは成り立つ
+        let ok = try? FrameConverter.picture(width: 2, height: 2, alpha: .straight) { destination in
+            memset(destination.data, 7, 2 * 2 * 4)
+            return vImage_Error(kvImageNoError)
+        }
+        #expect(ok?.bytes == [UInt8](repeating: 7, count: 16))
     }
 }

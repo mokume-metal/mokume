@@ -9,26 +9,41 @@ extension SketchPart {
     ///
     /// <!-- example: 文脈 var trail: Canvas! -->
     /// ```swift
-    /// func setup() {
-    ///     trail = try! createGraphics(400, 400)
+    /// func setup() throws {
+    ///     trail = try createGraphics(400, 400)
     /// }
     ///
     /// func draw() {
-    ///     trail.beginDraw()
-    ///     trail.fill(255, 102, 51)
-    ///     trail.circle(mouseX, mouseY, 20)   // 消さないので跡が残る
-    ///     trail.endDraw()
+    ///     draw(into: trail) {
+    ///         fill(255, 102, 51)
+    ///         circle(mouseX, mouseY, 20)   // 消さないので跡が残る
+    ///     }
     ///
     ///     image(trail, 0, 0)
     /// }
     /// ```
     ///
+    /// **描き場所へ描く書き方は 3 つある。** 画面向けに書いた描く関数 (``circle(_:_:_:)`` など) を
+    /// そのまま使い回すなら ``draw(into:_:)`` (上の例)。描き場所を ``Canvas`` として明示して扱い、
+    /// 描き切りの失敗を自分で捕まえたいなら ``Canvas/draw(_:)``。区間を自分で開け閉めするなら
+    /// ``Canvas/beginDraw()`` と ``Canvas/endDraw()``。
+    ///
+    /// | 書き方 | 素の `circle(…)` の描画先 | 描き切りの失敗 |
+    /// | --- | --- | --- |
+    /// | ``draw(into:_:)`` | 描き場所 (閉包を抜けると本体へ戻る) | 警告する |
+    /// | ``Canvas/draw(_:)`` (`try trail.draw { … }`) | 本体 (描き場所へは `trail.circle(…)` と書く) | ``RenderFailure`` を投げる |
+    /// | ``Canvas/beginDraw()`` / ``Canvas/endDraw()`` | 本体 (描き場所へは `trail.circle(…)` と書く) | `endDraw()` で警告する |
+    ///
+    /// 3 つの違いの詳しい説明は ``draw(into:_:)`` の「3 つの `draw` の違い」に、手動の対の規則は
+    /// 下の「置くのは `beginDraw()` と `endDraw()` の間だけ」にある。次の例は手動の形で、`setup()` で
+    /// 1 度だけ描いた描き場所を、等倍と縮小で 2 度置く。
+    ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var pad: Canvas! -->
     ///     ```swift
-    ///     func setup() {
-    ///         pad = try! createGraphics(160, 160)
+    ///     func setup() throws {
+    ///         pad = try createGraphics(160, 160)
     ///         pad.beginDraw()
     ///         pad.background(38, 46, 61)
     ///         pad.noStroke()
@@ -46,7 +61,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円 -->
-    ///     ![同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円](https://i.gyazo.com/c4f5cef49f49d1b3e30312fe28a368ec.png)
+    ///     ![同じ描き場所が 2 つ。左は等倍で大きく、右は小さく。どちらも左上寄りに橙色の円](https://i.gyazo.com/f72febd86fd1cc325ea61afe6b7077c3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -114,7 +129,7 @@ extension SketchPart {
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
-    // shot: 1 snippet=952dfdc7
+    // shot: 1 snippet=a1f4852e
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
         try Self.resourceCanvas(RenderFailure.self).createGraphics(width, height)
     }
@@ -145,6 +160,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 橙色の半透明の円が楕円の軌道に沿って動き、通った跡が弧になって積み重なっていく | frames=60 -->
+    ///     ![橙色の半透明の円が楕円の軌道に沿って動き、通った跡が弧になって積み重なっていく](https://i.gyazo.com/24c45ff7db2d4a04d444e08c5ea55c6b.gif)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -173,8 +189,51 @@ extension SketchPart {
     /// ```
     ///
     /// **入力 (``mouseX``・``mouseY``・キーなど) は本体の窓のまま**で、描き場所の座標へは変わらない。描き場所を
-    /// 本体と同じ大きさにして、マウスの位置にそのまま描く使い方を想定している。時刻 (``time``・``deltaTime``・
-    /// ``frameCount``) も本体と同じである。``orbitControl(_:_:_:)`` の道具の状態 (``orbit``) は本体と共有で、
+    /// 本体と同じ大きさにして、マウスの位置にそのまま描く使い方を想定している。
+    ///
+    /// **描き場所が本体より小さいときは、閉包の中で本体の座標を描き場所の座標へ写す。** 閉包の中で切り替わるのは
+    /// ``width`` と ``height`` だけで (描き場所の大きさになる)、``mouseX`` と ``mouseY`` は本体の座標のままである。
+    /// 本体が 400×400 で、200×100 の描き場所 `pad` を (0, 0) から 400×400 に引き伸ばして出すなら、本体のマウス
+    /// (200, 200) は `pad` の (100, 50) に当たる。`circle(mouseX, mouseY, …)` と書くと、`pad` の外 (200×100 の外) へ
+    /// 描いてしまうので、`mouseX * width / 400`・`mouseY * height / 400` と写す。一般には、本体の座標から
+    /// 描き場所を置いた位置を引き、置いた倍率 (置いた幅 ÷ 描き場所の幅) で割る。写しを自動では行わない。
+    /// 次の例は、マウスの代わりに本体の座標で動く点 (白い輪) を使う。描き場所に残る橙色の筆跡の先頭が、その輪と重なる:
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var pad: Canvas! -->
+    ///     ```swift
+    ///     func setup() throws {
+    ///         pad = try createGraphics(200, 100)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         // 本体 (400×400) の座標で動く点。マウスなら (mouseX, mouseY)
+    ///         let x = 200 + 150 * cos(time * 3)
+    ///         let y = 200 + 100 * sin(time * 4)
+    ///
+    ///         draw(into: pad) {
+    ///             noStroke()
+    ///             fill(255, 102, 51)
+    ///             circle(x * width / 400, y * height / 400, 4)   // width・height は pad の 200・100
+    ///         }
+    ///
+    ///         background(23, 26, 31)
+    ///         image(pad, 0, 0, 400, 400)   // pad を 400×400 に引き伸ばして出す
+    ///         noFill()
+    ///         stroke(255)
+    ///         circle(x, y, 16)             // 本体の点
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 灰色の下地に橙色の筆跡が曲線を描いて積み重なり、先頭を白い輪が囲んでいる。筆跡は縦に長く引き伸ばされている | size=400x400 frames=60 -->
+    ///     ![灰色の下地に橙色の筆跡が曲線を描いて積み重なり、先頭を白い輪が囲んでいる。筆跡は縦に長く引き伸ばされている](https://i.gyazo.com/64ba078d83147430096ac0d3b243943c.gif)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// 時刻 (``time``・``deltaTime``・``frameCount``) も本体と同じである。``orbitControl(_:_:_:)`` の道具の状態 (``orbit``) は本体と共有で、
     /// 視点を書く先だけが描き場所になる。道具の始まりは本体の面の中央で、道具の状態を進めてよいかも
     /// 本体のフレームで決まる (`setup()` の中から呼ぶと、本体と同じく断る)。
     ///
@@ -242,7 +301,8 @@ extension SketchPart {
     /// - Parameters:
     ///   - graphics: 描く先の描き場所。
     ///   - body: 中の呼び出しが `graphics` へ向く閉包。
-    // shot: 後で撮る
+    // shot: 1 snippet=1dbb3334
+    // shot: 2 snippet=ba1fde9c
     public func draw(into graphics: Canvas, _ body: () -> Void) {
         guard let runtime = Self.liveRuntime() else { return }
         let previous = runtime.drawingInto
