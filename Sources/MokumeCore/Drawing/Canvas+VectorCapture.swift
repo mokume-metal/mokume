@@ -288,8 +288,9 @@ extension Canvas {
     ///   落とす。
     /// - 貼る絵と勾配は塗りにしか効かない。輪郭を持つ図形は、塗りだけを落として輪郭を書く
     ///   (黙って輪郭まで失わない)。
-    /// - 図形の塗りと輪郭を何度かの口に分けて控える図形 (破線で塗りもある図形・弧) は、
-    ///   ``countingOneVectorFigure(_:)`` で括り、同じ図形を 2 度数えない。
+    /// - 図形の塗りと輪郭を何度かの口に分けて控える図形 (破線で塗りもある図形。塗りは ``appendForm``、輪郭は
+    ///   ``recordVectorDashedForm`` が控える) は、``countingOneVectorFigure(_:)`` で括り、同じ図形を 2 度数えない。
+    ///   貼る絵が効く弧 (``Canvas/placeArcInParts``) は、弧 1 つを真の形で 1 度に控えるので、括りは要らない。
     ///
     /// 書くものが無ければ nil。
     func vectorWritable(
@@ -309,7 +310,7 @@ extension Canvas {
 
     /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数える。**
     ///
-    /// 破線で塗りもある図形は塗りと輪郭を別々に、既定の弧は扇の塗りと開いた弧の輪郭を別々に控える。
+    /// 破線で塗りもある図形は、塗り (``appendForm``) と輪郭 (``recordVectorDashedForm``) を別々の口で控える。
     /// それぞれが同じ理由 (利用者の断片など) で落とすと、見た目は 1 つの図形なのに 2 と数えてしまう。
     func countingOneVectorFigure(_ body: () -> Void) {
         guard let sink = vectorSink() else { return body() }
