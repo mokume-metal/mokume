@@ -489,13 +489,15 @@ public final class SketchRuntime {
     /// 窓に出す数字。**観測の応答が返すものと同じ集計器から採る** (ADR-0030 決定 7)。
     var frameNumbers: FrameNumbers {
         let moment = now()
+        let warnings = Diagnostics.warningSummary()
         return FrameNumbers(
             frameCount: timing.frameCount,
             time: Double(timing.time),
             frameRate: tempo.frameRate(now: moment),
             frameTimeMs: tempo.frameTimeMs(now: moment)?.mean,
             overBudgetFrames: budget.overBudgetFrames,
-            heaviestFrame: budget.heaviest?.frame)
+            heaviestFrame: budget.heaviest?.frame,
+            warningCount: warnings.count, lastWarning: warnings.last)
     }
 
     /// これまでに描いたフレームの数。

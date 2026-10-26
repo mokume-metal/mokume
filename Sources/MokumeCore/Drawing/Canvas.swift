@@ -340,8 +340,8 @@ public final class Canvas {
         /// どおり変換の違う置き場所も同じ雛形に畳む。**広げ方を頂点段へ移した畳み (``thinFillCapacity``・
         /// #2208) では使わない** — ``expandsThinFillsInVertexStage`` を偽にした検査用の形だけが入れる。
         var fillLinear: ThinFold?
-        /// 頂点段で広げる細い塗りの雛形が持つ片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ・#2208・``ThinFillRecord/capacity(forPieces:)``)。
-        /// **この区間だけは、大きい区間の雛形が小さい区間の置き場所も受ける** (``joined(with:)``・``holds(_:)``)。
+        /// 頂点段で広げる細い塗りの雛形が持つ片の数 (置き場所の片の数そのもの・上限 64・#2208・#3178・``ThinFillRecord/capacity(forPieces:)``)。
+        /// **この片の数だけは、大きい片の数の雛形が小さい片の数の置き場所も受ける** (``joined(with:)``・``holds(_:)``)。
         /// 置き場所の 2x2 は鍵に入らない —
         /// 広げ方は置き場所ごとの記述 (``ThinFillRecord``) が持つので、回転だけが違う置き場所も 1 つの雛形に
         /// 畳まれる。細い塗りでなければ 0 で、これまでどおり。``expandsThinFillsInVertexStage`` を偽にすると

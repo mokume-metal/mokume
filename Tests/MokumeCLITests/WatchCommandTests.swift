@@ -280,6 +280,91 @@ struct WatchCommandTests {
         #expect(line.contains(WatchCommand.nothingRunningLine), "\(line)")
     }
 
+    // MARK: - 通らなかったビルドの最初の error: の行 (#3087)
+
+    private func failed(_ output: String) -> BuildReport {
+        .failed(
+            status: 1, output: output, stamp: nil, configuration: "debug",
+            timings: BuildReport.Timings(detectMs: nil, buildMs: 1, relaunchMs: nil))
+    }
+
+    /// 例: 桁つきの `<パス>:<行>:<桁>: error: <文>`。手前の警告や note は拾わず、最初の 1 本を言い換えずに出す。
+    @Test("通らなかった回の行に、最初の error: の行 (ファイル・行・桁・文) を添える")
+    func addsTheFirstErrorLineToTheFailedBuildNotice() throws {
+        let first = "/work/Sources/App/main.swift:12:5: error: cannot find 'circel' in scope"
+        let output = """
+            Building for debugging...
+            /work/Sources/App/main.swift:3:9: warning: variable 'x' was never used
+            \(first)
+                circel(0, 0, 50)
+                ^~~~~~
+            /work/Sources/App/main.swift:20:1: error: expected '}' at end of brace statement
+            error: fatalError
+            """
+        let line = try #require(WatchCommand.notice(for: failed(output), holdingPrevious: true))
+        #expect(line == "The build failed — " + WatchCommand.holdingLine + "\n" + first, "\(line)")
+        let nothing = try #require(WatchCommand.notice(for: failed(output), holdingPrevious: false))
+        #expect(nothing.hasSuffix("\n" + first), "\(nothing)")
+    }
+
+    @Test("桁の無い形も拾い、色の制御列は落とす")
+    func readsTheErrorLineWithoutAColumnAndStripsColour() throws {
+        #expect(failed("a.swift:7: error: boom").firstErrorLine == "a.swift:7: error: boom")
+        let coloured = "\u{1B}[1m/w/a.swift:7:2: \u{1B}[0;1;31merror: \u{1B}[0;1mboom\u{1B}[0m"
+        #expect(failed(coloured).firstErrorLine == "/w/a.swift:7:2: error: boom")
+    }
+
+    /// ファイルと行が付かない `error:` の行 (リンクの失敗など)・`error:` が無い失敗は、今の行のまま。
+    @Test("ファイルと行の付かない error: や error: の無い失敗は、今の行のまま")
+    func leavesTheLineAloneWithoutAFileAndLine() {
+        for output in ["", "error: link command failed", "ld: symbol(s) not found\nerror: fatalError"] {
+            let line = WatchCommand.notice(for: failed(output), holdingPrevious: true)
+            #expect(line == "The build failed — " + WatchCommand.holdingLine, "\(output)")
+        }
+    }
+
+    /// **肝心なのは末尾の文**なので、長いときは中を詰める (プレビューの他の行と同じ規則・同じ上限)。末尾を省くと、
+    /// 幅の狭いプレビューで文が先に落ちる。
+    @Test("長い error: の行は、頭のパスと末尾の文を残して中を詰める。上限は他の行と同じ")
+    func abbreviatesALongErrorLineInTheMiddle() throws {
+        let place = "/Users/someone/Repos/a-long-project-name/.build/checkouts/Sources/Sketch/Deeply/Nested/main.swift"
+        let sentence = "cannot find 'circel' in scope"
+        let long = "\(place):12:5: error: \(sentence)"
+        let error = try #require(failed(long).firstErrorLine)
+        #expect(error == BuildReport.abbreviated(long, to: BuildReport.noticeLimit), "\(error)")
+        #expect(error.count == BuildReport.noticeLimit, "\(error)")
+        #expect(error.hasSuffix(sentence), "文が落ちた: \(error)")
+        #expect(error.hasPrefix("/Users/someone/Repos/"), "頭を残していない: \(error)")
+        // 上限に収まる行は、そのまま
+        let short = "/w/a.swift:1:1: error: boom"
+        #expect(failed(short).firstErrorLine == short)
+    }
+
+    /// **行の頭からパス・行番号 1 以上を求める。** ファイルを指さない疑似位置 (`<unknown>:0:`)・行 0・
+    /// 文中にたまたま `:1: error: ` を含む警告や注記は、ファイルと行の付いた `error:` ではない。
+    @Test("疑似位置・行 0・文中に error: を含む警告や注記・字下げした行は拾わず、次の本物を拾う")
+    func skipsLinesThatAreNotARealFileAndLine() throws {
+        let real = "/w/Sources/App/main.swift:9:3: error: expected expression"
+        let decoys = [
+            "<unknown>:0: error: unable to load standard library",
+            "<module-includes>:1:1: error: umbrella header not found",
+            "/w/a.swift:0: error: no line",
+            "/w/a.swift:0:4: error: no line either",
+            "/w/a.swift:3:9: warning: this mentions /w/b.swift:1: error: inside a sentence",
+            "/w/a.swift:3:9: note: see also b.swift:2:2: error: here",
+            "  /w/c.swift:5:5: error: indented code echo",
+            "error: /w/lib.c:1:10 'x.h' file not found",
+        ]
+        let output = decoys.joined(separator: "\n") + "\n" + real
+        #expect(failed(output).firstErrorLine == real)
+        for decoy in decoys {
+            #expect(failed(decoy).firstErrorLine == nil, "拾ってはいけない行を拾った: \(decoy)")
+            #expect(
+                WatchCommand.notice(for: failed(decoy), holdingPrevious: true)
+                    == "The build failed — " + WatchCommand.holdingLine, "\(decoy)")
+        }
+    }
+
     /// **1 枚目の待ちは、待ちを置いた後の 1 度だけ畳む** (#2875)。2 つの窓が独立に合図を出すので
     /// 2 度目では畳まない。作り直しが始まった後に遅れて来た合図でも畳まない — 畳むと、
     /// 作り直しの行が消える。

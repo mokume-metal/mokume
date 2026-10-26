@@ -58,6 +58,13 @@ public nonisolated enum Diagnostics {
         (digest ?? sharedDigest).takeUnreported()
     }
 
+    /// このプロセスが言った警告の数と最後の 1 行。**読んでも空にならない** (``takeUnreported()`` とは別)。
+    ///
+    /// 子が絵と同じ面へ載せ、道具の窓が件数と最後の 1 行を出す ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    package static func warningSummary() -> (count: Int, last: String?) {
+        (digest ?? sharedDigest).summary()
+    }
+
     /// 失敗を、**型と理由の 1 行**にする。``warn(_:)`` の文面に埋める (#2263)。
     ///
     /// **符号化・復号の失敗に `localizedDescription` を使わない** — `EncodingError` /

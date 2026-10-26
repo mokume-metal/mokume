@@ -202,7 +202,7 @@ extension Canvas {
             ringSegments = ringSplitMemo.count(forRadius: radius, scale: scale)
         }
         // 細い塗り: 広げ方を頂点段へ移した畳みでは、置き場所ごとの記述を求める (#2208)。雛形の鍵には
-        // 片の数の区間 (1・10・16 と 8 刻みで 64 まで = 9 つ) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
+        // 片の数 (置き場所の片の数そのもの・上限 64) だけが入る。移さない形 (検査が比べる) は、鍵に 2x2 そのものを入れる
         var thinFill: ThinFillPlacing?
         var thinFillCapacity = 0
         var fillLinear: ThinFold?
@@ -261,8 +261,8 @@ extension Canvas {
         if let graphics = (key.texture?.owner as? RenderTarget)?.drawer { note(placing: graphics) }
         notePaintPlacement()
 
-        // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数の区間が小さい
-        // 置き場所も大きい区間の雛形に受ける** (区間が上がったときだけ、新しい雛形になる)
+        // 開いている雛形と同じ形なら、置き場所を足すだけで済む。**細い塗りは、片の数が小さい
+        // 置き場所も大きい片の数の雛形に受ける** (片の数が上がったときだけ、新しい雛形になる)
         if let open = openFlat, open.key == key || open.key.holds(key) {
             appendFolded(
                 placement(at: anchor), thinFill: thinFill, outline: { makeOutline(ringSegments) })
@@ -313,7 +313,7 @@ extension Canvas {
     ) {
         // 描き場所を置いた記録は、呼び手 (``draw(folding:at:outline:)``) が組み替えの前に取っている
         if let open = openFlat, isBatchFull(flatInstances.count, since: open.instanceStart) {
-            // 開き直す雛形は、開いていた雛形の区間を引き継ぐ (区間が上がった後に小さい区間へ戻さない)
+            // 開き直す雛形は、開いていた雛形の片の数を引き継ぐ (片の数が上がった後に小さい片の数へ戻さない)
             openFlatTemplate(key: open.key, outline: makeOutline())
         }
         flatInstances.append(placement)

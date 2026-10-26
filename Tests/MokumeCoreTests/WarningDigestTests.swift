@@ -214,4 +214,35 @@ struct WarningDigestTests {
             found == Set(Self.directWriteAllowlist.keys),
             "標準エラーへ直に書く場所が一覧とずれている: \(found.symmetricDifference(Self.directWriteAllowlist.keys).sorted())")
     }
+
+    // MARK: - 窓のための件数と最後の 1 行 (#3087)
+
+    @Test("言った数と最後の 1 行は、観測が行を持っていっても残り、言うたびに進む")
+    func theSummarySurvivesTakingTheLines() {
+        scoped { _ in
+            #expect(Diagnostics.warningSummary().count == 0)
+            #expect(Diagnostics.warningSummary().last == nil)
+            Diagnostics.warn("first")
+            Diagnostics.warn("second")
+            #expect(Diagnostics.takeUnreported() == ["first", "second"])
+            let summary = Diagnostics.warningSummary()
+            #expect(summary.count == 2, "観測が持っていった行を、窓の数から落とした")
+            #expect(summary.last == "second")
+            Diagnostics.warn("third")
+            #expect(Diagnostics.warningSummary().count == 3)
+            #expect(Diagnostics.warningSummary().last == "third")
+        }
+    }
+
+    /// 溜め場は最初の上限ぶんを残して後を捨てる。窓の数はそれに縛られず、最後の 1 行は捨てた後に言った行である。
+    @Test("溜め場の上限を越えても、件数は言った数そのもので、最後の 1 行は捨てた側に言った行になる")
+    func theSummaryIsNotBoundedByTheLimit() {
+        scoped(limit: 3) { _ in
+            for number in 1...10 { Diagnostics.warn("line \(number)") }
+            let summary = Diagnostics.warningSummary()
+            #expect(summary.count == 10)
+            #expect(summary.last == "line 10")
+            #expect(Diagnostics.takeUnreported().count == 4, "観測の側の上限は変わらない")
+        }
+    }
 }

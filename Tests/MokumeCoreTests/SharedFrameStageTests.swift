@@ -887,6 +887,156 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **子が言った警告は、道具の窓が控えて出す** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 速さと違い古くならない (``RemoteTempo`` の鮮度の外) ので、次の世代の絵が来るまで残り、
+    /// 新しい世代が何も言っていなければ消える。
+    @Test("子が言った警告は台が控え、新しい世代の絵が来て何も言っていなければ消える")
+    func theStageKeepsTheWarningsUntilTheNextGenerationDraws() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let first = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("warnings"))
+            defer { stage.close() }
+            stage.open()
+            #expect(stage.warnings == nil, "絵が来る前から警告を名乗った")
+
+            var spoken = SharedFrameSurfaceTests.numbers(frame: 1)
+            spoken.warningCount = 2
+            spoken.lastWarning = "Transforms are written again every frame"
+            try draw(first, frame: 1, gpu: gpu, numbers: spoken)
+            stage.displayLinkFired()
+            #expect(
+                stage.warnings
+                    == WarningSummary(count: 2, last: "Transforms are written again every frame"))
+
+            // 同じ世代の次の枚数 (何も言い足さない) でも残る
+            var again = SharedFrameSurfaceTests.numbers(frame: 2)
+            again.warningCount = spoken.warningCount
+            again.lastWarning = spoken.lastWarning
+            try draw(first, frame: 2, gpu: gpu, numbers: again)
+            stage.displayLinkFired()
+            #expect(stage.warnings?.count == 2)
+
+            // 何も言っていない新しい世代の絵が来れば、前の世代の警告は消える
+            let next = try publish(in: facet, gpu: gpu, pid: 300, frames: 0, pointerLock: false)
+            try draw(next, frame: 1, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.warnings == nil, "新しい世代が何も言っていないのに、前の世代の警告が残っている")
+        }
+    }
+
+    /// **警告の控えは、面の値と一緒に動く。** 数字を載せない面 (速さを載せない古いライブラリの子) は数字の読みで
+    /// 先に抜けるので、そこで抜けると前の値が残る ([#3087](https://github.com/mokume-metal/mokume/issues/3087) の反証)。
+    @Test("数字の載らない面の絵が来たら、前の警告は残らない")
+    func aSurfaceWithoutNumbersCarriesNoWarnings() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let shared = try makeSurface(in: facet, gpu: gpu, drawing: 0)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("no-numbers"))
+            defer { stage.close() }
+            stage.open()
+            var spoken = SharedFrameSurfaceTests.numbers(frame: 1)
+            spoken.warningCount = 2
+            spoken.lastWarning = "spoken once"
+            try draw(shared, frame: 1, gpu: gpu, numbers: spoken)
+            stage.displayLinkFired()
+            #expect(stage.warnings?.count == 2, "検査の前提: 警告を名乗っている")
+
+            // 次の絵は、数字を載せない子の絵 (数字の鍵が無い)
+            try draw(shared, frame: 2, gpu: gpu)
+            stripNumbers(from: shared)
+            stage.displayLinkFired()
+            #expect(stage.warnings == nil, "数字の載らない面なのに、前の警告が残っている")
+        }
+    }
+
+    /// **乗り換えでは前の世代の警告を捨て、前の版へ戻すときは死んだ世代の警告を捨てる** ([#3087])。戻した前の版の
+    /// 値は、次のリフレッシュがその面から読み直す。
+    @Test("乗り換えた瞬間に前の世代の警告は消え、乗り換えないと伝えれば死んだ世代の警告も消えて前の版の値に戻る")
+    func promotionAndAbandonmentDropTheOldWarnings() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            // 窓を開かない台: 乗り換えても 1 枚目の合図は鳴らず、直前の世代を持ち続ける
+            let previous = try publish(in: facet, gpu: gpu, pid: 100, frames: 0, pointerLock: false)
+            var spoken = SharedFrameSurfaceTests.numbers(frame: 1)
+            spoken.warningCount = 3
+            spoken.lastWarning = "from the previous version"
+            try draw(previous, frame: 1, gpu: gpu, numbers: spoken)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("warnings-handover"))
+            defer { stage.close() }
+            var seenAtPromotion: [WarningSummary?] = []
+            stage.onGenerationPromoted = { [unowned stage] _ in seenAtPromotion.append(stage.warnings) }
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100 && stage.warnings?.count == 3, "検査の前提")
+            seenAtPromotion.removeAll()
+
+            // 死ぬ子 (200) は別の警告を言って 1 枚書き、乗り換えられる
+            let dead = try publish(in: facet, gpu: gpu, pid: 200, frames: 0, pointerLock: false)
+            var deadSpoken = SharedFrameSurfaceTests.numbers(frame: 1)
+            deadSpoken.warningCount = 7
+            deadSpoken.lastWarning = "from the dying child"
+            try draw(dead, frame: 1, gpu: gpu, numbers: deadSpoken)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            #expect(seenAtPromotion.count == 1 && seenAtPromotion[0] == nil, "乗り換えた時点で前の世代の警告が残っている")
+            #expect(stage.warnings?.count == 7, "乗り換えた世代の警告を読んでいない")
+
+            // 見張りが乗り換えないと決める: 死んだ子の警告は消え、次のリフレッシュで前の版の値に戻る
+            stage.abandonIncoming(pids: [200])
+            #expect(stage.displayedPID == 100)
+            #expect(stage.warnings == nil, "死んだ世代の警告が残っている: \(String(describing: stage.warnings))")
+            stage.displayLinkFired()
+            #expect(stage.warnings?.count == 3 && stage.warnings?.last == "from the previous version")
+        }
+    }
+
+    /// **プレビューは、後から来た警告で面の枠を伸ばす** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// つまみの顔ぶれが変わらなければ面は作り直さないので、拍ごとに警告を押し込んで枠を置き直す。
+    @Test("プレビューの枠は、警告が後から来ると伸び、新しい世代が何も言わなければ縮む")
+    func thePreviewPanelGrowsWhenAWarningArrivesLater() throws {
+        try withFacet { facet in
+            let params = facet.appendingPathComponent("params", isDirectory: true)
+            try FileManager.default.createDirectory(at: params, withIntermediateDirectories: true)
+            let gpu = try RenderDevice()
+            let first = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false)
+            let preview = try SharedFramePreview(
+                gpu: gpu, facet: facet, params: params, title: "警告で伸びる-\(UUID().uuidString)")
+            preview.open()
+            defer { preview.close() }
+            preview.stage.displayLinkFired()
+            let bare = try #require(preview.panelHeight)
+
+            var spoken = SharedFrameSurfaceTests.numbers(frame: 2)
+            spoken.warningCount = 1
+            spoken.lastWarning = "Transforms are written again every frame, so call this from draw()."
+            try draw(first, frame: 2, gpu: gpu, numbers: spoken)
+            preview.stage.displayLinkFired()
+            #expect(preview.stage.warnings?.count == 1, "検査の前提: 台が警告を控えた")
+            // 拍の頭で面へ押し込み、その後で読むので、面に載るのは次の拍
+            preview.stage.displayLinkFired()
+            let grown = try #require(preview.panelHeight)
+            #expect(grown > bare, "警告が来たのに枠が伸びていない: \(bare) → \(grown)")
+
+            // 何も言っていない新しい世代へ乗り換えれば、欄は消えて枠は元の丈に戻る
+            let next = try publish(in: facet, gpu: gpu, pid: 200, frames: 0, pointerLock: false)
+            try draw(next, frame: 1, gpu: gpu)
+            preview.stage.displayLinkFired()
+            preview.stage.displayLinkFired()
+            preview.stage.displayLinkFired()
+            #expect(preview.stage.warnings == nil)
+            #expect(preview.panelHeight == bare, "欄が消えたのに枠が縮んでいない")
+        }
+    }
+
+    /// 面から数字の鍵 (進めた枚数と時刻) を外す。数字を載せない子の面を作る。
+    private func stripNumbers(from shared: SharedFrameSurface) {
+        for id in shared.ids {
+            guard let surface = IOSurfaceLookup(id) else { continue }
+            IOSurfaceRemoveValue(surface, SharedFrameSurface.TempoAttribute.frameCount as CFString)
+            IOSurfaceRemoveValue(surface, SharedFrameSurface.TempoAttribute.time as CFString)
+        }
+    }
+
     /// **受け取れない知らせの経路も同じ形** ([#2928] の経路・[#2983])。生きた前の世代の次の 1 枚で頼みが
     /// 戻らない。
     ///
@@ -1836,13 +1986,14 @@ struct SharedFrameStageTests {
     private func draw(
         _ shared: SharedFrameSurface, frame: Int, gpu: RenderDevice, width: Int = 32,
         height: Int = 32, pointerLock: Bool = false, cursorHidden: Bool = false,
-        selection: SelectionBroker.Request? = nil
+        numbers: FrameNumbers? = nil, selection: SelectionBroker.Request? = nil
     ) throws {
         let source = try RenderTarget(gpu: gpu, width: width, height: height)
         try source.fill(with: .linear(red: 0, green: 0, blue: 0))
         let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
         try shared.write(
-            source, using: presenter, numbers: SharedFrameSurfaceTests.numbers(frame: frame),
+            source, using: presenter,
+            numbers: numbers ?? SharedFrameSurfaceTests.numbers(frame: frame),
             pointerLock: pointerLock, cursorHidden: cursorHidden, selection: selection)
         // 名乗りは焼きの結末を見てからなので、結末が届くのを待ってから名乗らせる (#2735)
         awaitOutcomes(gpu)

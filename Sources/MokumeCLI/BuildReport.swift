@@ -233,6 +233,39 @@ struct BuildReport: Encodable, Equatable {
         return Self.abbreviated(line, to: Self.noticeLimit)
     }
 
+    /// 通らなかった作り直しの出力のうち、**最初の `error:` の行** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 無ければ `nil`。
+    ///
+    /// 拾う形は **行の頭が** `<パス>:<行>:<桁>: error: <文>` (桁の無い `<パス>:<行>: error: <文>` も)。
+    /// - パスは `<` で始まらない (`<unknown>:0: error: …` のような、ファイルを指さない疑似位置は拾わない)
+    /// - 行は 1 以上 (行 0 は、行を指さない)
+    /// - 位置は行の頭に限る — 文中にたまたま `:1: error: ` を含む警告・注記の行は拾わない
+    /// - **C 系ターゲットの失敗は拾わない。** `swift build` は clang の失敗を `error: <パス>:<行>:<桁> <文>`
+    ///   (`: error:` を持たず、`fatal error:` でもない) の形で出す (ヘッダが見つからない等・実測) ので、この形には
+    ///   当たらない。Swift の失敗だけが対象で、C 系は今の行のまま (端末には出ている)
+    ///
+    /// ファイルと行が付かない `error:` の行 (リンクの失敗など) は拾わない — 窓の行は、直す場所が分かる行だけを
+    /// 出す。端末に出た行を言い換えず、色の制御列だけを落とす。長いときは、肝心な文が末尾にあるので**中を詰める**
+    /// (プレビューの他の行と同じ規則・同じ上限 — ``abbreviated(_:to:)``・``noticeLimit``)。
+    var firstErrorLine: String? {
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let line = Self.stripEscapes(String(raw))
+            guard line.range(of: Self.errorLinePattern, options: .regularExpression) != nil else {
+                continue
+            }
+            return Self.abbreviated(line.trimmingCharacters(in: .whitespaces), to: Self.noticeLimit)
+        }
+        return nil
+    }
+
+    /// 行の頭の `<パス>:<行>(:<桁>)?: error: `。パスは `:` を含まず `<` で始まらない、行は 1 以上。
+    private static let errorLinePattern = #"^[^<:\s][^:]*:[1-9][0-9]*(:[0-9]+)?: error: "#
+
+    /// 色の制御列 (`ESC [ … m`) を落とす。`swift build` の出力は端末向けに色が付くことがある。
+    private static func stripEscapes(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+    }
+
     /// 長い 1 行を、頭と末尾を残して中を詰める。
     static func abbreviated(_ line: String, to limit: Int) -> String {
         guard line.count > limit else { return line }

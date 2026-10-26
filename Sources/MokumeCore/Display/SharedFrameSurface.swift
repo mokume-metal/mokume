@@ -117,6 +117,10 @@ final class SharedFrameSurface {
         static let overBudgetFrames = "mokume.overBudgetFrames"
         /// いちばん重かったフレームの番号。**まだ測っていなければ載らない。**
         static let heaviestFrame = "mokume.heaviestFrame"
+        /// この子が起動から言った警告の数 (#3087)。
+        static let warningCount = "mokume.warningCount"
+        /// 最後に言った警告の文面 (#3087)。**まだ何も言っていなければ載らない。** 古いライブラリの子は載せない。
+        static let lastWarning = "mokume.lastWarning"
     }
 
     /// スケッチがカーソルを捕まえるよう頼んでいるかを載せる属性の名前 (1 で頼んでいる)
@@ -680,6 +684,18 @@ final class SharedFrameSurface {
             surface, TempoAttribute.overBudgetFrames as CFString,
             NSNumber(value: numbers.overBudgetFrames))
         set(numbers.heaviestFrame.map(Double.init), as: TempoAttribute.heaviestFrame, on: surface)
+        IOSurfaceSetValue(
+            surface, TempoAttribute.warningCount as CFString, NSNumber(value: numbers.warningCount))
+        // **文面は言っていなければ消す。** 面は使い回されるので、消さなければ前の文面が残る。
+        // **載せる前に、読み手が出す長さに切る** (``WarningSummary/line(_:)``)。毎フレーム書き直す属性に、
+        // 上限の無い文面を載せ続けない
+        if let last = numbers.lastWarning {
+            IOSurfaceSetValue(
+                surface, TempoAttribute.lastWarning as CFString,
+                WarningSummary.line(last) as CFString)
+        } else {
+            IOSurfaceRemoveValue(surface, TempoAttribute.lastWarning as CFString)
+        }
     }
 
     /// 捕まえの要求を面へ載せる。**頼んでいなければ属性ごと消す** — 面は使い回されるので、
@@ -871,7 +887,9 @@ final class SharedFrameSurface {
             frameRate: number(TempoAttribute.frameRate, on: surface)?.doubleValue,
             frameTimeMs: number(TempoAttribute.frameTimeMs, on: surface)?.doubleValue,
             overBudgetFrames: number(TempoAttribute.overBudgetFrames, on: surface)?.intValue ?? 0,
-            heaviestFrame: number(TempoAttribute.heaviestFrame, on: surface)?.intValue)
+            heaviestFrame: number(TempoAttribute.heaviestFrame, on: surface)?.intValue,
+            warningCount: number(TempoAttribute.warningCount, on: surface)?.intValue ?? 0,
+            lastWarning: IOSurfaceCopyValue(surface, TempoAttribute.lastWarning as CFString) as? String)
     }
 
     private static func number(_ name: String, on surface: IOSurfaceRef) -> NSNumber? {
