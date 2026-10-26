@@ -235,6 +235,11 @@ jobs:
       # 検査を走らせられる環境かを先に見る (#2588。render と同じ)
       - id: preflight
         run: bash scripts/runner-preflight.sh
+      # 診断 3 が立てた値が検査の道具の設定の置き場に残っているので、止めない版の前に消す (#3286)
+      - run: |
+          defaults read swiftpm-testing-helper NSAutomaticWindowAnimationsEnabled || true
+          defaults delete swiftpm-testing-helper NSAutomaticWindowAnimationsEnabled || true
+          defaults read swiftpm-testing-helper NSAutomaticWindowAnimationsEnabled || echo 'cleared'
       - run: make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=
         env:
           MOKUME_LEDGER_DUMP_DIR: ${{ github.workspace }}/.build/ledger-shots
