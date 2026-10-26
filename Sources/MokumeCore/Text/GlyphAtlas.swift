@@ -263,24 +263,36 @@ import simd
         private var countFrom: [Int] = []
         private var bytesFrom: [Int] = []
 
-        /// 先送りの履歴から作る (フレームが替わって `owedLastFrame` を差し替えたとき)。
-        init(_ owed: some Sequence<Owed>) {
-            var perAge: [Int: (count: Int, bytes: Int)] = [:]
+        /// 先送りの履歴から作り直す (フレームが替わって `owedLastFrame` を差し替えたとき)。
+        ///
+        /// **置き場を持ち回す** (`removeAll(keepingCapacity:)`)。先送りが続くフレームごとに辞書や配列を
+        /// 確保し直さない。age は小さい数が少数なので、二分探索で挿し込む (並べ替えの一時配列も要らない)。
+        mutating func rebuild(_ owed: some Sequence<Owed>) {
+            ages.removeAll(keepingCapacity: true)
+            countFrom.removeAll(keepingCapacity: true)
+            bytesFrom.removeAll(keepingCapacity: true)
             for entry in owed {
-                let total = perAge[entry.age] ?? (0, 0)
-                perAge[entry.age] = (total.count + 1, total.bytes + entry.bytes)
+                var low = 0
+                var high = ages.count
+                while low < high {
+                    let middle = (low + high) / 2
+                    if ages[middle] < entry.age { low = middle + 1 } else { high = middle }
+                }
+                if low < ages.count, ages[low] == entry.age {
+                    countFrom[low] += 1
+                    bytesFrom[low] += entry.bytes
+                } else {
+                    ages.insert(entry.age, at: low)
+                    countFrom.insert(1, at: low)
+                    bytesFrom.insert(entry.bytes, at: low)
+                }
             }
-            ages = perAge.keys.sorted()
-            countFrom = [Int](repeating: 0, count: ages.count)
-            bytesFrom = [Int](repeating: 0, count: ages.count)
-            var count = 0
-            var bytes = 0
-            for index in ages.indices.reversed() {
-                let total = perAge[ages[index]]!
-                count += total.count
-                bytes += total.bytes
-                countFrom[index] = count
-                bytesFrom[index] = bytes
+            // 「その age 以上」の累積へ (大きい age から足していく)
+            if ages.count > 1 {
+                for index in stride(from: ages.count - 2, through: 0, by: -1) {
+                    countFrom[index] += countFrom[index + 1]
+                    bytesFrom[index] += bytesFrom[index + 1]
+                }
             }
         }
 
@@ -316,7 +328,7 @@ import simd
         scaledBakesThisFrame = 0
         scaledBytesThisFrame = 0
         owedLastFrame = owedThisFrame
-        owedLastFrameTotals = OwedTotals(owedLastFrame.values)
+        owedLastFrameTotals.rebuild(owedLastFrame.values)
         owedThisFrame = [:]
     }
 
