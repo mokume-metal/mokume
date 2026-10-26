@@ -1,5 +1,11 @@
 # mokume
 
+[![Release](https://img.shields.io/github/v/release/mokume-metal/mokume?label=version)](https://github.com/mokume-metal/mokume/releases/latest)
+[![Reference](https://img.shields.io/badge/reference-DocC-8A2BE2)](https://mokume.org/documentation/mokume/)
+[![Swift 6.2+](https://img.shields.io/badge/Swift-6.2%2B-F05138?logo=swift&logoColor=white)](https://www.swift.org)
+[![Platform macOS 26+](https://img.shields.io/badge/platform-macOS%2026%2B%20%C2%B7%20Apple%20Silicon-blue?logo=apple)](https://developer.apple.com/macos/)
+[![License MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Creative coding for Swift + Metal.
 
 [公式サイト](https://mokume.org) · [API リファレンス](https://mokume.org/documentation/mokume/) · [作例](Sketches) · [リリース](https://github.com/mokume-metal/mokume/releases)
