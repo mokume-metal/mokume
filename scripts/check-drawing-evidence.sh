@@ -253,6 +253,8 @@ if ! pr_json=$(fetch_pr_json 2>"$pr_err"); then
   if [ -n "$pr" ]; then give_up "PR #$pr を読めなかった (${why:-gh は理由を出さなかった})"; fi
   preview_without_pr
 fi
+# 成功した回の stderr も捨てない — 事前取得が効かず取り直した警告 (pr_view_json) はここに出る
+if [ -s "$pr_err" ]; then cat "$pr_err" >&2; fi
 rm -f "$pr_err"
 
 if jq -e --arg l "$ESCAPE_LABEL" '.labels[]? | select(.name == $l)' >/dev/null <<<"$pr_json"; then

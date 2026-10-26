@@ -65,11 +65,15 @@ pr_files() { # $1=owner/repo (空可) $2=PR 番号
   local repo=${1:-} number=${2:?PR 番号が必要}
   if [ -n "${MOKUME_PR_SNAPSHOT_DIR:-}" ]; then
     local snapshot="$MOKUME_PR_SNAPSHOT_DIR/files-$number.txt"
-    if [ -r "$snapshot" ]; then
+    # **同じ PR のメタデータ (view-<番号>.json) も揃っているときだけ読む。** pr-snapshot は
+    # 一時の名前へ書いて、files を先に・view を後に置く。view が無いのは、途中で落ちた回の
+    # 半端な files であり、空のファイルを「変更ファイル 0 件」と読むと、絵や AGENTS.md の検査が
+    # 黙って外れる
+    if [ -r "$snapshot" ] && [ -r "$MOKUME_PR_SNAPSHOT_DIR/view-$number.json" ]; then
       cat "$snapshot"
       return
     fi
-    echo "pr-files: 事前取得 $snapshot を読めない — 自分で取り直す" >&2
+    echo "pr-files: 事前取得 $snapshot が揃っていない — 自分で取り直す" >&2
   fi
   [ -n "$repo" ] || repo='{owner}/{repo}'
   gh api "repos/$repo/pulls/$number/files" --paginate --jq '.[].filename'
@@ -80,18 +84,18 @@ pr_files() { # $1=owner/repo (空可) $2=PR 番号
 #   $2 = PR 番号
 #   $3 = --json の欄 (カンマ区切り)
 #
-# 事前取得 (view-<番号>.json) が**番号と欄を満たすときだけ**それを返す。欄が足りないものを
-# 返すと、読み手の jq が null を読んで黙って緩む。満たさなければ警告して gh を呼ぶ。
+# 事前取得 (view-<番号>.json) が**番号と欄を満たすときだけ**それを返す。欄が足りない・値が null の
+# ものを返すと、読み手の jq が null を「無い」と読んで黙って緩む。満たさなければ警告して gh を呼ぶ。
 pr_view_json() { # $1=owner/repo (空可) $2=PR 番号 $3=--json の欄
   local repo=${1:-} number=${2:?PR 番号が必要} fields=${3:?--json の欄が必要}
   if [ -n "${MOKUME_PR_SNAPSHOT_DIR:-}" ]; then
     local snapshot="$MOKUME_PR_SNAPSHOT_DIR/view-$number.json"
     if [ -r "$snapshot" ] && jq -e --argjson n "$number" --arg fields "$fields" \
-      '.number == $n and (($fields | split(",")) - keys == [])' "$snapshot" >/dev/null 2>&1; then
+      '.number == $n and (. as $o | $fields | split(",") | all(. as $k | $o[$k] != null))' "$snapshot" >/dev/null 2>&1; then
       cat "$snapshot"
       return
     fi
-    echo "pr-files: 事前取得 $snapshot が無い・読めない・欄が足りない — 自分で取り直す" >&2
+    echo "pr-files: 事前取得 $snapshot が無い・読めない・番号か欄が合わない — 自分で取り直す" >&2
   fi
   local args=("$number" --json "$fields")
   if [ -n "$repo" ]; then args+=(-R "$repo"); fi

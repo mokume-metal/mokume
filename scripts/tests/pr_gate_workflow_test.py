@@ -258,8 +258,12 @@ class TitleCheckTest(unittest.TestCase):
 # --jq が付けば本物と同じようにクエリを適用する
 FAKE_GH_SINGLE = """#!/bin/bash
 printf '%s\\n' "$*" >> "$GH_CALLS"
-query=; prev=
-for arg in "$@"; do [ "$prev" = "--jq" ] && query=$arg; prev=$arg; done
+query=; fields=; prev=
+for arg in "$@"; do
+  [ "$prev" = "--jq" ] && query=$arg
+  [ "$prev" = "--json" ] && fields=$arg
+  prev=$arg
+done
 case "$1 $2" in
   "auth status") exit 0 ;;
   "pr view") json='{"number":42,"title":"ci: 取得を1回にする","body":"","labels":[{"name":"no-issue"}],"latestReviews":[],"closingIssuesReferences":[],"baseRefName":"main","headRefOid":"aaaa","createdAt":"2026-10-27T00:00:00Z"}' ;;
@@ -269,6 +273,8 @@ case "$1 $2" in
            esac ;;
   *) exit 1 ;;
 esac
+# 本物の gh pr view と同じく、--json で頼まれた欄だけを返す (頼み忘れた欄は読み手が null を読む)
+if [ -n "$fields" ]; then json=$(printf '%s' "$json" | jq -c --arg f "$fields" 'with_entries(select(.key as $k | $f | split(",") | index($k)))'); fi
 if [ -n "$query" ]; then printf '%s' "$json" | jq -r "$query"; else printf '%s' "$json"; fi
 """
 
@@ -367,6 +373,59 @@ class SingleFetchTest(unittest.TestCase):
         results, calls = self.run_steps(CHECKS, before=corrupt)
         self.assert_all_ok(results)
         self.assertEqual(self.kinds(calls), (2, 2, 1), calls)
+
+    def test_読み手が頼む欄は_pr_snapshot_の欄が覆う(self):
+        """欄の一覧は 3 か所 (yml の --json と 2 つの読み手) にある。読み手が欄を足して yml を直し忘れても
+        赤にならないので、読み手のファイルから欄を読み出して比べる(足りないと事前取得を捨てて自前で取り直すだけで、
+        回数の削減が黙って消える)。"""
+        snapshot = step_named(self.gate, SNAPSHOT)
+        provided = set(re.search(r"--json ([\w,]+)", snapshot).group(1).split(","))
+        review = (REPO / "scripts" / "review-gate.sh").read_text(encoding="utf-8")
+        drawing = (REPO / "scripts" / "check-drawing-evidence.sh").read_text(encoding="utf-8")
+        asked = [
+            re.search(r'pr_view_json "\$REPO" "\$PR" \\\n\s+([\w,]+)\)', review),
+            re.search(r'pr_view_json "\$REPO" "\$pr" "([\w,]+)"', drawing),
+        ]
+        for name, found in zip(("review-gate.sh", "check-drawing-evidence.sh"), asked):
+            self.assertIsNotNone(found, f"{name} の pr_view_json の呼び出しが読めない")
+            self.assertLessEqual(set(found.group(1).split(",")), provided, name)
+
+    def test_タイトルの_step_は番号が違う事前取得を読まない(self):
+        def other_pr(root, env):
+            snap = root / "runner" / "pr-snapshot"
+            snap.mkdir()
+            (snap / "view-42.json").write_text('{"number": 41, "title": "feat: 別の PR"}')
+            env["MOKUME_PR_SNAPSHOT_DIR"] = str(snap)
+
+        results, calls = self.run_steps((CHECKS[0],), before=other_pr)
+        self.assert_all_ok(results)
+        self.assertEqual(self.kinds(calls), (0, 0, 1), calls)  # REST で取り直した
+
+    def test_pr_snapshot_は半端なファイルを正規の名前で残さない(self):
+        """メタデータの取得は済み、変更ファイルの取得で落ちる回。files を先に・view を後に置くので、
+        正規の名前の view は残らない (読み手は揃っていない事前取得を読まない)。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = root / "gh"
+            fake.write_text(
+                "#!/bin/bash\n"
+                'case "$1 $2" in "pr view") echo \'{"number":42}\' ;; *) exit 1 ;; esac\n')
+            fake.chmod(0o755)
+            github_env = root / "github_env"
+            github_env.touch()
+            (root / "runner").mkdir()
+            env = dict(
+                os.environ, PATH=f"{tmp}:{os.environ['PATH']}", GITHUB_REPOSITORY="owner/repo",
+                PR_NUMBER="42", RUNNER_TEMP=str(root / "runner"), GITHUB_ENV=str(github_env),
+            )
+            r = subprocess.run(
+                [*BASH_FLAGS, run_block(step_named(self.gate, SNAPSHOT))],
+                env=env, cwd=REPO, capture_output=True, text=True,
+            )
+            self.assertNotEqual(r.returncode, 0)
+            placed = sorted(p.name for p in (root / "runner" / "pr-snapshot").iterdir())
+            self.assertNotIn("view-42.json", placed)
+            self.assertNotIn("files-42.txt", placed)
 
     def test_pr_snapshot_は取り終えてから環境変数を立てる(self):
         """gh が途中で落ちる回は環境変数が立たない — 半端な置き場を後ろの判定へ渡さない。"""

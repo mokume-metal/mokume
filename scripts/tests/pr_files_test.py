@@ -159,8 +159,11 @@ class SnapshotTest(unittest.TestCase):
             capture_output=True, text=True, env=self.env,
         )
 
-    def put_files(self, number, text):
+    def put_files(self, number, text, view=True):
+        """変更ファイルの事前取得を置く。`view` なら同じ PR のメタデータも置く (揃っているときだけ読まれる)。"""
         (self.snap / f"files-{number}.txt").write_text(text, encoding="utf-8")
+        if view:
+            self.put_view(number, json.dumps({"number": number, "title": "t"}))
 
     def put_view(self, number, text):
         (self.snap / f"view-{number}.json").write_text(text, encoding="utf-8")
@@ -195,6 +198,20 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
         self.assertEqual(len(self.gh_calls()), 1)
         self.assertIn("事前取得", proc.stderr)
+
+    def test_files_without_the_matching_view_are_not_trusted(self):
+        """**途中で落ちた回の半端なファイルを、空の一覧と読まない。**
+
+        pr-snapshot は files を先に・view を後に置く。view が無い files は書き終わりが分からない
+        (空なら「変更ファイル 0 件」と読まれ、絵や AGENTS.md の検査が黙って外れる)。
+        """
+        for text in ("", "partial\n"):
+            with self.subTest(text=text):
+                self.calls.unlink(missing_ok=True)
+                self.put_files(7, text, view=False)
+                proc = self.call("pr_files", "o/r", "7")
+                self.assertEqual(proc.stdout.split(), ["live-a", "live-b"])
+                self.assertEqual(len(self.gh_calls()), 1)
 
     def test_another_prs_snapshot_is_not_read(self):
         self.put_files(8, "other-pr\n")
@@ -241,6 +258,18 @@ class SnapshotTest(unittest.TestCase):
         self.assertIn('"live"', proc.stdout)
         self.assertEqual(len(self.gh_calls()), 1)
         self.assertIn("事前取得", proc.stderr)
+
+    def test_view_snapshot_with_a_null_field_falls_back(self):
+        """キーがあっても値が null なら欠けと同じ (`latestReviews: null` を「レビューなし」と読ませない)。"""
+        self.put_view(7, json.dumps(self.view(labels=None)))
+        proc = self.call("pr_view_json", "o/r", "7", self.FIELDS)
+        self.assertIn('"live"', proc.stdout)
+        self.assertEqual(len(self.gh_calls()), 1)
+        # 空の配列・空の文字列は null ではない
+        self.calls.unlink(missing_ok=True)
+        self.put_view(7, json.dumps(self.view(body="", labels=[])))
+        self.call("pr_view_json", "o/r", "7", self.FIELDS)
+        self.assertEqual(self.gh_calls(), [])
 
     def test_view_snapshot_of_another_number_or_broken_json_falls_back(self):
         for text in (json.dumps(self.view(number=8)), "{not json", "", "[]"):

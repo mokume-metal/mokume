@@ -76,9 +76,9 @@ jobs:
   # 最新になる (#2668 の probe)。
   #
   # **3 つの判定は 1 つのジョブの step に並べ、どの起動でも 3 つとも走らせる。** check が 1 つ
-  # なので、レビューの run が review-gate だけを見て緑を返すと、赤いタイトルを隠す。後ろの
-  # 2 つは前の step が赤でも走る (!cancelled())。continue-on-error は使わない — 赤が success に
-  # 化ける。
+  # なので、レビューの run が review-gate だけを見て緑を返すと、赤いタイトルを隠す。3 つとも
+  # 前の step (材料を取る pr-snapshot を含む) が赤でも走る (!cancelled())。continue-on-error は
+  # 使わない — 赤が success に化ける。
   #
   # **判定は既定ブランチ (main) の版のスクリプトで走らせる** (#2001・ADR-0031 決定 2)。PR の版
   # で走らせると、同じ PR の中で自分を裁く検査を書き換えて通れてしまう。スクリプトは PR の
@@ -128,11 +128,15 @@ jobs:
           . scripts/pr-files.sh
           dir="$RUNNER_TEMP/pr-snapshot"
           mkdir -p "$dir"
-          # 欄は 3 つの読み手 (title の step・review-gate・drawing-evidence) の和集合
+          # 一時の名前へ書いてから mv で置く — 途中で落ちた回に、半端なファイルを正規の名前で残さない。
+          # 読み手は変更ファイルと PR のメタデータが揃っているときだけ事前取得を読む(files を先に、
+          # view を後に置く)。欄は 3 つの読み手 (title の step・review-gate・drawing-evidence) の和集合
           gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" \
             --json title,body,labels,number,latestReviews,closingIssuesReferences,baseRefName,headRefOid,createdAt \
-            >"$dir/view-$PR_NUMBER.json"
-          pr_files "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$dir/files-$PR_NUMBER.txt"
+            >"$dir/view-$PR_NUMBER.json.part"
+          pr_files "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$dir/files-$PR_NUMBER.txt.part"
+          mv "$dir/files-$PR_NUMBER.txt.part" "$dir/files-$PR_NUMBER.txt"
+          mv "$dir/view-$PR_NUMBER.json.part" "$dir/view-$PR_NUMBER.json"
           echo "MOKUME_PR_SNAPSHOT_DIR=$dir" >>"$GITHUB_ENV"
 
       # PR タイトル = squash 後のコミットメッセージなので Conventional Commits を検査する。
@@ -145,8 +149,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # 事前取得は、番号がこの PR のものと一致するときだけ読む
           if [ -z "${MOKUME_PR_SNAPSHOT_DIR:-}" ] ||
-            ! title=$(jq -er .title "$MOKUME_PR_SNAPSHOT_DIR/view-$PR_NUMBER.json"); then
+            ! title=$(jq -er --argjson n "$PR_NUMBER" 'select(.number == $n) | .title' \
+              "$MOKUME_PR_SNAPSHOT_DIR/view-$PR_NUMBER.json"); then
             title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
           fi
           if grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+' <<<"$title"; then
