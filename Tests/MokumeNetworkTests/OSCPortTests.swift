@@ -877,8 +877,10 @@ struct OSCPortTests {
         // 黙りを測る (読んだ送り元が 1 つ以上あれば、黙りで閉じる相手がいる)
         var burst: [any DatagramSending] = []
         defer { for sender in burst { sender.stop() } }
-        let burstSockets = try (0..<DatagramListener.connectionLimit).map { _ in try RawDatagramSocket() }
+        // 先に defer を張り、1 本ずつ足す (途中で投げても、それまでの socket が解放される)
+        var burstSockets: [RawDatagramSocket] = []
         defer { for socket in burstSockets { socket.release() } }
+        for _ in 0..<DatagramListener.connectionLimit { burstSockets.append(try RawDatagramSocket()) }
         var lateSockets: [RawDatagramSocket] = []
         defer { for socket in lateSockets { socket.release() } }
         // 素の socket の `sendto` が失敗していたら、読めなかった理由は受け口ではなく送り手側
@@ -896,6 +898,14 @@ struct OSCPortTests {
         try await requireHeard(
             !heard.isEmpty, "1 通も読めていない — 黙りを測る相手がいない\(sendtoFailures())", log: burstLog,
             osc: osc, port: port, told: told)
+        // 送り元が別であることを強制する (送り元のポートは、1 度送った後に決まる)。socket を使い回すと、
+        // 受け口からは 1 つの送り元に見え、`/late` の足しが台帳を目安まで押し上げて、黙りの約束を
+        // 見ないまま緑になりうる
+        let burstPorts = Set(burstSockets.map(\.port))
+        try await requireHeard(
+            burstPorts.count == burstSockets.count,
+            "集める送り元のポートが別々でない (\(burstPorts.count)/\(burstSockets.count) 種)\(sendtoFailures())",
+            log: burstLog, osc: osc, port: port, told: told)
 
         // **集め終えた後の閉じを測る。** 本物の時計で `idleAfter` が 0.05 秒なので、集めている最中に
         // 受け入れが目安に達して閉じが起きうる。その分を数えないよう、ここの数を基準にする
