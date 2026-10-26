@@ -64,7 +64,11 @@ layered@6 ad936a35ca8e0de0e3ea23277ccbb6ff14aa27edb9dc92cc5f9fdd8d5a0a8bff
 layered@20 937b0708bc32bbe5d35dba2d5e615bab336b14c071c895c8f47b8474d82d3d21
 
 # 参照スケッチ (Sketches/) の書き出し。1 本 1 行で、--render と同じ 45 フレーム目の絵
-# (sketch:<名前>@45)。作者が書く形のまま API を呼ぶので、Sketch 層の中継と SketchRuntime の
+# (sketch:raster-and-edges@45 d80b12297a8da1a9d4a883d26146965439503a7813583d4715fd8e77d242e948
+sketch:raster-and-edges-075@45 255232db168815574231672746dfa1e70d0d9b315860b48645922cef5cc784df
+sketch:raster-and-edges-050@45 9b190fa7f712703473df24c7438299c9ba952db8246d91290819ac3d6fe1ca80
+sketch:alpha-and-layers@45 dc66435cb5cde86b98e048c359ccf11ee8873a4676c6e2f3f6cbad0e2cd2f800
+sketch:<名前>@45)。作者が書く形のまま API を呼ぶので、Sketch 層の中継と SketchRuntime の
 # 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
 # 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
 # 実物のポートを開くもの (osc-and-reply) は載せない — 外から届いた値が絵に入りうる (ADR-0028 決定 7)。
