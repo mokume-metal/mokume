@@ -111,6 +111,9 @@ import Metal
     /// まだ届けていない区画の数。**検査が読む。**
     var pendingRegionCount: Int { pending.count }
 
+    /// まだ届けていない区画の世代(積んだ順の番号)の並び。**検査が読む。**
+    var pendingGenerations: [UInt64] { pending.map(\.generation) }
+
     /// 投入に載せて届け、結末を待っている区画の数。**検査が読む。**
     var deliveredRegionCount: Int { delivered.reduce(0) { $0 + $1.regions.count } }
 }
@@ -163,9 +166,25 @@ extension GlyphPage: PendingUpload {
 
     @discardableResult
     func markUploaded(through generation: UInt64, by submission: UInt64?) -> Bool {
-        let reached = pending.filter { $0.generation <= generation }
-        pending.removeAll { $0.generation <= generation }
-        guard !reached.isEmpty else { return false }
+        // **1 回の走査**で、届けた区画を取り出し、残りを先頭へ詰める。残りを詰めるだけで控えの容量は
+        // 手放さない (通常のフレームは全部届くので、控えは空になって次のフレームが同じ置き場へ積む)。
+        // 直接書いた分 (`submission == nil`) は投入に載らず、届けた区画の配列を作らない
+        guard !pending.isEmpty else { return false }
+        var reached: [Region] = []
+        if submission != nil { reached.reserveCapacity(pending.count) }
+        var kept = 0
+        var anyReached = false
+        for index in pending.indices {
+            if pending[index].generation <= generation {
+                anyReached = true
+                if submission != nil { reached.append(pending[index]) }
+            } else {
+                if kept != index { pending[kept] = pending[index] }
+                kept += 1
+            }
+        }
+        guard anyReached else { return false }
+        pending.removeLast(pending.count - kept)
         // 直接書いた分は届いている。投入に載っていないので、結末を待たない
         guard let submission else { return false }
         delivered.append((submission, reached))
