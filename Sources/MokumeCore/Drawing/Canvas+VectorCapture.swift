@@ -186,8 +186,9 @@ extension Canvas {
                     arcClosure: .pie, cornerRadius: 0, fills: writable.fills, strokes: writable.strokes,
                     cap: style.strokeCap, dash: writable.strokes ? vectorDash(of: corners, isClosed: true) : [])
             case .roundedRect(let width, let height, let radius):
-                // 畳むのは塗りだけの角丸 (#3170) なので、いまは輪郭を持つ角丸は来ない (塗りは落とすので何も書かない)。
-                // 来たときも、他の形と同じく輪郭は真の形 (角丸の矩形・貼る絵の無い角丸が書くものと同じ) で書く。
+                // 畳む道が来るのは塗りだけの角丸 (#3170) で、塗りは落とすので何も書かない。輪郭つきの角丸は
+                // 畳まず ``placeRect`` が直接呼ぶ (#3271)。どちらも他の形と同じく、輪郭は真の形 (角丸の矩形・
+                // 貼る絵の無い角丸が書くものと同じ) で書く。
                 // 破線は、画面が刻む角丸の周 (``placeRect`` が破線の輪郭に使うものと同じ刻み) から作る
                 let half = SIMD2(width / 2, height / 2)
                 let outline =

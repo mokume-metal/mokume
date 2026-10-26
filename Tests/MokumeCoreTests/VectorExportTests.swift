@@ -797,45 +797,117 @@ struct VectorCaptureTests {
         #expect(drops == [.texture, .shader], "\(drops)")
     }
 
-    @Test("畳む道が控える角丸の矩形の輪郭は、貼る絵の無いときの角丸と同じ真の形の要素になる (#3170)")
-    func theFoldingPathWritesTheTrueRoundedRect() throws {
+    /// 角丸の矩形を、実際の `rect(…, r)` で置く。**輪郭の要素が通る道ごとに** 控えた図形を返す。
+    ///
+    /// - `picture` / `shader`: 貼る絵 (`texture()`) か利用者の断片 (`shader()`) が塗りに効く道 (`placeRect` が
+    ///   `draw(Outline)` へ行く) か。
+    /// - `dashed`: 破線の輪郭か。
+    /// - `transformed`: 回転と拡大を掛けるか (置くときの変換が点にも破線の長さにも当たる)。
+    private func roundedRectFigures(
+        _ harness: Harness, shaded: Shading?, dashed: Bool, filled: Bool = true, transformed: Bool = false
+    ) throws -> (figures: [VectorFigure], drops: [VectorDrop]) {
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let shader = try harness.canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let gradient = Gradient.linearGradient(
+            [(LinearRGBA.linear(red: 1, green: 0, blue: 0), 0), (LinearRGBA.linear(red: 0, green: 0, blue: 1), 1)],
+            from: [0, 0], to: [10, 0])
+        return try harness.capture { canvas in
+            canvas.noTexture()
+            canvas.resetShader()
+            if filled { canvas.fill(red) } else { canvas.noFill() }
+            canvas.stroke(blue)
+            canvas.strokeWeight(2)
+            if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+            switch shaded {
+            case .texture: canvas.texture(picture)
+            case .shader: canvas.shader(shader)
+            case .gradient: canvas.fill(gradient)
+            case nil: break
+            }
+            if transformed {
+                canvas.translate(20, 5)
+                canvas.rotate(0.3)
+                canvas.scale(1.5, 1.5)
+            }
+            canvas.rect(10, 10, 30, 20, 5)
+            canvas.resetShader()
+            canvas.noTexture()
+        }
+    }
+
+    enum Shading { case texture, shader, gradient }
+
+    @Test("貼る絵・勾配が効く輪郭つきの角丸 rect は、効かない角丸と同じ真の形 (3 次ベジェ 4 つ) で書き、塗りだけを名指しで落とす (#3271)")
+    func aShadedRoundedRectWithAStrokeWritesTheTrueShape() throws {
+        let harness = try Harness()
+        for dashed in [false, true] {
+            for transformed in [false, true] {
+                // 基準: 塗りの無い同じ角丸 (貼る絵が無ければ距離関数の道)
+                let (reference, _) = try roundedRectFigures(
+                    harness, shaded: nil, dashed: dashed, filled: false, transformed: transformed)
+                try #require(reference.count == 1)
+                for (shading, dropped) in [(Shading.texture, VectorDrop.texture), (.gradient, .gradient)] {
+                    let label = "\(shading) dashed=\(dashed) transformed=\(transformed)"
+                    let (figures, drops) = try roundedRectFigures(
+                        harness, shaded: shading, dashed: dashed, transformed: transformed)
+                    try #require(figures.count == 1, "\(label): \(figures)")
+                    #expect(figures[0] == reference[0], "\(label)")
+                    #expect(figures[0].subpaths[0].curves.filter { $0 }.count == 4, "\(label): 角は 3 次ベジェ 4 つ")
+                    #expect(figures[0].fill == nil, "\(label)")
+                    #expect(figures[0].stroke?.dash.isEmpty == !dashed, "\(label)")
+                    #expect(drops == [dropped], "\(label): 塗りを 1 度だけ名指す \(drops)")
+                }
+            }
+        }
+    }
+
+    @Test("利用者の断片は輪郭にも効くので、輪郭つきの角丸 rect も図形ごと 1 度だけ名指しで落とす (#3271・#3139 の決定 3)")
+    func aShaderOnARoundedRectWithAStrokeDropsTheWholeFigure() throws {
+        let harness = try Harness()
+        for dashed in [false, true] {
+            let (figures, drops) = try roundedRectFigures(harness, shaded: .shader, dashed: dashed)
+            #expect(figures.isEmpty, "dashed=\(dashed): \(figures)")
+            #expect(drops == [.shader], "dashed=\(dashed): \(drops)")
+        }
+    }
+
+    @Test("破線の角丸 rect は、実線の同じ角丸と同じ真の形・同じ起点で、破線の指定だけが載る (#3271)")
+    func aDashedRoundedRectWritesTheTrueShapeAndStart() throws {
+        let harness = try Harness()
+        for transformed in [false, true] {
+            let (solid, _) = try roundedRectFigures(
+                harness, shaded: nil, dashed: false, filled: false, transformed: transformed)
+            let (dashed, drops) = try roundedRectFigures(
+                harness, shaded: nil, dashed: true, filled: true, transformed: transformed)
+            try #require(solid.count == 1)
+            // 塗り → 輪郭の順。塗りは破線に関わらず真の形
+            try #require(dashed.count == 2, "transformed=\(transformed): \(dashed)")
+            #expect(dashed[0].stroke == nil && dashed[0].fill != nil)
+            #expect(dashed[1].fill == nil)
+            #expect(dashed[1].subpaths == solid[0].subpaths, "transformed=\(transformed): 輪郭の道が実線と同じ")
+            #expect(dashed[1].subpaths == dashed[0].subpaths, "塗りと輪郭が同じ形")
+            #expect(dashed[1].subpaths[0].curves.filter { $0 }.count == 4, "角は 3 次ベジェ 4 つ (折れ線でない)")
+            let scale: Float = transformed ? 1.5 : 1
+            #expect(dashed[1].stroke?.dash == [6 * scale, 3 * scale], "transformed=\(transformed)")
+            #expect(dashed[1].stroke?.width == solid[0].stroke?.width)
+            #expect(drops.isEmpty, "\(drops)")
+        }
+    }
+
+    @Test("輪郭の太さが 0 の角丸 rect は、貼る絵が効いても輪郭を書かず、塗りだけを名指しで落とす (#3271)")
+    func aShadedRoundedRectWithoutAStrokeWritesNothing() throws {
         let harness = try Harness()
         let picture = try harness.canvas.createGraphics(8, 8)
-        for dashed in [false, true] {
-            // 基準: 貼る絵が無ければ距離関数の道で、輪郭は角丸の矩形そのもの (3 次ベジェ) で書く
-            let (reference, _) = try harness.capture { canvas in
-                canvas.noTexture()
-                canvas.noFill()
-                canvas.stroke(blue)
-                canvas.strokeWeight(2)
-                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
-                canvas.rect(10, 10, 30, 20, 5)
-            }
-            // 畳む道が呼ぶ控え (`draw(folding:at:)` の入り口) を、同じ形・同じ置き場所で直接呼ぶ。
-            // 塗りだけの角丸しか畳まない (`placeRect`) ので、輪郭つきはこの口を直接叩いて確かめる
-            let (figures, drops) = try harness.capture { canvas in
-                canvas.fill(red)
-                canvas.texture(picture)
-                canvas.stroke(blue)
-                canvas.strokeWeight(2)
-                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
-                let held = canvas.suspendVectorRecordingShadedFigure(
-                    .roundedRect(width: 30, height: 20, radius: 5), at: SIMD2(10, 10))
-                canvas.resumeVector(held)
-            }
-            try #require(figures.count == 1 && reference.count == 1, "dashed=\(dashed)")
-            if dashed {
-                // 破線の角丸は、画面が刻んだ周を折れ線で書く道を通る (始点も違う) ので、道そのものは比べず、
-                // 破線の長さと間隔が揃うことを見る
-                #expect(figures[0].stroke == reference[0].stroke)
-            } else {
-                #expect(figures[0] == reference[0])
-            }
-            #expect(figures[0].subpaths[0].curves.filter { $0 }.count == 4, "角は 3 次ベジェ 4 つ (折れ線でない)")
-            #expect(figures[0].fill == nil)
-            #expect(figures[0].stroke?.dash.isEmpty == !dashed, "dashed=\(dashed)")
-            #expect(drops == [.texture], "塗りを 1 度だけ名指す \(drops)")
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(0)
+            canvas.texture(picture)
+            canvas.rect(10, 10, 30, 20, 5)
+            canvas.noTexture()
         }
+        #expect(figures.isEmpty, "\(figures)")
+        #expect(drops == [.texture], "\(drops)")
     }
 
     @Test("利用者の断片・通常以外の混ぜ方・切り抜きは輪郭にも効くので、図形ごと 1 つと数えて落とす")
@@ -940,6 +1012,7 @@ struct VectorCaptureTests {
         func picture(capturing: Bool) throws -> [UInt8] {
             let harness = try Harness(width: 96, height: 96)
             let canvas = harness.canvas
+            let paper = try canvas.createGraphics(8, 8)
             try canvas.draw {
                 if capturing {
                     canvas.beginVectorWindow(pending: [])
@@ -955,7 +1028,12 @@ struct VectorCaptureTests {
                 canvas.strokeDash(4, 3)
                 canvas.line(5, 90, 90, 60)
                 canvas.rect(50, 50, 30, 30)
+                // 控えの位置を動かした道 (#3271): 破線の角丸と、貼る絵が効く輪郭つきの角丸
+                canvas.rect(50, 8, 36, 14, 4)
                 canvas.noStrokeDash()
+                canvas.texture(paper)
+                canvas.rect(4, 44, 24, 16, 5)
+                canvas.noTexture()
                 canvas.push()
                 canvas.translate(70, 70)
                 canvas.rotate(0.5)
