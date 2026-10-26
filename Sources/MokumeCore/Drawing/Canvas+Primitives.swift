@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// 基本図形を置く口 (`rect` / `circle` / `arc` など)。`Canvas.swift` の MARK「図形」から、
-// 図形を置く 9 本をここへ移した ([#943](https://github.com/mokume-metal/mokume/issues/943))。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
-// 拾われないよう、宣言との間は必ず 1 行空ける。
+// 基本図形を置く口 (`rect` / `circle` / `arc` など)。
 
 import simd
 
