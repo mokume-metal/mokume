@@ -251,6 +251,16 @@ SPDX-License-Identifier: MIT
 
 門番は `actions: read` だけを持ち、GitHub ホストで走る。**専用機のジョブは権限も秘密も持たないまま**で、上の前提は動かない。門番が赤でも専用機のジョブは走らせる。`render` が skipped になると、skipped は必須チェックを満たしてしまうので、順番が乱れるほうを軽く取る。門番で待っている間に run を cancel すると `render` は cancelled で終わり、必須を満たさない (skipped にはならない・[#2063](https://github.com/mokume-metal/mokume/issues/2063) の実測)。
 
+#### 改訂 (2026-10-27) — 門番は runner の数 (`RENDER_TURN_SLOTS`) まで group を並走させる ([#2252](https://github.com/mokume-metal/mokume/issues/2252)・[#3319](https://github.com/mokume-metal/mokume/issues/3319))
+
+**門番が守るのは「1 本ずつ」ではなく、「専用機に積まれた job (queued + in_progress) の数が runner の数を越えない」である。** 越えなければ、runner が queued の job を先着順に拾わないこと (上の #2062) は順番を崩さない。そこで `merge_group` の門番は、前の group を base sha の親を辿って N 段まで遡り、終わっていない run を持つ group が N 本未満なら通す。N は render.yml がリポジトリの変数 `vars.RENDER_TURN_SLOTS` から渡し、未設定なら 1 (上の段のとおり 1 本ずつ) である。`yield` (render-pr) と `wait` (定期) は N を見ず、merge_group の run が 1 本でも残っていれば見送る・待つ。
+
+**理由**: 2026-10-20〜27 の実測で、専用機は混む日に 86〜89% 埋まり、`render` は run の作成から専用機で走り出すまで p50 18.4 分・p90 29.5 分を門番の中で待っていた。queue は 2 つの group を同時に組む (`max_entries_to_build: 2`) のに、門番が 1 本ずつにしていたので、2 本目の group は 1 本目の約 22 分をそのまま待った。2026-10-16 に退けた案 3-a (同じ機械に runner を 2 つ) の再開の条件に当たり、メンテナが採った。runner は同じユーザー・同じ画面のセッションで 2 本にする — `scripts/gpu-slot.py` の枠を 2 本で共有し、GPU の同時の検査が枠の数を越えないためである。
+
+**切り替えと戻しは変数で行う。** コードは既定 1 で merge し、2 本目の runner を置いてから変数を 2 にする。基準 (#2252 の完了条件 4: 待ちの p50 が 5 分以下・並走した回の所要が単独の +25% 以内・GPU の打ち切りと窓の検査の赤が増えない) を満たさなければ、変数を 1 に戻す。
+
+**代償**: 専用機の GPU と画面のセッションを 2 本の job が分け合う。1 プロセスの中の並列の幅は 1 のまま (`scripts/gpu-slot.py`「並列の幅」) で、増えるのはプロセスの数 (最大 2) だけだが、専用機で GPU の検査を 2 プロセス同時に走らせた実績は無い。窓を開く検査が同じ画面で重なる。門番の 1 周の API の呼び出しは N=2 で 2 倍 (1 時間 240 件) になる。退けた案: 門番を外して runner の数だけに任せる — group と render-pr が N 本を越えて積まれると、#2062 の取り合いが runner の数だけ緩んで残る。
+
 #### 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
 
 **塞ぐ実害**: [mokume-syphon#26](https://github.com/mokume-metal/mokume-syphon/issues/26) では、本体の振る舞いの変化 (出口へ渡す絵が 1 フレーム遅れた) で mokume-syphon の GPU の検査が 4 件落ちた。気付いたのは mokume-syphon の追随の PR で、本体は壊した版をもう出していた。mokume-syphon の GPU の検査は GitHub ホストでは Suite ごと飛ぶので、専用機の外では誰も見ない。
