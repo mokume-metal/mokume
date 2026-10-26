@@ -509,6 +509,11 @@ public final class SketchRuntime {
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。**観測の指定秒が描き直す枚でも作者の時計の値。**
     /// 本体が持つ状態 (動画の再生位置・録った音の起点) はこちらで進める。
     var authorTime: Float { timing.authorTime }
+    /// 作者の時計の上の、いまのフレームの時刻 (倍精度)。
+    var authorSeconds: Double { timing.seconds }
+    /// 時刻を指定した観測の枚の指定の秒。``time`` と同じ約束で、観測の秒を読むのは ``Sketch/draw()`` と
+    /// 入り口の供給の間だけ。
+    var observedSeconds: Double? { showsObservedTime ? timing.observedSeconds : nil }
     /// ``Sketch/draw()`` と入り口の供給が、観測の秒を読んでいる間だけ立つ。``time`` を参照。
     private var showsObservedTime = false
     /// 前のフレームからの経過 (**秒**)。p5.js の `deltaTime` はミリ秒なので、写すときは係数を 1000 倍する
@@ -1082,7 +1087,10 @@ public final class SketchRuntime {
                 // 作者の `draw()` の区間 (Instruments・#2378)
                 let drawInterval = FrameSignposts.beginDraw()
                 defer { FrameSignposts.endDraw(drawInterval) }
+                // `draw()` の外で頼まれた SVG は、この `draw()` を丸ごと書く。窓は `draw()` の間だけ開く (#3139)
+                canvas.beginVectorWindow(pending: recorder?.takePendingVectors() ?? [])
                 sketch.draw()
+                finishVectorWindow()
                 // **`draw()` の中で後から決まったことは、ここで知る。** `noLoop()` で止めた・`save()` や
                 // `beginRecord()` で撮ると頼んだフレームは、描き直されずに残る。そのフレームで先送りした字は、
                 // フレームの終わりに払う (``Canvas/settleDeferredGlyphs(baking:)``・#2446)
@@ -1863,12 +1871,39 @@ public final class SketchRuntime {
 
     /// このフレームの絵を 1 枚だけ書き出すよう頼む。転送 (正本は ``SketchPart/save(_:)``)。
     public func save(_ path: String) {
+        // **拡張子が `.svg` なら、絵でなく線を書く** (ADR-0023 の改訂 (2026-10-23)・#3139)。意味は呼ぶ場所で決まる
+        guard !FrameRecorder.isVector(path) else { return saveVector(path) }
         // **頼まれたフレームを一緒に渡す。** 配るのは 1〜2 枚遅れるので、番号が無いと
         // 「そのフレームの絵」ではなく前の絵が書かれる (#927・#2743)
         requireRecorder().save(path, at: timing.frameCount)
         attachRecorderIfNeeded()
         // 撮る絵は残る。これより後に置く字は、先送りせず要る段で焼く (#2446)
         canvas.atlas.mayDeferScaledBakes = false
+    }
+
+    /// ベクター (SVG) を 1 枚書くよう頼む ([#3139])。**意味は呼ぶ場所で決まる。**
+    ///
+    /// - `draw()` の中: 呼んだ時点から、その `draw()` の終わりまでに置いた図形を書く。呼ぶ前に置いたものは
+    ///   書かれない。
+    /// - `draw()` の外 (`setup()`・入力のコールバック): 次の `draw()` を丸ごと書く。
+    ///
+    /// どちらも、書くのは `draw()` の終わり (``finishVectorWindow()``) である。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    private func saveVector(_ path: String) {
+        let recorder = requireRecorder()
+        guard recorder.acceptsVector(path) else { return }
+        if canvas.vector.isOpen {
+            canvas.startVectorCapture(path: path)
+        } else {
+            recorder.holdVector(path)
+        }
+    }
+
+    /// `draw()` の終わりで、控えた図形を SVG にして書くよう頼む。頼まれていなければ何も払わない。
+    private func finishVectorWindow() {
+        guard let capture = canvas.endVectorWindow() else { return }
+        requireRecorder().writeVectors(capture, width: canvas.width, height: canvas.height)
     }
 
     /// 連番を始める。転送 (正本は ``SketchPart/beginRecord(_:)``)。

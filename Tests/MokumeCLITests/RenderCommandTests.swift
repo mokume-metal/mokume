@@ -312,6 +312,15 @@ struct RenderCommandTests {
         expectOutRefused(out)
     }
 
+    /// `.svg` は受けず、黙らずに断る ([#3139])。作品の中の `save("x.svg")` へ案内する。
+    ///
+    /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    @Test("行き先が .svg なら、作品の中の save() へ案内して止まる", arguments: ["/plot.svg", "plot.SVG", "out/plot.svg"])
+    func anSVGOutIsRefusedAndPointsToSave(out: String) {
+        expectUsage(
+            ["--fps", "30", "--seconds", "1", "--out", out], mentioningAll: ["--out", ".svg", "save(", "draw()"])
+    }
+
     /// **打った場所の名前の `#` は番号の場所ではない** ([#2313])。`--out` は打った場所から
     /// 絶対パスにしてから形を見るので、パス全体から `#` を探すと、`#` の無い `still.png` まで
     /// 連番として受け、断られずに 0 で終わる。書いたものは隣の `take01/`… にできる。

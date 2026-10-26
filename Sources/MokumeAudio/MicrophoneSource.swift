@@ -24,7 +24,7 @@ import Synchronization
 ///   進める。状態 (``lifecycle`` ほか) はこの上に閉じていて、錠は要らない
 /// - Core Audio の機材の一覧の変化を受ける口は待ち行列を引数に取るので、[ADR-0010] 決定 4 の
 ///   改訂 ([ADR-0042] 決定 7) の条件の内側で持つ
-/// - 境界を越えるのは標本の窓 (`[Float]`) と状態だけで、AVFAudio と Core Audio の型は越えさせない
+/// - 境界を越えるのは解析する区間 (``AudioSpan``) と状態だけで、AVFAudio と Core Audio の型は越えさせない
 ///
 /// ## 状態の判断は ``MicrophoneLifecycle`` が持つ
 ///
@@ -42,7 +42,7 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
     let ring = SampleRing(capacity: AudioAnalysis.windowSize * 32)
 
     /// 入れ物。操作の列が置き、許可の答えの手続きが読む。
-    private let input = Mutex<ExternalInput<[Float]>?>(nil)
+    private let input = Mutex<ExternalInput<AudioSpan>?>(nil)
     private let rate = Mutex<Float>(0)
     private var lifecycle = MicrophoneLifecycle()
     private var engine: AVAudioEngine?
@@ -52,7 +52,7 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
     private var known: Set<AudioObjectID> = []
     private var devicesListener: AudioObjectPropertyListenerBlock?
     private var configurationObserver: (any NSObjectProtocol)?
-    /// 前に窓を入れたときの、環に書かれた総数。
+    /// 前に区間を入れたときの、環に書かれた総数 (前の区間の終わり)。
     private var lastTotal = 0
 
     init(device: AudioDevice?) {
@@ -63,7 +63,7 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
 
     // MARK: - AudioSource (main actor から)
 
-    func start(into input: ExternalInput<[Float]>, at time: Double) {
+    func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
         self.input.withLock { $0 = input }
         control.async { [self] in
             known = Set(CoreAudioDevices.allObjects())
@@ -76,14 +76,20 @@ nonisolated final class MicrophoneSource: AudioSource, @unchecked Sendable {
         }
     }
 
-    /// 新しい標本が届いていれば、最新の窓を入れる。届いた時刻は環の最後の標本の host time。
-    func pump(into input: ExternalInput<[Float]>, at time: Double) {
+    /// 新しい標本が届いていれば、前に入れた区間の終わり以後の標本を、解析する区間として入れる。届いた時刻は
+    /// 環の最後の標本の host time。
+    ///
+    /// 区間の始まりは `lastTotal` — 届いた単位 (チャンクの長さ) には依らない。環の通し番号がそのまま音源の
+    /// 標本の番号で、最初に受け取った標本が 0 になる。新しい標本が無いフレームは何も入れず、値は前のまま
+    /// (``AudioIn/isNewFrame`` が false)。長く止まった後は、``AudioAnalysis/maxSpan`` 標本に切る。
+    func pump(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
         let total = ring.total
-        // 公開直後は通知の総数が遅れることがある。既に受け取った窓を送り直さない。
+        // 公開直後は通知の総数が遅れることがある。既に受け取った区間を送り直さない。
         guard total > lastTotal else { return }
-        let snapshot = ring.snapshot(AudioAnalysis.windowSize)
-        lastTotal = snapshot.total
-        input.send(snapshot.samples, hostTime: snapshot.hostTime)
+        let snapshot = ring.snapshot(since: lastTotal)
+        guard snapshot.span.to > lastTotal else { return }
+        lastTotal = snapshot.span.to
+        input.send(snapshot.span, hostTime: snapshot.hostTime)
     }
 
     func stop() {

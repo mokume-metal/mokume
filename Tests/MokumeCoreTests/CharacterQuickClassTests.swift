@@ -14,7 +14,7 @@ import Testing
 ///
 /// [#1784]: https://github.com/mokume-metal/mokume/issues/1784
 @Suite("ASCII の近道つきの空白と改行")
-struct CharacterQuickClassTests {
+nonisolated struct CharacterQuickClassTests {
     /// 比べる字。
     private static let characters: [Character] = {
         var all: [Character] = []

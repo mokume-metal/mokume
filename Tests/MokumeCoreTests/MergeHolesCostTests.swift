@@ -21,7 +21,7 @@ import simd
 /// [#2508]: https://github.com/mokume-metal/mokume/issues/2508
 /// [#915]: https://github.com/mokume-metal/mokume/issues/915
 @Suite("穴のつなぎの費用")
-struct MergeHolesCostTests {
+nonisolated struct MergeHolesCostTests {
     /// 外周 1 つと、`side` × `side` 個の 4 点の正方形の穴 (外周と逆回り)。穴の位置を穴ごとにずらす。
     nonisolated static func shiftedGrid(side: Int) -> (
         outer: [Int], holes: [[Int]], points: [SIMD2<Float>]
@@ -117,7 +117,7 @@ struct MergeHolesCostTests {
             if: RenderDevice.isAvailable,
             "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
     )
-    struct OnCanvas {
+    @MainActor struct OnCanvas {
         private func scans(side: Int) throws -> Int {
             let scene = MergeHolesCostTests.shiftedGrid(side: side)
             let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 200, height: 200)

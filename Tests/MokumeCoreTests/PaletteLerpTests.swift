@@ -7,7 +7,7 @@ import Testing
 
 /// 3 色以上の段から色を引く ``paletteLerp(_:_:)`` (#2424)。走っているスケッチも GPU も要らない。
 @Suite("パレットの補間")
-struct PaletteLerpTests {
+nonisolated struct PaletteLerpTests {
     private let sky: [(LinearRGBA, Float)] = [
         (color(20, 30, 80), 0), (color(200, 60, 60), 0.6), (color(250, 220, 120), 1),
     ]
@@ -94,6 +94,7 @@ struct PaletteLerpTests {
     }
 
     @Test("区切りの並べ方は勾配 (Gradient) と同じ: 同じ区切りの並びを、同じ順に読む")
+    @MainActor
     func sortsLikeAGradient() throws {
         let a = color(255, 0, 0)
         let b = color(0, 255, 0)

@@ -194,6 +194,15 @@ enum RenderCommand {
                     + " 1/\(RenderRequest.movieFrameRateLimit) of a second, which cannot hold a"
                     + " shorter frame, so frames would be lost): \(rateText)")
         }
+        // **`.svg` は受けず、黙らずに断る** (#3139)。SVG は 1 回の `draw()` の線で、動きを 1 枚ずつ書く
+        // この口の形ではない。作品の中で `save("x.svg")` を呼べば、`render` で走らせても書かれる
+        if out.lowercased().hasSuffix(".svg") {
+            throw .usage(
+                "\(outFlags[0]) cannot write an .svg: a vector is the lines of one draw(), not a frame of a"
+                    + " movie. Call save(\"plot.svg\") inside the sketch (it is written when the sketch runs,"
+                    + " with render too), and give \(outFlags[0]) a .mov, .mp4 or .gif, or a numbered series"
+                    + " (out/frame-####.png): \(out)")
+        }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
                 frameRate: frameRate, frameCount: frameCount, destination: destination)

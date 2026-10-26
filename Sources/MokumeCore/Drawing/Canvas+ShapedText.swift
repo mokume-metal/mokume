@@ -26,6 +26,8 @@ extension Canvas {
     public func shapedText(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
+        // 字はベクターへ書けない。字形の輪郭を持たない (#3139)
+        noteVectorDrop(.text)
         let face = typeface
         let lines = string.lines
         let leading = resolvedTextLeading

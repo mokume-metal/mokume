@@ -35,18 +35,24 @@ import MokumeDiagnostics
 ///
 /// ## 解析するのは、その音の出口
 ///
-/// 各フレームでは、その音の出口で終わる 1024 標本の窓を ``AudioIn`` と同じ解析に通す。窓を切るのは
-/// フレームの頭で、**解析は値が読まれたときまで遅らせる** — 値を読まない音の解析は走らず、読んでも
-/// 結果は毎フレーム解析したのと同じである。
+/// 各フレームでは、**前のフレームからその音の出口に出た全標本**(区間)を ``AudioIn`` と同じ解析に通す。
+/// 区間を切るのはフレームの頭で、**解析は値が読まれたときまで遅らせる** — 値を読まない音の解析は走らず、
+/// 読んでも結果は毎フレーム解析したのと同じである。読まれなかったフレームの区間は解かず、次のフレームの
+/// 値に混ぜない。
 /// オシレータとノイズなら音量と包絡を掛けた後 (定位を掛ける前)、エフェクトなら処理した後の
 /// 音である。鳴っていない間は無音 (``level`` が 0) になる。
 ///
+/// 値の意味は ``AudioIn`` と同じで、``rms``・``decibels``・``level``・``peak`` は区間全体、
+/// ``spectrum`` は区間に終わりが入る 512 標本ごとの窓の平均である。窓を置く格子の原点 (標本 0) は、
+/// その音の出口が最初に標本を出したところ。標本が進まなかったフレームは前の値のまま。長く止まった後は、
+/// 区間の終わりから 6144 標本 (48 kHz で約 0.128 秒) までを解析する。
+///
 /// ## 書き出しでも解析できる
 ///
-/// 窓に出して動かしている間は実際に鳴らし、窓は実際に鳴った標本から取る。書き出し
+/// 窓に出して動かしている間は実際に鳴らし、区間は実際に鳴った標本から取る。書き出し
 /// (`mokume render`) と、窓を開かずに回す検査 (時刻がフレームの数え方から決まるとき —
-/// ``SketchPart/clock``) では**鳴らさず**、標本を「フレームの番号 × 標本化率 ÷ fps」まで進めて窓を
-/// 取る。何を作ってどう操作したかが同じなら、何度書き出しても同じ値になる ([ADR-0028] 決定 7・
+/// ``SketchPart/clock``) では**鳴らさず**、標本を「絶対のフレーム番号 × 標本化率 ÷ fps」の位置まで進めて
+/// 区間を取る。何を作ってどう操作したかが同じなら、何度書き出しても同じ値になる ([ADR-0028] 決定 7・
 /// [ADR-0025] の水準 2)。
 ///
 /// 音を進めるのは音の時計で、``SketchPart/time`` ではない。``SketchPart/pauseTime()`` と
@@ -73,28 +79,39 @@ public class SynthSound: EffectInput {
     /// 鳴らし始めた (エフェクトなら入力を繋いだ) か。解析はここから始める。
     var isActive = false
 
-    /// フレームの頭の窓と、読まれたときに解いた値 (``DeferredLevels``)。
+    /// フレームの頭の区間と、読まれたときに解いた値 (``DeferredLevels``)。
     private var deferred = DeferredLevels()
     private var levels: AudioLevels { deferred.levels() }
     /// 解析した回数。**検査が読む** — 読まれない値は解析しない。
     var analyses: Int { deferred.analyses }
+    /// 前のフレームの区間の終わり (出口の標本の通し番号)。
+    private var covered = 0
     private var noticed: Set<String> = []
 
     init(stage: SynthStage, node: RackNode?, name: String) {
         self.stage = stage
         self.node = node
         self.name = name
+        // 鳴らし始める前の出口は無音 (ラックが 0 を書いている)。最初の区間の始まりが出口の標本 0 でなくても、
+        // 最初の立ち上がりを拍にする
+        deferred.beginsSilent = true
         if node == nil { stage.noticeCapacity() }
         stage.register(self)
     }
 
     // MARK: - 生の値
 
-    /// 窓の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
+    /// 区間の二乗平均の平方根 (振幅の単位)。無音で 0、全振幅の正弦波で約 0.707。
     public var rms: Float { levels.rms }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
     public var decibels: Float { levels.decibels }
-    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。
+    /// 区間の標本の絶対値の最大 (振幅の単位)。無音で 0、全振幅の音で 1。写し方は ``AudioIn/peak`` と同じ。
+    ///
+    /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解くので、`draw()` が読まなかった
+    /// フレームの区間は解かれず、次のフレームの値にも混ざらない。取りこぼしたくない値は、毎フレーム読む。
+    public var peak: Float { levels.peak }
+    /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の真ん中にある全振幅の正弦波で 1。区間に終わりが入る
+    /// 窓の平均。
     public var spectrum: [Float] { levels.spectrum }
 
     // MARK: - 0〜1 へ写した値
@@ -104,6 +121,79 @@ public class SynthSound: EffectInput {
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。写し方は ``level`` と同じ。
     public var spectrumLevels: [Float] { levels.spectrumLevels }
 
+    // MARK: - 帯域・波形・拍
+
+    /// 周波数の範囲 `low`〜`high` (Hz) の大きさを 0〜1 で返す。低音の脈動を、帯域の番号を割り出さずに取る。
+    ///
+    /// <!-- example: 文脈 var sound: SynthSound? -->
+    /// ```swift
+    /// if let sound { circle(width / 2, height / 2, 100 + sound.energy(from: 20, to: 140) * 300) }
+    /// ```
+    ///
+    /// 区間の ``spectrum`` の、中心がその範囲に入る帯域 (帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz) の振幅の
+    /// 平均を、``level`` と同じ dB の固定範囲 (-60 dBFS が 0、0 dBFS が 1) で写した値で、履歴に依らない。別の
+    /// 解析は走らせない。手本は p5.sound の `getEnergy`。
+    ///
+    /// - 範囲に中心が入る帯域が無ければ、範囲の中点にいちばん近い 1 帯域の値
+    /// - 逆順 (`low` が `high` より大きい) は入れ替える。0 Hz〜標本化率の半分の外へはみ出す分は端へ寄せ、
+    ///   範囲が全部外なら 0
+    /// - 数でない値・無限の値は 0 を返し、そのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func energy(from low: Float, to high: Float) -> Float {
+        let result = AudioAnalysis.energy(of: levels.spectrum, from: low, to: high, sampleRate: sampleRate)
+        if !result.isNumber {
+            notice(
+                "energy.notFinite",
+                "energy() got a value that is not a number, or an infinite one, so it returns 0 for "
+                    + "this \(name)")
+        }
+        return result.value
+    }
+
+    /// 区間の終わりの 1024 標本 (古い順)。波形を描くのに使う。
+    ///
+    /// <!-- example: 文脈 var sound: SynthSound? -->
+    /// ```swift
+    /// if let sound {
+    ///     noFill()
+    ///     stroke(255)
+    ///     beginShape()
+    ///     for (i, s) in sound.waveform.enumerated() { vertex(Float(i) / 1024 * width, height * 0.8 + s * 100) }
+    ///     endShape()
+    /// }
+    /// ```
+    ///
+    /// 標本は解析と同じもの (チャンネルを平均したもの。音量は掛けた後)。標本 0 より前は 0。標本が進まな
+    /// かったフレームは前のまま。何も鳴っていなければ 1024 個の 0。手本は p5.sound の `waveform()` と
+    /// Processing Sound の `Waveform`。
+    public var waveform: [Float] { deferred.waveform() }
+
+    /// このフレームの区間に拍があったか。区間に拍が 1 つ以上あれば `true` (複数あっても 1 回に畳む)。
+    ///
+    /// <!-- example: 文脈 var sound: SynthSound?; var flash: Float = 0 -->
+    /// ```swift
+    /// if sound?.isBeat == true { flash = 1 }
+    /// flash *= 0.9
+    /// background(30 + flash * 200, 30, 40)
+    /// ```
+    ///
+    /// 拍は、ブロックごとのエネルギーが直近の平均を急に上回ったところ。ブロックは音源の標本 0 から 512 標本ごと
+    /// に区切った固定の列で、**判定は届いた単位ではなくこの列の順にだけ進む**。同じ標本列からは、fps や
+    /// 届くチャンクの長さが違っても同じ標本位置で拍が出る (``AudioIn`` のマイクを除く — 到着が実時間で決まる
+    /// ので、固定の時計の書き出しの水準 2 を名乗れるのはファイル・標本列・合成音)。手本は Minim の `BeatDetect`、
+    /// p5.sound の `PeakDetect`、Processing Sound の `BeatDetector`。感度の口は持たない。
+    ///
+    /// **鳴らし始めたとき** (エフェクトなら入力を繋いだとき) から履歴を溜め、読まないフレームの区間も毎フレーム処理する。
+    /// どのフレームから読み始めても拍の有無は変わらず、読む間隔を変えても拍の位置は同じ (費用は標本あたり二乗和 1 回で、
+    /// 1 フレームに数 µs)。鳴らす前は無音なので、最初の立ち上がりも拍になる。止めても履歴は続き、鳴らし直せば
+    /// 続きから判定する。標本を落としたとき (区間の上限を越えたとき) は、履歴を捨てて始め直し、落とした区間では
+    /// 拍を出さない。区間の上限があるので、約 7.8 fps (48 kHz) より遅いフレームでは区間の頭が落ち続け、拍は fps に依る。
+    public var isBeat: Bool { deferred.isBeat }
+
+    /// 拍の状態が区間を処理した回数。検査が読む — 一度も読まれなければ 0。
+    var beatSteps: Int { deferred.beatSteps }
+
     // MARK: - 出どころ
 
     /// 標本化率 (Hz)。帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz。常に 48000。
@@ -111,23 +201,32 @@ public class SynthSound: EffectInput {
 
     // MARK: - ステージとの受け渡し
 
-    /// フレームごとに、最新の窓を切り出す。**解析は値が読まれたときまで遅らせる** ([#2379])。
+    /// フレームごとに、前のフレーム以後の標本を区間として切り出す。**解析は値が読まれたときまで遅らせる** ([#2379])。
     ///
-    /// 窓はここ (フレームの頭) で決める。読まれたときに引き直すと、フレームの途中で進んだ標本を
-    /// 拾って値が変わる。
+    /// 区間はここ (フレームの頭) で決める。読まれたときに引き直すと、フレームの途中で進んだ標本を
+    /// 拾って値が変わる。鳴らし始める前も、区間の終わりは追い続ける (鳴らし始めた最初のフレームの区間は、
+    /// 前のフレームからの分だけ)。
     ///
     /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
     func refresh() {
-        guard isActive, let node else {
+        deferred.beginFrame()
+        guard let node else {
             deferred.silence()
             return
         }
-        deferred.hold(node.meter.latest(AudioAnalysis.windowSize))
+        guard isActive else {
+            deferred.silence()
+            covered = node.meter.total
+            return
+        }
+        let snapshot = node.meter.snapshot(since: covered)
+        covered = snapshot.span.to
+        deferred.hold(snapshot.span)
     }
 
     /// スケッチが終わった。以後の値は無音。
     func silence() {
-        deferred.silence()
+        deferred.forget()
     }
 
     // MARK: - 音の側へ渡す
