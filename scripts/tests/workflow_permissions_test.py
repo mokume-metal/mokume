@@ -59,6 +59,7 @@ API_WRITES = (
     (re.compile(_REPO + "actions/"), {"actions"}),
     (re.compile(_REPO + "issues/"), {"issues"}),
     (re.compile(_REPO + "pulls/"), {"pull-requests"}),
+    (re.compile(_REPO + "git/refs/"), {"contents"}),
 )
 
 # 書き込み権限を使う action
@@ -325,6 +326,7 @@ class WorkflowPermissionTest(unittest.TestCase):
             "stall-watch.yml:watch": ("scripts/stall-act.sh", {"actions"}),
             "queue-sweep.yml:sweep": ("scripts/queue-sweep.sh", {"actions"}),
             "close-cleanup.yml:drop-in-progress": ("run:", {"issues"}),
+            "close-cleanup.yml:delete-unmerged-head": ("run:", {"contents"}),
             "release.yml:release": ("run:", {"contents"}),
             "pages.yml:publish": ("uses:", {"pages", "id-token"}),
             "ruleset-drift.yml:drift": ("scripts/triage.sh", {"issues"}),
