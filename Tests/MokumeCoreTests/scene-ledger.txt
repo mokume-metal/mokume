@@ -68,6 +68,7 @@ layered@20 937b0708bc32bbe5d35dba2d5e615bab336b14c071c895c8f47b8474d82d3d21
 # 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
 # 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
 # 実物のポートを開くもの (osc-and-reply) は載せない — 外から届いた値が絵に入りうる (ADR-0028 決定 7)。
+sketch:parts-and-surfaces@45 3237ca436d1435f062316d07dad238fc8e1ef05e6d070c47c63e9aa46e812ec8
 sketch:shapes-and-style@45 dad0c512d6d0bc5f50dc775c531aa679d95aab0843e4c8f406ea68aa40248808
 sketch:curves-and-vertices@45 544fa3563aebbdd75e34eb39dd958d1b59da4d04ec06eaaa5c9291844aa493ab
 sketch:curve-and-flight@45 fb6f13196d84dd2dfcb0c3d07877f4e6efb2c1a690237f3b0e8e46a3c1b8f7c2

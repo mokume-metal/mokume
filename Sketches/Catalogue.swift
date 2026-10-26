@@ -37,6 +37,7 @@ nonisolated struct ReferenceSketch: Sendable, CustomStringConvertible {
 nonisolated let stillFrame = 45
 
 nonisolated let catalogue: [ReferenceSketch] = [
+    ReferenceSketch(name: "parts-and-surfaces") { PartsAndSurfaces() },
     ReferenceSketch(name: "shapes-and-style") { ShapesAndStyle() },
     ReferenceSketch(name: "curves-and-vertices") { CurvesAndVertices() },
     ReferenceSketch(name: "curve-and-flight") { CurveAndFlight() },
