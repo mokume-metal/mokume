@@ -62,6 +62,9 @@ jobs:
         id: watch
         env:
           GH_TOKEN: ${{ github.token }}
+          # 専用機の runner の数 (#3320)。門番 (render.yml) と同じ変数を読む。runner-offline は
+          # 走っている専用機の job がこの本数に満たないときに名乗る。未設定なら 1
+          RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
         run: |
           # **標準出力は機械が読む契約なので、stderr を混ぜない** (ruleset-drift.yml が
           # 2>&1 | tee を使っているのは、あちらの出力が人向けのログだからである)
