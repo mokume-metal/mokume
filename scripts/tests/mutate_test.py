@@ -261,6 +261,32 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok")[0], "survived")
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok", gpu=True)[0], "unevaluated")
 
+    def test_skipped_nested_suite_maps_to_its_outermost_type(self):
+        # xunit の classname は入れ子を `.` でつなぐ (`T.Outer.Inner`)。関連は最外の型 (`T.Outer`) で作る
+        related = {"T.Outer"}
+
+        def outcome(cases, **kwargs):
+            return mutate.classify("ok", "ok", "ok", cases, set(), related, **kwargs)[0]
+
+        self.assertEqual(outcome([("T.Outer.Inner/a()", "skipped")]), "unevaluated")
+        self.assertEqual(outcome([("T.Outer.Inner.Deeper/a()", "skipped")]), "unevaluated")
+        # 入れ子でない suite と、関連でない suite は今までどおり
+        self.assertEqual(outcome([("T.Outer/a()", "skipped")]), "unevaluated")
+        self.assertEqual(outcome([("T.Other/b()", "skipped")]), "survived")
+        self.assertEqual(outcome([("T.Other.Inner/b()", "skipped")]), "survived")
+        # 最外の型が名前の前半だけ同じ別の型 (`T.OuterExtra`) は関連にしない
+        self.assertEqual(outcome([("T.OuterExtra.Inner/b()", "skipped")]), "survived")
+        # GPU の無い機械の印があれば、関連の外も数える (今までどおり)
+        self.assertEqual(outcome([("T.Other.Inner/b()", "skipped")], gpu_hint=True), "unevaluated")
+        # xunit の入れ子 (`.`) と testID の入れ子 (`/`) は同じ最外の suite に写る
+        self.assertEqual(mutate.suite_of("T.Outer.Inner/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of("T.Outer/Inner/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of("T.Outer/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of(mutate.UNKEYED_IDENT), mutate.UNKEYED_IDENT)
+        # 実物の xunit の記録の 1 行 (`classname="MokumeCoreTests.ModelTests.OnCanvas"`) の形
+        self.assertEqual(mutate.suite_of("MokumeCoreTests.ModelTests.OnCanvas/aLoadedModelIsVisible()"),
+                         "MokumeCoreTests.ModelTests")
+
     def test_cancelled_related_suite_is_unevaluated(self):
         # xunit の上では passed のまま、事象の記録の取り消しが cancelled として足されている
         cases = [("T.GuardTests/a()", "passed"), ("T.GuardTests/a()", "cancelled")]
@@ -326,6 +352,21 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(totals["model"], {"killed": 1, "sole": 1})
         self.assertEqual(totals["-"], {"killed": 1, "sole": 0})
         self.assertEqual(mutants[1]["sole"], None)
+
+    def test_a_nested_suite_that_killed_is_attributed_to_its_catalog_row(self):
+        # xunit の killers は入れ子を classname の `.` でつなぐ (実物の記録の 1 行の形)。
+        # 最外の型 (表の行) を引けず、帰属が `-` に落ちてはならない
+        catalog = {"ModelTests": ("model", "3218"), "Inner": ("inner", "1")}
+        mutants = [
+            {"outcome": "killed", "killers": ["MokumeCoreTests.ModelTests.OnCanvas/aLoadedModelIsVisible()"]},
+            {"outcome": "killed", "killers": ["MokumeCoreTests.Other.Inner/a()"]},
+            {"outcome": "killed", "killers": ["MokumeCoreTests.Other.Deeper/a()"]},
+        ]
+        totals = mutate.attribute(mutants, "present", catalog)
+        self.assertEqual(totals["model"], {"killed": 1, "sole": 1})
+        self.assertEqual(totals["inner"], {"killed": 1, "sole": 1})
+        self.assertEqual(totals["-"], {"killed": 1, "sole": 1})
+        self.assertEqual(mutate.proposal_of("MokumeCoreTests.ModelTests.OnCanvas/a()", catalog), "model")
 
     def test_without_a_catalog_nothing_is_attributed(self):
         mutants = [{"outcome": "killed", "killers": ["T.X/a()"]}]
