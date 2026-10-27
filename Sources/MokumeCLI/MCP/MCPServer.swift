@@ -185,11 +185,18 @@ enum MCPCommand {
         return (package, Invocation.facetBase(under: package, workDirectory: workDirectory))
     }
 
-    /// - Parameter serving: 窓口を回す手続き。**検査から差し替える** — 既定は標準入力が
-    ///   閉じるまで読み続けるので、回す前に止まることを確かめる検査がここで固まらないように
-    ///   する (`WatchCommand.run(_:watching:)` と同じ作法)。
+    /// - Parameters:
+    ///   - scratch: 信号で終わった窓口の観測の写しの置き場を掃く、一時の場所。**検査から差し替える** —
+    ///     既定の共有の一時の場所は、他のプロセスや過去の実行が積んだ項目の全体を走査する
+    ///     (数万になりうる) ので、引数や回す前の止まり方を見るだけの検査が、その件数に左右される
+    ///     ([#3298](https://github.com/mokume-metal/mokume/issues/3298))。`BundleCommand` の
+    ///     `scratch:` と同じ作法で、製品の呼び口 (`Command`) は渡さず既定のまま呼ぶ。
+    ///   - serving: 窓口を回す手続き。**検査から差し替える** — 既定は標準入力が
+    ///     閉じるまで読み続けるので、回す前に止まることを確かめる検査がここで固まらないように
+    ///     する (`WatchCommand.run(_:watching:)` と同じ作法)。
     static func run(
-        _ arguments: [String], serving: (MCPServer) -> Void = { $0.serve() }
+        _ arguments: [String], scratch: URL = FileManager.default.temporaryDirectory,
+        serving: (MCPServer) -> Void = { $0.serve() }
     ) throws(CommandFailure) {
         // **窓口を立てる前に解く。** 立ててからでは、誤りを言う前に標準入力を待つ
         let directories = try directories(arguments: arguments)
@@ -199,7 +206,7 @@ enum MCPCommand {
         let place = InterfacePlace.at(directories.package)
         // 信号で終わった窓口の観測の写しの置き場を、立てるときに 1 度だけ掃く (一時の場所の一覧は
         // 重いので、道具の束を作るたびにはしない・#3131)
-        ObservationCopies.sweepStale(in: FileManager.default.temporaryDirectory)
+        ObservationCopies.sweepStale(in: scratch)
         let server = MCPServer(
             tools: Tools(
                 facets: Facets(
