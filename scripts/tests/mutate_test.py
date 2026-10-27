@@ -261,6 +261,29 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok")[0], "survived")
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok", gpu=True)[0], "unevaluated")
 
+    def test_skipped_nested_suite_maps_to_its_outermost_type(self):
+        # xunit の classname は入れ子を `.` でつなぐ (`T.Outer.Inner`)。関連は最外の型 (`T.Outer`) で作る
+        related = {"T.Outer"}
+
+        def outcome(cases, **kwargs):
+            return mutate.classify("ok", "ok", "ok", cases, set(), related, **kwargs)[0]
+
+        self.assertEqual(outcome([("T.Outer.Inner/a()", "skipped")]), "unevaluated")
+        self.assertEqual(outcome([("T.Outer.Inner.Deeper/a()", "skipped")]), "unevaluated")
+        # 入れ子でない suite と、関連でない suite は今までどおり
+        self.assertEqual(outcome([("T.Outer/a()", "skipped")]), "unevaluated")
+        self.assertEqual(outcome([("T.Other/b()", "skipped")]), "survived")
+        self.assertEqual(outcome([("T.Other.Inner/b()", "skipped")]), "survived")
+        # 最外の型が名前の前半だけ同じ別の型 (`T.OuterExtra`) は関連にしない
+        self.assertEqual(outcome([("T.OuterExtra.Inner/b()", "skipped")]), "survived")
+        # GPU の無い機械の印があれば、関連の外も数える (今までどおり)
+        self.assertEqual(outcome([("T.Other.Inner/b()", "skipped")], gpu_hint=True), "unevaluated")
+        # xunit の入れ子 (`.`) と testID の入れ子 (`/`) は同じ最外の suite に写る
+        self.assertEqual(mutate.suite_of("T.Outer.Inner/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of("T.Outer/Inner/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of("T.Outer/a()"), "T.Outer")
+        self.assertEqual(mutate.suite_of(mutate.UNKEYED_IDENT), mutate.UNKEYED_IDENT)
+
     def test_cancelled_related_suite_is_unevaluated(self):
         # xunit の上では passed のまま、事象の記録の取り消しが cancelled として足されている
         cases = [("T.GuardTests/a()", "passed"), ("T.GuardTests/a()", "cancelled")]

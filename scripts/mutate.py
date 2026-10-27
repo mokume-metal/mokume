@@ -402,9 +402,9 @@ def read_cancelled(path):
     読みは read-test-record.py と共有する。事象の記録が無い・読めない回は、取り消しが無いと
     読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。ident は testID の末尾の
     `/<file>:<line>:<column>` を落としたもの (`<suite>/<name>`)。testID は入れ子の suite を `/` で
-    つなぐ (`MokumeCoreTests.Outer/Inner/test()`) ので、`suite_of` は最外の suite に写す。
-    xunit の classname は入れ子を `.` でつなぐ (`MokumeCoreTests.Outer.Inner`) ので、入れ子では
-    xunit の ident とは綴りが合わない — ident は xunit の検査と突き合わせず、関連の suite の判定にだけ使う。
+    つなぐ (`MokumeCoreTests.Outer/Inner/test()`)。xunit の classname は入れ子を `.` でつなぐ
+    (`MokumeCoreTests.Outer.Inner`) ので、入れ子では xunit の ident とは綴りが合わない — ident は
+    xunit の検査と突き合わせず、関連の suite の判定にだけ使う (`suite_of` はどちらも最外の suite に写す)。
     """
     reason, items, _, _ = _read_test_record().read_cancellations(path)
     if reason is not None:
@@ -414,10 +414,12 @@ def read_cancelled(path):
 
 
 def suite_of(ident):
-    """`<module>.<suite>/…` の最外の suite。取り消しの ident (testID 由来・入れ子は `/`) では
-    `MokumeCoreTests.Outer/Inner/test()` → `MokumeCoreTests.Outer`。xunit の ident (`<classname>/<name>`)
-    の classname は入れ子を `.` でつなぐので、入れ子の飛ばされた検査はそのままでは関連に合わない。"""
-    return ident.split("/", 1)[0]
+    """`<module>.<suite>/…` の最外の suite (`<module>.<最外の型>`・関連の集合と同じ綴り)。
+    取り消しの ident (testID 由来・入れ子は `/`) では `MokumeCoreTests.Outer/Inner/test()`、
+    xunit の ident (`<classname>/<name>`・入れ子は classname の `.`) では
+    `MokumeCoreTests.Outer.Inner/test()` — どちらも `MokumeCoreTests.Outer` に写る。
+    module は SwiftPM の target 名で `.` を含まない。"""
+    return ".".join(ident.split("/", 1)[0].split(".")[:2])
 
 
 def classify(build, test, record_state, cases, baseline_failed, related, gpu_hint=False):
