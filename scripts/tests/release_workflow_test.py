@@ -55,6 +55,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
         # 版の判定 (release.py) より前に置く — 出すものが無い日も走る
         self.assertNotIn("release.py", check)
 
+    def test_専用機の定期debugも全探索を維持する(self):
+        _, jobs = workflow.split((REPO / ".github/workflows/render.yml").read_text(encoding="utf-8"))
+        self.assertRegex(jobs["scheduled-debug"], r'(?m)^      MOKUME_GEOMETRY_EXPLORATION: "1"$')
+        for job in ("render", "render-pr"):
+            self.assertNotIn("MOKUME_GEOMETRY_EXPLORATION", jobs[job])
+
     def test_図形探索は版と同じ_SHAで実行し記録と報告を残す(self):
         check = self.jobs["release-check"]
         self.assertLess(check.index("make test-geometry-exploration"), check.index("make test-release"))
