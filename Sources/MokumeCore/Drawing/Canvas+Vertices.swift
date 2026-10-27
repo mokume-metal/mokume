@@ -476,12 +476,16 @@ extension Canvas {
         guard let writable = vectorWritable(fills: wantsFill, strokes: wantsStroke, into: sink) else { return }
         let (fills, strokes) = writable
         let place = vectorPlacer()
+        // 数でない座標の周・穴は画面にも描かれないので、周なら原始形ごと・穴なら穴だけを黙って飛ばす。有限でも
+        // 書けない大きさの座標は画面には描かれるので、ここでは飛ばさず、図形を足す口 (``VectorCapture/add(_:)``) が、
+        // 周と穴をひとまとめに図形ごと名指しで落とす (穴だけを欠いた周を書かない)
         func placed(_ indices: some Sequence<Int>) -> [SIMD2<Float>]? {
             var result = [SIMD2<Float>]()
             for index in indices {
                 let position = points[index].position
                 let moved = place(SIMD2(position.x, position.y))
-                guard moved.x.isFinite, moved.y.isFinite else { return nil }
+                guard SVGWriter.fit(of: moved.x) != .notANumber, SVGWriter.fit(of: moved.y) != .notANumber
+                else { return nil }
                 result.append(moved)
             }
             return result
@@ -494,11 +498,10 @@ extension Canvas {
                 subpaths.append(VectorSubpath(points: loop, isClosed: true))
             }
             var fill: VectorFill?
+            var mixesColours = false
             if fills, primitive.fills, let first = primitive.ring.first {
                 let color = points[first].fill
-                if primitive.ring.contains(where: { points[$0].fill != color }) {
-                    sink.drops.append(.vertexColours)
-                }
+                mixesColours = primitive.ring.contains(where: { points[$0].fill != color })
                 fill = vectorFill(color: color, evenOdd: evenOdd || primitive.holes.contains { !$0.isEmpty })
             }
             var stroke: VectorStroke?
@@ -512,7 +515,10 @@ extension Canvas {
                 stroke = vectorStroke(cap: primitive.ring.count == 1 ? vectorPointCap : nil, dash: dash)
             }
             guard fill != nil || stroke != nil else { continue }
-            sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke))
+            // 色が違うと名乗るのは、書いた図形だけ (落とした図形を「書いた」とも名乗らない)
+            if sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke)), mixesColours {
+                sink.drops.append(.vertexColours)
+            }
         }
     }
 
