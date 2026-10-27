@@ -29,6 +29,17 @@ nonisolated enum SVGWriter {
     /// √2 になり、切られずに尖る — 丸め下げると直角が切られるので、丸め上げる。
     static let miterLimit = "1.4143"
 
+    /// 数を 1/1000 まで書けるか。**書ける数の定義はここに 1 つだけ持つ。** 数でない値・無限と、1/1000 にした
+    /// 絶対値が `1e15` 以上 (元の値で約 1e12 以上) の値は、整数の桁にあふれるので書けない。
+    /// 控えへ足す口 (``VectorCapture/add(_:)``) が、書けない数を持つ図形を控えないために読む。
+    static func isWritable(_ value: Float) -> Bool {
+        fits(thousandths: (Double(value) * 1000).rounded())
+    }
+
+    fileprivate static func fits(thousandths: Double) -> Bool {
+        thousandths.isFinite && abs(thousandths) < 1e15
+    }
+
     /// SVG を組む。
     ///
     /// - Parameters:
@@ -178,10 +189,11 @@ extension Array where Element == UInt8 {
     /// 数を 1/1000 まで書く。末尾の 0 は書かず、`-0` は `0` にする。
     ///
     /// **書式を自前で持つ** (`String(format:)` は使わない)。ロケールにも OS の版にも依らず、1 万本ぶんを
-    /// 組む間に文字列の確保を払わない。数でない値・桁が溢れる大きさは `0` で書く (置く前に弾いてある)。
+    /// 組む間に文字列の確保を払わない。書けない数 (``SVGWriter/isWritable(_:)``) は `0` で書く保険を持つが、
+    /// **ここへ届く前に、控えへ足す口 (``VectorCapture/add(_:)``) が弾いてある** (#3318)。
     fileprivate nonisolated mutating func appendNumber(_ value: Float) {
         let scaled = (Double(value) * 1000).rounded()
-        guard scaled.isFinite, abs(scaled) < 1e15 else { return append(48) }
+        guard SVGWriter.fits(thousandths: scaled) else { return append(48) }
         var thousandths = Int64(scaled)
         if thousandths == 0 { return append(48) }
         if thousandths < 0 {

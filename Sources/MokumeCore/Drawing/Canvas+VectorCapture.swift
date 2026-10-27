@@ -45,12 +45,29 @@ final class VectorCapture {
     /// 図形を 1 つ足す。**画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
     /// `stroke-opacity="0"` で書くと、不透明度を無視する取り込み側が線を引く。両方とも見えなければ、
     /// 図形ごと足さない (``VectorColor/isInvisible``)。
+    ///
+    /// **書けない数 (``SVGWriter/isWritable(_:)``) を点・線の太さ・破線に持つ図形も足さない** (#3318)。
+    /// 書き手は書けない数を `0` と書くので、有限でも 1e12 を越える座標の図形は (0, 0) へ潰れて残る。
+    /// 数でない座標の図形を控えないのと同じ倒し方で、名乗りは付けない。**判定は変換を当てた後の値**で、
+    /// 置く口が増えても漏れないよう、図形を足すこの 1 点で見る。
     func add(_ figure: VectorFigure) {
+        guard Self.isWritable(figure) else { return }
         var figure = figure
         if let fill = figure.fill, fill.color.isInvisible { figure.fill = nil }
         if let stroke = figure.stroke, stroke.color.isInvisible { figure.stroke = nil }
         guard figure.fill != nil || figure.stroke != nil else { return }
         figures.append(figure)
+    }
+
+    /// 図形の数がすべて書けるか。
+    static func isWritable(_ figure: VectorFigure) -> Bool {
+        for subpath in figure.subpaths {
+            for point in subpath.points {
+                guard SVGWriter.isWritable(point.x), SVGWriter.isWritable(point.y) else { return false }
+            }
+        }
+        guard let stroke = figure.stroke else { return true }
+        return SVGWriter.isWritable(stroke.width) && stroke.dash.allSatisfy(SVGWriter.isWritable)
     }
 }
 

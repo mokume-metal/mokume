@@ -945,6 +945,79 @@ struct VectorCaptureTests {
         }
     }
 
+    /// 変換を当てた後の座標が書けない大きさ (1/1000 にした絶対値が 1e15 以上・元の値で約 1e12 以上) の図形は、
+    /// 数でない座標の図形と同じく控えない (#3318)。書き手は書けない数を `0` と書くので、控えると (0, 0) へ潰れた形が残る。
+    @Test("変換後の座標が 1e12 を越える有限の図形は、(0, 0) へ潰れた形で書かれず控えない (#3318)")
+    func aHugeFiniteCoordinateWritesNothing() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.fill(red)
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(2)
+                    if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                    canvas.translate(2e12, 0)
+                    place(canvas)
+                }
+                #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
+                #expect(drops.isEmpty, "名乗りは付けない (数でない座標と同じ): \(drops)")
+            }
+        }
+        // 線と頂点の形 (基本図形の口とは別の道) も、控えへ足す同じ 1 点で控えない
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.stroke(blue)
+            canvas.noFill()
+            canvas.translate(0, 3e12)
+            canvas.line(0, 0, 10, 10)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(15, 5)
+            canvas.vertex(5, 15)
+            canvas.endShape(.close)
+        }
+        #expect(figures.isEmpty, "\(figures)")
+        #expect(drops.isEmpty, "\(drops)")
+    }
+
+    @Test("書けない大きさの座標の図形は控えず、同じ口で置いた書ける図形はそのまま書く (1e12 の外と内)")
+    func hugeAndOrdinaryFiguresAreSeparated() throws {
+        let harness = try Harness()
+        let svg = try harness.svg { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.push()
+            canvas.translate(2e12, 0)
+            canvas.circle(0, 0, 20)
+            canvas.pop()
+            canvas.rect(10, 10, 30, 20)
+        }
+        let elements = SVG.elements(svg)
+        #expect(elements.count == 1, "\(svg)")
+        #expect(SVG.attribute("d", in: elements[0]) == "M10 10L40 10 40 30 10 30Z", "\(svg)")
+    }
+
+    @Test("判定は変換の後の座標で行う — 形自身の座標が 1e13 でも、縮めれば収まって書き、拡大して溢れれば控えない")
+    func theLimitIsJudgedAfterTheTransform() throws {
+        let harness = try Harness()
+        let shrunk = try harness.capture { canvas in
+            canvas.noFill()
+            canvas.stroke(blue)
+            canvas.scale(1e-3, 1e-3)
+            canvas.line(1e13, 0, 1e13 + 1e6, 0)
+        }
+        #expect(shrunk.figures.count == 1, "\(shrunk.figures)")
+        let points = shrunk.figures.first?.subpaths.first?.points ?? []
+        #expect(points.allSatisfy { abs($0.x - 1e10) < 1e7 }, "\(points)")
+        let grown = try harness.capture { canvas in
+            canvas.noFill()
+            canvas.stroke(blue)
+            canvas.scale(1e3, 1e3)
+            canvas.line(1e10, 0, 1e10 + 1, 0)
+        }
+        #expect(grown.figures.isEmpty, "\(grown.figures)")
+    }
+
     @Test("書けない設定が効く破線の輪郭を控える口は、落とした印を 1 度だけ付ける (括りに頼らない・#3271)")
     func theDashedFormRecorderCountsABlockedStrokeOnce() throws {
         let harness = try Harness()
@@ -1145,6 +1218,61 @@ struct SVGWriterTests {
             isClosed: false)
         let svg = render(VectorFigure(subpaths: [path], fill: nil, stroke: nil))
         #expect(svg.contains("d=\"M0.05 0L1.5 100 -3.25 0.001 12345.679 2\""), "\(svg)")
+    }
+
+    // MARK: - 書けない大きさの数 (#3318)
+
+    private func capture(_ figure: VectorFigure) -> [VectorFigure] {
+        let sink = VectorCapture()
+        sink.add(figure)
+        return sink.figures
+    }
+
+    private func line(from a: SIMD2<Float>, to b: SIMD2<Float>, width: Float = 1, dash: [Float] = []) -> VectorFigure {
+        VectorFigure(
+            subpaths: [VectorSubpath(points: [a, b], isClosed: false)], fill: nil,
+            stroke: VectorStroke(color: VectorColor(red: 0, green: 0, blue: 0, opacity: 1), width: width, cap: .round, join: .miter, dash: dash))
+    }
+
+    /// Float で 1e12 に最も近い下側の値 (999999995904) まで書け、次の値 (1000000061440) から書けない。
+    @Test("書ける数の境界: 1/1000 にした絶対値が 1e15 に届く直前までは書き、届いたら書けない")
+    func theWritableBoundary() {
+        let below: Float = 999_999_995_904
+        let above: Float = 1_000_000_061_440
+        #expect(below.nextUp == above)
+        #expect(SVGWriter.isWritable(below))
+        #expect(SVGWriter.isWritable(-below))
+        #expect(!SVGWriter.isWritable(above))
+        #expect(!SVGWriter.isWritable(-above))
+        #expect(!SVGWriter.isWritable(.nan))
+        #expect(!SVGWriter.isWritable(.infinity))
+        #expect(SVGWriter.isWritable(0))
+        #expect(SVGWriter.isWritable(-0.0))
+        // 境界の内側は、そのままの値で書く
+        #expect(capture(line(from: SIMD2(below, 0), to: SIMD2(0, -below))).count == 1)
+        let svg = String(
+            decoding: SVGWriter.render([line(from: SIMD2(below, 0), to: SIMD2(1, 1))][...], width: 10, height: 10),
+            as: UTF8.self)
+        #expect(svg.contains("d=\"M999999995904 0L1 1\""), "\(svg)")
+    }
+
+    @Test("書けない大きさの点・線の太さ・破線を持つ図形は、有限でも控えに足さない")
+    func figuresWithUnwritableNumbersAreNotCaptured() {
+        let above: Float = 1_000_000_061_440
+        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(above, 0))).isEmpty)
+        #expect(capture(line(from: SIMD2(0, -above), to: SIMD2(1, 1))).isEmpty)
+        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1, 1), width: above)).isEmpty)
+        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1, 1), dash: [4, above])).isEmpty)
+        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(.nan, 1))).isEmpty)
+        // 2 つ目の道の点でも見る
+        let second = VectorFigure(
+            subpaths: [
+                VectorSubpath(points: [SIMD2(0, 0), SIMD2(1, 1)], isClosed: false),
+                VectorSubpath(points: [SIMD2(0, 0), SIMD2(above, 1)], isClosed: false),
+            ], fill: VectorFill(color: VectorColor(red: 0, green: 0, blue: 0, opacity: 1), evenOdd: false), stroke: nil)
+        #expect(capture(second).isEmpty)
+        // 普通の図形は足される
+        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1e9, 1), width: 3, dash: [4, 2])).count == 1)
     }
 
     @Test("同じ入力を 2 回組むと、バイトまで一致する")
