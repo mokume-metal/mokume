@@ -12,6 +12,8 @@
 // **置いた点・線の太さ・破線が書ける数かは、5 つの口のどれでもなく、図形を足す 1 点 (`VectorCapture.add`) が
 // 見る** (#3318)。数でない座標の図形は画面にも描かれないので黙って控えず、有限でも約 1e12 を越える図形は
 // 画面には描かれるので `VectorDrop.tooLarge` で名指しして落とす。書ける数の定義は `SVGWriter.Fit` に 1 つ。
+// **有限の入力が Float の桁あふれで ∞ になったものは、入力の ∞ と区別がつかない**ので、数を作る 3 か所 (置き先・
+// 線の太さ・破線の長さ) が入力と結果を見比べて、桁あふれの側を `tooLarge` の側へ丸めてから渡す (#3350)。
 //
 // **控えるのは観測であって、組み立てを変えない。** 控えた後も図形はいままでどおり 1 本の組み立てを
 // 通って描かれる。頼まれていないフレームが払うのは、各口の先頭の読み (`vector.capture` が nil か・
@@ -52,7 +54,9 @@ final class VectorCapture {
     /// 書けない数を `0` と書くので、足せば (0, 0) へ潰れた形が残る。数でない座標の図形は画面にも描かれないので、
     /// 黙って足さない。有限でも大きすぎる図形は画面には描かれるので、図形ごと名指しで落とす
     /// (``VectorDrop/tooLarge``)。判定は変換を当てた後の値で、**見えない線を外した後**に行う。置く口が増えても
-    /// 漏れないよう、図形を足すこの 1 点で見る。
+    /// 漏れないよう、図形を足すこの 1 点で見る。**有限の入力が桁あふれして ∞ になったものは、数を作る側が
+    /// 先に書けない大きさへ丸めているので、ここへ来る ∞ は入力そのものが数でない図形だけ**
+    /// (``overflowedToLarge(_:inputsAreFinite:)``・#3350)。
     @discardableResult
     func add(_ figure: VectorFigure) -> Bool {
         guard let figure = Self.visible(figure) else { return false }
@@ -321,15 +325,49 @@ extension Canvas {
     var vectorLinearScale: Float {
         let columns = transform.matrix.columns
         let determinant = columns.0.x * columns.1.y - columns.0.y * columns.1.x
-        return determinant.magnitude.squareRoot()
+        // 行列の成分が有限なのに、積が桁あふれで有限でなくなったときは、書けない大きさに丸める (#3350)
+        return Self.overflowedToLarge(
+            determinant.magnitude.squareRoot(),
+            inputsAreFinite: columns.0.x.isFinite && columns.0.y.isFinite && columns.1.x.isFinite
+                && columns.1.y.isFinite)
+    }
+
+    /// 有限の入力から作った数が、Float の桁あふれで有限でなくなったとき、書けない大きさ
+    /// (``SVGWriter/Fit/tooLarge``) の有限値 (±`greatestFiniteMagnitude`) に丸める (#3350)。
+    ///
+    /// **入力そのものが数でない・無限のときは丸めずにそのまま返す。** 図形を足す口 (``VectorCapture/add(_:)``) が
+    /// 見るのは結果だけで、結果が無限でも「入力が無限だった」のか「有限の入力が桁あふれした」のかは区別できない。
+    /// 区別がつくのは数を作る側 (置き先・線の太さ・破線の長さ) だけなので、ここで入力と結果を見比べて、
+    /// 桁あふれの側だけを「大きすぎる」(名乗って落とす) へ寄せる。入力が数でない図形は画面にも描かれないので、
+    /// 従来どおり黙って書かない。
+    static func overflowedToLarge(_ value: Float, inputsAreFinite: Bool) -> Float {
+        guard !value.isFinite, inputsAreFinite else { return value }
+        return value < 0 ? -Float.greatestFiniteMagnitude : Float.greatestFiniteMagnitude
     }
 
     /// 形自身の座標の点を、いまの変換で画面の座標へ。
-    func vectorPlacer() -> (SIMD2<Float>) -> SIMD2<Float> {
+    ///
+    /// 有限の点と有限の変換の積が桁あふれしたら、書けない大きさに丸める (``overflowedToLarge(_:inputsAreFinite:)``)。
+    ///
+    /// - Parameter pointsAreFinite: 渡す点がすべて有限と分かっているか (基本図形は、置く口が寸法の有限を
+    ///   確かめた後なので、組み立ての途中で桁あふれした無限の点も、入力の無限ではなく桁あふれとして丸める)。
+    ///   偽なら、点ごとに有限かを見る (利用者の頂点は数でないことがある)。
+    func vectorPlacer(pointsAreFinite: Bool = false) -> (SIMD2<Float>) -> SIMD2<Float> {
         let matrix = transform.matrix
+        let columns = matrix.columns
+        func isFinite(_ column: SIMD4<Float>) -> Bool {
+            column.x.isFinite && column.y.isFinite && column.z.isFinite && column.w.isFinite
+        }
+        let matrixIsFinite =
+            isFinite(columns.0) && isFinite(columns.1) && isFinite(columns.2) && isFinite(columns.3)
         return { point in
             let moved = matrix * SIMD4<Float>(point.x, point.y, 0, 1)
-            return SIMD2(moved.x, moved.y)
+            guard matrixIsFinite, pointsAreFinite || (point.x.isFinite && point.y.isFinite) else {
+                return SIMD2(moved.x, moved.y)
+            }
+            return SIMD2(
+                Self.overflowedToLarge(moved.x, inputsAreFinite: true),
+                Self.overflowedToLarge(moved.y, inputsAreFinite: true))
         }
     }
 
@@ -414,13 +452,21 @@ extension Canvas {
         guard total.isFinite, period.isFinite, period > 0, total / period <= Float(Self.maxDashPieces)
         else { return [] }
         let scale = vectorLinearScale
-        return [dash.length * scale, dash.gap * scale]
+        // 破線の長さと間隔は上で有限と確かめてある。拡大率が有限なら、積の桁あふれは書けない大きさに丸める (#3350)
+        return [
+            Self.overflowedToLarge(dash.length * scale, inputsAreFinite: scale.isFinite),
+            Self.overflowedToLarge(dash.gap * scale, inputsAreFinite: scale.isFinite),
+        ]
     }
 
     /// いまの設定の輪郭。
     func vectorStroke(color: LinearRGBA? = nil, cap: StrokeCap? = nil, dash: [Float] = []) -> VectorStroke {
-        VectorStroke(
-            color: VectorColor(color ?? style.stroke), width: style.strokeWeight * vectorLinearScale,
+        let scale = vectorLinearScale
+        // 太さも拡大率も有限なのに積が桁あふれしたら、書けない大きさに丸める (#3350)
+        let width = Self.overflowedToLarge(
+            style.strokeWeight * scale, inputsAreFinite: style.strokeWeight.isFinite && scale.isFinite)
+        return VectorStroke(
+            color: VectorColor(color ?? style.stroke), width: width,
             cap: cap ?? style.strokeCap, join: style.strokeJoin, dash: dash)
     }
 
@@ -459,11 +505,15 @@ extension Canvas {
         axis: SIMD2<Float>, arc: SIMD2<Float>, arcClosure: FormInstance.ArcClosure,
         cornerRadius: Float, fills: Bool, strokes: Bool, cap: StrokeCap, dash: [Float] = []
     ) {
-        let place = vectorPlacer()
         // 置いた点が書けるかは、控えへ足す口 (``VectorCapture/add(_:)``) が見る — 数でない座標の図形は黙って控えず、
         // 有限でも大きすぎる図形は名指しで落とす。ここで見るのは、刻む数を求める入力 (角丸の半径・弧の角) が
         // 数かだけである (数でなければ、四分円の数を整数にできない)
         guard cornerRadius.isFinite, arc.x.isFinite, arc.y.isFinite else { return }
+        // 寸法が有限なら、組み立ての途中 (中心 + 半径の和・制御点の延ばし) で桁あふれした無限の点は、入力の無限ではなく
+        // 桁あふれなので、置く側で書けない大きさに丸める (#3350)
+        let place = vectorPlacer(
+            pointsAreFinite: center.x.isFinite && center.y.isFinite && half.x.isFinite && half.y.isFinite
+                && axis.x.isFinite && axis.y.isFinite)
         let fill = fills ? vectorFill() : nil
         let stroke = strokes ? vectorStroke(cap: cap, dash: dash) : nil
 

@@ -1067,6 +1067,188 @@ struct VectorCaptureTests {
         }
     }
 
+    /// 変換の拡大率を掛けた積が Float の上限 (約 3.4e38) を越える形。置き先の中心は有限のまま、角・半径が越える
+    /// (中心の置き先が越えるものは、画面が `isPlaceable` で図形ごと落とすので、ここには入れない・#3350)。
+    private var overflowingShapes: [(name: String, place: (Canvas) -> Void)] {
+        [
+            ("rect", { $0.rect(-5e19, -5e19, 1e20, 1e20) }),
+            ("rounded rect", { $0.rect(-5e19, -5e19, 1e20, 1e20, 5) }),
+            ("ellipse", { $0.ellipse(0, 0, 1e20, 1e20) }),
+            ("circle", { $0.circle(0, 0, 1e20) }),
+            ("pie", { $0.arc(0, 0, 1e20, 1e20, 0.2, 2.2, .pie) }),
+            ("open arc", { $0.arc(0, 0, 1e20, 1e20, 0.2, 2.2, .open) }),
+        ]
+    }
+
+    /// 有限の座標に有限の拡大率を掛けた積が桁あふれして ∞ になっても、入力は有限なので「数でない」図形とは違う。
+    /// 数でない図形は画面にも描かれないので黙って書かないが、桁あふれは画面にも描かれうる大きさの窓があり、
+    /// 黙って消さずに `tooLarge` で名乗る (#3350)。
+    @Test("有限の座標 × 拡大率が Float の上限を越えて ∞ になった図形は、黙って落とさず名指しで落とす (#3350)")
+    func aFiniteCoordinateOverflowingTheScaleIsNamed() throws {
+        let harness = try Harness()
+        for (name, place) in overflowingShapes {
+            for dashed in [false, true] {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.fill(red)
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(1)
+                    if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                    canvas.scale(1e19, 1e19)
+                    place(canvas)
+                }
+                #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
+                #expect(drops == [.tooLarge], "\(name) dashed=\(dashed): \(drops)")
+            }
+        }
+        // 頂点の形の座標 × 拡大率 (基本図形とは別の道)
+        let shape = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.scale(1e19, 1e19)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(1e20, 0)
+            canvas.vertex(0, 1e20)
+            canvas.endShape(.close)
+        }
+        #expect(shape.figures.isEmpty && shape.drops == [.tooLarge], "\(shape)")
+        // 同じ図形が上限の手前で名乗られるものと、名乗り方が変わらない (上限の手前も約 1e12 を越えれば tooLarge)
+        let below = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.scale(1e10, 1e10)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(1e20, 0)
+            canvas.vertex(0, 1e20)
+            canvas.endShape(.close)
+        }
+        #expect(below.figures.isEmpty && below.drops == [.tooLarge], "\(below)")
+    }
+
+    @Test("組み立ての途中 (中心 + 半径・制御点の延ばし) で Float の上限を越えた図形も、有限の入力なので名指しで落とす (#3350)")
+    func aShapeOverflowingWhileBeingBuiltIsNamed() throws {
+        let harness = try Harness()
+        for (name, place) in [
+            ("circle", { (canvas: Canvas) in canvas.circle(2.5e38, 0, 3e38) }),
+            ("ellipse", { (canvas: Canvas) in canvas.ellipse(2.5e38, 0, 3e38, 3e38) }),
+            ("pie", { (canvas: Canvas) in canvas.arc(2.5e38, 0, 3e38, 3e38, 0.2, 2.2, .pie) }),
+        ] {
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.fill(red)
+                canvas.noStroke()
+                place(canvas)
+            }
+            #expect(figures.isEmpty, "\(name): \(figures)")
+            #expect(drops == [.tooLarge], "\(name): \(drops)")
+        }
+    }
+
+    @Test("有限の線の太さ × 拡大率が Float の上限を越えて ∞ になっても、塗りも輪郭も図形ごと名指しで落とし、名乗りは 1 度 (#3350)")
+    func aFiniteStrokeWidthOverflowingTheScaleIsNamed() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.fill(red)
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(1e30)
+                    if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                    canvas.scale(1e10, 1e10)
+                    place(canvas)
+                }
+                #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
+                #expect(drops == [.tooLarge], "\(name) dashed=\(dashed): \(drops)")
+            }
+        }
+        // 太さが上限をまたぐ前後で、結果は変わらない (3e38 は有限で書けない大きさ・4e38 は桁あふれ)
+        for weight: Float in [3e28, 4e28, 1e30] {
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.noFill()
+                canvas.stroke(blue)
+                canvas.strokeWeight(weight)
+                canvas.scale(1e10, 1e10)
+                canvas.circle(0, 0, 20)
+            }
+            #expect(figures.isEmpty && drops == [.tooLarge], "weight=\(weight): \(figures) \(drops)")
+        }
+        // 頂点の形・線 (基本図形とは別の道)
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.stroke(blue)
+            canvas.noFill()
+            canvas.strokeWeight(1e30)
+            canvas.scale(1e10, 1e10)
+            canvas.line(0, 0, 10, 10)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(15, 5)
+            canvas.vertex(5, 15)
+            canvas.endShape(.close)
+        }
+        #expect(figures.isEmpty && drops == [.tooLarge, .tooLarge], "\(figures) \(drops)")
+    }
+
+    @Test("有限の破線の長さ × 拡大率が Float の上限を越えて ∞ になっても、図形ごと名指しで落とす (#3350)")
+    func aFiniteDashLengthOverflowingTheScaleIsNamed() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.noFill()
+                canvas.stroke(blue)
+                canvas.strokeWeight(2)
+                canvas.strokeDash(1e30, 1e30)
+                canvas.scale(1e10, 1e10)
+                place(canvas)
+            }
+            #expect(figures.isEmpty && drops == [.tooLarge], "\(name): \(figures) \(drops)")
+        }
+    }
+
+    @Test("入力そのものが数でない・無限の図形は、拡大率と掛けても桁あふれとは名乗らず、従来どおり黙って書かない (#3350)")
+    func aNonFiniteInputIsStillDroppedSilently() throws {
+        let harness = try Harness()
+        // 数でない頂点は `vertex()` が置かないので、数でない入力が控えへ届くのは変換だけである
+        for bad: Float in [.nan, .infinity, -.infinity] {
+            // 数でない変換 (太さも大きい)
+            let moved = try harness.capture { canvas in
+                canvas.fill(red)
+                canvas.stroke(blue)
+                canvas.strokeWeight(1e30)
+                canvas.translate(bad, 0)
+                canvas.scale(1e10, 1e10)
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(10, 0)
+                canvas.vertex(0, 10)
+                canvas.endShape(.close)
+                canvas.line(0, 0, 10, 10)
+                canvas.circle(0, 0, 10)
+            }
+            #expect(moved.figures.isEmpty && moved.drops.isEmpty, "translate \(bad): \(moved)")
+        }
+        // 拡大率の積が桁あふれする変換の行列そのものが有限でない (scale を 2 度重ねて ∞) ときも、入力が有限でないので黙る
+        let matrix = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.scale(1e30, 1e30)
+            canvas.scale(1e30, 1e30)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(10, 0)
+            canvas.vertex(0, 10)
+            canvas.endShape(.close)
+        }
+        #expect(matrix.figures.isEmpty && matrix.drops.isEmpty, "\(matrix)")
+        // 中心の置き先が桁あふれする基本図形は、画面が `isPlaceable` で図形ごと落とすので、書き出しも名乗らない
+        let center = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.scale(1e19, 1e19)
+            canvas.circle(1e20, 0, 10)
+        }
+        #expect(center.figures.isEmpty && center.drops.isEmpty, "\(center)")
+    }
+
     @Test("破線で塗りもある図形の塗りが別の理由で名乗られても、輪郭の大きすぎる名乗りは消えない (種類ごとに 1 件・#3318)")
     func differentReasonsInOneDashedFigureAreBothNamed() throws {
         let harness = try Harness()
