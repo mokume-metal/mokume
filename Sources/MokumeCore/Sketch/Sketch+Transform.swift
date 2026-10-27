@@ -262,6 +262,23 @@ extension SketchPart {
         canvas.scale(x, y)
     }
 
+    /// 全部の軸を同じ倍率で伸ばす・縮める。
+    ///
+    /// ``scale(_:_:_:)`` に同じ値を 3 つ渡す (`scale(s, s, s)`) のと同じで、**縦横も奥行きも
+    /// 一緒に** 伸びる。平面だけを描いているときは奥行きが見えないので、`scale(s, s)` と同じ
+    /// 絵になる。立体を置くときは、奥へ伸ばしたぶんも倍率どおりに掛かる (Processing の
+    /// `scale(s)` と同じ)。基準は原点で、図形の中心ではない。**負の値は反転で、0 は潰れる。**
+    ///
+    /// 平面だけを軸ごとに変えたいときは ``scale(_:_:)`` を使う。
+    ///
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    // shot: 参照 scale(_:_:)
+    public func scale(_ s: some ScalarConvertible) {
+        guard let canvas = Self.liveCanvas() else { return }
+        let s = s.asFloat
+        canvas.scale(s)
+    }
+
     /// 原点を奥行きも含めてずらす。
     ///
     /// **奥行きは見ている側が正。** 正の値を渡すと手前へ、負の値を渡すと奥へ動く
