@@ -66,7 +66,10 @@ public nonisolated final class ScratchOwner: @unchecked Sendable {
 
     /// 預かったものを全部消す。
     ///
-    /// - Returns: 消せなかった場所 (読めない親など)。1 つが消せなくても残りは消し続ける。
+    /// 書き込み権を落とした区画 (検査が 0o500 にしている間に殺された区画など) は、権限を戻して 1 度
+    /// やり直す (``ScratchRemoval``)。
+    ///
+    /// - Returns: 消せなかった場所 (親が書けないなど)。1 つが消せなくても残りは消し続ける。
     @discardableResult
     public func removeAll() -> [URL] {
         let urls = lock.withLock {
@@ -80,13 +83,36 @@ public nonisolated final class ScratchOwner: @unchecked Sendable {
             // **在るかは `lstat` 相当で見る** — `fileExists` はぶら下がった symlink を「無い」と読んで、
             // symlink そのものを残す
             guard (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil else { continue }
-            do {
-                try FileManager.default.removeItem(at: url)
-            } catch {
-                failed.append(url)
-            }
+            if !ScratchRemoval.remove(url) { failed.append(url) }
         }
         return failed
+    }
+}
+
+/// 区画を消す。**消せなければ、辿った分の書き込み権を戻して 1 度だけやり直す。**
+///
+/// 検査が区画を 0o500 などにしている間にプロセスが殺されると、区画が消せないまま残り、親の掃除が
+/// 毎回失敗して黙って残り続ける。権限を戻すのは区画とその中のディレクトリだけで、**symlink は辿らない**
+/// (`setAttributes` は symlink の指す先を変える)。区画の親の権限は触らない。
+public nonisolated enum ScratchRemoval {
+    /// - Returns: 消せたか (最初から無ければ失敗)。
+    public static func remove(_ url: URL) -> Bool {
+        if (try? FileManager.default.removeItem(at: url)) != nil { return true }
+        restoreWriteAccess(url)
+        return (try? FileManager.default.removeItem(at: url)) != nil
+    }
+
+    private static func restoreWriteAccess(_ url: URL) {
+        let fileManager = FileManager.default
+        // `attributesOfItem` は `lstat` 相当で、symlink は `.typeSymbolicLink` と読む
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+            attributes[.type] as? FileAttributeType == .typeDirectory
+        else { return }
+        let mode = (attributes[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
+        try? fileManager.setAttributes([.posixPermissions: mode | 0o700], ofItemAtPath: url.path)
+        for name in (try? fileManager.contentsOfDirectory(atPath: url.path)) ?? [] {
+            restoreWriteAccess(url.appendingPathComponent(name))
+        }
     }
 }
 
@@ -96,8 +122,9 @@ public nonisolated final class ScratchOwner: @unchecked Sendable {
 /// プロセスのものだけを消す。**自分の親と、走っている検査の親は触らない。** pid の再利用で消し
 /// 損ねることはあっても、生きている検査の親は消さない向きに倒す。製品の型は `MokumeCLI` の
 /// internal で、この target は Foundation だけに依るので、生死の判定は同じ式を写している。
-/// 接頭辞が違うもの (製品の置き場・他の検査の区画・既に積もった `mokume-*`) と、`<pid>` を
-/// 読めない名前には触れない。
+/// 接頭辞が違うもの (製品の置き場・他の検査の区画・既に積もった `mokume-*`) と、
+/// `mokume-test-<pid>-<UUID>` の形に厳密に合わない名前 (``ownerPid(ofName:)``) には触れない。
+/// 消せない区画は、書き込み権を戻して 1 度やり直す (``ScratchRemoval``)。
 public nonisolated enum ScratchSweep {
     /// 検査の親の名前の頭。続く `<pid>-<uuid>` の pid が持ち主。
     public static let prefix = "mokume-test-"
@@ -105,6 +132,22 @@ public nonisolated enum ScratchSweep {
     /// pid のプロセスが居るか。
     public static let processExists: @Sendable (pid_t) -> Bool = { pid in
         kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// 検査の親の名前 `mokume-test-<10 進の数字のみ>-<UUID>` から、持ち主の pid を取り出す。
+    ///
+    /// **形が厳密に合うものだけ**を読む。符号つき (`-5`・`+5`)・UUID でない末尾・人が置いた
+    /// `mokume-test-<数字>-…` は `nil` で、掃かない。pid が 1 以上でなければ `nil`。
+    public static func ownerPid(ofName name: String) -> pid_t? {
+        guard name.hasPrefix(prefix) else { return nil }
+        let rest = name.dropFirst(prefix.count)
+        let parts = rest.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+            !parts[0].isEmpty, parts[0].allSatisfy({ ("0"..."9").contains($0) }),
+            let pid = pid_t(parts[0]), pid > 0,
+            UUID(uuidString: String(parts[1])) != nil
+        else { return nil }
+        return pid
     }
 
     /// `directory` の下の、持ち主の居ない検査の親を消す。
@@ -117,18 +160,10 @@ public nonisolated enum ScratchSweep {
     ) -> [URL] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         var removed: [URL] = []
-        for name in names where name.hasPrefix(prefix) {
-            let rest = name.dropFirst(prefix.count)
-            guard let digits = rest.split(separator: "-", maxSplits: 1).first,
-                let pid = pid_t(digits), pid > 0, !isAlive(pid)
-            else { continue }
+        for name in names {
+            guard let pid = ownerPid(ofName: name), !isAlive(pid) else { continue }
             let url = directory.appendingPathComponent(name)
-            do {
-                try FileManager.default.removeItem(at: url)
-                removed.append(url)
-            } catch {
-                continue
-            }
+            if ScratchRemoval.remove(url) { removed.append(url) }
         }
         return removed
     }
@@ -148,10 +183,16 @@ public nonisolated enum TestScratch {
         ScratchSweep.sweepDead(in: base)
         let root = base.appendingPathComponent(
             "\(ScratchSweep.prefix)\(getpid())-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // 親が作れないまま進むと、後の検査が「親が無い」とは読めない書き込みの失敗で落ちる。
+        // 検査の補助なので、理由 (場所と OS の誤り) を言って止まる
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        } catch {
+            fatalError("検査の一時の親を作れない: \(root.path): \(error)")
+        }
         atexit {
             _ = TestScratch.owner.removeAll()
-            try? FileManager.default.removeItem(at: TestScratch.root)
+            _ = ScratchRemoval.remove(TestScratch.root)
         }
         return root
     }()

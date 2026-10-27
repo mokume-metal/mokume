@@ -76,25 +76,80 @@ struct ScratchOwnerTests {
     @Test("消せない場所があっても、残りは消し、消せなかった場所を返す")
     func anUnremovableEntryDoesNotStopTheRest() throws {
         let owner = try makeOwner()
-        let locked = try owner.directory("mokume-locked")
-        let inside = locked.appendingPathComponent("inner", isDirectory: true)
-        try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
+        // 預けた場所の親が書けないと、権限を戻すやり直しでも消せない (権限を戻すのは預けた場所とその
+        // 中だけ)。**親はこの持ち主に預けない** — 預けると、親ごと権限を戻して消してしまう
+        let lockedParent = try TestScratch.directory("mokume-locked-parent")
+        let stuck = lockedParent.appendingPathComponent("stuck", isDirectory: true)
+        try FileManager.default.createDirectory(at: stuck, withIntermediateDirectories: true)
+        owner.adopt(stuck)
         let other = try owner.directory("mokume-other")
-        // 親を書けなくすると、中の項目を消せない
-        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: lockedParent.path)
         defer {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: lockedParent.path)
         }
 
         let failed = owner.removeAll()
         #expect(!FileManager.default.fileExists(atPath: other.path), "1 つ消せなかっただけで、残りを消さなかった")
         // root では権限が効かず、消せてしまう
         if getuid() != 0 {
-            #expect(!failed.isEmpty, "消せなかった場所を返していない (常に空を返しても緑になる)")
-            #expect(
-                failed.map(\.lastPathComponent).allSatisfy { $0.hasPrefix("mokume-locked-") },
-                "消せなかった場所の名乗りが違う: \(failed)")
+            #expect(failed == [stuck], "消せなかった場所を返していない (常に空を返しても緑になる): \(failed)")
+            #expect(FileManager.default.fileExists(atPath: stuck.path))
         }
+    }
+
+    /// 検査が区画を書けなくしている間にプロセスが殺されると、書き込み権の無い区画が残る (#3298)。
+    private func lockedTree(in base: URL) throws -> (top: URL, inner: URL) {
+        let top = base.appendingPathComponent("locked-\(UUID().uuidString)", isDirectory: true)
+        let inner = top.appendingPathComponent("inner", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: inner.appendingPathComponent("request.json"))
+        // 内側から先に閉じる (外を閉じると内に入れない)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: inner.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: top.path)
+        return (top, inner)
+    }
+
+    @Test("書き込み権を落とした区画も、権限を戻して消す")
+    func aReadOnlyDirectoryIsRemovedAfterRestoringAccess() throws {
+        let owner = try makeOwner()
+        let (top, inner) = try lockedTree(in: owner.base)
+        owner.adopt(top)
+        defer {
+            for url in [top, inner] {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            }
+        }
+
+        #expect(owner.removeAll().isEmpty, "書けない区画を消せなかった")
+        #expect(!FileManager.default.fileExists(atPath: top.path))
+    }
+
+    @Test("権限を戻すとき、symlink の指す先の権限は変えない")
+    func restoringAccessDoesNotFollowSymlinks() throws {
+        let owner = try makeOwner()
+        let target = try owner.directory("mokume-target")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: target.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: target.path)
+        }
+        let (top, inner) = try lockedTree(in: owner.base)
+        defer {
+            for url in [top, inner] {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            }
+        }
+        // 区画の中の symlink (書けない区画の中には作れないので、権限を戻した後で作って閉じ直す)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: inner.path)
+        try FileManager.default.createSymbolicLink(
+            atPath: inner.appendingPathComponent("link").path, withDestinationPath: target.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: inner.path)
+        owner.adopt(top)
+
+        #expect(ScratchRemoval.remove(top))
+        let mode = try #require(
+            FileManager.default.attributesOfItem(atPath: target.path)[.posixPermissions] as? NSNumber)
+        #expect(mode.uint16Value & 0o777 == 0o500, "symlink の指す先の権限を変えた")
+        #expect(FileManager.default.fileExists(atPath: target.path), "symlink の指す先を消した")
     }
 
     @Test("ぶら下がった symlink も、在る場所として消す")
@@ -133,6 +188,13 @@ struct ScratchOwnerTests {
             base.appendingPathComponent("\(ScratchSweep.prefix)notapid-cccc", isDirectory: true),
             base.appendingPathComponent("\(ScratchSweep.prefix)", isDirectory: true),
             base.appendingPathComponent("\(ScratchSweep.prefix)0-dddd", isDirectory: true),
+            // 符号つきは pid と読まない・UUID でない末尾・人が置いた名前は触らない
+            base.appendingPathComponent("\(ScratchSweep.prefix)-5-\(UUID().uuidString)", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)+5-\(UUID().uuidString)", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)4000021-notes", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)4000021-", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)4000021", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)4_000_021-\(UUID().uuidString)", isDirectory: true),
         ]
         for url in others {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -143,6 +205,37 @@ struct ScratchOwnerTests {
         #expect(!FileManager.default.fileExists(atPath: dead.path), "死んだ持ち主の親が残った")
         for url in [mine] + others {
             #expect(FileManager.default.fileExists(atPath: url.path), "消してはいけない: \(url.lastPathComponent)")
+        }
+    }
+
+    @Test("消せない区画を含む死んだ親も、権限を戻して掃く")
+    func aDeadParentWithAReadOnlyEntryIsSwept() throws {
+        let base = try TestScratch.directory("mokume-sweep-check")
+        let dead = try parent(4_000_026, in: base)
+        let (top, inner) = try lockedTree(in: dead)
+        defer {
+            for url in [top, inner] {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            }
+        }
+
+        let removed = ScratchSweep.sweepDead(in: base)
+        #expect(removed.map(\.lastPathComponent) == [dead.lastPathComponent], "書けない区画のせいで、死んだ親が残った")
+        #expect(!FileManager.default.fileExists(atPath: dead.path))
+    }
+
+    @Test("名前の読み方: 数字だけの pid と UUID の末尾だけを持ち主として読む")
+    func ownerPidIsReadStrictly() {
+        let uuid = UUID().uuidString
+        #expect(ScratchSweep.ownerPid(ofName: "\(ScratchSweep.prefix)123-\(uuid)") == 123)
+        #expect(ScratchSweep.ownerPid(ofName: "\(ScratchSweep.prefix)123-\(uuid.lowercased())") == 123)
+        for name in [
+            "\(ScratchSweep.prefix)-5-\(uuid)", "\(ScratchSweep.prefix)+5-\(uuid)",
+            "\(ScratchSweep.prefix)0-\(uuid)", "\(ScratchSweep.prefix)5-x",
+            "\(ScratchSweep.prefix)5-\(uuid)-extra", "\(ScratchSweep.prefix)99999999999999999999-\(uuid)",
+            "mokume-picture-copies-5-\(uuid)",
+        ] {
+            #expect(ScratchSweep.ownerPid(ofName: name) == nil, "pid と読んだ: \(name)")
         }
     }
 

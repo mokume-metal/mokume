@@ -35,7 +35,12 @@ struct ObserveTests {
         for name in Set(names) {
             try Data("picture".utf8).write(to: facets.observeFacet.appendingPathComponent(name))
         }
-        return Tools(facets: facets, makeID: { "fixed" })
+        var tools = Tools(facets: facets, makeID: { "fixed" })
+        // 写しの置き場は検査の区画へ向ける。既定は共有の一時の場所に `mokume-picture-copies-<pid>-*` を作り、
+        // 殺されると (消すのは `deinit` だけ) 積もる (#3298)
+        tools.copies = ObservationCopies(
+            root: TestScratch.path("mokume-picture-copies", isDirectory: true))
+        return tools
     }
 
     /// どの応答にも要る土台。ここに `image` や `frames` を足して形を作る。
