@@ -181,7 +181,7 @@ nonisolated extension Vector3 {
 
 nonisolated extension Vector3 {
     /// `value` の成分のうち、いちばん大きいものの指数。成分は有限で、少なくとも 1 つは 0 でないこと。
-    private static func peakExponent(_ value: SIMD3<Float>) -> Int {
+    fileprivate static func peakExponent(_ value: SIMD3<Float>) -> Int {
         Int(max(abs(value.x), abs(value.y), abs(value.z)).exponent)
     }
 
@@ -213,5 +213,116 @@ nonisolated extension Vector3 {
         let exponent = peakExponent(value)
         let unit = SIMD3(scalbn(value.x, -exponent), scalbn(value.y, -exponent), scalbn(value.z, -exponent))
         return scalbn((unit * unit).sum().squareRoot(), exponent)
+    }
+}
+
+nonisolated extension Vector3 {
+    /// 長さ 1 の向きを、2 乗を作らずに求める。成分が有限で、少なくとも 1 つは 0 でないこと。
+    static func scaledDirection(of value: SIMD3<Float>) -> SIMD3<Float> {
+        let exponent = peakExponent(value)
+        let unit = SIMD3(scalbn(value.x, -exponent), scalbn(value.y, -exponent), scalbn(value.z, -exponent))
+        return unit / (unit * unit).sum().squareRoot()
+    }
+}
+
+// MARK: - 長さ・向き・幾何演算
+
+nonisolated extension Vector3 {
+    /// 長さ。Processing の `mag()` に当たる。
+    ///
+    /// 2 乗が溢れるほど大きい値も、潰れるほど小さい値も有限の長さで返り、**0 になるのは 0 ベクトル
+    /// だけ**。``Vector2/length`` と同じ規則で、関数の ``mag(_:_:_:)``・``dist(_:_:_:_:_:_:)`` と同じ答えになる。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public var length: Float {
+        Vector3.measuredLength(of: simd)
+    }
+
+    /// 向きを保ったまま、長さを 1 にした値。Processing の `normalize()` に当たる。
+    ///
+    /// 元の値は変わらない (新しい値を返す)。**長さが 0 の値 (0 ベクトルだけ) は、変えずに返す** —
+    /// 向きが無いので 0 で割らず、数でない値を絵に流さない (``Vector2/normalized()`` と同じ)。
+    /// 成分が小さいだけの値は 0 ベクトルではないので、2 乗が 0 に潰れるほど小さくても長さ 1 の向きを返す。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func normalized() -> Vector3 {
+        let magnitude = length
+        guard magnitude > 0 else { return self }
+        // 長さそのものが Float に収まらない (∞) か、非正規数に丸められる (約 1.2e-38 未満) だけの有限な値は、
+        // 向きだけを寄せた成分から求める (``Vector2/normalized()`` と同じ)
+        if magnitude == .infinity || magnitude < Float.leastNormalMagnitude,
+            simd.x.isFinite, simd.y.isFinite, simd.z.isFinite
+        {
+            return Vector3(Vector3.scaledDirection(of: simd))
+        }
+        return Vector3(simd / magnitude)
+    }
+
+    /// 長さが `maximum` を越えないように縮めた値。Processing の `limit()` に当たる。
+    ///
+    /// 向きは保つ。長さが `maximum` 以下の値は変えずに返し、越えるときだけ長さを `maximum` にする。
+    /// 元の値は変わらない (新しい値を返す)。**`maximum` が 0 以下なら `Vector3(0, 0, 0)` を返す**
+    /// (数でない値も同じ。``Vector2/limited(to:)`` と同じで、Processing の `limit()` が負の上限で向きを
+    /// 反転させるのとは違う)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func limited(to maximum: some ScalarConvertible) -> Vector3 {
+        let limit = maximum.asFloat
+        guard limit > 0 else { return Vector3(0, 0, 0) }
+        let magnitude = length
+        guard magnitude > limit else { return self }
+        let limited = simd * limit / magnitude
+        // 成分が有限なのに、長さが Float に収まらない・`simd * limit` が溢れる・潰れるときは、向きに上限を
+        // 掛け直す (``Vector2/limited(to:)`` と同じ)。どれでもない値は上の式のまま通る
+        let product = simd * limit
+        func holds(_ result: Float, _ component: Float) -> Bool {
+            component == 0 ? result == 0 : abs(result) >= Float.leastNormalMagnitude && result.isFinite
+        }
+        let componentsAreFinite = simd.x.isFinite && simd.y.isFinite && simd.z.isFinite
+        let intermediateHolds = holds(product.x, simd.x) && holds(product.y, simd.y) && holds(product.z, simd.z)
+        if componentsAreFinite && (magnitude == .infinity || !intermediateHolds) {
+            return Vector3(Vector3.scaledDirection(of: simd) * limit)
+        }
+        return Vector3(limited)
+    }
+
+    /// 2 つの点の間の距離。Processing の `PVector.dist(v, w)` に当たる。
+    ///
+    /// ``length`` と同じ規則で測り、関数の層の ``dist(_:_:_:_:_:_:)`` と同じ値になる。
+    /// **数でない値が混じれば数でない値のまま返る** (関数の `dist()` は 0 を返して注意する)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func distance(to other: Vector3) -> Float {
+        (other - self).length
+    }
+
+    /// 内積。Processing の `dot()` に当たる。
+    ///
+    /// 同じ向きなら正、直角なら 0、反対向きなら負になり、長さを掛けた値になる。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func dot(_ other: Vector3) -> Float {
+        (simd * other.simd).sum()
+    }
+
+    /// 外積。Processing の `cross()` に当たる。
+    ///
+    /// 2 つの値のどちらにも直角な値で、長さは 2 つが作る平行四辺形の面積。**右手系** — 横 (`x`) の
+    /// 正の向きから縦 (`y`) の正の向きへ回したときの法線を返すので、`Vector3(1, 0, 0).cross(Vector3(0, 1, 0))`
+    /// は `Vector3(0, 0, 1)`、順を入れ替えると向きが反対になる。縦軸が下向き・奥行きが手前正の
+    /// この面の座標でも、**数式として右手系の規則を守る** (画面上で見える向きは座標系に従う)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func cross(_ other: Vector3) -> Vector3 {
+        let (a, b) = (simd, other.simd)
+        return Vector3(SIMD3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x))
+    }
+
+    /// `target` へ向かう途中の値。`amount` が 0 なら自分、1 なら `target` がちょうど返る。
+    /// Processing の `lerp()` に当たる。
+    ///
+    /// 成分ごとに、関数の層の ``lerp(_:_:_:)`` と同じ式で間を取る。**0…1 の外は締めない**。
+    /// 元の値は変わらない (新しい値を返す)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func interpolated(to target: Vector3, amount: some ScalarConvertible) -> Vector3 {
+        let amount = amount.asFloat
+        return Vector3(
+            SIMD3(
+                interpolate(simd.x, target.simd.x, amount), interpolate(simd.y, target.simd.y, amount),
+                interpolate(simd.z, target.simd.z, amount)))
     }
 }
