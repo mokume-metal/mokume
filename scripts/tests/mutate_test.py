@@ -52,6 +52,10 @@ LIBRARY = textwrap.dedent("""\
 #   `SKIPPY`               → GuardTests が飛ぶ (GPU の無い機械の形)
 #   `isEmpty != false` / `isEmpty == true`
 #                          → GuardTests は緑のまま、OtherTests/far が赤 (target 全体でだけ殺す)
+#   `CANCELLED`            → GuardTests が Test.cancel で取り消される (xunit では passed のまま・事象の記録にだけ載る)
+#   `OTHERCANCEL`          → 関連でない OtherTests が取り消される
+#   `UNKEYEDCANCEL`        → testID の欄が無い取り消しが出る
+#   `NOEVENTS`             → 事象の記録を書かない
 #   いつでも               → BrokenTests/always が赤 (もとから赤い検査)
 FAKE_SWIFT = textwrap.dedent("""\
     #!/usr/bin/env python3
@@ -89,6 +93,23 @@ FAKE_SWIFT = textwrap.dedent("""\
             elif classname.endswith("OtherTests") and ("isEmpty != false" in source or "isEmpty == true" in source):
                 body = '<failure message="far away"/>'
             rows.append('<testcase classname="%s" name="%s">%s</testcase>' % (classname, name, body))
+        events_path = args[args.index("--event-stream-output-path") + 1] if "--event-stream-output-path" in args else None
+        if events_path and "NOEVENTS" not in source:
+            def event(kind, **fields):
+                payload = {"kind": kind, "messages": [], "version": 0}
+                payload.update(fields)
+                return json.dumps({"kind": "event", "payload": payload})
+            guard = "LibTests.GuardTests/rejectsNegative()/GuardTests.swift:2:5"
+            other = "LibTests.OtherTests/far()/OtherTests.swift:1:1"
+            lines = [event("runStarted")]
+            if "CANCELLED" in source:
+                lines.append(event("testCancelled", testID=guard, _comments=["前提が成り立たない"]))
+            if "OTHERCANCEL" in source:
+                lines.append(event("testCancelled", testID=other, _comments=["別の前提"]))
+            if "UNKEYEDCANCEL" in source:
+                lines.append(event("testCancelled", _comments=["どの検査か分からない"]))
+            lines.append(event("runEnded"))
+            Path(events_path).write_text("\\n".join(lines) + "\\n")
         record = base[:-len(".xml")] + "-swift-testing.xml"
         Path(record).write_text('<?xml version="1.0"?><testsuites><testsuite name="TestResults">'
                                 + "".join(rows) + "</testsuite></testsuites>")
@@ -240,6 +261,37 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok")[0], "survived")
         self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok", gpu=True)[0], "unevaluated")
 
+    def test_cancelled_related_suite_is_unevaluated(self):
+        # xunit の上では passed のまま、事象の記録の取り消しが cancelled として足されている
+        cases = [("T.GuardTests/a()", "passed"), ("T.GuardTests/a()", "cancelled")]
+        outcome, reason, _ = self.classify(cases, test="ok")
+        self.assertEqual(outcome, "unevaluated")
+        self.assertIn("Test.cancel", reason)
+        # 関連でない suite の取り消しは、関連の検査が走った回を評価できなかったことにしない
+        self.assertEqual(self.classify([("T.Other/b()", "cancelled")], test="ok")[0], "survived")
+        # GPU の無い機械の印があっても、取り消しは GPU と無関係なので関連の外は数えない (survived を隠さない)
+        self.assertEqual(self.classify([("T.Other/b()", "cancelled")], test="ok", gpu=True)[0], "survived")
+        # 飛ばされた検査は、印があれば関連の外も数える (今までどおり)
+        self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok", gpu=True)[0], "unevaluated")
+        # 理由の件数は関連の取り消しだけ (関連の外の分を足さない)
+        mixed = [("T.GuardTests/a()", "cancelled"), ("T.Other/b()", "cancelled"), ("T.Other/c()", "cancelled")]
+        self.assertIn("関連の suite で 1 件が Test.cancel", self.classify(mixed, test="ok", gpu=True)[1])
+        # 入れ子の suite は testID の `/` つなぎなので最外の suite に写る
+        self.assertEqual(mutate.suite_of("T.GuardTests/Inner/a()"), "T.GuardTests")
+        self.assertEqual(self.classify([("T.GuardTests/Inner/a()", "cancelled")], test="ok")[0], "unevaluated")
+        # 殺した回は、取り消しがあっても殺した
+        both = [("T.GuardTests/a()", "failed"), ("T.GuardTests/b()", "cancelled")]
+        self.assertEqual(self.classify(both)[0], "killed")
+
+    def test_a_cancel_whose_test_is_unknown_counts_as_related(self):
+        cases = [("T.Other/b()", "passed"), (mutate.UNKEYED_IDENT, "cancelled")]
+        self.assertEqual(self.classify(cases, test="ok")[0], "unevaluated")
+
+    def test_an_unreadable_event_record_is_invalid_not_survived(self):
+        outcome, reason, _ = self.classify([("T.GuardTests/a()", "passed")], test="ok", state="事象の記録: 記録が無い")
+        self.assertEqual(outcome, "invalid")
+        self.assertIn("事象の記録", reason)
+
     def test_nonzero_exit_without_failures_is_invalid(self):
         self.assertEqual(self.classify([("T.GuardTests/a()", "passed")], test="failed")[0], "invalid")
 
@@ -353,6 +405,64 @@ class RunTest(unittest.TestCase):
             self.assertEqual(data["score"], 0.5)
             self.assertEqual(data["catalog"]["state"], "missing")
             self.assertEqual(package.library.read_bytes(), before)
+
+    def test_a_cancelled_test_is_unevaluated_not_survived(self):
+        """変異を入れた回に前提が崩れて取り消した検査は、何も確かめていない (#3348)。"""
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            before = package.library.read_bytes()
+            bundle = package.bundle([
+                mutant("cancel", "x.isFinite, x >= 0", "x.isFinite, x >= 0 CANCELLED"),
+                mutant("other", "x.isFinite, x >= 0", "x.isFinite, x >= 0 OTHERCANCEL"),
+                mutant("unkeyed", "x.isFinite, x >= 0", "x.isFinite, x >= 0 UNKEYEDCANCEL"),
+                mutant("noevents", "x.isFinite, x >= 0", "x.isFinite, x >= 0 NOEVENTS"),
+                mutant("plain", "label.isEmpty == false", "label.isEmpty != true"),
+            ])
+            result, data = package.run("--bundle", bundle)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            by_id = {m["id"]: m for m in data["mutants"]}
+            self.assertEqual({k: v["outcome"] for k, v in by_id.items()},
+                             {"cancel": "unevaluated", "other": "survived", "unkeyed": "unevaluated",
+                              "noevents": "invalid", "plain": "survived"})
+            self.assertIn("Test.cancel", by_id["cancel"]["reason"])
+            self.assertIn("事象の記録", by_id["noevents"]["reason"])
+            # 生き残りに数えない
+            self.assertEqual(data["counts"]["unevaluated"], 2)
+            self.assertEqual(package.library.read_bytes(), before)
+
+    def test_a_baseline_without_the_event_record_names_why(self):
+        """変異なしの基準が成り立たない回は、build か記録のどれが原因かを SystemExit の文面に出す。"""
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// NOEVENTS\n")
+            git(package.repo, "commit", "-qam", "marker")
+            result, _ = package.run("--bundle", package.bundle([
+                mutant("plain", "label.isEmpty == false", "label.isEmpty != true")]))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("事象の記録: 記録が無い", result.stderr)
+            self.assertIn("--filter", result.stderr)
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// BREAK\n")
+            git(package.repo, "commit", "-qam", "marker")
+            result, _ = package.run("--bundle", package.bundle([
+                mutant("plain", "label.isEmpty == false", "label.isEmpty != true")]))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("build が failed", result.stderr)
+
+    def test_swift_is_asked_for_the_event_stream_in_version_zero(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            calls = Path(root) / "calls.txt"
+            wrapper = Path(root) / "swift-logged"
+            wrapper.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> ' + str(calls) + '\nexec "' + str(package.swift) + '" "$@"\n')
+            wrapper.chmod(0o755)
+            package.swift = wrapper
+            package.run("--bundle", package.bundle([mutant("plain", "label.isEmpty == false", "label.isEmpty != true")]))
+            tests = [l for l in calls.read_text().splitlines() if l.startswith("test ")]
+            self.assertTrue(tests)
+            for line in tests:
+                self.assertRegex(line, r"--event-stream-output-path \S+-events\.jsonl --event-stream-version 0")
 
     def test_timeout_is_counted_and_the_rest_still_runs(self):
         with tempfile.TemporaryDirectory() as root:

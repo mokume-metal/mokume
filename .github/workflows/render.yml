@@ -181,6 +181,7 @@ jobs:
           name: render-record
           path: |
             .build/test-results-swift-testing.xml
+            .build/test-events.jsonl
             .build/test-log.txt
             .build/test-vanished/
             .build/ci-check-durations.tsv
@@ -252,6 +253,7 @@ jobs:
           name: render-record
           path: |
             .build/test-results-swift-testing.xml
+            .build/test-events.jsonl
             .build/test-log.txt
             .build/test-vanished/
             .build/ci-check-durations.tsv
@@ -338,6 +340,7 @@ jobs:
           name: scheduled-debug-record
           path: |
             .build/test-results-swift-testing.xml
+            .build/test-events.jsonl
             .build/test-log.txt
             .build/test-vanished/
             .build/ci-check-durations.tsv
@@ -401,6 +404,7 @@ jobs:
           name: scheduled-release-record
           path: |
             .build/test-results-release-swift-testing.xml
+            .build/test-events-release.jsonl
             .build/test-log.txt
           if-no-files-found: ignore
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない

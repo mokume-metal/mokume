@@ -286,6 +286,16 @@ METAL_VALIDATION := $(if $(CI),,MTL_DEBUG_LAYER=1 MTL_DEBUG_LAYER_WARNING_MODE=n
 TEST_RECORD_BASE := .build/test-results.xml
 TEST_RECORD := .build/test-results-swift-testing.xml
 
+# 事象の記録 (JSON Lines)。`Test.cancel` の取り消しを読む元で、xUnit には取り消しが passed と
+# 同じ形でしか載らない (#3348)。名前は接尾辞を挟まれずそのまま書かれる。理由 (_comments) と
+# ケースの名前 (_testCase) は版 0 にしか無いので、版も渡す
+TEST_EVENTS := .build/test-events.jsonl
+# release と TSan の段も同じ取り消しを走らせる (DocumentLoadingTests・APIListDownloadTests)。
+# TSan は遅く、並列の負荷で前提が崩れやすい。xUnit の記録と同じく段ごとに別のファイルへ書く
+# (#1089。同じ置き場へ書くと、段をまたいで前の回の取り消しを読む)
+TEST_EVENTS_RELEASE := .build/test-events-release.jsonl
+TEST_EVENTS_TSAN := .build/test-events-tsan.jsonl
+
 # release の記録。debug と別のファイルになる名前を渡す (理由は上の「別のファイルへ書く」
 # の段)。接尾辞の挟まり方は debug と同じで、SwiftPM が -swift-testing を足す
 TEST_RECORD_RELEASE_BASE := .build/test-results-release.xml
@@ -323,18 +333,26 @@ TEST_RECORD_RELEASE := .build/test-results-release-swift-testing.xml
 # 同じ一覧を job の要約にも書く。警告だけで段の終了コードは変えない (読み手は常に 0 で終わる)。
 # 赤の経路でも名乗る — 記録が残る普通の赤では、重さも読む材料になる。記録が無い・読めない回は、
 # 読み手もそう名乗る (黙って「長い検査は無い」と読ませない)。仕組みは scripts/read-test-record.py
+#
+# **続けて、`Test.cancel` で取り消した検査を名乗る** (#3348)。取り消しは xUnit の上で passed と
+# 同じ形になり、端末の出力は 1 ケースの取り消しを出さない。前提が崩れて何も確かめないまま緑に
+# なる回を、事象の記録 (`--event-stream-output-path`) から名前・ケース・理由つきで読む。
+# `--slow` と同じく警告だけで段の終了コードは変えず、緑でも赤でも呼ぶ。前の回の記録を読まない
+# よう、走る前に消す (xUnit の記録と同じ)
 TEST_SLOW_SECONDS ?= 5
 
 test:
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD)
+	@rm -f $(TEST_RECORD) $(TEST_EVENTS)
 	@touch .build/test-started
 	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
-	set -o pipefail; env $(METAL_VALIDATION) python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output $(TEST_RECORD_BASE) 2>&1 | tee -a .build/test-log.txt \
+	set -o pipefail; env $(METAL_VALIDATION) python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output $(TEST_RECORD_BASE) --event-stream-output-path $(TEST_EVENTS) --event-stream-version 0 2>&1 | tee -a .build/test-log.txt \
 		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; \
-			python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS); exit $$code; }
+			python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS); \
+			python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS); exit $$code; }
 	@bash scripts/test-vanished.sh 0 $(TEST_RECORD) .build/test-log.txt .build/test-started
 	@python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS)
+	@python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS)
 
 # 描画の検査が実際に走ったかを、test の記録から確かめる (#878)。専用機の描画ジョブ
 # (.github/workflows/render.yml) が test の後に走らせる。**ci-check の既定の並びには
@@ -382,8 +400,10 @@ TEST_RELEASE_ARGS ?=
 
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD_RELEASE) .build/geometry-release.md
-	env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	@rm -f $(TEST_RECORD_RELEASE) $(TEST_EVENTS_RELEASE) .build/geometry-release.md
+	env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE) --event-stream-output-path $(TEST_EVENTS_RELEASE) --event-stream-version 0 \
+		|| { code=$$?; python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_RELEASE); exit $$code; }
+	@python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_RELEASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
@@ -470,12 +490,14 @@ TSAN_SKIP := SecondRunTests/ \
 
 test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の job が走らせる。ci-check には含まれない)
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD_TSAN)
+	@rm -f $(TEST_RECORD_TSAN) $(TEST_EVENTS_TSAN)
 	set -o pipefail; swift build --build-tests --sanitize=thread --scratch-path $(TSAN_SCRATCH) 2>&1 | tee $(TEST_LOG_TSAN)
 	set -o pipefail; env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
-		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
-		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); exit $$code; }
+		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) --event-stream-output-path $(TEST_EVENTS_TSAN) --event-stream-version 0 2>&1 | tee -a $(TEST_LOG_TSAN) \
+		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); \
+			python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_TSAN); exit $$code; }
 	@python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS)
+	@python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_TSAN)
 	@if [ -z "$(TEST_TSAN_ARGS)" ]; then for suite in $(TSAN_SUITES); do \
 		read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD_TSAN) $$suite); \
 		[ "$$verdict" = passed ] || { echo "代表の検査 ($$suite) が $$verdict — そのモジュールが TSan の下で走っていない ($(TEST_RECORD_TSAN))"; exit 1; }; \

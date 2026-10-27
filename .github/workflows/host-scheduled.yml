@@ -65,6 +65,7 @@ jobs:
           name: tsan-record
           path: |
             .build/test-results-tsan-swift-testing.xml
+            .build/test-events-tsan.jsonl
             .build/test-log-tsan.txt
           if-no-files-found: ignore
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
