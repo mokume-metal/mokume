@@ -8,8 +8,9 @@ import Testing
 
 @testable import MokumeCore
 
-/// 書き手が音の窓を絵に合わせて書く順と、書き損じの扱い (#3125)。符号化器も GPU も要らない — 書く先を差し替えて、
-/// 書き手が渡した順を記録する。
+/// 書き手が音の窓を絵に合わせて書く順と、書き損じの扱い (#3125)。順と書き損じの検査は符号化器も GPU も要らない —
+/// 書く先を差し替えて、書き手が渡した順を記録する。末尾の 2 本 (絵が落ちた末尾・0 標本の窓) だけは本物の
+/// `MovieWriter` と `AVAssetReader` で .mov を書いて読むので、符号化器が無い機械では `.enabled(if:)` でスキップに残す。
 @Suite("書き出しの音声トラック (書く順と書き損じ)")
 struct SoundTrackOrderTests {
     /// 書き手が渡したものを記録する出口。`failingPictures`・`failingSounds` は、その番目 (0 始まり) の呼び出しで投げる。
@@ -172,9 +173,10 @@ struct SoundTrackOrderTests {
 
     // MARK: - 絵が落ちた末尾
 
-    @Test("末尾の絵が落ちても、窓は描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)")
+    @Test(
+        "末尾の絵が落ちても、窓は描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)",
+        .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
     func theSoundOfADroppedTailPictureIsCutAtTheVideoLength() async throws {
-        guard MovieFile.isAvailable else { return }
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-sound-tail-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -230,9 +232,10 @@ struct SoundTrackOrderTests {
 
     // MARK: - 0 標本の窓
 
-    @Test("fps が標本化率を越えて窓が 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる")
+    @Test(
+        "fps が標本化率を越えて窓が 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる",
+        .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
     func zeroSampleWindowsAreSkipped() async throws {
-        guard MovieFile.isAvailable else { return }
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mokume-sound-zero-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

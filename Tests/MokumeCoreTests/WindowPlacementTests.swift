@@ -158,7 +158,9 @@ struct WindowPlacementTests {
     }
 
     /// 画面を大きく超える指定 (完了条件 4)。**断らずに縮め、縮めたことを言う。**
-    @Test("画面を超える指定は、縦横比を保って縮めて開き、そのことを 1 行言う")
+    @Test(
+        "画面を超える指定は、縦横比を保って縮めて開き、そのことを 1 行言う",
+        .enabled("この実行環境には画面 (NSScreen.main) が無く、縮める先が無い") { await MainActor.run { NSScreen.main != nil } })
     @MainActor
     func shrinksAnOversizedRequestAndSaysSo() throws {
         try withDefaults { defaults, name in
@@ -171,7 +173,6 @@ struct WindowPlacementTests {
             WindowPlacement.honour(
                 huge, in: window, autosaveName: name, defaults: defaults,
                 warn: { warnings.append($0) })
-            guard NSScreen.main != nil else { return }  // 画面の無い実行環境では縮める先が無い
             let size = window.contentLayoutRect.size
             #expect(size.width < huge.width)
             #expect(abs(size.width / size.height - 16.0 / 9.0) < 0.01, "縦横比が崩れた: \(size)")
