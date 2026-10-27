@@ -468,12 +468,15 @@ final class FrameRecorder: Outlet {
     }
 
     /// 書けない図形があった `save("x.svg")` の 1 行。**種類と数を名指す。**
+    ///
+    /// 原因が種類のもの (字・画像・シェーダの下の図形など) と、原因が大きさのもの (``VectorDrop/tooLarge``) は、
+    /// 別の節で原因を言う。大きさのものは線も平らな塗りも落ちるので、「線と平らな塗りだけを持つ」とは言わない。
     static func vectorLeftOutNotice(path: String, dropped: ArraySlice<VectorDrop>) -> String {
         var counts: [VectorDrop: Int] = [:]
         for kind in dropped { counts[kind, default: 0] += 1 }
         func list(_ written: Bool) -> String {
             VectorDrop.allCases
-                .filter { counts[$0] != nil && $0.isWrittenDifferently == written }
+                .filter { $0 != .tooLarge && counts[$0] != nil && $0.isWrittenDifferently == written }
                 .map { "\($0.noun) x\(counts[$0] ?? 0)" }
                 .joined(separator: ", ")
         }
@@ -486,8 +489,15 @@ final class FrameRecorder: Outlet {
         if !different.isEmpty {
             parts.append("written in the colour of the first vertex: \(different)")
         }
-        return "save(\"\(path)\"): " + parts.joined(separator: "; ")
-            + ". An SVG written by save() holds lines and flat filled shapes only (they are still on the screen)"
+        if let large = counts[.tooLarge] {
+            parts.append(
+                "left out of the file because a coordinate, line width or dash length in them is 1e12 or more, "
+                    + "too large for an SVG number: \(VectorDrop.tooLarge.noun) x\(large)")
+        }
+        // 種類が原因のものがあるときだけ、SVG が持てるものを言う (大きさだけが原因なら、線も塗りも持てる)
+        let holds = left.isEmpty && different.isEmpty
+            ? "" : ". An SVG written by save() holds lines and flat filled shapes only"
+        return "save(\"\(path)\"): " + parts.joined(separator: "; ") + holds + " (they are still on the screen)"
     }
 
     /// 連番か動画を始める。**行き先の綴りが形を決める。**

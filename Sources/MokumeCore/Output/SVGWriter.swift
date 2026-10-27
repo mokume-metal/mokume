@@ -49,8 +49,6 @@ nonisolated enum SVGWriter {
         fit(ofThousandths: (Double(value) * 1000).rounded())
     }
 
-    static func isWritable(_ value: Float) -> Bool { fit(of: value) == .writable }
-
     fileprivate static func fit(ofThousandths thousandths: Double) -> Fit {
         guard thousandths.isFinite else { return .notANumber }
         return abs(thousandths) < 1e15 ? .writable : .tooLarge
@@ -205,7 +203,7 @@ extension Array where Element == UInt8 {
     /// 数を 1/1000 まで書く。末尾の 0 は書かず、`-0` は `0` にする。
     ///
     /// **書式を自前で持つ** (`String(format:)` は使わない)。ロケールにも OS の版にも依らず、1 万本ぶんを
-    /// 組む間に文字列の確保を払わない。書けない数 (``SVGWriter/isWritable(_:)``) は `0` で書く保険を持つが、
+    /// 組む間に文字列の確保を払わない。書けない数 (``SVGWriter/Fit``) は `0` で書く保険を持つが、
     /// **ここへ届く前に、控えへ足す口 (``VectorCapture/add(_:)``) が弾いてある** (#3318)。
     fileprivate nonisolated mutating func appendNumber(_ value: Float) {
         let scaled = (Double(value) * 1000).rounded()

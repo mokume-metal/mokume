@@ -1000,7 +1000,7 @@ struct VectorCaptureTests {
         #expect(SVG.attribute("d", in: elements.first ?? "") == "M10 10L40 10 40 30 10 30Z", "\(svg)")
         // 落としたことは、書いた後の知らせの文面にも名指しで出る
         let said = FrameRecorder.vectorLeftOutNotice(path: "x.svg", dropped: drops[...])
-        #expect(said.contains("shape beyond 1e12 pixels x1"), "\(said)")
+        #expect(said.contains("shape x1") && said.contains("1e12 or more"), "\(said)")
     }
 
     @Test("見えない線の太さは数えない — 塗りが書ける図形は、見えない線が溢れる太さでも塗りを書く (#3318)")
@@ -1023,6 +1023,88 @@ struct VectorCaptureTests {
             canvas.circle(50, 50, 20)
         }
         #expect(visible.figures.isEmpty && visible.drops == [.tooLarge], "\(visible)")
+    }
+
+    @Test("書いた図形だけが「色が違う」と名乗られ、落とした図形は名乗られない (#3318)")
+    func aDroppedShapeIsNotAlsoWrittenInTheFirstVertexColour() throws {
+        let harness = try Harness()
+        func place(_ shift: Float) throws -> (figures: [VectorFigure], drops: [VectorDrop]) {
+            try harness.capture { canvas in
+                canvas.noStroke()
+                canvas.translate(shift, 0)
+                canvas.beginShape()
+                canvas.fill(red)
+                canvas.vertex(0, 0)
+                canvas.fill(blue)
+                canvas.vertex(10, 0)
+                canvas.vertex(0, 10)
+                canvas.endShape(.close)
+            }
+        }
+        let written = try place(0)
+        #expect(written.figures.count == 1 && written.drops == [.vertexColours], "\(written)")
+        let huge = try place(2e12)
+        #expect(huge.figures.isEmpty && huge.drops == [.tooLarge], "書いたとも名乗らない: \(huge)")
+        let absent = try place(.nan)
+        #expect(absent.figures.isEmpty && absent.drops.isEmpty, "\(absent)")
+    }
+
+    @Test("線の太さだけが大きすぎても、破線の有無によらず、塗りも輪郭も図形ごと落ち、名乗りは 1 度 (#3318)")
+    func anOversizedStrokeWidthDropsTheWholeFigureThroughEveryDoor() throws {
+        let harness = try Harness()
+        for (name, place) in outlinedShapes {
+            for dashed in [false, true] {
+                let (figures, drops) = try harness.capture { canvas in
+                    canvas.fill(red)
+                    canvas.stroke(blue)
+                    canvas.strokeWeight(2e12)
+                    if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                    place(canvas)
+                }
+                #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
+                #expect(drops == [.tooLarge], "\(name) dashed=\(dashed): \(drops)")
+            }
+        }
+    }
+
+    @Test("破線で塗りもある図形の塗りが別の理由で名乗られても、輪郭の大きすぎる名乗りは消えない (種類ごとに 1 件・#3318)")
+    func differentReasonsInOneDashedFigureAreBothNamed() throws {
+        let harness = try Harness()
+        let picture = try harness.canvas.createGraphics(8, 8)
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(2e12)
+            canvas.strokeDash(6, 3)
+            canvas.texture(picture)
+            canvas.rect(10, 10, 30, 20)
+            canvas.noTexture()
+        }
+        #expect(figures.isEmpty, "\(figures)")
+        #expect(drops == [.texture, .tooLarge], "\(drops)")
+        // 括りの約束そのもの: 同じ種類は 1 件・違う種類はどちらも名乗る (括りが最初の 1 件だけ残すと tooLarge が消える)
+        let counted = try harness.capture { canvas in
+            canvas.countingOneVectorFigure {
+                canvas.noteVectorDrop(.gradient)
+                canvas.noteVectorDrop(.tooLarge)
+                canvas.noteVectorDrop(.gradient)
+                canvas.noteVectorDrop(.tooLarge)
+            }
+        }
+        #expect(counted.drops == [.gradient, .tooLarge], "\(counted.drops)")
+    }
+
+    @Test("大きさが原因の知らせは、原因を大きさと言い、「線と平らな塗りだけ」とは言わない。種類が原因のものと混ざれば両方言う (#3318)")
+    func theNoticeNamesTheCause() {
+        let size = FrameRecorder.vectorLeftOutNotice(path: "x.svg", dropped: [.tooLarge, .tooLarge][...])
+        #expect(size.contains("1e12 or more") && size.contains("line width") && size.contains("dash length"), "\(size)")
+        #expect(size.contains("shape x2") && size.contains("still on the screen"), "\(size)")
+        #expect(!size.contains("flat filled shapes only"), "線も平らな塗りも落ちるので言わない: \(size)")
+        let mixed = FrameRecorder.vectorLeftOutNotice(path: "x.svg", dropped: [.text, .tooLarge][...])
+        #expect(mixed.contains("text x1") && mixed.contains("shape x1") && mixed.contains("1e12 or more"), "\(mixed)")
+        #expect(mixed.contains("flat filled shapes only"), "\(mixed)")
+        let kind = FrameRecorder.vectorLeftOutNotice(path: "x.svg", dropped: [.text][...])
+        #expect(kind.contains("flat filled shapes only") && !kind.contains("1e12"), "\(kind)")
     }
 
     @Test("頂点の形の穴が書けない大きさなら、穴だけを欠いた外周でなく、図形ごと名指しで落とす (#3318)")
@@ -1323,14 +1405,14 @@ struct SVGWriterTests {
         let below: Float = 999_999_995_904
         let above: Float = 1_000_000_061_440
         #expect(below.nextUp == above)
-        #expect(SVGWriter.isWritable(below))
-        #expect(SVGWriter.isWritable(-below))
-        #expect(!SVGWriter.isWritable(above))
-        #expect(!SVGWriter.isWritable(-above))
-        #expect(!SVGWriter.isWritable(.nan))
-        #expect(!SVGWriter.isWritable(.infinity))
-        #expect(SVGWriter.isWritable(0))
-        #expect(SVGWriter.isWritable(-0.0))
+        #expect(SVGWriter.fit(of: below) == .writable)
+        #expect(SVGWriter.fit(of: -below) == .writable)
+        #expect(SVGWriter.fit(of: above) == .tooLarge)
+        #expect(SVGWriter.fit(of: -above) == .tooLarge)
+        #expect(SVGWriter.fit(of: .nan) == .notANumber)
+        #expect(SVGWriter.fit(of: .infinity) == .notANumber)
+        #expect(SVGWriter.fit(of: 0) == .writable)
+        #expect(SVGWriter.fit(of: -0.0) == .writable)
         // 境界の内側は、そのままの値で書く
         #expect(capture(line(from: SIMD2(below, 0), to: SIMD2(0, -below))).count == 1)
         let svg = String(
@@ -1395,13 +1477,13 @@ struct SVGWriterTests {
             ]
         }
         let together = VectorCapture()
-        together.add(parts: parts(fillPoint: SIMD2(0, 0)))
+        together.group { parts(fillPoint: SIMD2(0, 0)).forEach { together.add($0) } }
         #expect(together.figures.count == 2 && together.drops.isEmpty)
         let dropped = VectorCapture()
-        dropped.add(parts: parts(fillPoint: SIMD2(above, 0)))
+        dropped.group { parts(fillPoint: SIMD2(above, 0)).forEach { dropped.add($0) } }
         #expect(dropped.figures.isEmpty && dropped.drops == [.tooLarge], "\(dropped.figures)")
         let absent = VectorCapture()
-        absent.add(parts: parts(fillPoint: SIMD2(.nan, 0)))
+        absent.group { parts(fillPoint: SIMD2(.nan, 0)).forEach { absent.add($0) } }
         #expect(absent.figures.isEmpty && absent.drops.isEmpty)
     }
 

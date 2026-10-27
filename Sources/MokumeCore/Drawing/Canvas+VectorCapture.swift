@@ -46,7 +46,9 @@ final class VectorCapture {
     var drops: [VectorDrop] = []
     var requests: [Request] = []
 
-    /// 図形を 1 つ足す。**画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
+    /// 図形を 1 つ足す。足したか (括りの中なら、括りが決めるまで預かったか) を返す。
+    ///
+    /// **画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
     /// `stroke-opacity="0"` で書くと、不透明度を無視する取り込み側が線を引く。両方とも見えなければ、
     /// 図形ごと足さない (``VectorColor/isInvisible``)。
     ///
@@ -55,28 +57,46 @@ final class VectorCapture {
     /// 黙って足さない。有限でも大きすぎる図形は画面には描かれるので、図形ごと名指しで落とす
     /// (``VectorDrop/tooLarge``)。判定は変換を当てた後の値で、**見えない線を外した後**に行う。置く口が増えても
     /// 漏れないよう、図形を足すこの 1 点で見る。
-    func add(_ figure: VectorFigure) {
-        guard let figure = Self.visible(figure) else { return }
-        keep(figure, ifFitting: Self.fit(of: figure))
-    }
-
-    /// 1 つの図形が複数の要素に分かれるもの (塗りの形と輪郭の形が違う弧) を足す。**部品は、揃って足されるか
-    /// 揃って落ちるかのどちらか** — 片方だけ残ると、塗りのない輪郭だけが画面と違う図形として書かれる。落とすときの名乗りは
-    /// 図形 1 つにつき 1 度。
-    func add(parts: [VectorFigure]) {
-        let visible = parts.compactMap(Self.visible)
-        guard !visible.isEmpty else { return }
-        let fit = visible.reduce(SVGWriter.Fit.writable) { $0.merged(with: Self.fit(of: $1)) }
+    @discardableResult
+    func add(_ figure: VectorFigure) -> Bool {
+        guard let figure = Self.visible(figure) else { return false }
+        let fit = Self.fit(of: figure)
+        if held != nil {
+            held?.append(figure)
+            heldFit = heldFit.merged(with: fit)
+            return true
+        }
         switch fit {
-        case .writable: figures.append(contentsOf: visible)
-        case .notANumber: break
-        case .tooLarge: drops.append(.tooLarge)
+        case .writable:
+            figures.append(figure)
+            return true
+        case .notANumber:
+            return false
+        case .tooLarge:
+            drops.append(.tooLarge)
+            return false
         }
     }
 
-    private func keep(_ figure: VectorFigure, ifFitting fit: SVGWriter.Fit) {
+    /// 括りの間に足した図形の組。`nil` なら括りの外。
+    private var held: [VectorFigure]?
+    private var heldFit = SVGWriter.Fit.writable
+
+    /// **1 つの図形が複数の要素に分かれる口** (塗りと輪郭が別の形の弧・破線で塗りもある図形) を括る。
+    /// 括りの間に足した図形は、**揃って残るか揃って落ちるかのどちらか** — 片方だけ残ると、塗りの無い輪郭
+    /// だけが、画面と違う図形として書かれる。落とすときの名乗りは括り 1 つにつき 1 度。
+    /// 入れ子の括りは、いちばん外の括りが決める。
+    func group(_ body: () -> Void) {
+        guard held == nil else { return body() }
+        held = []
+        heldFit = .writable
+        body()
+        let kept = held ?? []
+        let fit = heldFit
+        held = nil
+        heldFit = .writable
         switch fit {
-        case .writable: figures.append(figure)
+        case .writable: figures.append(contentsOf: kept)
         case .notANumber: break
         case .tooLarge: drops.append(.tooLarge)
         }
@@ -360,15 +380,22 @@ extension Canvas {
         return (fills, strokes)
     }
 
-    /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数える。**
+    /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数え、部品は揃って
+    /// 残すか揃って落とす。**
     ///
     /// 破線で塗りもある図形は、塗り (``appendForm``) と輪郭 (``recordVectorDashedForm``) を別々の口で控える。
     /// それぞれが同じ理由 (利用者の断片など) で落とすと、見た目は 1 つの図形なのに 2 と数えてしまう。
+    /// 数えるのは**種類ごとに 1 件** — 塗りが貼る絵で、輪郭が大きすぎて落ちるような別々の理由は、どちらも名乗る。
+    /// 書けない大きさの数 (``VectorDrop/tooLarge``) は、塗りか輪郭のどちらかにあれば図形ごと落とす
+    /// (``VectorCapture/group(_:)``)。
     func countingOneVectorFigure(_ body: () -> Void) {
         guard let sink = vectorSink() else { return body() }
         let before = sink.drops.count
-        body()
-        if sink.drops.count - before > 1 { sink.drops.removeSubrange((before + 1)...) }
+        sink.group(body)
+        guard sink.drops.count - before > 1 else { return }
+        var seen = Set<VectorDrop>()
+        let added = sink.drops[before...].filter { seen.insert($0).inserted }
+        sink.drops.replaceSubrange(before..., with: added)
     }
 
     /// 輪郭の破線を、画面と同じく刻めるか。刻めるなら、拡大率を掛けた破線の長さと間隔。
@@ -514,16 +541,15 @@ extension Canvas {
         case .chord: strokeShape = chord
         case .standard, .open: strokeShape = openArc
         }
-        // 塗りと輪郭の形が違えば 2 つの図形になるが、弧は 1 つなので揃えて足す (``VectorCapture/add(parts:)``)
+        // 塗りと輪郭の形が違えば 2 つの図形になるが、弧は 1 つなので揃えて足す (``VectorCapture/group(_:)``)
         if let fill, let stroke {
             if fillShape == strokeShape {
                 sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: stroke))
             } else {
-                sink.add(
-                    parts: [
-                        VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil),
-                        VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke),
-                    ])
+                sink.group {
+                    sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
+                    sink.add(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
+                }
             }
         } else if let fill {
             sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))

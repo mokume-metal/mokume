@@ -498,11 +498,10 @@ extension Canvas {
                 subpaths.append(VectorSubpath(points: loop, isClosed: true))
             }
             var fill: VectorFill?
+            var mixesColours = false
             if fills, primitive.fills, let first = primitive.ring.first {
                 let color = points[first].fill
-                if primitive.ring.contains(where: { points[$0].fill != color }) {
-                    sink.drops.append(.vertexColours)
-                }
+                mixesColours = primitive.ring.contains(where: { points[$0].fill != color })
                 fill = vectorFill(color: color, evenOdd: evenOdd || primitive.holes.contains { !$0.isEmpty })
             }
             var stroke: VectorStroke?
@@ -516,7 +515,10 @@ extension Canvas {
                 stroke = vectorStroke(cap: primitive.ring.count == 1 ? vectorPointCap : nil, dash: dash)
             }
             guard fill != nil || stroke != nil else { continue }
-            sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke))
+            // 色が違うと名乗るのは、書いた図形だけ (落とした図形を「書いた」とも名乗らない)
+            if sink.add(VectorFigure(subpaths: subpaths, fill: fill, stroke: stroke)), mixesColours {
+                sink.drops.append(.vertexColours)
+            }
         }
     }
 
