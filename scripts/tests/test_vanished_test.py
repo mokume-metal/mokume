@@ -25,6 +25,7 @@
 """
 
 import fcntl
+import json
 import os
 import re
 import shutil
@@ -71,17 +72,19 @@ RECORD_UNCLOSED = RECORD_ALL_PASSED.rsplit("</testsuites>", 1)[0]
 
 # 偽の swift。build は FAKE_BUILD_EXIT で終わる。test は --xunit-output の名前に
 # SwiftPM と同じく -swift-testing を挟んだ先へ FAKE_RECORD を写し、FAKE_CONSOLE を出し、
-# FAKE_TEST_EXIT で終わる。直す前の Makefile は build を分けずに swift test でビルドまで
+# FAKE_TEST_EXIT で終わる。--event-stream-output-path の先へは FAKE_EVENTS を写す。直す前の Makefile は build を分けずに swift test でビルドまで
 # するので、そちらでビルドの誤りを作るときは test も FAKE_BUILD_EXIT で止める
 FAKE_SWIFT = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$FAKE_CALLS"
 sub=$1
 skip_build=0
 base=
+events=
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-build) skip_build=1 ;;
     --xunit-output) base=$2; shift ;;
+    --event-stream-output-path) events=$2; shift ;;
   esac
   shift
 done
@@ -94,6 +97,7 @@ if [ "$sub" = build ] || [ "$skip_build" -eq 0 ]; then
 fi
 [ -n "${FAKE_NEW_REPORT:-}" ] && : > "$FAKE_NEW_REPORT"
 [ -n "${FAKE_RECORD:-}" ] && cp "$FAKE_RECORD" "${base%.xml}-swift-testing.xml"
+[ -n "${FAKE_EVENTS:-}" ] && [ -n "$events" ] && cp "$FAKE_EVENTS" "$events"
 printf '%s\n' "${FAKE_CONSOLE:-}"
 exit "${FAKE_TEST_EXIT:-0}"
 """
@@ -478,6 +482,212 @@ class ReadSlowTest(unittest.TestCase):
         self.assertIn("``pick(`a`\\|b)``", self.written())
 
 
+def _event(kind, **fields):
+    payload = {"kind": kind, "messages": [], "version": 0}
+    payload.update(fields)
+    return json.dumps({"kind": "event", "payload": payload}, ensure_ascii=False)
+
+
+def _events(*lines, started=True, ended=True):
+    out = ([_event("runStarted")] if started else []) + list(lines) + ([_event("runEnded")] if ended else [])
+    return "\n".join(out) + "\n"
+
+
+WHOLE_ID = "MokumeCoreTests.DocumentLoadingTests.slowBody()/DocumentLoadingTests.swift:860:9"
+CASES_ID = "MokumeCoreTests.CanvasTests.sizes(n:)/CanvasTests.swift:12:2"
+
+
+def _case(display_name):
+    return {"displayName": display_name, "id": "Parameterized test case ID: argumentIDs: [...]"}
+
+
+# Swift 6.4 の版 0: 丸ごとの取り消しは testCancelled だけ。理由は _comments
+EVENTS_WHOLE = _events(_event("testCancelled", testID=WHOLE_ID, _comments=["5 回とも前提が成り立たなかった"]))
+# Swift 6.3.3 の版 0: 同じ testID に、ケースの欄の無い testCaseCancelled も出る (実測)
+EVENTS_WHOLE_633 = _events(
+    _event("testCancelled", testID=WHOLE_ID, _comments=["5 回とも前提が成り立たなかった"]),
+    _event("testCaseCancelled", testID=WHOLE_ID, _comments=["5 回とも前提が成り立たなかった"]),
+)
+EVENTS_ONE_CASE = _events(
+    _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("2"), _comments=["2 は前提が無い"]),
+)
+# 版 6.3 / 6.4 の書式: 理由 (_comments) とケース (_testCase) の欄が消える
+EVENTS_NO_FIELDS = _events(
+    _event("testCancelled", testID=WHOLE_ID),
+    _event("testCaseCancelled", testID=CASES_ID),
+)
+
+CANCELLED_TITLE = "取り消した検査"
+
+
+class ReadCancelledTest(unittest.TestCase):
+    """`read-test-record.py --cancelled` — `Test.cancel` の取り消しを事象の記録から名乗る口 (#3348)。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.summary = self.root / "summary.md"
+
+    def read(self, content, summary=True):
+        path = self.root / "events.jsonl"
+        if content is not None:
+            path.write_text(content, encoding="utf-8")
+        env = dict(os.environ)
+        env.pop("GITHUB_STEP_SUMMARY", None)
+        if summary:
+            env["GITHUB_STEP_SUMMARY"] = str(self.summary)
+        proc = subprocess.run(
+            ["python3", str(READER), "--cancelled", str(path)],
+            capture_output=True, text=True, env=env,
+        )
+        # 呼ぶ側 (make test) との約束 — 警告だけで、段の終了コードを変えない
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def written(self):
+        return self.summary.read_text(encoding="utf-8") if self.summary.exists() else ""
+
+    def test_names_a_whole_test_with_its_reason(self):
+        out = self.read(EVENTS_WHOLE)
+        self.assertIn(CANCELLED_TITLE + " 1 件", out.splitlines()[0])
+        self.assertIn("%s — 丸ごと — 5 回とも前提が成り立たなかった" % WHOLE_ID, out)
+        self.assertNotIn("理由が読めない", out)
+
+    def test_counts_the_swift_633_duplicate_once(self):
+        """Swift 6.3.3 が同じ検査に出す testCancelled と testCaseCancelled の両方を、1 件に数える。"""
+        out = self.read(EVENTS_WHOLE_633)
+        lines = out.splitlines()
+        self.assertIn(CANCELLED_TITLE + " 1 件", lines[0])
+        self.assertEqual(len([l for l in lines if WHOLE_ID in l]), 1)
+        self.assertNotIn("ケース", out)
+        self.assertIn("| 丸ごと |", self.written())
+        # 順序に依らない (写しが先に来ても、理由は拾って 1 件のまま)
+        reordered = _events(
+            _event("testCaseCancelled", testID=WHOLE_ID, _comments=["写しの側の理由"]),
+            _event("testCancelled", testID=WHOLE_ID),
+        )
+        out = self.read(reordered)
+        self.assertIn(CANCELLED_TITLE + " 1 件", out.splitlines()[0])
+        self.assertIn("丸ごと — 写しの側の理由", out)
+
+    def test_names_one_cancelled_case_with_its_name_and_reason(self):
+        out = self.read(EVENTS_ONE_CASE)
+        self.assertIn(CANCELLED_TITLE + " 1 件", out.splitlines()[0])
+        self.assertIn("%s — ケース 2 — 2 は前提が無い" % CASES_ID, out)
+
+    def test_groups_the_cases_of_one_test_by_reason(self):
+        out = self.read(_events(
+            _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("1"), _comments=["同じ理由"]),
+            _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("3"), _comments=["同じ理由"]),
+            _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("5"), _comments=["別の理由"]),
+        ))
+        lines = out.splitlines()
+        self.assertIn(CANCELLED_TITLE + " 3 件", lines[0])
+        self.assertIn("ケース 1, 3 — 同じ理由", lines[1])
+        self.assertIn("ケース 5 — 別の理由", lines[2])
+
+    def test_a_whole_cancel_swallows_its_cases(self):
+        """丸ごとの取り消しの後ろに付く同じ testID のケースは、別に数えない (ケースの欄があっても)。"""
+        out = self.read(_events(
+            _event("testCancelled", testID=CASES_ID, _comments=["丸ごと"]),
+            _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("1"), _comments=["丸ごと"]),
+            _event("testCaseCancelled", testID=CASES_ID, _testCase=_case("2"), _comments=["丸ごと"]),
+        ))
+        self.assertIn(CANCELLED_TITLE + " 1 件", out.splitlines()[0])
+        self.assertNotIn("ケース", out)
+
+    def test_other_events_are_not_cancellations(self):
+        out = self.read(_events(
+            _event("testStarted", testID="A.b()/F.swift:1:1"),
+            _event("testSkipped", testID="A.b()/F.swift:1:1", _comments=["skipped"]),
+            _event("testEnded", testID="A.b()/F.swift:1:1"),
+            _event("testCancelled", testID=WHOLE_ID, _comments=["だけ"]),
+        ))
+        self.assertIn(CANCELLED_TITLE + " 1 件", out.splitlines()[0])
+        self.assertNotIn("A.b()", out)
+
+    def test_names_a_missing_reason_and_case_when_the_fields_are_gone(self):
+        """版 6.3 以降の書式 (欄が消えた日) は、件数は数えて、読めないものを読めないと名乗る。"""
+        out = self.read(EVENTS_NO_FIELDS)
+        self.assertIn(CANCELLED_TITLE + " 2 件", out.splitlines()[0])
+        self.assertIn("%s — 丸ごと — 理由が読めない" % WHOLE_ID, out)
+        self.assertIn("%s — ケース 名前が読めない 1 件 — 理由が読めない" % CASES_ID, out)
+        self.assertIn("2 件は理由の欄 (`_comments`) が無く読めない", out)
+        self.assertIn("--event-stream-version 0", out)
+        self.assertIn("2 件は理由の欄", self.written())
+
+    def test_writes_the_same_list_to_the_job_summary(self):
+        self.read(EVENTS_WHOLE)
+        md = self.written()
+        self.assertIn("### " + CANCELLED_TITLE + " (1 件)", md)
+        self.assertIn("| `%s` | 丸ごと | 5 回とも前提が成り立たなかった |" % WHOLE_ID, md)
+        # 前の step が書いたものを消さずに足す
+        self.read(EVENTS_ONE_CASE)
+        md = self.written()
+        self.assertIn(WHOLE_ID, md)
+        self.assertIn(CASES_ID, md)
+
+    def test_does_not_touch_a_summary_outside_github(self):
+        out = self.read(EVENTS_WHOLE, summary=False)
+        self.assertIn(WHOLE_ID, out)
+        self.assertFalse(self.summary.exists())
+
+    def test_says_none_when_nothing_was_cancelled(self):
+        out = self.read(_events(_event("testStarted", testID="A.b()/F.swift:1:1")))
+        # runStarted と testStarted と runEnded の 3 件
+        self.assertEqual(out.strip(), CANCELLED_TITLE + "は無い (記録の事象 3 件)")
+        self.assertIn("無い (記録の事象 3 件)", self.written())
+
+    def test_names_a_record_it_cannot_read(self):
+        """記録が無い・壊れている・書式が変わったときに、黙って「取り消しは無い」を出さない。"""
+        cases = [
+            ("無い", None, "記録が無い"),
+            ("空", "", "記録が無い"),
+            ("JSON でない", "this is not json\n", "記録に事象が 1 件も無い (読めない行 1 行)"),
+            ("事象が無い", json.dumps({"kind": "test", "payload": {"id": "A.b()/F.swift:1:1"}}) + "\n",
+             "記録に事象が 1 件も無い"),
+            # 事象の種類の綴りが変わった日 (取り消しの綴りも変わっているかもしれない)
+            ("runStarted が無い", _events(_event("testCancelled", testID=WHOLE_ID), started=False),
+             "に runStarted が無い"),
+        ]
+        for label, content, reason in cases:
+            with self.subTest(label):
+                self.summary.unlink(missing_ok=True)
+                (self.root / "events.jsonl").unlink(missing_ok=True)
+                out = self.read(content)
+                self.assertIn(CANCELLED_TITLE + "を読めない: ", out)
+                self.assertIn(reason, out)
+                self.assertNotIn("は無い (", out)
+                self.assertIn("読めない: ", self.written())
+
+    def test_names_a_record_that_was_cut_off_but_still_lists_what_it_has(self):
+        out = self.read(_events(_event("testCancelled", testID=WHOLE_ID, _comments=["理由"]), ended=False))
+        self.assertIn(CANCELLED_TITLE + " 1 件", out)
+        self.assertIn("runEnded で閉じていない", out)
+        self.assertIn("runEnded で閉じていない", self.written())
+
+    def test_names_unreadable_lines_but_still_lists_the_rest(self):
+        text = _events(_event("testCancelled", testID=WHOLE_ID, _comments=["理由"]))
+        out = self.read(text + '{"kind":"event","payload":{"kind":"testCa\n')
+        self.assertIn(CANCELLED_TITLE + " 1 件", out)
+        self.assertIn("読めない行が 1 行あった", out)
+
+    def test_table_cells_survive_pipes_and_newlines(self):
+        self.read(_events(_event("testCancelled", testID="A.b(`x`|y)/F.swift:1:1", _comments=["a|b\nc"])))
+        md = self.written()
+        self.assertIn("``A.b(`x`\\|y)/F.swift:1:1``", md)
+        self.assertIn("| a\\|b c |", md)
+
+    def test_caps_the_list(self):
+        out = self.read(_events(*[
+            _event("testCancelled", testID="A.t%d()/F.swift:%d:1" % (i, i), _comments=["理由"]) for i in range(53)
+        ]))
+        self.assertIn(CANCELLED_TITLE + " 53 件", out)
+        self.assertEqual(out.count(" — 丸ごと — "), 50)
+        self.assertIn("ほか 3 行は記録を読む", out)
+
+
 class MakeTestTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -727,9 +937,10 @@ class MakeTestTest(unittest.TestCase):
         summary = self.root / "summary.md"
         code, out = self.run_make(0, record=record, extra_env={"GITHUB_STEP_SUMMARY": str(summary)})
         self.assertEqual(code, 0, out)
-        tail = out.rstrip().splitlines()[-2:]
-        self.assertIn(SLOW_TITLE + " (1 件", tail[0])
-        self.assertIn("145.5s  MokumeCLITests.TemplateBuildTests/bundles()", tail[1])
+        lines = out.rstrip().splitlines()
+        at = next(i for i, l in enumerate(lines) if SLOW_TITLE in l)
+        self.assertIn(SLOW_TITLE + " (1 件", lines[at])
+        self.assertIn("145.5s  MokumeCLITests.TemplateBuildTests/bundles()", lines[at + 1])
         self.assertIn("| 145.5 | `MokumeCLITests.TemplateBuildTests` / `bundles()` |", summary.read_text())
 
     def test_the_threshold_comes_from_the_make_variable(self):
@@ -746,6 +957,53 @@ class MakeTestTest(unittest.TestCase):
         self.assertIn(SLOW_TITLE + " (1 件", out)
         self.assertIn("bundles()", out)
         self.assert_not_vanished(out)
+
+    # --- 取り消した検査 (#3348) ---------------------------------------------
+
+    def test_names_the_cancelled_tests_at_the_end_of_a_green_run(self):
+        code, out = self.run_make(0, record=RECORD_ALL_PASSED, extra_env={"FAKE_EVENTS": self.events(EVENTS_WHOLE_633)})
+        self.assertEqual(code, 0, out)
+        lines = out.rstrip().splitlines()
+        self.assertIn(CANCELLED_TITLE + " 1 件", lines[-2])
+        self.assertIn("%s — 丸ごと — 5 回とも前提が成り立たなかった" % WHOLE_ID, lines[-1])
+        self.assert_not_vanished(out)
+
+    def test_asks_swift_for_the_event_stream_in_version_zero(self):
+        """理由とケースの名前は版 0 にしか無いので、版を渡す。置き場は段の中で消してから走る。"""
+        self.run_make(0, record=RECORD_ALL_PASSED, extra_env={"FAKE_EVENTS": self.events(EVENTS_WHOLE)})
+        calls = (self.root / "swift-calls.txt").read_text()
+        self.assertIn("--skip-build --xunit-output .build/test-results.xml"
+                      " --event-stream-output-path .build/test-events.jsonl --event-stream-version 0", calls)
+
+    def test_names_the_cancelled_tests_in_a_red_run_without_changing_the_exit(self):
+        code, out = self.run_make(
+            1, record=RECORD_ONE_FAILED, extra_env={"FAKE_EVENTS": self.events(EVENTS_ONE_CASE)},
+        )
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("Error 1", out)
+        self.assertIn("%s — ケース 2 — 2 は前提が無い" % CASES_ID, out)
+        self.assert_not_vanished(out)
+
+    def test_does_not_read_the_event_record_of_the_previous_run(self):
+        """今回の swift が事象の記録を書かなかった回に、前の回の取り消しを名乗らない。"""
+        build = self.work / ".build"
+        build.mkdir(exist_ok=True)
+        (build / "test-events.jsonl").write_text(EVENTS_WHOLE, encoding="utf-8")
+        code, out = self.run_make(0, record=RECORD_ALL_PASSED)
+        self.assertEqual(code, 0, out)
+        self.assertIn(CANCELLED_TITLE + "を読めない: 記録が無い", out)
+        self.assertNotIn(WHOLE_ID, out)
+
+    def test_says_when_nothing_was_cancelled_without_changing_the_exit(self):
+        code, out = self.run_make(0, record=RECORD_ALL_PASSED, extra_env={"FAKE_EVENTS": self.events(_events())})
+        self.assertEqual(code, 0, out)
+        self.assertIn(CANCELLED_TITLE + "は無い", out)
+
+    def events(self, content):
+        path = self.root / "fake-events.jsonl"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
 
 if __name__ == "__main__":
     unittest.main()

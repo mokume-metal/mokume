@@ -82,8 +82,36 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
 
 **警告だけで、終了コードは常に 0** — 段の結末は変えない。赤にするか・予算を設けるかは、
 名乗らせた後の実測で別に決める。
+## 取り消した検査 (`--cancelled <事象の記録>`・#3348)
+
+`make test` が、`swift test` が終わった回の最後に呼ぶ (緑でも赤でも)。`Test.cancel` で検査の
+途中から取り消した検査を、名前・ケース・理由つきで名乗る。取り消しは xUnit の上では passed と
+同じ `<testcase/>` に見え、端末の出力にも (1 ケースの取り消しは) 出ない。前提が崩れた回に
+検査が何も確かめないまま緑になる — いま `Test.cancel` で取り消す検査は
+`DocumentLoadingTests` と `APIListDownloadTests` の「5 回とも前提が成り立たなかった」の枝である。
+
+**読む元は xUnit ではなく、`swift test --event-stream-output-path <置き場> --event-stream-version 0`
+の事象の記録** (1 行 1 JSON)。プロセスが自分でファイルへ書くので端末のように行を落とさず、
+丸ごとの取り消し (`testCancelled`) も 1 ケースの取り消し (`testCaseCancelled`) も持つ。
+
+- **Swift 6.3.3 は、丸ごとの取り消しに `testCancelled` と、同じ testID の `testCaseCancelled`
+  を両方出す** (6.4 は `testCancelled` だけ)。同じ testID に `testCancelled` が在れば、その
+  testID の `testCaseCancelled` は丸ごとの取り消しの写しとして畳み、1 件に数える
+- 理由は事象の `_comments`、ケースの名前は `_testCase.displayName`。どちらも版 0 の実験的な欄
+  (`_` で始まる) で、版 6.3 以降の書式では消える。無い日は「理由が読めない」「ケースの名前が
+  読めない」と名乗る (欄が消えても取り消しの件数は数えられる)
+
+`$GITHUB_STEP_SUMMARY` があれば、同じ一覧を Markdown でそこへ追記する (`--slow` と同じ作法)。
+
+**黙って空を出さない。** 記録が無い・読めない・事象が 1 件も無い・`runStarted` が無い・取り消しが
+0 件、はそれぞれ名乗る。0 件のときも「無い」と言い、読めない行や `runEnded` で閉じていない記録
+(検査のプロセスが途中で消えた回) は添える。
+
+**警告だけで、終了コードは常に 0** — 段の結末は変えない。取り消しを赤にするかは、名乗らせた後に
+別に決める。
 """
 
+import json
 import os
 import re
 import sys
@@ -117,6 +145,9 @@ GATE_TEXT_SUITES = frozenset(
 SLOW_SECONDS = 5.0
 # 一覧に載せる上限。手元の記録 (10-19) で 5 秒以上は 26 件だった
 MAX_SLOW = 50
+# 取り消し 1 行に並べるケース名の上限と、一覧に載せる上限
+MAX_CASE_NAMES = 5
+MAX_CANCELLED = 50
 
 
 def verdict(cases, classname):
@@ -333,6 +364,145 @@ def slow(path, threshold=SLOW_SECONDS):
     return "\n".join(text), "\n".join(md)
 
 
+def cancelled(path):
+    """`Test.cancel` で取り消した検査を事象の記録 (JSON Lines) から。(端末の文, 要約の Markdown) を返す。"""
+    title = "取り消した検査"
+
+    def cannot(reason):
+        return (
+            "%sを読めない: %s (%s)" % (title, reason, path),
+            "### %s\n\n読めない: %s (`%s`)" % (title, reason, path),
+        )
+
+    try:
+        if os.path.getsize(path) == 0:
+            return cannot("記録が無い")
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return cannot("記録が無い")
+    except UnicodeDecodeError:
+        return cannot("記録が壊れている — 文字として読めない")
+
+    events = []
+    broken = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+            payload = record["payload"]
+            if record["kind"] == "event" and isinstance(payload, dict) and isinstance(payload["kind"], str):
+                events.append(payload)
+        except (ValueError, KeyError, TypeError):
+            broken += 1
+    if not events:
+        return cannot("記録に事象が 1 件も無い" + ("" if not broken else " (読めない行 %d 行)" % broken))
+    kinds = {e["kind"] for e in events}
+    if "runStarted" not in kinds:
+        return cannot(
+            "記録の事象 %d 件に runStarted が無い — 記録の書式が変わったか、`--event-stream-version 0` で書かれていない可能性がある"
+            % len(events)
+        )
+
+    # testID ごとに、丸ごと (testCancelled) とケース (testCaseCancelled) を集める
+    whole = {}
+    cases = {}
+    for e in events:
+        if e["kind"] not in ("testCancelled", "testCaseCancelled"):
+            continue
+        test_id = e.get("testID")
+        if not isinstance(test_id, str):
+            test_id = "(testID が読めない)"
+        comments = e.get("_comments")
+        reason = " / ".join(str(c) for c in comments) if isinstance(comments, list) and comments else None
+        if e["kind"] == "testCancelled":
+            if whole.get(test_id) is None:
+                whole[test_id] = reason
+        else:
+            test_case = e.get("_testCase")
+            name = test_case.get("displayName") if isinstance(test_case, dict) else None
+            cases.setdefault(test_id, []).append((name if isinstance(name, str) else None, reason))
+
+    # 同じ testID の testCaseCancelled は、丸ごとの取り消しの写し (Swift 6.3.3) として畳む。
+    # 写しの側にだけ理由が載る版でも、理由は拾う
+    for test_id in whole:
+        for _, reason in cases.pop(test_id, []):
+            if whole[test_id] is None:
+                whole[test_id] = reason
+
+    items = []  # (testID, 取り消しの範囲, 件数, 理由)
+    for test_id, reason in whole.items():
+        items.append((test_id, "丸ごと", 1, reason))
+    for test_id, entries in cases.items():
+        by_reason = {}
+        for name, reason in entries:
+            by_reason.setdefault(reason, []).append(name)
+        for reason, names in by_reason.items():
+            known = [n for n in names if n is not None]
+            unknown = len(names) - len(known)
+            shown = ", ".join(known[:MAX_CASE_NAMES])
+            if len(known) > MAX_CASE_NAMES:
+                shown += " ほか %d 件" % (len(known) - MAX_CASE_NAMES)
+            if unknown:
+                shown += ("; " if shown else "") + "名前が読めない %d 件" % unknown
+            items.append((test_id, "ケース %s" % shown, len(names), reason))
+
+    notes = []
+    if broken:
+        notes.append("読めない行が %d 行あった" % broken)
+    if "runEnded" not in kinds:
+        notes.append("記録が runEnded で閉じていない — 検査のプロセスが途中で消えた可能性がある")
+    if not items:
+        notes_text = "".join(" (%s)" % n for n in notes)
+        line = "%sは無い (記録の事象 %d 件)%s" % (title, len(events), notes_text)
+        return line, "### %s\n\n無い (記録の事象 %d 件)%s" % (title, len(events), notes_text)
+
+    total = sum(n for _, _, n, _ in items)
+    no_reason = sum(n for _, _, n, r in items if r is None)
+    if no_reason:
+        notes.append(
+            "%d 件は理由の欄 (`_comments`) が無く読めない — `--event-stream-version 0` で書かれていない可能性がある" % no_reason
+        )
+    shown = items[:MAX_CANCELLED]
+    rest = len(items) - len(shown)
+
+    def why(reason):
+        return " ".join(reason.split()) if reason is not None else "理由が読めない"
+
+    head = "%s %d 件 (Test.cancel — xUnit の上では passed と区別できない。警告だけで段の結末は変えない・#3348):" % (title, total)
+    text = [head]
+    text += ["  %s — %s — %s" % (i, scope, why(r)) for i, scope, _, r in shown]
+    md = [
+        "### %s (%d 件)" % (title, total),
+        "",
+        "`Test.cancel` で取り消した検査。xUnit の上では passed と区別できない。警告だけで、段の結末は変えない (#3348)。",
+        "",
+        "| 検査 | 範囲 | 理由 |",
+        "| --- | --- | --- |",
+    ]
+    md += ["| %s | %s | %s |" % (code_span(i), scope.replace("|", "\\|"), why(r).replace("|", "\\|")) for i, scope, _, r in shown]
+    if rest:
+        text.append("  ほか %d 行は記録を読む" % rest)
+        md += ["", "ほか %d 行は記録を読む" % rest]
+    for n in notes:
+        text.append("  注: " + n)
+        md += ["", "注: " + n]
+    return "\n".join(text), "\n".join(md)
+
+
+def append_summary(md):
+    """`$GITHUB_STEP_SUMMARY` があれば Markdown を足す。書けなかったことは名乗る。"""
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    try:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write(md + "\n\n")
+    except OSError as e:
+        print("job の要約へ書けなかった (%s): %s" % (summary, e))
+
+
 def main(argv):
     if len(argv) == 3 and argv[1] == "--failures":
         print(failures(argv[2]))
@@ -347,13 +517,12 @@ def main(argv):
             return 0
         text, md = slow(argv[2], threshold)
         print(text)
-        summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary:
-            try:
-                with open(summary, "a", encoding="utf-8") as f:
-                    f.write(md + "\n\n")
-            except OSError as e:
-                print("job の要約へ書けなかった (%s): %s" % (summary, e))
+        append_summary(md)
+        return 0
+    if len(argv) == 3 and argv[1] == "--cancelled":
+        text, md = cancelled(argv[2])
+        print(text)
+        append_summary(md)
         return 0
     if len(argv) in (3, 4) and argv[1] == "--failure-messages":
         print(failure_messages(*argv[2:]))
