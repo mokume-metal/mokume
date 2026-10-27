@@ -710,6 +710,33 @@ public nonisolated func dist(
     return Vector3.measuredLength(of: SIMD3(x2 - x1, y2 - y1, z2 - z1))
 }
 
+/// 2 つの点 (`Vector2`) の間の距離。``dist(_:_:_:_:)`` に 2 つの点の成分を渡すのと同じで、
+/// 値型の `a.distance(to: b)` ``Vector2/distance(to:)`` とも同じ値になる。
+///
+/// ```swift
+/// let reach = dist(Vector2(mouseX, mouseY), Vector2(width / 2, height / 2))
+/// ```
+///
+/// **数でない値・無限の値が混じったときは 0 を返し、1 度だけ注意を言う** (``dist(_:_:_:_:)`` と同じ。
+/// `distance(to:)` は数でない値のまま返る)。
+// shot: 撮れない 値を返すだけで、描く結果が無い
+public nonisolated func dist(_ a: Vector2, _ b: Vector2) -> Float {
+    dist(a.x, a.y, b.x, b.y)
+}
+
+/// 空間の 2 つの点 (`Vector3`) の間の距離。``dist(_:_:_:_:_:_:)`` に 2 つの点の成分を渡すのと同じで、
+/// ``Vector3/distance(to:)`` とも同じ値になる。
+///
+/// ```swift
+/// let reach = dist(Vector3(0, 0, 0), Vector3(30, 40, 120))  // 130
+/// ```
+///
+/// **数でない値・無限の値が混じったときは 0 を返し、1 度だけ注意を言う** (``dist(_:_:_:_:_:_:)`` と同じ)。
+// shot: 撮れない 値を返すだけで、描く結果が無い
+public nonisolated func dist(_ a: Vector3, _ b: Vector3) -> Float {
+    dist(a.x, a.y, a.z, b.x, b.y, b.z)
+}
+
 /// 原点からの距離 (3 次元)。``dist(_:_:_:_:_:_:)`` の 1 つ目の点を原点 (0, 0, 0) にしたもの。
 ///
 /// ```swift

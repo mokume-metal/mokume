@@ -508,6 +508,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/rect(_:_:_:_:_:)``
 - ``SketchPart/square(_:_:_:)``
 - ``SketchPart/circle(_:_:_:)``
+- ``SketchPart/circle(_:_:)``
 - ``SketchPart/ellipse(_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:)``
 - ``SketchPart/arc(_:_:_:_:_:_:_:)``
@@ -515,7 +516,9 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/triangle(_:_:_:_:_:_:)``
 - ``SketchPart/quad(_:_:_:_:_:_:_:_:)``
 - ``SketchPart/point(_:_:)``
+- ``SketchPart/point(_:)-(Vector2)``
 - ``SketchPart/line(_:_:_:_:)``
+- ``SketchPart/line(_:_:)-(Vector2,_)``
 - ``SketchPart/bezier(_:_:_:_:_:_:_:_:)``
 
 ### 座標の読み方
@@ -536,7 +539,9 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 - ``SketchPart/beginShape(_:)``
 - ``SketchPart/vertex(_:_:)``
+- ``SketchPart/vertex(_:)-(Vector2)``
 - ``SketchPart/vertex(_:_:_:)``
+- ``SketchPart/vertex(_:)-(Vector3)``
 - ``SketchPart/vertex(_:_:_:_:)``
 - ``SketchPart/vertex(_:_:_:_:_:)``
 - ``SketchPart/index(_:)``
@@ -568,6 +573,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 - ``SketchPart/translate(_:_:)``
 - ``SketchPart/translate(_:_:_:)``
+- ``SketchPart/translate(_:)-(Vector2)``
+- ``SketchPart/translate(_:)-(Vector3)``
 - ``SketchPart/rotate(_:)``
 - ``SketchPart/rotateX(_:)``
 - ``SketchPart/rotateY(_:)``
@@ -910,6 +917,8 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``lerpAngle(_:_:_:)``
 - ``dist(_:_:_:_:)``
 - ``dist(_:_:_:_:_:_:)``
+- ``dist(_:_:)-(Vector2,_)``
+- ``dist(_:_:)-(Vector3,_)``
 - ``mag(_:_:)``
 - ``mag(_:_:_:)``
 - ``sq(_:)``
