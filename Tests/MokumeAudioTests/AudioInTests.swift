@@ -58,7 +58,7 @@ final class AudioSketch: Sketch {
     nonisolated(unsafe) static var onDraw: (AudioSketch) -> Void = { _ in }
     init() {}
     var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
-    func setup() { try? Self.onSetup(self) }
+    func setup() throws { try Self.onSetup(self) }
     func draw() {
         background(0, 0, 0)
         Self.onDraw(self)
@@ -184,7 +184,7 @@ struct AudioInTests {
             defer { try? FileManager.default.removeItem(at: facet) }
             var audio: AudioIn?
             var seen: [Float] = []
-            AudioSketch.onSetup = { sketch in audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+            AudioSketch.onSetup = { sketch in audio = try sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
             AudioSketch.onDraw = { sketch in
                 if let audio { seen.append(audio.level) }
                 if sketch.frameCount == pausing { sketch.pauseTime() }
@@ -234,7 +234,13 @@ struct AudioInTests {
         AudioSketch.onSetup = { _ in }
         AudioSketch.onDraw = { sketch in
             // 4 枚目 (時刻 5 の観測の枚) で作る
-            if sketch.frameCount == 4 { audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+            if sketch.frameCount == 4 {
+                do {
+                    audio = try sketch.createAudioIn(samples: chord, sampleRate: 48_000)
+                } catch {
+                    Issue.record("音の入口を作れなかった: \(error)")
+                }
+            }
             if let audio {
                 levels.append(audio.level)
                 times.append(sketch.time)
@@ -318,7 +324,7 @@ struct AudioInTests {
     func samplesFollowTheAuthorsClockOnTheFixedClock() throws {
         var audio: AudioIn?
         var heard: [(level: Float, peak: Float, isNew: Bool)] = []
-        AudioSketch.onSetup = { sketch in audio = try? sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
+        AudioSketch.onSetup = { sketch in audio = try sketch.createAudioIn(samples: chord, sampleRate: 48_000) }
         AudioSketch.onDraw = { sketch in
             guard let audio else { return }
             heard.append((audio.level, audio.peak, audio.isNewFrame))

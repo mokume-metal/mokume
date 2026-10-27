@@ -14,7 +14,7 @@ final class SynthSketch: Sketch {
     nonisolated(unsafe) static var onDraw: (SynthSketch) -> Void = { _ in }
     init() {}
     var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
-    func setup() { try? Self.onSetup(self) }
+    func setup() throws { try Self.onSetup(self) }
     func draw() {
         background(0, 0, 0)
         Self.onDraw(self)

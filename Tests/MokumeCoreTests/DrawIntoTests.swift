@@ -83,8 +83,9 @@ struct DrawIntoTests {
         let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
         probe.runtime = runtime
         runtime.start()
+        // 台本は `probe.layer!` などを強制で開く。作れていなければ、台本が走る前に赤で止める
+        try #require(probe.pad != nil && probe.layer != nil && probe.direct != nil, "描き場所を作れていない")
         for _ in 0..<frames { try runtime.advance() }
-        #expect(probe.pad != nil && probe.layer != nil && probe.direct != nil, "描き場所を作れていない")
         return (probe, runtime)
     }
 
@@ -682,6 +683,8 @@ struct DrawIntoTests {
         let sketch = Temporal()
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
         runtime.start()
+        // `draw()` が `pad!` を開くので、作れていなければ走らせる前に赤で止める
+        try #require(sketch.pad != nil, "描き場所を作れていない")
         try runtime.advance()
         #expect(sketch.outside, "検査が成り立たない: 本体の面が履歴を使っていない")
         #expect(sketch.inside == sketch.outside, "閉包の中と外で答えが割れた")
