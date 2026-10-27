@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+// Canvas とその拡張の実装メモは、宣言との間を空行で区切る。
+// scripts/api-surface.py の slash_doc は宣言直前の // も説明文として拾うため、
+// 利用者が最初に触る層の説明と、内部の保守上の理由を混ぜない (ADR-0020 決定 4)。
+
 import Metal
 import MokumeDiagnostics
 import simd
@@ -4494,7 +4498,7 @@ public final class Canvas {
         //
         // [#1469]: https://github.com/mokume-metal/mokume/issues/1469
         // [#2042]: https://github.com/mokume-metal/mokume/issues/2042
-        // **出す先を書かない描き切りは写させない** ([#2787])。置いた側の写しを使わず、区切りも入れない。
+        // **GPU に頼む仕事が無い描き切りは写させない** ([#2787])。読み戻しなどの仕事があれば省かない。
         // 置いた側は、自分の絵が次に変わる前に写させる (``placers`` は残る)
         //
         // [#2103]: https://github.com/mokume-metal/mokume/issues/2103

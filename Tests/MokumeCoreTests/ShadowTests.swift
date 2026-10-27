@@ -97,7 +97,7 @@ struct ShadowTests {
 
     @Test("影のある絵が、同じ入力から 2 回とも同じ絵になる")
     func shadowsAreDeterministic() throws {
-        // このフェーズの出口条件。焼き付けが同じ順で同じ形から行われていれば、
+        // 焼き付けが同じ順で同じ形から行われていれば、
         // 2 回とも 1 ビットも違わない
         let first = try floorAndSphere(try makeCanvas())
         let second = try floorAndSphere(try makeCanvas())

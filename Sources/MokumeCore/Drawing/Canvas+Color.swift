@@ -3,10 +3,6 @@
 //
 // 素の数値で色を指定する口 (ADR-0033 決定 1)。下の層にも同じ綴りを置くのは、
 // 上で書けて下で書けない食い違いを作らないため (同 決定 8)。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
-// 拾われないよう、宣言との間は必ず 1 行空ける。
 
 extension Canvas {
     public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {

@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT
 //
 // 線の破線 ([#2835](https://github.com/mokume-metal/mokume/issues/2835))。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
-// 拾われないよう、宣言との間は必ず 1 行空ける。
 
 import simd
 

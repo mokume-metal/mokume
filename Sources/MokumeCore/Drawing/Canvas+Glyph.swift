@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// 字形と画像を四角として積む下ごしらえ。`Canvas.swift` の MARK「文字の下ごしらえ」を、
-// 区画ごとここへ移した ([#943](https://github.com/mokume-metal/mokume/issues/943))。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
-// 拾われないよう、宣言との間は必ず 1 行空ける。
+// 字形と画像を四角として積む下ごしらえ。
 
 import CoreText
 import simd

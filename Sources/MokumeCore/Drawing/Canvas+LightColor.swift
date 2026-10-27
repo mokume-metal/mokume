@@ -3,9 +3,6 @@
 //
 // 光と質感の色を素の数値で指定する口 (ADR-0033 決定 1・7)。手本が持つ形だけを
 // 足すので、向きを持つ光には gray 形も alpha 形も無い。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4)。この覚え書きが宣言の
-// 説明文として拾われないよう、宣言との間は必ず 1 行空ける。
 
 extension Canvas {
     public func ambientLight(_ gray: some ScalarConvertible) {
