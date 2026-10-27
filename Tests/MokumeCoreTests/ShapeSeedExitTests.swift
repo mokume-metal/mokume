@@ -98,15 +98,15 @@ struct ShapeSeedExitTests {
         init() {}
 
         func setup() {
-            layer = try? createGraphics(16, 16)
-            childLayer = try? layer?.createGraphics(16, 16)
+            layer = creating({ try createGraphics(16, 16) })
+            if let layer { childLayer = creating({ try layer.createGraphics(16, 16) }) }
             let gpu = canvas.gpu
-            direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu)
-            directOutput = try? Canvas(
+            direct = creating({ try Canvas(target: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu) })
+            directOutput = creating({ try Canvas(
                 output: RenderTarget(gpu: gpu, width: 16, height: 16), gpu: gpu, pixelDensity: 0.5,
-                upscale: .spatial)
-            directLayer = try? direct?.createGraphics(16, 16)
-            directChildLayer = try? directLayer?.createGraphics(16, 16)
+                upscale: .spatial) })
+            if let direct { directLayer = creating({ try direct.createGraphics(16, 16) }) }
+            if let directLayer { directChildLayer = creating({ try directLayer.createGraphics(16, 16) }) }
             if phase == .setup { script?(self) }
         }
         func draw() {

@@ -682,7 +682,7 @@ struct FrameSyncTests {
         weak var droppedTexture: (any MTLTexture)?
         try canvas.draw {
             bench.keepGPUBusy()
-            let image = try? canvas.createImage(2, 2)
+            let image = creating({ try canvas.createImage(2, 2) })
             image?.set(0, 0, red)
             if let image { canvas.image(image, 0, 0) }
             droppedTexture = image?.texture
@@ -719,8 +719,8 @@ struct FrameSyncTests {
         static func brightness(atFrame frame: Int) -> UInt8 { frame % 2 == 0 ? 255 : 0 }
 
         func setup() {
-            scratch = try? makeNumbers(count: 1)
-            spin = try? makeComputation(FrameSyncTests.spin, name: "spin")
+            scratch = creating({ try makeNumbers(count: 1) })
+            spin = creating({ try makeComputation(FrameSyncTests.spin, name: "spin") })
         }
 
         func draw() {

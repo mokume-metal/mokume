@@ -567,7 +567,7 @@ enum Scene: String, CaseIterable, Sendable {
     /// 汚しの絵。**その場で焼く**ので毎回同じで、木目とは別の形にしてある
     /// (掛け合わせた結果から、どちらが効いているかを読み分けるため)。
     static func makeSmudge(on canvas: Canvas) -> Image? {
-        guard let image = try? canvas.createImage(32, 32) else { return nil }
+        guard let image = creating({ try canvas.createImage(32, 32) }) else { return nil }
         for y in 0..<32 {
             for x in 0..<32 {
                 // 斜めに流れる帯。木目 (縦縞) と重ならない向きにする
@@ -594,7 +594,7 @@ enum Scene: String, CaseIterable, Sendable {
     /// 縞と格子を重ねてある — 上下・左右のどちらが逆になっても絵が変わる形にしないと、
     /// 向きの退行が台帳の行に出ない。
     static func makeGrain(on canvas: Canvas) -> Image? {
-        guard let image = try? canvas.createImage(32, 32) else { return nil }
+        guard let image = creating({ try canvas.createImage(32, 32) }) else { return nil }
         for y in 0..<32 {
             for x in 0..<32 {
                 let ring = 0.5 + 0.5 * sin(Float(x) * 0.9 + Float(y) * 0.12)
@@ -1250,7 +1250,7 @@ enum Scene: String, CaseIterable, Sendable {
     private func drawImages(on canvas: Canvas) {
         canvas.background(.display(red: 0.08, green: 0.08, blue: 0.1))
         // 元の絵はその場で作る。ファイルを置かずに済み、絵は毎回同じになる
-        guard let source = try? canvas.createImage(8, 8) else { return }
+        guard let source = creating({ try canvas.createImage(8, 8) }) else { return }
         for y in 0..<8 {
             for x in 0..<8 {
                 let checker = (x / 2 + y / 2) % 2 == 0
@@ -1360,20 +1360,20 @@ enum Scene: String, CaseIterable, Sendable {
     ///
     /// [#788]: https://github.com/mokume-metal/mokume/issues/788
     private func drawRetainedShapeBands(on canvas: Canvas) {
-        guard let warm = try? canvas.createImage(4, 4),
-            let cool = try? canvas.createImage(4, 4)
+        guard let warm = creating({ try canvas.createImage(4, 4) }),
+            let cool = creating({ try canvas.createImage(4, 4) })
         else { return }
         warm.fill(.display(red: 1, green: 0.72, blue: 0.3))
         cool.fill(.display(red: 0.35, green: 0.75, blue: 1))
         guard
-            let tone = try? canvas.makeShader(
+            let tone = creating({ try canvas.makeShader(
                 """
                 float4 paint(Fragment in, Values values, Surfaces surfaces) {
                     float wave = 0.55 + 0.45 * sin(in.place.x * 26.0);
                     return float4(mokume_sample(surfaces.tone, in.place).rgb * wave, 1.0);
                 }
                 """,
-                surfaces: ["tone": .image(warm)])
+                surfaces: ["tone": .image(warm)]) })
         else { return }
 
         canvas.noStroke()
@@ -1393,7 +1393,7 @@ enum Scene: String, CaseIterable, Sendable {
 
         // 面の中の位置と、渡した値から色を作る断片
         guard
-            let stripes = try? canvas.makeShader(
+            let stripes = creating({ try canvas.makeShader(
                 """
                 float4 paint(Fragment in, Values values) {
                     float wave = 0.5 + 0.5 * sin(in.place.x * values.density);
@@ -1403,7 +1403,7 @@ enum Scene: String, CaseIterable, Sendable {
                 values: [
                     "density": 40,
                     "tint": .color(.display(red: 1, green: 0.55, blue: 0.25)),
-                ])
+                ]) })
         else { return }
 
         canvas.shader(stripes)
@@ -1443,7 +1443,7 @@ enum Scene: String, CaseIterable, Sendable {
 
         // 下: 同じ座標を断片から引く。**種も細かさも値として渡していない**
         guard
-            let field = try? canvas.makeShader(
+            let field = creating({ try canvas.makeShader(
                 """
                 float4 paint(Fragment in, Values values) {
                     float2 p = (in.position - values.origin) * 0.0625;
@@ -1451,7 +1451,7 @@ enum Scene: String, CaseIterable, Sendable {
                     return float4(level, level * 0.7, 1.0 - level, 1.0);
                 }
                 """,
-                values: ["origin": .pair(0, 68)])
+                values: ["origin": .pair(0, 68)]) })
         else { return }
         canvas.shader(field)
         canvas.rect(0, 68, 128, 60)
@@ -1605,7 +1605,7 @@ enum Scene: String, CaseIterable, Sendable {
 
         // 読み込んだモデルにも同じ規則で線が引かれる。底の四角を割った対角線は出ない
         canvas.strokeJoin(.round)
-        guard let model = try? canvas.loadModel(ModelFixture.pyramid) else { return }
+        guard let model = creating({ try canvas.loadModel(ModelFixture.pyramid) }) else { return }
         canvas.push()
         canvas.translate(85, 108, 0)
         canvas.rotateX(-0.35)
@@ -1771,7 +1771,7 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
         canvas.lights()
         canvas.noStroke()
-        guard let model = try? canvas.loadModel(ModelFixture.pyramid) else { return }
+        guard let model = creating({ try canvas.loadModel(ModelFixture.pyramid) }) else { return }
 
         canvas.fill(.display(red: 0.9, green: 0.72, blue: 0.4))
         canvas.push()
@@ -1869,8 +1869,8 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.lights()
         canvas.noStroke()
         guard let grain = Scene.makeGrain(on: canvas),
-            let unwrapped = try? canvas.loadModel(ModelFixture.unwrapped),
-            let pyramid = try? canvas.loadModel(ModelFixture.pyramid)
+            let unwrapped = creating({ try canvas.loadModel(ModelFixture.unwrapped) }),
+            let pyramid = creating({ try canvas.loadModel(ModelFixture.pyramid) })
         else { return }
         canvas.texture(grain)
 
@@ -1895,7 +1895,7 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.background(.display(red: 0.05, green: 0.06, blue: 0.08))
         canvas.lights()
         canvas.noStroke()
-        guard let painted = try? canvas.makeShader(Scene.stripes, values: ["pitch": 0.55])
+        guard let painted = creating({ try canvas.makeShader(Scene.stripes, values: ["pitch": 0.55]) })
         else { return }
 
         canvas.shader(painted)
@@ -1932,13 +1932,13 @@ enum Scene: String, CaseIterable, Sendable {
         canvas.directionalLight(.display(red: 1, green: 0.95, blue: 0.88), -0.4, 0.7, -0.6)
         canvas.noStroke()
         guard
-            let painted = try? canvas.makeShader(
+            let painted = creating({ try canvas.makeShader(
                 Scene.grain,
                 values: [
                     "pitch": 0.35,
                     "early": .color(.display(red: 0.82, green: 0.64, blue: 0.44)),
                     "late": .color(.display(red: 0.46, green: 0.30, blue: 0.18)),
-                ])
+                ]) })
         else { return }
 
         canvas.shader(painted)
@@ -1966,10 +1966,10 @@ enum Scene: String, CaseIterable, Sendable {
         guard
             let grain = Scene.makeGrain(on: canvas),
             let smudge = Scene.makeSmudge(on: canvas),
-            let painted = try? canvas.makeShader(
+            let painted = creating({ try canvas.makeShader(
                 Scene.blended,
                 values: ["amount": 0.85, "tiling": .pair(2, 2)],
-                surfaces: ["grain": .image(grain), "smudge": .image(smudge)])
+                surfaces: ["grain": .image(grain), "smudge": .image(smudge)]) })
         else { return }
 
         canvas.shader(painted)

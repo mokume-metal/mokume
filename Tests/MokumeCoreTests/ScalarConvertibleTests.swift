@@ -407,7 +407,7 @@ struct ScalarConvertibleSketchPortTests {
         var settings: SketchSettings { SketchSettings(width: 32, height: 32) }
         func setup() {
             randomSeed(2524)
-            dust = try? makeParticles(count: 256)
+            dust = creating({ try makeParticles(count: 256) })
         }
         func draw() {
             guard let dust else { return }

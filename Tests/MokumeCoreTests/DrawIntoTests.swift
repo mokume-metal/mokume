@@ -51,11 +51,11 @@ struct DrawIntoTests {
         init() {}
 
         func setup() {
-            pad = try? createGraphics(32, 16)
-            layer = try? createGraphics(64, 64)
+            pad = creating({ try createGraphics(32, 16) })
+            layer = creating({ try createGraphics(64, 64) })
             let gpu = canvas.gpu
-            dust = try? pad?.makeParticles(count: 64)
-            direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu)
+            if let pad { dust = creating({ try pad.makeParticles(count: 64) }) }
+            direct = creating({ try Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu) })
             do { try setupScript?(self) } catch { Issue.record(error) }
         }
 
@@ -673,7 +673,7 @@ struct DrawIntoTests {
             var outside = false
             var inside: Bool?
             init() {}
-            func setup() { pad = try? createGraphics(16, 16) }
+            func setup() { pad = creating({ try createGraphics(16, 16) }) }
             func draw() {
                 outside = usesFrameHistory
                 draw(into: pad!) { inside = usesFrameHistory }
@@ -705,7 +705,7 @@ struct DrawIntoTests {
         var variadic = -1
         var array = -1
         try run { probe in
-            guard let layer = probe.layer, let dust = try? layer.makeParticles(count: 8) else { return }
+            guard let layer = probe.layer, let dust = creating({ try layer.makeParticles(count: 8) }) else { return }
             layer.beginDraw()
             layer.force(dust, .gravity(0, 10), .drag(0.5))
             variadic = dust.pendingForceCount

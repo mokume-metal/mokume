@@ -156,7 +156,7 @@ struct StoppedUpscaleOutletsTests {
         // 描き切りを挟むと、そこで置いた側へ写させてしまう
         sketch.onKey["a"] = { sketch in
             _ = sketch.get(0, 0)
-            guard let opened = try? sketch.createGraphics(160, 160) else { return }
+            guard let opened = creating({ try sketch.createGraphics(160, 160) }) else { return }
             layer?.canvas = opened
             opened.beginDraw()
             opened.image(sketch.canvas, 0, 0)
@@ -407,13 +407,13 @@ struct StoppedUpscaleOutletsTests {
             case .shader:
                 // 4 つの象限のどれに置いても、その象限が本体の全面を読む
                 guard
-                    let shader = try? layer.makeShader(
+                    let shader = creating({ try layer.makeShader(
                         """
                         float4 paint(Fragment in, Values values, Surfaces surfaces) {
                             return mokume_sample(surfaces.body, fract(in.place * 2.0));
                         }
                         """,
-                        surfaces: ["body": .graphics(body)])
+                        surfaces: ["body": .graphics(body)]) })
                 else { return }
                 layer.shader(shader)
                 layer.rect(x, y, 80, 80)
@@ -488,7 +488,7 @@ struct StoppedUpscaleOutletsTests {
         _ sketch: StoppedPainter, by door: Door, box: LayerBox,
         between: (Canvas) -> Void = { _ in }
     ) {
-        guard let layer = try? sketch.createGraphics(160, 160) else { return }
+        guard let layer = creating({ try sketch.createGraphics(160, 160) }) else { return }
         box.canvas = layer
         layer.beginDraw()
         door.place(sketch.canvas, into: layer, at: 0, 0)
@@ -607,14 +607,14 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: density, configure: { sketch in
             sketch.onKey["k"] = { sketch in
                 DrawOut.rectThenGet.apply(to: sketch)
-                guard let layer = try? sketch.createGraphics(160, 160),
-                    let shader = try? layer.makeShader(
+                guard let layer = creating({ try sketch.createGraphics(160, 160) }),
+                    let shader = creating({ try layer.makeShader(
                         """
                         float4 paint(Fragment in, Values values, Surfaces surfaces) {
                             return mokume_sample(surfaces.body, fract(in.place * 2.0));
                         }
                         """,
-                        surfaces: ["body": .graphics(sketch.canvas)])
+                        surfaces: ["body": .graphics(sketch.canvas)]) })
                 else { return }
                 box.canvas = layer
                 layer.beginDraw()
@@ -782,13 +782,13 @@ struct StoppedUpscaleOutletsTests {
                 layer.pop()
             case .heldPaint:
                 guard
-                    let shader = try? layer.makeShader(
+                    let shader = creating({ try layer.makeShader(
                         """
                         float4 paint(Fragment in, Values values, Surfaces surfaces) {
                             return mokume_sample(surfaces.body, fract(in.place * 2.0));
                         }
                         """,
-                        surfaces: ["body": .graphics(body)])
+                        surfaces: ["body": .graphics(body)]) })
                 else { return }
                 let shape = layer.createShape {
                     layer.shader(shader)
@@ -833,7 +833,7 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: density, configure: { sketch in
             sketch.onKey["k"] = { sketch in
                 DrawOut.rectThenGet.apply(to: sketch)
-                guard let layer = try? sketch.createGraphics(160, 160) else { return }
+                guard let layer = creating({ try sketch.createGraphics(160, 160) }) else { return }
                 box.canvas = layer
                 layer.beginDraw()
                 route.place(sketch.canvas, into: layer)
@@ -862,14 +862,14 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: 0.5, configure: { sketch in
             sketch.onKey["k"] = { sketch in
                 DrawOut.rectThenGet.apply(to: sketch)
-                guard let layer = try? sketch.createGraphics(160, 160),
-                    let shader = try? layer.makeShader(
+                guard let layer = creating({ try sketch.createGraphics(160, 160) }),
+                    let shader = creating({ try layer.makeShader(
                         """
                         float4 paint(Fragment in, Values values, Surfaces surfaces) {
                             return mokume_sample(surfaces.body, fract(in.place * 2.0));
                         }
                         """,
-                        surfaces: ["body": .graphics(sketch.canvas)])
+                        surfaces: ["body": .graphics(sketch.canvas)]) })
                 else { return }
                 box.canvas = layer
                 let place: (Float, Float) -> Void = { x, y in
@@ -916,14 +916,14 @@ struct StoppedUpscaleOutletsTests {
         try Self.withStoppedSketch(density: 0.5, configure: { sketch in
             sketch.onKey["k"] = { sketch in
                 DrawOut.rectThenGet.apply(to: sketch)
-                guard let layer = try? sketch.createGraphics(160, 160),
-                    let shader = try? layer.makeShader(
+                guard let layer = creating({ try sketch.createGraphics(160, 160) }),
+                    let shader = creating({ try layer.makeShader(
                         """
                         float4 paint(Fragment in, Values values, Surfaces surfaces) {
                             return mokume_sample(surfaces.body, in.place);
                         }
                         """,
-                        surfaces: ["body": .graphics(sketch.canvas)])
+                        surfaces: ["body": .graphics(sketch.canvas)]) })
                 else { return }
                 let gpu = sketch.canvas.gpu
                 layer.beginDraw()
@@ -1002,14 +1002,14 @@ struct StoppedUpscaleOutletsTests {
     /// 本体を赤と青へ交互に描き換えて描き切らせては、新しい描き場所の 40×40 の升へ順に置いて閉じる。
     private static func placeRepeatedly(_ sketch: StoppedPainter, kind: Repeated, box: LayerBox) {
         let body = sketch.canvas
-        guard let layer = try? sketch.createGraphics(160, 160),
-            let shader = try? layer.makeShader(
+        guard let layer = creating({ try sketch.createGraphics(160, 160) }),
+            let shader = creating({ try layer.makeShader(
                 """
                 float4 paint(Fragment in, Values values, Surfaces surfaces) {
                     return mokume_sample(surfaces.body, fract(in.place * 4.0));
                 }
                 """,
-                surfaces: ["body": .graphics(body)])
+                surfaces: ["body": .graphics(body)]) })
         else { return }
         box.canvas = layer
         layer.beginDraw()
