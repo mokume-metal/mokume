@@ -1346,6 +1346,97 @@ struct VectorCaptureTests {
         }
     }
 
+    /// 書ける図形の出力は、Float の式で作った従来の値と 1 ビットも変わらない。出力は 1/1000 に丸めるので、境界に近い値が
+    /// 0.001 ずれる退行を、Double で一度に丸めると起こしうる (#3350)。値は画面と同じ式 (`matrix * SIMD4(x, y, 0, 1)`・
+    /// `det.squareRoot()`) を、この検査の側で Float で作って比べる。
+    @Test("回転・非整数の拡大を含む書ける図形の座標・太さ・破線は、Float の式で作った値と 1 ビットも違わない (#3350)")
+    func aWritableFigureIsBitIdenticalToTheFloatComputation() throws {
+        let harness = try Harness()
+        let local: [SIMD2<Float>] = [[0.1, 0.3], [37.77, 5.13], [12.3456, 91.01], [-8.7, 44.4]]
+        for index in 0..<80 {
+            let angle = Float(index) * 0.0783 + 0.013
+            let scaleX = 0.5 + Float(index) * 0.0371
+            let scaleY = 1.3 + Float(index) * 0.0173
+            var matrix = matrix_identity_float4x4
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.fill(red)
+                canvas.stroke(blue)
+                canvas.strokeWeight(1.37)
+                canvas.strokeDash(6.1, 2.9)
+                canvas.translate(3.3, 17.7)
+                canvas.rotate(angle)
+                canvas.scale(scaleX, scaleY)
+                matrix = canvas.transform.matrix
+                canvas.beginShape()
+                for point in local { canvas.vertex(point.x, point.y) }
+                canvas.endShape(.close)
+            }
+            try #require(figures.count == 1 && drops.isEmpty, "\(index): \(figures) \(drops)")
+            let expected = local.map { point -> SIMD2<Float> in
+                let moved = matrix * SIMD4<Float>(point.x, point.y, 0, 1)
+                return SIMD2(moved.x, moved.y)
+            }
+            #expect(figures[0].subpaths[0].points == expected, "\(index) points")
+            let determinant = matrix.columns.0.x * matrix.columns.1.y - matrix.columns.0.y * matrix.columns.1.x
+            let scale = determinant.magnitude.squareRoot()
+            #expect(figures[0].stroke?.width == 1.37 * scale, "\(index) width")
+            #expect(figures[0].stroke?.dash == [6.1 * scale, 2.9 * scale], "\(index) dash")
+        }
+    }
+
+    /// 画面は `appendForm` の関門 (`isPlaceable`) で、潰れた・桁あふれした変換の図形を置かない。破線の輪郭と破線の線は、
+    /// 画面の道を通らずに控えるので、同じ関門を通す。実線と破線で、同じ図形の結末が揃う (#3350)。
+    @Test("画面が置かない図形 (行列式・置き先が桁あふれ) は、実線でも破線でも、書き出しも黙って落とす (#3350)")
+    func aFigureTheScreenDoesNotPlaceIsDroppedSilentlyDashedOrNot() throws {
+        let harness = try Harness()
+        let cases: [(name: String, scale: Float, place: (Canvas) -> Void)] = [
+            ("far circle", 1e19, { $0.circle(1e20, 0, 10) }),
+            ("circle", 1e20, { $0.circle(0, 0, 10) }),
+            ("rect", 1e20, { $0.rect(0, 0, 10, 10) }),
+            ("rounded rect", 1e20, { $0.rect(0, 0, 10, 10, 2) }),
+            ("pie", 1e20, { $0.arc(0, 0, 10, 10, 0.2, 2.2, .pie) }),
+            ("line", 1e20, { $0.line(0, 0, 10, 10) }),
+        ]
+        for (name, scale, place) in cases {
+            for dashed in [false, true] {
+                for filled in [false, true] {
+                    let (figures, drops) = try harness.capture { canvas in
+                        if filled { canvas.fill(red) } else { canvas.noFill() }
+                        canvas.stroke(blue)
+                        canvas.strokeWeight(2)
+                        if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                        canvas.scale(scale, scale)
+                        place(canvas)
+                    }
+                    #expect(
+                        figures.isEmpty && drops.isEmpty,
+                        "\(name) dashed=\(dashed) filled=\(filled): \(figures) \(drops)")
+                }
+            }
+        }
+    }
+
+    /// 寸法が有限なのに局所の和が Float を越えた点は、変換を当てると、変換が小さいときに間違った座標を黙って書く
+    /// (真の値は Float で持てない)。歪めて書かず、書けない大きさを返して名乗って落とす (#3350)。
+    @Test("寸法が有限で局所の和が Float を越えた点は、変換が小さくても書けない大きさになり、歪んだ座標を書かない (#3350)")
+    func anOverflowedLocalPointIsNeverShrunkByTheTransform() throws {
+        let harness = try Harness()
+        harness.canvas.transform = Transform(
+            matrix: simd_float4x4(diagonal: SIMD4(1e-30, 1e-30, 1, 1)))
+        let finite = harness.canvas.vectorPlacer(pointsAreFinite: true)
+        for point: SIMD2<Float> in [[.infinity, 0], [0, -.infinity], [.nan, 1]] {
+            let placed = finite(point)
+            #expect(SVGWriter.fit(of: placed.x) == .tooLarge || SVGWriter.fit(of: placed.y) == .tooLarge, "\(point): \(placed)")
+        }
+        // 入力の無限・数でない点は、旗が偽のとき、そのまま渡る (黙って落とす)
+        let plain = harness.canvas.vectorPlacer()
+        #expect(!plain([.infinity, 0]).x.isFinite)
+        #expect(!plain([.nan, 0]).x.isFinite)
+        // 有限の点は、旗によらず従来どおり変換を当てる
+        #expect(finite([2, 4]) == plain([2, 4]))
+        harness.canvas.transform = .identity
+    }
+
     @Test("破線で塗りもある図形の塗りが別の理由で名乗られても、輪郭の大きすぎる名乗りは消えない (種類ごとに 1 件・#3318)")
     func differentReasonsInOneDashedFigureAreBothNamed() throws {
         let harness = try Harness()

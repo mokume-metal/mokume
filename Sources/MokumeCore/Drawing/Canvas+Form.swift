@@ -205,6 +205,22 @@ extension Canvas {
         recordedGeometryForms.append(instance)
     }
 
+    /// 基本図形を ``appendForm`` が置くか。**画面が置かない図形 (潰れた・桁あふれした変換・数でない寸法) を、画面を通らずに
+    /// ベクターへ控える口 (破線の輪郭) が、画面と同じ関門で見るのに使う** (#3350)。判定は ``appendForm`` と同じ式。
+    func formIsPlaceable(
+        center: SIMD2<Float>, half: SIMD2<Float>, axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero
+    ) -> Bool {
+        let columns = transform.matrix.columns
+        let c0 = SIMD2(columns.0.x, columns.0.y)
+        let c1 = SIMD2(columns.1.x, columns.1.y)
+        let x = c0 * axis.x + c1 * axis.y
+        let y = c0 * (-axis.y) + c1 * axis.x
+        return FormInstance.isPlaceable(
+            linear: SIMD4(x.x, x.y, y.x, y.y), offset: transform.placed(x: center.x, y: center.y))
+            && half.x.isFinite && half.y.isFinite && style.strokeWeight.isFinite && arc.x.isFinite
+            && arc.y.isFinite
+    }
+
     /// 線を基本図形として置く。長さが 0 でも端の形ぶんは出る (点と同じ規則)。
     func appendLineForm(_ a: SIMD2<Float>, _ b: SIMD2<Float>) {
         let delta = b - a
