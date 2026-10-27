@@ -145,6 +145,21 @@ nonisolated struct RotatedTouchingHolesTests {
         #expect(problems.isEmpty, "\(item.name): 誤る角度 \(problems.count) 個 \(problems.prefix(6))")
     }
 
+    @Test("橋が頂点を通って誤った角度の前後でも塗りを保つ (#2997)")
+    func formerlyFailingBridgeAnglesAndNeighbours() {
+        let scenes = TouchingHoleScenes.make(.vertexToVertex, count: 400)
+        for (index, angles) in [(95, [286.0, 356.5, 359.5] as [Float]),
+                                (207, [214.26, 232.29465]), (214, [65.300735])] {
+            for angle in angles {
+                for degrees in [angle.nextDown, angle, angle.nextUp, angle - 0.1, angle + 0.1] {
+                    let scene = scenes[index]
+                    #expect(Self.problem(outer: scene.outer, holes: scene.holes, by: degrees) == nil,
+                            "場面 \(index) / \(degrees)°")
+                }
+            }
+        }
+    }
+
     // MARK: - 角度を振る
 
     /// 0.1° 刻みで 3600 の角度を振る。標本の数は、手元で数秒に収まる範囲で選んだ。
@@ -181,6 +196,7 @@ nonisolated struct RotatedTouchingHolesTests {
     /// (95 番は 14 個・207 番は 18 個) あった。
     @Test(
         "橋が頂点を通りうる場面を 0.1° 刻みで回しても、どの角度でも面積どおりに塗られる (#2997)",
+        .enabled(if: GeometryExploration.enabled, GeometryExploration.reason),
         arguments: [95, 207, 214])
     func sweepOfScenesWhereABridgeMeetsAVertex(_ index: Int) {
         let scene = TouchingHoleScenes.make(.vertexToVertex, count: 400)[index]

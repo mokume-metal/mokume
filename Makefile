@@ -5,7 +5,7 @@
 SHELL := /bin/bash
 
 .DEFAULT_GOAL := ci-check
-.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled test-tsan examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math attach-result api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
+.PHONY: setup check ci-check build test gpu-ran test-release test-release-scheduled test-geometry-exploration test-tsan examples drawing-evidence syphon-check entry-check shaders params schemas api tool-language isolated-deinit runtime-math attach-result api-list reference example-shots example-shots-check cli-dist cli-examples reference-shots no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size hooks-test
 
 # **並行では走らせない** (#784)。swift の置き場 (.build/.lock) を取り合うため、-j を
 # 付けると壊れる。ci-check は駆動役が 1 段ずつ make を
@@ -363,7 +363,7 @@ gpu-ran:
 	esac
 
 # release でテストを回す — 性能を測るための器 (#761)。**ci-check には入れない** (計測の
-# ためだけで、常時のゲートに要る検査は debug の test が全部持つ)。
+# ための入口。#3338 の図形の全探索もここで必ず有効にする)。
 #
 # `-enable-testing` を渡すのは、SwiftPM が release では testability を有効にしないため
 # (`@testable import` が `not compiled for testing` で落ちる)。Metal の検証レイヤは
@@ -382,12 +382,30 @@ TEST_RELEASE_ARGS ?=
 
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD_RELEASE)
-	python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	@rm -f $(TEST_RECORD_RELEASE) .build/geometry-release.md
+	env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
 		exit 1; }
+
+# filter を渡す手元の診断だけは全探索の集合照合を外す。日次/版の入口は引数を渡さない。
+ifeq ($(strip $(TEST_RELEASE_ARGS)),)
+	python3 scripts/check-geometry-record.py $(TEST_RECORD_RELEASE) --configuration release --summary .build/geometry-release.md
+endif
+
+# #3338: 毎回から移した図形の全探索を、同じ debug 構成で見る。対象外のGPUは要らない。
+# release.yml は同じSHAのこの段とtest-releaseが両方成功したときだけ版を出す。
+# 終了コードだけでは全skipでも緑になるので、最後に全対象のXMLを照合する。
+GEOMETRY_SUITES := CoordinateMagnitudeHolesTests|NonzeroSplitTests|RotatedTouchingHolesTests
+GEOMETRY_RECORD := .build/test-results-geometry-swift-testing.xml
+
+test-geometry-exploration: ## 日次に回す図形の全探索 (debug、固定回帰も含む)
+	@mkdir -p .build
+	@rm -f $(GEOMETRY_RECORD) .build/geometry-debug.md
+	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log-geometry.txt
+	set -o pipefail; env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --filter '$(GEOMETRY_SUITES)' --xunit-output .build/test-results-geometry.xml 2>&1 | tee -a .build/test-log-geometry.txt
+	python3 scripts/check-geometry-record.py $(GEOMETRY_RECORD) --configuration debug --summary .build/geometry-debug.md
 
 # 専用機で定期に走らせる release の検査 (ADR-0019 決定 7 の段階 D・#1983)。**定期の release の
 # 範囲の正本はここ 1 箇所**で、workflow (.github/workflows/render.yml)・起票の本文
@@ -454,7 +472,7 @@ test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD_TSAN)
 	set -o pipefail; swift build --build-tests --sanitize=thread --scratch-path $(TSAN_SCRATCH) 2>&1 | tee $(TEST_LOG_TSAN)
-	set -o pipefail; python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
+	set -o pipefail; env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
 		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
 		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); exit $$code; }
 	@python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS)

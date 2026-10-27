@@ -176,8 +176,30 @@ struct FrameWriterTests {
     /// [#1627]: https://github.com/mokume-metal/mokume/issues/1627
     @Test(
         "同じ行き先へ続けて頼むと、頼んだ順に書き、最後に頼んだ絵が残る",
-        arguments: ["同じ綴り", "sub/../", "シンボリックリンク", "大文字と小文字", "別の書き手"])
+        arguments: ["同じ綴り", "sub/../", "シンボリックリンク", "別の書き手"])
     func writesToOnePathSettleInTheOrderAsked(_ spelling: String) throws {
+        try checkWritesToOnePathSettleInTheOrderAsked(spelling)
+    }
+
+    /// 大文字と小文字の綴りは、一時ディレクトリのボリュームが区別しないときだけ同じ行き先になる。
+    /// 区別するボリュームでは別のファイルなので、検査せずに緑にせず、理由つきのスキップとして記録に残す。
+    @Test(
+        "同じ行き先へ続けて頼むと、頼んだ順に書き、最後に頼んだ絵が残る (大文字と小文字だけが違う綴り)",
+        .enabled(
+            if: FrameWriterTests.temporaryVolumeIgnoresCase,
+            "一時ディレクトリのボリュームは大文字と小文字を区別するので、LATEST.png は別のファイルになる"))
+    func writesToOnePathSettleInTheOrderAskedWhateverTheCase() throws {
+        try checkWritesToOnePathSettleInTheOrderAsked("大文字と小文字")
+    }
+
+    /// 一時ディレクトリのボリュームが、大文字と小文字を区別しないか。
+    nonisolated static let temporaryVolumeIgnoresCase: Bool = {
+        let values = try? FileManager.default.temporaryDirectory
+            .resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        return values?.volumeSupportsCaseSensitiveNames == false
+    }()
+
+    private func checkWritesToOnePathSettleInTheOrderAsked(_ spelling: String) throws {
         // **ケースごとに違う場所を使う。** 行き先の順番待ちの鍵 (`FrameWriter.lanes`) はプロセスで
         // 1 つで、前のケースの `drain()` から返った後も、ワーカーが消すまでの間は残りうる。
         // 同じ場所を使い回すと、次のケースの 1 枚目が控えに回り、2 枚目に畳まれて書かれない (#1878)
@@ -204,9 +226,6 @@ struct FrameWriterTests {
                 try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
                 again = link.appendingPathComponent("latest.png").path
             case "大文字と小文字":
-                let values = try directory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
-                // 区別するボリュームでは別のファイルなので、この綴りは同じ行き先ではない
-                guard values.volumeSupportsCaseSensitiveNames == false else { return }
                 again = directory.appendingPathComponent("LATEST.png").path
             case "別の書き手": second = FrameWriter(encode: encode)
             default: break

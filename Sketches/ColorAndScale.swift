@@ -51,8 +51,8 @@ final class ColorAndScale: Sketch {
         ]
     }
 
-    func setup() {
-        pad = try? createGraphics(120, 120)
+    func setup() throws {
+        pad = try createGraphics(120, 120)
     }
 
     func draw() {

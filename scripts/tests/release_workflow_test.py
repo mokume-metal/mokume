@@ -55,6 +55,32 @@ class ReleaseWorkflowTest(unittest.TestCase):
         # 版の判定 (release.py) より前に置く — 出すものが無い日も走る
         self.assertNotIn("release.py", check)
 
+    def test_専用機の定期debugも全探索を維持する(self):
+        _, jobs = workflow.split((REPO / ".github/workflows/render.yml").read_text(encoding="utf-8"))
+        self.assertRegex(jobs["scheduled-debug"], r'(?m)^      MOKUME_GEOMETRY_EXPLORATION: "1"$')
+        for job in ("render", "render-pr"):
+            self.assertNotIn("MOKUME_GEOMETRY_EXPLORATION", jobs[job])
+
+    def test_図形探索は版と同じ_SHAで実行し記録と報告を残す(self):
+        check = self.jobs["release-check"]
+        self.assertLess(check.index("make test-geometry-exploration"), check.index("make test-release"))
+        for name in ("test-results-geometry-swift-testing.xml", "test-log-geometry.txt",
+                     "geometry-debug.md", "geometry-release.md"):
+            self.assertIn(name, check)
+        summary = check[check.index("- name: 全探索の記録をまとめる"):check.index("- uses: actions/upload-artifact")]
+        self.assertIn("if: always()", summary)
+        self.assertIn("--configuration debug --summary .build/geometry-debug.md || result=1", summary)
+        self.assertIn("--configuration release --summary .build/geometry-release.md || result=1", summary)
+        self.assertIn('exit "$result"', summary)
+        report = self.jobs["release-check-report"]
+        self.assertIn("test-results-geometry-swift-testing.xml", report)
+        self.assertIn("geometry-missing.xml", report)
+        makefile = (REPO / "Makefile").read_text()
+        self.assertIn("env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release", makefile)
+        self.assertIn("env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread", makefile)
+        self.assertIn("scripts/check-geometry-record.py $(GEOMETRY_RECORD)", makefile)
+        self.assertIn("scripts/check-geometry-record.py $(TEST_RECORD_RELEASE)", makefile)
+
     def test_release_check_の赤を緑に化かさない(self):
         # continue-on-error があると、検査が赤でも release-check が success になり、版が出る
         self.assertNotIn("continue-on-error", self.jobs["release-check"])

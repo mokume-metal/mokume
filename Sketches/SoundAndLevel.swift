@@ -31,8 +31,8 @@ final class SoundAndLevel: Sketch {
 
     private var sound: AudioIn?
 
-    func setup() {
-        sound = try? createAudioIn(samples: Self.phrase(), sampleRate: Self.rate)
+    func setup() throws {
+        sound = try createAudioIn(samples: Self.phrase(), sampleRate: Self.rate)
     }
 
     func draw() {

@@ -3,15 +3,15 @@
 //
 // ベクターへ書く図形を、置く口の内側で控える仕組み ([#3139])。
 //
-// **説明文は置かない。** 正本は上の層 (`save(_:)`・ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが拾われないよう、
-// 宣言との間は必ず 1 行空ける。
-//
 // 割る前の図形の列は、組み立てに 1 本としては残っていない ([ADR-0021] 決定 3 の追補 (2026-10-23))。
 // 控える位置は 5 つ — 基本図形を置く口 (`appendForm`)・破線の口 (`appendDashedForm` /
 // `appendDashedLineForms`)・周を道具で扱う口 (`draw(_ outline:)`)・頂点の形を終える口
 // (`drawBuiltShape`)。書けない図形は、公開の口 (字・絵・保持した形・立体・画素・粒) と、置く口が見る
 // 設定 (断片・貼る絵・勾配・通常以外の混ぜ方・切り抜き) で数えて落とす。
+//
+// **置いた点・線の太さ・破線が書ける数かは、5 つの口のどれでもなく、図形を足す 1 点 (`VectorCapture.add`) が
+// 見る** (#3318)。数でない座標の図形は画面にも描かれないので黙って控えず、有限でも約 1e12 を越える図形は
+// 画面には描かれるので `VectorDrop.tooLarge` で名指しして落とす。書ける数の定義は `SVGWriter.Fit` に 1 つ。
 //
 // **控えるのは観測であって、組み立てを変えない。** 控えた後も図形はいままでどおり 1 本の組み立てを
 // 通って描かれる。頼まれていないフレームが払うのは、各口の先頭の読み (`vector.capture` が nil か・
@@ -42,15 +42,83 @@ final class VectorCapture {
     var drops: [VectorDrop] = []
     var requests: [Request] = []
 
-    /// 図形を 1 つ足す。**画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
+    /// 図形を 1 つ足す。足したか (括りの中なら、括りが決めるまで預かったか) を返す。
+    ///
+    /// **画面に見えない塗りと輪郭は書かない** — 透明な線 (`stroke(255, 0)`) を
     /// `stroke-opacity="0"` で書くと、不透明度を無視する取り込み側が線を引く。両方とも見えなければ、
     /// 図形ごと足さない (``VectorColor/isInvisible``)。
-    func add(_ figure: VectorFigure) {
+    ///
+    /// **書けない数 (``SVGWriter/Fit``) を、見える点・線の太さ・破線に持つ図形は足さない** (#3318)。書き手は
+    /// 書けない数を `0` と書くので、足せば (0, 0) へ潰れた形が残る。数でない座標の図形は画面にも描かれないので、
+    /// 黙って足さない。有限でも大きすぎる図形は画面には描かれるので、図形ごと名指しで落とす
+    /// (``VectorDrop/tooLarge``)。判定は変換を当てた後の値で、**見えない線を外した後**に行う。置く口が増えても
+    /// 漏れないよう、図形を足すこの 1 点で見る。
+    @discardableResult
+    func add(_ figure: VectorFigure) -> Bool {
+        guard let figure = Self.visible(figure) else { return false }
+        let fit = Self.fit(of: figure)
+        if held != nil {
+            held?.append(figure)
+            heldFit = heldFit.merged(with: fit)
+            return true
+        }
+        switch fit {
+        case .writable:
+            figures.append(figure)
+            return true
+        case .notANumber:
+            return false
+        case .tooLarge:
+            drops.append(.tooLarge)
+            return false
+        }
+    }
+
+    /// 括りの間に足した図形の組。`nil` なら括りの外。
+    private var held: [VectorFigure]?
+    private var heldFit = SVGWriter.Fit.writable
+
+    /// **1 つの図形が複数の要素に分かれる口** (塗りと輪郭が別の形の弧・破線で塗りもある図形) を括る。
+    /// 括りの間に足した図形は、**揃って残るか揃って落ちるかのどちらか** — 片方だけ残ると、塗りの無い輪郭
+    /// だけが、画面と違う図形として書かれる。落とすときの名乗りは括り 1 つにつき 1 度。
+    /// 入れ子の括りは、いちばん外の括りが決める。
+    func group(_ body: () -> Void) {
+        guard held == nil else { return body() }
+        held = []
+        heldFit = .writable
+        body()
+        let kept = held ?? []
+        let fit = heldFit
+        held = nil
+        heldFit = .writable
+        switch fit {
+        case .writable: figures.append(contentsOf: kept)
+        case .notANumber: break
+        case .tooLarge: drops.append(.tooLarge)
+        }
+    }
+
+    /// 見えない塗りと輪郭を外した図形。何も見えなければ nil。
+    private static func visible(_ figure: VectorFigure) -> VectorFigure? {
         var figure = figure
         if let fill = figure.fill, fill.color.isInvisible { figure.fill = nil }
         if let stroke = figure.stroke, stroke.color.isInvisible { figure.stroke = nil }
-        guard figure.fill != nil || figure.stroke != nil else { return }
-        figures.append(figure)
+        guard figure.fill != nil || figure.stroke != nil else { return nil }
+        return figure
+    }
+
+    /// 図形の数がすべて書けるか。点・線の太さ・破線を見る。
+    static func fit(of figure: VectorFigure) -> SVGWriter.Fit {
+        var result = SVGWriter.Fit.writable
+        for subpath in figure.subpaths {
+            for point in subpath.points {
+                result = result.merged(with: SVGWriter.fit(of: point.x)).merged(with: SVGWriter.fit(of: point.y))
+            }
+        }
+        guard let stroke = figure.stroke else { return result }
+        result = result.merged(with: SVGWriter.fit(of: stroke.width))
+        for value in stroke.dash { result = result.merged(with: SVGWriter.fit(of: value)) }
+        return result
     }
 }
 
@@ -308,15 +376,22 @@ extension Canvas {
         return (fills, strokes)
     }
 
-    /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数える。**
+    /// 1 つの図形を何度かの口に分けて控える処理を括り、**書けないものを図形ごとに 1 度だけ数え、部品は揃って
+    /// 残すか揃って落とす。**
     ///
     /// 破線で塗りもある図形は、塗り (``appendForm``) と輪郭 (``recordVectorDashedForm``) を別々の口で控える。
     /// それぞれが同じ理由 (利用者の断片など) で落とすと、見た目は 1 つの図形なのに 2 と数えてしまう。
+    /// 数えるのは**種類ごとに 1 件** — 塗りが貼る絵で、輪郭が大きすぎて落ちるような別々の理由は、どちらも名乗る。
+    /// 書けない大きさの数 (``VectorDrop/tooLarge``) は、塗りか輪郭のどちらかにあれば図形ごと落とす
+    /// (``VectorCapture/group(_:)``)。
     func countingOneVectorFigure(_ body: () -> Void) {
         guard let sink = vectorSink() else { return body() }
         let before = sink.drops.count
-        body()
-        if sink.drops.count - before > 1 { sink.drops.removeSubrange((before + 1)...) }
+        sink.group(body)
+        guard sink.drops.count - before > 1 else { return }
+        var seen = Set<VectorDrop>()
+        let added = sink.drops[before...].filter { seen.insert($0).inserted }
+        sink.drops.replaceSubrange(before..., with: added)
     }
 
     /// 輪郭の破線を、画面と同じく刻めるか。刻めるなら、拡大率を掛けた破線の長さと間隔。
@@ -385,14 +460,10 @@ extension Canvas {
         cornerRadius: Float, fills: Bool, strokes: Bool, cap: StrokeCap, dash: [Float] = []
     ) {
         let place = vectorPlacer()
-        // 数でない・桁あふれした座標の図形は書かない (``recordVectorOutline`` と同じ約束・#3271)。形の外接の
-        // 4 隅 (線は両端) を置いて見る — 形の点はどれも外接の中にあるので、隅が有限なら全部有限である
-        guard
-            Self.vectorFormExtent(kind: kind, center: center, half: half, axis: axis).allSatisfy({
-                let placed = place($0)
-                return placed.x.isFinite && placed.y.isFinite
-            }), cornerRadius.isFinite, arc.x.isFinite, arc.y.isFinite
-        else { return }
+        // 置いた点が書けるかは、控えへ足す口 (``VectorCapture/add(_:)``) が見る — 数でない座標の図形は黙って控えず、
+        // 有限でも大きすぎる図形は名指しで落とす。ここで見るのは、刻む数を求める入力 (角丸の半径・弧の角) が
+        // 数かだけである (数でなければ、四分円の数を整数にできない)
+        guard cornerRadius.isFinite, arc.x.isFinite, arc.y.isFinite else { return }
         let fill = fills ? vectorFill() : nil
         let stroke = strokes ? vectorStroke(cap: cap, dash: dash) : nil
 
@@ -428,20 +499,6 @@ extension Canvas {
             let points = ends[0] == ends[1] ? [ends[0]] : ends
             single(VectorSubpath(points: points, isClosed: false))
         }
-    }
-
-    /// 基本図形の外接を作る点 (形自身の座標)。線は両端、ほかは外接の矩形の 4 隅。
-    static func vectorFormExtent(
-        kind: FormInstance.Kind, center: SIMD2<Float>, half: SIMD2<Float>, axis: SIMD2<Float>
-    ) -> [SIMD2<Float>] {
-        if kind == .line {
-            let tip = axis * half.x
-            return [center - tip, center + tip]
-        }
-        return [
-            center - half, center + half, SIMD2(center.x + half.x, center.y - half.y),
-            SIMD2(center.x - half.x, center.y + half.y),
-        ]
     }
 
     /// 弧を控える。**閉じ方で、塗りの形と輪郭の形が違う。**
@@ -480,12 +537,15 @@ extension Canvas {
         case .chord: strokeShape = chord
         case .standard, .open: strokeShape = openArc
         }
+        // 塗りと輪郭の形が違えば 2 つの図形になるが、弧は 1 つなので揃えて足す (``VectorCapture/group(_:)``)
         if let fill, let stroke {
             if fillShape == strokeShape {
                 sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: stroke))
             } else {
-                sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
-                sink.add(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
+                sink.group {
+                    sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
+                    sink.add(VectorFigure(subpaths: [strokeShape], fill: nil, stroke: stroke))
+                }
             }
         } else if let fill {
             sink.add(VectorFigure(subpaths: [fillShape], fill: fill, stroke: nil))
@@ -523,7 +583,6 @@ extension Canvas {
         }
         let place = vectorPlacer()
         let ends = [place(a), place(b)]
-        guard ends.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
         let dash = vectorDash(of: [a, b], isClosed: false)
         sink.add(
             VectorFigure(
@@ -549,13 +608,7 @@ extension Canvas {
     /// 書けると分かった周を、図形にして控える (``recordVectorOutline``)。
     func writeVectorOutline(_ sink: VectorCapture, _ outline: Outline, fills: Bool, strokes: Bool) {
         let place = vectorPlacer()
-        var points = [SIMD2<Float>]()
-        points.reserveCapacity(outline.points.count)
-        for point in outline.points {
-            let placed = place(point)
-            guard placed.x.isFinite, placed.y.isFinite else { return }
-            points.append(placed)
-        }
+        let points = outline.points.map(place)
         let dash = strokes ? vectorDash(of: outline.points, isClosed: outline.isClosed) : []
         sink.add(
             VectorFigure(

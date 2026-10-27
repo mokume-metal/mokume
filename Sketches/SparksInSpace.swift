@@ -55,12 +55,12 @@ final class SparksInSpace: Sketch {
     private var sparks: Particles?
     private var nebula: Particles?
 
-    func setup() {
+    func setup() throws {
         randomSeed(20_260_923)
         // 加算で光らせる。**混ぜ方は作った瞬間に粒へ焼き付く**ので、作る前に置いて戻す
         blendMode(.add)
-        sparks = try? makeParticles(count: capacity)
-        nebula = try? makeParticles(count: 2_400)
+        sparks = try makeParticles(count: capacity)
+        nebula = try makeParticles(count: 2_400)
         blendMode(.blend)
     }
 

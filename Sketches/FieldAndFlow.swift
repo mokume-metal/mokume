@@ -53,148 +53,131 @@ final class FieldAndFlow: Sketch {
     /// そのときの行。**断面を切り出す行**として GPU へ返す。
     private var peakRow = 27
 
-    func setup() {
-        field = try? makeNumbers(count: columns * rows)
+    func setup() throws {
+        field = try makeNumbers(count: columns * rows)
         field?.fill(0)
 
         // 描く前に走る側。**格子 1 マスにつき 1 本**走り、位置と時刻だけから値を決める。
         // 前のフレームの値を読まないので、どのフレームから始めても同じ場が出る
-        do {
-            stir = try makeComputation(
-                """
-                kernel void stir(device float *field [[buffer(0)]],
-                                 constant Values &values [[buffer(MOKUME_VALUES)]],
-                                 uint2 at [[thread_position_in_grid]])
-                {
-                    float2 grid = values.grid;
-                    if (at.x >= uint(grid.x) || at.y >= uint(grid.y)) { return; }
+        stir = try makeComputation(
+            """
+            kernel void stir(device float *field [[buffer(0)]],
+                             constant Values &values [[buffer(MOKUME_VALUES)]],
+                             uint2 at [[thread_position_in_grid]])
+            {
+                float2 grid = values.grid;
+                if (at.x >= uint(grid.x) || at.y >= uint(grid.y)) { return; }
 
-                    // マスの真ん中で引く (画素の真ん中で引く塗りと座標を揃える)
-                    float2 p = (float2(at) + 0.5) / grid;
-                    float t = values.time;
+                // マスの真ん中で引く (画素の真ん中で引く塗りと座標を揃える)
+                float2 p = (float2(at) + 0.5) / grid;
+                float t = values.time;
 
-                    // 向きの違う波を 3 つ重ねる。1 つだけだと縞にしか見えず、
-                    // 場が「流れている」ことが動きから読めない
-                    float wave = sin((p.x * 5.4 + t * 0.9) * 1.7)
-                               + sin((p.y * 4.6 - t * 0.7) * 1.9)
-                               + sin((p.x + p.y) * 6.2 - t * 1.3);
+                // 向きの違う波を 3 つ重ねる。1 つだけだと縞にしか見えず、
+                // 場が「流れている」ことが動きから読めない
+                float wave = sin((p.x * 5.4 + t * 0.9) * 1.7)
+                           + sin((p.y * 4.6 - t * 0.7) * 1.9)
+                           + sin((p.x + p.y) * 6.2 - t * 1.3);
 
-                    // 中ほどを高くする。輪を置く先が縁に張り付かないように。
-                    // **落とし方は控えめにする** — 深く落とすと縁が黒く潰れ、
-                    // そこにも場があることが絵から読めなくなる
-                    float bowl = clamp(1.0 - length(p - 0.5) * 0.9, 0.0, 1.0);
-                    float base = clamp(0.5 + wave * 0.22, 0.0, 1.0);
+                // 中ほどを高くする。輪を置く先が縁に張り付かないように。
+                // **落とし方は控えめにする** — 深く落とすと縁が黒く潰れ、
+                // そこにも場があることが絵から読めなくなる
+                float bowl = clamp(1.0 - length(p - 0.5) * 0.9, 0.0, 1.0);
+                float base = clamp(0.5 + wave * 0.22, 0.0, 1.0);
 
-                    field[at.y * uint(grid.x) + at.x] = base * (0.45 + 0.55 * bowl);
-                }
-                """,
-                name: "stir",
-                values: ["grid": .pair(Float(columns), Float(rows)), "time": 0])
-        } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
-            print(error)
-        }
+                field[at.y * uint(grid.x) + at.x] = base * (0.45 + 0.55 * bowl);
+            }
+            """,
+            name: "stir",
+            values: ["grid": .pair(Float(columns), Float(rows)), "time": 0])
 
         // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
-        do {
-            paint = try makeShader(
-                """
-                static inline float mokume_cell(Fragment in, float2 grid, float2 at) {
-                    float2 clamped = clamp(at, float2(0.0), grid - 1.0);
-                    uint index = uint(clamped.y) * uint(grid.x) + uint(clamped.x);
-                    return in.numbers[index];
-                }
+        paint = try makeShader(
+            """
+            static inline float mokume_cell(Fragment in, float2 grid, float2 at) {
+                float2 clamped = clamp(at, float2(0.0), grid - 1.0);
+                uint index = uint(clamped.y) * uint(grid.x) + uint(clamped.x);
+                return in.numbers[index];
+            }
 
-                float4 paint(Fragment in, Values values) {
-                    float2 grid = values.grid;
-                    // 場の座標へ移す。マスの真ん中が中心に来るよう半マスずらす
-                    float2 spot = in.place * grid - 0.5;
-                    float2 base = floor(spot);
-                    float2 t = spot - base;
+            float4 paint(Fragment in, Values values) {
+                float2 grid = values.grid;
+                // 場の座標へ移す。マスの真ん中が中心に来るよう半マスずらす
+                float2 spot = in.place * grid - 0.5;
+                float2 base = floor(spot);
+                float2 t = spot - base;
 
-                    float a = mokume_cell(in, grid, base);
-                    float b = mokume_cell(in, grid, base + float2(1.0, 0.0));
-                    float c = mokume_cell(in, grid, base + float2(0.0, 1.0));
-                    float d = mokume_cell(in, grid, base + float2(1.0, 1.0));
-                    float heat = mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+                float a = mokume_cell(in, grid, base);
+                float b = mokume_cell(in, grid, base + float2(1.0, 0.0));
+                float c = mokume_cell(in, grid, base + float2(0.0, 1.0));
+                float d = mokume_cell(in, grid, base + float2(1.0, 1.0));
+                float heat = mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 
-                    float3 tint = mix(values.low.rgb, values.high.rgb, clamp(heat, 0.0, 1.0));
+                float3 tint = mix(values.low.rgb, values.high.rgb, clamp(heat, 0.0, 1.0));
 
-                    // 等高線を 1 本重ねる。**値そのものが読める**ようになり、
-                    // 混ぜた色だけでは分からない場の形が出る
-                    float ring = fract(heat * 9.0);
-                    float line = smoothstep(0.46, 0.5, ring) * (1.0 - smoothstep(0.5, 0.54, ring));
-                    return float4(tint + line * 0.28, 1.0);
-                }
-                """,
-                values: [
-                    "grid": .pair(Float(columns), Float(rows)),
-                    "low": .color(color(13, 18, 33)),
-                    "high": .color(color(255, 194, 92)),
-                ])
-        } catch {
-            print(error)
-        }
+                // 等高線を 1 本重ねる。**値そのものが読める**ようになり、
+                // 混ぜた色だけでは分からない場の形が出る
+                float ring = fract(heat * 9.0);
+                float line = smoothstep(0.46, 0.5, ring) * (1.0 - smoothstep(0.5, 0.54, ring));
+                return float4(tint + line * 0.28, 1.0);
+            }
+            """,
+            values: [
+                "grid": .pair(Float(columns), Float(rows)),
+                "low": .color(color(13, 18, 33)),
+                "high": .color(color(255, 194, 92)),
+            ])
 
         // 切り出す行は CPU が決める。**書くのはいつでもよい** — 書いた値は次の描き切りが届ける
-        probe = try? makeNumbers(count: 1)
+        probe = try makeNumbers(count: 1)
         probe?.set(Float(peakRow), at: 0)
-        profile = try? makeNumbers(count: columns)
+        profile = try makeNumbers(count: columns)
         profile?.fill(0)
 
         // **1 次元の計算。** 束ねる先は `reads + writes` の順に buffer(0), (1), … となる
-        do {
-            slice = try makeComputation(
-                """
-                kernel void slice(device const float *field [[buffer(0)]],
-                                  device const float *probe [[buffer(1)]],
-                                  device float *profile [[buffer(2)]],
-                                  constant Values &values [[buffer(MOKUME_VALUES)]],
-                                  uint id [[thread_position_in_grid]])
-                {
-                    uint columns = uint(values.columns);
-                    if (id >= columns) { return; }
-                    uint row = uint(probe[0]);
-                    profile[id] = field[row * columns + id];
-                }
-                """,
-                name: "slice",
-                values: ["columns": .number(Float(columns))])
-        } catch {
-            print(error)
-        }
+        slice = try makeComputation(
+            """
+            kernel void slice(device const float *field [[buffer(0)]],
+                              device const float *probe [[buffer(1)]],
+                              device float *profile [[buffer(2)]],
+                              constant Values &values [[buffer(MOKUME_VALUES)]],
+                              uint id [[thread_position_in_grid]])
+            {
+                uint columns = uint(values.columns);
+                if (id >= columns) { return; }
+                uint row = uint(probe[0]);
+                profile[id] = field[row * columns + id];
+            }
+            """,
+            name: "slice",
+            values: ["columns": .number(Float(columns))])
 
         // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
-        do {
-            graph = try makeShader(
-                """
-                float4 paint(Fragment in, Values values) {
-                    float columns = values.columns;
-                    float2 band = values.band;
-                    float y = (in.place.y - band.x) / (band.y - band.x);
+        graph = try makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                float columns = values.columns;
+                float2 band = values.band;
+                float y = (in.place.y - band.x) / (band.y - band.x);
 
-                    // 列の間は隣の 2 本から混ぜる。場を塗る側と同じく、列の真ん中で引く
-                    float spot = clamp(in.place.x * columns - 0.5, 0.0, columns - 1.0);
-                    float a = in.numbers[uint(floor(spot))];
-                    float b = in.numbers[uint(min(floor(spot) + 1.0, columns - 1.0))];
-                    float level = clamp(mix(a, b, fract(spot)), 0.0, 1.0);
+                // 列の間は隣の 2 本から混ぜる。場を塗る側と同じく、列の真ん中で引く
+                float spot = clamp(in.place.x * columns - 0.5, 0.0, columns - 1.0);
+                float a = in.numbers[uint(floor(spot))];
+                float b = in.numbers[uint(min(floor(spot) + 1.0, columns - 1.0))];
+                float level = clamp(mix(a, b, fract(spot)), 0.0, 1.0);
 
-                    float under = step(1.0 - level, y);
-                    float edge = 1.0 - smoothstep(0.0, 0.04, abs(y - (1.0 - level)));
-                    float3 tint = mix(values.low.rgb, values.high.rgb, level);
-                    return float4(mix(values.low.rgb * 0.6, tint, under) + edge * 0.6, 1.0);
-                }
-                """,
-                name: "graph",
-                values: [
-                    "columns": .number(Float(columns)),
-                    "band": .pair(band.top, band.bottom),
-                    "low": .color(color(13, 18, 33)),
-                    "high": .color(color(255, 194, 92)),
-                ])
-        } catch {
-            print(error)
-        }
+                float under = step(1.0 - level, y);
+                float edge = 1.0 - smoothstep(0.0, 0.04, abs(y - (1.0 - level)));
+                float3 tint = mix(values.low.rgb, values.high.rgb, level);
+                return float4(mix(values.low.rgb * 0.6, tint, under) + edge * 0.6, 1.0);
+            }
+            """,
+            name: "graph",
+            values: [
+                "columns": .number(Float(columns)),
+                "band": .pair(band.top, band.bottom),
+                "low": .color(color(13, 18, 33)),
+                "high": .color(color(255, 194, 92)),
+            ])
     }
 
     func draw() {

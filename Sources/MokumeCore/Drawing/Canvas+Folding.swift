@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// 周を 1 本の道具としてなぞる仕組み。`Canvas.swift` の MARK「周をひとつの道具に
-// する」を、区画ごとここへ移した ([#943](https://github.com/mokume-metal/mokume/issues/943))。
-//
-// **説明文は置かない。** 正本は上の層 (ADR-0020 決定 4) で、api-surface.py の
-// slash_doc は宣言の直前に積んだ `//` も説明文として拾う。この覚え書きが
-// 拾われないよう、宣言との間は必ず 1 行空ける。
+// 周を 1 本の道具としてなぞる仕組み。
 
 import simd
 

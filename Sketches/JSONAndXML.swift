@@ -42,6 +42,7 @@ final class JSONAndXML: Sketch {
     private var sky: XML?
     /// 待たない口で読み直した結果。**届くまでは `nil`**
     private var reread: String?
+    private var rereadFailure: String?
 
     /// 天気の帯の場所。
     private static let left: Float = 40
@@ -52,7 +53,7 @@ final class JSONAndXML: Sketch {
     private static let skyLeft: Float = 660
     private static let skyTop: Float = 70
 
-    func setup() {
+    func setup() throws {
         _ = CannedWeather.installed
         for city in Self.cities {
             do {
@@ -66,16 +67,22 @@ final class JSONAndXML: Sketch {
                 reasons.append("\(error)")
             }
         }
-        sky = try? loadXML(Self.data("constellation.xml"))
+        sky = try loadXML(Self.data("constellation.xml"))
 
         // 同じ URL とファイルを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
         // 下の draw() が「読み直している…」と出す
+        // 都市ごとの失敗例と同期の星座は残し、追加の読み直しだけを失敗表示にする。
         Task {
-            let weather = try? await requestJSONObject(Self.cities[0].url)
-            let stars = try? await requestXML(Self.data("constellation.xml"))
-            let temp = weather?.getJSONObject("main").getFloat("temp") ?? .nan
-            let count = stars?.getChildren("star").count ?? 0
-            reread = "\(Self.cities[0].label) \(String(format: "%.1f", temp))°C・星 \(count) 個"
+            do {
+                let weather = try await requestJSONObject(Self.cities[0].url)
+                let stars = try await requestXML(Self.data("constellation.xml"))
+                let temp = weather.getJSONObject("main").getFloat("temp")
+                let count = stars.getChildren("star").count
+                reread = "\(Self.cities[0].label) \(String(format: "%.1f", temp))°C・星 \(count) 個"
+            } catch {
+                rereadFailure = "待たない口での読み直しに失敗 (ログを参照)"
+                print("json-and-xml: reread: \(error)")
+            }
         }
     }
 
@@ -99,7 +106,7 @@ final class JSONAndXML: Sketch {
         if let reread {
             text("待たない口 (requestJSONObject / requestXML) で読み直した: \(reread)", Self.left, 536)
         } else {
-            text("待たない口 (requestJSONObject / requestXML) で読み直している…", Self.left, 536)
+            text(rereadFailure ?? "待たない口 (requestJSONObject / requestXML) で読み直している…", Self.left, 536)
         }
     }
 

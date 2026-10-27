@@ -101,6 +101,21 @@ final class Tunables: Sketch {
     @Param(0...200) let radius: Double = 80
 }'
 
+# 複数の束縛と独自の get / set は、専用の診断で止まる (#3301)。型検査が落ちるだけでは足りず、
+# **mokume の診断の文言が出ている**ことまで見る — 一般のコンパイル失敗に化けても、利用者へ
+# 「どう書くか」が届かないため。期待の語は ParamMacro.Problem の message の固有の部分
+check "束縛を複数並べると、1 宣言に 1 つと名指しして止まる" fail "@Param takes one value per declaration" 'import mokume
+
+final class Tunables: Sketch {
+    @Param var a: Int = 0, b: Int = 0
+}'
+
+check "独自の get / set を持つ値に付けると、保存する値に付けるよう名指しして止まる" fail "@Param cannot go on a property with its own get or set" 'import mokume
+
+final class Tunables: Sketch {
+    @Param var a: Int { 1 }
+}'
+
 # enum を宣言できること (#2438)。型の側に ParamRepresentable を書かない。刻みは実数の範囲に付く
 check "String を生の値に持つ CaseIterable の enum は、型に何も書かずに宣言でき、刻みも書ける" pass "" 'import mokume
 

@@ -51,21 +51,12 @@ final class SurfaceAndGrain: Sketch {
     /// 画面の中の位置から作る木目。**回すと板の上を滑る** (#367 の症状)。
     private var slipping: Shader?
 
-    func setup() {
-        do {
-            grain = try makeShader(
-                Self.wood(from: "in.shapePosition.xz"), values: settingsForWood)
-        } catch {
-            // 組めなければ理由を出す。理由は書いた断片の行を指す (`try?` で捨てると何も描かれないだけ)
-            print(error)
-        }
+    func setup() throws {
+        grain = try makeShader(
+            Self.wood(from: "in.shapePosition.xz"), values: settingsForWood)
         // 画面の位置は 0…1 なので、同じ縞の細かさになるよう板の大きさへ合わせる
-        do {
-            slipping = try makeShader(
-                Self.wood(from: "(in.place - 0.5) * float2(520.0, 300.0)"), values: settingsForWood)
-        } catch {
-            print(error)
-        }
+        slipping = try makeShader(
+            Self.wood(from: "(in.place - 0.5) * float2(520.0, 300.0)"), values: settingsForWood)
     }
 
     func draw() {

@@ -20,17 +20,17 @@ final class FilterAndGauge: Sketch {
     private var stripes: Image?
     private var silhouette: Image?
 
-    func setup() {
-        let image = try? createImage(220, 200)
+    func setup() throws {
+        let image = try createImage(220, 200)
         for y in 0..<200 {
             for x in 0..<220 {
                 let warp = sin(Float(y) * 0.06) * 14
                 let ring = 0.5 + 0.5 * sin((Float(x) + warp) * 0.16)
-                image?.set(x, y, .display(red: ring, green: ring * 0.8, blue: ring * 0.5))
+                image.set(x, y, .display(red: ring, green: ring * 0.8, blue: ring * 0.5))
             }
         }
         stripes = image
-        silhouette = image?.filtered([.threshold(level: 0.5)])
+        silhouette = image.filtered([.threshold(level: 0.5)])
     }
 
     func draw() {

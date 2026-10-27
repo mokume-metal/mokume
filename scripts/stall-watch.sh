@@ -56,7 +56,9 @@
 #      render.yml の run は rerun しない (3 と同じ)
 #   8. 描画に触れない PR も含めて、queue に入った PR が 60 分ごとに弾かれ続ける
 #      原因: 専用機の runner が止まっていて、必須の render が queued のまま走らない
-#      (#1774)。専用機は 1 台で、render は paths で絞らず merge_group ごとに走る。弾かれた
+#      (#1774)。専用機は runner の数 (RENDER_TURN_SLOTS・既定 1) 本で、render は paths で
+#      絞らず merge_group ごとに走る。runner が複数のとき、1 本が落ちても残りが走っている間は
+#      空いた runner の数だけ queued が拾われないままになる (#3320)。弾かれた
 #      PR には 5 の行も出るが、掛け直しても同じ 60 分を待つだけである
 #      対処: 1) 専用機の前で runner を戻す (ssh では入れない — #1767)。戻ったかは
 #      Settings → Actions → Runners か gh api repos/<repo>/actions/runners (メンテナの権限)
@@ -224,17 +226,21 @@
 #
 # ## PR ではなくリポジトリを見る行 (runner-offline・#1774)
 #
-# runner-offline だけは PR ごとの状態ではなく、専用機という 1 台の状態を見る。番号の欄は
+# runner-offline だけは PR ごとの状態ではなく、専用機という (1 台の) 状態を見る。番号の欄は
 # `-` になる。判定は render.yml の終わっていない run の、**専用機の job** (ラベル
 # mokume-render) の並びから読む — runners API は GITHUB_TOKEN では読めないためである。
-# 「queued の専用機の job があり、in_progress の専用機の job が 1 本も無く、最古の queued が
-# 猶予を超えた」ときに名乗る。
+# 「queued の専用機の job があり、in_progress の専用機の job が runner の数
+# (RENDER_TURN_SLOTS) 本未満で、最古の queued が猶予を超えた」ときに名乗る。
 #
 # - **run ではなく job で見る** (#2062)。render.yml の run はどれも先に GitHub ホストの門番
 #   (render-turn) が走るので、専用機が止まっていても run は数秒で in_progress になる。run の
 #   status で読むと、runner が落ちても「走っている」に倒れて黙る
-# - **専用機の job が 1 本でも in_progress なら名乗らない。** runner は生きていて、1 台なので
-#   順番を待っているだけである (render の所要は約 7〜8 分)
+# - **専用機の job が runner の数 (RENDER_TURN_SLOTS) 本そろって in_progress なら名乗らない。**
+#   runner は生きていて、全部が埋まっているので順番を待っているだけである (render の所要は
+#   約 7〜8 分)。**未満なら、空いている runner があるのに queued が拾われていない** — 2 本の
+#   うち 1 本が落ちて、残りが走っている間も名乗る。N は門番 (scripts/render-turn.sh) と同じ
+#   vars.RENDER_TURN_SLOTS を stall-watch.yml が渡して読み、未設定なら 1 (従来どおり 1 本でも
+#   走っていれば黙る)。1 以上の整数でなければ unreadable を名乗る (#3320)
 # - 生きている runner は queued の run を数秒で拾うので、猶予 (既定 15 分) は PR の猶予より
 #   短い。**ここは猶予を超えたときにしか行を出さず、出したら必ず 1 で終える** — 猶予の
 #   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
@@ -589,6 +595,17 @@ say_line() { # $1=番号 $2=分類 $3=別 $4=経過分 $5=説明
   printf '%s %s %s %s %s\n' "$1" "$2" "$3" "$4" "$5"
 }
 
+# 専用機で同時に走る job の数 (runner の数)。**門番 (scripts/render-turn.sh) と同じ値を同じ
+# 既定で読む** — render.yml と stall-watch.yml が、どちらもリポジトリの変数
+# vars.RENDER_TURN_SLOTS を渡す。未設定か空なら 1。1 以上の整数でなければ非 0 で返す (#3320)
+render_turn_slots() {
+  local n="${RENDER_TURN_SLOTS:-1}"
+  case "$n" in
+    "" | *[!0-9]* | 0*) return 1 ;;
+  esac
+  printf '%s\n' "$n"
+}
+
 # 終わっていない render.yml の run の、専用機の job を「<status> <created_at>」で出す。
 # 門番 (GitHub ホスト) の job は数えない。読めなければ非 0 で返す
 runner_jobs() {
@@ -641,11 +658,15 @@ if ! jobs=$(runner_jobs); then
 else
   oldest_queued=$(awk '$1 == "queued" { print $2 }' <<<"$jobs" | sort | sed -n '1p')
   running=$(awk '$1 == "in_progress" { n++ } END { print n + 0 }' <<<"$jobs")
-  if [ -n "$oldest_queued" ] && [ "$running" -eq 0 ]; then
+  # 専用機の job が runner の数 (RENDER_TURN_SLOTS) 本そろって走っていれば、queued は順番待ち。
+  # 未満なのに最古の queued が猶予を超えていれば、空いている runner があるはずなのに拾われていない
+  if ! slots=$(render_turn_slots); then
+    say_line - unreadable name 0 "RENDER_TURN_SLOTS は 1 以上の整数で渡す: '${RENDER_TURN_SLOTS}' (runner の死活を判定していない)"
+  elif [ -n "$oldest_queued" ] && [ "$running" -lt "$slots" ]; then
     mins=$(minutes_since "$oldest_queued")
     if [ "$mins" -ge "$RUNNER_STALL_MINUTES" ]; then
       say_line - runner-offline name "$mins" \
-        "専用機の runner が render を拾っていない — 戻す手順は表の 8 行目"
+        "専用機の runner が render を拾っていない (走っている job $running 本 / runner $slots 本) — 戻す手順は表の 8 行目"
       overdue=1
     fi
   fi

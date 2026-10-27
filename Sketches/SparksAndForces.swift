@@ -40,9 +40,9 @@ final class SparksAndForces: Sketch {
 
     private var sparks: Particles?
 
-    func setup() {
+    func setup() throws {
         randomSeed(20_260_830)
-        sparks = try? makeParticles(count: capacity)
+        sparks = try makeParticles(count: capacity)
     }
 
     func draw() {

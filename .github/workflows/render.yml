@@ -317,6 +317,8 @@ jobs:
     # 揃える約束 (render_workflow_test.py の 13) なので、違いはジョブの env に置く。倍率は、この
     # ジョブの枠 (30 分) の残り 8〜12 分に増分が収まる値に置く (#3216)
     env:
+      # #3338: 毎回から移す探索も、専用機のOS/コンパイラの定期debugでは全量を保つ。
+      MOKUME_GEOMETRY_EXPLORATION: "1"
       MOKUME_PROBE_FRESH: "1"
       MOKUME_PROBE_SCALE: "4"
     steps:
