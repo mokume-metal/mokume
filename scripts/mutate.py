@@ -413,13 +413,20 @@ def read_cancelled(path):
                   for tid, _, _, _ in items]
 
 
+def suite_path(ident):
+    """検査の ID の suite の連なり `[<module>, <最外の型>, <内側の型>…]`。入れ子は、取り消しの ident
+    (testID 由来) では `/`、xunit の ident (`<classname>/<name>`) では classname の `.` でつなぐので、
+    どちらも同じ連なりに写す。xunit の記録の実物: `classname="MokumeCoreTests.ModelTests.OnCanvas"`
+    (`ModelTests` の入れ子の `OnCanvas`)。module は SwiftPM の target 名で `.` を含まない。"""
+    head = ident.split("/")
+    return head[0].split(".") + head[1:-1]
+
+
 def suite_of(ident):
-    """`<module>.<suite>/…` の最外の suite (`<module>.<最外の型>`・関連の集合と同じ綴り)。
-    取り消しの ident (testID 由来・入れ子は `/`) では `MokumeCoreTests.Outer/Inner/test()`、
-    xunit の ident (`<classname>/<name>`・入れ子は classname の `.`) では
-    `MokumeCoreTests.Outer.Inner/test()` — どちらも `MokumeCoreTests.Outer` に写る。
-    module は SwiftPM の target 名で `.` を含まない。"""
-    return ".".join(ident.split("/", 1)[0].split(".")[:2])
+    """`<module>.<最外の型>` (関連の集合 `suites_mentioning` と同じ綴り)。
+    `MokumeCoreTests.Outer/Inner/test()` (取り消し) も `MokumeCoreTests.Outer.Inner/test()` (xunit) も
+    `MokumeCoreTests.Outer` に写る。"""
+    return ".".join(suite_path(ident)[:2])
 
 
 def classify(build, test, record_state, cases, baseline_failed, related, gpu_hint=False):
@@ -480,9 +487,8 @@ def read_catalog(path):
 
 def proposal_of(ident, catalog):
     """検査の ID の suite (入れ子なら内側から) を表で引く。無ければ `-`。"""
-    head = ident.split("/")
-    names = [head[0].split(".", 1)[-1]] + head[1:-1]
-    for name in reversed(names):
+    path = suite_path(ident)
+    for name in reversed(path[1:] or path):
         if name in catalog:
             return catalog[name][0]
     return NOT_IN_CATALOG

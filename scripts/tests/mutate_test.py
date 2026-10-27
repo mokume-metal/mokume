@@ -283,6 +283,9 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(mutate.suite_of("T.Outer/Inner/a()"), "T.Outer")
         self.assertEqual(mutate.suite_of("T.Outer/a()"), "T.Outer")
         self.assertEqual(mutate.suite_of(mutate.UNKEYED_IDENT), mutate.UNKEYED_IDENT)
+        # 実物の xunit の記録の 1 行 (`classname="MokumeCoreTests.ModelTests.OnCanvas"`) の形
+        self.assertEqual(mutate.suite_of("MokumeCoreTests.ModelTests.OnCanvas/aLoadedModelIsVisible()"),
+                         "MokumeCoreTests.ModelTests")
 
     def test_cancelled_related_suite_is_unevaluated(self):
         # xunit の上では passed のまま、事象の記録の取り消しが cancelled として足されている
@@ -349,6 +352,21 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(totals["model"], {"killed": 1, "sole": 1})
         self.assertEqual(totals["-"], {"killed": 1, "sole": 0})
         self.assertEqual(mutants[1]["sole"], None)
+
+    def test_a_nested_suite_that_killed_is_attributed_to_its_catalog_row(self):
+        # xunit の killers は入れ子を classname の `.` でつなぐ (実物の記録の 1 行の形)。
+        # 最外の型 (表の行) を引けず、帰属が `-` に落ちてはならない
+        catalog = {"ModelTests": ("model", "3218"), "Inner": ("inner", "1")}
+        mutants = [
+            {"outcome": "killed", "killers": ["MokumeCoreTests.ModelTests.OnCanvas/aLoadedModelIsVisible()"]},
+            {"outcome": "killed", "killers": ["MokumeCoreTests.Other.Inner/a()"]},
+            {"outcome": "killed", "killers": ["MokumeCoreTests.Other.Deeper/a()"]},
+        ]
+        totals = mutate.attribute(mutants, "present", catalog)
+        self.assertEqual(totals["model"], {"killed": 1, "sole": 1})
+        self.assertEqual(totals["inner"], {"killed": 1, "sole": 1})
+        self.assertEqual(totals["-"], {"killed": 1, "sole": 1})
+        self.assertEqual(mutate.proposal_of("MokumeCoreTests.ModelTests.OnCanvas/a()", catalog), "model")
 
     def test_without_a_catalog_nothing_is_attributed(self):
         mutants = [{"outcome": "killed", "killers": ["T.X/a()"]}]
