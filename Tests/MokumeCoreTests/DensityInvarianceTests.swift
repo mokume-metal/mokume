@@ -166,34 +166,49 @@ struct DensityInvarianceTests {
         /// 光の量が面積を約束 (±6%) より多く越えると #3242 が記録している外れか。
         ///
         /// **既知として扱うのは #3242 の記録に当たるものだけ** で、口の名前だけでは決めない。外れた量が
-        /// 記録の向き・大きさに収まらないもの (少なく出る・記録より大きく多い) と、記録の形に当たらない
-        /// 入力 (描く画素で太さ 0.99 に届かず長さも 16 を越える楕円) は、同じ口でも通常の失敗にする。
+        /// 記録の向き・大きさに収まらないもの (少なく出る・見積もりを越えて多い) と、記録の形に当たらない
+        /// 入力は、同じ口でも通常の失敗にする。条件はすべて満たすとき:
         ///
         /// | 条件 | 根拠 |
         /// | --- | --- |
         /// | 楕円の 2 口 | #3242 の `diagonalEllipseAcross`・`diagonalEllipseAlong` |
-        /// | 光の量が期待より多い | 記録の比はすべて 1 より大きい (×1.060〜×1.227) |
-        /// | 期待の ×1.3 まで | 記録の最大は 45° の太さ 1・細かさ 1 の ×1.227。固定の seed の生成で見つかった細かい置き方の最大は ×1.280 (下の「追記の観測」) |
-        /// | 描く画素で太さ 0.99 以上 | 「描く画素で幅 1 の近く」の行: 太さ 1・細かさ 1 (×1.227・×1.079)・太さ 1.81・細かさ 0.570 (描く画素で 1.03・×1.164)。下端は「追記の観測」 |
-        /// | または描く画素での長さ (40 × 細かさ) が 16 以下 | 「細かさを下げた短い楕円」の行: 長さ 13 で ×1.070。上振れが長さに反比例する (長さ 20 で +4.7%) ので ±6% を越えるのは 15.7 以下 |
+        /// | 光の量が期待より多い | 記録の比はすべて 1 より大きい |
+        /// | **幅の形**: 描く画素での太さが 0.985〜2.2 で、期待の `1 + 0.35 × min(1, (2.2 − 太さ) / 1.2)` まで | 「描く画素で幅 1 の近く」の行。下の測り直しで、0.99 までは ×1.03〜×1.05 の近似の上振れだけで、0.992 から段差で ×1.06〜×1.29 になり、太さが増すほど戻って 2.0 で ×1.05 に収まる。見積もりは測った最大 (太さ 1 で ×1.288・1.5 で ×1.10・1.9 で ×1.063) を太さの一次式で上から押さえる |
+        /// | **短い形**: 描く画素での長さ (40 × 細かさ) が 18 以下で、期待の `1 + 1.2 / 長さ` まで | 「細かさを下げた短い楕円」の行。上振れは長さに反比例し、測った `(比 − 1) × 長さ` は 0.74〜1.08 (長さ 10〜32)。±6% を越えるのは長さ 17 以下 |
+        /// | 2 つの形の両方に当たるときは、見積もりの大きいほう | 重なる置き方 (細かさ 0.25〜0.4・太さ 1 の近く) の最大は幅の形だけの最大と同じで、足し合わさらない |
         ///
         /// 発見の記録は seed 0x616304c188a0c9b6・0x38b3332de597de2f (``DensityInvarianceTests/amountKeepsItsWeight(_:)``)。
         ///
-        /// **追記の観測** (#3242 の本文の数字は「幅 1 以上」「最大 +22.7%」で、下端と最大がずれていた)。
-        /// 楕円の 2 口を角度 {0, 0.5, π/4}・細かさ {1, 0.5}・ずらし y {0, 0.25, 0.5} で測ると、描く画素での
-        /// 太さが 0.99 までは ×1.03〜×1.05 (軸に沿った楕円の近似の上振れ) で収まり、**0.995 から段差で**
-        /// ×1.06〜×1.28 になって、1.7 で ×1.06 まで戻る (1.9 で ×1.05)。最大は Across・角度 0・
-        /// 太さ 0.995 (細かさ 1)・ずらし y 0.5 の ×1.280。固定の seed (``Probe`` の既定) の生成が当てた
-        /// 太さ 1.0695・細かさ 0.9296 (描く画素で 0.994・角度 1.445) の ×1.120 は、記録の「1 以上」を
-        /// わずかに外れて通常の失敗になり、この段差の存在を示した。
+        /// **測り直し** (一時の検査・`dx` と細かさを連続に振った。数字の追記は #3242 の
+        /// [issuecomment-6433901302](https://github.com/mokume-metal/mokume/issues/3242#issuecomment-6433901302))。
+        /// 楕円の 2 口を、次の 4 つの格子で測った。
         ///
-        /// **#3242 が直ったらこの述語と ``DensityInvarianceTests/measureTolerating3242(_:_:)`` ごと撤去する。**
+        /// 1. 下端: 描く画素での太さ 0.9〜1.0・細かさ 0.25〜1 (1/128 刻み)・ずらし (x, y) 各 [0, 2)・角度 [0, π/2) の乱数 300 件
+        /// 2. 上端: 太さ 1〜4・同じ範囲の乱数 300 件
+        /// 3. 短い形: 太さ 0.07〜0.9・細かさ 0.25〜0.8・同じ範囲の乱数 500 件 (長さ 10〜32)
+        /// 4. 最大: 太さ {0.993, 0.995, 0.997, 1.0, 1.02, 1.05} × 細かさ {0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1} ×
+        ///    角度 {0, π/4, 1.2} × ずらし x {0, 0.7, 1.4} × ずらし y {0, 0.5, 1.2} (3,240 件)
+        ///
+        /// 結果: (1) 細かさ 0.5 以上で、太さ 0.9910 までは収まり、0.9933 から ×1.06 を越える (細かさ 0.25〜0.4 は
+        /// 長さ 10〜16 の短い形で太さによらず越える)。下端は 0.985 に置いた。(2) 太さ 1.0〜1.2 の最大 ×1.159・1.4〜1.6 で ×1.101・
+        /// 1.8〜2.0 で ×1.063・2.0 以上は ×1.052 以下。(3) `(比 − 1) × 長さ` の最大は長さ 10〜12 で 0.95・12〜14 で 0.98・
+        /// 14〜16 で 0.99・16〜18 で 0.99・20〜24 で 1.03・24〜32 で 1.08。長さ 16〜18 の最大は ×1.0600 で、±6% を
+        /// 越える置き方は長さ 16 までに限られる (境界は 18 に置いた)。(4) 最大は ×1.288 (太さ 0.993・細かさ 0.7・角度 0)。
+        /// 見積もりの余裕は、幅の形で 1.35 / 1.288、短い形で `1.2 / 1.08` (約 11%)。
+        ///
+        /// **#3242 が直ったら、``DensityInvarianceTests/overshootOf3242IsStillThere()`` が「既知が起きなかった」で赤くなる。
+        /// そのとき、この述語と ``DensityInvarianceTests/measureTolerating3242(_:_:)`` を消し、呼び元
+        /// (``DensityInvarianceTests/amountKeepsItsWeight(_:)``・``DensityInvarianceTests/fixedPosesKeepTheirWeight(_:)``) は
+        /// ``DensityInvarianceTests/measurement(_:_:)`` と ``DensityInvarianceTests/judge(_:measured:expected:)`` を直に呼ぶ。**
         func isRecordedOvershoot(_ pose: Pose, measured: Double, expected: Double) -> Bool {
             guard self == .diagonalEllipseAcross || self == .diagonalEllipseAlong else { return false }
-            guard measured > expected, measured <= expected * 1.3 else { return false }
+            guard measured > expected else { return false }
             let drawnWeight = Double(pose.weight * pose.density)
             let drawnLength = 40 * Double(pose.density)
-            return drawnWeight >= 0.99 || drawnLength <= 16
+            var allowance = 0.0
+            if (0.985...2.2).contains(drawnWeight) { allowance = 0.35 * min(1, (2.2 - drawnWeight) / 1.2) }
+            if drawnLength <= 18 { allowance = max(allowance, 1.2 / drawnLength) }
+            return measured <= expected * (1 + allowance)
         }
 
         /// 回転を持つ口か (``Pose/angle`` を使う)。
@@ -511,27 +526,20 @@ struct DensityInvarianceTests {
     /// 描いていた。同じ程度に収める (#3216 の条件 5)。
     static let generatedCases = 32
 
-    /// 量の口を置き方 `pose` で描き、約束と比べる。
-    @MainActor
-    static func measure(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
-        guard let (measured, expected) = try measurement(mouth, pose) else { return .skip }
-        return Self.judge(mouth, measured: measured, expected: expected)
-    }
-
     /// 許容 (``Amount/tolerance``) に収まるかを見る。
-    private static func judge(_ mouth: Amount, measured: Double, expected: Double) -> Probe.Outcome {
+    static func judge(_ mouth: Amount, measured: Double, expected: Double) -> Probe.Outcome {
         if abs(measured - expected) > mouth.tolerance * expected {
             return .fail("光の量 \(measured) (期待 \(expected)・許容 ±\(mouth.tolerance))")
         }
         return .pass
     }
 
-    /// ``measure(_:_:)`` に、#3242 が記録している外れ (``Amount/isRecordedOvershoot(_:measured:expected:)``)
-    /// だけを既知として足したもの。生成する検査も固定の例も、ここを通る。
+    /// 量の口を置き方 `pose` で描いて約束と比べ、#3242 が記録している外れ
+    /// (``Amount/isRecordedOvershoot(_:measured:expected:)``) だけを既知とする。生成する検査も固定の例も、ここを通る。
     ///
     /// 既知の外れは `withKnownIssue("#3242")` で記録して `pass` を返すので、Probe の探索は続き、
     /// 後ろの入力の未知の外れを名乗る。記録に当たらない外れは `fail` のまま。
-    /// **#3242 が直ったら、``measure(_:_:)`` に戻してここを消す。**
+    /// **#3242 が直ったら消す** (手順は ``Amount/isRecordedOvershoot(_:measured:expected:)``)。
     @MainActor
     static func measureTolerating3242(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
         guard let (measured, expected) = try measurement(mouth, pose) else { return .skip }
@@ -540,6 +548,23 @@ struct DensityInvarianceTests {
         else { return outcome }
         withKnownIssue("#3242") { Issue.record("\(mouth.rawValue): \(pose): \(text)") }
         return .pass
+    }
+
+    /// #3242 の見張り。**決定的な 1 例で、#3242 の外れがいまも起きることを見る。** ±6% を越える例
+    /// (45° に回した太さ 1・細かさ 1・ずらし 0 の楕円。Across・Along とも ×1.227) を、間欠にしない
+    /// `withKnownIssue` に入れる。#3242 が直ると「既知が起きなかった」で赤くなり、
+    /// ``Amount/isRecordedOvershoot(_:measured:expected:)`` と ``measureTolerating3242(_:_:)`` を消す合図になる。
+    @Test("#3242 の見張り: 回した細い楕円の光の量が約束を越える外れは、直るまでは起きる")
+    func overshootOf3242IsStillThere() throws {
+        let pose = Pose(weight: 1, density: 1, offset: .zero, angle: .pi / 4, squash: 1)
+        for mouth in [Amount.diagonalEllipseAcross, .diagonalEllipseAlong] {
+            let (measured, expected) = try #require(try Self.measurement(mouth, pose))
+            withKnownIssue("#3242") {
+                #expect(
+                    Self.judge(mouth, measured: measured, expected: expected) == .pass,
+                    "\(mouth.rawValue): 光の量 \(measured) (期待 \(expected))")
+            }
+        }
     }
 
     /// 量の口を置き方 `pose` で描いて測った光の量と、約束の量。`nil` なら置き方が約束の外で、見ない。
@@ -578,8 +603,9 @@ struct DensityInvarianceTests {
     ///
     /// 置き方は seed つきで生成する (#3216)。赤なら、縮めた置き方と seed を `[density seed=…]` で名乗る。
     /// 同じ赤は `MOKUME_PROBE_SEED=<その seed>` と `--filter` で、その 1 件だけを走らせて再現する。
-    /// **許容の幅は緩めない** — 生成した置き方で越えたら Bug として起票し、その置き方を
-    /// ``fixedPosesKeepTheirWeight(_:)`` の固定の例に `withKnownIssue` で足す (条件 3)。
+    /// **許容の幅は緩めない** — 生成した置き方で越えたら Bug として起票する。既知の Bug と同じ根で
+    /// 記録の範囲だけが狭かったときは、測り直して ``Amount/isRecordedOvershoot(_:measured:expected:)``
+    /// (#3242 の述語) の範囲を改訂し、根拠を `///` に足す。許容の幅は動かさない。
     @Test(
         "太さ・面積の口は、細かさ・置く位置・角度・倍率によらず描く画素での太さ (面積) ぶんの濃さで出る",
         arguments: Amount.allCases)
