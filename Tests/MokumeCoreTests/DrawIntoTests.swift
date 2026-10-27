@@ -84,7 +84,9 @@ struct DrawIntoTests {
         probe.runtime = runtime
         runtime.start()
         // 台本は `probe.layer!` などを強制で開く。作れていなければ、台本が走る前に赤で止める
-        try #require(probe.pad != nil && probe.layer != nil && probe.direct != nil, "描き場所を作れていない")
+        try #require(
+            probe.pad != nil && probe.layer != nil && probe.direct != nil && probe.dust != nil,
+            "描き場所か粒を作れていない")
         for _ in 0..<frames { try runtime.advance() }
         return (probe, runtime)
     }
@@ -650,6 +652,8 @@ struct DrawIntoTests {
             let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
             probe.runtime = runtime
             runtime.start()
+            // 台本が `probe.pad!` を開くので、作れていなければ走らせる前に赤で止める
+            try #require(probe.pad != nil, "描き場所を作れていない")
             runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: .right))
             try runtime.advance()
             runtime.input.enqueue(.mouseMoved(x: 40, y: 32))

@@ -34,10 +34,21 @@ struct MovieStallMeasurement {
 
     @Test(
         "2764 MovieReader.picture(at:) の止まり — 鍵のコマで決める読み方と、1 秒で分ける読み方 (変更前)",
-        arguments: ["h264.gop30", "h264.gop90", "hevc.gop30"])
+        arguments: ["h264.gop30", "h264.gop90"])
     func pictureStalls(variant: String) async throws {
+        try await measurePictureStalls(variant: variant)
+    }
+
+    /// HEVC の符号化器が無い機械では、H.264 の側を巻き込まずに、この 1 本だけを理由つきで飛ばす。
+    @Test(
+        "2764 MovieReader.picture(at:) の止まり — 鍵のコマで決める読み方と、1 秒で分ける読み方 (変更前・HEVC)",
+        .enabled(if: TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い"))
+    func pictureStallsHEVC() async throws {
+        try await measurePictureStalls(variant: "hevc.gop30")
+    }
+
+    private func measurePictureStalls(variant: String) async throws {
         let hevc = variant.hasPrefix("hevc")
-        try #require(!hevc || TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い")
         for (width, height) in Self.sizes {
             let url = try await TestMovie.write(
                 frames: 90, width: width, height: height, codec: hevc ? .hevc : .h264,

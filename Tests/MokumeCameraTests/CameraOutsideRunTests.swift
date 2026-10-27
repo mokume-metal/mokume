@@ -101,9 +101,10 @@ struct CameraOutsideRunTests {
         }
     }
 
-    @Test("読める動画でも、createVideo は大きさの失敗ではなく notRunning を投げる")
+    @Test(
+        "読める動画でも、createVideo は大きさの失敗ではなく notRunning を投げる",
+        .enabled(if: TestMovie.canWrite, "この機械には H.264 の符号化器が無い"))
     func videoSaysItCannotReachTheSurface() async throws {
-        try #require(TestMovie.canWrite, "この機械には H.264 の符号化器が無い")
         let url = try await TestMovie.write(frames: 2)
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {

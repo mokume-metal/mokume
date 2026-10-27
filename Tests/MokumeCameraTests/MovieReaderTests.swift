@@ -258,10 +258,21 @@ struct MovieReaderTests {
 
     @Test(
         "どの読み方でも、ループ・後ろ・前・1 秒以内の飛びを混ぜた位置の並びに同じコマが出る",
-        arguments: ["h264.gop30", "h264.gop90", "h264.gop30.reordered", "hevc.gop30"])
+        arguments: ["h264.gop30", "h264.gop90", "h264.gop30.reordered"])
     func sameFramesWhicheverWayItReads(variant: String) async throws {
+        try await expectSameFramesWhicheverWayItReads(variant: variant)
+    }
+
+    /// HEVC の符号化器が無い機械では、H.264 の側を巻き込まずに、この 1 本だけを理由つきで飛ばす。
+    @Test(
+        "どの読み方でも、ループ・後ろ・前・1 秒以内の飛びを混ぜた位置の並びに同じコマが出る (HEVC)",
+        .enabled(if: TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い"))
+    func sameFramesWhicheverWayItReadsHEVC() async throws {
+        try await expectSameFramesWhicheverWayItReads(variant: "hevc.gop30")
+    }
+
+    private func expectSameFramesWhicheverWayItReads(variant: String) async throws {
         let hevc = variant.hasPrefix("hevc")
-        try #require(!hevc || TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い")
         let url = try await TestMovie.write(
             frames: 90, width: 128, height: 96, codec: hevc ? .hevc : .h264,
             keyFrameInterval: variant.contains("gop90") ? 90 : 30, reordersFrames: variant.hasSuffix("reordered"),
