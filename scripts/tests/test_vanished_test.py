@@ -587,6 +587,32 @@ class ReadCancelledTest(unittest.TestCase):
         self.assertIn("ケース 1, 3 — 同じ理由", lines[1])
         self.assertIn("ケース 5 — 別の理由", lines[2])
 
+    def test_unreadable_test_ids_are_counted_one_by_one(self):
+        """testID の欄が読めない事象は、別々の取り消しでも 1 つの鍵に潰さず 1 件ずつ数える。"""
+        out = self.read(_events(
+            _event("testCancelled", _comments=["1 つ目"]),
+            _event("testCancelled", _comments=["2 つ目"]),
+            _event("testCaseCancelled", _testCase=_case("7"), _comments=["3 つ目"]),
+            _event("testCancelled", testID="", _comments=["4 つ目"]),
+            _event("testCancelled", testID=42, _comments=["5 つ目"]),
+        ))
+        lines = out.splitlines()
+        self.assertIn(CANCELLED_TITLE + " 5 件", lines[0])
+        for reason in ("1 つ目", "2 つ目", "4 つ目", "5 つ目"):
+            self.assertIn("(testID が読めない) — 丸ごと — " + reason, out)
+        self.assertIn("(testID が読めない) — ケース 7 — 3 つ目", out)
+        self.assertIn("testID が読めない取り消しが 5 件ある", out)
+        self.assertIn("5 件ある", self.written())
+
+    def test_unreadable_test_ids_are_not_folded_into_a_keyed_whole_cancel(self):
+        """6.3.3 の写しを畳む照合に、testID の無い事象は入れない (別の取り消しを飲まない)。"""
+        out = self.read(_events(
+            _event("testCancelled", testID=WHOLE_ID, _comments=["丸ごと"]),
+            _event("testCaseCancelled", _testCase=_case("1"), _comments=["testID が無い"]),
+        ))
+        self.assertIn(CANCELLED_TITLE + " 2 件", out.splitlines()[0])
+        self.assertIn("(testID が読めない) — ケース 1 — testID が無い", out)
+
     def test_a_whole_cancel_swallows_its_cases(self):
         """丸ごとの取り消しの後ろに付く同じ testID のケースは、別に数えない (ケースの欄があっても)。"""
         out = self.read(_events(
@@ -725,7 +751,8 @@ class MakeTestTest(unittest.TestCase):
         path.write_text(body)
         path.chmod(0o755)
 
-    def run_make(self, test_exit, record=None, console="", build_exit=0, fail="", extra_env=None):
+    def run_make(self, test_exit, record=None, console="", build_exit=0, fail="", extra_env=None,
+                 target="test", make_args=()):
         env = dict(os.environ)
         env.pop("MAKEFLAGS", None)
         env.pop("MFLAGS", None)
@@ -752,7 +779,7 @@ class MakeTestTest(unittest.TestCase):
             env["FAKE_RECORD"] = str(self.record_src)
         with tempfile.TemporaryFile("w+") as out:
             code = subprocess.call(
-                ["make", "--no-print-directory", "-f", str(MAKEFILE), "test"],
+                ["make", "--no-print-directory", "-f", str(MAKEFILE), target, *make_args],
                 cwd=self.work, env=env, stdout=out, stderr=subprocess.STDOUT, timeout=60,
             )
             out.seek(0)
@@ -998,6 +1025,56 @@ class MakeTestTest(unittest.TestCase):
         code, out = self.run_make(0, record=RECORD_ALL_PASSED, extra_env={"FAKE_EVENTS": self.events(_events())})
         self.assertEqual(code, 0, out)
         self.assertIn(CANCELLED_TITLE + "は無い", out)
+
+    # --- release と TSan の段も同じ配線 (#3348) -----------------------------
+
+    STAGES = [
+        # (target, make の引数, 事象の記録の置き場, xunit の記録)
+        ("test-release", ["TEST_RELEASE_ARGS=--filter Fake"], ".build/test-events-release.jsonl",
+         ".build/test-results-release-swift-testing.xml"),
+        ("test-tsan", ["TEST_TSAN_ARGS=--filter Fake"], ".build/test-events-tsan.jsonl",
+         ".build/test-results-tsan-swift-testing.xml"),
+    ]
+
+    def test_release_and_tsan_name_the_cancelled_tests_in_a_green_run(self):
+        for target, args, events, _ in self.STAGES:
+            with self.subTest(target):
+                code, out = self.run_make(0, record=RECORD_ALL_PASSED, target=target, make_args=args,
+                                          extra_env={"FAKE_EVENTS": self.events(EVENTS_WHOLE_633)})
+                self.assertEqual(code, 0, out)
+                self.assertIn(CANCELLED_TITLE + " 1 件", out)
+                self.assertIn("%s — 丸ごと — 5 回とも前提が成り立たなかった" % WHOLE_ID, out)
+
+    def test_release_and_tsan_name_the_cancelled_tests_in_a_red_run_without_changing_the_exit(self):
+        for target, args, events, _ in self.STAGES:
+            with self.subTest(target):
+                code, out = self.run_make(1, record=RECORD_ONE_FAILED, target=target, make_args=args,
+                                          extra_env={"FAKE_EVENTS": self.events(EVENTS_ONE_CASE)})
+                self.assertNotEqual(code, 0, out)
+                self.assertIn("Error 1", out)
+                self.assertIn("%s — ケース 2 — 2 は前提が無い" % CASES_ID, out)
+
+    def test_release_and_tsan_ask_swift_for_their_own_event_stream_in_version_zero(self):
+        for target, args, events, _ in self.STAGES:
+            with self.subTest(target):
+                self.run_make(0, record=RECORD_ALL_PASSED, target=target, make_args=args,
+                              extra_env={"FAKE_EVENTS": self.events(EVENTS_WHOLE)})
+                calls = (self.root / "swift-calls.txt").read_text()
+                self.assertIn("--event-stream-output-path %s --event-stream-version 0" % events, calls)
+                (self.root / "swift-calls.txt").unlink()
+
+    def test_release_and_tsan_do_not_read_another_runs_or_stages_event_record(self):
+        """前の回の記録・別の段 (make test) の記録を、この段の取り消しとして名乗らない。"""
+        for target, args, events, _ in self.STAGES:
+            with self.subTest(target):
+                build = self.work / ".build"
+                build.mkdir(exist_ok=True)
+                for stale in (events, ".build/test-events.jsonl"):
+                    (self.work / stale).write_text(EVENTS_WHOLE, encoding="utf-8")
+                code, out = self.run_make(0, record=RECORD_ALL_PASSED, target=target, make_args=args)
+                self.assertEqual(code, 0, out)
+                self.assertIn(CANCELLED_TITLE + "を読めない: 記録が無い", out)
+                self.assertNotIn(WHOLE_ID, out)
 
     def events(self, content):
         path = self.root / "fake-events.jsonl"

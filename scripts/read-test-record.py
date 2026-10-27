@@ -99,7 +99,8 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
   testID の `testCaseCancelled` は丸ごとの取り消しの写しとして畳み、1 件に数える
 - 理由は事象の `_comments`、ケースの名前は `_testCase.displayName`。どちらも版 0 の実験的な欄
   (`_` で始まる) で、版 6.3 以降の書式では消える。無い日は「理由が読めない」「ケースの名前が
-  読めない」と名乗る (欄が消えても取り消しの件数は数えられる)
+  読めない」と名乗る (欄が消えても取り消しの件数は数えられる)。testID の欄が読めない事象は、
+  どの testID とも照合できないので畳まず、1 件ずつ別に数える
 
 `$GITHUB_STEP_SUMMARY` があれば、同じ一覧を Markdown でそこへ追記する (`--slow` と同じ作法)。
 
@@ -364,25 +365,27 @@ def slow(path, threshold=SLOW_SECONDS):
     return "\n".join(text), "\n".join(md)
 
 
-def cancelled(path):
-    """`Test.cancel` で取り消した検査を事象の記録 (JSON Lines) から。(端末の文, 要約の Markdown) を返す。"""
-    title = "取り消した検査"
+# testID が読めない取り消しの表示名。鍵に使わず、1 件ずつ別に数える
+UNKEYED = "(testID が読めない)"
 
-    def cannot(reason):
-        return (
-            "%sを読めない: %s (%s)" % (title, reason, path),
-            "### %s\n\n読めない: %s (`%s`)" % (title, reason, path),
-        )
 
+def read_cancellations(path):
+    """事象の記録 (JSON Lines) から `Test.cancel` の取り消しを読む。
+
+    (理由, 取り消し, 事象の数, 注) を返す。**理由が None でなければ読めていない**
+    (取り消しは空)。取り消しは (testID, 範囲, 件数, 理由) の列で、testID が読めない事象は
+    None を入れて 1 件ずつ別に数える (畳むと別々の取り消しが 1 件に潰れる)。理由が読めない
+    ときの理由は None。`scripts/mutate.py` もここを共有する。
+    """
     try:
         if os.path.getsize(path) == 0:
-            return cannot("記録が無い")
+            return "記録が無い", [], 0, []
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
-        return cannot("記録が無い")
+        return "記録が無い", [], 0, []
     except UnicodeDecodeError:
-        return cannot("記録が壊れている — 文字として読めない")
+        return "記録が壊れている — 文字として読めない", [], 0, []
 
     events = []
     broken = 0
@@ -397,32 +400,39 @@ def cancelled(path):
         except (ValueError, KeyError, TypeError):
             broken += 1
     if not events:
-        return cannot("記録に事象が 1 件も無い" + ("" if not broken else " (読めない行 %d 行)" % broken))
+        return "記録に事象が 1 件も無い" + ("" if not broken else " (読めない行 %d 行)" % broken), [], 0, []
     kinds = {e["kind"] for e in events}
     if "runStarted" not in kinds:
-        return cannot(
+        return (
             "記録の事象 %d 件に runStarted が無い — 記録の書式が変わったか、`--event-stream-version 0` で書かれていない可能性がある"
-            % len(events)
+            % len(events),
+            [],
+            len(events),
+            [],
         )
 
-    # testID ごとに、丸ごと (testCancelled) とケース (testCaseCancelled) を集める
+    # testID ごとに、丸ごと (testCancelled) とケース (testCaseCancelled) を集める。
+    # testID が読めない事象は、どの testID とも照合できないので畳まず 1 件ずつ数える
     whole = {}
     cases = {}
+    unkeyed = []  # (丸ごとか, ケースの名前, 理由)
     for e in events:
         if e["kind"] not in ("testCancelled", "testCaseCancelled"):
             continue
         test_id = e.get("testID")
-        if not isinstance(test_id, str):
-            test_id = "(testID が読めない)"
         comments = e.get("_comments")
         reason = " / ".join(str(c) for c in comments) if isinstance(comments, list) and comments else None
-        if e["kind"] == "testCancelled":
+        test_case = e.get("_testCase")
+        name = test_case.get("displayName") if isinstance(test_case, dict) else None
+        name = name if isinstance(name, str) else None
+        is_whole = e["kind"] == "testCancelled"
+        if not isinstance(test_id, str) or not test_id:
+            unkeyed.append((is_whole, name, reason))
+        elif is_whole:
             if whole.get(test_id) is None:
                 whole[test_id] = reason
         else:
-            test_case = e.get("_testCase")
-            name = test_case.get("displayName") if isinstance(test_case, dict) else None
-            cases.setdefault(test_id, []).append((name if isinstance(name, str) else None, reason))
+            cases.setdefault(test_id, []).append((name, reason))
 
     # 同じ testID の testCaseCancelled は、丸ごとの取り消しの写し (Swift 6.3.3) として畳む。
     # 写しの側にだけ理由が載る版でも、理由は拾う
@@ -447,16 +457,33 @@ def cancelled(path):
             if unknown:
                 shown += ("; " if shown else "") + "名前が読めない %d 件" % unknown
             items.append((test_id, "ケース %s" % shown, len(names), reason))
+    for is_whole, name, reason in unkeyed:
+        scope = "丸ごと" if is_whole else "ケース %s" % (name if name is not None else "名前が読めない 1 件")
+        items.append((None, scope, 1, reason))
 
     notes = []
+    if unkeyed:
+        notes.append("testID が読めない取り消しが %d 件ある — どれとも照合できないので畳まず 1 件ずつ数えた" % len(unkeyed))
     if broken:
         notes.append("読めない行が %d 行あった" % broken)
     if "runEnded" not in kinds:
         notes.append("記録が runEnded で閉じていない — 検査のプロセスが途中で消えた可能性がある")
+    return None, items, len(events), notes
+
+
+def cancelled(path):
+    """`Test.cancel` で取り消した検査を事象の記録から。(端末の文, 要約の Markdown) を返す。"""
+    title = "取り消した検査"
+    reason, items, event_count, notes = read_cancellations(path)
+    if reason is not None:
+        return (
+            "%sを読めない: %s (%s)" % (title, reason, path),
+            "### %s\n\n読めない: %s (`%s`)" % (title, reason, path),
+        )
     if not items:
         notes_text = "".join(" (%s)" % n for n in notes)
-        line = "%sは無い (記録の事象 %d 件)%s" % (title, len(events), notes_text)
-        return line, "### %s\n\n無い (記録の事象 %d 件)%s" % (title, len(events), notes_text)
+        line = "%sは無い (記録の事象 %d 件)%s" % (title, event_count, notes_text)
+        return line, "### %s\n\n無い (記録の事象 %d 件)%s" % (title, event_count, notes_text)
 
     total = sum(n for _, _, n, _ in items)
     no_reason = sum(n for _, _, n, r in items if r is None)
@@ -472,7 +499,7 @@ def cancelled(path):
 
     head = "%s %d 件 (Test.cancel — xUnit の上では passed と区別できない。警告だけで段の結末は変えない・#3348):" % (title, total)
     text = [head]
-    text += ["  %s — %s — %s" % (i, scope, why(r)) for i, scope, _, r in shown]
+    text += ["  %s — %s — %s" % (i if i is not None else UNKEYED, scope, why(r)) for i, scope, _, r in shown]
     md = [
         "### %s (%d 件)" % (title, total),
         "",
@@ -481,7 +508,11 @@ def cancelled(path):
         "| 検査 | 範囲 | 理由 |",
         "| --- | --- | --- |",
     ]
-    md += ["| %s | %s | %s |" % (code_span(i), scope.replace("|", "\\|"), why(r).replace("|", "\\|")) for i, scope, _, r in shown]
+    md += [
+        "| %s | %s | %s |"
+        % (code_span(i if i is not None else UNKEYED), scope.replace("|", "\\|"), why(r).replace("|", "\\|"))
+        for i, scope, _, r in shown
+    ]
     if rest:
         text.append("  ほか %d 行は記録を読む" % rest)
         md += ["", "ほか %d 行は記録を読む" % rest]

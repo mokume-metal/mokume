@@ -290,6 +290,11 @@ TEST_RECORD := .build/test-results-swift-testing.xml
 # 同じ形でしか載らない (#3348)。名前は接尾辞を挟まれずそのまま書かれる。理由 (_comments) と
 # ケースの名前 (_testCase) は版 0 にしか無いので、版も渡す
 TEST_EVENTS := .build/test-events.jsonl
+# release と TSan の段も同じ取り消しを走らせる (DocumentLoadingTests・APIListDownloadTests)。
+# TSan は遅く、並列の負荷で前提が崩れやすい。xUnit の記録と同じく段ごとに別のファイルへ書く
+# (#1089。同じ置き場へ書くと、段をまたいで前の回の取り消しを読む)
+TEST_EVENTS_RELEASE := .build/test-events-release.jsonl
+TEST_EVENTS_TSAN := .build/test-events-tsan.jsonl
 
 # release の記録。debug と別のファイルになる名前を渡す (理由は上の「別のファイルへ書く」
 # の段)。接尾辞の挟まり方は debug と同じで、SwiftPM が -swift-testing を足す
@@ -395,8 +400,10 @@ TEST_RELEASE_ARGS ?=
 
 test-release: ## release でテストを回す (性能の計測用。ci-check には含まれない)
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD_RELEASE) .build/geometry-release.md
-	env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE)
+	@rm -f $(TEST_RECORD_RELEASE) $(TEST_EVENTS_RELEASE) .build/geometry-release.md
+	env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test -c release -Xswiftc -enable-testing $(TEST_RELEASE_ARGS) --xunit-output $(TEST_RECORD_RELEASE_BASE) --event-stream-output-path $(TEST_EVENTS_RELEASE) --event-stream-version 0 \
+		|| { code=$$?; python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_RELEASE); exit $$code; }
+	@python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_RELEASE)
 	@test -s $(TEST_RECORD_RELEASE) || { \
 		echo "記録が出来ていない ($(TEST_RECORD_RELEASE))。SwiftPM が --xunit-output の"; \
 		echo "綴りを変えた可能性がある — debug 側の TEST_RECORD と併せて直す"; \
@@ -482,12 +489,14 @@ TSAN_SKIP := SecondRunTests/ \
 
 test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の job が走らせる。ci-check には含まれない)
 	@mkdir -p .build
-	@rm -f $(TEST_RECORD_TSAN)
+	@rm -f $(TEST_RECORD_TSAN) $(TEST_EVENTS_TSAN)
 	set -o pipefail; swift build --build-tests --sanitize=thread --scratch-path $(TSAN_SCRATCH) 2>&1 | tee $(TEST_LOG_TSAN)
 	set -o pipefail; env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --sanitize=thread --scratch-path $(TSAN_SCRATCH) \
-		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) 2>&1 | tee -a $(TEST_LOG_TSAN) \
-		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); exit $$code; }
+		$(foreach t,$(TSAN_SKIP),--skip '$(t)') $(TEST_TSAN_ARGS) --xunit-output $(TEST_RECORD_TSAN_BASE) --event-stream-output-path $(TEST_EVENTS_TSAN) --event-stream-version 0 2>&1 | tee -a $(TEST_LOG_TSAN) \
+		|| { code=$$?; python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS); \
+			python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_TSAN); exit $$code; }
 	@python3 scripts/read-test-record.py --slow $(TEST_RECORD_TSAN) $(TEST_SLOW_SECONDS)
+	@python3 scripts/read-test-record.py --cancelled $(TEST_EVENTS_TSAN)
 	@if [ -z "$(TEST_TSAN_ARGS)" ]; then for suite in $(TSAN_SUITES); do \
 		read -r verdict skipped < <(python3 scripts/read-test-record.py $(TEST_RECORD_TSAN) $$suite); \
 		[ "$$verdict" = passed ] || { echo "代表の検査 ($$suite) が $$verdict — そのモジュールが TSan の下で走っていない ($(TEST_RECORD_TSAN))"; exit 1; }; \
