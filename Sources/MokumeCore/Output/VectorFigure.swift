@@ -115,6 +115,9 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
     case effects
     /// 頂点ごとに塗りの色が違う形。最初の頂点の色で書いた (落としてはいない)。
     case vertexColours
+    /// 座標・線の太さ・破線の長さが、書ける大きさ (約 1e12) を越える図形。画面には描かれるので名乗る。
+    /// 数でない座標の図形は画面にも描かれないので、これには数えない (``SVGWriter/Fit``)。
+    case tooLarge
 
     /// 名乗りの文面での呼び名 (英語・単数も複数も同じ)。
     var noun: String {
@@ -133,6 +136,7 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
         case .clip: "shape inside a clip"
         case .effects: "effects() call"
         case .vertexColours: "shape with a different fill colour at each vertex"
+        case .tooLarge: "shape beyond 1e12 pixels"
         }
     }
 

@@ -29,15 +29,31 @@ nonisolated enum SVGWriter {
     /// √2 になり、切られずに尖る — 丸め下げると直角が切られるので、丸め上げる。
     static let miterLimit = "1.4143"
 
-    /// 数を 1/1000 まで書けるか。**書ける数の定義はここに 1 つだけ持つ。** 数でない値・無限と、1/1000 にした
-    /// 絶対値が `1e15` 以上 (元の値で約 1e12 以上) の値は、整数の桁にあふれるので書けない。
-    /// 控えへ足す口 (``VectorCapture/add(_:)``) が、書けない数を持つ図形を控えないために読む。
-    static func isWritable(_ value: Float) -> Bool {
-        fits(thousandths: (Double(value) * 1000).rounded())
+    /// 数が 1/1000 まで書けるか。**書ける数の定義はここに 1 つだけ持つ** (書き手の `0` の保険も同じ値を読む)。
+    enum Fit: Sendable {
+        case writable
+        /// 数でない値・無限。画面にも描かれないので、控える側は黙って控えない。
+        case notANumber
+        /// 有限だが、1/1000 にした絶対値が `1e15` 以上 (元の値で約 1e12 以上) で、整数の桁にあふれる。
+        /// 画面には描かれる大きさなので、控える側は名指しで落とす (``VectorDrop/tooLarge``)。
+        case tooLarge
+
+        /// 2 つの結果のうち、図形を書けなくする側。数でないほうが先 (画面に無い図形は名乗らない)。
+        func merged(with other: Fit) -> Fit {
+            if self == .notANumber || other == .notANumber { return .notANumber }
+            return self == .tooLarge || other == .tooLarge ? .tooLarge : .writable
+        }
     }
 
-    fileprivate static func fits(thousandths: Double) -> Bool {
-        thousandths.isFinite && abs(thousandths) < 1e15
+    static func fit(of value: Float) -> Fit {
+        fit(ofThousandths: (Double(value) * 1000).rounded())
+    }
+
+    static func isWritable(_ value: Float) -> Bool { fit(of: value) == .writable }
+
+    fileprivate static func fit(ofThousandths thousandths: Double) -> Fit {
+        guard thousandths.isFinite else { return .notANumber }
+        return abs(thousandths) < 1e15 ? .writable : .tooLarge
     }
 
     /// SVG を組む。
@@ -193,7 +209,7 @@ extension Array where Element == UInt8 {
     /// **ここへ届く前に、控えへ足す口 (``VectorCapture/add(_:)``) が弾いてある** (#3318)。
     fileprivate nonisolated mutating func appendNumber(_ value: Float) {
         let scaled = (Double(value) * 1000).rounded()
-        guard SVGWriter.fits(thousandths: scaled) else { return append(48) }
+        guard SVGWriter.fit(ofThousandths: scaled) == .writable else { return append(48) }
         var thousandths = Int64(scaled)
         if thousandths == 0 { return append(48) }
         if thousandths < 0 {

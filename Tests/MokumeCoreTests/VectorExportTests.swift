@@ -946,8 +946,9 @@ struct VectorCaptureTests {
     }
 
     /// 変換を当てた後の座標が書けない大きさ (1/1000 にした絶対値が 1e15 以上・元の値で約 1e12 以上) の図形は、
-    /// 数でない座標の図形と同じく控えない (#3318)。書き手は書けない数を `0` と書くので、控えると (0, 0) へ潰れた形が残る。
-    @Test("変換後の座標が 1e12 を越える有限の図形は、(0, 0) へ潰れた形で書かれず控えない (#3318)")
+    /// 書かずに名指しで落とす (#3318)。書き手は書けない数を `0` と書くので、控えると (0, 0) へ潰れた形が残る。
+    /// 数でない座標の図形と違い、有限の図形は画面には描かれるので、黙って消さずに名乗る。
+    @Test("変換後の座標が 1e12 を越える有限の図形は、(0, 0) へ潰れた形で書かれず、名指しで落とす (#3318)")
     func aHugeFiniteCoordinateWritesNothing() throws {
         let harness = try Harness()
         for (name, place) in outlinedShapes {
@@ -961,10 +962,10 @@ struct VectorCaptureTests {
                     place(canvas)
                 }
                 #expect(figures.isEmpty, "\(name) dashed=\(dashed): \(figures)")
-                #expect(drops.isEmpty, "名乗りは付けない (数でない座標と同じ): \(drops)")
+                #expect(drops == [.tooLarge], "図形 1 つにつき 1 度: \(name) dashed=\(dashed): \(drops)")
             }
         }
-        // 線と頂点の形 (基本図形の口とは別の道) も、控えへ足す同じ 1 点で控えない
+        // 線と頂点の形 (基本図形の口とは別の道) も、控えへ足す同じ 1 点で名指しで落とす
         let (figures, drops) = try harness.capture { canvas in
             canvas.stroke(blue)
             canvas.noFill()
@@ -977,13 +978,13 @@ struct VectorCaptureTests {
             canvas.endShape(.close)
         }
         #expect(figures.isEmpty, "\(figures)")
-        #expect(drops.isEmpty, "\(drops)")
+        #expect(drops == [.tooLarge, .tooLarge], "\(drops)")
     }
 
-    @Test("書けない大きさの座標の図形は控えず、同じ口で置いた書ける図形はそのまま書く (1e12 の外と内)")
+    @Test("書けない大きさの座標の図形は落とし、同じ口で置いた書ける図形はそのまま書く (1e12 の外と内)")
     func hugeAndOrdinaryFiguresAreSeparated() throws {
         let harness = try Harness()
-        let svg = try harness.svg { canvas in
+        let (figures, drops) = try harness.capture { canvas in
             canvas.fill(red)
             canvas.noStroke()
             canvas.push()
@@ -992,9 +993,84 @@ struct VectorCaptureTests {
             canvas.pop()
             canvas.rect(10, 10, 30, 20)
         }
+        #expect(figures.count == 1, "\(figures)")
+        #expect(drops == [.tooLarge], "\(drops)")
+        let svg = String(decoding: SVGWriter.render(figures[...], width: 100, height: 100), as: UTF8.self)
         let elements = SVG.elements(svg)
-        #expect(elements.count == 1, "\(svg)")
-        #expect(SVG.attribute("d", in: elements[0]) == "M10 10L40 10 40 30 10 30Z", "\(svg)")
+        #expect(SVG.attribute("d", in: elements.first ?? "") == "M10 10L40 10 40 30 10 30Z", "\(svg)")
+        // 落としたことは、書いた後の知らせの文面にも名指しで出る
+        let said = FrameRecorder.vectorLeftOutNotice(path: "x.svg", dropped: drops[...])
+        #expect(said.contains("shape beyond 1e12 pixels x1"), "\(said)")
+    }
+
+    @Test("見えない線の太さは数えない — 塗りが書ける図形は、見えない線が溢れる太さでも塗りを書く (#3318)")
+    func anInvisibleStrokeDoesNotDropTheFill() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(.display(red: 0, green: 0, blue: 1, alpha: 0))
+            canvas.strokeWeight(1e13)
+            canvas.circle(50, 50, 20)
+        }
+        try #require(figures.count == 1, "\(figures)")
+        #expect(figures[0].fill != nil && figures[0].stroke == nil, "\(figures)")
+        #expect(drops.isEmpty, "\(drops)")
+        // 見える線なら、同じ太さの図形は落とす
+        let visible = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(1e13)
+            canvas.circle(50, 50, 20)
+        }
+        #expect(visible.figures.isEmpty && visible.drops == [.tooLarge], "\(visible)")
+    }
+
+    @Test("頂点の形の穴が書けない大きさなら、穴だけを欠いた外周でなく、図形ごと名指しで落とす (#3318)")
+    func aHugeHoleDropsTheWholeShape() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.beginShape()
+            canvas.vertex(10, 10)
+            canvas.vertex(90, 10)
+            canvas.vertex(90, 90)
+            canvas.vertex(10, 90)
+            canvas.beginContour()
+            canvas.vertex(30, 30)
+            canvas.vertex(2e12, 30)
+            canvas.vertex(70, 70)
+            canvas.endContour()
+            canvas.endShape(.close)
+        }
+        #expect(figures.isEmpty, "\(figures)")
+        #expect(drops == [.tooLarge], "\(drops)")
+    }
+
+    @Test("弧の塗り (扇) と輪郭 (開いた弧) は揃って落ちる — 中心だけが書けない大きさの弧で、輪郭だけが残らない (#3318)")
+    func anArcFillAndStrokeFallTogether() throws {
+        let harness = try Harness()
+        // 中心 (1.5e12, 0)・半径 1.5e12 の弧の、角 π ± 0.01 の部分。弧の点は x が 0 の近くへ戻って書ける大きさに
+        // 収まり、扇の頂点 (中心) だけが 1e12 を越える
+        func place(_ mode: ArcMode?) throws -> (figures: [VectorFigure], drops: [VectorDrop]) {
+            try harness.capture { canvas in
+                canvas.fill(red)
+                canvas.stroke(blue)
+                canvas.strokeWeight(2)
+                if let mode {
+                    canvas.arc(1.5e12, 0, 3e12, 200, Float.pi - 0.01, Float.pi + 0.01, mode)
+                } else {
+                    canvas.arc(1.5e12, 0, 3e12, 200, Float.pi - 0.01, Float.pi + 0.01)
+                }
+            }
+        }
+        // 標準の閉じ方は、塗り (扇) と輪郭 (開いた弧) が別の形。扇が書けないなら、輪郭も一緒に落とす
+        let standard = try place(nil)
+        #expect(standard.figures.isEmpty, "\(standard.figures)")
+        #expect(standard.drops == [.tooLarge], "\(standard.drops)")
+        // 弦で結んだ形は中心を含まないので、塗りも輪郭も書ける
+        let chord = try place(.chord)
+        #expect(chord.figures.count == 1 && chord.drops.isEmpty, "\(chord)")
     }
 
     @Test("判定は変換の後の座標で行う — 形自身の座標が 1e13 でも、縮めれば収まって書き、拡大して溢れれば控えない")
@@ -1228,6 +1304,13 @@ struct SVGWriterTests {
         return sink.figures
     }
 
+    /// 足して、残った図形と名乗りを返す。
+    private func captured(_ figure: VectorFigure) -> (figures: [VectorFigure], drops: [VectorDrop]) {
+        let sink = VectorCapture()
+        sink.add(figure)
+        return (sink.figures, sink.drops)
+    }
+
     private func line(from a: SIMD2<Float>, to b: SIMD2<Float>, width: Float = 1, dash: [Float] = []) -> VectorFigure {
         VectorFigure(
             subpaths: [VectorSubpath(points: [a, b], isClosed: false)], fill: nil,
@@ -1256,23 +1339,70 @@ struct SVGWriterTests {
         #expect(svg.contains("d=\"M999999995904 0L1 1\""), "\(svg)")
     }
 
-    @Test("書けない大きさの点・線の太さ・破線を持つ図形は、有限でも控えに足さない")
+    @Test("書けない大きさの点・線の太さ・破線を持つ図形は足さず、有限なら名指しで落とし、数でなければ黙って足さない")
     func figuresWithUnwritableNumbersAreNotCaptured() {
         let above: Float = 1_000_000_061_440
-        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(above, 0))).isEmpty)
-        #expect(capture(line(from: SIMD2(0, -above), to: SIMD2(1, 1))).isEmpty)
-        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1, 1), width: above)).isEmpty)
-        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1, 1), dash: [4, above])).isEmpty)
-        #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(.nan, 1))).isEmpty)
+        for (name, figure) in [
+            ("end point", line(from: SIMD2(0, 0), to: SIMD2(above, 0))),
+            ("start point", line(from: SIMD2(0, -above), to: SIMD2(1, 1))),
+            ("width", line(from: SIMD2(0, 0), to: SIMD2(1, 1), width: above)),
+            ("dash", line(from: SIMD2(0, 0), to: SIMD2(1, 1), dash: [4, above])),
+        ] {
+            let result = captured(figure)
+            #expect(result.figures.isEmpty && result.drops == [.tooLarge], "\(name): \(result)")
+        }
+        // 数でない座標は、画面にも描かれないので名乗らない
+        let notANumber = captured(line(from: SIMD2(0, 0), to: SIMD2(.nan, 1)))
+        #expect(notANumber.figures.isEmpty && notANumber.drops.isEmpty, "\(notANumber)")
+        // 数でない点と書けない点が混じれば、画面に無い図形なので名乗らない
+        let mixed = captured(line(from: SIMD2(.infinity, 0), to: SIMD2(above, 1)))
+        #expect(mixed.figures.isEmpty && mixed.drops.isEmpty, "\(mixed)")
         // 2 つ目の道の点でも見る
         let second = VectorFigure(
             subpaths: [
                 VectorSubpath(points: [SIMD2(0, 0), SIMD2(1, 1)], isClosed: false),
                 VectorSubpath(points: [SIMD2(0, 0), SIMD2(above, 1)], isClosed: false),
             ], fill: VectorFill(color: VectorColor(red: 0, green: 0, blue: 0, opacity: 1), evenOdd: false), stroke: nil)
-        #expect(capture(second).isEmpty)
+        #expect(captured(second).figures.isEmpty && captured(second).drops == [.tooLarge])
         // 普通の図形は足される
         #expect(capture(line(from: SIMD2(0, 0), to: SIMD2(1e9, 1), width: 3, dash: [4, 2])).count == 1)
+    }
+
+    @Test("見えない線を外した後で判定する — 書ける塗りと、溢れる太さの見えない線の図形は、塗りを残す")
+    func visibilityIsDecidedBeforeFitting() {
+        let above: Float = 1_000_000_061_440
+        let fill = VectorFill(color: VectorColor(red: 255, green: 0, blue: 0, opacity: 1), evenOdd: false)
+        let ghost = VectorStroke(
+            color: VectorColor(red: 0, green: 0, blue: 255, opacity: 0), width: above, cap: .round, join: .miter,
+            dash: [above])
+        let figure = VectorFigure(
+            subpaths: [VectorSubpath(points: [SIMD2(0, 0), SIMD2(10, 0), SIMD2(0, 10)], isClosed: true)],
+            fill: fill, stroke: ghost)
+        let result = captured(figure)
+        #expect(result.figures.count == 1 && result.figures[0].stroke == nil && result.drops.isEmpty, "\(result)")
+    }
+
+    @Test("1 つの図形の部品は、揃って足されるか揃って落ちる — 名乗りは 1 度")
+    func partsFallTogether() {
+        let above: Float = 1_000_000_061_440
+        let red = VectorFill(color: VectorColor(red: 255, green: 0, blue: 0, opacity: 1), evenOdd: false)
+        let blue = VectorStroke(
+            color: VectorColor(red: 0, green: 0, blue: 255, opacity: 1), width: 1, cap: .round, join: .miter)
+        func parts(fillPoint: SIMD2<Float>) -> [VectorFigure] {
+            [
+                VectorFigure(subpaths: [VectorSubpath(points: [fillPoint, SIMD2(1, 0), SIMD2(0, 1)], isClosed: true)], fill: red, stroke: nil),
+                VectorFigure(subpaths: [VectorSubpath(points: [SIMD2(1, 0), SIMD2(0, 1)], isClosed: false)], fill: nil, stroke: blue),
+            ]
+        }
+        let together = VectorCapture()
+        together.add(parts: parts(fillPoint: SIMD2(0, 0)))
+        #expect(together.figures.count == 2 && together.drops.isEmpty)
+        let dropped = VectorCapture()
+        dropped.add(parts: parts(fillPoint: SIMD2(above, 0)))
+        #expect(dropped.figures.isEmpty && dropped.drops == [.tooLarge], "\(dropped.figures)")
+        let absent = VectorCapture()
+        absent.add(parts: parts(fillPoint: SIMD2(.nan, 0)))
+        #expect(absent.figures.isEmpty && absent.drops.isEmpty)
     }
 
     @Test("同じ入力を 2 回組むと、バイトまで一致する")

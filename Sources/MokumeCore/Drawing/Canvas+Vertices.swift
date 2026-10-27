@@ -476,12 +476,16 @@ extension Canvas {
         guard let writable = vectorWritable(fills: wantsFill, strokes: wantsStroke, into: sink) else { return }
         let (fills, strokes) = writable
         let place = vectorPlacer()
+        // 数でない座標の周・穴は画面にも描かれないので、周なら原始形ごと・穴なら穴だけを黙って飛ばす。有限でも
+        // 書けない大きさの座標は画面には描かれるので、ここでは飛ばさず、図形を足す口 (``VectorCapture/add(_:)``) が、
+        // 周と穴をひとまとめに図形ごと名指しで落とす (穴だけを欠いた周を書かない)
         func placed(_ indices: some Sequence<Int>) -> [SIMD2<Float>]? {
             var result = [SIMD2<Float>]()
             for index in indices {
                 let position = points[index].position
                 let moved = place(SIMD2(position.x, position.y))
-                guard moved.x.isFinite, moved.y.isFinite else { return nil }
+                guard SVGWriter.fit(of: moved.x) != .notANumber, SVGWriter.fit(of: moved.y) != .notANumber
+                else { return nil }
                 result.append(moved)
             }
             return result
