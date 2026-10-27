@@ -33,6 +33,7 @@ final class TableAndText: Sketch {
     private var reread: Table?
     /// 同じ CSV を、文字の行として読み直したもの。見出しの行を名乗るのに使う
     private var rereadLines: [String] = []
+    private var rereadFailure: String?
 
     /// 縦軸に取る気温の幅 (°C)。
     private static let coldest: Float = -5
@@ -42,26 +43,33 @@ final class TableAndText: Sketch {
     private static let top: Float = 100
     private static let bottom: Float = 500
 
-    func setup() {
-        caption = (try? loadStrings(Self.data("temperatures.txt"))) ?? []
-        guard var read = try? loadTable(Self.data("temperatures.csv"), header: true) else { return }
+    func setup() throws {
+        caption = try loadStrings(Self.data("temperatures.txt"))
+        var read = try loadTable(Self.data("temperatures.csv"), header: true)
         read.addColumn("mean")
         for (i, row) in read.rows.enumerated() {
             read.setFloat(i, "mean", (row.getFloat("high") + row.getFloat("low")) / 2)
         }
         // 普通のスケッチなら `saveTable(read, "out/temperatures-with-mean.csv")` と書く。
         // 参照スケッチは検査からも走るので、リポジトリを汚さない一時ディレクトリへ書く
-        try? saveTable(read, Self.written)
+        try saveTable(read, Self.written)
         // 文字列の行も同じく書き出せる (普通のスケッチなら `saveStrings(caption, "out/caption.txt")`)。
         // 絵には出さない
-        try? saveStrings(caption, Self.writtenCaption)
+        try saveStrings(caption, Self.writtenCaption)
         table = read
 
         // 書き出したものを、待たない口で読み直す。待つのは Task の仕事で、届くまでは
         // 下の draw() が「読み直している…」と出す
+        // 読み直しが失敗しても、先に読んだ表を描き続ける。
         Task {
-            reread = try? await requestTable(Self.written, header: true)
-            rereadLines = (try? await requestStrings(Self.written)) ?? []
+            do {
+                let read = try await requestTable(Self.written, header: true)
+                rereadLines = try await requestStrings(Self.written)
+                reread = read
+            } catch {
+                rereadFailure = "CSV の読み直しに失敗 (ログを参照)"
+                print("table-and-text: reread: \(error)")
+            }
         }
     }
 
@@ -89,7 +97,7 @@ final class TableAndText: Sketch {
             let titles = rereadLines.first ?? ""
             text("書き出した CSV を読み直した: \(reread.rowCount) 行・見出し \(titles)", Self.left, 544)
         } else {
-            text("書き出した CSV を読み直している…", Self.left, 544)
+            text(rereadFailure ?? "書き出した CSV を読み直している…", Self.left, 544)
         }
 
         guard let table else { return }

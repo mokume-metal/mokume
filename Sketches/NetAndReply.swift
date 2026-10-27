@@ -42,11 +42,11 @@ final class NetAndReply: Sketch {
     /// 円ごとに、届いた `hit` の数。
     private var hits = [0, 0, 0]
 
-    func setup() {
-        server = try? createTCPServer(5204)
+    func setup() throws {
+        server = try createTCPServer(5204)
         // 受けるのは 6000、送り返すのは 6001 (同じ機械の `nc -u -l 6001` で見える)
-        udp = try? createUDP(listen: 6000, send: ("127.0.0.1", 6001))
-        socket = try? createWebSocketServer(8025)
+        udp = try createUDP(listen: 6000, send: ("127.0.0.1", 6001))
+        socket = try createWebSocketServer(8025)
     }
 
     func draw() {

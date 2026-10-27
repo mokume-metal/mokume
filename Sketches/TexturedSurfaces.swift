@@ -18,8 +18,8 @@ final class TexturedSurfaces: Sketch {
     /// 焼いた木目。**初期化で 1 度だけ作る。**
     private var grain: Image?
 
-    func setup() {
-        let image = try? createImage(256, 256)
+    func setup() throws {
+        let image = try createImage(256, 256)
         for y in 0..<256 {
             for x in 0..<256 {
                 // 年輪を歪めた縞。上下・左右が入れ替わったら分かるよう、
@@ -28,7 +28,7 @@ final class TexturedSurfaces: Sketch {
                 let ring = 0.5 + 0.5 * sin((Float(x) + warp) * 0.16)
                 let top: Float = y < 16 ? 0.35 : 0
                 let left: Float = x < 16 ? 0.4 : 0
-                image?.set(
+                image.set(
                     x, y,
                     .display(
                         red: min(1, 0.42 + ring * 0.36 + top + left),

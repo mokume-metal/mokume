@@ -27,7 +27,7 @@ final class PartsAndFormats: Sketch {
     /// 並べる 2 つ。読めたモデルか、読めなかった説明のどちらかを持つ。
     private var shelves: [(title: String, model: Model?, failure: String?)] = []
 
-    func setup() {
+    func setup() throws {
         // **リポジトリには資材ファイルを置けない** (`scripts/check-no-binaries.sh` が `.stl` と
         // `.obj` を弾く) ので、検体をここで書き出してから読んでいる。**普通のスケッチにこの
         // 書き出しは要らない** — 手元にあるファイルの場所を `loadModel` へ渡すだけでよい
@@ -35,8 +35,8 @@ final class PartsAndFormats: Sketch {
         let stl = folder.appendingPathComponent("mokume-reference-gear.stl")
         let obj = folder.appendingPathComponent("mokume-reference-gear.obj")
         let triangles = Self.gear(teeth: 14)
-        try? Self.stlSource(triangles).write(to: stl, atomically: true, encoding: .utf8)
-        try? Self.objSource(triangles).write(to: obj, atomically: true, encoding: .utf8)
+        try Self.stlSource(triangles).write(to: stl, atomically: true, encoding: .utf8)
+        try Self.objSource(triangles).write(to: obj, atomically: true, encoding: .utf8)
 
         for (title, url) in [("STL から", stl), ("OBJ から", obj)] {
             do {

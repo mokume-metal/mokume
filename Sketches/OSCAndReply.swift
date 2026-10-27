@@ -34,8 +34,8 @@ final class OSCAndReply: Sketch {
     /// 届いた `/hit` の数。
     private var hits = 0
 
-    func setup() {
-        osc = try? createOSC(listen: Self.port, send: ("127.0.0.1", Self.port))
+    func setup() throws {
+        osc = try createOSC(listen: Self.port, send: ("127.0.0.1", Self.port))
     }
 
     func draw() {

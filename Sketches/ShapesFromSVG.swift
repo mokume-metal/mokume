@@ -32,6 +32,7 @@ final class ShapesFromSVG: Sketch {
     private var mark: Shape?
     /// 待たない口で読む上端の波。**届くまでは `nil`**
     private var wave: Shape?
+    private var waveFailure: String?
 
     /// 印に掛ける色。
     private static let tints: [LinearRGBA] = [
@@ -39,21 +40,28 @@ final class ShapesFromSVG: Sketch {
         color(230, 90, 120), color(250, 220, 90), color(180, 140, 250),
     ]
 
-    func setup() {
+    func setup() throws {
         // **リポジトリには SVG のファイルを置かない**ので、検体をここで書き出してから読んで
         // いる。**普通のスケッチにこの書き出しは要らない** — 手元にあるファイルの場所を
         // `loadShape` へ渡すだけでよい
-        logo = try? loadShape(Self.written(Self.logoSource, as: "mokume-reference-logo.svg"))
-        if let read = try? loadShape(Self.written(Self.markSource, as: "mokume-reference-mark.svg")),
-            let box = read.bounds
-        {
+        logo = try loadShape(Self.written(Self.logoSource, as: "mokume-reference-logo.svg"))
+        let read = try loadShape(Self.written(Self.markSource, as: "mokume-reference-mark.svg"))
+        if let box = read.bounds {
             // 読んだ形の外接の中心を、組み立ての中で原点へ寄せる。ファイルを開いて確かめた寸法を
             // コードへ写さずに済む
             mark = createShape { shape(read, -box.center.x, -box.center.y) }
         }
         // 読んでいる間フレームを止めない読み方。読み解きは別の仕事で回り、形にするのは届いた後
-        let wavePath = Self.written(Self.waveSource, as: "mokume-reference-wave.svg")
-        Task { wave = try? await requestShape(wavePath) }
+        // 波は追加の装飾。失敗しても同期のロゴと印は比較できるので続ける。
+        Task {
+            do {
+                let wavePath = try Self.written(Self.waveSource, as: "mokume-reference-wave.svg")
+                wave = try await requestShape(wavePath)
+            } catch {
+                waveFailure = "requestShape failed (see log)"
+                print("shapes-from-svg: requestShape: \(error)")
+            }
+        }
     }
 
     func draw() {
@@ -90,6 +98,11 @@ final class ShapesFromSVG: Sketch {
         }
 
         if let wave { shape(wave, 0, 6) }
+        if let waveFailure {
+            fill(255, 180, 140)
+            noStroke()
+            text(waveFailure, 20, 28)
+        }
 
         fill(200, 205, 215)
         noStroke()
@@ -99,9 +112,9 @@ final class ShapesFromSVG: Sketch {
     }
 
     /// 文字を一時ディレクトリへ書いて、その場所を返す。
-    private static func written(_ text: String, as name: String) -> String {
+    private static func written(_ text: String, as name: String) throws -> String {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        try? text.write(to: url, atomically: true, encoding: .utf8)
+        try text.write(to: url, atomically: true, encoding: .utf8)
         return url.path
     }
 
