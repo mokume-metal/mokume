@@ -185,6 +185,11 @@ enum MCPCommand {
         return (package, Invocation.facetBase(under: package, workDirectory: workDirectory))
     }
 
+    /// 古い写しの置き場を掃く既定の場所 — 窓口が立つ製品の呼び口 (`Command.dispatch`) は、これを掃く。
+    /// 共有の一時の場所のままであることは、`MCPServerTests` が見る (掃く場所を取り違えると、
+    /// 信号で終わった窓口の置き場が誰にも掃かれずに積もる)。
+    static var defaultScratch: URL { FileManager.default.temporaryDirectory }
+
     /// - Parameters:
     ///   - scratch: 信号で終わった窓口の観測の写しの置き場を掃く、一時の場所。**検査から差し替える** —
     ///     既定の共有の一時の場所は、他のプロセスや過去の実行が積んだ項目の全体を走査する
@@ -195,7 +200,7 @@ enum MCPCommand {
     ///     閉じるまで読み続けるので、回す前に止まることを確かめる検査がここで固まらないように
     ///     する (`WatchCommand.run(_:watching:)` と同じ作法)。
     static func run(
-        _ arguments: [String], scratch: URL = FileManager.default.temporaryDirectory,
+        _ arguments: [String], scratch: URL = MCPCommand.defaultScratch,
         serving: (MCPServer) -> Void = { $0.serve() }
     ) throws(CommandFailure) {
         // **窓口を立てる前に解く。** 立ててからでは、誤りを言う前に標準入力を待つ

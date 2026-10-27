@@ -1555,6 +1555,35 @@ struct MCPServerTests {
         #expect(FileManager.default.fileExists(atPath: unrelated.path), "写しの置き場でない項目を消した")
     }
 
+    /// **製品の呼び口は、既定で共有の一時の場所を掃く。** 検査は掃く場所を差し替えて走らせる (共有の
+    /// 一時の場所を走査しない) ので、既定の配線は別に見る: 既定値の名前つきの定数が共有の一時の場所で、
+    /// `run` の既定値がそれを指し、`Command.dispatch` が場所を渡さずに呼ぶこと。共有の一時の場所は
+    /// 走査しない。
+    @Test("製品の呼び口は、掃く場所を渡さず、既定の共有の一時の場所を掃く")
+    func theProductDoorSweepsTheSharedTemporaryDirectoryByDefault() throws {
+        #expect(
+            MCPCommand.defaultScratch.standardizedFileURL
+                == FileManager.default.temporaryDirectory.standardizedFileURL)
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // MokumeCLITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // リポジトリ直下
+            .appendingPathComponent("Sources/MokumeCLI", isDirectory: true)
+        let server = try String(
+            contentsOf: sources.appendingPathComponent("MCP/MCPServer.swift"), encoding: .utf8)
+        #expect(
+            server.contains("scratch: URL = MCPCommand.defaultScratch"),
+            "`run` の既定値が、名前つきの既定の場所を指していない")
+        #expect(
+            server.contains("ObservationCopies.sweepStale(in: scratch)"),
+            "`run` が渡された場所を掃いていない")
+        let command = try String(
+            contentsOf: sources.appendingPathComponent("Command.swift"), encoding: .utf8)
+        #expect(
+            command.contains("try MCPCommand.run(rest)\n"),
+            "`Command.dispatch` が掃く場所を渡している (製品は既定の場所を掃く)")
+    }
+
     /// 引数の誤りでは、掃除まで進まない (在らない場所に窓口を立てる前に断る)。
     @Test("引数の誤りでは、置き場を掃かない")
     func aWrongArgumentSweepsNothing() throws {

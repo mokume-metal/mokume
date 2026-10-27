@@ -76,8 +76,10 @@ public nonisolated final class ScratchOwner: @unchecked Sendable {
         }
         var failed: [URL] = []
         for url in urls {
-            // 検査が既に消した (自分で `defer` した) 場所は在らないので、失敗ではない
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            // 検査が既に消した (自分で `defer` した) 場所は在らないので、失敗ではない。
+            // **在るかは `lstat` 相当で見る** — `fileExists` はぶら下がった symlink を「無い」と読んで、
+            // symlink そのものを残す
+            guard (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil else { continue }
             do {
                 try FileManager.default.removeItem(at: url)
             } catch {
@@ -88,32 +90,88 @@ public nonisolated final class ScratchOwner: @unchecked Sendable {
     }
 }
 
-/// **プロセスの終わりに消す、検査の一時の区画。**
+/// 持ち主の居ない古い検査の親を掃く (``TestScratch`` が最初の使用で 1 度だけ呼ぶ)。
 ///
-/// 全検査が 1 つを分け持ち、`atexit` で消す (`TemplateBuildTests` の `SharedDebugScratch` と同じ作法)。
-/// 区画の名前と置き場所は、今までの `temporaryDirectory.appendingPathComponent("mokume-…-<UUID>")` と
-/// 同じなので、検査の中身は変わらない。
+/// 製品の `ObservationCopies.sweepStale` と同じ作法 — 名前の `<pid>` が、いま走っていない
+/// プロセスのものだけを消す。**自分の親と、走っている検査の親は触らない。** pid の再利用で消し
+/// 損ねることはあっても、生きている検査の親は消さない向きに倒す。製品の型は `MokumeCLI` の
+/// internal で、この target は Foundation だけに依るので、生死の判定は同じ式を写している。
+/// 接頭辞が違うもの (製品の置き場・他の検査の区画・既に積もった `mokume-*`) と、`<pid>` を
+/// 読めない名前には触れない。
+public nonisolated enum ScratchSweep {
+    /// 検査の親の名前の頭。続く `<pid>-<uuid>` の pid が持ち主。
+    public static let prefix = "mokume-test-"
+
+    /// pid のプロセスが居るか。
+    public static let processExists: @Sendable (pid_t) -> Bool = { pid in
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// `directory` の下の、持ち主の居ない検査の親を消す。
+    ///
+    /// - Parameter isAlive: pid のプロセスが居るか。検査から差し替える。
+    /// - Returns: 消した親。消せなかったものは含めない。
+    @discardableResult
+    public static func sweepDead(
+        in directory: URL, isAlive: (pid_t) -> Bool = processExists
+    ) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        var removed: [URL] = []
+        for name in names where name.hasPrefix(prefix) {
+            let rest = name.dropFirst(prefix.count)
+            guard let digits = rest.split(separator: "-", maxSplits: 1).first,
+                let pid = pid_t(digits), pid > 0, !isAlive(pid)
+            else { continue }
+            let url = directory.appendingPathComponent(name)
+            do {
+                try FileManager.default.removeItem(at: url)
+                removed.append(url)
+            } catch {
+                continue
+            }
+        }
+        return removed
+    }
+}
+
+/// **プロセスごとの親の下に集めて、プロセスの終わりに消す、検査の一時の区画。**
+///
+/// 区画は一時の場所の直下の `mokume-test-<pid>-<uuid>/` の下に、今までの
+/// `<prefix>-<UUID>` の名前のまま作る (`atexit` で親ごと消す・`TemplateBuildTests` の
+/// `SharedDebugScratch` と同じ作法)。**`atexit` は CI のキャンセル・timeout・クラッシュでは走らない**
+/// ので、最初の使用のときに ``ScratchSweep`` が、持ち主の pid が死んでいる古い親を掃く
+/// (別の作業ツリー・セッションが残したものも含む)。生きている検査の親は触らない。
 public nonisolated enum TestScratch {
-    /// 登録の本体。初めて引いたときに、プロセスの終わりの後始末を頼む。
-    public static let owner: ScratchOwner = {
-        let owner = ScratchOwner()
-        atexit { _ = TestScratch.owner.removeAll() }
-        return owner
+    /// このプロセスの親。初めて引いたときに、古い親を掃き、親を作り、終わりの後始末を頼む。
+    public static let root: URL = {
+        let base = FileManager.default.temporaryDirectory
+        ScratchSweep.sweepDead(in: base)
+        let root = base.appendingPathComponent(
+            "\(ScratchSweep.prefix)\(getpid())-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        atexit {
+            _ = TestScratch.owner.removeAll()
+            try? FileManager.default.removeItem(at: TestScratch.root)
+        }
+        return root
     }()
 
-    /// `<prefix>-<UUID>` の空の区画を一時の場所の直下に作る。
+    /// 登録の本体 (親は ``root``)。
+    public static let owner = ScratchOwner(base: root)
+
+    /// `<prefix>-<UUID>` の空の区画を ``root`` の下に作る。
     public static func directory(_ prefix: String) throws -> URL {
         try owner.directory(prefix)
     }
 
-    /// 一時の場所の直下の `<prefix>-<UUID>[.<pathExtension>]` を返す (作らない)。
+    /// ``root`` の下の `<prefix>-<UUID>[.<pathExtension>]` を返す (作らない)。
     public static func path(
         _ prefix: String, pathExtension: String? = nil, isDirectory: Bool = false
     ) -> URL {
         owner.path(prefix, pathExtension: pathExtension, isDirectory: isDirectory)
     }
 
-    /// 呼び手が名前を決める一時の場所の直下の場所を登録して返す (作らない)。
+    /// 呼び手が名前を決める ``root`` の下の場所を登録して返す (作らない)。
     public static func path(named name: String, isDirectory: Bool = false) -> URL {
         owner.path(named: name, isDirectory: isDirectory)
     }

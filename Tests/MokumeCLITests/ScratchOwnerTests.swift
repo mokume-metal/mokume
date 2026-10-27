@@ -88,9 +88,82 @@ struct ScratchOwnerTests {
 
         let failed = owner.removeAll()
         #expect(!FileManager.default.fileExists(atPath: other.path), "1 つ消せなかっただけで、残りを消さなかった")
+        // root では権限が効かず、消せてしまう
+        if getuid() != 0 {
+            #expect(!failed.isEmpty, "消せなかった場所を返していない (常に空を返しても緑になる)")
+            #expect(
+                failed.map(\.lastPathComponent).allSatisfy { $0.hasPrefix("mokume-locked-") },
+                "消せなかった場所の名乗りが違う: \(failed)")
+        }
+    }
+
+    @Test("ぶら下がった symlink も、在る場所として消す")
+    func aDanglingSymlinkIsRemoved() throws {
+        let owner = try makeOwner()
+        let link = owner.path("mokume-dangling")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.path, withDestinationPath: owner.base.appendingPathComponent("nowhere").path)
+        #expect(!FileManager.default.fileExists(atPath: link.path), "前提: 指す先が無い")
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil)
+
+        #expect(owner.removeAll().isEmpty)
         #expect(
-            failed.map(\.lastPathComponent).allSatisfy { $0.hasPrefix("mokume-locked-") },
-            "消せなかった場所の名乗りが違う: \(failed)")
+            (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil,
+            "symlink そのものが残った")
+    }
+
+    // MARK: - 死んだ検査の親の掃除
+
+    private func parent(_ pid: pid_t, in base: URL, tail: String = "\(UUID().uuidString)") throws -> URL {
+        let url = base.appendingPathComponent("\(ScratchSweep.prefix)\(pid)-\(tail)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: url.appendingPathComponent("request.json"))
+        return url
+    }
+
+    @Test("持ち主の pid が死んでいる親だけを、中身ごと掃く。生きている親・別の接頭辞・壊れた名前は残す")
+    func onlyDeadOwnersParentsAreSwept() throws {
+        let base = try TestScratch.directory("mokume-sweep-check")
+        // 走っているはずのない pid (macOS の pid は 99999 まで)
+        let dead = try parent(4_000_021, in: base)
+        let mine = try parent(getpid(), in: base)
+        let others = [
+            base.appendingPathComponent("mokume-picture-copies-4000021-aaaa", isDirectory: true),
+            base.appendingPathComponent("mokume-observe-4000021-bbbb", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)notapid-cccc", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)", isDirectory: true),
+            base.appendingPathComponent("\(ScratchSweep.prefix)0-dddd", isDirectory: true),
+        ]
+        for url in others {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+
+        let removed = ScratchSweep.sweepDead(in: base)
+        #expect(removed.map(\.lastPathComponent) == [dead.lastPathComponent])
+        #expect(!FileManager.default.fileExists(atPath: dead.path), "死んだ持ち主の親が残った")
+        for url in [mine] + others {
+            #expect(FileManager.default.fileExists(atPath: url.path), "消してはいけない: \(url.lastPathComponent)")
+        }
+    }
+
+    @Test("生死の判定は差し替えられ、生きているとされた pid の親は掃かない")
+    func theLivenessJudgementDecidesWhatIsSwept() throws {
+        let base = try TestScratch.directory("mokume-sweep-check")
+        let deadOne = try parent(4_000_022, in: base)
+        let aliveOne = try parent(4_000_023, in: base)
+
+        ScratchSweep.sweepDead(in: base, isAlive: { $0 == 4_000_023 })
+        #expect(!FileManager.default.fileExists(atPath: deadOne.path))
+        #expect(FileManager.default.fileExists(atPath: aliveOne.path), "生きているとされた親を消した")
+
+        ScratchSweep.sweepDead(in: base, isAlive: { _ in false })
+        #expect(!FileManager.default.fileExists(atPath: aliveOne.path))
+    }
+
+    @Test("既定の判定は、自分の pid を生きていると読み、居ない pid を死んでいると読む")
+    func theDefaultJudgementReadsThisProcessAsAlive() {
+        #expect(ScratchSweep.processExists(getpid()))
+        #expect(!ScratchSweep.processExists(4_000_024))
     }
 
     @Test("名前を決める場所と、別の方法で作った場所も預けられる")
@@ -111,8 +184,15 @@ struct ScratchOwnerTests {
     /// **全検査が分け持つ持ち主 (``TestScratch``) は、プロセスの終わりに預かった区画を消す。**
     /// 1 本の検査の中からは「終わり」が見えないので、子のプロセス (exit test) に区画を作らせ、
     /// 子が終わった後の親から見る。後始末を `atexit` へ頼む 1 行を外すと、ここだけが赤くなる。
-    @Test("プロセスが終わると、共有の持ち主が預かった区画は中身ごと消える")
+    @Test("プロセスが終わると、共有の持ち主が預かった区画と親は消える。最初の使用では、死んだ検査の親を掃く")
     func theSharedOwnerCleansUpWhenTheProcessEnds() async throws {
+        // 子の最初の使用が掃く対象。持ち主の pid は居ない。名前は 1 つで、別のセッションの掃除が
+        // 先に消しても (この検査の前提には要らないので) 赤にならない
+        let decoy = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "\(ScratchSweep.prefix)4000025-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: decoy, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: decoy) }
+
         let result = await #expect(processExitsWith: .success, observing: [\.standardOutputContent]) {
             let directory = try TestScratch.directory("mokume-exit-check")
             try Data("x".utf8).write(to: directory.appendingPathComponent("request.json"))
@@ -120,13 +200,18 @@ struct ScratchOwnerTests {
             try Data("riff".utf8).write(to: file)
             print("OWNED \(directory.path)")
             print("OWNED \(file.path)")
+            print("OWNED \(TestScratch.root.path)")
         }
         let output = String(decoding: try #require(result).standardOutputContent, as: UTF8.self)
         let paths = output.split(separator: "\n").filter { $0.hasPrefix("OWNED ") }
             .map { String($0.dropFirst("OWNED ".count)) }
-        #expect(paths.count == 2, "子が作った場所を名乗らなかった。標準出力:\n\(output)")
+        #expect(paths.count == 3, "子が作った場所を名乗らなかった。標準出力:\n\(output)")
         for path in paths {
             #expect(!FileManager.default.fileExists(atPath: path), "子が終わったのに残っている: \(path)")
         }
+        #expect(!FileManager.default.fileExists(atPath: decoy.path), "子の最初の使用が、死んだ検査の親を掃かなかった")
+        // 生きている (この) 検査の親は、子の掃除に巻き込まれない
+        #expect(FileManager.default.fileExists(atPath: TestScratch.root.path))
+        #expect(!paths.contains(TestScratch.root.path), "子と親が同じ親を使っている")
     }
 }

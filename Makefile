@@ -447,7 +447,8 @@ TSAN_SKIP := SecondRunTests/ \
 	NonisolatedValueFunctionsTests/realMouthsSayOncePerMouthAcrossThreads \
 	WarningDigestTests/standardErrorStillGetsOneLine \
 	RunCommandTests/aStopSignalTakesTheSketchDownToo \
-	RenderCommandTests/aSigintToTheToolStopsTheChild
+	RenderCommandTests/aSigintToTheToolStopsTheChild \
+	ScratchOwnerTests/theSharedOwnerCleansUpWhenTheProcessEnds
 
 test-tsan: ## ThreadSanitizer で組んだ検査を回す (ホストの定期の job が走らせる。ci-check には含まれない)
 	@mkdir -p .build
