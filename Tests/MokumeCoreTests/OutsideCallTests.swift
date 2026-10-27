@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -187,8 +188,7 @@ struct OutsideCallTests {
 
     @Test("Task から頼んだ save() は、終わらせてもファイルにならない")
     func saveFromATaskWritesNothing() async throws {
-        let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-outside-call-\(UUID().uuidString).png")
+        let out = TestScratch.path("mokume-outside-call", pathExtension: "png")
         defer { try? FileManager.default.removeItem(at: out) }
         let sketch = Asking()
         sketch.ask = { $0.save(out.path) }

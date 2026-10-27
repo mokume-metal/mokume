@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -18,8 +19,7 @@ struct DocumentLoadingTests {
     }
 
     /// 検査ごとに別の置き場。終わったら消す。
-    private let folder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-documents-\(UUID().uuidString)")
+    private let folder = TestScratch.path("mokume-documents")
 
     private func file(_ name: String, _ text: String) throws -> String {
         try file(name, Data(text.utf8))

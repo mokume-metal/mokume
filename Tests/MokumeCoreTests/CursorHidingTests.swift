@@ -3,6 +3,7 @@
 
 import Foundation
 import IOSurface
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -338,9 +339,7 @@ struct CursorHidingOutsideRunTests {
 @MainActor
 struct CursorHidingSketchTests {
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-cursor-hiding-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-cursor-hiding")
         return facet
     }
 

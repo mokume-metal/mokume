@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -103,8 +104,7 @@ struct PosixReasonTests {
 
     /// 書き出しの置き場。外した権利は `defer` で戻す。
     static func folder() throws -> URL {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-posix-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-posix")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
     }

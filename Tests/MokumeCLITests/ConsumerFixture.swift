@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import mokume
 
 @testable import MokumeCLI
@@ -16,9 +17,7 @@ import mokume
 enum ConsumerFixture {
     /// 使い捨てのディレクトリ。
     static func makeDirectory(_ label: String = "consumer") throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-\(label)-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-\(label)")
         return url
     }
 

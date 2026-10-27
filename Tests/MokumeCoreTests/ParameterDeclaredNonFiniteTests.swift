@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -57,9 +58,7 @@ struct ParameterDeclaredNonFiniteTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-declared-nonfinite-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-declared-nonfinite")
         return directory
     }
 

@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -63,9 +64,7 @@ struct ObservationTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-observe")
         return directory
     }
 
@@ -651,9 +650,7 @@ struct FirstObservedFrameTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-first-frame-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-first-frame")
         return directory
     }
 
@@ -781,9 +778,7 @@ struct MeasureTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-measure-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-measure")
         return directory
     }
 

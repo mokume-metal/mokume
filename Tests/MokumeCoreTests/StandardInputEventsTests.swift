@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -274,8 +275,7 @@ struct StandardInputEventsTests {
         #expect(SharedFrameSurface.owner(environment: [key: "  "]) == nil, "空白だけの名乗りを合図と読んだ")
         #expect(SharedFrameSurface.owner(environment: [key: " mokume watch "]) == "mokume watch")
 
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let facet = TestScratch.path("mokume-viewport", isDirectory: true)
         #expect(!SharedFrameSurface.isEnabled(at: facet, owner: nil))
         #expect(!SharedFrameSurface.isEnabled(at: facet, owner: "mokume watch"), "区画が無いのに共有面にした")
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)

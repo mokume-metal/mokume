@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -19,8 +20,7 @@ struct ObserveTests {
     /// **要求を置く前から応答が在る形にする** — `exchange` は id の一致で完了を判定するので、
     /// 先に置いてあれば待たない。待ちを短くするのではなく、待ちを起こさない形にしてある。
     private func makeTools(report: [String: Any]) throws -> Tools {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-observe", isDirectory: true)
         let facets = Facets(directory: directory)
         try FileManager.default.createDirectory(
             at: facets.observeFacet, withIntermediateDirectories: true)
@@ -35,7 +35,12 @@ struct ObserveTests {
         for name in Set(names) {
             try Data("picture".utf8).write(to: facets.observeFacet.appendingPathComponent(name))
         }
-        return Tools(facets: facets, makeID: { "fixed" })
+        var tools = Tools(facets: facets, makeID: { "fixed" })
+        // 写しの置き場は検査の区画へ向ける。既定は共有の一時の場所に `mokume-picture-copies-<pid>-*` を作り、
+        // 殺されると (消すのは `deinit` だけ) 積もる (#3298)
+        tools.copies = ObservationCopies(
+            root: TestScratch.path("mokume-picture-copies", isDirectory: true))
+        return tools
     }
 
     /// どの応答にも要る土台。ここに `image` や `frames` を足して形を作る。
@@ -163,8 +168,7 @@ struct ObserveTests {
     /// ことの両方で見る (`MCPServerTests.refusesSeriesThatAreNotWholeNumbers` と同じ形)。
     @Test("時刻の不正値と連写指定は要求を送る前に断る")
     func rejectsInvalidTimeArguments() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-observe", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let facets = Facets(directory: directory, waitLimit: 0.2)
         let tools = Tools(facets: facets, makeID: { "fixed" })

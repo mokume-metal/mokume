@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -67,8 +68,7 @@ struct ShaderErrorLineTests {
     }
 
     private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-line-\(UUID().uuidString)")
+        let url = TestScratch.path("mokume-shader-line")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

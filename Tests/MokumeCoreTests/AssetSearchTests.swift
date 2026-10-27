@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -14,9 +15,7 @@ import Testing
 @Suite("資材を探す並び")
 struct AssetSearchTests {
     private func makeWorkspace() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-assets-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-assets")
         return root
     }
 

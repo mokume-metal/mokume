@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -28,8 +29,7 @@ struct BuildReportTests {
     /// 見張りが書くときと**同じ口を通す**。かつてはここで `JSONEncoder` を組み直して
     /// いたが、それは `WatchSession` の設定の写しで、割れても誰も気付かなかった (#989)。
     private func encoded(_ report: BuildReport) throws -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-build-\(UUID().uuidString)", isDirectory: true)
+        let url = TestScratch.path("mokume-build", isDirectory: true)
             .appendingPathComponent("status.json")
         try AtomicFile.writeJSON(report, to: url)
         return try String(contentsOf: url, encoding: .utf8)

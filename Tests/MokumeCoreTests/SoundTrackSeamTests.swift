@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import MokumeTestSupport
 import Testing
 
 // **`@testable` を付けない。** 外のパッケージが音を載せる口 (``SoundSource``・``SoundWindow``) は公開で、
@@ -86,8 +87,7 @@ struct SoundTrackSeamTests {
     }
 
     private func temporaryMovie() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-track-\(UUID().uuidString).mov")
+        TestScratch.path("mokume-sound-track", pathExtension: "mov")
     }
 
     /// 書いた `.mov` の音声トラックを、標本として読み戻す。**符号化を通った実物を読む。**

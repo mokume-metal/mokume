@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 import mokume
@@ -142,9 +143,7 @@ struct WatchSessionTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-watch-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-watch")
         return url
     }
 
@@ -397,9 +396,7 @@ struct WatchSessionTests {
     /// 側で `try?` に戻っても緑のままになる — ここでは本物の `Process` を起こせない形で起こす。
     @Test("本物の起こす口は、起こせなかった在処と原因を投げる")
     func theLiveLaunchThrowsWhereAndWhy() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unlaunchable-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-unlaunchable")
         defer { try? FileManager.default.removeItem(at: directory) }
         let hooks = WatchSession.Hooks.live(in: directory, invocation: Invocation())
 
@@ -605,8 +602,7 @@ struct WatchSessionTests {
     /// 名乗る読み替えを、検査が固定していた。
     @Test("本物の作り直しの口は、起こせなかった誤りを投げ返す")
     func theLiveRebuildThrowsWhatStoppedIt() async throws {
-        let nowhere = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-nowhere-\(UUID().uuidString)", isDirectory: true)
+        let nowhere = TestScratch.path("mokume-nowhere", isDirectory: true)
         let hooks = WatchSession.Hooks.live(in: nowhere, invocation: Invocation())
 
         await #expect(
@@ -3088,8 +3084,7 @@ struct WatchSessionTests {
 @Suite("ソースの世代")
 struct SourceStampTests {
     private func makeSketch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stamp-\(UUID().uuidString)", isDirectory: true)
+        let url = TestScratch.path("mokume-stamp", isDirectory: true)
         try FileManager.default.createDirectory(
             at: url.appendingPathComponent("Sources/app"), withIntermediateDirectories: true)
         try "// package".write(
@@ -3382,9 +3377,7 @@ struct FrameRateHandoffTests {
     /// だけの子を起こして見る。
     @Test("本物の起こす口は、窓の持ち主として自分の名乗りを子へ渡す")
     func theLiveLaunchPassesItselfAsTheViewportOwner() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-owner-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-owner")
         defer { try? FileManager.default.removeItem(at: directory) }
         let seen = directory.appendingPathComponent("seen")
         let executable = directory.appendingPathComponent("sketch")
@@ -3417,8 +3410,7 @@ struct FrameRateHandoffTests {
     /// **束に写される置き場だけを、宣言から決める** (#2517)。ディレクトリの並びから推し量らない。
     @Test("置き場の元は、product の target が .copy(\"assets\") を宣言したものだけから決める")
     func theAssetOriginComesFromTheDeclaration() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-origin", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         func make(_ path: String) throws {
             try FileManager.default.createDirectory(
@@ -3483,8 +3475,7 @@ struct FrameRateHandoffTests {
     /// 本物の起こす口が、見張りの子へ置き場の元を渡す。導き手が決めた置き場を渡し、決められなければ渡さない。
     @Test("本物の起こす口は、導き手が決めた資材の置き場の元を子へ渡す")
     func theLiveLaunchPassesTheAssetOrigin() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-origin", isDirectory: true)
         let assets = directory.appendingPathComponent("Sources/sketch/assets", isDirectory: true)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -3518,8 +3509,7 @@ struct FrameRateHandoffTests {
     /// 決められなかったときだけ、置き場に断片が在れば名乗る。
     @Test("置き場の元を決められなかったときだけ、断片が在れば保存しても差し替わらないと名乗る")
     func anUndecidedOriginIsNamedOnlyWhenFragmentsExist() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-origin", isDirectory: true)
         let assets = root.appendingPathComponent("Sources/wa/assets", isDirectory: true)
         try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

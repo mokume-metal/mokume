@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -23,8 +24,7 @@ struct ParamReportClaimTests {
     private static let sentinel = #"{"sentinel":"the holder's catalogue"}"#
 
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-claim-\(UUID().uuidString)", isDirectory: true)
+        let facet = TestScratch.path("mokume-claim", isDirectory: true)
             .appendingPathComponent("params", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         try Data(Self.sentinel.utf8).write(to: WorkDirectory.reportURL(under: facet))

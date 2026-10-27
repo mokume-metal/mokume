@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -69,9 +70,7 @@ struct EmptyPlaceTests {
 
     @Test("mcp の場所が空なら、作業ディレクトリに解かずに止まる")
     func anEmptyPlaceOfMCPIsRefused() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-empty-place-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-empty-place")
         defer { try? FileManager.default.removeItem(at: root) }
         // 作業ディレクトリは在る。在るので、解いてしまえば通る — それを断る
         expectRefused(
@@ -153,9 +152,7 @@ struct EmptyPlaceTests {
     /// 名乗りの行が先に立ち、診た場所がどこかも書く。
     @Test("doctor は空の場所で止まらず、空だったことと、代わりに診た場所を名乗る")
     func doctorNamesAnEmptyPlace() throws {
-        let typedFrom = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-empty-doctor-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: typedFrom, withIntermediateDirectories: true)
+        let typedFrom = try TestScratch.directory("mokume-empty-doctor")
         defer { try? FileManager.default.removeItem(at: typedFrom) }
         let store = typedFrom.appendingPathComponent("store").path
         let environment = [BuildDirectory.environmentKey: store]

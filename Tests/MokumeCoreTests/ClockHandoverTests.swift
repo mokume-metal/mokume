@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -68,8 +69,7 @@ struct ClockHandoverTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-handover-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-handover")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -144,8 +144,7 @@ struct ClockHandoverTests {
         #expect(unset == [key], "絶対パスでなくても、合図は環境から消す")
 
         unset = []
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-handover-\(UUID().uuidString)").path
+        let directory = TestScratch.path("mokume-handover").path
         let given = ClockHandover.startup(environment: [key: directory], unset: { unset.append($0) })
         #expect(given != nil)
         #expect(unset == [key])

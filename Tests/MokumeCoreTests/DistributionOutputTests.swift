@@ -4,6 +4,7 @@
 import AVFoundation
 import Foundation
 import ImageIO
+import MokumeTestSupport
 import Testing
 import UniformTypeIdentifiers
 
@@ -16,9 +17,7 @@ import UniformTypeIdentifiers
 @Suite("配る形 (GIF・MP4) の書き手")
 struct DistributionOutputTests {
     private func withDirectory(_ body: (URL) throws -> Void) throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("mokume-distribution-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-distribution")
         defer { try? FileManager.default.removeItem(at: directory) }
         try body(directory)
     }
@@ -321,9 +320,7 @@ struct DistributionOutputTests {
 
     /// 非同期の検査から使う一時ディレクトリ。
     private func withDirectoryAsync(_ body: (URL) async throws -> Void) async throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("mokume-distribution-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-distribution")
         defer { try? FileManager.default.removeItem(at: directory) }
         try await body(directory)
     }

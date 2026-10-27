@@ -5,6 +5,7 @@ import AVFAudio
 import AVFoundation
 import CoreVideo
 import Foundation
+import MokumeTestSupport
 import Testing
 import VideoToolbox
 
@@ -37,8 +38,7 @@ nonisolated enum TestMovie {
 
     /// 一時ディレクトリの中の、重ならない名前。
     static func temporaryURL(_ suffix: String = "mov") -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-movie-\(UUID().uuidString).\(suffix)")
+        TestScratch.path("mokume-movie", pathExtension: suffix)
     }
 
     /// `frames` 枚の動画を `fps` で書く。`index` 枚目の画素 (x, y) の BGR は `pixel(index, x, y)`。

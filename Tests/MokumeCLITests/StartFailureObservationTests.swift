@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -15,8 +16,7 @@ import mokume
 @Suite("起動できなかった子の後の観測")
 struct StartFailureObservationTests {
     private func makeFacets() -> (Facets, URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-start-failure-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-start-failure", isDirectory: true)
         return (Facets(directory: directory, waitLimit: 0.05), directory)
     }
 
@@ -150,8 +150,7 @@ struct StartFailureObservationTests {
 
     @Test("起動できなかった子は、見張りに起こされ、区画 build が在れば自分の pid で理由の全文を置く")
     func aChildHandsOverItsReasonThroughTheBuildFacet() throws {
-        let base = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-start-note-\(UUID().uuidString)", isDirectory: true)
+        let base = TestScratch.path("mokume-start-note", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: base)
 
@@ -172,8 +171,7 @@ struct StartFailureObservationTests {
     /// 見張りの残した区画に、誰も掃かないファイルを置き続けない。
     @Test("見張りに起こされていない子は、区画 build が在っても理由を置かない")
     func aChildNotStartedByTheWatcherLeavesNothing() throws {
-        let base = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-start-note-\(UUID().uuidString)", isDirectory: true)
+        let base = TestScratch.path("mokume-start-note", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let facet = WorkDirectory.facet(WorkDirectory.buildFacetName, under: base)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)

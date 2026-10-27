@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -93,8 +94,7 @@ struct NewCommandTests {
     /// `link`、SwiftPM は `lib` を要る。
     @Test("symlink を通って作るスケッチでも、依存の名前は実体の場所から解く")
     func namesAPathDependencyFromWhereTheSketchReallyIs() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-link-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-new-link", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let real = root.appendingPathComponent("real/lib", isDirectory: true)
         let work = root.appendingPathComponent("work", isDirectory: true)
@@ -161,9 +161,7 @@ struct NewCommandTests {
     /// `swift package dump-package` が通ること)。依存の中身は読まないので、指す先は空でよい。
     @Test("場所に \" や \\ があっても、作った Package.swift を SwiftPM が読める")
     func aLocalWithQuotesMakesAReadableManifest() throws {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-quoted-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let workspace = try TestScratch.directory("mokume-new-quoted")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let options = NewCommand.Options(
             name: "quoted", path: workspace.path,
@@ -210,8 +208,7 @@ struct NewCommandTests {
         "作った後の案内は、走らせた場所からそのまま貼れば作った場所へ入る",
         arguments: [".", "dir with space", "it's here", #"a"b\c $HOME"#])
     func theGuidanceCanBePastedWhereItWasTyped(path: String) throws {
-        let typedFrom = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-guide-\(UUID().uuidString)", isDirectory: true)
+        let typedFrom = TestScratch.path("mokume-new-guide", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: typedFrom) }
         let root = try NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -404,9 +401,7 @@ struct NewCommandTests {
 
     @Test("長すぎる名前は、何も作らずに止まる")
     func aTooLongNameCreatesNothing() throws {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-long-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let workspace = try TestScratch.directory("mokume-new-long")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let name = String(repeating: "a", count: 130)
         #expect(throws: CommandFailure.nameTooLong(name: name, length: 130)) {

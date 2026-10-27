@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -49,8 +50,7 @@ struct FacetsWaitTests {
     }
 
     private func makeFacets(waitLimit: TimeInterval = Facets.defaultWaitLimit) -> (Facets, URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-facets-wait-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-facets-wait", isDirectory: true)
         return (Facets(directory: directory, waitLimit: waitLimit), directory)
     }
 

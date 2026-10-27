@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -131,8 +132,7 @@ struct DataFromURLTests {
 
     @Test("ファイルを読む道は変わらない")
     func filesAreStillRead() async throws {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-data-url-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-data-url")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let path = folder.appendingPathComponent("t.csv").path

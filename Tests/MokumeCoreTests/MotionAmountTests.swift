@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -189,9 +190,7 @@ struct MotionAmountTests {
 @Suite("外から送る、位置を持たない移動")
 struct RelativeMotionInboxTests {
     private func makeFacet() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-input-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-input")
         return url
     }
 

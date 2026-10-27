@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -362,9 +363,7 @@ struct UnitShapeTests {
     func reloadInPlaceSwapsUnitShapeStatesTogether() throws {
         let gpu = try RenderDevice()
         let c = try CanvasFixture.make(gpu: gpu, width: 80, height: 32)
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unit-sphere-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-unit-sphere")
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("paint.metal")
         let red = LinearRGBA.linear(red: 1, green: 0, blue: 0)
@@ -421,9 +420,7 @@ struct UnitShapeTests {
         let runtime = try SketchRuntime(sketch: sketch, gpu: gpu, clock: nil, now: { 0 })
         try runtime.advance()
         sketch.target = runtime.canvas
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unit-sphere-bg-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-unit-sphere-bg")
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("paint.metal")
         // 定数を毎回変えて、冷えた状態で組ませる (同じ中身は Metal の控えに当たる)

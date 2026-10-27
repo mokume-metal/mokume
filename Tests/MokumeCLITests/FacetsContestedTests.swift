@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -34,8 +35,7 @@ struct FacetsContestedTests {
     }
 
     private func makeFacets(waitLimit: TimeInterval = 5) -> (Facets, URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-facets-contested-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-facets-contested", isDirectory: true)
         return (Facets(directory: directory, waitLimit: waitLimit), directory)
     }
 
@@ -275,8 +275,7 @@ struct FacetsContestedTests {
 
     @Test("期限で諦めた回に別の書き手が置き換えていたら、その 1 文を応えなかった案内の前に足す")
     func aTimedOutCallSaysTheRequestWasReplaced() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-facets-contested-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-facets-contested", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let facets = Facets(directory: directory, waitLimit: 0.4)
         let place = facets.inputFacet

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import SwiftUI
 import Testing
 
@@ -44,8 +45,7 @@ struct ParameterRoundTripTests {
     }
 
     private func makeWorkspace() throws -> Workspace {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-round-trip-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-round-trip", isDirectory: true)
         let facet = root.appendingPathComponent("params", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         return Workspace(facet: facet, saved: root.appendingPathComponent("params.json"))

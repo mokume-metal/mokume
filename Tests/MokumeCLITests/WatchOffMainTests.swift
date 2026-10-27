@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 import mokume
@@ -559,9 +560,7 @@ struct WatchOffMainTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-watch-off-main-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-watch-off-main")
         return url
     }
 }

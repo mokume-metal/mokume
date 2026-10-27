@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -15,8 +16,7 @@ import Testing
 struct WorkDirectoryTests {
     /// 使い捨ての場所。**作らない** — 在るかどうかは検査の側が決める。
     private func temporaryPath(_ tag: String, isDirectory: Bool = true) -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-\(tag)-\(UUID().uuidString)", isDirectory: isDirectory)
+        TestScratch.path("mokume-\(tag)", isDirectory: isDirectory)
     }
 
     @Test("在るディレクトリは真、無い場所は偽")

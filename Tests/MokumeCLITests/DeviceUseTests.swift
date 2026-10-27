@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -14,8 +15,7 @@ import Testing
 @Suite("機材を使うか")
 struct DeviceUseTests {
     private func makeSketch(files: [String: String]) throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-device-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-device", isDirectory: true)
         for (path, contents) in files {
             let url = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(

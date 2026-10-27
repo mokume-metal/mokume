@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -138,9 +139,7 @@ struct PublicVectorTests {
     }
 
     private func makeFile() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-vector-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-vector")
         return directory.appendingPathComponent("params.json")
     }
 

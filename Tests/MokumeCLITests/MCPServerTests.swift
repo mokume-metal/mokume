@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -34,10 +35,7 @@ struct MCPServerTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-mcp-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        try TestScratch.directory("mokume-mcp")
     }
 
     /// 観測の区画に置かれる要求。道具が走ったかどうかは、これが在るかで分かる。
@@ -1508,24 +1506,80 @@ struct MCPServerTests {
 
     /// **口そのものが、窓口を回す (標準入力を読む) 前に止まる。** 回す手続きを差し替えて、
     /// 回されたかを見る — 本物を回すと、検査が標準入力を待って固まる。
+    ///
+    /// **掃除の置き場も差し替える** (#3298)。既定の共有の一時の場所は、他のプロセスや過去の実行が
+    /// 積んだ項目の全体 (数万になりうる) を走査する。ここは引数の検査で、その中身に左右されない。
     @Test("引数の誤りでは、口は窓口を回さずに止まる")
     func theDoorStopsBeforeServing() throws {
         let root = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
+        let scratch = try makeDirectory()
         let wrong = [
             ["--help"], [root.path, "b"], [root.appendingPathComponent("nonexistent").path],
         ]
         for arguments in wrong {
             var served = false
             #expect(throws: CommandFailure.self, "\(arguments) で止まらなかった") {
-                try MCPCommand.run(arguments) { _ in served = true }
+                try MCPCommand.run(arguments, scratch: scratch) { _ in served = true }
             }
             #expect(!served, "\(arguments) で窓口を回した")
         }
         // 裏側: 在る場所なら回す
         var served = false
-        try MCPCommand.run([root.path]) { _ in served = true }
+        try MCPCommand.run([root.path], scratch: scratch) { _ in served = true }
         #expect(served)
+    }
+
+    /// **回収の保証は、口が持つ** (#3298・条件 3)。`sweepStale` 単体の検査 (`ObservationCopyTests`) は、
+    /// 口がそれを呼ぶことまでは見ない — 口から掃除を外しても緑のままだった。渡した置き場の中の
+    /// 古い置き場だけを、口が窓口を回す前に消す。
+    @Test("窓口が立つときに、渡した置き場の持ち主の居ない古い写しの置き場を掃く")
+    func theDoorSweepsTheGivenScratchBeforeServing() throws {
+        let root = try makeDirectory()
+        let scratch = try makeDirectory()
+        // 走っているはずのない pid (macOS の pid は 99999 まで)
+        let dead = scratch.appendingPathComponent(
+            "\(ObservationCopies.prefix)4000011-\(UUID().uuidString.lowercased())", isDirectory: true)
+        let mine = scratch.appendingPathComponent(
+            "\(ObservationCopies.prefix)\(getpid())-\(UUID().uuidString.lowercased())", isDirectory: true)
+        let unrelated = scratch.appendingPathComponent("mokume-observe-4000011-aaaa", isDirectory: true)
+        for url in [dead, mine, unrelated] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+
+        var sweptBeforeServing: Bool?
+        try MCPCommand.run([root.path], scratch: scratch) { _ in
+            sweptBeforeServing = !FileManager.default.fileExists(atPath: dead.path)
+        }
+        #expect(sweptBeforeServing == true, "窓口を回す前に、持ち主の居ない置き場を掃かなかった")
+        #expect(FileManager.default.fileExists(atPath: mine.path), "生きている持ち主の置き場を消した")
+        #expect(FileManager.default.fileExists(atPath: unrelated.path), "写しの置き場でない項目を消した")
+    }
+
+    /// **掃く場所の決め方は、純粋な関数が持つ** (#3298)。渡されなければ共有の一時の場所、渡されたら
+    /// そのまま。`run` が決めた場所を掃くことは、上の `theDoorSweepsTheGivenScratchBeforeServing` が
+    /// 実行で見る。**見えない穴**: `Command.dispatch` が場所を渡さないこと (製品の呼び口が省略のまま
+    /// 呼ぶこと) はここでは見ない — 検査から呼ぶ口は `scratch:` を渡すので、製品の呼び口が省略を
+    /// 渡し損ねても (別の場所を渡しても) 緑のままになる。
+    @Test("掃く場所は、渡されなければ共有の一時の場所、渡されればその場所")
+    func theScratchToSweepDefaultsToTheSharedTemporaryDirectory() throws {
+        #expect(
+            MCPCommand.scratchToSweep(given: nil).standardizedFileURL
+                == FileManager.default.temporaryDirectory.standardizedFileURL)
+        let given = try makeDirectory()
+        #expect(MCPCommand.scratchToSweep(given: given) == given)
+    }
+
+    /// 引数の誤りでは、掃除まで進まない (在らない場所に窓口を立てる前に断る)。
+    @Test("引数の誤りでは、置き場を掃かない")
+    func aWrongArgumentSweepsNothing() throws {
+        let scratch = try makeDirectory()
+        let dead = scratch.appendingPathComponent(
+            "\(ObservationCopies.prefix)4000012-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: dead, withIntermediateDirectories: true)
+        #expect(throws: CommandFailure.self) {
+            try MCPCommand.run(["--help"], scratch: scratch) { _ in }
+        }
+        #expect(FileManager.default.fileExists(atPath: dead.path), "誤りの口が掃いた")
     }
 
     @Test("区画が別の場所でも、区画は区画から・仕様はパッケージの場所から読む")
@@ -1835,8 +1889,7 @@ struct MCPServerTests {
 struct FacetExchangeFailureTests {
     /// 親がファイルなので、区画のディレクトリを作れない置き場。
     private func blockedPlace() throws -> URL {
-        let place = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-blocked-\(UUID().uuidString)", isDirectory: false)
+        let place = TestScratch.path("mokume-blocked")
         try Data().write(to: place)
         return place
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -115,9 +116,7 @@ struct ParameterEnumTests {
     /// 面 (`.mokume/params`) を通した往復。応答には候補が載り、候補の外は理由つきで断られる。
     @Test("面を通しても、tide は当たり、sea は notInChoices で断られる")
     func overTheSurface() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-enum-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-enum")
         defer { try? FileManager.default.removeItem(at: facet) }
         let sketch = Painter()
         let surface = ParamSurface(directory: facet, sketch: sketch)
@@ -210,9 +209,7 @@ struct ParameterEnumStoreTests {
     }
 
     private func makeFile() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-enum-store-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-enum-store")
         return directory.appendingPathComponent("params.json")
     }
 
@@ -350,9 +347,7 @@ struct ParameterStepTests {
     }
 
     private func makeFile() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-step-store-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-step-store")
         return directory.appendingPathComponent("params.json")
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -101,8 +102,7 @@ struct RequestCancellationOnASurfaceTests {
 
     /// 1 色の絵を書き出す。大きい絵ほど復号に時間がかかるので、遅れて届く A を作れる。
     private func writePicture(red: UInt8, blue: UInt8, side: Int = 1) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-cancel-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-cancel", pathExtension: "png")
         let bytes = [UInt8]((0..<(side * side)).flatMap { _ in [red, 0, blue, 255] })
         try PNGFile.write(DisplayImage(width: side, height: side, bytes: bytes), to: url)
         return url
@@ -112,8 +112,7 @@ struct RequestCancellationOnASurfaceTests {
     func arrivalsDespiteCancellation() async throws {
         let png = try writePicture(red: 255, blue: 0)
         defer { try? FileManager.default.removeItem(at: png) }
-        let svg = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-cancel-\(UUID().uuidString).svg")
+        let svg = TestScratch.path("mokume-cancel", pathExtension: "svg")
         let body = #"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#
         try Data(body.utf8).write(to: svg)
         defer { try? FileManager.default.removeItem(at: svg) }

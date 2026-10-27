@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -681,9 +682,7 @@ struct WatchStopOffMainTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-watch-stop-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-watch-stop")
         return url
     }
 }

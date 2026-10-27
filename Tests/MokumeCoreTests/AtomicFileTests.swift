@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -23,9 +24,7 @@ struct AtomicFileTests {
     private let sample = Sample(zebra: 1, apple: "a", middle: true)
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-atomic-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-atomic")
         return directory
     }
 

@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import IOSurface
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -290,9 +291,7 @@ struct SelectInputInputTests {
 
     @Test("区画から送ると、待っているときだけ accepted。待っていない・2 本は ignored で、待ちが無い件は名乗る")
     func theInboxChecksTheWait() async throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-select-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-select")
         defer { try? FileManager.default.removeItem(at: facet) }
         let inbox = InputInbox(directory: facet)
         let state = InputState()
@@ -326,9 +325,7 @@ struct SelectInputInputTests {
 
     @Test("区画から送る番号つきの結果は、番号が合うときだけ accepted。合わないものは ignored で名乗る")
     func theInboxChecksTheSerial() async throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-select-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-select")
         defer { try? FileManager.default.removeItem(at: facet) }
         let inbox = InputInbox(directory: facet)
         let state = InputState()
@@ -438,9 +435,7 @@ struct SelectInputSketchTests {
     }
 
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-select-sketch-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-select-sketch")
         return facet
     }
 

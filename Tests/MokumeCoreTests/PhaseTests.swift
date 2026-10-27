@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -155,7 +156,7 @@ struct PhaseRuntimeTests {
 
     @Test("時刻を指定した観測の枚の draw() は観測の秒から巡り、draw() の外と次の枚は作者の時計から巡る")
     func anObservedFrameFollowsTheObservedSecond() throws {
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("mokume-phase-\(UUID())")
+        let path = TestScratch.path("mokume-phase")
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: path) }
         let scene = Scene()

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -79,9 +80,7 @@ struct PointerLockOutsideRunTests {
 @MainActor
 struct PointerLockSketchTests {
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-pointer-lock-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-pointer-lock")
         return facet
     }
 

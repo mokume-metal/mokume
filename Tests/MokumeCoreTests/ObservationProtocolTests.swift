@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -11,9 +12,7 @@ import Testing
 struct ObservationProtocolTests {
     /// 使い捨ての区画を作る。
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-observe")
         return directory
     }
 
@@ -40,8 +39,7 @@ struct ObservationProtocolTests {
 
     @Test("区画が無ければ観測は働かない")
     func staysOffWithoutTheFacet() throws {
-        let absent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-absent-\(UUID().uuidString)", isDirectory: true)
+        let absent = TestScratch.path("mokume-absent", isDirectory: true)
         #expect(FrameObserver.makeIfEnabled(at: absent) == nil)
     }
 

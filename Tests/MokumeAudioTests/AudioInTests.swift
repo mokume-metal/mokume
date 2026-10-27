@@ -3,6 +3,7 @@
 
 import AVFAudio
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -82,8 +83,7 @@ let chord: [Float] = (0..<48_000).map { index in
 
 /// 標本列を 2 チャンネルの 32 bit 浮動小数の WAV に書く (左右とも同じ)。
 func writeWAV(_ samples: [Float], sampleRate: Double) throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-audio-\(UUID().uuidString).wav")
+    let url = TestScratch.path("mokume-audio", pathExtension: "wav")
     let format = try #require(
         AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 2, interleaved: false))
@@ -180,9 +180,7 @@ struct AudioInTests {
     func anObservedFrameShowsTheIntervalEndingAtTheRequestedTime() throws {
         /// `pausing` を指定すると、その枚の `draw()` で時間を止める (観測の後の通常の枚の区間が空になる)
         func run(observingAt frame: Int?, pausingAt pausing: Int? = nil) throws -> [Float] {
-            let facet = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+            let facet = try TestScratch.directory("mokume-audio-observe")
             defer { try? FileManager.default.removeItem(at: facet) }
             var audio: AudioIn?
             var seen: [Float] = []
@@ -228,9 +226,7 @@ struct AudioInTests {
     /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
     @Test("観測の枚の draw() で作った標本列の入り口は、作者の時計の秒を起点にする")
     func anInputMadeOnAnObservedFrameStartsOnTheAuthorsClock() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-audio-observe")
         defer { try? FileManager.default.removeItem(at: facet) }
         var audio: AudioIn?
         var levels: [Float] = []
@@ -266,9 +262,7 @@ struct AudioInTests {
     /// 別に載る (観測の枚だけ)。
     @Test("時刻を指定した観測の枚でも、出どころへ渡す時計の秒は作者の時計のままで、観測の秒は観測の枚にだけ載る")
     func theSourceIsHandedTheAuthorsClockOnAnObservedFrame() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-audio-observe")
         defer { try? FileManager.default.removeItem(at: facet) }
         let spy = ClockSpyAudioSource()
         AudioSketch.onSetup = { sketch in
@@ -569,9 +563,7 @@ struct AudioInTests {
 
     @Test("状態と最後に届いたフレームが、観測の応答の inputs に載る")
     func appearsInObservation() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-audio")
         AudioSketch.onSetup = { _ = try $0.createAudioIn(samples: chord, sampleRate: 48_000) }
         AudioSketch.onDraw = { _ in }
         let runtime = try SketchRuntime(
@@ -594,8 +586,7 @@ struct AudioInTests {
 
     @Test("見つからない・読めない・空・標本化率が正でないときは、作るときに投げる")
     func failuresAreThrownAtCreation() throws {
-        let garbage = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-\(UUID().uuidString).wav")
+        let garbage = TestScratch.path("mokume-audio", pathExtension: "wav")
         try Data("not audio".utf8).write(to: garbage)
         defer { try? FileManager.default.removeItem(at: garbage) }
 

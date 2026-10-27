@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -18,9 +19,7 @@ import mokume
 @Suite("同じ場所の 2 本目の見張り", .signalStateKept)
 struct WatchPlaceLockTests {
     private func makeSketch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-watch-place-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-watch-place")
         try Data(#"// swift-tools-version: 6.2"#.utf8)
             .write(to: url.appendingPathComponent("Package.swift"))
         return url

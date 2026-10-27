@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -379,9 +380,7 @@ struct RenderCommandTests {
     /// 解いた後にパッケージを探すので、`Package.swift` の無い場所でも使い方の誤りが先に出る。
     @Test("引数の誤りは、スケッチを探す前 (ビルドの前) に止まる")
     func argumentErrorsComeBeforeTheBuild() throws {
-        let empty = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-empty-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let empty = try TestScratch.directory("mokume-render-empty")
         defer { try? FileManager.default.removeItem(at: empty) }
 
         let refused = #expect(throws: CommandFailure.self) {
@@ -434,9 +433,7 @@ struct RenderCommandTests {
     private func makeChild(exiting status: Int32, signalled signal: String? = nil) throws
         -> (executable: URL, seen: URL)
     {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render")
         let seen = directory.appendingPathComponent("seen")
         let executable = directory.appendingPathComponent("sketch")
         try """
@@ -507,9 +504,7 @@ struct RenderCommandTests {
     ///
     /// [#2481]: https://github.com/mokume-metal/mokume/issues/2481
     private func makeScriptChild(_ body: String) throws -> (executable: URL, directory: URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-out-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-out")
         let executable = directory.appendingPathComponent("sketch")
         try "#!/bin/sh\n\(body)\n".write(to: executable, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
@@ -548,9 +543,7 @@ struct RenderCommandTests {
     /// 連番は「N 枚中 M 枚」を名乗る。
     @Test("連番が足りなければ、頼んだ枚数と揃った枚数を名乗って 0 以外で終わる")
     func aSeriesThatFallsShortNamesTheCounts() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-series-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-series")
         defer { try? FileManager.default.removeItem(at: directory) }
         // 4 枚頼まれて 2 枚だけ書き、0 で終わる子
         let child = try makeScriptChild(
@@ -612,9 +605,7 @@ struct RenderCommandTests {
 
     @Test("頼んだ枚数がこの回に書かれていれば、何も投げない")
     func aChildThatWroteEverythingPasses() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-done-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-done")
         defer { try? FileManager.default.removeItem(at: directory) }
         let writes = (0..<3).map { "printf x > '\(directory.path)/f-\($0).png'" }
         let child = try makeScriptChild(writes.joined(separator: "; "))
@@ -630,9 +621,7 @@ struct RenderCommandTests {
     /// 前の回の連番が揃って見えてはならない。
     @Test("前の回の連番が残っているだけなら、この回は書けていないと名乗る")
     func leftoversFromAnEarlierRunDoNotPass() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-left-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-left")
         defer { try? FileManager.default.removeItem(at: directory) }
         for number in 0..<3 {
             let file = directory.appendingPathComponent("f-\(number).png")
@@ -683,9 +672,7 @@ struct RenderCommandTests {
             var pid: pid_t?
             let done = DispatchSemaphore(value: 0)
         }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-sigint-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-sigint")
         defer { try? FileManager.default.removeItem(at: directory) }
         let marker = directory.appendingPathComponent("pid")
         let executable = directory.appendingPathComponent("sketch")

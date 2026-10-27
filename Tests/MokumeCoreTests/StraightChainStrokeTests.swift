@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -18,10 +19,11 @@ import simd
 /// 軸に沿って見る・目を直線の上に置く。
 @Suite("同じ直線に載る辺の鎖", .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct StraightChainStrokeTests {
+    /// 検体を書く置き場。プロセスごとに 1 つ (他のセッションと分け持つと、後始末が他方の検体を消す・#3298)。
+    private static let fixtures = TestScratch.path("mokume-straight-chain-fixtures", isDirectory: true)
+
     private static func written(_ text: String, as name: String) -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-straight-chain-fixtures", isDirectory: true)
-            .appendingPathComponent(name)
+        let url = fixtures.appendingPathComponent(name)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? text.write(to: url, atomically: true, encoding: .utf8)

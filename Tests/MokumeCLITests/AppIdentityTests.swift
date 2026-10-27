@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -13,9 +14,7 @@ import mokume
 @Suite("作品の名乗り")
 struct AppIdentityTests {
     private func makeSketch(identity: String?) throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-identity-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-identity")
         if let identity {
             try identity.write(
                 to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,

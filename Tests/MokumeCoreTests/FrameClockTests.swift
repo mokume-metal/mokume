@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -565,8 +566,7 @@ struct SketchFrameClockTests {
 
     /// 1 画素の PNG を書く。
     private func writePicture() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-frame-clock-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-frame-clock", pathExtension: "png")
         try PNGFile.write(DisplayImage(width: 1, height: 1, bytes: [255, 0, 0, 255]), to: url)
         return url
     }
@@ -624,8 +624,7 @@ struct SketchFrameClockTests {
     /// (`parseJSONObject`・`parseJSONArray`) はファイルを読まないので、`draw()` の中でも知らせない。
     @Test("draw() の中の loadJSONArray は口の名前で 1 度だけ requestJSONArray を案内し、setup() の中と parse は知らせない")
     func loadJSONArrayInDrawIsNoticed() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-frame-clock-\(UUID().uuidString).json")
+        let url = TestScratch.path("mokume-frame-clock", pathExtension: "json")
         try Data("[1, 2, 3]".utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
 

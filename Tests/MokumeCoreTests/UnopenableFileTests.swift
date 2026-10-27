@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -87,8 +88,7 @@ struct UnopenableFileTests {
 
     /// 検査ごとに別の置き場。
     struct Scratch {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unopenable-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-unopenable")
 
         /// 開けないものの名前。拡張子は表のものだが、読むのは中身を解く前に止まるので、どの口に
         /// 渡しても同じである。

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -15,8 +16,7 @@ struct ResourceDeclarationTests {
     private func makeSketch(
         manifest: String, assets: [String] = [], hidden: [String] = []
     ) throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-resources-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-resources", isDirectory: true)
         let target = root.appendingPathComponent("Sources/demo", isDirectory: true)
         let directory = target.appendingPathComponent("assets", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

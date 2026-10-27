@@ -4,6 +4,7 @@
 import AppKit
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -213,9 +214,7 @@ struct FileDroppedWireTests {
     @MainActor
     @Test("区画から送ると、落としが届いて accepted に数えられる。paths を mouseDown に付けると名乗って 1 件は通す")
     func theInboxFeedsTheDropAndNamesStrayPaths() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-dropped-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-dropped")
         defer { try? FileManager.default.removeItem(at: facet) }
         let body = #"""
             {"id":"d1","events":[

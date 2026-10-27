@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -41,8 +42,7 @@ struct ResourceOutsideRunTests {
     /// 読める SVG を置いた場所。`loadShape` はファイルを読んでから面を取るので、読めないファイル
     /// だと先にそちらの失敗が投げられ、見たいものを見ない。
     static func svgFile() throws -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-outside-run-\(UUID().uuidString).svg")
+        let url = TestScratch.path("mokume-outside-run", pathExtension: "svg")
         let text = #"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>"#
         try Data(text.utf8).write(to: url)
         return url.path

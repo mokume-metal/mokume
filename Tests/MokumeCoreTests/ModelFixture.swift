@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 
 /// 検査に使うモデルのファイル。
 ///
@@ -210,11 +211,13 @@ enum ModelFixture {
         return (lines + extra).joined(separator: "\n") + "\n"
     }
 
+    /// 検体を書く置き場。**プロセスごとに 1 つ** — 他のセッションと名前を分け持つと、片方が終わるときの
+    /// 後始末 (``TestScratch``) がもう片方の検体を消す (#3298)。
+    private static let fixtures = TestScratch.path("mokume-fixtures", isDirectory: true)
+
     /// 検体を、呼ぶたびに違う名前で書き出す (同じ名前で書き換えると、控えの有無や別の検査と取り違える)。
     static func writtenUniquely(_ contents: Data, extension fileExtension: String) -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-fixtures", isDirectory: true)
-            .appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
+        let url = fixtures.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? contents.write(to: url)
@@ -223,9 +226,7 @@ enum ModelFixture {
 
     /// 検体を決まった場所へ 1 度だけ書き出す。
     private static func written(_ text: String, as name: String) -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-fixtures", isDirectory: true)
-            .appendingPathComponent(name)
+        let url = fixtures.appendingPathComponent(name)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? text.write(to: url, atomically: true, encoding: .utf8)

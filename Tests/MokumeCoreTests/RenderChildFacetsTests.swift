@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -96,9 +97,7 @@ struct RenderChildFacetsTests {
         let kept = SignalState.current()
         defer { kept.restore() }
         sketchStopRequested = 0
-        let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-render-facets-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let output = try TestScratch.directory("mokume-render-facets")
         defer { try? FileManager.default.removeItem(at: output) }
         let request = try #require(
             RenderRequest(

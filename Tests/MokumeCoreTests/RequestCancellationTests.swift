@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -45,8 +46,7 @@ struct RequestCancellationTests {
     }
 
     private func writeFile(_ name: String, _ text: String) throws -> String {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-cancel-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-cancel")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent(name)
         try Data(text.utf8).write(to: url)

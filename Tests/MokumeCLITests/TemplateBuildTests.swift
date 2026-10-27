@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -170,9 +171,7 @@ struct TemplateBuildTests {
     /// を塞ぐので、上限が鳴ってもプロセスは終わらない) ので、失うものは無い (#564)。
     @Test("束ねた包みの中でも、資材が絵を探す場所にある")
     func assetsLandInsideTheBundledApplication() throws {
-        let workspace = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-bundled-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let workspace = try TestScratch.directory("mokume-bundled")
         defer { try? FileManager.default.removeItem(at: workspace) }
         let root = try Self.generate("packed-sketch", in: workspace)
         try Self.write(
@@ -337,8 +336,7 @@ nonisolated enum SharedDebugScratch {
     /// 根。置き場とスケッチの親をこの下に並べる。初めて引いたときに場所を決め、プロセスの
     /// 終わりに消すよう頼む。
     static let root: URL = {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-template-build-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-template-build", isDirectory: true)
         atexit { try? FileManager.default.removeItem(at: SharedDebugScratch.root) }
         return root
     }()

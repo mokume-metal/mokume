@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -13,9 +14,7 @@ import Testing
 @Suite("依存している版")
 struct DependencyVersionTests {
     private func makePackage(_ resolved: String?) throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-version-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-version")
         if let resolved {
             try Data(resolved.utf8).write(to: root.appendingPathComponent("Package.resolved"))
         }

@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -762,8 +763,7 @@ struct StoppedSolidDepthTests {
     private static func runtimePicture(
         _ interval: Interval, _ settling: Settling, _ scene: Scene
     ) throws -> DisplayImage {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-solid-depth-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-solid-depth", isDirectory: true)
         let facet = directory.appendingPathComponent("facet", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

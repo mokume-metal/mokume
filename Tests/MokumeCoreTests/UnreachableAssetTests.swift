@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -24,8 +25,7 @@ struct UnreachableAssetTests {
 
     /// 検査ごとに別の置き場。`assets` を入れない親にする。
     struct Scratch {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unreachable-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-unreachable")
 
         var assets: URL { folder.appendingPathComponent("assets") }
 

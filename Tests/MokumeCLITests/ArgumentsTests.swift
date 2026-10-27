@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -233,8 +234,7 @@ struct ArgumentsTests {
     /// そこに 1 つ目が出ていれば 1 つ目を場所に取っている。
     @Test("切り分けの口も、場所は 1 つだけ取る")
     func theDoctorVerbStillTakesOnePlace() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-doctor-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-doctor", isDirectory: true)
         let first = root.appendingPathComponent("a", isDirectory: true)
         let second = root.appendingPathComponent("b", isDirectory: true)
         let text = DoctorCommand.text(

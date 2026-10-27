@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -16,9 +17,7 @@ import mokume
 struct RunCommandTests {
     /// 指定した終了コードで終わるだけの実行ファイルを置く。`seconds` だけ眠ってから終わる。
     private func makeExecutable(exiting status: Int32, after seconds: Double = 0) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-run")
         let executable = directory.appendingPathComponent("sketch")
         try "#!/bin/sh\nsleep \(seconds)\nexit \(status)\n".write(
             to: executable, atomically: true, encoding: .utf8)
@@ -29,9 +28,7 @@ struct RunCommandTests {
 
     /// 合図で自分を落とすだけの実行ファイルを置く (`kill -s <NAME> $$`)。`fatalError` の代わり。
     private func makeCrasher(signal name: String) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-crash-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-run-crash")
         let executable = directory.appendingPathComponent("sketch")
         try "#!/bin/sh\nkill -s \(name) $$\n".write(
             to: executable, atomically: true, encoding: .utf8)
@@ -44,9 +41,7 @@ struct RunCommandTests {
     ///
     /// **番号を書き終えてから名乗る** (途中を読ませない)。`exec` で番号を保ったまま眠る。
     private func makeSleeper() throws -> (directory: URL, marker: URL, executable: URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-signal-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-run-signal")
         let marker = directory.appendingPathComponent("pid")
         let executable = directory.appendingPathComponent("sketch")
         try """
@@ -152,8 +147,7 @@ struct RunCommandTests {
     // MARK: - 起こせなかった理由 (#2314)
 
     private func missingPlace() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-no-such-place-\(UUID().uuidString)", isDirectory: true)
+        TestScratch.path("mokume-no-such-place", isDirectory: true)
     }
 
     /// **起こせなかったことを、道具が無いことと決めつけない。** `Process.run()` は作業
@@ -207,9 +201,7 @@ struct RunCommandTests {
     /// 「渡した場所を確かめよ」と言わない。
     @Test("場所でも実行ファイルの不在でもない理由なら、OS の事情を言い、場所を確かめよとは言わない")
     func aNonPlaceReasonDoesNotBlameThePlace() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-noexec-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-run-noexec")
         defer { try? FileManager.default.removeItem(at: directory) }
         let garbage = directory.appendingPathComponent("sketch")
         try Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE]).write(to: garbage)
@@ -229,8 +221,7 @@ struct RunCommandTests {
 
     /// 検索の権利を外した親 (`chmod 000`) を作る。**戻すのは呼び手** (`unlock`)。
     private func makeLockedParent() throws -> URL {
-        let locked = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-locked-\(UUID().uuidString)", isDirectory: true)
+        let locked = TestScratch.path("mokume-run-locked", isDirectory: true)
         try FileManager.default.createDirectory(
             at: locked.appendingPathComponent("child", isDirectory: true),
             withIntermediateDirectories: true)
@@ -248,9 +239,7 @@ struct RunCommandTests {
     /// 返すときだけ (同じ判定であること)。
     @Test("場所の在り方は、無い・ディレクトリでない・辿り着けないを分け、ディレクトリの判定は WorkDirectory と同じ")
     func presenceTellsMissingFromUnreachable() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-presence-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-run-presence")
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("file")
         try "".write(to: file, atomically: true, encoding: .utf8)
@@ -373,9 +362,7 @@ struct RunCommandTests {
     /// (``GivenPath/Presence``) と同じく、stat し直して読み分ける。
     @Test("起こせない走らせるものは、実行ビット・中身・ディレクトリ・探索権・宛先の無い symlink を読み分ける")
     func unrunnableExecutablesAreToldApart() throws {
-        let place = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-unrunnable-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let place = try TestScratch.directory("mokume-run-unrunnable")
         let locked = place.appendingPathComponent("locked", isDirectory: true)
         try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
         defer {
@@ -467,9 +454,7 @@ struct RunCommandTests {
 
     /// 自分の作業ディレクトリ (シンボリックリンクを解いたもの) を `marker` へ書いて終わる子。
     private func makeWorkingDirectoryRecorder() throws -> (executable: URL, marker: URL) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-pwd-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-run-pwd")
         let marker = directory.appendingPathComponent("pwd")
         let executable = directory.appendingPathComponent("sketch")
         try """
@@ -490,8 +475,7 @@ struct RunCommandTests {
 
     /// `走らせた場所/a/b` から打った、という形の置き場を作る。
     private func makeTypedFrom() throws -> (root: URL, typedFrom: URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-dotdot-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-run-dotdot", isDirectory: true)
         let typedFrom = root.appendingPathComponent("a/b", isDirectory: true)
         try FileManager.default.createDirectory(at: typedFrom, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
@@ -964,9 +948,7 @@ struct RunCommandTests {
 
         // 子を、道具とは別の作業ディレクトリ (スケッチ) で起こし、受け取った値を
         // その場所から解く — 子が見る区画の基準である
-        let sketch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-run-workdir-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        let sketch = try TestScratch.directory("mokume-run-workdir")
         defer { try? FileManager.default.removeItem(at: sketch) }
         let marker = sketch.appendingPathComponent("given")
         let child = sketch.appendingPathComponent("sketch")
@@ -1053,8 +1035,7 @@ struct RunCommandTests {
         let kept: [URL]
 
         init() throws {
-            root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-rebuild-guard-\(UUID().uuidString)", isDirectory: true)
+            root = TestScratch.path("mokume-rebuild-guard", isDirectory: true)
             let layout = root.appendingPathComponent("layout", isDirectory: true)
             package = root.appendingPathComponent("package", isDirectory: true)
             bin = layout.appendingPathComponent("bin", isDirectory: true)
@@ -1387,9 +1368,7 @@ struct RunCommandTests {
     }
 
     private func makeEmptyDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-binpath-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-binpath")
         return directory
     }
 
@@ -1421,8 +1400,7 @@ struct RunCommandTests {
             var status: Int32?
             let done = DispatchSemaphore(value: 0)
         }
-        let marker = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-running-build-\(UUID().uuidString)")
+        let marker = TestScratch.path("mokume-running-build")
         let running = RunningBuild()
         let outcome = Outcome()
         // **並行プールに載せず、専用の糸で待つ。** `Task.detached` で待たせたら、`make ci-check`

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -29,7 +30,7 @@ struct ObservationUnreadableRequestTests {
     }
 
     private func facet() throws -> URL {
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("mokume-unreadable-\(UUID())")
+        let path = TestScratch.path("mokume-unreadable")
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         return path
     }

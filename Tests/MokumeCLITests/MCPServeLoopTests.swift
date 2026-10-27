@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -77,9 +78,7 @@ struct MCPServeLoopTests {
         _ steps: (_ requestPlaced: @escaping @Sendable () -> Bool, _ answered: @escaping @Sendable (Int) -> Bool)
             -> [Script.Step]
     ) throws -> (answers: [String], inputRequestPlaced: Bool) {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-serve-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-serve")
         defer { try? FileManager.default.removeItem(at: directory) }
         // 待ちの上限。取り消しが効かなければ、この長さの後に `observe` の答えが書かれて赤になる
         let facets = Facets(directory: directory, waitLimit: 10)
@@ -170,9 +169,7 @@ struct MCPServeLoopTests {
     /// その間に置いた次の要求の時間切れを、「応えない」と取り違えない。
     @Test("取り消した観測の次の呼び出しが時間切れになったら、前の要求をまだ撮っていると案内する")
     func explainsTheSketchIsStillOnTheCancelledRequest() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-serve-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-serve")
         defer { try? FileManager.default.removeItem(at: directory) }
         let facets = Facets(directory: directory, waitLimit: 0.3)
         let ids = Counter(["first", "second", "third"])
@@ -200,9 +197,7 @@ struct MCPServeLoopTests {
     /// 実行してしまう。
     @Test("取り消しが先に立っていた呼び出しは、要求を区画に置かずに戻る")
     func aCancelledCallPlacesNothing() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-serve-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-serve")
         defer { try? FileManager.default.removeItem(at: directory) }
         let facets = Facets(directory: directory, waitLimit: 5)
         let tools = Tools(facets: facets, makeID: { "fixed" })

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -34,8 +35,7 @@ struct ModelFillTests {
 
     /// 頂点を傾けた四角錐。頂点の数は ``ModelFixture/pyramid`` と同じで、形だけが違う。
     private static let leaningPyramid: String = {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-fill-leaning-pyramid.obj")
+        let url = TestScratch.path("mokume-fill-leaning-pyramid", pathExtension: "obj")
         let text = ModelFixture.pyramidText.replacingOccurrences(
             of: "v 0.0 1.6 0.0", with: "v 0.9 1.6 0.9")
         try? text.write(to: url, atomically: true, encoding: .utf8)

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -44,8 +45,7 @@ struct ObservationCopyTests {
     }
 
     private func makePlace(id: String = "H", keep: Int = 4) -> Place {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-copy-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-copy", isDirectory: true)
         let facets = Facets(directory: directory)
         var tools = Tools(facets: facets, makeID: { id })
         tools.copies = ObservationCopies(
@@ -347,8 +347,7 @@ struct ObservationCopyTests {
 
     @Test("窓口が終われば、置き場ごと消える")
     func theRootGoesWithTheWindow() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-copy-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-copy", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let root = directory.appendingPathComponent("copies", isDirectory: true)
         var copies: ObservationCopies? = ObservationCopies(root: root)
@@ -371,8 +370,7 @@ struct ObservationCopyTests {
 
     @Test("持ち主のプロセスが居ない古い置き場は、次の窓口が掃く。生きている持ち主と自分のは残す")
     func staleRootsOfDeadOwnersAreSwept() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sweep-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-sweep", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let prefix = ObservationCopies.prefix
         let dead = directory.appendingPathComponent("\(prefix)4000001-aaaa")

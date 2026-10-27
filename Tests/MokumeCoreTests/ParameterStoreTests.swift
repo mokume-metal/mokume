@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -32,9 +33,7 @@ struct ParameterStoreTests {
     }
 
     private func makeFile() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-store-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-store")
         return directory.appendingPathComponent("params.json")
     }
 
@@ -743,9 +742,7 @@ struct ParameterStoreRuntimeTests {
 
     @Test("setup も最初の draw も、復元された値を見る")
     func setupSeesTheRestoredValue() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-store-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-store")
         let url = directory.appendingPathComponent("params.json")
 
         // 前回の実行に相当するもの
@@ -808,9 +805,7 @@ struct ParameterWithoutYieldingTests {
     }
 
     private func makeDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unyielding-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-unyielding")
         return directory
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -202,9 +203,7 @@ struct OutletDeferralTests {
     /// 戻れば面の中身は新しい。そこで頼んだ保存は、次の描画を待たずに書く。
     @Test("止まっている間に、打ち切りの後で面へ書けば、次の描画を待たずに保存する")
     func aStoppedSketchSavesAfterWritingOverADroppedFrame() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stopped-dropped-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-stopped-dropped")
         defer { try? FileManager.default.removeItem(at: directory) }
         StoppedSaver.directory = directory
         let runtime = try SketchRuntime(sketch: StoppedSaver(), gpu: try RenderDevice())

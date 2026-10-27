@@ -3,6 +3,7 @@
 
 import Foundation
 import ModelIO
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -34,8 +35,7 @@ struct STLModelTests {
     private func withWritten<T>(
         _ contents: Data, as name: String, _ body: (String) throws -> T
     ) throws -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-stl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent(name)
@@ -301,8 +301,7 @@ struct STLModelTests {
     /// 読み手には 1 行目に空白を足した写しを渡す。写しは残らない。
     @Test("名前の行がちょうど 83 文字の文字の STL も、字下げがタブで 84 バイト目がタブのものも読める")
     func byte83ThatLooksLikeANumberDoesNotLeaveACopy() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        let scratch = TestScratch.path("mokume-stl-scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
 
@@ -326,8 +325,7 @@ struct STLModelTests {
     /// 固定し、写しの置き場 (子の作成と削除) に触れたかを見る。
     @Test("84 バイト目が制御文字の文字の STL は、面の数が読み直しの枚数と違えば写しを作らず、同じなら作る")
     func aCopyIsMadeOnlyWhenTheCountsCannotTellAReadingApart() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        let scratch = TestScratch.path("mokume-stl-scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
@@ -377,8 +375,7 @@ struct STLModelTests {
     /// 渡す** — 共有の一時の置き場を数えると、並んで走る別の検査が作っている途中の写しを拾う。
     @Test("小さい文字の STL を読んでも、一時の写しは残らない (読めても、断られても)")
     func smallASCIILeavesNoCopyBehind() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        let scratch = TestScratch.path("mokume-stl-scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         func leftBehind() throws -> [String] {
@@ -663,8 +660,7 @@ struct STLModelTests {
     /// 行は、読み手が正しく読むので写さない (#2645 の反証 3)。写しは残らない。
     @Test("読み手が面を探しに行けない・面の中に空白だけの行がある文字だけ写しを作り、写しは残らない (#2645)")
     func aCopyIsMadeOnlyForAFarFacetOrABlankLineInAFacet() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        let scratch = TestScratch.path("mokume-stl-scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
@@ -729,8 +725,7 @@ struct STLModelTests {
 
     /// 文字の STL を書き出し、頭の 128 バイトと続きに分けて通読する (``scan(_:chunk:)`` の ``ModelFile/TextScan`` 版)。
     static func textScan(_ text: String, chunk: Int) -> ModelFile.TextScan? {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scan-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-stl-scan")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("scan.stl")
@@ -913,8 +908,7 @@ struct STLModelTests {
     /// 置き場の更新日時を古い日に固定し、写しの置き場 (子の作成と削除) に触れたかを見る。
     @Test("普通のバイナリの STL は写しを作らずに読み、見出しが solid … facet normal のものだけ写しを作って残さない (#2746)")
     func aCopyIsMadeOnlyForABinaryTheReaderTakesForText() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scratch-\(UUID().uuidString)")
+        let scratch = TestScratch.path("mokume-stl-scratch")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         let longAgo = Date(timeIntervalSince1970: 1_000_000_000)
@@ -1179,8 +1173,7 @@ struct STLModelTests {
 
     /// 文字の STL を書き出し、頭の 128 バイトと続きに分けて走査する。
     static func scan(_ text: String, chunk: Int) -> ModelFile.FacetScan? {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stl-scan-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-stl-scan")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("scan.stl")

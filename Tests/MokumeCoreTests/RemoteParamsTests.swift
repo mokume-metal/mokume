@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -15,8 +16,7 @@ import Testing
 struct RemoteParamsTests {
     /// 区画を 1 つ作って渡す。
     private func withFacet<T>(_ body: (URL) throws -> T) rethrows -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-params-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-params", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         return try body(directory)

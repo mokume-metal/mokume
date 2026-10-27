@@ -4,6 +4,7 @@
 import AVFoundation
 import CoreVideo
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -36,8 +37,7 @@ nonisolated struct MovieFileReadsTests {
     private func withMovieFile(
         _ body: (MovieFile, String) async throws -> Void
     ) async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-movie-reads-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-movie-reads")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("reads.mov").path

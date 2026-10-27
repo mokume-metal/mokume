@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -130,8 +131,7 @@ struct SetupThrowsTests {
     func renderingOneFrameStopsTheSameWay() throws {
         let sketch = Missing()
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-setup-throws-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-setup-throws", pathExtension: "png")
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(throws: RenderFailure.self) { try runtime.renderFrame(to: url) }
         #expect(!FileManager.default.fileExists(atPath: url.path), "止まったのにファイルを書いた")
@@ -182,8 +182,7 @@ struct SetupThrowsTests {
         #expect(sketch.draws == 0)
 
         // 始めてから 1 枚も進めずに書き出しても、ファイルを書かない
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-setup-throws-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-setup-throws", pathExtension: "png")
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(throws: RenderFailure.self) { try runtime.renderFrame(to: url) }
         #expect(!FileManager.default.fileExists(atPath: url.path))
@@ -203,9 +202,7 @@ struct SetupThrowsTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-setup-throws-facet-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-setup-throws-facet")
         return directory
     }
 
@@ -459,9 +456,7 @@ struct SetupThrowsTests {
     // MARK: - 起動中の印の置き場 (WorkDirectory)
 
     private func makeBase() throws -> (base: URL, facet: URL) {
-        let base = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-starting-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let base = try TestScratch.directory("mokume-starting")
         return (base, WorkDirectory.facet(WorkDirectory.buildFacetName, under: base))
     }
 

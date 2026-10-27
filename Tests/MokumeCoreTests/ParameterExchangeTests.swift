@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -21,9 +22,7 @@ struct ParameterExchangeTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-params-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-params")
         return directory
     }
 
@@ -454,8 +453,7 @@ struct ParameterExchangeTests {
 
     @Test("区画が無ければ働かない")
     func staysOffWithoutTheFacet() throws {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-params-absent-\(UUID().uuidString)", isDirectory: true)
+        let missing = TestScratch.path("mokume-params-absent", isDirectory: true)
         #expect(ParamSurface.makeIfEnabled(for: ParamRegistry(of: Knobbed()), at: missing) == nil)
     }
 

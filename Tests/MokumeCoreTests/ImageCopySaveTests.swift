@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -23,8 +24,7 @@ struct ImageCopySaveTests {
     }
 
     private func withTemporaryDirectory(_ body: (URL) throws -> Void) throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("mokume-image-save-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-image-save")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         try body(directory)
