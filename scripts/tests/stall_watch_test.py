@@ -23,7 +23,10 @@
    失う」(#642) を踏む
 8. **専用機の runner が止まったことを、順番待ちと分けて名乗る** (#1774)。必須の render が
    走らないと、描画に触れない PR も含めて queue 全体が止まる。1 台なので、他の run を
-   走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)
+   走らせている間の queued は正常な順番待ちで、名乗ると毎回の注意になる (#642)。runner が
+   RENDER_TURN_SLOTS (N) 本のときは、専用機の job が N 本そろって走っている間だけ順番待ちで、
+   N 本未満なら空いた runner が拾わない queued を名乗る (#3320)。N は門番と同じ値を読み、
+   未設定なら 1 (従来どおり)
 9. **予約が外れた PR があっても、当番は予約を掛けない** (#2614)。当番の GITHUB_TOKEN では
    掛けられず (`enablePullRequestAutoMerge` が FORBIDDEN)、掛け直しは一度も成功しないまま、
    毎回 stall-act を exit 1 にして他の赤を埋もれさせていた。**代わりに、外れた出来事
@@ -317,7 +320,7 @@ class StallWatchTest(unittest.TestCase):
         env["GH_CALLS"] = str(self.calls)
         env["PR_DIR"] = str(self.pr_dir)
         # 手元で打ったときの既定を再現する (Actions の変数が残っていると分岐が変わる)
-        for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GITHUB_EVENT_NAME", "GH_TOKEN"):
+        for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GITHUB_EVENT_NAME", "GH_TOKEN", "RENDER_TURN_SLOTS"):
             env.pop(key, None)
         env.update({k: str(v) for k, v in extra.items()})
         return env
@@ -1195,6 +1198,66 @@ class StallWatchTest(unittest.TestCase):
         proc = self.watch()
         self.assertIsNone(self.runner_line(proc), proc.stdout)
         self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_runner_が_2_本で_1_本だけ走っていて_queued_が猶予を超えたら名乗る(self):
+        """N=2 のとき、1 本が落ちて残りが走っている間も、空いた runner が queued を拾わない (#3320)。"""
+        self.write_runs("in_progress", ago(25))
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        line = self.runner_line(proc)
+        self.assertIsNotNone(line, proc.stdout)
+        self.assertEqual(line[1:4], ["runner-offline", "name", "20"], proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_runner_が_1_本なら_1_本走っている間の_queued_は同じ状況でも黙る(self):
+        """同じ入力で N=1 (明示) なら従来どおり順番待ち。"""
+        self.write_runs("in_progress", ago(25))
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=1)
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_RENDER_TURN_SLOTS_が未設定か空なら_1_として読む(self):
+        self.write_runs("in_progress", ago(25))
+        self.write_runs("queued", ago(20))
+        for value in (None, ""):
+            with self.subTest(value=value):
+                extra = {} if value is None else {"RENDER_TURN_SLOTS": value}
+                proc = self.watch(**extra)
+                self.assertIsNone(self.runner_line(proc), proc.stdout)
+                self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_runner_が_2_本とも走っていれば_queued_が猶予を超えても黙る(self):
+        """N 本そろって走っている間は順番待ち。"""
+        self.write_runs("in_progress", ago(25), ago(24))
+        self.write_runs("queued", ago(20))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_runner_が_2_本で_queued_が猶予の内なら黙る(self):
+        self.write_runs("in_progress", ago(25))
+        self.write_runs("queued", ago(3))
+        proc = self.watch(RENDER_TURN_SLOTS=2)
+        self.assertIsNone(self.runner_line(proc), proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_RENDER_TURN_SLOTS_が整数でなければ読めなかったと名乗る(self):
+        """黙って 1 に倒すと、runner を足した後の設定の誤りに気付けない。"""
+        self.write_runs("in_progress", ago(25))
+        self.write_runs("queued", ago(20))
+        for bad in ("0", "two", "-1", "1.5", "02"):
+            with self.subTest(bad=bad):
+                proc = self.watch(RENDER_TURN_SLOTS=bad)
+                line = self.runner_line(proc)
+                self.assertIsNotNone(line, proc.stdout)
+                self.assertEqual(line[1:3], ["unreadable", "name"], proc.stdout)
+                self.assertIn("RENDER_TURN_SLOTS", proc.stdout)
+
+    def test_stall_watch_yml_は変数を当番へ渡す(self):
+        """render.yml (門番) と同じ vars.RENDER_TURN_SLOTS を渡す。渡さないと Actions 上では常に 1 になる。"""
+        wf = (WORKFLOWS / "stall-watch.yml").read_text(encoding="utf-8")
+        self.assertIn("RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}", wf)
 
     def test_猶予の内の_queued_は黙る(self):
         self.write_runs("queued", ago(3))
