@@ -1249,6 +1249,103 @@ struct VectorCaptureTests {
         #expect(center.figures.isEmpty && center.drops.isEmpty, "\(center)")
     }
 
+    private func triangle(_ canvas: Canvas, _ size: Float) {
+        canvas.beginShape()
+        canvas.vertex(0, 0)
+        canvas.vertex(size, 0)
+        canvas.vertex(0, size)
+        canvas.endShape(.close)
+    }
+
+    /// 拡大率を Float で作ると、成分が有限でも積が先に ∞ になり、本当は書ける図形まで偽の「大きすぎる」で落ちる。
+    /// 真の値が書けるものは、Double で作って、そのまま書く (#3350)。
+    @Test("拡大率の行列式が Float では桁あふれするが、真の太さ・座標は書ける図形は、名乗らずそのまま書く (#3350)")
+    func aWritableFigureUnderAHugeScaleIsNotNamed() throws {
+        let harness = try Harness()
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(1e-15)
+            canvas.strokeDash(2e-15, 1e-15)
+            canvas.scale(1e20, 1e20)
+            triangle(canvas, 1e-15)
+        }
+        try #require(figures.count == 1, "\(figures) \(drops)")
+        #expect(drops.isEmpty, "\(drops)")
+        // 真の太さは 1e-15 * 1e20 = 1e5 (Float の拡大率 1e20 の 2 乗は 1e40 で桁あふれする)
+        let width = try #require(figures[0].stroke?.width)
+        #expect(abs(width - 1e5) < 1, "\(width)")
+        let dash = try #require(figures[0].stroke?.dash)
+        #expect(dash.count == 2 && abs(dash[0] - 2e5) < 1, "\(dash)")
+    }
+
+    @Test("特異な行列 (行列式の真の値が 0) は、Float なら ∞ - ∞ で NaN になるが、太さ 0 の書ける図形として書く (#3350)")
+    func aSingularMatrixIsNotNamed() throws {
+        let harness = try Harness()
+        let singular = simd_float4x4(
+            columns: (
+                SIMD4(1e20, 1e20, 0, 0), SIMD4(1e20, 1e20, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, 0, 0, 1)
+            ))
+        let (figures, drops) = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.stroke(blue)
+            canvas.strokeWeight(1e-15)
+            canvas.transform = Transform(matrix: singular)
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(1e-15, -1e-15)
+            canvas.vertex(2e-15, -2e-15)
+            canvas.endShape(.close)
+        }
+        #expect(figures.count == 1 && drops.isEmpty, "\(figures) \(drops)")
+    }
+
+    /// 置き先が使う成分は、画面の `Transform.placed` が x・y に使う列 0・1・3 の x・y だけ。最後の行が無限の変換は、
+    /// 画面では x・y が有限のまま描かれるので、書き出しも書く。桁あふれは行列の他の成分に左右されず名乗る (#3350)。
+    @Test("行列の最後の行が無限でも、x・y の成分が有限なら、書ける図形は書き、桁あふれは名乗る (#3350)")
+    func onlyTheMatrixComponentsThePlacementUsesMatter() throws {
+        let harness = try Harness()
+        func matrix(scale: Float) -> Transform {
+            Transform(
+                matrix: simd_float4x4(
+                    columns: (
+                        SIMD4(scale, 0, 0, .infinity), SIMD4(0, scale, 0, 0), SIMD4(0, 0, 1, 0),
+                        SIMD4(0, 0, 0, 1)
+                    )))
+        }
+        let ordinary = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.transform = matrix(scale: 2)
+            triangle(canvas, 10)
+        }
+        #expect(ordinary.figures.count == 1 && ordinary.drops.isEmpty, "\(ordinary)")
+        let overflowing = try harness.capture { canvas in
+            canvas.fill(red)
+            canvas.noStroke()
+            canvas.transform = matrix(scale: 1e19)
+            triangle(canvas, 1e20)
+        }
+        #expect(overflowing.figures.isEmpty && overflowing.drops == [.tooLarge], "\(overflowing)")
+    }
+
+    /// 破線で輪郭だけの矩形は、周の点 (`anchor + half`) を Float の和で先に作る。その和が範囲を越えても、
+    /// 寸法は有限なので、実線・塗りありの同じ図形と同じに名乗る (#3350)。
+    @Test("破線で輪郭だけの矩形の角が、局所の和で Float の範囲を越えても、実線・塗りありと同じに名乗る (#3350)")
+    func aDashedRectWhoseCornersOverflowLocallyIsNamed() throws {
+        let harness = try Harness()
+        for (dashed, filled) in [(true, false), (false, false), (false, true), (true, true)] {
+            let (figures, drops) = try harness.capture { canvas in
+                if filled { canvas.fill(red) } else { canvas.noFill() }
+                canvas.stroke(blue)
+                canvas.strokeWeight(2)
+                if dashed { canvas.strokeDash(6, 3) } else { canvas.noStrokeDash() }
+                canvas.rect(2e38, 0, 2e38, 10)
+            }
+            #expect(figures.isEmpty && drops == [.tooLarge], "dashed=\(dashed) filled=\(filled): \(figures) \(drops)")
+        }
+    }
+
     @Test("破線で塗りもある図形の塗りが別の理由で名乗られても、輪郭の大きすぎる名乗りは消えない (種類ごとに 1 件・#3318)")
     func differentReasonsInOneDashedFigureAreBothNamed() throws {
         let harness = try Harness()
