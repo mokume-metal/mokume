@@ -176,3 +176,42 @@ nonisolated extension Vector3 {
         lhs.simd /= rhs.asFloat
     }
 }
+
+// MARK: - 中間の 2 乗が溢れる・潰れる値の逃げ道
+
+nonisolated extension Vector3 {
+    /// `value` の成分のうち、いちばん大きいものの指数。成分は有限で、少なくとも 1 つは 0 でないこと。
+    private static func peakExponent(_ value: SIMD3<Float>) -> Int {
+        Int(max(abs(value.x), abs(value.y), abs(value.z)).exponent)
+    }
+
+    /// `value` の長さ。関数の層の `mag(_:_:_:)`・`dist(_:_:_:_:_:_:)` が共有する、3 成分の長さを開く口
+    /// (#3358)。
+    ///
+    /// **規則は ``Vector2/measuredLength(of:)`` と同じ 1 本** (#2935)。2 乗の和が `2^-100` 以上
+    /// `2^100` 未満なら従来の式のまま開くので、`1, 2, 2` から 3 がちょうど返る。外 (2 乗が溢れる大きい値・
+    /// 0 や非正規数に潰れる小さい値) は 2 の冪で寄せて測るので、有限の距離は有限で返り、**0 になるのは
+    /// 0 ベクトルだけ**。結果が `Float` の範囲を越えるなら ∞ になる。数でない値・無限の値が混じるときは
+    /// 2 乗の和をそのまま開く (扱いは呼ぶ側が決める)。
+    static func measuredLength(of value: SIMD3<Float>) -> Float {
+        let squared = (value * value).sum()
+        if squared >= Vector2.safeSquaredLow && squared < Vector2.safeSquaredHigh {
+            return squared.squareRoot()
+        }
+        return scaledLength(of: value)
+    }
+
+    /// 2 乗を作らずに測った長さ。大きいほうの成分の指数の分だけ 2 の冪で寄せてから 2 乗するので、
+    /// 成分が有限なら溢れも潰れもしない。寄せるのも戻すのも丸めを足さない。
+    ///
+    /// 0 になるのは 0 ベクトルだけ。成分が有限でなければ 2 乗の和をそのまま開く。
+    static func scaledLength(of value: SIMD3<Float>) -> Float {
+        guard value.x.isFinite, value.y.isFinite, value.z.isFinite else {
+            return (value * value).sum().squareRoot()
+        }
+        guard value != .zero else { return 0 }
+        let exponent = peakExponent(value)
+        let unit = SIMD3(scalbn(value.x, -exponent), scalbn(value.y, -exponent), scalbn(value.z, -exponent))
+        return scalbn((unit * unit).sum().squareRoot(), exponent)
+    }
+}

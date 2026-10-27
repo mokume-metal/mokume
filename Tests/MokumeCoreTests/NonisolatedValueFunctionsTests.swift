@@ -38,6 +38,8 @@ struct NonisolatedValueFunctionsTests {
         out.append(lerpAngle(0.1, 6.2, 0.5))
         out.append(dist(0, 0, 3, 4))
         out.append(mag(3, 4))
+        out.append(dist(0, 0, 0, 3, 4, 12))
+        out.append(mag(2, 3, 6))
         out.append(sq(3))
         out.append(fract(2.75))
         out.append(mod(-1, 3))
