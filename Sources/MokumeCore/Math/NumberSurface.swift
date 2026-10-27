@@ -43,6 +43,9 @@ nonisolated enum NumberValues {
             case lerpAngle
             case dist
             case mag
+            /// 3 次元の ``dist(_:_:_:_:_:_:)``・``mag(_:_:_:)``。2 次元の口と**別に数える** (#3358)
+            case dist3D
+            case mag3D
             case sq
             case fract
             case mod
@@ -632,7 +635,7 @@ public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some 
 ///
 /// **これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。値型 `Vector2` の側は
 /// `length` と名乗る — 関数の ``dist(_:_:_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と
-/// `Circle` の使い分けと同じである。平面の 2 点だけで、3 次元の形は無い。
+/// `Circle` の使い分けと同じである。ここは平面の 2 点で、空間の 2 点は ``dist(_:_:_:_:_:_:)``。
 ///
 /// **2 乗が `Float` で溢れる距離でも、距離は有限で返る** (`dist(0, 0, 3e19, 4e19)` は 5e19)。
 /// 結果そのものが `Float` の範囲を越えるときだけ ∞ を返す (数でない値は返さない)。
@@ -661,7 +664,7 @@ public nonisolated func dist(
 /// ```
 ///
 /// `mag(3, 4)` は 5 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
-/// 値型 `Vector2` の側は `length` と名乗る。平面の 2 成分だけで、3 次元の形は無い。
+/// 値型 `Vector2` の側は `length` と名乗る。ここは平面の 2 成分で、空間の 3 成分は ``mag(_:_:_:)``。
 ///
 /// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
 /// 返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
@@ -674,6 +677,62 @@ public nonisolated func mag(_ x: some ScalarConvertible, _ y: some ScalarConvert
         return 0
     }
     return euclideanLength(x, y)
+}
+
+/// 空間の 2 点の間の距離。``dist(_:_:_:_:)`` の 3 次元版。
+///
+/// ```swift
+/// let reach = dist(0, 0, 0, 30, 40, 120)  // 130
+/// ```
+///
+/// 引数は 1 つ目の点の x・y・z、2 つ目の点の x・y・z の順 (手本と同じ並び)。`Float`・`Double`・`Int` を
+/// そのまま渡せて、返すのは `Float`。奥行き (z) の向きは ``SketchPart/translate(_:_:_:)`` などと同じ
+/// (視点に向かって手前が正) で、距離は向きを見ないので符号は結果に効かない。
+///
+/// **これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。値型 `Vector3` の側は
+/// `length` と名乗る。
+///
+/// **2 乗が `Float` で溢れる距離でも、距離は有限で返り** (`dist(0, 0, 0, 3e19, 4e19, 0)` は 5e19)、
+/// **数でない値・無限の値が混じったときは 0 を返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
+// shot: 撮れない 値を返すだけで、描く結果が無い
+public nonisolated func dist(
+    _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
+    _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible
+) -> Float {
+    let (x1, y1, z1) = (x1.asFloat, y1.asFloat, z1.asFloat)
+    let (x2, y2, z2) = (x2.asFloat, y2.asFloat, z2.asFloat)
+    guard x1.isFinite, y1.isFinite, z1.isFinite, x2.isFinite, y2.isFinite, z2.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.dist3D),
+            "dist(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return Vector3.measuredLength(of: SIMD3(x2 - x1, y2 - y1, z2 - z1))
+}
+
+/// 原点からの距離 (3 次元)。``dist(_:_:_:_:_:_:)`` の 1 つ目の点を原点 (0, 0, 0) にしたもの。
+///
+/// ```swift
+/// let reach = mag(100, 150, 200)
+/// ```
+///
+/// `mag(2, 3, 6)` は 7 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
+/// 値型 `Vector3` の側は `length` と名乗る。
+///
+/// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
+/// 返す** (``mag(_:_:)`` と同じ)。注意は 1 度だけ言う。
+// shot: 撮れない 値を返すだけで、描く結果が無い
+public nonisolated func mag(
+    _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+) -> Float {
+    let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+    guard x.isFinite, y.isFinite, z.isFinite else {
+        NumberValues.warnOnce(
+            .notANumber(.mag3D),
+            "mag(): got a value that is not a number, or an infinite one, so 0 was returned")
+        return 0
+    }
+    return Vector3.measuredLength(of: SIMD3(x, y, z))
 }
 
 /// ベクトル (`dx`, `dy`) の長さ。``dist(_:_:_:_:)`` と ``mag(_:_:)`` が共有する。**注意は言わない** —
