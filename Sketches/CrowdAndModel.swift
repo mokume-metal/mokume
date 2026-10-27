@@ -25,6 +25,11 @@ import mokume
 /// **読み込んだモデルには、作者が書いた展開どおりに絵が乗る。** 検体は上下の錐を絵の
 /// 上半分・下半分へ割り当ててあるので、面ごとに縦の帯が並ぶ — 囲みの箱から作る位置に
 /// 倒れていれば、帯にはならず絵が 1 枚そのまま乗る ([#406](https://github.com/mokume-metal/mokume/issues/406))。
+/// 確認: `swift run reference-sketches crowd-and-model` で上中央の読み込み中表示から
+/// 波打つ板が現れることを見る。ドラッグして離すと慣性で回り、スクロールで寄れる。
+/// 右上の箱は視点が変わっても画面内の位置を保つ。到着までの実時間は固定しない。
+/// `--render` は45枚でも長い連番でも未到着の像。失敗の切り分けには資源の診断も要る。
+///
 final class CrowdAndModel: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 1200, height: 600, title: "crowd and model")

@@ -16,6 +16,11 @@ import mokume
 /// `players` を `gamepads()` に替えるだけでよい。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+/// 確認: `--render /tmp/mokume-frames --frames 150` で接続→切断→再接続を見る。
+/// `f.0020` / `f.0050` / `f.0120` を目安に、右だけが灰色で止まり、白に戻ることを確認。
+/// 左の円はその間も動き続ける。復帰後も左右が入れ替わらず、右の同じ位置から動き始める。
+/// これは記録入力の確認で、実機の認識・抜き挿しを試したことにはならない。
+///
 final class GamepadAndPlayers: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 1200, height: 600, title: "gamepad and players")

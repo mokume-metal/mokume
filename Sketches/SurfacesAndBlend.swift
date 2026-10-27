@@ -18,6 +18,10 @@ import mokume
 /// ほうがいま右の板に掛かっている (描いた面を `image(_:_:_:_:_:)` でそのまま置く)。
 /// 真ん中上の小さな箱は、同じ面を断片を使わずに `texture(_:)` で貼ったもの。
 /// **名前で渡しても、貼っても、描いた面は読み込んだ絵と同じに扱える。**
+/// 確認: `--render /tmp/mokume-frames --frames 150` のこの例の連番を60 fpsで見る。
+/// 下の候補の枠と右の板の模様が約1秒で一緒に切り替わり、約2秒で元へ戻る。
+/// `f.0000` / `f.0060` / `f.0120` 前後を比較する。45枚目だけでは交換を見られない。
+///
 final class SurfacesAndBlend: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 540, title: "surfaces and blend")

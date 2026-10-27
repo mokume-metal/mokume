@@ -86,24 +86,42 @@ final class ShapesAndStyle: Sketch {
         }
         blendMode(.blend)
 
-        // 頂点列 — 曲線と穴と切り抜き
-        push()
-        translate(560, 330)
-        clip(560, 330, 360, 170)
-        fill(115, 217, 191)
-        stroke(26, 76, 76)
-        strokeWeight(3)
-        beginShape()
-        vertex(20, 140)
-        bezierVertex(60, 10, 200, 10, 250, 140)
-        beginContour()
-        vertex(90, 110)
-        vertex(180, 110)
-        vertex(135, 50)
-        endContour()
-        endShape(.close)
-        pop()
-        noClip()
+        // 頂点列 — 同じ穴付き曲線を、切り抜きなし / ありで比較する。
+        // clip は変換後の面の座標。右の形は枠の右辺をまたぐ。
+        pushStyle()
+        for (index, x) in [Float(540), 740].enumerated() {
+            noStroke()
+            fill(217, 230, 255)
+            textSize(14)
+            text(index == 0 ? "unclipped" : "clip", x, 330)
+            if index == 1 { clip(x + 10, 350, 110, 110) }
+            pushMatrix()
+            translate(x, 350)
+            scale(0.65, 0.65)
+            fill(115, 217, 191)
+            stroke(26, 76, 76)
+            strokeWeight(3)
+            beginShape()
+            vertex(20, 140)
+            bezierVertex(60, 10, 200, 10, 250, 140)
+            beginContour()
+            vertex(90, 110)
+            vertex(180, 110)
+            vertex(135, 50)
+            endContour()
+            endShape(.close)
+            popMatrix() // 変換だけを戻す。クリップはまだ有効。
+            noClip()
+            // 解除した直後、枠の外に黄色の印。noClip がなければ右の印は消える。
+            noStroke()
+            fill(242, 217, 89)
+            circle(x + 155, 470, 12)
+            noFill()
+            stroke(89, 191, 242)
+            strokeWeight(1)
+            rect(x + 10, 350, 110, 110)
+        }
+        popStyle()
 
         // 基準モード — 同じ 4 つの数の読み方を変える。楕円は中心から測るのが既定
         noStroke()

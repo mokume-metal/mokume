@@ -11,6 +11,10 @@ import mokume
 /// 下の段は**同じ球 1 つを、光の組と周囲だけ変えて**並べる — 既定の光の組 (`lights()`)・
 /// 光を取り除いたもの (`noLights()`)・3 色から自作した周囲・いまの周囲を弱めたもの
 /// (`scaled(by:)`)。光も周囲も置いた時点より後の形に効くので、1 つのフレームの中で置き直せる。
+/// 確認: `--render /tmp/mokume-frames --frames 300` のこの例を60 fpsで見る。
+/// 上の周囲名と金属の映り込みが約2秒で sky → studio、約4秒で sunset に変わる。
+/// `f.0000` / `f.0120` / `f.0240` 前後を比較する。45枚目は sky の配置だけを見る。
+///
 final class MaterialsAndSurroundings: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 680, title: "materials and surroundings")
