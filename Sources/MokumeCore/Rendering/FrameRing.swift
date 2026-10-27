@@ -125,6 +125,8 @@ import MokumeDiagnostics
     ///
     /// **止まるのは `preconditionFailure` で** — release で組んだ検査 (`make test-release`・定期の
     /// release の検査) でも止まる。止まるかを決めるのは ``stopsOnUnguardedWrite`` だけである。
+    /// **ただし文面を出すのは `-Onone` だけ** (`-O` は出さずに止まる)。止まったことを確かめる側は、
+    /// 文面ではなく、止まる直前の注意 (``unguardedWriteNotice``) と信号で落ちたことを見る (#3365)。
     ///
     /// - Parameter label: 書こうとした置き場の名前。止まるときの文面に入れる。
     func checkWritable(_ label: String) {
