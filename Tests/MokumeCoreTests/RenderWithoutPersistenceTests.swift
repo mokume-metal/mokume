@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -75,8 +76,7 @@ struct RenderWithoutPersistenceTests {
             runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         }
         for _ in 0..<Self.frames { try runtime.advance() }
-        let png = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-persist-\(UUID().uuidString).png")
+        let png = TestScratch.path("mokume-persist", pathExtension: "png")
         defer { try? FileManager.default.removeItem(at: png) }
         try runtime.target.writePNG(to: png)
         runtime.closePlugins()

@@ -3,6 +3,7 @@
 
 import CoreText
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -76,8 +77,7 @@ struct FontFileTests {
     /// 更新時刻が変わったファイルは、別の値 (焼き場が古い字形を使い回さない)。
     @Test("ファイルが更新されると、別の値になる")
     func aChangedFileIsAnotherValue() throws {
-        let copy = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-font-\(UUID().uuidString).ttc")
+        let copy = TestScratch.path("mokume-font", pathExtension: "ttc")
         try FileManager.default.copyItem(atPath: Self.staticFile, toPath: copy.path)
         defer { try? FileManager.default.removeItem(at: copy) }
         let before = try Font.load(copy.path)
@@ -132,8 +132,7 @@ struct FontFileTests {
     /// ファイル**で見る。
     @Test("読んだ書体は、プロセスへ登録しない")
     func loadingDoesNotRegister() throws {
-        let copy = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-font-\(UUID().uuidString).ttc")
+        let copy = TestScratch.path("mokume-font", pathExtension: "ttc")
         try FileManager.default.copyItem(atPath: Self.staticFile, toPath: copy.path)
         defer { try? FileManager.default.removeItem(at: copy) }
         try #require(

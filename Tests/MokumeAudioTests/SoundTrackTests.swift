@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -22,8 +23,7 @@ struct SoundTrackTests {
     static let kick: [Float] = (0..<12_000).map { $0 < 480 ? 0.5 : 0 }
 
     private func temporaryMovie() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-track-\(UUID().uuidString).mov")
+        TestScratch.path("mokume-sound-track", pathExtension: "mov")
     }
 
     /// 走らせて閉じる。`setup` と `draw` はスケッチへ渡す手続き。`begins`・`ends` は録りの頼み (番号は `frameCount`)。
@@ -309,8 +309,7 @@ struct SoundTrackTests {
         }
         let wav = try writeWAV(Self.kick, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
-        let still = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-track-still-\(UUID().uuidString).png")
+        let still = TestScratch.path("mokume-sound-track-still", pathExtension: "png")
         defer { try? FileManager.default.removeItem(at: still) }
 
         func once(busy: Bool) async throws -> Heard {
@@ -454,8 +453,7 @@ struct SoundTrackTests {
     func uncarriedRecordingsSayWhy() throws {
         let wav = try writeWAV(Self.kick, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-track-seq-\(UUID().uuidString)", isDirectory: true)
+        let folder = TestScratch.path("mokume-sound-track-seq", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         var sound: SoundFile?
         SoundSketch.onSetup = { sound = try $0.loadSound(wav.path) }

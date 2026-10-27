@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -555,8 +556,7 @@ struct ForgottenLayerFrameTests {
 
     /// 1 枚目を描き、止まっている間に `keys` を 1 つずつ、別の回で配る。
     private func runStopped(_ sketch: some Sketch, keys: [String]) throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-forgotten-layer-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-forgotten-layer", isDirectory: true)
         let facet = directory.appendingPathComponent("facet", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -33,9 +34,7 @@ struct BuildResolutionTests {
     }
 
     private func makeSketch(manifest: String = "// swift-tools-version: 6.2\n") throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-resolver-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-resolver")
         try write(manifest, to: directory)
         return directory
     }
@@ -97,9 +96,7 @@ struct BuildResolutionTests {
     /// 導いても同じ「宣言が読めなかった」に落ちる — 直した回に世代が変わって導き直される。
     @Test("宣言が読めない間は、導き直さない")
     func anUnreadableManifestIsNotResolvedAgain() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-resolver-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-resolver")
         defer { try? FileManager.default.removeItem(at: directory) }
         let counter = Counter()
         let resolver = BuildResolver(directory: directory) { counter.resolution(for: $0) }

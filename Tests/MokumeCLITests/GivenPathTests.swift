@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -122,9 +123,7 @@ struct GivenPathTests {
         // 絶対パスは通り、在るかの判定へ進む (ここでは在らないので、その失敗で止まる)
         #expect(directories([Self.absolute]) == .directoryNotFound(path: Self.absolute))
 
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-given-path-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-given-path")
         defer { try? FileManager.default.removeItem(at: root) }
         #expect(directories([root.path]) == nil)
     }
@@ -183,8 +182,7 @@ struct GivenPathTests {
     @Test("doctor は、走らせた場所が読めなくても止まらず、先頭でそう名乗る")
     func doctorAnnouncesAnUnreadableWorkingDirectory() {
         let environment = [
-            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+            BuildDirectory.environmentKey: TestScratch.path("mokume-doctor-store").path
         ]
         // 実在しない相対の綴り (走らせている場所に同名があっても影響されない)
         let spelling = "mokume-no-such-\(UUID().uuidString)"
@@ -276,9 +274,7 @@ struct GivenPathTests {
 
     @Test("mcp は、相対の MOKUME_WORK_DIR・MOKUME_BUILD_DIR を読めない作業ディレクトリで断る")
     func mcpRefusesRelativeVariables() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-given-path-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-given-path")
         defer { try? FileManager.default.removeItem(at: root) }
         func directories(_ environment: [String: String]) -> CommandFailure? {
             failure { () throws(CommandFailure) in
@@ -308,9 +304,7 @@ struct GivenPathTests {
     /// doctor は止まらず、相対の環境変数を「与えられていないもの」として診て、そう名乗る。
     @Test("doctor は、相対の環境変数が読めない作業ディレクトリに当たっても止まらず名乗る")
     func doctorAnnouncesUnreadableVariables() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-given-path-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = try TestScratch.directory("mokume-given-path")
         defer { try? FileManager.default.removeItem(at: root) }
         let text = DoctorCommand.text(
             for: [root.path], workDirectory: nil,
@@ -329,8 +323,7 @@ struct GivenPathTests {
     @Test("doctor の空の場所は、作業ディレクトリが読めなければ、診たとは言わず空だったことと読めないことを言う")
     func doctorEmptyPlaceWithAnUnreadableWorkingDirectory() {
         let environment = [
-            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+            BuildDirectory.environmentKey: TestScratch.path("mokume-doctor-store").path
         ]
         let text = DoctorCommand.text(
             for: [""], workDirectory: nil, environment: environment, currentDirectory: nil)

@@ -3,6 +3,7 @@
 
 import Foundation
 import IOSurface
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -81,9 +82,7 @@ struct SharedFrameSurfaceFacetTests {
 @Suite("絵を渡す面 (番号を読む)")
 struct SharedFrameManifestTests {
     private func withManifest<T>(_ json: String?, _ body: (URL) throws -> T) throws -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-manifest-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-manifest")
         defer { try? FileManager.default.removeItem(at: directory) }
         if let json {
             try Data(json.utf8).write(
@@ -183,9 +182,7 @@ struct SharedFrameManifestTests {
 struct SharedFrameSurfaceTests {
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
     private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-viewport")
         defer { try? FileManager.default.removeItem(at: directory) }
         return try body(directory)
     }
@@ -238,8 +235,7 @@ struct SharedFrameSurfaceTests {
     @Test("区画が無ければ作らない")
     func withoutFacetItIsNotMade() throws {
         let gpu = try RenderDevice()
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         #expect(SharedFrameSurface.makeIfEnabled(gpu: gpu, width: 16, height: 8, at: missing) == nil)
     }
 

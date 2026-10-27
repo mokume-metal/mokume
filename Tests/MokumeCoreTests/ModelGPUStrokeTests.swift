@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -13,9 +14,8 @@ import simd
 /// 組む。以前のモデルの経路と同じ) で、どの場面でも 2 つの経路の絵が全バイトで一致することを見る。
 @Suite("モデルの稜線の骨", .enabled(if: RenderDevice.isAvailable, "GPU が無い環境ではスキップ"))
 struct ModelGPUStrokeTests {
-    /// 検査に使うモデルを書いた場所。**内容から名前を決める**ので、並行する検査が同じ場所へ同じ中身を書く。
-    private static let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-model-stroke-fixtures", isDirectory: true)
+    /// 検査に使うモデルを書いた場所。**内容から名前を決める**ので、並行する検査が同じ場所へ同じ中身を書く (場所はプロセスごと)。
+    private static let directory = TestScratch.path("mokume-model-stroke-fixtures", isDirectory: true)
 
     private static func written(_ text: String, as name: String) -> String {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

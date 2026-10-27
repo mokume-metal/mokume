@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -1075,8 +1076,7 @@ struct ShaderTests {
     // MARK: - 道具
 
     private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-\(UUID().uuidString)")
+        let url = TestScratch.path("mokume-shader")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -1168,9 +1168,7 @@ struct ShaderWatchWithoutYieldingTests {
     }
 
     private func load(on canvas: Canvas) throws -> Fragments {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unyielding-shader-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-unyielding-shader")
         let paint = directory.appendingPathComponent("paint.metal")
         let tint = directory.appendingPathComponent("tint.metal")
         let fill = directory.appendingPathComponent("fill.metal")
@@ -1474,9 +1472,7 @@ struct ShaderWatchWithoutYieldingTests {
     /// 組み直す。`failure` は、いま効いている中身とファイルが揃えば下りる。同じ理由は言い直さない。
     @Test("組み直さないのは翻訳に失敗した中身だけで、失敗の控えは効いている中身へ戻すと下りる")
     func onlyCompilationFailuresAreRemembered() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-box-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-shader-box")
         let url = directory.appendingPathComponent("paint.metal")
         let good = Self.shaderBody("0.25")
         try good.write(to: url, atomically: false, encoding: .utf8)

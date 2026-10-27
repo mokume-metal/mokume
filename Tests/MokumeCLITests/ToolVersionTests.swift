@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -65,8 +66,7 @@ struct ToolVersionTests {
     private func place(
         release contents: String?, under path: [String] = []
     ) throws -> (executable: URL, cleanup: () -> Void) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-toolversion-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-toolversion", isDirectory: true)
         let directory = path.reduce(root) { $0.appendingPathComponent($1, isDirectory: true) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("mokume")

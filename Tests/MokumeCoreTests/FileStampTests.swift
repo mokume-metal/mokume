@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -15,8 +16,7 @@ import Testing
 @Suite("更新時刻の見張り")
 struct FileStampTests {
     private func makeDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-file-stamp-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-file-stamp")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

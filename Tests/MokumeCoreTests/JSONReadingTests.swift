@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -20,8 +21,7 @@ struct JSONReadingTests {
         func draw() {}
     }
 
-    private let folder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-json-reading-\(UUID().uuidString)")
+    private let folder = TestScratch.path("mokume-json-reading")
 
     private func file(_ name: String, _ text: String) throws -> String {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

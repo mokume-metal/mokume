@@ -3,6 +3,7 @@
 
 import CoreGraphics
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -153,9 +154,7 @@ struct MouseButtonCallbackTests {
     /// 押す前の `draw()` では `nil` で、送った番号は面では名前で読める。
     @Test("離した釦を、mouseReleased() の中から読める")
     func readsTheReleasedButtonInMouseReleased() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-mouse-button-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-mouse-button")
         let sketch = Recorder()
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,

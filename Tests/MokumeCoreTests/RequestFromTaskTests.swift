@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -97,8 +98,7 @@ struct RequestFromTaskTests {
     /// 左が赤・右が青の 2 画素を PNG に書き出す。**色は端の値だけを使う** — 途中の値だと
     /// 読み込みと書き出しの丸めが期待値に混ざる。
     private func writePicture() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-request-from-task-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-request-from-task", pathExtension: "png")
         try PNGFile.write(
             DisplayImage(width: 2, height: 1, bytes: [255, 0, 0, 255, 0, 0, 255, 255]), to: url)
         return url

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -124,9 +125,7 @@ struct StoppedUpscaleOutletsTests {
         configure: (StoppedPainter) -> Void = { _ in },
         _ body: (SketchRuntime, RenderDevice, (String) throws -> Void) throws -> Void
     ) throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stopped-outlets-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-stopped-outlets")
         defer { try? FileManager.default.removeItem(at: directory) }
         let facet = directory.appendingPathComponent("facet", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
@@ -275,9 +274,7 @@ struct StoppedUpscaleOutletsTests {
             runtime, gpu, press in
             try press(scenario.change.key)
 
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-stopped-shared-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let directory = try TestScratch.directory("mokume-stopped-shared")
             defer { try? FileManager.default.removeItem(at: directory) }
             let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
             let shared = try SharedFrameSurface(gpu: gpu, width: 160, height: 160, at: directory)

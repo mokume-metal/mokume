@@ -5,6 +5,7 @@ import AVFoundation
 import AppKit
 import Foundation
 import ImageIO
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -71,9 +72,7 @@ struct RenderDistributionTests {
     }
 
     private func withDirectory(_ body: (URL) async throws -> Void) async throws {
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("mokume-render-distribution-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-render-distribution")
         defer { try? FileManager.default.removeItem(at: directory) }
         try await body(directory)
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -177,8 +178,7 @@ struct ShaderOriginTests {
 
     @Test("断片の口は、束にも写されていれば置き場の元から読み、保存した中身が読める")
     func readFindsTheFragmentAtTheOrigin() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-origin", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let assets = try makeFragment("// green", under: root)
 
@@ -201,8 +201,7 @@ struct ShaderOriginTests {
     /// **束に入っていない断片を、見張りだけが元から読まない** (資材の宣言の検査が止めるはずの抜け)。
     @Test("束に写されていない断片は、元が在っても変更前どおり見つからない")
     func readDoesNotHideAFragmentTheBundleLacks() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-origin", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let assets = try makeFragment("// green", under: root)
         let missing = root.appendingPathComponent("nowhere/assets/paint.metal")
@@ -213,8 +212,7 @@ struct ShaderOriginTests {
 
     @Test("合図が無ければ、同じ名前でも元は探さない (見張りの外の解き方は変わらない)")
     func readIgnoresTheOriginWithoutTheSignal() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-origin-\(UUID().uuidString)", isDirectory: true)
+        let root = TestScratch.path("mokume-origin", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         _ = try makeFragment("// green", under: root)
         let missing = root.appendingPathComponent("nowhere/assets/paint.metal")

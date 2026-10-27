@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -38,15 +39,12 @@ struct ObservationWarningsTests {
     }
 
     private func makeFacet() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-warnings-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-observe-warnings")
         return directory
     }
 
     private func writePicture() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-observe-warnings-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-observe-warnings", pathExtension: "png")
         try PNGFile.write(DisplayImage(width: 1, height: 1, bytes: [255, 0, 0, 255]), to: url)
         return url
     }

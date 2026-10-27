@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -42,8 +43,7 @@ struct DroppedWorkReadersTests {
     }
 
     private func temporaryPNG() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-dropped-\(UUID().uuidString).png")
+        TestScratch.path("mokume-dropped", pathExtension: "png")
     }
 
     /// 打ち切りを名乗る失敗か。**理由は 1 行目に載る** (窓の経路は 1 行目しか流さない・#1343)。
@@ -298,9 +298,7 @@ struct DroppedWorkReadersTests {
     /// 揃わなかった目録は `image` を落とす — 読み手はこの鍵の有無だけで成否を言える (ADR-0018 決定 3)。
     @Test("観測の撮影は、打ち切られたフレームの絵を撮らず、揃わなかった目録に理由を載せる")
     func observationDoesNotCaptureADroppedFrame() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-dropped-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-dropped-observe")
         defer { try? FileManager.default.removeItem(at: facet) }
         let gpu = try RenderDevice()
         let runtime = try SketchRuntime(

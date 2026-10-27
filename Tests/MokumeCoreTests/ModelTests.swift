@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -869,8 +870,7 @@ struct ModelTests {
         @Test("読めたが面が 1 つも無い状態が、読めなかった状態と区別できる")
         func anEmptyModelIsNotAFailure() throws {
             let canvas = try makeCanvas()
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            let directory = TestScratch.path("mokume-model")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let empty = directory.appendingPathComponent("empty.obj")
@@ -890,8 +890,7 @@ struct ModelTests {
         @Test("対応していない形式は、そう分かる形で投げる")
         func unsupportedFormatsSayWhy() throws {
             let canvas = try makeCanvas()
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            let directory = TestScratch.path("mokume-model")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             // STL は読めるようになった (#1966) ので、まだ読まない PLY を検体にする
@@ -997,8 +996,7 @@ struct ModelTests {
             // 裏から光を受けて暗くなる (#1473)。書いた向きは裏返されないので、正しい絵の
             // 手本になる。検体の四角錐は内向きに巻いてあるので、外向きに巻き直したものと
             // 両方で見る (形から求めた向きは両面なので、どちらの巻き方でも同じ絵になる)
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            let directory = TestScratch.path("mokume-model")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             func written(_ text: String, as name: String) throws -> String {
@@ -1129,8 +1127,7 @@ struct ModelTests {
         private func brightnessOfB(
             _ contents: Data, as name: String, light: SIMD3<Float> = SIMD3(-1, 0, -1)
         ) throws -> Float {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+            let directory = TestScratch.path("mokume-model")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
             let url = directory.appendingPathComponent(name)
@@ -1273,8 +1270,7 @@ struct ModelTests {
         /// 頂点を傾けた四角錐。**頂点と面の数は ``ModelFixture/pyramid`` と同じ**で、形だけが
         /// 違う — 数が違うと、影の指紋 (頂点の数を混ぜる) では取り違えが表に出ない。
         private static let leaningPyramid: String = {
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-leaning-pyramid.obj")
+            let url = TestScratch.path("mokume-leaning-pyramid", pathExtension: "obj")
             let text = ModelFixture.pyramidText.replacingOccurrences(
                 of: "v 0.0 1.6 0.0", with: "v 0.9 1.6 0.9")
             try? text.write(to: url, atomically: true, encoding: .utf8)
@@ -1352,8 +1348,7 @@ struct ModelTests {
 
         /// 四角錐を別々の場所へ `count` 個書き出す。**連番の OBJ の形** (名前を組み立てて読む)。
         private func writtenPyramids(_ count: Int) throws -> [String] {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-model-sequence-\(UUID().uuidString)")
+            let directory = TestScratch.path("mokume-model-sequence")
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
             return try (0..<count).map { index in

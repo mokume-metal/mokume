@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -27,9 +28,7 @@ struct SoundTrackWriterTests {
     }
 
     private func withDirectory(_ body: (URL) async throws -> Void) async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-writer-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-sound-writer")
         defer { try? FileManager.default.removeItem(at: directory) }
         try await body(directory)
     }

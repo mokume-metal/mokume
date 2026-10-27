@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -34,7 +35,7 @@ struct ObservationTimeTests {
     }
 
     private func facet() throws -> URL {
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("mokume-time-\(UUID())")
+        let path = TestScratch.path("mokume-time")
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         return path
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -146,8 +147,7 @@ struct SolidShaderTests {
         // **1 回だけでは判別力が無い** — 1 度目で控えが埋まり、2 度目が素通り
         // する形の壊れ方が残る
         let canvas = try makeCanvas()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-shader")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("paint.metal")
@@ -193,8 +193,7 @@ struct SolidShaderTests {
     @Test("壊れた断片では絵が消えず、前の断片が残って理由が伝わる")
     func abrokenShaderKeepsThePicture() throws {
         let canvas = try makeCanvas()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-shader")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("paint.metal")

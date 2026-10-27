@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -17,8 +18,7 @@ struct AssetURLTests {
 
     @Test("在るファイルは、その場所を返す")
     func existingFileIsFound() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-asset-\(UUID().uuidString).txt")
+        let url = TestScratch.path("mokume-asset", pathExtension: "txt")
         try Data("x".utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(try Bare().assetURL(url.path) == url)

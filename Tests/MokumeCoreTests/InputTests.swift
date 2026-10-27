@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -682,9 +683,7 @@ struct NonFiniteInputTests {
 @Suite("外から送られた入力")
 struct InputInboxTests {
     private func makeFacet() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-input-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-input")
         return url
     }
 
@@ -1022,8 +1021,7 @@ struct InputInboxTests {
 
     @Test("区画が無ければ、入力の受け口は立たない")
     func staysOffWithoutTheFacet() {
-        let absent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-absent-\(UUID().uuidString)", isDirectory: true)
+        let absent = TestScratch.path("mokume-absent", isDirectory: true)
         #expect(InputInbox.makeIfEnabled(at: absent) == nil)
     }
 }
@@ -1067,9 +1065,7 @@ struct SketchInputTests {
     }
 
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-input-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-input")
         return facet
     }
 
@@ -1143,9 +1139,7 @@ struct SketchInputTests {
 
     @Test("送った出来事が、同じフレームの draw から見える")
     func arrivesInTheSameFrame() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-input-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-input")
 
         let sketch = Recorder()
         let runtime = try SketchRuntime(

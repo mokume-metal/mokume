@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -137,9 +138,7 @@ struct LaunchedByToolTests {
         let kept = SignalState.current()
         defer { kept.restore() }
         sketchStopRequested = 0
-        let output = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-launched-render-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let output = try TestScratch.directory("mokume-launched-render")
         defer { try? FileManager.default.removeItem(at: output) }
         let request = try #require(
             RenderRequest(
@@ -237,8 +236,7 @@ struct LaunchedByToolTests {
     /// **区画が無ければ名乗らない。** 直に走らせたいつもの実行の出力を 1 行も増やさない。
     @Test("区画が無ければ、窓を開くことを名乗らない")
     func withoutTheFacetNothingIsSaid() throws {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         let application = try makeApplication()
         defer { application.willTerminate() }
         var said: [String] = []
@@ -308,9 +306,7 @@ struct LaunchedByToolTests {
     /// 区画に目録を書けない形 (書き込めない区画) で倒す。
     @Test("合図と区画が揃っていれば、共有面を用意できずに窓へ倒れても、管を読んで道具の去ったことに気付く")
     func aChildThatFallsBackToAWindowStillWatchesTheTool() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-locked-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-viewport-locked")
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)
@@ -337,8 +333,7 @@ struct LaunchedByToolTests {
     /// 目録の場所をディレクトリに塞いで倒す (区画そのものは書ける)。
     @Test("共有面を用意できずに窓へ倒れた子は、区画に自分の pid の目印を置く")
     func aChildThatFallsBackDeclaresItToTheTool() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-blocked-\(UUID().uuidString)", isDirectory: true)
+        let facet = TestScratch.path("mokume-viewport-blocked", isDirectory: true)
         try FileManager.default.createDirectory(
             at: facet.appendingPathComponent(SharedFrameSurface.manifestName, isDirectory: true),
             withIntermediateDirectories: true)
@@ -379,9 +374,7 @@ struct LaunchedByToolTests {
     /// 区画そのものを書けない倒れ方では、知らせようが無い。置けなくても落ちず、窓へ倒れる。
     @Test("区画を書けずに倒れた子は、目印を置けなくても落ちずに窓を開く")
     func aChildThatCannotWriteTheFacetStillFallsBack() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-locked-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-viewport-locked")
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: facet.path)

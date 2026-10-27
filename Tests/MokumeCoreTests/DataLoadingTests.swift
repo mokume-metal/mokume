@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -16,8 +17,7 @@ struct DataLoadingTests {
     }
 
     /// 検査ごとに別の置き場。終わったら消す。
-    private let folder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-data-\(UUID().uuidString)")
+    private let folder = TestScratch.path("mokume-data")
 
     private func file(_ name: String, _ text: String) throws -> String {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

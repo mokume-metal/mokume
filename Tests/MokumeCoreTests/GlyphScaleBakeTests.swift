@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -712,9 +713,7 @@ struct GlyphScaleBakeTests {
     }
 
     private func temporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-glyph-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-glyph")
         return url
     }
 

@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -175,9 +176,7 @@ struct SoundTrackOrderTests {
     @Test("末尾の絵が落ちても、窓は描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)")
     func theSoundOfADroppedTailPictureIsCutAtTheVideoLength() async throws {
         guard MovieFile.isAvailable else { return }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-tail-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-sound-tail")
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("tail.mov").path
 
@@ -233,9 +232,7 @@ struct SoundTrackOrderTests {
     @Test("fps が標本化率を越えて窓が 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる")
     func zeroSampleWindowsAreSkipped() async throws {
         guard MovieFile.isAvailable else { return }
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-zero-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-sound-zero")
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("fast.mov").path
 

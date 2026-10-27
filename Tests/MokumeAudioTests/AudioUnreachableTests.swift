@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -22,8 +23,7 @@ struct AudioUnreachableTests {
 
     @Test("入れない親の下の音声は、unopenable で入れない場所を名乗り、見つからないとは言わない")
     func unreachableParentIsNamedNotMissing() throws {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-unreachable-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-audio-unreachable")
         let assets = folder.appendingPathComponent("assets")
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: assets.path)

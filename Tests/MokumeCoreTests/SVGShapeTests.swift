@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -54,8 +55,7 @@ struct SVGShapeTests {
 
     /// 書き出した場所。検査ごとに別の名前で書く。
     private static func written(_ text: String) throws -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-svg-shape-\(UUID().uuidString).svg")
+        let url = TestScratch.path("mokume-svg-shape", pathExtension: "svg")
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url.path
     }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -93,8 +94,7 @@ struct NumberTextTests {
     // MARK: - ファイルから
 
     /// 検査ごとに別の置き場。終わったら消す。
-    private let folder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-number-text-\(UUID().uuidString)")
+    private let folder = TestScratch.path("mokume-number-text")
 
     private func file(_ name: String, _ text: String) throws -> String {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

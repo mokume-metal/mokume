@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import MokumeTestSupport
 import Synchronization
 import Testing
 
@@ -77,8 +78,7 @@ nonisolated final class PortLink: @unchecked Sendable {
     private let directory: URL
 
     init() throws {
-        directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-serial-\(UUID().uuidString)")
+        directory = TestScratch.path("mokume-serial")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         path = directory.appendingPathComponent("cu.usbmodem-test").path
     }

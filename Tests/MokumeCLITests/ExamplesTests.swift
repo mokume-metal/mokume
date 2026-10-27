@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -16,9 +17,7 @@ enum ExamplesFixture {
     static func catalogue(_ rows: [(spelling: String, summary: String, source: String)]) throws
         -> (Examples.Catalogue, URL)
     {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-examples-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-examples")
         var index = ""
         for (number, row) in rows.enumerated() {
             let file = String(format: "%04d.swift.template", number + 1)
@@ -178,9 +177,7 @@ struct ExamplesTests {
 
     @Test("索引が無い・空の置き場は、束が無いと断る")
     func aMissingBundleIsRefused() throws {
-        let empty = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-examples-none-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let empty = try TestScratch.directory("mokume-examples-none")
         defer { try? FileManager.default.removeItem(at: empty) }
         // 束を作る前の置き場 (README の 1 枚だけが在る)
         try "placeholder".write(
@@ -342,9 +339,7 @@ struct NewFromExampleTests {
     // MARK: - 実際に書く
 
     private func workspace() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-from-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-new-from")
         return url
     }
 
@@ -504,8 +499,7 @@ struct EveryBundledExampleBuildsTests {
 
     @Test("説明文の例 triangle が、名前だけで引ける")
     func theExampleFromTheIssueIsThere() throws {
-        let bundle = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-bundle-\(UUID().uuidString)", isDirectory: true)
+        let bundle = TestScratch.path("mokume-bundle", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: bundle) }
         try Self.makeBundle(into: bundle)
         let catalogue = try Examples.Catalogue(directory: bundle)

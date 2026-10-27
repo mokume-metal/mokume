@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -18,9 +19,7 @@ import Testing
 @Suite("watch --keep-time", .serialized, .signalStateKept)
 struct WatchKeepTimeTests {
     private func makeDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-keep-time-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-keep-time")
         return url
     }
 
@@ -181,9 +180,7 @@ struct WatchKeepTimeTests {
 
     @Test("名前が前置きで始まらないディレクトリは消さない (場所の取り違えで一時ディレクトリそのものを消さない)")
     func onlyItsOwnDirectoryIsRemoved() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("unrelated-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("unrelated")
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("clock")
         try Data("x".utf8).write(to: file)

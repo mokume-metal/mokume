@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -38,8 +39,7 @@ struct AudioOutsideRunTests {
 
     /// 音声として読めない中身を書いたファイル。外で呼んだ口がこれを読めば `unreadable` が返る。
     static func garbageFile() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-audio-outside-\(UUID().uuidString).wav")
+        let url = TestScratch.path("mokume-audio-outside", pathExtension: "wav")
         try Data("not audio".utf8).write(to: url)
         return url
     }

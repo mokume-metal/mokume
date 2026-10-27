@@ -4,6 +4,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import MokumeTestSupport
 import Testing
 import UniformTypeIdentifiers
 
@@ -116,8 +117,7 @@ enum FloatPictureFixture {
         }
         guard let made else { throw Failure(description: "浮動小数の文脈を作れなかった") }
 
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-float-\(UUID().uuidString).\(format.pathExtension)")
+        let url = TestScratch.path("mokume-float", pathExtension: format.pathExtension)
         guard
             let destination = CGImageDestinationCreateWithURL(
                 url as CFURL, format.identifier as CFString, 1, nil)

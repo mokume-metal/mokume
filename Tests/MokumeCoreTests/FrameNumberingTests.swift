@@ -3,6 +3,7 @@
 
 import Foundation
 import ImageIO
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -52,9 +53,7 @@ struct FrameNumberingTests {
     /// (止めたフレームは入らない — `SaveFramesTests` の「endRecord から返った時点で」と同じ数え方)。
     @Test("途中のフレームから撮り始めても、連番は 0 から振られる")
     func sequenceNumbersStartAtZeroWhereverTheRecordingStarts() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-numbering-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-numbering")
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let sketch = Recording()

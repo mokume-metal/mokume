@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -355,9 +356,7 @@ struct SketchApplicationTests {
 
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
     private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-viewport")
         defer { try? FileManager.default.removeItem(at: directory) }
         return try body(directory)
     }
@@ -388,8 +387,7 @@ struct SketchApplicationTests {
     /// (#826) が決めており、#1102 が触ってよいのは窓を持たない側だけである。
     @Test("自分の窓を持つ経路では、最後の窓が閉じたらスケッチも終わる")
     func theSketchEndsWithItsOwnLastWindow() throws {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         let application = try makeApplication(Blank())
         defer { application.willTerminate() }
         // 区画が無いので、窓を持つ道具に起こされていても出口は窓のまま
@@ -502,9 +500,7 @@ struct SketchApplicationTests {
         "撮っている最中なら、閉じ終えるまで返事を待たせ、済んだら 1 回だけ終わってよいと返す",
         .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
     func waitsForTheMovieWithoutBlocking() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-quit-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-quit")
         defer { try? FileManager.default.removeItem(at: directory) }
         Recording.path = directory.appendingPathComponent("quit.mov").path
 

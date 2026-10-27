@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -42,8 +43,7 @@ struct SVGEvenOddSelfCrossingTests {
 
     /// SVG を読んで描き、(中央 (120, 85) の赤, 上の腕の中 (120, 30) の赤) を返す。
     private func probe(_ text: String) throws -> (center: Double, arm: Double) {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-svg-star-\(UUID().uuidString).svg")
+        let url = TestScratch.path("mokume-svg-star", pathExtension: "svg")
         try text.write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: url) }
         let sketch = Loaded()
@@ -105,8 +105,7 @@ struct SVGEvenOddSelfCrossingTests {
             """
         }
         func sample(_ rule: String) throws -> (first: Double, overlap: Double, second: Double) {
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-svg-crossing-\(UUID().uuidString).svg")
+            let url = TestScratch.path("mokume-svg-crossing", pathExtension: "svg")
             try text(rule).write(to: url, atomically: true, encoding: .utf8)
             defer { try? FileManager.default.removeItem(at: url) }
             let sketch = Loaded()

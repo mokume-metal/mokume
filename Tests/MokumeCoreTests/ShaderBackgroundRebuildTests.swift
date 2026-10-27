@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -72,8 +73,7 @@ struct ShaderBackgroundRebuildTests {
     private static func write(_ body: String, named name: String, in directory: URL? = nil) throws -> URL {
         let directory =
             directory
-            ?? FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-background-shader-\(UUID().uuidString)", isDirectory: true)
+            ?? TestScratch.path("mokume-background-shader", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name)
         try body.write(to: url, atomically: true, encoding: .utf8)
@@ -219,9 +219,7 @@ struct ShaderBackgroundRebuildTests {
 
     @Test("観測のフレームでは、組んでいる仕事を待たずにその場で組み、保存した中身で描く")
     func anObservedFrameBuildsInPlace() throws {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-background-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-background-observe")
         let (runtime, _, shader, url) = try Self.runtime(
             painting: Self.paintBody(0.25), observer: FrameObserver(directory: facet))
         let saved = Double.random(in: 0.6...0.9)
@@ -243,8 +241,7 @@ struct ShaderBackgroundRebuildTests {
     @Test("効果と計算も、裏で組んでフレームの頭で差し替わる")
     func effectsAndComputationsAreBuiltInTheBackground() throws {
         let (runtime, _, _, _) = try Self.runtime(painting: Self.paintBody(0.25))
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-background-others-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-background-others", isDirectory: true)
         let tint = try Self.write(Self.effectBody(0.5), named: "tint.metal", in: directory)
         let fill = try Self.write(Self.computationBody(0.5), named: "fill.metal", in: directory)
         let effect = try runtime.canvas.loadEffect(tint.path)

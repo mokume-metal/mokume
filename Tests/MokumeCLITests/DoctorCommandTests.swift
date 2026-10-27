@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -83,8 +84,7 @@ struct DoctorCommandTests {
     /// 共有の置き場を打った人の手元へ向かせない環境 (結果を機械の状態で変えない)。
     private static func isolated() -> [String: String] {
         [
-            BuildDirectory.environmentKey: FileManager.default.temporaryDirectory
-                .appendingPathComponent("mokume-doctor-store-\(UUID().uuidString)").path
+            BuildDirectory.environmentKey: TestScratch.path("mokume-doctor-store").path
         ]
     }
 
@@ -731,9 +731,7 @@ struct DoctorCommandTests {
     }
 
     static func emptyDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-doctor-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = try TestScratch.directory("mokume-doctor")
         return url
     }
 }

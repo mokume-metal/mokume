@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -858,8 +859,7 @@ struct ShapeFormulaTests {
         let text =
             triangles.map { "v \($0.x) \($0.y) \($0.z)" }.joined(separator: "\n")
             + "\nf 1 2 3\nf 4 5 6\n"
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-model-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-model")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("two-triangles.obj")

@@ -3,6 +3,7 @@
 
 import AVFAudio
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -33,8 +34,7 @@ struct Heard: Equatable {
 
 /// 見出しだけで標本の無い (長さ 0 の) WAV を書く。
 func writeEmptyWAV() throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-sound-\(UUID().uuidString).wav")
+    let url = TestScratch.path("mokume-sound", pathExtension: "wav")
     let format = try #require(
         AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false))
     _ = try AVAudioFile(forWriting: url, settings: format.settings)
@@ -43,8 +43,7 @@ func writeEmptyWAV() throws -> URL {
 
 /// 中身をそのまま書いた一時ファイル。
 func writeBytes(_ bytes: [UInt8], extension suffix: String) throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-sound-\(UUID().uuidString).\(suffix)")
+    let url = TestScratch.path("mokume-sound", pathExtension: suffix)
     try Data(bytes).write(to: url)
     return url
 }
@@ -52,8 +51,7 @@ func writeBytes(_ bytes: [UInt8], extension suffix: String) throws -> URL {
 /// 名前が在るものに解けるのに開けないもの — ディレクトリと、読む権利の無いファイル — を置く
 /// ([#2358](https://github.com/mokume-metal/mokume/issues/2358))。
 struct UnopenablePlaces {
-    let folder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("mokume-unopenable-\(UUID().uuidString)")
+    let folder = TestScratch.path("mokume-unopenable")
 
     /// `name` という名前のディレクトリと、同じ名前に `locked-` を冠した読む権利の無いファイルを置き、
     /// 場所と、開こうとして OS が返す番号の C の文面を返す。外した権利は ``cleanUp()`` が戻す。
@@ -956,8 +954,7 @@ struct SoundFileTests {
         // ファイルから作ったのではない
         try expectCannotReload(url: url, source: nil, reason: "nothing to read it from")
         // 外している間に消えた (見つからないと開けないを取り違えない)
-        let gone = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-gone-\(UUID().uuidString).wav")
+        let gone = TestScratch.path("mokume-gone", pathExtension: "wav")
         try expectCannotReload(url: url, source: gone, reason: gone.lastPathComponent)
         // 外している間に、音声でないものに替わった
         let swapped = try writeBytes(Array("not audio".utf8), extension: "wav")
@@ -978,8 +975,7 @@ struct SoundFileTests {
         defer { try? FileManager.default.removeItem(at: shorter) }
         try expectCannotReload(url: url, source: shorter, reason: "differ")
         // チャンネル数が違う (同じ長さ・同じ標本化率のモノラル)
-        let mono = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-mono-\(UUID().uuidString).wav")
+        let mono = TestScratch.path("mokume-mono", pathExtension: "wav")
         defer { try? FileManager.default.removeItem(at: mono) }
         let monoFormat = try #require(
             AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))

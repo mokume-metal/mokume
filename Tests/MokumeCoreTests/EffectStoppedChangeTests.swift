@@ -3,6 +3,7 @@
 
 import Foundation
 import ImageIO
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -546,9 +547,7 @@ struct EffectStoppedChangeTests {
         "止まっている間のコールバックで書き、save() を通してから描き直しても、書いた画素が残り効果は焼き込まれない",
         arguments: [Float(1), 0.5])
     func aStoppedSketchKeepsWhatItsCallbackWrote(density: Float) throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stopped-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-stopped")
         defer { try? FileManager.default.removeItem(at: directory) }
         let facet = directory.appendingPathComponent("facet", isDirectory: true)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)

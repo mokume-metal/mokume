@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -20,8 +21,7 @@ struct WatchedFileTests {
 
     /// ファイルを 1 つ作って渡す。
     private func withFile<T>(_ body: (URL) throws -> T) rethrows -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-watched-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-watched", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         return try body(directory.appendingPathComponent("payload.json"))

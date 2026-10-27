@@ -3,6 +3,7 @@
 
 import AVFoundation
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeAudio
@@ -22,8 +23,7 @@ struct SoundTrackOperationsTests {
     static func value(_ index: Int) -> Float { Float(index % 997 + 1) / 2000 }
 
     private func temporaryMovie() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-ops-\(UUID().uuidString).mov")
+        TestScratch.path("mokume-sound-ops", pathExtension: "mov")
     }
 
     /// 書いた `.mov` の音声トラック。
@@ -211,8 +211,7 @@ struct SoundTrackOperationsTests {
 
     /// 左右の違うステレオと、モノラルのファイル。
     private func writeChannels(_ channels: [[Float]], sampleRate: Double) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-sound-ops-\(UUID().uuidString).wav")
+        let url = TestScratch.path("mokume-sound-ops", pathExtension: "wav")
         let format = try #require(
             AVAudioFormat(
                 commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels.count),

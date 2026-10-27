@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCamera
@@ -360,8 +361,7 @@ struct MovieTests {
 
     @Test("ディレクトリと読む権利の無いファイルは、unopenable で開けない事情を名乗る (#2358)")
     func unopenableNamesWhy() throws {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-unopenable-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-unopenable")
         let directory = folder.appendingPathComponent("clip.mov")
         let locked = folder.appendingPathComponent("locked.mov")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -396,8 +396,7 @@ struct MovieTests {
     /// 名乗る ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。`createVideo` の `assetURL` の写し。
     @Test("入れない親の下の動画は、unopenable で入れない場所を名乗り、見つからないとは言わない")
     func unreachableParentIsNamedNotMissing() throws {
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-movie-unreachable-\(UUID().uuidString)")
+        let folder = TestScratch.path("mokume-movie-unreachable")
         let assets = folder.appendingPathComponent("assets")
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: assets.path)
@@ -550,9 +549,7 @@ struct MovieTests {
         prepare: @escaping (Movie) -> Void = { $0.play() },
         during: @escaping (MovieSketch, Movie) -> Void = { _, _ in }
     ) throws -> [MovieFrame] {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-movie-observe-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-movie-observe")
         defer { try? FileManager.default.removeItem(at: facet) }
         var movie: Movie?
         var received: [MovieFrame] = []

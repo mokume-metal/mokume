@@ -5,6 +5,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Metal
+import MokumeTestSupport
 import Testing
 import UniformTypeIdentifiers
 
@@ -62,8 +63,7 @@ struct ImageTests {
             context.fill(CGRect(x: x, y: height - 1 - y, width: 1, height: 1))
         }
         let made = context.makeImage()!
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-image-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-image", pathExtension: "png")
         let destination = CGImageDestinationCreateWithURL(
             url as CFURL, UTType.png.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, made, nil)
@@ -113,8 +113,7 @@ struct ImageTests {
 
     @Test("画像として読めないものは、その旨を投げる")
     func anUndecodableFileSaysSo() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-not-an-image-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-not-an-image", pathExtension: "png")
         try "これは画像ではない".write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -888,8 +887,7 @@ struct ImageTests {
         context.setFillColor(
             CGColor(colorSpace: space, components: [CGFloat(red), 0.2, 0.3, 1])!)
         context.fill(CGRect(x: 0, y: 0, width: side, height: side))
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-solid-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-solid", pathExtension: "png")
         let destination = CGImageDestinationCreateWithURL(
             url as CFURL, UTType.png.identifier as CFString, 1, nil)!
         CGImageDestinationAddImage(destination, context.makeImage()!, nil)

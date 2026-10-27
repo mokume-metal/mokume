@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCLI
@@ -76,9 +77,7 @@ struct NewNameTests {
     /// **何も書かずに断る。** 止まった後にディレクトリが残ると、打ち直しが「Already there」になる。
     @Test("断った名前は、ディレクトリを作らない")
     func nothingIsWrittenForARefusedName() throws {
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-new-refused-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let parent = try TestScratch.directory("mokume-new-refused")
         defer { try? FileManager.default.removeItem(at: parent) }
 
         for name in ["sketch", "Self", "mokume", "MokumeCore"] {
@@ -259,8 +258,7 @@ struct NewNameTests {
         let repository = TemplateBuildTests.repository
         // **置き場を別にする。** 既定の `.build` は、この検査を走らせている `swift test` が
         // ロックを持っていて、同じ置き場へ聞くと互いに待って終わらない
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-dump-\(UUID().uuidString)", isDirectory: true)
+        let scratch = TestScratch.path("mokume-dump", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         let dump = try RunCommand.swift(
             ["package", "--scratch-path", scratch.path, "dump-package"], in: repository,

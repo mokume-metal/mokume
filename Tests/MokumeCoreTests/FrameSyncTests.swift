@@ -3,6 +3,7 @@
 
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -835,8 +836,7 @@ struct FrameSyncTests {
     /// ベンチの描画先を差し出す共有面と、焼く口。区画はファイルを置かないので作らない。
     private func makeSharedSurface(for bench: Bench) throws -> (SharedFrameSurface, FramePresenter) {
         let target = bench.canvas.output
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
+        let directory = TestScratch.path("mokume-viewport", isDirectory: true)
         let shared = try SharedFrameSurface(
             gpu: bench.gpu, width: target.width, height: target.height, at: directory)
         let presenter = try FramePresenter(gpu: bench.gpu, pixelFormat: RenderTarget.pixelFormat)

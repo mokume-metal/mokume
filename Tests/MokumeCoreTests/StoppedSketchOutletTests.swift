@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -65,9 +66,7 @@ private final class RunningSketch: Sketch {
 @MainActor
 struct StoppedSketchOutletTests {
     private func makeFacet() throws -> URL {
-        let facet = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-stopped-outlet-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
+        let facet = try TestScratch.directory("mokume-stopped-outlet")
         return facet
     }
 

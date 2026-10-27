@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -2344,8 +2345,7 @@ struct SVGFileTests {
 
     /// 検査ごとに別の名前で、一時ディレクトリへ書く。
     private func written(_ data: Data, as name: String) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-svg-\(UUID().uuidString)-\(name)")
+        let url = TestScratch.path(named: "mokume-svg-\(UUID().uuidString)-\(name)")
         try data.write(to: url)
         return url
     }

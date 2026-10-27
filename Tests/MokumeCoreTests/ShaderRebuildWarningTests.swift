@@ -3,6 +3,7 @@
 
 import Foundation
 import MokumeDiagnostics
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -86,9 +87,7 @@ struct ShaderRebuildWarningTests {
     /// 警告の側だけを変える。観測の `failure` と投げる理由 (`description`) は、全文のまま。
     @Test("保存して差し替えに失敗すると、警告に行が載り、観測の failure と理由の全文は変わらない")
     func theWarningCarriesTheLineButTheFailureStaysWhole() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-shader-warning-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-shader-warning")
         let url = directory.appendingPathComponent("waves.metal")
         try "good".write(to: url, atomically: false, encoding: .utf8)
         let box = ShaderBox(

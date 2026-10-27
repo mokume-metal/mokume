@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -109,9 +110,7 @@ struct DisplayOutputTests {
         let outlet = WatchingOutlet()
         AlternatingSketch.declared = [outlet]
         let runtime = try SketchRuntime(sketch: AlternatingSketch(), gpu: RenderDevice())
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-display-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-display")
         defer { try? FileManager.default.removeItem(at: directory) }
 
         var shownLevels: [UInt8] = []
@@ -156,8 +155,7 @@ struct DisplayOutputTests {
         let failure = RenderFailure.timedOut(seconds: RenderDevice.waitLimitSeconds)
         gpu.failSettleForTesting = failure
         #expect(throws: failure) { _ = try canvas.output.encodeForDisplay() }
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-display-\(UUID().uuidString).png")
+        let url = TestScratch.path("mokume-display", pathExtension: "png")
         #expect(throws: failure) { try canvas.output.writePNG(to: url) }
         #expect(!FileManager.default.fileExists(atPath: url.path), "待てなかったのに書き出した")
 

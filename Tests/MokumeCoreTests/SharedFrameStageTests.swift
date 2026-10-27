@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -22,9 +23,7 @@ import Testing
 struct SharedFrameStageTests {
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
     private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-viewport-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = try TestScratch.directory("mokume-viewport")
         defer { try? FileManager.default.removeItem(at: directory) }
         return try body(directory)
     }

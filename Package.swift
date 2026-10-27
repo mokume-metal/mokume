@@ -124,24 +124,33 @@ let package = Package(
         // 検査が入力を seed つきで生成して縮める道具 (#3207 の提案 1・#3216)。product には含めない。
         // 検査の target だけが依存する (依存は足さず Foundation だけ)
         .target(name: "MokumeProbe", path: "Tests/MokumeProbe", swiftSettings: .mokume),
+        // 検査が一時の場所に作る区画の持ち主 (#3298)。product には含めない。検査の target だけが
+        // 依存する (依存は足さず Foundation だけ)
+        .target(name: "MokumeTestSupport", path: "Tests/MokumeTestSupport", swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCoreTests", dependencies: ["mokume", "reference-sketches", "MokumeProbe"],
+            name: "MokumeCoreTests",
+            dependencies: ["mokume", "reference-sketches", "MokumeProbe", "MokumeTestSupport"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
-        .testTarget(name: "MokumeCLITests", dependencies: ["MokumeCLI"], swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeTestSupport"],
+            swiftSettings: .mokume),
         // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
         .testTarget(
             name: "FrameRateProbeTests", dependencies: ["frame-rate-probe"],
             swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCameraTests", dependencies: ["mokume", "MokumeCamera"],
+            name: "MokumeCameraTests",
+            dependencies: ["mokume", "MokumeCamera", "MokumeTestSupport"],
             swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeAudioTests", dependencies: ["mokume", "MokumeAudio"],
+            name: "MokumeAudioTests",
+            dependencies: ["mokume", "MokumeAudio", "MokumeTestSupport"],
             swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeNetworkTests", dependencies: ["mokume", "MokumeNetwork"],
+            name: "MokumeNetworkTests",
+            dependencies: ["mokume", "MokumeNetwork", "MokumeTestSupport"],
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeGamepadTests", dependencies: ["mokume", "MokumeGamepad"],

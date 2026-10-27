@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import mokume
 
@@ -216,9 +217,7 @@ struct NameCorrespondenceTests {
     /// ずれが起きないことを見る (列挙が網羅 `switch` を強いるので、ここは面の側の確認)。
     @Test("一覧に載る道具は、すべて呼べる")
     func everyListedToolAnswers() throws {
-        let place = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("tools-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
+        let place = try TestScratch.directory("tools")
         defer { try? FileManager.default.removeItem(at: place) }
 
         let tools = Tools(facets: Facets(directory: place, waitLimit: 0.2), makeID: { "fixed" })

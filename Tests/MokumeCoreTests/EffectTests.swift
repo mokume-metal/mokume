@@ -4,6 +4,7 @@
 import CryptoKit
 import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -817,8 +818,7 @@ struct EffectTests {
     @Test("差し替えに失敗した効果の理由が、観測へ届く")
     func failedEffectReloadReachesObservation() throws {
         let canvas = try makeCanvas()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mokume-effect-\(UUID().uuidString)")
+        let directory = TestScratch.path("mokume-effect")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("tint.metal")
         try "float4 effect(Pixel in, Values values) { return in.color; }"
