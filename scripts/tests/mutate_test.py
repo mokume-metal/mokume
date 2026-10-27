@@ -269,7 +269,16 @@ class ClassifyTest(unittest.TestCase):
         self.assertIn("Test.cancel", reason)
         # 関連でない suite の取り消しは、関連の検査が走った回を評価できなかったことにしない
         self.assertEqual(self.classify([("T.Other/b()", "cancelled")], test="ok")[0], "survived")
-        self.assertEqual(self.classify([("T.Other/b()", "cancelled")], test="ok", gpu=True)[0], "unevaluated")
+        # GPU の無い機械の印があっても、取り消しは GPU と無関係なので関連の外は数えない (survived を隠さない)
+        self.assertEqual(self.classify([("T.Other/b()", "cancelled")], test="ok", gpu=True)[0], "survived")
+        # 飛ばされた検査は、印があれば関連の外も数える (今までどおり)
+        self.assertEqual(self.classify([("T.Other/b()", "skipped")], test="ok", gpu=True)[0], "unevaluated")
+        # 理由の件数は関連の取り消しだけ (関連の外の分を足さない)
+        mixed = [("T.GuardTests/a()", "cancelled"), ("T.Other/b()", "cancelled"), ("T.Other/c()", "cancelled")]
+        self.assertIn("関連の suite で 1 件が Test.cancel", self.classify(mixed, test="ok", gpu=True)[1])
+        # 入れ子の suite は testID の `/` つなぎなので最外の suite に写る
+        self.assertEqual(mutate.suite_of("T.GuardTests/Inner/a()"), "T.GuardTests")
+        self.assertEqual(self.classify([("T.GuardTests/Inner/a()", "cancelled")], test="ok")[0], "unevaluated")
         # 殺した回は、取り消しがあっても殺した
         both = [("T.GuardTests/a()", "failed"), ("T.GuardTests/b()", "cancelled")]
         self.assertEqual(self.classify(both)[0], "killed")
@@ -420,6 +429,26 @@ class RunTest(unittest.TestCase):
             # 生き残りに数えない
             self.assertEqual(data["counts"]["unevaluated"], 2)
             self.assertEqual(package.library.read_bytes(), before)
+
+    def test_a_baseline_without_the_event_record_names_why(self):
+        """変異なしの基準が成り立たない回は、build か記録のどれが原因かを SystemExit の文面に出す。"""
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// NOEVENTS\n")
+            git(package.repo, "commit", "-qam", "marker")
+            result, _ = package.run("--bundle", package.bundle([
+                mutant("plain", "label.isEmpty == false", "label.isEmpty != true")]))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("事象の記録: 記録が無い", result.stderr)
+            self.assertIn("--filter", result.stderr)
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// BREAK\n")
+            git(package.repo, "commit", "-qam", "marker")
+            result, _ = package.run("--bundle", package.bundle([
+                mutant("plain", "label.isEmpty == false", "label.isEmpty != true")]))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("build が failed", result.stderr)
 
     def test_swift_is_asked_for_the_event_stream_in_version_zero(self):
         with tempfile.TemporaryDirectory() as root:

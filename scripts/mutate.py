@@ -400,8 +400,11 @@ def read_cancelled(path):
     """(問題, 取り消しの列)。問題は None か読めない理由。取り消しは (ident, "cancelled")。
 
     読みは read-test-record.py と共有する。事象の記録が無い・読めない回は、取り消しが無いと
-    読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。ident は xunit の
-    `<classname>/<name>` と同じ綴りで、testID の末尾の `/<file>:<line>:<column>` を落としたもの。
+    読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。ident は testID の末尾の
+    `/<file>:<line>:<column>` を落としたもの (`<suite>/<name>`)。testID は入れ子の suite を `/` で
+    つなぐ (`MokumeCoreTests.Outer/Inner/test()`) ので、`suite_of` は最外の suite に写す。
+    xunit の classname は入れ子を `.` でつなぐ (`MokumeCoreTests.Outer.Inner`) ので、入れ子では
+    xunit の ident とは綴りが合わない — ident は xunit の検査と突き合わせず、関連の suite の判定にだけ使う。
     """
     reason, items, _, _ = _read_test_record().read_cancellations(path)
     if reason is not None:
@@ -411,7 +414,9 @@ def read_cancelled(path):
 
 
 def suite_of(ident):
-    """`MokumeCoreTests.Outer/Inner/test()` → `MokumeCoreTests.Outer`。"""
+    """`<module>.<suite>/…` の最外の suite。取り消しの ident (testID 由来・入れ子は `/`) では
+    `MokumeCoreTests.Outer/Inner/test()` → `MokumeCoreTests.Outer`。xunit の ident (`<classname>/<name>`)
+    の classname は入れ子を `.` でつなぐので、入れ子の飛ばされた検査はそのままでは関連に合わない。"""
     return ident.split("/", 1)[0]
 
 
@@ -438,12 +443,15 @@ def classify(build, test, record_state, cases, baseline_failed, related, gpu_hin
     related_skipped = [i for i in skipped if suite_of(i) in related]
     cancelled = [ident for ident, result in cases if result == "cancelled"]
     related_cancelled = [i for i in cancelled if i == UNKEYED_IDENT or suite_of(i) in related]
-    if related_skipped or related_cancelled or (gpu_hint and (skipped or cancelled)):
+    # 飛ばされた検査は GPU の無い機械の印 (gpu_hint) があれば関連の外も数える。取り消しは GPU の
+    # 有無と無関係 (時間の前提の崩れなど) なので、関連の suite のものだけを数える — 関連でない
+    # suite の取り消しで、本物の survived を隠さない
+    if related_skipped or related_cancelled or (gpu_hint and skipped):
         parts = []
         if related_skipped or (gpu_hint and skipped):
             parts.append(f"関連の suite で {len(related_skipped) or len(skipped)} 件が飛んだ")
-        if related_cancelled or (gpu_hint and cancelled):
-            parts.append(f"関連の suite で {len(related_cancelled) or len(cancelled)} 件が Test.cancel で取り消された")
+        if related_cancelled:
+            parts.append(f"関連の suite で {len(related_cancelled)} 件が Test.cancel で取り消された")
         return "unevaluated", "・".join(parts), []
     return "survived", None, []
 
@@ -544,6 +552,7 @@ class Runner:
         self.wrap = ["python3", str(repo / "scripts" / "gpu-slot.py"), "--"] if gpu_slot else []
         self.log = self.work / "mutate-log.txt"
         self.baselines = {}
+        self.baseline_problems = {}
         self.runs = 0
 
     def once(self, pattern, deadline):
@@ -573,11 +582,16 @@ class Runner:
         return build, test, state, cases
 
     def baseline(self, pattern):
-        """変異なしで同じ集合を回し、もとから赤い検査を覚える。組めなければ None。"""
+        """変異なしで同じ集合を回し、もとから赤い検査を覚える。組めなければ None (理由は baseline_problems)。"""
         if pattern not in self.baselines:
             build, test, state, cases = self.once(pattern, time.monotonic() + self.timeout)
             if build != "ok" or state != "ok":
                 self.baselines[pattern] = None
+                self.baseline_problems[pattern] = (
+                    f"build が {build}" if build != "ok"
+                    else f"記録が {state}" if state in ("missing", "unreadable")
+                    else state  # 事象の記録が読めない (「事象の記録: …」)
+                )
             else:
                 self.baselines[pattern] = {i for i, r in cases if r == "failed"}
         return self.baselines[pattern]
@@ -586,8 +600,8 @@ class Runner:
 def stage(runner, path, original, mutated, pattern, related, gpu_hint, scope):
     baseline = runner.baseline(pattern)
     if baseline is None:
-        raise SystemExit(f"mutate: 変異なしの build か test の記録が成り立たない (--filter {pattern})。"
-                         f" 材料は {runner.log}")
+        raise SystemExit(f"mutate: 変異なしの build か test の記録が成り立たない: {runner.baseline_problems[pattern]}"
+                         f" (--filter {pattern})。材料は {runner.log}")
     started = time.monotonic()
     path.write_text(mutated, encoding="utf-8")
     try:
