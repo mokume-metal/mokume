@@ -163,8 +163,29 @@ struct DensityInvarianceTests {
         /// 点は描く画素で 1 以上を見ないので、距離関数の経路でも 1 まで。
         var maxWeight: Double { isDistanceField && crossings(squash: 1) != 0 ? 4 : 1 }
 
-        /// 光の量が面積を約束 (±6%) より多く越える置き方が分かっている口 (#3242)。
-        var isKnownToOvershoot: Bool { self == .diagonalEllipseAcross || self == .diagonalEllipseAlong }
+        /// 光の量が面積を約束 (±6%) より多く越えると #3242 が記録している外れか。
+        ///
+        /// **既知として扱うのは #3242 の記録に当たるものだけ** で、口の名前だけでは決めない。外れた量が
+        /// 記録の向き・大きさに収まらないもの (少なく出る・記録より大きく多い) と、記録の形に当たらない
+        /// 入力 (描く画素で太さ 1 に届かず長さも 16 を越える楕円) は、同じ口でも通常の失敗にする。
+        ///
+        /// | 条件 | #3242 の記録 |
+        /// | --- | --- |
+        /// | 楕円の 2 口 | `diagonalEllipseAcross`・`diagonalEllipseAlong` |
+        /// | 光の量が期待より多い | 記録の比はすべて 1 より大きい (×1.060〜×1.227) |
+        /// | 期待の ×1.25 まで | 記録の最大は 45° の太さ 1・細かさ 1 の ×1.227 (+22.7%) |
+        /// | 描く画素で太さ 1 以上 | 「描く画素で幅 1 の近く」の行: 太さ 1・細かさ 1 (×1.227・×1.079)・太さ 1.81・細かさ 0.570 (描く画素で 1.03・×1.164) |
+        /// | または描く画素での長さ (40 × 細かさ) が 16 以下 | 「細かさを下げた短い楕円」の行: 長さ 13 で ×1.070。上振れが長さに反比例する (長さ 20 で +4.7%) ので ±6% を越えるのは 15.7 以下 |
+        ///
+        /// 発見の記録は seed 0x616304c188a0c9b6・0x38b3332de597de2f (``DensityInvarianceTests/amountKeepsItsWeight(_:)``)。
+        /// **#3242 が直ったらこの述語と ``DensityInvarianceTests/measureTolerating3242(_:_:)`` ごと撤去する。**
+        func isRecordedOvershoot(_ pose: Pose, measured: Double, expected: Double) -> Bool {
+            guard self == .diagonalEllipseAcross || self == .diagonalEllipseAlong else { return false }
+            guard measured > expected, measured <= expected * 1.25 else { return false }
+            let drawnWeight = Double(pose.weight * pose.density)
+            let drawnLength = 40 * Double(pose.density)
+            return drawnWeight >= 1 || drawnLength <= 16
+        }
 
         /// 回転を持つ口か (``Pose/angle`` を使う)。
         var rotates: Bool {
@@ -481,21 +502,52 @@ struct DensityInvarianceTests {
     /// 描いていた。同じ程度に収める (#3216 の条件 5)。
     static let generatedCases = 32
 
-    /// 量の口を置き方 `pose` で描き、約束と比べる。生成する検査も固定の例も、ここを通る。
+    /// 量の口を置き方 `pose` で描き、約束と比べる。
     @MainActor
     static func measure(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
+        guard let (measured, expected) = try measurement(mouth, pose) else { return .skip }
+        return Self.judge(mouth, measured: measured, expected: expected)
+    }
+
+    /// 許容 (``Amount/tolerance``) に収まるかを見る。
+    private static func judge(_ mouth: Amount, measured: Double, expected: Double) -> Probe.Outcome {
+        if abs(measured - expected) > mouth.tolerance * expected {
+            return .fail("光の量 \(measured) (期待 \(expected)・許容 ±\(mouth.tolerance))")
+        }
+        return .pass
+    }
+
+    /// ``measure(_:_:)`` に、#3242 が記録している外れ (``Amount/isRecordedOvershoot(_:measured:expected:)``)
+    /// だけを既知として足したもの。生成する検査も固定の例も、ここを通る。
+    ///
+    /// 既知の外れは `withKnownIssue("#3242")` で記録して `pass` を返すので、Probe の探索は続き、
+    /// 後ろの入力の未知の外れを名乗る。記録に当たらない外れは `fail` のまま。
+    /// **#3242 が直ったら、``measure(_:_:)`` に戻してここを消す。**
+    @MainActor
+    static func measureTolerating3242(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
+        guard let (measured, expected) = try measurement(mouth, pose) else { return .skip }
+        let outcome = judge(mouth, measured: measured, expected: expected)
+        guard case .fail(let text) = outcome, mouth.isRecordedOvershoot(pose, measured: measured, expected: expected)
+        else { return outcome }
+        withKnownIssue("#3242") { Issue.record("\(mouth.rawValue): \(pose): \(text)") }
+        return .pass
+    }
+
+    /// 量の口を置き方 `pose` で描いて測った光の量と、約束の量。`nil` なら置き方が約束の外で、見ない。
+    @MainActor
+    static func measurement(_ mouth: Amount, _ pose: Pose) throws -> (measured: Double, expected: Double)? {
         let (weight, density) = (pose.weight, pose.density)
         let drawn = Double(weight * density)
         // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)
-        if drawn < 0.07 { return .skip }
+        if drawn < 0.07 { return nil }
         // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
         // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
         let areaFactor = mouth.areaFactor(squash: pose.squash)
         let crossings = mouth.crossings(squash: pose.squash)
-        if crossings == 0, drawn * areaFactor.squareRoot() >= 1 { return .skip }
+        if crossings == 0, drawn * areaFactor.squareRoot() >= 1 { return nil }
         // 三角形の経路の面全体で見る塗りも、描く画素で幅が 1 より細いときだけ見る (``Amount/fillArea``)。
         // 距離関数の経路の塗りは縁を面積で数えるので、太くても見る
-        if mouth.fillArea != nil, !mouth.isDistanceField, drawn >= 1 { return .skip }
+        if mouth.fillArea != nil, !mouth.isDistanceField, drawn >= 1 { return nil }
         let canvas = try makeCanvas(density: density)
         try draw(on: canvas) {
             canvas.background(0)
@@ -504,18 +556,13 @@ struct DensityInvarianceTests {
             try mouth.draw(on: canvas, pose)
         }
         let pixels = try canvas.target.readPixels()
-        let (measured, expected): (Double, Double)
         if let area = mouth.fillArea {
-            (measured, expected) = (totalSum(pixels), area * drawn * Double(density))
+            return (totalSum(pixels), area * drawn * Double(density))
         } else if crossings == 0 {
-            (measured, expected) = (totalSum(pixels), drawn * drawn * areaFactor)
+            return (totalSum(pixels), drawn * drawn * areaFactor)
         } else {
-            (measured, expected) = (columnSum(pixels, density: density), drawn * crossings)
+            return (columnSum(pixels, density: density), drawn * crossings)
         }
-        if abs(measured - expected) > mouth.tolerance * expected {
-            return .fail("光の量 \(measured) (期待 \(expected)・許容 ±\(mouth.tolerance))")
-        }
-        return .pass
     }
 
     /// 太さ・面積の口が、細かさ・置く位置・角度・倍率によらず、描く画素での太さ (面積) ぶんの濃さで出る。
@@ -537,17 +584,9 @@ struct DensityInvarianceTests {
                 offset: SIMD2(input.float("dx"), input.float("dy")),
                 angle: mouth.rotates ? input.float("angle") : 0,
                 squash: mouth.squashes ? input.float("squash") : 1)
-            return try Self.measure(mouth, pose)
+            return try Self.measureTolerating3242(mouth, pose)
         }
-        if mouth.isKnownToOvershoot {
-            // #3242: 細い楕円は描く画素で幅 1 の近くと短い楕円で ±6% を越える。許容は緩めずに残す。
-            // 定期の検査の新しい seed では当たらない回もあるので、間欠として扱う
-            withKnownIssue("#3242", isIntermittent: true) {
-                #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
-            }
-        } else {
-            #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
-        }
+        #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
         // 生成した置き方の大半が約束の外へ落ちると、探したと名乗りながら何も見ない
         #expect(report.ran * 2 >= report.ran + report.skipped, "\(mouth.rawValue): 見たのは \(report.ran) 件・約束の外 \(report.skipped) 件")
     }
@@ -581,27 +620,19 @@ struct DensityInvarianceTests {
     @Test("固定の例: 直した Bug の置き方の格子でも、描く画素での太さ (面積) ぶんの濃さで出る", arguments: FixedPose.all)
     func fixedPosesKeepTheirWeight(_ row: FixedPose) throws {
         var broken: [String] = []
-        // #3242 の形 (楕円の口・描く画素で幅 1 以上) は、置き換える前の格子では見ていなかった
-        var known: [String] = []
         for weight in [Float(1), 0.5, 0.2] {
             for density in Self.densities {
                 for offset in row.mouth.offsets {
                     let pose = Pose(
                         weight: weight, density: density, offset: SIMD2(0, offset), angle: row.angle, squash: row.squash)
-                    if case .fail(let text) = try Self.measure(row.mouth, pose) {
-                        if row.mouth.isKnownToOvershoot, weight * density >= 1 {
-                            known.append("\(pose): \(text)")
-                        } else {
-                            broken.append("\(pose): \(text)")
-                        }
+                    // #3242 の記録に当たる外れだけは既知として記録し、ほかの外れは落とす
+                    if case .fail(let text) = try Self.measureTolerating3242(row.mouth, pose) {
+                        broken.append("\(pose): \(text)")
                     }
                 }
             }
         }
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
-        if !known.isEmpty {
-            withKnownIssue("#3242") { Issue.record("\(row.testDescription): \(known.joined(separator: " / "))") }
-        }
     }
 
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
