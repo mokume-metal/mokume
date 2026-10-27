@@ -4,7 +4,8 @@
 #
 # 版を出す前の release の検査 (release.yml の release-check) の赤を発信する (#2662)。
 #
-#   report-release-check.sh <結論> <記録> <test-log>
+#   report-release-check.sh <結論> <記録> <test-log> [<debug探索の記録> <debug探索のlog>]
+# #3338: 日次へ移したdebug探索も同じ失敗起票経路に載せる。
 #
 # 結論は release-check の `needs.release-check.result` (failure / cancelled)。記録は xunit XML、
 # test-log は検査の端末出力で、どちらも artifact から落とした先のパスである。記録と test-log は
@@ -33,13 +34,15 @@ REPO="$(this_repo)"
 # 接頭辞が `fix(` なので triage.sh が Bug を付ける — 動いていたものが赤になった事象である
 readonly TITLE="fix(release): 下限 OS の release の検査が落ちて、版を見送っている"
 
-[ $# -eq 3 ] || {
+{ [ $# -eq 3 ] || [ $# -eq 5 ]; } || {
   echo "使い方: report-release-check.sh <結論> <記録> <test-log>" >&2
   exit 64
 }
 RESULT="$1"
 RECORD="$2"
 LOG="$3"
+GEOMETRY_RECORD="${4:-}"
+GEOMETRY_LOG="${5:-}"
 
 here="$(dirname "${BASH_SOURCE[0]}")"
 
@@ -51,9 +54,13 @@ trap 'rm -f "$body" "$log"' EXIT
 {
   printf '=== release (make test-release) ===\n'
   if [ -s "$LOG" ]; then
-    tail -n 180 "$LOG"
+    tail -n 100 "$LOG"
   else
     printf '(test-log が無い: %s)\n' "$LOG"
+  fi
+  if [ -n "$GEOMETRY_RECORD" ]; then
+    printf '\n=== debugの図形全探索 (make test-geometry-exploration) ===\n'
+    if [ -s "$GEOMETRY_LOG" ]; then tail -n 80 "$GEOMETRY_LOG"; else printf '(探索のtest-logが無い)\n'; fi
   fi
 } > "$log"
 
@@ -74,6 +81,14 @@ BODY
       ;;
   esac
   python3 "$here/read-test-record.py" --failure-messages "$RECORD"
+  if [ -n "$GEOMETRY_RECORD" ]; then
+    printf '\n## debugの図形全探索 (#3338)\n\n'
+    python3 "$here/read-test-record.py" --failure-messages "$GEOMETRY_RECORD"
+    # 検査側が既に失敗した回の報告。欠落/skipも文面にし、起票まで進める。
+    # 本文は同じ落ち方の鍵でもあるため、SHA・時刻・所要は載せずartifactへ残す。
+    python3 "$here/check-geometry-record.py" "$GEOMETRY_RECORD" --configuration debug | sed -n '/^結果:/,$p' || true
+    printf '\n再現: `make test-geometry-exploration`。全探索の失敗・欠落でも、このSHAの版は出ない。\n'
+  fi
   printf '\n'
   cat <<'BODY'
 

@@ -55,7 +55,7 @@ class ReportReleaseCheckTest(unittest.TestCase):
         self.log.write_text("")
         self.body = self.dir / "body.md"
 
-    def report(self, content=RED, result="failure", issue_list="[]", has_log=None):
+    def report(self, content=RED, result="failure", issue_list="[]", has_log=None, geometry=None):
         """結論と記録 (None なら無いまま渡す) で呼ぶ。test-log は既定で記録と同じく置く。"""
         xml = self.dir / "release.xml"
         log = self.dir / "release.log"
@@ -75,14 +75,55 @@ class ReportReleaseCheckTest(unittest.TestCase):
         )
         for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL"):
             env.pop(key, None)
+        arguments = ["/bin/bash", str(SCRIPT), result, str(xml), str(log)]
+        if geometry is not None:
+            exploration = self.dir / "geometry.xml"
+            if geometry != "missing":
+                exploration.write_text(geometry, encoding="utf-8")
+            arguments += [str(exploration), str(self.dir / "geometry.log")]
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT), result, str(xml), str(log)],
+            arguments,
             capture_output=True,
             text=True,
             env=env,
             cwd=REPO,
             check=False,
         )
+
+    def test_探索の失敗と欠落が起票に届く(self):
+        for geometry in ("missing", record(("MokumeCoreTests.NonzeroSplitTests", "randomHolesFollowNonzero()", "seed77 trial99 EXPLORATION"))):
+            with self.subTest(geometry=geometry):
+                result = self.report(geometry=geometry)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                body = self.body.read_text()
+                self.assertIn("debugの図形全探索", body)
+                self.assertIn("make test-geometry-exploration", body)
+                self.assertIn("このSHAの版は出ない", body)
+                if geometry == "missing":
+                    self.assertIn("記録を読めない", body)
+                else:
+                    self.assertIn("seed77 trial99 EXPLORATION", body)
+
+    def test_探索の全skipも成功と報告しない(self):
+        geometry = '<testsuites><testsuite><testcase classname="MokumeCoreTests.NonzeroSplitTests" name="randomHolesFollowNonzero()" time="0"><skipped/></testcase></testsuite></testsuites>'
+        result = self.report(geometry=geometry, result="cancelled")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = self.body.read_text()
+        self.assertIn("探索がskipped", body)
+        self.assertIn("timeout", body)
+
+    def test_探索の所要だけが変わっても報告の鍵は変わらない(self):
+        xml = '<testsuites><testsuite><testcase classname="MokumeCoreTests.NonzeroSplitTests" name="randomHolesFollowNonzero()" time="{}"/></testsuite></testsuites>'
+        self.report(geometry=xml.format("1"))
+        first = self.body.read_text()
+        self.report(geometry=xml.format("99"))
+        self.assertEqual(first, self.body.read_text())
+
+    def test_探索の失敗は既存Issueにも届く(self):
+        result = self.report(geometry="missing", issue_list=f'[{{"number":123,"title":"{TITLE}"}}]')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("issue comment 123", self.gh_log())
+        self.assertIn("debugの図形全探索", self.body.read_text())
 
     def gh_log(self):
         return self.log.read_text()
