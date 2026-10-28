@@ -419,6 +419,41 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[501][0], "dropped", "パスの親ディレクトリの uid に当たっている")
         self.assertEqual(seen[1637][0], "busy", "末尾の名前の番号に当たっていない")
 
+    # 3c-2. `.claude/worktrees/` の `<スラグ>-<16 進 6 桁>` 型の接尾辞にも当たらない (#3377 の反証)
+    def test_worktree_match_ignores_slug_hex_suffix(self):
+        done, _ = self.run_queue(
+            [
+                issue(55719, labels=["status: in progress"]),  # ci-test-improvement-55719b
+                issue(686, labels=["status: in progress"]),  # 枝 claude/…-c686f1
+                issue(1339, labels=["status: in progress"]),  # ci-fix-1339ab
+                issue(3267, labels=["status: in progress"]),  # merge-3267b (5 桁・当てる)
+                issue(3345, labels=["status: in progress"]),  # r1-3345 (当てる)
+                issue(3243, labels=["status: in progress"]),  # gui3243 (当てる)
+            ],
+            worktrees=(
+                "worktree /w/.claude/worktrees/ci-test-improvement-55719b\n"
+                "branch refs/heads/claude/task-coordination-subagent-c686f1\n\n"
+                "worktree /w/.claude/worktrees/ci-fix-1339ab\n\n"
+                "worktree /w/merge-3267b\n"
+                "worktree /w/other\nbranch refs/heads/refute/r1-3345\n"
+                "worktree /w/gui3243\n"
+            ),
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (55719, 686, 1339):
+            self.assertEqual(seen[n][0], "dropped", f"#{n} が 16 進の接尾辞に当たっている")
+        for n in (3267, 3345, 3243):
+            self.assertEqual(seen[n][0], "busy", f"#{n} に当たっていない")
+
+    # 3c-3. 数字だけの `agent-3377` は人が付けた番号かもしれないので、落とさない
+    def test_worktree_match_keeps_all_digit_agent_name(self):
+        done, _ = self.run_queue(
+            [issue(3377, labels=["status: in progress"])],
+            worktrees="worktree /w/agent-3377\n",
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[3377][0], "busy", "数字だけの agent-3377 を落としている")
+
     # 3c'. 英字に続く番号・枝の名前の番号には当たり続ける
     def test_worktree_match_keeps_letter_prefixed_numbers(self):
         issues = [
