@@ -74,6 +74,7 @@ struct SceneOutsideFrameTests {
             Mouth("rotateX", .transform) { $0.rotateX(Float.pi / 4) },
             Mouth("rotateY", .transform) { $0.rotateY(Float.pi / 4) },
             Mouth("rotateZ", .transform) { $0.rotateZ(Float.pi / 4) },
+            Mouth("scale(s)", .transform) { $0.scale(2) },
             Mouth("scale(x,y)", .transform) { $0.scale(2, 3) },
             Mouth("scale(x,y,z)", .transform) { $0.scale(2, 3, 4) },
             Mouth("shearX", .transform) { $0.shearX(0.3) },

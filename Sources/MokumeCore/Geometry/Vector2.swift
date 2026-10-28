@@ -638,10 +638,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 中心から等しい距離に、等しい間隔で円状に並ぶ 12 個の橙色の円 -->
+    ///     ![中心から等しい距離に、等しい間隔で円状に並ぶ 12 個の橙色の円](https://i.gyazo.com/ad16c41f54e9d945640a582b891fffa7.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=eade7c59
     public init(angle: some ScalarConvertible, length: some ScalarConvertible = 1) {
         let (angle, length) = (angle.asFloat, length.asFloat)
         self.init(SIMD2(RuntimeMath.cos(angle), RuntimeMath.sin(angle)) * length)
@@ -669,10 +670,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 中心から右上へ伸びる橙色の線と、その線から右向きの水平までを結ぶ水色の弧 -->
+    ///     ![中心から右上へ伸びる橙色の線と、その線から右向きの水平までを結ぶ水色の弧](https://i.gyazo.com/5b777d11b5d6b9b1ae7444f181063ede.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=bdf11bb3
     public var angle: Float {
         RuntimeMath.atan2(simd.y, simd.x)
     }
@@ -696,10 +698,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 中心から等しい距離に、45 度ずつ回して置いた 8 個の橙色の円 -->
+    ///     ![中心から等しい距離に、45 度ずつ回して置いた 8 個の橙色の円](https://i.gyazo.com/b572c47f9c99348e4da17505a5dea779.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=5d1ac7b7
     public func rotated(by angle: some ScalarConvertible) -> Vector2 {
         let angle = angle.asFloat
         let (cosine, sine) = (RuntimeMath.cos(angle), RuntimeMath.sin(angle))
@@ -748,10 +751,11 @@ nonisolated extension Vector2 {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左下から右上へ、等しい間隔で斜めに並ぶ 6 個の橙色の円 -->
+    ///     ![左下から右上へ、等しい間隔で斜めに並ぶ 6 個の橙色の円](https://i.gyazo.com/bb71c3b505dd092ca063ce2687fd2bb8.png)
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 後で撮る
+    // shot: 1 snippet=56e2c36f
     public func interpolated(to target: Vector2, amount: some ScalarConvertible) -> Vector2 {
         let amount = amount.asFloat
         return Vector2(SIMD2(interpolate(simd.x, target.simd.x, amount), interpolate(simd.y, target.simd.y, amount)))

@@ -579,6 +579,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/rotateX(_:)``
 - ``SketchPart/rotateY(_:)``
 - ``SketchPart/rotateZ(_:)``
+- ``SketchPart/scale(_:)``
 - ``SketchPart/scale(_:_:)``
 - ``SketchPart/scale(_:_:_:)``
 - ``SketchPart/shearX(_:)``

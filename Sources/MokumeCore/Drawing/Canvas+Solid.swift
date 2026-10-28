@@ -138,6 +138,13 @@ extension Canvas {
         transform.scale(x: x, y: y, z: z)
     }
 
+    /// 縦横と奥行きを同じ倍率で伸ばす (`scale(s, s, s)`)。
+    public func scale(_ s: some ScalarConvertible) {
+        let s = s.asFloat
+        guard isShaping else { return warnOutsideFrame(.transform) }
+        transform.scale(x: s, y: s, z: s)
+    }
+
     // MARK: - 置く
 
     /// 形を組み立てて (あるいは使い回して)、いまの変換と塗りと線で置く。

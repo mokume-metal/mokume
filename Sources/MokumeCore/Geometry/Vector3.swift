@@ -181,7 +181,7 @@ nonisolated extension Vector3 {
 
 nonisolated extension Vector3 {
     /// `value` の成分のうち、いちばん大きいものの指数。成分は有限で、少なくとも 1 つは 0 でないこと。
-    fileprivate static func peakExponent(_ value: SIMD3<Float>) -> Int {
+    private static func peakExponent(_ value: SIMD3<Float>) -> Int {
         Int(max(abs(value.x), abs(value.y), abs(value.z)).exponent)
     }
 
