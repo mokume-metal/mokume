@@ -25,7 +25,7 @@ mokume は、Processing や p5.js の書き方で絵と動きをつくる、Swif
 | --- | --- |
 | <img src="https://i.gyazo.com/34337801ec22c3d5f82c6abe5b24b453.png" width="400" alt="濃い灰の背景に、橙・水色・青緑・白の小さな図形が画面いっぱいに並んだ見本"><br>図形とスタイル | <img src="https://i.gyazo.com/c4b16442441d68c13a63ae69b4db81fc.gif" width="400" alt="放射状の線が回りながら、にじみの強さが周期的に強くなったり弱くなったりする"><br>ポストエフェクト |
 | <img src="https://i.gyazo.com/a1df70eb0294c3ee5aa50a930e898e1a.webp" width="400" alt="床の上に円柱・円錐・輪・箱・球が並び、視点が回るにつれて光の当たる面と影の向きが変わる"><br>3D とライティング | <img src="https://i.gyazo.com/e3407232bafed2fe7f49bdfef740a29e.webp" width="400" alt="円の上を向かい合って回る 2 つの噴き口から橙の粒が出て、2 本の腕のような渦を描く"><br>パーティクルと力 |
-| <img src="https://i.gyazo.com/78efcf97619760a0c8557afa54083c72.webp" width="400" alt="琥珀色の等高線の模様が流れるように形を変え、暗い窪みが移動していく"><br>GPU で計算した場 | <img src="https://i.gyazo.com/cb8df7dbe450e31edafaddf488e6c416.webp" width="400" alt="橙の六角形と緑の葉のような立体が回り、手前に小さな箱が円盤状に大量に並んで回っている"><br>インスタンシングと 3D モデル |
+| <img src="https://i.gyazo.com/b31b34d167a305a409b771281a2251d8.webp" width="400" alt="光を受けた起伏のように青緑の谷と琥珀の尾根が流れて形を変え、その上を等高線が走る。頂に照準が置かれ、下の帯がその行の断面を描く"><br>GPU で計算した場 | <img src="https://i.gyazo.com/cb8df7dbe450e31edafaddf488e6c416.webp" width="400" alt="橙の六角形と緑の葉のような立体が回り、手前に小さな箱が円盤状に大量に並んで回っている"><br>インスタンシングと 3D モデル |
 
 ソースはすべて [Sketches](Sketches) にあります。
 
