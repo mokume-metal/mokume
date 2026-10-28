@@ -5,7 +5,6 @@ import Accelerate
 import AVFoundation
 import Foundation
 import MokumeDiagnostics
-import Synchronization
 import VideoToolbox
 
 /// 動きをファイルへ書き出すときに起こりうる失敗。
@@ -703,7 +702,7 @@ nonisolated final class MovieFile: MovieOutput {
         if let size = attributes?[.size] as? Int, size == 0 {
             return "the encoder closed the file without writing anything into it (a \(width)x\(height) picture)"
         }
-        switch await Self.withinDeadline(limitSeconds, { await read(path) }) ?? nil {
+        switch Self.withinDeadline(limitSeconds, { await read(path) }) ?? nil {
         case .noVideoTrack:
             return "the encoder closed the file without a video track in it (a \(width)x\(height) picture)"
         case .noSamples:
@@ -715,23 +714,20 @@ nonisolated final class MovieFile: MovieOutput {
 
     /// `work` の答えを `seconds` 秒だけ待つ。越えたら `nil` (仕事は残るが、待つ側は進む)。
     ///
-    /// 子のタスクを束ねない (束ねると、取り消しに応えない読みを、束ねた側が最後まで待つ)。先に着いた
-    /// 方の答えだけを返し、後から着いた方は捨てる。
+    /// ``videoSampleCount(atPath:)`` と同じ流儀で、別の仕事 (`Task.detached`) に読ませ、`DispatchSemaphore` の
+    /// `wait(timeout:)` で期限つきに待つ (ADR-0010 決定 4 — 本体に `DispatchQueue` を足さない)。**代償: 待つ間、
+    /// 呼ぶ側のスレッドを最大 `seconds` 秒塞ぐ。** 閉じる経路の 1 回だけで、期限は 5 秒である。
     nonisolated static func withinDeadline<Value: Sendable>(
         _ seconds: Double, _ work: @escaping @Sendable () async -> Value
-    ) async -> Value? {
-        let once = AnswerOnce()
-        return await withCheckedContinuation { (continuation: CheckedContinuation<Value?, Never>) in
-            Task.detached {
-                let value = await work()
-                if once.take() { continuation.resume(returning: value) }
-            }
-            // 期限は協調スレッドを使わず Dispatch で測る。読みが詰まって協調スレッドを塞ぐ負荷の下でも、期限が
-            // 遅れて来ないように
-            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
-                if once.take() { continuation.resume(returning: nil) }
-            }
+    ) -> Value? {
+        let box = DeadlineBox<Value>()
+        let finished = DispatchSemaphore(value: 0)
+        Task.detached {
+            defer { finished.signal() }
+            box.value = await work()
         }
+        guard finished.wait(timeout: .now() + seconds) == .success else { return nil }
+        return box.value
     }
 
     /// 秒の時刻を、刻み (``timescale``) の**いちばん近い**目盛りへ置く ([#2307])。
@@ -836,14 +832,8 @@ nonisolated final class MovieFile: MovieOutput {
     }
 }
 
-/// 答えを 1 度だけ渡すための箱 (``MovieFile/withinDeadline(_:_:)``)。先に取った側だけが答えを渡す。
-private nonisolated final class AnswerOnce: Sendable {
-    private let spent = Mutex(false)
-
-    func take() -> Bool {
-        spent.withLock { taken in
-            defer { taken = true }
-            return !taken
-        }
-    }
+/// 仕事と待つ側の間で結果を渡す箱 (``MovieFile/withinDeadline(_:_:)``)。**書くのは仕事が 1 度だけで、読むのは
+/// 合図の後だけ** (期限を越えたら読まない)。
+private nonisolated final class DeadlineBox<Value: Sendable>: @unchecked Sendable {
+    var value: Value?
 }

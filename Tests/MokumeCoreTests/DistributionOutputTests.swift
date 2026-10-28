@@ -370,6 +370,23 @@ struct DistributionOutputTests {
         }
     }
 
+    /// 終わらない読みを差し込んだ確かめの結果と、**確かめの中で**測った経過時間。測るのを隔離の外 (この関数) で
+    /// 済ませるのは、main actor 上の検査が他の検査に塞がれた待ちを、期限の遅れと取り違えないため。
+    private nonisolated static func hollowReasonOfAReadThatNeverEnds(
+        path: String, limitSeconds: Double
+    ) async -> (reason: String?, elapsed: Duration) {
+        let clock = ContinuousClock()
+        let started = clock.now
+        // 期限を越えたものは、標本が無いと答えるものでも断らない (答えは捨てられる)
+        let reason = await MovieFile.hollowReason(
+            atPath: path, width: 64, height: 48, limitSeconds: limitSeconds,
+            read: { _ in
+                try? await Task.sleep(for: .seconds(60))
+                return .noSamples
+            })
+        return (reason, clock.now - started)
+    }
+
     /// 読みが期限を越えたら、確かめられなかったとして断らずに通す (#3223)。遅いボリュームで詰まっても、書き手の
     /// 閉じる期限に当たらない。読みは終わらないものを差し込み、期限の外で待たないことを経過時間で見る。
     @Test("閉じた後の確かめは、読みが期限を越えたら断らずに通し、読みの終わりを待たない")
@@ -377,18 +394,9 @@ struct DistributionOutputTests {
         try await withDirectoryAsync { directory in
             let path = directory.appendingPathComponent("slow.mp4").path
             FileManager.default.createFile(atPath: path, contents: Data("x".utf8))
-            let clock = ContinuousClock()
-            let started = clock.now
-            // 期限を越えたものは、標本が無いと答えるものでも断らない (答えは捨てられる)
-            let reason = await MovieFile.hollowReason(
-                atPath: path, width: 64, height: 48, limitSeconds: 0.2,
-                read: { _ in
-                    try? await Task.sleep(for: .seconds(60))
-                    return .noSamples
-                })
-            let elapsed = clock.now - started
-            #expect(reason == nil, "期限を越えた読みで断った: \(reason ?? "")")
-            #expect(elapsed < .seconds(30), "読みの終わりを待った: \(elapsed)")
+            let outcome = await Self.hollowReasonOfAReadThatNeverEnds(path: path, limitSeconds: 0.2)
+            #expect(outcome.reason == nil, "期限を越えた読みで断った: \(outcome.reason ?? "")")
+            #expect(outcome.elapsed < .seconds(10), "読みの終わりを待った: \(outcome.elapsed)")
         }
     }
 
