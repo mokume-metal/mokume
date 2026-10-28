@@ -1203,7 +1203,9 @@ public final class SketchRuntime {
     /// - Returns: 配った結果、このフレームを描くことになったか。
     private func deliverWhileStopped() -> Bool {
         collectInput()
-        withActiveRuntime { carryingOver { input.beginFrame { deliver($0) } } }
+        // **コールバック 1 つが 1 つの区間である** (#3273)。変換と積み履歴は区間の出口で戻るので、続けて配る
+        // 2 つ目のコールバックへ、1 つ目で書いた変換は漏れない
+        withActiveRuntime { input.beginFrame { callback in carryingOver { deliver(callback) } } }
         // 描き直しの 1 枚の経過は ``runFrame()`` が決める
         return isLooping || redrawRequested
     }

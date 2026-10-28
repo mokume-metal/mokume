@@ -206,6 +206,14 @@ extension Canvas {
         case cameraOutsideFrame
         /// フレームの外で変換を書いた。
         case transformOutsideFrame
+        /// 持ち越しの区間 (`setup()`・止まっている間のコールバック) で変換を書いたのに、その後に何も置かないまま
+        /// 区間を出た ([#3273])。変換は区間を出るとき戻り、`draw()` へは持ち越さない。
+        ///
+        /// **``transformOutsideFrame`` とは鍵を分ける。** あちらは変換を断った (区間の外・効かなかった) 話で、
+        /// こちらは効かせたうえで、置くものが無く捨てた話である。
+        ///
+        /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
+        case transformNotCarried
         /// フレームの外でスタイルを積み降ろしした。
         case styleOutsideFrame
         /// フレームの外で切り抜きを書いた。

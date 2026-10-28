@@ -1337,6 +1337,18 @@ public final class Canvas {
     /// [#1529]: https://github.com/mokume-metal/mokume/issues/1529
     var isShaping: Bool { isDrawing || recordingShape }
 
+    /// 変換と、変換・スタイルの積み降ろしを受けてよいか。**``isShaping`` に、持ち越しの区間
+    /// (``carriesOver``) を足したもの** ([ADR-0021] 決定 4 の追補 (2026-10-28)・[#3273])。
+    ///
+    /// 置いた図形は置くときに変換を焼き付けるので、区間の中で書いた変換は、その後に置いたものに
+    /// 効く。区間を出るときに変換と積み履歴は既定へ戻る (``endCarriedSegment()``) ので、次の
+    /// フレームにも次の区間にも漏れない。**シーンの記述 (光・視点・投影・材質・影・周囲・効果・
+    /// 切り抜き・粒・計算) は、焼き付かずフレームに属するので、ここを見ない** — 区間でも従来どおり断る。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
+    var admitsTransform: Bool { isShaping || carriesOver }
+
     /// 持ち越しを約束する区間にいるか ([ADR-0021] 決定 4 の追補 (2026-09-27)・[#1672])。
     ///
     /// **置いたもの (図形・絵・背景・画素の書き込み) をフレームの外に置いてよいのは、次の
@@ -1363,14 +1375,62 @@ public final class Canvas {
     /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     var carriesOver = false {
         didSet {
+            if !oldValue, carriesOver, !isDrawing {
+                // 区間は変換も積み履歴も既定から始める。前のフレームが残した変換を持ち込まない (#3273)
+                beginCarriedSegment()
+            }
             if !oldValue, carriesOver, !isDrawing, timebase.owner === self {
                 let next = timebase.frame + 1
                 for entry in timebase.layers { entry.canvas?.dropFrameLeftOpen(before: next) }
             }
             guard oldValue, !carriesOver else { return }
+            if !isDrawing { endCarriedSegment() }
             let amount = pendingAmount
             if amount > 0 { carriedOverAmount = amount }
         }
+    }
+
+    /// 区間の中で最後に変換を書いた時点の溜め場の量 (``pendingAmount``)。区間で変換を書いていなければ `nil`。
+    /// 区間を出るとき、これと量が同じなら、変換の後に何も置かなかった (#3273)。
+    private var carriedTransformMark: Int?
+
+    /// 持ち越しの区間に入る。変換と積み履歴を既定へ戻して始める ([#3273])。
+    ///
+    /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
+    private func beginCarriedSegment() {
+        transform = .identity
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        carriedTransformMark = nil
+    }
+
+    /// 持ち越しの区間を出る。**区間で書いた変換と積み履歴を既定へ戻す** ([#3273])。
+    ///
+    /// 置いたものには変換が焼き付いているので、戻しても絵は変わらない。戻さないと、止まっている間の
+    /// コールバックの変換が次のコールバックと次のフレームへ漏れる。積んだまま抜けた段は、フレームと同じく
+    /// 名指して捨てる。変換を書いたのに、その後に何も置かないまま区間を出たなら、`draw()` へは持ち越さない
+    /// ことを 1 度だけ知らせる (#941 の害 — 書いたのに効かず、何も言われない — を黙らせない)。
+    ///
+    /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
+    private func endCarriedSegment() {
+        if let mark = carriedTransformMark, transform != .identity, pendingAmount == mark {
+            warnOnce(
+                .transformNotCarried,
+                "A transform was written in setup() or an input callback, but nothing was placed "
+                    + "after it, and it is dropped when that call ends: every frame starts with no "
+                    + "transform, so it does not reach draw(). Place the shapes after the transform in "
+                    + "the same call, or write the transform in draw()")
+        }
+        warnIfStacksLeftOpen(before: "setup() or the input callback")
+        transform = .identity
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        carriedTransformMark = nil
+    }
+
+    /// 区間の中で変換を書いたことを覚える (``endCarriedSegment()``)。形の組み立ての中は、出口で戻るので数えない。
+    func noteTransformWritten() {
+        if carriesOver, !isDrawing, !recordingShape { carriedTransformMark = pendingAmount }
     }
 
     /// 持ち越しの区間を出たときに、溜め場に残っていた量 (``pendingAmount``)。区間で何も置いて
@@ -2764,45 +2824,52 @@ public final class Canvas {
 
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y)
+        noteTransformWritten()
     }
 
     public func rotate(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotate(by: radians)
+        noteTransformWritten()
     }
 
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         let (x, y) = (x.asFloat, y.asFloat)
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y)
+        noteTransformWritten()
     }
 
     public func shearX(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.shearX(by: radians)
+        noteTransformWritten()
     }
 
     public func shearY(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.shearY(by: radians)
+        noteTransformWritten()
     }
 
     public func applyMatrix(_ other: Transform) {
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.concatenate(other)
+        noteTransformWritten()
     }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
     /// 積んである変換 (``pushMatrix(fileID:line:)``) は捨てない — 戻す先は残る。
     public func resetMatrix() {
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.reset()
+        noteTransformWritten()
     }
 
     /// `fileID`・`line` は呼んだ場所で、積んだまま終わったときの注意が名指す ([#2399])。
@@ -2858,7 +2925,7 @@ public final class Canvas {
     /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
     /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
     public func push(_ body: () throws -> Void) rethrows {
-        guard isShaping else {
+        guard admitsTransform else {
             warnOutsideFrame(.transform)
             warnOutsideFrame(.style)
             return try body()
@@ -2870,7 +2937,7 @@ public final class Canvas {
         var finished = false
         defer {
             // 閉じたフレームの状態は戻さない。中で開き直したフレームの段は、そのフレームのもの
-            if framesDrawn == frame, isShaping {
+            if framesDrawn == frame, admitsTransform {
                 if finished { warnIfStacksLeftOpen(before: "push { … }") }
                 restore(savedStacks)
                 transform = savedTransform
@@ -2883,18 +2950,18 @@ public final class Canvas {
 
     /// 段を積む。フレームの外では注意して積まない。
     private func pushTransform(_ site: StackSite) {
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transformStack.append((transform, site))
     }
 
     private func pushStyleEntry(_ site: StackSite) {
-        guard isShaping else { return warnOutsideFrame(.style) }
+        guard admitsTransform else { return warnOutsideFrame(.style) }
         styleStack.append((currentStyle, site))
     }
 
     /// 段を降ろして戻す。戻したら `true`、戻す段が無ければ `false`、フレームの外なら注意して `nil`。
     private func popTransform() -> Bool? {
-        guard isShaping else {
+        guard admitsTransform else {
             warnOutsideFrame(.transform)
             return nil
         }
@@ -2904,7 +2971,7 @@ public final class Canvas {
     }
 
     private func popStyleEntry() -> Bool? {
-        guard isShaping else {
+        guard admitsTransform else {
             warnOutsideFrame(.style)
             return nil
         }
