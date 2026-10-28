@@ -220,6 +220,37 @@ struct CallbackDeliveryTests {
             ], "\(deltaOnly.calls)")
     }
 
+    /// **量が 0 の引きずり** (押したまま同じ位置へ動いた) でも、引数なしが先、量付きが後に呼ばれる。
+    /// 回っていても、`noLoop()` で止めている間 (止まっている間もコールバックは呼ばれる) でも同じ。
+    @Test("量が 0 の引きずりも、止めている間の引きずりも、引数なしの mouseDragged() が呼ばれる", arguments: [false, true])
+    func zeroAmountDragAndStoppedDragReachBothForms(stopped: Bool) throws {
+        let facet = try makeFacet()
+        let sketch = Recorder()
+        sketch.stopsInSetup = stopped
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try send(
+            #"""
+            {"type":"mouseDown","x":10,"y":10,"button":0},
+            {"type":"mouseMoved","x":10,"y":10},
+            {"type":"mouseMoved","x":14,"y":10}
+            """#, id: "z1", to: facet)
+        try runtime.advance()
+        let dragged = sketch.calls.filter { call in
+            switch call {
+            case .mouseDraggedAt, .mouseDragged: true
+            default: false
+            }
+        }
+        #expect(
+            dragged == [
+                .mouseDraggedAt(mouseX: 10), .mouseDragged(deltaX: 0, deltaY: 0),
+                .mouseDraggedAt(mouseX: 14), .mouseDragged(deltaX: 4, deltaY: 0),
+            ], "\(sketch.calls)")
+    }
+
     /// 外から落としを送ると、**次のフレームの頭**で `fileDropped(_:)` が 1 回、`draw()` より先に呼ばれ、
     /// その中で落とした所が `mouseX`・`mouseY` から読める。`mouseMoved()` は呼ばれない
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。止めている間 (`noLoop()`) も届く。

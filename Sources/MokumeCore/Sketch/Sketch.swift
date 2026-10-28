@@ -107,7 +107,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
     func mouseClicked()
 
-    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged(deltaX:deltaY:)`` が呼ばれる。
+    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` (と、続けて ``mouseDragged(deltaX:deltaY:)``) が呼ばれる。
     ///
     /// 動いた量が要るなら ``mouseMoved(deltaX:deltaY:)`` を書く — ここの直後に続けて呼ばれる。
     func mouseMoved()
@@ -188,7 +188,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ```
     ///
     /// **手本 (Processing・p5.js) の形をまねて引数なしの `func mouseWheel()` と書くと、コンパイルは
-    /// 通るが一度も呼ばれない** (``mouseDragged(deltaX:deltaY:)`` と同じ)。上の形の
+    /// 通るが一度も呼ばれない** (`mouseDragged()` は引数なしでも呼ばれるが、ここは量が要るので引数なしの形を持たない)。上の形の
     /// `func mouseWheel(deltaX: Float, deltaY: Float)` に書き直す。回した量は手本の `event` から
     /// 読む代わりに、引数で受け取る。
     ///

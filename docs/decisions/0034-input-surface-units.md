@@ -117,6 +117,8 @@ public nonisolated struct Key: Sendable, Hashable {
 
 ### 5. 足し込みで数える量は、呼び出しが引数で運ぶ (2026-09-04 追加)
 
+> 下の `mouseDragged` の形は、改訂 (2026-10-28) で引数なしの `mouseDragged()` も要件に戻した (本節の末尾、釦の決定 6 の直前)。引数付きの形はそのまま残る。
+
 ```swift
 func mouseWheel(deltaX: Float, deltaY: Float)
 func mouseDragged(deltaX: Float, deltaY: Float)
@@ -187,7 +189,7 @@ func mouseDragged(deltaX: Float, deltaY: Float)  // 1 件ぶんの量
 
 | 採らなかった案 | なぜ |
 | --- | --- |
-| `mokume run` / `watch` のビルド時に、引数なしの `mouseDragged()` / `mouseWheel()` を持つ型へ警告を出す | ソースを読む機構が CLI に要り、届く範囲が `mokume run` / `watch` に限られる (SwiftPM や Xcode で直に組む人には届かない)。足す機構の割に効く範囲が狭い。3C' は型の中で閉じる |
+| `mokume run` / `watch` のビルド時に、引数なしの `mouseDragged()` / `mouseWheel()` を持つ型へ警告を出す | ソースを読む機構が CLI に要り、届く範囲が `mokume run` / `watch` に限られる (SwiftPM や Xcode で直に組む人には届かない)。足す機構の割に効く範囲が狭い。引数なしの入口を足す案は型の中で閉じる |
 | `mouseDragged()` と `mouseWheel()` の両方に引数なしの入口を足す | `mouseWheel()` の中で読める正しい量が無く、手本にも無い形である |
 | 現状維持 (索引と説明文だけ) | 読まない人の詰まりが残る。呼ばれないことが黙って起きる形は、決定 5 の追補が既に「実例がある」と書いた |
 
@@ -266,6 +268,6 @@ if startButton.justPressed { startGame() }   // 左の釦がこのフレーム�
 - 打たれた文字を読む `key: String` は変えない。**打った文字と、動いたキーは別の問い**である
 - **`mouseButton` は `MouseButton?` になる** (決定 6)。何も押していないときの `nil` は、`keyCode` を `Key?` にした理由と同じく、`MouseButton(rawValue: 0)` が左の釦であって「無い」ではないからである。**押しても離しても入れ替わる**のも `keyCode` と同じで、`mouseReleased()` の中から離した釦を知る口は他に無い。`InputState.button` と `InputEvent.mouseDown` / `mouseUp` の `button:` も同じ型へ揃う。0.x なので minor で出る
 - **`mouseDragged()` も引数を取る形へ変わる** (決定 5。ただし引数なしの形は改訂 (2026-10-28) で要件へ戻した)。[#831](https://github.com/mokume-metal/mokume/pull/831) が引数なしで出したばかりだが、0.x では形が動くことを織り込んでいる
-- **注意書きが 3 か所消える。** `mouseDragged()` の doc・`dragX` の doc・`orbitControl()` の `- Important:` に、同じ「フレームの累計であって 1 件ぶんではない」が重複して書かれていた。**注意書きで凌ぐのは面が正しくないことの印**で、面が正しくなれば書くことは「どちらを読むか」だけになる
+- **注意書きが 3 か所消える** (**`dragX` の doc の「コールバックの中で読まない」は、改訂 (2026-10-28) で引数なしの `mouseDragged()` の中について戻した**)。`mouseDragged()` の doc・`dragX` の doc・`orbitControl()` の `- Important:` に、同じ「フレームの累計であって 1 件ぶんではない」が重複して書かれていた。**注意書きで凌ぐのは面が正しくないことの印**で、面が正しくなれば書くことは「どちらを読むか」だけになる
 - **`orbitControl()` は `draw()` から 1 回呼ぶ形のまま。** 1 件ぶんが渡るようになっても、あちらが食うのはフレーム合計である。`mouseDragged` から呼べるようにすると、引きずっていない間に回り続ける枝 (慣性) が 1 フレームに複数回進む別の欠陥が出る
 - **参照スケッチが手本になる。** `Sketches/PointerAndKeys.swift` の `size += scrollY * 4` は、#807 が「そのまま `mouseWheel()` へ移すと壊れる書き方の実例」として名指ししていた行である。移した先で正しく書けることが、この決定の効き目の確かめになる
