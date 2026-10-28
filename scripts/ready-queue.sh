@@ -105,8 +105,10 @@
 #   B-1 の対象か    本文の 🤖 Assisted by の署名 (エージェントを問わない。#3149)。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
-#   落ちて見えるか  紐づく open PR が無く、git worktree list のパスと枝の名前に番号が
-#                   現れず、**そのうえ Issue が静かになって久しい**こと
+#   落ちて見えるか  紐づく open PR が無く、git worktree list の名前と枝の名前に番号が
+#                   現れず (worktree は末尾の名前だけ・16 進の乱数を含む名前 (`agent-<16 進>`・
+#                   `<スラグ>-<16 進 6 桁>`) は見ない — 番号と関係の無い数字に当たるため。#3377)、
+#                   **そのうえ Issue が静かになって久しい**こと
 #
 # 3 つ目が要るのは、**枝の名前が番号を持たないことのほうが多い**からである — AGENTS.md が
 # 定める枝の形は `<type>/<短い説明>` で、番号はどこにも入らない。worktree の照合だけに頼ると
@@ -211,7 +213,10 @@ has_label() { # $1=ラベルの並び (改行区切り) $2=探すラベル
 # 手元の worktree / 枝の名前に番号が現れるか。
 #
 # 前後が数字でないことまで見る — 927 が 1927 に当たると、落ちた着手が「生きている」へ
-# 倒れて誰にも拾われなくなる
+# 倒れて誰にも拾われなくなる。英字に続く番号 (`gui3243`・`m3087`) は当てる。
+#
+# 照合するのは WORKTREE_NAMES (下で作る) だけで、**番号を持たない名前は材料に入れない**:
+# worktree のパスの親ディレクトリ (uid など) と、16 進の乱数を含む名前 (numberless_name・#3377)
 seen_locally() { # $1=番号
   case " $WORKTREE_NAMES " in *[!0-9]"$1"[!0-9]*) return 0 ;; esac
   return 1
@@ -252,9 +257,37 @@ claims=$(jq -r --arg repo "$REPO" '
 QUIET_BEFORE=$(date -u -v-"${DROPPED_MINUTES}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
   date -u -d "${DROPPED_MINUTES} minutes ago" +%Y-%m-%dT%H:%M:%SZ)
 
-# 手元の worktree のパスと枝の名前。読めなければ空 (見えないものは「見えない」と扱う)
-WORKTREE_NAMES=$(git worktree list --porcelain 2>/dev/null |
-  sed -n 's#^worktree ##p; s#^branch refs/heads/##p' | tr '\n' ' ' || true)
+# 番号を持たない名前か。Claude Code が作る名前は 16 進の乱数を含み、その数字の並びが番号に当たる
+# (#3377)。落とすのは次の 2 つで、どちらも **英字 (a-f) を 1 字以上含む**ものだけ — 数字だけの
+# 並びは人が付けた番号かもしれない (`agent-3377` は #3377 を指す):
+#
+#   agent-<16 進 8 桁以上>   (`worktree-agent-` も同じ)  worktree の名前と、その枝の名前
+#   <スラグ>-<16 進 6 桁>    `.claude/worktrees/` の worktree (`ci-test-improvement-55719b`)
+#                            と枝 (`claude/task-coordination-subagent-c686f1`)
+#
+# **代償**: 6 桁の 16 進で終わる意図的な名前 (`wt-3377ab` のように、番号に英字を足したもの) は
+# 当たらなくなる。`gui3243`・`merge-3267b` (5 桁)・`r1-3345` のような名前は当てる
+numberless_name() { # $1=名前
+  local tail
+  case "$1" in
+    agent-* | worktree-agent-*)
+      tail=${1##*agent-}
+      [[ $tail =~ ^[0-9a-f]{8,}$ && $tail =~ [a-f] ]] && return 0
+      ;;
+  esac
+  tail=${1##*-}
+  [[ $tail != "$1" && $tail =~ ^[0-9a-f]{6}$ && $tail =~ [a-f] ]]
+}
+
+# 手元の worktree の名前 (パスの末尾の 1 要素) と枝の名前から、番号を持たない名前を除いたもの。
+# 読めなければ空 (見えないものは「見えない」と扱う)。**パス全体は入れない** — 親ディレクトリの
+# 数字 (`/claude-501/` の uid) が番号に当たる (#3377)
+WORKTREE_NAMES=''
+while IFS= read -r name; do
+  numberless_name "$name" || WORKTREE_NAMES+="$name "
+done < <(git worktree list --porcelain 2>/dev/null |
+  awk '/^worktree / { n = substr($0, 10); sub(/.*\//, "", n); print n }
+       /^branch refs\/heads\// { print substr($0, 19) }' || true)
 
 # --- 走査 -------------------------------------------------------------------
 
