@@ -877,13 +877,13 @@ extension SketchPart {
     ///
     /// `push { }` は混ぜ方だけでなく、変換 (``translate(_:_:)``・``rotate(_:)``・``scale(_:_:)``) と、
     /// 塗りなどほかのスタイルも戻す。スタイルだけ戻して変換は戻さないなら、
-    /// ``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` を使う。`push { }` は `draw()` の中でも
-    /// `setup()` の本体でも、抜けるときに戻す ([#3273])。
+    /// ``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` を使う。`push { }` が戻すのは
+    /// フレームの中 (`draw()`・形の組み立て) だけで、`setup()` の本体では、いまは本体を走らせる
+    /// だけで戻さない (注意も出る)。
     ///
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
     /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
-    /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     ///
     /// - Note: 混ぜ方は**フレームを越える**。一度書けば、書き換えるまで残る。
