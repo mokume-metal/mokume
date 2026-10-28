@@ -39,6 +39,12 @@ import Foundation
 /// | `v.mag()` | ``length`` |
 /// | `v.normalize()` | ``normalized()`` |
 /// | `v.limit(max)` | ``limited(to:)`` |
+/// | `v.heading()` | ``angle`` |
+/// | `v.rotate(theta)` | ``rotated(by:)`` |
+/// | `v.dot(w)` | ``dot(_:)`` |
+/// | `PVector.dist(v, w)` | ``distance(to:)`` |
+/// | `v.lerp(w, amount)` | ``interpolated(to:amount:)`` |
+/// | `p5.Vector.fromAngle(angle, length)` | ``init(angle:length:)`` |
 ///
 /// **隔離の外に置く** ([ADR-0010] 決定 1 の改訂)。通信の完了ハンドラのような main actor の
 /// 外からも作れ、比べ、符号化できる。符号化の形は `{"x": …, "y": …}` である。
@@ -608,5 +614,150 @@ nonisolated extension Vector2 {
         let near = SIMD2(scalbn(gap.x, -exponent), scalbn(gap.y, -exponent))
         let range = scalbn(reach, -exponent)
         return (near * near).sum() <= range * range
+    }
+}
+
+// MARK: - 幾何演算 (距離・内積・角度・回転・補間)
+
+nonisolated extension Vector2 {
+    /// 長さ `length`・向き `angle` (ラジアン) のベクトルを作る。p5 の `p5.Vector.fromAngle` に当たる。
+    ///
+    /// 角度は ``angle`` と同じ向きで、0 は右 (横の正の向き)、**正の角度は画面の上で時計回り**
+    /// (縦軸が下向きなので、`rotate()` と同じ)。長さの既定は 1。負の長さは反対向きになる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     for i in 0..<12 {
+    ///         let spoke = Vector2(angle: Float(i) * TWO_PI / 12, length: 110)
+    ///         circle(200 + spoke.x, 150 + spoke.y, 20)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 中心から等しい距離に、等しい間隔で円状に並ぶ 12 個の橙色の円 -->
+    ///     ![中心から等しい距離に、等しい間隔で円状に並ぶ 12 個の橙色の円](https://i.gyazo.com/ad16c41f54e9d945640a582b891fffa7.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=eade7c59
+    public init(angle: some ScalarConvertible, length: some ScalarConvertible = 1) {
+        let (angle, length) = (angle.asFloat, length.asFloat)
+        self.init(SIMD2(RuntimeMath.cos(angle), RuntimeMath.sin(angle)) * length)
+    }
+
+    /// 向いている角度 (ラジアン)。Processing の `heading()` に当たる。
+    ///
+    /// 右 (横の正の向き) が 0 で、**正の角度は画面の上で時計回り** (縦軸が下向きなので、`rotate()` と同じ)。
+    /// 値は `-π`…`π`。長さの無い値 (`Vector2(0, 0)`) は向きが無いので 0 を返す。
+    /// ``init(angle:length:)`` と逆の関係になる。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     let center = Vector2(200, 150)
+    ///     let toTarget = Vector2(330, 60) - center
+    ///     stroke(242, 115, 64)
+    ///     strokeWeight(3)
+    ///     line(center.x, center.y, center.x + toTarget.x, center.y + toTarget.y)
+    ///     noFill()
+    ///     stroke(89, 191, 242)
+    ///     arc(center.x, center.y, 120, 120, toTarget.angle, 0)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 中心から右上へ伸びる橙色の線と、その線から右向きの水平までを結ぶ水色の弧 -->
+    ///     ![中心から右上へ伸びる橙色の線と、その線から右向きの水平までを結ぶ水色の弧](https://i.gyazo.com/5b777d11b5d6b9b1ae7444f181063ede.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=bdf11bb3
+    public var angle: Float {
+        RuntimeMath.atan2(simd.y, simd.x)
+    }
+
+    /// 長さを保ったまま、`angle` (ラジアン) だけ回した値。Processing の `rotate(theta)` に当たる。
+    ///
+    /// **正の角度は画面の上で時計回り** (縦軸が下向きなので、`rotate()` と同じ)。原点が中心で、
+    /// 元の値は変わらない (新しい値を返す。Processing の `rotate()` は自分を書き換える)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     var arm = Vector2(110, 0)
+    ///     for _ in 0..<8 {
+    ///         circle(200 + arm.x, 150 + arm.y, 24)
+    ///         arm = arm.rotated(by: QUARTER_PI)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 中心から等しい距離に、45 度ずつ回して置いた 8 個の橙色の円 -->
+    ///     ![中心から等しい距離に、45 度ずつ回して置いた 8 個の橙色の円](https://i.gyazo.com/b572c47f9c99348e4da17505a5dea779.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=5d1ac7b7
+    public func rotated(by angle: some ScalarConvertible) -> Vector2 {
+        let angle = angle.asFloat
+        let (cosine, sine) = (RuntimeMath.cos(angle), RuntimeMath.sin(angle))
+        return Vector2(SIMD2(simd.x * cosine - simd.y * sine, simd.x * sine + simd.y * cosine))
+    }
+
+    /// 2 つの点の間の距離。Processing の `PVector.dist(v, w)` に当たる。
+    ///
+    /// ``length`` と同じ規則で測るので、2 乗が溢れる・潰れる大きさでも有限の距離が返る。関数の層の
+    /// ``dist(_:_:_:_:)`` と同じ値になる (`dist()` と `a.distance(to:)` は、
+    /// `circle()` と `Circle` と同じ使い分け)。**数でない値が混じれば数でない値のまま返る**
+    /// (関数の `dist()` は 0 を返して注意する)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func distance(to other: Vector2) -> Float {
+        (other - self).length
+    }
+
+    /// 内積。Processing の `dot()` に当たる。
+    ///
+    /// 2 つの値の向きの近さを測る。同じ向きなら正、直角なら 0、反対向きなら負になり、
+    /// 長さを掛けた値になる。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
+    public func dot(_ other: Vector2) -> Float {
+        (simd * other.simd).sum()
+    }
+
+    /// `target` へ向かう途中の値。`amount` が 0 なら自分、1 なら `target` がちょうど返る。
+    /// Processing の `lerp()` に当たる。
+    ///
+    /// 成分ごとに、関数の層の ``lerp(_:_:_:)`` と同じ式で間を取る。**0…1 の外は締めない** —
+    /// `amount` が 2 なら `target` の先へ、-1 なら自分の手前へ伸びる。元の値は変わらない
+    /// (新しい値を返す。Processing の `lerp()` は自分を書き換える)。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     fill(242, 115, 64)
+    ///     let start = Vector2(50, 240)
+    ///     let end = Vector2(350, 60)
+    ///     for i in 0...5 {
+    ///         let point = start.interpolated(to: end, amount: Float(i) / 5)
+    ///         circle(point.x, point.y, 22)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 左下から右上へ、等しい間隔で斜めに並ぶ 6 個の橙色の円 -->
+    ///     ![左下から右上へ、等しい間隔で斜めに並ぶ 6 個の橙色の円](https://i.gyazo.com/bb71c3b505dd092ca063ce2687fd2bb8.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    // shot: 1 snippet=56e2c36f
+    public func interpolated(to target: Vector2, amount: some ScalarConvertible) -> Vector2 {
+        let amount = amount.asFloat
+        return Vector2(SIMD2(interpolate(simd.x, target.simd.x, amount), interpolate(simd.y, target.simd.y, amount)))
     }
 }
