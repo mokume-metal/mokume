@@ -317,6 +317,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// ```
     ///
     /// ``pause()`` の後なら止めた位置から、``stop()`` の後と鳴り終わった後は頭から鳴らす。
+    /// ``jump(_:)`` で終わりへ寄せた後も、鳴り終わった後と同じ位置なので頭から鳴らす。
     /// **鳴っている最中に呼ぶと、頭から鳴らし直す。** ``loop()`` で鳴らしている最中に呼んだときも
     /// 頭から鳴らし直し、今度は終わりで止まる。
     public func play() {
@@ -378,7 +379,8 @@ public final class SoundFile: Inlet, EffectInput {
     /// そのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。どれも `Movie` の `jump(_:)` と同じ。
     ///
     /// 同じフレームで後から ``play()`` か ``loop()`` を呼ぶと、鳴っている最中なら頭から鳴らし直す
-    /// (後から呼んだ口が勝つ)。``stop()`` は頭へ戻す。
+    /// (後から呼んだ口が勝つ)。``stop()`` は頭へ戻す。**終わりへ飛ばして鳴らし続けると、残りが無いので
+    /// 無音で止まる** (頭の音は出ない)。止まっている間に終わりへ飛んだ後の ``play()`` は頭から鳴らす。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func jump(_ seconds: Float) {

@@ -59,8 +59,9 @@ nonisolated struct Playhead: Equatable {
     /// 外へ見せる位置 (秒)。飛ぶよう頼まれていれば、その飛び先。
     var reported: Double { pendingJump ?? position }
 
-    /// 終わりまで映したか (ループしていないとき)。
-    private var hasEnded: Bool { pendingJump == nil && position >= duration }
+    /// 終わりまで映したか (ループしていないとき)。飛ぶよう頼まれていれば、飛び先が終わりか
+    /// (同じフレームの ``jump(to:)`` → ``play()`` でも、終わりから流すので頭から。#3303)。
+    private var hasEnded: Bool { reported >= duration }
 
     /// 1 度だけ流す。終わりまで映していたら頭から。ループしていたなら、今回の終わりで止まる。
     mutating func play() {
@@ -82,7 +83,11 @@ nonisolated struct Playhead: Equatable {
     private mutating func start() {
         projection = nil
         guard !isPlaying else { return }
-        if hasEnded { position = 0 }
+        if hasEnded {
+            // 頭から。飛び先を残すと、次のフレームで飛び先の終わりが当たり直す
+            position = 0
+            pendingJump = nil
+        }
         isPlaying = true
         anchor = nil
     }

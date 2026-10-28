@@ -76,6 +76,30 @@ struct FileNodeTests {
         #expect(mismatch(try heard(pieces: pieces), whole) == nil)
     }
 
+    /// 終わり以降から 1 度だけ鳴らす区切りは無音のまま終わり、ループなら頭から鳴る (#3303)。
+    /// ``FilePlayer`` (直の道) も同じ — ``FilePlayerTests`` が見る。
+    @Test("終わりの位置から始めた区切りは、1 度だけなら無音のまま終わり、ループなら頭から鳴る")
+    func startingAtTheEndPlaysNothingOnceAndTheHeadWhenLooping() throws {
+        let samples = Self.ramp(1000)
+        for start in [1000, 2500] {
+            let once = makeRack()
+            let onceNode = try addFile(once, samples)
+            begin(once, onceNode, start: start)
+            let silent = render(once, 4000).left
+            #expect(silent.allSatisfy { $0 == 0 }, "start \(start)")
+            #expect(onceNode.isIdle && onceNode.isFinished)
+
+            let loop = makeRack()
+            let loopNode = try addFile(loop, samples)
+            begin(loop, loopNode, start: start, looping: true)
+            let heard = render(loop, 8000).left
+            let expected = (0..<8000).map { samples[$0 % 1000] * Self.center }
+            #expect(
+                mismatch(Array(heard[Self.settled...]), Array(expected[Self.settled...])) == nil,
+                "start \(start)")
+        }
+    }
+
     @Test("標本化率が低いファイルは、ラックの率で読み直され、1 秒のファイルが 1 秒で終わる")
     func resamplesToTheRackRate() throws {
         // 44100 Hz で 441 Hz (ちょうど 100 標本で 1 周期)・1 秒

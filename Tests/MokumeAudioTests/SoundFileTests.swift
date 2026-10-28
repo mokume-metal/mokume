@@ -360,6 +360,76 @@ struct SoundFileTests {
         #expect(looped[3].level > 0)
     }
 
+    /// 終わりの位置に立っているのは「鳴り終わった後」と同じ状態で、`play()` は頭から鳴らす (#3303)。
+    /// 同じフレームで `jump` と `play()` を呼んでも、フレームを分けても、鳴る位置の列は同じ。
+    @Test("止まっている間に終わりへ飛んでから play() すると、頭から鳴る (同じフレームでも、フレームを分けても。直に鳴らす経路も、書き出しの経路も)")
+    func playAfterJumpingToTheEndStartsFromTheTop() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for audible in [false, true] {
+            var runs: [[Heard]] = []
+            for split in [false, true] {
+                let flow = audible ? try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096) : nil
+                var heardSound: [Float] = []
+                let heard = try record(
+                    frames: 9,
+                    { sketch in
+                        if let flow { return try sketch.loadSound(url.path, flow: flow) }
+                        return try sketch.loadSound(url.path)
+                    },
+                    act: { sound, frame in
+                        if frame == 2 {
+                            sound.jump(sound.duration)
+                            if !split { sound.play() }
+                        }
+                        if frame == 3, split { sound.play() }
+                    },
+                    between: { _ in if let flow { heardSound += try render(flow, Self.perFrame) } })
+                // `play()` を呼んだフレーム。次のフレームの位置は 1 フレームぶん (800 標本) 進んでいる
+                let begin = split ? 3 : 2
+                let label = "audible: \(audible)・split: \(split)"
+                #expect(heard[begin...].map(\.isPlaying).allSatisfy { $0 }, Comment(rawValue: label))
+                #expect(
+                    Array(heard[begin...].map(\.position)) == (1...(9 - begin)).map { $0 * Self.perFrame }, Comment(rawValue: label))
+                #expect(heard[begin + 1].level > 0, "\(label): 頭の音の解析")
+                if audible {
+                    // 鳴ったのは、`play()` を呼んだフレームの描き出しから、ファイルの頭からの音
+                    let silent = (begin - 1) * Self.perFrame
+                    #expect(heardSound.prefix(silent).allSatisfy { $0 == 0 }, Comment(rawValue: label))
+                    let worst = zip(heardSound.dropFirst(silent), chord).map { abs($0 - $1) }.max() ?? 1
+                    #expect(worst < 1e-6, Comment(rawValue: label))
+                }
+                runs.append(Array(heard[begin...]))
+            }
+            // 呼んだフレームから数えた同じ長さ (分けた方が 1 フレーム短い)
+            #expect(runs[0].prefix(runs[1].count) == runs[1][...], "同じフレームで呼んでも、分けても、同じ位置と解析 (audible: \(audible))")
+        }
+    }
+
+    /// 鳴っている間の `jump(duration)` は、その位置から鳴らす残りが無いので、頭の音を出さずに止まる (#3303)。
+    @Test("鳴っている間に終わりへ飛ぶと、頭の音を出さずに止まり、位置は頭へ戻る")
+    func jumpingToTheEndWhilePlayingStopsWithoutTheHead() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let flow = try SoundFlow.offline(sampleRate: 48_000, channels: 2, maximumFrames: 4096)
+        var heardSound: [Float] = []
+        let heard = try record(
+            frames: 9,
+            { sketch in
+                let sound = try sketch.loadSound(url.path, flow: flow)
+                sound.play()
+                return sound
+            },
+            act: { sound, frame in if frame == 3 { sound.jump(sound.duration) } },
+            between: { _ in heardSound += try render(flow, Self.perFrame) })
+        // フレーム 3 の描き出しまでは鳴っている (0..<2400)。飛んだ後は、頭の音が出ない
+        let worst = zip(heardSound.prefix(3 * Self.perFrame), chord).map { abs($0 - $1) }.max() ?? 1
+        #expect(worst < 1e-6)
+        #expect(heardSound.dropFirst(3 * Self.perFrame).allSatisfy { $0 == 0 }, "頭の音が出ている")
+        #expect(heard.last?.isPlaying == false)
+        #expect(heard.last?.position == 0)
+    }
+
     /// 1 フレームより短い一発音は、鳴り終わったフレームの区間 (鳴り始めてから終わりまで) に入る。窓の終わりで見ていたときは、
     /// 鳴り終わったフレームを無音に戻して、peak が一度も出なかった。
     @Test("24 fps で 20 ミリ秒の一発音を鳴らすと、鳴り終わったフレームの peak に出て、次のフレームから無音になる")

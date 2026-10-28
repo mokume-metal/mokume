@@ -137,6 +137,32 @@ nonisolated struct PlayheadTests {
         #expect(head.start == 2000)
     }
 
+    @Test("終わりへ飛んだ後の鳴らし始めは、鳴り終わった後と同じく頭から (止まっている間も、範囲の外へ寄せたときも)")
+    func playFromTheEndStartsFromTheTop() {
+        for target in [2000, 2500] {
+            for looping in [false, true] {
+                var head = Playhead(length: 2000)
+                head.jump(to: target)
+                #expect(head.start == 2000)
+                head.play(looping: looping)
+                #expect(head.start == 0, "jump(to: \(target)) → play(looping: \(looping))")
+                #expect(head.position(after: 300) == 300)
+                #expect(!head.hasEnded(after: 0))
+            }
+        }
+        // 鳴っている最中の play が頭へ戻すのはいままでどおり
+        var head = Playhead(length: 2000)
+        head.play(looping: false)
+        head.jump(to: 1200)
+        head.play(looping: false)
+        #expect(head.start == 0)
+        // 終わりの手前までなら、止めた位置から鳴らす
+        var near = Playhead(length: 2000)
+        near.jump(to: 1999)
+        near.play(looping: false)
+        #expect(near.start == 1999)
+    }
+
     @Test("鳴っている間に飛んだ区切りは、始まりより前をファイルの標本で埋める (頭より前は 0)")
     func jumpWhilePlayingFillsTheWindowFromTheFile() {
         var head = Playhead(length: 2000)

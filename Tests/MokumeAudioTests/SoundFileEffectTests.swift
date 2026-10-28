@@ -336,6 +336,36 @@ struct SoundFileEffectTests {
         #expect(plain.file.map(\.isPlaying).contains(false))
     }
 
+    /// 終わりの位置に立っているのは「鳴り終わった後」と同じ状態で、`play()` は頭から鳴らす (#3303)。
+    /// エフェクトへ通したラックの道も、通さない道と同じ位置から鳴り、出口に音が出る。
+    @Test("止まっている間に終わりへ飛んでから play() すると、エフェクトへ通しても頭から鳴る (同じフレームでも、分けても)")
+    func playAfterJumpingToTheEndStartsFromTheTopThroughTheEffect() throws {
+        let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        for split in [false, true] {
+            let act: (SoundFile, Int) -> Void = { sound, frame in
+                if frame == 2 {
+                    sound.jump(sound.duration)
+                    if !split { sound.play() }
+                }
+                if frame == 3, split { sound.play() }
+            }
+            let begin = split ? 3 : 2
+            let plain = try take(
+                frames: 9, flow: try offline(), url: url, route: false, start: { _ in }, act: act)
+            let routed = try take(frames: 9, flow: try offline(), url: url, start: { _ in }, act: act)
+            #expect(routed.file == plain.file, "split: \(split)")
+            #expect(
+                Array(routed.file[begin...].map(\.position)) == (1...(9 - begin)).map { $0 * Self.perFrame },
+                "split: \(split)")
+            #expect(routed.file[begin...].map(\.isPlaying).allSatisfy { $0 }, "split: \(split)")
+            #expect(routed.effect.last?.level ?? 0 > 0, "split: \(split): 出口に音が出ていない")
+            // 固定の時計 (鳴らさない) でも同じ位置
+            let framed = try take(frames: 9, url: url, start: { _ in }, act: act)
+            #expect(framed.file.map(\.position) == routed.file.map(\.position), "split: \(split)")
+        }
+    }
+
     @Test("鳴っている最中にエフェクトへ通しても、位置は頭へ戻らず、通さないときと同じに進む")
     func routingWhilePlayingKeepsThePosition() throws {
         let url = try writeWAV(Self.tenSeconds, sampleRate: 48_000)
