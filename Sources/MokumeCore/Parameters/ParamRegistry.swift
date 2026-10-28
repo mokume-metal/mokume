@@ -55,6 +55,36 @@ struct ParamRegistry {
         boxes.map(\.box.declaration).filter { $0.value.hasOnlyFiniteNumbers }
     }
 
+    /// 保存へ併記する、宣言が生まれたときの既定値。**並びは宣言した順で、保存の `values` に載る宣言
+    /// (``declarations``) のうち、既定値が有限のものだけ**。
+    ///
+    /// 既定値を持たない宣言 (``DeclaredParam/defaultValue`` が `nil`) と、畳めなくて非有限のまま置かれた
+    /// 既定値は載せない。載せないものは、コードの既定値が変わったかを見ずに、名前と型だけで戻る
+    /// ([ADR-0030] 決定 6 の改訂 (2026-10-28)・[#2402](https://github.com/mokume-metal/mokume/issues/2402))。
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    var defaults: [NamedParamValue] {
+        boxes.compactMap { entry in
+            guard entry.box.declaration.value.hasOnlyFiniteNumbers,
+                let value = entry.box.defaultValue, value.hasOnlyFiniteNumbers
+            else { return nil }
+            return NamedParamValue(name: entry.name, value: value)
+        }
+    }
+
+    /// その名前の宣言が生まれたときの値。**宣言が無い・既定値を持たない・非有限なら `nil`。**
+    func defaultValue(of name: String) -> ParamValue? {
+        guard let box = boxes.first(where: { $0.name == name })?.box,
+            let value = box.defaultValue, value.hasOnlyFiniteNumbers
+        else { return nil }
+        return value
+    }
+
+    /// 許した候補。文字の値にだけ付き、宣言が無ければ `nil`。
+    func choices(of name: String) -> [String]? {
+        boxes.first(where: { $0.name == name })?.box.declaration.choices
+    }
+
     /// つまみへ渡す箱。**並びは宣言した順。**
     ///
     /// 窓がここから受け取るのは、**索引をもう 1 度引かせないため**である。引き直すと

@@ -189,6 +189,8 @@ struct ParamReport: Encodable {
             case notInChoices
             /// 有限の数でない (NaN・無限)。宣言の型へ読み替えると収まらず無限になる数も含む。
             case notFinite
+            /// コードの既定値が、保存に書いた時点から変わった (`discarded` にだけ載る)。
+            case defaultChanged
         }
     }
 

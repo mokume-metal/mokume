@@ -150,6 +150,15 @@ public final class ParamBox<Value> {
 
     /// 面から指すときの名前。
     public let name: String
+    /// **宣言が生まれたときの値** (面に出る表現)。宣言の初期値か `init` の中の代入で、非有限なら畳んだ後の値。
+    ///
+    /// 保存は、書いた時点のこの値を併記する。次の起動で今のコードのこの値と比べ、コードの既定値が
+    /// 変わった値だけ保存を捨てる ([ADR-0030] 決定 6 の改訂 (2026-10-28)・[#2402])。**生まれのときに
+    /// 控えるので、`setup()` や `draw()` の代入・保存からの復元・外からの書き込みは入らない。**
+    ///
+    /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    /// [#2402]: https://github.com/mokume-metal/mokume/issues/2402
+    let bornValue: ParamValue
     /// 外からの書き込みを収める幅。**検めた後の値** — 片方の端だけが非有限の範囲 (`0...Double.infinity`)
     /// はそのまま持って有限の端へ収め、両端とも非有限なら収める相手が無いので `nil` になる。端が非有限の
     /// 範囲は、どちらでも面 (応答の `min` / `max`・窓のつまみ) には出さない (``declaration``・
@@ -184,6 +193,7 @@ public final class ParamBox<Value> {
         let zero = valueIsFinite ? nil : fromParam(offered.zero).flatMap { toParam($0).hasOnlyFiniteNumbers ? $0 : nil }
         let born = zero ?? value
         self.storedValue = born
+        self.bornValue = toParam(born)
         self.valueKeyPath = \ParamBox<Value>.value
         let rangeIsFinite = range?.hasFiniteBounds ?? true
         self.range = rangeIsFinite || range?.hasAFiniteBound == true ? range : nil
@@ -287,6 +297,9 @@ public final class ParamBox<Value> {
 extension ParamBox: nonisolated Observable {}
 
 extension ParamBox: DeclaredParam {
+    /// 保存に併記する既定値 (``bornValue``)。
+    var defaultValue: ParamValue? { bornValue }
+
     /// 面から見えるいまの姿。
     public var declaration: ParamDeclaration {
         // 端が非有限の範囲は面に出さない (収めには使う)。窓がつまみを出さない理由を言い分けられる
@@ -357,5 +370,12 @@ extension ParamBox: DeclaredParam {
 /// 型を伏せた ``ParamBox``。宣言の一覧を集めるときと、面から書き込むときに使う。
 protocol DeclaredParam: AnyObject {
     var declaration: ParamDeclaration { get }
+    /// 宣言が生まれたときの値 (``ParamBox/bornValue``)。**持たない実装は `nil`** で、その宣言は
+    /// 保存に既定値を併記せず、コードの既定値が変わったかも見られない (名前と型だけで戻る)。
+    var defaultValue: ParamValue? { get }
     func write(_ incoming: ParamValue) -> ParamOutcome
+}
+
+extension DeclaredParam {
+    var defaultValue: ParamValue? { nil }
 }
