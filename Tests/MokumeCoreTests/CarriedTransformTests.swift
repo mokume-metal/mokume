@@ -25,11 +25,15 @@ struct CarriedTransformTests {
         var onSetup: (Scene) -> Void = { _ in }
         var onDraw: (Scene) -> Void = { _ in }
         var onPressed: (Scene) -> Void = { _ in }
+        /// 偽なら下地を塗らない。溜め場が空のまま `setup()` の本体へ入る (背景の予定も溜め場の量に数えるので)。
+        var preparesCanvas = true
 
         func setup() {
-            background(0)
-            noStroke()
-            fill(255)
+            if preparesCanvas {
+                background(0)
+                noStroke()
+                fill(255)
+            }
             onSetup(self)
         }
 
@@ -287,6 +291,252 @@ struct CarriedTransformTests {
         #expect(lit(80...120, 80...120) > 20, "\(placer.name): 変換した位置 (100, 100) に出ていない")
         #expect(lit(0...25, 0...25) == 0, "\(placer.name): 原点のまわりに出ている (変換が効いていない)")
         #expect(!runtime.canvas.warnings.hasWarned(.transformOutsideFrame))
+        // 変換の後に置いたのだから、「何も置かなかった」とは言わない (どの置く口も置いた通し数を進める)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) == nil,
+            "\(placer.name): 変換の後に置いたのに、何も置かなかったと言っている")
+    }
+
+    // MARK: - 置いた後に描き切る口 (反証 4)
+
+    /// 置いた後に溜め場を空にする口 (描き切る口)。`translate` の後に置いてから呼ぶと、溜め場は変換を書いた
+    /// 時点と同じ量 (0) へ戻る。量だけで「置いたか」を見ると、ここで偽に「何も置かなかった」と言う。
+    nonisolated static let flushers: [Placer] = [
+        Placer(name: "loadPixels") { $0.loadPixels() },
+        Placer(name: "get") { _ = $0.get(1, 1) },
+        Placer(name: "filter") { $0.filter([.invert()]) },
+    ]
+
+    @Test("変換の後に置いてから描き切る口を呼んでも、何も置かなかったとは言わない", arguments: flushers)
+    func placingThenFlushingIsNotMistakenForPlacingNothing(_ flusher: Placer) throws {
+        let scene = Scene()
+        scene.preparesCanvas = false  // 溜め場が空の状態で変換を書く
+        scene.onSetup = { s in
+            s.translate(s.width / 2, s.height / 2)
+            s.circle(0, 0, 50)
+            try? flusher.place(s)
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) == nil,
+            "\(flusher.name): 置いた後に描き切ったのを、何も置かなかったと取り違えた")
+    }
+
+    @Test("変換の後に何も置かず、描き切る口だけ呼んだときは、持ち越さない旨を言う", arguments: flushers)
+    func flushingWithoutPlacingStillExplains(_ flusher: Placer) throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.circle(0, 0, 10)  // 変換より前に置いて、描き切りに捨てさせる
+            s.translate(s.width / 2, s.height / 2)
+            try? flusher.place(s)
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) != nil,
+            "\(flusher.name): 変換の後に何も置いていないのに言わない")
+    }
+
+    // MARK: - 変換の口の全数 (反証 7)
+
+    /// 変換の口 1 つ。`body` は同じ場面を、口を呼ぶ版 (`true`) と呼ばない版 (`false`) で書く。
+    /// 区間 (`setup()`) と `draw()` の同じ本体が同じ絵になり、かつ口を呼ぶかどうかで絵が変わることを見る。
+    struct Mouth: Sendable, CustomTestStringConvertible {
+        let name: String
+        let body: @MainActor @Sendable (Scene, Bool) -> Void
+        var testDescription: String { name }
+    }
+
+    nonisolated static let mouths: [Mouth] = [
+            Mouth(name: "translate(x,y)") { s, on in
+                if on { s.translate(100, 100) }
+                s.rect(-20, -20, 40, 40)
+            },
+            Mouth(name: "translate(Vector2)") { s, on in
+                if on { s.translate(Vector2(100, 100)) }
+                s.rect(-20, -20, 40, 40)
+            },
+            Mouth(name: "rotate") { s, on in
+                if on { s.rotate(0.5) }
+                s.rect(60, 20, 60, 20)
+            },
+            Mouth(name: "scale(s)") { s, on in
+                if on { s.scale(2) }
+                s.rect(20, 20, 30, 30)
+            },
+            Mouth(name: "scale(x,y)") { s, on in
+                if on { s.scale(2, 3) }
+                s.rect(20, 20, 30, 20)
+            },
+            Mouth(name: "shearX") { s, on in
+                if on { s.shearX(0.6) }
+                s.rect(20, 20, 40, 40)
+            },
+            Mouth(name: "shearY") { s, on in
+                if on { s.shearY(0.6) }
+                s.rect(20, 20, 40, 40)
+            },
+            Mouth(name: "applyMatrix") { s, on in
+                var moved = Transform.identity
+                moved.translate(x: 60, y: 40)
+                if on { s.applyMatrix(moved) }
+                s.rect(20, 20, 40, 40)
+            },
+            Mouth(name: "resetMatrix") { s, on in
+                s.translate(100, 100)
+                s.rect(-5, -5, 10, 10)
+                if on { s.resetMatrix() }
+                s.rect(20, 20, 40, 40)
+            },
+            Mouth(name: "pushMatrix / popMatrix") { s, on in
+                if on { s.pushMatrix() }
+                s.translate(100, 100)
+                s.rect(-5, -5, 10, 10)
+                if on { s.popMatrix() }
+                s.rect(20, 20, 40, 40)
+            },
+            Mouth(name: "pushStyle / popStyle") { s, on in
+                if on { s.pushStyle() }
+                s.fill(255, 0, 0)
+                s.rect(100, 100, 40, 40)
+                if on { s.popStyle() }
+                s.rect(20, 20, 40, 40)
+            },
+            // 立体の口 (`Canvas+Solid.swift` の 6 つ)。`box` で見る
+            Mouth(name: "translate(x,y,z)") { s, on in
+                if on { s.translate(100, 100, 0) }
+                s.box(40)
+            },
+            Mouth(name: "translate(Vector3)") { s, on in
+                if on { s.translate(Vector3(100, 100, 0)) }
+                s.box(40)
+            },
+            Mouth(name: "rotateX") { s, on in
+                s.translate(100, 100, 0)
+                if on { s.rotateX(0.9) }
+                s.box(60)
+            },
+            Mouth(name: "rotateY") { s, on in
+                s.translate(100, 100, 0)
+                if on { s.rotateY(0.9) }
+                s.box(60)
+            },
+            Mouth(name: "rotateZ") { s, on in
+                s.translate(100, 100, 0)
+                if on { s.rotateZ(0.5) }
+                s.box(60)
+            },
+            Mouth(name: "scale(x,y,z)") { s, on in
+                s.translate(100, 100, 0)
+                if on { s.scale(2, 1, 1) }
+                s.box(30)
+            },
+    ]
+
+    /// 同じ本体を `setup()` (区間) と `draw()` (フレーム) で書いて、絵を取る。
+    private func picture(_ mouth: Mouth, on: Bool, inSetup: Bool) throws -> [UInt8] {
+        let scene = Scene()
+        if inSetup {
+            scene.onSetup = { s in mouth.body(s, on) }
+        } else {
+            scene.onDraw = { s in mouth.body(s, on) }
+        }
+        return try firstFrame(of: scene).image.bytes
+    }
+
+    @Test("変換の口はどれも、setup() では draw() と同じ絵になり、口を呼ぶと絵が変わる", arguments: mouths)
+    func everyTransformMouthWorksInSetup(_ mouth: Mouth) throws {
+        let inSetup = try picture(mouth, on: true, inSetup: true)
+        let inDraw = try picture(mouth, on: true, inSetup: false)
+        let without = try picture(mouth, on: false, inSetup: false)
+        #expect(inDraw != without, "\(mouth.name): 口を呼んでも絵が変わらない (この検査が効かない)")
+        #expect(inSetup == inDraw, "\(mouth.name): setup() の絵が draw() と違う (区間で効いていない)")
+    }
+
+    // MARK: - コールバックの push { }・pushStyle (反証 7)
+
+    @Test("止まっている間のコールバックの push { } は、塗りと変換を戻す")
+    func aPushClosureInAStoppedCallbackRestoresStyleAndTransform() throws {
+        let scene = Scene()
+        scene.onSetup = { s in s.noLoop() }
+        scene.onPressed = { s in
+            s.push {
+                s.fill(255, 0, 0)
+                s.translate(100, 0)
+                s.circle(0, 100, 40)
+            }
+            s.circle(0, 100, 40)
+            s.redraw()
+        }
+        let runtime = try SketchRuntime(sketch: scene, gpu: try RenderDevice())
+        try runtime.advance()
+        runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+        try runtime.advance()
+        let image = try runtime.canvas.target.encodeForDisplay()
+        #expect(image[100, 100].red > 200 && image[100, 100].green < 60, "push の中の円が赤く (100, 100) に出ていない")
+        #expect(image[3, 100].red > 200 && image[3, 100].green > 200, "push の後の円が白く原点側に出ていない")
+        #expect(!runtime.canvas.warnings.hasWarned(.styleOutsideFrame))
+        #expect(!runtime.canvas.warnings.hasWarned(.transformOutsideFrame))
+    }
+
+    @Test("止まっている間のコールバックの pushStyle / popStyle は、塗りを戻す")
+    func aStylePairInAStoppedCallbackRestoresTheFill() throws {
+        let scene = Scene()
+        scene.onSetup = { s in s.noLoop() }
+        scene.onPressed = { s in
+            s.pushStyle()
+            s.fill(255, 0, 0)
+            s.circle(100, 100, 40)
+            s.popStyle()
+            s.circle(0, 100, 40)
+            s.redraw()
+        }
+        let runtime = try SketchRuntime(sketch: scene, gpu: try RenderDevice())
+        try runtime.advance()
+        runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+        try runtime.advance()
+        let image = try runtime.canvas.target.encodeForDisplay()
+        #expect(image[100, 100].red > 200 && image[100, 100].green < 60, "積んだ中の円が赤くない")
+        #expect(image[3, 100].green > 200, "popStyle() の後の円が白くない (塗りが戻っていない)")
+        #expect(runtime.canvas.warnings.message(for: .popWithoutPush) == nil)
+    }
+
+    // MARK: - 区間の中でフレームを開く (反証 6)
+
+    /// 区間の中で本体の面のフレームを開く (`canvas.draw { }`)。フレームの頭は変換と積み履歴を既定へ戻すが、
+    /// 閉じた後は区間の変換へ戻す。
+    @Test("setup() で translate した後に canvas.draw { } を開いて閉じても、続く図形に変換が効く")
+    func aTransformSurvivesAFrameOpenedInsideTheSegment() throws {
+        let scene = Scene()
+        scene.onSetup = { s in
+            s.translate(100, 0)
+            s.circle(0, 40, 30)
+            try? s.canvas.draw { s.circle(0, 100, 30) }  // フレームの中は既定の変換
+            s.circle(0, 160, 30)
+        }
+        let (image, runtime) = try firstFrame(of: scene)
+        #expect(isWhite(image, 100, 40), "開く前の円が (100, 40) に出ていない")
+        #expect(isWhite(image, 3, 100), "開いたフレームの中の円が原点側に出ていない")
+        #expect(isWhite(image, 100, 160), "閉じた後の円が (100, 160) に出ていない (区間の変換が消えた)")
+        #expect(isBlack(image, 3, 160), "閉じた後の円が原点側に出ている")
+        #expect(runtime.canvas.warnings.message(for: .transformNotCarried) == nil)
+    }
+
+    @Test("setup() で pushMatrix した後に canvas.draw { } を開いて閉じても、popMatrix が対を取る")
+    func aPushSurvivesAFrameOpenedInsideTheSegment() throws {
+        let scene = Scene()
+        scene.onSetup = { s in
+            s.pushMatrix()
+            s.translate(100, 0)
+            try? s.canvas.draw { s.circle(0, 40, 30) }
+            s.circle(0, 100, 30)
+            s.popMatrix()
+            s.circle(0, 160, 30)
+        }
+        let (image, runtime) = try firstFrame(of: scene)
+        #expect(isWhite(image, 100, 100), "閉じた後の円が (100, 100) に出ていない")
+        #expect(isWhite(image, 3, 160), "popMatrix() の後の円が原点側に出ていない")
+        #expect(runtime.canvas.warnings.message(for: .popWithoutPush) == nil, "積みが開いたフレームで消えた")
     }
 
     // MARK: - 区間の外・断るもの (完了条件 6・10)

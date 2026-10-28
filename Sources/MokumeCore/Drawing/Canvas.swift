@@ -1375,6 +1375,7 @@ public final class Canvas {
     /// [#2509]: https://github.com/mokume-metal/mokume/issues/2509
     var carriesOver = false {
         didSet {
+            if !oldValue, carriesOver { carriedSegmentCount += 1 }
             if !oldValue, carriesOver, !isDrawing {
                 // 区間は変換も積み履歴も既定から始める。前のフレームが残した変換を持ち込まない (#3273)
                 beginCarriedSegment()
@@ -1390,9 +1391,37 @@ public final class Canvas {
         }
     }
 
-    /// 区間の中で最後に変換を書いた時点の溜め場の量 (``pendingAmount``)。区間で変換を書いていなければ `nil`。
-    /// 区間を出るとき、これと量が同じなら、変換の後に何も置かなかった (#3273)。
+    /// 区間の中で最後に変換を書いた時点の、置いた通し数 (``carriedPlacedSerial``)。区間で変換を書いて
+    /// いなければ `nil`。区間を出るとき、これと通し数が同じなら、変換の後に何も置かなかった (#3273)。
     private var carriedTransformMark: Int?
+
+    /// 区間の中で、溜め場から捨てた量の合計 (``discardPending(keepingCasters:)`` が足す)。
+    /// 区間に入るとき 0 に戻す。
+    private var carriedDiscardedAmount = 0
+
+    /// 持ち越しの区間に入った回数。区間の中で開いたフレームが、**同じ区間の中で**閉じたかを見分ける
+    /// (``frameOpenedInCarriedSegment``)。
+    private var carriedSegmentCount = 0
+
+    /// 持ち越しの区間の中でフレームを開いたとき (`canvas.draw { }`・`beginDraw()`) に控えた、区間の
+    /// 変換と積み履歴 ([#3273])。フレームの頭は変換と積み履歴を既定へ戻すので、そのままだと、区間で書いた
+    /// 変換が、開いたフレームを閉じた後の図形から消える。**同じ区間の中で閉じたときに、閉じた後で戻す**
+    /// (``leaveFrame()``)。別の区間・区間の外で閉じたときは戻さない (その区間の値ではない)。
+    ///
+    /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
+    private var frameOpenedInCarriedSegment: (segment: Int, transform: Transform, stacks: Stacks)?
+
+    /// 区間の中で置いた量の通し数。**溜め場の量 (``pendingAmount``) に、捨てた分を足し戻したもの。**
+    ///
+    /// 変換の後に何かを置いたかを、溜め場の量だけで見ると、置いた後に描き切る口 (`filter()`・
+    /// `loadPixels()`・`get()` など) が溜め場を空にしたとき、量が変換を書いた時点と同じ 0 に戻り、
+    /// 「何も置かなかった」と偽に言う。捨てた分を足し戻せば、通し数は置いたときにだけ増える。
+    /// **開いている列の印と、塗り直しの予定 (``pendingBackground``) は数えない** — 列は閉じれば印が下り、予定は
+    /// 置き換えるたびに立ったり消えたりして、通し数を戻してしまうからである (変換は背景にも効かない)。口ごとに印を立てる形は取らない
+    /// (``hasPendingDrawing`` と同じ理由)。
+    private var carriedPlacedSerial: Int {
+        carriedDiscardedAmount + sweepPending(emptying: false, countsOpenColumns: false)
+    }
 
     /// 持ち越しの区間に入る。変換と積み履歴を既定へ戻して始める ([#3273])。
     ///
@@ -1402,6 +1431,7 @@ public final class Canvas {
         transformStack.removeAll(keepingCapacity: true)
         styleStack.removeAll(keepingCapacity: true)
         carriedTransformMark = nil
+        carriedDiscardedAmount = 0
     }
 
     /// 持ち越しの区間を出る。**区間で書いた変換と積み履歴を既定へ戻す** ([#3273])。
@@ -1413,7 +1443,7 @@ public final class Canvas {
     ///
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
     private func endCarriedSegment() {
-        if let mark = carriedTransformMark, transform != .identity, pendingAmount == mark {
+        if let mark = carriedTransformMark, transform != .identity, carriedPlacedSerial == mark {
             warnOnce(
                 .transformNotCarried,
                 "A transform was written in setup() or an input callback, but nothing was placed "
@@ -1426,11 +1456,12 @@ public final class Canvas {
         transformStack.removeAll(keepingCapacity: true)
         styleStack.removeAll(keepingCapacity: true)
         carriedTransformMark = nil
+        carriedDiscardedAmount = 0
     }
 
     /// 区間の中で変換を書いたことを覚える (``endCarriedSegment()``)。形の組み立ての中は、出口で戻るので数えない。
     func noteTransformWritten() {
-        if carriesOver, !isDrawing, !recordingShape { carriedTransformMark = pendingAmount }
+        if carriesOver, !isDrawing, !recordingShape { carriedTransformMark = carriedPlacedSerial }
     }
 
     /// 持ち越しの区間を出たときに、溜め場に残っていた量 (``pendingAmount``)。区間で何も置いて
@@ -3137,6 +3168,8 @@ public final class Canvas {
     ///   **形の組み立ての出口の安全網だけが真を渡す** — そこで捨てるのは組み立ての途中で溜めた
     ///   ものだけで、前の無関係な区切りで描いた立体の影まで消す筋合いが無い (#1656)。
     func discardPending(keepingCasters: Bool = false) {
+        // 区間の中で捨てた分を覚える (``carriedPlacedSerial``)。区間の外の毎フレームは数えない
+        if carriesOver { carriedDiscardedAmount += sweepPending(emptying: false, countsOpenColumns: false) }
         _ = sweepPending(emptying: true)
         pendingDiscards &+= 1
         // **途中の描き切りが既に描いた落とす側も捨てる** ([#1656])。塗り直しは前に置いた立体ごと
@@ -3213,7 +3246,11 @@ public final class Canvas {
     /// - Returns: 見る側 (`emptying: false`) で、溜まっている量 (``pendingAmount``)。捨てる側では 0。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
-    private func sweepPending(emptying: Bool) -> Int {
+    ///
+    /// - Parameter countsOpenColumns: 開いている列の印 (開いた列・畳む相手の控え・雛形を組み立てている印) を
+    ///   量に数えるか。**置けば増え、捨てれば 0 に戻る** (``pendingAmount``) のは、これを数えるとき — 開いた列は
+    ///   閉じれば印が下りて量が減る。置いた通し数 (``carriedPlacedSerial``) は数えない。
+    private func sweepPending(emptying: Bool, countsOpenColumns: Bool = true) -> Int {
         var amount = 0
         func list<Store: RangeReplaceableCollection>(
             _ store: inout Store, resettingTo reset: Store = Store(), counted: Bool = true
@@ -3226,10 +3263,10 @@ public final class Canvas {
             }
         }
         func open<Value>(_ value: inout Value?) {
-            if emptying { value = nil } else if value != nil { amount += 1 }
+            if emptying { value = nil } else if countsOpenColumns, value != nil { amount += 1 }
         }
         func flag(_ value: inout Bool) {
-            if emptying { value = false } else if value { amount += 1 }
+            if emptying { value = false } else if countsOpenColumns, value { amount += 1 }
         }
         list(&vertices)
         // 先送りの控えは、頂点の位置を指す。頂点ごと捨てたので、控えも要らない
@@ -3645,6 +3682,13 @@ public final class Canvas {
         style.clip = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
+        // **持ち越しの区間の中で開いたフレームは、区間の変換と積み履歴を控える** (閉じた後に戻す・
+        // ``frameOpenedInCarriedSegment``・#3273)。区間の外で開いたなら控えを捨てる
+        if carriesOver {
+            frameOpenedInCarriedSegment = (carriedSegmentCount, transform, (transformStack, styleStack))
+        } else {
+            frameOpenedInCarriedSegment = nil
+        }
         transform = .identity
         // **積んだ履歴もフレームを越えない** (同 決定 4 の追補・[#925])。積むのは変換と
         // スタイルの 2 つで、どちらの寿命に属する状態を積んだかによらず、積んだ事実は
@@ -3959,6 +4003,16 @@ public final class Canvas {
         if let release = sketchTimeLease {
             sketchTimeLease = nil
             release()
+        }
+        // 持ち越しの区間の中で開いたフレームを、同じ区間の中で閉じたなら、区間の変換と積み履歴へ戻す。
+        // フレームの外へ出た後 (``abandonFrame()`` が既定へ戻した後) に戻す。警告は上の
+        // ``warnIfStacksLeftOpen(before:)`` が、フレームの中の積み残しとして済ませている (#3273)
+        if let saved = frameOpenedInCarriedSegment {
+            frameOpenedInCarriedSegment = nil
+            if carriesOver, saved.segment == carriedSegmentCount {
+                transform = saved.transform
+                restore(saved.stacks)
+            }
         }
     }
 
