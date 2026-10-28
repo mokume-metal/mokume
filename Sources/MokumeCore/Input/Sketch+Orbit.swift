@@ -69,7 +69,8 @@ extension SketchPart {
     /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
     ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
     ///
-    /// - Important: **``Sketch/mouseDragged(deltaX:deltaY:)`` の中から呼ばない。** ここが
+    /// - Important: **``Sketch/mouseDragged()`` と ``Sketch/mouseDragged(deltaX:deltaY:)`` の
+    ///   どちらの中からも呼ばない。** ここが
     ///   食うのは ``SketchPart/dragX`` — フレームの合計 — なので、1 フレームに移動が複数件
     ///   届くと同じ量を何度も食うことになる (2 度目からは食わない作りにしてあるが、
     ///   そのぶん残りの呼び出しでは何も起きない)。`draw()` の中で 1 回呼ぶ形にする。

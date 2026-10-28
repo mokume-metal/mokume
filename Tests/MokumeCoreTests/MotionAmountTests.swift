@@ -34,7 +34,7 @@ struct MotionAmountTests {
         for callback in seen {
             switch callback {
             case .mouseMovedBy(let deltaX, let deltaY): moved.append((deltaX, deltaY))
-            case .mouseDragged(let deltaX, let deltaY): dragged.append((deltaX, deltaY))
+            case .mouseDraggedBy(let deltaX, let deltaY): dragged.append((deltaX, deltaY))
             default: break
             }
         }
@@ -69,7 +69,7 @@ struct MotionAmountTests {
             .mouseDown(x: 40, y: 30, button: .left),
             .mouseMovedBy(dx: 6, dy: 8),
         ])
-        #expect(seen == [.mousePressed, .mouseDragged(deltaX: 6, deltaY: 8)])
+        #expect(seen == [.mousePressed, .mouseDragged, .mouseDraggedBy(deltaX: 6, deltaY: 8)])
     }
 
     @Test("押したまま届いた位置を持たない移動は、引きずった量と動いた量の両方に足す")

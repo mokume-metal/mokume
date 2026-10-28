@@ -117,6 +117,8 @@ public nonisolated struct Key: Sendable, Hashable {
 
 ### 5. 足し込みで数える量は、呼び出しが引数で運ぶ (2026-09-04 追加)
 
+> 下の `mouseDragged` の形は、改訂 (2026-10-28) で引数なしの `mouseDragged()` も要件に戻した (本節の末尾、釦の決定 6 の直前)。引数付きの形はそのまま残る。
+
 ```swift
 func mouseWheel(deltaX: Float, deltaY: Float)
 func mouseDragged(deltaX: Float, deltaY: Float)
@@ -160,6 +162,36 @@ func mouseDragged(deltaX: Float, deltaY: Float)
 | --- | --- |
 | `movedX` だけを足し、1 件ぶんを運ぶ口を置かない | 捕まえている間の `mouseMoved()` は読むものが `movedX` しか無く、1 件ぶんが要る書き手はその中で読む。1 フレームに 3 件届くと `3a + 2b + c` を足し込む — 本決定が #807 で塞いだ罠が、新しい量でそのまま開く。本決定に「この量だけは引数で運ばない」例外が要り、`movedX` の説明文が「コールバックの中で読まない」と注意書きで凌ぐことになる。影響節のとおり、注意書きで凌ぐのは面が正しくないことの印である |
 | `mouseMoved()` を `mouseMoved(deltaX:deltaY:)` へ置き換える ([#869](https://github.com/mokume-metal/mokume/pull/869) が `mouseDragged` でやった形) | 引数なしで書いた作品が**黙って呼ばれなくなる** — Swift はプロトコルから外れた同名のメソッドを咎めない。実例が既にあり、#869 以降 1 度も呼ばれていない引数なしの `mouseDragged()` を持つ作品がある |
+
+#### 改訂 (2026-10-28) — 引数なしの `mouseDragged()` を、要件として戻す
+
+[#3258](https://github.com/mokume-metal/mokume/issues/3258)。**[#869](https://github.com/mokume-metal/mokume/pull/869) が外した引数なしの `func mouseDragged()` を、`Sketch` の要件として戻す。** `mouseDragged(deltaX:deltaY:)` は残り、どちらも書ける。
+
+```swift
+func mouseDragged()                              // Processing・p5.js の基本形
+func mouseDragged(deltaX: Float, deltaY: Float)  // 1 件ぶんの量
+```
+
+| 決めたこと | 中身 |
+| --- | --- |
+| 呼ぶ順と回数 | 押したまま動いた 1 件ごとに、`mouseDragged()` を 1 回、続けて `mouseDragged(deltaX:deltaY:)` を 1 回。`mouseMoved()` → `mouseMoved(deltaX:deltaY:)` (上の追補 (2026-10-07)) と同じ順序と回数で、どちらか片方だけを書いた型も、書いた側が 1 件につき 1 回呼ばれる |
+| 引数なしの中で読む位置 | `mouseX` / `mouseY` は、その出来事まで当てた位置になる (手本の `mouseDragged()` の中で読む値と同じ) |
+| `dragX` / `dragY` の罠 | 引数なしの中で読むと、1 フレームに複数件届いたとき部分累計 (`3a + 2b + c`) を足し込む。影響の節が消した「コールバックの中で読まない」の注意書きを、`dragX` / `dragY` の説明文へ戻す (`movedX` と同じ形)。1 件ぶんは `mouseDragged(deltaX:deltaY:)` の引数で受ける |
+| `mouseWheel()` | **足さない** |
+
+**根拠。** 実害の記録が決定 5 の追補にある — #869 以降 1 度も呼ばれていない引数なしの `mouseDragged()` を持つ作品がある (Swift は、プロトコルから外れた同名のメソッドを咎めない)。手本の `mouseDragged()` は引数なしが基本形で、名前と形をそのまま採る [ADR-0020](0020-api-naming-and-surface.md) 決定 1 に沿う。同じ天秤は、追補 (2026-10-07) が `mouseMoved()` で既に掛けている (引数なしを残し、量の要る人に引数付きを足した)。**公開の要件を 1 つ足す根拠は作例ではなく、この実害の記録と手本の基本形である** — [ADR-0041](0041-standard-scope-map.md) 決定 3 の入力の表で、手本の口のうち下限に選ばれる口として扱う。
+
+**`mouseWheel()` を足さない理由。** 引数なしの中で読める正しい量が無い (`scrollY` は部分累計である)。手本 (Processing の `mouseWheel(MouseEvent event)`・p5.js の `mouseWheel(event)`) も引数なしの形を持たない。足さないので、「手本の名前から引く」の `mouseWheel()` の行と `mouseWheel(deltaX:deltaY:)` の説明文は残る。
+
+**代償。** 公開の要件が 1 つ増える。`dragX` をコールバックの中で読む罠が、引数なしの入口から開く (`movedX` と同じ形)。決定 5 が「注意書きで凌ぐのは面が正しくないことの印」と言った形が、この 1 口に限って戻る — 手本の基本形を採る代わりに、説明文で名乗る。これを嫌うなら、引数なしを足さない (現状維持) 案がある。
+
+採らなかった案:
+
+| 採らなかった案 | なぜ |
+| --- | --- |
+| `mokume run` / `watch` のビルド時に、引数なしの `mouseDragged()` / `mouseWheel()` を持つ型へ警告を出す | ソースを読む機構が CLI に要り、届く範囲が `mokume run` / `watch` に限られる (SwiftPM や Xcode で直に組む人には届かない)。足す機構の割に効く範囲が狭い。引数なしの入口を足す案は型の中で閉じる |
+| `mouseDragged()` と `mouseWheel()` の両方に引数なしの入口を足す | `mouseWheel()` の中で読める正しい量が無く、手本にも無い形である |
+| 現状維持 (索引と説明文だけ) | 読まない人の詰まりが残る。呼ばれないことが黙って起きる形は、決定 5 の追補が既に「実例がある」と書いた |
 
 ### 6. 釦も同じ判断で型にする (2026-09-25 改訂)
 
@@ -235,7 +267,7 @@ if startButton.justPressed { startGame() }   // 左の釦がこのフレーム�
 - **キーの符号が通る経路は `Int` 1 本だったので、置換で閉じた。** 型を絞る関所は `SketchSurface` の `Int(event.keyCode)` 1 箇所で、体系の変換を入れたくなったときもそこだけを見ればよい
 - 打たれた文字を読む `key: String` は変えない。**打った文字と、動いたキーは別の問い**である
 - **`mouseButton` は `MouseButton?` になる** (決定 6)。何も押していないときの `nil` は、`keyCode` を `Key?` にした理由と同じく、`MouseButton(rawValue: 0)` が左の釦であって「無い」ではないからである。**押しても離しても入れ替わる**のも `keyCode` と同じで、`mouseReleased()` の中から離した釦を知る口は他に無い。`InputState.button` と `InputEvent.mouseDown` / `mouseUp` の `button:` も同じ型へ揃う。0.x なので minor で出る
-- **`mouseDragged()` も引数を取る形へ変わる** (決定 5)。[#831](https://github.com/mokume-metal/mokume/pull/831) が引数なしで出したばかりだが、0.x では形が動くことを織り込んでいる
-- **注意書きが 3 か所消える。** `mouseDragged()` の doc・`dragX` の doc・`orbitControl()` の `- Important:` に、同じ「フレームの累計であって 1 件ぶんではない」が重複して書かれていた。**注意書きで凌ぐのは面が正しくないことの印**で、面が正しくなれば書くことは「どちらを読むか」だけになる
+- **`mouseDragged()` も引数を取る形へ変わる** (決定 5。ただし引数なしの形は改訂 (2026-10-28) で要件へ戻した)。[#831](https://github.com/mokume-metal/mokume/pull/831) が引数なしで出したばかりだが、0.x では形が動くことを織り込んでいる
+- **注意書きが 3 か所消える** (**`dragX` の doc の「コールバックの中で読まない」は、改訂 (2026-10-28) で引数なしの `mouseDragged()` の中について戻した**)。`mouseDragged()` の doc・`dragX` の doc・`orbitControl()` の `- Important:` に、同じ「フレームの累計であって 1 件ぶんではない」が重複して書かれていた。**注意書きで凌ぐのは面が正しくないことの印**で、面が正しくなれば書くことは「どちらを読むか」だけになる
 - **`orbitControl()` は `draw()` から 1 回呼ぶ形のまま。** 1 件ぶんが渡るようになっても、あちらが食うのはフレーム合計である。`mouseDragged` から呼べるようにすると、引きずっていない間に回り続ける枝 (慣性) が 1 フレームに複数回進む別の欠陥が出る
 - **参照スケッチが手本になる。** `Sketches/PointerAndKeys.swift` の `size += scrollY * 4` は、#807 が「そのまま `mouseWheel()` へ移すと壊れる書き方の実例」として名指ししていた行である。移した先で正しく書けることが、この決定の効き目の確かめになる

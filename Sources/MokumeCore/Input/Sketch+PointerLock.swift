@@ -22,7 +22,8 @@ extension SketchPart {
     /// - ``mouseX`` / ``mouseY`` / ``pmouseX`` / ``pmouseY`` は捕まえた時点の位置のまま動かない。
     ///   押下と解放もその位置を名乗る
     /// - 動いた量は、押していなければ ``Sketch/mouseMoved(deltaX:deltaY:)`` が、押していれば
-    ///   ``Sketch/mouseDragged(deltaX:deltaY:)`` が 1 件ずつ受け取る。フレームの合計は ``movedX`` /
+    ///   ``Sketch/mouseDragged(deltaX:deltaY:)`` が 1 件ずつ受け取る (引数なしの ``Sketch/mouseMoved()`` /
+    ///   ``Sketch/mouseDragged()`` も 1 件ごとに先に呼ばれるが、量は運ばない)。フレームの合計は ``movedX`` /
     ///   ``movedY`` (押している間のぶんは ``dragX`` / ``dragY`` も) で読む
     /// - 量の単位は捕まえていないときと同じ描く解像度の画素で、縦軸は下向きである
     ///

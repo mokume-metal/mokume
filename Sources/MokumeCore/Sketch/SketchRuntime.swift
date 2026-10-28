@@ -1220,7 +1220,8 @@ public final class SketchRuntime {
         case .mouseMoved: sketch.mouseMoved()
         case .mouseMovedBy(let deltaX, let deltaY):
             sketch.mouseMoved(deltaX: deltaX, deltaY: deltaY)
-        case .mouseDragged(let deltaX, let deltaY):
+        case .mouseDragged: sketch.mouseDragged()
+        case .mouseDraggedBy(let deltaX, let deltaY):
             sketch.mouseDragged(deltaX: deltaX, deltaY: deltaY)
         case .mouseWheel(let deltaX, let deltaY):
             sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)

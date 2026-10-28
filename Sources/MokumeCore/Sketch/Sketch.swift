@@ -107,7 +107,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 時刻を見ないので、外から送った出来事でも窓での実操作と同じように起きる。
     func mouseClicked()
 
-    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged(deltaX:deltaY:)`` が呼ばれる。
+    /// 押していない間に動いたとき呼ばれる。押している間は ``mouseDragged()`` (と、続けて ``mouseDragged(deltaX:deltaY:)``) が呼ばれる。
     ///
     /// 動いた量が要るなら ``mouseMoved(deltaX:deltaY:)`` を書く — ここの直後に続けて呼ばれる。
     func mouseMoved()
@@ -140,7 +140,21 @@ public protocol Sketch: AnyObject, SketchPart {
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     func mouseMoved(deltaX: Float, deltaY: Float)
 
-    /// 押したまま動いたとき呼ばれる。**その 1 件で動いた量**を受け取る。
+    /// 押したまま動いたとき呼ばれる。押していない間は ``mouseMoved()`` が呼ばれる。
+    ///
+    /// 手本 (Processing・p5.js) の `mouseDragged()` と同じ引数なしの形で、中で読む
+    /// ``SketchPart/mouseX`` / ``SketchPart/mouseY`` は、その出来事まで当てた位置になる。
+    /// 動いた量が要るなら ``mouseDragged(deltaX:deltaY:)`` を書く — ここの直後に続けて呼ばれる。
+    ///
+    /// **``SketchPart/dragX`` / ``SketchPart/dragY`` をここで読んではいけない。** あちらはフレームの頭から
+    /// 足し込む合計なので、1 フレームに 3 件届くと `a` + `(a+b)` + `(a+b+c)` を足し込む形になる
+    /// ([ADR-0034] 決定 5 の改訂 (2026-10-28))。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    func mouseDragged()
+
+    /// 押したまま動いたとき、``mouseDragged()`` の**直後に続けて**呼ばれる。**その 1 件で動いた量**を
+    /// 受け取る。
     ///
     /// ```swift
     /// var angle: Float = 0
@@ -150,10 +164,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
-    /// **手本 (Processing・p5.js) の引数なしの形 `func mouseDragged()` で書くと、コンパイルは
-    /// 通るが一度も呼ばれない。** Swift は、名前が同じで引数の違うメソッドを咎めない。上の形の
-    /// `func mouseDragged(deltaX: Float, deltaY: Float)` に書き直せば、ドラッグで呼ばれる。量を
-    /// 使わなくても引数は要る ([ADR-0034] 決定 5 の追補に、作品が踏んだ記録がある)。
+    /// 引数なしの ``mouseDragged()`` も書いていれば、1 件ごとに引数なしが先、ここが後に呼ばれる。
     ///
     /// 1 フレームに移動が 3 件届けばここは 3 回呼ばれ、渡る量はそれぞれの 1 件ぶんに
     /// なる。**3 つ足せばフレーム合計 (``SketchPart/dragX``) と一致する** — 面から読む量とここへ
@@ -177,7 +188,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// ```
     ///
     /// **手本 (Processing・p5.js) の形をまねて引数なしの `func mouseWheel()` と書くと、コンパイルは
-    /// 通るが一度も呼ばれない** (``mouseDragged(deltaX:deltaY:)`` と同じ)。上の形の
+    /// 通るが一度も呼ばれない** (`mouseDragged()` は引数なしでも呼ばれるが、ここは量が要るので引数なしの形を持たない)。上の形の
     /// `func mouseWheel(deltaX: Float, deltaY: Float)` に書き直す。回した量は手本の `event` から
     /// 読む代わりに、引数で受け取る。
     ///
@@ -289,6 +300,7 @@ extension Sketch {
     public func mouseClicked() {}
     public func mouseMoved() {}
     public func mouseMoved(deltaX: Float, deltaY: Float) {}
+    public func mouseDragged() {}
     public func mouseDragged(deltaX: Float, deltaY: Float) {}
     public func mouseWheel(deltaX: Float, deltaY: Float) {}
     public func fileDropped(_ paths: [String]) {}

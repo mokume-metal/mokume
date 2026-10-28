@@ -238,7 +238,7 @@ struct InputCallbackTests {
         ]
         #expect(
             callbacks(from: events) == [
-                .mousePressed, .mouseDragged(deltaX: 10, deltaY: 10), .mouseReleased,
+                .mousePressed, .mouseDragged, .mouseDraggedBy(deltaX: 10, deltaY: 10), .mouseReleased,
                 .mouseClicked,
             ])
     }
@@ -301,7 +301,7 @@ struct InputCallbackTests {
         var deltaX: Float = 0
         var deltaY: Float = 0
         state.beginFrame { callback in
-            guard case .mouseDragged(let x, let y) = callback else { return }
+            guard case .mouseDraggedBy(let x, let y) = callback else { return }
             deltaX += x
             deltaY += y
         }
@@ -351,7 +351,7 @@ struct InputCallbackTests {
         #expect(
             callbacks(from: events) == [
                 .mouseMoved, .mouseMovedBy(deltaX: 10, deltaY: 10), .mousePressed,
-                .mouseDragged(deltaX: 20, deltaY: 15), .mouseReleased, .mouseClicked,
+                .mouseDragged, .mouseDraggedBy(deltaX: 20, deltaY: 15), .mouseReleased, .mouseClicked,
                 .mouseMoved, .mouseMovedBy(deltaX: 30, deltaY: 35),
             ])
     }
@@ -362,7 +362,7 @@ struct InputCallbackTests {
     @Test("引きずりの判定は、外から送れる材料だけで決まる")
     func derivesDraggingWithoutWindowOnlyInformation() {
         let held: [InputEvent] = [.mouseDown(x: 0, y: 0, button: .left), .mouseMoved(x: 5, y: 5)]
-        #expect(callbacks(from: held) == [.mousePressed, .mouseDragged(deltaX: 5, deltaY: 5)])
+        #expect(callbacks(from: held) == [.mousePressed, .mouseDragged, .mouseDraggedBy(deltaX: 5, deltaY: 5)])
         #expect(
             callbacks(from: [.mouseMoved(x: 5, y: 5)]) == [
                 .mouseMoved, .mouseMovedBy(deltaX: 5, deltaY: 5),
@@ -493,7 +493,7 @@ struct NonFiniteInputTests {
         #expect(state.x == 3e38, "捨てた 2 件目の位置が当たっている")
         #expect(state.dragX == first, "引きずった量が 1 件目の差のままでない: \(state.dragX)")
         #expect(readersAreFinite(state))
-        #expect(seen == [.mousePressed, .mouseDragged(deltaX: first, deltaY: 0)], "\(seen)")
+        #expect(seen == [.mousePressed, .mouseDragged, .mouseDraggedBy(deltaX: first, deltaY: 0)], "\(seen)")
         let said = state.warnings.message(for: .nonFiniteEvent)
         #expect(said?.contains("mouseMoved(x: -3e+38") == true, "捨てたことを名乗っていない: \(String(describing: said))")
     }
@@ -670,7 +670,7 @@ struct NonFiniteInputTests {
             state.enqueue(event)
         }
         state.beginFrame { callback in
-            guard case .mouseDragged(let x, _) = callback else { return }
+            guard case .mouseDraggedBy(let x, _) = callback else { return }
             deltaX += x
         }
 

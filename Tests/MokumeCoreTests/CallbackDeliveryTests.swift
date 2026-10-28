@@ -37,6 +37,9 @@ struct CallbackDeliveryTests {
         case mouseMoved
         /// `mouseMoved(deltaX:deltaY:)`。Swift は同じ基底名の case を 2 つ持てないので綴りを変える
         case mouseMovedBy(deltaX: Float, deltaY: Float)
+        /// 引数なしの `mouseDragged()`。呼ばれた中で読んだ `mouseX` も控える (その出来事まで当てた位置になる)
+        case mouseDraggedAt(mouseX: Float)
+        /// `mouseDragged(deltaX:deltaY:)`。同じ基底名の case を 2 つ持てないので、引数なしの側は綴りを変えた
         case mouseDragged(deltaX: Float, deltaY: Float)
         case mouseWheel(deltaX: Float, deltaY: Float)
         /// `fileDropped(_:)`。呼ばれた中で読んだ `mouseX`・`mouseY` も控える ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
@@ -71,6 +74,7 @@ struct CallbackDeliveryTests {
         func mouseMoved(deltaX: Float, deltaY: Float) {
             calls.append(.mouseMovedBy(deltaX: deltaX, deltaY: deltaY))
         }
+        func mouseDragged() { calls.append(.mouseDraggedAt(mouseX: mouseX)) }
         func mouseDragged(deltaX: Float, deltaY: Float) {
             calls.append(.mouseDragged(deltaX: deltaX, deltaY: deltaY))
         }
@@ -140,7 +144,10 @@ struct CallbackDeliveryTests {
                 .mouseMovedBy(deltaX: -3, deltaY: 7),
                 .mousePressed,
                 // 1 件で動いた量 (当てる前の位置との差)。横と縦を取り違えると (4, 3) になる
+                // 1 件ごとに、引数なしが先・量付きが後。引数なしの中の `mouseX` は、その出来事まで当てた位置
+                .mouseDraggedAt(mouseX: 13),
                 .mouseDragged(deltaX: 3, deltaY: 4),
+                .mouseDraggedAt(mouseX: 8),
                 .mouseDragged(deltaX: -5, deltaY: 6),
                 .mouseReleased,
                 .mouseClicked,
@@ -154,6 +161,94 @@ struct CallbackDeliveryTests {
                 // (``Sketch/mousePressed()`` の「`draw()` の直前に、届いた順で呼ばれる」)
                 .draw(frame: 2),
             ])
+    }
+
+    /// 量付きの `mouseDragged(deltaX:deltaY:)` だけを書いたスケッチ。引数なしの口が増えても、
+    /// 呼ばれ方が変わらないことを見る。
+    final class DeltaOnlyDragRecorder: Sketch {
+        var calls: [Call] = []
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 32, height: 24) }
+        func draw() { background(.display(red: 0, green: 0, blue: 0)) }
+        func mouseDragged(deltaX: Float, deltaY: Float) {
+            calls.append(.mouseDragged(deltaX: deltaX, deltaY: deltaY))
+        }
+    }
+
+    /// 押したまま動いた 1 件ごとに、引数なしの `mouseDragged()` が 1 回、続けて
+    /// `mouseDragged(deltaX:deltaY:)` が 1 回呼ばれる。**引数なしの中で読んだ `mouseX` は、その出来事まで
+    /// 当てた位置**になる ([#3258](https://github.com/mokume-metal/mokume/issues/3258))。量付きだけを
+    /// 書いた型は、これまでどおり 1 件につき 1 回だけ呼ばれる。
+    @Test("押したまま動いた 1 件ごとに、引数なしの mouseDragged() が先、量付きが後に 1 回ずつ届く")
+    func dragArrivesWithAndWithoutAmounts() throws {
+        let events = #"""
+            {"type":"mouseDown","x":10,"y":10,"button":0},
+            {"type":"mouseMoved","x":20,"y":10},
+            {"type":"mouseMoved","x":30,"y":10}
+            """#
+
+        let both = Recorder()
+        let facet = try makeFacet()
+        let runtime = try SketchRuntime(
+            sketch: both, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try send(events, id: "d1", to: facet)
+        try runtime.advance()
+        #expect(
+            both.calls.filter { call in
+                switch call {
+                case .mouseDraggedAt, .mouseDragged: true
+                default: false
+                }
+            } == [
+                .mouseDraggedAt(mouseX: 20), .mouseDragged(deltaX: 10, deltaY: 0),
+                .mouseDraggedAt(mouseX: 30), .mouseDragged(deltaX: 10, deltaY: 0),
+            ], "\(both.calls)")
+
+        let deltaOnly = DeltaOnlyDragRecorder()
+        let facet2 = try makeFacet()
+        let runtime2 = try SketchRuntime(
+            sketch: deltaOnly, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet2))
+        try runtime2.advance()
+        try send(events, id: "d2", to: facet2)
+        try runtime2.advance()
+        #expect(
+            deltaOnly.calls == [
+                .mouseDragged(deltaX: 10, deltaY: 0), .mouseDragged(deltaX: 10, deltaY: 0),
+            ], "\(deltaOnly.calls)")
+    }
+
+    /// **量が 0 の引きずり** (押したまま同じ位置へ動いた) でも、引数なしが先、量付きが後に呼ばれる。
+    /// 回っていても、`noLoop()` で止めている間 (止まっている間もコールバックは呼ばれる) でも同じ。
+    @Test("量が 0 の引きずりも、止めている間の引きずりも、引数なしの mouseDragged() が呼ばれる", arguments: [false, true])
+    func zeroAmountDragAndStoppedDragReachBothForms(stopped: Bool) throws {
+        let facet = try makeFacet()
+        let sketch = Recorder()
+        sketch.stopsInSetup = stopped
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: nil, now: { 0 }, observer: nil,
+            inbox: InputInbox(directory: facet))
+        try runtime.advance()
+        try send(
+            #"""
+            {"type":"mouseDown","x":10,"y":10,"button":0},
+            {"type":"mouseMoved","x":10,"y":10},
+            {"type":"mouseMoved","x":14,"y":10}
+            """#, id: "z1", to: facet)
+        try runtime.advance()
+        let dragged = sketch.calls.filter { call in
+            switch call {
+            case .mouseDraggedAt, .mouseDragged: true
+            default: false
+            }
+        }
+        #expect(
+            dragged == [
+                .mouseDraggedAt(mouseX: 10), .mouseDragged(deltaX: 0, deltaY: 0),
+                .mouseDraggedAt(mouseX: 14), .mouseDragged(deltaX: 4, deltaY: 0),
+            ], "\(sketch.calls)")
     }
 
     /// 外から落としを送ると、**次のフレームの頭**で `fileDropped(_:)` が 1 回、`draw()` より先に呼ばれ、
