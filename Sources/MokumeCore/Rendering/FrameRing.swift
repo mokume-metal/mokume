@@ -120,13 +120,14 @@ import MokumeDiagnostics
         isWritable = true
     }
 
-    /// 書く前に印を見る。印が無ければ、検査の中では止まり、外では 1 度だけ注意して戻る (書くのは
-    /// 呼ぶ側が続ける)。
+    /// 書く前に印を見る。印が無ければ、1 度だけ注意を言ってから、検査の中では止まり、外では戻る
+    /// (書くのは呼ぶ側が続ける)。
     ///
     /// **止まるのは `preconditionFailure` で** — release で組んだ検査 (`make test-release`・定期の
     /// release の検査) でも止まる。止まるかを決めるのは ``stopsOnUnguardedWrite`` だけである。
     /// **ただし文面を出すのは `-Onone` だけ** (`-O` は出さずに止まる)。止まったことを確かめる側は、
-    /// 文面ではなく、止まる直前の注意 (``unguardedWriteNotice``) と信号で落ちたことを見る (#3365)。
+    /// 文面ではなく、止まる直前の注意 (``unguardedWriteNotice``) と、信号で落ちたこと (終了コードで
+    /// 終わっていない) を見る (#3365)。
     ///
     /// - Parameter label: 書こうとした置き場の名前。止まるときの文面に入れる。
     func checkWritable(_ label: String) {

@@ -66,12 +66,16 @@ struct FrameRingWriteGateTests {
         try call(port, on: storage)
     }
 
-    /// 止まったことは、**組み方によらず子に残る 2 つの印**で確かめる。1 つは終わり方 (表明は信号で
-    /// 落とす。`throw` や `exit` の終了コードとは違う)、もう 1 つは止まる直前に `checkWritable` が
-    /// 言う注意 (``FrameRing/unguardedWriteNotice``)。`preconditionFailure` の文面は見ない — 文面は
-    /// `-Onone` でしか出ず、`-O` (定期の release の検査・`make test-release`) では出さずに止まる (#3365)。
-    /// 注意は「印の検査まで来た」ことの印で、終わり方は「そこで止まった」ことの印である。表明を外すと
-    /// 子は書いて 0 で終わるので、終わり方の `#expect` が赤になる。
+    /// 止まったことは、**組み方によらず子に残る 2 つの印**で確かめる。1 つは終わり方 (信号で落ちた
+    /// こと。終了コード 0 で戻った子と、`exit(n)` で終わった子を除く)、もう 1 つは止まる直前に
+    /// `checkWritable` が必ず言う注意 (``FrameRing/unguardedWriteNotice``)。`preconditionFailure` の
+    /// 文面は見ない — 文面は `-Onone` でしか出ず、`-O` (定期の release の検査・`make test-release`)
+    /// では出さずに止まる (#3365)。
+    ///
+    /// **信号だけでは表明の停止と見分けられない。** exit test の本体が `throw` した子も信号
+    /// (SIGTRAP) で終わることを手元で確かめてある。止まったのが印の
+    /// 検査の直後であることは、その直前に出る注意の行で見る。表明を外すと子は書いて 0 で戻るので、
+    /// 終わり方の `#expect` が赤になる。
     @Test("印が無いまま書き込み口を呼ぶと、mokume の検査の中では止まる")
     func anUnguardedWriteStopsInsideTheTests() async throws {
         let results = [
@@ -90,7 +94,7 @@ struct FrameRingWriteGateTests {
             guard let result else { continue }
             let errors = String(decoding: result.standardErrorContent, as: UTF8.self)
             guard case .signal = result.exitStatus else {
-                Issue.record("表明の信号ではなく、終了コードで終わった: \(result.exitStatus)。標準エラー:\n\(errors)")
+                Issue.record("信号で落ちていない (終了コードで終わった): \(result.exitStatus)。標準エラー:\n\(errors)")
                 continue
             }
             #expect(
