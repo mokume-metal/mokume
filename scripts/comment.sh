@@ -58,7 +58,7 @@ usage() {
   cat >&2 <<'EOF'
 使い方: scripts/comment.sh {issue|pr} <番号> (--body TEXT | --body-file FILE) [--with 名乗り]... [--dry-run]
 
-  --with : 一緒に作った別のエージェント・モデルを署名に併記する (例 --with "OpenAI Codex (gpt-6-astra)")
+  --with : 一緒に作った別のエージェント・モデルを署名に併記する (例 --with "Codex (GPT-6 Astra)")
 
 例:
   scripts/comment.sh issue 42 --body-file /tmp/plan.md

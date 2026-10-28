@@ -28,7 +28,7 @@ SCRIPT = REPO / "scripts" / "sub-issue.sh"
 AGENT_ENV = [
     "MOKUME_AGENT_NAME", "MOKUME_AGENT_URL", "MOKUME_AGENT_MODEL",
     "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "AI_AGENT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CONFIG_DIR",
-    "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_HOME",
+    "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_HOME", "CODEX_THREAD_ID",
 ]
 SIGNATURE = "<sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code)</sub>"
 
@@ -163,7 +163,7 @@ class SubIssueTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("Assisted by", calls)
         proc, calls = self.run_sub_issue("ci: 直す", "--body", "本文", CODEX_SANDBOX="seatbelt")
-        self.assertIn("Assisted by [OpenAI Codex]", calls)
+        self.assertIn("Assisted by [Codex]", calls)
 
     def test_body_from_process_substitution_and_stdin(self):
         """ファイルでない本文の口 (`<(…)`・`-`) も読む (反証の #10)。"""
@@ -226,10 +226,10 @@ class SubIssueTest(unittest.TestCase):
 
     def test_with_names_collaborators(self):
         proc, calls = self.run_sub_issue(
-            "ci: 直す", "--body", "本文", "--with", "OpenAI Codex (gpt-6-astra)", CLAUDECODE="1"
+            "ci: 直す", "--body", "本文", "--with", "Codex (GPT-6 Astra)", CLAUDECODE="1"
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("(https://claude.com/claude-code) and OpenAI Codex (gpt-6-astra)</sub>", calls)
+        self.assertIn("(https://claude.com/claude-code) and Codex (GPT-6 Astra)</sub>", calls)
         self.assertNotIn("--with", calls, "--with を gh へ渡している")
 
     # --- 紐づけ -------------------------------------------------------------
