@@ -32,9 +32,10 @@ import MokumeCore
 /// フレームにだけ払う。
 ///
 /// 作るときのトラックの読み込みだけは、AVFoundation が非同期の口しか持たない (同期の口は
-/// Swift では非推奨) ので、別の仕事で読ませて待つ。受けるのは手元のファイルの場所だけ
-/// (`createVideo(_:)` が `assetURL(_:)` で解く) なので、待ちに期限は持たない。
-/// 手元のファイルなら 1 ms ほどで返る。
+/// Swift では非推奨) ので、完了ハンドラで受けて待つ。ハンドラは AVFoundation の側のスレッドで呼ばれ、
+/// Swift の協調プールを要らない — 作品が協調プールを埋めていても、作る呼び出しは返る (#3240)。
+/// 受けるのは手元のファイルの場所だけ (`createVideo(_:)` が `assetURL(_:)` で解く) なので、
+/// 待ちに期限は持たない。手元のファイルなら 1 ms ほどで返る。
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 /// [#2764]: https://github.com/mokume-metal/mokume/issues/2764
@@ -341,26 +342,45 @@ final class MovieReader {
 
     /// 最初の映像のトラックと、その時間の範囲と、サンプルの目録を引かせるかを、待って受け取る。
     /// 目録を引かせるかが読めなくても失敗にはしない (引かせない扱いで、1 秒で分ける)。
-    private static func inspect(
+    ///
+    /// **読み込みは完了ハンドラで受ける。** ハンドラは AVFoundation の側のスレッドで呼ばれ、Swift の
+    /// 協調プールの空きを要らない。async の口 (`load(_:)`) を別の仕事に載せて待つと、作品が協調プールを
+    /// 同期の重い仕事で埋めている間は、読み込みが走れず、塞いで待つここが返らない (#3240)。
+    /// `loadTracks(withMediaType:completionHandler:)` は非推奨ではないが、`loadValuesAsynchronously` と
+    /// `timeRange`・`canProvideSampleCursors` の同期の getter は Swift から非推奨 (macOS 13〜) —
+    /// 協調プールの外で待てる口がこれしか無いので使う。Apple がこれを消したら、そのときの async の口と
+    /// executor の事情で選び直す。
+    ///
+    /// **検査が直に呼ぶ** (協調プールを埋めた状態で返るかを見る)。
+    nonisolated static func inspect(
         _ asset: AVURLAsset, path: String
     ) throws(MovieFailure) -> (AVAssetTrack, CMTimeRange, Bool) {
-        // 読み込みの仕事と待つ側の間で結果を渡す箱。**書くのは読み込みの仕事が 1 度だけで、
-        // 読むのは合図を待った後だけ** — 合図が前後を決めるので、錠は要らない
+        // 読み込みの結果を待つ側へ渡す箱。**書くのは完了ハンドラが 1 度だけで、読むのは合図を待った
+        // 後だけ** — 合図が前後を決めるので、錠は要らない
         nonisolated final class Box: @unchecked Sendable {
             var outcome: Result<(AVAssetTrack, CMTimeRange, Bool)?, any Error> = .success(nil)
         }
         let box = Box()
         let loaded = DispatchSemaphore(value: 0)
-        // main actor の外で読ませる。読み込みは main actor を要らないので、塞いで待っても詰まらない
-        Task.detached {
-            defer { loaded.signal() }
-            do {
-                guard let track = try await asset.loadTracks(withMediaType: .video).first else { return }
-                let range = try await track.load(.timeRange)
-                let cursors = (try? await track.load(.canProvideSampleCursors)) ?? false
-                box.outcome = .success((track, range, cursors))
-            } catch {
-                box.outcome = .failure(error)
+        asset.loadTracks(withMediaType: .video) { tracks, error in
+            guard let track = tracks?.first else {
+                // 映像が無いのは (トラックの一覧は読めた) `.success(nil)`、一覧が読めなかったのは失敗
+                if let error { box.outcome = .failure(error) }
+                loaded.signal()
+                return
+            }
+            track.loadValuesAsynchronously(forKeys: ["timeRange", "canProvideSampleCursors"]) {
+                var failure: NSError?
+                if track.statusOfValue(forKey: "timeRange", error: &failure) == .loaded {
+                    // 目録を引かせるかが読めなければ、引かせない扱い
+                    let cursors =
+                        track.statusOfValue(forKey: "canProvideSampleCursors", error: nil) == .loaded
+                        && track.canProvideSampleCursors
+                    box.outcome = .success((track, track.timeRange, cursors))
+                } else {
+                    box.outcome = .failure(failure ?? Failure(reason: "the time range could not be loaded"))
+                }
+                loaded.signal()
             }
         }
         loaded.wait()
