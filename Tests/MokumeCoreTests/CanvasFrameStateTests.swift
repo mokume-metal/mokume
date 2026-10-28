@@ -630,6 +630,7 @@ extension CanvasTests {
                 "carriesOver": "持ち越しの区間の印。ランタイムが setup() と止まっている間のコールバックの出入口で対で戻す (#1672)。境目をまたがない",
                 "placementsFoundOutsideRegions": count,
                 "isRuntimeSurface": "ランタイムの本体の面かの印。ランタイムが作ったときに 1 度だけ立て、境目では動かない (#2780)",
+                "carriedTransformMark": "持ち越しの区間の中だけの印。区間に入るときと出るときに nil へ戻る (フレームの境目では動かない・#3273)",
                 "stopsOnPlacementOutsideRegions": testing,
                 "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,
                 "sweepPolicy": testing, "sharesUnitShapes": testing, "specializesUnlitSolids": testing, "specializesOpaqueSolids": testing,

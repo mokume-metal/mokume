@@ -79,7 +79,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=e1676e34
     // shot: 2 snippet=0dab2481
     // shot: 3 snippet=58a41dae
@@ -165,7 +165,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=27bff880
     // shot: 2 snippet=00e07a33
     // shot: 3 snippet=8ea7daa7
@@ -252,7 +252,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=6b558fd6
     // shot: 2 snippet=2941aa4a
     // shot: 3 snippet=5ae25e26
@@ -271,7 +271,7 @@ extension SketchPart {
     ///
     /// 平面だけを軸ごとに変えたいときは ``scale(_:_:)`` を使う。
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 参照 scale(_:_:)
     public func scale(_ s: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -309,7 +309,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=ceef2b2d
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -346,7 +346,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=54abaf07
     public func rotateX(_ radians: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -383,7 +383,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=d031c80c
     public func rotateY(_ radians: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -418,7 +418,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=7f65053a
     public func rotateZ(_ radians: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -465,7 +465,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=e3260042
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -525,7 +525,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=ecea4b47
     // shot: 2 snippet=1e816167
     public func shearX(_ radians: some ScalarConvertible) {
@@ -585,7 +585,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=e8584e7d
     // shot: 2 snippet=305667e2
     public func shearY(_ radians: some ScalarConvertible) {

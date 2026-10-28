@@ -155,7 +155,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻るので、戻し忘れても次のフレームへは残らない。
+    /// - Note: 積んだ変換も**フレームを越えない** (`setup()` と止まっている間の入力のコールバックでも積めるが、その呼び出しを抜けるときに戻す)。フレームの頭で空に戻るので、戻し忘れても次のフレームへは残らない。
     // shot: 1 snippet=ec08da66
     // shot: 2 snippet=f32daf1c
     public func pushMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
@@ -191,7 +191,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 積んだ変換も**フレームを越えない**。フレームの頭で空に戻る。
+    /// - Note: 積んだ変換も**フレームを越えない** (`setup()` と止まっている間の入力のコールバックでも積めるが、その呼び出しを抜けるときに戻す)。フレームの頭で空に戻る。
     // shot: 1 snippet=2d914404
     public func popMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
         Self.liveCanvas(.act, "popMatrix()")?.popMatrix(fileID: fileID, line: line)
@@ -233,7 +233,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: **積んだ履歴はフレームを越えない。** 変換もスタイルも、積んだ事実は `draw()` の頭で
+    /// - Note: **積んだ履歴はフレームを越えない** (`setup()` と止まっている間の入力のコールバックでも積めるが、その呼び出しを抜けるときに戻す)。 変換もスタイルも、積んだ事実は `draw()` の頭で
     ///   捨てられるので、``push(fileID:line:)`` と ``pop(fileID:line:)`` は同じフレームの中で釣り合わせる。
     ///   スタイルそのもの (塗り・線・混ぜ方) はフレームを越える (切り抜き・材質・影を落とす / 受ける
     ///   設定は、そのフレームの中だけ)。
@@ -280,7 +280,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: **積んだ履歴はフレームを越えない。** 変換もスタイルも、積んだ事実は `draw()` の頭で
+    /// - Note: **積んだ履歴はフレームを越えない** (`setup()` と止まっている間の入力のコールバックでも積めるが、その呼び出しを抜けるときに戻す)。 変換もスタイルも、積んだ事実は `draw()` の頭で
     ///   捨てられるので、``push(fileID:line:)`` と ``pop(fileID:line:)`` は同じフレームの中で釣り合わせる。
     ///   スタイルそのもの (塗り・線・混ぜ方) はフレームを越える (切り抜き・材質・影を落とす / 受ける
     ///   設定は、そのフレームの中だけ)。
@@ -330,7 +330,8 @@ extension SketchPart {
     ///
     /// - Note: 描き場所の ``Canvas/draw(_:)`` とは役目が違う。あちらは描き場所の 1 フレームを開いて
     ///   閉じ、こちらはフレームを開かず、いま描いている面の状態を閉包の範囲で戻すだけである。描き場所の
-    ///   `draw { }` の中でも、その描き場所の `push { }` として使える。
+    ///   `draw { }` の中でも、その描き場所の `push { }` として使える。`setup()` と止まっている間の入力の
+    ///   コールバックの中でも、同じく閉包の範囲で変換とスタイルを戻す。
     // shot: 1 snippet=720a4372
     public func push(_ body: () throws -> Void) rethrows {
         guard let canvas = Self.liveCanvas(.act, "push()") else { return try body() }

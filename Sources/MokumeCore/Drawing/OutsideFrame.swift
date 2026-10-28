@@ -148,8 +148,8 @@ extension Canvas {
                 "Transforms are written again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"
             case .style:
-                "Pushing and popping style only works in a frame, setup() or an input callback. This "
-                    + "was called outside all of them, so it belongs to no frame, and was ignored"
+                "Pushing and popping style only works inside a frame. This was called outside a "
+                    + "frame, so it belongs to no frame, and was ignored"
             case .clip:
                 "The clip is written again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"
