@@ -845,6 +845,42 @@ extension SketchPart {
     /// は 0 を下回った値を残すので、暗部は途中で折れずに黒へ着く。表示できる範囲へ畳むのは
     /// 出力段だけである ([ADR-0011] 決定 1・[#1057])。
     ///
+    /// **一部の図形だけ混ぜ方を変えたいなら、``push(_:)`` の閉包で包む。** 閉包を抜けると、混ぜ方は
+    /// 入る前の値へ戻る。戻し忘れると、後に描く図形も、次のフレームの頭からも加算が効き続ける。下の例は、
+    /// 上の段を `push { }` の中で `.add` で描き、下の段を外で描く。下の段の円は重なっても明るくならない。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     ```swift
+    ///     background(23, 26, 31)
+    ///     noStroke()
+    ///     push {
+    ///         blendMode(.add)
+    ///         fill(242, 76, 51)
+    ///         circle(155, 80, 120)
+    ///         fill(51, 115, 242)
+    ///         circle(245, 80, 120)
+    ///     }
+    ///     // 閉包を抜けたので、ここは普通に重なる
+    ///     fill(242, 76, 51)
+    ///     circle(155, 220, 120)
+    ///     fill(51, 115, 242)
+    ///     circle(245, 220, 120)
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 上の段は赤と青の円が重なり、重なった部分が明るい桃色に光る。下の段は同じ 2 つの円が重なり、青い円が赤い円を覆っている -->
+    ///     ![上の段は赤と青の円が重なり、重なった部分が明るい桃色に光る。下の段は同じ 2 つの円が重なり、青い円が赤い円を覆っている](https://i.gyazo.com/a0185af7c928b6c792aea2e8e917da8e.png)
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// `push { }` は混ぜ方だけでなく、変換 (``translate(_:_:)``・``rotate(_:)``・``scale(_:_:)``) と、
+    /// 塗りなどほかのスタイルも戻す。スタイルだけ戻して変換は戻さないなら、
+    /// ``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` を使う。`push { }` が戻すのは
+    /// フレームの中 (`draw()`・形の組み立て) だけで、`setup()` の本体では、いまは本体を走らせる
+    /// だけで戻さない (注意も出る)。
+    ///
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
     /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
@@ -856,6 +892,7 @@ extension SketchPart {
     // shot: 3 snippet=0f727a4c
     // shot: 4 snippet=b5a144fd
     // shot: 5 snippet=43e3e4b7
+    // shot: 6 snippet=5a37d22e
     public func blendMode(_ mode: BlendMode) { Self.liveCanvas()?.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。

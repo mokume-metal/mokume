@@ -400,6 +400,103 @@ class ReadyQueueTest(unittest.TestCase):
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[27][0], "dropped", "1279 が 27 に当たっている")
 
+    # 3c. 番号を持たない名前 (16 進の worktree 名・パスの親の uid) には当たらない (#3377)
+    def test_worktree_match_ignores_hex_names_and_parent_dirs(self):
+        done, _ = self.run_queue(
+            [
+                issue(1339, labels=["status: in progress"]),
+                issue(501, labels=["status: in progress"]),
+                issue(1637, labels=["status: in progress"]),
+            ],
+            worktrees=(
+                "worktree /w/.claude/worktrees/agent-a3bc1339c2c201fa4\n"
+                "branch refs/heads/worktree-agent-a3bc1339c2c201fa4\n\n"
+                "worktree /private/tmp/claude-501/x/scratchpad/wt-1637\n"
+            ),
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[1339][0], "dropped", "16 進の worktree 名に当たっている")
+        self.assertEqual(seen[501][0], "dropped", "パスの親ディレクトリの uid に当たっている")
+        self.assertEqual(seen[1637][0], "busy", "末尾の名前の番号に当たっていない")
+
+    # 3c-2. `.claude/worktrees/` の `<スラグ>-<16 進 6 桁>` 型の接尾辞にも当たらない (#3377 の反証)
+    def test_worktree_match_ignores_slug_hex_suffix(self):
+        done, _ = self.run_queue(
+            [
+                issue(55719, labels=["status: in progress"]),  # ci-test-improvement-55719b
+                issue(686, labels=["status: in progress"]),  # 枝 claude/…-c686f1
+                issue(1339, labels=["status: in progress"]),  # ci-fix-1339ab
+                issue(3267, labels=["status: in progress"]),  # merge-3267b (5 桁・当てる)
+                issue(3345, labels=["status: in progress"]),  # r1-3345 (当てる)
+                issue(3243, labels=["status: in progress"]),  # gui3243 (当てる)
+            ],
+            worktrees=(
+                "worktree /w/.claude/worktrees/ci-test-improvement-55719b\n"
+                "branch refs/heads/claude/task-coordination-subagent-c686f1\n\n"
+                "worktree /w/.claude/worktrees/ci-fix-1339ab\n\n"
+                "worktree /w/merge-3267b\n"
+                "worktree /w/other\nbranch refs/heads/refute/r1-3345\n"
+                "worktree /w/gui3243\n"
+            ),
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (55719, 686, 1339):
+            self.assertEqual(seen[n][0], "dropped", f"#{n} が 16 進の接尾辞に当たっている")
+        for n in (3267, 3345, 3243):
+            self.assertEqual(seen[n][0], "busy", f"#{n} に当たっていない")
+
+    # 3c-3. 数字だけの `agent-3377` は人が付けた番号かもしれないので、落とさない
+    def test_worktree_match_keeps_all_digit_agent_name(self):
+        done, _ = self.run_queue(
+            [issue(3377, labels=["status: in progress"])],
+            worktrees="worktree /w/agent-3377\n",
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[3377][0], "busy", "数字だけの agent-3377 を落としている")
+
+    # 3c'. 英字に続く番号・枝の名前の番号には当たり続ける
+    def test_worktree_match_keeps_letter_prefixed_numbers(self):
+        issues = [
+            issue(n, labels=["status: in progress"]) for n in (3243, 3345, 3087, 3500, 243)
+        ]
+        done, _ = self.run_queue(
+            issues,
+            worktrees=(
+                "worktree /a/merge-3243\n"
+                "worktree /a/other\nbranch refs/heads/refute/r1-3345\n"
+                "worktree /a/m3087\n"
+                "worktree /a/gui3500\n"
+            ),
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (3243, 3345, 3087, 3500):
+            self.assertEqual(seen[n][0], "busy", f"#{n} に当たっていない")
+        self.assertEqual(seen[243][0], "dropped", "3243 が 243 に当たっている")
+
+    # 3c''. 家族の照合も同じ関数を通る — 16 進の名前にしか現れない子は証拠にならない
+    def test_family_ignores_hex_worktree_names(self):
+        done, _ = self.run_queue(
+            [issue(20, labels=["status: in progress"]), issue(1339)],
+            worktrees=(
+                "worktree /w/.claude/worktrees/agent-a3bc1339c2c201fa4\n"
+                "worktree /w/wt-77\n"
+            ),
+            families={20: {"children": [member(1339), member(77)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[20][0], "busy", "末尾の名前の番号を持つ子が証拠にならない")
+        self.assertIn("家族 #77", seen[20][1])
+        self.assertNotIn("#1339", seen[20][1], "16 進の名前に当たった子を証拠にしている")
+
+    def test_family_only_hex_match_stays_dropped(self):
+        done, _ = self.run_queue(
+            [issue(20, labels=["status: in progress"]), issue(1339)],
+            worktrees="worktree /w/.claude/worktrees/agent-a3bc1339c2c201fa4\n",
+            families={20: {"children": [member(1339)]}},
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[20][0], "dropped", "16 進の名前に当たった子で生きていると読んでいる")
+
     # 3d. 静かになるまでは dropped と呼ばない (枝の名前は番号を持たないことが多い)
     def test_recent_activity_is_still_busy(self):
         fresh = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
