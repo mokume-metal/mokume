@@ -63,11 +63,14 @@ struct VectorFigurePortsTests {
         #expect(try captured { $0.rect(10, 10, 20, 20, 4) } == 1)
         #expect(try captured { $0.square(10, 10, 20) } == 1)
         #expect(try captured { $0.circle(50, 50, 20) } == 1)
+        #expect(try captured { $0.circle(Vector2(50, 50), 20) } == 1)
         #expect(try captured { $0.ellipse(50, 50, 30, 20) } == 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2) } >= 1)
         #expect(try captured { $0.arc(50, 50, 30, 30, 0, 2, .chord) } >= 1)
         #expect(try captured { $0.line(0, 0, 10, 10) } == 1)
         #expect(try captured { $0.point(5, 5) } == 1)
+        #expect(try captured { $0.line(Vector2(0, 0), Vector2(10, 10)) } == 1)
+        #expect(try captured { $0.point(Vector2(5, 5)) } == 1)
         #expect(try captured { $0.triangle(0, 0, 10, 0, 0, 10) } == 1)
         #expect(try captured { $0.quad(0, 0, 10, 0, 12, 10, 0, 8) } == 1)
         #expect(try captured { $0.bezier(0, 0, 10, 0, 20, 10, 30, 10) } == 1)
@@ -118,6 +121,8 @@ struct VectorFigurePortsTests {
         let model = try canvas.loadModel(ModelFixture.pyramid)
         #expect(try handled(canvas) { $0.line(0, 0, 0, 10, 10, 10) } == 1)
         #expect(try handled(canvas) { $0.point(0, 0, 5) } == 1)
+        #expect(try handled(canvas) { $0.line(Vector3(0, 0, 0), Vector3(10, 10, 10)) } == 1)
+        #expect(try handled(canvas) { $0.point(Vector3(0, 0, 5)) } == 1)
         // 奥行きを持つ頂点 (2 つの書き方) は、形ごと立体として 1 つ数える
         #expect(
             try handled(canvas) {

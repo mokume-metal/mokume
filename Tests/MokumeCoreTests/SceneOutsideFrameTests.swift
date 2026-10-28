@@ -68,6 +68,8 @@ struct SceneOutsideFrameTests {
             // 変換 (#941)
             Mouth("translate(x,y)", .transform) { $0.translate(10, 20) },
             Mouth("translate(x,y,z)", .transform) { $0.translate(10, 20, 30) },
+            Mouth("translate(Vector2)", .transform) { $0.translate(Vector2(10, 20)) },
+            Mouth("translate(Vector3)", .transform) { $0.translate(Vector3(10, 20, 30)) },
             Mouth("rotate", .transform) { $0.rotate(Float.pi / 4) },
             Mouth("rotateX", .transform) { $0.rotateX(Float.pi / 4) },
             Mouth("rotateY", .transform) { $0.rotateY(Float.pi / 4) },
