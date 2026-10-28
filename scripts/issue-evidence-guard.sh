@@ -28,8 +28,8 @@
 # 穴があったときに照合まで一緒に抜けないためである (二重に止まっても害は無い)。
 #
 # **取りこぼしは許容する** (agent-comment-guard と同じ水準)。止めるのはうっかりで、
-# 回避ではない。$(cat …) で組んだ本文・scripts/sub-issue.sh などのスクリプト経由の起票・
-# gh api は見えない。人の Web 入力は対象外 (入力欄へ落とせば絵が付く)。
+# 回避ではない。$(cat …) で組んだ本文・スクリプト経由の起票・gh api は見えない
+# (scripts/sub-issue.sh は自分で同じ照合を通す。#3376)。人の Web 入力は対象外 (入力欄へ落とせば絵が付く)。
 #
 # 契約: stdin に PreToolUse の JSON。素通しは無出力 + 終了コード 0。
 # 配線は .claude/settings.json、テストは scripts/tests/issue_evidence_guard_test.py。

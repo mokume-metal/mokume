@@ -130,6 +130,20 @@ if [ -n "$BODY_FILE" ]; then
   # 読めるかは cat に任せる (`<(…)` のようなファイルでないものも、`-` の標準入力も読む)
   BODY=$(cat "$BODY_FILE") || { echo "本文のファイルを読めない: $BODY_FILE" >&2; exit 66; }
 fi
+# エージェントの起票なら、作る前に本文を絵の照合に通す (#3376)。素の gh issue create は
+# scripts/issue-evidence-guard.sh が見るが、ここを通る起票はそれに見えず、見た目のバグが
+# 絵も宣言も無いまま作られていた (#2655・#2647)。人の実行には掛けない (署名と同じ判定)
+if detect_agent strict >/dev/null; then
+  body_tmp=$(mktemp)
+  printf '%s\n' "$BODY" > "$body_tmp"
+  if ! out=$(bash "$(dirname "${BASH_SOURCE[0]}")/check-drawing-evidence.sh" --issue-body "$body_tmp" 2>&1 >/dev/null); then
+    rm -f "$body_tmp"
+    printf '%s\n' "$out" >&2
+    exit 1
+  fi
+  rm -f "$body_tmp"
+fi
+
 # --generic を渡さない = 判定できなければ署名しない
 if ! grep -qF "$SIGNATURE_KEY" <<<"$BODY" &&
    sig=$(agent_signature ${WITH[@]+"${WITH[@]}"}); then
