@@ -812,6 +812,62 @@ struct StrokeDashTests {
         expectInk(image, 77, 20, "上辺の 2 つ目の破線 (x = 70…85)")
     }
 
+    /// 半径が辺の半分ちょうどの角丸の矩形 (横長・縦長の stadium と円) も、`(x + r, y)` から時計回りに数える。
+    /// 横長は右上の弧の始まり `(w − r, y)` と `(x + r, y)` が離れていて、変更前は数え始めが幅 `w − 2r` ずれていた。
+    @Test("stadium と円の破線も、上辺の (x + r, y) から時計回りに数え始める", arguments: Route.allCases)
+    func aStadiumAndACircleStartAtTheTopOfTheLeftArc(_ route: Route) throws {
+        // 横長 (h == 2r): 上辺は x = 50…110。弧の長さ d = 7 は塗り、22 は空き、37 は塗り、52 は空き
+        let (wide, _) = try picture(route, width: 200, height: 200) { canvas in
+            canvas.strokeWeight(2)
+            canvas.strokeCap(.square)
+            canvas.strokeDash(15, 15)
+            canvas.rect(20, 20, 120, 60, 30)
+        }
+        expectInk(wide, 57, 20, "横長の最初の破線 (d = 0…15)")
+        expectBare(wide, 72, 20, "横長の最初の間隔 (d = 15…30)")
+        expectInk(wide, 87, 20, "横長の 2 つ目の破線 (d = 30…45)")
+        expectBare(wide, 102, 20, "横長の 2 つ目の間隔 (d = 45…60)")
+        // 縦長 (w == 2r) と円 (w == h == 2r): 起点は上の弧の頂点 (50, 20)。中心 (50, 50)・半径 30 の弧を時計回りに進む
+        func point(_ length: Float) -> (Int, Int) {
+            let angle = length / 30
+            return (Int((50 + 30 * sin(angle)).rounded()), Int((50 - 30 * cos(angle)).rounded()))
+        }
+        for (name, height) in [("縦長", Float(120)), ("円", 60)] {
+            let (image, _) = try picture(route, width: 200, height: 200) { canvas in
+                canvas.strokeWeight(2)
+                canvas.strokeCap(.square)
+                canvas.strokeDash(15, 15)
+                canvas.rect(20, 20, 60, height, 30)
+            }
+            let inside = point(7)
+            let gap = point(22)
+            expectInk(image, inside.0, inside.1, "\(name)の最初の破線 (d = 0…15)")
+            expectBare(image, gap.0, gap.1, "\(name)の最初の間隔 (d = 15…30)")
+        }
+    }
+
+    /// 破線を刻む点だけを角度 0 から数え、塗りの周は `start` から刻んだまま動かさない。見えない破線の輪郭
+    /// (透明な線) を付けても、塗りの画素は輪郭を引かないときと 1 画素も変わらない。
+    @Test("一周の弧の破線は、塗りの縁を動かさない", arguments: Route.allCases)
+    func aDashedFullTurnArcLeavesTheFillAlone(_ route: Route) throws {
+        func filled(dashed: Bool) throws -> DisplayImage {
+            try picture(route, width: 200, height: 200) { canvas in
+                canvas.fill(.linear(red: 0, green: 0, blue: 1))
+                if dashed {
+                    canvas.stroke(LinearRGBA(premultipliedRed: 0, green: 0, blue: 0, alpha: 0))
+                    canvas.strokeWeight(2)
+                    canvas.strokeDash(15, 15)
+                } else {
+                    canvas.noStroke()
+                }
+                canvas.arc(100, 100, 120, 120, 1, 8)
+            }.image
+        }
+        let plain = try filled(dashed: false)
+        let dashed = try filled(dashed: true)
+        #expect(dashed == plain, "破線の輪郭を足しただけで、塗りの縁が動いた")
+    }
+
     /// 一周の弧は、貼る絵・断片を効かせても効かせなくても、角度 0 (右の端) から時計回りに数える。
     /// 変更前は、距離関数の道は角度 0、断片の道 (三角形) は `start` (ここでは 1) から数えていた。
     @Test("一周の弧の破線は、どちらの道でも角度 0 から数え始める", arguments: Route.allCases)

@@ -157,12 +157,12 @@ extension Canvas {
     /// 周を、破線の長さと間隔で片に刻む。**閉じた周は ``Outline/dashStart`` の点から数える** (#3314)。
     /// 点の並びそのものは動かさず、刻むときだけ回す。
     static func dashPieces(of outline: Outline, by dash: StrokeDash) -> DashResult {
-        var points = outline.points
+        var points = outline.dashPoints ?? outline.points
         var steps = outline.curveSteps
         let turn = outline.dashStart
         if outline.isClosed, turn > 0, turn < points.count {
             points = Array(points[turn...] + points[..<turn])
-            if steps.count == outline.points.count { steps = Array(steps[turn...] + steps[..<turn]) }
+            if steps.count == points.count { steps = Array(steps[turn...] + steps[..<turn]) }
         }
         return dashPieces(of: points, curveSteps: steps, isClosed: outline.isClosed, by: dash)
     }

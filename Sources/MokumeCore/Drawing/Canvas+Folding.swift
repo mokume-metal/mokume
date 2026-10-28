@@ -79,6 +79,11 @@ extension Canvas {
         /// 角丸の矩形は `(x + r, y)` (上辺の左の弧の終わり) から数え、SVG の `<rect rx>`・
         /// p5.js の `roundRect` と同じ起点に揃える。
         var dashStart = 0
+        /// 破線を刻むときだけ、``points`` の代わりに使う点 (#3314)。`nil` なら ``points`` (と ``dashStart``)。
+        ///
+        /// 塗りと実線の周は `start` から刻んだ点のまま動かさず、破線だけを別の点の並び (一周の弧は
+        /// 角度 0 から刻んだ点) から数えるときに持つ。点の数は ``points`` と同じで、刻みの印 (``curveSteps``) を共有する。
+        var dashPoints: [SIMD2<Float>]?
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
@@ -149,6 +154,7 @@ extension Canvas {
                 cornerDiagonals: cornerDiagonals,
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.dashStart = dashStart
+            moved.dashPoints = dashPoints.map { $0.map { $0 + offset } }
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
         }

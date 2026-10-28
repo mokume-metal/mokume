@@ -278,12 +278,13 @@ extension Canvas {
                 mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
                 sweep: sweep)
         }
-        // **一周で破線の輪郭を引くときは、周を角度 0 から作る** (#3314)。距離関数の道・楕円・SVG は角度 0 から
-        // 破線を数えるので、貼る絵 (`texture()`) や断片を足しただけで破線が `start` ぶん動かないよう揃える。
-        // 実線の一周は今までどおり `start` から (頂点の並びを動かさない)
-        let ringStart = isFullTurn && dashedStroke != nil ? 0 : start
+        // **一周で破線の輪郭を引くときは、破線だけを角度 0 から数える** (#3314)。距離関数の道・楕円・SVG は
+        // 角度 0 から破線を数えるので、貼る絵 (`texture()`) や断片を足しただけで破線が `start` ぶん動かないよう
+        // 揃える。塗りと実線の周は今までどおり `start` から作り (頂点の並びを動かさない)、破線を刻む点だけを
+        // 角度 0 から作り直して持たせる (``Outline/dashPoints``)
+        let dashesFromAngleZero = isFullTurn && dashedStroke != nil
         draw(
-            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: ringStart, sweep: sweep),
+            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
             at: center
         ) { segments in
             // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
@@ -291,10 +292,18 @@ extension Canvas {
             // `StrokeJoin.miter` の注記もそう約束している。#1423 は 3 つの角だけを折れ目の形に
             // 従わせていたが、`texture()` / `shader()` を足しただけで角の形が変わっていた (#1486)。
             // 一周を何個に刻むかは、画面に出る半径で決まる (#1645)
-            Self.ringOutline(
+            var outline = Self.ringOutline(
                 Outline.Ring(
-                    radiusX: radiusX, radiusY: radiusY, start: ringStart, sweep: sweep,
+                    radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
                     segments: segments, piece: .sector))
+            if dashesFromAngleZero {
+                outline.dashPoints = Self.ringOutline(
+                    Outline.Ring(
+                        radiusX: radiusX, radiusY: radiusY, start: 0, sweep: sweep,
+                        segments: segments, piece: .sector)
+                ).points
+            }
+            return outline
         }
     }
 
