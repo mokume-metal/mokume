@@ -674,7 +674,10 @@ struct FormInstance {
     }
 
     /// 2x2 が潰れていないか (潰れた形は面積を持たず、三角形のときも何も出なかった)。
-    var isPlaceable: Bool {
+    var isPlaceable: Bool { Self.isPlaceable(linear: linear, offset: SIMD2(offset.x, offset.y)) }
+
+    /// ``isPlaceable`` の判定そのもの。画面が置かない図形を、ベクターへ控える口 (破線の輪郭) も同じ関門で見る (#3350)。
+    static func isPlaceable(linear: SIMD4<Float>, offset: SIMD2<Float>) -> Bool {
         let determinant = linear.x * linear.w - linear.y * linear.z
         return determinant.isFinite && determinant != 0
             && offset.x.isFinite && offset.y.isFinite

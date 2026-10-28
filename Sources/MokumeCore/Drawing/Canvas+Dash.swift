@@ -256,7 +256,8 @@ extension Canvas {
             let made = outline()
             ring = made
             // 塗りは上の `appendForm` が控えた。破線の輪郭は、片に分ける前の形と破線の指定を控える
-            if let sink = vectorSink() {
+            // 画面が置かない図形 (潰れた・桁あふれした変換) は、塗りの `appendForm` と同じ関門で、輪郭も控えない (#3350)
+            if let sink = vectorSink(), formIsPlaceable(center: center, half: half, arc: arc) {
                 recordVectorDashedForm(
                     sink, kind: kind, center: center, half: half, arc: arc, arcClosure: arcClosure,
                     cornerRadius: cornerRadius, outline: made)
