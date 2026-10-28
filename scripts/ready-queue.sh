@@ -101,7 +101,10 @@
 #   着手できるか    ラベル (verify: triaged / status: in progress)
 #   紐づく PR       gh pr list の closingIssuesReferences。**GitHub 自身の答えを読む** —
 #                   本文を正規表現で拾うと scripts/review-gate.sh と読み方が割れ、
-#                   割れたほうが黙って「着手できる」に倒れる (ADR-0008 決定 6)
+#                   割れたほうが黙って「着手できる」に倒れる (ADR-0008 決定 6)。**足す側だけは本文を
+#                   読む**: open な PR の本文の `Refs #N` / `Part of #N` も、その Issue の持ち主の
+#                   証拠に数える (段階の PR・束の記録は Closes を持たない — #3366)。足しても busy が
+#                   増えるだけで、ready に倒れることは無い
 #   B-1 の対象か    本文の 🤖 Assisted by の署名 (エージェントを問わない。#3149)。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
@@ -152,6 +155,10 @@
 # 閉じた家族は PR も worktree も持たないので、updatedAt が新しいときだけ動いているとみなす。
 # 兄弟の PR が merge されてから、次の子の PR が出るまでの間を拾うためである。
 #
+# **家族の静けさの窓は DROPPED_MINUTES に従う** (#3366)。当番が 3 日で打つと、家族の窓も 3 日になる。
+# 意図した結合で (窓を分けると「着手印は 3 日静か・家族は 2 時間静か」の組を落ちたと読む)、代償は
+# 家族が動き続けている間、落ちた着手がその最後の動きから 3 日隠れること (ADR-0036 決定 5 の改訂)。
+#
 # **家族を渡るのは 1 段だけにする。** 家族の証拠に数えるのは上の 3 つだけで、家族を通じて
 # busy になったものは数えない。連鎖させると、1 本の生きた PR が無関係な枝まで生かしてしまう。
 #
@@ -182,6 +189,12 @@
 # 壊れていても「在庫が尽きた」と読んで B-1 へ回る — #1045 が塞いだ形が、読み取りの失敗から
 # 黙って戻る。gh の版は検査しない。古い gh で欄が足りなければ gh 自身がそう名乗る
 # (例: issueType は gh 2.94.0 から)。
+#
+# **一部を読めないまま完走した回は、終了コードを変えずに印を出す** (#3366)。標準エラーの最後に
+# `incomplete: <印> ...` の 1 行 (印は hands-unread = 人の手か bot の追記かを読めなかった・
+# capped-Issue / capped-PR = 一覧が上限に張り付いた)。読めなかった番号は busy へ倒れるので、dropped が
+# 0 件に見えても名乗るべき着手印を落としているかもしれない。読む側 (scripts/stall-watch.sh) は
+# 行頭の `incomplete: ` を機械で拾って unreadable と名乗る。全部読めた回は出さない。
 #
 # 検査は scripts/tests/ready_queue_test.py。
 set -euo pipefail
@@ -235,16 +248,27 @@ issues_json=$(gh issue list --repo "$REPO" --state open --limit "$ISSUE_LIMIT" \
 }
 
 prs_json=$(gh pr list --repo "$REPO" --state open --limit "$PR_LIMIT" \
-  --json number,title,closingIssuesReferences) || {
+  --json number,title,body,closingIssuesReferences) || {
   echo "open な PR の一覧を読めなかった" >&2
   exit 2
+}
+
+# 一部を読めないまま完走した印。**終了コードは変えず**、最後に標準エラーへ
+# `incomplete: <印> ...` の 1 行を出す (印は空白を含まない 1 語)。読む側 (scripts/stall-watch.sh) が
+# 機械で見分け、「dropped が 0 件」の緑と区別する — 読めなかった番号は busy へ倒れるので、
+# 名乗るべき着手印が黙って落ちる (#3366)
+INCOMPLETE=''
+mark_incomplete() { # $1=印 (空白を含まない 1 語)
+  case " $INCOMPLETE " in *" $1 "*) ;; *) INCOMPLETE+="$1 " ;; esac
 }
 
 # 上限に張り付いたら黙らない。**読み落としは「着手できる」へ倒れる** — 紐づく PR を
 # 読み落とした Issue は ready に見えるので、二重に着手される
 warn_if_capped() { # $1=読んだ件数 $2=上限 $3=何の一覧か
-  [ "$1" -lt "$2" ] ||
+  [ "$1" -lt "$2" ] || {
     echo "$3 が上限 $2 件に張り付いた — 読み落としているかもしれない" >&2
+    mark_incomplete "capped-$3"
+  }
 }
 warn_if_capped "$(jq 'length' <<<"$issues_json")" "$ISSUE_LIMIT" Issue
 warn_if_capped "$(jq 'length' <<<"$prs_json")" "$PR_LIMIT" PR
@@ -255,6 +279,20 @@ claims=$(jq -r --arg repo "$REPO" '
       | .closingIssuesReferences[]?
       | select((.repository.owner.login + "/" + .repository.name) == $repo)
       | "\(.number) \($pr.number)"' <<<"$prs_json")
+
+# **`Refs #N` / `Part of #N` で進んでいる open な PR も、持ち主の証拠に数える** (#3366)。段階の PR や
+# 束の記録は `Closes` を持たないので、閉じる側だけを読むと、PR が進んでいる Issue が静かなだけで
+# dropped と読まれる。**本文を拾うのは、この足す側だけ** — 足しても busy が増えるだけで、「着手できる」
+# へ倒れることは無い (閉じる側を本文から拾って review-gate と読み方が割れる形 — ADR-0008 決定 6 — とは逆向き)。
+# 綴りは `Refs #1, #2`・`Part of #3 and #4` のように並べた番号を全部拾う。他のリポジトリの番号
+# (`owner/repo#N`) は拾わない
+refs=$(jq -r '
+  .[] | . as $pr
+      | (($pr.body // "")
+         | [scan("(?i)(?<![A-Za-z0-9_/])(?:refs?|part of)\\s+#[0-9]+(?:\\s*(?:,|and|&)\\s*#[0-9]+)*")]
+         | map(scan("#([0-9]+)")[0]) | unique[])
+      | "\(.) \($pr.number)"' <<<"$prs_json")
+claims=$(printf '%s\n%s\n' "$claims" "$refs" | awk 'NF')
 
 # 静けさの境目。**BSD の date を先に試す** (走るのは手元の Mac と、当番 (stall-watch・ubuntu) —
 # 当番では -v が断られ、GNU の -d の枝で同じ値になる。どちらも scripts/tests/ready_queue_test.py が通す)。
@@ -389,6 +427,7 @@ read_hands_into() { # $1=番号 (空白区切り)
   else
     for n in $1; do hands+="$n unread"$'\n'; done
     echo "人の手か bot の追記かを読めなかった — 静けさは updatedAt のまま測った" >&2
+    mark_incomplete hands-unread
   fi
 }
 
@@ -643,5 +682,8 @@ printf 'ready %s / stock %s / dropped %s / busy %s / decide %s\n' \
   "$(grep -c . <<<"$dropped" || true)" \
   "$(grep -c . <<<"$busy" || true)" \
   "$decide_count" >&2
+
+# 一部を読めないまま完走したときだけ。件数の行の後ろに 1 行 (読む側は行頭の `incomplete: ` で拾う)
+[ -z "$INCOMPLETE" ] || printf 'incomplete: %s\n' "${INCOMPLETE% }" >&2
 
 [ "$ready_count" -gt 0 ]

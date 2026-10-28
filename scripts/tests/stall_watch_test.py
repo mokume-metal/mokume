@@ -262,11 +262,11 @@ class StallWatchTest(unittest.TestCase):
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
 
-    def write_ready_queue(self, lines, *, rc=1, summary=True):
+    def write_ready_queue(self, lines, *, rc=1, summary=True, incomplete=None):
         """差し替える ready-queue.sh。lines を標準出力へ出し、rc で終わる。
 
         渡された DROPPED_MINUTES は seen-minutes へ控える。summary=False は件数の行を出さない
-        (途中で落ちた回の形)。"""
+        (途中で落ちた回の形)。incomplete は一部を読めないまま完走した印 (標準エラーの最後の 1 行)。"""
         (self.queue_dir / "out.txt").write_text("".join(f"{l}\n" for l in lines), encoding="utf-8")
         script = self.queue_dir / "ready-queue.sh"
         script.write_text(
@@ -274,6 +274,7 @@ class StallWatchTest(unittest.TestCase):
             f'printf "%s" "${{DROPPED_MINUTES-unset}}" > "{self.queue_dir}/seen-minutes"\n'
             f'cat "{self.queue_dir}/out.txt"\n'
             + ('echo "ready 0 / stock 0 / dropped 0 / busy 0 / decide 0" >&2\n' if summary else 'echo "boom" >&2\n')
+            + (f'echo "incomplete: {incomplete}" >&2\n' if incomplete else "")
             + f"exit {rc}\n",
             encoding="utf-8",
         )
@@ -1359,6 +1360,68 @@ class StallWatchTest(unittest.TestCase):
                 self.assertEqual(line[:3], ["-", "unreadable", "name"], proc.stdout)
                 self.assertIn("着手印", line[4], proc.stdout)
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_一部を読めないまま完走した回は読めなかったと名乗る(self):
+        """読めなかった番号は busy へ倒れて名乗られない。dropped が 0 件の緑と区別する (#3366)。
+        見つかった dropped は続けて名乗り、赤にするのはそちらだけ。"""
+        self.write_ready_queue([], rc=1, incomplete="hands-unread capped-Issue")
+        proc = self.watch()
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if "unreadable" in l)
+        self.assertEqual(line[:3], ["-", "unreadable", "name"], proc.stdout)
+        self.assertIn("hands-unread capped-Issue", line[4], proc.stdout)
+        self.assertEqual(proc.returncode, 0, "読めなかっただけで赤くしている: " + proc.stdout)
+
+        self.write_ready_queue(
+            ["2507 dropped 着手印が残ったまま 4320 分以上動いていない (x)"], rc=1, incomplete="hands-unread"
+        )
+        proc = self.watch()
+        self.assertIn("unreadable", proc.stdout)
+        self.assertIsNotNone(self.claim_line(2507, proc), proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_全部読めた回は読めなかったと名乗らない(self):
+        self.write_ready_queue([], rc=1)
+        proc = self.watch()
+        self.assertNotIn("unreadable", proc.stdout)
+
+    def run_result_step(self, log_lines, status):
+        """stall-watch.yml の最後の step の run を、stall.log と STATUS を渡して走らせる。"""
+        wf = (WORKFLOWS / "stall-watch.yml").read_text(encoding="utf-8")
+        block = wf[wf.index("name: 名乗りの結果") :]
+        body = block[block.index("run: |\n") + len("run: |\n") :]
+        script = "\n".join(l[10:] if l.startswith(" " * 10) else l for l in body.splitlines())
+        work = Path(self.tmp.name) / "step"
+        work.mkdir(exist_ok=True)
+        (work / "stall.log").write_text("".join(f"{l}\n" for l in log_lines), encoding="utf-8")
+        summary = work / "summary.md"
+        summary.write_text("", encoding="utf-8")
+        proc = subprocess.run(
+            ["/bin/bash", "-eo", "pipefail", "-c", script],
+            cwd=work,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "STATUS": str(status), "GITHUB_STEP_SUMMARY": str(summary)},
+        )
+        return proc, summary.read_text(encoding="utf-8")
+
+    def test_読めなかった判定は赤にせず_run_の要約と_annotation_に出す(self):
+        """既存の unreadable の扱い (終了コードに数えない) は変えず、続けて読めなくても誰かの目に入るようにする (#3366)。"""
+        proc, summary = self.run_result_step(
+            ["- unreadable name 0 着手印の判定の一部を読めないまま終わった (hands-unread)", "12 unreadable name 0 PR を読めなかった"],
+            status=0,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        warnings = [l for l in proc.stdout.splitlines() if l.startswith("::warning")]
+        self.assertEqual(len(warnings), 2, proc.stdout)
+        self.assertIn("hands-unread", warnings[0])
+        self.assertIn("hands-unread", summary)
+        self.assertIn("PR を読めなかった", summary)
+
+    def test_読めなかった判定が無ければ_annotation_は出ない_赤は従来どおり(self):
+        proc, summary = self.run_result_step(["2507 stale-claim name 4320 x"], status=1)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertNotIn("::warning", proc.stdout)
+        self.assertEqual(summary, "")
 
     def test_着手印の判定は何も書き込まない(self):
         """印を外さず・起票もしない。当番に渡すのは issues: read だけ。"""

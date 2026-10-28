@@ -89,6 +89,18 @@ jobs:
         env:
           STATUS: ${{ steps.watch.outputs.status }}
         run: |
+          # 読めなかった判定 (unreadable) は赤にしない — 名乗りの意味 (人手が要る詰まりの猶予超過) を
+          # 変えないため。ただし続けて読めなくても誰も見ないので、run の要約と annotation に出す (#3366)
+          if grep -qE '^[^ ]+ unreadable ' stall.log; then
+            {
+              echo "### 当番が読めなかった判定がある"
+              echo
+              grep -E '^[^ ]+ unreadable ' stall.log | sed 's/^/- /'
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            grep -E '^[^ ]+ unreadable ' stall.log | while IFS= read -r line; do
+              echo "::warning title=当番が読めなかった判定::$line"
+            done
+          fi
           if [ "$STATUS" != "0" ]; then
             echo "人手が要る詰まりが猶予を超えて続いている (分類と対処は上のログ)" >&2
             exit 1

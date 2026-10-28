@@ -274,6 +274,11 @@
 # - **猶予を超えた名乗りしか出ないので、出したら必ず 1 で終える** (runner-offline と同じ形)。
 #   人が印を外す・閉じる・プランで人の手を残すまで赤が続く。その間に起きた PR の詰まりの赤が
 #   同じ赤に紛れる代償は、対処が 1 手で済むことで受ける (#3366)
+# - **一部を読めないまま完走した回** (ready-queue.sh が標準エラーの最後に出す `incomplete: <印>`) も
+#   unreadable を名乗る。読めなかった番号は busy へ倒れるので、dropped が 0 件の緑と区別がつかない
+#   (人の手を読めなかった hands-unread・一覧が上限に張り付いた capped-*)。見つかった dropped はそのまま名乗る
+# - unreadable は赤にしない (ほかの unreadable と同じ)。ただし続けて読めなくても誰も見ないので、
+#   当番の run の要約と annotation (::warning::) に出す (stall-watch.yml の最後の step)
 # - 当番に要る権限は issues: read (読み取りだけ)。印の付け外しも起票もしない
 # - 当番は ubuntu で、ready-queue.sh は BSD の date -v が断られたときの GNU の枝と mawk で走る。
 #   手元の Mac と同じに出ることは scripts/tests/ready_queue_test.py が固定している
@@ -689,7 +694,7 @@ name_stale_gate() { # $1=番号 $2=PR の JSON $3=均した checks
 # 着手印が残ったまま人の手が無い Issue (stale-claim・冒頭の「Issue を見る行」)。名乗った行が
 # あれば 0、無ければ 1。読めなかったときは unreadable を名乗って 1
 name_stale_claims() {
-  local out errfile rc=0 line n rest title
+  local out errfile rc=0 line n rest title incomplete
   errfile=$(mktemp)
   out=$(DROPPED_MINUTES="$CLAIM_STALL_MINUTES" bash "$READY_QUEUE" 2>"$errfile") || rc=$?
   # 標準エラーは捨てずにジョブのログへ流す (件数の行も混ざる)
@@ -701,7 +706,13 @@ name_stale_claims() {
     rm -f "$errfile"
     return 1
   fi
+  # 一部を読めないまま完走した回 (人の手を読めなかった番号・一覧の上限)。読めなかった番号は busy へ
+  # 倒れて名乗られないので、dropped が 0 件でも緑にしない。見つかった dropped は続けて名乗る
+  incomplete=$(sed -n 's/^incomplete: //p;' "$errfile" | sed -n '1p')
   rm -f "$errfile"
+  if [ -n "$incomplete" ]; then
+    say_line - unreadable name 0 "着手印の判定の一部を読めないまま終わった ($incomplete) — 名乗るべき着手印を見落としているかもしれない (判定しきれていない)"
+  fi
   local named=1
   while IFS= read -r line; do
     n=${line%% *}
