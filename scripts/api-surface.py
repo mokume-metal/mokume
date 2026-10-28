@@ -613,7 +613,6 @@ UNSHOWN = {
     "plugins": "作者が書くのは 1 行だけで、中身は外のパッケージが書く",
     "attach": "plugins と同じ理由 (呼ぶのは機能を作る側で、作者は createCapture() のような口を呼ぶ)",
     "detach": "attach と同じ理由",
-    "createCapture": "カメラの絵は機材と許可に依り、--render と台帳で同じ絵を回せない (ADR-0028 決定 7)。注入の形 (frames:) はテストが回す",
     "captureDevices": "一覧は繋がっている機材に依り、絵にならない",
     "createVideo": "動画ファイルをリポジトリに置けず (scripts/check-no-binaries.sh)、参照スケッチの中で作ると重い。作例は説明文の例に置き、固定の時計で同じコマが出ることはテストが見る (#1960)",
     "audioInputDevices": "captureDevices と同じ理由",
