@@ -66,8 +66,16 @@ struct FrameRingWriteGateTests {
         try call(port, on: storage)
     }
 
-    /// 止まったことは、止まり方の文面 (`FrameRing.checkWritable` の表明) で確かめる。子が別の理由で
-    /// 落ちても `.failure` には合うので、終わり方だけでは見ない。
+    /// 止まったことは、**組み方によらず子に残る 2 つの印**で確かめる。1 つは終わり方 (信号で落ちた
+    /// こと。終了コード 0 で戻った子と、`exit(n)` で終わった子を除く)、もう 1 つは止まる直前に
+    /// `checkWritable` が必ず言う注意 (``FrameRing/unguardedWriteNotice``)。`preconditionFailure` の
+    /// 文面は見ない — 文面は `-Onone` でしか出ず、`-O` (定期の release の検査・`make test-release`)
+    /// では出さずに止まる (#3365)。
+    ///
+    /// **信号だけでは表明の停止と見分けられない。** exit test の本体が `throw` した子も信号
+    /// (SIGTRAP) で終わることを手元で確かめてある。止まったのが印の
+    /// 検査の直後であることは、その直前に出る注意の行で見る。表明を外すと子は書いて 0 で戻るので、
+    /// 終わり方の `#expect` が赤になる。
     @Test("印が無いまま書き込み口を呼ぶと、mokume の検査の中では止まる")
     func anUnguardedWriteStopsInsideTheTests() async throws {
         let results = [
@@ -85,9 +93,13 @@ struct FrameRingWriteGateTests {
             // 終わり方が違えば、赤は上の `#expect` が記録済みである
             guard let result else { continue }
             let errors = String(decoding: result.standardErrorContent, as: UTF8.self)
+            guard case .signal = result.exitStatus else {
+                Issue.record("信号で落ちていない (終了コードで終わった): \(result.exitStatus)。標準エラー:\n\(errors)")
+                continue
+            }
             #expect(
-                errors.contains("mokume.test.gate was about to be written after a submission"),
-                "印の表明で止まっていない。標準エラー:\n\(errors)")
+                errors.contains(FrameRing.unguardedWriteNotice),
+                "印の検査まで来ていない (別の理由で落ちた)。標準エラー:\n\(errors)")
         }
     }
 
