@@ -59,8 +59,9 @@ nonisolated struct Playhead: Equatable {
     /// 外へ見せる位置 (秒)。飛ぶよう頼まれていれば、その飛び先。
     var reported: Double { pendingJump ?? position }
 
-    /// 終わりまで映したか (ループしていないとき)。
-    private var hasEnded: Bool { pendingJump == nil && position >= duration }
+    /// 終わりまで映したか (ループしていないとき)。飛ぶよう頼まれていれば、飛び先が終わりか
+    /// (同じフレームの ``jump(to:)`` → ``play()`` でも、終わりから流すので頭から。#3303)。
+    private var hasEnded: Bool { reported >= duration }
 
     /// 1 度だけ流す。終わりまで映していたら頭から。ループしていたなら、今回の終わりで止まる。
     mutating func play() {
@@ -82,7 +83,11 @@ nonisolated struct Playhead: Equatable {
     private mutating func start() {
         projection = nil
         guard !isPlaying else { return }
-        if hasEnded { position = 0 }
+        if hasEnded {
+            // 頭から。飛び先を残すと、次のフレームで飛び先の終わりが当たり直す
+            position = 0
+            pendingJump = nil
+        }
         isPlaying = true
         anchor = nil
     }
@@ -92,6 +97,16 @@ nonisolated struct Playhead: Equatable {
         isPlaying = false
         anchor = nil
         projection = nil
+    }
+
+    /// 公開の秒 (単精度) を、飛ぶ先の秒 (``jump(to:)`` へ渡す値) に直す。**公開の長さ (``duration`` を単精度に
+    /// 丸めたもの) 以上の秒は、内部の長さそのものへ寄せる。** 単精度へ丸めた長さは、内部の長さをわずかに
+    /// 割ることがあり (3.3 秒は 3.29999995…)、作者が公開の長さを渡して「終わりへ飛ぶ」つもりでも、
+    /// 終わりの手前に着いて「終わりまで映したか」(``hasEnded``) が偽になる (#3303)。数でない値・無限は
+    /// そのまま返し、``jump(to:)`` が受け取らない。
+    func landing(_ seconds: Float) -> Double {
+        guard seconds.isFinite, seconds >= Float(duration) else { return Double(seconds) }
+        return duration
     }
 
     /// 次のフレームで `seconds` 秒の位置を映す。範囲の外は 0 か長さへ寄せる。

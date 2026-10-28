@@ -52,9 +52,10 @@ nonisolated struct Playhead: Equatable {
     }
 
     /// 鳴らし始める。**鳴っている最中なら頭から鳴らし直す。** 止めていれば止めた位置から、
-    /// 頭へ戻してあれば頭から。呼んだ側は区切りを始め直す。
+    /// 頭へ戻してあれば頭から。**止めた位置が終わり (``jump(to:)`` で寄せたもの) なら、鳴り終わった後と同じに
+    /// 頭から** (#3303)。呼んだ側は区切りを始め直す。
     mutating func play(looping: Bool) {
-        if isPlaying { start = 0 }
+        if isPlaying || start >= length { start = 0 }
         isPlaying = true
         isLooping = looping
         leapt = false

@@ -249,9 +249,11 @@ nonisolated final class FileVoice: @unchecked Sendable {
         active = word & Self.haltedBit == 0 && length > 0
         guard active else { return }
         let start = Int(word & Self.startMask)
-        // 範囲の外は頭から (旧実装と同じ。ラックの節 (``FileNode``) とそろえるかは #3303 で決める)
-        position = start > 0 && start < length ? start : 0
         looping = word & Self.loopingBit != 0
+        // 終わり以降から 1 度だけ鳴らす区切りは、鳴らす残りが無いので無音のまま終わる (ラックの節
+        // (``FileNode``) と同じ。#3303)。**頭から鳴らし直すのは、区切りを決める ``Playhead`` の仕事** で、
+        // ここで頭へ戻すと、鳴っている間に終わりへ飛んだとき頭の音が出る。ループなら頭から
+        position = start < length ? start : (looping ? 0 : length)
         count = 0
     }
 

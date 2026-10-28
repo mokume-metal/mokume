@@ -140,6 +140,65 @@ nonisolated struct PlayheadTests {
         #expect(advance(&head, [1, 1.5]) == [0, 0.5])
     }
 
+    @Test("止まっている間に、同じフレームで終わりへ飛んで流すと、頭から流れる (フレームを分けても同じ)")
+    func playRightAfterJumpingToTheEndStartsFromTheTop() {
+        // 同じフレーム: 飛び先がまだ受け付けられていない間に流す
+        var sameFrame = Playhead(duration: 2)
+        _ = sameFrame.jump(to: 2)
+        sameFrame.play()
+        #expect(sameFrame.reported == 0, "飛び先の終わりを残さない")
+        #expect(advance(&sameFrame, [0, 0.5, 1]) == [0, 0.5, 1])
+        #expect(sameFrame.isPlaying)
+        // フレームを分ける: 飛び先を映してから流す
+        var split = Playhead(duration: 2)
+        _ = split.jump(to: 2)
+        #expect(advance(&split, [0]) == [2])
+        split.play()
+        #expect(advance(&split, [1, 1.5]) == [0, 0.5])
+        // 範囲の外 (長さより先) も同じ
+        var beyond = Playhead(duration: 2)
+        _ = beyond.jump(to: 5)
+        beyond.play()
+        #expect(advance(&beyond, [0, 0.5]) == [0, 0.5])
+        // 終わりの手前へ飛んで流すなら、その位置から
+        var near = Playhead(duration: 2)
+        _ = near.jump(to: 1.5)
+        near.play()
+        #expect(advance(&near, [0, 0.25]) == [1.5, 1.75])
+        // 流してから飛ぶ (終わりへ) のは、そのまま終わりを映す
+        var after = Playhead(duration: 2)
+        after.play()
+        _ = after.jump(to: 2)
+        #expect(advance(&after, [0]) == [2])
+    }
+
+    @Test("公開の長さ (単精度) を渡して終わりへ飛ぶと、長さが単精度で表せなくても終わりに着き、流すと頭から (#3303)")
+    func jumpingToThePublicDurationLandsOnTheEnd() {
+        // 3.3 秒は、単精度へ丸めると 3.29999995… で、倍精度の長さを割る
+        let duration = 3.3
+        #expect(Double(Float(duration)) < duration)
+        var head = Playhead(duration: duration)
+        _ = head.jump(to: head.landing(Float(duration)))
+        #expect(head.reported == duration)
+        head.play()
+        #expect(head.reported == 0, "飛び先の終わりを残さない")
+        #expect(advance(&head, [0, 0.5, 1]) == [0, 0.5, 1])
+        #expect(head.isPlaying)
+        // フレームを分けても同じ
+        var split = Playhead(duration: duration)
+        _ = split.jump(to: split.landing(Float(duration)))
+        #expect(advance(&split, [0]) == [duration])
+        split.play()
+        #expect(advance(&split, [1, 1.5]) == [0, 0.5])
+        // 終わりより手前の秒は寄せない (単精度の隣の値も)。数でない値・無限は受け取らない
+        var near = Playhead(duration: duration)
+        let before = Float(duration).nextDown
+        #expect(near.landing(before) == Double(before))
+        #expect(near.landing(1.5) == 1.5)
+        let refused = [Float.nan, .infinity, -.infinity].map { near.jump(to: near.landing($0)) }
+        #expect(refused == [false, false, false])
+    }
+
     @Test("スケッチの時刻が後ろへ飛んでも、頭より前へは行かない")
     func neverGoesBeforeTheTop() {
         var head = Playhead(duration: 10)

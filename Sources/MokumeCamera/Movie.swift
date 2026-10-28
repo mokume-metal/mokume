@@ -116,8 +116,8 @@ public final class Movie: Inlet {
 
     /// 1 度だけ流す。終わりのコマで止まる。
     ///
-    /// 止めた位置から流し、終わりまで映していたなら頭から流す。``loop()`` で流していたなら、
-    /// 今回の終わりで止まる。
+    /// 止めた位置から流し、終わりまで映していたなら頭から流す。``jump(_:)`` で終わりへ飛ばした後も、
+    /// 同じフレームで呼んでも頭から流す。``loop()`` で流していたなら、今回の終わりで止まる。
     public func play() {
         playhead.play()
     }
@@ -137,9 +137,9 @@ public final class Movie: Inlet {
     /// `seconds` 秒の位置へ飛ぶ。次のフレームにその位置のコマが出る。
     ///
     /// 流している間なら、そこから流れ続ける。0 より前は頭、``duration`` より後は終わりへ
-    /// 寄せる。数でない値 (`.nan`・無限) は位置を変えず、1 度だけ知らせる。
+    /// 寄せる (``duration`` を渡せば、長さが単精度で表せない値でも、終わりへ着く)。数でない値 (`.nan`・無限) は位置を変えず、1 度だけ知らせる。
     public func jump(_ seconds: Float) {
-        guard playhead.jump(to: Double(seconds)) else {
+        guard playhead.jump(to: playhead.landing(seconds)) else {
             guard !warnedJump else { return }
             warnedJump = true
             return warn("jump(): \(seconds) is not a time, so the video stays where it is")
