@@ -7,18 +7,36 @@ SPDX-License-Identifier: MIT
 
 **本文の正本はこのファイルである。** README と重なるのは brew の 1 行・短いコード片・
 絵だけにしてあり、その 1 行が README と一致していることは scripts/check-entry.py が
-見る。絵は主図と下の gallery の URL を README も借りている — 同じ URL を指すだけで
-中身は 1 つなので、撮り直すときは両方の URL を差し替える (#1168)。README はさらに、
-始める前の前提・最初の 1 本の手順・動きの絵を持つが、それは GitHub だけを見て試す人の
-ためのもので、ここへは写さない。重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。
+見る。絵は README と同じ URL を借りている (下の一覧) — 同じ URL を指すだけで中身は
+1 つなので、撮り直すときは両方の URL を差し替える (#1168)。README はさらに、始める前の
+前提・最初の 1 本の手順を持つが、それは GitHub だけを見て試す人のためのもので、ここへは
+写さない。重ねる量を増やすと二重管理になる (ADR-0001 原則 9)。API の説明は参照の面
+(documentation/mokume/) が持ち、ここは入口に徹する (#3412)。
+
+  README と共有: 34337801 (図形とスタイル)・c4b16442 (ポストエフェクト)・
+  a1df70eb (立体と光)・e3407232 (粒と力)・78efcf97 (GPU の場)・bf9796f5 (保存で差し替わる)
+
+**節に置くコード片は参照スケッチ (Sketches/) からの抜粋で、出典へリンクする。** 抜粋に
+`@main` を含めない — check-entry.py は `@main` を持つ塊を「最初の 1 本」として雛形と
+突き合わせる。「最初の 1 本」の塊は `<pre><code>` の綴りのまま置く (属性を足すと拾えない)。
+訳させない印 (translate="no") と色付けの印は、外側の div に付ける。
 
 **リンクは相対で書く。** 公開先の基準パス (github.io の /mokume/ か、独自ドメインの
 root か) はここでは決まらないため — 隣の documentation/index.html と同じ理由。
 
-**外部ホストへの要求を持たない。** スタイルはここに同梱し、フォントは system font
+**外部ホストへの要求を持たない。** スタイルと JS はここに同梱し、フォントは system font
 stack、favicon はインライン SVG。外に出て行くのは絵の <img> だけで、その死活は
 scripts/check-external-assets.py が定期で見る。画像とフォントはリポジトリに置けない
 (scripts/check-no-binaries.sh が拒否する) ので、絵は Gyazo に置いて URL で指す。
+翻訳のプロキシ (translate.goog) は利用者が押したときに移る**リンク**で、ページからの要求ではない。
+
+**ヒーローの canvas は飾りで、mokume の絵ではない** (#3412)。木目 (mokume) の等高線を
+ブラウザの WebGL のシェーダで描き、ページ上にもそう書く。実物の絵は下の節に並べる。
+JS や WebGL が無ければ飾りを出さず、文字とリンクだけで読める。`prefers-reduced-motion`
+では 1 枚描いて止まる。画面外・隠れたタブでは止める。
+
+**翻訳は 2 経路** (#3412): ブラウザが端末内の翻訳 (Translator API) を持てば文字を置き換え
+(外へ何も送らない)、持たなければ Google 翻訳のプロキシへ移る。コードには translate="no"。
 
 **配色は DocC の変数を写さない。** 写した時点で参照の面の配色の 2 つ目の写しになる。
 代わりに、下に並べた絵が実際に使っている色 (濃い灰の地・橙) をそのまま地にしている。
@@ -32,28 +50,52 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
     <meta
       name="description"
       content="mokume は Swift と Metal で書くクリエイティブコーディングの道具。1 ファイルから始めて、保存するたびに絵が差し替わる。" />
+    <meta name="color-scheme" content="dark" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23101318'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%23f2733f'/%3E%3C/svg%3E" />
     <style>
       :root {
-        --ground: #101318;
-        --panel: #171b22;
-        --line: #262c36;
+        --ground: #0e1116;
+        --panel: #151a21;
+        --panel-2: #1b212a;
+        --line: #252d38;
+        --grid: rgba(255, 255, 255, 0.028);
         --ink: #e8ecf2;
         --ink-dim: #9aa4b2;
+        --ink-faint: #677283;
         --accent: #f2733f;
+        --accent-ink: #1a0d06;
+        --cool: #6fc3df;
+        --leaf: #8fd694;
         --sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
         --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --wide: 72rem;
+        --gutter: clamp(1rem, 4vw, 2rem);
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        scroll-behavior: smooth;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
       body {
         margin: 0;
-        background: var(--ground);
+        background-color: var(--ground);
+        /* 方眼紙。スケッチ帳の地として、絵の邪魔をしない濃さに留める */
+        background-image:
+          linear-gradient(var(--grid) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+        background-size: 24px 24px;
         color: var(--ink);
         font: 17px/1.75 var(--sans);
         /* 日本語の本文を、行の途中の変な位置で折らない */
@@ -61,87 +103,338 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
         overflow-wrap: anywhere;
       }
 
-      main {
-        max-width: 60rem;
+      a {
+        color: var(--accent);
+      }
+
+      a:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      .wrap {
+        max-width: var(--wide);
         margin: 0 auto;
-        padding: 0 1.25rem 5rem;
+        padding: 0 var(--gutter);
       }
 
-      header {
-        padding: 4rem 0 2rem;
+      /* ---- 上の帯 ---- */
+
+      .bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(14, 17, 22, 0.78);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       }
 
-      h1 {
-        margin: 0;
-        font-size: clamp(2.4rem, 8vw, 3.6rem);
-        letter-spacing: -0.02em;
-        line-height: 1.1;
+      .bar .wrap {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        height: 3.25rem;
       }
 
-      h1 + p {
-        margin: 0.5rem 0 0;
-        color: var(--ink-dim);
-        font-size: clamp(1rem, 3.2vw, 1.25rem);
-      }
-
-      h2 {
-        margin: 3.5rem 0 1rem;
-        font-size: 1.35rem;
+      .bar .mark {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--ink);
+        font: 700 1rem var(--mono);
+        text-decoration: none;
         letter-spacing: -0.01em;
       }
 
-      h2::before {
+      .bar .mark::before {
         content: "";
+        width: 0.8rem;
+        height: 0.8rem;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .bar nav {
+        display: flex;
+        gap: 1.1rem;
+        margin-left: auto;
+        font: 0.85rem var(--mono);
+      }
+
+      .bar nav a {
+        color: var(--ink-dim);
+        text-decoration: none;
+      }
+
+      .bar nav a:hover {
+        color: var(--ink);
+      }
+
+      .translate {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.3rem 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: transparent;
+        color: var(--ink);
+        font: 0.8rem var(--mono);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .translate:hover {
+        border-color: var(--accent);
+      }
+
+      .translate[aria-busy="true"] {
+        opacity: 0.6;
+        cursor: progress;
+      }
+
+      @media (max-width: 40rem) {
+        .bar nav a.wide-only {
+          display: none;
+        }
+      }
+
+      .mt-note {
+        margin: 0;
+        padding: 0.5rem var(--gutter);
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-dim);
+        font: 0.8rem/1.5 var(--mono);
+        text-align: center;
+      }
+
+      .mt-note button {
+        margin-left: 0.5rem;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--accent);
+        font: inherit;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+
+      /* ---- ヒーロー ---- */
+
+      .hero {
+        position: relative;
+        min-height: min(52rem, calc(100svh - 3.25rem));
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        background: var(--ground);
+        isolation: isolate;
+      }
+
+      .hero canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: -2;
+      }
+
+      /* 文字の下だけ地を濃くし、線が字を食わないようにする */
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background:
+          radial-gradient(ellipse 60% 70% at 20% 50%, rgba(14, 17, 22, 0.86), transparent 70%),
+          linear-gradient(to bottom, transparent 70%, var(--ground));
+        pointer-events: none;
+      }
+
+      .hero .wrap {
+        width: 100%;
+        padding-top: 4rem;
+        padding-bottom: 6rem;
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: clamp(3.6rem, 14vw, 9rem);
+        font-weight: 800;
+        line-height: 0.95;
+        letter-spacing: -0.045em;
+      }
+
+      .hero .tagline {
+        margin: 1.1rem 0 0;
+        font: 500 clamp(1rem, 2.6vw, 1.35rem) / 1.4 var(--mono);
+        color: var(--accent);
+      }
+
+      .hero .lede {
+        max-width: 34rem;
+        margin: 1.1rem 0 0;
+        color: var(--ink-dim);
+        font-size: clamp(1rem, 2.4vw, 1.15rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 2rem;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.7rem 1.3rem;
+        border-radius: 999px;
+        font: 600 0.95rem var(--mono);
+        text-decoration: none;
+        transition: transform 0.15s ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+      }
+
+      .button.primary {
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .button.secondary {
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: var(--ink);
+        background: rgba(14, 17, 22, 0.5);
+      }
+
+      /* Processing の窓の下に出る、計器の行 */
+      .readout {
+        position: absolute;
+        left: var(--gutter);
+        bottom: 1rem;
+        margin: 0;
+        color: var(--ink-faint);
+        font: 0.72rem/1.5 var(--mono);
+        white-space: pre;
+      }
+
+      .hero-note {
+        position: absolute;
+        right: var(--gutter);
+        bottom: 1rem;
+        max-width: 22rem;
+        margin: 0;
+        color: var(--ink-faint);
+        font-size: 0.75rem;
+        line-height: 1.5;
+        text-align: right;
+      }
+
+      @media (max-width: 40rem) {
+        .readout {
+          display: none;
+        }
+
+        .hero-note {
+          left: var(--gutter);
+          text-align: left;
+        }
+      }
+
+      /* ---- 三本柱 ---- */
+
+      .pillars {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+        gap: 1rem;
+        margin: 0;
+        padding: 2rem 0 0;
+        list-style: none;
+      }
+
+      .pillars li {
+        padding: 1.25rem 1.3rem;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+
+      .pillars strong {
         display: block;
-        width: 2.5rem;
-        border-top: 2px solid var(--accent);
-        margin-bottom: 0.9rem;
+        margin-bottom: 0.35rem;
+        font-size: 1.05rem;
+      }
+
+      .pillars span {
+        color: var(--ink-dim);
+        font-size: 0.92rem;
+      }
+
+      /* ---- コードと絵の節 ---- */
+
+      .feature {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+        gap: clamp(1.5rem, 4vw, 3.5rem);
+        align-items: center;
+        padding: clamp(3.5rem, 9vw, 6.5rem) 0 0;
+      }
+
+      .feature.flip .feature-text {
+        order: 2;
+      }
+
+      .feature.wide {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      @media (max-width: 52rem) {
+        .feature {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .feature.flip .feature-text {
+          order: 0;
+        }
+      }
+
+      .tag {
+        margin: 0 0 0.6rem;
+        color: var(--accent);
+        font: 0.8rem var(--mono);
+        letter-spacing: 0.04em;
+      }
+
+      h2 {
+        margin: 0 0 0.8rem;
+        font-size: clamp(1.6rem, 4vw, 2.2rem);
+        line-height: 1.25;
+        letter-spacing: -0.02em;
       }
 
       p {
         margin: 0 0 1rem;
       }
 
-      a {
-        color: var(--accent);
-      }
-
-      /* 絵は幅いっぱいまで縮む。**縦横比は属性で持たせる**ので、読み込む前でも
-         場所が確保され、後から本文が飛び跳ねない。
-         **loading="lazy" は付けない。** 付けると「読み込まれないまま空で出る」が
-         起こりうるうえ、その状態は機械から「絵が出ている」と見分けられない
-         (実測: 画面に入れて待っても complete が false のままになる実装がある)。
-         絵は 5 枚で、全部を最初から読ませても足りる */
-      img {
-        display: block;
-        width: 100%;
-        height: auto;
-        border-radius: 10px;
-        background: var(--panel);
-      }
-
-      figure {
-        margin: 0;
-      }
-
-      figure figcaption {
-        margin-top: 0.6rem;
+      .feature-text > p:not(.tag):not(.source) {
         color: var(--ink-dim);
-        font-size: 0.9rem;
       }
 
-      .gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-        gap: 1rem;
-        margin: 1.5rem 0 0;
-        padding: 0;
-        list-style: none;
+      .source {
+        margin: 0.5rem 0 0;
+        color: var(--ink-faint);
+        font: 0.78rem var(--mono);
       }
 
-      .gallery figcaption {
-        margin-top: 0.5rem;
-        font-size: 0.85rem;
+      .source a {
+        color: var(--ink-dim);
       }
 
       /* コードは**枠の中だけで横に流す**。本文ごと横に伸びると、狭い画面で
@@ -153,23 +446,240 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
         border: 1px solid var(--line);
         border-radius: 10px;
         overflow-x: auto;
-        font: 0.9rem/1.6 var(--mono);
+        font: 0.84rem/1.65 var(--mono);
+        tab-size: 4;
+      }
+
+      .code pre {
+        margin: 0;
       }
 
       code {
         font-family: var(--mono);
       }
 
-      p code {
+      p code,
+      li code {
         padding: 0.1em 0.35em;
-        background: var(--panel);
+        background: var(--panel-2);
         border-radius: 5px;
-        font-size: 0.9em;
+        font-size: 0.88em;
       }
+
+      /* 色付け (下の JS が付ける)。地の橙と、絵に出てくる水色・葉の緑から取る */
+      .tk-kw {
+        color: #ff8f6b;
+      }
+
+      .tk-ty {
+        color: var(--cool);
+      }
+
+      .tk-fn {
+        color: #f3d27a;
+      }
+
+      .tk-num {
+        color: #c8a2f0;
+      }
+
+      .tk-str {
+        color: var(--leaf);
+      }
+
+      .tk-com {
+        color: var(--ink-faint);
+        font-style: italic;
+      }
+
+      /* 絵を、スケッチの窓に見立てて置く */
+      .window {
+        margin: 0;
+        background: #07090c;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 30px 80px -40px rgba(242, 115, 63, 0.35);
+      }
+
+      .window-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.55rem 0.8rem;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-faint);
+        font: 0.72rem var(--mono);
+      }
+
+      .window-bar i {
+        width: 0.6rem;
+        height: 0.6rem;
+        border-radius: 50%;
+        background: var(--line);
+      }
+
+      .window-bar span {
+        margin-left: 0.5rem;
+      }
+
+      .window-bar b {
+        margin-left: auto;
+        font-weight: 400;
+      }
+
+      /* 絵は幅いっぱいまで縮む。**縦横比は属性で持たせる**ので、読み込む前でも
+         場所が確保され、後から本文が飛び跳ねない。
+         **loading="lazy" は付けない。** 付けると「読み込まれないまま空で出る」が
+         起こりうるうえ、その状態は機械から「絵が出ている」と見分けられない
+         (実測: 画面に入れて待っても complete が false のままになる実装がある) */
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: var(--panel);
+      }
+
+      .window figcaption {
+        padding: 0.6rem 0.9rem 0.75rem;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+        color: var(--ink-dim);
+        font-size: 0.82rem;
+        line-height: 1.6;
+      }
+
+      /* ---- スケッチ帳 ---- */
+
+      .section-head {
+        padding: clamp(4rem, 10vw, 7rem) 0 0;
+      }
+
+      .section-head p {
+        max-width: 40rem;
+        color: var(--ink-dim);
+      }
+
+      .sketchbook {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+        gap: 1rem;
+        margin: 1.5rem 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .sketchbook a {
+        position: relative;
+        display: block;
+        height: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        text-decoration: none;
+        color: var(--ink);
+        background: var(--panel);
+      }
+
+      .sketchbook img {
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        transition: transform 0.4s ease;
+      }
+
+      .sketchbook a:hover img {
+        transform: scale(1.04);
+      }
+
+      .sketchbook a:hover {
+        border-color: var(--accent);
+      }
+
+      .sketchbook .label {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.6rem 0.8rem;
+        font-size: 0.85rem;
+      }
+
+      .sketchbook .label code {
+        color: var(--ink-faint);
+        font-size: 0.72rem;
+        background: none;
+        padding: 0;
+      }
+
+      .sketchbook .more {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        min-height: 10rem;
+        padding: 1.2rem;
+        background: transparent;
+        border-style: dashed;
+      }
+
+      .sketchbook .more strong {
+        color: var(--accent);
+        font: 600 1rem var(--mono);
+      }
+
+      .sketchbook .more span {
+        color: var(--ink-dim);
+        font-size: 0.85rem;
+      }
+
+      /* ---- はじめる ---- */
+
+      .steps {
+        display: grid;
+        gap: 1.5rem;
+        margin: 2rem 0 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+      }
+
+      .steps > li {
+        display: grid;
+        grid-template-columns: 2.5rem minmax(0, 1fr);
+        gap: 0 1rem;
+        counter-increment: step;
+      }
+
+      .steps > li::before {
+        content: counter(step);
+        display: grid;
+        place-items: center;
+        width: 2.2rem;
+        height: 2.2rem;
+        border: 1px solid var(--accent);
+        border-radius: 50%;
+        color: var(--accent);
+        font: 600 0.95rem var(--mono);
+      }
+
+      .steps h3 {
+        margin: 0.2rem 0 0.6rem;
+        font-size: 1.2rem;
+      }
+
+      .steps p {
+        color: var(--ink-dim);
+      }
+
+      .steps p a {
+        color: var(--accent);
+      }
+
+      /* ---- もっと読む ---- */
 
       .faces {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
         gap: 0.75rem;
         margin: 1.5rem 0 0;
         padding: 0;
@@ -178,10 +688,11 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
 
       .faces a {
         display: block;
-        padding: 1rem 1.1rem;
+        height: 100%;
+        padding: 1.1rem 1.2rem;
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 10px;
+        border-radius: 12px;
         text-decoration: none;
         color: var(--ink);
       }
@@ -193,7 +704,7 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
       .faces strong {
         display: block;
         color: var(--accent);
-        font-size: 1rem;
+        font: 600 1rem var(--mono);
       }
 
       .faces span {
@@ -202,107 +713,330 @@ scripts/check-external-assets.py が定期で見る。画像とフォントは�
       }
 
       footer {
-        margin-top: 4rem;
-        padding-top: 1.5rem;
+        margin-top: 5rem;
+        padding: 1.5rem 0 3rem;
         border-top: 1px solid var(--line);
         color: var(--ink-dim);
-        font-size: 0.88rem;
+        font-size: 0.85rem;
       }
     </style>
   </head>
   <body>
+    <header class="bar">
+      <div class="wrap">
+        <a class="mark" href="./" translate="no">mokume</a>
+        <nav>
+          <a href="#start">はじめる</a>
+          <a href="documentation/mokume/">参照</a>
+          <a class="wide-only" href="https://github.com/mokume-metal/mokume" translate="no">GitHub</a>
+        </nav>
+        <button class="translate" id="translate" type="button" translate="no" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" />
+          </svg>
+          <span>English</span>
+        </button>
+      </div>
+    </header>
+    <p class="mt-note" id="mt-note" translate="no" hidden>
+      Machine-translated from Japanese on your device. Code is left as written.
+      <button type="button" id="mt-undo">日本語に戻す</button>
+    </p>
+
     <main>
-      <header>
-        <h1>mokume</h1>
-        <p>Creative coding for Swift + Metal.</p>
-      </header>
+      <section class="hero" id="hero">
+        <canvas id="grain" aria-hidden="true"></canvas>
+        <div class="wrap">
+          <h1 translate="no">mokume</h1>
+          <p class="tagline" translate="no">Creative coding for Swift + Metal.</p>
+          <p class="lede">
+            Swift と Metal で、絵と動きを書く。1 ファイルから始めて、保存するたびに絵が差し替わる。
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#start">はじめる →</a>
+            <a class="button secondary" href="documentation/mokume/">参照を読む</a>
+          </div>
+        </div>
+        <p class="readout" id="readout" translate="no" aria-hidden="true"></p>
+        <p class="hero-note">
+          背景はブラウザのシェーダで描いた木目の飾り。mokume が描いた実際の絵は、下に並べてある。
+        </p>
+      </section>
 
-      <figure>
-        <img
-          src="https://i.gyazo.com/f7c28eb4c8f3251a8934729267de57ff.png"
-          width="960"
-          height="540"
-          alt="濃い紺の地に、中心から放射状に伸びる無数の細い線。中心へ向かうほど明るく、周辺は暗く落ちている" />
-        <figcaption>
-          描く細かさを半分と指定して拡大し、描き終えた絵ににじみ・色ずれ・周辺減光を重ねた 1 枚。
-          指定するのは細かさだけで、コードに拡大は 1 行も出てこない。
-        </figcaption>
-      </figure>
+      <div class="wrap">
+        <ul class="pillars">
+          <li>
+            <strong>1 つの <code>Sketch</code> に全部</strong>
+            <span>2D の図形と文字、立体と光、粒と力、画素の読み書き、GPU の計算とポストエフェクトを、同じ 1 ファイルの中で書く。</span>
+          </li>
+          <li>
+            <strong>細かさと座標が別</strong>
+            <span>座標は出す細かさのままなので、描く解像度を落としても本文は 1 文字も変わらない。</span>
+          </li>
+          <li>
+            <strong>外から観測できる</strong>
+            <span>撮る・作り直しの結果を読む・入力を送る、がエージェントからも同じ口で使える。</span>
+          </li>
+        </ul>
 
-      <h2>何ができるか</h2>
-      <p>
-        2D の図形と文字、立体と光、粒と力、画素の読み書き、GPU の計算とポストエフェクトを、
-        1 つの <code>Sketch</code> の中で書く。座標は出す細かさのままなので、
-        描く解像度を落としても本文は変わらない。
-      </p>
-      <p>
-        走らせたスケッチは外から観測できる。撮る・作り直しの結果を読む・入力を送る、が
-        エージェントからも同じ口で使える。
-      </p>
+        <section class="feature wide" aria-labelledby="f-reload">
+          <div class="feature-text">
+            <p class="tag" translate="no">// 01 · live reload</p>
+            <h2 id="f-reload">保存すると、その場で差し替わる</h2>
+            <p>
+              <code>mokume watch</code> で走らせたまま書く。保存するたびに作り直して、窓の中身だけを入れ替える。
+              窓を閉じて開き直す手間が無いので、数字を 1 つ変えて見る、を何十回でも繰り返せる。
+            </p>
+            <div class="code" data-lang="shell" translate="no"><pre><code>mokume watch           # 保存したら作り直して差し替える
+mokume mcp             # 走っているスケッチを、エージェントから撮る・読む・操作する</code></pre></div>
+          </div>
+          <figure class="window">
+            <div class="window-bar" aria-hidden="true" translate="no">
+              <i></i><i></i><i></i><span>my-sketch — mokume watch</span>
+            </div>
+            <img
+              src="https://i.gyazo.com/bf9796f5fcfea45e426a854e6c9e11ce.webp"
+              width="1040"
+              height="270"
+              alt="左にスケッチのコード、右に実行中の絵。fill の行を書き換えて保存すると橙の円が水色に、circle の大きさを書き換えて保存すると円が大きくなる" />
+          </figure>
+        </section>
 
-      <ul class="gallery">
-        <li>
-          <figure>
+        <section class="feature" aria-labelledby="f-solids">
+          <div class="feature-text">
+            <p class="tag" translate="no">// 02 · 3D &amp; light</p>
+            <h2 id="f-solids">立体と光を、同じ書き味で</h2>
+            <p>
+              視点を置き、光を置き、塗って形を呼ぶ。2D と同じ <code>fill</code> と <code>push</code> / <code>pop</code> のまま、
+              影も輪郭線も付く。
+            </p>
+            <div class="code" data-lang="swift" translate="no"><pre><code>let angle = time * 0.5
+camera(
+    center.x + sin(angle) * distance, center.y - 210, cos(angle) * distance,
+    center.x, center.y + 110, 0,
+    0, 1, 0)
+ambientLight(111, 115, 129)
+directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.45, 0.85, -0.35)
+shadows(true)
+
+fill(242, 115, 76)
+box(90)</code></pre></div>
+            <p class="source">
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/SolidsAndLight.swift">Sketches/SolidsAndLight.swift</a>
+              から抜粋 (一部を短縮)
+            </p>
+          </div>
+          <figure class="window">
+            <div class="window-bar" aria-hidden="true" translate="no">
+              <i></i><i></i><i></i><span>solids and light</span><b>960×540</b>
+            </div>
             <img
-              src="https://i.gyazo.com/34337801ec22c3d5f82c6abe5b24b453.png"
-              width="960"
-              height="540"
-              alt="濃い灰の地に、橙・水色・青緑・白の小さな図形が面いっぱいに並んだ見本板" />
-            <figcaption>図形とスタイル</figcaption>
+              src="https://i.gyazo.com/a1df70eb0294c3ee5aa50a930e898e1a.webp"
+              width="480"
+              height="270"
+              alt="床の上に円柱・円錐・輪・箱・球が並び、視点が回るにつれて光の当たる面と影の向きが変わる" />
           </figure>
-        </li>
-        <li>
-          <figure>
+        </section>
+
+        <section class="feature flip" aria-labelledby="f-sparks">
+          <div class="feature-text">
+            <p class="tag" translate="no">// 03 · particles &amp; forces</p>
+            <h2 id="f-sparks">粒を撒いて、力で曲げる</h2>
+            <p>
+              渦を描く命令はどこにも無い。でたらめな向きに出した粒に 4 つの力を足すと、
+              2 本の腕が巻いて出てくる。どれか 1 つを外すと、絵はまったく別のものになる。
+            </p>
+            <div class="code" data-lang="swift" translate="no"><pre><code>emit(
+    sparks, from: .point(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring),
+    toward: .plane(0...(2 * Float.pi)), rate: 800, speed: 30...90, life: 2.4...4,
+    size: 1.5...4, color: color(255, 173, 71))
+
+force(
+    sparks,
+    .attract(eye.x, eye.y, strength: 420),
+    .swirl(eye.x, eye.y, strength: 350),
+    .drag(1.2),
+    .gravity(0, 60))
+particles(sparks)</code></pre></div>
+            <p class="source">
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/SparksAndForces.swift">Sketches/SparksAndForces.swift</a>
+              から抜粋
+            </p>
+          </div>
+          <figure class="window">
+            <div class="window-bar" aria-hidden="true" translate="no">
+              <i></i><i></i><i></i><span>sparks and forces</span><b>960×540</b>
+            </div>
             <img
-              src="https://i.gyazo.com/f9e73e08d339f1f5280c65fa673371f9.png"
-              width="960"
-              height="540"
-              alt="暗い地の下半分に、光を受けた立体がいくつも並び、面ごとに明るさが変わっている" />
-            <figcaption>立体と光</figcaption>
+              src="https://i.gyazo.com/e3407232bafed2fe7f49bdfef740a29e.webp"
+              width="480"
+              height="270"
+              alt="円の上を向かい合って回る 2 つの噴き口から橙の粒が出て、2 本の腕のような渦を描く" />
           </figure>
-        </li>
-        <li>
-          <figure>
+        </section>
+
+        <section class="feature" aria-labelledby="f-field">
+          <div class="feature-text">
+            <p class="tag" translate="no">// 04 · GPU compute</p>
+            <h2 id="f-field">GPU で場を計算し、そのまま塗る</h2>
+            <p>
+              計算のシェーダで場を毎フレーム書き換え、同じ場を塗りのシェーダで読む。
+              CPU へ読み戻すのは、要るときだけでいい。
+            </p>
+            <div class="code" data-lang="swift" translate="no"><pre><code>stir.set("time", .number(time))
+compute(stir, over: columns, by: rows, writes: [field])
+
+numbers(field)
+shader(paint)
+rect(0, 0, width, height)
+resetShader()</code></pre></div>
+            <p class="source">
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/FieldAndFlow.swift">Sketches/FieldAndFlow.swift</a>
+              から抜粋
+            </p>
+          </div>
+          <figure class="window">
+            <div class="window-bar" aria-hidden="true" translate="no">
+              <i></i><i></i><i></i><span>field and flow</span><b>960×540</b>
+            </div>
             <img
-              src="https://i.gyazo.com/aec4d9d19edc23aee65909d3c5e69ae2.png"
-              width="960"
-              height="540"
-              alt="画面いっぱいに広がる琥珀色の細かい模様。中ほどに暗く落ち込んだ領域がある" />
-            <figcaption>場と流れ</figcaption>
+              src="https://i.gyazo.com/78efcf97619760a0c8557afa54083c72.webp"
+              width="480"
+              height="270"
+              alt="琥珀色の等高線の模様が流れるように形を変え、暗い窪みが移動していく" />
           </figure>
-        </li>
-        <li>
-          <figure>
+        </section>
+
+        <section class="feature flip" aria-labelledby="f-glow">
+          <div class="feature-text">
+            <p class="tag" translate="no">// 05 · density &amp; effects</p>
+            <h2 id="f-glow">描く細かさを落として、効果を重ねる</h2>
+            <p>
+              描く細かさを半分と指定して拡大し、描き終えた絵ににじみ・色ずれ・周辺減光を重ねる。
+              指定するのは細かさだけで、コードに拡大は 1 行も出てこない。
+            </p>
+            <div class="code" data-lang="swift" translate="no"><pre><code>var settings: SketchSettings {
+    SketchSettings(
+        width: 960, height: 540, title: "glow and detail", pixelDensity: 0.5)
+}
+
+effects([
+    .bloom(amount: 0.45 + 0.35 * (0.5 + 0.5 * sin(time * 1.1)), threshold: 0.4, radius: 14),
+    .fringe(amount: 0.55),
+    .vignette(amount: 0.6),
+])</code></pre></div>
+            <p class="source">
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/GlowAndDetail.swift">Sketches/GlowAndDetail.swift</a>
+              から抜粋
+            </p>
+          </div>
+          <figure class="window">
+            <div class="window-bar" aria-hidden="true" translate="no">
+              <i></i><i></i><i></i><span>glow and detail</span><b>480×270 → 960×540</b>
+            </div>
             <img
               src="https://i.gyazo.com/c4b16442441d68c13a63ae69b4db81fc.gif"
               width="480"
               height="270"
               alt="放射状の線が回りながら、にじみの強さが周期的に強くなったり弱くなったりする" />
-            <figcaption>止まった 1 枚では読めないもの</figcaption>
           </figure>
-        </li>
-      </ul>
+        </section>
 
-      <h2>入れる</h2>
-      <p>macOS 26 (Tahoe) 以上・Apple Silicon 専用。</p>
-      <pre><code>brew install mokume-metal/tap/mokume</code></pre>
-      <p>
-        Homebrew を使わない入れ方は
-        <a href="https://github.com/mokume-metal/mokume#インストール">README</a>、
-        このリポジトリから道具を作る手順は
-        <a href="https://github.com/mokume-metal/mokume/blob/main/CONTRIBUTING.md#手元で作る"
-          >CONTRIBUTING</a
-        >
-        にある。
-      </p>
+        <section aria-labelledby="sketchbook">
+          <div class="section-head">
+            <p class="tag" translate="no">// sketchbook</p>
+            <h2 id="sketchbook">スケッチ帳</h2>
+            <p>
+              上の絵はすべて参照スケッチが描いたもの。どれも 1 ファイルで、そのまま走らせられる。
+            </p>
+          </div>
+          <ul class="sketchbook">
+            <li>
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/ShapesAndStyle.swift">
+                <img
+                  src="https://i.gyazo.com/34337801ec22c3d5f82c6abe5b24b453.png"
+                  width="960"
+                  height="540"
+                  alt="濃い灰の地に、橙・水色・青緑・白の小さな図形が面いっぱいに並んだ見本板" />
+                <span class="label">図形とスタイル <code translate="no">ShapesAndStyle</code></span>
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/SolidsAndLight.swift">
+                <img
+                  src="https://i.gyazo.com/f9e73e08d339f1f5280c65fa673371f9.png"
+                  width="960"
+                  height="540"
+                  alt="暗い地の下半分に、光を受けた立体がいくつも並び、面ごとに明るさが変わっている" />
+                <span class="label">立体と光 <code translate="no">SolidsAndLight</code></span>
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/FieldAndFlow.swift">
+                <img
+                  src="https://i.gyazo.com/aec4d9d19edc23aee65909d3c5e69ae2.png"
+                  width="960"
+                  height="540"
+                  alt="画面いっぱいに広がる琥珀色の細かい模様。中ほどに暗く落ち込んだ領域がある" />
+                <span class="label">場と流れ <code translate="no">FieldAndFlow</code></span>
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/mokume-metal/mokume/blob/main/Sketches/GlowAndDetail.swift">
+                <img
+                  src="https://i.gyazo.com/f7c28eb4c8f3251a8934729267de57ff.png"
+                  width="960"
+                  height="540"
+                  alt="濃い紺の地に、中心から放射状に伸びる無数の細い線。中心へ向かうほど明るく、周辺は暗く落ちている" />
+                <span class="label">にじみと細かさ <code translate="no">GlowAndDetail</code></span>
+              </a>
+            </li>
+            <li>
+              <a class="more" href="https://github.com/mokume-metal/mokume/tree/main/Sketches">
+                <strong>Sketches/ →</strong>
+                <span>文字・音・カメラ・通信・ゲームパッドほか、領域ごとの参照スケッチ</span>
+              </a>
+            </li>
+          </ul>
+        </section>
 
-      <h2>最初の 1 本</h2>
-      <pre><code>mokume new my-sketch
+        <section id="start" aria-labelledby="start-title">
+          <div class="section-head">
+            <p class="tag" translate="no">// getting started</p>
+            <h2 id="start-title">はじめる</h2>
+          </div>
+          <ol class="steps">
+            <li>
+              <div>
+                <h3>入れる</h3>
+                <p>macOS 26 (Tahoe) 以上・Apple Silicon 専用。</p>
+                <div class="code" data-lang="shell" translate="no"><pre><code>brew install mokume-metal/tap/mokume</code></pre></div>
+                <p>
+                  Homebrew を使わない入れ方は
+                  <a href="https://github.com/mokume-metal/mokume#インストール">README</a>、
+                  このリポジトリから道具を作る手順は
+                  <a href="https://github.com/mokume-metal/mokume/blob/main/CONTRIBUTING.md#手元で作る"
+                    >CONTRIBUTING</a
+                  >
+                  にある。
+                </p>
+              </div>
+            </li>
+            <li>
+              <div>
+                <h3>最初の 1 本</h3>
+                <div class="code" data-lang="shell" translate="no"><pre><code>mokume new my-sketch
 cd my-sketch
 mokume run             # 作って走らせる
-mokume watch           # 保存したら作り直して差し替える</code></pre>
-      <p>できるのは、そのまま動く 1 ファイルのスケッチ:</p>
-      <pre><code>import mokume
+mokume watch           # 保存したら作り直して差し替える</code></pre></div>
+              </div>
+            </li>
+            <li>
+              <div>
+                <h3>書く</h3>
+                <p>できるのは、そのまま動く 1 ファイルのスケッチ:</p>
+                <div class="code" data-lang="swift" translate="no"><pre><code>import mokume
 
 @main
 final class MySketch: Sketch {
@@ -316,35 +1050,484 @@ final class MySketch: Sketch {
         let angle = time * 0.8
         circle(width / 2 + cos(angle) * 160, height / 2 + sin(angle) * 120, 80)
     }
-}</code></pre>
+}</code></pre></div>
+              </div>
+            </li>
+          </ol>
+        </section>
 
-      <h2>もっと読む</h2>
-      <ul class="faces">
-        <li>
-          <a href="documentation/mokume/">
-            <strong>参照の面</strong>
-            <span>書ける口の説明。実行結果の絵つき</span>
-          </a>
-        </li>
-        <li>
-          <a href="https://github.com/mokume-metal/mokume">
-            <strong>GitHub</strong>
-            <span>ソース・Issue・リリース</span>
-          </a>
-        </li>
-        <li>
-          <a href="https://github.com/mokume-metal/mokume/blob/main/CONTRIBUTING.md">
-            <strong>貢献の入口</strong>
-            <span>起票から merge までの進め方</span>
-          </a>
-        </li>
-      </ul>
+        <section aria-labelledby="more">
+          <div class="section-head">
+            <p class="tag" translate="no">// next</p>
+            <h2 id="more">もっと読む</h2>
+          </div>
+          <ul class="faces">
+            <li>
+              <a href="documentation/mokume/">
+                <strong>参照の面</strong>
+                <span>書ける口の説明。実行結果の絵つき</span>
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/mokume-metal/mokume">
+                <strong translate="no">GitHub</strong>
+                <span>ソース・Issue・リリース</span>
+              </a>
+            </li>
+            <li>
+              <a href="https://github.com/mokume-metal/mokume/blob/main/CONTRIBUTING.md">
+                <strong>貢献の入口</strong>
+                <span>起票から merge までの進め方</span>
+              </a>
+            </li>
+          </ul>
+        </section>
 
-      <footer>
-        MIT License · 上の絵は
-        <a href="https://github.com/mokume-metal/mokume/tree/main/Sketches">参照スケッチ</a>
-        が描いたもの
-      </footer>
+        <footer>
+          MIT License · 絵はすべて
+          <a href="https://github.com/mokume-metal/mokume/tree/main/Sketches">参照スケッチ</a>
+          が描いたもの (いちばん上の木目だけはブラウザの飾り)
+        </footer>
+      </div>
     </main>
+
+    <script>
+      // ---- ヒーローの木目 ----------------------------------------------------
+      // **年輪と流れを、1 つの場の等値線として描く** (#3412)。場 φ は縦の位置を
+      // ドメインワープした fbm で揺らしたもので、線は φ の整数のところ。節では φ を
+      // 外は「円柱を回る流れ」の流線 (上下とも回り込む)、内は縁の値から芯へ刻む年輪に
+      // 置き換える。縁で値が繋がるので、流れの線がそのまま年輪を包む 1 枚の模様になる
+      // (2D で線と楕円を重ねた版は「重ねただけ」に見え、ガウスの膨らみを足した版は
+      // 上にだけ盛り上がる丘になった)。
+      // 節は 2 つが固定でゆっくり漂い、もう 1 つがポインタに付いてくる。
+      // 飾りなので、WebGL が使えなければ何もしない (文字とリンクはそれだけで読める)
+      (() => {
+        const canvas = document.getElementById("grain");
+        const hero = document.getElementById("hero");
+        const readout = document.getElementById("readout");
+        const gl = canvas.getContext && canvas.getContext("webgl", { antialias: false, alpha: false });
+        if (!gl || !gl.getExtension("OES_standard_derivatives")) return;
+
+        const vertex = `
+          attribute vec2 corner;
+          void main() { gl_Position = vec4(corner, 0.0, 1.0); }`;
+        const fragment = `
+          #extension GL_OES_standard_derivatives : enable
+          precision highp float;
+          uniform vec2 size;      // CSS 画素
+          uniform float ratio;    // 画素 / CSS 画素
+          uniform float time;
+          uniform vec3 knots[3];  // 中心 (CSS 画素) と強さ 0…1
+          uniform vec3 radii;     // 節の半径 (短い辺に対する比)
+
+          float hash(vec2 p) {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+          }
+          float noise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+                       mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+          }
+          float fbm(vec2 p) {
+            float sum = 0.0;
+            float amp = 0.5;
+            for (int i = 0; i < 5; i++) {
+              sum += amp * noise(p);
+              p = p * 2.03 + vec2(17.1, 9.2);
+              amp *= 0.5;
+            }
+            return sum;
+          }
+
+          // 1 本の場。単位は「線の本数」 — 整数のところに線が引かれる
+          const float LINES = 46.0;
+
+          // 節からの楕円の距離。**年輪の形を揺らす** — 揺らぎは向きだけで決まるので、
+          // 内の年輪と外の流れが同じ歪んだ輪郭を共有し、縁で食い違わない
+          float knotDistance(vec2 q, vec2 center, float seed) {
+            vec2 d = (q - center) * vec2(0.5, 1.0);
+            // 角度の正弦の和にする (値ノイズを向きで引くと、格子が出て輪が角張る)
+            float a = atan(d.y, d.x + 1e-5);
+            float wobble = 0.55 * sin(2.0 * a + seed) + 0.3 * sin(3.0 * a + seed * 1.7)
+                         + 0.15 * sin(5.0 * a + seed * 2.3);
+            return length(d) * (1.0 + 0.09 * wobble);
+          }
+
+          float field(vec2 q, float scale) {
+            // 木の繊維は横に長いので、横方向の周波数を落としてから揺らす
+            vec2 drift = vec2(time * 0.018, 0.0);
+            vec2 warp = vec2(fbm(q * vec2(0.9, 2.4) + drift),
+                             fbm(q * vec2(0.9, 2.4) + drift + vec2(5.2, 1.3)));
+            float base = (q.y + 0.11 * (fbm(q * vec2(0.7, 1.9) + 1.6 * warp) - 0.5)) * LINES;
+            // 帯の幅に緩急を付ける (詰まった晩材と広い早材)。傾きが負にならない量に留める
+            float phi = base + 0.3 * sin(base * 0.55 + 2.0 * fbm(vec2(q.x * 0.4, base * 0.05)));
+            for (int k = 0; k < 3; k++) {
+              // 節は横に長い楕円。半径は強さで育つ (ポインタの節は 0 から生まれる)
+              vec2 center = knots[k].xy / scale;
+              float radius = radii[k] * knots[k].z;
+              if (radius < 1e-3) continue;
+              float r = knotDistance(q, center, float(k) * 7.3);
+              float rest = LINES * center.y;
+              if (r > radius) {
+                // 外: 円柱を回る流れの流線 ψ = y (1 − R²/r²)。線は上下とも節を回り込み、
+                // 節の縁そのものが 1 本の等値線 (rest) になる
+                phi = rest + (phi - rest) * (1.0 - radius * radius / (r * r));
+              } else {
+                // 内: 縁の値 rest から芯へ向けて年輪を刻む。間隔は外の線と揃える
+                phi = rest - LINES * 0.8 * (radius - r);
+              }
+            }
+            // ゆっくり育つ — 年輪は節から生まれて外へ、流れは上へ送られる
+            return phi - time * 0.12;
+          }
+
+          void main() {
+            vec2 css = vec2(gl_FragCoord.x, size.y * ratio - gl_FragCoord.y) / ratio;
+            float scale = min(size.x, size.y);
+            vec2 q = css / scale;
+            float phi = field(q, scale);
+
+            float width = fwidth(phi);
+            float band = fract(phi);
+            float nearest = min(band, 1.0 - band) / max(width, 1e-4);   // 画素での距離
+            // 線は 1 CSS 画素前後。詰まって潰れるところ (節の縁) では線を薄め、面の濃さへ
+            float crowd = smoothstep(0.5, 0.18, width * ratio);
+            float line = clamp(0.7 * ratio - nearest + 0.5, 0.0, 1.0) * crowd;
+
+            // 帯の中の濃淡 (早材から晩材へ) と、繊維の細い筋
+            float grain = noise(vec2(q.x * 3.0, phi * 9.0)) * 0.5 + noise(vec2(q.x * 0.8, phi * 23.0)) * 0.5;
+            float tone = 0.02 * smoothstep(0.1, 0.95, band) + 0.014 * grain;
+
+            float index = floor(phi + 0.5);
+            bool accent = mod(index, 7.0) < 0.5;
+            vec3 ground = vec3(0.055, 0.067, 0.086);
+            vec3 ink = accent ? vec3(0.95, 0.45, 0.25) : vec3(0.60, 0.64, 0.70);
+            float alpha = accent ? 0.62 : 0.2;
+
+            // 節の芯は温かく、縁は樹皮の輪として暗く締める — 流れの線が詰まる場所を、
+            // 灰色のにじみではなく節の輪郭として見せる
+            float heart = 0.0;
+            float bark = 0.0;
+            for (int k = 0; k < 3; k++) {
+              float radius = max(radii[k] * knots[k].z, 1e-3);
+              float r = knotDistance(q, knots[k].xy / scale, float(k) * 7.3);
+              heart += knots[k].z * (1.0 - smoothstep(0.0, radius, r));
+              float edge = (r - radius) / (radius * 0.12);
+              bark += knots[k].z * exp(-edge * edge);
+            }
+
+            vec3 color = ground + tone + vec3(0.06, 0.026, 0.01) * heart;
+            color = mix(color, ink, line * alpha);
+            color = mix(color, vec3(0.03, 0.025, 0.024), 0.55 * clamp(bark, 0.0, 1.0));
+            color += vec3(0.22, 0.09, 0.04) * 0.35 * clamp(bark, 0.0, 1.0) * smoothstep(0.6, 1.0, bark);
+            gl_FragColor = vec4(color, 1.0);
+          }`;
+
+        const compile = (type, source) => {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+          return shader;
+        };
+        let program;
+        try {
+          program = gl.createProgram();
+          gl.attachShader(program, compile(gl.VERTEX_SHADER, vertex));
+          gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragment));
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+        } catch (error) {
+          console.warn("mokume: 木目の飾りを出せない", error);
+          return;
+        }
+        gl.useProgram(program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        const corner = gl.getAttribLocation(program, "corner");
+        gl.enableVertexAttribArray(corner);
+        gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
+        const uniform = (name) => gl.getUniformLocation(program, name);
+        const at = {
+          size: uniform("size"), ratio: uniform("ratio"), time: uniform("time"),
+          knots: uniform("knots"), radii: uniform("radii"),
+        };
+        gl.uniform3f(at.radii, 0.085, 0.055, 0.075);
+
+        const still = window.matchMedia("(prefers-reduced-motion: reduce)");
+        let width = 0;
+        let height = 0;
+        let ratio = 1;
+        let frame = 0;
+        let time = 0;
+        let last = 0;
+        let fps = 60;
+        let onScreen = true;
+        let raf = 0;
+        const pointer = { x: 0, y: 0, tx: 0, ty: 0, strength: 0, inside: false };
+
+        const resize = () => {
+          ratio = Math.min(window.devicePixelRatio || 1, 2);
+          width = hero.clientWidth;
+          height = hero.clientHeight;
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        };
+
+        const draw = () => {
+          gl.uniform2f(at.size, width, height);
+          gl.uniform1f(at.ratio, ratio);
+          gl.uniform1f(at.time, time);
+          gl.uniform3fv(at.knots, [
+            width * (0.74 + 0.02 * Math.sin(time * 0.11)), height * (0.38 + 0.03 * Math.cos(time * 0.09)), 1,
+            width * (0.9 + 0.015 * Math.cos(time * 0.07)), height * (0.8 + 0.02 * Math.sin(time * 0.13)), 1,
+            pointer.x, pointer.y, pointer.strength,
+          ]);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+        };
+
+        const report = () => {
+          const position = pointer.inside
+            ? `mouse (${Math.round(pointer.tx)}, ${Math.round(pointer.ty)})`
+            : "mouse (–, –)";
+          const pace = still.matches ? "still · prefers-reduced-motion" : `${fps.toFixed(0)} fps`;
+          readout.textContent =
+            `frame ${String(frame).padStart(6, "0")}  ·  ${pace}  ·  ${width}×${height}  ·  ${position}`;
+        };
+
+        const tick = (now) => {
+          raf = 0;
+          if (!running()) return;
+          const delta = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+          last = now;
+          fps += (1 / Math.max(delta, 0.001) - fps) * 0.05;
+          time += delta;
+          frame += 1;
+          // 節は指より少し遅れて付いてくる。入ると育ち、離れると流れへ戻る
+          pointer.x += (pointer.tx - pointer.x) * 0.08;
+          pointer.y += (pointer.ty - pointer.y) * 0.08;
+          pointer.strength += ((pointer.inside ? 1 : 0) - pointer.strength) * 0.04;
+          draw();
+          report();
+          raf = window.requestAnimationFrame(tick);
+        };
+
+        const running = () => onScreen && !document.hidden && !still.matches && !gl.isContextLost();
+        const start = () => {
+          if (raf || !running()) return;
+          last = 0;
+          raf = window.requestAnimationFrame(tick);
+        };
+        const stop = () => {
+          if (raf) window.cancelAnimationFrame(raf);
+          raf = 0;
+        };
+        const settle = () => {
+          // 動かさないときも 1 枚は描く (飾りが消えるのではなく、止まる)
+          if (running()) start();
+          else {
+            stop();
+            if (!gl.isContextLost()) draw();
+            report();
+          }
+        };
+
+        hero.addEventListener("pointermove", (event) => {
+          const box = hero.getBoundingClientRect();
+          pointer.tx = event.clientX - box.left;
+          pointer.ty = event.clientY - box.top;
+          if (pointer.strength < 0.02) {
+            pointer.x = pointer.tx;
+            pointer.y = pointer.ty;
+          }
+          pointer.inside = true;
+        });
+        hero.addEventListener("pointerleave", () => {
+          pointer.inside = false;
+        });
+        canvas.addEventListener("webglcontextlost", (event) => {
+          event.preventDefault();
+          stop();
+        });
+
+        new ResizeObserver(() => {
+          resize();
+          if (!raf) {
+            draw();
+            report();
+          }
+        }).observe(hero);
+        new IntersectionObserver((entries) => {
+          onScreen = entries[0].isIntersecting;
+          settle();
+        }).observe(hero);
+        document.addEventListener("visibilitychange", settle);
+        still.addEventListener("change", settle);
+
+        resize();
+        settle();
+      })();
+
+      // ---- コードの色付け ----------------------------------------------------
+      // 字句だけを見る小さな色付け。**原文 (HTML の中のテキスト) は変えない** —
+      // check-entry.py は HTML をそのまま読んで雛形と突き合わせるので、色の印は
+      // 読み込んだ後にだけ付ける
+      (() => {
+        const keywords = new Set([
+          "import", "final", "class", "struct", "var", "let", "func", "for", "in", "if",
+          "guard", "else", "return", "private", "true", "false", "self", "try", "throws",
+        ]);
+        const escape = (text) =>
+          text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const swift =
+          /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(@\w+)|(\b\d[\d_]*(?:\.\d+)?\b)|(\b[A-Za-z_]\w*\b)/g;
+        const shell = /(#[^\n]*)/g;
+        document.querySelectorAll(".code code").forEach((block) => {
+          const language = block.closest(".code").dataset.lang;
+          const text = block.textContent;
+          const pattern = language === "swift" ? swift : shell;
+          let html = "";
+          let cursor = 0;
+          for (const match of text.matchAll(pattern)) {
+            html += escape(text.slice(cursor, match.index));
+            const [token, comment, string, attribute, number, word] = match;
+            let kind = "";
+            if (comment) kind = "com";
+            else if (string) kind = "str";
+            else if (attribute) kind = "kw";
+            else if (number) kind = "num";
+            else if (word) {
+              if (keywords.has(word)) kind = "kw";
+              else if (/^[A-Z]/.test(word)) kind = "ty";
+              else if (text[match.index + word.length] === "(") kind = "fn";
+            }
+            html += kind ? `<span class="tk-${kind}">${escape(token)}</span>` : escape(token);
+            cursor = match.index + token.length;
+          }
+          block.innerHTML = html + escape(text.slice(cursor));
+        });
+      })();
+
+      // ---- ワンクリックの翻訳 -------------------------------------------------
+      // 端末内の翻訳 (Translator API) があれば、文字をその場で置き換える — 外へは
+      // 何も送らない。無ければ Google 翻訳のプロキシへ移る (利用者が押したときだけ)。
+      // translate="no" の中 (コード・名乗り・計器) はどちらの経路でも訳さない
+      (() => {
+        const button = document.getElementById("translate");
+        const label = button.querySelector("span");
+        const note = document.getElementById("mt-note");
+        const undo = document.getElementById("mt-undo");
+        const japanese = /[぀-ヿ㐀-鿿]/;
+        const proxied = location.hostname.endsWith(".translate.goog");
+        const originals = new Map();
+        let translated = false;
+
+        // translate.goog の名前は「- を -- に、. を - に」して作る。プロキシが引けるのは
+        // 公開された名前だけなので、手元 (localhost・file:) で開いたときは公開先を指す
+        const published =
+          /^https?:$/.test(location.protocol) &&
+          /\./.test(location.hostname) &&
+          !/^[\d.]+$/.test(location.hostname);
+        const proxyURL = () => {
+          const host = (published ? location.hostname : "mokume.org")
+            .replace(/-/g, "--")
+            .replace(/\./g, "-");
+          const path = published ? location.pathname : "/";
+          return `https://${host}.translate.goog${path}?_x_tr_sl=ja&_x_tr_tl=en&_x_tr_hl=en`;
+        };
+        const originalURL = () => {
+          const host = location.hostname
+            .replace(/\.translate\.goog$/, "")
+            .replace(/--/g, "\u0000")
+            .replace(/-/g, ".")
+            .replace(/\u0000/g, "-");
+          return `https://${host}${location.pathname}`;
+        };
+
+        const targets = () => {
+          const found = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode: (node) =>
+              japanese.test(node.nodeValue) &&
+              !node.parentElement.closest('[translate="no"], script, style')
+                ? NodeFilter.FILTER_ACCEPT
+                : NodeFilter.FILTER_REJECT,
+          });
+          while (walker.nextNode()) found.push(walker.currentNode);
+          document.querySelectorAll("img[alt]").forEach((image) => {
+            if (japanese.test(image.alt)) found.push(image);
+          });
+          return found;
+        };
+
+        const translateHere = async () => {
+          const pair = { sourceLanguage: "ja", targetLanguage: "en" };
+          if ((await Translator.availability(pair)) === "unavailable") return false;
+          const translator = await Translator.create({
+            ...pair,
+            monitor(monitor) {
+              monitor.addEventListener("downloadprogress", (event) => {
+                label.textContent = `${Math.round(event.loaded * 100)}%`;
+              });
+            },
+          });
+          for (const target of targets()) {
+            const isImage = target.nodeType === Node.ELEMENT_NODE;
+            const source = isImage ? target.alt : target.nodeValue;
+            const [, before, body, after] = source.match(/^(\s*)([\s\S]*?)(\s*)$/);
+            const english = await translator.translate(body.replace(/\s+/g, " "));
+            originals.set(target, source);
+            if (isImage) target.alt = english;
+            else target.nodeValue = before + english + after;
+          }
+          document.documentElement.lang = "en";
+          return true;
+        };
+
+        const restore = () => {
+          originals.forEach((source, target) => {
+            if (target.nodeType === Node.ELEMENT_NODE) target.alt = source;
+            else target.nodeValue = source;
+          });
+          originals.clear();
+          document.documentElement.lang = "ja";
+          translated = false;
+          note.hidden = true;
+          label.textContent = "English";
+        };
+
+        if (proxied) {
+          label.textContent = "日本語";
+          button.addEventListener("click", () => location.assign(originalURL()));
+        } else {
+          button.addEventListener("click", async () => {
+            if (translated) return restore();
+            if (!("Translator" in self)) return location.assign(proxyURL());
+            button.setAttribute("aria-busy", "true");
+            label.textContent = "…";
+            try {
+              if (!(await translateHere())) return location.assign(proxyURL());
+              translated = true;
+              note.hidden = false;
+              label.textContent = "日本語";
+            } catch {
+              // 途中で失敗したら、置き換えた分を戻してからプロキシへ
+              restore();
+              location.assign(proxyURL());
+            } finally {
+              button.removeAttribute("aria-busy");
+            }
+          });
+          undo.addEventListener("click", restore);
+        }
+        button.dataset.proxy = proxyURL();
+        button.hidden = false;
+      })();
+    </script>
   </body>
 </html>
