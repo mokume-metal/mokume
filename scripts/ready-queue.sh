@@ -161,6 +161,10 @@
 # 代償は既知である: 家族が動き続けていると、本当に落ちた予約も busy に隠れる。拾う動作は
 # いまのところ無い (ADR-0036 決定 5) ので、誤って拾うより安い側に倒した。
 #
+# **dropped を読むのは scripts/stall-watch.sh (当番) である** (#3366)。`DROPPED_MINUTES=<3 日の分>`
+# で打ち、dropped の行だけを取って、人の手が 3 日以上無い着手印を名乗り赤くする。名乗るだけで、
+# 印は外さない (拾うのは人)。
+#
 # **見ないもの**: 他のマシンで動いているセッション。worktree は手元のものしか見えないので、
 # dropped は「落ちた」ではなく「**落ちて見える**」までしか言わない。拾う動作を足さないのも
 # 同じ理由である (ADR-0036 決定 5 — 出すのは 0 円だが、拾うには実害が要る)。
@@ -252,7 +256,8 @@ claims=$(jq -r --arg repo "$REPO" '
       | select((.repository.owner.login + "/" + .repository.name) == $repo)
       | "\(.number) \($pr.number)"' <<<"$prs_json")
 
-# 静けさの境目。**BSD の date を先に試す** (このスクリプトが走るのは手元の Mac である)。
+# 静けさの境目。**BSD の date を先に試す** (走るのは手元の Mac と、当番 (stall-watch・ubuntu) —
+# 当番では -v が断られ、GNU の -d の枝で同じ値になる。どちらも scripts/tests/ready_queue_test.py が通す)。
 # 1 度だけ作って ISO8601 の字面で比べる — 同じ書式・同じ UTC なら辞書順が時刻順になる
 QUIET_BEFORE=$(date -u -v-"${DROPPED_MINUTES}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
   date -u -d "${DROPPED_MINUTES} minutes ago" +%Y-%m-%dT%H:%M:%SZ)

@@ -697,7 +697,7 @@ name_stale_claims() {
   # 0 と 1 は読めている (1 は ready が 0 件)。ただし 1 は途中で落ちた回とも同じなので、
   # 最後に打つ件数の行があるときだけ読めたと数える
   if [ "$rc" -ge 2 ] || { [ "$rc" -eq 1 ] && ! grep -q '^ready [0-9]* / stock' "$errfile"; }; then
-    say_line - unreadable name 0 "着手印の残った Issue を読めなかった (ready-queue.sh の終了コード $rc・判定していない)"
+    say_line - unreadable name 0 "着手印の残った Issue を読めなかった (ready-queue.sh の終了コード ${rc}・判定していない)"
     rm -f "$errfile"
     return 1
   fi

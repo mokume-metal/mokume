@@ -156,6 +156,19 @@ echo "偽 git が知らない呼び出し: $*" >&2
 exit 1
 """
 
+# GNU の date のふり (ubuntu の当番が走るときの形・#3366)。-v は知らない option として断り、
+# `-u -d "<N> minutes ago" <書式>` は手元の BSD date の -v に直して答える (このホストでも通すため)
+FAKE_DATE_GNU = """#!/bin/bash
+for a in "$@"; do
+  case "$a" in -v*) echo "date: invalid option -- 'v'" >&2; exit 1 ;; esac
+done
+if [ "$1 $2" = "-u -d" ]; then
+  n=${3%% *}
+  exec /bin/date -u -v-"${n}"M "$4"
+fi
+exec /bin/date "$@"
+"""
+
 SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
 
 # 既定は「ずっと前」。静けさを見る検査だけが新しい時刻を渡す
@@ -296,6 +309,7 @@ class ReadyQueueTest(unittest.TestCase):
         parents=None,
         hands=None,
         selves=None,
+        gnu_date=False,
         **extra_env,
     ):
         with tempfile.TemporaryDirectory() as tmp:
@@ -318,7 +332,10 @@ class ReadyQueueTest(unittest.TestCase):
 
             bindir = tmp / "bin"
             bindir.mkdir()
-            for name, body in (("gh", FAKE_GH), ("git", FAKE_GIT)):
+            bins = [("gh", FAKE_GH), ("git", FAKE_GIT)]
+            if gnu_date:
+                bins.append(("date", FAKE_DATE_GNU))
+            for name, body in bins:
                 path = bindir / name
                 path.write_text(body, encoding="utf-8")
                 path.chmod(0o755)
@@ -496,6 +513,46 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[20][0], "dropped", "16 進の名前に当たった子で生きていると読んでいる")
+
+    # 3e. 当番 (stall-watch) が打つ形: 閾値 3 日で、手元の Mac の date と ubuntu の GNU の date が
+    # 同じ行を出す (#3366)。GNU の枝は `date -v` が断られたときの `date -d` である
+    def test_stale_claims_at_three_day_threshold(self):
+        issues = [
+            # #2507 の形: 印も人の最後の手も古い
+            issue(2507, labels=["status: in progress"]),
+            # #2251 の形: 人の手は 12 日前で止まり、その後は bot の追記だけが続く
+            issue(2251, labels=["status: in progress"], updated=ago(30)),
+            # 2 日前に人がコメントした着手
+            issue(2400, labels=["status: in progress"], updated=ago(2 * 24 * 60)),
+        ]
+        hands = {
+            2251: {"nodes": [human_comment(12 * 24 * 60), bot_comment(30)]},
+            2400: {"nodes": [human_comment(2 * 24 * 60)]},
+        }
+        outputs = []
+        for gnu in (False, True):
+            with self.subTest(gnu_date=gnu):
+                done, _ = self.run_queue(issues, hands=hands, gnu_date=gnu, DROPPED_MINUTES="4320")
+                seen = self.lines_by_number(done.stdout)
+                self.assertEqual(seen[2507][0], "dropped", done.stdout)
+                self.assertEqual(seen[2251][0], "dropped", "bot の追記で生きていると読んでいる")
+                self.assertEqual(seen[2400][0], "busy", "2 日前の人の手を静かと読んでいる")
+                outputs.append(done.stdout)
+        self.assertEqual(outputs[0], outputs[1], "手元の date と GNU の date で行が違う")
+
+    # 3f. 閾値の境目: 閾値ちょうど (静か) と 1 分前 (まだ動いている)
+    def test_threshold_boundary(self):
+        threshold = 4320
+        done, _ = self.run_queue(
+            [
+                issue(70, labels=["status: in progress"], updated=ago(threshold)),
+                issue(71, labels=["status: in progress"], updated=ago(threshold - 1)),
+            ],
+            DROPPED_MINUTES=str(threshold),
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[70][0], "dropped", "閾値ちょうどを静かと読んでいない")
+        self.assertEqual(seen[71][0], "busy", "閾値の 1 分前を静かと読んでいる")
 
     # 3d. 静かになるまでは dropped と呼ばない (枝の名前は番号を持たないことが多い)
     def test_recent_activity_is_still_busy(self):
