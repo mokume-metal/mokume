@@ -99,6 +99,16 @@ nonisolated struct Playhead: Equatable {
         projection = nil
     }
 
+    /// 公開の秒 (単精度) を、飛ぶ先の秒 (``jump(to:)`` へ渡す値) に直す。**公開の長さ (``duration`` を単精度に
+    /// 丸めたもの) 以上の秒は、内部の長さそのものへ寄せる。** 単精度へ丸めた長さは、内部の長さをわずかに
+    /// 割ることがあり (3.3 秒は 3.29999995…)、作者が公開の長さを渡して「終わりへ飛ぶ」つもりでも、
+    /// 終わりの手前に着いて「終わりまで映したか」(``hasEnded``) が偽になる (#3303)。数でない値・無限は
+    /// そのまま返し、``jump(to:)`` が受け取らない。
+    func landing(_ seconds: Float) -> Double {
+        guard seconds.isFinite, seconds >= Float(duration) else { return Double(seconds) }
+        return duration
+    }
+
     /// 次のフレームで `seconds` 秒の位置を映す。範囲の外は 0 か長さへ寄せる。
     ///
     /// - Returns: 受け取ったか。数でない値・無限は受け取らない (位置は変わらない)。

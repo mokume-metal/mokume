@@ -375,7 +375,7 @@ public final class SoundFile: Inlet, EffectInput {
     /// (``pause()`` の後・``stop()`` の後・鳴り終わった後) は位置だけを動かし、鳴らさない。次の
     /// ``play()`` か ``loop()`` がそこから鳴らす。
     ///
-    /// 0 より前は頭、``duration`` より後は終わりへ寄せる。数でない値・無限の値は位置を変えず、
+    /// 0 より前は頭、``duration`` より後は終わりへ寄せる (``duration`` を渡せば、長いファイルでも終わりへ着く)。数でない値・無限の値は位置を変えず、
     /// そのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。どれも `Movie` の `jump(_:)` と同じ。
     ///
     /// 同じフレームで後から ``play()`` か ``loop()`` を呼ぶと、鳴っている最中なら頭から鳴らし直す
@@ -391,10 +391,21 @@ public final class SoundFile: Inlet, EffectInput {
                     + "at \(position) seconds")
             return
         }
-        // 寄せてから整数にする (大きな秒のまま整数へ直すと溢れる)。いちばん近い標本へ丸める — 切り捨てると、
-        // 単精度で 5.1 をわずかに割る `jump(5.1)` が 1 標本手前になり、`position` が 5.1 に戻らない
-        let reach = min(max(Double(seconds) * Double(sampleRate), 0), Double(samples.count))
-        submit(.jump(Int(reach.rounded())))
+        submit(.jump(Self.landing(seconds, sampleRate: sampleRate, count: samples.count)))
+    }
+
+    /// `seconds` 秒 (公開の単精度) の標本の番号。0〜`count` へ寄せる。
+    ///
+    /// 寄せてから整数にする (大きな秒のまま整数へ直すと溢れる)。いちばん近い標本へ丸める — 切り捨てると、
+    /// 単精度で 5.1 をわずかに割る `jump(5.1)` が 1 標本手前になり、`position` が 5.1 に戻らない。
+    /// **公開の長さ (``duration``。標本の数 ÷ 標本化率を単精度へ丸めたもの) 以上の秒は、終わりの標本 (`count`) へ
+    /// 寄せる** — 丸めの向きによっては、長いファイル (48 kHz で 250 秒ほどから) で `jump(duration)` が
+    /// 1 標本手前に着き、終わりの位置と見なされず、1 標本だけ鳴って終わる (#3303)。
+    nonisolated static func landing(_ seconds: Float, sampleRate: Float, count: Int) -> Int {
+        let length = Float(Double(count) / Double(sampleRate))
+        if seconds >= length { return count }
+        let reach = min(max(Double(seconds) * Double(sampleRate), 0), Double(count))
+        return Int(reach.rounded())
     }
 
     /// いま鳴らしている位置 (秒)。0 から ``duration`` まで。``jump(_:)`` を呼んだ後なら、その飛び先。

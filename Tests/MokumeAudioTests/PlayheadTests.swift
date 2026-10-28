@@ -163,6 +163,34 @@ nonisolated struct PlayheadTests {
         #expect(near.start == 1999)
     }
 
+    @Test("公開の長さ (単精度) を渡した jump は、長いファイルでも終わりの標本に着き、鳴らし始めは頭から")
+    func jumpingToThePublicDurationLandsOnTheEndSample() {
+        // 48 kHz で 256 秒を越えるファイルは、単精度の長さに戻した秒 × 標本化率が、終わりの 1 標本手前へ丸まる標本の数がある
+        // (12_288_002 標本は 1 標本手前になる。丸めを寄せなければ、この数が赤になる)
+        for (rate, base) in [(Float(48_000), 12_288_000), (44_100, 13_230_000), (48_000, 172_800_000)] {
+            for count in base..<(base + 200) {
+                let duration = Float(Double(count) / Double(rate))
+                #expect(
+                    SoundFile.landing(duration, sampleRate: rate, count: count) == count,
+                    "\(count) 標本・\(rate) Hz")
+            }
+        }
+        // 終わりに着いた jump の後の鳴らし始めは、頭から
+        let count = 12_288_002
+        var head = Playhead(length: count)
+        head.jump(to: SoundFile.landing(Float(Double(count) / 48_000), sampleRate: 48_000, count: count))
+        head.play(looping: false)
+        #expect(head.start == 0)
+        #expect(!head.hasEnded(after: 0))
+        // 終わりでない秒は、いちばん近い標本のまま。範囲の外は端へ
+        #expect(SoundFile.landing(1.5, sampleRate: 48_000, count: 480_000) == 72_000)
+        #expect(SoundFile.landing(5.1, sampleRate: 44_100, count: 441_000) == 224_910)
+        #expect(SoundFile.landing(-3, sampleRate: 48_000, count: 480_000) == 0)
+        #expect(SoundFile.landing(99, sampleRate: 48_000, count: 480_000) == 480_000)
+        // 終わりの 1 標本手前の秒は、終わりへ寄せない
+        #expect(SoundFile.landing(9.99998, sampleRate: 48_000, count: 480_000) == 479_999)
+    }
+
     @Test("鳴っている間に飛んだ区切りは、始まりより前をファイルの標本で埋める (頭より前は 0)")
     func jumpWhilePlayingFillsTheWindowFromTheFile() {
         var head = Playhead(length: 2000)

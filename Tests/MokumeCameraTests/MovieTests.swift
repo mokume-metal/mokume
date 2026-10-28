@@ -211,6 +211,32 @@ struct MovieTests {
         #expect(rows[8].time == Float(20.0 / 30))
     }
 
+    /// 公開の `duration` は単精度で、長さによっては内部の長さ (倍精度) をわずかに割る。そのまま渡した `jump` が
+    /// 終わりの手前に着き、`play()` が頭から流れなかった (#3303)。
+    @Test("公開の duration を渡して終わりへ飛んでから play() すると、長さが単精度で表せなくても、頭から流れる")
+    func playAfterJumpingToThePublicDurationStartsFromTheTop() async throws {
+        // 17 コマ (17/30 秒) は、単精度へ丸めた長さが倍精度の長さを割る
+        let url = try await TestMovie.write(frames: 17)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let exact = try MovieReader(url: url, path: "duration.mov").duration
+        try #require(Double(Float(exact)) < exact, "この長さは単精度で割らない: 検査の前提が崩れた")
+        var shown: [Float] = []
+        _ = try record(
+            url, frames: 8, prepare: { _ in },
+            during: { sketch, movie in
+                if sketch.frameCount == 2 {
+                    movie.jump(movie.duration)
+                    movie.play()
+                }
+                shown.append(movie.time)
+            })
+        // 頼んだ次のフレームから頭、その後は 1 フレームぶんずつ流れる (終わりで止まらない)
+        let expected: [Float] = (0..<6).map { Float(Double($0) / 30) }
+        #expect(shown.count == 8)
+        #expect(
+            zip(shown[2...], expected).allSatisfy { abs($0 - $1) < 1e-5 }, "頭から 1 フレームぶんずつ: \(shown)")
+    }
+
     @Test("1 度だけ流すと終わりのコマで止まる")
     func playStopsOnTheLastFrame() async throws {
         let url = try await TestMovie.write(frames: 6)
