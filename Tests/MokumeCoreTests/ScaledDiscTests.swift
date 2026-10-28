@@ -110,8 +110,8 @@ struct ScaledDiscTests {
     /// 空振りはそこで捕まる (基本図形が距離関数の経路で描かれても、期待値の側が違う絵になる)。
     private func shade(_ canvas: Canvas) {
         guard
-            let shader = try? canvas.makeShader(
-                "float4 paint(Fragment in, Values values) { return in.color; }")
+            let shader = creating({ try canvas.makeShader(
+                "float4 paint(Fragment in, Values values) { return in.color; }") })
         else { return }
         canvas.shader(shader)
     }
@@ -974,7 +974,7 @@ struct ScaledDiscTests {
             canvas.stroke(255)
             canvas.strokeWeight(1.3)
             // 絵を貼った矩形は三角形の経路で、不透明の線は重ねたまま積まれ、矩形の角の削ぎも通る
-            let picture = try? canvas.createImage(1, 1)
+            let picture = creating({ try canvas.createImage(1, 1) })
             retained = canvas.createShape {
                 for cap in [StrokeCap.round, .square, .project] {
                     for join in [StrokeJoin.round, .miter, .bevel] {

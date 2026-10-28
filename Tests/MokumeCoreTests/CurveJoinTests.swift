@@ -261,7 +261,7 @@ struct CurveJoinTests {
     {
         try render { canvas in
             // 絵の中身は問わない。塗りに絵が付いていることだけが経路を決める
-            guard let picture = try? canvas.createImage(1, 1) else { return }
+            guard let picture = creating({ try canvas.createImage(1, 1) }) else { return }
             canvas.texture(picture)
             canvas.fill(black)
             canvas.strokeWeight(10)
@@ -278,8 +278,8 @@ struct CurveJoinTests {
     {
         try render { canvas in
             guard
-                let shader = try? canvas.makeShader(
-                    "float4 paint(Fragment in, Values values) { return in.color; }")
+                let shader = creating({ try canvas.makeShader(
+                    "float4 paint(Fragment in, Values values) { return in.color; }") })
             else { return }
             canvas.shader(shader)
             canvas.strokeWeight(10)

@@ -596,10 +596,10 @@ struct FilterImmediateTests {
         var effect: EffectShader?
         var seen: [Float] = []
         func setup() {
-            source = try? createImage(2, 2)
+            source = creating({ try createImage(2, 2) })
             source?.set(0, 0, LinearRGBA.display(red: 0.5, green: 0.5, blue: 0.5))
-            effect = try? makeEffect(
-                "float4 effect(Pixel in, Values values) { return float4(float3(in.time * 10.0), 1.0); }")
+            effect = creating({ try makeEffect(
+                "float4 effect(Pixel in, Values values) { return float4(float3(in.time * 10.0), 1.0); }") })
         }
         func draw() {
             background(0)
@@ -665,8 +665,8 @@ struct FilterImmediateTests {
             func draw() {
                 background(0)
                 // 毎フレーム新しい写しに掛ける (写しは手放される)
-                if let image = try? createImage(2, 2) { _ = image.copy().filtered([.invert()]) }
-                if let image = try? createImage(3, 1) { _ = image.copy().filtered([.invert()]) }
+                if let image = creating({ try createImage(2, 2) }) { _ = image.copy().filtered([.invert()]) }
+                if let image = creating({ try createImage(3, 1) }) { _ = image.copy().filtered([.invert()]) }
             }
         }
         let gpu = try RenderDevice()

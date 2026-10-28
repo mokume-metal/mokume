@@ -15,7 +15,7 @@ final class MovieSketch: Sketch {
     nonisolated(unsafe) static var onDraw: (MovieSketch) -> Void = { _ in }
     init() {}
     var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: Self.frameRate) }
-    func setup() { try? Self.onSetup(self) }
+    func setup() throws { try Self.onSetup(self) }
     func draw() {
         background(0, 0, 0)
         Self.onDraw(self)

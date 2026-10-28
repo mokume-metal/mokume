@@ -314,7 +314,7 @@ struct SceneOutsideFrameTests {
             (
                 "emit", .particles,
                 { sketch in
-                    guard let dust = try? sketch.makeParticles(count: 4) else { return }
+                    guard let dust = creating({ try sketch.makeParticles(count: 4) }) else { return }
                     sketch.emit(dust, from: .point(8, 8), rate: 60)
                 }
             ),

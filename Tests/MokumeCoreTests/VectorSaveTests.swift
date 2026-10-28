@@ -361,7 +361,7 @@ struct VectorSaveTests {
             let url = directory.appendingPathComponent("plot.svg")
             let sketch = PlotterSketch()
             var layer: Canvas?
-            sketch.onSetup = { layer = try? $0.canvas.createGraphics(8, 8) }
+            sketch.onSetup = { sketch in layer = creating({ try sketch.canvas.createGraphics(8, 8) }) }
             sketch.onDraw = { sketch in
                 sketch.save(url.path)
                 sketch.stroke(0)

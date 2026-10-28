@@ -392,7 +392,7 @@ struct GraphicsTests {
             var dropped: Set<ObjectIdentifier> = []
             var born: Canvas?
             while born == nil, dropped.count < Self.reuseAttempts {
-                guard let made = try? canvas.createGraphics(16, 16) else { return }
+                guard let made = creating({ try canvas.createGraphics(16, 16) }) else { return }
                 let isBorn =
                     keepDroppedAlive ? !dropped.isEmpty : dropped.contains(ObjectIdentifier(made))
                 if isBorn {
@@ -691,11 +691,11 @@ struct GraphicsTests {
         init() {}
         var settings: SketchSettings { SketchSettings(width: 32, height: 16, frameRate: 30) }
         func setup() {
-            pulse = try? makeShader(
-                "float4 paint(Fragment in, Values values) { \(GraphicsTests.pulse) }")
-            outer = try? createGraphics(16, 16)
+            pulse = creating({ try makeShader(
+                "float4 paint(Fragment in, Values values) { \(GraphicsTests.pulse) }") })
+            outer = creating({ try createGraphics(16, 16) })
             graphics = outer
-            if nested { graphics = try? outer?.createGraphics(16, 16) }
+            if nested, let outer { graphics = creating({ try outer.createGraphics(16, 16) }) }
         }
         func draw() {
             guard let pulse, let graphics else { return }
@@ -769,9 +769,9 @@ struct GraphicsTests {
         init() {}
         var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
         func setup() {
-            effect = try? makeEffect(
-                "float4 effect(Pixel in, Values values) { \(GraphicsTests.pulse) }")
-            graphics = try? createGraphics(16, 16)
+            effect = creating({ try makeEffect(
+                "float4 effect(Pixel in, Values values) { \(GraphicsTests.pulse) }") })
+            graphics = creating({ try createGraphics(16, 16) })
         }
         func draw() {
             guard let effect, let graphics else { return }
@@ -822,9 +822,9 @@ struct GraphicsTests {
         init() {}
         var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
         func setup() {
-            onScreen = try? makeParticles(count: 1)
-            onGraphics = try? makeParticles(count: 1)
-            graphics = try? createGraphics(16, 16)
+            onScreen = creating({ try makeParticles(count: 1) })
+            onGraphics = creating({ try makeParticles(count: 1) })
+            graphics = creating({ try createGraphics(16, 16) })
         }
         func draw() {
             guard let onScreen, let onGraphics, let graphics else { return }
