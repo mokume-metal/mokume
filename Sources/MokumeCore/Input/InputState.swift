@@ -329,16 +329,18 @@ public final class InputState {
         }
     }
 
-    /// 移動 1 件が生む呼び出し。押していれば引きずり、押していなければ移動とその量が続く。
+    /// 移動 1 件が生む呼び出し。押していれば引きずりとその量が、押していなければ移動とその量が続く。
     ///
-    /// **`mouseMoved` の直後に量を続ける** (``InputCallback/mouseMovedBy(deltaX:deltaY:)``)。
-    /// 引数なしの `mouseMoved()` は残し、量の要る書き手は引数のある口を書く — 置き換えると、
-    /// 引数なしで書いた作品が黙って呼ばれなくなる (ADR-0034 決定 5 の追補 (2026-10-07))。
+    /// **`mouseMoved` / `mouseDragged` の直後に量を続ける** (``InputCallback/mouseMovedBy(deltaX:deltaY:)``・
+    /// ``InputCallback/mouseDraggedBy(deltaX:deltaY:)``)。引数なしの口は残し、量の要る書き手は引数のある
+    /// 口を書く — 置き換えると、引数なしで書いた作品が黙って呼ばれなくなる
+    /// (ADR-0034 決定 5 の追補 (2026-10-07) と改訂 (2026-10-28))。
     private func dispatchMotion(
         deltaX: Float, deltaY: Float, before: Before, to dispatch: (InputCallback) -> Void
     ) {
         if before.isMouseDown {
-            dispatch(.mouseDragged(deltaX: deltaX, deltaY: deltaY))
+            dispatch(.mouseDragged)
+            dispatch(.mouseDraggedBy(deltaX: deltaX, deltaY: deltaY))
         } else {
             dispatch(.mouseMoved)
             dispatch(.mouseMovedBy(deltaX: deltaX, deltaY: deltaY))

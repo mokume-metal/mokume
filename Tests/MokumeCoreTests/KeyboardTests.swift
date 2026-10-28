@@ -218,7 +218,7 @@ struct KeyboardTests {
             callbacks([
                 .mouseDown(x: 0, y: 0, button: .left), .mouseDown(x: 0, y: 0, button: .right),
                 .mouseUp(x: 0, y: 0, button: .right), .mouseMoved(x: 3, y: 4),
-            ]).last == .mouseDragged(deltaX: 3, deltaY: 4))
+            ]).suffix(2) == [.mouseDragged, .mouseDraggedBy(deltaX: 3, deltaY: 4)])
     }
 }
 

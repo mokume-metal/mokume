@@ -31,8 +31,13 @@ enum InputCallback: Equatable, Sendable {
     /// 名前を `mouseMoved` に揃えられないのは、Swift が同じ基底名の case を 2 つ持てないため
     /// である。
     case mouseMovedBy(deltaX: Float, deltaY: Float)
-    /// 押したまま動いた。**その 1 件で動いた量**を運ぶ。
-    case mouseDragged(deltaX: Float, deltaY: Float)
+    /// 押したまま動いた。
+    case mouseDragged
+    /// 押したまま動いた量。``mouseDragged`` の直後に続き、スケッチの
+    /// `mouseDragged(deltaX:deltaY:)` に当たる。**その 1 件で動いた量**を運ぶ。
+    ///
+    /// 名前を `mouseDragged` に揃えられないのは ``mouseMovedBy(deltaX:deltaY:)`` と同じ理由である。
+    case mouseDraggedBy(deltaX: Float, deltaY: Float)
     /// スクロールされた。**その 1 件ぶんの量**を運ぶ。
     case mouseWheel(deltaX: Float, deltaY: Float)
     /// ファイルが落とされた。落とした所は、呼ぶ前に ``InputState/x``・``InputState/y`` へ当たっている

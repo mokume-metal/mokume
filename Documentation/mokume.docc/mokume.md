@@ -358,7 +358,6 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 
 | 手本 | mokume | 写すときの直し方 |
 | --- | --- | --- |
-| `mouseDragged()` | ``Sketch/mouseDragged(deltaX:deltaY:)`` | `func mouseDragged(deltaX: Float, deltaY: Float)` と書く。量を使わなくても引数は要る |
 | `mouseWheel()` | ``Sketch/mouseWheel(deltaX:deltaY:)`` | `func mouseWheel(deltaX: Float, deltaY: Float)` と書く。回した量は引数で受け取る |
 
 #### 数え方が違う
@@ -998,6 +997,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/selectInput(_:)``
 - ``Sketch/mouseMoved()``
 - ``Sketch/mouseMoved(deltaX:deltaY:)``
+- ``Sketch/mouseDragged()``
 - ``Sketch/mouseDragged(deltaX:deltaY:)``
 - ``Sketch/keyPressed()``
 - ``Sketch/keyReleased()``

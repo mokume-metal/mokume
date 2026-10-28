@@ -76,7 +76,12 @@ extension SketchPart {
     ///
     /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量が
     /// 要るなら ``Sketch/mouseDragged(deltaX:deltaY:)`` が引数で受け取る — 1 フレーム
-    /// ぶんを足し合わせればここと一致する。
+    /// ぶんを足し合わせればここと一致する。**``Sketch/mouseDragged()`` の中でここを読むと、
+    /// 1 フレームに複数件届いたとき、その出来事までの部分累計になる** (`3a + 2b + c` を足し込む形)。
+    /// 1 件ぶんは ``Sketch/mouseDragged(deltaX:deltaY:)`` の引数で受け取る ([ADR-0034] 決定 5 の
+    /// 改訂 (2026-10-28))。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var dragX: Float { Self.input.dragX }
     /// このフレームに、押したまま引きずった量 (縦)。
     public var dragY: Float { Self.input.dragY }
