@@ -129,6 +129,18 @@
 #      打たない。検査の最新が赤・走っている途中・片方が無いなら名乗らない (読み直しても緑に
 #      ならない。直すのはコードの側)。**#2718 より前の本文の編集の run の赤を最新の ci-gate に持つ
 #      open な PR が無くなったら、この行と edited の判定ごと消してよい**
+#  15. 着手印 (status: in progress) が付いたまま、紐づく open PR が無く、人の手 (bot の追記を除く) が
+#      3 日以上無い Issue (stale-claim・#3366)
+#      原因: 着手したセッションが PR を出さずに終わった・束の記録の閉じ忘れ・Refs の PR が merge された後の
+#      段を持つ者がいない・bot の追記だけが続く。2026-10-27 には 14 件が溜まり、次の仕事を選ぶ側からは
+#      どの Issue も「誰かが持っている」ように見えた。#2251 では印が付いていたせいで、release の赤が
+#      9 日間誰にも読まれなかった (#3365)
+#      対処: 条件を満たしているなら閉じる。残るなら印を外し、残る条件と再開の手順を Issue に書く。続けて
+#      いるなら、プランを更新して人の手を残す (それで名乗りが止まる)。当番は印を外さない・起票しない
+#      見えないもの: CI からは手元の worktree / 枝が見えない。枝の名前は番号を持たないことが多いので、
+#      リモートの枝を読んでも補えない。だから閾値は日単位 (CLAIM_STALL_MINUTES・既定 3 日) で、PR を出す
+#      前に 1 日を越えた着手は、手元で動いていても名乗られうる。判定の式は scripts/ready-queue.sh の
+#      dropped と 1 つで、ここに写しは無い
 #
 # 読むときの注意:
 #
@@ -166,6 +178,7 @@
 #   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
 #   stale-gate           name   13      古い pr-gate の打ち直しは人手。当番には打たせていない (#2668)
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
+#   stale-claim          name   15      着手印を外す・閉じる・プランを更新するのは人手。番号は Issue のもの
 #   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
 #
 # **auto-merge-dropped は打たずに名乗り、猶予を超えたら赤で人に返す** (#2614)。以前は act
@@ -246,6 +259,30 @@
 #   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
 # - run の一覧を読めなかったら unreadable を名乗る。黙ると「止まっていない」に倒れる (#1303)
 #
+# ## Issue を見る行 (stale-claim・#3366)
+#
+# PR ではなく **着手印の残った Issue** を見る。番号の欄は Issue の番号である。判定は
+# scripts/ready-queue.sh の dropped で、**ここに式を写さない** — `DROPPED_MINUTES=
+# $CLAIM_STALL_MINUTES bash scripts/ready-queue.sh` を打って dropped の行だけを取る。
+# DROPPED_MINUTES は静けさの境目と bot の手を読む窓の両方を決める (ready-queue.sh の
+# QUIET_BEFORE)。窓と境目を分ける必要が出たら、判定を関数に切り出して両方から読む。
+#
+# - ready-queue.sh の終了コードは 0 (ready がある)・1 (ready が 0 件) のどちらも読めている。
+#   2 (一覧を読めなかった) は unreadable を名乗る。1 で終えた回も、件数の行 (標準エラーの
+#   `ready N / ...`) が無ければ途中で落ちているので unreadable にする
+# - 経過の欄は閾値 (CLAIM_STALL_MINUTES) を出す。dropped の行は実際の経過を持たない下限である
+# - **猶予を超えた名乗りしか出ないので、出したら必ず 1 で終える** (runner-offline と同じ形)。
+#   人が印を外す・閉じる・プランで人の手を残すまで赤が続く。その間に起きた PR の詰まりの赤が
+#   同じ赤に紛れる代償は、対処が 1 手で済むことで受ける (#3366)
+# - **一部を読めないまま完走した回** (ready-queue.sh が標準エラーの最後に出す `incomplete: <印>`) も
+#   unreadable を名乗る。読めなかった番号は busy へ倒れるので、dropped が 0 件の緑と区別がつかない
+#   (人の手を読めなかった hands-unread・一覧が上限に張り付いた capped-*)。見つかった dropped はそのまま名乗る
+# - unreadable は赤にしない (ほかの unreadable と同じ)。ただし続けて読めなくても誰も見ないので、
+#   当番の run の要約と annotation (::warning::) に出す (stall-watch.yml の最後の step)
+# - 当番に要る権限は issues: read (読み取りだけ)。印の付け外しも起票もしない
+# - 当番は ubuntu で、ready-queue.sh は BSD の date -v が断られたときの GNU の枝と mawk で走る。
+#   手元の Mac と同じに出ることは scripts/tests/ready_queue_test.py が固定している
+#
 # ## 予約が queue へ動かない行 (queue-not-entered・#2693)
 #
 # 予約が効いていれば、必須が揃ってから数秒で queue に入る。なので猶予 (既定 15 分) は PR の
@@ -294,6 +331,13 @@ RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
 # 予約が掛かり必須が揃ってから、queue に入らないまま過ぎてよい時間。理由は冒頭の「予約が
 # queue へ動かない行」
 QUEUE_ENTRY_MINUTES=${QUEUE_ENTRY_MINUTES:-15}
+
+# 着手印が残ったまま人の手が無いまま過ぎてよい時間 (既定 3 日)。CI からは手元の worktree / 枝が
+# 見えないので日単位に取る。理由は冒頭の「Issue を見る行」。**readonly にしない** — 検査が短い値で回す
+CLAIM_STALL_MINUTES=${CLAIM_STALL_MINUTES:-4320}
+
+# 判定の実体。**readonly にしない** — 検査が差し替える
+READY_QUEUE=${READY_QUEUE:-"$(dirname "${BASH_SOURCE[0]}")/ready-queue.sh"}
 
 # 必須チェックの正本 (stale-gate が必須の context を読む)。**readonly にしない** — 検査が
 # 読めない形を差し替えて回すため
@@ -647,9 +691,47 @@ name_stale_gate() { # $1=番号 $2=PR の JSON $3=均した checks
     "必須は揃っているのに、必須が読む最新の suite の pr-gate の run が cancelled で BLOCKED のまま — gh run rerun $gate_run で打ち直す (打ち直せなければ本文を編集して新しい run を作る。当番は打たない・#2716)"
 }
 
+# 着手印が残ったまま人の手が無い Issue (stale-claim・冒頭の「Issue を見る行」)。名乗った行が
+# あれば 0、無ければ 1。読めなかったときは unreadable を名乗って 1
+name_stale_claims() {
+  local out errfile rc=0 line n rest title incomplete
+  errfile=$(mktemp)
+  out=$(DROPPED_MINUTES="$CLAIM_STALL_MINUTES" bash "$READY_QUEUE" 2>"$errfile") || rc=$?
+  # 標準エラーは捨てずにジョブのログへ流す (件数の行も混ざる)
+  cat "$errfile" >&2
+  # 0 と 1 は読めている (1 は ready が 0 件)。ただし 1 は途中で落ちた回とも同じなので、
+  # 最後に打つ件数の行があるときだけ読めたと数える
+  if [ "$rc" -ge 2 ] || { [ "$rc" -eq 1 ] && ! grep -q '^ready [0-9]* / stock' "$errfile"; }; then
+    say_line - unreadable name 0 "着手印の残った Issue を読めなかった (ready-queue.sh の終了コード ${rc}・判定していない)"
+    rm -f "$errfile"
+    return 1
+  fi
+  # 一部を読めないまま完走した回 (人の手を読めなかった番号・一覧の上限)。読めなかった番号は busy へ
+  # 倒れて名乗られないので、dropped が 0 件でも緑にしない。見つかった dropped は続けて名乗る
+  incomplete=$(sed -n 's/^incomplete: //p;' "$errfile" | sed -n '1p')
+  rm -f "$errfile"
+  if [ -n "$incomplete" ]; then
+    say_line - unreadable name 0 "着手印の判定の一部を読めないまま終わった ($incomplete) — 名乗るべき着手印を見落としているかもしれない (判定しきれていない)"
+  fi
+  local named=1
+  while IFS= read -r line; do
+    n=${line%% *}
+    rest=${line#* }
+    [ "${rest%% *}" = dropped ] || continue
+    title=${rest#dropped }
+    say_line "$n" stale-claim name "$CLAIM_STALL_MINUTES" \
+      "$title — 条件を満たしていれば閉じる / 残るなら印を外して残る条件と再開の手順を書く / 続けているならプランを更新する (CI からは手元の worktree が見えないので日単位・表の 15 行目)"
+    named=0
+  done <<<"$out"
+  return "$named"
+}
+
 # --- 走査 -------------------------------------------------------------------
 
 overdue=0
+
+# 着手印の残った Issue。PR の走査とは別の対象なので先に出す
+if name_stale_claims; then overdue=1; fi
 
 # 専用機の死活。PR の走査より先に出す — 止まっていれば、下の PR の行 (弾かれた・予約が
 # 外れた) の原因はたいていここにある

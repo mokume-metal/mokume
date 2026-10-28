@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """scripts/stall-watch.sh と scripts/stall-act.sh の検査 (#961)。
 
-固定したいのは十五。
+固定したいのは十六。
 
 1. **集約のジョブ (ci-gate) は上流より後に打つ** (#1883)。先に打つと ci-gate だけが前の結論を
    読んで同じ赤を返し、その run が走っている間は上流の打ち直しが拒まれる。除外したジョブ
@@ -55,6 +55,13 @@
    (読み直しても緑にならない)。検査の最新は ci-gate.sh と同じく作成順で最新の run (suite) の、その
    中の最後の attempt で読み、作法のジョブを含む古い run の赤は legacy-gate に残す。legacy-gate の
    対処は push だけを言う (本文の編集では新しい ci-gate が付かない)
+
+16. **人の手が閾値 (既定 3 日) 以上無い着手印を、Issue の番号で名乗って赤くする** (#3366)。判定は
+   scripts/ready-queue.sh の dropped と 1 つで、ここは `DROPPED_MINUTES=<閾値> bash ready-queue.sh`
+   を打って dropped の行だけを取る (式の写しは無い)。busy の行は名乗らない。ready-queue.sh の終了
+   コード 1 (ready が 0 件) は読めている。2 と、件数の行が無い 1 (途中で落ちた回) は unreadable。
+   当番の job は issues: read だけを持ち、Issue に書き込む権限は持たない。判定そのものの例
+   (手元の Mac と当番の GNU の date で同じに出る・閾値の境目) は ready_queue_test.py が固定する
 
 gh は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む (応答を素通しにすると、絞り込みの誤りが素通りする)。
@@ -245,9 +252,33 @@ class StallWatchTest(unittest.TestCase):
         self.calls.write_text("", encoding="utf-8")
         self.bin_dir = bin_dir
 
+        # 着手印の判定 (ready-queue.sh) は差し替える。判定そのものは ready_queue_test.py が固定する。
+        # 既定は dropped が 0 件で、ready も 0 件 (終了コード 1・件数の行つき)
+        self.queue_dir = root / "queue"
+        self.queue_dir.mkdir()
+        self.write_ready_queue([])
+
 
     def write(self, name, payload):
         (self.pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+
+    def write_ready_queue(self, lines, *, rc=1, summary=True, incomplete=None):
+        """差し替える ready-queue.sh。lines を標準出力へ出し、rc で終わる。
+
+        渡された DROPPED_MINUTES は seen-minutes へ控える。summary=False は件数の行を出さない
+        (途中で落ちた回の形)。incomplete は一部を読めないまま完走した印 (標準エラーの最後の 1 行)。"""
+        (self.queue_dir / "out.txt").write_text("".join(f"{l}\n" for l in lines), encoding="utf-8")
+        script = self.queue_dir / "ready-queue.sh"
+        script.write_text(
+            "#!/bin/bash\n"
+            f'printf "%s" "${{DROPPED_MINUTES-unset}}" > "{self.queue_dir}/seen-minutes"\n'
+            f'cat "{self.queue_dir}/out.txt"\n'
+            + ('echo "ready 0 / stock 0 / dropped 0 / busy 0 / decide 0" >&2\n' if summary else 'echo "boom" >&2\n')
+            + (f'echo "incomplete: {incomplete}" >&2\n' if incomplete else "")
+            + f"exit {rc}\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
 
     def write_timeline(self, key, events):
         """PR の予約と queue の出来事を、GraphQL の応答の形で置く (古い順)。"""
@@ -319,6 +350,7 @@ class StallWatchTest(unittest.TestCase):
         env["PATH"] = f"{self.bin_dir}:{env['PATH']}"
         env["GH_CALLS"] = str(self.calls)
         env["PR_DIR"] = str(self.pr_dir)
+        env["READY_QUEUE"] = str(self.queue_dir / "ready-queue.sh")
         # 手元で打ったときの既定を再現する (Actions の変数が残っていると分岐が変わる)
         for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GITHUB_EVENT_NAME", "GH_TOKEN", "RENDER_TURN_SLOTS"):
             env.pop(key, None)
@@ -1258,6 +1290,162 @@ class StallWatchTest(unittest.TestCase):
         """render.yml (門番) と同じ vars.RENDER_TURN_SLOTS を渡す。渡さないと Actions 上では常に 1 になる。"""
         wf = (WORKFLOWS / "stall-watch.yml").read_text(encoding="utf-8")
         self.assertIn("RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}", wf)
+
+    # --- 着手印の残った Issue (stale-claim・#3366) ----------------------------
+
+    def claim_line(self, number, proc):
+        for line in proc.stdout.splitlines():
+            parts = line.split(maxsplit=4)
+            if parts and parts[0] == str(number) and parts[1:2] == ["stale-claim"]:
+                return parts
+        return None
+
+    def test_人の手が閾値以上無い着手印を_Issue_の番号で名乗って赤くする(self):
+        """#2507 の形 (印も人の最後の手も古い)・#2251 の形 (人の手が止まり bot の追記だけが続く) を
+        ready-queue.sh の dropped が名乗る。当番はそれを Issue の番号で出し、1 で終える。"""
+        self.write_ready_queue(
+            [
+                "2507 dropped 着手印が残ったまま 4320 分以上動いていない (専用機の設定)",
+                "2251 dropped 着手印が残ったまま 4320 分以上動いていない (定期の検査の赤)",
+            ],
+            rc=1,
+        )
+        proc = self.watch()
+        for n in (2507, 2251):
+            line = self.claim_line(n, proc)
+            self.assertIsNotNone(line, proc.stdout)
+            self.assertEqual(line[1:4], ["stale-claim", "name", "4320"], proc.stdout)
+        self.assertIn("印を外して", proc.stdout)
+        self.assertIn("プランを更新", proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+
+    def test_閾値は判定へそのまま渡す(self):
+        """DROPPED_MINUTES が静けさの境目と bot の手を読む窓の両方を決める。渡さないと既定の 120 分で
+        判定され、2 日前に人が触れた着手まで名乗る。"""
+        self.watch()
+        self.assertEqual((self.queue_dir / "seen-minutes").read_text(encoding="utf-8"), "4320")
+        self.watch(CLAIM_STALL_MINUTES=90)
+        self.assertEqual((self.queue_dir / "seen-minutes").read_text(encoding="utf-8"), "90")
+
+    def test_dropped_以外の行は名乗らない(self):
+        """2 日前に人がコメントした着手 (busy)・PR が出ているもの・ready は名乗らない。"""
+        self.write_ready_queue(
+            [
+                "10 ready [Bug] 着手できる",
+                "11 busy まだ動いている (人の手が 2 日前)",
+                "12 busy PR #90 が出ている (なにか)",
+                "13 stock [Task] 無印",
+            ],
+            rc=0,
+        )
+        proc = self.watch()
+        self.assertEqual(proc.stdout.strip(), "", proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_ready_が_0_件の終了コード_1_は読めている(self):
+        self.write_ready_queue(["2507 dropped 着手印が残ったまま 4320 分以上動いていない (x)"], rc=1)
+        proc = self.watch()
+        self.assertIsNotNone(self.claim_line(2507, proc), proc.stdout)
+        self.assertNotIn("unreadable", proc.stdout)
+
+    def test_判定を読めなければ読めなかったと名乗る(self):
+        """一覧を読めなかった (2)・件数の行を出さずに落ちた (1) を、dropped が 0 件と読まない。
+        黙ると名乗りが無いまま「正常」に混ざる (#1303)。読めなかっただけでは赤くしない。"""
+        cases = {"終了コード 2": dict(rc=2), "件数の行が無い 1": dict(rc=1, summary=False)}
+        for name, kw in cases.items():
+            with self.subTest(name):
+                self.write_ready_queue([], **kw)
+                proc = self.watch()
+                line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if "unreadable" in l)
+                self.assertEqual(line[:3], ["-", "unreadable", "name"], proc.stdout)
+                self.assertIn("着手印", line[4], proc.stdout)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_一部を読めないまま完走した回は読めなかったと名乗る(self):
+        """読めなかった番号は busy へ倒れて名乗られない。dropped が 0 件の緑と区別する (#3366)。
+        見つかった dropped は続けて名乗り、赤にするのはそちらだけ。"""
+        self.write_ready_queue([], rc=1, incomplete="hands-unread capped-Issue")
+        proc = self.watch()
+        line = next(l.split(maxsplit=4) for l in proc.stdout.splitlines() if "unreadable" in l)
+        self.assertEqual(line[:3], ["-", "unreadable", "name"], proc.stdout)
+        self.assertIn("hands-unread capped-Issue", line[4], proc.stdout)
+        self.assertEqual(proc.returncode, 0, "読めなかっただけで赤くしている: " + proc.stdout)
+
+        self.write_ready_queue(
+            ["2507 dropped 着手印が残ったまま 4320 分以上動いていない (x)"], rc=1, incomplete="hands-unread"
+        )
+        proc = self.watch()
+        self.assertIn("unreadable", proc.stdout)
+        self.assertIsNotNone(self.claim_line(2507, proc), proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_全部読めた回は読めなかったと名乗らない(self):
+        self.write_ready_queue([], rc=1)
+        proc = self.watch()
+        self.assertNotIn("unreadable", proc.stdout)
+
+    def run_result_step(self, log_lines, status):
+        """stall-watch.yml の最後の step の run を、stall.log と STATUS を渡して走らせる。"""
+        wf = (WORKFLOWS / "stall-watch.yml").read_text(encoding="utf-8")
+        block = wf[wf.index("name: 名乗りの結果") :]
+        body = block[block.index("run: |\n") + len("run: |\n") :]
+        script = "\n".join(l[10:] if l.startswith(" " * 10) else l for l in body.splitlines())
+        work = Path(self.tmp.name) / "step"
+        work.mkdir(exist_ok=True)
+        (work / "stall.log").write_text("".join(f"{l}\n" for l in log_lines), encoding="utf-8")
+        summary = work / "summary.md"
+        summary.write_text("", encoding="utf-8")
+        proc = subprocess.run(
+            ["/bin/bash", "-eo", "pipefail", "-c", script],
+            cwd=work,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "STATUS": str(status), "GITHUB_STEP_SUMMARY": str(summary)},
+        )
+        return proc, summary.read_text(encoding="utf-8")
+
+    def test_読めなかった判定は赤にせず_run_の要約と_annotation_に出す(self):
+        """既存の unreadable の扱い (終了コードに数えない) は変えず、続けて読めなくても誰かの目に入るようにする (#3366)。"""
+        proc, summary = self.run_result_step(
+            ["- unreadable name 0 着手印の判定の一部を読めないまま終わった (hands-unread)", "12 unreadable name 0 PR を読めなかった"],
+            status=0,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        warnings = [l for l in proc.stdout.splitlines() if l.startswith("::warning")]
+        self.assertEqual(len(warnings), 2, proc.stdout)
+        self.assertIn("hands-unread", warnings[0])
+        self.assertIn("hands-unread", summary)
+        self.assertIn("PR を読めなかった", summary)
+
+    def test_読めなかった判定が無ければ_annotation_は出ない_赤は従来どおり(self):
+        proc, summary = self.run_result_step(["2507 stale-claim name 4320 x"], status=1)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertNotIn("::warning", proc.stdout)
+        self.assertEqual(summary, "")
+
+    def test_着手印の判定は何も書き込まない(self):
+        """印を外さず・起票もしない。当番に渡すのは issues: read だけ。"""
+        self.write_ready_queue(["2507 dropped 着手印が残ったまま 4320 分以上動いていない (x)"], rc=1)
+        self.watch()
+        log = self.gh_log()
+        for verb in ("issue edit", "issue comment", "issue close", "issue create", "--add-label", "--remove-label"):
+            self.assertNotIn(verb, log)
+
+    def test_当番の_watch_job_は_issues_read_だけを足す(self):
+        """ready-queue.sh は Issue を読む。issues: write は渡さず、ほかの権限は変えない (#3366)。"""
+        wf = (WORKFLOWS / "stall-watch.yml").read_text(encoding="utf-8")
+        job = wf[wf.index("  watch:") :]
+        perms = dict(re.findall(r"^      ([a-z-]+): (read|write)", job, re.M))
+        self.assertEqual(
+            perms,
+            {"contents": "read", "pull-requests": "read", "actions": "write", "issues": "read"},
+            job,
+        )
+
+    def test_stall_act_は着手印の行に何も打たない(self):
+        proc = self.act(["2507 stale-claim name 4320 着手印が残ったまま"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.gh_log().strip(), "", self.gh_log())
 
     def test_猶予の内の_queued_は黙る(self):
         self.write_runs("queued", ago(3))
