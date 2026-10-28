@@ -10,6 +10,9 @@ extension RenderRequest {
     package nonisolated enum Shortfall: Equatable, Sendable {
         /// この回に書かれたファイルが無い (無い・前の回の残りだけ・空)。
         case notWritten
+        /// この回にファイルが作られたが、中身が無い (0 バイト)。**頼みを読んだ子が作ったもの**なので、
+        /// 版の食い違いではなく、書き手が何も書かなかった (#3223)。
+        case empty
         /// ファイルは在るが、動画として読めない。
         case unreadable
         /// 動画の枚数が、頼んだ枚数と違う (`found` 枚)。足りないことも多すぎることもある。
@@ -39,12 +42,12 @@ extension RenderRequest {
     package nonisolated func inspectOutput(since start: Date) -> Shortfall? {
         // **配る形 (GIF) は、動画ではなく画像の並びとして数える** ([#2440])。MP4 は動画として数える
         if FrameRecorder.distribution(of: destination) == .gif {
-            guard Self.isWritten(destination, since: start) else { return .notWritten }
+            guard Self.isWritten(destination, since: start) else { return Self.absence(destination, since: start) }
             guard let found = GIFFile.frameCount(atPath: destination) else { return .unreadable }
             return found == frameCount ? nil : .frames(found: found)
         }
         if FrameRecorder.isMovie(destination) || FrameRecorder.distribution(of: destination) == .mp4 {
-            guard Self.isWritten(destination, since: start) else { return .notWritten }
+            guard Self.isWritten(destination, since: start) else { return Self.absence(destination, since: start) }
             guard let found = MovieFile.videoSampleCount(atPath: destination) else {
                 return .unreadable
             }
@@ -55,6 +58,18 @@ extension RenderRequest {
         var found = 0
         while found < frameCount, Self.isWritten(sequence.next(), since: start) { found += 1 }
         return found == frameCount ? nil : .leadingFrames(found: found)
+    }
+
+    /// 中身のあるファイルが無いときの足りなさ。**この回に作られた 0 バイトのファイルは `.empty`**
+    /// — 頼みを読まない古い版の子は行き先に触れない (`MovieFile.init` が消して作り直すのは頼みを読んだ子だけ)
+    /// ので、この回に作られたファイルは、子が頼みを読んだ証拠である。それ以外 (無い・前の回の残り) は `.notWritten`。
+    private nonisolated static func absence(_ path: String, since start: Date) -> Shortfall {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
+            let size = attributes[.size] as? Int, size == 0,
+            let modified = attributes[.modificationDate] as? Date, modified >= start.addingTimeInterval(-1)
+        else { return .notWritten }
+        return .empty
     }
 
     /// この回に書かれた、中身のあるファイルか。

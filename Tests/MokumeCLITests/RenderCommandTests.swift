@@ -567,6 +567,21 @@ struct RenderCommandTests {
         #expect(!failure.message.contains("mokume doctor"))
     }
 
+    /// この回に作られた 0 バイトのファイルは、子が頼みを読んだ証拠なので、版の食い違いを推さない (#3223)。
+    @Test("この回に作られた空のファイルは、版の食い違いを推さず、作られたが中身が無いと名乗る")
+    func anEmptyFileIsNotBlamedOnTheVersion() {
+        let failure = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mp4", expected: 5, shortfall: .empty)
+        #expect(failure.exitCode != 0)
+        #expect(failure.message.contains("was created by this run but nothing was written into it"))
+        #expect(!failure.message.contains("mokume doctor"))
+        #expect(!failure.message.contains("another version"))
+        // 書かれていない回の案内は、今までどおり
+        let missing = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mp4", expected: 5, shortfall: .notWritten)
+        #expect(missing.message.contains("mokume doctor"))
+    }
+
     /// **多すぎるのも頼みと違う。** 「N 枚中 M 枚 (M > N)」と言わず、多すぎると名乗る。
     @Test("頼んだより多い動画は、多すぎると名乗り、何も書かれていない回の説明を付けない")
     func tooManyFramesAreNamedAsTooMany() {

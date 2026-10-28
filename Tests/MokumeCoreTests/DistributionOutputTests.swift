@@ -258,6 +258,53 @@ struct DistributionOutputTests {
         }
     }
 
+    /// 辺が 1 の絵を H.264 の書き手へ渡すと、OS の書き手は成功を返したまま 0 バイトを書く (#3223)。
+    /// 書き損じとして、渡した大きさと下限を名乗り、0 バイトのファイルを残さない。
+    @Test("辺が 1 の MP4 は、大きさと下限を名乗る書き損じになり、0 バイトのファイルを残さない。辺が 2 なら書ける")
+    func aSideOfOnePixelIsNamedNotWrittenEmpty() async throws {
+        try await withDirectoryAsync { directory in
+            for (width, height) in [(64, 1), (1, 64), (1, 1), (2, 1)] {
+                let path = directory.appendingPathComponent("thin-\(width)x\(height).mp4").path
+                let writer = MovieWriter(path: path, frameRate: 25, format: .h264)
+                for index in 0..<5 {
+                    writer.write(
+                        picture(index, width: width, height: height), frame: index + 1,
+                        time: Double(index) / 25)
+                }
+                writer.finish()
+                let failure = try #require(writer.takeFailure(), "\(width)x\(height): 書き損じを名乗っていない")
+                #expect(failure.contains("Could not"), "\(width)x\(height): \(failure)")
+                #expect(failure.contains("\(width)x\(height)"), "\(width)x\(height): 大きさを名乗っていない: \(failure)")
+                #expect(!FileManager.default.fileExists(atPath: path), "\(width)x\(height): 行き先にファイルが残っている")
+            }
+            // 陰性対照: 辺が 2 なら、頼んだ枚数の MP4 が書ける
+            for (width, height) in [(64, 2), (2, 2)] {
+                let path = directory.appendingPathComponent("ok-\(width)x\(height).mp4").path
+                write(.h264, to: path, frames: 5, fps: 25) { picture($0, width: width, height: height) }
+                #expect(MovieFile.videoSampleCount(atPath: path) == 5, "\(width)x\(height)")
+            }
+        }
+    }
+
+    /// 書き手が「済んだ」と言っても、書けたものを確かめる (`MovieFile.finish`)。辺の下限を測っていない機械で
+    /// 同じ形が黙って戻らないための守り (#3223)。判断は ``MovieFile/hollowReason(atPath:width:height:)``。
+    @Test("閉じた後の確かめは、0 バイトのファイルを中身が無いとし、書けた動画は通す")
+    func aHollowFileIsNamedAfterClosing() async throws {
+        try await withDirectoryAsync { directory in
+            let empty = directory.appendingPathComponent("empty.mp4").path
+            FileManager.default.createFile(atPath: empty, contents: Data())
+            let reason = try #require(await MovieFile.hollowReason(atPath: empty, width: 64, height: 1))
+            #expect(reason.contains("64x1"), "\(reason)")
+            let good = directory.appendingPathComponent("good.mp4").path
+            write(.h264, to: good, frames: 5, fps: 25) { picture($0, width: 64, height: 48) }
+            #expect(await MovieFile.hollowReason(atPath: good, width: 64, height: 48) == nil)
+            // 読めないだけのファイルは断らない (書き手が済んだと言ったものを、読み込みの都合で書き損じにしない)
+            let garbage = directory.appendingPathComponent("garbage.mp4").path
+            FileManager.default.createFile(atPath: garbage, contents: Data("not a movie".utf8))
+            #expect(await MovieFile.hollowReason(atPath: garbage, width: 64, height: 48) == nil)
+        }
+    }
+
     // MARK: - 綴り・fps の規則 (完了条件 1〜4)
 
     @Test("配る形の綴りと、番号の場所を持つ連番との分かれ目")

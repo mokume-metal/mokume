@@ -485,6 +485,8 @@ nonisolated enum CommandFailure: Error, Equatable {
         switch shortfall {
         case .notWritten:
             "nothing was written to \(destination) by this run (\(expected) frames were asked for)"
+        case .empty:
+            "\(destination) was created by this run but nothing was written into it (\(expected) frames were asked for)"
         case .unreadable:
             "\(destination) is there but cannot be read as a movie (\(expected) frames were asked for)"
         case .frames(let found) where found > expected:
@@ -506,6 +508,13 @@ nonisolated enum CommandFailure: Error, Equatable {
             The sketch itself ended without an error. A sketch that uses another version of mokume \
             than this tool does not read the request and writes nothing — run `mokume doctor` to \
             compare the two, and bring them to the same version
+            """
+        case .empty:
+            """
+            The sketch itself ended without an error and did not say why. It did read the request \
+            (it created the file), so the two are not on different versions — the movie writer put \
+            nothing in it. Check the sketch's size (a movie needs a few pixels on each side) and the \
+            disk, and run the command again
             """
         case .unreadable, .frames, .leadingFrames:
             """

@@ -76,6 +76,30 @@ struct RenderOutputCheckTests {
         }
     }
 
+    /// 頼みを読まない古い子は行き先に触れない。**この回に作られた 0 バイトのファイルは、子が頼みを読んだ証拠**で、
+    /// 版の食い違いではない (#3223)。
+    @Test("この回に作られた 0 バイトの動画は、中身が無いと言う。前の回の 0 バイトは書かれていないまま")
+    func anEmptyFileCreatedByThisRunIsNotAVersionMismatch() throws {
+        try withDirectory("mokume-check-empty") { directory in
+            for name in ["take.mov", "take.mp4", "take.gif"] {
+                let path = directory.appendingPathComponent(name).path
+                let start = Date()
+                FileManager.default.createFile(atPath: path, contents: Data())
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .empty, "\(name): この回の空")
+                // 前の回の空は、この回のものではない
+                try makeStale(path)
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .notWritten,
+                    "\(name): 前の回の空")
+                // 無ければ書かれていない
+                try FileManager.default.removeItem(atPath: path)
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .notWritten, "\(name): 無い")
+            }
+        }
+    }
+
     @Test("頼んだ枚数に足りない動画は、見つけた枚数を言う")
     func aShortMovieNamesWhatItHolds() throws {
         try withDirectory("mokume-check-mov-short") { directory in

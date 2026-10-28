@@ -404,6 +404,16 @@ nonisolated final class MovieFile: MovieOutput {
             }
             supported = properties
         case .h264:
+            // **辺が 1 の絵は、書き損じとして名乗る** (#3223)。OS の H.264 の書き手は、辺が 1 だと成功を
+            // 返したまま 0 バイトのファイルを書く (`startWriting`・`append`・`finishWriting` の状態も誤りも
+            // 無い)。ファイルを作る前に断るので、行き先に空のファイルを残さない。下限は辺 2 で測った
+            // (macOS 27・専用回路のある機械) が、測っていない機械でも ``finish(lastFrameAt:)`` が空を断る
+            guard width >= Self.h264MinimumSide, height >= Self.h264MinimumSide else {
+                throw .writeFailed(
+                    path: path,
+                    reason: "an H.264 movie needs at least \(Self.h264MinimumSide) pixels on each side, "
+                        + "but the picture is \(width)x\(height)")
+            }
             supported = [:]
         }
         self.path = path
@@ -627,6 +637,32 @@ nonisolated final class MovieFile: MovieOutput {
         guard writer.status == .completed else {
             throw .writeFailed(path: path, reason: failureReason)
         }
+        // **書き手が「済んだ」と言っても、書けたものを確かめる** (#3223)。H.264 の書き手は、受け付けない
+        // 大きさで成功を返したまま 0 バイトを書く。辺の下限は ``init`` が断るが、測っていない機械・OS の
+        // 境目で同じ形が黙って戻らないよう、ここでも見る
+        if let reason = await Self.hollowReason(atPath: path, width: width, height: height) {
+            // 中身の無いファイルを残さない (1 枚も受け取っていないときの取り消しと同じ)
+            try? FileManager.default.removeItem(atPath: path)
+            throw .writeFailed(path: path, reason: reason)
+        }
+    }
+
+    /// H.264 の書き手が受ける辺の最小 (画素)。辺 1 は、成功を返したまま 0 バイトを書く (#3223)。
+    static let h264MinimumSide = 2
+
+    /// 書き終えたファイルが中身の無いものなら、その理由。中身があれば (判断がつかないときも) `nil`。
+    ///
+    /// 0 バイト、または読めるのに映像のトラックが無いものを、中身が無いとする。読めないだけでは断らない
+    /// (書き手が「済んだ」と言ったものを、読み込みの都合で書き損じにしない)。
+    nonisolated static func hollowReason(atPath path: String, width: Int, height: Int) async -> String? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        if let size = attributes?[.size] as? Int, size == 0 {
+            return "the encoder closed the file without writing anything into it (a \(width)x\(height) picture)"
+        }
+        guard let tracks = try? await AVURLAsset(url: URL(fileURLWithPath: path)).loadTracks(withMediaType: .video),
+            tracks.isEmpty
+        else { return nil }
+        return "the encoder closed the file without a video track in it (a \(width)x\(height) picture)"
     }
 
     /// 秒の時刻を、刻み (``timescale``) の**いちばん近い**目盛りへ置く ([#2307])。
