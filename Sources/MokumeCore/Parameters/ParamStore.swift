@@ -78,8 +78,15 @@ final class ParamStore: DeclarationWatcher {
 
     /// 保存されていた値を戻し、何を捨てたかを返す。**起動時に 1 回だけ。**
     ///
-    /// 採るのは**名前と型が一致するものだけ**である ([ADR-0030] 決定 6)。それ以外の
-    /// 救済 (型を変換して救う、など) を入れると、絵が理由なく変わる経路が増える。
+    /// 採るのは**名前と型が一致するもののうち、コードの既定値が保存に書いた時点から変わっていないもの**
+    /// である ([ADR-0030] 決定 6 とその改訂 (2026-10-28))。それ以外の救済 (型を変換して救う、など) を
+    /// 入れると、絵が理由なく変わる経路が増える。
+    ///
+    /// **保存の既定値が今のコードの既定値と食い違うものを 1 件でも見たら (捨てた・黙って採った・既定値の
+    /// 列が無い古い保存)、戻した後に 1 度、今の値と今の既定値で保存を書き直す。** 書き直さないと、保存の
+    /// `defaults` が今のコードに追いつかず、(a) 次の起動も同じ「Threw away」を前の既定値のまま名乗り、
+    /// (b) 書き戻した値の既定値を元へ戻したとき保存の古い値が黙って勝ち、(c) 捨てた値が残って既定値を
+    /// 戻すと黙って復活する ([#2402](https://github.com/mokume-metal/mokume/issues/2402))。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     @discardableResult
@@ -112,6 +119,8 @@ final class ParamStore: DeclarationWatcher {
         var mismatched: [ParamReport.Rejection] = []
         var unreadable: [ParamReport.Rejection] = []
         var defaultChanged: [DefaultChange] = []
+        // 保存の既定値が今のコードに追いついていないか (上の説明の「書き直す」)
+        var savedDefaultsAreStale = false
         // 当てる順は名前順で、同じ名前は書いた順 (要求と同じ鍵・#858)。保存の並びや並べ替えの
         // 安定性に結果が依ると、同じ保存から違う姿が出る
         for entry in ParamRequest.inApplicationOrder(entries) {
@@ -127,6 +136,9 @@ final class ParamStore: DeclarationWatcher {
                 continue
             }
             guard case .value(let value) = entry.reading else { continue }
+            if let current = registry.defaultValue(of: entry.name), savedDefaults[entry.name] != current {
+                savedDefaultsAreStale = true
+            }
             // **コードの既定値が、保存に書いた時点から変わった値は、保存を戻さない** ([ADR-0030] 決定 6 の
             // 改訂 (2026-10-28)・#2402)。型の食い違いと候補の外は、いままでの理由が先に言う。
             // 保存が既定値を持たない (古い形式・既定値を持たない宣言) ものは、名前と型だけで戻る
@@ -161,6 +173,7 @@ final class ParamStore: DeclarationWatcher {
             mismatched.append(.init(name: entry.name, reason: reason))
         }
         announce(mismatched: mismatched, unreadable: unreadable, defaultChanged: defaultChanged)
+        if savedDefaultsAreStale { write() }
         return result
     }
 
@@ -295,10 +308,18 @@ final class ParamStore: DeclarationWatcher {
         }
     }
 
+    /// 実数を名乗る形。**`Float` で正確に表せる数は `Float` の桁で出す** — `Float` の宣言の `0.1` は
+    /// 面の表現では `Double` の `0.10000000149011612` になるので、そのまま出すと宣言と違う数に読める。
+    /// `Double` の宣言でも、`Float` で正確に表せる数なら同じ数を指す (`0.5` や `120.0`)。
+    private static func describe(_ number: Double) -> String {
+        let narrow = Float(number)
+        return Double(narrow) == number ? "\(narrow)" : "\(number)"
+    }
+
     /// 値を 1 行の中で名乗る形。型は名乗らない (名前の隣に並ぶ値は宣言の型で読める)。
     private static func describe(_ value: ParamValue) -> String {
         switch value {
-        case .float(let number): "\(number)"
+        case .float(let number): describe(number)
         case .int(let number): "\(number)"
         case .bool(let flag): "\(flag)"
         case .string(let text): "\"\(text)\""

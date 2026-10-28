@@ -372,10 +372,9 @@ protocol DeclaredParam: AnyObject {
     var declaration: ParamDeclaration { get }
     /// 宣言が生まれたときの値 (``ParamBox/bornValue``)。**持たない実装は `nil`** で、その宣言は
     /// 保存に既定値を併記せず、コードの既定値が変わったかも見られない (名前と型だけで戻る)。
+    ///
+    /// **既定の実装は置かない** — 実装を足す人が、持たなくてよいかを自分で書いて選ぶ (置くと、既定値を
+    /// 持つ実装が書き忘れて「変わったか見ない」へ黙って落ちる)。
     var defaultValue: ParamValue? { get }
     func write(_ incoming: ParamValue) -> ParamOutcome
-}
-
-extension DeclaredParam {
-    var defaultValue: ParamValue? { nil }
 }

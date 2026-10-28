@@ -295,6 +295,9 @@ final class RemoteParam: DeclaredParam {
         ParamDeclaration(name: name, value: value, range: range, choices: choices, step: step)
     }
 
+    /// **面越しのつまみは既定値を持たない。** 保存を持つのは子 (``ParamBox`` の側) で、窓の側は読まない。
+    var defaultValue: ParamValue? { nil }
+
     /// つまみを動かされた。
     ///
     /// **収めるのも弾くのも子の仕事である** ([ADR-0030] 決定 3 の判断は 1 か所にある)。
