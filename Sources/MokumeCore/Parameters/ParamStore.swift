@@ -23,7 +23,8 @@ import Observation
 ///
 /// 正典はコードに書いた既定値であり ([ADR-0013] 決定 3)、ここが返すのは手元の続きだけ
 /// である。作品として残したい値はコードへ書き戻す — だから置き場は版管理から外れて
-/// いてよい。
+/// いてよい。**コードの既定値を書いた時点から変えた値は、保存を捨ててコードが勝つ** — 保存は書いた
+/// 時点の既定値を併記する ([ADR-0030] 決定 6 の改訂 (2026-10-28)・[#2402](https://github.com/mokume-metal/mokume/issues/2402))。
 ///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md

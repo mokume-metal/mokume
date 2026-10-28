@@ -9,6 +9,7 @@
   "clamped": [],
   "discarded": [
     { "name": "count", "reason": "unknownName" },
-    { "name": "shape", "reason": "notInChoices" }
+    { "name": "shape", "reason": "notInChoices" },
+    { "name": "radius", "reason": "defaultChanged" }
   ]
 }
