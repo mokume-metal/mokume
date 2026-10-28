@@ -575,6 +575,38 @@ class IssueBodyTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
                 self.assertIn("理由が無い", r.stderr)
 
+    def test_撮る時期を後へ回すだけの宣言は赤い(self):
+        # #3376: 見た目のバグが「着手時に撮る」「直す PR で載せる」で通り、起票の時点の絵が欠けた。
+        # 描画のファイルを名指ししない本文でも、宣言を書いた時点で見た目の Issue と自認している
+        for reason in (
+            "起票の時点では数値の実測だけで、絵は着手時に撮る",
+            "画素の食い違いで、直す PR で before/after を載せる",
+            "棚卸しは読み取りだけで撮っていない",
+            "比較図は未撮影",
+            "手元ではまだ撮っていない",
+        ):
+            for body in (f"`Shapes.metal` の滲み\n\n絵: なし — {reason}", f"塗りが欠ける\n\n絵: なし — {reason}"):
+                with self.subTest(reason=reason, body=body[:8]):
+                    r = self.check(body)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                    self.assertIn("後へ回している", r.stderr)
+                    self.assertIn("--snippet", r.stderr)
+
+    def test_撮れない理由と描画に関わらない理由の宣言は通る(self):
+        for reason in (
+            "起きる条件を作れず、いまの絵は撮れない",
+            "検査の揺れで、描画は変えない",
+            "口がまだ無く、描ける絵が無い (作例の before/after は PR で載せる)",
+            "この Issue の成果物が絵そのもの (撮るのは着手後で、PR に載る)",
+        ):
+            with self.subTest(reason):
+                r = self.check(f"`Shapes.metal`\n\n絵: なし — {reason}")
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_宣言の行の外の先送りの語は数えない(self):
+        r = self.check("着手時に撮る段取りは別に書く\n\n絵: なし — 検査の揺れで、描画は変えない")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_描画の外のファイルだけなら通る(self):
         r = self.check("scripts/check-drawing-evidence.sh と AGENTS.md の文面を直す")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
