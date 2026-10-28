@@ -22,10 +22,13 @@
 #   エージェント  MOKUME_AGENT_NAME (+ MOKUME_AGENT_URL) > Claude Code の env > Codex の痕跡 >
 #                 AI_AGENT の道具名 (他の道具も立てる慣習の変数)。どれも無ければ「分からない」
 #   モデル        MOKUME_AGENT_MODEL (カンマ区切りで複数) > Claude Code のセッションの記録に
-#                 残る assistant の model / Codex のセッションの記録の最後の turn_context の model。**名乗るのはこの文を書いたモデルではなく、このセッションで
+#                 残る assistant の model > Codex のスレッドがいま使っている model。
+#                 Claude Code では**名乗るのはこの文を書いたモデルではなく、このセッションで
 #                 使ったモデル**である (どの文をどのモデルが書いたかは記録から決められない)。
 #                 先頭は主の記録の最新のモデル (/model で切り替えた後のもの)、続いて主の記録の残り、
-#                 サブエージェントの記録にだけ現れるモデルの順
+#                 サブエージェントの記録にだけ現れるモデルの順。Codex はいまのモデル 1 つだけを
+#                 名乗る: サブのスレッドには自動のレビュー (codex-auto-review) も混ざり、並べても
+#                 書き手の手掛かりにならない (#3409)
 #   併記          --with に渡した名乗り (複数可)。連携は実行環境からは見えないので明示する
 
 # 署名の検知キー。リンク先やモデルの名乗りが変わっても効き続けるよう、固定の語で見る。
@@ -80,9 +83,10 @@ model_display_name() { # $1=モデルの ID
     local family=${BASH_REMATCH[1]}
     printf '%s%s %s' "$(tr '[:lower:]' '[:upper:]' <<<"${family:0:1}")" "${family:1}" \
       "${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
-  elif [[ $1 =~ ^gpt-([0-9]+(\.[0-9]+)?)-([a-z]+)$ ]]; then
-    local name=${BASH_REMATCH[3]}
-    printf 'GPT-%s %s%s' "${BASH_REMATCH[1]}" "$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")" "${name:1}"
+  elif [[ $1 =~ ^gpt-([0-9]+(\.[0-9]+)?)(-([a-z]+))?$ ]]; then
+    local name=${BASH_REMATCH[4]}
+    printf 'GPT-%s' "${BASH_REMATCH[1]}"
+    [ -z "$name" ] || printf ' %s%s' "$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")" "${name:1}"
   else
     printf '%s' "$1"
   fi
@@ -117,17 +121,38 @@ latest_model() { # $1=記録のパス
     grep -vxF '<synthetic>' | tail -n 1
 }
 
-# Codex のセッションの記録から、いま使っているモデルの ID (分からなければ空)。記録は
-# ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-<時刻>-<CODEX_THREAD_ID>.jsonl に置かれ、
-# 手番ごとの turn_context 行がその時点の model を持つ。最後の行を読むので、途中で切り替えた
-# 後のモデルを名乗る。grep で turn_context の行に絞るのは速さのため (transcript_models と同じ)
+# Codex のスレッドがいま使っているモデルの ID (分からなければ空)。#3409。読む順:
+#   1. 状態の DB (${CODEX_HOME}/state_<版>.sqlite) の threads.model。Codex 自身が持つ正本で、
+#      長いスレッドの記録が区間に分かれても、古い記録が .jsonl.zst に圧縮されても引ける。
+#      ただし DB は WAL で、読むだけでも -shm へ書けないと開けない (サンドボックスの中など)
+#   2. 記録 sessions/YYYY/MM/DD/rollout-<時刻>-<ID>[_<区間>].jsonl。手番ごとの turn_context 行が
+#      その時点の model を持つ。区間は名前順で後ろほど新しいので、最後のファイルの最後の行を読む。
+#      grep で turn_context の行に絞るのは速さのため (transcript_models と同じ)
+#   3. DB を immutable で開く。書けなくても開けるが WAL を読まないので、切り替えたばかりの
+#      モデルを取り逃がしうる。1・2 が無いときの最後の手
 codex_model() {
-  local id=${CODEX_THREAD_ID:-} f
-  [ -n "$id" ] || return 0
-  for f in "${CODEX_HOME:-$HOME/.codex}"/sessions/*/*/*/rollout-*-"$id".jsonl; do
-    [ -f "$f" ] || continue
-    grep -E '"type": ?"turn_context"' "$f" | jq -r '.payload.model // empty' 2>/dev/null | tail -n 1
-    return 0
+  local id=${CODEX_THREAD_ID:-} home=${CODEX_HOME:-$HOME/.codex} f last= model=
+  # ID は SQL に埋めるので、UUID の字だけを通す
+  [[ $id =~ ^[0-9A-Fa-f-]+$ ]] || return 0
+  model=$(codex_db_model "$home" "$id" mode=ro)
+  if [ -z "$model" ]; then
+    for f in "$home"/sessions/*/*/*/rollout-*-"$id".jsonl "$home"/sessions/*/*/*/rollout-*-"$id"_*.jsonl; do
+      [ -f "$f" ] && last=$f
+    done
+    [ -z "$last" ] ||
+      model=$(grep -E '"type": ?"turn_context"' "$last" | jq -r '.payload.model // empty' 2>/dev/null | tail -n 1)
+  fi
+  [ -n "$model" ] || model=$(codex_db_model "$home" "$id" immutable=1)
+  printf '%s' "$model"
+}
+
+# 状態の DB から threads.model を引く (版の違う DB や sqlite3 の無い環境では空)
+codex_db_model() { # $1=CODEX_HOME $2=スレッドの ID $3=開き方 (URI の引数)
+  local db model
+  for db in "$1"/state_*.sqlite; do
+    [ -f "$db" ] || continue
+    model=$(sqlite3 "file:$db?$3" "SELECT model FROM threads WHERE id = '$2'" 2>/dev/null) || model=
+    [ -z "$model" ] || { printf '%s' "$model"; return 0; }
   done
 }
 

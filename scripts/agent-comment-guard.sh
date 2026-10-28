@@ -218,13 +218,14 @@ EOF
 # 署名の無い本文の案内 (#3149)。貼る 1 行はこのセッションの名乗りで組む (モデルも名乗る)
 unsigned_reason() {
   local sig model
-  # Claude Code 以外 (Codex など) は、payload がモデルを名乗っていればそれを表示名に畳んで使う
-  # (gpt-6-astra → GPT-6 Astra。#3409)。Claude Code は記録 (transcript_path) から、サブエージェントの
-  # モデルまで拾う
+  # Claude Code 以外 (Codex など) は、payload がモデルを名乗っていればそれを使う。Codex は自前の
+  # 署名と同じ表示名に畳む (gpt-6-astra → GPT-6 Astra。#3409)。他の道具は書いたとおりに出す。
+  # Claude Code は記録 (transcript_path) から、サブエージェントのモデルまで拾う
   model=$(hook_field '.model // empty')
   case "$(detect_agent)" in
     "Claude Code"*) ;;
-    *) [ -z "$model" ] || MOKUME_AGENT_MODEL=${MOKUME_AGENT_MODEL:-$(model_display_name "$model")} ;;
+    Codex$'\t'*) [ -z "$model" ] || MOKUME_AGENT_MODEL=${MOKUME_AGENT_MODEL:-$(model_display_name "$model")} ;;
+    *) [ -z "$model" ] || MOKUME_AGENT_MODEL=${MOKUME_AGENT_MODEL:-$model} ;;
   esac
   sig=$(agent_signature --generic --transcript "$(hook_field '.transcript_path // empty')")
   cat <<EOF

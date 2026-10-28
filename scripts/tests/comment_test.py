@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -313,6 +314,15 @@ def write_codex_rollout(codex_home, thread_id, models):
         lines.append(json.dumps({"type": "event_msg", "payload": {"model": "gpt-fake"}}))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def write_codex_state(codex_home, thread_id, model):
+    """Codex の状態の DB を模して置く (#3409)。threads.model がスレッドのいまのモデル。"""
+    con = sqlite3.connect(Path(codex_home) / "state_5.sqlite")
+    con.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, model TEXT)")
+    con.execute("INSERT INTO threads VALUES (?, '', ?)", (thread_id, model))
+    con.commit()
+    con.close()
 
 
 def clean_env(path_prefix=None, **overrides):
@@ -942,6 +952,16 @@ class CreateSignatureGuardTest(unittest.TestCase):
         )
         self.assertIn("Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>", reason)
 
+    def test_reason_keeps_the_payload_model_of_non_codex_agents(self):
+        """Codex 以外の道具の payload のモデルは畳まず書いたとおりに出す (反証の #4)。"""
+        reason = self.assert_denied(
+            "gh issue create --title t --body x",
+            wrapper=UNSIGNED,
+            payload_extra={"model": "claude-opus-5-5"},
+            MOKUME_AGENT_NAME="Cursor",
+        )
+        self.assertIn("Assisted by Cursor (claude-opus-5-5)</sub>", reason)
+
     def test_comment_and_unsigned_create_together_name_both(self):
         reason = self.assert_denied("gh issue comment 1 -b x && gh issue create -t t -b y")
         self.assertIn(UNSIGNED, reason)
@@ -988,7 +1008,7 @@ class SignatureTest(unittest.TestCase):
         self.assertNotIn("Claude Code", out)
 
     def test_codex_detected_via_thread_id(self):
-        out, _ = self.dry_run(CODEX_THREAD_ID="t-1")
+        out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001")
         self.assertIn("Assisted by [Codex]", out)
 
     def test_explicit_name_wins(self):
@@ -1046,16 +1066,16 @@ class SignatureTest(unittest.TestCase):
     def test_codex_names_the_model_in_its_rollout(self):
         """Codex は記録の turn_context からモデルを名乗る (#3409 条件 1)。"""
         with tempfile.TemporaryDirectory() as d:
-            write_codex_rollout(d, "t-1", ["gpt-6-astra"])
-            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+            write_codex_rollout(d, "01a1-0001", ["gpt-6-astra"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
         self.assertIn("<sub>🤖 Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>", out)
         self.assertNotIn("gpt-fake", out, "turn_context 以外に映った model を拾っている")
 
     def test_codex_names_the_latest_model(self):
         """途中で切り替えたら最後の turn_context のモデルを名乗る (#3409 条件 2)。"""
         with tempfile.TemporaryDirectory() as d:
-            write_codex_rollout(d, "t-1", ["gpt-6-astra", "gpt-6.1-sol"])
-            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+            write_codex_rollout(d, "01a1-0001", ["gpt-6-astra", "gpt-6.1-sol"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
         self.assertIn("(GPT-6.1 Sol)</sub>", out)
         self.assertNotIn("Astra", out)
 
@@ -1063,13 +1083,43 @@ class SignatureTest(unittest.TestCase):
         """記録が無ければモデルは書かない。別の会話の記録も読まない (#3409 条件 3)。"""
         with tempfile.TemporaryDirectory() as d:
             write_codex_rollout(d, "other", ["gpt-6-astra"])
-            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
         self.assertIn("Assisted by [Codex](https://developers.openai.com/codex)</sub>", out)
+
+    def test_codex_prefers_the_state_db(self):
+        """区間に分かれた・圧縮された記録でも、状態の DB からいまのモデルを引く (反証の #1・#2)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "01a0-f442", ["gpt-6-astra"])
+            write_codex_state(d, "01a0-f442", "gpt-6.1-sol")
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a0-f442", CODEX_HOME=d)
+        self.assertIn("(GPT-6.1 Sol)</sub>", out)
+
+    def test_codex_reads_the_last_segment_without_db(self):
+        """DB が無ければ、区間に分かれた記録の最後の区間を読む (反証の #1)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "01a1-0001", ["gpt-6-astra"])
+            write_codex_rollout(d, "01a1-0001_02b2-0002", ["gpt-6-luna"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
+        self.assertIn("(GPT-6 Luna)</sub>", out)
+
+    def test_codex_thread_id_is_not_spliced_into_sql(self):
+        """ID は SQL に埋めるので、UUID の字でなければ DB も記録も読まない。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_state(d, "x", "gpt-6-astra")
+            out, _ = self.dry_run(CODEX_THREAD_ID="' OR '1'='1", CODEX_HOME=d)
+        self.assertIn("Assisted by [Codex](https://developers.openai.com/codex)</sub>", out)
+
+    def test_bare_gpt_version_is_folded(self):
+        """名前の無い gpt-6 も GPT-6 に畳む (反証の #5)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "01a1-0001", ["gpt-6"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
+        self.assertIn("(GPT-6)</sub>", out)
 
     def test_codex_unknown_model_id_is_kept_as_is(self):
         with tempfile.TemporaryDirectory() as d:
-            write_codex_rollout(d, "t-1", ["codex-auto-review"])
-            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+            write_codex_rollout(d, "01a1-0001", ["codex-auto-review"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="01a1-0001", CODEX_HOME=d)
         self.assertIn("(codex-auto-review)</sub>", out)
 
     def test_explicit_model_is_kept_as_written(self):
