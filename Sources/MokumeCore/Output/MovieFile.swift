@@ -5,6 +5,7 @@ import Accelerate
 import AVFoundation
 import Foundation
 import MokumeDiagnostics
+import Synchronization
 import VideoToolbox
 
 /// 動きをファイルへ書き出すときに起こりうる失敗。
@@ -210,6 +211,9 @@ nonisolated final class MovieFile: MovieOutput {
         var baseAddress: ((CVPixelBuffer) -> UnsafeMutableRawPointer?)?
         /// 器を writer へ渡す手の代わり (`false` は writer が断った)。検査が、渡さなかったことを数える。
         var appendBuffer: ((CVPixelBuffer, CMTime) -> Bool)?
+        /// writer が「済んだ」と言った直後、中身を確かめる前に呼ぶ手 (引数は書き出し先)。検査が、閉じたファイルを
+        /// 0 バイトに切り詰めて、本物の書き手では作れない「済んだと言ったのに空」を差し込む (#3223)。
+        var closed: ((String) -> Void)?
     }
 
     /// 検査が差し込む読み方。空なら本物を読む。
@@ -637,6 +641,7 @@ nonisolated final class MovieFile: MovieOutput {
         guard writer.status == .completed else {
             throw .writeFailed(path: path, reason: failureReason)
         }
+        readsForTesting.closed?(path)
         // **書き手が「済んだ」と言っても、書けたものを確かめる** (#3223)。H.264 の書き手は、受け付けない
         // 大きさで成功を返したまま 0 バイトを書く。辺の下限は ``init`` が断るが、測っていない機械・OS の
         // 境目で同じ形が黙って戻らないよう、ここでも見る
@@ -650,19 +655,83 @@ nonisolated final class MovieFile: MovieOutput {
     /// H.264 の書き手が受ける辺の最小 (画素)。辺 1 は、成功を返したまま 0 バイトを書く (#3223)。
     static let h264MinimumSide = 2
 
+    /// 閉じた直後の確かめで、トラックの表を読む待ちの期限 (秒)。``MovieWriter`` の閉じる期限 (30 秒) の内に
+    /// 収まるよう、標本を数える待ち (``readLimitSeconds``) より短い。索引を読むだけなので、普通は一瞬で済む。
+    nonisolated static let closedReadLimitSeconds = 5.0
+
+    /// 閉じたファイルを安く読んだ結果。標本を 1 つずつ数えない (``videoSampleCount(atPath:)`` の仕事)。
+    enum ClosedReading: Equatable, Sendable {
+        /// 映像のトラックが 1 本も無い。
+        case noVideoTrack
+        /// 映像のトラックはあるが、標本が無い (標本の大きさの合計か、トラックの長さが 0)。
+        case noSamples
+        /// 標本がある。
+        case hasSamples
+    }
+
+    /// 閉じたファイルの映像のトラックを読む。読めなければ `nil` (期限を越えたときは呼ぶ側が `nil` にする)。
+    ///
+    /// 読むのはトラックの表 (索引) だけで、標本は 1 つも復号しない。
+    nonisolated static func readClosedFile(atPath path: String) async -> ClosedReading? {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video) else { return nil }
+        guard let track = tracks.first else { return .noVideoTrack }
+        guard let range = try? await track.load(.timeRange),
+            let length = try? await track.load(.totalSampleDataLength)
+        else { return nil }
+        return length == 0 || (range.duration.isNumeric && range.duration.seconds <= 0)
+            ? .noSamples : .hasSamples
+    }
+
     /// 書き終えたファイルが中身の無いものなら、その理由。中身があれば (判断がつかないときも) `nil`。
     ///
-    /// 0 バイト、または読めるのに映像のトラックが無いものを、中身が無いとする。読めないだけでは断らない
-    /// (書き手が「済んだ」と言ったものを、読み込みの都合で書き損じにしない)。
-    nonisolated static func hollowReason(atPath path: String, width: Int, height: Int) async -> String? {
+    /// 0 バイト、映像のトラックが無いもの、トラックはあっても標本が無いものを、中身が無いとする。
+    /// **読めないだけでは断らない** (書き手が「済んだ」と言ったものを、読み込みの都合で書き損じにしない)。
+    /// 読みには期限を持たせる (``videoSampleCount(atPath:)`` と同じ流儀)。遅いボリュームで詰まっても、
+    /// ``MovieWriter`` の閉じる期限 (``MovieWriter/closeLimitSeconds``) に当たらないよう、越えたら「確かめられ
+    /// なかった」として断らずに通す。
+    ///
+    /// - Parameters:
+    ///   - limitSeconds: 読みを待つ期限 (秒)。
+    ///   - read: トラックを読む手。検査が、遅い読み・標本の無いトラックを差し込む。
+    nonisolated static func hollowReason(
+        atPath path: String, width: Int, height: Int,
+        limitSeconds: Double = closedReadLimitSeconds,
+        read: @escaping @Sendable (String) async -> ClosedReading? = { await readClosedFile(atPath: $0) }
+    ) async -> String? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         if let size = attributes?[.size] as? Int, size == 0 {
             return "the encoder closed the file without writing anything into it (a \(width)x\(height) picture)"
         }
-        guard let tracks = try? await AVURLAsset(url: URL(fileURLWithPath: path)).loadTracks(withMediaType: .video),
-            tracks.isEmpty
-        else { return nil }
-        return "the encoder closed the file without a video track in it (a \(width)x\(height) picture)"
+        switch await Self.withinDeadline(limitSeconds, { await read(path) }) ?? nil {
+        case .noVideoTrack:
+            return "the encoder closed the file without a video track in it (a \(width)x\(height) picture)"
+        case .noSamples:
+            return "the encoder closed the file with a video track but no frames in it (a \(width)x\(height) picture)"
+        case .hasSamples, nil:
+            return nil
+        }
+    }
+
+    /// `work` の答えを `seconds` 秒だけ待つ。越えたら `nil` (仕事は残るが、待つ側は進む)。
+    ///
+    /// 子のタスクを束ねない (束ねると、取り消しに応えない読みを、束ねた側が最後まで待つ)。先に着いた
+    /// 方の答えだけを返し、後から着いた方は捨てる。
+    nonisolated static func withinDeadline<Value: Sendable>(
+        _ seconds: Double, _ work: @escaping @Sendable () async -> Value
+    ) async -> Value? {
+        let once = AnswerOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Value?, Never>) in
+            Task.detached {
+                let value = await work()
+                if once.take() { continuation.resume(returning: value) }
+            }
+            // 期限は協調スレッドを使わず Dispatch で測る。読みが詰まって協調スレッドを塞ぐ負荷の下でも、期限が
+            // 遅れて来ないように
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                if once.take() { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     /// 秒の時刻を、刻み (``timescale``) の**いちばん近い**目盛りへ置く ([#2307])。
@@ -763,6 +832,18 @@ nonisolated final class MovieFile: MovieOutput {
                 destination[to + 2] = source[from]
                 destination[to + 3] = source[from + 3]
             }
+        }
+    }
+}
+
+/// 答えを 1 度だけ渡すための箱 (``MovieFile/withinDeadline(_:_:)``)。先に取った側だけが答えを渡す。
+private nonisolated final class AnswerOnce: Sendable {
+    private let spent = Mutex(false)
+
+    func take() -> Bool {
+        spent.withLock { taken in
+            defer { taken = true }
+            return !taken
         }
     }
 }

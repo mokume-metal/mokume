@@ -76,12 +76,12 @@ struct RenderOutputCheckTests {
         }
     }
 
-    /// 頼みを読まない古い子は行き先に触れない。**この回に作られた 0 バイトのファイルは、子が頼みを読んだ証拠**で、
-    /// 版の食い違いではない (#3223)。
-    @Test("この回に作られた 0 バイトの動画は、中身が無いと言う。前の回の 0 バイトは書かれていないまま")
-    func anEmptyFileCreatedByThisRunIsNotAVersionMismatch() throws {
+    /// 動画の行き先の、この回の時刻の 0 バイトのファイルは `.empty` (誰が作ったかは言わない)。前の回の空と
+    /// 無いファイルは `.notWritten` (#3223)。
+    @Test("この回の時刻の 0 バイトの動画は、中身が無いと言う。前の回の 0 バイトは書かれていないまま")
+    func anEmptyMovieFromThisRunIsNamedEmpty() throws {
         try withDirectory("mokume-check-empty") { directory in
-            for name in ["take.mov", "take.mp4", "take.gif"] {
+            for name in ["take.mov", "take.mp4"] {
                 let path = directory.appendingPathComponent(name).path
                 let start = Date()
                 FileManager.default.createFile(atPath: path, contents: Data())
@@ -97,6 +97,19 @@ struct RenderOutputCheckTests {
                 #expect(
                     try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .notWritten, "\(name): 無い")
             }
+        }
+    }
+
+    /// GIF の書き手は最初にヘッダを書く (`GIFFile.append`) ので、GIF の 0 バイトは書き手が作らない。
+    /// `.empty` (書き手が書かなかった) と読ませず、従来どおり `.notWritten` (#3223)。
+    @Test("0 バイトの GIF は、この回の時刻でも書かれていないまま (書き手は空を作らない)")
+    func anEmptyGIFIsStillNotWritten() throws {
+        try withDirectory("mokume-check-empty-gif") { directory in
+            let path = directory.appendingPathComponent("take.gif").path
+            let start = Date()
+            FileManager.default.createFile(atPath: path, contents: Data())
+            let shortfall = try request(path, frames: 6, frameRate: 25).inspectOutput(since: start)
+            #expect(shortfall == .notWritten)
         }
     }
 
