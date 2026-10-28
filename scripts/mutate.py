@@ -402,9 +402,9 @@ def read_cancelled(path):
     読みは read-test-record.py と共有する。事象の記録が無い・読めない回は、取り消しが無いと
     読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。ident は testID の末尾の
     `/<file>:<line>:<column>` を落としたもの (`<suite>/<name>`)。testID は入れ子の suite を `/` で
-    つなぐ (`MokumeCoreTests.Outer/Inner/test()`) ので、`suite_of` は最外の suite に写す。
-    xunit の classname は入れ子を `.` でつなぐ (`MokumeCoreTests.Outer.Inner`) ので、入れ子では
-    xunit の ident とは綴りが合わない — ident は xunit の検査と突き合わせず、関連の suite の判定にだけ使う。
+    つなぐ (`MokumeCoreTests.Outer/Inner/test()`)。xunit の classname は入れ子を `.` でつなぐ
+    (`MokumeCoreTests.Outer.Inner`) ので、入れ子では xunit の ident とは綴りが合わない — ident は
+    xunit の検査と突き合わせず、関連の suite の判定にだけ使う (`suite_of` はどちらも最外の suite に写す)。
     """
     reason, items, _, _ = _read_test_record().read_cancellations(path)
     if reason is not None:
@@ -413,11 +413,20 @@ def read_cancelled(path):
                   for tid, _, _, _ in items]
 
 
+def suite_path(ident):
+    """検査の ID の suite の連なり `[<module>, <最外の型>, <内側の型>…]`。入れ子は、取り消しの ident
+    (testID 由来) では `/`、xunit の ident (`<classname>/<name>`) では classname の `.` でつなぐので、
+    どちらも同じ連なりに写す。xunit の記録の実物: `classname="MokumeCoreTests.ModelTests.OnCanvas"`
+    (`ModelTests` の入れ子の `OnCanvas`)。module は SwiftPM の target 名で `.` を含まない。"""
+    head = ident.split("/")
+    return head[0].split(".") + head[1:-1]
+
+
 def suite_of(ident):
-    """`<module>.<suite>/…` の最外の suite。取り消しの ident (testID 由来・入れ子は `/`) では
-    `MokumeCoreTests.Outer/Inner/test()` → `MokumeCoreTests.Outer`。xunit の ident (`<classname>/<name>`)
-    の classname は入れ子を `.` でつなぐので、入れ子の飛ばされた検査はそのままでは関連に合わない。"""
-    return ident.split("/", 1)[0]
+    """`<module>.<最外の型>` (関連の集合 `suites_mentioning` と同じ綴り)。
+    `MokumeCoreTests.Outer/Inner/test()` (取り消し) も `MokumeCoreTests.Outer.Inner/test()` (xunit) も
+    `MokumeCoreTests.Outer` に写る。"""
+    return ".".join(suite_path(ident)[:2])
 
 
 def classify(build, test, record_state, cases, baseline_failed, related, gpu_hint=False):
@@ -478,9 +487,8 @@ def read_catalog(path):
 
 def proposal_of(ident, catalog):
     """検査の ID の suite (入れ子なら内側から) を表で引く。無ければ `-`。"""
-    head = ident.split("/")
-    names = [head[0].split(".", 1)[-1]] + head[1:-1]
-    for name in reversed(names):
+    path = suite_path(ident)
+    for name in reversed(path[1:] or path):
         if name in catalog:
             return catalog[name][0]
     return NOT_IN_CATALOG
