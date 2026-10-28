@@ -239,10 +239,28 @@ SYMBOL_GRAPHS := $(CURDIR)/.build/symbol-graphs
 SYMBOL_GRAPH_FLAGS := -Xswiftc -emit-symbol-graph \
 	-Xswiftc -emit-symbol-graph-dir -Xswiftc $(SYMBOL_GRAPHS)
 
+# debug のビルドのデバッグ情報を行表だけにする (#3237)。テストのビルドはほぼ全部が
+# MokumeCoreTests (394 ファイル・15.9 万行) のコンパイルで、量で律速している。同じ runner の
+# 上で前後を比べると、テストのビルドが 3 組とも −12〜13% (約 −45 秒) 縮んだ (#3384)。
+# 失うのは変数と型のデバッグ情報だけで、関数名は記号表に、ファイルと行は行表に残る —
+# Swift Testing の失敗の位置は #expect のマクロがソースの位置を埋めるので変わらない (わざと落とした
+# 検査で、事象の記録とコンソールの位置が書いた行と一致することを確かめた・#3237)。クラッシュの
+# 関数名と行は記号表と行表に残る見込みで、実測はしていない。
+#
+# **指定は build・test・test-geometry-exploration の 3 か所で同じにする** (BUILD_FLAGS で 1 本)。
+# 1 か所でも外すと、その段で本体を組み直す。別の置き場・別の構成で組む test-tsan・
+# test-release・cli-dist と、検査の中の入れ子の swift build には渡さない (組み直しは起きない)。
+#
+# **手元で lldb を使って変数を見たいときは、指定を空にして組み直す**:
+#   make test DEBUG_INFO_FLAGS=
+# (空の指定で組んだ後に既定の make を打つと、そこでまた組み直しになる)
+DEBUG_INFO_FLAGS := -Xswiftc -gline-tables-only
+BUILD_FLAGS := $(DEBUG_INFO_FLAGS) $(SYMBOL_GRAPH_FLAGS)
+
 # ライブラリのビルドとテスト。ツールチェーンの要求は ADR-0009 が定める
 # (macOS 26 / Xcode 26 / Swift 6 言語モード)。満たさない環境ではここで落ちる
 build:
-	swift build $(SYMBOL_GRAPH_FLAGS)
+	swift build $(BUILD_FLAGS)
 
 # テストの記録を残す。何が走って何がスキップされたかを、描画の検査が走ったかの判定
 # (gpu-ran・#878) が読む。**この節は下の 2 つの入口 — debug の test と release の
@@ -345,7 +363,7 @@ test:
 	@mkdir -p .build
 	@rm -f $(TEST_RECORD) $(TEST_EVENTS)
 	@touch .build/test-started
-	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log.txt
+	set -o pipefail; swift build --build-tests $(BUILD_FLAGS) 2>&1 | tee .build/test-log.txt
 	set -o pipefail; env $(METAL_VALIDATION) python3 scripts/gpu-slot.py -- swift test --skip-build --xunit-output $(TEST_RECORD_BASE) --event-stream-output-path $(TEST_EVENTS) --event-stream-version 0 2>&1 | tee -a .build/test-log.txt \
 		|| { code=$$?; bash scripts/test-vanished.sh $$code $(TEST_RECORD) .build/test-log.txt .build/test-started; \
 			python3 scripts/read-test-record.py --slow $(TEST_RECORD) $(TEST_SLOW_SECONDS); \
@@ -423,7 +441,7 @@ GEOMETRY_RECORD := .build/test-results-geometry-swift-testing.xml
 test-geometry-exploration: ## 日次に回す図形の全探索 (debug、固定回帰も含む)
 	@mkdir -p .build
 	@rm -f $(GEOMETRY_RECORD) .build/geometry-debug.md
-	set -o pipefail; swift build --build-tests $(SYMBOL_GRAPH_FLAGS) 2>&1 | tee .build/test-log-geometry.txt
+	set -o pipefail; swift build --build-tests $(BUILD_FLAGS) 2>&1 | tee .build/test-log-geometry.txt
 	set -o pipefail; env MOKUME_GEOMETRY_EXPLORATION=1 python3 scripts/gpu-slot.py -- swift test --skip-build --filter '$(GEOMETRY_SUITES)' --xunit-output .build/test-results-geometry.xml 2>&1 | tee -a .build/test-log-geometry.txt
 	python3 scripts/check-geometry-record.py $(GEOMETRY_RECORD) --configuration debug --summary .build/geometry-debug.md
 
