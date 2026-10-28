@@ -105,8 +105,9 @@
 #   B-1 の対象か    本文の 🤖 Assisted by の署名 (エージェントを問わない。#3149)。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
-#   落ちて見えるか  紐づく open PR が無く、git worktree list のパスと枝の名前に番号が
-#                   現れず、**そのうえ Issue が静かになって久しい**こと
+#   落ちて見えるか  紐づく open PR が無く、git worktree list の名前と枝の名前に番号が
+#                   現れず (worktree は末尾の名前だけ・`agent-<16 進>` は見ない — 番号と関係の
+#                   無い数字に当たるため。#3377)、**そのうえ Issue が静かになって久しい**こと
 #
 # 3 つ目が要るのは、**枝の名前が番号を持たないことのほうが多い**からである — AGENTS.md が
 # 定める枝の形は `<type>/<短い説明>` で、番号はどこにも入らない。worktree の照合だけに頼ると
@@ -211,7 +212,10 @@ has_label() { # $1=ラベルの並び (改行区切り) $2=探すラベル
 # 手元の worktree / 枝の名前に番号が現れるか。
 #
 # 前後が数字でないことまで見る — 927 が 1927 に当たると、落ちた着手が「生きている」へ
-# 倒れて誰にも拾われなくなる
+# 倒れて誰にも拾われなくなる。英字に続く番号 (`gui3243`・`m3087`) は当てる。
+#
+# 照合するのは WORKTREE_NAMES (下で作る) だけで、**番号を持たない名前は材料に入れない**:
+# worktree のパスの親ディレクトリ (uid など) と、`agent-<16 進>` の形 (#3377)
 seen_locally() { # $1=番号
   case " $WORKTREE_NAMES " in *[!0-9]"$1"[!0-9]*) return 0 ;; esac
   return 1
@@ -252,9 +256,14 @@ claims=$(jq -r --arg repo "$REPO" '
 QUIET_BEFORE=$(date -u -v-"${DROPPED_MINUTES}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
   date -u -d "${DROPPED_MINUTES} minutes ago" +%Y-%m-%dT%H:%M:%SZ)
 
-# 手元の worktree のパスと枝の名前。読めなければ空 (見えないものは「見えない」と扱う)
+# 手元の worktree の名前 (パスの末尾の 1 要素) と枝の名前。読めなければ空 (見えないものは
+# 「見えない」と扱う)。**パス全体は入れない** — 親ディレクトリの数字 (`/claude-501/` の uid) が
+# 番号に当たる。Claude Code が作る `agent-<16 進>` / `worktree-agent-<16 進>` も入れない — 16 進の
+# 数字の並びが番号に当たり、番号を持たない名前だからである (#3377)
 WORKTREE_NAMES=$(git worktree list --porcelain 2>/dev/null |
-  sed -n 's#^worktree ##p; s#^branch refs/heads/##p' | tr '\n' ' ' || true)
+  awk '/^worktree / { n = substr($0, 10); sub(/.*\//, "", n); print n }
+       /^branch refs\/heads\// { print substr($0, 19) }' |
+  grep -Ev '^(worktree-)?agent-[0-9a-f]+$' | tr '\n' ' ' || true)
 
 # --- 走査 -------------------------------------------------------------------
 
