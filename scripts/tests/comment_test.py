@@ -43,6 +43,7 @@ AGENT_ENV = [
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "CODEX_HOME",
+    "CODEX_THREAD_ID",
     # 署名のモデルの名乗りに効く (#3149)。呼び出し元のセッションの記録を読ませない
     "MOKUME_AGENT_MODEL",
     "CLAUDE_CODE_SESSION_ID",
@@ -296,6 +297,22 @@ def gh_version():
     proc = subprocess.run(["gh", "--version"], capture_output=True, text=True)
     match = re.search(r"gh version (\S+)", proc.stdout)
     return match.group(1) if match else ""
+
+
+def write_codex_rollout(codex_home, thread_id, models):
+    """Codex のセッションの記録を模して置く (#3409)。
+
+    手番ごとの turn_context 行が payload.model を持つ。ほかの種類の行にも payload.model を混ぜる
+    (turn_context に絞らずに読めば、最後に来るこちらを名乗る)。
+    """
+    path = Path(codex_home) / "sessions" / "2026" / "10" / "28" / f"rollout-2026-10-28T00-00-00-{thread_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps({"type": "session_meta", "payload": {"id": thread_id}})]
+    for m in models:
+        lines.append(json.dumps({"type": "turn_context", "payload": {"model": m}}))
+        lines.append(json.dumps({"type": "event_msg", "payload": {"model": "gpt-fake"}}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
 
 
 def clean_env(path_prefix=None, **overrides):
@@ -923,7 +940,7 @@ class CreateSignatureGuardTest(unittest.TestCase):
             payload_extra={"model": "gpt-6-astra"},
             CODEX_SANDBOX="seatbelt",
         )
-        self.assertIn("Assisted by [OpenAI Codex](https://developers.openai.com/codex) (gpt-6-astra)", reason)
+        self.assertIn("Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>", reason)
 
     def test_comment_and_unsigned_create_together_name_both(self):
         reason = self.assert_denied("gh issue comment 1 -b x && gh issue create -t t -b y")
@@ -966,8 +983,13 @@ class SignatureTest(unittest.TestCase):
 
     def test_codex_detected(self):
         out, _ = self.dry_run(CODEX_SANDBOX="seatbelt")
-        self.assertIn("Assisted by [OpenAI Codex]", out)
+        self.assertIn("Assisted by [Codex]", out)
+        self.assertNotIn("OpenAI Codex", out, "冗長な OpenAI を付けている (#3409)")
         self.assertNotIn("Claude Code", out)
+
+    def test_codex_detected_via_thread_id(self):
+        out, _ = self.dry_run(CODEX_THREAD_ID="t-1")
+        self.assertIn("Assisted by [Codex]", out)
 
     def test_explicit_name_wins(self):
         out, _ = self.dry_run(MOKUME_AGENT_NAME="Cursor", CLAUDECODE="1")
@@ -1021,6 +1043,35 @@ class SignatureTest(unittest.TestCase):
             out, _ = self.dry_run(CLAUDECODE="1", CLAUDE_CODE_SESSION_ID="sess-1", CLAUDE_CONFIG_DIR=d)
         self.assertIn("(claude-3-5-sonnet-20241022)", out)
 
+    def test_codex_names_the_model_in_its_rollout(self):
+        """Codex は記録の turn_context からモデルを名乗る (#3409 条件 1)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "t-1", ["gpt-6-astra"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+        self.assertIn("<sub>🤖 Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>", out)
+        self.assertNotIn("gpt-fake", out, "turn_context 以外に映った model を拾っている")
+
+    def test_codex_names_the_latest_model(self):
+        """途中で切り替えたら最後の turn_context のモデルを名乗る (#3409 条件 2)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "t-1", ["gpt-6-astra", "gpt-6.1-sol"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+        self.assertIn("(GPT-6.1 Sol)</sub>", out)
+        self.assertNotIn("Astra", out)
+
+    def test_codex_without_rollout_names_no_model(self):
+        """記録が無ければモデルは書かない。別の会話の記録も読まない (#3409 条件 3)。"""
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "other", ["gpt-6-astra"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+        self.assertIn("Assisted by [Codex](https://developers.openai.com/codex)</sub>", out)
+
+    def test_codex_unknown_model_id_is_kept_as_is(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_codex_rollout(d, "t-1", ["codex-auto-review"])
+            out, _ = self.dry_run(CODEX_THREAD_ID="t-1", CODEX_HOME=d)
+        self.assertIn("(codex-auto-review)</sub>", out)
+
     def test_explicit_model_is_kept_as_written(self):
         """Claude 以外のエージェントが Claude のモデルを名乗るなら、書いたとおりに出す。"""
         out, _ = self.dry_run(MOKUME_AGENT_NAME="Cursor", MOKUME_AGENT_MODEL="Claude Opus 5.5")
@@ -1038,7 +1089,7 @@ class SignatureTest(unittest.TestCase):
     def test_with_names_collaborators(self):
         proc = subprocess.run(
             ["/bin/bash", str(COMMENT), "issue", "42", "--body", "本文",
-             "--with", "OpenAI Codex (gpt-6-astra)", "--with", "Grok CLI", "--dry-run"],
+             "--with", "Codex (GPT-6 Astra)", "--with", "Grok CLI", "--dry-run"],
             capture_output=True,
             text=True,
             env=clean_env(path_prefix=stub_gh(self), CLAUDECODE="1"),
@@ -1046,7 +1097,7 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(
             "Assisted by [Claude Code](https://claude.com/claude-code)"
-            " and OpenAI Codex (gpt-6-astra) and Grok CLI</sub>",
+            " and Codex (GPT-6 Astra) and Grok CLI</sub>",
             proc.stdout,
         )
 

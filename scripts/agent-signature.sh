@@ -8,10 +8,11 @@
 #   <sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5)</sub>
 #   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5, Haiku 5.5)</sub>   サブエージェントが別のモデル
 #   <sub>🤖 Assisted by Grok CLI (grok-5)</sub>                                        環境変数で名乗る
-#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5) and OpenAI Codex (gpt-6-astra)</sub>   --with で併記
+#   <sub>🤖 Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>
+#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5) and Codex (GPT-6 Astra)</sub>   --with で併記
 #
 # **分からない部分は書かない。** 推測で書いたモデル名は出所の嘘になる。Codex の
-# config.toml の model は起動時の指定で上書きされうるので読まない。
+# config.toml の model は起動時の指定で上書きされうるので読まず、セッションの記録を読む (#3409)。
 #
 # 読み手は scripts/comment.sh (発言)・scripts/sub-issue.sh (起票)・
 # scripts/agent-comment-guard.sh (署名の無い本文を差し戻すときに貼る 1 行を示す)。
@@ -21,7 +22,7 @@
 #   エージェント  MOKUME_AGENT_NAME (+ MOKUME_AGENT_URL) > Claude Code の env > Codex の痕跡 >
 #                 AI_AGENT の道具名 (他の道具も立てる慣習の変数)。どれも無ければ「分からない」
 #   モデル        MOKUME_AGENT_MODEL (カンマ区切りで複数) > Claude Code のセッションの記録に
-#                 残る assistant の model。**名乗るのはこの文を書いたモデルではなく、このセッションで
+#                 残る assistant の model / Codex のセッションの記録の最後の turn_context の model。**名乗るのはこの文を書いたモデルではなく、このセッションで
 #                 使ったモデル**である (どの文をどのモデルが書いたかは記録から決められない)。
 #                 先頭は主の記録の最新のモデル (/model で切り替えた後のもの)、続いて主の記録の残り、
 #                 サブエージェントの記録にだけ現れるモデルの順
@@ -49,11 +50,13 @@ detect_agent() {
     printf 'Claude Code\thttps://claude.com/claude-code'
     return 0
   fi
-  # OpenAI Codex: 専用の名乗りがまだ無く (openai/codex#13416)、サンドボックス実行の
-  # 痕跡で見るしかない。判定が緩いぶん、名乗りが増えたらここを差し替える
-  if [ -n "${CODEX_SANDBOX:-}" ] || [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
+  # Codex: 専用の名乗りがまだ無く (openai/codex#13416)、シェルに立てる CODEX_THREAD_ID と
+  # サンドボックス実行の痕跡で見る。判定が緩いぶん、名乗りが増えたらここを差し替える。
+  # 「OpenAI」は付けない (冗長。メンテナの指定。#3409)
+  if [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_SANDBOX:-}" ] ||
+     [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
      { [ "$strict" != strict ] && [ -n "${CODEX_HOME:-}" ]; }; then
-    printf 'OpenAI Codex\thttps://developers.openai.com/codex'
+    printf 'Codex\thttps://developers.openai.com/codex'
     return 0
   fi
   # 知らない道具でも AI_AGENT を立てていれば、その道具名 (版より前) を名乗る
@@ -68,6 +71,8 @@ detect_agent() {
 # 「Claude」を付けないのは、記録から読むのが Claude Code のときだけで、署名の頭の
 # [Claude Code] と重なるため (メンテナの指定)。Claude 以外のエージェントが Claude の
 # モデルを名乗るときは MOKUME_AGENT_MODEL に書いたとおりに出る (Claude Opus 5.5 など)。
+# GPT は gpt-6-astra → GPT-6 Astra (Codex の models_cache.json の表示名は「GPT-6-Astra」
+# 「GPT-6.1 Terra」と綴りが揺れるので使わない。#3409)。
 # 形が読めない ID はそのまま返す (知らない形を作り替えると別のモデルを名乗りかねない)
 model_display_name() { # $1=モデルの ID
   local id=${1%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}
@@ -75,6 +80,9 @@ model_display_name() { # $1=モデルの ID
     local family=${BASH_REMATCH[1]}
     printf '%s%s %s' "$(tr '[:lower:]' '[:upper:]' <<<"${family:0:1}")" "${family:1}" \
       "${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
+  elif [[ $1 =~ ^gpt-([0-9]+(\.[0-9]+)?)-([a-z]+)$ ]]; then
+    local name=${BASH_REMATCH[3]}
+    printf 'GPT-%s %s%s' "${BASH_REMATCH[1]}" "$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")" "${name:1}"
   else
     printf '%s' "$1"
   fi
@@ -109,6 +117,20 @@ latest_model() { # $1=記録のパス
     grep -vxF '<synthetic>' | tail -n 1
 }
 
+# Codex のセッションの記録から、いま使っているモデルの ID (分からなければ空)。記録は
+# ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-<時刻>-<CODEX_THREAD_ID>.jsonl に置かれ、
+# 手番ごとの turn_context 行がその時点の model を持つ。最後の行を読むので、途中で切り替えた
+# 後のモデルを名乗る。grep で turn_context の行に絞るのは速さのため (transcript_models と同じ)
+codex_model() {
+  local id=${CODEX_THREAD_ID:-} f
+  [ -n "$id" ] || return 0
+  for f in "${CODEX_HOME:-$HOME/.codex}"/sessions/*/*/*/rollout-*-"$id".jsonl; do
+    [ -f "$f" ] || continue
+    grep -E '"type": ?"turn_context"' "$f" | jq -r '.payload.model // empty' 2>/dev/null | tail -n 1
+    return 0
+  done
+}
+
 # 使ったモデルの名乗り → "Opus 5.5, Haiku 5.5" (分からなければ空)。
 #   $1 = エージェントの表示名  $2 = Claude Code の記録のパス (省略時は env から探す)
 agent_models() {
@@ -116,6 +138,11 @@ agent_models() {
   if [ -n "${MOKUME_AGENT_MODEL:-}" ]; then
     printf '%s' "$MOKUME_AGENT_MODEL"
     return
+  fi
+  if [ "$agent" = Codex ]; then
+    line=$(codex_model)
+    [ -z "$line" ] || model_display_name "$line"
+    return 0
   fi
   [ "$agent" = "Claude Code" ] || return 0
   [ -n "$transcript" ] || transcript=$(claude_transcript) || return 0
