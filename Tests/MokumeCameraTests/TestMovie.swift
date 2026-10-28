@@ -336,9 +336,9 @@ nonisolated enum TestMovie {
     ///
     /// **読み進める同期の待ち (`copyNextSampleBuffer`) は、Swift の協調プールの外で回す** (#3196)。
     /// 協調プールのスレッドはコア数 (ホストの runner で 3 本) しか無く、並列の幅を広げると、
-    /// この待ちが全部を塞ぐ。そのとき main で `MovieReader.inspect` が待つ読み込みの仕事 (`Task.detached`)
-    /// が走れず、検査全体が止まった (#3199 の run 40159542555)。GCD のキューは協調プールと別に
-    /// スレッドを足せる
+    /// この待ちが全部を塞ぐ。そのとき main で `MovieReader.inspect` が待つ読み込みの仕事 (当時は
+    /// `Task.detached`。#3240 で完了ハンドラに替えた) が走れず、検査全体が止まった (#3199 の run
+    /// 40159542555)。GCD のキューは協調プールと別にスレッドを足せる
     static func reference(_ url: URL) async throws -> [(time: Double, picture: DisplayImage)] {
         let asset = AVURLAsset(url: url)
         // トラックを読み込みの側へ渡す箱。**渡した後は、こちらからは触らない**

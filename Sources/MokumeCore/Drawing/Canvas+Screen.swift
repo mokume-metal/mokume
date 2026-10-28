@@ -20,11 +20,13 @@ extension Canvas {
     /// 点が、いまの変換でどこへ移るか (横)。
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
+        noteTransformRead()
         return transform.placed(x: x, y: y).x
     }
 
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
+        noteTransformRead()
         return transform.placed(x: x, y: y).y
     }
 
@@ -51,6 +53,7 @@ extension Canvas {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         // 潰れた変換 (どこかの軸を 0 倍したもの。判定は `Transform.isCollapsed`) には
         // 打ち消しが無い = 戻し先が決まらない。倍率が小さいだけなら打ち消しはある (#1541)
+        noteTransformRead()
         guard let undo = transform.inverted else { return Vector3(0, 0, 0) }
         let inside =
             Self.makeProjection(width: width, height: height)
@@ -76,6 +79,7 @@ extension Canvas {
     /// 溢れた値は、**どれも結果が数でなくなる形で現れる**。入口や途中にもう 1 枚
     /// 置いても捕まる場所は増えず、消しても検査が緑のままの番人になる。
     private func screenPosition(_ x: Float, _ y: Float, _ z: Float) -> SIMD3<Float> {
+        noteTransformRead()
         let clip = viewProjection * transform.matrix * SIMD4<Float>(x, y, z, 1)
         let inside = SIMD4<Float>(SIMD3(clip.x, clip.y, clip.z) / clip.w, 1)
         let screen = Self.makeProjection(width: width, height: height).inverse * inside

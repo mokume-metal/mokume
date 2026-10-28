@@ -106,11 +106,31 @@ circle(200, 150, 20 + pow(2, level))
 
 **乱数の種 (``SketchPart/randomSeed(_:)``) もスケッチに 1 つで、書き換えるまでフレームを越えて残る**が、上の 2 つには入らない — 描き方でもシーンの記述でもなく、引くたびに進む列の位置で、揺らぎと違って断片へは届かない。形の組み立て (``SketchPart/createShape(_:)``) の中で書いた種だけは、抜けると**最初に書く直前の列**へ戻る。
 
-`setup()` は最初のフレームが始まる前に走り、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックもフレームの外で走るので、**そこで書いたシーンの記述はどのフレームにも属さない**。黙って捨てず、警告を出して無視する。描き場所 (``SketchPart/createGraphics(_:_:)``) では、視点・光・変換・粒・計算などのシーンの記述も ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ効く — `draw()` の中に居ても、その対の外で書けば同じ警告を出して無視する。
+`setup()` は最初のフレームが始まる前に走り、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックもフレームの外で走るので、**そこで書いたシーンの記述はどのフレームにも属さない**。黙って捨てず、警告を出して無視する。**ただし変換と、変換・スタイルの積み降ろしは例外である** — 置いたものには置くときに変換が焼き付くので、`setup()` と止まっている間の入力のコールバックでは `translate()` や `push { }` が効き、その後に置いたものへ効く。呼び出しを抜けるときに変換と積んだ段は戻り、次のコールバックにも `draw()` にも持ち越さない (`setup()` で `translate()` だけ書いて何も置かないと、そう言って 1 度知らせる)。光・視点・材質・切り抜きなど、焼き付かないシーンの記述は、そこでは従来どおり警告して無視する。ただし**止まっている間の入力のコールバックが戻るのは、本当に止まっている間だけ**である — ループ中 (と、`redraw()` を頼んだ後) のコールバックはフレームの内側で配られるので、そこで書いた変換は同じフレームの `draw()` に漏れる ([#3408](https://github.com/mokume-metal/mokume/issues/3408))。
+
+```swift
+// Processing の Basics/Color/ColorVariables と同じ形。setup() だけで 1 枚を描く
+func setup() {
+    background(51)
+    noStroke()
+    fill(204, 102, 0)
+    pushMatrix()
+    translate(80, 80)
+    square(0, 0, 120)  // (80, 80) に出る
+    popMatrix()
+    fill(0, 102, 153)
+    pushMatrix()
+    translate(200, 80)
+    square(0, 0, 120)  // (200, 80) に出る
+    popMatrix()
+}
+```
+
+描き場所 (``SketchPart/createGraphics(_:_:)``) では、視点・光・変換・粒・計算などのシーンの記述も ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ効く — `draw()` の中に居ても、その対の外で書けば同じ警告を出して無視する。
 
 **置いたもの (図形・絵・背景・画素の書き込み・呼んだ時点で効果を掛ける ``SketchPart/filter(_:)``) は設定ではなく、次に描くフレームに出る。** `setup()` と、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックで置いたものは、次に描くフレームへ持ち越される — `setup()` だけで 1 枚を描ける。描き場所では ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。それ以外 (描き場所の対の外・`Task` の続きなど) で置いたものは、警告を出して無視する。
 
-**寿命と、積めるかどうかは別の話である。** 変換はフレームを越えないが ``SketchPart/pushMatrix(fileID:line:)`` で積める。積んだものもフレームの頭で空に戻るので、`draw()` の中で戻し忘れても次のフレームへは残らない。
+**寿命と、積めるかどうかは別の話である。** 変換はフレームを越えないが ``SketchPart/pushMatrix(fileID:line:)`` で積める。積んだものもフレームの頭で空に戻るので、`draw()` の中で戻し忘れても次のフレームへは残らない。 `setup()` と止まっている間のコールバックでも同じで、呼び出しを抜けるときに戻る。
 
 **どこに書けるかは寿命を表さない。** 切り抜き (``SketchPart/clip(_:_:_:_:)``) は塗りや線と同じところに書けるが、シーンの記述なので越えない。
 
@@ -375,7 +395,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 | `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録る間を 2 つで挟む。`####` はフレーム番号ではなく、録りの中の通し番号 (0 から) |
 | p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
 | p5.js 2D の `background(0, 20)` (前の絵に薄く重ねて残像になる) | ``SketchPart/background(_:_:)`` (面を置き換える) | 残像にならない。薄い四角を `rect` で重ねて作る (作り方は ``SketchPart/background(_:_:)`` の例) |
-| `setup()` で書いた `translate`・`rotate`・視点 (以降の絵に効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` で書くと警告して無視する。`draw()` の中で書く。1 枚だけ描くなら `draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
+| `setup()` で書いた `translate`・`rotate`・視点 (以降の `draw()` にも効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` の変換は、その後に `setup()` で置いたものへだけ効き (置くときに焼き付く)、`setup()` を抜けると戻る。`draw()` で置くものの変換は `draw()` の中で書く。視点・光は `setup()` で書くと警告して無視する。1 枚だけ描くなら `setup()` で置くか、`draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
 | p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |
 | Processing `keyPressed()` (押したままで連射) | ``Sketch/keyPressed()`` (押した 1 回だけ) | 押している間ずっと効かせるものは、`draw()` で `keyboard.isPressed(_:)` を読む |
 

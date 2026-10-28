@@ -173,9 +173,9 @@ struct ObservationWarningsTests {
         }
     }
 
-    /// 完了条件 1 の例。止まっている間のコールバックで `translate` を呼ぶと警告して無視される。
+    /// 完了条件 1 の例。止まっている間のコールバックで `perspective` を呼ぶと警告して無視される (変換は #3273 から区間で効く)。
     /// 入力で押して観測すると、その 1 行が応答に載り、同じ操作をもう一度しても 2 度目には載らない。
-    @Test("止まっている間の mousePressed の translate の警告が、押した後の観測に 1 度だけ載る")
+    @Test("止まっている間の mousePressed の perspective の警告が、押した後の観測に 1 度だけ載る")
     func aPressWhileStoppedIsExplainedOnce() throws {
         try Diagnostics.$digest.withValue(WarningDigest()) {
             let observeFacet = try makeFacet()
@@ -183,7 +183,7 @@ struct ObservationWarningsTests {
             let sketch = Talker()
             sketch.onSetup = { $0.noLoop() }
             sketch.onPressed = { talker in
-                talker.translate(100, 0)
+                talker.perspective()
                 talker.circle(0, 0, 50)
                 talker.redraw()
             }
@@ -199,7 +199,7 @@ struct ObservationWarningsTests {
                 try runtime.advance()
             }
 
-            let notice = Canvas.OutsideFrame.transform.notice
+            let notice = Canvas.OutsideFrame.camera.notice
             try press(id: "p1")
             let first = try observe(id: "o1", in: observeFacet, with: runtime)
             #expect(first.filter { $0 == notice }.count == 1, "\(first)")

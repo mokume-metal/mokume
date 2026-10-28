@@ -76,6 +76,43 @@ struct RenderOutputCheckTests {
         }
     }
 
+    /// 動画の行き先の、この回の時刻の 0 バイトのファイルは `.empty` (誰が作ったかは言わない)。前の回の空と
+    /// 無いファイルは `.notWritten` (#3223)。
+    @Test("この回の時刻の 0 バイトの動画は、中身が無いと言う。前の回の 0 バイトは書かれていないまま")
+    func anEmptyMovieFromThisRunIsNamedEmpty() throws {
+        try withDirectory("mokume-check-empty") { directory in
+            for name in ["take.mov", "take.mp4"] {
+                let path = directory.appendingPathComponent(name).path
+                let start = Date()
+                FileManager.default.createFile(atPath: path, contents: Data())
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .empty, "\(name): この回の空")
+                // 前の回の空は、この回のものではない
+                try makeStale(path)
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .notWritten,
+                    "\(name): 前の回の空")
+                // 無ければ書かれていない
+                try FileManager.default.removeItem(atPath: path)
+                #expect(
+                    try request(path, frames: 6, frameRate: 25).inspectOutput(since: start) == .notWritten, "\(name): 無い")
+            }
+        }
+    }
+
+    /// GIF の書き手は最初にヘッダを書く (`GIFFile.append`) ので、GIF の 0 バイトは書き手が作らない。
+    /// `.empty` (書き手が書かなかった) と読ませず、従来どおり `.notWritten` (#3223)。
+    @Test("0 バイトの GIF は、この回の時刻でも書かれていないまま (書き手は空を作らない)")
+    func anEmptyGIFIsStillNotWritten() throws {
+        try withDirectory("mokume-check-empty-gif") { directory in
+            let path = directory.appendingPathComponent("take.gif").path
+            let start = Date()
+            FileManager.default.createFile(atPath: path, contents: Data())
+            let shortfall = try request(path, frames: 6, frameRate: 25).inspectOutput(since: start)
+            #expect(shortfall == .notWritten)
+        }
+    }
+
     @Test("頼んだ枚数に足りない動画は、見つけた枚数を言う")
     func aShortMovieNamesWhatItHolds() throws {
         try withDirectory("mokume-check-mov-short") { directory in

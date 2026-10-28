@@ -1,7 +1,9 @@
 name: Stall watch
 
 # 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表が定める対処を
-# 打つ (#961)。
+# 打つ (#961)。**PR のほかに、着手印 (status: in progress) が付いたまま人の手が 3 日以上無い
+# Issue も名乗る** (stale-claim・#3366)。当番の job に Issue を読む権限 (issues: read) を足して
+# あり、見えないもの (手元の worktree) は表の 15 行目に書いてある。
 #
 # 表は PR が止まるたびに 1 行ずつ増えてきたが、読むのは人間とエージェントの目だけで、
 # 気付く経路が「誰かがたまたま見る」しか無かった (#840 は 2 時間 47 分・#690 は 45 分
@@ -54,6 +56,9 @@ jobs:
       # PR を読むだけ。auto-merge の掛け直しはやめた — 掛けるには contents: write が要り、
       # 当番に書き込みを渡すかは人の判断なので名乗るだけにした (#2614・scripts/stall-act.sh 冒頭)
       pull-requests: read
+      # 着手印の残った Issue を読むだけ (scripts/ready-queue.sh の dropped・#3366)。印の付け外しも
+      # 起票もしないので write は渡さない
+      issues: read
       actions: write # 判定を固定している古い失敗ジョブの rerun
     steps:
       - uses: actions/checkout@v7
@@ -84,6 +89,18 @@ jobs:
         env:
           STATUS: ${{ steps.watch.outputs.status }}
         run: |
+          # 読めなかった判定 (unreadable) は赤にしない — 名乗りの意味 (人手が要る詰まりの猶予超過) を
+          # 変えないため。ただし続けて読めなくても誰も見ないので、run の要約と annotation に出す (#3366)
+          if grep -qE '^[^ ]+ unreadable ' stall.log; then
+            {
+              echo "### 当番が読めなかった判定がある"
+              echo
+              grep -E '^[^ ]+ unreadable ' stall.log | sed 's/^/- /'
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            grep -E '^[^ ]+ unreadable ' stall.log | while IFS= read -r line; do
+              echo "::warning title=当番が読めなかった判定::$line"
+            done
+          fi
           if [ "$STATUS" != "0" ]; then
             echo "人手が要る詰まりが猶予を超えて続いている (分類と対処は上のログ)" >&2
             exit 1

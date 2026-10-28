@@ -156,6 +156,19 @@ echo "偽 git が知らない呼び出し: $*" >&2
 exit 1
 """
 
+# GNU の date のふり (ubuntu の当番が走るときの形・#3366)。-v は知らない option として断り、
+# `-u -d "<N> minutes ago" <書式>` は手元の BSD date の -v に直して答える (このホストでも通すため)
+FAKE_DATE_GNU = """#!/bin/bash
+for a in "$@"; do
+  case "$a" in -v*) echo "date: invalid option -- 'v'" >&2; exit 1 ;; esac
+done
+if [ "$1 $2" = "-u -d" ]; then
+  n=${3%% *}
+  exec /bin/date -u -v-"${n}"M "$4"
+fi
+exec /bin/date "$@"
+"""
+
 SIGNATURE = "🤖 Assisted by [Claude Code](https://claude.com/claude-code)"
 
 # 既定は「ずっと前」。静けさを見る検査だけが新しい時刻を渡す
@@ -173,12 +186,13 @@ def issue(number, *, title="なにか", body="", labels=(), type_=None, updated=
     }
 
 
-def closing_pr(number, *, closes=(), repo="mokume-metal/mokume"):
-    """open な PR と、それが閉じる Issue。"""
+def closing_pr(number, *, closes=(), repo="mokume-metal/mokume", body=""):
+    """open な PR と、それが閉じる Issue。body は `Refs #N` などの本文 (#3366)。"""
     owner, name = repo.split("/")
     return {
         "number": number,
         "title": f"PR {number}",
+        "body": body,
         "closingIssuesReferences": [
             {"number": n, "repository": {"owner": {"login": owner}, "name": name}}
             for n in closes
@@ -296,6 +310,7 @@ class ReadyQueueTest(unittest.TestCase):
         parents=None,
         hands=None,
         selves=None,
+        gnu_date=False,
         **extra_env,
     ):
         with tempfile.TemporaryDirectory() as tmp:
@@ -318,7 +333,10 @@ class ReadyQueueTest(unittest.TestCase):
 
             bindir = tmp / "bin"
             bindir.mkdir()
-            for name, body in (("gh", FAKE_GH), ("git", FAKE_GIT)):
+            bins = [("gh", FAKE_GH), ("git", FAKE_GIT)]
+            if gnu_date:
+                bins.append(("date", FAKE_DATE_GNU))
+            for name, body in bins:
                 path = bindir / name
                 path.write_text(body, encoding="utf-8")
                 path.chmod(0o755)
@@ -496,6 +514,46 @@ class ReadyQueueTest(unittest.TestCase):
         )
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[20][0], "dropped", "16 進の名前に当たった子で生きていると読んでいる")
+
+    # 3e. 当番 (stall-watch) が打つ形: 閾値 3 日で、手元の Mac の date と ubuntu の GNU の date が
+    # 同じ行を出す (#3366)。GNU の枝は `date -v` が断られたときの `date -d` である
+    def test_stale_claims_at_three_day_threshold(self):
+        issues = [
+            # #2507 の形: 印も人の最後の手も古い
+            issue(2507, labels=["status: in progress"]),
+            # #2251 の形: 人の手は 12 日前で止まり、その後は bot の追記だけが続く
+            issue(2251, labels=["status: in progress"], updated=ago(30)),
+            # 2 日前に人がコメントした着手
+            issue(2400, labels=["status: in progress"], updated=ago(2 * 24 * 60)),
+        ]
+        hands = {
+            2251: {"nodes": [human_comment(12 * 24 * 60), bot_comment(30)]},
+            2400: {"nodes": [human_comment(2 * 24 * 60)]},
+        }
+        outputs = []
+        for gnu in (False, True):
+            with self.subTest(gnu_date=gnu):
+                done, _ = self.run_queue(issues, hands=hands, gnu_date=gnu, DROPPED_MINUTES="4320")
+                seen = self.lines_by_number(done.stdout)
+                self.assertEqual(seen[2507][0], "dropped", done.stdout)
+                self.assertEqual(seen[2251][0], "dropped", "bot の追記で生きていると読んでいる")
+                self.assertEqual(seen[2400][0], "busy", "2 日前の人の手を静かと読んでいる")
+                outputs.append(done.stdout)
+        self.assertEqual(outputs[0], outputs[1], "手元の date と GNU の date で行が違う")
+
+    # 3f. 閾値の境目: 閾値ちょうど (静か) と 1 分前 (まだ動いている)
+    def test_threshold_boundary(self):
+        threshold = 4320
+        done, _ = self.run_queue(
+            [
+                issue(70, labels=["status: in progress"], updated=ago(threshold)),
+                issue(71, labels=["status: in progress"], updated=ago(threshold - 1)),
+            ],
+            DROPPED_MINUTES=str(threshold),
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[70][0], "dropped", "閾値ちょうどを静かと読んでいない")
+        self.assertEqual(seen[71][0], "busy", "閾値の 1 分前を静かと読んでいる")
 
     # 3d. 静かになるまでは dropped と呼ばない (枝の名前は番号を持たないことが多い)
     def test_recent_activity_is_still_busy(self):
@@ -703,6 +761,57 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[2251][0], "busy", "読めなかったのに従来の判定より悪くしている")
         self.assertIn("作者を読めなかった", seen[2251][1])
         self.assertIn("読めなかった", done.stderr)
+        # 機械で読める印 (#3366)。読めなかった番号は busy に倒れ、dropped が 0 件に見える
+        self.assertIn("incomplete: hands-unread", done.stderr)
+
+    # 3b-2. 一部を読めないまま完走した印 (#3366)。全部読めた回には出さない
+    def test_incomplete_mark_only_when_something_was_unread(self):
+        done, _ = self.run_queue([issue(1, labels=["verify: triaged"])])
+        self.assertNotIn("incomplete:", done.stderr)
+        # 件数の行の後ろに 1 行。印は空白を含まない 1 語
+        done, _ = self.run_queue(
+            [issue(2251, labels=["status: in progress"], updated=ago(30))],
+            hands={2251: {"nodes": [bot_comment(30)]}},
+            FAIL_HANDS="1",
+        )
+        lines = done.stderr.splitlines()
+        self.assertTrue(lines[-1].startswith("incomplete: "), done.stderr)
+        self.assertIn(" / decide ", "\n".join(lines[:-1]))
+
+    def test_incomplete_mark_when_list_hits_the_cap(self):
+        done, _ = self.run_queue([issue(1, labels=["verify: triaged"])], ISSUE_LIMIT="1")
+        self.assertIn("incomplete: capped-Issue", done.stderr)
+        done, _ = self.run_queue([issue(1, labels=["verify: triaged"])], PR_LIMIT="1", prs=[closing_pr(9)])
+        self.assertIn("incomplete: capped-PR", done.stderr)
+
+    # 3b-3. `Refs #N` / `Part of #N` で進んでいる open な PR も持ち主の証拠 (#3366)。Closes を持たない
+    # 段階の PR・束の記録の Issue が、静かなだけで dropped と読まれない
+    def test_refs_in_open_pr_body_keeps_issue_busy(self):
+        issues = [issue(n, labels=["status: in progress"]) for n in (10, 11, 12, 13, 14, 15)]
+        done, _ = self.run_queue(
+            issues,
+            prs=[
+                closing_pr(90, body="目的\n\nRefs #10, #11\nPart of #12 and #13"),
+                # 拾わないもの: 綴りが違う (prefs)・語の途中・他のリポジトリの番号・Refs の無い #N
+                closing_pr(91, body="prefs #14\nsee other/repo#15\nrefs-like #15 と #14"),
+            ],
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (10, 11, 12, 13):
+            self.assertEqual(seen[n][0], "busy", f"#{n} の Refs を数えていない")
+            self.assertIn("PR #90", seen[n][1])
+        for n in (14, 15):
+            self.assertEqual(seen[n][0], "dropped", f"#{n} を Refs でないのに数えている")
+
+    def test_refs_in_open_pr_body_also_hides_issue_from_ready(self):
+        # next-task の側にも効く: Closes の PR と同じく、Refs の PR が進んでいる Issue は ready に出さず
+        # busy にする (二重に着手されない)。busy が増えるだけで、ready へ倒れることは無い
+        done, _ = self.run_queue(
+            [issue(20, labels=["verify: triaged"])],
+            prs=[closing_pr(92, body="Refs #20")],
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[20][0], "busy", "Refs の PR が出ている Issue を ready に出している")
 
     # 3c. 別リポジトリを閉じる PR は紐づけに数えない
     def test_other_repo_claim_is_ignored(self):
@@ -894,6 +1003,33 @@ class ReadyQueueTest(unittest.TestCase):
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[10][0], "busy")
         self.assertEqual(seen[11][0], "dropped", "家族を通じた busy を、さらに証拠に数えている")
+
+    # 閾値 3 日 (DROPPED_MINUTES=4320) では、家族の静けさの窓も 3 日に伸びる (#3366)。意図した結合:
+    # 家族 (親・兄弟・子) は同じ着手の続きのことがあり (#1391)、窓を分けると「着手印は 3 日静か・
+    # 家族は 2 時間静か」の組を落ちたと読んでしまう。代償は、家族が動き続けている間は、落ちた着手が
+    # その最後の動きから 3 日隠れること (ADR-0036 決定 5 の改訂に書いた)
+    def test_family_window_follows_the_threshold(self):
+        three_days = 3 * 24 * 60
+        for name, family_age, expected in (
+            ("家族が 2 日前に人の手 (窓の中)", 2 * 24 * 60, "busy"),
+            ("家族が 4 日前に人の手 (窓の外)", 4 * 24 * 60, "dropped"),
+        ):
+            with self.subTest(name):
+                done, _ = self.run_queue(
+                    [issue(1352, labels=["status: in progress"])],
+                    families={
+                        1352: {
+                            "parent": member(1350),
+                            "siblings": [member(1357, updated=ago(family_age))],
+                        }
+                    },
+                    hands={1357: {"nodes": [human_comment(family_age)]}},
+                    DROPPED_MINUTES=str(three_days),
+                )
+                seen = self.lines_by_number(done.stdout)
+                self.assertEqual(seen[1352][0], expected, done.stdout)
+                if expected == "busy":
+                    self.assertIn("家族 #1357 がまだ動いている", seen[1352][1])
 
     def test_unreadable_family_stays_dropped(self):
         done, _ = self.run_queue(

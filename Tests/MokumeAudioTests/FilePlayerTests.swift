@@ -190,8 +190,24 @@ struct FilePlayerTests {
         player.leave()
     }
 
-    /// 器の外の始まり (`start >= length`・負) の振る舞いは、ここで固定しない: 非ループの `start == length` は
-    /// 頭から鳴るが、ラックの節 (``FileNode``) は終わりに寄せて無音になる。どちらにそろえるかは #3303 で決める。
+    /// 終わり以降の始まり (`start >= length`) は、1 度だけなら鳴らす残りが無いので無音で、ループなら頭から鳴る
+    /// (ラックの節 (``FileNode``) と同じ・#3303)。頭から鳴らし直すのは、始まりを決める `Playhead` の仕事。
+    @Test("終わり以降から始めた区切りは、1 度だけなら無音のまま、ループなら頭から鳴る。描いた数は進む")
+    func startingAtTheEndPlaysNothingOnceAndTheHeadWhenLooping() throws {
+        let flow = try makeFlow()
+        let player = try #require(FilePlayer(flow: flow, buffer: try rampBuffer(1000)))
+        for start in [1000, 1500] {
+            player.play(from: start, looping: false)
+            let silent = try render(flow, 600)
+            #expect(silent.allSatisfy { $0 == 0 }, "1 度だけ・start \(start): 頭の音が出ている")
+            #expect(player.played == 600, "無音でも描いた数は進む")
+            player.play(from: start, looping: true)
+            let heard = try render(flow, 300)
+            expectNear(heard, (0..<300).map { Float($0) / 1000 })
+        }
+        player.leave()
+    }
+
     @Test("1 度だけなら、器の終わりより後は無音のまま、止めるまで描いた数が進む")
     func playedOnceKeepsCountingAfterTheEnd() throws {
         let flow = try makeFlow()

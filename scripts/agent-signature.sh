@@ -8,10 +8,11 @@
 #   <sub>🤖 Assisted by [Claude Code](https://claude.com/claude-code) (Opus 5.5)</sub>
 #   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5, Haiku 5.5)</sub>   サブエージェントが別のモデル
 #   <sub>🤖 Assisted by Grok CLI (grok-5)</sub>                                        環境変数で名乗る
-#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5) and OpenAI Codex (gpt-6-astra)</sub>   --with で併記
+#   <sub>🤖 Assisted by [Codex](https://developers.openai.com/codex) (GPT-6 Astra)</sub>
+#   <sub>🤖 Assisted by [Claude Code](…) (Opus 5.5) and Codex (GPT-6 Astra)</sub>   --with で併記
 #
 # **分からない部分は書かない。** 推測で書いたモデル名は出所の嘘になる。Codex の
-# config.toml の model は起動時の指定で上書きされうるので読まない。
+# config.toml の model は起動時の指定で上書きされうるので読まず、セッションの記録を読む (#3409)。
 #
 # 読み手は scripts/comment.sh (発言)・scripts/sub-issue.sh (起票)・
 # scripts/agent-comment-guard.sh (署名の無い本文を差し戻すときに貼る 1 行を示す)。
@@ -21,10 +22,13 @@
 #   エージェント  MOKUME_AGENT_NAME (+ MOKUME_AGENT_URL) > Claude Code の env > Codex の痕跡 >
 #                 AI_AGENT の道具名 (他の道具も立てる慣習の変数)。どれも無ければ「分からない」
 #   モデル        MOKUME_AGENT_MODEL (カンマ区切りで複数) > Claude Code のセッションの記録に
-#                 残る assistant の model。**名乗るのはこの文を書いたモデルではなく、このセッションで
+#                 残る assistant の model > Codex のスレッドがいま使っている model。
+#                 Claude Code では**名乗るのはこの文を書いたモデルではなく、このセッションで
 #                 使ったモデル**である (どの文をどのモデルが書いたかは記録から決められない)。
 #                 先頭は主の記録の最新のモデル (/model で切り替えた後のもの)、続いて主の記録の残り、
-#                 サブエージェントの記録にだけ現れるモデルの順
+#                 サブエージェントの記録にだけ現れるモデルの順。Codex はいまのモデル 1 つだけを
+#                 名乗る: サブのスレッドには自動のレビュー (codex-auto-review) も混ざり、並べても
+#                 書き手の手掛かりにならない (#3409)
 #   併記          --with に渡した名乗り (複数可)。連携は実行環境からは見えないので明示する
 
 # 署名の検知キー。リンク先やモデルの名乗りが変わっても効き続けるよう、固定の語で見る。
@@ -49,11 +53,13 @@ detect_agent() {
     printf 'Claude Code\thttps://claude.com/claude-code'
     return 0
   fi
-  # OpenAI Codex: 専用の名乗りがまだ無く (openai/codex#13416)、サンドボックス実行の
-  # 痕跡で見るしかない。判定が緩いぶん、名乗りが増えたらここを差し替える
-  if [ -n "${CODEX_SANDBOX:-}" ] || [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
+  # Codex: 専用の名乗りがまだ無く (openai/codex#13416)、シェルに立てる CODEX_THREAD_ID と
+  # サンドボックス実行の痕跡で見る。判定が緩いぶん、名乗りが増えたらここを差し替える。
+  # 「OpenAI」は付けない (冗長。メンテナの指定。#3409)
+  if [ -n "${CODEX_THREAD_ID:-}" ] || [ -n "${CODEX_SANDBOX:-}" ] ||
+     [ -n "${CODEX_SANDBOX_NETWORK_DISABLED:-}" ] ||
      { [ "$strict" != strict ] && [ -n "${CODEX_HOME:-}" ]; }; then
-    printf 'OpenAI Codex\thttps://developers.openai.com/codex'
+    printf 'Codex\thttps://developers.openai.com/codex'
     return 0
   fi
   # 知らない道具でも AI_AGENT を立てていれば、その道具名 (版より前) を名乗る
@@ -68,6 +74,8 @@ detect_agent() {
 # 「Claude」を付けないのは、記録から読むのが Claude Code のときだけで、署名の頭の
 # [Claude Code] と重なるため (メンテナの指定)。Claude 以外のエージェントが Claude の
 # モデルを名乗るときは MOKUME_AGENT_MODEL に書いたとおりに出る (Claude Opus 5.5 など)。
+# GPT は gpt-6-astra → GPT-6 Astra (Codex の models_cache.json の表示名は「GPT-6-Astra」
+# 「GPT-6.1 Terra」と綴りが揺れるので使わない。#3409)。
 # 形が読めない ID はそのまま返す (知らない形を作り替えると別のモデルを名乗りかねない)
 model_display_name() { # $1=モデルの ID
   local id=${1%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}
@@ -75,6 +83,10 @@ model_display_name() { # $1=モデルの ID
     local family=${BASH_REMATCH[1]}
     printf '%s%s %s' "$(tr '[:lower:]' '[:upper:]' <<<"${family:0:1}")" "${family:1}" \
       "${BASH_REMATCH[2]}${BASH_REMATCH[4]:+.${BASH_REMATCH[4]}}"
+  elif [[ $1 =~ ^gpt-([0-9]+(\.[0-9]+)?)(-([a-z]+))?$ ]]; then
+    local name=${BASH_REMATCH[4]}
+    printf 'GPT-%s' "${BASH_REMATCH[1]}"
+    [ -z "$name" ] || printf ' %s%s' "$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")" "${name:1}"
   else
     printf '%s' "$1"
   fi
@@ -109,6 +121,41 @@ latest_model() { # $1=記録のパス
     grep -vxF '<synthetic>' | tail -n 1
 }
 
+# Codex のスレッドがいま使っているモデルの ID (分からなければ空)。#3409。読む順:
+#   1. 状態の DB (${CODEX_HOME}/state_<版>.sqlite) の threads.model。Codex 自身が持つ正本で、
+#      長いスレッドの記録が区間に分かれても、古い記録が .jsonl.zst に圧縮されても引ける。
+#      ただし DB は WAL で、読むだけでも -shm へ書けないと開けない (サンドボックスの中など)
+#   2. 記録 sessions/YYYY/MM/DD/rollout-<時刻>-<ID>[_<区間>].jsonl。手番ごとの turn_context 行が
+#      その時点の model を持つ。区間は名前順で後ろほど新しいので、最後のファイルの最後の行を読む。
+#      grep で turn_context の行に絞るのは速さのため (transcript_models と同じ)
+#   3. DB を immutable で開く。書けなくても開けるが WAL を読まないので、切り替えたばかりの
+#      モデルを取り逃がしうる。1・2 が無いときの最後の手
+codex_model() {
+  local id=${CODEX_THREAD_ID:-} home=${CODEX_HOME:-$HOME/.codex} f last= model=
+  # ID は SQL に埋めるので、UUID の字だけを通す
+  [[ $id =~ ^[0-9A-Fa-f-]+$ ]] || return 0
+  model=$(codex_db_model "$home" "$id" mode=ro)
+  if [ -z "$model" ]; then
+    for f in "$home"/sessions/*/*/*/rollout-*-"$id".jsonl "$home"/sessions/*/*/*/rollout-*-"$id"_*.jsonl; do
+      [ -f "$f" ] && last=$f
+    done
+    [ -z "$last" ] ||
+      model=$(grep -E '"type": ?"turn_context"' "$last" | jq -r '.payload.model // empty' 2>/dev/null | tail -n 1)
+  fi
+  [ -n "$model" ] || model=$(codex_db_model "$home" "$id" immutable=1)
+  printf '%s' "$model"
+}
+
+# 状態の DB から threads.model を引く (版の違う DB や sqlite3 の無い環境では空)
+codex_db_model() { # $1=CODEX_HOME $2=スレッドの ID $3=開き方 (URI の引数)
+  local db model
+  for db in "$1"/state_*.sqlite; do
+    [ -f "$db" ] || continue
+    model=$(sqlite3 "file:$db?$3" "SELECT model FROM threads WHERE id = '$2'" 2>/dev/null) || model=
+    [ -z "$model" ] || { printf '%s' "$model"; return 0; }
+  done
+}
+
 # 使ったモデルの名乗り → "Opus 5.5, Haiku 5.5" (分からなければ空)。
 #   $1 = エージェントの表示名  $2 = Claude Code の記録のパス (省略時は env から探す)
 agent_models() {
@@ -116,6 +163,11 @@ agent_models() {
   if [ -n "${MOKUME_AGENT_MODEL:-}" ]; then
     printf '%s' "$MOKUME_AGENT_MODEL"
     return
+  fi
+  if [ "$agent" = Codex ]; then
+    line=$(codex_model)
+    [ -z "$line" ] || model_display_name "$line"
+    return 0
   fi
   [ "$agent" = "Claude Code" ] || return 0
   [ -n "$transcript" ] || transcript=$(claude_transcript) || return 0

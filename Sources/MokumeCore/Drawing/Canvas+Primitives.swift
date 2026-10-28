@@ -138,11 +138,15 @@ extension Canvas {
             for point in arc where point != points.last { points.append(point) }
         }
         if points.count > 1, points.last == points.first { points.removeLast() }
-        return Outline(
+        var outline = Outline(
             points: points, isClosed: true, fanCenter: SIMD2(w / 2, h / 2),
             curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
             namedFill: Outline.NamedFill(
                 isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
+        // 破線は上辺の左の弧の終わり `(r, 0)` から数える (SVG の `<rect rx>`・p5.js の `roundRect` と同じ・#3314)。
+        // 点の並びは右上の弧の始まりからのまま (実線の絵を動かさない)
+        outline.dashStart = points.firstIndex(of: SIMD2(r, 0)) ?? 0
+        return outline
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
@@ -274,6 +278,11 @@ extension Canvas {
                 mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
                 sweep: sweep)
         }
+        // **一周で破線の輪郭を引くときは、破線だけを角度 0 から数える** (#3314)。距離関数の道・楕円・SVG は
+        // 角度 0 から破線を数えるので、貼る絵 (`texture()`) や断片を足しただけで破線が `start` ぶん動かないよう
+        // 揃える。塗りと実線の周は今までどおり `start` から作り (頂点の並びを動かさない)、破線を刻む点だけを
+        // 角度 0 から作り直して持たせる (``Outline/dashPoints``)
+        let dashesFromAngleZero = isFullTurn && dashedStroke != nil
         draw(
             folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
             at: center
@@ -283,10 +292,18 @@ extension Canvas {
             // `StrokeJoin.miter` の注記もそう約束している。#1423 は 3 つの角だけを折れ目の形に
             // 従わせていたが、`texture()` / `shader()` を足しただけで角の形が変わっていた (#1486)。
             // 一周を何個に刻むかは、画面に出る半径で決まる (#1645)
-            Self.ringOutline(
+            var outline = Self.ringOutline(
                 Outline.Ring(
                     radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
                     segments: segments, piece: .sector))
+            if dashesFromAngleZero {
+                outline.dashPoints = Self.ringOutline(
+                    Outline.Ring(
+                        radiusX: radiusX, radiusY: radiusY, start: 0, sweep: sweep,
+                        segments: segments, piece: .sector)
+                ).points
+            }
+            return outline
         }
     }
 

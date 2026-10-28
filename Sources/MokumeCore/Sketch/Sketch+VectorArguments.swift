@@ -75,7 +75,7 @@ extension SketchPart {
     /// translate(pos)
     /// ```
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 参照 translate(_:_:)
     public func translate(_ offset: Vector2) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -89,7 +89,7 @@ extension SketchPart {
     /// translate(Vector3(200, 150, -100))
     /// ```
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 参照 translate(_:_:_:)
     public func translate(_ offset: Vector3) {
         guard let canvas = Self.liveCanvas() else { return }

@@ -107,42 +107,48 @@ extension Canvas {
     // 原点を奥行きも含めてずらす。
     public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y, z: z)
+        noteTransformWritten()
     }
 
     // 横軸まわりに回す。
     public func rotateX(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateX(by: radians)
+        noteTransformWritten()
     }
 
     // 縦軸まわりに回す。
     public func rotateY(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateY(by: radians)
+        noteTransformWritten()
     }
 
     // 奥行きの軸まわりに回す。
     public func rotateZ(_ radians: some ScalarConvertible) {
         let radians = radians.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateZ(by: radians)
+        noteTransformWritten()
     }
 
     public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y, z: z)
+        noteTransformWritten()
     }
 
     /// 縦横と奥行きを同じ倍率で伸ばす (`scale(s, s, s)`)。
     public func scale(_ s: some ScalarConvertible) {
         let s = s.asFloat
-        guard isShaping else { return warnOutsideFrame(.transform) }
+        guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: s, y: s, z: s)
+        noteTransformWritten()
     }
 
     // MARK: - 置く
