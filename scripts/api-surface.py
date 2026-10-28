@@ -607,9 +607,6 @@ SKETCHES = pathlib.Path(__file__).resolve().parents[1] / "Sketches"
 # 「対象から外すもの」。**書けるのは「スケッチでは示せない理由」に限る** — 足すのが面倒な
 # だけのものを載せると、#1358 が塞いだ空白がここへ移るだけになる
 UNSHOWN = {
-    "save": "結果が絵ではなくファイルで、--render のたびにファイルが書かれる。正しさはテストが見る",
-    "beginRecord": "save と同じ理由 (記録の書き出し)",
-    "endRecord": "save と同じ理由 (記録の書き出し)",
     "plugins": "作者が書くのは 1 行だけで、中身は外のパッケージが書く",
     "attach": "plugins と同じ理由 (呼ぶのは機能を作る側で、作者は createCapture() のような口を呼ぶ)",
     "detach": "attach と同じ理由",

@@ -75,6 +75,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     // 触って確かめるためのもの。**書き出しても触っていない 1 枚しか出ない**が、台帳には
     // 「走っても落ちない」の検査として載る。カタログを 2 つに割るほどの違いではない
     ReferenceSketch(name: "pointer-and-keys") { PointerAndKeys() },
+    ReferenceSketch(name: "save-and-record") { SaveAndRecord() },
     ReferenceSketch(name: "time-and-scrub") { TimeAndScrub() },
     ReferenceSketch(name: "follow-and-turn") { FollowAndTurn() },
     ReferenceSketch(name: "knobs-and-values") { KnobsAndValues() },
