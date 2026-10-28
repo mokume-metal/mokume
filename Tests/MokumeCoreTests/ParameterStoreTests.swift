@@ -65,6 +65,8 @@ struct ParameterStoreTests {
             ParamDeclaration(name: "radius", value: .float(number))
         }
 
+        var defaultValue: ParamValue? { nil }
+
         func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
     }
 
@@ -311,7 +313,7 @@ struct ParameterStoreTests {
             @Param(0...200) var radius: Double = 80
         }
         final class Narrow: Sketch {
-            @Param(0...100) var radius: Double = 50
+            @Param(0...100) var radius: Double = 80
         }
         let url = try makeFile()
         let wide = Wide()
@@ -547,6 +549,342 @@ struct ParameterStoreTests {
         let discarded = report["discarded"] as? [[String: Any]] ?? []
         #expect(discarded.contains { $0["name"] as? String == "count" })
         #expect(discarded.contains { $0["reason"] as? String == "unknownName" })
+    }
+
+    // MARK: - コードの既定値が変わった値 (#2402)
+
+    /// 保存を書いた時点のスケッチ。`radius` は 80、`hue` は 0.3。
+    final class Dial: Sketch {
+        @Param(0...200) var radius: Double = 80
+        @Param(0...1) var hue: Double = 0.3
+    }
+
+    /// `radius` の既定値だけを 60 へ変えた。
+    final class DialRadius60: Sketch {
+        @Param(0...200) var radius: Double = 60
+        @Param(0...1) var hue: Double = 0.3
+    }
+
+    /// 触っていない `hue` の既定値だけを 0.6 へ変えた。
+    final class DialHue06: Sketch {
+        @Param(0...200) var radius: Double = 80
+        @Param(0...1) var hue: Double = 0.6
+    }
+
+    /// つまみで合わせた 120 を、コードの既定値へ書き戻した。
+    final class DialRadius120: Sketch {
+        @Param(0...200) var radius: Double = 120
+        @Param(0...1) var hue: Double = 0.3
+    }
+
+    /// `radius` のつまみだけを 120 にして保存した置き場を作る。
+    private func savedDial() async throws -> URL {
+        let url = try makeFile()
+        let before = Dial()
+        let saving = store(for: before, at: url)
+        saving.restore()
+        before.radius = 120
+        await settle(saving)
+        return url
+    }
+
+    /// 保存を戻して、戻した結果・標準エラーへ言った行を返す。
+    private func restore(_ sketch: any Sketch, from url: URL) -> (ParamStore.Restoration, [String]) {
+        var warnings: [String] = []
+        let restoration = ParamStore(
+            registry: ParamRegistry(of: sketch), at: url, warn: { warnings.append($0) }
+        ).restore()
+        return (restoration, warnings)
+    }
+
+    @Test("S3: コードを変えずに起動し直すと、合わせた値が戻り、警告は出ない")
+    func unchangedDefaultsRestoreSilently() async throws {
+        let url = try await savedDial()
+        let after = Dial()
+        let (restoration, warnings) = restore(after, from: url)
+        #expect(after.radius == 120)
+        #expect(after.hue == 0.3)
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+    }
+
+    @Test("S1: コードの既定値を変えた値は保存を捨て、捨てた値・前の既定値・新しい既定値を 1 度だけ名乗る")
+    func aChangedDefaultWinsOverTheSavedValueAndSaysSo() async throws {
+        let url = try await savedDial()
+        let saved = try String(contentsOf: url, encoding: .utf8)
+        let after = DialRadius60()
+        var warnings: [String] = []
+        let (restoration, discarded) = try restoreThroughTheFirstReport(
+            saved, into: after, warnings: &warnings)
+
+        #expect(after.radius == 60, "保存の 120 が勝った")
+        #expect(after.hue == 0.3, "触っていない値まで巻き込んだ")
+        #expect(restoration.discarded == [.init(name: "radius", reason: .defaultChanged)])
+        #expect(discarded == [["name": "radius", "reason": "defaultChanged"]])
+        #expect(restoration.clamped.isEmpty)
+        let line = try #require(warnings.first, "捨てたのに黙っていた")
+        #expect(warnings.count == 1)
+        #expect(line.contains("radius"))
+        #expect(line.contains("saved 120.0"), "\(line)")
+        #expect(line.contains("the default was 80.0"), "\(line)")
+        #expect(line.contains("now 60.0"), "\(line)")
+        #expect(!line.contains("The declarations have changed"), "宣言が変わったことにした: \(line)")
+    }
+
+    @Test("S2: 触っていない値の既定値を変えると新しい既定値になり、警告も discarded も出ない")
+    func aChangedDefaultOfAnUntouchedValueTakesEffectInSilence() async throws {
+        let url = try await savedDial()
+        let after = DialHue06()
+        let (restoration, warnings) = restore(after, from: url)
+        #expect(after.hue == 0.6, "触っていない値が保存に凍った")
+        #expect(after.radius == 120, "合わせた値を失った")
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+    }
+
+    @Test("S4: 合わせた値をコードの既定値へ書き戻すと 120 のまま、警告は出ない")
+    func writingTheTunedValueBackIntoTheCodeLosesNothing() async throws {
+        let url = try await savedDial()
+        let after = DialRadius120()
+        let (restoration, warnings) = restore(after, from: url)
+        #expect(after.radius == 120)
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+    }
+
+    @Test("既定値を持たない古い形式の保存は、いままでどおり名前と型で戻し、次に書くとき既定値の列を足す")
+    func aSaveWithoutDefaultsIsRestoredByNameAndType() async throws {
+        let url = try makeFile()
+        try #"{"schemaVersion":1,"values":[{"name":"radius","type":"float","value":120},{"name":"hue","type":"float","value":0.3}]}"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        let after = DialRadius60()
+        var warnings: [String] = []
+        let restoring = ParamStore(
+            registry: ParamRegistry(of: after), at: url, warn: { warnings.append($0) })
+        let restoration = restoring.restore()
+        // コードの既定値は 60 だが、保存に既定値が無いので変わったかは見られず、保存が勝つ (いままでの規則)
+        #expect(after.radius == 120)
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+
+        // 次に書くとき、既定値の列が足される
+        after.radius = 130
+        await settle(restoring)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let defaults = try #require(object["defaults"] as? [[String: Any]], "既定値の列を書かなかった")
+        #expect(defaults.compactMap { $0["name"] as? String } == ["radius", "hue"])
+        #expect(defaults.first?["value"] as? Double == 60)
+    }
+
+    /// 戻したあとの保存の `defaults` を `[名前: 値]` で読む。
+    private func savedDefaults(at url: URL) throws -> [String: Double] {
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let defaults = object["defaults"] as? [[String: Any]] ?? []
+        return Dictionary(
+            uniqueKeysWithValues: defaults.compactMap { entry in
+                (entry["name"] as? String).flatMap { name in
+                    (entry["value"] as? Double).map { (name, $0) }
+                }
+            })
+    }
+
+    /// (a) 捨てた起動で何も触らずに終えても、保存が今のコードに追いつく。次の起動は同じ警告を繰り返さない。
+    @Test("(a) 既定値の変化で捨てた起動のあと、触らずに起動し直しても、同じ警告を繰り返さない")
+    func theSaveCatchesUpWithTheCodeAfterADiscard() async throws {
+        let url = try await savedDial()
+        let (first, firstWarnings) = restore(DialRadius60(), from: url)
+        #expect(first.discarded == [.init(name: "radius", reason: .defaultChanged)])
+        #expect(firstWarnings.count == 1)
+        #expect(try savedDefaults(at: url) == ["radius": 60, "hue": 0.3], "保存の既定値が追いつかなかった")
+
+        let second = DialRadius60()
+        let (restoration, warnings) = restore(second, from: url)
+        #expect(second.radius == 60)
+        #expect(restoration.isEmpty, "\(restoration.discarded)")
+        #expect(warnings.isEmpty, "同じ警告を繰り返した: \(warnings)")
+    }
+
+    /// (b) 書き戻した値 (黙って採った) のあと、既定値を元へ戻しても、保存の古い値が黙って勝たない。
+    @Test("(b) 合わせた値をコードへ書き戻したあと、既定値を元へ戻すと、保存の古い値でなく元の既定値になる")
+    func theSaveCatchesUpAfterATunedValueIsWrittenBack() async throws {
+        let url = try await savedDial()
+        let adopted = DialRadius120()
+        let (_, adoptedWarnings) = restore(adopted, from: url)
+        #expect(adopted.radius == 120)
+        #expect(adoptedWarnings.isEmpty)
+        #expect(try savedDefaults(at: url)["radius"] == 120, "黙って採ったのに保存の既定値を直さなかった")
+
+        let back = Dial()
+        let (restoration, warnings) = restore(back, from: url)
+        #expect(back.radius == 80, "既定値を戻したのに、保存の 120 が黙って勝った")
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+    }
+
+    /// (c) 捨てた値が保存に残らない。既定値を戻しても黙って復活しない。
+    @Test("(c) 捨てた値は保存に残らず、既定値を戻しても黙って復活しない")
+    func aDiscardedValueDoesNotComeBackWhenTheDefaultGoesBack() async throws {
+        let url = try await savedDial()
+        _ = restore(DialRadius60(), from: url)
+        let back = Dial()
+        let (restoration, warnings) = restore(back, from: url)
+        #expect(back.radius == 80, "捨てた 120 が復活した")
+        #expect(restoration.isEmpty)
+        #expect(warnings.isEmpty, "\(warnings)")
+    }
+
+    @Test("古い形式の保存は、戻した時点で既定値の列を足して書き直す")
+    func aLegacySaveIsRewrittenWithDefaultsOnRestore() throws {
+        let url = try makeFile()
+        try #"{"schemaVersion":1,"values":[{"name":"radius","type":"float","value":120},{"name":"hue","type":"float","value":0.3}]}"#
+            .write(to: url, atomically: true, encoding: .utf8)
+        _ = restore(DialRadius60(), from: url)
+        #expect(try savedDefaults(at: url) == ["radius": 60, "hue": 0.3])
+    }
+
+    @Test("既定値が変わっていなければ、戻すだけで保存は書き直さない")
+    func anUpToDateSaveIsNotRewrittenOnRestore() async throws {
+        let url = try await savedDial()
+        let before = try Data(contentsOf: url)
+        let after = Dial()
+        let store = ParamStore(registry: ParamRegistry(of: after), at: url, warn: { _ in })
+        store.restore()
+        #expect(store.writeCount == 0)
+        #expect(try Data(contentsOf: url) == before)
+    }
+
+    @Test("警告は Float の宣言の 0.1 を、Float の桁で名乗る")
+    func theNoticePrintsFloatsInTheirOwnDigits() throws {
+        let line = try #require(
+            ParamStore.notice(
+                for: [],
+                defaultChanged: [
+                    .init(
+                        name: "level", saved: .float(Double(Float(0.5))),
+                        previousDefault: .float(Double(Float(0.1))), newDefault: .float(Double(Float(0.2))))
+                ]))
+        #expect(line.contains("the default was 0.1, now 0.2"), "\(line)")
+        #expect(!line.contains("0.10000000149011612"))
+    }
+
+    /// 古い版の `SavedReading` (`values` だけを読む) の写し。**新しい保存を古い版が読んでも、いままでどおり
+    /// 名前と型で戻る**ことを、戻す側を変えずに見る。
+    private struct OldSavedReading: Decodable {
+        let values: [ParamRequest.Entry]
+    }
+
+    @Test("新しい保存を、既定値の列を知らない古い読みが読んでも、値はいままでどおり読める")
+    func anOldReaderStillReadsTheValuesOfANewSave() async throws {
+        let url = try await savedDial()
+        let data = try Data(contentsOf: url)
+        let old = try JSONDecoder().decode(OldSavedReading.self, from: data)
+        #expect(
+            old.values == [
+                .init(name: "radius", value: .float(120)), .init(name: "hue", value: .float(0.3)),
+            ])
+    }
+
+    @Test("既定値の列が壊れていても、合わせた値は名前と型で戻す")
+    func aBrokenDefaultsColumnIsTreatedAsNoDefaults() throws {
+        let broken = [
+            #""defaults":5"#, #""defaults":[{"name":"radius","type":"matrix","value":1}]"#,
+            #""defaults":null"#,
+        ]
+        for defaults in broken {
+            let url = try makeFile()
+            try #"{"schemaVersion":1,"values":[{"name":"radius","type":"float","value":120}],\#(defaults)}"#
+                .write(to: url, atomically: true, encoding: .utf8)
+            let after = DialRadius60()
+            let (restoration, warnings) = restore(after, from: url)
+            #expect(after.radius == 120, "\(defaults)")
+            #expect(restoration.isEmpty, "\(defaults)")
+            #expect(warnings.isEmpty, "\(defaults): \(warnings)")
+        }
+    }
+
+    @Test("型を変えた値と候補の外の値は、既定値も変わっていても、いままでの理由で捨てる")
+    func typeAndChoiceMismatchesKeepTheirOwnReasons() async throws {
+        // `Knobbed` から `Renamed` へは、`radius` の型・`shape` の候補と既定値が変わる
+        let url = try makeFile()
+        let before = Knobbed()
+        let saving = store(for: before, at: url)
+        saving.restore()
+        before.radius = 120
+        before.shape = "square"
+        await settle(saving)
+
+        let (restoration, _) = restore(Renamed(), from: url)
+        #expect(restoration.discarded.contains(.init(name: "radius", reason: .typeMismatch)))
+        #expect(restoration.discarded.contains(.init(name: "shape", reason: .notInChoices)))
+        #expect(!restoration.discarded.contains { $0.reason == .defaultChanged })
+    }
+
+    @Test("7 つの型のどれでも、既定値が変わった値は捨て、変えていなければ戻す")
+    func everyTypeDetectsAChangedDefault() async throws {
+        final class Every: Sketch {
+            @Param(0...10) var number: Double = 1
+            @Param(0...10) var whole: Int = 2
+            @Param var flag: Bool = false
+            @Param(choices: ["a", "b", "c"]) var word: String = "a"
+            @Param var tint: LinearRGBA = .linear(red: 0.1, green: 0.2, blue: 0.3)
+            @Param(-1...1) var pair: Vector2 = Vector2(0, 0)
+            @Param(-1...1) var triple: Vector3 = Vector3(0, 0, 0)
+        }
+        final class EveryMoved: Sketch {
+            @Param(0...10) var number: Double = 9
+            @Param(0...10) var whole: Int = 9
+            @Param var flag: Bool = true
+            @Param(choices: ["a", "b", "c"]) var word: String = "c"
+            @Param var tint: LinearRGBA = .linear(red: 0.9, green: 0.8, blue: 0.7)
+            @Param(-1...1) var pair: Vector2 = Vector2(1, 1)
+            @Param(-1...1) var triple: Vector3 = Vector3(1, 1, 1)
+        }
+        let url = try makeFile()
+        let before = Every()
+        let saving = store(for: before, at: url)
+        saving.restore()
+        before.number = 3.5
+        before.whole = 7
+        before.flag = true
+        before.word = "b"
+        before.tint = .linear(red: 0.4, green: 0.5, blue: 0.6)
+        before.pair = Vector2(0.25, -0.5)
+        before.triple = Vector3(0.1, 0.2, 0.3)
+        await settle(saving)
+
+        let same = Every()
+        let (sameRestoration, sameWarnings) = restore(same, from: url)
+        #expect(sameRestoration.isEmpty, "既定値が同じなのに捨てた: \(sameRestoration.discarded)")
+        #expect(sameWarnings.isEmpty)
+        #expect(same.tint == .linear(red: 0.4, green: 0.5, blue: 0.6))
+
+        let moved = EveryMoved()
+        let (restoration, _) = restore(moved, from: url)
+        // 真偽は値が 2 つしか無いので、保存の `true` が新しい既定値の `true` と同じになり、失うものが無い
+        #expect(
+            Set(restoration.discarded.map(\.name))
+                == ["number", "whole", "word", "tint", "pair", "triple"])
+        #expect(restoration.discarded.allSatisfy { $0.reason == .defaultChanged })
+        #expect(moved.flag == true)
+        #expect(moved.number == 9)
+        #expect(moved.word == "c")
+    }
+
+    @Test("コードの既定値が変わって捨てたことは、名前・保存値・前と新しい既定値で言える")
+    func theDefaultChangeNoticeNamesTheValues() throws {
+        let line = try #require(
+            ParamStore.notice(
+                for: [],
+                defaultChanged: [
+                    .init(
+                        name: "radius", saved: .float(120), previousDefault: .float(80),
+                        newDefault: .float(60))
+                ]))
+        #expect(line.contains("Threw away 1 of the saved values because the default in the code changed"))
+        #expect(line.contains("radius (saved 120.0, the default was 80.0, now 60.0)"))
+        #expect(!line.contains("\n"))
     }
 
     // MARK: - 読めない保存 (#2806)

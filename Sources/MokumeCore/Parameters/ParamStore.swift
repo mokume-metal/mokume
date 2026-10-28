@@ -23,7 +23,8 @@ import Observation
 ///
 /// 正典はコードに書いた既定値であり ([ADR-0013] 決定 3)、ここが返すのは手元の続きだけ
 /// である。作品として残したい値はコードへ書き戻す — だから置き場は版管理から外れて
-/// いてよい。
+/// いてよい。**コードの既定値を書いた時点から変えた値は、保存を捨ててコードが勝つ** — 保存は書いた
+/// 時点の既定値を併記する ([ADR-0030] 決定 6 の改訂 (2026-10-28)・[#2402](https://github.com/mokume-metal/mokume/issues/2402))。
 ///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
@@ -77,8 +78,15 @@ final class ParamStore: DeclarationWatcher {
 
     /// 保存されていた値を戻し、何を捨てたかを返す。**起動時に 1 回だけ。**
     ///
-    /// 採るのは**名前と型が一致するものだけ**である ([ADR-0030] 決定 6)。それ以外の
-    /// 救済 (型を変換して救う、など) を入れると、絵が理由なく変わる経路が増える。
+    /// 採るのは**名前と型が一致するもののうち、コードの既定値が保存に書いた時点から変わっていないもの**
+    /// である ([ADR-0030] 決定 6 とその改訂 (2026-10-28))。それ以外の救済 (型を変換して救う、など) を
+    /// 入れると、絵が理由なく変わる経路が増える。
+    ///
+    /// **保存の既定値が今のコードの既定値と食い違うものを 1 件でも見たら (捨てた・黙って採った・既定値の
+    /// 列が無い古い保存)、戻した後に 1 度、今の値と今の既定値で保存を書き直す。** 書き直さないと、保存の
+    /// `defaults` が今のコードに追いつかず、(a) 次の起動も同じ「Threw away」を前の既定値のまま名乗り、
+    /// (b) 書き戻した値の既定値を元へ戻したとき保存の古い値が黙って勝ち、(c) 捨てた値が残って既定値を
+    /// 戻すと黙って復活する ([#2402](https://github.com/mokume-metal/mokume/issues/2402))。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     @discardableResult
@@ -97,8 +105,11 @@ final class ParamStore: DeclarationWatcher {
             return Self.unreadableSave(sayingWhy: error, at: url, warn)
         }
         let entries: [ParamRequest.Entry]
+        let savedDefaults: [String: ParamValue]
         do {
-            entries = try JSONDecoder().decode(SavedReading.self, from: data).values
+            let reading = try JSONDecoder().decode(SavedReading.self, from: data)
+            entries = reading.values
+            savedDefaults = reading.defaultsByName
         } catch {
             return Self.unreadableSave(sayingWhy: error, at: url, warn)
         }
@@ -107,6 +118,9 @@ final class ParamStore: DeclarationWatcher {
         // 捨てたものは 2 つに分けて控える。言い方が違う (``notice(for:unreadable:)``)
         var mismatched: [ParamReport.Rejection] = []
         var unreadable: [ParamReport.Rejection] = []
+        var defaultChanged: [DefaultChange] = []
+        // 保存の既定値が今のコードに追いついていないか (上の説明の「書き直す」)
+        var savedDefaultsAreStale = false
         // 当てる順は名前順で、同じ名前は書いた順 (要求と同じ鍵・#858)。保存の並びや並べ替えの
         // 安定性に結果が依ると、同じ保存から違う姿が出る
         for entry in ParamRequest.inApplicationOrder(entries) {
@@ -122,6 +136,26 @@ final class ParamStore: DeclarationWatcher {
                 continue
             }
             guard case .value(let value) = entry.reading else { continue }
+            if let current = registry.defaultValue(of: entry.name), savedDefaults[entry.name] != current {
+                savedDefaultsAreStale = true
+            }
+            // **コードの既定値が、保存に書いた時点から変わった値は、保存を戻さない** ([ADR-0030] 決定 6 の
+            // 改訂 (2026-10-28)・#2402)。型の食い違いと候補の外は、いままでの理由が先に言う。
+            // 保存が既定値を持たない (古い形式・既定値を持たない宣言) ものは、名前と型だけで戻る
+            switch Self.defaultChange(
+                for: entry.name, saved: value, savedDefaults: savedDefaults, in: registry)
+            {
+            case nil:
+                break
+            case .nothingLost:
+                // 前の既定値と同じだった値 (触っていない) と、新しい既定値と同じ値 (書き戻した) は、
+                // 失うものが無いので黙る。どちらも新しい既定値のまま
+                continue
+            case .lost(let change):
+                result.discarded.append(.init(name: change.name, reason: .defaultChanged))
+                defaultChanged.append(change)
+                continue
+            }
             let reason: ParamReport.Rejection.Reason
             switch registry.write(value, to: entry.name) {
             case nil: reason = .unknownName
@@ -138,7 +172,8 @@ final class ParamStore: DeclarationWatcher {
             result.discarded.append(.init(name: entry.name, reason: reason))
             mismatched.append(.init(name: entry.name, reason: reason))
         }
-        announce(mismatched: mismatched, unreadable: unreadable)
+        announce(mismatched: mismatched, unreadable: unreadable, defaultChanged: defaultChanged)
+        if savedDefaultsAreStale { write() }
         return result
     }
 
@@ -166,9 +201,55 @@ final class ParamStore: DeclarationWatcher {
     /// 検査から読めないので、**読めるのは組み立てのほうだけ**である。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-    private func announce(mismatched: [ParamReport.Rejection], unreadable: [ParamReport.Rejection]) {
-        guard let notice = Self.notice(for: mismatched, unreadable: unreadable) else { return }
+    private func announce(
+        mismatched: [ParamReport.Rejection], unreadable: [ParamReport.Rejection],
+        defaultChanged: [DefaultChange]
+    ) {
+        guard
+            let notice = Self.notice(
+                for: mismatched, unreadable: unreadable, defaultChanged: defaultChanged)
+        else { return }
         warn(notice)
+    }
+
+    /// コードの既定値が、保存に書いた時点から変わったために捨てた値 1 件。
+    struct DefaultChange: Equatable {
+        let name: String
+        /// 捨てた保存の値。
+        let saved: ParamValue
+        /// 保存に書いた時点の既定値。
+        let previousDefault: ParamValue
+        /// いまのコードの既定値。
+        let newDefault: ParamValue
+    }
+
+    /// 保存の値 1 件を、コードの既定値の変化に照らす。**当たらなければ `nil`** (いままでの規則で戻す)。
+    ///
+    /// 当たるのは、保存がその宣言の既定値を持ち、今のコードの既定値と違い、型が同じで、文字の候補の
+    /// 外でないときだけである (型の食い違いと候補の外は、いままでの理由が先に言う)。当たったうえで、
+    /// 保存の値が前の既定値と同じ (触っていない) か、いまの既定値と同じ (書き戻した) なら失うものが
+    /// 無く、そうでなければ合わせた値を捨てる。
+    enum DefaultChangeVerdict: Equatable {
+        case nothingLost
+        case lost(DefaultChange)
+    }
+
+    static func defaultChange(
+        for name: String, saved: ParamValue, savedDefaults: [String: ParamValue],
+        in registry: ParamRegistry
+    ) -> DefaultChangeVerdict? {
+        guard let previous = savedDefaults[name], let current = registry.defaultValue(of: name),
+            previous != current, saved.paramType == current.paramType,
+            previous.paramType == current.paramType
+        else { return nil }
+        if case .string(let text) = saved, let choices = registry.choices(of: name),
+            !choices.contains(text)
+        {
+            return nil
+        }
+        guard saved != previous, saved != current else { return .nothingLost }
+        return .lost(
+            DefaultChange(name: name, saved: saved, previousDefault: previous, newDefault: current))
     }
 
     /// 捨てたものを人へ伝える 1 行。捨てていなければ `nil`。
@@ -180,7 +261,8 @@ final class ParamStore: DeclarationWatcher {
     ///     数) と名前の無い 1 件。理由は `typeMismatch` か `notFinite` だけが来る。宣言とは関わりが
     ///     無いので、**宣言が変わったとは言わない** (#2806)
     static func notice(
-        for discarded: [ParamReport.Rejection], unreadable: [ParamReport.Rejection] = []
+        for discarded: [ParamReport.Rejection], unreadable: [ParamReport.Rejection] = [],
+        defaultChanged: [DefaultChange] = []
     ) -> String? {
         var parts: [String] = []
         if !discarded.isEmpty {
@@ -202,6 +284,17 @@ final class ParamStore: DeclarationWatcher {
                 "Could not read \(unreadable.count) of the saved values: \(listed). "
                     + "These stay at their defaults")
         }
+        if !defaultChanged.isEmpty {
+            let listed = defaultChanged
+                .map {
+                    "\($0.name) (saved \(describe($0.saved)), the default was \(describe($0.previousDefault)), "
+                        + "now \(describe($0.newDefault)))"
+                }
+                .joined(separator: " / ")
+            parts.append(
+                "Threw away \(defaultChanged.count) of the saved values because the default in the code changed "
+                    + "since they were saved: \(listed). The code wins, so these start at the new defaults")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: "; ")
     }
 
@@ -211,6 +304,28 @@ final class ParamStore: DeclarationWatcher {
         case .typeMismatch: "a different type from the declaration"
         case .notInChoices: "outside the choices that are allowed"
         case .notFinite: "not a finite number once read as the declared type"
+        case .defaultChanged: "the default in the code changed since it was saved"
+        }
+    }
+
+    /// 実数を名乗る形。**`Float` で正確に表せる数は `Float` の桁で出す** — `Float` の宣言の `0.1` は
+    /// 面の表現では `Double` の `0.10000000149011612` になるので、そのまま出すと宣言と違う数に読める。
+    /// `Double` の宣言でも、`Float` で正確に表せる数なら同じ数を指す (`0.5` や `120.0`)。
+    private static func describe(_ number: Double) -> String {
+        let narrow = Float(number)
+        return Double(narrow) == number ? "\(narrow)" : "\(number)"
+    }
+
+    /// 値を 1 行の中で名乗る形。型は名乗らない (名前の隣に並ぶ値は宣言の型で読める)。
+    private static func describe(_ value: ParamValue) -> String {
+        switch value {
+        case .float(let number): describe(number)
+        case .int(let number): "\(number)"
+        case .bool(let flag): "\(flag)"
+        case .string(let text): "\"\(text)\""
+        case .color(let color): "color(\(color.red), \(color.green), \(color.blue), \(color.alpha))"
+        case .vector2(let vector): "(\(vector.x), \(vector.y))"
+        case .vector3(let vector): "(\(vector.x), \(vector.y), \(vector.z))"
         }
     }
 
@@ -274,7 +389,8 @@ final class ParamStore: DeclarationWatcher {
     private func write() {
         coverDeclarationChange()
         let saved = Saved(
-            values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) })
+            values: registry.declarations.map { Saved.Entry(name: $0.name, value: $0.value) },
+            defaults: registry.defaults)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
         // 書けなければ型と理由を名乗る (#2263)。非有限の数が 1 つ載っているだけで全部が
@@ -338,9 +454,21 @@ extension ParamStore {
     /// 置かない — 要求も応答も受け取らず、読むのはこのライブラリだけである。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    ///
+    /// **`defaults` は、書いた時点のコードの既定値** ([ADR-0030] 決定 6 の改訂 (2026-10-28)・
+    /// [#2402](https://github.com/mokume-metal/mokume/issues/2402))。`values` の外の別の列に置くので、
+    /// この列を知らない古い版の読み (``SavedReading``) は `values` だけを読み、いままでどおり名前と型で
+    /// 戻す。`defaults` の無い保存 (古い版が書いたもの) は、既定値が変わったかを見ずに同じ規則で戻し、
+    /// 次に書くときにこの列を足す。形は動かしていないので ``ParamStore/schemaVersion`` は 1 のまま。
     struct Saved: Codable {
         var schemaVersion = ParamStore.schemaVersion
         let values: [Entry]
+        let defaults: [Entry]
+
+        init(values: [Entry], defaults: [Entry] = []) {
+            self.values = values
+            self.defaults = defaults
+        }
 
         /// 1 件ぶん。**面が読み書きするものと同じ形** (``NamedParamValue``)。
         typealias Entry = NamedParamValue
@@ -356,7 +484,32 @@ extension ParamStore {
     /// 読まない (版で読み分けるものが無い)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
+    ///
+    /// **`defaults` は読めた 1 件だけを使う。** 列が欠けた・配列でない・1 件が読めないときは、その
+    /// 宣言の既定値は「書かれていない」と見なして名前と型だけで戻す (既定値の列が壊れても、合わせた値を
+    /// 道連れに捨てない)。
     struct SavedReading: Decodable {
         let values: [ParamRequest.Entry]
+        let defaults: [ParamRequest.Entry]
+
+        /// 名前から引く、保存に書いた時点の既定値。**同じ名前が並んでいれば最初の 1 件。**
+        var defaultsByName: [String: ParamValue] {
+            var byName: [String: ParamValue] = [:]
+            for entry in defaults {
+                guard case .value(let value) = entry.reading, byName[entry.name] == nil else { continue }
+                byName[entry.name] = value
+            }
+            return byName
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case values, defaults
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            values = try container.decode([ParamRequest.Entry].self, forKey: .values)
+            defaults = (try? container.decode([ParamRequest.Entry].self, forKey: .defaults)) ?? []
+        }
     }
 }

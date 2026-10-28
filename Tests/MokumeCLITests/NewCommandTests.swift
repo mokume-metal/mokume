@@ -298,6 +298,9 @@ struct NewCommandTests {
         // 保存値が既定値に勝つこと、消す前に人へ確かめることまで書いてあるか (#3034)
         #expect(text.contains("保存値がコードの既定値に勝つ"))
         #expect(text.contains("人に確かめてから"))
+        // 既定値を書き換えた値は保存より勝つこと (#2402)
+        #expect(text.contains("コードの既定値を書き換えた値は、保存より勝つ"))
+        #expect(text.contains("defaultChanged"))
     }
 
     @Test("案内は本体を正典として指し、規約を写さない")
