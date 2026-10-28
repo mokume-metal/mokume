@@ -65,30 +65,41 @@ nonisolated struct MovieReaderCooperativePoolTests {
         var duration: Double?
         var failure: (any Error)?
         var timedOut = false
+        /// `inspect` が返るまでの秒。
+        var seconds = 0.0
         /// 起きなかった (塞げなかった) 仕事の数。0 でなければ前提が崩れている。
         var missing = 0
     }
 
+    /// 協調プールを塞ぐ待ちの上限 (秒)。**並走する他の suite が協調プールを使っていて塞ぎきれないとき、
+    /// 起きた分を抱えたまま待つのはこの間だけ** — 越えたらすぐ解いて、検査は「塞げなかった」と名乗って赤になる。
+    private static let fillBudget = 5.0
+
     /// 協調プールを塞いだ状態で、専用のスレッドから `inspect` を呼ぶ。
+    ///
+    /// **期限の見張りは、塞ぐ前に起こす** (塞ぐ待ちも期限に含める)。見張りは専用のスレッドで、塞ぐ待ちと
+    /// `inspect` の待ちの合計 (``fillBudget`` + `deadline`) を越えたら、塞ぎを解いて `timedOut` を立てる。
     private func inspectWhileFilled(_ url: URL, deadline: TimeInterval) async -> Outcome {
         let fill = PoolFill()
         let outcome = Outcome()
         return await withCheckedContinuation { continuation in
+            let finished = DispatchSemaphore(value: 0)
+            Thread.detachNewThread {
+                if finished.wait(timeout: .now() + Self.fillBudget + deadline) == .timedOut {
+                    outcome.timedOut = true
+                    fill.release()
+                }
+            }
             Thread.detachNewThread {
                 defer {
+                    finished.signal()
                     fill.release()
                     continuation.resume(returning: outcome)
                 }
-                outcome.missing = fill.fill(timeout: 30)
+                outcome.missing = fill.fill(timeout: Self.fillBudget)
+                // 塞ぎきれなければ、すぐ解いて抜ける (`defer`)。他の suite の仕事を待たせない
                 guard outcome.missing == 0 else { return }
-                // 期限は専用のスレッドで持つ。越えたら塞ぎを解いて、塞がれていた読み込みを進める
-                let finished = DispatchSemaphore(value: 0)
-                Thread.detachNewThread {
-                    if finished.wait(timeout: .now() + deadline) == .timedOut {
-                        outcome.timedOut = true
-                        fill.release()
-                    }
-                }
+                let begin = DispatchTime.now()
                 do {
                     let asset = AVURLAsset(url: url)
                     let (_, range, _) = try MovieReader.inspect(asset, path: url.lastPathComponent)
@@ -96,7 +107,7 @@ nonisolated struct MovieReaderCooperativePoolTests {
                 } catch {
                     outcome.failure = error
                 }
-                finished.signal()
+                outcome.seconds = Double(DispatchTime.now().uptimeNanoseconds - begin.uptimeNanoseconds) / 1e9
             }
         }
     }
@@ -108,8 +119,8 @@ nonisolated struct MovieReaderCooperativePoolTests {
         let url = try await TestMovie.write(frames: 30, width: 32, height: 16)
         defer { try? FileManager.default.removeItem(at: url) }
         let outcome = await inspectWhileFilled(url, deadline: 10)
-        #expect(outcome.missing == 0, "前提: 協調プールの全部が塞がった (起きなかった仕事 \(outcome.missing) 本)")
-        #expect(!outcome.timedOut, "10 秒以内に返らなかった (協調プールの空きを待っている)")
+        #expect(outcome.missing == 0, "前提: 協調プールの全部が塞がった。他の suite が協調プールを使っていて塞ぎきれなかった (起きなかった仕事 \(outcome.missing) 本)")
+        #expect(!outcome.timedOut && outcome.seconds < 10, "10 秒以内に返らなかった (協調プールの空きを待っている)")
         #expect(outcome.failure == nil, "読めなかった: \(String(describing: outcome.failure))")
         #expect(outcome.duration.map { abs($0 - 1) < 1e-9 } == true)
     }
@@ -125,7 +136,9 @@ nonisolated struct MovieReaderCooperativePoolTests {
         let garbled = await inspectWhileFilled(garbage, deadline: 10)
         let silent = await inspectWhileFilled(sound, deadline: 10)
         #expect(garbled.missing == 0 && silent.missing == 0, "前提: 協調プールの全部が塞がった")
-        #expect(!garbled.timedOut && !silent.timedOut, "10 秒以内に返らなかった")
+        #expect(
+            !garbled.timedOut && !silent.timedOut && garbled.seconds < 10 && silent.seconds < 10,
+            "10 秒以内に返らなかった")
         #expect(garbled.failure as? MovieFailure == .unreadable(path: garbage.lastPathComponent))
         #expect(silent.failure as? MovieFailure == .noVideo(path: sound.lastPathComponent))
     }
