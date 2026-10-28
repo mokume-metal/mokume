@@ -483,6 +483,39 @@ public struct SketchSettings: Equatable, Sendable {
         self.fullScreenDisplay = nil
     }
 
+    /// 窓の大きさ (画素) を書いて作る。`SketchSettings(width:height:)` と同じ設定を、型の名前を
+    /// 繰り返さずに書ける。
+    ///
+    /// 手本 (Processing) の `size(width, height)` に当たる。`.fullScreen()` と同じく、
+    /// 返り値の型から決まる書き方である:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { .size(800, 600) }
+    /// ```
+    ///
+    /// 1 秒あたりのフレーム数と窓の題名は、あとに続けて渡せる。省けば ``init(width:height:frameRate:title:pixelDensity:upscale:windowScale:clock:)``
+    /// の既定 (60・`"mokume"`) と同じになる:
+    ///
+    /// ```swift
+    /// var settings: SketchSettings { .size(640, 360, frameRate: 30, title: "Waves") }
+    /// ```
+    ///
+    /// 描く細かさ (``pixelDensity``)・窓の倍率 (``windowScale``)・時計 (``clock``) など、ここに無い設定は
+    /// 返った値へ代入して変える (``fullScreen(_:)`` の説明と同じ書き方):
+    ///
+    /// ```swift
+    /// var settings: SketchSettings {
+    ///     var settings = SketchSettings.size(320, 180)
+    ///     settings.windowScale = 4
+    ///     return settings
+    /// }
+    /// ```
+    ///
+    /// 窓で開く (全画面にしない)。全画面は ``fullScreen(_:)`` を使う。
+    public static func size(_ width: Int, _ height: Int, frameRate: Int = 60, title: String = "mokume") -> SketchSettings {
+        SketchSettings(width: width, height: height, frameRate: frameRate, title: title)
+    }
+
     /// 全画面で出す。番号でディスプレイを選び、省けばメニューバーのある画面 (1) に出す。
     ///
     /// 手本 (Processing) の `fullScreen()` / `fullScreen(display)` に当たる。展示でプロジェクタを
