@@ -10,6 +10,12 @@ extension RenderRequest {
     package nonisolated enum Shortfall: Equatable, Sendable {
         /// この回に書かれたファイルが無い (無い・前の回の残りだけ・空)。
         case notWritten
+        /// 動画 (`.mov` / `.mp4`) の行き先に、この回の時刻の 0 バイトのファイルが残った (#3223)。
+        /// **誰が作ったかは言えない**: 書き手が何も書かなかった (頼みを読んだ子) のかもしれないし、利用者が
+        /// 直前に置いた空のファイルと、頼みを読まない古い版の子の組かもしれない (時計が進むファイルシステムでは
+        /// 前の回の空も新しく見える)。だから版の食い違いを主因として推さず、両方の可能性を名乗る。
+        /// GIF は書き手が最初にヘッダを書くので、0 バイトは書き手が作らない — `.notWritten` のまま。
+        case empty
         /// ファイルは在るが、動画として読めない。
         case unreadable
         /// 動画の枚数が、頼んだ枚数と違う (`found` 枚)。足りないことも多すぎることもある。
@@ -44,7 +50,7 @@ extension RenderRequest {
             return found == frameCount ? nil : .frames(found: found)
         }
         if FrameRecorder.isMovie(destination) || FrameRecorder.distribution(of: destination) == .mp4 {
-            guard Self.isWritten(destination, since: start) else { return .notWritten }
+            guard Self.isWritten(destination, since: start) else { return Self.absence(destination, since: start) }
             guard let found = MovieFile.videoSampleCount(atPath: destination) else {
                 return .unreadable
             }
@@ -55,6 +61,17 @@ extension RenderRequest {
         var found = 0
         while found < frameCount, Self.isWritten(sequence.next(), since: start) { found += 1 }
         return found == frameCount ? nil : .leadingFrames(found: found)
+    }
+
+    /// 動画の行き先に中身のあるファイルが無いときの足りなさ。**この回の時刻の 0 バイトのファイルは `.empty`**
+    /// (``Shortfall/empty`` — 誰が作ったかの証拠ではない)。それ以外 (無い・前の回の残り) は `.notWritten`。
+    private nonisolated static func absence(_ path: String, since start: Date) -> Shortfall {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+            attributes[.type] as? FileAttributeType == .typeRegular,
+            let size = attributes[.size] as? Int, size == 0,
+            let modified = attributes[.modificationDate] as? Date, modified >= start.addingTimeInterval(-1)
+        else { return .notWritten }
+        return .empty
     }
 
     /// この回に書かれた、中身のあるファイルか。

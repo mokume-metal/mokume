@@ -567,6 +567,27 @@ struct RenderCommandTests {
         #expect(!failure.message.contains("mokume doctor"))
     }
 
+    /// 動画の行き先の空のファイルは、誰が作ったかを断定しない (#3223)。書き手が何も書かなかったのかもしれないし、
+    /// 利用者が直前に置いた空のファイルと頼みを読まない古い版の子の組かもしれない。
+    @Test("空のファイルは、書き手が書かなかった場合と版の食い違いの場合の両方を名乗り、どちらも主因として断定しない")
+    func anEmptyFileNamesBothPossibilities() {
+        let failure = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mp4", expected: 5, shortfall: .empty)
+        #expect(failure.exitCode != 0)
+        #expect(failure.message.contains("is an empty file"))
+        // 版の食い違いも、書き手が書かなかったことも名乗る
+        #expect(failure.message.contains("mokume doctor"))
+        #expect(failure.message.contains("the movie writer put nothing in the file it created"))
+        // 子が書き損じを名乗っていれば、その理由が先に出ている
+        #expect(failure.message.contains("If it named a reason"))
+        // 「版が違わない」とは言い切らない
+        #expect(!failure.message.contains("not on different versions"))
+        // 書かれていない回の案内は、今までどおり
+        let missing = CommandFailure.renderOutputShort(
+            destination: "/tmp/take.mp4", expected: 5, shortfall: .notWritten)
+        #expect(missing.message.contains("mokume doctor"))
+    }
+
     /// **多すぎるのも頼みと違う。** 「N 枚中 M 枚 (M > N)」と言わず、多すぎると名乗る。
     @Test("頼んだより多い動画は、多すぎると名乗り、何も書かれていない回の説明を付けない")
     func tooManyFramesAreNamedAsTooMany() {

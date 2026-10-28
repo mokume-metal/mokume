@@ -258,6 +258,148 @@ struct DistributionOutputTests {
         }
     }
 
+    /// 辺が 1 の絵を H.264 の書き手へ渡すと、OS の書き手は成功を返したまま 0 バイトを書く (#3223)。
+    /// 書き損じとして、渡した大きさと下限を名乗り、0 バイトのファイルを残さない。
+    @Test("辺が 1 の MP4 は、大きさと下限を名乗る書き損じになり、0 バイトのファイルを残さない。辺が 2 なら書ける")
+    func aSideOfOnePixelIsNamedNotWrittenEmpty() async throws {
+        try await withDirectoryAsync { directory in
+            for (width, height) in [(64, 1), (1, 64), (1, 1), (2, 1)] {
+                let path = directory.appendingPathComponent("thin-\(width)x\(height).mp4").path
+                let writer = MovieWriter(path: path, frameRate: 25, format: .h264)
+                for index in 0..<5 {
+                    writer.write(
+                        picture(index, width: width, height: height), frame: index + 1,
+                        time: Double(index) / 25)
+                }
+                writer.finish()
+                let failure = try #require(writer.takeFailure(), "\(width)x\(height): 書き損じを名乗っていない")
+                #expect(failure.contains("Could not"), "\(width)x\(height): \(failure)")
+                #expect(failure.contains("\(width)x\(height)"), "\(width)x\(height): 大きさを名乗っていない: \(failure)")
+                #expect(!FileManager.default.fileExists(atPath: path), "\(width)x\(height): 行き先にファイルが残っている")
+            }
+            // 陰性対照: 辺が 2 なら、頼んだ枚数の MP4 が書ける
+            for (width, height) in [(64, 2), (2, 2)] {
+                let path = directory.appendingPathComponent("ok-\(width)x\(height).mp4").path
+                write(.h264, to: path, frames: 5, fps: 25) { picture($0, width: width, height: height) }
+                #expect(MovieFile.videoSampleCount(atPath: path) == 5, "\(width)x\(height)")
+            }
+        }
+    }
+
+    /// H.264 の `MovieFile` に 1 枚書いて閉じる。`closedEmpty` なら、書き手が「済んだ」と言った直後に行き先を
+    /// 空のファイルに差し替える。閉じるのが断られたらその失敗を返す。
+    private nonisolated static func closeOneFrame(
+        path: String, image: DisplayImage, closedEmpty: Bool
+    ) async -> MovieWriteFailure? {
+        do {
+            let file = try MovieFile(path: path, width: 64, height: 48, frameRate: 25, format: .h264)
+            if closedEmpty {
+                file.readsForTesting.closed = { FileManager.default.createFile(atPath: $0, contents: Data()) }
+            }
+            try await file.append(image, at: 0)
+            try await file.finish(lastFrameAt: 0)
+            return nil
+        } catch {
+            return error
+        }
+    }
+
+    /// 閉じた後の確かめが `finish` を通って働く (#3223)。本物の書き手では 0 バイトを作れない (辺の下限が先に
+    /// 断る) ので、書き手が「済んだ」と言った直後に行き先を 0 バイトへ切り詰めて、「済んだと言ったのに空」を
+    /// 差し込む (``MovieFile/ReadsForTesting/closed``)。`finish` の確かめの呼びを外すと、この検査が赤くなる。
+    @Test("閉じた後に空だったファイルは、finish が書き損じとして名乗り、行き先に残さない。空でなければ通す")
+    func finishNamesAFileThatClosedEmpty() async throws {
+        try await withDirectoryAsync { directory in
+            // 陰性対照: 差し込まなければ、同じ手順で閉じられる
+            let good = directory.appendingPathComponent("good.mp4").path
+            let image = picture(0, width: 64, height: 48)
+            #expect(await Self.closeOneFrame(path: good, image: image, closedEmpty: false) == nil)
+            #expect(MovieFile.videoSampleCount(atPath: good) == 1)
+
+            let path = directory.appendingPathComponent("hollow.mp4").path
+            let failure = await Self.closeOneFrame(path: path, image: image, closedEmpty: true)
+            guard case .writeFailed(let failedPath, let reason)? = failure else {
+                Issue.record("空のファイルを成功として閉じた (または書き損じ以外で断った): \(String(describing: failure))")
+                return
+            }
+            #expect(failedPath == path)
+            #expect(reason.contains("64x48"), "\(reason)")
+            #expect(reason.contains("without writing anything"), "\(reason)")
+            #expect(!FileManager.default.fileExists(atPath: path), "空のファイルが行き先に残っている")
+        }
+    }
+
+    /// 閉じた後の確かめの判断 (``MovieFile/hollowReason(atPath:width:height:limitSeconds:read:)``)。
+    @Test("閉じた後の確かめは、0 バイト・映像のトラックが無いもの・標本が無いものを中身が無いとし、書けた動画は通す")
+    func aHollowFileIsNamedAfterClosing() async throws {
+        try await withDirectoryAsync { directory in
+            let empty = directory.appendingPathComponent("empty.mp4").path
+            FileManager.default.createFile(atPath: empty, contents: Data())
+            let reason = try #require(await MovieFile.hollowReason(atPath: empty, width: 64, height: 1))
+            #expect(reason.contains("64x1"), "\(reason)")
+
+            // 本物の書けた動画は、1 枚でも複数枚でも通す (トラックの長さと標本の大きさを安く読むだけ)
+            for frames in [1, 5] {
+                let good = directory.appendingPathComponent("good-\(frames).mp4").path
+                write(.h264, to: good, frames: frames, fps: 25) { picture($0, width: 64, height: 48) }
+                #expect(await MovieFile.readClosedFile(atPath: good) == .hasSamples, "\(frames) 枚")
+                #expect(await MovieFile.hollowReason(atPath: good, width: 64, height: 48) == nil, "\(frames) 枚")
+            }
+            if MovieFile.isAvailable {
+                let mov = directory.appendingPathComponent("good.mov").path
+                write(.proRes4444, to: mov, frames: 1, fps: 25) { picture($0, width: 64, height: 48) }
+                #expect(await MovieFile.hollowReason(atPath: mov, width: 64, height: 48) == nil)
+            }
+
+            // 読めないだけのファイルは断らない (書き手が済んだと言ったものを、読み込みの都合で書き損じにしない)
+            let garbage = directory.appendingPathComponent("garbage.mp4").path
+            FileManager.default.createFile(atPath: garbage, contents: Data("not a movie".utf8))
+            #expect(await MovieFile.hollowReason(atPath: garbage, width: 64, height: 48) == nil)
+
+            // トラックの無いもの・トラックはあっても標本の無いものは断る。本物の書き手では作れない
+            // (標本の無いトラックは「読めない」になる) ので、読む手を差し替える
+            let filled = directory.appendingPathComponent("filled.mp4").path
+            FileManager.default.createFile(atPath: filled, contents: Data("x".utf8))
+            let noTrack = await MovieFile.hollowReason(
+                atPath: filled, width: 64, height: 48, read: { _ in .noVideoTrack })
+            #expect(try #require(noTrack).contains("without a video track"))
+            let noSamples = await MovieFile.hollowReason(
+                atPath: filled, width: 64, height: 48, read: { _ in .noSamples })
+            #expect(try #require(noSamples).contains("no frames"))
+            #expect(await MovieFile.hollowReason(atPath: filled, width: 64, height: 48, read: { _ in .hasSamples }) == nil)
+        }
+    }
+
+    /// 終わらない読みを差し込んだ確かめの結果と、**確かめの中で**測った経過時間。測るのを隔離の外 (この関数) で
+    /// 済ませるのは、main actor 上の検査が他の検査に塞がれた待ちを、期限の遅れと取り違えないため。
+    private nonisolated static func hollowReasonOfAReadThatNeverEnds(
+        path: String, limitSeconds: Double
+    ) async -> (reason: String?, elapsed: Duration) {
+        let clock = ContinuousClock()
+        let started = clock.now
+        // 期限を越えたものは、標本が無いと答えるものでも断らない (答えは捨てられる)
+        let reason = await MovieFile.hollowReason(
+            atPath: path, width: 64, height: 48, limitSeconds: limitSeconds,
+            read: { _ in
+                try? await Task.sleep(for: .seconds(60))
+                return .noSamples
+            })
+        return (reason, clock.now - started)
+    }
+
+    /// 読みが期限を越えたら、確かめられなかったとして断らずに通す (#3223)。遅いボリュームで詰まっても、書き手の
+    /// 閉じる期限に当たらない。読みは終わらないものを差し込み、期限の外で待たないことを経過時間で見る。
+    @Test("閉じた後の確かめは、読みが期限を越えたら断らずに通し、読みの終わりを待たない")
+    func aSlowReadIsNotWaitedForNorBlamed() async throws {
+        try await withDirectoryAsync { directory in
+            let path = directory.appendingPathComponent("slow.mp4").path
+            FileManager.default.createFile(atPath: path, contents: Data("x".utf8))
+            let outcome = await Self.hollowReasonOfAReadThatNeverEnds(path: path, limitSeconds: 0.2)
+            #expect(outcome.reason == nil, "期限を越えた読みで断った: \(outcome.reason ?? "")")
+            #expect(outcome.elapsed < .seconds(10), "読みの終わりを待った: \(outcome.elapsed)")
+        }
+    }
+
     // MARK: - 綴り・fps の規則 (完了条件 1〜4)
 
     @Test("配る形の綴りと、番号の場所を持つ連番との分かれ目")
