@@ -27,11 +27,14 @@ private let outsideFrameNotices: [Canvas.OutsideFrame: String] = [
             + "draw(). This was called outside a frame, so it belongs to no frame, and was "
             + "ignored",
     .transform:
-        "Transforms are written again every frame, so call this from draw(). This was "
-            + "called outside a frame, so it belongs to no frame, and was ignored",
+        "Transforms are written again every frame, so call this from draw(), or from "
+            + "setup() or an input callback while the sketch is stopped, where it applies to "
+            + "what you place there. This was called outside a frame, so it belongs to no "
+            + "frame, and was ignored",
     .style:
-        "Pushing and popping style only works inside a frame. This was called outside a "
-            + "frame, so it belongs to no frame, and was ignored",
+        "Pushing and popping style works inside a frame, in setup(), and in an input "
+            + "callback while the sketch is stopped. This was called outside a frame, so it "
+            + "belongs to no frame, and was ignored",
     .clip:
         "The clip is written again every frame, so call this from draw(). This was "
             + "called outside a frame, so it belongs to no frame, and was ignored",
@@ -167,7 +170,11 @@ struct OutsideFrameNoticeTests {
         }
         #expect(scene.count == 12, "シーンの記述の種類が変わった — この検査の範囲を見直す")
         for subject in scene {
-            #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")
+            // 変換と積み降ろしは、`setup()` と止まっている間のコールバックでは効く (#3273)。
+            // 断った場面としてではなく、**効く場面**として挙げる (断るのは `Task` の続きなど区間の外)
+            if subject != .transform && subject != .style {
+                #expect(!subject.notice.contains("setup"), "\(subject) の文が setup を名乗る: \(subject.notice)")
+            }
             #expect(
                 subject.notice.hasSuffix(
                     ". This was called outside a frame, so it belongs to no frame, and was ignored"),

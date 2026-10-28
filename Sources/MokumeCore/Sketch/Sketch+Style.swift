@@ -878,8 +878,8 @@ extension SketchPart {
     /// `push { }` は混ぜ方だけでなく、変換 (``translate(_:_:)``・``rotate(_:)``・``scale(_:_:)``) と、
     /// 塗りなどほかのスタイルも戻す。スタイルだけ戻して変換は戻さないなら、
     /// ``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` を使う。`push { }` が戻すのは
-    /// フレームの中 (`draw()`・形の組み立て) だけで、`setup()` の本体では、いまは本体を走らせる
-    /// だけで戻さない (注意も出る)。
+    /// フレームの中 (`draw()`・形の組み立て) に加えて、`setup()` の本体と止まっている間の入力の
+    /// コールバックでも、抜けるときに戻す。
     ///
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447

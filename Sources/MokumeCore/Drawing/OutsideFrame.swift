@@ -145,11 +145,14 @@ extension Canvas {
                     + "draw(). This was called outside a frame, so it belongs to no frame, and was "
                     + "ignored"
             case .transform:
-                "Transforms are written again every frame, so call this from draw(). This was "
-                    + "called outside a frame, so it belongs to no frame, and was ignored"
+                "Transforms are written again every frame, so call this from draw(), or from "
+                    + "setup() or an input callback while the sketch is stopped, where it applies to "
+                    + "what you place there. This was called outside a frame, so it belongs to no "
+                    + "frame, and was ignored"
             case .style:
-                "Pushing and popping style only works inside a frame. This was called outside a "
-                    + "frame, so it belongs to no frame, and was ignored"
+                "Pushing and popping style works inside a frame, in setup(), and in an input "
+                    + "callback while the sketch is stopped. This was called outside a frame, so it "
+                    + "belongs to no frame, and was ignored"
             case .clip:
                 "The clip is written again every frame, so call this from draw(). This was "
                     + "called outside a frame, so it belongs to no frame, and was ignored"

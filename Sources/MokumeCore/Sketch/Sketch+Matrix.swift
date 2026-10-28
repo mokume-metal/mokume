@@ -62,7 +62,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=9c067b7f
     // shot: 2 snippet=ad0cc1bf
     public func applyMatrix(_ matrix: Transform) { Self.liveCanvas()?.applyMatrix(matrix) }
@@ -95,7 +95,7 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。
+    /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=a95c28ee
     public func resetMatrix() { Self.liveCanvas()?.resetMatrix() }
 

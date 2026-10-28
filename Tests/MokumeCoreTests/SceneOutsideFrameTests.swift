@@ -9,7 +9,8 @@ import Testing
 ///
 /// 約束は ADR-0021 決定 4 の「シーンの記述をフレームの外で書いたら、警告して無視する。
 /// 黙って捨てない」である。守りは口ごとの `guard admits(…)` (変換とスタイルは
-/// `guard isShaping`) で、**書き落とした口が黙る**。これまで変換 ([#941])・切り抜き
+/// `guard admitsTransform` — 形の組み立てに加えて、ランタイムの持ち越しの区間 `setup()` と止まっている間の
+/// コールバックでは効く ([#3273]・`CarriedTransformTests`)。この表の変換の行は、区間の外 (直に使う面) で断る側を見る) で、**書き落とした口が黙る**。これまで変換 ([#941])・切り抜き
 /// ([#1505])・効果 ([#1605])・`noLights()` ([#1670]) を 1 件ずつ見つけてきた。
 ///
 /// **この表は範囲の検査の片割れである。** `scripts/api-surface.py` の `PORT_KINDS` が
@@ -24,6 +25,7 @@ import Testing
 /// [#1505]: https://github.com/mokume-metal/mokume/issues/1505
 /// [#1605]: https://github.com/mokume-metal/mokume/issues/1605
 /// [#1670]: https://github.com/mokume-metal/mokume/issues/1670
+/// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
 @Suite(
     "フレームの外のシーンの記述",
     .enabled(
