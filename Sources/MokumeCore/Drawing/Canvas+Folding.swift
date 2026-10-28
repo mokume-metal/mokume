@@ -72,6 +72,13 @@ extension Canvas {
         ///
         /// [#1934]: https://github.com/mokume-metal/mokume/issues/1934
         var namedFill: NamedFill?
+        /// 閉じた周を破線に刻むとき、数え始める点の添字 (#3314)。既定は最初の点。
+        ///
+        /// **破線の起点だけを動かす。** 点の並びは実線・塗り・畳みの鍵に効くので動かさず、
+        /// 破線の片を刻む口 (``Canvas/dashedPieces(of:by:)``) だけがここから周を回る。
+        /// 角丸の矩形は `(x + r, y)` (上辺の左の弧の終わり) から数え、SVG の `<rect rx>`・
+        /// p5.js の `roundRect` と同じ起点に揃える。
+        var dashStart = 0
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
@@ -141,6 +148,7 @@ extension Canvas {
                 fills: fills, strokes: strokes, curveSteps: curveSteps,
                 cornerDiagonals: cornerDiagonals,
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
+            moved.dashStart = dashStart
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
         }

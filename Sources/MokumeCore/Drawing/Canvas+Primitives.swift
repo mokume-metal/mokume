@@ -138,11 +138,15 @@ extension Canvas {
             for point in arc where point != points.last { points.append(point) }
         }
         if points.count > 1, points.last == points.first { points.removeLast() }
-        return Outline(
+        var outline = Outline(
             points: points, isClosed: true, fanCenter: SIMD2(w / 2, h / 2),
             curveSteps: Array(repeating: true, count: points.count), strokesAsOneRegion: true,
             namedFill: Outline.NamedFill(
                 isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
+        // 破線は上辺の左の弧の終わり `(r, 0)` から数える (SVG の `<rect rx>`・p5.js の `roundRect` と同じ・#3314)。
+        // 点の並びは右上の弧の始まりからのまま (実線の絵を動かさない)
+        outline.dashStart = points.firstIndex(of: SIMD2(r, 0)) ?? 0
+        return outline
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
@@ -274,8 +278,12 @@ extension Canvas {
                 mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
                 sweep: sweep)
         }
+        // **一周で破線の輪郭を引くときは、周を角度 0 から作る** (#3314)。距離関数の道・楕円・SVG は角度 0 から
+        // 破線を数えるので、貼る絵 (`texture()`) や断片を足しただけで破線が `start` ぶん動かないよう揃える。
+        // 実線の一周は今までどおり `start` から (頂点の並びを動かさない)
+        let ringStart = isFullTurn && dashedStroke != nil ? 0 : start
         draw(
-            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
+            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: ringStart, sweep: sweep),
             at: center
         ) { segments in
             // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
@@ -285,7 +293,7 @@ extension Canvas {
             // 一周を何個に刻むかは、画面に出る半径で決まる (#1645)
             Self.ringOutline(
                 Outline.Ring(
-                    radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
+                    radiusX: radiusX, radiusY: radiusY, start: ringStart, sweep: sweep,
                     segments: segments, piece: .sector))
         }
     }

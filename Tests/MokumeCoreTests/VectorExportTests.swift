@@ -921,6 +921,20 @@ struct VectorCaptureTests {
         }
     }
 
+    /// 破線の起点は、画面 (``StrokeDashTests`` が `(x + r, y)` から数えると見る) と書き出しの道で同じ点。
+    /// 書き出しは起点を動かさず、位相の口も足さない (#3314)。
+    @Test("破線の角丸の矩形の SVG の道は上辺の左の弧の終わりから始まり、破線の位相は書かない (#3314)")
+    func aDashedRoundedRectStartsWhereTheScreenCountsAndWritesNoPhase() throws {
+        let harness = try Harness()
+        for shaded in [nil, Shading.texture, .gradient] {
+            let (figures, _) = try outlinedFigures(
+                harness, { $0.rect(10, 10, 30, 20, 5) }, shaded: shaded, dashed: true, filled: false)
+            let figure = try #require(figures.first, "\(String(describing: shaded))")
+            #expect(figure.subpaths[0].points[0] == SIMD2<Float>(15, 10), "\(String(describing: shaded))")
+            #expect(figure.stroke?.dash == [6, 3])
+        }
+    }
+
     @Test("数でない変換の下では、貼る絵が効く図形も破線の図形も書かない (旧い道と同じ・#3271)")
     func aNonFiniteTransformWritesNothing() throws {
         let harness = try Harness()
