@@ -50,9 +50,9 @@ struct CameraOutsideRunTests {
             var capture: Capture?
             init() {}
             var settings: SketchSettings { SketchSettings(width: 8, height: 8) }
-            func setup() {
+            func setup() throws {
                 let red = DisplayImage(width: 4, height: 4, bytes: Array(repeating: [255, 0, 0, 255], count: 16).flatMap { $0 })
-                capture = try? createCapture(frames: [red])
+                capture = try createCapture(frames: [red])
             }
             func draw() { background(0, 0, 0) }
         }
@@ -101,9 +101,10 @@ struct CameraOutsideRunTests {
         }
     }
 
-    @Test("読める動画でも、createVideo は大きさの失敗ではなく notRunning を投げる")
+    @Test(
+        "読める動画でも、createVideo は大きさの失敗ではなく notRunning を投げる",
+        .enabled(if: TestMovie.canWrite, "この機械には H.264 の符号化器が無い"))
     func videoSaysItCannotReachTheSurface() async throws {
-        try #require(TestMovie.canWrite, "この機械には H.264 の符号化器が無い")
         let url = try await TestMovie.write(frames: 2)
         let log = OutsideRun()
         OutsideRun.$current.withValue(log) {

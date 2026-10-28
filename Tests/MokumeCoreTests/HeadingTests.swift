@@ -200,7 +200,7 @@ struct HeadingEmissionTests {
         init() {}
         func setup() {
             randomSeed(1042)
-            dots = try? makeParticles(count: 64)
+            dots = creating({ try makeParticles(count: 64) })
         }
         func draw() {
             guard let dots else { return }
@@ -214,7 +214,7 @@ struct HeadingEmissionTests {
         init() {}
         func setup() {
             randomSeed(1042)
-            dots = try? makeParticles(count: 64)
+            dots = creating({ try makeParticles(count: 64) })
         }
         func draw() {
             guard let dots else { return }

@@ -205,7 +205,7 @@ struct SketchRelayParityTests {
 
     /// 画素ごとに色の違う 8x6 の絵。横へ進むと赤が、縦へ進むと緑が増える。
     private static func gradient(on canvas: Canvas) -> Image? {
-        guard let image = try? canvas.createImage(8, 6) else { return nil }
+        guard let image = creating({ try canvas.createImage(8, 6) }) else { return nil }
         for y in 0..<6 {
             for x in 0..<8 {
                 image.set(x, y, .linear(red: Float(x) / 7, green: Float(y) / 5, blue: 0.5))

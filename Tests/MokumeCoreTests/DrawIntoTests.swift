@@ -51,11 +51,11 @@ struct DrawIntoTests {
         init() {}
 
         func setup() {
-            pad = try? createGraphics(32, 16)
-            layer = try? createGraphics(64, 64)
+            pad = creating({ try createGraphics(32, 16) })
+            layer = creating({ try createGraphics(64, 64) })
             let gpu = canvas.gpu
-            dust = try? pad?.makeParticles(count: 64)
-            direct = try? Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu)
+            if let pad { dust = creating({ try pad.makeParticles(count: 64) }) }
+            direct = creating({ try Canvas(target: RenderTarget(gpu: gpu, width: 32, height: 32), gpu: gpu) })
             do { try setupScript?(self) } catch { Issue.record(error) }
         }
 
@@ -83,8 +83,11 @@ struct DrawIntoTests {
         let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
         probe.runtime = runtime
         runtime.start()
+        // 台本は `probe.layer!` などを強制で開く。作れていなければ、台本が走る前に赤で止める
+        try #require(
+            probe.pad != nil && probe.layer != nil && probe.direct != nil && probe.dust != nil,
+            "描き場所か粒を作れていない")
         for _ in 0..<frames { try runtime.advance() }
-        #expect(probe.pad != nil && probe.layer != nil && probe.direct != nil, "描き場所を作れていない")
         return (probe, runtime)
     }
 
@@ -649,6 +652,8 @@ struct DrawIntoTests {
             let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice())
             probe.runtime = runtime
             runtime.start()
+            // 台本が `probe.pad!` を開くので、作れていなければ走らせる前に赤で止める
+            try #require(probe.pad != nil, "描き場所を作れていない")
             runtime.input.enqueue(.mouseDown(x: 10, y: 32, button: .right))
             try runtime.advance()
             runtime.input.enqueue(.mouseMoved(x: 40, y: 32))
@@ -673,7 +678,7 @@ struct DrawIntoTests {
             var outside = false
             var inside: Bool?
             init() {}
-            func setup() { pad = try? createGraphics(16, 16) }
+            func setup() { pad = creating({ try createGraphics(16, 16) }) }
             func draw() {
                 outside = usesFrameHistory
                 draw(into: pad!) { inside = usesFrameHistory }
@@ -682,6 +687,8 @@ struct DrawIntoTests {
         let sketch = Temporal()
         let runtime = try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
         runtime.start()
+        // `draw()` が `pad!` を開くので、作れていなければ走らせる前に赤で止める
+        try #require(sketch.pad != nil, "描き場所を作れていない")
         try runtime.advance()
         #expect(sketch.outside, "検査が成り立たない: 本体の面が履歴を使っていない")
         #expect(sketch.inside == sketch.outside, "閉包の中と外で答えが割れた")
@@ -705,7 +712,7 @@ struct DrawIntoTests {
         var variadic = -1
         var array = -1
         try run { probe in
-            guard let layer = probe.layer, let dust = try? layer.makeParticles(count: 8) else { return }
+            guard let layer = probe.layer, let dust = creating({ try layer.makeParticles(count: 8) }) else { return }
             layer.beginDraw()
             layer.force(dust, .gravity(0, 10), .drag(0.5))
             variadic = dust.pendingForceCount

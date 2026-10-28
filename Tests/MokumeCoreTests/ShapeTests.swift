@@ -1665,7 +1665,7 @@ final class FrameStartInsideLayerBuild: Sketch {
     var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
 
     func setup() {
-        layer = try? createGraphics(16, 16)
+        layer = creating({ try createGraphics(16, 16) })
         if inSetup { build() }
     }
 
@@ -1709,7 +1709,7 @@ final class MainFrameStartInsideLayerBuild: Sketch {
     var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 30) }
 
     func setup() {
-        layer = try? createGraphics(16, 16)
+        layer = creating({ try createGraphics(16, 16) })
         guard let layer else { return }
         canvas.beginDraw()
         layer.beginDraw()

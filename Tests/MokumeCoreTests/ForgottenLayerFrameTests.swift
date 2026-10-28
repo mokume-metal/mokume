@@ -457,7 +457,7 @@ struct ForgottenLayerFrameTests {
 
         func setup() {
             if !opensInSetup { noLoop() }
-            layer = try? createGraphics(16, 16)
+            layer = creating({ try createGraphics(16, 16) })
             if opensInSetup {
                 noLoop()
                 openAndPlace()
@@ -511,7 +511,7 @@ struct ForgottenLayerFrameTests {
 
         func setup() {
             noLoop()
-            guard let layer = try? createGraphics(16, 16) else { return }
+            guard let layer = creating({ try createGraphics(16, 16) }) else { return }
             self.layer = layer
             // `setup()` の中で開いて閉じる。区間の中の対なので、そのまま描かれる
             layer.beginDraw()

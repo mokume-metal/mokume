@@ -142,8 +142,11 @@ EOF
 #
 # 読み手は scripts/issue-evidence-guard.sh (エージェントの gh issue create / edit)。
 #   0  通過 (絵がある・宣言がある・描画のファイルを名指ししていない)
-#   1  描画のファイルを名指ししているのに、絵も宣言も無い (理由の空の宣言を含む)
+#   1  描画のファイルを名指ししているのに、絵も宣言も無い (理由の空の宣言を含む)。
+#      宣言の理由が撮る時期を後へ回しているだけ (POSTPONED) も、名指しに関わらず 1 (#3376)
 readonly DECLARATION='絵: なし'
+# 宣言の理由のうち、撮る時期を後へ回しているだけと読む語 (#3376)
+readonly POSTPONED='着手時|直す PR|後で撮|まだ撮|撮っていない|未撮影'
 
 mentioned_drawing_files() { # 標準入力 = 本文
   local body root tracked inside names
@@ -165,7 +168,7 @@ mentioned_drawing_files() { # 標準入力 = 本文
 }
 
 check_issue_body() { # $1=本文のファイル
-  local body live mentioned
+  local body live mentioned declared
   body=$(cat "$1" 2>/dev/null) || give_up "本文 $1 を読めなかった"
   if has_evidence <<<"$body"; then
     say "ok: Issue の本文に絵がある"
@@ -176,6 +179,25 @@ check_issue_body() { # $1=本文のファイル
   live=$(markdown_live_lines <<<"$body")
   if grep -Eq "(^|[[:space:]])${DECLARATION}([[:space:]]|$)" <<<"$live"; then
     if grep -Eq "(^|[[:space:]])${DECLARATION}[[:space:]]*(—|--?)[[:space:]]*[^[:space:]]" <<<"$live"; then
+      # 理由が撮る時期を後へ回しているだけなら通さない (#3376)。宣言は「絵にしようが
+      # ない」ための例外で、「まだ撮っていない」はそれに当たらない。見た目のバグが
+      # 「着手時に撮る」「直す PR で載せる」で通り、起票の時点の絵が欠けていた
+      # 宣言の行だけを変数へ受けてから読む (grep -q が先に抜けると書き手が SIGPIPE で
+      # 止まり、pipefail の下で判定が裏返る。#1900)
+      declared=$(grep -E "(^|[[:space:]])${DECLARATION}" <<<"$live")
+      if grep -Eq "$POSTPONED" <<<"$declared"; then
+        cat >&2 <<EOF
+drawing-evidence: 差し戻し — 「${DECLARATION}」の理由が、撮る時期を後へ回しているだけ
+
+宣言は絵にしようがないときの例外です。いま撮れるなら、起票の時点で撮って貼ります:
+
+  python3 scripts/example-shots.py --snippet repro.swift --size 160x120 --zoom 4 --upload \\
+    --token-command "\$MOKUME_GYAZO_TOKEN_CMD"
+
+撮れないなら、撮れない理由 (再現の形が未定・クラッシュ・条件を作れない など) を書きます。
+EOF
+        exit 1
+      fi
       say "ok: 絵は無いという宣言がある"
       exit 0
     fi

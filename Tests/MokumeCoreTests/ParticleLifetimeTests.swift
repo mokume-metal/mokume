@@ -260,7 +260,7 @@ struct ParticleLifetimeTests {
         var emitted = false
         init() {}
 
-        func setup() { spark = try? makeParticles(count: 1) }
+        func setup() { spark = creating({ try makeParticles(count: 1) }) }
 
         func draw() {
             background(0)

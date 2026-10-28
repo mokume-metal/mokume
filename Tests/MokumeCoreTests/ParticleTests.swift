@@ -1241,7 +1241,7 @@ struct ParticleTests {
         var dots: Particles?
         init() {}
 
-        func setup() { dots = try? makeParticles(count: 1000) }
+        func setup() { dots = creating({ try makeParticles(count: 1000) }) }
 
         func draw() {
             background(0)

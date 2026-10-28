@@ -76,7 +76,7 @@ struct TextureTests {
             var solid: [SolidVertex] = []
             try canvas.draw {
                 if bindingThenClearing {
-                    let image = try? self.makeQuadrants(canvas)
+                    let image = creating({ try self.makeQuadrants(canvas) })
                     if let image { canvas.texture(image) }
                     canvas.noTexture()
                 }
@@ -113,7 +113,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         var readsImage: [Bool] = []
         try canvas.draw {
-            let image = try? self.makeQuadrants(canvas)
+            let image = creating({ try self.makeQuadrants(canvas) })
             guard let image else { return }
             canvas.texture(image)
             canvas.fill(self.white)
@@ -133,7 +133,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         var readsImage: [Bool] = []
         try canvas.draw {
-            let image = try? self.makeQuadrants(canvas)
+            let image = creating({ try self.makeQuadrants(canvas) })
             guard let image else { return }
             canvas.texture(image)
             canvas.fill(self.white)
@@ -151,7 +151,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         var readsImage: [Bool] = []
         try canvas.draw {
-            let image = try? self.makeQuadrants(canvas)
+            let image = creating({ try self.makeQuadrants(canvas) })
             guard let image else { return }
             canvas.texture(image)
             // 周囲そのものを出すのは「背景として描く」ほう
@@ -169,7 +169,7 @@ struct TextureTests {
     func thePastedImageIsPartOfTheStyle() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
-            let image = try? self.makeQuadrants(canvas)
+            let image = creating({ try self.makeQuadrants(canvas) })
             guard let image else { return }
             canvas.push()
             canvas.texture(image)
@@ -234,7 +234,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         var written: [SIMD2<Float>] = []
         try canvas.draw {
-            guard let image = try? self.makeQuadrants(canvas, size: 16) else { return }
+            guard let image = creating({ try self.makeQuadrants(canvas, size: 16) }) else { return }
             canvas.texture(image)
             canvas.fill(self.white)
             canvas.noStroke()
@@ -263,7 +263,7 @@ struct TextureTests {
             let canvas = try makeCanvas()
             try canvas.draw {
                 canvas.background(self.black)
-                guard let image = try? self.makeQuadrants(canvas, size: 16) else { return }
+                guard let image = creating({ try self.makeQuadrants(canvas, size: 16) }) else { return }
                 canvas.texture(image)
                 canvas.fill(self.white)
                 canvas.noStroke()
@@ -296,7 +296,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         var written: [SIMD2<Float>] = []
         try canvas.draw {
-            guard let image = try? self.makeQuadrants(canvas) else { return }
+            guard let image = creating({ try self.makeQuadrants(canvas) }) else { return }
             canvas.texture(image)
             canvas.fill(self.white)
             canvas.noStroke()
@@ -413,7 +413,7 @@ struct TextureTests {
         let size = 40
         try canvas.draw {
             canvas.background(self.black)
-            guard let image = try? self.makeQuadrants(canvas) else { return }
+            guard let image = creating({ try self.makeQuadrants(canvas) }) else { return }
             canvas.texture(image)
             canvas.fill(self.white)
             canvas.noStroke()
@@ -436,7 +436,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(self.black)
-            guard let image = try? self.makeQuadrants(canvas) else { return }
+            guard let image = creating({ try self.makeQuadrants(canvas) }) else { return }
             canvas.texture(image)
             canvas.fill(self.white)
             canvas.noStroke()
@@ -455,7 +455,7 @@ struct TextureTests {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.background(self.black)
-            guard let image = try? self.makeQuadrants(canvas) else { return }
+            guard let image = creating({ try self.makeQuadrants(canvas) }) else { return }
             canvas.texture(image)
             // 右下の区画は白なので、掛けた色がそのまま出る
             canvas.fill(self.red)

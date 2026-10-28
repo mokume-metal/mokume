@@ -180,6 +180,31 @@ class SubIssueTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("--body 標準入力の本文", self.log.read_text(encoding="utf-8"))
 
+    # --- 絵の照合 (#3376) ---------------------------------------------------
+
+    def test_agent_run_refuses_a_drawing_body_without_a_picture(self):
+        # #2655・#2647: ここを通る起票はフックに見えず、絵も宣言も無いまま作られた
+        for body in ("`Shapes.metal` の塗りが欠ける", "塗りが欠ける\n\n絵: なし — 着手時に撮る"):
+            with self.subTest(body):
+                self.log.write_text("", encoding="utf-8")
+                proc, calls = self.run_sub_issue("fix: 欠ける", "--body", body, CLAUDECODE="1")
+                self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("drawing-evidence: 差し戻し", proc.stderr)
+                self.assertNotIn("issue create", calls)
+
+    def test_agent_run_creates_when_the_body_has_a_picture(self):
+        proc, calls = self.run_sub_issue(
+            "fix: 欠ける", "--body", "`Shapes.metal` の塗り\n\n![](https://i.gyazo.com/abc.png)", CLAUDECODE="1"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.create_call(calls)
+
+    def test_human_run_is_not_checked_for_pictures(self):
+        # 人の起票は雑でよい (AGENTS.md「進め方」1)。絵の要求はエージェントにだけ掛ける
+        proc, calls = self.run_sub_issue("fix: 欠ける", "--body", "`Shapes.metal` の塗りが欠ける")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.create_call(calls)
+
     def test_body_and_body_file_together_is_a_usage_error(self):
         proc, calls = self.run_sub_issue("ci: 直す", "--body", "x", "--body-file", "/dev/null")
         self.assertEqual(proc.returncode, 64, proc.stderr)
