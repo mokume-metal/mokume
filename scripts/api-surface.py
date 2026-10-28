@@ -617,7 +617,6 @@ UNSHOWN = {
     "captureDevices": "一覧は繋がっている機材に依り、絵にならない",
     "createVideo": "動画ファイルをリポジトリに置けず (scripts/check-no-binaries.sh)、参照スケッチの中で作ると重い。作例は説明文の例に置き、固定の時計で同じコマが出ることはテストが見る (#1960)",
     "audioInputDevices": "captureDevices と同じ理由",
-    "loadSound": "音声ファイルはリポジトリに置けず (check-no-binaries)、参照スケッチの読む資材が無い。鳴らさずに解析する形は createAudioIn(samples:) が示す。再生と解析はテストが見る",
     "clock": "時刻の出どころを名乗る口で、--render では片方 (frameIndex) しか絵に出ない (usesFrameHistory と同じ)。正しさはテストが見る",
     "authorTime": "入り口・部品が状態を進めるのに読む秒で、観測の枚でないと time と同じ値になり、--render の絵では time と違いが出ない。観測の枚での違いはテストが見る (#2900)",
     "displays": "captureDevices と同じ理由 (繋がっているディスプレイに依る。全画面の作例は SketchSettings.fullScreen の説明文が持つ・#2020)",
