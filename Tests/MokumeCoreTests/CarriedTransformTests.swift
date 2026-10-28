@@ -539,6 +539,127 @@ struct CarriedTransformTests {
         #expect(runtime.canvas.warnings.message(for: .popWithoutPush) == nil, "積みが開いたフレームで消えた")
     }
 
+    // MARK: - 2 回目の反証の直し
+
+    /// 変換を通した座標を読む口。読むだけで抜けても、変換は使われている。
+    nonisolated static let readers: [Placer] = [
+        Placer(name: "screenX(x,y)") { _ = $0.screenX(0, 0) },
+        Placer(name: "screenY(x,y)") { _ = $0.screenY(0, 0) },
+        Placer(name: "screenX(x,y,z)") { _ = $0.screenX(0, 0, 0) },
+        Placer(name: "screenY(x,y,z)") { _ = $0.screenY(0, 0, 0) },
+        Placer(name: "screenZ") { _ = $0.screenZ(0, 0, 0) },
+        Placer(name: "spacePosition") { _ = $0.spacePosition(screenX: 10, screenY: 10, depth: 0) },
+    ]
+
+    @Test("変換を読むだけで抜けても、何も置かなかったとは言わない", arguments: readers)
+    func readingTheTransformCountsAsUsingIt(_ reader: Placer) throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.translate(100, 100)
+            try? reader.place(s)
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) == nil,
+            "\(reader.name): 変換を読んだのに、何も使っていないと言っている")
+    }
+
+    @Test("変換を書いた後に読んでも、また書き直して何も使わなければ言う")
+    func aRewrittenTransformIsExplainedAgain() throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.translate(100, 100)
+            _ = s.screenX(0, 0)
+            s.translate(1, 1)
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(runtime.canvas.warnings.message(for: .transformNotCarried) != nil)
+    }
+
+    @Test("変換の後に背景を周囲で塗っただけなら、何も置かなかったと言う")
+    func aSurroundingsBackdropIsNotAPlacement() throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.translate(100, 100)
+            s.background(.sky)
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) != nil,
+            "背景の板は変換が効かないのに、置いたものに数えている")
+    }
+
+    @Test("変換の後に、区間の中で開いたフレームの中だけで置いたときは、何も置かなかったと言う")
+    func shapesPlacedInAFrameOpenedInsideAreNotPlacedByTheTransform() throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.translate(100, 0)
+            try? s.canvas.draw { s.circle(0, 40, 30) }  // フレームの既定の変換で置かれる
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(
+            runtime.canvas.warnings.message(for: .transformNotCarried) != nil,
+            "フレームの中で置いたものを、区間の変換の後に置いたものに数えている")
+    }
+
+    @Test("変換の後に区間で置いたものが、開いたフレームの描き切りで捨てられても、置いたと数える")
+    func shapesPlacedBeforeAFrameOpenedInsideAreStillCounted() throws {
+        let scene = Scene()
+        scene.preparesCanvas = false
+        scene.onSetup = { s in
+            s.translate(100, 0)
+            s.circle(0, 40, 30)
+            try? s.canvas.draw {}
+        }
+        let (_, runtime) = try firstFrame(of: scene)
+        #expect(runtime.canvas.warnings.message(for: .transformNotCarried) == nil)
+    }
+
+    /// `push { }` の中で区間のフレームを開いて閉じる。`leaveFrame()` は開いた時点 (`push` の中) の値へ戻すが、
+    /// `push` は抜けるときに、入る前の変換・積み履歴・スタイルへ戻す。
+    @Test("setup() の push { } の中で canvas.draw { } を開いて閉じても、push を抜けた後に変換が漏れない")
+    func aPushClosureRestoresAcrossAFrameOpenedInsideTheSegment() throws {
+        let scene = Scene()
+        scene.onSetup = { s in
+            s.push {
+                s.fill(255, 0, 0)
+                s.translate(100, 0)
+                s.circle(0, 40, 30)
+                try? s.canvas.draw { s.circle(0, 70, 10) }
+            }
+            s.circle(0, 100, 30)
+        }
+        let (image, runtime) = try firstFrame(of: scene)
+        #expect(image[100, 40].red > 200 && image[100, 40].green < 60, "push の中の円が赤く (100, 40) に出ていない")
+        #expect(image[3, 100].red > 200 && image[3, 100].green > 200, "push の後の円が白く原点側に出ていない (変換か塗りが漏れた)")
+        #expect(isBlack(image, 100, 100), "push の後の円に変換が効いている")
+        #expect(runtime.canvas.warnings.message(for: .popWithoutPush) == nil)
+    }
+
+    @Test("pushMatrix した後の push { } が canvas.draw { } を開いて閉じても、外側の積みは残る")
+    func theOuterStackSurvivesAPushClosureWithAFrameInside() throws {
+        let scene = Scene()
+        scene.onSetup = { s in
+            s.pushMatrix()
+            s.translate(100, 0)
+            s.push {
+                s.translate(0, 50)
+                try? s.canvas.draw {}
+            }
+            s.circle(0, 40, 30)
+            s.popMatrix()
+            s.circle(0, 100, 30)
+        }
+        let (image, runtime) = try firstFrame(of: scene)
+        #expect(isWhite(image, 100, 40), "push の後の円が外側の変換 (100, 0) で出ていない")
+        #expect(isWhite(image, 3, 100), "popMatrix() の後の円が原点側に出ていない")
+        #expect(runtime.canvas.warnings.message(for: .popWithoutPush) == nil, "外側の積みが失われた")
+    }
+
     // MARK: - 区間の外・断るもの (完了条件 6・10)
 
     /// 完了条件 6。区間の外 (フレームの外の直に使う面) では、変換も積み降ろしも今までどおり断る。

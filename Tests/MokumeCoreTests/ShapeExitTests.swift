@@ -199,6 +199,8 @@ enum ShapeExit {
             "carriedTransformMark": "持ち越しの区間の中で最後に変換を書いた時点の、置いた通し数。区間の出入口が読み書きし、形の組み立ての中は書かない (#3273)",
             "carriedDiscardedAmount": "持ち越しの区間の中で溜め場から捨てた量。区間の出入口で 0 へ戻り、形の組み立ての出入口では動かない (#3273)",
             "carriedSegmentCount": count,
+            "carriedBackdropAmount": "持ち越しの区間の中で背景の板が足した量。区間の出入口で 0 へ戻り、形の組み立ての出入口では動かない (#3273)",
+            "carriedTransformRead": "区間の中で変換を読む口を使ったかの印。区間の出入口と変換を書く口が書き、形の組み立ての中は書かない (#3273)",
             "frameOpenedInCarriedSegment": "区間の中で開いたフレームが控えた変換と積み履歴。フレームの頭と出口が読み書きし、形の組み立ての出入口では動かない (#3273)",
             "drawsEncodedInLastFrame": count,
             "spheresFromUnit": count,

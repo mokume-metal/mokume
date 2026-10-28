@@ -633,6 +633,8 @@ extension CanvasTests {
                 "carriedTransformMark": "持ち越しの区間の中だけの印。区間に入るときと出るときに nil へ戻る (フレームの境目では動かない・#3273)",
                 "carriedDiscardedAmount": "持ち越しの区間の中で溜め場から捨てた量。区間に入るときと出るときに 0 へ戻り、区間の外では足さない (#3273)",
                 "carriedSegmentCount": count,
+                "carriedBackdropAmount": "持ち越しの区間の中で背景の板が足した量。区間に入るときと出るときに 0 へ戻り、境目では動かない (#3273)",
+                "carriedTransformRead": "区間の中で変換を読む口を使ったかの印。区間に入るときと出るときと変換を書くたびに偽へ戻る (#3273)",
                 "frameOpenedInCarriedSegment": "持ち越しの区間の中で開いたフレームが控えた、区間の変換と積み履歴。フレームの頭が書き、フレームを出る道 (leaveFrame) が戻して下ろす。境目では常に既定 (#3273)",
                 "stopsOnPlacementOutsideRegions": testing,
                 "placesGlyphs": testing, "instanceCapacity": testing, "particleRoute": testing,

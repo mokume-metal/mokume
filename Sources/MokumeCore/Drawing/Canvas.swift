@@ -1399,6 +1399,14 @@ public final class Canvas {
     /// 区間に入るとき 0 に戻す。
     private var carriedDiscardedAmount = 0
 
+    /// 区間の中で、背景の板 (``appendSurfaceReplacement(_:)``) が溜め場へ足した量。置いた通し数から引く
+    /// (``carriedPlacedSerial``)。板は面全体を置き換えるもので、変換は効かない。区間に入るとき 0 に戻す。
+    private var carriedBackdropAmount = 0
+
+    /// 区間の中で、最後に変換を書いた後に、変換を読む口 (`screenX`・`spacePosition` など) を使ったか。
+    /// 読んだなら変換は使われている (``endCarriedSegment()``)。区間に入るときと、変換を書くたびに偽へ戻す。
+    private var carriedTransformRead = false
+
     /// 持ち越しの区間に入った回数。区間の中で開いたフレームが、**同じ区間の中で**閉じたかを見分ける
     /// (``frameOpenedInCarriedSegment``)。
     private var carriedSegmentCount = 0
@@ -1409,7 +1417,7 @@ public final class Canvas {
     /// (``leaveFrame()``)。別の区間・区間の外で閉じたときは戻さない (その区間の値ではない)。
     ///
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
-    private var frameOpenedInCarriedSegment: (segment: Int, transform: Transform, stacks: Stacks)?
+    private var frameOpenedInCarriedSegment: (segment: Int, transform: Transform, stacks: Stacks, pending: Int)?
 
     /// 区間の中で置いた量の通し数。**溜め場の量 (``pendingAmount``) に、捨てた分を足し戻したもの。**
     ///
@@ -1420,7 +1428,7 @@ public final class Canvas {
     /// 置き換えるたびに立ったり消えたりして、通し数を戻してしまうからである (変換は背景にも効かない)。口ごとに印を立てる形は取らない
     /// (``hasPendingDrawing`` と同じ理由)。
     private var carriedPlacedSerial: Int {
-        carriedDiscardedAmount + sweepPending(emptying: false, countsOpenColumns: false)
+        carriedDiscardedAmount + sweepPending(emptying: false, countsOpenColumns: false) - carriedBackdropAmount
     }
 
     /// 持ち越しの区間に入る。変換と積み履歴を既定へ戻して始める ([#3273])。
@@ -1432,6 +1440,8 @@ public final class Canvas {
         styleStack.removeAll(keepingCapacity: true)
         carriedTransformMark = nil
         carriedDiscardedAmount = 0
+        carriedBackdropAmount = 0
+        carriedTransformRead = false
     }
 
     /// 持ち越しの区間を出る。**区間で書いた変換と積み履歴を既定へ戻す** ([#3273])。
@@ -1443,7 +1453,9 @@ public final class Canvas {
     ///
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
     private func endCarriedSegment() {
-        if let mark = carriedTransformMark, transform != .identity, carriedPlacedSerial == mark {
+        if let mark = carriedTransformMark, transform != .identity, !carriedTransformRead,
+            carriedPlacedSerial == mark
+        {
             warnOnce(
                 .transformNotCarried,
                 "A transform was written in setup() or an input callback, but nothing was placed "
@@ -1457,11 +1469,22 @@ public final class Canvas {
         styleStack.removeAll(keepingCapacity: true)
         carriedTransformMark = nil
         carriedDiscardedAmount = 0
+        carriedBackdropAmount = 0
+        carriedTransformRead = false
     }
 
     /// 区間の中で変換を書いたことを覚える (``endCarriedSegment()``)。形の組み立ての中は、出口で戻るので数えない。
     func noteTransformWritten() {
-        if carriesOver, !isDrawing, !recordingShape { carriedTransformMark = carriedPlacedSerial }
+        if carriesOver, !isDrawing, !recordingShape {
+            carriedTransformMark = carriedPlacedSerial
+            carriedTransformRead = false
+        }
+    }
+
+    /// 区間の中で変換を読んだことを覚える (``endCarriedSegment()``)。`screenX()` などで変換を通した座標を
+    /// 読む使い方は、何も置かなくても変換を使っている。
+    func noteTransformRead() {
+        if carriesOver, !isDrawing, !recordingShape { carriedTransformRead = true }
     }
 
     /// 持ち越しの区間を出たときに、溜め場に残っていた量 (``pendingAmount``)。区間で何も置いて
@@ -2965,10 +2988,15 @@ public final class Canvas {
         let savedStyle = currentStyle
         let savedStacks = takeStacks()
         let frame = framesDrawn
+        // 区間の中で呼んだなら、中で開いて閉じたフレームを跨いでも戻す (#3273)。フレームを閉じると
+        // ``leaveFrame()`` は開いた時点 (`push` の中) の値へ戻すので、戻さないと区間へ漏れる
+        let segment = carriesOver && !isDrawing ? carriedSegmentCount : nil
         var finished = false
         defer {
-            // 閉じたフレームの状態は戻さない。中で開き直したフレームの段は、そのフレームのもの
-            if framesDrawn == frame, admitsTransform {
+            // 閉じたフレームの状態は戻さない。中で開き直したフレームの段は、そのフレームのもの。
+            // 区間の中で開いて同じ区間の中で閉じたフレームは、区間の値だから戻す
+            let sameSegment = segment == carriedSegmentCount && carriesOver && !isDrawing
+            if framesDrawn == frame || sameSegment, admitsTransform {
                 if finished { warnIfStacksLeftOpen(before: "push { … }") }
                 restore(savedStacks)
                 transform = savedTransform
@@ -3127,6 +3155,13 @@ public final class Canvas {
             surroundings = value.packed(isBackdrop: true)
         }
         let corners = currentCamera.replacementCorners()
+        let placedBefore = carriesOver ? sweepPending(emptying: false, countsOpenColumns: false) : 0
+        defer {
+            // 板が足した量は置いた通し数に数えない (変換が効かない・``carriedPlacedSerial``)
+            if carriesOver {
+                carriedBackdropAmount += sweepPending(emptying: false, countsOpenColumns: false) - placedBefore
+            }
+        }
         let vertexStart = solidVertices.count
         // 面の向きは持たせない。光を受けず、色 (または周囲) をそのまま出す
         for index in [0, 1, 2, 0, 2, 3] {
@@ -3157,6 +3192,19 @@ public final class Canvas {
                 replacesSurface: true))
     }
 
+    /// 捨てる溜め場のうち、区間で置いたものの量 (``carriedDiscardedAmount`` へ足す)。
+    ///
+    /// 区間の中で開いたフレーム (``frameOpenedInCarriedSegment``) の中で捨てるときは、**フレームを開く前に
+    /// 区間で置いた分だけ**を数える。フレームの中で置いたものは、フレームの既定の変換で置かれ、区間の変換は
+    /// 効かないので、数えない (数えると、変換の後に置いたことになる)。
+    private func carriedAmountDiscarded() -> Int {
+        let current = sweepPending(emptying: false, countsOpenColumns: false)
+        guard let opened = frameOpenedInCarriedSegment else { return current }
+        let counted = min(current, opened.pending)
+        frameOpenedInCarriedSegment?.pending -= counted
+        return counted
+    }
+
     /// 溜めているものを捨てる。
     ///
     /// **塗り直しは「このフレームをここから描き直す」こと**なので、平面の頂点も
@@ -3169,7 +3217,7 @@ public final class Canvas {
     ///   ものだけで、前の無関係な区切りで描いた立体の影まで消す筋合いが無い (#1656)。
     func discardPending(keepingCasters: Bool = false) {
         // 区間の中で捨てた分を覚える (``carriedPlacedSerial``)。区間の外の毎フレームは数えない
-        if carriesOver { carriedDiscardedAmount += sweepPending(emptying: false, countsOpenColumns: false) }
+        if carriesOver { carriedDiscardedAmount += carriedAmountDiscarded() }
         _ = sweepPending(emptying: true)
         pendingDiscards &+= 1
         // **途中の描き切りが既に描いた落とす側も捨てる** ([#1656])。塗り直しは前に置いた立体ごと
@@ -3685,7 +3733,9 @@ public final class Canvas {
         // **持ち越しの区間の中で開いたフレームは、区間の変換と積み履歴を控える** (閉じた後に戻す・
         // ``frameOpenedInCarriedSegment``・#3273)。区間の外で開いたなら控えを捨てる
         if carriesOver {
-            frameOpenedInCarriedSegment = (carriedSegmentCount, transform, (transformStack, styleStack))
+            frameOpenedInCarriedSegment = (
+                carriedSegmentCount, transform, (transformStack, styleStack),
+                sweepPending(emptying: false, countsOpenColumns: false))
         } else {
             frameOpenedInCarriedSegment = nil
         }
