@@ -4126,6 +4126,27 @@ public final class Canvas {
         // 描き切れなかったフレームも含めて、次に引き継ぐ奥行きは無い (#1888)
         depthIsHeld = false
         beginDrawFrame = nil
+        resetSceneDescription()
+        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
+        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
+        // `beginFrame()`)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        discardShapeLeftOpen()
+    }
+
+    /// **シーンの記述 (視点・目印・変換・切り抜き・光・周囲・材質・影) を既定へ戻す。** フレームの終わり
+    /// (``abandonFrame()``) と、フレームの内側で配った入力のコールバックの出口
+    /// (``leaveInputCallbackInsideFrame()``・[#3408]) が、同じこの 1 つを通る。戻す並びを 2 か所に書くと、
+    /// 片方に足し落とした状態だけが越える。**境目の検査の表で「シーンの記述」の印を持つ行
+    /// (`CanvasTests.FrameState` の `FrameReset.isSceneDescription`) と、ここで戻すものは同じ集合**で、
+    /// 足したらその表に印つきで足す。
+    ///
+    /// 積み履歴 (``transformStack``・``styleStack``) と効果の予定 (``pendingEffects``) は、ここへ入れない —
+    /// フレームの終わりでは頭が戻す (積んだ事実はフレームに属する・#925)。出口の側が自分で戻す。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    private func resetSceneDescription() {
         cameraStorage = nil
         drawsDebugGuides = false
         transform = .identity
@@ -4139,12 +4160,33 @@ public final class Canvas {
         shadowBiasValue = ShadowMap.defaultBias
         style.castsShadow = true
         style.receivesShadow = true
-        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
-        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
-        // `beginFrame()`)
-        //
-        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
-        discardShapeLeftOpen()
+    }
+
+    /// **フレームの内側で配った入力のコールバック 1 つの出口。** コールバックで書いたシーンの記述を、
+    /// 抜けるときに既定へ戻す ([#3408]・[ADR-0021] 決定 4 の追補 (2026-10-30))。
+    ///
+    /// ループ中と `redraw()` を頼んだ後の入力のコールバックは、本体の面のフレームの内側 (`draw()` の前) で
+    /// 配られる。戻さないと、`mousePressed()` で書いた `translate()`・`lights()`・`clip()` などが、同じ
+    /// フレームの `draw()` へ漏れる (止まっている間は、区間の出口 ``endCarriedSegment()`` が変換と積み履歴を
+    /// 戻す)。Processing・p5.js は `draw()` の頭で既定へ戻るので、同じ結果になる。戻す範囲は、フレームの頭が
+    /// 戻すシーンの記述と同じ (``resetSceneDescription()``・積み履歴・効果の予定)。**描き方 (塗り・線・混ぜ方
+    /// など) と乱数の種は戻さない** — 寿命がフレームを越える。置いたもの (図形・絵・背景・書いた画素) は
+    /// 消さない。
+    ///
+    /// **戻す前に列を閉じる。** 列は閉じるときに視点・光・切り抜き・材質を読むので、コールバックで光や切り抜きを
+    /// 書いて置いたものが、戻した既定で描かれてしまう (``restoringStyleClosesTheBatchOnlyWhenItMatters`` と同じ
+    /// 考え方)。積んだまま抜けた段は、フレームの終わりと同じく名指して 1 度知らせて捨てる。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func leaveInputCallbackInsideFrame() {
+        guard isDrawing else { return }
+        warnIfStacksLeftOpen(before: "the input callback")
+        closeBatch()
+        resetSceneDescription()
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        pendingEffects.removeAll(keepingCapacity: true)
     }
 
     /// 同じ本体のフレームの中で ``beginDraw()`` を重ねたことを、初回だけ知らせる。境目を越えて
