@@ -44,7 +44,7 @@ final class NoiseAndSeed: Sketch {
         noiseDetail(5, 0.5)
 
         // 断片の側。`mokume_noise` は前置きされているので宣言も配線も要らない
-        grain = try makeShader(
+        grain = try createShader(
             """
             float4 paint(Fragment in, Values values) {
                 // 板の中での位置 (0…1)。左の CPU 側と同じ座標を作るため、
