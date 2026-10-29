@@ -42,6 +42,8 @@ name: Render
 #   - ledger-shots: 台帳の全行の絵 (MOKUME_LEDGER_DUMP_DIR)。落ちた回だけ上げる — 台帳の
 #     行が動いた回の after の絵で、書き換える前に目で見る (ADR-0019 決定 3)
 #   - 落ちた回は、落ちた検査の文面と台帳の書き換え後の行 (案) を run の要約へ書く
+#   - 本物の GPU の打ち切りがあった回は、結論によらず件数と理由を run の要約へ名乗る (#2275)。
+#     警告だけで結論は変えない — 絵を読まない検査は、打ち切りがあっても緑のまま通る
 # artifact は runner が持つ runtime の token で上げるので、contents: read のままで足りる。
 # 保持は 14 日 — 赤を直すまでの材料で、恒久の証跡は PR に載せる絵が持つ。
 # render と render-pr の step の並びは同じに保つ。違うのはジョブの if と concurrency と、
@@ -187,6 +189,12 @@ jobs:
       - name: 落ちた検査の文面を要約へ書く
         if: failure()
         run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      # 本物の GPU の打ち切りがあれば、件数と理由を要約へ名乗る (#2275)。絵を読まない検査は、打ち切りが
+      # あっても緑のまま通る。**警告だけで、結論は変えない** — 検査が赤でも緑でも走らせ (`!cancelled()`)、
+      # 読むのは下の artifact が上げる test-log
+      - name: GPU の打ち切りを要約へ名乗る
+        if: ${{ !cancelled() }}
+        run: python3 scripts/read-test-record.py --gpu-dropped .build/test-log.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -259,6 +267,12 @@ jobs:
       - name: 落ちた検査の文面を要約へ書く
         if: failure()
         run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      # 本物の GPU の打ち切りがあれば、件数と理由を要約へ名乗る (#2275)。絵を読まない検査は、打ち切りが
+      # あっても緑のまま通る。**警告だけで、結論は変えない** — 検査が赤でも緑でも走らせ (`!cancelled()`)、
+      # 読むのは下の artifact が上げる test-log
+      - name: GPU の打ち切りを要約へ名乗る
+        if: ${{ !cancelled() }}
+        run: python3 scripts/read-test-record.py --gpu-dropped .build/test-log.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -346,6 +360,12 @@ jobs:
       - name: 落ちた検査の文面を要約へ書く
         if: failure()
         run: python3 scripts/read-test-record.py --failure-messages .build/test-results-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      # 本物の GPU の打ち切りがあれば、件数と理由を要約へ名乗る (#2275)。絵を読まない検査は、打ち切りが
+      # あっても緑のまま通る。**警告だけで、結論は変えない** — 検査が赤でも緑でも走らせ (`!cancelled()`)、
+      # 読むのは下の artifact が上げる test-log
+      - name: GPU の打ち切りを要約へ名乗る
+        if: ${{ !cancelled() }}
+        run: python3 scripts/read-test-record.py --gpu-dropped .build/test-log.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -410,6 +430,12 @@ jobs:
       - name: 落ちた検査の文面を要約へ書く
         if: failure()
         run: python3 scripts/read-test-record.py --failure-messages .build/test-results-release-swift-testing.xml >> "$GITHUB_STEP_SUMMARY"
+      # 本物の GPU の打ち切りがあれば、件数と理由を要約へ名乗る (#2275)。絵を読まない検査は、打ち切りが
+      # あっても緑のまま通る。**警告だけで、結論は変えない** — 検査が赤でも緑でも走らせ (`!cancelled()`)、
+      # 読むのは下の artifact が上げる test-log
+      - name: GPU の打ち切りを要約へ名乗る
+        if: ${{ !cancelled() }}
+        run: python3 scripts/read-test-record.py --gpu-dropped .build/test-log.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:

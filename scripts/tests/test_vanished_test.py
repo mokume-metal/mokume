@@ -714,6 +714,107 @@ class ReadCancelledTest(unittest.TestCase):
         self.assertIn("ほか 3 行は記録を読む", out)
 
 
+REAL_DROP = (
+    "mokume: The GPU dropped the work it had queued, so this frame was never finished: "
+    "Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang)"
+    " \u2014 this notice will not be repeated"
+)
+OTHER_REAL_DROP = REAL_DROP.replace("kIOGPUCommandBufferCallbackErrorHang", "kIOGPUCommandBufferCallbackErrorTimeout")
+# SketchRuntime が出す別の行。故意の打ち切り (dropsNextSubmissionForTesting) でも出るので数えない
+OUTLET_DROP = (
+    "mokume: The GPU dropped the work behind frame 3 (injected for testing), so that frame was not "
+    "handed to the outlets: a recording leaves it out (said once)"
+)
+GPU_DROPPED_TITLE = "GPU の打ち切り"
+
+
+class ReadGpuDroppedTest(unittest.TestCase):
+    """`read-test-record.py --gpu-dropped` — 本物の GPU の打ち切りを検査の出力から名乗る口 (#2275)。
+
+    守るのは 4 つ。(1) 本物の打ち切りの行があれば、要約に件数と理由を名乗る。(2) 数えるのは
+    `RenderDevice` が故意でない打ち切りにだけ出す行で、故意の打ち切りでも出る別の行は数えない。
+    (3) 無かった回は要約に何も書かない。(4) どの回も終了コードは 0 — job の結論は変えない。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.summary = self.root / "summary.md"
+
+    def read(self, lines, summary=True):
+        path = self.root / "test-log.txt"
+        if lines is not None:
+            path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        env = dict(os.environ)
+        env.pop("GITHUB_STEP_SUMMARY", None)
+        if summary:
+            env["GITHUB_STEP_SUMMARY"] = str(self.summary)
+        proc = subprocess.run(
+            ["python3", str(READER), "--gpu-dropped", str(path)],
+            capture_output=True, text=True, env=env,
+        )
+        # 呼ぶ側 (render.yml の step) との約束 — 警告だけで、job の終了コードを変えない
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def written(self):
+        return self.summary.read_text(encoding="utf-8") if self.summary.exists() else ""
+
+    def test_names_a_real_drop_with_its_reason_in_the_summary(self):
+        out = self.read(["✔ Test x() passed", REAL_DROP, "✔ Suite y passed"])
+        self.assertIn(GPU_DROPPED_TITLE + " 1 件", out)
+        md = self.written()
+        self.assertIn("### %s (1 件)" % GPU_DROPPED_TITLE, md)
+        self.assertIn("kIOGPUCommandBufferCallbackErrorHang", md)
+        # 絵を読まない検査が緑のまま通ることと、結論を変えないことを言う
+        self.assertIn("緑のまま通る", md)
+        self.assertIn("job の結論は変えない", md)
+
+    def test_counts_per_reason_most_frequent_first(self):
+        out = self.read([REAL_DROP, OTHER_REAL_DROP, REAL_DROP, REAL_DROP])
+        self.assertIn(GPU_DROPPED_TITLE + " 4 件", out)
+        lines = out.splitlines()
+        self.assertIn("3 件", lines[1])
+        self.assertIn("ErrorHang", lines[1])
+        self.assertIn("1 件", lines[2])
+        self.assertIn("ErrorTimeout", lines[2])
+        self.assertIn("| 3 | ", self.written())
+
+    def test_does_not_count_the_line_a_deliberate_drop_also_prints(self):
+        """故意の打ち切りの検査だけが走った出力では名乗らない。SketchRuntime の行は故意でも出る。"""
+        out = self.read(["✔ Test dropsNextSubmission() passed", OUTLET_DROP])
+        self.assertNotRegex(out, r"\d+ 件")
+        self.assertIn("見つからなかった", out)
+        self.assertEqual(self.written(), "")
+
+    def test_writes_nothing_to_the_summary_when_there_is_no_drop(self):
+        out = self.read(["✔ Test x() passed", "✔ Suite y passed"])
+        self.assertIn("見つからなかった", out)
+        self.assertEqual(self.written(), "")
+
+    def test_says_when_the_log_cannot_be_read(self):
+        out = self.read(None)  # 検査の出力が無い
+        self.assertIn("読めない", out)
+        # 黙って空を出すと、見張りが止まっても気付かない
+        self.assertIn("読めない", self.written())
+
+    def test_finds_the_line_wherever_it_sits_in_the_row(self):
+        """並走する出力が混ざって行頭が崩れても拾う。"""
+        self.read(["✔ Test a() passed 12:00:01 " + REAL_DROP])
+        self.assertIn("(1 件)", self.written())
+
+    def test_the_line_matches_the_real_message_in_the_sources(self):
+        """拾う行は土台の文面の写しなので、本物から外れたら黙って数えなくなる。"""
+        swift = (REPO / "Sources" / "MokumeCore" / "Rendering" / "RenderDevice.swift").read_text(encoding="utf-8")
+        self.assertIn("The GPU dropped the work it had queued, so this frame was never finished: ", swift)
+        self.assertIn("this notice will not be repeated", swift)
+        # 故意の打ち切りでは出さない条件。ここが外れたら、故意の打ち切りまで数えることになる
+        self.assertIn("droppedForTesting == nil", swift)
+        reader = READER.read_text(encoding="utf-8")
+        self.assertIn("The GPU dropped the work it had queued, so this frame was never finished: ", reader)
+
+
 class MakeTestTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

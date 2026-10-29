@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CoreGraphics
 import Foundation
 import MokumeTestSupport
 import Testing
@@ -564,6 +565,126 @@ struct MovieTests {
         #expect(notices.count == 1)
         #expect(notices.first?.contains("jump()") == true)
         runtime.closePlugins()
+    }
+
+    // MARK: - 速さ (#2451)
+
+    @Test("speed(2) の後は、スケッチの時刻が 1 秒進むと位置が 2 秒進み、2 度回すとフレームごとのコマ・位置が一致する")
+    func speedTwoAdvancesTwoSecondsPerSecond() async throws {
+        let url = try await TestMovie.write(frames: 90, pixel: TestMovie.noise)  // 3 秒
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        let prepare: (Movie) -> Void = {
+            $0.speed(2)
+            $0.play()
+        }
+        let first = try record(url, frames: 31, prepare: prepare)
+        let second = try record(url, frames: 31, prepare: prepare)
+        #expect(first.count == 31)
+        #expect(first == second)
+        // 31 枚目はスケッチの時刻で 1 秒 (play() は 1 枚目から数える) → 位置は 2 秒
+        #expect(abs(first[30].time - 2) < 1e-4, "\(first[30].time)")
+        for row in first {
+            #expect(abs(row.time - 2 * Float(row.frame - 1) / 30) < 1e-4, "\(row.frame) 枚目の位置 \(row.time)")
+            let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
+            #expect(row.pixels == expected[index], "\(row.frame) 枚目 (\(row.time) 秒)")
+        }
+    }
+
+    @Test("流している途中で速さを変えても位置は跳ばず、毎フレーム同じ速さを渡しても変わらない")
+    func changingTheSpeedMidwayDoesNotJump() async throws {
+        let url = try await TestMovie.write(frames: 90, pixel: TestMovie.noise)  // 3 秒
+        defer { try? FileManager.default.removeItem(at: url) }
+        // 1〜16 枚目は 2 倍 (毎フレーム渡す)、17 枚目から 0.5 倍。16 枚目の位置は 2 × 15/30 = 1.0
+        let rows = try record(
+            url, frames: 31,
+            prepare: {
+                $0.speed(2)
+                $0.play()
+            },
+            during: { sketch, movie in movie.speed(sketch.frameCount < 16 ? 2 : 0.5) })
+        #expect(abs(rows[15].time - 1.0) < 1e-4, "\(rows[15].time)")
+        for row in rows where row.frame > 16 {
+            let want = 1.0 + 0.5 * Float(row.frame - 16) / 30
+            #expect(abs(row.time - want) < 1e-4, "\(row.frame) 枚目: \(row.time) (想定 \(want))")
+        }
+        // 毎フレーム 1 倍を渡し続けても、渡さないときと位置は同じ
+        let plain = try record(url, frames: 31, prepare: { $0.play() })
+        let repeated = try record(
+            url, frames: 31, prepare: { $0.play() }, during: { _, movie in movie.speed(1) })
+        #expect(repeated == plain)
+    }
+
+    @Test("speed(0) は位置を進めず、負・数でない値・無限は速さを変えず 1 度だけ知らせる")
+    func unacceptableSpeedsAreNoticedOnce() async throws {
+        let url = try await TestMovie.write(frames: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var notices: [String] = []
+        var times: [Float] = []
+        var movie: Movie?
+        let runtime = try run(
+            frames: 8,
+            setup: { sketch in
+                let reader = try MovieReader(url: url, path: "clip.mov")
+                let made = Movie(
+                    image: try sketch.createImage(reader.width, reader.height), reader: reader,
+                    name: "video: clip.mov", owner: sketch, warn: { notices.append($0) })
+                sketch.attach(made)
+                made.speed(-1)
+                made.speed(.nan)
+                made.speed(.infinity)
+                made.speed(-.infinity)
+                made.play()
+                movie = made
+            },
+            draw: { sketch in
+                guard let movie else { return }
+                times.append(movie.time)
+                // 5 枚目から速さを 0 にする (位置は止まる)
+                if sketch.frameCount == 5 { movie.speed(0) }
+            })
+        // 速さは 1 のまま流れる (4 つの受け取らない値が速さを変えていない) → 5 枚目まで進み、そこで止まる
+        let want = (0..<8).map { Float(min($0, 4)) / 30 }
+        for (index, time) in times.enumerated() {
+            #expect(abs(time - want[index]) < 1e-4, "\(index + 1) 枚目: \(time)")
+        }
+        #expect(notices.count == 1, "\(notices)")
+        #expect(notices.first?.contains("speed()") == true)
+        runtime.closePlugins()
+    }
+
+    // MARK: - 回転の印 (#2451)
+
+    @Test("縦に撮った動画は、width と height が入れ替わり、image も正しい向きで映る (左上の赤が右上へ)")
+    func portraitMovieShowsUpright() async throws {
+        let url = try await TestMovie.write(
+            frames: 5, width: 64, height: 32,
+            transform: CGAffineTransform(rotationAngle: .pi / 2).concatenating(CGAffineTransform(translationX: 32, y: 0)),
+            paint: TestMovie.quadrants)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var movie: Movie?
+        var size: (Int, Int, Int, Int)?
+        var pixels: [LinearRGBA] = []
+        let runtime = try run(
+            frames: 2,
+            setup: { sketch in movie = try sketch.createVideo(url.path) },
+            draw: { _ in
+                guard let movie else { return }
+                size = (movie.width, movie.height, movie.image.width, movie.image.height)
+                pixels = Self.pixels(of: movie.image)
+            })
+        runtime.closePlugins()
+        let seen = try #require(size)
+        #expect(seen == (32, 64, 32, 64), "\(seen)")
+        // 象限の中心の色 (作業空間の値): 左上は青、右上は赤
+        func dominant(_ x: Int, _ y: Int) -> String {
+            let c = pixels[y * 32 + x]
+            if min(c.red, c.green, c.blue) > 0.5 { return "white" }
+            if c.red > c.green, c.red > c.blue { return "red" }
+            if c.green > c.red, c.green > c.blue { return "green" }
+            return "blue"
+        }
+        #expect([dominant(8, 16), dominant(24, 16), dominant(8, 48), dominant(24, 48)] == ["blue", "red", "white", "green"])
     }
 
     // MARK: - 時刻を指定した観測の枚 (#2357)

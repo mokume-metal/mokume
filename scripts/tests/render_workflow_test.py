@@ -44,11 +44,13 @@ schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権�
  12. 外のパッケージ mokume-syphon の検査 (`scripts/syphon-check-pr.sh`) は `render-pr` にだけ
      あり、`continue-on-error` で merge を止めない (#1973)。必須の `render` や定期のジョブに
      入ると、外のリポジトリの赤が本体の merge や起票を動かす
- 13. 専用機のジョブの、前検査より後の共通の step (検査の make・落ちた文面の要約・artifact)
-     が揃っている (#2267)。debug の 3 本 (`render`・`render-pr`・`scheduled-debug`) は、
-     その 4 step が artifact の名前を除いて同じ。段の違う `scheduled-release` を含む 4 本
+ 13. 専用機のジョブの、前検査より後の共通の step (検査の make・落ちた文面の要約・GPU の
+     打ち切りの名乗り・artifact) が揃っている (#2267・#2275)。debug の 3 本 (`render`・
+     `render-pr`・`scheduled-debug`) は、その 5 step が artifact の名前を除いて同じ。段の違う `scheduled-release` を含む 4 本
      すべてで、検査の make は `CI=` を渡し、要約は自分が上げる記録を読み、artifact は
-     `include-hidden-files: true` を持つ。step は 4 本へ手で写してあり、**割れても黙って
+     `include-hidden-files: true` を持つ。GPU の打ち切りの名乗りは、検査が赤でも緑でも
+     走り (`!cancelled()`)、結論を変えない (`continue-on-error` も `exit` も持たず、
+     読み手が常に 0 で終わる)。step は 4 本へ手で写してあり、**割れても黙って
      緑になる側がある** — `CI=` を落とすと Metal の検証レイヤが切れたまま緑になり
      (Makefile の METAL_VALIDATION)、`include-hidden-files` を落とすと `.build/` の記録が
      1 つも上がらない。違うべき部分 (artifact の名前・`if`・`concurrency`・`render-pr` の
@@ -289,14 +291,15 @@ class RenderWorkflowTest(unittest.TestCase):
         # 違ってよいのは artifact の名前 (上げ先が job ごとに分かれる) だけで、ほかは一字一句比べる。
         # render-pr の checkout の with: (fetch-depth) と末尾の 2 step は比べる範囲の外
         def common(name):
-            body = steps(self.jobs[name])[2:6]
+            body = steps(self.jobs[name])[2:7]
             return [re.sub(r"(?m)^          name: \S+$", "          name: <artifact>", s) for s in body]
 
         base = common("render")
-        self.assertEqual(len(base), 4)
+        self.assertEqual(len(base), 5)
         self.assertTrue(base[0].startswith("      - run: make ci-check "), base[0])
         self.assertIn("scripts/read-test-record.py --failure-messages", base[1])
-        for s in base[2:]:
+        self.assertIn("scripts/read-test-record.py --gpu-dropped", base[2])
+        for s in base[3:]:
             self.assertTrue(s.startswith("      - uses: actions/upload-artifact@"), s)
         for name in DEBUG_RUNNER_JOBS:
             self.assertEqual(common(name), base, f"{name} の step が render と割れている")
@@ -317,6 +320,15 @@ class RenderWorkflowTest(unittest.TestCase):
             self.assertEqual(len(summaries), 1, name)
             self.assertIn("if: failure()", summaries[0], name)
             record = re.search(r"--failure-messages (\S+)", summaries[0]).group(1)
+
+            # GPU の打ち切りの名乗り (#2275): 検査が赤でも緑でも走り、結論は変えない。読む test-log は
+            # 下の always の artifact に入っている (上げる材料と、要約が読む材料が同じ)
+            dropped = [s for s in body if "name: GPU の打ち切りを要約へ名乗る" in s]
+            self.assertEqual(len(dropped), 1, name)
+            self.assertIn("if: ${{ !cancelled() }}", dropped[0], name)
+            self.assertIn("scripts/read-test-record.py --gpu-dropped .build/test-log.txt", dropped[0], name)
+            self.assertNotIn("continue-on-error", dropped[0], name)
+            self.assertNotIn("exit ", dropped[0], name)
 
             uploads = [s for s in body if s.startswith("      - uses: actions/upload-artifact@")]
             self.assertTrue(uploads, name)
