@@ -209,6 +209,7 @@ extension SketchPart {
     ///         if frameCount == 2 { beginRecord(folder + "frame-##.png") }
     ///         if frameCount == 5 {
     ///             endRecord()  // 書き終えてから返る
+    ///             // 書き終えたばかりの 3 枚を読む。draw() は投げ返せず、読めないのは書き方の誤りなので `try!`
     ///             strip = (0..<3).map { try! loadImage(folder + "frame-0\($0).png") }
     ///         }
     ///
@@ -290,7 +291,7 @@ extension SketchPart {
     /// 撮り始めに前倒しになる (1 枚も描かれない録りでも空のディレクトリが残る)。書いている間は前のファイルと一時ファイルが
     /// 並ぶので、ディスクの要りようが一時的に倍になる。`.gif` は、書けないディレクトリにある書き込める既存ファイルを
     /// 上書きできなくなった (隣に一時ファイルを作れない。`.mov`・`.mp4` は元から断っていた)。
-
+    ///
     /// ## 作れない長さの名前は、撮り始めない
     ///
     /// 1 枚目のファイル名が長すぎるときは、撮り始めずに警告する。ファイル名は連番で 247、`.mov` で 255 まで、
@@ -316,7 +317,7 @@ extension SketchPart {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    // shot: 1 snippet=5f85730d
+    // shot: 1 snippet=dbe3d06b
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
             return OutsideRun.log.warn(.beginRecord)

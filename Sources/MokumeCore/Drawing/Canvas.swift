@@ -1651,6 +1651,22 @@ public final class Canvas {
     private(set) var placedPicturesCopied = 0
     /// 写しの上限に達して、置いた側を描き切らせた回数 (作ってから通算)。**検査が読む。**
     private(set) var placedPictureCopyLimitReached = 0
+    /// ``ShaderSurface/previousFrame`` が読む写し ([#2456])。1 枚を使い回す (``previousFrameHeld()``)。
+    ///
+    /// [#2456]: https://github.com/mokume-metal/mokume/issues/2456
+    var previousFrameCopy: PlacedPictureCopy?
+    /// この面の溜めた列が前のフレームの写しを読む列を、このフレームで閉じたか。
+    var previousFrameRead = false
+    /// 前のフレームで読む列を閉じたか。立っていれば、このフレームの最初の描き切りが写しを取る
+    /// (読む列が最初の描き切りより後に置かれても、前の絵を取れるように)。
+    var previousFrameWatched = false
+    /// このフレームで、前のフレームの写しを取ったか。**投入した後で立てる** (``flush(applyingEffects:mirroringPixels:)``)。
+    var previousFrameCopiedThisFrame = false
+    /// 前のフレームの写しの面を作った回数 (作ってから通算)。**同じ大きさなら作り直していないこと、
+    /// 使っていない面では 0 のままであることを検査が見る。**
+    var previousFrameCopiesMade = 0
+    /// 前のフレームの絵を写した回数 (作ってから通算)。**宣言して当てた面だけが払うことを検査が見る。**
+    var previousFramePicturesCopied = 0
     /// 置いた時点の絵の写しを失敗させる差し込み (検査用)。製品の経路では `nil`。
     ///
     /// 写しの失敗 (確保できない・コマンドを積めない) は資源が枯れたときにしか起きず、検査から自然には
@@ -3778,6 +3794,7 @@ public final class Canvas {
         lightStorage.removeAll(keepingCapacity: true)
         drawsDebugGuides = false
         passesThisFrame = 0
+        rollPreviousFrameUse()
 
         isDrawing = true
         beginDrawFrame = nil
@@ -4795,6 +4812,7 @@ public final class Canvas {
         // [#2388]: https://github.com/mokume-metal/mokume/issues/2388
         var exchanges = 0
         var submitted = false
+        var copiedPreviousFrame = false
         let hadCarry = carriesPictureBeforeEffects
         defer {
             if !submitted, exchanges % 2 == 1 { exchangeTargetWithCarry() }
@@ -4830,6 +4848,10 @@ public final class Canvas {
                 exchangeTargetWithCarry()
                 exchanges += 1
             }
+            // **前のフレームの絵を、描く先を書き換える前に写す** ([#2456]・``encodePreviousFrameCopy(startsFrame:restoresCarry:drawsInFrame:into:)``)
+            copiedPreviousFrame = try encodePreviousFrameCopy(
+                startsFrame: startsFrame, restoresCarry: restoresCarry, drawsInFrame: drawsInFrame,
+                into: commands)
             // 描く先へのパスは、取り替えた後の面で組む
             let pass = target.makeRenderPass(
                 clearColor: pendingBackground,
@@ -4933,6 +4955,10 @@ public final class Canvas {
                 uploaded: uploaded, carried: carried, upscaled: upscaled, pass: pass)
         }
         submitted = true
+        if copiedPreviousFrame {
+            previousFrameCopiedThisFrame = true
+            previousFramePicturesCopied += 1
+        }
         // 結末の届いていない前の効果のフレームの上から戻したなら、覚えておく (``carryDropped(_:)``・#2388)
         if restoresCarry, carriedAwaitingOutcome[carriedFlush.submission] != nil {
             carriedAwaitingOutcome[carriedFlush.submission] = true
