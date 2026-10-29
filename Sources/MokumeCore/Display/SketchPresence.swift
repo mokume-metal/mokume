@@ -45,6 +45,13 @@ import Foundation
 /// **こちらから 1 度も触ってはならない** — 触れば AppKit の event loop へ再入する。
 /// オフスクリーンの経路には回す人が居ないので、自分で回す。見分けは `NSApp.isRunning`。
 ///
+/// **`NSApp` が走っていなくても、main の run loop を別の誰かが回していることがある** (async main の
+/// 最上段で `CFRunLoopRun()` が回る検査のプロセスと、`SketchRuntime` を async main の上で回す使い手)。
+/// そこで出来事を汲み出すと、プロセスが `exit(0)` で終わる ([#3120])。見分けは `NSApp.isRunning` に
+/// 加えて、main の run loop が走っているか (``shouldDriveRunLoop(appIsRunning:mainRunLoopIsRunning:)``)。
+///
+/// [#3120]: https://github.com/mokume-metal/mokume/issues/3120
+///
 /// ## 短命な実行は名乗らない
 ///
 /// 絵を書き出すだけの一括処理 (`make reference-shots`) が名乗りのせいで遅くなってはならない
@@ -76,6 +83,34 @@ final class SketchPresence {
     /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 7)。
     static func shouldAnnounce(runningFor elapsed: Double) -> Bool {
         elapsed >= grace
+    }
+
+    /// 名乗りが、自分で run loop を回す (``pump()``) べきか。
+    ///
+    /// **AppKit を 1 つも触らない純関数**にしてある。回す人が別に居るかの判断は検査したいが、
+    /// 検査から本物の run loop や `NSApp` を動かしたくはない。
+    ///
+    /// 回すのは、**回す人が誰も居ないときだけ**である。居るのは 2 通り:
+    /// - `NSApp.run()` の中 (窓を開く経路・``SketchApplication``)。こちらから触れば AppKit の event loop へ再入する
+    /// - **main の run loop を別の誰かが回している** (async main の最上段で `CFRunLoopRun()` が回る
+    ///   プロセス — 検査のプロセスと、`SketchRuntime` を async main の上で直に回す使い手・[#3120])。
+    ///   そこで `nextEvent` を呼ぶと、以後は出来事が届くたびに AppKit が main の run loop を止めるブロックを
+    ///   積み、run loop が戻ったプロセスは `exit(0)` で終わる (実測)
+    ///
+    /// 代償: 後者の形では、名乗りは出るが**メニューは押せず、プレビューも動かない** (出来事を取り出す人が
+    /// 居ない)。プロセスが消えるよりよい — 名乗りの目的 (どれが誰のものか) は、メニューバーに出ていれば足りる。
+    ///
+    /// [#3120]: https://github.com/mokume-metal/mokume/issues/3120
+    static func shouldDriveRunLoop(appIsRunning: Bool, mainRunLoopIsRunning: Bool) -> Bool {
+        !appIsRunning && !mainRunLoopIsRunning
+    }
+
+    /// main の run loop がいま走っているか (回している人が誰であれ)。
+    ///
+    /// 走っていれば現在のモードの名前が返る。**``announce()`` が名乗る前、こちらが 1 度も回さないうちに
+    /// 読む** — 自分で回した後に読むと、自分が回しているのを「別の誰か」と取り違える。
+    static var mainRunLoopIsRunning: Bool {
+        CFRunLoopCopyCurrentMode(CFRunLoopGetMain()) != nil
     }
 
     /// 名乗りの中身を組み立てる係。**ここも AppKit を触らない。**
@@ -234,7 +269,11 @@ final class SketchPresence {
         // **`finishLaunching()` は呼ばない。** 名乗りに要らないことを実測で確かめてある。
         // 窓経路では AppKit が既に呼んでおり、二度目は
         // `applicationDidFinishLaunching` をもう一度流して窓を 2 枚開かせうる
-        drivesRunLoop = !app.isRunning
+        //
+        // **回す人が別に居るかは、名乗る前に読む** (``mainRunLoopIsRunning``)。窓を開かず async main の
+        // 上で直に回す形では、`nextEvent` で出来事を汲み出さない (#3120)
+        drivesRunLoop = Self.shouldDriveRunLoop(
+            appIsRunning: app.isRunning, mainRunLoopIsRunning: Self.mainRunLoopIsRunning)
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Self.mark()
