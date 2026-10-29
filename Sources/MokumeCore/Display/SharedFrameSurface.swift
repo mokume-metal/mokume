@@ -168,6 +168,36 @@ final class SharedFrameSurface {
     /// 面の番号を置くファイルの名前。
     static let manifestName = "surface.json"
 
+    /// 全画面にするよう頼むディスプレイ 1 枚 ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
+    ///
+    /// **番号 (``Display/number``) だけでなく、OS が振った識別子 (`CGDirectDisplayID`) も載せる。** 道具は同じ
+    /// 機械の `NSScreen` から識別子で画面を引き直す — 番号は子が組み立てで選んだ後に抜き差しがあると、道具が
+    /// 別の画面を指しうる。番号と名前は、引けなかったときに道具が名乗る言葉の材料である。
+    struct FullScreenDisplay: Codable, Equatable, Sendable {
+        /// 子が選んだ番号 (1 から)。
+        let number: Int
+        /// OS が名乗る名前。
+        let name: String
+        /// OS が振った識別子 (`CGDirectDisplayID`)。**道具が画面を引く鍵。**
+        let screenID: UInt32
+
+        init(number: Int, name: String, screenID: UInt32) {
+            self.number = number
+            self.name = name
+            self.screenID = screenID
+        }
+
+        init(_ display: Display) {
+            self.init(number: display.number, name: display.name, screenID: display.screenID)
+        }
+
+        /// 使える値か。**番号は 1 から、識別子は 0 でない** (`NSScreen.screenID` は読めなければ 0)。
+        var isUsable: Bool { number >= 1 && screenID != 0 }
+
+        /// `display 2 (LG ULTRAWIDE)` の形。名乗りに使う。
+        var label: String { "display \(number) (\(name))" }
+    }
+
     /// 面の番号と大きさ。**読み手が最初に読むもの。**
     ///
     /// 毎フレームは書かない — 中身が変わるのは大きさが変わったときだけである。
@@ -200,6 +230,15 @@ final class SharedFrameSurface {
         /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
         /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
         let windowScale: Float?
+        /// 作品の窓を全画面にするよう頼むディスプレイ (``SketchSettings/fullScreen(_:)``)。**宣言どおりの画面で
+        /// 出すために渡す** ([ADR-0032] 決定 1 の「見え方は直に走らせたときと同じ」・[#2188])。
+        ///
+        /// **`nil` なら全画面を頼んでいない。** **無くても絵は出る** (``windowScale`` と同じ足し方 — 版は
+        /// 据え置き)。書かない古いライブラリの子なら窓のまま開く。読まない古い道具は窓のままで、全画面に
+        /// ならなかったことは子の名乗りが言う (``SketchApplication/resolveOutlet(at:owner:)``)。
+        ///
+        /// [#2188]: https://github.com/mokume-metal/mokume/issues/2188
+        let fullScreenDisplay: FullScreenDisplay?
         /// この目録を置いた子のプロセスの番号。**どの世代の目録かを、読み手が照合する印である**
         /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         ///
@@ -210,14 +249,18 @@ final class SharedFrameSurface {
         let pid: Int32?
 
         private enum CodingKeys: String, CodingKey {
-            case schemaVersion, ids, width, height, windowScale, pid
+            case schemaVersion, ids, width, height, windowScale, fullScreenDisplay, pid
         }
 
-        init(ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil, pid: Int32? = nil) {
+        init(
+            ids: [UInt32], width: Int, height: Int, windowScale: Float? = nil,
+            fullScreenDisplay: FullScreenDisplay? = nil, pid: Int32? = nil
+        ) {
             self.ids = ids
             self.width = width
             self.height = height
             self.windowScale = windowScale
+            self.fullScreenDisplay = fullScreenDisplay
             self.pid = pid
         }
 
@@ -249,6 +292,10 @@ final class SharedFrameSurface {
             // ので、開けない値は「頼まれていない」として扱う
             let scale = try? container.decodeIfPresent(Float.self, forKey: .windowScale)
             windowScale = scale.flatMap { $0 }.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            // **全画面の頼みも読めなくても目録ごと捨てない。** 形が違う・値が使えない欄は「頼まれていない」
+            // として扱い、窓のまま開く (絵が出ないよりよい)
+            let display = try? container.decodeIfPresent(FullScreenDisplay.self, forKey: .fullScreenDisplay)
+            fullScreenDisplay = display.flatMap { $0 }.flatMap { $0.isUsable ? $0 : nil }
             // **番号も読めなくても目録ごと捨てない。** 整数でない・正でない値は「印が無い」として扱い、
             // 読み手は推定に倒れる
             let writer = try? container.decodeIfPresent(Int32.self, forKey: .pid)
@@ -266,6 +313,8 @@ final class SharedFrameSurface {
     let height: Int
     /// 窓を開く倍率。目録に載せて道具へ渡す (``Manifest/windowScale``)。
     let windowScale: Float?
+    /// 作品の窓を全画面にするディスプレイ。目録に載せて道具へ渡す (``Manifest/fullScreenDisplay``)。
+    let fullScreenDisplay: FullScreenDisplay?
     /// 面の番号 (書く順)。
     let ids: [UInt32]
 
@@ -342,6 +391,7 @@ final class SharedFrameSurface {
     ///   - warn: 理由を伝える口。検査が差し替える。
     static func makeIfEnabled(
         gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
+        fullScreenDisplay: FullScreenDisplay? = nil,
         at directory: URL = WorkDirectory.facet(StartupReads.viewport.key),
         owner: String? = SharedFrameSurface.launchOwner,
         warn: (String) -> Void = { Diagnostics.warn($0) }
@@ -349,7 +399,8 @@ final class SharedFrameSurface {
         guard isEnabled(at: directory, owner: owner) else { return nil }
         do {
             return try SharedFrameSurface(
-                gpu: gpu, width: width, height: height, windowScale: windowScale, at: directory)
+                gpu: gpu, width: width, height: height, windowScale: windowScale,
+                fullScreenDisplay: fullScreenDisplay, at: directory)
         } catch {
             warn(
                 "Could not make the surfaces frames go to (RenderFailure): \(error.headline) "
@@ -464,7 +515,8 @@ final class SharedFrameSurface {
     }
 
     init(
-        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil, at directory: URL
+        gpu: RenderDevice, width: Int, height: Int, windowScale: Float? = nil,
+        fullScreenDisplay: FullScreenDisplay? = nil, at directory: URL
     ) throws(RenderFailure) {
         // 面は `makeTexture(descriptor:iosurface:plane:)` で作るので `RenderDevice.makeTexture` を
         // 通らない。寸法の関所はここで通す (上の端も含む・#1642)
@@ -472,6 +524,7 @@ final class SharedFrameSurface {
         self.width = width
         self.height = height
         self.windowScale = windowScale
+        self.fullScreenDisplay = fullScreenDisplay
         self.gpu = gpu
         self.manifestURL = directory.appendingPathComponent(Self.manifestName)
 
@@ -554,6 +607,7 @@ final class SharedFrameSurface {
         try AtomicFile.writeJSON(
             Manifest(
                 ids: ids, width: width, height: height, windowScale: windowScale,
+                fullScreenDisplay: fullScreenDisplay,
                 pid: ProcessInfo.processInfo.processIdentifier),
             to: manifestURL)
     }

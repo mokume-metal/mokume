@@ -267,6 +267,9 @@ struct LaunchedByToolTests {
                 contentsOf: facet.appendingPathComponent(SharedFrameSurface.manifestName),
                 encoding: .utf8)
             #expect(placed != Self.watchedManifest, "自分の面の番号を目録に置いていない")
+            #expect(
+                SharedFrameSurface.readManifest(at: facet)?.fullScreenDisplay == nil,
+                "全画面を頼んでいない子が、全画面の頼みを載せた")
             // 管を読み始めている — 読み口は塞がない形になる
             let flags = fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFL)
             #expect(flags & O_NONBLOCK != 0, "道具の管を読んでいない")
@@ -276,13 +279,14 @@ struct LaunchedByToolTests {
         }
     }
 
-    /// **全画面の頼みに応えられないことを、黙らない** ([#2020])。作品の窓は道具が持つので
-    /// ([ADR-0032] 決定 1)、子からは全画面にできない。描く大きさはディスプレイから決まっている。
+    /// **全画面の頼みは目録に載せて道具へ渡し、道具が読まない古さでも黙らない** ([#2020]・[#2188])。作品の窓は
+    /// 道具が持つので ([ADR-0032] 決定 1)、子からは全画面にできない。描く大きさはディスプレイから決まっている。
     ///
     /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
-    @Test("全画面を頼む見張りの子は、窓を道具が持つことを 1 度名乗る")
-    func aFullScreenChildSaysTheToolHoldsTheWindow() throws {
-        try withProductionFacet(manifest: Self.watchedManifest) { _ in
+    /// [#2188]: https://github.com/mokume-metal/mokume/issues/2188
+    @Test("全画面を頼む見張りの子は、選んだディスプレイを目録に載せ、道具が対応していないときの手当てを 1 度名乗る")
+    func aFullScreenChildAsksTheToolAndSaysWhatToDoIfItDoesNotListen() throws {
+        try withProductionFacet(manifest: Self.watchedManifest) { facet in
             let pipe = Pipe()
             let application = try SketchApplication(
                 sketch: FullScreenBlank(display: 2), gpu: RenderDevice(), render: nil,
@@ -298,7 +302,15 @@ struct LaunchedByToolTests {
             #expect(!application.endsAfterLastWindowClosed, "共有面の経路になっていない")
             #expect(said.count == 1, "\(said)")
             #expect(said.first?.contains("full screen on display 2 (Projector)") == true)
-            #expect(said.first?.contains("mokume watch holds the window") == true)
+            #expect(said.first?.contains("mokume watch puts the window it holds there") == true)
+            #expect(said.first?.contains("the tool is older") == true, "古い道具のときの手当てを言っていない")
+            #expect(said.first?.contains("by hand") == true)
+            // 選んだディスプレイを、道具が引き直せる形 (識別子つき) で目録に載せた
+            let manifest = try #require(SharedFrameSurface.readManifest(at: facet))
+            #expect(
+                manifest.fullScreenDisplay
+                    == SharedFrameSurface.FullScreenDisplay(SmallDisplays.second),
+                "目録に全画面の頼みを載せていない: \(String(describing: manifest.fullScreenDisplay))")
         }
     }
     /// **共有面を用意できずに窓へ倒れても、見張りの子は管を読む。** 管を引いたのは見張りで、
