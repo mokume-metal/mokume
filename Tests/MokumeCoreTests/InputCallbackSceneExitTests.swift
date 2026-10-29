@@ -226,4 +226,136 @@ struct InputCallbackSceneExitTests {
         #expect(image[100, 100].green > 200, "コールバックの円が (100, 100) に出ていない")
         #expect(runtime.canvas.transform == .identity)
     }
+
+    // MARK: - 列を割らない・書いたときだけ閉じる (反証の直し)
+
+    /// 何も書かずに抜ける出口は、列を閉じない。押す・離す・クリックの 3 つのコールバックが 1 フレームに続いて
+    /// 円を置いても、列は 1 本のまま (`draw()` の頭で、閉じた列は 0 本)。
+    @Test("シーンの記述を書かないコールバックは、置いた列を割らない")
+    func callbacksThatWriteNothingDoNotSplitColumns() throws {
+        let scene = Scene()
+        var closedAtDraw: Int?
+        scene.onPressed = { s in s.circle(20, 20, 10) }
+        scene.onReleased = { s in s.circle(60, 20, 10) }
+        scene.onDraw = { s in closedAtDraw = s.canvas.batches.count }
+        let runtime = try SketchRuntime(sketch: scene, gpu: try RenderDevice())
+        try runtime.advance()
+        runtime.input.enqueue(.mouseDown(x: 4, y: 4, button: .left))
+        runtime.input.enqueue(.mouseUp(x: 4, y: 4, button: .left))
+        try runtime.advance()
+        #expect(closedAtDraw == 0, "出口が列を割った: 閉じた列 \(closedAtDraw.map(String.init) ?? "nil") 本")
+    }
+
+    /// 出口の道具。`Canvas` を直に使い、フレームの内側で出口を通す。
+    private func withCanvas(_ body: (Canvas) -> Void) throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+        try canvas.draw { body(canvas) }
+    }
+
+    @Test("何も書いていない出口は、開いている列も、貼る絵の矩形の畳みも切らない")
+    func anExitWithNothingWrittenKeepsTheOpenColumnAndPendingFlat() throws {
+        try withCanvas { canvas in
+            guard let sheet = try? canvas.createImage(8, 8) else { Issue.record("画像を作れない"); return }
+            sheet.fill(.linear(red: 1, green: 1, blue: 1))
+            canvas.rect(20, 20, 4, 4)  // 読む面を替える 1 つ目が閉じる、前の列
+            canvas.texture(sheet)
+            canvas.noStroke()
+            canvas.rect(0, 0, 3, 3)
+            canvas.rect(4, 0, 3, 3)
+            guard canvas.pendingFlat != nil else { Issue.record("検査の前提: 畳む相手を待っていない"); return }
+            let before = canvas.batches.count
+            for _ in 0..<5 {
+                canvas.leaveInputCallbackInsideFrame()
+                #expect(canvas.batches.count == before, "出口が列を閉じた")
+                #expect(canvas.pendingFlat != nil, "出口が貼る絵の矩形の畳みを切った")
+            }
+        }
+    }
+
+    /// 列が読む設定 (ここでは光) を書いたときは、置いたものがその設定で描かれるよう、戻す前に列を閉じる。
+    @Test("列が読む設定を書いて抜けるときは、列を 1 本だけ閉じる")
+    func anExitAfterWritingWhatColumnsReadClosesTheColumn() throws {
+        try withCanvas { canvas in
+            canvas.lights()
+            canvas.box(10)
+            let before = canvas.batches.count
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(canvas.batches.count == before + 1, "書いた光で置いた列が閉じていない")
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(canvas.batches.count == before + 1, "戻した後の出口がまた列を閉じた")
+        }
+    }
+
+    // MARK: - 列に焼かれず描き切りで読む状態は、書いたまま抜けると 1 度だけ知らせる
+
+    @Test("影・効果・目印を書いたまま抜けると、効かないことを 1 度だけ知らせる", arguments: ["shadows", "effects", "debugMode"])
+    func leavingWithAFrameReadSettingWarnsOnce(_ call: String) throws {
+        try withCanvas { canvas in
+            @MainActor func write() {
+                switch call {
+                case "shadows": canvas.shadows(true)
+                case "effects": canvas.effects([.invert()])
+                default: canvas.debugMode()
+                }
+            }
+            write()
+            canvas.leaveInputCallbackInsideFrame()
+            let said = canvas.warnings.message(for: .sceneNotCarried)
+            #expect(said?.contains("draw()") == true, "\(call): 知らせていない: \(said ?? "nil")")
+            // 戻った
+            #expect(!canvas.shadowsEnabled && canvas.pendingEffects.isEmpty && !canvas.drawsDebugGuides)
+            // 1 度だけ: 2 度目の鍵は立ったまま
+            write()
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(canvas.warnings.hasWarned(.sceneNotCarried))
+        }
+    }
+
+    @Test("光・切り抜き・変換だけを書いて抜けても、知らせない (列に焼かれて効いている)")
+    func leavingWithBakedSettingsDoesNotWarn() throws {
+        try withCanvas { canvas in
+            canvas.lights()
+            canvas.clip(0, 0, 10, 10)
+            canvas.translate(5, 5)
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(!canvas.warnings.hasWarned(.sceneNotCarried))
+        }
+    }
+
+    // MARK: - 粒・計算は戻さない
+
+    @Test("コールバックで頼んだ粒の力と計算は、出口で戻さない (そのフレームで走る仕事の予約)")
+    func particlesAndComputationsAreNotReset() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+        let other = try CanvasFixture.make(gpu: RenderDevice(), width: 64, height: 64)
+        let particles = try other.makeParticles(count: 8)
+        let computation = try canvas.makeComputation(
+            "kernel void mark(device float *out [[buffer(0)]], uint id [[thread_position_in_grid]]) { out[id] = 1; }",
+            name: "mark")
+        let numbers = try canvas.makeNumbers(count: 1)
+        try canvas.draw {
+            canvas.force(particles, [.gravity(0, 1)])
+            canvas.compute(computation, over: 1, writes: [numbers])
+            #expect(canvas.forcesThisFrame.count == 1 && canvas.pendingComputations.count == 1, "検査の前提")
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(canvas.forcesThisFrame.count == 1, "粒の力が出口で消えた")
+            #expect(canvas.pendingComputations.count == 1, "計算の頼みが出口で消えた")
+        }
+    }
+
+    // MARK: - 組み立て中の形
+
+    @Test("beginShape() のまま抜けた形は、draw() へ持ち越さずに捨てる")
+    func anOpenShapeIsDroppedAtTheExit() throws {
+        try withCanvas { canvas in
+            canvas.beginShape(.triangles)
+            canvas.vertex(0, 0)
+            canvas.vertex(8, 0)
+            #expect(canvas.isBuildingShape, "検査の前提")
+            canvas.leaveInputCallbackInsideFrame()
+            #expect(!canvas.isBuildingShape, "開いたままの形が残った")
+            #expect(canvas.shapePoints.isEmpty)
+            #expect(canvas.warnings.hasWarned(.shapeNotEnded), "既存の警告を言っていない")
+        }
+    }
 }

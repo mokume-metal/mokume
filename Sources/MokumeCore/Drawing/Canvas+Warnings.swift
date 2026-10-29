@@ -214,6 +214,14 @@ extension Canvas {
         ///
         /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
         case transformNotCarried
+        /// フレームの内側で配る入力のコールバック (ループ中・`redraw()` を頼んだ後) で、影・効果・目印を書いたまま
+        /// 抜けた ([#3408])。これらは列に焼かれず描き切りで読まれるので、出口で戻すと同じフレームの `draw()` に届かない。
+        ///
+        /// **``transformNotCarried`` とは鍵を分ける。** あちらは止まっている間の区間の話で、こちらはフレームの
+        /// 内側の話である。
+        ///
+        /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+        case sceneNotCarried
         /// フレームの外でスタイルを積み降ろしした。
         case styleOutsideFrame
         /// フレームの外で切り抜きを書いた。
