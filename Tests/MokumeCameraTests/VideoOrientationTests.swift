@@ -76,8 +76,10 @@ nonisolated struct VideoOrientationTests {
     /// どの画素も違う、縦と横が違う絵。
     private var sample: DisplayImage {
         let width = 5, height = 3
-        let bytes = (0..<width * height).flatMap { index in
-            [UInt8(index * 10), UInt8(index * 10 + 1), UInt8(index * 10 + 2), UInt8(255 - index)]
+        var bytes: [UInt8] = []
+        for index in 0..<width * height {
+            let base = UInt8(index * 10)
+            bytes += [base, base + 1, base + 2, UInt8(255 - index)]
         }
         return DisplayImage(width: width, height: height, bytes: bytes)
     }
