@@ -55,7 +55,12 @@ private struct EmbeddingApp: View {
 
 /// SwiftUI のアプリの中に映すビュー (#3511)。GPU と窓を使うので、1 本ずつ走らせる。
 @MainActor
-@Suite("SketchView", .serialized)
+@Suite(
+    "SketchView", .serialized,
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
 struct SketchViewTests {
     /// ホストの窓を建てて、中の `SketchHostView` を取る。
     private func embed(_ root: some View) throws -> (NSWindow, SketchHostView) {

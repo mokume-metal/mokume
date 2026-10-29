@@ -78,8 +78,9 @@ final class SketchHostView: NSView {
             surface.frame = bounds
             addSubview(surface)
         } catch {
-            // 組み立てられなかった理由を全文で言う (`Sketch.main()` と同じ文面)。アプリごと落とさず、何も映さない
-            FileHandle.standardError.write(Data(startupFailureText(error).utf8))
+            // **組み立てられなかった理由を、観測に載る警告として言う** (`Diagnostics.warn`)。ホストのアプリごと
+            // 落とさず (`exit` しない)、何も映さない。標準エラーへ直には書かない
+            Diagnostics.warn("SketchView could not start the sketch: \(error.headline)")
         }
     }
 
