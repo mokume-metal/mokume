@@ -138,7 +138,9 @@ enum Command {
                     colour as sRGB, and writes each pixel opaque or transparent (alpha 128 or
                     more is opaque), and its frame time is a whole number of 1/100 seconds, so
                     --fps must divide 100 (50, 25, 20 …); a .mp4 writes colour as sRGB with no
-                    transparency. Ends by itself after fps × seconds frames
+                    transparency, and H.264 can drop a pixel from an odd width or height (65x49
+                    comes out 64x48) — it says so on stderr
+                    when it does. Ends by itself after fps × seconds frames
                     """
                 )
             case .mcp:
