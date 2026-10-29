@@ -7,7 +7,10 @@ import SwiftUI
 
 /// スケッチを SwiftUI のアプリの中に映すビュー。
 ///
+/// <!-- example: 組めない SwiftUI を import すると mokume の Image・Color・Font・Path と名前が衝突する。全部の例を 1 ファイルへ束ねて組む検査 (import は先頭へ集める) に混ぜられない、SwiftUI のアプリの断片 -->
 /// ```swift
+/// import SwiftUI
+///
 /// struct ContentView: View {
 ///     var body: some View {
 ///         VStack { Text("My Game"); SketchView(Game()) }
