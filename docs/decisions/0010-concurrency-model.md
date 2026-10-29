@@ -74,6 +74,11 @@ SPDX-License-Identifier: MIT
 - **隔離が要る理由は、注意を 1 度だけ言う記録だけだった。** 記録 (`NumberValues`・`ColorValues`・`PaletteValues` の `warnings`) は `static var` で、main actor でしか触れなかった。`Mutex` で守る控え (`SharedWarningLog`) に替え、複数のスレッドから同時に言っても注意は 1 度だけ出る。スケッチを書く人の書き味は変わらない
 - **理由は実測にある。** 1080p の全画素を `noise`→`map`→`color` で埋めるループは、main の 1 本で 169 ms、写しを `concurrentPerform` で 64 分割すると 11.3 ms だった (#2389 の 2026-10-12 のコメント)。並列にできる口が無いと、画素を計算する仕事を P コアと E コアに分けられない。いちばん使われる `map` と `color` が main 隔離だったことが、その邪魔になっていた
 - **範囲:** スケッチの状態 (描く状態・`noise` の種と細かさ) を読む `Sketch` / `Canvas` / `SketchPart` のメンバーは main actor に残る。`noise` のメソッドは種を読むので、並列から呼べない。値で持つ揺らぎは新しい値型として #2418 が決める (上の改訂のとおり `nonisolated` で生まれる)
+- **範囲の外: 文書の値型 (`JSONObject`・`JSONArray`・`XML`・`Table`/`TableRow`) の読み出し (`getFloat`・`getString` ほか) は、main actor に残す** ([#3166](https://github.com/mokume-metal/mokume/issues/3166))。並列に回したい人は、分ける前に main で `[Float]` などへ写す。形は `map` の説明文が名乗り、4 つの型の説明文がそこを指す
+  - **理由は 3 つ。** (1) 注意の控え (`DocumentValues`・`TableValues` の `warnings`) の鍵が、キー・列の名前という値を持つ。`SharedWarningLog` は鍵を値を持たない有限の enum に限っているので、そのままでは使えず、値を持つ鍵を複数のスレッドから 1 度だけ言う控えを別に設計することになる。(2) 並列の閉包から文書を読みたい作品・作例・Issue が無く、#2389 にあった実測の利得も文書の読み出しには示されていない。(3) 後から `nonisolated` に広げても、呼ぶ側は壊れない (逆向きは壊れる)
+  - **退けた案 A:** 読み出しを `nonisolated` にし、文書の控えを `Mutex` で守る。並列から読みたい作品が出たら、作例を添えて起票し直して比べる。**代償:** 数と色の関数 (`nonisolated`) と文書の読み出し (main actor) で隔離が食い違い、並列のループで表を引く人は先に配列へ写す 1 行が要る。ただし `map` の説明文は元から「読みたい値は、分ける前に変数へ取り出しておく」と言っており、同じ規律の延長になる
+  - **上の 2026-10-14 の改訂との食い違いの解き方:** 「これから足す値型は `nonisolated`」の対象に、文書の値型は入らない。その理由 (`ExternalQueue` の完了ハンドラで値を作る・リプレイで `Codable` な値を記録する) が当たらないからである。文書は `Sketch` の `load…`・`request…` (main actor) の口でしか作られず、`Codable` でもない。2026-10-21 に main actor の型として足した `JSONArray` (Collection の適合も main actor の上) がその例である
+  - **一部の口だけを `nonisolated` にもしない** (注意を言わない `hasKey`・`keys`・`rowCount` など)。同じ値型の中で、並列から呼べる口と呼べない口が、注意を言うかどうかで分かれ、読む人に理由が見えなくなる
 - **これは明示的に選ぶ人向けの道である** ([ADR-0001](0001-founding-principles.md) 原則 1)。スケッチは変わらず注釈なしで書ける。`concurrentPerform` に渡す閉包は `@Sendable` になり、スケッチの口を呼ぶ main actor の閉包を渡すと実行時の隔離の検査で落ちる (SE-0423)。`map` の説明文がこれを名乗る
 
 退けた案: **しない。** 並列に回したい人は値型 (`Vector2` など) と値の揺らぎで書き、`map`・`color` は自前で写す。写しを 1 本で回すだけでも 18% 速かった (139 対 169 ms) うえ、写しはライブラリとの一致を人が保つことになる。**代償:** 数と色の関数の隔離が、同じ名前のメソッド (`noise` ほか) と食い違う。
