@@ -18,14 +18,14 @@ import simd
 ///
 /// ## 見る図形と許容 (``CoverageTable``)
 ///
-/// 軸に沿う rect (縁は線形の渡し = 面積・0.006)・回した rect (直線の斜めの縁・0.012)・円 (曲線の縁・0.02)
+/// 軸に沿う rect (縁は線形の渡し = 写した面積・1/255)・回した rect (直線の斜めの縁・0.012)・円 (曲線の縁・0.02)
 /// の塗り。許容は既存の検査の根拠のままで、**生成した置き方で越えたら許容を広げず Bug として起票する**。
 /// 約束は経路で違い、ここで比べるのは距離関数の経路の「面積」だけである。三角形の経路 (立体・任意形状) の縁は
 /// AA なしで、約束は 50% の白黒と重心まで (ADR-0039 決定 1・3)。表が拒む組は比べない。
 ///
 /// 円の半径は 7 以上を生成する。曲線の縁は距離を直線とみなして数えるので面積より明るく出て、差は半径に
 /// 反比例する (実測の最大: 半径 3 で 0.037・5 で 0.023・8 で 0.017・29 で 0.007)。**許容を広げずに、
-/// 0.02 に収まる半径から探す** — それより小さい円の約束 (許容の置き方) は #3217 で人が決める。
+/// 0.02 に収まる半径から探す** — 半径 7 未満の約束 (許容の置き方) は #3493 で決める。
 ///
 /// ## 見ない画素
 ///
@@ -103,9 +103,9 @@ struct FillCoverageTests {
         ProbeAxis("quarter", 0..<4, simplest: 0, step: 1),
     ]
 
-    @Test("軸に沿う rect の塗りは、位置の小数・大きさ・向きによらず、縁の画素が参照と 0.006 以内で一致する")
+    @Test("軸に沿う rect の塗りは、位置の小数・大きさ・向きによらず、縁の画素が参照と 1/255 以内で一致する")
     func axisAlignedRectMatchesTheReference() throws {
-        let row = try CoverageTable.row(.axisAlignedRect, on: .distanceField, comparing: .area)
+        let row = try CoverageTable.row(.axisAlignedRect, on: .distanceField, comparing: .snappedArea)
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
         let report = try Probe.run(
             "coverage", suite: "FillCoverageTests", key: "rect-axis", axes: Self.axisAxes, cases: Self.rectCases
@@ -122,7 +122,9 @@ struct FillCoverageTests {
             let half = SIMD2(Double(w) / 2, Double(h) / 2)
             let angle = Double(quarter) * .pi / 2
             let polygon = CoverageReference.rotatedRect(center: center, half: half, angle: angle)
+            // 軸に沿う縁は、本体の両端の遊び (`kFormSnap`) で写した値を比べる
             let reference = CoverageReference.polygonCoverage(polygon, width: Self.size, height: Self.size)
+                .map(CoverageReference.snapped)
             return Self.compare(pixels, with: reference, row: row) { px, py in
                 Self.nearCorner(center: center, half: half, angle: angle, px, py)
             }
@@ -173,6 +175,9 @@ struct FillCoverageTests {
     static let circleAxes: [ProbeAxis] = [
         ProbeAxis("cx", 36..<92, simplest: 64),
         ProbeAxis("cy", 36..<92, simplest: 64),
+        // 半径 7 以上だけ生成する。曲線の縁は距離を直線とみなして数えるので面積より明るく出て、差は半径に
+        // 反比例する (最大 0.037 @ 半径 3・0.023 @ 5・0.017 @ 8)。0.02 に収まるのは半径 7 以上で、許容は広げない。
+        // 半径 7 未満は #3493 (縁が面積より最大 0.037 明るい) で約束を決める
         ProbeAxis("radius", 7..<30, simplest: 12),
     ]
 

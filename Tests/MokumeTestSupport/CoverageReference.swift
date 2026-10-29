@@ -146,6 +146,21 @@ public nonisolated enum CoverageReference {
         return out
     }
 
+    // MARK: - 本体の両端の遊び
+
+    /// 本体が被覆の両端に持たせる遊び (`Shapes.metal` の `kFormSnap`・1/256)。
+    public static let formSnap = 1.0 / 256
+
+    /// 面積を、本体の被覆の写し方 (`c · (1 + 2/256) − 1/256`・0〜1 に clamp) で写した値。
+    ///
+    /// `Shapes.metal` の `mokume_formCoverage` (`saturate(mokume_pixelCdf(…) * (1.0 + 2.0 * kFormSnap) - kFormSnap)`・
+    /// 1925〜1928 行付近) と同じ式で、**整数に置いた縁が 0 / 1 の境目に乗って、隣の画素が 1/255 染まる・塗り切った
+    /// 画素が 254/255 になる** のを防ぐための設計である。面積そのものとは 0 / 1 に近い画素で最大 1/256 違う。
+    /// 軸に沿う縁の比べに使い、面積の真値ではなく「本体が約束する値」を比べる。
+    public static func snapped(_ area: Double) -> Double {
+        min(1, max(0, area * (1 + 2 * formSnap) - formSnap))
+    }
+
     // MARK: - 半平面・標本
 
     /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_pixelCdf` の写し・
@@ -209,6 +224,8 @@ public nonisolated enum CoverageTable {
     public enum Quantity: String, Sendable, CaseIterable {
         /// 画素の正方形との重なりの面積。
         case area = "面積"
+        /// 面積を、本体の両端の遊び (`kFormSnap`) で写した値。``CoverageReference/snapped(_:)``。
+        case snappedArea = "面積 (kFormSnap で写した値)"
         /// 縁 1 本を幅 1 の線形に渡した値。
         case linearRamp = "線形の渡し"
         /// 縁を 50% の被覆で白黒にした形と、線形の被覆で重みを付けた重心。
@@ -241,7 +258,7 @@ public nonisolated enum CoverageTable {
     /// 経路が約束する量 (ADR-0039 決定 1〜3)。
     public static func promises(_ route: Route) -> [Quantity] {
         switch route {
-        case .distanceField: [.area, .linearRamp, .halfToneAndCentroid]
+        case .distanceField: [.area, .snappedArea, .linearRamp, .halfToneAndCentroid]
         case .triangles: [.halfToneAndCentroid]
         }
     }
@@ -249,15 +266,15 @@ public nonisolated enum CoverageTable {
     /// 表。許容は既存の検査の根拠のまま (`ExactEdgeCoverageTests`)。
     public static let rows: [Row] = [
         Row(
-            shape: .axisAlignedRect, route: .distanceField, quantity: .area, tolerance: 0.006,
-            basis: "軸に沿う縁は線形の渡しがそのまま面積。両端の遊び 1/256 (`kFormSnap`) と頂点の固定小数の丸めで、"
-                + "面積との差は最大 0.0055 (実測)"),
+            shape: .axisAlignedRect, route: .distanceField, quantity: .snappedArea, tolerance: 1.0 / 255,
+            basis: "軸に沿う縁は線形の渡しがそのまま面積だが、本体は両端に 1/256 の遊びを持たせて写す"
+                + " (`Shapes.metal` の `kFormSnap`・`mokume_formCoverage` の 1925〜1928 行付近)。写した値と 1/255 以内"),
         Row(
             shape: .rotatedRect, route: .distanceField, quantity: .area, tolerance: 0.012,
             basis: "直線の斜めの縁は半平面との重なりの面積 (`mokume_pixelCdf`)。45° の rect で 0.012 (#2991)"),
         Row(
             shape: .circle, route: .distanceField, quantity: .area, tolerance: 0.02,
-            basis: "曲線の縁は距離を直線とみなして数えるので、面積より明るく出る。差は半径に反比例し、半径 7 以上で 0.02 の内"
+            basis: "曲線の縁は距離を直線とみなして数えるので、面積より明るく出る。差は半径に反比例し、半径 7 以上で 0.02 の内。7 未満は #3493"
                 + " (半径 3 で 0.037・5 で 0.023・8 で 0.017・29 で 0.007。実測)。角丸・折れ目の既存の検査と同じ 0.02 (#2991)"),
     ]
 

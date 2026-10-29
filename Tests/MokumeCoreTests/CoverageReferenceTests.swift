@@ -74,6 +74,16 @@ struct CoverageReferenceTests {
         #expect(CoverageReference.circleArea(center: SIMD2(10.5, 10.5), radius: 0.5, pixel: 11, 10) < 1e-9)
     }
 
+    @Test("本体の両端の遊びの写しは、0 と 1 を動かさず、0 / 1 の近くを 1/256 だけ内へ寄せる")
+    func snapped() {
+        #expect(CoverageReference.snapped(0) == 0)
+        #expect(CoverageReference.snapped(1) == 1)
+        #expect(CoverageReference.snapped(0.5) == 0.5)
+        #expect(CoverageReference.snapped(1.0 / 258) < 1e-15, "1/258 以下は 0 へ揃う")
+        #expect(abs(CoverageReference.snapped(0.04) - (0.04 * (1 + 2.0 / 256) - 1.0 / 256)) < 1e-15)
+        #expect(CoverageReference.snapped(257.0 / 258) > 1 - 1e-15, "257/258 以上は 1 へ揃う")
+    }
+
     @Test("標本の面積と半平面の式は、厳密な面積と食い違わない")
     func sampledAndHalfPlane() {
         // 画素の中心を通る 45° の縁は、画素を半分に割る
@@ -122,12 +132,14 @@ struct CoverageReferenceTests {
         }
     }
 
-    @Test("距離関数の経路の塗りの 3 図形は、面積で比べる行があり、許容は 0.006・0.012・0.02")
+    @Test("距離関数の経路の塗りの 3 図形は、面積で比べる行があり、許容は 1/255・0.012・0.02")
     func tableHasTheFillRows() throws {
         let tolerances = try CoverageTable.Shape.allCases.map {
-            try CoverageTable.row($0, on: .distanceField, comparing: .area).tolerance
+            try CoverageTable.row(
+                $0, on: .distanceField, comparing: $0 == .axisAlignedRect ? .snappedArea : .area
+            ).tolerance
         }
-        #expect(tolerances == [0.006, 0.012, 0.02])
+        #expect(tolerances == [1.0 / 255, 0.012, 0.02])
     }
 
     @Test("表に行が無い組 (参照を持たない比べ方) は、経路が約束していても比べない")
