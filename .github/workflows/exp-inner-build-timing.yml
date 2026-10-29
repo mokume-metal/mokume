@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て: #3191 の束ねる検査で、検査の中から組む release が手で組むより 25〜30 秒遅い理由を、順番を入れ替えて分ける。
+# merge しない。結果を #3191 に載せたら PR ごと閉じる。
+name: exp-inner-build-timing
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/exp-inner-build-timing.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  measure:
+    runs-on: macos-26
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [T-replica-first, T-test-first]
+        round: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - name: measure
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -u
+          R="$RUNNER_TEMP/result.txt"; : > "$R"
+          note() { echo "$*" | tee -a "$R"; }
+          stamp() { perl -MTime::HiRes=time -e '$t0=time; $|=1; while(<STDIN>){printf "%7.1f %s", time-$t0, $_}'; }
+          step() { # 名前 ディレクトリ 引数...
+            local name=$1 dir=$2; shift 2
+            local t0=$SECONDS
+            (cd "$dir" && swift "$@" 2>&1) | stamp > "$RUNNER_TEMP/$name.log"; local rc=${PIPESTATUS[0]}
+            note "**$VARIANT $name** rc=$rc wall=$((SECONDS - t0))s compiling-lines=$(grep -c ' Compiling ' "$RUNNER_TEMP/$name.log")"
+            [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/$name.log"
+          }
+          note "$VARIANT cores=$(sysctl -n hw.ncpu) mem=$(( $(sysctl -n hw.memsize) / 1073741824 ))G $(swift --version 2>&1 | head -1)"
+          step resolve . package resolve
+          step build-tests . build --build-tests -Xswiftc -gline-tables-only
+          CLI=$(swift build --show-bin-path)/mokume-cli
+          W="$RUNNER_TEMP/ws"; mkdir -p "$W"
+          "$CLI" new packed-sketch --path "$W" --local "$PWD" > /dev/null
+          # 検査と同じく資材を 1 つ置く (資材の包みを組む分を揃える)
+          mkdir -p "$W/packed-sketch/Sources/packed-sketch/assets" && echo 木目 > "$W/packed-sketch/Sources/packed-sketch/assets/mark.txt"
+          replica() { rm -rf "$W/packed-sketch/.build"; step "release-$1" "$W/packed-sketch" build -c release --disable-index-store --product packed-sketch; grep 'Build complete' "$RUNNER_TEMP/release-$1.log" | tee -a "$R"; }
+          real() { step "test-$1" . test --skip-build --filter assetsLandInsideTheBundledApplication; grep -E 'Test run with' "$RUNNER_TEMP/test-$1.log" | tail -1 | tee -a "$R"; }
+          case "$VARIANT" in
+            T-replica-first) replica a; real b; replica c ;;
+            T-test-first) real a; replica b; real c ;;
+          esac
+          cat "$R" >> "$GITHUB_STEP_SUMMARY"
