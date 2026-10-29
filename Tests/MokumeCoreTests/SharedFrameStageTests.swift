@@ -1694,6 +1694,32 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 1 枚目の前の層 (#2876)
+
+    /// **絵が来るまでの層は、不透明な黒で塗る。** 窓は 1 枚目の前に出るので、一度も present していない層の
+    /// 透明か不定の中身が見える。層を作るのは `SketchSurface` で、道具の窓も直に走らせる窓も同じ
+    /// 面を使う — 起こし方ごとに塗らず、作る所 1 か所で塗る。
+    @Test("層を作る所が不透明な黒を置き、道具の窓もその面を使う")
+    func theLayerIsPaintedBlackBeforeTheFirstPicture() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: 64, height: 64), device: device, input: InputState(),
+            canvasSize: (64, 64))
+        surface.wantsLayer = true
+        let layer = try #require(surface.metalLayer)
+        let color = try #require(layer.backgroundColor, "層に背景色が無い")
+        #expect(color.alpha == 1, "不透明でない: \(color)")
+        #expect(color.components?.prefix(color.numberOfComponents - 1).allSatisfy { $0 == 0 } == true, "黒でない: \(color)")
+
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look(fresh()))
+            stage.open()
+            defer { stage.close() }
+            let stageLayer = try #require(stage.host?.layer as? CAMetalLayer)
+            #expect(stageLayer.backgroundColor?.alpha == 1, "道具の窓の層が塗られていない")
+        }
+    }
+
     // MARK: - 全画面 (#2188)
 
     /// 全画面の口を差し替えた記録。**本物の口は検査を走らせた機械の画面を全画面にしてしまう。**
