@@ -133,7 +133,7 @@ let package = Package(
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeTestSupport"],
+            name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeTestSupport", "MokumeProbe"],
             swiftSettings: .mokume),
         // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
