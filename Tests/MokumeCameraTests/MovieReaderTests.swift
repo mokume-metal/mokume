@@ -363,6 +363,28 @@ struct MovieReaderTests {
         #expect(quadrants(picture) == ["blue", "red", "white", "green"], "\(quadrants(picture))")
     }
 
+    /// 8 通りのうち、回転でない印 (左右反転) と 180°。`MovieReader` が記録された変換を `VideoOrientation` へ
+    /// 渡す配線を、90° 以外でも見る (渡す変換を取り違えると、この 2 通りの象限の行き先が変わる)。
+    @Test(
+        "左右反転・180° の印を持つ動画も、記録された変換のとおりに象限が動き、大きさは変わらない",
+        arguments: [
+            ("左右反転", CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(translationX: 64, y: 0)),
+             ["green", "red", "white", "blue"]),
+            ("180°", CGAffineTransform(rotationAngle: .pi).concatenating(CGAffineTransform(translationX: 64, y: 32)),
+             ["white", "blue", "green", "red"]),
+        ])
+    func flippedAndUpsideDownMoviesAreOriented(
+        _ name: String, _ transform: CGAffineTransform, _ expected: [String]
+    ) async throws {
+        let url = try await TestMovie.write(
+            frames: 3, width: 64, height: 32, transform: transform, paint: TestMovie.quadrants)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let reader = try MovieReader(url: url, path: url.path)
+        #expect(reader.width == 64 && reader.height == 32, "\(name): \(reader.width)×\(reader.height)")
+        let picture = try #require(try reader.picture(at: 0))
+        #expect(quadrants(picture) == expected, "\(name): \(quadrants(picture))")
+    }
+
     @Test("回転の印の無い動画は、変更前と同じ大きさ・向きで届く")
     func movieWithoutATransformIsLeftAlone() async throws {
         let url = try await TestMovie.write(frames: 3, width: 64, height: 32, paint: TestMovie.quadrants)
