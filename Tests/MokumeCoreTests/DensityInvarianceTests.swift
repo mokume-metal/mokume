@@ -156,6 +156,11 @@ struct DensityInvarianceTests {
             }
         }
 
+        /// 見る列の外に縦の稜を持つか。箱は背面の左の縦の稜が、見る列の左端のすぐ外 (出す画素で x ≈ 49〜51) に
+        /// あり、細かさが低いと列の左端が出す画素の 54 より左へ出てそれを数える (#3385・``columnSum(_:density:keepsInside:)``)。
+        /// 他の口は x = 20…108 の横の線で、縦の線は x = 20・108 だけ。
+        var hasVerticalEdges: Bool { self == .box }
+
         /// 距離関数の経路の口か (縁を面積で数え、描く画素で 1 以上の太さでも量が保たれる)。
         var isDistanceField: Bool { rawValue.hasSuffix("(距離関数)") }
 
@@ -459,8 +464,15 @@ struct DensityInvarianceTests {
     }
 
     /// 描く面の、出す画素の x = 54…74 にあたる列の和の平均。
-    private static func columnSum(_ pixels: PixelBuffer, density: Float) -> Double {
-        let first = Int((54 * density).rounded(.down))
+    ///
+    /// - Parameter keepsInside: 最初の列を **切り上げ** で取り、見る列が出す画素の [54, 74] の中に収まるようにする
+    ///   (#3385)。切り捨てると、細かさが 0.36 以下のとき最初の列の左端が出す画素の 54 より最大 1 / 細かさ だけ
+    ///   左へ出て (細かさ 33/128 で 50.42)、箱の背面の左の縦の稜を数える。見る列に入ってよいのは横切る稜
+    ///   (``Amount/crossings(squash:)``) だけである。**縦の稜を持つ口 (``Amount/hasVerticalEdges``) だけが立てる** —
+    ///   他の口は列を減らすだけで利が無く、三角形の輪郭は斜めの辺を数える列が 1 本減ると、格子の丸めで ±10% を
+    ///   越える細かさがある (細かさ 34/128・ずらし 0.57 で ×1.13。切り捨てなら 5 列で収まる)。
+    private static func columnSum(_ pixels: PixelBuffer, density: Float, keepsInside: Bool = false) -> Double {
+        let first = Int((54 * density).rounded(keepsInside ? .up : .down))
         let last = Int((74 * density).rounded(.down))
         var total = 0.0
         for x in first..<last {
@@ -508,6 +520,7 @@ struct DensityInvarianceTests {
     /// - 細かさ: `pixelDensity` は `(0, 1]` を受ける (`Canvas.swift` の検め)。出す面 128 が描く画素の
     ///   整数になる 1/128 刻みで選ぶ。0.25 より細かくない面は描く面が 32 画素未満になり、線の口が
     ///   見る列 (x = 54…74) が 5 列を切るので見ない
+    ///   (縦の稜を持つ口は最初の列を切り上げるので、細かさ 0.25 で 4 列。#3385)
     /// - ずらし: 出す画素で `[0, 2)` の 2 次元。描く画素の格子の位相を、細かさ 0.5 でも 1 周期より先まで回る
     /// - 角度: `[0, π/2)`。正方形の格子は π/2 で元に戻る
     /// - 倍率: `[0.1, 1)`。固定の例の 0.1 と 0.25 を含む。0.1 未満は ``Amount/stretchedQuad`` の
@@ -590,7 +603,8 @@ struct DensityInvarianceTests {
         } else if crossings == 0 {
             return (totalSum(pixels), drawn * drawn * areaFactor)
         } else {
-            return (columnSum(pixels, density: density), drawn * crossings)
+            return (
+                columnSum(pixels, density: density, keepsInside: mouth.hasVerticalEdges), drawn * crossings)
         }
     }
 
@@ -662,6 +676,26 @@ struct DensityInvarianceTests {
             }
         }
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: #3385 で落ちた box の稜線の置き方 (専用機の定期の回が生成した入力を縮めたもの。#2251 の追記)。
+    ///
+    /// 細かさ 0.36 以下で横のずらしが特定の位相のとき、見る列の最初の列が出す画素の 54 より左へ出て、
+    /// 背面の左の縦の稜を数え、光の量が期待の約 1.3 倍に読めた。描画は約束どおりで、物差し
+    /// (``columnSum(_:density:keepsInside:)``) の取り方の誤りだった。いずれも太さ 1・縦のずらし 0。
+    nonisolated static let boxEdgePoses: [Pose] = [
+        Pose(weight: 1, density: 0.3515625, offset: SIMD2(1.92, 0), angle: 0, squash: 1),
+        Pose(weight: 1, density: 0.3515625, offset: SIMD2(1.91, 0), angle: 0, squash: 1),
+        Pose(weight: 1, density: 0.2578125, offset: SIMD2(0.862, 0), angle: 0, squash: 1),
+        Pose(weight: 1, density: 0.2578125, offset: SIMD2(0.9, 0), angle: 0, squash: 1),
+    ]
+
+    @Test("固定の例: 細かさが低く横のずらしが特定の位相の box の稜線も、見る列に縦の稜を数えず太さぶんの濃さで出る (#3385)", arguments: boxEdgePoses)
+    func boxEdgeKeepsItsWeightAtThePhaseOf3385(_ pose: Pose) throws {
+        let (measured, expected) = try #require(try Self.measurement(.box, pose))
+        #expect(
+            Self.judge(.box, pose, measured: measured, expected: expected) == .pass,
+            "#3385 box の稜線の列の和: \(measured) (期待 \(expected))・\(pose)")
     }
 
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
@@ -1006,7 +1040,7 @@ struct DensityInvarianceTests {
         }
         let (surface, density): (Canvas, Float) = recordOnMain ? (pad, 1) : (canvas, 0.5)
         let pixels = try surface.target.readPixels()
-        let measured = Self.columnSum(pixels, density: density)
+        let measured = Self.columnSum(pixels, density: density, keepsInside: Amount.box.hasVerticalEdges)
         let expected = 4 * Double(density)
         let route = recordOnMain ? "本体で記録して描き場所" : "描き場所で記録して本体"
         #expect(

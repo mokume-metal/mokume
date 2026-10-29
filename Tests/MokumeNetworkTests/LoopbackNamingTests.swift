@@ -249,39 +249,6 @@ struct LoopbackNamingTests {
         #expect(log(arrival: []).senderText.contains("名乗りは 0 行 (黙っている)"))
     }
 
-    @Test("本物の送り手の跡は、出した数・誤り無しの完了・誤りの完了・最後の状態を数える")
-    func datagramSenderTraceCountsWhatItSaw() async throws {
-        let told = Told()
-        let source = DatagramSource<String>.text(
-            port: 0, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let receiver = UDPPort(
-            port: 0, name: "udp :0", source: source, outbound: nil, owner: nil, warn: told.append)
-        try receiver.open()
-        defer { receiver.close() }
-        try await requireState(told: told, tracing: source) { receiver.state }
-        let port = try #require(source.boundPort)
-
-        let sender = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        defer { sender.stop() }
-        #expect(sender.sendTrace == SendTrace(), "送る前は何も見ていない")
-        sender.send(Array("a".utf8))
-        sender.send(Array("b".utf8))
-        #expect(sender.sendTrace.issued == 2)
-        try await requireWait(
-            "送り手が 2 通を誤り無しで終えて、繋ぎが ready になった", detail: { "\(sender.sendTrace)" },
-            until: { sender.sendTrace.completed == 2 && sender.sendTrace.state == "ready" })
-        #expect(sender.sendTrace.failed == 0)
-
-        // 誤りつきの完了と待っている繋ぎは、それぞれの数・状態に出る
-        let other = DatagramSender(host: "127.0.0.1", port: port, warn: told.append)
-        other.noted(.waiting(.posix(.ENETDOWN)))
-        #expect(other.sendTrace.state?.hasPrefix("waiting") == true, "\(other.sendTrace)")
-        other.noted(completion: .posix(.ECONNREFUSED))
-        #expect(other.sendTrace.failed == 1 && other.sendTrace.completed == 0, "\(other.sendTrace)")
-        other.noted(completion: nil)
-        #expect(other.sendTrace.completed == 1, "\(other.sendTrace)")
-    }
-
     // MARK: - 待ちの道具 (#3124)
 
     @Test("前提を待つ道具は、満たされなければ何が・どれだけ待って満たされなかったかを名乗って止まり、満たされれば何も言わない")

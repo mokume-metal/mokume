@@ -77,12 +77,20 @@ extension AudioSource {
 ///
 /// ファイル (``Sketch/createAudioIn(file:)``) も、読み終えた標本列としてここへ来る。
 ///
+/// **外して足し直しても、時刻は最初に開いたときから数える** (時刻どおり・[#3152])。外していた間も作者の時計は進んで
+/// いたものとして、足し直した最初の区間は、その時刻で終わる窓になる (外していた間の標本は届かない)。足し直した位置から
+/// 標本の頭へ戻らない。
+///
+/// [#3152]: https://github.com/mokume-metal/mokume/issues/3152
+///
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class RecordedSource: AudioSource {
     let samples: [Float]
     let sampleRate: Float
     private var origin = SourceClock(seconds: 0)
+    /// 一度でも開いたか。**起点 (``origin``) は最初に開いたときだけ決める** — 足し直しで取り直すと、位置が標本の頭へ戻る (#3152)。
+    private var opened = false
     /// 前に入れた区間の終わり (標本の通し番号)。
     private var covered = 0
     /// 前に入れた通常の区間の長さ。実時間の時計で、観測の枚の「1 フレームぶん」を決める。まだ無ければ解析の窓。
@@ -94,9 +102,14 @@ final class RecordedSource: AudioSource {
     }
 
     func start(into input: ExternalInput<AudioSpan>, at clock: SourceClock) {
-        origin = clock
-        covered = 0
-        lastLength = AudioAnalysis.windowSize
+        if !opened {
+            origin = clock
+            lastLength = AudioAnalysis.windowSize
+            opened = true
+        }
+        // 最初の開きは 0 (起点と同じ時刻)。足し直しは、外していた間に進んだぶんの標本を飛ばした位置から数える
+        // — 外さずに回した実行の、足し直した時刻までの区間の終わりと同じ位置
+        covered = endIndex(at: clock.seconds, clock: clock)
         input.setState(samples.isEmpty ? .unavailable : .running)
     }
 

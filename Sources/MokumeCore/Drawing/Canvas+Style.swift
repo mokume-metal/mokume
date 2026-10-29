@@ -280,7 +280,7 @@ extension Canvas {
     /// 図形を積む口 (``notePaintPlacement()``) が取る。
     private func snapshotSurfaces() -> [HeldTexture] {
         guard let shader = currentShader, !shader.surfaces.isEmpty else { return [] }
-        return shader.orderedSurfaces.map(\.held)
+        return shader.orderedSurfaces.map { $0.held(reading: self) }
     }
 
     /// いま生きている状態 (``shader(_:)`` / ``numbers(_:)``) から作る塗り。

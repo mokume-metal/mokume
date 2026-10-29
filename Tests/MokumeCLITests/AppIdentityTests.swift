@@ -32,6 +32,43 @@ struct AppIdentityTests {
                 == AppIdentity(name: "Grain", identifier: "org.example.grain", version: "0.1.0"))
     }
 
+    // MARK: - 見本の識別子 (#3442)
+
+    private final class Lines: @unchecked Sendable {
+        var all: [String] = []
+    }
+
+    /// 見本 (README とエラーが見せる例) をそのまま写した作品は、止めずに名乗る。
+    @Test("識別子が見本の値のままなら、名指しした警告を 1 行出し、読みは止まらない")
+    func warnsOnceWhenTheIdentifierIsTheExample() throws {
+        let root = try makeSketch(identity: AppIdentity.example)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let identity = try AppIdentity.read(in: root)  // 止まらない (案 A を採らない)
+
+        let lines = Lines()
+        identity.warnIfExample { lines.all.append($0) }
+
+        #expect(
+            lines.all == [
+                "Warning: identifier \"org.example.grain\" is the example from the README; "
+                    + "give this work its own identifier so macOS remembers its permissions separately"
+            ])
+        // 見本の値は 1 か所の定数から引く (エラーの見本と同じ綴り)
+        #expect(AppIdentity.example.contains("\"\(AppIdentity.exampleIdentifier)\""))
+    }
+
+    /// **見本の値と一致するときだけ。** 接頭辞の規則で広く当てると、正当な識別子まで責める。
+    @Test(
+        "作品ごとの識別子には、何も出さない",
+        arguments: ["com.studio.grain", "org.example.other", "org.example.", "Org.Example.Grain", "org.example.grain2"])
+    func staysSilentForOwnIdentifiers(identifier: String) {
+        let identity = AppIdentity(name: "Grain", identifier: identifier, version: "0.1.0")
+        #expect(identity.warning == nil)
+        let lines = Lines()
+        identity.warnIfExample { lines.all.append($0) }
+        #expect(lines.all.isEmpty)
+    }
+
     @Test("置かれていなければ止まり、書き方を見せる")
     func aMissingIdentityStops() throws {
         let root = try makeSketch(identity: nil)

@@ -687,7 +687,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
         #expect(report.contains("/tmp/Demo.app"))
         #expect(report.contains(".build"))
     }
@@ -799,7 +799,7 @@ struct BundleCommandTests {
 
         let report = BundleCommand.report(
             for: app, package: sketch, note: parent.appendingPathComponent("How to open Bund.txt"),
-            signedAs: nil)
+            signedAs: nil, identity: identity)
         let line = try #require(
             report.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
                 .first { $0.hasPrefix("(") })
@@ -834,7 +834,7 @@ struct BundleCommandTests {
             for: URL(fileURLWithPath: "/work/bund with space/bundle/Bund.app"),
             package: URL(fileURLWithPath: "/work/bund with space", isDirectory: true),
             note: URL(fileURLWithPath: "/work/bund with space/bundle/How to open Bund.txt"),
-            signedAs: nil)
+            signedAs: nil, identity: identity)
         #expect(
             report.contains(
                 "  ( build='/work/bund with space/.build'; held='/work/bund with space/.build-held';"
@@ -850,7 +850,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
         #expect(
             report.contains(
                 "Once it draws, quit the app: .build is put back as soon as it closes,"
@@ -917,7 +917,7 @@ struct BundleCommandTests {
         let report = BundleCommand.report(
             for: URL(fileURLWithPath: "/tmp/Demo.app"),
             package: URL(fileURLWithPath: "/tmp/demo", isDirectory: true),
-            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil)
+            note: URL(fileURLWithPath: "/tmp/How to open Demo.txt"), signedAs: nil, identity: identity)
         #expect(report.contains("/tmp/How to open Demo.txt"))
         #expect(report.contains("Send it along with the work"))
     }
@@ -1225,6 +1225,91 @@ struct BundleCommandTests {
         }
     }
 
+    // MARK: - 見本の識別子の警告 (#3442)
+
+    /// プロセスの標準エラーを一時ファイルへ差し替えて本体を走らせ、書かれたものを返す。
+    /// (標準入力を差し替える `LaunchedByToolTests` と同じ手。製品の側に差し替えの口は足さない)
+    private func capturingStandardError(_ body: () throws -> Void) throws -> String {
+        let file = try makeWorkspace().appendingPathComponent("stderr.txt")
+        let descriptor = open(file.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        try #require(descriptor >= 0, "一時ファイルを開けない")
+        let saved = dup(STDERR_FILENO)
+        try #require(saved >= 0, "標準エラーを控えられない")
+        try #require(dup2(descriptor, STDERR_FILENO) >= 0, "標準エラーを差し替えられない")
+        close(descriptor)
+        do {
+            try body()
+        } catch {
+            dup2(saved, STDERR_FILENO)
+            close(saved)
+            throw error
+        }
+        dup2(saved, STDERR_FILENO)
+        close(saved)
+        return (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+    }
+
+    /// カメラを使うのに文言が無いスケッチ。`run` は**ビルドの前**の検めで止まるので、警告が
+    /// 出るのは、ビルドへ進む前の経路だけである (中身の無い `Package.swift`)。
+    private func makeSketchStoppingBeforeTheBuild(identity written: String) throws -> URL {
+        let root = try makeWorkspace()
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try written.write(
+            to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+            encoding: .utf8)
+        let sources = root.appendingPathComponent("Sources/mirror", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try "let camera = try? createCapture()\n".write(
+            to: sources.appendingPathComponent("Mirror.swift"), atomically: true, encoding: .utf8)
+        return root
+    }
+
+    /// 検査が `warnIfExample` を直に呼ぶだけだと、`run` の 1 行を消しても緑のままになる。
+    /// `run` を通して、ビルドの前の警告が標準エラーへ出るのを固定する。
+    @Test("束ねる経路は、見本の識別子ならビルドの前に警告を出し、作品ごとの識別子なら出さない")
+    func runWarnsAboutTheExampleIdentifierBeforeBuilding() throws {
+        let example = try makeSketchStoppingBeforeTheBuild(identity: AppIdentity.example)
+        defer { try? FileManager.default.removeItem(at: example) }
+        let warned = try capturingStandardError {
+            #expect(throws: CommandFailure.self) { try BundleCommand.run([example.path]) }
+        }
+        let warning = try #require(
+            AppIdentity(name: "Grain", identifier: AppIdentity.exampleIdentifier, version: "0.1.0")
+                .warning)
+        #expect(warned.contains(warning), "\(warned)")
+
+        let own = try makeSketchStoppingBeforeTheBuild(
+            identity: AppIdentity.example.replacingOccurrences(
+                of: AppIdentity.exampleIdentifier, with: "com.studio.grain"))
+        defer { try? FileManager.default.removeItem(at: own) }
+        let silent = try capturingStandardError {
+            #expect(throws: CommandFailure.self) { try BundleCommand.run([own.path]) }
+        }
+        #expect(!silent.contains("Warning: identifier"), "\(silent)")
+    }
+
+    /// 警告は束ねる前に 1 行出るだけで、続く `swift build` の出力で流れる。**成功の報せ
+    /// (送る前に読むもの) にも載せる**。文は ``AppIdentity/warning`` から引く。
+    @Test("成功の報せは、見本の識別子のままなら警告を末尾に繰り返し、作品ごとの識別子なら足さない")
+    func theReportRepeatsTheExampleIdentifierWarning() throws {
+        let app = URL(fileURLWithPath: "/tmp/Demo.app")
+        let package = URL(fileURLWithPath: "/tmp/demo", isDirectory: true)
+        let note = URL(fileURLWithPath: "/tmp/How to open Demo.txt")
+        let example = AppIdentity(
+            name: "Grain", identifier: AppIdentity.exampleIdentifier, version: "0.1.0")
+
+        let report = BundleCommand.report(
+            for: app, package: package, note: note, signedAs: nil, identity: example)
+        let warning = try #require(example.warning)
+        #expect(report.hasSuffix(warning), "\(report)")
+
+        let own = BundleCommand.report(
+            for: app, package: package, note: note, signedAs: nil, identity: identity)
+        #expect(!own.contains("Warning:"))
+        #expect(own == String(report.dropLast(warning.count + 2)))
+    }
+
     /// **name に `/` があれば、組み立ての前に止まる** ([#2309](https://github.com/mokume-metal/mokume/issues/2309))。
     /// 中身の無い `Package.swift` なので、名乗りの段を越えていれば `dump-package` で別の失敗
     /// (`toolchainFailed`) になる。`../victim` は 2 回打っても、隣の `victim.app` を消さない。
@@ -1294,11 +1379,12 @@ struct BundleCommandTests {
         let note = URL(fileURLWithPath: "/tmp/Demo を開くには.txt")
 
         #expect(
-            BundleCommand.report(for: app, package: package, note: note, signedAs: nil)
+            BundleCommand.report(for: app, package: package, note: note, signedAs: nil, identity: identity)
                 .contains("ad-hoc"))
 
         let named = BundleCommand.report(
-            for: app, package: package, note: note, signedAs: "Developer ID Application: X")
+            for: app, package: package, note: note, signedAs: "Developer ID Application: X",
+            identity: identity)
         #expect(named.contains("Developer ID Application: X"))
         #expect(named.contains("has not been notarized yet"))
     }

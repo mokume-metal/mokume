@@ -447,6 +447,30 @@ nonisolated struct SenderLedger<Sender> {
     }
 }
 
+/// UDP の送り手が宛先ごとに持つ繋ぎ (既定は `NWConnection`)。``DatagramSender`` が触るのは
+/// この 3 つだけで、検査は疑似の繋ぎを差し出して、送ったバイト列と、状態・完了が返る順序を
+/// 自分で決める (#3231)。
+nonisolated protocol DatagramLink: AnyObject, Sendable {
+    /// 始める。繋ぎの状態が移るたびに `changed` を呼ぶ。どちらも `queue` の上で。
+    func start(queue: DispatchQueue, changed: @escaping @Sendable (NWConnection.State) -> Void)
+    /// datagram を 1 つ送る。完了は `completion` で知らせる (`nil` は誤り無し。UDP の「誤り無し」は
+    /// 手元のソケットから出たことだけを言う)。
+    func send(_ bytes: [UInt8], completion: @escaping @Sendable (NWError?) -> Void)
+    /// 閉じる。積まれていた送信の完了は、誤りつきで返る (Network.framework の実測の形)。
+    func cancel()
+}
+
+nonisolated extension NWConnection: DatagramLink {
+    func start(queue: DispatchQueue, changed: @escaping @Sendable (NWConnection.State) -> Void) {
+        stateUpdateHandler = { state in changed(state) }
+        start(queue: queue)
+    }
+
+    func send(_ bytes: [UInt8], completion: @escaping @Sendable (NWError?) -> Void) {
+        send(content: Data(bytes), completion: .contentProcessed { error in completion(error) })
+    }
+}
+
 /// UDP で 1 つの宛先へ送る。
 protocol DatagramSending: AnyObject, Sendable {
     /// 送る。待たずに返る。
@@ -527,10 +551,23 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
 
     /// 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
     let confirmAfter: TimeInterval
+
+    /// 宛先 (ホストとポート) への繋ぎを作る手続き。既定 (``udpConnection``) は本物の UDP の繋ぎで、
+    /// 検査は疑似の繋ぎを返す (#3231)。**繋ぎは返すだけで、始めない** — 始めるのは送り手の側 (待ち行列の上)。
+    typealias Connect = @Sendable (_ host: String, _ port: Int) -> any DatagramLink
+
+    /// 本物の UDP の繋ぎを作る。
+    static let udpConnection: Connect = { host, port in
+        NWConnection(
+            host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any,
+            using: .udp)
+    }
+
     private let queue = DispatchQueue(label: "org.mokume.network.sender")
     private let now: @Sendable () -> TimeInterval
     private let warn: @Sendable (String) -> Void
-    private var connection: NWConnection?
+    private let connect: Connect
+    private var connection: (any DatagramLink)?
     private var warned = false
     /// いま名乗っているのが、宛先の失敗 (拒否など) か。偽なら (待っている) 送れた 1 度で戻る。名乗った
     /// 後に宛先の失敗が返れば、理由が待ちでも真にする (次の誤り無しの完了で戻して言い直さない)。
@@ -556,15 +593,18 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
     /// - Parameters:
     ///   - confirmAfter: 拒否で名乗った後、送れたと読むまでに、同じ繋ぎで空ける間 (秒)。
     ///   - now: その間を測る時計 (秒)。検査は手で進める時計を渡す。
+    ///   - connect: 繋ぎを作る手続き。`nil` なら本物の UDP の繋ぎ (``udpConnection``)。
     init(
         host: String, port: Int, confirmAfter: TimeInterval = defaultConfirmAfter,
         now: @escaping @Sendable () -> TimeInterval = DatagramListener.systemClock,
+        connect: Connect? = nil,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.host = host
         self.port = port
         self.confirmAfter = confirmAfter
         self.now = now
+        self.connect = connect ?? Self.udpConnection
         self.warn = warn
     }
 
@@ -573,12 +613,10 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
         queue.async { [self] in
             let connection = connection ?? open()
             let issued = now()
-            connection.send(
-                content: Data(bytes),
-                completion: .contentProcessed { [weak self, weak connection] error in
-                    self?.noted(completion: error)
-                    self?.finished(sending: error, on: connection, issuedAt: issued)
-                })
+            connection.send(bytes) { [weak self, weak connection] error in
+                self?.noted(completion: error)
+                self?.finished(sending: error, on: connection, issuedAt: issued)
+            }
         }
     }
 
@@ -598,22 +636,20 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
 
     // MARK: - 待ち行列の上
 
-    private func open() -> NWConnection {
-        let opened = NWConnection(
-            host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(clamping: port)) ?? .any,
-            using: .udp)
-        opened.stateUpdateHandler = { [weak self, weak opened] state in
+    private func open() -> any DatagramLink {
+        let opened = connect(host, port)
+        // いまの繋ぎにしてから始める (始めた繋ぎの状態は、いまの繋ぎからのものだけを読む)
+        attach(opened)
+        opened.start(queue: queue) { [weak self, weak opened] state in
             self?.noted(state)
             self?.changed(to: state, on: opened)
         }
-        opened.start(queue: queue)
-        attach(opened)
         return opened
     }
 
     /// 繋ぎをいまの繋ぎにする。検査は、始めていない繋ぎをここへ据えて、いまの繋ぎの完了と
     /// 捨てた繋ぎの完了を作り分ける。
-    func attach(_ opened: NWConnection) {
+    func attach(_ opened: any DatagramLink) {
         connection = opened
         unrefutedSince = nil
     }
@@ -624,7 +660,7 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
     /// 完了と同じく、いまの繋ぎの話ではない。捨てた繋ぎから遅れて `failed` や `waiting` が届くと、
     /// 送れたと読んで戻った後に言い直し、待ちの名乗りを拒否へ読み替えてしまう。捨てる繋ぎは `cancel()` する
     /// ので届かないはずの形への守りで、実測した赤の根ではない (#3045)。
-    func changed(to state: NWConnection.State, on opened: NWConnection?) {
+    func changed(to state: NWConnection.State, on opened: (any DatagramLink)?) {
         guard isCurrent(opened) else { return }
         switch state {
         case .waiting(let error):
@@ -646,7 +682,7 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
     /// 無く終わって初めて戻す (型の説明の「UDP の送れた」)。
     ///
     /// - Parameter issuedAt: この送信を出した時刻。`nil` なら、いま。
-    func finished(sending error: NWError?, on sent: NWConnection?, issuedAt: TimeInterval? = nil) {
+    func finished(sending error: NWError?, on sent: (any DatagramLink)?, issuedAt: TimeInterval? = nil) {
         guard let error else {
             guard warned else {
                 if isCurrent(sent) { unrefutedSince = unrefutedSince ?? now() }
@@ -673,13 +709,13 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
 
     /// `sent` がいまの繋ぎか。**弱参照が消えた (`nil`) ものはいまの繋ぎではない** — いまの繋ぎは
     /// こちらが持っているので消えない。
-    private func isCurrent(_ sent: NWConnection?) -> Bool {
+    private func isCurrent(_ sent: (any DatagramLink)?) -> Bool {
         guard let sent else { return false }
         return connection === sent
     }
 
     /// 繋ぎを捨てる。次に送るときに作り直す。
-    private func drop(_ failed: NWConnection) {
+    private func drop(_ failed: any DatagramLink) {
         failed.cancel()
         if connection === failed {
             connection = nil
@@ -719,4 +755,22 @@ nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked
         guard case .posix(let code) = error else { return error.debugDescription }
         return Diagnostics.posixReason(code.rawValue)
     }
+}
+
+/// 作る口 (`createOSC(listen:send:)`・`createOSC(send:)`・`createUDP(listen:send:)`) が UDP の部品を作るときの
+/// 継ぎ目 (#3231)。受け口を作る手続き (``DatagramListener/Acceptor``) と繋ぎを作る手続き
+/// (``DatagramSender/Connect``) を、作る口の引数を増やさずに差し替える。
+///
+/// 既定は両方 `nil` で、本物のポートと本物の繋ぎを使う。検査だけが ``current`` を `$current.withValue` で
+/// 差し替え、作る口が本物のポートを開かずに、組んだ部品 (受け口・送り手・ポートの状態) を確かめる。
+/// 値は作る口が呼ばれた時点で読むので、`setup()` の中で呼ぶ作る口には、`withValue` の中で走らせるだけで届く
+/// (`OutsideRun.$current` と同じ形)。
+nonisolated struct DatagramSeams: Sendable {
+    /// 受け口を作る手続き。`nil` なら本物のポートを開く。
+    var acceptor: DatagramListener.Acceptor?
+    /// 繋ぎを作る手続き。`nil` なら本物の UDP の繋ぎ。
+    var connect: DatagramSender.Connect?
+
+    /// 作る口が読む値。
+    @TaskLocal static var current = DatagramSeams()
 }

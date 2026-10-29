@@ -58,7 +58,7 @@ enum NewCommand {
                     reason: Diagnostics.writingPosixReason(error, at: url) ?? Diagnostics.reason(error))
             }
         }
-        print(guidance(for: root))
+        print(guidance(for: root, name: options.name))
     }
 
     /// 作った後に言うこと。
@@ -66,13 +66,25 @@ enum NewCommand {
     /// **案内は、走らせた場所からそのまま貼って動く形にする** (#2320)。`cd <名前>` では
     /// `--path` を付けたときに入れず、空白を含む場所なら引用も要った。作った場所を絶対
     /// パスで名指しし、シェルの 1 語に包む (``GivenPath/shellWord(_:)``)。
-    static func guidance(for root: URL) -> String {
+    ///
+    /// **最初の操作は `watch`** (README のクイックスタートと同じ順 — #3431)。編集するファイルは
+    /// 作ったパッケージの根からの相対パスで名指しし、そのパスは ``files(for:base:example:)`` が
+    /// 書くものと同じ値 (``sketchFile(for:)``) から作る。名前は文字・数字・`-`・`_` だけなので、
+    /// 引用は要らない。
+    static func guidance(for root: URL, name: String) -> String {
         """
         Created \(root.path)
 
           cd \(GivenPath.shellWord(root))
-          \(Command.name) run
+          \(Command.name) watch
+
+        Edit \(sketchFile(for: name)). Each time you save it, watch rebuilds the sketch and swaps it in.
         """
+    }
+
+    /// 作ったパッケージの根からの、編集するスケッチのファイル。ひな形でも `--from` でも同じ場所。
+    static func sketchFile(for name: String) -> String {
+        "Sources/\(name)/\(typeName(for: name)).swift"
     }
 
     /// 選択肢の宣言。``Command/valueOptions`` が `doctor` に同じ宣言を渡す。
@@ -161,10 +173,7 @@ enum NewCommand {
         }
         return [
             ("Package.swift", try Templates.render("Package.swift.template", values)),
-            (
-                "Sources/\(target)/\(type).swift",
-                sketchSource
-            ),
+            (sketchFile(for: options.name), sketchSource),
             (".gitignore", try Templates.render("gitignore.template", values)),
             // 宣言した置き場は実在しなければならない。空のままでも道具立てが
             // 受け付けるよう、読み手への説明を 1 枚置く

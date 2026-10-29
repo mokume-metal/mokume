@@ -229,6 +229,12 @@ enum ShapeExit {
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "upscaledBy": flush,
+            // #2456 (ShaderSurface.previousFrame の写し)
+            "previousFrameCopy": resource,
+            "previousFrameRead": "前のフレームの写しを読む列を閉じたかの印。立てるだけで、組み立ての中の列も同じに立てる。フレームの頭が下ろす",
+            "previousFrameWatched": "前のフレームで読む列を閉じたかの印。フレームの頭だけが書き、組み立てに関わらない",
+            "previousFrameCopiedThisFrame": "このフレームで写しを取ったかの印。描き切りの投入の後に立て、フレームの頭が下ろす。組み立てに関わらない",
+            "previousFrameCopiesMade": count, "previousFramePicturesCopied": count,
             "carriedFlush": flush, "carriedAwaitingOutcome": flush,
             // #2455 (filter() の投入の記帳と、Image.filtered() の作業の面)
             "filterSubmissions": flush, "beforeFilterCommitForTesting": "検査の差し込み。filter() の投入の直前に呼ぶだけで、組み立てに関わらない",
@@ -380,6 +386,7 @@ extension ShapeExit {
             "orbitHome": "orbit と同じ (ダブルクリックで戻る始めの視点・#2762)。`orbitControl()` が最初の呼び出しで 1 度だけ控える。組み立ての中では `orbitControl()` が視点を書く前に断るので、形には焼き付かない",
             "warnings": "ランタイムが 1 度だけ言った注意の控え (走っている最中の枚数の代入・#1323)。形に焼き付く値を生まない",
             "blockingLoads": "draw() の中の同期の読み込みを 1 度だけ言う控え (#2601)。形に焼き付く値を生まない",
+            "attachRequests": "中で起こした `Task` から入り口を足すことの頼みの窓口 (#3398)。フレームの頭で当てて待ちを終えるだけで、形の組み立てには触れず、形に焼き付く値を生まない",
             "setupFailure": "setup() が投げた失敗の控え (#2401)。最初のフレームの start() が 1 度だけ立て、消えない。出口で戻すと投げ続ける約束が壊れる。形に焼き付く値を生まない",
             "setupFailureHandler": "setup() の失敗を advance() の外で見つけたときの知らせ先 (#2401)。窓の経路が組み立てのときに 1 度だけ差す実行の制御で、形に焼き付く値を生まない",
             "seedScopes":"組み立ての入れ子ごとの乱数と揺らぎの控え。入口で積み出口で畳む、出口の仕組みそのもの (#1936・#2041)",

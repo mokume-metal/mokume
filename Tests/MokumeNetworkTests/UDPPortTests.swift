@@ -28,6 +28,19 @@ struct UDPPortTests {
         return (udp, try #require(source.boundPort))
     }
 
+    /// 疑似の受け口で受ける入り口。開いて、受け始めた後で返す。列の送りの補助の検査が、本物のポートを開かずに
+    /// 使う (#3231)。
+    private func fakeListening(_ network: FakeNetwork, told: Told) throws -> UDPPort {
+        let source = DatagramSource<String>.text(
+            port: network.port, host: "127.0.0.1", retryAfter: 1, acceptor: network.acceptor, warn: told.append)
+        let udp = UDPPort(
+            port: network.port, name: "udp :\(network.port)", source: source, outbound: nil, owner: nil,
+            warn: told.append)
+        try udp.open()
+        network.listener.play([.ready(port: network.port)])
+        return udp
+    }
+
     /// 列の送りで、前提 (送った列が全部読まれる) が満たされなかった回の名乗り (#3001)。受け口の様子と、
     /// 素の socket から 1 通送って読まれるかを添えて、1 つで止まる。名乗りの中身は
     /// ``requireSent(_:_:log:landing:)``。
@@ -377,32 +390,6 @@ struct UDPPortTests {
         #expect(recording.sent.map(\.count) == [5])
     }
 
-    @Test("本物の宛先でも、上限に入らない文字列は送らず、続けて送った文字列は届く")
-    func oversizedSendLeavesTheDestinationReachable() async throws {
-        let receiving = Told()
-        let (receiver, port) = try await listening(told: receiving)
-        defer { receiver.close() }
-        let told = Told()
-        let sender = UDPPort(
-            port: 1, name: "udp :1", source: RecordedSource<String>(batches: []),
-            outbound: DatagramSender(host: "127.0.0.1", port: port, warn: told.append),
-            owner: nil, warn: told.append)
-        defer { sender.close() }
-        let log = SendLog()
-        log.watch { sender.sendTrace }
-
-        sender.send(String(repeating: "a", count: 20000))
-        sender.send("after")
-        let received = await collect(receiver, count: 1, log: log)
-        try await requireReceived(
-            received, expecting: 1, log: log, udp: receiver, port: port, told: receiving)
-        #expect(received == ["after"])
-        #expect(receiver.input.unreadable == 0)
-        #expect(told.lines.count == 1)
-        #expect(told.count(containing: "9215 bytes at most") == 1)
-        #expect(told.count(containing: "listening") == 0)
-    }
-
     @Test("送れない理由は、理由ごとに 1 度だけ知らせて何も送らない")
     func unsendableIsToldOncePerReason() throws {
         let told = Told()
@@ -436,38 +423,6 @@ struct UDPPortTests {
     }
 
     // MARK: - 注入
-
-    @Test("同じ文字列の列は、ポートで受けても注入しても同じ結果になる")
-    func injectedMessagesGiveTheSameOutcome() async throws {
-        let told = Told()
-        let (live, port) = try await listening(told: told)
-        defer { live.close() }
-        var senders: [any DatagramSending] = []
-        defer { for sender in senders { sender.stop() } }
-        let log = SendLog()
-        let received = try await sendAndCollect(
-            textScript.map { Array("\($0)\n".utf8) }, expecting: textScript.count, to: live,
-            senders: &senders, log: log
-        ) { warn in DatagramSender(host: "127.0.0.1", port: port, warn: warn) }
-        try await requireReceived(
-            received, expecting: textScript.count, log: log, udp: live, port: port, told: told)
-
-        let injected = UDPPort(
-            port: nil, name: "udp (recorded)",
-            source: RecordedSource(batches: textScript.map { [$0] }), outbound: nil, owner: nil,
-            warn: told.append)
-        try injected.open()
-        var replayed: [String] = []
-        for _ in textScript {
-            injected.supply()
-            replayed += injected.messages
-        }
-
-        #expect(received == textScript)
-        #expect(replayed == textScript)
-        #expect(TextOutcome(received) == TextOutcome(replayed))
-        #expect(TextOutcome(replayed) == TextOutcome(size: 0.75, hits: 2))
-    }
 
     @Test("注入した列は、i 番目の取り出しで i 番目の束を渡し、終わりまで行けば始まりへ戻る")
     func injectedBatchesFollowTheFrames() throws {
@@ -522,10 +477,12 @@ struct UDPPortTests {
     @Test("列の送りは、送れないと名乗り、まだ 1 通も読まれていない送り元を、猶予の後に替えて列を最初から送り直す")
     func sendAndCollectReplacesAStuckSender() async throws {
         let told = Told()
-        let (udp, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let udp = try fakeListening(network, told: told)
         defer { udp.close() }
-        let raw = try RawDatagramSocket()
-        defer { raw.release() }
+        let port = network.port
+        let flow = network.flow(0)
+        network.listener.offer(flow)
 
         var made = 0
         var senders: [any DatagramSending] = []
@@ -538,7 +495,7 @@ struct UDPPortTests {
             made += 1
             // 最初の送り元は、送れないと名乗って何も出さない
             return ScriptedSender(
-                raw: made == 1 ? nil : raw, port: port, complaint: made == 1 ? warn : nil)
+                flow: made == 1 ? nil : flow, port: port, complaint: made == 1 ? warn : nil)
         }
         try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port, told: told)
         #expect(received == ["a", "b"])
@@ -548,10 +505,12 @@ struct UDPPortTests {
     @Test("列の送りは、1 通でも読まれた後は名乗っても替えず、名乗らずに読まれない送り元も替えない")
     func sendAndCollectDoesNotReplaceAfterAReadOrWithoutAComplaint() async throws {
         let told = Told()
-        let (udp, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let udp = try fakeListening(network, told: told)
         defer { udp.close() }
-        let raw = try RawDatagramSocket()
-        defer { raw.release() }
+        let port = network.port
+        let flow = network.flow(0)
+        network.listener.offer(flow)
 
         // 名乗るが、出してもいる (読まれた後なので替えない。替えると列が重なる)
         var made = 0
@@ -563,7 +522,7 @@ struct UDPPortTests {
             within: 20, patience: 10, log: log
         ) { warn in
             made += 1
-            return ScriptedSender(raw: raw, port: port, complaint: warn)
+            return ScriptedSender(flow: flow, port: port, complaint: warn)
         }
         try await requireReceived(received, expecting: 2, log: log, udp: udp, port: port, told: told)
         #expect(received == ["a", "b"])
@@ -577,7 +536,7 @@ struct UDPPortTests {
             [Array("c".utf8)], expecting: 1, to: udp, senders: &more, within: 0.4
         ) { _ in
             silent += 1
-            return ScriptedSender(raw: nil, port: port, complaint: nil)
+            return ScriptedSender(flow: nil, port: port, complaint: nil)
         }
         #expect(none.isEmpty)
         #expect(silent == 1)
@@ -586,8 +545,10 @@ struct UDPPortTests {
     @Test("列の送りは、替える回数に上限を持ち、越えたら読まれた分(0 通)を返す")
     func sendAndCollectStopsReplacingAtTheLimit() async throws {
         let told = Told()
-        let (udp, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let udp = try fakeListening(network, told: told)
         defer { udp.close() }
+        let port = network.port
 
         var made = 0
         var senders: [any DatagramSending] = []
@@ -599,7 +560,7 @@ struct UDPPortTests {
             within: 10, patience: 0.05, endsAtLimit: true
         ) { warn in
             made += 1
-            return ScriptedSender(raw: nil, port: port, complaint: warn)
+            return ScriptedSender(flow: nil, port: port, complaint: warn)
         }
         #expect(received.isEmpty)
         #expect(made == 3)

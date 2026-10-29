@@ -611,9 +611,14 @@ struct Tools {
             // `Package.resolved` も無いので、理由を「パスで指しているとき」とだけ言うと取り違える。
             // 版を読むのはパッケージの場所なので、区画の基準 (`MOKUME_WORK_DIR`) には依らない。
             // 取りに行けない・読めない回は場所のせいではないので添えない
-            guard missing.cause == .versionUnknown, let place = facets.place, !place.isSketch
+            guard missing.cause == .versionUnknown, let place = facets.place
             else { return (missing.advice, true) }
-            return ("\(missing.advice)\n\n\(place.note)", true)
+            if !place.isSketch { return ("\(missing.advice)\n\n\(place.note)", true) }
+            // 立てたときはスケッチだったが、いまは `Package.swift` が無い (後で消えた) 回は、
+            // 立てたときの事実 (`place`) は古い。**いまの場所**で見て、次の一手を添える (#3419)
+            let now = InterfacePlace.at(apiList.directory)
+            if !now.isSketch { return ("\(missing.advice)\n\n\(now.restartMove)", true) }
+            return (missing.advice, true)
         } catch {
             return ("Could not read the public API list: \(error)", true)
         }
@@ -635,8 +640,9 @@ struct Tools {
 
             \(searched)
 
-            If you depend on mokume as a package, run `swift build` once in that directory —
-            that puts the files in place, and they can be read from there. If this interface
+            If you depend on mokume as a package, build the sketch once with
+            `\(Command.name) run <directory>` (or `\(Command.name) watch`) — that puts the files in place, in
+            the build directory the tool shares, and they are read from there. If this interface
             was started in a different directory, pass the sketch's directory
             (`\(Command.name) mcp <directory>`).
             """

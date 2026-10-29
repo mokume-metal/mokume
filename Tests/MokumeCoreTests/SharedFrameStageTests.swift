@@ -1694,6 +1694,244 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 1 枚目の前の層 (#2876)
+
+    /// **絵が来るまでの層は、不透明な黒で塗る。** 窓は 1 枚目の前に出るので、一度も present していない層の
+    /// 透明か不定の中身が見える。層を作るのは `SketchSurface` で、道具の窓も直に走らせる窓も同じ
+    /// 面を使う — 起こし方ごとに塗らず、作る所 1 か所で塗る。直に走らせる窓の層は
+    /// `LaunchedByToolTests` (窓で開く・窓へ倒れた)・`FullScreenTests` (全画面) が、起こした窓の層を同じ判定
+    /// (``OpaqueBlackLayer``) に掛ける。
+    @Test("層を作る所が不透明な黒を置き、道具の窓の層も不透明な黒である")
+    func theLayerIsPaintedBlackBeforeTheFirstPicture() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: 64, height: 64), device: device, input: InputState(),
+            canvasSize: (64, 64))
+        surface.wantsLayer = true
+        #expect(OpaqueBlackLayer.problem(with: surface.metalLayer) == nil, "層を作る所")
+
+        try withFacet { facet in
+            let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look(fresh()))
+            stage.open()
+            defer { stage.close() }
+            #expect(
+                OpaqueBlackLayer.problem(with: stage.window?.contentView?.layer) == nil, "道具の窓の層")
+        }
+    }
+
+    // MARK: - 全画面 (#2188)
+
+    /// 全画面の口を差し替えた記録。**本物の口は検査を走らせた機械の画面を全画面にしてしまう。**
+    private final class FullScreenLog {
+        var entered: [NSWindow] = []
+        var left: [NSWindow] = []
+        /// いま全画面か。
+        var isFullScreen = false
+        /// 窓がいる画面の識別子。既定は頼まれた画面とは別の画面 (窓を移す道を通す)。
+        var windowScreenID: UInt32? = 999
+        /// 引ける画面の識別子。**機械の画面は 1 枚でよい** — 引ける識別子には同じ画面を返し、引き方だけを検査する。
+        var known: Set<UInt32> = [7, 8]
+
+        func access(screen: NSScreen) -> SharedFrameStage.FullScreenAccess {
+            SharedFrameStage.FullScreenAccess(
+                screen: { [self] request in known.contains(request.screenID) ? screen : nil },
+                windowScreenID: { [self] _ in windowScreenID },
+                isFullScreen: { [self] _ in isFullScreen },
+                enter: { [self] in entered.append($0) },
+                leave: { [self] in left.append($0) })
+        }
+    }
+
+    private static let projector = SharedFrameSurface.FullScreenDisplay(
+        number: 2, name: "Projector", screenID: 7)
+    private static let wall = SharedFrameSurface.FullScreenDisplay(
+        number: 3, name: "Wall", screenID: 8)
+
+    /// 全画面の口を差し替えた作品の窓を開いて、`body` へ渡す。
+    private func withFullScreenStage(
+        followsRequestedSize: Bool = true,
+        _ body: (SharedFrameStage, FullScreenLog, URL, RenderDevice) throws -> Void
+    ) throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            let suite = "mokume.test.stage.\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let screen = try #require(NSScreen.main ?? NSScreen.screens.first, "画面が無い実行環境")
+            var artworkLook = look(fresh())
+            artworkLook.followsRequestedSize = followsRequestedSize
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: artworkLook)
+            let log = FullScreenLog()
+            stage.fullScreen = log.access(screen: screen)
+            stage.defaults = defaults
+            stage.open()
+            defer { stage.close() }
+            try body(stage, log, facet, gpu)
+        }
+    }
+
+    /// **頼みどおりの画面へ置いて、全画面を 1 度頼む。同じ頼みの世代が続いても、手で全画面を抜けた後に同じ頼みの
+    /// 世代が来ても、2 度目は頼まない。頼みが変わったら頼む。** 保存のたびに戻ってはならない (ADR-0032 決定 1)。
+    @Test("全画面の頼みは、頼まれた画面へ置いて 1 度だけ当て、同じ頼みの世代では当て直さず、変わったら当てる")
+    func fullScreenIsAskedOnceUntilTheRequestChanges() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            // 窓が画面の外にいる (別の画面を模す) — 当てると頼まれた画面の使える範囲に収まる
+            let screen = try #require(NSScreen.main ?? NSScreen.screens.first)
+            stage.window?.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+
+            var arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1, "頼まれたのに全画面にしていない")
+            #expect(log.entered.first === stage.window)
+            #expect(log.left.isEmpty)
+            #expect(stage.appliedFullScreen == Self.projector)
+            let frame = try #require(stage.window?.frame)
+            #expect(
+                screen.visibleFrame.contains(frame),
+                "窓を頼まれた画面へ移していない (窓 \(frame) / 画面 \(screen.visibleFrame))")
+            #expect(stage.window?.collectionBehavior.contains(.fullScreenPrimary) == true)
+
+            // 保存して子が入れ替わった。同じ頼み
+            arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1, "同じ頼みの世代で、また全画面にした")
+
+            // 手で全画面を抜けた後に保存した
+            log.isFullScreen = false
+            arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1, "手で抜けた全画面へ、保存で戻した")
+
+            // 宣言を 3 枚目へ変えた
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.wall)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 2, "頼みが変わったのに当てていない")
+            #expect(stage.appliedFullScreen == Self.wall)
+            _ = arriving
+        }
+    }
+
+    @Test("全画面を頼まない世代は何もせず、その後に同じ頼みが戻れば、変わったものとして当てる")
+    func aGenerationWithoutTheRequestAsksForNothing() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            var arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            stage.displayLinkFired()
+            #expect(log.entered.isEmpty, "欄が無いのに全画面にした")
+            #expect(stage.appliedFullScreen == nil)
+
+            arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1)
+
+            // 全画面をやめた作品 (窓で開く宣言) に変えて保存した。全画面はそのままにする
+            log.isFullScreen = true
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1)
+            #expect(log.left.isEmpty, "頼みが無くなったからと、全画面を抜けさせた")
+            #expect(stage.appliedFullScreen == nil)
+
+            // 頼みが戻った — 覚えは捨てたので、変わったものとして当てる
+            log.isFullScreen = false
+            arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 2)
+            _ = arriving
+        }
+    }
+
+    @Test("頼まれた画面が引けなければ窓のままにして 1 行言い、覚えずに、次の世代で引ければ当てる")
+    func anUnknownDisplayLeavesTheWindowAndSaysSo() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            var said: [String] = []
+            stage.warn = { said.append($0) }
+            log.known = []
+
+            var arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.isEmpty)
+            #expect(said.count == 1, "\(said)")
+            #expect(said.first?.contains("display 2 (Projector)") == true)
+            #expect(stage.appliedFullScreen == nil, "引けなかった頼みを、当てたものとして覚えた")
+
+            log.known = [7]
+            arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1, "画面が繋がった後の世代で当てていない")
+            #expect(said.count == 1)
+            _ = arriving
+        }
+    }
+
+    @Test("プレビュー (大きさの頼みに従わない窓) は、全画面の頼みにも従わない")
+    func aWindowThatDoesNotFollowTheRequestIgnoresFullScreen() throws {
+        try withFullScreenStage(followsRequestedSize: false) { stage, log, facet, gpu in
+            let arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.isEmpty)
+            #expect(stage.appliedFullScreen == nil)
+            _ = arriving
+        }
+    }
+
+    /// **全画面の窓は動かせない** — 別の画面へ頼みが変わったときは、抜けてから移して入り直す。手で抜けたときは戻さない。
+    @Test("全画面のまま別の画面へ頼みが変わったら、抜け終わってから移して入り直し、手で抜けたときは入らない")
+    func movingAFullScreenWindowLeavesFirst() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            var arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.count == 1)
+
+            // 手で抜けた。頼みは持っていないので、抜け終わっても入らない
+            stage.didExitFullScreen()
+            #expect(log.entered.count == 1, "手で抜けた窓へ入り直した")
+
+            // 全画面に戻って (いまは頼まれた画面とは別の画面にいる)、3 枚目 (8) へ変えて保存した
+            log.isFullScreen = true
+            log.windowScreenID = 7
+            arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.wall)
+            stage.displayLinkFired()
+            #expect(log.left.count == 1, "全画面のまま別の画面へ移そうとした")
+            #expect(log.entered.count == 1, "抜け終わる前に入った")
+            #expect(stage.appliedFullScreen == Self.wall)
+
+            log.isFullScreen = false
+            stage.didExitFullScreen()
+            #expect(log.entered.count == 2, "抜け終わっても入り直していない")
+
+            // 二度目の抜け終わりでは入らない (頼みは使い切った)
+            stage.didExitFullScreen()
+            #expect(log.entered.count == 2)
+            _ = arriving
+        }
+    }
+
+    @Test("頼まれた画面の全画面にもういるなら、抜けも入りもしない")
+    func alreadyFullScreenOnTheRequestedDisplay() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            // 引ける画面は機械の画面 1 枚 (``FullScreenLog/access(screen:)``)。窓がそこの全画面にいる
+            let screen = try #require(NSScreen.main ?? NSScreen.screens.first)
+            log.isFullScreen = true
+            log.windowScreenID = screen.screenID
+            let arriving = try makeSurface(
+                in: facet, gpu: gpu, drawing: 1, fullScreenDisplay: Self.projector)
+            stage.displayLinkFired()
+            #expect(log.entered.isEmpty)
+            #expect(log.left.isEmpty)
+            #expect(stage.appliedFullScreen == Self.projector)
+            _ = arriving
+        }
+    }
+
     /// 作品の窓とプレビューを開き、差し出し元を 1 つ来させる。
     private func openPair(
         facet: URL, gpu: RenderDevice, defaults: UserDefaults, width: Int, height: Int,
@@ -1964,10 +2202,12 @@ struct SharedFrameStageTests {
     /// **同じ区画へ 2 つ作ると、目録は後から置いたほうで上書きされる** — それが子の
     /// 入れ替えで起きることそのものである。
     private func makeSurface(
-        in facet: URL, gpu: RenderDevice, drawing frames: Int, windowScale: Float? = nil
+        in facet: URL, gpu: RenderDevice, drawing frames: Int, windowScale: Float? = nil,
+        fullScreenDisplay: SharedFrameSurface.FullScreenDisplay? = nil
     ) throws -> SharedFrameSurface {
         let shared = try SharedFrameSurface(
-            gpu: gpu, width: 32, height: 32, windowScale: windowScale, at: facet)
+            gpu: gpu, width: 32, height: 32, windowScale: windowScale,
+            fullScreenDisplay: fullScreenDisplay, at: facet)
         try shared.publishManifest()
         // **更新時刻を必ず動かす。** 見張りは時刻が変わったときだけ読み直すので、同じ刻みに
         // 収まると 2 つ目の目録を読まない (``WatchedFile``)

@@ -574,8 +574,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -604,8 +604,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -633,8 +633,8 @@ extension SketchPart {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    // shot: 1 snippet=71ced307
-    // shot: 2 snippet=51be46d6
+    // shot: 1 snippet=d94b64bf
+    // shot: 2 snippet=91381f9a
     public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
@@ -649,8 +649,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -679,8 +679,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -706,8 +706,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=c4b369c6
-    // shot: 2 snippet=2f7e5ef6
+    // shot: 1 snippet=bceed6ce
+    // shot: 2 snippet=ca7f00e4
     public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)

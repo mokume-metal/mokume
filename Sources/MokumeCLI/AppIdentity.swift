@@ -48,10 +48,37 @@ nonisolated struct AppIdentity: Equatable {
     static let example = """
         {
           "name": "Grain",
-          "identifier": "org.example.grain",
+          "identifier": "\(exampleIdentifier)",
           "version": "0.1.0"
         }
         """
+
+    /// 見本が見せる識別子。**エラーの見本と束ねるときの名乗りの検め (``warning``) が、この 1 か所から
+    /// 引く** (#3442)。README の例 (2 か所) も同じ綴りである — 例を変えるなら、ここも同じ PR で変える。
+    static let exampleIdentifier = "org.example.grain"
+
+    /// 識別子が見本の値のままのときの警告。**そうでなければ `nil`。**
+    ///
+    /// 見本をそのまま写した作品は、全員が同じ識別子で配ることになり、権限の許可の状態が別の作品と
+    /// 混ざる ([ADR-0029] 決定 4 が、ひな形に同梱しない理由にした事故)。**止めずに名乗る** (#3442・
+    /// メンテナの決定 = 名乗るだけ) — すでにその値で配った人の束ね直しを止めない。**見本の値と
+    /// 一致するときだけ**で、`org.example.` のような接頭辞の規則では当てない。
+    ///
+    /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
+    var warning: String? {
+        guard identifier == Self.exampleIdentifier else { return nil }
+        return "Warning: identifier \"\(identifier)\" is the example from the README; "
+            + "give this work its own identifier so macOS remembers its permissions separately"
+    }
+
+    /// 警告があれば標準エラーへ 1 行書く。束ねる前に呼ぶ (ビルドの数分の前に読める)。
+    ///
+    /// - Parameter write: 書き先。**検査から差し替える形にしてある。**
+    func warnIfExample(
+        to write: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+    ) {
+        if let warning { write(warning) }
+    }
 
     /// ファイルに書かれている中身。**鍵の綴りはここだけ。**
     ///

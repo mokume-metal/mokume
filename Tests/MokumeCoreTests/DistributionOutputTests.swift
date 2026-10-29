@@ -4,6 +4,7 @@
 import AVFoundation
 import Foundation
 import ImageIO
+import MokumeDiagnostics
 import MokumeTestSupport
 import Testing
 import UniformTypeIdentifiers
@@ -237,25 +238,105 @@ struct DistributionOutputTests {
         }
     }
 
-    /// H.264 は奇数の大きさを書けるかを測った結果で、書けない大きさは書き損じとして名乗る。
-    @Test("奇数の大きさの MP4 を書く (書けなければ書き損じとして名乗る)")
+    /// H.264 は奇数の大きさを書けるかを測った結果で、書けない大きさは書き損じとして名乗る。**書けても
+    /// 縦横が頼んだとおりでなければ、名乗りが出ている** (#3379)。`MovieWriter` を通すので、`mokume render` も
+    /// スケッチの `beginRecord` も同じ口 (`MovieFile.finish`) で名乗ることの確かめでもある。
+    @Test("奇数の大きさの MP4 を書く (書けなければ書き損じとして名乗り、縦横が変われば削ったことを名乗る)")
     func anOddSizeIsWrittenOrNamed() async throws {
         try await withDirectoryAsync { directory in
-            let path = directory.appendingPathComponent("odd.mp4").path
-            let writer = MovieWriter(path: path, frameRate: 25, format: .h264)
-            for index in 0..<5 {
-                writer.write(
-                    picture(index, width: 63, height: 47), frame: index + 1, time: Double(index) / 25)
-            }
-            writer.finish()
-            let failure = writer.takeFailure()
-            print("MEASURED odd-size (63x47) MP4: \(failure ?? "written")")
-            if failure == nil {
+            for (width, height) in [(63, 47), (65, 49)] {
+                let path = directory.appendingPathComponent("odd-\(width)x\(height).mp4").path
+                // 検査が差す溜め場で、言われた警告だけを数える (`MovieWriter` は差された溜め場を閉じる仕事へ持ち込む)
+                let (failure, said) = Diagnostics.$digest.withValue(WarningDigest()) {
+                    let writer = MovieWriter(path: path, frameRate: 25, format: .h264)
+                    for index in 0..<5 {
+                        writer.write(
+                            picture(index, width: width, height: height), frame: index + 1,
+                            time: Double(index) / 25)
+                    }
+                    writer.finish()
+                    return (writer.takeFailure(), Diagnostics.takeUnreported())
+                }
+                print("MEASURED odd-size (\(width)x\(height)) MP4: \(failure ?? "written") / said: \(said)")
+                if let failure {
+                    #expect(!failure.isEmpty)
+                    continue
+                }
                 #expect(MovieFile.videoSampleCount(atPath: path) == 5)
-            } else {
-                #expect(!(failure ?? "").isEmpty)
+                let written = try #require(await MovieFile.readClosedFile(atPath: path), "\(width)x\(height)")
+                guard case .hasSamples(let size?) = written else {
+                    Issue.record("\(width)x\(height): 書けた縦横を読めない: \(written)")
+                    continue
+                }
+                if size == MovieFile.WrittenSize(width: width, height: height) {
+                    #expect(said.isEmpty, "頼んだとおりに書けたのに名乗った: \(said)")
+                } else {
+                    // 削られたなら、書けた大きさと頼んだ大きさの両方を含む 1 行が出ている
+                    #expect(said.count == 1, "\(width)x\(height) → \(size.width)x\(size.height): 名乗りが \(said.count) 行")
+                    let line = said.first ?? ""
+                    #expect(line.contains("\(size.width)x\(size.height)"), "\(line)")
+                    #expect(line.contains("\(width)x\(height)"), "\(line)")
+                }
             }
         }
+    }
+
+    /// 偶数の大きさ (64×48) は頼んだとおりに書けるので、何も言わない。`MovieFile` を直に開き、検査が差す溜め場で
+    /// 言われたことを見る (終わりまで同じ仕事の中で走る)。
+    @Test("頼んだとおりの縦横で書けた MP4 は、何も名乗らない")
+    func anExactSizeSaysNothing() async throws {
+        try await withDirectoryAsync { directory in
+            let path = directory.appendingPathComponent("even.mp4").path
+            let said = await Diagnostics.$digest.withValue(WarningDigest()) {
+                let file = try? MovieFile(path: path, width: 64, height: 48, frameRate: 25, format: .h264)
+                for index in 0..<5 {
+                    try? await file?.append(picture(index, width: 64, height: 48), at: Double(index) / 25)
+                }
+                try? await file?.finish(lastFrameAt: 4.0 / 25)
+                return Diagnostics.takeUnreported()
+            }
+            #expect(MovieFile.videoSampleCount(atPath: path) == 5)
+            #expect(said.isEmpty, "\(said)")
+        }
+    }
+
+    /// 名乗りは書けた縦横を読んで決める。「奇数なら」では決めない (4097×16 は奇数のまま書ける)。
+    @Test("名乗りは書けた縦横と頼んだ縦横の違いで決まる (奇数かどうかでも、読めないときでもない)")
+    func theNoteFollowsTheWrittenSizeNotTheParity() async throws {
+        let path = "x.mp4"
+        func note(asked: (Int, Int), written: (Int, Int)?) -> String? {
+            MovieFile.resizedNote(
+                path: path, width: asked.0, height: asked.1,
+                written: written.map { MovieFile.WrittenSize(width: $0.0, height: $0.1) })
+        }
+        // 削られた: 奇数の辺
+        let dropped = try #require(note(asked: (65, 49), written: (64, 48)))
+        #expect(dropped.hasPrefix("x.mp4 was written at 64x48") && dropped.contains("65x49"), "\(dropped)")
+        // 奇数でも頼んだとおりに書けたら言わない
+        #expect(note(asked: (4097, 16), written: (4097, 16)) == nil)
+        #expect(note(asked: (65, 49), written: (65, 49)) == nil)
+        // 偶数でも違って書けたら言う (奇数かどうかの決め打ちをしない)
+        #expect(note(asked: (64, 48), written: (62, 46)) != nil)
+        // 読めなかったら言わない (確かめられないものを名乗らない)
+        #expect(note(asked: (65, 49), written: nil) == nil)
+
+        // 閉じた後の読みを通した形: 読んだ縦横が `ClosedCheck.written` に載る。期限を越えた読みは載せない
+        let directory = try TestScratch.directory("mokume-distribution")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("x.mp4")
+        FileManager.default.createFile(atPath: file.path, contents: Data("x".utf8))
+        let read: @Sendable (String) async -> MovieFile.ClosedReading? = { _ in
+            .hasSamples(written: MovieFile.WrittenSize(width: 64, height: 48))
+        }
+        let check = await MovieFile.closedCheck(atPath: file.path, width: 65, height: 49, read: read)
+        #expect(check == MovieFile.ClosedCheck(hollow: nil, written: MovieFile.WrittenSize(width: 64, height: 48)))
+        let late = await MovieFile.closedCheck(
+            atPath: file.path, width: 65, height: 49, limitSeconds: 0.1,
+            read: { _ in
+                try? await Task.sleep(for: .seconds(60))
+                return .hasSamples(written: MovieFile.WrittenSize(width: 64, height: 48))
+            })
+        #expect(late == MovieFile.ClosedCheck(hollow: nil, written: nil))
     }
 
     /// 辺が 1 の絵を H.264 の書き手へ渡すと、OS の書き手は成功を返したまま 0 バイトを書く (#3223)。
@@ -342,7 +423,8 @@ struct DistributionOutputTests {
             for frames in [1, 5] {
                 let good = directory.appendingPathComponent("good-\(frames).mp4").path
                 write(.h264, to: good, frames: frames, fps: 25) { picture($0, width: 64, height: 48) }
-                #expect(await MovieFile.readClosedFile(atPath: good) == .hasSamples, "\(frames) 枚")
+                let reading = await MovieFile.readClosedFile(atPath: good)
+                #expect(reading == .hasSamples(written: MovieFile.WrittenSize(width: 64, height: 48)), "\(frames) 枚: \(String(describing: reading))")
                 #expect(await MovieFile.hollowReason(atPath: good, width: 64, height: 48) == nil, "\(frames) 枚")
             }
             if MovieFile.isAvailable {
@@ -366,7 +448,7 @@ struct DistributionOutputTests {
             let noSamples = await MovieFile.hollowReason(
                 atPath: filled, width: 64, height: 48, read: { _ in .noSamples })
             #expect(try #require(noSamples).contains("no frames"))
-            #expect(await MovieFile.hollowReason(atPath: filled, width: 64, height: 48, read: { _ in .hasSamples }) == nil)
+            #expect(await MovieFile.hollowReason(atPath: filled, width: 64, height: 48, read: { _ in .hasSamples(written: nil) }) == nil)
         }
     }
 
