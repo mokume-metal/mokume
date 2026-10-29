@@ -217,6 +217,12 @@ struct LaunchedByToolTests {
                 application.resolveOutlet()
 
                 #expect(application.endsAfterLastWindowClosed, "窓の経路になっていない")
+                // 窓を開く経路の窓の層は、1 枚目の前に不透明な黒で塗られている (#2876)
+                application.didFinishLaunching()
+                defer { application.window?.close() }
+                #expect(
+                    OpaqueBlackLayer.problem(with: application.window?.contentView?.layer) == nil,
+                    "自分の窓の層")
                 #expect(application.activationPolicy == .regular, "Dock に並ばない (窓を開かない) 経路になった")
                 #expect(
                     try String(
@@ -332,6 +338,12 @@ struct LaunchedByToolTests {
         application.resolveOutlet(at: facet, owner: "mokume watch")
 
         #expect(application.endsAfterLastWindowClosed, "目録を書けないのに共有面の経路になった")
+        // 窓へ倒れた子の窓も、1 枚目の前に不透明な黒で塗られている (#2876)
+        application.didFinishLaunching()
+        defer { application.window?.close() }
+        #expect(
+            OpaqueBlackLayer.problem(with: application.window?.contentView?.layer) == nil,
+            "窓へ倒れた子の窓の層")
         let flags = fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFL)
         #expect(flags & O_NONBLOCK != 0, "窓へ倒れた見張りの子が、道具の管を読んでいない")
         #expect(!application.driverDeparted())

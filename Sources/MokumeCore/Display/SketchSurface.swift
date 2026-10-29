@@ -144,6 +144,15 @@ final class SketchSurface: NSView {
         // スケッチが明示的に選んだときだけ
         layer.wantsExtendedDynamicRangeContent = false
         layer.framebufferOnly = true
+        // **1 枚目が出るまでは黒で塗る** ([#2876](https://github.com/mokume-metal/mokume/issues/2876))。
+        // 窓は作り直しや `setup()` より先に開くので、最初の 1 枚までは drawable を一度も受け取っていない
+        // 層が見え、中身が透明か不定になる。黒は、絵が収まらない帯の色 (`FramePresenter`) と、半透明の面の
+        // 下地 (窓では後ろが透けない・`Sketch+Color.swift`) が既に出している色で、作品の表示に無いものを
+        // 足さない。**窓 (`NSWindow.backgroundColor`) は塗らない** — 層の外 (タイトルバーの下の縁など)
+        // まで色が変わり、帯の黒とも別の経路になる。直に走らせる窓も道具の窓も、この面を使うので、
+        // 起こし方で分けずに作る所 1 か所で塗る (ADR-0032 決定 6 の追補)。1 枚目より後は、drawable が
+        // 層を覆うので見え方は変わらない
+        layer.backgroundColor = CGColor(gray: 0, alpha: 1)
         return layer
     }
 
