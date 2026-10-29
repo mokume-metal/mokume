@@ -8,3 +8,5 @@ SPDX-License-Identifier: MIT
 **`reference` を名前なしで呼んだときの「面の仕様が見つからない」の案内も、`swift build` ではなく `mokume run` / `mokume watch` で一度ビルドする手に揃えた。**
 
 **`mokume doctor` の依存の行も、まだ解決していないスケッチを「パスで指している」とは言わなくなった。** `not resolved yet` と名乗り、`mokume run` で解決することを案内する。
+
+**`mokume doctor` の依存の行は、`Package.resolved` が読めないときや枝・改訂で固定しているときも、「パスで指している」とは言わない。** 読めた事実 (読めない・改訂の固定・`Package.swift` が無い) をそのまま名乗る。

@@ -178,7 +178,7 @@ struct DependencyVersionTests {
     /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。
     @Test("まだ解決していないスケッチには、パスで指しているとは言わず、解決の手を言う")
     func doesNotBlameAPathWhenNotResolvedYet() {
-        let line = DoctorCommand.dependencyLine(nil, unresolved: true)
+        let line = DoctorCommand.dependencyLine(nil, state: .unresolved)
         #expect(line.contains("not resolved yet"))
         #expect(!line.contains("pointing at a path"))
         // 道具の既定と同じ置き場で解決する `run` を勧める。裸の `swift package resolve` は
@@ -186,6 +186,29 @@ struct DependencyVersionTests {
         #expect(line.contains("\(Command.name) run"))
         #expect(!line.contains("swift package resolve"))
         // 解決してあるのに pin が無い回は、今までの文言のまま
-        #expect(DoctorCommand.dependencyLine(nil, unresolved: false).contains("pointing at a path does this"))
+        #expect(DoctorCommand.dependencyLine(nil, state: .notPinned).contains("pointing at a path does this"))
+    }
+
+    /// 読めない `Package.resolved` や枝・改訂の固定も、「パスで指している」とは言わない (#3419)。
+    @Test("読めない Package.resolved や改訂の固定を、パスで指しているとは言わない")
+    func doesNotBlameAPathWhenTheVersionIsUnknownForOtherReasons() {
+        let unreadable = DoctorCommand.dependencyLine(nil, state: .unreadable)
+        #expect(unreadable.contains("could not be read"))
+        #expect(!unreadable.contains("pointing at a path"))
+        let revision = DoctorCommand.dependencyLine(nil, state: .revision("0123456789abcdef"))
+        #expect(revision.contains("0123456789ab"))
+        #expect(!revision.contains("pointing at a path"))
+        #expect(!DoctorCommand.dependencyLine(nil, state: .noPackage).contains("pointing at a path"))
+    }
+
+    /// 状態を読む配線 (`state(for:)` が `dependencyState` を埋める) を、実物の置き場から固定する。
+    @Test("doctor の状態は、壊れた Package.resolved を unreadable として読む")
+    func doctorReadsAnUnreadablePackageResolved() throws {
+        let sketch = try makeSketch(resolved: "{ not json")
+        let state = DoctorCommand.probeState(
+            in: sketch, facetBase: sketch, environment: [BuildDirectory.environmentKey: sketch.path],
+            home: sketch)
+        #expect(state.dependencyState == .unreadable)
+        #expect(state.dependency == nil)
     }
 }

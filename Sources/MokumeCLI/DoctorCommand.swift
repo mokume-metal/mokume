@@ -101,9 +101,9 @@ enum DoctorCommand {
         /// ときは pin が無い)。面を持たない理由に当たった人が、どこまで上げればよいかを
         /// 知るために要る (#684)。
         var dependency: String?
-        /// `Package.swift` はあるが `Package.resolved` が無い (作ったばかりで、まだ解決していない)。
-        /// `dependency` が `nil` の理由を「パスで指している」と決めつけないために持つ (#3419)。
-        var unresolved: Bool = false
+        /// `dependency` が `nil` の理由 (読めた事実から分けたもの)。`nil` の理由を「パスで指している」と
+        /// 決めつけないために持つ (#3419)。読んでいなければ `nil` (従来の文言)。
+        var dependencyState: DependencyVersion.State?
         /// 道具自身の配布版。**読めなければ `nil`** (手元ビルドは版を持たない)。
         ///
         /// `dependency` と突き合わせるために持つ。版の違う道具とスケッチの組は観測面を
@@ -480,7 +480,7 @@ enum DoctorCommand {
         var lines = [
             placeLine(state.place, presence: state.presence),
             sketchLine(state.hasPackage),
-            dependencyLine(state.dependency, tool: state.tool, unresolved: state.unresolved),
+            dependencyLine(state.dependency, tool: state.tool, state: state.dependencyState),
             // **在処まで書く。** 置き場は版ごとの共有へ移りうるので、在る / 無いだけでは
             // 「どこを消せばやり直せるのか」に答えられない (ADR-0037)
             buildDirectoryLine(state.buildDirectory),
@@ -518,17 +518,27 @@ enum DoctorCommand {
     /// 揃っているときは行を増やさない。どちらかが読めなければ食い違いを言わない —
     /// 手元ビルドの道具に「版が違う」と言うと、正しい原因から人を遠ざける (規律 3)。
     static func dependencyLine(
-        _ dependency: String?, tool: String? = nil, unresolved: Bool = false
+        _ dependency: String?, tool: String? = nil, state: DependencyVersion.State? = nil
     ) -> String {
         guard let dependency else {
-            // **まだ解決していないだけなら、パスで指しているとは言わない** (#3419)。作ったばかりの
-            // スケッチはこの形で、`run` / `watch` が最初に解決する
-            if unresolved {
-                return "mokume dependency: \(unknown) — not resolved yet (no Package.resolved; "
+            // **版が引けない理由は、読めた事実だけで言う** (#3419)。作ったばかりのスケッチ・読めない
+            // `Package.resolved`・枝や改訂の固定を、「パスで指している」と決めつけない
+            let prefix = "mokume dependency: \(unknown) — "
+            switch state {
+            case .unresolved:
+                return prefix + "not resolved yet (no Package.resolved; "
                     + "`\(Command.name) run` writes it)"
+            case .unreadable:
+                return prefix + "Package.resolved could not be read (damaged, or a form this tool "
+                    + "does not know), so whether it pins \(DependencyVersion.identity) is unknown"
+            case .revision(let revision):
+                return prefix + "pinned to a branch or revision (\(revision.prefix(12))), "
+                    + "not to a release"
+            case .noPackage:
+                return prefix + "no Package.swift here to read it from"
+            case .notPinned, .version, nil:
+                return prefix + "no pin in Package.resolved (pointing at a path does this)"
             }
-            return "mokume dependency: \(unknown) — no pin in Package.resolved "
-                + "(pointing at a path does this)"
         }
         guard let tool, !sameRelease(dependency, tool) else {
             return "mokume dependency: \(dependency)"
@@ -687,7 +697,7 @@ enum DoctorCommand {
             sharedStore: root.map { sharedStore(at: $0) },
             lastBuild: lastBuild(under: facetBase),
             dependency: DependencyVersion.resolved(forPackageAt: directory),
-            unresolved: DependencyVersion.state(forPackageAt: directory) == .unresolved,
+            dependencyState: DependencyVersion.state(forPackageAt: directory),
             tool: ToolVersion.release(),
             presence: presence ?? GivenPath.Presence.of(directory))
     }
