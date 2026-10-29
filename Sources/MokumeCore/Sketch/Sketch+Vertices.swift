@@ -498,7 +498,7 @@ extension SketchPart {
     /// endShape()
     /// resetShader()
     /// ```
-    // shot: 1 snippet=9de5f5b4
+    // shot: 1 snippet=5f4f9da3
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
@@ -568,7 +568,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=fa95d28d
+    // shot: 1 snippet=1faf918a
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)

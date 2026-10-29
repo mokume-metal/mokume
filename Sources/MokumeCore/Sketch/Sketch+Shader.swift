@@ -325,10 +325,10 @@ extension SketchPart {
     /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=7a78b249
-    // shot: 2 snippet=3bf5c822
-    // shot: 3 snippet=cfc04917
-    // shot: 4 snippet=fd4f4dea
+    // shot: 1 snippet=bae40615
+    // shot: 2 snippet=665a9f67
+    // shot: 3 snippet=dd1337e8
+    // shot: 4 snippet=3ae3a391
     public func makeShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
@@ -425,8 +425,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=2acc7397
-    // shot: 2 snippet=dc7bbac5
+    // shot: 1 snippet=a8109ffd
+    // shot: 2 snippet=58cca231
     public func shader(_ shader: Shader) { Self.liveCanvas()?.shader(shader) }
 
     /// 組み込みの塗りへ戻す。
@@ -468,6 +468,6 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=17f903d5
+    // shot: 1 snippet=22be189b
     public func resetShader() { Self.liveCanvas()?.resetShader() }
 }

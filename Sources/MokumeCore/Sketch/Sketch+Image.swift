@@ -306,7 +306,7 @@ extension SketchPart {
     ///   ``ImageFailure/unplaceable(width:height:)``。1 を割る指定を 1×1 へ丸めない。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=f455cc89
+    // shot: 1 snippet=687277ab
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
         try Self.resourceCanvas(ImageFailure.self).createImage(width, height)
     }
@@ -347,7 +347,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=484b5a23
+    // shot: 1 snippet=cbfaab04
     public func image(_ image: Image, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
@@ -386,7 +386,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=6c035e1b
+    // shot: 1 snippet=03eb840b
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
@@ -432,7 +432,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b02a0f10
+    // shot: 1 snippet=2a1a23bd
     public func image(
         _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
@@ -577,10 +577,10 @@ extension SketchPart {
     /// 中心かだけである。
     ///
     /// - Note: 座標の読み方は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=3489d6ec
-    // shot: 2 snippet=1c6055c2
-    // shot: 3 snippet=bbc7b35e
-    // shot: 4 snippet=04e1e495
+    // shot: 1 snippet=5cd997ad
+    // shot: 2 snippet=5313d2ba
+    // shot: 3 snippet=c541dbbc
+    // shot: 4 snippet=5b4df7b6
     public func imageMode(_ mode: ShapeMode) { Self.liveCanvas()?.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
@@ -649,8 +649,8 @@ extension SketchPart {
     /// 知らせる。
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=25c42a96
-    // shot: 2 snippet=4775cb21
+    // shot: 1 snippet=02205f1c
+    // shot: 2 snippet=4729e607
     public func tint(_ color: LinearRGBA) { Self.liveCanvas()?.tint(color) }
 
     /// 色掛けをやめる。
@@ -689,6 +689,6 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=82db2864
+    // shot: 1 snippet=88558c99
     public func noTint() { Self.liveCanvas()?.noTint() }
 }

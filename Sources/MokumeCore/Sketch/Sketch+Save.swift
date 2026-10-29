@@ -302,7 +302,7 @@ extension SketchPart {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    // shot: 1 snippet=5f85730d
+    // shot: 1 snippet=dbe3d06b
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
             return OutsideRun.log.warn(.beginRecord)

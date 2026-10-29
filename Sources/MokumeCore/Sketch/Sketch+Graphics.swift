@@ -301,7 +301,7 @@ extension SketchPart {
     /// - Parameters:
     ///   - graphics: 描く先の描き場所。
     ///   - body: 中の呼び出しが `graphics` へ向く閉包。
-    // shot: 1 snippet=1dbb3334
+    // shot: 1 snippet=52cdbef4
     // shot: 2 snippet=ba1fde9c
     public func draw(into graphics: Canvas, _ body: () -> Void) {
         guard let runtime = Self.liveRuntime() else { return }
@@ -361,7 +361,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b01c8b0c
+    // shot: 1 snippet=423340e2
     public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
@@ -400,7 +400,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=eca56bd9
+    // shot: 1 snippet=d40247f8
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
@@ -442,7 +442,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=625e4d78
+    // shot: 1 snippet=9f3f2df0
     public func image(
         _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
@@ -584,9 +584,9 @@ extension SketchPart {
     ///
     /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
     /// ``noTexture()`` を呼ぶまで続き、``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
-    // shot: 1 snippet=c9428b67
-    // shot: 2 snippet=f943b654
-    // shot: 3 snippet=beee00de
+    // shot: 1 snippet=ae1a14cd
+    // shot: 2 snippet=8457adaf
+    // shot: 3 snippet=17433594
     public func texture(_ image: Image) { Self.liveCanvas()?.texture(image) }
 
     /// これから置く塗りに描き場所を貼る。
@@ -676,8 +676,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=ce04dd39
-    // shot: 2 snippet=5d6b5918
+    // shot: 1 snippet=b95f51a7
+    // shot: 2 snippet=a78d202e
     public func texture(_ graphics: Canvas) { Self.liveCanvas()?.texture(graphics) }
 
     /// 絵を貼るのをやめる。
@@ -761,7 +761,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=5281a349
-    // shot: 2 snippet=346300b3
+    // shot: 1 snippet=3d8912c0
+    // shot: 2 snippet=03298d4c
     public func noTexture() { Self.liveCanvas()?.noTexture() }
 }

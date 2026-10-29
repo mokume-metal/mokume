@@ -67,7 +67,7 @@ extension SketchPart {
     ///   1 個へ丸めない) に ``RenderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=fc61cf1e
+    // shot: 1 snippet=753ebbcc
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
         try Self.resourceCanvas(RenderFailure.self).makeNumbers(count: count)
     }
@@ -210,8 +210,8 @@ extension SketchPart {
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=d76ea602
-    // shot: 2 snippet=e8f5dab5
+    // shot: 1 snippet=bfd24c1e
+    // shot: 2 snippet=5d18c9e5
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
@@ -440,9 +440,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=40715f97
-    // shot: 2 snippet=12b4d9f9
-    // shot: 3 snippet=7db37900
+    // shot: 1 snippet=c91153ed
+    // shot: 2 snippet=00c3a828
+    // shot: 3 snippet=eb962dd1
     public func compute(
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
@@ -604,9 +604,9 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=d9bf43e4
-    // shot: 2 snippet=0bc34129
-    // shot: 3 snippet=5ec9d11e
+    // shot: 1 snippet=ea31d1a7
+    // shot: 2 snippet=292bcdbe
+    // shot: 3 snippet=b319e0ed
     public func numbers(_ numbers: Numbers) { Self.liveCanvas()?.numbers(numbers) }
 
     /// 並びを読まない状態へ戻す。
@@ -696,8 +696,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=b40dc8fc
-    // shot: 2 snippet=b4da70c9
+    // shot: 1 snippet=b3ea6266
+    // shot: 2 snippet=e36a2631
     public func resetNumbers() { Self.liveCanvas()?.resetNumbers() }
 
     /// 描く前に計算させる (2 次元)。
@@ -767,7 +767,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=d5ab3e25
+    // shot: 1 snippet=fbc2cbae
     public func compute(
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
@@ -903,7 +903,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=d7424f97
-    // shot: 2 snippet=9dfc4082
+    // shot: 1 snippet=2835ba04
+    // shot: 2 snippet=3c337d6d
     public func read(_ numbers: Numbers) -> [Float] { Self.liveCanvas(.read(returning: "[]"))?.read(numbers) ?? [] }
 }
