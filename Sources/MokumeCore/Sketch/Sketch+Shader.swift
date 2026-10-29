@@ -230,6 +230,9 @@ extension SketchPart {
     /// (`in.place`) で読むので、面いっぱいに広げた 1 枚を形の窓から覗いたように見え、市松は
     /// 四角と円にまたがって途切れずに続く。
     ///
+    /// **前のフレームの絵**を読むなら ``ShaderSurface/previousFrame`` を渡す。残像やフィードバックが、描き場所を
+    /// 入れ替えずに書ける。
+    ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var fromCanvas: Shader! -->
