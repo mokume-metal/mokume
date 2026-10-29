@@ -29,13 +29,15 @@ extension SketchPart {
     /// ```
     ///
     /// Processing の `selectInput(prompt, callback)` に当たる。コールバックの代わりに `async` で結果を返す。
-    /// 返るパスは絶対パスで、読み込みの口にそのまま渡せる。
+    /// 返るパスは絶対パスで、ファイルを読む口に渡せる。**結果は `Task` の続きで届き、そこでは走っている実行が
+    /// 外れているので、`Task` の中でそのまま読めるかは口による。**
     ///
-    /// **`Task` の中で読むなら、待つ口 (``requestImage(_:)``・``requestTable(_:header:)``・
-    /// `requestSound(_:)` など) に渡す。** 結果は `Task` の続きで届き、そこでは走っている実行が外れているので、
-    /// 同期の口 (``loadImage(_:)``・`loadSound(_:)`) は `notRunning` (``ImageFailure/notRunning(call:)`` など) を投げる。
-    /// パスを持ち越して次の `draw()` で同期の口を呼ぶと、フレームを止める読み込みの警告が出る。面を使わない
-    /// ``loadTable(_:header:)`` は `Task` の中でも読める (上の例)。
+    /// - **待つ口がある** (``requestImage(_:)``・``requestTable(_:header:)``・`requestSound(_:)`): `Task` の中ではこちらへ
+    ///   渡す。同期の ``loadImage(_:)``・`loadSound(_:)` は `notRunning` (``ImageFailure/notRunning(call:)`` など) を投げる。
+    ///   パスを持ち越して次の `draw()` で同期の口を呼ぶと、フレームを止める読み込みの警告が出る
+    /// - **面を使わない口**: ``loadTable(_:header:)``・`loadFont(_:)` は `Task` の中でも読める (上の例)
+    /// - **待つ口が無い口** (動画の `createVideo(_:)`・音声ファイルを入力として解析する `createAudioIn(file:)`): `Task` の中では
+    ///   作れない。パスを持ち越し、次の `draw()` などの、走っている実行の中で作る
     ///
     /// ## 呼び方
     ///

@@ -77,8 +77,14 @@ extension Sketch {
     ///     if key == "o" {
     ///         Task {
     ///             guard let path = await selectInput("音声を選ぶ") else { return }
-    ///             song = try? await requestSound(path)
-    ///             song?.loop()
+    ///             guard let next = try? await requestSound(path) else { return }
+    ///             // 選び直したときは、前の音を止めて外す
+    ///             if let song {
+    ///                 song.stop()
+    ///                 detach(song)
+    ///             }
+    ///             song = next
+    ///             next.loop()
     ///         }
     ///     }
     /// }
@@ -99,7 +105,8 @@ extension Sketch {
     /// 探す場所・読める形式・投げる失敗は ``loadSound(_:)`` と同じ (``AudioFailure`` に case は足さない)。
     ///
     /// > Note: 届くフレームは、ファイルの大きさとフレームの間隔で変わる。何枚目のフレームで返るかは、
-    /// > いまの振る舞いであって約束ではない ([#2760])。呼んだ `Task` を取り消しても、読み込みは止まらない。
+    /// > いまの振る舞いであって約束ではない ([#2760])。呼んだ `Task` を取り消しても、読み込みは止まらず、
+    /// > 読み終えればスケッチへ足される (取り消しを口に伝えるかは決めていない)。要らなければ、返った後に外す。
     /// > この口だけの絵は撮っていない (鳴る音は絵に出ず、読む場所が違うだけで ``loadSound(_:)`` と同じ)。
     ///
     /// - Parameter file: 音声ファイルの名前。``loadSound(_:)`` と同じ。

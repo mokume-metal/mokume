@@ -75,8 +75,8 @@ struct RequestSoundTests {
         }
     }
 
-    private func makeRuntime(_ sketch: Requesting) throws -> SketchRuntime {
-        try SketchRuntime(sketch: sketch, gpu: try RenderDevice())
+    private func makeRuntime(_ sketch: Requesting, clock: Clock? = nil) throws -> SketchRuntime {
+        try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: clock)
     }
 
     /// フレームを回しながら、`done` になるのを待つ。**期限を越えたら失敗にして返る** — 待つ側が期限を持つ。
@@ -198,6 +198,66 @@ struct RequestSoundTests {
 
         #expect(sketch.song == nil)
         #expect(sketch.failure == .notRunning(call: "requestSound(_:)"))
+    }
+
+    /// **足し終えて待ちが終わった直後に畳まれる競り合い。** 実行が頼みを当てて待ちを終えてから、呼んだ `Task` に
+    /// 番が回るまでの間に `closePlugins` が走ると、足した入り口は閉じられている。それを成功として返さない。
+    /// 検査は main actor を明け渡さずに、フレーム (頼みを当てる) と畳むのを続けて行って、この間を作る。
+    @Test("頼みが当てられて待ちが終わった直後に畳まれたら、閉じられた音を返さず、notRunning を投げる")
+    func closingRightAfterTheRequestWasServedThrowsNotRunning() async throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sketch = Requesting()
+        sketch.path = url.path
+        sketch.flow = try flow()
+        let runtime = try makeRuntime(sketch)
+        try runtime.advance()
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !runtime.attachRequests.hasWaiting, !sketch.finished, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(runtime.attachRequests.hasWaiting, "頼みが窓口に届いていない")
+        // ここから await しない: フレームが頼みを当てて待ちを終え (`Task` はまだ戻っていない)、続けて畳む
+        try runtime.advance()
+        #expect(!runtime.attachRequests.hasWaiting, "頼みが当てられていない")
+        #expect(!sketch.finished, "Task が先に戻っている — 競り合いを作れていない")
+        runtime.closePlugins()
+
+        let closedAt = ContinuousClock.now
+        while !sketch.finished, ContinuousClock.now < closedAt + .seconds(10) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(sketch.finished, "待っている Task が終わらない")
+        #expect(sketch.song == nil, "畳まれた実行の、閉じられた音が成功として返っている")
+        #expect(sketch.failure == .notRunning(call: "requestSound(_:)"))
+    }
+
+    /// 本番の時計の枝を通す。ここまでの検査は `flow` を差し込んで、機材に出さない流れで鳴らした。
+    /// 書き出しの時計 (固定のフレーム時計) は機材に出さずに、フレームの数から決めた位置で進むので、`flow` を
+    /// 差し込まずに `owner.clock` の枝 (`soundFrameRate`)・音声トラックの混ぜ役 (`SoundTrackMixer`) を通せる。
+    @Test("書き出しの時計では、flow を差し込まずに読んでも、足された音がフレームの数から決めた位置で進む")
+    func aSoundRequestedUnderTheExportClockFollowsTheFrames() async throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sketch = Requesting()
+        sketch.path = url.path
+        let runtime = try makeRuntime(sketch, clock: .frameIndex(frameRate: 60))
+
+        try await drive(runtime) { sketch.finished }
+
+        #expect(sketch.failure == nil, "失敗: \(String(describing: sketch.failure))")
+        let song = try #require(sketch.song)
+        #expect(runtime.isAttached(song))
+        song.play()
+        var positions: [Int] = []
+        for _ in 0..<4 {
+            try runtime.advance()
+            positions.append(song.samplePosition)
+        }
+        #expect(song.isPlaying)
+        // 60 fps・48 kHz: 1 フレームで 800 標本。機材には出ていない
+        #expect(zip(positions, positions.dropFirst()).allSatisfy { $1 - $0 == 800 }, "位置: \(positions)")
+        runtime.closePlugins()
     }
 
     @Test("draw() の中で loadSound を呼ぶ警告は、requestSound(_:) へ案内する")

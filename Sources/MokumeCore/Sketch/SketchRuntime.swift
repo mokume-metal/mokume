@@ -1646,12 +1646,25 @@ public final class SketchRuntime {
 
     /// 中で起こした `Task` の続きから頼まれた、入り口を足すことを当てる (``AttachRequests``)。
     ///
-    /// 呼ぶのはフレームの頭で、差込口を巡回している最中ではないので、すぐ足せる。**足した結果の `false` は
+    /// 呼ぶのはフレームの頭で、ふつう差込口を巡回している最中ではないので、すぐ足せる。**巡回の最中なら当てずに次の
+    /// フレームの頭へ回す** — ``attachNow(_:)-(any Inlet)`` は公開の ``attach(_:)-(any Inlet)`` と違い巡回中の後回しを通らず、
+    /// 巡回の最中に並びを変えると書き戻しで消える (#1988)。フレームの中の巡回は ``isAdvancingFrame`` が再入を
+    /// 止めている (``advanceForPresence()``) ので入りえないが、フレームの外の巡回 (出口を外す・閉じる) の最中に
+    /// 差込口がもう 1 度フレームを進めうるかは、差込口の書き方に依る。依らずに済むよう、ここで見る。
+    ///
+    /// **足した結果の `false` は
     /// ここで捨てる** — 閉じた後で断られたとき・`open()` が投げたときで、どちらも診断に出ており、待つ側へは
     /// 足すのを頼み終えたことだけを返す (入り口の `state` が言う。投げる作る口の
     /// ``SketchPart/attached(_:calledAs:making:)`` が `false` を 1 か所で捨てるのと同じ)。
     private func serveAttachRequests() {
-        attachRequests.serve { _ = attachNow($0) }
+        guard seamVisitDepth == 0 else { return }
+        // **走っている実行として足す。** 入り口の `open()` は、時計・画面へ出しているか・音声トラックの混ぜ役を
+        // 走っている実行から読む (`SoundFile` の `owner.clock` など)。差し込まずに開くと、書き出しの時計の下でも
+        // 機材へ鳴らす枝に入る。フレームの頭は `withActiveRuntime` の外 (``drawSketchFrame(deliveredInput:at:displayTime:)``
+        // が中で差す) なので、ここで差す
+        withActiveRuntime {
+            attachRequests.serve { _ = attachNow($0) }
+        }
     }
 
     /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
