@@ -217,8 +217,25 @@ public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { ra
 /// `DispatchQueue` へ渡すと、main actor の閉包なので、実行時の隔離の検査で落ちる (SE-0423)。
 /// 描くのは分けた先ではなく、結果を持ち帰ってからにする。
 ///
+/// **表や JSON・XML の読み出し (``TableRow/getFloat(_:)-(String)`` ほか) も、分けた先では呼べない。**
+/// ``Table``・``JSONObject``・``JSONArray``・``XML`` の読み出しは main actor の上にあり
+/// ([ADR-0010] 決定 1)、分けた先の閉包で呼ぶと、スケッチの口と同じく実行時の隔離の検査で落ちる
+/// (`@Sendable` の閉包なら、組む時点で誤りになる)。分ける前に、main で読みたい値を `[Float]` などへ
+/// 写しておく。欠けた列の知らせも、写すときに列ごとに 1 度だけ出る。
+///
+/// <!-- example: 文脈 var table: Table! -->
+/// ```swift
+/// import Dispatch
+///
+/// let heights = table.rows.map { $0.getFloat("height") }   // main で値へ写す
+/// DispatchQueue.concurrentPerform(iterations: heights.count) { i in
+///     _ = map(heights[i], 0, 200, 0, 1)                    // [Float] はどこからでも読める
+/// }
+/// ```
+///
 /// [#2389]: https://github.com/mokume-metal/mokume/issues/2389
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func map(
     _ value: some ScalarConvertible, _ inLow: some ScalarConvertible, _ inHigh: some ScalarConvertible,
