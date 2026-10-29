@@ -71,22 +71,19 @@ struct APIListLocator {
     /// 取り置きの区画の名前。
     static let facetName = "reference"
 
+    /// 依存の版の状態。**読み方は [DependencyVersion] が持つ** (`doctor` と写しを作らない)。
+    func versionState() -> DependencyVersion.State { DependencyVersion.state(forPackageAt: directory) }
+
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {
-        let version = resolvedVersion()
+        let state = versionState()
+        let version: String? = if case .version(let found) = state { found } else { nil }
         let cache = cacheURL(for: version)
         if let text = try? String(contentsOf: cache, encoding: .utf8), !text.isEmpty {
             return (text, .cached(cache))
         }
         guard let version else {
-            throw Missing(
-                advice: advice(
-                    reason: """
-                        Cannot tell which version is depended on: `Package.resolved` has no pin
-                        for `\(Self.identity)` (this happens when you point at mokume by path
-                        while developing it).
-                        """, cache: cache),
-                cause: .versionUnknown)
+            throw Missing(advice: unknownVersionAdvice(state, cache: cache), cause: .versionUnknown)
         }
 
         let remote = Self.assetURL(version: version)
@@ -128,6 +125,70 @@ struct APIListLocator {
     /// 資産の在処。タグは版に `v` を付けたもの。
     static func assetURL(version: String) -> URL {
         URL(string: "\(releases)/v\(version)/mokume-api-v\(version).md")!
+    }
+
+    /// 版が引けなかった理由ごとの答え (#3419)。**答えの 1 行目は理由が違っても同じ**で、続きが
+    /// その理由に合う一手になる。本体の開発の手順 (`make api-list`) を先に出すのは、本体の開発を
+    /// 示す事実がある回だけ。確かめられない回は、条件をつけて両方を示す。
+    private func unknownVersionAdvice(_ state: DependencyVersion.State, cache: URL) -> String {
+        let head = "Cannot tell which version is depended on"
+        let resolve = "swift package resolve --package-path \"\(directory.path)\""
+        switch state {
+        case .unresolved:
+            return """
+                The public API list is not available yet.
+
+                \(head): this sketch has not resolved its dependencies yet
+                (there is no `Package.resolved`), which is normal right after
+                `\(Command.name) new`. Resolve them, then ask again — the list for the
+                resolved version is fetched and kept:
+
+                  \(resolve)
+
+                (`\(Command.name) run` and `\(Command.name) watch` resolve them too, as part of building.)
+
+                If the sketch points at mokume by path (while developing mokume), there is no version
+                to resolve. Build the list in the mokume repository and put it here instead:
+
+                  make api-list OUT="\(cache.path)"
+                """
+        case .notPinned:
+            return """
+                The public API list is not available here.
+
+                \(head): `Package.resolved` has no pin for `\(Self.identity)`.
+                That is how it looks when the sketch points at mokume by path (while developing
+                mokume): build the list in the mokume repository and put it here, and it is
+                returned from then on:
+
+                  make api-list OUT="\(cache.path)"
+
+                If the dependency on mokume was added or changed recently, resolve again and
+                ask again:
+
+                  \(resolve)
+                """
+        case .revision(let revision):
+            return """
+                The public API list is not available here.
+
+                \(head): `\(Self.identity)` is pinned to a branch or revision
+                (\(revision.prefix(12))), not to a release, and the list is published per release.
+                Depend on a release version and resolve again, or build the list from the
+                revision in use in the mokume repository and put it here:
+
+                  make api-list OUT="\(cache.path)"
+                """
+        case .noPackage:
+            return """
+                The public API list is not available here.
+
+                \(head): there is no `Package.swift` here to read it from.
+                """
+        case .version:
+            // 版があるときはここへ来ない
+            return advice(reason: head, cache: cache)
+        }
     }
 
     /// 得られなかった理由と、そこからの一手。

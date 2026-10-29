@@ -1712,21 +1712,82 @@ struct MCPServerTests {
         #expect(otherFetches.urls.isEmpty)
     }
 
-    @Test("版が引けなければ、組み立てて置く一手を添えて答える")
-    func explainsHowToBuildTheListWhenTheVersionIsUnknown() throws {
-        let directory = try makeSketch()  // Package.resolved が無い = パスで指している (スケッチの場所で)
+    /// **作ったばかりのスケッチ (`Package.resolved` が無い) を、本体の開発と決めつけない** (#3419)。
+    /// 先に出るのはスケッチ側で解決する手で、本体の `make api-list` は「パスで指しているなら」の
+    /// 条件つきで後ろに置く。
+    @Test("作ったばかりで版が引けなければ、スケッチで依存を解決する手を先に言う")
+    func pointsAFreshSketchToResolvingItsDependencies() throws {
+        let directory = try makeSketch()  // Package.swift だけがあり、Package.resolved が無い
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(fetches.urls.isEmpty, "未解決の照会だけでは取りにも行かない")
+        #expect(outcome.text.contains("Cannot tell which version is depended on"))
+        #expect(outcome.text.contains("has not resolved its dependencies yet"))
+        let resolve = "swift package resolve --package-path \"\(directory.path)\""
+        let make =
+            "make api-list OUT=\"\(directory.appendingPathComponent(".mokume/reference/mokume-api.md").path)\""
+        let resolveAt = try #require(outcome.text.range(of: resolve)?.lowerBound, "\(outcome.text)")
+        // 本体の手は、パスで指しているときの条件つきで、解決の手より後ろ
+        let makeAt = try #require(outcome.text.range(of: make)?.lowerBound, "\(outcome.text)")
+        #expect(resolveAt < makeAt)
+        #expect(outcome.text.contains("points at mokume by path"))
+    }
+
+    /// 案内どおりに解決した後は、その版の一覧を取りに行く (別の版で穴埋めしない)。
+    @Test("案内どおりに解決すれば、その版の一覧を取る")
+    func fetchesTheResolvedVersionAfterResolving() throws {
+        let directory = try makeSketch()
+        let fetches = Fetches()
+        let tools = makeTools(directory: directory, fetches: fetches)
+        #expect(tools.call("reference", arguments: ["name": "api"]).isError)
+        #expect(fetches.urls.isEmpty)
+
+        try writeResolved(directory, pins: pin("mokume", "0.1.0"))
+        let outcome = tools.call("reference", arguments: ["name": "api"])
+        #expect(!outcome.isError)
+        #expect(fetches.urls.map(\.absoluteString).allSatisfy { $0.contains("v0.1.0") })
+        #expect(fetches.urls.count == 1)
+    }
+
+    /// 解決済みで mokume の pin が無いのは、パス依存 (本体の開発) の形。ここは本体の手が先で、
+    /// 依存を足し替えた直後かもしれないので、解決し直す手も条件つきで添える。
+    @Test("解決済みなのに mokume の pin が無ければ、パス依存の手を先に言い、解決し直す手も添える")
+    func pointsAPathDependencyToBuildingTheList() throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("swift-syntax", "603.0.2"))
         let fetches = Fetches()
         let outcome = makeTools(directory: directory, fetches: fetches)
             .call("reference", arguments: ["name": "api"])
 
         #expect(outcome.isError)
         #expect(fetches.urls.isEmpty)
-        #expect(outcome.text.contains("Package.resolved"))
-        // 次の一手は、そのまま打てる形で入っている
-        #expect(
-            outcome.text.contains(
-                "make api-list OUT=\"\(directory.appendingPathComponent(".mokume/reference/mokume-api.md").path)\""
-            ))
+        #expect(outcome.text.contains("has no pin for `mokume`"))
+        #expect(outcome.text.contains("points at mokume by path"))
+        #expect(outcome.text.contains("make api-list OUT="))
+        #expect(outcome.text.contains("swift package resolve --package-path"))
+        #expect(!outcome.text.contains("has not resolved its dependencies yet"))
+    }
+
+    @Test("枝や改訂で固定していれば、リリースの版ではないことと、版へ切り替える手を言う")
+    func explainsARevisionPin() throws {
+        let directory = try makeSketch()
+        try Data(
+            #"{"pins":[{"identity":"mokume","kind":"remoteSourceControl","location":"https://example.com/mokume.git","state":{"branch":"main","revision":"0123456789abcdef"}}],"version":3}"#
+                .utf8
+        ).write(to: directory.appendingPathComponent("Package.resolved"))
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.contains("pinned to a branch or revision"))
+        #expect(outcome.text.contains("0123456789ab"))
+        #expect(outcome.text.contains("Depend on a release version"))
+        #expect(!outcome.text.contains("has not resolved its dependencies yet"))
     }
 
     @Test("資産を取ってこられなければ、理由と一手を添えて答える")

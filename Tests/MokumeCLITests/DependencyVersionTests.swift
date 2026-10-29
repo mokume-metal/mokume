@@ -130,4 +130,55 @@ struct DependencyVersionTests {
                 "mokume dependency: \(DoctorCommand.unknown) — no pin in Package.resolved "
                     + "(pointing at a path does this)"))
     }
+
+    // MARK: - 版が引けない理由 (#3419)
+
+    private func makeSketch(resolved: String?, manifest: Bool = true) throws -> URL {
+        let root = try makePackage(resolved)
+        if manifest {
+            try "// swift-tools-version: 6.2\n".write(
+                to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        }
+        return root
+    }
+
+    @Test("版が引けない理由を、置かれているファイルから分ける")
+    func tellsWhyTheVersionIsUnknown() throws {
+        // 作ったばかり: Package.swift があって Package.resolved が無い
+        #expect(DependencyVersion.state(forPackageAt: try makeSketch(resolved: nil)) == .unresolved)
+        // 解決済みだが mokume の pin が無い (パス依存。swift-syntax だけが載る)
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved:
+                        #"{"pins":[{"identity":"swift-syntax","state":{"version":"603.0.2"}}],"version":3}"#))
+                == .notPinned)
+        // 版で固定 / 改訂で固定
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved: #"{"pins":[{"identity":"mokume","state":{"version":"0.5.0"}}],"version":3}"#))
+                == .version("0.5.0"))
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved:
+                        #"{"pins":[{"identity":"mokume","state":{"branch":"main","revision":"abcdef0123456789"}}],"version":3}"#))
+                == .revision("abcdef0123456789"))
+        // スケッチの場所でない
+        #expect(
+            DependencyVersion.state(forPackageAt: try makeSketch(resolved: nil, manifest: false))
+                == .noPackage)
+    }
+
+    /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。
+    @Test("まだ解決していないスケッチには、パスで指しているとは言わず、解決の手を言う")
+    func doesNotBlameAPathWhenNotResolvedYet() {
+        let line = DoctorCommand.dependencyLine(nil, unresolved: true)
+        #expect(line.contains("not resolved yet"))
+        #expect(!line.contains("pointing at a path"))
+        #expect(line.contains("swift package resolve"))
+        // 解決してあるのに pin が無い回は、今までの文言のまま
+        #expect(DoctorCommand.dependencyLine(nil, unresolved: false).contains("pointing at a path does this"))
+    }
 }
