@@ -1344,7 +1344,9 @@ public final class Canvas {
     /// 置いた図形は置くときに変換を焼き付けるので、区間の中で書いた変換は、その後に置いたものに
     /// 効く。区間を出るときに変換と積み履歴は既定へ戻る (``endCarriedSegment()``) ので、次の
     /// フレームにも次の区間にも漏れない。**シーンの記述 (光・視点・投影・材質・影・周囲・効果・
-    /// 切り抜き・粒・計算) は、焼き付かずフレームに属するので、ここを見ない** — 区間でも従来どおり断る。
+    /// 切り抜き) は、焼き付かずフレームに属するので、ここを見ない** — 区間でも従来どおり断る。粒・計算の頼みも
+    /// 同じく断る (``admits(_:)``)。こちらは状態ではなく、そのフレームで走る仕事の予約で、ループ中の
+    /// 入力のコールバックで頼めば、そのフレームで走る (出口で戻さない・``leaveInputCallbackInsideFrame()``)。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
@@ -1769,6 +1771,8 @@ public final class Canvas {
     ///
     /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
     func warnIfStacksLeftOpen(before ended: String) {
+        // 段が無ければ、配列を作らずに抜ける (入力のコールバックの出口が、配るたびに通る・#3408)
+        guard !transformStack.isEmpty || !styleStack.isEmpty else { return }
         let sites = [transformStack.last?.1, styleStack.last?.1].compactMap { $0 }
         guard let last = sites.max(by: { $0.order < $1.order }) else { return }
         warnOnce(
@@ -4126,6 +4130,27 @@ public final class Canvas {
         // 描き切れなかったフレームも含めて、次に引き継ぐ奥行きは無い (#1888)
         depthIsHeld = false
         beginDrawFrame = nil
+        resetSceneDescription()
+        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
+        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
+        // `beginFrame()`)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        discardShapeLeftOpen()
+    }
+
+    /// **シーンの記述 (視点・目印・変換・切り抜き・光・周囲・材質・影) を既定へ戻す。** フレームの終わり
+    /// (``abandonFrame()``) と、フレームの内側で配った入力のコールバックの出口
+    /// (``leaveInputCallbackInsideFrame()``・[#3408]) が、同じこの 1 つを通る。戻す並びを 2 か所に書くと、
+    /// 片方に足し落とした状態だけが越える。**境目の検査の表で「シーンの記述」の印を持つ行
+    /// (`CanvasTests.FrameState` の `FrameReset.isSceneDescription`) と、ここで戻すものは同じ集合**で、
+    /// 足したらその表に印つきで足す。
+    ///
+    /// 積み履歴 (``transformStack``・``styleStack``) と効果の予定 (``pendingEffects``) は、ここへ入れない —
+    /// フレームの終わりでは頭が戻す (積んだ事実はフレームに属する・#925)。出口の側が自分で戻す。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    private func resetSceneDescription() {
         cameraStorage = nil
         drawsDebugGuides = false
         transform = .identity
@@ -4139,12 +4164,64 @@ public final class Canvas {
         shadowBiasValue = ShadowMap.defaultBias
         style.castsShadow = true
         style.receivesShadow = true
-        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
-        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
-        // `beginFrame()`)
-        //
-        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    }
+
+    /// **フレームの内側で配った入力のコールバック 1 つの出口。** コールバックで書いたシーンの記述を、
+    /// 抜けるときに既定へ戻す ([#3408]・[ADR-0021] 決定 4 の追補 (2026-10-28) の改訂)。
+    ///
+    /// ループ中と `redraw()` を頼んだ後の入力のコールバックは、本体の面のフレームの内側 (`draw()` の前) で
+    /// 配られる。戻さないと、`mousePressed()` で書いた `translate()`・`lights()`・`clip()` などが、同じ
+    /// フレームの `draw()` へ漏れる (止まっている間は、区間の出口 ``endCarriedSegment()`` が変換と積み履歴を
+    /// 戻す)。Processing・p5.js は `draw()` の頭で既定へ戻るので、同じ結果になる。戻す範囲は、フレームの頭が
+    /// 戻すシーンの記述と同じ (``resetSceneDescription()``・積み履歴・効果の予定)。**描き方 (塗り・線・混ぜ方
+    /// など) と乱数の種は戻さない** — 寿命がフレームを越える。置いたもの (図形・絵・背景・書いた画素) は
+    /// 消さない。**粒・計算 (`force()`・`particles()`・`compute()`) も戻さない** — 状態ではなく、そのフレームで
+    /// 走る仕事の予約で、コールバックで頼んだものはそのフレームで走る。組み立てたまま抜けた形は、フレームの
+    /// 頭と同じく捨てる (``discardShapeLeftOpen()``)。
+    ///
+    /// **戻す前に、列を閉じる必要があるときだけ閉じる。** 列は閉じるときに視点・光・周囲・切り抜き・材質・影の
+    /// 落とし方を読むので、コールバックで書いて置いたものが、戻した既定で描かれてはいけない。一方、何も
+    /// 書いていなければ列は割らない (`mouseDragged() { circle(…) }` が 1 フレームに何件来ても、列は 1 本のまま
+    /// で、貼る絵の矩形の畳み ``pendingFlat`` も切れない)。``currentStyle`` の setter が、列の読む設定が変わる
+    /// ときだけ閉じるのと同じ規律である。
+    ///
+    /// **列に焼かれず、描き切りで読む状態 (影・効果・目印) は、コールバックで書いたまま抜けると効かない。**
+    /// 黙って戻さず、1 度だけ知らせる (``Warning/sceneNotCarried``。``endCarriedSegment()`` が捨てる変換を
+    /// 知らせるのと同じ形)。積んだまま抜けた段も、フレームの終わりと同じく名指して 1 度知らせて捨てる。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func leaveInputCallbackInsideFrame() {
+        guard isDrawing else { return }
+        warnIfStacksLeftOpen(before: "the input callback")
+        warnIfFrameReadSceneNotCarried()
+        if columnsReadNonDefaultScene { closeBatch() }
+        resetSceneDescription()
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        pendingEffects.removeAll(keepingCapacity: true)
         discardShapeLeftOpen()
+    }
+
+    /// 列が閉じるときに読むシーンの記述 (視点・光・周囲・切り抜き・材質・影の落とし方) が、既定でないか。
+    /// 既定でなければ、戻す前に開いている列を閉じる (``leaveInputCallbackInsideFrame()``)。
+    private var columnsReadNonDefaultScene: Bool {
+        cameraStorage != nil || !activeLights.isEmpty || activeSurroundings != nil || style.clip != nil
+            || style.material != .default || !style.castsShadow || !style.receivesShadow
+    }
+
+    /// 影・効果・目印を書いたまま入力のコールバックを抜けるなら、効かないことを 1 度だけ知らせる。
+    /// これらは列に焼かれず、フレームの描き切りが読むので、出口で戻すと同じフレームの `draw()` に届かない。
+    private func warnIfFrameReadSceneNotCarried() {
+        guard
+            shadowsEnabled || shadowRangeValue != nil || shadowDetailValue != ShadowMap.defaultDetail
+                || shadowBiasValue != ShadowMap.defaultBias || !pendingEffects.isEmpty || drawsDebugGuides
+        else { return }
+        warnOnce(
+            .sceneNotCarried,
+            "A shadow, effect or debug-guide setting (shadows(), effects(), debugMode()) was written in "
+                + "an input callback, and it is dropped when that callback ends: every frame starts "
+                + "with none of them, so it does not reach the draw() of the same frame. Write it in draw()")
     }
 
     /// 同じ本体のフレームの中で ``beginDraw()`` を重ねたことを、初回だけ知らせる。境目を越えて
