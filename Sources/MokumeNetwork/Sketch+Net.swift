@@ -442,12 +442,15 @@ extension Sketch {
             }
         }
         return try attached(NetworkFailure.self, calledAs: #function) {
+            let seams = DatagramSeams.current
             let outbound = destination.map {
-                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+                DatagramSender(
+                    host: $0.host, port: $0.port, connect: seams.connect, warn: { Diagnostics.warn($0) })
             }
             return UDPPort(
                 port: port, name: "udp :\(port)",
-                source: DatagramSource<String>.text(port: port, warn: { Diagnostics.warn($0) }),
+                source: DatagramSource<String>.text(
+                    port: port, acceptor: seams.acceptor, warn: { Diagnostics.warn($0) }),
                 outbound: outbound, owner: self)
         }
     }
