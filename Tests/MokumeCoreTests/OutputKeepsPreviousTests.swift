@@ -113,6 +113,29 @@ struct OutputKeepsPreviousTests {
         }
     }
 
+    @Test("255 まで作れる名前の行き先にも書ける (一時ファイルの名前を詰めるので、243〜255 の名前でも黙って書き損じにならない)")
+    func theLongestNamesStillWrite() async throws {
+        try await withDirectory { directory in
+            for (name, format) in Self.kinds {
+                let ext = String(name.drop { $0 != "." })
+                for length in [243, 255] {
+                    let long = String(repeating: "n", count: length - ext.count) + ext
+                    #expect(FileNameLength.of(long) == length)
+                    let destination = directory.appendingPathComponent(long)
+                    try Self.previous.write(to: destination)
+                    let writer = MovieWriter(path: destination.path, frameRate: 25, format: format)
+                    for index in 0..<3 {
+                        writer.write(picture(index), frame: index + 1, time: Double(index) / 25)
+                    }
+                    writer.finish()
+                    #expect(writer.takeFailure() == nil, "\(ext) \(length): 書き損じた")
+                    #expect(frameCount(atPath: destination.path) == 3, "\(ext) \(length): 置き換わっていない")
+                    #expect(temporaries(of: destination).isEmpty, "\(ext) \(length): 一時ファイルが残った")
+                }
+            }
+        }
+    }
+
     // MARK: - 完了条件 4 (書き損じたとき)
 
     @Test("1 枚でも書き損じた録りは、行き先に置かず前のファイルを残す。失敗の行は行き先の名前と、前のファイルが残ったことを言う")

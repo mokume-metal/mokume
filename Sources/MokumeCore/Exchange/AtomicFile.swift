@@ -212,7 +212,30 @@ package enum AtomicFile {
     /// 一時ファイルの場所。**置き場所の隣に作る** (冒頭の `rename(2)` の理由)。
     static func temporaryURL(for url: URL, writer: pid_t, sequence: Int) -> URL {
         url.deletingLastPathComponent().appendingPathComponent(
-            ".\(url.lastPathComponent).\(writer)-\(sequence).tmp", isDirectory: false)
+            ".\(temporaryStem(of: url.lastPathComponent)).\(writer)-\(sequence).tmp", isDirectory: false)
+    }
+
+    /// 一時ファイルの名前に入れる、行き先の名前 (``temporaryURL(for:writer:sequence:)``)。
+    ///
+    /// **名前を詰める** ([#3426])。一時ファイルは `.<名前>.<pid>-<連番>.tmp` で、行き先より十数字長い。行き先の名前は
+    /// 255 まで作れる (``FileNameLength/limit``) ので、そのまま入れると 243〜255 の名前は一時ファイルを作る段で
+    /// `File name too long` になり、書けるはずの名前が書けなくなる。収まらないときだけ、頭から切って入れる。
+    ///
+    /// **切る長さは pid と連番の桁数によらない固定の余白で決める** — 片付け (``writer(ofTemporary:for:)``) が
+    /// 名前から同じ頭を引き直せるように、書いた側と読む側で同じ 1 つの式にしてある。余白は点 2 つと `-` と `.tmp`
+    /// (7) に、pid (最大 10 桁) と連番 (最大 19 桁) を足した 36 を丸めた 40。
+    ///
+    /// [#3426]: https://github.com/mokume-metal/mokume/issues/3426
+    nonisolated static func temporaryStem(of name: String) -> String {
+        let room = FileNameLength.limit - 40
+        guard let length = FileNameLength.of(name), length > room else { return name }
+        var stem = ""
+        for character in name {
+            let next = stem + String(character)
+            guard let nextLength = FileNameLength.of(next), nextLength <= room else { break }
+            stem = next
+        }
+        return stem
     }
 
     /// 一時ファイルの名前から、書いたプロセスの番号を引く。
@@ -220,7 +243,7 @@ package enum AtomicFile {
     /// - Returns: その置き場所の一時ファイルでなければ `nil`。**名前の形が違うものは
     ///   片付けの対象にしない** — 誰が置いたか分からないものは消さない。
     nonisolated static func writer(ofTemporary name: String, for url: URL) -> pid_t? {
-        let prefix = ".\(url.lastPathComponent)."
+        let prefix = ".\(temporaryStem(of: url.lastPathComponent))."
         let suffix = ".tmp"
         guard name.count > prefix.count + suffix.count, name.hasPrefix(prefix),
             name.hasSuffix(suffix)
