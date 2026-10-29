@@ -347,6 +347,233 @@ struct BundleCommandTests {
         #expect(try readInfoPlist(of: app)[AppIdentity.bundledMarkKey] as? Bool == true)
     }
 
+    // MARK: - 上書きするのは前の版の自分の紙だけ (#3054)
+
+    /// `--out` の直下の `How to open Grain.txt` の場所。
+    private func grainNote(in out: URL) -> URL {
+        out.appendingPathComponent(BundleCommand.noteFileName(for: grain))
+    }
+
+    /// 利用者の覚え書き (先頭の行が `How to open Grain` でない) を紙の場所に置く。
+    private func placeForeignNote(in out: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+        try "my own memo\n".write(to: note, atomically: true, encoding: .utf8)
+        return note
+    }
+
+    /// 止まるのはビルドの前でなければならない。中身の無い `Package.swift` なので、ビルドへ進んで
+    /// いれば `dump-package` で別の失敗 (`toolchainFailed`) になる。紙も `.app` も変わらない。
+    @Test("run は、利用者の How to open Grain.txt をビルドの前に断り、何も変えない")
+    func bundlingStopsBeforeBuildingOverAForeignNote() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "// 中身の無い宣言\n".write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try #"{"name": "Grain", "identifier": "org.example.grain", "version": "0.1.0"}"#
+            .write(
+                to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
+                encoding: .utf8)
+        let out = root.appendingPathComponent(BundleCommand.defaultOutputDirectory, isDirectory: true)
+        let note = try placeForeignNote(in: out)
+
+        do {
+            try BundleCommand.run([root.path])
+            Issue.record("投げなかった")
+        } catch {
+            guard let failure = error as? CommandFailure, case .cannotCreate(let path, let reason) = failure
+            else {
+                Issue.record("cannotCreate で投げていない (ビルドへ進んだ): \(error)")
+                return
+            }
+            #expect(path == note.path)
+            #expect(reason.contains("confirmed"), "\(reason)")
+            #expect(reason.contains("by hand"), "\(reason)")
+        }
+        #expect(try String(contentsOf: note, encoding: .utf8) == "my own memo\n")
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: out.path) == [note.lastPathComponent])
+    }
+
+    /// 書く直前の確かめ (`finish` が呼ぶ口)。ビルドの前の確かめだけでは、その後に置かれたものを守れない。
+    @Test("紙を書く口も、利用者のファイルを上書きしない")
+    func writingTheNoteDoesNotOverwriteAForeignFile() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let note = try placeForeignNote(in: out)
+
+        expectRefusal(at: note) {
+            _ = try BundleCommand.writeOpeningNote(
+                for: grain, beside: out.appendingPathComponent("Grain.app"))
+        }
+        #expect(try String(contentsOf: note, encoding: .utf8) == "my own memo\n")
+    }
+
+    @Test("リンク (生きていても壊れていても) と、ディレクトリの紙は、何も変えずに断る")
+    func linksAndDirectoriesAreNotReplacedAsNotes() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+        // リンクの先は、先頭の行だけなら mokume の紙と読める (辿って確かめないことを見る)
+        let target = root.appendingPathComponent("target.txt")
+        try BundleCommand.openingNote(for: grain).write(to: target, atomically: true, encoding: .utf8)
+
+        try FileManager.default.createSymbolicLink(at: note, withDestinationURL: target)
+        expectRefusal(at: note) { _ = try BundleCommand.replaceableNote(for: grain, in: out) }
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(atPath: note.path) == target.path)
+        #expect(
+            try String(contentsOf: target, encoding: .utf8) == BundleCommand.openingNote(for: grain))
+        try FileManager.default.removeItem(at: note)
+
+        let missing = root.appendingPathComponent("no-such-file.txt")
+        try FileManager.default.createSymbolicLink(at: note, withDestinationURL: missing)
+        expectRefusal(at: note) {
+            _ = try BundleCommand.writeOpeningNote(
+                for: grain, beside: out.appendingPathComponent("Grain.app"))
+        }
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(atPath: note.path) == missing.path)
+        #expect(!FileManager.default.fileExists(atPath: missing.path), "リンクの先に書いた")
+        try FileManager.default.removeItem(at: note)
+
+        try FileManager.default.createDirectory(at: note, withIntermediateDirectories: false)
+        expectRefusal(at: note) { _ = try BundleCommand.replaceableNote(for: grain, in: out) }
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: note.path, isDirectory: &isDirectory))
+        #expect(isDirectory.boolValue)
+    }
+
+    @Test("前の回に mokume が書いた紙は上書きされ、紙が無ければ書かれる")
+    func anOwnNoteIsReplacedAndAnAbsentOneIsWritten() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        let app = out.appendingPathComponent("Grain.app")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+
+        #expect(try BundleCommand.writeOpeningNote(for: grain, beside: app) == note)
+        #expect(try String(contentsOf: note, encoding: .utf8) == BundleCommand.openingNote(for: grain))
+
+        try (BundleCommand.openingNote(for: grain) + "\nedited tail\n")
+            .write(to: note, atomically: true, encoding: .utf8)
+        _ = try BundleCommand.writeOpeningNote(for: grain, beside: app)
+        #expect(try String(contentsOf: note, encoding: .utf8) == BundleCommand.openingNote(for: grain))
+    }
+
+    /// 印は先頭の行そのもの。名前の前方一致 (`Grain 2`) や、行の途中の一致は通さない。
+    @Test("先頭の行が How to open Grain と一致しない紙は断る")
+    func onlyTheExactFirstLineMarksANote() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+
+        for text in [
+            "How to open Grain 2\n\nbody", "\nHow to open Grain\n", "my notes\nHow to open Grain\n",
+            " How to open Grain\n", "",
+        ] {
+            try text.write(to: note, atomically: true, encoding: .utf8)
+            #expect(!BundleCommand.isOwnNote(note, identity: grain), "\(text.debugDescription) を通した")
+        }
+        for text in ["How to open Grain", "How to open Grain\n", "How to open Grain\n\nbody"] {
+            try text.write(to: note, atomically: true, encoding: .utf8)
+            #expect(BundleCommand.isOwnNote(note, identity: grain), "\(text.debugDescription) を断った")
+        }
+        // 文字として読めないものは確かめられない側に倒す
+        try Data([0x48, 0xFF, 0xFE]).write(to: note)
+        #expect(!BundleCommand.isOwnNote(note, identity: grain))
+    }
+
+    /// 読む前に大きさで断る。先頭の行が合っていても、上限を超える紙は確かめられない側に倒す。
+    @Test("上限を超える大きさの紙は、先頭の行が合っていても読まずに断る")
+    func anOversizedNoteIsNotRead() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+        let head = BundleCommand.openingNote(for: grain) + "\n"
+
+        let within = head + String(repeating: "x", count: BundleCommand.openingNoteReadLimit - head.utf8.count)
+        try within.write(to: note, atomically: true, encoding: .utf8)
+        #expect(BundleCommand.isOwnNote(note, identity: grain), "上限ちょうどの紙を断った")
+
+        try (within + "x").write(to: note, atomically: true, encoding: .utf8)
+        expectRefusal(at: note) { _ = try BundleCommand.replaceableNote(for: grain, in: out) }
+    }
+
+    /// 名前には改行が入りうる (`AppIdentity.make` は途中の `\n` を通す)。印を行として割ると、
+    /// 自分の紙を 2 回目から断る。
+    @Test("名前に改行があっても、前の回に書いた自分の紙は 2 回目も上書きできる")
+    func aNameWithANewlineStillMatchesItsOwnNote() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let multiline = AppIdentity(name: "Gr\nain", identifier: "org.example.grain", version: "0.1.0")
+        let app = out.appendingPathComponent("Gr\nain.app")
+
+        let note = try BundleCommand.writeOpeningNote(for: multiline, beside: app)
+        _ = try BundleCommand.writeOpeningNote(for: multiline, beside: app)
+        #expect(try String(contentsOf: note, encoding: .utf8) == BundleCommand.openingNote(for: multiline))
+        // 名前の途中までしか合わない紙は通さない
+        try "How to open Gr\n".write(to: note, atomically: true, encoding: .utf8)
+        #expect(!BundleCommand.isOwnNote(note, identity: multiline))
+    }
+
+    /// APFS の既定は大文字小文字を区別せず、`How to open grain.txt` は `How to open Grain.txt` と
+    /// 同じファイルに当たる。**名前の部分だけ**大文字小文字を無視し、`How to open ` は完全一致のまま。
+    @Test("名前の大文字小文字だけが違う自分の紙は断らず、How to open の部分は完全一致のまま")
+    func theNameInTheMarkIgnoresCaseButTheLeadDoesNot() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+        try BundleCommand.openingNote(for: grain).write(to: note, atomically: true, encoding: .utf8)
+
+        let lower = AppIdentity(name: "grain", identifier: "org.example.grain", version: "0.1.0")
+        #expect(BundleCommand.isOwnNote(note, identity: lower), "Grain の紙を grain で断った")
+
+        try "how to open Grain\n".write(to: note, atomically: true, encoding: .utf8)
+        #expect(!BundleCommand.isOwnNote(note, identity: grain), "How to open の大文字小文字を無視した")
+        try "How to open Grainy\n".write(to: note, atomically: true, encoding: .utf8)
+        #expect(!BundleCommand.isOwnNote(note, identity: grain), "名前の前方一致を通した")
+    }
+
+    /// 人かエディタが触っただけの形 (CRLF への変換・BOM) は、自分の紙として受ける。
+    @Test("CRLF に変換された紙と、UTF-8 の BOM 付きの紙も自分の紙と確かめる")
+    func aNoteConvertedToCRLFOrWithABOMIsStillOwn() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        let note = grainNote(in: out)
+        let own = BundleCommand.openingNote(for: grain)
+        let multiline = AppIdentity(name: "Gr\nain", identifier: "org.example.grain", version: "0.1.0")
+
+        try own.replacingOccurrences(of: "\n", with: "\r\n").write(
+            to: note, atomically: true, encoding: .utf8)
+        #expect(BundleCommand.isOwnNote(note, identity: grain), "CRLF の紙を断った")
+        try ("\u{FEFF}" + own).write(to: note, atomically: true, encoding: .utf8)
+        #expect(BundleCommand.isOwnNote(note, identity: grain), "BOM 付きの紙を断った")
+        try ("\u{FEFF}" + own.replacingOccurrences(of: "\n", with: "\r\n")).write(
+            to: note, atomically: true, encoding: .utf8)
+        #expect(BundleCommand.isOwnNote(note, identity: grain), "BOM 付きの CRLF の紙を断った")
+        try BundleCommand.openingNote(for: multiline).replacingOccurrences(of: "\n", with: "\r\n")
+            .write(to: note, atomically: true, encoding: .utf8)
+        #expect(BundleCommand.isOwnNote(note, identity: multiline), "改行入りの名前の CRLF の紙を断った")
+        // BOM は 1 つだけ読み飛ばす
+        try ("\u{FEFF}\u{FEFF}" + own).write(to: note, atomically: true, encoding: .utf8)
+        #expect(!BundleCommand.isOwnNote(note, identity: grain), "BOM を 2 つ読み飛ばした")
+    }
+
     // MARK: - 退ける手順と、確かめる形 (#2500 の反証)
 
     /// 他人の `.app` の形。`Contents/Info.plist` に mokume の印を入れた「自分の出力に見える」実体を、
@@ -1470,6 +1697,32 @@ struct BundleCommandTests {
         #expect(!signed, "紙が書けないのに署名の段に進んだ")
     }
 
+    /// 確かめは通る (紙は無い) のに書くだけが失敗する回。置き場を書けない権限にする。
+    @Test("確かめを通ったあと書くだけが失敗する回も、署名の段に進まずに止まる")
+    func aNoteThatPassesTheCheckButCannotBeWrittenStopsBeforeSigning() throws {
+        let root = try makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApplicationToSign(in: root)
+        let out = app.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: out.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: out.path)
+        }
+        try #require(
+            !FileManager.default.isWritableFile(atPath: out.path), "書けない権限にできない (root で走っている)")
+        var signed = false
+
+        #expect(throws: CommandFailure.self) {
+            try BundleCommand.finish(app, identity: identity, bundles: []) {
+                _ throws(CommandFailure) in signed = true
+            }
+        }
+        #expect(!signed, "紙が書けないのに署名の段に進んだ")
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: out.appendingPathComponent(BundleCommand.noteFileName(for: identity)).path))
+    }
+
     @Test("資材の欠けは、紙も署名も出さずに止まる")
     func aMissingBundleStopsBeforeTheNoteAndSigning() throws {
         let root = try makeWorkspace()
@@ -1511,27 +1764,24 @@ struct BundleCommandTests {
         #expect(readme.contains("組み立ての後"), "README が組み立ての後で落ちうることを書いていない")
     }
 
-    /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。置き換えて書く紙は、
-    /// 行き先がディレクトリだと下の失敗が ENOENT になるが、`Is a directory` と名乗る。
-    @Test("書けなかった事情は OS の文面で名乗り、ディレクトリへ置き換えて書く失敗は Is a directory")
+    /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。紙の場所のディレクトリは
+    /// 書く前の確かめで断る (#3054) ので、ここで見るのは確かめを通ったあとの書く失敗 (無い置き場)。
+    @Test("書けなかった事情は OS の文面で名乗る")
     func unwritableReasonsAreTheOSWords() throws {
         let root = try makeWorkspace()
         defer { try? FileManager.default.removeItem(at: root) }
-        let app = root.appendingPathComponent("Demo.app")
-        try FileManager.default.createDirectory(
-            at: root.appendingPathComponent(BundleCommand.noteFileName(for: identity)),
-            withIntermediateDirectories: false)
+        let missing = root.appendingPathComponent("no-such-folder")
         do {
-            _ = try BundleCommand.writeOpeningNote(for: identity, beside: app)
-            Issue.record("ディレクトリへ紙を書けてしまった")
+            _ = try BundleCommand.writeOpeningNote(
+                for: identity, beside: missing.appendingPathComponent("Demo.app"))
+            Issue.record("無い置き場へ紙を書けてしまった")
         } catch {
             guard case .cannotCreate(_, let reason) = error else {
                 Issue.record("cannotCreate で投げていない: \(error)")
                 return
             }
-            #expect(reason == String(cString: strerror(EISDIR)))
+            #expect(reason == String(cString: strerror(ENOENT)))
         }
-        let missing = root.appendingPathComponent("no-such-folder")
         do {
             _ = try BundleCommand.writeEntitlements(["com.apple.security.app-sandbox": false], in: missing)
             Issue.record("無い置き場へ書けてしまった")
