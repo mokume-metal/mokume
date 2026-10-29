@@ -230,6 +230,9 @@ nonisolated final class MovieFile: MovieOutput {
 
     private var writerStatus: AVAssetWriter.Status { readsForTesting.status?() ?? writer.status }
 
+    /// 本物の writer の状態。**検査だけが読む** — ``readsForTesting`` の差し替えを通さず、取り消しが呼ばれたかを見る (#3426)。
+    var realWriterStatus: AVAssetWriter.Status { writer.status }
+
     private var pixelBufferPool: CVPixelBufferPool? {
         if let pool = readsForTesting.pool { return pool() }
         return adaptor.pixelBufferPool
@@ -448,6 +451,12 @@ nonisolated final class MovieFile: MovieOutput {
         // 書く場所が行き先なので、撮り直しは上書きになる。形式は `fileType` が決めるので、拡張子が `.tmp` でも
         // 同じに書ける (`.mov`・`.mp4` とも測った)
         try? FileManager.default.removeItem(at: writtenURL)
+        // **ここから先で投げるなら、書く場所に作ったものを残さない** (#3426)。`startWriting` や `canAdd` が断って
+        // 投げても、隣の隠した一時ファイルは誰も開いておらず、`MovieWriter` は開けなかった書き手に `abandon()` を
+        // 呼ばない。次の回の片付けまで残る
+        let written = writtenURL
+        var opened = false
+        defer { if !opened { try? FileManager.default.removeItem(at: written) } }
 
         guard let writer = try? AVAssetWriter(outputURL: writtenURL, fileType: format == .h264 ? .mp4 : .mov)
         else {
@@ -511,6 +520,7 @@ nonisolated final class MovieFile: MovieOutput {
         guard writer.startWriting() else {
             throw .writeFailed(path: path, reason: failureReason)
         }
+        opened = true
     }
 
     /// 1 枚を書き足す。**時刻はフレーム自身のもの**で、通し番号ではない。
@@ -697,8 +707,12 @@ nonisolated final class MovieFile: MovieOutput {
     /// 書き損じた録りを捨てる。**書いている最中のファイルを取り消し、一時ファイルを消す。行き先には触れない** (#3426)。
     ///
     /// 一時ファイルを使わない形 (``placement`` が `nil`) では、書く場所が行き先なので、書きかけがそのまま消える。
+    ///
+    /// **取り消しを呼ぶのは、まだ書いている writer だけ** (``finish(lastFrameAt:)`` の「転んだ writer には取り消しを呼ばない」と
+    /// 同じ)。転んだ writer・閉じ終えた writer に `cancelWriting()` を呼ぶと、書き手の状態が取り消しへ書き換わり、
+    /// 転んだ理由が失われる。
     func abandon() {
-        writer.cancelWriting()
+        if writerStatus == .writing, writerError == nil { writer.cancelWriting() }
         try? FileManager.default.removeItem(at: writtenURL)
     }
 

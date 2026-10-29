@@ -348,6 +348,48 @@ struct OutputKeepsPreviousTests {
         }
     }
 
+    @Test("リンクの行き先へ置き換えが失敗したら、リンクは残り、指す先は変わらず、一時ファイルも残らない")
+    func aFailedPlacementOverALinkKeepsTheLink() async throws {
+        try await withDirectory { directory in
+            let target = directory.appendingPathComponent("target.bin")
+            try Self.previous.write(to: target)
+            let destination = directory.appendingPathComponent("link.mp4")
+            try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: target)
+            let placement = try AtomicFile.reserve(destination)
+            // 書き手が一時ファイルを書かずに置く段へ来た (置く物が無い) — 置き換えは断られる
+            #expect(throws: (any Error).self) { try placement.placeWritten() }
+            #expect(
+                (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) == target.path,
+                "リンクが失われた")
+            #expect(try Data(contentsOf: target) == Self.previous)
+            #expect(temporaries(of: destination).isEmpty)
+        }
+    }
+
+    @Test("転んだ writer には取り消しを呼ばない。書いている最中の writer には呼ぶ")
+    func abandonCancelsOnlyAWriterThatIsStillWriting() async throws {
+        try await withDirectory { directory in
+            for failed in [true, false] {
+                let destination = directory.appendingPathComponent("abandon-\(failed).mp4")
+                let placement = try AtomicFile.reserve(destination)
+                let file = try MovieFile(
+                    path: destination.path, width: 48, height: 32, frameRate: 25, format: .h264, placement: placement)
+                try await file.append(picture(0), at: 0)
+                // 状態の読みを「転んだ」に差し替える。本物の writer は書いている最中のまま
+                if failed { file.readsForTesting.status = { .failed } }
+                #expect(file.realWriterStatus == .writing)
+                file.abandon()
+                #expect(
+                    failed ? file.realWriterStatus == .writing : file.realWriterStatus == .cancelled,
+                    "failed=\(failed): \(file.realWriterStatus.rawValue)")
+                #expect(temporaries(of: destination).isEmpty)
+                // 取り消されなかった writer は、ここで閉じて手放す (書いている最中のまま手放さない)
+                file.readsForTesting.status = nil
+                file.abandon()
+            }
+        }
+    }
+
     // MARK: - 完了条件 5 (子が落ちたとき)
 
     @Test("落ちた書き手の一時ファイルは、次に同じ名前へ書く回が片付け、行き先は落ちる前のまま")

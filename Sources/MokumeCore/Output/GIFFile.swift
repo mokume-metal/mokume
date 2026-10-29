@@ -89,9 +89,11 @@ nonisolated final class GIFFile: MovieOutput {
         // 行き先の前のファイルは閉じ終えるまで残る (#3426)。使わない形では書く場所が行き先なので、撮り直しは上書きになる
         let writtenPath = placement?.temporary.path ?? path
         try? FileManager.default.removeItem(atPath: writtenPath)
-        guard FileManager.default.createFile(atPath: writtenPath, contents: nil),
-            let handle = FileHandle(forWritingAtPath: writtenPath)
-        else { throw .destinationUnavailable(path: path) }
+        // **作るのと開くのを 1 回の `open(2)` で済ませる** (#3426)。`createFile` の後に `FileHandle` が開けないと、
+        // 作った空のファイル (一時ファイル) を残して投げることになる。権限は `createFile` と同じ (0666 から umask を引く)
+        let descriptor = open(writtenPath, O_WRONLY | O_CREAT | O_TRUNC, 0o666)
+        guard descriptor >= 0 else { throw .destinationUnavailable(path: path) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.path = path
         self.placement = placement
         self.writtenPath = writtenPath

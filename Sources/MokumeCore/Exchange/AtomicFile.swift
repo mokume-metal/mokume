@@ -152,17 +152,26 @@ package enum AtomicFile {
         /// 書き手が一時ファイルに書き終えた後、出来上がりを行き先へ置く ([#3426])。**中身は既に一時ファイルにある**。
         ///
         /// 置き方は ``place(using:)`` と同じ 1 つで、違いは行き先がシンボリックリンクのときだけ。`replaceItemAt` は
-        /// リンクの置き換えを断る (実測: `No such file or directory`) ので、**リンクを外してから置く** — いまの書き手が
-        /// 開くときに `removeItem` でリンクを外すのと同じ結果 (リンクが普通のファイルに置き換わり、指す先は変わらない)。
-        /// 外す窓があるのはリンクのときだけで、普通のファイルには 1 回の置き換えのままである。
+        /// リンクの置き換えを断る (実測: `No such file or directory`) ので、リンクのときは **`rename(2)` で
+        /// リンク自身を置き換える** — リンクが普通のファイルに置き換わり、指す先は変わらない (いまの書き手が開くときに
+        /// `removeItem` でリンクを外すのと同じ結果)。**リンクを外してから置くのではない**: 外した後で置き換えが
+        /// 失敗すると、行き先は前のリンクも新しいものも無くなる。`rename(2)` は 1 回で済み、失敗したときは何も変わらない。
+        /// 普通のファイルには、``place(using:)`` どおり 1 回の置き換えである。
         ///
         /// [#3426]: https://github.com/mokume-metal/mokume/issues/3426
         func placeWritten() throws {
-            if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
-                // `removeItem` はリンクを辿らず、リンク自身だけを消す
-                try? FileManager.default.removeItem(at: url)
+            guard (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil else {
+                try place { _ in }
+                return
             }
-            try place { _ in }
+            do {
+                // リンクの先がディレクトリなら置かない (`reserve` と同じ向き)
+                try AtomicFile.refuseDirectory(url)
+                guard rename(temporary.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            } catch {
+                try? FileManager.default.removeItem(at: temporary)
+                throw error
+            }
         }
     }
 
