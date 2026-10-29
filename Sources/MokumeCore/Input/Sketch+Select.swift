@@ -29,7 +29,13 @@ extension SketchPart {
     /// ```
     ///
     /// Processing の `selectInput(prompt, callback)` に当たる。コールバックの代わりに `async` で結果を返す。
-    /// 返るパスは絶対パスで、``loadImage(_:)``・``loadTable(_:header:)`` などにそのまま渡せる。
+    /// 返るパスは絶対パスで、読み込みの口にそのまま渡せる。
+    ///
+    /// **`Task` の中で読むなら、待つ口 (``requestImage(_:)``・``requestTable(_:header:)``・
+    /// `requestSound(_:)` など) に渡す。** 結果は `Task` の続きで届き、そこでは走っている実行が外れているので、
+    /// 同期の口 (``loadImage(_:)``・`loadSound(_:)`) は `notRunning` (``ImageFailure/notRunning(call:)`` など) を投げる。
+    /// パスを持ち越して次の `draw()` で同期の口を呼ぶと、フレームを止める読み込みの警告が出る。面を使わない
+    /// ``loadTable(_:header:)`` は `Task` の中でも読める (上の例)。
     ///
     /// ## 呼び方
     ///

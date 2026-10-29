@@ -125,6 +125,9 @@ public final class SketchRuntime {
     /// 差込口を閉じたか (``closePlugins(_:)``)。**閉じた後に足したものは誰にも閉じられない**
     /// ので、足す頼みを断る。
     private var seamsClosed = false
+    /// 中で起こした `Task` の続きから、入り口を足すことを頼む窓口 (``SketchPart/requestSound(_:)`` など)。
+    /// フレームの頭で当てる (``serveAttachRequests()``)。
+    let attachRequests = AttachRequests()
     /// 実行中に足した出口が、足されたフレーム。**それより前に描いた絵は渡さない。**
     ///
     /// 配るのは 1〜2 枚遅れなので (#927・#2743)、`draw()` の中で足した出口は、そのままだと同じ
@@ -841,6 +844,8 @@ public final class SketchRuntime {
         seamsClosed = true
         // **終わった実行の `selectInput` は待たせない** — 結果を届ける合流点はもう配られず、待てば返らない
         input.selection.end()
+        // 足してもらうのを待っている `Task` も同じ。当てる者がもう居ないので、足せなかったとして終える
+        attachRequests.end()
         // **並びに居なくても閉じる。** 撮る係は遊んでいる間は外れているので、
         // 並びだけを畳むと最後に頼んだ 1 枚が書かれないまま終わりうる
         if let recorder {
@@ -919,6 +924,9 @@ public final class SketchRuntime {
         // `start()` の直後、外から止められた枝・作者が止めた枝の観測の一枚描きは、応えた直後。見落とすと、
         // 窓の経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
         try throwSetupFailure(answering: observation)
+        // **足してもらうのを待っている `Task` の頼みは、フレームの頭で当てる** (止めている間も、外から止めている間も
+        // フレームは回るので待ちは終わる)。描く前で、巡回の外である
+        serveAttachRequests()
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
         // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
         // このフレームの中なので、ここで立てれば覆える
@@ -1634,6 +1642,16 @@ public final class SketchRuntime {
             return true
         }
         return attachNow(outlet)
+    }
+
+    /// 中で起こした `Task` の続きから頼まれた、入り口を足すことを当てる (``AttachRequests``)。
+    ///
+    /// 呼ぶのはフレームの頭で、差込口を巡回している最中ではないので、すぐ足せる。**足した結果の `false` は
+    /// ここで捨てる** — 閉じた後で断られたとき・`open()` が投げたときで、どちらも診断に出ており、待つ側へは
+    /// 足すのを頼み終えたことだけを返す (入り口の `state` が言う。投げる作る口の
+    /// ``SketchPart/attached(_:calledAs:making:)`` が `false` を 1 か所で捨てるのと同じ)。
+    private func serveAttachRequests() {
+        attachRequests.serve { _ = attachNow($0) }
     }
 
     /// 入り口が並びに居るか。外す頼みが実際に何かを外すかを、頼む前に知るために使う (#3122)。
@@ -2537,7 +2555,9 @@ public final class SketchRuntime {
             shapeAssemblyListener = previousListener
         }
         try LaunchingSketch.$canvas.withValue(canvas) {
-            try LaunchingSketch.$selection.withValue(input.selection, operation: body)
+            try LaunchingSketch.$selection.withValue(input.selection) {
+                try LaunchingSketch.$attachments.withValue(attachRequests, operation: body)
+            }
         }
     }
 }
