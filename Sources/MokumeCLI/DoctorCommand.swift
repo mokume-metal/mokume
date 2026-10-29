@@ -328,6 +328,19 @@ enum DoctorCommand {
             // 投げずに言う。切り分けの口が使い方で止まると、いちばん要るときに読めない
             lines += ["Ignored arguments doctor does not take: \(ignored.joined(separator: " "))", ""]
         }
+        // **診る場所が無い・ディレクトリでない・`Package.swift` が無いときだけ、その行を先頭で言う**
+        // (#3429)。直すべきものが環境の節 (十数行) の後ろの `What is here` に埋もれていた。
+        // 文は ``placeLine(_:presence:)`` と ``sketchLine(_:)`` が作るもので、写しは持たない。
+        // 判定は足さない (ADR-0029 決定 2) — 使うのは `presence` と `hasPackage` だけ。場所が読めず
+        // 解けなかった回は、上で名乗っているので足さない
+        if unresolvedPlace == nil {
+            switch state.presence {
+            case .directory:
+                if !state.hasPackage { lines += [sketchLine(state.hasPackage), ""] }
+            case .missing, .notDirectory, .unreachable:
+                lines += [placeLine(state.place, presence: state.presence), ""]
+            }
+        }
         lines += ["What the environment provides", ""]
         lines += environmentLines(environment).map { "  \($0)" }
         lines += ["", "What is here", ""]
