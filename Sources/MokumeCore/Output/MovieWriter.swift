@@ -48,7 +48,10 @@ final class MovieWriter {
     ///
     /// **越えても殺さない。** mp4 は末尾のメタデータが要るので、途中で止めると再生できない
     /// ファイルになる。待つのをやめても符号化は走り続けるので、失うのは「返ってきた時点で
-    /// 出来ている」という保証だけである。
+    /// 出来ている」という保証だけである。書き手は隠した一時ファイルへ書くので (#3426)、**待つのをやめた
+    /// 時点で行き先に置かれているのは前のファイルのまま**で、再生できないファイルは行き先に出ない
+    /// (閉じ終えれば、置き換えがその後で済む。プロセスが先に終わったときは、隠した一時ファイルが残り、
+    /// 次に同じ名前へ書く回が片付ける)。
     nonisolated static let closeLimitSeconds = 30.0
 
     /// 符号化へ渡す 1 つ。絵と音の窓は同じ 1 本の列に、頼んだ順に並ぶ。窓は 1 フレームぶんで、`draw()` の後に積まれ、
@@ -76,6 +79,10 @@ final class MovieWriter {
     private let closed = DispatchSemaphore(value: 0)
     /// 最後に決着した書き込みの結果。**隔離の外から書かれる**ので錠で守る。
     private let lastOutcome = OutcomeSlot()
+    /// 書き損じを含む録りを捨てたことの知らせ (#3426)。**``takeOutcome()`` とは別の器で、閉じ際の ``takeFailure()`` だけが
+    /// 読む。** 録っている間に毎フレーム取り出される器 (``FrameRecorder/absorbOutcomes()``) に置くと、途中で転んだ
+    /// 録りの「捨てた・前のファイルが残った」が、閉じ際には取り出し済みで誰にも言われない。
+    private let closingOutcome = OutcomeSlot()
     private let continuation: AsyncStream<Job>.Continuation
 
     /// 書き出し先。
@@ -133,11 +140,18 @@ final class MovieWriter {
         self.path = path
         // **書き手は、行き先の隣の一時ファイルへ書き、書き損じなく閉じ終えたときだけ行き先へ置く** (#3426)。
         // 準備 (ディレクトリを作る・落とされた書き手の一時ファイルの片付け・名前の連番) は静的な状態に触るので、
-        // 隔離の外の仕事へ渡す前に、main の ここで済ませる。準備が断られたとき (行き先がディレクトリ・親を作れない)
-        // は一時ファイルを使わない: 書き手が同じ理由で断る (行き先がディレクトリなら、消さずに断る・#2859)
-        let placement = try? AtomicFile.reserve(URL(fileURLWithPath: path))
+        // 隔離の外の仕事へ渡す前に、main の ここで済ませる。**準備が断られたとき (行き先がディレクトリ・リンクの先が
+        // ディレクトリ・親を作れない) は、書き手も同じ理由で断る** — 一時ファイルを使わずに直に書く形へは落とさない。
+        // 直に書く形は行き先のリンクを外して書くので、準備が断った行き先 (リンクの先のディレクトリ) を壊しうる
+        let reservation = Result { try AtomicFile.reserve(URL(fileURLWithPath: path)) }
+        let placement = try? reservation.get()
         // 前のファイルが残るとき、書き損じの行がそう名乗る。**置く段取りがあるとき・前に普通のファイルがあるときだけ**
         let leftAsItWas = placement != nil && FileManager.default.fileExists(atPath: path)
+        // 書き損じを含む録りを捨てたとき、閉じ際に言う行の末尾 (行き先に何が残るか)
+        let leftText: String =
+            leftAsItWas ? " (\(path) is left as it was)"
+            : placement != nil ? " (nothing is written to \(path))" : ""
+        let closing = closingOutcome
         pressure = Backpressure(limit: limit)
         span = RecordedSpan(from: from)
 
@@ -169,9 +183,12 @@ final class MovieWriter {
             var newest = 0
             // 1 度でも書き損じたか (絵・音とも)。**書き損じを含む録りは、行き先に置かない** (#3426)
             var failed = false
+            // 最初の書き損じの文面。閉じ際に、捨てたことと並べて言い直す
+            var firstFailure: String?
             /// 書き損じを名乗る。前のファイルが行き先に残るときは、同じ行でそう言う。
             func fail(_ message: String) {
                 failed = true
+                if firstFailure == nil { firstFailure = message }
                 outcome.fail(leftAsItWas ? "\(message) (\(path) is left as it was)" : message, at: path)
             }
 
@@ -209,6 +226,11 @@ final class MovieWriter {
                             if let open {
                                 opened = try open(image, soundStart)
                             } else {
+                                // 準備が断られたなら、書き手も同じ理由で断る (直に書く形へ落とさない)
+                                if case .failure(let refusal) = reservation {
+                                    throw MovieWriteFailure.writeFailed(
+                                        path: path, reason: Diagnostics.failureText(refusal))
+                                }
                                 switch format {
                                 case .proRes4444, .h264:
                                     opened = try MovieFile(
@@ -256,6 +278,10 @@ final class MovieWriter {
                     }
                 }
             }
+            // **書き損じた録りは、閉じ際にもう 1 度言う** (行き先の名前と、行き先がどうなるか)。録っている間の書き損じは
+            // 毎フレーム取り出され、後の書けた枚で消えるので、閉じ際の読み手 (``takeFailure()``) には何も残らない。
+            // 捨てたことは閉じ際にしか決まらないので、ここで専用の器に置く
+            if failed, let firstFailure { closing.fail(firstFailure + leftText, at: path) }
             closed.signal()
         }
     }
@@ -328,8 +354,11 @@ final class MovieWriter {
             if !answered {
                 Diagnostics.warn(
                     "\(path): waited \(Int(Self.closeLimitSeconds)) seconds to close the movie with no "
-                        + "answer — no longer waiting. Quitting now leaves a file that will not "
-                        + "play (writing is still going, so waiting a little may still close it)")
+                        + "answer — no longer waiting. The movie is written to a hidden file beside "
+                        + "\(path), which is put in place only once it is closed, so \(path) stays as it "
+                        + "is until then (writing is still going, so waiting a little may still close it). "
+                        + "Quitting now leaves that hidden file behind; the next recording to the same "
+                        + "name clears it")
             }
             stage = .closed
         }
@@ -368,7 +397,17 @@ final class MovieWriter {
     func takeOutcome() -> WriteOutcome? { lastOutcome.take() }
 
     /// 最後の結果が書き損じなら、その理由を取り出す。**取り出したら消える。**
-    func takeFailure() -> String? { takeOutcome()?.failure }
+    ///
+    /// 書き損じを含む録りを捨てたときは、捨てたことの知らせ (行き先の名前と、前のファイルが残ったこと・
+    /// 前が無ければ何も書かれないこと) を先に、決着した結果があれば後ろへ並べる。
+    func takeFailure() -> String? {
+        let closing = closingOutcome.take()?.failure
+        let outcome = takeOutcome()?.failure
+        // 決着した結果が、捨てたことの知らせと同じ文面 (最初の書き損じ) なら、並べて重ねない
+        guard let closing else { return outcome }
+        guard let outcome, outcome != closing else { return closing }
+        return closing + " / " + outcome
+    }
 }
 
 /// 動画を閉じ終えるまでに、外から待つ側が見込むべき長さ。

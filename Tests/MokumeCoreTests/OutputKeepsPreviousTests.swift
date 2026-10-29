@@ -348,6 +348,84 @@ struct OutputKeepsPreviousTests {
         }
     }
 
+    // MARK: - 閉じ際の名乗り (FrameRecorder を通る経路)
+
+    @Test("途中で転んだ録りも、閉じ際に行き先の名前と、前のファイルが残ったこと (前が無ければ書かれないこと) を言う")
+    @MainActor
+    func theRecorderSaysAtTheCloseWhatWasKept() async throws {
+        try await withDirectory { directory in
+            for (name, format) in Self.kinds {
+                for hasPrevious in [true, false] {
+                    let destination = directory.appendingPathComponent("\(hasPrevious ? "kept" : "fresh")-\(name)")
+                    if hasPrevious { try Self.previous.write(to: destination) }
+                    let recorder = FrameRecorder(frameRate: 25)
+                    recorder.beginRecord(destination.path, at: 1, rendering: 10)
+                    let movie = try #require(recorder.recordingMovie, "\(name)")
+                    movie.write(picture(0), frame: 1, time: 0)
+                    // 途中で大きさが変わった絵は、書き手が断る (書き損じ)
+                    movie.write(picture(1, width: 20, height: 20), frame: 2, time: 1.0 / 25)
+                    // 録っている間に、毎フレームの取り出し (`absorbOutcomes`) が書き損じの知らせを持っていく
+                    try #require(
+                        pollUntilSettled(within: 20) {
+                            recorder.absorbOutcomes()
+                            return recorder.failure != nil
+                        }, "\(name): 書き損じが決着しない")
+                    // 後の書けた枚が、保っていた書き損じを消す。閉じ際の読み手には何も残らない形
+                    movie.write(picture(2), frame: 3, time: 2.0 / 25)
+                    try #require(
+                        pollUntilSettled(within: 20) {
+                            recorder.absorbOutcomes()
+                            return recorder.failure == nil
+                        }, "\(name): 書けた枚が決着しない")
+
+                    recorder.endRecord()
+
+                    let said = try #require(
+                        recorder.warnings.message(for: .movieFailure), "\(name): 捨てたことを誰も言っていない")
+                    #expect(said.contains(destination.path), "\(name): \(said)")
+                    if hasPrevious {
+                        #expect(said.contains("is left as it was"), "\(name): \(said)")
+                        #expect(try Data(contentsOf: destination) == Self.previous, "\(name): 前のファイルが変わった")
+                    } else {
+                        #expect(said.contains("nothing is written"), "\(name): \(said)")
+                        #expect(!said.contains("left as it was"), "\(name): \(said)")
+                        #expect(!FileManager.default.fileExists(atPath: destination.path), "\(name): 行き先ができた")
+                    }
+                    #expect(recorder.hasFailedToWrite, "\(name)")
+                    #expect(temporaries(of: destination).isEmpty, "\(name): 一時ファイルが残った")
+                }
+            }
+        }
+    }
+
+    // MARK: - 準備の断りと置き換えの失敗
+
+    @Test("行き先のリンクの先がディレクトリなら、書き手も断り、リンクも先のディレクトリも壊さない (直書きに落ちない)")
+    func aLinkToADirectoryIsRefusedAndKept() async throws {
+        try await withDirectory { directory in
+            for (name, format) in Self.kinds {
+                let target = directory.appendingPathComponent("dir-for-\(name)")
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+                let keep = target.appendingPathComponent("keep.txt")
+                try Data("x".utf8).write(to: keep)
+                let destination = directory.appendingPathComponent("link-\(name)")
+                try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: target)
+                let writer = MovieWriter(path: destination.path, frameRate: 25, format: format)
+                for index in 0..<3 {
+                    writer.write(picture(index), frame: index + 1, time: Double(index) / 25)
+                }
+                writer.finish()
+                let failure = try #require(writer.takeFailure(), "\(name): 断らなかった")
+                #expect(failure.contains("Is a directory"), "\(name): \(failure)")
+                #expect(
+                    (try? FileManager.default.destinationOfSymbolicLink(atPath: destination.path)) != nil,
+                    "\(name): リンクが消えた")
+                #expect(try FileManager.default.contentsOfDirectory(atPath: target.path) == ["keep.txt"], "\(name): 先のディレクトリが変わった")
+                #expect(temporaries(of: destination).isEmpty, "\(name): 一時ファイルが残った")
+            }
+        }
+    }
+
     @Test("リンクの行き先へ置き換えが失敗したら、リンクは残り、指す先は変わらず、一時ファイルも残らない")
     func aFailedPlacementOverALinkKeepsTheLink() async throws {
         try await withDirectory { directory in
