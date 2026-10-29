@@ -174,6 +174,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 - **debug の全部** — `make ci-check` の build・test・gpu-ran。台帳を含む。決定6で毎回から移したCPU全探索も有効にし、専用機の定期検査の範囲を維持する
 - **release の全部** — Makefile の `test-release-scheduled`。台帳を含む。release でも debug と同じ台帳に合う ([ADR-0025](0025-determinism-levels.md) 決定 7)。#1736 が決着するまでは、毎回赤になるので台帳だけを外していた (この段の当初の範囲。決着したら戻すと書いてあった約束どおりに戻した)
 - 「GPU が見えないので全部飛ばした」まま緑になるのは、`gpu-ran` が止める。代表は debug と同じ台帳
+- **例の絵の前後の比較** — 前回までに比べ終えた定期の run の SHA から今の main までの区間を、`scripts/example-shots.py --drift` で描き比べる ([#2706](https://github.com/mokume-metal/mokume/issues/2706)・下の「定期の検査 (D) は退かせない」)。render-pr の名指しは警告で止まらず、merge queue が専用機を待つ間は出ない。そうして main に入った絵のずれが、誰の手元にも残らず 11 日放置されたのが #2705 (13 枚) である。区間に描画のパス (`scripts/drawing-paths.txt`) へ触れた変更が無ければ描かない。名指しがあれば `scheduled-report` が `scripts/report-check-failure.sh` で固定タイトルの Issue にする (`scripts/report-example-drift.sh`・鍵は変わった絵の指紋の集合)。区間の起点は GitHub ホストの門番 (`scheduled-drift-turn`) が API から引き、専用機の job (`scheduled-drift`) に権限も秘密も足さない。**別の job なのは、`scheduled-debug` が 30 分の枠の 28 分を使うから**で、base と head の 2 回の build と render は載らない。却下した案: render-pr の名指しを PR のコメントに残す (書く権限が専用機の job に要り、見送られた PR の分を拾えない) / merge 後に起票する workflow を足す (新しい workflow と権限が増える)。代償: 起票は merge の最大 6 時間後で、比べる区間に描画のパスへ触れた変更があった回だけ専用機の時間が延びる。merge されなかった PR の分は起票されない。**定期の専用機の占有は約 60 分から約 90 分に伸びる** (debug 約 30 分 + release 約 30 分 + 比較の最大 30 分)。`scheduled-report` は `scheduled-drift` を待つので、**debug・release の赤の起票は最大で約 95 分遅れる** (比較の job が門番で最大 60 分待つ分を含む)。起点は `scheduled-drift` の success で進むので、**同じ run の `scheduled-report` が落ちた回の名指しは、artifact と run の要約にしか残らない** (次の区間に入らない)。比べる job が落ちた・切れた回は、debug・release と同じく `scheduled-report` が起票し、区間は次の回へ伸びる。撮り直し込みの PR も区間に入って名指しされる (撮り直したかを見るには `// shot:` の記録の形を変える必要があり、約束の選択として別に決める)
 
 **いつ**: 6 時間おき (`13 2,8,14,20 * * *`・JST の 05:13 / 11:13 / 17:13 / 23:13)。赤が見えるまでの最大は約 6 時間になる。schedule は遅れたり間引かれたりする (`stall-watch.yml` の実測)。毎時 0 分は避ける (このリポジトリの慣習)。
 
@@ -216,6 +217,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 | `report-scheduled-render.sh`・`report-release-check.sh` | 呼び手の本文 (結論と落ちた検査の名前・文面。所要を持つ端末出力の末尾は `--log` 側) |
 | `report-ruleset-drift.sh` | 検査の出力 (差分) |
 | `report-runner-environment.sh` | 前検査の理由 |
+| `report-example-drift.sh` | 変わった絵の指紋 (`snippet=`) の集合 (違う画素・最大の差・説明文の行は区間と編集で動く) |
 | `report-dead-assets.sh` | 「引けなかった指し先と出所」の節だけ (出力の頭の本数・版数は日次で動く) |
 
 `make hooks-test` が走らせる `report_check_failure_test.py` が、共通部品の振る舞いと、実物の呼び手ごとに「揺れる値だけが違う回は黙り、落ち方が違う回は知らせる」ことを見る。
@@ -257,7 +259,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 
 **見直すのは、group ができた瞬間と外れた瞬間だけである。** その後に門番を通らずに専用機へ積まれた `render-pr` は、次の契機まで残る。門番が API を読めずに通した回や、人が job 単位で rerun した回である。「先頭の `render` が待つ間、専用機の queue に他の job を置かない」を常に守るには、拾われる直前に専用機の job の中で判定し直すしかない。だがそれには専用機の job に token を渡すか、token なしで外の API を引く必要がある (#2064 の案 A)。token を渡すのは、上の「専用機のジョブは権限も秘密も持たない」にぶつかる。token なしでも公開リポジトリの run は読めるが、API の回数の制限 (送り元の IP ごとに 1 時間 60 回) を専用機の job すべてで分け合うことになり、使い切った回は判定できない。外向きの通信は開けてあるので、ネットワークの側は妨げない (上の前提・下の改訂 (2026-10-18))。そこで、取り合いの大半を占める「queue が空いている間に積まれた分」を、GitHub ホストの側で group ができる瞬間に退かせるところで止めた。
 
-**定期の検査 (D) は退かせない。** 1 つの run の中では `needs` の鎖で 1 本ずつ積まれ (debug → 門番 → release)、どれも `wait` の門番の後ろにいるので、先頭の `render` と並ぶ定期の job は 1 本までである (`scripts/tests/render_workflow_test.py` が形を固定する)。`wait` は 60 分で通すので、queue が 60 分以上埋まり続ける間は、group がある最中にも 1 本積まれうる。それでも 1 本までである。run をまたいで重なるのは、専用機が 6 時間 (cron の間隔) 以上止まって前の回が queue に残ったときだけである。退かせると、その回の debug・release・起票がまとめて消え、赤が見えるまでの最大が約 6 時間から約 12 時間に延びる。2026-10-04 に先頭を待たせた分の多くは、既に走っていた release (30 分で切れた) で、queued の job を外す手では減らない。release の所要と頻度は [#1983](https://github.com/mokume-metal/mokume/issues/1983) の測り直しで選び直す。
+**定期の検査 (D) は退かせない。** 1 つの run の中では `needs` の鎖で 1 本ずつ積まれ (debug → 門番 → release → 門番 → 例の絵の前後の比較)、どれも `wait` の門番の後ろにいるので、先頭の `render` と並ぶ定期の job は 1 本までである (`scripts/tests/render_workflow_test.py` が形を固定する)。`wait` は 60 分で通すので、queue が 60 分以上埋まり続ける間は、group がある最中にも 1 本積まれうる。それでも 1 本までである。run をまたいで重なるのは、専用機が 6 時間 (cron の間隔) 以上止まって前の回が queue に残ったときだけである。退かせると、その回の debug・release・起票がまとめて消え、赤が見えるまでの最大が約 6 時間から約 12 時間に延びる。2026-10-04 に先頭を待たせた分の多くは、既に走っていた release (30 分で切れた) で、queued の job を外す手では減らない。release の所要と頻度は [#1983](https://github.com/mokume-metal/mokume/issues/1983) の測り直しで選び直す。
 
 門番は `actions: read` だけを持ち、GitHub ホストで走る。**専用機のジョブは権限も秘密も持たないまま**で、上の前提は動かない。門番が赤でも専用機のジョブは走らせる。`render` が skipped になると、skipped は必須チェックを満たしてしまうので、順番が乱れるほうを軽く取る。門番で待っている間に run を cancel すると `render` は cancelled で終わり、必須を満たさない (skipped にはならない・[#2063](https://github.com/mokume-metal/mokume/issues/2063) の実測)。
 

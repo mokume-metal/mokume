@@ -56,10 +56,22 @@ name: Render
 # 警告を出しても読む人がいないし、必須の検査の所要を延ばす。
 #
 # **定期の検査 (scheduled-*) は、専用機のジョブと起票のジョブで権限を分ける** (#1983)。
-#   - scheduled-debug / scheduled-release — 専用機。contents: read・秘密なしのまま
+#   - scheduled-debug / scheduled-release / scheduled-drift — 専用機。contents: read・秘密なしのまま
 #   - scheduled-report — GitHub ホスト。**issues: write を持つのは、これと
 #     render-environment-report (下) の 2 つだけ**で、専用機のジョブの結論と記録の artifact を
 #     読むだけ (ruleset-drift.yml と同じ形)
+#
+# **例の絵の前後の比較は、定期の run でも走る** (#2706・scheduled-drift)。render-pr の名指しは
+# PR の上の警告で、merge queue が専用機を待つ間は見送られ、merge の後には誰の手元にも残らない
+# (#2705 は 13 枚が 11 日残った)。定期の run が、前回までに比べ終えた run の SHA から今の main まで
+# の区間を同じ専用機で描き比べ (scripts/scheduled-drift.sh)、名指しがあれば scheduled-report が
+# 既存の起票の経路 (scripts/report-check-failure.sh) で固定タイトルの Issue にする
+# (scripts/report-example-drift.sh)。区間の起点を API から引くのは GitHub ホストの門番
+# (scheduled-drift-turn・scripts/drift-base.sh) で、専用機のジョブに権限と秘密は足さない。
+# 区間に描画のパスへ触れた変更が無ければ描かない。起点が引けない回はそう要約に書く。
+# **別の job なのは、scheduled-debug が 30 分の枠の 28 分を使うから** — base と head の 2 回の
+# build + render は載らない。debug → release → 比較の順に 1 本ずつ積むので、先頭の render と
+# 並ぶ定期の job は 1 本までのまま
 #
 # **merge queue の render が前検査で落ちたら、render-environment-report が発信する** (#2588)。
 # 専用機の環境が壊れていると (#2507)、render は PR の赤と見分けの付かない形で落ち続け、
@@ -411,6 +423,66 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+  # release の後に、もう一度 merge queue の render を先に通し、前回までに比べ終えた区間の起点を引く
+  # (上の「例の絵の前後の比較は、定期の run でも走る」)。起点を読むのに actions: read が要るので、
+  # 専用機の job ではなく、この GitHub ホストの門番が持つ
+  scheduled-drift-turn:
+    needs: scheduled-release
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read # checkout
+      actions: read # merge queue の render の run と、前回までの比較の job を読む
+    outputs:
+      base: ${{ steps.base.outputs.base }}
+      reason: ${{ steps.base.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+      - id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/drift-base.sh
+
+  scheduled-drift:
+    # release が赤でも走らせる (比べるのは別の問い)。needs は順序のためで、門番を通ってから queue に入る
+    needs: [scheduled-release, scheduled-drift-turn]
+    # always() にしない: cancel された定期の run で専用機に積まない (render と同じ理由)
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    concurrency:
+      group: render-scheduled-drift
+      cancel-in-progress: false
+    # 変わった絵の本数。scheduled-report が読む (0 なら起票しない)
+    outputs:
+      drift-count: ${{ steps.drift.outputs.drift-count }}
+    steps:
+      - uses: actions/checkout@v7
+      # 検査を走らせられる環境かを先に見る (#2588。render と同じ)
+      - id: preflight
+        run: bash scripts/runner-preflight.sh
+      # 前回の区間の起点から今の main までを描き比べる。比べないと決めた回は、理由を run の
+      # 要約へ書いて success で終わる (その回が次の起点になる)。起点を受け取れなかった回は
+      # 赤で終わり、次の回の区間が伸びる (scripts/scheduled-drift.sh の冒頭)
+      - id: drift
+        env:
+          DRIFT_BASE: ${{ needs.scheduled-drift-turn.outputs.base }}
+          DRIFT_BASE_REASON: ${{ needs.scheduled-drift-turn.outputs.reason }}
+        run: bash scripts/scheduled-drift.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scheduled-drift-record
+          path: .build/scheduled-drift/
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
   # 緑で終わらなかった回を起票する。落ちた (failure) 回に加え、切れた (cancelled) 回も
   # 起票する — 30 分の timeout で切れた job は cancelled で終わり、failure だけを見ると
   # 何も起票されずに黙って抜けた (#2084)。切れる経路 (timeout・人の cancel・concurrency の
@@ -418,15 +490,18 @@ jobs:
   # skipped で起票する。always() を外さない: 暗黙の success() が足され、needs が赤の回に
   # この job が skipped になる
   scheduled-report:
-    needs: [scheduled-debug, scheduled-release]
+    needs: [scheduled-debug, scheduled-release, scheduled-drift]
     if: >-
       always()
       && (needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure'
-          || needs.scheduled-debug.result == 'cancelled' || needs.scheduled-release.result == 'cancelled')
+          || needs.scheduled-drift.result == 'failure'
+          || needs.scheduled-debug.result == 'cancelled' || needs.scheduled-release.result == 'cancelled'
+          || needs.scheduled-drift.result == 'cancelled'
+          || fromJSON(needs.scheduled-drift.outputs.drift-count || '0') > 0)
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
-      issues: write # 赤のときの起票 (#1983)
+      issues: write # 赤のときの起票 (#1983)・画素の変わった例の絵の起票 (#2706)
     steps:
       - uses: actions/checkout@v7
       # ビルドで落ちて記録が上がらなかった回も起票する。artifact が無くても止まらない
@@ -440,15 +515,31 @@ jobs:
         with:
           name: scheduled-release-record
           path: record/release
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: scheduled-drift-record
+          path: record/drift
       # 上げた記録の置き場所は、上げたファイルの共通の親で決まる (.build/ が付くか付かないかが
       # 中身で変わる) ので、位置を決め打たず名前で探す。無ければ無いパスを渡し、呼び先が
       # 「記録が無い」と名乗って起票する。記録が無い理由 (落ちた・切れた) は job の結論で
       # 変わるので、結論も渡す
+      #
+      # 専用機の定期の検査の赤 (debug・release・例の絵の比較の failure / cancelled) だけを発信する。
+      # 例の絵の変化だけで走った回に、緑の検査を「落ちている」と起票しない。比べる job が落ちた・
+      # 切れた回 (起点を引けない・取り寄せられない・build で落ちた・30 分で切れた) もここで起票する
+      # (起点は success の回から引くので、起票しなければ区間が伸びるだけで誰にも届かない)
       - name: 赤を発信する
+        if: >-
+          needs.scheduled-debug.result == 'failure' || needs.scheduled-release.result == 'failure'
+          || needs.scheduled-drift.result == 'failure'
+          || needs.scheduled-debug.result == 'cancelled' || needs.scheduled-release.result == 'cancelled'
+          || needs.scheduled-drift.result == 'cancelled'
         env:
           GH_TOKEN: ${{ github.token }}
           DEBUG_RESULT: ${{ needs.scheduled-debug.result }}
           RELEASE_RESULT: ${{ needs.scheduled-release.result }}
+          DRIFT_RESULT: ${{ needs.scheduled-drift.result }}
         run: |
           find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
           debug_xml=$(find_one record/debug test-results-swift-testing.xml)
@@ -457,4 +548,16 @@ jobs:
           release_log=$(find_one record/release test-log.txt)
           bash scripts/report-scheduled-render.sh \
             "$DEBUG_RESULT" "${debug_xml:-record/debug/none.xml}" "${debug_log:-record/debug/none.txt}" \
-            "$RELEASE_RESULT" "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}"
+            "$RELEASE_RESULT" "${release_xml:-record/release/none.xml}" "${release_log:-record/release/none.txt}" \
+            "$DRIFT_RESULT"
+      # 例の絵の画素の変化 (#2706)。上の赤の発信が落ちても走らせる — 別の問いである
+      - name: 画素の変わった例の絵を発信する
+        if: ${{ !cancelled() && fromJSON(needs.scheduled-drift.outputs.drift-count || '0') > 0 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT_COUNT: ${{ needs.scheduled-drift.outputs.drift-count }}
+        run: |
+          tsv=$(find record/drift -name drifts.tsv -print -quit 2>/dev/null || true)
+          dir=record/drift/none
+          if [ -n "$tsv" ]; then dir=$(dirname "$tsv"); fi
+          bash scripts/report-example-drift.sh "$dir"
