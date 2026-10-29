@@ -182,7 +182,7 @@ struct WarningDigestTests {
         .deletingLastPathComponent()
 
     /// 標準エラーへ直に書く場所は、そこから警告が溜め場を素通りする。
-    /// スケッチのプロセスが言う警告は、MokumeCore・Audio・Camera・Network・Gamepad のすべてで
+    /// スケッチのプロセスが言う警告は、MokumeCore・Audio・Camera・Network・Gamepad・MIDI のすべてで
     /// `Diagnostics.warn` を通る。**通らない書き方を足すと、その警告だけが観測に載らない。**
     static let directWriteAllowlist = [
         "Sources/MokumeDiagnostics/Diagnostics.swift":
@@ -193,7 +193,7 @@ struct WarningDigestTests {
 
     @Test("スケッチのプロセスの警告は、すべて Diagnostics.warn を通る")
     func everySketchModuleWarnsThroughDiagnostics() throws {
-        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeDiagnostics"]
+        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeDiagnostics"]
         let marks = ["FileHandle.standardError", "fputs(", "stderr"]
         var found: Set<String> = []
         for module in modules {

@@ -50,9 +50,9 @@ struct NewNameTests {
         arguments: [
             "sketch", "Sketch", "sketch-settings", "sketch_settings", "Self", "self", "Any",
             "mokume", "Mokume", "swift-syntax", "Swift-Syntax", "MokumeCore", "MokumeCamera",
-            "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeDiagnostics", "MokumeMacros", "Foundation",
+            "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeDiagnostics", "MokumeMacros", "Foundation",
             "foundation", "FOUNDATION", "Swift", "SwiftSyntax", "SwiftCompilerPlugin", "Network",
-            "Observation", "SwiftUI", "Accelerate", "AppKit", "simd", "Metal", "Darwin", "GameController",
+            "Observation", "SwiftUI", "Accelerate", "AppKit", "simd", "Metal", "Darwin", "GameController", "CoreMIDI",
         ])
     func anUnbuildableNameIsRefused(name: String) throws {
         let refused = try #require(unusable([name]), "\(name) が断られていない")
