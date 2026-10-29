@@ -267,6 +267,21 @@ public final class SketchRuntime {
         return (display.width, display.height, display)
     }
 
+    /// 出す先の面。座標の `scale` 倍の大きさで作る。
+    ///
+    /// 倍率を掛けた大きさが面の一辺の上限を越えるなら、**掛けた後の大きさ**で
+    /// ``RenderFailure/invalidSize(width:height:)`` を投げる (何を書き出そうとして越えたかが分かる)。
+    static func outputTarget(
+        gpu: RenderDevice, width: Int, height: Int, scale: Int
+    ) throws(RenderFailure) -> RenderTarget {
+        // 掛け算が溢れる巨大な値は、上限を越える最大の数へ丸めて断る
+        let (scaledWidth, widthOverflowed) = width.multipliedReportingOverflow(by: scale)
+        let (scaledHeight, heightOverflowed) = height.multipliedReportingOverflow(by: scale)
+        return try RenderTarget(
+            gpu: gpu, width: widthOverflowed ? .max : scaledWidth,
+            height: heightOverflowed ? .max : scaledHeight)
+    }
+
     /// 撮る係へ渡す刻みを、時計から決める (``launchFrameRate``)。
     static func recordingFrameRate(clock: Clock, declared: Int) -> Int {
         switch clock {
@@ -577,12 +592,15 @@ public final class SketchRuntime {
     ///   - persistsParams: 保存を持つか。意味は公開の初期化子の同名の引数が正本。
     ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time` の下の実行だけ・``ClockHandover``)。
     ///     **書き出しの子には渡さない。** 省けば 0 秒から始まる。
+    ///   - outputScale: 出す画素の倍率 (`mokume render --scale`・[#2441])。**書き出しの子だけが 1 を超える値を渡す。**
+    ///     出す先を座標の `outputScale` 倍の画素で作り、座標 (``SketchPart/width``) は変えない。
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
     ///
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
     init(
         sketch: any Sketch,
         gpu: RenderDevice,
@@ -593,6 +611,7 @@ public final class SketchRuntime {
         persistsParams: Bool = true,
         opensFacets: Bool = true,
         handover: ClockHandover? = nil,
+        outputScale: Int = 1,
         presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
     ) throws(RenderFailure) {
         let settings = sketch.settings
@@ -609,10 +628,13 @@ public final class SketchRuntime {
         self.windowScale = settings.windowScale
         self.fullScreenDisplay = stage.display
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
-        let target = try RenderTarget(gpu: gpu, width: stage.width, height: stage.height)
+        // **出す先は座標の倍率倍。** 大きさの上限 (面の一辺 16384) は掛けた後の数で検める — 越えたら、
+        // 最初のフレームを描く前に、書き出す大きさを名乗って断る
+        let target = try Self.outputTarget(
+            gpu: gpu, width: stage.width, height: stage.height, scale: outputScale)
         self.canvas = try Canvas(
             output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
-            upscale: settings.upscale)
+            upscale: settings.upscale, outputScale: outputScale)
         self.timing = FrameTiming(
             clock: clock, frameRate: settings.frameRate, now: now, handover: handover)
         self.isOnScreen = onScreen || clock == .wallClock

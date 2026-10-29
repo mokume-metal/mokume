@@ -614,7 +614,7 @@ struct ComputeTests {
         var settings: SketchSettings { SketchSettings(width: 32, height: 8) }
         func setup() {
             level = try! makeNumbers(count: 1)
-            show = try! makeShader(ComputeTests.showFirst)
+            show = try! createShader(ComputeTests.showFirst)
             level.set(0.5, at: 0)
             numbers(level)
         }

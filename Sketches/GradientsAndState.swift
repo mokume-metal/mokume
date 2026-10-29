@@ -27,7 +27,7 @@ final class GradientsAndState: Sketch {
     func setup() throws {
         white = try createImage(20, 20)
         white.fill(color(255))
-        red = try makeShader("float4 paint(Fragment in, Values values) { return float4(1,0,0,1); }")
+        red = try createShader("float4 paint(Fragment in, Values values) { return float4(1,0,0,1); }")
         retained = createShape {
             noStroke()
             fill(ramp(from: [-70, 0], to: [70, 0]))

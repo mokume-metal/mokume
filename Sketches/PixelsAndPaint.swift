@@ -18,7 +18,7 @@ final class PixelsAndPaint: Sketch {
 
     func setup() throws {
         // 断片は文字列からも作れる。書くのは「その画素の色」だけ
-        ripple = try makeShader(
+        ripple = try createShader(
             """
             float4 paint(Fragment in, Values values) {
                 float2 centre = float2(0.5, 0.5);

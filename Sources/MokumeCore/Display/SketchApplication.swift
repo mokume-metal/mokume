@@ -421,7 +421,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
             displays: displays, onScreen: render == nil, opensFacets: render == nil,
-            handover: Self.handover(given: handover, render: render))
+            handover: Self.handover(given: handover, render: render),
+            outputScale: render?.scale ?? 1)
         self.clock = runtime.clock
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         runtime.defersEnlargedGlyphBakes = render == nil

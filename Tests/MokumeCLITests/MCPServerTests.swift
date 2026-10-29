@@ -154,6 +154,16 @@ struct MCPServerTests {
         #expect(tools.allSatisfy { ($0["description"] as? String)?.isEmpty == false })
     }
 
+    /// 取り消しは窓口の待ちだけを切り、置いた列はスケッチが撮り終えるまで区画を塞ぐ (#3030・ADR-0018 決定 3)。
+    /// 呼び手が取り消してよいかを決める道具の説明に、その決まりが書かれていること。
+    @Test("observe の説明は、取り消しが待ちだけを切り、次の呼び出しが撮り終えた後ろで待つことを名乗る")
+    func observeDescriptionSaysCancellationOnlyEndsTheWait() {
+        let description = Tools.ToolName.observe.description
+        #expect(description.contains("Cancelling a call ends only the wait"), "\(description)")
+        #expect(description.contains("taken to the end"), "\(description)")
+        #expect(description.contains("the next call waits behind it"), "\(description)")
+    }
+
     @Test("1 行の壊れで繋がりを切らず、壊れた行には誤りを 1 行返す")
     func survivesAMalformedLine() throws {
         let (server, recorder) = makeServer(

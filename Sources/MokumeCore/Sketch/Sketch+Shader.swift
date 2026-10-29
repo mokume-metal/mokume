@@ -21,7 +21,7 @@ extension SketchPart {
     /// }
     /// ```
     ///
-    /// 文字列から作る ``makeShader(_:name:values:surfaces:)`` も、ここに書いた規約のまま書ける。
+    /// 文字列から作る ``createShader(_:name:values:surfaces:)`` も、ここに書いた規約のまま書ける。
     /// 値・面・平面と立体・秒数を 1 つずつ動かした例と絵は、そちらにある。
     ///
     /// ## 書くのは「その画素の色」だけ
@@ -120,7 +120,7 @@ extension SketchPart {
     ///   (``ShaderFailure/unreadable(path:)``)・組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 参照 makeShader(_:name:values:surfaces:)
+    // shot: 参照 createShader(_:name:values:surfaces:)
     public func loadShader(
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
@@ -146,7 +146,7 @@ extension SketchPart {
     ///     ```swift
     ///     func setup() {
     ///         // 16 画素ごとの縦縞。暗い側の濃さを values.amount で決める
-    ///         stripes = try! makeShader(
+    ///         stripes = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -189,7 +189,7 @@ extension SketchPart {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
     ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///         stripes = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -263,8 +263,8 @@ extension SketchPart {
     ///                 return mokume_sample(surfaces.pattern, in.place);
     ///             }
     ///             """
-    ///         fromCanvas = try! makeShader(body, surfaces: ["pattern": .graphics(bands)])
-    ///         fromImage = try! makeShader(body, surfaces: ["pattern": .image(checks)])
+    ///         fromCanvas = try! createShader(body, surfaces: ["pattern": .graphics(bands)])
+    ///         fromImage = try! createShader(body, surfaces: ["pattern": .image(checks)])
     ///     }
     ///
     ///     func draw() {
@@ -296,7 +296,7 @@ extension SketchPart {
     ///     <!-- example: 文脈 var waves: Shader! -->
     ///     ```swift
     ///     func setup() {
-    ///         waves = try! makeShader(
+    ///         waves = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float wave = sin(in.position.x * 0.15 - in.time * values.speed);
@@ -328,11 +328,11 @@ extension SketchPart {
     /// - Throws: 組み立てられないとき・値や面が多すぎるときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=7a78b249
-    // shot: 2 snippet=3bf5c822
-    // shot: 3 snippet=cfc04917
-    // shot: 4 snippet=fd4f4dea
-    public func makeShader(
+    // shot: 1 snippet=cb492b49
+    // shot: 2 snippet=4c231961
+    // shot: 3 snippet=85879b05
+    // shot: 4 snippet=724b9aca
+    public func createShader(
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
@@ -354,14 +354,14 @@ extension SketchPart {
     ///     <!-- example: 文脈 var checks: Shader! -->
     ///     ```swift
     ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///         stripes = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
     ///                 return float4(in.color.rgb * mix(1.0, 0.25, band), in.color.a);
     ///             }
     ///             """)
-    ///         checks = try! makeShader(
+    ///         checks = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float2 cell = floor(in.position / 20.0);
@@ -399,7 +399,7 @@ extension SketchPart {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
     ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///         stripes = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -428,8 +428,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=2acc7397
-    // shot: 2 snippet=dc7bbac5
+    // shot: 1 snippet=b72d454e
+    // shot: 2 snippet=15e2ecf3
     public func shader(_ shader: Shader) { Self.liveCanvas()?.shader(shader) }
 
     /// 組み込みの塗りへ戻す。
@@ -442,7 +442,7 @@ extension SketchPart {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
     ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///         stripes = try! createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -471,6 +471,6 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=17f903d5
+    // shot: 1 snippet=d191e36e
     public func resetShader() { Self.liveCanvas()?.resetShader() }
 }

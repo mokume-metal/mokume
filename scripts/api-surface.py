@@ -1017,6 +1017,7 @@ PORT_KINDS: dict[str, str | tuple[str, str]] = {
     "loadShape": RESOURCE,
     "requestShape": RESOURCE,
     "loadShader": RESOURCE,
+    "createShader": RESOURCE,
     "makeShader": RESOURCE,
     "loadEffect": RESOURCE,
     "makeEffect": RESOURCE,

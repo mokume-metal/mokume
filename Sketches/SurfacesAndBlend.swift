@@ -55,7 +55,7 @@ final class SurfacesAndBlend: Sketch {
         let place = """
             float2 spot = in.shapePosition.xz * values.scale + 0.5;
             """
-        plain = try makeShader(
+        plain = try createShader(
             """
             float4 paint(Fragment in, Values values, Surfaces surfaces) {
                 \(place)
@@ -64,7 +64,7 @@ final class SurfacesAndBlend: Sketch {
             }
             """,
             name: "plain", values: settingsForBoard, surfaces: ["grain": .image(grain)])
-        blended = try makeShader(
+        blended = try createShader(
             """
             float4 paint(Fragment in, Values values, Surfaces surfaces) {
                 \(place)

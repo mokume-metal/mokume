@@ -55,10 +55,16 @@ extension Canvas {
     /// **1 画素ごとに通っても安い。** 状態は呼ばれた時点で直に読み (控えない)、待ちと写しの確かめは
     /// 前の答えが有効なら省く (`RenderTarget.pixels`・[#2369])。
     ///
+    /// **ただし、全画素を書き換えるなら ``Pixels/update(_:)`` が速い。** 上の安さは 1 回の読み書きの費用の話で、
+    /// こちらは回し方の話である。添字の 2 重ループは画素ごとに書いてよいかを尋ね、`update` は入口で 1 回だけ
+    /// 尋ねる。1280×720 で、窓を 1 度取って全画素を `p[x, y] = p[x, y]` で書く形が 73.2 ms、同じ処理を
+    /// `update` で書く形が 2.0 ms だった (約 37 倍・M3 Max・release・15 回の中央値・[#2955])。
+    ///
     /// [#1588]: https://github.com/mokume-metal/mokume/issues/1588
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#2203]: https://github.com/mokume-metal/mokume/issues/2203
     /// [#2369]: https://github.com/mokume-metal/mokume/issues/2369
+    /// [#2955]: https://github.com/mokume-metal/mokume/issues/2955
     public var pixels: Pixels {
         let loading = needsPixelLoad
         if !refusesInsideShape(), loading { loadPixels() }
