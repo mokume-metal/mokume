@@ -19,9 +19,14 @@ import Foundation
 /// ## 渡す形
 ///
 /// 1 つの環境変数に `<fps>:<枚数>:<行き先>` と並べる。行き先を最後に置くので、`:` を含む
-/// パスもそのまま運べる。**倍率を掛けるとき (``scale`` が 2 以上) だけ**、行き先の前に
-/// `<倍率>:` を挟む (`<fps>:<枚数>:<倍率>:<行き先>`)。行き先は絶対パスで渡すので (`/` で始まる)、
-/// 数字で始まる倍率と取り違えない。JSON にしないのは、面の仕様 (`Schemas/`) を持つほどの形ではなく、
+/// パスもそのまま運べる。**倍率を掛けるとき (``scale`` が 2 以上) だけ**、先頭に `x<倍率>:`
+/// を付ける (`x2:<fps>:<枚数>:<行き先>`)。
+///
+/// **倍率の前の版のライブラリが読むと、必ず断られる形にしてある。** 古い読み手は最初の `:` までを
+/// fps の整数として読むので、`x2` は読めずに頼みごと断られ (``RenderFailure/unreadableRenderRequest(value:)``。
+/// 版のずれを案内する)、倍率を黙って落として等倍で書いたり、倍率を行き先の一部と読んで変な場所へ書いたりしない
+/// (倍率を行き先の前に挟む形は、古い読み手が `2:/abs/x.mov` を相対パスの行き先と読み、作品の場所に
+/// `2:` というフォルダを作って書く・#2441 の反証)。JSON にしないのは、面の仕様 (`Schemas/`) を持つほどの形ではなく、
 /// 道具と子が**同じ版のこの型**で読み書きするからである (道具は `package` の口から組む)。
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
@@ -127,24 +132,25 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     package var environmentValue: String {
         scale == 1
             ? "\(frameRate):\(frameCount):\(destination)"
-            : "\(frameRate):\(frameCount):\(scale):\(destination)"
+            : "x\(scale):\(frameRate):\(frameCount):\(destination)"
     }
 
     /// 環境変数の値から読む。**読めなければ `nil`。**
     package init?(environmentValue: String) {
-        let parts = environmentValue.split(
-            separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+        // 倍率があれば、先頭に `x<倍率>:` が付いている
+        var scale = 1
+        var rest = Substring(environmentValue)
+        if rest.hasPrefix("x") {
+            guard let colon = rest.firstIndex(of: ":"), let given = Int(rest[rest.index(after: rest.startIndex)..<colon])
+            else { return nil }
+            scale = given
+            rest = rest[rest.index(after: colon)...]
+        }
+        let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
         guard parts.count == 3, let rate = Int(parts[0]), let count = Int(parts[1]) else {
             return nil
         }
-        // 倍率があれば、行き先の前に `<倍率>:` が挟まっている (行き先は `/` で始まる絶対パス)
-        var scale = 1
-        var destination = parts[2]
-        if let colon = destination.firstIndex(of: ":"), let given = Int(destination[..<colon]) {
-            scale = given
-            destination = destination[destination.index(after: colon)...]
-        }
-        self.init(frameRate: rate, frameCount: count, scale: scale, destination: String(destination))
+        self.init(frameRate: rate, frameCount: count, scale: scale, destination: String(parts[2]))
     }
 
     /// 起動の瞬間に決まる頼み。**合図が無ければ `nil`** (いつもの窓の経路)。

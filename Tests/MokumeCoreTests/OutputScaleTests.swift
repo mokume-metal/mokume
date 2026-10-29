@@ -90,8 +90,10 @@ struct OutputScaleTests {
     }
 
     /// 完了条件 1: 円は (中心を座標のまま) 倍の直径、線の太さは倍の画素で描かれる。
-    @Test("倍率 2 では、円の面積が 4 倍の画素になり、線は座標の太さの倍の画素で刻まれる")
-    func shapesAreDrawnAtTheScaledPixelSize() throws {
+    @Test(
+        "倍率 N では、円の面積が N² 倍の画素になり、線は座標の太さの N 倍の画素で刻まれる (2 のべきでない 3 も)",
+        arguments: [2, 3])
+    func shapesAreDrawnAtTheScaledPixelSize(_ factor: Int) throws {
         func draw(on canvas: Canvas) throws {
             try Self.draw(on: canvas) {
                 canvas.background(0)
@@ -105,11 +107,11 @@ struct OutputScaleTests {
         }
         let base = try Self.makeCanvas(scale: 1)
         try draw(on: base)
-        let scaled = try Self.makeCanvas(scale: 2)
+        let scaled = try Self.makeCanvas(scale: factor)
         try draw(on: scaled)
         let one = try base.output.readPixels()
         let two = try scaled.output.readPixels()
-        #expect(two.width == 256 && two.height == 256)
+        #expect(two.width == 128 * factor && two.height == 128 * factor)
 
         func lightness(_ buffer: PixelBuffer, rows: Range<Int>) -> Float {
             var sum: Float = 0
@@ -118,15 +120,17 @@ struct OutputScaleTests {
         }
         // 円 (線より下の行): 面積は π·40² ≈ 5027 画素 (倍率 1)、倍率 2 では 4 倍
         let circle1 = lightness(one, rows: 20..<128)
-        let circle2 = lightness(two, rows: 40..<256)
+        let circle2 = lightness(two, rows: 20 * factor..<128 * factor)
         #expect(abs(circle1 - 5027) < 5027 * 0.02, "倍率 1 の円の面積: \(circle1)")
-        #expect(abs(circle2 / circle1 - 4) < 0.04, "倍率 2 の円の面積は 4 倍のはず: \(circle2 / circle1)")
+        #expect(
+            abs(circle2 / circle1 - Float(factor * factor)) < 0.04 * Float(factor * factor),
+            "倍率 \(factor) の円の面積は \(factor * factor) 倍のはず: \(circle2 / circle1)")
         // 線: 中ほどの 1 列を横切る和が、太さ 2 → 倍率 1 で 2 画素・倍率 2 で 4 画素
         func crossing(_ buffer: PixelBuffer, column: Int, rows: Range<Int>) -> Float {
             rows.reduce(0) { $0 + buffer[column, $1].red }
         }
         #expect(abs(crossing(one, column: 30, rows: 0..<20) - 2) < 0.2)
-        #expect(abs(crossing(two, column: 60, rows: 0..<40) - 4) < 0.2)
+        #expect(abs(crossing(two, column: 30 * factor, rows: 0..<20 * factor) - Float(2 * factor)) < 0.2)
     }
 
     // MARK: - 形の口
@@ -134,17 +138,17 @@ struct OutputScaleTests {
     /// 完了条件 3: 位置・半径・矩形・断片の口は、倍率を掛けて読む。**倍率 2 の絵を 2×2 で平均すると、
     /// 倍率 1 の絵と同じ形** (縁は倍率 1 の画素の半分までずれてよい)。
     @Test(
-        "位置・矩形・効果・断片の口は、倍率 2 の絵を縮めると倍率 1 の絵と同じ形に出る",
-        arguments: DensityInvarianceTests.Outline.allCases)
-    func outlineStaysInPlaceUnderScale(_ mouth: DensityInvarianceTests.Outline) throws {
+        "位置・矩形・効果・断片の口は、倍率 2・3 の絵を縮めると倍率 1 の絵と同じ形に出る",
+        arguments: DensityInvarianceTests.Outline.allCases, [2, 3])
+    func outlineStaysInPlaceUnderScale(_ mouth: DensityInvarianceTests.Outline, _ factor: Int) throws {
         var broken: [String] = []
         for offset in mouth.offsets {
             let base = try Self.makeCanvas(scale: 1)
             try Self.draw(on: base) { try mouth.draw(on: base, offset: offset, reference: false) }
             let full = try base.output.readPixels()
-            let scaled = try Self.makeCanvas(scale: 2)
+            let scaled = try Self.makeCanvas(scale: factor)
             try Self.draw(on: scaled) { try mouth.draw(on: scaled, offset: offset, reference: false) }
-            let shrunk = Self.averaged(try scaled.output.readPixels(), by: 2)
+            let shrunk = Self.averaged(try scaled.output.readPixels(), by: factor)
             // 何も描かれない絵どうしを比べて緑にしない
             let whites = full.components.enumerated().filter { $0.offset % 4 == 0 && $0.element > 0.5 }.count
             try #require(
@@ -245,6 +249,10 @@ struct OutputScaleTests {
         }
         let one = try measure(scale: 1)
         let two = try measure(scale: 2)
+        let three = try measure(scale: 3)
+        // 3 倍 (2 のべきでない) は 8 × log2(3) ≈ 12.7 → 13 段目
+        #expect(three.step == 13, "倍率 3 の textSize(24) は 13 段目のはず: \(three.step)")
+        #expect(three.width == one.width)
         #expect(one.step == 0)
         #expect(two.step == 8, "倍率 2 の textSize(24) は 48 画素の段 (8) のはず: \(two.step)")
         #expect(one.width > 0 && one.width == two.width, "textWidth は座標の単位のまま: \(one.width) / \(two.width)")

@@ -439,7 +439,8 @@ struct RenderCommandTests {
     func theUsageListsRender() {
         let usage = Command.usage("mokume")
         #expect(usage.contains("  render [<directory>]"))
-        #expect(usage.contains("--fps <n> --seconds <s> --out <path>"))
+        #expect(usage.contains("--fps <n> --seconds <s> --out <path> [--scale <n>]"))
+        #expect(usage.contains("--scale <n> (a whole"))
         #expect(Command.Verb.named("render") == .render)
     }
 

@@ -409,7 +409,7 @@ extension RenderFailure: CustomStringConvertible {
             """
             The sketch was asked to render, but it cannot read or write what it was asked: \(value)
             \(StartupReads.render.key) comes from `mokume render` as <fps>:<frames>:<where to write> (with --scale, \
-            <fps>:<frames>:<scale>:<where to write>) — a whole \
+            x<scale>:<fps>:<frames>:<where to write>) — a whole \
             frame rate and frame count above 0, and a .mov or .mp4 (at most \(RenderRequest.movieFrameRateLimit) \
             frames per second), a .gif (a frame rate that divides 100) or a numbered series (out/frame-####.png). If the tool and the \
             sketch use different versions of mokume, bring them to the same one (`mokume doctor` \

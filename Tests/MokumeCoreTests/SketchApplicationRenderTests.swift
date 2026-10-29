@@ -51,6 +51,9 @@ struct SketchApplicationRenderTests {
         /// `dropsNextSubmissionForTesting`・#2743)。
         var dropsAtFrame: Int?
         private(set) var seen: [Moment] = []
+        /// 作品から見えた大きさ: 座標 (`width`/`height`) と、実際に刻む画素 (`pixelWidth`/`pixelHeight`)。
+        /// **倍率が組み立てから描く面まで渡っているかは、PNG の大きさだけでなく作品の側からも見る** (#2441 の反証)。
+        private(set) var sizes: [[Float]] = []
 
         init() {}
         var settings: SketchSettings { SketchSettings(width: 48, height: 24, frameRate: 60) }
@@ -61,6 +64,7 @@ struct SketchApplicationRenderTests {
                 canvas.gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
             }
             seen.append(Moment(frame: frameCount, time: time, deltaTime: deltaTime))
+            sizes.append([width, height, Float(pixelWidth), Float(pixelHeight)])
             background(15)
             noStroke()
             fill(240, 120, 50)
@@ -210,6 +214,9 @@ struct SketchApplicationRenderTests {
                 #expect(ending.exitStatus == nil)
                 // 作品から見た座標は倍率の前のまま、画素の口は実際の画素
                 #expect(sketch.seen.count == 3)
+                #expect(
+                    sketch.sizes == Array(repeating: [48, 24, 96, 48], count: 3),
+                    "作品から見た座標 48×24 と実際の画素 96×48: \(sketch.sizes)")
                 let written = try FileManager.default.contentsOfDirectory(
                     atPath: directory.appendingPathComponent("run\(run)").path
                 ).sorted()

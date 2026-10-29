@@ -30,7 +30,7 @@ nonisolated struct RenderRequestTests {
         let scaled = try #require(
             RenderRequest(frameRate: 30, frameCount: 120, scale: 2, destination: "/tmp/a:b/motion.mov"))
         #expect(scaled.scale == 2)
-        #expect(scaled.environmentValue == "30:120:2:/tmp/a:b/motion.mov")
+        #expect(scaled.environmentValue == "x2:30:120:/tmp/a:b/motion.mov")
         #expect(RenderRequest(environmentValue: scaled.environmentValue) == scaled)
         let plain = try #require(
             RenderRequest(frameRate: 30, frameCount: 120, scale: 1, destination: "/tmp/a:b/motion.mov"))
@@ -38,7 +38,7 @@ nonisolated struct RenderRequestTests {
         #expect(plain == RenderRequest(frameRate: 30, frameCount: 120, destination: "/tmp/a:b/motion.mov"))
         #expect(RenderRequest(environmentValue: plain.environmentValue)?.scale == 1)
         // 倍率の位置にある 1 も読める (形は違うが、頼みは同じ)
-        #expect(RenderRequest(environmentValue: "30:120:1:/tmp/a.mov")?.scale == 1)
+        #expect(RenderRequest(environmentValue: "x1:30:120:/tmp/a.mov")?.scale == 1)
     }
 
     @Test("倍率は 1 以上 16384 以下の整数だけ。範囲の外の頼みは組まず、読めない")
@@ -47,8 +47,30 @@ nonisolated struct RenderRequestTests {
             #expect(RenderRequest(frameRate: 30, frameCount: 1, scale: scale, destination: "/tmp/a.mov") == nil)
         }
         #expect(RenderRequest(frameRate: 30, frameCount: 1, scale: 16384, destination: "/tmp/a.mov") != nil)
-        #expect(RenderRequest(environmentValue: "30:1:0:/tmp/a.mov") == nil)
-        #expect(RenderRequest(environmentValue: "30:1:16385:/tmp/a.mov") == nil)
+        #expect(RenderRequest(environmentValue: "x0:30:1:/tmp/a.mov") == nil)
+        #expect(RenderRequest(environmentValue: "x16385:30:1:/tmp/a.mov") == nil)
+        #expect(RenderRequest(environmentValue: "x:30:1:/tmp/a.mov") == nil)
+        #expect(RenderRequest(environmentValue: "x2") == nil)
+    }
+
+    /// **倍率の前の版のライブラリは、倍率つきの値を必ず断る** ([#2441] の反証)。その版の読み方 (最初の `:` までを
+    /// fps の整数として読み、行き先は残り全部) を写して、倍率つきの値が読めないこと、倍率の無い値は今までどおり
+    /// 読めることを見る。倍率を黙って落とす・倍率を行き先の前へ挟んで変な場所へ書く、がどちらも起きない。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    @Test("倍率の前の版の読み方は、倍率つきの値を断り、倍率の無い値は読む")
+    func anOlderReaderRefusesAScaledValue() throws {
+        func older(_ value: String) -> (rate: Int, count: Int, destination: String)? {
+            let parts = value.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+            guard parts.count == 3, let rate = Int(parts[0]), let count = Int(parts[1]) else { return nil }
+            return (rate, count, String(parts[2]))
+        }
+        let scaled = try #require(
+            RenderRequest(frameRate: 30, frameCount: 120, scale: 4, destination: "/tmp/out/f-####.png"))
+        #expect(older(scaled.environmentValue) == nil)
+        let plain = try #require(
+            RenderRequest(frameRate: 30, frameCount: 120, destination: "/tmp/out/f-####.png"))
+        #expect(older(plain.environmentValue)?.destination == "/tmp/out/f-####.png")
     }
 
     /// **行き先は最後に置く。** `:` を含むパスも切らずに運ぶ。
