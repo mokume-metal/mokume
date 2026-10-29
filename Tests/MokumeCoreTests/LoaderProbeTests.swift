@@ -26,6 +26,9 @@ import Testing
 /// `MOKUME_PROBE_SEED` に渡すと同じ入力を再現する。落ちる入力は、プロセスが落ちる前に標準エラーへ
 /// `[probe] 落ちる直前に渡していた …` と名乗る (``Guarded``)。
 ///
+/// 失敗は `\(error as Any)` で文面に載せる。失敗の型の `description` は main actor に隔離された適合なので、
+/// nonisolated のこの suite からは静的に使えない (下限の Xcode が `[#IsolatedConformances]` で拒む・#3199)。
+///
 /// [#3220]: https://github.com/mokume-metal/mokume/issues/3220
 @Suite("読み込みの口は、壊した入力にも落ちず止まらず名乗って答え、空白や大きさだけの違いで答えを変えない")
 nonisolated struct LoaderProbeTests {
@@ -50,7 +53,7 @@ nonisolated struct LoaderProbeTests {
         case .unreadable(let named):
             return named == path ? nil : "失敗が渡した名前を名乗らない (\(named))"
         default:
-            return "想定していない失敗 \(failure)"
+            return "想定していない失敗 \(failure as Any)"
         }
     }
 
@@ -257,7 +260,7 @@ nonisolated struct LoaderProbeTests {
                 _ = try Self.loadSTL(bytes, in: directory)
                 return nil
             } catch {
-                guard case .unreadable(let named) = error else { return "想定していない失敗 \(error)" }
+                guard case .unreadable(let named) = error else { return "想定していない失敗 \(error as Any)" }
                 return named.hasSuffix("probe.stl") ? nil : "失敗が渡した名前を名乗らない (\(named))"
             }
         }
@@ -365,7 +368,7 @@ nonisolated struct LoaderProbeTests {
                     let skipped = drawing.skipped.map { "\($0.what) ×\($0.count)" }
                     let approximated = drawing.approximated.map { "\($0.what) ×\($0.count)" }
                     return "描くもの \(drawing.items)・捨てた \(skipped)・近似 \(approximated)"
-                } catch { return "投げた \(error)" }
+                } catch { return "投げた \(error as Any)" }
             }
             let (left, right) = (read(plain), read(spaced))
             guard left != right else { return .pass }
@@ -398,7 +401,7 @@ nonisolated struct LoaderProbeTests {
     static func answer(_ bytes: [UInt8], in directory: URL) -> Answer {
         do throws(ModelFailure) { return .triangles(try loadSTL(bytes, in: directory).positions.count / 3) } catch {
             if case .unreadable = error { return .unreadable }
-            return .other("\(error)")
+            return .other("\(error as Any)")
         }
     }
 
