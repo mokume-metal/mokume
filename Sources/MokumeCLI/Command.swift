@@ -157,11 +157,19 @@ enum Command {
                     "List what the environment provides and what is here, for when things do not run"
                 )
             case .help:
-                ("help", "This message")
+                (
+                    "help [<command>]",
+                    "Show the commands, or pass one to see only what it takes"
+                )
             case .version:
                 nil
             }
         }
+    }
+
+    /// 口の説明の各行。**全体の使い方と口のヘルプが同じ値から出る** (写しを持たない・#3425)。
+    private static func descriptionLines(_ entry: (signature: String, description: String)) -> [String] {
+        entry.description.split(separator: "\n").map { "      \($0)" }
     }
 
     static func usage(_ name: String = name) -> String {
@@ -169,19 +177,82 @@ enum Command {
         for verb in Verb.allCases {
             guard let entry = verb.usageEntry else { continue }
             lines.append("  \(entry.signature)")
-            lines += entry.description.split(separator: "\n").map { "      \($0)" }
+            lines += descriptionLines(entry)
             lines.append("")
         }
         lines.append("Tool: \(ToolVersion.describe())")
         return lines.joined(separator: "\n")
     }
 
+    /// その口だけの使い方 (`<口> --help`・`help <口>`)。**`usageEntry` から作る** — 新しい説明は書かない。
+    ///
+    /// 使い方の宣言を持たない口 (`version`) は、全体の使い方を返す (版はその末尾の `Tool:` が名乗る・#634)。
+    static func help(for verb: Verb, _ name: String = name) -> String {
+        guard let entry = verb.usageEntry else { return usage(name) }
+        return (["Usage: \(name) \(entry.signature)", ""] + descriptionLines(entry))
+            .joined(separator: "\n")
+    }
+
+    /// 誤りの後ろに置く 1 行。**全体の使い方は繰り返さない** (#3425)。
+    static func pointer(to verb: Verb) -> String {
+        "See \(name) help \(verb.rawValue) for what \(verb.rawValue) takes."
+    }
+
     static func dispatch(_ arguments: [String]) throws(CommandFailure) {
         guard let first = arguments.first else { throw .usage(usage()) }
         let rest = Array(arguments.dropFirst())
         guard let verb = Verb.named(first) else {
-            throw .usage("Unknown command: \(first)\n\n" + usage())
+            throw .usage("Unknown command: \(first)\nSee \(name) help for the commands.")
         }
+        switch verb {
+        case .help:
+            try help(arguments: rest)
+        case .version:
+            try version(arguments: rest)
+        default:
+            do {
+                try perform(verb, rest)
+            } catch .helpRequested {
+                print(help(for: verb))
+            } catch .usage(let text) {
+                // 誤りの文と、どこを読めばよいかの 1 行だけ。全体の使い方は付けない
+                throw .usage(text + "\n" + pointer(to: verb))
+            }
+        }
+    }
+
+    /// `help [<command>]`。**余る引数を黙って捨てない** (#2321 と同じ約束)。
+    private static func help(arguments: [String]) throws(CommandFailure) {
+        guard let spelling = arguments.first else {
+            print(usage())
+            return
+        }
+        guard let target = Verb.named(spelling) else {
+            throw .usage("Unknown command: \(spelling)\nSee \(name) help for the commands.")
+        }
+        if let extra = arguments.dropFirst().first {
+            throw .usage(
+                "\(name) help takes at most one command (got \(GivenPath.shellWord(display: extra)))\n"
+                    + pointer(to: .help))
+        }
+        print(help(for: target))
+    }
+
+    /// `version`。引数を取らない。`--help` / `-h` は全体の使い方を出す (版はその末尾が名乗る)。
+    private static func version(arguments: [String]) throws(CommandFailure) {
+        if arguments.contains(where: { Arguments.helpSpellings.contains($0) }) {
+            print(usage())
+            return
+        }
+        if let extra = arguments.first {
+            throw .usage(
+                "\(name) version takes no arguments (got \(GivenPath.shellWord(display: extra)))")
+        }
+        print(ToolVersion.describe())
+    }
+
+    /// 口を走らせる。`help` と `version` は ``dispatch(_:)`` が先に受ける。
+    private static func perform(_ verb: Verb, _ rest: [String]) throws(CommandFailure) {
         switch verb {
         case .new:
             try NewCommand.run(rest)
@@ -198,12 +269,13 @@ enum Command {
         case .bundle:
             try BundleCommand.run(rest)
         case .doctor:
-            // 投げない。切り分けの口が失敗で終わると、いちばん要るときに読めない
+            // ヘルプを頼まれたら診断を走らせない。それ以外の知らない引数は、これまでどおり脇へ置いて診る
+            // (切り分けの口が使い方で止まると、いちばん要るときに読めない)
+            if DoctorCommand.asksForHelp(rest) { throw .helpRequested }
             DoctorCommand.run(rest)
-        case .help:
-            print(usage())
-        case .version:
-            print(ToolVersion.describe())
+        case .help, .version:
+            // ``dispatch(_:)`` が先に受けるので、ここへは来ない
+            preconditionFailure("handled by dispatch")
         }
     }
 }

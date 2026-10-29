@@ -152,7 +152,7 @@ enum BundleCommand {
     static var options: [Arguments.Option] {
         [
             Arguments.Option(["--out"], takesPlace: true) {
-                "\($0) needs a directory\n\n" + Command.usage()
+                "\($0) needs a directory"
             }
         ]
     }

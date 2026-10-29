@@ -1438,8 +1438,9 @@ struct MCPServerTests {
     /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。窓口だけが
     /// 最初の引数をそのまま場所にしていて、`mcp --help` は `--help` という場所の窓口として
     /// 標準入力を待っていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
-    /// 断る文面は `run --help` と同じ形 (`Unknown option: …` と使い方)。
-    @Test("知らない選択肢は、使い方を出して止まる", arguments: ["--help", "-h", "--version", "-c"])
+    /// 断る文面は `run --version` と同じ形 (`Unknown option: …`。全体の使い方は付けない・#3425)。
+    /// `--help` / `-h` は断らず、ヘルプの頼みとして止まる (下の `helpIsAskedNotRefused`)。
+    @Test("知らない選択肢は、名指して止まる", arguments: ["--version", "-c"])
     func anUnknownOptionIsRefused(option: String) throws {
         let root = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1450,8 +1451,17 @@ struct MCPServerTests {
             Issue.record("使い方の誤りとして止まっていない: \(String(describing: thrown))")
             return
         }
-        #expect(text.hasPrefix("Unknown option: \(option)\n"), "知らない選択肢を名指していない: \(text)")
-        #expect(text.contains("Usage: "), "使い方を出していない: \(text)")
+        #expect(text == "Unknown option: \(option)", "知らない選択肢を名指していない: \(text)")
+    }
+
+    /// **`--help` / `-h` は誤りではなく、ヘルプの頼み** (#3425)。窓口を回す前に止まる。
+    @Test("--help と -h は、ヘルプの頼みとして止まる", arguments: ["--help", "-h"])
+    func helpIsAskedNotRefused(option: String) throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(throws: CommandFailure.helpRequested) {
+            try MCPCommand.directories(arguments: [option], environment: [:], currentDirectory: root)
+        }
     }
 
     /// 位置引数は 1 つまで。`bundle` / `run` と同じ文面で、2 つ目を名指す。
@@ -1528,6 +1538,7 @@ struct MCPServerTests {
         ]
         for arguments in wrong {
             var served = false
+            // `--help` もここで止まる (ヘルプの頼みとして。回さない)
             #expect(throws: CommandFailure.self, "\(arguments) で止まらなかった") {
                 try MCPCommand.run(arguments, scratch: scratch) { _ in served = true }
             }

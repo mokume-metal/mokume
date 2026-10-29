@@ -90,7 +90,14 @@ enum Arguments {
         /// 増える。**打たれた順に並び、宣言した選択肢は綴りと値を 1 つにして載る** (`-c release`)。
         /// 値はシェルの 1 語として読める形にする (空は `''`、空白入りは引用符つき・#2484)。
         var setAside: [String] = []
+        /// `--help` / `-h` が打たれたか。**``Surplus/ignore`` のときだけ立つ** (``Surplus/reject`` は
+        /// ``CommandFailure/helpRequested`` を投げる)。脇へは置かない (#3425)。
+        var helpRequested = false
     }
+
+    /// ヘルプを頼む綴り。**値を取る位置に来たもの (`render --out -h` の `-h`) は値であって、これではない。**
+    /// 宣言に載らない `-` 始まりの語として読まれる位置に来たときだけ、ヘルプとみなす (#3425)。
+    static let helpSpellings = ["--help", "-h"]
 
     /// 空の場所を断る言い方。`flag` は選択肢の綴り (位置引数なら `nil`)。
     ///
@@ -167,13 +174,21 @@ enum Arguments {
             } else if argument.hasPrefix("-") {
                 // **知らない選択肢を黙って位置引数にしない。** `-c` が場所として解釈された
                 // 結果が「スケッチが見つからない: …/-c」で、何を直せばよいか分からない (#680)
+                //
+                // **全体の使い方は付けない** (#3425)。どの口の誤りかを知っているのは ``Command/dispatch(_:)``
+                // で、そこが「`help <口>` で読める」の 1 行を足す
                 switch surplus {
                 case .reject:
+                    if helpSpellings.contains(argument) { throw .helpRequested }
                     if let spelling = separatedSpelling(of: argument, in: options) {
-                        throw .usage(spelling + "\n\n" + Command.usage())
+                        throw .usage(spelling)
                     }
-                    throw .usage("Unknown option: \(argument)\n\n" + Command.usage())
+                    throw .usage("Unknown option: \(argument)")
                 case .ignore:
+                    if helpSpellings.contains(argument) {
+                        parsed.helpRequested = true
+                        break
+                    }
                     parsed.ignored.append(argument)
                     parsed.setAside.append(GivenPath.shellWord(display: argument))
                 }
