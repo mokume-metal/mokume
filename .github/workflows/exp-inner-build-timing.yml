@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て: #3191 の 2 本 (束ねる検査・全部の例の組み上げ) の内訳を GitHub の macOS runner で測る。
+# merge しない。結果を #3191 に載せたら PR ごと閉じる。
+name: exp-inner-build-timing
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/exp-inner-build-timing.yml]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: macos-26
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [T-bundle-release, E-every-example]
+        round: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - name: measure
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -u
+          R="$RUNNER_TEMP/result.txt"; : > "$R"
+          note() { echo "$*" | tee -a "$R"; }
+          stamp() { perl -MTime::HiRes=time -e '$t0=time; $|=1; while(<STDIN>){printf "%7.1f %s", time-$t0, $_}'; }
+          # 区間ごとの、モジュールの最初と最後の Compiling の時刻・行数・prebuilt の有無
+          modules() { # ログ
+            note '```'
+            awk '/Compiling /{for(i=1;i<=NF;i++) if($i=="Compiling"){m=$(i+1); if(!(m in f)) {f[m]=$1; o[++n]=m}; l[m]=$1; c[m]++}} END{for(k=1;k<=n;k++){m=o[k]; printf "%-28s first=%6.1f last=%6.1f lines=%d\n", m, f[m], l[m], c[m]}}' "$1" | tee -a "$R"
+            grep -i 'prebuilt' "$1" | head -3 | tee -a "$R"
+            grep -E 'Linking|Build complete' "$1" | tail -4 | tee -a "$R"
+            note '```'
+          }
+          step() { # 名前 ディレクトリ 引数...
+            local name=$1 dir=$2; shift 2
+            local t0=$SECONDS
+            (cd "$dir" && swift "$@" 2>&1) | stamp > "$RUNNER_TEMP/$name.log"; local rc=${PIPESTATUS[0]}
+            note "**$VARIANT $name** rc=$rc wall=$((SECONDS - t0))s compiling-lines=$(grep -c ' Compiling ' "$RUNNER_TEMP/$name.log")"
+            [ "$rc" -eq 0 ] || tail -40 "$RUNNER_TEMP/$name.log"
+          }
+          note "$VARIANT cores=$(sysctl -n hw.ncpu) mem=$(( $(sysctl -n hw.memsize) / 1073741824 ))G $(swift --version 2>&1 | head -1)"
+          step resolve . package resolve
+          step build-tests . build --build-tests -Xswiftc -gline-tables-only
+          CLI=$(swift build --show-bin-path)/mokume-cli
+          W="$RUNNER_TEMP/ws"; mkdir -p "$W"
+          case "$VARIANT" in
+            T-bundle-release)
+              # 1. 本物の検査 (まっさらな置き場で release を組む)
+              step test-assetsLand . test --skip-build --filter assetsLandInsideTheBundledApplication
+              grep -E 'passed after|failed after' "$RUNNER_TEMP/test-assetsLand.log" | tail -2 | tee -a "$R"
+              # 2. 同じ形のスケッチを release で組む。モジュールごとの時刻を取る
+              "$CLI" new packed-sketch --path "$W" --local "$PWD" > /dev/null
+              step release-cold "$W/packed-sketch" build -c release --product packed-sketch
+              modules "$RUNNER_TEMP/release-cold.log"
+              # 3. 依存を組んだ後に、スケッチだけ変えて組み直す (依存が占める分の裏)
+              printf '\n// probe\n' >> "$(ls "$W"/packed-sketch/Sources/packed-sketch/*.swift | head -1)"
+              step release-sketch-only "$W/packed-sketch" build -c release --product packed-sketch
+              ;;
+            E-every-example)
+              # 1. 本物の検査 (まっさらな共有置き場で、依存ごと debug で組む)
+              step test-everyExample . test --skip-build --filter everyExampleBuilds
+              grep -E 'passed after|failed after' "$RUNNER_TEMP/test-everyExample.log" | tail -2 | tee -a "$R"
+              # 2. 束を作るだけの時間
+              t0=$SECONDS; python3 scripts/bundle-examples.py --out "$W/bundle" > /dev/null 2>&1; note "**$VARIANT bundle-examples** wall=$((SECONDS - t0))s"
+              # 3. ひな形 1 本を、まっさらな置き場に debug で組む (= 依存を組む分)
+              "$CLI" new tiny --path "$W" --local "$PWD" > /dev/null
+              step debug-cold "$W/tiny" build --scratch-path "$W/scratch"
+              modules "$RUNNER_TEMP/debug-cold.log"
+              # 4. 同じ置き場で、もう 1 本の検査を走らせる形は取れないので、tiny を変えて組み直す (リンクだけの目安)
+              printf '\n// probe\n' >> "$(ls "$W"/tiny/Sources/tiny/*.swift | head -1)"
+              step debug-tiny-only "$W/tiny" build --scratch-path "$W/scratch"
+              ;;
+          esac
+          cat "$R" >> "$GITHUB_STEP_SUMMARY"
