@@ -62,7 +62,7 @@ import MokumeDiagnostics
 /// 1 つのスケッチで同時に生きていられる合成した音は、オシレータ・ノイズ・エフェクトを合わせて 64 個
 /// まで (エフェクトへ通した ``SoundFile`` もこの数に入る — 下の段落)。**手放して (変数や配列から外して) 鳴り終えたオシレータとノイズは、数から外れる** — 鳴り終えたとは、
 /// ``SynthSource/stop()`` で止めて消えたか、``Env`` の形が終わって無音になったこと。手放しても鳴っている音は
-/// 切らず、鳴り終えてから数から外れる。鳴らしたまま (包絡なしの ``SynthSource/play()`` で) 手放した音は鳴り
+/// 切らず、鳴り終えてから数から外れる。鳴らしたまま (包絡なしの ``SynthSource/play(at:)`` で) 手放した音は鳴り
 /// 続け、数から外れない。**エフェクトはスケッチの終わりまで残る**。`setup()` で作って使い回す書き方は、
 /// 今も勧める形で、当たるたびに短い音を作って捨てる書き方も、包絡で鳴り終えさせれば 64 個を使い切らない。
 ///
@@ -244,6 +244,34 @@ public class SynthSound: EffectInput {
         stage.rack.post(SynthCommand(op: op, node: UInt8(node.id)))
     }
 
+    /// 予約の秒 `seconds` (音の時計) を標本の位置にする。数でない値・無限の値は `nil` — その呼び出し全体を
+    /// 無視し、1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。今より前の値は知らせない (すぐ鳴らす)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    func reservationPosition(_ seconds: Float, call: String) -> Int? {
+        if let position = stage.samplePosition(ofSeconds: seconds) { return position }
+        notice(
+            "\(call).at.notFinite",
+            "\(call)() got an at: that is not a number, or an infinite one, so the call is "
+                + "ignored for this \(name)")
+        return nil
+    }
+
+    /// 値の変更と操作を、位置 `position` の 1 つの予約にして渡す。ステージが閉じていれば捨てる。
+    /// 位置が今以前 (0 を含む) なら、次に作る標本の頭で全部が順に効く。
+    func postReservation(
+        values: [(param: SynthParam, value: Float)], ops: [SynthCommand.Op], at position: Int
+    ) {
+        guard let node, !stage.isClosed else { return }
+        var commands: [SynthCommand] = values.map {
+            SynthCommand(
+                op: .set, node: UInt8(node.id), param: $0.param, bits: UInt64($0.value.bitPattern),
+                at: position)
+        }
+        commands += ops.map { SynthCommand(op: $0, node: UInt8(node.id), at: position) }
+        stage.rack.postReservation(commands)
+    }
+
     /// 呼び出しで渡された値を、範囲へ丸めて受ける。数でない値・無限の値は `nil` (無視する)。
     ///
     /// どちらも投げず、同じ呼び出しについて 1 度だけ知らせる ([ADR-0020] 決定 5)。
@@ -280,16 +308,16 @@ public class SynthSound: EffectInput {
 
 /// 合成した音の音源 (オシレータとノイズ) に共通の操作。
 ///
-/// 作っただけでは鳴らない。``play()`` で鳴らし、``stop()`` で止める。音量・足す値・定位は、
+/// 作っただけでは鳴らない。``play(at:)`` で鳴らし、``stop()`` で止める。音量・足す値・定位は、
 /// 鳴らす前にも鳴らしている最中にも変えられ、急に変えても音がぷつっと鳴らないよう
 /// 約 5 ミリ秒かけて追う。どの口も投げない ([ADR-0020] 決定 5)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public class SynthSource: SynthSound {
-    /// 鳴っているか。``play()`` で `true` になり、``stop()`` で `false` になる。
+    /// 鳴っているか。``play(at:)`` で `true` になり、``stop()`` で `false` になる。
     ///
     /// ``Env`` の形が終わって音が 0 になっても `true` のまま (止めるのは ``stop()``)。
-    public private(set) var isPlaying = false
+    public internal(set) var isPlaying = false
 
     /// 鳴らし始める。今の周波数・音量・足す値・定位のまま。
     ///
@@ -302,15 +330,38 @@ public class SynthSource: SynthSound {
     /// ```
     ///
     /// 鳴っている最中に呼んでも何も変わらない。止めた後に呼ぶと、位相を頭へ戻して鳴らし直す。
-    public func play() {
-        post(.play)
+    ///
+    /// ## 先の時刻に予約する
+    ///
+    /// `at` に**音の時計の秒**(``Sketch/soundTime`` と同じ時計) を渡すと、その標本の頭から鳴らす。省略するか、
+    /// 今より前の値なら、次に作る標本の頭で鳴らす。``SketchPart/time`` の秒ではなく、``SketchPart/pauseTime()``・
+    /// ``SketchPart/jumpTime(_:)`` は予約に効かない (音を進めるのは音の時計で、止めない・飛ばさない)。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc? -->
+    /// ```swift
+    /// func mousePressed() {
+    ///     // 0.5 秒後の標本の頭から鳴らす
+    ///     osc?.play(at: soundTime + 0.5)
+    /// }
+    /// ```
+    ///
+    /// 手本は Tone.js の `triggerAttack(…, time)` と Web Audio の `OscillatorNode.start(when)`。書き出しでは
+    /// フレームの途中でも標本の位置で効き、同じ操作から同じ標本が出る。実機でも、音の側の区切りの途中で効く。
+    /// 予約した音は ``isPlaying`` が**呼んだ時点で** `true` になり、``stop()`` は予約を取り消さない (すぐ止まるだけで、
+    /// 予約の位置に着くと鳴り始める)。数でない値・無限の値は、呼び出し全体を無視して 1 度だけ知らせる (投げない —
+    /// [ADR-0020] 決定 5)。先の予約は数に上限がある (``Env/play(_:_:_:_:_:at:)``)。
+    ///
+    /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+    public func play(at time: Float = 0) {
+        guard let position = reservationPosition(time, call: "play") else { return }
+        postReservation(values: [], ops: [.play], at: position)
         isActive = true
         isPlaying = true
     }
 
     /// 止める。約 5 ミリ秒かけて消える。
     ///
-    /// 鳴っていなければ何もしない。もう一度 ``play()`` で鳴らせる。
+    /// 鳴っていなければ何もしない。もう一度 ``play(at:)`` で鳴らせる。
     public func stop() {
         post(.stop)
         isPlaying = false
@@ -352,23 +403,42 @@ public class SynthSource: SynthSound {
         send(.panning, value)
     }
 
+    /// 音量・足す値・定位のうち、受けられた値 (範囲へ丸めた後)。受けられなかったものは入れない。
+    func mixValues(_ amp: Float, _ add: Float, _ pan: Float) -> [(param: SynthParam, value: Float)] {
+        var values: [(param: SynthParam, value: Float)] = []
+        if let value = accept(amp, 0...1, call: "amp", meaning: "a volume") {
+            values.append((.amplitude, value))
+        }
+        if let value = accept(add, -1...1, call: "add", meaning: "an offset") {
+            values.append((.offset, value))
+        }
+        if let value = accept(pan, -1...1, call: "pan", meaning: "a position") {
+            values.append((.panning, value))
+        }
+        return values
+    }
+
     /// ``Env`` が、この音の包絡を頭から始める。鳴っていなければ鳴らし始める。
     func triggerEnvelope(
-        attack: Float, sustain: Float, level: Float, release: Float
+        attack: Float, sustain: Float, level: Float, release: Float, at time: Float
     ) {
         guard
+            let position = reservationPosition(time, call: "Env.play"),
             let attackTime = acceptTime(attack, call: "Env.play", meaning: "attackTime"),
             let sustainTime = acceptTime(sustain, call: "Env.play", meaning: "sustainTime"),
             let releaseTime = acceptTime(release, call: "Env.play", meaning: "releaseTime"),
             let sustainLevel = accept(
                 level, 0...1, call: "Env.play", meaning: "a sustainLevel")
         else { return }
-        send(.attack, attackTime)
-        send(.sustain, sustainTime)
-        send(.level, sustainLevel)
-        send(.release, releaseTime)
-        post(.trigger)
-        play()
+        // 値・包絡・鳴らす操作を 1 つの予約として渡す。時刻が先なら、前の予約の値を書き換えないよう全部がその時刻に効く
+        postReservation(
+            values: [
+                (.attack, attackTime), (.sustain, sustainTime), (.level, sustainLevel),
+                (.release, releaseTime),
+            ],
+            ops: [.trigger, .play], at: position)
+        isActive = true
+        isPlaying = true
     }
 
     /// 秒の長さを受ける。負の値は 0 へ丸め、数でない値・無限の値は `nil` (無視する)。
@@ -432,10 +502,26 @@ public class Oscillator: SynthSource {
     /// ```
     ///
     /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
-    /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func play(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        set(freq, amp, add, pan)
-        play()
+    /// ``SynthSource/pan(_:)`` と同じに扱う。`at` は ``SynthSource/play(at:)`` と同じ音の時計の秒で、
+    /// **値も鳴らすのと同じ標本の頭から効く** (省略するとすぐ)。
+    public func play(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Float = 0) {
+        guard let position = reservationPosition(time, call: "play") else { return }
+        postReservation(values: voiceValues(freq, amp, add, pan), ops: [.play], at: position)
+        isActive = true
+        isPlaying = true
+    }
+
+    /// 周波数・音量・足す値・定位のうち、受けられた値 (範囲へ丸めた後)。受けられなかったものは入れない。
+    private func voiceValues(
+        _ freq: Float, _ amp: Float, _ add: Float, _ pan: Float
+    ) -> [(param: SynthParam, value: Float)] {
+        let limit = Float(stage.rack.sampleRate / 2)
+        var values: [(param: SynthParam, value: Float)] = []
+        if let value = accept(freq, 0...limit, call: "freq", meaning: "a frequency") {
+            values.append((.frequency, value))
+        }
+        values += mixValues(amp, add, pan)
+        return values
     }
 
     /// 周波数を決める。単位は Hz で、0 から標本化率の半分 (24000) まで。既定は 440。
@@ -536,10 +622,13 @@ public class Noise: SynthSource {
     /// ```
     ///
     /// 範囲の外・数でない値は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
-    /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        set(amp, add, pan)
-        play()
+    /// ``SynthSource/pan(_:)`` と同じに扱う。`at` は ``SynthSource/play(at:)`` と同じ音の時計の秒で、
+    /// **値も鳴らすのと同じ標本の頭から効く** (省略するとすぐ)。
+    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Float = 0) {
+        guard let position = reservationPosition(time, call: "play") else { return }
+        postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position)
+        isActive = true
+        isPlaying = true
     }
 
     /// 音量・足す値・定位を、鳴らさずに決める。
@@ -596,8 +685,8 @@ public final class PinkNoise: Noise {
 /// }
 /// ```
 ///
-/// 形は呼ぶたびに頭から始まる。形が終わると音源の音は 0 (無音) になり、次に ``play(_:_:_:_:_:)`` を
-/// 呼ぶまでそのままで、``SynthSource/play()`` で鳴らし直しても戻らない。
+/// 形は呼ぶたびに頭から始まる。形が終わると音源の音は 0 (無音) になり、次に ``play(_:_:_:_:_:at:)`` を
+/// 呼ぶまでそのままで、``SynthSource/play(at:)`` で鳴らし直しても戻らない。
 public final class Env {
     init() {}
 
@@ -621,16 +710,71 @@ public final class Env {
     ///   - sustainTime: 保つ秒数。
     ///   - sustainLevel: 保つ高さ (0〜1)。
     ///   - releaseTime: 下がる秒数。
+    ///   - at: 始める時刻 (音の時計の秒。``Sketch/soundTime`` と同じ時計)。省略するか、今より前なら、次に作る
+    ///     標本の頭で始める。
     ///
-    /// 秒数が負なら 0 へ、`sustainLevel` が 0〜1 の外なら端へ丸め、数でない値・無限の値があれば
+    /// 秒数が負なら 0 へ、`sustainLevel` が 0〜1 の外なら端へ丸め、数でない値・無限の値 (`at` を含む) があれば
     /// 呼び出し全体を無視する。どちらもそのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。
+    ///
+    /// ## 先の時刻へ予約する
+    ///
+    /// `at` を渡すと、`draw()` が呼ばれたフレームの区切りではなく、**その標本の頭**から形が始まる。60 fps で
+    /// 約 17 ミリ秒の粒に拍が揃わなくなり、120 BPM の 16 分音符 (125 ミリ秒) も等間隔に鳴る。**`at` の秒は音の時計で、
+    /// ``SketchPart/time`` ではない** — 音を進めるのは音の時計で、``SketchPart/pauseTime()``・``SketchPart/jumpTime(_:)``
+    /// は予約に効かない (音を止めない・飛ばさない)。今の音の時計は ``Sketch/soundTime`` で読む。手本は Tone.js の
+    /// `triggerAttackRelease(…, time)` と、Web Audio の `OscillatorNode.start(when)`。
+    ///
+    /// ```swift
+    /// final class Sequencer: Sketch {
+    ///     var osc: TriOsc?
+    ///     var env: Env?
+    ///     var lastStep = -1
+    ///     let pattern = [true, false, true, false, true, false, true, true,
+    ///                    true, false, true, false, true, false, false, true]
+    ///     func setup() {
+    ///         osc = createTriOsc()
+    ///         env = createEnv()
+    ///     }
+    ///     func draw() {
+    ///         background(20)
+    ///         let now = soundTime                          // 音の時計の秒
+    ///         let step = Int(now / 0.125) % 16
+    ///         if step != lastStep {
+    ///             lastStep = step
+    ///             let next = (step + 1) % 16
+    ///             if pattern[next], let osc, let env {
+    ///                 // 次の 16 分の頭へ予約する。1 フレーム先より遠いので、実時間でも間に合う
+    ///                 env.play(osc, 0.002, 0.03, 0.7, 0.1, at: Float(Int(now / 0.125) + 1) * 0.125)
+    ///             }
+    ///         }
+    ///         for i in 0..<16 {
+    ///             if i == step { fill(255, 180, 60) } else { fill(pattern[i] ? 120 : 50) }
+    ///             rect(40 + Float(i) * 55, height / 2 - 25, 50, 50)
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - 値 (秒数・高さ) も、形も、鳴らす操作も、予約した時刻に**まとめて**効く。続けて予約しても、前の予約の
+    ///   値を書き換えない
+    /// - 実機では、音の側の区切りの途中で効く。予約が先の時刻なら、その標本の頭ちょうどから形が始まる。
+    ///   書き出しでは、同じ操作から同じ標本が出る ([ADR-0025] の水準 2)
+    /// - **先の予約を溜める置き場は、スケッチごとに 2048 個の操作まで**。この呼び出し 1 回は 6 個 (値 4・形・
+    ///   鳴らす) を使い、時刻に着いて効いたぶんが空く。およそ 340 回ぶん先まで予約でき、足りなければその予約を
+    ///   捨てて 1 度だけ知らせる (投げない)。曲全体を先に積まず、次の数音だけ予約する
+    /// - **今の音の時計より前の `at` は、次に作る標本の頭で始める** (知らせない)。実機で、`draw()` が間に合わず
+    ///   予約が少し遅れたときも、この形で鳴る
+    /// - 予約した音は、手放しても時刻に着いて鳴り終えるまで残る
+    ///
+    /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func play(
         _ input: SynthSource, _ attackTime: Float, _ sustainTime: Float, _ sustainLevel: Float,
-        _ releaseTime: Float
+        _ releaseTime: Float, at time: Float = 0
     ) {
         input.triggerEnvelope(
-            attack: attackTime, sustain: sustainTime, level: sustainLevel, release: releaseTime)
+            attack: attackTime, sustain: sustainTime, level: sustainLevel, release: releaseTime,
+            at: time)
     }
 }

@@ -25,7 +25,7 @@ extension Sketch {
 
     // MARK: - オシレータ
 
-    /// 正弦波のオシレータを作る。鳴らすのは ``Oscillator/play(_:_:_:_:)`` か ``SynthSource/play()`` を
+    /// 正弦波のオシレータを作る。鳴らすのは ``Oscillator/play(_:_:_:_:at:)`` か ``SynthSource/play(at:)`` を
     /// 呼んでから。
     ///
     /// <!-- example: 文脈 var osc: SinOsc? -->
@@ -95,7 +95,7 @@ extension Sketch {
 
     // MARK: - ノイズ
 
-    /// 白色雑音を作る。鳴らすのは ``Noise/play(_:_:_:)`` か ``SynthSource/play()`` を呼んでから。
+    /// 白色雑音を作る。鳴らすのは ``Noise/play(_:_:_:at:)`` か ``SynthSource/play(at:)`` を呼んでから。
     /// 呼んだときの決まりは ``createSinOsc()`` と同じ。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
@@ -124,7 +124,7 @@ extension Sketch {
 
     // MARK: - 包絡
 
-    /// 包絡 (音の大きさの形) を作る。かけるのは ``Env/play(_:_:_:_:_:)``。
+    /// 包絡 (音の大きさの形) を作る。かけるのは ``Env/play(_:_:_:_:_:at:)``。
     ///
     /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
     /// ```swift
@@ -219,5 +219,36 @@ extension Sketch {
     /// ```
     public func createDelay() -> Delay {
         Delay(stage: SynthStage.stage(for: self))
+    }
+
+    // MARK: - 音の時計
+
+    /// いまの音の時計 (秒)。合成した音の予約 (`play(at:)`・``Env/play(_:_:_:_:_:at:)``) が読む時計で、次の拍の頭を
+    /// 求めるのに使う。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
+    /// ```swift
+    /// func draw() {
+    ///     guard let osc, let env else { return }
+    ///     // 次の 0.5 秒の頭ちょうどへ鳴らす
+    ///     let next = (soundTime / 0.5).rounded(.down) * 0.5 + 0.5
+    ///     env.play(osc, 0.002, 0.03, 0.7, 0.1, at: next)
+    /// }
+    /// ```
+    ///
+    /// - 合成した音を **1 つ作ってから** 0 秒を起点に数え、`setup()` で作ったスケッチを 60 fps の固定の時計で回すと、
+    ///   `frameCount` が 121 の `draw()` で 2.0 を返す (`SoundFile` の `position` と同じ数え方)。合成した音を
+    ///   1 つも作っていなければ、いつも 0 を返す
+    /// - **``SketchPart/time`` ではない。** ``SketchPart/pauseTime()`` でも止まらず、``SketchPart/jumpTime(_:)`` でも
+    ///   飛ばない (音を進めるのは音の時計で、``SynthSound`` と同じ)
+    /// - 書き出し (固定の時計) では、フレームの数から決まるので、同じフレームはいつも同じ値を返す。窓では、
+    ///   音の側が**実際に作った標本の数**から読む (`clock: .frames` の窓も)。処理が落ちて音が遅れた間は、
+    ///   ``SketchPart/time`` とずれうる
+    /// - 単精度なので、3 分を超えるあたりから 1 標本 (約 0.02 ミリ秒) の粒には揃わず、予約が数標本ずれうる
+    /// - 読むのに錠は取らず、音の側を待たせない
+    ///
+    /// 手本は Tone.js の `Tone.now()` と Web Audio の `AudioContext.currentTime`。
+    public var soundTime: Float {
+        Float(SynthStage.existing(for: self)?.soundSeconds ?? 0)
     }
 }

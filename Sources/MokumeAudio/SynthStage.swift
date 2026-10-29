@@ -88,6 +88,7 @@ final class SynthStage: Inlet {
         case noOutput
         case capacity
         case cannotCarry
+        case reservationFull
     }
 
     /// - Parameter owner: 持ち主のスケッチ。**検査だけが `nil` で作る** (スケッチを走らせずに、`pace` と
@@ -149,6 +150,30 @@ final class SynthStage: Inlet {
         rack.retryHeld()
     }
 
+    /// `sketch` のステージ。**作らない** — まだ無い (合成した音を 1 つも作っていない) か、閉じていれば `nil`。
+    static func existing(for sketch: any Sketch) -> SynthStage? {
+        guard let stage = stages[ObjectIdentifier(sketch)]?.stage, !stage.isClosed,
+            stage.owner === sketch
+        else { return nil }
+        return stage
+    }
+
+    /// 音の時計 (秒)。ラックが作った標本の数を標本化率で割ったもの。**フレームの数え方 (書き出し・検査) では
+    /// フレームの番号から決まり、実機では音の側が実際に作った標本から読む** (``SynthRack/rendered``)。
+    /// ``SketchPart/time`` ではなく、``SketchPart/pauseTime()``・``SketchPart/jumpTime(_:)`` に動かされない。
+    var soundSeconds: Double {
+        Double(rack.rendered) / rack.sampleRate
+    }
+
+    /// 予約の秒 `seconds` (音の時計) を、ラックの標本の位置にする。数でない値・無限の値は `nil`。
+    /// 負の値と今より前の値は、そのまま過去の位置になり、次に作る標本の頭で適用される。
+    func samplePosition(ofSeconds seconds: Float) -> Int? {
+        guard seconds.isFinite else { return nil }
+        // 大きな値は丸めて、整数に収まらないまま掛け算で溢れないようにする
+        let position = (Double(seconds) * rack.sampleRate).rounded()
+        return Int(min(max(position, 0), 1e15))
+    }
+
     /// このステージが、`sketch` のものか。
     func isOwned(by sketch: any Sketch) -> Bool {
         owner === sketch
@@ -175,6 +200,16 @@ final class SynthStage: Inlet {
                 + "once it has finished sounding; a sound file stops counting once it is detached; "
                 + "effects stay until the sketch ends. Create them once in setup() "
                 + "and reuse them instead of creating new ones in draw()")
+    }
+
+    /// 予約が置き場に入らず捨てられたことを 1 度だけ知らせる。
+    private func noticeReservationFull() {
+        notice(
+            .reservationFull,
+            "Too many sounds are reserved ahead with at: (a sketch keeps at most "
+                + "\(SynthRack.reservationCapacity) reserved operations waiting; one Env.play(…, at:) uses 6, "
+                + "play(…, at:) with values up to 5), so some reservations were dropped. Reserve only the "
+                + "next few notes ahead of soundTime instead of the whole song at once")
     }
 
     // MARK: - Inlet
@@ -229,6 +264,7 @@ final class SynthStage: Inlet {
         rack.retryHeld()
         if case .speaker(let player) = pace { resumeIfStopped(player) }
         reapReleasedSources()
+        if rack.droppedReservations > 0 { noticeReservationFull() }
         for entry in sounds { entry.sound?.refresh() }
     }
 
