@@ -312,6 +312,45 @@ extension SketchPart {
         return attachAfterCheck(try make())
     }
 
+    /// ``attached(_:calledAs:making:)`` の、**待って返す口** (``SketchPart/requestSound(_:)``・[#3398]) の版。
+    ///
+    /// 待って返す口は、走っている実行の中で起こした `Task` の続きから呼ばれる。そこでは ``runningSketch`` が外れているので、
+    /// 素の ``attached(_:calledAs:making:)`` は断る。代わりに、`Task` へ持ち越した窓口 (``AttachRequests``・
+    /// ``LaunchingSketch``) へ足すことを頼み、**実行がフレームの頭で足し終えてから**返る。足す者は実行で、
+    /// `Task` から直に足さない ([ADR-0010])。
+    ///
+    /// 順は ``attached(_:calledAs:making:)`` と同じ。**頼める所かを `make` の前に確かめ** (頼めなければ、作る前に
+    /// `call` の名前で 1 度だけ警告して `notRunning(call:)` を投げる。`Task.detached`・`init`・後片付けの後)、`make` で
+    /// 作り、足してもらう。待っている最中に実行が終われば、作ったものは足されないので同じく投げる (足された後、`Task` に番が回る前に畳まれたときも同じ)。足した結果の
+    /// `false` は実行が 1 か所 (`serveAttachRequests()`) で捨てる。
+    ///
+    /// **`make` は呼んだ `Task` の上 (main actor) で走る。** ファイルを読むなど重い仕事は、`make` の中で
+    /// `Task.detached` へ出し、入り口を作る所だけを main actor に戻す。
+    ///
+    /// [#3398]: https://github.com/mokume-metal/mokume/issues/3398
+    /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+    package func attachedWaiting<Failure: NotRunningFailure, Part: Inlet>(
+        _ failure: Failure.Type, calledAs call: String, making make: () async throws(Failure) -> Part
+    ) async throws(Failure) -> Part {
+        let requests = LaunchingSketch.attachments
+        guard runningSketch != nil || requests?.isEnded == false else {
+            OutsideRun.log.warn(call, .thrownUnattached)
+            throw Failure.notRunning(call: call)
+        }
+        let part = try await make()
+        // 走っている実行の中ならそのまま足す (`Task` の続きでは外れているので、ふつうは下の窓口を通る)
+        if runningSketch != nil { return attachAfterCheck(part) }
+        guard let requests, await requests.request(part), !requests.isEnded else {
+            // 頼む前か待っている間に実行が終わった。足されなかったものを、足されたと偽って返さない。
+            // **`request` が `true` を返した後でも、`Task` が戻る前に畳まれうる** — 実行が頼みを当てて待ちを終えてから、
+            // 呼んだ `Task` に番が回るまでの間に `closePlugins` が走ると、足した入り口は閉じられている。窓口は畳まれた
+            // ときに終わる (``AttachRequests/end()``) ので、戻った後にもう 1 度見て、閉じられたものを成功として返さない
+            OutsideRun.log.warn(call, .thrownUnattached)
+            throw Failure.notRunning(call: call)
+        }
+        return part
+    }
+
     /// ``attached(_:calledAs:making:)`` の、作るのが投げない口。足せない所で投げるのは確かめだけ。
     package func attached<Failure: NotRunningFailure, Part: Inlet>(
         _ failure: Failure.Type, calledAs call: String, making make: () -> Part

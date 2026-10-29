@@ -142,6 +142,11 @@ final class OutsideRun {
         "requestImage(_:)", "requestModel(_:normalize:)", "requestShape(_:)",
     ]
 
+    /// 走っている実行へ足して使うものを、待って返す口の名前 (``SketchPart/requestSound(_:)``)。`Task` の続きで返るので、
+    /// 走っている実行の中で起こした `Task` からなら呼べる (``AttachRequests``)。``notAttachedNotice(_:)`` が
+    /// 呼べる場所をそう言い分ける。名前は口の `#function` である。
+    nonisolated static let waitingAttaches: Set<String> = ["requestSound(_:)"]
+
     /// 外から読まれた ``SketchPart/canvas`` が止めるときの文面。
     ///
     /// **資源の口の文面 (``notRunningNotice(_:)``) を使わない** (#2683 の反証 B5)。`canvas` は読む
@@ -196,10 +201,21 @@ final class OutsideRun {
     /// 形はそれと同じく、1 行目が起きたこと、2 行目が次にすることで、「走っていない」とは言わない
     /// ([#1322])。投げる口は、ファイルを読む・ポートを開く前に投げる。
     ///
+    /// **待って返す口 (``waitingAttaches``) だけが、走っている実行の中で起こした `Task` から呼べる。** 同期の口を
+    /// そこから呼ぶと投げるので、同じ文面で「`Task` から呼べる」と言うと、呼んだ場所そのものを勧めることになる
+    /// (``notRunningNotice(_:)`` の ``waitingLoads`` と同じ言い分け)。2 通りを完全な文として持つ (ADR-0038 決定 3)。
+    ///
     /// [#1322]: https://github.com/mokume-metal/mokume/issues/1322
     /// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
     nonisolated static func notAttachedNotice(_ call: String) -> String {
-        "\(call) only works inside setup(), draw() or an input callback, because what it returns has "
+        if waitingAttaches.contains(call) {
+            return "\(call) only works inside setup(), draw() or an input callback, or in a Task started "
+                + "there, because what it returns has to join the running sketch, which can only happen "
+                + "there. It was called from somewhere else — an initialiser, after the sketch ended, or "
+                + "Task.detached — so it stopped before reading or opening anything."
+                + "\nCall it from a Task started in setup()"
+        }
+        return "\(call) only works inside setup(), draw() or an input callback, because what it returns has "
             + "to join the running sketch, which can only happen there. It was called outside them — "
             + "from an initialiser, after the sketch ended, or from a Task — so it stopped before "
             + "reading or opening anything.\nCall it from setup()"

@@ -666,6 +666,10 @@ enum LaunchingSketch {
     /// 後もこの待ちへ頼めるようにする** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。待つ側は
     /// 絵を描かず、頼んで結果を待つだけなので、描く順の性質に触れない。
     @TaskLocal static var selection: SelectionBroker?
+    /// 入り口を足すことの頼みの窓口 (``SketchPart/requestSound(_:)`` など)。**中で起こされた `Task` が、差し込みが外れた
+    /// 後も、足すのを実行へ頼めるようにする** — 足すのは実行がフレームの頭で行い、ここが持ち越すのは頼む窓口だけである
+    /// (``AttachRequests``)。実行そのものは持ち越さないので、描く口は `Task` から効かない。
+    @TaskLocal static var attachments: AttachRequests?
 }
 
 extension SketchPart {

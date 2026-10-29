@@ -18,7 +18,8 @@ import mokume
 ///
 /// ## 操作
 ///
-/// - ファイルを窓へ落とす (`fileDropped(_:)`)・O でファイルを選ぶ (`selectInput(_:)`) — `loadSound` で読む
+/// - ファイルを窓へ落とす (`fileDropped(_:)`) — `loadSound` で読む
+/// - O でファイルを選ぶ (`selectInput(_:)`) — `requestSound` で読む
 /// - space — 鳴らす / 止める (`play()` / `pause()`)
 /// - L — 頭から繰り返して鳴らす (`loop()`)
 /// - ← → — 1 秒戻る・進む (`jump(_:)`)
@@ -43,11 +44,12 @@ import mokume
 /// - 読めないファイルを落としたのに、理由が出ない・前の音が止まる・スケッチが止まる
 /// - 鳴らしているのに位置が進まない・止めても進み続ける
 ///
-/// O で選んだファイルは、ダイアログが閉じた後の最初の `draw()` で読む (ダイアログの結果は `Task` で届き、
-/// そこでは `loadSound` を呼べない)。そのため、読み込みが `draw()` の中にあるという警告が 1 度だけ端末に出る。
-/// 落とす経路は入力のコールバックの中で読むので出ない。
+/// O で選んだファイルは、ダイアログの結果が届いた `Task` の中で `requestSound` で読む (そこでは同期の
+/// `loadSound` は呼べない)。落とす経路は入力のコールバックの中で `loadSound` で読む。どちらも、読み込みが
+/// `draw()` の中にあるという警告は出ない ([#3398])。
 ///
 /// [#3390]: https://github.com/mokume-metal/mokume/issues/3390
+/// [#3398]: https://github.com/mokume-metal/mokume/issues/3398
 final class FileAndSound: Sketch {
     var settings: SketchSettings {
         SketchSettings(width: 960, height: 540, title: "file and sound")
@@ -59,8 +61,6 @@ final class FileAndSound: Sketch {
     var songName = ""
     /// 読めなかった理由。読めたら消す。
     var failure = ""
-    /// O で選んだパス。次の `draw()` の頭で読む。
-    var chosen: String?
     /// 選んでいる最中か。
     var choosing = false
 
@@ -78,8 +78,9 @@ final class FileAndSound: Sketch {
             guard !choosing else { return }
             choosing = true
             Task {
-                chosen = await selectInput("音声ファイルを選ぶ")
-                choosing = false
+                defer { choosing = false }
+                guard let path = await selectInput("音声ファイルを選ぶ") else { return }
+                await request(path)
             }
         case .space:
             guard let song else { return }
@@ -97,28 +98,36 @@ final class FileAndSound: Sketch {
         }
     }
 
-    /// 読む。読めなければ理由を覚え、前の音は触らない。
+    /// 入力のコールバックの中で読む。読めなければ理由を覚え、前の音は触らない。
     private func load(_ path: String) {
         do {
-            let loaded = try loadSound(path)
-            if let song {
-                song.stop()
-                detach(song)
-            }
-            song = loaded
-            songName = Self.name(of: path)
-            failure = ""
+            replace(with: try loadSound(path), from: path)
         } catch {
             failure = "\(Self.name(of: path)) を読めなかった: \(error)"
         }
     }
 
-    func draw() {
-        if let path = chosen {
-            chosen = nil
-            load(path)
+    /// `Task` の中で読む。`selectInput` の結果は `Task` に届き、そこでは `loadSound` は呼べない。
+    private func request(_ path: String) async {
+        do {
+            replace(with: try await requestSound(path), from: path)
+        } catch {
+            failure = "\(Self.name(of: path)) を読めなかった: \(error)"
         }
+    }
 
+    /// 読めた音に差し替える。前の音は止めて外す。
+    private func replace(with loaded: SoundFile, from path: String) {
+        if let song {
+            song.stop()
+            detach(song)
+        }
+        song = loaded
+        songName = Self.name(of: path)
+        failure = ""
+    }
+
+    func draw() {
         background(18, 18, 24)
         noStroke()
         guard let song else {

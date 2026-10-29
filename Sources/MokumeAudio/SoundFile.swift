@@ -287,7 +287,7 @@ public final class SoundFile: Inlet, EffectInput {
 
     init(
         name: String, buffer: AVAudioPCMBuffer, owner: (any Sketch)?, flow: SoundFlow?,
-        source: URL? = nil,
+        source: URL? = nil, decodedSamples: [Float]? = nil,
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         warn: @escaping (String) -> Void = Diagnostics.warn
     ) {
@@ -295,7 +295,8 @@ public final class SoundFile: Inlet, EffectInput {
         self.buffer = buffer
         self.format = buffer.format
         self.frameLength = buffer.frameLength
-        self.samples = AudioFile.mono(buffer)
+        // 裏で解いてきたなら、解き直さない (``Sketch/requestSound(_:)``)
+        self.samples = decodedSamples ?? AudioFile.mono(buffer)
         self.sampleRate = Float(buffer.format.sampleRate)
         self.owner = owner
         self.injectedFlow = flow

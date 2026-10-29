@@ -98,6 +98,53 @@ struct AudioOutsideRunTests {
         }
     }
 
+    /// `Task.detached` の中から、2 度 `requestSound` を呼ぶ。呼ぶ側のスケッチと警告の控えは、ここで作る。
+    static func requestInDetachedTask(_ path: String) async -> (failures: [AudioFailure], messages: [String]) {
+        let log = OutsideRun()
+        let sketch = Bare()
+        let failures = await OutsideRun.$current.withValue(log) { () async -> [AudioFailure] in
+            var caught: [AudioFailure] = []
+            for _ in 0..<2 {
+                do {
+                    _ = try await sketch.requestSound(path)
+                } catch {
+                    caught.append(error as? AudioFailure ?? .empty)
+                }
+            }
+            return caught
+        }
+        return (failures, log.messages)
+    }
+
+    @Test("Task.detached から requestSound を呼ぶと、ファイルを読まずに notRunning を投げ、requestSound(_:) を名乗って 1 度だけ警告する (#3398)")
+    func requestSoundInADetachedTaskThrowsNotRunning() async throws {
+        let garbage = try Self.garbageFile()
+        defer { try? FileManager.default.removeItem(at: garbage) }
+        let path = garbage.path
+        // `Task.detached` は、走っている実行から持ち越すもの (``LaunchingSketch``) を受け継がない
+        let outcome = await Task.detached { await Self.requestInDetachedTask(path) }.value
+        // 読めないファイルなのに unreadable でない — 読む前に断っている
+        #expect(outcome.failures == Array(repeating: .notRunning(call: "requestSound(_:)"), count: 2))
+        #expect(outcome.messages.count == 1, "2 度呼んでも 1 行")
+        let message = try #require(outcome.messages.first)
+        #expect(message.hasPrefix("requestSound(_:) only works inside setup()"))
+        #expect(message.contains("or in a Task started there"))
+        #expect(message.contains("It threw an error instead of returning anything."))
+        #expect(message.hasSuffix("Call it from a Task started in setup()"))
+        #expect(!message.contains("attach()"), "利用者が呼んでいない attach() を名乗らない")
+    }
+
+    @Test("requestSound の notRunning は「走っている実行の中で起こした Task からなら呼べる」を言い、loadSound の文面は言わない")
+    func requestSoundNoticeSaysATaskIsFine() {
+        let waiting = AudioFailure.notRunning(call: "requestSound(_:)").description
+        #expect(waiting == OutsideRun.notAttachedNotice("requestSound(_:)"))
+        #expect(waiting.contains("or in a Task started there"))
+        #expect(!waiting.contains("surface"), "面から作る口の文面ではない")
+        // 同期の口は Task から呼べない。その文面に「Task から呼べる」とは言わない
+        let blocking = AudioFailure.notRunning(call: "loadSound(_:)").description
+        #expect(!blocking.contains("or in a Task started there"))
+    }
+
     /// 投げない口の名前と、作る手続き。
     static let quietMakers: [(call: String, make: (Bare) -> AnyObject)] = [
         ("createSinOsc()", { $0.createSinOsc() }),

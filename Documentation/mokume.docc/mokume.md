@@ -732,6 +732,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 ### 音声ファイルを鳴らす
 
 - ``Sketch/loadSound(_:)``
+- ``Sketch/requestSound(_:)``
 - ``SoundFile``
 
 ### 音を合成する
