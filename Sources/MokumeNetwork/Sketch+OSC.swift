@@ -136,6 +136,8 @@ extension Sketch {
     /// 何度回しても同じメッセージが同じフレームに届く — OSC で動かすスケッチを相手なしで
     /// 確かめるときや、展示の前に空回しするときに使う ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// ```swift
     /// final class Replay: Sketch {
     ///     var osc: OSCPort?
@@ -163,7 +165,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(messages: [[OSCMessage]]) -> OSCPort {
         let osc = OSCPort(
-            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages),
+            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages, owner: self),
             outbound: nil, owner: self)
         attach(osc, calledAs: #function, returning: "a port that never receives anything")
         return osc

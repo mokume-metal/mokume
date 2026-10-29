@@ -291,9 +291,11 @@ struct AudioIntervalTests {
         let third = try #require(pump(16.375))
         #expect(third == (250, 375))
         // 終わりを越えたら始まりへ戻る (通し番号は戻らず、標本だけが読み直される)
-        source.start(into: input, at: 0)
+        // (足し直しは起点を取り直さない (#3152) ので、新しい出どころで 0 秒から始める)
+        let fresh = RecordedSource(samples: stream, sampleRate: 1000)
+        fresh.start(into: input, at: 0)
         let wrapped = try #require({ () -> AudioSpan? in
-            source.pump(into: input, at: 5)
+            fresh.pump(into: input, at: 5)
             return input.take()
         }())
         #expect(wrapped.from == AudioAnalysis.limited(from: 0, to: 5000) && wrapped.to == 5000)

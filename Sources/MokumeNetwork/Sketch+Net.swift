@@ -133,6 +133,8 @@ extension Sketch {
     /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に空回しするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// ```swift
     /// final class Replay: Sketch {
     ///     var server: TCPServer?
@@ -159,7 +161,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createTCPServer(messages: [[String]]) -> TCPServer {
         let server = TCPServer(
-            port: nil, name: "tcp (recorded)", source: RecordedSource(batches: messages),
+            port: nil, name: "tcp (recorded)", source: RecordedSource(batches: messages, owner: self),
             clients: nil, owner: self)
         attach(server, calledAs: #function, returning: "a port that never receives anything")
         return server
@@ -171,6 +173,8 @@ extension Sketch {
     /// ``Sketch/createWebSocketServer(_:)`` で受けるスケッチを相手なしで回すときは、これに差し替える。
     /// 流し方は ``Sketch/createTCPServer(messages:)`` と同じで、`messages[i]` が、作ってから i 番目の
     /// フレームで ``TextPort/messages`` に入る ([ADR-0028] 決定 6・7)。
+    ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// <!-- example: 文脈 var socket: WebSocketServer? -->
     /// ```swift
@@ -188,7 +192,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createWebSocketServer(messages: [[String]]) -> WebSocketServer {
         let server = WebSocketServer(
-            port: nil, name: "websocket (recorded)", source: RecordedSource(batches: messages),
+            port: nil, name: "websocket (recorded)", source: RecordedSource(batches: messages, owner: self),
             clients: nil, owner: self)
         attach(server, calledAs: #function, returning: "a port that never receives anything")
         return server
@@ -324,6 +328,8 @@ extension Sketch {
     /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に空回しするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// <!-- example: 文脈 var link: TCPClient? -->
     /// ```swift
     /// link = createTCPClient(messages: [["0.25"], [], ["0.75", "hit"]])
@@ -340,7 +346,7 @@ extension Sketch {
     public func createTCPClient(messages: [[String]]) -> TCPClient {
         let client = TCPClient(
             target: "tcp client (recorded)", name: "tcp client (recorded)",
-            source: RecordedSource(batches: messages), clients: nil, owner: self)
+            source: RecordedSource(batches: messages, owner: self), clients: nil, owner: self)
         attach(client, calledAs: #function, returning: "a port that never receives anything")
         return client
     }
@@ -350,6 +356,8 @@ extension Sketch {
     /// ``Sketch/createWebSocketClient(_:)`` で受けるスケッチを相手なしで回すときは、これに差し替える。
     /// 流し方は ``Sketch/createTCPClient(messages:)`` と同じで、`messages[i]` が、作ってから i 番目の
     /// フレームで ``TextPort/messages`` に入る ([ADR-0028] 決定 6・7)。
+    ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// <!-- example: 文脈 var socket: WebSocketClient? -->
     /// ```swift
@@ -367,7 +375,7 @@ extension Sketch {
     public func createWebSocketClient(messages: [[String]]) -> WebSocketClient {
         let client = WebSocketClient(
             target: "websocket client (recorded)", name: "websocket client (recorded)",
-            source: RecordedSource(batches: messages), clients: nil, owner: self)
+            source: RecordedSource(batches: messages, owner: self), clients: nil, owner: self)
         attach(client, calledAs: #function, returning: "a port that never receives anything")
         return client
     }
@@ -451,6 +459,8 @@ extension Sketch {
     /// 何度回しても同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に
     /// 空回しするときに使う ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// ```swift
     /// final class Replay: Sketch {
     ///     var udp: UDPPort?
@@ -476,7 +486,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createUDP(messages: [[String]]) -> UDPPort {
         let udp = UDPPort(
-            port: nil, name: "udp (recorded)", source: RecordedSource(batches: messages),
+            port: nil, name: "udp (recorded)", source: RecordedSource(batches: messages, owner: self),
             outbound: nil, owner: self)
         attach(udp, calledAs: #function, returning: "a port that never receives anything")
         return udp

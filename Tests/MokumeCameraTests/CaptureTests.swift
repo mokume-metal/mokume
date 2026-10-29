@@ -156,6 +156,33 @@ struct CaptureTests {
         runtime.closePlugins()
     }
 
+    @Test("外して足し直した記録のカメラは、外さずに回したときと同じ絵を、足し直した後のフレームで受け取る (時刻どおり・#3152)")
+    func reattachedRecordedCameraKeepsTheTimeline() throws {
+        // 要素ごとに違う絵 (赤の値)。6 枚で、10 フレームまで回すと最後まで行って最初に戻る
+        let frames = (0..<6).map { solid(UInt8(40 * ($0 + 1)), 0, 0) }
+        func record(leaveAt: Int?, returnAt: Int?) throws -> [Float] {
+            var camera: Capture?
+            var seen: [Float] = []
+            let runtime = try run(
+                frames: 10,
+                setup: { camera = try $0.createCapture(frames: frames) },
+                draw: { sketch in
+                    guard let camera else { return }
+                    if sketch.frameCount == leaveAt { sketch.detach(camera) }
+                    if sketch.frameCount == returnAt { sketch.attach(camera) }
+                    seen.append(camera.image.get(0, 0).red)
+                })
+            runtime.closePlugins()
+            return seen
+        }
+        let straight = try record(leaveAt: nil, returnAt: nil)
+        let reattached = try record(leaveAt: 2, returnAt: 4)
+        #expect(Set(straight).count == 6, "絵が要素ごとに違う: \(straight)")
+        // 外していた間 (3・4 フレーム目) は外す前の絵のまま、足し直した後 (5 フレーム目から) は外さない実行と同じ絵
+        #expect(reattached[2] == reattached[1] && reattached[3] == reattached[1])
+        #expect(Array(reattached[4...]) == Array(straight[4...]), "\(reattached)")
+    }
+
     /// 足し直した後の 2 フレーム (3・4 フレーム目) の `(state, isNewFrame)`。1 フレーム目に `leave` で外し、2 フレーム目に
     /// 足し直す。記録した絵は毎フレーム届く。
     private func afterReattach(

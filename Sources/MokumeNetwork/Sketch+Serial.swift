@@ -104,6 +104,8 @@ extension Sketch {
     /// 同じフレームに届く — 機材の無い場所で確かめるときや、展示の前に空回しするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `lines[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// ```swift
     /// final class Replay: Sketch {
     ///     var port: Serial?
@@ -132,7 +134,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createSerial(lines: [[String]]) -> Serial {
         let serial = Serial(
-            name: "serial (recorded)", source: RecordedSource(batches: lines), owner: self)
+            name: "serial (recorded)", source: RecordedSource(batches: lines, owner: self), owner: self)
         attach(serial, calledAs: #function, returning: "a serial port that never receives anything")
         return serial
     }
