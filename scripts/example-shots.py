@@ -146,6 +146,12 @@ merge queue が専用機を待っている間は render-pr ごと見送られる
 が変わって絵が古くなったことは、#1454 (6 枚) と #1625 で、機械が何も言わないまま人が
 気付くまで残っていた。
 
+**名指しが merge の後に残らない穴は、定期の run が塞ぐ** (#2706)。render.yml の定期の run
+(`scheduled-drift`) が、前回までに比べ終えた main の SHA から今の main までの区間を同じ
+`--drift` で描き比べ、`--drift-record` で結果を記録に置く (専用機の job は起票できないので、
+GitHub ホストの `scheduled-report` が `scripts/report-example-drift.sh` で固定タイトルの
+Issue にする)。render-pr が見送られた PR の分も区間の差に入る。
+
 - **止めない。** 撮り直して書き戻すには Gyazo の鍵が要るが、専用機は secrets を持たない
   (ADR-0019 決定 7)。止めると、Gyazo が止まったときに描画 PR が全部止まる
 - **記録の形は変えない。** 撮った時点の画素のハッシュを持たせる案 (#671 の候補 1) は
@@ -905,7 +911,8 @@ def check(shots: list[Shot]) -> list[str]:
     # 1 行で言うほうが正確である。実装だけの変化は render-pr が名指しする (#1986)
     print("  実装が変わって絵が古くなっているかは、ここでは見ていない")
     print("  (描画のパスに触れる PR では render-pr が前後の描画で名指しする・警告のみ。")
-    print("   merge queue が専用機を待っている間は render-pr ごと見送られるか止まる — #2062・#2064)")
+    print("   merge queue が専用機を待っている間は render-pr ごと見送られるか止まる — #2062・#2064。")
+    print("   取りこぼした分は、定期の run が main の区間で名指しして起票する — #2706)")
     return problems
 
 
@@ -1690,7 +1697,41 @@ def report_drift(
     print(f"例の絵: {compared} 本を比べて、画素が変わったのは {len(drifts)} 本")
 
 
-def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathlib.Path) -> int:
+def write_drift_record(record: pathlib.Path, summary: str, drifts: list[Drift]) -> None:
+    """比べた結果を、後続の job が読む形で置く (`--drift-record`・#2706)。
+
+    専用機の job は secrets も書き込みの token も持たない (ADR-0019 決定 7) ので、名指しを
+    起票する GitHub ホストの job へ渡すのは artifact になる。`summary.md` は run の要約と同じ
+    Markdown (起票の本文の表になる)、`drifts.tsv` は 1 本 1 行の機械の読み口
+    (説明文の場所・snippet・違う画素・全画素・最大の差・枚数・一文の説明)。変わった絵が無ければ
+    `drifts.tsv` は空で、起票は走らない。
+    """
+    record.mkdir(parents=True, exist_ok=True)
+    (record / "summary.md").write_text(summary, encoding="utf-8")
+    rows = [
+        "\t".join(
+            [
+                drift.shot.where,
+                drift.shot.fingerprint,
+                str(drift.pixels),
+                str(drift.total),
+                str(drift.largest),
+                str(drift.frames),
+                " ".join(drift.shot.alt.split()),
+            ]
+        )
+        for drift in drifts
+    ]
+    (record / "drifts.tsv").write_text("".join(row + "\n" for row in rows), encoding="utf-8")
+
+
+def drift(
+    root: pathlib.Path,
+    head_shots: list[Shot],
+    base_rev: str,
+    out: pathlib.Path,
+    record: pathlib.Path | None = None,
+) -> int:
     """base の木を取り出し、両方で例の絵を描いて比べる。
 
     **撮る経路 (`render`) をそのまま 2 回使う** — 撮る側と比べる側で描き方が割れると、
@@ -1707,7 +1748,16 @@ def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathli
     try:
         base_shots = collect(base_root)
         if not head_shots or not base_shots:
-            print(f"比べる例の絵が片側に無い (base {len(base_shots)} 本・head {len(head_shots)} 本)")
+            note = f"比べる例の絵が片側に無い (base {len(base_shots)} 本・head {len(head_shots)} 本)"
+            print(note)
+            # **記録だけでなく run の要約にも出す** (警告のみで赤にはしない)。比べていないことが
+            # 要約から読めないと、変化が無かった回と見分けが付かない (render-pr も同じ)
+            summary = f"## 例の絵の前後の比較\n\n{note}\n"
+            if record:
+                write_drift_record(record, summary, [])
+            if path := os.environ.get("GITHUB_STEP_SUMMARY"):
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(summary)
             return 0
         # **同じ機械で順に描く** — 比べる 2 枚は同じ OS・同じ GPU で描いたものでなければ、
         # OS の版の違いが誤報になる (冒頭の「指紋が見ていない範囲」)
@@ -1724,6 +1774,8 @@ def drift(root: pathlib.Path, head_shots: list[Shot], base_rev: str, out: pathli
     finally:
         _remove_worktree(root, base_root)
     report_drift(compared, drifts, timings, base_rev)
+    if record:
+        write_drift_record(record, drift_summary(compared, drifts, timings, base_rev), drifts)
     return 0
 
 
@@ -1974,6 +2026,13 @@ def main(
         help="BASE_REV の木と今の木の両方で例の絵を描き、画素が変わった絵を名指しする "
         "(GPU が要る・警告のみで鍵も ffmpeg も要らない)",
     )
+    parser.add_argument(
+        "--drift-record",
+        type=pathlib.Path,
+        metavar="DIR",
+        help="--drift の結果を DIR へ置く (summary.md と drifts.tsv)。定期の検査が、名指しを "
+        "起票する別の job へ渡すのに使う (#2706)",
+    )
     parser.add_argument("--token-command", help="Gyazo のトークンを標準出力に出すコマンド")
     parser.add_argument(
         "--mirror-report",
@@ -1996,6 +2055,9 @@ def main(
     # 丸ごと無駄になり、止まり方も traceback になる
     if arguments.drift and (arguments.render or arguments.capture):
         print("--drift は --render / --capture と一緒に使えない", file=sys.stderr)
+        return 1
+    if arguments.drift_record and not arguments.drift:
+        print("--drift-record は --drift と一緒に使う", file=sys.stderr)
         return 1
     if arguments.render or arguments.capture:
         missing = missing_tool(which)
@@ -2020,7 +2082,9 @@ def main(
     shots = collect(root)
 
     if arguments.drift:
-        return drift(root, shots, arguments.drift, root / ".build" / "example-shots-drift-out")
+        return drift(
+            root, shots, arguments.drift, root / ".build" / "example-shots-drift-out", arguments.drift_record
+        )
 
     if not arguments.render and not arguments.capture:
         problems = check(shots)

@@ -642,6 +642,30 @@ class CallerKeysTest(unittest.TestCase):
             lambda: args("別の文面", "0.001"),
         )
 
+    def test_example_drift(self):
+        """変わった絵の指紋が同じ間は黙り、別の絵が加われば知らせる。違う画素・最大の差は鍵に入らない。"""
+
+        def args(*rows):
+            record = self.dir / "drift-record"
+            record.mkdir(exist_ok=True)
+            (record / "summary.md").write_text("## 例の絵の前後の比較\n\n表\n", encoding="utf-8")
+            (record / "range.txt").write_text("a" * 40 + " " + "b" * 40 + "\n", encoding="utf-8")
+            tsv = "".join(
+                f"Sources/Sketch.swift:{line}\t{fingerprint}\t{pixels}\t1000\t{largest}\t0\t絵\n"
+                for line, fingerprint, pixels, largest in rows
+            )
+            (record / "drifts.tsv").write_text(tsv, encoding="utf-8")
+            return [str(record)]
+
+        self.check(
+            "report-example-drift.sh",
+            "fix(docs): 実装の変更で画素が変わった例の絵が、撮り直されないまま残っている",
+            lambda: args((10, "3f9a1c8d", 120, 17)),
+            # 行・違う画素・最大の差は区間と編集で動く
+            lambda: args((12, "3f9a1c8d", 99, 5)),
+            lambda: args((12, "3f9a1c8d", 99, 5), (40, "0badf00d", 7, 2)),
+        )
+
     def test_release_check(self):
         def args(message, tail):
             xml = self.write("release.xml", record(("Suite", "releaseTest()", message)))

@@ -37,7 +37,7 @@ final class FacingAndView: Sketch {
     func setup() throws {
         // 向きの成分は −1…1 なので、0…1 へ寄せてから色にする
         painters = try Self.fields.map { (field, _) -> Shader? in
-            return try makeShader(
+            return try createShader(
                 """
                 float4 paint(Fragment in, Values values) {
                     return float4(in.\(field) * 0.5 + 0.5, 1.0);

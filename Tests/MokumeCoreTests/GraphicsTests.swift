@@ -691,7 +691,7 @@ struct GraphicsTests {
         init() {}
         var settings: SketchSettings { SketchSettings(width: 32, height: 16, frameRate: 30) }
         func setup() {
-            pulse = creating({ try makeShader(
+            pulse = creating({ try createShader(
                 "float4 paint(Fragment in, Values values) { \(GraphicsTests.pulse) }") })
             outer = creating({ try createGraphics(16, 16) })
             graphics = outer

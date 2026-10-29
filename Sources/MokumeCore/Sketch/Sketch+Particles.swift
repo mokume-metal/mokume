@@ -100,7 +100,7 @@ extension SketchPart {
     /// var smoke: Particles!
     ///
     /// func setup() throws {
-    ///     let soft = try makeShader("""
+    ///     let soft = try createShader("""
     ///         float4 paint(Fragment in, Values values) {
     ///             float r = length(in.shapePosition.xy) * 2.0;
     ///             return in.color * (1.0 - smoothstep(0.0, 1.0, r)) * (1.0 - in.particle.age);

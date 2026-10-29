@@ -6,7 +6,7 @@ extension SketchPart {
     /// 数の並びを用意する。**CPU と GPU で同じものを見る。**
     ///
     /// 下は、長さ (`count`) を 4・8・16 と動かした並びを作り、`setup()` で CPU から明るさの段を
-    /// 書いたもの。断片 (``makeShader(_:name:values:surfaces:)``) は横の位置から升の番号を出し、
+    /// 書いたもの。断片 (``createShader(_:name:values:surfaces:)``) は横の位置から升の番号を出し、
     /// ``numbers(_:)`` で渡した並びの値をそのまま明るさにする (升の両端は細く抜いて区切る)。
     /// 升は長さの数だけ出て、CPU が書いた値を GPU が読んでいる。
     ///
@@ -24,7 +24,7 @@ extension SketchPart {
     ///         }
     ///         // 横の位置から升の番号を出し、並びの値を明るさにする。
     ///         // 升の両端は細く抜き、升の数が見えるようにする
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float cell = in.place.x * values.count;
@@ -67,7 +67,7 @@ extension SketchPart {
     ///   1 個へ丸めない) に ``RenderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=753ebbcc
+    // shot: 1 snippet=c489c9db
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
         try Self.resourceCanvas(RenderFailure.self).makeNumbers(count: count)
     }
@@ -108,7 +108,7 @@ extension SketchPart {
     ///         rise = try makeComputation(body, name: "rise")
     ///         fall = try makeComputation(body, name: "fall")
     ///         rows = [try makeNumbers(count: 16), try makeNumbers(count: 16)]
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -169,7 +169,7 @@ extension SketchPart {
     ///             """,
     ///             name: "hills", values: ["peaks": 1])
     ///         rows = try (0..<3).map { _ in try makeNumbers(count: 64) }
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -210,8 +210,8 @@ extension SketchPart {
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=bfd24c1e
-    // shot: 2 snippet=5d18c9e5
+    // shot: 1 snippet=7edab337
+    // shot: 2 snippet=5fbcf78e
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
@@ -267,7 +267,7 @@ extension SketchPart {
     ///             row.fill(0.1)
     ///             rows.append(row)
     ///         }
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -333,7 +333,7 @@ extension SketchPart {
     ///         rows = try (0..<3).map { _ in try makeNumbers(count: 16) }
     ///         // 1 本目にだけ、CPU から明るさの段を書く
     ///         rows[0].set((0..<16).map { 0.1 + Float($0) / 15 * 0.2 })
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -410,7 +410,7 @@ extension SketchPart {
     ///         early.fill(0.1)
     ///         late = try makeNumbers(count: 16)
     ///         late.fill(0.1)
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -440,9 +440,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=c91153ed
-    // shot: 2 snippet=00c3a828
-    // shot: 3 snippet=eb962dd1
+    // shot: 1 snippet=34962788
+    // shot: 2 snippet=b971e8ce
+    // shot: 3 snippet=12f91dc7
     public func compute(
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
@@ -473,7 +473,7 @@ extension SketchPart {
     ///             row.set(values)
     ///             rows.append(row)
     ///         }
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -523,7 +523,7 @@ extension SketchPart {
     ///         one = try makeNumbers(count: 1)
     ///         one.set(1, at: 0)
     ///         // 並びの値に、断片の値 (gain) を掛けて明るさにする
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0] * values.gain), 1);
@@ -573,7 +573,7 @@ extension SketchPart {
     ///     ```swift
     ///     func setup() throws {
     ///         level = try makeNumbers(count: 16)
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -604,9 +604,9 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=ea31d1a7
-    // shot: 2 snippet=292bcdbe
-    // shot: 3 snippet=b319e0ed
+    // shot: 1 snippet=4debea82
+    // shot: 2 snippet=dd1220ac
+    // shot: 3 snippet=df83e98e
     public func numbers(_ numbers: Numbers) { Self.liveCanvas()?.numbers(numbers) }
 
     /// 並びを読まない状態へ戻す。
@@ -626,7 +626,7 @@ extension SketchPart {
     ///         level = try makeNumbers(count: 1)
     ///         level.set(0.8, at: 0)
     ///         // 渡していないときに読めるのは 1 個の 0 なので、0 番だけを読む
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0]), 1);
@@ -667,7 +667,7 @@ extension SketchPart {
     ///     ```swift
     ///     func setup() throws {
     ///         level = try makeNumbers(count: 1)
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0]), 1);
@@ -696,8 +696,8 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=b3ea6266
-    // shot: 2 snippet=e36a2631
+    // shot: 1 snippet=f95765cd
+    // shot: 2 snippet=a6332d37
     public func resetNumbers() { Self.liveCanvas()?.resetNumbers() }
 
     /// 描く前に計算させる (2 次元)。
@@ -733,7 +733,7 @@ extension SketchPart {
     ///             grids.append(grid)
     ///         }
     ///         // 板の左上 (origin) から 14 ずつの升で、並びの値を読む
-    ///         paint = try makeShader(
+    ///         paint = try createShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint2 cell = uint2((in.position - values.origin) / 14.0);
@@ -767,7 +767,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=fbc2cbae
+    // shot: 1 snippet=364be025
     public func compute(
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
