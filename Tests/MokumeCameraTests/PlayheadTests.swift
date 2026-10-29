@@ -266,4 +266,113 @@ nonisolated struct PlayheadTests {
         #expect(head.advance(to: 4) == 3)
         #expect(head.position(at: 0.2) == 3, "覗く元が古い枚の起点のまま")
     }
+
+    // MARK: - 速さ (#2451)
+
+    @Test("速さ 2 で流すと、スケッチの時刻が 1 秒進むごとに位置が 2 秒進む")
+    func speedScalesTheElapsedTime() {
+        var head = Playhead(duration: 10)
+        let accepted1 = head.setSpeed(2)
+        #expect(accepted1)
+        head.play()
+        #expect(advance(&head, [0, 1, 2.5]) == [0, 2, 5])
+        // 既定 (1) と 0.5
+        var normal = Playhead(duration: 10)
+        normal.play()
+        #expect(advance(&normal, [0, 1]) == [0, 1])
+        var half = Playhead(duration: 10)
+        half.play()
+        _ = half.advance(to: 0)
+        let accepted2 = half.setSpeed(0.5)
+        #expect(accepted2)
+        #expect(advance(&half, [1, 2]) == [0.5, 1])
+    }
+
+    @Test("流している途中で速さを変えても位置は跳ばず、変えたフレームの位置から新しい速さで進む (2.0 のとき 0.5 にして 1 秒で 2.5)")
+    func changingTheSpeedWhilePlayingDoesNotJump() {
+        var head = Playhead(duration: 10)
+        head.play()
+        _ = head.advance(to: 0)
+        _ = head.setSpeed(2)
+        #expect(head.advance(to: 1) == 2)
+        let accepted3 = head.setSpeed(0.5)
+        #expect(accepted3)
+        #expect(head.position == 2, "速さを変えただけでは動かない")
+        #expect(head.advance(to: 2) == 2.5)
+        // 戻したときも同じ (3.0 や 0.5 へ跳ばない)
+        _ = head.setSpeed(4)
+        #expect(head.advance(to: 2.5) == 4.5)
+    }
+
+    @Test("同じ速さを毎フレーム渡しても、位置は渡さないときと変わらない (毎フレーム呼ぶ作例)")
+    func passingTheSameSpeedEveryFrameChangesNothing() {
+        var plain = Playhead(duration: 100)
+        plain.play()
+        var repeated = Playhead(duration: 100)
+        repeated.play()
+        _ = repeated.setSpeed(1.5)
+        _ = plain.setSpeed(1.5)
+        for frame in 1...90 {
+            let t = time(frame, fps: 60)
+            // 毎フレームの取り直しは、浮動小数点の丸めの 1e-9 の外では動かさない
+            #expect(abs(repeated.advance(to: t) - plain.advance(to: t)) < 1e-9, "\(frame) 枚目")
+            _ = repeated.setSpeed(1.5)
+        }
+    }
+
+    @Test("速さ 0 は位置を進めず、速さを戻せばそこから進む")
+    func zeroSpeedHoldsThePosition() {
+        var head = Playhead(duration: 10)
+        head.play()
+        _ = head.advance(to: 0)
+        #expect(head.advance(to: 1) == 1)
+        let accepted4 = head.setSpeed(0)
+        #expect(accepted4)
+        #expect(advance(&head, [2, 3]) == [1, 1])
+        #expect(head.isPlaying, "止めたのではなく、進まないだけ")
+        let accepted5 = head.setSpeed(1)
+        #expect(accepted5)
+        #expect(advance(&head, [4, 5]) == [2, 3])
+    }
+
+    @Test("負・数でない値・無限は受け取らず、速さも位置も変わらない")
+    func unacceptableSpeedsAreRefused() {
+        var head = Playhead(duration: 10)
+        head.play()
+        _ = head.setSpeed(2)
+        _ = head.advance(to: 0)
+        for rate in [-1, -0.001, .nan, .infinity, -.infinity] as [Double] {
+            let accepted6 = head.setSpeed(rate)
+            #expect(!accepted6, "\(rate)")
+            #expect(head.speed == 2)
+        }
+        #expect(head.advance(to: 1) == 2)
+    }
+
+    @Test("速さを掛けても、ループは長さで折り返し、1 度だけ流すと終わりで止まる")
+    func speedAppliesToLoopsAndTheEnd() {
+        var looping = Playhead(duration: 2)
+        looping.loop()
+        _ = looping.setSpeed(3)
+        #expect(advance(&looping, [0, 1, 2]) == [0, 1, 0], "3 秒 → 1 秒、6 秒 → ちょうど 3 周で頭")
+        var once = Playhead(duration: 2)
+        once.play()
+        _ = once.setSpeed(3)
+        #expect(advance(&once, [0, 0.5, 1]) == [0, 1.5, 2])
+        #expect(!once.isPlaying)
+    }
+
+    @Test("速さを変えた後に覗く位置も、その枚の起点から同じ速さで数える (観測の秒が残らない・#2357)")
+    func peekingCountsWithTheSpeedOfTheAnchor() {
+        var head = Playhead(duration: 10)
+        head.play()
+        _ = head.advance(to: 0)
+        _ = head.setSpeed(2)
+        #expect(head.advance(to: 1) == 2)
+        // 観測の枚: 作者の時計の位置は進めたまま、指定の秒を覗くと起点から速さを掛けて数える
+        #expect(head.position(at: 1) == 2)
+        #expect(head.position(at: 1.5) == 3)
+        // 次の枚の起点も作者の時計の秒で決まり、覗いた秒を引きずらない
+        #expect(head.advance(to: 2) == 4)
+    }
 }
