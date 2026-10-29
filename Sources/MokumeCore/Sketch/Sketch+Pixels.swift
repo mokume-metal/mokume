@@ -178,6 +178,10 @@ extension SketchPart {
     /// (``SketchSettings/pixelDensity``) を下げているときは ``width`` / ``height``
     /// より小さい。**読み書きするのは拡大より手前の絵**なので、ここで書いた値も
     /// 拡大を通ってから出て行く。
+    ///
+    /// **書き出しの倍率 (`mokume render --scale N`) の下では、``width`` / ``height`` の N 倍になる**
+    /// (倍率 2 で 1920×1080 の作品は 3840×2160)。``width`` で画素を回す作品は、倍率の下で絵が変わる
+    /// — 画素を回すなら ``pixelWidth`` / ``pixelHeight`` で数える。
     // shot: 1 snippet=0617ccbc
     // shot: 2 snippet=ab94a2c3
     // shot: 3 snippet=f1c90989

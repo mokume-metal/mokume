@@ -102,7 +102,7 @@ nonisolated struct MovieReaderCooperativePoolTests {
                 let begin = DispatchTime.now()
                 do {
                     let asset = AVURLAsset(url: url)
-                    let (_, range, _) = try MovieReader.inspect(asset, path: url.lastPathComponent)
+                    let (_, range, _, _) = try MovieReader.inspect(asset, path: url.lastPathComponent)
                     outcome.duration = range.duration.seconds
                 } catch {
                     outcome.failure = error

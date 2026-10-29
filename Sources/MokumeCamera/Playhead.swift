@@ -5,10 +5,11 @@
 ///
 /// ## 位置はスケッチの時刻から決める
 ///
-/// 再生中の位置は「再生を始めた位置 + (いまのフレームの時刻 − 始めたフレームの時刻)」で、
+/// 再生中の位置は「再生を始めた位置 + (いまのフレームの時刻 − 始めたフレームの時刻) × 速さ」で、
 /// 実時間の再生時計を持たない。だから固定の時計で書き出すと、位置はフレーム番号だけで決まる
 /// ([ADR-0025] の水準 2・[ADR-0028] 決定 7)。前身のライブラリは再生時計でコマを選んでいたので、
-/// 書き出しと揃わなかった (#1960)。
+/// 書き出しと揃わなかった (#1960)。速さも位置の決まり方の一部で、時計には触れない — 同じ速さを同じ
+/// フレームで渡せば、同じ位置になる。
 ///
 /// ## 操作は次のフレームで効く
 ///
@@ -27,10 +28,14 @@ nonisolated struct Playhead: Equatable {
     /// 割り、前のコマを取り違える)。単精度の丸めは数千秒まで 1 ms を越えないので、これで吸収する。
     static let tolerance = 0.001
 
-    /// 再生を始めたフレームの時刻と、そのときの位置。
+    /// 再生を始めたフレームの時刻と、そのときの位置、そこから数える速さ。
+    ///
+    /// 速さを起点に持たせるのは、起点から数える ``position(at:)`` (観測の枚の覗き) が、その起点を
+    /// 作った ``advance(to:)`` と同じ速さで数えるため。
     private struct Anchor: Equatable {
         let time: Double
         let position: Double
+        let speed: Double
     }
 
     /// 長さ (秒)。正の数。
@@ -41,6 +46,8 @@ nonisolated struct Playhead: Equatable {
     private(set) var isPlaying = false
     /// 終わりまで行ったら頭へ戻るか。
     private(set) var isLooping = false
+    /// 流す速さ (1 が等倍)。0 以上の有限の数。
+    private(set) var speed = 1.0
     /// 始めたフレーム。再生中で、まだ始めたフレームを迎えていなければ `nil`。
     private var anchor: Anchor?
     /// 次のフレームで飛ぶ先 (秒)。
@@ -68,7 +75,7 @@ nonisolated struct Playhead: Equatable {
         if isPlaying, isLooping, let lastTime {
             // 起点を今回の頭へ寄せる。寄せないと、何周目かの生の位置が長さを越えていて、
             // 次のフレームですぐ終わる
-            anchor = Anchor(time: lastTime, position: position)
+            anchor = Anchor(time: lastTime, position: position, speed: speed)
         }
         isLooping = false
         start()
@@ -97,6 +104,23 @@ nonisolated struct Playhead: Equatable {
         isPlaying = false
         anchor = nil
         projection = nil
+    }
+
+    /// 流す速さを `rate` に変える。
+    ///
+    /// 流している間に変えても位置は跳ばない: 最後に進めたフレームの位置から、新しい速さで数え直す
+    /// (いまの位置を起点に取り直す)。同じ速さを毎フレーム渡しても位置は変わらない。次のフレームで
+    /// 始める前 (``play()`` の後で、まだ ``advance(to:)`` を迎えていない) なら、起点はまだ無く、始めた
+    /// フレームから新しい速さで数える。
+    ///
+    /// - Returns: 受け取ったか。負・数でない値・無限は受け取らない (速さは変わらない)。
+    mutating func setSpeed(_ rate: Double) -> Bool {
+        guard rate.isFinite, rate >= 0 else { return false }
+        speed = rate
+        if anchor != nil, let lastTime {
+            anchor = Anchor(time: lastTime, position: position, speed: rate)
+        }
+        return true
     }
 
     /// 公開の秒 (単精度) を、飛ぶ先の秒 (``jump(to:)`` へ渡す値) に直す。**公開の長さ (``duration`` を単精度に
@@ -132,13 +156,13 @@ nonisolated struct Playhead: Equatable {
         guard isPlaying else { return position }
         guard let anchor else {
             // 始めたフレーム。位置は動かさず、ここから数える
-            anchor = Anchor(time: time, position: position)
+            anchor = Anchor(time: time, position: position, speed: speed)
             projection = anchor
             if isLooping { position = wrapped(position) }
             return position
         }
         projection = anchor
-        let raw = anchor.position + (time - anchor.time)
+        let raw = anchor.position + (time - anchor.time) * anchor.speed
         if isLooping {
             position = wrapped(raw)
         } else if raw >= duration {
@@ -164,7 +188,7 @@ nonisolated struct Playhead: Equatable {
     /// コマを映す (終わりに達したのは作者の時計の秒で、観測の秒ではない)。
     func position(at time: Double) -> Double {
         guard let projection else { return position }
-        let raw = projection.position + (time - projection.time)
+        let raw = projection.position + (time - projection.time) * projection.speed
         if isLooping { return wrapped(raw) }
         return raw >= duration ? duration : max(0, raw)
     }

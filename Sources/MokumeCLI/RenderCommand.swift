@@ -22,6 +22,16 @@ import mokume
 /// 上限) のままで、全速で回す駆動源は足さない (ADR-0012 決定 3)。`--fps` が宣言と同じなら、
 /// 書き出しには実時間と同じだけかかる。
 ///
+/// ## 倍率 (`--scale N`)
+///
+/// 座標を変えずに、出す画素だけを縦横 N 倍にして書き出す ([#2441])。`width` / `height` は作品の宣言のまま
+/// で、画素の口 (`pixelWidth`・`pixels`) だけが N 倍になる。線の太さ・効果の半径・`clip`・断片の位置と
+/// 大きさ・字は倍率を掛けて描かれる。倍率ごとに決定論 (同じ引数から同じ画素) で、倍率 1 と 2 の画素は
+/// 一致しない。倍率が 1 以上の整数でないもの・倍率だけで面の上限を越えるものは、ビルドの前に断る。
+/// 作品の大きさを掛けて上限を越える組は、作品の大きさがコードの中にあるので、子が最初のフレームを描く前に
+/// 断る。
+///
+/// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 enum RenderCommand {
     /// 解いた引数。
@@ -35,6 +45,7 @@ enum RenderCommand {
     static let frameRateFlags = ["--fps"]
     static let secondsFlags = ["--seconds"]
     static let outFlags = ["--out"]
+    static let scaleFlags = ["--scale"]
 
     /// 書き出しの選択肢の宣言 (`run` の選択肢に足すぶん)。``Command/valueOptions`` が `doctor` に
     /// 同じ宣言を渡す。
@@ -46,6 +57,9 @@ enum RenderCommand {
             Arguments.Option(secondsFlags) { "\($0) needs a length after it (in seconds)" },
             Arguments.Option(outFlags, takesPlace: true) {
                 "\($0) needs somewhere to write after it (a .mov, .mp4 or .gif, or out/frame-####.png)"
+            },
+            Arguments.Option(scaleFlags) {
+                "\($0) needs a whole number after it (2 writes twice the pixels each way)"
             },
         ]
     }
@@ -124,8 +138,9 @@ enum RenderCommand {
     ///
     /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
     static func report(_ request: RenderRequest) -> String {
+        let scaled = request.scale > 1 ? " at \(request.scale)× the pixels" : ""
         let wrote =
-            "Wrote \(request.frameCount) frames at \(request.frameRate) fps to \(request.destination)"
+            "Wrote \(request.frameCount) frames at \(request.frameRate) fps\(scaled) to \(request.destination)"
         guard RenderRequest.isDistribution(destination: request.destination) else { return wrote }
         return wrote + "\n" + distributionNotice
     }
@@ -166,6 +181,7 @@ enum RenderCommand {
         }
         let frameRate = try parseFrameRate(rateText)
         let frameCount = try parseFrameCount(seconds: secondsText, frameRate: frameRate)
+        let scale = try values[scaleFlags[0]].map(parseScale) ?? 1
         let destination = try GivenPath.resolve(out, from: currentDirectory, isDirectory: false).path
         // **形は打った綴りでも見る** (#2313)。絶対パスにすると末尾の `/` と `.`・`..` が消え、
         // 最後の部品が変わる — `take#1/` (フォルダ) が `…/take#1` になり、`take#1` の `#` を
@@ -205,7 +221,7 @@ enum RenderCommand {
         }
         guard RenderRequest.accepts(destination: out),
             let request = RenderRequest(
-                frameRate: frameRate, frameCount: frameCount, destination: destination)
+                frameRate: frameRate, frameCount: frameCount, scale: scale, destination: destination)
         else {
             throw .usage(
                 "\(outFlags[0]) takes a movie ending in .mov, .mp4 or .gif, or a numbered series with a"
@@ -226,6 +242,24 @@ enum RenderCommand {
                 "\(frameRateFlags[0]) takes a whole number of frames per second above 0: \(text)")
         }
         return rate
+    }
+
+    /// `--scale` の値。**1 以上の整数だけ** ([#2441])。座標は変えず、出す画素を縦横それぞれ何倍にするか。
+    /// 小数は断る (画素の格子へ丸めると、頼んだ倍率と書いた倍率が黙って食い違う)。
+    ///
+    /// 倍率だけで面の一辺の上限 (16384 画素) を越えるものも、ビルドの前に断る。**作品の大きさを掛けた
+    /// 後の上限は、ここでは見られない** (作品の大きさはコードの中にある) ので、子が最初のフレームを
+    /// 描く前に、掛けた大きさを名乗って断る。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    static func parseScale(_ text: String) throws(CommandFailure) -> Int {
+        guard let scale = Int(text), RenderRequest.scales.contains(scale) else {
+            throw .usage(
+                "\(scaleFlags[0]) takes a whole number from 1 up to \(RenderRequest.scales.upperBound)"
+                    + " (the sketch's width and height times it must fit in \(RenderRequest.scales.upperBound)"
+                    + " pixels): \(text)")
+        }
+        return scale
     }
 
     /// 書く枚数。**`fps × seconds` が整数になるときだけ。**

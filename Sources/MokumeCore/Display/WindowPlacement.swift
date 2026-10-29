@@ -314,6 +314,18 @@ enum WindowPlacement {
         return window
     }
 
+    /// 窓を別の画面へ移す。**使える範囲に収めて中央に置く** (全画面に入る前の置き場所で、抜けた窓が戻る先)。
+    ///
+    /// 全画面にする前に呼ぶ — 全画面は、窓がいる画面に入る。全画面の窓は動かせない。
+    @MainActor
+    static func move(_ window: NSWindow, onto screen: NSScreen) {
+        let visible = screen.visibleFrame
+        let size = fitted(
+            window.contentLayoutRect.size, within: window.contentRect(forFrameRect: visible).size)
+        window.setContentSize(size)
+        window.setFrameOrigin(centred(window.frame.size, in: visible))
+    }
+
     /// 全画面に入った窓の中身が、描く大きさと食い違っていれば、その 1 行。合っていれば `nil`。
     ///
     /// 描く大きさは、全画面の中身の大きさを OS の読みから**先に**決めたものである
