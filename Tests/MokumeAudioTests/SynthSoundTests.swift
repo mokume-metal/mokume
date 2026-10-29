@@ -125,9 +125,9 @@ struct SynthSoundTests {
 
     @Test("soundTime: 固定の時計 (60 fps) で frameCount が 121 の draw() は 2.0 を返し、pauseTime()・jumpTime(5) で止まらず飛ばない。合成音を作っていなければ 0")
     func soundTimeFollowsTheSoundClock() throws {
-        var withSound: [Int: Float] = [:]
-        var inSetup: Float = -1
-        var bare: [Float] = []
+        var withSound: [Int: Double] = [:]
+        var inSetup: Double = -1
+        var bare: [Double] = []
         let clock = Clock.frameIndex(frameRate: 60)
         for makesSound in [true, false] {
             let runtime = try run(
@@ -156,7 +156,7 @@ struct SynthSoundTests {
         // 一時停止の後も、飛んだ後も、1 フレーム (800 標本) ずつ進む
         for frame in 31...129 {
             let step = try #require(withSound[frame + 1]) - (try #require(withSound[frame]))
-            #expect(abs(step - 1.0 / 60) < 1e-6, "frame \(frame): \(step)")
+            #expect(abs(step - 1.0 / 60) < 1e-12, "frame \(frame): \(step)")
         }
         #expect(bare.count == 130 && bare.allSatisfy { $0 == 0 })
     }

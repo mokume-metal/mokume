@@ -289,7 +289,7 @@ struct SynthReservationTests {
         let stage = makeStage()
         let osc = TriOsc(stage: stage)
         let env = Env()
-        for k in 1...16 { env.play(osc, 0.002, 0.03, 0.7, 0.1, at: 0.125 * Float(k)) }
+        for k in 1...16 { env.play(osc, 0.002, 0.03, 0.7, 0.1, at: 0.125 * Double(k)) }
         var heard: [Float] = []
         for frame in 0..<(Int(Double(Self.step * 17) / 800.0) + 1) {
             stage.frame = frame
@@ -364,7 +364,7 @@ struct SynthReservationTests {
         let stage = makeStage(notices)
         let osc = SinOsc(stage: stage)
         let env = Env()
-        for k in 1...400 { env.play(osc, 0.002, 0.03, 0.7, 0.1, at: 5 + 0.001 * Float(k)) }
+        for k in 1...400 { env.play(osc, 0.002, 0.03, 0.7, 0.1, at: 5 + 0.001 * Double(k)) }
         for frame in 0..<8 {
             stage.frame = frame
             stage.supply()
@@ -396,7 +396,7 @@ struct SynthReservationTests {
             while samples.count < total {
                 if !queued, samples.count >= chunk * 2 {
                     queued = true
-                    let now = Float(stage.soundSeconds)
+                    let now = stage.soundSeconds
                     env.play(osc, 0.002, 0.03, 0.7, 0.1, at: (now / 0.125).rounded(.down) * 0.125 + 0.25)
                 }
                 samples += try renderStereo(flow, min(chunk, total - samples.count), chunk: chunk).left
@@ -411,5 +411,219 @@ struct SynthReservationTests {
             #expect(mismatch(other.samples, base.samples) == nil, "区切り \(chunk)")
             #expect(other.seconds == 0.375)
         }
+    }
+
+    // MARK: - stop() は予約を取り消す
+
+    @Test("止めると、その音の先の予約は鳴らない。ほかの音の予約と、止めた後に頼んだ予約は残る")
+    func stopCancelsTheFutureReservationsOfThatSource() throws {
+        let rack = makeRack()
+        let stopped = try makeVoice(rack)
+        let other = try makeVoice(rack)
+        rack.postReservation(envelope(stopped, at: 20_000))
+        rack.postReservation(envelope(stopped, at: 30_000))
+        rack.postReservation(envelope(other, at: 25_000))
+        _ = render(rack, 1_000)
+        rack.post(SynthCommand(op: .stop, node: UInt8(stopped.id)))
+        // 止めた後の予約は取り消されない (頼んだ順)
+        rack.postReservation(envelope(stopped, at: 40_000))
+        _ = render(rack, 8_000)
+        var heard: [Float] = []
+        heard += render(rack, pieces: pieces(of: 441, total: 40_000)).left
+        #expect(rack.droppedReservations == 0)
+
+        // 参照: 取り消された 2 つは頼まなかった場合
+        let reference = makeRack()
+        let kept = try makeVoice(reference)
+        let alone = try makeVoice(reference)
+        reference.postReservation(envelope(alone, at: 25_000))
+        reference.postReservation(envelope(kept, at: 40_000))
+        _ = render(reference, 9_000)
+        let expected = render(reference, pieces: pieces(of: 441, total: 40_000)).left
+        #expect(mismatch(heard, expected) == nil)
+        #expect(heard.map { abs($0) }.max() ?? 0 > 0.1)
+    }
+
+    @Test("止めて取り消された予約の節は、置き場を返す")
+    func aCancelledReservationReturnsItsSlot() throws {
+        let rack = makeRack()
+        for _ in 0..<63 { try addSource(rack, .wave(.sine), [.amplitude: 0]) }
+        let voice = try makeVoice(rack)
+        rack.postReservation(envelope(voice, at: 500_000))
+        rack.release(voice.id)
+        _ = render(rack, 1_000)
+        #expect(rack.addSource(.wave(.sine)) == nil, "予約が残っている間は返さない")
+        rack.post(SynthCommand(op: .stop, node: UInt8(voice.id)))
+        _ = render(rack, 1_000)
+        let next = try #require(rack.addSource(.wave(.sine)))
+        #expect(next.id == voice.id)
+    }
+
+    @Test("ステージ越し: 予約中の音に stop() を呼ぶと、予約した時刻に着いても鳴らない (すぐ鳴らす音は止まる)")
+    func stopThroughTheApiCancelsTheReservation() {
+        let stage = makeStage()
+        let osc = TriOsc(stage: stage)
+        let env = Env()
+        env.play(osc, 0.002, 0.03, 0.7, 0.1, at: 0.125)
+        osc.play(at: 0.25)
+        osc.stop()
+        #expect(!osc.isPlaying)
+        var peak: Float = 0
+        for frame in 0..<60 {
+            stage.frame = frame
+            stage.supply()
+            peak = max(peak, osc.peak)
+        }
+        stage.close()
+        #expect(peak == 0, "取り消された予約は鳴らない: \(peak)")
+    }
+
+    // MARK: - 予約のまとまりは 1 度に公開する
+
+    @Test("まとまりを載せている最中に音の側が取り出しても、先頭だけが予約され続きが即時に効く、ということは起きない")
+    func aReservationGroupIsPublishedAtOnce() throws {
+        func run(interrupt: Bool) throws -> [Float] {
+            let rack = makeRack()
+            let voice = try addSource(rack, .wave(.sine), [.amplitude: 0.5])
+            var heard = render(rack, 500).left
+            var group = [
+                SynthCommand(
+                    op: .set, node: UInt8(voice.id), param: .frequency,
+                    bits: UInt64(Float(880).bitPattern), at: 1000),
+                SynthCommand(
+                    op: .set, node: UInt8(voice.id), param: .amplitude,
+                    bits: UInt64(Float(0.1).bitPattern), at: 1000),
+            ]
+            if interrupt {
+                // 2 つ目を載せる直前に、音の側が 2000 標本ぶん取り出して描く (位置 1000 を過ぎる)
+                var fired = false
+                rack.observePost = { command in
+                    guard command.param == .amplitude, !fired else { return }
+                    fired = true
+                    heard += render(rack, 1500).left
+                }
+                rack.postReservation(group)
+                rack.observePost = nil
+                heard += render(rack, 3000).left
+            } else {
+                // 参照: 描いた後に、まとまり全体を (位置はもう過ぎている) 載せる
+                heard += render(rack, 1500).left
+                group[0].follow = 0
+                rack.postReservation(group)
+                heard += render(rack, 3000).left
+            }
+            return heard
+        }
+        let interrupted = try run(interrupt: true)
+        let reference = try run(interrupt: false)
+        #expect(mismatch(interrupted, reference) == nil)
+        #expect(interrupted.count == 5000)
+    }
+
+    @Test("控えに回ったまとまりも、全部が入る空きができてから 1 度に載る")
+    func aHeldGroupIsPublishedAtOnce() throws {
+        let rack = makeRack()
+        let voice = try makeVoice(rack)
+        // 列をほぼ埋める (音の側は動かない)。4096 の列に、節を足した 2 個と合わせて 4093 個 (空きは 3 個で、6 個のまとまりは入らない)
+        for _ in 0..<4_091 { rack.set(voice.id, .frequency, 440) }
+        #expect(rack.heldCount == 0)
+        var seen: [Int] = []
+        rack.observePost = { _ in seen.append(1) }
+        // 6 個のまとまりは入らない → 控える (1 個も載らない)
+        #expect(rack.postReservation(envelope(voice, at: 50_000)))
+        #expect(rack.heldCount == 6)
+        rack.retryHeld()
+        #expect(seen.isEmpty && rack.heldCount == 6, "空きが足りない間は、一部も載せない")
+        // 音の側が取り出して空きができれば、全部が載る
+        _ = render(rack, 100)
+        rack.retryHeld()
+        #expect(rack.heldCount == 0)
+        #expect(seen.count == 6)
+    }
+
+    // MARK: - 予約の順序 (降順に頼んでも同じ)
+
+    @Test("降順に頼んだ予約は、昇順に頼んだ予約と標本まで同じで、同じ位置は頼んだ順")
+    func descendingReservationsMatchAscending() throws {
+        func run(_ positions: [Int]) throws -> [Float] {
+            let rack = makeRack()
+            let voice = try makeVoice(rack)
+            for position in positions { rack.postReservation(envelope(voice, at: position)) }
+            #expect(rack.droppedReservations == 0)
+            return render(rack, pieces: pieces(of: 512, total: 120_000)).left
+        }
+        let ascending = (1...341).map { 5_000 + 250 * $0 }
+        let descending = Array(ascending.reversed())
+        let shuffled = ascending.enumerated().map { ($0.offset * 97) % 341 }.map { ascending[$0] }
+        #expect(Set(shuffled).count == 341)
+        let base = try run(ascending)
+        #expect(base.map { abs($0) }.max() ?? 0 > 0.1)
+        #expect(mismatch(try run(descending), base) == nil)
+        #expect(mismatch(try run(shuffled), base) == nil)
+    }
+
+    @Test("同じ位置の予約は、ヒープに入れても頼んだ順に効く")
+    func samePositionKeepsTheRequestOrderInTheHeap() throws {
+        func run(_ freqs: [Float]) throws -> [Float] {
+            let rack = makeRack()
+            let voice = try addSource(rack, .wave(.sine), [.amplitude: 0.5], playing: true)
+            // 間に別の位置を挟んで、ヒープの形を崩す
+            for (index, freq) in freqs.enumerated() {
+                rack.postReservation([
+                    SynthCommand(
+                        op: .set, node: UInt8(voice.id), param: .frequency,
+                        bits: UInt64(freq.bitPattern), at: 1000)
+                ])
+                rack.postReservation([
+                    SynthCommand(
+                        op: .set, node: UInt8(voice.id), param: .offset, bits: 0,
+                        at: 2000 + 10 * ((index * 7) % 5))
+                ])
+            }
+            return render(rack, 3000).left
+        }
+        // 最後に頼んだ周波数が残る: 20 個の中で最後が 880 なら、880 だけを頼んだときと同じ
+        let many = try run((0..<20).map { Float(200 + $0 * 10) } + [880])
+        let last = try run([880])
+        #expect(mismatch(Array(many.suffix(1000)), Array(last.suffix(1000))) == nil)
+    }
+
+    // MARK: - 公開の口の互換
+
+    @Test("at: を足す前の公開の口は、そのまま残る (引数なしの play()・値つきの play・Env.play と、その関数参照)")
+    func theOldSignaturesRemain() {
+        let stage = makeStage()
+        let osc = SinOsc(stage: stage)
+        let noise = WhiteNoise(stage: stage)
+        let env = Env()
+        let plain: () -> Void = osc.play
+        let voice: (Float, Float, Float, Float) -> Void = osc.play
+        let hiss: (Float, Float, Float) -> Void = noise.play
+        let shape: (SynthSource, Float, Float, Float, Float) -> Void = env.play
+        plain()
+        voice(440, 0.5, 0, 0)
+        hiss(0.2, 0, 0)
+        shape(osc, 0.01, 0.1, 0.5, 0.1)
+        osc.play()
+        osc.play(440, 0.5)
+        noise.play(0.2)
+        env.play(osc, 0.01, 0.1, 0.5, 0.1)
+        for frame in 0..<4 {
+            stage.frame = frame
+            stage.supply()
+        }
+        #expect(osc.isPlaying && noise.isPlaying)
+        #expect(osc.peak > 0.01)
+        stage.close()
+    }
+
+    @Test("長く動かしても標本に揃う: 1 時間後の 1 標本ぶんの差が位置に出る (倍精度)")
+    func longTimesStayOnTheSample() {
+        let stage = makeStage()
+        #expect(stage.samplePosition(ofSeconds: 3600) == 172_800_000)
+        #expect(stage.samplePosition(ofSeconds: 3600 + 1.0 / 48_000) == 172_800_001)
+        #expect(stage.samplePosition(ofSeconds: -1) == 0)
+        #expect(stage.samplePosition(ofSeconds: .infinity) == nil)
+        stage.close()
     }
 }

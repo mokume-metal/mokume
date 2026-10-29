@@ -167,10 +167,10 @@ final class SynthStage: Inlet {
 
     /// 予約の秒 `seconds` (音の時計) を、ラックの標本の位置にする。数でない値・無限の値は `nil`。
     /// 負の値と今より前の値は、そのまま過去の位置になり、次に作る標本の頭で適用される。
-    func samplePosition(ofSeconds seconds: Float) -> Int? {
+    func samplePosition(ofSeconds seconds: Double) -> Int? {
         guard seconds.isFinite else { return nil }
         // 大きな値は丸めて、整数に収まらないまま掛け算で溢れないようにする
-        let position = (Double(seconds) * rack.sampleRate).rounded()
+        let position = (seconds * rack.sampleRate).rounded()
         return Int(min(max(position, 0), 1e15))
     }
 
@@ -209,7 +209,9 @@ final class SynthStage: Inlet {
             "Too many sounds are reserved ahead with at: (a sketch keeps at most "
                 + "\(SynthRack.reservationCapacity) reserved operations waiting; one Env.play(…, at:) uses 6, "
                 + "play(…, at:) with values up to 5), so some reservations were dropped. Reserve only the "
-                + "next few notes ahead of soundTime instead of the whole song at once")
+                + "next few notes ahead of soundTime instead of the whole song at once, and check that at: "
+                + "is in seconds of soundTime: a time far in the future (a typo, or milliseconds given as "
+                + "seconds) keeps its reservation waiting and fills the store")
     }
 
     // MARK: - Inlet
