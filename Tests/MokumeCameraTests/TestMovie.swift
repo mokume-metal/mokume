@@ -55,12 +55,12 @@ nonisolated enum TestMovie {
     /// 符号化器が場面の変わり目と見て鍵のコマを足す。
     static func write(
         frames: Int, fps: Int32 = 30, width: Int = 32, height: Int = 16, codec: AVVideoCodecType = .h264,
-        keyFrameInterval: Int? = nil, reordersFrames: Bool = false,
+        keyFrameInterval: Int? = nil, reordersFrames: Bool = false, transform: CGAffineTransform = .identity,
         pixel: (Int, Int, Int) -> (blue: UInt8, green: UInt8, red: UInt8) = TestMovie.grey
     ) async throws -> URL {
         try await write(
             frames: frames, fps: fps, width: width, height: height, codec: codec,
-            keyFrameInterval: keyFrameInterval, reordersFrames: reordersFrames
+            keyFrameInterval: keyFrameInterval, reordersFrames: reordersFrames, transform: transform
         ) { buffer, index in
             let base = CVPixelBufferGetBaseAddress(buffer)!
             let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
@@ -84,7 +84,7 @@ nonisolated enum TestMovie {
     static func write(
         frames: Int, fps: Int32 = 30, width: Int, height: Int, codec: AVVideoCodecType = .h264,
         keyFrameInterval: Int? = nil, reordersFrames: Bool = false, hardware: Bool = false, bitRate: Int? = nil,
-        paint: (CVPixelBuffer, Int) -> Void
+        transform: CGAffineTransform = .identity, paint: (CVPixelBuffer, Int) -> Void
     ) async throws -> URL {
         let url = temporaryURL()
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -112,6 +112,8 @@ nonisolated enum TestMovie {
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
+        // 回転の印 (縦に撮った動画の向き)。画素はそのまま書き、トラックの `preferredTransform` に残る
+        input.transform = transform
         // **刻みを書き手へ渡す** (#2307)。`CMTime` を fps の刻みで作るだけでは、トラックも容れ物も
         // 既定の 600 で書かれ、600 を割り切らない fps (48 など) の時刻が丸まる
         input.mediaTimeScale = fps
@@ -270,6 +272,29 @@ nonisolated enum TestMovie {
                 repeating: 0xff00_0000 | level << 16 | UInt32((y >> 2) & 0xff) << 8 | UInt32((index * 2) & 0xff),
                 count: width)
             (row + barX).update(repeating: 0xffff_ffff, count: bar)
+        }
+    }
+
+    /// 4 つの象限を塗り分ける (`write(…paint:)` に渡す): 左上が赤・右上が緑・左下が青・右下が白。
+    /// 向きを当てた絵の、どの象限がどこへ行ったかを見るための柄 (枚が変わっても同じ)。
+    static func quadrants(_ buffer: CVPixelBuffer, _ index: Int) {
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<height {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt32.self)
+            for x in 0..<width {
+                // 32BGRA をそのまま 32 ビットで書く (リトルエンディアンで 0xAARRGGBB)
+                let left = x < width / 2, top = y < height / 2
+                row[x] =
+                    switch (top, left) {
+                    case (true, true): 0xffff_0000
+                    case (true, false): 0xff00_ff00
+                    case (false, true): 0xff00_00ff
+                    case (false, false): 0xffff_ffff
+                    }
+            }
         }
     }
 

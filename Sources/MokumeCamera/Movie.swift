@@ -26,8 +26,8 @@ import MokumeDiagnostics
 ///
 /// ## 位置はスケッチの時刻で決まる
 ///
-/// 流している間の位置は、流し始めてからスケッチの ``SketchPart/time`` が進んだぶんだけ進む。
-/// 実時間の再生時計は持たない。だから `mokume run` では実時間で流れ、`mokume render`
+/// 流している間の位置は、流し始めてからスケッチの ``SketchPart/time`` が進んだぶん (に ``speed(_:)``
+/// を掛けたぶん) だけ進む。実時間の再生時計は持たない。だから `mokume run` では実時間で流れ、`mokume render`
 /// (固定の時計) で書き出すと**同じフレーム番号にはいつも同じコマが出る** ([ADR-0028] 決定 7)。
 /// スケッチの時刻を止めれば (``SketchPart/pauseTime()``) 動画も止まる。
 ///
@@ -43,11 +43,19 @@ import MokumeDiagnostics
 /// | `loop()` | ``loop()`` |
 /// | `pause()` | ``pause()`` |
 /// | `jump(where)` | ``jump(_:)`` |
+/// | `speed(rate)` | ``speed(_:)`` |
 /// | `time()` / `duration()` | ``time`` / ``duration`` |
 /// | `available()` / `read()` | 要らない。`draw()` の前に ``image`` が書かれ、新しいコマかは ``isNewFrame`` |
 ///
 /// ``play()``・``loop()``・``jump(_:)`` は次のフレームで効く (そのフレームに、始めた位置・
 /// 飛んだ先のコマが出る)。``pause()`` はすぐ効き、いま映っているコマで止まる。音は鳴らさない。
+///
+/// ## 向き
+///
+/// 縦に撮った動画など、ファイルが回転の印 (`preferredTransform`) を持っていれば、その向きを当てて
+/// 映す。``width``・``height``・``image`` の大きさは、当てた後 (見えている向き) の値である。
+/// 90° 刻みの回転と左右・上下の反転を当てる。それ以外の変換 (斜めの回転など) は当てず、
+/// 記録された向きのまま映す。
 ///
 /// ## 外して足し直す
 ///
@@ -77,6 +85,7 @@ public final class Movie: Inlet {
     private let warn: (String) -> Void
     private var warnedRead = false
     private var warnedJump = false
+    private var warnedSpeed = false
 
     init(
         image: Image, reader: MovieReader, name: String, owner: (any Sketch)?,
@@ -94,9 +103,9 @@ public final class Movie: Inlet {
     public var state: SourceState { input.state }
     /// 最後に新しいコマが届いたフレーム。まだ 1 枚も届いていなければ `nil`。
     public var lastArrival: Arrival? { input.lastArrival }
-    /// 幅 (画素)。``image`` の幅と同じ。
+    /// 幅 (画素)。``image`` の幅と同じで、回転の印を当てた後の値 (縦に撮った動画では、記録された幅ではなく高さ)。
     public var width: Int { image.width }
-    /// 高さ (画素)。``image`` の高さと同じ。
+    /// 高さ (画素)。``image`` の高さと同じで、回転の印を当てた後の値。
     public var height: Int { image.height }
     /// 長さ (秒)。
     public var duration: Float { Float(reader.duration) }
@@ -143,6 +152,30 @@ public final class Movie: Inlet {
             guard !warnedJump else { return }
             warnedJump = true
             return warn("jump(): \(seconds) is not a time, so the video stays where it is")
+        }
+    }
+
+    /// 流す速さを `rate` 倍にする。1 が等倍 (最初の値)、2 なら倍速、0.5 なら半分、0 なら流れが止まる。
+    ///
+    /// 位置が進む速さだけを変える。流している間に変えても、位置は跳ばない (変えたフレームの位置から、
+    /// 新しい速さで進み直す) ので、毎フレーム呼んでもよい。同じ値を渡し続けても位置は変わらない。
+    /// スケッチの時刻を止めれば (``SketchPart/pauseTime()``) 動画も止まる点は変わらない。
+    ///
+    /// **`draw()` の中で変えた枚の ``time`` は、変える前の速さで数えた値のまま** で、新しい速さは
+    /// 次の枚から効く。
+    ///
+    /// 0 以上の有限の値だけを受ける。**負 (逆再生)・数でない値 (`.nan`)・無限は受けず、速さを変えない**
+    /// — 1 度だけ知らせる。
+    ///
+    /// <!-- example: 文脈 var movie: Movie! -->
+    /// ```swift
+    /// movie.speed(map(mouseX, 0, width, 0.25, 4))   // マウスの横の位置で 0.25 倍から 4 倍
+    /// ```
+    public func speed(_ rate: Float) {
+        guard playhead.setSpeed(Double(rate)) else {
+            guard !warnedSpeed else { return }
+            warnedSpeed = true
+            return warn("speed(): \(rate) is not a speed (0 or more), so the speed stays as it is")
         }
     }
 
