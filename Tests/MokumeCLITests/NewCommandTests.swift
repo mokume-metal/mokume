@@ -213,7 +213,7 @@ struct NewCommandTests {
         let root = try NewCommand.Options(name: "hint", path: path).root(from: typedFrom)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let guidance = NewCommand.guidance(for: root)
+        let guidance = NewCommand.guidance(for: root, name: "hint")
         #expect(guidance.contains("Created \(root.path)"))
         // 場所は引用され、--path を含む
         #expect(guidance.contains("  cd \(GivenPath.shellWord(root))\n"))
@@ -226,12 +226,31 @@ struct NewCommandTests {
         let root = try NewCommand.Options(name: "hint", path: "dir with space")
             .root(from: URL(fileURLWithPath: "/work", isDirectory: true))
         #expect(
-            NewCommand.guidance(for: root) == """
+            NewCommand.guidance(for: root, name: "hint") == """
                 Created /work/dir with space/hint
 
                   cd '/work/dir with space/hint'
-                  \(Command.name) run
+                  \(Command.name) watch
+
+                Edit Sources/hint/Hint.swift. Each time you save it, watch rebuilds the sketch and swaps it in.
                 """)
+    }
+
+    /// 案内が名指すファイルは、`files(for:example:)` が書くスケッチのファイルと同じ値 (#3431)。
+    /// ひな形と `--from` のどちらでも。
+    @Test("作った後の案内が名指す編集対象は、作られるスケッチのファイルと一致する", arguments: [false, true])
+    func theGuidanceNamesTheFileThatIsWritten(fromExample: Bool) throws {
+        let options = NewCommand.Options(name: "my-sketch")
+        let (catalogue, directory) = try ExamplesFixture.standard()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let example = fromExample ? try catalogue.select("triangle") : nil
+        let files = try NewCommand.files(for: options, example: example)
+        let sketch = try #require(files.first { $0.0.hasPrefix("Sources/my-sketch/") && $0.0.hasSuffix(".swift") })
+        #expect(sketch.0 == "Sources/my-sketch/MySketch.swift")
+        let root = try options.root(from: URL(fileURLWithPath: "/work", isDirectory: true))
+        let guidance = NewCommand.guidance(for: root, name: options.name)
+        #expect(guidance.contains("Edit \(sketch.0)."))
+        #expect(!guidance.contains("\(Command.name) run"))
     }
 
     @Test("作られるのは 7 つ — 定義・スケッチ・無視の指定・資材の置き場・案内 2 枚・窓口の登録")
