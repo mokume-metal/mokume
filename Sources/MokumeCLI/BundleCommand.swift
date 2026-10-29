@@ -297,22 +297,47 @@ enum BundleCommand {
     /// ファイルで ``openingNoteReadLimit`` 以下であること。**シンボリックリンクは、生きていても壊れていても
     /// 確かめられない側に倒す** — 読んで「自分のもの」と判定すると、利用者が張ったリンクを普通の
     /// ファイルに置き換えてしまう。形が外れるものは読まずに断る。
+    ///
+    /// **印は「先頭の行」を行として割らずに、本文の頭が印と、その後ろの改行 (か本文の終わり) で
+    /// 続くかで見る。** 名前には改行が入りうる (`AppIdentity.make` は途中の `\n` を通す) ので、行で
+    /// 割ると自分の紙を 2 回目から断ってしまう。印の中の改行の数は名前が持つので、数えずに頭から比べる。
+    /// 次の 3 つは自分の紙として受ける (どれも mokume が書いたあとで、人かエディタが触っただけの形):
+    /// - **名前の大文字小文字の違い** (`Grain` → `grain`)。APFS の既定は大文字小文字を区別せず、
+    ///   同じファイルに当たる。`How to open ` の部分は完全一致のまま
+    /// - **UTF-8 の BOM 1 つ** が頭に付いたもの
+    /// - **CRLF** に変換されたもの (印の中の改行も、後ろの区切りも)
     static func isOwnNote(_ note: URL, identity: AppIdentity) -> Bool {
         guard kind(of: note) == .typeRegular,
             let attributes = try? FileManager.default.attributesOfItem(atPath: note.path),
             let size = (attributes[.size] as? NSNumber)?.intValue, size <= openingNoteReadLimit,
             let data = try? Data(contentsOf: note),
-            let text = String(data: data, encoding: .utf8)
+            // `String(data:encoding:)` は頭の BOM を黙って落とすので使わない (読み飛ばすのは下で 1 つだけ)
+            let raw = String(validating: data, as: UTF8.self)
         else { return false }
-        let firstLine = text.split(
-            separator: "\n", maxSplits: 1, omittingEmptySubsequences: false
-        ).first.map(String.init)
-        return firstLine == openingNoteMark(for: identity)
+        let unified = { (text: String) -> [Unicode.Scalar] in
+            Array(text.replacingOccurrences(of: "\r\n", with: "\n").unicodeScalars)
+        }
+        var body = unified(raw)
+        if body.first == "\u{FEFF}" { body.removeFirst() }
+        let lead = Array(openingNoteLead.unicodeScalars)
+        let name = unified(identity.name)
+        guard body.count >= lead.count + name.count, Array(body[..<lead.count]) == lead else {
+            return false
+        }
+        let given = String(String.UnicodeScalarView(body[lead.count..<(lead.count + name.count)]))
+        guard given.compare(String(String.UnicodeScalarView(name)), options: .caseInsensitive)
+            == .orderedSame
+        else { return false }
+        let rest = body[(lead.count + name.count)...]
+        return rest.isEmpty || rest.first == "\n"
     }
+
+    /// 紙の先頭の行の、名前より前の部分。大文字小文字を区別して比べる。
+    private static let openingNoteLead = "How to open "
 
     /// 紙の先頭の行。紙の印であり、``openingNote(for:)`` の書き出しでもある (1 か所で持つ)。
     static func openingNoteMark(for identity: AppIdentity) -> String {
-        "How to open \(identity.name)"
+        "\(openingNoteLead)\(identity.name)"
     }
 
     /// `Info.plist` を読んでよい大きさの上限 (バイト)。他人の `.app` の中を、確かめるために読むので、
