@@ -55,9 +55,12 @@ nonisolated enum DependencyVersion {
         /// `Package.swift` はあるが `Package.resolved` が無い。**作ったばかりのスケッチの形。**
         /// パスで指している場合も、解決するまでは同じ形なので区別できない。
         case unresolved
-        /// `Package.resolved` はあるが `mokume` の pin が無い。パス依存は pin を持たないので、
+        /// `Package.resolved` は読めたが `mokume` の pin が無い。パス依存は pin を持たないので、
         /// 本体の開発のときもこの形になる (mokume に依存していない場合も)。
         case notPinned
+        /// `Package.resolved` はあるが読めない (壊れている・読み取れない・知らない形式)。
+        /// **pin が無いのか読めないだけなのかが分からない**ので、パスで指しているとは言えない。
+        case unreadable
         /// `Package.swift` が無い。スケッチの場所で立っていない。
         case noPackage
     }
@@ -72,8 +75,10 @@ nonisolated enum DependencyVersion {
         let manager = FileManager.default
         guard manager.fileExists(atPath: package.appendingPathComponent("Package.swift").path)
         else { return .noPackage }
-        return manager.fileExists(atPath: package.appendingPathComponent("Package.resolved").path)
-            ? .notPinned : .unresolved
+        let resolved = package.appendingPathComponent("Package.resolved")
+        guard manager.fileExists(atPath: resolved.path) else { return .unresolved }
+        // pin が引けなかったのは、読めたうえで無いのか、そもそも読めないのかのどちらか
+        return SwiftPM.read(SwiftPM.Resolved.self, at: resolved) == nil ? .unreadable : .notPinned
     }
 
     /// 解決された版。読めなければ `nil`。

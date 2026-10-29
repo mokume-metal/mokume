@@ -1274,6 +1274,36 @@ struct MCPServerTests {
         #expect(found?.path == consumer.schemas.path)
     }
 
+    /// **`schemasMissing` が勧める `run` / `watch` の産物を、窓口が見つけられる** (#3419)。
+    /// 共有の置き場 (`<根>/swiftlang-*/<版>`) に `workspace-state.json` があれば、スケッチ直下に
+    /// `.build/` が無くても仕様を引ける。
+    @Test("共有の置き場でビルドしたスケッチの仕様を、スケッチ直下に .build が無くても読む")
+    func findsTheSchemasInTheSharedBuildDirectory() throws {
+        let work = try makeDirectory()
+        try Data("// sketch\n".utf8).write(to: work.appendingPathComponent("Package.swift"))
+        try writeResolved(work, pins: pin("mokume", "0.4.2"))
+        let root = try makeDirectory()
+        let store = root.appendingPathComponent("swiftlang-6.3.3.1.3/0.4.2", isDirectory: true)
+        let checkout = store.appendingPathComponent("checkouts/mokume", isDirectory: true)
+        let schemas = checkout.appendingPathComponent("Schemas", isDirectory: true)
+        try FileManager.default.createDirectory(at: schemas, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: schemas.appendingPathComponent("observe-report.schema.json"))
+        try Data(
+            """
+            {"object":{"artifacts":[],"dependencies":[{"basedOn":null,\
+            "packageRef":{"identity":"mokume","kind":"remoteSourceControl",\
+            "location":"https://example.com/mokume.git","name":"mokume"},\
+            "state":{"name":"sourceControlCheckout","checkoutState":{"revision":"0000"}},\
+            "subpath":"mokume"}],"prebuilts":[]},"version":7}
+            """.utf8
+        ).write(to: store.appendingPathComponent("workspace-state.json"))
+
+        #expect(!FileManager.default.fileExists(atPath: work.appendingPathComponent(".build").path))
+        let found = SchemasLocator.resolvedPackage(
+            workDirectory: work, environment: [BuildDirectory.environmentKey: root.path])
+        #expect(realPath(found) == realPath(checkout))
+    }
+
     @Test("名前の似た依存を取り違えない")
     func doesNotMistakeASimilarlyNamedDependency() throws {
         let consumer = try ConsumerFixture.make(name: "mokume-extras")
@@ -1339,7 +1369,10 @@ struct MCPServerTests {
             facets: Facets(directory: consumer.work, waitLimit: 0.2), makeID: { "fixed" })
         let text = tools.schemasMissing()
         #expect(text.contains(consumer.schemas.path))
-        #expect(text.contains("swift build"))
+        // 案内は道具の既定と同じ置き場で作る手 (`run` / `watch`)。裸の `swift build` は
+        // スケッチ直下に別の `.build/` を作る (#3419)
+        #expect(text.contains("\(Command.name) run"))
+        #expect(!text.contains("swift build"))
 
         let outcome = tools.call("reference", arguments: ["name": "observe-report"])
         #expect(outcome.isError)
@@ -1726,13 +1759,16 @@ struct MCPServerTests {
         #expect(fetches.urls.isEmpty, "未解決の照会だけでは取りにも行かない")
         #expect(outcome.text.contains("Cannot tell which version is depended on"))
         #expect(outcome.text.contains("has not resolved its dependencies yet"))
-        let resolve = "swift package resolve --package-path \"\(directory.path)\""
+        // 解決の手は、道具の既定と同じ置き場を使う `run` (裸の `swift package resolve` は
+        // スケッチ直下に約 200MB の `.build/` を作る)
+        let run = "\(Command.name) run \(GivenPath.shellWord(directory))"
         let make =
-            "make api-list OUT=\"\(directory.appendingPathComponent(".mokume/reference/mokume-api.md").path)\""
-        let resolveAt = try #require(outcome.text.range(of: resolve)?.lowerBound, "\(outcome.text)")
+            "make api-list OUT=\(GivenPath.shellWord(directory.appendingPathComponent(".mokume/reference/mokume-api.md")))"
+        #expect(!outcome.text.contains("swift package resolve"), "\(outcome.text)")
+        let runAt = try #require(outcome.text.range(of: run)?.lowerBound, "\(outcome.text)")
         // 本体の手は、パスで指しているときの条件つきで、解決の手より後ろ
         let makeAt = try #require(outcome.text.range(of: make)?.lowerBound, "\(outcome.text)")
-        #expect(resolveAt < makeAt)
+        #expect(runAt < makeAt)
         #expect(outcome.text.contains("points at mokume by path"))
     }
 
@@ -1767,7 +1803,8 @@ struct MCPServerTests {
         #expect(outcome.text.contains("has no pin for `mokume`"))
         #expect(outcome.text.contains("points at mokume by path"))
         #expect(outcome.text.contains("make api-list OUT="))
-        #expect(outcome.text.contains("swift package resolve --package-path"))
+        #expect(outcome.text.contains("\(Command.name) run"))
+        #expect(!outcome.text.contains("swift package resolve"))
         #expect(!outcome.text.contains("has not resolved its dependencies yet"))
     }
 
@@ -1788,6 +1825,69 @@ struct MCPServerTests {
         #expect(outcome.text.contains("0123456789ab"))
         #expect(outcome.text.contains("Depend on a release version"))
         #expect(!outcome.text.contains("has not resolved its dependencies yet"))
+    }
+
+    /// **読めない `Package.resolved` を、「pin が無い = パスで指している」と断定しない** (#3419)。
+    @Test("Package.resolved が読めなければ、パスで指しているとは言い切らず、書き直す手を言う")
+    func doesNotBlameAPathWhenPackageResolvedIsUnreadable() throws {
+        let directory = try makeSketch()
+        try Data("{ これは JSON ではない".utf8)
+            .write(to: directory.appendingPathComponent("Package.resolved"))
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.contains("could not be read"), "\(outcome.text)")
+        #expect(!outcome.text.contains("has no pin for"), "\(outcome.text)")
+        #expect(!outcome.text.contains("That is how it looks when the sketch points at mokume by path"))
+        #expect(outcome.text.contains("remove it"))
+        #expect(outcome.text.contains("\(Command.name) run \(GivenPath.shellWord(directory))"))
+    }
+
+    /// **案内のコマンドは単引用の 1 語で組む** (`GivenPath.shellWord`)。二重引用は `$` と `` ` `` を
+    /// 解くので、そのまま貼ると別の場所を指す (#3419)。
+    @Test("案内のコマンドは、$ や \" や ' を含む場所でも、シェルの 1 語として組む")
+    func quotesThePathsInTheCommandsItSuggests() throws {
+        let parent = try makeDirectory()
+        let directory = parent.appendingPathComponent(#"we"ird $HOME 'x'"#, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "// 中身の無い宣言\n".write(
+            to: directory.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let outcome = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+
+        let cache = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        #expect(outcome.text.contains("\(Command.name) run \(GivenPath.shellWord(directory))"))
+        #expect(outcome.text.contains("OUT=\(GivenPath.shellWord(cache))"))
+        #expect(outcome.text.contains(#"'\''"#), "中の ' は閉じて逃がして開き直す: \(outcome.text)")
+        #expect(!outcome.text.contains(#"OUT=""#), "二重引用では組まない: \(outcome.text)")
+
+        // 取りに行けない回の一手も同じ形
+        try writeResolved(directory, pins: pin("mokume", "0.1.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let failed = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+        let versioned = directory.appendingPathComponent(".mokume/reference/mokume-api-v0.1.0.md")
+        #expect(failed.text.contains("OUT=\(GivenPath.shellWord(versioned))"), "\(failed.text)")
+        #expect(!failed.text.contains(#"OUT=""#), "\(failed.text)")
+    }
+
+    /// 立てたときはスケッチだったが、後で `Package.swift` が消えた。**場所と次の一手が答えに載る。**
+    @Test("立てた後で Package.swift が消えたら、場所と起こし直す手を答える")
+    func tellsWhereAndWhatToDoWhenThePackageVanished() throws {
+        let directory = try makeSketch()
+        let tools = makeTools(directory: directory, fetches: Fetches())  // 立てたときはスケッチ
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("Package.swift"))
+        let outcome = tools.call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("no `Package.swift` in \(directory.path)"), "\(outcome.text)")
+        #expect(outcome.text.contains("\(Command.name) mcp <sketch directory>"), "\(outcome.text)")
+        // 立てたときからスケッチでない場所の答えとは、手の文が重ならない
+        #expect(outcome.text.components(separatedBy: "\(Command.name) mcp <sketch directory>").count == 2)
     }
 
     @Test("資産を取ってこられなければ、理由と一手を添えて答える")

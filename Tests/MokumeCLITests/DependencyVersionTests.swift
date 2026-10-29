@@ -169,6 +169,10 @@ struct DependencyVersionTests {
         #expect(
             DependencyVersion.state(forPackageAt: try makeSketch(resolved: nil, manifest: false))
                 == .noPackage)
+        // 読めない (壊れている): pin が無いのではなく、読めない
+        #expect(
+            DependencyVersion.state(forPackageAt: try makeSketch(resolved: "{ not json"))
+                == .unreadable)
     }
 
     /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。
@@ -177,7 +181,10 @@ struct DependencyVersionTests {
         let line = DoctorCommand.dependencyLine(nil, unresolved: true)
         #expect(line.contains("not resolved yet"))
         #expect(!line.contains("pointing at a path"))
-        #expect(line.contains("swift package resolve"))
+        // 道具の既定と同じ置き場で解決する `run` を勧める。裸の `swift package resolve` は
+        // スケッチ直下に `.build/` を作る (#3419)
+        #expect(line.contains("\(Command.name) run"))
+        #expect(!line.contains("swift package resolve"))
         // 解決してあるのに pin が無い回は、今までの文言のまま
         #expect(DoctorCommand.dependencyLine(nil, unresolved: false).contains("pointing at a path does this"))
     }

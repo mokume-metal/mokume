@@ -525,7 +525,7 @@ enum DoctorCommand {
             // スケッチはこの形で、`run` / `watch` が最初に解決する
             if unresolved {
                 return "mokume dependency: \(unknown) — not resolved yet (no Package.resolved; "
-                    + "`\(Command.name) run` or `swift package resolve` writes it)"
+                    + "`\(Command.name) run` writes it)"
             }
             return "mokume dependency: \(unknown) — no pin in Package.resolved "
                 + "(pointing at a path does this)"
