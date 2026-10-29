@@ -40,6 +40,7 @@
 """
 
 import contextlib
+import dataclasses
 import importlib.util
 import io
 import os
@@ -766,6 +767,52 @@ class DriftTest(unittest.TestCase):
         code, built, err = self.run_main(["--drift", "HEAD^1"], which=which)
         self.assertEqual(code, 0, err)
         self.assertEqual(len(built), 1)
+
+    def test_drift_record_は_summary_と_drifts_tsv_を置く(self):
+        """定期の検査 (#2706) が、名指しを起票する別の job へ渡す記録。変わった絵が無ければ tsv は空。"""
+        drift = self.drift_for()
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "rec"
+            shots.write_drift_record(record, shots.drift_summary(5, [drift], {"比較": 1.0}, "BASE"), [drift])
+            row = (record / "drifts.tsv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(row), 1)
+            columns = row[0].split("\t")
+            self.assertEqual(columns[0], drift.shot.where)
+            self.assertEqual(columns[1], drift.shot.fingerprint)
+            self.assertEqual(columns[2:6], ["9644", "120000", "17", "0"])
+            self.assertIn("| 説明文 |", (record / "summary.md").read_text(encoding="utf-8"))
+            shots.write_drift_record(record, "## 変化なし\n", [])
+            self.assertEqual((record / "drifts.tsv").read_text(encoding="utf-8"), "")
+
+    def test_片側に例の絵が無い回は記録と要約の両方に出す(self):
+        """比べていないことが要約から読めないと、変化が無かった回と見分けが付かない (#2706)。"""
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(shots.subprocess, "run"), \
+                mock.patch.object(shots, "collect", return_value=[]), \
+                mock.patch.object(shots, "_remove_worktree"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            summary = Path(tmp) / "step-summary.md"
+            record = Path(tmp) / "rec"
+            with mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+                code = shots.drift(Path(tmp), [], "BASE", Path(tmp) / "out", record)
+            self.assertEqual(code, 0)  # 警告のみで赤にはしない
+            self.assertIn("片側に無い", summary.read_text(encoding="utf-8"))
+            self.assertIn("片側に無い", (record / "summary.md").read_text(encoding="utf-8"))
+            self.assertEqual((record / "drifts.tsv").read_text(encoding="utf-8"), "")
+
+    def test_drift_record_の一文の説明は_1_行にして_tsv_を壊さない(self):
+        shot = dataclasses.replace(self.shots[0], alt="改行と\tタブ\nを含む説明")
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp)
+            shots.write_drift_record(record, "x", [self.drift_for(shot=shot)])
+            lines = (record / "drifts.tsv").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0].split("\t")), 7)
+
+    def test_drift_record_は_drift_と一緒に使う(self):
+        code, built, err = self.run_main(["--drift-record", "out"], which=lambda name: "/bin/true")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(built, [])
+        self.assertIn("--drift-record", err)
 
     def test_drift_は_render_と一緒に使えない(self):
         code, built, err = self.run_main(

@@ -49,8 +49,10 @@ REPO="$(this_repo)"
 # AGENTS.md の「迷ったら Bug > Design > Docs > Task」に従う
 readonly TITLE="fix(render): 専用機の定期の検査が落ちている"
 
-[ $# -eq 6 ] || {
-  echo "使い方: report-scheduled-render.sh <debug の結論> <debug の記録> <debug の test-log> <release の結論> <release の記録> <release の test-log>" >&2
+# 7 つ目 (任意) は例の絵の前後の比較 (scheduled-drift・#2706) の結論。failure / cancelled のときだけ
+# 節を足す。比べる job が落ちた・切れた回は区間が伸びるだけで、起票しなければ誰にも届かない
+[ $# -eq 6 ] || [ $# -eq 7 ] || {
+  echo "使い方: report-scheduled-render.sh <debug の結論> <debug の記録> <debug の test-log> <release の結論> <release の記録> <release の test-log> [<例の絵の比較の結論>]" >&2
   exit 64
 }
 DEBUG_RESULT="$1"
@@ -59,6 +61,7 @@ DEBUG_LOG="$3"
 RELEASE_RESULT="$4"
 RELEASE_RECORD="$5"
 RELEASE_LOG="$6"
+DRIFT_RESULT="${7:-}"
 
 here="$(dirname "${BASH_SOURCE[0]}")"
 
@@ -131,11 +134,19 @@ adr_url="${GITHUB_SERVER_URL:-https://github.com}/$REPO/blob/main/docs/decisions
 
 - **debug**: `make ci-check CI_CHECK_STEPS="build test gpu-ran" CI=` (台帳を含む。`render` と同じ)
 - **release**: `make test-release-scheduled` — release の検査の全部 (台帳を含む。release でも debug と同じ台帳に合う — #1736)
+- **例の絵の前後の比較**: 前回までに比べ終えた main の SHA から今の main までの区間 (#2706。落ちた・切れた回だけ、下に節が出る)
 
 BODY
   job_section "debug" "$DEBUG_RESULT" "$DEBUG_RECORD" "$DEBUG_LOG" "$DEBUG_SHOTS"
   # release は絵を上げない。台帳の行が動けば、記録の失敗の文面に指紋が出る
   job_section "release" "$RELEASE_RESULT" "$RELEASE_RECORD" "$RELEASE_LOG" ""
+  # 例の絵の前後の比較は xunit の記録を持たない。理由は run の要約と記録 (scheduled-drift.sh) にある
+  case "$DRIFT_RESULT" in
+    failure | cancelled)
+      printf '### 例の絵の前後の比較 (`scheduled-drift`・#2706)\n\n'
+      printf '結論: `%s` — 前回までに比べ終えた main の SHA から今の main までの区間で、例の絵の画素のずれを描き比べる job (`scripts/scheduled-drift.sh`) が、比べ終えずに終わった。**この回の区間は閉じていない。次の回の区間が今回の分まで伸びる** (起点は success で終わった回から引く・`scripts/drift-base.sh`)。run の画面の `scheduled-drift` の要約に理由が出る: 起点を API から読めなかった・起点を前の job から受け取れなかった・起点の commit を取り寄せられなかった (取得の失敗)・build か描画で落ちた・30 分で切れた (`cancelled`)。\n\n' "$DRIFT_RESULT"
+      ;;
+  esac
   cat <<'BODY'
 ## 対処
 
