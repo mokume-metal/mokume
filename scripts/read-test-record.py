@@ -408,7 +408,11 @@ def read_cancellations(path):
         if os.path.getsize(path) == 0:
             return "記録が無い", [], 0, []
         with open(path, encoding="utf-8") as f:
-            lines = f.read().splitlines()
+            # **レコードの境界は LF だけ** (JSON Lines)。`splitlines()` は U+2028 / U+2029 / U+0085 でも
+            # 割るが、JSON の文字列にはそれがそのまま入りうる — 割ると正常な記録が読めない行になり、
+            # 取り消しを取りこぼす (#3499)。CRLF は読み込みの改行の読み替えで LF に揃い、最終行の
+            # 空の断片と空行は下で読み飛ばす
+            lines = f.read().split("\n")
     except OSError:
         return "記録が無い", [], 0, []
     except UnicodeDecodeError:
