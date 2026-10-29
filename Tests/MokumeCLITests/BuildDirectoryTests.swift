@@ -480,6 +480,97 @@ struct BuildPlacementTests {
                 given: true))
     }
 
+    // MARK: - 依存を解決する間の名乗り (#3427)
+
+    /// 名乗りと解決の手を記録する。**呼ばれた順が要る** — 名乗りは `swift` を起こす前でなければ、
+    /// 名乗りの意味が無い。
+    private final class ResolveRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var log: [String] = []
+        var events: [String] { lock.withLock { log } }
+        func record(_ event: String) { lock.withLock { log.append(event) } }
+    }
+
+    /// 依存を持たない最小のスケッチ。**固定 (`Package.resolved`) は書かない** — 作ったばかりの
+    /// スケッチと同じ「解決が要る」状態にするため。
+    private static func unresolvedSketch() throws -> URL {
+        let root = try BuildDirectoryTests.directory()
+        let sources = root.appendingPathComponent("Sources/hello", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try """
+            // swift-tools-version: 6.2
+            import PackageDescription
+            let package = Package(
+                name: "hello",
+                products: [.executable(name: "hello", targets: ["hello"])],
+                targets: [.executableTarget(name: "hello", dependencies: [])]
+            )
+            """.write(
+            to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try "".write(
+            to: sources.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        return root
+    }
+
+    @Test("固定が無くて解決を起こす回は、swift を起こす前に 1 行名乗る")
+    func announcesBeforeResolving() throws {
+        let store = try BuildDirectoryTests.directory()
+        let sketch = try Self.unresolvedSketch()
+        let recorder = ResolveRecorder()
+
+        _ = try RunCommand.context(
+            in: sketch, invocation: Invocation(place: sketch.path),
+            environment: [BuildDirectory.environmentKey: store.path],
+            announce: { recorder.record("say: \($0)") },
+            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") })
+
+        // 名乗りが 1 度、解決より先。綴りはこのとおり (#3427)
+        #expect(
+            recorder.events == [
+                "say: Resolving the sketch's dependencies… (the first one takes a while)",
+                "swift package resolve",
+            ])
+    }
+
+    @Test("固定がある回は解決を起こさず、何も名乗らない")
+    func staysSilentWhenAlreadyPinned() throws {
+        let store = try BuildDirectoryTests.directory()
+        let sketch = try Self.sketch(pinning: "0.7.1")
+        let recorder = ResolveRecorder()
+
+        _ = try RunCommand.context(
+            in: sketch, invocation: Invocation(place: sketch.path),
+            environment: [BuildDirectory.environmentKey: store.path],
+            announce: { recorder.record("say: \($0)") },
+            resolver: { _, _ in recorder.record("swift") })
+
+        #expect(recorder.events.isEmpty)
+    }
+
+    @Test("置き場を明示した回は、解決を起こさず何も名乗らない")
+    func staysSilentWithExplicitScratchPath() throws {
+        let sketch = try Self.unresolvedSketch()
+        let work = try BuildDirectoryTests.directory()
+        let recorder = ResolveRecorder()
+
+        _ = try RunCommand.context(
+            in: sketch,
+            invocation: Invocation(place: sketch.path, scratchPath: "sp", currentDirectory: work),
+            announce: { recorder.record("say: \($0)") },
+            resolver: { _, _ in recorder.record("swift") })
+
+        #expect(recorder.events.isEmpty)
+    }
+
+    /// 見張りの書き方は、端末で速さの行を消してから書く (#685)。名乗りが同じ書き方を通る。
+    @Test("見張りでは、名乗りの行も速さの行を消してから書く形になる")
+    func watchSaysThroughItsOwnWriter() {
+        #expect(
+            WatchCommand.line(RunCommand.resolvingLine, isTerminal: true)
+                == "\r\u{1B}[2K" + RunCommand.resolvingLine)
+        #expect(WatchCommand.line(RunCommand.resolvingLine, isTerminal: false) == RunCommand.resolvingLine)
+    }
+
     // MARK: - 作り直しの結果の読み方
 
     /// **3 つの失敗を混ぜない。** 次の一手が違う。

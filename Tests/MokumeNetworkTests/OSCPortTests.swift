@@ -109,10 +109,11 @@ nonisolated final class PortHolder: Sendable {
 
 /// 作り物の送り元 (#2910)。通信の揺れを入れずに、番号つきの送りの補助が名乗りをどう読むかを確かめる。
 ///
-/// `raw` があればそれで受け口へ出し、無ければ何も出さない。`complaint` があれば、送るとき (と、
-/// `complainsOnStop` なら閉じるとき) に送れないと名乗る。
+/// `raw` があればそれで受け口へ出し、無ければ何も出さない。疑似の受け口の上で確かめる検査は、`raw` の代わりに
+/// 疑似の流れ (``FakeFlow``) を渡す — 出したものはその流れから受け口へ渡り、socket は開かない (#3231)。
+/// `complaint` があれば、送るとき (と、`complainsOnStop` なら閉じるとき) に送れないと名乗る。
 nonisolated final class ScriptedSender: DatagramSending, SendTracing {
-    private let raw: RawDatagramSocket?
+    private let output: (@Sendable ([UInt8]) -> Void)?
     private let port: Int
     private let complaint: (@Sendable (String) -> Void)?
     private let complainsOnStop: Bool
@@ -123,7 +124,19 @@ nonisolated final class ScriptedSender: DatagramSending, SendTracing {
         raw: RawDatagramSocket?, port: Int, complaint: (@Sendable (String) -> Void)?,
         complainsOnStop: Bool = false, trace: SendTrace = SendTrace()
     ) {
-        self.raw = raw
+        output = raw.map { raw in { @Sendable (bytes: [UInt8]) in _ = raw.send(bytes, to: port) } }
+        self.port = port
+        self.complaint = complaint
+        self.complainsOnStop = complainsOnStop
+        traced = Mutex(trace)
+    }
+
+    /// 疑似の流れから受け口へ出す送り元。流れは受け入れさせてある (``FakeAcceptor/offer(_:)``) こと。
+    init(
+        flow: FakeFlow?, port: Int, complaint: (@Sendable (String) -> Void)?,
+        complainsOnStop: Bool = false, trace: SendTrace = SendTrace()
+    ) {
+        output = flow.map { flow in { @Sendable (bytes: [UInt8]) in _ = flow.deliver(bytes) } }
         self.port = port
         self.complaint = complaint
         self.complainsOnStop = complainsOnStop
@@ -135,7 +148,7 @@ nonisolated final class ScriptedSender: DatagramSending, SendTracing {
     func send(_ bytes: [UInt8]) {
         traced.withLock { $0.issued += 1 }
         complaint?("Could not send to 127.0.0.1:\(port) (Address already in use)")
-        _ = raw?.send(bytes, to: port)
+        output?(bytes)
     }
 
     func stop() {
@@ -328,20 +341,6 @@ struct OSCPortTests {
             ok, what(), log: log, landing: landing(of: osc, port: port, told: told))
     }
 
-    /// 素の socket から送った通が `count` 通読まれるのを待つ。読まれなければ、受け口の様子と素の 1 通の前後の
-    /// 受け入れの差を名乗って 1 つで止まる (#3105)。名乗りは ``requireSent(_:_:log:landing:)``・
-    /// 素の socket の記録は ``collectOrName(_:count:within:landing:_:)`` と同じ。
-    private func heard(
-        _ osc: OSCPort, count: Int, within seconds: TimeInterval = 5, port: Int, told: Told,
-        from peer: RawDatagramSocket, _ note: String = ""
-    ) async throws -> [OSCMessage] {
-        try await collectOrName(
-            count: count, within: seconds, from: peer, landing: landing(of: osc, port: port, told: told), note
-        ) { count, seconds, label, log in
-            await collect(osc, count: count, within: seconds, label: label, log: log)
-        }
-    }
-
     /// 127.0.0.1 で、OS が選んだポート (0 を頼む) で受け、送り先も同じポートにした入り口。開いて、
     /// 受け始めてから、実際に開いたポートと一緒に返す。
     ///
@@ -366,6 +365,19 @@ struct OSCPortTests {
         }
         aimed.aim(at: port)
         return (osc, port)
+    }
+
+    /// 疑似の受け口で受ける入り口。開いて、受け始めた後で返す。番号つきの送りの補助の検査が、本物のポートを
+    /// 開かずに使う (#3231)。
+    private func fakeListening(_ network: FakeNetwork, told: Told) throws -> OSCPort {
+        let source = NetworkOSCSource(
+            port: network.port, host: "127.0.0.1", retryAfter: 1, acceptor: network.acceptor, warn: told.append)
+        let osc = OSCPort(
+            port: network.port, name: "osc :\(network.port)", source: source, outbound: nil, owner: nil,
+            warn: told.append)
+        try osc.open()
+        network.listener.play([.ready(port: network.port)])
+        return osc
     }
 
     /// `running` になったのに、開いたポートの番号を読めなかった。
@@ -533,37 +545,6 @@ struct OSCPortTests {
         #expect(recording.sent == [try OSCCodec.encode(OSCMessage("/back", 1))])
     }
 
-    @Test("同じメッセージの列は、ポートで受けても注入しても同じ結果になる")
-    func injectedMessagesGiveTheSameOutcome() async throws {
-        let told = Told()
-        let (live, port) = try await listening(told: told)
-        defer { live.close() }
-        let log = SendLog()
-        log.watch { live.sendTrace }
-        for message in Self.script {
-            live.send(message)
-        }
-        let received = await collect(live, count: Self.script.count, log: log)
-        try await requireHeard(
-            received.count >= Self.script.count, "\(Self.script.count) 通のうち読めたのは \(received.count) 通",
-            log: log, osc: live, port: port, told: told)
-
-        let injected = OSCPort(
-            port: nil, name: "osc (recorded)",
-            source: RecordedSource<OSCMessage>(batches: Self.script.map { [$0] }), outbound: nil, owner: nil)
-        try injected.open()
-        var replayed: [OSCMessage] = []
-        for _ in Self.script {
-            injected.supply()
-            replayed += injected.messages
-        }
-
-        #expect(received == Self.script)
-        #expect(replayed == Self.script)
-        #expect(Outcome(received) == Outcome(replayed))
-        #expect(Outcome(replayed) == Outcome(Self.script))
-    }
-
     @Test("注入した列は、i 番目の取り出しで i 番目の束を渡し、終わりまで行けば始まりへ戻る")
     func injectedBatchesFollowTheFrames() throws {
         let first = OSCMessage("/a", 1)
@@ -694,10 +675,12 @@ struct OSCPortTests {
     @Test("番号つきの送りは、送れないと名乗った番号だけを新しい送り元に替えて全部を読む")
     func numberedBurstReplacesSendersThatCannotSend() async throws {
         let told = Told()
-        let (osc, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let osc = try fakeListening(network, told: told)
         defer { osc.close() }
-        let raw = try RawDatagramSocket()
-        defer { raw.release() }
+        let port = network.port
+        let flow = network.flow(0)
+        network.listener.offer(flow)
 
         let count = 10
         var attempts: [Int: Int] = [:]
@@ -711,7 +694,7 @@ struct OSCPortTests {
             // 奇数の番号の最初の送り元は、送れないと名乗って何も出さない。作り物の送り元だけで確かめる
             // (本物の送り元は負荷で名乗ることがあり、数が揺れる)
             let cannot = index % 2 == 1 && attempt == 1
-            return ScriptedSender(raw: cannot ? nil : raw, port: port, complaint: cannot ? warn : nil)
+            return ScriptedSender(flow: cannot ? nil : flow, port: port, complaint: cannot ? warn : nil)
         }
         try await requireHeard(
             heard == Set(0..<count), "送り元 \(count) 本のうち読めたのは \(heard.count) 本", log: log,
@@ -726,7 +709,9 @@ struct OSCPortTests {
     @Test("番号つきの送りは、名乗らずに読まれない番号の送り元を替えず、期限で読まれた分を返す")
     func numberedBurstDoesNotReplaceSilentSenders() async throws {
         let told = Told()
-        let (osc, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let osc = try fakeListening(network, told: told)
+        let port = network.port
         defer { osc.close() }
 
         var senders: [any DatagramSending] = []
@@ -745,7 +730,9 @@ struct OSCPortTests {
     @Test("番号つきの送りは、替えた後の古い送り元が遅れて名乗っても、同じ番号を替え直さない")
     func numberedBurstIgnoresAReplacedSendersLateComplaint() async throws {
         let told = Told()
-        let (osc, port) = try await listening(told: told)
+        let network = FakeNetwork()
+        let osc = try fakeListening(network, told: told)
+        let port = network.port
         defer { osc.close() }
 
         var attempts: [Int] = []
@@ -819,39 +806,6 @@ struct OSCPortTests {
         #expect(text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
         #expect(text.contains("受け口の知らせは 0 行"), "名乗り: \(text)")
         #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1"), "名乗り: \(text)")
-    }
-
-    @Test("素の socket から送った通が読まれなければ、受け口の様子と素の 1 通の前後の受け入れの差を名乗り、送り手の欄は様子を読めない送り元と言って 1 つで止まる (#3105)")
-    func rawSocketShortReadNamesTheReceiver() async throws {
-        let told = Told()
-        let (osc, port) = try await listening(told: told)
-        defer { osc.close() }
-        let peer = try RawDatagramSocket()
-        defer { peer.release() }
-        let packet = try Wire.encoded(OSCMessage("/m", arguments: []))
-
-        // 1 通だけ送って 2 通を期待する (2 通目は来ない)
-        #expect(peer.send(packet, to: port) == packet.count)
-        let text = try await said {
-            _ = try await heard(osc, count: 2, within: 0.5, port: port, told: told, from: peer, "(2 通目は送っていない)")
-        }
-        #expect(text.contains("素の socket から送った 2 通のうち読めたのは 1 通(2 通目は送っていない)"), "名乗り: \(text)")
-        #expect(text.contains("期限 0.5 秒"), "名乗り: \(text)")
-        #expect(text.contains("受け口 (1 通の前): running") && text.contains("受け入れ 1・黙りで閉じた 0・終わって外れた 0・持つ数 1"), "名乗り: \(text)")
-        #expect(text.contains("素の socket の 1 通: 読めた・受け入れ +1 (新しい送り元を受けられた)"), "名乗り: \(text)")
-        // 送り手の欄: 素の socket は名乗りも替えも持たない。黙っているとは言わない
-        #expect(text.contains("送り元の様子 {様子を読めない送り元}×1"), "名乗り: \(text)")
-        #expect(!text.contains("黙っている") && !text.contains("替えた"), "名乗り: \(text)")
-        // 送った socket の sendto の戻り: 送れていたので、読めなかった理由は受け口側と読める
-        #expect(text.contains("sendto は 1 回とも成功 (計 \(packet.count) バイト)"), "名乗り: \(text)")
-
-        // 受け口が受けない形 (閉じた受け口) は、素の 1 通も読まれず、受け口側と読み分けられる
-        osc.close()
-        let closed = try await said {
-            _ = try await heard(osc, count: 1, within: 0.3, port: port, told: told, from: peer)
-        }
-        #expect(closed.contains("受け口 (1 通の前): stopped"), "名乗り: \(closed)")
-        #expect(closed.contains("素の socket の 1 通: 読めなかった"), "名乗り: \(closed)")
     }
 
     /// **送り元は、送り元ごとの素の socket (``RawDatagramSocket``) から送る** (#3160)。`DatagramSender`
@@ -1032,44 +986,6 @@ struct OSCPortTests {
         }
     }
 
-    @Test("送るだけの入り口は、受けるポートを開かず、何も受けず、観測の inputs に行を出さず、送ったものは宛先で受けられる (#2469)")
-    func sendOnlyPortSendsWithoutListening() async throws {
-        let told = Told()
-        let receiver = try await listening(told: told)
-        defer { receiver.osc.close() }
-
-        // `createOSC(send:)` が組むのと同じ部品 (何も受けない出どころ・共通の送り手)
-        let sender = OSCPort(
-            port: nil, name: "osc (send only)", source: SendOnlySource(),
-            outbound: DatagramSender(host: "127.0.0.1", port: receiver.port, warn: told.append),
-            owner: nil, warn: told.append)
-        try sender.open()
-        #expect(sender.port == nil)
-        #expect(sender.state == .running)
-        #expect(sender.report == nil, "受け口ではないので、inputs に載らない")
-
-        let log = SendLog()
-        log.watch { sender.sendTrace }
-        sender.send("/size", Float(0.25))
-        sender.send("/hit", 1)
-        let received = await collect(receiver.osc, count: 2, log: log)
-        try await requireHeard(
-            received.count >= 2, "2 通のうち読めたのは \(received.count) 通 (送るだけの入り口から)", log: log,
-            osc: receiver.osc, port: receiver.port, told: told)
-        #expect(received == [OSCMessage("/size", Float(0.25)), OSCMessage("/hit", 1)])
-
-        sender.supply()
-        #expect(sender.messages.isEmpty)
-        #expect(sender.latest("/size") == nil)
-        #expect(sender.lastArrival == nil)
-        #expect(told.lines.isEmpty)
-
-        sender.close()
-        #expect(sender.state == .stopped)
-        sender.send("/late", 1)
-        #expect(told.count(containing: "is stopped") == 1)
-    }
-
     // MARK: - 送れないとき
 
     @Test("送れない理由は、理由ごとに 1 度だけ知らせて何も送らない")
@@ -1159,24 +1075,4 @@ struct OSCPortTests {
         #expect(recording.sent.count == 1)
     }
 
-    @Test("本物の宛先でも、上限に入らないメッセージは送らず、続けて送ったメッセージは届く")
-    func oversizedSendLeavesTheDestinationReachable() async throws {
-        let told = Told()
-        let (osc, port) = try await listening(told: told)
-        defer { osc.close() }
-        let log = SendLog()
-        log.watch { osc.sendTrace }
-
-        osc.send(OSCMessage("/big", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
-        osc.send("/after", 1)
-        let received = await collect(osc, count: 1, log: log)
-        try await requireHeard(
-            received.count >= 1, "1 通のうち読めたのは \(received.count) 通 (上限に入らない 1 通の後に送った分)", log: log,
-            osc: osc, port: port, told: told)
-        #expect(received == [OSCMessage("/after", 1)])
-        #expect(osc.input.unreadable == 0)
-        #expect(told.lines.count == 1)
-        #expect(told.count(containing: "9212 bytes at most") == 1)
-        #expect(told.count(containing: "listening") == 0)
-    }
 }

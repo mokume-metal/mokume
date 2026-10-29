@@ -110,6 +110,33 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
 
 **警告だけで、終了コードは常に 0** — 段の結末は変えない。取り消しを赤にするかは、名乗らせた後に
 別に決める。
+
+## GPU の打ち切り (`--gpu-dropped <test-log>`・#2275)
+
+render.yml の検査の 4 job (`render`・`render-pr`・`scheduled-debug`・`scheduled-release`) が、検査と
+記録の後に呼ぶ。GPU が仕事を打ち切っても、絵を読まない検査は緑のまま通る — 標準エラーに 1 行出る
+だけで、記録にも job の結論にも残らない。#2251 の集計では、hang の行があった 25 run のうち赤に
+なったのは絵を読む検査の 5 回だけだった。読むのは検査の出力 (`.build/test-log.txt`) で、
+xunit の記録ではない: 打ち切りは検査の結末ではなく、土台が標準エラーへ言う 1 行だからである
+(**端末の出力は行を落とす** (#1056) ので、行が無いことは打ち切りが無かったことの証明にならない。
+名乗るのは見つかった分だけの下限である)。
+
+**数えるのは本物の打ち切りの行だけ** — 土台 (`RenderDevice.swift` の `makeCommitOptions`) が
+`droppedForTesting == nil` のときにだけ出す
+`The GPU dropped the work it had queued, so this frame was never finished: <理由> — this notice will not be repeated`。
+故意の打ち切りを起こす検査 (`dropsNextSubmissionForTesting` など) ではこの行は出ない。同じ「GPU が
+仕事を打ち切った」を言う別の行 (`SketchRuntime` の `The GPU dropped the work behind frame N …`) は、
+故意の打ち切りでも出るので数えない。この行は 1 プロセスで最初の打ち切りにしか出ない
+(`this notice will not be repeated`) ので、件数は打ち切りの回数ではなく、打ち切りを受けた
+プロセスの数に近い。
+
+`$GITHUB_STEP_SUMMARY` があれば、理由ごとの件数を Markdown でそこへ追記する (`--slow` と同じ作法)。
+**無かった回は要約に何も書かない** (4 job のほぼ全部の回が該当し、毎回「無い」と書くと本物が埋まる)。
+**読めなかった回は名乗る** — 黙って空を出すと、見張りが止まっても誰も気付かない。
+
+**警告だけで、終了コードは常に 0** — job の結論は変えない。赤にするかは、名乗りの件数が見えてから
+別に決める (#2275 の決定)。故意と本物の見分けをログの文字列で行うと壊れやすく、赤にした途端に、
+検査と無関係な GPU の揺れで merge queue が止まりうるためである。
 """
 
 import json
@@ -522,6 +549,66 @@ def cancelled(path):
     return "\n".join(text), "\n".join(md)
 
 
+# 土台が本物の打ち切りでだけ標準エラーへ出す 1 行 (RenderDevice.swift の makeCommitOptions)。
+# 英語の文面を写しているので、本物と合っていることは test_vanished_test.py が Sources から確かめる。
+# 行頭の `mokume: ` や、並走する出力の混ざりに依らないよう、行のどこにあっても拾う
+GPU_DROPPED = re.compile(
+    r"The GPU dropped the work it had queued, so this frame was never finished: (?P<reason>.*?)"
+    r"(?: — this notice will not be repeated)?\s*$"
+)
+MAX_DROPPED_REASONS = 20
+
+
+def gpu_dropped(path):
+    """検査の出力から、本物の GPU の打ち切りを理由ごとに。(端末の文, 要約の Markdown or None) を返す。
+
+    要約は、1 件以上あったときと、読めなかったときだけ書く (無かった回は黙る)。
+    """
+    title = "GPU の打ち切り"
+    reasons = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = GPU_DROPPED.search(line)
+                if m:
+                    reason = " ".join(m.group("reason").split()) or "理由が読めない"
+                    reasons[reason] = reasons.get(reason, 0) + 1
+    except OSError:
+        return (
+            "%sを読めない: 検査の出力が無い (%s)" % (title, path),
+            "### %s\n\n読めない: 検査の出力が無い (`%s`)" % (title, path),
+        )
+    total = sum(reasons.values())
+    if not total:
+        return "%sは見つからなかった (%s)" % (title, path), None
+
+    ordered = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+    shown = ordered[:MAX_DROPPED_REASONS]
+    rest = len(ordered) - len(shown)
+    head = "%s %d 件 (本物の打ち切りだけ。警告だけで job の結論は変えない・#2275):" % (title, total)
+    text = [head] + ["  %d 件  %s" % (n, r) for r, n in shown]
+    md = [
+        "### %s (%d 件)" % (title, total),
+        "",
+        "検査の出力に、本物の GPU の打ち切り (`The GPU dropped the work it had queued`) があった。"
+        "**絵を読まない検査は、打ち切りがあっても緑のまま通る**ので、job は success でも、"
+        "同じ run の検査の結果は打ち切りの影響を受けていないとは言えない。"
+        "警告だけで、job の結論は変えない (#2275)。",
+        "",
+        "この行は 1 プロセスで最初の打ち切りにしか出ない (`this notice will not be repeated`) ので、"
+        "件数は打ち切りの回数ではなく、打ち切りを受けたプロセスの数に近い。"
+        "端末の出力は行を落とす (#1056) ので、件数は下限である。",
+        "",
+        "| 件数 | 理由 |",
+        "| ---: | --- |",
+    ]
+    md += ["| %d | %s |" % (n, code_span(r)) for r, n in shown]
+    if rest:
+        text.append("  ほか %d 種類の理由は検査の出力を読む" % rest)
+        md += ["", "ほか %d 種類の理由は検査の出力 (`%s`) を読む" % (rest, path)]
+    return "\n".join(text), "\n".join(md)
+
+
 def append_summary(md):
     """`$GITHUB_STEP_SUMMARY` があれば Markdown を足す。書けなかったことは名乗る。"""
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -554,6 +641,12 @@ def main(argv):
         text, md = cancelled(argv[2])
         print(text)
         append_summary(md)
+        return 0
+    if len(argv) == 3 and argv[1] == "--gpu-dropped":
+        text, md = gpu_dropped(argv[2])
+        print(text)
+        if md is not None:
+            append_summary(md)
         return 0
     if len(argv) in (3, 4) and argv[1] == "--failure-messages":
         print(failure_messages(*argv[2:]))

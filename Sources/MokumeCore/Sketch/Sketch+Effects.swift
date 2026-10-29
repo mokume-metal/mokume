@@ -287,8 +287,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -324,8 +324,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -357,8 +357,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -411,9 +411,9 @@ extension SketchPart {
     /// - Throws: 組み立てられないときに ``ShaderFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=51305187
-    // shot: 2 snippet=6a15d68d
-    // shot: 3 snippet=e53a59b0
+    // shot: 1 snippet=1a47f234
+    // shot: 2 snippet=2e1bd212
+    // shot: 3 snippet=b61a0815
     public func makeEffect(
         _ body: String, name: String = "effect", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {

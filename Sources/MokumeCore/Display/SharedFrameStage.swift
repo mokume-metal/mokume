@@ -55,6 +55,9 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         ///
         /// 従うのは指定が前と変わったときだけで、変わらなければ手で動かした大きさと位置が
         /// 残る (``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)``)。
+        ///
+        /// **全画面の頼み (``SketchSettings/fullScreen(_:)``) にも、同じ窓だけが同じ規律で従う**
+        /// (``SharedFrameStage/followRequestedFullScreen(of:)``・[#2188](https://github.com/mokume-metal/mokume/issues/2188))。
         var followsRequestedSize = false
         /// 作品の窓が頼まれた大きさで置き直されたとき、その真下へ置き直すか。
         ///
@@ -101,9 +104,48 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         let frames: [UInt32: Frame]
         /// 窓を開く倍率。**名乗らない子 (古いライブラリ) なら `nil`** で、窓の大きさに触らない。
         let windowScale: Float?
+        /// 作品の窓を全画面にするよう頼むディスプレイ。**頼まない子・名乗らない子 (古いライブラリ) なら `nil`**
+        /// ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
+        let fullScreenDisplay: FullScreenDisplay?
         /// 目録を置いた子の番号。**名乗らない子 (古いライブラリ) なら `nil`** (#2982)。
         let pid: Int32?
     }
+
+    /// 全画面にするディスプレイ。``SharedFrameSurface/FullScreenDisplay``。
+    typealias FullScreenDisplay = SharedFrameSurface.FullScreenDisplay
+
+    /// 全画面に触れる口。**検査から差し替える** — 既定のままでは、検査を走らせた機械の画面が全画面の
+    /// 操作スペースへ切り替わる (`SketchApplication.enterFullScreen` と同じ流儀)。
+    struct FullScreenAccess {
+        /// 頼まれたディスプレイの画面を、いま繋がっている中から引く。外れていれば `nil`。
+        var screen: @MainActor (FullScreenDisplay) -> NSScreen? = { request in
+            NSScreen.screens.first { $0.screenID == request.screenID }
+        }
+        /// 窓がいる画面の識別子 (`CGDirectDisplayID`)。画面に出ていなければ `nil`。
+        var windowScreenID: @MainActor (NSWindow) -> UInt32? = { $0.screen?.screenID }
+        /// 窓がいま全画面か。
+        var isFullScreen: @MainActor (NSWindow) -> Bool = { $0.styleMask.contains(.fullScreen) }
+        /// 窓を全画面にする。**窓が画面に出てから呼ぶ** (`toggleFullScreen` は出ている窓にしか効かない)。
+        var enter: @MainActor (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
+        /// 全画面の窓を抜けさせる。抜け終わりは窓の delegate が受ける (``SharedFrameStage/didExitFullScreen()``)。
+        var leave: @MainActor (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
+    }
+
+    /// 全画面に触れる口。**検査から差し替える。**
+    var fullScreen = FullScreenAccess()
+    /// 窓へ当てた全画面の頼み。**同じ頼みを 2 度当てないための覚えで、この台が生きている間 (見張り 1 回の
+    /// 間) だけ持つ** ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
+    ///
+    /// ``WindowPlacement/honour(_:in:autosaveName:defaults:warn:)`` と違い `UserDefaults` には残さない —
+    /// 全画面と置いた画面は窓の寿命に紐づく ([ADR-0032] 文脈) ので、見張りを止めて起こし直したら、また頼みどおりに
+    /// 出す。手で全画面を抜けた窓へ、同じ頼みの世代が来ても戻さないのは、この覚えが頼みそのものを持つからで、
+    /// 窓がいま全画面かは見ない。頼みが無い世代が来たら捨てる (あとで同じ頼みが戻ってきたら、変わったと読む)。
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    private(set) var appliedFullScreen: FullScreenDisplay?
+    /// 全画面を抜け終えたら入り直す頼み。**別のディスプレイの全画面にいる窓を移すとき**だけ持つ
+    /// (全画面の窓は動かせないので、抜けてから移す)。
+    private var pendingFullScreenEntry: FullScreenDisplay?
 
     private let gpu: RenderDevice
     private let facet: URL
@@ -317,6 +359,10 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         func windowWillClose(_ notification: Notification) {
             stage?.willClose()
         }
+
+        func windowDidExitFullScreen(_ notification: Notification) {
+            stage?.didExitFullScreen()
+        }
     }
 
     private let windowRelay = WindowRelay()
@@ -378,14 +424,6 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             device: gpu.device, input: InputState(), canvasSize: (1, 1))
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
-        // **絵が来るまでは黒で塗る** ([#2875])。窓は作り直しより先に開くので、最初の 1 枚
-        // までは drawable を一度も受け取っていない層が見え、中身が透明か不定になる。黒は
-        // 絵が収まらない帯の色 (`FramePresenter`) と同じで、作品の表示に無いものを足さない
-        // — 言葉も印も載せないのは ADR-0032 決定 6 の追補のとおり。直に走らせる窓は
-        // 層を作る側 (`SketchSurface`) が同じなので、塗るのは道具の窓のここだけにする
-        //
-        // [#2875]: https://github.com/mokume-metal/mokume/issues/2875
-        view.metalLayer?.backgroundColor = CGColor(gray: 0, alpha: 1)
         // **窓より先に繋ぐ。** 出してから繋ぐと、その隙間に触ったぶんが落ちる
         view.relay = { [weak self] line in self?.onInput?(line) }
         window.contentView = view
@@ -658,7 +696,8 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         incoming = Source(
             ids: manifest.ids, lookup: SharedFrameSurface.Lookup(ids: manifest.ids),
             width: manifest.width, height: manifest.height, frames: frames,
-            windowScale: manifest.windowScale, pid: manifest.pid)
+            windowScale: manifest.windowScale, fullScreenDisplay: manifest.fullScreenDisplay,
+            pid: manifest.pid)
     }
 
     /// 控えている世代が絵を出せるなら、そちらへ乗り換える。
@@ -689,6 +728,7 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
         // 触った操作を写す規則は描く解像度に依る (レーン 4 で使う)
         view?.setCanvasSize((waiting.width, waiting.height))
         followRequestedSize(of: waiting)
+        followRequestedFullScreen(of: waiting)
         // **枚数の数え直しに備える。** 新しい子は 1 から数えるので、前の子の枚数を
         // 覚えたままだと、そこへ追い付くまで 1 枚も出さないことになる (速さも同じで、
         // 追い付くまで前の子の数字を名乗り続けることになる)
@@ -718,6 +758,68 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             WindowPlacement.placeBeneathArtwork(
                 requested, window: window, autosaveName: look.autosaveName, defaults: defaults)
         }
+    }
+
+    /// 出す世代が頼む全画面を、作品の窓へ当てる ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。
+    ///
+    /// **当てるのは作品の窓だけで (``Look/followsRequestedSize``)、頼みが変わったときだけである**
+    /// (``appliedFullScreen``)。保存のたびに当てると、手で全画面を抜けた窓が戻る — 見張りから本番を回す窓で、
+    /// 保存で全画面が外れても戻ってもならない ([ADR-0032] 決定 1)。
+    ///
+    /// - 頼みが無い世代 (全画面を頼まない子・古いライブラリの子): 何もしない。いま全画面なら、そのままにする
+    /// - 頼まれた画面が引けない: 窓のままにして 1 行言う。**覚えない** — 次の世代で引けたら当てる
+    /// - 窓が別の画面の全画面にいる: 抜けてから移して入り直す (``didExitFullScreen()``)
+    ///
+    /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
+    private func followRequestedFullScreen(of generation: Source) {
+        guard look.followsRequestedSize, let window else { return }
+        guard let request = generation.fullScreenDisplay else {
+            appliedFullScreen = nil
+            pendingFullScreenEntry = nil
+            return
+        }
+        guard request != appliedFullScreen else { return }
+        guard let screen = fullScreen.screen(request) else {
+            warn(
+                "The sketch asks for full screen on \(request.label), but no such display is "
+                    + "connected to this machine — leaving the window as it is")
+            return
+        }
+        appliedFullScreen = request
+        pendingFullScreenEntry = nil
+        if fullScreen.isFullScreen(window) {
+            // 全画面の窓は動かせない。**同じ画面の全画面なら、そのまま** (頼みどおりである)
+            guard fullScreen.windowScreenID(window) != screen.screenID else { return }
+            pendingFullScreenEntry = request
+            fullScreen.leave(window)
+            return
+        }
+        enterFullScreen(window, on: screen)
+    }
+
+    /// 窓を頼まれた画面へ移して、全画面にする。
+    private func enterFullScreen(_ window: NSWindow, on screen: NSScreen) {
+        // **全画面にできる窓であることを自分で言う。** 既定の動きに頼らない
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        if fullScreen.windowScreenID(window) != screen.screenID {
+            WindowPlacement.move(window, onto: screen)
+        }
+        fullScreen.enter(window)
+    }
+
+    /// 全画面を抜け終えた (窓の delegate から)。**別の画面へ頼みが変わっていたなら、そこで入り直す。**
+    ///
+    /// 手で抜けたときは持っている頼みが無く、何もしない (戻さない)。
+    func didExitFullScreen() {
+        guard let request = pendingFullScreenEntry, let window else { return }
+        pendingFullScreenEntry = nil
+        guard let screen = fullScreen.screen(request) else {
+            warn(
+                "The sketch asks for full screen on \(request.label), but no such display is "
+                    + "connected to this machine — leaving the window as it is")
+            return
+        }
+        enterFullScreen(window, on: screen)
     }
 
     /// 開く大きさの指定を覚える先。**検査から差し替える** — 既定のままだと、検査を走らせた

@@ -85,6 +85,7 @@ enum BundleCommand {
         // 絵が出ない」形になる — しかも配った先で出る
         try ResourceDeclaration.check(in: directory)
         let identity = try AppIdentity.read(in: directory)
+        identity.warnIfExample()
         // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
         try DeviceUse.check(in: directory, identity: identity)
         // **作り直す先が自分の出力でなければ、ビルドの前に止まる** (#2500)。消せないと分かるのは
@@ -120,7 +121,10 @@ enum BundleCommand {
         ) { app throws(CommandFailure) in
             try sign(app, as: signature, entitlements: identity.entitlements)
         }
-        print(report(for: app, package: directory, note: note, signedAs: signature))
+        print(
+            report(
+                for: app, package: directory, note: note, signedAs: signature,
+                identity: identity))
     }
 
     /// 組み上がった包みの仕上げ。**手順の順序をここ 1 か所で持つ** — 資材の検め → 開き方の紙 → 署名。
@@ -468,13 +472,20 @@ enum BundleCommand {
     /// なので、`.build` と書くと走らせた場所がスケッチでないときに別の場所を指す。場所は
     /// 絶対パスで名指しし、シェルの 1 語に包む (``GivenPath/shellWord(_:)``)。
     ///
-    /// - Parameter package: 束ねたスケッチの場所 (絶対パス)。
+    /// **名乗りが見本の値のままなら、警告をもう一度ここで言う** (#3442)。束ねる前の 1 行
+    /// (``AppIdentity/warnIfExample(to:)``) は、続く `swift build` の出力で流れる。送る前に読む
+    /// この報せの末尾へ置けば、配る直前の目に入る。文は ``AppIdentity/warning`` から引く (写さない)。
+    ///
+    /// - Parameters:
+    ///   - package: 束ねたスケッチの場所 (絶対パス)。
+    ///   - identity: 束ねた名乗り。**省略できない** — 呼び元が渡し忘れると、警告だけが黙って落ちる。
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    static func report(for app: URL, package: URL, note: URL, signedAs signature: String?)
-        -> String
-    {
-        """
+    static func report(
+        for app: URL, package: URL, note: URL, signedAs signature: String?,
+        identity: AppIdentity
+    ) -> String {
+        let base = """
         Bundled: \(app.path)
 
         What this guarantees is that it launches on another machine and draws.
@@ -492,6 +503,8 @@ enum BundleCommand {
 
         If it draws with .build moved aside, the bundle carries all it needs.
         """
+        guard let warning = identity.warning else { return base }
+        return base + "\n\n" + warning
     }
 
     /// 確かめ方の 1 行。スケッチの `.build` を退避して `.app` を開き、戻す。

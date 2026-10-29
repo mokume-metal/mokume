@@ -28,6 +28,9 @@ extension SketchPart {
     /// }
     /// ```
     ///
+    /// 選んだファイルが CSV として読めなければ `table` は `nil` のままで、案内の文字が出続けるので、
+    /// `Task` の中の `try?` で受けている。
+    ///
     /// Processing の `selectInput(prompt, callback)` に当たる。コールバックの代わりに `async` で結果を返す。
     /// 返るパスは絶対パスで、``loadImage(_:)``・``loadTable(_:header:)`` などにそのまま渡せる。
     ///

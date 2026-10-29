@@ -8,5 +8,10 @@
   "width": 960,
   "height": 540,
   "windowScale": 0.5,
+  "fullScreenDisplay": {
+    "number": 2,
+    "name": "LG ULTRAWIDE",
+    "screenID": 4
+  },
   "pid": 48213
 }

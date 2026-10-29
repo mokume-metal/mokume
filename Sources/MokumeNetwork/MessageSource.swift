@@ -44,22 +44,31 @@ protocol EventTracing: AnyObject {
 
 /// 記録したメッセージの列を、フレームごとに 1 束ずつ入れる出どころ。**ポートも開かない。**
 ///
-/// `batches[i]` は、開いてから i 回目の取り出しで届く。終わりまで行けば始まりへ戻る。どの束が
+/// `batches[i]` は、作ってから i 番目のフレームで届く。終わりまで行けば始まりへ戻る。どの束が
 /// 入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても同じメッセージが同じ
 /// フレームに届く ([ADR-0028] 決定 7・[ADR-0025] の水準 2)。
 ///
+/// **外して足し直しても、フレームの数え方は変わらない** (時刻どおり・[#3152])。外していた間も
+/// フレームは進んでいたものとして、足し直したときに列の位置をその数だけ進める (外していた間の束は届かない)。
+/// 実物のポートが外している間も相手に送られ続けるのと同じである。
+///
+/// [#3152]: https://github.com/mokume-metal/mokume/issues/3152
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class RecordedSource<Message: Sendable>: MessageSource {
     let batches: [[Message]]
     private var next = 0
+    private var detached: DetachedFrames
 
-    init(batches: [[Message]]) {
+    /// - Parameter owner: 外していた間に進んだフレームを数える持ち主。`nil` なら足し直しでも位置を進めない。
+    init(batches: [[Message]], owner: (any Sketch)? = nil) {
         self.batches = batches
+        detached = DetachedFrames(owner: owner)
     }
 
     func start(into queue: ExternalQueue<Message>) {
-        next = 0
+        // 最初の開きは 0。足し直しは、外していた間に進んだフレームの数だけ進める
+        if !batches.isEmpty { next = (next + detached.reopen()) % batches.count }
         queue.setState(.running)
     }
 
@@ -69,7 +78,9 @@ final class RecordedSource<Message: Sendable>: MessageSource {
         next = (next + 1) % batches.count
     }
 
-    func stop() {}
+    func stop() {
+        detached.close()
+    }
 }
 
 /// 受け口の移り変わり (``PortListener/Event``) を列の状態に写し、初めてのものを 1 度だけ言う。

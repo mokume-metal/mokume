@@ -83,6 +83,10 @@ extension SketchPart {
     /// 窓の継ぎ目 (``FrameSamples``) と 1 標本も違わずに数えられない。走っていなければ 0。
     package var authorSeconds: Double { runningSketch?.authorSeconds ?? 0 }
 
+    /// これまでに進めたフレームの数 (``frameCount`` と同じ)。**走っていなければ `nil`** で、警告も言わない。外された入り口が
+    /// 足し直されるまでの間に進んだ数を、出どころが数える (`DetachedFrames`・#3152)。
+    package var runningFrameCount: Int? { runningSketch?.frameCount }
+
     /// 時刻を指定した観測の枚の、**`draw()` と入り口の供給の間だけ**の指定の秒。それ以外は `nil`。
     package var observedSeconds: Double? { runningSketch?.observedSeconds }
 }

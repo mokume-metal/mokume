@@ -329,6 +329,8 @@ struct FullScreenWindowTests {
         #expect(window.collectionBehavior.contains(.fullScreenPrimary))
         #expect(window.frameAutosaveName.isEmpty, "全画面の窓が位置を覚えている")
         #expect(said.isEmpty)
+        // 1 枚目の前の層は不透明な黒 (#2876)。窓を作る側が層を塗るのではなく、層を作る所が塗る
+        #expect(OpaqueBlackLayer.problem(with: window.contentView?.layer) == nil, "全画面の窓の層")
     }
 
     /// **全画面に入った後に、実物と描く大きさを突き合わせる。** 通知は手で送る — 実際に全画面に

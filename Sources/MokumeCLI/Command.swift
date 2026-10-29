@@ -126,7 +126,7 @@ enum Command {
                 (
                     """
                     render [<directory>] [-c <configuration>] [--scratch-path <directory>] \
-                    --fps <n> --seconds <s> --out <path>
+                    --fps <n> --seconds <s> --out <path> [--scale <n>]
                     """,
                     """
                     Build the sketch and write its motion at a fixed frame rate, with no window.
@@ -138,7 +138,11 @@ enum Command {
                     colour as sRGB, and writes each pixel opaque or transparent (alpha 128 or
                     more is opaque), and its frame time is a whole number of 1/100 seconds, so
                     --fps must divide 100 (50, 25, 20 …); a .mp4 writes colour as sRGB with no
-                    transparency. Ends by itself after fps × seconds frames
+                    transparency, and H.264 can drop a pixel from an odd width or height (65x49
+                    comes out 64x48) — it says so on stderr when it does. Ends by itself after
+                    fps × seconds frames. --scale <n> (a whole
+                    number from 1, default 1) writes n times the pixels each way without changing the
+                    sketch's coordinates: a 1920×1080 sketch is written at 3840×2160 with --scale 2
                     """
                 )
             case .mcp:

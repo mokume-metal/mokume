@@ -140,6 +140,9 @@ final class MovieWriter {
         let release = pressure.release
         let closed = self.closed
         let outcome = lastOutcome
+        // 閉じるときに言う警告 (縦横が変わったとき・#3379) が、頼んだ側の溜め場へ入るように控える。
+        // 差してなければ `nil` で、プロセスの溜め場へ入る (タスクローカル値は `Task.detached` に届かない)
+        let digest = Diagnostics.digest
         // **優先度は待つ側 (main) に揃える** (#2372)。main は `Backpressure.take()` で semaphore を
         // 待つが、semaphore は優先度を寄付しない。`.utility` だと CPU が混んだ機械で符号化だけが
         // 後回しにされ、main がその遅れを待つ形になる (ProRes のソフトの符号化器の内部のスレッドは
@@ -226,7 +229,9 @@ final class MovieWriter {
                 // 残りの窓 (最後の絵より先の分) を書いてから閉じる
                 await drainSound(through: .max)
                 do {
-                    try await file.finish(lastFrameAt: lastTime)
+                    try await Diagnostics.$digest.withValue(digest) {
+                        try await file.finish(lastFrameAt: lastTime)
+                    }
                 } catch {
                     outcome.fail("Could not close \(path): \(error)", at: path)
                 }
