@@ -97,18 +97,31 @@ final class SketchPresence {
     ///   そこで `nextEvent` を呼ぶと、以後は出来事が届くたびに AppKit が main の run loop を止めるブロックを
     ///   積み、run loop が戻ったプロセスは `exit(0)` で終わる (実測)
     ///
-    /// 代償: 後者の形では、名乗りは出るが**メニューは押せず、プレビューも動かない** (出来事を取り出す人が
-    /// 居ない)。プロセスが消えるよりよい — 名乗りの目的 (どれが誰のものか) は、メニューバーに出ていれば足りる。
+    /// 代償: 後者の形では、**メニューは押せず、プレビューも動かない** (出来事を取り出す人が居ない)。
+    /// **`await` を挟まず run loop へ戻らない密なループ (main actor 上の `for { advance() }`) では、
+    /// 印も描かれない** — 出るまで回す待ち (``announce()``) も飛ばすので、ループが run loop へ戻るまで
+    /// 出ない (実測: 名乗って 10 秒後も `NSStatusBarWindow` は不可視で、`await` で run loop へ戻すと 0.5 秒で
+    /// 可視になった)。プロセスが消えるよりよい。run loop へ戻るたび (フレームの間に `await` を挟む形) には出る。
     ///
     /// [#3120]: https://github.com/mokume-metal/mokume/issues/3120
     static func shouldDriveRunLoop(appIsRunning: Bool, mainRunLoopIsRunning: Bool) -> Bool {
         !appIsRunning && !mainRunLoopIsRunning
     }
 
+    /// いま、自分で run loop を回すべきか (`NSApp` と main の run loop の、その場の状態から)。
+    ///
+    /// 純関数の ``shouldDriveRunLoop(appIsRunning:mainRunLoopIsRunning:)`` へ、本物の状態を渡したもの。
+    /// ``announce()`` と、毎フレームの ``advanced(runningFor:)`` が同じ判定を使う。
+    static var drivesRunLoopNow: Bool {
+        shouldDriveRunLoop(
+            appIsRunning: NSApplication.shared.isRunning, mainRunLoopIsRunning: mainRunLoopIsRunning)
+    }
+
     /// main の run loop がいま走っているか (回している人が誰であれ)。
     ///
-    /// 走っていれば現在のモードの名前が返る。**``announce()`` が名乗る前、こちらが 1 度も回さないうちに
-    /// 読む** — 自分で回した後に読むと、自分が回しているのを「別の誰か」と取り違える。
+    /// 走っていれば現在のモードの名前が返る。**こちらが回している最中には読まない** (``announce()`` の
+    /// 待ちの中・``pump()`` の中で読むと、自分が回しているのを「別の誰か」と取り違える)。読むのは
+    /// 回す前だけである。
     static var mainRunLoopIsRunning: Bool {
         CFRunLoopCopyCurrentMode(CFRunLoopGetMain()) != nil
     }
@@ -180,8 +193,6 @@ final class SketchPresence {
     private var item: NSStatusItem?
     /// メニューの出来事を受ける先。AppKit は delegate を弱く参照するので、寿命をここで持つ。
     private var menuDelegate: SketchPresenceMenu?
-    /// 自分で run loop を回す必要があるか。``announce(_:)`` のときに 1 度だけ決める。
-    private var drivesRunLoop = false
     /// プレビューを出している面。開いている間だけ入る。
     private var previewView: NSImageView?
     /// 素性の行。経過時間を書き替えるために持つ。
@@ -214,7 +225,10 @@ final class SketchPresence {
             return
         }
         // 出た後は撫でるだけ。**回す人が別に居るなら触らない** (AppKit の event loop への再入)
-        guard drivesRunLoop else { return }
+        // **回す人が別に居るかは、毎回その場で読む** (``drivesRunLoopNow``)。名乗った時点の答えを覚えて
+        // おくと、あとから main の run loop を別の誰かが回し始めたとき (名乗った後で async の最上段へ
+        // 入る使い手など) に、古い答えで汲み出して `exit(0)` になる (#3120)
+        guard Self.drivesRunLoopNow else { return }
         pump()
     }
 
@@ -272,8 +286,7 @@ final class SketchPresence {
         //
         // **回す人が別に居るかは、名乗る前に読む** (``mainRunLoopIsRunning``)。窓を開かず async main の
         // 上で直に回す形では、`nextEvent` で出来事を汲み出さない (#3120)
-        drivesRunLoop = Self.shouldDriveRunLoop(
-            appIsRunning: app.isRunning, mainRunLoopIsRunning: Self.mainRunLoopIsRunning)
+        let drivesRunLoop = Self.drivesRunLoopNow
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Self.mark()

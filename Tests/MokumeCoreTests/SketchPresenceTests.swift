@@ -81,6 +81,17 @@ struct SketchPresenceTests {
         #expect(SketchPresence.mainRunLoopIsRunning)
     }
 
+    /// 回す人が別に居るかは、毎フレームその場で読む。**名乗った時点の答えを覚えない** — 覚えると、
+    /// 名乗った後で main の run loop を別の誰かが回し始めたとき、古い答えで汲み出して `exit(0)` になる。
+    /// 名乗りそのものは起こせない (#473) ので、毎フレームの汲み出しの前が読む `drivesRunLoopNow` が、
+    /// 本物の状態 (`NSApp` と main の run loop) から答えることを、async の上 (別の誰かが回している) で固定する。
+    @Test("毎フレームの判定は、本物の run loop の状態から答える (async の上では回さない)")
+    func drivesRunLoopNowReadsTheLiveState() async {
+        await Task.yield()
+        #expect(SketchPresence.mainRunLoopIsRunning)
+        #expect(!SketchPresence.drivesRunLoopNow, "main の run loop を別の誰かが回しているのに、自分で回すと答えた")
+    }
+
     // MARK: - 経過の表記
 
     @Test("経過は分と秒で出る")

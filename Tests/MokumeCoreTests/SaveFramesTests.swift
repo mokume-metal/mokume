@@ -900,7 +900,12 @@ struct SaveFramesTests {
         _ body: @escaping (SavingSketch) -> Void
     ) throws -> SketchRuntime {
         SavingSketch.body = body
-        return try SketchRuntime(sketch: SavingSketch(), gpu: try RenderDevice())
+        // **名乗りの実時間の時計は止める** (#3120)。公開の初期化子で組むと、閉じるのを待つ検査が実時間で
+        // 猶予 (30 秒) を越えて名乗りうる。名乗るとプロセス全体の状態が変わり、同じプロセスの窓の検査の
+        // run loop を止める (#1527)
+        return try SketchRuntime(
+            sketch: SavingSketch(), gpu: try RenderDevice(), clock: nil,
+            now: { ProcessInfo.processInfo.systemUptime }, presenceClock: { 0 })
     }
 
     // MARK: - 出る絵
