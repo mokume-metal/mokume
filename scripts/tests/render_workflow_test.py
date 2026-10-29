@@ -6,32 +6,37 @@
 ADR-0019 決定 7 は、専用機に届くきっかけを 3 つ (merge_group・同じリポジトリの PR・
 schedule) に限り、それぞれの理由を持つ。**どれも `if:` と権限の 1 行が崩れると、理由ごと
 外れる** — しかも崩れても run は緑のままで、気付くのは専用機に想定外のものが届いた後になる。
-ここで固定するのは次の 13 個:
+ここで固定するのは次の 14 個:
 
   1. schedule の cron は 6 時間おきで、毎時 0 分を避けている (このリポジトリの慣習)
   2. `render` (必須) と `render-pr` は schedule では起動しない — 必須チェックの結論を
      定期の run が動かさない。`workflow_dispatch` も足さない (任意のブランチで起こせる)
-  3. 定期の専用機のジョブ (`scheduled-debug` / `scheduled-release`) は schedule でだけ
-     起動し、30 分で切る — 専用機は 1 台で、必須の `render` の待ちを延ばさないため
+  3. 定期の専用機のジョブ (`scheduled-debug` / `scheduled-release` / `scheduled-drift`) は
+     schedule でだけ起動し、30 分で切る — 専用機は 1 台で、必須の `render` の待ちを延ばさないため
   4. `scheduled-release` は `scheduled-debug` と、その後の門番を待つ — 間に待っている
-     `render` を先に通す (1 本の長いジョブにしない)
+     `render` を先に通す (1 本の長いジョブにしない)。`scheduled-drift` (例の絵の前後の比較・
+     #2706) は release と、その後の門番 (`scheduled-drift-turn`) を待つ
   5. 専用機のジョブは権限を広げず (`permissions` を持たず workflow 既定の `contents: read`)、
      秘密を持たない
   6. `issues: write` を持つのは GitHub ホストの後続ジョブ (`scheduled-report` と
      `render-environment-report`) だけ
-  7. `scheduled-report` は専用機のジョブが落ちた (`failure`) か切れた (`cancelled`) ときだけ
-     走り、2 つの job の結論を起票のスクリプトへ渡す。timeout で切れた回は `cancelled` に
+  7. `scheduled-report` は定期の専用機のジョブ (debug・release・例の絵の比較の `scheduled-drift`)
+     が落ちた (`failure`) か切れた (`cancelled`) とき、または `scheduled-drift` が変わった絵を
+     名指ししたときだけ走り、3 つの結論を起票のスクリプトへ渡す。赤の発信の step は赤の回にだけ走る (例の絵の名指しだけで
+     走った回に、緑の検査を「落ちている」と起票しない)。timeout で切れた回は `cancelled` に
      なるので、`failure` だけを見ると黙って抜ける (#2084)。`if:` は状態の関数を持つ —
      無ければ暗黙の success() で、needs が赤の回に skipped になる
-  8. 専用機のジョブはすべて門番 (`render-turn` / `scheduled-release-turn`) の後に積まれ、
+  8. 専用機のジョブはすべて門番 (`render-turn` / `scheduled-release-turn` /
+     `scheduled-drift-turn`) の後に積まれ、
      門番が赤でも走る (`!cancelled()`)。render が skipped になると必須チェックを満たして
      しまう (#2062)
   9. 門番は GitHub ホストで、`actions: read` だけを持つ。待ちの上限は門番が自分で守り
      (job の timeout より内側)、merge_group の上限は queue の期限より手前にある
- 10. schedule で起動する専用機のジョブは `scheduled-debug` / `scheduled-release` だけで、
-     `needs` の鎖で 1 本ずつ並び、どれも `wait` の門番の後ろにいる。門番より前に積まれた
-     定期の job を退かせないことを受け入れる根拠 — 先頭の render と並ぶのは定期の job 1 本
-     まで — がこの形である (#2064・ADR-0019 決定 7)。3 本目を足すと、ここが赤になる
+ 10. schedule で起動する専用機のジョブは `scheduled-debug` / `scheduled-release` /
+     `scheduled-drift` だけで、`needs` の鎖で 1 本ずつ並び、どれも `wait` の門番の後ろに
+     いる。門番より前に積まれた定期の job を退かせないことを受け入れる根拠 — 先頭の render と
+     並ぶのは定期の job 1 本まで — がこの形である (#2064・ADR-0019 決定 7)。鎖に並ばない
+     job を足すと、ここが赤になる
  11. 専用機のジョブはすべて、checkout の直後に環境の前検査 (`scripts/runner-preflight.sh`)
      を走らせる。`render` はその理由を job の出力へ上げ、`render-environment-report` は
      前検査で落ちた回 (理由が空でない) にだけ走って発信する (#2588)。理由を見ずに
@@ -66,10 +71,16 @@ WORKFLOW = REPO / ".github" / "workflows" / "render.yml"
 
 RUNNER_JOBS = ("render", "render-pr", "scheduled-debug", "scheduled-release")
 DEBUG_RUNNER_JOBS = ("render", "render-pr", "scheduled-debug")
-TURN_JOBS = ("render-turn", "scheduled-release-turn")
+TURN_JOBS = ("render-turn", "scheduled-release-turn", "scheduled-drift-turn")
 TURN_SCRIPT = REPO / "scripts" / "render-turn.sh"
 RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
-SCHEDULED_RUNNER_JOBS = ("scheduled-debug", "scheduled-release")
+# 例の絵の前後の比較 (#2706)。定期の専用機のジョブの 3 本目で、release の後ろに 1 本ずつ積む。
+# 落ちた・切れた回は debug・release と同じく scheduled-report が起票する (起点は success の回から
+# 引くので、起票しなければ区間が伸びるだけで誰にも届かない)
+DRIFT_JOB = "scheduled-drift"
+SCHEDULED_RUNNER_JOBS = ("scheduled-debug", "scheduled-release", DRIFT_JOB)
+SCHEDULED_ALL_JOBS = SCHEDULED_RUNNER_JOBS
+ALL_RUNNER_JOBS = RUNNER_JOBS + (DRIFT_JOB,)
 
 
 def split(text):
@@ -163,7 +174,7 @@ class RenderWorkflowTest(unittest.TestCase):
         self.assertNotIn("schedule", pr)
 
     def test_定期の専用機のジョブは_schedule_でだけ起動し_30_分で切る(self):
-        for name in SCHEDULED_RUNNER_JOBS:
+        for name in SCHEDULED_ALL_JOBS:
             body = self.jobs[name]
             self.assertIn("github.event_name == 'schedule'", condition(body), name)
             self.assertIn("runs-on: [self-hosted, mokume-render]", body, name)
@@ -180,6 +191,32 @@ class RenderWorkflowTest(unittest.TestCase):
         self.assertIn("!cancelled()", condition(self.jobs["scheduled-release"]))
         self.assertNotIn("always()", condition(self.jobs["scheduled-release"]))
 
+    def test_scheduled_drift_は_release_の後に_queue_へ入り起点は門番が引く(self):
+        # 例の絵の前後の比較 (#2706)。debug は 30 分の枠の 28 分を使うので、別の job で、
+        # release の後ろに 1 本ずつ積む
+        self.assertRegex(
+            self.jobs[DRIFT_JOB],
+            r"(?m)^    needs: \[scheduled-release, scheduled-drift-turn\]\s*$",
+        )
+        self.assertRegex(self.jobs["scheduled-drift-turn"], r"(?m)^    needs: scheduled-release\s*$")
+        self.assertIn("!cancelled()", condition(self.jobs[DRIFT_JOB]))
+        self.assertNotIn("always()", condition(self.jobs[DRIFT_JOB]))
+        # 起点は actions: read を持つ GitHub ホストの門番だけが API から引き、専用機の job は
+        # 出力で受ける (専用機の job に token も権限も足さない・ADR-0019 決定 7)
+        turn = self.jobs["scheduled-drift-turn"]
+        self.assertIn("run: bash scripts/drift-base.sh", turn)
+        self.assertIn("base: ${{ steps.base.outputs.base }}", turn)
+        self.assertNotIn("drift-base.sh", self.jobs[DRIFT_JOB])
+        self.assertIn("DRIFT_BASE: ${{ needs.scheduled-drift-turn.outputs.base }}", self.jobs[DRIFT_JOB])
+        self.assertIn("run: bash scripts/scheduled-drift.sh", self.jobs[DRIFT_JOB])
+        # 変わった絵の本数を出力で渡す。scheduled-report の `if:` が読む
+        self.assertIn("drift-count: ${{ steps.drift.outputs.drift-count }}", self.jobs[DRIFT_JOB])
+        # 記録は隠しディレクトリごと上げる。無いと .build/ の記録が 1 つも上がらない
+        for body in steps(self.jobs[DRIFT_JOB]):
+            if body.startswith("      - uses: actions/upload-artifact@"):
+                self.assertIn("include-hidden-files: true", body)
+                self.assertIn("name: scheduled-drift-record", body)
+
     def test_定期の専用機のジョブは_1_本ずつ並び_wait_の門番の後ろにいる(self):
         # schedule で起動する専用機のジョブを、名前の一覧に頼らず本文から拾う
         scheduled = {
@@ -188,7 +225,7 @@ class RenderWorkflowTest(unittest.TestCase):
             if "runs-on: [self-hosted" in body
             and "github.event_name == 'schedule'" in condition(body)
         }
-        self.assertEqual(scheduled, set(SCHEDULED_RUNNER_JOBS))
+        self.assertEqual(scheduled, set(SCHEDULED_ALL_JOBS))
 
         def ancestors(name):
             seen, todo = set(), list(needs(self.jobs[name]))
@@ -226,9 +263,9 @@ class RenderWorkflowTest(unittest.TestCase):
         # contents: read の token で、secrets ではない)
         self.assertRegex(self.top["permissions"], r"contents:\s*read")
         self.assertNotIn("issues", self.top["permissions"])
-        for name in RUNNER_JOBS:
+        for name in ALL_RUNNER_JOBS:
             self.assertNotIn("permissions:", self.jobs[name], name)
-        self.assertNotIn("secrets.", "\n".join(self.jobs[n] for n in RUNNER_JOBS))
+        self.assertNotIn("secrets.", "\n".join(self.jobs[n] for n in ALL_RUNNER_JOBS))
 
     def test_issues_write_を持つのは_GitHub_ホストの後続ジョブだけ(self):
         holders = [name for name, body in self.jobs.items() if re.search(r"issues:\s*write", body)]
@@ -239,7 +276,7 @@ class RenderWorkflowTest(unittest.TestCase):
 
     def test_専用機のジョブは_checkout_の直後に前検査を走らせる(self):
         # make より後に置くと、壊れた環境で 14 分走ってから落ちる (#2507) のに戻る
-        for name in RUNNER_JOBS:
+        for name in ALL_RUNNER_JOBS:
             steps = re.findall(r"(?m)^      - (.+)$", self.jobs[name])
             self.assertEqual(steps[0], "uses: actions/checkout@v7", name)
             self.assertEqual(steps[1], "id: preflight", name)
@@ -318,15 +355,40 @@ class RenderWorkflowTest(unittest.TestCase):
 
     def test_scheduled_report_は専用機のジョブが落ちたか切れたときだけ走る(self):
         body = self.jobs["scheduled-report"]
-        self.assertRegex(body, r"needs: \[scheduled-debug, scheduled-release\]")
+        self.assertRegex(body, r"needs: \[scheduled-debug, scheduled-release, scheduled-drift\]")
         cond = condition(body)
         for job in SCHEDULED_RUNNER_JOBS:
             self.assertIn(f"needs.{job}.result == 'failure'", cond, job)
             # 30 分の timeout で切れた回は cancelled で終わる。ここを外すと、何も起票されずに
             # 黙って抜ける (#2084 の 6 回)。人の cancel と見分けないのは ADR-0019 決定 7
             self.assertIn(f"needs.{job}.result == 'cancelled'", cond, job)
+        # 例の絵の名指し (#2706): 変わった絵が 1 本でもあれば走る。出力が空 (job が skipped・
+        # 落ちた) でも式が崩れないよう、`|| '0'` を持つ
+        self.assertIn("fromJSON(needs.scheduled-drift.outputs.drift-count || '0') > 0", cond)
         # 成功・skipped のときに走らせない。`!=` 側で書くと、skipped で起票する
         self.assertNotIn("!=", cond)
+
+    def test_scheduled_report_は赤の発信と例の絵の発信を別の_step_で出す(self):
+        # 同じ step に畳むと、例の絵の名指しだけで走った回に、緑の検査を「落ちている」と
+        # 起票するか、赤の発信が落ちた回に例の絵の名指しが消えるかのどちらかになる
+        body = self.jobs["scheduled-report"]
+        by_name = {re.search(r"name: (.+)", s).group(1): s for s in steps(body) if "name:" in s}
+        red = by_name["赤を発信する"]
+        self.assertIn("scripts/report-scheduled-render.sh", red)
+        # 赤の発信は debug・release・比べる job の failure / cancelled を拾い、結論を渡す (7 つ目の引数)
+        for job in SCHEDULED_RUNNER_JOBS:
+            self.assertIn(f"needs.{job}.result == 'failure'", red, job)
+            self.assertIn(f"needs.{job}.result == 'cancelled'", red, job)
+        self.assertIn("DRIFT_RESULT: ${{ needs.scheduled-drift.result }}", red)
+        self.assertIn('"$DRIFT_RESULT"', red)
+        # 変わった絵の本数 (drift-count) では動かない。それは下の step の問い
+        self.assertNotIn("drift-count", red)
+        shots = by_name["画素の変わった例の絵を発信する"]
+        self.assertIn("scripts/report-example-drift.sh", shots)
+        # 手前の赤の発信が落ちても走る (別の問い)。cancel された run では走らない
+        self.assertIn("!cancelled() && fromJSON(needs.scheduled-drift.outputs.drift-count || '0') > 0", shots)
+        # 記録を落とせなかった回も、名乗った本数を渡して起票する
+        self.assertIn("DRIFT_COUNT: ${{ needs.scheduled-drift.outputs.drift-count }}", shots)
 
     def test_scheduled_report_は_needs_が赤でも走る(self):
         # `if:` に状態の関数が無いと、GitHub は暗黙の success() を足す。needs が failure /
@@ -349,8 +411,9 @@ class RenderWorkflowTest(unittest.TestCase):
             "render-pr": "render-turn",
             "scheduled-debug": "render-turn",
             "scheduled-release": "scheduled-release-turn",
+            DRIFT_JOB: "scheduled-drift-turn",
         }
-        self.assertEqual(set(gate), set(RUNNER_JOBS))
+        self.assertEqual(set(gate), set(ALL_RUNNER_JOBS))
         for name, turn in gate.items():
             needs = re.search(r"(?m)^    needs: (.+)$", self.jobs[name])
             self.assertIsNotNone(needs, name)
@@ -361,7 +424,7 @@ class RenderWorkflowTest(unittest.TestCase):
         # 必須チェックを満たすので、描かずに merge される
         # always() ではなく !cancelled() — always() は cancel された run (queue-sweep が捨てた
         # group など) でも専用機に積み、取り合いを増やす
-        for name in RUNNER_JOBS:
+        for name in ALL_RUNNER_JOBS:
             cond = condition(self.jobs[name])
             self.assertIn("!cancelled()", cond, name)
             self.assertNotIn("always()", cond, name)

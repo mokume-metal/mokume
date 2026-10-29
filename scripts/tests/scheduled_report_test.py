@@ -26,6 +26,9 @@
      案内しない。「走っている途中で切れた」と言うのは test-log があるときだけ。落ちて
      (`failure`) 記録が無い job には、ビルドかジョブの開始で落ちた回と、検査のプロセスが
      記録を残さずに消えた回 (#1526) を並べて案内する
+  9. 例の絵の前後の比較 (`scheduled-drift`・#2706) が落ちた・切れた回は、7 つ目の引数の結論で
+     節を足して起票する (debug・release が緑でも)。success・skipped・引数なしは節を足さない。
+     起点は success の回から引くので、起票しなければ区間が伸びるだけで誰にも届かない
   8. 台帳の絵の案内が、定期の run の artifact の名前 (`scheduled-debug-ledger-shots`) を
      指す — `ledger-shots` は render / render-pr の名前で、定期の run には上がらない
 
@@ -135,6 +138,7 @@ class ReportScheduledRenderTest(unittest.TestCase):
         issue_list="[]",
         results=("failure", "failure"),
         logs=None,
+        drift=None,
     ):
         """debug / release の結論と記録 (None なら無いまま渡す) で呼ぶ。
 
@@ -152,6 +156,8 @@ class ReportScheduledRenderTest(unittest.TestCase):
             if has_log:
                 log.write_text(f"{name} の端末出力の末尾\n", encoding="utf-8")
             args += [result, str(xml), str(log)]
+        if drift is not None:
+            args.append(drift)  # 例の絵の前後の比較 (scheduled-drift・#2706) の結論 (7 つ目・任意)
         env = dict(os.environ)
         env.update(
             {
@@ -332,6 +338,30 @@ class ReportScheduledRenderTest(unittest.TestCase):
         )
         self.assertEqual(r.returncode, 64)
         self.assertIn("使い方", r.stderr)
+
+
+class DriftSectionTest(ReportScheduledRenderTest):
+    """比べる job (`scheduled-drift`) の結論の扱い (#2706)。"""
+
+    def test_落ちた回と切れた回は_debug_と_release_が緑でも節を足して起票する(self):
+        for result in ("failure", "cancelled"):
+            with self.subTest(result=result):
+                self.log.write_text("")
+                proc = self.report(debug=GREEN, release=GREEN, results=("success", "success"), drift=result)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn("issue create", self.log.read_text())
+                body = self.body.read_text()
+                self.assertIn("例の絵の前後の比較", body)
+                self.assertIn(f"結論: `{result}`", body)
+                self.assertIn("区間は閉じていない", body)
+
+    def test_success_と_skipped_と引数なしは節を足さない(self):
+        for drift in ("success", "skipped", None):
+            with self.subTest(drift=drift):
+                proc = self.report(drift=drift)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("結論: `success` — 前回までに比べ終えた", self.body.read_text())
+                self.assertNotIn("区間は閉じていない", self.body.read_text())
 
 
 if __name__ == "__main__":
