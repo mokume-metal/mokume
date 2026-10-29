@@ -78,12 +78,14 @@ extension Sketch {
             }
         }
         return try attached(OSCFailure.self, calledAs: #function) {
+            let seams = DatagramSeams.current
             let outbound = destination.map {
-                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+                DatagramSender(
+                    host: $0.host, port: $0.port, connect: seams.connect, warn: { Diagnostics.warn($0) })
             }
             return OSCPort(
                 port: port, name: "osc :\(port)",
-                source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
+                source: NetworkOSCSource(port: port, acceptor: seams.acceptor, warn: { Diagnostics.warn($0) }),
                 outbound: outbound, owner: self)
         }
     }
@@ -124,7 +126,8 @@ extension Sketch {
             OSCPort(
                 port: nil, name: "osc (send only)", source: SendOnlySource(),
                 outbound: DatagramSender(
-                    host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) }),
+                    host: destination.host, port: destination.port, connect: DatagramSeams.current.connect,
+                    warn: { Diagnostics.warn($0) }),
                 owner: self)
         }
     }
