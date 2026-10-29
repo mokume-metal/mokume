@@ -394,6 +394,8 @@ def slow(path, threshold=SLOW_SECONDS):
 
 # testID が読めない取り消しの表示名。鍵に使わず、1 件ずつ別に数える
 UNKEYED = "(testID が読めない)"
+# 読めない行があったときの注の頭。`scripts/mutate.py` が、その回を信用しない印として読む
+BROKEN_LINES_NOTE = "読めない行が"
 
 
 def read_cancellations(path):
@@ -421,7 +423,9 @@ def read_cancellations(path):
     events = []
     broken = 0
     for line in lines:
-        if not line.strip():
+        # 空行の判定は JSON の空白 (space・tab・CR・LF) だけ。`str.strip()` は U+2028・U+0085・
+        # U+001C〜001F も空白とみなすので、そうした字だけの行 (壊れた行) を黙って読み飛ばしてしまう
+        if not line.strip(" \t\r\n"):
             continue
         try:
             record = json.loads(line)
@@ -496,7 +500,7 @@ def read_cancellations(path):
     if unkeyed:
         notes.append("testID が読めない取り消しが %d 件ある — どれとも照合できないので畳まず 1 件ずつ数えた" % len(unkeyed))
     if broken:
-        notes.append("読めない行が %d 行あった" % broken)
+        notes.append("%s %d 行あった" % (BROKEN_LINES_NOTE, broken))
     if "runEnded" not in kinds:
         notes.append("記録が runEnded で閉じていない — 検査のプロセスが途中で消えた可能性がある")
     return None, items, len(events), notes

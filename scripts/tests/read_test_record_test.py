@@ -40,7 +40,7 @@ TEST_ID = "Demo/test"
 def _event(kind, **fields):
     payload = {"kind": kind, "messages": [], "version": 0}
     payload.update(fields)
-    # ensure_ascii=False が要点: U+2028 を   に逃がさず、実際の文字として書く
+    # ensure_ascii=False が要点: U+2028 を \u2028 に逃がさず、実際の文字として書く
     return json.dumps({"kind": "event", "payload": payload}, ensure_ascii=False)
 
 
@@ -61,7 +61,7 @@ class ReadCancellationsTest(unittest.TestCase):
 
     def test_a_cancellation_with_a_unicode_line_separator_is_read_whole(self):
         """JSON 文字列の中の U+2028 / U+2029 / U+0085 は、レコードの境界ではない。"""
-        for separator in (" ", " ", "\u0085"):
+        for separator in ("\u2028", "\u2029", "\u0085"):
             with self.subTest(separator=repr(separator)):
                 reason = "reason%scontinued" % separator
                 line = _event("testCancelled", testID=TEST_ID, _comments=[reason])
@@ -77,8 +77,8 @@ class ReadCancellationsTest(unittest.TestCase):
         """割れた断片に挟まれた通常の事象も数に入る (取りこぼすと事象の数が合わない)。"""
         text = self.lines(
             _event("runStarted"),
-            _event("testStarted", testID="A/x", _comments=["a b"]),
-            _event("testCancelled", testID=TEST_ID, _comments=["x y"]),
+            _event("testStarted", testID="A/x", _comments=["a\u2028b"]),
+            _event("testCancelled", testID=TEST_ID, _comments=["x\u2028y"]),
             _event("testEnded", testID="A/x"),
             _event("runEnded"),
         )
@@ -89,7 +89,7 @@ class ReadCancellationsTest(unittest.TestCase):
 
     def test_the_final_newline_and_crlf_do_not_change_the_result(self):
         records = [_event("runStarted"),
-                   _event("testCancelled", testID=TEST_ID, _comments=["a b"]),
+                   _event("testCancelled", testID=TEST_ID, _comments=["a\u2028b"]),
                    _event("runEnded")]
         expected = self.read(self.lines(*records))
         self.assertEqual(self.read(self.lines(*records, final_newline=False)), expected)
@@ -110,9 +110,9 @@ class ReadCancellationsTest(unittest.TestCase):
         _, items, event_count, notes = self.read(self.lines(
             _event("runStarted"),
             '{"kind": "event", "payload": {"kind": "testCancelled", ',
-            _event("testCancelled", testID=TEST_ID, _comments=["a b"]),
+            _event("testCancelled", testID=TEST_ID, _comments=["a\u2028b"]),
             _event("runEnded")))
-        self.assertEqual(items, [(TEST_ID, "丸ごと", 1, "a b")])
+        self.assertEqual(items, [(TEST_ID, "丸ごと", 1, "a\u2028b")])
         self.assertEqual(event_count, 3)
         self.assertEqual(notes, ["読めない行が 1 行あった"])
 
@@ -135,10 +135,10 @@ class ReadCancellationsTest(unittest.TestCase):
     def test_the_whole_and_case_duplicates_are_still_folded(self):
         _, items, _, _ = self.read(self.lines(
             _event("runStarted"),
-            _event("testCancelled", testID=TEST_ID, _comments=["a b"]),
-            _event("testCaseCancelled", testID=TEST_ID, _comments=["a b"]),
+            _event("testCancelled", testID=TEST_ID, _comments=["a\u2028b"]),
+            _event("testCaseCancelled", testID=TEST_ID, _comments=["a\u2028b"]),
             _event("runEnded")))
-        self.assertEqual(items, [(TEST_ID, "丸ごと", 1, "a b")])
+        self.assertEqual(items, [(TEST_ID, "丸ごと", 1, "a\u2028b")])
 
 
     def test_mutate_shares_the_reader_and_sees_the_same_cancellation(self):
@@ -152,6 +152,39 @@ class ReadCancellationsTest(unittest.TestCase):
         problem, cancelled = mutate.read_cancelled(str(path))
         self.assertIsNone(problem)
         self.assertEqual(cancelled, [(TEST_ID, "cancelled")])
+
+    def test_mutate_does_not_read_a_record_with_broken_lines_as_having_no_cancellations(self):
+        """読めない行 (途中で切れた最終行など) があった回は、`read_cancelled` が問題として返す。"""
+        mutate = _load("mutate", "mutate.py")
+        path = Path(self.tmp.name) / "broken.jsonl"
+        path.write_text(self.lines(
+            _event("runStarted"),
+            _event("testCancelled", testID=TEST_ID + "/File.swift:1:2", _comments=["r"]),
+            '{"kind": "event", "payload": {"kind": "testCancelled", "testID": "Cut/',
+            final_newline=False), encoding="utf-8")
+        problem, cancelled = mutate.read_cancelled(str(path))
+        self.assertEqual(problem, "事象の記録: 読めない行が 1 行あった")
+        self.assertEqual(cancelled, [])
+
+    def test_a_line_of_only_non_json_whitespace_is_broken_not_blank(self):
+        """空行は JSON の空白 (space・tab・CR・LF) だけの行。U+2028・U+0085・U+001C 以降の制御文字だけの行は壊れた行。"""
+        odd = [chr(0x2028), chr(0x2029), chr(0x85), chr(0x1C), chr(0x1F), chr(0x0B), chr(0x0C)]
+        for char in odd:
+            with self.subTest(char=hex(ord(char))):
+                _, items, event_count, notes = self.read(self.lines(
+                    _event("runStarted"), char, _event("runEnded")))
+                self.assertEqual(notes, ["読めない行が 1 行あった"])
+                self.assertEqual(event_count, 2)
+        # JSON の空白だけの行は、今までどおり読み飛ばす (壊れた行に数えない)
+        _, _, _, notes = self.read(self.lines(
+            _event("runStarted"), " \t\r", _event("runEnded")))
+        self.assertEqual(notes, [])
+
+    def test_this_file_keeps_its_separators_escaped(self):
+        """生の U+2028・U+2029・U+0085 をソースに書かない。エディタや整形が正規化すると意味が黙って変わる。"""
+        text = Path(__file__).read_text(encoding="utf-8")
+        for code in (0x2028, 0x2029, 0x85):
+            self.assertNotIn(chr(code), text, "生の U+%04X がソースに書かれている (エスケープで書く)" % code)
 
 
 if __name__ == "__main__":

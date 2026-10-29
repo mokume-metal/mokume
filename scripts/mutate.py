@@ -400,15 +400,22 @@ def read_cancelled(path):
     """(問題, 取り消しの列)。問題は None か読めない理由。取り消しは (ident, "cancelled")。
 
     読みは read-test-record.py と共有する。事象の記録が無い・読めない回は、取り消しが無いと
-    読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。ident は testID の末尾の
+    読ませずに問題として返す (取り消しを見落として「生き残り」に数えない)。**読めない行があった回も同じ**
+    (その行に取り消しがあったかもしれない・#3499)。ident は testID の末尾の
     `/<file>:<line>:<column>` を落としたもの (`<suite>/<name>`)。testID は入れ子の suite を `/` で
     つなぐ (`MokumeCoreTests.Outer/Inner/test()`)。xunit の classname は入れ子を `.` でつなぐ
     (`MokumeCoreTests.Outer.Inner`) ので、入れ子では xunit の ident とは綴りが合わない — ident は
     xunit の検査と突き合わせず、関連の suite の判定にだけ使う (`suite_of` はどちらも最外の suite に写す)。
     """
-    reason, items, _, _ = _read_test_record().read_cancellations(path)
+    module = _read_test_record()
+    reason, items, _, notes = module.read_cancellations(path)
     if reason is not None:
         return f"事象の記録: {reason}", []
+    # **読めない行があった回は、取り消しを見落としているかもしれない** (途中で切れた行など)。
+    # 黙って「取り消しが無い」と読ませず、記録が読めない回と同じく問題として返す
+    broken = [n for n in notes if n.startswith(module.BROKEN_LINES_NOTE)]
+    if broken:
+        return f"事象の記録: {broken[0]}", []
     return None, [(UNKEYED_IDENT if tid is None else LOCATION.sub("", tid), "cancelled")
                   for tid, _, _, _ in items]
 
