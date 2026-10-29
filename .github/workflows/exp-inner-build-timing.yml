@@ -59,7 +59,7 @@ jobs:
               step release-cold "$W/packed-sketch" build -c release --product packed-sketch
               modules "$RUNNER_TEMP/release-cold.log"
               # 3. 依存を組んだ後に、スケッチだけ変えて組み直す (依存が占める分の裏)
-              printf '\n// probe\n' >> "$(ls "$W"/packed-sketch/Sources/packed-sketch/*.swift | head -1)"
+              printf '\n// probe\n' >> "$(find "$W/packed-sketch/Sources/packed-sketch" -name '*.swift' | head -1)"
               step release-sketch-only "$W/packed-sketch" build -c release --product packed-sketch
               ;;
             E-every-example)
@@ -73,7 +73,7 @@ jobs:
               step debug-cold "$W/tiny" build --scratch-path "$W/scratch"
               modules "$RUNNER_TEMP/debug-cold.log"
               # 4. 同じ置き場で、もう 1 本の検査を走らせる形は取れないので、tiny を変えて組み直す (リンクだけの目安)
-              printf '\n// probe\n' >> "$(ls "$W"/tiny/Sources/tiny/*.swift | head -1)"
+              printf '\n// probe\n' >> "$(find "$W/tiny/Sources/tiny" -name '*.swift' | head -1)"
               step debug-tiny-only "$W/tiny" build --scratch-path "$W/scratch"
               ;;
           esac
