@@ -42,6 +42,40 @@
 /// など) を投げる。投げない ``createShape(_:)`` は空の形を返して警告する。面そのもの (``canvas``)
 /// だけは、返す値も投げる道も無いので、外から取ると止まる。
 ///
+/// **更新は、語彙を読まずに引数で受ける値の型へ分けられる。** 上の「呼べるのはスケッチが走っている間」
+/// のとおり、`update` の中で ``keyboard``・``width``・``random(_:_:)`` を読むと、`init()`・`Task`・テストの
+/// ように走っていない所では 0 や空になる。入力と刻みを `draw()` で読んで引数で渡せば、`update` は語彙を
+/// 知らない値の更新になり、窓も GPU も無しに確かめられる。
+///
+/// ```swift
+/// struct Paddle: SketchPart {
+///     var x: Float = 240
+///
+///     mutating func update(horizontal: Float, deltaTime: Float) {
+///         x += horizontal * 120 * deltaTime
+///     }
+///
+///     func display() { rect(x - 30, 440, 60, 10) }
+/// }
+///
+/// final class Breakout: Sketch {
+///     var paddle = Paddle()
+///
+///     func draw() {
+///         let left: Float = keyboard.isPressed(.arrowLeft) ? 1 : 0
+///         let right: Float = keyboard.isPressed(.arrowRight) ? 1 : 0
+///         paddle.update(horizontal: right - left, deltaTime: deltaTime)
+///         background(20)
+///         paddle.display()
+///     }
+/// }
+/// ```
+///
+/// 入力 1・刻み 0.25 秒で `update` を呼ぶと、`x` は 240 から 270 (240 + 1 × 120 × 0.25) になる。
+/// `Paddle()` を作って `update` を呼ぶだけの計算なので、スケッチを走らせなくても、窓も GPU も無しに
+/// 確かめられる。テストの書き方は [Swift Testing](https://developer.apple.com/documentation/testing)
+/// にある。
+///
 /// **部品の型に置けないもの:**
 ///
 /// - つまみ (`@Param`) は、スケッチの型に直に置いたものだけが出る。部品の中に書いても組めるが、
