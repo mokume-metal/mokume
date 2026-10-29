@@ -100,6 +100,60 @@ struct DoctorCommandTests {
         #expect(text.contains("Toolchain: \(DoctorCommand.unknown) — not asked"))
     }
 
+    // MARK: - 場所の問題を先頭で言う (#3429)
+
+    /// 環境の節 (`What the environment provides`) の前の部分。
+    private static func opening(of text: String) -> String {
+        text.components(separatedBy: "What the environment provides").first ?? text
+    }
+
+    @Test("在らない場所を渡すと、場所が無いという行が環境の節より前に出る")
+    func aMissingPlaceIsNamedFirst() {
+        let missing = "/nonexistent-\(UUID().uuidString)/xyz"
+        let text = DoctorCommand.text(for: [missing], workDirectory: nil, environment: Self.isolated())
+        let line = DoctorCommand.placeLine(URL(fileURLWithPath: missing), presence: .missing)
+        #expect(Self.opening(of: text) == line + "\n\n")
+        #expect(line.contains("— nothing is there"))
+        // 節の中の行はそのまま残る
+        #expect(text.contains("\n  \(line)\n"))
+    }
+
+    @Test("ファイルを渡すと、ディレクトリでないという行が環境の節より前に出る")
+    func aFileAsThePlaceIsNamedFirst() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let file = place.appendingPathComponent("Package.swift")
+        try "".write(to: file, atomically: true, encoding: .utf8)
+        let text = DoctorCommand.text(
+            for: [file.path], workDirectory: nil, environment: Self.isolated())
+        // 手元の OS が `.notDirectory` を `.unreachable` に倒しうるので、いまの値から文を作って突き合わせる
+        let presence = GivenPath.Presence.of(file)
+        let line = DoctorCommand.placeLine(file, presence: presence)
+        #expect(Self.opening(of: text) == line + "\n\n")
+        #expect(Self.opening(of: text).contains("— not a directory"))
+    }
+
+    @Test("Package.swift の無いディレクトリを渡すと、その行が環境の節より前に出る")
+    func aPlaceWithoutPackageIsNamedFirst() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+        let text = DoctorCommand.text(
+            for: [place.path], workDirectory: nil, environment: Self.isolated())
+        #expect(Self.opening(of: text) == "Sketch: no Package.swift here\n\n")
+        #expect(text.contains("\n  Sketch: no Package.swift here\n"))
+    }
+
+    @Test("Package.swift のあるディレクトリでは、環境の節の前に何も足さない")
+    func aSketchPlaceAddsNothingBeforeTheEnvironment() throws {
+        let place = try Self.emptyDirectory()
+        defer { try? FileManager.default.removeItem(at: place) }
+        try "".write(
+            to: place.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let text = DoctorCommand.text(
+            for: [place.path], workDirectory: nil, environment: Self.isolated())
+        #expect(Self.opening(of: text) == "")
+    }
+
     @Test("ファイルを渡すと、ディレクトリでないと名乗り、swift を起こせなかったとは言わない")
     func aFileAsThePlaceIsNamed() throws {
         let place = try Self.emptyDirectory()
