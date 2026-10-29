@@ -72,6 +72,18 @@ SPDX-License-Identifier: MIT
 
 代償は、渡す絵の場所が区画の外になること、写す分の時間と置き場が要ること。撮り終えた応答が次の書き手に消されて取り合いに落ちる ([#2857](https://github.com/mokume-metal/mokume/issues/2857) の名乗り) は、この改訂でも残る。
 
+#### 改訂 (2026-10-29) — 窓口の取り消しは待ちだけを切り、連写は撮り終えるまで区画を塞ぐ
+
+**区画は置いた要求を取り下げる口を持たない。窓口の取り消し (`notifications/cancelled`) は待ちだけを切り、その id には答えない。続けて撮る観測 (`count`・`every`) は、スケッチが撮り終えるまで区画を塞ぎ、次の要求はその後ろで待つ。** スケッチは要求を 1 枚ずつ拾い、応え終えるまで次を拾わない (`SketchRuntime.serveObservationIfRequested`・`continueCapture`) ので、置いた列は取り消されても撮り続ける。最長は `ObservationRequest.maximumCount` (120) と `maximumEvery` (60) の積で、30fps で約 4 分 ((119 × 60 + 1) / 30 ≈ 238 秒)。窓口はそれを覚え (`AbandonedRequests`)、次の要求が時間切れになったとき、「スケッチが応えない」と取り違えずに、取り消した列の後ろで待っていると案内する ([#3038](https://github.com/mokume-metal/mokume/pull/3038))。この決まりは `observe` の道具の説明にも書く。振る舞いは変えない ([#3030](https://github.com/mokume-metal/mokume/issues/3030))。
+
+退けた案:
+
+- **A: 区画に取り下げの口を足す** (要求に `cancel` を置き直し、スケッチが撮影を切って `cancelled` の応答を書く) — 走っている側と Schema の変更になる。作品はライブラリの版を固定する (決定 5 の改訂・決定 6) ので、古い作品の区画には届かない。前の改訂が A・B・C を退けたのと同じ理由である。加えて、取り消しで困った実害はまだ見つかっていない (ルートの `AGENTS.md`「想定だけの API を先回りで作らない」)
+
+代償は、連写を取り消しても最長約 4 分は区画が塞がり、次の呼び出しがその後ろで待つこと。窓口の手当て (#3038) で、呼び手が受ける案内は誤らなくなった。
+
+**比べ直す条件:** 取り消した列の待ちが実際の制作の妨げになった Issue が立ったとき、または [#2992](https://github.com/mokume-metal/mokume/issues/2992) で退けた案 (区画を書き手ごとに分ける・要求の列にする) を比べ直すとき (どちらも区画の形を変えるので一緒に比べる)。そのとき案 A を取るなら、`git grep -n '3030' -- Sources Tests` で見つかる「取り消しはスケッチへ届かない」の説明 (`ServeLoop.swift`・`Tools.swift`・`Facets.swift`・`MCPServer.swift`・`MCPServeLoopTests.swift`) を全部書き直す。
+
 ### 4. wire 形式の正典は `Schemas/` の JSON Schema
 
 やりとりする JSON の構造・キー・値域は `Schemas/` 配下の JSON Schema (draft 2020-12) が正典で、実装はそれに従う ([ADR-0016](0016-package-structure.md) 決定 4 のとおり実装ターゲットの外に置く)。
