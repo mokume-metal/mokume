@@ -632,10 +632,15 @@ extension Canvas {
         // 「どちらの式を使うか」を描画側へ伝える道が要らないのはこのためで、
         // 判断は積む側でここだけに閉じている (#271)
         let color = entry.isColored ? Self.whiteScaled(byAlphaOf: color) : color
-        return appendPixelAlignedQuad(
+        let start = appendPixelAlignedQuad(
             x: penX + entry.offset.x, y: baseline + entry.offset.y,
             width: entry.size.x, height: entry.size.y,
             uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)
+        // **置き換える混ぜ方で置いた字は、字形の縁の被覆が 1 未満になる** (焼き場の α)。縁の画素に下地を
+        // 残す断片で描くので、細い線の帯と同じ印を立てる (``Batch/thinCoverage``・#3111)。**積んだ後に
+        // 立てる** — 積む (``beginFlat()``) が前の列を閉じると、印は閉じた列が持っていってしまう
+        if style.blendMode == .replace { openBatchHasThinCoverage = true }
+        return start
     }
 
     /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。

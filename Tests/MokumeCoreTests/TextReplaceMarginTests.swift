@@ -14,10 +14,11 @@ import Testing
 ///
 /// 「字形の被覆 0 の画素」は、同じ字を重ねる混ぜ方 (`.blend`) で描いたときに下地のまま
 /// 残る画素とする。置き換えの結果を、実装から借りずに重ねる混ぜ方の絵から読む。字形の縁の
-/// AA は、置き換える列で被覆の分の α がそのまま書かれる — 基本図形の縁と同じ扱いで、
-/// ここでは見ない。
+/// AA は、被覆の残りに下地を残す (基本図形の縁と同じ読み・[#3111]) — 不透明な字を不透明な
+/// 下地へ描くと、置き換える混ぜ方は重ねる混ぜ方と同じ絵になる (縁の検査は条件 5)。
 ///
 /// [#1557]: https://github.com/mokume-metal/mokume/issues/1557
+/// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 @Suite(
     "置き換える混ぜ方で描いた文字の余白",
     .enabled(
@@ -196,5 +197,30 @@ struct TextReplaceMarginTests {
         }
         try #require(inside > 0)
         #expect(wrong == 0)
+    }
+
+    // MARK: - 条件 5
+
+    @Test("字形の縁の画素は、置き換えで描いても下地を被覆の残りだけ残す (不透明な字は重ねる絵と同じ)", arguments: [false, true])
+    func theEdgeOfTheGlyphKeepsTheGround(_ useHi: Bool) throws {
+        let (sample, ink, ground) = useHi ? (Self.hi, yellow, blue) : (Self.o, white, red)
+        let blended = try render(sample, ink, on: ground, mode: .blend)
+        let replaced = try render(sample, ink, on: ground, mode: .replace)
+        var edge = 0
+        var wrong = 0
+        for y in 0..<Self.size {
+            for x in 0..<Self.size {
+                let b = blended[x, y]
+                // 縁の画素: 下地でも字の色そのものでもない
+                if differs(b, ground) && differs(b, ink) { edge += 1 }
+                let r = replaced[x, y]
+                let gap = max(
+                    abs(r.red - b.red), abs(r.green - b.green), abs(r.blue - b.blue),
+                    abs(r.alpha - b.alpha))
+                if gap > 1.0 / 255 { wrong += 1 }
+            }
+        }
+        try #require(edge > 20)
+        #expect(wrong == 0, "\(wrong) 画素が重ねる絵と違う。縁の画素が下地を消している")
     }
 }
