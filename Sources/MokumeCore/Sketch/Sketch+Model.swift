@@ -90,7 +90,7 @@ extension SketchPart {
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
     ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
-    ///             pyramids.append(try! loadModel(path))
+    ///             pyramids.append(try loadModel(path))
     ///         }
     ///     }
     ///
@@ -141,7 +141,7 @@ extension SketchPart {
     ///                 """
     ///             let path = NSTemporaryDirectory() + "pyramid-\(s).obj"
     ///             try obj.write(toFile: path, atomically: true, encoding: .utf8)
-    ///             pyramids.append(try! loadModel(path, normalize: false))
+    ///             pyramids.append(try loadModel(path, normalize: false))
     ///         }
     ///     }
     ///
@@ -283,7 +283,7 @@ extension SketchPart {
     ///             """
     ///         let path = NSTemporaryDirectory() + "pyramid.obj"
     ///         try obj.write(toFile: path, atomically: true, encoding: .utf8)
-    ///         pyramid = try! loadModel(path)
+    ///         pyramid = try loadModel(path)
     ///     }
     ///
     ///     func draw() {

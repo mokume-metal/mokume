@@ -287,8 +287,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -324,8 +324,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;
@@ -357,8 +357,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var ripple: EffectShader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         ripple = try! makeEffect(
+    ///     func setup() throws {
+    ///         ripple = try makeEffect(
     ///             """
     ///             float4 effect(Pixel in, Values values) {
     ///                 float wave = sin(in.place.y * 60.0 + in.time * 4.0) * values.depth;

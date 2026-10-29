@@ -75,16 +75,13 @@ extension SketchPart {
     /// //     float4 dirt = mokume_sample(surfaces.smudge, in.place);
     /// //     return float4(wood.rgb * mix(1.0, dirt.r, values.amount), wood.a);
     /// // }
-    /// guard let bark = try? loadImage("assets/bark.png"),
-    ///     let smudge = try? createGraphics(256, 256)
-    /// else { return }
-    /// do {
+    /// func setup() throws {
+    ///     let bark = try loadImage("assets/bark.png")
+    ///     let smudge = try createGraphics(256, 256)
     ///     blended = try loadShader(
     ///         "assets/blended.metal",
     ///         values: ["amount": 0.7],
     ///         surfaces: ["grain": .image(bark), "smudge": .graphics(smudge)])
-    /// } catch {
-    ///     print(error)
     /// }
     /// ```
     ///
@@ -144,9 +141,9 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 16 画素ごとの縦縞。暗い側の濃さを values.amount で決める
-    ///         stripes = try! makeShader(
+    ///         stripes = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -188,8 +185,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///     func setup() throws {
+    ///         stripes = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -235,9 +232,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var fromCanvas: Shader! -->
     ///     <!-- example: 文脈 var fromImage: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 自分で描いた面: 4 色の縦の帯
-    ///         let bands = try! createGraphics(100, 100)
+    ///         let bands = try createGraphics(100, 100)
     ///         bands.beginDraw()
     ///         bands.noStroke()
     ///         bands.fill(242, 115, 64)
@@ -250,7 +247,7 @@ extension SketchPart {
     ///         bands.rect(75, 0, 25, 100)
     ///         bands.endDraw()
     ///         // 画素から作った絵: 10 画素ごとの市松
-    ///         let checks = try! createImage(80, 60)
+    ///         let checks = try createImage(80, 60)
     ///         for y in 0..<60 {
     ///             for x in 0..<80 {
     ///                 let odd = (x / 10 + y / 10) % 2 == 1
@@ -263,8 +260,8 @@ extension SketchPart {
     ///                 return mokume_sample(surfaces.pattern, in.place);
     ///             }
     ///             """
-    ///         fromCanvas = try! makeShader(body, surfaces: ["pattern": .graphics(bands)])
-    ///         fromImage = try! makeShader(body, surfaces: ["pattern": .image(checks)])
+    ///         fromCanvas = try makeShader(body, surfaces: ["pattern": .graphics(bands)])
+    ///         fromImage = try makeShader(body, surfaces: ["pattern": .image(checks)])
     ///     }
     ///
     ///     func draw() {
@@ -295,8 +292,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var waves: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         waves = try! makeShader(
+    ///     func setup() throws {
+    ///         waves = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float wave = sin(in.position.x * 0.15 - in.time * values.speed);
@@ -353,15 +350,15 @@ extension SketchPart {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     <!-- example: 文脈 var checks: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///     func setup() throws {
+    ///         stripes = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
     ///                 return float4(in.color.rgb * mix(1.0, 0.25, band), in.color.a);
     ///             }
     ///             """)
-    ///         checks = try! makeShader(
+    ///         checks = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float2 cell = floor(in.position / 20.0);
@@ -398,8 +395,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///     func setup() throws {
+    ///         stripes = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));
@@ -441,8 +438,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var stripes: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         stripes = try! makeShader(
+    ///     func setup() throws {
+    ///         stripes = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float band = step(0.5, fract(in.position.x / 16.0));

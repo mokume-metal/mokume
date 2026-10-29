@@ -574,8 +574,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -604,8 +604,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -649,8 +649,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {
@@ -679,8 +679,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var tile: Image! -->
     ///     ```swift
-    ///     func setup() {
-    ///         tile = try! createImage(64, 64)
+    ///     func setup() throws {
+    ///         tile = try createImage(64, 64)
     ///         tile.fill(color(51, 71, 102))
     ///         for y in 0..<24 {
     ///             for x in 0..<64 {

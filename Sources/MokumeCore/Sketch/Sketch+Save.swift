@@ -209,6 +209,7 @@ extension SketchPart {
     ///         if frameCount == 2 { beginRecord(folder + "frame-##.png") }
     ///         if frameCount == 5 {
     ///             endRecord()  // 書き終えてから返る
+    ///             // 書き終えたばかりの 3 枚を読む。draw() は投げ返せず、読めないのは書き方の誤りなので `try!`
     ///             strip = (0..<3).map { try! loadImage(folder + "frame-0\($0).png") }
     ///         }
     ///

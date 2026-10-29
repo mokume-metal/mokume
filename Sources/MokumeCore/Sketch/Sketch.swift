@@ -220,6 +220,9 @@ public protocol Sketch: AnyObject, SketchPart {
     /// }
     /// ```
     ///
+    /// 落とされたファイルが絵として読めなければ `photo` は `nil` のままで、案内の文字が出続けるので、
+    /// `try?` で受けている (コールバックは投げ返せない所)。
+    ///
     /// 落とした所へ ``SketchPart/mouseX``・``SketchPart/mouseY`` が動く — 呼ばれた中から読める
     /// (Processing の `mousePressed()` の中で `mouseX` を読むのと同じ書き方)。位置は引数にしない。
     /// ``mouseMoved()`` は呼ばれない。渡るのは**パスだけ**で、ファイルの中身は読まない — 読むのは作者で、

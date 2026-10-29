@@ -15,16 +15,16 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 長さを 4・8・16 と動かし、CPU から明るさの段を書く
     ///         for count in [4, 8, 16] {
-    ///             let row = try! makeNumbers(count: count)
+    ///             let row = try makeNumbers(count: count)
     ///             row.set((1...count).map { Float($0) / Float(count) })
     ///             rows.append(row)
     ///         }
     ///         // 横の位置から升の番号を出し、並びの値を明るさにする。
     ///         // 升の両端は細く抜き、升の数が見えるようにする
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 float cell = in.place.x * values.count;
@@ -90,7 +90,7 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 入口を 2 つ書いた 1 つの断片から、name で入口を選ぶ
     ///         let body = """
     ///             kernel void rise(device float *level [[buffer(0)]],
@@ -105,10 +105,10 @@ extension SketchPart {
     ///                 level[id] = (16.0 - float(id)) / 16.0;
     ///             }
     ///             """
-    ///         rise = try! makeComputation(body, name: "rise")
-    ///         fall = try! makeComputation(body, name: "fall")
-    ///         rows = [try! makeNumbers(count: 16), try! makeNumbers(count: 16)]
-    ///         paint = try! makeShader(
+    ///         rise = try makeComputation(body, name: "rise")
+    ///         fall = try makeComputation(body, name: "fall")
+    ///         rows = [try makeNumbers(count: 16), try makeNumbers(count: 16)]
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -155,9 +155,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 山の数を values で宣言する。断片からは values.peaks で読める
-    ///         hills = try! makeComputation(
+    ///         hills = try makeComputation(
     ///             """
     ///             kernel void hills(device float *level [[buffer(0)]],
     ///                               constant Values &values [[buffer(MOKUME_VALUES)]],
@@ -168,8 +168,8 @@ extension SketchPart {
     ///             }
     ///             """,
     ///             name: "hills", values: ["peaks": 1])
-    ///         rows = (0..<3).map { _ in try! makeNumbers(count: 64) }
-    ///         paint = try! makeShader(
+    ///         rows = try (0..<3).map { _ in try makeNumbers(count: 64) }
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -250,9 +250,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 走った 1 本ごとに、その番号の升を明るくする
-    ///         light = try! makeComputation(
+    ///         light = try makeComputation(
     ///             """
     ///             kernel void light(device float *level [[buffer(0)]],
     ///                               uint id [[thread_position_in_grid]])
@@ -263,11 +263,11 @@ extension SketchPart {
     ///             name: "light")
     ///         // 16 升の並びを 3 本。CPU から暗い灰色で埋めておく
     ///         for _ in 0..<3 {
-    ///             let row = try! makeNumbers(count: 16)
+    ///             let row = try makeNumbers(count: 16)
     ///             row.fill(0.1)
     ///             rows.append(row)
     ///         }
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -318,9 +318,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // reads の並びが buffer(0)、writes の並びが buffer(1) に来る
-    ///         add = try! makeComputation(
+    ///         add = try makeComputation(
     ///             """
     ///             kernel void add(device const float *from [[buffer(0)]],
     ///                             device float *to [[buffer(1)]],
@@ -330,10 +330,10 @@ extension SketchPart {
     ///             }
     ///             """,
     ///             name: "add")
-    ///         rows = (0..<3).map { _ in try! makeNumbers(count: 16) }
+    ///         rows = try (0..<3).map { _ in try makeNumbers(count: 16) }
     ///         // 1 本目にだけ、CPU から明るさの段を書く
     ///         rows[0].set((0..<16).map { 0.1 + Float($0) / 15 * 0.2 })
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -396,8 +396,8 @@ extension SketchPart {
     ///     <!-- example: 文脈 var late: Numbers! -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         light = try! makeComputation(
+    ///     func setup() throws {
+    ///         light = try makeComputation(
     ///             """
     ///             kernel void light(device float *level [[buffer(0)]],
     ///                               uint id [[thread_position_in_grid]])
@@ -406,11 +406,11 @@ extension SketchPart {
     ///             }
     ///             """,
     ///             name: "light")
-    ///         early = try! makeNumbers(count: 16)
+    ///         early = try makeNumbers(count: 16)
     ///         early.fill(0.1)
-    ///         late = try! makeNumbers(count: 16)
+    ///         late = try makeNumbers(count: 16)
     ///         late.fill(0.1)
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -464,16 +464,16 @@ extension SketchPart {
     ///     <!-- example: 文脈 var rows: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 中身の違う 3 本: 右へ明るい段・左へ明るい段・1 升おきに明るい
     ///         let ramp = (1...16).map { Float($0) / 16 }
     ///         let stripes = (0..<16).map { Float($0 % 2) }
     ///         for values in [ramp, Array(ramp.reversed()), stripes] {
-    ///             let row = try! makeNumbers(count: 16)
+    ///             let row = try makeNumbers(count: 16)
     ///             row.set(values)
     ///             rows.append(row)
     ///         }
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -518,12 +518,12 @@ extension SketchPart {
     ///     <!-- example: 文脈 var one: Numbers! -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         level = try! makeNumbers(count: 1)
-    ///         one = try! makeNumbers(count: 1)
+    ///     func setup() throws {
+    ///         level = try makeNumbers(count: 1)
+    ///         one = try makeNumbers(count: 1)
     ///         one.set(1, at: 0)
     ///         // 並びの値に、断片の値 (gain) を掛けて明るさにする
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0] * values.gain), 1);
@@ -571,9 +571,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var level: Numbers! -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         level = try! makeNumbers(count: 16)
-    ///         paint = try! makeShader(
+    ///     func setup() throws {
+    ///         level = try makeNumbers(count: 16)
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint i = uint(in.place.x * values.count);
@@ -622,11 +622,11 @@ extension SketchPart {
     ///     <!-- example: 文脈 var level: Numbers! -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         level = try! makeNumbers(count: 1)
+    ///     func setup() throws {
+    ///         level = try makeNumbers(count: 1)
     ///         level.set(0.8, at: 0)
     ///         // 渡していないときに読めるのは 1 個の 0 なので、0 番だけを読む
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0]), 1);
@@ -665,9 +665,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var level: Numbers! -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
-    ///         level = try! makeNumbers(count: 1)
-    ///         paint = try! makeShader(
+    ///     func setup() throws {
+    ///         level = try makeNumbers(count: 1)
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 return float4(float3(in.numbers[0]), 1);
@@ -715,9 +715,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var grids: [Numbers] = [] -->
     ///     <!-- example: 文脈 var paint: Shader! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 位置は uint2 で届く。8 × 6 の升目の、その位置を白くする
-    ///         mark = try! makeComputation(
+    ///         mark = try makeComputation(
     ///             """
     ///             kernel void mark(device float *grid [[buffer(0)]],
     ///                              uint2 at [[thread_position_in_grid]])
@@ -728,12 +728,12 @@ extension SketchPart {
     ///             name: "mark")
     ///         // 升目は CPU から市松に埋めておく
     ///         for _ in 0..<3 {
-    ///             let grid = try! makeNumbers(count: 8 * 6)
+    ///             let grid = try makeNumbers(count: 8 * 6)
     ///             grid.set((0..<48).map { ($0 % 8 + $0 / 8) % 2 == 0 ? 0.1 : 0.2 })
     ///             grids.append(grid)
     ///         }
     ///         // 板の左上 (origin) から 14 ずつの升で、並びの値を読む
-    ///         paint = try! makeShader(
+    ///         paint = try makeShader(
     ///             """
     ///             float4 paint(Fragment in, Values values) {
     ///                 uint2 cell = uint2((in.position - values.origin) / 14.0);
@@ -788,9 +788,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var wave: Computation! -->
     ///     <!-- example: 文脈 var heights: Numbers! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 12 個の高さを GPU で決める
-    ///         wave = try! makeComputation(
+    ///         wave = try makeComputation(
     ///             """
     ///             kernel void wave(device float *heights [[buffer(0)]],
     ///                              uint id [[thread_position_in_grid]])
@@ -799,7 +799,7 @@ extension SketchPart {
     ///             }
     ///             """,
     ///             name: "wave")
-    ///         heights = try! makeNumbers(count: 12)
+    ///         heights = try makeNumbers(count: 12)
     ///     }
     ///
     ///     func draw() {
@@ -869,9 +869,9 @@ extension SketchPart {
     ///     <!-- example: 文脈 var twice: Computation! -->
     ///     <!-- example: 文脈 var span: Numbers! -->
     ///     ```swift
-    ///     func setup() {
+    ///     func setup() throws {
     ///         // 並びの値を倍にする
-    ///         twice = try! makeComputation(
+    ///         twice = try makeComputation(
     ///             """
     ///             kernel void twice(device float *span [[buffer(0)]],
     ///                               uint id [[thread_position_in_grid]])
@@ -880,7 +880,7 @@ extension SketchPart {
     ///             }
     ///             """,
     ///             name: "twice")
-    ///         span = try! makeNumbers(count: 1)
+    ///         span = try makeNumbers(count: 1)
     ///     }
     ///
     ///     func draw() {

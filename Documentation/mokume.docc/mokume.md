@@ -247,13 +247,38 @@ circle(width / 2, height / 2, 1 / 2)     // 0 になり、直径が 0 で何も�
 circle(width / 2, height / 2, 1.0 / 2)   // 0.5 が渡る
 ```
 
-**3. 画像・描き場所・シェーダなどを作る口は、失敗を投げるので `try` が要る。** Processing には `try` が
-無い。`try?` は失敗の理由を捨てて `nil` にし、`do` / `catch` は理由を受け取る。
-作例の多くは、読めなければ描かない `try?` と `guard let` の形である。
+**3. 画像・描き場所・シェーダなどを作る口は、失敗を投げるので `try` が要る。** Swift では、投げる関数を呼ぶ式の頭に
+`try` を付ける。**無いと絵が成り立たない資源は、`setup()` を `throws` で書いて、その中で `try` する。**
+読めなければ ``Sketch/draw()`` を 1 度も呼ばずに、起動の失敗として止まり、`The sketch could not start.` に続けて
+失敗の理由 (何を読めなかったか) が出る。`setup()` が成功したときだけ `draw()` が呼ばれるので、`Image!` で
+宣言した変数は `draw()` の中で `nil` にならない。
 
 ```swift
-guard let photo = try? loadImage("assets/photo.png") else { return }   // 読めなければ nil
-image(photo, 0, 0)
+var photo: Image!
+
+func setup() throws {
+    photo = try loadImage("assets/photo.png")   // 無ければ、起動の失敗として止まる
+}
+
+func draw() {
+    image(photo, 0, 0)
+}
+```
+
+**無くても絵が成り立つ資源は、`try?` で受ける。** `try?` は失敗の理由を捨てて `nil` にするので、読めなければ
+そこだけ描かずに走り続ける。`do` / `catch` なら理由を受け取れる。
+
+```swift
+var grain: Image?
+
+func setup() {
+    grain = try? loadImage("assets/grain.png")   // 無くても絵は成り立つので、読めなければ nil のまま
+}
+
+func draw() {
+    background(20)
+    if let grain { image(grain, 0, 0) }          // 無ければ、ここだけ描かない
+}
 ```
 
 ```swift

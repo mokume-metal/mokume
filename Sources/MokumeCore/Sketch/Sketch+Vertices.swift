@@ -445,8 +445,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var checks: Canvas! -->
     ///     ```swift
-    ///     func setup() {
-    ///         checks = try! createGraphics(120, 120)
+    ///     func setup() throws {
+    ///         checks = try createGraphics(120, 120)
     ///         checks.beginDraw()
     ///         checks.background(51, 71, 102)
     ///         checks.noStroke()
@@ -523,8 +523,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var checks: Canvas! -->
     ///     ```swift
-    ///     func setup() {
-    ///         checks = try! createGraphics(120, 120)
+    ///     func setup() throws {
+    ///         checks = try createGraphics(120, 120)
     ///         checks.beginDraw()
     ///         checks.background(51, 71, 102)
     ///         checks.noStroke()
