@@ -238,6 +238,8 @@ import simd
     /// }
     /// ```
     ///
+    /// ファイルへ残すのは付け足しで、書けなくても取った写しは `shots` に残るので、`try?` で受けている。
+    ///
     /// - Returns: 大きさも画素も同じ、新しい `Image`。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md

@@ -56,7 +56,8 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// ``SketchPart/saveTable(_:_:)`` で書くと最初の行が見出しになり、
+    /// `keyPressed()` は投げ返せない所で、書けなくても絵は続くので `try?` で受けている (理由が要るなら
+    /// `do` / `catch` で受ける)。``SketchPart/saveTable(_:_:)`` で書くと最初の行が見出しになり、
     /// ``SketchPart/loadTable(_:header:)`` を `header: true` で読み直すと同じ表に戻る。
     public init(columns: [String]) {
         titles = columns
