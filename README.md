@@ -134,6 +134,8 @@ mokume render --fps 1 --seconds 1 --scale 4 --out print-####.png   # 7680×4320 
 - `fps × seconds` 枚を描き終えると終了し、書き出し先と枚数を表示します。`fps × seconds` が整数にならない組み合わせはエラーになります
 - 書き出しにかかる時間は、`--fps` がスケッチの `frameRate` と同じならほぼ実時間です
 - 相対パスは実行した場所が基準です。スケッチの場所・`-c`・`--scratch-path` は `run` と同じように指定できます
+- 連番の番号は 0 から振ります。`N` 番目のフレーム (`frameCount == N`) は番号 `N - 1` のファイルになるので、1 枚だけ欲しいときは `--seconds` を `N / fps` にして最後の 1 枚を取ります。`--fps 60 --seconds 2 --out shots/f-####.png` なら、最後の `shots/f-0119.png` が `frameCount == 120` (`time` は 1.9833…) の絵です
+- 書き出しを確かめてから 0 で終わり、書けなかったときは 0 以外で終わるので、`mokume render … --out motion.mov && open motion.mov` のようにつなぐと、書けたときだけ開けます
 - `Control` + `C` で中断しても、それまでの分は残ります。最後まで書き出せなかったときは 0 以外で終了します
 
 </details>
