@@ -307,6 +307,27 @@ struct MovieTests {
         #expect(movie?.state == .stopped)
     }
 
+    @Test("外して足し直した動画は、外さずに回したときと同じ位置・同じコマを、足し直した後のフレームで映す (時刻どおり・#3152)")
+    func reattachedMovieKeepsTheTimeline() async throws {
+        let url = try await TestMovie.write(frames: 30, pixel: TestMovie.noise)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let straight = try record(url, frames: 10)
+        // 2 フレーム目の `draw()` で外し、4 フレーム目の `draw()` で足し直す (流している間の位置は時刻で進む)
+        let reattached = try record(
+            url, frames: 10,
+            during: { sketch, movie in
+                if sketch.frameCount == 2 { sketch.detach(movie) }
+                if sketch.frameCount == 4 { sketch.attach(movie) }
+            })
+        #expect(straight.count == 10 && reattached.count == 10)
+        // 例が意味を持つ: コマごとに画素が違う
+        #expect(Set(straight[4...].map(\.pixels)).count == 6)
+        // 外していた間 (3・4 フレーム目) は外す前のコマのまま
+        #expect(reattached[2].pixels == reattached[1].pixels && reattached[3].pixels == reattached[1].pixels)
+        // 足し直した後 (5 フレーム目から) は、位置もコマも外さない実行と同じ
+        #expect(Array(reattached[4...]) == Array(straight[4...]))
+    }
+
     @Test("読めなくなっていた動画を外して足し直した後、読めない所へ進めば、また読めなくなったと名乗る (#3122)")
     func reattachedDamagedMovieNoticesTheDamageAgain() async throws {
         let url = try await TestMovie.write(frames: 60, width: 64, height: 48, pixel: TestMovie.noise)

@@ -388,6 +388,51 @@ struct AudioInTests {
         #expect(first == samples)
     }
 
+    // MARK: - 外して足し直したときの位置 (#3152)
+
+    /// 作る口で作った入り口を回し、フレームごとに受け取った値を返す。`leaveAt` フレーム目の `draw()` で外し、`returnAt`
+    /// フレーム目の `draw()` で足し直す (外さない実行は `nil`)。
+    private func recordReattached(
+        frames: Int, leaveAt: Int?, returnAt: Int?, _ make: @escaping (AudioSketch) throws -> AudioIn
+    ) throws -> [Received] {
+        var audio: AudioIn?
+        var received: [Received] = []
+        let runtime = try run(
+            frames: frames, clock: .frameIndex(frameRate: 60),
+            setup: { audio = try make($0) },
+            draw: { sketch in
+                guard let audio else { return }
+                if sketch.frameCount == leaveAt { sketch.detach(audio) }
+                if sketch.frameCount == returnAt { sketch.attach(audio) }
+                received.append(
+                    Received(
+                        time: sketch.time, level: audio.level, rms: audio.rms, peak: audio.peak,
+                        spectrum: audio.spectrum))
+            })
+        runtime.closePlugins()
+        return received
+    }
+
+    @Test("外して足し直した音の入り口は、外さずに回したときと同じ窓を、足し直した後のフレームで解析する (時刻どおり・#3152)")
+    func reattachedAudioKeepsTheTimeline() throws {
+        let url = try writeWAV(chord, sampleRate: 48_000)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let makers: [(String, (AudioSketch) throws -> AudioIn)] = [
+            ("createAudioIn(samples:sampleRate:)", { try $0.createAudioIn(samples: chord, sampleRate: 48_000) }),
+            ("createAudioIn(file:)", { try $0.createAudioIn(file: url.path) }),
+        ]
+        for (name, make) in makers {
+            let straight = try recordReattached(frames: 10, leaveAt: nil, returnAt: nil, make)
+            let reattached = try recordReattached(frames: 10, leaveAt: 2, returnAt: 4, make)
+            // 外していた間 (3・4 フレーム目) は無音で、足し直した後 (5 フレーム目から) は外さない実行と同じ値
+            #expect(reattached[2].level == 0 && reattached[3].level == 0, "\(name)")
+            #expect(Array(reattached[4...]) == Array(straight[4...]), "\(name): 足し直した後のフレームの値が違う")
+            // 例が意味を持つ: 窓ごとに値が違い、頭の窓へ戻っていない
+            #expect(Set(straight[4...].map(\.level)).count > 3, "\(name)")
+            #expect(reattached[4].level != straight[1].level, "\(name): 頭の窓へ戻った")
+        }
+    }
+
     // MARK: - 状態と観測
 
     @Test("注入の入り口は動いていると名乗り、閉じれば止まって無音になる")
