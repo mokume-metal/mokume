@@ -445,8 +445,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var checks: Canvas! -->
     ///     ```swift
-    ///     func setup() {
-    ///         checks = try! createGraphics(120, 120)
+    ///     func setup() throws {
+    ///         checks = try createGraphics(120, 120)
     ///         checks.beginDraw()
     ///         checks.background(51, 71, 102)
     ///         checks.noStroke()
@@ -498,7 +498,7 @@ extension SketchPart {
     /// endShape()
     /// resetShader()
     /// ```
-    // shot: 1 snippet=9de5f5b4
+    // shot: 1 snippet=5f4f9da3
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
@@ -523,8 +523,8 @@ extension SketchPart {
     ///   @Column(size: 3) {
     ///     <!-- example: 文脈 var checks: Canvas! -->
     ///     ```swift
-    ///     func setup() {
-    ///         checks = try! createGraphics(120, 120)
+    ///     func setup() throws {
+    ///         checks = try createGraphics(120, 120)
     ///         checks.beginDraw()
     ///         checks.background(51, 71, 102)
     ///         checks.noStroke()
@@ -568,7 +568,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=fa95d28d
+    // shot: 1 snippet=1faf918a
     public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)

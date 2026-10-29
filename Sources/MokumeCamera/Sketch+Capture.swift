@@ -67,10 +67,12 @@ extension Sketch {
 
     /// 記録した絵の列を、カメラの代わりに流す。**機材も許可も使わない。**
     ///
-    /// フレームごとに次の 1 枚が ``Capture/image`` に入り、最後まで行けば最初に戻る。
+    /// `frames[i]` が、作ってから i 番目のフレームで ``Capture/image`` に入り、最後まで行けば最初に戻る。
     /// どの絵が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても同じ絵が
     /// 同じフレームに出る — カメラを使うスケッチを、機材の無い場所で確かめるときや、展示の
     /// 前に空回しするときに使う ([ADR-0028] 決定 6・7)。
+    ///
+    /// **外して足し直しても、i 番目のフレームには `frames[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -102,7 +104,7 @@ extension Sketch {
             Capture(
                 image: try createImage(
                     frames.first?.width ?? 0, frames.first?.height ?? 0, calledAs: call),
-                device: nil, name: "camera (frames)", source: FramesSource(frames: frames),
+                device: nil, name: "camera (frames)", source: FramesSource(frames: frames, owner: self),
                 mirrored: mirrored, owner: self)
         }
     }

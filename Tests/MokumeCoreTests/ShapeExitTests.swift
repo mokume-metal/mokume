@@ -229,6 +229,12 @@ enum ShapeExit {
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
             "placedPictureCopyLimitReached": count, "upscaledBy": flush,
+            // #2456 (ShaderSurface.previousFrame の写し)
+            "previousFrameCopy": resource,
+            "previousFrameRead": "前のフレームの写しを読む列を閉じたかの印。立てるだけで、組み立ての中の列も同じに立てる。フレームの頭が下ろす",
+            "previousFrameWatched": "前のフレームで読む列を閉じたかの印。フレームの頭だけが書き、組み立てに関わらない",
+            "previousFrameCopiedThisFrame": "このフレームで写しを取ったかの印。描き切りの投入の後に立て、フレームの頭が下ろす。組み立てに関わらない",
+            "previousFrameCopiesMade": count, "previousFramePicturesCopied": count,
             "carriedFlush": flush, "carriedAwaitingOutcome": flush,
             // #2455 (filter() の投入の記帳と、Image.filtered() の作業の面)
             "filterSubmissions": flush, "beforeFilterCommitForTesting": "検査の差し込み。filter() の投入の直前に呼ぶだけで、組み立てに関わらない",

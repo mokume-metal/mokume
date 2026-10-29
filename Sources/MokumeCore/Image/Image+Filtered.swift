@@ -10,13 +10,14 @@ extension Image {
     /// ``Effect/custom(_:)`` も掛けられる。**カメラの絵にも掛けられ**、返った絵はカメラの次の 1 枚で
     /// 書き換わらない。
     ///
-    /// <!-- example: 文脈 var camera: Capture? -->
+    /// <!-- example: 文脈 var camera: Capture! -->
     /// ```swift
-    /// func setup() { camera = try? createCapture() }
+    /// func setup() throws {
+    ///     camera = try createCapture()   // カメラが無ければ、起動の失敗として止まる
+    /// }
     ///
     /// func draw() {
     ///     background(0)
-    ///     guard let camera else { return }
     ///     // カメラを 2 値化して影絵にする
     ///     image(camera.image.filtered([.threshold(level: 0.45)]), 0, 0, width, height)
     ///     // 効果の掛からない色の円を、その上に置く

@@ -13,4 +13,5 @@
 DatagramListenerFakeTests	network	3219
 DensityInvarianceTests	density	3216
 ProbeTests	probe	3216
+DatagramSenderFakeTests	network	3231
 WatchSessionModelTests	watch	3218

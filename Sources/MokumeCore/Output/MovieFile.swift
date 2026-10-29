@@ -149,6 +149,10 @@ nonisolated final class MovieFile: MovieOutput {
     /// **配る形**で、同じ引数から書いても画素が一致するとは約束しない。再生環境が広く軽いが、符号化は
     /// 損失があり、透けは書かず (H.264 に無い)、色は sRGB へ写してから書く (``DistributionColor``)。
     ///
+    /// **縦横も保つとは約束しない。** H.264 の符号化器は、奇数の辺を 1 画素削ることがある (65x49 → 64x48)。
+    /// 削ったときは、書けた縦横を閉じた後に読んで標準エラーへ名乗る (``finish(lastFrameAt:)``・[#3379])。
+    ///
+    /// [#3379]: https://github.com/mokume-metal/mokume/issues/3379
     /// [#2440]: https://github.com/mokume-metal/mokume/issues/2440
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     enum Format: Equatable {
@@ -644,11 +648,29 @@ nonisolated final class MovieFile: MovieOutput {
         // **書き手が「済んだ」と言っても、書けたものを確かめる** (#3223)。H.264 の書き手は、受け付けない
         // 大きさで成功を返したまま 0 バイトを書く。辺の下限は ``init`` が断るが、測っていない機械・OS の
         // 境目で同じ形が黙って戻らないよう、ここでも見る
-        if let reason = await Self.hollowReason(atPath: path, width: width, height: height) {
+        let check = await Self.closedCheck(atPath: path, width: width, height: height)
+        if let reason = check.hollow {
             // 中身の無いファイルを残さない (1 枚も受け取っていないときの取り消しと同じ)
             try? FileManager.default.removeItem(atPath: path)
             throw .writeFailed(path: path, reason: reason)
         }
+        // **頼んだ縦横と違う縦横で書けたら、名乗る** (#3379)。H.264 の符号化器は奇数の辺を黙って 1 画素削る
+        // ことがある (65x49 → 64x48)。「奇数なら」と決め打たず、**書けたファイルを読んだ縦横**で決める
+        // (4097x16 は奇数のまま書ける。境目は符号化器と機械で変わりうる)。ここは `mokume render` も
+        // スケッチの `beginRecord` も通る 1 つの口で、どちらにも効く。書けたものは断らない (名乗るだけ)
+        if let note = Self.resizedNote(path: path, width: width, height: height, written: check.written) {
+            Diagnostics.warn(note)
+        }
+    }
+
+    /// 頼んだ縦横と違う縦横でファイルが書けたときの、名乗りの 1 行。同じなら (読めなかったときも) `nil`。
+    nonisolated static func resizedNote(
+        path: String, width: Int, height: Int, written: WrittenSize?
+    ) -> String? {
+        guard let written, written.width != width || written.height != height else { return nil }
+        return "\(path) was written at \(written.width)x\(written.height), not the \(width)x\(height) "
+            + "the sketch draws — the encoder changed the size of the frame "
+            + "(an H.264 movie can lose a pixel from an odd side)"
     }
 
     /// H.264 の書き手が受ける辺の最小 (画素)。辺 1 は、成功を返したまま 0 バイトを書く (#3223)。
@@ -664,8 +686,14 @@ nonisolated final class MovieFile: MovieOutput {
         case noVideoTrack
         /// 映像のトラックはあるが、標本が無い (標本の大きさの合計か、トラックの長さが 0)。
         case noSamples
-        /// 標本がある。
-        case hasSamples
+        /// 標本がある。縦横は、読めたときだけ持つ (読めなくても標本の有無の判断は変わらない)。
+        case hasSamples(written: WrittenSize?)
+    }
+
+    /// 書けたファイルの映像のトラックの縦横 (画素)。トラックの `naturalSize` を丸めた値。
+    struct WrittenSize: Equatable, Sendable {
+        var width: Int
+        var height: Int
     }
 
     /// 閉じたファイルの映像のトラックを読む。読めなければ `nil` (期限を越えたときは呼ぶ側が `nil` にする)。
@@ -678,8 +706,23 @@ nonisolated final class MovieFile: MovieOutput {
         guard let range = try? await track.load(.timeRange),
             let length = try? await track.load(.totalSampleDataLength)
         else { return nil }
-        return length == 0 || (range.duration.isNumeric && range.duration.seconds <= 0)
-            ? .noSamples : .hasSamples
+        guard !(length == 0 || (range.duration.isNumeric && range.duration.seconds <= 0)) else {
+            return .noSamples
+        }
+        // 縦横は索引から読むだけ (標本は復号しない)。読めなければ名乗りの材料が無いだけで、書けたものは断らない
+        let size = try? await track.load(.naturalSize)
+        return .hasSamples(
+            written: size.map {
+                WrittenSize(width: Int($0.width.rounded()), height: Int($0.height.rounded()))
+            })
+    }
+
+    /// 閉じた直後の確かめの結果。
+    struct ClosedCheck: Equatable, Sendable {
+        /// 中身が無いときの理由 (``hollowReason(atPath:width:height:limitSeconds:read:)``)。
+        var hollow: String?
+        /// 書けた縦横。読めなかったとき (期限・失敗) は `nil`。
+        var written: WrittenSize?
     }
 
     /// 書き終えたファイルが中身の無いものなら、その理由。中身があれば (判断がつかないときも) `nil`。
@@ -698,17 +741,33 @@ nonisolated final class MovieFile: MovieOutput {
         limitSeconds: Double = closedReadLimitSeconds,
         read: @escaping @Sendable (String) async -> ClosedReading? = { await readClosedFile(atPath: $0) }
     ) async -> String? {
+        await closedCheck(atPath: path, width: width, height: height, limitSeconds: limitSeconds, read: read)
+            .hollow
+    }
+
+    /// 閉じたファイルを 1 度だけ読み、中身が無いか (``hollowReason(atPath:width:height:limitSeconds:read:)``)・
+    /// 書けた縦横はいくつか (#3379) を返す。**読みを 2 度に分けない** (期限つきの待ちが 2 度になる)。
+    nonisolated static func closedCheck(
+        atPath path: String, width: Int, height: Int,
+        limitSeconds: Double = closedReadLimitSeconds,
+        read: @escaping @Sendable (String) async -> ClosedReading? = { await readClosedFile(atPath: $0) }
+    ) async -> ClosedCheck {
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         if let size = attributes?[.size] as? Int, size == 0 {
-            return "the encoder closed the file without writing anything into it (a \(width)x\(height) picture)"
+            return ClosedCheck(
+                hollow: "the encoder closed the file without writing anything into it (a \(width)x\(height) picture)")
         }
         switch Self.withinDeadline(limitSeconds, { await read(path) }) ?? nil {
         case .noVideoTrack:
-            return "the encoder closed the file without a video track in it (a \(width)x\(height) picture)"
+            return ClosedCheck(
+                hollow: "the encoder closed the file without a video track in it (a \(width)x\(height) picture)")
         case .noSamples:
-            return "the encoder closed the file with a video track but no frames in it (a \(width)x\(height) picture)"
-        case .hasSamples, nil:
-            return nil
+            return ClosedCheck(
+                hollow: "the encoder closed the file with a video track but no frames in it (a \(width)x\(height) picture)")
+        case .hasSamples(let written):
+            return ClosedCheck(hollow: nil, written: written)
+        case nil:
+            return ClosedCheck(hollow: nil)
         }
     }
 

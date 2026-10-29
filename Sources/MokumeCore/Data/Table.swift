@@ -26,6 +26,8 @@ import Foundation
 /// (``setFloat(_:_:_:)-(_,String,_)``)。Processing の `Table` は参照で持つので、行から
 /// 書き換える (`row.setFloat(…)`) 書き方は、ここでは表から書き換える書き方になる。
 ///
+/// 読み出しは main actor の上にあるので、`DispatchQueue.concurrentPerform` などで並列に回すときは、分ける前に値へ写しておく (形は ``map(_:_:_:_:_:)`` の説明)。
+///
 /// ## 値は文字で持つ
 ///
 /// セルは読んだ文字のまま持ち、数として読むのは取り出すときである
@@ -56,7 +58,8 @@ public struct Table: Equatable, Sendable {
     /// }
     /// ```
     ///
-    /// ``SketchPart/saveTable(_:_:)`` で書くと最初の行が見出しになり、
+    /// `keyPressed()` は投げ返せない所で、書けなくても絵は続くので `try?` で受けている (理由が要るなら
+    /// `do` / `catch` で受ける)。``SketchPart/saveTable(_:_:)`` で書くと最初の行が見出しになり、
     /// ``SketchPart/loadTable(_:header:)`` を `header: true` で読み直すと同じ表に戻る。
     public init(columns: [String]) {
         titles = columns

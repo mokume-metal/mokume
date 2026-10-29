@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -324,5 +325,73 @@ struct MovieReaderTests {
         #expect(reader.restarts == 0, "0 → 0.9 は 1 秒以内")
         _ = try reader.picture(at: 2.5)
         #expect(reader.restarts == 1, "0.9 → 2.5 は 1 秒より先")
+    }
+
+    // MARK: - 回転の印 (#2451)
+
+    /// 絵の (x, y) の画素が、赤・緑・青・白のどれか (4 つの象限の柄の色を、色空間の変換と圧縮に
+    /// 揺らされても読み分ける)。
+    private func quadrantColour(_ picture: DisplayImage, _ x: Int, _ y: Int) -> String {
+        let at = (y * picture.width + x) * 4
+        let red = Int(picture.bytes[at]), green = Int(picture.bytes[at + 1]), blue = Int(picture.bytes[at + 2])
+        if min(red, green, blue) > 180 { return "white" }
+        if red > green, red > blue { return "red" }
+        if green > red, green > blue { return "green" }
+        return "blue"
+    }
+
+    /// 4 象限の中心の色を、左上・右上・左下・右下の順に。
+    private func quadrants(_ picture: DisplayImage) -> [String] {
+        let w = picture.width, h = picture.height
+        return [(w / 4, h / 4), (3 * w / 4, h / 4), (w / 4, 3 * h / 4), (3 * w / 4, 3 * h / 4)]
+            .map { quadrantColour(picture, $0.0, $0.1) }
+    }
+
+    @Test("縦に撮った動画 (回転の印が時計回りに 90°) は、幅と高さが入れ替わり、絵も正しい向きで届く")
+    func portraitMovieIsOriented() async throws {
+        // 記録された大きさは 64×32 (横長)。象限は左上が赤・右上が緑・左下が青・右下が白
+        let url = try await TestMovie.write(
+            frames: 3, width: 64, height: 32, transform: CGAffineTransform(rotationAngle: .pi / 2).concatenating(
+                CGAffineTransform(translationX: 32, y: 0)),
+            paint: TestMovie.quadrants)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let reader = try MovieReader(url: url, path: url.path)
+        #expect(reader.width == 32 && reader.height == 64, "回した後の大きさ: \(reader.width)×\(reader.height)")
+        let picture = try #require(try reader.picture(at: 0))
+        #expect((picture.width, picture.height) == (32, 64))
+        // 時計回りに 90°: 元の左上 (赤) は右上へ、左下 (青) は左上へ、右上 (緑) は右下へ、右下 (白) は左下へ
+        #expect(quadrants(picture) == ["blue", "red", "white", "green"], "\(quadrants(picture))")
+    }
+
+    /// 8 通りのうち、回転でない印 (左右反転) と 180°。`MovieReader` が記録された変換を `VideoOrientation` へ
+    /// 渡す配線を、90° 以外でも見る (渡す変換を取り違えると、この 2 通りの象限の行き先が変わる)。
+    @Test(
+        "左右反転・180° の印を持つ動画も、記録された変換のとおりに象限が動き、大きさは変わらない",
+        arguments: [
+            ("左右反転", CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(translationX: 64, y: 0)),
+             ["green", "red", "white", "blue"]),
+            ("180°", CGAffineTransform(rotationAngle: .pi).concatenating(CGAffineTransform(translationX: 64, y: 32)),
+             ["white", "blue", "green", "red"]),
+        ])
+    func flippedAndUpsideDownMoviesAreOriented(
+        _ name: String, _ transform: CGAffineTransform, _ expected: [String]
+    ) async throws {
+        let url = try await TestMovie.write(
+            frames: 3, width: 64, height: 32, transform: transform, paint: TestMovie.quadrants)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let reader = try MovieReader(url: url, path: url.path)
+        #expect(reader.width == 64 && reader.height == 32, "\(name): \(reader.width)×\(reader.height)")
+        let picture = try #require(try reader.picture(at: 0))
+        #expect(quadrants(picture) == expected, "\(name): \(quadrants(picture))")
+    }
+
+    @Test("回転の印の無い動画は、変更前と同じ大きさ・向きで届く")
+    func movieWithoutATransformIsLeftAlone() async throws {
+        let url = try await TestMovie.write(frames: 3, width: 64, height: 32, paint: TestMovie.quadrants)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let reader = try MovieReader(url: url, path: url.path)
+        #expect(reader.width == 64 && reader.height == 32)
+        let picture = try #require(try reader.picture(at: 0))
+        #expect(quadrants(picture) == ["red", "green", "blue", "white"], "\(quadrants(picture))")
     }
 }
