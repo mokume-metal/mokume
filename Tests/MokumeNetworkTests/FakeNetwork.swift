@@ -148,21 +148,27 @@ nonisolated final class FakeAcceptor: DatagramAccepting, @unchecked Sendable {
 /// 受け口を作る手続き (``DatagramListener/Acceptor``) を差し出し、作られた疑似の受け口を覚える。
 nonisolated final class FakeNetwork: Sendable {
     let port: Int
-    private let made = Mutex<FakeAcceptor?>(nil)
+    private let made = Mutex<[FakeAcceptor]>([])
 
     init(port: Int = 9000) { self.port = port }
 
     var acceptor: DatagramListener.Acceptor {
         { [self] queue, changed, closed in
             let acceptor = FakeAcceptor(port: port, queue: queue, changed: changed, closed: closed)
-            made.withLock { $0 = acceptor }
+            made.withLock { $0.append(acceptor) }
             return acceptor
         }
     }
 
+    /// 受け口が作られた数 (作る口が、渡した手続きで受け口を作ったかを見る)。
+    var openedCount: Int { made.withLock { $0.count } }
+
+    /// 受け口が作られたか。
+    var opened: Bool { openedCount > 0 }
+
     /// 作られた受け口。受け口を作る前 (出どころを始める前) に読むのは検査の誤り。
     var listener: FakeAcceptor {
-        guard let acceptor = made.withLock({ $0 }) else {
+        guard let acceptor = made.withLock({ $0.last }) else {
             preconditionFailure("疑似の受け口がまだ作られていない (出どころを始める前に読んだ)")
         }
         return acceptor
@@ -178,7 +184,7 @@ nonisolated final class FakeNetwork: Sendable {
 /// 繋ぎの移り変わりと送信の完了を予定どおりの順で読ませる。
 ///
 /// 送り手が繋ぎを捨てた後 (宛先の失敗) の送信は、本物と同じく新しい繋ぎで出る (検査が
-/// 始めていない繋ぎを据える)。
+/// 始めていない疑似の繋ぎ (``FakeLink``) を据える)。
 nonisolated struct SendPlan: Sendable, CustomStringConvertible {
     enum Step: Sendable {
         /// 1 つ送り、完了が `error` で返る (`nil` は誤り無し)。
@@ -218,11 +224,11 @@ extension SendPlan {
         let clock = ManualClock(0)
         let sender = DatagramSender(
             host: host, port: port, confirmAfter: confirmAfter, now: clock.provider, warn: told.append)
-        var current: NWConnection?
+        var current: FakeLink?
         var outcome = SendPlanOutcome()
-        func connection() -> NWConnection {
+        func connection() -> FakeLink {
             if let current { return current }
-            let opened = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: UInt16(port))!, using: .udp)
+            let opened = FakeLink(host: host, port: port)
             sender.onQueue { sender.attach(opened) }
             current = opened
             return opened
@@ -248,4 +254,94 @@ extension SendPlan {
         outcome.lines = told.lines
         return outcome
     }
+}
+
+/// 疑似の送り手の繋ぎ (#3231)。送ったバイト列を覚え、完了を検査が決めた答えで返す。socket は開かない。
+///
+/// 手続きは送り手の待ち行列の上で走る。完了は ``send(_:completion:)`` の中で同期に返す (本物は待ち行列を
+/// 通って遅れて返るが、送り手の読み替えは完了が返る順序だけを見る)。**疑似が写すのは、本物の socket の検査が
+/// 実測で固定している振る舞いだけ** — 完了が「誤り無し」でも宛先に届いたとは限らず、拒否は次の送信の完了の
+/// 誤りとして返る (`DatagramSenderLoopbackTests`)。疑似の前提が OS とずれたら、そちらが赤になる。
+nonisolated final class FakeLink: DatagramLink, @unchecked Sendable {
+    // `@unchecked Sendable`: 可変の状態は ``store`` の錠の中でだけ触る。
+
+    let host: String
+    let port: Int
+    private struct Store {
+        var sent: [[UInt8]] = []
+        var started = false
+        var cancelled = false
+        var queue: DispatchQueue?
+        var changed: (@Sendable (NWConnection.State) -> Void)?
+    }
+    private let store = Mutex(Store())
+    private let answer: @Sendable (_ index: Int) -> NWError?
+
+    /// - Parameter answer: `index` 番目 (0 から) の送信の完了。`nil` は誤り無し。
+    init(host: String, port: Int, answer: @escaping @Sendable (Int) -> NWError? = { _ in nil }) {
+        self.host = host
+        self.port = port
+        self.answer = answer
+    }
+
+    /// 送ったバイト列 (繋ぎを閉じた後も残る)。
+    var sent: [[UInt8]] { store.withLock { $0.sent } }
+    /// 始めたか。
+    var started: Bool { store.withLock { $0.started } }
+    /// 閉じたか。
+    var cancelled: Bool { store.withLock { $0.cancelled } }
+
+    func start(queue: DispatchQueue, changed: @escaping @Sendable (NWConnection.State) -> Void) {
+        store.withLock {
+            $0.started = true
+            $0.queue = queue
+            $0.changed = changed
+        }
+    }
+
+    func send(_ bytes: [UInt8], completion: @escaping @Sendable (NWError?) -> Void) {
+        let index = store.withLock { store in
+            defer { store.sent.append(bytes) }
+            return store.sent.count
+        }
+        completion(answer(index))
+    }
+
+    func cancel() {
+        store.withLock { $0.cancelled = true }
+    }
+
+    /// 繋ぎが移ったと名乗る。送り手の待ち行列の上で、同期に返す。始めていなければ何もしない。
+    func move(to state: NWConnection.State) {
+        let (queue, changed) = store.withLock { ($0.queue, $0.changed) }
+        guard let queue, let changed else { return }
+        queue.sync { changed(state) }
+    }
+}
+
+/// 繋ぎを作る手続き (``DatagramSender/Connect``) を差し出し、作られた疑似の繋ぎを覚える。
+nonisolated final class FakeWire: Sendable {
+    private let made = Mutex<[FakeLink]>([])
+    private let answer: @Sendable (_ link: Int, _ index: Int) -> NWError?
+
+    /// - Parameter answer: `link` 番目の繋ぎの `index` 番目の送信の完了。`nil` は誤り無し。
+    init(answer: @escaping @Sendable (Int, Int) -> NWError? = { _, _ in nil }) { self.answer = answer }
+
+    var connect: DatagramSender.Connect {
+        { [self] host, port in
+            let link = made.withLock { links in
+                let number = links.count
+                let link = FakeLink(host: host, port: port) { [answer] index in answer(number, index) }
+                links.append(link)
+                return link
+            }
+            return link
+        }
+    }
+
+    /// 作られた繋ぎ (作られた順)。
+    var links: [FakeLink] { made.withLock { $0 } }
+
+    /// どの繋ぎへ送ったか (繋ぎの宛先と、送ったバイト列)。
+    var sent: [[UInt8]] { links.flatMap(\.sent) }
 }

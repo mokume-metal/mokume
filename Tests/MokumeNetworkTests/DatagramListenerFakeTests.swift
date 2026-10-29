@@ -220,6 +220,67 @@ struct DatagramListenerFakeTests {
         return (osc, source)
     }
 
+    @Test("同じ文字列の列は、受け口で受けても注入しても同じ結果になる")
+    func injectedTextGivesTheSameOutcomeAsTheListener() throws {
+        let told = Told()
+        let network = FakeNetwork()
+        let (live, _) = try udpPort(network, told: told)
+        defer { live.close() }
+        let flow = network.flow(0)
+        network.listener.offer(flow)
+        for text in textScript { flow.deliver(Array("\(text)\n".utf8)) }
+        live.supply()
+        let received = live.messages
+
+        let injected = UDPPort(
+            port: nil, name: "udp (recorded)",
+            source: RecordedSource(batches: textScript.map { [$0] }), outbound: nil, owner: nil,
+            warn: told.append)
+        try injected.open()
+        var replayed: [String] = []
+        for _ in textScript {
+            injected.supply()
+            replayed += injected.messages
+        }
+
+        #expect(received == textScript, plan("udp-live-vs-injected", "\(received)"))
+        #expect(replayed == textScript, plan("udp-live-vs-injected"))
+        #expect(TextOutcome(received) == TextOutcome(replayed), plan("udp-live-vs-injected"))
+        #expect(TextOutcome(replayed) == TextOutcome(size: 0.75, hits: 2), plan("udp-live-vs-injected"))
+    }
+
+    @Test("同じ OSC メッセージの列は、受け口で受けても注入しても同じ結果になる")
+    func injectedMessagesGiveTheSameOutcomeAsTheListener() throws {
+        let told = Told()
+        let network = FakeNetwork()
+        let (live, _) = try oscPort(network, told: told)
+        defer { live.close() }
+        let flow = network.flow(0)
+        network.listener.offer(flow)
+        for message in OSCPortTests.script { flow.deliver(try Wire.encoded(message)) }
+        live.supply()
+        let received = live.messages
+
+        let injected = OSCPort(
+            port: nil, name: "osc (recorded)",
+            source: RecordedSource<OSCMessage>(batches: OSCPortTests.script.map { [$0] }), outbound: nil,
+            owner: nil)
+        try injected.open()
+        var replayed: [OSCMessage] = []
+        for _ in OSCPortTests.script {
+            injected.supply()
+            replayed += injected.messages
+        }
+
+        #expect(received == OSCPortTests.script, plan("osc-live-vs-injected", "\(received)"))
+        #expect(replayed == OSCPortTests.script, plan("osc-live-vs-injected"))
+        #expect(
+            OSCPortTests.Outcome(received) == OSCPortTests.Outcome(replayed), plan("osc-live-vs-injected"))
+        #expect(
+            OSCPortTests.Outcome(replayed) == OSCPortTests.Outcome(OSCPortTests.script),
+            plan("osc-live-vs-injected"))
+    }
+
     /// macOS の受け口が渡す長さ (9216 バイトを超えるものは先頭 9216 バイトに黙って切る — #2325)。
     /// 切り方そのものは `UDPPortTests` の `networkFrameworkCutsDatagramsAt9216` が本物で見張る。
     private func asDelivered(_ bytes: [UInt8]) -> [UInt8] { Array(bytes.prefix(Datagram.sizeLimit)) }
