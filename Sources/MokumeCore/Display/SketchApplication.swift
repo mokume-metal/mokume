@@ -421,7 +421,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         let runtime = try SketchRuntime(
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
             displays: displays, onScreen: render == nil, opensFacets: render == nil,
-            handover: Self.handover(given: handover, render: render))
+            handover: Self.handover(given: handover, render: render),
+            outputScale: render?.scale ?? 1)
         self.clock = runtime.clock
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         runtime.defersEnlargedGlyphBakes = render == nil
@@ -580,15 +581,17 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             return
         }
         outlet = .shared(shared)
-        // **全画面の頼みに応えられないことを、黙らない** (#2020)。作品の窓は道具が持つので
-        // ([ADR-0032] 決定 1)、こちらからは全画面にできない。描く大きさはディスプレイから
-        // 決めてあるので、道具の窓を手で全画面にすれば合う。道具が宣言に従って全画面に
-        // する扱いは #2188
+        // **全画面の頼みは、目録に載せて道具へ渡した** (#2188)。作品の窓は道具が持つので
+        // ([ADR-0032] 決定 1)、こちらからは全画面にできない。道具が頼みを受けて、宣言した
+        // ディスプレイで全画面にする。**道具が頼みを読んだかは、こちらからは分からない** —
+        // 読まない古い道具なら窓のままなので、そのときの手当てまで 1 行で言う。描く大きさは
+        // ディスプレイから決めてあるので、手で全画面にすれば合う
         if let display = runtime.fullScreenDisplay {
             announce(
                 "The sketch asks for full screen on display \(display.number) (\(display.name)), "
-                    + "but \(owner ?? "the tool") holds the window — put that window into full "
-                    + "screen by hand; saving keeps it so")
+                    + "and \(owner ?? "the tool") puts the window it holds there — if the window "
+                    + "stays a window, the tool is older than the mokume this sketch depends on: "
+                    + "update them together, or put that window into full screen by hand")
         }
     }
 
@@ -619,8 +622,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         guard
             let shared = SharedFrameSurface.makeIfEnabled(
                 gpu: gpu, width: runtime.target.width, height: runtime.target.height,
-                windowScale: runtime.windowScale, at: directory, owner: owner,
-                warn: { announce($0) })
+                windowScale: runtime.windowScale,
+                fullScreenDisplay: runtime.fullScreenDisplay.map(SharedFrameSurface.FullScreenDisplay.init),
+                at: directory, owner: owner, warn: { announce($0) })
         else { return nil }
         do {
             try shared.publishManifest()

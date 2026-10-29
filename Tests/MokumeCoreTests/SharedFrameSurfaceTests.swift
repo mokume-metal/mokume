@@ -124,6 +124,35 @@ struct SharedFrameManifestTests {
         }
     }
 
+    /// **全画面の頼みは任意の欄である** ([#2188](https://github.com/mokume-metal/mokume/issues/2188))。書かない古い
+    /// ライブラリの子の目録も読み、形が違う・使えない値は、目録ごと捨てずに「頼まれていない」として読む。
+    @Test("全画面の頼みを読み、無い・読めない値は頼まれていないものとして読む")
+    func readsTheFullScreenDisplay() throws {
+        let head = #"{"schemaVersion":1,"ids":[7],"width":16,"height":8,"fullScreenDisplay":"#
+        try withManifest(head + #"{"number":2,"name":"LG ULTRAWIDE","screenID":77}}"#) {
+            let manifest = try #require(SharedFrameSurface.readManifest(at: $0))
+            #expect(
+                manifest.fullScreenDisplay
+                    == SharedFrameSurface.FullScreenDisplay(
+                        number: 2, name: "LG ULTRAWIDE", screenID: 77))
+        }
+        try withManifest(#"{"schemaVersion":1,"ids":[7],"width":16,"height":8}"#) {
+            #expect(SharedFrameSurface.readManifest(at: $0)?.fullScreenDisplay == nil)
+        }
+        for bad in [
+            "2", #""LG""#, "null", "{}", #"{"number":0,"name":"x","screenID":3}"#,
+            #"{"number":2,"name":"x","screenID":0}"#, #"{"number":2,"name":"x","screenID":-1}"#,
+            #"{"number":"2","name":"x","screenID":3}"#, #"{"number":2,"screenID":3}"#,
+        ] {
+            try withManifest(head + bad + "}") {
+                let manifest = try #require(
+                    SharedFrameSurface.readManifest(at: $0), "全画面の頼み \(bad) で目録ごと捨てた")
+                #expect(manifest.fullScreenDisplay == nil, "全画面の頼み \(bad)")
+                #expect(manifest.ids == [7], "絵の番号まで読めなくなった")
+            }
+        }
+    }
+
     /// **書き手の子の番号は任意の欄である** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
     /// 書かない古いライブラリの子の目録も読み、読めない値は目録ごと捨てずに「印が無い」として読む。
     @Test("書き手の子の番号を読み、無い・読めない値は印が無いものとして読む")

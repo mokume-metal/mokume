@@ -85,10 +85,12 @@ final class MovieReader {
 
     /// 失敗の説明に載せる名前 (利用者が渡した綴り)。
     let path: String
-    /// 幅 (画素)。最初のコマの大きさ。
+    /// 幅 (画素)。**回転の印 (``orientation``) を当てた後**の、最初のコマの大きさ。
     let width: Int
-    /// 高さ (画素)。
+    /// 高さ (画素)。回転の印を当てた後。
     let height: Int
+    /// 動画が記録している向き。``picture(at:)`` が返す 1 枚ごとに当てる。
+    let orientation: VideoOrientation
     /// 長さ (秒)。
     let duration: Double
 
@@ -141,7 +143,7 @@ final class MovieReader {
             throw .unopenable(path: path, location: refusal.location, reason: refusal.reason)
         }
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-        let (track, range, canProvideSampleCursors) = try Self.inspect(asset, path: path)
+        let (track, range, canProvideSampleCursors, transform) = try Self.inspect(asset, path: path)
         let duration = range.duration.seconds
         guard duration.isFinite, duration > 0 else { throw .unreadable(path: path) }
 
@@ -165,10 +167,14 @@ final class MovieReader {
             lookup == .track
             ? KeyFrameIndex(track: track, start: range.start, canProvideSampleCursors: canProvideSampleCursors)
             : nil
-        width = CVPixelBufferGetWidth(first.buffer)
-        height = CVPixelBufferGetHeight(first.buffer)
+        let recordedWidth = CVPixelBufferGetWidth(first.buffer)
+        let recordedHeight = CVPixelBufferGetHeight(first.buffer)
+        // 縦に撮った動画は、横長の絵に回転の印が付いている。変換は記録された大きさで済ませ、向きは
+        // 変換した後の 1 枚に当てる (公開する大きさは当てた後)
+        orientation = VideoOrientation(transform)
+        (width, height) = orientation.size(width: recordedWidth, height: recordedHeight)
         // 動画は透過を持ちうるので、不透明度を乗算していないまま運ぶ (#2881)
-        converter = FrameConverter(width: width, height: height, alpha: .straight)
+        converter = FrameConverter(width: recordedWidth, height: recordedHeight, alpha: .straight)
         reader = opened.reader
         output = opened.output
         serial = 1
@@ -222,7 +228,7 @@ final class MovieReader {
             throw Failure(reason: error.description)
         }
         handed = current.serial
-        return image
+        return image.oriented(orientation)
     }
 
     /// コマの変換。既定は ``converter``。**検査が、変換できない動画を作らずに失敗を差し込む。**
@@ -340,25 +346,25 @@ final class MovieReader {
 
     // MARK: - 開く
 
-    /// 最初の映像のトラックと、その時間の範囲と、サンプルの目録を引かせるかを、待って受け取る。
+    /// 最初の映像のトラックと、その時間の範囲と、サンプルの目録を引かせるかと、回転の印を、待って受け取る。
     /// 目録を引かせるかが読めなくても失敗にはしない (引かせない扱いで、1 秒で分ける)。
     ///
     /// **読み込みは完了ハンドラで受ける。** ハンドラは AVFoundation の側のスレッドで呼ばれ、Swift の
     /// 協調プールの空きを要らない。async の口 (`load(_:)`) を別の仕事に載せて待つと、作品が協調プールを
     /// 同期の重い仕事で埋めている間は、読み込みが走れず、塞いで待つここが返らない (#3240)。
     /// `loadTracks(withMediaType:completionHandler:)` は非推奨ではないが、`loadValuesAsynchronously` と
-    /// `timeRange`・`canProvideSampleCursors` の同期の getter は Swift から非推奨 (macOS 13〜) —
+    /// `timeRange`・`canProvideSampleCursors`・`preferredTransform` の同期の getter は Swift から非推奨 (macOS 13〜) —
     /// 協調プールの外で待てる口がこれしか無いので使う。Apple がこれを消したら、そのときの async の口と
     /// executor の事情で選び直す。
     ///
     /// **検査が直に呼ぶ** (協調プールを埋めた状態で返るかを見る)。
     nonisolated static func inspect(
         _ asset: AVURLAsset, path: String
-    ) throws(MovieFailure) -> (AVAssetTrack, CMTimeRange, Bool) {
+    ) throws(MovieFailure) -> (AVAssetTrack, CMTimeRange, Bool, CGAffineTransform) {
         // 読み込みの結果を待つ側へ渡す箱。**書くのは完了ハンドラが 1 度だけで、読むのは合図を待った
         // 後だけ** — 合図が前後を決めるので、錠は要らない
         nonisolated final class Box: @unchecked Sendable {
-            var outcome: Result<(AVAssetTrack, CMTimeRange, Bool)?, any Error> = .success(nil)
+            var outcome: Result<(AVAssetTrack, CMTimeRange, Bool, CGAffineTransform)?, any Error> = .success(nil)
         }
         let box = Box()
         let loaded = DispatchSemaphore(value: 0)
@@ -369,14 +375,18 @@ final class MovieReader {
                 loaded.signal()
                 return
             }
-            track.loadValuesAsynchronously(forKeys: ["timeRange", "canProvideSampleCursors"]) {
+            track.loadValuesAsynchronously(forKeys: ["timeRange", "canProvideSampleCursors", "preferredTransform"]) {
                 var failure: NSError?
                 if track.statusOfValue(forKey: "timeRange", error: &failure) == .loaded {
                     // 目録を引かせるかが読めなければ、引かせない扱い
                     let cursors =
                         track.statusOfValue(forKey: "canProvideSampleCursors", error: nil) == .loaded
                         && track.canProvideSampleCursors
-                    box.outcome = .success((track, track.timeRange, cursors))
+                    // 回転の印が読めなければ、当てない (記録された向きのまま映す)
+                    let transform =
+                        track.statusOfValue(forKey: "preferredTransform", error: nil) == .loaded
+                        ? track.preferredTransform : .identity
+                    box.outcome = .success((track, track.timeRange, cursors, transform))
                 } else {
                     box.outcome = .failure(failure ?? Failure(reason: "the time range could not be loaded"))
                 }

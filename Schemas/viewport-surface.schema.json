@@ -40,6 +40,32 @@
       "exclusiveMinimum": 0,
       "description": "How many points of the window one pixel takes (SketchSettings.windowScale). The tool's artwork window opens at width × windowScale by height × windowScale, the size the sketch's own window would open at, and follows it again only when that size changes (#1624). Optional: a reader that does not know it still shows the picture, and a writer that predates it leaves it out, in which case the window keeps its size."
     },
+    "fullScreenDisplay": {
+      "type": "object",
+      "description": "The display the sketch asked its artwork window to be put into full screen on (SketchSettings.fullScreen). The tool's artwork window moves to that display and enters full screen, and does so only when this request changes: saving, or leaving full screen by hand, does not bring it back, and the tool remembers the request only for as long as the watch runs (#2188). The tool looks the display up by screenID on the same machine; number and name are for the line it says when it cannot find it. Optional: a reader that does not know it leaves the window as it is (the sketch says so on its own line), and a writer that predates it leaves it out, in which case the window is not asked for full screen. A value that is not an object of this shape is read as absent; the file is not discarded.",
+      "required": [
+        "number",
+        "name",
+        "screenID"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The display's number as the sketch chose it (Display.number), counted from 1."
+        },
+        "name": {
+          "type": "string",
+          "description": "The name the OS gives the display (Display.name)."
+        },
+        "screenID": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The identifier the OS gave the display (CGDirectDisplayID). The tool finds the screen by this, not by number: a display plugged or unplugged after the sketch chose would make the number point at another screen."
+        }
+      }
+    },
     "pid": {
       "type": "integer",
       "minimum": 1,

@@ -51,6 +51,9 @@ struct SketchApplicationRenderTests {
         /// `dropsNextSubmissionForTesting`・#2743)。
         var dropsAtFrame: Int?
         private(set) var seen: [Moment] = []
+        /// 作品から見えた大きさ: 座標 (`width`/`height`) と、実際に刻む画素 (`pixelWidth`/`pixelHeight`)。
+        /// **倍率が組み立てから描く面まで渡っているかは、PNG の大きさだけでなく作品の側からも見る** (#2441 の反証)。
+        private(set) var sizes: [[Float]] = []
 
         init() {}
         var settings: SketchSettings { SketchSettings(width: 48, height: 24, frameRate: 60) }
@@ -61,6 +64,7 @@ struct SketchApplicationRenderTests {
                 canvas.gpu.dropsNextSubmissionForTesting = DroppedWorkReadersTests.victim
             }
             seen.append(Moment(frame: frameCount, time: time, deltaTime: deltaTime))
+            sizes.append([width, height, Float(pixelWidth), Float(pixelHeight)])
             background(15)
             noStroke()
             fill(240, 120, 50)
@@ -186,6 +190,46 @@ struct SketchApplicationRenderTests {
             try finishTerminating(application, ending)
             #expect(ending.exitStatus == nil)
             #expect(try await decodeMovie(path).times.count == 4)
+        }
+    }
+
+    /// 倍率 ([#2441]): 座標 (`width` / `height`) は 48×24 のまま、書く PNG は 96×48 になる。同じ引数で 2 度書くと、
+    /// 倍率の絵も同じバイトになる (決定論は倍率ごと)。専用機の `render` の段が走らせる 1 シーン。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    @Test("--scale 2 の書き出しは、座標を変えずに画素が倍の PNG になり、2 度書いて同じバイトになる")
+    func aScaledSeriesKeepsTheCoordinatesAndDoublesThePixels() async throws {
+        try await withTemporaryDirectory("mokume-render-scale") { directory in
+            var runs: [[Data]] = []
+            for run in 1...2 {
+                let pattern = directory.appendingPathComponent("run\(run)/f-###.png").path
+                let sketch = Sweep()
+                let request = try #require(
+                    RenderRequest(frameRate: 30, frameCount: 3, scale: 2, destination: pattern))
+                let ending = Ending()
+                let application = try makeApplication(sketch, request, ending)
+                application.didFinishLaunching()
+                fire(application, times: 6)
+                try finishTerminating(application, ending)
+                #expect(ending.exitStatus == nil)
+                // 作品から見た座標は倍率の前のまま、画素の口は実際の画素
+                #expect(sketch.seen.count == 3)
+                #expect(
+                    sketch.sizes == Array(repeating: [48, 24, 96, 48], count: 3),
+                    "作品から見た座標 48×24 と実際の画素 96×48: \(sketch.sizes)")
+                let written = try FileManager.default.contentsOfDirectory(
+                    atPath: directory.appendingPathComponent("run\(run)").path
+                ).sorted()
+                #expect(written == ["f-000.png", "f-001.png", "f-002.png"])
+                runs.append(
+                    try written.map {
+                        try Data(contentsOf: directory.appendingPathComponent("run\(run)/\($0)"))
+                    })
+            }
+            let first = try #require(NSBitmapImageRep(data: runs[0][0]))
+            #expect(first.pixelsWide == 96 && first.pixelsHigh == 48, "\(first.pixelsWide)×\(first.pixelsHigh)")
+            #expect(runs[0] == runs[1], "同じ倍率・同じ引数で、画素が一致しない")
+            #expect(runs[0][0] != runs[0][2], "枚ごとに絵が動いていない")
         }
     }
 
