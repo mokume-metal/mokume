@@ -85,6 +85,7 @@ enum BundleCommand {
         // 絵が出ない」形になる — しかも配った先で出る
         try ResourceDeclaration.check(in: directory)
         let identity = try AppIdentity.read(in: directory)
+        identity.warnIfExample()
         // **許可の文言も、ビルドの前に見る。** 使うのに無いと、止まるのは配った先になる
         try DeviceUse.check(in: directory, identity: identity)
         // **作り直す先が自分の出力でなければ、ビルドの前に止まる** (#2500)。消せないと分かるのは
