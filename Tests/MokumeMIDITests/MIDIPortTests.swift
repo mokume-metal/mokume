@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Synchronization
 import Testing
 
 @testable import MokumeCore
@@ -187,5 +188,89 @@ struct MIDIPortTests {
         // 外す前に届いて読まれなかったものは当てない。足し直した後の最初のフレームは、列の次 (2 番目)
         #expect(port.messages == [Self.on60])
         #expect(port.controlChange(1) == 64.0 / 127)
+    }
+
+    // MARK: - 反証の直し (#3507)
+
+    @Test("速度 0 のノートオンは、注入した列でも機材から届いたものでも、ノートオフとして入り、押しっぱなしにならない")
+    func zeroVelocityNoteOnReleases() throws {
+        let zero = MIDIMessage.noteOn(channel: 1, note: 60, velocity: 0)
+        let seen = frames(try port([[Self.on60], [zero], nil]), 3)
+        #expect(seen[1].messages == [.noteOff(channel: 1, note: 60, velocity: 0)])
+        // 離されているので、抜かれても noteOff は出ない
+        #expect(seen[2].messages == [])
+    }
+
+    @Test("抜かれている間に届いたものは捨てる。押しっぱなしを残さない")
+    func receiveWhileDisconnectedIsDropped() throws {
+        let port = try port([nil])
+        port.supply()
+        #expect(port.state == .disconnected)
+        port.inbox.receive(Self.on60)
+        port.supply()
+        #expect(port.messages.isEmpty)
+        #expect(port.controlChange(1) == nil)
+    }
+
+    /// 別スレッドが、全コントローラ (0〜127) を 1 周ずつ、値を 1 から 127 まで上げながら送る。
+    private static func sweep(into inbox: MIDIInbox) -> Task<Void, Never> {
+        Task.detached {
+            for round in 1...127 {
+                for controller in 0..<128 {
+                    inbox.receive(.controlChange(channel: 1, controller: controller, value: round))
+                }
+            }
+        }
+    }
+
+    @Test("現在値の表と出来事は同じ錠の内側で取るので、同じフレームで食い違わない")
+    func tableAndMessagesAreTakenTogether() async throws {
+        var mismatches = 0
+        for _ in 0..<20 {
+            let port = try port([[]], capacity: 1 << 20)
+            let inbox = port.inbox
+            let sender = Self.sweep(into: inbox)
+            var taken = 0
+            let deadline = ContinuousClock.now + .seconds(5)
+            while taken < 127 * 128, ContinuousClock.now < deadline {
+                let (table, messages) = inbox.take()
+                taken += messages.count
+                // 取り出した出来事の最後の CC は、同じ時点の表の値と一致する
+                if case .controlChange(_, let controller, let value)? = messages.last,
+                    table?.value(controller: controller, channel: nil) != value
+                {
+                    mismatches += 1
+                }
+                await Task.yield()
+            }
+            await sender.value
+        }
+        #expect(mismatches == 0)
+    }
+
+    @Test("現在値の再送は、同時に届く新しい値を古い表で上書きしない")
+    func resendDoesNotOverwriteNewerValues() async throws {
+        var stale = 0
+        for _ in 0..<50 {
+            let port = try port([[]], capacity: 1 << 20)
+            let inbox = port.inbox
+            let finished = Atomic<Bool>(false)
+            let sender = Task.detached {
+                for round in 1...127 {
+                    for controller in 0..<128 {
+                        inbox.receive(.controlChange(channel: 1, controller: controller, value: round))
+                    }
+                }
+                finished.store(true, ordering: .releasing)
+            }
+            // 送っている間、現在値を何度も再送する。最後の送りをまたいだ再送が古い表を後から入れていれば、
+            // 送り終わった後の取り出しが、最後の値を持たない
+            while !finished.load(ordering: .acquiring) { inbox.resendControllers() }
+            await sender.value
+            let table = inbox.take().controllers
+            let sum = (0..<128).reduce(0) { $0 + (table?.value(controller: $1, channel: nil) ?? 0) }
+            if sum != 127 * 128 { stale += 1 }
+        }
+        #expect(stale == 0)
     }
 }

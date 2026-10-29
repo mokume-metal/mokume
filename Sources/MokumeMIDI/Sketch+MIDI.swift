@@ -35,6 +35,8 @@ extension Sketch {
     public func midiDevices() -> [MIDIDevice] {
         let hub = MIDIHub.shared
         hub.start()
+        // 毎回引き直す。知らせを待つ間に挿された機材・繋げなかった機材も、呼ぶたびに繋ぎ直す
+        hub.refresh()
         return hub.devices
     }
 

@@ -7,6 +7,8 @@
 /// CoreMIDI を `MIDIInputPortCreateWithProtocol` の MIDI 1.0 の写像で開くと、機材が MIDI 2.0 でも
 /// 1.0 のチャンネルボイス (7 ビット) に落ちて届く。読むのはその形である。
 ///
+/// **UMP の group は読まない。** MIDI 1.0 の口は端点ごとに受けるので、1 つの端点には group 0 の 1 本だけが届く。
+///
 /// | UMP の種別 | 扱い |
 /// | --- | --- |
 /// | 0 (ユーティリティ) | 読み飛ばす (数えない) |
@@ -68,10 +70,9 @@ nonisolated enum MIDIUMP {
         let second = Int(word & 0x7F)
         switch status {
         case 0x80: return .noteOff(channel: channel, note: first, velocity: second)
-        case 0x90:
-            return second == 0
-                ? .noteOff(channel: channel, note: first, velocity: 0)
-                : .noteOn(channel: channel, note: first, velocity: second)
+        // 速度 0 のノートオンは、そのまま返す。ノートオフにするのは入れ物 (``MIDIInbox/receive(_:hostTime:)``)
+        // で、機材から届いたものも注入した列も同じ 1 か所を通す
+        case 0x90: return .noteOn(channel: channel, note: first, velocity: second)
         case 0xB0: return .controlChange(channel: channel, controller: first, value: second)
         default: return nil
         }

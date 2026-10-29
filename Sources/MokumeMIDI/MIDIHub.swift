@@ -26,7 +26,10 @@ protocol MIDIBackend: AnyObject {
     /// いま使える入力の一覧。外されている (オフラインの) 機材は含めない。
     func sources() -> [MIDISourceInfo]
     /// 受け始める。届いた UMP の語と host time を `handler` へ渡す (**任意のスレッドから**呼ばれる)。
-    func connect(_ source: MIDISourceInfo, handler: @escaping @Sendable (_ words: [UInt32], _ hostTime: UInt64) -> Void)
+    /// 繋げたか (`false` なら受け取り先を持たない。係が次の ``MIDIHub/refresh()`` で繋ぎ直す)。
+    func connect(
+        _ source: MIDISourceInfo, handler: @escaping @Sendable (_ words: [UInt32], _ hostTime: UInt64) -> Void
+    ) -> Bool
     /// 受けるのをやめる。
     func disconnect(_ source: MIDISourceInfo)
 }
@@ -56,6 +59,8 @@ final class MIDIHub {
     /// 振った識別子と、いま繋がっているもの。
     private(set) var slots = MIDISlots()
     private var bound: [Int32: (source: MIDISourceInfo, id: String)] = [:]
+    /// 見えているが繋げなかった機材 (一意な番号 → 識別子)。次の ``refresh()`` で繋ぎ直す。
+    private var failed: [Int32: String] = [:]
     private var feeds: [String: MIDIFeed] = [:]
     private var started = false
     private let backend: any MIDIBackend
@@ -70,9 +75,8 @@ final class MIDIHub {
         started = true
         backend.start { [weak self] in
             // 知らせは CoreMIDI のスレッドで届きうる。main へ寄せて、一覧を引き直す
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.refresh() }
-            }
+            // (新しい待ち行列は持たない・ADR-0010 決定 4)
+            Task { @MainActor in self?.refresh() }
         }
         refresh()
     }
@@ -83,21 +87,45 @@ final class MIDIHub {
         var seen: Set<Int32> = []
         let present = current.filter { seen.insert($0.uniqueID).inserted }
 
-        // 抜かれた (端点が変わったものも、いったん抜かれたことにする)
-        let gone = bound.filter { uid, entry in !present.contains(where: { $0.uniqueID == uid && $0 == entry.source }) }
-        for (uid, entry) in gone.sorted(by: { $0.value.id < $1.value.id }) {
+        // 抜かれた。**端点が変わったものも、いったん抜かれたことにする** (挿し直しが 1 回の知らせに収まった)。
+        // 端点が同じで名前だけ変わったものは抜かない (下で名前だけ直す)
+        let gone = bound.filter { uid, entry in
+            !present.contains(where: { $0.uniqueID == uid && $0.endpoint == entry.source.endpoint })
+        }
+        for (uid, entry) in gone.sorted(by: { $0.key < $1.key }) {
             bound[uid] = nil
             slots.disconnect(entry.id)
             backend.disconnect(entry.source)
             for inbox in feed(for: entry.id).inboxes { inbox.unplug() }
         }
-        // 繋がった
-        for source in present where bound[source.uniqueID] == nil {
+        // 繋げないまま抜かれた機材
+        for (uid, id) in failed.sorted(by: { $0.key < $1.key }) where !present.contains(where: { $0.uniqueID == uid }) {
+            failed[uid] = nil
+            for inbox in feed(for: id).inboxes { inbox.unplug() }
+        }
+        // 名前だけが変わった
+        for source in present {
+            guard var entry = bound[source.uniqueID], entry.source.name != source.name else { continue }
+            entry.source.name = source.name
+            bound[source.uniqueID] = entry
+            slots.rename(entry.id, to: source.name)
+        }
+        // 繋がった。**一意な番号の順に**識別子を振る — OS が一覧する順は起動ごとに変わりうるので、同じ名前の
+        // 機材の番号が、起動をまたいで入れ替わらないようにする
+        for source in present.sorted(by: { $0.uniqueID < $1.uniqueID }) where bound[source.uniqueID] == nil {
             let id = slots.connect(uniqueID: source.uniqueID, name: source.name)
-            bound[source.uniqueID] = (source, id)
             let feed = feed(for: id)
-            backend.connect(source) { [feed] words, hostTime in feed.receive(words, hostTime: hostTime) }
+            // 受け始めてから名乗ると、その間に届いたものを「抜かれている」と捨てる。先に名乗る
             feed.setState(.running)
+            if backend.connect(source, handler: { [feed] words, hostTime in feed.receive(words, hostTime: hostTime) }) {
+                bound[source.uniqueID] = (source, id)
+                failed[source.uniqueID] = nil
+            } else {
+                // 繋げなかった。繋がっていると名乗らず、一覧には載せる (次の `refresh()` で繋ぎ直す)
+                slots.disconnect(id)
+                failed[source.uniqueID] = id
+                feed.setState(.unavailable)
+            }
         }
     }
 
@@ -112,12 +140,15 @@ final class MIDIHub {
 
     /// `id` の中継へ入れ物を繋ぐ。
     func subscribe(_ inbox: MIDIInbox, to id: String) {
-        feed(for: id).add(inbox)
+        // 状態を先に決める。足した後に決めると、足した直後に届いたものを「抜かれている」と捨てる
         if slots.isConnected(id) {
             inbox.setState(.running)
+        } else if failed.values.contains(id) {
+            inbox.setState(.unavailable)
         } else {
             inbox.setState(slots.known.contains(id) ? .disconnected : .unavailable)
         }
+        feed(for: id).add(inbox)
     }
 
     /// `id` の中継から入れ物を外す。
@@ -137,8 +168,16 @@ final class MIDIHub {
 ///
 /// **どのスレッドから呼ばれてもよい** (CoreMIDI の受け取りの口は隔離の外で呼ばれる)。入れ物は弱く持つ —
 /// 入れ物を持つのは入り口 (``MIDIPort``) で、閉じずに捨てられた入り口のぶんがここに溜まらない。
+///
+/// **コントロールチェンジの最後の表を持つ。** 入れ物が無い間に動いたつまみも数え、後から繋いだ入り口・足し直された
+/// 入り口へ、繋ぐ瞬間に渡す (ゲームパッドが繋いだときにいまの値を入れるのと同じ)。表の更新と入れ物への配りは、
+/// 繋ぐ処理と同じ錠の内側で行う — 外すと、繋ぐ瞬間に古い表が新しい値を上書きする。
 nonisolated final class MIDIFeed: Sendable {
-    private let entries = Mutex<[Entry]>([])
+    private struct State: Sendable {
+        var entries: [Entry] = []
+        var controllers = MIDIControllers()
+    }
+    private let state = Mutex(State())
 
     private struct Entry: Sendable {
         weak var inbox: MIDIInbox?
@@ -146,32 +185,40 @@ nonisolated final class MIDIFeed: Sendable {
 
     /// 繋がっている入れ物。
     var inboxes: [MIDIInbox] {
-        entries.withLock { $0.compactMap(\.inbox) }
+        state.withLock { $0.entries.compactMap(\.inbox) }
     }
 
+    /// 入れ物を繋ぎ、ここまでに届いたコントロールチェンジの現在値を渡す。
     func add(_ inbox: MIDIInbox) {
-        entries.withLock { list in
-            list.removeAll { $0.inbox == nil || $0.inbox === inbox }
-            list.append(Entry(inbox: inbox))
+        state.withLock { state in
+            state.entries.removeAll { $0.inbox == nil || $0.inbox === inbox }
+            state.entries.append(Entry(inbox: inbox))
+            inbox.adopt(state.controllers)
         }
     }
 
     func remove(_ inbox: MIDIInbox) {
-        entries.withLock { list in list.removeAll { $0.inbox == nil || $0.inbox === inbox } }
+        state.withLock { state in state.entries.removeAll { $0.inbox == nil || $0.inbox === inbox } }
     }
 
     func setState(_ state: SourceState) {
         for inbox in inboxes { inbox.setState(state) }
     }
 
-    /// 届いた語を読んで、入れ物へ入れる。入れ物が無ければ読まない。
+    /// 届いた語を読んで、表を更新し、入れ物へ入れる。入れ物が無くても表は更新する。
     func receive(_ words: [UInt32], hostTime: UInt64) {
-        let inboxes = inboxes
-        guard !inboxes.isEmpty else { return }
         let decoded = MIDIUMP.decode(words)
-        for inbox in inboxes {
-            for message in decoded.messages { inbox.receive(message, hostTime: hostTime) }
-            if decoded.unreadable > 0 { inbox.discardUnreadable(decoded.unreadable) }
+        guard !decoded.messages.isEmpty || decoded.unreadable > 0 else { return }
+        state.withLock { state in
+            for message in decoded.messages {
+                if case .controlChange(let channel, let controller, let value) = message, message.isValid {
+                    state.controllers.set(channel: channel, controller: controller, value: value)
+                }
+            }
+            for inbox in state.entries.compactMap(\.inbox) {
+                for message in decoded.messages { inbox.receive(message, hostTime: hostTime) }
+                if decoded.unreadable > 0 { inbox.discardUnreadable(decoded.unreadable) }
+            }
         }
     }
 }

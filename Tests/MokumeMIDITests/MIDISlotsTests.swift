@@ -55,4 +55,15 @@ nonisolated struct MIDISlotsTests {
         let second = slots.connect(uniqueID: 99, name: "Pad")
         #expect(first != second)
     }
+
+    @Test("改名しても識別子は変わらず、同じ綴りの識別子を新しい機材が取り合わない")
+    func renameKeepsTheIdAndAvoidsCollisions() {
+        var slots = MIDISlots()
+        let id = slots.connect(uniqueID: 10, name: "Pad")
+        slots.rename(id, to: "Pad Pro")
+        #expect(slots.name(of: id) == "Pad Pro")
+        #expect(slots.known == [id])
+        let other = slots.connect(uniqueID: 11, name: "Pad")
+        #expect(other != id)
+    }
 }

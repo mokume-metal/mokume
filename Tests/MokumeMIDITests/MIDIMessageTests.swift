@@ -48,9 +48,9 @@ nonisolated struct MIDIMessageTests {
         #expect(decoded.unreadable == 0)
     }
 
-    @Test("速度 0 のノートオンは、ノートオフとして届く")
-    func noteOnWithZeroVelocityIsNoteOff() {
-        #expect(MIDIUMP.decode([0x2090_3C00]).messages == [.noteOff(channel: 1, note: 60, velocity: 0)])
+    @Test("速度 0 のノートオンは、語の読みではそのまま返る (ノートオフにするのは入れ物)")
+    func zeroVelocityNoteOnIsKeptRawByTheDecoder() {
+        #expect(MIDIUMP.decode([0x2090_3C00]).messages == [.noteOn(channel: 1, note: 60, velocity: 0)])
     }
 
     @Test("クロック・開始・ユーティリティは数えずに読み飛ばす。ピッチベンド・SysEx は読めないと数える")

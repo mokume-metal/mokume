@@ -33,9 +33,8 @@ final class DeviceSource: MIDISource {
 
     func start(into inbox: MIDIInbox) {
         self.inbox = inbox
+        // 中継が、繋ぐ瞬間にコントロールチェンジの現在値を入れる (足し直しでも、外すときに捨てた分が戻る)
         hub.subscribe(inbox, to: id)
-        // 外していた入り口が足し直されたとき、外すときに捨てた現在値を戻す (つまみは動いていない)
-        inbox.resendControllers()
     }
 
     func pump(into inbox: MIDIInbox) {}

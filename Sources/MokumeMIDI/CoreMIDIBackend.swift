@@ -28,6 +28,8 @@ final class CoreMIDIBackend: MIDIBackend {
     /// 接続している端点ごとの接続の番号。
     private var tags: [Int32: Int] = [:]
     private var nextTag = 1
+    /// 繋げなかったと言った機材。
+    private var warned: Set<Int32> = []
 
     func start(changed: @escaping @Sendable () -> Void) {
         let made = MIDIClientCreateWithBlock("mokume" as CFString, &client) { @Sendable _ in
@@ -60,31 +62,43 @@ final class CoreMIDIBackend: MIDIBackend {
         return (0..<MIDIGetNumberOfSources()).compactMap { index in
             let endpoint = MIDIGetSource(index)
             guard endpoint != 0 else { return nil }
-            // 外されている機材 (挿していないが設定には残っているもの) は使えない
+            // 外されている機材 (挿していないが設定には残っているもの) は使えない。読めなければ、外されていないものとして扱う
             var offline: Int32 = 0
-            MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyOffline, &offline)
+            if MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyOffline, &offline) != noErr { offline = 0 }
             guard offline == 0 else { return nil }
+            // 一意な番号が読めない端点を 0 に潰すと、複数の機材が 1 台にまとまる。端点そのものの番号で代える
+            // (挿し直すと変わるので、挿し直しは別の機材に見えるが、まとまるよりよい)
             var uniqueID: Int32 = 0
-            MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyUniqueID, &uniqueID)
+            if MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyUniqueID, &uniqueID) != noErr {
+                uniqueID = Int32(bitPattern: endpoint)
+            }
             var name: Unmanaged<CFString>?
-            MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &name)
-            let display = (name?.takeRetainedValue() as String?).flatMap { $0.isEmpty ? nil : $0 }
-            return MIDISourceInfo(uniqueID: uniqueID, name: display ?? "MIDI source", endpoint: endpoint)
+            let display: String? =
+                MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &name) == noErr
+                ? name?.takeRetainedValue() as String? : nil
+            return MIDISourceInfo(
+                uniqueID: uniqueID, name: display.flatMap { $0.isEmpty ? nil : $0 } ?? "MIDI source",
+                endpoint: endpoint)
         }
     }
 
-    func connect(_ source: MIDISourceInfo, handler: @escaping Handler) {
-        guard ready else { return }
+    func connect(_ source: MIDISourceInfo, handler: @escaping Handler) -> Bool {
+        guard ready else { return false }
         let tag = nextTag
         nextTag += 1
         handlers.set(handler, for: tag)
         let status = MIDIPortConnectSource(port, source.endpoint, UnsafeMutableRawPointer(bitPattern: tag))
-        if status == noErr {
-            tags[source.uniqueID] = tag
-        } else {
+        guard status == noErr else {
             handlers.set(nil, for: tag)
-            Diagnostics.warn("midi: could not connect \"\(source.name)\" (error \(status))")
+            // 引き直すたびに繋ぎ直すので、同じ機材のことは 1 度だけ言う
+            if warned.insert(source.uniqueID).inserted {
+                Diagnostics.warn("midi: could not connect \"\(source.name)\" (error \(status)); it will be tried again")
+            }
+            return false
         }
+        tags[source.uniqueID] = tag
+        warned.remove(source.uniqueID)
+        return true
     }
 
     func disconnect(_ source: MIDISourceInfo) {

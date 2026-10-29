@@ -23,8 +23,15 @@ final class FakeMIDIBackend: MIDIBackend {
 
     func sources() -> [MIDISourceInfo] { current }
 
-    func connect(_ source: MIDISourceInfo, handler: @escaping @Sendable ([UInt32], UInt64) -> Void) {
+    /// 繋げないことにする機材 (一意な番号)。
+    var failing: Set<Int32> = []
+    private(set) var connectAttempts = 0
+
+    func connect(_ source: MIDISourceInfo, handler: @escaping @Sendable ([UInt32], UInt64) -> Void) -> Bool {
+        connectAttempts += 1
+        guard !failing.contains(source.uniqueID) else { return false }
         handlers[source.uniqueID] = handler
+        return true
     }
 
     func disconnect(_ source: MIDISourceInfo) {
@@ -208,5 +215,129 @@ struct MIDIHubTests {
             await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
         }
         #expect(hub.devices.map(\.id) == ["Pad #1"])
+    }
+
+    // MARK: - 反証の直し (#3507)
+
+    @Test("後から作った入り口・足し直した入り口は、作る前に動いたつまみの現在値を読める")
+    func lateSubscribersSeeTheCurrentValue() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 1)]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        // 入り口が 1 つも無い間に動いたつまみ
+        backend.deliver(1, [Self.cc1(100)])
+        let late = try port("Pad #1", on: hub)
+        late.supply()
+        #expect(late.controlChange(1) == 100.0 / 127)
+
+        // 外している間に動いても、足し直した入り口に戻る
+        late.close()
+        backend.deliver(1, [Self.cc1(20)])
+        try late.open()
+        late.supply()
+        #expect(late.controlChange(1) == 20.0 / 127)
+        let fresh = try port("Pad #1", on: hub)
+        #expect(fresh.controlChange(1) == nil, "作っただけでは supply() するまで読めない")
+    }
+
+    @Test("MIDIPort の最初の supply() で、同じ機材の 2 つ目の入り口にも現在値が入る")
+    func secondPortOnTheSameDevice() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 1)]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        let first = try port("Pad #1", on: hub)
+        backend.deliver(1, [Self.cc1(7)])
+        first.supply()
+        let second = try port("Pad #1", on: hub)
+        second.supply()
+        #expect(second.controlChange(1) == 7.0 / 127)
+        #expect(second.messages.isEmpty, "出来事は繋いだ後に届いたものだけ")
+    }
+
+    @Test("繋げなかった機材は running と名乗らず、一覧には載り、次の引き直しで繋ぎ直す")
+    func connectFailureIsRetried() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 1)]
+        backend.failing = [1]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        #expect(hub.devices.map(\.id) == ["Pad #1"])
+        #expect(hub.devices.map(\.isConnected) == [false])
+        let port = try port("Pad #1", on: hub)
+        #expect(port.state == .unavailable)
+
+        hub.refresh()
+        #expect(backend.connectAttempts == 2, "引き直すたびに繋ぎ直す")
+        #expect(port.state == .unavailable)
+
+        backend.failing = []
+        hub.refresh()
+        #expect(port.state == .running)
+        #expect(hub.devices.map(\.isConnected) == [true])
+        backend.deliver(1, [Self.on60])
+        port.supply()
+        #expect(port.messages == [.noteOn(channel: 1, note: 60, velocity: 100)])
+        #expect(hub.devices.map(\.id) == ["Pad #1"], "席は増えない")
+    }
+
+    @Test("同じ名前の機材の番号は、一覧の順ではなく一意な番号の順に振る")
+    func numbersFollowUniqueIDs() {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 20, name: "Pad", endpoint: 2), .init(uniqueID: 10, name: "Pad", endpoint: 1)]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        #expect(hub.devices.map(\.id) == ["Pad #1", "Pad #2"])
+        // #1 は一意な番号 10 の機材。20 だけを抜くと #2 が抜かれる
+        backend.current = [.init(uniqueID: 10, name: "Pad", endpoint: 1)]
+        hub.refresh()
+        #expect(hub.devices.map(\.isConnected) == [true, false])
+    }
+
+    @Test("端点が同じで名前だけが変わっても、抜いたことにせず、ノートも離さない。名前だけ更新する")
+    func renameIsNotAnUnplug() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 1)]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        let port = try port("Pad #1", on: hub)
+        backend.deliver(1, [Self.on60])
+        port.supply()
+        backend.current = [.init(uniqueID: 1, name: "Pad Renamed", endpoint: 1)]
+        hub.refresh()
+        port.supply()
+        #expect(port.state == .running)
+        #expect(port.messages.isEmpty)
+        #expect(hub.devices.map(\.name) == ["Pad Renamed"])
+        #expect(hub.devices.map(\.id) == ["Pad #1"])
+        // 同じ綴りの識別子を、新しい機材が取り合わない
+        backend.current += [.init(uniqueID: 2, name: "Pad", endpoint: 2)]
+        hub.refresh()
+        #expect(Set(hub.devices.map(\.id)).count == 2)
+    }
+
+    @Test("抜いた後に遅れて届いた callback は捨て、押しっぱなしを残さない。挿し直した後は届く")
+    func lateCallbackAfterUnplugIsDropped() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 1)]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        let port = try port("Pad #1", on: hub)
+        let late = try #require(backend.handlers[1])
+        backend.current = []
+        hub.refresh()
+        port.supply()
+        // 抜いた後に、古い接続の callback が遅れて届く
+        late([Self.on60], mach_absolute_time())
+        port.supply()
+        #expect(port.messages.isEmpty)
+        // 挿し直して抜く。遅れて届いた noteOn が押しっぱなしとして残っていれば、ここで noteOff が出る
+        backend.current = [.init(uniqueID: 1, name: "Pad", endpoint: 2)]
+        hub.refresh()
+        backend.current = []
+        hub.refresh()
+        port.supply()
+        #expect(port.messages.isEmpty)
     }
 }

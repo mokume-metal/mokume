@@ -12,11 +12,16 @@ import MokumeCore
 /// if let first = midiDevices().first { midi = createMIDI(first) }
 /// ```
 public nonisolated struct MIDIDevice: Sendable, Equatable {
-    /// 識別子。「機材名 #番号」の形で振る (`"Launchpad Mini #1"`)。番号は、同じ名前の機材が初めて繋がった順に 1 から振る。
+    /// 識別子。「機材名 #番号」の形で振る (`"Launchpad Mini #1"`)。番号は、同じ名前の機材が初めて繋がった順に 1 から振る
+    /// (同時に見えた機材は、CoreMIDI が機材ごとに振る一意な番号の順)。
     ///
     /// **抜いて挿し直しても同じ値になる。** 同じ機種を 2 台挿していて、両方を抜いて逆の順に挿しても、
-    /// CoreMIDI が機材ごとに振る一意な番号で同じ機材へ戻る。その番号が変わって見える機材は、同じ名前で
-    /// 抜かれている番号の小さいほうへ戻る。
+    /// その一意な番号で同じ機材へ戻る。その番号が変わって見える機材は、同じ名前で抜かれている番号の
+    /// 小さいほうへ戻る。
+    ///
+    /// **見分けられない場合がある。** 一意な番号が挿し直しで変わる機材は、同じ名前の新しい機材と区別できない
+    /// (抜かれている席があれば、新しい機材がそこへ入る)。プロセスの再起動をまたぐ約束でもない —
+    /// 起動ごとに、見えた順 (同時なら一意な番号の順) に番号を振り直す。
     public let id: String
     /// 機材の名前。OS が名乗るとおり (`"Launchpad Mini"`)。
     public let name: String
@@ -95,6 +100,11 @@ public final class MIDIPort: Inlet {
     /// 機材が 1 台で、つまみ 1 本の最小の使い方では、チャンネルを意識せずに書ける。チャンネルを渡すと、そのチャンネルで
     /// 最後に届いた値になる。
     ///
+    /// **値は、見張りが始まってから動いたつまみの分だけ読める。** 見張りは最初に ``Sketch/midiDevices()`` か
+    /// ``Sketch/createMIDI(_:)`` を呼んだときに始まり、その後に動いたつまみの値は、後から作った入り口・足し直した
+    /// 入り口からも読める。MIDI には、いまのつまみの位置を機材に尋ねる手段が無いので、`watch` で作り直した直後など、
+    /// 見張りが始まる前の位置は分からない — つまみを動かすまで `nil` のままである。
+    ///
     /// MIDI の 0〜127 を 0〜1 に写す (127 が 1)。生の値が要るなら、``messages`` の
     /// ``MIDIMessage/controlChange(channel:controller:value:)`` を読む。
     ///
@@ -113,8 +123,10 @@ public final class MIDIPort: Inlet {
 
     public func supply() {
         source.pump(into: inbox)
-        if let table = inbox.controllers.take() { controllers = table }
-        messages = inbox.messages.take()
+        // 現在値の表と出来事は、同じ錠の内側で一緒に取る (同じフレームで食い違わない)
+        let taken = inbox.take()
+        if let table = taken.controllers { controllers = table }
+        messages = taken.messages
     }
 
     public func close() {

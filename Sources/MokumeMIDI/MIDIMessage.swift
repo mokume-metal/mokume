@@ -16,7 +16,8 @@
 ///   (配線上の 0〜15 ではない)
 /// - **ノートと値は 0〜127** (MIDI の 7 ビット)。ノートの 60 が真ん中の C
 /// - **速度 0 のノートオンは、ノートオフとして届く。** MIDI は「速度 0 のノートオン」でも離したことを
-///   伝えるので、読む側が 2 通りを見分けなくてよいようにしてある
+///   伝えるので、読む側が 2 通りを見分けなくてよいようにしてある。機材から届いたものも、
+///   ``Sketch/createMIDI(messages:)`` に渡した列も同じに扱う
 ///
 /// `Codable`・`Sendable` で、記録した列として書き出して読み戻せる。``Sketch/createMIDI(messages:)`` に
 /// そのまま渡せる。
@@ -43,6 +44,12 @@ nonisolated extension MIDIMessage {
             return Self.channels.contains(channel) && Self.data.contains(controller)
                 && Self.data.contains(value)
         }
+    }
+
+    /// 速度 0 のノートオンを、ノートオフにしたもの。ほかはそのまま。
+    var releasingZeroVelocity: MIDIMessage {
+        if case .noteOn(let channel, let note, 0) = self { return .noteOff(channel: channel, note: note, velocity: 0) }
+        return self
     }
 
     static let channels = 1...16

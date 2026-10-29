@@ -76,12 +76,19 @@ nonisolated final class MIDIInbox: Sendable {
     // MARK: - 入れる (どのスレッドからでも)
 
     /// 届いたメッセージを入れる。範囲に収まらないものは「読めずに捨てた」と数える。
+    ///
+    /// - **速度 0 のノートオンは、ノートオフにして入れる。** 実機から読んだものも、注入した列も同じ形になる
+    ///   (入れ物から先は出どころを知らない)
+    /// - **抜かれている間は捨てる。** 抜いた後に遅れて届いた callback が、離されないノートを残さないように、
+    ///   状態の見張り (``unplug(hostTime:)``) と同じ錠の内側で見る
     func receive(_ message: MIDIMessage, hostTime: UInt64 = mach_absolute_time()) {
         guard message.isValid else {
             messages.discardUnreadable()
             return
         }
+        let message = message.releasingZeroVelocity
         memory.withLock { memory in
+            guard state != .disconnected else { return }
             switch message {
             case .noteOn(let channel, let note, _): memory.held.insert(Self.key(channel, note))
             case .noteOff(let channel, let note, _): memory.held.remove(Self.key(channel, note))
@@ -115,15 +122,39 @@ nonisolated final class MIDIInbox: Sendable {
                 messages.send(.noteOff(channel: key / 128 + 1, note: key % 128, velocity: 0), hostTime: hostTime)
             }
             memory.held.removeAll()
+            // 離す出来事を入れた同じ錠の内側で名乗る。この後に届くものは ``receive(_:hostTime:)`` が捨てる
+            setState(.disconnected)
         }
-        setState(.disconnected)
     }
 
     /// 読んだ現在値の表を、最新の 1 つへ入れ直す。外されていた入り口が足し直されたとき
     /// (``discardWaiting()`` で捨てた表を戻す)。
+    ///
+    /// **錠の内側で送る。** 錠を放してから送ると、その隙間に届いた新しい値を、古い表が上書きする。
     func resendControllers() {
-        let table = memory.withLock { $0.controllers }
-        if !table.isEmpty { controllers.send(table) }
+        memory.withLock { memory in
+            if !memory.controllers.isEmpty { controllers.send(memory.controllers) }
+        }
+    }
+
+    /// 中継 (``MIDIFeed``) が持つ最後の現在値の表を、この入れ物の表にして最新の 1 つへ入れる。
+    /// 後から繋いだ入り口・足し直された入り口が、繋ぐ前に動いたつまみの値を読めるようにする。
+    /// 何も届いていない表では何もしない。
+    func adopt(_ table: MIDIControllers) {
+        memory.withLock { memory in
+            guard !table.isEmpty else { return }
+            memory.controllers = table
+            controllers.send(table)
+        }
+    }
+
+    /// 現在値の表と出来事を、**同じ錠の内側で**取り出す。別々に取ると、その間に届いたものを片方だけが
+    /// 持ち、同じフレームで表と列が食い違う。
+    @MainActor
+    func take() -> (controllers: MIDIControllers?, messages: [MIDIMessage]) {
+        memory.withLock { _ in
+            MainActor.assumeIsolated { (controllers.take(), messages.take()) }
+        }
     }
 
     /// まだ取り出されていない出来事と表を、読まずに捨てる (``MIDIPort/close()``)。

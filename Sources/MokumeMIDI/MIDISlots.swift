@@ -35,7 +35,10 @@ nonisolated struct MIDISlots: Equatable {
             uniqueIDs[vacant] = uniqueID
             return vacant
         }
-        let id = "\(name) #\(sameName.count + 1)"
+        // 改名した機材が同じ綴りの識別子を持っていても、重ならない番号まで進める
+        var number = sameName.count + 1
+        while known.contains("\(name) #\(number)") { number += 1 }
+        let id = "\(name) #\(number)"
         known.append(id)
         names[id] = name
         uniqueIDs[id] = uniqueID
@@ -46,6 +49,12 @@ nonisolated struct MIDISlots: Equatable {
     /// 抜かれた。
     mutating func disconnect(_ id: String) {
         connected.remove(id)
+    }
+
+    /// 名前だけが変わった。識別子は変えない。
+    mutating func rename(_ id: String, to name: String) {
+        guard names[id] != nil else { return }
+        names[id] = name
     }
 
     /// いま繋がっているか。
