@@ -52,7 +52,7 @@ struct WireShapeTests {
         #expect(try keys(answered) == base.union(["id"]))
     }
 
-    @Test("差し出す面の目録。**倍率を持たなければ鍵ごと出さない**")
+    @Test("差し出す面の目録。**倍率・全画面の頼みを持たなければ鍵ごと出さない**")
     func manifest() throws {
         let base: Set<String> = ["schemaVersion", "ids", "width", "height"]
         #expect(try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9)) == base)
@@ -62,6 +62,12 @@ struct WireShapeTests {
         #expect(
             try keys(SharedFrameSurface.Manifest(ids: [1], width: 16, height: 9, pid: 42))
                 == base.union(["pid"]))
+        let display = SharedFrameSurface.FullScreenDisplay(number: 2, name: "LG", screenID: 9)
+        #expect(
+            try keys(
+                SharedFrameSurface.Manifest(
+                    ids: [1], width: 16, height: 9, fullScreenDisplay: display))
+                == base.union(["fullScreenDisplay"]))
     }
 
     @Test("撮った 1 枚。**測れていないものは出さない**")
