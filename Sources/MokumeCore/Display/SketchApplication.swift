@@ -294,6 +294,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 速さを名乗る仕掛け。名乗りが与えられたときだけ持つ。
     private var frameRateNotice: Timer?
+    /// 速さの直近の推移 (#3424)。**この子の中にだけ持つ** — 作り直しで子が替われば空から
+    /// 始まり、版の違う値が 1 本に見えない。名乗るときだけ持つ。
+    private var frameRateHistory: FrameRateNotice.History?
 
     /// 続けて描けなかった数。**始まりと終わりだけ**言うために持つ。
     private var frameFailures = FrameFailureLog()
@@ -525,12 +528,20 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **同じ 1 行を書き換える。** 積み上げると、見張りを付けっぱなしにしている間に
     /// 作り直しの記録と失敗の出力が上へ流れていく — いちばん読みたいものが、いちばん
     /// 流されやすくなる ([#685](https://github.com/mokume-metal/mokume/issues/685))。
+    ///
+    /// 推移は直近 30 秒を 1 秒 1 文字で添える (#3424)。縦軸の上端は、起動のときに検めた
+    /// 宣言値 (``SketchRuntime/declaredFrameRate``) で、`settings` は読み直さない
+    /// (#1642・#1323)。
     private func startFrameRateNotice(configuration: String) {
+        frameRateHistory = FrameRateNotice.History(declaredFrameRate: runtime.declaredFrameRate)
         frameRateNotice = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, var history = self.frameRateHistory else { return }
+                let rate = self.currentFrameRate
+                history.record(rate: rate, at: FrameRateNotice.monotonicSeconds)
+                self.frameRateHistory = history
                 let line = FrameRateNotice.line(
-                    rate: self.currentFrameRate, configuration: configuration)
+                    rate: rate, configuration: configuration, history: history)
                 print(FrameRateNotice.rewrite + line, terminator: "")
                 fflush(stdout)
             }
