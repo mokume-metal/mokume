@@ -44,7 +44,7 @@ public enum ShaderFailure: Error, Equatable, Sendable {
     /// 渡す面が口の数に収まらない。枚数と上限を添える。
     case tooManySurfaces(path: String, count: Int, capacity: Int)
     /// 走っている面を取れない所で、この型を投げる資源の口を呼んだ。`call` は呼んだ口の名前
-    /// (`"makeShader(_:name:values:surfaces:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
+    /// (`"createShader(_:name:values:surfaces:)"` など)。返すものを走っている面からしか作れないので、`setup()` などから呼び直す
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
     ///
     /// 面を取れるのは `setup()`・`draw()`・入力のコールバックの中 (待つ読み込みは、そこで起こした

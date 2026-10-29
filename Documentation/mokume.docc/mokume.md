@@ -956,7 +956,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 ### GPU に計算させる
 
 - ``SketchPart/loadShader(_:values:surfaces:)``
-- ``SketchPart/makeShader(_:name:values:surfaces:)``
+- ``SketchPart/createShader(_:name:values:surfaces:)``
 - ``SketchPart/shader(_:)``
 - ``SketchPart/resetShader()``
 - ``SketchPart/effects(_:)``

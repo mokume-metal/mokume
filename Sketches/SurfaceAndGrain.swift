@@ -52,10 +52,10 @@ final class SurfaceAndGrain: Sketch {
     private var slipping: Shader?
 
     func setup() throws {
-        grain = try makeShader(
+        grain = try createShader(
             Self.wood(from: "in.shapePosition.xz"), values: settingsForWood)
         // 画面の位置は 0…1 なので、同じ縞の細かさになるよう板の大きさへ合わせる
-        slipping = try makeShader(
+        slipping = try createShader(
             Self.wood(from: "(in.place - 0.5) * float2(520.0, 300.0)"), values: settingsForWood)
     }
 

@@ -31,7 +31,7 @@ final class RasterAndEdges: Sketch {
         let image = try createImage(2, 2)
         image.fill(color(255))
         white = image
-        solid = try makeShader("""
+        solid = try createShader("""
             float4 paint(Fragment in, Values values) { return float4(1.0); }
             """)
     }

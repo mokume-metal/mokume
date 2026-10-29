@@ -73,8 +73,8 @@ struct ResourceOutsideRunTests {
         #expect(throws: ShaderFailure.notRunning(call: "loadShader(_:values:surfaces:)")) {
             try part.loadShader("paint.metal")
         }
-        #expect(throws: ShaderFailure.notRunning(call: "makeShader(_:name:values:surfaces:)")) {
-            try part.makeShader(fragment)
+        #expect(throws: ShaderFailure.notRunning(call: "createShader(_:name:values:surfaces:)")) {
+            try part.createShader(fragment)
         }
         #expect(throws: ShaderFailure.notRunning(call: "makeEffect(_:name:values:)")) {
             try part.makeEffect(fragment)

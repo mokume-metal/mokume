@@ -102,7 +102,7 @@ final class FieldAndFlow: Sketch {
             values: ["grid": .pair(Float(columns), Float(rows)), "time": 0])
 
         // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
-        paint = try makeShader(
+        paint = try createShader(
             """
             static inline float mokume_cell(Fragment in, float2 grid, float2 at) {
                 float2 clamped = clamp(at, float2(0.0), grid - 1.0);
@@ -187,7 +187,7 @@ final class FieldAndFlow: Sketch {
             values: ["columns": .number(Float(columns))])
 
         // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
-        graph = try makeShader(
+        graph = try createShader(
             """
             static inline float mokume_sample(Fragment in, float columns, float i) {
                 return in.numbers[uint(clamp(i, 0.0, columns - 1.0))];
