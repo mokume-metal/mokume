@@ -22,6 +22,55 @@ import Foundation
 /// 配列は ``getJSONArray(_:)`` で ``JSONArray`` にして回す)。最上位が配列の JSON は
 /// ``SketchPart/loadJSONArray(_:)`` で読む。
 ///
+/// ## 型で読む
+///
+/// 形が決まっている JSON は、型として宣言して Foundation の `JSONDecoder` で読む道もある。mokume の口では
+/// なく、`import Foundation` を書き、手元の資材の場所を ``SketchPart/assetURL(_:)`` で引いて渡す。次は
+/// ``JSONArray`` の例と同じ地震の GeoJSON を、キーを辿る代わりに型で読む例である。
+///
+/// ```swift
+/// import Foundation
+///
+/// var quakes: Quakes!
+///
+/// struct Quakes: Decodable {
+///     struct Feature: Decodable {
+///         struct Geometry: Decodable { let coordinates: [Float] }
+///         struct Properties: Decodable {
+///             let place: String   // 必須のキー
+///             let mag: Float?     // 省いてよいキー
+///         }
+///         let geometry: Geometry
+///         let properties: Properties
+///     }
+///     let features: [Feature]
+/// }
+///
+/// func setup() throws {
+///     let data = try Data(contentsOf: assetURL("data/quakes.geojson"))
+///     quakes = try JSONDecoder().decode(Quakes.self, from: data)
+/// }
+///
+/// func draw() {
+///     background(23, 26, 31)
+///     for feature in quakes.features {
+///         let x = map(feature.geometry.coordinates[0], -180, 180, 0, width)
+///         let y = map(feature.geometry.coordinates[1], 90, -90, 0, height)
+///         circle(x, y, (feature.properties.mag ?? 1) * 4)
+///     }
+/// }
+/// ```
+///
+/// **必須のキーと省いてよいキーが、型に出る。** 型で読むと、必須のキー (`place`) が 1 件でも欠ければ、読み全体が
+/// `DecodingError` (`keyNotFound`) で失敗し、`setup() throws` の中の `try` が起動の失敗として止める。省いてよい
+/// キー (`mag: Float?`) が欠ければ `nil` になる。型を書かずに読む側は逆で、どちらのキーが欠けても落ちず、空の
+/// 値 (NaN や空の文字) を返してキーごとに 1 度知らせる。欠けても絵を続けたい値は型を書かずに読む側が、欠けたら
+/// 読み全体を止めたい値は型で読む側が向く。
+///
+/// **この道は Foundation の口で、失敗は mokume の失敗 (``DataFailure``) ではなく Foundation の `DecodingError`
+/// で届く。** 読めるのは手元の資材で、URL から読むときは ``SketchPart/requestJSONObject(_:)`` か
+/// ``SketchPart/loadJSONObject(_:)`` を使う。
+///
 /// ## 値の型である
 ///
 /// 代入すると写しになる (``Table`` と同じ)。読むだけで、書き換える口は持たない。

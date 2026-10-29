@@ -86,12 +86,16 @@ protocol GamepadSource: AnyObject {
 
 /// 記録した入力の列を、フレームごとに 1 つずつ入れる出どころ。**機材を使わない。**
 ///
-/// どの入力が入るかはフレームの数え方だけで決まる (始めてから何回目の取り出しか) ので、
+/// どの入力が入るかはフレームの数え方だけで決まる (作ってから何番目のフレームか) ので、
 /// 同じ列からは何度回しても同じ入力が同じフレームに出る ([ADR-0028] 決定 7)。
+///
+/// **外して足し直しても、フレームの数え方は変わらない** (時刻どおり・[#3152])。外していた間も
+/// フレームは進んでいたものとして、足し直したときに列の位置をその数だけ進める (外していた間の入力は届かない)。
 ///
 /// 実機と同じ入れ物を通すため、釦は前のフレームとの差を押し離しの出来事にして列へ入れ、
 /// `nil` (抜かれている) は実機が抜かれたときと同じ形で入れる。
 ///
+/// [#3152]: https://github.com/mokume-metal/mokume/issues/3152
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class RecordedGamepadSource: GamepadSource {
     private let inputs: [GamepadInput?]
@@ -99,16 +103,21 @@ final class RecordedGamepadSource: GamepadSource {
     /// 前のフレームで押されていた釦。抜かれていれば空。
     private var held: Set<GamepadButton> = []
     private var stopped = false
+    private var detached: DetachedFrames
 
-    init(inputs: [GamepadInput?]) {
+    /// - Parameter owner: 外していた間に進んだフレームを数える持ち主。`nil` なら足し直しでも位置を進めない。
+    init(inputs: [GamepadInput?], owner: (any Sketch)? = nil) {
         self.inputs = inputs
+        detached = DetachedFrames(owner: owner)
     }
 
     func start(into inbox: GamepadInbox) {
-        // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は続け、押していた釦の記憶は捨てる
+        // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は、外していた間に進んだフレームの数だけ進め
+        // (時刻どおり・#3152)、押していた釦の記憶は捨てる
         // (パッドの側は外すときに押した記憶を消すので、同じ釦を押し続ける列は押し直しとして届ける)
         stopped = false
         held = []
+        if !inputs.isEmpty { next = (next + detached.reopen()) % inputs.count }
         inbox.setState(inputs.isEmpty ? .unavailable : .running)
     }
 
@@ -135,6 +144,7 @@ final class RecordedGamepadSource: GamepadSource {
 
     func stop() {
         stopped = true
+        detached.close()
     }
 
     private static func byName(_ lhs: GamepadButton, _ rhs: GamepadButton) -> Bool {

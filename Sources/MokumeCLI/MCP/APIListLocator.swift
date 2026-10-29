@@ -71,22 +71,19 @@ struct APIListLocator {
     /// 取り置きの区画の名前。
     static let facetName = "reference"
 
+    /// 依存の版の状態。**読み方は [DependencyVersion] が持つ** (`doctor` と写しを作らない)。
+    func versionState() -> DependencyVersion.State { DependencyVersion.state(forPackageAt: directory) }
+
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {
-        let version = resolvedVersion()
+        let state = versionState()
+        let version: String? = if case .version(let found) = state { found } else { nil }
         let cache = cacheURL(for: version)
         if let text = try? String(contentsOf: cache, encoding: .utf8), !text.isEmpty {
             return (text, .cached(cache))
         }
         guard let version else {
-            throw Missing(
-                advice: advice(
-                    reason: """
-                        Cannot tell which version is depended on: `Package.resolved` has no pin
-                        for `\(Self.identity)` (this happens when you point at mokume by path
-                        while developing it).
-                        """, cache: cache),
-                cause: .versionUnknown)
+            throw Missing(advice: unknownVersionAdvice(state, cache: cache), cause: .versionUnknown)
         }
 
         let remote = Self.assetURL(version: version)
@@ -130,6 +127,100 @@ struct APIListLocator {
         URL(string: "\(releases)/v\(version)/mokume-api-v\(version).md")!
     }
 
+    /// 版が引けなかった理由ごとの答え (#3419)。**`Cannot tell which version is depended on` の
+    /// 段落は理由が違っても同じ文**で、続きがその理由に合う一手になる (その前の 1 行目は、
+    /// 解決するだけで直る `.unresolved` だけ `not available yet.`)。本体の開発の手順
+    /// (`make api-list`) を先に出すのは、本体の開発を示す事実がある回だけ。確かめられない回は、
+    /// 条件をつけて両方を示す。
+    ///
+    /// **依存を解決する手は、道具の既定と同じ置き場を使うものだけを勧める。** 裸の
+    /// `swift package resolve` は `--scratch-path` を渡さないので、スケッチ直下に約 200MB の
+    /// `.build/` を作る。`run` / `watch` は解決を共有の置き場 (`BuildDirectory.resolveSegment`) へ
+    /// 固定しているので、`Package.resolved` だけがスケッチ直下にでき、`.build/` は作られない。
+    private func unknownVersionAdvice(_ state: DependencyVersion.State, cache: URL) -> String {
+        let head = "Cannot tell which version is depended on"
+        // 案内のコマンドは `GivenPath.shellWord` で包む。二重引用は `$` と `` ` `` を解く
+        let run = "\(Command.name) run \(GivenPath.shellWord(directory))"
+        let makeList = Self.buildCommand(cache: cache)
+        switch state {
+        case .unresolved:
+            return """
+                The public API list is not available yet.
+
+                \(head): this sketch has not resolved its dependencies yet
+                (there is no `Package.resolved`), which is normal right after
+                `\(Command.name) new`. Build it once — `\(Command.name) run` and `\(Command.name) watch`
+                resolve the dependencies as part of building, in the shared build directory
+                (not under the sketch) — then ask again; the list for the resolved version
+                is fetched and kept:
+
+                  \(run)
+
+                If the sketch points at mokume by path (while developing mokume), there is no version
+                to resolve. Build the list in the mokume repository and put it here instead:
+
+                  \(makeList)
+                """
+        case .notPinned:
+            return """
+                The public API list is not available here.
+
+                \(head): `Package.resolved` has no pin for `\(Self.identity)`.
+                That is how it looks when the sketch points at mokume by path (while developing
+                mokume): build the list in the mokume repository and put it here, and it is
+                returned from then on:
+
+                  \(makeList)
+
+                If the dependency on mokume was added or changed recently, build the sketch
+                again (it resolves the dependencies) and ask again:
+
+                  \(run)
+                """
+        case .unreadable:
+            return """
+                The public API list is not available here.
+
+                \(head): `Package.resolved` is there but could not be read
+                (damaged, or in a form this tool does not know), so whether it pins
+                `\(Self.identity)` is unknown. If it is damaged, remove it, build the sketch
+                (it writes the file again) and ask again:
+
+                  \(run)
+
+                If the sketch points at mokume by path (while developing mokume), build the list
+                in the mokume repository and put it here instead:
+
+                  \(makeList)
+                """
+        case .revision(let revision):
+            return """
+                The public API list is not available here.
+
+                \(head): `\(Self.identity)` is pinned to a branch or revision
+                (\(revision.prefix(12))), not to a release, and the list is published per release.
+                Depend on a release version and build the sketch again, or build the list from the
+                revision in use in the mokume repository and put it here:
+
+                  \(makeList)
+                """
+        case .noPackage:
+            return """
+                The public API list is not available here.
+
+                \(head): there is no `Package.swift` in \(directory.path) to read it from.
+                """
+        case .version:
+            // 版があるときはここへ来ない
+            return advice(reason: head, cache: cache)
+        }
+    }
+
+    /// 本体のリポジトリで一覧を組み立てて、取り置きの場所へ置く手。
+    static func buildCommand(cache: URL) -> String {
+        "make api-list OUT=\(GivenPath.shellWord(cache))"
+    }
+
     /// 得られなかった理由と、そこからの一手。
     private func advice(reason: String, cache: URL) -> String {
         """
@@ -139,7 +230,7 @@ struct APIListLocator {
 
         Build it in the mokume repository and put it here, and it is returned from then on:
 
-          make api-list OUT="\(cache.path)"
+          \(Self.buildCommand(cache: cache))
         """
     }
 

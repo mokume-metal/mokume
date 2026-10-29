@@ -78,12 +78,14 @@ extension Sketch {
             }
         }
         return try attached(OSCFailure.self, calledAs: #function) {
+            let seams = DatagramSeams.current
             let outbound = destination.map {
-                DatagramSender(host: $0.host, port: $0.port, warn: { Diagnostics.warn($0) })
+                DatagramSender(
+                    host: $0.host, port: $0.port, connect: seams.connect, warn: { Diagnostics.warn($0) })
             }
             return OSCPort(
                 port: port, name: "osc :\(port)",
-                source: NetworkOSCSource(port: port, warn: { Diagnostics.warn($0) }),
+                source: NetworkOSCSource(port: port, acceptor: seams.acceptor, warn: { Diagnostics.warn($0) }),
                 outbound: outbound, owner: self)
         }
     }
@@ -124,7 +126,8 @@ extension Sketch {
             OSCPort(
                 port: nil, name: "osc (send only)", source: SendOnlySource(),
                 outbound: DatagramSender(
-                    host: destination.host, port: destination.port, warn: { Diagnostics.warn($0) }),
+                    host: destination.host, port: destination.port, connect: DatagramSeams.current.connect,
+                    warn: { Diagnostics.warn($0) }),
                 owner: self)
         }
     }
@@ -135,6 +138,8 @@ extension Sketch {
     /// 行けば最初に戻る。どのメッセージが入るかはフレームの数え方だけで決まるので、同じ列からは
     /// 何度回しても同じメッセージが同じフレームに届く — OSC で動かすスケッチを相手なしで
     /// 確かめるときや、展示の前に空回しするときに使う ([ADR-0028] 決定 6・7)。
+    ///
+    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -163,7 +168,7 @@ extension Sketch {
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(messages: [[OSCMessage]]) -> OSCPort {
         let osc = OSCPort(
-            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages),
+            port: nil, name: "osc (recorded)", source: RecordedSource(batches: messages, owner: self),
             outbound: nil, owner: self)
         attach(osc, calledAs: #function, returning: "a port that never receives anything")
         return osc

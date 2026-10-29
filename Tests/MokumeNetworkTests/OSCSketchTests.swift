@@ -241,7 +241,9 @@ struct OSCSketchTests {
     /// **走っている所で呼べば、投げる 4 口は渡したポートで作ったものを足して返す** ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。
     /// 走らせない検査は投げることしか見られないので、成功する側をここで見る (端の 65535 も)。足されたことは、
     /// 終わり (`closePlugins()`) に閉じられて `stopped` になることで見る — 足されていなければ誰も閉じない。
-    /// ポートは実際に開く (すべての口で受ける) が、何も送らず、すぐ閉じる。
+    /// TCP・WebSocket のポートは実際に開く (すべての口で受ける) が、何も送らず、すぐ閉じる。UDP・OSC は
+    /// 疑似の受け口と繋ぎを渡して (``DatagramSeams``)、ポートも socket も開かずに、作る口が渡した手続きで
+    /// 部品を組むことを見る (#3231)。
     @Test("setup() で呼んだ投げる 4 口は、渡したポートで作ったものを走っているスケッチへ足して返す (#2740)")
     func throwingMakersSucceedWhileRunning() throws {
         var tcp: TCPServer?
@@ -250,33 +252,47 @@ struct OSCSketchTests {
         var osc: OSCPort?
         var failures: [String] = []
         let log = OutsideRun()
-        try OutsideRun.$current.withValue(log) {
-            OSCSketch.onSetup = { sketch in
-                do {
-                    tcp = try sketch.createTCPServer(65535)
-                    socket = try sketch.createWebSocketServer(65534)
-                    udp = try sketch.createUDP(listen: 65533, send: ("127.0.0.1", 1))
-                    osc = try sketch.createOSC(listen: 65532, send: ("127.0.0.1", 1))
-                } catch {
-                    failures.append("\(error)")
+        let network = FakeNetwork()
+        let wire = FakeWire()
+        try DatagramSeams.$current.withValue(DatagramSeams(acceptor: network.acceptor, connect: wire.connect)) {
+            try OutsideRun.$current.withValue(log) {
+                OSCSketch.onSetup = { sketch in
+                    do {
+                        tcp = try sketch.createTCPServer(65535)
+                        socket = try sketch.createWebSocketServer(65534)
+                        udp = try sketch.createUDP(listen: 65533, send: ("127.0.0.1", 1))
+                        osc = try sketch.createOSC(listen: 65532, send: ("127.0.0.1", 2))
+                    } catch {
+                        failures.append("\(error)")
+                    }
                 }
+                OSCSketch.onDraw = { _ in
+                    udp?.send("hit")
+                    osc?.send("/hit", 1)
+                }
+                defer { OSCSketch.onSetup = { _ in }; OSCSketch.onDraw = { _ in } }
+                let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
+                try runtime.advance()
+                #expect(failures.isEmpty, "\(failures)")
+                #expect(tcp?.port == 65535)
+                #expect(socket?.port == 65534)
+                #expect(udp?.port == 65533)
+                #expect(osc?.port == 65532)
+                #expect(log.messages.isEmpty, "走っている所では何も言わない: \(log.messages)")
+                runtime.closePlugins()
             }
-            OSCSketch.onDraw = { _ in }
-            defer { OSCSketch.onSetup = { _ in } }
-            let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
-            try runtime.advance()
-            #expect(failures.isEmpty, "\(failures)")
-            #expect(tcp?.port == 65535)
-            #expect(socket?.port == 65534)
-            #expect(udp?.port == 65533)
-            #expect(osc?.port == 65532)
-            #expect(log.messages.isEmpty, "走っている所では何も言わない: \(log.messages)")
-            runtime.closePlugins()
         }
         #expect(tcp?.state == .stopped)
         #expect(socket?.state == .stopped)
         #expect(udp?.state == .stopped)
         #expect(osc?.state == .stopped)
+        // 作る口は、渡した受け口と繋ぎで組んだ (本物のポートは開かない)。送り先は作る口に渡した宛先
+        #expect(network.openedCount == 2, "UDP・OSC が、渡した受け口の手続きで 1 つずつ作らなかった (\(network.openedCount))")
+        // UDP と OSC の送り手は別の待ち行列で繋ぎを作るので、繋ぎの作られる順は決まらない。宛先ごとに見る
+        let sentTo = Dictionary(uniqueKeysWithValues: wire.links.map { ($0.port, $0.sent) })
+        #expect(wire.links.count == 2, "繋ぎの宛先 \(wire.links.map(\.port))")
+        #expect(sentTo[1] == [Array("hit".utf8)], "\(sentTo)")
+        #expect(sentTo[2] == [try Wire.encoded(OSCMessage("/hit", 1))], "\(sentTo)")
     }
 
     @Test("stop() の後は何も届かず、状態は stopped を名乗る")
@@ -289,53 +305,42 @@ struct OSCSketchTests {
     }
 
     /// **`createOSC(send:)` は、受けるポートを開かずに、`createOSC(listen:send:)` と同じ送り手で送る** (#2469)。
-    /// 受け手は検査が別に開く (番号は OS が選ぶ)。送るだけの口は `port` が `nil` で、観測の `inputs` に出ず、
-    /// 作ったスケッチが終わると閉じられて `stopped` になる (足されていなければ誰も閉じない)。
+    /// 送り手は疑似の繋ぎ (``FakeWire``) を渡して、受け手を開かずに、渡した宛先へ出たバイト列を見る (#3231)。
+    /// 送るだけの口は `port` が `nil` で、観測の `inputs` に出ず、作ったスケッチが終わると閉じられて
+    /// `stopped` になる (足されていなければ誰も閉じない)。
     @Test("setup() で呼んだ createOSC(send:) は、受けるポートを開かず送れて、観測の inputs に行を出さない (#2469)")
-    func sendOnlyMakerSendsToAnotherPort() async throws {
-        let told = Told()
-        let source = NetworkOSCSource(port: 0, host: "127.0.0.1", retryAfter: 0.05, warn: told.append)
-        let receiver = OSCPort(
-            port: 0, name: "osc :0", source: source, outbound: nil, owner: nil, warn: told.append)
-        try receiver.open()
-        defer { receiver.close() }
-        try await requireState(told: told, tracing: source) { receiver.state }
-        let target = try #require(source.boundPort)
-
+    func sendOnlyMakerSendsToAnotherPort() throws {
+        let wire = FakeWire()
+        let network = FakeNetwork()
         var sender: OSCPort?
         var failure: String?
-        let runtime = try OutsideRun.$current.withValue(OutsideRun()) {
-            OSCSketch.onSetup = { sketch in
-                do { sender = try sketch.createOSC(send: ("127.0.0.1", target)) } catch { failure = "\(error)" }
+        let runtime = try DatagramSeams.$current.withValue(
+            DatagramSeams(acceptor: network.acceptor, connect: wire.connect)
+        ) {
+            try OutsideRun.$current.withValue(OutsideRun()) {
+                OSCSketch.onSetup = { sketch in
+                    do { sender = try sketch.createOSC(send: ("127.0.0.1", 7000)) } catch { failure = "\(error)" }
+                }
+                OSCSketch.onDraw = { _ in sender?.send("/hit", 1) }
+                defer { OSCSketch.onSetup = { _ in }; OSCSketch.onDraw = { _ in } }
+                let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
+                try runtime.advance()
+                return runtime
             }
-            OSCSketch.onDraw = { _ in sender?.send("/hit", 1) }
-            defer { OSCSketch.onSetup = { _ in }; OSCSketch.onDraw = { _ in } }
-            let runtime = try SketchRuntime(sketch: OSCSketch(), gpu: try RenderDevice())
-            try runtime.advance()
-            return runtime
         }
         #expect(failure == nil)
         let port = try #require(sender)
         #expect(port.port == nil)
         #expect(port.report == nil)
         #expect(port.state == .running)
-
-        // `createOSC(send:)` が組む送り手から送った 1 通が読まれる前提。読まれなかった回は、送り手と受け口の
-        // 様子を名乗って止まる (#3001)
-        let log = SendLog()
-        log.watch { port.sendTrace }
-        let received = await collectCounting(count: 1, log: log) {
-            receiver.supply()
-            return receiver.messages
-        }
-        try await requireSent(
-            !received.isEmpty, "1 通のうち読めたのは \(received.count) 通 (createOSC(send:) の送り手から)", log: log,
-            landing: landing(of: receiver, port: target, told: told))
-        #expect(received.first == OSCMessage("/hit", 1))
+        #expect(!network.opened, "送るだけの口が受け口を作った")
         #expect(port.messages.isEmpty)
         #expect(port.latest("/hit") == nil)
 
         runtime.closePlugins()
         #expect(port.state == .stopped)
+        // `createOSC(send:)` が組む送り手から、渡した宛先へ 1 通出た
+        #expect(wire.links.map(\.port) == [7000], "繋ぎの宛先 \(wire.links.map(\.port))")
+        #expect(wire.sent == [try Wire.encoded(OSCMessage("/hit", 1))], "\(wire.sent)")
     }
 }

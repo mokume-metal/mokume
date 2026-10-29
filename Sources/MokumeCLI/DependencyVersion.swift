@@ -41,6 +41,46 @@ nonisolated enum DependencyVersion {
         case revision(String)
     }
 
+    /// 依存の版が、何から分かるか (分からないなら、なぜか)。
+    ///
+    /// **「版が引けない」には、打つ手の違う理由がある** (#3419)。`mokume new` 直後の未解決を
+    /// 「パスで指している」と決めつけると、利用者を本体の開発手順へ送ってしまう。確かめられる事実
+    /// (`Package.swift` と `Package.resolved` の有無・pin の種類) だけで分け、分からない境目は
+    /// 断定しない。
+    enum State: Equatable {
+        /// 版で固定されている。
+        case version(String)
+        /// 枝または改訂で固定されている。リリースの版ではないので、公開 API の一覧の資産が無い。
+        case revision(String)
+        /// `Package.swift` はあるが `Package.resolved` が無い。**作ったばかりのスケッチの形。**
+        /// パスで指している場合も、解決するまでは同じ形なので区別できない。
+        case unresolved
+        /// `Package.resolved` は読めたが `mokume` の pin が無い。パス依存は pin を持たないので、
+        /// 本体の開発のときもこの形になる (mokume に依存していない場合も)。
+        case notPinned
+        /// `Package.resolved` はあるが読めない (壊れている・読み取れない・知らない形式)。
+        /// **pin が無いのか読めないだけなのかが分からない**ので、パスで指しているとは言えない。
+        case unreadable
+        /// `Package.swift` が無い。スケッチの場所で立っていない。
+        case noPackage
+    }
+
+    /// 依存の版の状態。pin が読めればそれが先で、読めなければ置かれているファイルから分ける。
+    static func state(forPackageAt package: URL) -> State {
+        switch pin(forPackageAt: package) {
+        case .version(let version): return .version(version)
+        case .revision(let revision): return .revision(revision)
+        case nil: break
+        }
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: package.appendingPathComponent("Package.swift").path)
+        else { return .noPackage }
+        let resolved = package.appendingPathComponent("Package.resolved")
+        guard manager.fileExists(atPath: resolved.path) else { return .unresolved }
+        // pin が引けなかったのは、読めたうえで無いのか、そもそも読めないのかのどちらか
+        return SwiftPM.read(SwiftPM.Resolved.self, at: resolved) == nil ? .unreadable : .notPinned
+    }
+
     /// 解決された版。読めなければ `nil`。
     ///
     /// 形式は SwiftPM の版 2 以降 (`pins` が根にある) を読む。ひな形は tools-version 6.2 を

@@ -107,6 +107,10 @@ enum RunCommand {
     /// - Parameters:
     ///   - environment: 環境。**検査から渡せる形にしてある。**
     ///   - home: ホームディレクトリ。同上。
+    ///   - announce: 依存の解決を始める前に、その待ちを名乗る先 (#3427)。既定は標準出力へ 1 行。
+    ///     **見張りは自分の書き方 (`WatchCommand.say`) を渡す** — 速さの行が書き換え続けている
+    ///     最中に素の `print` で書くと、行の途中から続いて読めなくなる (#685)。
+    ///   - resolver: 解決の `swift` を起こす手。**検査から偽の手を渡せる形にしてある。**
     ///
     /// ## main actor の外で走る
     ///
@@ -118,7 +122,9 @@ enum RunCommand {
     nonisolated static func context(
         in directory: URL, invocation: Invocation,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        announce: (String) -> Void = { print($0) },
+        resolver: (_ arguments: [String], _ directory: URL) -> Void = launchResolve
     ) throws(CommandFailure) -> BuildContext {
         let declared = try dumpPackage(in: directory)
         let product = declared?.executableProductName
@@ -153,7 +159,7 @@ enum RunCommand {
             package: declared, pin: pin, toolchain: toolchain)
         // 足りないのが固定だけなら、1 回だけ解決して取り直す
         if shareability == .unshared(.unresolved) {
-            resolveDependencies(in: directory, root: root)
+            resolveDependencies(in: directory, root: root, announce: announce, resolver: resolver)
             pin = DependencyVersion.pin(forPackageAt: directory)
             shareability = BuildDirectory.shareability(
                 package: declared, pin: pin, toolchain: toolchain)
@@ -182,12 +188,28 @@ enum RunCommand {
     /// **置き場は共有の 1 つに固定する。** 解決に積まれるのは依存の複製と prebuilt
     /// (実測 200MB) だけで、コンパイルの産物は 1 バイトも入らない — 取り違えようが
     /// 無いので、鍵で分ける理由が無い。
-    nonisolated private static func resolveDependencies(in directory: URL, root: URL) {
+    ///
+    /// **始める前に 1 行名乗る** (#3427)。初回は依存を取りに行くので数秒かかり (空の置き場で
+    /// 3.4 秒の実測)、`Tool:` の行の後が無音になる。名乗るのは始まりの 1 行だけで、
+    /// 測れない進みは名乗らない。標準エラーを流して名乗りの代わりにしない — 捨てるのは、
+    /// 失敗を次のビルドが見せる設計による。
+    nonisolated private static func resolveDependencies(
+        in directory: URL, root: URL, announce: (String) -> Void,
+        resolver: (_ arguments: [String], _ directory: URL) -> Void
+    ) {
         let store = root.appendingPathComponent(
             BuildDirectory.resolveSegment, isDirectory: true)
-        _ = try? swift(
-            ["package", "resolve", "--scratch-path", store.path], in: directory,
-            capturing: true, errors: .discard)
+        announce(resolvingLine)
+        resolver(["package", "resolve", "--scratch-path", store.path], directory)
+    }
+
+    /// 依存を解決する前に名乗る 1 行 (#3427)。
+    nonisolated static let resolvingLine =
+        "Resolving the sketch's dependencies… (the first one takes a while)"
+
+    /// 本物の解決。標準出力を掴み、標準エラーを捨て、失敗しても投げない。
+    nonisolated static func launchResolve(_ arguments: [String], in directory: URL) {
+        _ = try? swift(arguments, in: directory, capturing: true, errors: .discard)
     }
 
     /// 見張りの区画が残っている場所で `run` したときに名乗る 1 行。区画が無ければ `nil`。

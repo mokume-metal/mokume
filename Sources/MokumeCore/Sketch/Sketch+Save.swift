@@ -217,6 +217,7 @@ extension SketchPart {
     ///         if frameCount == 2 { beginRecord(folder + "frame-##.png") }
     ///         if frameCount == 5 {
     ///             endRecord()  // 書き終えてから返る
+    ///             // 書き終えたばかりの 3 枚を読む。draw() は投げ返せず、読めないのは書き方の誤りなので `try!`
     ///             strip = (0..<3).map { try! loadImage(folder + "frame-0\($0).png") }
     ///         }
     ///
@@ -316,7 +317,7 @@ extension SketchPart {
     /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    // shot: 1 snippet=5f85730d
+    // shot: 1 snippet=dbe3d06b
     public func beginRecord(_ pattern: String) {
         guard let runtime = runningSketch else {
             return OutsideRun.log.warn(.beginRecord)

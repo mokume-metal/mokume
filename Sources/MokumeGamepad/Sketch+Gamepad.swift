@@ -61,6 +61,8 @@ extension Sketch {
     /// 何度回しても同じ動きになる — パッドで動かすスケッチを機材の無い場所で確かめるときや、展示の
     /// 前に空回しするときに使う ([ADR-0028] 決定 6・7)。
     ///
+    /// **外して足し直しても、i 番目のフレームには `inputs[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    ///
     /// ```swift
     /// final class Replay: Sketch {
     ///     var pad: Gamepad?
@@ -159,7 +161,7 @@ final class GamepadRoster {
     func recorded(_ inputs: [GamepadInput?], for sketch: any Sketch, calledAs call: String) -> Gamepad {
         // 番号は足せたときだけ進める。外で足せなかったパッドが番号を使うと、後の `setup()` のパッドが `recorded #2` から始まる
         let id = "recorded #\(recordedCount + 1)"
-        let pad = Gamepad(id: id, name: "gamepad (\(id))", source: RecordedGamepadSource(inputs: inputs))
+        let pad = Gamepad(id: id, name: "gamepad (\(id))", source: RecordedGamepadSource(inputs: inputs, owner: sketch))
         if sketch.attach(pad, calledAs: call, returning: "a gamepad that never reports anything") {
             recordedCount += 1
         }
