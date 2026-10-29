@@ -82,6 +82,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         case pendingWindow
         /// 自分の窓へ出す。付属の `hasPresented` は最初の 1 枚の扱いに使う。
         case window(NSWindow, SketchSurface, hasPresented: Bool)
+        /// ホストのアプリの `NSView` の中へ出す (``SketchView``・#3511)。**窓は持たない** — 窓も
+        /// アプリケーションの寿命もホストのもので、こちらは面と駆動源だけを持つ。付属の
+        /// `hasPresented` は ``window`` と同じく最初の 1 枚の扱いに使う。
+        case embedded(SketchSurface, hasPresented: Bool)
         /// 外のプロセスが持つ区画へ差し出す。**窓は持たない。**
         case shared(SharedFrameSurface)
         /// 画面へは出さず、決めた枚数を書き出して終わる (`mokume render`・[#1282])。
@@ -122,6 +126,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         switch outlet {
         case .shared, .render: false
         case .pendingWindow, .window: true
+        // 最後の窓を数えるのはホストで、`NSApplication` を回すのもホストである
+        case .embedded: false
         }
     }
 
@@ -134,7 +140,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         switch outlet {
         case .shared, .render: .accessory
         // 窓はまだ建っていないが、建てると決まっている
-        case .pendingWindow, .window: .regular
+        // 据えるのは ``run()`` だけで、埋め込んだ経路は据えない (ホストのアプリの方針)
+        case .pendingWindow, .window, .embedded: .regular
         }
     }
 
@@ -352,8 +359,11 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 最小化・他の窓による被覆・別の Space への切り替えを **1 つの判定で覆う**。
     /// 最小化だけを特別扱いしないのは、どれも「画面へ出しても誰も見ない」という
     /// 同じ状態だからである。
+    ///
+    /// 埋め込んだ経路では、面が載っているホストの窓を読む。
     private var isWindowVisible: Bool {
-        windowVisibilityForTesting ?? window?.occlusionState.contains(.visible) ?? false
+        windowVisibilityForTesting
+            ?? (window ?? embeddedHostWindow)?.occlusionState.contains(.visible) ?? false
     }
 
     /// 窓が見えているかの答えを**検査から決める**。製品の経路では常に `nil`。
@@ -517,6 +527,88 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         return true
     }
 
+    // MARK: - ホストのアプリの中で走らせる (SketchView・#3511)
+
+    /// 埋め込んだ面が載っているホストの窓。載っていなければ `nil`。
+    private var embeddedHostWindow: NSWindow? {
+        if case .embedded(let surface, _) = outlet { surface.window } else { nil }
+    }
+
+    /// ホストのアプリの中で走らせる用意をして、絵を映す面を返す。**面をホストの `NSView` へ載せるのは
+    /// 呼び出し側** (``SketchView``)。
+    ///
+    /// ``run()`` の代わりに呼ぶ。**`NSApplication` を回さない** — アプリの寿命・メニュー・窓・Dock の
+    /// 方針はホストのもので、ここは面と駆動源と省電力の断りだけを持つ。据えないもの:
+    ///
+    /// - 活動の方針 (`setActivationPolicy`)・`NSApplicationDelegate`・終わりの合図 (`StopSignals`)・
+    ///   速さの名乗り: プロセス全体に効くので、ホストのものに触れない
+    /// - ディスプレイのスリープの断り: 画面が消えるのを断るかはホストが決める (止まれば駆動源の
+    ///   予備が叩く・``ScreenDisplayLink``)
+    ///
+    /// **1 プロセスに走らせられるのは 1 つだけ** (``refusesSecondRun()``)。既に走っているものが在れば、
+    /// 断ったことを 1 度だけ言って `nil` を返す。
+    ///
+    /// 駆動源は面がホストの窓に載ってから ``attachEmbeddedDriver()`` で繋ぐ。終わるときは
+    /// ``stopEmbedded()`` を呼ぶ。
+    func startEmbedded() -> SketchSurface? {
+        guard !SketchApplication.refusesSecondRun() else { return nil }
+        let surface = SketchSurface(
+            frame: NSRect(x: 0, y: 0, width: runtime.target.width, height: runtime.target.height),
+            device: gpu.device, input: runtime.input,
+            canvasSize: (runtime.target.width, runtime.target.height))
+        surface.wantsLayer = true
+        surface.autoresizingMask = [.width, .height]
+        // **つまみは絵の外に立つ** (ADR-0030 決定 1)。`Sketch.main()` の窓と同じく重ねる
+        KnobOverlay.makeIfNeeded(for: runtime.paramRegistry) { [runtime] in runtime.frameNumbers }?
+            .attach(to: surface)
+        outlet = .embedded(surface, hasPresented: false)
+        SketchApplication.running = self
+        // 省電力の間引きを断る (ADR-0012 決定 5)。走らせている間ずっと保持し、終わるときに返す
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "keeping the sketch's frames advancing at a steady rate")
+        return surface
+    }
+
+    /// 面がホストの窓に載った。駆動源を窓の画面へ繋ぎ、窓が移ったら追う。
+    ///
+    /// **窓に何も据わっていなければ、面を第一応答者にする** (キーが 1 件も来ないため・
+    /// ``SketchSurface/acceptsFirstResponder``)。ホストが別のものを据えていれば奪わない。
+    func attachEmbeddedDriver() {
+        guard case .embedded(let surface, _) = outlet, !isTerminating,
+            let window = surface.window
+        else { return }
+        if window.firstResponder == nil || window.firstResponder === window {
+            window.makeFirstResponder(surface)
+        }
+        surface.synchronizeDrawableSize()
+        screenLink.attach(to: window.screen ?? NSScreen.main, following: window)
+    }
+
+    /// 面がホストの窓から外れた。駆動源を畳む (窓が無い間は進めない)。載り直したら
+    /// ``attachEmbeddedDriver()`` が繋ぎ直す。
+    func detachEmbeddedDriver() {
+        guard case .embedded = outlet else { return }
+        screenLink.invalidate()
+    }
+
+    /// ホストの中で走らせるのをやめて、後始末をする。**何度呼んでもよい。**
+    ///
+    /// ``willTerminate()`` と同じ後始末を、`NSApplication` を終わらせずに通す。差込口 (カメラ・音・
+    /// シリアル・ソケット) を閉じ、撮っていた動画は書き切りを待つ。**走っているものの印を外す** — 外さないと
+    /// 以後の `SketchView` が断られる。
+    func stopEmbedded() {
+        guard case .embedded = outlet, !isTerminating else { return }
+        isTerminating = true
+        runtime.closePlugins()
+        screenLink.invalidate()
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
+        if SketchApplication.running === self { SketchApplication.running = nil }
+    }
+
     /// 1 秒ごとに速さを名乗る。
     ///
     /// **付け足しは本体を妨げない** ([ADR-0029] 決定 5)。投げる経路を持たず、フレームの
@@ -655,8 +747,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             runtime.beginRecord(request.destination, rendering: request.frameCount)
             screenLink.attach(to: NSScreen.main)
             return
-        // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る
-        case .window: return
+        // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る。埋め込んだ経路は
+        // ここを通らず、ホストの窓に載ったとき ``attachEmbeddedDriver()`` が繋ぐ
+        case .window, .embedded: return
         case .pendingWindow: break
         }
         // **全画面なら、選んだディスプレイの画面に立てる** (#2020)。位置も開く大きさの指定も
@@ -939,6 +1032,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 毎リフレッシュ渡すのは、窓が前に出たか・ポインタが面の上かが、要求と関係なく変わるため
     /// である。
     private func followPointerLockRequest() {
+        if case .embedded(let surface, _) = outlet {
+            surface.followPointerLock(requested: runtime.pointerLockRequested)
+            surface.followCursorHiding(requested: runtime.cursorHidingRequested)
+            if let window = surface.window { followSelectionRequest(window: window, surface: surface) }
+            return
+        }
         guard case .window(let window, let surface, _) = outlet else { return }
         surface.followPointerLock(requested: runtime.pointerLockRequested)
         // 矢印を隠す要求も同じ経路で渡す ([#2439](https://github.com/mokume-metal/mokume/issues/2439))
@@ -1133,34 +1232,47 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
                 lastShown = shown
             }
         case .window(let window, let surface, let hasPresented):
-            guard let layer = surface.metalLayer,
-                FramePresenter.shouldPresent(
-                    windowIsVisible: isWindowVisible, hasPresented: hasPresented)
-            else {
-                // 見えていない間は出さない。見えるようになったら、同じ絵でも 1 回出し直す (#2367)
-                lastShown = nil
-                return
+            if try presentToSurface(surface, hasPresented: hasPresented), !hasPresented {
+                outlet = .window(window, surface, hasPresented: true)
             }
-            // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。窓の面の大きさ・明るさの
-            // 設定も鍵に入る。GPU が前の present を打ち切っていたら、次の書き込みは来ないので出し直す
-            let shown = shownFrame(
-                drawable: layer.drawableSize, pointerLock: false, cursorHidden: false,
-                selection: nil)
-            if hasPresented, runtime.isHeldStill, shown == lastShown {
-                if gpu.undelivered(presenter.lastSubmission) != true { return }
-                lastShown = nil
-            }
-            // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
-            // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
-            // 戻らないので、立てるのも 1 度でよい
-            if try presenter.present(runtime.target, to: layer) {
-                lastShown = shown
-                if !hasPresented { outlet = .window(window, surface, hasPresented: true) }
+        case .embedded(let surface, let hasPresented):
+            if try presentToSurface(surface, hasPresented: hasPresented), !hasPresented {
+                outlet = .embedded(surface, hasPresented: true)
             }
         // 書き出す経路の出口は撮る係だけで、絵はランタイムが配っている
         case .pendingWindow, .render:
             return
         }
+    }
+
+    /// 自分で持つ面 (窓の中の面・ホストの中の面) へ絵を出す。**出したら `true`** (最初の 1 枚の印を
+    /// 立てるのは呼び出し元)。
+    private func presentToSurface(_ surface: SketchSurface, hasPresented: Bool) throws(RenderFailure) -> Bool {
+        guard let layer = surface.metalLayer,
+            FramePresenter.shouldPresent(
+                windowIsVisible: isWindowVisible, hasPresented: hasPresented)
+        else {
+            // 見えていない間は出さない。見えるようになったら、同じ絵でも 1 回出し直す (#2367)
+            lastShown = nil
+            return false
+        }
+        // **止まっている間は、絵が変わらなければ出し直さない** (#2367)。窓の面の大きさ・明るさの
+        // 設定も鍵に入る。GPU が前の present を打ち切っていたら、次の書き込みは来ないので出し直す
+        let shown = shownFrame(
+            drawable: layer.drawableSize, pointerLock: false, cursorHidden: false,
+            selection: nil)
+        if hasPresented, runtime.isHeldStill, shown == lastShown {
+            if gpu.undelivered(presenter.lastSubmission) != true { return false }
+            lastShown = nil
+        }
+        // **書き戻すのは 1 度だけ。** 素直に毎回組み直すと、出すたびに窓と面の
+        // retain/release が乗る (秒 60 回)。`shouldPresent` は一度 true になれば
+        // 戻らないので、立てるのも 1 度でよい
+        if try presenter.present(runtime.target, to: layer) {
+            lastShown = shown
+            return true
+        }
+        return false
     }
 
     /// いま出そうとしている絵の鍵 (``ShownFrame``)。**絵そのものは読まない** — 描画先の番号と明るさの

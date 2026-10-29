@@ -451,6 +451,7 @@ FOREIGN_ALLOWLIST = {
     "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
     "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
     "SketchPart.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
+    "SketchView.body": "SwiftUI の `View` の要件そのもの。SwiftUI のアプリへ埋め込む口なので、`View` として並べるほかに表せない (ADR-0045 決定 11・#3511)",
     "SketchRuntime.renderFrame(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
     "WorkDirectory.base": "作業場所の在処。WorkDirectory は場所そのものを扱う型なので URL が本体",
     "WorkDirectory.facet(_:)": "作業場所の下位を指す (WorkDirectory.base と同じ理由)",
