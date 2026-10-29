@@ -5586,11 +5586,17 @@ public final class Canvas {
         if coverageSpans.isEmpty {
             coverageBuffer = try coverageStorage.write([Float(1)], holding: 1)
         } else {
-            var coverages = [Float](repeating: 1, count: vertices.count)
+            // **置き場へ直に書く** ([#3253])。中間の `[Float]` を毎フレーム頂点数ぶん確保して、もう一度写さない
+            //
+            // [#3253]: https://github.com/mokume-metal/mokume/issues/3253
+            let count = vertices.count
+            let (storage, bytes) = try coverageStorage.writableBytes(holding: count)
+            let coverages = bytes.bindMemory(to: Float.self, capacity: count)
+            coverages.initialize(repeating: 1, count: count)
             for span in coverageSpans {
-                for index in span.range where index < coverages.count { coverages[index] = span.value }
+                for index in span.range.clamped(to: 0..<count) { coverages[index] = span.value }
             }
-            coverageBuffer = try coverageStorage.write(coverages, holding: coverages.count)
+            coverageBuffer = storage
         }
         let formBuffer = try formInstanceStorage.write(
             formInstances, holding: max(formInstances.count, 1))
@@ -6174,19 +6180,21 @@ public final class Canvas {
                 afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
             shadowBake.rebakeBarriersEncoded += 1
         }
-        encoder.setRenderPipelineState(pipeline.shadowState)
+        // **パイプラインと引数表は、ここでは束ねない** ([#3253])。落とす列ごとに ``encodeCaster(_:from:memory:on:)``
+        // が束ねるので、ここで束ねても最初の列が上書きし、列が無ければ描かない
+        //
+        // [#3253]: https://github.com/mokume-metal/mokume/issues/3253
         encoder.setDepthStencilState(pipeline.solidDepthState)
         encoder.setViewport(
             MTLViewport(
                 originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
                 znear: 0, zfar: 1))
         argumentTable.setAddress(
-            solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-        argumentTable.setAddress(
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-        // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
-        // 前後判定が書く) ので、断片段に渡すものが無い
-        encoder.setArgumentTable(argumentTable, stages: [.vertex])
+        // **前の列と同じ設定は設定し直さない** (本描画の `encodeBatches` と同じ・``EncodedStateMemory``)。
+        // 引数表は使い回しなので、記録はこの呼び出しの頭で空にする。投影の口は焼く間ずっと同じなので、
+        // 記録を通さずここで 1 度だけ束ねた
+        var memory = EncodedStateMemory()
         // 値の区画は基本図形を飛ばして詰めた番号 (``detailRegionCount``)。落とす列は立体か平面で、
         // 基本図形は影へ焼かない (`Canvas.form` が `castsShadow` を偽にする)
         var detailIndex = 0
@@ -6202,7 +6210,7 @@ public final class Canvas {
                     indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
                     instances: instanceBuffer.gpuAddress,
                     values: batchValues.gpuAddress + detailOffset),
-                on: encoder)
+                memory: &memory, on: encoder)
         }
         // 持ち越した列は、控えたときに上げた区画を読む (上げ直さない)。面が既に持っていれば焼かない
         if !adding {
@@ -6216,7 +6224,7 @@ public final class Canvas {
                         indexBase: caster.indexOffset / MemoryLayout<UInt32>.stride,
                         instances: address + UInt64(caster.instanceOffset),
                         values: address + UInt64(caster.valuesOffset)),
-                    on: encoder)
+                    memory: &memory, on: encoder)
             }
         }
         encodeShadowBarrier(on: encoder)
@@ -6242,25 +6250,38 @@ public final class Canvas {
     }
 
     /// 落とす列を 1 つ焼く。
+    ///
+    /// **前の列と同じ設定は設定し直さない** ([#3253]・本描画の ``EncodedStateMemory`` と同じ書き方)。
+    /// 引数表は束ね直す (`setArgumentTable`) が、中身の書き込み (`setAddress`)・パイプライン・巻き方・
+    /// 捨て方は、前の列と違うときだけ呼ぶ。
+    ///
+    /// [#3253]: https://github.com/mokume-metal/mokume/issues/3253
     private func encodeCaster(
-        _ batch: Batch, from source: CasterSource, on encoder: any MTL4RenderCommandEncoder
+        _ batch: Batch, from source: CasterSource, memory: inout EncodedStateMemory,
+        on encoder: any MTL4RenderCommandEncoder
     ) {
-        encoder.setRenderPipelineState(
+        let state =
             batch.strokeGeometry != nil
-                ? pipeline.solidStrokeShadowState
-                : batch.usesUnitShape ? pipeline.unitShapeShadowState : pipeline.shadowState)
+            ? pipeline.solidStrokeShadowState
+            : batch.usesUnitShape ? pipeline.unitShapeShadowState : pipeline.shadowState
+        if memory.changes(pipeline: ObjectIdentifier(state)) { encoder.setRenderPipelineState(state) }
+        func bind(_ address: UInt64, _ index: Int) {
+            if memory.changes(address: address, index: index) {
+                argumentTable.setAddress(address, index: index)
+            }
+        }
         // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される
         // ので、足すのは 0 で、区画の頭がそのまま束ねる番地になる
-        argumentTable.setAddress(
+        bind(
             (batch.ownVertices?.gpuAddress ?? source.vertices) + batch.vertexBaseShift,
-            index: ShapePipeline.vertexBufferIndex)
-        argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
-        argumentTable.setAddress(
+            ShapePipeline.vertexBufferIndex)
+        bind(source.values, ShapePipeline.valuesBufferIndex)
+        bind(
             (batch.instances?.storage.gpuAddress ?? source.instances)
                 + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
-            index: ShapePipeline.instanceBufferIndex)
+            ShapePipeline.instanceBufferIndex)
         // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
         // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
         //
@@ -6273,8 +6294,9 @@ public final class Canvas {
         //
         // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
         // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
-        encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
-        encoder.setCullMode(batch.cullMode)
+        let winding = ShadowMap.frontFacing(isMirrored: batch.isMirrored)
+        if memory.changes(frontFacing: winding) { encoder.setFrontFacing(winding) }
+        if memory.changes(cullMode: batch.cullMode) { encoder.setCullMode(batch.cullMode) }
         encoder.setArgumentTable(argumentTable, stages: [.vertex])
         if let arguments = batch.indirectArguments?.storage {
             // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)
