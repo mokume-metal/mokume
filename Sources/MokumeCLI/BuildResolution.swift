@@ -99,11 +99,16 @@ extension BuildResolver {
     ///
     /// - Parameter running: 走っている `swift` を外から止められるように掴む先。
     ///   **見張りだけが渡す** (#1147)。
+    /// - Parameter announce: 依存の解決を始める前の名乗りの書き先 (#3427)。**見張りだけが渡す** —
+    ///   既定の素の `print` は、速さの行が書き換えている最中だと行の途中から続く (#685)。
+    ///   導くのは作り直しの糸 (main actor の外) からも来るので、隔離を持たずに呼べる形でなければならない。
     static func live(
-        in directory: URL, invocation: Invocation, running: RunningBuild? = nil
+        in directory: URL, invocation: Invocation, running: RunningBuild? = nil,
+        announce: @escaping @Sendable (String) -> Void = { print($0) }
     ) -> BuildResolver {
         BuildResolver(directory: directory) { directory throws(CommandFailure) in
-            let context = try RunCommand.context(in: directory, invocation: invocation)
+            let context = try RunCommand.context(
+                in: directory, invocation: invocation, announce: announce)
             return BuildResolution(
                 context: context,
                 binPath: try RunCommand.binPath(

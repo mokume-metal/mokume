@@ -130,4 +130,85 @@ struct DependencyVersionTests {
                 "mokume dependency: \(DoctorCommand.unknown) — no pin in Package.resolved "
                     + "(pointing at a path does this)"))
     }
+
+    // MARK: - 版が引けない理由 (#3419)
+
+    private func makeSketch(resolved: String?, manifest: Bool = true) throws -> URL {
+        let root = try makePackage(resolved)
+        if manifest {
+            try "// swift-tools-version: 6.2\n".write(
+                to: root.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        }
+        return root
+    }
+
+    @Test("版が引けない理由を、置かれているファイルから分ける")
+    func tellsWhyTheVersionIsUnknown() throws {
+        // 作ったばかり: Package.swift があって Package.resolved が無い
+        #expect(DependencyVersion.state(forPackageAt: try makeSketch(resolved: nil)) == .unresolved)
+        // 解決済みだが mokume の pin が無い (パス依存。swift-syntax だけが載る)
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved:
+                        #"{"pins":[{"identity":"swift-syntax","state":{"version":"603.0.2"}}],"version":3}"#))
+                == .notPinned)
+        // 版で固定 / 改訂で固定
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved: #"{"pins":[{"identity":"mokume","state":{"version":"0.5.0"}}],"version":3}"#))
+                == .version("0.5.0"))
+        #expect(
+            DependencyVersion.state(
+                forPackageAt: try makeSketch(
+                    resolved:
+                        #"{"pins":[{"identity":"mokume","state":{"branch":"main","revision":"abcdef0123456789"}}],"version":3}"#))
+                == .revision("abcdef0123456789"))
+        // スケッチの場所でない
+        #expect(
+            DependencyVersion.state(forPackageAt: try makeSketch(resolved: nil, manifest: false))
+                == .noPackage)
+        // 読めない (壊れている): pin が無いのではなく、読めない
+        #expect(
+            DependencyVersion.state(forPackageAt: try makeSketch(resolved: "{ not json"))
+                == .unreadable)
+    }
+
+    /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。
+    @Test("まだ解決していないスケッチには、パスで指しているとは言わず、解決の手を言う")
+    func doesNotBlameAPathWhenNotResolvedYet() {
+        let line = DoctorCommand.dependencyLine(nil, state: .unresolved)
+        #expect(line.contains("not resolved yet"))
+        #expect(!line.contains("pointing at a path"))
+        // 道具の既定と同じ置き場で解決する `run` を勧める。裸の `swift package resolve` は
+        // スケッチ直下に `.build/` を作る (#3419)
+        #expect(line.contains("\(Command.name) run"))
+        #expect(!line.contains("swift package resolve"))
+        // 解決してあるのに pin が無い回は、今までの文言のまま
+        #expect(DoctorCommand.dependencyLine(nil, state: .notPinned).contains("pointing at a path does this"))
+    }
+
+    /// 読めない `Package.resolved` や枝・改訂の固定も、「パスで指している」とは言わない (#3419)。
+    @Test("読めない Package.resolved や改訂の固定を、パスで指しているとは言わない")
+    func doesNotBlameAPathWhenTheVersionIsUnknownForOtherReasons() {
+        let unreadable = DoctorCommand.dependencyLine(nil, state: .unreadable)
+        #expect(unreadable.contains("could not be read"))
+        #expect(!unreadable.contains("pointing at a path"))
+        let revision = DoctorCommand.dependencyLine(nil, state: .revision("0123456789abcdef"))
+        #expect(revision.contains("0123456789ab"))
+        #expect(!revision.contains("pointing at a path"))
+        #expect(!DoctorCommand.dependencyLine(nil, state: .noPackage).contains("pointing at a path"))
+    }
+
+    /// 状態を読む配線 (`state(for:)` が `dependencyState` を埋める) を、実物の置き場から固定する。
+    @Test("doctor の状態は、壊れた Package.resolved を unreadable として読む")
+    func doctorReadsAnUnreadablePackageResolved() throws {
+        let sketch = try makeSketch(resolved: "{ not json")
+        let state = DoctorCommand.probeState(
+            in: sketch, facetBase: sketch, environment: [BuildDirectory.environmentKey: sketch.path],
+            home: sketch)
+        #expect(state.dependencyState == .unreadable)
+        #expect(state.dependency == nil)
+    }
 }

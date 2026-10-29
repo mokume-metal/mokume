@@ -113,7 +113,8 @@ enum WatchCommand {
         // `dump-package` と `--show-bin-path` が二重に走る (#1067)
         let running = RunningBuild()
         let resolver = BuildResolver.live(
-            in: directory, invocation: invocation, running: running)
+            in: directory, invocation: invocation, running: running,
+            announce: { say($0) })
         let context = try resolver.current().context
 
         // **場所を 1 本のものとして取る。区画に触れる前に** ([#2093](https://github.com/mokume-metal/mokume/issues/2093))。
@@ -1134,7 +1135,9 @@ enum WatchCommand {
     /// **端末では、速さの行を消してから書く。** 走らせているスケッチは同じ 1 行を書き換え
     /// 続けているので (`FrameRateNotice`)、消さずに書くと作り直しの記録がその行の**途中から
     /// 続く**形になり読めなくなる ([#685](https://github.com/mokume-metal/mokume/issues/685))。
-    static func say(_ text: String, isTerminal: Bool = isatty(STDOUT_FILENO) != 0) {
+    ///
+    /// **隔離を持たない。** 導き直しは作り直しの糸 (main actor の外) から依存の解決を名乗る (#3427)。
+    nonisolated static func say(_ text: String, isTerminal: Bool = isatty(STDOUT_FILENO) != 0) {
         print(line(text, isTerminal: isTerminal))
     }
 
@@ -1147,7 +1150,7 @@ enum WatchCommand {
     ///
     /// **行ごとに消す** (#2521)。理由のように複数行を 1 度に書くと、先頭の行しか消さない形では
     /// 2 行目以降に速さの行の残りが重なる。
-    static func line(_ text: String, isTerminal: Bool) -> String {
+    nonisolated static func line(_ text: String, isTerminal: Bool) -> String {
         guard isTerminal else { return text }
         return text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { "\r\u{1B}[2K" + $0 }.joined(separator: "\n")
