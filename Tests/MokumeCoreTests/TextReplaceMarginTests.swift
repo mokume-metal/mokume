@@ -223,4 +223,69 @@ struct TextReplaceMarginTests {
         try #require(edge > 20)
         #expect(wrong == 0, "\(wrong) 画素が重ねる絵と違う。縁の画素が下地を消している")
     }
+
+    // MARK: - 条件 6 — 縁で下地を残さない字
+
+    /// 置き換えで描いた絵が、下地に依らないか。2 つの下地へ同じ絵を描き、**下地のまま残った画素を除いて**
+    /// 全画素が一致することを見る。下地を混ぜる画素 (縁で下地を残す) があれば、下地ごとに値が違う。
+    private func groundIndependence(
+        _ body: (Canvas) -> Void
+    ) throws -> (touched: Int, dependent: Int, brightest: Float) {
+        func render(on ground: LinearRGBA) throws -> PixelBuffer {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
+            try canvas.draw {
+                canvas.background(ground)
+                body(canvas)
+            }
+            return try canvas.target.readPixels()
+        }
+        let (first, second) = (red, blue)
+        let (a, b) = (try render(on: first), try render(on: second))
+        var touched = 0
+        var dependent = 0
+        var brightest: Float = 0
+        for y in 0..<Self.size {
+            for x in 0..<Self.size {
+                let (p, q) = (a[x, y], b[x, y])
+                brightest = max(brightest, p.red, p.green, p.blue, p.alpha)
+                if !differs(p, first) && !differs(q, second) { continue }
+                touched += 1
+                if differs(p, q) { dependent += 1 }
+            }
+        }
+        return (touched, dependent, brightest)
+    }
+
+    @Test("色を持つ字形 (絵文字) は、置き換えで描くと透けた画素をそのまま写し、縁で下地を残さない")
+    func aColoredGlyphCopiesItsTransparentPixels() throws {
+        let result = try groundIndependence { canvas in
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.textSize(70)
+            canvas.blendMode(.replace)
+            canvas.text("\u{1F600}", 40, 110)
+        }
+        try #require(result.touched > 200, "絵文字が描けていない (\(result.touched))")
+        #expect(result.dependent == 0, "\(result.dependent) 画素が下地と混ざった")
+    }
+
+    @Test("利用者の断片が効いている字は、置き換えで描くと色をそのまま置き、1 を越えず下地にも依らない")
+    func aShaderedGlyphKeepsItsOwnCoverage() throws {
+        let result = try groundIndependence { canvas in
+            // 字の被覆 (in.texel) を掛けない断片。`S + D·(1 − 被覆)` にすると縁で 1 を越える
+            guard
+                let shader = try? canvas.makeShader(
+                    "float4 paint(Fragment in, Values values) { return in.color; }")
+            else { return }
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.textSize(60)
+            canvas.shader(shader)
+            canvas.blendMode(.replace)
+            canvas.text("o", 50, 110)
+        }
+        try #require(result.touched > 200, "字が描けていない (\(result.touched))")
+        #expect(result.dependent == 0, "\(result.dependent) 画素が下地と混ざった")
+        #expect(result.brightest <= 1 + 1.0 / 255, "字の縁で値が 1 を越えた: \(result.brightest)")
+    }
 }

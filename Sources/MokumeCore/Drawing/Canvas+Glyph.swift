@@ -624,6 +624,15 @@ extension Canvas {
         defer { isPlacingDeferredGlyph = false }
         glyphQuadsPlaced += 1
         useGlyphTexture()
+        // **置き換える混ぜ方で単色の字を置くときだけ、縁の被覆を下地と混ぜる** (下の印・#3111)。色を持つ字形
+        // (絵と同じ性質で、透けた画素をそのまま写す約束・#1542) と、利用者の断片が効いている字 (被覆は断片が
+        // 持つ。`S` が字形の α を掛けるとは限らない) は、これまでどおり色をそのまま置く。2 つを同じ列に
+        // 混ぜると断片が見分けられないので、種類が替わったら列を閉じる
+        let blendsEdge = style.blendMode == .replace && currentShader == nil
+        if blendsEdge {
+            if let kind = openBatchGlyphColored, kind != entry.isColored { closeBatch() }
+            openBatchGlyphColored = entry.isColored
+        }
         // **色を持つ字形には塗りの色を掛けない。** 焼き場の値に頂点の色を掛けるのが
         // 合成の唯一の式なので、掛けても変わらない色 — 白 — を積めば、字形の色が
         // そのまま出る。塗りの透明度だけは効かせたいので、白をその透明度で乗算した
@@ -636,10 +645,10 @@ extension Canvas {
             x: penX + entry.offset.x, y: baseline + entry.offset.y,
             width: entry.size.x, height: entry.size.y,
             uvMin: entry.uvMin, uvMax: entry.uvMax, color: color)
-        // **置き換える混ぜ方で置いた字は、字形の縁の被覆が 1 未満になる** (焼き場の α)。縁の画素に下地を
+        // **置き換える混ぜ方で置いた単色の字は、字形の縁の被覆が 1 未満になる** (焼き場の α)。縁の画素に下地を
         // 残す断片で描くので、細い線の帯と同じ印を立てる (``Batch/thinCoverage``・#3111)。**積んだ後に
         // 立てる** — 積む (``beginFlat()``) が前の列を閉じると、印は閉じた列が持っていってしまう
-        if style.blendMode == .replace { openBatchHasThinCoverage = true }
+        if blendsEdge, !entry.isColored { openBatchHasThinCoverage = true }
         return start
     }
 
