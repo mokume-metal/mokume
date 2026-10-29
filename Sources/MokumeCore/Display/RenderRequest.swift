@@ -19,7 +19,9 @@ import Foundation
 /// ## 渡す形
 ///
 /// 1 つの環境変数に `<fps>:<枚数>:<行き先>` と並べる。行き先を最後に置くので、`:` を含む
-/// パスもそのまま運べる。JSON にしないのは、面の仕様 (`Schemas/`) を持つほどの形ではなく、
+/// パスもそのまま運べる。**倍率を掛けるとき (``scale`` が 2 以上) だけ**、行き先の前に
+/// `<倍率>:` を挟む (`<fps>:<枚数>:<倍率>:<行き先>`)。行き先は絶対パスで渡すので (`/` で始まる)、
+/// 数字で始まる倍率と取り違えない。JSON にしないのは、面の仕様 (`Schemas/`) を持つほどの形ではなく、
 /// 道具と子が**同じ版のこの型**で読み書きするからである (道具は `package` の口から組む)。
 ///
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
@@ -29,6 +31,11 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     package let frameRate: Int
     /// 描く枚数。描き終えたら子は自分で終わる。
     package let frameCount: Int
+    /// 出す画素の倍率 (1 以上の整数・[#2441])。**座標は変えず、出す画素だけを倍率の 2 乗に増やす。**
+    /// 2 なら 1920×1080 の作品が 3840×2160 の絵になる。1 は書き出さないときと同じ。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    package let scale: Int
     /// 書き出す先。綴りが形を決める (`.mov` なら動画、ファイル名に `#` の並びを含めば連番)。
     ///
     /// **絶対パスで渡す。** 子の作業ディレクトリはスケッチの場所で、打った場所ではない。
@@ -39,16 +46,22 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     /// (``FrameRecorder/accepts(_:frameRate:)``)。`.mov` へ刻みより速く書く組もここで断る ([#2307])。
     ///
     /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
-    package init?(frameRate: Int, frameCount: Int, destination: String) {
-        guard frameRate > 0, frameCount > 0,
+    package init?(frameRate: Int, frameCount: Int, scale: Int = 1, destination: String) {
+        guard frameRate > 0, frameCount > 0, Self.scales.contains(scale),
             Self.accepts(destination: destination, frameRate: frameRate)
         else {
             return nil
         }
         self.frameRate = frameRate
         self.frameCount = frameCount
+        self.scale = scale
         self.destination = destination
     }
+
+    /// 受ける倍率。**1 以上の整数で、倍率だけで面の一辺の上限を越えないもの。** 作品の大きさを掛けた
+    /// 後の上限は、道具が作品の大きさをビルドの前には知らないので、子の組み立てが断る
+    /// (``SketchRuntime/outputTarget(gpu:width:height:scale:)``)。
+    package static let scales = 1...RenderDevice.maxTextureSide
 
     /// 行き先の綴りを、書き出せる形として受けるか。規則は撮る係のもの
     /// (``FrameRecorder/accepts(_:)``) で、組むときもこれで見る。
@@ -111,7 +124,11 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
     }
 
     /// 環境変数に載せる値。
-    package var environmentValue: String { "\(frameRate):\(frameCount):\(destination)" }
+    package var environmentValue: String {
+        scale == 1
+            ? "\(frameRate):\(frameCount):\(destination)"
+            : "\(frameRate):\(frameCount):\(scale):\(destination)"
+    }
 
     /// 環境変数の値から読む。**読めなければ `nil`。**
     package init?(environmentValue: String) {
@@ -120,7 +137,14 @@ package nonisolated struct RenderRequest: Equatable, Sendable {
         guard parts.count == 3, let rate = Int(parts[0]), let count = Int(parts[1]) else {
             return nil
         }
-        self.init(frameRate: rate, frameCount: count, destination: String(parts[2]))
+        // 倍率があれば、行き先の前に `<倍率>:` が挟まっている (行き先は `/` で始まる絶対パス)
+        var scale = 1
+        var destination = parts[2]
+        if let colon = destination.firstIndex(of: ":"), let given = Int(destination[..<colon]) {
+            scale = given
+            destination = destination[destination.index(after: colon)...]
+        }
+        self.init(frameRate: rate, frameCount: count, scale: scale, destination: String(destination))
     }
 
     /// 起動の瞬間に決まる頼み。**合図が無ければ `nil`** (いつもの窓の経路)。

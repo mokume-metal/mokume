@@ -72,6 +72,45 @@ struct RenderCommandTests {
             sourceLocation: sourceLocation)
     }
 
+    // MARK: - 倍率 ([#2441])
+
+    /// `--scale N` (座標は変えず、出す画素を縦横 N 倍にする)。ビルドの前に解く。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    @Test("--scale は頼みに載り、書かなければ 1")
+    func scaleReachesTheRequest() throws {
+        let base = ["--fps", "30", "--seconds", "1", "--out", "out/f-####.png"]
+        #expect(try parse(base).request.scale == 1)
+        #expect(try parse(base + ["--scale", "2"]).request.scale == 2)
+        #expect(try parse(base + ["--scale", "1"]).request == (try parse(base)).request)
+        #expect(try parse(["--scale", "4"] + base).request.scale == 4)
+        #expect(try parse(base + ["--scale", "16384"]).request.scale == 16384)
+    }
+
+    @Test(
+        "--scale は 1 以上の整数だけ。0・負・小数・数でない・上限越えは、ビルドの前に使い方の誤りとして断る",
+        arguments: ["0", "-1", "1.5", "2.0", "two", "", "16385", "99999999999999999999"])
+    func badScalesAreRefusedBeforeTheBuild(_ value: String) {
+        expectUsage(
+            ["--fps", "30", "--seconds", "1", "--out", "out/f-####.png", "--scale", value],
+            mentioningAll: ["--scale"])
+    }
+
+    @Test("--scale に値が無いと、何を書けばよいかを名乗って断る")
+    func scaleNeedsAValue() {
+        expectUsage(
+            ["--fps", "30", "--seconds", "1", "--out", "out/f-####.png", "--scale"],
+            mentioningAll: ["--scale", "whole number"])
+    }
+
+    @Test("倍率を掛けた書き出しの 1 行は、倍率を名乗る。1 倍は変わらない")
+    func reportNamesTheScale() throws {
+        let scaled = try #require(RenderRequest(frameRate: 30, frameCount: 4, scale: 2, destination: "/tmp/f-###.png"))
+        #expect(RenderCommand.report(scaled).contains("2×"))
+        let plain = try #require(RenderRequest(frameRate: 30, frameCount: 4, destination: "/tmp/f-###.png"))
+        #expect(RenderCommand.report(plain) == "Wrote 4 frames at 30 fps to /tmp/f-###.png")
+    }
+
     // MARK: - ファイル名の長さ ([#2774])
 
     /// `--out` のファイル名の長さを、ビルドの前に断る。FS には書かず `parse` を直に呼ぶ。

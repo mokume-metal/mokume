@@ -48,12 +48,13 @@ import simd
 /// 図形は溜められ、``draw(_:)`` を抜けるときにまとめて描かれる。
 @MainActor
 public final class Canvas {
-    /// 幅 (画素)。**出す細かさ**で、スケッチが書く座標もこの中にある。
+    /// 幅。**座標の単位**で、スケッチが書く座標もこの中にある。出す画素の数と同じだが、
+    /// 書き出しの倍率 (`mokume render --scale`) を掛けているときは、倍率の前の数のまま。
     public let width: Float
-    /// 高さ (画素)。**出す細かさ。**
+    /// 高さ。**座標の単位。**
     public let height: Float
 
-    /// 実際に刻む幅 (画素)。細かさが 1 なら ``width`` と同じ。
+    /// 実際に刻む幅 (画素)。細かさが 1 で書き出しの倍率も掛けていなければ ``width`` と同じ。
     public var pixelWidth: Int { target.width }
     /// 実際に刻む高さ (画素)。
     public var pixelHeight: Int { target.height }
@@ -2647,9 +2648,31 @@ public final class Canvas {
     ///   ``RenderFailure``。**組み立てのときに投げる** (ADR-0020 決定 5)。
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public init(
+    public convenience init(
         output: RenderTarget, gpu: RenderDevice, pixelDensity: Float, upscale: Upscale
     ) throws(RenderFailure) {
+        try self.init(
+            output: output, gpu: gpu, pixelDensity: pixelDensity, upscale: upscale, outputScale: 1)
+    }
+
+    /// 出す先を座標の `outputScale` 倍の大きさで持つ作り方 (`mokume render --scale`・[#2441])。
+    ///
+    /// **座標は変えず、出す画素だけを増やす。** ``width`` / ``height`` は `output` の大きさを
+    /// `outputScale` で割った値 (座標) のまま、`output` と描く先は `outputScale` 倍の画素で刻む。
+    /// 描く画素 1 つが座標でいくらか (``unitsPerDrawnPixel``) が `1 / outputScale` に縮むので、
+    /// 線の太さ・効果の半径・切り抜き・断片が受ける位置と大きさ・字の焼き場の鍵は、細かさを下げる
+    /// 側 (`pixelDensity` < 1) と同じ経路を、逆向きに通って倍率を掛けて読まれる。
+    ///
+    /// - Parameter outputScale: 1 以上の整数。`output` の幅と高さはどちらもこの数で割り切れる。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    init(
+        output: RenderTarget, gpu: RenderDevice, pixelDensity: Float, upscale: Upscale,
+        outputScale: Int
+    ) throws(RenderFailure) {
+        precondition(
+            outputScale >= 1 && output.width % outputScale == 0 && output.height % outputScale == 0,
+            "outputScale has to be at least 1 and divide the output size")
         guard pixelDensity > 0, pixelDensity <= 1, pixelDensity.isFinite else {
             throw .invalidPixelDensity(pixelDensity)
         }
@@ -2720,8 +2743,9 @@ public final class Canvas {
         self.shadowBake = ShadowBake(
             matrixStorage: storage(stride: Self.valuesStride, minimum: 1, label: "shadowMatrix"))
 
-        self.width = Float(output.width)
-        self.height = Float(output.height)
+        // **座標の大きさ。** 出す先が倍率で大きくても、スケッチが書く座標は倍率の前のまま
+        self.width = Float(output.width / outputScale)
+        self.height = Float(output.height / outputScale)
         self.pipeline = try gpu.shapePipeline(pixelFormat: RenderTarget.pixelFormat)
         self.argumentTable = try ShapePipeline.makeArgumentTable(gpu: gpu)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)

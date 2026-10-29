@@ -408,8 +408,14 @@ public struct SketchSettings: Equatable, Sendable {
     /// よって 1 割ほど揺れる。扇形 (一周でない `arc`。`.chord`・`.open` の弦で結んだ形も) は付けるかによらず約束の外で、`triangle`・`quad`・
     /// `beginShape` は描く画素の格子で丸まる)。
     /// 効果の半径 (``Effect/blur(radius:)`` など)・切り抜きの矩形 (``SketchPart/clip(_:_:_:_:)``)・
-    /// 断片 (塗りと効果) が受け取る位置と大きさも同じく出す細かさの画素で、細かさによらない。
+    /// 断片 (塗りと効果) が受け取る位置と大きさも同じく座標の単位で、細かさによらない。
     /// 違うのは描く画素 1 つより細かい所 (拡大のぼけと、描く画素の格子への丸め) だけである。
+    ///
+    /// **座標の単位は、細かさと、書き出しの倍率 (`mokume render --scale`) のどちらにもよらない。**
+    /// 倍率 N の書き出しは、座標を変えずに出す画素を縦横 N 倍にする。線の太さ・効果の半径・切り抜き・断片が
+    /// 受け取る位置と大きさ・字は、座標と同じく倍率を掛けて読まれ、描く画素は「出す大きさ × 倍率 × 細かさ」
+    /// になる。``SketchPart/width`` / ``SketchPart/height`` は倍率の下でも変わらず、実際に刻む画素
+    /// (``SketchPart/pixelWidth``・`pixels`) だけが倍率を掛けた数になる。
     ///
     /// 使えるのは 0 より大きく 1 以下。1 を超える指定 (出すより細かく描く) は
     /// 引き受けないので、組み立ての時点で断る。
@@ -673,15 +679,17 @@ extension SketchPart {
         return runtime.activeCanvas
     }
 
-    /// 出す幅 (画素)。**細かさ (``SketchSettings/pixelDensity``) を変えても動かない。**
+    /// 出す幅 (座標の単位)。**細かさ (``SketchSettings/pixelDensity``) も、書き出しの倍率
+    /// (`mokume render --scale`) も、変えても動かない。**
     ///
     /// 走る前 (部品の `init()` の中など) に読むと 0 を返し、1 度だけ警告する。面の大きさで
     /// 決まる値は ``Sketch/setup()`` の中で決める。
     public var width: Float { Self.liveCanvas(.read(returning: "0"))?.width ?? 0 }
-    /// 出す高さ (画素)。**細かさを変えても動かない。**
+    /// 出す高さ (座標の単位)。**細かさも書き出しの倍率も、変えても動かない。**
     public var height: Float { Self.liveCanvas(.read(returning: "0"))?.height ?? 0 }
 
-    /// 実際に刻んでいる幅 (画素)。細かさが 1 なら ``width`` と同じ。
+    /// 実際に刻んでいる幅 (画素)。細かさが 1 で、書き出しの倍率 (`mokume render --scale`) も掛けていなければ
+    /// ``width`` と同じ。倍率 2 なら ``width`` の 2 倍。
     ///
     /// ``pixels`` の索引はこちらの数である。断片 (塗りと効果) が受け取る位置と大きさは
     /// こちらではなく、座標と同じ出す画素 (``width``) で届く。

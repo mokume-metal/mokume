@@ -22,6 +22,35 @@ nonisolated struct RenderRequestTests {
         #expect(RenderRequest(environmentValue: request.environmentValue) == request)
     }
 
+    /// 倍率 ([#2441]): 2 以上のときだけ行き先の前に挟む。1 は倍率の無い頼みと同じ値で、これまでの値の形のまま。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    @Test("倍率は行き先の前に挟んで運び、1 は値に載せない。: を含む行き先も切らない")
+    func theScaleTravelsBeforeTheDestination() throws {
+        let scaled = try #require(
+            RenderRequest(frameRate: 30, frameCount: 120, scale: 2, destination: "/tmp/a:b/motion.mov"))
+        #expect(scaled.scale == 2)
+        #expect(scaled.environmentValue == "30:120:2:/tmp/a:b/motion.mov")
+        #expect(RenderRequest(environmentValue: scaled.environmentValue) == scaled)
+        let plain = try #require(
+            RenderRequest(frameRate: 30, frameCount: 120, scale: 1, destination: "/tmp/a:b/motion.mov"))
+        #expect(plain.environmentValue == "30:120:/tmp/a:b/motion.mov")
+        #expect(plain == RenderRequest(frameRate: 30, frameCount: 120, destination: "/tmp/a:b/motion.mov"))
+        #expect(RenderRequest(environmentValue: plain.environmentValue)?.scale == 1)
+        // 倍率の位置にある 1 も読める (形は違うが、頼みは同じ)
+        #expect(RenderRequest(environmentValue: "30:120:1:/tmp/a.mov")?.scale == 1)
+    }
+
+    @Test("倍率は 1 以上 16384 以下の整数だけ。範囲の外の頼みは組まず、読めない")
+    func theScaleHasARange() {
+        for scale in [0, -1, 16385, Int.max] {
+            #expect(RenderRequest(frameRate: 30, frameCount: 1, scale: scale, destination: "/tmp/a.mov") == nil)
+        }
+        #expect(RenderRequest(frameRate: 30, frameCount: 1, scale: 16384, destination: "/tmp/a.mov") != nil)
+        #expect(RenderRequest(environmentValue: "30:1:0:/tmp/a.mov") == nil)
+        #expect(RenderRequest(environmentValue: "30:1:16385:/tmp/a.mov") == nil)
+    }
+
     /// **行き先は最後に置く。** `:` を含むパスも切らずに運ぶ。
     @Test("行き先に : を含んでも、切らずに運ぶ")
     func aColonInTheDestinationSurvives() throws {

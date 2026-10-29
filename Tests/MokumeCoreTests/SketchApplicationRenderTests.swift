@@ -189,6 +189,43 @@ struct SketchApplicationRenderTests {
         }
     }
 
+    /// 倍率 ([#2441]): 座標 (`width` / `height`) は 48×24 のまま、書く PNG は 96×48 になる。同じ引数で 2 度書くと、
+    /// 倍率の絵も同じバイトになる (決定論は倍率ごと)。専用機の `render` の段が走らせる 1 シーン。
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    @Test("--scale 2 の書き出しは、座標を変えずに画素が倍の PNG になり、2 度書いて同じバイトになる")
+    func aScaledSeriesKeepsTheCoordinatesAndDoublesThePixels() async throws {
+        try await withTemporaryDirectory("mokume-render-scale") { directory in
+            var runs: [[Data]] = []
+            for run in 1...2 {
+                let pattern = directory.appendingPathComponent("run\(run)/f-###.png").path
+                let sketch = Sweep()
+                let request = try #require(
+                    RenderRequest(frameRate: 30, frameCount: 3, scale: 2, destination: pattern))
+                let ending = Ending()
+                let application = try makeApplication(sketch, request, ending)
+                application.didFinishLaunching()
+                fire(application, times: 6)
+                try finishTerminating(application, ending)
+                #expect(ending.exitStatus == nil)
+                // 作品から見た座標は倍率の前のまま、画素の口は実際の画素
+                #expect(sketch.seen.count == 3)
+                let written = try FileManager.default.contentsOfDirectory(
+                    atPath: directory.appendingPathComponent("run\(run)").path
+                ).sorted()
+                #expect(written == ["f-000.png", "f-001.png", "f-002.png"])
+                runs.append(
+                    try written.map {
+                        try Data(contentsOf: directory.appendingPathComponent("run\(run)/\($0)"))
+                    })
+            }
+            let first = try #require(NSBitmapImageRep(data: runs[0][0]))
+            #expect(first.pixelsWide == 96 && first.pixelsHigh == 48, "\(first.pixelsWide)×\(first.pixelsHigh)")
+            #expect(runs[0] == runs[1], "同じ倍率・同じ引数で、画素が一致しない")
+            #expect(runs[0][0] != runs[0][2], "枚ごとに絵が動いていない")
+        }
+    }
+
     @Test("連番へ書き出すと、決めた枚数のファイルが 0 番から並ぶ")
     func aNumberedSeriesGetsEveryFrame() async throws {
         try await withTemporaryDirectory("mokume-render-series") { directory in
