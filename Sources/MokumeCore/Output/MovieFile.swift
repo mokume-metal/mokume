@@ -173,7 +173,13 @@ nonisolated final class MovieFile: MovieOutput {
     /// [#2307]: https://github.com/mokume-metal/mokume/issues/2307
     static let timescale: CMTimeScale = 90_000
 
+    /// 書き出し先 (名乗る名前)。**閉じ終えるまで、この場所にあるものには触れない** (``placement`` があるとき・#3426)。
     private let path: String
+    /// 行き先の隣の一時ファイルへ書き、書き損じなく閉じ終えたときだけ 1 回の置き換えで ``path`` に置く段取り。
+    /// `nil` なら ``path`` へ直に書く (前のファイルは開くときに消える — 検査と、準備が断られた回の従来の形)。
+    private let placement: AtomicFile.Placement?
+    /// バイトを書く場所。``placement`` があれば一時ファイル、無ければ ``path``。
+    private let writtenURL: URL
     private let format: Format
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
@@ -392,9 +398,11 @@ nonisolated final class MovieFile: MovieOutput {
 
     /// - Parameters:
     ///   - soundStart: 音声トラックを付けるとき、最初の窓の先頭の標本の番号。`nil` なら付けない。
+    ///   - placement: 隣の一時ファイルへ書いて、閉じ終えたときだけ ``path`` へ置く段取り (`AtomicFile.reserve` が作る)。
+    ///     渡せば、書いている間も書き損じたときも ``path`` の前のファイルに触れない (#3426)。
     init(
         path: String, width: Int, height: Int, frameRate: Int, format: Format = .proRes4444,
-        soundStart: Int? = nil
+        soundStart: Int? = nil, placement: AtomicFile.Placement? = nil
     ) throws(MovieWriteFailure) {
         // **書き出し先がディレクトリなら、消さずに断る。** 下の「同じ名前が残っていると開けない」の
         // `removeItem` はディレクトリを中身ごと消す。出力先は利用者が指定するパスなので、取り違えて
@@ -424,6 +432,8 @@ nonisolated final class MovieFile: MovieOutput {
             supported = [:]
         }
         self.path = path
+        self.placement = placement
+        self.writtenURL = placement?.temporary ?? URL(fileURLWithPath: path)
         self.format = format
         self.width = width
         self.height = height
@@ -433,10 +443,13 @@ nonisolated final class MovieFile: MovieOutput {
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // 同じ名前が残っていると開けない。撮り直しは上書きになるのが自然である
-        try? FileManager.default.removeItem(at: url)
+        // 同じ名前が残っていると開けない。**消すのは書く場所だけ** — 一時ファイルは名前が書き込みごとに違うので
+        // 何も無く、**行き先の前のファイルは、閉じ終えるまで残る** (#3426)。一時ファイルの無い従来の形では、
+        // 書く場所が行き先なので、撮り直しは上書きになる。形式は `fileType` が決めるので、拡張子が `.tmp` でも
+        // 同じに書ける (`.mov`・`.mp4` とも測った)
+        try? FileManager.default.removeItem(at: writtenURL)
 
-        guard let writer = try? AVAssetWriter(outputURL: url, fileType: format == .h264 ? .mp4 : .mov)
+        guard let writer = try? AVAssetWriter(outputURL: writtenURL, fileType: format == .h264 ? .mp4 : .mov)
         else {
             throw .destinationUnavailable(path: path)
         }
@@ -631,10 +644,12 @@ nonisolated final class MovieFile: MovieOutput {
             // 利用者に届くのは最後に決着した理由なので、「1 枚も無い」で覆わない。転んだ writer には
             // 取り消しを呼ばない
             if writerStatus != .writing || writerError != nil {
+                try? FileManager.default.removeItem(at: writtenURL)
                 throw .writeFailed(path: path, reason: failureReason)
             }
             // 1 枚も受け取っていない。中身の無いファイルを残さない
             writer.cancelWriting()
+            try? FileManager.default.removeItem(at: writtenURL)
             throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         input.markAsFinished()
@@ -642,17 +657,33 @@ nonisolated final class MovieFile: MovieOutput {
         writer.endSession(atSourceTime: Self.stamp(time + frameDuration))
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw .writeFailed(path: path, reason: failureReason)
+            // 閉じ切れなかった書きかけは捨てる。行き先の前のファイルはそのまま (#3426)
+            let reason = failureReason
+            try? FileManager.default.removeItem(at: writtenURL)
+            throw .writeFailed(path: path, reason: reason)
         }
-        readsForTesting.closed?(path)
+        readsForTesting.closed?(writtenURL.path)
         // **書き手が「済んだ」と言っても、書けたものを確かめる** (#3223)。H.264 の書き手は、受け付けない
         // 大きさで成功を返したまま 0 バイトを書く。辺の下限は ``init`` が断るが、測っていない機械・OS の
         // 境目で同じ形が黙って戻らないよう、ここでも見る
-        let check = await Self.closedCheck(atPath: path, width: width, height: height)
+        // 読むのは書いたもの (一時ファイル) で、**置く前に済ませる** (#3426)。空なら、行き先に置かない
+        let mime = format == .h264 ? "video/mp4" : "video/quicktime"
+        let check = await Self.closedCheck(
+            atPath: writtenURL.path, width: width, height: height,
+            read: { await Self.readClosedFile(atPath: $0, mimeType: mime) })
         if let reason = check.hollow {
-            // 中身の無いファイルを残さない (1 枚も受け取っていないときの取り消しと同じ)
-            try? FileManager.default.removeItem(atPath: path)
+            // 中身の無いファイルを残さない (1 枚も受け取っていないときの取り消しと同じ)。行き先の前のファイルはそのまま
+            try? FileManager.default.removeItem(at: writtenURL)
             throw .writeFailed(path: path, reason: reason)
+        }
+        // **ここまで来たら、1 回の置き換えで行き先に置く** (#3426)。置けなかったら (置く直前に行き先が
+        // ディレクトリになっていたなど)、一時ファイルは `Placement` が消し、行き先の前のファイルはそのまま
+        if let placement {
+            do {
+                try placement.placeWritten()
+            } catch {
+                throw .writeFailed(path: path, reason: Diagnostics.failureText(error))
+            }
         }
         // **頼んだ縦横と違う縦横で書けたら、名乗る** (#3379)。H.264 の符号化器は奇数の辺を黙って 1 画素削る
         // ことがある (65x49 → 64x48)。「奇数なら」と決め打たず、**書けたファイルを読んだ縦横**で決める
@@ -661,6 +692,14 @@ nonisolated final class MovieFile: MovieOutput {
         if let note = Self.resizedNote(path: path, width: width, height: height, written: check.written) {
             Diagnostics.warn(note)
         }
+    }
+
+    /// 書き損じた録りを捨てる。**書いている最中のファイルを取り消し、一時ファイルを消す。行き先には触れない** (#3426)。
+    ///
+    /// 一時ファイルを使わない形 (``placement`` が `nil`) では、書く場所が行き先なので、書きかけがそのまま消える。
+    func abandon() {
+        writer.cancelWriting()
+        try? FileManager.default.removeItem(at: writtenURL)
     }
 
     /// 頼んだ縦横と違う縦横でファイルが書けたときの、名乗りの 1 行。同じなら (読めなかったときも) `nil`。
@@ -699,8 +738,13 @@ nonisolated final class MovieFile: MovieOutput {
     /// 閉じたファイルの映像のトラックを読む。読めなければ `nil` (期限を越えたときは呼ぶ側が `nil` にする)。
     ///
     /// 読むのはトラックの表 (索引) だけで、標本は 1 つも復号しない。
-    nonisolated static func readClosedFile(atPath path: String) async -> ClosedReading? {
-        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+    ///
+    /// - Parameter mimeType: 中身の種類を拡張子に頼らず指す。**一時ファイル (`.tmp`) は拡張子から種類を引けず、
+    ///   指さないと `AVURLAsset` は開けない** (測った)。開けないと「読めないから断らない」に倒れて、空の確かめも
+    ///   縦横の名乗りも黙って外れる。
+    nonisolated static func readClosedFile(atPath path: String, mimeType: String? = nil) async -> ClosedReading? {
+        let options = mimeType.map { [AVURLAssetOverrideMIMETypeKey: $0] }
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path), options: options)
         guard let tracks = try? await asset.loadTracks(withMediaType: .video) else { return nil }
         guard let track = tracks.first else { return .noVideoTrack }
         guard let range = try? await track.load(.timeRange),

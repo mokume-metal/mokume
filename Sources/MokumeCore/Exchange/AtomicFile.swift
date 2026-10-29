@@ -148,6 +148,22 @@ package enum AtomicFile {
                 throw error
             }
         }
+
+        /// 書き手が一時ファイルに書き終えた後、出来上がりを行き先へ置く ([#3426])。**中身は既に一時ファイルにある**。
+        ///
+        /// 置き方は ``place(using:)`` と同じ 1 つで、違いは行き先がシンボリックリンクのときだけ。`replaceItemAt` は
+        /// リンクの置き換えを断る (実測: `No such file or directory`) ので、**リンクを外してから置く** — いまの書き手が
+        /// 開くときに `removeItem` でリンクを外すのと同じ結果 (リンクが普通のファイルに置き換わり、指す先は変わらない)。
+        /// 外す窓があるのはリンクのときだけで、普通のファイルには 1 回の置き換えのままである。
+        ///
+        /// [#3426]: https://github.com/mokume-metal/mokume/issues/3426
+        func placeWritten() throws {
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+                // `removeItem` はリンクを辿らず、リンク自身だけを消す
+                try? FileManager.default.removeItem(at: url)
+            }
+            try place { _ in }
+        }
     }
 
     /// 置く準備をする。途中のディレクトリを作り、書く先がディレクトリなら断り、一時ファイルの名前を決める。

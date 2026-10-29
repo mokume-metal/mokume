@@ -131,6 +131,13 @@ final class MovieWriter {
         open: (@Sendable (_ image: DisplayImage, _ soundStart: Int?) throws -> any MovieOutput)? = nil
     ) {
         self.path = path
+        // **書き手は、行き先の隣の一時ファイルへ書き、書き損じなく閉じ終えたときだけ行き先へ置く** (#3426)。
+        // 準備 (ディレクトリを作る・落とされた書き手の一時ファイルの片付け・名前の連番) は静的な状態に触るので、
+        // 隔離の外の仕事へ渡す前に、main の ここで済ませる。準備が断られたとき (行き先がディレクトリ・親を作れない)
+        // は一時ファイルを使わない: 書き手が同じ理由で断る (行き先がディレクトリなら、消さずに断る・#2859)
+        let placement = try? AtomicFile.reserve(URL(fileURLWithPath: path))
+        // 前のファイルが残るとき、書き損じの行がそう名乗る。**置く段取りがあるとき・前に普通のファイルがあるときだけ**
+        let leftAsItWas = placement != nil && FileManager.default.fileExists(atPath: path)
         pressure = Backpressure(limit: limit)
         span = RecordedSpan(from: from)
 
@@ -160,6 +167,13 @@ final class MovieWriter {
             var soundStopped = false
             // 書けた絵のうち、最も新しいフレームの番号
             var newest = 0
+            // 1 度でも書き損じたか (絵・音とも)。**書き損じを含む録りは、行き先に置かない** (#3426)
+            var failed = false
+            /// 書き損じを名乗る。前のファイルが行き先に残るときは、同じ行でそう言う。
+            func fail(_ message: String) {
+                failed = true
+                outcome.fail(leftAsItWas ? "\(message) (\(path) is left as it was)" : message, at: path)
+            }
 
             /// 控えの窓のうち、番号が `limit` 以下のものを順に書く。**書き損じたら音声トラックを止める**
             /// (映像と同じ道で名乗る)。書き損じた窓を控えに残すと、次の絵のときに同じ窓を二重に書くか、飛ばして
@@ -171,7 +185,7 @@ final class MovieWriter {
                         try await file.appendSound(window)
                         waiting.removeFirst()
                     } catch {
-                        outcome.fail("Could not write \(path): \(error)", at: path)
+                        fail("Could not write \(path): \(error)")
                         soundStopped = true
                         waiting.removeAll()
                         return
@@ -200,9 +214,9 @@ final class MovieWriter {
                                     opened = try MovieFile(
                                         path: path, width: image.width, height: image.height,
                                         frameRate: frameRate, format: format == .h264 ? .h264 : .proRes4444,
-                                        soundStart: soundStart)
+                                        soundStart: soundStart, placement: placement)
                                 case .gif:
-                                    opened = try GIFFile(path: path, frameRate: frameRate)
+                                    opened = try GIFFile(path: path, frameRate: frameRate, placement: placement)
                                 }
                             }
                             file = opened
@@ -214,7 +228,7 @@ final class MovieWriter {
                         outcome.succeed()
                         await drainSound(through: newest - 1 + Self.soundLead)
                     } catch {
-                        outcome.fail("Could not write \(path): \(error)", at: path)
+                        fail("Could not write \(path): \(error)")
                         // **最初の絵が書けなかったら、音声は書かない。** 書けなかった絵の分の窓を控えたまま
                         // 後の絵で書くと、窓が欠けたり順序が乱れたりする。書き損じは絵の側が名乗っている
                         if !started {
@@ -228,12 +242,18 @@ final class MovieWriter {
             if let file {
                 // 残りの窓 (最後の絵より先の分) を書いてから閉じる
                 await drainSound(through: .max)
-                do {
-                    try await Diagnostics.$digest.withValue(digest) {
-                        try await file.finish(lastFrameAt: lastTime)
+                if failed {
+                    // 書き損じを含む録りは閉じず、一時ファイルを捨てる。行き先の前のファイルはそのまま (#3426)。
+                    // 書き損じは、起きたときに名乗ってある
+                    file.abandon()
+                } else {
+                    do {
+                        try await Diagnostics.$digest.withValue(digest) {
+                            try await file.finish(lastFrameAt: lastTime)
+                        }
+                    } catch {
+                        fail("Could not close \(path): \(error)")
                     }
-                } catch {
-                    outcome.fail("Could not close \(path): \(error)", at: path)
                 }
             }
             closed.signal()
