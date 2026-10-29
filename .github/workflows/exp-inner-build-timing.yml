@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [T-replica-first, T-test-first]
+        variant: [T-replica-first, T-test-first, P-pass-time]
         round: [1, 2]
     steps:
       - uses: actions/checkout@v7
@@ -47,10 +47,27 @@ jobs:
           "$CLI" new packed-sketch --path "$W" --local "$PWD" > /dev/null
           # 検査と同じく資材を 1 つ置く (資材の包みを組む分を揃える)
           mkdir -p "$W/packed-sketch/Sources/packed-sketch/assets" && echo 木目 > "$W/packed-sketch/Sources/packed-sketch/assets/mark.txt"
-          replica() { rm -rf "$W/packed-sketch/.build"; step "release-$1" "$W/packed-sketch" build -c release --disable-index-store --product packed-sketch; grep 'Build complete' "$RUNNER_TEMP/release-$1.log" | tee -a "$R"; }
-          real() { step "test-$1" . test --skip-build --filter assetsLandInsideTheBundledApplication; grep -E 'Test run with' "$RUNNER_TEMP/test-$1.log" | tail -1 | tee -a "$R"; }
+          replica() { rm -rf "$W/packed-sketch/.build"; step "release-$1" "$W/packed-sketch" build -c release --disable-index-store --product packed-sketch; { grep -E 'complete!' "$RUNNER_TEMP/release-$1.log" || true; } | tee -a "$R"; }
+          real() { step "test-$1" . test --skip-build --filter assetsLandInsideTheBundledApplication; { grep -E 'Test run with' "$RUNNER_TEMP/test-$1.log" || true; } | tail -1 | tee -a "$R"; }
           case "$VARIANT" in
             T-replica-first) replica a; real b; replica c ;;
             T-test-first) real a; replica b; real c ;;
+            P-pass-time)
+              # 手当て 2: MokumeCore の release (whole-module) のうち、SIL のどの pass・関数に時間がかかるか
+              swift build -c release --target MokumeCore -v > "$RUNNER_TEMP/v.log" 2>&1 || true
+              line=$({ grep -E 'swiftc .*-module-name MokumeCore .*-whole-module-optimization' "$RUNNER_TEMP/v.log" || true; } | { grep -v -E 'Requirements|SwiftDriver' || true; } | tail -1)
+              note "compile-line-found=$([ -n "$line" ] && echo yes || echo no)"
+              if [ -z "$line" ]; then { grep -n 'MokumeCore' "$RUNNER_TEMP/v.log" || true; } | head -5 | cut -c1-400 | tee -a "$R"; else
+                cmd=$(printf '%s' "$line" | sed -E 's#^.*[[:space:]](/[^[:space:]]*/swiftc)[[:space:]]#\1 #')
+                t0=$SECONDS
+                eval "$cmd -Xllvm -sil-print-pass-time -Xllvm -sil-min-pass-time=100" > "$RUNNER_TEMP/pass.log" 2>&1 || true
+                note "pass-time-run wall=$((SECONDS - t0))s lines=$(wc -l < "$RUNNER_TEMP/pass.log")"
+                note '```'
+                head -5 "$RUNNER_TEMP/pass.log" | cut -c1-300 | tee -a "$R"
+                note '--- top 60 by first number'
+                { grep -E '^[[:space:]]*[0-9]' "$RUNNER_TEMP/pass.log" || true; } | sort -rn | head -60 | cut -c1-300 | tee -a "$R"
+                note '```'
+              fi
+              ;;
           esac
           cat "$R" >> "$GITHUB_STEP_SUMMARY"
