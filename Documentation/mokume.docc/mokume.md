@@ -196,6 +196,56 @@ Swift の色を変えて保存すると、保存済みの半径と窓は残る�
 書き戻したときは、失うものが無いので黙って新しい既定値になる。代償として、**起動のたびに既定値が変わる宣言**
 (`@Param var seed = Double.random(in: 0...1)` など) は、保存が毎回捨てられて効かない。
 
+### 止めて変数を見る
+
+**`draw()` の途中で止めて変数を読みたいときは、`mokume run -c debug` が起こしたスケッチに `lldb` で付ける。** `mokume` に専用の口は無い (編集器の設定も作らない)。`lldb` は Command Line Tools に入っている。構成は `-c debug` を明示する。debug の実行ファイルは、デバッガーが付ける印 (`com.apple.security.get-task-allow`) を持つ。確かめたのは debug だけである。
+
+例として、`mokume new Ball` で作ったスケッチの `draw()` を次のように書き換える。`deltaTime` は `Float` なので、`x` も `Float` で持つ。
+
+```swift
+var x: Float = 0
+
+func draw() {
+    background(15, 18, 23)
+    fill(242, 115, 51)
+    x += 120 * deltaTime   // ← ここで止める (Ball.swift の 14 行目)
+    circle(x, 200, 40)
+}
+```
+
+1 つめの端末でスケッチを起こす。
+
+```bash
+mokume run -c debug
+```
+
+2 つめの端末で、スケッチの名前 (`mokume new` に渡した名前・実行ファイルの名前) を指して `lldb` を付ける。付いた時点で窓は止まる。止めたい行にブレークポイントを置いて、再開する。
+
+```
+$ lldb -n Ball
+(lldb) breakpoint set -f Ball.swift -l 14
+(lldb) continue
+```
+
+次のフレームの `draw()` が 14 行目に着くと止まる。止まったら、変数を読み、1 行進め、再開する (値は走らせた時間で変わる)。
+
+```
+(lldb) frame variable
+(Ball.Ball) self = 0x0000007b4340c0a0 (x = 8851.95214)
+(lldb) p deltaTime
+(Float) 0.166666672
+(lldb) next
+(lldb) p x
+(Float) 8871.95214
+(lldb) continue
+```
+
+`next` で `x += …` が 1 行進み、`x` が増える。`continue` で窓が動き出し、次のフレームで同じ行にまた止まる。ブレークポイントを外して走らせ続けるなら `breakpoint delete` の後に `continue` する。デバッガーを外すときは `process detach` を打つ (スケッチは走り続ける)。同じ名前のスケッチを複数起こしているときは、`lldb -n` ではなく `lldb -p <PID>` で 1 つを指す。
+
+**調べている間は `mokume watch` を使わない。** `watch` は `.swift` を保存するたびに新しいプロセスを起こして入れ替える (上の「作り直しを越えるもの」)。付いていたデバッガーは古いプロセスに残る。保存すると、古いプロセスは `lldb` の中で `stop reason = signal SIGTERM` のまま止まり、しばらくして `watch` が `Killed a sketch that would not stop` と落とす。新しいプロセスにデバッガーは付いておらず (`lldb` は古いプロセスの終了とともに終わる)、ブレークポイントも引き継がれないので、付け直しになる。止めて調べるときは `mokume run -c debug` を使い、直したら起こし直す。`.metal` の断片を保存したときは、プロセスが替わらない (上の「作り直しを越えるもの」)。
+
+**速さを測るときは release を使う。** debug の数字を根拠にしない。`mokume run -c release` で起こす。
+
 ### 同じ時刻の絵を比較する
 
 MCP の `observe` に `{"time": 3}` を渡すと、走っているスケッチを3秒目で1枚描き直して撮れる。
