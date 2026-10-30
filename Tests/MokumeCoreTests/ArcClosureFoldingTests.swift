@@ -10,9 +10,11 @@ import simd
 
 /// 弧の閉じ方 (既定・`.chord`・`.open`) の畳み ([#3248]) の検査。GPU を要する。
 ///
-/// `shader()` / `texture()` を効かせた間、弧の閉じ方は周を部分ごとに組んで置いていた。**同じ形が続く間は、
-/// 置き場所を足すだけの 1 つの雛形に畳む。** 絵は動かさない — 畳まずに置く道 (閉じ方ごとの周を作って直に
-/// `draw(_:)` へ渡す、畳む前の道) と同じ画素で出ることを、閉じ方・輪郭・拡大ごとに見る。
+/// `shader()` / `texture()` を効かせた間、弧の閉じ方は周を部分ごとに組んで置いていた。**輪郭を引かず貼る絵も無い塗りは、
+/// 同じ形が続く間は置き場所を足すだけの 1 つの雛形に畳む。** 輪郭つき・貼る絵つきは畳まない — 畳んだ絵が畳まない絵と
+/// 縁の数成分違う (置き場所の変換を GPU で掛けるぶん・#3170 の角丸の輪郭つきと同じ根) ので、絵を動かさない約束を
+/// 守るため今までの道に残す。どちらも、畳まずに置く道 (閉じ方ごとの周を作って直に `draw(_:)` へ渡す) と
+/// **同じ画素** (許容 0) で出ることを見る。
 ///
 /// [#3248]: https://github.com/mokume-metal/mokume/issues/3248
 @Suite(
@@ -46,21 +48,17 @@ struct ArcClosureFoldingTests {
 
     // MARK: - 畳まれる
 
-    /// 場面: 細かさ 0.5・回転だけ違う弧を 10,000 個。閉じ方ごとに 1 つの雛形へ畳まれ、周は雛形の 1 回だけ組む。
-    @Test("回転だけ違う弧の閉じ方は、閉じ方ごとに 1 つの雛形に畳まれる", arguments: [false, true])
-    func rotatedArcsFoldIntoOneTemplate(stroke: Bool) throws {
+    /// 場面: 細かさ 0.5・回転だけ違う弧を 10,000 個。輪郭を引かなければ、閉じ方ごとに 1 つの雛形へ畳まれ、周は雛形の
+    /// 1 回だけ組む。
+    @Test("輪郭なしで回転だけ違う弧の閉じ方は、閉じ方ごとに 1 つの雛形に畳まれる")
+    func rotatedArcsFoldIntoOneTemplate() throws {
         for (name, mode) in Self.closures {
             let canvas = try Self.makeCanvas(density: 0.5)
             let shader = try canvas.makeShader(Self.plain)
             let count = 10_000
             try canvas.draw {
                 canvas.background(0)
-                if stroke {
-                    canvas.stroke(200)
-                    canvas.strokeWeight(2)
-                } else {
-                    canvas.noStroke()
-                }
+                canvas.noStroke()
                 canvas.fill(255)
                 canvas.shader(shader)
                 for index in 0..<count {
@@ -70,14 +68,10 @@ struct ArcClosureFoldingTests {
                     Self.place(canvas, mode: mode, radii: (20, 14), start: 0.3, stop: 4.1)
                     canvas.popMatrix()
                 }
-                #expect(canvas.openFlat != nil, "\(name) (輪郭 \(stroke)): 畳まれていない")
-                #expect(
-                    canvas.flatInstances.count == count + 1,
-                    "\(name) (輪郭 \(stroke)): 置き場所 \(canvas.flatInstances.count)")
+                #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                #expect(canvas.flatInstances.count == count + 1, "\(name): 置き場所 \(canvas.flatInstances.count)")
                 // 周を組んだのは、畳む相手を待って置いた 1 つ目と雛形だけ
-                #expect(
-                    canvas.outlinesAssembledThisFrame < 10,
-                    "\(name) (輪郭 \(stroke)): 周を組んだ数 \(canvas.outlinesAssembledThisFrame)")
+                #expect(canvas.outlinesAssembledThisFrame < 10, "\(name): 周を組んだ数 \(canvas.outlinesAssembledThisFrame)")
             }
         }
     }
@@ -115,9 +109,10 @@ struct ArcClosureFoldingTests {
         stroke: (weight: Float, cap: StrokeCap, join: StrokeJoin)? = (0.7, .round, .round),
         radii: (Float, Float) = (14, 9), sweep: (Float, Float) = (0.3, 4.1), spin: Float = 0.21,
         scale: (Int) -> (Float, Float) = { _ in (1, 1) },
+        closures: [(String, ArcMode?)] = ArcClosureFoldingTests.closures,
         folded: Bool
     ) throws {
-        for (closureName, mode) in Self.closures {
+        for (closureName, mode) in closures {
             func picture(folding: Bool) throws -> PixelBuffer {
                 let canvas = try Self.makeCanvas(density: density)
                 let shader = try canvas.makeShader(Self.plain)
@@ -214,89 +209,34 @@ struct ArcClosureFoldingTests {
         try expectSameAsUnfolded("輪郭なしの細かさ 0.5", density: 0.5, stroke: nil, folded: true)
         try expectSameAsUnfolded("輪郭なしの鏡映", stroke: nil, scale: { _ in (-1, 1) }, folded: true)
         try expectSameAsUnfolded("輪郭なしの縦長の楕円の弧", stroke: nil, radii: (6, 15), spin: 0.3, folded: true)
+        try expectSameAsUnfolded("輪郭なしの小さい弧", stroke: nil, radii: (3, 3), sweep: (0.3, 2.4), folded: true)
+        try expectSameAsUnfolded("輪郭なしのほぼ一周の弧", stroke: nil, sweep: (0.1, 6.2), folded: true)
     }
 
-    @Test("掃引が小さく 2 点になる弧も、畳まずに置いた絵と画素が同じ (端の形で円板の有無が変わる)")
-    func tinySweepsKeepTheirPixels() throws {
+    /// **畳んだ絵が畳まない絵と縁の数成分違う場面は、畳まない** (#3248)。輪郭つきの弧 (全部の閉じ方) と、貼る絵つきの
+    /// `.chord` / `.open` は今までの道で置く — 畳まないことと、畳まない道と同じ画素 (許容 0) の両方を見る。
+    @Test("輪郭つきの弧は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
+    func strokedClosuresAreNotFolded() throws {
+        try expectSameAsUnfolded("輪郭つき", folded: false)
+        try expectSameAsUnfolded("縦長の楕円の弧", radii: (6, 15), spin: 0.3, folded: false)
+        try expectSameAsUnfolded("細い輪郭", stroke: (0.3, .round, .round), spin: 0.27, folded: false)
+        try expectSameAsUnfolded("太い輪郭", stroke: (3, .round, .round), folded: false)
         for cap in [StrokeCap.round, .square, .project] {
             try expectSameAsUnfolded(
-                "短い弧 \(cap)", stroke: (2.5, cap, .miter), radii: (3, 3), sweep: (0.3, 0.4), folded: true)
-            try expectSameAsUnfolded(
-                "ほぼ一周の弧 \(cap)", stroke: (2, cap, .round), sweep: (0.1, 6.2), folded: true)
+                "短い弧 \(cap)", stroke: (2.5, cap, .miter), radii: (3, 3), sweep: (0.3, 0.4), folded: false)
+            try expectSameAsUnfolded("ほぼ一周の弧 \(cap)", stroke: (2, cap, .round), sweep: (0.1, 6.2), folded: false)
         }
     }
 
-    // 以下は、畳んだ絵が畳まずに置いた絵と縁の数成分 (約 4 万成分のうち 3〜16) 違う場面。**畳む道そのものの性質** で、
-    // 閉じ方を足す前から畳まれていた `.pie` の弧も同じだけ違う (置き場所の変換を GPU で掛けるぶん、縁の頂点が
-    // 1 ulp 級でずれる・#3170 が角丸の輪郭つきを畳まなかったのと同じ根)。#3248 の完了条件 2 (許容 0) をどう読むかは
-    // 人の判断待ちなので、既知の食い違いとして残す。判断が付いたら、この印を外すか場面を畳まない側へ移す。
-
-    @Test("輪郭つきの弧の閉じ方は、畳んだ絵が畳まずに置いた絵と縁の数成分違う (既知・条件 2 の判断待ち)")
-    func strokedClosuresDifferAtTheEdge() throws {
-        withKnownIssue("畳む道は置き場所の変換を GPU で掛けるので、縁の頂点が畳まない道と 1 ulp 級でずれる", isIntermittent: false) {
-            do {
-                try expectSameAsUnfolded("輪郭つき", folded: true)
-                try expectSameAsUnfolded("縦長の楕円の弧", radii: (6, 15), spin: 0.3, folded: true)
-            } catch {
-                Issue.record(error)
-            }
-        }
+    @Test("貼る絵つきの .chord / .open は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
+    func texturedChordFillsAreNotFolded() throws {
+        let chords: [(String, ArcMode?)] = [(".chord", .chord), (".open", .open)]
+        try expectSameAsUnfolded("貼る絵だけ", texture: true, stroke: nil, closures: chords, folded: false)
+        try expectSameAsUnfolded("貼る絵と輪郭", texture: true, closures: chords, folded: false)
     }
 
-    @Test("貼る絵だけの弧の閉じ方も、畳んだ絵が畳まずに置いた絵と縁の数成分違う (既知・条件 2 の判断待ち)")
-    func texturedClosuresDifferAtTheEdge() throws {
-        withKnownIssue("貼る絵の読み取り位置が、畳む道では GPU の変換で 1 ulp 級ずれる", isIntermittent: false) {
-            do {
-                try expectSameAsUnfolded("貼る絵だけ", texture: true, stroke: nil, folded: true)
-            } catch {
-                Issue.record(error)
-            }
-        }
-    }
-
-    @Test("輪郭つきの弧が太さ・端・折れ目・倍率を変えても畳まれ、絵が空にならない")
-    func strokedClosuresFoldAcrossStyles() throws {
-        // 縁の画素の 1 ulp 級の食い違いは上の既知の場面が見る。ここでは畳みの有無と、絵が空でないことを確かめる
-        for (weight, cap, join) in [
-            (Float(3), StrokeCap.round, StrokeJoin.round), (0.3, .round, .round), (2, .square, .miter),
-            (2, .project, .bevel),
-        ] {
-            withKnownIssue(isIntermittent: true) {
-                do {
-                    try expectSameAsUnfolded(
-                        "太さ \(weight) \(cap) \(join)", stroke: (weight, cap, join), spin: 0.27, folded: true)
-                } catch {
-                    Issue.record(error)
-                }
-            }
-        }
-    }
-
-    @Test("貼る絵と輪郭が同居する弧・破線の弧は畳まれない")
-    func unfoldableClosuresStayUnfolded() throws {
-        for (name, mode) in Self.closures {
-            for (label, texture, dash) in [("貼る絵と輪郭", true, false), ("破線", false, true)] {
-                let canvas = try Self.makeCanvas(density: 1)
-                let shader = try canvas.makeShader(Self.plain)
-                var image: Image?
-                if texture { image = try canvas.createImage(8, 8) }
-                try canvas.draw {
-                    canvas.background(0)
-                    canvas.stroke(200)
-                    canvas.strokeWeight(1)
-                    if dash { canvas.strokeDash(3, 2) }
-                    canvas.fill(255)
-                    if let image { canvas.texture(image) } else { canvas.shader(shader) }
-                    for index in 0..<10 {
-                        canvas.pushMatrix()
-                        canvas.translate(64, 64)
-                        canvas.rotate(Float(index) * 0.3)
-                        Self.place(canvas, mode: mode, radii: (14, 9), start: 0.3, stop: 4.1)
-                        canvas.popMatrix()
-                    }
-                    #expect(canvas.openFlat == nil, "\(label) \(name): 畳まれた")
-                }
-            }
-        }
+    @Test("破線の弧は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
+    func dashedClosuresAreNotFolded() throws {
+        try expectSameAsUnfolded("破線", dash: true, stroke: (1, .round, .round), folded: false)
     }
 }

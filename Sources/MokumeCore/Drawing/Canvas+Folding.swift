@@ -84,12 +84,6 @@ extension Canvas {
         /// 塗りと実線の周は `start` から刻んだ点のまま動かさず、破線だけを別の点の並び (一周の弧は
         /// 角度 0 から刻んだ点) から数えるときに持つ。点の数は ``points`` と同じで、刻みの印 (``curveSteps``) を共有する。
         var dashPoints: [SIMD2<Float>]?
-        /// この周の塗りに続けて、輪郭だけを別の周で引く周 (0 個か 1 個)。弧の既定・`.open` は、塗り (扇・弦で結んだ形) の周と
-        /// 輪郭 (開いた弧) の周が別なので、塗りの周がこれを持つ (#3248)。
-        ///
-        /// ``Canvas/draw(_:)`` は塗りの周を描いた後に、この周を描く (塗りの上に輪郭)。畳みの雛形は、塗りの周から塗りを、
-        /// ここの周から輪郭を積む (``Canvas/openFlatTemplate(key:outline:)``)。持つのは塗りの周で、持たせた周はさらに持たない。
-        var strokeParts: [Outline] = []
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
@@ -161,7 +155,6 @@ extension Canvas {
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.dashStart = dashStart
             moved.dashPoints = dashPoints.map { $0.map { $0 + offset } }
-            moved.strokeParts = strokeParts.map { $0.moved(by: offset) }
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
         }
@@ -183,8 +176,6 @@ extension Canvas {
             fillInterior(outline, thinFillMatrix: recordingShape ? nil : transform.matrix)
         }
         if outline.strokes, style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
-        // 塗りの周が別の周で輪郭を引くなら、塗りの後に引く (塗りの上に輪郭・弧の既定と `.open`)
-        for part in outline.strokeParts { draw(part) }
     }
 
     /// 形自身の座標で作った周を、置き場所へ置く。**同じ形が続く間は畳む。**
@@ -247,8 +238,7 @@ extension Canvas {
             // 頂点段で広げる細い塗りは周を刻まない。貼る絵が無く輪郭も無ければ、刻み方の違う置き場所も
             // 1 つの雛形に畳む (貼る絵の読み取り位置は周の囲みの箱から作るので、絵があれば刻み方も鍵に残す)
             ringSegments: thinFillCapacity > 0 && !hasStroke && style.picture == nil ? 0 : ringSegments,
-            discSegments: hasStroke
-                && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin, ringSegments: ringSegments)
+            discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(),
             fillLinear: fillLinear,
@@ -381,8 +371,7 @@ extension Canvas {
         }
         let strokeStart = vertices.count
         // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)
-        // 塗りの周が輪郭を別の周で持つ形 (弧の既定・`.open`) は、その周を引く。持たなければ塗りと同じ周
-        if key.hasStroke { strokeOutline(outline.strokeParts.first ?? outline, discSegments: key.discSegments) }
+        if key.hasStroke { strokeOutline(outline, discSegments: key.discSegments) }
         buildingFlatTemplate = false
         templateStrokeMatrix = nil
         transform = savedTransform
@@ -590,25 +579,14 @@ extension Canvas {
             fullTurn: segmentCount(forRadius: max(radiusX, radiusY), scale: scale))
     }
 
-    /// 一周を `fullTurn` 個に刻んだとき、掃引 `sweep` の弧を刻む辺の数。
-    static func arcSegmentCount(sweep: Float, fullTurn full: Int) -> Int {
-        max(1, Int((Float(full) * sweep / (2 * .pi)).rounded(.up)))
-    }
-
-    /// 一周を `fullTurn` 個に刻んだ弧の上の点の数 (``arcOffsets(radiusX:radiusY:from:sweep:fullTurn:)`` が返す数)。
-    static func arcPointCount(sweep: Float, fullTurn full: Int) -> Int {
-        let segments = arcSegmentCount(sweep: sweep, fullTurn: full)
-        return sweep >= 2 * .pi ? segments : segments + 1
-    }
-
     /// 一周を `fullTurn` 個に刻んだ弧の上の点の、中心からのずれ。
     static func arcOffsets(
         radiusX: Float, radiusY: Float, from start: Float, sweep: Float, fullTurn full: Int
     ) -> [SIMD2<Float>] {
-        let segments = arcSegmentCount(sweep: sweep, fullTurn: full)
+        let segments = max(1, Int((Float(full) * sweep / (2 * .pi)).rounded(.up)))
         let step = sweep / Float(segments)
         // 一周は最後の点が最初と重なるので落とす
-        let count = arcPointCount(sweep: sweep, fullTurn: full)
+        let count = sweep >= 2 * .pi ? segments : segments + 1
         // 閉包を標準ライブラリへ渡さずにループで回す。main actor の文脈の閉包は、点ごとに
         // 隔離の実行時検査を払う (#1779)
         var points: [SIMD2<Float>] = []

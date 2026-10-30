@@ -894,7 +894,6 @@ struct ScaledDiscTests {
                     (.rect(width: 4, height: 3), 4, [false, false, false, false]),
                     (.ellipse(radiusX: 2, radiusY: 2), 8, Array(repeating: true, count: 8)),
                     (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3, closure: .pie), 6, Array(repeating: true, count: 6)),
-                    (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3, closure: .chord), 6, Array(repeating: true, count: 6)),
                 ]
                 // 角丸の矩形は、実際の周 (角の弧の点がどれも刻み) の点の数と刻みで突き合わせる (#3170)。
                 // 半径が短い辺の半分ちょうどの周 (弧の端が重なる点を 1 つに畳む) も含める
@@ -905,24 +904,9 @@ struct ScaledDiscTests {
                         (.roundedRect(width: width, height: height, radius: radius), outline.points.count, outline.curveSteps))
                 }
                 for (form, count, steps) in roundedForms {
-                    let rule = form.placesDiscs(cap: cap, join: join, ringSegments: 16)
+                    let rule = form.placesDiscs(cap: cap, join: join)
                     let actual = placed(count: count, closed: true, steps: steps)
                     if rule != actual { mismatches.append("\(form) \(cap) \(join) 規則\(rule) 骨\(actual)") }
-                }
-                // 開いた弧の輪郭 (既定・`.open`) は、実際の周 (開いた弧の点がどれも刻み) の点の数で突き合わせる (#3248)。
-                // 一周の刻みが小さいと弧の点が 2 つになり、端の形 (丸い端だけ円板) で決まる
-                for closure in [FormInstance.ArcClosure.standard, .open] {
-                    for (sweep, fullTurn) in [(Float(3), 16), (3, 3), (0.2, 16), (0.2, 3), (1, 6)] {
-                        let outline = Canvas.ringOutline(
-                            Canvas.Outline.Ring(
-                                radiusX: 2, radiusY: 2, start: 0, sweep: sweep, segments: fullTurn, piece: .arcLine))
-                        let form = Canvas.FlatForm.arc(radiusX: 2, radiusY: 2, start: 0, sweep: sweep, closure: closure)
-                        let rule = form.placesDiscs(cap: cap, join: join, ringSegments: fullTurn)
-                        let actual = placed(count: outline.points.count, closed: false, steps: outline.curveSteps)
-                        if rule != actual {
-                            mismatches.append("\(form) 刻み\(fullTurn) 点\(outline.points.count) \(cap) \(join) 規則\(rule) 骨\(actual)")
-                        }
-                    }
                 }
             }
         }
