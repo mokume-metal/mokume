@@ -1058,7 +1058,8 @@ enum Scene: String, CaseIterable, Sendable {
         // 右下: 切り抜いた中にだけ描かれる
         canvas.push()
         canvas.translate(64, 64)
-        canvas.clip(76, 76, 40, 40)
+        // 切り抜きは呼んだ時点の変換で読む (#2721)。面の (76, 76) から 40 四方は、動かした先で (12, 12)
+        canvas.clip(12, 12, 40, 40)
         canvas.noStroke()
         canvas.fill(.display(red: 0.35, green: 0.6, blue: 0.95))
         canvas.circle(32, 32, 56)

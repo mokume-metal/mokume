@@ -87,7 +87,7 @@ final class ShapesAndStyle: Sketch {
         blendMode(.blend)
 
         // 頂点列 — 同じ穴付き曲線を、切り抜きなし / ありで比較する。
-        // clip は変換後の面の座標。右の形は枠の右辺をまたぐ。
+        // clip は呼んだ時点の変換で読む。ここは変換の前 (translate の前) に書くので、面の座標のまま。右の形は枠の右辺をまたぐ。
         pushStyle()
         for (index, x) in [Float(540), 740].enumerated() {
             noStroke()

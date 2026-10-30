@@ -249,8 +249,31 @@ extension Canvas {
         /// ``SketchPart/orbit`` に収めようのない値 (数でない値・無限の角など) が書かれ、
         /// 既定へ倒した ([#2643])。
         case badOrbit
-        /// 受け取れない切り抜きが渡された。
+        /// 受け取れない切り抜きが渡された (数でない値・無限の指定)。
         case badClip
+        /// 渡された 4 つの数は有限だが、`rectMode(_:)` で矩形へ解くと端が数でなくなった (`.radius` の
+        /// `-∞ + ∞`)。切り抜きは触らない ([#2721])。
+        ///
+        /// **``badClip``・``clipTransformOverflow`` とは鍵を分ける。** 直す先が違い (渡す数・変換)、同じ鍵だと
+        /// 先に出た文面が後の原因を隠す。
+        ///
+        /// [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        case clipNotResolvable
+        /// 渡された数は有限で矩形にも解けたが、いまの変換が矩形を数でない値・無限へ運んだ (倍率が大きすぎる・
+        /// 行列が溢れている)。切り抜きは触らない ([#2721])。
+        ///
+        /// **``badClip``・``clipNotResolvable`` とは鍵を分ける。**
+        ///
+        /// [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        case clipTransformOverflow
+        /// 回転・剪断を含む変換の下で ``Canvas/clip(_:_:_:_:)`` が呼ばれ、写した 4 つの角を囲む面に沿った
+        /// 矩形で切り抜いた ([#2721])。切り抜きは面に沿った矩形しか持てない。
+        ///
+        /// **``badClip`` とは鍵を分ける。** あちらは渡された数が受け取れない話で、こちらは数は受け取れて、
+        /// 変換の下で表せない形を近似した話である。
+        ///
+        /// [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        case clipUnderRotation
         /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698
