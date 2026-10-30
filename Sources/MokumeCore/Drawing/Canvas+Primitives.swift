@@ -220,7 +220,10 @@ extension Canvas {
     /// 閉じ方の違う `arc` が同じ列に並ぶ性質も、`.pie` と変わらない。
     ///
     /// 距離関数の経路を使えないとき — `texture()` か `shader()` を効かせた塗りは三角形の経路へ — は、輪郭の周
-    /// (``Outline``) を部分ごとに組んで描く (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
+    /// (``Outline``) を描く。**畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open`
+    /// の塗り**で、同じ形が続く間は 1 つの雛形に畳む (``draw(folding:at:outline:)``・#3248)。輪郭つきの弧と、貼る絵つきの
+    /// `.chord` / `.open` は、畳むと縁の数成分が畳まない絵と違うので畳まず、部分ごとに組んで描く
+    /// (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
     /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
@@ -273,7 +276,12 @@ extension Canvas {
                     .arc, center: center, half: SIMD2(radiusX, radiusY),
                     arc: SIMD2(start, sweep), arcClosure: closure, fills: true)
         }
-        guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) else {
+        // **畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open` の塗り**
+        // (どちらも弦で結んだ形の塗り・#3248)。輪郭つきと貼る絵つきの `.chord` / `.open`・輪郭つきの既定は、畳んだ絵が
+        // 畳まない絵と縁の数成分違い (置き場所の変換を GPU で掛けるぶん・#3170 の角丸の輪郭つきと同じ根) — 絵を
+        // 動かさない約束を守るため、今までの道 (``placeArcInParts``) に残す
+        let foldsChordFill = !drawsStroke && style.picture == nil && (mode == .chord || mode == .open)
+        guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) || foldsChordFill else {
             return placeArcInParts(
                 mode: mode, center: center, radiusX: radiusX, radiusY: radiusY, start: start,
                 sweep: sweep)
@@ -284,7 +292,9 @@ extension Canvas {
         // 角度 0 から作り直して持たせる (``Outline/dashPoints``)
         let dashesFromAngleZero = isFullTurn && dashedStroke != nil
         draw(
-            folding: .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep),
+            folding: .arc(
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
+                closure: foldsChordFill && !isFullTurn ? .chord : .pie),
             at: center
         ) { segments in
             // 周の点はどれも円板で埋める。弧の点は刻みで、**扇の 3 つの角 (中心と弧の両端)
@@ -295,7 +305,7 @@ extension Canvas {
             var outline = Self.ringOutline(
                 Outline.Ring(
                     radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
-                    segments: segments, piece: .sector))
+                    segments: segments, piece: foldsChordFill && !isFullTurn ? .chord : .sector))
             if dashesFromAngleZero {
                 outline.dashPoints = Self.ringOutline(
                     Outline.Ring(
@@ -317,7 +327,7 @@ extension Canvas {
     /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
     /// 破線の輪郭は、開いた弧の周を刻むので、ここでも ``strokeOutline(_:discSegments:)`` が引き受ける。
     /// **周は区間の中だと分かってから組む。**
-    private func placeArcInParts(
+    func placeArcInParts(
         mode: ArcMode?, center: SIMD2<Float>, radiusX: Float, radiusY: Float, start: Float,
         sweep: Float
     ) {
@@ -332,8 +342,10 @@ extension Canvas {
         // `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。書けないものは
         // 図形 1 つにつき 1 度だけ数える (#3139)
         let held = suspendVectorRecordingShadedFigure(
-            .arc(radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep), at: center,
-            arcClosure: mode.map(\.closure) ?? .standard)
+            .arc(
+                radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
+                closure: mode.map(\.closure) ?? .standard),
+            at: center)
         defer { resumeVector(held) }
         switch mode {
         case nil:

@@ -196,6 +196,11 @@ extension Canvas {
         folding form: FlatForm, at anchor: SIMD2<Float>,
         outline makeOutline: (_ ringSegments: Int) -> Outline
     ) {
+        // 畳める弧の閉じ方は 2 つだけ (扇と、弦で結んだ形の塗り)。周の作り方 (`makeOutline`) も `ringRadius`・`placesDiscs` も
+        // 閉じ方を見ないので、輪郭を開いた弧で引く閉じ方 (既定・`.open`) は雛形にできない — 呼ぶ側が畳まない口へ送る
+        if case .arc(_, _, _, _, let closure) = form {
+            precondition(closure == .pie || closure == .chord, "only a pie and a chord fill fold (\(closure))")
+        }
         // 区間の外では、畳む相手の控えも雛形も動かさない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         // ここへ来るのは貼る絵か断片が効いている図形だけ (``formAllowed(fills:)``)。塗りはベクターへ書けないので

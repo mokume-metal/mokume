@@ -893,7 +893,7 @@ struct ScaledDiscTests {
                 let forms: [(Canvas.FlatForm, Int, [Bool])] = [
                     (.rect(width: 4, height: 3), 4, [false, false, false, false]),
                     (.ellipse(radiusX: 2, radiusY: 2), 8, Array(repeating: true, count: 8)),
-                    (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3), 6, Array(repeating: true, count: 6)),
+                    (.arc(radiusX: 2, radiusY: 2, start: 0, sweep: 3, closure: .pie), 6, Array(repeating: true, count: 6)),
                 ]
                 // 角丸の矩形は、実際の周 (角の弧の点がどれも刻み) の点の数と刻みで突き合わせる (#3170)。
                 // 半径が短い辺の半分ちょうどの周 (弧の端が重なる点を 1 つに畳む) も含める

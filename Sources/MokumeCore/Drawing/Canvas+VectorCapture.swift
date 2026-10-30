@@ -264,10 +264,11 @@ extension Canvas {
     /// 図形ごと落とす (``vectorWritable(fills:strokes:into:)``)。輪郭は、周を刻んだ折れ線でなく
     /// 真の形 (矩形・楕円・弧) で書く。
     ///
-    /// - Parameter arcClosure: 弧の閉じ方。輪郭の形と破線を刻む周の部分が閉じ方で決まる
-    ///   (``Canvas/placeArcInParts``が呼ぶ既定・`.chord`・`.open`)。弧以外では読まない。
+    /// **弧の閉じ方は、形 (``FlatForm/arc(radiusX:radiusY:start:sweep:closure:)``) が持つ 1 つだけを読む。** 輪郭の形と
+    /// 破線を刻む周の部分が閉じ方で決まる。畳みの口 (``Canvas/draw(folding:at:outline:)``) は扇か弦で結んだ形を、
+    /// 畳まない口 (``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) は既定・`.chord`・`.open` を渡す。
     func suspendVectorRecordingShadedFigure(
-        _ form: FlatForm, at anchor: SIMD2<Float>, arcClosure: FormInstance.ArcClosure = .pie
+        _ form: FlatForm, at anchor: SIMD2<Float>
     ) -> VectorCapture? {
         guard let sink = vectorSink() else { return nil }
         let fills = style.hasFill
@@ -312,7 +313,7 @@ extension Canvas {
                                 radiusX: radiusX, radiusY: radiusY, start: 0, sweep: 2 * .pi, piece: .sector,
                                 at: anchor
                             ).points, isClosed: true) : [])
-            case .arc(let radiusX, let radiusY, let start, let sweep):
+            case .arc(let radiusX, let radiusY, let start, let sweep, let arcClosure):
                 // 一周ぶんは楕円。一周でない弧は、閉じ方 (`arcClosure`) の形で書く
                 let isFullTurn = sweep >= 2 * .pi
                 let ring = writable.strokes
@@ -445,7 +446,8 @@ extension Canvas {
     ///   (黙って輪郭まで失わない)。
     /// - 図形の塗りと輪郭を何度かの口に分けて控える図形 (破線で塗りもある図形。塗りは ``appendForm``、輪郭は
     ///   ``recordVectorDashedForm`` が控える) は、``countingOneVectorFigure(_:)`` で括り、同じ図形を 2 度数えない。
-    ///   貼る絵が効く弧 (``Canvas/placeArcInParts``) は、弧 1 つを真の形で 1 度に控えるので、括りは要らない。
+    ///   貼る絵が効く弧 (畳む口 ``Canvas/draw(folding:at:outline:)`` と畳まない口 ``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) は、
+    ///   弧 1 つを真の形で 1 度に控えるので、括りは要らない。
     ///
     /// 書くものが無ければ nil。
     func vectorWritable(
