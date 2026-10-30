@@ -462,6 +462,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Sketch/draw()``
 - ``Sketch/settings``
 - ``Sketch/plugins``
+- ``SketchView``
 
 ### 面の大きさと時間
 
