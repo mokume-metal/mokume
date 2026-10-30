@@ -178,6 +178,85 @@ struct OutputScaleGraphicsTests {
         #expect(part.maxX == 60 * factor - 1 && part.maxY == 60 * factor - 1, "\(part)")
     }
 
+    // MARK: - image 以外の口 (完了条件 2・3)
+
+    /// 左半分が赤・右半分が緑の描き場所 (座標 64×64)。
+    private static func makeHalves(_ canvas: Canvas) throws -> Canvas {
+        let graphics = try canvas.createGraphics(64, 64)
+        try draw(on: graphics) {
+            graphics.background(0)
+            graphics.noStroke()
+            graphics.fill(.linear(red: 1, green: 0, blue: 0))
+            graphics.rect(0, 0, 32, 64)
+            graphics.fill(.linear(red: 0, green: 1, blue: 0))
+            graphics.rect(32, 0, 32, 64)
+        }
+        return graphics
+    }
+
+    /// `texture(graphics)` に書いた読み取り位置 `vertex(x, y, u, v)` は、描き場所の**座標の大きさ**で読まれる。
+    /// 画素数で割ると、倍率 N では描き場所の左上の 1/N² だけを読んで、置いた四角が全部赤になる。
+    @Test("texture(描き場所) と vertex(x, y, u, v) の u・v は、倍率 N でも描き場所の座標で読まれる", arguments: [1, 2, 3])
+    func writtenCoordinatesAreReadInCoordinates(_ factor: Int) throws {
+        let canvas = try Self.makeCanvas(size: 64, scale: factor)
+        let graphics = try Self.makeHalves(canvas)
+        try Self.draw(on: canvas) {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.texture(graphics)
+            canvas.beginShape()
+            canvas.vertex(0, 0, 0, 0)
+            canvas.vertex(64, 0, 64, 0)
+            canvas.vertex(64, 64, 64, 64)
+            canvas.vertex(0, 64, 0, 64)
+            canvas.endShape(.close)
+        }
+        let left = canvas.get(16 * factor, 32 * factor), right = canvas.get(48 * factor, 32 * factor)
+        #expect(left.red > 0.9 && left.green < 0.1, "左半分は赤: \(left)")
+        #expect(right.green > 0.9 && right.red < 0.1, "右半分は緑: \(right)")
+    }
+
+    /// 断片の面に渡した描き場所は、倍率 N の画素の描き場所をそのまま標本にする (大きさは読まない)。
+    @Test("断片の面に渡した描き場所は、倍率 N でも全体が読まれる", arguments: [1, 2, 3])
+    func shaderSurfaceReadsTheWholeGraphics(_ factor: Int) throws {
+        let canvas = try Self.makeCanvas(size: 64, scale: factor)
+        let graphics = try Self.makeHalves(canvas)
+        let shader = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values, Surfaces surfaces) {
+                return mokume_sample(surfaces.painted, in.place);
+            }
+            """,
+            surfaces: ["painted": .graphics(graphics)])
+        try Self.draw(on: canvas) {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.shader(shader)
+            canvas.rect(0, 0, 64, 64)
+        }
+        let left = canvas.get(16 * factor, 32 * factor), right = canvas.get(48 * factor, 32 * factor)
+        #expect(left.red > 0.9 && left.green < 0.1, "左半分は赤: \(left)")
+        #expect(right.green > 0.9 && right.red < 0.1, "右半分は緑: \(right)")
+    }
+
+    /// 走っているスケッチの `draw(into:)` の中で描いた描き場所も、倍率の画素で刻まれ、`image` が座標で置く。
+    @Test("draw(into:) で描いた描き場所は、倍率 N で線が 2N 画素の太さになり、image が座標で置く", arguments: [1, 2, 3])
+    func drawIntoWorksUnderScale(_ factor: Int) throws {
+        let runtime = try SketchRuntime(
+            sketch: DrawIntoSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 }, outputScale: factor)
+        try runtime.advance()
+        let pixels = try runtime.target.readPixels()
+        #expect(pixels.width == 64 * factor)
+        // 左半分 (赤い四角) は座標 (0..32)。右半分は暗く、白い線 (太さ 2) だけが横切る
+        #expect(pixels[16 * factor, 10 * factor].red > 0.9)
+        #expect(pixels[48 * factor, 10 * factor].red < 0.01)
+        var crossing: Float = 0
+        for y in 0..<pixels.height { crossing += pixels[48 * factor, y].red }
+        #expect(abs(crossing - Float(2 * factor)) < 0.3, "線の太さ: \(crossing)")
+        // 赤い四角の右端は座標 32 の画素の境目
+        #expect(pixels[32 * factor - 1, 10 * factor].red > 0.9 && pixels[32 * factor, 10 * factor].red < 0.1)
+    }
+
     // MARK: - 上限 (完了条件 5)
 
     @Test("倍率を掛けた描き場所が 16384 を越えると、倍率を名指す失敗で断る。上限ちょうどは通る")
@@ -252,5 +331,27 @@ struct OutputScaleGraphicsTests {
         let direct = try Canvas(target: RenderTarget(gpu: gpu, width: 128, height: 128), gpu: gpu)
         try scene(direct)
         #expect(try made.output.readPixels() == direct.output.readPixels())
+    }
+}
+
+/// `draw(into:)` の中で、描き場所へ赤い四角と太さ 2 の線を描き、`image` で置く。
+private final class DrawIntoSketch: Sketch {
+    var settings: SketchSettings { SketchSettings(width: 64, height: 64) }
+    private var layer: Canvas!
+
+    func setup() throws { layer = try createGraphics(64, 64) }
+
+    func draw() {
+        draw(into: layer) {
+            background(0)
+            noStroke()
+            fill(.linear(red: 1, green: 0, blue: 0))
+            rect(0, 0, 32, 64)
+            stroke(.linear(red: 1, green: 1, blue: 1))
+            strokeWeight(2)
+            line(40, 32, 64, 32)
+        }
+        background(0)
+        image(layer, 0, 0)
     }
 }
