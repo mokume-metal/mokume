@@ -13,6 +13,11 @@ import mokume
 ///
 /// 取り置きが要るのは、**窓口が毎回ネットワークに依存しないため**である。手元にあるものを
 /// 読める限り、飛行機の中でもスケッチは書ける。
+///
+/// **取り置きの名前は、依存の同一性に追随する** (``cacheURL(for:)``)。版は `mokume-api-v<版>.md`、
+/// 枝・改訂は `mokume-api-rev-<改訂の先頭 12 字>.md` で、依存を上げれば別の名前になり、古い一覧は
+/// 返らない。**追随できない (鍵が無い) 状態だけ共通名 `mokume-api.md`** を読み、そこから返す回は
+/// 答えが鍵の無いことを名乗る (``Source/cached(_:keyed:)``・#3478)。
 struct APIListLocator {
     /// 資産の置き場。
     static let releases = "https://github.com/mokume-metal/mokume/releases/download"
@@ -32,12 +37,21 @@ struct APIListLocator {
     /// どこから得たか。**応答に載せる** — 取り置きを読んでいるのか、いま取ってきたのかが
     /// 分からないと、古いものを新しいと信じる余地が残る。
     enum Source {
-        case cached(URL)
+        /// 取り置きから。`keyed` は、その名前に依存の版・改訂が入っているか。**入っていない (共通名) 一覧は、
+        /// 何から組んだものか分からない**ので、答えがそう名乗る (#3478)。
+        case cached(URL, keyed: Bool)
         case downloaded(URL, from: URL)
 
         var text: String {
             switch self {
-            case .cached(let url): "cached (\(url.path))"
+            case .cached(let url, let keyed):
+                // 頭の `cached (…)` は変えない (検査も読み手も頭で見ている)
+                keyed
+                    ? "cached (\(url.path))"
+                    : """
+                    cached (\(url.path)) — a list put here by hand, tied to no version or revision, \
+                    so it may differ from the dependency in use
+                    """
             case .downloaded(let url, let remote): "fetched and cached (\(remote) → \(url.path))"
             }
         }
@@ -78,9 +92,9 @@ struct APIListLocator {
     func read() throws -> (text: String, source: Source) {
         let state = versionState()
         let version: String? = if case .version(let found) = state { found } else { nil }
-        let cache = cacheURL(for: version)
+        let cache = cacheURL(for: state)
         if let text = try? String(contentsOf: cache, encoding: .utf8), !text.isEmpty {
-            return (text, .cached(cache))
+            return (text, .cached(cache, keyed: Self.isKeyed(state)))
         }
         guard let version else {
             throw Missing(advice: unknownVersionAdvice(state, cache: cache), cause: .versionUnknown)
@@ -116,10 +130,29 @@ struct APIListLocator {
     /// 実装は 1 つにする。
     func resolvedVersion() -> String? { DependencyVersion.resolved(forPackageAt: directory) }
 
-    /// 取り置きの置き場。版が引けないときは**手で置くための枠**を指す。
-    func cacheURL(for version: String?) -> URL {
-        let name = version.map { "mokume-api-v\($0).md" } ?? "mokume-api.md"
+    /// 取り置きの置き場。**名前は依存の同一性から作る** — 版は `mokume-api-v<版>.md`、枝・改訂は
+    /// `mokume-api-rev-<先頭 12 字>.md` (12 字の計算は ``BuildDirectory/revisionSegment(_:)`` のもの)。
+    /// 鍵にできるものが無い状態 (パスで指す・未解決・読めない・`Package.swift` が無い) は、
+    /// **手で置くための枠**の共通名 `mokume-api.md` を指す。
+    ///
+    /// **読む側 (``read()``) も案内の `OUT=` も、この 1 つの計算を通る。** 改訂の名前が無いときに共通名へ
+    /// 落ちて読むと、前の改訂の一覧を今のものとして返す (#3478)。
+    func cacheURL(for state: DependencyVersion.State) -> URL {
+        let name =
+            switch state {
+            case .version(let version): "mokume-api-v\(version).md"
+            case .revision(let revision): "mokume-api-\(BuildDirectory.revisionSegment(revision)).md"
+            case .unresolved, .notPinned, .unreadable, .noPackage: "mokume-api.md"
+            }
         return facet.appendingPathComponent(name)
+    }
+
+    /// 取り置きの名前に、依存の版・改訂が入るか。
+    static func isKeyed(_ state: DependencyVersion.State) -> Bool {
+        switch state {
+        case .version, .revision: true
+        case .unresolved, .notPinned, .unreadable, .noPackage: false
+        }
     }
 
     /// 資産の在処。タグは版に `v` を付けたもの。
@@ -200,7 +233,8 @@ struct APIListLocator {
                 \(head): `\(Self.identity)` is pinned to a branch or revision
                 (\(revision.prefix(12))), not to a release, and the list is published per release.
                 Depend on a release version and build the sketch again, or build the list from the
-                revision in use in the mokume repository and put it here:
+                revision in use in the mokume repository and put it here (the file name carries the
+                revision, so a list kept for another revision is never returned for this one):
 
                   \(makeList)
                 """

@@ -232,10 +232,14 @@ nonisolated enum BuildDirectory {
         case .version(let version): version
         // 枝や改訂で固定したものは版を名乗らない。**版と混ぜない** — 混ざると
         // 互いを作り直させ続ける
-        case .revision(let revision): "rev-\(revision.prefix(12))"
+        case .revision(let revision): revisionSegment(revision)
         case nil: nil
         }
     }
+
+    /// 改訂を、名前の 1 段にする (`rev-<先頭 12 字>`)。置き場の名前と、公開 API の一覧の取り置きの名前
+    /// (``APIListLocator/cacheURL(for:)``) が同じ計算を通る。
+    static func revisionSegment(_ revision: String) -> String { "rev-\(revision.prefix(12))" }
 
     /// そのパッケージの置き場になりうる場所を、**見る順に**並べる。
     ///
