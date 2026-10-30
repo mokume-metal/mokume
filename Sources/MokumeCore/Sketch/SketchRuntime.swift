@@ -486,8 +486,9 @@ public final class SketchRuntime {
     /// 間なら描き終えたフレームを指す。止める口 (`endRecord()`) はどちらからも呼ばれるので、
     /// `frameCount - 1` のような決め打ちでは片方で 1 枚ずれる (#1626 の反証)。
     private var drawnThrough = 0
-    /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
-    private var lastFrameAt: Double = 0
+    /// 最後にフレームを描き終えた**実時間** (``presenceClock``)。**誰かが進めているか**の判断に使う
+    /// (``advanceForPresence()``)。まだ 1 枚も描いていなければ、いつからでも「進めていない」になる。
+    private var lastFrameAt: Double = -.infinity
     /// フレームの速さを数える、**ただ 1 つの集計器** ([ADR-0030] 決定 7)。
     ///
     /// 窓に出る数字も観測の応答が返す数字もここから採る。**観測の有無に関わらず
@@ -970,7 +971,7 @@ public final class SketchRuntime {
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
-            lastFrameAt = now()
+            lastFrameAt = presenceClock()
             warnIfFrameRateWasReassigned()
         }
         guard !isPaused else {
@@ -1850,7 +1851,12 @@ public final class SketchRuntime {
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
-        guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
+        // **実時間で測る** (#3120)。誰かが進めているかは壁の時間の話で、作者の時計 (``now``) は検査が
+        // 差し替えて進められる。名乗りの経過 (``presenceElapsed``) が実時間を見るのと揃える (ADR-0032 決定 1)。
+        // 本番の ``now`` は実時間と同じ値なので、振る舞いは変わらない
+        guard !isAdvancingFrame, presenceClock() - lastFrameAt > Self.presenceStallThreshold else {
+            return
+        }
         do throws(RenderFailure) {
             try runFrame()
         } catch {
