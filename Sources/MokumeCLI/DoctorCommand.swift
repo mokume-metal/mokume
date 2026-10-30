@@ -555,8 +555,9 @@ enum DoctorCommand {
             case .malformed(let pin):
                 return prefix + "the pin for \(DependencyVersion.identity) in Package.resolved has a "
                     + "\(DependencyVersion.describe(pin)), which cannot be used "
-                    + "(\(DependencyVersion.rule(for: pin)); fix that pin line by hand, or write it "
-                    + "again with `swift package update \(DependencyVersion.identity)`)"
+                    + "(\(DependencyVersion.rule(for: pin)); fix the `version` (or `revision`) of that pin "
+                    + "in Package.resolved by hand, since SwiftPM's own commands stop on it; as a second resort "
+                    + "remove Package.resolved and build again, which also drops the pins of the other dependencies)"
             case .revision(let revision):
                 return prefix + "pinned to a branch or revision (\(revision.prefix(12))), "
                     + "not to a release"

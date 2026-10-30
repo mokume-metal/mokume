@@ -251,7 +251,9 @@ struct DependencyVersionTests {
         let version = DoctorCommand.dependencyLine(nil, state: .malformed(.version("../../x")))
         #expect(version.contains("has a version `../../x`, which cannot be used"), "\(version)")
         #expect(version.contains("a version must start with a digit"), "\(version)")
-        #expect(version.contains("swift package update mokume"), "\(version)")
+        #expect(version.contains("fix the `version` (or `revision`) of that pin"), "\(version)")
+        #expect(version.contains("second resort remove Package.resolved"), "\(version)")
+        #expect(!version.contains("swift package update"), "\(version)")
         #expect(!version.contains("could not be read"), "\(version)")
         #expect(!version.contains("pointing at a path"), "\(version)")
         let revision = DoctorCommand.dependencyLine(nil, state: .malformed(.revision("zz")))
@@ -264,7 +266,9 @@ struct DependencyVersionTests {
         let long = DoctorCommand.dependencyLine(
             nil, state: .malformed(.version("\u{1b}[31m" + String(repeating: "\u{1b}", count: 200))))
         #expect(!long.contains("\u{1b}"), "端末を乱す文字が出た")
-        #expect(long.count < 400, "逃がした後も短い: \(long.count)")
+        // 値の分の伸びは、逃がした後で 80 字 + `…` 以内 (固定の文の長さに左右されない)
+        let short = DoctorCommand.dependencyLine(nil, state: .malformed(.version("x")))
+        #expect(long.count - short.count <= 81, "逃がした後も短い: \(long.count - short.count)")
     }
 
     /// 弾いた値の表示 (`doctor` だけが使う)。**ASCII の印字できる文字のうち `` ` `` と `\` 以外はそのまま、

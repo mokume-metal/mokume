@@ -1958,8 +1958,10 @@ struct MCPServerTests {
             #expect(!outcome.text.contains(version), "弾いた値が答えに出た: \(outcome.text)")
         }
         // 一手目は pin の行を直す手。消す手は、他の依存の固定も外れると添えた二手目
-        let fix = try #require(outcome.text.range(of: "swift package update"), "\(outcome.text)")
-        let removal = try #require(outcome.text.range(of: "Removing `Package.resolved`"), "\(outcome.text)")
+        let fix = try #require(outcome.text.range(of: "so fix the pin by hand"), "\(outcome.text)")
+        let removal = try #require(outcome.text.range(of: "remove `Package.resolved` and build"), "\(outcome.text)")
+        #expect(!outcome.text.contains("swift package update"), "SwiftPM では直せない手を勧めた: \(outcome.text)")
+        #expect(!outcome.text.contains("swift package resolve"), "\(outcome.text)")
         #expect(fix.lowerBound < removal.lowerBound, "\(outcome.text)")
         #expect(outcome.text.contains("drops the pins of the other dependencies"), "\(outcome.text)")
         let shared = directory.appendingPathComponent(".mokume/reference/mokume-api.md")

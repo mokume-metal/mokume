@@ -265,10 +265,11 @@ struct APIListLocator {
 
                 \(head): the pin for `\(Self.identity)` in `Package.resolved` is not in a form this tool can use
                 as a name (\(DependencyVersion.rule(for: pin))). The value is shown by
-                `\(Command.name) doctor \(GivenPath.shellWord(directory))`. Fix that pin line (by hand, or write it again
-                with `swift package update \(Self.identity)`), then ask again. Removing `Package.resolved` and
-                building also works, but it drops the pins of the other dependencies too, so they may
-                move to other versions:
+                `\(Command.name) doctor \(GivenPath.shellWord(directory))`. SwiftPM's own commands (`resolve`, `update`) stop on
+                such a file and do not rewrite it, so fix the pin by hand: set the `version` (or `revision`) of the
+                `\(Self.identity)` pin in `Package.resolved` to a correct value, then ask again. If that is not
+                possible, remove `Package.resolved` and build the sketch (it writes the file again); that also
+                drops the pins of the other dependencies, so they may move to other versions:
 
                   \(run)
 
