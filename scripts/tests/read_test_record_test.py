@@ -30,6 +30,7 @@ JSON Lines のレコード境界は LF だけである。JSON の文字列には
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -339,6 +340,72 @@ class XunitUndecodableTest(unittest.TestCase):
                 terminal, summary = READER.slow(path)
                 self.assertNotIn("記録が無い", terminal + summary)
                 self.assertIn("記録が壊れている", terminal)
+
+
+class XunitUnopenableTest(unittest.TestCase):
+    """在るが開けない記録 (権限なし・ディレクトリ) を、xUnit の読み手が「無い」と名乗らないこと (#3527)。
+
+    「無い」と言えるのは `FileNotFoundError` と大きさ 0 だけ。権限の失敗や I/O エラーを
+    `OSError` ごと「無い」にすると、在る記録を無いと言う (UTF-8 として読めない記録と同じ根)。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name) / "a-directory"
+        self.dir.mkdir()
+        self.denied = Path(self.tmp.name) / "denied.xml"
+        self.denied.write_text('<testsuites><testcase classname="A" name="x"/></testsuites>', encoding="utf-8")
+        self.denied.chmod(0)
+        self.addCleanup(self.denied.chmod, 0o600)
+        # 親のディレクトリが調べられない記録 (stat の段で権限の失敗になる)
+        self.locked = Path(self.tmp.name) / "locked"
+        self.locked.mkdir()
+        (self.locked / "record.xml").write_text("<testsuites/>", encoding="utf-8")
+        self.locked.chmod(0)
+        self.addCleanup(self.locked.chmod, 0o700)
+
+    def unopenable(self):
+        """開けない記録の名前と置き場。root で走ると chmod 000 でも読めるので、その記録は含めない。"""
+        found = [("directory", str(self.dir))]
+        if not os.access(self.denied, os.R_OK):
+            found.append(("permission denied", str(self.denied)))
+        if not os.access(self.locked / "record.xml", os.R_OK):
+            found.append(("unsearchable parent", str(self.locked / "record.xml")))
+        return found
+
+    def test_the_precondition_holds(self):
+        """検査の前提: ディレクトリは必ず開けない。権限なしの記録は root 以外で開けない。"""
+        names = [name for name, _ in self.unopenable()]
+        self.assertIn("directory", names)
+        # root 以外では権限なしの記録も検査に入る (root の CI では読めてしまうので飛ばす)
+        self.assertTrue(os.geteuid() == 0 or {"permission denied", "unsearchable parent"} <= set(names), names)
+
+    def test_no_xunit_reader_calls_an_unopenable_record_missing(self):
+        mutate = _load("mutate", "mutate.py")
+        for name, path in self.unopenable():
+            with self.subTest(record=name):
+                self.assertEqual(READER.read(path, "A"), ("unreadable", 0))
+                self.assertEqual(READER.failures(path), "unreadable")
+                self.assertEqual(READER.failure_messages(path), "記録を読めなかった (`%s`)" % path)
+                terminal, summary = READER.slow(path)
+                self.assertNotIn("記録が無い", terminal + summary)
+                self.assertIn("記録を読めなかった", terminal)
+                self.assertEqual(mutate.read_record(path), ("unreadable", []))
+
+    def test_a_missing_or_empty_record_is_still_missing(self):
+        mutate = _load("mutate", "mutate.py")
+        none = str(Path(self.tmp.name) / "none")
+        empty = Path(self.tmp.name) / "empty.xml"
+        empty.write_bytes(b"")
+        self.assertEqual(READER.failures(none), "missing")
+        self.assertEqual(READER.failures(str(empty)), "missing")
+        self.assertEqual(READER.failure_messages(none), "記録が無い (`%s`)" % none)
+        self.assertEqual(READER.failure_messages(str(empty)), "記録が無い (`%s`)" % empty)
+        self.assertIn("記録が無い", READER.slow(none)[0])
+        self.assertIn("記録が無い", READER.slow(str(empty))[0])
+        self.assertEqual(mutate.read_record(none), ("missing", []))
+        self.assertEqual(mutate.read_record(str(empty)), ("missing", []))
 
 
 if __name__ == "__main__":

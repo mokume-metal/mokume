@@ -370,11 +370,17 @@ def filter_for(targets, suites):
 def read_record(path):
     """(状態, 検査の列)。状態は ok / missing / unreadable。検査は (ID, 結末)。"""
     path = Path(path)
-    if not path.is_file() or path.stat().st_size == 0:
+    try:
+        if path.stat().st_size == 0:
+            return "missing", []
+    except FileNotFoundError:
         return "missing", []
+    except OSError:
+        return "unreadable", []  # 在るが調べられない — 「無い」と言わない (#3527)
     try:
         root = ET.parse(path).getroot()
-    except ET.ParseError:
+    except (ET.ParseError, OSError):
+        # 権限なし・ディレクトリ・I/O エラーも、切れた記録と同じく読めない側へ (#3527)
         return "unreadable", []
     cases = []
     for case in root.iter("testcase"):
