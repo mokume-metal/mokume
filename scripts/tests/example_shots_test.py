@@ -1141,6 +1141,8 @@ class CaptureIdempotenceTest(unittest.TestCase):
         self.out = self.root / "out"
         self.uploaded = []
         self.served = 0  # 上げた回数の通算 (uploaded は検査の途中で空にする)
+        self.dead = set()  # 置き場で消えた URL (偽の死活の問い合わせが「引けない」と答える)
+        self.fail_after = None  # この回数だけ上げたら、次の上げで例外を出す
         # 絵の中身。鍵は囲みの番号 (指紋が動いても同じ絵を撮れるように、名前では持たない)
         self.black_at = {1: 1, 2: 2}
 
@@ -1159,26 +1161,31 @@ class CaptureIdempotenceTest(unittest.TestCase):
                 write_png(out / f"{shot.name}.png", self.rows(shot))
 
     def fake_upload(self, image, token, alt):
+        if self.fail_after is not None and len(self.uploaded) >= self.fail_after:
+            raise RuntimeError("Gyazo が落ちた")
         self.uploaded.append(image.name)
         self.served += 1
         return f"https://i.gyazo.com/{self.served:032x}.png"
 
-    def capture(self):
+    def capture(self, expect=0):
         """`main --capture` を 1 回。置き場は組んだ木ではなく、このテストの木に差し替える。"""
-        real_collect, real_capture, real_write = shots.collect, shots.capture_urls, shots.write_back
+        real_collect, real_capture, real_write, real_finished = (
+            shots.collect, shots.capture_urls, shots.write_back, shots.finished_shots)
         err = io.StringIO()
         with mock.patch.object(shots, "collect", lambda root: real_collect(self.root)), \
                 mock.patch.object(shots, "render", self.fake_render), \
                 mock.patch.object(shots, "report_mirrors", lambda *a, **k: None), \
                 mock.patch.object(shots, "upload", self.fake_upload), \
+                mock.patch.object(shots, "dead_urls", lambda urls: set(urls) & self.dead), \
                 mock.patch.object(shots, "capture_urls", lambda root, *a, **k: real_capture(self.root, *a, **k)), \
                 mock.patch.object(shots, "write_back", lambda root, *a: real_write(self.root, *a)), \
+                mock.patch.object(shots, "finished_shots", lambda root, *a: real_finished(self.root, *a)), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = shots.main(
                 ["--capture", "--render", str(self.out), "--token-command", "echo token"],
                 which=lambda name: f"/opt/tools/{name}",
             )
-        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(code, expect, err.getvalue())
 
     def text(self):
         return self.path.read_text(encoding="utf-8")
@@ -1310,6 +1317,89 @@ class CaptureIdempotenceTest(unittest.TestCase):
         self.capture()
         self.assertEqual(len(self.uploaded), 1, self.uploaded)
         self.assertEqual(len(set(self.urls())), 1)
+
+    def test_置き場で消えた絵は画素が同じでも上げ直す(self):
+        """#1294 級の消失や、写り込みを消すための削除の後に `make example-shots` で直せる。"""
+        self.capture()
+        before = self.urls()
+        self.dead = {before[0]}
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1, "消えた URL を『同じ』として残した")
+        after = self.urls()
+        self.assertNotEqual(after[0], before[0])
+        self.assertEqual(after[1], before[1], "生きている絵まで上げ直した")
+
+    def test_死活の引き方は_check_external_assets_のものを借りる(self):
+        """引き直し・一時的な失敗の扱いは `probe_all` が持つ。写さずに呼ぶことを固定する。"""
+        module = shots._external_assets()
+        asked = []
+
+        def fake(urls):
+            asked.append(urls)
+            return {urls[0]: object()}
+
+        with mock.patch.object(module, "probe_all", fake):
+            self.assertEqual(shots.dead_urls({"https://i.gyazo.com/b.png", "https://i.gyazo.com/a.png"}),
+                             {"https://i.gyazo.com/a.png"})
+            self.assertEqual(shots.dead_urls(set()), set())
+        self.assertEqual(asked, [["https://i.gyazo.com/a.png", "https://i.gyazo.com/b.png"]])
+
+    def test_死活は候補の_URL_だけを問う(self):
+        """画素が記録と同じ絵の URL だけを引く。画素が違う絵は上げ直すので問い合わせに載らない。"""
+        self.capture()
+        asked = []
+
+        def spy(urls):
+            asked.append(set(urls))
+            return set()
+
+        def again():
+            found = shots.collect(self.root)
+            out = self.root / "spy"
+            self.fake_render(self.root, found, out)
+            with mock.patch.object(shots, "dead_urls", spy), \
+                    mock.patch.object(shots, "upload", self.fake_upload):
+                shots.capture_urls(self.root, found, out, "tok", say=lambda _: None)
+
+        again()
+        self.assertEqual(asked, [set(self.urls())])
+        self.black_at[1] = 6
+        asked.clear()
+        again()
+        self.assertEqual(asked, [{self.urls()[1]}])
+
+    def test_途中で上げに失敗しても_上げ終えた分は記録に残る(self):
+        # 2 つ目のファイル (名前順で先に撮られる) を足す。2 本上げたところで落とす
+        second = self.root / "Sources" / "Second.swift"
+        second.write_text(SOURCE.replace("circle(200, 150, 160)", "circle(1, 2, 3)").replace(
+            "circle(200, 150, 80)", "circle(4, 5, 6)"), encoding="utf-8")
+        self.fail_after = 2
+        with self.assertRaises(RuntimeError):
+            self.capture()
+        self.assertEqual(len(self.uploaded), 2)
+        # 上げ終えた塊 (Second.swift) は書き戻され、落ちた後の塊 (Sketch.swift) は触られない
+        written = second.read_text(encoding="utf-8")
+        self.assertEqual(len(re.findall(r"i\.gyazo\.com", written)), 2)
+        self.assertEqual(len(re.findall(r" image=", written)), 2)
+        self.assertNotIn("i.gyazo.com", self.text())
+        # 続きを撮ると、上げ終えた分は上げ直さず、残りの 2 本だけを上げる
+        done = re.findall(r"https://i\.gyazo\.com/\w+\.png", written)
+        self.fail_after = None
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(len(self.uploaded), 2, self.uploaded)
+        self.assertEqual(re.findall(r"https://i\.gyazo\.com/\w+\.png", second.read_text(encoding="utf-8")), done)
+
+    def test_1_枚だけの動きと静止画は同じ画素でも同じハッシュにならない(self):
+        out = self.root / "kind"
+        out.mkdir()
+        still = shots.collect(self.root)[0]
+        write_png(out / f"{still.name}.png", grey_rows(8, 6))
+        motion = dataclasses.replace(still, frames=1)
+        (out / motion.name).mkdir()
+        write_png(out / motion.name / "f.0000.png", grey_rows(8, 6))
+        self.assertNotEqual(shots.image_hash(out, still), shots.image_hash(out, motion))
 
     def test_画素のハッシュは_PNG_のバイトに依らない(self):
         """圧縮の差分符号が違っても、画素が同じなら同じハッシュになる。"""
