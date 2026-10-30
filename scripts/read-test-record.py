@@ -108,8 +108,9 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
 0 件、はそれぞれ名乗る。0 件のときも「無い」と言い、読めない行や `runEnded` で閉じていない記録
 (検査のプロセスが途中で消えた回) は添える。**不正な UTF-8 のバイトを含む行 (末尾が多バイト文字の
 途中で切れた最終行など) も、その行だけを読めない行に数える** — 記録全体を読めないことにして、前の
-正常な取り消しまで捨てない (#3512)。読める事象が 0 件で、読めない行のすべてが不正なバイトによる
-ときだけ、記録全体を `文字として読めない` と名乗る。
+正常な取り消しまで捨てない (#3512)。読めた行が 1 行も無く (事象でない行も)、読めない行のすべてが
+改行で閉じた不正なバイトの行のときだけ、記録全体を `文字として読めない` と名乗る。改行で閉じていない
+最終行は「切れた行」で、切れた位置が ASCII でも多バイト文字の途中でも同じ名乗りにする。
 
 **警告だけで、終了コードは常に 0** — 段の結末は変えない。取り消しを赤にするかは、名乗らせた後に
 別に決める。
@@ -429,18 +430,24 @@ def read_cancellations(path):
 
     events = []
     broken = 0
-    undecodable = 0  # broken のうち、不正なバイトを含んだ行の数
-    for line in lines:
+    # broken のうち、改行で閉じた行で不正なバイトを含んだものの数。**改行で閉じていない最終行は
+    # 数えない** — 書く途中で消えた「切れた行」で、切れた位置が ASCII でも多バイト文字の途中でも
+    # 同じ名乗りにする (#3512)
+    undecodable = 0
+    nonblank = 0
+    for number, line in enumerate(lines):
         # 空行の判定は JSON の空白 (space・tab・CR・LF) だけ。`str.strip()` は U+2028・U+0085・
         # U+001C〜001F も空白とみなすので、そうした字だけの行 (壊れた行) を黙って読み飛ばしてしまう
         if not line.strip(" \t\r\n"):
             continue
+        nonblank += 1
         # **JSON として形が整っていても、不正なバイトを含む行は読めない行** — json.loads は
         # 写した字 (lone surrogate) をそのまま通すので、先に弾く。JSON のエスケープ表記
         # (`\udc80` の ASCII 6 字) は写した字ではないので当たらない
         if INVALID_BYTES.search(line):
             broken += 1
-            undecodable += 1
+            if number != len(lines) - 1:
+                undecodable += 1
             continue
         try:
             record = json.loads(line)
@@ -449,8 +456,9 @@ def read_cancellations(path):
                 events.append(payload)
         except (ValueError, KeyError, TypeError):
             broken += 1
-    if not events and undecodable and undecodable == broken:
-        # 読める事象が 0 件で、読めない行のすべてが不正なバイトによる — 記録全体が UTF-8 でない
+    if undecodable and undecodable == broken == nonblank:
+        # 読めた行が 1 行も無く (事象でない行も)、読めない行のすべてが、改行で閉じた不正なバイトの
+        # 行 — 記録全体が UTF-8 でない
         return "記録が壊れている — 文字として読めない", [], 0, []
     if not events:
         return "記録に事象が 1 件も無い" + ("" if not broken else " (読めない行 %d 行)" % broken), [], 0, []
