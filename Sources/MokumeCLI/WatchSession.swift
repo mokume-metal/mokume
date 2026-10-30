@@ -1387,6 +1387,9 @@ final class WatchSession {
         guard !stopRequested else { return notStartedForStopping() }
 
         let relaunchStarted = hooks.now()
+        // **起こせなかった回に、前の世代を元の役へ戻すための控え。** 重ねる見張りは、起こす前に
+        // 走っている世代を `outgoing` へ回す (下)。その乗り換えの待ち印もここで控える
+        var handedOver: (process: Process, wasAwaitingPromotion: Bool)?
         // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
         // いると、次の合図はそちらのものかもしれない。新しいライブラリの子は目録が子の番号を名乗り、
         // 合図は待っている世代のものだけを受ける (``generationPromoted(pid:)``・#2982) が、番号を
@@ -1412,6 +1415,7 @@ final class WatchSession {
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
+            handedOver = child.map { ($0, awaitingPromotion) }
             outgoing = child
             child = nil
         } else {
@@ -1424,7 +1428,11 @@ final class WatchSession {
         // 続ける — 建っていない回 (``unbuiltNotice(_:)``) と同じ形で、読み手は頭の行で
         // 何が起きたかを読める
         // **新しい子を起こす前に、古い目印を掃く** (#2350)。後の子が同じ pid を巡り当てても、倒れたと読まれない
-        sweepFellBackMarkers(keeping: nil)
+        //
+        // **ただし、乗り換えを待っていた世代の目印は残す** — 起こせなかった回は、その世代を現役へ戻して待たせ続ける
+        // (下)。巡回が読む前に消すと、倒れた子の合図を受けられない。起こせた回は後で掃く
+        let keptMarker = handedOver.flatMap { $0.wasAwaitingPromotion ? $0.process.processIdentifier : nil }
+        sweepFellBackMarkers(keeping: keptMarker)
         prepareStartFailureNotes()
         // **絵を出したと覚えるのは、生きている世代のぶんだけ。** 番号は使い回されるので、居なくなった世代の
         // 覚えを残すと、同じ番号の新しい子を、もう絵を出したと読む (#3172)
@@ -1445,7 +1453,22 @@ final class WatchSession {
         unblockWriting(to: child)
         expectsGeneration(generationPIDs(of: child))
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
-        awaitingPromotion = overlapsGenerations && child != nil
+        let launchedNew = child != nil
+        awaitingPromotion = overlapsGenerations && launchedNew
+        // **起こせなかった回は、走っている世代の役を動かさない** ([#3481](https://github.com/mokume-metal/mokume/issues/3481))。
+        // 前の世代は `outgoing` へ回したままだと、「前の版」と取り違えられる — 乗り換えを待っていた世代が
+        // 待ちを忘れて、自分の番号の合図で畳まれる。映っていた世代が、次の保存で畳まれるのに台へ手放したと
+        // 伝わらない。走っているものは落とさない (作り直しが通らない回と同じ顔)。回す前の役と待ち印へ戻す
+        var restoredPrevious = false
+        if !launchedNew, let handedOver, outgoing === handedOver.process, handedOver.process.isRunning {
+            child = handedOver.process
+            outgoing = nil
+            awaitingPromotion = handedOver.wasAwaitingPromotion
+            restoredPrevious = true
+        }
+        // **戻さなかった回は、残した目印を掃く。** 前の世代は退役待ちか居ないので、もう読む者が居ない。
+        // 起こしたばかりの子の目印は、まだ置かれていなくても残す (置くのは子で、掃くと倒れた知らせを失う)
+        if keptMarker != nil, !restoredPrevious { sweepFellBackMarkers(keeping: child?.processIdentifier) }
 
         let timings = BuildReport.Timings(
             detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)
@@ -1460,7 +1483,7 @@ final class WatchSession {
                     timings: timings)
             }
         return finish(
-            report, firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
+            report, firstFrameSince: measuresFirstFrame && launchedNew ? relaunchStarted : nil)
     }
 
     /// 前の子を止めている間に、作り直しを止める・見張りを終える頼みが来ていないかを見る。

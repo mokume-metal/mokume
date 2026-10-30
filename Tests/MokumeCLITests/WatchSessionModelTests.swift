@@ -42,13 +42,6 @@ import mokume
 ///
 /// 生成する操作は ``Op``。子が消える操作は終了コード 0 と非 0 (最初の絵の前に失敗で終わる・#3172) の 2 通り。
 /// TERM を無視する子は起こさない (止めるのに期限を待つので、PR の経路には載せない・#3218 の条件 6)。
-///
-/// ## 既知の破れ
-///
-/// 生成が見つけた、まだ直っていない破れが 2 つある (``knownBreaks``)。**事後条件は緩めず**、生成する検査は
-/// その形の列だけを外し (``Driver/skipsKnownIssues``)、破れる最小の列を `withKnownIssue` で残す。2 つとも、
-/// 「起こせなかった」保存 (`save(launchFail)`) が `child` を空にして前の世代を `outgoing` に回す形から来る。
-/// 直ったら、例が「破れが記録されなかった」と赤になるので、例と外す条件を一緒に消す。
 @Suite("見張りの世代交代は、生成した操作の列でも事後条件を破らない", .signalStateKept)
 struct WatchSessionModelTests {
     /// 見張りと台の外側に起きる出来事。
@@ -162,34 +155,19 @@ struct WatchSessionModelTests {
         #expect(report.skipped == 0 && report.ran >= 1, "走った列 \(report.ran) 件・約束の外 \(report.skipped) 件")
     }
 
-    /// 生成した列が見つけた、まだ直っていない破れ。**事後条件は緩めず、破れる最小の列を残す** (#3218 の条件 4)。
-    /// 生成する検査は、この形だけを列から外す (``Driver/skipsKnownIssues``)。直ったら、この例が「破れが記録されなかった」と
-    /// 赤になるので、例と外す条件を一緒に消す。
-    struct KnownBreak: Sendable, CustomTestStringConvertible {
-        /// 起票した Bug (番号)。
-        let issue: String
-        let ops: [Op]
-        /// 破れる事後条件の説明。
-        let summary: String
-
-        var testDescription: String { "\(issue) \(summary)" }
-    }
-
-    nonisolated static let knownBreaks: [KnownBreak] = [
-        KnownBreak(
-            issue: "#3481", ops: [.save, .saveLaunchFail, .promoteWaiting],
-            summary: "起こせなかった保存の後に、前の世代 (待っていた世代) の乗り換えの合図が来ると、道具がその世代を畳む (事後条件 4)"),
-        KnownBreak(
-            issue: "#3481", ops: [.save, .promoteWaiting, .saveLaunchFail, .save],
-            summary: "起こせなかった保存の後の保存が、映っている世代を畳むのに、台へ手放したと伝えない (事後条件 3)"),
-    ]
-
-    @Test("既知の破れ: 直るまで、破れる最小の列を残す", arguments: knownBreaks)
-    func knownBreak(_ row: KnownBreak) async {
-        await withKnownIssue("\(row.issue) \(row.summary)") {
-            let outcome = await Driver.runCase(ops: row.ops, ends: false, skipsKnownIssues: false)
-            #expect(outcome == .pass, "\(outcome)")
-        }
+    /// 生成が見つけて直した列 (#3481)。**生成する検査の seed に頼らず、決定的に回す。** 起こせなかった保存が
+    /// 走っている世代の役を動かさない約束 (事後条件 3・4) を、3 つの形で見る。
+    @Test(
+        "起こせなかった保存の後の合図・保存は、事後条件 3・4 を破らない (#3481 の 3 列)",
+        arguments: [
+            [Op.save, .saveLaunchFail, .promoteWaiting],
+            [.save, .promoteWaiting, .saveLaunchFail, .promoteStale],
+            [.save, .promoteWaiting, .saveLaunchFail, .save],
+        ])
+    @MainActor
+    func refusedLaunchColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
     }
 
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
@@ -219,8 +197,6 @@ struct WatchSessionModelTests {
         /// 自分の窓へ倒れたと知らせた世代 (目印を置いた)。**自分の窓に描いている**ので、1 枚目を出した世代と読まれる
         /// (台が受け取れない世代 (``silent``) も、台の知らせが無いので、起動中の印で読まれて同じになる)。
         private var marked: Set<Int> = []
-        /// 台へ手放したと伝え損ねたと言わない世代 (既知の Bug の形で畳まれた世代)。
-        private var exemptFromRelinquish: Set<Int> = []
         /// 台が 1 度でも映した世代。
         private var everShown: Set<Int> = []
         /// 手放したと伝えられた世代の延べ回数。
@@ -233,11 +209,8 @@ struct WatchSessionModelTests {
         private var launches = 0
         private var stopped = false
         private var history: [String] = []
-        /// 既知の Bug の形を、検査から外すか。**生成する検査は外し、既知の例 (``WatchSessionModelTests/knownBreaks``) は外さない。**
-        private let skipsKnownIssues: Bool
 
-        init(skipsKnownIssues: Bool) throws {
-            self.skipsKnownIssues = skipsKnownIssues
+        init() throws {
             let directory = try TestScratch.directory("mokume-watch-model")
             // 値を持つ前に自分を捕まえられないので、箱を挟む
             let box = Box()
@@ -287,12 +260,6 @@ struct WatchSessionModelTests {
             return process
         }
 
-        /// 乗り換えを待っていた世代を、後の保存の「起こせなかった」回が前の世代へ回し、見張りが待ちを忘れた形
-        /// (`child` が無く、その世代が `outgoing`)。**この形は既知の Bug で、台の合図を見張りが受け付けない** (``knownBreaks``)。
-        private func isOrphan(_ index: Int) -> Bool {
-            session.child == nil && session.outgoing === gens[index]
-        }
-
         private func index(of pid: Int32) -> Int? { gens.firstIndex { $0.processIdentifier == pid } }
         private func pid(_ index: Int) -> Int32 { gens[index].processIdentifier }
         private func isAlive(_ index: Int) -> Bool { gens[index].isRunning }
@@ -340,9 +307,9 @@ struct WatchSessionModelTests {
         }
 
         /// 1 件の列を走らせる。
-        static func runCase(ops: [Op], ends: Bool, skipsKnownIssues: Bool = true) async -> Probe.Outcome {
+        static func runCase(ops: [Op], ends: Bool) async -> Probe.Outcome {
             let driver: Driver
-            do { driver = try Driver(skipsKnownIssues: skipsKnownIssues) } catch { return .fail("検査の準備に失敗: \(error)") }
+            do { driver = try Driver() } catch { return .fail("検査の準備に失敗: \(error)") }
             defer { driver.teardown() }
             let sequence = ops + (ends ? [Op.stop] : [])
             for op in sequence {
@@ -389,13 +356,7 @@ struct WatchSessionModelTests {
                 let launched = gens.count
                 let childBefore = session.child.flatMap { child in gens.firstIndex { $0 === child } }
                 let unseenBefore = unseen
-                // 映っている世代が、「起こせなかった」回の後の `outgoing` のまま (`child` が無い) で畳まれると、台へ手放したと
-                // 伝えない (``knownBreaks``)
-                let shownGapOutgoing = shown.flatMap { session.child == nil && session.outgoing === gens[$0] ? $0 : nil }
                 await beat()
-                if skipsKnownIssues, let shownGapOutgoing, !isAlive(shownGapOutgoing) {
-                    exemptFromRelinquish.insert(shownGapOutgoing)
-                }
                 if gens.count > launched { waiting = gens.count - 1 }
                 guard unseenBefore.isEmpty else { return nil }
                 switch op {
@@ -414,7 +375,7 @@ struct WatchSessionModelTests {
                 return nil
 
             case .promoteWaiting, .promoteAnonymous:
-                guard let target = waiting, isAlive(target), !(skipsKnownIssues && isOrphan(target)) else { return nil }
+                guard let target = waiting, isAlive(target) else { return nil }
                 await session.generationPromoted(pid: op == .promoteWaiting ? pid(target) : nil)
                 session.generationShown(pid: pid(target))
                 shown = target
@@ -430,7 +391,7 @@ struct WatchSessionModelTests {
             case .promoteStale:
                 guard
                     let stale = alive().filter({
-                        $0 != waiting && !silent.contains($0) && !(skipsKnownIssues && isOrphan($0))
+                        $0 != waiting && !silent.contains($0)
                     }).max()
                 else { return nil }
                 let waitingBefore = session.waitingGeneration
@@ -454,7 +415,7 @@ struct WatchSessionModelTests {
                 return nil
 
             case .fellBack, .undeliverable:
-                guard let target = waiting, isAlive(target), !(skipsKnownIssues && isOrphan(target)) else { return nil }
+                guard let target = waiting, isAlive(target) else { return nil }
                 let label = op == .fellBack ? "倒れた知らせ" : "受け取れない知らせ"
                 let first = try await notify(op, about: target)
                 guard first else {
@@ -555,7 +516,7 @@ struct WatchSessionModelTests {
                 return Violation(number: 3, text: "生きて映っている G\(shown) を、台へ手放したと伝えた")
             }
             // 終わるとき (窓ごと閉じる) は、台へ伝える相手が居ない
-            if !stopped, let shown, !isAlive(shown), !unseen.contains(shown), !exemptFromRelinquish.contains(shown),
+            if !stopped, let shown, !isAlive(shown), !unseen.contains(shown),
                 (relinquished[shown] ?? 0) == 0
             {
                 return Violation(number: 3, text: "映っていた G\(shown) が居なくなったのに、台へ手放したと伝えていない")
