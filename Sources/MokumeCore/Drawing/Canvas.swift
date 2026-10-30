@@ -1344,7 +1344,9 @@ public final class Canvas {
     /// 置いた図形は置くときに変換を焼き付けるので、区間の中で書いた変換は、その後に置いたものに
     /// 効く。区間を出るときに変換と積み履歴は既定へ戻る (``endCarriedSegment()``) ので、次の
     /// フレームにも次の区間にも漏れない。**シーンの記述 (光・視点・投影・材質・影・周囲・効果・
-    /// 切り抜き・粒・計算) は、焼き付かずフレームに属するので、ここを見ない** — 区間でも従来どおり断る。
+    /// 切り抜き) は、焼き付かずフレームに属するので、ここを見ない** — 区間でも従来どおり断る。粒・計算の頼みも
+    /// 同じく断る (``admits(_:)``)。こちらは状態ではなく、そのフレームで走る仕事の予約で、ループ中の
+    /// 入力のコールバックで頼めば、そのフレームで走る (出口で戻さない・``leaveInputCallbackInsideFrame()``)。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
@@ -1769,6 +1771,8 @@ public final class Canvas {
     ///
     /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
     func warnIfStacksLeftOpen(before ended: String) {
+        // 段が無ければ、配列を作らずに抜ける (入力のコールバックの出口が、配るたびに通る・#3408)
+        guard !transformStack.isEmpty || !styleStack.isEmpty else { return }
         let sites = [transformStack.last?.1, styleStack.last?.1].compactMap { $0 }
         guard let last = sites.max(by: { $0.order < $1.order }) else { return }
         warnOnce(
@@ -4126,6 +4130,27 @@ public final class Canvas {
         // 描き切れなかったフレームも含めて、次に引き継ぐ奥行きは無い (#1888)
         depthIsHeld = false
         beginDrawFrame = nil
+        resetSceneDescription()
+        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
+        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
+        // `beginFrame()`)
+        //
+        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+        discardShapeLeftOpen()
+    }
+
+    /// **シーンの記述 (視点・目印・変換・切り抜き・光・周囲・材質・影) を既定へ戻す。** フレームの終わり
+    /// (``abandonFrame()``) と、フレームの内側で配った入力のコールバックの出口
+    /// (``leaveInputCallbackInsideFrame()``・[#3408]) が、同じこの 1 つを通る。戻す並びを 2 か所に書くと、
+    /// 片方に足し落とした状態だけが越える。**境目の検査の表で「シーンの記述」の印を持つ行
+    /// (`CanvasTests.FrameState` の `FrameReset.isSceneDescription`) と、ここで戻すものは同じ集合**で、
+    /// 足したらその表に印つきで足す。
+    ///
+    /// 積み履歴 (``transformStack``・``styleStack``) と効果の予定 (``pendingEffects``) は、ここへ入れない —
+    /// フレームの終わりでは頭が戻す (積んだ事実はフレームに属する・#925)。出口の側が自分で戻す。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    private func resetSceneDescription() {
         cameraStorage = nil
         drawsDebugGuides = false
         transform = .identity
@@ -4139,12 +4164,64 @@ public final class Canvas {
         shadowBiasValue = ShadowMap.defaultBias
         style.castsShadow = true
         style.receivesShadow = true
-        // **組み立て中の形もフレームを越えない** ([#1591])。終わりで捨てるのは、`draw()` で
-        // 開いたまま抜けた形を、止まっている間のコールバックへ漏らさないため (頭の側は
-        // `beginFrame()`)
-        //
-        // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
+    }
+
+    /// **フレームの内側で配った入力のコールバック 1 つの出口。** コールバックで書いたシーンの記述を、
+    /// 抜けるときに既定へ戻す ([#3408]・[ADR-0021] 決定 4 の追補 (2026-10-28) の改訂)。
+    ///
+    /// ループ中と `redraw()` を頼んだ後の入力のコールバックは、本体の面のフレームの内側 (`draw()` の前) で
+    /// 配られる。戻さないと、`mousePressed()` で書いた `translate()`・`lights()`・`clip()` などが、同じ
+    /// フレームの `draw()` へ漏れる (止まっている間は、区間の出口 ``endCarriedSegment()`` が変換と積み履歴を
+    /// 戻す)。Processing・p5.js は `draw()` の頭で既定へ戻るので、同じ結果になる。戻す範囲は、フレームの頭が
+    /// 戻すシーンの記述と同じ (``resetSceneDescription()``・積み履歴・効果の予定)。**描き方 (塗り・線・混ぜ方
+    /// など) と乱数の種は戻さない** — 寿命がフレームを越える。置いたもの (図形・絵・背景・書いた画素) は
+    /// 消さない。**粒・計算 (`force()`・`particles()`・`compute()`) も戻さない** — 状態ではなく、そのフレームで
+    /// 走る仕事の予約で、コールバックで頼んだものはそのフレームで走る。組み立てたまま抜けた形は、フレームの
+    /// 頭と同じく捨てる (``discardShapeLeftOpen()``)。
+    ///
+    /// **戻す前に、列を閉じる必要があるときだけ閉じる。** 列は閉じるときに視点・光・周囲・切り抜き・材質・影の
+    /// 落とし方を読むので、コールバックで書いて置いたものが、戻した既定で描かれてはいけない。一方、何も
+    /// 書いていなければ列は割らない (`mouseDragged() { circle(…) }` が 1 フレームに何件来ても、列は 1 本のまま
+    /// で、貼る絵の矩形の畳み ``pendingFlat`` も切れない)。``currentStyle`` の setter が、列の読む設定が変わる
+    /// ときだけ閉じるのと同じ規律である。
+    ///
+    /// **列に焼かれず、描き切りで読む状態 (影・効果・目印) は、コールバックで書いたまま抜けると効かない。**
+    /// 黙って戻さず、1 度だけ知らせる (``Warning/sceneNotCarried``。``endCarriedSegment()`` が捨てる変換を
+    /// 知らせるのと同じ形)。積んだまま抜けた段も、フレームの終わりと同じく名指して 1 度知らせて捨てる。
+    ///
+    /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    func leaveInputCallbackInsideFrame() {
+        guard isDrawing else { return }
+        warnIfStacksLeftOpen(before: "the input callback")
+        warnIfFrameReadSceneNotCarried()
+        if columnsReadNonDefaultScene { closeBatch() }
+        resetSceneDescription()
+        transformStack.removeAll(keepingCapacity: true)
+        styleStack.removeAll(keepingCapacity: true)
+        pendingEffects.removeAll(keepingCapacity: true)
         discardShapeLeftOpen()
+    }
+
+    /// 列が閉じるときに読むシーンの記述 (視点・光・周囲・切り抜き・材質・影の落とし方) が、既定でないか。
+    /// 既定でなければ、戻す前に開いている列を閉じる (``leaveInputCallbackInsideFrame()``)。
+    private var columnsReadNonDefaultScene: Bool {
+        cameraStorage != nil || !activeLights.isEmpty || activeSurroundings != nil || style.clip != nil
+            || style.material != .default || !style.castsShadow || !style.receivesShadow
+    }
+
+    /// 影・効果・目印を書いたまま入力のコールバックを抜けるなら、効かないことを 1 度だけ知らせる。
+    /// これらは列に焼かれず、フレームの描き切りが読むので、出口で戻すと同じフレームの `draw()` に届かない。
+    private func warnIfFrameReadSceneNotCarried() {
+        guard
+            shadowsEnabled || shadowRangeValue != nil || shadowDetailValue != ShadowMap.defaultDetail
+                || shadowBiasValue != ShadowMap.defaultBias || !pendingEffects.isEmpty || drawsDebugGuides
+        else { return }
+        warnOnce(
+            .sceneNotCarried,
+            "A shadow, effect or debug-guide setting (shadows(), effects(), debugMode()) was written in "
+                + "an input callback, and it is dropped when that callback ends: every frame starts "
+                + "with none of them, so it does not reach the draw() of the same frame. Write it in draw()")
     }
 
     /// 同じ本体のフレームの中で ``beginDraw()`` を重ねたことを、初回だけ知らせる。境目を越えて
@@ -5586,11 +5663,17 @@ public final class Canvas {
         if coverageSpans.isEmpty {
             coverageBuffer = try coverageStorage.write([Float(1)], holding: 1)
         } else {
-            var coverages = [Float](repeating: 1, count: vertices.count)
+            // **置き場へ直に書く** ([#3253])。中間の `[Float]` を毎フレーム頂点数ぶん確保して、もう一度写さない
+            //
+            // [#3253]: https://github.com/mokume-metal/mokume/issues/3253
+            let count = vertices.count
+            let (storage, bytes) = try coverageStorage.writableBytes(holding: count)
+            let coverages = bytes.bindMemory(to: Float.self, capacity: count)
+            coverages.initialize(repeating: 1, count: count)
             for span in coverageSpans {
-                for index in span.range where index < coverages.count { coverages[index] = span.value }
+                for index in span.range.clamped(to: 0..<count) { coverages[index] = span.value }
             }
-            coverageBuffer = try coverageStorage.write(coverages, holding: coverages.count)
+            coverageBuffer = storage
         }
         let formBuffer = try formInstanceStorage.write(
             formInstances, holding: max(formInstances.count, 1))
@@ -6174,19 +6257,21 @@ public final class Canvas {
                 afterQueueStages: .fragment, beforeStages: .fragment, visibilityOptions: .device)
             shadowBake.rebakeBarriersEncoded += 1
         }
-        encoder.setRenderPipelineState(pipeline.shadowState)
+        // **パイプラインと引数表は、ここでは束ねない** ([#3253])。落とす列ごとに ``encodeCaster(_:from:memory:on:)``
+        // が束ねるので、ここで束ねても最初の列が上書きし、列が無ければ描かない
+        //
+        // [#3253]: https://github.com/mokume-metal/mokume/issues/3253
         encoder.setDepthStencilState(pipeline.solidDepthState)
         encoder.setViewport(
             MTLViewport(
                 originX: 0, originY: 0, width: Double(map.detail), height: Double(map.detail),
                 znear: 0, zfar: 1))
         argumentTable.setAddress(
-            solidBuffer.gpuAddress, index: ShapePipeline.vertexBufferIndex)
-        argumentTable.setAddress(
             matrixBuffer.gpuAddress, index: ShapePipeline.projectionBufferIndex)
-        // **束ねるのは頂点段だけ。** 焼くパイプラインは断片を持たない (奥行きの面へは
-        // 前後判定が書く) ので、断片段に渡すものが無い
-        encoder.setArgumentTable(argumentTable, stages: [.vertex])
+        // **前の列と同じ設定は設定し直さない** (本描画の `encodeBatches` と同じ・``EncodedStateMemory``)。
+        // 引数表は使い回しなので、記録はこの呼び出しの頭で空にする。投影の口は焼く間ずっと同じなので、
+        // 記録を通さずここで 1 度だけ束ねた
+        var memory = EncodedStateMemory()
         // 値の区画は基本図形を飛ばして詰めた番号 (``detailRegionCount``)。落とす列は立体か平面で、
         // 基本図形は影へ焼かない (`Canvas.form` が `castsShadow` を偽にする)
         var detailIndex = 0
@@ -6202,7 +6287,7 @@ public final class Canvas {
                     indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
                     instances: instanceBuffer.gpuAddress,
                     values: batchValues.gpuAddress + detailOffset),
-                on: encoder)
+                memory: &memory, on: encoder)
         }
         // 持ち越した列は、控えたときに上げた区画を読む (上げ直さない)。面が既に持っていれば焼かない
         if !adding {
@@ -6216,7 +6301,7 @@ public final class Canvas {
                         indexBase: caster.indexOffset / MemoryLayout<UInt32>.stride,
                         instances: address + UInt64(caster.instanceOffset),
                         values: address + UInt64(caster.valuesOffset)),
-                    on: encoder)
+                    memory: &memory, on: encoder)
             }
         }
         encodeShadowBarrier(on: encoder)
@@ -6242,25 +6327,38 @@ public final class Canvas {
     }
 
     /// 落とす列を 1 つ焼く。
+    ///
+    /// **前の列と同じ設定は設定し直さない** ([#3253]・本描画の ``EncodedStateMemory`` と同じ書き方)。
+    /// 引数表は束ね直す (`setArgumentTable`) が、中身の書き込み (`setAddress`)・パイプライン・巻き方・
+    /// 捨て方は、前の列と違うときだけ呼ぶ。
+    ///
+    /// [#3253]: https://github.com/mokume-metal/mokume/issues/3253
     private func encodeCaster(
-        _ batch: Batch, from source: CasterSource, on encoder: any MTL4RenderCommandEncoder
+        _ batch: Batch, from source: CasterSource, memory: inout EncodedStateMemory,
+        on encoder: any MTL4RenderCommandEncoder
     ) {
-        encoder.setRenderPipelineState(
+        let state =
             batch.strokeGeometry != nil
-                ? pipeline.solidStrokeShadowState
-                : batch.usesUnitShape ? pipeline.unitShapeShadowState : pipeline.shadowState)
+            ? pipeline.solidStrokeShadowState
+            : batch.usesUnitShape ? pipeline.unitShapeShadowState : pipeline.shadowState
+        if memory.changes(pipeline: ObjectIdentifier(state)) { encoder.setRenderPipelineState(state) }
+        func bind(_ address: UInt64, _ index: Int) {
+            if memory.changes(address: address, index: index) {
+                argumentTable.setAddress(address, index: index)
+            }
+        }
         // 持ち越した列は詰め直した区画の頭を、溜め場の列は溜め場の頭を渡す。引数を GPU が書く列 (粒) は、
         // そこから列の頭までを足す (``Batch/vertexBaseShift``)。その列は溜め場の頂点を添字なしで読む
         // 列に限られ (``Batch/addressesVertexHead``)、持ち越した列は詰め直すときに頭が 0 へ置き直される
         // ので、足すのは 0 で、区画の頭がそのまま束ねる番地になる
-        argumentTable.setAddress(
+        bind(
             (batch.ownVertices?.gpuAddress ?? source.vertices) + batch.vertexBaseShift,
-            index: ShapePipeline.vertexBufferIndex)
-        argumentTable.setAddress(source.values, index: ShapePipeline.valuesBufferIndex)
-        argumentTable.setAddress(
+            ShapePipeline.vertexBufferIndex)
+        bind(source.values, ShapePipeline.valuesBufferIndex)
+        bind(
             (batch.instances?.storage.gpuAddress ?? source.instances)
                 + UInt64(batch.instanceStart * MemoryLayout<SolidInstance>.stride),
-            index: ShapePipeline.instanceBufferIndex)
+            ShapePipeline.instanceBufferIndex)
         // 画面と同じ捨て方で焼く。閉じた形では光から見た最も近い面も必ず表なので、
         // 裏面を捨てても焼き付く奥行きは両面で焼いたときと変わらない
         //
@@ -6273,8 +6371,9 @@ public final class Canvas {
         //
         // [#1446]: https://github.com/mokume-metal/mokume/issues/1446
         // [#1474]: https://github.com/mokume-metal/mokume/issues/1474
-        encoder.setFrontFacing(ShadowMap.frontFacing(isMirrored: batch.isMirrored))
-        encoder.setCullMode(batch.cullMode)
+        let winding = ShadowMap.frontFacing(isMirrored: batch.isMirrored)
+        if memory.changes(frontFacing: winding) { encoder.setFrontFacing(winding) }
+        if memory.changes(cullMode: batch.cullMode) { encoder.setCullMode(batch.cullMode) }
         encoder.setArgumentTable(argumentTable, stages: [.vertex])
         if let arguments = batch.indirectArguments?.storage {
             // 粒は影の側でも GPU が書いた個数で描く (本描画と同じ)

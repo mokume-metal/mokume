@@ -321,7 +321,7 @@ enum NewCommand {
     static let unusableModules: Set<String> = [
         // mokume の library product が辿るターゲット
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
-        "MokumeGamepad", "MokumeDiagnostics", "MokumeMacros",
+        "MokumeGamepad", "MokumeMIDI", "MokumeDiagnostics", "MokumeMacros",
         // ひな形が import するモジュール (`mokume` は上) と標準ライブラリ。`Foundation` はひな形が
         // import しなくなった (#2416) が、ライブラリのソースが import するので下の SDK の列にも要る
         "Foundation", "Swift",
@@ -329,7 +329,7 @@ enum NewCommand {
         "simd", "Metal", "Synchronization", "AppKit", "Darwin", "QuartzCore", "CoreGraphics",
         "AVFAudio", "Observation", "SwiftUI", "Accelerate", "AVFoundation", "Network", "CoreText",
         "ImageIO", "IOSurface", "CoreMedia", "CoreAudio", "VideoToolbox", "UniformTypeIdentifiers",
-        "ModelIO", "IOKit", "CoreVideo", "GameController", "os",
+        "ModelIO", "IOKit", "CoreVideo", "GameController", "CoreMIDI", "os",
         // ライブラリのソースが import する swift-syntax のモジュール
         "SwiftSyntax", "SwiftSyntaxMacros", "SwiftCompilerPlugin", "SwiftDiagnostics",
     ]

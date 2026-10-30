@@ -34,6 +34,12 @@ import Foundation
 /// 落とす」という意味になり、このパッケージが選んでいる「待たせる」の反対側になる。時刻は
 /// フレーム自身のものなので、遅れても絵を落とす理由が無い ([ADR-0025] 決定 2)。
 ///
+/// **この待ちが返るかは、書き手が走れるかに掛かる。** ``take()`` を main で呼ぶのは 3 か所 (動画の
+/// ``MovieWriter``・静止画と連番の ``FrameWriter``・観測の撮影の ``FrameObserver``) で、書き手はどれも
+/// `.userInitiated` の `Task.detached` である。作品が並行の仕事でスレッドを埋めて書き手が走れないと、
+/// ここで main が待ち続ける。本体の側では防げない限界として、動画の読み出しと一緒に ADR-0010 の
+/// 「影響」に書いた。`beginRecord`・`save` の説明が避け方を名乗る ([#3396])。
+///
 /// ## 待ち方は 2 通りあるが、期限の測り方は 1 つ
 ///
 /// 塞いで待つ (``Patience/block``) のは `endRecord()` の経路で、利用者の同期の `draw()` から
@@ -42,6 +48,7 @@ import Foundation
 /// 通ってしまう。
 ///
 /// [#978]: https://github.com/mokume-metal/mokume/issues/978
+/// [#3396]: https://github.com/mokume-metal/mokume/issues/3396
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md

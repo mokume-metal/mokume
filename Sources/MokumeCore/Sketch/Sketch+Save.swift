@@ -55,6 +55,13 @@ extension SketchPart {
     /// ([#1300](https://github.com/mokume-metal/mokume/issues/1300))。GPU が描き損じた
     /// ときだけは別である (下の節)。
     ///
+    /// **作品が並行の仕事でスレッドを埋めていると、行き先を変えて頼んだ書き込みが滞ることがある。** 書く側は main の
+    /// 外で走るので、作品が `.userInitiated` 以上の優先度の仕事をコア数ぶん以上、同期の待ち (`DispatchSemaphore.wait()`
+    /// など) で塞ぐと走れず、抱える枚数の上限 (4 枚) に達したところで次のフレームが戻らない。ここには期限を置かない
+    /// (置くと絵を落とす) ので、本体の側では防げない限界である ([ADR-0010])。重い同期の仕事は、優先度を下げる
+    /// (`Task.detached(priority: .utility)`) か、待たずに分ける。同じ行き先へ続けて頼む形は、最後の 1 枚に畳むので
+    /// この上限に達しない。
+    ///
     /// ## 描けなかったフレームでは、次に描けた絵で書く
     ///
     /// 頼んだフレームを描けなかったとき (描画が転んだ・**GPU が仕事を打ち切った**
@@ -155,6 +162,7 @@ extension SketchPart {
     ///
     /// - Parameter path: 書き出す先。
     ///
+    /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     // shot: 撮れない 画面の絵を何も変えずにファイルを書く口で、書き終わる時点もフレームに紐づかない (確かなのは endRecord の後かスケッチの終わり) ので、書いたものを同じスケッチで読み戻して見せる絵も決まらない
@@ -277,6 +285,12 @@ extension SketchPart {
     /// **メモリは伸びない代わりに、絵が遅くなる。** 長く撮っても走らせ続けられることを、
     /// 伸び続けないことのほうで担保している。
     ///
+    /// 書く側は main の外で走る仕事である。**作品が並行の仕事でスレッドを埋めていると、書く側が走れず、次のフレームが
+    /// 戻らないことがある。** 作品が `.userInitiated` 以上の優先度の仕事をコア数ぶん以上、同期の待ち
+    /// (`DispatchSemaphore.wait()` など) で塞ぐと、上の上限に達したところで待ちが終わらない。ここには期限を
+    /// 置かない (置くと絵を落とす) ので、本体の側では防げない限界である ([ADR-0010])。重い同期の仕事は、優先度を
+    /// 下げる (`Task.detached(priority: .utility)`) か、待たずに分ける。
+    ///
     /// ## 動画は、閉じ終えるまで前のファイルを残す
     ///
     /// `"out/motion.mov"` のように 1 本のファイルへ書く録りは、**行き先の隣の隠した一時ファイルへ書き、
@@ -315,6 +329,7 @@ extension SketchPart {
     ///   呼ぶ形に当たるが、動画へ書く口と終わりの口が要るので、手本の中では同じ形の `beginRecord` の
     ///   名前を採った ([ADR-0020] 決定 1)。
     ///
+    /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     // shot: 1 snippet=dbe3d06b

@@ -57,6 +57,12 @@ import MokumeDiagnostics
 /// 90° 刻みの回転と左右・上下の反転を当てる。それ以外の変換 (斜めの回転など) は当てず、
 /// 記録された向きのまま映す。
 ///
+/// ## 作品が並行の仕事でスレッドを埋めたとき
+///
+/// コマは毎フレーム main で同期に読む。作品が既定の優先度の仕事をコア数ぶん以上、同期の待ちで塞ぐと、
+/// 動画を読む待ちが返らずに窓ごと止まることがある (本体の側では防げない限界。限界と避け方は
+/// ``Sketch/createVideo(_:)``、理由は [ADR-0010])。重い同期の仕事は優先度を下げるか、待たずに分ける。
+///
 /// ## 外して足し直す
 ///
 /// ``SketchPart/detach(_:)-(Inlet)`` で外した動画は、``SketchPart/attach(_:)-(Inlet)`` で足し直せる。足し直すと
@@ -74,6 +80,7 @@ import MokumeDiagnostics
 /// 1 度だけ知らせる。手前へ戻る (ループの継ぎ目・``jump(_:)``) か、読めなくなった所から
 /// 1 秒より先へ進むと読み直し、読めれば ``SourceState/running`` へ戻る。
 ///
+/// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class Movie: Inlet {
