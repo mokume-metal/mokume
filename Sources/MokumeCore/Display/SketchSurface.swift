@@ -69,7 +69,7 @@ final class SketchSurface: NSView {
     /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     /// ``pointerLock`` と同じく、スケッチの要求は窓を持つ側が ``followCursorHiding(requested:)`` で渡し、
     /// 窓の状況はこの面が答える。
-    let cursorHiding = CursorHiding()
+    let cursorHiding: CursorHiding
 
     /// 最後に合流点へ名乗った位置 (キャンバスの座標)。**捕まえている間の押下と解放はここを
     /// 名乗る** — 捕まえた時点の位置で、捕まえている間は動かない。
@@ -93,18 +93,24 @@ final class SketchSurface: NSView {
     /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
 
+    /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前の窓と道具の窓は受ける** (既定)。
+    ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — 窓はホストのもので、ホスト側のドロップと
+    ///   取り合わない。受けるのは macOS の自前の窓だけである。
     init(
         frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int),
-        pointerLock: PointerLock = PointerLock()
+        pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding(),
+        acceptsFileDrops: Bool = true
     ) {
         self.pointerLock = pointerLock
+        self.cursorHiding = cursorHiding
         self.device = device
         self.input = input
         self.canvasWidth = Double(canvasSize.0)
         self.canvasHeight = Double(canvasSize.1)
         super.init(frame: frame)
-        // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)
-        registerForDraggedTypes([.fileURL])
+        // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)。
+        // 埋め込む面は登録しない: 登録しない面はドラッグの宛先にならず、ホストのビューが受けられる
+        if acceptsFileDrops { registerForDraggedTypes([.fileURL]) }
         // **終わるときに放す** — 終わりの経路 (× の確定・Ctrl-C・`terminate(_:)`) は窓を閉じずに
         // プロセスを畳むことがあり、窓が閉じる知らせだけでは取りこぼす
         NotificationCenter.default.addObserver(

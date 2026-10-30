@@ -77,9 +77,11 @@ extension SketchPart {
     /// ``requestImage(_:)`` と同じく [#2760] と合わせて決めるので、いまの振る舞いであって約束ではない。呼んだ
     /// `Task` を取り消しても待ちは終わらない (取消の扱いも [#2760])。
     ///
-    /// **macOS の窓で出す。** iOS・`SketchView` のホストからの出し方と、セキュリティスコープ付きの URL は
-    /// [#2604]・[#2605] で決める。選べるのはファイル 1 つで、保存先を選ばせる `selectOutput` やフォルダを選ばせる
-    /// `selectFolder` はまだ無い。
+    /// **macOS の窓で出す。** 自前の窓と道具の窓に加えて、``SketchView`` ではホストの窓のシートで出る
+    /// (ホストのアプリが前面になる)。**ホストの窓が見えていないあいだは出さず**、見えるまで頼みは残る。
+    /// **`SketchView` が消える・窓から外れる・ホストのアプリが終わるときは、開いているシートは閉じて、取り消しとして
+    /// `nil` で終わる。** iOS と、セキュリティスコープ付きの URL は [#2605] で決める。選べるのはファイル 1 つで、
+    /// 保存先を選ばせる `selectOutput` やフォルダを選ばせる `selectFolder` はまだ無い。
     ///
     /// - Parameter prompt: ダイアログに添える文言。
     /// - Returns: 選んだファイルの絶対パス。取り消したら `nil`。走っている実行の外から呼んだら、あるいは実行が
@@ -87,7 +89,6 @@ extension SketchPart {
     ///   終わったときも、待ちは `nil` で終わる。
     ///
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
-    /// [#2604]: https://github.com/mokume-metal/mokume/issues/2604
     /// [#2605]: https://github.com/mokume-metal/mokume/issues/2605
     // shot: 撮れない 結果が選んだ人の手元のファイルで、ダイアログは窓の外に出る
     public func selectInput(_ prompt: String) async -> String? {

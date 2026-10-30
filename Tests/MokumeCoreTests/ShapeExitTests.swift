@@ -356,7 +356,7 @@ extension ShapeExit {
         let observation = "観測 (差し出した値・測った値)。形に焼き付く値を生まない (Sketch+Expose)"
         let untouched: [String: String] = [
             "sketch": construction, "canvas": construction, "declaredFrameRate": construction,
-            "windowScale": construction, "fullScreenDisplay": construction,
+            "windowScale": construction, "fullScreenDisplay": construction, "isEmbedded": construction,
             "launchFrameRate": construction, "isOnScreen": construction, "observer": construction,
             "inbox": construction,
             "relayed": construction, "params": construction, "paramRegistry": construction,
