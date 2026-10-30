@@ -167,17 +167,25 @@ public nonisolated struct ProbeAxis: Sendable {
 public nonisolated struct ProbeInput: Sendable, CustomStringConvertible {
     public let axes: [ProbeAxis]
     public let values: [Double]
+    /// この入力を作った case の seed (縮めた入力も、元の case の seed を持つ)。値を直に渡した入力は `nil`。
+    /// 落ちて縮められない入力を、落ちる前に名乗るために持つ (``seedText``)。
+    public let seed: UInt64?
 
     init(axes: [ProbeAxis], seed: UInt64) {
         var random = ProbeRandom(seed: seed)
         self.axes = axes
         self.values = axes.map { $0.value(at: random.nextUnit()) }
+        self.seed = seed
     }
 
-    init(axes: [ProbeAxis], values: [Double]) {
+    init(axes: [ProbeAxis], values: [Double], seed: UInt64? = nil) {
         self.axes = axes
         self.values = values
+        self.seed = seed
     }
+
+    /// `seed=0x…` の表記 (`MOKUME_PROBE_SEED` へ渡せば同じ入力を再現する)。seed が無ければ空。
+    public var seedText: String { seed.map { "seed=\(ProbeSeed.format($0))" } ?? "" }
 
     /// 名前の座標の値。無い名前は検査の書き誤りなので落とす。
     public subscript(_ name: String) -> Double {
@@ -193,7 +201,7 @@ public nonisolated struct ProbeInput: Sendable, CustomStringConvertible {
     func replacing(_ index: Int, with value: Double) -> ProbeInput {
         var values = values
         values[index] = value
-        return ProbeInput(axes: axes, values: values)
+        return ProbeInput(axes: axes, values: values, seed: seed)
     }
 
     public var description: String {
