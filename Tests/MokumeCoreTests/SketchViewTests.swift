@@ -59,6 +59,45 @@ private final class ThrowingSetup: Sketch {
     func draw() {}
 }
 
+/// `setup()` で、矢印を隠す・ポインタを捕まえる・ファイルを選ばせるを頼んでから投げるスケッチ。
+private final class WishfulThenThrowing: Sketch {
+    struct Boom: Error, CustomStringConvertible { var description: String { "boom" } }
+    var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
+    init() {}
+    func setup() throws {
+        noCursor()
+        requestPointerLock()
+        Task { _ = await selectInput("pick") }
+        throw Boom()
+    }
+    func draw() {}
+}
+
+/// 閉じた回数を数える差込口。
+private final class CloseCounter: Inlet {
+    var closes = 0
+    func open() throws {}
+    func supply() {}
+    func close() { closes += 1 }
+    var failure: String? { nil }
+    var report: SourceReport? { nil }
+}
+
+private struct CounterPlugin: Plugin {
+    let inlet: CloseCounter
+    func register(into registry: PluginRegistry) { registry.add(inlet: inlet) }
+}
+
+/// 差込口を 1 つ足すスケッチ。
+private final class WithCounter: Sketch {
+    /// 検査が `init()` の前に差す。ホストの中で作られるので、ここから渡す。
+    nonisolated(unsafe) static var counter = CloseCounter()
+    var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
+    var plugins: [any Plugin] { [CounterPlugin(inlet: Self.counter)] }
+    init() {}
+    func draw() {}
+}
+
 /// `setup()` で `selectInput` を頼む (`Task` から) スケッチ。
 private final class SelectAsker: Sketch {
     var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
@@ -237,6 +276,30 @@ struct SketchViewTests {
             #expect(third.application == nil && third.isWaiting, "先頭が走り始めたのに、次も始まった")
             #expect(
                 Diagnostics.takeUnreported().isEmpty, "始まるときに、余計な警告を言った")
+        }
+    }
+
+    /// 起こされた側の組み立てが言う警告は、送った側 (先を止めた側) の溜め場へ載る。起こす仕事は `DispatchQueue.main.async` の
+    /// 中で走り、タスクローカル値が切れるので、送る時点で持って行く。
+    @Test("起こされたビューが組み立てで言う警告は、先を止めた側の溜め場に載る")
+    func aWokenViewWarnsIntoTheSendersDigest() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            // 全画面を頼むスケッチは、組み立てで 1 度警告する (``SketchRuntime/embeddedFullScreenNotice``)
+            let waiting = SketchHostView(sketch: FullScreenProbe())
+            defer {
+                first.stop()
+                waiting.stop()
+            }
+            #expect(waiting.isWaiting)
+            _ = Diagnostics.takeUnreported()
+
+            first.stop()
+            #expect(await eventually { waiting.application != nil }, "待っていたビューが始まらない")
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0 == SketchRuntime.embeddedFullScreenNotice }.count == 1,
+                "起こされた側の警告が、送った側の溜め場に載っていない: \(said)")
         }
     }
 
@@ -505,7 +568,8 @@ struct SketchViewTests {
     func stoppingClosesTheOpenFileSheet() async throws {
         try await Diagnostics.$digest.withValue(WarningDigest()) {
             let (window, container) = hostWindow()
-            let view = SketchHostView(sketch: SelectAsker())
+            let asker = SelectAsker()
+            let view = SketchHostView(sketch: asker)
             container.addSubview(view)
             defer {
                 view.stop()
@@ -529,6 +593,9 @@ struct SketchViewTests {
             #expect(picker.dismissals == 1, "止めてもシートが開いたまま")
             let cancelled = InputEvent.fileSelected(path: nil, serial: 1).wireLine
             #expect(lines.contains(cancelled), "取り消しの結果を渡していない: \(lines)")
+            // スケッチ側の待ちは、取り消しの nil で終わる (待ち続けない)
+            #expect(await eventually { asker.result != nil }, "スケッチの selectInput が終わらない")
+            #expect(asker.result == .some(nil), "取り消しの nil で終わっていない: \(String(describing: asker.result))")
         }
     }
 
@@ -626,5 +693,206 @@ struct SketchViewTests {
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
         #expect(application.screenLink.isAttached, "載り直したのに繋ぎ直されていない")
+    }
+
+    /// 根 1: `setup()` が投げた回の続きが、止めた面に触れない。矢印・ポインタを戻した後に頼み直さない。
+    @Test("埋め込みで setup() が、矢印・ポインタ・ファイルを頼んでから投げても、止めた後は面に触れない")
+    func nothingTouchesTheSurfaceAfterASetupFailureStops() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            var shownCursor = 0
+            var releases = 0
+            let lock = PointerLock(
+                system: .init(capture: { true }, release: { releases += 1 }),
+                arbiter: PointerLock.Arbiter())
+            let hiding = CursorHiding(system: .init(hide: { shownCursor -= 1 }, unhide: { shownCursor += 1 }))
+            let (window, container) = hostWindow()
+            let view = SketchHostView(
+                sketch: WishfulThenThrowing(), pointerLock: lock, cursorHiding: hiding)
+            container.addSubview(view)
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            application.windowVisibilityForTesting = true
+            application.exitProcess = { _ in Issue.record("ホストのアプリごと終わらせた") }
+            let picker = FakeFilePicker()
+            application.filePicker = picker
+            // setup() が起こした `Task` (selectInput) を走らせてから、最初のフレームを回す
+            try await Task.sleep(for: .milliseconds(30))
+
+            application.displayLinkFired()
+            // 止めた回の続きが、頼みを面へ渡し直していない
+            #expect(!hiding.isRequested, "止めた後に、矢印を隠す頼みを面へ渡し直した")
+            #expect(!lock.isRequested, "止めた後に、ポインタを捕まえる頼みを面へ渡し直した")
+            #expect(!hiding.isHiding && shownCursor == 0, "矢印を隠したまま")
+            #expect(!lock.isLocked)
+            #expect(picker.shown.isEmpty, "止めた後に、ファイルを選ばせるシートを出した")
+            // 次のリフレッシュ (駆動源は畳まれていて来ないが、来ても) も同じ
+            application.displayLinkFired()
+            #expect(!hiding.isRequested && !lock.isRequested && picker.shown.isEmpty)
+        }
+    }
+
+    /// 根 2: 起こす仕事が送られている間に `run()` が席を取ったら、待っているビューは永久に待たず、
+    /// 「待っても始まらない」と 1 度だけ言って何も映さない。
+    @Test("起こす仕事が送られている間に run() が席を取ったら、待っていたビューは断る側へ倒れる")
+    func aRunTakingTheSeatWhileTheWakeIsPendingTurnsTheWaiterAway() async throws {
+        SketchApplication.resetEmbeddedAnnouncementsForTesting()
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            let waiting = SketchHostView(sketch: EmbeddedProbe())
+            let windowed = try SketchApplication(sketch: EmbeddedProbe(), gpu: RenderDevice())
+            defer {
+                first.stop()
+                waiting.stop()
+                windowed.unmarkRunningForTesting()
+            }
+            #expect(first.application != nil && waiting.isWaiting)
+
+            first.stop()  // 待っているものを起こす仕事が送られた
+            #expect(
+                SketchApplication.admission(for: .embedded) == .wait,
+                "送られている間の新しい SketchView は、追い越さずに待つ")
+            #expect(
+                !SketchApplication.refusesSecondRun(), "送られている間の run() は席を取れる (断らない)")
+            windowed.markRunningForTesting()
+
+            #expect(await eventually { !waiting.isWaiting }, "待っていたビューが、永久に待ち続けている")
+            #expect(waiting.application == nil, "run() が走っているのに SketchView が始まった")
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0.contains(SketchApplication.embeddedRefusalNotice) }.count == 1,
+                "待っても始まらない理由が 1 度だけ出ていない: \(said)")
+            #expect(!said.contains { $0.contains(SketchApplication.secondRunRefusal) })
+        }
+    }
+
+    /// 旧 `onlyOneRunsAtATime` が見ていた組の裏: SketchView が走っているとき、`run()` (`Sketch.main()`) は断られる。
+    @Test("SketchView が走っているときの run() は断られ、断りを 1 度だけ言い、SketchView は止まらない")
+    func aSecondRunIsRefusedWhileASketchViewRuns() throws {
+        SketchApplication.resetEmbeddedAnnouncementsForTesting()
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, view) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            #expect(SketchApplication.admission(for: .run) == .refuse)
+            #expect(SketchApplication.refusesSecondRun(), "SketchView が走っているのに、run() を断らなかった")
+            #expect(SketchApplication.refusesSecondRun())
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0.contains(SketchApplication.secondRunRefusal) }.count == 1,
+                "断りが 1 度だけ出ていない: \(said)")
+            // 走っている SketchView は何も変わらない
+            #expect(view.application === application)
+            #expect(application.screenLink.isAttached, "断った拍子に、走っている SketchView の駆動源が畳まれた")
+            #expect(SketchApplication.admission(for: .run) == .refuse, "断った拍子に、席が空いた")
+            refresh(application, 2)
+        }
+    }
+
+    /// K5: ホストのアプリが終わるとき (`SwiftUI` は `dismantleNSView` を通らない)、後始末が 1 度だけ走る。
+    @Test("ホストのアプリが終わる知らせで、走っている SketchView の後始末が 1 度だけ走り、席が空く")
+    func theHostTerminatingRunsTheCleanupOnce() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let counter = CloseCounter()
+            WithCounter.counter = counter
+            let first = SketchHostView(sketch: WithCounter())
+            let waiting = SketchHostView(sketch: EmbeddedProbe())
+            defer {
+                first.stop()
+                waiting.stop()
+            }
+            let running = try #require(first.application)
+            #expect(waiting.isWaiting)
+            refresh(running, 2)  // 差込口は最初のフレームで開く
+            #expect(counter.closes == 0)
+
+            NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+            #expect(counter.closes == 1, "ホストの終了で、差込口が閉じられていない")
+            NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+            first.stop()  // dismantle が後から来ても、2 度は閉じない
+            #expect(counter.closes == 1, "後始末が重ねて走った (\(counter.closes) 回)")
+            #expect(await eventually { waiting.application != nil }, "席が空かず、待っているビューが始まらない")
+        }
+    }
+
+    /// K6: ホストの窓が見えていない間は、ファイルを選ばせるシートを出さない (独立したパネルになり、ホストを前面へ出す)。
+    @Test("ホストの窓が見えない間はシートを出さず、見えたリフレッシュで出す")
+    func theSheetWaitsForAVisibleHostWindow() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, container) = hostWindow()
+            let view = SketchHostView(sketch: SelectAsker())
+            container.addSubview(view)
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            application.windowVisibilityForTesting = true
+            let picker = FakeFilePicker()
+            application.filePicker = picker
+
+            window.orderOut(nil)
+            #expect(!window.isVisible, "検査の前提: ホストの窓が見えない")
+            // 頼み (Task) が届くまで、見えないまま何度か回す
+            for _ in 0..<8 {
+                application.displayLinkFired()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(picker.shown.isEmpty, "見えない窓の頼みを、シートでない形で出した")
+
+            window.orderFront(nil)
+            #expect(
+                await eventually {
+                    application.displayLinkFired()
+                    return !picker.shown.isEmpty
+                }, "窓が見えても、頼みが出ない")
+            #expect(picker.shown.count == 1)
+        }
+    }
+
+    /// K7: ビューが窓から外れただけ (dismantle されない) でも、シートは閉じる。載り直した最初のフレームが取り消しを汲む。
+    @Test("窓から外れたらシートを取り消しで閉じ、載り直すとスケッチの待ちが nil で終わる")
+    func detachingFromTheWindowClosesTheSheet() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, container) = hostWindow()
+            let asker = SelectAsker()
+            let view = SketchHostView(sketch: asker)
+            container.addSubview(view)
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            application.windowVisibilityForTesting = true
+            let picker = FakeFilePicker()
+            application.filePicker = picker
+            var lines: [String] = []
+            try surface(of: view).relay = { lines.append($0) }
+            #expect(
+                await eventually {
+                    application.displayLinkFired()
+                    return !picker.shown.isEmpty
+                }, "頼んだシートが出ていない")
+
+            view.removeFromSuperview()
+            #expect(picker.dismissals == 1, "窓から外れても、シートが元の窓に残った")
+            #expect(
+                lines.contains(InputEvent.fileSelected(path: nil, serial: 1).wireLine),
+                "取り消しの結果を渡していない: \(lines)")
+
+            container.addSubview(view)
+            #expect(
+                await eventually {
+                    application.displayLinkFired()
+                    return asker.result != nil
+                }, "載り直しても、スケッチの待ちが終わらない")
+            #expect(asker.result == .some(nil))
+            #expect(picker.shown.count == 1, "取り消した頼みを出し直した")
+        }
     }
 }

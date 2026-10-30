@@ -245,6 +245,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 終わると決まったか。**立てたら下ろさない** — 終わりの意思は覆さない。
     private var isTerminating = false
+    /// ホストのアプリが終わる知らせの受け口 (埋め込みのときだけ。``stopEmbedded()`` が外す)。
+    private var terminationObserver: NSObjectProtocol?
     /// 後始末を見に来る仕掛け。**返事を待たせている間だけ持つ。**
     private var terminationPoll: Timer?
     /// 後始末を見に来る間隔 (秒)。
@@ -281,8 +283,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 待っている ``SketchView`` を起こす仕事を、main の次の回へ送ってあるか。
     ///
-    /// **立っている間は、走っているものが無くても「埋まっている」と数える** (``isOccupied``) — 送った間に
-    /// 新しく出た ``SketchView`` が、待っているものを追い越して始まらない。
+    /// **立っている間は、走っているものが無くても ``SketchView`` には「埋まっている」と答える** (``admission(for:)``) —
+    /// 送った間に新しく出た ``SketchView`` が、待っているものを追い越して始まらない。``run()`` には空いている。
     private static var embeddedWakePending = false
 
     /// 順番を待っている ``SketchView`` (待ち始めた順)。**弱く持つ** — 待ちながら消えたビューを起こさない。
@@ -542,13 +544,52 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         SketchApplication.running = nil
     }
 
+    /// 席を求めるもの。**席は 1 プロセスに 1 つ**で、``run()`` (``Sketch/main()``) と ``SketchView`` が同じ席を取り合う。
+    enum SeatRequester: Equatable {
+        /// ``SketchView`` の中で走る (``startEmbedded(pointerLock:cursorHiding:)``)。
+        case embedded
+        /// ``run()`` と ``Sketch/main()``。
+        case run
+    }
+
+    /// 席を求めたときの答え。
+    enum SeatAdmission: Equatable {
+        /// 席が空いている。始める。
+        case start
+        /// 席は ``SketchView`` が持っている (または、持っているものが消えて、待っているものを起こす仕事が送られている)。
+        /// ``SketchView`` なら列に並んで待つ。
+        case wait
+        /// 席を持っているものは、このまま居続ける。``run()`` なら 2 つ目として断り、``SketchView`` なら待っても
+        /// 始まらないので何も映さない。
+        case refuse
+    }
+
+    /// 席を求めたら、始められるか・待つか・断られるか。**席の判定はここ 1 か所** — ``run()``・``Sketch/main()``・
+    /// ``SketchView`` (``startEmbedded(pointerLock:cursorHiding:)``) が同じ関数を読む。
+    ///
+    /// | 席を持っているもの | ``SketchView`` | ``run()`` |
+    /// | --- | --- | --- |
+    /// | 無い | 始める | 始める |
+    /// | 無いが、待っているものを起こす仕事が送られている | 待つ (追い越さない) | 始める (席を取る。待っているものは断る側へ倒れる) |
+    /// | ``SketchView`` | 待つ | 断る |
+    /// | ``run()`` | 断る (待っても始まらない) | 断る |
+    static func admission(for requester: SeatRequester) -> SeatAdmission {
+        guard let running else {
+            return embeddedWakePending && requester == .embedded ? .wait : .start
+        }
+        if requester == .embedded, case .embedded = running.outlet { return .wait }
+        return .refuse
+    }
+
     /// 既に走っているものが在れば、断ったことを 1 度だけ言って `true` を返す (#2027)。
     ///
     /// ``run()`` と ``Sketch/main()`` が、プロセス全体の状態に触れる前に呼ぶ。`main()` は
     /// 組み立ての前に呼ぶ — 組み立てが投げると `exit(1)` でプロセスを落とし、走っている
     /// 1 つ目の後始末 (書き切りを待つ経路・#1219) を飛ばすからである。
+    ///
+    /// 断るかは ``admission(for:)`` が決める。**``SketchView`` が走っていても断る** (席は 1 つ)。
     static func refusesSecondRun() -> Bool {
-        guard running != nil else { return false }
+        guard admission(for: .run) == .refuse else { return false }
         if !refusalAnnounced {
             refusalAnnounced = true
             Diagnostics.warn(secondRunRefusal)
@@ -557,21 +598,6 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     }
 
     // MARK: - ホストのアプリの中で走らせる (SketchView・#3511)
-
-    /// 別のスケッチが走っているか。**``SketchView`` が、始めるか待つかを決めるのに読む。**
-    ///
-    /// 走っているものが空に戻り、待っているものを起こす仕事が送られている間も `true` (``embeddedWakePending``)。
-    static var isOccupied: Bool { running != nil || embeddedWakePending }
-
-    /// 走っているものが、終わるのを待てるものか。**``SketchView`` の中で走っているものだけが、ビューが消えれば終わる。**
-    /// ``run()`` で走っているもの (``Sketch/main()``) はプロセスと同じだけ生きるので、待っても始まらない。
-    /// 起こす仕事が送られている間は、待っているものが走り始めるので `true`。
-    static var occupantEnds: Bool {
-        if embeddedWakePending { return true }
-        guard let running else { return true }
-        if case .embedded = running.outlet { return true }
-        return false
-    }
 
     /// ``SketchView`` が待たされるときに言う 1 行。**言うのはプロセスで 1 度だけ** (``announceEmbeddedWait()``)。
     /// 検査が読む。
@@ -603,10 +629,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         Diagnostics.warn(embeddedRefusalNotice)
     }
 
-    /// 言ったかの控えを戻す。**検査から呼ぶ** — プロセスで 1 度の名乗りを、検査ごとに数え直すため。
+    /// 言ったかの控えを戻す (待つ理由・待っても始まらない理由・2 つ目の ``run()`` の断り)。**検査から呼ぶ** —
+    /// プロセスで 1 度の名乗りを、検査ごとに数え直すため。
     static func resetEmbeddedAnnouncementsForTesting() {
         embeddedWaitAnnounced = false
         embeddedRefusalAnnounced = false
+        refusalAnnounced = false
     }
 
     /// ``run()`` が走っている印だけを立てる。**検査から呼ぶ** — `run()` は戻らないので、走っているのが
@@ -636,10 +664,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private static func scheduleEmbeddedWake() {
         guard !embeddedWaiters.isEmpty, !embeddedWakePending else { return }
         embeddedWakePending = true
+        // **送った側の警告の行き先を持って行く。** `DispatchQueue.main.async` の中は `Task` ではなく、タスクローカル値
+        // (`Diagnostics.digest`) が切れる — 起こされたビューが組み立てで言う警告が、送った側と別の溜め場へ行く
+        let digest = Diagnostics.digest
         DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                embeddedWakePending = false
-                wakeNextEmbeddedWaiter()
+            Diagnostics.$digest.withValue(digest) {
+                MainActor.assumeIsolated {
+                    embeddedWakePending = false
+                    wakeNextEmbeddedWaiter()
+                }
             }
         }
     }
@@ -648,7 +681,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 起こされたビューは自分で始める (``EmbeddedWaiter/vacancyOpened()``)。外れたもの・始められなかった
     /// (組み立てが投げた) ものは飛ばして、次を起こす。走り始めたら残りは待ったままである。
+    ///
+    /// **起こす仕事が送られている間に、``run()`` が席を取ったら、待っているものは全部列から外して起こす** —
+    /// 起こされたビューは自分で席を求め直し (``admission(for:)``)、断られて、「待っても始まらない」と 1 度だけ
+    /// 言って何も映さない。残すと、プロセスが終わるまで「先が終われば始まる」と名乗ったまま待ち続ける。
     private static func wakeNextEmbeddedWaiter() {
+        if let running, !embeddedWaiters.isEmpty {
+            if case .embedded = running.outlet { return }
+            let waiters = embeddedWaiters
+            embeddedWaiters.removeAll()
+            for entry in waiters { entry.waiter?.vacancyOpened() }
+            return
+        }
         while running == nil, !embeddedWaiters.isEmpty {
             let next = embeddedWaiters.removeFirst()
             next.waiter?.vacancyOpened()
@@ -674,8 +718,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// - ディスプレイのスリープの断り: 画面が消えるのを断るかはホストが決める (止まれば駆動源の
     ///   予備が叩く・``ScreenDisplayLink``)
     ///
-    /// **1 プロセスに走らせられるのは 1 つだけ。** 既に走っているものが在れば、**黙って** `nil` を返す。
-    /// 待たせて名乗るのは呼び出し側 (``SketchView``・``isOccupied``・``enqueueEmbeddedWaiter(_:)``) — `run()` の
+    /// **1 プロセスに走らせられるのは 1 つだけ。** 席が空いていなければ (``admission(for:)`` が `.start` でなければ)、
+    /// **黙って** `nil` を返す。待たせて名乗るのは呼び出し側 (``SketchView``・``enqueueEmbeddedWaiter(_:)``) — `run()` の
     /// 断り (``refusesSecondRun()``) は使わない。あれは「この呼び出しは何もしない」と言うもので、`SketchView` は
     /// 先が終われば始まり、`Sketch.main()` が断る 1 度の名乗りも食わない。
     ///
@@ -689,7 +733,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     func startEmbedded(
         pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding()
     ) -> SketchSurface? {
-        guard !SketchApplication.isOccupied else { return nil }
+        guard SketchApplication.admission(for: .embedded) == .start else { return nil }
         // **ファイルのドロップは受けない** (`acceptsFileDrops: false`)。窓はホストのもので、ホスト側のドロップと
         // 取り合わない。受けるのは macOS の自前の窓だけ (``Sketch/fileDropped(_:)``)
         let surface = SketchSurface(
@@ -704,6 +748,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             .attach(to: surface)
         outlet = .embedded(surface, hasPresented: false)
         SketchApplication.running = self
+        // **ホストのアプリが終わるときも、同じ後始末を通す。** ホストの終了では SwiftUI が `dismantleNSView` を通らず、
+        // 差込口の閉じ・つまみの保存の flush が飛ぶ。`stopEmbedded()` が自分で外す。
+        // **受け口は同期に走らせる** (`queue: nil`) — `.main` を渡すと次の回へ送られ、終わる前に走らない。
+        // アプリの終了の知らせは main で来る
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopEmbedded() }
+        }
         // 省電力の間引きを断る (ADR-0012 決定 5)。走らせている間ずっと保持し、終わるときに返す
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical],
@@ -731,13 +784,23 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     func detachEmbeddedDriver() {
         guard case .embedded = outlet else { return }
         screenLink.invalidate()
+        // **窓から外れたら、シートも閉じる** — ビューが消えたのに、シートが元の窓に残らない。結果は取り消しとして渡り、
+        // 載り直した最初のフレームが汲む。dismantle を通らない外れ方 (別の窓へ付け替える・ホストが外す) もここへ来る
+        _ = cancelOpenSelectionDialog()
     }
 
     /// ホストの中で走らせるのをやめて、後始末をする。**何度呼んでもよい。**
     ///
     /// ``willTerminate()`` と同じ後始末を、`NSApplication` を終わらせずに通す。差込口 (カメラ・音・
-    /// シリアル・ソケット) を閉じ、撮っていた動画は書き切りを待つ。**走っているものの印を外す** — 外さないと
-    /// 以後の `SketchView` が断られる。
+    /// シリアル・ソケット) を閉じ、撮っていた動画は書き切りを待つ。**走っているものの印を外す** — 外すと
+    /// 待っている `SketchView` が起こされる。外し忘れると、待っているものは永久に起こされない
+    /// (「断られる」のは、2 つ目の ``run()`` と、``run()`` が走っている間に出た `SketchView` だけである)。
+    ///
+    /// **止めた後は、同じフレームの続きも含めて面に触れない** (``followPointerLockRequest()`` が止まった後は何もしない)。
+    /// 呼び出しは、ビューが外れたとき (`dismantleNSView`・`isolated deinit`)、`setup()` が投げたとき、ホストの
+    /// アプリが終わるとき (``NSApplication/willTerminateNotification``) である。ホストが終わるときは SwiftUI が
+    /// `dismantleNSView` を通らないので、通知で受ける — 塞いで待つのは撮る係の書き切りだけで、その待ちは
+    /// ``willTerminate()`` の最後の砦と同じ期限で諦める。
     ///
     /// **ホストの窓に残しうるものも手放す。** ファイルを選ばせるシートが開いていれば閉じ (自前の窓で閉じたときと同じ
     /// 取り消しの結果を渡す)、捕まえているポインタと隠している矢印を戻し、面が第一応答者なら手放す — 次に始まる
@@ -745,6 +808,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     func stopEmbedded() {
         guard case .embedded(let surface, _) = outlet, !isTerminating else { return }
         isTerminating = true
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+            self.terminationObserver = nil
+        }
         _ = cancelOpenSelectionDialog()
         surface.pointerLock.tearDown()
         surface.cursorHiding.stop()
@@ -1192,9 +1259,19 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// である。
     private func followPointerLockRequest() {
         if case .embedded(let surface, _) = outlet {
+            // **止めた後は面に触れない。** `setup()` が投げた回は、`advanceAndPresent` の中で止めた (``stopEmbedded()``) 後も
+            // 同じフレームの続きがここへ来る — 戻した矢印を隠し直し、ポインタを捕まえ直し、シートを出し直すと、
+            // 駆動源は畳まれていて誰も戻さない
+            guard !isTerminating else { return }
             surface.followPointerLock(requested: runtime.pointerLockRequested)
             surface.followCursorHiding(requested: runtime.cursorHidingRequested)
-            if let window = surface.window { followSelectionRequest(window: window, surface: surface) }
+            if let window = surface.window {
+                // **ホストの窓がシートを受けられるときだけ出す** — 見えていない窓へは、独立したパネルになり、
+                // ホストのアプリを前面へ出す (決定: ホストの窓のシートで出す)。見えるまで頼みは残り、見えたリフレッシュで出す
+                followSelectionRequest(
+                    window: window, surface: surface,
+                    canPresent: window.isVisible && !window.isMiniaturized)
+            }
             return
         }
         guard case .window(let window, let surface, _) = outlet else { return }
@@ -1211,13 +1288,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 頼みが無くなった・別の番号になったら、出しているダイアログは結果ごと捨てて閉じる。結果は**同じ形の
     /// 出来事**にして自分の合流点へ積む — 外から送られた結果と同じ道を通る。共有面の経路は頼みを面の属性に
     /// 載せて道具の窓へ渡す (``presentFrame()``)。
-    private func followSelectionRequest(window: NSWindow, surface: SketchSurface) {
+    private func followSelectionRequest(
+        window: NSWindow, surface: SketchSurface, canPresent: Bool = true
+    ) {
         let pending = runtime.input.selection.pending
         if let shown = shownSelection, shown.serial != pending?.serial {
             shown.dismiss()
             shownSelection = nil
         }
-        guard let pending, shownSelection == nil else { return }
+        guard let pending, shownSelection == nil, canPresent else { return }
         let serial = pending.serial
         // `pick` が同じ呼び出しのうちに結果を返した検査の口のために、先に控えてから出す
         shownSelection = (serial, {}, false)
