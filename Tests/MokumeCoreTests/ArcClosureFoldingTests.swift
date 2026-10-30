@@ -301,6 +301,36 @@ struct ArcClosureFoldingTests {
             "保持した形", stroke: nil, radii: (6, 4), spin: 0.29, recorded: true, folded: nil)
     }
 
+    /// **保持した形 (`createShape`) に記録した輪郭なしの弧を、拡大して置き直す。** 畳んだ道では保持した形の周が `.chord` の 1 本、
+    /// 畳まない道は `.chordFill` + `.arcLine` の 2 本で、置き直しの再刻み (塗りだけ組み直す) が同じ絵になることを、拡大・縮小・
+    /// 細かさを変えて許容 0 で見る (保持した形の検査は拡大なしだった)。
+    @Test("保持した輪郭なしの弧を拡大して置き直しても、畳んだ絵は畳まない絵と画素が同じ (許容 0)", arguments: [Float(1), 0.5])
+    func retainedStrokelessArcsRescaledKeepTheirPixels(density: Float) throws {
+        let chords: [(String, ArcMode?)] = [(".chord", .chord), (".open", .open)]
+        try expectSameAsUnfolded(
+            "保持した形を 2.5 倍", density: density, stroke: nil, radii: (6, 4), spin: 0.29,
+            scale: { _ in (2.5, 2.5) }, recorded: true, count: 12, closures: chords, folded: nil)
+        try expectSameAsUnfolded(
+            "保持した形を置き場所ごとに違う倍率", density: density, stroke: nil, radii: (6, 4), spin: 0.29,
+            scale: { (0.6 + Float($0 % 5) * 0.7, 0.6 + Float($0 % 5) * 0.7) }, recorded: true, count: 12,
+            closures: chords, folded: nil)
+        try expectSameAsUnfolded(
+            "保持した形を軸ごとに違う倍率", density: density, stroke: nil, radii: (6, 4), spin: 0.29,
+            scale: { _ in (2.5, 1.4) }, recorded: true, count: 12, closures: chords, folded: nil)
+    }
+
+    /// **`stroke` を設定したまま `strokeWeight(0)` にした弧は輪郭を引かない** (`drawsStroke == false`) ので、輪郭なしと同じに畳み、
+    /// 畳まない道と許容 0 で一致する。
+    @Test("strokeWeight(0) のまま stroke を設定した .chord / .open は畳まれ、畳まない絵と画素が同じ (許容 0)")
+    func zeroWeightStrokeArcsFoldAndKeepTheirPixels() throws {
+        let chords: [(String, ArcMode?)] = [(".chord", .chord), (".open", .open)]
+        try expectSameAsUnfolded(
+            "太さ 0 の輪郭", stroke: (0, .round, .round), at: (21.3, -13.7), spin: 0.29, closures: chords, folded: true)
+        try expectSameAsUnfolded(
+            "太さ 0 の輪郭の細かさ 0.5", density: 0.5, stroke: (0, .round, .round), at: (21.3, -13.7), spin: 0.29,
+            closures: chords, folded: true)
+    }
+
     /// **畳んだ絵が畳まない絵と縁の数成分違う場面は、畳まない** (#3248)。輪郭つきの弧 (全部の閉じ方) と、貼る絵つきの
     /// `.chord` / `.open` は今までの道で置く — 畳まないことと、畳まない道と同じ画素 (許容 0) の両方を見る。
     @Test("輪郭つきの弧は畳まず、畳まずに置いた絵と画素が同じ (許容 0)")
