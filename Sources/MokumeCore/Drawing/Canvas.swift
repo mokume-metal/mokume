@@ -386,8 +386,9 @@ public final class Canvas {
         /// 4 つの角を `radius` で丸めた矩形。`radius` は 0 より大きく、幅・高さの半分以下 (``Canvas/rect(_:_:_:_:_:)``)
         case roundedRect(width: Float, height: Float, radius: Float)
         case ellipse(radiusX: Float, radiusY: Float)
-        /// 円弧。`closure` は塗りの周の部分 (``FormInstance/ArcClosure``)。畳むのは、扇 (`.pie`) と、輪郭を引かない
-        /// 弦で結んだ形 (`.chord`) だけ (#3248・``Canvas/placeArc``)。
+        /// 円弧。`closure` は弧の閉じ方 (``FormInstance/ArcClosure``)。**畳んで置いてよいのは、扇 (`.pie`) と、輪郭を引かない
+        /// 弦で結んだ形 (`.chord`) だけ** (#3248・``Canvas/draw(folding:at:outline:)`` が前提にする)。既定・`.open` を持つ形は、
+        /// 畳まない口 (``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``) がベクターの控えに渡すためだけに作る。
         case arc(
             radiusX: Float, radiusY: Float, start: Float, sweep: Float,
             closure: FormInstance.ArcClosure)

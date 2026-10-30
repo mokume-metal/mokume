@@ -220,7 +220,10 @@ extension Canvas {
     /// 閉じ方の違う `arc` が同じ列に並ぶ性質も、`.pie` と変わらない。
     ///
     /// 距離関数の経路を使えないとき — `texture()` か `shader()` を効かせた塗りは三角形の経路へ — は、輪郭の周
-    /// (``Outline``) を部分ごとに組んで描く (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
+    /// (``Outline``) を描く。**畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open`
+    /// の塗り**で、同じ形が続く間は 1 つの雛形に畳む (``draw(folding:at:outline:)``・#3248)。輪郭つきの弧と、貼る絵つきの
+    /// `.chord` / `.open` は、畳むと縁の数成分が畳まない絵と違うので畳まず、部分ごとに組んで描く
+    /// (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
     /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
@@ -324,7 +327,7 @@ extension Canvas {
     /// 塗りの後に輪郭を引くので、重なりの順は輪郭を実線で引くときと同じ (塗りの上に輪郭)。
     /// 破線の輪郭は、開いた弧の周を刻むので、ここでも ``strokeOutline(_:discSegments:)`` が引き受ける。
     /// **周は区間の中だと分かってから組む。**
-    private func placeArcInParts(
+    func placeArcInParts(
         mode: ArcMode?, center: SIMD2<Float>, radiusX: Float, radiusY: Float, start: Float,
         sweep: Float
     ) {
@@ -342,8 +345,7 @@ extension Canvas {
             .arc(
                 radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep,
                 closure: mode.map(\.closure) ?? .standard),
-            at: center,
-            arcClosure: mode.map(\.closure) ?? .standard)
+            at: center)
         defer { resumeVector(held) }
         switch mode {
         case nil:

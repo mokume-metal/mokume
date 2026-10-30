@@ -797,6 +797,31 @@ struct VectorCaptureTests {
         #expect(drops == [.texture, .shader], "\(drops)")
     }
 
+    @Test("輪郭の無い .chord / .open の塗りは畳む道を通っても、断片の塗りを 1 度だけ名指しで落とし、図形は書かない (#3248)")
+    func aFoldedChordFillDropsOnlyTheFill() throws {
+        let harness = try Harness()
+        let shader = try harness.canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        for (name, place) in [
+            ("chord", { (canvas: Canvas) in canvas.arc(30, 30, 30, 20, 0.2, 2.2, .chord) }),
+            ("open", { (canvas: Canvas) in canvas.arc(30, 30, 30, 20, 0.2, 2.2, .open) }),
+        ] {
+            let (figures, drops) = try harness.capture { canvas in
+                canvas.noStroke()
+                canvas.fill(red)
+                canvas.shader(shader)
+                // 同じ形を続けて置く (2 つ目から雛形に畳まれる)。図形 1 つにつき 1 度だけ数える
+                place(canvas)
+                place(canvas)
+                place(canvas)
+                // 畳まれて置かれたことも見る
+                #expect(canvas.openFlat != nil, "\(name): 畳まれていない")
+                canvas.resetShader()
+            }
+            #expect(figures.isEmpty, "\(name): 塗りしか無い図形は、塗りを落とせば何も残らない \(figures.count)")
+            #expect(drops == [.shader, .shader, .shader], "\(name): \(drops)")
+        }
+    }
+
     /// 輪郭の要素が通る道ごとに確かめる、塗りと輪郭を両方持つ基本図形。**実際の公開の口** (`rect(…, r)`・
     /// `ellipse`・`arc`) で置く。
     private var outlinedShapes: [(name: String, place: (Canvas) -> Void)] {

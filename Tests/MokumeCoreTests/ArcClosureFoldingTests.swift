@@ -36,13 +36,29 @@ struct ArcClosureFoldingTests {
     /// 検査の弧。`nil` は既定 (閉じ方を渡さない)。
     private static let closures: [(String, ArcMode?)] = [("既定", nil), (".chord", .chord), (".open", .open)]
 
+    /// 弧の 4 つの数 (`ellipseMode` ごとの読み方) を、中心 `at`・半径 `radii` から組む。
+    private static func arguments(
+        at center: (Float, Float), radii: (Float, Float), ellipseMode: ShapeMode
+    ) -> (Float, Float, Float, Float) {
+        switch ellipseMode {
+        case .center: (center.0, center.1, radii.0 * 2, radii.1 * 2)
+        case .corner: (center.0 - radii.0, center.1 - radii.1, radii.0 * 2, radii.1 * 2)
+        case .radius: (center.0, center.1, radii.0, radii.1)
+        case .corners: (center.0 - radii.0, center.1 - radii.1, center.0 + radii.0, center.1 + radii.1)
+        }
+    }
+
     private static func place(
-        _ canvas: Canvas, mode: ArcMode?, radii: (Float, Float), start: Float, stop: Float
+        _ canvas: Canvas, mode: ArcMode?, radii: (Float, Float), at center: (Float, Float) = (0, 0),
+        ellipseMode: ShapeMode = .center, start: Float, stop: Float
     ) {
+        let (a, b, c, d) = arguments(at: center, radii: radii, ellipseMode: ellipseMode)
+        canvas.ellipseMode(ellipseMode)
+        defer { canvas.ellipseMode(.center) }
         if let mode {
-            canvas.arc(0, 0, radii.0 * 2, radii.1 * 2, start, stop, mode)
+            canvas.arc(a, b, c, d, start, stop, mode)
         } else {
-            canvas.arc(0, 0, radii.0 * 2, radii.1 * 2, start, stop)
+            canvas.arc(a, b, c, d, start, stop)
         }
     }
 
@@ -107,10 +123,12 @@ struct ArcClosureFoldingTests {
     private func expectSameAsUnfolded(
         _ name: String, density: Float = 1, texture: Bool = false, dash: Bool = false,
         stroke: (weight: Float, cap: StrokeCap, join: StrokeJoin)? = (0.7, .round, .round),
-        radii: (Float, Float) = (14, 9), sweep: (Float, Float) = (0.3, 4.1), spin: Float = 0.21,
-        scale: (Int) -> (Float, Float) = { _ in (1, 1) },
+        radii: (Float, Float) = (14, 9), at center: (Float, Float) = (0, 0), ellipseMode: ShapeMode = .center,
+        sweep: (Float, Float) = (0.3, 4.1), sweepOf: ((Int) -> (Float, Float))? = nil, spin: Float = 0.21,
+        scale: (Int) -> (Float, Float) = { _ in (1, 1) }, fills: Bool = true, tint: Bool = false,
+        blend: BlendMode = .blend, recorded: Bool = false, count: Int = 30, fillAlpha: Float = 255,
         closures: [(String, ArcMode?)] = ArcClosureFoldingTests.closures,
-        folded: Bool
+        folded: Bool?, expectsLit: Bool = true
     ) throws {
         for (closureName, mode) in closures {
             func picture(folding: Bool) throws -> PixelBuffer {
@@ -138,22 +156,54 @@ struct ArcClosureFoldingTests {
                     } else {
                         canvas.noStroke()
                     }
-                    canvas.fill(255)
+                    canvas.fill(255, fillAlpha)
+                    if !fills { canvas.noFill() }
+                    if tint { canvas.tint(200, 120, 60) }
+                    canvas.blendMode(blend)
                     if let image { canvas.texture(image) } else { canvas.shader(shader) }
-                    for index in 0..<30 {
+                    // 保持する形 (`createShape`) に記録して置く。記録の間は畳まない
+                    var retained: Shape?
+                    if recorded {
+                        retained = canvas.createShape {
+                            for (index, spot) in [(0, (-9.0, 4.0)), (1, (11.0, -6.0)), (2, (3.0, 12.0))] {
+                                let at = (Float(spot.0), Float(spot.1))
+                                let swept = (sweep.0 + Float(index) * 0.2, sweep.1)
+                                if folding {
+                                    Self.place(
+                                        canvas, mode: mode, radii: radii, at: at, ellipseMode: ellipseMode,
+                                        start: swept.0, stop: swept.1)
+                                } else {
+                                    Self.placeUnfolded(
+                                        canvas, mode: mode, radii: radii, at: at, ellipseMode: ellipseMode,
+                                        sweep: swept)
+                                }
+                            }
+                        }
+                    }
+                    for index in 0..<count {
                         canvas.pushMatrix()
-                        canvas.translate(20 + Float(index % 6) * 17, 20 + Float(index / 6) * 17)
+                        // 30 個までは 6 列の格子。それ以上は、ずらしながら重ねる
+                        canvas.translate(
+                            20 + Float(index % 6) * 17 + Float(index / 36) * 3.7,
+                            20 + Float((index / 6) % 6) * 17 + Float(index / 36) * 5.3)
                         canvas.rotate(Float(index) * spin + 0.03)
                         let (sx, sy) = scale(index)
                         canvas.scale(sx, sy)
-                        if folding {
-                            Self.place(canvas, mode: mode, radii: radii, start: sweep.0, stop: sweep.1)
+                        let swept = sweepOf?(index) ?? sweep
+                        if let retained {
+                            canvas.shape(retained)
+                        } else if folding {
+                            Self.place(
+                                canvas, mode: mode, radii: radii, at: center, ellipseMode: ellipseMode,
+                                start: swept.0, stop: swept.1)
                         } else {
-                            Self.placeUnfolded(canvas, mode: mode, radii: radii, sweep: sweep)
+                            Self.placeUnfolded(
+                                canvas, mode: mode, radii: radii, at: center, ellipseMode: ellipseMode,
+                                sweep: swept)
                         }
                         canvas.popMatrix()
                     }
-                    if folding {
+                    if folding, let folded {
                         #expect(
                             (canvas.openFlat != nil) == folded,
                             "\(name) \(closureName): 畳みの有無が想定と違う (畳まれた \(canvas.openFlat != nil))")
@@ -167,40 +217,29 @@ struct ArcClosureFoldingTests {
             var lit = 0
             for index in unfolded.components.indices {
                 if unfolded.components[index] != foldedPicture.components[index] { differing += 1 }
-                if unfolded.components[index] > 0 { lit += 1 }
+                // 不透明度の成分は背景でも 1 なので数えない (色の成分だけ)
+                if index % 4 != 3, unfolded.components[index] > 0 { lit += 1 }
             }
-            #expect(lit > 0, "\(name) \(closureName): 絵が空")
+            #expect((lit > 0) == expectsLit, "\(name) \(closureName): 絵が\(expectsLit ? "空" : "空でない")")
             #expect(
                 differing == 0,
                 "\(name) \(closureName): 畳まずに置いた絵と画素の成分が \(differing) 個違う (点いている成分 \(lit))")
         }
     }
 
-    /// 畳む前の道: 閉じ方ごとの周を、置き場所の中心 (原点) まで動かして直に描く。
+    /// 畳まない道: **本物の ``Canvas/placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``** を、`arc` と同じ手順で
+    /// 解いた中心・半径で呼ぶ (手で写した複製にしない — 本物を直しても基準が追従する)。
     private static func placeUnfolded(
-        _ canvas: Canvas, mode: ArcMode?, radii: (Float, Float), sweep: (Float, Float)
+        _ canvas: Canvas, mode: ArcMode?, radii: (Float, Float), at center: (Float, Float),
+        ellipseMode: ShapeMode, sweep: (Float, Float)
     ) {
-        let segments = Canvas.segmentCount(
-            forRadius: max(radii.0, radii.1), scale: Canvas.splitScale(of: canvas.transform.matrix))
-        func outline(_ piece: Canvas.Outline.Ring.Piece) -> Canvas.Outline {
-            Canvas.ringOutline(
-                Canvas.Outline.Ring(
-                    radiusX: radii.0, radiusY: radii.1, start: sweep.0, sweep: sweep.1 - sweep.0,
-                    segments: segments, piece: piece)
-            ).moved(by: .zero)
-        }
-        switch mode {
-        case nil:
-            canvas.draw(outline(.sectorFill))
-            canvas.draw(outline(.arcLine))
-        case .chord:
-            canvas.draw(outline(.chord))
-        case .open:
-            canvas.draw(outline(.chordFill))
-            canvas.draw(outline(.arcLine))
-        case .pie:
-            canvas.draw(outline(.sector))
-        }
+        let (a, b, c, d) = arguments(at: center, radii: radii, ellipseMode: ellipseMode)
+        let box = Canvas.resolveBox(a, b, c, d, mode: ellipseMode)
+        let radiusX = box.width / 2
+        let radiusY = box.height / 2
+        canvas.placeArcInParts(
+            mode: mode, center: SIMD2(box.x + radiusX, box.y + radiusY), radiusX: radiusX, radiusY: radiusY,
+            start: sweep.0, sweep: min(sweep.1 - sweep.0, 2 * .pi))
     }
 
     @Test("輪郭を引かない弧の閉じ方は、畳んでも畳まずに置いた絵と画素が同じ (許容 0)")
@@ -211,6 +250,55 @@ struct ArcClosureFoldingTests {
         try expectSameAsUnfolded("輪郭なしの縦長の楕円の弧", stroke: nil, radii: (6, 15), spin: 0.3, folded: true)
         try expectSameAsUnfolded("輪郭なしの小さい弧", stroke: nil, radii: (3, 3), sweep: (0.3, 2.4), folded: true)
         try expectSameAsUnfolded("輪郭なしのほぼ一周の弧", stroke: nil, sweep: (0.1, 6.2), folded: true)
+    }
+
+    /// **置き場所が原点でない弧**。畳む道は「雛形の座標を置き場所の行列で移す」、畳まない道は「位置を足してから移す」で、
+    /// 足す順が違う (#3170 が角丸の輪郭つきを畳まなかった根)。中心が原点だと足す量が 0 で、この差は出ない — 回転・拡大の
+    /// ある変換の下で、非零の中心 (`rotate(θ); arc(21.3, -13.7, …)`) を `ellipseMode` ごとに置いて、許容 0 を見る。
+    @Test("置き場所が非零の弧 (回転・拡大・ellipseMode) の輪郭なしの塗りも、畳んでも画素が同じ (許容 0)", arguments: [Float(1), 0.5])
+    func strokelessNonZeroPlacementsKeepTheirPixels(density: Float) throws {
+        for ellipseMode in [ShapeMode.center, .corner, .radius, .corners] {
+            try expectSameAsUnfolded(
+                "非零の中心 \(ellipseMode) 細かさ \(density)", density: density, stroke: nil, at: (21.3, -13.7),
+                ellipseMode: ellipseMode, spin: 0.29, folded: true)
+        }
+        try expectSameAsUnfolded(
+            "非零の中心・倍率なし・回転なし", density: density, stroke: nil, at: (37.3, 21.7), spin: 0, folded: true)
+        // 軸ごとに違う (一様でない) 倍率。倍率が違えば刻み数も変わりうるので、畳みの有無は見ず、絵だけ見る
+        try expectSameAsUnfolded(
+            "非零の中心・軸ごとに違う倍率", density: density, stroke: nil, at: (-17.9, 29.1), spin: 0.37,
+            scale: { (1.2 + Float($0 % 3) * 0.05, 0.8 + Float($0 % 4) * 0.03) }, folded: nil)
+    }
+
+    /// 重なりで縁の食い違いが飽和に隠れないよう、半透明を足し算で多数重ねる (400 個)。置き場所ごとの回転・非零の中心。
+    @Test("非零の中心で半透明を多数重ねても、畳んだ絵は畳まない絵と画素が同じ (許容 0)")
+    func manyOverlappingNonZeroPlacementsKeepTheirPixels() throws {
+        try expectSameAsUnfolded(
+            "400 個の重なり", stroke: nil, radii: (5, 3.5), at: (7.3, -4.1), spin: 0.917, blend: .add, count: 400,
+            fillAlpha: 30, folded: true)
+        try expectSameAsUnfolded(
+            "細かさ 0.5 の 400 個の重なり", density: 0.5, stroke: nil, radii: (5, 3.5), at: (7.3, -4.1), ellipseMode: .corner,
+            spin: 0.917, blend: .add, count: 400, fillAlpha: 30, folded: true)
+    }
+
+    /// 設定の組み合わせ。**同じ形が続けば畳み、絵は畳まない道と 1 ビットも違わない。**
+    @Test("輪郭なしの塗りは、tint・blendMode・置き場所ごとに違う掃引・保持した形・塗りなしでも、畳まない絵と画素が同じ (許容 0)")
+    func strokelessCombinationsKeepTheirPixels() throws {
+        try expectSameAsUnfolded("tint", stroke: nil, at: (21.3, -13.7), spin: 0.29, tint: true, folded: true)
+        for blend in [BlendMode.add, .screen] {
+            try expectSameAsUnfolded(
+                "blendMode \(blend)", stroke: nil, at: (21.3, -13.7), spin: 0.29, blend: blend, folded: true)
+        }
+        // 置き場所ごとに start / sweep が違う並び (形の鍵が変わるので畳まれず、絵は同じ)
+        try expectSameAsUnfolded(
+            "置き場所ごとに違う掃引", stroke: nil, at: (13.1, 7.3),
+            sweepOf: { (0.2 + Float($0 % 5) * 0.3, 3.3 + Float($0 % 4) * 0.7) }, spin: 0.29, folded: nil)
+        // 塗りも輪郭も無い弧は何も描かず、どちらの道も空 (絵が空でも畳みの有無は想定どおり)
+        try expectSameAsUnfolded(
+            "塗りなし・輪郭なし", stroke: nil, at: (21.3, -13.7), fills: false, folded: false, expectsLit: false)
+        // 保持する形に記録して置く (記録の間は畳まない)
+        try expectSameAsUnfolded(
+            "保持した形", stroke: nil, radii: (6, 4), spin: 0.29, recorded: true, folded: nil)
     }
 
     /// **畳んだ絵が畳まない絵と縁の数成分違う場面は、畳まない** (#3248)。輪郭つきの弧 (全部の閉じ方) と、貼る絵つきの
