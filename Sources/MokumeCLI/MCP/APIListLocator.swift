@@ -142,10 +142,13 @@ struct APIListLocator {
             switch state {
             case .version(let version): "mokume-api-v\(version).md"
             case .revision(let revision): "mokume-api-\(BuildDirectory.revisionSegment(revision)).md"
-            case .unresolved, .notPinned, .unreadable, .noPackage: "mokume-api.md"
+            case .unresolved, .notPinned, .unreadable, .noPackage: Self.sharedName
             }
         return facet.appendingPathComponent(name)
     }
+
+    /// 鍵の無い取り置きの共通名 (手で置くための枠)。
+    static let sharedName = "mokume-api.md"
 
     /// 取り置きの名前に、依存の版・改訂が入るか。
     static func isKeyed(_ state: DependencyVersion.State) -> Bool {
@@ -227,16 +230,29 @@ struct APIListLocator {
                   \(makeList)
                 """
         case .revision(let revision):
+            let segment = BuildDirectory.revisionSegment(revision)
+            // 共通名に一覧が在っても、改訂の鍵を持たないので読まない。**読まないことを、答えが名乗る** (#3478)
+            let shared = facet.appendingPathComponent(Self.sharedName)
+            let sharedNote =
+                if let text = try? String(contentsOf: shared, encoding: .utf8), !text.isEmpty {
+                    """
+
+
+                    A list is kept under the shared name (\(shared.path)), but that name carries no
+                    revision, so it is not read for a pinned revision. Put the list for this revision
+                    under the name above instead.
+                    """
+                } else { "" }
             return """
                 The public API list is not available here.
 
                 \(head): `\(Self.identity)` is pinned to a branch or revision
-                (\(revision.prefix(12))), not to a release, and the list is published per release.
+                (\(segment)), not to a release, and the list is published per release.
                 Depend on a release version and build the sketch again, or build the list from the
                 revision in use in the mokume repository and put it here (the file name carries the
                 revision, so a list kept for another revision is never returned for this one):
 
-                  \(makeList)
+                  \(Self.buildCommand(cache: cache, version: segment))\(sharedNote)
                 """
         case .noPackage:
             return """
@@ -251,8 +267,12 @@ struct APIListLocator {
     }
 
     /// 本体のリポジトリで一覧を組み立てて、取り置きの場所へ置く手。
-    static func buildCommand(cache: URL) -> String {
-        "make api-list OUT=\(GivenPath.shellWord(cache))"
+    ///
+    /// `version` を渡すと、組み上がる一覧の見出し (`# mokume <version> の公開 API`) にそれが出る。改訂のときは
+    /// 改訂の名前を渡す — 名前だけでなく、中身も、どの改訂のものかを名乗る (#3478)。
+    static func buildCommand(cache: URL, version: String? = nil) -> String {
+        let pin = version.map { " VERSION=\(GivenPath.shellWord(quoting: $0))" } ?? ""
+        return "make api-list OUT=\(GivenPath.shellWord(cache))\(pin)"
     }
 
     /// 得られなかった理由と、そこからの一手。

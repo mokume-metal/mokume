@@ -1839,6 +1839,28 @@ struct MCPServerTests {
         // 置かせる先は、共通名ではなく改訂の名前 (#3478)
         let named = directory.appendingPathComponent(".mokume/reference/mokume-api-rev-0123456789ab.md")
         #expect(outcome.text.contains("OUT=\(GivenPath.shellWord(named))"), "\(outcome.text)")
+        // 組み上がる一覧の見出しにも改訂が出るよう、版の名前も渡す。本文の改訂の表記も同じ名前
+        #expect(outcome.text.contains("VERSION='rev-0123456789ab'"), "\(outcome.text)")
+        #expect(outcome.text.contains("(rev-0123456789ab)"), "\(outcome.text)")
+        // 共通名に一覧が無ければ、共通名に触れない
+        #expect(!outcome.text.contains("shared name"), "\(outcome.text)")
+    }
+
+    /// 共通名に前の一覧が在るのに、改訂の依存では読まない。**読まないことを、答えが名乗る** (#3478)。
+    @Test("共通名に一覧が在って改訂の依存では読まないとき、案内がそれに触れ、改訂の名前へ置き直す手を言う")
+    func namesTheSharedListItDoesNotRead() throws {
+        let directory = try makeSketch()
+        try writeRevisionPin(directory, "0123456789abcdef0123456789abcdef01234567")
+        try putList("# 前に置いた一覧\n", at: "mokume-api.md", in: directory)
+        let outcome = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(!outcome.text.contains("# 前に置いた一覧"), "\(outcome.text)")
+        let shared = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        #expect(outcome.text.contains("kept under the shared name (\(shared.path))"), "\(outcome.text)")
+        #expect(outcome.text.contains("not read for a pinned revision"), "\(outcome.text)")
+        #expect(outcome.text.contains("mokume-api-rev-0123456789ab.md"), "\(outcome.text)")
     }
 
     /// 枝・改訂で固定した `Package.resolved` を書く (`branch: "main"` を `swift package resolve` した後の形)。
