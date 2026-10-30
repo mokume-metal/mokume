@@ -341,7 +341,15 @@ struct WatchStopOffMainTests {
         stubborn.waitUntilReady()
         let current = try #require(session.child)
 
-        let retiring = Task { await session.generationPromoted() }
+        // 退役を始めた時刻と、退役が戻った時刻。**見張りの期限 (`stopTimeout`) が本当に切れた回か** を、経過で見分ける
+        let clock = ContinuousClock()
+        let retireStarted = clock.now
+        var retireReturned: ContinuousClock.Instant?
+        let retiring = Task { () -> WatchSession.StopOutcome? in
+            let outcome = await session.generationPromoted()
+            retireReturned = clock.now
+            return outcome
+        }
         try await waitUntil { stubborn.received(0) }
         var ended = false
         // **終える手続きが戻った時点で、退役の子が止まっているか。** 誰が落としたか (検査か、見張りの期限か) によらず、
@@ -369,17 +377,23 @@ struct WatchStopOffMainTests {
         #expect(session.child == nil)
         #expect(session.outgoing == nil)
 
-        // **見張りの期限が、検査の見る前に切れた回は、約束の外である。** 期限は見張りが main の外で数えるので、
-        // この検査が main の上で進むより先に切れうる (退役の子が強制終了され、終える手続きは正しく戻る)。
-        // そのときは「待たずに戻った」と見分けがつかないので、下の時間に頼る 2 つは見ずに、名乗って飛ばす
+        // **見張りの期限が、検査の見る前に正当に切れた回は、時間に頼る 2 つを見ない。** 期限は見張りが main の外で
+        // 数えるので、この検査が main の上で進むより先に切れうる (退役の子が強制終了され、終える手続きは正しく戻る)。
+        // そのときは「待たずに戻った」と見分けがつかない。**`.killed` だけでは正当と言えない** — 期限より前に
+        // 強制終了する退行も `.killed` を返すので、**経過が期限に届いた回だけ**を見送る (退役を始めた時刻は期限を
+        // 数え始める時刻より前なので、正当に切れた回の経過は期限以上になる)。見送った回は、順序の 2 つ
+        // (終える手続きが戻った時点で退役の子が止まっている・子と状態が残らない) だけで通る
+        let elapsed = retireReturned.map { retireStarted.duration(to: $0) }
+        let deadline = Duration.seconds(Self.stopTimeout)
+        let expiredOnItsOwn = retirement == .killed && (elapsed.map { $0 >= deadline } ?? false)
         if retirement == .killed {
-            try Test.cancel(
-                "見張りの止める期限 (\(Self.stopTimeout) 秒) が、検査が退役の子を見る前に切れ、退役の子は強制終了された (退役を始めてから見るまでの区間が期限を越えた回)"
-            )
+            #expect(expiredOnItsOwn, "退役の子が、見張りの期限 (\(Self.stopTimeout) 秒) より前に強制終了された (経過 \(String(describing: elapsed)))")
         }
-        // 待たない実装を、通常の期限で捕まえる (200 ミリ秒のあいだ、退役の子は走り続け、終える手続きは戻らない)
-        #expect(retiredStillRunning, "退役の途中の子が、200 ミリ秒のあいだに止まった (退役の結果 \(String(describing: retirement)))")
-        #expect(!endedEarly, "退役の途中の子が残っているのに戻っている (退役の結果 \(String(describing: retirement)))")
+        if !expiredOnItsOwn {
+            // 待たない実装を、通常の期限で捕まえる (200 ミリ秒のあいだ、退役の子は走り続け、終える手続きは戻らない)
+            #expect(retiredStillRunning, "退役の途中の子が、200 ミリ秒のあいだに止まった (退役の結果 \(String(describing: retirement)))")
+            #expect(!endedEarly, "退役の途中の子が残っているのに戻っている (退役の結果 \(String(describing: retirement)))")
+        }
     }
 
     // MARK: - 待っている間に来た合図
