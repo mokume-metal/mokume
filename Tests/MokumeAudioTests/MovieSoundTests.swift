@@ -19,7 +19,7 @@ nonisolated enum MovieSoundFixture {
     enum Track {
         /// 16 bit の整数の LPCM。標本が量子化の幅 (1/32768) の中で元と一致する。
         case lpcm
-        /// AAC。不可逆なので、長さ (符号化の最小の単位 1024 標本の中) と周波数で突き合わせる。
+        /// AAC。不可逆なので、長さ (先頭の余白 2112 標本と端数 1024 標本を許す幅) と周波数で突き合わせる。
         case aac
     }
 
@@ -88,50 +88,49 @@ nonisolated enum MovieSoundFixture {
         let sources = tones.map { Self.sine(count: total, tone: $0) }
         let chunk = Self.sampleRate / Int(fps)
         var audioAt = 0
-        var audioFinished = false
-        func appendAudio(upTo limit: Int) async throws {
-            let end = min(total, limit)
-            if audioAt < end {
+        var videoIndex = 0
+        // **次に渡す時刻が早いほうの入力から渡す。** 書き手は映像と音を時刻の順に書くので、先に待つ入力を
+        // 固定すると (音の開始が映像より遅い動画では特に)、書き手が別の入力を待っていて、互いに待ち合う。
+        // 同じ時刻なら映像が先。渡し終えた入力は、すぐ閉じる (閉じないと、書き手は「まだ来るかもしれない」と、
+        // 時刻が先の入力を待たせる)
+        while videoIndex < frames || audioAt < total {
+            let videoTime = videoIndex < frames ? Double(videoIndex) / Double(fps) : .infinity
+            let audioTime = audioAt < total ? Double(audioAt + audioOffset) / Double(Self.sampleRate) : .infinity
+            if videoTime <= audioTime {
+                try await Self.waitReady(video)
+                let pool = try #require(adaptor.pixelBufferPool)
+                var made: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+                let buffer = try #require(made)
+                CVPixelBufferLockBaseAddress(buffer, [])
+                let base = try #require(CVPixelBufferGetBaseAddress(buffer))
+                let level = UInt8((videoIndex % 6) * 40 + 20)
+                for row in 0..<48 {
+                    let line = base.advanced(by: row * CVPixelBufferGetBytesPerRow(buffer))
+                        .assumingMemoryBound(to: UInt8.self)
+                    for column in 0..<64 {
+                        line[column * 4] = level
+                        line[column * 4 + 1] = level
+                        line[column * 4 + 2] = level
+                        line[column * 4 + 3] = 255
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                #expect(
+                    adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(videoIndex), timescale: fps)))
+                videoIndex += 1
+                if videoIndex == frames { video.markAsFinished() }
+            } else {
+                let end = min(total, audioAt + chunk)
                 for (audio, source) in zip(audios, sources) {
                     try await Self.waitReady(audio)
                     let sample = try Self.sampleBuffer(Array(source[audioAt..<end]), at: audioAt + audioOffset)
                     #expect(audio.append(sample))
                 }
                 audioAt = end
-            }
-            // 音を渡し終えたら、すぐ閉じる。閉じないと書き手は「まだ音が来るかもしれない」と、時刻が先の映像を待たせる
-            if audioAt >= total, !audioFinished {
-                audioFinished = true
-                for audio in audios { audio.markAsFinished() }
+                if audioAt >= total { for audio in audios { audio.markAsFinished() } }
             }
         }
-        for index in 0..<frames {
-            try await Self.waitReady(video)
-            let pool = try #require(adaptor.pixelBufferPool)
-            var made: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
-            let buffer = try #require(made)
-            CVPixelBufferLockBaseAddress(buffer, [])
-            let base = try #require(CVPixelBufferGetBaseAddress(buffer))
-            let level = UInt8((index % 6) * 40 + 20)
-            for row in 0..<48 {
-                let line = base.advanced(by: row * CVPixelBufferGetBytesPerRow(buffer))
-                    .assumingMemoryBound(to: UInt8.self)
-                for column in 0..<64 {
-                    line[column * 4] = level
-                    line[column * 4 + 1] = level
-                    line[column * 4 + 2] = level
-                    line[column * 4 + 3] = 255
-                }
-            }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: fps)))
-            // 音を映像より 2 枚ぶん先行させて渡す。書き手は映像と音を時刻の順に交互に書くので、音が遅れると
-            // 映像の入力が待たされ、長い動画では詰まる
-            try await appendAudio(upTo: (index + 3) * chunk)
-        }
-        try await appendAudio(upTo: total)
-        video.markAsFinished()
         writer.endSession(
             atSourceTime: CMTime(seconds: seconds + Double(audioOffset) / Double(Self.sampleRate), preferredTimescale: 48_000))
         await writer.finishWriting()
@@ -249,7 +248,7 @@ struct MovieSoundFileTests {
     }
 
     @Test(
-        "映像と音声を持つ .mov・.mp4 (AAC) の長さが音声トラックと符号化の 1 単位 (1024 標本) の中で一致し、周波数が書いたものと同じ",
+        "映像と音声を持つ .mov・.mp4 (AAC) の長さが音声トラックと符号化の先頭の余白 (priming) を含めた幅の中で一致し、周波数が書いたものと同じ",
         arguments: [AVFileType.mov, AVFileType.mp4])
     func readsAACInAContainer(fileType: AVFileType) async throws {
         let url = try await Fixture.writeMovie(fileType: fileType, track: .aac)
@@ -260,7 +259,10 @@ struct MovieSoundFileTests {
         let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
         let trackSeconds = try await track.load(.timeRange).duration.seconds
         let seconds = Double(read.samples.count) / Double(read.sampleRate)
-        #expect(abs(seconds - trackSeconds) < 1024.0 / 48_000, "読んだ \(seconds) 秒・音声トラック \(trackSeconds) 秒")
+        // AAC の符号化は、先頭に 2112 標本の余白 (priming) と、1 パケット (1024 標本) の端数を持つ。AVAudioFile は
+        // 余白を除いた長さを読み、音声トラックの長さの側は余白を含めるかが OS の世代で違いうるので、両方を許す幅にする
+        let tolerance = Double(2112 + 1024) / 48_000
+        #expect(abs(seconds - trackSeconds) < tolerance, "読んだ \(seconds) 秒・音声トラック \(trackSeconds) 秒")
         #expect(abs(Fixture.frequency(read.samples, sampleRate: read.sampleRate) - 1000) < 10)
     }
 
@@ -412,13 +414,26 @@ struct MovieSoundRenderTests {
         var testDescription: String { self == .setup ? "setup()" : "draw()" }
     }
 
-    /// 書き出しの `fps`・`play()` を呼ぶ場面・音を鳴らす遅れ (フレーム) ごとの、音の頭と映像の頭の差 (窓の数。負なら音が早い)。
+    /// 録りの始め方。
+    enum Recording: Sendable, CustomTestStringConvertible {
+        /// 最初の `draw()` の中で `beginRecord` を呼ぶ (作品が書く形)。
+        case inDraw
+        /// 最初のフレームより前に `runtime.beginRecord` を呼ぶ (`mokume render` と同じ形)。
+        case beforeFirstFrame
+        var testDescription: String { self == .inDraw ? "draw() で beginRecord" : "mokume render 形" }
+    }
+
+    /// 書き出しの `fps`・`play()` を呼ぶ場面・録りの始め方・音を鳴らす遅れ (フレーム) ごとの、音の頭と映像の頭の差
+    /// (窓の数。負なら音が早い)。
     struct HeadCase: CustomTestStringConvertible, Sendable {
         var fps: Int
         var at: Where
         var delay: Int
         var expected: Int
-        var testDescription: String { "\(fps) fps・\(at)・音を \(delay) フレーム遅らせる → 差 \(expected)" }
+        var recording: Recording = .inDraw
+        var testDescription: String {
+            "\(fps) fps・\(at)・\(recording)・音を \(delay) フレーム遅らせる → 差 \(expected)"
+        }
     }
 
     @Test(
@@ -427,6 +442,12 @@ struct MovieSoundRenderTests {
             HeadCase(fps: 30, at: .draw, delay: 0, expected: -1), HeadCase(fps: 60, at: .draw, delay: 0, expected: -1),
             HeadCase(fps: 30, at: .draw, delay: 1, expected: 0), HeadCase(fps: 60, at: .draw, delay: 1, expected: 0),
             HeadCase(fps: 30, at: .setup, delay: 0, expected: 0), HeadCase(fps: 60, at: .setup, delay: 0, expected: 0),
+            // `mokume render` と同じ、最初のフレームより前に録り始める形
+            HeadCase(fps: 30, at: .setup, delay: 0, expected: 0, recording: .beforeFirstFrame),
+            HeadCase(fps: 60, at: .setup, delay: 0, expected: 0, recording: .beforeFirstFrame),
+            HeadCase(fps: 30, at: .draw, delay: 0, expected: -1, recording: .beforeFirstFrame),
+            HeadCase(fps: 60, at: .draw, delay: 0, expected: -1, recording: .beforeFirstFrame),
+            HeadCase(fps: 30, at: .draw, delay: 1, expected: 0, recording: .beforeFirstFrame),
         ])
     func headOffsetBetweenVideoAndSoundInARender(_ item: HeadCase) async throws {
         let source = try await Fixture.writeMovie(fileType: .mov, track: .lpcm)
@@ -449,15 +470,21 @@ struct MovieSoundRenderTests {
             // 映像は、映したコマを窓いっぱいに描いて書き出しへ載せる
             if let clip { sketch.image(clip.image, 0, 0, 8, 8) }
             if sketch.frameCount == 1 {
-                sketch.beginRecord(out.path)
+                if item.recording == .inDraw { sketch.beginRecord(out.path) }
                 if item.at == .draw { clip?.play() }
             }
             if item.at == .draw, sketch.frameCount == 1 + item.delay { song?.play() }
-            if sketch.frameCount == recorded + 1 { sketch.endRecord() }
+            if item.recording == .inDraw, sketch.frameCount == recorded + 1 { sketch.endRecord() }
         }
         let runtime = try SketchRuntime(
             sketch: SoundSketch(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: item.fps))
-        for _ in 0..<(recorded + 1) { try runtime.advance() }
+        switch item.recording {
+        case .inDraw:
+            for _ in 0..<(recorded + 1) { try runtime.advance() }
+        case .beforeFirstFrame:
+            runtime.beginRecord(out.path)
+            for _ in 0..<recorded { try runtime.advance() }
+        }
         runtime.closePlugins()
 
         let heard = try await watch(out, frames: recorded)
@@ -503,13 +530,17 @@ struct MovieSoundRenderTests {
         }
         var gaps: [Float] = []
         var jumps = 0
+        var lastTime: Float = 0
         SoundSketch.onDraw = { sketch in
             guard let clip, let song else { return }
             gaps.append(song.position - clip.time)
+            // 説明文の例と同じ規則: 映像が動いているときだけ合わせる
+            let moving = clip.time != lastTime
+            lastTime = clip.time
             if sketch.frameCount == 10 {
                 // 音を 0.3 秒先へずらして、ずれを作る
                 song.jump(clip.time + 0.3)
-            } else if abs(song.position - clip.time) > 0.1 {
+            } else if moving, abs(song.position - clip.time) > 0.1 {
                 jumps += 1
                 song.jump(recipe == .plain ? clip.time : clip.time + sketch.deltaTime)
             }
@@ -525,5 +556,40 @@ struct MovieSoundRenderTests {
         let settled = Array(gaps[14...])
         let expected: Float = recipe == .plain ? -frame : 0
         #expect(settled.allSatisfy { abs($0 - expected) < 1e-3 }, "期待 \(expected) 秒・実際 \(settled)")
+    }
+    @Test("映像だけ止めた間 (clip.pause()) は、説明文の例の規則では音を引き戻さず、音は鳴り続ける")
+    func doesNotDragTheSoundBackWhileTheVideoIsPaused() async throws {
+        let source = try await Fixture.writeMovie(fileType: .mov, track: .lpcm)
+        defer { try? FileManager.default.removeItem(at: source) }
+        var clip: Movie?
+        var song: SoundFile?
+        SoundSketch.onSetup = { sketch in
+            clip = try sketch.createVideo(source.path)
+            song = try sketch.loadSound(source.path)
+            clip?.play()
+            song?.play()
+        }
+        var jumps = 0
+        var lastTime: Float = 0
+        var positions: [Float] = []
+        SoundSketch.onDraw = { sketch in
+            guard let clip, let song else { return }
+            if sketch.frameCount == 5 { clip.pause() }
+            positions.append(song.position)
+            let moving = clip.time != lastTime
+            lastTime = clip.time
+            if moving, abs(song.position - clip.time) > 0.1 {
+                jumps += 1
+                song.jump(clip.time + sketch.deltaTime)
+            }
+        }
+        let runtime = try SketchRuntime(
+            sketch: SoundSketch(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 30))
+        for _ in 0..<20 { try runtime.advance() }
+        runtime.closePlugins()
+
+        #expect(jumps == 0, "映像を止めた後も合わせ直した: \(positions)")
+        // 音は止まった映像の位置 (約 0.13 秒) を越えて、鳴り続けている
+        #expect((positions.last ?? 0) > 0.4, "\(positions)")
     }
 }
