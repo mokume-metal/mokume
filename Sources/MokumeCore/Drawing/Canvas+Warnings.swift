@@ -251,6 +251,14 @@ extension Canvas {
         case badOrbit
         /// 受け取れない切り抜きが渡された。
         case badClip
+        /// 回転・剪断を含む変換の下で ``Canvas/clip(_:_:_:_:)`` が呼ばれ、写した 4 つの角を囲む面に沿った
+        /// 矩形で切り抜いた ([#2721])。切り抜きは面に沿った矩形しか持てない。
+        ///
+        /// **``badClip`` とは鍵を分ける。** あちらは渡された数が受け取れない話で、こちらは数は受け取れて、
+        /// 変換の下で表せない形を近似した話である。
+        ///
+        /// [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        case clipUnderRotation
         /// ``strokeWeight(_:)`` に負の値・数でない値・無限が渡され、0 に丸めた ([#1698])。
         ///
         /// [#1698]: https://github.com/mokume-metal/mokume/issues/1698

@@ -70,21 +70,69 @@ extension Canvas {
         // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
         guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
+        // **矩形は呼んだ時点の変換で面へ写す** ([#2721])。手本 (Processing) の既定の描き手は、切り抜きを
+        // 今の変換の下の座標で読む。面に沿わない変換 (回転・剪断) は、写した 4 つの角を囲む面に沿った矩形で
+        // 切り抜く (切り抜きは面に沿った矩形しか持てない)。角を取って最小・最大を取るので、幅や高さが負の
+        // 矩形・鏡映しの変換は裏返して読まれる (手本が負の幅・高さを裏返して読むのと同じ)
+        //
+        // **端は有限の大きな値へ収めてから変換を通す。** 溢れた端 (`+∞`) は、変換の行列の 0 との積が
+        // 数でない値 (`0 * ∞`) になり、収める先が決まらなくなる。面より桁違いに大きい端は、収めても
+        // 同じ面の外にあるので、効く切り抜きは変わらない
+        //
+        // [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        let limit: Float = 1e18
+        let edges = (
+            left: min(max(box.x, -limit), limit), top: min(max(box.y, -limit), limit),
+            right: min(max(box.x + box.width, -limit), limit),
+            bottom: min(max(box.y + box.height, -limit), limit)
+        )
+        noteTransformRead()
+        let corners = [
+            transform.placed(x: edges.left, y: edges.top), transform.placed(x: edges.right, y: edges.top),
+            transform.placed(x: edges.right, y: edges.bottom), transform.placed(x: edges.left, y: edges.bottom),
+        ]
+        let xs = corners.map(\.x)
+        let ys = corners.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max(),
+            minX.isFinite, maxX.isFinite, minY.isFinite, maxY.isFinite
+        else { return warnBadClipOnce() }
+        if !Self.isAxisAlignedBox(corners, minX: minX, maxX: maxX, minY: minY, maxY: maxY) {
+            warnOnce(
+                .clipUnderRotation,
+                "clip(): the transform at this call rotates or shears, but a clip is an axis-aligned "
+                    + "rectangle, so it was set to the rectangle that encloses the transformed corners. "
+                    + "Write clip() before rotate() or shearX()/shearY() to clip the rectangle as it is")
+        }
         // **`Float` のまま面の内へ収める。** 画素へ丸めるのは ``scissor(_:)`` で、そこでは
         // 面の内の値しか `Int` にしない (`Int(_:Float)` は面より桁違いに大きい値でトラップする・
         // [#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
         //
         // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
-        let left = min(max(0, box.x), width)
-        let top = min(max(0, box.y), height)
-        let right = min(max(left, box.x + box.width), width)
-        let bottom = min(max(top, box.y + box.height), height)
+        let left = min(max(0, minX), width)
+        let top = min(max(0, minY), height)
+        let right = min(max(left, maxX), width)
+        let bottom = min(max(top, maxY), height)
         let clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
         // **正規化まで済ませた後で、効く切り抜きが変わるときだけ閉じる** (#2789)。列が持つのは閉じた
         // 時点の切り抜きなので、ビット列まで同じなら閉じても閉じなくても列の中身は同じになる
         if let current = style.clip, current.isBitwiseEqual(to: clip) { return }
         closeBatch()
         style.clip = clip
+    }
+
+    /// 写した 4 つの角が、囲む矩形 (`min`・`max`) の 4 つの角と重なるか。回転・剪断を含むと、角は囲む矩形の
+    /// 辺の上に残って角と重ならない。90 度刻みの回転や鏡映しは重なるので、切り抜きで正確に表せる。
+    ///
+    /// 許す誤差は画素の 1000 分の 1。`rotate(.pi)` の行列の成分は `-8.7e-8` ほどの誤差を持つので、
+    /// 丸めの誤差で 180 度回した矩形を「回っている」と数えない。
+    private static func isAxisAlignedBox(
+        _ corners: [SIMD2<Float>], minX: Float, maxX: Float, minY: Float, maxY: Float
+    ) -> Bool {
+        let tolerance: Float = 1e-3
+        func near(_ value: Float, _ edge: Float) -> Bool { abs(value - edge) <= tolerance }
+        return corners.allSatisfy {
+            (near($0.x, minX) || near($0.x, maxX)) && (near($0.y, minY) || near($0.y, maxY))
+        }
     }
 
     public func noClip() {
