@@ -375,6 +375,114 @@ struct SynthReservationTests {
         stage.close()
     }
 
+    // MARK: - 高さと包絡を同じ時刻に並べる (#3515)
+
+    /// 旋律の高さ。k 番目 (k = 1…4) の拍 `0.125 × k` 秒の頭から鳴る。
+    private static let notes: [Float] = [440, 330, 550, 220]
+
+    /// ステージ越しに、`osc.play(notes[k - 1], 0.5, at: t)` と `env.play(osc, 0.01, 0.05, 0.5, 0.1, at: t)` を
+    /// 同じ `t = 0.125 × k` (k = 1…4) に並べて頼み、音源の出口を集める。`envelopeFirst` で頼む順を替える。
+    private func sequenced(envelopeFirst: Bool) -> [Float] {
+        let stage = makeStage()
+        let osc = TriOsc(stage: stage)
+        let env = Env()
+        for k in 1...Self.notes.count {
+            let time = 0.125 * Double(k)
+            if envelopeFirst { env.play(osc, 0.01, 0.05, 0.5, 0.1, at: time) }
+            osc.play(Self.notes[k - 1], 0.5, at: time)
+            if !envelopeFirst { env.play(osc, 0.01, 0.05, 0.5, 0.1, at: time) }
+        }
+        var heard: [Float] = []
+        for frame in 0..<(Self.step * 5 / 800 + 2) {
+            stage.frame = frame
+            stage.supply()
+            if frame > 0, let node = osc.node { heard += node.meter.latest(800) }
+        }
+        stage.close()
+        return heard
+    }
+
+    /// 同じ音を、予約を使わず、`step` ごとの区切りの頭に値と包絡を**すぐ**効かせて作る参照。
+    private func immediatePitched() throws -> [Float] {
+        let rack = makeRack()
+        let voice = try #require(rack.addSource(.wave(.triangle)))
+        func value(_ param: SynthParam, _ number: Float) -> SynthCommand {
+            SynthCommand(
+                op: .set, node: UInt8(voice.id), param: param, bits: UInt64(number.bitPattern), at: 0)
+        }
+        var heard: [Float] = []
+        func piece() {
+            _ = render(rack, Self.step)
+            heard += voice.meter.latest(Self.step)
+        }
+        piece()
+        for note in Self.notes {
+            for command in [
+                value(.frequency, note), value(.amplitude, 0.5), value(.offset, 0), value(.panning, 0),
+                value(.attack, 0.01), value(.sustain, 0.05), value(.level, 0.5), value(.release, 0.1),
+                SynthCommand(op: .trigger, node: UInt8(voice.id), at: 0),
+                SynthCommand(op: .play, node: UInt8(voice.id), at: 0),
+            ] {
+                rack.post(command)
+            }
+            piece()
+        }
+        return heard
+    }
+
+    /// `range` の標本で、符号が変わる回数 (零点の数)。高さの目安 (周波数 f の波は、区間の秒数 × 2f 回)。
+    private func crossings(_ samples: [Float], _ range: Range<Int>) -> Int {
+        var count = 0
+        for index in range.dropFirst() where (samples[index] >= 0) != (samples[index - 1] >= 0) {
+            count += 1
+        }
+        return count
+    }
+
+    @Test("高さと包絡を同じ時刻に並べると、高さも 6000 × k 標本から変わり、前の音の尾は前の高さのまま終わる")
+    func pitchAndEnvelopeAlignedOnTheSameSample() throws {
+        let heard = sequenced(envelopeFirst: false)
+        let total = Self.step * 5
+        #expect(heard.count >= total)
+        // 最初の拍の前は無音 (前の高さは無い)
+        #expect(heard.prefix(Self.step).allSatisfy { $0 == 0 })
+        #expect((6000...6001).contains(firstSound(heard) ?? -1))
+
+        // すぐ効かせた参照と標本まで一致する
+        let reference = try immediatePitched()
+        #expect(reference.count == total)
+        #expect(mismatch(Array(heard.prefix(total)), reference) == nil)
+        #expect(heard.map { abs($0) }.max() ?? 0 > 0.1, "全部 0 で一致していては意味が無い")
+
+        // 高さが区間ごとに予約した高さである。区間は 2000 標本 (周波数 f の波は零点が f / 12 回)。
+        // 立ち上がり 480 標本の後 (保つ区間の内側) で、新しい高さ
+        for (index, note) in Self.notes.enumerated() {
+            let start = Self.step * (index + 1)
+            let expected = Int((Double(note) / 12).rounded())
+            let found = crossings(heard, (start + 600)..<(start + 2600))
+            #expect(abs(found - expected) <= 2, "k = \(index + 1): \(note) Hz 零点 \(found) 回 (期待 \(expected))")
+        }
+        // 次の拍の直前の 1500 標本は、前の音の尾 (7680 標本の音で、拍の 6000 標本より長いのでまだ鳴っている) で、前の高さのまま。`freq(_:)` を今すぐ
+        // 呼んでいれば新しい高さに変わってしまう区間
+        for (index, note) in Self.notes.enumerated().dropLast() {
+            let next = Self.step * (index + 2)
+            let expected = Int((Double(note) * 1500 / 24_000).rounded())
+            let found = crossings(heard, (next - 1500)..<next)
+            #expect(abs(found - expected) <= 2, "k = \(index + 1) の尾: \(note) Hz 零点 \(found) 回 (期待 \(expected))")
+        }
+
+        // 2 回書き出すと標本が一致する (ADR-0025 の水準 2)
+        #expect(mismatch(heard, sequenced(envelopeFirst: false)) == nil)
+    }
+
+    @Test("同じ時刻なら、env.play を先に頼んでも osc.play を先に頼んでも、同じ標本になる")
+    func theOrderOfTheTwoCallsDoesNotMatter() {
+        let valuesFirst = sequenced(envelopeFirst: false)
+        let envelopeFirst = sequenced(envelopeFirst: true)
+        #expect(mismatch(envelopeFirst, valuesFirst) == nil)
+        #expect(valuesFirst.map { abs($0) }.max() ?? 0 > 0.1)
+    }
+
     // MARK: - 実時間 (音の流れ)
 
     @Test("実際に鳴らす流れでも、流れの 1 度に描かせる長さ (512・441・128) によらず予約した標本から鳴り、音の時計は作った標本を数える")

@@ -21,7 +21,7 @@
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=3f9a1c8d
+    // shot: 1 snippet=3f9a1c8d image=0b6e4c1a9d27f358
 
 **例と絵は左右に並べる。** 縦に積むと絵が本文の幅いっぱいに出て、目が例と結び付け
 にくい。列の重みを 3:1 にしてあるのは、**例の行が折り返さずに収まる幅**を先に確保する
@@ -154,9 +154,10 @@ Issue にする)。render-pr が見送られた PR の分も区間の差に入�
 
 - **止めない。** 撮り直して書き戻すには Gyazo の鍵が要るが、専用機は secrets を持たない
   (ADR-0019 決定 7)。止めると、Gyazo が止まったときに描画 PR が全部止まる
-- **記録の形は変えない。** 撮った時点の画素のハッシュを持たせる案 (#671 の候補 1) は
-  採らない — 撮るのはメンテナの手元 (別の OS) で、照合するのは専用機になり、OS の版の
-  違いが誤報になる。**比べる 2 枚は同じ機械・同じ OS で、いま描く**
+- **ここ (実装の変化を名指しする側) は、記録の画素のハッシュを使わない。** 撮るのは
+  メンテナの手元 (別の OS) で、照合するのは専用機になり、OS の版の違いが誤報になる。
+  **比べる 2 枚は同じ機械・同じ OS で、いま描く**。記録の `image=` (下の「撮り直しで URL を
+  動かさない」) は撮り直しの側だけが読む — 外れても上げ直すだけで、誤報にならない
 - **比べるのは画素で、PNG のバイトではない。** バイトだけが違う絵 (#1454 の
   `shadows(_:)`) は、画素が同じなら言わない。画素が違うなら、違う数と最大の差を添える。
   閾値は置いていない (同じ木を 2 回描いて差が出ないことは確かめてある・#1986)
@@ -166,15 +167,37 @@ Issue にする)。render-pr が見送られた PR の分も区間の差に入�
 手元でも、撮り直しの差分そのものが効く。`--capture` を打つと、絵が実際に変わった囲みの
 `![…](…)` だけが書き換わる。
 
-## 冪等性を借りている先 (#671)
+## 撮り直しで URL を動かさない (#671・#3459)
 
-**撮り直しても絵が変わっていなければ URL が動かないのは、Gyazo が同じ画素に同じ URL を
-返すからである。** こちらは毎回すべてを上げ直しており、同じ URL が返ることに依存して
-いる — つまり**この性質は借りものであって、こちらが保証しているのではない。**
+**撮り直しても絵が変わっていなければ、説明文の URL は 1 本も動かない。** 記録 (`// shot:`)
+が撮った絵の画素のハッシュを `image=` に持ち、`--capture` は上げる前に、いま撮った絵の
+画素のハッシュと記録のそれを比べる。
 
-破れたら (同じ画素に別の URL が返るようになったら) 撮るたびに全数の URL が動く。その
-ときは**撮った絵の内容 (画素のハッシュ) を記録に持ち、変わった絵だけ上げ直す**形へ移る
-— #671 の候補 1 がそれで、そこまでは足さない (実害が出てから足す・ADR-0008)。
+    // shot: 1 snippet=3f9a1c8d image=0b6e4c1a9d27f358
+
+- **同じと言えるのは 4 つが揃うとき** — 記録が `image=` を持ち、それがいま撮った画素と
+  同じで、囲みにその絵の Gyazo の URL があり、**その URL が今も引ける**。そのときは上げず、
+  囲みの URL をそのまま使う。**1 つでも欠ければ上げる** (古い記録・読めない画像・URL を消した
+  囲み・置き場で消えた絵)。判定できないときは、同じと言わずに上げ直す側へ倒す
+- **URL の生死は引いて確かめる** (`dead_urls`)。引き方は `check-external-assets.py` の
+  `probe_all` を借りる (一時的な失敗の引き直しもそちらが持つ)。これが無いと、置き場の側で
+  絵が消えても (#1294・写り込みを消すための削除) 記録は「同じ」と言い続け、`make example-shots`
+  で撮り直せなくなる — 消えた絵は `report-dead-assets.sh` が撮り直しを求める道そのもの
+- **変わった絵だけが上げ直され、その URL だけが動く。** 例を書き換えて指紋が動いても、
+  画素が同じなら URL は残る (記録の `snippet=` だけが新しくなる)
+- **材料は PNG のバイトではなく画素** (`decode_rgba` で読んだ幅・高さ・RGBA)。動きは連番の
+  全フレームの画素を順に混ぜる。圧縮器の版でバイトが変わっても動かない。静止画と動きは
+  材料に種類を混ぜて区別する (1 枚だけの動きと静止画の画素が同じでも、上げる物が違う)
+- **途中で上げに失敗しても、上げ終えた分は記録に残す** (説明文の塊ごと)。残さないと、次の
+  撮影で上げた絵が「記録に無い」として上げ直され、URL がまた動く
+- **`image=` は任意で、`example-shots-check` は見ない。** 記録の指紋 (`snippet=`) が合って
+  いるかだけを見る (画素は撮らないと分からない)。`image=` の無い古い記録は「不明」で、次の
+  撮影で上げ直される — この変更の後の最初の `make example-shots` だけ、全数の URL が 1 度
+  動く。以降は動かない
+- **Gyazo の性質には頼らない。** かつては「Gyazo が同じ画素に同じ URL を返す」ことに依って
+  おり、それが破れて (同じ画素に別の URL が返って) 撮るたびに全数が動いた (#3459)。いまは
+  上げるかどうかをこちらが決める。**手元で撮った絵と記録の比べだけ**で、別の OS の描画を
+  照合するものではない — OS の版で画素が動けば、その絵は上げ直されるだけ
 
 ## 撮れた絵が何かを示しているか (#481)
 
@@ -243,7 +266,9 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -280,7 +305,11 @@ OPEN = re.compile(r"^(?P<indent>\s*)///\s*<!--\s*shot:\s*(?P<alt>[^|]*?)\s*(?:\|
 CLOSE = re.compile(r"^\s*///\s*<!--\s*/shot\s*-->\s*$")
 DOC = re.compile(r"^\s*///")
 # 撮影の記録。**機械が書く** (書き戻しが塊ごとに置き換える)
-RECORD = re.compile(r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)\s*$")
+# `image=` は撮った絵の画素のハッシュ (#3459)。古い記録は持たないので任意
+RECORD = re.compile(
+    r"^\s*//\s*shot:\s*(?P<index>\d+)\s+snippet=(?P<snippet>[0-9a-f]+)"
+    r"(?:\s+image=(?P<image>[0-9a-f]+))?\s*$"
+)
 # `//` の行 (`///` は含まない)。説明文の直後に積まれる記録と宣言は、この行の連なり
 SLASH = re.compile(r"^\s*//(?!/)")
 # 人が書く宣言 (#2116)。**記録と同じ `// shot:` の名前空間** に置き、`grep '// shot:'` で
@@ -364,6 +393,8 @@ class Shot:
     index: int  # 同じ説明文の中で何番目か (記録の鍵)
     record_line: int | None
     record_snippet: str | None
+    # 記録の `image=` (撮った絵の画素のハッシュ・#3459)。古い記録は持たないので None
+    record_image: str | None = None
     # 「後で撮る」の印の行 (0 起点)。**塊ごとに 1 つ** — 同じ説明文の囲みは全部が同じ印を持つ (#2116)
     deferred_line: int | None = None
     # 例に付いた `組めない` の印の理由 (#2229)。印が無ければ None。組める側が外す例なので、
@@ -507,17 +538,17 @@ def run_after(lines: list[str], close_line: int) -> tuple[int, int]:
     return start, end
 
 
-def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str]]:
+def records_after(lines: list[str], close_line: int) -> dict[int, tuple[int, str, str | None]]:
     """説明文の塊の直後に積まれた記録。鍵は説明文の中での番号。
 
     **連なりの中なら位置を問わない** — 記録の前後に人が宣言 (`// shot: 後で撮る`) を
     置いても読める (#2116)。
     """
     start, end = run_after(lines, close_line)
-    found: dict[int, tuple[int, str]] = {}
+    found: dict[int, tuple[int, str, str | None]] = {}
     for index in range(start, end):
         if match := RECORD.match(lines[index]):
-            found[int(match["index"])] = (index, match["snippet"])
+            found[int(match["index"])] = (index, match["snippet"], match["image"])
     return found
 
 
@@ -583,7 +614,7 @@ def shots_in(root: pathlib.Path, path: pathlib.Path) -> list[Shot]:
         block_end = max(other.close_line for other in siblings)
         records = records_after(lines, block_end)
         if record := records.get(shot.index):
-            shot.record_line, shot.record_snippet = record
+            shot.record_line, shot.record_snippet, shot.record_image = record
         shot.deferred_line = deferred_after(lines, block_end)
         found.append(shot)
     return found
@@ -1792,7 +1823,10 @@ def _remove_worktree(root: pathlib.Path, path: pathlib.Path) -> None:
 
 
 def upload(image: pathlib.Path, token: str, alt: str) -> str:
-    """Gyazo へ上げて URL を得る。**同じ中身には同じ URL が返る**ので撮り直しはべき等。"""
+    """Gyazo へ上げて URL を得る。
+
+    **同じ中身に同じ URL が返ることは当てにしない** (#3459)。撮り直しをべき等にするのは
+    `capture_urls` で、画素が同じ絵はここへ来ない。"""
     boundary = "----mokume-example-shots"
     parts: list[bytes] = []
 
@@ -1823,6 +1857,136 @@ def upload(image: pathlib.Path, token: str, alt: str) -> str:
     return url
 
 
+# 囲みの中の絵の行。`write_back` が書く形で、Gyazo の URL に限る (人が別の場所の絵を貼った
+# 囲みを、撮った絵と同じと見なして残さない)
+IMAGE_LINE = re.compile(r"^\s*///\s*!\[.*\]\((?P<url>https://i\.gyazo\.com/[^)\s]+)\)\s*$")
+
+
+def image_hash(out: pathlib.Path, shot: Shot) -> str | None:
+    """撮った絵の画素のハッシュ (16 桁)。**PNG のバイトではなく、読んだ画素から採る。**
+
+    バイトは圧縮器の版で変わりうるが、画素は絵そのもの。動きは連番の全フレームの画素を
+    順に混ぜる (束ねた GIF は ffmpeg の出力で、材料にしない)。**読めなければ None** —
+    判定できない絵は「同じ」と言わず、上げ直す側へ倒す。
+    """
+    if shot.is_motion:
+        frames = sorted((out / shot.name).glob("f.*.png"))
+    else:
+        frames = [out / f"{shot.name}.png"]
+    if not frames:
+        return None
+    # 静止画と動きは材料に種類を混ぜる — 1 枚だけの動き (`still=` で黙らせたもの) と静止画の
+    # 画素が同じでも、上げる物 (PNG と GIF) が違うので、同じと言わない
+    digest = hashlib.sha256(f"{'motion' if shot.is_motion else 'still'}:{len(frames)}".encode())
+    try:
+        for frame in frames:
+            (width, height), pixels = decode_rgba(frame)
+            digest.update(width.to_bytes(4, "big") + height.to_bytes(4, "big"))
+            digest.update(pixels)
+    except (SystemExit, OSError, zlib.error):
+        # `decode_rgba` は読めない形を SystemExit で名乗る。ここでは止めずに上げ直す
+        return None
+    return digest.hexdigest()[:16]
+
+
+def recorded_url(root: pathlib.Path, shot: Shot) -> str | None:
+    """囲みの中に今ある Gyazo の URL。囲みの中が絵の 1 行だけでなければ None。"""
+    if shot.close_line != shot.open_line + 2:
+        return None
+    lines = (root / shot.path).read_text(encoding="utf-8").split("\n")
+    if match := IMAGE_LINE.match(lines[shot.open_line + 1]):
+        return match["url"]
+    return None
+
+
+@functools.lru_cache(maxsize=1)
+def _external_assets():
+    """死活の引き方は `check-external-assets.py` から借りる。**写さない** — 引き直し・
+    一時的な失敗と消失の見分けは、そちらが持つ (#1676)。名前にハイフンを含むので import は経路から行う。"""
+    path = pathlib.Path(__file__).resolve().parent / "check-external-assets.py"
+    spec = importlib.util.spec_from_file_location("check_external_assets", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def dead_urls(urls: set[str]) -> set[str]:
+    """引けない URL。**応えないもの (5xx・接続の失敗) も含める** — 判定できない絵は
+    「同じ」と言わず上げ直す側へ倒す (引き直しは `probe_all` が 1 回する)。"""
+    if not urls:
+        return set()
+    return set(_external_assets().probe_all(sorted(urls)))
+
+
+def capture_urls(
+    root: pathlib.Path,
+    shots: list[Shot],
+    out: pathlib.Path,
+    token: str,
+    say: Callable[[str], None] = print,
+    urls: dict[str, str] | None = None,
+    images: dict[str, str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """絵ごとに「前に上げた絵と同じ画素か」を見て、違うものだけを上げる (#3459)。
+
+    返すのは (絵の名前 → URL, 絵の名前 → 画素のハッシュ)。`urls` / `images` を渡せば、その
+    辞書へ 1 本ずつ入れる — 途中で上げに失敗しても、呼ぶ側が上げ終えた分を書き戻せる。
+
+    **同じと言える条件は 4 つ全部**: 記録が `image=` を持ち・それがいま撮った画素と同じで・
+    囲みにその絵の Gyazo の URL があり・**その URL が今も引ける**。1 つでも欠ければ上げる
+    (古い記録・読めない画像・URL を消した囲み・置き場で消えた絵)。最後の条件があるので、
+    置き場の側で絵が消えても (#1294・写り込みを消すための削除) `make example-shots` で直せる。
+    同じ名前の (指紋の同じ) 囲みは 1 本として扱い、上げは 1 回。
+    """
+    urls = {} if urls is None else urls
+    images = {} if images is None else images
+    # 1. 画素が記録と同じで、URL を持っている絵 (再利用の候補)
+    candidates: dict[str, str] = {}
+    digests: dict[str, str | None] = {}
+    for shot in shots:
+        if shot.name in digests:
+            continue
+        digests[shot.name] = digest = image_hash(out, shot)
+        for sibling in (s for s in shots if s.name == shot.name):
+            url = recorded_url(root, sibling)
+            if digest and sibling.record_image == digest and url:
+                candidates[shot.name] = url
+                break
+    # 2. 候補の URL が今も引けるか
+    dead = dead_urls(set(candidates.values()))
+    kept = 0
+    for shot in shots:
+        if shot.name in urls:
+            continue
+        if digest := digests[shot.name]:
+            images[shot.name] = digest
+        url = candidates.get(shot.name)
+        if url and url not in dead:
+            urls[shot.name] = url
+            kept += 1
+            say(f"そのまま: {shot.name} (画素が同じ) → {url}")
+            continue
+        image = out / (f"{shot.name}.gif" if shot.is_motion else f"{shot.name}.png")
+        why = " (画素は同じだが URL が引けない)" if url else ""
+        urls[shot.name] = upload(image, token, shot.alt)
+        say(f"上げた: {shot.name}{why} → {urls[shot.name]}")
+    say(f"上げた {len(urls) - kept} 本・画素が同じで上げなかった {kept} 本")
+    return urls, images
+
+
+def finished_shots(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> list[Shot]:
+    """上げ終えた絵だけで書き戻せる囲み。**説明文の塊ごと** — 塊の記録は塊の全部を
+    まとめて書き直すので、一部が欠けたまま書くと、欠けた絵の記録が落ちる。"""
+    finished: list[Shot] = []
+    for path in sorted({shot.path for shot in shots}):
+        lines = (root / path).read_text(encoding="utf-8").split("\n")
+        for block in blocks_of(lines, [s for s in shots if s.path == path]):
+            if all(shot.name in urls for shot in block):
+                finished += block
+    return finished
+
+
 def blocks_of(lines: list[str], shots: list[Shot]) -> list[list[Shot]]:
     """同じ説明文の塊に属する囲みをまとめる。塊の順に並べて返す。"""
     grouped: list[list[Shot]] = []
@@ -1834,8 +1998,13 @@ def blocks_of(lines: list[str], shots: list[Shot]) -> list[list[Shot]]:
     return grouped
 
 
-def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> int:
+def write_back(
+    root: pathlib.Path, shots: list[Shot], urls: dict[str, str], images: dict[str, str] | None = None
+) -> int:
     """囲みの中と記録を書き戻す。**囲みの外は 1 文字も触らない。**
+
+    `images` は絵の名前 → 画素のハッシュで、あれば記録に `image=` として置く (#3459)。
+    無い絵の記録は `snippet=` だけになり、次の撮影で上げ直される。
 
     位置で対応づけるので、初回・撮り直し・中断後の再実行がすべて同じ操作になる。
     記録は塊ごとにまとめて置き換える — 1 本ずつ差し込むと、同じ塊の他の記録の
@@ -1862,6 +2031,7 @@ def write_back(root: pathlib.Path, shots: list[Shot], urls: dict[str, str]) -> i
             ]
             lines[after:records_end] = [
                 f"{indent}// shot: {shot.index} snippet={shot.fingerprint}"
+                + (f" image={images[shot.name]}" if shot.name in (images or {}) else "")
                 for shot in block
             ] + kept
             for shot in reversed(block):
@@ -2136,12 +2306,18 @@ def main(
         print("トークンが空だった", file=sys.stderr)
         return 1
 
-    urls = {}
-    for shot in shots:
-        image = out / (f"{shot.name}.gif" if shot.is_motion else f"{shot.name}.png")
-        urls[shot.name] = upload(image, token, shot.alt)
-        print(f"上げた: {shot.name} → {urls[shot.name]}")
-    changed = write_back(root, shots, urls)
+    urls: dict[str, str] = {}
+    images: dict[str, str] = {}
+    try:
+        capture_urls(root, shots, out, token, urls=urls, images=images)
+    except BaseException:
+        # **途中で止まっても、上げ終えた分は記録に残す** — 残さないと次の撮影で、上げた絵が
+        # 「記録に無い」として上げ直され、URL がまた動く
+        if done := finished_shots(root, shots, urls):
+            write_back(root, done, urls, images)
+            print(f"途中で止まった。上げ終えた {len(done)} 本は書き戻した", file=sys.stderr)
+        raise
+    changed = write_back(root, shots, urls, images)
     print(f"書き戻した: {changed} ファイル")
     return 0
 

@@ -134,7 +134,7 @@ struct CoverageReferenceTests {
 
     @Test("距離関数の経路の塗りの 3 図形は、面積で比べる行があり、許容 (円は半径の大きいときの下限) は 1/255・0.012・0.02")
     func tableHasTheFillRows() throws {
-        let tolerances = try CoverageTable.Shape.allCases.map {
+        let tolerances = try CoverageTable.Shape.analytic.map {
             try CoverageTable.row(
                 $0, on: .distanceField, comparing: $0 == .rotatedRect ? .area : .snappedArea
             ).tolerance
@@ -259,7 +259,35 @@ struct CoverageReferenceTests {
             #expect(
                 CoverageTable.promises(row.route).contains(row.quantity),
                 "\(row.shape.rawValue): \(row.route.rawValue)は\(row.quantity.rawValue)を約束しない")
-            #expect(row.tolerance > 0 && row.tolerance < 0.1, "\(row.shape.rawValue): \(row.tolerance)")
+            if row.quantity == .halfToneAndCentroid {
+                // 白黒の不一致の割合と、重心のずれ (画素)。面積の許容 (0〜1 の被覆) とは単位が違う
+                #expect(row.tolerance > 0 && row.tolerance <= 0.1, "\(row.shape.rawValue): \(row.tolerance)")
+                #expect(row.centroidTolerance != nil, "\(row.shape.rawValue): 重心の許容が無い")
+            } else {
+                #expect(row.tolerance > 0 && row.tolerance < 0.1, "\(row.shape.rawValue): \(row.tolerance)")
+                #expect(row.centroidTolerance == nil, "\(row.shape.rawValue): 面積の行は重心を持たない")
+            }
+        }
+    }
+
+    @Test("SVG の 2 つの行は「50% の白黒と重心」で名乗り、距離関数と三角形の両方の経路にある (#3494)")
+    func tableHasTheSVGRows() throws {
+        let primitives = try CoverageTable.row(.svgPrimitives, on: .distanceField, comparing: .halfToneAndCentroid)
+        let path = try CoverageTable.row(.svgPath, on: .triangles, comparing: .halfToneAndCentroid)
+        #expect(primitives.centroidTolerance == 0.1)
+        #expect(path.centroidTolerance == 0.15)
+        #expect(primitives.quantity.rawValue == "50% の白黒と重心")
+        // SVG を「面積」で比べる行は置けない (参照は CoreGraphics の AA で、中間値は比べられない)
+        #expect(throws: CoverageTable.Refusal.self) {
+            try CoverageTable.row(.svgPrimitives, on: .distanceField, comparing: .area)
+        }
+    }
+
+    @Test("CSS の優先順位を含む入力は、対象外として表が名乗る (生成しない)")
+    func tableNamesTheCSSPrecedenceAsOutOfScope() {
+        #expect(CoverageTable.svgOutOfScope.contains { $0.what.contains("CSS の優先順位") && $0.reason.contains("#2348") })
+        for marker in ["<style", "!important", "class="] {
+            #expect(CoverageTable.svgOutOfScopeMarkers.contains(marker), "\(marker)")
         }
     }
 }

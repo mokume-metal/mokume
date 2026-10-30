@@ -153,6 +153,9 @@ final class ScreenDisplayLink: NSObject {
         startFallback()
     }
 
+    /// 繋がっているか (予備が回っているか)。**検査が読む** (窓に載り・外れたときの繋ぎ・畳み)。
+    var isAttached: Bool { fallbackTimer != nil }
+
     /// 駆動源を畳み、窓を追うのもやめる。**何度呼んでもよい。**
     func invalidate() {
         stopFollowing()

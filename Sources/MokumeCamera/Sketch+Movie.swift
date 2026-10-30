@@ -42,10 +42,16 @@ extension Sketch {
     /// - 縦に撮った動画など、回転の印 (`preferredTransform`) を持つ動画は、その向きを当てて正しい向きで映す
     ///   (90° 刻みの回転と反転。それ以外の変換は当てない)。``Movie/width``・``Movie/height``・``Movie/image`` の
     ///   大きさも当てた後の値
-    /// - 流す速さは ``Movie/speed(_:)`` で変えられる。音は鳴らさない
+    /// - 流す速さは ``Movie/speed(_:)`` で変えられる。音は鳴らさない (同じファイルを `loadSound` で鳴らして合わせる道は ``Movie`` の説明の「音」)
     ///
     /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。開くときに最初のコマまで読んで
     /// 確かめる。`setup()`・`draw()`・入力のコールバックの中で呼ぶ。
+    ///
+    /// **作品が並行の仕事でスレッドを埋めていると、動画を読む待ちが返らないことがある。**
+    /// 最初のコマ (この口) も、流している間の毎フレームのコマも、main で同期に読む。作品が `Task.detached` などで
+    /// 既定の優先度の仕事をコア数ぶん以上、同期の待ち (`DispatchSemaphore.wait()` など) で塞ぐと、OS が動画を読むために
+    /// 使うスレッドまで走れなくなり、窓ごと止まる。これは本体の側では防げない限界である ([ADR-0010])。重い同期の仕事は、
+    /// 優先度を下げる (`Task.detached(priority: .utility)`) か、待たずに分ける。
     ///
     /// - Parameter file: 動画ファイルの名前。macOS が再生できる形式 (QuickTime の `.mov`・
     ///   MPEG-4 の `.mp4` / `.m4v` で、H.264・HEVC・ProRes など)。
@@ -55,6 +61,7 @@ extension Sketch {
     ///   (``MovieFailure``)。`setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・
     ///   `Task` の中) で呼ぶと、ファイルを開く前に ``MovieFailure/notRunning(call:)`` (プロセスは落ちない)。
     ///
+    /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createVideo(_ file: String) throws(MovieFailure) -> Movie {

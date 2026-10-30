@@ -41,6 +41,7 @@ struct StartupFailureTests {
         ),
         ("gpuNotResponding", .gpuNotResponding),
         ("invalidSize", .invalidSize(width: 0, height: 120)),
+        ("sizeBeyondOutputScale", .sizeBeyondOutputScale(width: 8192, height: 100, scale: 3)),
         ("invalidPixelDensity", .invalidPixelDensity(1.5)),
         ("invalidFrameRate", .invalidFrameRate(0)),
         ("invalidWindowScale", .invalidWindowScale(0)),

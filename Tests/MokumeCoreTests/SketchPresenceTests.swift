@@ -52,6 +52,46 @@ struct SketchPresenceTests {
         #expect(SketchPresence.grace < 600)
     }
 
+    // MARK: - run loop を誰が回すか (#3120)
+
+    /// 自分で回すのは、`NSApp.run()` の中でも main の run loop を別の誰かが回しているのでもないときだけ。
+    /// 判定を落とすと、async main の上で回すプロセスが名乗りの汲み出しで `exit(0)` になる。
+    @Test(
+        "run loop を回す人が誰も居ないときだけ、自分で回す",
+        arguments: [
+            // (NSApp が走っている, main の run loop が走っている, 自分で回すか)
+            (false, false, true),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+        ])
+    func drivesTheRunLoopOnlyWhenNobodyElseDoes(
+        appIsRunning: Bool, mainRunLoopIsRunning: Bool, expected: Bool
+    ) {
+        #expect(
+            SketchPresence.shouldDriveRunLoop(
+                appIsRunning: appIsRunning, mainRunLoopIsRunning: mainRunLoopIsRunning) == expected)
+    }
+
+    /// 検査のプロセスは async main の上で走るので、main の run loop は別の誰かが回している。
+    /// 見分けが本物の run loop の状態を読むこと (常に `false` を返す実装でないこと) を、ここで固定する。
+    @Test("async の上では、main の run loop が走っていると読める")
+    func readsAForeignMainRunLoopAsRunning() async {
+        await Task.yield()
+        #expect(SketchPresence.mainRunLoopIsRunning)
+    }
+
+    /// 回す人が別に居るかは、毎フレームその場で読む。**名乗った時点の答えを覚えない** — 覚えると、
+    /// 名乗った後で main の run loop を別の誰かが回し始めたとき、古い答えで汲み出して `exit(0)` になる。
+    /// 名乗りそのものは起こせない (#473) ので、毎フレームの汲み出しの前が読む `drivesRunLoopNow` が、
+    /// 本物の状態 (`NSApp` と main の run loop) から答えることを、async の上 (別の誰かが回している) で固定する。
+    @Test("毎フレームの判定は、本物の run loop の状態から答える (async の上では回さない)")
+    func drivesRunLoopNowReadsTheLiveState() async {
+        await Task.yield()
+        #expect(SketchPresence.mainRunLoopIsRunning)
+        #expect(!SketchPresence.drivesRunLoopNow, "main の run loop を別の誰かが回しているのに、自分で回すと答えた")
+    }
+
     // MARK: - 経過の表記
 
     @Test("経過は分と秒で出る")
@@ -200,5 +240,37 @@ struct SketchPresenceClockTests {
         clockwork.author = -1000
         clockwork.real = -1000
         #expect(runtime.presenceElapsed == 0)
+    }
+
+    /// 描いた回数を数えるスケッチ。
+    private final class Counting: Sketch {
+        init() {}
+        let settings = SketchSettings(width: 16, height: 16)
+        var draws = 0
+        func draw() { draws += 1 }
+    }
+
+    /// 名乗りのメニューが開いている間、誰かが進めているかは**実時間**で測る (#3120)。作者の時計 (`now`) は
+    /// 検査が差し替えて進められるが、誰かが進めているかは壁の時間の話で、名乗りの経過と同じ時計で揃える。
+    @Test("誰も進めていないかは、作者の時計ではなく実時間で測る")
+    func advanceForPresenceMeasuresTheStallInRealTime() throws {
+        let clockwork = Clockwork()
+        let sketch = Counting()
+        let runtime = try SketchRuntime(
+            sketch: sketch, gpu: RenderDevice(), clock: .wallClock, now: { clockwork.author },
+            presenceClock: { clockwork.real })
+        try runtime.advance()
+        let first = sketch.draws
+        try #require(first >= 1, "最初のフレームが描かれていない")
+
+        // 作者の時計だけが進んでも、実時間は進んでいないので、誰かが進めているとみなす
+        clockwork.author += 100
+        runtime.advanceForPresence()
+        #expect(sketch.draws == first, "作者の時計が進んだだけで、名乗りが進めた")
+
+        // 実時間が、誰も進めていないとみなす長さ (0.066 秒) を越えたら進める
+        clockwork.real += 1
+        runtime.advanceForPresence()
+        #expect(sketch.draws == first + 1, "実時間で止まっているのに、名乗りが進めなかった")
     }
 }

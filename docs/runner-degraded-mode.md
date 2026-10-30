@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # 専用機が止まったときの縮退 (必須チェックから `render` を外す)
 
-merge queue の必須チェック `render` は、専用機 `mokume-m4` の 1 台でだけ走る。専用機の runner が止まると、描画に触れない PR (docs・scripts・CI) も含めて、queue に入った PR が 60 分ごとに弾かれ続ける。専用機は SSH で入れず、runner は物理操作でしか戻せない ([#1767](https://github.com/mokume-metal/mokume/issues/1767))。runner を戻せない間も merge を通すために、**必須チェックから `render` だけを外した保護の定義**を前もって用意してある ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。
+merge queue の必須チェック `render` は、専用機 `mokume-m4` の 1 台でだけ走る。専用機の runner が止まると、描画に触れない PR (docs・scripts・CI) も含めて、queue に入った PR が期限 (95 分) ごとに弾かれ続ける。専用機は SSH で入れず、runner は物理操作でしか戻せない ([#1767](https://github.com/mokume-metal/mokume/issues/1767))。runner を戻せない間も merge を通すために、**必須チェックから `render` だけを外した保護の定義**を前もって用意してある ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。
 
 この文書が縮退と復帰の手順の唯一の置き場である。`scripts/stall-watch.sh` の読み分け 8 の対処は、ここを指す。
 
@@ -53,7 +53,7 @@ bash scripts/check-rulesets.sh                     # 定義と実設定が一致
 
 ## 例: #2507 の形
 
-専用機が止まり、先頭の `render` が 14 回続けて落ちた (#2507)。いまは AGENTS.md だけの PR (#2474) も 60 分ごとに弾かれ続ける。この手順で縮退を適用すると、その PR は `render` を待たずに merge される。復帰の適用で `render` が必須に戻る。
+専用機が止まり、先頭の `render` が 14 回続けて落ちた (#2507)。当時 (2026-10-12・queue の期限は 60 分だった) は AGENTS.md だけの PR (#2474) も 60 分ごとに弾かれ続けた (いまの期限は 95 分)。この手順で縮退を適用すると、その PR は `render` を待たずに merge される。復帰の適用で `render` が必須に戻る。
 
 ## 定義の保守
 

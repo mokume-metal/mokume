@@ -727,7 +727,12 @@ struct RecordMovieTests {
         _ body: @escaping (MovingSketch) -> Void
     ) throws -> SketchRuntime {
         MovingSketch.body = body
-        return try SketchRuntime(sketch: MovingSketch(), gpu: try RenderDevice())
+        // **名乗りの実時間の時計は止める** (#3120)。閉じるのを最大 40 秒待つ検査は、公開の初期化子で組むと
+        // 実時間が猶予 (30 秒) を越えて名乗りうる。名乗るとプロセス全体の状態が変わり、同じプロセスの
+        // 窓の検査の run loop を止める
+        return try SketchRuntime(
+            sketch: MovingSketch(), gpu: try RenderDevice(), clock: nil,
+            now: { CACurrentMediaTime() }, presenceClock: { 0 })
     }
 
     /// 動きのあるスケッチを 1 本撮って、量子化点の絵も一緒に持ち帰る。

@@ -269,6 +269,13 @@ public nonisolated enum CoverageTable {
         case axisAlignedRect = "軸に沿う rect の塗り"
         case rotatedRect = "回した rect の塗り"
         case circle = "円の塗り"
+        /// SVG の矩形・円・群の `opacity` (距離関数の経路)。参照は CoreSVG (``CoreSVGReference``・#3494)。
+        case svgPrimitives = "SVG の矩形・円の塗り"
+        /// SVG のパス (三角形の経路)。参照は CoreSVG。
+        case svgPath = "SVG のパスの塗り"
+
+        /// 解析的な参照 (``CoverageReference``) で比べる塗りの 3 図形。
+        public static let analytic: [Shape] = [.axisAlignedRect, .rotatedRect, .circle]
     }
 
     /// 表の 1 行。
@@ -278,11 +285,29 @@ public nonisolated enum CoverageTable {
         public let quantity: Quantity
         /// 画素ごとの差の許容の下限 (0〜1 の被覆)。曲線の縁の行は、半径が小さいときだけこれより広がる
         /// (``tolerance(atRadius:)``)。
+        ///
+        /// ``Quantity/halfToneAndCentroid`` の行では、**白黒の一致しない画素の数の上限を、参照の白黒の縁の画素の
+        /// 数で割った割合**を持つ (縁が長い形ほど数が増えるので、数ではなく縁に対する割合で縛る)。
         public let tolerance: Double
+        /// ``Quantity/halfToneAndCentroid`` の行だけが持つ、重心のずれの上限 (画素)。
+        public let centroidTolerance: Double?
         /// 曲線の縁の、差の上限 `k / R` の k (0 なら半径によらず ``tolerance`` 一定)。``CoverageTable/curvatureConstant``。
-        public var curvature: Double = 0
+        public let curvature: Double
         /// 許容の根拠 (比べる検査の説明が引く)。
         public let basis: String
+
+        public init(
+            shape: Shape, route: Route, quantity: Quantity, tolerance: Double, centroidTolerance: Double? = nil,
+            curvature: Double = 0, basis: String
+        ) {
+            self.shape = shape
+            self.route = route
+            self.quantity = quantity
+            self.tolerance = tolerance
+            self.centroidTolerance = centroidTolerance
+            self.curvature = curvature
+            self.basis = basis
+        }
 
         /// 描く画素での曲率半径 `radius` の縁の許容: `max(tolerance, k / radius + 余裕)`。
         ///
@@ -360,7 +385,32 @@ public nonisolated enum CoverageTable {
                 + "半径 7 以上は 0.02 (#3493)。比べる量は kFormSnap で写した面積 — 面積の枝の最後の写しを許容から分ける"
                 + " (軸に沿う rect の行と同じ)。0.02 は角丸・折れ目の既存の検査と同じ (#2991)。半径 3 未満は範囲の外"
                 + " (3 は置いた線で、GPU で測ったのは 3 から。本体の式の写しでは 1〜2.5 でも差 × R は k の内)"),
+        Row(
+            shape: .svgPrimitives, route: .distanceField, quantity: .halfToneAndCentroid, tolerance: 0.1,
+            centroidTolerance: 0.1,
+            basis: "参照は CoreSVG の CPU の絵で、CoreGraphics の AA は円で画素ごとに最大 0.064 外れる (#3217 の実測) ので中間値は"
+                + "比べられない。50% の白黒の不一致は縁の画素の 0.1 以内、線形の被覆で重みを付けた重心は 0.1 画素以内"
+                + " (距離関数は縁が AA されるので重心が揃い、実測の最大は 0.06。群の opacity の見本は縁が不透明度ぶん薄く、参照の AA の誤差が効く)。群の opacity が子ごとに掛かる近似 (#2878) は、重なった所の"
+                + "重みを動かして重心で赤になる"),
+        Row(
+            shape: .svgPath, route: .triangles, quantity: .halfToneAndCentroid, tolerance: 0.1,
+            centroidTolerance: 0.15,
+            basis: "三角形の経路の縁は AA なしで、約束は 50% の白黒と重心まで (ADR-0039 決定 1・3)。白黒の不一致は縁の画素の"
+                + " 0.1 以内。重心は、参照の側も 50% の白黒で重みを付けて比べる — AA なしの側は参照の AA の重みを"
+                + "写せず、重みを揃えないと 45° の縁が揃って偏り、0.45 画素まで動く (実測)。evenodd を nonzero にすると、"
+                + "穴の面積ぶんの画素が一致せず白黒で赤になる"),
     ]
+
+    /// **比べない入力** (SVG)。生成しない。参照 (CoreSVG) が誤るので、比べると mokume の誤りと見分けられない。
+    public static let svgOutOfScope: [(what: String, reason: String)] = [
+        (
+            "CSS の優先順位を含む入力 (`<style>`・`class`・`!important`・詳細度・`style` 属性との重なり)",
+            "CoreSVG が優先順位を誤る (#2348・#2334・#2410 の型)。参照にならない"
+        )
+    ]
+
+    /// ``svgOutOfScope`` の入力を見分ける目印。生成した SVG の文がこれを含んでいれば、約束の外を生成している。
+    public static let svgOutOfScopeMarkers = ["<style", "class=", "!important", "style="]
 
     /// `shape` を `route` で描いたものを `quantity` で比べる行。無ければ理由を投げる。
     public static func row(_ shape: Shape, on route: Route, comparing quantity: Quantity) throws -> Row {

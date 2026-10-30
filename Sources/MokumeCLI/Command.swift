@@ -142,7 +142,9 @@ enum Command {
                     comes out 64x48) — it says so on stderr when it does. Ends by itself after
                     fps × seconds frames. --scale <n> (a whole
                     number from 1, default 1) writes n times the pixels each way without changing the
-                    sketch's coordinates: a 1920×1080 sketch is written at 3840×2160 with --scale 2
+                    sketch's coordinates: a 1920×1080 sketch is written at 3840×2160 with --scale 2.
+                    Drawing targets from createGraphics are scaled too, and one whose size times n is
+                    past 16384 pixels a side is refused where setup() or draw() creates it
                     """
                 )
             case .mcp:
