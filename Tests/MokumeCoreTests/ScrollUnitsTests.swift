@@ -3,7 +3,9 @@
 
 import AppKit
 import CoreGraphics
+import Foundation
 import Metal
+import MokumeTestSupport
 import Testing
 
 @testable import MokumeCore
@@ -15,6 +17,7 @@ import Testing
 /// 実機のホイールとトラックパッドで合わせた感触は、人の手で窓を回して確かめる
 /// ([#2442](https://github.com/mokume-metal/mokume/issues/2442))。
 @Suite("スクロールの単位")
+@MainActor
 struct ScrollUnitsTests {
     @Test("ホイール 1 刻み (行の機器) は、1 行の点数に換算して届く")
     func wheelLinesBecomePoints() {
@@ -58,22 +61,49 @@ struct ScrollUnitsTests {
         #expect(amount.dy == .infinity)
     }
 
-    @Test("窓の側の換算は、外から送る scrolled の経路には掛からない")
-    func theWireIsNotConverted() throws {
-        // 外から送った dy は、行の機器の換算を通らず今と同じ数で合流点へ入る (#2442 の完了条件 2)
+    /// **外から送る 2 つの実際の経路を通す。** 合流点へ直に積むだけでは、復号や運び口に換算が足されても
+    /// 赤にならない (#2442 の完了条件 2・#2731 の前提)。
+    @Test("外から送る scrolled (.mokume/input の要求) は、dx・dy が換算されず点のまま届く")
+    func theInboxIsNotConverted() throws {
+        let facet = try TestScratch.directory("mokume-input")
+        try AtomicFile.write(
+            Data(#"{"id":"r1","events":[{"type":"scrolled","dx":-2,"dy":1}]}"#.utf8),
+            to: facet.appendingPathComponent("request.json"))
         let state = InputState()
-        state.enqueue(.scrolled(dx: 1, dy: 1))
-        state.beginFrame()
+        let report = try #require(InputInbox(directory: facet).drain(into: state))
+        #expect(report.accepted == 1)
+        var delivered: [InputCallback] = []
+        state.beginFrame { delivered.append($0) }
+        #expect(state.scrollX == -2)
         #expect(state.scrollY == 1)
-        #expect(state.scrollX == 1)
+        #expect(delivered.contains(.mouseWheel(deltaX: -2, deltaY: 1)))
+    }
+
+    @Test("標準入力の 1 行 (道具の窓の運び口) も、dx・dy が換算されず点のまま届く")
+    func theStandardInputIsNotConverted() throws {
+        let pipe = Pipe()
+        let reader = StandardInputEvents(descriptor: pipe.fileHandleForReading.fileDescriptor)
+        defer { try? pipe.fileHandleForWriting.close() }
+        try pipe.fileHandleForWriting.write(
+            contentsOf: Data(InputEvent.scrolled(dx: -2, dy: 1).wireLine.utf8))
+        let state = InputState()
+        reader.drain(into: state)
+        #expect(reader.accepted == 1)
+        var delivered: [InputCallback] = []
+        state.beginFrame { delivered.append($0) }
+        #expect(state.scrollX == -2)
+        #expect(state.scrollY == 1)
+        #expect(delivered.contains(.mouseWheel(deltaX: -2, deltaY: 1)))
     }
 }
 
 /// 窓が出来事から量を取り出して、換算の関数を通して合流点へ流すところ。
 ///
-/// **OS が `CGEvent` から作る値を前提にしない。** 行の出来事の `scrollingDeltaY` が何になるかは OS の側の約束で、
+/// **量は OS が `CGEvent` から作る値を前提にしない。** 行の出来事の `scrollingDeltaY` が何になるかは OS の側の約束で、
 /// 手元と専用機で違いうる ([#3214](https://github.com/mokume-metal/mokume/issues/3214))。見るのは、
-/// 出来事が名乗った量と機器の別から、期待する点を**その場で**出して、窓が流した量と揃うことだけである。
+/// 出来事が名乗った量と機器の別から、期待する点を**その場で**出して、窓が流した量と揃うことである。
+/// **ただし機器の別 (`hasPreciseScrollingDeltas`) は縛る** — 行の出来事が precise を名乗る環境では、
+/// 換算を外しても期待値が揃ってしまうので、そこは赤にして知らせる。
 @Suite("スクロールの単位: 窓")
 @MainActor
 struct ScrollSurfaceTests {
@@ -98,6 +128,11 @@ struct ScrollSurfaceTests {
         let event = try scrollEvent(units: units, amount: 3)
         // 量が 0 の出来事では、換算を外しても揃ってしまう
         try #require(event.scrollingDeltaY != 0)
+        // **出来事の印を前提として縛る。** 行の出来事が precise を名乗る環境では、期待値が換算なしの量になり、
+        // 換算を外しても緑のまま素通りする。環境が違えばここで赤にして知らせる (#2442 の反証)
+        try #require(
+            event.hasPreciseScrollingDeltas == (units == .pixel),
+            "\(units) の出来事の hasPreciseScrollingDeltas が期待と違う: \(event.hasPreciseScrollingDeltas)")
         // 印と結果が揃うことを見る: 点の機器はそのまま、行の機器は 1 行の点数を掛けた量
         let scale: Double = event.hasPreciseScrollingDeltas ? 1 : ScrollUnits.pointsPerLine
         var lines: [String] = []
