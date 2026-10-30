@@ -69,7 +69,7 @@ final class SketchSurface: NSView {
     /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     /// ``pointerLock`` と同じく、スケッチの要求は窓を持つ側が ``followCursorHiding(requested:)`` で渡し、
     /// 窓の状況はこの面が答える。
-    let cursorHiding = CursorHiding()
+    let cursorHiding: CursorHiding
 
     /// 最後に合流点へ名乗った位置 (キャンバスの座標)。**捕まえている間の押下と解放はここを
     /// 名乗る** — 捕まえた時点の位置で、捕まえている間は動かない。
@@ -98,9 +98,11 @@ final class SketchSurface: NSView {
     ///   取り合わない。受けるのは macOS の自前の窓だけである。
     init(
         frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int),
-        pointerLock: PointerLock = PointerLock(), acceptsFileDrops: Bool = true
+        pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding(),
+        acceptsFileDrops: Bool = true
     ) {
         self.pointerLock = pointerLock
+        self.cursorHiding = cursorHiding
         self.device = device
         self.input = input
         self.canvasWidth = Double(canvasSize.0)

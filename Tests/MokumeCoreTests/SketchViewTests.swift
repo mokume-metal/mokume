@@ -50,6 +50,26 @@ private final class FullScreenProbe: Sketch {
     }
 }
 
+/// `setup()` で投げるスケッチ。
+private final class ThrowingSetup: Sketch {
+    struct Boom: Error, CustomStringConvertible { var description: String { "boom" } }
+    var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
+    init() {}
+    func setup() throws { throw Boom() }
+    func draw() {}
+}
+
+/// `setup()` で `selectInput` を頼む (`Task` から) スケッチ。
+private final class SelectAsker: Sketch {
+    var settings: SketchSettings { SketchSettings(width: 64, height: 36) }
+    var result: String??
+    init() {}
+    func setup() {
+        Task { result = .some(await selectInput("pick")) }
+    }
+    func draw() {}
+}
+
 /// 作者の時計と実時間を、検査から進める。
 private final class TimeBox {
     var author = 0.0
@@ -170,9 +190,10 @@ struct SketchViewTests {
     }
 
     /// **条件 1**: 別の `SketchView` が映っている間に出た 2 つ目は、始めず、理由を 1 度だけ言う。先が消えると始まる。
-    @Test("2 つ目は待ち、理由を 1 度だけ名乗り、先のビューが止まると始まる")
-    func theSecondWaitsAndStartsWhenTheFirstEnds() throws {
-        try Diagnostics.$digest.withValue(WarningDigest()) {
+    @Test("2 つ目は待ち、理由をプロセスで 1 度だけ名乗り、先のビューが止まると始まる")
+    func theSecondWaitsAndStartsWhenTheFirstEnds() async throws {
+        SketchApplication.resetEmbeddedAnnouncementsForTesting()
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
             let (windowA, first) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
             defer {
                 first.stop()
@@ -182,31 +203,38 @@ struct SketchViewTests {
 
             let churn = Churn()
             let (windowB, second) = try embed(EmbeddingApp(churn: churn) { EmbeddedProbe() })
+            // 3 つ目も待つ。理由は、待つビューの数によらず 1 度だけ
+            let (windowC, third) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
             defer {
                 second.stop()
+                third.stop()
                 windowB.close()
+                windowC.close()
             }
             #expect(second.application == nil, "1 つ走っているのに、2 つ目が走り出した")
-            #expect(second.isWaiting)
+            #expect(second.isWaiting && third.isWaiting)
             // 待っている間にホストが評価し直しても、理由は言い直さない
             for _ in 0..<10 {
                 churn.tick += 1
                 windowB.contentView?.layoutSubtreeIfNeeded()
-                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+                try await Task.sleep(for: .milliseconds(10))
             }
             let said = Diagnostics.takeUnreported()
             #expect(
                 said.filter { $0.contains(SketchApplication.embeddedWaitNotice) }.count == 1,
-                "待つ理由が 1 度だけ出ていない: \(said)")
+                "待つ理由がプロセスで 1 度だけ出ていない: \(said)")
             #expect(
                 !said.contains { $0.contains(SketchApplication.secondRunRefusal) },
                 "run() の断りの文面を言った (SketchView は断られず待つ)")
 
             first.stop()
             first.stop()  // 何度呼んでもよい
-            let started = try #require(second.application, "先を止めても、2 つ目が始まらない")
+            #expect(second.application == nil, "止めた呼び出しの中で、待っているものを起こした (次の回へ送る)")
+            #expect(await eventually { second.application != nil }, "先を止めても、2 つ目が始まらない")
+            let started = try #require(second.application)
             #expect(!second.isWaiting)
             #expect(started.screenLink.isAttached, "窓に載っているのに駆動源が繋がっていない")
+            #expect(third.application == nil && third.isWaiting, "先頭が走り始めたのに、次も始まった")
             #expect(
                 Diagnostics.takeUnreported().isEmpty, "始まるときに、余計な警告を言った")
         }
@@ -214,8 +242,8 @@ struct SketchViewTests {
 
     /// 順番は待ち始めた順で、待ちながら外れたビューは飛ばされる。
     @Test("待っているビューは待ち始めた順に始まり、待ちながら外れたものは始まらない")
-    func waitersStartInOrderAndALeavingOneIsSkipped() throws {
-        try Diagnostics.$digest.withValue(WarningDigest()) {
+    func waitersStartInOrderAndALeavingOneIsSkipped() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
             var windows: [NSWindow] = []
             var views: [SketchHostView] = []
             for _ in 0..<4 {
@@ -233,13 +261,85 @@ struct SketchViewTests {
 
             c.stop()  // 待ちながら外れた
             a.stop()
-            #expect(b.application != nil, "先頭の待ちが始まらない")
+            #expect(await eventually { b.application != nil }, "先頭の待ちが始まらない")
             #expect(c.application == nil, "外れたビューが始まった")
             #expect(d.application == nil && d.isWaiting, "先頭が走り始めたのに、次も始まった")
 
             b.stop()
-            #expect(d.application != nil, "次の待ちが始まらない")
+            #expect(await eventually { d.application != nil }, "次の待ちが始まらない")
             #expect(c.application == nil)
+        }
+    }
+
+    /// 起こす仕事を次の回へ送っている間に出た新しい `SketchView` は、待っているものを追い越さない。
+    @Test("起こす仕事が送られている間に出た新しいビューは、待っているものの後ろに並ぶ")
+    func aNewcomerDoesNotJumpTheQueue() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            let waiting = SketchHostView(sketch: EmbeddedProbe())
+            defer {
+                first.stop()
+                waiting.stop()
+            }
+            #expect(first.application != nil && waiting.isWaiting)
+
+            first.stop()
+            // 走っているものは空だが、待っているものを起こす仕事が送られている
+            let newcomer = SketchHostView(sketch: EmbeddedProbe())
+            defer { newcomer.stop() }
+            #expect(newcomer.application == nil && newcomer.isWaiting, "待っているものを追い越して始まった")
+            #expect(await eventually { waiting.application != nil }, "待っていたものが始まらない")
+            #expect(newcomer.application == nil && newcomer.isWaiting)
+        }
+    }
+
+    /// 起こす仕事を送った後に、待っていたビューが止められても、次が起こされる。
+    @Test("起こす仕事を送った後に待っていたビューを止めても、次のビューが始まる")
+    func stoppingAWaiterAfterTheWakeWasScheduled() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            let second = SketchHostView(sketch: EmbeddedProbe())
+            let third = SketchHostView(sketch: EmbeddedProbe())
+            defer {
+                first.stop()
+                second.stop()
+                third.stop()
+            }
+            first.stop()
+            second.stop()  // 起こされる前に外れた
+            #expect(await eventually { third.application != nil }, "外れたビューの次が始まらない")
+            #expect(second.application == nil, "止めたビューが始まった")
+        }
+    }
+
+    /// 走っているのが `run()` (`Sketch.main()`) なら、待っても始まらないので、待たずに 1 度だけそう言う。
+    @Test("走っているのが run() なら、SketchView は待たず、始まらない理由を 1 度だけ言う")
+    func aRunningWindowIsNotWaitedFor() throws {
+        SketchApplication.resetEmbeddedAnnouncementsForTesting()
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            let windowed = try SketchApplication(sketch: EmbeddedProbe(), gpu: RenderDevice())
+            windowed.markRunningForTesting()
+            defer { windowed.unmarkRunningForTesting() }
+
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            let second = SketchHostView(sketch: EmbeddedProbe())
+            defer {
+                first.stop()
+                second.stop()
+            }
+            #expect(first.application == nil && !first.isWaiting, "待っても始まらないのに、待った")
+            #expect(second.application == nil && !second.isWaiting)
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0.contains(SketchApplication.embeddedRefusalNotice) }.count == 1,
+                "始まらない理由が 1 度だけ出ていない: \(said)")
+            #expect(!said.contains { $0.contains(SketchApplication.embeddedWaitNotice) })
+
+            // run() が終われば、次の SketchView は始まる
+            windowed.unmarkRunningForTesting()
+            let third = SketchHostView(sketch: EmbeddedProbe())
+            defer { third.stop() }
+            #expect(third.application != nil)
         }
     }
 
@@ -358,6 +458,154 @@ struct SketchViewTests {
         }
         let surface = try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
         #expect(surface.registeredDraggedTypes.isEmpty, "ドロップを受けるよう登録している")
+    }
+
+    private func surface(of view: SketchHostView) throws -> SketchSurface {
+        try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
+    }
+
+    /// ホストの窓に、`SketchHostView` を直に並べる (SwiftUI を介さない)。
+    private func hostWindow() -> (NSWindow, NSView) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 160), styleMask: [.titled],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 160))
+        window.contentView = container
+        window.orderFront(nil)
+        return (window, container)
+    }
+
+    /// 指摘 1: 起こされた面が据わる。止めた面が第一応答者のままだと、次の面にキーが来ない。
+    @Test("先のビューを止めると第一応答者を手放し、起こされた次の面がキーを受ける")
+    func theNextSurfaceTakesTheKeysAfterTheFirstEnds() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, container) = hostWindow()
+            let first = SketchHostView(sketch: EmbeddedProbe())
+            let second = SketchHostView(sketch: EmbeddedProbe())
+            container.addSubview(first)
+            container.addSubview(second)
+            defer {
+                first.stop()
+                second.stop()
+                window.close()
+            }
+            let firstSurface = try surface(of: first)
+            #expect(window.firstResponder === firstSurface, "先の面が第一応答者になっていない")
+
+            first.stop()
+            #expect(window.firstResponder !== firstSurface, "止めた面が第一応答者のまま")
+            #expect(await eventually { second.application != nil })
+            #expect(window.firstResponder === (try surface(of: second)), "起こされた面にキーが来ない")
+        }
+    }
+
+    /// 指摘 4: 止めたら、開いているファイルのシートを閉じる。
+    @Test("止めたら、開いているファイルを選ぶシートを閉じ、取り消しとして結果を渡す")
+    func stoppingClosesTheOpenFileSheet() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, container) = hostWindow()
+            let view = SketchHostView(sketch: SelectAsker())
+            container.addSubview(view)
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            application.windowVisibilityForTesting = true
+            let picker = FakeFilePicker()
+            application.filePicker = picker
+            var lines: [String] = []
+            try surface(of: view).relay = { lines.append($0) }
+
+            #expect(
+                await eventually {
+                    application.displayLinkFired()
+                    return !picker.shown.isEmpty
+                }, "頼んだシートが出ていない")
+            #expect(picker.dismissals == 0)
+
+            view.stop()
+            #expect(picker.dismissals == 1, "止めてもシートが開いたまま")
+            let cancelled = InputEvent.fileSelected(path: nil, serial: 1).wireLine
+            #expect(lines.contains(cancelled), "取り消しの結果を渡していない: \(lines)")
+        }
+    }
+
+    /// 指摘 4: 止めたら、捕まえているポインタと隠している矢印を戻す。
+    @Test("止めたら、捕まえているポインタと隠している矢印を戻す")
+    func stoppingReleasesThePointerAndTheCursor() throws {
+        var releases = 0
+        var shown = 0
+        let lock = PointerLock(
+            system: .init(capture: { true }, release: { releases += 1 }),
+            arbiter: PointerLock.Arbiter())
+        let hiding = CursorHiding(system: .init(hide: { shown -= 1 }, unhide: { shown += 1 }))
+        let application = try SketchApplication(
+            sketch: EmbeddedProbe(), gpu: RenderDevice(), embedded: true)
+        let surface = try #require(
+            application.startEmbedded(pointerLock: lock, cursorHiding: hiding))
+        defer { application.stopEmbedded() }
+
+        lock.notePress(in: .init(isKeyWindow: true, pointerIsInside: true))
+        lock.update(requested: true, in: .init(isKeyWindow: true, pointerIsInside: true))
+        hiding.update(requested: true, in: .init(isKeyWindow: true, pointerIsOverSurface: true))
+        #expect(lock.isLocked && hiding.isHiding, "検査の前提: 捕まえて隠している")
+        _ = surface
+
+        application.stopEmbedded()
+        #expect(!lock.isLocked, "ポインタを捕まえたまま")
+        #expect(releases == 1)
+        #expect(!hiding.isHiding && shown == 0, "矢印を隠したまま")
+    }
+
+    /// 指摘 5: 埋め込みで `setup()` が投げても、ホストのアプリごと落とさない。
+    @Test("埋め込みで setup() が投げても、プロセスを終わらせず、理由を警告してそのビューだけを止める")
+    func aThrowingSetupDoesNotEndTheHost() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            let (window, container) = hostWindow()
+            let failing = SketchHostView(sketch: ThrowingSetup())
+            let next = SketchHostView(sketch: EmbeddedProbe())
+            container.addSubview(failing)
+            container.addSubview(next)
+            defer {
+                failing.stop()
+                next.stop()
+                window.close()
+            }
+            let application = try #require(failing.application)
+            application.windowVisibilityForTesting = true
+            var exits: [Int32] = []
+            application.exitProcess = { exits.append($0) }
+            _ = Diagnostics.takeUnreported()
+
+            application.displayLinkFired()
+            #expect(exits.isEmpty, "ホストのアプリごと終わらせた (\(exits))")
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.contains { $0.contains("SketchView could not start the sketch") && $0.contains("boom") },
+                "理由を警告していない: \(said)")
+            #expect(await eventually { next.application != nil }, "止めた後、次の待ちが始まらない")
+        }
+    }
+
+    /// 指摘 6: `dismantleNSView` を通らずに消えても、走っているものの印を外す。
+    @Test("後始末を通らずに消えたビューも、走っている印を外し、待っていたビューが始まる")
+    func aViewThatVanishesWithoutDismantlingFreesTheSlot() async throws {
+        try await Diagnostics.$digest.withValue(WarningDigest()) {
+            weak var weakFirst: SketchHostView?
+            var second: SketchHostView!
+            // stop() を呼ばずに手放す。自動解放の置き場を抜けて、解放まで済ませる
+            autoreleasepool {
+                let first = SketchHostView(sketch: EmbeddedProbe())
+                second = SketchHostView(sketch: EmbeddedProbe())
+                weakFirst = first
+                #expect(first.application != nil && second.isWaiting)
+            }
+            defer { second.stop() }
+            #expect(weakFirst == nil, "検査の前提: ビューが解放された")
+            #expect(await eventually { second.application != nil }, "消えたビューの印が外れず、待ちが起こされない")
+        }
     }
 
     /// 駆動源は窓に載ったときに繋ぎ、外れたら畳む。
