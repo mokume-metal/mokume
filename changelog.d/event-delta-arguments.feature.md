@@ -3,11 +3,11 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-スクロールを出来事として受け取れるようになりました。`mouseWheel(deltaX:deltaY:)` が**その 1 件ぶんの量**を引数で渡します。
+スクロールを出来事として受け取れるようになりました。`mouseWheel(deltaX:deltaY:)` が**その 1 件ぶんの量**を引数で渡します。量の単位は**点**です (トラックパッドは指の動いた点、ふつうのホイールは 1 行 = 10 点に換算した量・[#2442](https://github.com/mokume-metal/mokume/issues/2442))。
 
 ```swift
 func mouseWheel(deltaX: Float, deltaY: Float) {
-    size = min(max(size + deltaY * 4, 20), 400)
+    size = min(max(size + deltaY, 20), 400)
 }
 ```
 

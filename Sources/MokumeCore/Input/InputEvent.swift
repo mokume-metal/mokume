@@ -18,6 +18,9 @@ public enum InputEvent: Equatable, Sendable {
     /// これを送る ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。外から送る線
     /// (`mouseMovedBy`) も同じ形で、捕まえていなくても量として届く。
     case mouseMovedBy(dx: Float, dy: Float)
+    /// スクロールされた。**量の単位は点** (窓はホイールの 1 行を 10 点に換算して流す。外から送る線は
+    /// 点として扱い、換算しない・[#2442](https://github.com/mokume-metal/mokume/issues/2442))。
+    /// 指を離した後の慣性の続きも同じ量として届く。
     case scrolled(dx: Float, dy: Float)
     /// トラックパッドのピンチ。**倍率の差分** (0.1 で 1.1 倍に開いた・負で閉じた) — AppKit の
     /// `NSEvent.magnification` と同じ量である ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。

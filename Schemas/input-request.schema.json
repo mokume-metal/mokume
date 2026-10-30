@@ -185,11 +185,11 @@
           },
           "dx": {
             "type": ["number", "null"],
-            "description": "For scrolled, how much was scrolled, horizontally; for mouseMovedBy, how far the pointer moved, horizontally, in canvas pixels. **This is for that one event**, and the value reaches the sketch's mouseWheel(deltaX:deltaY:) unchanged (scrolled) or its mouseMoved(deltaX:deltaY:) — mouseDragged(deltaX:deltaY:) while a button is held — and its movedX (mouseMovedBy). mouseMovedBy leaves mouseX and mouseY where they are."
+            "description": "For scrolled, how much was scrolled, horizontally, **in points**; for mouseMovedBy, how far the pointer moved, horizontally, in canvas pixels. **A scrolled amount is taken as points as it is and is never converted**: the sketch's own window converts a wheel that counts in lines (one line is 10 points) before it reaches the sketch, and a trackpad already reports points, so send points on the same scale (a wheel notch is about 10; a trackpad swipe is tens to hundreds). The tail of motion after the fingers leave a trackpad arrives as the same kind of amount, so it can be sent the same way. **This is for that one event**, and the value reaches the sketch's mouseWheel(deltaX:deltaY:) unchanged (scrolled) or its mouseMoved(deltaX:deltaY:) — mouseDragged(deltaX:deltaY:) while a button is held — and its movedX (mouseMovedBy). mouseMovedBy leaves mouseX and mouseY where they are."
           },
           "dy": {
             "type": ["number", "null"],
-            "description": "How much was scrolled, or how far the pointer moved, vertically. For that one event, as with dx. For mouseMovedBy the vertical axis points down, as the canvas coordinates do."
+            "description": "How much was scrolled (in points, as with dx), or how far the pointer moved, vertically. For that one event, as with dx. For mouseMovedBy the vertical axis points down, as the canvas coordinates do."
           },
           "code": {
             "type": "integer",

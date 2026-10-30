@@ -426,8 +426,15 @@ extension SketchSurface {
     /// **位置と違って尺度を変えない。** これは面の上の場所ではなく身振りの量なので、
     /// 窓の大きさで割り増すと同じ手つきが窓の大きさによって違う意味になる
     /// (``Orbit/radiansPerPixel`` が面の大きさに依らない割合を選んでいるのと同じ理由)。
+    ///
+    /// **ただし機器の違いは揃える。** ホイールは行、トラックパッドは点で量が届くので、行の機器だけ
+    /// 点へ換算して流す (``ScrollUnits``・[#2442](https://github.com/mokume-metal/mokume/issues/2442))。
+    /// 指を離した後の慣性の続きも、同じ量としてそのまま流す。
     override func scrollWheel(with event: NSEvent) {
-        deliver(.scrolled(dx: Float(event.scrollingDeltaX), dy: Float(event.scrollingDeltaY)))
+        let amount = ScrollUnits.points(
+            dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY),
+            isPrecise: event.hasPreciseScrollingDeltas)
+        deliver(.scrolled(dx: amount.dx, dy: amount.dy))
     }
 
     // MARK: ピンチ

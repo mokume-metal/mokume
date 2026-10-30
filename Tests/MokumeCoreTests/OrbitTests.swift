@@ -283,13 +283,17 @@ struct OrbitTests {
         #expect(orbit.distance == before)
     }
 
+    /// 指数が 100 になる量 (感度 10 で)。Float の `exp` は 88 あたりから無限になるので、溢れさせたい検査はこれを使う。
+    /// **係数の `zoomPerScroll` が動いても、指数が同じになるように係数で割る** (#2442)。
+    private var overflowingScroll: Float { -100 / (10 * Orbit.zoomPerScroll) }
+
     /// 引いたつもりが、最も寄った位置へ飛んでいた。
     @Test("溢れて無限になった距離は、下限ではなく上限へ収める")
     func overflowingZoomOutStopsAtTheFarLimit() {
         var orbit = fitting()
         // 指数 100 は Float の exp で無限になる
         let held = orbit.advance(
-            dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
+            dragX: 0, dragY: 0, scroll: overflowingScroll, isDragging: false, sensitivity: SIMD3(1, 1, 10))
         #expect(!held.any)
         #expect(orbit.distance == orbit.maximumDistance)
 
@@ -304,7 +308,7 @@ struct OrbitTests {
     func overflowingZoomWithoutAFarLimitHolds() {
         var orbit = Orbit(center: Vector3(0, 0, 0), distance: 100)
         let held = orbit.advance(
-            dragX: 0, dragY: 0, scroll: -200, isDragging: false, sensitivity: SIMD3(1, 1, 10))
+            dragX: 0, dragY: 0, scroll: overflowingScroll, isDragging: false, sensitivity: SIMD3(1, 1, 10))
         #expect(held == Orbit.HeldAxes(zoom: true))
         #expect(orbit.distance == 100)
     }

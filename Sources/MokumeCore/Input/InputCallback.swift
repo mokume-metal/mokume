@@ -38,7 +38,7 @@ enum InputCallback: Equatable, Sendable {
     ///
     /// 名前を `mouseDragged` に揃えられないのは ``mouseMovedBy(deltaX:deltaY:)`` と同じ理由である。
     case mouseDraggedBy(deltaX: Float, deltaY: Float)
-    /// スクロールされた。**その 1 件ぶんの量**を運ぶ。
+    /// スクロールされた。**その 1 件ぶんの量** (単位は点・[#2442](https://github.com/mokume-metal/mokume/issues/2442)) を運ぶ。
     case mouseWheel(deltaX: Float, deltaY: Float)
     /// ファイルが落とされた。落とした所は、呼ぶ前に ``InputState/x``・``InputState/y`` へ当たっている
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。**その 1 件ぶんのパス**を運ぶ。
