@@ -37,6 +37,9 @@ public enum AudioFailure: Error, Equatable, Sendable {
     ///
     /// **名前に反して、スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした
     /// `Task` から呼んでもこの場合になる (``ImageFailure/notRunning(call:)`` と同じ)。
+    /// 待つ口 (``Sketch/requestSound(_:)``) は別で、走っている実行の中で起こした `Task` から呼べる。
+    /// ``SketchPart/selectInput(_:)`` で選んだファイルなど、`Task` の中で読むなら、``Sketch/loadSound(_:)`` ではなくこちらを使う。
+    /// 呼べないのは、`init`・後片付けの後・`Task.detached` と、待っている最中にスケッチが終わったとき。
     case notRunning(call: String)
 }
 

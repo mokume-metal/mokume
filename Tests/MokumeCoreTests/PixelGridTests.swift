@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -1281,8 +1282,8 @@ struct PixelGridTests {
                     let gradient = SIMD2(slope(SIMD2(1, 0)), slope(SIMD2(0, 1)))
                     let truth = max(
                         0,
-                        Self.halfPlaneArea(distance - halfWeight, gradient)
-                            - Self.halfPlaneArea(distance + halfWeight, gradient))
+                        CoverageReference.halfPlaneArea(distance - halfWeight, gradient)
+                            - CoverageReference.halfPlaneArea(distance + halfWeight, gradient))
                     let error = abs(Double(pixels[x, y].red) - truth)
                     if error > worst {
                         worst = error
@@ -1292,20 +1293,6 @@ struct PixelGridTests {
             }
         }
         return (worst, at)
-    }
-
-    /// 半平面 `c + g · d ≤ 0` と、画素の正方形 [−0.5, 0.5]² の重なりの面積 (`mokume_pixelCdf` の写し・
-    /// 64 bit・#2991)。
-    nonisolated static func halfPlaneArea(_ c: Double, _ g: SIMD2<Double>) -> Double {
-        let hi = max(abs(g.x), abs(g.y)), lo = min(abs(g.x), abs(g.y))
-        if hi < 1e-12 { return c > 0 ? 0 : 1 }
-        let s = 0.5 * (hi + lo), u = abs(c)
-        if u >= s { return c > 0 ? 0 : 1 }
-        // 軸に沿う縁 (短辺 0) は、幅 hi の線形の渡し
-        if lo <= 1e-9 * hi { return min(1, max(0, 0.5 - c / hi)) }
-        let k = 0.5 * (hi - lo), ramp = s - u
-        let tail = u >= k ? ramp * ramp / (2 * lo * hi) : 0.5 - u / hi
-        return c > 0 ? tail : 1 - tail
     }
 
     nonisolated static let approximateArcEdgeShapes: [SeamShape] = ([
