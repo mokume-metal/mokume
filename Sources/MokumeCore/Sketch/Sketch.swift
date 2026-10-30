@@ -622,7 +622,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// - **`mokume render` では窓を開かない。** 書き出す絵の大きさは、そのディスプレイで全画面に
     ///   したときの大きさになる
     /// - **``SketchView`` では読まない。** 窓はホストのものなので、窓は変えず、描く大きさは
-    ///   ``SketchSettings/width``・``SketchSettings/height`` のまま、1 度だけ言う
+    ///   ``SketchSettings/width``・``SketchSettings/height`` のまま、そのビューが始まるたびに 1 度言う (待つ理由の名乗りのように、プロセスで 1 度ではない)
     /// - 複数のディスプレイにまたがる 1 枚の絵 (手本の `SPAN`) と、重なりのぼかしは持たない。
     ///   プロジェクションマッピングの道具へ渡す仕事である
     public static func fullScreen(_ display: Int = 1) -> SketchSettings {

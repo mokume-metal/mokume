@@ -141,9 +141,17 @@ final class SketchHostView: NSView, EmbeddedWaiter {
     private(set) var isWaiting = false
     /// ``stop()`` を呼ばれたか。**呼ばれたら、起こされても始めない。**
     private var isStopped = false
+    /// 面が使うポインタの捕まえと矢印の隠し。**検査から差し替える** (``SketchApplication/startEmbedded(pointerLock:cursorHiding:)``)。
+    private let pointerLock: PointerLock
+    private let cursorHiding: CursorHiding
 
-    init(sketch: any Sketch) {
+    init(
+        sketch: any Sketch, pointerLock: PointerLock = PointerLock(),
+        cursorHiding: CursorHiding = CursorHiding()
+    ) {
         self.sketch = sketch
+        self.pointerLock = pointerLock
+        self.cursorHiding = cursorHiding
         super.init(frame: .zero)
         begin()
     }
@@ -153,13 +161,19 @@ final class SketchHostView: NSView, EmbeddedWaiter {
 
     /// 始める。**別のスケッチが走っていれば、始めずに順番を待つ。** 走っているものが ``run()``
     /// (``Sketch/main()``) なら、待っても始まらないので、そう言って何も映さない。
+    ///
+    /// 始められるか・待つか・断られるかは ``SketchApplication/admission(for:)`` が決める (``run()`` と同じ 1 か所)。
     private func begin() {
         guard application == nil, !isStopped else { return }
-        guard !SketchApplication.isOccupied else { return waitOrRefuse() }
+        let admission = SketchApplication.admission(for: .embedded)
+        guard admission == .start else { return holdBack(admission) }
         do {
             let application = try SketchApplication(
                 sketch: sketch, gpu: try RenderDevice(), embedded: true)
-            guard let surface = application.startEmbedded() else { return waitOrRefuse() }
+            guard
+                let surface = application.startEmbedded(
+                    pointerLock: pointerLock, cursorHiding: cursorHiding)
+            else { return holdBack(SketchApplication.admission(for: .embedded)) }
             self.application = application
             surface.frame = bounds
             addSubview(surface)
@@ -172,18 +186,23 @@ final class SketchHostView: NSView, EmbeddedWaiter {
         }
     }
 
-    /// 先の ``SketchView`` が消えるのを待つか、待っても始まらないと言って諦める。
+    /// 先の ``SketchView`` が消えるのを待つか、待っても始まらないと言って諦める (``begin()`` が席を断られたとき)。
     ///
     /// 理由を言うのは**プロセスで 1 度だけ** (``SketchApplication/announceEmbeddedWait()``)。待つビューの数や画面の
     /// 出入りで繰り返さない。
-    private func waitOrRefuse() {
-        guard SketchApplication.occupantEnds else {
+    private func holdBack(_ admission: SketchApplication.SeatAdmission) {
+        switch admission {
+        case .start:
+            // 席の判定と `startEmbedded` は同じ main の回のうちにあり、答えは変わらない
+            break
+        case .wait:
+            isWaiting = true
+            SketchApplication.enqueueEmbeddedWaiter(self)
+            SketchApplication.announceEmbeddedWait()
+        case .refuse:
+            isWaiting = false
             SketchApplication.announceEmbeddedRefusal()
-            return
         }
-        isWaiting = true
-        SketchApplication.enqueueEmbeddedWaiter(self)
-        SketchApplication.announceEmbeddedWait()
     }
 
     func vacancyOpened() {

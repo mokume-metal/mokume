@@ -113,7 +113,7 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 | | JSON・XML の読み込みと、URL からの読み込み (2026-10-04 追加) | 基準 1: 最低ライン (Processing の本体の `loadJSONObject`・`loadXML`。どちらも URL を受ける)。基準 2: Foundation (`JSONSerialization`・`XMLParser`・`URLSession`) で書ける。基準 3: 読んだ値は本体の値として返し、面に Foundation の型を出さない ([ADR-0020](0020-api-naming-and-surface.md) 決定 6)。基準 4: ファイルは手元の標本で、URL は応答を差し替えて検査できる。基準 5: 当たらない |
 | | SVG の読み込み (2026-10-04 追加) | 基準 1: 最低ライン (Processing の本体の `loadShape`)。openFrameworks は公式、TouchDesigner は本体にも持つ。基準 2: `XMLParser` で読める。基準 3: 読んだものは画素ではなく本体の図形 (パス) になり、色・変換・書き出しがそのまま効く。基準 4: 図形になるので、これまでの描画の検査で確かめられる。基準 5: 当たらない |
 | | 全画面と、出すディスプレイの選択 (2026-10-04 追加) | 基準 1: 最低ライン (Processing の本体の `fullScreen(display)`)。基準 2: AppKit (`NSScreen`) で書ける。基準 3: 描く側はこれまでのフレームのまま変わらない。基準 4: ディスプレイの一覧を差し替えて、選んだ結果を検査できる。基準 5: 複数台にまたがる 1 枚の表示と、重なりのぼかしはしない (マッピングの仕事) |
-| | ファイルの受け渡し (窓へのドロップ・選ばせるダイアログ。2026-10-21 追加) | 基準 1: 最低ライン (Processing の本体の `selectInput`。同じ口の `selectOutput`・`selectFolder` もここに当たる)。ドロップは openFrameworks (`dragEvent`)・Cinder (`fileDrop`)・OPENRNDR (`window.drop`)・nannou (`dropped_file`) が窓の出来事として持ち、p5.js は `drop`、Processing は第三者のライブラリである。基準 2: AppKit (`NSOpenPanel` と、ドラッグを受ける `NSDraggingDestination`) で書ける。基準 3: ドロップはフレームに属し、`Codable` な入力の出来事に乗る。受けたパスは絶対パスなので、`loadImage`・`createVideo`・`loadSound`・`loadTable` がそのまま読める。基準 4: ドロップは入力の注入の道 (`Schemas/input-request.schema.json`) で、窓も機材も無しに検査できる。選ばせるダイアログは、`NSOpenPanel` の結果を差し替える注入の道を決めてから入れる。基準 5: 当たらない。**ドロップは macOS の自前の窓と道具の窓だけで受ける (2026-10-30 に決めた)。** `SketchView` に埋め込んだ面は受けない — 窓はホストのもので、ホスト側のドロップと取り合わないため。ホストからの受け方は、要る作例が来たら決める。選ばせるダイアログは、`SketchView` ではホストの窓のシートで出し、`SketchView` が消えたら開いているシートも閉じる。iOS と、セキュリティスコープ付きの URL は [#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める ([#2604](https://github.com/mokume-metal/mokume/issues/2604))。実装の `Feature` は、ドロップを先に、選ばせるダイアログを後の 2 本に分ける |
+| | ファイルの受け渡し (窓へのドロップ・選ばせるダイアログ。2026-10-21 追加) | 基準 1: 最低ライン (Processing の本体の `selectInput`。同じ口の `selectOutput`・`selectFolder` もここに当たる)。ドロップは openFrameworks (`dragEvent`)・Cinder (`fileDrop`)・OPENRNDR (`window.drop`)・nannou (`dropped_file`) が窓の出来事として持ち、p5.js は `drop`、Processing は第三者のライブラリである。基準 2: AppKit (`NSOpenPanel` と、ドラッグを受ける `NSDraggingDestination`) で書ける。基準 3: ドロップはフレームに属し、`Codable` な入力の出来事に乗る。受けたパスは絶対パスなので、`loadImage`・`createVideo`・`loadSound`・`loadTable` がそのまま読める。基準 4: ドロップは入力の注入の道 (`Schemas/input-request.schema.json`) で、窓も機材も無しに検査できる。選ばせるダイアログは、`NSOpenPanel` の結果を差し替える注入の道を決めてから入れる。基準 5: 当たらない。**ドロップは macOS の自前の窓と道具の窓だけで受け、`SketchView` に埋め込んだ面は受けない。選ばせるダイアログは `SketchView` ではホストの窓のシートで出す** (2026-10-30 の追補)。iOS と、セキュリティスコープ付きの URL は [#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める ([#2604](https://github.com/mokume-metal/mokume/issues/2604))。実装の `Feature` は、ドロップを先に、選ばせるダイアログを後の 2 本に分ける |
 | | ゲーム (`MokumeGame`。2026-10-14 追加): シーン管理・アーケード物理・タイルマップ (Tiled 形式)・セーブスロット・カメラの追従・簡易 GUI (仮置き) | 基準 1 は弱い。Processing・p5.js・openFrameworks は本体にも公式にも持たず、物理を本体に持つのは Unity・TouchDesigner だけである。補うのは、想定する利用者 (授業やゲームジャムでゲームまで作りたい学生) と、ゲームも書ける方向 ([ADR-0045](0045-game-direction.md)) である。別のパッケージにせず、本体の別ターゲットをアンブレラが再公開する形にして、入口が `import mokume` の 1 つ・1 リポジトリ 1 版のまま使えるようにした (ADR-0045 決定 4)。基準 2: 自前の Swift と Foundation で書ける。アーケード物理は速度・重力・矩形や円のめり込みの解消・接地の判定までにする (Phaser の Arcade Physics に当たる)。基準 3: 本体の値型 (図形・`Vector2`) とフレームの時刻の上に載り、描画は本体の口を通る。基準 4: 純粋な計算なので、機材も GPU も無しに検査できる。物理も決定論を保つ。基準 5: エディタ・シーンの木の GUI は持たない (下の「入れない」のノードエディタの行)。剛体物理はこの行に入れない (外のパッケージの行) |
 | **mokume の仕事 (外のパッケージ)** | 深度カメラ・Kinect・Leap | 第三者の SDK を要する (基準 2) |
 | | 剛体物理 (2026-10-14 に「入れない」から移した) | 積み重ね・関節・回転する衝突は、第三者のコード (2D は Box2D・3D は Jolt) を要する (基準 2)。作例が求めたときに外のリポジトリで包む。第三者のコードを本体で保守しない理由は、決定 7 の Syphon と同じである |
@@ -143,7 +143,7 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 - **区分は mokume の仕事 (標準)。** 基準 1 は最低ライン (Processing の本体の `selectInput`) で満たす。ドロップは openFrameworks・Cinder・OPENRNDR・nannou が窓の出来事として持つ
 - **ドロップはフレームに属し、`Codable` な入力の出来事に乗せる。** 入力の注入の道 (`Schemas/input-request.schema.json`) で機材なしに検査でき (基準 4)、リプレイの記録 ([#2603](https://github.com/mokume-metal/mokume/issues/2603)) と入力の層の検め ([#2731](https://github.com/mokume-metal/mokume/issues/2731)) を通る。`mokume watch` では、窓を持つ道具が受けて子へ渡す ([ADR-0032](0032-window-ownership.md) 決定 4)
 - **実装は `Feature` 2 本に分け、ドロップを先にする。** `selectInput` は、窓を持たない子 (`mokume watch` の下) でダイアログを出す主体と、`NSOpenPanel` の結果を差し替える注入の道を決めてから入れる
-- **ドロップは macOS の自前の窓と道具の窓だけと名乗る。** `SketchView` に埋め込んだ面は受けない (窓はホストのもの・2026-10-30 に決めた)。選ばせるダイアログは `SketchView` でもホストの窓のシートで出す。iOS と、セキュリティスコープ付きの URL は [#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める
+- **ドロップは macOS の自前の窓と道具の窓だけと名乗る。** `SketchView` に埋め込んだ面での受け方・出し方は、下の追補 (2026-10-30)。iOS と、セキュリティスコープ付きの URL は [#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める
 
 退けた案: ドロップだけ入れて選ばせる口を持たない (Processing の本体の `selectInput` に届かない — 最低ラインを割る)。持たないと地図に書く (道具型のスケッチがパスの書き換えのまま残る)。
 
@@ -153,38 +153,17 @@ mokume が使えるのは OS のフレームワークで、第三者の依存も
 
 この改訂の PR で、改訂の見出しが上限 (5 つ) に達していた本 ADR の経緯を [history/0041.md](history/0041.md) へ移した ([docs/decisions/AGENTS.md](AGENTS.md) の手順)。
 
-#### 改訂 (2026-10-23) — 書き出しの動画に音声を載せる行を、標準へ移す
+#### 追補 (2026-10-30) — SketchView の埋め込みはドロップを受けず、選ばせるダイアログはホストの窓のシートで出す
 
-「標準だが設計が重い」に置いていた「書き出しに音声を載せる」を、領域ごとの Design ([#1969](https://github.com/mokume-metal/mokume/issues/1969)) で形が決まったので、標準 (mokume の仕事) へ移した。形は [ADR-0042](0042-camera-and-audio-standard.md) 決定 6 の改訂 (2026-10-23)、符号化と水準は [ADR-0025](0025-determinism-levels.md) 決定 3 の追補 (2026-10-23) にある。基準を当てた結果は表の理由の欄に書いた。同じ PR で、`AGENTS.md` の「してはならないこと」の要約も直した (決定 4)。
+ファイルの受け渡しの行 (上の改訂 (2026-10-21)) は、ホストのアプリの中に映す `SketchView` からの受け方・出し方を「[#2604](https://github.com/mokume-metal/mokume/issues/2604)・[#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める」と持ち越していた。`SketchView` の 2 つ目を待たせ、名乗り・全画面・ドロップをホストへ譲る変更 ([#3509](https://github.com/mokume-metal/mokume/issues/3509)) で、macOS のホストの分をメンテナが決めた (2026-10-30)。
 
-- **基準 1 は弱い。** 最低ライン (Processing の本体と公式の Sound・Video) には、音を載せた動画を書く口が見当たらない。補うのは、音に反応する絵は音が付いて初めて作品になること、書き出しが固定の時計で絵の時刻を決めるので、音の時刻を絵に合わせられるのは書き出しの側だけで、外の道具で後から重ねると時刻の対応が利用者の手に残ること
-- **基準 5 の線は、スケッチ自身が鳴らした音だけを載せるところに引く。** マイクの録音・ミキシング・書き出し後の編集は、DAW や編集ソフトの仕事で、やらない
+- **ドロップ: `SketchView` に埋め込んだ面は受けない。** 窓はホストのものなので、ドロップの宛先を面が取ると、ホストのビューの受け口 (SwiftUI の `onDrop` など) と取り合う。面はドラッグの宛先として登録しない。ホストが落とされたファイルを受けたいときは、ホストの受け口で受けて、スケッチへ自分で渡す。ホストの受け口をスケッチへ繋ぐ公開の口は、要る作例が来たときに決める ([ADR-0043](0043-features-start-from-examples.md))
+- **選ばせるダイアログ: `SketchView` でもホストの窓のシートで出す。** ファイルを選ばせるのはスケッチの頼み (`selectInput`) なので、埋め込みでも出す。ホストの窓が見えているときだけ出し (見えない窓へは独立したパネルになり、ホストのアプリを前面へ出す)、見えるまで頼みは残る。`SketchView` が消える・窓から外れる・ホストのアプリが終わるときは、開いているシートを取り消しの結果で閉じる
+- 自前の窓と `mokume watch` の道具の窓の受け方は変わらない。iOS と、セキュリティスコープ付きの URL は [#2605](https://github.com/mokume-metal/mokume/issues/2605) で決める
 
-退けた案: 地図の外に置き、外の道具で音を重ねるよう案内する (時刻の対応が利用者に残る — 上の補いが効かない)。外のパッケージにする (音の流れは本体の型で、書き手は本体の `MovieFile` の中にあり、外からは触れない)。
+退けた案: 面がドロップを受けて、ホストの受け口と並べる (宛先の取り合いになり、ホストの `onDrop` が効かなくなる)。ホストへ受け口を公開の口として足す (作例が無いまま口の形を決めることになる — ADR-0043)。埋め込みでは `selectInput` を出さず `nil` で返す (Processing の `selectInput` に届かない最低ラインを、`SketchView` だけが割る)。独立した `NSOpenPanel` で出す (ホストのアプリを前面へ出し、窓の持ち主の約束と合わない)。
 
-代償: 本体が書き手の入力を 2 本持つ。使われなければ決定 5 で削る候補になる。
-
-#### 改訂 (2026-10-23) — Vision の行を、標準へ移す
-
-「標準だが設計が重い」に置いていた Vision を、領域ごとの Design ([#1968](https://github.com/mokume-metal/mokume/issues/1968)) で形が決まったので、標準 (mokume の仕事) へ移した。形は [ADR-0014](0014-machine-learning-role.md) の改訂 (2026-10-23) にある。基準を当てた結果は表の理由の欄に書いた。同じ PR で、`AGENTS.md` の「してはならないこと」の要約も直した (決定 4)。
-
-- **範囲は手の関節点から。** 顔・体・人物の切り抜きは、同じ行の中で、次の作例が来てから足す (決定 3・[ADR-0043](0043-features-start-from-examples.md))。行を分けない
-- **基準 1 は弱い。** 最低ラインの Processing の本体と公式の Sound・Video は持たない。補うのは、前身のライブラリで周辺の領域の中で作例が最も多かったことと、カメラと組むと強いこと
-
-退けた案: 外のパッケージにする (OS の Vision だけで書け、第三者のコードを抱えない — 基準 2 を満たす)。「標準だが設計が重い」のまま置く (カメラが入り、置き場・受け方・決定論が決まって、重さの理由が無くなった)。
-
-代償: 公開の面が増える。使われなければ決定 5 で削る候補になる。結果は OS のモデルに頼るので、OS の更新で変わりうる。
-
-#### 改訂 (2026-10-23) — ベクター書き出しの行を、標準へ移す
-
-「標準だが設計が重い」に置いていたベクター書き出し (PDF・SVG・DXF) を、領域ごとの Design ([#1967](https://github.com/mokume-metal/mokume/issues/1967)) で形が決まったので、標準 (mokume の仕事) へ移した。形は [ADR-0023](0023-frame-stages-and-outputs.md) の改訂 (2026-10-23) と [ADR-0021](0021-solid-space-and-frame-assembly.md) 決定 3 の追補 (2026-10-23) にある。基準を当てた結果は表の理由の欄に書いた。同じ PR で、`AGENTS.md` の「してはならないこと」の要約も直した (決定 4)。
-
-- **範囲は SVG の 1 枚から。** PDF・DXF・連番のベクターは、作例が来たときに別の `Feature` で足す (決定 3・[ADR-0043](0043-features-start-from-examples.md))。行を分けない
-- **基準 3 の「本体の型に合流する」は、置く口で控えた図形の値で満たす。** 組み立てに割る前の列が 1 本残っているわけではない (ADR-0021 の追補が確かめた)
-
-退けた案: PDF・SVG・DXF を 3 行に分ける (描き先の問題が同じで、控える図形も 1 つ)。「標準だが設計が重い」のまま置く (置き場・一致・口が決まって、重さの理由が無くなった)。
-
-代償: 置く口が増えるたびに控えを足す保守が要る (ADR-0023 の改訂に、黙って欠けないための検査を書いた)。使われなければ決定 5 で削る候補になる。
+代償: `SketchView` のスケッチは、落とされたファイルを自分では受け取れない (ホストが受けて渡す)。ホストの窓が見えない間 (最小化など) は、ファイルを選ばせる頼みが出ず待つ。
 
 ### 3. 地図の標準に載った領域は、作品の実需を待たずに入れる。口の形は作例と作品で詰める
 
