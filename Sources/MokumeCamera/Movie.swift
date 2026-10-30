@@ -45,10 +45,45 @@ import MokumeDiagnostics
 /// | `jump(where)` | ``jump(_:)`` |
 /// | `speed(rate)` | ``speed(_:)`` |
 /// | `time()` / `duration()` | ``time`` / ``duration`` |
+/// | `volume(v)` | 持たない。同じファイルを `loadSound` で鳴らす (下の「音」・[#3452](https://github.com/mokume-metal/mokume/issues/3452)) |
 /// | `available()` / `read()` | 要らない。`draw()` の前に ``image`` が書かれ、新しいコマかは ``isNewFrame`` |
 ///
 /// ``play()``・``loop()``・``jump(_:)`` は次のフレームで効く (そのフレームに、始めた位置・
-/// 飛んだ先のコマが出る)。``pause()`` はすぐ効き、いま映っているコマで止まる。音は鳴らさない。
+/// 飛んだ先のコマが出る)。``pause()`` はすぐ効き、いま映っているコマで止まる。音は鳴らさない (下の「音」)。
+///
+/// ## 音
+///
+/// `Movie` は音を鳴らさない。動画に音があれば、**同じファイルを `loadSound` でも開いて鳴らし**、`jump(_:)` で
+/// 映像の位置へ合わせる。`loadSound` は動画の容器 (`.mov`・`.mp4`) の音声トラックを読める。
+///
+/// ```swift
+/// final class Talk: Sketch {
+///     var clip: Movie?
+///     var song: SoundFile?
+///     func setup() throws {
+///         clip = try createVideo("assets/talk.mov")
+///         song = try loadSound("assets/talk.mov")
+///         clip?.play()
+///         song?.play()
+///     }
+///     func draw() {
+///         guard let clip, let song else { return }
+///         image(clip.image, 0, 0, width, height)
+///         // 0.05 秒より外れたら、音を映像の位置へ合わせ直す
+///         if abs(song.position - clip.time) > 0.05 { song.jump(clip.time) }
+///     }
+/// }
+/// ```
+///
+/// - 映像と音の同期は作品が持つ。`Movie` の位置は ``SketchPart/time`` に従い、音の位置は音の時計 (書き出しでは
+///   フレームの窓) に従う。**``SketchPart/pauseTime()`` で止まるのは映像だけ**で、音は鳴り続ける
+/// - **``speed(_:)`` を 1 以外にすると、音は合わない。** 音の速さを変える口はまだ無い
+///   ([#3473](https://github.com/mokume-metal/mokume/issues/3473))
+/// - 固定の時計で書き出すと、音は `.mov` の音声トラックに載る。ただし**同じフレームの `draw()` で `clip.play()` と
+///   `song.play()` を呼ぶと、音の頭が映像の頭より 1 フレーム (1 / fps 秒) 早い** — `play()` は次のフレームで効く
+///   (映像) のに対し、音は呼んだフレームの窓の先頭から効く。フレームの数は fps によらず 1 で、揃えるなら
+///   `song.play()` を 1 フレーム遅らせる。上の例の 0.05 秒は、この 1 フレームを許す大きさ (fps が 20 以下なら
+///   広げる)
 ///
 /// ## 向き
 ///
