@@ -36,6 +36,11 @@
   止めること・止まる区間が一部なら通すこと・下限の当て方・`still=<理由>` で黙らせること。
   **止まった GIF は見比べても気付けない**のが足した理由で、緩むと止まった絵が黙って上がる
 
+- **撮り直しで URL が動かない** (#3459) — 画素が同じ絵は上げず、説明文の URL を 1 文字も
+  動かさないこと・変わった絵だけが上げ直されること。上げ先は呼ぶたびに別の URL を返す
+  偽物で、Gyazo が同じ画素に同じ URL を返す性質が破れた状態を作る。**撮るたびに全数の
+  URL が動く**のが足した理由で、緩むと撮り直す PR ごとに説明文の URL が全数 diff に出る
+
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -1112,6 +1117,212 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(len(uploaded), len(self.shots))
         self.assertEqual(len(written), 1)
 
+
+
+# ---------------------------------------------------------------- 撮り直しで URL を動かさない (#3459)
+
+
+class CaptureIdempotenceTest(unittest.TestCase):
+    """`--capture` が、画素の変わっていない絵を上げ直さず、説明文の URL を動かさないこと。
+
+    上げ先は偽物で、**呼ぶたびに別の URL を返す** — 「Gyazo が同じ画素に同じ URL を返す」
+    性質が破れた状態 (#3459) を作る。この上げ先で URL が動かなければ、動かさない理由は
+    Gyazo の性質ではなく、こちらの判定である。GPU も鍵も ffmpeg も要らない (絵は
+    `write_png` で置く)。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        (self.root / "Sources").mkdir()
+        self.path = self.root / "Sources" / "Sketch.swift"
+        self.path.write_text(SOURCE, encoding="utf-8")
+        self.out = self.root / "out"
+        self.uploaded = []
+        self.served = 0  # 上げた回数の通算 (uploaded は検査の途中で空にする)
+        # 絵の中身。鍵は囲みの番号 (指紋が動いても同じ絵を撮れるように、名前では持たない)
+        self.black_at = {1: 1, 2: 2}
+
+    def rows(self, shot, frame=0):
+        return grey_rows(8, 6, changed={(self.black_at[shot.index] + frame, 0): BLACK})
+
+    def fake_render(self, root, found, out, **kwargs):
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir(parents=True)
+        for shot in found:
+            if shot.is_motion:
+                (out / shot.name).mkdir()
+                for frame in range(shot.frames):
+                    write_png(out / shot.name / f"f.{frame:04d}.png", self.rows(shot, frame))
+            else:
+                write_png(out / f"{shot.name}.png", self.rows(shot))
+
+    def fake_upload(self, image, token, alt):
+        self.uploaded.append(image.name)
+        self.served += 1
+        return f"https://i.gyazo.com/{self.served:032x}.png"
+
+    def capture(self):
+        """`main --capture` を 1 回。置き場は組んだ木ではなく、このテストの木に差し替える。"""
+        real_collect, real_capture, real_write = shots.collect, shots.capture_urls, shots.write_back
+        err = io.StringIO()
+        with mock.patch.object(shots, "collect", lambda root: real_collect(self.root)), \
+                mock.patch.object(shots, "render", self.fake_render), \
+                mock.patch.object(shots, "report_mirrors", lambda *a, **k: None), \
+                mock.patch.object(shots, "upload", self.fake_upload), \
+                mock.patch.object(shots, "capture_urls", lambda root, *a, **k: real_capture(self.root, *a, **k)), \
+                mock.patch.object(shots, "write_back", lambda root, *a: real_write(self.root, *a)), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = shots.main(
+                ["--capture", "--render", str(self.out), "--token-command", "echo token"],
+                which=lambda name: f"/opt/tools/{name}",
+            )
+        self.assertEqual(code, 0, err.getvalue())
+
+    def text(self):
+        return self.path.read_text(encoding="utf-8")
+
+    def urls(self):
+        return re.findall(r"https://i\.gyazo\.com/\w+\.png", self.text())
+
+    def test_画素が同じなら_2_回続けて撮っても説明文は動かない(self):
+        self.capture()
+        first = self.text()
+        self.assertEqual(len(self.uploaded), 2)
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(self.uploaded, [], "同じ画素の絵を上げ直した")
+        self.assertEqual(self.text(), first)
+
+    def test_記録は画素のハッシュを持ち_検査はそれを要らない(self):
+        self.capture()
+        records = [line.strip() for line in self.text().split("\n") if line.strip().startswith("// shot:")]
+        self.assertEqual(len(records), 2, records)
+        for record in records:
+            self.assertRegex(record, r"^// shot: \d+ snippet=[0-9a-f]{8} image=[0-9a-f]{16}$")
+        self.assertEqual(self.check(), [])
+
+    def check(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return shots.check(shots.collect(self.root))
+
+    def test_画素が変わった絵だけ上げ直され_その_URL_だけが動く(self):
+        self.capture()
+        before = self.urls()
+        self.uploaded.clear()
+        self.black_at[2] = 5  # 2 本目だけ絵が変わる
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1, self.uploaded)
+        after = self.urls()
+        self.assertEqual(after[0], before[0])
+        self.assertNotEqual(after[1], before[1])
+
+    def test_例を書き換えて指紋が動いても画素が同じなら_URL_は残る(self):
+        self.capture()
+        before = self.urls()
+        self.uploaded.clear()
+        self.path.write_text(self.text().replace("circle(200, 150, 160)", "circle(200, 150, 161)"), encoding="utf-8")
+        self.capture()
+        self.assertEqual(self.uploaded, [])
+        self.assertEqual(self.urls(), before)
+        # 記録の指紋は新しくなる (検査は通る)
+        self.assertEqual(self.check(), [])
+
+    def test_image_の無い古い記録は不明として上げ直す(self):
+        self.capture()
+        self.path.write_text(re.sub(r" image=[0-9a-f]+", "", self.text()), encoding="utf-8")
+        self.assertEqual(self.check(), [], "古い形の記録も読める")
+        before = self.urls()
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(len(self.uploaded), 2)
+        self.assertNotEqual(self.urls(), before)
+        self.assertIn(" image=", self.text())
+
+    def test_囲みの_URL_が_Gyazo_のものでなければ上げ直す(self):
+        self.capture()
+        self.path.write_text(
+            self.text().replace("https://i.gyazo.com/", "https://example.invalid/", 1), encoding="utf-8"
+        )
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1, "別の場所の絵を、撮った絵と同じとして残した")
+        self.assertNotIn("example.invalid", self.text())
+
+    def test_囲みから絵の行が消えていれば上げ直す(self):
+        self.capture()
+        text = re.sub(r"\n    /// !\[中央の小さな円\]\([^)]*\)", "", self.text())
+        self.assertNotEqual(text, self.text())
+        self.path.write_text(text, encoding="utf-8")
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1)
+
+    def test_読めない画像は同じと言わずに上げ直す(self):
+        self.capture()
+        self.uploaded.clear()
+        found = shots.collect(self.root)
+        # 次の撮影で、1 本目だけ読めない PNG になる
+        real_render = self.fake_render
+
+        def broken(root, found, out, **kwargs):
+            real_render(root, found, out)
+            (out / f"{found[0].name}.png").write_bytes(b"png")
+
+        self.fake_render = broken
+        self.capture()
+        self.assertEqual(self.uploaded, [f"{found[0].name}.png"])
+        # 読めないままの 2 回目も、前回の読めなかった記録と「同じ」にならない
+        self.assertNotIn("image=", next(l for l in self.text().split("\n") if "// shot: 1 " in l))
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(self.uploaded, [f"{found[0].name}.png"])
+
+    def test_動きは全フレームの画素で判定する(self):
+        self.path.write_text(
+            SOURCE.replace("<!-- shot: 中央の橙色の円 -->", "<!-- shot: 動く円 | frames=3 -->"), encoding="utf-8"
+        )
+        self.capture()
+        self.assertEqual(len(self.uploaded), 2)
+        self.uploaded.clear()
+        self.capture()
+        self.assertEqual(self.uploaded, [])
+        # 最後の 1 フレームだけ違っても、動き全体を上げ直す
+        real_render = self.fake_render
+
+        def last_frame_differs(root, found, out, **kwargs):
+            real_render(root, found, out)
+            motion = next(shot for shot in found if shot.is_motion)
+            write_png(out / motion.name / "f.0002.png", grey_rows(8, 6, changed={(7, 5): BLACK}))
+
+        self.fake_render = last_frame_differs
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1)
+        self.assertTrue(self.uploaded[0].endswith(".gif"), self.uploaded)
+
+    def test_同じ指紋の囲みは_1_回だけ上げる(self):
+        self.path.write_text(
+            SOURCE.replace("circle(200, 150, 80)", "circle(200, 150, 160)").replace("中央の小さな円", "もう 1 つの円"),
+            encoding="utf-8",
+        )
+        self.black_at[2] = 1  # 同じ指紋 = 同じ絵
+        self.capture()
+        self.assertEqual(len(self.uploaded), 1, self.uploaded)
+        self.assertEqual(len(set(self.urls())), 1)
+
+    def test_画素のハッシュは_PNG_のバイトに依らない(self):
+        """圧縮の差分符号が違っても、画素が同じなら同じハッシュになる。"""
+        found = shots.collect(self.root)[0]
+        out = self.root / "hash"
+        out.mkdir()
+        rows = grey_rows(8, 6, changed={(3, 2): BLACK})
+        write_png(out / f"{found.name}.png", rows, filter_kind=0)
+        plain = shots.image_hash(out, found)
+        write_png(out / f"{found.name}.png", rows, filter_kind=4)
+        self.assertEqual(shots.image_hash(out, found), plain)
+        write_png(out / f"{found.name}.png", grey_rows(8, 6, changed={(3, 3): BLACK}))
+        self.assertNotEqual(shots.image_hash(out, found), plain)
 
 
 # ---------------------------------------------------------------- 公開メンバが例か宣言を持つか (#2116)
