@@ -253,8 +253,12 @@ def failure_messages(path, shots_artifact="ledger-shots"):
             return "記録が無い (`%s`)" % path
         with open(path, encoding="utf-8") as f:
             raw = f.read()
-    except (OSError, UnicodeDecodeError):
+    except OSError:
         return "記録が無い (`%s`)" % path
+    except UnicodeDecodeError:
+        # 在る記録が UTF-8 として読めない (多バイト文字の途中で切れた回など・#3527)。
+        # ASCII の途中で切れた記録の `ET.ParseError` と同じ名乗りにする — 切れた位置で分けない
+        return "記録を読めなかった (`%s`)" % path
     try:
         root = ET.fromstring(keep_attribute_newlines(raw).encode("utf-8"))
         cases = list(root.iter("testcase"))

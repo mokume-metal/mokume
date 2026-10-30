@@ -293,5 +293,53 @@ class ReadCancellationsTest(unittest.TestCase):
             self.assertNotIn(chr(code), text, "生の U+%04X がソースに書かれている (エスケープで書く)" % code)
 
 
+class XunitUndecodableTest(unittest.TestCase):
+    """xUnit (XML) の記録の読み手が、UTF-8 として読めない記録を「無い」と名乗らないこと (#3527)。
+
+    xUnit は文書全体を 1 つの木として読むのが約束で、切れた記録から前を読み出す約束は無い。
+    守るのは**切れた位置が ASCII の途中でも多バイト文字の途中でも、名乗りが同じ**ことと、
+    在る記録を「無い」と言わないこと。
+    """
+
+    HEAD = '<?xml version="1.0" encoding="UTF-8"?><testsuites><testsuite><testcase classname="A" name="x"'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "record.xml"
+
+    def write(self, data):
+        self.path.write_bytes(data)
+        return str(self.path)
+
+    def ascii_cut(self):
+        return self.write((self.HEAD + ' time="1').encode("utf-8"))
+
+    def multibyte_cut(self):
+        # あ = e3 81 82 の最後の 1 バイトを欠く (多バイト文字の途中で切れる)
+        return self.write((self.HEAD + ' note="あ').encode("utf-8")[:-1])
+
+    def test_failure_messages_names_an_undecodable_record_like_an_ascii_cut(self):
+        ascii_text = READER.failure_messages(self.ascii_cut())
+        multibyte_text = READER.failure_messages(self.multibyte_cut())
+        self.assertEqual(ascii_text, "記録を読めなかった (`%s`)" % self.path)
+        self.assertEqual(multibyte_text, ascii_text)
+
+    def test_failure_messages_still_says_missing_for_a_missing_or_empty_record(self):
+        self.assertEqual(READER.failure_messages(str(Path(self.tmp.name) / "none")),
+                         "記録が無い (`%s`)" % (Path(self.tmp.name) / "none"))
+        self.assertEqual(READER.failure_messages(self.write(b"")), "記録が無い (`%s`)" % self.path)
+
+    def test_no_xunit_reader_calls_an_undecodable_record_missing(self):
+        """`read`・`failures`・`slow` は ET.parse で読むので、不正な UTF-8 は読めない側に落ちる。"""
+        for name, path in (("ascii", self.ascii_cut()), ("multibyte", self.multibyte_cut())):
+            with self.subTest(cut=name):
+                self.assertEqual(READER.read(path, "A"), ("unreadable", 0))
+                self.assertEqual(READER.failures(path), "unreadable")
+                terminal, summary = READER.slow(path)
+                self.assertNotIn("記録が無い", terminal + summary)
+                self.assertIn("記録が壊れている", terminal)
+
+
 if __name__ == "__main__":
     unittest.main()
