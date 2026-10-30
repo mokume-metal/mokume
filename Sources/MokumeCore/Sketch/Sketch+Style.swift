@@ -517,7 +517,10 @@ extension SketchPart {
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
     /// **手本 (Processing) は `imageMode()` で読み、mokume は `rectMode(_:)` で読む。** 既定 (どちらも `.corner`) では
-    /// 同じ矩形になる。手本で `imageMode(CENTER)` と組んでいた `clip` を写すなら、`rectMode(.center)` を合わせる:
+    /// 同じ矩形になる。手本で `imageMode(CENTER)` と組んでいた `clip(x, y, w, h)` を写すなら、角を渡す
+    /// `clip(x - w / 2, y - h / 2, w, h)` と書く。`rectMode(.center)` を合わせる直し方は、``rect(_:_:_:_:)``・
+    /// ``square(_:_:_:)``・``text(_:_:_:_:_:)`` の箱の読み方も変えるので、手本のつもりで書いた他の矩形がずれる
+    /// (``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` で囲めば、`clip` も一緒に戻る)。
     /// `rectMode(.center)` のもとの `clip(200, 150, 100, 80)` は (150, 110)〜(250, 190) を切り抜く。`imageMode(.center)`
     /// だけを書いたときは `rectMode` が `.corner` のままなので、同じ呼び出しが (200, 150)〜(300, 230) を切り抜く。
     /// 幅や高さが負なら、手本と同じに裏返して読む (`clip(100, 100, -50, -50)` は (50, 50)〜(100, 100))。
@@ -544,7 +547,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている -->
-    ///     ![灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている](https://i.gyazo.com/1c5ea0bc2d5952246f5081f189310818.png)
+    ///     ![灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている](https://i.gyazo.com/00d18095286a2b99cb59787048ff7afd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -610,7 +613,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている | size=240x240 -->
-    ///     ![灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている](https://i.gyazo.com/66bf64e7ebf282df7933b1ae29a971b7.png)
+    ///     ![灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている](https://i.gyazo.com/c2d07fac2fe68fc179189729c9fb8b55.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -692,12 +695,11 @@ extension SketchPart {
     /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときや、止まっている間の入力のコールバックで書いた切り抜きはどのフレームにも
     ///   属さないので、警告して無視される。
-    // shot: 1 snippet=28891adf
-    // shot: 2 snippet=1ca10345
-    // shot: 3 snippet=b4e74bbc
-    // shot: 4 snippet=b84ca0ec
-    // shot: 5 snippet=bd0ccc48
-    // shot: 後で撮る
+    // shot: 1 snippet=28891adf image=433da9b280bfd522
+    // shot: 2 snippet=1ca10345 image=0daf4d2218fec1fd
+    // shot: 3 snippet=353b0131 image=6d39fdb20976fdc0
+    // shot: 4 snippet=b84ca0ec image=b953abec6aa746c5
+    // shot: 5 snippet=bd0ccc48 image=2612ab9e73926215
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)

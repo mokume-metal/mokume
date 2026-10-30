@@ -14,4 +14,4 @@ SPDX-License-Identifier: MIT
 
 回転・剪断の下の `clip` は、写した 4 つの角を囲む面に沿った矩形で切り抜き、1 度だけ警告します (切り抜きは面に沿った矩形しか持てません)。90 度刻みの回転と鏡映しは正確に切り抜き、警告しません。
 
-説明文に、手本 (Processing) は `imageMode()` で数を読み、mokume は `rectMode(_:)` で読むことと、写すときの直し方を足しました。
+説明文に、手本 (Processing) は `imageMode()` で数を読み、mokume は `rectMode(_:)` で読むことを足しました。手本で `imageMode(CENTER)` と組んでいた `clip(x, y, w, h)` は、角を渡す `clip(x - w / 2, y - h / 2, w, h)` と書き直してください (`rectMode(.center)` を合わせると `rect` や `text` の箱の読み方も変わります)。
