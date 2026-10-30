@@ -227,12 +227,16 @@ nonisolated enum BuildDirectory {
     }
 
     /// 固定を、置き場の名前の 1 段にする。
+    ///
+    /// **版・改訂の形でない文字列は鍵にしない** (`nil`)。名前の 1 段に `/` や `..` が入ると、共有の根の外へ置き場を
+    /// 作る。``DependencyVersion/pin(forPackageAt:)`` が読む時点で検めているが、型を作って渡す口もあるので、
+    /// 名前にする直前でも同じ検めを通す (#3535)。
     static func keySegment(pin: DependencyVersion.Pin?) -> String? {
         switch pin {
-        case .version(let version): version
+        case .version(let version): DependencyVersion.isVersion(version) ? version : nil
         // 枝や改訂で固定したものは版を名乗らない。**版と混ぜない** — 混ざると
         // 互いを作り直させ続ける
-        case .revision(let revision): revisionSegment(revision)
+        case .revision(let revision): DependencyVersion.isRevision(revision) ? revisionSegment(revision) : nil
         case nil: nil
         }
     }

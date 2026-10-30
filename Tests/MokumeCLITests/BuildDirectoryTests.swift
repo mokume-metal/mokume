@@ -71,6 +71,27 @@ struct BuildDirectoryTests {
         #expect(shareability == .shareable("swiftlang-6.3.3.1.3/rev-b8f9c7652cd8"))
     }
 
+    /// **置き場の名前の 1 段に `/` や `..` を入れない** (#3535)。型を作って渡す口でも、版・改訂の形でなければ鍵にしない。
+    @Test(
+        "版・改訂の形でない固定は、置き場の鍵にせず、共有しない",
+        arguments: [
+            DependencyVersion.Pin.version("../../x"), .version("1/../../x"), .version(""), .version("1/2"),
+            .revision("../../x"), .revision("/"), .revision(""), .revision("zzzz"),
+        ])
+    func aMalformedPinIsNotAKey(pin: DependencyVersion.Pin) {
+        #expect(BuildDirectory.keySegment(pin: pin) == nil)
+        #expect(BuildDirectory.storeName(pin: pin, toolchain: Self.toolchain) == nil)
+        #expect(
+            BuildDirectory.shareability(
+                package: Self.manifest(local: false), pin: pin, toolchain: Self.toolchain)
+                == .unshared(.unresolved))
+        // 見る場所の候補にも、その鍵を入れない (パッケージ直下の `.build` だけ)
+        let candidates = BuildDirectory.plausibleDirectories(
+            for: URL(fileURLWithPath: "/work/hello"), root: URL(fileURLWithPath: "/root"), pin: pin,
+            listing: { _ in ["swiftlang-6.3.3.1.3"] })
+        #expect(candidates.map(\.path) == ["/work/hello/.build"])
+    }
+
     @Test("まだ固定が読めなければ、共有しない")
     func anUnresolvedPackageIsNotShared() throws {
         let shareability = BuildDirectory.shareability(

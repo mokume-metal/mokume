@@ -175,6 +175,45 @@ struct DependencyVersionTests {
                 == .unreadable)
     }
 
+    /// **版・改訂は名前に使う前に検める** (#3535)。先頭が数字で、数字・`.`・`-`・`+`・英字だけを版とみなす。
+    @Test(
+        "版の形 (先頭が数字で、数字・.・-・+・英字だけ) の判定",
+        arguments: [
+            ("0.5.0", true), ("1.0.0-beta.1", true), ("0.5.0+build5", true), ("2", true), ("1..2", true),
+            ("../../x", false), ("1/../../x", false), ("1/2", false), ("", false), ("..", false),
+            ("v1.0.0", false), ("-1", false), ("1.0.0 ", false), ("1.0\n0", false), ("1.0。", false),
+            ("１.０", false),
+        ])
+    func recognisesAVersion(text: String, isVersion: Bool) {
+        #expect(DependencyVersion.isVersion(text) == isVersion)
+    }
+
+    @Test(
+        "改訂の形 (16 進数の字だけ) の判定",
+        arguments: [
+            ("abcdef0123456789", true), ("0000", true), ("ABCDEF", true), ("", false), ("../../x", false),
+            ("abc/def", false), ("xyz", false), ("abc ", false),
+        ])
+    func recognisesARevision(text: String, isRevision: Bool) {
+        #expect(DependencyVersion.isRevision(text) == isRevision)
+    }
+
+    /// 形が違う pin は、版へも改訂へも寄せず、壊れた `Package.resolved` として扱う。名前に使う口 (`pin`・`resolved`) は何も返さない。
+    @Test("版・改訂の形でない pin は、壊れているものとして読み、鍵にも版にもならない")
+    func aMalformedPinIsReadAsDamaged() throws {
+        for state in [
+            #"{"version":"../../x"}"#, #"{"version":"1/../../x"}"#, #"{"version":""}"#,
+            // 版で固定した pin は改訂も持つ。版が壊れているなら、改訂へ落とさない
+            #"{"version":"../x","revision":"abcdef0123"}"#, #"{"revision":"../../x"}"#, #"{"branch":"main","revision":""}"#,
+        ] {
+            let sketch = try makeSketch(
+                resolved: #"{"pins":[{"identity":"mokume","state":\#(state)}],"version":3}"#)
+            #expect(DependencyVersion.state(forPackageAt: sketch) == .unreadable, "\(state)")
+            #expect(DependencyVersion.pin(forPackageAt: sketch) == nil, "\(state)")
+            #expect(DependencyVersion.resolved(forPackageAt: sketch) == nil, "\(state)")
+        }
+    }
+
     /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。
     @Test("まだ解決していないスケッチには、パスで指しているとは言わず、解決の手を言う")
     func doesNotBlameAPathWhenNotResolvedYet() {

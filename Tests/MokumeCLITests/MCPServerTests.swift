@@ -1878,6 +1878,80 @@ struct MCPServerTests {
         try Data(text.utf8).write(to: cache)
     }
 
+    /// `directory` の下にある全部のファイル・ディレクトリの相対パス (`Package.*` は除く)。
+    private func entries(under directory: URL) -> [String] {
+        let walker = FileManager.default.enumerator(atPath: directory.path)
+        return (walker?.allObjects as? [String] ?? []).filter { !$0.hasPrefix("Package.") }.sorted()
+    }
+
+    /// **版・改訂の文字列は、名前に使う前に検める** (#3535)。`/` や `..` が入る `Package.resolved` で、
+    /// 取り置きの名前が `.mokume/reference/` の外や入れ子を指して書き込まない。鍵の無い依存と同じ扱い (共通名)。
+    @Test(
+        "Package.resolved の版が版の形でなければ、取り置きの名前に使わず・取りにも行かず・何も書かない",
+        arguments: ["../../x", "1/../../escaped", "1/2", "", "..", "v1.0.0", "1.0.0 ", "1.0\n0", "1.0.0/"])
+    func refusesAMalformedVersion(version: String) throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("mokume", version.replacingOccurrences(of: "\n", with: "\\n")))
+        let before = entries(under: directory)
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError, "\(outcome.text)")
+        #expect(fetches.urls.isEmpty, "版の形でないものを URL に入れて取りに行った: \(fetches.urls)")
+        #expect(entries(under: directory) == before, "何かを書いた: \(entries(under: directory))")
+        // 壊れた Package.resolved の案内 (版が引けない理由) で、共通名へ置く手を言う
+        #expect(outcome.text.contains("could not be read"), "\(outcome.text)")
+        let shared = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        #expect(outcome.text.contains("OUT=\(GivenPath.shellWord(shared))"), "\(outcome.text)")
+    }
+
+    @Test("版の形でない版でも、共通名に手で置いた一覧は返し、鍵が無いことを添える")
+    func servesTheSharedListForAMalformedVersion() throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("mokume", "1/../../escaped"))
+        try putList("# 手で置いた一覧\n", at: "mokume-api.md", in: directory)
+        let fetches = Fetches()
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(!outcome.isError, "\(outcome.text)")
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.contains("# 手で置いた一覧"))
+        #expect(outcome.text.contains("tied to no version or revision"), "\(outcome.text)")
+    }
+
+    @Test("pin の改訂が 16 進数でなければ、取り置きの名前に使わず何も書かない", arguments: ["../../../x", "/etc", "", "0123/../../escaped"])
+    func refusesAMalformedRevision(revision: String) throws {
+        let directory = try makeSketch()
+        try writeRevisionPin(directory, revision)
+        let before = entries(under: directory)
+        let outcome = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError, "\(outcome.text)")
+        #expect(entries(under: directory) == before, "何かを書いた: \(entries(under: directory))")
+        #expect(outcome.text.contains("could not be read"), "\(outcome.text)")
+    }
+
+    /// 検めが版を弾きすぎない — 版の形 (先行版・ビルドの印) は鍵になり、取り置きの名前にそのまま入る。
+    @Test("先行版・ビルドの印のある版は、版として取り置く")
+    func keepsVersionsWithPrereleaseAndBuildMarks() throws {
+        for version in ["1.0.0-beta.1", "0.5.0+build5", "2.1.0-rc.2+sha.abc"] {
+            let directory = try makeSketch()
+            try writeResolved(directory, pins: pin("mokume", version))
+            let fetches = Fetches()
+            let outcome = makeTools(directory: directory, fetches: fetches)
+                .call("reference", arguments: ["name": "api"])
+            #expect(!outcome.isError, "\(version): \(outcome.text)")
+            #expect(fetches.urls.count == 1, "\(version)")
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-v\(version).md").path),
+                "\(version): \(entries(under: directory))")
+        }
+    }
+
     /// **改訂を上げても、前の改訂の一覧が返らない** (#3478)。取り置きの名前が改訂に追随する。
     @Test("改訂 A の一覧を置いた後で pin が改訂 B になれば、A の一覧は返らず、B の名前へ置く手を案内する")
     func doesNotServeTheListOfAnotherRevision() throws {
