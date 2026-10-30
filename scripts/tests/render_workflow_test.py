@@ -76,6 +76,7 @@ DEBUG_RUNNER_JOBS = ("render", "render-pr", "scheduled-debug")
 TURN_JOBS = ("render-turn", "scheduled-release-turn", "scheduled-drift-turn")
 TURN_SCRIPT = REPO / "scripts" / "render-turn.sh"
 RULESET = REPO / ".github" / "rulesets" / "main-protection.json"
+RULESET_DEGRADED = REPO / ".github" / "rulesets-degraded" / "main-protection.json"
 # 例の絵の前後の比較 (#2706)。定期の専用機のジョブの 3 本目で、release の後ろに 1 本ずつ積む。
 # 落ちた・切れた回は debug・release と同じく scheduled-report が起票する (起点は success の回から
 # 引くので、起票しなければ区間が伸びるだけで誰にも届かない)
@@ -472,10 +473,22 @@ class RenderWorkflowTest(unittest.TestCase):
         # merge_group は期限より手前で自分から通す。期限を越えて待てば、自分の render が
         # 走る前に弾かれる
         self.assertLess(limits["merge_group"], deadline)
+        # 門番の timeout は期限より外 (render.yml「queue の期限より外に置く」)。縮退の ruleset も
+        # 同じ期限を持つので両方と比べる (縮退の期限だけが先に伸びても timeout が内側に入らない)
+        turn_timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)", self.jobs["render-turn"]).group(1))
+        for ruleset in (RULESET, RULESET_DEGRADED):
+            ruleset_deadline = int(
+                re.search(r'"check_response_timeout_minutes":\s*(\d+)', ruleset.read_text(encoding="utf-8")).group(1)
+            )
+            self.assertGreater(turn_timeout, ruleset_deadline, ruleset.parent.name)
         for name in TURN_JOBS:
             timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)", self.jobs[name]).group(1))
+            # 門番ごとに、その job が呼ぶ mode の上限と比べる。merge_group の上限 (期限の手前) を
+            # 伸ばしても、wait だけを待つ定期の門番の timeout を巻き込まない (#3502)
+            called = set(re.findall(r"render-turn\.sh (merge_group|yield|wait)\b", self.jobs[name]))
+            self.assertTrue(called, name)
             # 上限は門番が自分で守る。timeout に任せると GitHub の cancel の扱いになる
-            self.assertGreater(timeout, max(limits.values()), name)
+            self.assertGreater(timeout, max(limits[m] for m in called), name)
 
 
 class SplitterTest(unittest.TestCase):

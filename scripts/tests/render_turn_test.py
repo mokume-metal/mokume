@@ -220,9 +220,9 @@ class RenderTurnTest(unittest.TestCase):
         self.assertIn("::warning::", r.stdout)
         self.assertIn(PREV, self.summary.read_text(encoding="utf-8"))
 
-    def test_merge_group_の上限は期限の直前の_55_分(self):
+    def test_merge_group_の上限は期限の直前の_90_分(self):
         text = TURN.read_text(encoding="utf-8")
-        self.assertIn("mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=55", text)
+        self.assertIn("mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=90", text)
 
     def test_先頭でないのに前の_run_が無ければ作られるまで待つ(self):
         self.answer("prev", 2, [run_of(11, PREV, "in_progress")])

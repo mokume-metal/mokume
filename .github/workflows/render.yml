@@ -88,7 +88,7 @@ name: Render
 #
 # **専用機へ積む順番は、GitHub ホストの門番 (render-turn) が決める** (#2062)。専用機は
 # 1 台で、runner は queued の job を先着順に拾わない — queue の先頭の render が、後から
-# 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (60 分) で弾かれた。
+# 積まれた render-pr や後ろの group の render に抜かれ続け、期限 (当時の 60 分・2026-10-04 の実測。いまは 95 分) で弾かれた。
 # 拾う順は変えられないので、積む job を絞る。判断は scripts/render-turn.sh が持つ:
 #   - render (merge_group) — 前の group のうち終わっていないものが runner の数 (リポジトリの
 #     変数 RENDER_TURN_SLOTS・既定 1) 未満になるまで積まない。既定では 1 つ前の group の run が
@@ -127,7 +127,9 @@ defaults:
 jobs:
   # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
   # render-turn.sh が持つ (merge_group は前の group が終わるまで・schedule は 60 分)。
-  # timeout は最後の歯止めで、queue の期限 (60 分) より外に置く
+  # timeout は最後の歯止めで、queue の期限 (95 分・main-protection.json) と merge_group の
+  # 上限 (90 分) より外に置く。定期の門番 (下の scheduled-*-turn) は wait の 60 分だけを
+  # 待つので 65 分のまま (queue の期限に結び付いていない)
   render-turn:
     if: >-
       github.event_name == 'merge_group'
@@ -136,7 +138,7 @@ jobs:
           && github.event.pull_request.head.repo.full_name == github.repository
           && !github.event.pull_request.draft)
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 100
     permissions:
       contents: read # checkout
       actions: read # merge queue の render の run を読む
