@@ -18,14 +18,15 @@ import simd
 ///
 /// ## 見る図形と許容 (``CoverageTable``)
 ///
-/// 軸に沿う rect (縁は線形の渡し = 写した面積・1/255)・回した rect (直線の斜めの縁・0.012)・円 (曲線の縁・0.02)
-/// の塗り。許容は既存の検査の根拠のままで、**生成した置き方で越えたら許容を広げず Bug として起票する**。
+/// 軸に沿う rect (縁は線形の渡し = 写した面積・1/255)・回した rect (直線の斜めの縁・0.012)・円 (曲線の縁・0.02 から、半径が小さいと k / R まで広がる)
+/// の塗り。許容は既存の検査の根拠のまま (円だけ半径の関数)。**生成した置き方で越えたら許容を広げず Bug として起票する**。
 /// 約束は経路で違い、ここで比べるのは距離関数の経路の「面積」だけである。三角形の経路 (立体・任意形状) の縁は
 /// AA なしで、約束は 50% の白黒と重心まで (ADR-0039 決定 1・3)。表が拒む組は比べない。
 ///
-/// 円の半径は 7 以上を生成する。曲線の縁は距離を直線とみなして数えるので面積より明るく出て、差は半径に
-/// 反比例する (実測の最大: 半径 3 で 0.037・5 で 0.023・8 で 0.017・29 で 0.007)。**許容を広げずに、
-/// 0.02 に収まる半径から探す** — 半径 7 未満の約束 (許容の置き方) は #3493 で決める。
+/// 円の半径は 3 以上を生成する。曲線の縁は接線の半平面で数えるので面積より明るく出て、差は描く画素での
+/// 曲率半径 R に反比例し約 k / R になる (``CoverageTable/curvatureConstant``・#3493。半径 3 で最大 0.037)。**許容は
+/// 半径の関数** (`max(0.02, k / R + 丸めの余裕)`) で、半径 7 以上は 0.02 のまま緩めない。比べる量は本体の両端の
+/// 遊びで写した面積である。半径 3 未満は約束の外に置く。
 ///
 /// ## 見ない画素
 ///
@@ -73,8 +74,10 @@ struct FillCoverageTests {
 
     /// 全画素を参照と比べ、最初に許容を越えた画素 (最悪) を名乗る。`skipping` が真の画素は見ない。
     private static func compare(
-        _ pixels: PixelBuffer, with reference: [Double], row: CoverageTable.Row, skipping: (Int, Int) -> Bool
+        _ pixels: PixelBuffer, with reference: [Double], row: CoverageTable.Row,
+        tolerance: Double? = nil, skipping: (Int, Int) -> Bool
     ) -> Probe.Outcome {
+        let tolerance = tolerance ?? row.tolerance
         var worst = 0.0
         var at = ""
         for y in 0..<pixels.height {
@@ -88,8 +91,8 @@ struct FillCoverageTests {
                 }
             }
         }
-        return worst <= row.tolerance
-            ? .pass : .fail("\(row.shape.rawValue) \(at) (差 \(Self.short(worst))・許容 \(Self.short(row.tolerance)))")
+        return worst <= tolerance
+            ? .pass : .fail("\(row.shape.rawValue) \(at) (差 \(Self.short(worst))・許容 \(Self.short(tolerance)))")
     }
 
     // MARK: - 軸に沿う rect
@@ -175,25 +178,29 @@ struct FillCoverageTests {
     static let circleAxes: [ProbeAxis] = [
         ProbeAxis("cx", 36..<92, simplest: 64),
         ProbeAxis("cy", 36..<92, simplest: 64),
-        // 半径 7 以上だけ生成する。曲線の縁は距離を直線とみなして数えるので面積より明るく出て、差は半径に
-        // 反比例する (最大 0.037 @ 半径 3・0.023 @ 5・0.017 @ 8)。0.02 に収まるのは半径 7 以上で、許容は広げない。
-        // 半径 7 未満は #3493 (縁が面積より最大 0.037 明るい) で約束を決める
-        ProbeAxis("radius", 7..<30, simplest: 12),
+        // 半径 3 から生成する。曲線の縁は接線の半平面で数えるので面積より明るく出て、差は描く画素での曲率半径 R に
+        // 反比例し約 k / R (``CoverageTable/curvatureConstant``・#3493)。許容は半径の関数で、半径 7 以上は 0.02 のまま。
+        // 3 未満は 1 画素の細い枝との境目に近く、約束の外に置く
+        ProbeAxis("radius", 3..<30, simplest: 12),
     ]
 
-    @Test("円の塗りは、位置の小数・半径によらず、縁の画素が参照と 0.02 以内で一致する")
+    @Test("円の塗りは、位置の小数・半径によらず、縁の画素が参照と 半径の関数の許容 (0.02 から k / R + 余裕) 以内で一致する")
     func circleMatchesTheReference() throws {
-        let row = try CoverageTable.row(.circle, on: .distanceField, comparing: .area)
+        let row = try CoverageTable.row(.circle, on: .distanceField, comparing: .snappedArea)
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
         let report = try Probe.run(
             "coverage", suite: "FillCoverageTests", key: "circle", axes: Self.circleAxes, cases: Self.circleCases
         ) { input in
             let (cx, cy, r) = (input.float("cx"), input.float("cy"), input.float("radius"))
             let pixels = try Self.draw(canvas) { canvas.circle(cx, cy, 2 * r) }
+            // 本体の両端の遊び (`kFormSnap`) で写した値を比べる
             let reference = CoverageReference.circleCoverage(
-                center: SIMD2(Double(cx), Double(cy)), radius: Double(r), width: Self.size, height: Self.size)
+                center: SIMD2(Double(cx), Double(cy)), radius: Double(r), width: Self.size, height: Self.size
+            ).map(CoverageReference.snapped)
             // 円には角が無い
-            return Self.compare(pixels, with: reference, row: row) { _, _ in false }
+            return Self.compare(
+                pixels, with: reference, row: row, tolerance: row.tolerance(atRadius: Double(r))
+            ) { _, _ in false }
         }
         #expect(report.failure == nil, "\(report.failure ?? "")")
         #expect(report.skipped == 0, "約束の外は無いはず: \(report.skipped) 件")

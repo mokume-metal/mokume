@@ -132,14 +132,113 @@ struct CoverageReferenceTests {
         }
     }
 
-    @Test("距離関数の経路の塗りの 3 図形は、面積で比べる行があり、許容は 1/255・0.012・0.02")
+    @Test("距離関数の経路の塗りの 3 図形は、面積で比べる行があり、許容 (円は半径の大きいときの下限) は 1/255・0.012・0.02")
     func tableHasTheFillRows() throws {
         let tolerances = try CoverageTable.Shape.allCases.map {
             try CoverageTable.row(
-                $0, on: .distanceField, comparing: $0 == .axisAlignedRect ? .snappedArea : .area
+                $0, on: .distanceField, comparing: $0 == .rotatedRect ? .area : .snappedArea
             ).tolerance
         }
         #expect(tolerances == [1.0 / 255, 0.012, 0.02])
+    }
+
+    // MARK: - 曲線の縁の上限 (#3493)
+
+    /// 本体の式の写しと真の面積を、半径 3〜30・画素と縁の相対位置の格子で比べた最大。画素と円の相対位置は、
+    /// 縁までの距離 δ (画素の中心から見た円周の符号つき距離・画素の対角の半分の内) と、画素の軸に対する法線の向き θ
+    /// (0〜45°・残りは対称) の 2 つで決まるので、乱数でなく格子で数える。
+    private static let radii: [Double] = [3, 3.5, 4, 5, 6, 7, 8, 10, 12, 16, 20, 29]
+    private static let normals: [Double] = (0...6).map { Double($0) * .pi / 4 / 6 }
+    private static let offsets: [Double] = (-12...12).map { Double($0) / 16 }
+
+    /// 画素 (100, 100) の中心から、向き θ へ距離 `radius + offset` だけ離れた所に円の中心を置く。
+    private static func circle(radius: Double, offset: Double, angle: Double) -> SIMD2<Double> {
+        SIMD2(100.5, 100.5) - SIMD2(cos(angle), sin(angle)) * (radius + offset)
+    }
+
+    @Test("曲線の縁 (円) の本体の式の写しは真の面積を下回らず、差 × R の最大は k の内で、k は 1.15 倍以内に収まる")
+    func curvedEdgeModelStaysInsideTheConstant() {
+        var largest = 0.0, smallest = 0.0, atLargest = ""
+        for radius in Self.radii {
+            for angle in Self.normals {
+                for offset in Self.offsets {
+                    let center = Self.circle(radius: radius, offset: offset, angle: angle)
+                    let model = CoverageReference.circleModelCoverage(
+                        center: center, radius: radius, pixel: 100, 100)
+                    let exact = CoverageReference.snapped(
+                        CoverageReference.circleArea(center: center, radius: radius, pixel: 100, 100))
+                    let scaled = (model - exact) * radius
+                    smallest = min(smallest, scaled)
+                    if scaled > largest {
+                        largest = scaled
+                        atLargest = "R=\(radius) δ=\(offset) θ=\(angle)"
+                    }
+                }
+            }
+        }
+        let k = CoverageTable.curvatureConstant
+        #expect(largest <= k, "差 × R の最大 \(largest) が k = \(k) を越える (\(atLargest))")
+        #expect(k <= largest * 1.15, "k = \(k) が模型の最大 \(largest) より緩すぎる (\(atLargest))")
+        // 凸の縁は面積より暗くならない (写しの丸めは 1e-5 の内)
+        #expect(smallest > -1e-4, "凸の縁が面積より暗い: \(smallest)")
+    }
+
+    @Test("凹の縁 (帯の内縁) は同じ大きさで暗く出て、差 × R は −k の内")
+    func concaveEdgeIsDarkerByTheSameBound() {
+        var darkest = 0.0, brightest = 0.0
+        for radius in Self.radii {
+            for angle in Self.normals {
+                for offset in Self.offsets {
+                    let center = Self.circle(radius: radius, offset: offset, angle: angle)
+                    // 形の内は円板の外: 真の面積は 1 − 円板の被覆
+                    let exact = CoverageReference.snapped(
+                        1 - CoverageReference.circleArea(center: center, radius: radius, pixel: 100, 100))
+                    let model = CoverageReference.circleHoleModelCoverage(
+                        center: center, radius: radius, pixel: 100, 100)
+                    let scaled = (model - exact) * radius
+                    darkest = min(darkest, scaled)
+                    brightest = max(brightest, scaled)
+                }
+            }
+        }
+        #expect(darkest < -0.1, "凹の縁が暗く出ていない: \(darkest)")
+        #expect(darkest >= -CoverageTable.curvatureConstant, "凹の縁の差 × R \(darkest) が −k の外")
+        #expect(brightest < 1e-4, "凹の縁が面積より明るい: \(brightest)")
+    }
+
+    @Test("円の行の許容は max(0.02, k / R + 余裕)。半径 7 以上は 0.02 のままで、小さいほど広い。許容は模型の差を余裕つきで覆う")
+    func circleToleranceIsAFunctionOfTheRadius() throws {
+        let row = try CoverageTable.row(.circle, on: .distanceField, comparing: .snappedArea)
+        for radius in stride(from: 7.0, to: 30.0, by: 0.5) {
+            #expect(row.tolerance(atRadius: radius) == 0.02, "半径 \(radius) の許容が 0.02 でない")
+        }
+        let k = CoverageTable.curvatureConstant
+        #expect(abs(row.tolerance(atRadius: 3) - (k / 3 + CoverageTable.rounding)) < 1e-12)
+        #expect(row.tolerance(atRadius: 3) > 0.04 && row.tolerance(atRadius: 3) < 0.05)
+        var previous = Double.infinity
+        for radius in stride(from: 3.0, to: 30.0, by: 0.25) {
+            let tolerance = row.tolerance(atRadius: radius)
+            #expect(tolerance <= previous, "半径が大きくなって許容が広がった: \(radius)")
+            previous = tolerance
+        }
+        // 模型の差に、丸めの余裕が残る
+        for radius in Self.radii {
+            for angle in Self.normals {
+                for offset in Self.offsets {
+                    let center = Self.circle(radius: radius, offset: offset, angle: angle)
+                    let model = CoverageReference.circleModelCoverage(
+                        center: center, radius: radius, pixel: 100, 100)
+                    let exact = CoverageReference.snapped(
+                        CoverageReference.circleArea(center: center, radius: radius, pixel: 100, 100))
+                    #expect(
+                        model - exact <= row.tolerance(atRadius: radius) - CoverageTable.rounding + 1e-9,
+                        "R=\(radius) δ=\(offset) θ=\(angle)")
+                }
+            }
+        }
+        // 曲線の行でない行は、半径によらず一定
+        let rect = try CoverageTable.row(.rotatedRect, on: .distanceField, comparing: .area)
+        #expect(rect.tolerance(atRadius: 3) == rect.tolerance)
     }
 
     @Test("表に行が無い組 (参照を持たない比べ方) は、経路が約束していても比べない")
