@@ -155,6 +155,21 @@ struct WatchSessionModelTests {
         #expect(report.skipped == 0 && report.ran >= 1, "走った列 \(report.ran) 件・約束の外 \(report.skipped) 件")
     }
 
+    /// 生成が見つけて直した列 (#3481)。**生成する検査の seed に頼らず、決定的に回す。** 起こせなかった保存が
+    /// 走っている世代の役を動かさない約束 (事後条件 3・4) を、3 つの形で見る。
+    @Test(
+        "起こせなかった保存の後の合図・保存は、事後条件 3・4 を破らない (#3481 の 3 列)",
+        arguments: [
+            [Op.save, .saveLaunchFail, .promoteWaiting],
+            [.save, .promoteWaiting, .saveLaunchFail, .promoteStale],
+            [.save, .promoteWaiting, .saveLaunchFail, .save],
+        ])
+    @MainActor
+    func refusedLaunchColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
     nonisolated final class Outcome: @unchecked Sendable {
         var value: Probe.Outcome = .pass
