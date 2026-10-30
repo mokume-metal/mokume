@@ -208,8 +208,11 @@ def failures(path):
     try:
         if os.path.getsize(path) == 0:
             return "missing"
-    except OSError:
+    except FileNotFoundError:
         return "missing"
+    except OSError:
+        # 在るが調べられない (親の権限など) — 「無い」と言わない (#3527)
+        return "unreadable"
     try:
         cases = list(ET.parse(path).getroot().iter("testcase"))
     except (OSError, ET.ParseError):
@@ -253,8 +256,13 @@ def failure_messages(path, shots_artifact="ledger-shots"):
             return "記録が無い (`%s`)" % path
         with open(path, encoding="utf-8") as f:
             raw = f.read()
-    except (OSError, UnicodeDecodeError):
+    except FileNotFoundError:
         return "記録が無い (`%s`)" % path
+    except (OSError, UnicodeDecodeError):
+        # 在る記録が読めない。権限なし・ディレクトリ・I/O エラー、UTF-8 として読めない記録 (多バイト
+        # 文字の途中で切れた回など) はどれも「無い」ではない (#3527)。ASCII の途中で切れた記録の
+        # `ET.ParseError` と同じ名乗りにする — 切れた位置でも、読めない理由でも分けない
+        return "記録を読めなかった (`%s`)" % path
     try:
         root = ET.fromstring(keep_attribute_newlines(raw).encode("utf-8"))
         cases = list(root.iter("testcase"))
@@ -354,8 +362,11 @@ def slow(path, threshold=SLOW_SECONDS):
         if os.path.getsize(path) == 0:
             return cannot("記録が無い")
         cases = list(ET.parse(path).getroot().iter("testcase"))
-    except OSError:
+    except FileNotFoundError:
         return cannot("記録が無い")
+    except OSError:
+        # 在るが開けない (権限なし・ディレクトリ・I/O エラー) — 「無い」と言わない (#3527)
+        return cannot("記録を読めなかった")
     except ET.ParseError:
         return cannot("記録が壊れている — 途中で切れているか、閉じていない")
     if not cases:
