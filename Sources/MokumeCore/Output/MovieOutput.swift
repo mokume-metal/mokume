@@ -19,8 +19,15 @@ nonisolated protocol MovieOutput: AnyObject {
     func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure)
     /// 書き終える。**ファイルが閉じてから返る。** `lastFrameAt` は最後のフレームの時刻。
     func finish(lastFrameAt time: Double) async throws(MovieWriteFailure)
+    /// 書き損じた録りを捨てる ([#3426])。**書いている最中のファイルを取り消し、一時ファイルを消す。行き先に前からあった
+    /// ファイルには触れない。** ``finish(lastFrameAt:)`` の代わりに呼び、呼んだ後は何も書かない。
+    ///
+    /// [#3426]: https://github.com/mokume-metal/mokume/issues/3426
+    func abandon()
 }
 
 extension MovieOutput {
     func appendSound(_ window: SoundWindow) async throws(MovieWriteFailure) {}
+    /// 書き手が取り消す物を持たないとき (検査の替え玉) は何もしない。
+    nonisolated func abandon() {}
 }

@@ -57,7 +57,12 @@ nonisolated final class GIFFile: MovieOutput {
         return (usable.last { $0 < frameRate }, usable.first { $0 > frameRate })
     }
 
+    /// 書き出し先 (名乗る名前)。``placement`` があれば、閉じ終えるまでここにあるものには触れない (#3426)。
     private let path: String
+    /// 行き先の隣の一時ファイルへ書き、書き損じなく閉じ終えたときだけ ``path`` へ置く段取り。`nil` なら直に書く。
+    private let placement: AtomicFile.Placement?
+    /// バイトを書く場所 (``placement`` があれば一時ファイル)。
+    private let writtenPath: String
     private let handle: FileHandle
     private let delay: Int
     private var added = 0
@@ -65,7 +70,8 @@ nonisolated final class GIFFile: MovieOutput {
     private var height = 0
 
     /// - Parameter frameRate: 1 秒あたりの枚数。**``delay(frameRate:)`` が割り切れる値だけ**を渡す。
-    init(path: String, frameRate: Int) throws(MovieWriteFailure) {
+    /// - Parameter placement: 隣の一時ファイルへ書いて、閉じ終えたときだけ ``path`` へ置く段取り (#3426)。
+    init(path: String, frameRate: Int, placement: AtomicFile.Placement? = nil) throws(MovieWriteFailure) {
         // **書き出し先がディレクトリなら、消さずに断る** (``MovieFile`` と同じ・#2859)
         if AtomicFile.isDirectory(URL(fileURLWithPath: path), following: false) {
             throw .writeFailed(path: path, reason: Diagnostics.posixReason(EISDIR))
@@ -79,12 +85,18 @@ nonisolated final class GIFFile: MovieOutput {
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // 同じ名前が残っていると、撮り直しは上書きになるのが自然である
-        try? FileManager.default.removeItem(at: url)
-        guard FileManager.default.createFile(atPath: path, contents: nil),
-            let handle = FileHandle(forWritingAtPath: path)
-        else { throw .destinationUnavailable(path: path) }
+        // 書く場所に同じ名前が残っていると、作り直す。**消すのは書く場所だけ**で、一時ファイルを使うときは
+        // 行き先の前のファイルは閉じ終えるまで残る (#3426)。使わない形では書く場所が行き先なので、撮り直しは上書きになる
+        let writtenPath = placement?.temporary.path ?? path
+        try? FileManager.default.removeItem(atPath: writtenPath)
+        // **作るのと開くのを 1 回の `open(2)` で済ませる** (#3426)。`createFile` の後に `FileHandle` が開けないと、
+        // 作った空のファイル (一時ファイル) を残して投げることになる。権限は `createFile` と同じ (0666 から umask を引く)
+        let descriptor = open(writtenPath, O_WRONLY | O_CREAT | O_TRUNC, 0o666)
+        guard descriptor >= 0 else { throw .destinationUnavailable(path: path) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.path = path
+        self.placement = placement
+        self.writtenPath = writtenPath
         self.handle = handle
         self.delay = delay
     }
@@ -127,15 +139,31 @@ nonisolated final class GIFFile: MovieOutput {
         guard added > 0 else {
             // 1 枚も受け取っていない。中身の無いファイルを残さない
             try? handle.close()
-            try? FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: writtenPath)
             throw .writeFailed(path: path, reason: "not a single frame was recorded")
         }
         do {
             try handle.write(contentsOf: GIFBlocks.trailer)
             try handle.close()
         } catch {
+            // 閉じ切れなかった書きかけは捨てる。行き先の前のファイルはそのまま (#3426)
+            try? FileManager.default.removeItem(atPath: writtenPath)
             throw .writeFailed(path: path, reason: Diagnostics.failureText(error))
         }
+        // **閉じ終えたら、1 回の置き換えで行き先に置く** (#3426)。置けなかったら一時ファイルは `Placement` が消す
+        if let placement {
+            do {
+                try placement.placeWritten()
+            } catch {
+                throw .writeFailed(path: path, reason: Diagnostics.failureText(error))
+            }
+        }
+    }
+
+    /// 書き損じた録りを捨てる。**一時ファイルを消す。行き先には触れない** (#3426)。
+    func abandon() {
+        try? handle.close()
+        try? FileManager.default.removeItem(atPath: writtenPath)
     }
 
     /// ImageIO に、1 枚だけの GIF を作らせる。

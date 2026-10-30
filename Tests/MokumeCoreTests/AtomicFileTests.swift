@@ -440,6 +440,38 @@ struct AtomicFileTests {
         }
     }
 
+    /// 行き先の名前は 255 まで作れる。一時ファイルの名前は行き先より長いので、詰めないと 243〜255 の名前は
+    /// 一時ファイルを作る段で `File name too long` になる ([#3426])。
+    ///
+    /// [#3426]: https://github.com/mokume-metal/mokume/issues/3426
+    @Test("一時ファイルの名前は、255 まで作れる行き先の名前でも 255 に収まり、片付けが同じ形で読める")
+    func temporaryNamesFitForTheLongestDestinationNames() throws {
+        let facet = try makeFacet()
+        defer { try? FileManager.default.removeItem(at: facet) }
+        let gone = try goneWriter()
+        for length in [200, 215, 216, 243, 250, 255] {
+            let name = String(repeating: "a", count: length - 4) + ".mov"
+            let url = facet.appendingPathComponent(name)
+            let temporary = AtomicFile.temporaryURL(for: url, writer: 2_147_483_647, sequence: Int.max)
+            let temporaryName = temporary.lastPathComponent
+            #expect(FileNameLength.of(temporaryName) ?? .max <= FileNameLength.limit, "\(length): \(temporaryName.count)")
+            // 実際に作れる (File name too long にならない)
+            #expect(FileManager.default.createFile(atPath: temporary.path, contents: Data("x".utf8)), "\(length)")
+            try? FileManager.default.removeItem(at: temporary)
+            // 書いた側と読む側が同じ頭を引く
+            #expect(AtomicFile.writer(ofTemporary: temporaryName, for: url) == 2_147_483_647, "\(length)")
+            // 落とされた書き手の分は、同じ名前を置くときに片付く
+            let stale = AtomicFile.temporaryURL(for: url, writer: gone, sequence: 1)
+            try Data("half".utf8).write(to: stale)
+            _ = try AtomicFile.reserve(url)
+            AtomicFile.settleSweeps()
+            #expect(!FileManager.default.fileExists(atPath: stale.path), "\(length): 落ちた書き手の一時ファイルが片付かない")
+        }
+        // 収まる名前は、今までどおり名前をそのまま入れる
+        let short = facet.appendingPathComponent("report.json")
+        #expect(AtomicFile.temporaryURL(for: short, writer: 4242, sequence: 1).lastPathComponent == ".report.json.4242-1.tmp")
+    }
+
     // ---------------------------------------------------------- 書く先がディレクトリ (#2859)
 
     /// 中身のあるディレクトリ `<facet>/full.json/inner.txt` を作って返す。

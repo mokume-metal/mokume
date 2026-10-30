@@ -182,7 +182,7 @@ struct ArgumentsTests {
     /// **知らない選択肢の文面だけは、どの口でも同じ。** 畳んだ先が持つ唯一の文である。
     @Test("知らない選択肢は、3 つの口で同じ言い方と使い方を出す")
     func unknownOptionsReadTheSameEverywhere() {
-        let expected = "Unknown option: --fast\n\n" + Command.usage()
+        let expected = "Unknown option: --fast"
         #expect(usageMessage { _ = try Invocation.parse(["--fast"]) } == expected)
         #expect(usageMessage { _ = try NewCommand.parse(["--fast"]) } == expected)
         #expect(usageMessage { _ = try BundleCommand.parse(["--fast"]) } == expected)
@@ -209,13 +209,12 @@ struct ArgumentsTests {
         #expect(usageMessage { _ = try NewCommand.parse(["a", "b"]) } == "Only one name: b")
     }
 
-    /// **`--out` だけが使い方を連れてくる。** 揃っていないのは畳む前からで、揃えるのは
-    /// 振る舞いを変えることなので、この PR ではしない (#854 の「1 文字も変えない」)。
+    /// 全体の使い方は付けない (#3425)。誤りの後ろの 1 行は ``Command/dispatch(_:)`` が足す。
     @Test("束ねる口の文面")
     func theBundleVerbKeepsItsWording() {
         #expect(
             usageMessage { _ = try BundleCommand.parse(["--out"]) }
-                == "--out needs a directory\n\n" + Command.usage())
+                == "--out needs a directory")
         #expect(usageMessage { _ = try BundleCommand.parse(["a", "b"]) } == "Only one directory: b")
     }
 
@@ -261,7 +260,7 @@ struct ArgumentsTests {
         let expected =
             "\(argument) is not accepted: separate the value from "
             + "\(argument.split(separator: "=", omittingEmptySubsequences: false)[0]) with a space,"
-            + " as in \(advice)\n\n" + Command.usage()
+            + " as in \(advice)"
         #expect(usageMessage { _ = try Invocation.parse([argument]) } == expected)
         #expect(usageMessage { _ = try Invocation.parse([argument, "x"]) } == expected)
     }
@@ -280,12 +279,12 @@ struct ArgumentsTests {
                 _ = try MCPCommand.directories(
                     arguments: ["--configuration=release"], environment: [:],
                     currentDirectory: URL(fileURLWithPath: "/"))
-            }?.hasPrefix("Unknown option: --configuration=release\n") == true)
+            } == "Unknown option: --configuration=release")
     }
 
     @Test("宣言されていない綴りの = 付きは、いまどおり知らない選択肢")
     func undeclaredSpellingWithEqualsStaysUnknown() {
-        let expected = "Unknown option: --nope=1\n\n" + Command.usage()
+        let expected = "Unknown option: --nope=1"
         #expect(usageMessage { _ = try Invocation.parse(["--nope=1"]) } == expected)
         #expect(usageMessage { _ = try NewCommand.parse(["--nope=1"]) } == expected)
         #expect(usageMessage { _ = try BundleCommand.parse(["--nope=1"]) } == expected)

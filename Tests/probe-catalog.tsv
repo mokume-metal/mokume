@@ -18,3 +18,4 @@ ProbeTests	probe	3216
 LoaderProbeTests	parse	3220
 JSONRPCProbeTests	parse	3220
 DatagramSenderFakeTests	network	3231
+WatchSessionModelTests	watch	3218
