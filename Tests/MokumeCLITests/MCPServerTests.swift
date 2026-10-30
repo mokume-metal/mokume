@@ -1878,37 +1878,117 @@ struct MCPServerTests {
         try Data(text.utf8).write(to: cache)
     }
 
+    /// 4 段深いスケッチ。**根から数えれば、`../` を重ねて取り置きの外へ出た書き込みも数に入る** (深くしないと、
+    /// スケッチの親は共有の置き場で、何を書いても数えられない)。
+    private func makeDeepSketch() throws -> (root: URL, sketch: URL) {
+        let root = try makeDirectory()
+        let sketch = root.appendingPathComponent("a/b/c/sketch", isDirectory: true)
+        try FileManager.default.createDirectory(at: sketch, withIntermediateDirectories: true)
+        try "// 中身の無い宣言\n".write(
+            to: sketch.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        return (root, sketch)
+    }
+
     /// `directory` の下にある全部のファイル・ディレクトリの相対パス (`Package.*` は除く)。
     private func entries(under directory: URL) -> [String] {
         let walker = FileManager.default.enumerator(atPath: directory.path)
-        return (walker?.allObjects as? [String] ?? []).filter { !$0.hasPrefix("Package.") }.sorted()
+        return (walker?.allObjects as? [String] ?? [])
+            .filter { !($0 as NSString).lastPathComponent.hasPrefix("Package.") }.sorted()
     }
 
     /// **版・改訂の文字列は、名前に使う前に検める** (#3535)。`/` や `..` が入る `Package.resolved` で、
     /// 取り置きの名前が `.mokume/reference/` の外や入れ子を指して書き込まない。鍵の無い依存と同じ扱い (共通名)。
     @Test(
         "Package.resolved の版が版の形でなければ、取り置きの名前に使わず・取りにも行かず・何も書かない",
-        arguments: ["../../x", "1/../../escaped", "1/2", "", "..", "v1.0.0", "1.0.0 ", "1.0\n0", "1.0.0/"])
+        arguments: [
+            "../../x", "1/../../escaped", "1/../../../../../escaped", "1/2", "", "..", "v1.0.0", "1.0.0 ",
+            "1.0\n0", "1.0.0/",
+        ])
     func refusesAMalformedVersion(version: String) throws {
-        let directory = try makeSketch()
+        let (root, directory) = try makeDeepSketch()
         try writeResolved(directory, pins: pin("mokume", version.replacingOccurrences(of: "\n", with: "\\n")))
-        let before = entries(under: directory)
+        let before = entries(under: root)
         let fetches = Fetches()
         let outcome = makeTools(directory: directory, fetches: fetches)
             .call("reference", arguments: ["name": "api"])
 
         #expect(outcome.isError, "\(outcome.text)")
         #expect(fetches.urls.isEmpty, "版の形でないものを URL に入れて取りに行った: \(fetches.urls)")
-        #expect(entries(under: directory) == before, "何かを書いた: \(entries(under: directory))")
-        // 壊れた Package.resolved の案内 (版が引けない理由) で、共通名へ置く手を言う
-        #expect(outcome.text.contains("could not be read"), "\(outcome.text)")
+        #expect(entries(under: root) == before, "何かを書いた: \(entries(under: root))")
+        // 案内は、弾いた値と受ける形を名乗り (壊れているとも、パスで指しているとも決めつけない)、共通名へ置く手を言う
+        #expect(outcome.text.contains("cannot be used as a name"), "\(outcome.text)")
+        #expect(outcome.text.contains("must start with a digit"), "\(outcome.text)")
+        #expect(!outcome.text.contains("could not be read"), "\(outcome.text)")
+        #expect(outcome.text.contains("has a version `\(DependencyVersion.shown(version))`"), "\(outcome.text)")
         let shared = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
         #expect(outcome.text.contains("OUT=\(GivenPath.shellWord(shared))"), "\(outcome.text)")
     }
 
+    /// 長さの上限 (``DependencyVersion/maximumLength``)。ファイル名は 255 バイトまでで、超える名前は書けずに
+    /// 黙って捨てられる。上限ちょうどは通り、1 つ超えれば弾く。
+    @Test("版が長さの上限を 1 つ超えれば弾き、上限ちょうどなら取り置く")
+    func refusesAVersionPastTheLengthLimit() throws {
+        let limit = DependencyVersion.maximumLength
+        let exact = "1" + String(repeating: "0", count: limit - 1)
+        let (rootExact, exactDirectory) = try makeDeepSketch()
+        try writeResolved(exactDirectory, pins: pin("mokume", exact))
+        let fetches = Fetches()
+        let accepted = makeTools(directory: exactDirectory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+        #expect(!accepted.isError, "\(accepted.text)")
+        #expect(fetches.urls.count == 1)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: exactDirectory.appendingPathComponent(".mokume/reference/mokume-api-v\(exact).md").path),
+            "\(entries(under: rootExact))")
+
+        let (root, directory) = try makeDeepSketch()
+        try writeResolved(directory, pins: pin("mokume", exact + "0"))
+        let before = entries(under: root)
+        let refused = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+        #expect(refused.isError, "\(refused.text)")
+        #expect(entries(under: root) == before)
+        // 長い値は案内に全部は出さず、切る
+        #expect(refused.text.contains("…"), "\(refused.text)")
+        #expect(!refused.text.contains(exact + "0"))
+    }
+
+    /// 名前を作る口に、検めを通っていない状態を直に渡しても、外へ出る名前も URL も作らない (#3535)。
+    @Test("取り置きの名前・資産の URL は、版・改訂の形でない値を直に渡されても作らない")
+    func theNamingMouthsRefuseMalformedValues() throws {
+        let directory = try makeDirectory()
+        let locator = APIListLocator(directory: directory, fetch: { _ in Data() })
+        let facet = locator.facet.standardizedFileURL.path
+        for text in ["../../x", "1/../../escaped", "", "1/2", "v1", String(repeating: "1", count: 129)] {
+            let url = locator.cacheURL(for: .version(text)).standardizedFileURL
+            #expect(url.path == "\(facet)/mokume-api.md", "\(text.prefix(20)): \(url.path)")
+            #expect(!APIListLocator.isKeyed(.version(text)))
+            #expect(APIListLocator.assetURL(version: text) == nil, "\(text.prefix(20))")
+        }
+        for text in ["../../x", "/", "", "zz", String(repeating: "a", count: 129)] {
+            let url = locator.cacheURL(for: .revision(text)).standardizedFileURL
+            #expect(url.path == "\(facet)/mokume-api.md", "\(text.prefix(20)): \(url.path)")
+            #expect(!APIListLocator.isKeyed(.revision(text)))
+        }
+        for state in [
+            DependencyVersion.State.malformed(.version("../../x")), .malformed(.revision("../x")),
+        ] {
+            #expect(locator.cacheURL(for: state).standardizedFileURL.path == "\(facet)/mokume-api.md")
+            #expect(!APIListLocator.isKeyed(state))
+        }
+        // 正しい版は、取り置きの名前も URL も今までどおり
+        #expect(
+            locator.cacheURL(for: .version("1.0.0-beta.1")).standardizedFileURL.path
+                == "\(facet)/mokume-api-v1.0.0-beta.1.md")
+        #expect(
+            APIListLocator.assetURL(version: "1.0.0+b5")?.absoluteString.hasSuffix("/v1.0.0+b5/mokume-api-v1.0.0+b5.md")
+                == true)
+    }
+
     @Test("版の形でない版でも、共通名に手で置いた一覧は返し、鍵が無いことを添える")
     func servesTheSharedListForAMalformedVersion() throws {
-        let directory = try makeSketch()
+        let (_, directory) = try makeDeepSketch()
         try writeResolved(directory, pins: pin("mokume", "1/../../escaped"))
         try putList("# 手で置いた一覧\n", at: "mokume-api.md", in: directory)
         let fetches = Fetches()
@@ -1921,17 +2001,29 @@ struct MCPServerTests {
         #expect(outcome.text.contains("tied to no version or revision"), "\(outcome.text)")
     }
 
-    @Test("pin の改訂が 16 進数でなければ、取り置きの名前に使わず何も書かない", arguments: ["../../../x", "/etc", "", "0123/../../escaped"])
+    @Test("pin の改訂が 16 進数でなければ、取り置きの名前に使わず何も書かない", arguments: ["../../../x", "/etc", "", "0123/../../escaped", "0123/../../../../../escaped"])
     func refusesAMalformedRevision(revision: String) throws {
-        let directory = try makeSketch()
+        let (root, directory) = try makeDeepSketch()
         try writeRevisionPin(directory, revision)
-        let before = entries(under: directory)
+        let before = entries(under: root)
         let outcome = makeTools(directory: directory, fetches: Fetches())
             .call("reference", arguments: ["name": "api"])
 
         #expect(outcome.isError, "\(outcome.text)")
-        #expect(entries(under: directory) == before, "何かを書いた: \(entries(under: directory))")
-        #expect(outcome.text.contains("could not be read"), "\(outcome.text)")
+        #expect(entries(under: root) == before, "何かを書いた: \(entries(under: root))")
+        #expect(outcome.text.contains("has a revision `\(DependencyVersion.shown(revision))`"), "\(outcome.text)")
+        #expect(outcome.text.contains("hexadecimal digits only"), "\(outcome.text)")
+        #expect(!outcome.text.contains("could not be read"), "\(outcome.text)")
+    }
+
+    /// 弾いた値は、端末を乱さないよう制御文字を逃がし、長ければ切って出す。
+    @Test("弾いた値の表示は、制御文字を逃がし、長ければ切る")
+    func showsARejectedValueSafely() {
+        #expect(DependencyVersion.shown("../../x") == "../../x")
+        #expect(DependencyVersion.shown("1\u{1b}[31m") == "1\\u{1b}[31m")
+        #expect(DependencyVersion.shown("a\nb") == "a\\u{a}b")
+        #expect(DependencyVersion.shown(String(repeating: "x", count: 41)) == String(repeating: "x", count: 40) + "…")
+        #expect(DependencyVersion.shown(String(repeating: "x", count: 40)) == String(repeating: "x", count: 40))
     }
 
     /// 検めが版を弾きすぎない — 版の形 (先行版・ビルドの印) は鍵になり、取り置きの名前にそのまま入る。

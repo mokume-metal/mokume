@@ -198,20 +198,52 @@ struct DependencyVersionTests {
         #expect(DependencyVersion.isRevision(text) == isRevision)
     }
 
-    /// 形が違う pin は、版へも改訂へも寄せず、壊れた `Package.resolved` として扱う。名前に使う口 (`pin`・`resolved`) は何も返さない。
-    @Test("版・改訂の形でない pin は、壊れているものとして読み、鍵にも版にもならない")
-    func aMalformedPinIsReadAsDamaged() throws {
-        for state in [
-            #"{"version":"../../x"}"#, #"{"version":"1/../../x"}"#, #"{"version":""}"#,
+    /// 形が違う pin は、版へも改訂へも寄せず、**弾いた値を持つ `.malformed`** にする (壊れているとは言い切らない・
+    /// どの値を弾いたかを案内が名乗れる)。名前に使う口 (`pin`・`resolved`) は何も返さない。
+    @Test("版・改訂の形でない pin は、弾いた値を持つ状態として読み、鍵にも版にもならない")
+    func aMalformedPinIsReadWithItsValue() throws {
+        let long = String(repeating: "1", count: DependencyVersion.maximumLength + 1)
+        let cases: [(String, DependencyVersion.Pin)] = [
+            (#"{"version":"../../x"}"#, .version("../../x")), (#"{"version":"1/../../x"}"#, .version("1/../../x")),
+            (#"{"version":""}"#, .version("")), (#"{"version":"\#(long)"}"#, .version(long)),
             // 版で固定した pin は改訂も持つ。版が壊れているなら、改訂へ落とさない
-            #"{"version":"../x","revision":"abcdef0123"}"#, #"{"revision":"../../x"}"#, #"{"branch":"main","revision":""}"#,
-        ] {
+            (#"{"version":"../x","revision":"abcdef0123"}"#, .version("../x")),
+            (#"{"revision":"../../x"}"#, .revision("../../x")), (#"{"branch":"main","revision":""}"#, .revision("")),
+        ]
+        for (state, rejected) in cases {
             let sketch = try makeSketch(
                 resolved: #"{"pins":[{"identity":"mokume","state":\#(state)}],"version":3}"#)
-            #expect(DependencyVersion.state(forPackageAt: sketch) == .unreadable, "\(state)")
+            #expect(DependencyVersion.state(forPackageAt: sketch) == .malformed(rejected), "\(state)")
             #expect(DependencyVersion.pin(forPackageAt: sketch) == nil, "\(state)")
             #expect(DependencyVersion.resolved(forPackageAt: sketch) == nil, "\(state)")
         }
+    }
+
+    /// 長さの境界: 上限ちょうどは版 (数字だけ)、1 つ超えれば弾く。改訂も同じ。
+    @Test("版・改訂は長さの上限ちょうどまで通り、1 つ超えれば弾く")
+    func lengthLimitBoundary() {
+        let limit = DependencyVersion.maximumLength
+        #expect(DependencyVersion.isVersion(String(repeating: "1", count: limit)))
+        #expect(!DependencyVersion.isVersion(String(repeating: "1", count: limit + 1)))
+        #expect(DependencyVersion.isRevision(String(repeating: "a", count: limit)))
+        #expect(!DependencyVersion.isRevision(String(repeating: "a", count: limit + 1)))
+    }
+
+    /// 案内の文面。**弾いた値と受ける形を名乗り**、読めないとも、パスで指しているとも言わない。
+    @Test("doctor の行は、弾いた値と受ける形を名乗り、読めないとは言わない")
+    func doctorNamesTheRejectedValue() {
+        let version = DoctorCommand.dependencyLine(nil, state: .malformed(.version("../../x")))
+        #expect(version.contains("has a version `../../x`"), "\(version)")
+        #expect(version.contains("must start with a digit"), "\(version)")
+        #expect(!version.contains("could not be read"), "\(version)")
+        #expect(!version.contains("pointing at a path"), "\(version)")
+        let revision = DoctorCommand.dependencyLine(nil, state: .malformed(.revision("zz")))
+        #expect(revision.contains("has a revision `zz`") && revision.contains("hexadecimal"), "\(revision)")
+        // 長い値・制御文字は逃がして切る
+        let long = DoctorCommand.dependencyLine(
+            nil, state: .malformed(.version("\u{1b}[31m" + String(repeating: "x", count: 200))))
+        #expect(!long.contains("\u{1b}"), "端末を乱す文字が出た")
+        #expect(long.count < 400, "\(long.count)")
     }
 
     /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。

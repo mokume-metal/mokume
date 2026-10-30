@@ -551,6 +551,10 @@ enum DoctorCommand {
             case .unreadable:
                 return prefix + "Package.resolved could not be read (damaged, or a form this tool "
                     + "does not know), so whether it pins \(DependencyVersion.identity) is unknown"
+            case .malformed(let pin):
+                return prefix + "the pin for \(DependencyVersion.identity) in Package.resolved has a "
+                    + "\(DependencyVersion.describe(pin)), which cannot be used "
+                    + "(\(DependencyVersion.rule(for: pin)); fix it, or remove Package.resolved and build again)"
             case .revision(let revision):
                 return prefix + "pinned to a branch or revision (\(revision.prefix(12))), "
                     + "not to a release"
