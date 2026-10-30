@@ -257,15 +257,18 @@ struct APIListLocator {
                   \(Self.buildCommand(cache: cache, version: segment))\(sharedNote)
                 """
         case .malformed(let pin):
-            // **弾いた値と、どんな形なら受けるかを名乗る。** 壊れているとも、パスで指しているとも決めつけない
+            // **どんな形なら受けるかだけを名乗り、弾いた値は出さない。** この答えは LLM のクライアントが読み、
+            // `Package.resolved` は第三者のリポジトリから来うる。値は人が端末で読む `doctor` が見せる。
+            // 壊れているとも、パスで指しているとも決めつけない
             return """
                 The public API list is not available here.
 
-                \(head): the pin for `\(Self.identity)` in `Package.resolved` has a \(DependencyVersion.describe(pin)),
-                which cannot be used as a name (\(DependencyVersion.rule(for: pin))).
-                SwiftPM itself rejects such a file as malformed, and does not write it again. Fix
-                the pin by hand, or remove `Package.resolved` and build the sketch (it writes the
-                file again), then ask again:
+                \(head): the pin for `\(Self.identity)` in `Package.resolved` is not in a form this tool can use
+                as a name (\(DependencyVersion.rule(for: pin))). The value is shown by
+                `\(Command.name) doctor \(GivenPath.shellWord(directory))`. Fix that pin line (by hand, or write it again
+                with `swift package update \(Self.identity)`), then ask again. Removing `Package.resolved` and
+                building also works, but it drops the pins of the other dependencies too, so they may
+                move to other versions:
 
                   \(run)
 

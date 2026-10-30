@@ -164,6 +164,11 @@ enum RunCommand {
             shareability = BuildDirectory.shareability(
                 package: declared, pin: pin, toolchain: toolchain)
         }
+        // 固定が引けないままなら、読めないのか、読めたが弾いたのかを分けて名乗る (解決を走らせる手は変えない)
+        if shareability == .unshared(.unresolved) {
+            shareability = .unshared(
+                BuildDirectory.fallbackWithoutPin(state: DependencyVersion.state(forPackageAt: directory)))
+        }
 
         let place: BuildDirectory.Place
         switch shareability {

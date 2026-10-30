@@ -219,31 +219,97 @@ struct DependencyVersionTests {
         }
     }
 
-    /// 長さの境界: 上限ちょうどは版 (数字だけ)、1 つ超えれば弾く。改訂も同じ。
+    /// **版が正しければ、改訂が不正でも `.version`** — 名前に使うのは版だけ。改訂の検めが版を巻き込まない。
+    @Test("版が正しく改訂が不正な pin は、版として読む")
+    func aValidVersionWinsOverAMalformedRevision() throws {
+        let sketch = try makeSketch(
+            resolved: #"{"pins":[{"identity":"mokume","state":{"version":"0.5.0","revision":"../../x"}}],"version":3}"#)
+        #expect(DependencyVersion.state(forPackageAt: sketch) == .version("0.5.0"))
+        #expect(DependencyVersion.pin(forPackageAt: sketch) == .version("0.5.0"))
+    }
+
+    /// 長さの境界: 上限ちょうどは版、1 つ超えれば弾く。改訂も同じ。**数字だけでなく、`+`・`-`・英字・`.` を含む
+    /// 長さでも同じ** (バイト数で数えているので、字の種類で境が動かない)。
     @Test("版・改訂は長さの上限ちょうどまで通り、1 つ超えれば弾く")
     func lengthLimitBoundary() {
         let limit = DependencyVersion.maximumLength
+        let mixed = String(("1.2.3-rc.4+Build.z-" + String(repeating: "a", count: limit)).prefix(limit))
+        #expect(mixed.utf8.count == limit)
+        #expect(DependencyVersion.isVersion(mixed))
+        #expect(!DependencyVersion.isVersion(mixed + "a"))
+        #expect(!DependencyVersion.isVersion(mixed + "+"))
         #expect(DependencyVersion.isVersion(String(repeating: "1", count: limit)))
         #expect(!DependencyVersion.isVersion(String(repeating: "1", count: limit + 1)))
         #expect(DependencyVersion.isRevision(String(repeating: "a", count: limit)))
         #expect(!DependencyVersion.isRevision(String(repeating: "a", count: limit + 1)))
     }
 
-    /// 案内の文面。**弾いた値と受ける形を名乗り**、読めないとも、パスで指しているとも言わない。
+    /// 案内の文面。**人が端末で読む `doctor` だけが、弾いた値と受ける形を名乗り**、読めないとも、パスで指しているとも
+    /// 言わない。期待値は文字列のリテラルで書く (`shown` が壊れても通らない)。
     @Test("doctor の行は、弾いた値と受ける形を名乗り、読めないとは言わない")
     func doctorNamesTheRejectedValue() {
         let version = DoctorCommand.dependencyLine(nil, state: .malformed(.version("../../x")))
-        #expect(version.contains("has a version `../../x`"), "\(version)")
-        #expect(version.contains("must start with a digit"), "\(version)")
+        #expect(version.contains("has a version `../../x`, which cannot be used"), "\(version)")
+        #expect(version.contains("a version must start with a digit"), "\(version)")
+        #expect(version.contains("swift package update mokume"), "\(version)")
         #expect(!version.contains("could not be read"), "\(version)")
         #expect(!version.contains("pointing at a path"), "\(version)")
         let revision = DoctorCommand.dependencyLine(nil, state: .malformed(.revision("zz")))
-        #expect(revision.contains("has a revision `zz`") && revision.contains("hexadecimal"), "\(revision)")
-        // 長い値・制御文字は逃がして切る
+        #expect(revision.contains("has a revision `zz`, which cannot be used"), "\(revision)")
+        #expect(revision.contains("hexadecimal"), "\(revision)")
+        // 制御文字・バッククォート・バックスラッシュは逃がし、長い値は逃がした後の長さで切る
+        let escaped = DoctorCommand.dependencyLine(nil, state: .malformed(.version("1\u{1b}[31m`\\")))
+        #expect(escaped.contains("has a version `1\\u{1b}[31m\\u{60}\\u{5c}`"), "\(escaped)")
+        #expect(!escaped.contains("\u{1b}"), "端末を乱す文字が出た")
         let long = DoctorCommand.dependencyLine(
-            nil, state: .malformed(.version("\u{1b}[31m" + String(repeating: "x", count: 200))))
+            nil, state: .malformed(.version("\u{1b}[31m" + String(repeating: "\u{1b}", count: 200))))
         #expect(!long.contains("\u{1b}"), "端末を乱す文字が出た")
-        #expect(long.count < 400, "\(long.count)")
+        #expect(long.count < 400, "逃がした後も短い: \(long.count)")
+    }
+
+    /// 弾いた値の表示 (`doctor` だけが使う)。**ASCII の印字できる文字のうち `` ` `` と `\` 以外はそのまま、
+    /// それ以外はすべて `\u{..}`。** 期待値はリテラル。
+    @Test("弾いた値の表示は、ASCII の印字できる文字以外とバッククォート・バックスラッシュを逃がす")
+    func showsARejectedValueSafely() {
+        #expect(DependencyVersion.shown("../../x") == "../../x")
+        #expect(DependencyVersion.shown("1.0.0-beta+b 5") == "1.0.0-beta+b 5")
+        // 制御文字
+        #expect(DependencyVersion.shown("1\u{1b}[31m") == "1\\u{1b}[31m")
+        #expect(DependencyVersion.shown("a\nb") == "a\\u{a}b")
+        #expect(DependencyVersion.shown("\u{7f}") == "\\u{7f}")
+        // 囲みのバッククォートを抜けられず、文字どおりの `\u{1b}` と本物の ESC が見分けられる
+        #expect(DependencyVersion.shown("a`b") == "a\\u{60}b")
+        #expect(DependencyVersion.shown("a\\b") == "a\\u{5c}b")
+        #expect(DependencyVersion.shown("\\u{1b}") == "\\u{5c}u{1b}")
+        #expect(DependencyVersion.shown("\u{1b}") == "\\u{1b}")
+        // 空白の仲間・右から左の文字・多バイトの字・書式の字
+        #expect(DependencyVersion.shown("1\u{a0}2") == "1\\u{a0}2")
+        #expect(DependencyVersion.shown("1\u{3000}2") == "1\\u{3000}2")
+        #expect(DependencyVersion.shown("1\u{202e}2") == "1\\u{202e}2")
+        #expect(DependencyVersion.shown("1。") == "1\\u{3002}")
+        #expect(DependencyVersion.shown("é") == "\\u{e9}")
+    }
+
+    /// 上限は**逃がした後の**長さ (逃がす前の字数で切ると、`\u{..}` で膨らんで約 10 倍に伸びる)。
+    @Test("弾いた値の表示は、逃がした後の長さで切る")
+    func shownIsCutAfterEscaping() {
+        let limit = 80
+        #expect(DependencyVersion.shown(String(repeating: "x", count: limit)) == String(repeating: "x", count: limit))
+        #expect(
+            DependencyVersion.shown(String(repeating: "x", count: limit + 1))
+                == String(repeating: "x", count: limit) + "…")
+        // 逃がした 1 字は 6 字 (`\u{1b}`) と数え、途中で割らない: 13 字で 78・14 字目は 84 になるので切る
+        let escapes = String(repeating: "\u{1b}", count: 200)
+        let shown = DependencyVersion.shown(escapes)
+        #expect(shown == String(repeating: "\\u{1b}", count: 13) + "…", "\(shown)")
+        #expect(shown.count <= limit + 1)
+        #expect(DependencyVersion.shown("abcdef", limit: 3) == "abc…")
+    }
+
+    @Test("弾いた pin の種類は値を含まない")
+    func kindNamesNoValue() {
+        #expect(DependencyVersion.kind(of: .version("../../x")) == "version")
+        #expect(DependencyVersion.kind(of: .revision("../../x")) == "revision")
     }
 
     /// 作ったばかりのスケッチの `doctor` が、パスで指していると決めつけない。

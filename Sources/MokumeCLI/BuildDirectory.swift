@@ -126,6 +126,11 @@ nonisolated enum BuildDirectory {
         case localDependency
         /// まだ固定が読めない (解決に失敗した)。
         case unresolved
+        /// 固定は読めたが、版・改訂の文字列が名前に使える形でない (手で書き換えた・壊れた `Package.resolved`)。
+        ///
+        /// **共有しない。** 名前にすると置き場の外を指しうる (#3535)。**読めているのに弾いたことを名乗る**
+        /// — 「読めない」と言うと、直す場所を取り違える。値は名乗らない (`mokume doctor` が見せる)。
+        case malformedPin
         /// パッケージの宣言が読めない。
         ///
         /// **断らない。** 宣言を壊した状態から直していく途中は、まさに見張っていてほしい
@@ -157,6 +162,10 @@ nonisolated enum BuildDirectory {
             case .unresolved:
                 "Cannot read the dependency version, so the build goes in this package's own"
                     + " .build (sharing it would mix versions)"
+            case .malformedPin:
+                "The pin for mokume in Package.resolved is not in the form of a version or revision,"
+                    + " so the build goes in this package's own .build (sharing it would mix versions)."
+                    + " `\(Command.name) doctor` shows the value"
             case .unknownToolchain:
                 "Cannot read the toolchain version, so the build goes in this package's own .build"
             case .nameTaken(let owner):
@@ -217,6 +226,13 @@ nonisolated enum BuildDirectory {
             return .unshared(.unresolved)
         }
         return .shareable(name)
+    }
+
+    /// 固定が引けなかった (`.unresolved`) ときの、共有しない理由。**読めているのに弾いた回 (`.malformed`) は
+    /// 読めない回と分ける** — 次の一手が違う (読めない回は解決を待てば直り、弾いた回は pin の行を直す)。純関数。
+    static func fallbackWithoutPin(state: DependencyVersion.State) -> Fallback {
+        if case .malformed = state { return .malformedPin }
+        return .unresolved
     }
 
     /// 鍵から、共有の置き場の名前 (根からの相対) を作る。決められなければ `nil`。

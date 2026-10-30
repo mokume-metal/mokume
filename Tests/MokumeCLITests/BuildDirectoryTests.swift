@@ -92,6 +92,22 @@ struct BuildDirectoryTests {
         #expect(candidates.map(\.path) == ["/work/hello/.build"])
     }
 
+    /// 固定が引けない理由を分ける (#3535)。**読めているのに弾いた回を、読めない回と同じ名乗りにしない**
+    /// — 読めない回は解決を待てば直り、弾いた回は pin の行を直す。
+    @Test("固定が引けない理由は、弾いた回だけ別にし、あとは読めない回のまま")
+    func theFallbackWithoutAPinTellsMalformedApart() {
+        #expect(BuildDirectory.fallbackWithoutPin(state: .malformed(.version("../../x"))) == .malformedPin)
+        #expect(BuildDirectory.fallbackWithoutPin(state: .malformed(.revision("zz"))) == .malformedPin)
+        for state: DependencyVersion.State in [.unresolved, .notPinned, .unreadable, .noPackage] {
+            #expect(BuildDirectory.fallbackWithoutPin(state: state) == .unresolved, "\(state)")
+        }
+        // 弾いた回の名乗りは、値を含まず、`doctor` を指す
+        let notice = BuildDirectory.Fallback.malformedPin.notice
+        #expect(notice?.contains("not in the form of a version or revision") == true, "\(notice ?? "")")
+        #expect(notice?.contains("doctor") == true, "\(notice ?? "")")
+        #expect(notice?.contains("Cannot read") == false, "\(notice ?? "")")
+    }
+
     @Test("まだ固定が読めなければ、共有しない")
     func anUnresolvedPackageIsNotShared() throws {
         let shareability = BuildDirectory.shareability(
@@ -551,6 +567,41 @@ struct BuildPlacementTests {
                 "say: Resolving the sketch's dependencies… (the first one takes a while)",
                 "swift package resolve",
             ])
+    }
+
+    /// **`run` / `watch` が、版・改訂の形でない pin を「読めない」と言わない** (#3535)。置き場の選び方 (共有しない・
+    /// 解決を 1 回走らせる) は読めない回と同じで、名乗りだけが「形でない」と言い、値は出さず `doctor` を指す。
+    @Test(
+        "pin が版・改訂の形でなければ、共有せず、そう名乗る (値は出さない)",
+        arguments: [
+            #"{"version":"../../x","revision":"abc123"}"#, #"{"version":""}"#,
+            #"{"branch":"main","revision":"../../x"}"#, #"{"version":"1.0\u001b[31mx"}"#,
+        ])
+    func aMalformedPinIsNotSharedAndSaidSo(state: String) throws {
+        let store = try BuildDirectoryTests.directory()
+        // 宣言は正しい版のまま、`Package.resolved` だけを書き換える
+        let sketch = try Self.sketch(pinning: "0.7.1")
+        try #"{"pins":[{"identity":"mokume","state":\#(state)}],"version":3}"#.write(
+            to: sketch.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
+        let recorder = ResolveRecorder()
+
+        let context = try RunCommand.context(
+            in: sketch, invocation: Invocation(place: sketch.path),
+            environment: [BuildDirectory.environmentKey: store.path],
+            announce: { recorder.record("say: \($0)") },
+            resolver: { arguments, _ in recorder.record("swift \(arguments.prefix(2).joined(separator: " "))") })
+
+        #expect(context.place == .inPackage(.malformedPin), "共有の置き場へ落とした: \(context.place)")
+        #expect(context.place.arguments.isEmpty)
+        let notice = try #require(context.place.notice)
+        #expect(notice.contains("not in the form of a version or revision"), "\(notice)")
+        #expect(notice.contains("doctor"), "\(notice)")
+        #expect(!notice.contains("Cannot read the dependency version"), "\(notice)")
+        #expect(!notice.contains("../../x") && !notice.contains("\u{1b}"), "弾いた値が出た: \(notice)")
+        // 共有の根へは何も作っていない
+        #expect(try FileManager.default.contentsOfDirectory(atPath: store.path).isEmpty)
+        // 解決を走らせる手は、読めない回と変えない
+        #expect(recorder.events.last == "swift package resolve", "\(recorder.events)")
     }
 
     @Test("固定がある回は解決を起こさず、何も名乗らない")

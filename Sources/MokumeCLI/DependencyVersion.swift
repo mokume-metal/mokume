@@ -61,9 +61,11 @@ nonisolated enum DependencyVersion {
         /// `Package.resolved` はあるが読めない (壊れている・読み取れない・知らない形式)。
         /// **pin が無いのか読めないだけなのかが分からない**ので、パスで指しているとは言えない。
         case unreadable
-        /// pin は読めたが、版・改訂の文字列が名前に使える形でない (手で書き換えた・壊れた `Package.resolved`)。
-        /// **弾いた値を持つ** — 案内が「どの値が・どう違うか」を名乗れる (``isVersion(_:)``・``isRevision(_:)``)。
-        /// SwiftPM 自身もこの `Package.resolved` を壊れたものとして断る (書き直しはしない)。
+        /// pin は読めたが、版・改訂の文字列が mokume の名前に使える形でない (手で書き換えた・壊れた `Package.resolved`)。
+        /// **弾いた値を持つ** — 人が端末で読む `doctor` だけが値を名乗る (``shown(_:limit:)``)。
+        /// **MCP の答えには値を出さない**: `Package.resolved` は第三者のリポジトリから来うる文字列で、
+        /// LLM のクライアントが読む文に入れたくない。SwiftPM がこの形を受けるかどうかは、ここでは決めつけない
+        /// (版は SemVer で落とすが、改訂は文字列のまま受けるだけで、弾く保証は無い)。
         case malformed(Pin)
         /// `Package.swift` が無い。スケッチの場所で立っていない。
         case noPackage
@@ -157,25 +159,41 @@ nonisolated enum DependencyVersion {
             }
     }
 
-    /// 弾いた値を、案内に出せる形にする。**制御文字を逃がし (`\u{1b}`)、長ければ切る** — 端末を乱さず、
-    /// 長い値で案内が埋まらない。
-    static func shown(_ text: String, limit: Int = 40) -> String {
+    /// 弾いた値を、端末に出せる形にする (`doctor` だけが使う。MCP の答えには値を出さない)。
+    ///
+    /// **正しい版・改訂は ASCII の英数字と `.`・`-`・`+` だけ**なので、値を出す側は「ASCII の印字できる文字のうち
+    /// `` ` `` と `\` 以外はそのまま、それ以外はすべて `\u{..}`」に逃がす。囲みのバッククォートを抜けられず、
+    /// 文字どおりの `\u{1b}` と本物の ESC は見分けがつき、空白の仲間 (U+00A0・U+3000)・右から左の文字・
+    /// 多バイトの字も逃がされる。
+    ///
+    /// - Parameter limit: **逃がした後の** 字数の上限。越えたら `…` で切る (逃がした 1 字は
+    ///   `\u{..}` の長さで数え、途中で割らない)。
+    static func shown(_ text: String, limit: Int = 80) -> String {
         var shown = ""
-        var count = 0
+        var length = 0
         for scalar in text.unicodeScalars {
-            if count == limit { return shown + "…" }
-            switch scalar.properties.generalCategory {
-            case .control, .format, .lineSeparator, .paragraphSeparator, .unassigned, .privateUse, .surrogate:
-                shown += "\\u{\(String(scalar.value, radix: 16))}"
-            default:
-                shown.unicodeScalars.append(scalar)
-            }
-            count += 1
+            let piece =
+                if (0x20...0x7e).contains(scalar.value), scalar != "`", scalar != "\\" {
+                    String(scalar)
+                } else {
+                    "\\u{\(String(scalar.value, radix: 16))}"
+                }
+            if length + piece.count > limit { return shown + "…" }
+            shown += piece
+            length += piece.count
         }
         return shown
     }
 
-    /// 弾いた pin を、案内の文にする (`version `../../x``)。
+    /// 弾いた pin の種類 (`version`・`revision`)。値は含まない。
+    static func kind(of pin: Pin) -> String {
+        switch pin {
+        case .version: "version"
+        case .revision: "revision"
+        }
+    }
+
+    /// 弾いた pin を、`doctor` の文にする (`version `../../x``)。値を含むので、端末へ出す口だけが使う。
     static func describe(_ pin: Pin) -> String {
         switch pin {
         case .version(let version): "version `\(shown(version))`"
@@ -183,7 +201,7 @@ nonisolated enum DependencyVersion {
         }
     }
 
-    /// 弾いた理由の文 (どんな形なら受けるか)。
+    /// 弾いた理由の文 (どんな形なら受けるか)。値は含まない。
     static func rule(for pin: Pin) -> String {
         switch pin {
         case .version:
