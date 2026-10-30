@@ -386,14 +386,20 @@ public final class Canvas {
         /// 4 つの角を `radius` で丸めた矩形。`radius` は 0 より大きく、幅・高さの半分以下 (``Canvas/rect(_:_:_:_:_:)``)
         case roundedRect(width: Float, height: Float, radius: Float)
         case ellipse(radiusX: Float, radiusY: Float)
-        case arc(radiusX: Float, radiusY: Float, start: Float, sweep: Float)
+        /// 円弧。`closure` は閉じ方で、塗りと輪郭の周の部分が決まる (``FormInstance/ArcClosure``)。
+        /// `.pie` は扇 1 つ、`.chord` は弦で結んだ形 1 つ (どちらも 1 つの周が塗りと輪郭を持つ)。
+        /// `.standard` (既定) と `.open` は、塗り (扇か弦で結んだ形) と開いた弧の輪郭が別の周で、雛形は 2 つを順に積む
+        /// (``Canvas/Outline/strokeParts``)
+        case arc(
+            radiusX: Float, radiusY: Float, start: Float, sweep: Float,
+            closure: FormInstance.ArcClosure)
 
         /// 周を刻む円の半径 (大きいほうの軸)。矩形は周を刻まないので `nil`。角丸の矩形は、角の弧の半径で刻む。
         var ringRadius: Float? {
             switch self {
             case .rect: nil
             case .roundedRect(_, _, let radius): radius
-            case .ellipse(let radiusX, let radiusY), .arc(let radiusX, let radiusY, _, _):
+            case .ellipse(let radiusX, let radiusY), .arc(let radiusX, let radiusY, _, _, _):
                 max(radiusX, radiusY)
             }
         }
@@ -401,14 +407,22 @@ public final class Canvas {
         /// 輪郭が円板を置くか。**規則は ``Canvas/strokePlacesDiscs(pointCount:isClosed:hasJoinCurveSteps:cap:join:)``
         /// の 1 つ**で、ここは周の形 (点の数・閉じているか・刻みか) を渡すだけである。楕円・弧の周は
         /// 点がどれも刻みで、矩形の周は 4 つの角 (刻みでない) で閉じる。
-        func placesDiscs(cap: StrokeCap, join: StrokeJoin) -> Bool {
+        ///
+        /// - Parameter ringSegments: 周を一周でいくつに刻むか (``FlatKey/ringSegments``)。**開いた弧の輪郭** (閉じ方が
+        ///   `.standard`・`.open`) だけが読む — 点が 3 つ以上なら途中の点が折れ目になり、2 つなら端の形 (丸い端だけ円板) になる。
+        func placesDiscs(cap: StrokeCap, join: StrokeJoin, ringSegments: Int) -> Bool {
             switch self {
+            case .arc(_, _, _, let sweep, let closure) where closure.strokesOpenArc && sweep < 2 * .pi:
+                // 一周でない弧の輪郭は開いた弧の周 (``Canvas/ringOutline(_:)``)。点の数は刻みと掃引で決まる
+                let count = Canvas.arcPointCount(sweep: sweep, fullTurn: ringSegments)
+                return Canvas.strokePlacesDiscs(
+                    pointCount: count, isClosed: false, hasJoinCurveSteps: count > 2, cap: cap, join: join)
             case .rect:
-                Canvas.strokePlacesDiscs(
+                return Canvas.strokePlacesDiscs(
                     pointCount: 4, isClosed: true, hasJoinCurveSteps: false, cap: cap, join: join)
             case .ellipse, .arc, .roundedRect:
                 // 角丸の矩形の周も、点がどれも刻み (角の弧の点) で、角は 1 つも無い
-                Canvas.strokePlacesDiscs(
+                return Canvas.strokePlacesDiscs(
                     pointCount: 3, isClosed: true, hasJoinCurveSteps: true, cap: cap, join: join)
             }
         }

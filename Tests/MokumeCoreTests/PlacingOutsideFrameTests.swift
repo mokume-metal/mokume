@@ -32,7 +32,7 @@ enum PlacingCall: CaseIterable, CustomTestStringConvertible {
     /// 破線の輪郭の円弧。塗りは距離関数・輪郭は周の片で、**周は区間の中だと分かってから組む**
     /// (`appendDashedForm`)。
     case arcDashed
-    /// 断片を効かせた円弧。部分ごとの周を三角形の経路で組む (`placeArcInParts`)。
+    /// 断片を効かせた円弧。部分ごとの周を三角形の経路で組む (畳みの口 `draw(folding:at:outline:)`)。
     case arcWithShader
     case square
     case line

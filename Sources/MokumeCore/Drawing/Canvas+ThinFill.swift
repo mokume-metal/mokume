@@ -844,7 +844,7 @@ extension Canvas.FlatForm {
         case .ellipse(let radiusX, let radiusY):
             Canvas.Outline.NamedFill(
                 isEllipse: true, center: SIMD2(0, 0), half: SIMD2(radiusX, radiusY))
-        case .arc(let radiusX, let radiusY, _, let sweep):
+        case .arc(let radiusX, let radiusY, _, let sweep, _):
             sweep >= 2 * .pi
                 ? Canvas.Outline.NamedFill(
                     isEllipse: true, center: SIMD2(0, 0), half: SIMD2(radiusX, radiusY))
