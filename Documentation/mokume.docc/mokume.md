@@ -470,6 +470,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 | --- | --- | --- |
 | `saveFrame("f-####.png")` | ``SketchPart/beginRecord(_:)`` と ``SketchPart/endRecord()`` | 録る間を 2 つで挟む。`####` はフレーム番号ではなく、録りの中の通し番号 (0 から) |
 | p5 `deltaTime` (ミリ秒) | ``SketchPart/deltaTime`` (秒) | ミリ秒を前提にした係数を 1000 倍する (`x += 0.2 * deltaTime` → `x += 200 * deltaTime`) |
+| Processing `clip(a, b, c, d)` (数を `imageMode` で読む) | ``SketchPart/clip(_:_:_:_:)`` (数を ``SketchPart/rectMode(_:)`` で読む) | 既定 (どちらも `.corner`) は同じ矩形。手本で `imageMode(CENTER)` と組んでいたなら、`rectMode(.center)` を合わせる (`imageMode(.center)` だけを写しても `clip` は左上から読む)。いまの変換の下で読むことと、負の幅・高さを裏返して読むことは手本と同じ。回転・剪断の下では、写した角を囲む矩形で切り、1 度警告する |
 | p5.js 2D の `background(0, 20)` (前の絵に薄く重ねて残像になる) | ``SketchPart/background(_:_:)`` (面を置き換える) | 残像にならない。薄い四角を `rect` で重ねて作る (作り方は ``SketchPart/background(_:_:)`` の例) |
 | `setup()` で書いた `translate`・`rotate`・視点 (以降の `draw()` にも効く) | シーンの記述 (``SketchPart/translate(_:_:)`` など) はフレームを越えない | `setup()` の変換は、その後に `setup()` で置いたものへだけ効き (置くときに焼き付く)、`setup()` を抜けると戻る。`draw()` で置くものの変換は `draw()` の中で書く。視点・光は `setup()` で書くと警告して無視する。1 枚だけ描くなら `setup()` で置くか、`draw()` で描いて ``SketchPart/noLoop()`` で止める ([状態の寿命](#状態の寿命)) |
 | p5 `movedX` (最新の 1 件) | ``SketchPart/movedX`` (フレームの合計) | `draw()` で読む。1 件ぶんは ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る |

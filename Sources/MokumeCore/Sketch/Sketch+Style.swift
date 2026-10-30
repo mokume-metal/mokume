@@ -516,6 +516,12 @@ extension SketchPart {
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
+    /// **手本 (Processing) は `imageMode()` で読み、mokume は `rectMode(_:)` で読む。** 既定 (どちらも `.corner`) では
+    /// 同じ矩形になる。手本で `imageMode(CENTER)` と組んでいた `clip` を写すなら、`rectMode(.center)` を合わせる:
+    /// `rectMode(.center)` のもとの `clip(200, 150, 100, 80)` は (150, 110)〜(250, 190) を切り抜く。`imageMode(.center)`
+    /// だけを書いたときは `rectMode` が `.corner` のままなので、同じ呼び出しが (200, 150)〜(300, 230) を切り抜く。
+    /// 幅や高さが負なら、手本と同じに裏返して読む (`clip(100, 100, -50, -50)` は (50, 50)〜(100, 100))。
+    ///
     /// 下は、灰色の枠の矩形へ `clip(40, 40, 120, 80)` を掛けて、はみ出す大きな円を塗ったもの。
     /// 円全体の灰色の輪郭は切り抜く前に描いたもので、塗った橙色は矩形の外へ出ない。
     ///
@@ -580,10 +586,9 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 矩形は**いまの変換の影響を受けず**、面の座標で読む。``translate(_:_:)`` などの後で
-    /// 呼んでも、切り抜くのは面の同じ場所である。変換を効かせたいときは、角を
-    /// ``screenX(_:_:)`` / ``screenY(_:_:)`` で面の座標へ写してから渡す。平行移動と拡大までは、
-    /// 角を 2 つ写せば足りる (既定の `rectMode(.corner)` のとき):
+    /// 矩形は**呼んだ時点の変換で面へ写して**読む。``translate(_:_:)`` や ``scale(_:_:)`` の後で呼べば、同じ引数の
+    /// ``rect(_:_:_:_:)`` が描くのと同じ場所を切り抜く (手本 (Processing) の既定の描き手と同じ)。切り抜きが決まるのは
+    /// 呼んだ時点で、後から変換しても動かない:
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -596,12 +601,10 @@ extension SketchPart {
     ///     stroke(89, 97, 115)
     ///     rect(0, 0, 60, 60)
     ///     circle(40, 40, 80)
-    ///     // 角を面の座標へ写して渡す。円は矩形の中だけが残る
+    ///     // 同じ変換の下で clip を呼ぶと、矩形も動かした先で読まれる。円は矩形の中だけが残る
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     let left = screenX(0, 0)
-    ///     let top = screenY(0, 0)
-    ///     clip(left, top, screenX(60, 60) - left, screenY(60, 60) - top)
+    ///     clip(0, 0, 60, 60)
     ///     circle(40, 40, 80)
     ///     ```
     ///   }
@@ -614,8 +617,12 @@ extension SketchPart {
     ///
     /// 円は、動かした先の矩形 (面の `(60, 60)` から 120 四方) の中だけが残る。
     ///
-    /// 切り抜きは面に沿った矩形しか持てないので、``rotate(_:)`` や ``shearX(_:)`` を掛けた
-    /// 矩形は表せない — 角を写しても、回した矩形にはならない。
+    /// **角を ``screenX(_:_:)``・``screenY(_:_:)`` で面の座標へ写してから渡すと、変換が 2 度掛かる。** 変換を掛けた後は、
+    /// 変換の前の数をそのまま渡す。
+    ///
+    /// 切り抜きは面に沿った矩形しか持てない。``rotate(_:)`` や ``shearX(_:)`` を掛けた後で呼ぶと、写した 4 つの角を
+    /// 囲む面に沿った矩形で切り抜き、`clip()` の名前で 1 度だけ警告する (回した矩形そのものにはならない)。面に沿った
+    /// 矩形でよければ、回す前に呼ぶ。90 度刻みの回転と鏡映しは面に沿った矩形に写るので、警告しない。
     ///
     /// 積み降ろし (``pushStyle(fileID:line:)``) で戻るので、入れ子にして元へ帰れる。
     ///
@@ -690,6 +697,7 @@ extension SketchPart {
     // shot: 3 snippet=b4e74bbc
     // shot: 4 snippet=b84ca0ec
     // shot: 5 snippet=bd0ccc48
+    // shot: 後で撮る
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
