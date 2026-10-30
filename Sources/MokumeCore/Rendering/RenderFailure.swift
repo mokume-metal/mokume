@@ -110,6 +110,17 @@ public enum RenderFailure: Error, Equatable, Sendable {
     /// [#885]: https://github.com/mokume-metal/mokume/issues/885
     case invalidSize(width: Int, height: Int)
 
+    /// 描き場所の大きさに書き出しの倍率 (`mokume render --scale`) を掛けると、面の一辺の上限を越える
+    /// ([#3453])。`width` と `height` は**頼んだ座標の大きさ** (掛ける前) で、`scale` は倍率。
+    ///
+    /// ``invalidSize(width:height:)`` と分ける。あちらは頼んだ大きさそのものが範囲の外で、直し先は頼む大きさ
+    /// だけである。こちらは頼んだ大きさ自体は通り、倍率との積が越えるので、直し先に倍率が加わる
+    /// (大きさを縮めるか、倍率を下げる)。文面が倍率を名指せないと、読んだ人は掛けていない大きさを
+    /// 疑ってしまう。
+    ///
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+    case sizeBeyondOutputScale(width: Int, height: Int, scale: Int)
+
     /// 描く細かさが正しくない (0 より大きく 1 以下でなければならない)。
     ///
     /// 1 を超える指定 — 出すより細かく描いて縮める — は引き受けない。拡大器が
@@ -323,6 +334,13 @@ extension RenderFailure: CustomStringConvertible {
             That is not a valid size for a render target: \(width)×\(height)
             Width and height each have to be at least 1 and at most \(RenderDevice.maxTextureSide).
             """
+        case .sizeBeyondOutputScale(let width, let height, let scale):
+            """
+            A drawing target of \(width)×\(height) is too large at the render scale \(scale) (`mokume render --scale \(scale)`): \
+            it would be \(Self.scaledText(width, by: scale))×\(Self.scaledText(height, by: scale)) pixels, and each side can be at most \(RenderDevice.maxTextureSide).
+            The size is in coordinates and the scale multiplies the pixels. Make the drawing target at most \
+            \(RenderDevice.maxTextureSide / scale) wide and high, or render with a smaller --scale.
+            """
         case .invalidPixelDensity(let density):
             """
             That is not a valid pixel density: \(density)
@@ -432,6 +450,12 @@ extension RenderFailure: CustomStringConvertible {
     /// [#600]: https://github.com/mokume-metal/mokume/issues/600
     nonisolated var headline: String {
         String(description.prefix { $0 != "\n" })
+    }
+
+    /// `value` に `scale` を掛けた数の文面。溢れる巨大な値は「溢れる」と書く。
+    private nonisolated static func scaledText(_ value: Int, by scale: Int) -> String {
+        let (product, overflowed) = value.multipliedReportingOverflow(by: scale)
+        return overflowed ? "more than \(Int.max)" : String(product)
     }
 
     /// ``gpuNotResponding`` の文面。**最初に期限を越えた待ち** (`closure`) を 1 行目に添える (#2052)。
