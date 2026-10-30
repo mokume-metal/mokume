@@ -281,6 +281,8 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 
 **代償**: 専用機が止まった回 (#2252) は、先頭の group が期限で外れるまでが 60 分から 95 分へ延びる。検査が壊れて止まった回は render の job の `timeout-minutes: 30` が先に赤にするので、故障の検知は遅れない。処理能力 (1 時間に通る group の上限) は変わらない。merge_group が専用機を長く握るので、定期の門番が待ち切れずに割り込む回が増えうる (仮説・未確認)。
 
+**95 分が覆う重なりと、覆わない重なり**: 値の決め方 (前の group の render 30 + 割り込みうる専用機の job 1 本 30 + 自分の render 30 + 門番の間隔) の「1 本」は、走っている `render-pr` か、`wait` の 60 分で放された定期の job の**どちらか 1 本**である。両方が自分の group の前に重なる最悪の形 (前の group 30 + `render-pr` 30 + 定期の job 30 + 自分 30 = 120 分) は、95 分でも覆えず、今までどおり `checks_timed_out` で外れる。`queue-sweep` は走っている `render-pr` を止めず (`scripts/queue-sweep.sh`)、定期の検査は退かせない (上の「定期の検査 (D) は退かせない」の「1 本まで」は定期の job の数で、`render-pr` はそれとは別に走りうる) ので、この重なりは起こりうる。期限を 120 分以上へ延ばすことは、故障した回の先頭の外れがさらに遅れる代償と引き換えになるので、ここでは選ばない。適用後 7 日の測定 ([#3502](https://github.com/mokume-metal/mokume/issues/3502)) で、残った `checks_timed_out` の内訳 (どの job が前に何本入ったか) を数え、この重なりが残りの主因なら期限か重なりの側を選び直す。
+
 **退けた案**: 構築数 1 (単独では時間切れを消さず、群の間の隙間に定期の job や render-pr が入りうる。比較は [#3503](https://github.com/mokume-metal/mokume/issues/3503) の計測の後) / 期限を延ばさず `render-turn` の上限だけを延ばす (期限を越えて待つと自分の render が走る前に弾かれる。`scripts/tests/render_workflow_test.py` が止める) / 期限と同時に render の `timeout-minutes` を延ばす (故障の検知が遅れる)。
 
 #### 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
