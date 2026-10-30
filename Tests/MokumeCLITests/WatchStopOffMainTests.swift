@@ -111,6 +111,11 @@ struct WatchStopOffMainTests {
     /// 入れ子の `swift build` と重なると子の立ち上げと印の待ちが遅れ、「退役の途中の子」の検査が
     /// 36.7 秒で、退役の子が期限で落とされた後に `isRunning` を見て赤になった (#3199 の
     /// run 40183767303)
+    ///
+    /// **それでも期限は、検査の進みより先に切れうる** (#3490・手元で 196 秒かかった回)。期限は見張りが
+    /// main の外で数えるので、main が長く塞がると、退役の子が検査の見る前に落とされる。**上げて収める
+    /// のではなく**、実装の約束を順序で見る検査にし (``endWaitsForARetirementInFlight()``)、期限が先に
+    /// 切れた回は名乗る (`.killed`・`lastStop`)
     private static let stopTimeout: TimeInterval = 120
 
     // MARK: - 差し替え
@@ -307,10 +312,13 @@ struct WatchStopOffMainTests {
 
         let finishing = Task { await WatchCommand.finish(session) }
         try await waitUntil { stubborn.received(0) }
-        #expect(child.isRunning, "止める待ちが終わってからでないと main が働けていない")
+        let stillRunning = child.isRunning
 
-        kill(child.processIdentifier, SIGKILL)
+        if stillRunning { kill(child.processIdentifier, SIGKILL) }
         await finishing.value
+        // **見張りの期限が先に切れた回は、そう名乗る** (`lastStop` が `.killed`。検査が落とした回は `.terminated`)
+        let expired = session.lastStop == .killed ? " (見張りの止める期限 \(Self.stopTimeout) 秒が、検査の見る前に切れて強制終了した)" : ""
+        #expect(stillRunning, "止める待ちが終わってからでないと main が働けていない\(expired)")
         #expect(!child.isRunning, "子を止め終える前に戻っている")
         #expect(session.child == nil)
     }
@@ -336,8 +344,12 @@ struct WatchStopOffMainTests {
         let retiring = Task { await session.generationPromoted() }
         try await waitUntil { stubborn.received(0) }
         var ended = false
+        // **終える手続きが戻った時点で、退役の子が止まっているか。** 誰が落としたか (検査か、見張りの期限か) によらず、
+        // 順序だけを見る。待たずに戻る実装は、ここで退役の子が生きている
+        var retiredWasRunningWhenEndReturned = true
         let ending = Task { () -> WatchSession.StopOutcome in
             let outcome = await session.end()
+            retiredWasRunningWhenEndReturned = retired.isRunning
             ended = true
             return outcome
         }
@@ -345,16 +357,29 @@ struct WatchStopOffMainTests {
         try await waitUntil { stubborn.received(1) }
         kill(current.processIdentifier, SIGKILL)
         for _ in 0..<40 { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(retired.isRunning)
-        #expect(!ended, "退役の途中の子が残っているのに戻っている")
+        let retiredStillRunning = retired.isRunning
+        let endedEarly = ended
 
-        kill(retired.processIdentifier, SIGKILL)
-        _ = await retiring.value
+        if retired.isRunning { kill(retired.processIdentifier, SIGKILL) }
+        let retirement = await retiring.value
         _ = await ending.value
         #expect(ended)
+        #expect(!retiredWasRunningWhenEndReturned, "終える手続きが、退役の途中の子が止め終わる前に戻っている")
         #expect(!retired.isRunning)
         #expect(session.child == nil)
         #expect(session.outgoing == nil)
+
+        // **見張りの期限が、検査の見る前に切れた回は、約束の外である。** 期限は見張りが main の外で数えるので、
+        // この検査が main の上で進むより先に切れうる (退役の子が強制終了され、終える手続きは正しく戻る)。
+        // そのときは「待たずに戻った」と見分けがつかないので、下の時間に頼る 2 つは見ずに、名乗って飛ばす
+        if retirement == .killed {
+            try Test.cancel(
+                "見張りの止める期限 (\(Self.stopTimeout) 秒) が、検査が退役の子を見る前に切れ、退役の子は強制終了された (退役を始めてから見るまでの区間が期限を越えた回)"
+            )
+        }
+        // 待たない実装を、通常の期限で捕まえる (200 ミリ秒のあいだ、退役の子は走り続け、終える手続きは戻らない)
+        #expect(retiredStillRunning, "退役の途中の子が、200 ミリ秒のあいだに止まった (退役の結果 \(String(describing: retirement)))")
+        #expect(!endedEarly, "退役の途中の子が残っているのに戻っている (退役の結果 \(String(describing: retirement)))")
     }
 
     // MARK: - 待っている間に来た合図
