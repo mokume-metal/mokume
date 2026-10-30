@@ -62,28 +62,52 @@ import MokumeDiagnostics
 ///     var song: SoundFile?
 ///     func setup() throws {
 ///         clip = try createVideo("assets/talk.mov")
-///         song = try loadSound("assets/talk.mov")
+///         // 音声トラックの無い動画は `loadSound` が断る。`try?` なら nil のままで、映像だけ流す
+///         song = try? loadSound("assets/talk.mov")
 ///         clip?.play()
 ///         song?.play()
 ///     }
 ///     func draw() {
-///         guard let clip, let song else { return }
+///         guard let clip else { return }
 ///         image(clip.image, 0, 0, width, height)
-///         // 0.05 秒より外れたら、音を映像の位置へ合わせ直す
-///         if abs(song.position - clip.time) > 0.05 { song.jump(clip.time) }
+///         // 鳴っている音が映像の位置から 0.1 秒より外れたら、音を合わせ直す。`jump` は次のフレームの頭で
+///         // 効くので、飛び先は 1 フレーム先 (`deltaTime`)。鳴り終えた音 (位置は 0 へ戻る) には打たない
+///         guard let song, song.isPlaying else { return }
+///         if abs(song.position - clip.time) > 0.1 { song.jump(clip.time + deltaTime) }
+///     }
+///     func keyPressed() {
+///         // 止めるときは両方を止める (映像だけ止めても、音は鳴り続ける)
+///         clip?.pause()
+///         song?.pause()
 ///     }
 /// }
 /// ```
 ///
-/// - 映像と音の同期は作品が持つ。`Movie` の位置は ``SketchPart/time`` に従い、音の位置は音の時計 (書き出しでは
-///   フレームの窓) に従う。**``SketchPart/pauseTime()`` で止まるのは映像だけ**で、音は鳴り続ける
+/// - **映像と音の同期は作品が持つ。** `Movie` の位置は ``SketchPart/time`` に従い、音の位置は音の時計 (書き出しでは
+///   フレームの窓) に従う。**``SketchPart/pauseTime()`` で止まるのは映像だけ**で、音は鳴り続ける。`clip.pause()` も
+///   映像だけを止める — 止めるなら `song.pause()` も、流し直すなら `clip.play()` と `song.play()` を呼ぶ
 /// - **``speed(_:)`` を 1 以外にすると、音は合わない。** 音の速さを変える口はまだ無い
 ///   ([#3473](https://github.com/mokume-metal/mokume/issues/3473))
-/// - 固定の時計で書き出すと、音は `.mov` の音声トラックに載る。ただし**同じフレームの `draw()` で `clip.play()` と
-///   `song.play()` を呼ぶと、音の頭が映像の頭より 1 フレーム (1 / fps 秒) 早い** — `play()` は次のフレームで効く
-///   (映像) のに対し、音は呼んだフレームの窓の先頭から効く。フレームの数は fps によらず 1 で、揃えるなら
-///   `song.play()` を 1 フレーム遅らせる。上の例の 0.05 秒は、この 1 フレームを許す大きさ (fps が 20 以下なら
-///   広げる)
+/// - **`song.jump(_:)` は次のフレームの頭で効く**ので、`jump(clip.time)` で合わせると、飛んだ後の音は映像より 1 フレーム
+///   (1 / fps 秒) 遅れる (30・60 fps で測った)。上の例のように `clip.time + deltaTime` へ飛べば揃う。合わせ直す閾
+///   (例の 0.1 秒) は、この 1 フレームより大きく取る — fps が 10 以下だと 1 フレームが 0.1 秒に届き、合わせ直しが
+///   毎フレーム起きる
+/// - **音は鳴り終えると位置が 0 へ戻って止まる**ので、`song.isPlaying` で守らないと、止まった音へ飛ぶ命令を
+///   毎フレーム出す。映像も終わりのコマで止まる (``play()``)
+/// - **音声トラックの無い動画は、`loadSound` が `AudioFailure.unreadable` で断る** (`setup()` で `try` なら、
+///   スケッチが始まらない)。**音声トラックが複数ある動画は、1 本目だけを読む。** macOS が音声として開けない符号の
+///   トラックも、同じく断る
+/// - **音声トラックの開始が映像とずれている動画 (頭に空の編集区間がある動画など) は、`jump(clip.time)` でも
+///   そのぶんずれる。** `Movie` は映像の時刻のとおりに映すが、`loadSound` は音声トラックの最初の標本から読み、
+///   空の区間を無音として足さない (0.5 秒遅れて始まる音を、頭から読むことを確かめた)
+/// - **`loadSound` は音の標本を全部メモリに持ち、`setup()` の間に読み切る。** 標本は 1 秒あたり 4 バイト ×
+///   (チャンネル数 + 1) × 標本化率 (48 kHz のステレオで 1 分あたり約 35 MB) で、長い動画では大きく、読む間
+///   `setup()` が止まる。待たずに読むなら、`Task` の中で読む `requestSound(_:)` を使う
+/// - 固定の時計で書き出すと、音は `.mov` の音声トラックに載る。映像と音の頭の関係は、`play()` を呼ぶ場面で違う。
+///   **`setup()` で `clip.play()` と `song.play()` を呼ぶと、書き出しの音の頭は映像の頭と揃う。** 最初の `draw()` など
+///   **`draw()` の中で同じフレームに両方を呼ぶと、音の頭が映像の頭より 1 フレーム早い** — `play()` は次のフレームで
+///   効く (映像) のに対し、音は呼んだフレームの窓の先頭から効く。揃えるなら、`draw()` で `song.play()` を 1 フレーム
+///   遅らせる。どちらも 30・60 fps で測った (それ以外の fps は測っていない)
 ///
 /// ## 向き
 ///

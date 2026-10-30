@@ -73,7 +73,7 @@ extension Sketch {
     /// 全体を標本列として持つ。
     ///
     /// - Parameter file: 音声ファイルの名前。macOS が読める形式 (WAV・AIFF・CAF・MP3・
-    ///   AAC/M4A・FLAC など)。
+    ///   AAC/M4A・FLAC など。動画の容器 (`.mov`・`.mp4`) は音声トラックを読む)。
     /// - Throws: 見つからない・見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る
     ///   ``AudioFailure/unopenable(path:location:reason:)``)・音声として読めない・標本が 1 つも無いとき。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
