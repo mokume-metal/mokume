@@ -51,7 +51,7 @@ extension CanvasTests {
             style.textWrap = .character
             style.imageMode = .center
             style.tint = .linear(red: 0.7, green: 0.8, blue: 0.9)
-            style.picture = .drawn(canvas.target)
+            style.picture = canvas.drawnPicture
         style.gradient = ResolvedGradient.resolve(
             .linearGradient([(.linear(red: 1, green: 0, blue: 0), 0), (.linear(red: 0, green: 0, blue: 1), 1)], from: [0, 0], to: [10, 0]),
             under: .identity
@@ -143,6 +143,11 @@ extension CanvasTests {
             /// `draw { }` を始める。外で書けるものは限られる (シーンの記述は断られる) ので、見るのは
             /// 頭で戻すものだけ (``FrameReset``)。区間の外では形も開けない (#1672)。
             case outsideThenDraw
+            /// ループ中 (と `redraw()` を頼んだ後) の入力のコールバックの出口 (#3408)。フレームの内側で汚し、
+            /// フレームを閉じずに、同じフレームの中で出口を通る。**越えるのは境目ではなく、コールバックの出口**
+            /// なので、見るのはシーンの記述の行だけである (``FrameReset/isSceneDescription``)。描き方と
+            /// 溜めたものは、コールバックで書いた・置いたまま残る。
+            case inputCallbackExit
 
             var testDescription: String { "\(self)" }
 
@@ -199,6 +204,12 @@ extension CanvasTests {
                     try canvas.draw { dirty() }
                     closed()
                     try canvas.draw { inspect() }
+                case .inputCallbackExit:
+                    try canvas.draw {
+                        dirty()
+                        canvas.leaveInputCallbackInsideFrame()
+                        inspect()
+                    }
                 case .outsideThenDraw:
                     canvas.carriesOver = true
                     dirty()
@@ -225,9 +236,19 @@ extension CanvasTests {
             case end
             /// 頭と終わりの両方で戻す。
             case both
+            /// `head` と同じ戻し方で、**シーンの記述** (`mokume.md` の「状態の寿命」の表の「シーンの記述」の行)
+            /// である。ループ中の入力のコールバックの出口でも戻る (``FrameBoundary/inputCallbackExit``・#3408)。
+            case sceneHead
+            /// `end` と同じ戻し方の、シーンの記述。
+            case sceneEnd
+            /// `both` と同じ戻し方の、シーンの記述。
+            case sceneBoth
 
-            var atHead: Bool { self != .end }
-            var atEnd: Bool { self != .head }
+            var atHead: Bool { self != .end && self != .sceneEnd }
+            var atEnd: Bool { self != .head && self != .sceneHead }
+            /// シーンの記述か。**フレームの内側で配る入力のコールバックの出口で戻す範囲は、この印の行** (#3408)。
+            /// 描き方・溜めたもの (置いた図形・絵・背景) は含まない — コールバックで置いたものは残る。
+            var isSceneDescription: Bool { [.sceneHead, .sceneEnd, .sceneBoth].contains(self) }
         }
 
         /// 境目を越えるときに開いている列。**列は同時に 1 本しか開かない**ので、開いたまま
@@ -282,6 +303,9 @@ extension CanvasTests {
             let head = FrameReset.head
             let end = FrameReset.end
             let both = FrameReset.both
+            let sceneHead = FrameReset.sceneHead
+            let sceneEnd = FrameReset.sceneEnd
+            let sceneBoth = FrameReset.sceneBoth
             return [
                 // 途中の描き切りと塗り直しは、溜めたものを捨てるので先に通す
                 ("passesThisFrame", head, all, { c, _ in c.loadPixels() }),
@@ -302,18 +326,18 @@ extension CanvasTests {
                 // 描き切らせて汚すと、上の塗り直しの予定を描いてしまうので、中身を直に足す
                 ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
                 // シーンの記述
-                ("cameraStorage", end, all, { c, _ in c.perspective() }),
-                ("drawsDebugGuides", both, all, { c, _ in c.debugMode() }),
-                ("transform", both, all, { c, _ in c.translate(5, 5) }),
-                ("transformStack", head, all, { c, _ in c.pushMatrix() }),
-                ("styleStack", head, all, { c, _ in c.pushStyle() }),
-                ("activeLights", both, all, { c, _ in c.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2)) }),
-                ("activeSurroundings", both, all, { c, _ in c.surroundings(.sky) }),
-                ("shadowsEnabled", end, all, { c, _ in c.shadows(true) }),
-                ("shadowRangeValue", end, all, { c, _ in c.shadowRange(50) }),
-                ("shadowDetailValue", end, all, { c, _ in c.shadowDetail(ShadowMap.detailRange.lowerBound) }),
-                ("shadowBiasValue", end, all, { c, _ in c.shadowBias(0.5) }),
-                ("pendingEffects", head, all, { c, _ in c.effects([.invert()]) }),
+                ("cameraStorage", sceneEnd, all, { c, _ in c.perspective() }),
+                ("drawsDebugGuides", sceneBoth, all, { c, _ in c.debugMode() }),
+                ("transform", sceneBoth, all, { c, _ in c.translate(5, 5) }),
+                ("transformStack", sceneHead, all, { c, _ in c.pushMatrix() }),
+                ("styleStack", sceneHead, all, { c, _ in c.pushStyle() }),
+                ("activeLights", sceneBoth, all, { c, _ in c.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2)) }),
+                ("activeSurroundings", sceneBoth, all, { c, _ in c.surroundings(.sky) }),
+                ("shadowsEnabled", sceneEnd, all, { c, _ in c.shadows(true) }),
+                ("shadowRangeValue", sceneEnd, all, { c, _ in c.shadowRange(50) }),
+                ("shadowDetailValue", sceneEnd, all, { c, _ in c.shadowDetail(ShadowMap.detailRange.lowerBound) }),
+                ("shadowBiasValue", sceneEnd, all, { c, _ in c.shadowBias(0.5) }),
+                ("pendingEffects", sceneHead, all, { c, _ in c.effects([.invert()]) }),
                 ("pendingComputations", end, all, { c, f in c.compute(f.computation, over: 1, writes: [f.numbers]) }),
                 // 溜めたもの。立体は光を置いた後に置くので、列を閉じたときに光の置き場へ写る
                 ("solidVertices", end, all, { c, _ in c.box(4) }),
@@ -528,6 +552,7 @@ extension CanvasTests {
             let testing = "検査の差し込み・上限。製品の経路では既定のまま"
             return [
                 "width": construction, "height": construction,
+                "outputScale": "\(construction)。書き出しの倍率で、描き場所の作り方が引き継ぐ (#3453)",
                 "target": "\(construction)。中のフレームに属する状態は nestedFrameState が見る (#1678)",
                 "output": construction, "upscaleStage": construction, "gpu": construction,
                 "frameRing": construction, "pipeline": construction, "argumentTable": construction,
@@ -657,10 +682,10 @@ extension CanvasTests {
         /// (ADR-0021 決定 4 の表)。
         private var frameStyle: [String: (reset: FrameReset, dirty: (inout Canvas.Style) -> Void)] {
             [
-                "clip": (.both, { $0.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6) }),
-                "material": (.end, { $0.material.shininess = 8 }),
-                "castsShadow": (.end, { $0.castsShadow = false }),
-                "receivesShadow": (.end, { $0.receivesShadow = false }),
+                "clip": (.sceneBoth, { $0.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6) }),
+                "material": (.sceneEnd, { $0.material.shininess = 8 }),
+                "castsShadow": (.sceneEnd, { $0.castsShadow = false }),
+                "receivesShadow": (.sceneEnd, { $0.receivesShadow = false }),
             ]
         }
 
@@ -878,6 +903,8 @@ extension CanvasTests {
                 // 外で置いたものは最初のフレームへ持ち越すのが約束である (ADR-0021 決定 4 の追補
                 // (2026-09-27))。頭で戻すものだけを見る
                 guard !boundary.dirtiesOutside || resets[name]?.atHead == true else { continue }
+                // コールバックの出口で戻すのはシーンの記述だけ (#3408)。置いたもの・描き方は残る
+                guard boundary != .inputCallbackExit || resets[name]?.isSceneDescription == true else { continue }
                 #expect(crossed[name] == value, "\(name) が \(boundary) の境目で既定へ戻らない")
             }
         }

@@ -13,6 +13,9 @@ import mokume
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 nonisolated enum CommandFailure: Error, Equatable {
     case usage(String)
+    /// `--help` / `-h` が打たれた。**誤りではない** — ``Command/dispatch(_:)`` がその口の使い方を標準出力に
+    /// 書いて 0 で終わる。口を走らせる前に投げて止める (ビルド・診断・窓口の待ち受け・ファイルの作成をしない・#3425)。
+    case helpRequested
     case nameMissing
     case invalidName(String)
     /// 文字は使えるが、作ったパッケージが組めなくなる名前。`reason` は組めない理由 (英語の 1 文)。
@@ -238,6 +241,9 @@ nonisolated enum CommandFailure: Error, Equatable {
         switch self {
         case .usage(let text):
             text
+        case .helpRequested:
+            // 誤りではないので、`dispatch` が受けてここへは来ない。来ても何も言わない
+            ""
         case .nameMissing:
             "The sketch needs a name: \(Command.name) new <name>"
         case .invalidName(let name):

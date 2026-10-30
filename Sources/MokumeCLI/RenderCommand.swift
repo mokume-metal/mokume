@@ -29,9 +29,12 @@ import mokume
 /// 大きさ・字は倍率を掛けて描かれる。倍率ごとに決定論 (同じ引数から同じ画素) で、倍率 1 と 2 の画素は
 /// 一致しない。倍率が 1 以上の整数でないもの・倍率だけで面の上限を越えるものは、ビルドの前に断る。
 /// 作品の大きさを掛けて上限を越える組は、作品の大きさがコードの中にあるので、子が最初のフレームを描く前に
-/// 断る。
+/// 断る。**`createGraphics` の描き場所も同じ倍率で作られ (座標は頼んだまま・画素だけ N 倍・[#3453])、同じ上限に
+/// 当たる。** それも作品の中でしか分からないので、描き場所を作る `setup()` (や `draw()`) の中で、倍率を名指す失敗で
+/// 断られる (倍率 1 で描けた本体より大きい描き場所は、倍率 N で止まりうる)。
 ///
 /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+/// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 enum RenderCommand {
     /// 解いた引数。
@@ -249,8 +252,10 @@ enum RenderCommand {
     ///
     /// 倍率だけで面の一辺の上限 (16384 画素) を越えるものも、ビルドの前に断る。**作品の大きさを掛けた
     /// 後の上限は、ここでは見られない** (作品の大きさはコードの中にある) ので、子が最初のフレームを
-    /// 描く前に、掛けた大きさを名乗って断る。
+    /// 描く前に、掛けた大きさを名乗って断る。**`createGraphics` の描き場所も同じ上限に当たる**
+    /// ので、`setup()` の中で (作った時点で) 倍率を名指して断られる ([#3453])。
     ///
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
     static func parseScale(_ text: String) throws(CommandFailure) -> Int {
         guard let scale = Int(text), RenderRequest.scales.contains(scale) else {

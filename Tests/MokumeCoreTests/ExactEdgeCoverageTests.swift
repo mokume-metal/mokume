@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import MokumeTestSupport
 import Testing
 import simd
 
@@ -495,26 +496,6 @@ struct ExactEdgeCoverageTests {
 
     // MARK: - 縁の画素ごと
 
-    /// 画素 (x, y) の面積を、`samples` × `samples` の標本で数える。画素の 4 角と中心が同じ側なら標本を取らない。
-    private static func sampledArea(
-        _ x: Int, _ y: Int, samples: Int = 48, inside: (SIMD2<Float>) -> Bool
-    ) -> Float {
-        let origin = SIMD2(Float(x), Float(y))
-        let probes = [SIMD2<Float>(0, 0), SIMD2(1, 0), SIMD2(0, 1), SIMD2(1, 1), SIMD2(0.5, 0.5)]
-        let hits = probes.map { inside(origin + $0) }
-        if hits.allSatisfy({ $0 }) { return 1 }
-        if !hits.contains(true) { return 0 }
-        var hit = 0
-        for sy in 0..<samples {
-            for sx in 0..<samples {
-                let sample = origin + SIMD2(
-                    (Float(sx) + 0.5) / Float(samples), (Float(sy) + 0.5) / Float(samples))
-                if inside(sample) { hit += 1 }
-            }
-        }
-        return Float(hit) / Float(samples * samples)
-    }
-
     /// 回した太い塗りの縁を、厳密な面積 (標本で数える) と画素ごとに比べる。**角の画素は見ない** — 角の
     /// 外の距離場は縁 1 本ではなく角までの距離で、面積の約束の外 (ADR-0039 決定 1)。
     @Test("45° に回した太い rect の塗りの縁は、辺に沿う画素ごとに、厳密な面積と 0.012 以内で一致する")
@@ -538,7 +519,6 @@ struct ExactEdgeCoverageTests {
                 let u = c * (d.x + d.y), v = c * (d.y - d.x)
                 return abs(u) <= half && abs(v) <= half
             }
-            let samples = 64
             for y in 0..<pixels.height {
                 for x in 0..<pixels.width {
                     let at = SIMD2(Float(x) + 0.5, Float(y) + 0.5)
@@ -547,16 +527,7 @@ struct ExactEdgeCoverageTests {
                     let u = c * (d.x + d.y), v = c * (d.y - d.x)
                     if abs(abs(u) - half) < 1.5 && abs(abs(v) - half) < 1.5 { continue }
                     if abs(u) > half + 1.5 || abs(v) > half + 1.5 { continue }
-                    var hit = 0
-                    for sy in 0..<samples {
-                        for sx in 0..<samples {
-                            let sample = SIMD2(
-                                Float(x) + (Float(sx) + 0.5) / Float(samples),
-                                Float(y) + (Float(sy) + 0.5) / Float(samples))
-                            if inside(sample) { hit += 1 }
-                        }
-                    }
-                    let exact = Float(hit) / Float(samples * samples)
+                    let exact = CoverageReference.sampledArea(x, y, samples: 64, inside: inside)
                     let diff = abs(pixels[x, y].red - exact)
                     if diff > worst {
                         worst = diff
@@ -586,7 +557,7 @@ struct ExactEdgeCoverageTests {
             for x in 0..<pixels.width {
                 let center = SIMD2(Float(x) + 0.5, Float(y) + 0.5)
                 if skipping.contains(where: { simd_distance($0 + shift, center) < 2.2 }) { continue }
-                let exact = sampledArea(x, y) { inside($0 - shift) }
+                let exact = CoverageReference.sampledArea(x, y) { inside($0 - shift) }
                 let diff = abs(pixels[x, y].red - exact)
                 if diff > worst {
                     worst = diff

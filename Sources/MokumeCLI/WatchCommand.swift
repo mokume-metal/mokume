@@ -980,7 +980,8 @@ enum WatchCommand {
     /// 出力 (`[n/m] Compiling…` の行) を端末へ流しても読む人のすることは変わらない。全文は
     /// 記録 (`status.json`) に在る。
     ///
-    /// - Parameter holdingPrevious: 前の版が走り続けているか (``WatchSession/keepsPreviousRunning``)。
+    /// - Parameter holdingPrevious: 何かの世代が生きているか — 前の版が走り続けているか、起動中の新しい世代があるか
+    ///   (``WatchSession/keepsPreviousRunning``)。
     ///   起こせなかった回に、そうであるときだけ ``holdingLine`` を名乗る — 窓のある見張りは前の
     ///   世代を残してから起こし、窓の無い見張りは起こす前に止める。**通らなかった回も同じ口で
     ///   分ける** ([#2875](https://github.com/mokume-metal/mokume/issues/2875)) — 最初の 1 回と、
@@ -1079,7 +1080,7 @@ enum WatchCommand {
     /// プレビューへ重ねる 1 行。**端末に出ている言葉だけで組む** — プレビューは端末の
     /// 代わりではないので、ここだけで名乗る事実を作らない。
     ///
-    /// - Parameter holdingPrevious: 前の版が走り続けているか (``reportLines(_:holdingPrevious:)``
+    /// - Parameter holdingPrevious: 何かの世代が生きているか (``reportLines(_:holdingPrevious:)``
     ///   と同じ口)。
     /// - Returns: 通って起こせたら `nil` (``startingSketchLine`` は出し手の ``report`` が置く)。通らなかったら**出したままにする行** — 消すと
     ///   「保存したのに絵が変わらない」が「変えた結果が同じだった」と見分けられない。

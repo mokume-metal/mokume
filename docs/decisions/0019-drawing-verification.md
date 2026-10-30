@@ -178,7 +178,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 
 **いつ**: 6 時間おき (`13 2,8,14,20 * * *`・JST の 05:13 / 11:13 / 17:13 / 23:13)。赤が見えるまでの最大は約 6 時間になる。schedule は遅れたり間引かれたりする (`stall-watch.yml` の実測)。毎時 0 分は避ける (このリポジトリの慣習)。
 
-**混雑への歯止め**: 専用機は 1 台で、必須の `render` (queue の期限は 60 分) と定期の run が取り合う。そこで 1 本の長いジョブにせず、debug と release の 2 ジョブに分け、release は debug の終了後に、下の門番を通してから queue へ入れる。各ジョブは `timeout-minutes: 30`。初回の run で所要と、直後の `render` の runner 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
+**混雑への歯止め**: 専用機は 1 台で、必須の `render` (queue の期限は 95 分・下の「改訂 (2026-10-30)」) と定期の run が取り合う。そこで 1 本の長いジョブにせず、debug と release の 2 ジョブに分け、release は debug の終了後に、下の門番を通してから queue へ入れる。各ジョブは `timeout-minutes: 30`。初回の run で所要と、直後の `render` の runner 待ちを測り、悪化していれば #1983 に戻って頻度か範囲を選び直す。
 
 **赤を誰が読むか**: GitHub ホストの後続ジョブが `scripts/report-check-failure.sh` で起票する。**赤に数えるのは、専用機の job が落ちた (`failure`) 回と切れた (`cancelled`) 回である** — `timeout-minutes` で切れた job は cancelled で終わり、Actions に灰色で出るだけなので、落ちた回よりさらに見えない。切れる経路 (timeout・人の cancel・run をまたぐ重なりでの concurrency の置き換え) は見分けず、起票の本文がそのどれかと名乗る (代償: 人が定期の run を止めると 1 本立つが、止めた人はそれを知っているので閉じれば済む・下の「切れた (cancelled) 回も赤に数えて起票する」)。却下した案: `stall-watch` が名乗る (赤は Actions に出るだけで、#1086 も publication の赤 (#1295) も「Actions の赤を誰も見ない」形で起きた。夜間の赤は「止まって見える」状態を作らないので、`stall-watch` が読まれる機会も無い) / GitHub の通知メールに任せる (宛先が cron を最後に触った人で決まり、エージェントに届かない)。
 
@@ -251,7 +251,7 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 
 拾う順は GitHub が決めるので変えられない。そこで**専用機に同時に積む job を絞る**。専用機の各ジョブの前に GitHub ホストの門番ジョブ (`render-turn`・判断は `scripts/render-turn.sh`) を置く:
 
-- `render` は、1 つ前の group の run が終わるまで積まない。group は queue の順に 1 本ずつ専用機に載る。**queue の期限の直前 (55 分) まで放さない** — 早く放すと後ろの group がそろって積まれ、期限に近い前の group と取り合って元の症状に戻る。上限は門番が自分で終わって守り、job の timeout には任せない
+- `render` は、1 つ前の group の run が終わるまで積まない。group は queue の順に 1 本ずつ専用機に載る。**queue の期限の直前 (90 分・当初は 55 分) まで放さない** — 早く放すと後ろの group がそろって積まれ、期限に近い前の group と取り合って元の症状に戻る。上限は門番が自分で終わって守り、job の timeout には任せない
 - `render-pr` は、merge_group の run が 1 本でも残っていれば見送る。必須ではないので merge の可否は変わらない (代償: queue が混んでいる間は、PR の時点で早く気付く情報が出ない。**例の絵の前後の比較 (#1986) を持つのは `render-pr` だけ**なので、実装だけが変わって絵が古くなったことの名指しもその間は出ない。見送りは run の要約に名乗る)
 - 定期の検査 (D) は、merge_group の run が残っている間は待つ
 
@@ -272,6 +272,18 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 **切り替えと戻しは変数で行う。** コードは既定 1 で merge し、2 本目の runner を置いてから変数を 2 にする。基準 (#2252 の完了条件 4: 待ちの p50 が 5 分以下・並走した回の所要が単独の +25% 以内・GPU の打ち切りと窓の検査の赤が増えない) を満たさなければ、変数を 1 に戻す。
 
 **代償**: 専用機の GPU と画面のセッションを 2 本の job が分け合う。1 プロセスの中の並列の幅は 1 のまま (`scripts/gpu-slot.py`「並列の幅」) で、増えるのはプロセスの数 (最大 2) だけだが、専用機で GPU の検査を 2 プロセス同時に走らせた実績は無い。窓を開く検査が同じ画面で重なる。門番の 1 周の API の呼び出しは N=2 で 2 倍 (1 時間 240 件) になる。退けた案: 門番を外して runner の数だけに任せる — group と render-pr が N 本を越えて積まれると、#2062 の取り合いが runner の数だけ緩んで残る。
+
+#### 改訂 (2026-10-30) — queue の期限を 60 分から約 95 分へ延ばす ([#3502](https://github.com/mokume-metal/mokume/issues/3502))
+
+**決定**: 構築数 (`max_entries_to_build`) は 2 のまま、merge queue の期限 (`check_response_timeout_minutes`) を 60 分から **95 分**へ延ばす。門番の `merge_group` の上限は 55 分から **90 分**、`render-turn` の `timeout-minutes` は 65 分から **100 分**へ、同じ並びで動かす。縮退用の ruleset (`.github/rulesets-degraded/`) も同じ 95 分にする (差は必須チェックの `render` だけという固定を保つ)。定期の門番 (`scheduled-release-turn`・`scheduled-drift-turn`) は queue の期限に結び付いておらず、`wait` の 60 分と timeout の 65 分のまま動かさない。`render`・定期の job の `timeout-minutes: 30`・全検査・ALLGREEN は変えない。
+
+**理由**: group が期限内に終わる条件は「前の group の render (最大 30 分) + group の前に割り込みうる専用機の job 1 本 (最大 30 分) + 自分の render (最大 30 分) + 門番の間隔」である。2026-10-21〜28 の 7 日で、期限切れで queue から外れた PR は 13 件あり、全件が専用機の render が間に合わなかった回だった (hosted の検査は 15 分以内に成功。[#2610](https://github.com/mokume-metal/mokume/issues/2610) の測定)。検査時間を縮めても (#3500・#3299・#3010)、割り込み 1 本で 60 分を越える構造は変わらないので、期限の側は短縮を待たずに決めた。
+
+**代償**: 専用機が止まった回 (#2252) は、先頭の group が期限で外れるまでが 60 分から 95 分へ延びる。検査が壊れて止まった回は render の job の `timeout-minutes: 30` が先に赤にするので、故障の検知は遅れない。処理能力 (1 時間に通る group の上限) は変わらない。merge_group が専用機を長く握るので、定期の門番が待ち切れずに割り込む回が増えうる (仮説・未確認)。
+
+**95 分が覆う重なりと、覆わない重なり**: 値の決め方 (前の group の render 30 + 割り込みうる専用機の job 1 本 30 + 自分の render 30 + 門番の間隔) の「1 本」は、走っている `render-pr` か、`wait` の 60 分で放された定期の job の**どちらか 1 本**である。両方が自分の group の前に重なる最悪の形 (前の group 30 + `render-pr` 30 + 定期の job 30 + 自分 30 = 120 分) は、95 分でも覆えず、今までどおり `checks_timed_out` で外れる。`queue-sweep` は走っている `render-pr` を止めず (`scripts/queue-sweep.sh`)、定期の検査は退かせない (上の「定期の検査 (D) は退かせない」の「1 本まで」は定期の job の数で、`render-pr` はそれとは別に走りうる) ので、この重なりは起こりうる。期限を 120 分以上へ延ばすことは、故障した回の先頭の外れがさらに遅れる代償と引き換えになるので、ここでは選ばない。適用後 7 日の測定 ([#3502](https://github.com/mokume-metal/mokume/issues/3502)) で、残った `checks_timed_out` の内訳 (どの job が前に何本入ったか) を数え、この重なりが残りの主因なら期限か重なりの側を選び直す。
+
+**退けた案**: 構築数 1 (単独では時間切れを消さず、群の間の隙間に定期の job や render-pr が入りうる。比較は [#3503](https://github.com/mokume-metal/mokume/issues/3503) の計測の後) / 期限を延ばさず `render-turn` の上限だけを延ばす (期限を越えて待つと自分の render が走る前に弾かれる。`scripts/tests/render_workflow_test.py` が止める) / 期限と同時に render の `timeout-minutes` を延ばす (故障の検知が遅れる)。
 
 #### 外のリポジトリから専用機に届くのは、render-pr が組む mokume-syphon の main だけ
 

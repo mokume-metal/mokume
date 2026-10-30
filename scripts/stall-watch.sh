@@ -54,12 +54,12 @@
 #      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
 #      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
 #      render.yml の run は rerun しない (3 と同じ)
-#   8. 描画に触れない PR も含めて、queue に入った PR が 60 分ごとに弾かれ続ける
+#   8. 描画に触れない PR も含めて、queue に入った PR が期限 (95 分) ごとに弾かれ続ける
 #      原因: 専用機の runner が止まっていて、必須の render が queued のまま走らない
 #      (#1774)。専用機は runner の数 (RENDER_TURN_SLOTS・既定 1) 本で、render は paths で
 #      絞らず merge_group ごとに走る。runner が複数のとき、1 本が落ちても残りが走っている間は
 #      空いた runner の数だけ queued が拾われないままになる (#3320)。弾かれた
-#      PR には 5 の行も出るが、掛け直しても同じ 60 分を待つだけである
+#      PR には 5 の行も出るが、掛け直しても同じ 95 分を待つだけである
 #      対処: 1) 専用機の前で runner を戻す (ssh では入れない — #1767)。戻ったかは
 #      Settings → Actions → Runners か gh api repos/<repo>/actions/runners (メンテナの権限)
 #      で見る。2) 戻せない間も merge を通すなら、メンテナが docs/runner-degraded-mode.md の
@@ -67,7 +67,7 @@
 #      条件は、その文書だけに書いてある (#2252)。エージェントは --apply を打たない
 #   9. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
 #      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
-#      積まれた render-pr や後ろの group の render に抜かれ続け、60 分の期限で弾かれる。
+#      積まれた render-pr や後ろの group の render に抜かれ続け、95 分の期限で弾かれる。
 #      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
 #      門番が効いていない (render-turn が赤) か、門番より前に積まれた job が残っている。
 #      門番より前に積まれた render-pr のうち、まだ拾われていないものは、group ができた

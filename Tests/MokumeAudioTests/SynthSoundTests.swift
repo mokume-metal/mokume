@@ -121,6 +121,46 @@ struct SynthSoundTests {
         return AudioAnalysis.analyze(span(of: stream, from: (frame - 1) * perFrame, to: frame * perFrame))
     }
 
+    // MARK: - 音の時計 (#2465)
+
+    @Test("soundTime: 固定の時計 (60 fps) で frameCount が 121 の draw() は 2.0 を返し、pauseTime()・jumpTime(5) で止まらず飛ばない。合成音を作っていなければ 0")
+    func soundTimeFollowsTheSoundClock() throws {
+        var withSound: [Int: Double] = [:]
+        var inSetup: Double = -1
+        var bare: [Double] = []
+        let clock = Clock.frameIndex(frameRate: 60)
+        for makesSound in [true, false] {
+            let runtime = try run(
+                frames: 130, clock: clock,
+                setup: { sketch in
+                    if makesSound {
+                        _ = SinOsc(stage: SynthStage.stage(for: sketch))
+                        inSetup = sketch.soundTime
+                    }
+                },
+                draw: { sketch in
+                    if makesSound {
+                        withSound[sketch.frameCount] = sketch.soundTime
+                    } else {
+                        bare.append(sketch.soundTime)
+                    }
+                    // 時間の口は、音の時計に効かない
+                    if sketch.frameCount == 30 { sketch.pauseTime() }
+                    if sketch.frameCount == 60 { sketch.jumpTime(5) }
+                })
+            runtime.closePlugins()
+        }
+        #expect(inSetup == 0)
+        #expect(withSound[121] == 2.0)
+        #expect(withSound[1] == 0 && withSound[61] == 1.0)
+        // 一時停止の後も、飛んだ後も、1 フレーム (800 標本) ずつ進む
+        for frame in 31...129 {
+            let step = try #require(withSound[frame + 1]) - (try #require(withSound[frame]))
+            #expect(abs(step - 1.0 / 60) < 1e-12, "frame \(frame): \(step)")
+        }
+        #expect(bare.count == 130 && bare.allSatisfy { $0 == 0 })
+    }
+
     // MARK: - 走っている実行の外から作る (#2740)
 
     /// **音の流れを先に足してあれば、外 (`draw()` で起こした `Task` など) から作った合成音も、その流れに入って

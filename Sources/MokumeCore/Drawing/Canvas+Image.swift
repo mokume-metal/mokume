@@ -115,12 +115,22 @@ extension Canvas {
     /// 描き場所を貼る。
     public func texture(_ graphics: Canvas) {
         note(placing: graphics)
-        style.picture = .drawn(graphics.output)
+        style.picture = graphics.drawnPicture
     }
 
     public func noTexture() { style.picture = nil }
 
     // MARK: - 置く
+
+    /// この描き場所を読む絵として渡す値。**大きさは座標の大きさ**で、画素数ではない ([#3453])。
+    /// 書き出しの倍率 (`mokume render --scale`) の下では描き場所は倍率の画素で刻まれるが、置く大きさ・
+    /// 切り出し・読み取り位置は、倍率 1 で書いた作品と同じ数のまま読めなければならない。
+    ///
+    /// **置く側で倍率を掛け直さない。** 座標と画素の分け方は `init(output:gpu:pixelDensity:upscale:outputScale:)`
+    /// の 1 本で、読む側はここで座標の大きさを受け取るだけ — 描き場所だけの換算を別に足すと、片方だけ直る。
+    ///
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+    var drawnPicture: Picture { .drawn(output, width: Int(width), height: Int(height)) }
 
     /// 絵を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは絵の画素数のまま。
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
@@ -145,18 +155,18 @@ extension Canvas {
         place(.loaded(image), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
-    /// 描き場所を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは描き場所の画素数のまま。
+    /// 描き場所を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは描き場所の座標の大きさのまま (書き出しの倍率の下でも変わらない)。
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
         let (a, b) = (a.asFloat, b.asFloat)
         note(placing: graphics)
-        place(.drawn(graphics.output), a, b)
+        place(graphics.drawnPicture, a, b)
     }
 
     /// 描き場所を、指定した寸法に合わせて置く。
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         note(placing: graphics)
-        place(.drawn(graphics.output), a, b, c, d)
+        place(graphics.drawnPicture, a, b, c, d)
     }
 
     /// 描き場所の一部を切り出して置く。
@@ -167,7 +177,7 @@ extension Canvas {
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         note(placing: graphics)
         place(
-            .drawn(graphics.output), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
+            graphics.drawnPicture, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
     // MARK: - 置き方は 1 本

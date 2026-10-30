@@ -199,6 +199,13 @@ enum DoctorCommand {
         print(text(for: arguments))
     }
 
+    /// ヘルプを頼まれているか (`--help` / `-h`)。**頼まれたら診断を走らせない** (#3425)。
+    /// 値を取る選択肢の値 (`doctor -c -h` の `-h` は値でなく、ヘルプを頼む語として読む。値は `-` 始まりを取らない)。
+    static func asksForHelp(_ arguments: [String]) -> Bool {
+        (try? Arguments.parse(arguments, options: Command.valueOptions, surplus: .ignore))?
+            .helpRequested ?? false
+    }
+
     /// 打った結果の全文。
     ///
     /// - Parameter workDirectory: 環境変数が与えた区画の基準 (`nil` なら与えられていない)。

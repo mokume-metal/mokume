@@ -54,7 +54,8 @@ extension AudioFailure: CustomStringConvertible {
             AssetOpening.notice(path: path, location: location, reason: reason)
         case .unreadable(let path):
             "\"\(path)\" cannot be read as audio. Check whether it is damaged, and that the format "
-                + "is one macOS plays (WAV, AIFF, CAF, MP3, AAC/M4A, FLAC)"
+                + "is one macOS plays (WAV, AIFF, CAF, MP3, AAC/M4A, FLAC). If it is a video file, "
+                + "it may have no audio track, or one in a format macOS cannot open"
         case .empty:
             "There are no samples to analyze. Pass at least one sample"
         case .invalidSampleRate(let rate):

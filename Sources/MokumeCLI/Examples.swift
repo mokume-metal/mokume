@@ -168,6 +168,7 @@ nonisolated enum Examples {
 /// `mokume examples`。
 enum ExamplesCommand {
     static func run(_ arguments: [String]) throws(CommandFailure) {
+        if arguments.contains(where: { Arguments.helpSpellings.contains($0) }) { throw .helpRequested }
         // 位置引数も選択肢も取らない。**黙って捨てると、絞り込みを期待した人が全件を読まされる**
         if let extra = arguments.first {
             throw .usage(
