@@ -146,6 +146,39 @@ public nonisolated enum CoverageReference {
         return out
     }
 
+    // MARK: - 曲線の縁の本体の式 (円)
+
+    /// **本体が曲線の縁の被覆に使う式の写し** (円の塗り・#3493)。本体は画素の中心での距離と勾配から縁の
+    /// 接線を作り、その**半平面**と画素の正方形の重なりの面積を被覆にする (`Shapes.metal` の
+    /// `mokume_formCoverage` の面積の枝・`mokume_pixelCdf`)。円の距離場は真の距離なので、中心 `center` から画素の
+    /// 中心までの距離 − 半径 が符号つきの距離、中心から画素へ向かう単位ベクトルが勾配になる。最後に
+    /// ``snapped(_:)`` で写す。
+    ///
+    /// **円板は凸で、接線の半平面に丸ごと含まれる**ので、この値は ``circleArea(center:radius:pixel:_:)`` (真の面積) を
+    /// 下回らない。差は描く画素での曲率半径 R に反比例し、約 `k / R` (k は ``CoverageTable/curvatureConstant``) まで開く。
+    /// 本体の式を写すのは、この差を GPU なしで数えて k を決めるためで、本体と食い違えば
+    /// `FillCoverageTests` が GPU の絵で見つける。
+    public static func circleModelCoverage(
+        center: SIMD2<Double>, radius: Double, pixel x: Int, _ y: Int
+    ) -> Double {
+        let middle = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
+        let distance = simd_distance(middle, center)
+        guard distance > 1e-12 else { return snapped(1) }
+        return snapped(halfPlaneArea(distance - radius, (middle - center) / distance))
+    }
+
+    /// 凹の縁 (帯の内縁 = 穴の縁) のための ``circleModelCoverage(center:radius:pixel:_:)``。**形の内が円板の外**で、
+    /// 距離は `半径 − 中心からの距離`、勾配は外向きの逆。接線の半平面は、形の内 (円板の外) の部分集合になるので、
+    /// 被覆は真の面積 (`1 − 円板の被覆`) を上回らない。
+    public static func circleHoleModelCoverage(
+        center: SIMD2<Double>, radius: Double, pixel x: Int, _ y: Int
+    ) -> Double {
+        let middle = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
+        let distance = simd_distance(middle, center)
+        guard distance > 1e-12 else { return snapped(0) }
+        return snapped(halfPlaneArea(radius - distance, -(middle - center) / distance))
+    }
+
     // MARK: - 本体の両端の遊び
 
     /// 本体が被覆の両端に持たせる遊び (`Shapes.metal` の `kFormSnap`・1/256)。
@@ -153,8 +186,7 @@ public nonisolated enum CoverageReference {
 
     /// 面積を、本体の被覆の写し方 (`c · (1 + 2/256) − 1/256`・0〜1 に clamp) で写した値。
     ///
-    /// `Shapes.metal` の `mokume_formCoverage` (`saturate(mokume_pixelCdf(…) * (1.0 + 2.0 * kFormSnap) - kFormSnap)`・
-    /// 1925〜1928 行付近) と同じ式で、**整数に置いた縁が 0 / 1 の境目に乗って、隣の画素が 1/255 染まる・塗り切った
+    /// `Shapes.metal` の `mokume_formCoverage` (`saturate(mokume_pixelCdf(…) * (1.0 + 2.0 * kFormSnap) - kFormSnap)`) と同じ式で、**整数に置いた縁が 0 / 1 の境目に乗って、隣の画素が 1/255 染まる・塗り切った
     /// 画素が 254/255 になる** のを防ぐための設計である。面積そのものとは 0 / 1 に近い画素で最大 1/256 違う。
     /// 軸に沿う縁の比べに使い、面積の真値ではなく「本体が約束する値」を比べる。
     public static func snapped(_ area: Double) -> Double {
@@ -251,26 +283,50 @@ public nonisolated enum CoverageTable {
         public let shape: Shape
         public let route: Route
         public let quantity: Quantity
-        /// 画素ごとの差の許容 (0〜1 の被覆)。
+        /// 画素ごとの差の許容の下限 (0〜1 の被覆)。曲線の縁の行は、半径が小さいときだけこれより広がる
+        /// (``tolerance(atRadius:)``)。
         ///
         /// ``Quantity/halfToneAndCentroid`` の行では、**白黒の一致しない画素の数の上限を、参照の白黒の縁の画素の
         /// 数で割った割合**を持つ (縁が長い形ほど数が増えるので、数ではなく縁に対する割合で縛る)。
         public let tolerance: Double
         /// ``Quantity/halfToneAndCentroid`` の行だけが持つ、重心のずれの上限 (画素)。
         public let centroidTolerance: Double?
+        /// 曲線の縁の、差の上限 `k / R` の k (0 なら半径によらず ``tolerance`` 一定)。``CoverageTable/curvatureConstant``。
+        public let curvature: Double
         /// 許容の根拠 (比べる検査の説明が引く)。
         public let basis: String
 
         public init(
             shape: Shape, route: Route, quantity: Quantity, tolerance: Double, centroidTolerance: Double? = nil,
-            basis: String
+            curvature: Double = 0, basis: String
         ) {
             self.shape = shape
             self.route = route
             self.quantity = quantity
             self.tolerance = tolerance
             self.centroidTolerance = centroidTolerance
+            self.curvature = curvature
             self.basis = basis
+        }
+
+        /// 描く画素での曲率半径 `radius` の縁の許容: `max(tolerance, k / radius + 余裕)`。
+        ///
+        /// 余裕は 8 bit の丸め (半段 = 1/510) と半精度の丸め (2⁻¹¹) の分 (``CoverageTable/rounding``)。
+        /// **半径が大きいときは `tolerance` (0.02) が勝つ** — 半径 7 以上で 0.02 より緩まない。
+        /// 曲線の行 (k が正) で ``CoverageTable/minimumRadius`` 未満は測っていないので、許容を黙って返さず止まる。
+        public func tolerance(atRadius radius: Double) -> Double {
+            guard curvature > 0 else { return tolerance }
+            precondition(
+                radius >= CoverageTable.minimumRadius,
+                "半径 \(radius) は ≥ \(CoverageTable.minimumRadius) の範囲の外 (GPU で測っていない・#3493)")
+            return max(tolerance, curvature / radius + CoverageTable.rounding)
+        }
+
+        /// 暗い側 (本体 < 参照) の許容。**曲線の縁の差は一方向** (本体は面積を下回らない = 明るい側) なので、曲線の行は
+        /// 丸めの余裕 (``CoverageTable/rounding``) だけにする。明るい側と同じ幅にすると、暗く出る退行 (被覆が 0.04 下がる
+        /// など) が半径 3 の許容に隠れる。曲線でない行は、明るい側と同じ許容。
+        public func darkTolerance(atRadius radius: Double) -> Double {
+            curvature > 0 ? CoverageTable.rounding : tolerance
         }
     }
 
@@ -287,19 +343,48 @@ public nonisolated enum CoverageTable {
         }
     }
 
+    /// **曲線の縁の差の上限 `k / R` の k** (#3493)。R は描く画素での曲率半径 (画素)。
+    ///
+    /// 本体は曲線の縁を、接線の半平面と画素の正方形の重なりで数える (`mokume_formCoverage` の面積の枝)。円板は
+    /// 凸なので被覆は面積より明るく (凹の縁は同じ大きさで暗く) 出て、差は画素の中の接線の長さ L に対し弧と接線の間の面積
+    /// `L³ / (24 R)` までで、画素の正方形の対角 (L = √2) で最大 0.118 / R になる。**実測の最大に合わせずに**、本体の式の
+    /// 写し (``CoverageReference/circleModelCoverage(center:radius:pixel:_:)``) を半径 3〜30・画素と縁の相対位置の格子で
+    /// 数えた最大 (0.116) を覆う値に置いた。`CoverageReferenceTests` が、模型の最大がこの値の内で、この値が模型の最大より
+    /// 緩すぎないこと (1.15 倍まで) を見る。
+    ///
+    /// **効く範囲は、描く画素での曲率半径が ``minimumRadius`` 以上の、面積の枝を通る曲線の縁。** 円・楕円・扇の塗りと
+    /// 輪郭の両縁・角丸の角・`strokeJoin(.round)` の外縁は同じ式を通るので、同じ向きに同じ根で外れる。**`point()` と、
+    /// 既定の丸い端 (`strokeCap(.round)`) の線の端は線形の渡しで面積の枝を通らず、この約束の外。** 測ったのは円 (一様な
+    /// 拡大) だけで、一様でない拡大 (軸 30×10 の楕円では差 × 局所の R が 0.168) と楕円は測っていない — 楕円は距離場そのものが
+    /// 近似 (ADR-0039) なので別の誤差が重なる。
+    public static let curvatureConstant = 0.12
+
+    /// 曲線の縁の約束を検査する曲率半径 (画素) の下限。**3 は置いた線で、GPU で測ったのは 3 から** (`FillCoverageTests` の
+    /// 生成の下限)。本体の式の写しで数えると、半径 1〜2.5 でも差 × R は 0.107 の内に収まる (k の内) ので、3 未満で
+    /// 約束が崩れると言っているのではなく、そこは GPU で測っていないので ``Row/tolerance(atRadius:)`` が許容を返さない。
+    public static let minimumRadius = 3.0
+
+    /// 8 bit の丸め (半段 = 1/510) と半精度の丸め (2⁻¹¹ = 0.0005) の分。許容に足す余裕。
+    public static let rounding = 1.0 / 510 + 1.0 / 2048
+
     /// 表。許容は既存の検査の根拠のまま (`ExactEdgeCoverageTests`)。
     public static let rows: [Row] = [
         Row(
             shape: .axisAlignedRect, route: .distanceField, quantity: .snappedArea, tolerance: 1.0 / 255,
             basis: "軸に沿う縁は線形の渡しがそのまま面積だが、本体は両端に 1/256 の遊びを持たせて写す"
-                + " (`Shapes.metal` の `kFormSnap`・`mokume_formCoverage` の 1925〜1928 行付近)。写した値と 1/255 以内"),
+                + " (`Shapes.metal` の `kFormSnap`・`mokume_formCoverage` の面積の枝の最後の `saturate(… * (1.0 + 2.0 * kFormSnap) - kFormSnap)`)。写した値と 1/255 以内"),
         Row(
             shape: .rotatedRect, route: .distanceField, quantity: .area, tolerance: 0.012,
             basis: "直線の斜めの縁は半平面との重なりの面積 (`mokume_pixelCdf`)。45° の rect で 0.012 (#2991)"),
         Row(
-            shape: .circle, route: .distanceField, quantity: .area, tolerance: 0.02,
-            basis: "曲線の縁は距離を直線とみなして数えるので、面積より明るく出る。差は半径に反比例し、半径 7 以上で 0.02 の内。7 未満は #3493"
-                + " (半径 3 で 0.037・5 で 0.023・8 で 0.017・29 で 0.007。実測)。角丸・折れ目の既存の検査と同じ 0.02 (#2991)"),
+            shape: .circle, route: .distanceField, quantity: .snappedArea, tolerance: 0.02,
+            curvature: curvatureConstant,
+            basis: "曲線の縁は、画素の中心での距離と勾配から作った接線の半平面と画素の正方形の重なりで数えるので、"
+                + "凸の縁 (円の塗り) は面積より明るく出る (凹の縁は同じ大きさで暗い)。差は描く画素での曲率半径 R に反比例し、"
+                + "約 k / R (k = \(curvatureConstant)・本体の式の写しの格子の最大 0.116 を覆う)。許容は max(0.02, k / R + 丸めの余裕)で、"
+                + "半径 7 以上は 0.02 (#3493)。比べる量は kFormSnap で写した面積 — 面積の枝の最後の写しを許容から分ける"
+                + " (軸に沿う rect の行と同じ)。0.02 は角丸・折れ目の既存の検査と同じ (#2991)。半径 3 未満は範囲の外"
+                + " (3 は置いた線で、GPU で測ったのは 3 から。本体の式の写しでは 1〜2.5 でも差 × R は k の内)"),
         Row(
             shape: .svgPrimitives, route: .distanceField, quantity: .halfToneAndCentroid, tolerance: 0.1,
             centroidTolerance: 0.1,

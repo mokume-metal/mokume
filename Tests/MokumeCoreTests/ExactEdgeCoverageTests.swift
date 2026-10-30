@@ -36,10 +36,17 @@ import simd
 ///   (1e-4 rad 回しても画素の値が動かない)・丸い端の線の端も同じ
 /// - **曲がった部分の面積は、その領域だけ**: 丸い折れ目・削ぎ・角丸の `rect` の辺と、尖った角 (帯の穴の角)
 ///   は、折れ目や角丸を付けない同じ `rect` と同じ画素の値のまま
+/// - **曲線の縁の「面積」は、接線の半平面で数える近似** ([#3493]): 凸の縁 (円・楕円・扇の外縁・角丸の角・`strokeJoin(.round)` の外縁)
+///   は面積より明るく、凹の縁 (輪郭の帯の内縁) は同じ大きさで暗く出て、差は描く画素での曲率半径 R に対し約 k / R
+///   (k = ``CoverageTable/curvatureConstant``)。半径 7 以上は 0.02 の内。以下の固定の検査のうち、角丸の角 (半径 12) は 0.02、
+///   `strokeJoin(.round)` の外縁 (半径 6) は半径の関数の許容 (`CoverageTable.Row.tolerance(atRadius:)`) で見る。
+///   半径 3 まで広げた生成の検査は `FillCoverageTests` (円の塗り)。測ったのは円 (一様な拡大) だけで、一様でない拡大・楕円
+///   (距離場そのものが近似で別の誤差が重なる) は測っていない。`point()` と丸い端は線形の渡しで、この約束の外
 /// - **曲がった部分は軸に沿う `rect` でも面積**: 角丸の角・`strokeJoin(.round)` の外縁・`.bevel` の削ぎは
 ///   画素ごとに厳密な面積と一致し、既定の丸い端・`point()` は線形の渡しのまま (従来と 1 ビットも違わない)
 ///
 /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+/// [#3493]: https://github.com/mokume-metal/mokume/issues/3493
 @Suite(
     "斜めの縁の被覆は画素の面積に一致する",
     .enabled(
@@ -588,7 +595,7 @@ struct ExactEdgeCoverageTests {
         #expect(result.error <= 0.02, "最大の差 \(result.error) — \(result.at)")
     }
 
-    @Test("軸に沿う rect の strokeJoin(.round) の外縁は、画素ごとに厳密な面積と 0.02 以内で一致する")
+    @Test("軸に沿う rect の strokeJoin(.round) の外縁 (半径 6) は、画素ごとに厳密な面積と k / R の許容以内で一致する")
     func roundJoinOfAxisAlignedRectMatchesTheExactArea() throws {
         let center = SIMD2<Float>(42.3, 35.4), half = SIMD2<Float>(22, 15), weight: Float = 12
         // 帯 = 外縁 (半幅を太さの半分だけ広げた丸い角) の内で、穴 (半幅を太さの半分だけ縮めた箱) の外
@@ -610,7 +617,11 @@ struct ExactEdgeCoverageTests {
             let hole = q.x < half.x - weight / 2 && q.y < half.y - weight / 2
             return grown && !hole
         }
-        #expect(result.error <= 0.02, "最大の差 \(result.error) — \(result.at)")
+        // 外縁の角の曲率半径は太さの半分 (6)。曲線の縁の許容は半径の関数で、R = 6 は 0.02 では足りない (k / R が 0.02)。
+        // 比べる相手は kFormSnap で写す前の面積なので、写しの分 (1/256) を足す (#3493)
+        let row = try CoverageTable.row(.circle, on: .distanceField, comparing: .snappedArea)
+        let tolerance = row.tolerance(atRadius: Double(weight / 2)) + CoverageReference.formSnap
+        #expect(result.error <= Float(tolerance), "最大の差 \(result.error) 許容 \(tolerance) — \(result.at)")
     }
 
     @Test("軸に沿う rect の strokeJoin(.bevel) の削ぎは、画素ごとに厳密な面積と 0.02 以内で一致する")

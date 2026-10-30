@@ -1905,6 +1905,7 @@ static inline float mokume_pixelCdf(float t, float hi, float lo) {
 /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
 /// [#1488]: https://github.com/mokume-metal/mokume/issues/1488
 /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
+/// [#3493]: https://github.com/mokume-metal/mokume/issues/3493
 static inline float mokume_formCoverage(FormField field, float4 inverseRows, bool linear) {
     float2 n = field.gradient;
     float2 screen = float2(
@@ -1917,6 +1918,14 @@ static inline float mokume_formCoverage(FormField field, float4 inverseRows, boo
         // (`linear`) は、従来の式のまま返す — 絵は 1 ビットも動かない。**曲線の縁と、軸に沿う
         // `rect` の曲がった部分 (角丸・丸い折れ目・削ぎ) は、軸に沿った形でも面積で数える**。斜めの縁を含みうる
         // 形を含まない列 (`kFormHasObliqueEdge` が偽) は、この枝ごと原稿から外す
+        //
+        // **「面積で数える」は、直線の縁では厳密で、曲線の縁では接線の半平面で数える近似である** ([#3493])。
+        // 円板は凸なので接線の半平面に丸ごと含まれ、凸の縁 (円・楕円・扇の外縁・角丸の角) は面積より明るく、
+        // 凹の縁 (輪郭の帯の内縁) は同じ大きさで暗く出る。差は描く画素での曲率半径 R に反比例して、約 k / R (k = 0.12。
+        // 画素の中の接線の長さ L に対する弧との間の面積 `L³ / (24 R)` が、対角 L = √2 で最大)。R = 3 の実測は最大 0.037 (9/255 ほど) で、
+        // R = 7 以上は 0.02 の内。この式は変えない — 曲率で補うと曲線の縁の全画素に費用が掛かる。楕円の R は場所ごとに変わり
+        // (最小は 短半径² / 長半径)、楕円は距離場そのものが近似 (ADR-0039) なので別の誤差が重なる。測ったのは円だけ
+        // (`CoverageTable.curvatureConstant`)
         //
         // 両端の遊び (下) は、面積にも同じく掛ける。面積の裾 (1/256 未満) を 0 に揃えないと、面積が 1e-4 ほど
         // しか掛からない画素に被覆が残り、置き換える混ぜ方 (`replace`) が下地を消す (実測)。裾だけを
