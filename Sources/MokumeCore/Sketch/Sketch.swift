@@ -236,8 +236,9 @@ public protocol Sketch: AnyObject, SketchPart {
     ///
     /// **macOS の自前の窓と、`mokume watch` の道具の窓だけで受ける。** ``SketchView`` に埋め込んだ面は受けない —
     /// 窓はホストのもので、ホスト側のドロップと取り合わない。ホストからの受け方は、要る作例が来たら決める
-    /// ([#2604](https://github.com/mokume-metal/mokume/issues/2604))。iOS と、セキュリティスコープ付きの URL は、
-    /// まだ決めていない ([#2605](https://github.com/mokume-metal/mokume/issues/2605))。
+    /// ([ADR-0041](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md))。
+    /// iOS と、セキュリティスコープ付きの URL は、まだ決めていない
+    /// ([#2605](https://github.com/mokume-metal/mokume/issues/2605))。
     /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
     ///
     /// **`mokume watch` の道具の窓では、1 回の落としが大きすぎると届かない。** 窓が拾った落としは、子の標準入力へ

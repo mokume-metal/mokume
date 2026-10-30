@@ -272,12 +272,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// いま走らせているもの。``run()`` の間と、``SketchView`` の中で走っている間だけ入る。
     /// **入っていれば 2 つ目の ``run()`` を断り** (#2027)、2 つ目の ``SketchView`` は待たせる。
     ///
-    /// 空になったら、待っている ``SketchView`` の先頭を起こす (``wakeNextEmbeddedWaiter()``)。
+    /// 空になったら、待っている ``SketchView`` の先頭を起こす (``scheduleEmbeddedWake()``)。
     private static var running: SketchApplication? {
         didSet {
-            if oldValue != nil, running == nil { wakeNextEmbeddedWaiter() }
+            if oldValue != nil, running == nil { scheduleEmbeddedWake() }
         }
     }
+
+    /// 待っている ``SketchView`` を起こす仕事を、main の次の回へ送ってあるか。
+    ///
+    /// **立っている間は、走っているものが無くても「埋まっている」と数える** (``isOccupied``) — 送った間に
+    /// 新しく出た ``SketchView`` が、待っているものを追い越して始まらない。
+    private static var embeddedWakePending = false
 
     /// 順番を待っている ``SketchView`` (待ち始めた順)。**弱く持つ** — 待ちながら消えたビューを起こさない。
     private static var embeddedWaiters: [WeakEmbeddedWaiter] = []
@@ -553,14 +559,64 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     // MARK: - ホストのアプリの中で走らせる (SketchView・#3511)
 
     /// 別のスケッチが走っているか。**``SketchView`` が、始めるか待つかを決めるのに読む。**
-    static var isOccupied: Bool { running != nil }
+    ///
+    /// 走っているものが空に戻り、待っているものを起こす仕事が送られている間も `true` (``embeddedWakePending``)。
+    static var isOccupied: Bool { running != nil || embeddedWakePending }
 
-    /// ``SketchView`` が待たされるときに、1 度だけ言う 1 行。検査が読む。
+    /// 走っているものが、終わるのを待てるものか。**``SketchView`` の中で走っているものだけが、ビューが消えれば終わる。**
+    /// ``run()`` で走っているもの (``Sketch/main()``) はプロセスと同じだけ生きるので、待っても始まらない。
+    /// 起こす仕事が送られている間は、待っているものが走り始めるので `true`。
+    static var occupantEnds: Bool {
+        if embeddedWakePending { return true }
+        guard let running else { return true }
+        if case .embedded = running.outlet { return true }
+        return false
+    }
+
+    /// ``SketchView`` が待たされるときに言う 1 行。**言うのはプロセスで 1 度だけ** (``announceEmbeddedWait()``)。
+    /// 検査が読む。
     ///
     /// ``secondRunRefusal`` (`run()` の断り) とは別の文面である — `SketchView` は断られて空のまま残るのでなく、
-    /// 先のスケッチが終われば始まる。
+    /// 先の ``SketchView`` が消えれば始まる。
     static let embeddedWaitNotice =
-        "A sketch is already running in this process — this SketchView waits and starts when it ends (one sketch per process)"
+        "A SketchView is already running in this process — this SketchView waits and starts when it goes away (one sketch per process)"
+
+    /// ``SketchView`` が始められず、待っても始まらないときに言う 1 行。**言うのはプロセスで 1 度だけ。**
+    /// ``run()`` (``Sketch/main()``) で走っているスケッチは、プロセスが終わるまで居る。検査が読む。
+    static let embeddedRefusalNotice =
+        "A sketch is already running in this process (run() or Sketch.main()) — this SketchView shows nothing, since it lasts as long as the process (one sketch per process)"
+
+    private static var embeddedWaitAnnounced = false
+    private static var embeddedRefusalAnnounced = false
+
+    /// 待つ理由を、プロセスで 1 度だけ言う。**待つビューの数・画面の出入りで繰り返さない。**
+    static func announceEmbeddedWait() {
+        guard !embeddedWaitAnnounced else { return }
+        embeddedWaitAnnounced = true
+        Diagnostics.warn(embeddedWaitNotice)
+    }
+
+    /// 待っても始まらない理由を、プロセスで 1 度だけ言う。
+    static func announceEmbeddedRefusal() {
+        guard !embeddedRefusalAnnounced else { return }
+        embeddedRefusalAnnounced = true
+        Diagnostics.warn(embeddedRefusalNotice)
+    }
+
+    /// 言ったかの控えを戻す。**検査から呼ぶ** — プロセスで 1 度の名乗りを、検査ごとに数え直すため。
+    static func resetEmbeddedAnnouncementsForTesting() {
+        embeddedWaitAnnounced = false
+        embeddedRefusalAnnounced = false
+    }
+
+    /// ``run()`` が走っている印だけを立てる。**検査から呼ぶ** — `run()` は戻らないので、走っているのが
+    /// ``run()`` のときの ``SketchView`` の振る舞いを、検査から見るために要る。
+    func markRunningForTesting() { SketchApplication.running = self }
+
+    /// ``markRunningForTesting()`` で立てた印を下ろす。
+    func unmarkRunningForTesting() {
+        if SketchApplication.running === self { SketchApplication.running = nil }
+    }
 
     /// 順番待ちの列へ並ぶ。**同じものを 2 度並べない。**
     static func enqueueEmbeddedWaiter(_ waiter: some EmbeddedWaiter) {
@@ -573,10 +629,25 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         embeddedWaiters.removeAll { $0.waiter == nil || $0.waiter === waiter }
     }
 
-    /// 走っているものが無くなった。**先頭から順に、誰かが走り始めるまで** 起こす。
+    /// 走っているものが無くなった。**待っている ``SketchView`` を起こす仕事を、main の次の回へ送る。**
     ///
-    /// 起こされたビューは自分で始める (``EmbeddedWaiter/vacancyOpened()``)。始められなかった (組み立てが
-    /// 投げた) ものは言って、次を起こす。走り始めたら残りは待ったままである。
+    /// 同期に起こさない — 起こす側 (`dismantleNSView`・フレームの途中の失敗) は SwiftUI の更新や駆動源の呼び出しの
+    /// 最中で、起こされたビューの重い初期化 (描画の土台・面の追加・第一応答者) をそこへ載せない。
+    private static func scheduleEmbeddedWake() {
+        guard !embeddedWaiters.isEmpty, !embeddedWakePending else { return }
+        embeddedWakePending = true
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                embeddedWakePending = false
+                wakeNextEmbeddedWaiter()
+            }
+        }
+    }
+
+    /// 先頭から順に、**誰かが走り始めるまで** 起こす。
+    ///
+    /// 起こされたビューは自分で始める (``EmbeddedWaiter/vacancyOpened()``)。外れたもの・始められなかった
+    /// (組み立てが投げた) ものは飛ばして、次を起こす。走り始めたら残りは待ったままである。
     private static func wakeNextEmbeddedWaiter() {
         while running == nil, !embeddedWaiters.isEmpty {
             let next = embeddedWaiters.removeFirst()
@@ -610,14 +681,22 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// 駆動源は面がホストの窓に載ってから ``attachEmbeddedDriver()`` で繋ぐ。終わるときは
     /// ``stopEmbedded()`` を呼ぶ。
-    func startEmbedded() -> SketchSurface? {
+    ///
+    /// - Parameters:
+    ///   - pointerLock: 面が使うポインタの捕まえ。**検査から差し替える** — 本番の口のままでは、検査を走らせている人の
+    ///     カーソルを奪う。
+    ///   - cursorHiding: 面が使う矢印の隠し。同じく検査から差し替える。
+    func startEmbedded(
+        pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding()
+    ) -> SketchSurface? {
         guard !SketchApplication.isOccupied else { return nil }
         // **ファイルのドロップは受けない** (`acceptsFileDrops: false`)。窓はホストのもので、ホスト側のドロップと
         // 取り合わない。受けるのは macOS の自前の窓だけ (``Sketch/fileDropped(_:)``)
         let surface = SketchSurface(
             frame: NSRect(x: 0, y: 0, width: runtime.target.width, height: runtime.target.height),
             device: gpu.device, input: runtime.input,
-            canvasSize: (runtime.target.width, runtime.target.height), acceptsFileDrops: false)
+            canvasSize: (runtime.target.width, runtime.target.height), pointerLock: pointerLock,
+            cursorHiding: cursorHiding, acceptsFileDrops: false)
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
         // **つまみは絵の外に立つ** (ADR-0030 決定 1)。`Sketch.main()` の窓と同じく重ねる
@@ -659,9 +738,19 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// ``willTerminate()`` と同じ後始末を、`NSApplication` を終わらせずに通す。差込口 (カメラ・音・
     /// シリアル・ソケット) を閉じ、撮っていた動画は書き切りを待つ。**走っているものの印を外す** — 外さないと
     /// 以後の `SketchView` が断られる。
+    ///
+    /// **ホストの窓に残しうるものも手放す。** ファイルを選ばせるシートが開いていれば閉じ (自前の窓で閉じたときと同じ
+    /// 取り消しの結果を渡す)、捕まえているポインタと隠している矢印を戻し、面が第一応答者なら手放す — 次に始まる
+    /// ``SketchView`` の面が、キーを受けられる。
     func stopEmbedded() {
-        guard case .embedded = outlet, !isTerminating else { return }
+        guard case .embedded(let surface, _) = outlet, !isTerminating else { return }
         isTerminating = true
+        _ = cancelOpenSelectionDialog()
+        surface.pointerLock.tearDown()
+        surface.cursorHiding.stop()
+        if let window = surface.window, window.firstResponder === surface {
+            window.makeFirstResponder(nil)
+        }
         runtime.closePlugins()
         screenLink.invalidate()
         if let activity {
@@ -1153,8 +1242,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// - Returns: 取り消したか。答え済みの (もう閉じている) ダイアログ・出していないときは `false`。
     private func cancelOpenSelectionDialog() -> Bool {
-        guard let shown = shownSelection, !shown.answered, case .window(_, let surface, _) = outlet
-        else { return false }
+        guard let shown = shownSelection, !shown.answered else { return false }
+        let surface: SketchSurface
+        switch outlet {
+        case .window(_, let windowSurface, _): surface = windowSurface
+        case .embedded(let embeddedSurface, _): surface = embeddedSurface
+        default: return false
+        }
         shown.dismiss()
         markSelectionAnswered(serial: shown.serial)
         surface.deliver(.fileSelected(path: nil, serial: shown.serial))
@@ -1255,6 +1349,13 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
     private func stopForSetupFailure(_ failure: RenderFailure) {
         guard !isTerminating else { return }
+        // **ホストのアプリの中 (``SketchView``) では、プロセスを終わらせない** — アプリはホストのもので、組み立ての
+        // 失敗 (``SketchView`` が警告に留める) と同じに、理由を警告して、このビューだけを止める
+        if case .embedded = outlet {
+            Diagnostics.warn("SketchView could not start the sketch: \(failure.headline)")
+            stopEmbedded()
+            return
+        }
         isTerminating = true
         reportStartFailure(failure, note: noteStartFailure)
         runtime.closePlugins()

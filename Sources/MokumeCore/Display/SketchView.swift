@@ -150,14 +150,15 @@ final class SketchHostView: NSView, EmbeddedWaiter {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    /// 始める。**別のスケッチが走っていれば、始めずに順番を待つ。**
+    /// 始める。**別のスケッチが走っていれば、始めずに順番を待つ。** 走っているものが ``run()``
+    /// (``Sketch/main()``) なら、待っても始まらないので、そう言って何も映さない。
     private func begin() {
         guard application == nil, !isStopped else { return }
-        guard !SketchApplication.isOccupied else { return wait() }
+        guard !SketchApplication.isOccupied else { return waitOrRefuse() }
         do {
             let application = try SketchApplication(
                 sketch: sketch, gpu: try RenderDevice(), embedded: true)
-            guard let surface = application.startEmbedded() else { return wait() }
+            guard let surface = application.startEmbedded() else { return waitOrRefuse() }
             self.application = application
             surface.frame = bounds
             addSubview(surface)
@@ -170,12 +171,18 @@ final class SketchHostView: NSView, EmbeddedWaiter {
         }
     }
 
-    /// 順番待ちの列へ並び、待つ理由を言う。**言うのはこのビューが待ち始めるときの 1 度だけ** (``init(sketch:)``)。
-    /// 待ち始めたビューは、先が終わるまで起こされないので、言い直す場面が無い。
-    private func wait() {
+    /// 先の ``SketchView`` が消えるのを待つか、待っても始まらないと言って諦める。
+    ///
+    /// 理由を言うのは**プロセスで 1 度だけ** (``SketchApplication/announceEmbeddedWait()``)。待つビューの数や画面の
+    /// 出入りで繰り返さない。
+    private func waitOrRefuse() {
+        guard SketchApplication.occupantEnds else {
+            SketchApplication.announceEmbeddedRefusal()
+            return
+        }
         isWaiting = true
         SketchApplication.enqueueEmbeddedWaiter(self)
-        Diagnostics.warn(SketchApplication.embeddedWaitNotice)
+        SketchApplication.announceEmbeddedWait()
     }
 
     func vacancyOpened() {
@@ -190,6 +197,12 @@ final class SketchHostView: NSView, EmbeddedWaiter {
         } else {
             application?.detachEmbeddedDriver()
         }
+    }
+
+    /// **`dismantleNSView` を通らずに消えても、走っているものの印を外す** — 外さないと、待っているビューが
+    /// 永久に起こされない。
+    isolated deinit {
+        application?.stopEmbedded()
     }
 
     /// 後始末する。待っていれば列から外れる。**何度呼んでもよい。**
