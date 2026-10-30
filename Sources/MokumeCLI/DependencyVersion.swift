@@ -61,16 +61,26 @@ nonisolated enum DependencyVersion {
         /// `Package.resolved` はあるが読めない (壊れている・読み取れない・知らない形式)。
         /// **pin が無いのか読めないだけなのかが分からない**ので、パスで指しているとは言えない。
         case unreadable
+        /// pin は読めたが、版・改訂の文字列が mokume の名前に使える形でない (手で書き換えた・壊れた `Package.resolved`)。
+        /// **弾いた値を持つ** — 人が端末で読む `doctor` だけが値を名乗る (``shown(_:limit:)``)。
+        /// **MCP の答えには値を出さない**: `Package.resolved` は第三者のリポジトリから来うる文字列で、
+        /// LLM のクライアントが読む文に入れたくない。SwiftPM がこの形を受けるかどうかは、ここでは決めつけない
+        /// (版は SemVer で落とすが、改訂は文字列のまま受けるだけで、弾く保証は無い)。
+        case malformed(Pin)
         /// `Package.swift` が無い。スケッチの場所で立っていない。
         case noPackage
     }
 
     /// 依存の版の状態。pin が読めればそれが先で、読めなければ置かれているファイルから分ける。
+    ///
+    /// **pin の文字列が版・改訂の形でないものは `.malformed` にする** (``isVersion(_:)``・``isRevision(_:)``)。
+    /// 名前に使うと `/` や `..` で置き場の外を指すので、鍵にもパスにも使わない。
     static func state(forPackageAt package: URL) -> State {
-        switch pin(forPackageAt: package) {
-        case .version(let version): return .version(version)
-        case .revision(let revision): return .revision(revision)
-        case nil: break
+        switch lookup(forPackageAt: package) {
+        case .pinned(.version(let version)): return .version(version)
+        case .pinned(.revision(let revision)): return .revision(revision)
+        case .malformed(let pin): return .malformed(pin)
+        case .absent: break
         }
         let manager = FileManager.default
         guard manager.fileExists(atPath: package.appendingPathComponent("Package.swift").path)
@@ -90,12 +100,114 @@ nonisolated enum DependencyVersion {
         return nil
     }
 
-    /// 何で固定されているか。固定が読めなければ `nil`。
+    /// 何で固定されているか。固定が読めなければ (形が版・改訂でないものも) `nil`。
     static func pin(forPackageAt package: URL) -> Pin? {
-        let url = package.appendingPathComponent("Package.resolved")
-        guard let resolved = SwiftPM.read(SwiftPM.Resolved.self, at: url) else { return nil }
-        if let version = resolved.version(of: identity) { return .version(version) }
-        if let revision = resolved.revision(of: identity) { return .revision(revision) }
+        if case .pinned(let pin) = lookup(forPackageAt: package) { return pin }
         return nil
+    }
+
+    /// pin の引き方。**版・改訂の文字列は、名前に使う前にここで検める。**
+    private enum Lookup {
+        case pinned(Pin)
+        /// `mokume` の pin が無い (`Package.resolved` が無い・読めない場合も)。
+        case absent
+        /// pin はあるが、版・改訂の形でない (手で書き換えた・壊れた `Package.resolved`)。弾いた値を持つ。
+        case malformed(Pin)
+    }
+
+    private static func lookup(forPackageAt package: URL) -> Lookup {
+        let url = package.appendingPathComponent("Package.resolved")
+        guard let resolved = SwiftPM.read(SwiftPM.Resolved.self, at: url) else { return .absent }
+        // 版が在るのに形が違うなら、改訂へ落とさず弾く (版で固定した pin は改訂も持つ)
+        if let version = resolved.version(of: identity) {
+            return isVersion(version) ? .pinned(.version(version)) : .malformed(.version(version))
+        }
+        if let revision = resolved.revision(of: identity) {
+            return isRevision(revision) ? .pinned(.revision(revision)) : .malformed(.revision(revision))
+        }
+        return .absent
+    }
+
+    /// 名前の 1 段にしてよい文字列の長さの上限 (UTF-8 のバイト数)。ファイル名は 255 バイトまでで、
+    /// `mokume-api-v<版>.md` や置き場の名前の枠を足しても収まる値。版は `1.2.3`・`0.5.0-beta.1` の長さ、
+    /// 改訂は 40 字 (SHA-256 でも 64 字) なので、これを超えるものは実在の値ではない。
+    static let maximumLength = 128
+
+    /// 版の形か。**先頭が数字で、数字・`.`・`-`・`+`・英字 (ASCII) だけ、``maximumLength`` 字まで**
+    /// (`1.2.3`・`0.5.0-beta.1`・`1.0.0+build`)。
+    ///
+    /// 版は `mokume-api-v<版>.md` や置き場の名前の 1 段、資産の URL に入る。`/`・`..`・空・制御文字を通すと、
+    /// 取り置きや置き場が `.mokume/reference/` や共有の根の外へ出るので、この形でない文字列は版として扱わない。
+    /// **名前を作る口はどれもこの判定を通る** (``BuildDirectory/keySegment(pin:)``・取り置きの名前・資産の URL)。
+    /// 道具の版 (``ToolVersion``・Homebrew の revision の `_` を許す) とは別の物で、写しではない。
+    static func isVersion(_ text: String) -> Bool {
+        guard text.utf8.count <= maximumLength, let first = text.unicodeScalars.first,
+            ("0"..."9").contains(first)
+        else { return false }
+        return text.unicodeScalars.allSatisfy { scalar in
+            ("0"..."9").contains(scalar) || ("a"..."z").contains(scalar) || ("A"..."Z").contains(scalar)
+                || scalar == "." || scalar == "-" || scalar == "+"
+        }
+    }
+
+    /// 改訂の形か。**16 進数の字だけ、``maximumLength`` 字まで** (リポジトリの改訂)。名前の 1 段
+    /// (`rev-<先頭 12 字>`) に入るので、版と同じ理由で検める。
+    static func isRevision(_ text: String) -> Bool {
+        !text.isEmpty && text.utf8.count <= maximumLength
+            && text.unicodeScalars.allSatisfy {
+                ("0"..."9").contains($0) || ("a"..."f").contains($0) || ("A"..."F").contains($0)
+            }
+    }
+
+    /// 弾いた値を、端末に出せる形にする (`doctor` だけが使う。MCP の答えには値を出さない)。
+    ///
+    /// **正しい版・改訂は ASCII の英数字と `.`・`-`・`+` だけ**なので、値を出す側は「ASCII の印字できる文字のうち
+    /// `` ` `` と `\` 以外はそのまま、それ以外はすべて `\u{..}`」に逃がす。囲みのバッククォートを抜けられず、
+    /// 文字どおりの `\u{1b}` と本物の ESC は見分けがつき、空白の仲間 (U+00A0・U+3000)・右から左の文字・
+    /// 多バイトの字も逃がされる。
+    ///
+    /// - Parameter limit: **逃がした後の** 字数の上限。越えたら `…` で切る (逃がした 1 字は
+    ///   `\u{..}` の長さで数え、途中で割らない)。
+    static func shown(_ text: String, limit: Int = 80) -> String {
+        var shown = ""
+        var length = 0
+        for scalar in text.unicodeScalars {
+            let piece =
+                if (0x20...0x7e).contains(scalar.value), scalar != "`", scalar != "\\" {
+                    String(scalar)
+                } else {
+                    "\\u{\(String(scalar.value, radix: 16))}"
+                }
+            if length + piece.count > limit { return shown + "…" }
+            shown += piece
+            length += piece.count
+        }
+        return shown
+    }
+
+    /// 弾いた pin の種類 (`version`・`revision`)。値は含まない。
+    static func kind(of pin: Pin) -> String {
+        switch pin {
+        case .version: "version"
+        case .revision: "revision"
+        }
+    }
+
+    /// 弾いた pin を、`doctor` の文にする (`version `../../x``)。値を含むので、端末へ出す口だけが使う。
+    static func describe(_ pin: Pin) -> String {
+        switch pin {
+        case .version(let version): "version `\(shown(version))`"
+        case .revision(let revision): "revision `\(shown(revision))`"
+        }
+    }
+
+    /// 弾いた理由の文 (どんな形なら受けるか)。値は含まない。
+    static func rule(for pin: Pin) -> String {
+        switch pin {
+        case .version:
+            "a version must start with a digit and contain only digits, letters, `.`, `-` and `+` (at most \(maximumLength) characters)"
+        case .revision:
+            "a revision must be hexadecimal digits only (at most \(maximumLength) characters)"
+        }
     }
 }

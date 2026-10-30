@@ -96,11 +96,10 @@ struct APIListLocator {
         if let text = try? String(contentsOf: cache, encoding: .utf8), !text.isEmpty {
             return (text, .cached(cache, keyed: Self.isKeyed(state)))
         }
-        guard let version else {
+        // **版の形でなければ取りに行かない** (``DependencyVersion/isVersion(_:)``)。URL を作れない版も同じ
+        guard let version, let remote = Self.assetURL(version: version) else {
             throw Missing(advice: unknownVersionAdvice(state, cache: cache), cause: .versionUnknown)
         }
-
-        let remote = Self.assetURL(version: version)
         let data: Data
         do {
             data = try fetch(remote)
@@ -138,29 +137,32 @@ struct APIListLocator {
     /// **読む側 (``read()``) も案内の `OUT=` も、この 1 つの計算を通る。** 改訂の名前が無いときに共通名へ
     /// 落ちて読むと、前の改訂の一覧を今のものとして返す (#3478)。
     func cacheURL(for state: DependencyVersion.State) -> URL {
-        let name =
-            switch state {
-            case .version(let version): "mokume-api-v\(version).md"
-            case .revision(let revision): "mokume-api-\(BuildDirectory.revisionSegment(revision)).md"
-            case .unresolved, .notPinned, .unreadable, .noPackage: Self.sharedName
-            }
-        return facet.appendingPathComponent(name)
+        facet.appendingPathComponent(Self.keyedName(for: state) ?? Self.sharedName)
     }
 
     /// 鍵の無い取り置きの共通名 (手で置くための枠)。
     static let sharedName = "mokume-api.md"
 
     /// 取り置きの名前に、依存の版・改訂が入るか。
-    static func isKeyed(_ state: DependencyVersion.State) -> Bool {
+    static func isKeyed(_ state: DependencyVersion.State) -> Bool { keyedName(for: state) != nil }
+
+    /// 版・改訂が入る取り置きの名前。**名前の 1 段にしてよい形でなければ `nil`** (``DependencyVersion/isVersion(_:)``・
+    /// ``DependencyVersion/isRevision(_:)``) — 状態を作る側が検めているが、名前を作るここでも同じ判定を通す (#3535)。
+    /// ``cacheURL(for:)`` と ``isKeyed(_:)`` はこれ 1 つから決まるので、名前と「鍵が入るか」は食い違わない。
+    private static func keyedName(for state: DependencyVersion.State) -> String? {
         switch state {
-        case .version, .revision: true
-        case .unresolved, .notPinned, .unreadable, .noPackage: false
+        case .version(let version) where DependencyVersion.isVersion(version):
+            "mokume-api-v\(version).md"
+        case .revision(let revision) where DependencyVersion.isRevision(revision):
+            "mokume-api-\(BuildDirectory.revisionSegment(revision)).md"
+        case .version, .revision, .unresolved, .notPinned, .unreadable, .malformed, .noPackage: nil
         }
     }
 
-    /// 資産の在処。タグは版に `v` を付けたもの。
-    static func assetURL(version: String) -> URL {
-        URL(string: "\(releases)/v\(version)/mokume-api-v\(version).md")!
+    /// 資産の在処。タグは版に `v` を付けたもの。**版の形でなければ (URL を作れなければ) `nil`** — 取りに行かない。
+    static func assetURL(version: String) -> URL? {
+        guard DependencyVersion.isVersion(version) else { return nil }
+        return URL(string: "\(releases)/v\(version)/mokume-api-v\(version).md")
     }
 
     /// 版が引けなかった理由ごとの答え (#3419)。**`Cannot tell which version is depended on` の
@@ -253,6 +255,28 @@ struct APIListLocator {
                 revision, so a list kept for another revision is never returned for this one):
 
                   \(Self.buildCommand(cache: cache, version: segment))\(sharedNote)
+                """
+        case .malformed(let pin):
+            // **どんな形なら受けるかだけを名乗り、弾いた値は出さない。** この答えは LLM のクライアントが読み、
+            // `Package.resolved` は第三者のリポジトリから来うる。値は人が端末で読む `doctor` が見せる。
+            // 壊れているとも、パスで指しているとも決めつけない
+            return """
+                The public API list is not available here.
+
+                \(head): the pin for `\(Self.identity)` in `Package.resolved` is not in a form this tool can use
+                as a name (\(DependencyVersion.rule(for: pin))). The value is shown by
+                `\(Command.name) doctor \(GivenPath.shellWord(directory))`. SwiftPM's own commands (`resolve`, `update`) stop on
+                such a file and do not rewrite it, so fix the pin by hand: set the `version` (or `revision`) of the
+                `\(Self.identity)` pin in `Package.resolved` to a correct value, then ask again. If that is not
+                possible, remove `Package.resolved` and build the sketch (it writes the file again); that also
+                drops the pins of the other dependencies, so they may move to other versions:
+
+                  \(run)
+
+                If the sketch points at mokume by path (while developing mokume), build the list
+                in the mokume repository and put it here instead:
+
+                  \(makeList)
                 """
         case .noPackage:
             return """

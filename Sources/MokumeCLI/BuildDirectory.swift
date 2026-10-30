@@ -126,6 +126,11 @@ nonisolated enum BuildDirectory {
         case localDependency
         /// まだ固定が読めない (解決に失敗した)。
         case unresolved
+        /// 固定は読めたが、版・改訂の文字列が名前に使える形でない (手で書き換えた・壊れた `Package.resolved`)。
+        ///
+        /// **共有しない。** 名前にすると置き場の外を指しうる (#3535)。**読めているのに弾いたことを名乗る**
+        /// — 「読めない」と言うと、直す場所を取り違える。値は名乗らない (`mokume doctor` が見せる)。
+        case malformedPin
         /// パッケージの宣言が読めない。
         ///
         /// **断らない。** 宣言を壊した状態から直していく途中は、まさに見張っていてほしい
@@ -157,6 +162,10 @@ nonisolated enum BuildDirectory {
             case .unresolved:
                 "Cannot read the dependency version, so the build goes in this package's own"
                     + " .build (sharing it would mix versions)"
+            case .malformedPin:
+                "The pin for mokume in Package.resolved is not in the form of a version or revision,"
+                    + " so the build goes in this package's own .build (sharing it would mix versions)."
+                    + " `\(Command.name) doctor` shows the value"
             case .unknownToolchain:
                 "Cannot read the toolchain version, so the build goes in this package's own .build"
             case .nameTaken(let owner):
@@ -219,6 +228,13 @@ nonisolated enum BuildDirectory {
         return .shareable(name)
     }
 
+    /// 固定が引けなかった (`.unresolved`) ときの、共有しない理由。**読めているのに弾いた回 (`.malformed`) は
+    /// 読めない回と分ける** — 次の一手が違う (読めない回は解決を待てば直り、弾いた回は pin の行を直す)。純関数。
+    static func fallbackWithoutPin(state: DependencyVersion.State) -> Fallback {
+        if case .malformed = state { return .malformedPin }
+        return .unresolved
+    }
+
     /// 鍵から、共有の置き場の名前 (根からの相対) を作る。決められなければ `nil`。
     static func storeName(pin: DependencyVersion.Pin?, toolchain: String?) -> String? {
         guard let segment = toolchainSegment(from: toolchain), let key = keySegment(pin: pin)
@@ -227,12 +243,16 @@ nonisolated enum BuildDirectory {
     }
 
     /// 固定を、置き場の名前の 1 段にする。
+    ///
+    /// **版・改訂の形でない文字列は鍵にしない** (`nil`)。名前の 1 段に `/` や `..` が入ると、共有の根の外へ置き場を
+    /// 作る。``DependencyVersion/pin(forPackageAt:)`` が読む時点で検めているが、型を作って渡す口もあるので、
+    /// 名前にする直前でも同じ検めを通す (#3535)。
     static func keySegment(pin: DependencyVersion.Pin?) -> String? {
         switch pin {
-        case .version(let version): version
+        case .version(let version): DependencyVersion.isVersion(version) ? version : nil
         // 枝や改訂で固定したものは版を名乗らない。**版と混ぜない** — 混ざると
         // 互いを作り直させ続ける
-        case .revision(let revision): revisionSegment(revision)
+        case .revision(let revision): DependencyVersion.isRevision(revision) ? revisionSegment(revision) : nil
         case nil: nil
         }
     }
