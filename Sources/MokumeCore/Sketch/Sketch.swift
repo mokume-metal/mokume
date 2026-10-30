@@ -183,9 +183,15 @@ public protocol Sketch: AnyObject, SketchPart {
     /// var size: Float = 120
     ///
     /// func mouseWheel(deltaX: Float, deltaY: Float) {
-    ///     size = min(max(size + deltaY * 4, 20), 400)
+    ///     size = min(max(size + deltaY, 20), 400)
     /// }
     /// ```
+    ///
+    /// **量の単位は点で、機器によらず同じ物差しで届く** ([ADR-0034] 決定 8)。トラックパッドは指の動いた点が
+    /// そのまま、ふつうのホイールは 1 行を 10 点に換算した量が届くので、ホイール 1 刻みは `10` 前後、
+    /// トラックパッドの 1 回のスワイプは数十から数百になる。同じ係数がどの機器でも同じ桁の動きになる。
+    /// **指を離した後の慣性の続きも、同じ量として届く** (トラックパッドで勢いよく払うと、離した後も
+    /// 減りながら何件か続く)。窓の外から送る `scrolled` の `dx` / `dy` は、最初から点として扱い、換算しない。
     ///
     /// **手本 (Processing・p5.js) の形をまねて引数なしの `func mouseWheel()` と書くと、コンパイルは
     /// 通るが一度も呼ばれない** (`mouseDragged()` は引数なしでも呼ばれるが、ここは量が要るので引数なしの形を持たない)。上の形の
@@ -198,6 +204,8 @@ public protocol Sketch: AnyObject, SketchPart {
     ///
     /// フレームに 1 件しか届かない環境では**間違えた側も正しく動く**ので、窓を触って
     /// 確かめている限り気付けない。
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     func mouseWheel(deltaX: Float, deltaY: Float)
 
     /// 窓へファイルが落とされたとき呼ばれる。**落とされたファイルの絶対パス**を受け取る (複数まとめて

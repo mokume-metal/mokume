@@ -197,7 +197,7 @@ final class PointerAndKeys: Sketch {
     ///
     /// [#807]: https://github.com/mokume-metal/mokume/issues/807
     func mouseWheel(deltaX: Float, deltaY: Float) {
-        size = constrain(size + deltaY * 4, 20, 400)
+        size = constrain(size + deltaY, 20, 400)
     }
 
     /// ファイルが落とされた。渡るのは絶対パスだけなので、枠に出す名前は最後の要素を切り出す。

@@ -48,7 +48,8 @@ extension SketchPart {
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var mouseButton: MouseButton? { Self.input.button }
-    /// このフレームのスクロール量 (横)。
+    /// このフレームのスクロール量 (横)。**単位は点** (トラックパッドは指の動いた点、ふつうのホイールは
+    /// 1 行 = 10 点に換算した量)。指を離した後の慣性の続きも足し込まれる ([ADR-0034] 決定 8)。
     ///
     /// **これはフレームの合計で、`draw()` から読むためのもの。** 出来事 1 件ぶんの量が
     /// 要るなら ``Sketch/mouseWheel(deltaX:deltaY:)`` が引数で受け取る。あちらの中から
@@ -56,7 +57,7 @@ extension SketchPart {
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var scrollX: Float { Self.input.scrollX }
-    /// このフレームのスクロール量 (縦)。
+    /// このフレームのスクロール量 (縦)。単位と慣性は ``scrollX`` と同じ。
     public var scrollY: Float { Self.input.scrollY }
     /// このフレームのピンチの量 (トラックパッドで指を開くと正、閉じると負)。
     ///

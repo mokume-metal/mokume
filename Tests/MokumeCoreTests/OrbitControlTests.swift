@@ -213,7 +213,8 @@ struct OrbitControlTests {
         let before = try pixels(runtime)
         let startDistance = try #require(sketch.seenOrbit?.distance)
 
-        runtime.input.enqueue(.scrolled(dx: 0, dy: 6))
+        // ホイール 6 刻み分 (1 刻み = 10 点・#2442)。絵が変わるほど寄る量にする
+        runtime.input.enqueue(.scrolled(dx: 0, dy: 60))
         try runtime.advance()
 
         #expect(try #require(sketch.seenOrbit?.distance) < startDistance)

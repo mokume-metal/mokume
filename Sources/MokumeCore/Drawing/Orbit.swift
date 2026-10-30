@@ -55,10 +55,15 @@ public struct Orbit: Equatable, Sendable {
     /// 変えただけで同じ手の動きが違う角を回すことになる。
     static let radiansPerPixel: Float = 0.01
 
-    /// スクロール 1 目盛りが距離を掛ける割合 (指数)。
+    /// スクロール 1 点が距離を掛ける割合 (指数)。
+    ///
+    /// スクロール量は点で届く (ホイール 1 刻みは 10 点・[ADR-0034] 決定 8)。ホイール 1 刻みでおよそ 5% 寄り、
+    /// トラックパッドのひと払い (100 点) で 1.6 倍ほど寄る。
     ///
     /// 掛け算で寄る。足し算にすると、遠くでは寄らず近くでは行き過ぎる。
-    static let zoomPerScroll: Float = 0.05
+    ///
+    /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
+    static let zoomPerScroll: Float = 0.005
 
     /// 仰角の限界。**真上・真下を越えない。**
     ///
