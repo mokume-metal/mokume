@@ -106,7 +106,10 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
 
 **黙って空を出さない。** 記録が無い・読めない・事象が 1 件も無い・`runStarted` が無い・取り消しが
 0 件、はそれぞれ名乗る。0 件のときも「無い」と言い、読めない行や `runEnded` で閉じていない記録
-(検査のプロセスが途中で消えた回) は添える。
+(検査のプロセスが途中で消えた回) は添える。**不正な UTF-8 のバイトを含む行 (末尾が多バイト文字の
+途中で切れた最終行など) も、その行だけを読めない行に数える** — 記録全体を読めないことにして、前の
+正常な取り消しまで捨てない (#3512)。読める事象が 0 件で、読めない行のすべてが不正なバイトによる
+ときだけ、記録全体を `文字として読めない` と名乗る。
 
 **警告だけで、終了コードは常に 0** — 段の結末は変えない。取り消しを赤にするかは、名乗らせた後に
 別に決める。
@@ -396,6 +399,8 @@ def slow(path, threshold=SLOW_SECONDS):
 UNKEYED = "(testID が読めない)"
 # 読めない行があったときの注の頭。`scripts/mutate.py` が、その回を信用しない印として読む
 BROKEN_LINES_NOTE = "読めない行が"
+# surrogateescape が不正なバイトを写す字 (#3512)。正しい UTF-8 から decode した文字列には現れない
+INVALID_BYTES = re.compile("[\udc80-\udcff]")
 
 
 def read_cancellations(path):
@@ -409,7 +414,11 @@ def read_cancellations(path):
     try:
         if os.path.getsize(path) == 0:
             return "記録が無い", [], 0, []
-        with open(path, encoding="utf-8") as f:
+        # **不正な UTF-8 は行単位で扱う** (#3512)。strict で全体を decode すると、末尾が多バイト
+        # 文字の途中で切れた記録 (検査のプロセスが書く途中で消えた回) の 1 バイトの不正が記録単位の
+        # 失敗になり、前の正常な取り消しまで捨てる。surrogateescape は不正なバイトを U+DC80〜U+DCFF
+        # の字へ写して読み通すので、下で、その字を含む行を読めない行に数える
+        with open(path, encoding="utf-8", errors="surrogateescape") as f:
             # **レコードの境界は LF だけ** (JSON Lines)。`splitlines()` は U+2028 / U+2029 / U+0085 でも
             # 割るが、JSON の文字列にはそれがそのまま入りうる — 割ると正常な記録が読めない行になり、
             # 取り消しを取りこぼす (#3499)。CRLF は読み込みの改行の読み替えで LF に揃い、最終行の
@@ -417,15 +426,21 @@ def read_cancellations(path):
             lines = f.read().split("\n")
     except OSError:
         return "記録が無い", [], 0, []
-    except UnicodeDecodeError:
-        return "記録が壊れている — 文字として読めない", [], 0, []
 
     events = []
     broken = 0
+    undecodable = 0  # broken のうち、不正なバイトを含んだ行の数
     for line in lines:
         # 空行の判定は JSON の空白 (space・tab・CR・LF) だけ。`str.strip()` は U+2028・U+0085・
         # U+001C〜001F も空白とみなすので、そうした字だけの行 (壊れた行) を黙って読み飛ばしてしまう
         if not line.strip(" \t\r\n"):
+            continue
+        # **JSON として形が整っていても、不正なバイトを含む行は読めない行** — json.loads は
+        # 写した字 (lone surrogate) をそのまま通すので、先に弾く。JSON のエスケープ表記
+        # (`\udc80` の ASCII 6 字) は写した字ではないので当たらない
+        if INVALID_BYTES.search(line):
+            broken += 1
+            undecodable += 1
             continue
         try:
             record = json.loads(line)
@@ -434,6 +449,9 @@ def read_cancellations(path):
                 events.append(payload)
         except (ValueError, KeyError, TypeError):
             broken += 1
+    if not events and undecodable and undecodable == broken:
+        # 読める事象が 0 件で、読めない行のすべてが不正なバイトによる — 記録全体が UTF-8 でない
+        return "記録が壊れている — 文字として読めない", [], 0, []
     if not events:
         return "記録に事象が 1 件も無い" + ("" if not broken else " (読めない行 %d 行)" % broken), [], 0, []
     kinds = {e["kind"] for e in events}

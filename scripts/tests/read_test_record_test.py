@@ -12,7 +12,18 @@ JSON Lines のレコード境界は LF だけである。JSON の文字列には
 3. **壊れた JSON は `broken` として数え、黙って捨てない。** 注に件数が出る。空行は数えない
 4. **記録が無い・形式が違う回の名乗りと、取り消しの重複の畳み方は変えない** (#3348)
 
-`scripts/mutate.py` が同じ関数を共有するので、そちらの入口でも 1 を見る。
+記録の読み方はもう 1 つある (#3512)。**プロセスが書く途中で消えると、最終行が多バイト文字の
+途中で切れうる。** 記録全体を strict な UTF-8 で読むと、その 1 バイトの不正が記録単位の失敗に
+なり、前の正常な取り消しまで捨てて「文字として読めない」と名乗る (同じ切れ方が ASCII の途中なら
+前を読み、読めない行に数える)。守るのは次の 2 つ。
+
+5. **不正な UTF-8 も行単位で扱う。** 不正なバイトを含む行だけを読めない行に数え、前後の行は読む。
+   JSON として形の整った行でも、不正なバイトを含むなら読めない行に数える (置き換えた字で正常な行に
+   見せない)
+6. **記録全体が UTF-8 でないときの名乗りは変えない。** 読める事象が 0 件で、読めない行のすべてが
+   不正なバイトによるときだけ `文字として読めない`
+
+`scripts/mutate.py` が同じ関数を共有するので、そちらの入口でも 1 と 5 を見る。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -54,6 +65,10 @@ class ReadCancellationsTest(unittest.TestCase):
         # newline="" で書いた文字をそのまま (CRLF も) 残す
         with open(self.path, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+        return READER.read_cancellations(str(self.path))
+
+    def read_bytes(self, data):
+        self.path.write_bytes(data)
         return READER.read_cancellations(str(self.path))
 
     def lines(self, *lines, final_newline=True):
@@ -132,6 +147,68 @@ class ReadCancellationsTest(unittest.TestCase):
         self.assertEqual(READER.read_cancellations(str(self.path))[0],
                          "記録が壊れている — 文字として読めない")
 
+    # あ = e3 81 82。最後の 1 バイトを欠くと、多バイト文字の途中で切れた行になる
+    TRUNCATED = '{"kind":"event","payload":{"_comments":["あ'.encode("utf-8")[:-1]
+
+    def head(self):
+        return "".join(line + "\n" for line in (
+            _event("runStarted"),
+            _event("testCancelled", testID=TEST_ID, _comments=["前提が崩れた"]),
+            _event("testCaseEnded"))).encode("utf-8")
+
+    def test_a_record_cut_in_the_middle_of_a_multibyte_character_keeps_the_earlier_cancellation(self):
+        """#3512。末尾の切れが ASCII の途中でも多バイト文字の途中でも、結果は同じになる。"""
+        ascii_cut = self.read_bytes(self.head() + b'{"kind":"event","payload":{"_comments":["a')
+        self.assertIsNone(ascii_cut[0])
+        multibyte_cut = self.read_bytes(self.head() + self.TRUNCATED)
+        self.assertIsNone(multibyte_cut[0])
+        self.assertEqual(multibyte_cut[1], [(TEST_ID, "丸ごと", 1, "前提が崩れた")])
+        self.assertEqual(multibyte_cut[2], 3)
+        self.assertEqual(multibyte_cut[3][0], "読めない行が 1 行あった")
+        self.assertIn("runEnded で閉じていない", multibyte_cut[3][1])
+        self.assertEqual(multibyte_cut, ascii_cut)
+
+    def test_one_line_with_invalid_utf8_in_the_middle_is_counted_and_the_rest_is_read(self):
+        """途中の 1 行だけの不正なバイトは、その行だけを読めない行に数え、前後を数える。"""
+        why, items, event_count, notes = self.read_bytes(
+            _event("runStarted").encode() + b"\n"
+            + b'{"kind":"event","payload":{"kind":"testStarted","_comments":["\xff"]}}\n'
+            + _event("testCancelled", testID=TEST_ID, _comments=["r"]).encode() + b"\n"
+            + _event("runEnded").encode() + b"\n")
+        self.assertIsNone(why)
+        self.assertEqual(items, [(TEST_ID, "丸ごと", 1, "r")])
+        self.assertEqual(event_count, 3)
+        self.assertEqual(notes, ["読めない行が 1 行あった"])
+
+    def test_a_well_formed_json_line_with_invalid_bytes_is_still_broken(self):
+        """不正なバイトを置き換えた字で JSON として通る行を、正常な取り消しとして読まない。"""
+        why, items, event_count, notes = self.read_bytes(
+            _event("runStarted").encode() + b"\n"
+            + b'{"kind":"event","payload":{"kind":"testCancelled","testID":"Bad/\xff","_comments":["x"]}}\n'
+            + _event("runEnded").encode() + b"\n")
+        self.assertIsNone(why)
+        self.assertEqual(items, [])
+        self.assertEqual(event_count, 2)
+        self.assertEqual(notes, ["読めない行が 1 行あった"])
+
+    def test_an_escaped_surrogate_in_json_text_is_not_invalid_bytes(self):
+        """JSON のエスケープ表記 (ASCII の 6 字) は不正なバイトではない。"""
+        why, items, event_count, notes = self.read_bytes(
+            _event("runStarted").encode() + b"\n"
+            + b'{"kind":"event","payload":{"kind":"testCancelled","testID":"A/b","_comments":["\\udc80"]}}\n'
+            + _event("runEnded").encode() + b"\n")
+        self.assertIsNone(why)
+        self.assertEqual(event_count, 3)
+        self.assertEqual(notes, [])
+        self.assertEqual(len(items), 1)
+
+    def test_a_record_with_only_undecodable_lines_keeps_the_whole_record_wording(self):
+        """読める事象が 0 件で、読めない行がすべて不正なバイトによる回は、今どおりの名乗り。"""
+        self.assertEqual(self.read_bytes(b"\xff\xfe\n\xfe\n")[0], "記録が壊れている — 文字として読めない")
+        # 読めない行に JSON の壊れも混じれば、全体が UTF-8 でないとは言わない
+        why = self.read_bytes(b"\xff\xfe\nnot json\n")[0]
+        self.assertEqual(why, "記録に事象が 1 件も無い (読めない行 2 行)")
+
     def test_the_whole_and_case_duplicates_are_still_folded(self):
         _, items, _, _ = self.read(self.lines(
             _event("runStarted"),
@@ -162,6 +239,16 @@ class ReadCancellationsTest(unittest.TestCase):
             _event("testCancelled", testID=TEST_ID + "/File.swift:1:2", _comments=["r"]),
             '{"kind": "event", "payload": {"kind": "testCancelled", "testID": "Cut/',
             final_newline=False), encoding="utf-8")
+        problem, cancelled = mutate.read_cancelled(str(path))
+        self.assertEqual(problem, "事象の記録: 読めない行が 1 行あった")
+        self.assertEqual(cancelled, [])
+
+    def test_mutate_does_not_read_a_record_cut_in_a_multibyte_character_as_having_no_cancellations(self):
+        """#3512。多バイト文字の途中で切れた記録も、`read_cancelled` が読めない行の問題として返す。"""
+        mutate = _load("mutate", "mutate.py")
+        path = Path(self.tmp.name) / "cut.jsonl"
+        path.write_bytes(self.head().replace(TEST_ID.encode(), (TEST_ID + "/File.swift:1:2").encode())
+                         + self.TRUNCATED)
         problem, cancelled = mutate.read_cancelled(str(path))
         self.assertEqual(problem, "事象の記録: 読めない行が 1 行あった")
         self.assertEqual(cancelled, [])
