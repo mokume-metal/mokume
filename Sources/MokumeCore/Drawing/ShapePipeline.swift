@@ -33,9 +33,12 @@ final class ShapePipeline {
     ///
     /// 断片が `[[color(0)]]` を宣言すると、同じ画素へ来る断片は順に並べる必要が
     /// あり、重なりの多い絵ではそれ自体が費用になる。既定の重ね方 (`.blend`) は
-    /// 乗算済みの source-over なので**固定機能のブレンドと式が一致し**、置き換え
-    /// (`.replace`) はそもそも下地を見ない — この 2 つは下地を読まない断片で描く
-    /// ([#758](https://github.com/mokume-metal/mokume/issues/758))。
+    /// 乗算済みの source-over なので**固定機能のブレンドと式が一致し**、下地を読まない断片で描く
+    /// ([#758](https://github.com/mokume-metal/mokume/issues/758))。置き換え (`.replace`) は
+    /// 形が掛かる面積だけを置き換え、**縁の画素では被覆の残りに下地を残す** (`c·S + (1 − c)·D`・
+    /// [#3111](https://github.com/mokume-metal/mokume/issues/3111))。ブレンドは切る。基本図形の
+    /// 断片は下地を読んで残りを足し、三角形の経路は縁が被覆 1 なので下地を読まない — 被覆が 1 未満に
+    /// なりうる列 (細い線の帯・置き換えで置いた字) だけが、下地を読む列 (`composite`) の断片で描く。
     ///
     /// 残りの混ぜ方は固定機能では表せないので、今までどおり断片が下地を読んで混ぜる。
     ///
@@ -50,7 +53,7 @@ final class ShapePipeline {
     /// | 混ぜ方 | 列 | 描く断片 | 下地 | 混ぜる主体 |
     /// | --- | --- | --- | --- | --- |
     /// | `.blend` (0) | `blend` | `mokume_fragmentDirect` / `mokume_formFragmentBlend` | 読まない | 固定機能のブレンド |
-    /// | `.replace` (9) | `replace` | `mokume_fragmentReplace` / `mokume_formFragmentReplace` | 読まない | 混ぜない (そのまま置く) |
+    /// | `.replace` (9) | `replace` (被覆が 1 未満になりうる列は `composite`) | `mokume_fragmentReplace` (被覆 1) / `mokume_formFragmentReplace` / `mokume_fragmentMain` (細い線の帯・置き換えで置いた字) | 基本図形と `composite` の列は読む (被覆の残りに下地を残す)・三角形の経路 (被覆 1) は読まない | 断片 (形が掛かる面積を置き換え、残りに下地を残す) |
     /// | `.add` … `.screen` (1–8) | `composite` | `mokume_fragmentMain` / `mokume_formFragment` | 読む | `mokume_composite` |
     ///
     /// 番号は `BlendMode.rawIndex` (正本は `Shaders/Kinds.metal`)。**`mokume_composite`
@@ -61,7 +64,8 @@ final class ShapePipeline {
         let composite: any MTLRenderPipelineState
         /// 重ねる列。断片は下地を読まず、固定機能のブレンドが混ぜる。
         let blend: any MTLRenderPipelineState
-        /// 置き換える列。断片は下地を読まず、混ぜずにそのまま置く。
+        /// 置き換える列。ブレンドは切る。基本図形の断片は、形が掛かる面積を置き換え、掛からない面積 (縁の画素の
+        /// 被覆の残り) には下地を残す。三角形の経路の断片は縁が被覆 1 なので、下地を読まずにそのまま置く。
         let replace: any MTLRenderPipelineState
 
         /// 3 つとも。差し替えた後も、投入済みのフレームが終わるまで抱えるのに使う
@@ -76,9 +80,9 @@ final class ShapePipeline {
             replace = built.states[2]
         }
 
-        /// その列を描くパイプライン。**置き換える列のうち、細い線を広げた頂点を持つ列だけは
-        /// 下地を読む列** (`composite`) で描く (#1637)。広げた帯は覆う割合だけを置き換え、残りの
-        /// 下地を残す (`mokume_fragmentMain` の置き換えの枝)。
+        /// その列を描くパイプライン。**置き換える列のうち、被覆が 1 未満になりうる列 (細い線を広げた頂点を
+        /// 持つ列・置き換えで字を置いた列) だけは下地を読む列** (`composite`) で描く (#1637・#3111)。
+        /// 覆う割合だけを置き換え、残りの下地を残す (`mokume_fragmentMain` の置き換えの枝)。
         func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
             state(in: Column(drawing: batch))
         }
@@ -111,8 +115,9 @@ final class ShapePipeline {
                 }
             }
 
-            /// **その列を描く列。** 置き換える列のうち、細い線を広げた頂点を持つ列だけは下地を読む列
-            /// (`composite`) で描く (#1637・``BlendStates/drawing(_:)``)。**列を選ぶのはここ 1 か所**で、
+            /// **その列を描く列。** 置き換える列のうち、被覆が 1 未満になりうる列 (細い線を広げた頂点を持つ列・
+            /// 置き換えで字を置いた列) だけは下地を読む列 (`composite`) で描く (#1637・#3111・
+            /// ``BlendStates/drawing(_:)``)。**列を選ぶのはここ 1 か所**で、
             /// 3 本一組で描く経路も、特化した 1 本を選ぶ経路 (``ShapePipeline/SolidVariantKey``・#1795) も
             /// この列を通る — 例外を写し持つと、片方だけが直されて絵が割れる。
             init(drawing batch: Canvas.Batch) {
@@ -551,7 +556,7 @@ final class ShapePipeline {
     static let flatFragmentFunctionName = "mokume_fragmentMain"
     /// 三角形の経路の断片の名前 (**下地を読まない側** — 重ねる列)。
     static let flatDirectFragmentFunctionName = "mokume_fragmentDirect"
-    /// 三角形の経路の断片の名前 (**下地を読まない側** — 置き換える列)。
+    /// 三角形の経路の断片の名前 (**下地を読まない側** — 置き換える列。被覆 1 の図形だけが使う)。
     ///
     /// 三角形の図形は塗る所だけを覆うので捨てる所が無いが、**字は字形の外接矩形に余白を
     /// 付けた四角**として置かれ、字形の外が余白になる。置き換える列でそこを書くと下地が
@@ -565,7 +570,7 @@ final class ShapePipeline {
     static let formFragmentFunctionName = "mokume_formFragment"
     /// 基本図形を距離関数で塗る断片の名前 (**重ねる列** — 下地を読まず、捨てもしない)。
     static let formBlendFragmentFunctionName = "mokume_formFragmentBlend"
-    /// 基本図形を距離関数で塗る断片の名前 (**置き換える列** — 下地を読まず、余白は捨てる)。
+    /// 基本図形を距離関数で塗る断片の名前 (**置き換える列** — 縁の被覆の残りに下地を残し、余白は捨てる)。
     static let formReplaceFragmentFunctionName = "mokume_formFragmentReplace"
 
     /// 利用者の断片で塗るパイプラインを組む。**組み込みと同じく混ぜ方ごとに 3 本**。

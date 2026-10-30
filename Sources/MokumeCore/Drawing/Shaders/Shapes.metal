@@ -2668,6 +2668,9 @@ struct FormPaint {
     /// 画素の中で塗りと輪郭の帯が重なる面積 `o` (塗りと輪郭を両方持つ形だけ。ほかは 0)。
     /// 見積もるのは割り戻す前の塗りの被覆率からである
     float overlap;
+    /// どちらでもない面積 `1 − (f + s − o)` (置き換える列だけが出す。ほかは 0)。置き換える列は、
+    /// ここに下地 `D` を残す (`mokume_formFragmentReplace`・ADR-0039 決定 5・#3111)
+    float remainder;
 };
 
 /// 距離関数で塗りと輪郭の被覆率を出す。**下地は見ない。**
@@ -3025,6 +3028,7 @@ static inline FormPaint mokume_formPaint(
     paint.fillCoverage = 0.0;
     paint.strokeCoverage = 0.0;
     paint.overlap = 0.0;
+    paint.remainder = 0.0;
     // **線と点は塗りを持たない。** 旗で列が切れるので塗りのある列には混ざらないが、
     // 種別は列の中で混ざるので、ここで名指しして外す
     if (kFormHasFill && kind != kFormLine) {
@@ -3033,6 +3037,8 @@ static inline FormPaint mokume_formPaint(
         paint.fillCoverage =
             isThinFill ? thinFillCoverage : mokume_formCoverage(fill, in.inverseRows, fillLinear);
     }
+    // 置き換える列がどちらでもない面積 (`remainder`) を出すために、割り戻す前の塗りの被覆率を覚える
+    float fillBefore = paint.fillCoverage;
     if (kFormHasStroke) {
         float outerCoverage = mokume_formCoverage(outer, in.inverseRows, outerLinear);
         float innerEdge = mokume_formCoverage(inner, in.inverseRows, innerLinear);
@@ -3110,6 +3116,13 @@ static inline FormPaint mokume_formPaint(
             float behind = 1.0 - strokeAlpha * paint.strokeCoverage;
             paint.fillCoverage = behind > 1e-4 ? saturate(visible / behind) : 0.0;
         }
+    }
+    // **置き換える列は、どちらでもない面積 `1 − (f + s − o)` に下地を残す** (#3111)。形が掛からない
+    // 面積まで置き換えると、縁の画素 (被覆 0.5) が `S·0.5` に下地ごと置き換わり、下地とも色とも
+    // 違う半透明の輪が残る。細い線の帯 (`mokume_fragmentMain` の置き換えの枝・#1637) が残す
+    // `D·(1 − c)` と同じ読みで、塗りと輪郭の両方を持つ形では 4 つの面積の和の 4 つ目になる
+    if (replacing) {
+        paint.remainder = max(0.0, 1.0 - (fillBefore + paint.strokeCoverage - paint.overlap));
     }
     paint.fill = form.fill * paint.fillCoverage;
     paint.stroke = form.stroke * paint.strokeCoverage;
@@ -3217,26 +3230,34 @@ fragment float4 mokume_formFragmentBlend(
     return mokume_formLayered(mokume_formPaint(in, instances, true, false));
 }
 
-/// 基本図形の断片 (置き換える列)。**下地を読まないが、余白は捨てる。**
+/// 基本図形の断片 (置き換える列)。**形が掛からない面積に下地を残し、余白は捨てる。**
 ///
-/// 置き換える混ぜ方は下地を見ないので読む必要は無い。ただし**書けば下地が消える**ので、
-/// 形の外の余白は捨てなければならない。
+/// 置き換える混ぜ方は、画素の**形が掛かる面積**を置いた色で置き換え、掛からない面積
+/// (どちらでもない面積 `1 − (f + s − o)`) には下地を残す ([#3111]・ADR-0039 決定 5)。縁の画素 (被覆
+/// 0.5) は `c·S + (1 − c)·D` になり、下地とも色とも違う半透明の輪が残らない。形の中まで入った
+/// 画素 (どちらでもない面積 0) は、下地に触れずに置き換わる。**書けば下地が変わる**ので、形の外の
+/// 余白は捨てる。
 ///
 /// **置き換えるのは部品の単位である** ([#1819])。輪郭の帯では、塗りの上に輪郭を置き換えた
 /// のと同じく輪郭だけが残り、下の塗りは輪郭が半透明でも透けない。置く色は 1 つの式
 /// (`mokume_formLayered`) だが、塗りの被覆率を置き換えの重みで割り戻してある
 /// (`mokume_formPaint` の `replacing`) ので、`S·s + F·(f − o)` になる — 三角形の経路と、
-/// 塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色である。
+/// 塗りだけ → 輪郭だけの順に分けて描いた絵が帯に置く色である。下地は、その色に
+/// `D·(1 − (f + s − o))` を足して混ぜる。
 ///
 /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
+/// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 fragment float4 mokume_formFragmentReplace(
     FormFragmentIn in [[stage_in]],
-    constant FormInstance *instances [[buffer(10)]])
+    constant FormInstance *instances [[buffer(10)]],
+    float4 destination [[color(0)]])
 {
     FormPaint paint = mokume_formPaint(in, instances, true, true);
     if (mokume_formIsBlank(paint)) {
         discard_fragment();
         return float4(0.0);
     }
-    return mokume_formLayered(paint);
+    float4 color = mokume_formLayered(paint);
+    // 形の中の画素は下地を読んだだけで書き換えない (どちらでもない面積が 0 なら、色は 1 ビットも変わらない)
+    return paint.remainder > 0.0 ? color + destination * paint.remainder : color;
 }

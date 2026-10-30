@@ -14,10 +14,11 @@ import Testing
 ///
 /// 「字形の被覆 0 の画素」は、同じ字を重ねる混ぜ方 (`.blend`) で描いたときに下地のまま
 /// 残る画素とする。置き換えの結果を、実装から借りずに重ねる混ぜ方の絵から読む。字形の縁の
-/// AA は、置き換える列で被覆の分の α がそのまま書かれる — 基本図形の縁と同じ扱いで、
-/// ここでは見ない。
+/// AA は、被覆の残りに下地を残す (基本図形の縁と同じ読み・[#3111]) — 不透明な字を不透明な
+/// 下地へ描くと、置き換える混ぜ方は重ねる混ぜ方と同じ絵になる (縁の検査は条件 5)。
 ///
 /// [#1557]: https://github.com/mokume-metal/mokume/issues/1557
+/// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 @Suite(
     "置き換える混ぜ方で描いた文字の余白",
     .enabled(
@@ -196,5 +197,159 @@ struct TextReplaceMarginTests {
         }
         try #require(inside > 0)
         #expect(wrong == 0)
+    }
+
+    // MARK: - 条件 5
+
+    @Test("字形の縁の画素は、置き換えで描いても下地を被覆の残りだけ残す (不透明な字は重ねる絵と同じ)", arguments: [false, true])
+    func theEdgeOfTheGlyphKeepsTheGround(_ useHi: Bool) throws {
+        let (sample, ink, ground) = useHi ? (Self.hi, yellow, blue) : (Self.o, white, red)
+        let blended = try render(sample, ink, on: ground, mode: .blend)
+        let replaced = try render(sample, ink, on: ground, mode: .replace)
+        var edge = 0
+        var wrong = 0
+        for y in 0..<Self.size {
+            for x in 0..<Self.size {
+                let b = blended[x, y]
+                // 縁の画素: 下地でも字の色そのものでもない
+                if differs(b, ground) && differs(b, ink) { edge += 1 }
+                let r = replaced[x, y]
+                let gap = max(
+                    abs(r.red - b.red), abs(r.green - b.green), abs(r.blue - b.blue),
+                    abs(r.alpha - b.alpha))
+                if gap > 1.0 / 255 { wrong += 1 }
+            }
+        }
+        try #require(edge > 20)
+        #expect(wrong == 0, "\(wrong) 画素が重ねる絵と違う。縁の画素が下地を消している")
+    }
+
+    // MARK: - 条件 6 — 縁で下地を残さない字
+
+    /// 置き換えで描いた絵が、下地に依らないか。2 つの下地へ同じ絵を描き、**下地のまま残った画素を除いて**
+    /// 全画素が一致することを見る。下地を混ぜる画素 (縁で下地を残す) があれば、下地ごとに値が違う。
+    private func groundIndependence(
+        _ body: (Canvas) -> Void
+    ) throws -> (touched: Int, dependent: Int, brightest: Float) {
+        func render(on ground: LinearRGBA) throws -> PixelBuffer {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
+            try canvas.draw {
+                canvas.background(ground)
+                body(canvas)
+            }
+            return try canvas.target.readPixels()
+        }
+        let (first, second) = (red, blue)
+        let (a, b) = (try render(on: first), try render(on: second))
+        var touched = 0
+        var dependent = 0
+        var brightest: Float = 0
+        for y in 0..<Self.size {
+            for x in 0..<Self.size {
+                let (p, q) = (a[x, y], b[x, y])
+                brightest = max(brightest, p.red, p.green, p.blue, p.alpha)
+                if !differs(p, first) && !differs(q, second) { continue }
+                touched += 1
+                if differs(p, q) { dependent += 1 }
+            }
+        }
+        return (touched, dependent, brightest)
+    }
+
+    @Test("色を持つ字形 (絵文字) は、置き換えで描くと透けた画素をそのまま写し、縁で下地を残さない")
+    func aColoredGlyphCopiesItsTransparentPixels() throws {
+        let result = try groundIndependence { canvas in
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.textSize(70)
+            canvas.blendMode(.replace)
+            canvas.text("\u{1F600}", 40, 110)
+        }
+        try #require(result.touched > 200, "絵文字が描けていない (\(result.touched))")
+        #expect(result.dependent == 0, "\(result.dependent) 画素が下地と混ざった")
+    }
+
+    @Test("利用者の断片が効いている字は、置き換えで描くと色をそのまま置き、1 を越えず下地にも依らない")
+    func aShaderedGlyphKeepsItsOwnCoverage() throws {
+        let result = try groundIndependence { canvas in
+            // 字の被覆 (in.texel) を掛けない断片。`S + D·(1 − 被覆)` にすると縁で 1 を越える
+            guard
+                let shader = try? canvas.makeShader(
+                    "float4 paint(Fragment in, Values values) { return in.color; }")
+            else { return }
+            canvas.noStroke()
+            canvas.fill(white)
+            canvas.textSize(60)
+            canvas.shader(shader)
+            canvas.blendMode(.replace)
+            canvas.text("o", 50, 110)
+        }
+        try #require(result.touched > 200, "字が描けていない (\(result.touched))")
+        #expect(result.dependent == 0, "\(result.dependent) 画素が下地と混ざった")
+        #expect(result.brightest <= 1 + 1.0 / 255, "字の縁で値が 1 を越えた: \(result.brightest)")
+    }
+
+    /// **単色の字と色を持つ字形が 1 回の `text()` に交互に並んでも、それぞれの読みが守られる** (#3111)。
+    /// 種類が替わるたびに列を閉じる (``Canvas/openBatchGlyphColored``) ので、先送りした字の列の途中で列が
+    /// 閉じる。見るのは字ごとの範囲: 単色の字は不透明な字を不透明な下地へ置くと重ねる混ぜ方の絵と同じ
+    /// (縁で下地を残す)、絵文字は下地 2 色で同じ絵 (透けた画素をそのまま写す)。
+    @Test("単色の字と絵文字が交互に並んでも、単色の縁は下地を残し、絵文字は透けた画素を写す")
+    func monochromeAndColoredGlyphsInOneRun() throws {
+        let string = "a\u{1F600}b\u{1F600}c"
+        let (width, height) = (320, 100)
+        func render(on ground: LinearRGBA, mode: BlendMode) throws -> (PixelBuffer, Canvas) {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.textSize(40)
+                canvas.blendMode(mode)
+                canvas.text(string, 10, 70)
+            }
+            return (try canvas.target.readPixels(), canvas)
+        }
+        let (onRed, canvas) = try render(on: red, mode: .replace)
+        let onBlue = try render(on: blue, mode: .replace).0
+        let blended = try render(on: red, mode: .blend).0
+        // 字ごとの範囲 (送り幅から。内側へ 3 画素寄せて、隣の字の張り出しを避ける)
+        func range(_ from: String, _ to: String) -> Range<Int> {
+            let lower = 10 + Int(canvas.textWidth(from)) + 3
+            let upper = 10 + Int(canvas.textWidth(to)) - 3
+            return lower..<upper
+        }
+        let emoji = [range("a", "a\u{1F600}"), range("a\u{1F600}b", "a\u{1F600}b\u{1F600}")]
+        let mono = [range("", "a"), range("a\u{1F600}", "a\u{1F600}b"), range("a\u{1F600}b\u{1F600}", string)]
+        for columns in emoji {
+            var touched = 0
+            var dependent = 0
+            for y in 0..<height {
+                for x in columns {
+                    let (p, q) = (onRed[x, y], onBlue[x, y])
+                    if !differs(p, red) || !differs(q, blue) { continue }
+                    touched += 1
+                    if differs(p, q) { dependent += 1 }
+                }
+            }
+            try #require(touched > 100, "絵文字が描けていない (\(touched))")
+            #expect(dependent == 0, "絵文字の範囲 \(columns) の \(dependent) 画素が下地と混ざった")
+        }
+        for columns in mono {
+            var edge = 0
+            var wrong = 0
+            for y in 0..<height {
+                for x in columns {
+                    let b = blended[x, y]
+                    if differs(b, red) && differs(b, white) { edge += 1 }
+                    let r = onRed[x, y]
+                    let gap = max(
+                        abs(r.red - b.red), abs(r.green - b.green), abs(r.blue - b.blue),
+                        abs(r.alpha - b.alpha))
+                    if gap > 1.0 / 255 { wrong += 1 }
+                }
+            }
+            try #require(edge > 5, "字の縁の画素が少ない (\(edge))")
+            #expect(wrong == 0, "単色の字の範囲 \(columns) の \(wrong) 画素が重ねる絵と違う。縁が下地を消している")
+        }
     }
 }

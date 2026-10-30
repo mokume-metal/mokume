@@ -515,18 +515,22 @@ struct FormShapeTests {
     ///
     /// 帯に丸ごと入る画素だけを見る検査 (上) では、縁の重みが決まらない — 「帯に丸ごと入る
     /// ときだけ重なりを輪郭だけにする」誤りでも緑になる。そこで面全体の画素を、置き換えで
-    /// 解いた式 `S·s + F·(f − o)` と比べる。形の外 (どちらでもない面積) は置き換えで透明に
-    /// なるので、透明な地に描いて 0 と比べる。被覆率は `RectAreas`。
+    /// 解いた式 `S·s + F·(f − o)` に、どちらでもない面積の下地 `D·(1 − (f + s − o))` を足した式
+    /// と比べる ([#3111])。透明な地では下地の項が 0 になり、不透明な地 (`onGround`) では縁の
+    /// 画素に下地が残る。被覆率は `RectAreas`。
     ///
     /// 塗りが半透明のとき、輪郭が不透明なとき、**不透明な輪郭で記録した形を半透明の色で置く**
     /// とき (置き場所の色は輪郭の不透明度にも掛かる・`FormInstance.placed(by:tint:)`) も回す。
     ///
     /// [#1819]: https://github.com/mokume-metal/mokume/issues/1819
     /// [#1867]: https://github.com/mokume-metal/mokume/issues/1867
+    /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
     @Test(
-        "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、面積で置き換えた色になる",
-        arguments: ["半透明の輪郭", "半透明の塗りと輪郭", "半透明の塗りと不透明な輪郭", "記録した形を半透明の色で置く"])
-    func replaceModeWeighsEdgePixelsByArea(_ variant: String) throws {
+        "置き換える混ぜ方で、塗りと輪郭を 1 回で描いた絵の縁の画素は、面積で置き換えた色にどちらでもない面積の下地を足した色になる",
+        arguments: ["半透明の輪郭", "半透明の塗りと輪郭", "半透明の塗りと不透明な輪郭", "記録した形を半透明の色で置く"],
+        [false, true])
+    func replaceModeWeighsEdgePixelsByArea(_ variant: String, _ onGround: Bool) throws {
+        let ground = LinearRGBA.display(red: 0.3, green: 0.6, blue: 0.45, alpha: 1)
         let fillAlpha: Float = variant.hasPrefix("半透明の塗り") ? 0.6 : 1
         let strokeAlpha: Float = variant == "半透明の塗りと不透明な輪郭" || variant.hasPrefix("記録") ? 1 : 0.5
         let fillColor = LinearRGBA.display(red: 0.2, green: 0.35, blue: 0.8, alpha: fillAlpha)
@@ -554,7 +558,8 @@ struct FormShapeTests {
             }
             if tint != nil { try canvas.draw { recorded = canvas.createShape { draw() } } }
             try canvas.draw {
-                canvas.background(LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0))
+                canvas.background(
+                    onGround ? ground : LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0))
                 if let tint {
                     canvas.blendMode(.replace)
                     canvas.shape(recorded, at: [Placement(fill: tint)])
@@ -568,11 +573,13 @@ struct FormShapeTests {
             for y in 0..<once.height {
                 for x in 0..<once.width {
                     let (f, s, o) = areas.at(x, y)
+                    // どちらでもない面積には下地が残る (#3111)。透明な地では 0
+                    let rest = onGround ? max(0, 1 - (f + s - o)) : 0
                     let expected = [
-                        strokePlaced.red * s + fillPlaced.red * (f - o),
-                        strokePlaced.green * s + fillPlaced.green * (f - o),
-                        strokePlaced.blue * s + fillPlaced.blue * (f - o),
-                        strokePlaced.alpha * s + fillPlaced.alpha * (f - o),
+                        strokePlaced.red * s + fillPlaced.red * (f - o) + ground.red * rest,
+                        strokePlaced.green * s + fillPlaced.green * (f - o) + ground.green * rest,
+                        strokePlaced.blue * s + fillPlaced.blue * (f - o) + ground.blue * rest,
+                        strokePlaced.alpha * s + fillPlaced.alpha * (f - o) + ground.alpha * rest,
                     ]
                     let actual = once[x, y]
                     let gap = max(
@@ -588,8 +595,119 @@ struct FormShapeTests {
                 "\(rect.name): 外縁 − 内縁が輪郭だけの形と \(areas.bandMismatchCount) 画素違う")
             #expect(
                 differing == 0,
-                "\(variant)・\(rect.name): \(differing) 画素が面積で置き換えた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
+                "\(variant)・\(onGround ? "不透明な地" : "透明な地")・\(rect.name): \(differing) 画素が面積で置き換えた色と違う (最大 \(worst.gap) @ (\(worst.x), \(worst.y))・f \(worst.f)・s \(worst.s))")
         }
+    }
+
+    /// 置き換える混ぜ方で描いた縁の画素は、下地を被覆の残りだけ残す ([#3111]・ADR-0039 決定 5)。
+    ///
+    /// 不透明な色を不透明な下地へ描くと、重ねる混ぜ方 (`S·c + D·(1 − c)`) と置き換える混ぜ方 (被覆
+    /// `c` の分を置き換え、残りに下地を残す) は同じ式になる。比べる相手は重ねる混ぜ方の絵で、縁の
+    /// 画素に下地が残っていないと (変更前は縁の画素が `S·c` で、下地を消した半透明の輪になった) 外れる。
+    /// 円・楕円・扇・矩形・線で、縁の画素が 40 を越える場面を回す。塗りと輪郭を両方持つ形は `replaceModeWeighsEdgePixelsByArea` が見る。
+    ///
+    /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
+    @Test(
+        "置き換える混ぜ方で描いた縁の画素は、不透明な色を不透明な下地へ重ねたのと同じで、下地を残す",
+        arguments: ["円", "楕円", "扇", "矩形", "線"])
+    func replaceModeKeepsTheGroundUnderTheEdge(_ kind: String) throws {
+        let ground = LinearRGBA.display(red: 0.8, green: 0.7, blue: 0.2, alpha: 1)
+        let ink = LinearRGBA.display(red: 0.1, green: 0.2, blue: 0.9, alpha: 1)
+        func render(_ mode: BlendMode) throws -> PixelBuffer {
+            let canvas = try makeCanvas()
+            try canvas.draw {
+                canvas.background(ground)
+                canvas.blendMode(mode)
+                canvas.fill(ink)
+                canvas.noStroke()
+                switch kind {
+                case "円": canvas.circle(41.3, 47.2, 64)
+                case "楕円": canvas.ellipse(47.6, 46.1, 70, 36)
+                case "扇": canvas.arc(47.3, 49.4, 66, 58, 0.4, 4.3)
+                case "矩形": canvas.rect(14.4, 17.7, 55.6, 50.9)
+                case "線":
+                    canvas.noFill()
+                    canvas.stroke(ink)
+                    canvas.strokeWeight(9)
+                    canvas.line(14.3, 20.2, 78.6, 71.9)
+                default: break
+                }
+            }
+            return try canvas.target.readPixels()
+        }
+        let replaced = try render(.replace)
+        let blended = try render(.blend)
+        func near(_ a: LinearRGBA, _ b: LinearRGBA) -> Bool {
+            max(
+                abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue),
+                abs(a.alpha - b.alpha)) <= 1.0 / 255
+        }
+        // 下地と色は、描き場所を通した値で読む (8 ビットの丸めを避ける)。(2, 2) は形の外に取ってある
+        let groundRead = blended[2, 2]
+        var edgePixels = 0
+        var differing = 0
+        for y in 0..<replaced.height {
+            for x in 0..<replaced.width {
+                let b = blended[x, y]
+                if !near(b, groundRead) && !near(b, ink) { edgePixels += 1 }
+                if !near(replaced[x, y], b) { differing += 1 }
+            }
+        }
+        #expect(edgePixels > 40, "\(kind): 縁の画素が少ない (\(edgePixels))")
+        #expect(
+            differing == 0,
+            "\(kind): \(differing) 画素が重ねる絵と違う。縁の画素が下地を消している")
+    }
+
+    /// 透明の色 (α 0) で下地に穴を抜く使い方 ([#1542]) の縁は `(1 − c)·D` で、穴の縁がなめらかになる
+    /// ([#3111])。丸ごと形に入る画素は透明に置き換わり、形の外は下地のまま。
+    ///
+    /// 被覆 `c` は、同じ円を不透明な色で重ねる混ぜ方で描いた絵の、下地の消えた割合から読む。
+    ///
+    /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
+    /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
+    @Test("α 0 の色で置き換えて抜いた穴の縁は、下地を被覆の残りだけ残す")
+    func replaceModePunchesASmoothHole() throws {
+        let ground = LinearRGBA.display(red: 0.8, green: 0.7, blue: 0.2, alpha: 1)
+        let hole = LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0)
+        let canvas = try makeCanvas()
+        try canvas.draw {
+            canvas.background(ground)
+            canvas.blendMode(.replace)
+            canvas.noStroke()
+            canvas.fill(hole)
+            canvas.circle(41.3, 47.2, 64)
+        }
+        let punched = try canvas.target.readPixels()
+        // 被覆: 白を黒地に重ねる混ぜ方で描いた赤の値
+        let coverage = try makeCanvas()
+        try coverage.draw {
+            coverage.background(black)
+            coverage.noStroke()
+            coverage.fill(white)
+            coverage.circle(41.3, 47.2, 64)
+        }
+        let areas = try coverage.target.readPixels()
+        var edge = 0
+        var differing = 0
+        for y in 0..<punched.height {
+            for x in 0..<punched.width {
+                let c = areas[x, y].red
+                if c > 0.05 && c < 0.95 { edge += 1 }
+                let want = [ground.red, ground.green, ground.blue, ground.alpha].map { $0 * (1 - c) }
+                let got = punched[x, y]
+                let gap = max(
+                    abs(got.red - want[0]), abs(got.green - want[1]), abs(got.blue - want[2]),
+                    abs(got.alpha - want[3]))
+                if gap > 1.0 / 255 { differing += 1 }
+            }
+        }
+        #expect(edge > 40, "縁の画素が少ない (\(edge))")
+        #expect(differing == 0, "\(differing) 画素が (1 − c)·下地と違う")
+        #expect(punched[41, 47].alpha == 0 && punched[41, 47].red == 0, "中は透明")
+        #expect(
+            abs(punched[2, 2].red - ground.red) <= 1.0 / 255 && punched[2, 2].alpha == 1,
+            "形の外は下地のまま")
     }
 
     /// 重ねる混ぜ方と下地を読む混ぜ方の 1 画素も、**縁と継ぎ目の画素まで** 4 つの面積の和に

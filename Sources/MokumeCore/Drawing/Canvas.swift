@@ -256,6 +256,11 @@ public final class Canvas {
     /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
     /// ``Batch/thinCoverage`` へ移して下ろす。
     var openBatchHasThinCoverage = false
+    /// 置き換える混ぜ方で字を積んだ開いている列が、色を持つ字形 (`true`) と単色の字形 (`false`) のどちらを積んだか。
+    /// 積んでいなければ `nil` (#3111)。**2 つは同じ列に混ぜない** — 単色の字の縁は被覆の残りに下地を残し、
+    /// 色を持つ字形は絵と同じく透けた画素をそのまま写す (``appendGlyphQuad(_:penX:baseline:color:inDeferredRun:)``)。
+    /// 列を閉じるときに下ろす。
+    var openBatchGlyphColored: Bool?
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -2098,8 +2103,9 @@ public final class Canvas {
         /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
         /// どちらを掛けても値が変わらないためである。
         var strokeStart: Int = .max
-        /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
-        /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
+        /// この列に、被覆が 1 未満になりうる頂点 — 細い線を広げた頂点 (#1637) と、置き換える混ぜ方で置いた
+        /// 字 (字形の縁の被覆・#3111) — があるか。置き換える列は、これが立つと下地を読む断片で描く
+        /// (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
         /// この列を、特化した断片で描くときの組の鍵 (光の枝を外す #1795・ブレンドを外す #2366)。
         /// `nil` なら既定の組。
@@ -3374,6 +3380,7 @@ public final class Canvas {
         if emptying { deferredRunOpen = false }
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
+        if emptying { openBatchGlyphColored = nil }
         list(&recordedStrokeRanges)
         list(&recordedFillRanges)
         list(&recordedGeometryForms, counted: false)

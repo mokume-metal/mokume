@@ -648,6 +648,7 @@ extension CanvasTests {
                 "solidStrokeCapture": transient,
                 "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
                 "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
+                "openBatchGlyphColored": transient,
                 "coverageStorage": resource, "thinStrokesRebuilt": count,
                 "thinFillMemo": "細い塗りの記述の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#2208)",
                 "thinFillRecordsBuilt": count,

@@ -222,6 +222,7 @@ extension Canvas {
         deferredRunOpen = false
         // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
         defer { openBatchHasThinCoverage = false }
+        defer { openBatchGlyphColored = nil }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
         // ここだけ黙って平面の経路へ落ちる (他の 5 箇所は `switch` なので止まる)
         switch openSource {
