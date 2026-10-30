@@ -1151,6 +1151,11 @@ enum WatchCommand {
     ///
     /// **行ごとに消す** (#2521)。理由のように複数行を 1 度に書くと、先頭の行しか消さない形では
     /// 2 行目以降に速さの行の残りが重なる。
+    ///
+    /// **消すのは 1 物理行だけでよい** (#3536)。速さの行は幅に収め、収まらなくても書く間だけ端末の
+    /// 自動折り返しを切って書くので (`FrameRateNotice.rewriting`)、折り返して複数の物理行に
+    /// ならない。**この側の行には折り返しを切る印を付けない** — 作り直しの記録や失敗の理由は
+    /// 残る出力で、右で切ると読めなくなる。
     nonisolated static func line(_ text: String, isTerminal: Bool) -> String {
         guard isTerminal else { return text }
         return text.split(separator: "\n", omittingEmptySubsequences: false)
