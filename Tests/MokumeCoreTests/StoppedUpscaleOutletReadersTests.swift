@@ -104,6 +104,9 @@ struct StoppedUpscaleOutletReadersTests {
     private static let tokens: [(name: String, pattern: Regex<Substring>)] = [
         // 描き場所の出す先から作る絵と、その絵を読む側
         (".drawn(", /\.drawn\(/),
+        // 描き場所から絵を作る口 (`Canvas.drawnPicture`・#3453) を呼ぶ行。作る式は 1 行にまとめてあるので、
+        // 呼ぶ側もここに載せないと、出す先を絵にする行が登録簿から抜ける
+        (".drawnPicture", /\.drawnPicture\b/),
         // 描き場所の出す先のテクスチャを名指す
         ("output.texture", /\boutput\.texture\b/),
         // ランタイムの出す先を、大きさ以外のために渡す (大きさは絵を読まない)
@@ -134,11 +137,15 @@ struct StoppedUpscaleOutletReadersTests {
     private static let readers: [Reader] = [
         // MARK: 置く口
         Reader(
-            file: "MokumeCore/Drawing/Canvas+Image.swift", token: ".drawn(", count: 4,
+            file: "MokumeCore/Drawing/Canvas+Image.swift", token: ".drawn(", count: 1,
+            catchUp: .placing,
+            reason: "描き場所から絵を作る唯一の式 (drawnPicture・座標の大きさを持たせる・#3453)。作った絵を使う行は下の .drawnPicture が数える"),
+        Reader(
+            file: "MokumeCore/Drawing/Canvas+Image.swift", token: ".drawnPicture", count: 4,
             catchUp: .placing,
             reason: "texture(canvas) と image(canvas) の 3 形。どれも絵を作る直前に note(placing: graphics) を通す (#2042)"),
         Reader(
-            file: "MokumeCore/Drawing/ShaderSurface.swift", token: ".drawn(", count: 1,
+            file: "MokumeCore/Drawing/ShaderSurface.swift", token: ".drawnPicture", count: 1,
             catchUp: .placing, vouchedIn: "MokumeCore/Drawing/Canvas+Style.swift",
             reason: "断片の面に渡した描き場所。置くたびに Canvas+Style の notePaintPlacement が drawnSurfaces を note(placing:) で記録する"),
         Reader(

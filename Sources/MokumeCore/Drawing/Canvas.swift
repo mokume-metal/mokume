@@ -54,6 +54,13 @@ public final class Canvas {
     /// 高さ。**座標の単位。**
     public let height: Float
 
+    /// 出す画素の倍率 (`mokume render --scale`・[#2441])。座標 1 つが出す画素いくつか。**1 のとき以外は書き出しの
+    /// 子の本体の面と、そこから作った描き場所 (``createGraphics(_:_:)``・[#3453]) だけが持つ。**
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+    let outputScale: Int
+
     /// 実際に刻む幅 (画素)。細かさが 1 で書き出しの倍率も掛けていなければ ``width`` と同じ。
     public var pixelWidth: Int { target.width }
     /// 実際に刻む高さ (画素)。
@@ -249,6 +256,11 @@ public final class Canvas {
     /// 開いている列に、細い線を広げた (被覆が 1 未満の) 頂点を積んだか (#1637)。列を閉じるときに
     /// ``Batch/thinCoverage`` へ移して下ろす。
     var openBatchHasThinCoverage = false
+    /// 置き換える混ぜ方で字を積んだ開いている列が、色を持つ字形 (`true`) と単色の字形 (`false`) のどちらを積んだか。
+    /// 積んでいなければ `nil` (#3111)。**2 つは同じ列に混ぜない** — 単色の字の縁は被覆の残りに下地を残し、
+    /// 色を持つ字形は絵と同じく透けた画素をそのまま写す (``appendGlyphQuad(_:penX:baseline:color:inDeferredRun:)``)。
+    /// 列を閉じるときに下ろす。
+    var openBatchGlyphColored: Bool?
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -2091,8 +2103,9 @@ public final class Canvas {
         /// 畳んでいない列は塗りしか無い扱いでよい — 置き場所の 2 色がどちらも白で、
         /// どちらを掛けても値が変わらないためである。
         var strokeStart: Int = .max
-        /// この列に、細い線を広げた (被覆が 1 未満の) 頂点があるか (#1637)。置き換える列は、
-        /// これが立つと下地を読む断片で描く (``ShapePipeline/BlendStates/drawing(_:)``)。
+        /// この列に、被覆が 1 未満になりうる頂点 — 細い線を広げた頂点 (#1637) と、置き換える混ぜ方で置いた
+        /// 字 (字形の縁の被覆・#3111) — があるか。置き換える列は、これが立つと下地を読む断片で描く
+        /// (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
         /// この列を、特化した断片で描くときの組の鍵 (光の枝を外す #1795・ブレンドを外す #2366)。
         /// `nil` なら既定の組。
@@ -2766,6 +2779,7 @@ public final class Canvas {
         // **座標の大きさ。** 出す先が倍率で大きくても、スケッチが書く座標は倍率の前のまま
         self.width = Float(output.width / outputScale)
         self.height = Float(output.height / outputScale)
+        self.outputScale = outputScale
         self.pipeline = try gpu.shapePipeline(pixelFormat: RenderTarget.pixelFormat)
         self.argumentTable = try ShapePipeline.makeArgumentTable(gpu: gpu)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
@@ -3366,6 +3380,7 @@ public final class Canvas {
         if emptying { deferredRunOpen = false }
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
+        if emptying { openBatchGlyphColored = nil }
         list(&recordedStrokeRanges)
         list(&recordedFillRanges)
         list(&recordedGeometryForms, counted: false)

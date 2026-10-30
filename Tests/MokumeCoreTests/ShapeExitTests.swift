@@ -151,6 +151,7 @@ enum ShapeExit {
         let unused = "記録の間は使わない (組み込みの立体は置き場所ごとに頂点へ焼き、平面は畳まない)"
         let untouched: [String: String] = [
             "width": construction, "height": construction,
+            "outputScale": "\(construction)。書き出しの倍率 (#3453)",
             "target": "\(construction)。中の露出と明るさの丸め方 (target.brightness) は断る",
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "argumentTable": construction,
@@ -220,6 +221,8 @@ enum ShapeExit {
             // #1637 (細い線を広げて被覆で運ぶ)
             "coverageStorage": resource, "thinStrokesRebuilt": count,
             "openBatchHasThinCoverage": "openSource と同じ (列を閉じるときに Batch.thinCoverage へ移して下ろす)",
+            // #3111 (置き換えで積んだ字の列に、色を持つ字形と単色の字形を混ぜない)
+            "openBatchGlyphColored": "openSource と同じ (列を閉じるときに下ろす)",
             "solidStrokeCoverage": "立体の線を 1 本組む間だけ使う被覆。次の線を組む前に書き直す",
             "solidStrokeIsLonePoint": "立体の線を 1 本組む間だけ使う印。次の線を組む前に書き直す",
             "templateStrokeMatrix": "畳みの雛形を組む間だけ立つ。記録の間は畳まない (unused と同じ理由)",

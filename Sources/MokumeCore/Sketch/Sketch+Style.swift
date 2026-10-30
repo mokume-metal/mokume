@@ -516,6 +516,15 @@ extension SketchPart {
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
+    /// **手本 (Processing) は `imageMode()` で読み、mokume は `rectMode(_:)` で読む。** 既定 (どちらも `.corner`) では
+    /// 同じ矩形になる。手本で `imageMode(CENTER)` と組んでいた `clip(x, y, w, h)` を写すなら、角を渡す
+    /// `clip(x - w / 2, y - h / 2, w, h)` と書く。`rectMode(.center)` を合わせる直し方は、``rect(_:_:_:_:)``・
+    /// ``square(_:_:_:)``・``text(_:_:_:_:_:)`` の箱の読み方も変えるので、手本のつもりで書いた他の矩形がずれる
+    /// (``pushStyle(fileID:line:)`` と ``popStyle(fileID:line:)`` で囲めば、`clip` も一緒に戻る)。
+    /// `rectMode(.center)` のもとの `clip(200, 150, 100, 80)` は (150, 110)〜(250, 190) を切り抜く。`imageMode(.center)`
+    /// だけを書いたときは `rectMode` が `.corner` のままなので、同じ呼び出しが (200, 150)〜(300, 230) を切り抜く。
+    /// 幅や高さが負なら、手本と同じに裏返して読む (`clip(100, 100, -50, -50)` は (50, 50)〜(100, 100))。
+    ///
     /// 下は、灰色の枠の矩形へ `clip(40, 40, 120, 80)` を掛けて、はみ出す大きな円を塗ったもの。
     /// 円全体の灰色の輪郭は切り抜く前に描いたもので、塗った橙色は矩形の外へ出ない。
     ///
@@ -538,7 +547,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている -->
-    ///     ![灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている](https://i.gyazo.com/1c5ea0bc2d5952246f5081f189310818.png)
+    ///     ![灰色の矩形の枠の中だけが橙色に塗られ、大きな円の灰色の輪郭が枠の外へはみ出している。橙色は枠の右・上・下の縁でまっすぐに切れている](https://i.gyazo.com/00d18095286a2b99cb59787048ff7afd.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -580,10 +589,9 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 矩形は**いまの変換の影響を受けず**、面の座標で読む。``translate(_:_:)`` などの後で
-    /// 呼んでも、切り抜くのは面の同じ場所である。変換を効かせたいときは、角を
-    /// ``screenX(_:_:)`` / ``screenY(_:_:)`` で面の座標へ写してから渡す。平行移動と拡大までは、
-    /// 角を 2 つ写せば足りる (既定の `rectMode(.corner)` のとき):
+    /// 矩形は**呼んだ時点の変換で面へ写して**読む。``translate(_:_:)`` や ``scale(_:_:)`` の後で呼べば、同じ引数の
+    /// ``rect(_:_:_:_:)`` が描くのと同じ場所を切り抜く (手本 (Processing) の既定の描き手と同じ)。切り抜きが決まるのは
+    /// 呼んだ時点で、後から変換しても動かない:
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -596,26 +604,29 @@ extension SketchPart {
     ///     stroke(89, 97, 115)
     ///     rect(0, 0, 60, 60)
     ///     circle(40, 40, 80)
-    ///     // 角を面の座標へ写して渡す。円は矩形の中だけが残る
+    ///     // 同じ変換の下で clip を呼ぶと、矩形も動かした先で読まれる。円は矩形の中だけが残る
     ///     noStroke()
     ///     fill(242, 115, 64)
-    ///     let left = screenX(0, 0)
-    ///     let top = screenY(0, 0)
-    ///     clip(left, top, screenX(60, 60) - left, screenY(60, 60) - top)
+    ///     clip(0, 0, 60, 60)
     ///     circle(40, 40, 80)
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている | size=240x240 -->
-    ///     ![灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている](https://i.gyazo.com/66bf64e7ebf282df7933b1ae29a971b7.png)
+    ///     ![灰色の正方形の枠の中だけに橙色の円が残り、円の輪郭は枠の外へ続いている。橙色は枠の右と下の縁でまっすぐに切れている](https://i.gyazo.com/c2d07fac2fe68fc179189729c9fb8b55.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// 円は、動かした先の矩形 (面の `(60, 60)` から 120 四方) の中だけが残る。
     ///
-    /// 切り抜きは面に沿った矩形しか持てないので、``rotate(_:)`` や ``shearX(_:)`` を掛けた
-    /// 矩形は表せない — 角を写しても、回した矩形にはならない。
+    /// **角を ``screenX(_:_:)``・``screenY(_:_:)`` で面の座標へ写してから渡すと、変換が 2 度掛かる。** 変換を掛けた後は、
+    /// 変換の前の数をそのまま渡す。
+    ///
+    /// 切り抜きは面に沿った矩形しか持てない。``rotate(_:)`` や ``shearX(_:)`` を掛けた後で呼ぶと、写した 4 つの角を
+    /// 囲む面に沿った矩形で切り抜き、`clip()` の名前で 1 度だけ警告する (回した矩形そのものにはならない)。面に沿った
+    /// 矩形でよければ、回す前に呼ぶ。90 度刻みの回転 (`rotate(.pi / 2)` の `Float` の丸めだけの差を含む) と鏡映しは
+    /// 面に沿った矩形に写るので、警告しない。1e-6 ラジアンほどの小さな本物の回転は、丸めではないので警告する。
     ///
     /// 積み降ろし (``pushStyle(fileID:line:)``) で戻るので、入れ子にして元へ帰れる。
     ///
@@ -685,11 +696,11 @@ extension SketchPart {
     /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときや、止まっている間の入力のコールバックで書いた切り抜きはどのフレームにも
     ///   属さないので、警告して無視される。
-    // shot: 1 snippet=28891adf
-    // shot: 2 snippet=1ca10345
-    // shot: 3 snippet=b4e74bbc
-    // shot: 4 snippet=b84ca0ec
-    // shot: 5 snippet=bd0ccc48
+    // shot: 1 snippet=28891adf image=433da9b280bfd522
+    // shot: 2 snippet=1ca10345 image=0daf4d2218fec1fd
+    // shot: 3 snippet=353b0131 image=6d39fdb20976fdc0
+    // shot: 4 snippet=b84ca0ec image=b953abec6aa746c5
+    // shot: 5 snippet=bd0ccc48 image=2612ab9e73926215
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
@@ -842,8 +853,9 @@ extension SketchPart {
     ///
     /// **置き換える (``BlendMode/replace``) 以外のどのモードでも、アルファ 0 の色は下地を
     /// 変えない。** 混ぜ方が変わっても「どれだけ効かせるか」はアルファが決める。
-    /// ``BlendMode/replace`` だけは下地を見ず、形が掛かる画素を置いた色でアルファごと
-    /// 置き換える — アルファ 0 の色なら、その画素は透明になる ([#1542])。
+    /// ``BlendMode/replace`` だけは、形が丸ごと掛かる画素を置いた色でアルファごと
+    /// 置き換える — アルファ 0 の色なら、その画素は透明になる ([#1542])。縁の画素は、
+    /// 被覆の残りに下地が残る ([#3111])。
     ///
     /// **下地が透明な所では、どのモードでも置いた色がそのまま載る。** 混ぜる相手が無いので、
     /// 混ぜ方は下地のアルファの分だけ効く — 半分透ける下地の上では、混ぜた色と置いた色が
@@ -895,6 +907,7 @@ extension SketchPart {
     /// [#1057]: https://github.com/mokume-metal/mokume/issues/1057
     /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
     /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
+    /// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     ///
     /// - Note: 混ぜ方は**フレームを越える**。一度書けば、書き換えるまで残る。

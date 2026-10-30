@@ -42,7 +42,7 @@ extension Sketch {
     /// - 縦に撮った動画など、回転の印 (`preferredTransform`) を持つ動画は、その向きを当てて正しい向きで映す
     ///   (90° 刻みの回転と反転。それ以外の変換は当てない)。``Movie/width``・``Movie/height``・``Movie/image`` の
     ///   大きさも当てた後の値
-    /// - 流す速さは ``Movie/speed(_:)`` で変えられる。音は鳴らさない
+    /// - 流す速さは ``Movie/speed(_:)`` で変えられる。音は鳴らさない (同じファイルを `loadSound` で鳴らして合わせる道は ``Movie`` の説明の「音」)
     ///
     /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。開くときに最初のコマまで読んで
     /// 確かめる。`setup()`・`draw()`・入力のコールバックの中で呼ぶ。

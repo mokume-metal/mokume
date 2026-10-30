@@ -80,13 +80,13 @@ extension CanvasTests {
             return try canvas.target.readPixels()[8, 8]
         }
 
-        /// **置き換える混ぜ方は、形が掛かる画素を置いた色でアルファごと置き換える。** アルファ 0
-        /// の色なら、その画素は透明になる — 「アルファ 0 の色は下地を変えない」の唯一の例外で、
+        /// **置き換える混ぜ方は、形が丸ごと掛かる画素を置いた色でアルファごと置き換える** (縁の画素は被覆の
+        /// 残りに下地を残す・#3111)。アルファ 0 の色なら、その画素は透明になる — 「アルファ 0 の色は下地を変えない」の唯一の例外で、
         /// 面の一部を透明にする手段でもある。
         ///
         /// 置く色は成分を持たせたアルファ 0 にする。乗算済みの 4 成分がすべて 0 になるので、
         /// 白い下地 (1, 1, 1, 1) が 1 成分でも残れば落ちる。
-        @Test("置き換える混ぜ方は下地を見ず、アルファ 0 の色なら透明に置き換える", arguments: [true, false])
+        @Test("置き換える混ぜ方は、形が丸ごと掛かる画素で下地を見ず、アルファ 0 の色なら透明に置き換える", arguments: [true, false])
         func replaceIgnoresWhatIsUnderneath(_ throughForms: Bool) throws {
             let result = try replaced(
                 with: .display(red: 0.25, green: 0.55, blue: 1, alpha: 0), throughForms: throughForms)

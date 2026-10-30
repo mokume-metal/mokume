@@ -1836,6 +1836,124 @@ struct MCPServerTests {
         #expect(outcome.text.contains("0123456789ab"))
         #expect(outcome.text.contains("Depend on a release version"))
         #expect(!outcome.text.contains("has not resolved its dependencies yet"))
+        // 置かせる先は、共通名ではなく改訂の名前 (#3478)
+        let named = directory.appendingPathComponent(".mokume/reference/mokume-api-rev-0123456789ab.md")
+        #expect(outcome.text.contains("OUT=\(GivenPath.shellWord(named))"), "\(outcome.text)")
+        // 組み上がる一覧の見出しにも改訂が出るよう、版の名前も渡す。本文の改訂の表記も同じ名前
+        #expect(outcome.text.contains("VERSION='rev-0123456789ab'"), "\(outcome.text)")
+        #expect(outcome.text.contains("(rev-0123456789ab)"), "\(outcome.text)")
+        // 共通名に一覧が無ければ、共通名に触れない
+        #expect(!outcome.text.contains("shared name"), "\(outcome.text)")
+    }
+
+    /// 共通名に前の一覧が在るのに、改訂の依存では読まない。**読まないことを、答えが名乗る** (#3478)。
+    @Test("共通名に一覧が在って改訂の依存では読まないとき、案内がそれに触れ、改訂の名前へ置き直す手を言う")
+    func namesTheSharedListItDoesNotRead() throws {
+        let directory = try makeSketch()
+        try writeRevisionPin(directory, "0123456789abcdef0123456789abcdef01234567")
+        try putList("# 前に置いた一覧\n", at: "mokume-api.md", in: directory)
+        let outcome = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(outcome.isError)
+        #expect(!outcome.text.contains("# 前に置いた一覧"), "\(outcome.text)")
+        let shared = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        #expect(outcome.text.contains("kept under the shared name (\(shared.path))"), "\(outcome.text)")
+        #expect(outcome.text.contains("not read for a pinned revision"), "\(outcome.text)")
+        #expect(outcome.text.contains("mokume-api-rev-0123456789ab.md"), "\(outcome.text)")
+    }
+
+    /// 枝・改訂で固定した `Package.resolved` を書く (`branch: "main"` を `swift package resolve` した後の形)。
+    private func writeRevisionPin(_ directory: URL, _ revision: String) throws {
+        try Data(
+            #"{"pins":[{"identity":"mokume","kind":"remoteSourceControl","location":"https://example.com/mokume.git","state":{"branch":"main","revision":"\#(revision)"}}],"version":3}"#
+                .utf8
+        ).write(to: directory.appendingPathComponent("Package.resolved"))
+    }
+
+    private func putList(_ text: String, at name: String, in directory: URL) throws {
+        let cache = directory.appendingPathComponent(".mokume/reference/\(name)")
+        try FileManager.default.createDirectory(
+            at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: cache)
+    }
+
+    /// **改訂を上げても、前の改訂の一覧が返らない** (#3478)。取り置きの名前が改訂に追随する。
+    @Test("改訂 A の一覧を置いた後で pin が改訂 B になれば、A の一覧は返らず、B の名前へ置く手を案内する")
+    func doesNotServeTheListOfAnotherRevision() throws {
+        let directory = try makeSketch()
+        let revisionA = "aaaaaaaaaaaa1111111111111111111111111111"
+        let revisionB = "bbbbbbbbbbbb2222222222222222222222222222"
+        try writeRevisionPin(directory, revisionA)
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())  // 改訂は資産が無く、取りに行かない
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        // 案内どおり、A の名前へ置く
+        let before = tools.call("reference", arguments: ["name": "api"])
+        let nameA = directory.appendingPathComponent(".mokume/reference/mokume-api-rev-aaaaaaaaaaaa.md")
+        #expect(before.isError)
+        #expect(before.text.contains("OUT=\(GivenPath.shellWord(nameA))"), "\(before.text)")
+        try putList("# A の一覧\n", at: "mokume-api-rev-aaaaaaaaaaaa.md", in: directory)
+        let served = tools.call("reference", arguments: ["name": "api"])
+        #expect(!served.isError)
+        #expect(served.text.contains("# A の一覧"))
+        #expect(!served.text.contains("tied to no version or revision"), "改訂の名前から返す回は、鍵があるので添えない")
+
+        // pin が B へ移る
+        try writeRevisionPin(directory, revisionB)
+        let after = tools.call("reference", arguments: ["name": "api"])
+        let nameB = directory.appendingPathComponent(".mokume/reference/mokume-api-rev-bbbbbbbbbbbb.md")
+        #expect(after.isError, "\(after.text)")
+        #expect(!after.text.contains("# A の一覧"), "\(after.text)")
+        #expect(after.text.contains("OUT=\(GivenPath.shellWord(nameB))"), "\(after.text)")
+        #expect(fetches.urls.isEmpty)
+
+        // 共通名に前の一覧が在っても、改訂の回は読まない
+        try putList("# 手で置いた古い一覧\n", at: "mokume-api.md", in: directory)
+        let ignored = tools.call("reference", arguments: ["name": "api"])
+        #expect(ignored.isError)
+        #expect(!ignored.text.contains("# 手で置いた古い一覧"), "\(ignored.text)")
+    }
+
+    @Test("同じ改訂のままなら、改訂の名前の取り置きを返し、取りに行かない")
+    func servesTheListKeptForTheSameRevision() throws {
+        let directory = try makeSketch()
+        try writeRevisionPin(directory, "0123456789abcdef0123456789abcdef01234567")
+        try putList("# 同じ改訂の一覧\n", at: "mokume-api-rev-0123456789ab.md", in: directory)
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())
+        let outcome = makeTools(directory: directory, fetches: fetches)
+            .call("reference", arguments: ["name": "api"])
+
+        #expect(!outcome.isError, "\(outcome.text)")
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.hasPrefix("Source: cached ("), "\(outcome.text)")
+        #expect(outcome.text.contains("# 同じ改訂の一覧"))
+    }
+
+    /// 鍵の無い状態は共通名のまま。そこから返す回だけ、鍵が無いことを名乗る。
+    @Test("pin が無い (パスで指す) 依存は共通名から返し、鍵が無いことを添える。版の取り置きには添えない")
+    func namesTheMissingKeyOnlyWhenServingTheSharedName() throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("swift-syntax", "603.0.2"))  // mokume の pin が無い
+        try putList("# 手で置いた一覧\n", at: "mokume-api.md", in: directory)
+        let unkeyed = makeTools(directory: directory, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+        #expect(!unkeyed.isError)
+        #expect(unkeyed.text.hasPrefix("Source: cached ("), "\(unkeyed.text)")
+        #expect(unkeyed.text.contains("tied to no version or revision"), "\(unkeyed.text)")
+        #expect(unkeyed.text.contains("# 手で置いた一覧"))
+
+        // 版の取り置きから返す回には添えない
+        let versioned = try makeDirectory()
+        try writeResolved(versioned, pins: pin("mokume", "0.2.0"))
+        try putList("# 版の一覧\n", at: "mokume-api-v0.2.0.md", in: versioned)
+        let keyed = makeTools(directory: versioned, fetches: Fetches())
+            .call("reference", arguments: ["name": "api"])
+        #expect(!keyed.isError)
+        #expect(keyed.text.hasPrefix("Source: cached ("))
+        #expect(!keyed.text.contains("tied to no version or revision"), "\(keyed.text)")
     }
 
     /// **読めない `Package.resolved` を、「pin が無い = パスで指している」と断定しない** (#3419)。

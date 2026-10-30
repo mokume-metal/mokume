@@ -586,10 +586,172 @@ struct WatchSessionTests {
         #expect(!lines.contains(WatchCommand.nothingRunningLine), "\(lines)")
     }
 
-    /// 作り直しの通り・通らないを、検査の途中で切り替える箱。
+    /// 作り直しの通り・通らない、子を起こせる・起こせないを、検査の途中で切り替える箱。
     @MainActor
     final class BuildSwitch {
         var status: Int32 = 0
+        var launchFails = false
+    }
+
+    /// 台へ手放したと伝えられた子の番号を溜める箱。
+    @MainActor
+    final class PIDLog {
+        var pids: [Int32] = []
+    }
+
+    /// 実物の子を起こし、`switches.launchFails` が立っている間は起こせない見張り (世代を重ねる)。
+    @MainActor
+    private func overlappingWithRefusableLaunch(
+        ready: Ready, switches: BuildSwitch
+    ) throws -> WatchSession {
+        var hooks = hooks(running: "echo ready; read line", ready: ready)
+        let start = hooks.launch
+        hooks.launch = { executable, directory, stamp, rate throws(CommandFailure) in
+            if switches.launchFails {
+                throw .cannotLaunch(tool: "sh", place: "", reason: "the test refuses to start a child")
+            }
+            return try start(executable, directory, stamp, rate)
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 0.5)
+        session.overlapsGenerations = true
+        return session
+    }
+
+    /// **起こせなかった保存は、走っている世代の役を動かさない** ([#3481](https://github.com/mokume-metal/mokume/issues/3481))。
+    /// 映っている世代は現役 (`child`) のまま残り、「前の世代」(`outgoing`) に回らない。
+    @Test("起こせなかった保存の後も、映っている世代は現役のまま走り続ける")
+    func aRefusedLaunchKeepsTheShownGenerationCurrent() async throws {
+        let ready = Ready()
+        let switches = BuildSwitch()
+        let session = try overlappingWithRefusableLaunch(ready: ready, switches: switches)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.generationPromoted(pid: shown.processIdentifier)
+        session.generationShown(pid: shown.processIdentifier)
+
+        switches.launchFails = true
+        let report = try #require(await session.tick())
+        #expect(report.ok && !report.launched, "検査の前提: 起こせなかった回")
+        #expect(shown.isRunning, "起こせなかった保存が、走っていた世代を落とした")
+        #expect(session.child === shown, "走っている世代が現役 (child) に残らない")
+        #expect(session.outgoing == nil, "走っている世代を前の世代へ回している")
+        #expect(session.waitingGeneration == nil)
+        #expect(session.keepsPreviousRunning)
+
+        // 次の保存で起こせれば、映っている世代が前の世代に回る (起こせなかった保存が挟まらなかった場合と同じ)
+        switches.launchFails = false
+        await session.tick()
+        ready.waitForLast()
+        #expect(shown.isRunning, "新しい世代が映る前に、映っている世代を畳んだ")
+        #expect(session.outgoing === shown)
+        #expect(session.waitingGeneration === session.child)
+    }
+
+    /// 乗り換えを待っていた世代は、起こせなかった保存の後も待ち続け、自分の番号の合図で畳まれない。
+    @Test("起こせなかった保存の後も、乗り換えを待つ世代は待ちのまま、その番号の合図で畳まれない")
+    func aRefusedLaunchKeepsTheWaitingGenerationWaiting() async throws {
+        let ready = Ready()
+        let switches = BuildSwitch()
+        let session = try overlappingWithRefusableLaunch(ready: ready, switches: switches)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let waiting = try #require(session.child)
+        #expect(session.waitingGeneration === waiting, "検査の前提: 乗り換えを待っている")
+
+        switches.launchFails = true
+        await session.tick()
+        #expect(waiting.isRunning)
+        #expect(session.child === waiting)
+        #expect(session.outgoing == nil)
+        #expect(session.waitingGeneration === waiting, "待ちを忘れた")
+
+        // 台がこの世代へ乗り換えた合図。合図された世代は生きたまま映る
+        await session.generationPromoted(pid: waiting.processIdentifier)
+        #expect(waiting.isRunning, "合図された世代を、道具が畳んだ")
+        #expect(session.waitingGeneration == nil)
+        #expect(session.keepsPreviousRunning)
+    }
+
+    /// **待っている世代の倒れた目印は、起こせなかった保存で消えない。** 起こす前の掃除が、戻して待たせ続ける
+    /// 世代の目印まで消すと、巡回が倒れた子の知らせを読めず、前の世代と倒れた子が並走し続ける。
+    @Test("起こせなかった保存を挟んでも、待つ世代の倒れた目印は残り、巡回が倒れた扱いにする")
+    func aRefusedLaunchKeepsTheWaitingGenerationsFellBackMarker() async throws {
+        let ready = Ready()
+        let switches = BuildSwitch()
+        let session = try overlappingWithRefusableLaunch(ready: ready, switches: switches)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let waiting = try #require(session.child)
+        let marker = try placeFellBackMarker(of: waiting, for: session)
+
+        switches.launchFails = true
+        await session.tick()
+        #expect(session.waitingGeneration === waiting)
+        #expect(FileManager.default.fileExists(atPath: marker.path), "起こす前の掃除が、待つ世代の倒れた目印を消した")
+        #expect(await session.retireAfterFallback() != nil, "巡回が、待つ世代の倒れた知らせを読めない")
+        #expect(session.waitingGeneration == nil)
+        #expect(waiting.isRunning)
+    }
+
+    /// **映っていた世代を畳むときは、台へ手放したと伝える** ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    /// 起こせなかった保存を挟んでも、映っている世代は次の成功する保存の後、合図が来ないまま次の保存で畳まれたときに
+    /// 手放したと伝わる (起こせなかった保存が映っている世代を「前の世代」に回すと、待ち印が下りて伝わらない)。
+    @Test("起こせなかった保存を挟んでも、映っている世代を合図なしの保存で畳むときは台へ手放したと伝える")
+    func aRefusedLaunchStillRelinquishesTheShownGenerationWhenItIsRetired() async throws {
+        let ready = Ready()
+        let switches = BuildSwitch()
+        let session = try overlappingWithRefusableLaunch(ready: ready, switches: switches)
+        defer { session.stopBlocking() }
+        let log = PIDLog()
+        session.relinquishesDisplay = { log.pids.append(contentsOf: $0) }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.generationPromoted(pid: shown.processIdentifier)
+        session.generationShown(pid: shown.processIdentifier)
+
+        switches.launchFails = true
+        await session.tick()
+        switches.launchFails = false
+        await session.tick()  // G1 を起こす。G0 は前の世代に回るだけで畳まない
+        ready.waitForLast()
+        #expect(shown.isRunning)
+        #expect(!log.pids.contains(shown.processIdentifier), "生きて映っている世代を、台へ手放したと伝えた")
+
+        await session.tick()  // 合図が来ないまま次の保存。映っている G0 を畳む
+        ready.waitForLast()
+        waitUntilGone(shown)
+        #expect(!shown.isRunning)
+        #expect(log.pids.contains(shown.processIdentifier), "畳んだ映っている世代を、台へ手放したと伝えていない")
+    }
+
+    /// **戻すのは、まだ走っている世代だけである。** 自分で終わった世代を現役へ戻すと、名乗り済みの消え方を
+    /// もう 1 度名乗る。
+    @Test("起こせなかった保存で、自分で終わっていた世代は現役へ戻さず、消えたと二度名乗らない")
+    func aRefusedLaunchDoesNotRestoreAGenerationThatEnded() async throws {
+        let ready = Ready()
+        let switches = BuildSwitch()
+        let session = try overlappingWithRefusableLaunch(ready: ready, switches: switches)
+        defer { session.stopBlocking() }
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.generationPromoted(pid: shown.processIdentifier)
+        session.generationShown(pid: shown.processIdentifier)
+        try #require(shown.standardInput as? Pipe).fileHandleForWriting.write(contentsOf: Data("bye\n".utf8))
+        waitUntilGone(shown)
+        #expect(session.departed() != nil, "検査の前提: 1 度目は名乗る")
+
+        switches.launchFails = true
+        await session.tick()
+        #expect(session.child == nil, "死んだ世代を現役へ戻した")
+        #expect(session.departed() == nil, "同じ消え方を二度名乗った")
+        #expect(!session.keepsPreviousRunning)
     }
 
     @Test("作り直しに失敗したら、差し替えない")

@@ -70,16 +70,89 @@ extension Canvas {
         // (ADR-0020 決定 5 の「安全な既定へ倒す」・他の入口と同じ倒し方)
         guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
+        // **矩形は呼んだ時点の変換で面へ写す** ([#2721])。手本 (Processing) の既定の描き手は、切り抜きを
+        // 今の変換の下の座標で読む。面に沿わない変換 (回転・剪断) は、写した 4 つの角を囲む面に沿った矩形で
+        // 切り抜く (切り抜きは面に沿った矩形しか持てない)。角を取って最小・最大を取るので、幅や高さが負の
+        // 矩形・鏡映しの変換は裏返して読まれる (手本が負の幅・高さを裏返して読むのと同じ)
+        //
+        // [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        let (rawLeft, rawTop) = (box.x, box.y)
+        let (rawRight, rawBottom) = (box.x + box.width, box.y + box.height)
+        // 読み方を解く算術は、有限の指定でも数でない値になりうる (`rectMode(.radius)` の `-∞ + ∞`)。
+        // 収める先が決まらないので、数でない指定と同じに切り抜きを触らずに返す
+        guard !rawLeft.isNaN, !rawTop.isNaN, !rawRight.isNaN, !rawBottom.isNaN else {
+            return warnOnce(
+                .clipNotResolvable,
+                "clip(): the four numbers resolve to a rectangle with an edge that is not a number "
+                    + "under the current rectMode (an overflow such as -infinity + infinity), so the "
+                    + "clip was left as it was")
+        }
+        // **端は有限の大きな値へ収めてから変換を通す。** 溢れた端 (`±∞`) は、変換の行列の 0 との積が
+        // 数でない値 (`0 * ∞`) になり、収める先が決まらなくなる。収める値 (1e18) は面より桁違いに大きいので、
+        // 面に沿った変換の下では収めても同じ面の外にある。回転・剪断・大きな縮小の下では、収めた端の写る先が
+        // 本物の端と同じとは限らないが、面を覆う矩形は覆ったままになる (無限大の矩形は面全体を通す)
+        let limit: Float = 1e18
+        let left = min(max(rawLeft, -limit), limit)
+        let top = min(max(rawTop, -limit), limit)
+        let right = min(max(rawRight, -limit), limit)
+        let bottom = min(max(rawBottom, -limit), limit)
+        noteTransformRead()
+        var (xx, xy, yx, yy) = (
+            transform.matrix.columns.0.x, transform.matrix.columns.1.x,
+            transform.matrix.columns.0.y, transform.matrix.columns.1.y
+        )
+        let (shiftX, shiftY) = (transform.matrix.columns.3.x, transform.matrix.columns.3.y)
+        // 面に沿った変換 (平行移動・拡大・鏡映し・90 度刻みの回転) かを、**軸の像ごと**に行列の成分で見る。
+        // 許すのは、面に沿う変換を `Float` で作ったときに出る丸めだけ: 軸の像の小さい成分が、大きい成分の
+        // 4 ulp (`4 * Float.ulpOfOne` ≒ 4.8e-7) 以下。`rotate(.pi / 2)` の `cos` は `-4.4e-8` で、この内に収まる。
+        // 倍率の比が大きい非一様の変換でも、列ごとに見るので許容が緩まない (`[[1000, 0.001], [0, 1]]` の剪断は
+        // 0.001 ≫ 4.8e-7 で、面に沿わない)。これより大きい成分は本物の回転・剪断で、面から遠い矩形では座標の
+        // ずれになるので、0 にせず警告して囲む矩形で切る
+        // 面に沿うなら、丸めのぶんの成分を 0 にして写す — 縁が画素の中心に乗る矩形を 90 度回しても、
+        // 丸めで縁の 1 列が落ちない
+        // (行列に有限でない成分があるときは、列ごとの比が無限の許容にならず、成分を 0 に潰さない。写した角が
+        // 有限でなくなるので、下の検めが変換の溢れとして断る)
+        let tolerance = 4 * Float.ulpOfOne
+        let diagonal = abs(yx) <= tolerance * abs(xx) && abs(xy) <= tolerance * abs(yy)
+        let anti = abs(xx) <= tolerance * abs(yx) && abs(yy) <= tolerance * abs(xy)
+        if diagonal {
+            (xy, yx) = (0, 0)
+        } else if anti {
+            (xx, yy) = (0, 0)
+        }
+        // 4 つの角を写す。配列も閉包も作らない (毎フレーム何度も呼ばれる)
+        let (p0x, p0y) = (xx * left + xy * top + shiftX, yx * left + yy * top + shiftY)
+        let (p1x, p1y) = (xx * right + xy * top + shiftX, yx * right + yy * top + shiftY)
+        let (p2x, p2y) = (xx * right + xy * bottom + shiftX, yx * right + yy * bottom + shiftY)
+        let (p3x, p3y) = (xx * left + xy * bottom + shiftX, yx * left + yy * bottom + shiftY)
+        guard p0x.isFinite, p0y.isFinite, p1x.isFinite, p1y.isFinite, p2x.isFinite, p2y.isFinite,
+            p3x.isFinite, p3y.isFinite
+        else { return warnClipTransformOverflowOnce() }
+        let minX = min(min(p0x, p1x), min(p2x, p3x))
+        var maxX = max(max(p0x, p1x), max(p2x, p3x))
+        let minY = min(min(p0y, p1y), min(p2y, p3y))
+        var maxY = max(max(p0y, p1y), max(p2y, p3y))
+        if !(diagonal || anti) {
+            warnOnce(
+                .clipUnderRotation,
+                "clip(): the transform at this call rotates or shears, but a clip is an axis-aligned "
+                    + "rectangle, so it was set to the rectangle that encloses the transformed corners. "
+                    + "Write clip() before rotate() or shearX()/shearY() to clip the rectangle as it is")
+        }
+        // 幅か高さが 0 の矩形は空のままにする。回した後の囲む矩形は 0 でなくなるが、変換の無いときに
+        // 空の切り抜きが、回すと線の太さを持つ切り抜きになってはいけない
+        if rawLeft == rawRight { maxX = minX }
+        if rawTop == rawBottom { maxY = minY }
         // **`Float` のまま面の内へ収める。** 画素へ丸めるのは ``scissor(_:)`` で、そこでは
         // 面の内の値しか `Int` にしない (`Int(_:Float)` は面より桁違いに大きい値でトラップする・
         // [#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
         //
         // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
-        let left = min(max(0, box.x), width)
-        let top = min(max(0, box.y), height)
-        let right = min(max(left, box.x + box.width), width)
-        let bottom = min(max(top, box.y + box.height), height)
-        let clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
+        let clipLeft = min(max(0, minX), width)
+        let clipTop = min(max(0, minY), height)
+        let clipRight = min(max(clipLeft, maxX), width)
+        let clipBottom = min(max(clipTop, maxY), height)
+        let clip = ClipRect(left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom)
         // **正規化まで済ませた後で、効く切り抜きが変わるときだけ閉じる** (#2789)。列が持つのは閉じた
         // 時点の切り抜きなので、ビット列まで同じなら閉じても閉じなくても列の中身は同じになる
         if let current = style.clip, current.isBitwiseEqual(to: clip) { return }
@@ -104,6 +177,17 @@ extension Canvas {
             .badClip,
             "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
                 + "left as it was")
+    }
+
+    /// 渡された数は有限でも、いまの変換が矩形を数でない値・無限へ運んだ。
+    ///
+    /// **``warnBadClipOnce()`` とは鍵を分ける。** あちらは渡した数を直す話で、こちらは変換 (倍率が大きすぎる・
+    /// 行列が溢れている) を直す話である。同じ鍵だと、先に出た文面が後の原因を隠す。
+    private func warnClipTransformOverflowOnce() {
+        warnOnce(
+            .clipTransformOverflow,
+            "clip(): the current transform carries the rectangle to a value that is not a number, "
+                + "or an infinite one, so the clip was left as it was")
     }
 
     /// 描くものを、下にある絵とどう混ぜるか。
@@ -222,6 +306,7 @@ extension Canvas {
         deferredRunOpen = false
         // 細い線を広げた頂点の印は、閉じた列が持っていく (#1637)。閉じる列が無くても下ろす
         defer { openBatchHasThinCoverage = false }
+        defer { openBatchGlyphColored = nil }
         // **`switch` で振る。** `if` 連鎖だと `VertexSource` にケースが増えた日、
         // ここだけ黙って平面の経路へ落ちる (他の 5 箇所は `switch` なので止まる)
         switch openSource {

@@ -517,8 +517,8 @@ extension Canvas {
         }
         // 記録の間は寄せられないので、積んだ区間を覚える (`recordedStrokeRanges`)
         if recordingShape, vertices.count > start {
-            // 引かずに積んだ線のうち、`replace` は下地を読まないので、重ねても半透明のまま
-            // 同じ色になる。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
+            // 引かずに積んだ線のうち、`replace` は三角形の経路 (被覆 1) では下地を読まないので、重ねても
+            // 半透明のまま同じ色になる (縁に被覆を持つ細い線の帯は下地を残すが、重ねた分は 2 回目も同じ式・#3111)。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
             // 置かれると 2 回目で寄っていくので、引く素材を持っておく。点 1 つの輪郭は
             // 端の形が 1 枚だけで、重なる相手が無いので持たない
             let carved: CarvedStroke? =

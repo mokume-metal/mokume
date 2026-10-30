@@ -112,8 +112,10 @@ struct FixedFunctionBlendTests {
         #expect(image[4, 4].red == 255, "図形の外の下地が変わっている")
     }
 
-    /// 置き換える混ぜ方は下地を見ない。**不透明度 0.5 の黒を置けば、そのまま残る。**
-    @Test("置き換える混ぜ方は下地を見ない", arguments: [true, false])
+    /// 置き換える混ぜ方は、形が丸ごと掛かる画素で下地を見ない。**不透明度 0.5 の黒を置けば、そのまま
+    /// 残る。** 縁の画素は被覆の残りに下地を残す (`FormShapeTests.replaceModeKeepsTheGroundUnderTheEdge`・#3111)。
+    /// 三角形の経路 (`quad`) は縁が被覆 1 なので、下地を見ない。
+    @Test("置き換える混ぜ方は、形が丸ごと掛かる画素で下地を見ない", arguments: [true, false])
     func replaceIgnoresTheGround(_ throughForms: Bool) throws {
         let canvas = try makeCanvas()
         let half = LinearRGBA(straightRed: 0, green: 0, blue: 0, alpha: 0.5)

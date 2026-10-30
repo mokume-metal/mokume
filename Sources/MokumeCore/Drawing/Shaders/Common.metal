@@ -655,10 +655,10 @@ static inline float mokume_noiseGradient(Fragment f, float x) {
 /// 出した色を下地と混ぜる。**通るのは 8 種だけ** (`kAdd` … `kScreen`)。
 ///
 /// **`kBlend` (0) と `kReplace` (9) はここへ来ない。** 前者は乗算済みの source-over で
-/// 固定機能のブレンドと式が一致し、後者は下地を見ない — どちらも下地を読まない断片
-/// (`mokume_fragmentDirect` / `mokume_formFragmentBlend` / `mokume_formFragmentReplace`) で
-/// 描かれる ([#758])。**どの混ぜ方がどちらの経路へ行くかの一覧は
-/// `ShapePipeline.BlendStates` の doc が持つ** ([#887])。
+/// 固定機能のブレンドと式が一致し (`mokume_fragmentDirect` / `mokume_formFragmentBlend`)、後者は
+/// 形が掛かる面積を置き換えて掛からない面積に下地を残す (`mokume_formFragmentReplace` と、被覆が
+/// 1 未満になりうる列の `mokume_fragmentMain` の枝・[#3111]) ([#758])。**どの混ぜ方がどちらの経路へ
+/// 行くかの一覧は `ShapePipeline.BlendStates` の doc が持つ** ([#887])。
 ///
 /// **式は W3C の合成の一般式である** ([Compositing and Blending Level 1] の 6 節・10 節)。
 /// 大文字は乗算前、小文字は乗算済みの色で、`B` が混ぜ方ごとの式:
@@ -684,6 +684,7 @@ static inline float mokume_noiseGradient(Fragment f, float x) {
 ///
 /// [#758]: https://github.com/mokume-metal/mokume/issues/758
 /// [#887]: https://github.com/mokume-metal/mokume/issues/887
+/// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 /// [#1447]: https://github.com/mokume-metal/mokume/issues/1447
 /// [Compositing and Blending Level 1]: https://www.w3.org/TR/compositing-1/#generalformula
 static inline float4 mokume_composite(float4 source, float4 destination, uint mode) {
@@ -903,17 +904,24 @@ fragment float4 mokume_fragmentMain(
     constant uint &readsGlyphPage [[buffer(3)]],
     float4 destination [[color(0)]])
 {
-    // **置き換える列のうち、細い線を広げた頂点を持つ列だけがここへ来る** (#1637)。広げた帯の
-    // 画素は帯が覆う割合 (被覆) だけを置き換え、残りは下地を残す: `S·c + D·(1 − c)`。塗りの上に
-    // 輪郭を置いた形では、距離関数の経路の置き換え (`S·s + F·(f − o)`・#1867 決定 1) と同じく
-    // 帯の下の塗りが見える。被覆 1 の画素はそのまま置き換える (`mokume_fragmentReplace` と同じ)
+    // **置き換える列のうち、被覆が 1 未満になりうる列だけがここへ来る** — 細い線を広げた頂点を持つ列
+    // (#1637) と、字を置いた列 (#3111)。画素は覆う割合 (被覆 `c`) だけを置き換え、残りは下地を残す:
+    // `S·c + D·(1 − c)`。塗りの上に輪郭を置いた形では、距離関数の経路の置き換え
+    // (`S·s + F·(f − o) + D·(1 − (f + s − o))`・#1867 決定 1) と同じく帯の下の塗りが見える。
+    // **字形の縁の被覆は焼き場の α** で、色 `S` はそれを掛けた乗算済みの色なので掛け直さない。
+    // 被覆 1 の画素はそのまま置き換える (`mokume_fragmentReplace` と同じ)
     if (mode == kReplace) {
-        if (readsGlyphPage != 0 && source_texture.sample(kGlyphSampler, in.uv).a <= 0.0) {
-            discard_fragment();
-            return destination;
+        float coverage = in.coverage;
+        if (readsGlyphPage != 0) {
+            float glyph = source_texture.sample(kGlyphSampler, in.uv).a;
+            if (glyph <= 0.0) {
+                discard_fragment();
+                return destination;
+            }
+            coverage *= glyph;
         }
         float4 color = mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS);
-        return in.coverage < 1.0 ? color + destination * (1.0 - in.coverage) : color;
+        return coverage < 1.0 ? color + destination * (1.0 - coverage) : color;
     }
     return mokume_composite(
         mokume_shapeColor(MOKUME_SHAPE_ARGS MOKUME_SURFACE_ARGS), destination, mode);
@@ -937,8 +945,11 @@ fragment float4 mokume_fragmentDirect(
 
 /// 画素を描く入口 (置き換える列)。**下地を読まないが、字形の外の余白は捨てる。**
 ///
-/// 置き換える混ぜ方は下地を見ずに色を置く — α 0 の色も、貼る絵の透けた所も、下地を
-/// 透明に置き換える ([#1542])。ただし**字は字形の外接矩形に余白を付けた四角**として
+/// この入口は**被覆 1 の図形だけ**を描き、下地を見ずに色を置く — α 0 の色も、貼る絵の透けた所も、
+/// 色を持つ字形の透けた所も、下地を透明に置き換える ([#1542])。縁に被覆を持つ図形 (基本図形・
+/// 細い線の帯・単色の字) は、縁の画素で下地を残す別の入口で描かれる ([#3111])。
+///
+/// 字は**字形の外接矩形に余白を付けた四角**として
 /// 置かれ、字形の外では焼き場の α が 0 になる。そこを書くと、字の周りの矩形 (`o` の穴の
 /// 中も) の下地が抜ける ([#1557])。基本図形の置き換える列が形の外の余白を捨てるのと
 /// 同じく、**字の焼き場を読む列に限って**、字形の被覆 0 の断片を捨てる。
@@ -947,8 +958,18 @@ fragment float4 mokume_fragmentDirect(
 /// 焼き場を読む図形 (輪郭・線・点・絵を貼らない塗り) は焼き場の白い区画 (α 1) を読むので、
 /// 捨てられない。
 ///
+/// **縁の画素に下地を残す列はここへ来ない** ([#3111])。三角形の経路の縁は被覆 1 (AA を持たない) で、
+/// 被覆 1 未満になるのは細い線を広げた帯と単色の字の縁だけである。どちらも列が `thinCoverage` の印を
+/// 持ち、下地を読む `mokume_fragmentMain` の置き換えの枝で描かれる
+/// (`ShapePipeline.BlendStates.Column.init(drawing:)`)。**色を持つ字形 (絵と同じ性質で、透けた画素を
+/// そのまま写す) と、利用者の断片が効いている字 (被覆は断片が持つ) は印を立てず、ここで色をそのまま置く。**
+/// ここを下地を読む断片にすると、
+/// 面を置き換える `background()` や被覆 1 の図形まで下地を読む費用を払う (面を覆う四角 200 枚で
+/// GPU 時間 +22%・debug の測定・[#3111])。
+///
 /// [#1542]: https://github.com/mokume-metal/mokume/issues/1542
 /// [#1557]: https://github.com/mokume-metal/mokume/issues/1557
+/// [#3111]: https://github.com/mokume-metal/mokume/issues/3111
 fragment float4 mokume_fragmentReplace(
     MOKUME_SURFACE_PARAMS
     MOKUME_SHAPE_PARAMS,
