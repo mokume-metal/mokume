@@ -156,7 +156,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
 
    **計測の job は、専用機に載る前に GitHub ホストの門番を通し、1 job を 30 分以内に割る**
    (#2303)。上の確認は始める前しか守らない。始めた後に queue へ入った PR の `render` は、
-   計測が専用機を占める間、step を 1 つも始めないまま待ち、queue の check の期限 (60 分) で
+   計測が専用機を占める間、step を 1 つも始めないまま待ち、queue の check の期限 (95 分) で
    `checks_timed_out` に弾かれる (#2270 の計測が約 3 時間占め、#2299・#2300 が弾かれた)。
    弾かれると auto-merge も外れる。門番 `scripts/render-turn.sh wait` は、merge_group の run が
    終わっていなければ終わるまで (最大 60 分) 専用機に job を積ませない。走り出した job は途中で

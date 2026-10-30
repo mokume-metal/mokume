@@ -59,10 +59,12 @@
 #
 # ## 上限
 #
-# **merge_group は queue の期限の直前 (55 分) まで放さない。** 前の group が終わらないまま
-# 待ちが長引くのは、専用機が他の job (最大 30 分) を走らせているときで、早く放すと後ろの
-# group がそろって専用機に積まれ、期限に近い前の group と取り合う — 元の症状に戻る。55 分
-# まで待てば自分の group も期限で外れる間際なので、放しても前の group を邪魔しない。
+# **merge_group は queue の期限の直前 (90 分・期限は 95 分) まで放さない。** 前の group が
+# 終わらないまま待ちが長引くのは、専用機が他の job (最大 30 分) を走らせているときで、早く
+# 放すと後ろの group がそろって専用機に積まれ、期限に近い前の group と取り合う — 元の症状に
+# 戻る。90 分まで待てば自分の group も期限で外れる間際なので、放しても前の group を邪魔しない。
+# 期限は、前の group の render 30 分 + 割り込みうる専用機の job 1 本 30 分 + 自分の render
+# 30 分 + 門番の間隔に収まるよう 60 分から 95 分へ延ばした (#3502)。
 #
 # **上限は自分で終わって守る。** render.yml の門番の timeout-minutes に任せると、timeout は
 # GitHub が job を cancel する扱いになり、後ろの render がどう終わるか (skipped は必須
@@ -114,7 +116,7 @@ case "${1:-}" in
       usage
       exit 2
     }
-    mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=55
+    mode=merge_group base=$2 base_ref=${3:-refs/heads/main} limit_default=90
     ;;
   yield)
     [ $# -eq 1 ] || {

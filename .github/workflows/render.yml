@@ -127,7 +127,9 @@ defaults:
 jobs:
   # 専用機へ積む順番を決める門番 (#2062・上の「専用機へ積む順番」)。待つ上限は
   # render-turn.sh が持つ (merge_group は前の group が終わるまで・schedule は 60 分)。
-  # timeout は最後の歯止めで、queue の期限 (60 分) より外に置く
+  # timeout は最後の歯止めで、queue の期限 (95 分・main-protection.json) と merge_group の
+  # 上限 (90 分) より外に置く。定期の門番 (下の scheduled-*-turn) は wait の 60 分だけを
+  # 待つので 65 分のまま (queue の期限に結び付いていない)
   render-turn:
     if: >-
       github.event_name == 'merge_group'
@@ -136,7 +138,7 @@ jobs:
           && github.event.pull_request.head.repo.full_name == github.repository
           && !github.event.pull_request.draft)
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 100
     permissions:
       contents: read # checkout
       actions: read # merge queue の render の run を読む

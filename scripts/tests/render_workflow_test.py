@@ -474,8 +474,12 @@ class RenderWorkflowTest(unittest.TestCase):
         self.assertLess(limits["merge_group"], deadline)
         for name in TURN_JOBS:
             timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)", self.jobs[name]).group(1))
+            # 門番ごとに、その job が呼ぶ mode の上限と比べる。merge_group の上限 (期限の手前) を
+            # 伸ばしても、wait だけを待つ定期の門番の timeout を巻き込まない (#3502)
+            called = set(re.findall(r"render-turn\.sh (merge_group|yield|wait)\b", self.jobs[name]))
+            self.assertTrue(called, name)
             # 上限は門番が自分で守る。timeout に任せると GitHub の cancel の扱いになる
-            self.assertGreater(timeout, max(limits.values()), name)
+            self.assertGreater(timeout, max(limits[m] for m in called), name)
 
 
 class SplitterTest(unittest.TestCase):
