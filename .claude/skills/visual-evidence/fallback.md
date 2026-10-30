@@ -99,9 +99,10 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 
 ### 参照の面には使わない
 
-参照の面 (`make example-shots`) は、Gyazo が同じ中身の絵に同じ URL を返すことを借り、URL が変わったかを
-絵が変わったかの判定にしている (理由: [ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2)。
-GitHub の添付は同じ絵でも毎回別の URL を返すので、この判定が成り立たない。参照の面は本線が戻るまで待つ。
+GitHub の添付は同じ絵でも毎回別の URL を返すので、参照の面 (`make example-shots`) で使うと、画素が同じ
+絵の説明文の URL まで全数動く (撮り直しの判定そのものは、記録の `image=` が持つ・
+[ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2)。**退避路を参照の面へ広げるかは
+[#3526](https://github.com/mokume-metal/mokume/issues/3526) で決める。それまでは本線だけ**で、本線が戻るまで待つ。
 
 ### 通らない道
 

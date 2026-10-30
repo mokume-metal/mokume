@@ -45,10 +45,10 @@ import mokume
 ///
 /// ## 既知の破れ
 ///
-/// 生成が見つけた、まだ直っていない破れが 3 つある (``knownBreaks``)。**事後条件は緩めず**、生成する検査は
-/// その形の列だけを外し (``Driver/skipsKnownIssues``)、破れる最小の列を `withKnownIssue` で残す。3 つとも、
-/// 「起こせなかった」保存 (`save(launchFail)`) が `child` を空にして前の世代を `outgoing` に回す形か、前の世代が
-/// 自分で終わった形から来る。直ったら、例が「破れが記録されなかった」と赤になるので、例と外す条件を一緒に消す。
+/// 生成が見つけた、まだ直っていない破れが 2 つある (``knownBreaks``)。**事後条件は緩めず**、生成する検査は
+/// その形の列だけを外し (``Driver/skipsKnownIssues``)、破れる最小の列を `withKnownIssue` で残す。2 つとも、
+/// 「起こせなかった」保存 (`save(launchFail)`) が `child` を空にして前の世代を `outgoing` に回す形から来る。
+/// 直ったら、例が「破れが記録されなかった」と赤になるので、例と外す条件を一緒に消す。
 @Suite("見張りの世代交代は、生成した操作の列でも事後条件を破らない", .signalStateKept)
 struct WatchSessionModelTests {
     /// 見張りと台の外側に起きる出来事。
@@ -180,9 +180,6 @@ struct WatchSessionModelTests {
             issue: "#3481", ops: [.save, .saveLaunchFail, .promoteWaiting],
             summary: "起こせなかった保存の後に、前の世代 (待っていた世代) の乗り換えの合図が来ると、道具がその世代を畳む (事後条件 4)"),
         KnownBreak(
-            issue: "#3482", ops: [.save, .promoteWaiting, .exitShown, .save],
-            summary: "映っていた前の世代が終わり、次の世代が起動中のとき、keepsPreviousRunning が偽になる (事後条件 5)"),
-        KnownBreak(
             issue: "#3481", ops: [.save, .promoteWaiting, .saveLaunchFail, .save],
             summary: "起こせなかった保存の後の保存が、映っている世代を畳むのに、台へ手放したと伝えない (事後条件 3)"),
     ]
@@ -294,13 +291,6 @@ struct WatchSessionModelTests {
         /// (`child` が無く、その世代が `outgoing`)。**この形は既知の Bug で、台の合図を見張りが受け付けない** (``knownBreaks``)。
         private func isOrphan(_ index: Int) -> Bool {
             session.child == nil && session.outgoing === gens[index]
-        }
-
-        /// 映っていた前の世代 (`outgoing`) は自分で終わり、次の世代 (`child`) は起動中で生きている形。
-        /// **既知の Bug** (``knownBreaks``): ``WatchSession/keepsPreviousRunning`` は `outgoing` だけを見て、生きている `child` を数えない。
-        private var hasDeadOutgoingAndLiveChild: Bool {
-            guard let outgoing = session.outgoing, let child = session.child else { return false }
-            return !outgoing.isRunning && child.isRunning
         }
 
         private func index(of pid: Int32) -> Int? { gens.firstIndex { $0.processIdentifier == pid } }
@@ -572,7 +562,7 @@ struct WatchSessionModelTests {
             }
             // 5. 前の版が走っていると名乗る口は、生きた世代の有無と一致する
             let running = !living.isEmpty && !session.stopRequested
-            if session.keepsPreviousRunning != running, !(skipsKnownIssues && hasDeadOutgoingAndLiveChild) {
+            if session.keepsPreviousRunning != running {
                 return Violation(
                     number: 5, text: "keepsPreviousRunning が \(session.keepsPreviousRunning) (生きている世代 \(name(living)))")
             }

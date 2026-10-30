@@ -536,6 +536,62 @@ struct WatchSessionTests {
         await session.end()
     }
 
+    /// **映っていた前の世代が自分で終わり、次の世代が起動中のとき、作り直しの失敗は「何も動いていない」と言わない**
+    /// ([#3482](https://github.com/mokume-metal/mokume/issues/3482))。死んだ G0 が `outgoing`、生きている G1 が
+    /// `child` に居る。`outgoing` だけを見ると偽になり、起動を続けている G1 を無いと言う。
+    @Test("映っていた世代が終わり、次の世代が起動中のとき、作り直しの失敗は前の版のまま待つと名乗る")
+    func aFailureNamesTheStartingGenerationWhenTheShownOneEnded() async throws {
+        let ready = Ready()
+        let build = BuildSwitch()
+        var hooks = hooks(running: "echo ready; read line", ready: ready)
+        hooks.rebuild = { directory in
+            RunCommand.Rebuilt(
+                status: build.status, output: build.status == 0 ? "" : "error: cannot find 'circl' in scope",
+                executable: build.status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
+                binPath: directory, product: "sketch")
+        }
+        let session = WatchSession(
+            directory: try makeDirectory(), context: testContext(), hooks: hooks, stopTimeout: 0.5)
+        session.overlapsGenerations = true
+        defer { session.stopBlocking() }
+
+        // G0 が映る
+        await session.start()
+        ready.waitForLast()
+        let shown = try #require(session.child)
+        await session.generationPromoted(pid: shown.processIdentifier)
+        session.generationShown(pid: shown.processIdentifier)
+
+        // G0 が自分で終わる
+        try #require(shown.standardInput as? Pipe).fileHandleForWriting.write(contentsOf: Data("bye\n".utf8))
+        waitUntilGone(shown)
+        #expect(!shown.isRunning, "検査の前提: 映っていた世代が自分で終わっている")
+        _ = session.departed()
+
+        // 保存して G1 を起こす (起動中・合図はまだ来ない)
+        await session.tick()
+        ready.waitForLast()
+        let starting = try #require(session.child)
+        #expect(session.outgoing === shown, "検査の前提: 死んだ G0 が前の世代に回っている")
+        #expect(starting.isRunning, "検査の前提: 次の世代が起動中で生きている")
+
+        // 作り直しが通らない保存
+        build.status = 1
+        let report = try #require(await session.tick())
+        #expect(!report.ok)
+        #expect(starting.isRunning)
+        #expect(session.keepsPreviousRunning, "起動中の世代が生きているのに、走っている世代が無いと言う")
+        let lines = WatchCommand.reportLines(report, holdingPrevious: session.keepsPreviousRunning)
+        #expect(lines.last == WatchCommand.holdingLine, "\(lines)")
+        #expect(!lines.contains(WatchCommand.nothingRunningLine), "\(lines)")
+    }
+
+    /// 作り直しの通り・通らないを、検査の途中で切り替える箱。
+    @MainActor
+    final class BuildSwitch {
+        var status: Int32 = 0
+    }
+
     @Test("作り直しに失敗したら、差し替えない")
     func keepsTheRunningVersionWhenTheBuildFails() async throws {
         let recorder = Recorder()

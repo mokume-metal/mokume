@@ -227,6 +227,8 @@ claude mcp add mokume -- mokume mcp
 
 スケッチのディレクトリで `mokume doctor` を実行すると、環境 (`What the environment provides`) とスケッチの状態 (`What is here`) が表示されます。何も変更しないので、問題の切り分けに気軽に使えます。
 
+`draw()` の途中で止めて変数を見たいときは、`mokume run -c debug` で起こして `lldb` で付けます。手順は [止めて変数を見る](https://mokume.org/documentation/mokume/#止めて変数を見る) にあります。
+
 ## コントリビュート
 
 Issue と Pull Request を歓迎します。始め方とソースからのビルド手順は [CONTRIBUTING.md](CONTRIBUTING.md)、作業の規約は [AGENTS.md](AGENTS.md)、設計判断の記録は [docs/decisions](docs/decisions/) にあります。`.mokume/` のファイル形式は [Schemas](Schemas) で定義しています。脆弱性の報告は [SECURITY.md](SECURITY.md) を参照してください。

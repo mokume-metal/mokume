@@ -76,7 +76,11 @@ struct RequestSoundTests {
     }
 
     private func makeRuntime(_ sketch: Requesting, clock: Clock? = nil) throws -> SketchRuntime {
-        try SketchRuntime(sketch: sketch, gpu: try RenderDevice(), clock: clock)
+        // **名乗りの実時間の時計は止める** (#3120)。最大 30 秒待った後に `advance()` する失敗経路は、
+        // 公開の初期化子で組むと実時間で猶予 (30 秒) を越えて名乗りうる
+        try SketchRuntime(
+            sketch: sketch, gpu: try RenderDevice(), clock: clock,
+            now: { ProcessInfo.processInfo.systemUptime }, presenceClock: { 0 })
     }
 
     /// フレームを回しながら、`done` になるのを待つ。**期限を越えたら失敗にして返る** — 待つ側が期限を持つ。

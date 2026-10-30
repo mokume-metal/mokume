@@ -17,5 +17,7 @@ DensityInvarianceTests	density	3216
 FillCoverageTests	coverage	3217
 ProbeTests	probe	3216
 SVGCoverageTests	coverage	3494
+LoaderProbeTests	parse	3220
+JSONRPCProbeTests	parse	3220
 DatagramSenderFakeTests	network	3231
 WatchSessionModelTests	watch	3218

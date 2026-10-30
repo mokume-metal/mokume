@@ -486,8 +486,9 @@ public final class SketchRuntime {
     /// 間なら描き終えたフレームを指す。止める口 (`endRecord()`) はどちらからも呼ばれるので、
     /// `frameCount - 1` のような決め打ちでは片方で 1 枚ずれる (#1626 の反証)。
     private var drawnThrough = 0
-    /// 最後にフレームを描き終えた時刻。**誰かが進めているか**の判断に使う。
-    private var lastFrameAt: Double = 0
+    /// 最後にフレームを描き終えた**実時間** (``presenceClock``)。**誰かが進めているか**の判断に使う
+    /// (``advanceForPresence()``)。まだ 1 枚も描いていなければ、いつからでも「進めていない」になる。
+    private var lastFrameAt: Double = -.infinity
     /// フレームの速さを数える、**ただ 1 つの集計器** ([ADR-0030] 決定 7)。
     ///
     /// 窓に出る数字も観測の応答が返す数字もここから採る。**観測の有無に関わらず
@@ -970,7 +971,7 @@ public final class SketchRuntime {
         isAdvancingFrame = true
         defer {
             isAdvancingFrame = false
-            lastFrameAt = now()
+            lastFrameAt = presenceClock()
             warnIfFrameRateWasReassigned()
         }
         guard !isPaused else {
@@ -1108,13 +1109,21 @@ public final class SketchRuntime {
         // (`guard isDrawing` で守られている。形を組み立てている最中でもないので外である)。変換と
         // スタイルの口は `guard admitsTransform` で、持ち越しの区間 (止まっている間の
         // コールバック・`carryingOver(_:)`) なら外でも効く (#3273)。この描き始めた中で配るのは、
-        // ループ中と `redraw()` を頼んだ後で、そこでは変換が同じフレームの `draw()` へ漏れる (#3408)
+        // ループ中と `redraw()` を頼んだ後で、そこではコールバック 1 つごとに、出口でシーンの記述を戻す
+        // (下の配り・#3408)
         // 図形・絵・画素の口は `guard canPlace` で守られている。フレームの外で置けるのは、この面に
         // ランタイムが持ち越しを約束した区間 (`setup()` と止まっている間のコールバック・
         // ``carryingOver(_:)``) だけで、そこで置いたものは次に描くフレームへ出る
         try canvas.draw {
             withActiveRuntime {
-                if !deliveredInput { input.beginFrame { deliver($0) } }
+                // **コールバック 1 つが 1 つの区間である** (止まっている間と同じ規則・#3408)。書いた変換・光・
+                // 切り抜きなどは出口で戻り、続くコールバックにも同じフレームの `draw()` にも漏れない
+                if !deliveredInput {
+                    input.beginFrame { callback in
+                        deliver(callback)
+                        canvas.leaveInputCallbackInsideFrame()
+                    }
+                }
                 // **観測の秒を読ませるのは、ここから `draw()` の終わりまで。** 上の入力のコールバックは
                 // 作者の時計の秒を読む (``time``・#2357)
                 showsObservedTime = true
@@ -1842,7 +1851,12 @@ public final class SketchRuntime {
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
     func advanceForPresence() {
-        guard !isAdvancingFrame, now() - lastFrameAt > Self.presenceStallThreshold else { return }
+        // **実時間で測る** (#3120)。誰かが進めているかは壁の時間の話で、作者の時計 (``now``) は検査が
+        // 差し替えて進められる。名乗りの経過 (``presenceElapsed``) が実時間を見るのと揃える (ADR-0032 決定 1)。
+        // 本番の ``now`` は実時間と同じ値なので、振る舞いは変わらない
+        guard !isAdvancingFrame, presenceClock() - lastFrameAt > Self.presenceStallThreshold else {
+            return
+        }
         do throws(RenderFailure) {
             try runFrame()
         } catch {
