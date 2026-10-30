@@ -75,64 +75,79 @@ extension Canvas {
         // 切り抜く (切り抜きは面に沿った矩形しか持てない)。角を取って最小・最大を取るので、幅や高さが負の
         // 矩形・鏡映しの変換は裏返して読まれる (手本が負の幅・高さを裏返して読むのと同じ)
         //
-        // **端は有限の大きな値へ収めてから変換を通す。** 溢れた端 (`+∞`) は、変換の行列の 0 との積が
+        // [#2721]: https://github.com/mokume-metal/mokume/issues/2721
+        let (rawLeft, rawTop) = (box.x, box.y)
+        let (rawRight, rawBottom) = (box.x + box.width, box.y + box.height)
+        // 読み方を解く算術は、有限の指定でも数でない値になりうる (`rectMode(.radius)` の `-∞ + ∞`)。
+        // 収める先が決まらないので、数でない指定と同じに切り抜きを触らずに返す
+        guard !rawLeft.isNaN, !rawTop.isNaN, !rawRight.isNaN, !rawBottom.isNaN else {
+            return warnBadClipOnce()
+        }
+        // **端は有限の大きな値へ収めてから変換を通す。** 溢れた端 (`±∞`) は、変換の行列の 0 との積が
         // 数でない値 (`0 * ∞`) になり、収める先が決まらなくなる。面より桁違いに大きい端は、収めても
         // 同じ面の外にあるので、効く切り抜きは変わらない
-        //
-        // [#2721]: https://github.com/mokume-metal/mokume/issues/2721
         let limit: Float = 1e18
-        let edges = (
-            left: min(max(box.x, -limit), limit), top: min(max(box.y, -limit), limit),
-            right: min(max(box.x + box.width, -limit), limit),
-            bottom: min(max(box.y + box.height, -limit), limit)
-        )
+        let left = min(max(rawLeft, -limit), limit)
+        let top = min(max(rawTop, -limit), limit)
+        let right = min(max(rawRight, -limit), limit)
+        let bottom = min(max(rawBottom, -limit), limit)
         noteTransformRead()
-        let corners = [
-            transform.placed(x: edges.left, y: edges.top), transform.placed(x: edges.right, y: edges.top),
-            transform.placed(x: edges.right, y: edges.bottom), transform.placed(x: edges.left, y: edges.bottom),
-        ]
-        let xs = corners.map(\.x)
-        let ys = corners.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max(),
-            minX.isFinite, maxX.isFinite, minY.isFinite, maxY.isFinite
-        else { return warnBadClipOnce() }
-        if !Self.isAxisAlignedBox(corners, minX: minX, maxX: maxX, minY: minY, maxY: maxY) {
+        var (xx, xy, yx, yy) = (
+            transform.matrix.columns.0.x, transform.matrix.columns.1.x,
+            transform.matrix.columns.0.y, transform.matrix.columns.1.y
+        )
+        let (shiftX, shiftY) = (transform.matrix.columns.3.x, transform.matrix.columns.3.y)
+        // 面に沿った変換 (平行移動・拡大・鏡映し・90 度刻みの回転) かを、行列の成分で見る。許す誤差は
+        // 成分の大きさに対する 1e-6 (`rotate(.pi / 2)` の `cos` は `-4.4e-8`) で、矩形の大きさによらない。
+        // 面に沿うなら、誤差ぶんの成分を 0 にして写す — 縁が画素の中心に乗る矩形を 90 度回しても、
+        // 誤差で縁の 1 列が落ちない
+        let largest = max(max(abs(xx), abs(xy)), max(abs(yx), abs(yy)))
+        let tolerance = largest * 1e-6
+        let diagonal = abs(xy) <= tolerance && abs(yx) <= tolerance
+        let anti = abs(xx) <= tolerance && abs(yy) <= tolerance
+        if diagonal {
+            (xy, yx) = (0, 0)
+        } else if anti {
+            (xx, yy) = (0, 0)
+        }
+        // 4 つの角を写す。配列も閉包も作らない (毎フレーム何度も呼ばれる)
+        let (p0x, p0y) = (xx * left + xy * top + shiftX, yx * left + yy * top + shiftY)
+        let (p1x, p1y) = (xx * right + xy * top + shiftX, yx * right + yy * top + shiftY)
+        let (p2x, p2y) = (xx * right + xy * bottom + shiftX, yx * right + yy * bottom + shiftY)
+        let (p3x, p3y) = (xx * left + xy * bottom + shiftX, yx * left + yy * bottom + shiftY)
+        guard p0x.isFinite, p0y.isFinite, p1x.isFinite, p1y.isFinite, p2x.isFinite, p2y.isFinite,
+            p3x.isFinite, p3y.isFinite
+        else { return warnBadClipOnce(overflowedByTransform: true) }
+        let minX = min(min(p0x, p1x), min(p2x, p3x))
+        var maxX = max(max(p0x, p1x), max(p2x, p3x))
+        let minY = min(min(p0y, p1y), min(p2y, p3y))
+        var maxY = max(max(p0y, p1y), max(p2y, p3y))
+        if !(diagonal || anti) {
             warnOnce(
                 .clipUnderRotation,
                 "clip(): the transform at this call rotates or shears, but a clip is an axis-aligned "
                     + "rectangle, so it was set to the rectangle that encloses the transformed corners. "
                     + "Write clip() before rotate() or shearX()/shearY() to clip the rectangle as it is")
         }
+        // 幅か高さが 0 の矩形は空のままにする。回した後の囲む矩形は 0 でなくなるが、変換の無いときに
+        // 空の切り抜きが、回すと線の太さを持つ切り抜きになってはいけない
+        if rawLeft == rawRight { maxX = minX }
+        if rawTop == rawBottom { maxY = minY }
         // **`Float` のまま面の内へ収める。** 画素へ丸めるのは ``scissor(_:)`` で、そこでは
         // 面の内の値しか `Int` にしない (`Int(_:Float)` は面より桁違いに大きい値でトラップする・
         // [#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
         //
         // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
-        let left = min(max(0, minX), width)
-        let top = min(max(0, minY), height)
-        let right = min(max(left, maxX), width)
-        let bottom = min(max(top, maxY), height)
-        let clip = ClipRect(left: left, top: top, right: right, bottom: bottom)
+        let clipLeft = min(max(0, minX), width)
+        let clipTop = min(max(0, minY), height)
+        let clipRight = min(max(clipLeft, maxX), width)
+        let clipBottom = min(max(clipTop, maxY), height)
+        let clip = ClipRect(left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom)
         // **正規化まで済ませた後で、効く切り抜きが変わるときだけ閉じる** (#2789)。列が持つのは閉じた
         // 時点の切り抜きなので、ビット列まで同じなら閉じても閉じなくても列の中身は同じになる
         if let current = style.clip, current.isBitwiseEqual(to: clip) { return }
         closeBatch()
         style.clip = clip
-    }
-
-    /// 写した 4 つの角が、囲む矩形 (`min`・`max`) の 4 つの角と重なるか。回転・剪断を含むと、角は囲む矩形の
-    /// 辺の上に残って角と重ならない。90 度刻みの回転や鏡映しは重なるので、切り抜きで正確に表せる。
-    ///
-    /// 許す誤差は画素の 1000 分の 1。`rotate(.pi)` の行列の成分は `-8.7e-8` ほどの誤差を持つので、
-    /// 丸めの誤差で 180 度回した矩形を「回っている」と数えない。
-    private static func isAxisAlignedBox(
-        _ corners: [SIMD2<Float>], minX: Float, maxX: Float, minY: Float, maxY: Float
-    ) -> Bool {
-        let tolerance: Float = 1e-3
-        func near(_ value: Float, _ edge: Float) -> Bool { abs(value - edge) <= tolerance }
-        return corners.allSatisfy {
-            (near($0.x, minX) || near($0.x, maxX)) && (near($0.y, minY) || near($0.y, maxY))
-        }
     }
 
     public func noClip() {
@@ -147,11 +162,18 @@ extension Canvas {
     /// 収めようのない切り抜きを、初回だけ知らせる。
     ///
     /// 毎フレーム起きうるので繰り返さない (``Diagnostics/warn(_:)`` の但し書き)。
-    private func warnBadClipOnce() {
-        warnOnce(
-            .badClip,
-            "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
-                + "left as it was")
+    private func warnBadClipOnce(overflowedByTransform: Bool = false) {
+        if overflowedByTransform {
+            warnOnce(
+                .badClip,
+                "clip(): the current transform carries the rectangle to a value that is not a number, "
+                    + "or an infinite one, so the clip was left as it was")
+        } else {
+            warnOnce(
+                .badClip,
+                "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
+                    + "left as it was")
+        }
     }
 
     /// 描くものを、下にある絵とどう混ぜるか。

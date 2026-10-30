@@ -181,4 +181,174 @@ struct ClipTransformTests {
         #expect(!result.canvas.warnings.hasWarned(.badClip))
         #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
     }
+    // MARK: - 反証 r1 の取りこぼし
+
+    @Test("pushMatrix / popMatrix は切り抜きを動かさず、push / pop と pushStyle / popStyle は切り抜きも戻す")
+    func stacksRestoreWhatTheyOwn() throws {
+        let matrixOnly = try drawn { canvas in
+            canvas.pushMatrix()
+            canvas.translate(30, 0)
+            canvas.clip(0, 0, 20, 20)
+            canvas.popMatrix()
+        }
+        let matrixBox = try #require(whiteBox(matrixOnly.pixels))
+        #expect(matrixBox.x == 30...49 && matrixBox.y == 0...19, "popMatrix は切り抜きを戻さない")
+
+        let whole = try drawn { canvas in
+            canvas.push()
+            canvas.translate(30, 0)
+            canvas.clip(0, 0, 20, 20)
+            canvas.pop()
+        }
+        let wholeBox = try #require(whiteBox(whole.pixels))
+        #expect(wholeBox.x == 0...99 && wholeBox.y == 0...99, "pop は切り抜きも戻す")
+
+        let styleOnly = try drawn { canvas in
+            canvas.pushStyle()
+            canvas.translate(30, 0)
+            canvas.clip(0, 0, 20, 20)
+            canvas.popStyle()
+        }
+        let styleBox = try #require(whiteBox(styleOnly.pixels))
+        #expect(styleBox.x == 0...99 && styleBox.y == 0...99, "popStyle は切り抜きを戻す")
+    }
+
+    @Test("90 度回転で縁が画素の中心 (x.5) に乗る矩形も、縁の画素を落とさない")
+    func quarterTurnKeepsEdgesOnPixelCenters() throws {
+        let result = try drawn { canvas in
+            canvas.translate(50, 0)
+            canvas.rotate(Float.pi / 2)  // (x, y) → (50 - y, x)
+            canvas.clip(10.5, 5, 20, 30)  // 行 = 10.5 …30.5 (両端の画素の中心が縁の上)
+        }
+        let box = try #require(whiteBox(result.pixels))
+        #expect(box.x == 15...44 && box.y == 10...30)
+        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+
+        // 面から遠い所で回すと、`cos(π / 2)` の誤差 (-4.4e-8) が座標の大きさを掛けて縁を越える
+        let far = try drawn { canvas in
+            canvas.translate(-2000, 0)
+            canvas.rotate(Float.pi / 2)  // (x, y) → (-2000 - y, x)
+            canvas.clip(10.5, -2100, 20, 100)  // 列 0…100・行 10.5 …30.5
+        }
+        let farBox = try #require(whiteBox(far.pixels))
+        #expect(farBox.x == 0...99 && farBox.y == 10...30, "誤差で縁の行が落ちた")
+        #expect(!far.canvas.warnings.hasWarned(.clipUnderRotation))
+    }
+
+    @Test("数でない値になる読み方 (rectMode(.radius) の -∞ + ∞) は、回転の警告ではなく bad clip で断り、切り抜きを触らない")
+    func overflowingResolutionIsRefusedAsABadClip() throws {
+        let result = try drawn { canvas in
+            canvas.clip(10, 10, 30, 30)
+            canvas.rectMode(.radius)
+            canvas.clip(-Float.greatestFiniteMagnitude, 50, Float.greatestFiniteMagnitude, 10)
+        }
+        #expect(result.canvas.warnings.hasWarned(.badClip))
+        #expect(result.canvas.warnings.message(for: .badClip)?.contains("transform") == false, "変換のせいではない")
+        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        let box = try #require(whiteBox(result.pixels))
+        #expect(box.x == 10...39 && box.y == 10...39, "前の切り抜きのまま")
+    }
+
+    @Test("変換が溢れて有限でなくなるときは、変換のせいだと言う (渡された数のせいにしない)")
+    func transformOverflowIsNamed() throws {
+        let result = try drawn { canvas in
+            canvas.scale(1e30, 1e30)
+            canvas.clip(1e10, 1e10, 1e10, 1e10)
+        }
+        #expect(result.canvas.warnings.hasWarned(.badClip))
+        #expect(result.canvas.warnings.message(for: .badClip)?.contains("transform") == true)
+    }
+
+    @Test("大きな矩形 (辺が 4 万画素) の 90 度回転も、誤差で警告もずれもしない")
+    func hugeQuarterTurnIsExact() throws {
+        let result = try drawn { canvas in
+            canvas.rotate(Float.pi / 2)  // (x, y) → (-y, x)
+            canvas.clip(0, -40_000, 50, 80_000)  // 行 0…50・列 -40000…40000
+        }
+        let box = try #require(whiteBox(result.pixels))
+        #expect(box.x == 0...99 && box.y == 0...49)
+        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+    }
+
+    @Test("幅か高さが 0 の矩形は、回転の下でも空のまま (対角線を囲む矩形にならない)")
+    func emptyRectanglesStayEmptyUnderRotation() throws {
+        for width: Float in [0, 30] {
+            let result = try drawn { canvas in
+                canvas.translate(50, 50)
+                canvas.rotate(Float.pi / 4)
+                canvas.clip(0, 0, width, width == 0 ? 30 : 0)
+            }
+            #expect(whiteBox(result.pixels) == nil, "幅 \(width) の矩形が空でなくなった")
+        }
+    }
+
+    // MARK: - 面の大きさと画素の対応 (細かさ・出力の倍率・描き場所)
+
+    /// 座標の大きさ 100×100 の面を、細かさ `density`・出力の倍率 `scale` で作り、`body` を描く。
+    /// 返すのは本体の出力の絵。`body` は 2 度目の呼び出しで描き場所も使えるよう `Canvas` を渡す。
+    private func drawnScaled(
+        density: Float = 1, scale: Int = 1, _ body: (Canvas) throws -> Void
+    ) throws -> PixelBuffer {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: 100 * scale, height: 100 * scale)
+        let canvas = try Canvas(
+            output: output, gpu: gpu, pixelDensity: density, upscale: .spatial, outputScale: scale)
+        var failure: (any Error)?
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noStroke()
+            canvas.fill(255)
+            do { try body(canvas) } catch { failure = error }
+        }
+        if let failure { throw failure }
+        return try canvas.output.readPixels()
+    }
+
+    @Test("細かさ 0.5 でも、translate の下の clip は、変換を通した同じ矩形と同じ画素を通す")
+    func transformedClipMatchesUntransformedUnderHalfDensity() throws {
+        let moved = try drawnScaled(density: 0.5) { canvas in
+            canvas.translate(41.5, 0)
+            canvas.clip(10, 0, 20, 100)
+            canvas.resetMatrix()
+            canvas.rect(0, 0, 100, 100)
+        }
+        let direct = try drawnScaled(density: 0.5) { canvas in
+            canvas.clip(51.5, 0, 20, 100)
+            canvas.rect(0, 0, 100, 100)
+        }
+        #expect(moved == direct)
+        #expect(whiteBox(moved) != nil)
+    }
+
+    @Test("出力の倍率 2 でも、translate の下の clip は座標で読まれ、倍率を掛けた画素 (60…99・20…59) を通す")
+    func transformedClipFollowsTheOutputScale() throws {
+        let pixels = try drawnScaled(scale: 2) { canvas in
+            canvas.translate(30, 10)
+            canvas.clip(0, 0, 20, 20)
+            canvas.resetMatrix()
+            canvas.rect(0, 0, 100, 100)
+        }
+        let box = try #require(whiteBox(pixels))
+        #expect(box.x == 60...99 && box.y == 20...59)
+    }
+
+    @Test("出力の倍率 2 の下の createGraphics の描き場所でも、translate の下の clip は同じ位置を通す")
+    func transformedClipInsideAGraphicsFollowsTheScale() throws {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: 200, height: 200)
+        let canvas = try Canvas(
+            output: output, gpu: gpu, pixelDensity: 1, upscale: .spatial, outputScale: 2)
+        let graphics = try canvas.createGraphics(100, 100)
+        try graphics.draw {
+            graphics.background(0)
+            graphics.noStroke()
+            graphics.fill(255)
+            graphics.translate(30, 10)
+            graphics.clip(0, 0, 20, 20)
+            graphics.resetMatrix()
+            graphics.rect(0, 0, 100, 100)
+        }
+        let box = try #require(whiteBox(try graphics.output.readPixels()))
+        #expect(box.x == 60...99 && box.y == 20...59)
+    }
 }
