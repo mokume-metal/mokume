@@ -236,9 +236,14 @@ struct CoverageReferenceTests {
                 }
             }
         }
-        // 曲線の行でない行は、半径によらず一定
+        // 暗い側 (本体 < 参照) は一方向の差なので、丸めの余裕だけ
+        for radius in [3.0, 6, 12, 29] {
+            #expect(row.darkTolerance(atRadius: radius) == CoverageTable.rounding)
+        }
+        // 曲線の行でない行は、半径によらず一定 (両側とも)
         let rect = try CoverageTable.row(.rotatedRect, on: .distanceField, comparing: .area)
         #expect(rect.tolerance(atRadius: 3) == rect.tolerance)
+        #expect(rect.darkTolerance(atRadius: 3) == rect.tolerance)
     }
 
     @Test("表に行が無い組 (参照を持たない比べ方) は、経路が約束していても比べない")

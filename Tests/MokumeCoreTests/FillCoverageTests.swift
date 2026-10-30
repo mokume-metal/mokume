@@ -19,7 +19,8 @@ import simd
 /// ## 見る図形と許容 (``CoverageTable``)
 ///
 /// 軸に沿う rect (縁は線形の渡し = 写した面積・1/255)・回した rect (直線の斜めの縁・0.012)・円 (曲線の縁・0.02 から、半径が小さいと k / R まで広がる)
-/// の塗り。許容は既存の検査の根拠のまま (円だけ半径の関数)。**生成した置き方で越えたら許容を広げず Bug として起票する**。
+/// の塗り。許容は既存の検査の根拠のまま (円だけ半径の関数)。**生成した置き方で越えたら許容を広げず Bug として起票する** —
+/// 曲線の縁だけは、#3493 の決定で、約束が「面積と一致」ではなく「半径の関数の上限 k / R」になっている (その外へ出たら Bug)。
 /// 約束は経路で違い、ここで比べるのは距離関数の経路の「面積」だけである。三角形の経路 (立体・任意形状) の縁は
 /// AA なしで、約束は 50% の白黒と重心まで (ADR-0039 決定 1・3)。表が拒む組は比べない。
 ///
@@ -73,26 +74,37 @@ struct FillCoverageTests {
     private static func short(_ value: Double) -> String { String(format: "%.4g", value) }
 
     /// 全画素を参照と比べ、最初に許容を越えた画素 (最悪) を名乗る。`skipping` が真の画素は見ない。
+    ///
+    /// `tolerance` は明るい側 (本体 > 参照)、`darkTolerance` は暗い側。省けば `row.tolerance` の両側同じ幅。
+    /// 曲線の縁の差は一方向 (本体は面積を下回らない) なので、円は暗い側を丸めの余裕だけにする (#3493)。
     private static func compare(
         _ pixels: PixelBuffer, with reference: [Double], row: CoverageTable.Row,
-        tolerance: Double? = nil, skipping: (Int, Int) -> Bool
+        tolerance: Double? = nil, darkTolerance: Double? = nil, skipping: (Int, Int) -> Bool
     ) -> Probe.Outcome {
         let tolerance = tolerance ?? row.tolerance
-        var worst = 0.0
+        let darkTolerance = darkTolerance ?? tolerance
+        var worst = 0.0  // 許容に対する比 (1 を越えたら赤)
+        var worstDiff = 0.0
         var at = ""
         for y in 0..<pixels.height {
             for x in 0..<pixels.width where !skipping(x, y) {
                 let expected = reference[y * pixels.width + x]
                 let measured = Double(pixels[x, y].red)
-                let diff = abs(measured - expected)
-                if diff > worst {
-                    worst = diff
+                let diff = measured - expected
+                let ratio = diff >= 0 ? diff / tolerance : -diff / darkTolerance
+                if ratio > worst {
+                    worst = ratio
+                    worstDiff = diff
                     at = "pixel=(\(x),\(y)) 値 \(Self.short(measured)) 参照 \(Self.short(expected))"
                 }
             }
         }
-        return worst <= tolerance
-            ? .pass : .fail("\(row.shape.rawValue) \(at) (差 \(Self.short(worst))・許容 \(Self.short(tolerance)))")
+        let limit = worstDiff >= 0 ? tolerance : darkTolerance
+        return worst <= 1
+            ? .pass
+            : .fail(
+                "\(row.shape.rawValue) \(at) (差 \(Self.short(worstDiff))・許容 \(Self.short(limit))"
+                    + (worstDiff >= 0 ? "" : "・暗い側") + ")")
     }
 
     // MARK: - 軸に沿う rect
@@ -181,7 +193,7 @@ struct FillCoverageTests {
         // 半径 3 から生成する。曲線の縁は接線の半平面で数えるので面積より明るく出て、差は描く画素での曲率半径 R に
         // 反比例し約 k / R (``CoverageTable/curvatureConstant``・#3493)。許容は半径の関数で、半径 7 以上は 0.02 のまま。
         // 3 未満は 1 画素の細い枝との境目に近く、約束の外に置く
-        ProbeAxis("radius", 3..<30, simplest: 12),
+        ProbeAxis("radius", CoverageTable.minimumRadius..<30, simplest: 12),
     ]
 
     @Test("円の塗りは、位置の小数・半径によらず、縁の画素が参照と 半径の関数の許容 (0.02 から k / R + 余裕) 以内で一致する")
@@ -199,7 +211,8 @@ struct FillCoverageTests {
             ).map(CoverageReference.snapped)
             // 円には角が無い
             return Self.compare(
-                pixels, with: reference, row: row, tolerance: row.tolerance(atRadius: Double(r))
+                pixels, with: reference, row: row, tolerance: row.tolerance(atRadius: Double(r)),
+                darkTolerance: row.darkTolerance(atRadius: Double(r))
             ) { _, _ in false }
         }
         #expect(report.failure == nil, "\(report.failure ?? "")")
