@@ -30,7 +30,24 @@ nonisolated struct SynthCommand {
     var op: Op
     var node: UInt8
     var param: SynthParam = .frequency
+    /// 予約のまとまりで、この操作の直後に続く同じ予約の操作の数 (``SynthRack/postReservation(_:)``)。音の側が
+    /// 予約を置き場に入れられないとき、まとまりを欠かさず捨てるのに使う。まとまりでなければ 0。
+    var follow: UInt8 = 0
     var bits: UInt64 = 0
+    /// 音の時計 (``SynthRack/rendered``) の標本の位置。**これが今の位置より先なら、音の側はその標本の頭まで
+    /// 適用を待つ** (``Op/isReservable`` の操作だけ)。今以前なら、次に作る標本の頭で適用する。0 は「すぐ」。
+    var at = 0
+}
+
+nonisolated extension SynthCommand.Op {
+    /// 時刻を持てる操作 (音源への操作)。ほかの操作は ``SynthCommand/at`` を読まずにすぐ適用する。``stop`` は
+    /// 時刻を持たず、すぐ止めて、その音の先の予約を取り消す。
+    var isReservable: Bool {
+        switch self {
+        case .set, .play, .trigger: true
+        default: false
+        }
+    }
 }
 
 /// 1 つのスケッチの合成した音を全部持つ「ラック」。音源 (オシレータ・ノイズ) とエフェクトの節と、
@@ -70,6 +87,14 @@ nonisolated struct SynthCommand {
 ///
 /// 音源が返った後も、エフェクトは動き続ける (入力が無音になるだけ。尾は切れない)。
 ///
+/// ## 予約は、標本の位置で適用する
+///
+/// 操作は音の時計 (``rendered``。作った標本の数) の位置 ``SynthCommand/at`` を持てる。音の側は、今より先の位置の
+/// 操作を**事前に確保した置き場** (``reservationCapacity`` 個) へ位置の順 (同じ位置なら頼んだ順) に入れ、標本を作る
+/// 途中で、その位置の頭に着いたところで適用する。区切りをまたぐときは、位置で区切りを分けるので、
+/// 音の側の区切り (512・441・128 標本ほか) によらず、予約した標本から効く。今以前の位置は、次に作る標本の頭で適用する。
+/// 置き場が埋まっていれば、その予約を**まとまりごと**捨てて数え (``droppedReservations``)、主スレッドが知らせる。
+///
 /// ## 繋がりと描く順
 ///
 /// エフェクトは、入力に選ばれた節の出口を足し合わせて処理する。入力に選ばれた節は、直には
@@ -91,6 +116,9 @@ nonisolated final class SynthRack: @unchecked Sendable {
     /// 出口の標本の写しの長さ (標本)。解析の窓 (1024) の 8 倍で、解析の区間の上限 (``AudioAnalysis/maxSpan``) と、
     /// その前の履歴 (最初の窓の頭まで。最大 1535 標本) が収まる。48 kHz で約 0.17 秒。
     static let meterCapacity = AudioAnalysis.windowSize * 8
+    /// 先の位置を待つ予約の操作の数の上限 (``SynthCommand/at``)。`Env.play` 1 回が 6 個 (値 4・包絡・鳴らす)、
+    /// 音の高さなどを決めて鳴らす口が最大 5 個を使うので、包絡つきの音をおよそ 340 回ぶん先まで予約できる。
+    static let reservationCapacity = 2048
     /// 操作の列の長さ。2 のべき乗。
     private static let queueCapacity = 4096
     /// 列に載せられず控えておく操作の数の上限 (``post(_:force:)``)。音の側が止まっている (流れが開いていない・
@@ -152,8 +180,35 @@ nonisolated final class SynthRack: @unchecked Sendable {
     private let buffers: UnsafeMutablePointer<Float>
     private let gathered: UnsafeMutablePointer<Float>
     private let zeros: UnsafeMutablePointer<Float>
-    /// これまでに作った標本の数。
-    private(set) var rendered = 0
+    /// 先の位置を待っている予約。**位置が先のものが根の二分ヒープ** (同じ位置は頼んだ順 — ``Reservation/order``)。
+    /// 入れる・取り出すのは `O(log n)` で、降順に頼んでも 1 回の呼び出しの時間に上限がある。事前に確保してある。
+    private let reserved: UnsafeMutablePointer<Reservation>
+    private var reservedCount = 0
+    /// 予約を入れた通し番号。同じ位置の予約を頼んだ順に並べる。
+    private var reservedOrder: UInt64 = 0
+    /// 置き場が埋まって捨てた予約のまとまりのうち、まだ読み飛ばしている操作の数 (まとまりの続きが後の
+    /// 取り出しで届くことがある)。
+    private var skipping = 0
+    /// 置き場が埋まって捨てた予約の数。音の側が足し、主スレッドが読む。
+    private let dropped = Atomic<Int>(0)
+    /// これまでに作った標本の数 (音の時計)。音の側が進め、主スレッドが読む。
+    private let renderedCount = Atomic<Int>(0)
+    /// これまでに作った標本の数。**音の側のスレッドが進める数を、錠なしで読む** (音の時計)。
+    var rendered: Int { renderedCount.load(ordering: .relaxed) }
+    /// 置き場が埋まって捨てた予約の数 (``reservationCapacity``)。
+    var droppedReservations: Int { dropped.load(ordering: .relaxed) }
+
+    /// 先の位置を待つ予約 1 つ。
+    private struct Reservation {
+        var command: SynthCommand
+        /// 入れた通し番号 (同じ位置の予約は、小さいほうが先)。
+        var order: UInt64
+
+        /// `self` が `other` より先に効くか。
+        func precedes(_ other: Reservation) -> Bool {
+            command.at != other.command.at ? command.at < other.command.at : order < other.order
+        }
+    }
 
     /// 描く順の 1 歩。
     private struct Step {
@@ -178,6 +233,10 @@ nonisolated final class SynthRack: @unchecked Sendable {
         gathered.initialize(repeating: 0, count: Self.chunk)
         zeros = .allocate(capacity: Self.chunk)
         zeros.initialize(repeating: 0, count: Self.chunk)
+        reserved = .allocate(capacity: Self.reservationCapacity)
+        reserved.initialize(
+            repeating: Reservation(command: SynthCommand(op: .stop, node: 0), order: 0),
+            count: Self.reservationCapacity)
         plan.reserveCapacity(Self.capacity)
         silent.reserveCapacity(Self.capacity)
         order.reserveCapacity(Self.capacity)
@@ -191,6 +250,7 @@ nonisolated final class SynthRack: @unchecked Sendable {
         buffers.deallocate()
         gathered.deallocate()
         zeros.deallocate()
+        reserved.deallocate()
     }
 
     // MARK: - 主スレッド: 節を足す
@@ -305,21 +365,58 @@ nonisolated final class SynthRack: @unchecked Sendable {
 
     /// 列に空きがあれば載せる。
     private func postNow(_ command: SynthCommand) -> Bool {
+        withUnsafePointer(to: command) { publish(UnsafeBufferPointer(start: $0, count: 1)) }
+    }
+
+    /// `commands` を、**続けて 1 度に**列へ載せる (空きが全部ぶんあるときだけ)。音の側へ見えるようになるのは、
+    /// 全部を書いてから末尾を進めた後なので、音の側の取り出しが途中に入らない — 予約のまとまりが、先頭だけ
+    /// 取り出されて残りが次の取り出しで届く、ということが起きない。
+    private func publish(_ commands: UnsafeBufferPointer<SynthCommand>) -> Bool {
         let end = tail.load(ordering: .relaxed)
-        guard end - head.load(ordering: .acquiring) < Self.queueCapacity else { return false }
-        observePost?(command)
-        queue[end & (Self.queueCapacity - 1)] = command
-        tail.store(end + 1, ordering: .releasing)
+        guard end - head.load(ordering: .acquiring) + commands.count <= Self.queueCapacity else {
+            return false
+        }
+        for (offset, command) in commands.enumerated() {
+            observePost?(command)
+            queue[(end + offset) & (Self.queueCapacity - 1)] = command
+        }
+        tail.store(end + commands.count, ordering: .releasing)
         return true
     }
 
     /// 控えていた操作を、頼まれた順に載せられるだけ載せる。**主スレッドから、フレームごとに呼ぶ**
-    /// (``SynthStage``)。
+    /// (``SynthStage``)。予約のまとまり (``postReservation(_:)``) は、全部が入る空きができるまで載せない。
     func retryHeld() {
         guard !held.isEmpty else { return }
         var posted = 0
-        while posted < held.count, postNow(held[posted]) { posted += 1 }
+        while posted < held.count {
+            let count = min(1 + Int(held[posted].follow), held.count - posted)
+            let accepted = held.withUnsafeBufferPointer {
+                publish(UnsafeBufferPointer(rebasing: $0[posted..<(posted + count)]))
+            }
+            guard accepted else { break }
+            posted += count
+        }
         if posted > 0 { held.removeFirst(posted) }
+    }
+
+    /// 予約 1 回ぶんの操作 (同じ ``SynthCommand/at``) を、まとまりで載せる。受け付ければ `true`。
+    ///
+    /// 先頭の操作に、続く操作の数を持たせる (``SynthCommand/follow``)。音の側は、置き場が足りなければ
+    /// まとまりごと捨てる — 一部だけ効くと、包絡の値だけ変わって鳴らない予約が残る。**まとまりは列へ 1 度に
+    /// 載せる** (``publish(_:)``。控えに回ったときも、全部が入るまで載せ直さない) ので、音の側の取り出しが
+    /// まとまりの途中に入って、先頭だけが予約され続きが即時に効く、ということが起きない。控えの上限に収まらなければ
+    /// **最初から**載せない。
+    @discardableResult
+    func postReservation(_ commands: [SynthCommand]) -> Bool {
+        guard !commands.isEmpty else { return true }
+        var group = commands
+        group[0].follow = UInt8(commands.count - 1)
+        guard group.count > 1 else { return post(group[0]) }
+        if held.isEmpty, group.withUnsafeBufferPointer({ publish($0) }) { return true }
+        guard held.count + group.count <= Self.heldLimit else { return false }
+        held += group
+        return true
     }
 
     /// 載せられずに控えている操作の数。検査が読む。
@@ -378,29 +475,39 @@ nonisolated final class SynthRack: @unchecked Sendable {
     func render(
         left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int
     ) {
-        drain()
-        var done = 0
-        while done < frames {
-            let count = min(Self.chunk, frames - done)
-            (left + done).update(repeating: 0, count: count)
-            (right + done).update(repeating: 0, count: count)
-            renderChunk(count, left: left + done, right: right + done)
-            done += count
-        }
-        rendered += frames
-        returnFinished()
+        produce(frames: frames, left: left, right: right)
     }
 
     /// 出口へは出さず、`frames` 標本ぶん進める。出口の標本の写し (解析が読む) だけが更新される。
     func advance(frames: Int) {
+        produce(frames: frames, left: nil, right: nil)
+    }
+
+    /// 操作の列を読んでから、`frames` 標本を作る。**予約の位置 (``SynthCommand/at``) に着いたら、そこで区切って
+    /// 適用する** — 区切りの長さによらず、予約した標本の頭から効く。
+    private func produce(
+        frames: Int, left: UnsafeMutablePointer<Float>?, right: UnsafeMutablePointer<Float>?
+    ) {
         drain()
+        let base = rendered
         var done = 0
         while done < frames {
-            let count = min(Self.chunk, frames - done)
-            renderChunk(count, left: nil, right: nil)
+            var count = min(Self.chunk, frames - done)
+            if reservedCount > 0 {
+                if applyDueReservations(upTo: base + done) { rebuildPlan() }
+                // 残った予約は先の位置 (今より後) なので、そこまでで区切る
+                if reservedCount > 0 { count = min(count, reserved[0].command.at - (base + done)) }
+            }
+            if let left, let right {
+                (left + done).update(repeating: 0, count: count)
+                (right + done).update(repeating: 0, count: count)
+                renderChunk(count, left: left + done, right: right + done)
+            } else {
+                renderChunk(count, left: nil, right: nil)
+            }
             done += count
         }
-        rendered += frames
+        renderedCount.store(base + frames, ordering: .relaxed)
         returnFinished()
     }
 
@@ -438,45 +545,134 @@ nonisolated final class SynthRack: @unchecked Sendable {
         var position = head.load(ordering: .relaxed)
         let end = tail.load(ordering: .acquiring)
         guard position != end else { return }
+        let now = rendered
         var rebuild = false
         while position != end {
             let command = queue[position & (Self.queueCapacity - 1)]
             position += 1
-            let id = Int(command.node)
-            switch command.op {
-            case .activate:
-                // 置き場を使い直す節は、前の節の繋がりを持たない。他のエフェクトの入力から落とし、
-                // 自分の入力も空にする (主スレッドが番号を受け取る前に載せた古い集合を、ここで断つ)
-                let bit: UInt64 = 1 << UInt64(id)
-                for effect in 0..<Self.capacity { inputs[effect] &= ~bit }
-                inputs[id] = 0
-                armed &= ~bit
-                released &= ~bit
-                nodes[id] = slots[id]?.takeUnretainedValue()
-                rebuild = true
-            case .set:
-                nodes[id]?.apply(command.param, Float(bitPattern: UInt32(truncatingIfNeeded: command.bits)))
-            case .play:
-                nodes[id]?.start()
-            case .stop:
-                nodes[id]?.halt()
-            case .trigger:
-                nodes[id]?.trigger()
-            case .inputs:
-                let bit: UInt64 = 1 << UInt64(id)
-                // 入力が無い (まだ繋がれていない・止められた) 状態から入力が入ったとき、前の状態を捨てる
-                if armed & bit == 0, command.bits != 0 { nodes[id]?.reset() }
-                inputs[id] = command.bits
-                if command.bits != 0 { armed |= bit } else { armed &= ~bit }
-                rebuild = true
-            case .segment:
-                nodes[id]?.begin(command.bits)
-            case .release:
-                if nodes[id] != nil { released |= 1 << UInt64(id) }
+            if skipping > 0 {
+                skipping -= 1
+                continue
             }
+            if command.op.isReservable, command.at > now {
+                if !reserve(command) {
+                    // まとまりの残りも捨てる。数えて、主スレッドが知らせる
+                    skipping = Int(command.follow)
+                    dropped.add(1, ordering: .relaxed)
+                }
+                continue
+            }
+            if apply(command) { rebuild = true }
         }
         head.store(position, ordering: .releasing)
         if rebuild { rebuildPlan() }
+    }
+
+    /// 操作を 1 つ適用する。描く順を決め直す必要があれば `true`。
+    private func apply(_ command: SynthCommand) -> Bool {
+        let id = Int(command.node)
+        switch command.op {
+        case .activate:
+            // 置き場を使い直す節は、前の節の繋がりを持たない。他のエフェクトの入力から落とし、
+            // 自分の入力も空にする (主スレッドが番号を受け取る前に載せた古い集合を、ここで断つ)
+            let bit: UInt64 = 1 << UInt64(id)
+            for effect in 0..<Self.capacity { inputs[effect] &= ~bit }
+            inputs[id] = 0
+            armed &= ~bit
+            released &= ~bit
+            nodes[id] = slots[id]?.takeUnretainedValue()
+            return true
+        case .set:
+            nodes[id]?.apply(command.param, Float(bitPattern: UInt32(truncatingIfNeeded: command.bits)))
+        case .play:
+            nodes[id]?.start()
+        case .stop:
+            nodes[id]?.halt()
+            // 止めた音の先の予約は鳴らさない (取り消した予約の節は、鳴り終えれば置き場を返す)
+            cancelReservations(of: id)
+        case .trigger:
+            nodes[id]?.trigger()
+        case .inputs:
+            let bit: UInt64 = 1 << UInt64(id)
+            // 入力が無い (まだ繋がれていない・止められた) 状態から入力が入ったとき、前の状態を捨てる
+            if armed & bit == 0, command.bits != 0 { nodes[id]?.reset() }
+            inputs[id] = command.bits
+            if command.bits != 0 { armed |= bit } else { armed &= ~bit }
+            return true
+        case .segment:
+            nodes[id]?.begin(command.bits)
+        case .release:
+            if nodes[id] != nil { released |= 1 << UInt64(id) }
+        }
+        return false
+    }
+
+    /// 先の位置を待つ予約の置き場 (二分ヒープ) へ入れる。**確保しない・`O(log n)`。** 埋まっていれば `false`。
+    /// まとまりの先頭 (``SynthCommand/follow``) は、まとまりの全部が入る空きを見る — 続きの操作は、その空きに入る。
+    private func reserve(_ command: SynthCommand) -> Bool {
+        guard reservedCount + 1 + Int(command.follow) <= Self.reservationCapacity else { return false }
+        let entry = Reservation(command: command, order: reservedOrder)
+        reservedOrder &+= 1
+        var index = reservedCount
+        reservedCount += 1
+        while index > 0 {
+            let parent = (index - 1) / 2
+            guard entry.precedes(reserved[parent]) else { break }
+            reserved[index] = reserved[parent]
+            index = parent
+        }
+        reserved[index] = entry
+        return true
+    }
+
+    /// 根 (いちばん先に効く予約) を取り出す。`reservedCount > 0` のときだけ呼ぶ。
+    private func popReservation() -> SynthCommand {
+        let top = reserved[0].command
+        reservedCount -= 1
+        if reservedCount > 0 { siftDown(from: 0, placing: reserved[reservedCount]) }
+        return top
+    }
+
+    /// `entry` を `start` から下へ置き直して、ヒープの形を保つ。
+    private func siftDown(from start: Int, placing entry: Reservation) {
+        var index = start
+        while true {
+            var child = 2 * index + 1
+            guard child < reservedCount else { break }
+            if child + 1 < reservedCount, reserved[child + 1].precedes(reserved[child]) { child += 1 }
+            guard reserved[child].precedes(entry) else { break }
+            reserved[index] = reserved[child]
+            index = child
+        }
+        reserved[index] = entry
+    }
+
+    /// 位置 `position` 以前の予約を、位置の順 (同じ位置は頼んだ順) に適用して置き場から外す。
+    /// 描く順を決め直す必要があれば `true`。
+    private func applyDueReservations(upTo position: Int) -> Bool {
+        var rebuild = false
+        while reservedCount > 0, reserved[0].command.at <= position {
+            if apply(popReservation()) { rebuild = true }
+        }
+        return rebuild
+    }
+
+    /// 節 `id` への先の予約を全部取り消す (``SynthCommand/Op/stop``)。残りの予約の順は変わらない。`O(n)`。
+    private func cancelReservations(of id: Int) {
+        guard reservedCount > 0 else { return }
+        var kept = 0
+        for index in 0..<reservedCount where Int(reserved[index].command.node) != id {
+            reserved[kept] = reserved[index]
+            kept += 1
+        }
+        guard kept != reservedCount else { return }
+        reservedCount = kept
+        // 残りでヒープを作り直す
+        var index = kept / 2 - 1
+        while index >= 0 {
+            siftDown(from: index, placing: reserved[index])
+            index -= 1
+        }
     }
 
     /// 手放された音源のうち鳴り終えたものを、表と描く順から外し、番号を主スレッドへ返す。
@@ -489,6 +685,12 @@ nonisolated final class SynthRack: @unchecked Sendable {
             let id = pending.trailingZeroBitCount
             pending &= pending - 1
             if let node = nodes[id], node.isFinished { finished |= 1 << UInt64(id) }
+        }
+        // 先の位置を待つ予約がある節は返さない — 置き場を使い直した別の節へ、予約が効いてしまう
+        if finished != 0, reservedCount > 0 {
+            var waiting: UInt64 = 0
+            for index in 0..<reservedCount { waiting |= 1 << UInt64(reserved[index].command.node) }
+            finished &= ~waiting
         }
         guard finished != 0 else { return }
         var each = finished

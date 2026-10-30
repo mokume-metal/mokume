@@ -425,6 +425,11 @@ struct NewFromExampleTests {
 /// スケッチを、1 つのパッケージの 1 つのモジュールに並べて 1 度で組む**。そのモジュールは
 /// 例ごとに `@main` を持てないので、並べるときに `@main` の行だけを外す。外す前に、全部の
 /// 例が `@main` を持つことを見る。
+///
+/// **重くても毎回の検査に残す** (#3191)。綴りの重なり・`@main` の抜け・`--from` の形で
+/// 組めない例を捕まえるのはここだけである。所要 (GitHub の runner で 1.5〜2 分) の大半は、
+/// 共有の置き場 (``SharedDebugScratch``) に依存を組む分で、この検査とひな形の検査のうち
+/// 先に走った側が払い、もう一方は使い回す。例そのものを組むのは 20〜45 秒である。
 @Suite("同梱した全部の例が、--from で作ったとおりに組める")
 struct EveryBundledExampleBuildsTests {
     static var repository: URL { TemplateBuildTests.repository }

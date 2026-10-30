@@ -220,4 +220,40 @@ extension Sketch {
     public func createDelay() -> Delay {
         Delay(stage: SynthStage.stage(for: self))
     }
+
+    // MARK: - 音の時計
+
+    /// いまの音の時計 (秒)。合成した音の予約 (`play(at:)`・``Env/play(_:_:_:_:_:at:)``) が読む時計で、次の拍の頭を
+    /// 求めるのに使う。
+    ///
+    /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
+    /// ```swift
+    /// func draw() {
+    ///     guard let osc, let env else { return }
+    ///     // 次の 0.5 秒の頭ちょうどへ鳴らす
+    ///     let next = (soundTime / 0.5).rounded(.down) * 0.5 + 0.5
+    ///     env.play(osc, 0.002, 0.03, 0.7, 0.1, at: next)
+    /// }
+    /// ```
+    ///
+    /// **起点は、最初の合成した音を作ったときで、そこが 0 秒。** スケッチの始まりではないので、
+    /// ``SketchPart/time`` (スケッチの始まりから数える。``SketchPart/pauseTime()`` で止まる)・``SoundFile/position``
+    /// (ファイルの先頭からの位置)・`.mov` の音声トラックの時刻 (録り始めが 0) とは、値が一致しない。
+    /// **合成した音を 1 つも作っていなければ、いつも 0 を返す** — ``SoundFile`` だけのスケッチでは読めない
+    /// (``SoundFile/position`` を使う)。
+    ///
+    /// - 合成した音を `setup()` で作ったスケッチを 60 fps の固定の時計で回すと、`frameCount` が 121 の `draw()` で
+    ///   2.0 を返す (`SoundFile` の `position` と同じ数え方)
+    /// - ``SketchPart/pauseTime()`` でも止まらず、``SketchPart/jumpTime(_:)`` でも飛ばない (音を進めるのは
+    ///   音の時計で、``SynthSound`` と同じ)
+    /// - 書き出し (固定の時計) では、フレームの数から決まるので、同じフレームはいつも同じ値を返す。窓では、
+    ///   音の側が**実際に作った標本の数**から読む (`clock: .frames` の窓も)。処理が落ちて音が遅れた間は、
+    ///   ``SketchPart/time`` とずれうる
+    /// - 倍精度で、長く動かしても標本に揃う
+    /// - 読むのに錠は取らず、音の側を待たせない
+    ///
+    /// 手本は Tone.js の `Tone.now()` と Web Audio の `AudioContext.currentTime`。
+    public var soundTime: Double {
+        SynthStage.existing(for: self)?.soundSeconds ?? 0
+    }
 }

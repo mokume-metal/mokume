@@ -169,6 +169,12 @@ struct TemplateBuildTests {
     /// 置くとしたら製品のコードになる — 利用者の `mokume bundle` が時計で殺される形は
     /// 採らない。外した `.timeLimit` はもともと効いていなかった (同期の本体が main actor
     /// を塞ぐので、上限が鳴ってもプロセスは終わらない) ので、失うものは無い (#564)。
+    ///
+    /// **重くても毎回の検査に残す** (#3191)。検査の中で release を組むのはここだけで、
+    /// release でだけ組めない形 (`#if !DEBUG` の中・最適化でだけ出る誤り) を PR の時点で
+    /// 捕まえるのもここだけである。所要 (GitHub の runner で 3〜4 分) のほとんどは
+    /// `MokumeCore` の whole-module の最適化で、束ねる手順 (宣言を読む・置き場を引く・
+    /// 署名する) は 2 秒に満たない。縮める手は #3191 で探して見つからなかった。
     @Test("束ねた包みの中でも、資材が絵を探す場所にある")
     func assetsLandInsideTheBundledApplication() throws {
         let workspace = try TestScratch.directory("mokume-bundled")

@@ -91,6 +91,9 @@ enum BundleCommand {
         // **作り直す先が自分の出力でなければ、ビルドの前に止まる** (#2500)。消せないと分かるのは
         // 数分のビルドの後ではなく、いまでよい
         _ = try replaceableApp(for: identity, in: out)
+        // **紙も同じ約束で、ビルドの前に見る** (#3054)。`.app` が通っても、同じ名前の利用者のファイルが
+        // 紙の場所にあれば、書くのはビルドの後になる
+        _ = try replaceableNote(for: identity, in: out)
 
         // **宣言は 1 度だけ読む。** 走らせるものを決めるのにも、下限の版と資材の包みを
         // 知るのにも要る — 別々に引くと `dump-package` を 2 回起こすことになる
@@ -156,7 +159,7 @@ enum BundleCommand {
     static var options: [Arguments.Option] {
         [
             Arguments.Option(["--out"], takesPlace: true) {
-                "\($0) needs a directory\n\n" + Command.usage()
+                "\($0) needs a directory"
             }
         ]
     }
@@ -253,6 +256,88 @@ enum BundleCommand {
                     + " removed or written. If you do not need it, remove it by hand and run this again")
         }
         return app
+    }
+
+    /// 作る開き方の紙 `How to open <name>.txt` の場所。**上書きしてよいと確かめられたときだけ返し、
+    /// そうでなければ何も書かずに投げる** (#3054。``replaceableApp(for:in:)`` と同じ約束を紙へ広げる。
+    /// ビルドの前の `run` と、紙を書く直前の ``writeOpeningNote(for:beside:)`` が同じ判定を使う)。
+    ///
+    /// 場所の確かめは `.app` と同じ (最後の部品が名前そのもので、親が `--out`)。**中身**: そこに既に
+    /// 在るものが、前の版の mokume が書いた紙と確かめられること (``isOwnNote(_:identity:)``)。
+    /// 何も無ければ上書きするものも無い。**シンボリックリンクは在るものとして数える** (壊れたものも)。
+    static func replaceableNote(for identity: AppIdentity, in out: URL) throws(CommandFailure) -> URL {
+        let fileName = noteFileName(for: identity)
+        let note = out.appendingPathComponent(fileName)
+        guard note.lastPathComponent == fileName,
+            note.deletingLastPathComponent().standardizedFileURL.path
+                == out.standardizedFileURL.path
+        else {
+            throw .cannotCreate(
+                path: note.path,
+                reason: "It would not sit directly inside \(out.path), so nothing was removed"
+                    + " or written. The name must not contain \"/\"")
+        }
+        guard kind(of: note) != nil else { return note }
+        guard isOwnNote(note, identity: identity) else {
+            throw .cannotCreate(
+                path: note.path,
+                reason: "It could not be confirmed as a note mokume wrote, so nothing was"
+                    + " removed or written. If you do not need it, remove it by hand and run this again")
+        }
+        return note
+    }
+
+    /// 開き方の紙を読んでよい大きさの上限 (バイト)。mokume が書く紙は数百バイトに名前が数回入るだけ
+    /// なので、確かめるために読む前に、この大きさで断る (``infoPlistReadLimit`` と同じ考え方)。
+    static let openingNoteReadLimit = 65_536
+
+    /// 既にある紙が、前の版の mokume が書いたものと確かめられるか。
+    ///
+    /// **印は先頭の行 `How to open <name>`** (``openingNote(for:)`` が書く決まった文)。形は、普通の
+    /// ファイルで ``openingNoteReadLimit`` 以下であること。**シンボリックリンクは、生きていても壊れていても
+    /// 確かめられない側に倒す** — 読んで「自分のもの」と判定すると、利用者が張ったリンクを普通の
+    /// ファイルに置き換えてしまう。形が外れるものは読まずに断る。
+    ///
+    /// **印は「先頭の行」を行として割らずに、本文の頭が印と、その後ろの改行 (か本文の終わり) で
+    /// 続くかで見る。** 名前には改行が入りうる (`AppIdentity.make` は途中の `\n` を通す) ので、行で
+    /// 割ると自分の紙を 2 回目から断ってしまう。印の中の改行の数は名前が持つので、数えずに頭から比べる。
+    /// 次の 3 つは自分の紙として受ける (どれも mokume が書いたあとで、人かエディタが触っただけの形):
+    /// - **名前の大文字小文字の違い** (`Grain` → `grain`)。APFS の既定は大文字小文字を区別せず、
+    ///   同じファイルに当たる。`How to open ` の部分は完全一致のまま
+    /// - **UTF-8 の BOM 1 つ** が頭に付いたもの
+    /// - **CRLF** に変換されたもの (印の中の改行も、後ろの区切りも)
+    static func isOwnNote(_ note: URL, identity: AppIdentity) -> Bool {
+        guard kind(of: note) == .typeRegular,
+            let attributes = try? FileManager.default.attributesOfItem(atPath: note.path),
+            let size = (attributes[.size] as? NSNumber)?.intValue, size <= openingNoteReadLimit,
+            let data = try? Data(contentsOf: note),
+            // `String(data:encoding:)` は頭の BOM を黙って落とすので使わない (読み飛ばすのは下で 1 つだけ)
+            let raw = String(validating: data, as: UTF8.self)
+        else { return false }
+        let unified = { (text: String) -> [Unicode.Scalar] in
+            Array(text.replacingOccurrences(of: "\r\n", with: "\n").unicodeScalars)
+        }
+        var body = unified(raw)
+        if body.first == "\u{FEFF}" { body.removeFirst() }
+        let lead = Array(openingNoteLead.unicodeScalars)
+        let name = unified(identity.name)
+        guard body.count >= lead.count + name.count, Array(body[..<lead.count]) == lead else {
+            return false
+        }
+        let given = String(String.UnicodeScalarView(body[lead.count..<(lead.count + name.count)]))
+        guard given.compare(String(String.UnicodeScalarView(name)), options: .caseInsensitive)
+            == .orderedSame
+        else { return false }
+        let rest = body[(lead.count + name.count)...]
+        return rest.isEmpty || rest.first == "\n"
+    }
+
+    /// 紙の先頭の行の、名前より前の部分。大文字小文字を区別して比べる。
+    private static let openingNoteLead = "How to open "
+
+    /// 紙の先頭の行。紙の印であり、``openingNote(for:)`` の書き出しでもある (1 か所で持つ)。
+    static func openingNoteMark(for identity: AppIdentity) -> String {
+        "\(openingNoteLead)\(identity.name)"
     }
 
     /// `Info.plist` を読んでよい大きさの上限 (バイト)。他人の `.app` の中を、確かめるために読むので、
@@ -555,12 +640,14 @@ enum BundleCommand {
     static func writeOpeningNote(for identity: AppIdentity, beside app: URL)
         throws(CommandFailure) -> URL
     {
-        let url = app.deletingLastPathComponent()
-            .appendingPathComponent(noteFileName(for: identity))
+        // **書く直前にも、ビルドの前と同じ確かめを通す** (#3054)。ここでだけ確かめると、止まる回に
+        // 作り直した `.app` が残る。ここは、前に済んだ確かめから書くまでに変わった分の守り
+        let url = try replaceableNote(for: identity, in: app.deletingLastPathComponent())
         do {
             try openingNote(for: identity).write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            // 置き換えて書くので、行き先がディレクトリだと下の失敗は ENOENT になる (#2839)
+            // 行き先がディレクトリのときは確かめで先に断る (#3054)。ここへ来るのは書けなかった事情
+            // (置き場が無い・権限が無いなど) で、OS の文面で名乗る (#2839)
             throw .cannotCreate(
                 path: url.path,
                 reason: Diagnostics.writingPosixReason(error, at: url) ?? error.localizedDescription)
@@ -582,7 +669,7 @@ enum BundleCommand {
     /// 断定できないことは書かない ([ADR-0029] 決定 2 と同じ規律)。
     static func openingNote(for identity: AppIdentity) -> String {
         """
-        How to open \(identity.name)
+        \(openingNoteMark(for: identity))
 
         The first time, you have to give it permission to open yourself.
         This app is distributed in a form where macOS cannot verify who made it.

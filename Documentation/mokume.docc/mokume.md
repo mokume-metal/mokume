@@ -107,7 +107,7 @@ circle(200, 150, 20 + pow(2, level))
 
 **乱数の種 (``SketchPart/randomSeed(_:)``) もスケッチに 1 つで、書き換えるまでフレームを越えて残る**が、上の 2 つには入らない — 描き方でもシーンの記述でもなく、引くたびに進む列の位置で、揺らぎと違って断片へは届かない。形の組み立て (``SketchPart/createShape(_:)``) の中で書いた種だけは、抜けると**最初に書く直前の列**へ戻る。
 
-`setup()` は最初のフレームが始まる前に走り、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックもフレームの外で走るので、**そこで書いたシーンの記述はどのフレームにも属さない**。黙って捨てず、警告を出して無視する。**ただし変換と、変換・スタイルの積み降ろしは例外である** — 置いたものには置くときに変換が焼き付くので、`setup()` と止まっている間の入力のコールバックでは `translate()` や `push { }` が効き、その後に置いたものへ効く。呼び出しを抜けるときに変換と積んだ段は戻り、次のコールバックにも `draw()` にも持ち越さない (`setup()` で `translate()` だけ書いて何も置かないと、そう言って 1 度知らせる)。光・視点・材質・切り抜きなど、焼き付かないシーンの記述は、そこでは従来どおり警告して無視する。ただし**止まっている間の入力のコールバックが戻るのは、本当に止まっている間だけ**である — ループ中 (と、`redraw()` を頼んだ後) のコールバックはフレームの内側で配られるので、そこで書いた変換は同じフレームの `draw()` に漏れる ([#3408](https://github.com/mokume-metal/mokume/issues/3408))。
+`setup()` は最初のフレームが始まる前に走り、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックもフレームの外で走るので、**そこで書いたシーンの記述はどのフレームにも属さない**。黙って捨てず、警告を出して無視する。**ただし変換と、変換・スタイルの積み降ろしは例外である** — 置いたものには置くときに変換が焼き付くので、`setup()` と止まっている間の入力のコールバックでは `translate()` や `push { }` が効き、その後に置いたものへ効く。呼び出しを抜けるときに変換と積んだ段は戻り、次のコールバックにも `draw()` にも持ち越さない (`setup()` で `translate()` だけ書いて何も置かないと、そう言って 1 度知らせる)。光・視点・材質・切り抜きなど、焼き付かないシーンの記述は、そこでは従来どおり警告して無視する。**ループ中 (と、`redraw()` を頼んだ後) の入力のコールバックはフレームの内側で配られ、そこでは光・視点・切り抜きなども効く**が、こちらも**コールバック 1 つごとに、書いたシーンの記述を抜けるときに戻す** — `mousePressed()` で書いた `translate()`・`lights()`・`clip()` は、そのコールバックの中で置いたものにだけ効き、同じフレームの `draw()` には効かない (`draw()` の頭で変換が既定へ戻る Processing・p5.js と同じ結果。[#3408](https://github.com/mokume-metal/mokume/issues/3408))。塗りや線などの描き方と乱数の種は戻らない。**列に焼かれず、フレームの描き切りで読まれる影・効果・目印は、コールバックで書いたまま抜けると効かない** (1 度だけ知らせる)。粒・計算 (`force()`・`particles()`・`compute()`) は状態ではなく、そのフレームで走る仕事の予約なので戻さず、ループ中のコールバックで頼めばそのフレームで走る。閉じずに抜けた形 (`beginShape()`) は、`draw()` へ持ち越さず捨てる。
 
 ```swift
 // Processing の Basics/Color/ColorVariables と同じ形。setup() だけで 1 枚を描く
@@ -127,7 +127,7 @@ func setup() {
 }
 ```
 
-描き場所 (``SketchPart/createGraphics(_:_:)``) では、視点・光・変換・粒・計算などのシーンの記述も ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ効く — `draw()` の中に居ても、その対の外で書けば同じ警告を出して無視する。
+描き場所 (``SketchPart/createGraphics(_:_:)``) では、視点・光・変換などのシーンの記述と、粒・計算の頼みも ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ効く — `draw()` の中に居ても、その対の外で書けば同じ警告を出して無視する。
 
 **置いたもの (図形・絵・背景・画素の書き込み・呼んだ時点で効果を掛ける ``SketchPart/filter(_:)``) は設定ではなく、次に描くフレームに出る。** `setup()` と、止まっている間 (``SketchPart/noLoop()``) の入力のコールバックで置いたものは、次に描くフレームへ持ち越される — `setup()` だけで 1 枚を描ける。描き場所では ``Canvas/beginDraw()`` と ``Canvas/endDraw()`` の間でだけ置ける。それ以外 (描き場所の対の外・`Task` の続きなど) で置いたものは、警告を出して無視する。
 
@@ -144,7 +144,7 @@ func setup() {
 - **読み取りと描く口。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める
 - **面から作る資源** (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など)。返すものを作れないので、型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す
 - **音・通信・シリアルの作る口** (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)``・``Sketch/createSerial(_:baudRate:)`` など)。スケッチの `init()` などで呼ぶと、作ったものを走っているスケッチへ足せないので、同じく ``AudioFailure/notRunning(call:)``・``SerialFailure/notRunning(call:)`` などを投げる
-- **投げない作る口**は、足されていないものを返す。合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを返す
+- **投げない作る口**は、足されていないものを返す。合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを、MIDI の口 (``Sketch/createMIDI(_:)``・``Sketch/createMIDI(messages:)``) は何も届かない入り口を返す
 - **入力の止める口** (``AudioIn/stop()``・``Capture/stop()``・``Serial/stop()`` など)。外で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する
 
 **止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。**
@@ -462,6 +462,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Sketch/draw()``
 - ``Sketch/settings``
 - ``Sketch/plugins``
+- ``SketchView``
 
 ### 面の大きさと時間
 
@@ -1063,6 +1064,15 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Gamepad``
 - ``GamepadButton``
 - ``GamepadInput``
+
+### MIDI 機材で動かす
+
+- ``Sketch/midiDevices()``
+- ``Sketch/createMIDI(_:)``
+- ``Sketch/createMIDI(messages:)``
+- ``MIDIPort``
+- ``MIDIDevice``
+- ``MIDIMessage``
 
 ### 走らせたまま値を動かす
 

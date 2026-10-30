@@ -96,10 +96,16 @@ let package = Package(
         .target(
             name: "MokumeGamepad", dependencies: ["MokumeCore"],
             swiftSettings: .mokume),
+        // MIDI (CoreMIDI)。機材とのやりとりで、他のどのターゲットとも依存も意味も重ならないので分ける (#1963)
+        .target(
+            name: "MokumeMIDI", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
             name: "mokume",
-            dependencies: ["MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad"],
+            dependencies: [
+                "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI",
+            ],
             swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)。OS の事情の文面は本体と同じ関数で引くので
@@ -133,7 +139,7 @@ let package = Package(
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
         .testTarget(
-            name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeTestSupport"],
+            name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeProbe", "MokumeTestSupport"],
             swiftSettings: .mokume),
         // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
@@ -154,6 +160,9 @@ let package = Package(
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeGamepadTests", dependencies: ["mokume", "MokumeGamepad"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeMIDITests", dependencies: ["mokume", "MokumeMIDI"],
             swiftSettings: .mokume),
 
     ]
