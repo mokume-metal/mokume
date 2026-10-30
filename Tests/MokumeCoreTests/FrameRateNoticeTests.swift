@@ -78,11 +78,11 @@ struct FrameRateNoticeTests {
         let rates: [Double?] = [60, 60, 40, 40, 60, nil, 60]
         let seventh = Self.history(rates)
         #expect(
-            FrameRateNotice.line(rate: 60, configuration: "release", history: seventh)
+            FrameRateNotice.line(rate: 60, configuration: "release", history: seventh, columns: 120)
                 == "Rate: 60.0 fps ██▆▆█·█ (release)")
         let sixth = Self.history(Array(rates.prefix(6)))
         #expect(
-            FrameRateNotice.line(rate: nil, configuration: "release", history: sixth)
+            FrameRateNotice.line(rate: nil, configuration: "release", history: sixth, columns: 120)
                 == "Rate: cannot tell — frames are not advancing ██▆▆█· (release)")
     }
 
@@ -91,13 +91,13 @@ struct FrameRateNoticeTests {
     func anEmptyTrendLeavesTheLineAsItWas() {
         let empty = FrameRateNotice.History(declaredFrameRate: 60)
         #expect(
-            FrameRateNotice.line(rate: 58.3, configuration: "release", history: empty)
+            FrameRateNotice.line(rate: 58.3, configuration: "release", history: empty, columns: 120)
                 == FrameRateNotice.line(rate: 58.3, configuration: "release"))
         #expect(
-            FrameRateNotice.line(rate: nil, configuration: "debug", history: empty)
+            FrameRateNotice.line(rate: nil, configuration: "debug", history: empty, columns: 120)
                 == FrameRateNotice.line(rate: nil, configuration: "debug"))
         let full = Self.history([60, 30, nil])
-        let line = FrameRateNotice.line(rate: nil, configuration: "debug", history: full)
+        let line = FrameRateNotice.line(rate: nil, configuration: "debug", history: full, columns: 120)
         #expect(!line.contains("\n"))
         #expect(line.hasSuffix(" (debug)"))
     }
@@ -170,5 +170,86 @@ struct FrameRateNoticeTests {
     @Test("新しい推移は空から始まる")
     func aNewChildStartsEmpty() {
         #expect(FrameRateNotice.History(declaredFrameRate: 60).trend.isEmpty)
+    }
+
+    // MARK: - 端末の幅に収める (#3536)
+
+    /// 30 秒ぶん満ちた推移 (古い 10 秒が最も高い棒、新しい 20 秒が中ほどの棒)。
+    private static let fullHistory = history([Double?](repeating: 60, count: 10) + [Double?](repeating: 30, count: 20))
+
+    /// 欠測の形で満ちた推移 (30 秒とも欠測)。最も長い行になる。
+    private static let missingHistory = history([Double?](repeating: nil, count: 30))
+
+    /// 破られた約束の再現: 欠測の形は 80 桁の端末で `debug` が 83 桁・`release` が 85 桁になり、
+    /// 折り返して毎秒 1 行ずつ積み上がっていた。**表示幅は桁数 - 1 以下。**
+    @Test(
+        "数値の形も欠測の形も、構成 debug・release × 幅 60・80・120 のどれでも、桁数 - 1 の幅に収まる",
+        arguments: [60, 80, 120], ["debug", "release"])
+    func theLineFitsTheTerminal(columns: Int, configuration: String) {
+        let forms: [(String, Double?, FrameRateNotice.History)] = [
+            ("数値", 58.7, Self.fullHistory), ("欠測", nil, Self.missingHistory),
+        ]
+        for (form, rate, history) in forms {
+            let line = FrameRateNotice.line(
+                rate: rate, configuration: configuration, history: history, columns: columns)
+            #expect(
+                line.count <= columns - 1,
+                "\(form)の形・\(configuration)・\(columns) 桁: \(line.count) 桁 — \(line)")
+            #expect(!line.contains("\n"))
+            #expect(line.hasSuffix(" (\(configuration))"), "構成の括弧は削らない")
+        }
+    }
+
+    /// 80 桁で欠測の形 (`debug` は 52 桁 + 空白 + 推移) は、推移が 26 文字で C - 1 = 79 桁にちょうど
+    /// なる。**切るのは古い側** — 最も高い棒 (古い 10 秒) の 4 文字が落ちて、新しい側が残る。
+    @Test("収まらない推移は、古い秒 (左) から落とし、新しい秒を残す")
+    func theOldestSecondsAreDropped() {
+        let line = FrameRateNotice.line(
+            rate: nil, configuration: "debug", history: Self.fullHistory, columns: 80)
+        #expect(
+            line
+                == "Rate: cannot tell — frames are not advancing "
+                + String(repeating: "█", count: 6) + String(repeating: "▄", count: 20) + " (debug)")
+        #expect(line.count == 79, "最後の桁は埋めない")
+    }
+
+    /// 幅が足りれば #3514 と同じ文字列 (30 文字の推移が全部入る)。
+    @Test("幅が足りれば、30 文字の推移がそのまま入る")
+    func aWideTerminalKeepsTheWholeTrend() {
+        let history = Self.fullHistory
+        #expect(history.trend.count == 30)
+        #expect(
+            FrameRateNotice.line(rate: 58.7, configuration: "release", history: history, columns: 120)
+                == "Rate: 58.7 fps " + history.trend + " (release)")
+        #expect(
+            FrameRateNotice.line(
+                rate: nil, configuration: "release", history: Self.missingHistory, columns: 120)
+                == "Rate: cannot tell — frames are not advancing "
+                + String(repeating: "·", count: 30) + " (release)")
+    }
+
+    /// 推移を全部落としても収まらない幅は、現在値と構成の括弧を削らず、推移の前の空白も
+    /// 付けない (推移の無い形と同じ文字列)。
+    @Test("推移を全部落としても足りない幅では、推移の無い形になる")
+    func aNarrowTerminalDropsTheWholeTrend() {
+        for columns in [1, 40, 54] {
+            #expect(
+                FrameRateNotice.line(
+                    rate: nil, configuration: "debug", history: Self.missingHistory, columns: columns)
+                    == FrameRateNotice.line(rate: nil, configuration: "debug"),
+                "\(columns) 桁")
+        }
+        // 1 文字だけ入る幅 (推移の前の空白を数えて 52 + 2 = 54 桁、末尾の 1 桁を残して 55)
+        let one = FrameRateNotice.line(
+            rate: nil, configuration: "debug", history: Self.missingHistory, columns: 55)
+        #expect(one == "Rate: cannot tell — frames are not advancing · (debug)")
+        #expect(one.count == 54)
+    }
+
+    /// 幅は呼ぶたびに読む口が 1 つだけ持つ。端末でなくても 1 以上の値が返る (読めないときは 80)。
+    @Test("端末の幅は、読めなくても 1 以上の値で返る")
+    func theColumnsAreAlwaysUsable() {
+        #expect(FrameRateNotice.columns >= 1)
+        #expect(FrameRateNotice.fallbackColumns == 80)
     }
 }

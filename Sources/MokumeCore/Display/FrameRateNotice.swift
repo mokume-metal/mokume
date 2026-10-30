@@ -18,6 +18,19 @@ import Foundation
 /// 渡された文字列を添えるだけにする — スケッチの側で構成を推し量ると、判定経路が二重に
 /// なる。`MOKUME_SOURCE_STAMP` (道具が渡し、観測が応答へそのまま載せる) と同じ形である。
 ///
+/// ## なぜ端末の幅を読むのか
+///
+/// **行が端末の幅を越えると、同じ 1 行を書き換える約束が破れる** ([#685] · [#3536])。書き換えの
+/// ``rewrite`` は今いる**物理行**の頭へ戻って消すだけで、折り返した上の物理行は残る。以後、
+/// 毎秒 1 行ずつ画面に積み上がる。`noLoop()` の間の欠測の形は推移を足すと 80 桁を越えるので、
+/// 80 桁の端末でも起きる。そこで**推移を端末の幅に収まるだけに切る**。推移の長さを短くして
+/// 固定せず、幅を毎秒読み直す — 狭い端末でも、走っている間に窓を狭めても収まる。
+/// 「端末の幅は問い合わせない」とした [#3424] の条件を、この約束のために改めた。
+///
+/// [#685]: https://github.com/mokume-metal/mokume/issues/685
+/// [#3424]: https://github.com/mokume-metal/mokume/issues/3424
+/// [#3536]: https://github.com/mokume-metal/mokume/issues/3536
+///
 /// ## 名乗らない既定
 ///
 /// 鍵が与えられなければ**何も出さない**。窓口から立てたスケッチの出力が 1 バイトも
@@ -45,6 +58,23 @@ public enum FrameRateNotice {
     /// **読むのはここだけ。** 判定は ``announces(configuration:isTerminal:)`` が持つ。
     static var isTerminal: Bool { isatty(STDOUT_FILENO) != 0 }
 
+    /// 読めないときの端末の桁数。
+    static let fallbackColumns = 80
+
+    /// 端末の桁数。**読むのはここだけ。** 行を作る関数 (``line(rate:configuration:history:columns:)``)
+    /// は幅を引数で受けるので、検査は端末を持たずに通せる。
+    ///
+    /// 問い合わせが失敗する・0 が返る (端末でない・幅を持たない擬似端末) ときは
+    /// ``fallbackColumns`` とみなす。毎秒 1 回呼ぶので、走っている間に窓を狭めても次の秒の
+    /// 行から収まる。
+    static var columns: Int {
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else {
+            return fallbackColumns
+        }
+        return Int(size.ws_col)
+    }
+
     /// 端末へ書くときの飾り。行頭へ戻して消してから書く — **同じ 1 行を書き換える。**
     ///
     /// 見張る道具の側にも同じ綴りがある。規約は文章で共有し、実装はそれぞれが持つ
@@ -69,21 +99,34 @@ public enum FrameRateNotice {
     /// 測れていない — 欠測を数字に化けさせると、止まっているスケッチが「とても重い」と
     /// 誤読される。
     ///
-    /// 推移を持たない形。推移の無い行 (``line(rate:configuration:history:)`` に空の推移を
+    /// 推移を持たない形。推移の無い行 (``line(rate:configuration:history:columns:)`` に空の推移を
     /// 渡したもの) と同じ文字列になる。
     public static func line(rate: Double?, configuration: String) -> String {
         line(rate: rate, configuration: configuration, trend: "")
     }
 
-    /// 直近の推移を添えた 1 行 (#3424)。
+    /// 直近の推移を添えた 1 行 (#3424)。**端末の幅に収める** (#3536)。
     ///
     /// 推移は現在値の直後・構成の括弧の直前に、空白 1 つで区切って置く。**1 行のまま**
     /// (改行を含まず、構成は同じ行に残る — [ADR-0029] 決定 3)。推移が空 (最初の 1 秒より前)
     /// なら、推移を持たない形と同じ文字列になる。
     ///
+    /// **表示幅は `columns - 1` 以下にする。** 最後の桁まで埋めると、端末によっては折り返しの
+    /// 待ちに入る。収まらないときは、**推移を古い秒 (左) から落とす** — 現在値と構成の括弧は
+    /// 削らない。推移を全部落としても収まらない幅 (欠測の形で 53〜55 桁未満) は、そのまま
+    /// 折り返す。幅は 1 文字 1 桁で数える (推移の `▁`〜`█`・`·`・`—` は、既定の設定の端末で
+    /// 1 桁)。
+    ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
-    static func line(rate: Double?, configuration: String, history: History) -> String {
-        line(rate: rate, configuration: configuration, trend: history.trend)
+    static func line(
+        rate: Double?, configuration: String, history: History, columns: Int
+    ) -> String {
+        let bare = line(rate: rate, configuration: configuration, trend: "")
+        // 推移の前の空白 1 桁ぶんも、推移が持ち込む幅に数える。
+        let room = columns - 1 - bare.count - 1
+        let trend = history.trend
+        let fitted = trend.count <= room ? trend : String(trend.suffix(max(0, room)))
+        return line(rate: rate, configuration: configuration, trend: fitted)
     }
 
     private static func line(rate: Double?, configuration: String, trend: String) -> String {
