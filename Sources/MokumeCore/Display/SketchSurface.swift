@@ -93,9 +93,12 @@ final class SketchSurface: NSView {
     /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
 
+    /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前の窓と道具の窓は受ける** (既定)。
+    ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — 窓はホストのもので、ホスト側のドロップと
+    ///   取り合わない。受けるのは macOS の自前の窓だけである。
     init(
         frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int),
-        pointerLock: PointerLock = PointerLock()
+        pointerLock: PointerLock = PointerLock(), acceptsFileDrops: Bool = true
     ) {
         self.pointerLock = pointerLock
         self.device = device
@@ -103,8 +106,9 @@ final class SketchSurface: NSView {
         self.canvasWidth = Double(canvasSize.0)
         self.canvasHeight = Double(canvasSize.1)
         super.init(frame: frame)
-        // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)
-        registerForDraggedTypes([.fileURL])
+        // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)。
+        // 埋め込む面は登録しない: 登録しない面はドラッグの宛先にならず、ホストのビューが受けられる
+        if acceptsFileDrops { registerForDraggedTypes([.fileURL]) }
         // **終わるときに放す** — 終わりの経路 (× の確定・Ctrl-C・`terminate(_:)`) は窓を閉じずに
         // プロセスを畳むことがあり、窓が閉じる知らせだけでは取りこぼす
         NotificationCenter.default.addObserver(

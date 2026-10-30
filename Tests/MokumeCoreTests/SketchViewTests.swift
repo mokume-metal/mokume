@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import MokumeDiagnostics
 import MokumeTestSupport
 import SwiftUI
 import Testing
@@ -32,6 +33,27 @@ private final class EmbeddedProbe: Sketch {
         expose("x", x)
         background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
     }
+}
+
+/// 全画面を頼むスケッチ。描く大きさは 64 × 36 (全画面ならディスプレイの大きさになる)。
+private final class FullScreenProbe: Sketch {
+    var settings: SketchSettings {
+        var settings = SketchSettings(width: 64, height: 36)
+        settings.fullScreenDisplay = 1
+        return settings
+    }
+
+    init() {}
+
+    func draw() {
+        background(LinearRGBA.linear(red: 0, green: 0, blue: 0))
+    }
+}
+
+/// 作者の時計と実時間を、検査から進める。
+private final class TimeBox {
+    var author = 0.0
+    var real = 0.0
 }
 
 /// `body` を評価し直させるための値。
@@ -147,25 +169,195 @@ struct SketchViewTests {
         #expect(probe.draws >= 5)
     }
 
-    /// 同時に動くのは 1 つ。ビューが外れたら印が外れ、次の `SketchView` が動く。
-    @Test("2 つ目は走らず、先のビューを止めたら次が走る")
-    func onlyOneRunsAtATime() throws {
-        let (windowA, first) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
-        defer { windowA.close() }
-        #expect(first.application != nil)
+    /// **条件 1**: 別の `SketchView` が映っている間に出た 2 つ目は、始めず、理由を 1 度だけ言う。先が消えると始まる。
+    @Test("2 つ目は待ち、理由を 1 度だけ名乗り、先のビューが止まると始まる")
+    func theSecondWaitsAndStartsWhenTheFirstEnds() throws {
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            let (windowA, first) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
+            defer {
+                first.stop()
+                windowA.close()
+            }
+            #expect(first.application != nil)
 
-        let (windowB, second) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
-        defer { windowB.close() }
-        #expect(second.application == nil, "1 つ走っているのに、2 つ目が走り出した")
+            let churn = Churn()
+            let (windowB, second) = try embed(EmbeddingApp(churn: churn) { EmbeddedProbe() })
+            defer {
+                second.stop()
+                windowB.close()
+            }
+            #expect(second.application == nil, "1 つ走っているのに、2 つ目が走り出した")
+            #expect(second.isWaiting)
+            // 待っている間にホストが評価し直しても、理由は言い直さない
+            for _ in 0..<10 {
+                churn.tick += 1
+                windowB.contentView?.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0.contains(SketchApplication.embeddedWaitNotice) }.count == 1,
+                "待つ理由が 1 度だけ出ていない: \(said)")
+            #expect(
+                !said.contains { $0.contains(SketchApplication.secondRunRefusal) },
+                "run() の断りの文面を言った (SketchView は断られず待つ)")
 
-        first.stop()
-        first.stop()  // 何度呼んでもよい
-        let (windowC, third) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
-        defer {
-            third.stop()
-            windowC.close()
+            first.stop()
+            first.stop()  // 何度呼んでもよい
+            let started = try #require(second.application, "先を止めても、2 つ目が始まらない")
+            #expect(!second.isWaiting)
+            #expect(started.screenLink.isAttached, "窓に載っているのに駆動源が繋がっていない")
+            #expect(
+                Diagnostics.takeUnreported().isEmpty, "始まるときに、余計な警告を言った")
         }
-        #expect(third.application != nil, "先を止めても、印が外れていない")
+    }
+
+    /// 順番は待ち始めた順で、待ちながら外れたビューは飛ばされる。
+    @Test("待っているビューは待ち始めた順に始まり、待ちながら外れたものは始まらない")
+    func waitersStartInOrderAndALeavingOneIsSkipped() throws {
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            var windows: [NSWindow] = []
+            var views: [SketchHostView] = []
+            for _ in 0..<4 {
+                let (window, view) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
+                windows.append(window)
+                views.append(view)
+            }
+            defer {
+                views.forEach { $0.stop() }
+                windows.forEach { $0.close() }
+            }
+            let (a, b, c, d) = (views[0], views[1], views[2], views[3])
+            #expect(a.application != nil)
+            #expect([b, c, d].allSatisfy { $0.application == nil && $0.isWaiting })
+
+            c.stop()  // 待ちながら外れた
+            a.stop()
+            #expect(b.application != nil, "先頭の待ちが始まらない")
+            #expect(c.application == nil, "外れたビューが始まった")
+            #expect(d.application == nil && d.isWaiting, "先頭が走り始めたのに、次も始まった")
+
+            b.stop()
+            #expect(d.application != nil, "次の待ちが始まらない")
+            #expect(c.application == nil)
+        }
+    }
+
+    /// **条件 2**: `SketchView` ではメニューバーの名乗りを出さない。
+    @Test("埋め込みでは、猶予を越えて走っても名乗りを出さない")
+    func noPresenceInsideTheHost() throws {
+        let time = TimeBox()
+        let runtime = try SketchRuntime(
+            sketch: EmbeddedProbe(), gpu: RenderDevice(), clock: .wallClock,
+            now: { time.author }, presenceClock: { time.real }, embedded: true)
+        try runtime.advance()
+        time.author += 100 * SketchPresence.grace
+        time.real += 100 * SketchPresence.grace
+        try runtime.advance()
+        #expect(!runtime.isPresenceAnnounced, "ホストの中で名乗りを出した")
+    }
+
+    /// 対照: 同じ時計の進みで、窓で走るなら名乗る長さに達する (上の検査が空振りでないことの裏)。名乗りそのものは
+    /// 起こさない — 2 度目の `advance()` を呼ばず、経過だけを読む。
+    @Test("対照: 窓で走るなら、同じ時計の進みで名乗る長さに達する")
+    func theSameClocksWouldAnnounceInAWindow() throws {
+        let time = TimeBox()
+        let runtime = try SketchRuntime(
+            sketch: EmbeddedProbe(), gpu: RenderDevice(), clock: .wallClock,
+            now: { time.author }, presenceClock: { time.real })
+        try runtime.advance()
+        time.author += 100 * SketchPresence.grace
+        time.real += 100 * SketchPresence.grace
+        #expect(SketchPresence.shouldAnnounce(runningFor: runtime.presenceElapsed))
+        #expect(!runtime.isPresenceAnnounced)
+    }
+
+    /// `SketchView` が組むランタイムが、埋め込みの組み方になっている (名乗り・全画面を外す印が立つ)。
+    @Test("SketchView が走らせるものは、埋め込みの組み方である")
+    func theHostRunsTheEmbeddedWay() throws {
+        let (window, view) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
+        defer {
+            view.stop()
+            window.close()
+        }
+        #expect(try #require(view.application).runsEmbedded)
+    }
+
+    /// **条件 2**: `fullScreen(_:)` を読まず、1 度だけ警告する。
+    @Test("埋め込みでは、全画面を頼んでも、ディスプレイの一覧を読まず、設定の大きさのまま 1 度だけ警告する")
+    func fullScreenIsNotReadInsideTheHost() throws {
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            let runtime = try SketchRuntime(
+                sketch: FullScreenProbe(), gpu: RenderDevice(), clock: nil, now: { 0 },
+                displays: {
+                    Issue.record("ディスプレイの一覧を読んだ")
+                    return []
+                }, embedded: true)
+            #expect(runtime.fullScreenDisplay == nil)
+            #expect(runtime.target.width == 64 && runtime.target.height == 36)
+            let said = Diagnostics.takeUnreported()
+            #expect(said == [SketchRuntime.embeddedFullScreenNotice], "警告が 1 度だけ出ていない: \(said)")
+        }
+    }
+
+    /// 対照: 埋め込みでなければ、同じ頼みでディスプレイを選びに行く (読まない検査が空振りでないことの裏)。
+    @Test("対照: 窓で開くなら、全画面を頼むとディスプレイの一覧を読み、選べなければ断る")
+    func fullScreenIsReadOutsideTheHost() throws {
+        var read = 0
+        #expect(throws: RenderFailure.self) {
+            _ = try SketchRuntime(
+                sketch: FullScreenProbe(), gpu: RenderDevice(), clock: nil, now: { 0 },
+                displays: {
+                    read += 1
+                    return []
+                })
+        }
+        #expect(read == 1)
+    }
+
+    /// 同じことを、ホストの窓の中で通して: 窓は変わらず、絵の大きさは設定のまま、警告は 1 度だけ。
+    @Test("SketchView に全画面のスケッチを載せても、ホストの窓は変わらず、警告は 1 度だけ")
+    func aFullScreenSketchLeavesTheHostWindowAlone() throws {
+        try Diagnostics.$digest.withValue(WarningDigest()) {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 200, height: 160), styleMask: [.titled],
+                backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            let hosting = NSHostingView(rootView: SketchView(FullScreenProbe()))
+            window.contentView = hosting
+            window.orderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            let frame = window.frame
+            let view = try #require(Self.hostView(in: hosting))
+            defer {
+                view.stop()
+                window.close()
+            }
+            let application = try #require(view.application)
+            refresh(application, 5)
+
+            #expect(!window.styleMask.contains(.fullScreen), "ホストの窓を全画面にした")
+            #expect(window.frame == frame, "ホストの窓の大きさを変えた")
+            let surface = try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
+            #expect(surface.canvasWidth == 64, "描く大きさがディスプレイの大きさになった")
+            let said = Diagnostics.takeUnreported()
+            #expect(
+                said.filter { $0 == SketchRuntime.embeddedFullScreenNotice }.count == 1,
+                "警告が 1 度だけ出ていない: \(said)")
+        }
+    }
+
+    /// 決定 (2026-10-30): 埋め込みの面はファイルのドロップを受けない (ホスト側のドロップと取り合わない)。
+    @Test("埋め込みの面は、ファイルのドロップを受けるよう登録しない")
+    func theEmbeddedSurfaceDoesNotAcceptFileDrops() throws {
+        let (window, view) = try embed(EmbeddingApp(churn: Churn()) { EmbeddedProbe() })
+        defer {
+            view.stop()
+            window.close()
+        }
+        let surface = try #require(view.subviews.compactMap { $0 as? SketchSurface }.first)
+        #expect(surface.registeredDraggedTypes.isEmpty, "ドロップを受けるよう登録している")
     }
 
     /// 駆動源は窓に載ったときに繋ぎ、外れたら畳む。

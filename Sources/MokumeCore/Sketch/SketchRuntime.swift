@@ -250,6 +250,13 @@ public final class SketchRuntime {
     /// 読み直すと、選んだディスプレイと描く大きさが別物になりうる。
     let fullScreenDisplay: Display?
 
+    /// ホストのアプリの中 (``SketchView``) で走るか。**組み立てのときに決まる。**
+    ///
+    /// 窓・メニューバー・全画面はホストのもので、ここは持たない: 全画面のディスプレイを選ばず
+    /// (``embeddedStage(for:)``)、メニューバーの名乗り (``SketchPresence``) も出さない
+    /// (``updatePresence()``)。
+    let isEmbedded: Bool
+
     /// 描く大きさを決める。全画面ならディスプレイを選び、その全画面の大きさにする ([#2020])。
     ///
     /// **窓で開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの顔ぶれに
@@ -269,6 +276,23 @@ public final class SketchRuntime {
         let display = try Display.choose(number, from: displays())
         return (display.width, display.height, display)
     }
+
+    /// ホストのアプリの中 (``SketchView``) で走るときの、描く大きさ。**全画面を読まない** — 窓はホストのもので、
+    /// ディスプレイの一覧も読まない。全画面を頼んでいたら、窓を変えずに 1 度だけ言う。
+    ///
+    /// 描く大きさは設定の ``SketchSettings/width``・``SketchSettings/height`` (窓で開くときと同じ)。
+    static func embeddedStage(
+        for settings: SketchSettings
+    ) -> (width: Int, height: Int, display: Display?) {
+        if settings.fullScreenDisplay != nil {
+            Diagnostics.warn(embeddedFullScreenNotice)
+        }
+        return (settings.width, settings.height, nil)
+    }
+
+    /// ``SketchView`` で全画面を頼まれたときに言う 1 行。検査が読む。
+    static let embeddedFullScreenNotice =
+        "SketchView ignores fullScreen(_:): the window belongs to the host app, so mokume does not change it"
 
     /// 出す先の面。座標の `scale` 倍の大きさで作る。
     ///
@@ -601,6 +625,8 @@ public final class SketchRuntime {
     ///   - opensFacets: 区画 `observe` / `input` / `params` が在れば開くか。**書き出しの子
     ///     (`SketchApplication` が書き出しの頼みつきで組むとき) だけが偽にする** ([#1619])。
     ///     保存された値の復元は区画と別の口なので、偽でも戻る。
+    ///   - embedded: ホストのアプリの中 (``SketchView``) で走るか (``isEmbedded``)。**`SketchView` だけが立てる。**
+    ///     全画面を読まず・メニューバーの名乗りを出さない。
     ///
     /// [#1642]: https://github.com/mokume-metal/mokume/issues/1642
     /// [#1619]: https://github.com/mokume-metal/mokume/issues/1619
@@ -616,12 +642,18 @@ public final class SketchRuntime {
         opensFacets: Bool = true,
         handover: ClockHandover? = nil,
         outputScale: Int = 1,
-        presenceClock: @escaping () -> Double = { CACurrentMediaTime() }
+        presenceClock: @escaping () -> Double = { CACurrentMediaTime() },
+        embedded: Bool = false
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
         try Self.checkWindowScale(settings.windowScale)
-        let stage = try Self.stage(for: settings, displays: displays)
+        let stage =
+            if embedded {
+                Self.embeddedStage(for: settings)
+            } else {
+                try Self.stage(for: settings, displays: displays)
+            }
         let clock =
             clock
             ?? (onScreen
@@ -631,6 +663,7 @@ public final class SketchRuntime {
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
         self.fullScreenDisplay = stage.display
+        self.isEmbedded = embedded
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         // **出す先は座標の倍率倍。** 大きさの上限 (面の一辺 16384) は掛けた後の数で検める — 越えたら、
         // 最初のフレームを描く前に、書き出す大きさを名乗って断る
@@ -687,6 +720,7 @@ public final class SketchRuntime {
         self.declaredFrameRate = settings.frameRate
         self.windowScale = settings.windowScale
         self.fullScreenDisplay = stage.display
+        self.isEmbedded = false
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: stage.width, height: stage.height)
         self.canvas = try Canvas(
@@ -1818,6 +1852,10 @@ public final class SketchRuntime {
     /// [#3119]: https://github.com/mokume-metal/mokume/issues/3119
     /// [#1527]: https://github.com/mokume-metal/mokume/issues/1527
     private func updatePresence() {
+        // **ホストのアプリの中では名乗らない** (``SketchView``)。メニューバーの名乗りは、バンドルを持たない
+        // 実行ファイルが Dock で名乗れないために置いたもので、ホストは自分の名前と Dock を持つ。`presence` は
+        // lazy なので、触れなければ建たない
+        guard !isEmbedded else { return }
         guard firstAdvanceAt != nil else {
             firstAdvanceAt = now()
             firstAdvanceRealAt = presenceClock()

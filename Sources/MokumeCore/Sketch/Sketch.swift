@@ -234,9 +234,10 @@ public protocol Sketch: AnyObject, SketchPart {
     /// (``mouseWheel(deltaX:deltaY:)`` と同じ罠)。p5.js の `drop` は要素のメソッドで、中身を持つ `p5.File` を
     /// 渡すので、名前も渡すものも違う。
     ///
-    /// **macOS の窓で受ける** (自前の窓と、`mokume watch` の道具の窓)。iOS・`SketchView` のホストからの
-    /// 受け方と、セキュリティスコープ付きの URL は、まだ決めていない
-    /// ([#2604](https://github.com/mokume-metal/mokume/issues/2604)・[#2605](https://github.com/mokume-metal/mokume/issues/2605))。
+    /// **macOS の自前の窓と、`mokume watch` の道具の窓だけで受ける。** ``SketchView`` に埋め込んだ面は受けない —
+    /// 窓はホストのもので、ホスト側のドロップと取り合わない。ホストからの受け方は、要る作例が来たら決める
+    /// ([#2604](https://github.com/mokume-metal/mokume/issues/2604))。iOS と、セキュリティスコープ付きの URL は、
+    /// まだ決めていない ([#2605](https://github.com/mokume-metal/mokume/issues/2605))。
     /// 外から送る線の `{"type": "fileDropped", "paths": ["/tmp/a.png"], "x": 10, "y": 20}` も同じ呼び出しになる。
     ///
     /// **`mokume watch` の道具の窓では、1 回の落としが大きすぎると届かない。** 窓が拾った落としは、子の標準入力へ
@@ -619,6 +620,8 @@ public struct SketchSettings: Equatable, Sendable {
     ///   手で全画面にする (起動のときの 1 行がそう言う)
     /// - **`mokume render` では窓を開かない。** 書き出す絵の大きさは、そのディスプレイで全画面に
     ///   したときの大きさになる
+    /// - **``SketchView`` では読まない。** 窓はホストのものなので、窓は変えず、描く大きさは
+    ///   ``SketchSettings/width``・``SketchSettings/height`` のまま、1 度だけ言う
     /// - 複数のディスプレイにまたがる 1 枚の絵 (手本の `SPAN`) と、重なりのぼかしは持たない。
     ///   プロジェクションマッピングの道具へ渡す仕事である
     public static func fullScreen(_ display: Int = 1) -> SketchSettings {

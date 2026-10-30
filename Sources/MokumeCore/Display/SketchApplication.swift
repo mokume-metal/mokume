@@ -269,8 +269,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     private let windowRelay = WindowRelay()
 
-    /// いま走らせているもの。``run()`` の間だけ入る。**入っていれば 2 つ目の ``run()`` を断る** (#2027)。
-    private static var running: SketchApplication?
+    /// いま走らせているもの。``run()`` の間と、``SketchView`` の中で走っている間だけ入る。
+    /// **入っていれば 2 つ目の ``run()`` を断り** (#2027)、2 つ目の ``SketchView`` は待たせる。
+    ///
+    /// 空になったら、待っている ``SketchView`` の先頭を起こす (``wakeNextEmbeddedWaiter()``)。
+    private static var running: SketchApplication? {
+        didSet {
+            if oldValue != nil, running == nil { wakeNextEmbeddedWaiter() }
+        }
+    }
+
+    /// 順番を待っている ``SketchView`` (待ち始めた順)。**弱く持つ** — 待ちながら消えたビューを起こさない。
+    private static var embeddedWaiters: [WeakEmbeddedWaiter] = []
 
     /// 2 つ目の ``run()`` を断ったと、もう言ったか。**言うのはプロセスで 1 度だけ。**
     private static var refusalAnnounced = false
@@ -388,6 +398,14 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **頼みの合図が在って読めなければ、窓へ倒さず投げる** (``RenderFailure/unreadableRenderRequest(value:)``・
     /// [#2481](https://github.com/mokume-metal/mokume/issues/2481))。
     public convenience init(sketch: any Sketch, gpu: RenderDevice) throws(RenderFailure) {
+        try self.init(sketch: sketch, gpu: gpu, embedded: false)
+    }
+
+    /// ホストのアプリの中 (``SketchView``) で走らせる組み方を選べる入口。
+    ///
+    /// - Parameter embedded: `true` なら、全画面 (``SketchSettings/fullScreenDisplay``) を読まず・メニューバーの
+    ///   名乗りを出さない (``SketchRuntime/isEmbedded``)。窓もアプリの寿命もホストのものである。
+    convenience init(sketch: any Sketch, gpu: RenderDevice, embedded: Bool) throws(RenderFailure) {
         // **窓の持ち主の合図を、ここで読んで環境から消す** (``SharedFrameSurface/launchOwner``)。
         // スケッチが `setup()` で子を起こしても、合図はもう継がれない
         _ = SharedFrameSurface.launchOwner
@@ -396,7 +414,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
         try self.init(
             sketch: sketch, gpu: gpu, render: try RenderRequest.startup(),
-            handover: ClockHandover.startup())
+            handover: ClockHandover.startup(), embedded: embedded)
     }
 
     /// 書き出しの頼みを渡せる入口。**検査から渡す** — 本番は起動の瞬間に環境から読む
@@ -411,10 +429,12 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///     繋がっているもの。**検査から差し替える。**
     ///   - handover: 作り直しをまたいで作者の時計を渡す口 (`watch --keep-time`・#2414)。**書き出しの頼みが
     ///     在れば使わない** — 書き出しは 0 秒から、同じ引数から同じ動きを出す。
+    ///   - embedded: ホストのアプリの中 (``SketchView``) で走らせるか (``SketchRuntime/isEmbedded``)。
     init(
         sketch: any Sketch, gpu: RenderDevice, render: RenderRequest?,
         displays: () -> [Display] = { Display.connected },
-        handover: ClockHandover? = nil
+        handover: ClockHandover? = nil,
+        embedded: Bool = false
     ) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
@@ -435,7 +455,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             sketch: sketch, gpu: gpu, clock: clock, now: { CACurrentMediaTime() },
             displays: displays, onScreen: render == nil, opensFacets: render == nil,
             handover: Self.handover(given: handover, render: render),
-            outputScale: render?.scale ?? 1)
+            outputScale: render?.scale ?? 1, embedded: embedded)
         self.clock = runtime.clock
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
         runtime.defersEnlargedGlyphBakes = render == nil
@@ -532,6 +552,41 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     // MARK: - ホストのアプリの中で走らせる (SketchView・#3511)
 
+    /// 別のスケッチが走っているか。**``SketchView`` が、始めるか待つかを決めるのに読む。**
+    static var isOccupied: Bool { running != nil }
+
+    /// ``SketchView`` が待たされるときに、1 度だけ言う 1 行。検査が読む。
+    ///
+    /// ``secondRunRefusal`` (`run()` の断り) とは別の文面である — `SketchView` は断られて空のまま残るのでなく、
+    /// 先のスケッチが終われば始まる。
+    static let embeddedWaitNotice =
+        "A sketch is already running in this process — this SketchView waits and starts when it ends (one sketch per process)"
+
+    /// 順番待ちの列へ並ぶ。**同じものを 2 度並べない。**
+    static func enqueueEmbeddedWaiter(_ waiter: some EmbeddedWaiter) {
+        embeddedWaiters.removeAll { $0.waiter == nil || $0.waiter === waiter }
+        embeddedWaiters.append(WeakEmbeddedWaiter(waiter: waiter))
+    }
+
+    /// 順番待ちの列から外れる (待ちながらビューが外れた)。
+    static func dequeueEmbeddedWaiter(_ waiter: some EmbeddedWaiter) {
+        embeddedWaiters.removeAll { $0.waiter == nil || $0.waiter === waiter }
+    }
+
+    /// 走っているものが無くなった。**先頭から順に、誰かが走り始めるまで** 起こす。
+    ///
+    /// 起こされたビューは自分で始める (``EmbeddedWaiter/vacancyOpened()``)。始められなかった (組み立てが
+    /// 投げた) ものは言って、次を起こす。走り始めたら残りは待ったままである。
+    private static func wakeNextEmbeddedWaiter() {
+        while running == nil, !embeddedWaiters.isEmpty {
+            let next = embeddedWaiters.removeFirst()
+            next.waiter?.vacancyOpened()
+        }
+    }
+
+    /// ホストのアプリの中 (``SketchView``) で走らせる組み方か (``SketchRuntime/isEmbedded``)。検査が読む。
+    var runsEmbedded: Bool { runtime.isEmbedded }
+
     /// 埋め込んだ面が載っているホストの窓。載っていなければ `nil`。
     private var embeddedHostWindow: NSWindow? {
         if case .embedded(let surface, _) = outlet { surface.window } else { nil }
@@ -548,17 +603,21 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// - ディスプレイのスリープの断り: 画面が消えるのを断るかはホストが決める (止まれば駆動源の
     ///   予備が叩く・``ScreenDisplayLink``)
     ///
-    /// **1 プロセスに走らせられるのは 1 つだけ** (``refusesSecondRun()``)。既に走っているものが在れば、
-    /// 断ったことを 1 度だけ言って `nil` を返す。
+    /// **1 プロセスに走らせられるのは 1 つだけ。** 既に走っているものが在れば、**黙って** `nil` を返す。
+    /// 待たせて名乗るのは呼び出し側 (``SketchView``・``isOccupied``・``enqueueEmbeddedWaiter(_:)``) — `run()` の
+    /// 断り (``refusesSecondRun()``) は使わない。あれは「この呼び出しは何もしない」と言うもので、`SketchView` は
+    /// 先が終われば始まり、`Sketch.main()` が断る 1 度の名乗りも食わない。
     ///
     /// 駆動源は面がホストの窓に載ってから ``attachEmbeddedDriver()`` で繋ぐ。終わるときは
     /// ``stopEmbedded()`` を呼ぶ。
     func startEmbedded() -> SketchSurface? {
-        guard !SketchApplication.refusesSecondRun() else { return nil }
+        guard !SketchApplication.isOccupied else { return nil }
+        // **ファイルのドロップは受けない** (`acceptsFileDrops: false`)。窓はホストのもので、ホスト側のドロップと
+        // 取り合わない。受けるのは macOS の自前の窓だけ (``Sketch/fileDropped(_:)``)
         let surface = SketchSurface(
             frame: NSRect(x: 0, y: 0, width: runtime.target.width, height: runtime.target.height),
             device: gpu.device, input: runtime.input,
-            canvasSize: (runtime.target.width, runtime.target.height))
+            canvasSize: (runtime.target.width, runtime.target.height), acceptsFileDrops: false)
         surface.wantsLayer = true
         surface.autoresizingMask = [.width, .height]
         // **つまみは絵の外に立つ** (ADR-0030 決定 1)。`Sketch.main()` の窓と同じく重ねる
@@ -1327,6 +1386,21 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             + " foundation; start it again to clear that"
     }
 
+}
+
+// MARK: - SketchView の順番待ち (#3509)
+
+/// 別のスケッチが終わるのを待っている ``SketchView``。
+@MainActor
+protocol EmbeddedWaiter: AnyObject {
+    /// 走っているものが無くなった。**自分で始める** (始められなくても列からは外れている)。
+    func vacancyOpened()
+}
+
+/// 順番待ちの列の 1 件。**待ちながら消えたビューを強く持たない。**
+@MainActor
+struct WeakEmbeddedWaiter {
+    weak var waiter: (any EmbeddedWaiter)?
 }
 
 // MARK: - AppKit との接点
