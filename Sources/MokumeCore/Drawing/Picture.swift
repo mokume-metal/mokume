@@ -13,27 +13,32 @@ import Metal
 enum Picture {
     /// 読み込んだ (あるいは画素から作った) 絵。
     case loaded(Image)
-    /// 自分で描いた場所。
-    case drawn(RenderTarget)
+    /// 自分で描いた場所。**`width` / `height` は座標の大きさ**で、`target` の画素数とは限らない
+    /// (書き出しの倍率 `mokume render --scale` の下では、描き場所は倍率の画素で刻まれる・[#3453])。
+    ///
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+    case drawn(RenderTarget, width: Int, height: Int)
 
+    /// 絵の大きさ。**置く大きさ・切り出し・読み取り位置の割り算は、すべてこの座標の大きさで読む。**
+    /// 読み込んだ絵では画素数、描き場所では座標の大きさ (倍率 1 では画素数と同じ)。
     var width: Int {
         switch self {
         case .loaded(let image): image.width
-        case .drawn(let target): target.width
+        case .drawn(_, let width, _): width
         }
     }
 
     var height: Int {
         switch self {
         case .loaded(let image): image.height
-        case .drawn(let target): target.height
+        case .drawn(_, _, let height): height
         }
     }
 
     var texture: any MTLTexture {
         switch self {
         case .loaded(let image): image.texture
-        case .drawn(let target): target.texture
+        case .drawn(let target, _, _): target.texture
         }
     }
 
@@ -41,7 +46,7 @@ enum Picture {
     var held: HeldTexture {
         switch self {
         case .loaded(let image): HeldTexture(texture: image.texture, owner: image)
-        case .drawn(let target): HeldTexture(texture: target.texture, owner: target)
+        case .drawn(let target, _, _): HeldTexture(texture: target.texture, owner: target)
         }
     }
 

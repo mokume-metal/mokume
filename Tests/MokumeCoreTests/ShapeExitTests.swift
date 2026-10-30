@@ -151,6 +151,7 @@ enum ShapeExit {
         let unused = "記録の間は使わない (組み込みの立体は置き場所ごとに頂点へ焼き、平面は畳まない)"
         let untouched: [String: String] = [
             "width": construction, "height": construction,
+            "outputScale": "\(construction)。書き出しの倍率 (#3453)",
             "target": "\(construction)。中の露出と明るさの丸め方 (target.brightness) は断る",
             "output": construction, "upscaleStage": construction, "gpu": construction,
             "frameRing": construction, "pipeline": construction, "argumentTable": construction,
