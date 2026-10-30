@@ -221,12 +221,22 @@ nonisolated enum MovieSoundFixture {
         return url
     }
 
-    /// 標本列の零交差の数から、周波数を割り出す。
+    /// 標本列の零交差の数から、周波数を割り出す。**標本の 25%〜75% の中ほどだけで数える。** 全体で数えると、
+    /// AAC の先頭の余白 (priming) や末尾の無音に乗る、符号化の小さな揺れの交差まで数えてしまう
+    /// (hosted の macOS の `.mov` で 1032.8 Hz になった)。中ほどは振幅が十分ある。AAC でないものも同じ測り方にそろえる。
     static func frequency(_ samples: [Float], sampleRate: Float) -> Float {
+        let middle = samples[(samples.count / 4)..<(samples.count * 3 / 4)]
         var crossings = 0
-        for index in 1..<samples.count where (samples[index - 1] < 0) != (samples[index] < 0) { crossings += 1 }
-        return Float(crossings) / 2 / (Float(samples.count) / sampleRate)
+        for index in (middle.startIndex + 1)..<middle.endIndex where (samples[index - 1] < 0) != (samples[index] < 0) {
+            crossings += 1
+        }
+        return Float(crossings) / 2 / (Float(middle.count) / sampleRate)
     }
+
+    /// 周波数の許容 (Hz)。**別の音 (2500 Hz のトラック) と取り違えないこと**を見るので、書いた音 (1000 Hz) との差の
+    /// 1500 Hz に対し、AAC の揺れを十分に許す 5% (50 Hz)。中ほどの 0.5 秒で数えれば、数え誤りは 2 Hz 程度で、
+    /// 手元の実測 (±1 Hz 以内) より 1 桁以上広い。
+    static let frequencyTolerance: Float = 50
 }
 
 /// `loadSound` が動画の容器の音声トラックを読むこと (#3452)。`loadSound` の読み込みは `AudioFile.load` で、ここは
@@ -263,7 +273,8 @@ struct MovieSoundFileTests {
         // 余白を除いた長さを読み、音声トラックの長さの側は余白を含めるかが OS の世代で違いうるので、両方を許す幅にする
         let tolerance = Double(2112 + 1024) / 48_000
         #expect(abs(seconds - trackSeconds) < tolerance, "読んだ \(seconds) 秒・音声トラック \(trackSeconds) 秒")
-        #expect(abs(Fixture.frequency(read.samples, sampleRate: read.sampleRate) - 1000) < 10)
+        let tone = Fixture.frequency(read.samples, sampleRate: read.sampleRate)
+        #expect(abs(tone - 1000) < Fixture.frequencyTolerance, "周波数 \(tone) Hz")
     }
 
     @Test("音声トラックの無い動画は、読めない音声 (unreadable) として断り、落ちない")
@@ -282,7 +293,7 @@ struct MovieSoundFileTests {
         let read = try AudioFile.read(url, path: "two.mov")
         #expect(read.samples.count == Fixture.sampleRate, "\(read.samples.count) 標本")
         let tone = Fixture.frequency(read.samples, sampleRate: read.sampleRate)
-        #expect(abs(tone - 1000) < 10, "周波数 \(tone) Hz")
+        #expect(abs(tone - 1000) < Fixture.frequencyTolerance, "周波数 \(tone) Hz")
     }
 
     @Test("音声が映像より遅れて始まる (頭に空の編集区間のある) 動画は、音声トラックの頭から読む (遅れた分の無音は足されない)")
