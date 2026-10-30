@@ -13,16 +13,37 @@
 // [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
 extension Canvas {
     /// 画面とは別の描き場所を作る。
+    ///
+    /// **座標の大きさは `width` × `height` のまま、画素は書き出しの倍率 (`outputScale`) を掛けて刻む**
+    /// ([#3453])。本体の面と同じ組み立て (`init(output:gpu:pixelDensity:upscale:outputScale:)`) の 1 本を通るので、
+    /// 線の太さ・効果の半径・切り抜き・断片・字の焼き場の鍵は、本体の面と同じ読みで倍率を掛ける。作る側が
+    /// 描き場所なら、その倍率を引き継ぐ。倍率 1 (窓・`--scale` の無い書き出し) では、これまでと同じ大きさ・同じ経路。
+    ///
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
-        // **大きさはそのまま関所 (`RenderTarget`) へ渡す。** 手前で 1 へ丸めると、1 を割る
-        // 指定が `invalidSize` に届かず、1×1 の描き場所が黙って返る (#1642)
-        let target = try RenderTarget(gpu: gpu, width: width, height: height)
+        let scale = outputScale
+        // **頼まれた大きさの範囲は、掛ける前に検める。** 掛けた後で検めると、負の大きさが倍率で
+        // 別の負の数になり、文面が頼んだ数を名乗れない。上限だけを越えるときは倍率を名指す
+        // (``RenderFailure/sizeBeyondOutputScale(width:height:scale:)``)
+        try RenderDevice.checkTextureSize(width: width, height: height)
+        let (scaledWidth, widthOverflowed) = width.multipliedReportingOverflow(by: scale)
+        let (scaledHeight, heightOverflowed) = height.multipliedReportingOverflow(by: scale)
+        guard !widthOverflowed, !heightOverflowed,
+            RenderDevice.textureSides.contains(scaledWidth),
+            RenderDevice.textureSides.contains(scaledHeight)
+        else {
+            throw .sizeBeyondOutputScale(width: width, height: height, scale: scale)
+        }
+        // **手前で 1 へ丸めない。** 1 を割る指定が `invalidSize` に届かず、1×1 の描き場所が黙って
+        // 返る (#1642)。上の検めを通った大きさだけを関所 (`RenderTarget`) へ渡す
+        let target = try RenderTarget(gpu: gpu, width: scaledWidth, height: scaledHeight)
         // **透明で始める。** 確保したままの中身は決まっていないが、`RenderTarget` が作る時点で
         // 透明な黒に塗ってある (#766) — ここで塗り直さない。塗り直すと投入が 1 本増え、
         // 投入済みの全部が終わるまで待つ (#2374)。以後は自動では消さない — 消さないからこそ、
         // 前のフレームの上に積み上がる絵が書ける。奥行きは作りたての面では持ち越さない
         // 扱い (`depthIsHeld = false`) なので、最初の描き切りが必ず消す
-        let graphics = try Canvas(target: target, gpu: gpu)
+        let graphics = try Canvas(
+            output: target, gpu: gpu, pixelDensity: 1, upscale: .spatial, outputScale: scale)
         // 時刻と刻み・揺らぎの種と細かさの置き場を、作った面と同じものに繋ぐ (``bind(_:)``)
         bind(graphics)
         // 字形を置くかも引き継ぐ (``placesGlyphs``・#1559)。描き場所に書いた字も同じ絵に載る

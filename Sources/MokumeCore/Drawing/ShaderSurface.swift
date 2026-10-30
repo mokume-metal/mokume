@@ -83,7 +83,7 @@ public enum ShaderSurface {
     var picture: Picture? {
         switch self {
         case .image(let image): .loaded(image)
-        case .graphics(let canvas): .drawn(canvas.output)
+        case .graphics(let canvas): canvas.drawnPicture
         case .previousFrame: nil
         }
     }

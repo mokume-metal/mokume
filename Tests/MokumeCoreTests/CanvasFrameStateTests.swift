@@ -51,7 +51,7 @@ extension CanvasTests {
             style.textWrap = .character
             style.imageMode = .center
             style.tint = .linear(red: 0.7, green: 0.8, blue: 0.9)
-            style.picture = .drawn(canvas.target)
+            style.picture = canvas.drawnPicture
         style.gradient = ResolvedGradient.resolve(
             .linearGradient([(.linear(red: 1, green: 0, blue: 0), 0), (.linear(red: 0, green: 0, blue: 1), 1)], from: [0, 0], to: [10, 0]),
             under: .identity
@@ -528,6 +528,7 @@ extension CanvasTests {
             let testing = "検査の差し込み・上限。製品の経路では既定のまま"
             return [
                 "width": construction, "height": construction,
+                "outputScale": "\(construction)。書き出しの倍率で、描き場所の作り方が引き継ぐ (#3453)",
                 "target": "\(construction)。中のフレームに属する状態は nestedFrameState が見る (#1678)",
                 "output": construction, "upscaleStage": construction, "gpu": construction,
                 "frameRing": construction, "pipeline": construction, "argumentTable": construction,

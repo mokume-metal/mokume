@@ -54,6 +54,13 @@ public final class Canvas {
     /// 高さ。**座標の単位。**
     public let height: Float
 
+    /// 出す画素の倍率 (`mokume render --scale`・[#2441])。座標 1 つが出す画素いくつか。**1 のとき以外は書き出しの
+    /// 子の本体の面と、そこから作った描き場所 (``createGraphics(_:_:)``・[#3453]) だけが持つ。**
+    ///
+    /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
+    /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+    let outputScale: Int
+
     /// 実際に刻む幅 (画素)。細かさが 1 で書き出しの倍率も掛けていなければ ``width`` と同じ。
     public var pixelWidth: Int { target.width }
     /// 実際に刻む高さ (画素)。
@@ -2762,6 +2769,7 @@ public final class Canvas {
         // **座標の大きさ。** 出す先が倍率で大きくても、スケッチが書く座標は倍率の前のまま
         self.width = Float(output.width / outputScale)
         self.height = Float(output.height / outputScale)
+        self.outputScale = outputScale
         self.pipeline = try gpu.shapePipeline(pixelFormat: RenderTarget.pixelFormat)
         self.argumentTable = try ShapePipeline.makeArgumentTable(gpu: gpu)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
