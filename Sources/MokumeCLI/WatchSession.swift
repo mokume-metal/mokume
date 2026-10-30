@@ -1387,6 +1387,9 @@ final class WatchSession {
         guard !stopRequested else { return notStartedForStopping() }
 
         let relaunchStarted = hooks.now()
+        // **起こせなかった回に、前の世代を元の役へ戻すための控え。** 重ねる見張りは、起こす前に
+        // 走っている世代を `outgoing` へ回す (下)。その乗り換えの待ち印もここで控える
+        var handedOver: (process: Process, wasAwaitingPromotion: Bool)?
         // **どの世代の合図か区別できる回だけ測る。** 前の世代がまだ乗り換わらずに生きて
         // いると、次の合図はそちらのものかもしれない。新しいライブラリの子は目録が子の番号を名乗り、
         // 合図は待っている世代のものだけを受ける (``generationPromoted(pid:)``・#2982) が、番号を
@@ -1412,6 +1415,7 @@ final class WatchSession {
             if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
                 return early
             }
+            handedOver = child.map { ($0, awaitingPromotion) }
             outgoing = child
             child = nil
         } else {
@@ -1445,7 +1449,17 @@ final class WatchSession {
         unblockWriting(to: child)
         expectsGeneration(generationPIDs(of: child))
         let relaunchMs = (hooks.now() - relaunchStarted) * 1000
-        awaitingPromotion = overlapsGenerations && child != nil
+        let launchedNew = child != nil
+        awaitingPromotion = overlapsGenerations && launchedNew
+        // **起こせなかった回は、走っている世代の役を動かさない** ([#3481](https://github.com/mokume-metal/mokume/issues/3481))。
+        // 前の世代は `outgoing` へ回したままだと、「前の版」と取り違えられる — 乗り換えを待っていた世代が
+        // 待ちを忘れて、自分の番号の合図で畳まれる。映っていた世代が、次の保存で畳まれるのに台へ手放したと
+        // 伝わらない。走っているものは落とさない (作り直しが通らない回と同じ顔)。回す前の役と待ち印へ戻す
+        if !launchedNew, let handedOver, outgoing === handedOver.process, handedOver.process.isRunning {
+            child = handedOver.process
+            outgoing = nil
+            awaitingPromotion = handedOver.wasAwaitingPromotion
+        }
 
         let timings = BuildReport.Timings(
             detectMs: detectMs, buildMs: buildMs, relaunchMs: relaunchMs)
@@ -1460,7 +1474,7 @@ final class WatchSession {
                     timings: timings)
             }
         return finish(
-            report, firstFrameSince: measuresFirstFrame && child != nil ? relaunchStarted : nil)
+            report, firstFrameSince: measuresFirstFrame && launchedNew ? relaunchStarted : nil)
     }
 
     /// 前の子を止めている間に、作り直しを止める・見張りを終える頼みが来ていないかを見る。
