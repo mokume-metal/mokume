@@ -81,11 +81,16 @@ extension Canvas {
         // 読み方を解く算術は、有限の指定でも数でない値になりうる (`rectMode(.radius)` の `-∞ + ∞`)。
         // 収める先が決まらないので、数でない指定と同じに切り抜きを触らずに返す
         guard !rawLeft.isNaN, !rawTop.isNaN, !rawRight.isNaN, !rawBottom.isNaN else {
-            return warnBadClipOnce()
+            return warnOnce(
+                .clipNotResolvable,
+                "clip(): the four numbers resolve to a rectangle with an edge that is not a number "
+                    + "under the current rectMode (an overflow such as -infinity + infinity), so the "
+                    + "clip was left as it was")
         }
         // **端は有限の大きな値へ収めてから変換を通す。** 溢れた端 (`±∞`) は、変換の行列の 0 との積が
-        // 数でない値 (`0 * ∞`) になり、収める先が決まらなくなる。面より桁違いに大きい端は、収めても
-        // 同じ面の外にあるので、効く切り抜きは変わらない
+        // 数でない値 (`0 * ∞`) になり、収める先が決まらなくなる。収める値 (1e18) は面より桁違いに大きいので、
+        // 面に沿った変換の下では収めても同じ面の外にある。回転・剪断・大きな縮小の下では、収めた端の写る先が
+        // 本物の端と同じとは限らないが、面を覆う矩形は覆ったままになる (無限大の矩形は面全体を通す)
         let limit: Float = 1e18
         let left = min(max(rawLeft, -limit), limit)
         let top = min(max(rawTop, -limit), limit)
@@ -97,14 +102,19 @@ extension Canvas {
             transform.matrix.columns.0.y, transform.matrix.columns.1.y
         )
         let (shiftX, shiftY) = (transform.matrix.columns.3.x, transform.matrix.columns.3.y)
-        // 面に沿った変換 (平行移動・拡大・鏡映し・90 度刻みの回転) かを、行列の成分で見る。許す誤差は
-        // 成分の大きさに対する 1e-6 (`rotate(.pi / 2)` の `cos` は `-4.4e-8`) で、矩形の大きさによらない。
-        // 面に沿うなら、誤差ぶんの成分を 0 にして写す — 縁が画素の中心に乗る矩形を 90 度回しても、
-        // 誤差で縁の 1 列が落ちない
-        let largest = max(max(abs(xx), abs(xy)), max(abs(yx), abs(yy)))
-        let tolerance = largest * 1e-6
-        let diagonal = abs(xy) <= tolerance && abs(yx) <= tolerance
-        let anti = abs(xx) <= tolerance && abs(yy) <= tolerance
+        // 面に沿った変換 (平行移動・拡大・鏡映し・90 度刻みの回転) かを、**軸の像ごと**に行列の成分で見る。
+        // 許すのは、面に沿う変換を `Float` で作ったときに出る丸めだけ: 軸の像の小さい成分が、大きい成分の
+        // 4 ulp (`4 * Float.ulpOfOne` ≒ 4.8e-7) 以下。`rotate(.pi / 2)` の `cos` は `-4.4e-8` で、この内に収まる。
+        // 倍率の比が大きい非一様の変換でも、列ごとに見るので許容が緩まない (`[[1000, 0.001], [0, 1]]` の剪断は
+        // 0.001 ≫ 4.8e-7 で、面に沿わない)。これより大きい成分は本物の回転・剪断で、面から遠い矩形では座標の
+        // ずれになるので、0 にせず警告して囲む矩形で切る
+        // 面に沿うなら、丸めのぶんの成分を 0 にして写す — 縁が画素の中心に乗る矩形を 90 度回しても、
+        // 丸めで縁の 1 列が落ちない
+        // (行列に有限でない成分があるときは、列ごとの比が無限の許容にならず、成分を 0 に潰さない。写した角が
+        // 有限でなくなるので、下の検めが変換の溢れとして断る)
+        let tolerance = 4 * Float.ulpOfOne
+        let diagonal = abs(yx) <= tolerance * abs(xx) && abs(xy) <= tolerance * abs(yy)
+        let anti = abs(xx) <= tolerance * abs(yx) && abs(yy) <= tolerance * abs(xy)
         if diagonal {
             (xy, yx) = (0, 0)
         } else if anti {
@@ -117,7 +127,7 @@ extension Canvas {
         let (p3x, p3y) = (xx * left + xy * bottom + shiftX, yx * left + yy * bottom + shiftY)
         guard p0x.isFinite, p0y.isFinite, p1x.isFinite, p1y.isFinite, p2x.isFinite, p2y.isFinite,
             p3x.isFinite, p3y.isFinite
-        else { return warnBadClipOnce(overflowedByTransform: true) }
+        else { return warnClipTransformOverflowOnce() }
         let minX = min(min(p0x, p1x), min(p2x, p3x))
         var maxX = max(max(p0x, p1x), max(p2x, p3x))
         let minY = min(min(p0y, p1y), min(p2y, p3y))
@@ -162,18 +172,22 @@ extension Canvas {
     /// 収めようのない切り抜きを、初回だけ知らせる。
     ///
     /// 毎フレーム起きうるので繰り返さない (``Diagnostics/warn(_:)`` の但し書き)。
-    private func warnBadClipOnce(overflowedByTransform: Bool = false) {
-        if overflowedByTransform {
-            warnOnce(
-                .badClip,
-                "clip(): the current transform carries the rectangle to a value that is not a number, "
-                    + "or an infinite one, so the clip was left as it was")
-        } else {
-            warnOnce(
-                .badClip,
-                "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
-                    + "left as it was")
-        }
+    private func warnBadClipOnce() {
+        warnOnce(
+            .badClip,
+            "clip(): got a coordinate that is not a number, or an infinite one, so the clip was "
+                + "left as it was")
+    }
+
+    /// 渡された数は有限でも、いまの変換が矩形を数でない値・無限へ運んだ。
+    ///
+    /// **``warnBadClipOnce()`` とは鍵を分ける。** あちらは渡した数を直す話で、こちらは変換 (倍率が大きすぎる・
+    /// 行列が溢れている) を直す話である。同じ鍵だと、先に出た文面が後の原因を隠す。
+    private func warnClipTransformOverflowOnce() {
+        warnOnce(
+            .clipTransformOverflow,
+            "clip(): the current transform carries the rectangle to a value that is not a number, "
+                + "or an infinite one, so the clip was left as it was")
     }
 
     /// 描くものを、下にある絵とどう混ぜるか。

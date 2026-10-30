@@ -242,8 +242,9 @@ struct ClipTransformTests {
             canvas.rectMode(.radius)
             canvas.clip(-Float.greatestFiniteMagnitude, 50, Float.greatestFiniteMagnitude, 10)
         }
-        #expect(result.canvas.warnings.hasWarned(.badClip))
-        #expect(result.canvas.warnings.message(for: .badClip)?.contains("transform") == false, "変換のせいではない")
+        #expect(result.canvas.warnings.hasWarned(.clipNotResolvable))
+        #expect(!result.canvas.warnings.hasWarned(.badClip) && !result.canvas.warnings.hasWarned(.clipTransformOverflow))
+        #expect(result.canvas.warnings.message(for: .clipNotResolvable)?.hasPrefix("clip()") == true)
         #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 10...39 && box.y == 10...39, "前の切り抜きのまま")
@@ -255,8 +256,9 @@ struct ClipTransformTests {
             canvas.scale(1e30, 1e30)
             canvas.clip(1e10, 1e10, 1e10, 1e10)
         }
-        #expect(result.canvas.warnings.hasWarned(.badClip))
-        #expect(result.canvas.warnings.message(for: .badClip)?.contains("transform") == true)
+        #expect(result.canvas.warnings.hasWarned(.clipTransformOverflow))
+        #expect(!result.canvas.warnings.hasWarned(.badClip))
+        #expect(result.canvas.warnings.message(for: .clipTransformOverflow)?.contains("transform") == true)
     }
 
     @Test("大きな矩形 (辺が 4 万画素) の 90 度回転も、誤差で警告もずれもしない")
@@ -270,16 +272,118 @@ struct ClipTransformTests {
         #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
     }
 
-    @Test("幅か高さが 0 の矩形は、回転の下でも空のまま (対角線を囲む矩形にならない)")
-    func emptyRectanglesStayEmptyUnderRotation() throws {
-        for width: Float in [0, 30] {
-            let result = try drawn { canvas in
-                canvas.translate(50, 50)
-                canvas.rotate(Float.pi / 4)
-                canvas.clip(0, 0, width, width == 0 ? 30 : 0)
+    /// 幅か高さが 0 の矩形 (`rectMode` ごとの書き方) と、変換 (なし・45 度・90 度・鏡映し) の組。
+    @Test("幅か高さが 0 の矩形は、どの読み方・どの変換の下でも空のまま (対角線を囲む矩形にならない)")
+    func emptyRectanglesStayEmpty() throws {
+        let rectangles: [(String, ShapeMode, Float, Float, Float, Float)] = [
+            ("corner 幅 0", .corner, 0, 0, 0, 30),
+            ("corner 高さ 0", .corner, 0, 0, 30, 0),
+            ("corner -0 の幅", .corner, 0, 0, -0.0, 30),
+            ("corners 同じ x", .corners, 10, 0, 10, 30),
+            ("corners 同じ y", .corners, 0, 10, 30, 10),
+            ("center 幅 0", .center, 10, 10, 0, 30),
+            ("radius 半径 0", .radius, 10, 10, 0, 20),
+        ]
+        let transforms: [(String, (Canvas) -> Void)] = [
+            ("なし", { _ in }),
+            ("45 度", { $0.translate(50, 50); $0.rotate(Float.pi / 4) }),
+            ("90 度", { $0.translate(50, 50); $0.rotate(Float.pi / 2) }),
+            ("鏡映し", { $0.translate(80, 0); $0.scale(-1, 1) }),
+        ]
+        for (name, mode, a, b, c, d) in rectangles {
+            for (transformName, apply) in transforms {
+                let result = try drawn { canvas in
+                    apply(canvas)
+                    canvas.rectMode(mode)
+                    // 角を渡す読み方は、4 つとも座標なので 4 つとも動かす
+                    let shift: Float = mode == .corners ? 20 : 0
+                    canvas.clip(a + 20, b + 20, c + shift, d + shift)
+                }
+                #expect(whiteBox(result.pixels) == nil, "\(name)・変換 \(transformName) が空でなくなった")
             }
-            #expect(whiteBox(result.pixels) == nil, "幅 \(width) の矩形が空でなくなった")
         }
+    }
+
+    @Test("scale(0) の clip は空の切り抜きで、警告しない")
+    func collapsedTransformClipsNothingQuietly() throws {
+        let result = try drawn { canvas in
+            canvas.translate(50, 50)
+            canvas.scale(0, 0)
+            canvas.clip(0, 0, 40, 40)
+        }
+        #expect(whiteBox(result.pixels) == nil)
+        for key: Canvas.Warning in [.badClip, .clipNotResolvable, .clipTransformOverflow, .clipUnderRotation] {
+            #expect(!result.canvas.warnings.hasWarned(key), "\(key)")
+        }
+    }
+
+    @Test("行列が溢れて有限でないときは、無限の成分を 0 に潰さず、変換の溢れとして断る")
+    func nonFiniteMatrixIsRefused() throws {
+        let result = try drawn { canvas in
+            canvas.clip(10, 10, 30, 30)
+            canvas.scale(Float.greatestFiniteMagnitude, 1)
+            canvas.scale(Float.greatestFiniteMagnitude, 1)  // 行列の成分が ∞ になる
+            canvas.clip(0, 0, 10, 10)
+        }
+        #expect(result.canvas.warnings.hasWarned(.clipTransformOverflow))
+        let box = try #require(whiteBox(result.pixels))
+        #expect(box.x == 10...39 && box.y == 10...39, "前の切り抜きのまま")
+    }
+
+    // MARK: - 軸に沿う判定の境界 (丸めだけを許す)
+
+    @Test("1e-6 rad の本物の回転は、面から遠い所でも軸に沿う変換と取り違えず、警告する")
+    func tinyRealRotationsAreWarned() throws {
+        for angle: Float in [1e-6, 1e-5] {
+            let result = try drawn { canvas in
+                canvas.translate(0, -1e6)
+                canvas.rotate(angle)
+                canvas.clip(0, 1e6, 100, 50)
+            }
+            #expect(result.canvas.warnings.hasWarned(.clipUnderRotation), "回転 \(angle) rad")
+        }
+        // 丸めだけの 90 度刻みは、同じ遠さでも警告せず、縁の画素を保つ
+        for angle: Float in [Float.pi / 2, Float.pi, -Float.pi / 2] {
+            let result = try drawn { canvas in
+                canvas.translate(0, -1e6)
+                canvas.rotate(angle)
+                canvas.clip(0, 1e6, 100, 50)
+            }
+            #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation), "回転 \(angle) rad")
+        }
+    }
+
+    @Test("非一様の倍率の下の小さな剪断 (shearX(0.0002) の後に scale(1000, 1)) は、0 に潰さず警告して、ずらして切る")
+    func shearUnderNonUniformScaleIsNotZeroed() throws {
+        let result = try drawn { canvas in
+            canvas.translate(0, -9950)
+            canvas.shearX(0.0002)
+            canvas.scale(1000, 1)
+            canvas.clip(0, 9950, 0.1, 100)  // y = 9950…10050 で、剪断が x を約 2 画素ずらす
+        }
+        #expect(result.canvas.warnings.hasWarned(.clipUnderRotation))
+        let box = try #require(whiteBox(result.pixels))
+        #expect(box.x.lowerBound == 2, "剪断のずれ (約 2 画素) が 0 に潰された: \(box.x)")
+    }
+
+    @Test("原因が違う 3 つの断り (渡した数・解いた矩形・変換の溢れ) は、同じ面で続けて起きても、それぞれ名乗る")
+    func eachRefusalIsNamedOnItsOwn() throws {
+        let result = try drawn { canvas in
+            canvas.clip(Float.nan, 0, 10, 10)
+            canvas.rectMode(.radius)
+            canvas.clip(-Float.greatestFiniteMagnitude, 50, Float.greatestFiniteMagnitude, 10)
+            canvas.rectMode(.corner)
+            canvas.scale(1e30, 1e30)
+            canvas.clip(1e10, 1e10, 1e10, 1e10)
+        }
+        let warnings = result.canvas.warnings
+        let keys: [Canvas.Warning] = [.badClip, .clipNotResolvable, .clipTransformOverflow]
+        for key in keys {
+            #expect(warnings.hasWarned(key), "\(key)")
+            #expect(warnings.message(for: key)?.hasPrefix("clip()") == true)
+        }
+        let messages = Set(keys.compactMap { warnings.message(for: $0) })
+        #expect(messages.count == 3, "文面が同じ原因を名乗っている")
     }
 
     // MARK: - 面の大きさと画素の対応 (細かさ・出力の倍率・描き場所)
