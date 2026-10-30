@@ -229,7 +229,8 @@ struct FrameRateNoticeTests {
     }
 
     /// 推移を全部落としても収まらない幅は、現在値と構成の括弧を削らず、推移の前の空白も
-    /// 付けない (推移の無い形と同じ文字列)。
+    /// 付けない (推移の無い形と同じ文字列)。行は幅を越えるが、折り返さず右で切れる
+    /// (``theRewriteSwitchesWrappingOffAroundTheLine``)。
     @Test("推移を全部落としても足りない幅では、推移の無い形になる")
     func aNarrowTerminalDropsTheWholeTrend() {
         for columns in [1, 40, 54] {
@@ -251,5 +252,34 @@ struct FrameRateNoticeTests {
     func theColumnsAreAlwaysUsable() {
         #expect(FrameRateNotice.columns >= 1)
         #expect(FrameRateNotice.fallbackColumns == 80)
+    }
+
+    /// **根の塞ぎ**: 収めても越える幅で折り返すと、書き換えが今いる物理行しか消さず積み上がる。
+    /// 書く間だけ自動折り返しを切り、戻すところまで **1 回の書き込み** (1 つの文字列) に収める。
+    @Test("書き換えは、行頭へ戻して消し、折り返しを切って行を書き、折り返しを戻すところまでが 1 つの文字列")
+    func theRewriteSwitchesWrappingOffAroundTheLine() {
+        let line = "Rate: 60.0 fps (release)"
+        let written = FrameRateNotice.rewriting(line)
+        #expect(written == "\r\u{1B}[2K" + "\u{1B}[?7l" + line + "\u{1B}[?7h")
+        #expect(written.hasPrefix(FrameRateNotice.rewrite))
+        #expect(written.hasSuffix(FrameRateNotice.wrapOn), "戻す制御列まで同じ書き込みの中")
+        #expect(!written.contains("\n"))
+        // 切る印は行の前・戻す印は行の後ろ (順序が逆なら折り返しが切れたまま残る)
+        let off = written.range(of: FrameRateNotice.wrapOff)
+        let body = written.range(of: line)
+        let on = written.range(of: FrameRateNotice.wrapOn)
+        #expect(off != nil && body != nil && on != nil)
+        if let off, let body, let on {
+            #expect(off.upperBound == body.lowerBound && body.upperBound == on.lowerBound)
+        }
+    }
+
+    /// `ws_col` が 0 (幅を持たない擬似端末) なら 80 桁、正ならその値。
+    @Test("ws_col から幅を決める: 0 は 80 桁とみなし、正の値はそのまま")
+    func theWindowColumnsDecideTheWidth() {
+        #expect(FrameRateNotice.columns(fromWindowColumns: 0) == 80)
+        #expect(FrameRateNotice.columns(fromWindowColumns: 1) == 1)
+        #expect(FrameRateNotice.columns(fromWindowColumns: 120) == 120)
+        #expect(FrameRateNotice.columns(fromWindowColumns: UInt16.max) == Int(UInt16.max))
     }
 }

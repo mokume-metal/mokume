@@ -25,6 +25,9 @@ import Foundation
 /// 毎秒 1 行ずつ画面に積み上がる。`noLoop()` の間の欠測の形は推移を足すと 80 桁を越えるので、
 /// 80 桁の端末でも起きる。そこで**推移を端末の幅に収まるだけに切る**。推移の長さを短くして
 /// 固定せず、幅を毎秒読み直す — 狭い端末でも、走っている間に窓を狭めても収まる。
+/// 収めても越える幅 (推移を全部落としても足りない・曖昧幅を全角で描く設定) と、窓を狭めた
+/// 直後の再配置は、**書く間だけ自動折り返しを切って**塞ぐ (``rewriting(_:)``)。越えた分は右で
+/// 切れるだけで、行は 1 物理行のまま残る。
 /// 「端末の幅は問い合わせない」とした [#3424] の条件を、この約束のために改めた。
 ///
 /// [#685]: https://github.com/mokume-metal/mokume/issues/685
@@ -69,10 +72,15 @@ public enum FrameRateNotice {
     /// 行から収まる。
     static var columns: Int {
         var size = winsize()
-        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0 else {
-            return fallbackColumns
-        }
-        return Int(size.ws_col)
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 else { return fallbackColumns }
+        return columns(fromWindowColumns: size.ws_col)
+    }
+
+    /// 問い合わせが返した `ws_col` から幅を決める。**0 は幅を持たないという答え**なので
+    /// ``fallbackColumns`` とみなす。問い合わせの結線から切り離してあるのは、この分岐を
+    /// 端末を持たずに検査で縛るため。
+    static func columns(fromWindowColumns raw: UInt16) -> Int {
+        raw > 0 ? Int(raw) : fallbackColumns
     }
 
     /// 端末へ書くときの飾り。行頭へ戻して消してから書く — **同じ 1 行を書き換える。**
@@ -80,6 +88,24 @@ public enum FrameRateNotice {
     /// 見張る道具の側にも同じ綴りがある。規約は文章で共有し、実装はそれぞれが持つ
     /// (この綴りを外へ出すかは、外から使う人が現れてから決める)。
     static let rewrite = "\r\u{1B}[2K"
+
+    /// 端末の自動折り返しを切る・戻す制御列 (DECAWM)。
+    static let wrapOff = "\u{1B}[?7l"
+    static let wrapOn = "\u{1B}[?7h"
+
+    /// 1 回の書き換えとして端末へ書く文字列。**書く間だけ自動折り返しを切る。**
+    ///
+    /// 幅に収めても (``line(rate:configuration:history:columns:)``)、収まらない幅・曖昧幅の
+    /// 文字を全角で描く設定・窓を狭めた直後の再配置では、行が折り返しうる。折り返すと
+    /// ``rewrite`` が消すのは今いる物理行だけで、上の物理行が毎秒 1 行ずつ積み上がる (#3536)。
+    /// 折り返しを切って書けば、溢れた分は端末が右で切るだけで、行は 1 物理行のまま残る。
+    ///
+    /// **戻す制御列まで 1 回の書き込みに収める。** 呼び出し側が 2 回に分けて書くと、間で落ちた
+    /// ときに折り返しが切れたまま端末に残る。実機の端末ごとの振る舞い (窓を狭めた直後の
+    /// 再配置で切った行がどうなるか) は確かめていない。
+    static func rewriting(_ line: String) -> String {
+        rewrite + wrapOff + line + wrapOn
+    }
 
     /// 名乗るか。
     ///
@@ -112,10 +138,13 @@ public enum FrameRateNotice {
     /// なら、推移を持たない形と同じ文字列になる。
     ///
     /// **表示幅は `columns - 1` 以下にする。** 最後の桁まで埋めると、端末によっては折り返しの
-    /// 待ちに入る。収まらないときは、**推移を古い秒 (左) から落とす** — 現在値と構成の括弧は
-    /// 削らない。推移を全部落としても収まらない幅 (欠測の形で 53〜55 桁未満) は、そのまま
-    /// 折り返す。幅は 1 文字 1 桁で数える (推移の `▁`〜`█`・`·`・`—` は、既定の設定の端末で
-    /// 1 桁)。
+    /// 待ち (次の文字で折り返す状態) に入るので 1 桁残す。収まらないときは、
+    /// **推移を古い秒 (左) から落とす** — 現在値と構成の括弧は削らない。
+    ///
+    /// 幅は 1 文字 1 桁で数える (推移の `▁`〜`█`・`·`・`—` は、既定の設定の端末で 1 桁)。
+    /// 推移を全部落としても収まらない幅 (欠測の形で 53〜55 桁未満) と、曖昧幅の文字を全角で
+    /// 描く設定の端末では、行は幅を越える。**越えた分は折り返さず右で切れる** — 書く側が
+    /// 書く間だけ折り返しを切る (``rewriting(_:)``)。
     ///
     /// [ADR-0029]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0029-post-run-surfaces.md
     static func line(

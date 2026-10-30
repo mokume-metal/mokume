@@ -626,8 +626,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// (#1642・#1323)。
     ///
     /// **行は端末の幅に収める** (#3536)。1 秒ごとに ``FrameRateNotice/columns`` を読み直し、
-    /// 収まらない分は推移の古い側から落とす。幅を越えた行は折り返し、書き換えが今いる物理行
-    /// しか消さないので、上の物理行が毎秒 1 行ずつ積み上がる — この約束が破れる。
+    /// 収まらない分は推移の古い側から落とす。幅を越えた行が折り返すと、書き換えが今いる物理行
+    /// しか消さないので、上の物理行が毎秒 1 行ずつ積み上がる — この約束が破れる。それでも越える
+    /// 幅 (推移を全部落としても足りない・曖昧幅を全角で描く設定) のために、**書く間だけ端末の
+    /// 自動折り返しを切る** (``FrameRateNotice/rewriting(_:)``)。越えた分は右で切れる。
     private func startFrameRateNotice(configuration: String) {
         frameRateHistory = FrameRateNotice.History(declaredFrameRate: runtime.declaredFrameRate)
         frameRateNotice = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -639,7 +641,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
                 let line = FrameRateNotice.line(
                     rate: rate, configuration: configuration, history: history,
                     columns: FrameRateNotice.columns)
-                print(FrameRateNotice.rewrite + line, terminator: "")
+                print(FrameRateNotice.rewriting(line), terminator: "")
                 fflush(stdout)
             }
         }
