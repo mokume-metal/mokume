@@ -289,19 +289,23 @@ final class ShaderLibraries {
         }
     }
 
-    /// 前置きの断片を、種別番号の正本 (`Kinds.metal`) 付きで読む。
+    /// 前置きの断片を、種別番号の正本 (`Kinds.metal`) と揺らぎの本体 (`Noise.metal`) 付きで読む。
     ///
     /// **3 本の前置き (Common / Compute / Effect) すべてに入る。** 番号は断片が
     /// `switch` する数で、ずれても例外は出ず別の種別として効くだけなので、Metal 側でも
     /// 1 箇所に集めて `mokume_kindLayout` が書き出せるようにしてある ([#802])。
+    /// 揺らぎの式も同じ理由で 1 つに保つ — 塗り・効果・計算の断片が引く値は、CPU の `noise()` と
+    /// 同じ式から出る (ADR-0001 原則 9・[#3569])。
     ///
     /// 区切りは名前を持ち、組み立てた原稿の中で本体の名前 (``bundledName(_:)``) を名乗る
     /// (``ShaderSource/assemble(prelude:values:surfaces:body:)``)。
     ///
     /// [#802]: https://github.com/mokume-metal/mokume/issues/802
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
     func prelude(named name: String) throws(RenderFailure) -> [ShaderSource.Part] {
         [
             .init(name: Self.bundledName("Kinds"), text: try bundledShaderSource(named: "Kinds")),
+            .init(name: Self.bundledName("Noise"), text: try bundledShaderSource(named: "Noise")),
             .init(name: Self.bundledName(name), text: try bundledShaderSource(named: name)),
         ]
     }

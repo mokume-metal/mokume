@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "agent-4711",
+  "action": "audition",
+  "accepted": true,
+  "auditioning": true,
+  "production": {
+    "pid": 48213,
+    "stamp": "s1f3a9c"
+  }
+}

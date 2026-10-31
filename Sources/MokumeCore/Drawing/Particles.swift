@@ -215,7 +215,7 @@ public final class Particles {
     /// 印が変わった組は、書いた指定を読む計算も、置き場所を読む列も投入か破棄を済ませている。
     /// ただし途中の描き切りから持ち越した落とす列 (#1656) は、印が変わった後も置き場所を読むので、
     /// 使い回す前に面へ尋ねる (``claimDraw(by:)``)。
-    private var claims: [(canvas: Weak<Canvas>, mark: Canvas.SettleMark)?]
+    private var claims = DrawClaims()
 
     /// 先頭の組の置き場所。
     var instances: Numbers { draws[0].instances }
@@ -379,7 +379,6 @@ public final class Particles {
         self.capacity = capacity
         self.state = state
         self.draws = [Draw(parameters: parameters, instances: instances, arguments: arguments)]
-        self.claims = [nil]
         self.levels = levels
         self.levelHeaders = levelHeaders
         self.levelLengths = levelLengths
@@ -487,42 +486,27 @@ public final class Particles {
     ///
     /// [#1651]: https://github.com/mokume-metal/mokume/issues/1651
     func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
-        // **持ち越した落とす列が読む組は空いていない** ([#1656])。途中の描き切りの後も、フレームの
-        // 終わりの焼き付けがその組の置き場所を読む (``Canvas/keepsCaster(reading:)``)
-        //
-        // [#1656]: https://github.com/mokume-metal/mokume/issues/1656
-        var free: Int?
-        for (index, claim) in claims.enumerated() {
-            guard let claim, let owner = claim.canvas.value else {
-                free = index
-                break
-            }
-            if owner.settleMark != claim.mark, !owner.keepsCaster(reading: draws[index].instances) {
-                free = index
-                break
-            }
-        }
-        let index: Int
-        if let free {
-            index = free
-        } else {
-            if let drawAllocationFailureForTesting { throw drawAllocationFailureForTesting }
-            let first = draws[0]
-            let gpu = first.parameters.gpu
-            draws.append(
-                Draw(
-                    parameters: try Numbers(gpu: gpu, count: first.parameters.count),
-                    instances: try Numbers(gpu: gpu, count: first.instances.count),
-                    arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
-            claims.append(nil)
-            index = draws.count - 1
-        }
-        claims[index] = (Weak(canvas), canvas.settleMark)
+        // 選び方は粒と置き場所の道で 1 つ (``DrawClaims``)。足す組は先頭と同じ大きさ
+        let index = try claims.claim(
+            by: canvas,
+            instances: { draws[$0].instances },
+            addDraw: { () throws(RenderFailure) in
+                let first = draws[0]
+                let gpu = first.parameters.gpu
+                draws.append(
+                    Draw(
+                        parameters: try Numbers(gpu: gpu, count: first.parameters.count),
+                        instances: try Numbers(gpu: gpu, count: first.instances.count),
+                        arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
+            })
         return draws[index]
     }
 
     /// 組を足すときに投げる失敗。**検査が差し替える** (確保の失敗は検査の中で起こせない)。
-    var drawAllocationFailureForTesting: RenderFailure?
+    var drawAllocationFailureForTesting: RenderFailure? {
+        get { claims.allocationFailureForTesting }
+        set { claims.allocationFailureForTesting = newValue }
+    }
 
     /// 組を足せなかったことを知らせる。
     func warnDrawUnavailable(_ failure: RenderFailure) {

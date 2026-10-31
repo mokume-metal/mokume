@@ -161,6 +161,15 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10, 0, 0, 2, 2) } == 1)
         #expect(try handled(canvas) { $0.shape(shape) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: [Placement(x: 1, y: 1)]) } == 1)
+        // 数の並びを置き場所として読む口 (#3581)。置くのは GPU で、何個になるかは CPU に分からないので、
+        // 呼び出しごとに 1 つ名乗る。載らない形は何も置かないので数えない
+        let solid = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(5)
+        }
+        let positions = try canvas.makeNumbers(count: 6)
+        #expect(try handled(canvas) { $0.shape(solid, at: positions, layout: .position) } == 1)
+        #expect(try handled(canvas) { $0.shape(shape, at: positions, layout: .position) } == 0)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
         // 画素の窓 (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
         // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)
@@ -169,5 +178,30 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.pixels.update { _, _, color in color } } == 1)
         #expect(try handled(canvas) { $0.filter([.threshold(level: 0.5)]) } == 1)
         #expect(try handled(canvas) { $0.particles(dust) } == 1)
+    }
+
+    @Test("道 (Path) を描く口は、同じ beginShape を描いたときと同じく、図形を控える (落とさない)")
+    func pathsAreCaptured() throws {
+        let canvas = try makeCanvas()
+        let path = canvas.createPath {
+            canvas.beginShape()
+            canvas.vertex(10, 10)
+            canvas.vertex(60, 10)
+            canvas.vertex(60, 60)
+            canvas.endShape(.close)
+        }
+        var figures = 0
+        var drops = 0
+        try canvas.draw {
+            canvas.beginVectorWindow(pending: [])
+            canvas.startVectorCapture(path: "x.svg")
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
+            canvas.shape(path)
+            let captured = canvas.endVectorWindow()
+            figures = captured?.figures.count ?? 0
+            drops = captured?.drops.count ?? 0
+        }
+        #expect(figures == 1 && drops == 0, "figures=\(figures) drops=\(drops)")
+        #expect(try handled(canvas) { $0.shape(path) } == 1)
     }
 }

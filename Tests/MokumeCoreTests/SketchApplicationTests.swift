@@ -109,6 +109,9 @@ struct SketchApplicationTests {
 
         let window = try #require(application.window)
         #expect(!window.isReleasedWhenClosed)
+        // 本物の経路で開いた窓も、検査のプロセスでは透明になる (`TestWindowConcealment`・#3652)。
+        // 並べる口を直に打つ検査だけでは、本体が別の並べ方に変わったときに気付けない
+        #expect(window.alphaValue == 0, "検査の窓が画面に見えている")
 
         window.close()
         #expect(!application.isWindowOnScreen)

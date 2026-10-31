@@ -40,11 +40,20 @@ final class EffectPipeline {
     /// 1 段ぶんの置き場の間隔 (バイト)。設定 32 / 面 32 / 値の順に詰める。
     ///
     /// 面は 2 つの `float4` で、段の面の大きさと秒数・出す大きさを持つ (断片が位置と大きさを
-    /// 出す画素で受け取るため・#1639)。
+    /// 出す画素で受け取るため・#1639)。空いていた欄には揺らぎの種と細かさも載る (下の
+    /// ``noiseSeedOffset``)。
     static let passStride = 256
     static let controlOffset = 0
     static let frameOffset = 32
     static let frameSize = 32
+    /// 面の 2 つの `float4` のうち、使っていなかった欄に載せる揺らぎの設定の位置 (面の頭からの
+    /// バイト)。`frame[0].w` に種、`frame[1].z` に重ねる枚数、`frame[1].w` に弱まり
+    /// (`Effect.metal` の `mokume_effectMain` が読む・[#3569])。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    static let noiseSeedOffset = 12
+    static let noiseOctavesOffset = 24
+    static let noiseFalloffOffset = 28
     static let valuesOffset = 64
     /// 1 つの効果が渡せる値の数。
     static let valueSlotCapacity = (passStride - valuesOffset) / MemoryLayout<Float>.stride

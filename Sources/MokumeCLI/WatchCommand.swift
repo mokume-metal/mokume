@@ -173,6 +173,10 @@ enum WatchCommand {
         // **窓口が使う区画は、窓より先に置く。** 窓が出せるかどうかと関係が無いうえ、
         // 置き損ねると道具ごとに 1 回ずつ起動し直させることになる (#464)
         let prepared = prepareFacets(under: session.facetBase)
+        // **見張りが答える区画は、見張り自身が作る** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+        // 前の見張りの要求は引き継がず、終わるときに畳む (``teardown(_:_:created:keepTimeFile:)``)
+        // **作れなかったら、1 度だけ名乗る** — 黙っていると、置いた要求にいつまでも応答が返らない
+        if let failure = session.serveRequests() { say(requestFacetFailedLine(reason: failure)) }
 
         // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
         // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
@@ -289,6 +293,8 @@ enum WatchCommand {
         // **止めている最中に失敗した子の理由も残さない** (#3169)。巡回が読む前に見張りが終わった子の分
         session.sweepStartFailureNotes()
         viewer?.close()
+        // **見張りが答える区画も置いていかない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))
+        session.closeRequests()
         // **置いていかない。** 区画は面の番号を置く場所で、置いた見張りが居なくなれば
         // 指す先も無い (同じ場所に別の見張りは居ない — ``WatchPlaceLock`` が断っている・#2093)。残っても居合わせた実行は窓を開くが、開くたびに「区画が在るのに
         // 窓の持ち主から起こされていない」と名乗らせることになる (#2028)
@@ -457,8 +463,12 @@ enum WatchCommand {
         // **どちらの窓で触っても、同じ作品へ届く。** 送る前にキャンバスの座標へ写して
         // あるので、窓の大きさの違いはそこで吸収されている — 指は 1 本しかないので、
         // 2 つの窓が「いまの値」を同時に持つことにはならない ([ADR-0032] 決定 4)
+        // **試聴の間だけ、窓ごとに宛先が変わる** (#3565)。プレビューで触った出来事は、プレビューが映している世代へ届く
         window.onInput = { [weak session] in session?.send($0) }
-        preview.onInput = { [weak session] in session?.send($0) }
+        preview.onInput = { [weak session, weak preview] line in
+            session?.send(line, shownBy: preview?.displayedPID)
+        }
+        connectAudition(session, window: window, preview: preview)
         // **子の上限を越える 1 行は管へ流さない** (`WatchSession.send(_:)`)。1 度だけ名乗る
         var saidOversized = false
         session.onOversizedInput = { bytes in
@@ -546,6 +556,24 @@ enum WatchCommand {
         return viewer
     }
 
+    /// 試聴の間、2 つの窓が別の世代を映すための口を、見張りと繋ぐ ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 目録は 1 枚で、最後に書いた子のもので上書きされる。**置き方は変えず、読み手の窓が子の番号で採る目録を
+    /// 選ぶ** (``WatchSession/windowAccepts(pid:)``・``WatchSession/previewAccepts(pid:)``)。プレビューには、試聴を
+    /// 出るときの戻り先 (本番の目録) を押し出さずに覚えさせる。
+    static func connectAudition(
+        _ session: WatchSession, window: SharedFrameWindow, preview: SharedFramePreview
+    ) {
+        window.acceptsGeneration = { [weak session] pid in session?.windowAccepts(pid: pid) ?? true }
+        preview.acceptsGeneration = { [weak session] pid in session?.previewAccepts(pid: pid) ?? true }
+        session.holdsPreviewGeneration = { [weak preview] pids in preview?.holdGeneration(pids: pids) }
+        session.returnsPreviewToGeneration = { [weak preview] pid in
+            preview?.returnToGeneration(pid: pid) ?? false
+        }
+        // 入る要求が、作品の窓が番号を名乗る本番を映しているかを問う口
+        session.windowShowsPID = { [weak window] in window?.displayedPID }
+    }
+
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
     /// ディレクトリへ置くと、子と別の区画を見ることになる (#331)。
     static func viewportFacet(for session: WatchSession) -> URL {
@@ -618,10 +646,17 @@ enum WatchCommand {
         _ cause: UndeliverableGeneration, session: WatchSession?, waiting: Process?,
         pid: Int32? = nil, viewer: Viewer? = nil, preview: ((String?, Bool) -> Void)? = nil
     ) async {
+        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
+        // **試聴の子の絵をプレビューが受け取れない回は、本番を畳まない** (#3565)。名乗って、本番はそのまま
+        if let session, session.isAuditionGeneration(pid: pid) {
+            say(auditionUndeliverableLine)
+            viewer?.firstFrame.settle()
+            showInPreview(auditionUndeliverableLine, false)
+            return
+        }
         guard let session,
             let undelivered = await session.retireAfterUndeliverable(waiting: waiting, pid: pid)
         else { return }
-        let showInPreview = preview ?? { line, spinning in viewer?.preview.report(line, spinning: spinning) }
         announce(undelivered.outcome)
         say(undeliverableLine(previous: undelivered.previous, cause: cause, inTerminal: true))
         viewer?.firstFrame.settle()
@@ -738,6 +773,12 @@ enum WatchCommand {
             session.noteStopRequested()
             return false
         }
+        // **区画 `watch` の要求に答える** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+        // 作り直しの契機より先に見る — 試聴に入る要求を置いてから保存した回は、その保存が試聴の版になる
+        if let answered = await session.answerRequests() {
+            for line in answered.lines { say(line) }
+            announce(answered.stopped)
+        }
         // **作り直しの契機より先に見る。** 保存と同時に消えた回では、後に置くと新しい子が
         // 起きて印が下り、消えたことを見逃す。名乗った行は作り直しが始まれば
         // `willRebuild` が上書きする (#1103)
@@ -757,11 +798,41 @@ enum WatchCommand {
                 // **絵を出さずに消えた世代の後ろで、前の世代を待たせたままにしない。** 入れ替わりの
                 // 合図はもう来ないので、ここで畳む (#1142)
                 await retire(after: session)
-                let line = departedLine(departure)
+                // 試聴の間に本番が消えた回は、保存しても本番は起きない (試聴の子が起きる) ので、別の言葉で言う (#3565)
+                let line =
+                    session.isAuditioning
+                    ? productionDepartedInAuditionLine(departure) : departedLine(departure)
                 say(line)
                 viewer?.firstFrame.settle()
                 showInPreview(line, false)
             }
+        }
+        // **試聴の子が消えた・倒れた回は、本番を畳まない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+        // 名乗るだけで、作品の窓は本番の版のまま回り続け、プレビューは最後の絵のまま残る
+        if let departure = session.auditionDeparted() {
+            let lines =
+                departure.failedToStart && departure.report != nil
+                ? failedStartLines(departure) : [auditionDepartedLine(departure)]
+            for line in lines { say(line) }
+            viewer?.firstFrame.settle()
+            if departure.failedToStart, let report = departure.report {
+                showInPreview(notice(for: report, holdingPrevious: departure.keptPrevious), false)
+            } else {
+                showInPreview(lines.last, false)
+            }
+        }
+        // **番号を名乗らない版を試聴の子として起こした回は、止めて名乗る** (#3565)。本番と番号で区別できず、
+        // 作品の窓にも出せない・プレビューで触った出来事の宛先も引けない。試聴は続く
+        if session.auditionIsUnidentified {
+            announce(await session.stopUnidentifiedAudition())
+            say(auditionUnidentifiedLine)
+            viewer?.firstFrame.settle()
+            showInPreview(auditionUnidentifiedLine, false)
+        }
+        if session.auditionFellBack() {
+            say(auditionFellBackLine)
+            viewer?.firstFrame.settle()
+            showInPreview(auditionFellBackLine, false)
         }
         // **倒れた子は、乗り換えの合図が来ないので、ここで見つける** (#2350)。作り直した子が共有面を
         // 作れず自分の窓を開いた回は、前の世代が道具の窓に映ったまま並走する
@@ -772,12 +843,17 @@ enum WatchCommand {
             viewer?.firstFrame.settle()
             showInPreview(line, false)
         }
-        if let outcome = await session.tick() {
+        // **保留していた試聴の子は、本番の乗り換えが決着したら起こす** (#3565)
+        let resumed = session.resumePendingAudition()
+        if let outcome = resumed != nil ? resumed : await session.tick() {
             // **終われと言われた後に戻ってきた結果は名乗らない** (最初の 1 回と同じ規律)。どう
             // 終えたかは ``finish(_:)`` が名乗る — ここで名乗ると、止めた作り直しを「直して保存
             // し直せ」と案内することになる (#2875 の反証)
             guard !session.stopRequested else { return true }
             report(outcome, holdingPrevious: session.keepsPreviousRunning, on: viewer)
+            // **試聴の版を起こした回は、作品の窓がまだ前の版であることを添える** (#3565)。「Rebuilt」だけだと、
+            // 両方の窓が入れ替わったと読める
+            if session.isAuditioning, outcome.ok, outcome.launched { say(auditionStartedLine) }
             // **差し替えで期限に掛かったことも名乗る。** 止め方は終わるときと同じ経路を
             // 通るので、保存のたびにも起こりうる (#732)
             switch session.lastStop {
@@ -1068,6 +1144,59 @@ enum WatchCommand {
             : "The running sketch exited on its own (code \(departure.status)) — the drawing "
                 + "is frozen where it stopped. Save and it gets rebuilt and started again"
     }
+
+    /// 試聴の版が、誰も頼んでいないのに消えたことを名乗る行 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// ``departedLine(_:)`` と同じく、終わり方と数字を載せる。違うのは、**作品の窓が止まっていない**ことと、
+    /// 次の一手 — 保存すれば、新しい版がまたプレビューで試される。
+    static func auditionDepartedLine(_ departure: WatchSession.Departure) -> String {
+        departure.wasSignalled
+            ? "The version under audition crashed (signal \(departure.status)) — the preview is frozen "
+                + "where it stopped, and the work's window keeps running the version it had. "
+                + "Save and the new version is tried in the preview again"
+            : "The version under audition exited on its own (code \(departure.status)) — the preview is "
+                + "frozen where it stopped, and the work's window keeps running the version it had. "
+                + "Save and the new version is tried in the preview again"
+    }
+
+    /// 試聴の間に、作品の窓が映していた版が消えたことを名乗る行 (#3565)。
+    ///
+    /// **「保存すれば起こし直す」とは言わない** — 試聴の間の保存は試聴の版しか起こさない。作品の窓は最後の絵のまま
+    /// 残り、試聴は続く。
+    static func productionDepartedInAuditionLine(_ departure: WatchSession.Departure) -> String {
+        let how =
+            departure.wasSignalled
+            ? "crashed (signal \(departure.status))" : "exited on its own (code \(departure.status))"
+        return "The sketch in the work's window \(how) — the window keeps its last picture, and the "
+            + "audition goes on in the preview"
+    }
+
+    /// 試聴の版を起こしたことを名乗る行 (#3565)。端末の要約 (`Rebuilt: …`) の次に出す。
+    static let auditionStartedLine =
+        "Started under audition — only the preview shows it, and the work's window still runs "
+        + "the version it had"
+
+    /// 区画 `watch` を作れなかったことを名乗る行 (#3565)。
+    static func requestFacetFailedLine(reason: String) -> String {
+        "Could not set up the place for requests to the watcher (\(reason)) — auditioning cannot be "
+            + "requested in this run"
+    }
+
+    /// 試聴の版が目録で自分の番号を名乗らなかったので止めたことを名乗る行 (#3565)。
+    static let auditionUnidentifiedLine =
+        "Stopped the version under audition — it does not name itself in the shared-frame manifest "
+        + "(an older mokume library), so it cannot be told apart from the work's version. The "
+        + "work's window keeps running the version it had"
+
+    /// 試聴の版が共有面を作れず自分の窓を開いたことを名乗る行 (#3565)。
+    static let auditionFellBackLine =
+        "The version under audition could not hand its frames to the preview, so it opened its own "
+        + "window — the work's window keeps running the version it had"
+
+    /// 試聴の版の絵をプレビューが受け取れないことを名乗る行 (#3565)。本番は畳まない。
+    static let auditionUndeliverableLine =
+        "The preview could not receive the frames of the version under audition — the work's window "
+        + "keeps running the version it had"
 
     /// 強制終了しても消えなかったことを名乗る行。
     ///

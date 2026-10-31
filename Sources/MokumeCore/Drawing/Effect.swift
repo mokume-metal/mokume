@@ -367,6 +367,11 @@ struct EffectPass {
     var control: (SIMD4<Float>, SIMD4<Float>)
     /// 利用者の効果。`nil` なら組み込み。
     var shader: EffectShader?
+    /// 断片の `mokume_noise` が引く揺らぎの種と細かさ。**効果を積んだ時点の設定**で、積む側
+    /// (``Canvas/effectPasses(_:noise:)``) が載せる。組み込みの効果は読まない ([#3569])。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    var noise = ValueNoise()
 
     /// 組み込みの効果の種別。設定の先頭 (``control``) に入っている番号を読む。
     /// 利用者の効果でも `copy` を名乗るが、そちらは自分のパイプラインで走る。

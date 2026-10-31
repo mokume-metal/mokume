@@ -54,6 +54,12 @@ struct Pixel {
     float4 color;
     /// スケッチが始まってからの秒数。
     float time;
+    /// 揺らぎの種と細かさ。**効果を積んだ時点** (`effects(_:)` / `filter(_:)` を呼んだ時点) に
+    /// `noiseSeed()` / `noiseDetail()` が決めていたものが届くので、利用者は配線しなくてよい。
+    /// ``mokume_noise`` が読む (CPU で引く `noise()` と同じ模様になる)。
+    uint noiseSeed;
+    uint noiseOctaves;
+    float noiseFalloff;
     /// 入りの絵。``mokume_at`` から読む。
     texture2d<float> source;
     /// 組み合わせる相手の絵。**組み込みのにじみだけが使う** — 渡されていないときは
@@ -87,6 +93,33 @@ static inline float4 mokume_paired(Pixel in, float2 place) {
     return in.paired.sample(reader, place);
 }
 
+/// その座標の揺らぎ (0…1)。**種と細かさは画素が持っている**ので、渡すのは座標だけ。
+///
+/// ```metal
+/// float4 effect(Pixel in, Values values) {
+///     float g = mokume_noise(in, in.place * 8.0);
+///     return float4(in.color.rgb * (0.8 + 0.4 * g), in.color.a);
+/// }
+/// ```
+///
+/// 式は塗りの断片の `mokume_noise` と CPU で引く `noise()` と同じ 1 つ (Noise.metal)。座標は
+/// `float4` まで取れ、時刻を円周に載せた `float4(p, cos(a), sin(a))` で場をループさせられる。
+static inline float mokume_noise(Pixel p, float3 q) {
+    return mokume_noiseSum(q, p.noiseSeed, p.noiseOctaves, p.noiseFalloff);
+}
+
+static inline float mokume_noise(Pixel p, float4 q) {
+    return mokume_noiseSum(q, p.noiseSeed, p.noiseOctaves, p.noiseFalloff);
+}
+
+static inline float mokume_noise(Pixel p, float2 q) {
+    return mokume_noise(p, float3(q, 0.0));
+}
+
+static inline float mokume_noise(Pixel p, float x) {
+    return mokume_noise(p, float3(x, 0.0, 0.0));
+}
+
 /// 画素 1 つぶんの色を出す。**組み込みも利用者の効果も、書くのはこれ 1 本。**
 float4 effect(Pixel in, Values values);
 
@@ -98,7 +131,9 @@ fragment float4 mokume_effectMain(
     texture2d<float> source [[texture(0)]],
     texture2d<float> paired [[texture(1)]])
 {
-    // frame[0] = (段の面の幅, 高さ, 秒数, 0)・frame[1] = (出す幅, 高さ, 0, 0)。
+    // frame[0] = (段の面の幅, 高さ, 秒数, 種)・frame[1] = (出す幅, 高さ, 枚数, 弱まり)。
+    // **種と枚数は整数のビットのまま載せて、整数として読む** — 浮動小数に直すと種の下の桁が丸まる。
+    // 値の欄 (`valueSlotCapacity`) を減らさないよう、使っていなかった欄に載せてある
     // **位置と大きさは出す画素で渡す** (#1639)。ラスタの位置は段の面の画素なので、出す
     // 大きさとの比を掛ける。細かさ 1 の全面の段では比がちょうど 1 で、1 ビットも変わらない
     Pixel p;
@@ -106,6 +141,10 @@ fragment float4 mokume_effectMain(
     p.place = in.place;
     p.position = in.position.xy * (frame[1].xy / frame[0].xy);
     p.time = frame[0].z;
+    constant uint4 *bits = reinterpret_cast<constant uint4 *>(frame);
+    p.noiseSeed = bits[0].w;
+    p.noiseOctaves = bits[1].z;
+    p.noiseFalloff = frame[1].w;
     p.source = source;
     p.paired = paired;
     p.control = control;

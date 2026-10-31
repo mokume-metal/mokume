@@ -52,7 +52,8 @@ public final class SharedFrameWindow {
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
     static let defaultSize = NSSize(width: 480, height: 270)
 
-    private let stage: SharedFrameStage
+    /// 検査が拍を打つために見える (``SharedFramePreview/stage`` と同じ)。
+    let stage: SharedFrameStage
 
     /// - Parameters:
     ///   - facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
@@ -131,6 +132,32 @@ public final class SharedFrameWindow {
     /// - Parameter pids: 起こした子の番号。
     public func expectGeneration(pids: [Int32]) {
         stage.expectGeneration(pids: pids)
+    }
+
+    /// いま映している世代の目録が名乗った子の番号 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 見張りが、この窓で触った出来事の宛先を引くのに使う。名乗らない子 (古いライブラリ)・まだ何も映していない
+    /// ときは `nil`。
+    package var displayedPID: Int32? { stage.displayedPID }
+
+    /// この窓が採る目録の関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 引数は目録が名乗る子の番号で、名乗らない子は `nil`。`false` を返した目録は採らない。試聴の間、作品の窓は
+    /// 試聴の子の目録を、プレビューは本番の目録を採らないために使う。設定しなければ、どの目録も採る。
+    package var acceptsGeneration: ((Int32?) -> Bool)? {
+        get { stage.acceptsGeneration }
+        set { stage.acceptsGeneration = newValue }
+    }
+
+    /// 押し出さずに覚えておく世代を決める (``returnToGeneration(pid:)`` の戻り先)。空で外す。
+    package func holdGeneration(pids: [Int32]) {
+        stage.holdGeneration(pids: pids)
+    }
+
+    /// 覚えている目録の世代へ戻る。戻れたかを返す。
+    @discardableResult
+    package func returnToGeneration(pid: Int32) -> Bool {
+        stage.returnToGeneration(pid: pid)
     }
 
     /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。

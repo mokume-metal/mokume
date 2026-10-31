@@ -281,9 +281,10 @@ struct DatagramListenerFakeTests {
             plan("osc-live-vs-injected"))
     }
 
-    /// macOS の受け口が渡す長さ (9216 バイトを超えるものは先頭 9216 バイトに黙って切る — #2325)。
+    /// ループバックの経路で macOS の受け口が渡す長さ (9216 バイトを超えるものは先頭 9216 バイトに黙って切る —
+    /// #2325)。別の機械から届く経路は切らずに全長で渡す (#2531・#3594)。
     /// 切り方そのものは `UDPPortTests` の `networkFrameworkCutsDatagramsAt9216` が本物で見張る。
-    private func asDelivered(_ bytes: [UInt8]) -> [UInt8] { Array(bytes.prefix(Datagram.sizeLimit)) }
+    private func asDeliveredOnLoopback(_ bytes: [UInt8]) -> [UInt8] { Array(bytes.prefix(Datagram.sizeLimit)) }
 
     @Test("UTF-8 として読めない datagram は捨てて数え、前後の datagram は届く")
     func unreadableTextIsDiscardedAndCounted() throws {
@@ -301,22 +302,41 @@ struct DatagramListenerFakeTests {
         #expect(udp.input.unreadable == 1, plan("udp-unreadable"))
     }
 
-    @Test("9216 バイト以上の datagram は切れた疑いがあるので丸ごと捨てて数え、9215 バイトまでは全長で届く")
-    func oversizedTextIsDiscardedAndCounted() throws {
+    @Test("ちょうど 9216 バイトの datagram だけを切れた疑いがあるので捨てて数え、9215 バイト以下と 9217 バイト以上は全長で届く (#3594)")
+    func exactlyNineThousandTwoHundredSixteenIsDiscardedAndCounted() throws {
         let told = Told()
         let network = FakeNetwork()
         let (udp, _) = try udpPort(network, told: told)
         defer { udp.close() }
         let flow = network.flow(0)
         network.listener.offer(flow)
-        for size in [1000, 9215, 9216, 9217, 20000, 65507] {
-            flow.deliver(asDelivered([UInt8](repeating: 0x61, count: size)))
+        // 別の機械から届く経路は、どの長さも全長で渡す (#2531)
+        for size in [1000, 9215, 9216, 9217, 12000, 60000] {
+            flow.deliver([UInt8](repeating: 0x61, count: size))
         }
         flow.deliver(Array("after".utf8))
         udp.supply()
-        #expect(udp.messages.map(\.utf8.count) == [1000, 9215, 5], plan("udp-oversized"))
-        #expect(udp.input.unreadable == 4, plan("udp-oversized"))
+        #expect(udp.messages.map(\.utf8.count) == [1000, 9215, 9217, 12000, 60000, 5], plan("udp-oversized"))
+        #expect(udp.input.unreadable == 1, plan("udp-oversized"))
         #expect(told.lines.isEmpty, plan("udp-oversized", "\(told.lines)"))
+    }
+
+    @Test("ループバックで 9216 バイトに切れて届いた datagram は、元の長さによらず捨てて数える (#2325)")
+    func loopbackCutDatagramsAreDiscardedAndCounted() throws {
+        let told = Told()
+        let network = FakeNetwork()
+        let (udp, _) = try udpPort(network, told: told)
+        defer { udp.close() }
+        let flow = network.flow(0)
+        network.listener.offer(flow)
+        for size in [1000, 9217, 20000, 65507] {
+            flow.deliver(asDeliveredOnLoopback([UInt8](repeating: 0x61, count: size)))
+        }
+        flow.deliver(Array("after".utf8))
+        udp.supply()
+        #expect(udp.messages.map(\.utf8.count) == [1000, 5], plan("udp-loopback-cut"))
+        #expect(udp.input.unreadable == 3, plan("udp-loopback-cut"))
+        #expect(told.lines.isEmpty, plan("udp-loopback-cut", "\(told.lines)"))
     }
 
     @Test("空の datagram は、流れの終わりを名乗っても空の文字列として届き、その流れを閉じて、後から届いたものは新しい流れで受ける (#2324)")
@@ -377,7 +397,7 @@ struct DatagramListenerFakeTests {
         #expect(udp.input.unreadable == 0)
     }
 
-    @Test("OSC: 読めない部分を含むパケットはそこから後ろを捨てて数え、9216 バイト以上は丸ごと捨てて数える。前と次のパケットは届く")
+    @Test("OSC: 読めない部分を含むパケットはそこから後ろを捨てて数え、ループバックで 9216 バイトに切れたパケットは丸ごと捨てて数える。9217 バイト以上で全長で届いた束は読める")
     func unreadableAndOversizedPacketsAreCounted() throws {
         let told = Told()
         let network = FakeNetwork()
@@ -394,13 +414,20 @@ struct DatagramListenerFakeTests {
                 try Wire.encoded(before), Wire.string("/bad") + Wire.string(",q"), try Wire.encoded(after),
             ]))
         // 12000 バイトの blob を 1 つ持つメッセージ (12012 バイト) と、頭に小さなメッセージを置いた束。
-        // 先頭 9216 バイトに切れたものを読むと、頭だけが読めてしまう
-        let blob = try Wire.encoded(OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 12000))]))
+        // ループバックでは先頭 9216 バイトに切れる。切れたものを読むと、頭だけが読めてしまう
+        let blobMessage = OSCMessage("/b", arguments: [.blob([UInt8](repeating: 7, count: 12000))])
+        let blob = try Wire.encoded(blobMessage)
         #expect(blob.count == 12012)
-        let bundle = Wire.bundle([try Wire.encoded(OSCMessage("/head", 1)), blob])
-        for packet in [blob, bundle, try Wire.encoded(next)] { flow.deliver(asDelivered(packet)) }
+        let head = OSCMessage("/head", 1)
+        let bundle = Wire.bundle([try Wire.encoded(head), blob])
+        // 別の機械から届く経路は全長で渡す (#2531・#3594): 束として最後まで読める
+        flow.deliver(blob)
+        flow.deliver(bundle)
+        // ループバックの経路は切って渡す: 読まずに捨てて数える
+        for packet in [blob, bundle] { flow.deliver(asDeliveredOnLoopback(packet)) }
+        flow.deliver(try Wire.encoded(next))
         osc.supply()
-        #expect(osc.messages == [before, next], plan("osc-unreadable"))
+        #expect(osc.messages == [before, blobMessage, head, blobMessage, next], plan("osc-unreadable"))
         #expect(osc.input.unreadable == 3, plan("osc-unreadable"))
         #expect(told.lines.isEmpty, plan("osc-unreadable", "\(told.lines)"))
     }

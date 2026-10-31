@@ -124,6 +124,30 @@ class ShadersScopeTest(unittest.TestCase):
             '#line 1 "Sources/Core/Solo.metal"\n// solo\n\n',
         )
 
+    def test_noise_goes_between_kinds_and_prelude(self):
+        # 揺らぎの本体 (Noise.metal) は 3 本の前置きすべてに入り、Kinds.metal の後・前置きの前に並ぶ。
+        # 実行時の ShaderLibraries.prelude と順がずれると、実行時にだけ組めない断片が検査を通る (#3569)
+        self.write(f"{SHADERS}/Kinds.metal", "// kinds\n")
+        self.write(f"{SHADERS}/Noise.metal", "// noise\n")
+        self.write(f"{SHADERS}/Common.metal", "// common_defined\n")
+        self.write(f"{SHADERS}/Shapes.metal", "// needs_common\n")
+        self.write(f"{SHADERS}/Effect.metal", "// effect_prelude\n")
+        self.write(f"{SHADERS}/Effects/Builtin.metal", "// builtin\n")
+        keep = self.root / ".kept"
+        keep.mkdir()
+        r = self.run_check(keep=keep)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name, prelude in (("Shapes.metal", "Common"), ("Builtin.metal", "Effect")):
+            text = (keep / name).read_text(encoding="utf-8")
+            order = [
+                text.index(f'#line 1 "{SHADERS}/Kinds.metal"'),
+                text.index(f'#line 1 "{SHADERS}/Noise.metal"'),
+                text.index(f'#line 1 "{SHADERS}/{prelude}.metal"'),
+            ]
+            self.assertEqual(order, sorted(order), name)
+        # 前置きそのものは単体で確かめない (Noise.metal も同じ)
+        self.assertNotIn("Noise.metal (", r.stdout)
+
     def test_ignored_common_does_not_count(self):
         # 手元にだけ在る前置きで組み立てると手元で通り、CI の木では単体で組まれて落ちる
         self.ignore(f"{SHADERS}/Common.metal")
