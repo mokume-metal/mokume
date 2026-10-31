@@ -441,6 +441,121 @@ class ApiSurfaceTests(unittest.TestCase):
             api.render([protocol_, color, gray], "v1.2.3"),
         )
 
+    # --- 口ごとの詳細 (#3583) ---------------------------------------------------
+    # 索引 (render) は宣言と型の説明の 1 行目だけを出す。口の説明と例は詳細が全文で持つ
+
+    def _detail_symbols(self, directory):
+        """型 1 つ・`///` を持つ口 2 本 (同名)・`//` だけを持つ口・説明の無い口・型の無い持ち主の口。"""
+        path, line = written(
+            directory, "// 二重斜線だけの説明。\n// 2 行目。\nfunc plain()\n")
+        return [
+            symbol("Sketch", kind="swift.protocol", doc="利用者が書く単位。\n\n詳しい説明。"),
+            symbol(
+                "ambientLight(_:)", owner="Sketch", precise="a", parameters=["LinearRGBA"],
+                takes=("LinearRGBA", "s:LinearRGBA"),
+                doc="全体を底上げする光。\n\n**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**\n\n"
+                    "```swift\nambientLight(.linear(red: 1, green: 1, blue: 1))\n```"),
+            symbol(
+                "ambientLight(_:)", owner="Sketch", precise="b", parameters=["Float"],
+                takes=("Float", "s:Sf"), doc="灰色の明るさで置く。目盛りは 0–255。"),
+            symbol("plain()", owner="Sketch", precise="c", location=(path, line)),
+            symbol("bare()", owner="Sketch", precise="d"),
+            symbol("orphan()", owner="Orphan", precise="e", doc="型が一覧に無い持ち主の口。"),
+        ]
+
+    def test_詳細に説明の全文が出る(self):
+        with tempfile.TemporaryDirectory() as directory:
+            symbols = self._detail_symbols(directory)
+            data = api.details(symbols, "v1.2.3")
+        self.assertEqual(data["schemaVersion"], 1)
+        self.assertEqual(data["version"], "v1.2.3")
+        light = data["symbols"]["ambientLight"]
+        self.assertEqual(len(light), 2, "同名の多重定義が 1 本に潰れている")
+        full = next(e for e in light if "LinearRGBA" in e["declaration"])
+        self.assertIn("この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない", full["doc"])
+        self.assertIn("```swift\nambientLight(.linear", full["doc"], "例が落ちている")
+        self.assertEqual(full["owner"], "Sketch")
+        # `//` だけの説明も、一覧の検査と同じ読み方で全文が入る
+        self.assertEqual(
+            data["symbols"]["plain"][0]["doc"], "二重斜線だけの説明。\n2 行目。")
+        self.assertEqual(data["symbols"]["bare"][0]["doc"], "")
+
+    def test_詳細の型の項は持ち主が空で説明の全文を持つ(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = api.details(self._detail_symbols(directory), "v1.2.3")
+        entry = data["symbols"]["Sketch"][0]
+        self.assertEqual(entry["owner"], "")
+        self.assertEqual(entry["doc"], "利用者が書く単位。\n\n詳しい説明。")
+
+    def test_詳細の件数は一覧の三つの出口の件数と一致する(self):
+        # 出口は top (型)・by_owner (一覧に型がある持ち主のメンバー)・その他 (型が一覧に無い持ち主)
+        with tempfile.TemporaryDirectory() as directory:
+            symbols = self._detail_symbols(directory)
+            data = api.details(symbols, "v1.2.3")
+            listed = api.render(symbols, "v1.2.3")
+        exits = {"top": 0, "members": 0, "orphans": 0}
+        section, first, fenced = None, True, False
+        for line in listed.split("\n"):
+            if line.startswith("## "):
+                section, first = ("orphans" if line == "## その他" else "top"), True
+            elif line == "```swift":
+                fenced = True
+            elif line == "```":
+                fenced = False
+            elif fenced and section == "orphans":
+                exits["orphans"] += 1
+            elif fenced and first:
+                exits["top"], first = exits["top"] + 1, False
+            elif fenced:
+                exits["members"] += 1
+        self.assertEqual(exits, {"top": 1, "members": 4, "orphans": 1})
+        self.assertEqual(api.count_details(data), sum(exits.values()))
+        self.assertEqual(api.count_details(data), len(symbols))
+
+    def test_詳細の並びが入力の順に依らない(self):
+        with tempfile.TemporaryDirectory() as directory:
+            symbols = self._detail_symbols(directory)
+        self.assertEqual(
+            api.render_details(api.details(symbols, "v1.2.3")),
+            api.render_details(api.details(list(reversed(symbols)), "v1.2.3")),
+        )
+
+    def test_索引には口の説明の全文を入れない(self):
+        # 論点 1 の b (一覧 1 ファイルに全文) は採らない。索引は型の説明の 1 行目と宣言だけ
+        with tempfile.TemporaryDirectory() as directory:
+            listed = api.render(self._detail_symbols(directory), "v1.2.3")
+        self.assertIn("利用者が書く単位。", listed)
+        self.assertNotIn("詳しい説明。", listed)
+        self.assertNotIn("目盛りは 0…1", listed)
+        self.assertNotIn("```swift\nambientLight(.linear", listed)
+
+    def test_listは_details_を渡したときだけ詳細を書く(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory) / "graphs"
+            graphs.mkdir()
+            document = {"symbols": self._detail_symbols(directory)[:3]}
+            (graphs / "MokumeCore.symbols.json").write_text(
+                json.dumps(document), encoding="utf-8")
+            index, details = Path(directory) / "index.md", Path(directory) / "details.json"
+
+            def run(*extra):
+                return subprocess.run(
+                    ["python3", str(SCRIPT), "list", "--graphs", str(graphs),
+                     "--module", "MokumeCore", "--version", "v1.2.3", "--output", str(index), *extra],
+                    capture_output=True, text=True)
+
+            done = run()
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertFalse(details.exists(), "--details を渡していないのに詳細を書いている")
+            indexed = index.read_text(encoding="utf-8")
+            done = run("--details", str(details))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(index.read_text(encoding="utf-8"), indexed, "詳細を足して索引が変わった")
+            data = json.loads(details.read_text(encoding="utf-8"))
+            self.assertEqual(data["version"], "v1.2.3")
+            self.assertEqual(api.count_details(data), 3)
+            self.assertIn("口ごとの詳細 3 個", done.stdout)
+
     def test_その他の節でも同名オーバーロードの並びが入力の順に依らない(self):
         # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の枝で並べられる**。
         # 片方だけ直しても残るので、両方を見る

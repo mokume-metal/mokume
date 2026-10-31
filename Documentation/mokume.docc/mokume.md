@@ -668,10 +668,16 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/createShape(_:)``
 - ``SketchPart/loadShape(_:)``
 - ``SketchPart/requestShape(_:)``
-- ``SketchPart/shape(_:_:_:)``
+- ``SketchPart/shape(_:_:_:)-(Shape,_,_)``
 - ``SketchPart/shape(_:at:)``
 - ``Shape``
 - ``Placement``
+
+### 線の道を測る
+
+- ``SketchPart/createPath(_:)``
+- ``SketchPart/shape(_:_:_:)-(Path,_,_)``
+- ``Path``
 
 ### 座標を動かす
 

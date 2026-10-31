@@ -98,6 +98,8 @@ enum ShapeExit {
         ]
         let detached = [
             "transformStack", "styleStack", "recordingShape",
+            // 道を記録している間の控え (#3561)。``Canvas/createPath(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
+            "pathRecorder",
             // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
             "shapeMarks",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印

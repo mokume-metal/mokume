@@ -39,7 +39,7 @@ final class MIDIAndHue: Sketch {
             switch message {
             case .noteOn(_, let note, _): held.insert(note)
             case .noteOff(_, let note, _): held.remove(note)
-            case .controlChange: break
+            default: break
             }
         }
         // つまみの現在値 (0〜1) を色相の 1 周 (0〜360 度) に写す。まだ届いていなければ 0 (赤)

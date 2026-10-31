@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/api-details.schema.json",
+  "title": "The public API of one release, with each declaration's description in full",
+  "description": "The Release asset mokume-api-details-v<version>.json, built by scripts/api-surface.py from the same symbol graphs and the same public symbols as the index (mokume-api-v<version>.md): the index lists declarations and the first line of a type's description; this lists every declaration with its description as written in the source (/// and //), unabridged. A reader looks a name up by its base name and takes the entries it needs, so that it does not have to read the whole file into its context (ADR-0027 decision 1, the 2026-10-31 revision). The description is never rewritten or summarised: the source comment is the only input.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "version",
+    "symbols"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "The version of this format. How it is raised is ADR-0018 decision 5."
+    },
+    "version": {
+      "type": "string",
+      "description": "The release the file was built for, spelled as the release tag (v0.38.0). A build outside a release says (開発版)."
+    },
+    "symbols": {
+      "type": "object",
+      "description": "The entries, keyed by base name: the declaration's name up to its first parenthesis, so that every overload of ambientLight(_:) is under ambientLight. A type itself is under its own name, with an empty owner. Every public symbol of the index is in exactly one entry, and the number of entries is the number of public symbols the index counts.",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "description": "The overloads and owners that share this base name. The order is by owner, then by parameter types, then by declaration, and does not depend on the order the compiler wrote the symbols in.",
+        "items": {
+          "type": "object",
+          "required": [
+            "owner",
+            "declaration",
+            "doc"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "owner": {
+              "type": "string",
+              "description": "The type the declaration belongs to (Sketch, Canvas, SoundFile). Empty for a type or a top-level declaration. The first path component only: a member of a nested type names the outermost type."
+            },
+            "declaration": {
+              "type": "string",
+              "description": "The declaration as the index prints it, attributes included."
+            },
+            "doc": {
+              "type": "string",
+              "description": "The description in full, as the source writes it: the /// comment, or the // comment just above the declaration when there is no ///. Empty when there is none."
+            }
+          }
+        }
+      }
+    }
+  }
+}

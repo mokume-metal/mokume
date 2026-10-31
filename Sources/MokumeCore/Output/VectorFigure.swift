@@ -75,7 +75,7 @@ nonisolated struct VectorColor: Sendable, Equatable {
 /// 塗り。
 nonisolated struct VectorFill: Sendable, Equatable {
     var color: VectorColor
-    /// 回り数が奇数の所だけを塗るか (穴のある形・SVG の `fill-rule="evenodd"`)。
+    /// 回り数が奇数の所だけを塗るか (`endShape(_:evenOdd:)` で選ぶ・SVG の `fill-rule="evenodd"`)。穴の有無では替えない。
     var evenOdd: Bool
 }
 
