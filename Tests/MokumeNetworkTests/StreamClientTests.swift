@@ -46,9 +46,8 @@ struct StreamClientTests {
 
     private func tcpClient(
         port: Int, told: Told,
-        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
-            $0.currentPath?.unsatisfiedReason
-        }
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason
     ) -> TCPClient {
         let target = "127.0.0.1:\(port)"
         let source = ClientSource(
@@ -63,9 +62,8 @@ struct StreamClientTests {
 
     private func webSocketClient(
         url: String, told: Told,
-        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
-            $0.currentPath?.unsatisfiedReason
-        }
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason
     ) throws -> WebSocketClient {
         let parsed = try #require(Endpoint.webSocketURL(url))
         let source = ClientSource(
@@ -284,6 +282,9 @@ struct StreamClientTests {
         #expect(client.state == .denied)
         #expect(told.count(containing: "blocked by macOS (Local Network)") == 1)
         #expect(told.count(containing: "cannot connect") == 0)
+        // クライアントは自動で繋ぎ直す。受け口の文面 (スケッチを始め直す) を言わない
+        #expect(told.count(containing: "connects at the next retry") == 1)
+        #expect(told.count(containing: "start the sketch again") == 0)
     }
 
     @Test("TCP: 拒まれていない繋げなさ (理由が許可でない) は denied にならず、いまどおり disconnected と cannot connect")

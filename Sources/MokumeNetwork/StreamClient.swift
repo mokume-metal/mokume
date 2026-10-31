@@ -73,9 +73,8 @@ nonisolated final class StreamConnector: @unchecked Sendable {
     init(
         kind: StreamListener.Kind, endpoint: NWEndpoint, secure: Bool = false,
         retryAfter: TimeInterval, connectTimeout: TimeInterval = defaultConnectTimeout,
-        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
-            $0.currentPath?.unsatisfiedReason
-        },
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason,
         received: @escaping @Sendable (_ texts: [String], _ unreadable: Int, _ hostTime: UInt64) -> Void,
         changed: @escaping @Sendable (ConnectorEvent) -> Void
     ) {
@@ -253,6 +252,11 @@ nonisolated final class StreamConnector: @unchecked Sendable {
 }
 
 nonisolated extension StreamConnector {
+    /// 経路を待つ繋ぎが満たされない理由 (既定の読み方。検査が差し替える)。
+    static let currentPathReason: @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
+        $0.currentPath?.unsatisfiedReason
+    }
+
     /// 経路を待つ繋ぎ (`NWConnection` の `.waiting`) の事情を、繋ぎ先の移り変わりに読み替える。
     ///
     /// ローカルネットワークの許可が無いとき、`NWConnection` は拒まれたとは言わず `ENETDOWN`
@@ -329,7 +333,8 @@ nonisolated final class ConnectorStatus: Sendable {
             tellOnce(
                 "denied",
                 "\(label) to \(target) is blocked by macOS (Local Network). Allow it in System "
-                    + "Settings > Privacy & Security > Local Network, then start the sketch again")
+                    + "Settings > Privacy & Security > Local Network. It connects at the next retry "
+                    + "(every \(seconds) second(s)) once allowed")
         case .lost:
             queue.setState(.disconnected)
             tellOnce(
@@ -374,9 +379,8 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing,
         kind: StreamListener.Kind, endpoint: NWEndpoint, secure: Bool = false, target: String,
         retryAfter: TimeInterval = defaultRetry,
         connectTimeout: TimeInterval = StreamConnector.defaultConnectTimeout,
-        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
-            $0.currentPath?.unsatisfiedReason
-        },
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.kind = kind

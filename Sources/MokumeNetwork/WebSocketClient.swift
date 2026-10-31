@@ -25,7 +25,8 @@ import MokumeDiagnostics
 /// ```
 ///
 /// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。状態の名乗り方は
-/// ``TCPClient`` と同じ (``TextPort`` の「来ないことには理由がある」)。
+/// ``TCPClient`` と同じ (``TextPort`` の「来ないことには理由がある」)。ローカルネットワークの許可が無くて
+/// 繋げないときは ``SourceState/denied`` で、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る。
 ///
 /// 手本 (Processing / p5.js) の本体には無いので、ブラウザの `WebSocket.send` に揃えて 1 通を送る口を
 /// ``send(_:)`` とする ([ADR-0020] 決定 1。``WebSocketServer`` と同じ)。
