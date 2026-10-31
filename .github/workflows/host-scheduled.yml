@@ -120,55 +120,48 @@ jobs:
   # 殺せなかったとは数えない (2026-10-30 の決定・#3221)。
   #
   # **前回の点数の commit は追跡用の Issue の本文から読む** (`issues: read` だけを持つ)。履歴は
-  # fetch-depth 0 で取る。**continue-on-error を付けない** — 赤が success に化けると報告が読み違える。
+  # fetch-depth 0 で取る。起点が読めない・HEAD の祖先でない回は範囲を回さず、理由 (`reason`) を
+  # 報告へ渡す — 報告は `first` 以外の理由では起点を動かさない。**continue-on-error を付けない**:
+  # 赤が success に化けると報告が読み違える。
   mutation:
     runs-on: macos-26
-    # 仮の値 (実測前)。内訳: 束の予算 90 分 + 範囲の予算 60 分 + 1 件の期限 (10 分) が予算の最後に
-    # はみ出す分 + 組み立て。push 後の workflow_dispatch の実測で直す
+    # 仮の値 (実測前)。内訳: 束の予算 90 分 + 範囲の予算 60 分 + 変異なしの基準の期限 (30 分) と
+    # 1 件の期限 (10 分) が予算の最後にはみ出す分 + 組み立て。push 後の workflow_dispatch の実測で直す
     timeout-minutes: 240
     permissions:
       contents: read
       issues: read # 前回の点数の commit を追跡用の Issue から読む
     outputs:
       since: ${{ steps.previous.outputs.since }}
+      reason: ${{ steps.previous.outputs.reason }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # 範囲を回す起点。読めない・木に無いときは範囲を回さず、そう名乗る (束は回る)
+      # 範囲を回す起点と、前の回で評価した候補のキー。読めない・祖先でないときは範囲を回さず、
+      # 理由を出力に残す (終了コードは束を回すために握る。理由が ok / first でなければ、下の
+      # 「状態を確かめる」の段が job を赤にする)
       - name: 前回の点数の commit を読む
         id: previous
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          since=
-          if prev=$(python3 scripts/mutation_state.py previous); then
-            if [ -z "$prev" ]; then
-              note="前回の点数の commit が無い (最初の回)。範囲は回さず、束を回して起点を置く"
-            elif git cat-file -e "$prev^{commit}" 2>/dev/null; then
-              since=$prev
-              note="範囲の起点は前回の点数の commit \`${prev:0:12}\`"
-            else
-              note="前回の点数の commit \`${prev:0:12}\` がこの木に無い (履歴の書き換えか)。範囲は回さない"
-            fi
-          else
-            note="追跡用の Issue から前回の commit を読めなかった。範囲は回さない"
-          fi
-          echo "since=$since" >> "$GITHUB_OUTPUT"
-          printf '### 変異の検査の範囲\n\n%s\n\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p .build
+          python3 scripts/mutation_state.py previous --done-file .build/mutation-done.json \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" || true
       - name: 固定の束を回す
         run: |
           python3 scripts/mutate.py run --bundle Tests/mutation-bundle.json \
             --out .build/mutation-bundle.json --work .build/mutation-bundle-work \
-            --budget 5400 --timeout 600
+            --budget 5400 --timeout 600 --baseline-timeout 1800
       - name: 前回の点数の commit からの範囲を回す
         if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
         env:
           SINCE: ${{ steps.previous.outputs.since }}
         run: |
-          python3 scripts/mutate.py run --since "$SINCE" \
+          python3 scripts/mutate.py run --since "$SINCE" --exclude-file .build/mutation-done.json \
             --out .build/mutation-range.json --work .build/mutation-range-work \
-            --budget 3600 --timeout 600
+            --budget 3600 --timeout 600 --baseline-timeout 1800
       # 読めない記録は unreadable と名乗って赤になる。job の要約にも載る
       - name: 要約 (固定の束)
         if: ${{ !cancelled() }}
@@ -176,6 +169,15 @@ jobs:
       - name: 要約 (範囲)
         if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
         run: python3 scripts/mutate.py summary .build/mutation-range.json
+      # 追跡用の Issue の状態を読めなかった回 (gh の失敗・区画の破損・起点が祖先でない) は赤にする。
+      # 束は回し終えてから落とすので、点数は報告に載る
+      - name: 状態を確かめる
+        if: ${{ !cancelled() && steps.previous.outputs.reason != 'ok' && steps.previous.outputs.reason != 'first' }}
+        env:
+          REASON: ${{ steps.previous.outputs.reason }}
+        run: |
+          echo "追跡用の Issue の状態を読めなかった回: reason='${REASON}'" >&2
+          exit 1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -195,10 +197,18 @@ jobs:
   # なった回だけ。**緑の回も走る** (点数を置くのが仕事なので) — `always()` を外さない:
   # 暗黙の success() が足され、mutation が赤の回に skipped になって、読めない回が黙る。
   # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる mutation には持たせない。
+  #
+  # **Issue を書くのは main の run だけ**。他の ref の workflow_dispatch (計測の run など) は、共有の
+  # 追跡 Issue を枝の版が書き換えないよう、区画を job の要約に出すだけにする (--dry-run)。
+  # **concurrency で直列にする**: schedule と dispatch が重なると、同じ本文を読んだ 2 つの run が
+  # 互いの更新を消し、Issue が二重に立つ。待たせるだけで、走っている run は切らない。
   mutation-report:
     needs: mutation
     if: always()
     runs-on: ubuntu-latest
+    concurrency:
+      group: mutation-report
+      cancel-in-progress: false
     permissions:
       contents: read # checkout
       issues: write # 追跡用 Issue の起票・本文の書き換え・コメント (#3221)
@@ -212,14 +222,32 @@ jobs:
           path: record
       # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (tsan-report と同じ)
       - name: 点数を追跡用の Issue に置く
+        if: ${{ github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ needs.mutation.result }}
           SINCE: ${{ needs.mutation.outputs.since }}
+          REASON: ${{ needs.mutation.outputs.reason }}
         run: |
           find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
           bundle=$(find_one record mutation-bundle.json)
           range=$(find_one record mutation-range.json)
           python3 scripts/report-mutation.py --result "$RESULT" \
             --bundle "${bundle:-record/none-bundle.json}" \
-            --range "${range:-record/none-range.json}" --range-since "$SINCE"
+            --range "${range:-record/none-range.json}" --range-since "$SINCE" \
+            --range-reason "${REASON:-unknown}"
+      - name: 点数を job の要約に出す (main 以外の run は Issue に書かない)
+        if: ${{ github.ref != 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.mutation.result }}
+          SINCE: ${{ needs.mutation.outputs.since }}
+          REASON: ${{ needs.mutation.outputs.reason }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          bundle=$(find_one record mutation-bundle.json)
+          range=$(find_one record mutation-range.json)
+          python3 scripts/report-mutation.py --dry-run --result "$RESULT" \
+            --bundle "${bundle:-record/none-bundle.json}" \
+            --range "${range:-record/none-range.json}" --range-since "$SINCE" \
+            --range-reason "${REASON:-unknown}"

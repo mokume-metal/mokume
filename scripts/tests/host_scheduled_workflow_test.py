@@ -22,7 +22,11 @@
      (`issues: read`) で、continue-on-error を持たない。記録が読めない回は要約の段が赤にする
   7. mutation-report は mutation の結論が何でも走り (`always()` を外すと、mutation が赤の回に
      skipped になって読めない回が黙る)、artifact と記録の綴りを mutation と揃えて読む。
-     範囲を回すつもりだったか (`since`) を job の出力で受け取り、起点を進めてよいかの判定に使う
+     範囲を回すつもりだったか (`since`) と起点の読めなかった理由 (`reason`) を job の出力で受け取り、
+     起点を進めてよいかの判定に使う
+  8. Issue を書くのは main の run だけ (他の ref は --dry-run で要約に出す)。報告は concurrency で
+     直列にする。起点の理由が ok / first でない回は「状態を確かめる」の段が job を赤にする。
+     記録の artifact は `if: always()` と `include-hidden-files: true` で常に上がる
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -126,13 +130,43 @@ class HostScheduledWorkflowTest(unittest.TestCase):
         for run in runs:
             self.assertRegex(run, r"--budget \d+")
             self.assertRegex(run, r"--timeout \d+")
+            # cold な build を 1 件の期限に食わせない (基準の期限は別に持つ・指摘 11)
+            self.assertRegex(run, r"--baseline-timeout \d+")
         self.assertIn("--bundle Tests/mutation-bundle.json", runs[0])
         self.assertIn("--since", runs[1])
-        # 予算が job の期限に収まる (1 件の期限が予算の最後にはみ出す分と組み立ての余裕を見る)
+        # 範囲は前の回で評価した候補を飛ばす (毎回同じ先頭だけが回って末尾が回らない形にしない・指摘 2)
+        self.assertIn("--exclude-file .build/mutation-done.json", runs[1])
+        # 予算が job の期限に収まる (1 件の期限と基準の期限が予算の最後にはみ出す分と組み立ての余裕を見る)
         timeout = int(re.search(r"timeout-minutes: (\d+)", mutation).group(1))
         budgets = sum(int(b) for b in re.findall(r"--budget (\d+)", mutation)) / 60
-        overrun = sum(int(b) for b in re.findall(r"--timeout (\d+)", mutation)) / 60
+        overrun = sum(int(b) for b in re.findall(r"--(?:baseline-)?timeout (\d+)", mutation)) / 60
         self.assertLess(budgets + overrun, timeout)
+
+    def test_mutation_は起点の読めなかった理由を出力に残し_ok_first_以外は赤にする(self):
+        mutation = self.jobs["mutation"]
+        previous = re.search(r"- name: 前回の点数の commit を読む.*?(?=\n      - name: )", mutation, re.S).group(0)
+        self.assertIn("scripts/mutation_state.py previous", previous)
+        for flag in ("--done-file .build/mutation-done.json", '--github-output "$GITHUB_OUTPUT"'):
+            self.assertIn(flag, previous)
+        self.assertRegex(mutation, r"outputs:\s+since: [^\n]+\s+reason: \$\{\{ steps\.previous\.outputs\.reason \}\}")
+        # 理由が ok / first でない回は、束を回し終えた後の段が job を赤にする
+        check = re.search(r"- name: 状態を確かめる\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)", mutation, re.S)
+        self.assertIsNotNone(check, "状態を確かめる段が無い")
+        self.assertIn("!cancelled()", check.group(1))
+        self.assertIn("!= 'ok'", check.group(1))
+        self.assertIn("!= 'first'", check.group(1))
+        self.assertIn("exit 1", check.group(2))
+        self.assertLess(mutation.index("固定の束を回す"), mutation.index("状態を確かめる"))
+
+    def test_mutation_の記録は常に上がる(self):
+        # 組み立てで落ちた回の記録を上げ損ねると、報告が何も読めない (指摘 12 d)
+        mutation = self.jobs["mutation"]
+        upload = re.search(r"- uses: actions/upload-artifact@v7\n(.*?)(?=\n      - |\Z)", mutation, re.S).group(1)
+        self.assertRegex(upload, r"if: always\(\)")
+        self.assertRegex(upload, r"include-hidden-files: true")
+        self.assertRegex(upload, r"retention-days: 14")
+        for path in (".build/mutation-bundle.json", ".build/mutation-range.json"):
+            self.assertIn(path, upload)
 
     def test_mutation_の読めない記録は赤になる(self):
         mutation = self.jobs["mutation"]
@@ -152,12 +186,32 @@ class HostScheduledWorkflowTest(unittest.TestCase):
             self.assertIn(f".build/{record}", mutation)
             self.assertIn(record, report)
         self.assertIn("scripts/report-mutation.py", report)
+        self.assertIn("needs.mutation.outputs.reason", report)
+        # 組み立てで落ちて artifact が無い回も報告する (download の失敗で止まらない)
+        download = re.search(r"- uses: actions/download-artifact@v8\n(.*?)(?=\n      - |\Z)", report, re.S).group(1)
+        self.assertIn("continue-on-error: true", download)
         # 範囲を回すつもりだったか (起点を進めてよいかの判定) を job の出力で受け渡す
         self.assertRegex(mutation, r"outputs:\s+since: \$\{\{ steps\.previous\.outputs\.since \}\}")
         self.assertIn("needs.mutation.outputs.since", report)
         self.assertIn("needs.mutation.result", report)
         # 範囲の段は起点が読めたときだけ走る
         self.assertIn("steps.previous.outputs.since != ''", self.jobs["mutation"])
+
+    def test_mutation_report_は_main_の_run_だけが_Issue_に書き_同時には_1_つだけ走る(self):
+        report = self.jobs["mutation-report"]
+        # 共有の追跡 Issue を、枝の dispatch が書き換えない (指摘 7)
+        write = re.search(r"- name: 点数を追跡用の Issue に置く\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)",
+                          report, re.S)
+        dry = re.search(r"- name: 点数を job の要約に出す[^\n]*\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)",
+                        report, re.S)
+        self.assertIsNotNone(write)
+        self.assertIsNotNone(dry)
+        self.assertIn("github.ref == 'refs/heads/main'", write.group(1))
+        self.assertNotIn("--dry-run", write.group(2))
+        self.assertIn("github.ref != 'refs/heads/main'", dry.group(1))
+        self.assertIn("--dry-run", dry.group(2))
+        # schedule と dispatch が重なっても、本文の更新が失われず Issue が二重に立たない (指摘 8)
+        self.assertRegex(report, r"(?m)^    concurrency:\n      group: mutation-report\n      cancel-in-progress: false\s*$")
 
     def test_exit_test_は_TSan_の下から外す(self):
         skip = tsan_skip(MAKEFILE.read_text(encoding="utf-8"))
