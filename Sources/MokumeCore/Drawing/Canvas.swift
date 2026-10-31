@@ -179,6 +179,11 @@ public final class Canvas {
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     var recordingShape = false
 
+    /// 道 (``Path``) を記録している間の控え。``createPath(_:)`` の入口で立て、出口で下ろす。
+    /// 立っている間は、閉じた形の周と穴を三角形に割らずにここへ控え、書けない口 (基本図形・字・画像・立体など)
+    /// は断る。記録は形の組み立ての中で行うので、``recordingShape`` も立っている。
+    var pathRecorder: PathRecorder?
+
     /// 保持する形を記録している間に、輪郭が積んだ平面の頂点の区間。
     ///
     /// 輪郭は画面で半画素寄せる ([ADR-0039] 決定 2) が、記録の間は置く場所の変換が

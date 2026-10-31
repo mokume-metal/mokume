@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Foundation
+
 extension Canvas {
 
     /// 形の組み立て (``createShape(_:)``) の中では効かないもの。**何が効かなかったか**を表す ([#1588])。
@@ -236,7 +238,12 @@ extension Canvas {
 
     /// 組み立ての中で効かなかったことを、初回だけ知らせる。
     func warnInsideShape(_ subject: InsideShape) {
-        warnOnce(subject.warning, subject.notice)
+        // 道の記録 (``createPath(_:)``) も形の組み立ての中で行うので、同じ断りを、呼んだ口の名前で言う
+        warnOnce(
+            subject.warning,
+            pathRecorder == nil
+                ? subject.notice
+                : subject.notice.replacingOccurrences(of: "createShape { }", with: "createPath { }"))
     }
 
     /// 形に焼き付かない設定を、いま書いてよいか。**書けなければ、なぜ効かないかを種類ごとに

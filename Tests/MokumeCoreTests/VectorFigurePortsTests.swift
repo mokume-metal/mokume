@@ -170,4 +170,29 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.filter([.threshold(level: 0.5)]) } == 1)
         #expect(try handled(canvas) { $0.particles(dust) } == 1)
     }
+
+    @Test("道 (Path) を描く口は、同じ beginShape を描いたときと同じく、図形を控える (落とさない)")
+    func pathsAreCaptured() throws {
+        let canvas = try makeCanvas()
+        let path = canvas.createPath {
+            canvas.beginShape()
+            canvas.vertex(10, 10)
+            canvas.vertex(60, 10)
+            canvas.vertex(60, 60)
+            canvas.endShape(.close)
+        }
+        var figures = 0
+        var drops = 0
+        try canvas.draw {
+            canvas.beginVectorWindow(pending: [])
+            canvas.startVectorCapture(path: "x.svg")
+            canvas.fill(.linear(red: 1, green: 0, blue: 0))
+            canvas.shape(path)
+            let captured = canvas.endVectorWindow()
+            figures = captured?.figures.count ?? 0
+            drops = captured?.drops.count ?? 0
+        }
+        #expect(figures == 1 && drops == 0, "figures=\(figures) drops=\(drops)")
+        #expect(try handled(canvas) { $0.shape(path) } == 1)
+    }
 }

@@ -412,6 +412,11 @@ extension Canvas {
         for hole in shapeHoles { points += hole }
         guard !points.isEmpty else { return }
         let primitives = builtPrimitives(closed: closed)
+        // 道を記録しているなら、三角形に割る前の周と穴を控えるだけで、描かない (``createPath(_:)``)
+        if let recorder = pathRecorder {
+            recordPathShape(recorder, primitives: primitives, points: points)
+            return
+        }
         // ベクターへ書くなら、三角形に割る前の周と穴をここで控える。割った後は三角形の頂点だけが残る (#3139)
         if let sink = vectorSink() {
             recordVectorShape(sink, primitives: primitives, points: points, evenOdd: evenOdd)
@@ -452,6 +457,39 @@ extension Canvas {
                 if style.hasStroke, style.strokeWeight > 0 {
                     emitStroke(primitive, points: points, placed: placed)
                 }
+            }
+        }
+    }
+
+    /// 並べ終えた頂点を、道へ控える。**原始形 1 つにつき、周が 1 つ、穴が 1 つずつ**部分道になる。
+    ///
+    /// 変換は焼き込む。奥行きを持つ頂点の形は平面でないので断る。座標が数でない周・穴は、画面にも描かれないので
+    /// 飛ばす。
+    private func recordPathShape(
+        _ recorder: PathRecorder, primitives: [Primitive], points: [BuildingVertex]
+    ) {
+        if shapeHasDepth {
+            refuseInsidePath(.depth)
+            return
+        }
+        let place = vectorPlacer()
+        func subpath(_ indices: some Sequence<Int>, isClosed: Bool) -> Path.Subpath? {
+            var positions: [SIMD2<Float>] = []
+            var steps: [Bool] = []
+            for index in indices {
+                let moved = place(SIMD2(points[index].position.x, points[index].position.y))
+                guard moved.x.isFinite, moved.y.isFinite else { return nil }
+                positions.append(moved)
+                steps.append(points[index].isCurveStep)
+            }
+            guard !positions.isEmpty else { return nil }
+            return Path.Subpath(points: positions, isClosed: isClosed, isCurveStep: steps)
+        }
+        for primitive in primitives {
+            guard let ring = subpath(primitive.ring, isClosed: primitive.isClosed) else { continue }
+            recorder.subpaths.append(ring)
+            for hole in primitive.holes {
+                if let loop = subpath(hole, isClosed: true) { recorder.subpaths.append(loop) }
             }
         }
     }
@@ -1223,7 +1261,7 @@ extension Canvas {
         appendVertex(SIMD3(point.x, point.y, depth), hasDepth: false, isCurveStep: isCurveStep)
     }
 
-    private func appendVertex(
+    func appendVertex(
         _ position: SIMD3<Float>, hasDepth: Bool, uv: SIMD2<Float>? = nil,
         isCurveStep: Bool = false
     ) {
