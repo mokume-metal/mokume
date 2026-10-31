@@ -71,6 +71,7 @@ final class FieldAndFlow: Sketch {
             """
             kernel void stir(device float *field [[buffer(0)]],
                              constant Values &values [[buffer(MOKUME_VALUES)]],
+                             constant Frame &frame [[buffer(MOKUME_FRAME)]],
                              uint2 at [[thread_position_in_grid]])
             {
                 float2 grid = values.grid;
@@ -78,7 +79,8 @@ final class FieldAndFlow: Sketch {
 
                 // マスの真ん中で引く (画素の真ん中で引く塗りと座標を揃える)
                 float2 p = (float2(at) + 0.5) / grid;
-                float t = values.time;
+                // 時刻は計算に届く (`Frame`)。値として手で渡さなくてよい
+                float t = frame.time;
 
                 // 座標をゆっくり歪めてから波を重ねる。縞ではなく、尾根と谷が
                 // 流れながら形を変える地形になる
@@ -99,7 +101,7 @@ final class FieldAndFlow: Sketch {
             }
             """,
             name: "stir",
-            values: ["grid": .pair(Float(columns), Float(rows)), "time": 0])
+            values: ["grid": .pair(Float(columns), Float(rows))])
 
         // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
         paint = try createShader(
@@ -236,7 +238,6 @@ final class FieldAndFlow: Sketch {
     func draw() {
         guard let field, let stir, let paint else { return }
 
-        stir.set("time", .number(time))
         compute(stir, over: columns, by: rows, writes: [field])
         // 場を読む計算。**`reads:` に場を書いたので、上の計算が終わってから走る**
         if let slice, let probe, let profile {

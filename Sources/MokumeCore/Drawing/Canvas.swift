@@ -1000,6 +1000,12 @@ public final class Canvas {
 
     /// このフレームにかける効果の並び。**フレームを越えない** (ADR-0021 決定 4)。
     var pendingEffects: [Effect] = []
+    /// ``pendingEffects`` を積んだ時点 (``effects(_:)``) の揺らぎの種と細かさ。効果の断片の
+    /// `mokume_noise` が引く ([#3569])。**効果と同じくフレームを越えない** — 効果を決め直さない
+    /// フレームには効果が無いので、読まれるのは積んだフレームだけである。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    var pendingEffectsNoise = ValueNoise()
     /// このフレームで力を積んだ粒と、最初に積む前に積んであった力の数 ([#1622])。
     ///
     /// **閉じ忘れたフレームを描かずに捨てるとき、そのフレームで積んだ力だけを落とす**ために

@@ -202,6 +202,22 @@ extension SketchPart {
     ///   }
     /// }
     ///
+    /// ## 時刻と揺らぎは `MOKUME_FRAME` から読む
+    ///
+    /// 入口に `constant Frame &frame [[buffer(MOKUME_FRAME)]]` と書くと、`frame.time` (``time``) と
+    /// `mokume_noise(frame, p)` (CPU で引く ``noise(_:_:_:_:)`` と同じ式の揺らぎ) が使える。
+    /// **頼んだ時点の** ``time`` と ``noiseSeed(_:)``・``noiseDetail(_:_:)`` が届くので、時刻を `values` に
+    /// 手で書き写さなくてよい。書かなければ入口の署名は何も変わらない。
+    ///
+    /// ```metal
+    /// kernel void drift(device float *level [[buffer(0)]],
+    ///                   constant Frame &frame [[buffer(MOKUME_FRAME)]],
+    ///                   uint id [[thread_position_in_grid]])
+    /// {
+    ///     level[id] = mokume_noise(frame, float2(float(id) * 0.1, frame.time));
+    /// }
+    /// ```
+    ///
     /// ## 保存したら差し替わる
     ///
     /// 在処のある断片は保存を拾って組み直される。**組み立てに失敗しても計算は止まらない** —

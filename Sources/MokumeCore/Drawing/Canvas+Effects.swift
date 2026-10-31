@@ -32,6 +32,9 @@ extension Canvas {
         // 指さない
         guard admits(.effects) else { return }
         pendingEffects = acceptedEffects(effects, calledBy: "effects")
+        // **積んだ時点の揺らぎの設定を控える** (#3569)。断片の `mokume_noise` は、フレームの終わりに
+        // 通すときではなく、ここで `noiseSeed()` / `noiseDetail()` が決めていた種と細かさで引く
+        pendingEffectsNoise = noiseSettings
         prepareEffectOutput()
     }
 
@@ -133,7 +136,8 @@ extension Canvas {
     /// 書かないので、描く先も控えも掛ける前の絵のまま揃う — 取り戻す記帳は要らない (効果の取り替え
     /// ``carryDropped(_:)`` は面の割り当てを CPU が持ち替えるので要る。こちらは持ち替えない)。
     func applyFilter(_ effects: [Effect]) throws(RenderFailure) {
-        let passes = effects.flatMap { $0.passes(drawnPerOutput: effectRadiusScale) }
+        // 揺らぎの設定は呼んだ時点のもの (その場で掛ける口なので、積むのも通すのもここ・#3569)
+        let passes = effectPasses(effects, noise: noiseSettings)
         guard !passes.isEmpty else { return }
         // 途中の描き切り。効果は掛けない (フレームの終わりの `effects(_:)` が掛ける分は、まだ溜めたまま)
         try flush(applyingEffects: false)
@@ -142,7 +146,7 @@ extension Canvas {
         // 止まっている間の描き切りは控えにも図形を描いて印を残す。効果を通し直す相手 (最後のフレームの効果) が
         // 無ければ (起きないはずだが) 描く先に掛けるだけにする
         let carry: StageImage? = changesGoIntoCarry ? pipeline.existingCarry : nil
-        let rerun = carry == nil ? [] : pendingEffects.flatMap { $0.passes(drawnPerOutput: effectRadiusScale) }
+        let rerun = carry == nil ? [] : effectPasses(pendingEffects, noise: pendingEffectsNoise)
         let reruns = carry != nil && !rerun.isEmpty
         // 描く先を書き換える口は、書く前に置いた側へ写させる (#1942)
         settlePlacersBeforeChange()
@@ -363,7 +367,7 @@ extension Canvas {
         // **半径は出す画素で書かれている** ([#1545])。段は描く細かさの絵の上で回るので、
         // 展開する前に描く画素へ換算する (縮め幅もこの半径で決まる)
         let scale = effectRadiusScale
-        let passes = pendingEffects.flatMap { $0.passes(drawnPerOutput: scale) }
+        let passes = effectPasses(pendingEffects, noise: pendingEffectsNoise, drawnPerOutput: scale)
         guard !passes.isEmpty else { return false }
         let pipeline = try effectPipeline()
         // **このフレームで使う枠を、1 枠も書かないうちに数え切る。** 取り直すと領域が
@@ -503,6 +507,24 @@ extension Canvas {
         effectChangesKeptEncoded += 1
     }
 
+    /// 効果の並びを段に展開し、**積んだ時点の揺らぎの設定を載せる** ([#3569])。
+    ///
+    /// 展開は ``Effect/passes(drawnPerOutput:)`` で、半径は出す画素から描く画素へ換算する
+    /// ([#1545])。揺らぎの設定は断片の `mokume_noise` だけが読む (組み込みの効果は読まない)。
+    ///
+    /// [#1545]: https://github.com/mokume-metal/mokume/issues/1545
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    func effectPasses(
+        _ effects: [Effect], noise: ValueNoise, drawnPerOutput scale: Float? = nil
+    ) -> [EffectPass] {
+        let scale = scale ?? effectRadiusScale
+        return effects.flatMap { $0.passes(drawnPerOutput: scale) }.map { pass in
+            var pass = pass
+            pass.noise = noise
+            return pass
+        }
+    }
+
     /// 次の段の枠を 1 つ取る。**効果も拡大もここから取る** (採番は 1 系統)。
     func takeStagePass() -> Int {
         defer { stagePassesUsed += 1 }
@@ -534,6 +556,16 @@ extension Canvas {
             SIMD4<Float>(width, height, 0, 0))
         block.advanced(by: EffectPipeline.frameOffset)
             .copyMemory(from: &frame, byteCount: EffectPipeline.frameSize)
+        // 揺らぎの種と細かさ (#3569)。**種と枚数は整数のまま、使っていなかった欄に載せる** —
+        // 浮動小数に直すと種の下の桁が丸まる。値の欄 (``EffectPipeline/valueSlotCapacity``) は減らない
+        let frameBlock = block.advanced(by: EffectPipeline.frameOffset)
+        frameBlock.storeBytes(
+            of: pass.noise.seed, toByteOffset: EffectPipeline.noiseSeedOffset, as: UInt32.self)
+        frameBlock.storeBytes(
+            of: UInt32(pass.noise.octaves), toByteOffset: EffectPipeline.noiseOctavesOffset,
+            as: UInt32.self)
+        frameBlock.storeBytes(
+            of: pass.noise.falloff, toByteOffset: EffectPipeline.noiseFalloffOffset, as: Float.self)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
         while values.count < EffectPipeline.valueSlotCapacity { values.append(0) }
         block.advanced(by: EffectPipeline.valuesOffset)

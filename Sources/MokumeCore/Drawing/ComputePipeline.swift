@@ -7,9 +7,43 @@ import Metal
 ///
 /// 図形の側 (``ShapePipeline``) と同じ役割を、計算の段に対して持つ。組み立て器を
 /// 分けて持っているのは、口の数が違う (計算は利用者の並びを何本も束ねる) ためである。
+/// 計算の頼みごとに添えて届く、時刻と揺らぎの設定 (断片の `Frame`)。
+///
+/// **並びは `Drawing/Shaders/Compute.metal` の `Frame` と一致していなければならない**
+/// (`ShaderInterfaceTests` が突き合わせる)。値 (``ComputeDispatch/values``) と同じく、
+/// **頼んだ時点の写しを持つ** — 溜めた頼みは流す段まで走らないので、流す段で読み直すと、
+/// 頼んだ後に決め直した時刻や種に引きずられる ([#3569]・[#932])。
+///
+/// [#932]: https://github.com/mokume-metal/mokume/issues/932
+/// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+struct ComputeFrame: Equatable {
+    /// スケッチが始まってからの秒数。
+    var time: Float
+    /// 揺らぎの種。
+    var noiseSeed: UInt32
+    /// 揺らぎを重ねる枚数。
+    var noiseOctaves: UInt32
+    /// 1 枚ごとの弱まり。
+    var noiseFalloff: Float
+
+    init(time: Float, noise: ValueNoise) {
+        self.time = time
+        noiseSeed = noise.seed
+        noiseOctaves = UInt32(noise.octaves)
+        noiseFalloff = noise.falloff
+    }
+}
+
 final class ComputePipeline {
     /// 利用者が渡した値が載る口の番号。断片からは `MOKUME_VALUES` で引ける。
     static let valuesBufferIndex = 15
+    /// 時刻と揺らぎの設定 (``Frame``) が載る口の番号。断片からは `MOKUME_FRAME` で引ける。
+    ///
+    /// 利用者の `Values` に欄を差し込まず、**別の口として配る** — 利用者が宣言した名前
+    /// (`time` など) と衝突しないため、入口の署名を書く側が持つ形も変わらない ([#3569])。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    static let frameBufferIndex = 16
     /// 1 回の計算に束ねられる並びの本数 (口 0…14)。
     ///
     /// 上限があるのは引数のテーブルを固定の大きさで作るためで、**超えた要求は黙って
@@ -35,7 +69,7 @@ final class ComputePipeline {
         self.gpu = gpu
         self.tablePool = ArgumentTablePool(
             gpu: gpu, label: "mokume.compute.arguments",
-            bufferBindCount: Self.valuesBufferIndex + 1)
+            bufferBindCount: Self.frameBufferIndex + 1)
         self.compiler = try gpu.shaders.compiler()
     }
 

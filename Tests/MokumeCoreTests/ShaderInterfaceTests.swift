@@ -236,6 +236,30 @@ struct ShaderInterfaceTests {
             limits: [.buffer: ComputePipeline.valuesBufferIndex + 1])
     }
 
+    @Test("計算の時刻と揺らぎの口 (MOKUME_FRAME) が、Swift 側と同じ番号と並びである")
+    func computeFrameAgreesWithSwift() throws {
+        let library = try RenderDevice().shaders.makeComputeLibrary(
+            named: "probe",
+            body: """
+                kernel void mokume_frameProbe(
+                    constant Frame &frame [[buffer(MOKUME_FRAME)]],
+                    uint id [[thread_position_in_grid]])
+                {
+                    (void)frame;
+                }
+                """)
+
+        check(
+            library,
+            entries: [
+                Entry(
+                    "mokume_frameProbe",
+                    [.buffer("frame", ComputePipeline.frameBufferIndex, .layout(Self.computeFrame))])
+            ],
+            covering: ["mokume_frameProbe"],
+            limits: [.buffer: ComputePipeline.frameBufferIndex + 1])
+    }
+
     @Test("粒の組み立てにある置き場所の写しも、Swift 側と同じ並びである")
     func particlePlacesAgreeWithSwift() throws {
         let shaders = try RenderDevice().shaders
@@ -434,6 +458,13 @@ struct ShaderInterfaceTests {
             ("time", \.time), ("resolution", \.resolution), ("shadowBias", \.shadowBias),
             ("shadowMatrix", \.shadowMatrix), ("shadowParams", \.shadowParams),
             ("unitsPerDrawnPixel", \.unitsPerDrawnPixel), ("unitsPadding", \.unitsPadding),
+        ])
+
+    static let computeFrame = layout(
+        of: ComputeFrame.self,
+        [
+            ("time", \.time), ("noiseSeed", \.noiseSeed), ("noiseOctaves", \.noiseOctaves),
+            ("noiseFalloff", \.noiseFalloff),
         ])
 
     static let lighting = layout(
