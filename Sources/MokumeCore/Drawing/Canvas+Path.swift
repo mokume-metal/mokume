@@ -122,7 +122,10 @@ extension Canvas {
                     guard placed.x.isFinite, placed.y.isFinite else { break }
                     moved.append(placed)
                 }
-                guard moved.count == subpath.points.count else { continue }
+                guard moved.count == subpath.points.count else {
+                    warnBadVertexOnce()
+                    continue
+                }
                 recorder.subpaths.append(
                     Path.Subpath(points: moved, isClosed: subpath.isClosed, isCurveStep: subpath.isCurveStep))
             }

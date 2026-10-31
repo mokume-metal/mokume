@@ -26,12 +26,17 @@ extension SketchPart {
     ///   だけ知らせる。道には ``beginShape(_:)`` で並べた輪郭だけが入る。奥行きのある頂点も断る。効果の頼みや塗り直しは、
     ///   ``createShape(_:)`` の中と同じく効かない。
     /// - 中で ``shape(_:_:_:)-(Path,_,_)`` を呼ぶと、描き方 (``fill(_:)-(LinearRGBA)`` や ``stroke(_:)-(LinearRGBA)`` の有無)
-    ///   に依らず、その道の部分道が、いまの変換を掛けて 1 回ずつ足される。
+    ///   に依らず、その道の部分道が、いまの変換を掛けて 1 回ずつ足される。非有限の座標になる部分道は飛ばして、1 度だけ
+    ///   知らせる。
+    /// - **部分道の並びは、足された順である。** ``shape(_:_:_:)-(Path,_,_)`` はその場で足し、開いた
+    ///   ``beginShape(_:)`` は ``endShape(_:)`` で足すので、`beginShape()` の途中で `shape(path)` を呼ぶと、
+    ///   `path` の部分道が先で、外の形が後になる。``Path/point(at:)`` が辿る順もこれである。
     /// - 中で ``createShape(_:)`` を呼べるが、中の形の輪郭は外の道へ入らない (逆に ``createShape(_:)`` の中の
     ///   ``createPath(_:)`` も同じ)。
     ///
     /// 走っている実行の面を取れない所 (初期化子の中・後片付けの後など) で呼ぶと、落ちずに空の道を返し、1 度だけ
     /// 警告する。中身は呼ばれる。
+    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。作例は #3562 が持つ)
     public func createPath(_ body: () -> Void) -> Path {
         guard let canvas = Self.liveCanvas(.make(returning: "an empty path")) else {
             body()
@@ -53,6 +58,7 @@ extension SketchPart {
     /// なる。SVG へ書き出すときも、塗りは 1 つの図形、線は部分道ごとの図形になる。
     ///
     /// ``createPath(_:)`` の中で呼ぶと、描かずに、外の道へ部分道を足す。
+    // shot: 撮れない 作例 (道に沿って動くもの・破線) は #2432・#3562 が持つ。同じ beginShape との画素の一致は PathTests が見る
     public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(path, x, y)

@@ -138,15 +138,39 @@ nonisolated struct PathValueTests {
 
     @Test("大きな半径の円も、刻みの上限 2048 本まで細かく刻む (Float で作ると 8 角形に退化していた)")
     func largeCirclesAreNotOctagons() {
-        for radius: Float in [1e5, 7e5, 1e6, 1e9] {
+        for radius: Float in [1e5, 7e5, 1e6, 1e9, 1e14, 1e15, 1e30] {
             let count = Path(Circle(center: [0, 0], radius: radius)).subpaths[0].points.count
             #expect(count > 100, "r=\(radius): \(count) 本")
         }
         #expect(Path(Circle(center: [0, 0], radius: 1e9)).subpaths[0].points.count == 2048)
+        for radius: Float in [1e15, 1e30] {
+            #expect(Path(Circle(center: [0, 0], radius: radius)).subpaths[0].points.count == 2048, "r=\(radius): 精度が尽きたら上限に倒す")
+        }
         #expect(Path(Circle(center: [0, 0], radius: 1e6)).subpaths[0].points.count == 2048)
         // 刻みは半径が上がるほど増える (単調)
         let counts = [10, 100, 1000, 10000].map { Path(Circle(center: [0, 0], radius: Float($0))).subpaths[0].points.count }
         #expect(counts == counts.sorted())
+    }
+
+    @Test("座標が 1e19 を越える道でも、contains は辺を数え落とさない (差と積は Double)")
+    func containsWithHugeCoordinates() {
+        let huge = Path(Circle(center: [0, 0], radius: 1e20))
+        #expect(huge.contains([0, 0]), "中心は内側")
+        #expect(huge.contains([5e19, 0]) && !huge.contains([3e20, 0]))
+        let box = Path(subpaths: [
+            Path.Subpath(
+                points: [[-1e30, -1e30], [1e30, -1e30], [1e30, 1e30], [-1e30, 1e30]], isClosed: true,
+                isCurveStep: [false, false, false, false])
+        ])
+        #expect(box.contains([0, 0]) && !box.contains([2e30, 0]))
+        // 斜めの辺で、差と積が両方 Float を越える (inf - inf で辺を数え落とす)
+        let triangle = Path(subpaths: [
+            Path.Subpath(
+                points: [[-1e20, -1e20], [1e20, 1e20], [-1e20, 1e20]], isClosed: true,
+                isCurveStep: [false, false, false])
+        ])
+        #expect(triangle.contains([-1e19, 1e19]), "内側")
+        #expect(!triangle.contains([1e19, -1e19]), "外側")
     }
 
     @Test("数でない点は内側ではない")
@@ -376,6 +400,41 @@ struct PathRecordingTests {
             }
             #expect(nested.subpaths.count == 2 && nested.length == two.length, "fill=\(fill) stroke=\(stroke)")
         }
+    }
+
+    @Test("非有限になる位置で足す shape(path) は、部分道を飛ばして、1 度知らせる")
+    func nonFinitePlacementIsNamed() throws {
+        let canvas = try makeCanvas()
+        let far = Path(subpaths: [
+            Path.Subpath(
+                points: [[3e38, 0], [0, 0], [0, 1]], isClosed: true, isCurveStep: [false, false, false])
+        ])
+        let made = try record(canvas) { canvas in
+            canvas.shape(far, 3e38, 0)
+        }
+        #expect(made.subpaths.isEmpty)
+        #expect(canvas.warnings.hasWarned(.badVertex), "黙って捨てている")
+    }
+
+    @Test("createPath の中の部分道の並び順: shape(path) は即座に足し、開いた beginShape は endShape で足す")
+    func subpathOrder() throws {
+        let canvas = try makeCanvas()
+        let source = try record(canvas) { squareOutline($0) }
+        let made = try record(canvas) { canvas in
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(10, 0)
+            canvas.shape(source)
+            canvas.vertex(10, 10)
+            canvas.endShape(.close)
+        }
+        try #require(made.subpaths.count == 2)
+        #expect(made.subpaths[0].points.count == 4, "先に足された shape(path)")
+        #expect(made.subpaths[1].points.count == 3, "endShape で足された外の形")
+        #expect(made.point(at: 0) == [0, 0])
+        // 辿る順は [source (400), 外の三角形]: 400 進んだ所は source の終点 (0,0)、そこから三角形の 10 先は (10, 0)
+        let total = made.length
+        #expect(simd_distance(made.point(at: 410 / total).simd, SIMD2<Float>(10, 0)) < 1e-3)
     }
 
     @Test("開いた beginShape の途中で shape(path) を呼んでも、外の形を黙って捨てない")

@@ -67,6 +67,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// 2π × 10 との差は 0.011 ほど)。半径が極端に大きく、刻みが上限の 2048 本に当たる円 (半径が 17000 ほどから先) では、
     /// 隔たりが 0.02 を越えうる。
     /// 半径が 0 以下か数でない円は、空の道になる。
+    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。作例は #3562 が持つ)
     public init(_ circle: Circle) {
         let radius = circle.radius
         let center = circle.center.simd
@@ -78,12 +79,14 @@ public nonisolated struct Path: Sendable, Hashable {
         // 8 角形に退化する
         let tolerance = min(0.02, Double(radius) / 2000)
         let ratio = max(-1, min(1, 1 - tolerance / Double(radius)))
-        let steps = ratio >= 1 ? 8 : max(8, min(2048, Int((Double.pi / acos(ratio)).rounded(.up))))
+        // `ratio` が 1 に丸まるのは、半径が 3.6e14 を越えて精度が尽きたとき (極めて細かく刻むべきとき) なので、
+        // 倒す先は上限である
+        let steps = ratio >= 1 ? 2048 : max(8, min(2048, Int((Double.pi / RuntimeMath.acos(ratio)).rounded(.up))))
         var points: [SIMD2<Float>] = []
         points.reserveCapacity(steps)
         for step in 0..<steps {
             let angle = Float(step) / Float(steps) * 2 * Float.pi
-            points.append(center + radius * SIMD2(cos(angle), sin(angle)))
+            points.append(center + radius * SIMD2(RuntimeMath.cos(angle), RuntimeMath.sin(angle)))
         }
         self.init(subpaths: [
             Subpath(points: points, isClosed: true, isCurveStep: Array(repeating: true, count: steps))
@@ -94,6 +97,7 @@ public nonisolated struct Path: Sendable, Hashable {
     ///
     /// 空の道は 0。曲線は刻んだ折れ線の長さで測る。座標が Float に収まらないほど大きく、長さが Float を越えるときは無限に
     /// なる (``point(at:)`` は弧長を Double で辿るので、無限にならない)。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
     public var length: Float {
         var total: Double = 0
         for subpath in subpaths {
@@ -107,6 +111,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// `t` が 0…1 の外なら端に締める。**数でない `t` は 0 として扱う** (始点を返す。落とさない)。空の道は原点を
     /// 返し、長さが 0 の道 (点が 1 つだけ・全部同じ所) は最初の点を返す。部分道の継ぎ目では、閉じていない部分道の
     /// 終点から次の部分道の始点へ飛ぶ — その間の辺は数えない。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
     public func point(at t: some ScalarConvertible) -> Vector2 {
         guard let first = subpaths.first(where: { !$0.points.isEmpty })?.points.first else { return Vector2(0, 0) }
         let given = t.asFloat
@@ -142,6 +147,7 @@ public nonisolated struct Path: Sendable, Hashable {
     ///
     /// 全部の部分道を 1 つの形とみなし、回り数が 0 でない所を内側とする。開いた部分道は閉じた形として扱う。
     /// 辺の上は、どちらとも決めない。数でない点は `false`。
+    // shot: 撮れない 値を返すだけで、描く結果が無い
     public func contains(_ point: Vector2) -> Bool {
         let probe = point.simd
         guard probe.x.isFinite, probe.y.isFinite else { return false }
@@ -152,6 +158,7 @@ public nonisolated struct Path: Sendable, Hashable {
             var previous = points[points.count - 1]
             for current in points {
                 // 点から右へ伸ばした半直線が、辺を上向き・下向きに横切る数で回り数を数える
+                // 差と積は Double で取る (Float では座標が 1e19 級で inf - inf になり、辺を数え落とす)
                 if previous.y <= probe.y {
                     if current.y > probe.y, Self.side(previous, current, probe) > 0 { winding += 1 }
                 } else if current.y <= probe.y, Self.side(previous, current, probe) < 0 {
@@ -170,7 +177,8 @@ public nonisolated struct Path: Sendable, Hashable {
     }
 
     /// 辺 `a`→`b` の左にあれば正、右にあれば負。
-    private static func side(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ p: SIMD2<Float>) -> Float {
-        (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
+    private static func side(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ p: SIMD2<Float>) -> Double {
+        (Double(b.x) - Double(a.x)) * (Double(p.y) - Double(a.y))
+            - (Double(p.x) - Double(a.x)) * (Double(b.y) - Double(a.y))
     }
 }

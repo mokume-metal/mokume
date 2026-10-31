@@ -1443,7 +1443,7 @@ extension Canvas {
                 + "as if no normal() had been written")
     }
 
-    private func warnBadVertexOnce() {
+    func warnBadVertexOnce() {
         warnOnce(
             .badVertex,
             "vertex(): got a coordinate that is not a number, or an infinite one, so that vertex "

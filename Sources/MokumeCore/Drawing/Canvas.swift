@@ -3985,7 +3985,7 @@ public final class Canvas {
             try endFrame()
         } catch {
             Diagnostics.warn(
-                "createShape { }: could not finish drawing the frame closed at the end of the "
+                "\(assemblyCall) { }: could not finish drawing the frame closed at the end of the "
                     + "shape: \(error.headline)")
         }
     }
