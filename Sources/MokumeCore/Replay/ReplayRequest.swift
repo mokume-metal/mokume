@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 
 /// 実行を頭から終わりまで 1 本の記録にする頼み (`mokume run --record <path>`・[#3570])。
 ///
@@ -51,7 +52,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
         forRun records: Bool,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) },
-        say: (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
+        say: (String) -> Void = { Diagnostics.warn($0) }
     ) -> ReplayRequest? {
         guard records else {
             unset(StartupReads.record.key)
@@ -68,7 +69,7 @@ package nonisolated struct ReplayRequest: Equatable, Sendable {
     static func startup(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         unset: (String) -> Void = { unsetenv($0) },
-        say: (String) -> Void = { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
+        say: (String) -> Void = { Diagnostics.warn($0) }
     ) -> ReplayRequest? {
         guard let given = environment[StartupReads.record.key] else { return nil }
         unset(StartupReads.record.key)
