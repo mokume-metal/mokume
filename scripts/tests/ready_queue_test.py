@@ -1391,6 +1391,78 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[2371][0], "busy")
         self.assertEqual(seen[2976][0], "ready")
 
+    # 9'''. 親の PR で満たされたのに戻らなかった子 (#3559・#3399 と #3396 の形)
+    def test_child_of_a_bot_reopened_parent_is_ready_with_a_suspicion_note(self):
+        """根の PR が子の条件も満たし、根だけが閉じられて開き直された形。
+
+        親は「子を待つ」で busy、子は ready のまま「親 #N の PR で満たされた疑い」を名乗る。
+        busy へ回すと互いに待つ形が戻るので、ready の件数も変えない
+        """
+        done, _ = self.run_queue(
+            [
+                issue(3396, labels=["verify: triaged"], type_="Design", title="根"),
+                issue(3399, labels=["verify: triaged"], type_="Bug", title="子"),
+            ],
+            parents={3399: parent(3396, type_="Design", labels=["verify: triaged"])},
+            selves={
+                3396: {"children": [member(3399)], "reopened": reopen("github-actions")},
+                3399: {},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[3396][0], "busy")
+        self.assertEqual(seen[3399][0], "ready", "疑いを名乗るために子を ready から外している")
+        self.assertEqual(
+            seen[3399][1], "[Bug] 子 ・親 #3396 の PR で満たされた疑い — 閉じてよいかを見る"
+        )
+        self.assertIn("ready 1 /", done.stderr)
+        self.assertEqual(done.returncode, 0)
+
+    def test_suspicion_note_is_only_for_children_of_a_reopened_parent(self):
+        """人が開き直した親・開き直されていない親・親を持たない Issue の行には添えない。"""
+        done, _ = self.run_queue(
+            [
+                issue(100, labels=["verify: triaged"], type_="Design", title="人が開き直した"),
+                issue(101, labels=["verify: triaged"], type_="Task", title="その子"),
+                issue(200, labels=["verify: triaged"], type_="Design", title="開き直されない"),
+                issue(201, labels=["verify: triaged"], type_="Task", title="その子 2"),
+                issue(300, labels=["verify: triaged"], type_="Task", title="親なし"),
+            ],
+            parents={
+                101: parent(100, type_="Design", labels=["verify: triaged"]),
+                201: parent(200, type_="Design", labels=["verify: triaged"]),
+            },
+            selves={
+                100: {
+                    "children": [member(101)],
+                    "reopened": reopen("someone", kind="User"),
+                },
+                200: {"children": [member(201)]},
+                101: {},
+                201: {},
+                300: {},
+            },
+        )
+        seen = self.lines_by_number(done.stdout)
+        for n in (101, 201, 300):
+            self.assertEqual(seen[n][0], "ready")
+            self.assertNotIn("疑い", seen[n][1], f"#{n} に疑いを添えている")
+
+    def test_suspicion_note_is_not_said_when_the_parent_was_not_read(self):
+        """親を読めなければ、疑いは名乗らない (名乗れる根拠が無い)。"""
+        done, _ = self.run_queue(
+            [
+                issue(3396, labels=["verify: triaged"], type_="Design"),
+                issue(3399, labels=["verify: triaged"], type_="Bug"),
+            ],
+            parents={3399: parent(3396, type_="Design", labels=["verify: triaged"])},
+            selves={3396: {"children": [member(3399)], "reopened": reopen("github-actions")}},
+            FAIL_PARENTS="1",
+        )
+        seen = self.lines_by_number(done.stdout)
+        self.assertEqual(seen[3399][0], "ready")
+        self.assertNotIn("疑い", seen[3399][1])
+
     def test_root_that_owns_its_work_still_takes_its_children(self):
         """開き直されていない (または人が開き直した) 親は、いままでどおり子を根で直す側に回す。"""
         done, _ = self.run_queue(
