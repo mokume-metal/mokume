@@ -87,6 +87,17 @@ extension Canvas {
         case insidePath(PathRefusal)
         /// 置けない置き場所が混ざっていた。
         case badPlacement
+        /// 数の並びを置き場所として読む口 (``Canvas/shape(_:at:layout:)``) に、その道に載らない形が渡された。
+        /// 理由は文面に並べる。鍵は 1 つで、初めに言った文面が残る (``badPlacement`` と同じ)。
+        case positionLayoutShape
+        /// 数の並びを置き場所として読む口 (``Canvas/shape(_:at:layout:)``) が、フレームの外で呼ばれた。
+        /// 計算を頼む口の鍵 (``computeOutsideFrame``) とは分ける — 断られたものが違い、片方が言ったからと
+        /// もう片方が黙ってはならない。
+        case positionLayoutOutsideFrame
+        /// 数の並びを置き場所として読む口に、3 で割り切れない長さの並びが渡された。端数は置かない。
+        case positionLayoutRemainder
+        /// 数の並びを置き場所として読む口が、計算の入口か置き場を用意できなかった。
+        case positionLayoutUnavailable
         /// 立体の寸法が受け取れない値だった。
         case badSolidSize
         /// ``sphere(_:detail:)`` の分け方に、範囲 (``SolidShape/detailRange``) の外の値が渡され、
@@ -556,6 +567,7 @@ extension Canvas {
         case materialInsideShape
         case particlesInsideShape
         case computeInsideShape
+        case positionLayoutInsideShape
         case brightnessInsideShape
         case debugInsideShape
     }

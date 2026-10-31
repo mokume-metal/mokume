@@ -117,6 +117,10 @@ extension Canvas {
         case particles
         /// 計算を頼んだ。
         case compute
+        /// 計算が書いた数の並びを置き場所として読んで置いた (``Canvas/shape(_:at:layout:)``)。組み立ては
+        /// 置き場所を頂点へ焼くが、GPU が書いた置き場所は CPU の手元に無いので焼けない。**フレームの外での
+        /// 扱いは口が自分で持つ** (置く口の関所と計算の関所を順に通す)。
+        case positionLayout
         /// 露出か明るさの丸め方を書いた。**描き方なのでフレームの外でも効く**が、面全体の明るさを
         /// 決めるもので形には焼き付かない ([#1529] の条件 3)。
         ///
@@ -141,7 +145,8 @@ extension Canvas {
             case .particles: .particles
             case .compute: .compute
             case .debug: .debug
-            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness: nil
+            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness,
+                .positionLayout: nil
             }
         }
 
@@ -163,6 +168,7 @@ extension Canvas {
             case .material: .materialInsideShape
             case .particles: .particlesInsideShape
             case .compute: .computeInsideShape
+            case .positionLayout: .positionLayoutInsideShape
             case .brightness: .brightnessInsideShape
             case .debug: .debugInsideShape
             }
@@ -226,6 +232,10 @@ extension Canvas {
             case .compute:
                 "Compute is not run inside \(call) { }. A shape cannot hold it, so ask for it "
                     + "before or after building the shape"
+            case .positionLayout:
+                "shape(at:layout:) does nothing inside createShape { }. A shape bakes the positions it "
+                    + "places into its vertices, but positions that a computation wrote live on the GPU "
+                    + "and are never read back, so call it before or after building the shape"
             case .brightness:
                 "exposure() and toneMapping() do nothing inside \(call) { }. They set the "
                     + "brightness of the whole surface, which a shape cannot hold, so call them "

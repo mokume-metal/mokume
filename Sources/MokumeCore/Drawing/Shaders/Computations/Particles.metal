@@ -3,6 +3,10 @@
 //
 // 粒を 1 フレーム進め、生きている粒だけを詰めて描画へ渡す。
 //
+// **数の並びを置き場所として読む入口 (mokume_positionFlags・mokume_positionPlace) も同居する。**
+// 旗 → scan → 詰める の道が同じで、scan の入口 (mokume_particleScan) をそのまま使うため。
+// 末尾近くの「数の並びを置き場所として読む」を参照。
+//
 // **この置き場にある断片は計算の前置き (Compute.metal) を付けて組み立てる。** 塗りの
 // 前置き (Common.metal) を付ける Shaders/ 直下とは組み立て方が違うので、置き場で
 // 分けてある (scripts/check-shaders.sh が同じ規則で確かめる)。
@@ -303,6 +307,87 @@ kernel void mokume_particles(
     placed.normal1 = float4(above, 0.0);
     placed.normal2 = float4(back, 0.0);
     placed.color = float4(p.red, p.green, p.blue, p.alpha);
+    instances[place] = placed;
+}
+
+// ## 数の並びを置き場所として読む (shape(_:at:layout:))
+//
+// 利用者の計算が書いた 3×N 個の位置から、粒と同じ道 (旗 → scan → 詰める) で置き場所を作る。
+// 数でない値・無限を含む 1 つは置かず、残りは並びの順に詰める。**旗と scan は粒のものをそのまま
+// 使い**(mokume_particleScan)、置き場所を書く入口だけが違う。束ねる先の番号は呼ぶ側が決める
+// (Canvas+PositionLayout.swift が reads / writes の順で渡す)。
+//
+// 指定の並びは Swift 側の `PositionPlacer` が正本:
+//
+//   [0…15]  いまの変換 (4x4)
+//   [16…27] 面の向きを移す行列 (3 本 × 4 成分。4 つめは 0)
+//   [28]    スキャンの段の数 L (uint のビット列)
+//   [29]    描く頂点の数 (uint のビット列)
+//   [30…34] 段 0…4 の置き場の頭 (uint のビット列)。段 L が置ける数 1 個ぶん
+//   [35…39] 予備
+
+/// 1. 置ける位置に旗を立てる。
+///
+///   buffer(0) 指定 (読む) / buffer(1) 位置の並び (読む) / buffer(2) 段の置き場 (書く)
+kernel void mokume_positionFlags(
+    device const float *parameters [[buffer(0)]],
+    device const float *positions [[buffer(1)]],
+    device uint *levels [[buffer(2)]],
+    uint id [[thread_position_in_grid]])
+{
+    float3 position = float3(positions[3 * id], positions[3 * id + 1], positions[3 * id + 2]);
+    uint base = as_type<uint>(parameters[30]);
+    levels[base + id] = mokume_particleFinite(position) ? 1u : 0u;
+}
+
+/// 2. 置ける位置だけを詰めて、置き場所と描く引数を書く。
+///
+/// 置き場所は**位置だけを動かす**ので、行列は「いまの変換 × 平行移動」で、面の向きは変換のものを
+/// そのまま使う (CPU の `Placement` が作る行列と同じ式)。色は白 (形に焼いた色がそのまま出る)。
+///
+///   buffer(0) 指定 (読む) / buffer(1) 位置の並び (読む) / buffer(2) 段の置き場 (読む) /
+///   buffer(3) 置き場所 (書く) / buffer(4) 描く引数 (書く)
+kernel void mokume_positionPlace(
+    device const float *parameters [[buffer(0)]],
+    device const float *positions [[buffer(1)]],
+    device const uint *levels [[buffer(2)]],
+    device SolidInstance *instances [[buffer(3)]],
+    device DrawArguments *arguments [[buffer(4)]],
+    uint id [[thread_position_in_grid]])
+{
+    uint levelCount = as_type<uint>(parameters[28]);
+
+    // 描く引数。**置ける数は最上段の 1 個**で、スキャンが全部の区画を足し上げてある
+    if (id == 0) {
+        uint top = as_type<uint>(parameters[30 + levelCount]);
+        arguments->vertexCount = as_type<uint>(parameters[29]);
+        arguments->instanceCount = levels[top];
+        // 頂点の頭は書かない (粒と同じ理由。mokume_particles を参照)
+        arguments->vertexStart = 0u;
+        arguments->baseInstance = 0;
+    }
+
+    float3 position = float3(positions[3 * id], positions[3 * id + 1], positions[3 * id + 2]);
+    if (!mokume_particleFinite(position)) return;
+
+    // 自分より前 (番号が小さい) に置ける位置の数。粒と同じ式
+    uint place = 0;
+    for (uint k = 0; k < levelCount; k++) {
+        uint base = as_type<uint>(parameters[30 + k]);
+        place += levels[base + (id >> (8 * k))];
+    }
+
+    float4x4 world = float4x4(
+        float4(parameters[0], parameters[1], parameters[2], parameters[3]),
+        float4(parameters[4], parameters[5], parameters[6], parameters[7]),
+        float4(parameters[8], parameters[9], parameters[10], parameters[11]),
+        float4(parameters[12], parameters[13], parameters[14], parameters[15]));
+    SolidInstance placed;
+    placed.matrix = float4x4(world[0], world[1], world[2], world * float4(position, 1.0));
+    placed.normal0 = float4(parameters[16], parameters[17], parameters[18], parameters[19]);
+    placed.normal1 = float4(parameters[20], parameters[21], parameters[22], parameters[23]);
+    placed.normal2 = float4(parameters[24], parameters[25], parameters[26], parameters[27]);
+    placed.color = float4(1.0, 1.0, 1.0, 1.0);
     instances[place] = placed;
 }
 

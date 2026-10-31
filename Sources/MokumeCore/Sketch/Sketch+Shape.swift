@@ -376,6 +376,109 @@ extension SketchPart {
         canvas.shape(shape, at: placements)
     }
 
+    /// 計算が書いた数の並びを置き場所として読み、保持した形をまとめて置く。**GPU が書いた位置を、CPU に
+    /// 読み戻さずに置く。**
+    ///
+    /// ``shape(_:at:)`` は置き場所を CPU の配列で受けるので、計算 (``compute(_:over:reads:writes:)``) が
+    /// 動かした位置で置くには、毎フレーム ``Numbers`` を読み戻して (``read(_:)``) 配列を組む — 読み戻す間、
+    /// そのフレームの続きが止まる。こちらは並びを GPU に置いたまま読み、読み戻しも待ちも無い。
+    ///
+    /// `.position` では、並びの 3 つが 1 か所の位置 (x・y・z) になる。3×N 個の並びが N か所で、
+    /// 同じ位置の ``Placement`` の配列で置いた絵と画素まで一致する。
+    ///
+    /// <!-- example: 文脈 var cube: Shape! -->
+    /// <!-- example: 文脈 var positions: Numbers! -->
+    /// ```swift
+    /// func draw() {
+    ///     shape(cube, at: positions, layout: .position)
+    /// }
+    /// ```
+    ///
+    /// 下は、計算が 24 個の位置を円に並べて毎フレーム回し、その位置に立方体を置いたもの。
+    ///
+    /// @Row {
+    ///   @Column(size: 3) {
+    ///     <!-- example: 文脈 var cube: Shape! -->
+    ///     <!-- example: 文脈 var carousel: Computation! -->
+    ///     <!-- example: 文脈 var positions: Numbers! -->
+    ///     ```swift
+    ///     func setup() throws {
+    ///         cube = createShape {
+    ///             noStroke()
+    ///             fill(242, 115, 64)
+    ///             box(20)
+    ///         }
+    ///         // 24 個の位置 (x, y, z) を、円に並べて turn だけ回す
+    ///         carousel = try makeComputation(
+    ///             """
+    ///             kernel void carousel(device float *position [[buffer(0)]],
+    ///                                  constant Values &values [[buffer(MOKUME_VALUES)]],
+    ///                                  uint id [[thread_position_in_grid]])
+    ///             {
+    ///                 float angle = float(id) / 24.0 * 6.2832 + values.turn;
+    ///                 position[id * 3] = 200.0 + 110.0 * cos(angle);
+    ///                 position[id * 3 + 1] = 150.0 + 110.0 * sin(angle);
+    ///                 position[id * 3 + 2] = 0.0;
+    ///             }
+    ///             """,
+    ///             name: "carousel", values: ["turn": 0])
+    ///         positions = try makeNumbers(count: 24 * 3)
+    ///     }
+    ///
+    ///     func draw() {
+    ///         carousel.set("turn", .number(Float(frameCount) * 0.03))
+    ///         compute(carousel, over: 24, writes: [positions])
+    ///         background(23, 26, 31)
+    ///         lights()
+    ///         shape(cube, at: positions, layout: .position)
+    ///     }
+    ///     ```
+    ///   }
+    ///   @Column {
+    ///     <!-- shot: 橙の立方体 24 個が、円周に等間隔で並ぶ -->
+    ///     <!-- /shot -->
+    ///   }
+    /// }
+    ///
+    /// ## 置ける形
+    ///
+    /// **立体が 1 つだけで、輪郭の線を持たない形**だけが置ける (組み立ての中で `noStroke()` にした不透明な
+    /// `box(_:)`・`cone(_:_:)` など)。位置が GPU にあるので、置き場所ごとに CPU で頂点を組み直す必要のある
+    /// 形 — 立体の線を持つ形・平面や基本図形が混ざる形・区間が 2 つ以上の形・半透明の色や貼る絵、重ねる以外の
+    /// 混ぜ方、断片で描いた形 (裏面を先に描き分ける) — は置けず、**1 度だけ理由を知らせて描かない**。
+    /// 置き場所ごとの塗りや倍率は付けられない。形に焼いた色のまま描く。
+    ///
+    /// ## 並びの読み方
+    ///
+    /// - 長さが 3 で割り切れないときは、`count / 3` の切り捨ての数だけ置き、端数があることを 1 度だけ知らせる
+    /// - 数でない値・無限を含む 1 か所は置かれず、残りは並びの順に置かれる
+    /// - 並びは、計算を頼んだ同じフレームの値で読む (前のフレームの値ではない)。計算より先にこの口を呼ぶと、
+    ///   その計算が書く前の値を読む
+    /// - `createShape(_:)` の中で呼ぶと置かれず、1 度だけ知らせる。組み立ては置き場所を頂点へ焼くが、
+    ///   GPU が書いた位置は CPU に無いので焼けない
+    /// - 計算は描くところ (`draw()`) の中だけで効く (``compute(_:over:reads:writes:)``)。外で呼ぶと置かれず、
+    ///   1 度だけ知らせる
+    ///
+    /// ## 費用
+    ///
+    /// 位置の数に比例した置き場所と旗の置き場を、並びごとに 1 度だけ確保して使い回す (毎フレーム確保しない)。
+    /// 1 か所あたり 128 バイトの置き場所を持つ。同じフレームで何度呼んでも、呼び出しごとに別の置き場所を使う。
+    ///
+    /// - **同じフレームで呼ぶ回数ぶん置き場所を持ち、面が生きている間は縮まない。** 並びが大きいほど、
+    ///   1 フレームで多く呼ぶほど重い (100 万か所の並びを 100 回呼ぶ描き方は、約 12.8GB の置き場所を持つ)。
+    ///   粒と同じ性質である
+    /// - **置き場所は面ごとに持つ。** 同じ並びを本体と描き場所 (`createGraphics`) の両方で置くと、それぞれの
+    ///   面が自分の置き場所を持つ (二重に持つ)
+    /// - 並びを手放すと、置き場所は次のフレームの頭で手放される (呼び出しの無いフレームでも)
+    /// - 置き場所や計算の準備に失敗すると、その呼び出しは描かれず 1 度だけ知らせる。失敗は一時的なことが
+    ///   あるので、フレームを重ねながら間隔を延ばして (1・2・4…フレーム、上限 600 フレーム) 試し直す。
+    ///   直れば、そのまま置かれるようになる
+    // shot: 後で撮る
+    public func shape(_ shape: Shape, at positions: Numbers, layout: Placement.Layout) {
+        guard let canvas = Self.liveCanvas() else { return }
+        canvas.shape(shape, at: positions, layout: layout)
+    }
+
     /// 保持した形を置く。
     ///
     /// 色は形が持っているものが使われ、置く場所といまの変換が効く。

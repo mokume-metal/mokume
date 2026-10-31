@@ -90,6 +90,16 @@ public struct Placement: Equatable, Sendable {
         self.fill = fill
     }
 
+    /// 計算が書いた数の並びを、置き場所としてどう読むか (``SketchPart/shape(_:at:layout:)``)。
+    public enum Layout: Sendable, Hashable {
+        /// 3 つで 1 か所: 位置の x・y・z。**3×N 個の並びが N か所になる。**
+        ///
+        /// 倍率・回転・塗りは付けられない (大きさ 1・回さず・形に焼いた色のまま)。数でない値・無限を含む 1 か所は
+        /// 置かれず、ほかは並びの順に置かれる (``Placement`` の `x`・`y`・`z` のどれかが数でない値・無限の
+        /// 置き場所が置かれないのと同じ)。
+        case position
+    }
+
     /// 置き場所を変換として組み立てる。
     ///
     /// 順序は**大きさ → 回転 → 位置**。`push()` / `translate()` / `rotateX()` /

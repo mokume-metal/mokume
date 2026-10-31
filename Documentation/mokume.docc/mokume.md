@@ -670,6 +670,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``SketchPart/requestShape(_:)``
 - ``SketchPart/shape(_:_:_:)-(Shape,_,_)``
 - ``SketchPart/shape(_:at:)``
+- ``SketchPart/shape(_:at:layout:)``
 - ``Shape``
 - ``Placement``
 
