@@ -380,6 +380,8 @@ extension ShapeExit {
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
+            // 実行の記録 (#3570)。入力・つまみ・観測を写して残す係で、形に焼き付く値を生まない
+            "replay": recording,
             "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording, "settling": observation,
             "frameDrawnAfter": recording, "readyOutletFrames": recording,
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,

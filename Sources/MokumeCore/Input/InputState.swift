@@ -138,6 +138,10 @@ public final class InputState {
     /// ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。
     let selection = SelectionBroker()
 
+    /// 溜められた出来事を知らせる先。**記録 (``ReplayRecorder``) が差す** ([#3570](https://github.com/mokume-metal/mokume/issues/3570))。
+    /// 溜める前の生の形で渡すので、溢れて先に当てた 1 件も、和が溢れて捨てる 1 件も落とさない。記録していない実行では `nil`。
+    var enqueueObserver: ((InputEvent) -> Void)?
+
     public init() {}
 
     /// 出来事を溜める。**窓からも外からも、入口はここ 1 つ。**
@@ -167,6 +171,7 @@ public final class InputState {
     /// [#935]: https://github.com/mokume-metal/mokume/issues/935
     /// [#2731]: https://github.com/mokume-metal/mokume/issues/2731
     public func enqueue(_ event: InputEvent) {
+        enqueueObserver?(event)
         if pending.count - pendingHead >= Self.queueLimit {
             apply(pending[pendingHead])
             pendingHead += 1

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/replay-record.schema.json",
+  "title": "The record of a run",
+  "description": "A sketch on the frame clock, run from its first frame to its end and written into one file (`mokume run --record <path>`, `mokume watch --record <path>`). It holds what is needed to play the same run again and get the same pictures on the same machine (ADR-0045 decision 10): the state the run started from, and for every advance() the inputs, the knob writes and the timed observation that reached the frame, plus the values a replay compares against (the exposed values of every frame and a hash of the picture every 60 frames and at the end). **The file is complete only when `complete` is true.** While the run is being written it is `<path>.<pid>.partial`, and `<path>` appears only when the run ended cleanly (the window closed, SIGTERM, or Control + C) and was synced to disk; a run that was killed, or whose setup() threw, leaves only the `.partial` file, which is not a record. Only one run writes to a path at a time (`<path>.lock`); a second run does not record. A sketch on the wall clock is not recorded. `mokume watch --record` writes one record per build, a file each (`take.json` → `take-1.json`, `take-2.json`, …): a rebuild is a cut between two records. Later stages add keys (for example messages that arrive from outside, each with the frame and time it arrived), so a reader that meets a key it does not know in a record of its own `schemaVersion` skips it; the keys listed here are the whole set of this version (additionalProperties is false), so a writer that adds one updates this schema first.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "clock", "size", "window", "start", "steps", "complete"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "The version of this format. A reader refuses a version it does not read, and says so."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "This record's identifier, made when the run starts. Something that points at the record — an observation of one frame together with the conditions it was taken under — names this id and a frame number."
+    },
+    "clock": {
+      "type": "object",
+      "required": ["kind", "frameRate"],
+      "additionalProperties": false,
+      "description": "The clock the run was on. Only the frame clock is recorded, so `kind` is always `frames`.",
+      "properties": {
+        "kind": { "const": "frames" },
+        "frameRate": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Frames per second of the clock: one draw() is exactly 1 / frameRate seconds."
+        }
+      }
+    },
+    "size": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "description": "The size, in pixels, of the picture the pixel hashes are taken of. A replay at another size cannot match.",
+      "properties": {
+        "width": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "window": {
+      "type": "boolean",
+      "description": "Whether the run was shown in a window. A window plays sound in real time (a replay without a window counts frames), so a record taken in a window names the sound it used under `unreproducible`; the draw of a recorded run is the same either way, because the window's deferral of enlarged-glyph bakes to the next frame is turned off while recording."
+    },
+    "start": {
+      "type": "object",
+      "required": ["seed", "seconds", "paused", "params"],
+      "additionalProperties": false,
+      "description": "The state the run started from, taken after the saved knob values were restored and before setup() ran. A replay sets it up the same way before setup().",
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "description": "The state the random numbers started from. It is always 0: a run starts from the default seed, and a randomSeed() the sketch calls itself is part of the sketch."
+        },
+        "seconds": {
+          "type": "number",
+          "description": "The author's clock (the time the sketch sees, including a time it stopped or jumped) at the first frame, in seconds. It is not 0 for a build that `mokume watch --keep-time` carried on from the previous one: the value is the one the first frame actually started from."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "Whether the author's clock was stopped at the first frame (pauseTime()). True for a build `mokume watch --keep-time` started from a clock that was left stopped: without it a replay would start moving from the first frame."
+        },
+        "params": {
+          "type": "array",
+          "description": "The values of every knob the sketch declares (@Param), in the order they were declared. A value the saved state restored is included. A number that is not finite is written as the string \"nan\", \"inf\" or \"-inf\".",
+          "items": { "$ref": "#/$defs/namedValue" }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "One entry per advance() that delivered the inputs or drew a frame, in order. **`step` counts the advance() calls that reached the delivery of input**, and a stopped sketch (noLoop()) that nothing reached is left out, so a gap in `step` is an advance() in which nothing happened. Inputs that reached the same frame are **not merged**: each bundle belongs to its own advance(), because every delivery resets the per-frame amounts (scroll, drag), and a sketch stopped with noLoop() takes a bundle per advance().",
+      "items": {
+        "type": "object",
+        "required": ["step", "frame", "drew"],
+        "additionalProperties": false,
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The count of advance() calls that delivered input before this one, from 0."
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The frame number when the advance() ended: the frame it drew, or the last frame drawn when it drew none."
+          },
+          "drew": {
+            "type": "boolean",
+            "description": "Whether this advance() drew a frame. False for a stopped sketch that only took inputs, and for a frame that failed to draw (its picture is not hashed, and `unreproducible` says a frame failed)."
+          },
+          "inputs": {
+            "type": "array",
+            "description": "The input events that reached the sketch before this advance() delivered them, **as they arrived** and in order: one event per item, in the same form as one line of the input request (`input-request.schema.json`, an item of `events`), which is also what the tool writes to a sketch's standard input. An event is kept before it is applied, so one that the sketch later drops (a move that would overflow a 32-bit float) is in here too, and a replay drops it in the same place. Omitted when none arrived.",
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "type": "string" }
+              }
+            }
+          },
+          "params": {
+            "type": "array",
+            "description": "The knob writes that came from outside (the window's knob panel, the params facet, the tool's window) before this advance(), **as the value the knob took** (after it was clamped into its range), in order. A value the sketch assigns itself is not a write from outside and is not recorded. Omitted when none came.",
+            "items": { "$ref": "#/$defs/namedValue" }
+          },
+          "observe": {
+            "type": "object",
+            "required": ["time"],
+            "additionalProperties": false,
+            "description": "This advance() drew the frame an observation at a given time asked for (`time` in the observation request).",
+            "properties": {
+              "time": {
+                "type": "number",
+                "description": "The time in seconds the frame was drawn at."
+              }
+            }
+          },
+          "expose": {
+            "type": "object",
+            "description": "The values the sketch exposed with expose() on this frame, by name — what a replay compares against, frame by frame. A value measured with measure() is not here: it is a time, and differs every run. Omitted when the sketch exposed nothing.",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["type", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "type": { "enum": ["float", "int", "bool", "string"] },
+                "value": {}
+              }
+            }
+          },
+          "pixelHash": {
+            "$ref": "#/$defs/pixelHash",
+            "description": "A hash of the picture of this frame. Taken when the frame number is a multiple of 60, and only then. Left out when the picture could not be read back (`unreproducible` says so). The last frame of the run is in `last`."
+          }
+        }
+      }
+    },
+    "unreproducible": {
+      "type": "array",
+      "description": "What was used that a replay cannot be promised to match, each with a reason, once per reason. A record with this key is not promised to replay frame for frame; a replay names it too. Omitted when there is nothing. The reasons: input that is not finite; too many inputs between two frames; a dropped or chosen file (the record holds its path, not its contents) and a file fetched from a URL; **a source from outside the sketch whose values the record does not hold** (a gamepad, MIDI, OSC / TCP / UDP / WebSocket, serial, microphone, camera, movie), named by kind; **sound that plays in real time in a window** (`window` is true); a picture that could not be read back to hash; a frame that failed to draw.",
+      "items": {
+        "type": "object",
+        "required": ["step", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The advance() it was first noticed in or before."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why, in a form to show a person. `Replay is not guaranteed (non-finite input)` is an input event that came with a number that is not finite (NaN, infinity) by InputState.enqueue(_:), which the record cannot keep: the form of an event is a line of JSON, which writes such a number as 0, so a replay would apply a different event."
+          }
+        }
+      }
+    },
+    "last": {
+      "type": "object",
+      "required": ["frame", "pixelHash"],
+      "additionalProperties": false,
+      "description": "The last frame the run drew, and a hash of its picture. Omitted when the run drew no frame, when the last frame failed to draw, or when its picture could not be read back (`unreproducible` says so in the last case).",
+      "properties": {
+        "frame": { "type": "integer", "minimum": 1 },
+        "pixelHash": { "$ref": "#/$defs/pixelHash" }
+      }
+    },
+    "complete": {
+      "const": true,
+      "description": "The mark of a finished record. It is written last, after everything the run produced; a file without it is not a record."
+    }
+  },
+  "$defs": {
+    "pixelHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256, in lowercase hex, of the bytes of the picture an outlet gets (8 bits per channel, RGBA, rows from the top, no padding) — the same picture a window shows and an observation writes. It is promised to match only on the same machine (ADR-0025 level 3)."
+    },
+    "namedValue": {
+      "type": "object",
+      "required": ["name", "type", "value"],
+      "additionalProperties": false,
+      "description": "One knob and its value, written as in the params facet (`params-request.schema.json`), except that a float that is not finite is the string \"nan\", \"inf\" or \"-inf\" (a number cannot hold it).",
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["float", "int", "bool", "string", "color", "vec2", "vec3"] },
+        "value": {
+          "description": "The value. float and int are numbers (or one of the strings above), bool is a boolean, string is text, color is a tuple with red, green, blue and alpha (premultiplied, in the working space), and vec2 and vec3 are arrays of components."
+        }
+      }
+    }
+  }
+}

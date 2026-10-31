@@ -32,7 +32,7 @@ enum WatchCommand {
             Arguments.Option([keepTimeFlag], isSwitch: true) {
                 "\($0) takes no value"
             }
-        ]
+        ] + RecordOption.options
     }
 
     /// 世代をまたいで作者の時計を渡すファイルの場所。見張り 1 本ごとに別 (プロセス番号で分ける)。
@@ -89,6 +89,8 @@ enum WatchCommand {
     ) throws(CommandFailure) {
         let (invocation, values) = try Invocation.parse(arguments, adding: options)
         let keepsTime = values[keepTimeFlag] != nil
+        // **ビルドの前に解く** (#3570)。作り直すたびに世代の番号つきの行き先を子へ渡す
+        let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)
         let directory = try invocation.directory
         guard FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("Package.swift").path)
@@ -139,8 +141,21 @@ enum WatchCommand {
         let session = WatchSession(
             directory: directory, context: context, facetBase: facetBase,
             reportsRate: true,
-            hooks: .live(resolver: resolver, running: running, keepTime: keepTimeFile?.path))
+            hooks: .live(
+                resolver: resolver, running: running, keepTime: keepTimeFile?.path, recording: recording))
         say("Watching: \(directory.path)")
+        if let recording {
+            // 1 から振り直すので、前の見張りが残した同じ並び (take-1.json, take-2.json, …) は先に消す。
+            // 残すと、前回の take-3 が今回の記録に混ざる (`run` が前回の完成品を消すのと同じ扱い)
+            let removed = ReplayRequest.discardGenerations(of: recording)
+            if !removed.isEmpty {
+                say("Removed the records of the previous watch: \(removed.joined(separator: ", "))")
+            }
+            say(
+                "Recording: each build gets its own file, "
+                    + "\(ReplayRequest.generation(of: recording, number: 1)), "
+                    + "\(ReplayRequest.generation(of: recording, number: 2)), …")
+        }
         if let notice = context.place.notice { say(notice) }
         // **決められなかったときは黙らない** (#2517)。置き場の断片を元から読めないので、保存しても
         // 走らせたまま差し替わらない

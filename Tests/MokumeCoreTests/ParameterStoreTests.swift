@@ -68,6 +68,8 @@ struct ParameterStoreTests {
         var defaultValue: ParamValue? { nil }
 
         func write(_ incoming: ParamValue) -> ParamOutcome { .applied }
+
+        func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
     }
 
     /// 非有限になりうる値を 2 番目に持つスケッチ (外した後も、並びの順で他の値を書けること)。

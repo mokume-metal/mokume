@@ -589,6 +589,8 @@ extension SketchPart {
     /// で解くので、同じ中身は置き場によらず同じ文字になる。
     private func readText(_ path: String) throws(DataFailure) -> String {
         if let url = try WebFile.url(path) {
+            // 本文は記録に持たない (#3570)
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
             return try TextFile.text(of: try WebFile.fetchWaiting(url, path: path), path: path)
         }
         return try TextFile.read(try dataURL(path), path: path)
@@ -602,6 +604,8 @@ extension SketchPart {
         _ path: String, _ parse: @escaping @Sendable (String) throws(DataFailure) -> Value
     ) async throws(DataFailure) -> Value {
         if let url = try WebFile.url(path) {
+            // 本文は記録に持たない (#3570)
+            LaunchingSketch.replay?.noteUnreproducible(ReplayRecorder.Reason.webFile)
             let body = try await WebFile.fetch(url, path: path)
             return try await Self.readAway { () throws(DataFailure) in
                 try parse(try TextFile.text(of: body, path: path))

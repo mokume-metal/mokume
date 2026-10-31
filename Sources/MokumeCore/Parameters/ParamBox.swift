@@ -176,6 +176,10 @@ public final class ParamBox<Value> {
     private let toParam: (Value) -> ParamValue
     /// 面から来た表現を、この型として読む。型が違えば `nil`。
     private let fromParam: (ParamValue) -> Value?
+    /// 外から来た書き込み (``write(_:)``) が置かれたことを知らせる先。**記録 (``ReplayRecorder``) が差す**
+    /// ([#3570](https://github.com/mokume-metal/mokume/issues/3570))。作者のコードからの代入は ``value`` へ
+    /// 直接入るので通らない。記録していない実行では `nil`。
+    private var writeObserver: ((String, ParamValue) -> Void)?
 
     /// 往復を渡して置き場を作る。**公開の `init` はここへ落ちる。**
     private init(
@@ -337,7 +341,14 @@ extension ParamBox: DeclaredParam {
             return .notFinite
         }
         value = typed
+        // 収めた後の値を知らせる。流し直すときに同じ収め方で同じ値に落ちる
+        writeObserver?(name, toParam(typed))
         return clamp
+    }
+
+    /// 外から来た書き込みが置かれたことを知らせる先を差す (``writeObserver``)。外すときは `nil`。
+    func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {
+        writeObserver = observer
     }
 
     /// 範囲へ収める。範囲が意味を持たない型 (真偽・文字・色) と、範囲を書いていない値はそのまま。
@@ -377,4 +388,6 @@ protocol DeclaredParam: AnyObject {
     /// 持つ実装が書き忘れて「変わったか見ない」へ黙って落ちる)。
     var defaultValue: ParamValue? { get }
     func write(_ incoming: ParamValue) -> ParamOutcome
+    /// 外から来た書き込みが置かれたことを知らせる先を差す (記録・#3570)。外すときは `nil`。
+    func observeWrites(_ observer: ((String, ParamValue) -> Void)?)
 }

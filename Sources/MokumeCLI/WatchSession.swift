@@ -88,14 +88,20 @@ final class WatchSession {
         ///   止めると決めた後に導き直しが `swift` を起こすと、それが新しく置き場の鍵を握る (#1147)。
         /// - Parameter keepTime: 作り直しをまたいで作者の時計を渡すファイルの絶対パス (`watch --keep-time`)。
         ///   起こす子ごとに環境変数で渡す (``StartupReads/keepTime``・#2414)。省けば渡さない。
+        /// - Parameter recording: 記録の行き先の絶対パス (`watch --record`)。起こす子ごとに、世代の番号つきの
+        ///   行き先を環境変数で渡す (``StartupReads/record``・``ReplayRequest/generation(of:number:)``・#3570)。
+        ///   省けば渡さない。
         /// - Parameter stamps: 世代の読み手。**1 つを持ち回る** — 属性の変わらないファイルを
         ///   巡回のたびに読み直さないための控えを持つ (資材の置き場の大きなファイル・#2312)。
         ///   渡すのは検査だけである (要約を塞いで、待っている間に main が進むかを見る)。
         static func live(
             resolver: BuildResolver, running: RunningBuild,
-            stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil
+            stamps: SourceStamp.Reader = SourceStamp.Reader(), keepTime: String? = nil,
+            recording: String? = nil
         ) -> Hooks {
-            Hooks(
+            // 起こした子の数。**作り直しは記録の切れ目**で、世代ごとに別の行き先を渡す (#3570)
+            let generations = recording.map { RecordGenerations(destination: $0) }
+            return Hooks(
                 rebuild: { directory throws(CommandFailure) in
                     // **切り離して走らせる。** `RunCommand.rebuild` は隔離を外してあるので、
                     // ここで待っても main actor は空く — ADR-0010 決定 4 の「明示的に分離
@@ -135,7 +141,8 @@ final class WatchSession {
                         // **置き場の断片は元から読ませる** (#2517)。写しを読むと、元を保存しても
                         // 走らせたまま差し替わらない
                         assetOrigin: (try? resolver.current())?.context.assets.url?.path,
-                        keepTime: keepTime)
+                        keepTime: keepTime,
+                        recording: generations?.next())
                     do {
                         try process.run()
                     } catch {
