@@ -7,7 +7,7 @@ import Foundation
 import Testing
 
 @testable import MokumeCamera
-import MokumeCore
+@testable import MokumeCore
 
 /// 動画の読み手の止まりを測る (#2523・#2764)。**検査ではなく計測で、既定では走らない。**
 ///
@@ -102,6 +102,124 @@ struct MovieStallMeasurement {
     }
 }
 
+extension MovieStallMeasurement {
+    /// 実時間の時計で、`Movie.supply()` 1 回の main の時間を測る (#2523 完了条件 1)。
+    ///
+    /// 動画の入り口の前後に時刻を読む入り口を足し (``Stopwatch``)、その差を supply 1 回の時間とする
+    /// (入り口は足した順に回る)。画面の更新の代わりに、1 フレームごとに 1/60 秒の刻みまで眠る。
+    /// 先読みを止めた回 (`allowsPrefetch = false` = 変更前の同期の読み) を同じ実行で並べる。
+    @Test(
+        "2523 Movie.supply() の main の時間 — 実時間の時計の先読みと、同期の読み (変更前)",
+        .enabled(if: RenderDevice.isAvailable, "GPU が無い"),
+        arguments: ["h264.gop30", "h264.gop90", "hevc.gop30"])
+    func supplyStalls(variant: String) async throws {
+        let hevc = variant.hasPrefix("hevc")
+        try #require(!hevc || TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い")
+        for (width, height) in Self.sizes {
+            let url = try await TestMovie.write(
+                frames: 90, width: width, height: height, codec: hevc ? .hevc : .h264,
+                keyFrameInterval: variant.hasSuffix("gop90") ? 90 : 30, hardware: true, bitRate: width * height * 4,
+                paint: MovieStall.busy)
+            defer { try? FileManager.default.removeItem(at: url) }
+            for prefetch in [true, false] {
+                let scene = "\(width)x\(height).\(variant).\(prefetch ? "prefetch" : "sync")"
+                try measureSupply(url: url, prefetch: prefetch, scene: scene)
+            }
+        }
+    }
+
+    /// 1 本の動画を、先読みあり / なしで流して測る。
+    private func measureSupply(url: URL, prefetch: Bool, scene: String) throws {
+        let before = Stopwatch()
+        let after = Stopwatch()
+        var movie: Movie?
+        MovieSketch.frameRate = 60
+        MovieSketch.onSetup = { sketch in
+            sketch.attach(before)
+            let made = try sketch.createVideo(url.path)
+            made.allowsPrefetch = prefetch
+            sketch.attach(after)
+            movie = made
+        }
+        MovieSketch.onDraw = { _ in }
+        let origin = ContinuousClock.now
+        let now = { MovieStall.seconds(ContinuousClock.now - origin) }
+        let runtime = try SketchRuntime(sketch: MovieSketch(), gpu: try RenderDevice(), clock: .wallClock, now: now)
+        defer { runtime.closePlugins() }
+        try runtime.advance()  // `setup()` は最初のフレームで走る
+        let movieRef = try #require(movie)
+        var tick = 1
+
+        /// 1 フレーム進め、supply の時間 (ms) と新しいコマが出たかを返す。1/60 秒の刻みまで眠る。
+        func frame() throws -> (ms: Double, isNew: Bool) {
+            tick += 1
+            let due = origin + .microseconds(Int64(Double(tick) * 1_000_000 / 60))
+            let wait = due - ContinuousClock.now
+            if wait > .zero { Thread.sleep(forTimeInterval: MovieStall.seconds(wait)) }
+            try runtime.advance()
+            return (MovieStall.ms(after.last - before.last), movieRef.isNewFrame)
+        }
+        /// `count` フレーム進める。
+        func frames(_ count: Int) throws -> [(ms: Double, isNew: Bool)] { try (0..<count).map { _ in try frame() } }
+
+        // 継ぎ目: ループで 8 秒 (継ぎ目 2 つ) 流し、継ぎ目の前後 3 フレームとそれ以外を分けて集める
+        movieRef.loop()
+        let laps = try frames(60 * 8)
+        var seam: [Double] = []
+        var steady: [Double] = []
+        for (index, row) in laps.enumerated() {
+            // 流し始めてからの位置 (1/60 秒の刻みで進めているので、フレームの数から読める)
+            let phase = (Double(index) / 60).truncatingRemainder(dividingBy: 3)
+            let nearSeam = phase < 0.06 || phase > 2.94
+            // 最初の 1 秒は係の立ち上がりを含むので数えない
+            if index > 60 { nearSeam ? seam.append(row.ms) : steady.append(row.ms) }
+        }
+        MovieStall.report("2523", scene, "steady.supply", steady)
+        MovieStall.report("2523", scene, "loopSeam.supply", seam)
+
+        // 速さ 2 倍・4 倍 (#2451): 1 フレームに進むコマが増える。継ぎ目を含めて 6 秒ずつ流す。最初の 0.5 秒は
+        // 速さを変えた直後を含むので数えない。前のコマのまま (`isNewFrame == false`) だったフレームも数える
+        for rate: Float in [2, 4] {
+            movieRef.speed(rate)
+            let rows = try frames(60 * 6).dropFirst(30)
+            let name = "speed\(Int(rate))x"
+            MovieStall.report("2523", scene, "\(name).supply", rows.map(\.ms))
+            MovieStall.line("2523", scene, "\(name).staleFrames", "\(rows.count { !$0.isNew })", "frames")
+        }
+        movieRef.speed(1)
+
+        /// 止めて `from` に置き、落ち着いてから `to` へ飛ぶ。飛んだフレームから 30 フレームの supply と、
+        /// 新しいコマが出るまでのフレーム数を 8 回集める。
+        func jump(_ name: String, from: Float, to: Float) throws {
+            var worst: [Double] = []
+            var arrival: [Double] = []
+            movieRef.pause()
+            for _ in 0..<8 {
+                movieRef.jump(from)
+                _ = try frames(30)
+                movieRef.jump(to)
+                let rows = try frames(30)
+                worst.append(rows.map(\.ms).max() ?? 0)
+                arrival.append(Double(rows.firstIndex(where: \.isNew) ?? rows.count))
+            }
+            MovieStall.report("2523", scene, "\(name).supplyMax", worst)
+            MovieStall.line("2523", scene, "\(name).framesToArrive", "\(arrival.sorted()[arrival.count / 2])", "frames")
+        }
+        try jump("jumpBack(2.9->2.5)", from: 2.9, to: 2.5)
+        try jump("jumpAhead(0->2.5)", from: 0, to: 2.5)
+        try jump("jumpAheadWithin1s(0->0.9)", from: 0, to: 0.9)
+    }
+}
+
+/// 回るたびに時刻を控える入り口。
+final class Stopwatch: Inlet {
+    private(set) var last = ContinuousClock.now
+    func supply() { last = ContinuousClock.now }
+    func close() {}
+    var failure: String? { nil }
+    var report: SourceReport? { nil }
+}
+
 /// 計測の道具。
 nonisolated enum MovieStall {
     /// 最適化していない実行ファイルか (`assert` は最適化すると消える)。
@@ -131,6 +249,11 @@ nonisolated enum MovieStall {
                 count: width)
             (row + barX).update(repeating: 0xffff_ffff, count: bar)
         }
+    }
+
+    static func seconds(_ duration: Duration) -> Double {
+        let parts = duration.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 
     static func ms(_ duration: Duration) -> Double {

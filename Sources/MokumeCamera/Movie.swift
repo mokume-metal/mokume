@@ -35,6 +35,18 @@ import MokumeDiagnostics
 /// 次のコマとみなす — スケッチの時刻は単精度なので、境目にちょうど乗るはずの時刻がわずかに
 /// 割ることがあり、そのたびに前のコマが出るのを防ぐ。
 ///
+/// **実時間の時計 (``Clock/wallClock``) で流している間は、数フレーム遅れて映ることがある。** 先の数コマを
+/// 本体の外で復号して待たせておき、フレームではその中から位置のコマを選ぶだけにしている — ループの
+/// 継ぎ目や ``jump(_:)`` で描画を止めないためである ([#2523])。飛んだ先のコマがまだ復号できていない
+/// フレームは、前のコマが映ったまま ``isNewFrame`` が `false` になり、届いたフレームで位置のコマに
+/// 替わる。フレームの時計 (`mokume render` の書き出し・``SketchSettings/ClockMode/frames`` の窓) と、
+/// 時刻を指定した観測の 1 枚では遅れず、いつも位置のコマが出る。
+///
+/// **復号の速さには OS の上限がある** ([#2961])。大きな動画を何本も・速く (``speed(_:)``) 流すと、復号が
+/// 追いつかないことがある。追いつかない間は、実時間の時計では前のコマが映ったまま (``isNewFrame`` が
+/// `false`) で、フレームの時計では正しいコマが出るまでそのフレームが待つ。何本・何倍速まで追いつくかは
+/// 機種で違うので、数は約束しない。
+///
 /// ## 操作
 ///
 /// | Processing の `Movie` | ここ |
@@ -131,9 +143,11 @@ import MokumeDiagnostics
 ///
 /// ## 作品が並行の仕事でスレッドを埋めたとき
 ///
-/// コマは毎フレーム main で同期に読む。作品が既定の優先度の仕事をコア数ぶん以上、同期の待ちで塞ぐと、
-/// 動画を読む待ちが返らずに窓ごと止まることがある (本体の側では防げない限界。限界と避け方は
-/// ``Sketch/createVideo(_:)``、理由は [ADR-0010])。重い同期の仕事は優先度を下げるか、待たずに分ける。
+/// フレームの時計と最初の 1 枚では、コマを main で同期に読む。実時間の時計では、先読みの係が読む。
+/// 作品が既定の優先度の仕事をコア数ぶん以上、同期の待ちで塞ぐと、動画を読む待ちが返らない —
+/// 同期に読む間は窓ごと止まり、先読みの間は映るコマが進まなくなることがある (本体の側では防げない
+/// 限界。限界と避け方は ``Sketch/createVideo(_:)``、理由は [ADR-0010])。重い同期の仕事は優先度を
+/// 下げるか、待たずに分ける。
 ///
 /// ## 外して足し直す
 ///
@@ -155,6 +169,8 @@ import MokumeDiagnostics
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+/// [#2523]: https://github.com/mokume-metal/mokume/issues/2523
+/// [#2961]: https://github.com/mokume-metal/mokume/issues/2961
 public final class Movie: Inlet {
     /// いま映っているコマ。大きさは動画の大きさで、変わらない。
     public let image: Image
@@ -169,6 +185,18 @@ public final class Movie: Inlet {
     private var warnedRead = false
     private var warnedJump = false
     private var warnedSpeed = false
+    /// 実時間の時計で先読みしてよいか。**計測が、変更前の同期の読みを測るのに倒す。**
+    var allowsPrefetch = true
+    /// 先読みの係。実時間の時計で流し始めたフレームに作る。**検査が読む。**
+    private(set) var prefetcher: MoviePrefetcher?
+    /// 先読みの頼みの世代と何周目か。
+    private var continuity = PlaybackContinuity()
+    /// 前のフレームを先読みの列から出したか。
+    private var prefetching = false
+    /// 先読みの列から最後に出したコマ。同期の読み (観測の枚) から戻ったフレームで映し直す。
+    private var lastPrefetched: DisplayImage?
+    /// 1 枚でもコマを出したか。最初の 1 枚は同期に読む (作るときに読んだコマを変換するだけ)。
+    private var hasShown = false
 
     init(
         image: Image, reader: MovieReader, name: String, owner: (any Sketch)?,
@@ -277,13 +305,19 @@ public final class Movie: Inlet {
         // 観測でない枚では二つの秒は同じで、映す位置は進めた位置そのものである
         let shown = owner?.time ?? 0
         let author = owner?.authorTime ?? shown
+        let jumps = playhead.jumps
         let advanced = playhead.advance(to: Double(author))
-        let position = shown == author ? advanced : playhead.position(at: Double(shown))
+        let observing = shown != author
+        let position = observing ? playhead.position(at: Double(shown)) : advanced
         do {
-            if let picture = try reader.picture(at: position) { input.send(picture) }
+            if let picture = try picture(at: position, jumped: playhead.jumps != jumps, observing: observing) {
+                input.send(picture)
+                hasShown = true
+            }
             // 読めなくなって、読み直しを試す位置にまだ届いていない間は、試さずに `nil` が返るだけで
-            // 読めてはいない。戻すのは読み直して読めたフレームだけ (#2908)
-            if input.state == .disconnected, !reader.isWaitingToRetry { input.setState(.running) }
+            // 読めてはいない。戻すのは読み直して読めたフレームだけ (#2908)。先読みの係は、読めない間は
+            // 投げ続ける
+            if input.state == .disconnected, prefetching || !reader.isWaitingToRetry { input.setState(.running) }
         } catch {
             input.setState(.disconnected)
             noticeOnce(error, at: position)
@@ -297,8 +331,48 @@ public final class Movie: Inlet {
     }
 
     public func close() {
+        // 係を止めてから (期限つきで待つ) 読み手を閉じる。足し直したら、次に先読みへ移るフレームで係を作り直す
+        prefetcher?.close()
+        prefetcher = nil
+        prefetching = false
         reader.close()
         input.setState(.stopped)
+    }
+
+    /// `position` 秒のコマ。前に渡したコマのままなら `nil`。
+    ///
+    /// **実時間の時計で流している間は、先読みの列から選び、待たない。** フレームの時計・時刻を指定した
+    /// 観測の枚・最初の 1 枚・先読みの係が動画を開けなかったときは、この場で同期に読む。2 つの読み手は
+    /// 別々に持ち、同時に触らない (同期に読む間、係は前の頼みのまま休んでいる)。
+    private func picture(at position: Double, jumped: Bool, observing: Bool) throws(MovieReader.Failure)
+        -> DisplayImage?
+    {
+        guard allowsPrefetch, hasShown, !observing, owner?.clock == .wallClock,
+            let prefetcher = prefetcherIfUsable()
+        else {
+            prefetching = false
+            return try reader.picture(at: position)
+        }
+        let returning = !prefetching
+        if returning {
+            // 同期の読みから移った。同期の読み手は休ませる (開いた読み手と 2 枚のコマを手放す)
+            reader.park()
+            prefetching = true
+        }
+        continuity.note(position: position, jumped: jumped, looping: playhead.isLooping)
+        let picture = try prefetcher.picture(
+            at: position, generation: continuity.generation, lap: continuity.lap, looping: playhead.isLooping)
+        if let picture { lastPrefetched = picture }
+        // 観測の枚 (同期の読み) から戻ったフレームで、先読みの位置のコマを映し直す
+        return picture ?? (returning ? lastPrefetched : nil)
+    }
+
+    /// 先読みの係。無ければ作る。係が動画を開けなかったなら `nil` (同期の読みに戻る)。
+    private func prefetcherIfUsable() -> MoviePrefetcher? {
+        if let prefetcher { return prefetcher.isBroken ? nil : prefetcher }
+        let made = MoviePrefetcher(source: reader.source)
+        prefetcher = made
+        return made
     }
 
     public var report: SourceReport? { input.report }

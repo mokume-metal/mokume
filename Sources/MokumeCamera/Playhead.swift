@@ -54,6 +54,9 @@ nonisolated struct Playhead: Equatable {
     private var pendingJump: Double?
     /// 最後に進めたフレームの時刻。
     private var lastTime: Double?
+    /// 飛ぶよう頼まれた位置へ移った回数 (``advance(to:)`` が頼みを使うたびに 1 つ)。先読みの係が、
+    /// 位置が続かなくなったフレームを知るのに読む (#2523)。
+    private(set) var jumps = 0
     /// 最後の ``advance(to:)`` が数えた起点 (再生中だったフレームだけ)。**終わりに達したフレームでも
     /// 残る** — ``position(at:)`` が、そのフレームを別の時刻で覗くのに要る (#2357)。再生を変える
     /// 操作 (``play()``・``loop()``・``pause()``・``jump(to:)``) が空にする。
@@ -152,6 +155,7 @@ nonisolated struct Playhead: Equatable {
             position = target
             pendingJump = nil
             anchor = nil
+            jumps += 1
         }
         guard isPlaying else { return position }
         guard let anchor else {

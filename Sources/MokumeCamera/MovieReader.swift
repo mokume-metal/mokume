@@ -27,9 +27,11 @@ import MokumeCore
 ///
 /// ## main actor の上で同期に読む
 ///
-/// 待ち行列もスレッドも足さない。OS のコールバックを受ける口が無いので、[ADR-0042] 決定 7 の
-/// 「受ける点」が要らない。1 枚の復号と変換はフレームの予算に収まる大きさで、コマが変わった
-/// フレームにだけ払う。
+/// この型は、頼まれたフレームのうちに位置のコマを読んで返す (待つ)。``Movie`` がこの型で読むのは、
+/// フレームの時計 (書き出し・検査・`clock: .frames` の窓)・時刻を指定した観測の 1 枚・実時間の時計の
+/// 最初の 1 枚である。実時間の時計で流している間は、先読みの係 (``MoviePrefetcher``) が別の読み手で
+/// 先を読み、この型の読み手は ``park()`` で休ませる。2 つは ``MovieFrames`` をそれぞれ 1 つずつ持ち、
+/// `AVAssetReader` を共有しない ([ADR-0042] 決定 7 の改訂 (2026-10-31)、[#2523])。
 ///
 /// 作るときのトラックの読み込みだけは、AVFoundation が非同期の口しか持たない (同期の口は
 /// Swift では非推奨) ので、完了ハンドラで受けて待つ。ハンドラは AVFoundation の側のスレッドで呼ばれ、
@@ -38,6 +40,7 @@ import MokumeCore
 /// 待ちに期限は持たない。手元のファイルなら 1 ms ほどで返る。
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
+/// [#2523]: https://github.com/mokume-metal/mokume/issues/2523
 /// [#2764]: https://github.com/mokume-metal/mokume/issues/2764
 final class MovieReader {
 
@@ -66,6 +69,9 @@ final class MovieReader {
     let orientation: VideoOrientation
     /// 長さ (秒)。
     var duration: Double { frames.duration }
+
+    /// 先読みの係が開き直す動画ファイル。
+    let source: MovieSource
 
     /// 読み進めの核。
     private let frames: MovieFrames
@@ -128,6 +134,9 @@ final class MovieReader {
         (width, height) = orientation.size(width: recordedWidth, height: recordedHeight)
         // 動画は透過を持ちうるので、不透明度を乗算していないまま運ぶ (#2881)
         converter = FrameConverter(width: recordedWidth, height: recordedHeight, alpha: .straight)
+        source = MovieSource(
+            url: url, path: path, indexesKeyFrames: lookup == .track, width: recordedWidth, height: recordedHeight,
+            orientation: orientation)
     }
 
     /// `position` 秒に映っているコマ。**前に渡したコマと同じなら `nil`。**
@@ -157,6 +166,12 @@ final class MovieReader {
     private func convert(_ buffer: CVPixelBuffer) throws(FrameConverter.Failure) -> DisplayImage {
         if let conversion { return try conversion(buffer) }
         return try converter.convert(buffer)
+    }
+
+    /// 読み手を休ませる。開いている `AVAssetReader` と持っているコマ (4K で 2 枚・約 63 MiB) を手放し、
+    /// 次の ``picture(at:)`` はその位置から読み直す。実時間の時計で先読みに移ったときに呼ぶ。
+    func park() {
+        frames.park()
     }
 
     /// 読むのをやめる。
