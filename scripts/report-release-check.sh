@@ -14,8 +14,13 @@
 # **無くてもよい** — ビルドで落ちた回は記録が無いので、そう名乗って起票する (黙ると赤が誰にも
 # 届かない・#1295 と同じ形)。
 #
-# **この赤が届いた日は、版が出ていない。** release-check が緑のときだけ release がタグを打つ
-# (release.yml)。本文はそれを名乗り、直す PR が merge されれば次の日次で出ることを案内する。
+# **この赤が届いた日は、版が出ていない。** release-check と geometry-exploration の**どちらも**
+# 緑のときだけ release がタグを打つ (release.yml)。本文はそれを名乗り、直す PR が merge されれば
+# 次の日次で出ることを案内する。
+#
+# **どちらの job が赤・切れかを本文の先頭で名乗り、緑の側の記録・出力は載せない** (#3342)。
+# 載せると、探索の job だけが落ちた回に、緑の release の記録と端末出力の末尾が並び、読み手には
+# release が落ちたように見える。緑の側の再現の案内も出さない。
 #
 # 発信の実体は scripts/report-check-failure.sh が持ち、ここが持つのは**固定タイトルと本文**
 # だけである (report-scheduled-render.sh と同じ分け方)。落ちた検査の名前と文面は
@@ -53,16 +58,28 @@ body=$(mktemp)
 log=$(mktemp)
 trap 'rm -f "$body" "$log"' EXIT
 
-# 端末出力の末尾。落ちた理由は後ろに出る。上限は report-check-failure.sh の 200 行に収める
+# どちらの job が赤・切れか。success 以外はすべて赤として扱う (skipped は release の needs が
+# 緑でないので、起票の条件 (failure / cancelled) には来ないが、来ても緑とは言わない)。
+# 探索の結論を渡されない呼び方 (release-check の中で走っていた頃) は、探索の記録があれば赤と読む
+RELEASE_RED=1
+[ "$RESULT" = "success" ] && RELEASE_RED=0
+GEOMETRY_RED=0
+if [ -n "$GEOMETRY_RECORD" ] && [ "$GEOMETRY_RESULT" != "success" ]; then GEOMETRY_RED=1; fi
+
+# 端末出力の末尾。落ちた理由は後ろに出る。上限は report-check-failure.sh の 200 行に収める。
+# 赤の側だけを載せる
 {
-  printf '=== release (make test-release) ===\n'
-  if [ -s "$LOG" ]; then
-    tail -n 100 "$LOG"
-  else
-    printf '(test-log が無い: %s)\n' "$LOG"
+  if [ "$RELEASE_RED" = 1 ]; then
+    printf '=== release (make test-release) ===\n'
+    if [ -s "$LOG" ]; then
+      tail -n 100 "$LOG"
+    else
+      printf '(test-log が無い: %s)\n' "$LOG"
+    fi
   fi
-  if [ -n "$GEOMETRY_RECORD" ]; then
-    printf '\n=== debugの図形全探索 (make test-geometry-exploration) ===\n'
+  if [ "$GEOMETRY_RED" = 1 ]; then
+    [ "$RELEASE_RED" = 1 ] && printf '\n'
+    printf '=== debugの図形全探索 (make test-geometry-exploration) ===\n'
     if [ -s "$GEOMETRY_LOG" ]; then tail -n 80 "$GEOMETRY_LOG"; else printf '(探索のtest-logが無い)\n'; fi
   fi
 } > "$log"
@@ -74,17 +91,34 @@ trap 'rm -f "$body" "$log"' EXIT
 見ているのは、**版にしようとした main の木**を下限 OS (GitHub ホストの `macos-26`) で `make test-release` したものである。GPU を要する検査は GitHub ホストではスキップされる (GPU 付きの release は専用機の定期が見る)。release でだけ出る赤は merge の前には止めないので、main には入りうる。
 
 BODY
-  printf '## 結論\n\n'
-  case "$RESULT" in
-    cancelled)
-      printf '結論: `cancelled` — **job の timeout (`release.yml` の `timeout-minutes`) か、人の cancel で切れた。** 記録が無ければ、どこまで走ったかは下の「検査の出力」の末尾で読む\n\n'
-      ;;
-    *)
-      printf '結論: `%s`\n\n' "${RESULT:-不明}"
-      ;;
-  esac
-  python3 "$here/read-test-record.py" --failure-messages "$RECORD"
+  # どちらの job が赤かを、詳細の前に名乗る
+  printf '## どちらの job が赤か\n\n'
+  if [ "$RELEASE_RED" = 1 ]; then
+    printf -- '- `release-check`: **`%s`** (赤)\n' "${RESULT:-不明}"
+  else
+    printf -- '- `release-check`: `success` (緑。記録と出力は載せない)\n'
+  fi
   if [ -n "$GEOMETRY_RECORD" ]; then
+    if [ "$GEOMETRY_RED" = 1 ]; then
+      printf -- '- `geometry-exploration`: **`%s`** (赤)\n' "${GEOMETRY_RESULT:-不明}"
+    else
+      printf -- '- `geometry-exploration`: `success` (緑。記録と出力は載せない)\n'
+    fi
+  fi
+  printf '\n'
+  if [ "$RELEASE_RED" = 1 ]; then
+    printf '## 結論\n\n'
+    case "$RESULT" in
+      cancelled)
+        printf '結論: `cancelled` — **job の timeout (`release.yml` の `timeout-minutes`) か、人の cancel で切れた。** 記録が無ければ、どこまで走ったかは下の「検査の出力」の末尾で読む\n\n'
+        ;;
+      *)
+        printf '結論: `%s`\n\n' "${RESULT:-不明}"
+        ;;
+    esac
+    python3 "$here/read-test-record.py" --failure-messages "$RECORD"
+  fi
+  if [ "$GEOMETRY_RED" = 1 ]; then
     printf '\n## debugの図形全探索 (#3338)\n\n'
     case "$GEOMETRY_RESULT" in
       cancelled)

@@ -25,7 +25,8 @@ release でだけ出る赤は merge の前には止めない (merge queue から
      同じジョブの中にある)。走っている版を止めない (`cancel-in-progress: false`)。
      **ワークフロー単位にも release-check にも掛けない** — 保留は group に 1 本で新しい保留が
      古い保留を cancel するので、全 PR の closed で起きる run が待っている release:now を
-     cancel する。共有の group に入るのは release-check が緑の run だけ (それ以外は run ごと)
+     cancel する。共有の group に入るのは release-check と geometry-exploration がどちらも緑の run だけ
+     (それ以外は run ごと)
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -108,6 +109,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for job in (check, exploration):
             self.assertRegex(job, r"(?m)^        if: always\(\)\s*$")
         self.assertIn("name: geometry-exploration-record", exploration)
+        # 固定名の artifact は、失敗した job だけの再実行で前の attempt と衝突しないよう overwrite する
+        for job, name in ((check, "release-check-record"), (exploration, "geometry-exploration-record")):
+            self.assertRegex(job, rf"(?m)^          name: {name}\n          overwrite: true\s*$")
         report = self.jobs["release-check-report"]
         self.assertIn("name: geometry-exploration-record", report)
         self.assertIn("test-results-geometry-swift-testing.xml", report)

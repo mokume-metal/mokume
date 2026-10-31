@@ -231,11 +231,11 @@ CPUだけで判定する図形の全探索のうち、#3338で列挙した座標
 
 #### release の赤は merge の前ではなく、版を出す前と定期で止める
 
-**ホストの release の検査 (`make test-release`・GPU なし・下限 OS の `macos-26`) は merge queue の必須にせず、`release.yml` の `release-check` で、版にする SHA そのものを検査して、緑のときだけタグを打つ** ([#2662](https://github.com/mokume-metal/mokume/issues/2662))。出すものが無い日も走るので、ホストの日次の検査を兼ねる。落ちた・切れた回は、`release-check-report` が `scripts/report-check-failure.sh` で起票する (開いていれば追記する)。権限の分け方は上の D と同じで、検査を走らせるジョブは `issues: write` を持たない。GPU を要する release は、これまでどおり専用機の定期 (`scheduled-release`) が見て、版の関門にはしない。GPU の停止という環境の故障で版が止まり、6 時間おきの SHA も版の SHA と一致しないためである。
+**ホストの release の検査 (`make test-release`・GPU なし・下限 OS の `macos-26`) は merge queue の必須にせず、`release.yml` の `release-check` で、版にする SHA そのものを検査して、緑のときだけタグを打つ（debug の図形の全探索は並走する別 job `geometry-exploration` が同じ SHA を検査し、**どちらも**緑のときだけタグを打つ・#3342）** ([#2662](https://github.com/mokume-metal/mokume/issues/2662))。出すものが無い日も走るので、ホストの日次の検査を兼ねる。落ちた・切れた回は、`release-check-report` が `scripts/report-check-failure.sh` で起票する (開いていれば追記する)。権限の分け方は上の D と同じで、検査を走らせるジョブは `issues: write` を持たない。GPU を要する release は、これまでどおり専用機の定期 (`scheduled-release`) が見て、版の関門にはしない。GPU の停止という環境の故障で版が止まり、6 時間おきの SHA も版の SHA と一致しないためである。
 
 あわせて、**GPU の待ちが期限を越えた回は、報告が「環境で成り立たなかった」と先に名乗る** (`scripts/read-test-record.py --failure-messages`)。期限を越えるとプロセスの関所が閉じ、以後の GPU の検査はすべて `gpuNotResponding` で落ちる。2026-10-13 09:20Z の定期の release では 2,108 件がそうなり、要約の先頭 80 件が巻き込みで埋まって、引き金の期限切れも release 固有の赤も載らなかった。関所の分は件数と 1 例に畳み、本物の赤を先に並べ、その周期の保証が欠けていることを言う。
 
-**代償**: release でだけ出る赤は main に入りうる。気付くのは、次の日次の `release-check` (版を出す時) か、専用機の 6 時間おきの定期である。日次の 1 回には前の版からの PR が並ぶので、原因の PR を絞る手間が増える。赤の間は版が出ない (`release:now` の出し直しも関門を通る)。版が出ないと、メンテナが新しい絵を見るリリースノートの「この版の絵」(ADR-0036) も止まる (絵は次の版にまとめて載るので、欠けずに遅れる)。merge queue の中で、合流後の木の検査のターゲットを下限 OS で組むものも無くなる (`ci-check` は merge_group で build と test を外している)。下限 OS でだけ合流後に壊れる形は、日次の `release-check` で気付く。版が出るのは約 15 分遅れる。ホストの macOS の消費は 1 日に約 15 分増え、merge_group ごとの約 12 分が減る。
+**代償**: release でだけ出る赤は main に入りうる。気付くのは、次の日次の `release-check` か `geometry-exploration` (版を出す時) か、専用機の 6 時間おきの定期である。日次の 1 回には前の版からの PR が並ぶので、原因の PR を絞る手間が増える。赤の間は版が出ない (`release:now` の出し直しも関門を通る)。版が出ないと、メンテナが新しい絵を見るリリースノートの「この版の絵」(ADR-0036) も止まる (絵は次の版にまとめて載るので、欠けずに遅れる)。merge queue の中で、合流後の木の検査のターゲットを下限 OS で組むものも無くなる (`ci-check` は merge_group で build と test を外している)。下限 OS でだけ合流後に壊れる形は、日次の `release-check` で気付く。版が出るのは、検査の所要 (いまは release のビルドと検査で約 50 分) だけ遅れる。ホストの macOS の消費は 1 日に約 15 分増え、merge_group ごとの約 12 分が減る。debug の全探索を別 job にした分 (#3342) は、探索の約 13 分を既に払っていたので消費はほぼ同じで、増えるのは 2 つ目の runner の起動・checkout・依存の解決の重複と、macOS の同時実行枠を 1 つ余計に取ることである。起票は両 job の終了を待つので、探索が早く落ちても気付きは release-check の終了 (最大 60 分) まで遅れる (版が出ないことは変わらない)。
 
 退けた案 (2026-10-14 にメンテナが比べた):
 

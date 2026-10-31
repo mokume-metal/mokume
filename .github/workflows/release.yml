@@ -108,10 +108,13 @@ jobs:
         run: |
           mkdir -p .build
           python3 scripts/check-geometry-record.py .build/test-results-release-swift-testing.xml --configuration release --summary .build/geometry-release.md
+      # 固定名の artifact。「失敗した job だけ再実行」は同じ run の前の attempt の同名と衝突して upload が
+      # 失敗するので、overwrite で置き換える (起票の記録が再実行の分を読む)
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: release-check-record
+          overwrite: true
           path: |
             .build/test-results-release-swift-testing.xml
             .build/test-events-release.jsonl
@@ -129,7 +132,9 @@ jobs:
   # 10-30 は 59.4 分で緑、10-29 と 10-31 は 60 分の上限で切れて版が出なかった (release の検査は
   # 日々伸びていて、#3341 が上限を決めた 44 分の実測は、この段を足す前の数字だった)。**検査の中身と
   # 保証は変えない** — どちらかが赤・切れ・走らなかった回には版を出さない (release は両方を needs に
-  # 持つ)。代償は、ホストの macOS をその日 1 本余計に使うこと (約 13 分)。
+  # 持つ)。代償: 探索の約 13 分は既に払っていたので、消費はほぼ同じ。増えるのは 2 つ目の runner の
+  # 起動・checkout・依存の解決の重複と、macOS の同時実行枠を 1 つ余計に取ること。起票は両 job の
+  # 終了を待つので、探索が早く落ちても気付きは release-check の終了 (最大 60 分) まで遅れる
   #
   # timeout は 30 分。実測の所要は 8.2〜15.8 分 (debug のビルドを含む。5 回)。ランナーの速さが 1.7 倍
   # ぶれる日があるので、遅い日でも約 27 分で、そこに届かない上限にした。上限だけ大きくすると、
@@ -158,10 +163,13 @@ jobs:
         run: |
           mkdir -p .build
           python3 scripts/check-geometry-record.py .build/test-results-geometry-swift-testing.xml --configuration debug --summary .build/geometry-debug.md
+      # 固定名の artifact。「失敗した job だけ再実行」は同じ run の前の attempt の同名と衝突して upload が
+      # 失敗するので、overwrite で置き換える (起票の記録が再実行の分を読む)
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: geometry-exploration-record
+          overwrite: true
           path: |
             .build/test-results-geometry-swift-testing.xml
             .build/test-log-geometry.txt

@@ -140,6 +140,45 @@ class ReportReleaseCheckTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("`geometry-exploration` の timeout", self.body.read_text())
 
+    def test_探索の_job_だけが赤の回は_緑の_release_の記録と出力を載せず_冒頭で赤い_job_を名乗る(self):
+        # 緑の release の記録と端末出力の末尾が並ぶと、読み手には release が落ちたように見える (#3342)
+        r = self.report(content=RED, result="success", geometry="missing", geometry_result="cancelled")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.body.read_text()
+        self.assertIn("`release-check`: `success` (緑", body)
+        self.assertIn("`geometry-exploration`: **`cancelled`** (赤)", body)
+        self.assertLess(body.index("どちらの job が赤か"), body.index("`geometry-exploration` の timeout"))
+        self.assertNotIn("結論: `success`", body)
+        self.assertNotIn("## 結論", body)
+        self.assertNotIn("release でだけ落ちた文面 GAMMA", body)
+        self.assertNotIn("release の端末出力の末尾 DELTA", body)
+        self.assertNotIn("=== release (make test-release) ===", body)
+
+    def test_release_check_だけが赤の回は_緑の探索の再現の案内と出力を出さない(self):
+        (self.dir / "geometry.log").write_text("探索の端末出力 EPSILON\n", encoding="utf-8")
+        r = self.report(result="failure", geometry=record(), geometry_result="success")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.body.read_text()
+        self.assertIn("`release-check`: **`failure`** (赤)", body)
+        self.assertIn("`geometry-exploration`: `success` (緑", body)
+        self.assertIn("release でだけ落ちた文面 GAMMA", body)
+        self.assertNotIn("## debugの図形全探索", body)
+        self.assertNotIn("再現: `make test-geometry-exploration`", body)
+        self.assertNotIn("全探索の失敗・欠落でも", body)
+        self.assertNotIn("EPSILON", body)
+
+    def test_両方が赤の回は両方の節と出力を載せる(self):
+        (self.dir / "geometry.log").write_text("探索の端末出力 EPSILON\n", encoding="utf-8")
+        r = self.report(result="failure", geometry="missing", geometry_result="failure")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.body.read_text()
+        self.assertIn("`release-check`: **`failure`** (赤)", body)
+        self.assertIn("`geometry-exploration`: **`failure`** (赤)", body)
+        self.assertIn("再現: `make test-geometry-exploration`", body)
+        self.assertIn("release でだけ落ちた文面 GAMMA", body)
+        self.assertIn("release の端末出力の末尾 DELTA", body)
+        self.assertIn("EPSILON", body)
+
     def test_探索の所要だけが変わっても報告の鍵は変わらない(self):
         xml = '<testsuites><testsuite><testcase classname="MokumeCoreTests.NonzeroSplitTests" name="randomHolesFollowNonzero()" time="{}"/></testsuite></testsuites>'
         self.report(geometry=xml.format("1"))
