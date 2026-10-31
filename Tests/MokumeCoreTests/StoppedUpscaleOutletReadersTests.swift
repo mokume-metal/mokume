@@ -145,6 +145,10 @@ struct StoppedUpscaleOutletReadersTests {
             catchUp: .placing,
             reason: "texture(canvas) と image(canvas) の 3 形。どれも絵を作る直前に note(placing: graphics) を通す (#2042)"),
         Reader(
+            file: "MokumeCore/Drawing/Canvas+CompositeGroup.swift", token: ".drawnPicture", count: 1,
+            catchUp: .placing,
+            reason: "合成の単位の中間面 (createGraphics の描き場所) を画像として置く 1 行。絵を作る直前に note(placing: group) を通す (#2042・#3560)"),
+        Reader(
             file: "MokumeCore/Drawing/ShaderSurface.swift", token: ".drawnPicture", count: 1,
             catchUp: .placing, vouchedIn: "MokumeCore/Drawing/Canvas+Style.swift",
             reason: "断片の面に渡した描き場所。置くたびに Canvas+Style の notePaintPlacement が drawnSurfaces を note(placing:) で記録する"),

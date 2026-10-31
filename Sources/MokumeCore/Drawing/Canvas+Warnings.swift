@@ -570,6 +570,15 @@ extension Canvas {
         case positionLayoutInsideShape
         case brightnessInsideShape
         case debugInsideShape
+        /// 形の組み立ての中で、合成の単位 (``Canvas/withCompositeGroup(opacity:covering:_:)``・[#3560]) を
+        /// 開こうとした。単位は形を置く時点で開くもので、記録はできない。種類と文面は ``InsideShape`` が持つ。
+        ///
+        /// [#3560]: https://github.com/mokume-metal/mokume/issues/3560
+        case compositeGroupInsideShape
+        /// 合成の単位の中間面を作れず、単位として描けなかった ([#3560])。
+        ///
+        /// [#3560]: https://github.com/mokume-metal/mokume/issues/3560
+        case compositeGroupSurface
     }
 
     /// 範囲の外の値を範囲へ丸めたことを、初回だけ知らせる ([#1698])。

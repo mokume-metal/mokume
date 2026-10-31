@@ -1535,6 +1535,10 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
     .debug:
         "debugMode() and noDebugMode() do nothing inside createShape { }. A shape cannot "
             + "hold the debug grid and axes, so call them before or after building the shape",
+    .compositeGroup:
+        "A composite group is not opened inside createShape { }. It draws into an "
+            + "intermediate surface when it is placed, which a shape cannot record, so it was "
+            + "not drawn as one group",
 ]
 
 /// 組み立ての中で呼ぶ、画素の口。
