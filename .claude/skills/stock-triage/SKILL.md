@@ -42,7 +42,7 @@ bash scripts/ready-queue.sh
 git fetch origin main && git log --oneline origin/main -5
 ```
 
-見るのは 4 つ:
+見るのは 5 つ:
 
 | 見るもの | 打つもの | なぜ |
 | --- | --- | --- |
@@ -50,12 +50,13 @@ git fetch origin main && git log --oneline origin/main -5
 | 本文が指す行番号・綴りがいまも同じか | 実際にそのファイルを開く | 行番号は動く。動いていたら本文を直す |
 | 前提が動いていないか | 関連する PR / ADR を読む | 起票時に正しかった観測が、いまは別の姿になっていることがある |
 | 重複が無いか | `gh issue list --search '<言葉>' --state all` | 同じことが 2 本立っていたら、片方を not planned で閉じる |
+| 別の所で満たされていないか | ready のまま 7 日以上動いていない Issue は、その後に merge された PR (`gh pr list --state merged --search '<言葉> merged:>=<Issue の最終更新>'`) と、関係する run・Issue を引く | 完了条件は別の PR・run・子の Issue で満たされても、元の Issue へ戻って閉じる契機が無い。[#2303](https://github.com/mokume-metal/mokume/issues/2303) は別の計測 run で、[#1527](https://github.com/mokume-metal/mokume/issues/1527) は直しの PR とその後の 250 回の run で満たされていたのに、ready に残って波に外され続けた。親の PR で満たされた疑いは `ready-queue.sh` が子の行で名乗る (#3559) が、run や別の Issue で満たされる形は決定論では拾えない |
 
 ### 題に「(実害待ち)」を持つ機構の提案
 
 実害の出ていない機構の提案は、題に「(実害待ち)」を付けて待たせてある
 (理由: [ADR-0008](../../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2)。
-この提案は上の 4 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
+この提案は上の 5 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
 入った PR に、その実害や同じ根に当たるものがあるか**。
 
 ```bash
