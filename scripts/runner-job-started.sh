@@ -13,15 +13,14 @@
 # actions/checkout の clean も作業ツリーを掃除するが、あちらは checkout が成功した後の
 # 話で、掃除するものも git の見える範囲に限る。ここはジョブの最初に、中身を問わず空にする。
 #
-# ## 専用機への置き方 (runner ユーザーで)
+# ## 専用機への置き方
 #
 # runner は PR の木ではなく、専用機に写したこのファイルを実行する。**リポジトリの版を
 # 直したら、専用機の写しも置き直す。**
 #
-#   install -m 755 scripts/runner-job-started.sh ~/actions-runner/job-started.sh
-#   echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOME/actions-runner/job-started.sh" >> ~/actions-runner/.env
-#   # runner を再起動して .env を読ませる (画面のセッションの LaunchAgent)
-#   launchctl kickstart -k "gui/$(id -u)/$(basename ~/Library/LaunchAgents/actions.runner.*.plist .plist)"
+# docs/render-runners.md の「ジョブ開始時の掃除を設定する」に従い、runner ごとに配置して
+# .env の ACTIONS_RUNNER_HOOK_JOB_STARTED をその写しの絶対パスにする。再起動は対象の
+# runner のディレクトリで ./svc.sh stop → ./svc.sh start とし、複数の plist を glob で選ばない。
 #
 # ## 使い方
 #
