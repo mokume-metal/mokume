@@ -1016,7 +1016,8 @@ struct ReplayRecordingRuntimeTests {
         let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         let partials = names.filter { ReplayClaim.isPartial($0, of: "take.json") }
         #expect(partials.count == 1 && names.count == 1, "\(names)")
-        let text = try String(contentsOf: directory.appendingPathComponent(partials[0]), encoding: .utf8)
+        let partial = try #require(partials.first, "setup() が投げた回の .partial が無い")
+        let text = try String(contentsOf: directory.appendingPathComponent(partial), encoding: .utf8)
         #expect(!text.contains("\"complete\""))
         #expect(runtime.recordingStatus == nil)
     }
