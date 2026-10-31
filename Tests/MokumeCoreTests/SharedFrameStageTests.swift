@@ -2290,18 +2290,19 @@ struct SharedFrameStageTests {
             var following: Int32?
             stage.acceptsGeneration = { $0 == following }
 
-            // 試聴の子を何度も入れ替える (覚えの上限より多く)
+            // 試聴の子を何度も入れ替える (覚えの上限より多く)。途中で本番が目録を書き直した (大きさを変えた、など)
+            // 場合も、プレビューには採らない。書き直しの目録も覚えるが、その後に試聴の子が重なって押し出される
             for audition in [Int32(201), 202, 203, 204, 205] {
                 following = audition
                 kept.append(try publishAs(pid: audition, in: facet, gpu: gpu))
                 stage.displayLinkFired()
                 #expect(stage.displayedPID == audition, "試聴の子 \(audition) へ乗り換えない")
+                if audition == 201 {
+                    kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 4))
+                    stage.displayLinkFired()
+                    #expect(stage.displayedPID == 201, "試聴中に本番の目録を採った")
+                }
             }
-
-            // 本番が目録を書き直した (大きさを変えた、など)。プレビューには採らない
-            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 4))
-            stage.displayLinkFired()
-            #expect(stage.displayedPID == 205, "試聴中に本番の目録を採った")
 
             // 出る: 追う相手を外してから、本番へ戻る
             following = nil
