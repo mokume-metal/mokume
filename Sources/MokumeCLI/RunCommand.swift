@@ -58,7 +58,9 @@ enum RunCommand {
     nonisolated static let defaultConfigurationName = "debug"
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
-        let invocation = try Invocation.parse(arguments)
+        let (invocation, values) = try Invocation.parse(arguments, adding: RecordOption.options)
+        // **ビルドの前に解く。** 行き先の誤りを、数分のビルドの後で知らせない (#3570)
+        let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)
         let directory = try invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
@@ -89,11 +91,17 @@ enum RunCommand {
         // なるかを言う文面へそのまま入る
         //
         // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
+        if let recording { print("Recording to: \(recording)") }
         try launch(
             executable, in: directory,
             environment: childEnvironment(
                 reportingRate: context.configurationName,
-                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)"))
+                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
+                recording: recording))
+        // **記録を頼んだのに残っていなければ、黙らない** (子が理由を言っている — 実時間の時計・行き先を開けない)
+        if let recording, !FileManager.default.fileExists(atPath: recording) {
+            print("No record was written to \(recording) (the sketch says why above)")
+        }
     }
 
     /// 1 回の実行で 1 度だけ、置き場と構成と product を決める。
@@ -743,6 +751,9 @@ enum RunCommand {
     ///   渡す)。子は最初の枚の前にここから前の世代の作者の時計を読み、必要なときに自分のを書く
     ///   (``StartupReads/keepTime``・[#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     ///   **渡さなければ、親の環境に在っても落とす** — 旗の無い `watch`・`run`・`render` は 0 秒から始まる。
+    /// - Parameter recording: 実行を頭から終わりまで記録する行き先の絶対パス (`run --record`・`watch --record` だけが
+    ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
+    ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -755,7 +766,7 @@ enum RunCommand {
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
-        assetOrigin: String? = nil, keepTime: String? = nil
+        assetOrigin: String? = nil, keepTime: String? = nil, recording: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -775,6 +786,9 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 時計を運ぶ旗は `watch --keep-time` だけのもので、旗の無い実行や `render` の子へ
         // 継がせると、別の世代の時計から始まってしまう (#2414)
         environment[StartupReads.keepTime.key] = keepTime
+        // **これも渡さなければ落とす。** 記録を頼む旗は `run --record` と `watch --record` だけのもので、`render` の子や
+        // 旗の無い実行へ継がせると、頼んでいない実行が記録を始める (#3570)
+        environment[StartupReads.record.key] = recording
         return environment
     }
 

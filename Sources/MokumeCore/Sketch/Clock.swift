@@ -242,6 +242,11 @@ final class FrameTiming {
     private var awaitsHandover: Bool
     /// `setup()` の前に読んだ、前の世代の作者の時計 (``beginHandover()``)。
     private var predecessor: ClockHandover.Predecessor?
+    /// 最初の枚が前の世代から引き継いだ、作者の時計の開始の秒と止めているか。**引き継ぎが無ければ `nil`。**
+    /// 最初の枚の時点で決まった値で、記録 (``ReplayRecorder``) が開始の状態として残す ([#3570])。
+    ///
+    /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+    private(set) var handoverStart: (seconds: Double, isHeld: Bool)?
     /// ``beginHandover()`` を済ませたか。
     private var hasBegunHandover = false
     /// 枚が止まっているか (``SketchPart/noLoop()``・外からの停止)。``noteStill(_:)`` が受ける。
@@ -391,6 +396,7 @@ final class FrameTiming {
             let source = authorTouchedClock ? predecessor : (handover?.predecessor() ?? predecessor)
             if let source {
                 let start = source.start(at: moment)
+                handoverStart = start
                 offset = start.seconds - raw
                 if !authorTouchedClock { heldAt = start.isHeld ? start.seconds : nil }
             }

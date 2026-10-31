@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "6f1d6b0e-52a7-4c9e-9a1d-3f58f1a3c0de",
+  "clock": { "kind": "frames", "frameRate": 60 },
+  "size": { "width": 640, "height": 360 },
+  "start": {
+    "seed": 0,
+    "seconds": 0,
+    "paused": false,
+    "params": [
+      { "name": "radius", "type": "float", "value": 120 },
+      { "name": "spinning", "type": "bool", "value": false }
+    ]
+  },
+  "steps": [
+    {
+      "step": 0,
+      "frame": 1,
+      "drew": true,
+      "expose": { "score": { "type": "int", "value": 0 } }
+    },
+    {
+      "step": 1,
+      "frame": 2,
+      "drew": true,
+      "inputs": [
+        { "type": "keyDown", "code": 124, "characters": "", "isRepeat": false },
+        { "type": "mouseMovedBy", "dx": 3e+38, "dy": 0.0 }
+      ],
+      "expose": { "score": { "type": "int", "value": 0 } }
+    },
+    {
+      "step": 2,
+      "frame": 3,
+      "drew": true,
+      "inputs": [{ "type": "keyUp", "code": 124 }],
+      "params": [{ "name": "radius", "type": "float", "value": 150 }],
+      "expose": { "score": { "type": "int", "value": 10 } }
+    },
+    {
+      "step": 3,
+      "frame": 4,
+      "drew": true,
+      "observe": { "time": 2.5 },
+      "expose": { "score": { "type": "int", "value": 10 } }
+    },
+    {
+      "step": 60,
+      "frame": 60,
+      "drew": true,
+      "expose": { "score": { "type": "int", "value": 20 } },
+      "pixelHash": "3b6c5e7e2d8f0a1c94d4b7a05e1f2c83d9a64b0f7e215c8a3d90b1e4f6a72c58"
+    },
+    {
+      "step": 61,
+      "frame": 60,
+      "drew": false,
+      "inputs": [{ "type": "scrolled", "dx": 0.0, "dy": 5.0 }]
+    }
+  ],
+  "unreproducible": [
+    { "step": 1, "reason": "Replay is not guaranteed (non-finite input)" }
+  ],
+  "last": {
+    "frame": 60,
+    "pixelHash": "3b6c5e7e2d8f0a1c94d4b7a05e1f2c83d9a64b0f7e215c8a3d90b1e4f6a72c58"
+  },
+  "complete": true
+}

@@ -1,0 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
+`mokume run --record take.json` と `mokume watch --record take.json` で、フレームの時計 (`clock: .frames`) のスケッチの実行を、最初のフレームから終わりまで 1 本のファイルに記録できるようになりました。毎回の入力 (キー・マウス)・外から書いたつまみの値・時刻を指定した観測・開始の状態 (乱数の種・つまみの値・作者の時計の秒) に加えて、毎フレームの `expose` の値と、60 フレームごと + 最後の 1 枚の画素のハッシュが残ります。記録の形式は `Schemas/replay-record.schema.json` です。
+
+行き先は `--record` が必ず指します (既定の行き先はありません)。窓を閉じる・SIGTERM・Control + C のどれで終えても最後に描いた枚まで書いて閉じ、途中で落ちたときは `take.json.partial` が残るだけで `take.json` は作られません (完成として読まれません)。`watch` は作り直すたびに新しい記録を始め、`take-1.json`・`take-2.json` のように世代ごとに別のファイルへ書きます。実時間の時計のスケッチには記録を始めず、理由を言って走り続けます。記録を流して照合する `mokume replay` は次の段で入ります。
