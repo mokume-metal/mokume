@@ -75,7 +75,9 @@ suite・段は JSON に残す。
 ## 要約 (`summary`)
 
 記録が無い・読めない・形が違うときは `unreadable` を名乗って 1 で終わる。**「生き残り 0」とは
-出さない** — 読めない回を緑に読ませると、検査の検証力が落ちても誰も気付かない。
+出さない** — 読めない回を緑に読ませると、検査の検証力が落ちても誰も気付かない。生き残りと無効
+(束の原文が当たらない `anchor` など) は理由つきで表にする (行は `SUMMARY_ROWS` で切り、残りを名乗る)。
+定期の job は結果を追跡用の Issue に置く (scripts/report-mutation.py・#3221)。
 
 検査は scripts/tests/mutate_test.py (make hooks-test)。`swift` は `MOKUME_MUTATE_SWIFT` で
 差し替えられる (検査が偽の実行ファイルで全体を通すため)。

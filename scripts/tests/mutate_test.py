@@ -421,6 +421,22 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("missing", out)
         self.assertEqual(out.strip(), step.strip())
 
+    def test_invalid_mutants_are_listed_with_their_reason_and_long_tables_are_cut(self):
+        # 無効は分母に入らないので、束の原文が当たらなくなった (anchor) ことは表で名乗らないと気付けない
+        many = mutate.SUMMARY_ROWS + 5
+        mutants = ([{"id": "stale", "outcome": "invalid", "file": "Sources/Y.swift", "line": 3,
+                     "reason": "anchor: 原文が 2 回当たる | 1 回でなければ当てない"}]
+                   + [{"id": f"s{i}", "outcome": "survived", "file": "Sources/X.swift", "line": i,
+                       "operator": "+ -> -"} for i in range(many)])
+        counts = dict({k: 0 for k in mutate.OUTCOMES}, survived=many, invalid=1)
+        code, out, _ = self.summary(json.dumps({
+            "version": 1, "counts": counts, "score": 0.0, "mutants": mutants, "head": "abc",
+            "catalog": {"path": "Tests/probe-catalog.tsv", "state": "present"}, "attribution": {}}))
+        self.assertEqual(code, 0, out)
+        self.assertIn("| stale | `Sources/Y.swift:3` | anchor: 原文が 2 回当たる \\| 1 回でなければ当てない |", out)
+        self.assertIn("ほか 5 件", out)
+        self.assertNotIn(f"| s{many - 1} |", out)
+
 
 class RunTest(unittest.TestCase):
     def test_bundle_outcomes_and_the_source_is_restored(self):
