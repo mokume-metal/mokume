@@ -254,6 +254,40 @@ import simd
         }
     }
 
+    /// 絵の画素を、一度に ``PixelBuffer`` で読む。``write(_:)`` の逆に当たる。
+    ///
+    /// 1 画素ずつ ``get(_:_:)`` で読む代わりに、全画素を 1 回の呼び出しで取る。外のパッケージが絵を
+    /// 解析に渡すとき (画像認識など) の入口である。返る ``PixelBuffer`` の `width`・`height` は絵の大きさで、
+    /// 原点は左上、行優先。
+    ///
+    /// **値は ``get(_:_:)`` と同じ表現で、変換を挟まない。** `components` は線形・アルファ乗算済み
+    /// (``PixelBuffer`` の説明のとおり) で、``Image/get(_:_:)`` が返す色の成分をそのまま並べたものになる。
+    /// 乗算を外す・sRGB へ写すといった変換は、受け取る側が必要なところで行う。
+    ///
+    /// ```swift
+    /// func setup() throws {
+    ///     let picture = try createImage(2, 2)
+    ///     picture.set(0, 0, LinearRGBA(premultipliedRed: 1, green: 0, blue: 0, alpha: 1))
+    ///
+    ///     let buffer = picture.readPixels()
+    ///     // buffer.components の先頭 4 つ (赤・緑・青・不透明度) は picture.get(0, 0) と同じ
+    ///     print(buffer.width, buffer.height, buffer.components.prefix(4))
+    /// }
+    /// ```
+    ///
+    /// **撮った時点の値の写しを返す。** 読んだ後で絵を ``set(_:_:_:)``・``fill(_:)``・``write(_:)`` で
+    /// 書き換えても、すでに返した ``PixelBuffer`` は変わらない。窓として開いたまま読み書きする
+    /// ``pixels`` (``Pixels``) とは役割が違う — あちらは絵そのものを指して自分を変え、こちらは
+    /// 全体の値を 1 度に取って手元に置く。
+    ///
+    /// 全画素の写しを作るので、絵の大きさに比例する費用がかかる (毎フレーム呼ぶ前に、要る頻度か
+    /// 確かめる)。読み取りなので落ちない (ADR-0020 決定 5)。
+    // shot: 撮れない 結果が絵ではなく、読み出した画素の値になる
+    public func readPixels() -> PixelBuffer {
+        let components = workingPixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
+        return PixelBuffer(width: width, height: height, components: components)
+    }
+
     /// 絵を PNG ファイルにして書く。Processing の `PImage.save()` に当たる。**書き終えてから返る。**
     ///
     /// ```swift
@@ -287,8 +321,7 @@ import simd
         guard !FrameRecorder.isVector(path) else {
             throw .unwritable(path: path, reason: FrameRecorder.vectorSeriesReason)
         }
-        let components = workingPixels.withUnsafeBytes { Array($0.bindMemory(to: Float16.self)) }
-        let picture = OutputStage.encode(PixelBuffer(width: width, height: height, components: components))
+        let picture = OutputStage.encode(readPixels())
         let url = FrameWriter.url(for: path)
         do {
             try FrameWriter.createParentDirectory(of: url)
