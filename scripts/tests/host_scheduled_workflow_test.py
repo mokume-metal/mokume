@@ -17,6 +17,12 @@
   5. exit test (`#expect(processExitsWith:)`) を持つ検査は、どれも Makefile の TSAN_SKIP に
      載る — TSan の下では子が中身を走らせずに止まり、`.failure` を期待する検査は偽って緑に
      なる (#3220 の実測)。足した exit test を TSAN_SKIP に載せ忘れると、ここが赤になる
+  6. 変異の mutation (#3221) は macos-26 で、固定の束と前回の commit からの範囲を、期限
+     (job の timeout-minutes と mutate.py の --budget) つきで回す。持つ権限は読むだけ
+     (`issues: read`) で、continue-on-error を持たない。記録が読めない回は要約の段が赤にする
+  7. mutation-report は mutation の結論が何でも走り (`always()` を外すと、mutation が赤の回に
+     skipped になって読めない回が黙る)、artifact と記録の綴りを mutation と揃えて読む。
+     範囲を回すつもりだったか (`since`) を job の出力で受け取り、起点を進めてよいかの判定に使う
 
 ワークフローの読み手は render_workflow_test.py のものを使う。実行は make hooks-test。
 """
@@ -80,7 +86,7 @@ class HostScheduledWorkflowTest(unittest.TestCase):
 
     def test_issues_write_は起票のジョブだけが持つ(self):
         holders = {name for name, body in self.jobs.items() if re.search(r"issues:\s*write", body)}
-        self.assertEqual(holders, {"tsan-report"})
+        self.assertEqual(holders, {"tsan-report", "mutation-report"})
 
     def test_起票は落ちたか切れた回だけ走る(self):
         report = self.jobs["tsan-report"]
@@ -104,6 +110,54 @@ class HostScheduledWorkflowTest(unittest.TestCase):
         self.assertIn(Path(log).name, report)
         self.assertIn("scripts/report-tsan.sh", report)
 
+
+    def test_mutation_は下限_OS_で束と範囲を期限つきで回し_読む権限だけを持つ(self):
+        mutation = self.jobs["mutation"]
+        self.assertRegex(mutation, r"(?m)^    runs-on: macos-26\s*$")
+        self.assertRegex(mutation, r"(?m)^    timeout-minutes: \d+\s*$")
+        self.assertNotIn("continue-on-error", mutation)
+        self.assertRegex(mutation, r"issues:\s*read")
+        self.assertNotRegex(mutation, r"(?:issues|contents|pull-requests|actions):\s*write")
+        # 範囲は履歴を要る (前回の commit が浅い clone に無いと range は回らない)
+        self.assertRegex(mutation, r"fetch-depth:\s*0")
+        # 束と範囲は、どちらも全体の期限と 1 件の期限を持つ (期限が無いと job の枠を塞ぐ)
+        runs = re.findall(r"scripts/mutate\.py run\b.*?(?=\n\s+- |\Z)", mutation, re.S)
+        self.assertEqual(len(runs), 2, "束と範囲の 2 つの run")
+        for run in runs:
+            self.assertRegex(run, r"--budget \d+")
+            self.assertRegex(run, r"--timeout \d+")
+        self.assertIn("--bundle Tests/mutation-bundle.json", runs[0])
+        self.assertIn("--since", runs[1])
+        # 予算が job の期限に収まる (1 件の期限が予算の最後にはみ出す分と組み立ての余裕を見る)
+        timeout = int(re.search(r"timeout-minutes: (\d+)", mutation).group(1))
+        budgets = sum(int(b) for b in re.findall(r"--budget (\d+)", mutation)) / 60
+        overrun = sum(int(b) for b in re.findall(r"--timeout (\d+)", mutation)) / 60
+        self.assertLess(budgets + overrun, timeout)
+
+    def test_mutation_の読めない記録は赤になる(self):
+        mutation = self.jobs["mutation"]
+        # 要約の段は !cancelled() で、run の段が赤でも走る。点数の低下は summary が 0 で返す
+        for record in ("mutation-bundle.json", "mutation-range.json"):
+            self.assertRegex(mutation, rf"scripts/mutate\.py summary \.build/{re.escape(record)}")
+        for step in re.findall(r"(?m)^      - name: 要約[^\n]*\n        if: ([^\n]*)", mutation):
+            self.assertIn("!cancelled()", step)
+
+    def test_mutation_report_は結論が何でも走り_mutation_の記録の綴りで読む(self):
+        mutation, report = self.jobs["mutation"], self.jobs["mutation-report"]
+        self.assertEqual(workflow.needs(report), {"mutation"})
+        self.assertEqual(workflow.condition(report), "always()")
+        self.assertIn("name: mutation-record", mutation)
+        self.assertIn("name: mutation-record", report)
+        for record in ("mutation-bundle.json", "mutation-range.json"):
+            self.assertIn(f".build/{record}", mutation)
+            self.assertIn(record, report)
+        self.assertIn("scripts/report-mutation.py", report)
+        # 範囲を回すつもりだったか (起点を進めてよいかの判定) を job の出力で受け渡す
+        self.assertRegex(mutation, r"outputs:\s+since: \$\{\{ steps\.previous\.outputs\.since \}\}")
+        self.assertIn("needs.mutation.outputs.since", report)
+        self.assertIn("needs.mutation.result", report)
+        # 範囲の段は起点が読めたときだけ走る
+        self.assertIn("steps.previous.outputs.since != ''", self.jobs["mutation"])
 
     def test_exit_test_は_TSan_の下から外す(self):
         skip = tsan_skip(MAKEFILE.read_text(encoding="utf-8"))

@@ -99,6 +99,7 @@ OUTCOMES = ("killed", "survived", "timeout", "invalid", "unevaluated", "unrun")
 DEFAULT_TIMEOUT = 900
 DEFAULT_CATALOG = "Tests/probe-catalog.tsv"
 NOT_IN_CATALOG = "-"
+SUMMARY_ROWS = 30  # 要約の表の行の上限 (Issue の本文の上限 65536 字に収める)
 
 
 def _read_test_record():
@@ -793,11 +794,24 @@ def summary_text(data):
     survivors = [m for m in data["mutants"] if m.get("outcome") == "survived"]
     if survivors:
         lines += ["#### 生き残り", "", "| id | 位置 | 変異 |", "| --- | --- | --- |"]
-        for m in survivors:
+        for m in survivors[:SUMMARY_ROWS]:
             change = m.get("operator") or m.get("note") or ""
             lines.append(f"| {m['id']} | `{m['file']}:{m.get('line')}` | {change} |")
-        lines.append("")
+        lines += more_rows(len(survivors))
+    # 無効は分母に入れないので、黙ると束の原文が当たらなくなったこと (anchor) に気付けない
+    invalid = [m for m in data["mutants"] if m.get("outcome") == "invalid"]
+    if invalid:
+        lines += ["#### 無効", "", "| id | 位置 | 理由 |", "| --- | --- | --- |"]
+        for m in invalid[:SUMMARY_ROWS]:
+            reason = str(m.get("reason") or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {m['id']} | `{m['file']}:{m.get('line')}` | {reason} |")
+        lines += more_rows(len(invalid))
     return "\n".join(lines)
+
+
+def more_rows(total):
+    """表の行を切ったとき、残りの件数を名乗る行 (と、表の後ろの空行)。"""
+    return ([f"| ほか {total - SUMMARY_ROWS} 件 (全部は artifact の JSON) | | |"] if total > SUMMARY_ROWS else []) + [""]
 
 
 def summary(args):

@@ -3,9 +3,10 @@
 name: Host scheduled
 
 # GitHub ホストの macOS で、**merge の前には重すぎる検査**を定期に回す置き場 (#3220)。
-# 検査ごとに「走らせる job」と「赤を起票する job」の 2 本を置く。後から足す検査
-# (変異の定期・#3221 など) も、同じ形の 2 本をこのファイルへ足す — workflow を検査ごとに
-# 増やさない (起動の時刻・権限の分け方・起票の形を 1 箇所で読めるようにするため)。
+# 検査ごとに「走らせる job」と「結果を発信する job」の 2 本を置く (tsan と tsan-report、
+# 変異の mutation と mutation-report #3221)。後から足す検査も、同じ形の 2 本をこのファイルへ足す —
+# workflow を検査ごとに増やさない (起動の時刻・権限の分け方・起票の形を 1 箇所で読めるようにするため)。
+# tsan-report は赤の回だけ起票し、mutation-report は緑の回も点数を置く。
 #
 # **専用機 (render.yml) には載せない。** 専用機の定期は描画の検査のためのもので、schedule で
 # 起動する専用機の job は scheduled-debug / scheduled-release に限っている (ADR-0019 決定 7・
@@ -104,3 +105,121 @@ jobs:
           xml=$(find_one record test-results-tsan-swift-testing.xml)
           log=$(find_one record test-log-tsan.txt)
           bash scripts/report-tsan.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
+
+  # 検査の検証力を測る (#3221)。実装を 1 か所ずつ壊し、関連の検査が赤になるかを見る
+  # (scripts/mutate.py)。塞ぐ実害は #3207 — 検査の提案を一括で入れても、どれが効いたかが
+  # 後から引けない。固定の束 (Tests/mutation-bundle.json) と、前回の点数の commit から HEAD までに
+  # 変わった行を、全体の期限の内側で回し、回しきれなかった数を名乗る。
+  #
+  # **点数の低下では赤にしない** (測るための job で、止める関門ではない)。赤にするのは、記録が
+  # 読めない回 (`mutate.py summary` が unreadable を返す・build が組めない) だけ — 読めない回を
+  # 緑に読ませると、検査の検証力が落ちても誰も気付かない。点数・帰属・新しい生き残りを追跡用の
+  # Issue へ置くのは mutation-report (scripts/report-mutation.py)。
+  #
+  # **GPU の suite はホストで飛ぶ** (RenderDevice.isAvailable が偽)。その分の変異は `未評価` と名乗り、
+  # 殺せなかったとは数えない (2026-10-30 の決定・#3221)。
+  #
+  # **前回の点数の commit は追跡用の Issue の本文から読む** (`issues: read` だけを持つ)。履歴は
+  # fetch-depth 0 で取る。**continue-on-error を付けない** — 赤が success に化けると報告が読み違える。
+  mutation:
+    runs-on: macos-26
+    # 仮の値 (実測前)。内訳: 束の予算 90 分 + 範囲の予算 60 分 + 1 件の期限 (10 分) が予算の最後に
+    # はみ出す分 + 組み立て。push 後の workflow_dispatch の実測で直す
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      issues: read # 前回の点数の commit を追跡用の Issue から読む
+    outputs:
+      since: ${{ steps.previous.outputs.since }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # 範囲を回す起点。読めない・木に無いときは範囲を回さず、そう名乗る (束は回る)
+      - name: 前回の点数の commit を読む
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          since=
+          if prev=$(python3 scripts/mutation_state.py previous); then
+            if [ -z "$prev" ]; then
+              note="前回の点数の commit が無い (最初の回)。範囲は回さず、束を回して起点を置く"
+            elif git cat-file -e "$prev^{commit}" 2>/dev/null; then
+              since=$prev
+              note="範囲の起点は前回の点数の commit \`${prev:0:12}\`"
+            else
+              note="前回の点数の commit \`${prev:0:12}\` がこの木に無い (履歴の書き換えか)。範囲は回さない"
+            fi
+          else
+            note="追跡用の Issue から前回の commit を読めなかった。範囲は回さない"
+          fi
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          printf '### 変異の検査の範囲\n\n%s\n\n' "$note" >> "$GITHUB_STEP_SUMMARY"
+      - name: 固定の束を回す
+        run: |
+          python3 scripts/mutate.py run --bundle Tests/mutation-bundle.json \
+            --out .build/mutation-bundle.json --work .build/mutation-bundle-work \
+            --budget 5400 --timeout 600
+      - name: 前回の点数の commit からの範囲を回す
+        if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
+        env:
+          SINCE: ${{ steps.previous.outputs.since }}
+        run: |
+          python3 scripts/mutate.py run --since "$SINCE" \
+            --out .build/mutation-range.json --work .build/mutation-range-work \
+            --budget 3600 --timeout 600
+      # 読めない記録は unreadable と名乗って赤になる。job の要約にも載る
+      - name: 要約 (固定の束)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/mutate.py summary .build/mutation-bundle.json
+      - name: 要約 (範囲)
+        if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
+        run: python3 scripts/mutate.py summary .build/mutation-range.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutation-record
+          path: |
+            .build/mutation-bundle.json
+            .build/mutation-range.json
+            .build/mutation-bundle-work/mutate-log.txt
+            .build/mutation-range-work/mutate-log.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  # 変異の点数・帰属・新しい生き残りを、固定タイトルの追跡用 Issue に置く (#3221)。
+  # 本文の機械の区画を書き換える (通知しない)。コメントするのは新しい生き残りと、記録が読めなく
+  # なった回だけ。**緑の回も走る** (点数を置くのが仕事なので) — `always()` を外さない:
+  # 暗黙の success() が足され、mutation が赤の回に skipped になって、読めない回が黙る。
+  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる mutation には持たせない。
+  mutation-report:
+    needs: mutation
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      issues: write # 追跡用 Issue の起票・本文の書き換え・コメント (#3221)
+    steps:
+      - uses: actions/checkout@v7
+      # 組み立てで落ちて記録が上がらなかった回も報告する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: mutation-record
+          path: record
+      # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (tsan-report と同じ)
+      - name: 点数を追跡用の Issue に置く
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.mutation.result }}
+          SINCE: ${{ needs.mutation.outputs.since }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          bundle=$(find_one record mutation-bundle.json)
+          range=$(find_one record mutation-range.json)
+          python3 scripts/report-mutation.py --result "$RESULT" \
+            --bundle "${bundle:-record/none-bundle.json}" \
+            --range "${range:-record/none-range.json}" --range-since "$SINCE"
