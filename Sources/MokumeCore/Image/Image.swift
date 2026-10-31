@@ -43,8 +43,16 @@ import simd
         return cpuPixels
     }
     private var cpuPixels: [SIMD4<Float16>]
-    /// 大きな入力は値として保持する。呼び手が元の配列を書き換えてもこの控えは変わらない。
-    private(set) var displayInput: DisplayImage?
+    /// 大きな入力は値として保持し、GPU で作業空間へ変換する。呼び手が元の配列を書き換えてもこの控えは変わらない。
+    private(set) var deferredInput: DeferredInput?
+    /// 遅らせた入力のうち、8 bit の並び (``DisplayImage``) で届いたもの。
+    var displayInput: DisplayImage? {
+        if case .display(let picture) = deferredInput { picture } else { nil }
+    }
+    /// 遅らせた入力のうち、面 (``PixelSurface``) で届いたもの。
+    var surfaceInput: PixelSurface? {
+        if case .surface(let surface) = deferredInput { surface } else { nil }
+    }
     private(set) var inputPatches: [Int: SIMD4<Float16>] = [:]
     private(set) var inputNeedsDecode = false
     // 公開のモードにせず、小さい入力の dispatch 費用と編集の控えの上限を内部で持つ (#1753)。
@@ -138,7 +146,7 @@ import simd
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let index = y * width + x
         let texel = HalfSurface.texel(color)
-        if displayInput != nil,
+        if deferredInput != nil,
             inputPatches[index] != nil || inputPatches.count < Self.inputPatchLimit
         {
             inputPatches[index] = texel
@@ -191,18 +199,52 @@ import simd
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     public func write(_ picture: DisplayImage) {
         guard picture.width == width, picture.height == height else {
-            warnMismatchOnce(picture)
+            warnMismatchOnce(width: picture.width, height: picture.height)
             return
         }
         if width * height >= Self.metalInputMinimumPixels {
-            displayInput = picture
-            cpuPixels = []
-            inputPatches = [:]
-            inputNeedsDecode = true
+            deferToGPU(.display(picture))
         } else {
             OutputStage.decode(picture, into: &cpuPixels)
         }
         needsUpload = true
+    }
+
+    /// 外から届いた面を、CPU で画素を作り直さずに書き込む。**動画とカメラのコマを絵にする速い道である。**
+    ///
+    /// 色の変換は面が持つ表 (``PixelSurface/ColorTable``) を GPU で引いて行い、結果は同じ表で作った
+    /// ``DisplayImage`` を ``write(_:)-(DisplayImage)`` で書いたときと 1 bit も違わない。いつも不透明として書く。
+    /// 大きさの扱い (違えば何もせず 1 度だけ知らせる) も同じである。
+    ///
+    /// **面は、次に書き込むか絵を捨てるまで絵が持つ** (``PixelSurface`` の「面の寿命」)。100 万画素に満たない
+    /// 絵へ書くときと、絵の画素を CPU で読むとき (``get(_:_:)``・``pixels``・``copy()``・``save(_:)`` ほか) は、
+    /// その場で表を CPU で引いて写す — 写した後は面を持たない。
+    ///
+    /// <!-- example: 組めない 面は外から届くもので、例の中で用意できない -->
+    /// ```swift
+    /// // frame は動画やカメラ、外のパッケージから届いた PixelSurface
+    /// picture.write(frame)
+    /// image(picture, 0, 0, width, height)
+    /// ```
+    public func write(_ surface: PixelSurface) {
+        guard surface.width == width, surface.height == height else {
+            warnMismatchOnce(width: surface.width, height: surface.height)
+            return
+        }
+        if width * height >= Self.metalInputMinimumPixels {
+            deferToGPU(.surface(surface))
+        } else {
+            OutputStage.decode(surface.converted(), into: &cpuPixels)
+        }
+        needsUpload = true
+    }
+
+    /// 入力を GPU の変換へ遅らせる。前の入力と編集は捨てる。
+    private func deferToGPU(_ input: DeferredInput) {
+        deferredInput = input
+        cpuPixels = []
+        inputPatches = [:]
+        inputNeedsDecode = true
     }
 
     /// 絵を写して、新しい `Image` にする。Processing の `PImage.copy()` に当たる。
@@ -337,10 +379,10 @@ import simd
     /// 全体を 1 色で埋める。色は ``set(_:_:_:)`` と同じく、検めずに面へ移す。
     public func fill(_ color: LinearRGBA) {
         let texel = HalfSurface.texel(color)
-        if displayInput != nil {
+        if deferredInput != nil {
             // 捨てる入力は復号しない。
             cpuPixels = Array(repeating: texel, count: width * height)
-            displayInput = nil
+            deferredInput = nil
             inputPatches = [:]
             inputNeedsDecode = false
         } else {
@@ -409,10 +451,13 @@ import simd
 
     /// CPU が読むとき、または GPU の準備に失敗したときの逃げ道。論理的な値と世代は変えない。
     func materializePixels() {
-        guard let displayInput else { return }
-        cpuPixels = OutputStage.decode(displayInput)
+        guard let deferredInput else { return }
+        switch deferredInput {
+        case .display(let picture): cpuPixels = OutputStage.decode(picture)
+        case .surface(let surface): cpuPixels = OutputStage.decode(surface.converted())
+        }
         for (index, texel) in inputPatches { cpuPixels[index] = texel }
-        self.displayInput = nil
+        self.deferredInput = nil
         inputPatches = [:]
         inputNeedsDecode = false
     }
@@ -426,11 +471,11 @@ import simd
     /// 言っていない)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    private func warnMismatchOnce(_ picture: DisplayImage) {
+    private func warnMismatchOnce(width passedWidth: Int, height passedHeight: Int) {
         guard !warnedMismatch else { return }
         warnedMismatch = true
         Diagnostics.warn(
-            "write(): the picture passed is \(picture.width)x\(picture.height), which differs "
+            "write(): the picture passed is \(passedWidth)x\(passedHeight), which differs "
                 + "from this image's \(width)x\(height), so nothing was written. If the source "
                 + "changed size, make it again with createImage()")
     }
@@ -496,7 +541,7 @@ extension Image: PendingUpload {
         guard generation == writeGeneration else { return false }
         // **全体を届けたかを、下ろす前に見る。** CPU の画素は毎回全体を、大きな入力は復号するときだけ
         // 全体を届ける。復号した後の編集だけの届けは、編集の画素しか書かない (`ImageInputPass`)
-        let whole = displayInput == nil || inputNeedsDecode
+        let whole = deferredInput == nil || inputNeedsDecode
         needsUpload = false
         inputNeedsDecode = false
         // 直接書いた分は届いている (全体を書く)
@@ -520,11 +565,19 @@ extension Image: PendingUpload {
         if submission == wholeDeliveredBy {
             wholeDeliveredBy = 0
             guard dropped else { return }
-            if displayInput != nil { inputNeedsDecode = true }
+            if deferredInput != nil { inputNeedsDecode = true }
         } else {
             guard dropped, submission > wholeDeliveredBy else { return }
         }
         needsUpload = true
         requestUpload()
     }
+}
+
+/// GPU で作業空間へ変換するまで遅らせた入力。
+enum DeferredInput {
+    /// 8 bit の並び。
+    case display(DisplayImage)
+    /// 面と色の表。
+    case surface(PixelSurface)
 }

@@ -167,6 +167,19 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は 2 
 
 > 破れたとき: カメラのためだけに `MTLTexture` を受ける口が面に増える。それを使えるのは組み込みだけになるか、外の語彙が面に散る。
 
+#### 改訂 (2026-11-01) — 計測で引き金が引かれたので、面を受ける道を足す ([#2962](https://github.com/mokume-metal/mokume/issues/2962))
+
+**現行の扱い: 外の画素は、`Image.write(DisplayImage)` に加えて、mokume 独自の `Sendable` な値 `PixelSurface` を受ける `Image.write(PixelSurface)` の重ねで書ける。** `PixelSurface` は `IOSurface` を 1 つと、8 bit の色を Display P3 の 8 bit へ写す表 (`PixelSurface.ColorTable`) を持つ。色の変換は表を GPU で引いて行い、結果は同じ表で CPU が作った `DisplayImage` を書いたときと 1 bit も違わない。
+
+- **引き金**: 4K の動画 4 本を流す複合場面で、CPU の全画素の変換 (`FrameConverter.convert`) と置き場への写し (`ImageInputPass.stage`) が main の観測の過半を占め、完成の p95 が 15.6 ms だった ([#2802](https://github.com/mokume-metal/mokume/issues/2802) の試作。GPU で表を引くと 5.9〜6.7 ms)。上の 3 項目めの「フレームの予算に収まらないと計測で示されたら」に当たる
+- **形**: 決定 3 のとおり MokumeCore の `public` に置き、外のパッケージも同じ口で書ける。**色の意味は作り手が持つ** — 表は「どの 8 bit の色がどの 8 bit の色になるか」だけを持ち、作り手が自分の変換 (カメラと動画は `DisplayImage` を作るのと同じ変換) を 256 枚の絵に通して作る。MokumeCore は表を詰めて引くだけで、色空間の変換を写さない
+- **「下位の描画資源を、面に新しく出さない」を `IOSurface` に及ぼさない。** `IOSurface` は Metal の型ではなく、OS が GPU と共有する面として用意した形で、iOS にもある。露出する Metal の資源は `OutputFrame.texture` の 1 点のままである。`IOSurface` を署名に出すのは `PixelSurface.init(_:conversion:)` の 1 点で、`scripts/api-surface.py` の許可の一覧に理由つきで載せる ([ADR-0020](0020-api-naming-and-surface.md) 決定 6)。`IOSurface` を返す公開の口は作らない
+- **決定 7 の条件 2 (OS の型を越えさせない) の読み**: `IOSurface` を包んだ自前の `Sendable` な値は、条件 2 の「OS の型」に当たらない (2026-11-01 にメンテナが決めた)。先読みの係・カメラの受け取りの列から main へ越えてよい。`CVPixelBuffer`・`CMSampleBuffer` は今までどおり越えさせない
+- **面の寿命**: 値を作った時点で面を「使用中」にし (`IOSurfaceIncrementUseCount`)、値の写しが全部消えたら外す。`CVPixelBuffer` の置き場は使用中の面を使い回さないので、元の `CVPixelBuffer` を先に手放しても中身は書き換わらない (#2962 の実験で、使用中にしないと 6/6 枚が上書きされ、使用中にすると 0/6 枚)。絵に書いた最後の 1 面は絵の寿命に従う
+- **受けるのは BGRA の 8 bit・平面なしの面だけ**で、不透明として書く。透けた画素・YpCbCr・HDR は `DisplayImage` の道のまま
+
+**採らなかった案 (2026-10-21・#2962)**: 生のポインタと返すための closure を受ける形 (面に生のポインタが出て、ページ境界に揃わない面は黙ってコピーへ戻る)。作る口を `package` に留める形 (決定 3・決定 5 の「外のパッケージも同じ道」に反する)。近似の表・GPU の bilinear の縮小 (色が 1 bit も変わらないことを約束できない)。
+
 ### 6. 音の範囲は、解析・再生・合成まで。音の流れは音のターゲットが持つ
 
 **範囲は次の 3 つで、Processing Sound と並ぶところまでとする。**

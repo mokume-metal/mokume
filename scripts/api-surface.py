@@ -488,6 +488,7 @@ FOREIGN_ALLOWLIST = {
     "OutputFrame.texture": "毎フレーム絵を渡す出口へ、描画資源をそのまま手渡す一点 (ADR-0024 決定 8)。包むと受け取る側が取り出す口を別に求め、露出の点が増える",
     "PNGFile.write(_:to:)": "書き出し先の指定。ファイルの場所の正典は標準ライブラリの外にある",
     "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
+    "PixelSurface.init(_:conversion:)": "OS が GPU と共有する面をそのまま受け、CPU で画素を作り直さずに絵へ書く入口 (#2962・ADR-0042 決定 5 の改訂)。面の在処はこの型でなければ表せず、Metal の型ではないので描画資源を面に出さない。既に持っている資源を持ち込む点は RenderDevice.init(device:) と同じ",
     "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
     "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
     "SketchPart.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
