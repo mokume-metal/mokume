@@ -616,6 +616,7 @@ extension CanvasTests {
                 "currentCurveDetail": "描き方 (曲線の細かさ)。一度書けば残る",
                 "currentCurveTightness": "描き方 (曲線の張り)。一度書けば残る",
                 "noiseStore": "揺らぎの種と細かさの置き場。一度書けば残る (断片と共有する・#366)。描き場所は作った面と共有する (#1503)",
+                "pendingEffectsNoise": "効果を積んだ時点の揺らぎの設定の控え (#3569)。効果 (pendingEffects) を積むたびに書き直し、効果が空のフレームでは読まれない。フレームには属さない",
                 "carriesPictureBeforeEffects": "効果を通す前の絵の控えがあるか。次のフレームの最初の描き切りが戻す (面の取り替え・#1469・#2388)",
                 "targetChangedSinceUpscale": "描く先が最後の拡大より後に変わったか。止まっている間の出力段が広げ直して下ろす。フレームの終わりの描き切りも下ろす (#1882)",
                 "placingCatchUpDeferred": "置く口の追い付きを見送っているか。描く先が変わる描き切りと、追い付けたときに下ろす (#2042)",

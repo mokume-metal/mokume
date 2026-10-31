@@ -127,7 +127,8 @@ enum ShapeExit {
             ("shadowRangeValue", { c, _ in c.shadowRange(50) }),
             ("shadowDetailValue", { c, _ in c.shadowDetail(512) }),
             ("shadowBiasValue", { c, _ in c.shadowBias(0.5) }),
-            ("pendingEffects", nil), ("pendingComputations", nil), ("forcesThisFrame", nil),
+            ("pendingEffects", nil), ("pendingEffectsNoise", nil),
+            ("pendingComputations", nil), ("forcesThisFrame", nil),
             // 頼んだ粒の進めの控え (#1710)。溜めた計算と同じく、組み立ての中では `particles()` を断る
             ("particleAdvancesThisFrame", nil),
             ("style.clip", { c, _ in c.clip(1, 2, 3, 4) }),

@@ -29,6 +29,10 @@ struct ComputeDispatch {
     ///
     /// [#932]: https://github.com/mokume-metal/mokume/issues/932
     let values: [Float]
+    /// 頼まれた時点の時刻と揺らぎの設定。**値と同じく写しを持つ** (``ComputeFrame``・[#3569])。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    let frame: ComputeFrame
 
     var reads: [ObjectIdentifier] {
         buffers.prefix(buffers.count - writeCount).map(ObjectIdentifier.init)
@@ -122,7 +126,9 @@ extension Canvas {
             buffers: buffers, writeCount: writes.count,
             // **いまの値をここで写す。** 流す段まで読みに行くと、その後の
             // `Computation/set(_:_:)` に引きずられる (#932)
-            values: computation.packedValues)
+            values: computation.packedValues,
+            // 時刻と揺らぎの設定も同じ時点で写す。断片は `MOKUME_FRAME` の口から読む (#3569)
+            frame: ComputeFrame(time: time, noise: noiseSettings))
         // **頼んだ順に効かせる。** 溜めは面ごと・描き切りも面ごとなので、別の面が先に頼んで
         // 溜めているものは、放っておくとこの頼みより後に走る (#1870)。ぶつかるものは先に投入する
         submitEarlierComputations(
@@ -172,9 +178,11 @@ extension Canvas {
         //
         // [#1183]: https://github.com/mokume-metal/mokume/issues/1183
         let pipeline = try computePipeline()
-        // 頼みごとの値の区画。**要る数を先に 1 度だけ取る** — 番地を束ねたあとに取り直すと、
-        // 束ねた先が死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)
-        let values = try computeValuesStorage.buffer(holding: pendingComputations.count)
+        // 頼みごとの値と時刻の区画。**要る数を先に 1 度だけ取る** — 番地を束ねたあとに取り直すと、
+        // 束ねた先が死んだ置き場を指す (``GrowableBuffer/buffer(holding:)``)。1 つの頼みに区画を
+        // 2 つ使う (``Canvas/computeValuesSlot(of:)``・``Canvas/computeFrameSlot(of:)``)
+        let values = try computeValuesStorage.buffer(
+            holding: pendingComputations.count * Self.computeSlotsPerDispatch)
         let groups = Self.groups(
             of: pendingComputations.map { (reads: $0.reads, writes: $0.writes) })
 
@@ -232,8 +240,14 @@ extension Canvas {
         // 走っている計算の足元で値が変わる (#932)
         writeComputeValues(dispatch.values, into: values, at: index)
         table.setAddress(
-            values.gpuAddress + UInt64(index * Self.valuesStride),
+            values.gpuAddress + UInt64(Self.computeValuesSlot(of: index) * Self.valuesStride),
             index: ComputePipeline.valuesBufferIndex)
+        // **時刻と揺らぎの設定は別の口で渡す** (``ComputePipeline/frameBufferIndex``)。利用者の
+        // `Values` に欄を差し込まないので、入口の署名も利用者の名前も変わらない (#3569)
+        writeComputeFrame(dispatch.frame, into: values, at: index)
+        table.setAddress(
+            values.gpuAddress + UInt64(Self.computeFrameSlot(of: index) * Self.valuesStride),
+            index: ComputePipeline.frameBufferIndex)
 
         encoder.setComputePipelineState(state)
         encoder.setArgumentTable(table)
@@ -250,7 +264,8 @@ extension Canvas {
     private func writeComputeValues(
         _ packed: [Float], into buffer: any MTLBuffer, at index: Int
     ) {
-        let slot = buffer.contents().advanced(by: index * Self.valuesStride)
+        let slot = buffer.contents()
+            .advanced(by: Self.computeValuesSlot(of: index) * Self.valuesStride)
             .assumingMemoryBound(to: Float.self)
         // 値を 1 つも宣言していない断片にも、読める形の区画を渡す
         if packed.isEmpty {
@@ -259,6 +274,25 @@ extension Canvas {
             slot.update(from: packed, count: packed.count)
         }
     }
+
+    /// 頼みの番号の、時刻と揺らぎの設定の区画へ写す ([#3569])。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    private func writeComputeFrame(
+        _ frame: ComputeFrame, into buffer: any MTLBuffer, at index: Int
+    ) {
+        buffer.contents()
+            .advanced(by: Self.computeFrameSlot(of: index) * Self.valuesStride)
+            .assumingMemoryBound(to: ComputeFrame.self)
+            .pointee = frame
+    }
+
+    /// 1 つの頼みが使う区画の数 (値と、時刻と揺らぎの設定)。
+    static let computeSlotsPerDispatch = 2
+    /// 頼みの番号の、値の区画の位置。
+    static func computeValuesSlot(of index: Int) -> Int { index * computeSlotsPerDispatch }
+    /// 頼みの番号の、時刻と揺らぎの設定の区画の位置。
+    static func computeFrameSlot(of index: Int) -> Int { index * computeSlotsPerDispatch + 1 }
 
     /// 1 組の大きさ。**GPU が受け取れる上限に収める。**
     static func threadgroup(
