@@ -37,16 +37,19 @@
 #   ・**経過時間の下限があるのは、一時の山を残りと取り違えないため。** macOS の ps の %CPU は直近の減衰平均なので、
 #     閾値だけでは job 内の一時的な負荷や索引の山 (mdworker_shared など。専用機の表の GUI セッションは runner の
 #     ユーザーで、その ppid=1 のプロセスは常に多数ある) を拾う
-#   ・**名前の許可表では外さない。** 許可表は黙って広がる。外すものが見つかったら、理由つきの表をここに足し、
-#     載るものを PR に列挙する (いまは 0 件)
-#   ・**OS が置く常駐は外す** (#3631)。外すのは、実行ファイルが次の置き場にあるものだけ。どれも SIP が守り、
-#     job は実行ファイルを置けないので、そこから起きたプロセスは前の job の残りではない。表の GUI セッションが
-#     runner のユーザーなので、ユーザーの launchd の子として ppid=1 に見え、写真の解析 (`mediaanalysisd`) の
-#     ように何日も CPU を使い続ける。`/usr/bin/`・`/bin/` は外さない — job も起こし、#2959 の `yes` はそこにある
+#   ・**出所で拾う** (#3631)。赤にするのは、実行ファイル (ps の comm) か作業ディレクトリ (lsof の cwd) が
+#     job の置き場にあるものだけ。表の GUI セッションが runner のユーザーなので、OS の常駐 (写真の解析の
+#     `mediaanalysisd` など) やログイン項目のアプリもユーザーの launchd の子として ppid=1 に見え、何日も CPU を
+#     使い続けうる。それは前の job の残りではないので赤にせず、注意 (::warning) で名乗る。comm は親が決める
+#     起動名 (argv[0]) で実行ファイルの置き場を保証しないので、置き場で外す形は採らない。#2959 の `yes`
+#     (/usr/bin/yes) は作業ディレクトリが job の置き場なので拾う。job の置き場は次のとおり (前置きは区切りの `/` まで見る):
 #
-#       /System/        OS の本体 (フレームワークの常駐・同梱のアプリ)
-#       /usr/libexec/   OS の補助の常駐 (trustd など)
-#       /usr/sbin/      OS の管理の常駐 (cfprefsd など)
+#       $RUNNER_WORKSPACE の親   runner の作業の置き場 (_work。checkout・_temp を含む)
+#       */.build/*              SwiftPM が組んだもの (作業ツリーの外の共有の置き場も)
+#       /private/tmp/・/tmp/    使い捨ての置き場
+#       $TMPDIR                 job のユーザーの一時の置き場 (/var/folders/…)
+#
+#     ORPHAN_JOB_ROOTS (`:` 区切り) は検査のための差し替えで、$RUNNER_WORKSPACE の親の代わりに使う
 #   ・**何も殺さない。** 名乗って止めるだけで、止めるのは人 (scripts/orphan-processes.sh が出所を引く)
 #   ・閾値 (ORPHAN_CPU_MIN・ORPHAN_ELAPSED_MIN) は専用機の平常の ps を読んで確定する (#3095)
 #
@@ -98,8 +101,42 @@ fi
 # **閾値は仮置き** — 専用機の平常の ps を読んで確定する (#3095)。環境変数で差し替えられるのは検査のため
 ORPHAN_CPU_MIN=${ORPHAN_CPU_MIN:-50}
 ORPHAN_ELAPSED_MIN=${ORPHAN_ELAPSED_MIN:-600}
+
+# job の置き場 (冒頭の表)。前置きで持ち、照合は区切りの `/` まで見る
+job_roots=()
+if [ -n "${ORPHAN_JOB_ROOTS:-}" ]; then
+  IFS=: read -r -a job_roots <<<"$ORPHAN_JOB_ROOTS"
+elif [ -n "${RUNNER_WORKSPACE:-}" ]; then
+  job_roots+=("$(dirname "$RUNNER_WORKSPACE")")
+fi
+job_roots+=(/private/tmp /tmp)
+if [ -n "${TMPDIR:-}" ]; then
+  job_roots+=("${TMPDIR%/}")
+  # /var は /private/var の別名。lsof はどちらでも返しうるので両方を持つ
+  case "$TMPDIR" in
+    /var/*) job_roots+=("/private${TMPDIR%/}") ;;
+  esac
+fi
+
+in_job_place() {
+  local path=$1 root
+  # データボリュームの firmlink (/System/Volumes/Data/Users/… は /Users/… と同じ所)
+  path=${path#/System/Volumes/Data}
+  case "$path" in */.build/*) return 0 ;; esac
+  for root in "${job_roots[@]}"; do
+    [ -n "$root" ] || continue
+    case "$path" in "${root%/}"/*) return 0 ;; esac
+  done
+  return 1
+}
+
+# 作業ディレクトリ。引けない (消えた・権限が無い) のは想定の範囲なので空を返す
+cwd_of() {
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+}
+
 if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); then
-  orphans=$(printf '%s\n' "$processes" | awk -v cpu_min="$ORPHAN_CPU_MIN" -v elapsed_min="$ORPHAN_ELAPSED_MIN" '
+  heavy=$(printf '%s\n' "$processes" | awk -v cpu_min="$ORPHAN_CPU_MIN" -v elapsed_min="$ORPHAN_ELAPSED_MIN" '
     function seconds(etime,   days, rest, parts, n) {
       days = 0
       rest = etime
@@ -115,17 +152,38 @@ if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); 
     $2 == 1 && $3 + 0 > cpu_min && seconds($4) > elapsed_min {
       name = $5
       for (i = 6; i <= NF; i++) name = name " " $i
-      # OS が置く常駐 (冒頭の表)。前置きは置き場の区切りの `/` まで見る
-      if (name ~ /^\/System\// || name ~ /^\/usr\/libexec\// || name ~ /^\/usr\/sbin\//) next
-      sub(/.*\//, "", name)
-      printf "%s (pid %s, %s%%, 経過 %s)\n", name, $1, $3, $4
+      printf "%s\t%s\t%s\t%s\n", $1, $3, $4, name
     }')
+  orphans="" others=""
+  while IFS=$'\t' read -r pid cpu etime comm; do
+    [ -n "$pid" ] || continue
+    line="${comm##*/} (pid ${pid}, ${cpu}%, 経過 ${etime})"
+    if { [ "${comm#/}" != "$comm" ] && in_job_place "$comm"; } || in_job_place "$(cwd_of "$pid")"; then
+      orphans+="${line}"$'\n'
+    else
+      others+="${line}"$'\n'
+    fi
+  done <<<"$heavy"
+  orphans=${orphans%$'\n'}
+  others=${others%$'\n'}
   if [ -n "$orphans" ]; then
     orphan_count=$(printf '%s\n' "$orphans" | wc -l | tr -d ' ')
     orphan_list=$(printf '%s\n' "$orphans" | sed -n '1,5p' | paste -sd '|' - | sed 's/|/, /g')
     orphan_more=""
     if [ "$orphan_count" -gt 5 ]; then orphan_more=" ほか $((orphan_count - 5)) 本"; fi
     problems+=("orphan-load: 前の job が残した負荷が ${orphan_count} 本ある (ppid=1 で CPU が ${ORPHAN_CPU_MIN}% 超・経過 $((ORPHAN_ELAPSED_MIN / 60)) 分超): ${orphan_list}${orphan_more}。何も止めていない。出所を確かめて人が止める")
+  fi
+  # job の置き場の外の重い負荷は、前の job の残りではないので赤にしない。検査を黙って遅くはするので名乗る
+  if [ -n "$others" ]; then
+    others_list=$(printf '%s\n' "$others" | sed -n '1,5p' | paste -sd '|' - | sed 's/|/, /g')
+    others_count=$(printf '%s\n' "$others" | wc -l | tr -d ' ')
+    others_more=""
+    if [ "$others_count" -gt 5 ]; then others_more=" ほか $((others_count - 5)) 本"; fi
+    notice="orphan-load: job の置き場の外のプロセスが CPU を使い続けている (前の job の残りではないので赤にしない。検査は遅くなりうる): ${others_list}${others_more}"
+    echo "::warning title=専用機の環境::${notice}"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      printf -- '- 注意: %s\n' "$notice" >> "$GITHUB_STEP_SUMMARY"
+    fi
   fi
 else
   problems+=("orphan-load: job のユーザーのプロセスの一覧 (ps) を読めない")

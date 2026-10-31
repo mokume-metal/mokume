@@ -14,11 +14,14 @@
    PR の赤と見分けられない。reason は既存の発信 (render-environment-report) がそのまま運ぶ
 6. **前の job が残した負荷 (ppid=1 で %CPU が閾値超・経過時間が下限超のプロセス) があれば赤にして名乗る** (#3095)。
    `yes` 10 本が 2 日 9 時間 CPU を使い続けても、どこにも赤が出なかった (#3010)。経過時間が下限未満なら、
-   ppid=1 でも job 内の一時の負荷として当てない。`ps` を読めないのも赤にする。何も殺さない
+   ppid=1 でも job 内の一時の負荷として当てない。`ps` を読めないのも赤にする。何も殺さない。
+   **赤にするのは、実行ファイルか作業ディレクトリが job の置き場にあるものだけ** (#3631)。OS の常駐や
+   ログイン項目のアプリは、表のセッションが runner のユーザーなので ppid=1 に見えるが、前の job の残りでは
+   ない。赤にせず注意 (::warning) で名乗る
 4. **落ちたら `$GITHUB_OUTPUT` に `reason=` を 1 行で書く。** render-environment-report は
    これが空でない回にだけ発信する。通ったら書かない (書けば PR の赤まで故障として起票される)
 
-偽の stat・id・osascript・ps は PATH の先頭に置いた同名のスタブ。本物の専用機は触らない。
+偽の stat・id・osascript・ps・lsof は PATH の先頭に置いた同名のスタブ。本物の専用機は触らない。
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
@@ -58,6 +61,22 @@ FAKE_PS = """#!/bin/sh
 printf '%s\\n' "$FAKE_PS"
 """
 
+# プロセスの作業ディレクトリ。FAKE_CWDS は `pid=path` の行。`lsof -a -p <pid> -d cwd -Fn` の形で返す
+FAKE_LSOF = """#!/bin/sh
+pid=""
+while [ $# -gt 0 ]; do
+  case "$1" in -p) pid=$2; shift ;; esac
+  shift
+done
+printf '%s\\n' "$FAKE_CWDS" | while IFS='=' read -r p path; do
+  [ "$p" = "$pid" ] && printf 'p%s\\nfcwd\\nn%s\\n' "$p" "$path"
+done
+exit 0
+"""
+
+JOB_ROOT = "/Users/runner/actions-runner/_work"
+WORK = JOB_ROOT + "/mokume/mokume"
+
 QUIET_PS = "\n".join(
     [
         "  101     1   0.0 12-03:04:05 /usr/libexec/launchd_helper",
@@ -72,6 +91,8 @@ HEALTHY = {
     "FAKE_SCREENS": "1",
     "FAKE_METAL": "Apple M4",
     "FAKE_PS": QUIET_PS,
+    "FAKE_CWDS": "",
+    "ORPHAN_JOB_ROOTS": JOB_ROOT,
 }
 
 
@@ -87,6 +108,7 @@ class RunnerPreflightTest(unittest.TestCase):
             ("id", FAKE_ID),
             ("osascript", FAKE_OSASCRIPT),
             ("ps", FAKE_PS),
+            ("lsof", FAKE_LSOF),
         ):
             path = self.bin / name
             path.write_text(body, encoding="utf-8")
@@ -208,11 +230,13 @@ class RunnerPreflightTest(unittest.TestCase):
 
     # --- 前の job が残した負荷 (#3095) ---
 
-    # #2959 の形: `yes` 10 本が ppid=1 で 90% ずつ、2 日 9 時間
+    # #2959 の形: `yes` 10 本が ppid=1 で 90% ずつ、2 日 9 時間。実行ファイルは /usr/bin で、作業ディレクトリが
+    # job の置き場 (checkout) にある
     YES_TEN = "\n".join(f"{9000 + n}     1  90.1 02-09:00:00 /usr/bin/yes" for n in range(10))
+    YES_CWDS = "\n".join(f"{9000 + n}={WORK}" for n in range(10))
 
     def test_ppid_1_で_CPU_を使い続けるプロセスが残っていれば赤で名乗り_何も止めないと言う(self):
-        r = self.run_preflight(FAKE_PS=QUIET_PS + "\n" + self.YES_TEN)
+        r = self.run_preflight(FAKE_PS=QUIET_PS + "\n" + self.YES_TEN, FAKE_CWDS=self.YES_CWDS)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("::error title=専用機の環境::orphan-load:", r.stdout)
         reason = self.reason()
@@ -239,57 +263,87 @@ class RunnerPreflightTest(unittest.TestCase):
 
     def test_ppid_1_でも経過時間が下限未満なら当たらない(self):
         # job 内の一時の負荷や索引の山を、前の job の残りと取り違えない。9 分 59 秒は下限 (10 分) の手前
-        r = self.run_preflight(FAKE_PS="  404     1  99.0       09:59 /usr/bin/spike")
+        r = self.run_preflight(FAKE_PS="  404     1  99.0       09:59 /usr/bin/spike", FAKE_CWDS=f"404={WORK}")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertNotIn("orphan-load", r.stdout)
         self.assertIsNone(self.reason())
 
     def test_経過時間が下限を越えた_1_本は日数なしの_hh_mm_ss_でも当たる(self):
-        r = self.run_preflight(FAKE_PS="  505     1  75.5    01:00:00 /Applications/Some App.app/Contents/MacOS/Some App")
+        # 実行ファイルが job の置き場 (.build) にあれば、作業ディレクトリが引けなくても拾う
+        r = self.run_preflight(FAKE_PS=f"  505     1  75.5    01:00:00 {WORK}/.build/debug/Some Sketch")
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("Some App (pid 505, 75.5%, 経過 01:00:00)", self.reason())
+        self.assertIn("Some Sketch (pid 505, 75.5%, 経過 01:00:00)", self.reason())
 
     def test_経過時間の日数も数える(self):
         # `1-00:00:01` は 1 日と 1 秒。日数を落とすと 1 秒に読めて、下限 (10 分) の手前になってしまう
-        r = self.run_preflight(FAKE_PS="  707     1  88.0 01-00:00:01 /usr/bin/day")
+        r = self.run_preflight(FAKE_PS="  707     1  88.0 01-00:00:01 /usr/bin/day", FAKE_CWDS="707=/private/tmp/scratch")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("day (pid 707, 88.0%, 経過 01-00:00:01)", self.reason())
 
     # #3631 の形: 専用機の表の GUI セッション (runner のユーザー) の macOS の常駐が、ppid=1 で 68%・18 日
     MEDIA_ANALYSIS = "  1904     1  68.0 18-09:23:07 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd"
 
-    def test_OS_が置く常駐は_ppid_1_で_CPU_を使い続けても当たらない(self):
-        # SIP が守る置き場の実行ファイルは job が置けないので、前の job の残りではない (#3631)
-        for comm in (
-            "/System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
-            "/usr/libexec/trustd",
-            "/usr/sbin/cfprefsd",
+    def test_job_の置き場の外の負荷は赤にせず注意で名乗る(self):
+        # 実行ファイルも作業ディレクトリも job の置き場の外なら、前の job の残りではない (#3631)。起動名が
+        # パスでない OS の常駐 (cloudphotod) やログイン項目のアプリも同じ。検査は遅くなりうるので注意で名乗る
+        for comm, cwd in (
+            ("/System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd", "/"),
+            ("cloudphotod", "/"),
+            ("/Applications/Some App.app/Contents/MacOS/Some App", "/Users/runner"),
+            ("/usr/bin/yes", ""),
         ):
             with self.subTest(comm=comm):
-                r = self.run_preflight(FAKE_PS=f"  1904     1  68.0 18-09:23:07 {comm}")
+                r = self.run_preflight(FAKE_PS=f"  1904     1  68.0 18-09:23:07 {comm}", FAKE_CWDS=f"1904={cwd}")
                 self.assertEqual(r.returncode, 0, r.stdout)
-                self.assertNotIn("orphan-load", r.stdout)
+                self.assertNotIn("::error", r.stdout)
                 self.assertIsNone(self.reason())
+                self.assertIn("::warning title=専用機の環境::orphan-load: job の置き場の外", r.stdout)
+                self.assertIn(f"{comm.rsplit('/', 1)[-1]} (pid 1904, 68.0%, 経過 18-09:23:07)", r.stdout)
+                self.assertIn("注意:", self.summary.read_text(encoding="utf-8"))
 
-    def test_OS_の常駐と並んでも_前の_job_の残りは当たる(self):
-        # 外すのは OS の置き場だけ。#3095 の `/usr/bin/yes` (/usr/bin は job も起こす) は変わらず赤で、
-        # 本数に常駐を数えない
-        r = self.run_preflight(FAKE_PS=self.MEDIA_ANALYSIS + "\n" + self.YES_TEN)
+    def test_job_の置き場の外の負荷と並んでも_前の_job_の残りは赤(self):
+        # 本数に置き場の外を数えず、置き場の外は注意で別に名乗る
+        r = self.run_preflight(FAKE_PS=self.MEDIA_ANALYSIS + "\n" + self.YES_TEN, FAKE_CWDS=self.YES_CWDS + "\n1904=/")
         self.assertEqual(r.returncode, 1, r.stdout)
         reason = self.reason()
         self.assertIn("orphan-load: 前の job が残した負荷が 10 本ある", reason)
         self.assertNotIn("mediaanalysisd", reason)
+        self.assertIn("::warning title=専用機の環境::", r.stdout)
+        self.assertIn("mediaanalysisd (pid 1904", r.stdout)
 
-    def test_OS_の置き場に似た名前は外さない(self):
-        # 前置きは置き場の区切り (`/`) まで見る。`/Systemish/`・`/usr/libexecutor/` は OS の置き場ではない
-        for comm in ("/Systemish/busy", "/usr/libexecutor/busy", "/opt/homebrew/System/busy"):
-            with self.subTest(comm=comm):
-                r = self.run_preflight(FAKE_PS=f"  808     1  90.0 01:00:00 {comm}")
+    def test_job_の置き場は実行ファイルでも作業ディレクトリでも拾う(self):
+        for comm, cwd in (
+            (f"{WORK}/.build/debug/reference-sketches", ""),
+            ("/opt/homebrew/bin/python3", f"{JOB_ROOT}/_temp/abc"),
+            ("/usr/bin/yes", "/private/tmp/claude-1/scratch"),
+            ("/usr/bin/yes", "/tmp/x"),
+            # データボリュームの firmlink の経路でも同じ置き場
+            (f"/System/Volumes/Data{WORK}/.build/debug/x", ""),
+            ("/bin/sleep", f"/System/Volumes/Data{WORK}"),
+            # 作業ツリーの外の共有の組み立て置き場
+            ("/Users/runner/Library/Caches/mokume/.build/debug/x", ""),
+        ):
+            with self.subTest(comm=comm, cwd=cwd):
+                r = self.run_preflight(FAKE_PS=f"  808     1  90.0 01:00:00 {comm}", FAKE_CWDS=f"808={cwd}")
                 self.assertEqual(r.returncode, 1, r.stdout)
-                self.assertIn("busy (pid 808, 90.0%, 経過 01:00:00)", self.reason())
+                self.assertIn(f"{comm.rsplit('/', 1)[-1]} (pid 808, 90.0%, 経過 01:00:00)", self.reason())
+
+    def test_job_の置き場に似た名前は拾わない(self):
+        # 前置きは置き場の区切り (`/`) まで見る
+        for cwd in (f"{JOB_ROOT}shop/x", "/private/tmpfoo/x", "/Users/runner/.buildish/x"):
+            with self.subTest(cwd=cwd):
+                r = self.run_preflight(FAKE_PS="  808     1  90.0 01:00:00 /usr/bin/busy", FAKE_CWDS=f"808={cwd}")
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertIsNone(self.reason())
+
+    def test_job_の置き場は_RUNNER_WORKSPACE_の親から決まる(self):
+        # 差し替えが無いときの既定。RUNNER_WORKSPACE は _work/<repo> なので、その親 (_work) が置き場
+        env = {"ORPHAN_JOB_ROOTS": "", "RUNNER_WORKSPACE": f"{JOB_ROOT}/mokume"}
+        r = self.run_preflight(FAKE_PS="  808     1  90.0 01:00:00 /usr/bin/yes", FAKE_CWDS=f"808={JOB_ROOT}/_temp/x", **env)
+        self.assertEqual(r.returncode, 1, r.stdout)
 
     def test_CPU_が閾値以下なら経過時間が長くても当たらない(self):
-        r = self.run_preflight(FAKE_PS="  606     1  50.0 03-00:00:00 /usr/bin/steady")
+        r = self.run_preflight(FAKE_PS="  606     1  50.0 03-00:00:00 /usr/bin/steady", FAKE_CWDS=f"606={WORK}")
         self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_ps_を読めなければ赤(self):
@@ -299,7 +353,7 @@ class RunnerPreflightTest(unittest.TestCase):
         self.assertIn("orphan-load: job のユーザーのプロセスの一覧 (ps) を読めない", self.reason())
 
     def test_負荷の残りと表のセッションの両方が当たれば_両方を名乗る(self):
-        r = self.run_preflight(FAKE_CONSOLE="so", FAKE_PS=self.YES_TEN)
+        r = self.run_preflight(FAKE_CONSOLE="so", FAKE_PS=self.YES_TEN, FAKE_CWDS=self.YES_CWDS)
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.stdout.count("::error"), 2, r.stdout)
         reason = self.reason()
