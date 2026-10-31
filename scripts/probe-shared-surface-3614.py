@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: MIT
 import datetime,json,os,pathlib,signal,subprocess,time
 root=pathlib.Path.cwd()
+developer=pathlib.Path(subprocess.check_output(['xcode-select','-p'],text=True).strip())
+helper=developer/'Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper'
+bundles=[p for p in root.glob('.build/**/MokumeCoreTests.xctest/Contents/MacOS/MokumeCoreTests') if 'Debug' in p.parts or 'debug' in p.parts]
+assert len(bundles)==1 and helper.is_file(),(bundles,helper)
+bundle=bundles[0]
+frameworks=developer/'Platforms/MacOSX.platform/Developer/Library/Frameworks'
+libraries=developer/'Platforms/MacOSX.platform/Developer/usr/lib'
+
 out=pathlib.Path('out/parallel')
 out.mkdir(parents=True,exist_ok=True)
 processes=[]
@@ -9,7 +17,7 @@ started=time.monotonic()
 try:
     for lane in (1,2):
         log=(out/f'lane-{lane}.log').open('w')
-        args=['python3','scripts/gpu-slot.py','--','swift','test','--skip-build','--filter','FrameSyncTests/theNewestSharedSurfaceHoldsTheFrameItNames','--maximum-repetitions','10','--repeat-until','fail','--xunit-output',str(out/f'lane-{lane}.xml'),'--event-stream-output-path',str(out/f'lane-{lane}-events.jsonl'),'--event-stream-version','0']
+        args=['python3','scripts/gpu-slot.py','--','env',f'DYLD_FRAMEWORK_PATH={frameworks}',f'DYLD_LIBRARY_PATH={libraries}',str(helper),'--test-bundle-path',str(bundle),'--filter','FrameSyncTests/theNewestSharedSurfaceHoldsTheFrameItNames','--repetitions','10','--repeat-until','fail','--xunit-output',str(out/f'lane-{lane}.xml'),'--event-stream-output-path',str(out/f'lane-{lane}-events.jsonl'),'--event-stream-version','0',str(bundle),'--testing-library','swift-testing']
         p=subprocess.Popen(args,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
         processes.append((lane,p,log))
     while any(p.poll() is None for _,p,_ in processes):
