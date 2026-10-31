@@ -176,6 +176,10 @@ extension MovieStallMeasurement {
         }
         MovieStall.report("2523", scene, "steady.supply", steady)
         MovieStall.report("2523", scene, "loopSeam.supply", seam)
+        // フレームごとの列 (図にする。1 行に、supply の ms と新しいコマが出たかを並べる)
+        MovieStall.line(
+            "2523", scene, "loop.series",
+            laps.map { String(format: "%.2f%@", $0.ms, $0.isNew ? "" : "*") }.joined(separator: ","))
 
         // 速さ 2 倍・4 倍 (#2451): 1 フレームに進むコマが増える。継ぎ目を含めて 6 秒ずつ流す。最初の 0.5 秒は
         // 速さを変えた直後を含むので数えない。前のコマのまま (`isNewFrame == false`) だったフレームも数える
