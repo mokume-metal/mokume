@@ -5,12 +5,12 @@
 
 追跡用の Issue は固定タイトルで 1 本だけ立ち、本文の**機械の区画**に最新の点数・帰属・生き残り・
 履歴と、次の回が読む状態 (メタ: 前回の点数の commit・前回の生き残り・読めなかった回の連続回数・
-範囲で評価済みの候補のキー) を持つ。区画の外 (人が書いた説明) は触らない。区画の書き換えは通知されない
+履歴) を持つ。区画の外 (人が書いた説明) は触らない。区画の書き換えは通知されない
 ので、毎日の更新が通知を積まない。
 
 このファイルは**読む側と書く側が共有する部品**だけを持つ:
 
-    python3 scripts/mutation_state.py previous [--done-file F] [--github-output F] [--summary F]
+    python3 scripts/mutation_state.py previous [--github-output F] [--summary F]
 
 `previous` は変異を回す job (`issues: read` だけを持つ) が呼ぶ。書き込む側は
 `scripts/report-mutation.py` で、別のファイルにしてあるのは scripts/tests/workflow_permissions_test.py が
@@ -33,12 +33,20 @@
 
     ok                前回の点数の commit が木にあり、HEAD の祖先である → 範囲を回す
     first             追跡用の Issue / 区画 / 起点が無い (最初の回) → 範囲は回さず、起点を置く
-    missing-commit    起点が木に無い、または HEAD の祖先でない (履歴の書き換え・別の枝の run) → 範囲は回さない
+    missing-commit    起点が木に無い、または HEAD の祖先でない (履歴の書き換え・別の枝の run) → 範囲は回さず、
+                      報告が名乗ったうえで起点を HEAD へ置き直す (自分では治らない状態を毎日赤にしない)
     unreadable-issue  gh が失敗した / 一覧の形が違う → 範囲は回さない
     unreadable-state  区画はあるが状態を読めない (broken) → 範囲は回さない
 
-`ok` と `first` は終了コード 0、ほかは 1。起点を動かしてよいのは `ok` と `first` だけで、書く側が
-reason を受け取って判断する (`first` 以外の理由で束が読めたからと起点を HEAD へ置かない)。
+`ok` と `first` と `missing-commit` は終了コード 0、ほかは 1 (job を赤にする)。範囲は**標本**で、起点は
+回した回の HEAD へ毎回進む (回しきれなかった数は報告が名乗る)。起点を動かさないのは、状態が読めない
+`unreadable-*` と、理由が分からない回だけ。
+
+## 追跡用 Issue の探し方 (`find_issue`)
+
+題の完全一致に加え、**作者が job の発信者 (`app/github-actions`) の Issue だけ**を採る (同じ題の Issue を
+誰かが立てても、書き込み先にしない)。検索の索引は起票の直後に追いつかないことがあるので、検索で
+空なら索引に依らない一覧で確かめてから「無い」と言う (無いと読んで二重に立てない)。
 
 検査は scripts/tests/report_mutation_test.py (make hooks-test)。
 """
@@ -62,7 +70,8 @@ BLOCKS = ("bundle", "range")
 OUTCOMES = ("killed", "survived", "timeout", "invalid", "unevaluated", "unrun")
 META = re.compile(r"^<!-- mutation-state meta=(.*) -->$", re.M)
 SHA = re.compile(r"^[0-9a-f]{40}$")
-DONE_LIMIT = 1000  # 評価済みの候補のキーの上限 (メタが本文の上限を食わないよう、古い方から落とす)
+# 追跡用 Issue を立てる job の発信者。GITHUB_TOKEN が作った Issue の作者は `app/github-actions`
+BOT_AUTHORS = ("app/github-actions", "github-actions")
 
 
 def normalize(text):
@@ -92,9 +101,6 @@ def validate_meta(meta):
         return "survivors が文字列の配列ではない"
     if not is_count(meta.get("unreadable")):
         return "unreadable が 0 以上の整数ではない"
-    done = meta.get("done", [])
-    if not isinstance(done, list) or any(not isinstance(k, str) for k in done):
-        return "done が文字列の配列ではない"
     history = meta.get("history")
     if not isinstance(history, list):
         return "history が配列ではない"
@@ -191,18 +197,28 @@ def gh_json(*args):
     return json.loads(out.stdout or "null")
 
 
+def matching(rows):
+    """題が完全一致し、作者が job の発信者の Issue の番号の並び (小さい順)。"""
+    if not isinstance(rows, list):
+        raise ValueError(f"issue list の応答が配列ではない ({rows!r})")
+    return sorted(row["number"] for row in rows
+                  if isinstance(row, dict) and row.get("title") == TITLE
+                  and (row.get("author") or {}).get("login") in BOT_AUTHORS)
+
+
 def find_issue():
     """open な追跡用 Issue の番号。無ければ None。
 
     **gh の失敗や形の違う応答は「無い」とせず例外にする** (無いと読むと、既にある Issue の隣に二重に立つ)。
-    タイトルは完全一致で絞る (検索は前方一致を含む)。複数あれば番号の小さい方 (先に立った方)。
+    検索は前方一致を含み、索引が遅れるので、完全一致・作者で絞り、検索で空なら索引に依らない一覧でも
+    確かめる。複数あれば番号の小さい方 (先に立った方)。
     """
-    rows = gh_json("issue", "list", "--state", "open", "--limit", "100", "--search", f'"{TITLE}" in:title',
-                   "--json", "number,title")
-    if not isinstance(rows, list):
-        raise ValueError(f"issue list の応答が配列ではない ({rows!r})")
-    numbers = sorted(row["number"] for row in rows if isinstance(row, dict) and row.get("title") == TITLE)
-    return numbers[0] if numbers else None
+    found = matching(gh_json("issue", "list", "--state", "open", "--limit", "100", "--search",
+                             f'"{TITLE}" in:title', "--json", "number,title,author"))
+    if not found:
+        found = matching(gh_json("issue", "list", "--state", "open", "--limit", "100",
+                                 "--json", "number,title,author"))
+    return found[0] if found else None
 
 
 def issue_body(number):
@@ -220,27 +236,27 @@ def is_ancestor(head, repo_dir="."):
 
 
 def previous(repo_dir="."):
-    """(reason, 起点か None, 評価済みのキーの並び, 詳細)。reason は冒頭の表。"""
+    """(reason, 起点か None, 詳細)。reason は冒頭の表。"""
     try:
         number = find_issue()
         body = issue_body(number) if number is not None else ""
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-        return "unreadable-issue", None, [], f"追跡用の Issue を読めなかった ({error})"
+        return "unreadable-issue", None, f"追跡用の Issue を読めなかった ({error})"
     kind, value = parse_state(body)
     if kind == "broken":
-        return "unreadable-state", None, [], f"区画の状態を読めない: {value}"
+        return "unreadable-state", None, f"区画の状態を読めない: {value}"
     if kind == "none" or value.get("range_head") is None:
-        return "first", None, [], "追跡用の Issue / 区画 / 起点が無い (最初の回)"
+        return "first", None, "追跡用の Issue / 区画 / 起点が無い (最初の回)"
     head = value["range_head"]
     if not is_ancestor(head, repo_dir):
-        return "missing-commit", None, [], f"起点 {head[:12]} がこの木に無いか、HEAD の祖先でない"
-    return "ok", head, list(value.get("done") or []), f"範囲の起点は前回の点数の commit {head[:12]}"
+        return "missing-commit", None, f"起点 {head[:12]} がこの木に無いか、HEAD の祖先でない"
+    return "ok", head, f"範囲の起点は前回の点数の commit {head[:12]}"
 
 
 NOTES = {
     "ok": "{detail}",
     "first": "{detail}。範囲は回さず、束を回して起点を置く",
-    "missing-commit": "{detail} (履歴の書き換えか、main 以外の枝の run)。範囲は回さず、起点も動かさない",
+    "missing-commit": "{detail} (履歴の書き換えか、main 以外の枝の run)。範囲は回さない。報告が名乗って起点を置き直す",
     "unreadable-issue": "{detail}。範囲は回さず、起点も動かさない",
     "unreadable-state": "{detail}。範囲は回さない。次の報告が区画を作り直してコメントで名乗る",
 }
@@ -251,15 +267,11 @@ def main(argv):
     commands = parser.add_subparsers(dest="command", required=True)
     sub = commands.add_parser("previous")
     sub.add_argument("--repo-dir", default=".")
-    sub.add_argument("--done-file", default=None, help="評価済みのキーの JSON を書く先 (mutate.py の --exclude-file)")
     sub.add_argument("--github-output", default=None, help="since= と reason= を足す先 ($GITHUB_OUTPUT)")
     sub.add_argument("--summary", default=None, help="job の要約に足す先 ($GITHUB_STEP_SUMMARY)")
     args = parser.parse_args(argv[1:])
-    reason, head, done, detail = previous(args.repo_dir)
+    reason, head, detail = previous(args.repo_dir)
     note = NOTES[reason].format(detail=detail)
-    if args.done_file:
-        with open(args.done_file, "w", encoding="utf-8") as out:
-            json.dump(done, out)
     if args.github_output:
         with open(args.github_output, "a", encoding="utf-8") as out:
             out.write(f"since={head or ''}\nreason={reason}\n")
@@ -268,7 +280,7 @@ def main(argv):
             out.write(f"### 変異の検査の範囲\n\n`{reason}`: {note}\n\n")
     print(head or "")
     print(f"mutation_state: {reason}: {note}", file=sys.stderr)
-    return 0 if reason in ("ok", "first") else 1
+    return 0 if reason in ("ok", "first", "missing-commit") else 1
 
 
 if __name__ == "__main__":

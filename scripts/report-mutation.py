@@ -29,20 +29,30 @@
 
 ## 読めない回 (#3221 の条件 6)
 
-記録が無い・読めない・形が違う・中断した (`aborted`)・job の結論が success でない回は、「生き残り 0」と
+記録が無い・読めない・形が違う・job の結論が success でない回は、「生き残り 0」と
 は出さず `unreadable` と名乗る。**点数の表は前回のまま更新しない**(読めなかった側だけ。束と範囲は別々に
 持つ)。
 
-## 範囲の起点 (`range_head`) と評価済みのキー (`done`)
+## 範囲の起点 (`range_head`)
 
-起点は 1 日で全部は回せない範囲を、**回しきるまで動かさない**。回した分のキーは `done` に残り、次の回の
-`mutate.py run --exclude-file` が飛ばす — 毎回同じ先頭だけが回って末尾が永久に回らない形にしない。
+**範囲は標本として扱う** (メンテナの決定・2026-10-31)。1 日で全部は回せないので、起点は回した回の
+HEAD へ**毎回進め**、回しきれなかった数 (`unrun`) を区画に名乗る。網羅の物差しは固定の束が担う。
+評価済みを覚えて飛ばす仕組みは持たない。
 
+    reason=ok                  範囲が読めたら起点を HEAD へ進める (回しきれなかった数は名乗る)
     reason=first               束が読めれば起点を HEAD に置く (最初の回)
-    reason=ok                  範囲が読めて unrun が 0 なら HEAD へ進めて done を空にする。unrun が残れば
-                               起点を保ち、評価済みのキーを足す
-    それ以外 (missing-commit・   起点を動かさない (理由は区画に名乗る)
-      unreadable-issue・unreadable-state)
+    reason=missing-commit      起点が木に無い / 祖先でない: コメントで名乗り、束が読めれば HEAD へ置き直す
+                               (範囲は回していない。自分では治らない状態を毎日赤にしない)
+    それ以外 (unreadable-issue・ 起点を動かさない (状態を読めていない。理由は区画に名乗る)
+      unreadable-state・unknown)
+
+**起点を戻さない**: 自分の HEAD が区画の起点の祖先 (かつ別の commit) なら、古い run が後から報告して
+起点を巻き戻したことになるので、起点は動かさない。
+
+## 基準が成り立たなかった filter
+
+`mutate.py` は基準 (変異なしの build と test) が成り立たない filter を `baseline_failures` に名乗って
+次へ進む。記録は読めるので点数は更新し、名乗りを区画と problems に載せる (連続の 1 度目にコメント)。
 
 ## 区画の状態を読めないとき
 
@@ -82,14 +92,14 @@ INTRO = """定期の job (`.github/workflows/host-scheduled.yml` の `mutation`)
 
 - **点数** = 殺した ÷ (殺した + 生き残り)。実装を 1 か所壊したとき、関連の検査が赤になれば「殺した」、全部緑のままなら「生き残り」。無効 (build が通らない・記録が読めない・束の原文が当たらない)・時間切れ・未評価 (GPU が無い機械で飛んだ検査)・回しきれなかった分は分母に入れず、件数を名乗る
 - **固定の束** (`Tests/mutation-bundle.json`) は同じ変異を毎回回す。点数の動きが検査の側の変化を表す (#3207 の K5)。GPU の suite を要る変異はホストでは `未評価` にしかならず、いまは取らない (2026-10-30 の決定)
-- **範囲** は前回の点数の commit から HEAD までに変わった `Sources/` の行を候補にする。全体の期限で打ち切り、**回しきるまで起点を動かさない** (回した候補は次の回で飛ばす)。積み残しの数は範囲の表に出る
+- **範囲** は前回の点数の commit から HEAD までに変わった `Sources/` の行を候補にする**標本**。全体の期限で打ち切り、起点は毎回 HEAD へ進める。回しきれなかった数は範囲の表に出る。網羅の物差しは固定の束
 - **帰属** は、殺した検査の suite を `Tests/probe-catalog.tsv` で提案へ引いた数 (#3207 の K2)。「単独」はその提案の検査だけが殺した数
 
 ## 動き
 
-- コメントが付くのは**新しい生き残り**と、**記録が読めなくなった回**と、**区画を作り直した回**だけ。読めない回は点数を前回のまま更新せず、範囲の起点も進めない
+- コメントが付くのは**新しい生き残り**と、**記録が読めなくなった回**と、**区画を作り直した回**と、**起点を置き直した回**だけ。読めない回は点数を前回のまま更新せず、範囲の起点も進めない
 - 点数が下がっても job は赤にならない。赤になるのは記録が読めない回 (`unreadable`)
-- **区画を読めなくなったら、区画ごと消せば次の回が作り直す。** この Issue は閉じない (閉じると次の回が新しく立て、前回の commit を失う)
+- **区画を読めなくなったら、区画ごと消せば次の回が作り直す** (読めない区画は次の回が自分で作り直してコメントする)。起点が木に無いときも次の回が置き直す。この Issue は閉じない (閉じると次の回が新しく立て、前回の commit を失う)
 
 """
 
@@ -112,8 +122,6 @@ def load(path):
     problem = mutate.check_result(data)
     if problem:
         return None, problem
-    if data.get("aborted"):
-        return None, f"中断した ({data['aborted']})"
     return data, None
 
 
@@ -156,21 +164,29 @@ def history_table(history):
 
 
 def survivors_of(data, source):
+    # check_result が id・file・outcome の形を見てある
     return [{"source": source, "id": m["id"], "where": f"{m['file']}:{m.get('line')}",
              "change": str(m.get("operator") or m.get("note") or "")}
             for m in data["mutants"] if m.get("outcome") == "survived"]
 
 
 RANGE_PROBLEMS = {
-    "missing-commit": "前回の点数の commit が木に無いか HEAD の祖先でない (履歴の書き換えか、main 以外の枝の run)",
     "unreadable-issue": "追跡用の Issue から前回の commit を読めなかった",
     "unreadable-state": "区画の状態を読めなかった",
     "unknown": "起点を読む段が理由を出さずに終わった",
 }
 
 
+def is_ancestor(older, newer, repo_dir):
+    """older が newer の祖先か (同じ commit は含まない)。木に無い commit は祖先と読まない。"""
+    if not older or not newer or older == newer:
+        return False
+    return subprocess.run(["git", "-C", repo_dir, "merge-base", "--is-ancestor", older, newer],
+                          capture_output=True).returncode == 0
+
+
 def build(previous_body, args, compact=False):
-    """(区画の文字列, 新しい生き残りの行, 読めなかった回の理由の並び, 新しい状態, 作り直した理由か None)。"""
+    """(区画の文字列, 新しい生き残りの行, 異常の文の並び, 新しい状態, (区画を作り直した理由か None, 起点を置き直した理由か None))。"""
     kind, value = state.parse_state(previous_body)
     reset = value if kind == "broken" else None
     meta = value if kind == "ok" else {}
@@ -183,15 +199,22 @@ def build(previous_body, args, compact=False):
     if expected:
         ranged, range_problem = load(args.range) if args.range else (None, "範囲の結果の置き場が渡されていない")
 
-    problems = []
+    problems = []  # (種類, 文)。種類は record (記録が読めない)・job (結論)・baseline (基準が成り立たない filter)
     if bundle is None:
-        problems.append(f"固定の束: {bundle_problem}")
+        problems.append(("record", f"固定の束: {bundle_problem}"))
     if expected and ranged is None:
-        problems.append(f"範囲 (since {args.range_since[:12]}): {range_problem}")
-    if reason not in ("ok", "first"):
-        problems.append(f"範囲: {RANGE_PROBLEMS.get(reason, '起点の状態が分からない')} (`{reason}`)。起点は動かさない")
+        problems.append(("record", f"範囲 (since {args.range_since[:12]}): {range_problem}"))
+    if reason not in ("ok", "first", "missing-commit"):
+        problems.append(("record", f"範囲: {RANGE_PROBLEMS.get(reason, '起点の状態が分からない')} (`{reason}`)。起点は動かさない"))
     if args.result != "success":
-        problems.append(f"job の結論が `{args.result}`")
+        problems.append(("job", f"job の結論が `{args.result}`"))
+    for name, data in (("固定の束", bundle), ("範囲", ranged)):
+        for failure in (data or {}).get("baseline_failures") or []:
+            problems.append(("baseline", f"{name}: 基準が成り立たなかった filter `{failure.get('filter')}` — {failure.get('reason')}"))
+    replaced = None
+    if reason == "missing-commit":
+        replaced = (f"範囲の起点 {str(meta.get('range_head'))[:12]} が木に無いか、HEAD の祖先でなかった "
+                    "(履歴の書き換えか、main 以外の枝の run)。範囲は回さず、起点を置き直した")
 
     blocks = {name: state.read_block(previous_body, name) if kind == "ok" else "" for name in state.BLOCKS}
     if bundle is not None:
@@ -200,27 +223,26 @@ def build(previous_body, args, compact=False):
         blocks["bundle"] = "#### 固定の束\n\nまだ読めた回が無い。"
 
     range_head = meta.get("range_head")
-    done = list(meta.get("done") or [])
-    if reason == "first":
-        if bundle is not None:
-            range_head, done = bundle.get("head"), []
-        if not blocks["range"]:
-            blocks["range"] = ("#### 範囲\n\nまだ回していない (前回の点数の commit が無い最初の回は、束だけを回して"
-                               "起点を置く)。")
+    advance = None  # 起点を置く commit
+    if reason in ("first", "missing-commit") and bundle is not None:
+        advance = bundle.get("head")
+    if reason == "first" and not blocks["range"]:
+        blocks["range"] = ("#### 範囲\n\nまだ回していない (前回の点数の commit が無い最初の回は、束だけを回して"
+                           "起点を置く)。")
     if ranged is not None:
         text = block_text(f"範囲 (since {args.range_since[:12]})", ranged, when, compact)
         unrun = ranged["counts"]["unrun"]
-        if unrun == 0:
-            range_head, done = ranged.get("head"), []
-            text += f"\n範囲を回しきった。起点を `{str(range_head)[:12]}` へ進めた。\n"
-        else:
-            evaluated = [m["key"] for m in ranged["mutants"] if m.get("outcome") != "unrun" and m.get("key")]
-            done = (done + [k for k in evaluated if k not in done])[-state.DONE_LIMIT:]
-            text += (f"\n**積み残し {unrun} 件。** 起点は前回のまま (`{args.range_since[:12]}`) にし、評価済みの"
-                     f" {len(done)} 件は次の回で飛ばす。回しきるまで起点を進めない。\n")
+        advance = ranged.get("head")
+        text += (f"\nこの回の範囲の点数。**回しきれなかった候補 {unrun} 件** (全体の期限で打ち切った分。範囲は標本で、"
+                 f"起点は `{str(advance)[:12]}` へ進めた。網羅は固定の束が担う)。\n" if unrun else
+                 f"\nこの回の範囲を全部評価した。起点は `{str(advance)[:12]}` へ進めた。\n")
         blocks["range"] = text
     elif not blocks["range"]:
         blocks["range"] = "#### 範囲\n\nまだ読めた回が無い。"
+    if advance and advance != range_head:
+        # 古い run が後から報告して、新しい起点を巻き戻さない
+        if not is_ancestor(advance, range_head, args.repo_dir):
+            range_head = advance
 
     history = list(meta.get("history") or [])
     if bundle is not None:
@@ -238,22 +260,25 @@ def build(previous_body, args, compact=False):
         fresh += survivors_of(ranged, f"範囲 since {args.range_since[:12]}")
 
     streak = int(meta.get("unreadable") or 0) + 1 if problems else 0
-    new_meta = {"range_head": range_head, "survivors": survivors, "unreadable": streak, "history": history,
-                "done": done}
+    new_meta = {"range_head": range_head, "survivors": survivors, "unreadable": streak, "history": history}
 
     if problems:
-        label = "unreadable" if any(not p.startswith("job の結論") for p in problems) else "job が success で終わらなかった"
+        kinds = {k for k, _ in problems}
+        label = ("unreadable" if "record" in kinds else "job が success で終わらなかった" if "job" in kinds
+                 else "基準が成り立たなかった filter がある")
         status = (f"**{label}** (連続 {streak} 回・{when} UTC・job の結論 `{args.result}`)"
-                  f" ・ 読めなかった側の点数は前回のまま更新していない: " + " / ".join(problems))
+                  f" ・ 読めなかった側の点数は前回のまま更新していない: " + " / ".join(text for _, text in problems))
     else:
         status = f"最終の回: {when} UTC ・ job の結論 `{args.result}` ・ 記録は読めた"
+    if replaced:
+        status += f" ・ {replaced}"
     if url:
         status += f" ・ [run]({url})"
 
     parts = [state.BEGIN, status, "", state.wrap_block("bundle", blocks["bundle"]), "",
              state.wrap_block("range", blocks["range"]), "", history_table(history) if history else "",
              state.encode_meta(new_meta), state.END]
-    return "\n".join(parts), fresh, problems, new_meta, reset
+    return "\n".join(parts), fresh, [text for _, text in problems], new_meta, (reset, replaced)
 
 
 def survivors_comment(fresh):
@@ -287,6 +312,10 @@ def reset_comment(reason):
     return (f"**区画の状態を読めなかった**: {reason}。区画を全部取り除いて作り直した (人が書いた文は残した)。"
             "履歴・範囲の起点・評価済みの候補・既知の生き残りを失ったので、次の回は最初の回として起点を置き直し、"
             "束の生き残りは全部新しい扱いで通知される。")
+
+
+def replaced_comment(reason):
+    return f"**範囲の起点を置き直した**: {reason}。"
 
 
 def write_temp(text, name):
@@ -328,6 +357,7 @@ def main(argv):
     parser.add_argument("--range", default=None)
     parser.add_argument("--range-since", default="", help="範囲を回すつもりだった回の起点 (空なら回さない回)")
     parser.add_argument("--range-reason", default="", help="mutation_state.py previous の reason (空なら since から読む)")
+    parser.add_argument("--repo-dir", default=".", help="起点の祖先を調べる木 (job の checkout)")
     parser.add_argument("--dry-run", action="store_true", help="Issue に書かず、区画を job の要約に出す (main 以外の run)")
     args = parser.parse_args(argv[1:])
 
@@ -345,7 +375,7 @@ def main(argv):
         make_body = lambda section: state.replace_section(  # noqa: E731
             state.remove_sections(previous_body) if reset_needed else previous_body, section)
     body, built = fit(previous_body, args, make_body)
-    section, fresh, problems, meta, reset = built
+    section, fresh, problems, meta, (reset, replaced) = built
     if body is None:
         print(f"report: 本文が {BODY_LIMIT} 字に収まらない (区画を件数だけにしても、人の文が長い)。書かずに終わる",
               file=sys.stderr)
@@ -365,6 +395,8 @@ def main(argv):
     comments = []
     if reset:
         comments.append(reset_comment(reset))
+    if replaced:
+        comments.append(replaced_comment(replaced))
     if fresh and number is not None:
         comments.append(survivors_comment(fresh))
     if problems and previous_streak == 0:
@@ -382,9 +414,13 @@ def main(argv):
             print(f"report: 起票の応答から Issue 番号を取れなかった: {url}", file=sys.stderr)
             return 1
         print(f"report: 起票した {url}")
-        # GITHUB_TOKEN が作った Issue には triage.yml が発火しない。型は自分で付ける
-        subprocess.run(["bash", str(HERE / "triage.sh"), created, state.TITLE], check=True)
+        # GITHUB_TOKEN が作った Issue には triage.yml が発火しない。型は自分で付ける。型の付与が落ちても、
+        # 立てた回の名乗り (読めなかった回のコメント) を止めない。落ちたことは最後に赤で返す
+        triage = subprocess.run(["bash", str(HERE / "triage.sh"), created, state.TITLE])
         post(created)  # 立てた回でも、読めなかった回は名乗る
+        if triage.returncode != 0:
+            print(f"report: #{created} の型を付けられなかった (triage.sh が {triage.returncode})", file=sys.stderr)
+            return 1
         return 0
 
     # コメントが先: 落ちた回に、本文だけが「既知」を覚えて通知が永久に落ちる形にしない

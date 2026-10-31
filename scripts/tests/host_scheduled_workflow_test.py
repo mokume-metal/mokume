@@ -134,20 +134,32 @@ class HostScheduledWorkflowTest(unittest.TestCase):
             self.assertRegex(run, r"--baseline-timeout \d+")
         self.assertIn("--bundle Tests/mutation-bundle.json", runs[0])
         self.assertIn("--since", runs[1])
-        # 範囲は前の回で評価した候補を飛ばす (毎回同じ先頭だけが回って末尾が回らない形にしない・指摘 2)
-        self.assertIn("--exclude-file .build/mutation-done.json", runs[1])
-        # 予算が job の期限に収まる (1 件の期限と基準の期限が予算の最後にはみ出す分と組み立ての余裕を見る)
+        # 範囲は標本 (メンテナの決定): 評価済みを覚えて飛ばす仕組みは持たない
+        self.assertNotIn("--exclude-file", mutation)
+        self.assertNotIn("mutation-done", mutation)
+        # mutate.py は「次の 1 件の最悪 (段の数 × (1 件の期限 + 基準の期限)) が残りに収まるときだけ」始める
+        # ので、予算が 1 件の最悪より小さいと、その run は 1 件も始まらない。段の数は束が 1、範囲は 2
+        # (絞った filter と target 全体)。job の期限には、予算の合計と組み立て・要約の余裕が収まる
+        stages = (1, 2)
+        for run, plans in zip(runs, stages):
+            budget = int(re.search(r"--budget (\d+)", run).group(1))
+            per = int(re.search(r"--timeout (\d+)", run).group(1))
+            baseline = int(re.search(r"--baseline-timeout (\d+)", run).group(1))
+            self.assertGreaterEqual(budget, plans * (per + baseline), f"{run.splitlines()[0]}: 予算が 1 件の最悪に足りない")
         timeout = int(re.search(r"timeout-minutes: (\d+)", mutation).group(1))
         budgets = sum(int(b) for b in re.findall(r"--budget (\d+)", mutation)) / 60
-        overrun = sum(int(b) for b in re.findall(r"--(?:baseline-)?timeout (\d+)", mutation)) / 60
-        self.assertLess(budgets + overrun, timeout)
+        self.assertLess(budgets + 30, timeout, "予算の合計 + 組み立てと要約の余裕 30 分が job の期限に収まらない")
+
+    def test_mutation_は同時に_1_本だけ回る(self):
+        mutation = self.jobs["mutation"]
+        self.assertRegex(mutation, r"(?m)^    concurrency:\n      group: mutation\n      cancel-in-progress: false\s*$")
 
     def test_mutation_は起点の読めなかった理由を出力に残し_ok_first_以外は赤にする(self):
         mutation = self.jobs["mutation"]
         previous = re.search(r"- name: 前回の点数の commit を読む.*?(?=\n      - name: )", mutation, re.S).group(0)
         self.assertIn("scripts/mutation_state.py previous", previous)
-        for flag in ("--done-file .build/mutation-done.json", '--github-output "$GITHUB_OUTPUT"'):
-            self.assertIn(flag, previous)
+        self.assertIn('--github-output "$GITHUB_OUTPUT"', previous)
+        self.assertNotIn("--done-file", previous)
         self.assertRegex(mutation, r"outputs:\s+since: [^\n]+\s+reason: \$\{\{ steps\.previous\.outputs\.reason \}\}")
         # 理由が ok / first でない回は、束を回し終えた後の段が job を赤にする
         check = re.search(r"- name: 状態を確かめる\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)", mutation, re.S)
@@ -155,6 +167,8 @@ class HostScheduledWorkflowTest(unittest.TestCase):
         self.assertIn("!cancelled()", check.group(1))
         self.assertIn("!= 'ok'", check.group(1))
         self.assertIn("!= 'first'", check.group(1))
+        # 起点が木に無い回は報告が名乗って置き直す。自分では治らないので毎日赤にしない
+        self.assertIn("!= 'missing-commit'", check.group(1))
         self.assertIn("exit 1", check.group(2))
         self.assertLess(mutation.index("固定の束を回す"), mutation.index("状態を確かめる"))
 
@@ -187,6 +201,9 @@ class HostScheduledWorkflowTest(unittest.TestCase):
             self.assertIn(record, report)
         self.assertIn("scripts/report-mutation.py", report)
         self.assertIn("needs.mutation.outputs.reason", report)
+        # 起点の祖先かを見て、古い run が起点を巻き戻さないための履歴
+        checkout = re.search(r"- uses: actions/checkout@v7\n(.*?)(?=\n      # |\n      - )", report, re.S).group(1)
+        self.assertRegex(checkout, r"fetch-depth:\s*0")
         # 組み立てで落ちて artifact が無い回も報告する (download の失敗で止まらない)
         download = re.search(r"- uses: actions/download-artifact@v8\n(.*?)(?=\n      - |\Z)", report, re.S).group(1)
         self.assertIn("continue-on-error: true", download)

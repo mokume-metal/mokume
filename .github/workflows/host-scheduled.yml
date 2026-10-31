@@ -125,8 +125,12 @@ jobs:
   # 赤が success に化けると報告が読み違える。
   mutation:
     runs-on: macos-26
-    # 仮の値 (実測前)。内訳: 束の予算 90 分 + 範囲の予算 60 分 + 変異なしの基準の期限 (30 分) と
-    # 1 件の期限 (10 分) が予算の最後にはみ出す分 + 組み立て。push 後の workflow_dispatch の実測で直す
+    # 同じ時間に 2 本は回さない (schedule と dispatch の重なり)。待たせるだけで、走っている run は切らない
+    concurrency:
+      group: mutation
+      cancel-in-progress: false
+    # 仮の値 (実測前)。mutate.py は「次の 1 件の最悪が --budget の残りに収まるときだけ」始めるので、
+    # 走る時間は予算を越えない: 束 90 分 + 範囲 60 分 + 組み立てと要約の余裕。実測で直す
     timeout-minutes: 240
     permissions:
       contents: read
@@ -138,16 +142,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # 範囲を回す起点と、前の回で評価した候補のキー。読めない・祖先でないときは範囲を回さず、
-      # 理由を出力に残す (終了コードは束を回すために握る。理由が ok / first でなければ、下の
-      # 「状態を確かめる」の段が job を赤にする)
+      # 範囲を回す起点。読めない・祖先でないときは範囲を回さず、理由を出力に残す (終了コードは束を
+      # 回すために握る。理由が ok / first / missing-commit でなければ、下の「状態を確かめる」の段が
+      # job を赤にする。missing-commit は報告が名乗って起点を置き直すので赤にしない)
       - name: 前回の点数の commit を読む
         id: previous
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .build
-          python3 scripts/mutation_state.py previous --done-file .build/mutation-done.json \
+          python3 scripts/mutation_state.py previous \
             --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" || true
       - name: 固定の束を回す
         run: |
@@ -159,9 +163,9 @@ jobs:
         env:
           SINCE: ${{ steps.previous.outputs.since }}
         run: |
-          python3 scripts/mutate.py run --since "$SINCE" --exclude-file .build/mutation-done.json \
+          python3 scripts/mutate.py run --since "$SINCE" \
             --out .build/mutation-range.json --work .build/mutation-range-work \
-            --budget 3600 --timeout 600 --baseline-timeout 1800
+            --budget 3600 --timeout 600 --baseline-timeout 600
       # 読めない記録は unreadable と名乗って赤になる。job の要約にも載る
       - name: 要約 (固定の束)
         if: ${{ !cancelled() }}
@@ -169,10 +173,10 @@ jobs:
       - name: 要約 (範囲)
         if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
         run: python3 scripts/mutate.py summary .build/mutation-range.json
-      # 追跡用の Issue の状態を読めなかった回 (gh の失敗・区画の破損・起点が祖先でない) は赤にする。
+      # 追跡用の Issue の状態を読めなかった回 (gh の失敗・区画の破損) は赤にする。
       # 束は回し終えてから落とすので、点数は報告に載る
       - name: 状態を確かめる
-        if: ${{ !cancelled() && steps.previous.outputs.reason != 'ok' && steps.previous.outputs.reason != 'first' }}
+        if: ${{ !cancelled() && steps.previous.outputs.reason != 'ok' && steps.previous.outputs.reason != 'first' && steps.previous.outputs.reason != 'missing-commit' }}
         env:
           REASON: ${{ steps.previous.outputs.reason }}
         run: |
@@ -213,7 +217,10 @@ jobs:
       contents: read # checkout
       issues: write # 追跡用 Issue の起票・本文の書き換え・コメント (#3221)
     steps:
+      # 履歴を取る: 報告は自分の HEAD が区画の起点の祖先かを見て、古い run が起点を巻き戻さないようにする
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       # 組み立てで落ちて記録が上がらなかった回も報告する。artifact が無くても止まらない
       - uses: actions/download-artifact@v8
         continue-on-error: true

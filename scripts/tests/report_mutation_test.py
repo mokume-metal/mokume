@@ -12,8 +12,11 @@
   3. コメントするのは新しい生き残りだけ。コメントを先に投稿し、成功してから本文を書き換える
   4. 記録が無い・読めない・形が違う・中断した・job が success でない回は `unreadable` と名乗り、「生き残り 0」と
      出さない。点数の表は前回のまま、範囲の起点は進めない。コメントは読めなくなった 1 度目だけ (立てた回も)
-  5. 範囲: 候補が 0 件の日は読めた回で起点を進める。unrun が残る間は起点を保ち、評価済みのキーを残す。
-     `first` 以外の理由 (missing-commit など) では、束が読めても起点を動かさない
+  5. 範囲は標本: 候補が 0 件の日も、回しきれなかった候補がある日も、読めた回の HEAD へ起点を進めて数を名乗る。
+     起点が木に無い (`missing-commit`) 回は名乗って置き直す。状態を読めない理由 (`unreadable-*`・`unknown`)
+     では、束が読めても起点を動かさない。古い run が後から報告しても、起点を巻き戻さない
+  9. 追跡用 Issue は題の完全一致かつ作者が job の発信者のものだけ。検索の索引が遅れても二重に立てない
+ 10. 起票の後の型の付与が落ちても、読めなかった回の名乗りは出す (落ちたことは赤で返す)
   6. 状態の読み方: CRLF でも読める・メタは区画の中からだけ・区画が 2 つ / メタが壊れている / 型が違うときは
      最初の回に戻さず、作り直してコメントで名乗る
   7. main 以外の run (`--dry-run`) は Issue に何も書かない
@@ -57,13 +60,17 @@ def save():
 
 if os.environ.get("FAKE_GH_FAIL") and args[:2] == ["issue", "list"]:
     sys.exit(1)
+if os.environ.get("FAKE_SEARCH_EMPTY") and args[:2] == ["issue", "list"] and "--search" in args:
+    print("[]")
+    sys.exit(0)
 if os.environ.get("FAKE_GH_BAD_LIST") and args[:2] == ["issue", "list"]:
     print('{"not": "a list"}')
     sys.exit(0)
 if args[:2] == ["issue", "list"]:
     # GitHub の検索は題の部分一致を含む (完全一致で絞るのは呼び手の仕事)
-    wanted = re.match(r'"(.*)" in:title', flag("--search")).group(1)
-    print(json.dumps([{"number": i["number"], "title": i["title"]}
+    wanted = re.match(r'"(.*)" in:title', flag("--search")).group(1) if "--search" in args else ""
+    print(json.dumps([{"number": i["number"], "title": i["title"],
+                       "author": {"login": i.get("author", "app/github-actions"), "is_bot": True}}
                       for i in store["issues"] if i["open"] and wanted in i["title"]]))
 elif args[:2] == ["issue", "view"]:
     issue = next(i for i in store["issues"] if i["number"] == int(args[2]))
@@ -83,6 +90,8 @@ elif args[:2] == ["issue", "edit"]:
     if "--body-file" in args:
         issue["body"] = open(flag("--body-file")).read()
     if "--type" in args:
+        if os.environ.get("FAKE_TYPE_FAIL"):
+            sys.exit(1)
         issue["type"] = flag("--type")
     save()
 elif args[:2] == ["issue", "comment"]:
@@ -117,7 +126,7 @@ def result(head, killed=0, survived=0, invalid=0, mutants=None, since=None, **ex
         counts[m["outcome"]] += 1
     scored = counts["killed"] + counts["survived"]
     data = {"version": 1, "head": head, "since": since, "bundle": None if since else "Tests/mutation-bundle.json",
-            "candidates": len(mutants), "aborted": None,
+            "candidates": len(mutants), "baseline_failures": [],
             "catalog": {"path": "Tests/probe-catalog.tsv", "state": "present", "rows": 1},
             "seconds": 12.0, "budget": 100, "timeout": 10, "counts": counts,
             "score": round(counts["killed"] / scored, 4) if scored else None,
@@ -131,7 +140,7 @@ def section_of(meta, extra=""):
 
 
 def good_meta(**over):
-    meta = {"range_head": HEAD_A, "survivors": [], "unreadable": 0, "history": [], "done": []}
+    meta = {"range_head": HEAD_A, "survivors": [], "unreadable": 0, "history": []}
     meta.update(over)
     return meta
 
@@ -159,10 +168,10 @@ class Env:
     def read_store(self):
         return json.loads(self.store.read_text())
 
-    def put_issue(self, body, number=7, title=None, open_=True):
+    def put_issue(self, body, number=7, title=None, open_=True, author="app/github-actions"):
         data = self.read_store()
         data["issues"].append({"number": number, "title": title or state.TITLE, "open": open_, "labels": [],
-                               "type": "Task", "body": body})
+                               "type": "Task", "body": body, "author": author})
         self.write_store(data)
 
     def env(self, **extra):
@@ -170,12 +179,13 @@ class Env:
         env.update({"PATH": f"{self.bin}:{env['PATH']}", "FAKE_STORE": str(self.store), "FAKE_LOG": str(self.log),
                     "RUNNER_TEMP": str(self.dir), "MUTATION_REPORT_NOW": "2026-10-31 19:40"})
         for key in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "FAKE_GH_FAIL", "FAKE_GH_BAD_LIST",
-                    "FAKE_COMMENT_FAIL", "GITHUB_STEP_SUMMARY"):
+                    "FAKE_COMMENT_FAIL", "GITHUB_STEP_SUMMARY", "FAKE_SEARCH_EMPTY", "FAKE_TYPE_FAIL"):
             env.pop(key, None)
         env.update(extra)
         return env
 
-    def report(self, bundle, ranged=None, since="", reason=None, result_name="success", dry=False, **extra):
+    def report(self, bundle, ranged=None, since="", reason=None, result_name="success", dry=False, repo_dir=None,
+               **extra):
         """bundle / ranged は結果の dict・文字列 (壊れた記録)・None (ファイルが無い)。"""
         self.runs += 1
         run_dir = self.dir / f"run{self.runs}"
@@ -192,6 +202,8 @@ class Env:
             argv += ["--range-reason", reason]
         if dry:
             argv.append("--dry-run")
+        if repo_dir:
+            argv += ["--repo-dir", str(repo_dir)]
         return subprocess.run(
             argv, capture_output=True, text=True, cwd=REPO,
             env=self.env(GITHUB_RUN_ID=str(self.runs), GITHUB_REPOSITORY="o/r", **extra))
@@ -258,6 +270,30 @@ class CreateTest(Env, unittest.TestCase):
         self.assertEqual(len(issues), 2, "別の題の Issue には書かず、追跡用を立てる")
         self.assertEqual(issues[0]["body"], "別件")
         self.assertEqual(issues[1]["title"], state.TITLE)
+
+    def test_作者が_job_の発信者でない同じ題の_Issue_には書かない(self):
+        self.put_issue("他人の Issue", number=3, author="someone")
+        r = self.report(result(HEAD_A, killed=1))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        issues = self.read_store()["issues"]
+        self.assertEqual(len(issues), 2)
+        self.assertEqual(issues[0]["body"], "他人の Issue")
+        self.assertEqual(issues[1]["author"] if "author" in issues[1] else "app/github-actions", "app/github-actions")
+
+    def test_検索の索引が遅れて空でも_索引に依らない一覧で見つけ_二重に立てない(self):
+        self.report(result(HEAD_A, killed=1))
+        r = self.report(result(HEAD_B, killed=2), FAKE_SEARCH_EMPTY="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.read_store()["issues"]), 1)
+        self.assertEqual(len(self.meta()["history"]), 2)
+
+    def test_型の付与が落ちても_読めなかった回の名乗りは出し_落ちたことは赤で返す(self):
+        r = self.report(None, FAKE_TYPE_FAIL="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("型を付けられなかった", r.stderr)
+        self.assertEqual(len(self.read_store()["issues"]), 1)
+        self.assertEqual(len(self.comments()), 1)
+        self.assertIn("unreadable", self.comments()[0]["body"])
 
     def test_gh_が一覧を読めなければ_無いと読まず_書かずに終わる(self):
         for env in ({"FAKE_GH_FAIL": "1"}, {"FAKE_GH_BAD_LIST": "1"}):
@@ -364,36 +400,53 @@ class RangeTest(Env, unittest.TestCase):
         self.assertEqual(self.meta()["range_head"], HEAD_B)
         self.assertIn("候補が 0 件", body)
 
-    def test_回しきれなかった範囲は起点を保ち_評価済みのキーを残す(self):
+    def test_回しきれなかった範囲も起点を進め_回しきれなかった数を名乗る(self):
         partial = result(HEAD_B, since=HEAD_A, mutants=[
-            mutant("m1", "killed", key="k1"), mutant("m2", "survived", key="k2"),
-            mutant("m3", "unrun", key="k3"), mutant("m4", "unrun", key="k4")])
+            mutant("m1", "killed"), mutant("m2", "survived"), mutant("m3", "unrun"), mutant("m4", "unrun")])
         r = self.report(result(HEAD_B, killed=3, survived=1), ranged=partial, since=HEAD_A, reason="ok")
         self.assertEqual(r.returncode, 0, r.stderr)
-        meta = self.meta()
-        self.assertEqual(meta["range_head"], HEAD_A, "回しきるまで起点を進めない")
-        self.assertEqual(meta["done"], ["k1", "k2"], "unrun のキーは残さない")
-        self.assertIn("積み残し 2 件", self.issue()["body"])
-        # 次の回: 残りを回しきれば進めて、done を空にする
-        rest = result(HEAD_C, since=HEAD_A, mutants=[mutant("m1", "killed", key="k3"), mutant("m2", "killed", key="k4")])
-        self.report(result(HEAD_C, killed=3, survived=1), ranged=rest, since=HEAD_A, reason="ok")
-        meta = self.meta()
-        self.assertEqual((meta["range_head"], meta["done"]), (HEAD_C, []))
+        self.assertEqual(self.meta()["range_head"], HEAD_B, "範囲は標本。毎回 HEAD へ進める")
+        body = self.issue()["body"]
+        self.assertIn("回しきれなかった候補 2 件", body)
+        self.assertNotIn("回しきった", body)
+        self.assertNotIn("done", body)
+        self.assertNotIn("**unreadable**", body)
 
-    def test_評価済みのキーは次の回に足され_上限で古い方から落ちる(self):
+    def test_全部評価した範囲もその回の範囲として名乗る(self):
+        full = result(HEAD_B, since=HEAD_A, mutants=[mutant("m1", "killed")])
+        self.report(result(HEAD_B, killed=3, survived=1), ranged=full, since=HEAD_A, reason="ok")
+        self.assertIn("この回の範囲を全部評価した", self.issue()["body"])
+
+    def test_古い_run_の報告は起点を巻き戻さない(self):
+        git_dir = self.dir / "git"
+        git_dir.mkdir()
+        a, b, _ = make_repo(git_dir)
         issue = self.issue()
-        old = [f"o{i}" for i in range(state.DONE_LIMIT)]
+        # 起点を実在の b に置き直してから、祖先の a の run が遅れて報告する
         self.write_store({"issues": [dict(issue, body=state.replace_section(
-            issue["body"], section_of(good_meta(done=old))))], "comments": []})
-        partial = result(HEAD_B, since=HEAD_A, mutants=[mutant("m1", "killed", key="new"),
-                                                        mutant("m2", "unrun", key="x")])
-        self.report(result(HEAD_B, killed=3, survived=1), ranged=partial, since=HEAD_A, reason="ok")
-        done = self.meta()["done"]
-        self.assertEqual(len(done), state.DONE_LIMIT)
-        self.assertEqual((done[0], done[-1]), ("o1", "new"))
+            issue["body"], section_of(good_meta(range_head=b))))], "comments": []})
+        r = self.report(result(a, killed=3, survived=1), repo_dir=git_dir)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.meta()["range_head"], b, "祖先の run は起点を戻さない")
+        # 子孫の run は進める
+        self.write_store({"issues": [dict(self.issue(), body=state.replace_section(
+            self.issue()["body"], section_of(good_meta(range_head=a))))], "comments": []})
+        self.report(result(b, killed=3, survived=1), repo_dir=git_dir)
+        self.assertEqual(self.meta()["range_head"], b)
 
-    def test_first_以外の理由では束が読めても起点を動かさない(self):
-        for reason in ("missing-commit", "unreadable-issue", "unreadable-state"):
+    def test_missing_commit_は名乗って起点を置き直し_赤にしない(self):
+        r = self.report(result(HEAD_C, killed=4, survived=1), reason="missing-commit")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.issue()["body"]
+        self.assertEqual(self.meta()["range_head"], HEAD_C)
+        self.assertIn("起点を置き直した", body)
+        self.assertNotIn("**unreadable**", body)
+        self.assertEqual(self.meta()["unreadable"], 0)
+        comments = [c["body"] for c in self.comments()]
+        self.assertTrue(any("範囲の起点を置き直した" in c for c in comments), comments)
+
+    def test_状態を読めない理由では束が読めても起点を動かさない(self):
+        for reason in ("unreadable-issue", "unreadable-state", "unknown"):
             with self.subTest(reason=reason):
                 r = self.report(result(HEAD_B, killed=4, survived=1), reason=reason)
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -401,11 +454,30 @@ class RangeTest(Env, unittest.TestCase):
                 self.assertIn(reason, self.issue()["body"])
                 self.assertIn("**unreadable**", self.issue()["body"])
 
+    def test_job_が時間で切れて記録も理由も無い回は_名乗るだけで起点を進めない(self):
+        r = self.report(None, result_name="failure", reason="unknown")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.meta()["range_head"], HEAD_A)
+        self.assertIn("**unreadable**", self.issue()["body"])
+        self.assertIn("評価 4・殺した 3・生き残り 1", self.issue()["body"], "点数は前回のまま")
+
+    def test_基準が成り立たなかった_filter_は点数を更新したうえで名乗る(self):
+        broken = result(HEAD_B, killed=4, survived=1)
+        broken["baseline_failures"] = [{"filter": "GuardTests\\b", "reason": "変異なしの build が timeout"}]
+        r = self.report(broken, result_name="failure")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.issue()["body"]
+        self.assertIn("評価 5・殺した 4・生き残り 1", body, "読めた記録の点数は更新する")
+        self.assertIn("基準が成り立たなかった filter", body)
+        self.assertIn("GuardTests", body)
+        self.assertEqual(len(self.meta()["history"]), 2)
+        self.assertTrue(any("基準が成り立たなかった" in c["body"] for c in self.comments()))
+
     def test_範囲のブロックは範囲を回さなかった回も前回のまま残る(self):
         ranged = result(HEAD_B, killed=2, since=HEAD_A)
         self.report(result(HEAD_B, killed=3, survived=1), ranged=ranged, since=HEAD_A, reason="ok")
         self.assertIn("評価 2・殺した 2", self.issue()["body"])
-        self.report(result(HEAD_C, killed=3, survived=1), reason="missing-commit")
+        self.report(result(HEAD_C, killed=3, survived=1), reason="unreadable-issue")
         body = self.issue()["body"]
         self.assertIn("評価 2・殺した 2", body, "範囲の表を捨てない")
         self.assertIn(HEAD_C[:12], body, "束の表は新しい")
@@ -413,7 +485,7 @@ class RangeTest(Env, unittest.TestCase):
     def test_読めない束は点数を前回のままにして名乗り_起点を進めない(self):
         for broken, why in ((None, "記録が無い"), ("{", "読めない"),
                             (json.dumps({"version": 1, "counts": {}, "mutants": []}), "counts"),
-                            (json.dumps(result(HEAD_B, killed=1, aborted="build が timeout")), "中断した")):
+                            (json.dumps(result(HEAD_B, mutants=[{"id": "a", "outcome": "killed"}], killed=1)), "形でない")):
             with self.subTest(broken=broken):
                 r = self.report(broken, result_name="failure")
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -451,11 +523,11 @@ class RangeTest(Env, unittest.TestCase):
         self.assertEqual(self.meta()["range_head"], HEAD_A, "回しそこなった範囲を飛ばさない")
         self.assertEqual(len(self.comments()), 1)
 
-    def test_形の合わない範囲と中断した範囲は_生き残り_0_とは読まない(self):
+    def test_形の合わない範囲は_生き残り_0_とは読まない(self):
         bad = result(HEAD_B, since=HEAD_A)
         bad["counts"]["killed"] = 7  # mutants の件数と合わない
-        for ranged, why in ((bad, "合わない"), (result(HEAD_B, killed=1, since=HEAD_A, aborted="build が timeout"),
-                                                "中断した")):
+        no_file = result(HEAD_B, since=HEAD_A, mutants=[{"id": "m1", "outcome": "survived"}])
+        for ranged, why in ((bad, "合わない"), (no_file, "形でない")):
             with self.subTest(why=why):
                 r = self.report(result(HEAD_B, killed=4, survived=1), ranged=ranged, since=HEAD_A, reason="ok")
                 self.assertEqual(r.returncode, 0, r.stderr)
@@ -534,12 +606,13 @@ class StateTest(Env, unittest.TestCase):
         self.assertIsNone(state.validate_meta(good_meta()))
         for bad in (good_meta(range_head="abc"), good_meta(survivors="x"), good_meta(survivors=[1]),
                     good_meta(unreadable="1"), good_meta(unreadable=True), good_meta(unreadable=-1),
-                    good_meta(done="k"), good_meta(history="h"), good_meta(history=[{"when": "d"}]),
+                    good_meta(history="h"), good_meta(history=[{"when": "d"}]),
                     good_meta(history=[{"when": "d", "head": "h", "score": "x", **{k: 0 for k in state.OUTCOMES}}]),
                     [], "x"):
             with self.subTest(bad=bad):
                 self.assertIsNotNone(state.validate_meta(bad))
-        self.assertIsNone(state.validate_meta({k: v for k, v in good_meta().items() if k != "done"}))
+        # 最初の計測の版が書いた done は、いまは使わないが壊れた状態とは読まない
+        self.assertIsNone(state.validate_meta(good_meta(done=["k"])))
 
 
 class SizeTest(Env, unittest.TestCase):
@@ -614,21 +687,20 @@ class PreviousTest(Env, unittest.TestCase):
         self.a, self.b, self.side = make_repo(self.git)
 
     def previous(self, **extra):
-        out, summary, done = self.dir / "out.txt", self.dir / "sum.md", self.dir / "done.json"
+        out, summary = self.dir / "out.txt", self.dir / "sum.md"
         for p in (out, summary):
             p.write_text("")
-        r = subprocess.run([sys.executable, str(STATE), "previous", "--repo-dir", str(self.git), "--done-file",
-                            str(done), "--github-output", str(out), "--summary", str(summary)],
+        r = subprocess.run([sys.executable, str(STATE), "previous", "--repo-dir", str(self.git),
+                            "--github-output", str(out), "--summary", str(summary)],
                            capture_output=True, text=True, env=self.env(**extra), cwd=REPO)
         outputs = dict(ln.split("=", 1) for ln in out.read_text().splitlines())
-        return r, outputs, summary.read_text(), json.loads(done.read_text()) if done.exists() else None
+        return r, outputs, summary.read_text()
 
-    def test_起点が祖先なら_ok_で_評価済みのキーを渡す(self):
-        self.put_issue(section_of(good_meta(range_head=self.a, done=["k1", "k2"])))
-        r, outputs, summary, done = self.previous()
+    def test_起点が祖先なら_ok(self):
+        self.put_issue(section_of(good_meta(range_head=self.a)))
+        r, outputs, summary = self.previous()
         self.assertEqual((r.returncode, r.stdout.strip()), (0, self.a))
         self.assertEqual(outputs, {"since": self.a, "reason": "ok"})
-        self.assertEqual(done, ["k1", "k2"])
         self.assertIn("`ok`", summary)
 
     def test_issue_が無い_区画が無い_起点が無いは_first(self):
@@ -637,43 +709,42 @@ class PreviousTest(Env, unittest.TestCase):
                 self.write_store({"issues": [], "comments": []})
                 for body in bodies:
                     self.put_issue(body)
-                r, outputs, _, done = self.previous()
+                r, outputs, _ = self.previous()
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual(outputs, {"since": "", "reason": "first"})
-                self.assertEqual(done, [])
 
     def test_木に無い起点と_祖先でない起点は_missing_commit(self):
         for head in ("f" * 40, self.side):
             with self.subTest(head=head):
                 self.write_store({"issues": [], "comments": []})
                 self.put_issue(section_of(good_meta(range_head=head)))
-                r, outputs, _, _ = self.previous()
-                self.assertEqual(r.returncode, 1)
+                r, outputs, _ = self.previous()
+                self.assertEqual(r.returncode, 0, "報告が置き直すので、自分では治らない状態を赤にしない")
                 self.assertEqual(outputs, {"since": "", "reason": "missing-commit"})
 
     def test_gh_が失敗したら_unreadable_issue(self):
         for env in ({"FAKE_GH_FAIL": "1"}, {"FAKE_GH_BAD_LIST": "1"}):
             with self.subTest(env=env):
-                r, outputs, summary, _ = self.previous(**env)
+                r, outputs, summary = self.previous(**env)
                 self.assertEqual(r.returncode, 1)
                 self.assertEqual(outputs, {"since": "", "reason": "unreadable-issue"})
                 self.assertIn("読めなかった", summary)
 
     def test_区画があるのに読めなければ_unreadable_state(self):
         self.put_issue(section_of(good_meta()) + "\n" + section_of(good_meta()))
-        r, outputs, summary, _ = self.previous()
+        r, outputs, summary = self.previous()
         self.assertEqual(r.returncode, 1)
         self.assertEqual(outputs, {"since": "", "reason": "unreadable-state"})
         self.assertIn("区画が 2 つ", summary)
 
     def test_CRLF_の本文からも起点を読める(self):
         self.put_issue(section_of(good_meta(range_head=self.a)).replace("\n", "\r\n"))
-        r, outputs, _, _ = self.previous()
+        r, outputs, _ = self.previous()
         self.assertEqual((r.returncode, outputs["reason"]), (0, "ok"))
 
     def test_書く側が置いた起点を読める(self):
         self.report(result(self.b, killed=1))
-        r, outputs, _, _ = self.previous()
+        r, outputs, _ = self.previous()
         self.assertEqual((r.returncode, outputs), (0, {"since": self.b, "reason": "ok"}))
 
 
