@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/watch-request.schema.json",
+  "title": "The request to the watching tool",
+  "description": "Asks `mokume watch` itself to do something, as opposed to the other surfaces, which a running sketch answers. This version takes two actions: audition (from now on, a save changes only the preview, and the work's window keeps running the version it has) and leave (stop the version under audition, and the preview shows the work's version again). Placed atomically as ADR-0018 decision 3 requires, and id changes with every request. **A request whose id can be read is always answered**, with the reason when it was declined. The facet exists only while a watching tool runs, and a request left from an earlier run is not carried over.",
+  "type": "object",
+  "required": ["id", "action"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "This request's identifier. The reply echoes it back. An id already answered is not processed again: the answer left in the reply is the record. Do not reuse an id while the facet remains. **This includes a request that could not be read**: once it is answered, fixing it and placing it again under the same id is not processed — place the fixed request with a new id."
+    },
+    "action": {
+      "type": "string",
+      "examples": ["audition", "leave"],
+      "description": "What to do. **audition** puts the tool into auditioning: nothing that is running is touched, and each save after that starts the new version as the version under audition, which only the preview shows (the version under audition before it is stopped first, so there is never more than one). **leave** stops the version under audition and shows the work's version in the preview again. A name this version does not take is declined with the reason unknownAction. Further actions are added here by later versions, so a reader does not assume this list is the whole set."
+    }
+  }
+}

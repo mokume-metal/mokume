@@ -19,18 +19,29 @@ import mokume
 /// 検査が子の生死を自分で数え (`Process.isRunning`)、台の役を自分で演じる (どの世代が映っているか・どの世代が
 /// 乗り換えを待っているか)。**``WatchSession`` の内部の変数ではなく、外から見える生死と呼び出しの結果で比べる。**
 ///
-/// 1. 生きている子は 2 つまで。2 つなら、一方は乗り換えを待っている (``WatchSession/waitingGeneration``) (#2350)
-/// 2. 入力 (``WatchSession/send(_:)``) の宛先は、映っている世代が生きていれば、その世代である
+/// 世代には **役** がある (#3565)。試聴に入っていなければ全部が本番の側で、入っている間は、保存で起こした子が試聴の側
+/// (``WatchSession/auditionChild``) になる。事後条件は役ごとに書く。
+///
+/// 1. 生きている子は、**本番の側が 2 つまで** (2 つなら、一方は乗り換えを待っている・
+///    ``WatchSession/waitingGeneration``・#2350)、**試聴の側が 1 つまで**。試聴に入っていなければ試聴の側は居ない。
+///    乗り換えを待つ世代が無ければ、全体で「本番 + 試聴」の 2 つまで
+/// 2. 入力 (``WatchSession/send(_:shownBy:)``) の宛先は、**窓が映している世代が生きていれば、その世代である**。
+///    作品の窓 (引数なし) は映っている本番の世代、プレビュー (その台の `displayedPID`) は試聴中なら映している試聴の世代
 /// 3. 台へ手放した世代 (``WatchSession/relinquishesDisplay``): **映っていて、そこから去った世代は、かならず伝える**
 ///    (去るのは自分で終わる・畳まれる・倒れた知らせで前の世代になる回。#2983)。生きて映っている世代は伝えない。
+///    試聴の子も同じ — プレビューが映した試聴の子が去る (自分で終わる・次の保存で止める・出る) 回は伝える。
 ///    **伝える回数は数えない** — 子の離脱 (`departed`)・映っている前の世代の離脱・次の保存の退役が同じ世代を重ねて
 ///    伝えうるが、台は番号を集合で覚える (`SharedFrameStage.relinquishSource` が `formUnion`) ので、重ねても同じ
 /// 4. 窓の合図は、待っている世代のものだけが待ちを下ろす。**ほかの世代の合図では、待ちも前の世代も動かず、合図された
 ///    世代は生きたまま** (#2982)。倒れた知らせ・受け取れない知らせは、生きて待っている世代のぶんだけ前の世代を畳み、
-///    2 度目は何もしない (#2928・#2350)
+///    2 度目は何もしない (#2928・#2350)。**試聴の子の合図は、どの合図も本番の側の何も動かさない** (#3565)
 /// 5. ``WatchSession/keepsPreviousRunning`` は「生きた世代がある」と一致する。1 度も起こしていなければ偽 (#2875)。
 ///    作り直しの失敗・起こせなかった失敗は、走っている世代を落とさない
 /// 6. 終われと言われて ``WatchSession/end()`` を済ませた後は、子が 0 で、以後 `launch` が呼ばれない
+/// 7. 試聴 (#3565): **入る要求は、試聴に入っておらず本番が走っているときだけ受け、受けても何も起こさない**。
+///    **入っている間の保存は本番の側を動かさない** (本番の子は入れ替わらず、生きている本番は 1 つも落ちない)。
+///    **出る要求は、入っているときだけ受け、試聴の子を止め、本番の側を動かさない**。試聴の子が自分で終わっても
+///    本番の側は動かない
 ///
 /// ## どこまで見て、どこで止めるか
 ///
@@ -48,6 +59,18 @@ struct WatchSessionModelTests {
     nonisolated enum Op: Sendable, CustomStringConvertible {
         /// 何もしない (縮める先)。
         case none
+        /// 試聴に入る要求 (#3565)。
+        case audition
+        /// 試聴を出る要求。
+        case leave
+        /// 試聴の子が、自分から (終了コード 0 で) 終わる。
+        case exitAudition
+        /// 試聴の子が、最初の絵の前に失敗 (終了コード 3) で終わる。続けて 1 拍回る。
+        case exitAuditionFailing
+        /// プレビューが試聴の子へ乗り換えた合図 (本番の合図ではない)。
+        case promoteAudition
+        /// プレビューが試聴の子の絵を受け取れない知らせ。
+        case undeliverableAudition
         /// 巡回の 1 拍。変化は無い。
         case beat
         /// 保存して、作り直しが通り、子を起こせる。
@@ -82,6 +105,12 @@ struct WatchSessionModelTests {
         var description: String {
             switch self {
             case .none: "none"
+            case .audition: "audition"
+            case .leave: "leave"
+            case .exitAudition: "exit(audition)"
+            case .exitAuditionFailing: "exit(audition,failing)"
+            case .promoteAudition: "promote(audition)"
+            case .undeliverableAudition: "undeliverable(audition)"
             case .beat: "beat"
             case .save: "save"
             case .saveBuildFail: "save(buildFail)"
@@ -110,6 +139,8 @@ struct WatchSessionModelTests {
         .promoteWaiting, .promoteWaiting, .promoteAnonymous, .promoteStale, .promoteStale, .promoteStale,
         .fellBack, .fellBackStale, .undeliverable, .undeliverableStale,
         .exitWaiting, .exitWaitingFailing, .exitShown,
+        .audition, .audition, .audition, .leave, .exitAudition, .exitAuditionFailing,
+        .promoteAudition, .undeliverableAudition,
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -132,7 +163,7 @@ struct WatchSessionModelTests {
     ///
     /// 赤なら、縮めた列と seed を `[watch seed=…]` で名乗る。同じ赤は `MOKUME_PROBE_SEED=<その seed>` と `--filter` で
     /// その 1 件だけ再現する。**事後条件は緩めない** — 破れたら Bug として起票し、直るまでは `withKnownIssue` で残す。
-    @Test("生成した操作の列で、世代交代は事後条件 1〜6 を破らない")
+    @Test("生成した操作の列で、世代交代は事後条件 1〜7 を破らない")
     nonisolated func successionKeepsItsPostconditions() async throws {
         let report = Probe.run(
             "watch", suite: "WatchSessionModelTests", key: "succession", axes: Self.axes,
@@ -170,6 +201,26 @@ struct WatchSessionModelTests {
         #expect(outcome == .pass, "\(outcome)")
     }
 
+    /// 試聴の列 (#3565)。**生成する検査の seed に頼らず、決定的に回す。** 入る・保存・出る、試聴の子の離脱、
+    /// 試聴中の本番の離脱、本番の乗り換え中に入る、の形で事後条件 1〜7 を見る。
+    @Test(
+        "試聴の列は、事後条件を破らない (#3565)",
+        arguments: [
+            [Op.save, .audition, .save, .leave],
+            [.save, .audition, .save, .save, .save, .leave, .save],
+            [.save, .promoteWaiting, .audition, .save, .exitAudition, .beat, .save],
+            [.save, .promoteWaiting, .audition, .save, .exitAuditionFailing, .save, .leave],
+            [.save, .save, .audition, .save, .promoteAudition, .undeliverableAudition, .promoteWaiting],
+            [.save, .promoteWaiting, .audition, .save, .exitShown, .beat, .save, .leave],
+            [.save, .promoteWaiting, .audition, .saveLaunchFail, .saveBuildFail, .save, .leave, .leave],
+            [.save, .audition, .save, .stop],
+        ])
+    @MainActor
+    func auditionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
     nonisolated final class Outcome: @unchecked Sendable {
         var value: Probe.Outcome = .pass
@@ -203,6 +254,13 @@ struct WatchSessionModelTests {
         private var relinquished: [Int: Int] = [:]
         /// 自分から終わらせたが、まだ巡回が見ていない世代。**見るまで、台へ手放したと伝える義務は生じない。**
         private var unseen: Set<Int> = []
+        /// 試聴の側として起こした世代 (#3565)。
+        private var auditionGens: Set<Int> = []
+        /// 試聴に入っているか (見張りの答えから写す)。
+        private var auditioning = false
+        /// 自分から終わらせたが、まだ巡回が見ていない試聴の子。
+        private var unseenAudition: Set<Int> = []
+        private var requestCount = 0
         private var stampCount = 0
         private var buildStatus: Int32 = 0
         private var launchFails = false
@@ -235,6 +293,7 @@ struct WatchSessionModelTests {
             session.relinquishesDisplay = { [unowned self] pids in
                 for pid in pids { if let index = self.index(of: pid) { self.relinquished[index, default: 0] += 1 } }
             }
+            session.serveRequests()
         }
 
         final class Box { weak var driver: Driver? }
@@ -264,6 +323,10 @@ struct WatchSessionModelTests {
         private func pid(_ index: Int) -> Int32 { gens[index].processIdentifier }
         private func isAlive(_ index: Int) -> Bool { gens[index].isRunning }
         private func alive() -> Set<Int> { Set(gens.indices.filter { isAlive($0) }) }
+        /// 生きている世代のうち、本番の側。
+        private func productionAlive() -> Set<Int> { alive().subtracting(auditionGens) }
+        /// 生きている試聴の子。
+        private func auditionAlive() -> Set<Int> { alive().intersection(auditionGens) }
 
         /// 子が消えるのを待つ (待つ側が期限を持つ)。
         private func waitUntilGone(_ index: Int, timeout: TimeInterval = 2) {
@@ -280,6 +343,25 @@ struct WatchSessionModelTests {
         private func beat() async {
             await WatchCommand.step(session, stopped: { false }, preview: { _, _ in })
             unseen = []
+            unseenAudition = []
+        }
+
+        /// 巡回がまだ見ていない子の離脱があれば、1 拍回して済ませる。**要求の前後を比べる操作は、離脱の後始末を
+        /// 要求の結果と取り違えない**ために、先にこれを済ませる。
+        private func settleUnseen() async {
+            if !unseen.isEmpty || !unseenAudition.isEmpty { await beat() }
+        }
+
+        /// 区画 `watch` へ要求を置いて 1 拍回し、受けたかを返す。
+        private func ask(_ action: String) async throws -> Bool {
+            requestCount += 1
+            let request = #"{"id":"m\#(requestCount)","action":"\#(action)"}"#
+            try AtomicFile.write(
+                Data(request.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
+            await beat()
+            let data = try Data(contentsOf: WorkDirectory.reportURL(under: session.watchFacet))
+            let report = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return report["accepted"] as? Bool == true
         }
 
         private func placeFellBackMarker(of index: Int) throws {
@@ -301,6 +383,7 @@ struct WatchSessionModelTests {
                 if waiting == index { tags.append("待") }
                 if session.child === gens[index] { tags.append("child") }
                 if session.outgoing === gens[index] { tags.append("outgoing") }
+                if auditionGens.contains(index) { tags.append("試聴") }
                 if let count = relinquished[index] { tags.append("手放し×\(count)") }
                 return "G\(index)[\(tags.joined(separator: "・"))]"
             }.joined(separator: " ")
@@ -356,8 +439,27 @@ struct WatchSessionModelTests {
                 let launched = gens.count
                 let childBefore = session.child.flatMap { child in gens.firstIndex { $0 === child } }
                 let unseenBefore = unseen
+                let productionBefore = productionAlive()
+                let auditioningBefore = auditioning
                 await beat()
-                if gens.count > launched { waiting = gens.count - 1 }
+                if gens.count > launched {
+                    // 試聴に入っている間に起こした子は試聴の側。本番の乗り換えは待たない
+                    if auditioningBefore {
+                        auditionGens.insert(gens.count - 1)
+                    } else {
+                        waiting = gens.count - 1
+                    }
+                }
+                // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
+                if auditioningBefore, unseenBefore.isEmpty {
+                    let childAfter = session.child.flatMap { child in gens.firstIndex { $0 === child } }
+                    if childAfter != childBefore {
+                        return Violation(number: 7, text: "試聴中の保存で、本番の子が G\(childBefore.map(String.init) ?? "-") から G\(childAfter.map(String.init) ?? "-") へ入れ替わった")
+                    }
+                    if !productionBefore.isSubset(of: alive()) {
+                        return Violation(number: 7, text: "試聴中の保存で、生きていた本番の側が落ちた (前 \(name(productionBefore)) → 後 \(name(alive())))")
+                    }
+                }
                 guard unseenBefore.isEmpty else { return nil }
                 switch op {
                 case .saveBuildFail:
@@ -381,16 +483,16 @@ struct WatchSessionModelTests {
                 shown = target
                 everShown.insert(target)
                 waiting = nil
-                if alive() != [target] {
+                if productionAlive() != [target] {
                     return Violation(
                         number: 4,
-                        text: "待っている G\(target) の合図の後、生きているのが \(name(alive())) (待っている世代だけのはず。前の世代を畳んでいない)")
+                        text: "待っている G\(target) の合図の後、生きている本番の側が \(name(productionAlive())) (待っている世代だけのはず。前の世代を畳んでいない)")
                 }
                 return nil
 
             case .promoteStale:
                 guard
-                    let stale = alive().filter({
+                    let stale = productionAlive().filter({
                         $0 != waiting && !silent.contains($0)
                     }).max()
                 else { return nil }
@@ -423,8 +525,8 @@ struct WatchSessionModelTests {
                 }
                 waiting = nil
                 silent.insert(target)
-                if alive() != [target] {
-                    return Violation(number: 4, text: "待っている G\(target) の\(label)の後、生きているのが \(name(alive())) (前の世代を畳んでいない)")
+                if productionAlive() != [target] {
+                    return Violation(number: 4, text: "待っている G\(target) の\(label)の後、生きている本番の側が \(name(productionAlive())) (前の世代を畳んでいない)")
                 }
                 // 2 度目は何もしない (窓ごとに知らせが来る)
                 if try await notify(op, about: target) {
@@ -433,7 +535,7 @@ struct WatchSessionModelTests {
                 return nil
 
             case .fellBackStale, .undeliverableStale:
-                guard let stale = alive().filter({ $0 != waiting && !silent.contains($0) }).max() else { return nil }
+                guard let stale = productionAlive().filter({ $0 != waiting && !silent.contains($0) }).max() else { return nil }
                 let waitingBefore = session.waitingGeneration
                 let label = op == .fellBackStale ? "倒れた知らせ" : "受け取れない知らせ"
                 if try await notify(op, about: stale, stale: true) {
@@ -464,13 +566,13 @@ struct WatchSessionModelTests {
                 if ambiguous { return nil }
                 // 最初の絵を出す前に失敗で終わった回 (#3172)。前の版が映っていて生きていれば残し、そうでなければ畳む
                 if let previous {
-                    if alive() != [previous] {
+                    if productionAlive() != [previous] {
                         return Violation(
                             number: 5,
-                            text: "最初の絵の前に失敗した G\(target) の後、映っていた G\(previous) が残らない (生きているのは \(name(alive())))")
+                            text: "最初の絵の前に失敗した G\(target) の後、映っていた G\(previous) が残らない (生きている本番の側は \(name(productionAlive())))")
                     }
-                } else if !alive().isEmpty {
-                    return Violation(number: 5, text: "最初の絵の前に失敗した G\(target) の後、前の版が居ないのに生きている世代が残る (\(name(alive())))")
+                } else if !productionAlive().isEmpty {
+                    return Violation(number: 5, text: "最初の絵の前に失敗した G\(target) の後、前の版が居ないのに生きている世代が残る (\(name(productionAlive())))")
                 }
                 return nil
 
@@ -478,6 +580,79 @@ struct WatchSessionModelTests {
                 guard let target = shown, isAlive(target) else { return nil }
                 finish(target, line: "bye")
                 unseen.insert(target)
+                return nil
+
+            case .audition:
+                guard !stopped else { return nil }
+                await settleUnseen()
+                let before = alive()
+                let expected = !auditioning && !productionAlive().isEmpty
+                let accepted = try await ask("audition")
+                if accepted != expected {
+                    return Violation(
+                        number: 7,
+                        text: "入る要求を\(accepted ? "受けた" : "断った") (期待は\(expected ? "受ける" : "断る")・試聴中 \(auditioning)・本番の側 \(name(productionAlive())))")
+                }
+                if accepted { auditioning = true }
+                if alive() != before {
+                    return Violation(number: 7, text: "入る要求で、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
+                }
+                return nil
+
+            case .leave:
+                guard !stopped else { return nil }
+                await settleUnseen()
+                let productionBefore = productionAlive()
+                let accepted = try await ask("leave")
+                if accepted != auditioning {
+                    return Violation(number: 7, text: "出る要求を\(accepted ? "受けた" : "断った") (試聴中 \(auditioning))")
+                }
+                guard accepted else { return nil }
+                auditioning = false
+                if !auditionAlive().isEmpty {
+                    return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
+                }
+                if productionAlive() != productionBefore {
+                    return Violation(number: 7, text: "出る要求で、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")
+                }
+                return nil
+
+            case .exitAudition:
+                guard let target = auditionAlive().first else { return nil }
+                finish(target, line: "bye")
+                unseenAudition.insert(target)
+                if productionAlive() != before.subtracting(auditionGens) {
+                    return Violation(number: 7, text: "試聴の子 G\(target) が自分で終わって、本番の側が動いた")
+                }
+                return nil
+
+            case .exitAuditionFailing:
+                guard let target = auditionAlive().first else { return nil }
+                await settleUnseen()
+                let productionBefore = productionAlive()
+                finish(target, line: "fail")
+                await beat()
+                if productionAlive() != productionBefore {
+                    return Violation(
+                        number: 7,
+                        text: "最初の絵の前に失敗した試聴の子 G\(target) の後、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")
+                }
+                if !auditioning { return Violation(number: 7, text: "試聴の子が落ちて、試聴が終わった") }
+                return nil
+
+            case .promoteAudition, .undeliverableAudition:
+                guard let target = auditionAlive().first else { return nil }
+                let waitingBefore = session.waitingGeneration
+                let received: Bool
+                if op == .promoteAudition {
+                    received = await session.generationPromoted(pid: pid(target)) != nil
+                    session.generationShown(pid: pid(target))
+                } else {
+                    received = await session.retireAfterUndeliverable(waiting: waitingBefore, pid: pid(target)) != nil
+                }
+                if received || alive() != before || session.waitingGeneration !== waitingBefore {
+                    return Violation(number: 4, text: "試聴の子 G\(target) の合図 (\(op)) で、本番の側が動いた (前 \(name(before)) → 後 \(name(alive())))")
+                }
                 return nil
 
             case .stop:
@@ -504,12 +679,23 @@ struct WatchSessionModelTests {
 
         private func checkAfter() -> Violation? {
             let living = alive()
-            // 1. 生きている子は 2 つまで。2 つなら一方は乗り換えを待っている
-            if living.count > 2 {
-                return Violation(number: 1, text: "生きている子が \(living.count) 個 (\(name(living)))")
+            // 1. 生きている子は、本番の側が 2 つまで (2 つなら一方は乗り換えを待っている)・試聴の側が 1 つまで。
+            //    乗り換えを待つ世代が無ければ、全体で 2 つまで
+            let productionLiving = productionAlive()
+            if productionLiving.count > 2 {
+                return Violation(number: 1, text: "生きている本番の側が \(productionLiving.count) 個 (\(name(productionLiving)))")
             }
-            if living.count == 2, session.waitingGeneration == nil {
-                return Violation(number: 1, text: "生きている子が 2 つ (\(name(living))) なのに、乗り換えを待つ世代が無い")
+            if productionLiving.count == 2, session.waitingGeneration == nil {
+                return Violation(number: 1, text: "生きている本番の側が 2 つ (\(name(productionLiving))) なのに、乗り換えを待つ世代が無い")
+            }
+            if auditionAlive().count > 1 {
+                return Violation(number: 1, text: "生きている試聴の子が \(auditionAlive().count) 個 (\(name(auditionAlive())))")
+            }
+            if !auditioning, !auditionAlive().isEmpty {
+                return Violation(number: 1, text: "試聴に入っていないのに、試聴の子が生きている (\(name(auditionAlive())))")
+            }
+            if session.waitingGeneration == nil, living.count > 2 {
+                return Violation(number: 1, text: "乗り換えを待つ世代が無いのに、生きている子が \(living.count) 個 (\(name(living)))")
             }
             // 3. 台へ手放した世代: 生きて映っている世代は渡らず、去った世代は 1 度だけ渡る
             if let shown, isAlive(shown), (relinquished[shown] ?? 0) > 0 {
@@ -520,6 +706,15 @@ struct WatchSessionModelTests {
                 (relinquished[shown] ?? 0) == 0
             {
                 return Violation(number: 3, text: "映っていた G\(shown) が居なくなったのに、台へ手放したと伝えていない")
+            }
+            // 3. (試聴の子も同じ) 生きて映っている試聴の子は伝えず、去った試聴の子は伝える
+            for index in auditionGens {
+                if isAlive(index), (relinquished[index] ?? 0) > 0 {
+                    return Violation(number: 3, text: "生きて映っている試聴の G\(index) を、台へ手放したと伝えた")
+                }
+                if !stopped, !isAlive(index), !unseenAudition.contains(index), (relinquished[index] ?? 0) == 0 {
+                    return Violation(number: 3, text: "映っていた試聴の G\(index) が居なくなったのに、台へ手放したと伝えていない")
+                }
             }
             // 5. 前の版が走っていると名乗る口は、生きた世代の有無と一致する
             let running = !living.isEmpty && !session.stopRequested
@@ -540,9 +735,25 @@ struct WatchSessionModelTests {
             return nil
         }
 
-        /// 2. 入力の宛先は、映っている世代が生きていれば、その世代である。
+        /// 2. 入力の宛先は、窓が映している世代が生きていれば、その世代である。
+        ///
+        /// 作品の窓は映っている本番の世代。プレビューは、試聴中なら映している試聴の世代 (その台の `displayedPID`)。
         private func checkSend() -> Violation? {
-            guard !stopped, let target = shown, isAlive(target) else { return nil }
+            guard !stopped else { return nil }
+            // プレビュー: 試聴の子が生きていれば、その子へ。本番の側へは届かない
+            if auditioning, let audition = auditionAlive().first {
+                let before = alive()
+                session.send("probe\n", shownBy: pid(audition))
+                waitUntilGone(audition, timeout: 1)
+                if isAlive(audition) {
+                    return Violation(number: 2, text: "プレビューで触った出来事が、映している試聴の G\(audition) へ届かない")
+                }
+                if alive() != before.subtracting([audition]) {
+                    return Violation(number: 2, text: "プレビューで触った出来事が、試聴の G\(audition) のほかの世代にも届いた")
+                }
+            }
+            // 作品の窓: 映っている本番の世代へ
+            guard let target = shown, isAlive(target) else { return nil }
             let before = alive()
             session.send("probe\n")
             waitUntilGone(target, timeout: 1)

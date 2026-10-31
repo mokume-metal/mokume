@@ -654,7 +654,75 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
     /// ときだけである。
     private func reloadSourceIfChanged() {
         guard let manifest = manifest.changed() else { return }
+        remember(manifest)
+        // **この台が映さない世代の目録は採らない** (``acceptsGeneration``)。読んだ印は付いている (同じ改訂を
+        // 読み直さない) ので、採り直す契機は ``returnToGeneration(pid:)`` だけである
+        if let accepts = acceptsGeneration, !accepts(manifest.pid) { return }
         adopt(manifest)
+    }
+
+    /// この台が、どの世代の目録を採るかを決める関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **目録は 1 枚で、最後に書いた子のもので上書きされる。** 試聴の間は、作品の窓が本番の目録だけを、プレビューが
+    /// 試聴の子の目録だけを採りたい。引数は読んだ目録が名乗る子の番号 (``SharedFrameSurface/Manifest/pid``) で、
+    /// **番号を名乗らない子 (古いライブラリ) は `nil`** — 世代を区別できないので、返す値は見張りが決める。
+    /// 設定しなければ (既定) どの目録も採る。
+    ///
+    /// **目録の置き方も形も変えない。** 区画の書き手の番号を、読み手が選ぶだけである。
+    var acceptsGeneration: ((Int32?) -> Bool)?
+
+    /// 読んだ目録を、書き手の子の番号ごとに最後のものだけ覚える。**関所が弾いた目録も覚える**
+    /// (``returnToGeneration(pid:)`` が戻る先)。古いほうから押し出す。
+    private var remembered: [(pid: Int32, manifest: SharedFrameSurface.Manifest)] = []
+    /// 覚える目録の上限。試聴で子が入れ替わるたびに増えるので、無限に溜めない。
+    private static let rememberedLimit = 4
+    /// 押し出さずに覚え続ける世代の子の番号 (``holdGeneration(pids:)``)。
+    private var heldPIDs: Set<Int32> = []
+
+    private func remember(_ manifest: SharedFrameSurface.Manifest) {
+        guard let pid = manifest.pid else { return }
+        remembered.removeAll { $0.pid == pid }
+        remembered.append((pid, manifest))
+        while remembered.count > Self.rememberedLimit,
+            let oldest = remembered.firstIndex(where: { !heldPIDs.contains($0.pid) })
+        {
+            remembered.remove(at: oldest)
+        }
+    }
+
+    /// 押し出さずに覚えておく世代を決める ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 試聴に入ったとき、本番の世代 (作品の窓が映す版。乗り換えを待つ間は 2 つ) の目録を留める。試聴の子が
+    /// 何度入れ替わっても、出る (``returnToGeneration(pid:)``) ときの戻り先を失わない。空で外す。
+    func holdGeneration(pids: [Int32]) {
+        heldPIDs = Set(pids)
+    }
+
+    /// 覚えている目録の世代へ戻る ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 目録は上書きされて読み直せないので、試聴を出るときに、プレビューを本番の絵へ戻すために使う。
+    /// 控えるだけで、乗り換えるのは普段の経路 (``promoteIfReady()``) である — 戻り先が 1 枚書いていれば
+    /// 次のリフレッシュで映る。**関所は通らない** (戻ると決めたのは見張りである)。
+    ///
+    /// - Returns: 戻れる (もう映している・控えた) なら `true`。覚えが無い、面をもう引けない (置いた子が
+    ///   消えた) なら `false` で、何も動かさない — 引けない目録を控えると、乗り換えないまま受け取れないと
+    ///   知らせることになる (``adopt(_:)``)。
+    @discardableResult
+    func returnToGeneration(pid: Int32) -> Bool {
+        if source?.pid == pid {
+            // 既に映している。別の世代を控えていたなら捨てる
+            if let waiting = incoming {
+                retiredLookups += waiting.lookup.lookups
+                try? gpu.releaseResidency(of: waiting.frames.values.map(\.texture))
+                incoming = nil
+            }
+            return true
+        }
+        guard let manifest = remembered.first(where: { $0.pid == pid })?.manifest,
+            manifest.ids.contains(where: { IOSurfaceLookup($0) != nil })
+        else { return false }
+        adopt(manifest)
+        return incoming?.pid == pid
     }
 
     /// 新しい差し出し元を**控える。** 出している世代には触らない。

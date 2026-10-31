@@ -2192,6 +2192,182 @@ struct SharedFrameStageTests {
         }
     }
 
+    // MARK: - 試聴で役を分ける (#3565)
+
+    /// 子の番号を名乗る目録を置き、`frames` 枚だけ焼く。`windowScale`・`fullScreenDisplay` も載せられる。
+    ///
+    /// 置いた面は呼び手が持ち続ける (手放すと台の控えが空になる)。
+    private func publishAs(
+        pid: Int32, in facet: URL, gpu: RenderDevice, frames: Int = 1, windowScale: Float? = nil,
+        fullScreenDisplay: SharedFrameSurface.FullScreenDisplay? = nil
+    ) throws -> SharedFrameSurface {
+        let surface = try SharedFrameSurface(gpu: gpu, width: 32, height: 32, at: facet)
+        let manifest = SharedFrameSurface.Manifest(
+            ids: surface.ids, width: 32, height: 32, windowScale: windowScale,
+            fullScreenDisplay: fullScreenDisplay, pid: pid)
+        let url = facet.appendingPathComponent(SharedFrameSurface.manifestName)
+        try JSONEncoder().encode(manifest).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: url.path)
+        for frame in 0..<frames { try draw(surface, frame: frame + 1, gpu: gpu) }
+        return surface
+    }
+
+    /// **関所が弾いた目録は採らない。採る世代は普段どおり乗り換える。** 作品の窓が試聴の子の目録を採らない形。
+    @Test("関所が弾いた世代の目録は採らず、映している世代も控えも動かない。採る世代へは乗り換える")
+    func theGateKeepsAGenerationOut() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu))
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("gate"))
+            defer { stage.close() }
+            stage.acceptsGeneration = { $0 != 200 }
+            var promoted: [Int32?] = []
+            stage.onGenerationPromoted = { promoted.append($0) }
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+
+            // 試聴の子 (200) が 1 枚焼いて目録を置いた。採らない
+            kept.append(try publishAs(pid: 200, in: facet, gpu: gpu))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100 && !stage.hasIncoming, "弾いた世代を控えた")
+            #expect(promoted == [100], "弾いた世代へ乗り換えた合図が鳴った: \(promoted)")
+
+            // 弾いた世代が焼き続けても、映す世代は変わらない
+            try draw(kept[1], frame: 2, gpu: gpu)
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+
+            // 本番が書き直した (別の目録で上書き)。これは採る
+            kept.append(try publishAs(pid: 300, in: facet, gpu: gpu))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 300, "採る世代へ乗り換えない")
+        }
+    }
+
+    /// 関所を設けなければ、どの目録も採る (見張りの外・試聴に入らない見張りは、これまでどおり)。
+    @Test("関所を設けていない台は、番号を名乗らない目録も含め、どの目録も採る")
+    func noGateTakesEveryManifest() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            kept.append(try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: false))
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("no-gate"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+            kept.append(try publish(in: facet, gpu: gpu, pid: 200, frames: 1, pointerLock: false))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 200)
+            // 番号を名乗らない目録 (古いライブラリ) は、関所に `nil` で問われる
+            var asked: [Int32?] = []
+            stage.acceptsGeneration = {
+                asked.append($0)
+                return true
+            }
+            kept.append(try publish(in: facet, gpu: gpu, pid: nil, frames: 1, pointerLock: false))
+            stage.displayLinkFired()
+            #expect(asked.count == 1 && asked[0] == nil, "\(asked)")
+            #expect(stage.displayedPID == nil && stage.hasSource)
+        }
+    }
+
+    /// **プレビューの形。** 試聴の子の目録だけを採り、本番の目録は採らない。出るとき (`returnToGeneration`) に、
+    /// 本番の世代へ戻る — 目録は上書きされて読み直せないので、台が覚えている。
+    @Test("試聴の子だけを採る台は、本番の目録を採らず、出るときに押し出されていない本番の世代へ戻る")
+    func thePreviewReturnsToTheHeldProduction() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu))
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("preview"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+
+            // 試聴に入った: 本番 (100) の目録を留める。以後は、いま追っている試聴の子の目録だけを採る
+            stage.holdGeneration(pids: [100])
+            var following: Int32?
+            stage.acceptsGeneration = { $0 == following }
+
+            // 試聴の子を何度も入れ替える (覚えの上限より多く)
+            for audition in [Int32(201), 202, 203, 204, 205] {
+                following = audition
+                kept.append(try publishAs(pid: audition, in: facet, gpu: gpu))
+                stage.displayLinkFired()
+                #expect(stage.displayedPID == audition, "試聴の子 \(audition) へ乗り換えない")
+            }
+
+            // 本番が目録を書き直した (大きさを変えた、など)。プレビューには採らない
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 4))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 205, "試聴中に本番の目録を採った")
+
+            // 出る: 追う相手を外してから、本番へ戻る
+            following = nil
+            stage.acceptsGeneration = { $0 != 205 }
+            #expect(stage.returnToGeneration(pid: 100))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100, "本番の世代へ戻らない: \(String(describing: stage.displayedPID))")
+            stage.holdGeneration(pids: [])
+        }
+    }
+
+    @Test("留めていない世代は覚えの上限で押し出され、戻れない。覚えが無い・面を引けない世代へも戻れない")
+    func returningNeedsARememberedGenerationWithLiveSurfaces() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu))
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("return-fails"))
+            defer { stage.close() }
+            stage.displayLinkFired()
+            // 留めずに、試聴の子を 5 つ入れ替える (上限 4 より多い)
+            for audition in [Int32(201), 202, 203, 204, 205] {
+                kept.append(try publishAs(pid: audition, in: facet, gpu: gpu))
+                stage.displayLinkFired()
+            }
+            #expect(stage.displayedPID == 205)
+            #expect(!stage.returnToGeneration(pid: 100), "押し出された世代へ戻れたことにした")
+            #expect(!stage.returnToGeneration(pid: 999), "覚えの無い世代へ戻れたことにした")
+            // 戻れなかった回は何も動かさない
+            #expect(stage.displayedPID == 205 && !stage.hasIncoming)
+            // 既に映している世代へは、何もせず戻れたことになる
+            #expect(stage.returnToGeneration(pid: 205))
+        }
+    }
+
+    /// **完了条件 9。** 試聴中に試聴の版が大きさ・全画面の頼みを変えて保存しても、作品の窓へは当てない。
+    @Test("作品の窓の台は、試聴の子の目録の大きさ・全画面の頼みを当てない。本番の目録の頼みは当てる")
+    func requestsOfAnAuditionedGenerationDoNotReachTheArtworkWindow() throws {
+        try withFullScreenStage { stage, log, facet, gpu in
+            var kept: [SharedFrameSurface] = []
+            stage.acceptsGeneration = { $0 != 200 }
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 0.5))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+            let before = try #require(stage.window?.contentLayoutRect.size)
+            #expect(log.entered.isEmpty && stage.appliedFullScreen == nil)
+
+            // 試聴の版が `windowScale: 0.5` → `1`、全画面を頼んで保存した
+            kept.append(
+                try publishAs(
+                    pid: 200, in: facet, gpu: gpu, windowScale: 1, fullScreenDisplay: Self.projector))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100, "試聴の子の目録を採った")
+            #expect(stage.window?.contentLayoutRect.size == before, "作品の窓の大きさが変わった")
+            #expect(log.entered.isEmpty && stage.appliedFullScreen == nil, "作品の窓が全画面になった")
+
+            // 本番の頼みは当たる (弾くのは試聴の子だけ)
+            kept.append(
+                try publishAs(
+                    pid: 300, in: facet, gpu: gpu, windowScale: 1, fullScreenDisplay: Self.projector))
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 300)
+            #expect(log.entered.count == 1 && stage.appliedFullScreen == Self.projector)
+        }
+    }
+
     /// 積んである投入の結末がすべて届くまで待つ (`DroppedWorkRedeliveryTests` と同じ)。
     private func awaitOutcomes(_ gpu: RenderDevice) {
         _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)

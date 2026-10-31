@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokume.org/schemas/watch-report.schema.json",
+  "title": "The watching tool's reply",
+  "description": "Whether the request was taken, the reason when it was declined, and who is running: the version the work's window shows (production) and the version under audition, each by process number and by the stamp of the source it was started from. **A declined reply names who is running too**, so a writer reads why it was declined and what is going on in one place. Written atomically, once per request.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "accepted", "auditioning"],
+  "additionalProperties": false,
+  "$defs": {
+    "generation": {
+      "type": "object",
+      "required": ["pid"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "description": "The sketch process's number. The same number is the pid in the viewport manifest (viewport-surface), which is how the two generations are told apart."
+        },
+        "stamp": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Which generation of the source this process was started from. The same value as the stamp in an observation reply and in the build record. Omitted when the build had none."
+        }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The identifier of the request this answers."
+    },
+    "action": {
+      "type": "string",
+      "description": "The action the request named, as it was written. Omitted when the request could not be read."
+    },
+    "accepted": {
+      "type": "boolean",
+      "description": "Whether the request was taken. When false, reason says why, and nothing changed."
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "notAuditioning",
+        "alreadyAuditioning",
+        "noPreview",
+        "noProduction",
+        "unknownAction",
+        "unreadable"
+      ],
+      "description": "Why the request was declined. Omitted when it was taken. **notAuditioning**: leave, but the tool is not auditioning. **alreadyAuditioning**: audition, but it already is. **noPreview**: the tool has no preview window (the window could not be opened, so the sketch opens its own), so there is nothing to audition in. **noProduction**: no version is running in the work's window, so there is nothing to protect — a plain save is enough. **unknownAction**: an action this version does not take. **unreadable**: the request could not be read as this surface's request, though its id could (detail says how)."
+    },
+    "detail": {
+      "type": "string",
+      "description": "One line on why the request could not be read. Only with reason unreadable."
+    },
+    "auditioning": {
+      "type": "boolean",
+      "description": "Whether the tool is auditioning, after this request."
+    },
+    "production": {
+      "$ref": "#/$defs/generation",
+      "description": "The version running in the work's window. Omitted when none is running."
+    },
+    "audition": {
+      "$ref": "#/$defs/generation",
+      "description": "The version under audition, which the preview shows. Omitted when none is running (not auditioning, or no save since entering, or the version under audition ended)."
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "agent-4712",
+  "action": "leave",
+  "accepted": false,
+  "reason": "notAuditioning",
+  "auditioning": false,
+  "production": {
+    "pid": 48213,
+    "stamp": "s1f3a9c"
+  }
+}

@@ -337,6 +337,47 @@ final class WatchSession {
     /// 世代の合図は「絵が出た」ではなく「目録が読めた」になる。
     private var hasSeenPromotion = false
 
+    // MARK: - 試聴 (#3565)
+
+    /// 試聴に入っているか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **入っている間、保存はプレビューだけを新しい版にする。** 作品の窓が映す本番の子 (``child`` と、乗り換えを
+    /// 待つ間の ``outgoing``) は止めず、新しい版は ``auditionChild`` に起こす。入るのも出るのも、区画 `watch` の
+    /// 要求である (``answerRequests()``)。**入らない見張りは、この分岐を 1 度も通らない。**
+    private(set) var isAuditioning = false
+
+    /// 試聴の子 — 試聴中に起こした最後の版。プレビューが映す。居なければ `nil`。
+    ///
+    /// **``child`` / ``outgoing`` の意味は変えない。** あれは作品の窓に映る本番の側の枠で、入れ替わりの合図・
+    /// 倒れた知らせ・子の離脱は本番だけを見る。試聴の子がこれらで終わっても本番を畳まないのは、そのためである。
+    private(set) var auditionChild: Process?
+
+    /// 試聴の子として起こした子の番号。**死んだ子を含む。** 作品の窓が採らない目録を選ぶ (``windowAccepts(pid:)``)。
+    /// 試聴を出た後、次の通常の差し替えで空にする。
+    private(set) var auditionPIDs: Set<Int32> = []
+
+    /// プレビューが映す試聴の世代の子の番号。試聴の子を起こすたびに更新し、試聴を出ると `nil` に戻す。
+    /// 立っている間のプレビューは、この番号の目録だけを採る (``previewAccepts(pid:)``)。
+    private(set) var previewFollowing: Int32?
+
+    /// 試聴の子が消えたことを既に名乗ったか。**子を起こすと下りる。**
+    private var hasNamedAuditionDeparture = false
+    /// 止めている最中の ``auditionChild`` (``stoppingChild`` と同じ役)。
+    private var stoppingAudition: Process?
+
+    /// 起こした子ごとの、ソースの世代の刻印。応答 (``WatchReport``) が名乗る。生きている子のぶんだけ持つ。
+    private var launchStamps: [Int32: String] = [:]
+
+    /// 本番の世代の目録を、プレビューの台に押し出させず覚えさせる口 (``returnsPreviewToGeneration`` の戻り先)。
+    /// 空で外す。窓を出せた見張りだけが繋ぐ (``WatchCommand``)。
+    var holdsPreviewGeneration: ([Int32]) -> Void = { _ in }
+
+    /// 試聴を出るとき、プレビューを本番の世代へ戻す口。引数は本番の子の番号で、戻れたかを返す。
+    var returnsPreviewToGeneration: (Int32) -> Bool = { _ in false }
+
+    /// 区画 `watch` の要求。**``serveRequests()`` を呼ぶまでは答えない。**
+    private var requests: RequestFile<WatchRequest>?
+
     /// 1 枚目の絵を道具の窓に出した世代の子の番号 ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
     /// **「絵を出す前に終わった」の根拠はこれである。** 乗り換えの合図 (``hasSeenPromotion``) は使えない —
@@ -567,10 +608,17 @@ final class WatchSession {
     ///
     /// **子の上限 (``InputWire/lineLimit``) を越える 1 行は管へ流さず、捨てて名乗る** (``onOversizedInput``)。
     /// 流すと子は溜めたぶんを全部捨て、残りは行の頭を失った断片として届く。
-    func send(_ line: String) {
+    ///
+    /// ## 試聴の間は、窓ごとに宛先を引く ([#3565](https://github.com/mokume-metal/mokume/issues/3565))
+    ///
+    /// 2 つの窓が別の世代を映す。作品の窓で触った出来事は本番へ (引数を省く)、プレビューで触った出来事は
+    /// **プレビューが映している世代**へ送る — 引数にその台の ``SharedFrameWindow/displayedPID`` を渡す。試聴の子が
+    /// 起きるまでは、プレビューはまだ本番を映しているので本番へ届く。映している世代が消えていれば、どこへも
+    /// 送らない (止まった絵に触っても、別の版に届けない)。試聴に入っていなければ、引数は読まない。
+    func send(_ line: String, shownBy shownPID: Int32? = nil) {
         // **画面に出ている世代へ送る。** 退役待ちが居る間は、まだ前の世代が映っている —
         // 入れ替わりと退役は同じ合図で起きるので、宛先は画面と一致する (#1142)
-        let target = outgoing ?? child
+        let target = sendTarget(shownBy: shownPID)
         guard let target, target.standardInput is Pipe, let data = line.data(using: .utf8) else {
             return
         }
@@ -591,13 +639,22 @@ final class WatchSession {
         }
     }
 
+    /// 入力の宛先。試聴に入っていなければ、画面に出ている本番 (``outgoing`` ?? ``child``)。
+    private func sendTarget(shownBy shownPID: Int32?) -> Process? {
+        guard isAuditioning, let shownPID else { return outgoing ?? child }
+        return [auditionChild, outgoing, child].lazy.compactMap { $0 }
+            .first { $0.processIdentifier == shownPID }
+    }
+
     /// 書き残した 1 行の続きを、書けるだけ書く。**塞がない。** 続きが無ければ何もしない。
     ///
     /// 見張りの巡回が刻みごとに呼ぶ (``WatchCommand/step(_:viewer:stopped:)``)。次の出来事が来なくても、
     /// 子が管を読み始めれば行は書き切られる。子が畳んだ・入れ替わったときは続きを捨てる。
     func flushPendingInput() {
         guard let pending = unsent else { return }
-        guard pending.target === (outgoing ?? child), pending.target.isRunning else {
+        guard pending.target === (outgoing ?? child) || pending.target === auditionChild,
+            pending.target.isRunning
+        else {
             unsent = nil
             return
         }
@@ -862,7 +919,9 @@ final class WatchSession {
     /// ときにも掃く (``WatchCommand/teardown(_:_:created:keepTimeFile:)``)。
     func prepareStartFailureNotes() {
         try? FileManager.default.createDirectory(at: buildFacet, withIntermediateDirectories: true)
-        sweepStartFailureNotes(keepingStartingOf: outgoing?.processIdentifier)
+        sweepStartFailureNotes(
+            keepingStartingOf: generationPIDs(of: outgoing) + generationPIDs(of: child)
+                + generationPIDs(of: auditionChild))
     }
 
     /// 区画 `build` の、読まれずに残った理由を掃く。
@@ -870,17 +929,18 @@ final class WatchSession {
     /// **起動中の印も同じに掃く** (#3222)。止めた子・見ずに消えた子の印が残ると、あとで同じ pid を巡り当てた
     /// 別の子が、最初の絵の前に終わったと読まれる。
     ///
-    /// - Parameter keeping: 掃かない子の番号の起動中の印。前の世代がまだ起動中で生きているときの、その子のもの。
-    func sweepStartFailureNotes(keepingStartingOf pid: Int32? = nil) {
+    /// - Parameter keeping: 掃かない子の番号の起動中の印。生きている世代がまだ起動中のときの、その子のもの。
+    func sweepStartFailureNotes(keepingStartingOf pids: [Int32] = []) {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: buildFacet.path)
         else { return }
         let failurePrefix = WorkDirectory.startFailureURL(forProcess: 0, under: buildFacet)
             .lastPathComponent.dropLast()  // `.start-failure.`
         let startingPrefix = WorkDirectory.startingURL(forProcess: 0, under: buildFacet)
             .lastPathComponent.dropLast()  // `.starting.`
-        let kept = pid.map { WorkDirectory.startingURL(forProcess: $0, under: buildFacet).lastPathComponent }
+        let kept = Set(
+            pids.map { WorkDirectory.startingURL(forProcess: $0, under: buildFacet).lastPathComponent })
         for name in names
-        where name.hasPrefix(failurePrefix) || (name.hasPrefix(startingPrefix) && name != kept) {
+        where name.hasPrefix(failurePrefix) || (name.hasPrefix(startingPrefix) && !kept.contains(name)) {
             try? FileManager.default.removeItem(at: buildFacet.appendingPathComponent(name))
         }
     }
@@ -946,6 +1006,8 @@ final class WatchSession {
         // **退役待ちも置いていかない。** 入れ替わりの合図が来る前に終わることがある。子と並べて
         // 止める — 順に待つと、退役の子が応えないあいだ現役の子へ頼みが届かない
         let retiring = Task { await self.retireOutgoing() }
+        // **試聴の子も置いていかない** (#3565)
+        let retiringAudition = Task { await self.retireAudition() }
         // **止めている間に、持っている子が入れ替わりうる。** 待つあいだ main actor を手放すので、
         // 差し替えの途中に終わりが来ると同じ子を 2 つの口が止めに行く (止め方は 1 つに畳まれる)。
         // 後から戻ったほうが、先に起こされた次の子を手放さないように、止めた相手を覚えておく
@@ -956,6 +1018,7 @@ final class WatchSession {
         if stoppingChild === leaving { stoppingChild = nil }
         lastStop = outcome
         _ = await retiring.value
+        _ = await retiringAudition.value
         // **誰が始めた止めでも、済むまで戻らない。** 戻った後は置いていく子が居ない、が
         // 終えるときの約束である (#454)
         await settle()
@@ -977,6 +1040,10 @@ final class WatchSession {
         }
         if let leaving = outgoing {
             outgoing = nil
+            bringDownBlocking(leaving, timeout: stopTimeout)
+        }
+        if let leaving = auditionChild {
+            auditionChild = nil
             bringDownBlocking(leaving, timeout: stopTimeout)
         }
         let outcome = bringDownBlocking(child, timeout: timeout ?? stopTimeout)
@@ -1386,6 +1453,27 @@ final class WatchSession {
         }
         guard !stopRequested else { return notStartedForStopping() }
 
+        // **試聴に入っている回は、本番の世代に触れない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+        // 前の試聴の子を止めてから、新しい版を試聴の子として起こす (試聴の子は重ねない)。止めている間に試聴を
+        // 出た回は、通常の差し替えへ続ける — 出た後に着いた版は、普段どおり両方の窓に出る
+        if overlapsGenerations, isAuditioning {
+            let auditionStarted = hooks.now()
+            let previousAudition = auditionChild
+            // 期限に掛かったことは、通常の差し替えと同じ口 (``lastStop``) で口の側が名乗る
+            if let stopped = await retireAudition() { lastStop = stopped }
+            // **止めた試聴の子の頼み (カーソルの捕まえ・隠し) を下ろす** — プレビューは、次の試聴の子が絵を出すまで
+            // その子の最後の絵を映す。止めた後に伝える (止めるまでに書く 1 枚で台が読み直す・``retireAfterFallback()``)
+            if let previousAudition { relinquishesDisplay([previousAudition.processIdentifier]) }
+            if let early = interruptedWhileStopping(notStarted: notStartedForStopping) {
+                return early
+            }
+            if isAuditioning {
+                return launchAudition(
+                    executable: executable, stamp: stamp, buildOutput: rebuilt.output,
+                    detectMs: detectMs, buildMs: buildMs, relaunchStarted: auditionStarted)
+            }
+        }
+
         let relaunchStarted = hooks.now()
         // **起こせなかった回に、前の世代を元の役へ戻すための控え。** 重ねる見張りは、起こす前に
         // 走っている世代を `outgoing` へ回す (下)。その乗り換えの待ち印もここで控える
@@ -1436,7 +1524,7 @@ final class WatchSession {
         prepareStartFailureNotes()
         // **絵を出したと覚えるのは、生きている世代のぶんだけ。** 番号は使い回されるので、居なくなった世代の
         // 覚えを残すと、同じ番号の新しい子を、もう絵を出したと読む (#3172)
-        let live = [child, outgoing].compactMap { $0?.processIdentifier }
+        let live = [child, outgoing, auditionChild].compactMap { $0?.processIdentifier }
         shownPIDs.formIntersection(live)
         stageSilentPIDs.formIntersection(live)
         launchedTool = executable.lastPathComponent
@@ -1448,6 +1536,10 @@ final class WatchSession {
             child = nil
             launchFailure = error
         }
+        noteLaunched(child, stamp: stamp)
+        // **試聴に入っていない通常の差し替えは、試聴の覚えを捨てる** (#3565)。子の番号は使い回されるので、
+        // 残すと、同じ番号を得た本番の子の目録を作品の窓が採らない
+        if !isAuditioning { auditionPIDs.removeAll() }
         // **書き口を塞がない形にしてから渡す。** 入力が来るのは窓が出た後なので、ここで
         // 立てておけば「読まない子へ書いて固まる」回は作れない (#1296)
         unblockWriting(to: child)
@@ -1486,6 +1578,305 @@ final class WatchSession {
             report, firstFrameSince: measuresFirstFrame && launchedNew ? relaunchStarted : nil)
     }
 
+    // MARK: - 試聴 (#3565)
+
+    /// 区画 `watch`。
+    var watchFacet: URL { WorkDirectory.facet(WorkDirectory.watchFacetName, under: facetBase) }
+
+    /// 区画 `watch` を用意して、要求に答え始める ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **前の見張りが残した要求と応答は引き継がない。** 置かれたままの要求は、いまの見張りに向けたものでは
+    /// ない — 引き継ぐと、起動した直後に試聴へ入る。同じ場所に見張りは 1 本しか居ない
+    /// (``WatchPlaceLock``) ので、残っているのは死んだ前任のものだけである。
+    func serveRequests() {
+        try? FileManager.default.removeItem(at: watchFacet)
+        guard
+            (try? FileManager.default.createDirectory(
+                at: watchFacet, withIntermediateDirectories: true)) != nil
+        else { return }
+        requests = RequestFile(facet: watchFacet, handover: .rereadsReport)
+    }
+
+    /// 要求に答えるのをやめ、区画を畳む。**見張りが終わるときに呼ぶ。**
+    func closeRequests() {
+        requests = nil
+        try? FileManager.default.removeItem(at: watchFacet)
+    }
+
+    /// 要求に答えた結果のうち、口の側 (``WatchCommand``) が名乗るもの。
+    struct Answered {
+        /// 端末へ出す行。
+        var lines: [String] = []
+        /// 試聴の子を止めたなら、その結果 (期限に掛かったことを名乗る)。
+        var stopped: StopOutcome?
+    }
+
+    /// 区画 `watch` に、まだ応えていない要求があれば答える ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **応えようとしたことは、待たずに記録する** (``RequestFile/markHandled(_:)``)。試聴を出る応答は子を止める
+    /// 待ちを挟むので、その間に次の巡回が同じ要求を拾い直さない。**応答は必ず書く** — `id` が読めれば、
+    /// 解けなかった要求にも断る理由を返す ([ADR-0018] 決定 3)。
+    ///
+    /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
+    ///
+    /// - Returns: 要求が無ければ `nil`。
+    func answerRequests() async -> Answered? {
+        guard let requests, let pending = requests.pending() else { return nil }
+        requests.markHandled(pending.id)
+        var answered = Answered()
+        let report: WatchReport
+        switch pending {
+        case .unreadable(let id, let reason):
+            report = refusal(id: id, action: nil, .unreadable, detail: reason)
+        case .request(let request):
+            switch request.known {
+            case .audition?: report = enterAudition(request, into: &answered)
+            case .leave?: report = await leaveAudition(request, into: &answered)
+            case nil: report = refusal(id: request.id, action: request.action, .unknownAction)
+            }
+        }
+        AtomicFile.publishJSON(report, to: requests.reportURL, "the watch reply")
+        return answered
+    }
+
+    /// 断った応答。**いまの役も載せる。**
+    private func refusal(
+        id: String, action: String?, _ reason: WatchReport.Reason, detail: String? = nil
+    ) -> WatchReport {
+        WatchReport(
+            id: id, action: action, accepted: false, reason: reason, detail: detail,
+            auditioning: isAuditioning, production: generation(of: production),
+            audition: generation(of: auditionChild))
+    }
+
+    private func acceptance(_ request: WatchRequest) -> WatchReport {
+        WatchReport(
+            id: request.id, action: request.action, accepted: true, reason: nil, detail: nil,
+            auditioning: isAuditioning, production: generation(of: production),
+            audition: generation(of: auditionChild))
+    }
+
+    /// 走っている本番の子。乗り換えを待つ間は、まだ前の世代 (``outgoing``) が作品の窓に映っている。
+    ///
+    /// **走っているほうを返す。** 前の世代が乗り換えを待つ間に自分で消えても、その後ろの子 (``child``) は
+    /// 走っている — `outgoing ?? child` と引くと、消えたほうを本番と読んで「本番が居ない」と言う。
+    private var production: Process? {
+        [outgoing, child].lazy.compactMap { $0 }.first { $0.isRunning }
+    }
+
+    /// 生きている子の名乗り。**居ない・死んでいる子は名乗らない。**
+    private func generation(of process: Process?) -> WatchReport.Generation? {
+        guard let process, process.isRunning else { return nil }
+        return WatchReport.Generation(
+            pid: process.processIdentifier, stamp: launchStamps[process.processIdentifier])
+    }
+
+    /// 起こした子の刻印を控える。生きている子のぶんだけ持つ (番号は使い回される)。
+    private func noteLaunched(_ process: Process?, stamp: String?) {
+        let live = Set([child, outgoing, auditionChild].compactMap { $0?.processIdentifier })
+        launchStamps = launchStamps.filter { live.contains($0.key) }
+        guard let process else { return }
+        launchStamps[process.processIdentifier] = stamp
+    }
+
+    /// 試聴に入る。
+    ///
+    /// **入っても、いま走っているものには何も触らない。** 以後の保存が、試聴の子を起こす。
+    private func enterAudition(_ request: WatchRequest, into answered: inout Answered) -> WatchReport {
+        // 窓を出せなかった見張りは、子が自分の窓を開く。プレビューが無いので、試聴の相手が居ない
+        guard overlapsGenerations else {
+            return refusal(id: request.id, action: request.action, .noPreview)
+        }
+        guard !isAuditioning else {
+            return refusal(id: request.id, action: request.action, .alreadyAuditioning)
+        }
+        // 試聴は、走っている本番を守るためのもの。守る相手が居なければ、普通に保存すれば足りる
+        guard let production else {
+            return refusal(id: request.id, action: request.action, .noProduction)
+        }
+        isAuditioning = true
+        previewFollowing = nil
+        hasNamedAuditionDeparture = false
+        // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品の窓が映す本番。乗り換えを待つ間は 2 つ) を失わない
+        holdsPreviewGeneration(
+            [outgoing, child].compactMap { $0 }.filter(\.isRunning).map(\.processIdentifier))
+        answered.lines = [Self.auditioningNotice]
+        return acceptance(request)
+    }
+
+    /// 試聴を出る。試聴の子を止め、プレビューを本番の絵へ戻す。
+    private func leaveAudition(
+        _ request: WatchRequest, into answered: inout Answered
+    ) async -> WatchReport {
+        guard isAuditioning else {
+            return refusal(id: request.id, action: request.action, .notAuditioning)
+        }
+        isAuditioning = false
+        previewFollowing = nil
+        // **先にプレビューを戻す。** 試聴の子を止める待ちの間に、止まる子の最後の絵を映し続けない。本番が
+        // 消えていれば戻り先が無く、プレビューは試聴の子の最後の絵のまま残る
+        var returned = false
+        if let production {
+            returned = returnsPreviewToGeneration(production.processIdentifier)
+        }
+        holdsPreviewGeneration([])
+        let leaving = auditionChild
+        answered.stopped = await retireAudition()
+        // 戻れなかったときは、プレビューが試聴の子の頼み (カーソルの捕まえ) を持ったままになる
+        if let leaving { relinquishesDisplay([leaving.processIdentifier]) }
+        answered.lines = [Self.leftNotice(returned: returned)]
+        return acceptance(request)
+    }
+
+    /// 試聴に入ったことを名乗る行。
+    static let auditioningNotice =
+        "Auditioning: saving now changes only the preview, and the work's window keeps running "
+        + "the version it has"
+
+    /// 試聴を出たことを名乗る行。
+    static func leftNotice(returned: Bool) -> String {
+        returned
+            ? "Left the audition — the preview shows the work's version again"
+            : "Left the audition — the preview could not go back to the work's version, so it keeps "
+                + "the last picture it had. Save to rebuild and show the sketch in both windows"
+    }
+
+    /// 作品の窓が、この目録を採るか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **試聴の子の目録は採らない。** 作品の窓が映すのは本番で、試聴中に試聴の版が宣言を変えても (大きさ・
+    /// 全画面の頼み)、作品の窓に当てない。番号を名乗らない子 (古いライブラリ) は世代を区別できないので採る —
+    /// その子の試聴は、両方の窓に出る。
+    func windowAccepts(pid: Int32?) -> Bool {
+        guard let pid else { return true }
+        return !auditionPIDs.contains(pid)
+    }
+
+    /// プレビューが、この目録を採るか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **試聴の子を起こした後は、その子の目録だけを採る。** 試聴中に本番が大きさを変えて目録を書き直しても、
+    /// プレビューには採らない。試聴の子を起こす前は、試聴の子の目録だけを採らない (出た後に遅れて来るぶん)。
+    func previewAccepts(pid: Int32?) -> Bool {
+        guard let pid else { return true }
+        if let following = previewFollowing { return pid == following }
+        return !auditionPIDs.contains(pid)
+    }
+
+    /// その番号は、試聴の子のものか。
+    func isAuditionGeneration(pid: Int32?) -> Bool {
+        guard let pid else { return false }
+        return auditionPIDs.contains(pid)
+    }
+
+    /// 試聴の子を止める。**何度呼んでもよい** (``retireOutgoing()`` と同じ)。
+    ///
+    /// 止め終えるまで ``auditionChild`` を残す。外すと、待っている間の入力の宛先が引けなくなる。
+    @discardableResult
+    func retireAudition() async -> StopOutcome? {
+        var outcome: StopOutcome?
+        if let leaving = auditionChild, !isBringingDown(leaving) {
+            stoppingAudition = leaving
+            outcome = await bringDown(leaving, timeout: stopTimeout)
+            if auditionChild === leaving { auditionChild = nil }
+            if stoppingAudition === leaving { stoppingAudition = nil }
+        }
+        await settle()
+        return outcome
+    }
+
+    /// 試聴の子を起こす。**本番の世代 (``child``・``outgoing``) には触れない。**
+    ///
+    /// 呼ぶ前に、前の試聴の子を止め終えている (試聴の子は重ねない)。記録は通常の回と同じ形で書くが、
+    /// 新しい絵が出るまでは測らない (作品の窓に出る絵ではない)。
+    private func launchAudition(
+        executable: URL, stamp: String?, buildOutput: String, detectMs: Double?, buildMs: Double,
+        relaunchStarted: Double
+    ) -> BuildReport {
+        // 乗り換えを待つ本番の倒れた知らせの目印は残す (``sweepFellBackMarkers(keeping:)`` が試聴の子のぶんも残す)
+        sweepFellBackMarkers(keeping: awaitingPromotion ? child?.processIdentifier : nil)
+        prepareStartFailureNotes()
+        let live = [child, outgoing].compactMap { $0?.processIdentifier }
+        shownPIDs.formIntersection(live)
+        stageSilentPIDs.formIntersection(live)
+        launchedTool = executable.lastPathComponent
+        var launchFailure: CommandFailure?
+        do throws(CommandFailure) {
+            auditionChild = try hooks.launch(
+                executable, directory, stamp, reportsRate ? configurationName : nil)
+        } catch {
+            auditionChild = nil
+            launchFailure = error
+        }
+        hasNamedAuditionDeparture = false
+        unblockWriting(to: auditionChild)
+        if let started = auditionChild {
+            auditionPIDs.insert(started.processIdentifier)
+            // **プレビューは、この子の目録だけを採る。** 起こせなかった回は据え置く (止めた前の子の最後の絵のまま)
+            previewFollowing = started.processIdentifier
+        }
+        noteLaunched(auditionChild, stamp: stamp)
+        expectsGeneration(generationPIDs(of: auditionChild))
+        let timings = BuildReport.Timings(
+            detectMs: detectMs, buildMs: buildMs, relaunchMs: (hooks.now() - relaunchStarted) * 1000)
+        let report: BuildReport =
+            if let launchFailure {
+                .notStarted(
+                    reason: launchFailure.message, buildOutput: buildOutput, stamp: stamp,
+                    configuration: configurationName, timings: timings)
+            } else {
+                .launched(
+                    output: buildOutput, stamp: stamp, configuration: configurationName,
+                    timings: timings)
+            }
+        return finish(report)
+    }
+
+    /// 試聴の子が、道具の知らないところで消えていたら 1 度だけ返す ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// ``departed()`` の試聴の側である。**本番は畳まない** — 試聴の版が落ちても、作品の窓は本番の版のまま回り続ける。
+    /// 試聴の子は外すだけで、プレビューは最後の絵のまま残る (面は子が消えても出せる)。最初の絵を出す前に
+    /// 失敗で終わった子は、起こせなかった回として記録を書き直す。前の版 (本番) は走り続けているので、
+    /// ``Departure/keptPrevious`` は本番が生きているかである。
+    func auditionDeparted() -> Departure? {
+        guard let gone = auditionChild, !gone.isRunning, !hasNamedAuditionDeparture,
+            gone !== stoppingAudition, !isBringingDown(gone)
+        else { return nil }
+        hasNamedAuditionDeparture = true
+        var departure: Departure
+        switch ChildEnding(of: gone) {
+        case .exited(let status): departure = Departure(status: status, wasSignalled: false)
+        case .signalled(let signal): departure = Departure(status: signal, wasSignalled: true)
+        }
+        let note = takeStartFailureNote(of: gone)
+        let failed =
+            departure.wasSignalled
+            ? !Self.endingSignals.contains(departure.status) : departure.status != 0
+        let drewFirstFrame = hasShownFirstFrame(gone)
+        try? FileManager.default.removeItem(
+            at: WorkDirectory.startingURL(forProcess: gone.processIdentifier, under: buildFacet))
+        auditionChild = nil
+        // 止まった絵のカーソルの頼み (捕まえる・隠す) を下ろす。最後の絵は残す
+        relinquishesDisplay([gone.processIdentifier])
+        guard note != nil || (!drewFirstFrame && failed) else { return departure }
+        departure.failedToStart = true
+        departure.keptPrevious = production != nil
+        departure.report = recordFailedStart(of: gone, departure, note: note)
+        return departure
+    }
+
+    /// 試聴の子が共有面を作れず自分の窓を開いたと知らされていたら、目印を読んで消し、`true` を返す。
+    ///
+    /// **何も畳まない** — 本番は作品の窓に映ったままである。プレビューは目録を採れないので、最後の絵のまま残る。
+    /// 目印は見たら消す (``retireAfterFallback()`` と同じ)。
+    func auditionFellBack() -> Bool {
+        guard let started = auditionChild, started.isRunning else { return false }
+        let marker = WorkDirectory.fellBackURL(
+            forProcess: started.processIdentifier, under: WatchCommand.viewportFacet(under: facetBase))
+        guard FileManager.default.fileExists(atPath: marker.path) else { return false }
+        try? FileManager.default.removeItem(at: marker)
+        stageSilentPIDs.insert(started.processIdentifier)
+        return true
+    }
+
     /// 前の子を止めている間に、作り直しを止める・見張りを終える頼みが来ていないかを見る。
     ///
     /// **止める待ちが main actor を塞がなくなったので、その間に終わりが来うる**
@@ -1516,6 +1907,9 @@ final class WatchSession {
     /// - Returns: 退役待ちを止めた結果。**名乗るのは口の側**である (``retireOutgoing()``)。
     @discardableResult
     func generationPromoted(pid: Int32? = nil) async -> StopOutcome? {
+        // **試聴の子の合図は、本番の入れ替わりではない** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+        // プレビューが試聴の子へ乗り換えても、待ちも前の世代も、記録の `firstFrameMs` も動かさない
+        if let pid, auditionPIDs.contains(pid) { return nil }
         // **合図が名乗った子が、待っている世代でなければ受けない** ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
         // 保存を続けた回、前の世代 (C) が 1 枚焼いて乗り換えた合図は、待っている次の世代 (D) のものでは
         // ない。待ちを下ろして C を畳むと、D が倒れても受け取れなくても、見張りはもう待っていないので
@@ -1661,10 +2055,15 @@ final class WatchSession {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: facet.path) else {
             return
         }
-        let kept = pid.map { WorkDirectory.fellBackURL(forProcess: $0, under: facet).lastPathComponent }
+        // **試聴の子の目印も残す** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。見る前に消すと、
+        // 倒れたことが名乗られない
+        let kept = Set(
+            [pid, auditionChild?.processIdentifier].compactMap { $0 }.map {
+                WorkDirectory.fellBackURL(forProcess: $0, under: facet).lastPathComponent
+            })
         let prefix = WorkDirectory.fellBackURL(forProcess: 0, under: facet).lastPathComponent
             .dropLast()  // `.fell-back.`
-        for name in names where name.hasPrefix(prefix) && name != kept {
+        for name in names where name.hasPrefix(prefix) && !kept.contains(name) {
             try? FileManager.default.removeItem(at: facet.appendingPathComponent(name))
         }
     }
@@ -1697,7 +2096,7 @@ final class WatchSession {
     /// 後に次の世代が起動中のとき、`outgoing` (死んでいる) だけを見ると、走っている世代があるのに
     /// 「何も動いていない」と言う。入力の宛先 (``send(_:)``) は「画面に出ている世代」を問うので別である。
     var keepsPreviousRunning: Bool {
-        !stopRequested && [outgoing, child].contains { $0?.isRunning == true }
+        !stopRequested && [outgoing, child, auditionChild].contains { $0?.isRunning == true }
     }
 
     /// 「通ったのに建っていない」ことを、記録の中で名乗る。
