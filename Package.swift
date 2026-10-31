@@ -106,12 +106,17 @@ let package = Package(
         .target(
             name: "MokumeGame", dependencies: ["MokumeCore"],
             swiftSettings: .mokume),
+        // 映像から取り出す (Vision。手の関節点から)。結果を最新の 1 つの入り口で受ける。MokumeCamera には依存しない —
+        // 受ける入力は Image と到着の記録で、カメラも動画も自作の絵も区別しない (ADR-0014 の改訂 (2026-10-23)・#3586)
+        .target(
+            name: "MokumeVision", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
             name: "mokume",
             dependencies: [
                 "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI",
-                "MokumeGame",
+                "MokumeGame", "MokumeVision",
             ],
             swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
@@ -173,6 +178,9 @@ let package = Package(
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeGameTests", dependencies: ["mokume", "MokumeGame", "MokumeDiagnostics", "MokumeTestSupport"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeVisionTests", dependencies: ["mokume", "MokumeVision"],
             swiftSettings: .mokume),
 
     ]
