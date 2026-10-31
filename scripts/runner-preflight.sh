@@ -39,6 +39,14 @@
 #     ユーザーで、その ppid=1 のプロセスは常に多数ある) を拾う
 #   ・**名前の許可表では外さない。** 許可表は黙って広がる。外すものが見つかったら、理由つきの表をここに足し、
 #     載るものを PR に列挙する (いまは 0 件)
+#   ・**OS が置く常駐は外す** (#3631)。外すのは、実行ファイルが次の置き場にあるものだけ。どれも SIP が守り、
+#     job は実行ファイルを置けないので、そこから起きたプロセスは前の job の残りではない。表の GUI セッションが
+#     runner のユーザーなので、ユーザーの launchd の子として ppid=1 に見え、写真の解析 (`mediaanalysisd`) の
+#     ように何日も CPU を使い続ける。`/usr/bin/`・`/bin/` は外さない — job も起こし、#2959 の `yes` はそこにある
+#
+#       /System/        OS の本体 (フレームワークの常駐・同梱のアプリ)
+#       /usr/libexec/   OS の補助の常駐 (trustd など)
+#       /usr/sbin/      OS の管理の常駐 (cfprefsd など)
 #   ・**何も殺さない。** 名乗って止めるだけで、止めるのは人 (scripts/orphan-processes.sh が出所を引く)
 #   ・閾値 (ORPHAN_CPU_MIN・ORPHAN_ELAPSED_MIN) は専用機の平常の ps を読んで確定する (#3095)
 #
@@ -107,6 +115,8 @@ if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); 
     $2 == 1 && $3 + 0 > cpu_min && seconds($4) > elapsed_min {
       name = $5
       for (i = 6; i <= NF; i++) name = name " " $i
+      # OS が置く常駐 (冒頭の表)。前置きは置き場の区切りの `/` まで見る
+      if (name ~ /^\/System\// || name ~ /^\/usr\/libexec\// || name ~ /^\/usr\/sbin\//) next
       sub(/.*\//, "", name)
       printf "%s (pid %s, %s%%, 経過 %s)\n", name, $1, $3, $4
     }')

@@ -103,6 +103,9 @@ class RunnerPreflightTest(unittest.TestCase):
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
         env["GITHUB_OUTPUT"] = str(self.output)
         env["GITHUB_STEP_SUMMARY"] = str(self.summary)
+        # 1 つの検査で何度も走らせる (subTest) とき、前の回の出力を読まない
+        self.output.unlink(missing_ok=True)
+        self.summary.unlink(missing_ok=True)
         # 本物の機械の gpu-slot の置き場 (HOME の下) の記録を読まない。置き場は検査ごとの一時ディレクトリ
         env["MOKUME_GPU_SLOT_DIR"] = str(self.slots)
         return subprocess.run(["/bin/bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
@@ -251,6 +254,39 @@ class RunnerPreflightTest(unittest.TestCase):
         r = self.run_preflight(FAKE_PS="  707     1  88.0 01-00:00:01 /usr/bin/day")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("day (pid 707, 88.0%, 経過 01-00:00:01)", self.reason())
+
+    # #3631 の形: 専用機の表の GUI セッション (runner のユーザー) の macOS の常駐が、ppid=1 で 68%・18 日
+    MEDIA_ANALYSIS = "  1904     1  68.0 18-09:23:07 /System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd"
+
+    def test_OS_が置く常駐は_ppid_1_で_CPU_を使い続けても当たらない(self):
+        # SIP が守る置き場の実行ファイルは job が置けないので、前の job の残りではない (#3631)
+        for comm in (
+            "/System/Library/PrivateFrameworks/MediaAnalysis.framework/Versions/A/mediaanalysisd",
+            "/usr/libexec/trustd",
+            "/usr/sbin/cfprefsd",
+        ):
+            with self.subTest(comm=comm):
+                r = self.run_preflight(FAKE_PS=f"  1904     1  68.0 18-09:23:07 {comm}")
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertNotIn("orphan-load", r.stdout)
+                self.assertIsNone(self.reason())
+
+    def test_OS_の常駐と並んでも_前の_job_の残りは当たる(self):
+        # 外すのは OS の置き場だけ。#3095 の `/usr/bin/yes` (/usr/bin は job も起こす) は変わらず赤で、
+        # 本数に常駐を数えない
+        r = self.run_preflight(FAKE_PS=self.MEDIA_ANALYSIS + "\n" + self.YES_TEN)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        reason = self.reason()
+        self.assertIn("orphan-load: 前の job が残した負荷が 10 本ある", reason)
+        self.assertNotIn("mediaanalysisd", reason)
+
+    def test_OS_の置き場に似た名前は外さない(self):
+        # 前置きは置き場の区切り (`/`) まで見る。`/Systemish/`・`/usr/libexecutor/` は OS の置き場ではない
+        for comm in ("/Systemish/busy", "/usr/libexecutor/busy", "/opt/homebrew/System/busy"):
+            with self.subTest(comm=comm):
+                r = self.run_preflight(FAKE_PS=f"  808     1  90.0 01:00:00 {comm}")
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("busy (pid 808, 90.0%, 経過 01:00:00)", self.reason())
 
     def test_CPU_が閾値以下なら経過時間が長くても当たらない(self):
         r = self.run_preflight(FAKE_PS="  606     1  50.0 03-00:00:00 /usr/bin/steady")
