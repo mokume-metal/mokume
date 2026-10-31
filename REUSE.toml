@@ -43,6 +43,9 @@ path = [
   "Package.resolved",
   "Schemas/examples/observe-request-time.json",
   "Schemas/examples/observe-report-time.json",
+  # 口ごとの詳細の形と代表例。添えファイル (.license) は使わない (上の方針) ので、ここで宣言する
+  "Schemas/api-details.schema.json",
+  "Schemas/examples/api-details.json",
   # 変異の固定の束 (scripts/mutate.py が読む)。JSON はコメントを持てない
   "Tests/mutation-bundle.json",
   # 参照スケッチが読むデータ (式で合成した値)。CSV はコメントを持てず、文字のファイルは
