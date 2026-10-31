@@ -6,13 +6,13 @@ import CoreMedia
 import Foundation
 import MokumeCore
 
-/// 動画ファイルの映像を、位置を指定して 1 枚ずつ読む。**AVFoundation で動画を読むのはこの型だけ
-/// である。**
+/// 動画ファイルの映像を、位置を指定して 1 枚ずつ読む。**AVFoundation で動画を読むのはこの型と、
+/// この型が持つ読み進めの核 (``MovieFrames``) だけである。**
 ///
 /// ## 読み進め、戻るときだけ読み直す
 ///
 /// `AVAssetReader` で表示順に読み進め、頼まれた位置に映っているコマ (表示時刻がその位置以下で
-/// 最も遅いコマ) を返す。後ろへ戻る (ループの継ぎ目・頭出し) か、``seekAhead`` より先へ飛ぶか、
+/// 最も遅いコマ) を返す。後ろへ戻る (ループの継ぎ目・頭出し) か、``MovieFrames/seekAhead`` より先へ飛ぶか、
 /// 次のコマと頼まれた位置の間に鍵のコマ (それだけで復号できるコマ) が十分先にある
 /// (``KeyFrameIndex``、[#2764]) ときだけ、その位置から読み直す。同じ並びで頼めば同じ道を通るので、
 /// 同じ位置には同じコマが返る — 固定の時計で書き出すと、何度書き出しても同じフレームに同じコマが
@@ -40,48 +40,21 @@ import MokumeCore
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 /// [#2764]: https://github.com/mokume-metal/mokume/issues/2764
 final class MovieReader {
-    /// 読めなかった理由。人が読む 1 文。
-    struct Failure: Error, Equatable {
-        let reason: String
-    }
 
-    /// 届いた 1 枚。
-    private struct Decoded {
-        /// 表示時刻 (秒)。トラックの始まりを 0 とする。
-        let time: Double
-        let buffer: CVPixelBuffer
-        /// 届いた順の番号。同じコマを 2 度渡さないための印。
-        let serial: Int
-    }
+    /// 読めなかった理由。人が読む 1 文。
+    typealias Failure = MovieFrames.Failure
 
     /// 鍵のコマの位置を引く口。
     enum KeyFrameLookup {
         /// トラックのサンプルの目録から引く (既定)。
         case track
-        /// 引かない。目録を引けない動画と同じく ``MovieReader/seekAhead`` で分ける (検査が、
+        /// 引かない。目録を引けない動画と同じく ``MovieFrames/seekAhead`` で分ける (検査が、
         /// 目録を引けない動画と変更前の振る舞いを再現するのに使う)。
         case unavailable
     }
 
-    /// これより先へ飛ぶときは、読み進めずに読み直す (秒)。
-    ///
-    /// 読み進めると、飛んだ間のコマを全部復号して変換する。読み直すと、その位置の手前の鍵のコマから
-    /// 復号し直すが、飛び先より前のコマは変換しない。普通の動画の鍵のコマの間隔 (1〜2 秒) と同じ桁に
-    /// 置く。**鍵のコマの位置を引けても縮めない** — 間に鍵のコマが無くても、遠い先は読み直すほうが
-    /// 速い ([#2764] の実測: 4K で 75 コマ先へ読み進めると 257 ms、読み直すと 141 ms)。
-    static let seekAhead = 1.0
-
-    /// ``seekAhead`` より近い先へ鍵のコマを跨いで読み直すのは、飛び先の手前の鍵のコマが次のコマより
-    /// これ以上先にあるときだけ (秒)。
-    ///
-    /// 読み直しは開く費用を払う (4K で 13〜17 ms)。すぐ先の鍵のコマのために読み直すと、読み進める
-    /// より遅い。全部が鍵のコマの動画 (ProRes など) を 1 コマ飛ばしで流すと、毎フレーム読み直しにも
-    /// なる。
-    static let restartMargin = 0.2
-
-    /// 読めなくなった後、読み直しを試すまでに先へ進む長さ (秒)。``Movie`` の説明文の「1 秒より先へ
-    /// 進むと読み直し」がこれである。
-    static let retryDistance = 1.0
+    /// 読めなくなった後、読み直しを試すまでに先へ進む長さ (秒)。``MovieFrames/retryDistance`` と同じ。
+    static let retryDistance = MovieFrames.retryDistance
 
     /// 失敗の説明に載せる名前 (利用者が渡した綴り)。
     let path: String
@@ -92,29 +65,15 @@ final class MovieReader {
     /// 動画が記録している向き。``picture(at:)`` が返す 1 枚ごとに当てる。
     let orientation: VideoOrientation
     /// 長さ (秒)。
-    let duration: Double
+    var duration: Double { frames.duration }
 
-    private let asset: AVURLAsset
-    private let track: AVAssetTrack
-    /// トラックの始まり (アセットの時間軸の上)。
-    private let start: CMTime
+    /// 読み進めの核。
+    private let frames: MovieFrames
     private let converter: FrameConverter
-
-    private var reader: AVAssetReader?
-    private var output: AVAssetReaderTrackOutput?
-    /// いま映しているコマ。
-    private var current: Decoded?
-    /// 次のコマ (読み終えていれば `nil`)。
-    private var upcoming: Decoded?
-    private var serial = 0
     /// 最後に渡したコマの番号。
     private var handed: Int?
-    /// 読めなくなった後、読み直しを試してよい位置 (秒)。
-    private var retryAfter = 0.0
-    /// 鍵のコマの位置。引けない動画では `nil`。
-    private let keyFrames: KeyFrameIndex?
     /// 読み直した回数 (作るときに開いた分は数えない)。**検査が読む。**
-    private(set) var restarts = 0
+    var restarts: Int { frames.restarts }
     /// 読めなくなって止まっていて、読み直しを試す位置にまだ届いていないか。
     ///
     /// **``picture(at:)`` の `nil` は「前と同じコマ」でも返る**ので、`nil` からは「読めているが新しい
@@ -123,7 +82,7 @@ final class MovieReader {
     ///
     /// 変換できないコマは、これではなく「渡し済み」の印で表す。渡せていないコマは次のフレームも
     /// 変換を試して投げる (``picture(at:)``)。
-    private(set) var isWaitingToRetry = false
+    var isWaitingToRetry: Bool { frames.isWaitingToRetry }
 
     /// 開いて、最初のコマまで読む。
     ///
@@ -148,25 +107,19 @@ final class MovieReader {
         guard duration.isFinite, duration > 0 else { throw .unreadable(path: path) }
 
         // 最初のコマまで読む。読めなければ作れない (大きさも最初のコマで決まる)
-        let opened: (reader: AVAssetReader, output: AVAssetReaderTrackOutput)
-        let first: (time: CMTime, buffer: CVPixelBuffer)
-        do {
-            guard let made = try Self.open(asset: asset, track: track, from: range.start),
-                let sample = try Self.next(from: made.output, reader: made.reader)
-            else { throw Failure(reason: "no frame") }
-            opened = made
-            first = sample
-        } catch {
-            throw .unreadable(path: path)
-        }
-        self.asset = asset
-        self.track = track
-        self.start = range.start
-        self.duration = duration
-        keyFrames =
+        let keyFrames =
             lookup == .track
             ? KeyFrameIndex(track: track, start: range.start, canProvideSampleCursors: canProvideSampleCursors)
             : nil
+        let frames: MovieFrames
+        do {
+            frames = try MovieFrames(
+                asset: asset, track: track, start: range.start, duration: duration, keyFrames: keyFrames)
+        } catch {
+            throw .unreadable(path: path)
+        }
+        guard let first = frames.current else { throw .unreadable(path: path) }
+        self.frames = frames
         let recordedWidth = CVPixelBufferGetWidth(first.buffer)
         let recordedHeight = CVPixelBufferGetHeight(first.buffer)
         // 縦に撮った動画は、横長の絵に回転の印が付いている。変換は記録された大きさで済ませ、向きは
@@ -175,16 +128,6 @@ final class MovieReader {
         (width, height) = orientation.size(width: recordedWidth, height: recordedHeight)
         // 動画は透過を持ちうるので、不透明度を乗算していないまま運ぶ (#2881)
         converter = FrameConverter(width: recordedWidth, height: recordedHeight, alpha: .straight)
-        reader = opened.reader
-        output = opened.output
-        serial = 1
-        current = Decoded(
-            time: CMTimeSubtract(first.time, range.start).seconds, buffer: first.buffer, serial: serial)
-        do {
-            upcoming = try readNext()
-        } catch {
-            throw .unreadable(path: path)
-        }
     }
 
     /// `position` 秒に映っているコマ。**前に渡したコマと同じなら `nil`。**
@@ -192,32 +135,9 @@ final class MovieReader {
     /// 範囲の外は端のコマを返す。読めなくなったら投げ、最後に読めたコマを持ったまま止まる。
     /// 止まった後は、頼まれた位置が手前へ戻るか ``retryDistance`` より先へ進んだときに読み直す。
     func picture(at position: Double) throws(Failure) -> DisplayImage? {
-        let target = position + Playhead.tolerance
-        do {
-            if reader == nil {
-                // 読めなくなった後。手前へ戻るか、十分先へ進むまでは試さない (``isWaitingToRetry`` は
-                // 投げたときに立てたまま。ここでは下ろさない)
-                if let current, target >= current.time, target < retryAfter { return nil }
-                try restart(at: position)
-            } else if needsRestart(to: target) {
-                try restart(at: position)
-            }
-            while let next = upcoming, next.time <= target {
-                current = next
-                upcoming = try readNext()
-            }
-        } catch {
-            reader?.cancelReading()
-            reader = nil
-            output = nil
-            upcoming = nil
-            retryAfter = target + Self.retryDistance
-            isWaitingToRetry = true
-            throw error
-        }
-        // 投げずにここへ来たのは、読めている (読み直して読めた) とき
-        isWaitingToRetry = false
-        guard let current, current.serial != handed else { return nil }
+        // 読めなくなった後で、まだ試さなかった
+        guard try frames.advance(to: position) else { return nil }
+        guard let current = frames.current, current.serial != handed else { return nil }
         let image: DisplayImage
         do {
             image = try convert(current.buffer)
@@ -241,107 +161,7 @@ final class MovieReader {
 
     /// 読むのをやめる。
     func close() {
-        reader?.cancelReading()
-        reader = nil
-        output = nil
-        upcoming = nil
-        // **読み直しを試してよい位置も戻す** (#3122)。読めなくなって止まっていた動画を外して足し直すと、
-        // 戻さない限り「まだ試さない」が続き、読めていないのに ``Movie`` が running と名乗る。
-        // 足し直した最初のフレームで読み直し、読めなければ改めて disconnected になる
-        retryAfter = 0
-        isWaitingToRetry = false
-    }
-
-    // MARK: - 読む
-
-    /// `target` 秒のコマを、読み進めずに読み直して得るか。
-    private func needsRestart(to target: Double) -> Bool {
-        guard let current else { return true }
-        // 後ろへ戻る
-        if target < current.time { return true }
-        // 終わりまで読み終えていれば (`upcoming` が無い)、先はどこも終わりのコマなので読み直さない
-        guard let upcoming else { return false }
-        // 遠い先は、間に鍵のコマが無くても読み直すほうが速い
-        if target > current.time + Self.seekAhead { return true }
-        // 余裕より近い先は、間に鍵のコマがあってもすぐ先なので読み進める (目録を引くまでもない)
-        guard target >= upcoming.time + Self.restartMargin else { return false }
-        return keyFrames?.answer(after: upcoming.time, upTo: target, margin: Self.restartMargin) == .restart
-    }
-
-    /// `position` 秒から読み直す。届いた最初のコマがその位置に映っているコマになる。
-    private func restart(at position: Double) throws(Failure) {
-        restarts += 1
-        reader?.cancelReading()
-        reader = nil
-        output = nil
-        upcoming = nil
-        // 終わりちょうどから読むと 1 枚も届かない。終わりのコマを映すため、終わりの 1 µs 手前から読む
-        let end = CMTimeAdd(start, CMTime(seconds: duration, preferredTimescale: Self.timescale))
-        var from = CMTimeAdd(start, CMTime(seconds: max(0, position), preferredTimescale: Self.timescale))
-        if CMTimeCompare(from, end) >= 0 {
-            from = CMTimeSubtract(end, CMTime(value: 1, timescale: Self.timescale))
-        }
-        guard let opened = try Self.open(asset: asset, track: track, from: from) else {
-            throw Failure(reason: "the reader could not start")
-        }
-        (reader, output) = opened
-        // 読めなければ、いま映しているコマは残す
-        guard let first = try readNext() else { throw Failure(reason: "no frame at \(position) s") }
-        current = first
-        upcoming = try readNext()
-    }
-
-    /// 次の 1 枚。読み終えていれば `nil`。
-    private func readNext() throws(Failure) -> Decoded? {
-        guard let output, let sample = try Self.next(from: output, reader: reader) else { return nil }
-        serial += 1
-        return Decoded(time: CMTimeSubtract(sample.time, start).seconds, buffer: sample.buffer, serial: serial)
-    }
-
-    /// 位置を表す刻み (1 µs)。
-    private static let timescale: CMTimeScale = 1_000_000
-
-    /// `from` から読む読み手を開く。開けなければ `nil`。
-    private static func open(
-        asset: AVURLAsset, track: AVAssetTrack, from: CMTime
-    ) throws(Failure) -> (reader: AVAssetReader, output: AVAssetReaderTrackOutput)? {
-        let reader: AVAssetReader
-        do {
-            reader = try AVAssetReader(asset: asset)
-        } catch {
-            throw Failure(reason: error.localizedDescription)
-        }
-        // **画素の形式は 32BGRA を頼む** — YpCbCr から RGB へは AVFoundation に変換させる
-        // (``FrameConverter`` は BGRA だけを受ける。カメラと同じ理由)
-        let output = AVAssetReaderTrackOutput(
-            track: track,
-            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        // 書き換えないので写さない
-        output.alwaysCopiesSampleData = false
-        reader.timeRange = CMTimeRange(start: from, duration: .positiveInfinity)
-        guard reader.canAdd(output) else { return nil }
-        reader.add(output)
-        guard reader.startReading() else {
-            throw Failure(reason: reader.error?.localizedDescription ?? "the reader could not start")
-        }
-        return (reader, output)
-    }
-
-    /// 読み手から次の 1 枚 (表示時刻と画素)。読み終えていれば `nil`、読めなくなったら投げる。
-    private static func next(
-        from output: AVAssetReaderTrackOutput, reader: AVAssetReader?
-    ) throws(Failure) -> (time: CMTime, buffer: CVPixelBuffer)? {
-        while true {
-            guard let sample = output.copyNextSampleBuffer() else {
-                if let reader, reader.status == .failed {
-                    throw Failure(reason: reader.error?.localizedDescription ?? "the reader failed")
-                }
-                return nil
-            }
-            // 画素を持たない標本 (区切りの印など) は飛ばす
-            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
-            return (CMSampleBufferGetPresentationTimeStamp(sample), buffer)
-        }
+        frames.close()
     }
 
     // MARK: - 開く
