@@ -64,12 +64,13 @@ import SwiftUI
 ///
 /// ## SwiftUI と名前が衝突するとき
 ///
-/// SwiftUI と mokume は、`Image`・`Font` という同じ名前の型を公開している。**同じファイルで両方を丸ごと
+/// SwiftUI と mokume は、`Image`・`Font`・`Scene` という同じ名前の型を公開している。**同じファイルで両方を丸ごと
 /// `import` すると、この名前はどちらを指すか決まらず、コンパイルが通らない** (`'Image' is ambiguous for type
-/// lookup`)。避け方は 2 つ。
+/// lookup`)。`Scene` は SwiftUI の `App` の入口 (`var body: some Scene`) で必ず出会う — そこは `some SwiftUI.Scene`
+/// と書き、mokume の場面 (``Scene``) は `mokume.Scene` と書く。避け方は 2 つ。
 ///
-/// - **使うところで、モジュール名つきで書く。** mokume の型は `mokume.Image`・`mokume.Font`、SwiftUI の型は
-///   `SwiftUI.Image`・`SwiftUI.Font`。名前つきで書けば、どちらを指すかが決まる
+/// - **使うところで、モジュール名つきで書く。** mokume の型は `mokume.Image`・`mokume.Font`・`mokume.Scene`、SwiftUI の型は
+///   `SwiftUI.Image`・`SwiftUI.Font`・`SwiftUI.Scene`。名前つきで書けば、どちらを指すかが決まる
 /// - 上の例のように、使う型だけを個別に `import` する (`import struct SwiftUI.VStack`)。丸ごと
 ///   `import SwiftUI` しなければ、衝突する名前は入ってこない
 ///
