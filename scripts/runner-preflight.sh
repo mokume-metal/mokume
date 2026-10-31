@@ -154,7 +154,7 @@ in_job_place() {
 
 # 作業ディレクトリ。引けない (消えた・権限が無い) のは想定の範囲なので空を返す
 cwd_of() {
-  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n '1p' || true
 }
 
 if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); then
