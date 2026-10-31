@@ -44,7 +44,7 @@ package final class OutsideRun {
         /// 値を作って返す口のうち、投げない口。代わりに `value` (人が読む綴り: `an empty shape` など) を返した。
         /// ``SketchPart/createShape(_:)`` と、音・通信・シリアル・ゲームパッド・MIDI の投げない作る口 (合成音の `createSinOsc()` など・
         /// `createAudioIn(device:)`・記録を流す `messages:` の 4 口と `createSerial(lines:)`・`gamepads()`・
-        /// `createGamepad(inputs:)`・`createMIDI(_:)`・`createMIDI(messages:)`。``SketchPart/attach(_:calledAs:returning:)``) が使う。
+        /// `createGamepad(inputs:)`・`createMIDI(_:)`・`createMIDI(messages:)`・`createHandPose(results:)`。``SketchPart/attach(_:calledAs:returning:)``) が使う。
         case make(returning: String)
         /// 資源を作る口 (``SketchPart/loadImage(_:)`` など)。`notRunning(call:)` を投げた。
         ///
