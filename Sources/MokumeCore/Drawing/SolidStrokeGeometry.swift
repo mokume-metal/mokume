@@ -7,7 +7,7 @@ import simd
 /// GPU で帯と角へ広げる骨。形の数ではなく稜線の数だけを持つ (#1738)。
 /// 列が所有するので、控えから外れても投入が読み終わるまで生きる。
 @MainActor final class SolidStrokeGeometry {
-    /// 片 1 つ。頂点関数 (`solidStrokeVertexMain`) が 6 頂点 (2 枚の三角形) に広げる。
+    /// 片 1 つ。頂点関数 (`solidStrokeVertexMain`) が 4 頂点に広げ、添字 6 つで 2 枚の三角形に並べる。
     ///
     /// - 帯 (`a.w` = 0): `a`・`b` が両端
     /// - 点の半分 (`a.w` = 2): `a` が点。`b.x` は点の記録の位置、`b.y` は 2 枚のどちらか (0 と 1)、
@@ -42,8 +42,12 @@ import simd
         var c: SIMD4<Float> = .zero
     }
 
+    /// 片と点の記録に続けて、添字を持つ置き場 (添字は `indexByteOffset` から)。
     let buffer: any MTLBuffer
+    /// 描く添字の数 (片 1 つにつき 6)。**頂点の数ではない** — 頂点は片 1 つにつき 4 で、添字で 2 枚の三角形に並べる。
     let count: Int
+    /// 添字 (`UInt32`) の置き場 ``buffer`` の中の位置 (バイト)。
+    let indexByteOffset: Int
     /// 端の円板の片 (`a.w` = 3) を持つか。持つのは、画面で 1 本になりうる点を持つ網だけである。
     let placesRoundEnds: Bool
     private let gpu: RenderDevice
@@ -89,7 +93,9 @@ import simd
         }
         // 骨の置き場の大きさ。配列を作る前に、上限を超えるなら戻る
         let wordCount = cursor - pieceCount * 3
-        let totalBytes = pieceCount * MemoryLayout<Piece>.stride + wordCount * MemoryLayout<SIMD4<Float>>.stride
+        let pieceBytes = pieceCount * MemoryLayout<Piece>.stride
+        let wordBytes = wordCount * MemoryLayout<SIMD4<Float>>.stride
+        let totalBytes = pieceBytes + wordBytes + pieceCount * Self.indicesPerPiece * MemoryLayout<UInt32>.stride
         if let byteLimit, totalBytes > byteLimit { return nil }
         var pieces: [Piece] = []
         pieces.reserveCapacity(pieceCount)
@@ -127,18 +133,35 @@ import simd
             }
         }
         self.gpu = gpu
-        count = pieces.count * 6
+        assert(pieces.count == pieceCount)
+        count = pieceCount * Self.indicesPerPiece
         placesRoundEnds = !discs.isEmpty
-        let pieceBytes = pieces.count * MemoryLayout<Piece>.stride
-        buffer = try gpu.makeReadableBuffer(
-            byteCount: pieceBytes + words.count * MemoryLayout<SIMD4<Float>>.stride)
+        indexByteOffset = pieceBytes + wordBytes
+        buffer = try gpu.makeReadableBuffer(byteCount: totalBytes)
         pieces.withUnsafeBytes { bytes in
             buffer.contents().copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
         }
         words.withUnsafeBytes { bytes in
             (buffer.contents() + pieceBytes).copyMemory(from: bytes.baseAddress!, byteCount: bytes.count)
         }
+        // 片 p の頂点は 4p…4p+3。2 枚の三角形は (0 1 2)・(0 2 3)
+        let indices = (buffer.contents() + indexByteOffset).bindMemory(
+            to: UInt32.self, capacity: count)
+        for piece in 0..<pieceCount {
+            let first = UInt32(piece * Self.verticesPerPiece)
+            let at = piece * Self.indicesPerPiece
+            indices[at] = first
+            indices[at + 1] = first + 1
+            indices[at + 2] = first + 2
+            indices[at + 3] = first
+            indices[at + 4] = first + 2
+            indices[at + 5] = first + 3
+        }
     }
+
+    /// 片 1 つの頂点の数と、並べる添字の数 (頂点関数 `solidStrokeVertexMain` の `index / 4`・`index % 4`)。
+    static let verticesPerPiece = 4
+    static let indicesPerPiece = 6
 
     /// 同じ直線の鎖の辺で隣とつながる点 (対の辺の先の点か、自分が対を持つ点)。
     private static func chainAdjacentPoints(

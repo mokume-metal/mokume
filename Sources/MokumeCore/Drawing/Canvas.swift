@@ -5506,7 +5506,8 @@ public final class Canvas {
                 encodeSolidDraw(
                     run, instances: 0..<batch.instanceCount,
                     indices: batch.ownedIndices?.buffer ?? geometry.solidIndices,
-                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0, on: encoder)
+                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
+                    strokeGeometry: batch.strokeGeometry, on: encoder)
                 draws += 1
             }
         }
@@ -5642,11 +5643,26 @@ public final class Canvas {
     ///
     /// `indexBase` は添字の置き場の中で区画が始まる位置で、途中の描き切りから持ち越した落とす列
     /// (``frameCasters``) だけが 0 でない値を渡す。
+    ///
+    /// `strokeGeometry` は GPU で広げる線の骨 (``Batch/strokeGeometry``)。**骨は自分の置き場の添字で描く** —
+    /// 片 1 つは 4 頂点で、添字 6 つが 2 枚の三角形に並べる (``SolidStrokeGeometry/count``)。非添字で
+    /// 6 頂点ずつ流すと同じ角を 2 度求める (#3246)。区間 (`section`・`run.start`) は添字の数え方である。
     private func encodeSolidDraw(
         _ run: Shape.Run, section: Range<Int>? = nil, instances: Range<Int>, indices: any MTLBuffer,
-        indexBase: Int = 0,
+        indexBase: Int = 0, strokeGeometry: SolidStrokeGeometry? = nil,
         on encoder: any MTL4RenderCommandEncoder
     ) {
+        if let strokeGeometry {
+            let range = section ?? run.start..<(run.start + run.count)
+            let stride = MemoryLayout<UInt32>.stride
+            encoder.drawIndexedPrimitives(
+                primitiveType: .triangle, indexCount: range.count, indexType: .uint32,
+                indexBuffer: strokeGeometry.buffer.gpuAddress
+                    + UInt64(strokeGeometry.indexByteOffset + range.lowerBound * stride),
+                indexBufferLength: range.count * stride,
+                instanceCount: instances.count, baseVertex: 0, baseInstance: instances.lowerBound)
+            return
+        }
         guard run.isIndexed else {
             let range = section ?? run.start..<(run.start + run.count)
             encoder.drawPrimitives(
@@ -6403,7 +6419,7 @@ public final class Canvas {
             // 影は奥行きだけを焼くので、裏 → 表に分けない (`Batch.backFaceParts`)
             encodeSolidDraw(
                 batch.run, instances: 0..<batch.instanceCount, indices: source.indices,
-                indexBase: source.indexBase, on: encoder)
+                indexBase: source.indexBase, strokeGeometry: batch.strokeGeometry, on: encoder)
         }
     }
 
