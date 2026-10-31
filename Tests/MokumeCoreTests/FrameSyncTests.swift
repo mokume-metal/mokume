@@ -891,9 +891,18 @@ struct FrameSyncTests {
     /// 積まれた差し出しも読む前に終わってしまう — 名指しの待ちを外しても緑のままだった。
     /// 8 本あれば開く口が待つのは 4 フレーム前なので、控えの投入は名乗る時点で本当に終わって
     /// いない。
-    @Test("読み手が掴む共有面の中身は、その面が名乗る枚数の絵である")
-    func theNewestSharedSurfaceHoldsTheFrameItNames() throws {
+    ///
+    /// **投入回数を観測回数の代わりにしない** (#3614)。焼きの結末は完了の合図より遅れて
+    /// 届くので、書き込みだけを続けると、名乗りが見送られ続けて 1 枚も読めないことがある。
+    /// 各面が名乗るまで期限付きで公開を試し、その面の画素を必ず照合する。結末を意図的に
+    /// 遅らせた側でも同じ照合を通す。
+    @Test("読み手が掴む共有面の中身は、その面が名乗る枚数の絵である", arguments: [false, true])
+    func theNewestSharedSurfaceHoldsTheFrameItNames(holdBurnOutcomes: Bool) throws {
         let bench = try makeBench(slotCount: 8)
+        defer {
+            bench.gpu.releaseHeldOutcomesForTesting()
+            bench.leaveIdle()
+        }
         let canvas = bench.canvas
         let (shared, presenter) = try makeSharedSurface(for: bench)
 
@@ -903,10 +912,33 @@ struct FrameSyncTests {
                 bench.keepGPUBusy()
                 canvas.background(LinearRGBA.linear(red: sharedLevel(atFrame: frame), green: 0, blue: 0))
             }
+            bench.gpu.holdsNextOutcomeForTesting = holdBurnOutcomes
             try shared.write(canvas.output, using: presenter, numbers: sharedNumbers(frame: frame))
             if frame == 1 { try #require(!bench.gpu.isIdle, "回転が短い — この検査は何も見ていない") }
 
-            guard let newest = SharedFrameSurface.newest(among: shared.ids) else { continue }
+            if holdBurnOutcomes {
+                try shared.publishPending()
+                #expect(
+                    SharedFrameSurface.newest(among: shared.ids)?.frame != frame,
+                    "結末の届いていない面を名乗った")
+                bench.gpu.releaseHeldOutcomesForTesting()
+            }
+
+            // 焼いた投入より後にも仕事を残す。公開を待つために全 GPU 完了を待つ形にはしない。
+            try canvas.draw { bench.keepGPUBusy() }
+            let deadline = ContinuousClock.now + .seconds(RenderDevice.waitLimitSeconds)
+            while SharedFrameSurface.newest(among: shared.ids)?.frame != frame,
+                ContinuousClock.now < deadline
+            {
+                try shared.publishPending()
+                if SharedFrameSurface.newest(among: shared.ids)?.frame != frame {
+                    Thread.sleep(forTimeInterval: 0.001)
+                }
+            }
+            let newest = try #require(
+                SharedFrameSurface.newest(among: shared.ids),
+                "\(frame) 枚目の公開を待っても、面が 1 枚も名乗らなかった")
+            try #require(newest.frame == frame, "\(frame) 枚目の公開が期限までに届かなかった")
             let pixel = try #require(SharedSurfaceReader.pixel(id: newest.id, x: 16, y: 16))
             // **名指しで待たずに名乗れば、ここに同じ面の 1 周前の色が出る**
             #expect(
