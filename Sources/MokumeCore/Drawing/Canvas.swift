@@ -2278,6 +2278,8 @@ public final class Canvas {
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
 
         /// 添字を溜め場ではなく自分の置き場から読む列なら、その置き場 (#2791)。モデルの塗りは添字を持たない。
+        /// **GPU で広げる線の骨の列は含まない** — 骨は `run` に添字を持たず (`isIndexed` は偽)、自分の置き場の
+        /// 添字 (`SolidStrokeGeometry.indexByteOffset`) で描く (`Canvas.encodeSolidDraw`)。
         var ownedIndices: SolidFillGeometry? { run.isIndexed ? fillGeometry : nil }
 
         /// 頂点を溜め場から読む列か。**詰め直すとき (`Canvas.compact(_:)`) に頂点を区画へ写して、
@@ -5596,7 +5598,7 @@ public final class Canvas {
             encoder.setCullMode(culled)
             encodeSolidDraw(
                 run, section: range, instances: instances, indices: indices, indexBase: indexBase,
-                on: encoder)
+                strokeGeometry: batch.strokeGeometry, on: encoder)
             draws += 1
         }
         let runs = SolidSweep.runs(
@@ -5630,7 +5632,9 @@ public final class Canvas {
         return draws
     }
 
-    /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。
+    /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。**例外が 1 つある — GPU で
+    /// 広げる線の骨の列** (`strokeGeometry`) は `run.indexCount` が 0 のまま (`isIndexed` は偽) で、骨の置き場の
+    /// 添字で描く。
     ///
     /// 画面と影の焼き付けで**同じ判定を通す**。片方だけ非添字のまま残すと、影だけが
     /// 別の形 (頂点を 3 つずつ束ねた並び) で焼かれる — 絵は出るので、影が崩れるまで
@@ -5645,11 +5649,14 @@ public final class Canvas {
     /// (``frameCasters``) だけが 0 でない値を渡す。
     ///
     /// `strokeGeometry` は GPU で広げる線の骨 (``Batch/strokeGeometry``)。**骨は自分の置き場の添字で描く** —
-    /// 片 1 つは 4 頂点で、添字 6 つが 2 枚の三角形に並べる (``SolidStrokeGeometry/count``)。非添字で
-    /// 6 頂点ずつ流すと同じ角を 2 度求める (#3246)。区間 (`section`・`run.start`) は添字の数え方である。
+    /// 片 1 つは 4 頂点で、添字 6 つが 2 枚の三角形に並べる (``SolidStrokeGeometry/count``)。この列の
+    /// `run.start`・`run.count` は頂点ではなく**骨の添字の位置と数**で、`section` も添字の数え方である
+    /// (`indices`・`indexBase` は読まない)。**呼ぶ口はすべて、列の `strokeGeometry` をそのまま渡す (既定値を
+    /// 持たない)。** 渡し忘れて非添字で描くと、頂点関数は頂点番号を `index / 4`・`index % 4` で読むので別の片・
+    /// 別の角を描く — 絵は出るので、崩れるまで誰も気づけない。線の列でなければ `nil` を渡す。
     private func encodeSolidDraw(
         _ run: Shape.Run, section: Range<Int>? = nil, instances: Range<Int>, indices: any MTLBuffer,
-        indexBase: Int = 0, strokeGeometry: SolidStrokeGeometry? = nil,
+        indexBase: Int = 0, strokeGeometry: SolidStrokeGeometry?,
         on encoder: any MTL4RenderCommandEncoder
     ) {
         if let strokeGeometry {
