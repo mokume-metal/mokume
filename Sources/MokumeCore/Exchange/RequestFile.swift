@@ -5,7 +5,7 @@ import Foundation
 import MokumeDiagnostics
 
 /// 外から置かれる要求が持つもの。
-nonisolated protocol ExchangeRequest: Decodable {
+package nonisolated protocol ExchangeRequest: Decodable {
     /// この要求の識別子。応答はこれを echo する。
     var id: String { get }
 }
@@ -26,7 +26,7 @@ nonisolated protocol ExchangeRequest: Decodable {
 /// [#2550]: https://github.com/mokume-metal/mokume/issues/2550
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
-nonisolated enum PendingRequest<Request: ExchangeRequest> {
+package nonisolated enum PendingRequest<Request: ExchangeRequest> {
     /// 解けた要求。
     case request(Request)
     /// `id` は読めたが、要求の形として解けなかった。`reason` は解けなかった理由の 1 行
@@ -34,7 +34,7 @@ nonisolated enum PendingRequest<Request: ExchangeRequest> {
     case unreadable(id: String, reason: String)
 
     /// 応答が echo する識別子。
-    var id: String {
+    package var id: String {
         switch self {
         case .request(let request): request.id
         case .unreadable(let id, _): id
@@ -114,18 +114,18 @@ extension PendingRequest: Equatable where Request: Equatable {}
 ///
 /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
 @MainActor
-final class RequestFile<Request: ExchangeRequest> {
+package final class RequestFile<Request: ExchangeRequest> {
     /// 引き継いだ時点で、前の世代の応答を読み直すか (「引き継いだ時点で、応答を読み直すか」)。
-    enum Handover {
+    package enum Handover {
         /// 読み直す。状態を戻さない区画 (観測・入力) が選ぶ。
         case rereadsReport
         /// 読み直さず、作った時点の応答だけを記録とする。状態を戻す区画 (つまみ) が選ぶ。
         case keepsCreationRecord
     }
 
-    let url: URL
+    package let url: URL
     /// 応答の置き場。区画の持ち主が書き、ここは作った時点と引き継いだ時点にだけ読む。
-    let reportURL: URL
+    package let reportURL: URL
     /// もう見たことにした要求の最終更新時刻。
     private var lastModification: FileStamp?
     /// 拾って返したが、まだ応えていない要求の最終更新時刻。
@@ -148,7 +148,7 @@ final class RequestFile<Request: ExchangeRequest> {
     /// 持つ識別子を「応えた」とみなすので、戻した状態がそれを含んでいる必要がある。
     ///
     /// 権利もここで取りに行く。取れなければ、以後 ``pending()`` のたびに取りに行く。
-    init(facet: URL, handover: Handover) {
+    package init(facet: URL, handover: Handover) {
         self.url = WorkDirectory.requestURL(under: facet)
         self.reportURL = WorkDirectory.reportURL(under: facet)
         self.handover = handover
@@ -169,7 +169,7 @@ final class RequestFile<Request: ExchangeRequest> {
     }
 
     /// まだ応えていない要求があれば返す。**`id` だけ読めた要求も返す** (``PendingRequest``)。
-    func pending() -> PendingRequest<Request>? {
+    package func pending() -> PendingRequest<Request>? {
         pollCount += 1
         guard takeOverIfFree() else { return nil }
         guard let modified = modificationDate() else { return nil }
@@ -210,7 +210,7 @@ final class RequestFile<Request: ExchangeRequest> {
     ///
     /// **応答を書けたかどうかによらず呼ぶ。** 書き込みに失敗したときに記録しないと、
     /// 同じ要求を毎フレーム拾い直し、壊れた書き込み先の上でループになる。
-    func markHandled(_ id: String) {
+    package func markHandled(_ id: String) {
         lastHandledID = id
         if let handingOver {
             lastModification = handingOver

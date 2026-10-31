@@ -99,6 +99,16 @@ nonisolated public enum WorkDirectory {
     /// 失敗した子が理由を置く側 (``noteStartFailure(_:forProcess:under:)``) が別のプロセスである。
     package static let buildFacetName = "build"
 
+    /// 見張りが**要求に答える**区画の名前 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// 観測・入力・つまみは走らせている子が答える区画だが、これは見張り (`mokume watch`) 自身が答える
+    /// 初めての区画である。試聴に入る・出る要求を置く。**子は読まない**ので ``StartupReads`` には載せない
+    /// (起動の瞬間に子が読む区画の一覧ではない)。見張りが作り、終わるときに畳む。
+    ///
+    /// **綴りはここ 1 つ** — 置く側 (外の道具) と答える側 (見張り) が別のプロセスで、片方だけ動かすと
+    /// 要求は置かれるのに応答は返らない ([#988](https://github.com/mokume-metal/mokume/issues/988))。
+    package static let watchFacetName = "watch"
+
     /// 区画 `build` の中の、**起動できなかった子が自分の理由を置く**ファイル
     /// ([#3169](https://github.com/mokume-metal/mokume/issues/3169))。
     ///

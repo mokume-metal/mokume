@@ -83,6 +83,11 @@ struct BuildReport: Encodable, Equatable {
             notStartedReason: reason, timings: timings)
     }
 
+    /// 試聴の版を、本番が乗り換えを待つ間は起こさず保留した回の理由 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    /// 乗り換えが決着してから起こす。**起こせなかった回とは言葉を分ける。**
+    static let auditionDeferredNotice =
+        "Audition waits: the work's window is still switching to the version just started"
+
     /// 理由が無いと言う文 (理由として空を渡された回)。
     static let unknownReason = "The sketch was not started, and no reason was given"
 
@@ -160,6 +165,12 @@ struct BuildReport: Encodable, Equatable {
     /// **これだけは後から書き換わる。** 新しい絵が出るまで (``Timings/firstFrameMs``) は
     /// 記録を置いた後に分かるので、見張りが足して置き直す。
     var timings: Timings
+    /// 試聴の版の作り直しか ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    ///
+    /// **試聴に入っている間の記録だけが `true` を持つ。** 試聴の版は作品の窓に出ない — 記録の `launched` は
+    /// 「プレビューに起こした」で、「作品の窓が映す版」ではない。試聴を出ると記録は本番の版に戻り、この欄は無くなる。
+    /// 試聴に入っていない記録は、欄ごと持たない。
+    var audition: Bool?
 
     /// 1 行の要約。端末に出す形で、測定の道具もこれを読める。
     var summary: String {
@@ -176,6 +187,8 @@ struct BuildReport: Encodable, Equatable {
         let lead =
             switch (ok, launched) {
             case (true, true): "Rebuilt: "
+            case (true, false) where notStartedReason?.hasPrefix(Self.auditionDeferredNotice) == true:
+                "Rebuilt, audition not started yet: "
             case (true, false) where notStartedReason?.hasPrefix(Self.stopRequestedNotice) == true:
                 "Rebuilt, not started because watching was ending: "
             case (true, false): "Rebuilt, but could not start it: "
