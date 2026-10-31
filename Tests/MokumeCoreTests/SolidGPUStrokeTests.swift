@@ -66,6 +66,29 @@ struct SolidGPUStrokeTests {
         #expect(try SolidStrokeGeometry(net: box, gpu: RenderDevice()) != nil)
     }
 
+    /// 骨の片は 4 頂点で、添字 6 つが 2 枚の三角形 (0 1 2・0 2 3) に並べる。非添字で 6 頂点ずつ流すと同じ角を
+    /// 2 度求める (#3246)。頂点関数 (`solidStrokeVertexMain`) は添字の値そのものを `index / 4`・`index % 4` で
+    /// 読むので、添字の並びがずれると別の片・別の角を描く (絵は壊れるが、描く数は変わらない)。
+    @Test("骨の片は 4 頂点で、添字は片ごとに (0 1 2)・(0 2 3) の 2 枚の三角形に並ぶ")
+    func piecesDrawFromFourVerticesAndSixIndices() throws {
+        let net = SolidEdges(SolidShape.box(width: 2, height: 2, depth: 2).make())
+        let geometry = try #require(try SolidStrokeGeometry(net: net, gpu: RenderDevice()))
+        let pieceCount = geometry.count / SolidStrokeGeometry.indicesPerPiece
+        #expect(pieceCount > 0 && geometry.count == pieceCount * 6)
+        // 添字は片と点の記録の後ろにあり、置き場の終わりまでにちょうど収まる
+        #expect(geometry.indexByteOffset + geometry.count * 4 == geometry.buffer.length)
+        let indices = (geometry.buffer.contents() + geometry.indexByteOffset).bindMemory(
+            to: UInt32.self, capacity: geometry.count)
+        var wrong: [Int] = []
+        for piece in 0..<pieceCount {
+            let first = UInt32(piece * 4)
+            let expected = [first, first + 1, first + 2, first, first + 2, first + 3]
+            let actual = (0..<6).map { indices[piece * 6 + $0] }
+            if actual != expected { wrong.append(piece) }
+        }
+        #expect(wrong.isEmpty, "添字の並びが違う片: \(wrong.prefix(5))")
+    }
+
     /// 骨を作らない配置。**直線の上で同じ側へ重なる 2 辺** (T 字の継ぎ目: 長い辺の途中に別の点が載る) は、
     /// 視線をその直線に沿わせたとき、たどる道が分かれるので、CPU の帯へ戻す。
     @Test("同じ側へ折り返す 2 本の辺を持つ網は、GPU の骨を作らない")
