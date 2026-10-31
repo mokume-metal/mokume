@@ -14,6 +14,7 @@
 @_exported import MokumeGamepad
 @_exported import MokumeMIDI
 @_exported import MokumeNetwork
+@_exported import MokumeVision
 
 // 三角関数は宣言単位で名指しして通す (ADR-0020 決定 7)。
 //

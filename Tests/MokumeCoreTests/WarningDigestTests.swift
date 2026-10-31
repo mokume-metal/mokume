@@ -193,7 +193,7 @@ struct WarningDigestTests {
 
     @Test("スケッチのプロセスの警告は、すべて Diagnostics.warn を通る")
     func everySketchModuleWarnsThroughDiagnostics() throws {
-        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeDiagnostics"]
+        let modules = ["MokumeCore", "MokumeAudio", "MokumeCamera", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeDiagnostics"]
         let marks = ["FileHandle.standardError", "fputs(", "stderr"]
         var found: Set<String> = []
         for module in modules {
