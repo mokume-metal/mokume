@@ -41,16 +41,23 @@
 #     job の置き場にあるものだけ。表の GUI セッションが runner のユーザーなので、OS の常駐 (写真の解析の
 #     `mediaanalysisd` など) やログイン項目のアプリもユーザーの launchd の子として ppid=1 に見え、何日も CPU を
 #     使い続けうる。それは前の job の残りではないので赤にせず、注意 (::warning) で名乗る。comm は親が決める
-#     起動名 (argv[0]) で実行ファイルの置き場を保証しないので、置き場で外す形は採らない。#2959 の `yes`
-#     (/usr/bin/yes) は作業ディレクトリが job の置き場なので拾う。job の置き場は次のとおり (前置きは区切りの `/` まで見る):
+#     起動名 (argv[0]) で実行ファイルの置き場を保証しないので、「OS の置き場なら外す」形は採らない。#2959 の
+#     `yes` (/usr/bin/yes) は作業ディレクトリが checkout なので拾う。job の置き場は次のとおり (前置きは区切りの
+#     `/` まで見る。/System/Volumes/Data/ の firmlink の経路も同じ置き場に読む):
 #
-#       $RUNNER_WORKSPACE の親   runner の作業の置き場 (_work。checkout・_temp を含む)
-#       */.build/*              SwiftPM が組んだもの (作業ツリーの外の共有の置き場も)
-#       /private/tmp/・/tmp/    使い捨ての置き場
-#       $TMPDIR                 job のユーザーの一時の置き場 (/var/folders/…)
+#       実行ファイル・作業ディレクトリの両方で見る
+#         runner の _work      $GITHUB_WORKSPACE (`…/_work/<repo>/<repo>`) の _work と、同じホームの
+#                              ~/actions-runner*/_work (専用機は runner 2 本・docs/render-runners.md)
+#         */.build/*           SwiftPM がパッケージ直下に組んだもの
+#         共有の組み立て置き場  $MOKUME_BUILD_DIR (既定 ~/Library/Caches/mokume/build・ADR-0037)
+#       実行ファイルだけで見る (OS の常駐にも作業ディレクトリをここに置くものがある — privatecloudcomputed)
+#         /private/tmp/・/tmp/・job のユーザーの一時の置き場 (getconf DARWIN_USER_TEMP_DIR)
 #
-#     ORPHAN_JOB_ROOTS (`:` 区切り) は検査のための差し替えで、$RUNNER_WORKSPACE の親の代わりに使う
-#   ・**何も殺さない。** 名乗って止めるだけで、止めるのは人 (scripts/orphan-processes.sh が出所を引く)
+#     作業ディレクトリを読む lsof が無い・runner の作業場所が分からない (job の中で $GITHUB_WORKSPACE が形に
+#     合わない) は、黙って注意に回さず赤にする。ORPHAN_JOB_ROOTS (`:` 区切り) は検査のための差し替えで、
+#     runner の _work の代わりに使う
+#   ・**何も殺さない。** 名乗って止めるだけで、止めるのは人 (出所は lsof の cwd で引く。scripts/orphan-processes.sh が
+#     見るのは .build・共有の組み立て置き場から起きたものだけ)
 #   ・閾値 (ORPHAN_CPU_MIN・ORPHAN_ELAPSED_MIN) は専用機の平常の ps を読んで確定する (#3095)
 #
 # 当たったものは全部名乗る (1 つ目で止めない)。直す人が専用機の前に立つのは 1 回で済ませたい。
@@ -103,27 +110,42 @@ ORPHAN_CPU_MIN=${ORPHAN_CPU_MIN:-50}
 ORPHAN_ELAPSED_MIN=${ORPHAN_ELAPSED_MIN:-600}
 
 # job の置き場 (冒頭の表)。前置きで持ち、照合は区切りの `/` まで見る
-job_roots=()
+work_roots=()
 if [ -n "${ORPHAN_JOB_ROOTS:-}" ]; then
-  IFS=: read -r -a job_roots <<<"$ORPHAN_JOB_ROOTS"
-elif [ -n "${RUNNER_WORKSPACE:-}" ]; then
-  job_roots+=("$(dirname "$RUNNER_WORKSPACE")")
+  IFS=: read -r -a work_roots <<<"$ORPHAN_JOB_ROOTS"
+else
+  case "${GITHUB_WORKSPACE:-}" in
+    */_work/*/*) work_roots+=("${GITHUB_WORKSPACE%%/_work/*}/_work") ;;
+  esac
+  for root in "$HOME"/actions-runner*/_work; do
+    [ -d "$root" ] && work_roots+=("$root")
+  done
 fi
-job_roots+=(/private/tmp /tmp)
-if [ -n "${TMPDIR:-}" ]; then
-  job_roots+=("${TMPDIR%/}")
-  # /var は /private/var の別名。lsof はどちらでも返しうるので両方を持つ
-  case "$TMPDIR" in
-    /var/*) job_roots+=("/private${TMPDIR%/}") ;;
+if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ ${#work_roots[@]} -eq 0 ]; then
+  problems+=("orphan-load: runner の作業場所が分からない (GITHUB_WORKSPACE が …/_work/<repo>/<repo> の形でない: '${GITHUB_WORKSPACE:-}')")
+fi
+build_root="${MOKUME_BUILD_DIR:-$HOME/Library/Caches/mokume/build}"
+# 空の配列を "${a[@]}" で開くと、macOS の bash 3.2 は set -u で落ちる
+shared_roots=(${work_roots[@]+"${work_roots[@]}"} "${build_root%/}")
+temp_roots=(/private/tmp /tmp)
+user_temp=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)
+if [ -n "$user_temp" ]; then
+  temp_roots+=("${user_temp%/}")
+  # /var は /private/var の別名。ps と lsof はどちらでも返しうるので両方を持つ
+  case "$user_temp" in
+    /var/*) temp_roots+=("/private${user_temp%/}") ;;
   esac
 fi
 
+# 置き場のどれかの下にあるか。$1 は見る置き場の種類 (exe = 実行ファイル・cwd = 作業ディレクトリ)
 in_job_place() {
-  local path=$1 root
+  local kind=$1 path=$2 root
   # データボリュームの firmlink (/System/Volumes/Data/Users/… は /Users/… と同じ所)
   path=${path#/System/Volumes/Data}
   case "$path" in */.build/*) return 0 ;; esac
-  for root in "${job_roots[@]}"; do
+  local roots=("${shared_roots[@]}")
+  [ "$kind" = "exe" ] && roots+=("${temp_roots[@]}")
+  for root in "${roots[@]}"; do
     [ -n "$root" ] || continue
     case "$path" in "${root%/}"/*) return 0 ;; esac
   done
@@ -155,10 +177,14 @@ if processes=$(ps -U "$job_user" -o pid=,ppid=,%cpu=,etime=,comm= 2>/dev/null); 
       printf "%s\t%s\t%s\t%s\n", $1, $3, $4, name
     }')
   orphans="" others=""
+  # 作業ディレクトリを読めないと、#2959 の形 (実行ファイルは /usr/bin・cwd が checkout) が黙って注意に落ちる
+  if [ -n "$heavy" ] && ! command -v lsof >/dev/null 2>&1; then
+    problems+=("orphan-load: プロセスの作業ディレクトリを読む lsof が無いので、前の job の残りか見分けられない")
+  fi
   while IFS=$'\t' read -r pid cpu etime comm; do
     [ -n "$pid" ] || continue
     line="${comm##*/} (pid ${pid}, ${cpu}%, 経過 ${etime})"
-    if { [ "${comm#/}" != "$comm" ] && in_job_place "$comm"; } || in_job_place "$(cwd_of "$pid")"; then
+    if { [ "${comm#/}" != "$comm" ] && in_job_place exe "$comm"; } || in_job_place cwd "$(cwd_of "$pid")"; then
       orphans+="${line}"$'\n'
     else
       others+="${line}"$'\n'
@@ -216,7 +242,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     esac
     case "$reason" in
       *"orphan-load:"*)
-        printf '直し方 (orphan-load): 専用機の前で、bash scripts/orphan-processes.sh で名乗られた PID の出所を確かめ、人が止める。この前検査は何も止めない。残ったままだと、後の job が黙って遅くなる (#3010・#3095)。\n' ;;
+        printf '直し方 (orphan-load): 専用機の前で、名乗られた PID の出所 (lsof -a -p <PID> -d cwd の作業ディレクトリ・ps -o command= -p <PID>) を確かめ、人が止める。この前検査は何も止めない。残ったままだと、後の job が黙って遅くなる (#3010・#3095)。\n' ;;
     esac
     case "$reason" in
       *"gpu-slot:"*)

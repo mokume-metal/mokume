@@ -76,6 +76,7 @@ exit 0
 
 JOB_ROOT = "/Users/runner/actions-runner/_work"
 WORK = JOB_ROOT + "/mokume/mokume"
+BUILD_ROOT = "/Users/runner/Library/Caches/mokume/build"
 
 QUIET_PS = "\n".join(
     [
@@ -93,6 +94,9 @@ HEALTHY = {
     "FAKE_PS": QUIET_PS,
     "FAKE_CWDS": "",
     "ORPHAN_JOB_ROOTS": JOB_ROOT,
+    "MOKUME_BUILD_DIR": BUILD_ROOT,
+    # 検査を回す機械が GitHub Actions の中でも、作業場所が分からない赤を出さない (置き場は上で差し替える)
+    "GITHUB_ACTIONS": "",
 }
 
 
@@ -118,11 +122,11 @@ class RunnerPreflightTest(unittest.TestCase):
         self.slots = self.root / "slots"
         self.record = self.slots / "wait-expired.json"
 
-    def run_preflight(self, **overrides):
+    def run_preflight(self, path_tail=None, **overrides):
         env = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_")}
         env.update(HEALTHY)
         env.update(overrides)
-        env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        env["PATH"] = f"{self.bin}{os.pathsep}{path_tail or env['PATH']}"
         env["GITHUB_OUTPUT"] = str(self.output)
         env["GITHUB_STEP_SUMMARY"] = str(self.summary)
         # 1 つの検査で何度も走らせる (subTest) とき、前の回の出力を読まない
@@ -248,7 +252,7 @@ class RunnerPreflightTest(unittest.TestCase):
         # 理由は `-` で始まらず、他の条件と ` / ` でつながる (#3047)
         self.assertFalse(reason.startswith("-"))
         summary = self.summary.read_text(encoding="utf-8")
-        self.assertIn("bash scripts/orphan-processes.sh", summary)
+        self.assertIn("lsof -a -p <PID> -d cwd", summary)
         self.assertIn("人が止める", summary)
         # 環境が壊れていないのに、表のセッションの直し方 (#2507) や gpu-slot の直し方は言わない
         self.assertNotIn("runner のユーザーに戻す", summary)
@@ -276,7 +280,7 @@ class RunnerPreflightTest(unittest.TestCase):
 
     def test_経過時間の日数も数える(self):
         # `1-00:00:01` は 1 日と 1 秒。日数を落とすと 1 秒に読めて、下限 (10 分) の手前になってしまう
-        r = self.run_preflight(FAKE_PS="  707     1  88.0 01-00:00:01 /usr/bin/day", FAKE_CWDS="707=/private/tmp/scratch")
+        r = self.run_preflight(FAKE_PS="  707     1  88.0 01-00:00:01 /usr/bin/day", FAKE_CWDS=f"707={WORK}")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("day (pid 707, 88.0%, 経過 01-00:00:01)", self.reason())
 
@@ -315,32 +319,74 @@ class RunnerPreflightTest(unittest.TestCase):
         for comm, cwd in (
             (f"{WORK}/.build/debug/reference-sketches", ""),
             ("/opt/homebrew/bin/python3", f"{JOB_ROOT}/_temp/abc"),
-            ("/usr/bin/yes", "/private/tmp/claude-1/scratch"),
-            ("/usr/bin/yes", "/tmp/x"),
+            # 共有の組み立て置き場 (ADR-0037) は、パスに .build を含まない
+            (f"{BUILD_ROOT}/mokume-1a2b/debug/x", ""),
+            ("/bin/sleep", f"{BUILD_ROOT}/mokume-1a2b"),
+            # 一時の置き場は実行ファイルで見る
+            ("/private/tmp/claude-1/scratch/busy", ""),
+            ("/tmp/x/busy", ""),
             # データボリュームの firmlink の経路でも同じ置き場
             (f"/System/Volumes/Data{WORK}/.build/debug/x", ""),
             ("/bin/sleep", f"/System/Volumes/Data{WORK}"),
-            # 作業ツリーの外の共有の組み立て置き場
-            ("/Users/runner/Library/Caches/mokume/.build/debug/x", ""),
         ):
             with self.subTest(comm=comm, cwd=cwd):
                 r = self.run_preflight(FAKE_PS=f"  808     1  90.0 01:00:00 {comm}", FAKE_CWDS=f"808={cwd}")
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn(f"{comm.rsplit('/', 1)[-1]} (pid 808, 90.0%, 経過 01:00:00)", self.reason())
 
+    def test_一時の置き場を作業ディレクトリにする_OS_の常駐は拾わない(self):
+        # privatecloudcomputed は cwd が /private/tmp。一時の置き場は実行ファイルでだけ見る (#3631 の反証)
+        comm = "/System/Library/PrivateFrameworks/PrivateCloudCompute.framework/privatecloudcomputed.app/Contents/MacOS/privatecloudcomputed"
+        for cwd in ("/private/tmp", "/tmp/x"):
+            with self.subTest(cwd=cwd):
+                r = self.run_preflight(FAKE_PS=f"  808     1  90.0 01:00:00 {comm}", FAKE_CWDS=f"808={cwd}")
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertIn("privatecloudcomputed (pid 808", r.stdout)
+
     def test_job_の置き場に似た名前は拾わない(self):
         # 前置きは置き場の区切り (`/`) まで見る
-        for cwd in (f"{JOB_ROOT}shop/x", "/private/tmpfoo/x", "/Users/runner/.buildish/x"):
+        for cwd in (f"{JOB_ROOT}shop/x", f"{BUILD_ROOT}ish/x", "/Users/runner/.buildish/x"):
             with self.subTest(cwd=cwd):
                 r = self.run_preflight(FAKE_PS="  808     1  90.0 01:00:00 /usr/bin/busy", FAKE_CWDS=f"808={cwd}")
                 self.assertEqual(r.returncode, 0, r.stdout)
                 self.assertIsNone(self.reason())
 
-    def test_job_の置き場は_RUNNER_WORKSPACE_の親から決まる(self):
-        # 差し替えが無いときの既定。RUNNER_WORKSPACE は _work/<repo> なので、その親 (_work) が置き場
-        env = {"ORPHAN_JOB_ROOTS": "", "RUNNER_WORKSPACE": f"{JOB_ROOT}/mokume"}
-        r = self.run_preflight(FAKE_PS="  808     1  90.0 01:00:00 /usr/bin/yes", FAKE_CWDS=f"808={JOB_ROOT}/_temp/x", **env)
+    def make_runners(self):
+        home = self.root / "home"
+        for name in ("actions-runner", "actions-runner-2"):
+            (home / name / "_work").mkdir(parents=True)
+        return home
+
+    def test_runner_の作業場所は_GITHUB_WORKSPACE_と同じホームの_runner_から決まる(self):
+        # 専用機は runner 2 本 (docs/render-runners.md)。もう片方の runner の checkout に残ったものも拾う
+        home = self.make_runners()
+        env = {"ORPHAN_JOB_ROOTS": "", "HOME": str(home), "GITHUB_ACTIONS": "true",
+               "GITHUB_WORKSPACE": f"{home}/actions-runner/_work/mokume/mokume"}
+        for cwd in (f"{home}/actions-runner/_work/mokume/mokume", f"{home}/actions-runner-2/_work/mokume/mokume"):
+            with self.subTest(cwd=cwd):
+                r = self.run_preflight(FAKE_PS="  808     1  90.0 01:00:00 /usr/bin/yes", FAKE_CWDS=f"808={cwd}", **env)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("前の job が残した負荷が 1 本ある", self.reason())
+
+    def test_job_の中で_runner_の作業場所が分からなければ赤(self):
+        # 黙って注意に回すと、#2959 の形を見逃す
+        env = {"ORPHAN_JOB_ROOTS": "", "HOME": str(self.root / "empty"), "GITHUB_ACTIONS": "true",
+               "GITHUB_WORKSPACE": "/somewhere/else"}
+        r = self.run_preflight(**env)
         self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("orphan-load: runner の作業場所が分からない", self.reason())
+
+    def test_lsof_が無ければ赤(self):
+        # 作業ディレクトリを読めないと、#2959 の形 (/usr/bin/yes・cwd が checkout) が黙って注意に落ちる
+        (self.bin / "lsof").unlink()
+        r = self.run_preflight(path_tail="/usr/bin:/bin", FAKE_PS=self.YES_TEN, FAKE_CWDS=self.YES_CWDS)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("orphan-load: プロセスの作業ディレクトリを読む lsof が無い", self.reason())
+
+    def test_重い候補が無ければ_lsof_が無くても赤にしない(self):
+        (self.bin / "lsof").unlink()
+        r = self.run_preflight(path_tail="/usr/bin:/bin")
+        self.assertEqual(r.returncode, 0, r.stdout)
 
     def test_CPU_が閾値以下なら経過時間が長くても当たらない(self):
         r = self.run_preflight(FAKE_PS="  606     1  50.0 03-00:00:00 /usr/bin/steady", FAKE_CWDS=f"606={WORK}")
@@ -361,7 +407,7 @@ class RunnerPreflightTest(unittest.TestCase):
         self.assertIn("orphan-load:", reason)
         summary = self.summary.read_text(encoding="utf-8")
         self.assertIn("runner のユーザーに戻す", summary)
-        self.assertIn("bash scripts/orphan-processes.sh", summary)
+        self.assertIn("lsof -a -p <PID> -d cwd", summary)
 
 
 if __name__ == "__main__":
