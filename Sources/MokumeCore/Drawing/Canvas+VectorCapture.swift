@@ -211,7 +211,11 @@ extension Canvas {
     /// 控えていなければ、図形を置いたことだけ覚える (``VectorWindow/placedBefore``)。
     @inline(__always)
     func vectorSink() -> VectorCapture? {
-        guard !recordingShape else { return nil }
+        guard !recordingShape else {
+            // 道の記録の中で図形を置く口が呼んだ。道には入らない (基本図形・曲線など)
+            if pathRecorder != nil { refuseInsidePath(.primitive) }
+            return nil
+        }
         if let capture = vector.capture { return capture }
         // 印は 1 度立てれば足りる。図形ごとに同じ値を書かない
         if !vector.placedBefore { vector.placedBefore = true }
@@ -220,7 +224,10 @@ extension Canvas {
 
     /// 書けない口が呼ぶ。控えている途中なら、種類を数える。
     func noteVectorDrop(_ kind: VectorDrop) {
-        guard !recordingShape else { return }
+        guard !recordingShape else {
+            if pathRecorder != nil, let refusal = PathRefusal(kind) { refuseInsidePath(refusal) }
+            return
+        }
         if let capture = vector.capture {
             capture.drops.append(kind)
         } else if !vector.placedBefore {

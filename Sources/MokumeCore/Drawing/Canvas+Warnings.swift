@@ -83,6 +83,8 @@ extension Canvas {
         ///
         /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
         case svgApproximated(path: String)
+        /// 道の記録 (``Canvas/createPath(_:)``) の中で、道に入れられないものを断った。**断った種類ごとに 1 度**。
+        case insidePath(PathRefusal)
         /// 置けない置き場所が混ざっていた。
         case badPlacement
         /// 立体の寸法が受け取れない値だった。

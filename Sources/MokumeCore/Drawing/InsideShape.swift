@@ -168,67 +168,70 @@ extension Canvas {
             }
         }
 
-        /// 言う中身。
-        var notice: String {
+        /// 言う中身 (形の組み立て ``createShape(_:)`` の中で)。
+        var notice: String { notice(in: "createShape") }
+
+        /// 言う中身。`call` は、いま組み立てている口の名前 (`createShape`・道を記録している間は `createPath`)。
+        func notice(in call: String) -> String {
             switch self {
             case .background:
-                "background() does nothing inside createShape { }. A shape cannot hold a repaint "
+                "background() does nothing inside \(call) { }. A shape cannot hold a repaint "
                     + "of the whole surface, so call it before or after building the shape"
             case .pixels:
-                "Pixels are not read or written inside createShape { }, because what is built "
+                "Pixels are not read or written inside \(call) { }, because what is built "
                     + "there has not been drawn yet. There, get() returns transparent, set() and "
                     + "loadPixels() do nothing, and pixels is not read again"
             case .drawnOut:
-                "createShape { }: the frame was drawn out while the shape was being built, so what "
+                "\(call) { }: the frame was drawn out while the shape was being built, so what "
                     + "was built up to then was drawn into the frame, and the shape is empty. This is "
                     + "most likely a fault inside mokume — please report it with this message at "
                     + "https://github.com/mokume-metal/mokume/issues (#2850)"
             case .frameEnd:
-                "createShape { }: the frame of the canvas being built on was closed inside the shape "
+                "\(call) { }: the frame of the canvas being built on was closed inside the shape "
                     + "by endDraw(), so it stays open until the shape is finished and closes there; "
                     + "until then the canvas is still drawing. Close it after building the shape"
             case .frameStart:
-                "createShape { }: a frame of the canvas being built on was started inside the shape "
+                "\(call) { }: a frame of the canvas being built on was started inside the shape "
                     + "(by beginDraw() or draw { }). Starting it would drop what was built, so it was "
                     + "not started: beginDraw() does nothing there, nor does the endDraw() that pairs "
                     + "with it, and draw { } runs its block as part of the shape. Start the frame "
                     + "before or after building the shape"
             case .camera:
-                "The camera and projection do nothing inside createShape { }. A shape cannot hold "
+                "The camera and projection do nothing inside \(call) { }. A shape cannot hold "
                     + "a camera, so place it before or after building the shape"
             case .clip:
-                "The clip does nothing inside createShape { }. A clip works in the coordinates of "
+                "The clip does nothing inside \(call) { }. A clip works in the coordinates of "
                     + "the surface, so a shape cannot hold it. Write it before or after building the shape"
             case .effects:
-                "Effects do nothing inside createShape { }. A shape cannot hold effects, so write "
+                "Effects do nothing inside \(call) { }. A shape cannot hold effects, so write "
                     + "them before or after building the shape"
             case .filter:
-                "filter() does nothing inside createShape { }. It applies effects to the picture drawn "
+                "filter() does nothing inside \(call) { }. It applies effects to the picture drawn "
                     + "so far, which a shape has not drawn yet, so call it before or after building the shape"
             case .light:
-                "Lights do nothing inside createShape { }. A shape cannot hold a light, so place "
+                "Lights do nothing inside \(call) { }. A shape cannot hold a light, so place "
                     + "it before or after building the shape"
             case .surroundings:
-                "The surroundings do nothing inside createShape { }. A shape cannot hold them, so "
+                "The surroundings do nothing inside \(call) { }. A shape cannot hold them, so "
                     + "place them before or after building the shape"
             case .shadow:
-                "Shadows do nothing inside createShape { }. A shape cannot hold how shadows are "
+                "Shadows do nothing inside \(call) { }. A shape cannot hold how shadows are "
                     + "cast or received, so write it before or after building the shape"
             case .material:
-                "Materials do nothing inside createShape { }. A shape cannot hold a material, so "
+                "Materials do nothing inside \(call) { }. A shape cannot hold a material, so "
                     + "write it before or after building the shape"
             case .particles:
-                "Particles are not moved or drawn inside createShape { }. A shape cannot hold "
+                "Particles are not moved or drawn inside \(call) { }. A shape cannot hold "
                     + "them, so handle them before or after building the shape"
             case .compute:
-                "Compute is not run inside createShape { }. A shape cannot hold it, so ask for it "
+                "Compute is not run inside \(call) { }. A shape cannot hold it, so ask for it "
                     + "before or after building the shape"
             case .brightness:
-                "exposure() and toneMapping() do nothing inside createShape { }. They set the "
+                "exposure() and toneMapping() do nothing inside \(call) { }. They set the "
                     + "brightness of the whole surface, which a shape cannot hold, so call them "
                     + "before or after building the shape"
             case .debug:
-                "debugMode() and noDebugMode() do nothing inside createShape { }. A shape cannot "
+                "debugMode() and noDebugMode() do nothing inside \(call) { }. A shape cannot "
                     + "hold the debug grid and axes, so call them before or after building the shape"
             }
         }
@@ -236,8 +239,12 @@ extension Canvas {
 
     /// 組み立ての中で効かなかったことを、初回だけ知らせる。
     func warnInsideShape(_ subject: InsideShape) {
-        warnOnce(subject.warning, subject.notice)
+        // 道の記録 (``createPath(_:)``) も形の組み立ての中で行うので、同じ断りを、呼んだ口の名前で言う
+        warnOnce(subject.warning, subject.notice(in: assemblyCall))
     }
+
+    /// いま形を組み立てている口の名前。断りの文面が、呼んだ口を名乗る。
+    var assemblyCall: String { pathRecorder == nil ? "createShape" : "createPath" }
 
     /// 形に焼き付かない設定を、いま書いてよいか。**書けなければ、なぜ効かないかを種類ごとに
     /// 1 度知らせて `false` を返す** ([#1529]・[#1684])。
