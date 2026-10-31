@@ -16,7 +16,7 @@
   5. 理由が空なら使い方の誤りで止まる — 空の理由で起票しない
   6. `-` で始まる値 (`--help`・`-h`・`--anything`・`-` 単独) は理由として読まず、gh を呼ばずに 64 で止まる —
      慣習の `--help` 1 回が、着手可の印つきの偽の障害 Issue にならない (#3047)
-  7. 前検査が書く通常の理由 (`console:`・`screens:`・`metal:`・`gpu-slot:` 始まり) は今どおり起票へ渡る
+  7. 前検査が書く通常の理由 (`console:`・`screens:`・`metal:`・`gpu-slot:`・`orphan-load:` 始まり) は今どおり起票へ渡る
 
 偽 gh は PATH の先頭に置いた同型のスタブ (`scheduled_report_test.py` と同じ形)。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -140,6 +140,10 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         self.assertIn("人が確かめてから", body)
         self.assertIn("wait-expired.json", body)
         self.assertNotIn("rm ", body.replace("gh pr merge", ""))
+        # 前の job が残した負荷 (#3095) は、出所を確かめて人が止める。何も自動では止めない
+        self.assertIn("`orphan-load`", body)
+        self.assertIn("bash scripts/orphan-processes.sh", body)
+        self.assertIn("人が止める", body)
         # 当番を走らせても予約は戻らない (#2614)。そう読める案内を残さない
         self.assertNotIn("gh workflow run stall-watch.yml", body)
 
@@ -161,7 +165,7 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
 
     def test_前検査が書く通常の理由は今どおり渡る(self):
         # runner-preflight.sh は各条件を `<名前>: …` で書き、` / ` でつなぐ。`-` では始まらない
-        for name in ("console", "screens", "metal", "gpu-slot"):
+        for name in ("console", "screens", "metal", "gpu-slot", "orphan-load"):
             with self.subTest(name=name):
                 self.log.write_text("")
                 reason = f"{name}: 理由の本文 / metal: Metal の既定のデバイスが取れない"
