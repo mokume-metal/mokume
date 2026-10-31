@@ -180,11 +180,12 @@ struct UDPPortTests {
         #expect(many.count == DatagramListener.emptyClosedLimit)
     }
 
-    @Test("前提: macOS の受け口は 9216 バイトを超える datagram を、先頭 9216 バイトに切って渡す")
+    @Test("前提: macOS の受け口は、ループバックで届いた 9216 バイトを超える datagram を、先頭 9216 バイトに切って渡す")
     func networkFrameworkCutsDatagramsAt9216() async throws {
-        // 上限 (Datagram.sizeLimit) の見張りを通る前の、受け口が渡す生のバイト列の長さを見る。
-        // 見張りは OS が切らなくても 9216 バイト以上を捨てるので、上の検査は OS の振る舞いが
-        // 変わっても緑のままになる。この検査はその前提だけを見張る (#2325)
+        // 上限 (Datagram.isReceivable) の見張りを通る前の、受け口が渡す生のバイト列の長さを見る。
+        // 見張りはちょうど 9216 バイトだけを捨てるので、疑似の受け口の検査は OS の振る舞いが
+        // 変わっても緑のままになる。この検査はその前提 (ループバックで切れる長さ) だけを見張る。
+        // 別の機械から届く経路は全長で届く (#2531・#3594) が、1 台では確かめられない (#2325)
         let lengths = Mutex<[Int]>([])
         let bound = Mutex<Int?>(nil)
         let events = Mutex<[String]>([])
@@ -216,7 +217,7 @@ struct UDPPortTests {
         ) { lengths.withLock { $0.count } >= 3 }
         #expect(
             lengths.withLock { $0 } == [9215, 9216, 9216],
-            "Network.framework の切り方が変わった。#2325 の上限 (Datagram.sizeLimit) の前提を見直す")
+            "Network.framework の切り方が変わった。#2325・#3594 の受けの上限 (Datagram.isReceivable) の前提を見直す")
     }
 
     // MARK: - 送る
