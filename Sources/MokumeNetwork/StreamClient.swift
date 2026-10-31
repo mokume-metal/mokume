@@ -53,6 +53,9 @@ nonisolated final class StreamConnector: @unchecked Sendable {
     let retryAfter: TimeInterval
     let connectTimeout: TimeInterval
 
+    /// 経路を待つ繋ぎが満たされない理由を読む手続き (既定は `currentPath`)。検査が差し替える。
+    private let unsatisfiedReason: @Sendable (NWConnection) -> NWPath.UnsatisfiedReason?
+
     private let queue = DispatchQueue(label: "org.mokume.network.client")
     private let received: @Sendable (_ texts: [String], _ unreadable: Int, _ hostTime: UInt64) -> Void
     private let changed: @Sendable (ConnectorEvent) -> Void
@@ -65,9 +68,13 @@ nonisolated final class StreamConnector: @unchecked Sendable {
     /// - Parameters:
     ///   - received: 届いた文字列・読めずに捨てた数・届いた瞬間の host time。``queue`` の上で呼ばれる。
     ///   - changed: 移り変わり。``queue`` の上で呼ばれる。
+    ///   - unsatisfiedReason: 経路を待つ繋ぎが満たされない理由を読む手続き。ローカルネットワークの許可が
+    ///     無いことは、エラーでなくここにだけ出る (#3593)。
     init(
         kind: StreamListener.Kind, endpoint: NWEndpoint, secure: Bool = false,
         retryAfter: TimeInterval, connectTimeout: TimeInterval = defaultConnectTimeout,
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason,
         received: @escaping @Sendable (_ texts: [String], _ unreadable: Int, _ hostTime: UInt64) -> Void,
         changed: @escaping @Sendable (ConnectorEvent) -> Void
     ) {
@@ -76,6 +83,7 @@ nonisolated final class StreamConnector: @unchecked Sendable {
         self.secure = secure
         self.retryAfter = retryAfter
         self.connectTimeout = connectTimeout
+        self.unsatisfiedReason = unsatisfiedReason
         self.received = received
         self.changed = changed
     }
@@ -155,8 +163,11 @@ nonisolated final class StreamConnector: @unchecked Sendable {
             case .tcp: receiveLines(from: current)
             case .webSocket: receiveMessages(from: current)
             }
-        case .waiting(let error), .failed(let error):
-            // 経路を待つ間の自動の張り直しには任せない — 間隔を固定にするため、自分で閉じて張り直す
+        case .waiting(let error):
+            // 経路を待つ間の自動の張り直しには任せない — 間隔を固定にするため、自分で閉じて張り直す。
+            // ローカルネットワークの許可が無いと `ENETDOWN` で待ち、拒まれたことは経路にしか出ない
+            drop(current, because: Self.event(waiting: error, unsatisfiedReason: unsatisfiedReason(current)))
+        case .failed(let error):
             drop(current, because: Self.event(for: error))
         default:
             return
@@ -240,6 +251,25 @@ nonisolated final class StreamConnector: @unchecked Sendable {
     }
 }
 
+nonisolated extension StreamConnector {
+    /// 経路を待つ繋ぎが満たされない理由 (既定の読み方。検査が差し替える)。
+    static let currentPathReason: @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? = {
+        $0.currentPath?.unsatisfiedReason
+    }
+
+    /// 経路を待つ繋ぎ (`NWConnection` の `.waiting`) の事情を、繋ぎ先の移り変わりに読み替える。
+    ///
+    /// ローカルネットワークの許可が無いとき、`NWConnection` は拒まれたとは言わず `ENETDOWN`
+    /// (`Network is down`) で待ち、拒まれたことは経路の理由 (`.localNetworkDenied`) にしか出ない
+    /// (#3593・Apple の TN3179 と一致)。それは許可の話なので `.denied` と読む。理由が他なら、
+    /// エラーだけで読む (経路が本当に無い `Network is down` は、いまどおり繋げなかった)。
+    static func event(
+        waiting error: any Error, unsatisfiedReason: NWPath.UnsatisfiedReason?
+    ) -> ConnectorEvent {
+        unsatisfiedReason == .localNetworkDenied ? .denied : event(for: error)
+    }
+}
+
 extension StreamListener.Kind {
     /// 繋ぎに行くときの通信の設定。`secure` は `wss://` (TLS の上の WebSocket)。
     nonisolated func clientParameters(secure: Bool) -> NWParameters {
@@ -303,7 +333,8 @@ nonisolated final class ConnectorStatus: Sendable {
             tellOnce(
                 "denied",
                 "\(label) to \(target) is blocked by macOS (Local Network). Allow it in System "
-                    + "Settings > Privacy & Security > Local Network, then start the sketch again")
+                    + "Settings > Privacy & Security > Local Network. It connects at the next retry "
+                    + "(every \(seconds) second(s)) once allowed")
         case .lost:
             queue.setState(.disconnected)
             tellOnce(
@@ -331,6 +362,7 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing,
     let secure: Bool
     let retryAfter: TimeInterval
     let connectTimeout: TimeInterval
+    private let unsatisfiedReason: @Sendable (NWConnection) -> NWPath.UnsatisfiedReason?
     private let status: ConnectorStatus
     private var connector: StreamConnector?
 
@@ -342,10 +374,13 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing,
 
     /// - Parameters:
     ///   - target: 診断に出す繋ぎ先の綴り。
+    ///   - unsatisfiedReason: ``StreamConnector`` へそのまま渡す。検査が経路の理由を差し替える。
     init(
         kind: StreamListener.Kind, endpoint: NWEndpoint, secure: Bool = false, target: String,
         retryAfter: TimeInterval = defaultRetry,
         connectTimeout: TimeInterval = StreamConnector.defaultConnectTimeout,
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason,
         warn: @escaping @Sendable (String) -> Void
     ) {
         self.kind = kind
@@ -353,6 +388,7 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing,
         self.secure = secure
         self.retryAfter = retryAfter
         self.connectTimeout = connectTimeout
+        self.unsatisfiedReason = unsatisfiedReason
         status = ConnectorStatus(
             label: "\(kind.label) client", target: target, retryAfter: retryAfter, warn: warn)
     }
@@ -364,7 +400,7 @@ nonisolated final class ClientSource: MessageSource, Broadcasting, EventTracing,
         queue.setState(.unavailable)
         let connector = StreamConnector(
             kind: kind, endpoint: endpoint, secure: secure, retryAfter: retryAfter,
-            connectTimeout: connectTimeout,
+            connectTimeout: connectTimeout, unsatisfiedReason: unsatisfiedReason,
             received: { texts, unreadable, hostTime in
                 for text in texts { queue.send(text, hostTime: hostTime) }
                 queue.discardUnreadable(unreadable)

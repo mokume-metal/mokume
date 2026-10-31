@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import MokumeDiagnostics
 import Network
 import Synchronization
 import Testing
@@ -43,22 +44,32 @@ struct StreamClientTests {
         return (server, try await boundPort(of: server, source: source, told: told))
     }
 
-    private func tcpClient(port: Int, told: Told) -> TCPClient {
+    private func tcpClient(
+        port: Int, told: Told,
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason
+    ) -> TCPClient {
         let target = "127.0.0.1:\(port)"
         let source = ClientSource(
             kind: .tcp,
             endpoint: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(port))!),
-            target: target, retryAfter: Self.retry, connectTimeout: Self.giveUp, warn: told.append)
+            target: target, retryAfter: Self.retry, connectTimeout: Self.giveUp,
+            unsatisfiedReason: unsatisfiedReason, warn: told.append)
         return TCPClient(
             target: target, name: "tcp client \(target)", source: source, clients: source,
             owner: nil, warn: told.append)
     }
 
-    private func webSocketClient(url: String, told: Told) throws -> WebSocketClient {
+    private func webSocketClient(
+        url: String, told: Told,
+        unsatisfiedReason: @escaping @Sendable (NWConnection) -> NWPath.UnsatisfiedReason? =
+            StreamConnector.currentPathReason
+    ) throws -> WebSocketClient {
         let parsed = try #require(Endpoint.webSocketURL(url))
         let source = ClientSource(
             kind: .webSocket, endpoint: .url(parsed.url), secure: parsed.secure, target: url,
-            retryAfter: Self.retry, connectTimeout: Self.giveUp, warn: told.append)
+            retryAfter: Self.retry, connectTimeout: Self.giveUp,
+            unsatisfiedReason: unsatisfiedReason, warn: told.append)
         return WebSocketClient(
             target: url, name: "websocket client \(url)", source: source, clients: source,
             owner: nil, warn: told.append)
@@ -227,6 +238,90 @@ struct StreamClientTests {
         ) {
             client.input.unreadable == 1
         }
+    }
+
+    // MARK: - ローカルネットワークの許可が無いときの名乗り (#3593)
+
+    /// 許可が無いとき `NWConnection` は拒まれたと言わず、`ENETDOWN` で待ち、経路の理由にだけ
+    /// `.localNetworkDenied` を出す (#2224 の実測)。本物の許可の拒否はこの機械で起こせないので、経路の理由だけを
+    /// 差し替えて、繋ぎが `.waiting` になる実物の経路 (閉じたサーバへの繋ぎ直し) を通す。
+    @Test("経路の理由が localNetworkDenied なら読み替えは denied、他の理由・理由なしなら、いまどおりエラーで読む")
+    func waitingIsReadAsDeniedOnlyForALocalNetworkDenial() {
+        let down = NWError.posix(.ENETDOWN)
+        #expect(StreamConnector.event(waiting: down, unsatisfiedReason: .localNetworkDenied) == .denied)
+        #expect(
+            StreamConnector.event(waiting: down, unsatisfiedReason: .notAvailable)
+                == .failed(Diagnostics.posixReason(ENETDOWN)))
+        #expect(
+            StreamConnector.event(waiting: down, unsatisfiedReason: nil)
+                == .failed(Diagnostics.posixReason(ENETDOWN)))
+        // 許可の理由が付いているなら、エラーが何でも許可の話である
+        #expect(
+            StreamConnector.event(waiting: NWError.posix(.ECONNREFUSED), unsatisfiedReason: .localNetworkDenied)
+                == .denied)
+        // `.failed` の読み替え (理由を取らない) は変えない
+        #expect(StreamConnector.event(for: down) == .failed(Diagnostics.posixReason(ENETDOWN)))
+    }
+
+    @Test("TCP: 許可が無くて繋ぎ直せないとき state は denied で、許可の直し方を 1 度だけ知らせる")
+    func tcpIsDeniedWhenTheLocalNetworkIsDenied() async throws {
+        let told = Told()
+        let (server, port) = try await tcpServer(told: told)
+        let client = tcpClient(port: port, told: told, unsatisfiedReason: { _ in .localNetworkDenied })
+        try client.open()
+        defer { client.close() }
+        try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
+
+        // サーバが居なくなった後の繋ぎ直しは拒まれて `.waiting` になる。その経路の理由が許可の拒否
+        server.close()
+        try await requireState(.denied, what: "繋ぎ", told: told, tracing: client.source) { client.state }
+        try await requireTold(
+            containing: "TCP client to 127.0.0.1:\(port) is blocked by macOS (Local Network)", told: told,
+            tracing: client.source) { client.state }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(client.state == .denied)
+        #expect(told.count(containing: "blocked by macOS (Local Network)") == 1)
+        #expect(told.count(containing: "cannot connect") == 0)
+        // クライアントは自動で繋ぎ直す。受け口の文面 (スケッチを始め直す) を言わない
+        #expect(told.count(containing: "connects at the next retry") == 1)
+        #expect(told.count(containing: "start the sketch again") == 0)
+    }
+
+    @Test("TCP: 拒まれていない繋げなさ (理由が許可でない) は denied にならず、いまどおり disconnected と cannot connect")
+    func tcpIsNotDeniedWhenThePathReasonIsNotLocalNetwork() async throws {
+        let told = Told()
+        let (server, port) = try await tcpServer(told: told)
+        let client = tcpClient(port: port, told: told, unsatisfiedReason: { _ in .notAvailable })
+        try client.open()
+        defer { client.close() }
+        try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
+
+        server.close()
+        try await requireTold(
+            containing: "TCP client cannot connect to 127.0.0.1:\(port)", told: told, tracing: client.source) {
+                client.state
+            }
+        #expect(client.state == .disconnected)
+        #expect(told.count(containing: "blocked by macOS") == 0)
+    }
+
+    @Test("WebSocket: 許可が無くて繋ぎ直せないとき state は denied で、許可の直し方を 1 度だけ知らせる")
+    func webSocketIsDeniedWhenTheLocalNetworkIsDenied() async throws {
+        let told = Told()
+        let (server, port) = try await webSocketServer(told: told)
+        let url = "ws://127.0.0.1:\(port)/room"
+        let client = try webSocketClient(url: url, told: told, unsatisfiedReason: { _ in .localNetworkDenied })
+        try client.open()
+        defer { client.close() }
+        try await requireState(.running, what: "繋ぎ", told: told, tracing: client.source) { client.state }
+
+        server.close()
+        try await requireState(.denied, what: "繋ぎ", told: told, tracing: client.source) { client.state }
+        try await requireTold(
+            containing: "WebSocket client to \(url) is blocked by macOS (Local Network)", told: told,
+            tracing: client.source) { client.state }
+        try await Task.sleep(for: .milliseconds(600))
+        #expect(told.count(containing: "blocked by macOS (Local Network)") == 1)
     }
 
     // MARK: - 繋ぎに行く側の前提が満たされなかった回の名乗り (#3104)

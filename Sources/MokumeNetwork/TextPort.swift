@@ -63,8 +63,9 @@ import MokumeDiagnostics
 ///
 /// **繋ぎに行く入り口 (``TCPClient``・``WebSocketClient``) の読み方。** 繋げていない間 (まだ一度も繋がっていない)
 /// は ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
-/// ``SourceState/disconnected`` を名乗る。切れても繋げなくても、**1 秒ごとに繋ぎ直し続ける** — 間隔は
-/// 固定で、変える口は無い。返事をしない相手は 5 秒で諦めて繋ぎ直す。サーバが戻れば ``SourceState/running`` に戻り、止めるのは ``stop()`` だけ。
+/// ``SourceState/disconnected`` を名乗る。このアプリにローカルネットワークの許可が無くて繋げないときは
+/// ``SourceState/denied`` を名乗り、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る。
+/// 切れても繋げなくても、**1 秒ごとに繋ぎ直し続ける** — 間隔は固定で、変える口は無い。返事をしない相手は 5 秒で諦めて繋ぎ直す。サーバが戻れば ``SourceState/running`` に戻り、止めるのは ``stop()`` だけ。
 ///
 /// ## 相手が居ないことも読める
 ///

@@ -224,7 +224,8 @@ extension Sketch {
     ///   捨てて数え、次のフレームで診断に出す
     /// - **相手が居なくても、居なくなっても作れる。** 繋げない間は ``TextPort/state`` が
     ///   ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
-    ///   ``SourceState/disconnected`` になる
+    ///   ``SourceState/disconnected`` になる。このアプリにローカルネットワークの許可が無くて繋げないときは
+    ///   ``SourceState/denied`` になり、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る
     /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。返事をしない
     ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で諦めて繋ぎ直す。止めるのは
     ///   ``TextPort/stop()`` だけ。繋げない・切れたことは、1 度だけ診断に出す
@@ -286,7 +287,8 @@ extension Sketch {
     /// - **呼んだときだけ繋ぐ。** `import mokume` しただけで繋ぎに行くことはない
     /// - **相手が居なくても、居なくなっても作れる。** 繋げない間は ``TextPort/state`` が
     ///   ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
-    ///   ``SourceState/disconnected`` になる
+    ///   ``SourceState/disconnected`` になる。このアプリにローカルネットワークの許可が無くて繋げないときは
+    ///   ``SourceState/denied`` になり、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る
     /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。返事をしない
     ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で諦めて繋ぎ直す。止めるのは
     ///   ``TextPort/stop()`` だけ。繋げない・切れたことは、1 度だけ診断に出す
