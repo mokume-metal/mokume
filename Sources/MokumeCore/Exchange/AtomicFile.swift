@@ -6,10 +6,20 @@ import MokumeDiagnostics
 
 /// 読み手が書きかけを掴まないように書く ([ADR-0018] 決定 3)。
 ///
-/// 同じディレクトリの一時ファイルへ書いてから `rename` で所定の名前にする。
-/// `rename(2)` は同一ボリューム内で不可分なので、読み手から見えるのは「前の内容」か
-/// 「新しい内容」のどちらかだけになる。**別のディレクトリの一時ファイルからでは
-/// この保証が無い** (ボリュームをまたぐとコピーになる) ので、必ず隣に作る。
+/// 同じディレクトリの一時ファイルへ書いてから、所定の名前へ 1 回の置き換えで置く。置き換えは 2 通りある
+/// (``Replacement``):
+///
+/// - **既定は `FileManager.replaceItemAt`** (``write(_:to:)``・``write(to:using:)``)。既存のファイルの
+///   権限・拡張属性・作成日時を新しい中身へ引き継ぐ。保存 (`params.json`) や作品の出力が通る
+/// - **JSON の口 (``writeJSON(_:to:)``・``publishJSON(_:to:_:)``) だけが `rename(2)` で置く**。属性は引き継がない
+///   (一時ファイルの既定になる)。区画 (`.mokume/<区画>/`) の応答・目録は利用者が属性を付けるものでなく、
+///   毎フレーム書き直す経路があり、`replaceItemAt` の 17 前後の syscall が main の予算を食うため ([#2382])
+///
+/// どちらも同一ボリューム内で不可分なので、読み手から見えるのは「前の内容」か「新しい内容」のどちらかだけに
+/// なる。**別のディレクトリの一時ファイルからではこの保証が無い** (ボリュームをまたぐとコピーになる) ので、
+/// 必ず隣に作る。
+///
+/// [#2382]: https://github.com/mokume-metal/mokume/issues/2382
 ///
 /// ## 一時ファイルの名前は書き込みごとに変える
 ///
@@ -120,6 +130,14 @@ package enum AtomicFile {
         try reserve(url).place(using: body)
     }
 
+    /// 一時ファイルを行き先へ置く方式。
+    nonisolated enum Replacement: Sendable {
+        /// `FileManager.replaceItemAt`。既存のファイルの権限・拡張属性・作成日時を引き継ぐ (既定。#2859)。
+        case preservingAttributes
+        /// `rename(2)` 1 回。属性は引き継がず、一時ファイルのものになる。区画の JSON が使う (#2382)。
+        case rename
+    }
+
     /// 置く場所と一時ファイルの名前を決めた、これから置く 1 回。**隔離の外へ渡せる。**
     ///
     /// 準備 (ディレクトリを作る・断る・落とされた書き手の片付け・連番) は静的な状態に触るので main actor で
@@ -133,15 +151,24 @@ package enum AtomicFile {
         let temporary: URL
 
         /// 書き手にファイルを作らせて、出来上がりを原子的に置く。**呼んだ場所で走る** (隔離の外でよい)。
-        func place(using body: (URL) throws -> Void) throws {
+        ///
+        /// - Parameter replacement: 置き換えの方式。既定は属性を引き継ぐ `replaceItemAt` (``Replacement``)。
+        func place(using body: (URL) throws -> Void, replacing replacement: Replacement = .preservingAttributes) throws {
             do {
                 try body(temporary)
-                // 置換は 1 回の syscall で済ませる。先に消してから rename すると、
+                // 置換は 1 回の置き換えで済ませる (`replaceItemAt` か `rename(2)`)。先に消してから置くと、
                 // その隙間に読み手が「ファイルが無い」状態を見る
                 // 本体を走らせている間に置かれたものも見る。見てから置き換えるまでの窓は縮めるだけで、
                 // ゼロにはならない (``AtomicFile/refuseDirectory(_:)``)
                 try AtomicFile.refuseDirectory(url)
-                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+                switch replacement {
+                case .preservingAttributes:
+                    _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+                case .rename:
+                    guard rename(temporary.path, url.path) == 0 else {
+                        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                    }
+                }
             } catch {
                 // **自分の分は自分で消す。** 名前が書き込みごとに違うので、誰も上書きしない
                 try? FileManager.default.removeItem(at: temporary)
@@ -194,12 +221,12 @@ package enum AtomicFile {
     /// **symlink は辿って見る (`stat`)。** 辿った先がディレクトリなら、置かない向きに倒す。宛先の無い
     /// symlink は辿れない (`stat` が失敗する) ので断らず、そのあとの置き方に任せる (従来どおり)。
     ///
-    /// **窓が残る。** 見てから `replaceItemAt` までは別の syscall なので、その間に別の主体が同じ
-    /// 場所へディレクトリを置けば、いままでどおり置き換わる。`rename(2)` を直に呼べば窓は閉じる
-    /// (ファイルからディレクトリへの `rename` は `EISDIR` で原子的に失敗する) が、**既存のファイルへ
-    /// 置くときの属性が変わる**: 実測では `replaceItemAt` は既存のファイルの権限 (0640)・拡張属性・
+    /// **窓が残る。** 見てから置き換えまでは別の syscall なので、その間に別の主体が同じ場所へディレクトリを
+    /// 置けば、いままでどおり置き換わる (`rename(2)` で置く区画の JSON は、ディレクトリへの `rename` が
+    /// `EISDIR` で原子的に失敗するので窓が閉じる)。`replaceItemAt` で置く経路は、**既存のファイルへ置くときの
+    /// 属性を引き継ぐ**のでそちらを残した: 実測では `replaceItemAt` は既存のファイルの権限 (0640)・拡張属性・
     /// 作成日時を新しい中身へ引き継ぎ、`rename(2)` はそのどれも引き継がず、権限は一時ファイルの
-    /// 既定 (0644) になり、拡張属性は消える。ファイル・無い場合の振る舞いを変えない (#2859 の完了条件 4)
+    /// 既定 (0644) になり、拡張属性は消える。保存・作品の出力の振る舞いを変えない (#2859 の完了条件 4)
     /// ので、窓を狭める直前の検査にとどめた。
     nonisolated fileprivate static func refuseDirectory(_ url: URL) throws {
         guard isDirectory(url, following: true) else { return }
@@ -547,10 +574,14 @@ package enum AtomicFile {
     /// 設定が割れていた頃は、応答の鍵の並びが面ごとに違ううえ、どの面も安定していなかった。
     ///
     /// [#854]: https://github.com/mokume-metal/mokume/issues/854
+    ///
+    /// **置き換えは `rename(2)` で、属性は引き継がない** (``Replacement/rename``・#2382)。区画の応答・目録を毎フレーム
+    /// 書き直す経路が、`replaceItemAt` の費用を払わずに済む。保存 (`params.json`) は ``write(_:to:)`` で、属性を引き継ぐ。
     package static func writeJSON(_ value: some Encodable, to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes, .sortedKeys]
-        try write(encoder.encode(value), to: url)
+        let data = try encoder.encode(value)
+        try reserve(url).place(using: { try data.write(to: $0) }, replacing: .rename)
     }
 
     /// JSON を組んで原子的に置く。**置けなければ 1 度だけ名乗って捨てる。**
