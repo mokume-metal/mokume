@@ -4,6 +4,37 @@
 import Metal
 import simd
 
+/// 組み立ての失敗の記憶。**次に試してよいフレームを持ち、失敗のたびに間隔を倍に延ばす。**
+///
+/// 組み立ての失敗は一時的なこと (メモリの逼迫・装置の失敗) がある。永く覚えると、その面・その並びは二度と
+/// 置けない (粒は作り直せるが、この道の置き場には作り直す口が無い)。覚えないと、見えないまま毎フレーム
+/// 同じ確保を試して重くなる。そこで **1・2・4…フレームと間隔を延ばしながら試し直す**
+/// (上限 ``maximumInterval``)。同じフレームの中では、何度呼んでも試さない。成功したら忘れる。
+/// 注意は 1 度だけのまま (``Canvas/warnOnce(_:_:)``)。
+///
+/// フレームは面の ``Canvas/framesDrawn`` で数える。
+struct RememberedFailure {
+    /// 間隔の上限 (フレーム)。
+    static let maximumInterval = 600
+
+    /// 覚えた失敗。試さない間は、これをそのまま投げる。
+    let failure: RenderFailure
+    /// 次に試すまでの間隔 (フレーム)。失敗が続くたびに倍になる。
+    let interval: Int
+    /// 次に試してよい最初のフレーム。
+    let retryFrame: Int
+
+    /// `frame` に失敗した。`previous` は、直前の試みも失敗していたときの記憶。
+    init(_ failure: RenderFailure, at frame: Int, after previous: RememberedFailure? = nil) {
+        self.failure = failure
+        interval = previous.map { Swift.min($0.interval * 2, Self.maximumInterval) } ?? 1
+        retryFrame = frame + interval
+    }
+
+    /// `frame` で試してよいか。
+    func allows(at frame: Int) -> Bool { frame >= retryFrame }
+}
+
 /// 数の並びを置き場所として読む道 (``Canvas/shape(_:at:layout:)``) の計算の入口。
 ///
 /// **粒の旗・scan・詰めると同じ原文から取る。** 旗と詰めるだけが置き場所用の入口で、scan は
@@ -64,11 +95,13 @@ final class PositionPlacer {
     private(set) var draws: [Draw]
     /// 組ごとの使われ方の帳簿。粒と同じ規則で選ぶ (``DrawClaims``)。
     private var claims = DrawClaims()
+    /// 組を足せなかったときの記憶。**間隔を延ばしながら試し直す** (``RememberedFailure``)。覚えないと、
+    /// 組が足りない呼び出しのたびに、大きい置き場所の確保を毎フレーム試し続ける。
+    private var addFailure: RememberedFailure?
+    /// 組を足そうとした回数。**検査が読む** (失敗の後に試し直す間隔を見る)。
+    private(set) var drawAllocationAttempts = 0
     /// 組を足すときに投げる失敗。**検査が差し替える** (確保の失敗は検査の中で起こせない)。
-    var drawAllocationFailureForTesting: RenderFailure? {
-        get { claims.allocationFailureForTesting }
-        set { claims.allocationFailureForTesting = newValue }
-    }
+    var drawAllocationFailureForTesting: RenderFailure?
 
     /// スキャンの段の数。容量 1 なら 0 (旗そのものが置ける数)。
     var scanCount: Int { levelLengths.count - 1 }
@@ -119,18 +152,31 @@ final class PositionPlacer {
     /// `canvas` のこの呼び出しが使う置き場の組を選ぶ。**まだ読まれていない組は使わない** —
     /// 選び方は粒と同じ 1 つの規則 (``DrawClaims``・``Particles/claimDraw(by:)``。#1656 の持ち越した
     /// 落とす列への尋ね方も含む) で、空きが無ければ 1 つ足す。足すのに失敗したら投げる。
+    ///
+    /// **足すのに失敗したら覚え、間隔を延ばしながら試し直す** (``addFailure``)。試さない間も、空いている
+    /// 組は使える — 止めるのは足すところだけである。
     func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
         let index = try claims.claim(
             by: canvas,
             instances: { draws[$0].instances },
             addDraw: { () throws(RenderFailure) in
-                let first = draws[0]
-                let gpu = first.parameters.gpu
-                draws.append(
-                    Draw(
-                        parameters: try Numbers(gpu: gpu, count: first.parameters.count),
-                        instances: try Numbers(gpu: gpu, count: first.instances.count),
-                        arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
+                let frame = canvas.framesDrawn
+                if let held = addFailure, !held.allows(at: frame) { throw held.failure }
+                drawAllocationAttempts += 1
+                do throws(RenderFailure) {
+                    if let drawAllocationFailureForTesting { throw drawAllocationFailureForTesting }
+                    let first = draws[0]
+                    let gpu = first.parameters.gpu
+                    draws.append(
+                        Draw(
+                            parameters: try Numbers(gpu: gpu, count: first.parameters.count),
+                            instances: try Numbers(gpu: gpu, count: first.instances.count),
+                            arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
+                    addFailure = nil
+                } catch {
+                    addFailure = RememberedFailure(error, at: frame, after: addFailure)
+                    throw error
+                }
             })
         return draws[index]
     }

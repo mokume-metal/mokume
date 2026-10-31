@@ -26,31 +26,33 @@ extension Canvas {
     /// 位置の並びごとの常駐の置き場と、その計算の入口。**面が 1 つ持つ。**
     ///
     /// 計算の入口は初めて使うときに 1 度だけ組む — 使わない面は組む費用も払わない。置き場は並び
-    /// (``Numbers``) ごとで、並びを手放したら次の呼び出しで畳む。際限なく増えない
-    /// ([ADR-0023] 決定 5)。
+    /// (``Numbers``) ごとで、並びを手放したら**次のフレームの頭**で畳む (``foldReleased()``)。際限なく
+    /// 増えない ([ADR-0023] 決定 5)。呼び出しのたびには畳まない — 呼び出しは自分の並びの置き場を引くだけで、
+    /// 置き場の数に比例して払わない。
     ///
-    /// **組み立てに失敗したら、失敗を覚えて同じものを組み直さない。** 失敗は 1 度しか知らせないので、
-    /// 覚えないと、見えないまま毎フレーム原文を組み直し、置き場を確保し直して重くなる
-    /// (描き切りの失敗を同じ番号のうちは繰り返さない ``Canvas`` の `framesDrawn` の扱いと同じ考え)。
-    /// 覚えるのは計算の入口が面ごとに 1 つ、置き場が並びごとに 1 つ。
+    /// **組み立てに失敗したら、失敗を覚えて、間隔を延ばしながら試し直す** (``RememberedFailure``)。
+    /// 失敗は 1 度しか知らせないので、覚えないと、見えないまま毎フレーム原文を組み直し、置き場を確保し直して
+    /// 重くなる (描き切りの失敗を同じ番号のうちは繰り返さない ``Canvas`` の `framesDrawn` の扱いと同じ考え)。
+    /// 一方、永く覚えると、一時的な失敗 (メモリの逼迫・装置の失敗) の後に、その面・その並びは二度と置けない
+    /// (粒は作り直せるが、こちらには作り直す口が無い)。覚えるのは計算の入口が面ごとに 1 つ、置き場が並びごとに 1 つ。
     ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     final class PositionLayouts {
         /// 組んだ計算の入口。
         var kernels: PositionKernels?
-        /// 計算の入口の組み立てが失敗した理由。あれば、組み直さずにこれを投げる。
-        var kernelsFailure: RenderFailure?
+        /// 計算の入口の組み立てが失敗した記憶。試してよいフレームまでは、組み直さずにこれを投げる。
+        var kernelsFailure: RememberedFailure?
         private var placers: [ObjectIdentifier: PositionPlacer] = [:]
         private var placerFailures: [ObjectIdentifier: PlacerFailure] = [:]
 
-        /// 置き場の組み立てが失敗した並びと、その理由。
+        /// 置き場の組み立てが失敗した並びと、その記憶。
         private struct PlacerFailure {
             let source: Weak<Numbers>
             let capacity: Int
-            let failure: RenderFailure
+            let remembered: RememberedFailure
         }
 
-        /// 計算の入口・置き場を組もうとした回数。**検査が読む** (失敗の後に組み直していないことを見る)。
+        /// 計算の入口・置き場を組もうとした回数。**検査が読む** (失敗の後に組み直す間隔を見る)。
         private(set) var kernelBuildAttempts = 0
         private(set) var placerBuildAttempts = 0
         /// 次に組むときに投げる失敗。**検査が差し替える** (組み立ての失敗は検査の中で起こせない)。
@@ -63,25 +65,25 @@ extension Canvas {
             if let kernelFailureForTesting { throw kernelFailureForTesting }
         }
 
-        /// `positions` の置き場。無ければ作る。
+        /// `positions` の置き場。無ければ作る。`frame` は面の ``Canvas/framesDrawn``。
         ///
-        /// **手放された並びの置き場は、呼び出しのたびに畳む。** 作るときだけ畳むと、新しい並びを
-        /// 使わない間は手放した並びの置き場が残る。並びの識別子は手放した後に別の並びが使い回しうるので、
-        /// 同じ識別子でも読み元が同じ並びかを確かめる。
+        /// 並びの識別子は、並びを手放した後に別の並びが使い回しうる (畳むのは次のフレームの頭なので、
+        /// 同じフレームの中で起きうる)。同じ識別子でも読み元が同じ並びかを確かめ、違えば作り直す。
         func placer(
-            for positions: Numbers, capacity: Int, gpu: RenderDevice
+            for positions: Numbers, capacity: Int, gpu: RenderDevice, frame: Int
         ) throws(RenderFailure) -> PositionPlacer {
-            foldReleased()
             let key = ObjectIdentifier(positions)
             if let existing = placers[key], existing.source === positions,
                 existing.capacity == capacity
             {
                 return existing
             }
+            var previous: RememberedFailure?
             if let failed = placerFailures[key], failed.source.value === positions,
                 failed.capacity == capacity
             {
-                throw failed.failure
+                guard failed.remembered.allows(at: frame) else { throw failed.remembered.failure }
+                previous = failed.remembered
             }
             placerBuildAttempts += 1
             do throws(RenderFailure) {
@@ -92,13 +94,16 @@ extension Canvas {
                 return made
             } catch {
                 placerFailures[key] = PlacerFailure(
-                    source: Weak(positions), capacity: capacity, failure: error)
+                    source: Weak(positions), capacity: capacity,
+                    remembered: RememberedFailure(error, at: frame, after: previous))
                 throw error
             }
         }
 
-        /// 手放された並びの置き場と、その失敗の記録を畳む。
-        private func foldReleased() {
+        /// 手放された並びの置き場と、その失敗の記録を畳む。**面のフレームの頭で呼ぶ**
+        /// (``Canvas/beginFrame()``)。最後の呼び出しの後に並びを手放しても、次の呼び出しを待たずに、
+        /// 次のフレームで置き場 (置き場所 1 つ 128 バイト × 容量) を手放す。
+        func foldReleased() {
             if placers.values.contains(where: { $0.source == nil }) {
                 placers = placers.filter { $0.value.source != nil }
             }
@@ -109,6 +114,9 @@ extension Canvas {
 
         /// 持っている置き場の数。**手放された並びのものも数える** — 畳んだかを検査が読む。
         var placerCount: Int { placers.count }
+
+        /// 覚えている置き場の失敗の数。**手放された並びのものも数える** — 畳んだかを検査が読む。
+        var placerFailureCount: Int { placerFailures.count }
 
         /// 作ってあれば `positions` の置き場。**検査が読む。**
         func existingPlacer(for positions: Numbers) -> PositionPlacer? {
@@ -153,12 +161,25 @@ extension Canvas {
         if !shape.solidStrokes.isEmpty || !shape.gpuStrokes.isEmpty {
             reasons.append("it has 3D outlines (call noStroke() before building it)")
         }
-        if shape.solidParts(in: run).contains(where: \.showsBackFaces) {
+        if shape.solidParts(in: run).contains(where: \.showsBackFaces)
+            || mayShowBackFaces(run, of: shape)
+        {
             reasons.append(
                 "it has parts drawn back faces first (a translucent colour, a texture, a "
                     + "blend mode other than the normal one, or a shader)")
         }
         return reasons.isEmpty ? .placeable(run) : .refused(reasons)
+    }
+
+    /// 区間が、形の側の情報から裏面を絵に出しうるか。**部品 (``Shape/solidParts``) を持たない区間も
+    /// 見落とさない** — 向きの求まらない形と自分で並べた頂点 (`beginShape`) は部品を持たないので、
+    /// 部品だけを見ると、半透明の色・貼る絵・重ねる以外の混ぜ方・利用者の断片で描く形が通ってしまう。
+    ///
+    /// 見るのは、形が記録したときの状態である: 頂点の色が透けているか、区間が読む面が字形の頁でない
+    /// (貼る絵) か、区間の混ぜ方が重ねるか、区間の塗りが利用者の断片か。
+    private static func mayShowBackFaces(_ run: Shape.Run, of shape: Shape) -> Bool {
+        !shape.solidAlphaIsOne || !run.texture.isGlyphPage || run.mode != .blend
+            || run.paint.shader != nil
     }
 
     // 計算が書いた数の並びを置き場所として読み、保持した形をまとめて置く。
@@ -196,7 +217,8 @@ extension Canvas {
         let draw: PositionPlacer.Draw
         do {
             kernels = try positionKernels()
-            placer = try positionLayouts.placer(for: positions, capacity: capacity, gpu: gpu)
+            placer = try positionLayouts.placer(
+                for: positions, capacity: capacity, gpu: gpu, frame: framesDrawn)
             draw = try placer.claimDraw(by: self)
         } catch {
             return warnPositionLayoutUnavailable(error)
@@ -243,10 +265,12 @@ extension Canvas {
     }
 
     /// 計算の入口。**初めて使うときに 1 度だけ組む。** 粒と同じ原文から取る。失敗したらそれを覚え、
-    /// 次からは組み直さずに同じ失敗を投げる (``PositionLayouts``)。
+    /// 試してよいフレームまでは組み直さずに同じ失敗を投げる (``PositionLayouts``・``RememberedFailure``)。
     private func positionKernels() throws(RenderFailure) -> PositionKernels {
         if let kernels = positionLayouts.kernels { return kernels }
-        if let failure = positionLayouts.kernelsFailure { throw failure }
+        let frame = framesDrawn
+        let previous = positionLayouts.kernelsFailure
+        if let previous, !previous.allows(at: frame) { throw previous.failure }
         do throws(RenderFailure) {
             try positionLayouts.beginKernelBuild()
             let name = Self.particleShaderName
@@ -258,9 +282,10 @@ extension Canvas {
                 scan: try particleKernel(Self.particleScanKernelName, in: library, from: source),
                 place: try particleKernel(PositionKernels.placeName, in: library, from: source))
             positionLayouts.kernels = kernels
+            positionLayouts.kernelsFailure = nil
             return kernels
         } catch {
-            positionLayouts.kernelsFailure = error
+            positionLayouts.kernelsFailure = RememberedFailure(error, at: frame, after: previous)
             throw error
         }
     }
@@ -270,13 +295,25 @@ extension Canvas {
     /// フレームの外で呼ばれた。**この口の名前で言う** — 計算を頼む口 (`compute`) の注意の鍵と文面を
     /// 借りると、`setup()` で `shape(at:layout:)` を呼んだ人に「計算は draw() から頼め」と言い、先に
     /// `compute` が同じ鍵で言っていればこちらは黙る。直す先は同じ (draw() の中) でも、何が断られたかが違う。
+    ///
+    /// **直し先は面で言い分ける** ([#2780])。ランタイムの本体の面 (``isRuntimeSurface``) は `draw()`、
+    /// 自分でフレームを開く面 (描き場所・直に使う ``Canvas``) は `beginDraw()` と `endDraw()` の間か
+    /// `draw { }` の中である — 本体向けの文を言うと、すでに `draw()` の中に居る利用者に直す場所を
+    /// 取り違えさせる。後者は ``OutsideFrame/drawingTargetTail`` と同じ案内にそろえる。鍵を
+    /// ``OutsideFrame`` に入れないのは、計算を頼む口の鍵と分けるためである。
+    ///
+    /// [#2780]: https://github.com/mokume-metal/mokume/issues/2780
     private func warnPositionLayoutOutsideFrame() {
+        let subject =
+            "shape(at:layout:) places shapes at positions that a computation wrote, and a "
+            + "computation runs only while a frame is drawn"
         warnOnce(
             .positionLayoutOutsideFrame,
-            "shape(at:layout:) places shapes at positions that a computation wrote, and a "
-                + "computation runs only while a frame is drawn, so call it from draw() (on a surface you "
-                + "open yourself, between beginDraw() and endDraw()). This was called outside a frame, so "
-                + "it belongs to no frame, and was ignored")
+            isRuntimeSurface
+                ? subject + ", so call it from draw() (on a surface you open yourself, between "
+                    + "beginDraw() and endDraw()). This was called outside a frame, so it belongs to "
+                    + "no frame, and was ignored"
+                : subject + ". " + OutsideFrame.drawingTargetTail)
     }
 
     /// 並びの長さが 3 で割り切れない。端数は置かない。

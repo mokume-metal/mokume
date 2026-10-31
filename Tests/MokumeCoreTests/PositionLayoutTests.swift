@@ -21,6 +21,26 @@ struct PositionLayoutValueTests {
         let layout: Placement.Layout = .position
         #expect(layout == .position)
     }
+
+    @Test("失敗の記憶は、間隔を 1・2・4…と倍にし、上限 600 フレームで止める")
+    func rememberedFailureBacksOffUpToTheLimit() {
+        let failure = RenderFailure.bufferUnavailable(byteCount: 1)
+        var remembered = RememberedFailure(failure, at: 100)
+        #expect(remembered.interval == 1)
+        #expect(remembered.retryFrame == 101)
+        #expect(!remembered.allows(at: 100), "失敗したフレームの中では試さない")
+        #expect(remembered.allows(at: 101))
+        var intervals = [remembered.interval]
+        var frame = remembered.retryFrame
+        for _ in 0..<14 {
+            remembered = RememberedFailure(failure, at: frame, after: remembered)
+            intervals.append(remembered.interval)
+            frame = remembered.retryFrame
+        }
+        #expect(
+            intervals == [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 600, 600, 600, 600, 600],
+            Comment(rawValue: "\(intervals)"))
+    }
 }
 
 @Suite(
@@ -792,10 +812,109 @@ struct PositionLayoutDrawingTests {
         #expect(differingPixels(try canvas.target.readPixels(), placed) == 0)
     }
 
+    // MARK: - 同じフレームの 2 回の呼び出しが、旗の段と指定を取り違えない
+
+    @Test("同じフレームで、並びを書き換えて数でない値の位置が違う 2 回を置いても、互いの旗を読まない")
+    func twoCallsWithDifferentNonFinitePositionsDoNotShareFlags() throws {
+        let canvas = try makeCanvas()
+        let positions = try canvas.makeNumbers(count: 12)
+        let cube = cube(canvas)
+        let nan = Float.nan
+        // 1 回目: 2 つ目が数でない値。2 回目 (書き換えた後): 3 つ目が数でない値で、段の頭も旗の並びも違う
+        let first: [Float] = [30, 50, 0, 60, nan, 0, 90, 50, 0, 150, 50, 0]
+        let second: [Float] = [30, 150, 0, 60, 150, 0, nan, 150, 0, 150, 150, 0]
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            positions.set(first)
+            canvas.shape(cube, at: positions, layout: .position)
+            positions.set(second)
+            canvas.shape(cube, at: positions, layout: .position)
+        }
+        let placed = try fromPlacements([
+            Placement(x: 30, y: 50), Placement(x: 90, y: 50), Placement(x: 150, y: 50),
+            Placement(x: 30, y: 150), Placement(x: 60, y: 150), Placement(x: 150, y: 150),
+        ])
+        let picture = try canvas.target.readPixels()
+        let gap = differingPixels(picture, placed)
+        #expect(gap == 0, "2 回の置きが互いの旗を読んだ (\(gap) 画素違う)")
+        #expect(coveredPixels(placed) > 0, "何も描かれていない (検査の前提)")
+    }
+
+    // MARK: - 途中の描き切り (#1656) を挟んでも、影が組を読む
+
+    /// 影を落とす立方体を同じ並びで 2 回置く。**途中の描き切りを 2 回の間に挟めば、1 回目の影の焼き付けは
+    /// 描き切りの後も 1 回目の組の置き場所を読む** — 2 回目が組を使い回すと、その置き場所を上書きする。
+    private func shadowedFrame(cut: Bool, shadows: Bool) throws -> DisplayImage {
+        let canvas = try makeCanvas(width: 96, height: 96)
+        let cube = cube(canvas, 16)
+        let positions = try canvas.makeNumbers(count: 6)
+        positions.set([24, 36, 0, 44, 36, 0])
+        // 2 枚目を見る (描き切りで落とす側を控えるのは、影を有効にした面だけ)
+        for _ in 0..<2 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.camera(48, -36, 120, 48, 48, 0, 0, 1, 0)
+                canvas.lights()
+                canvas.shadows(shadows)
+                canvas.shape(cube, at: positions, layout: .position)
+                if cut { _ = canvas.get(40, 40) }
+                // 後の呼び出しは横へずらす。組を使い回すと、前の呼び出しの置き場所がこれで上書きされる
+                canvas.push()
+                canvas.translate(30, 0, 0)
+                canvas.shape(cube, at: positions, layout: .position)
+                canvas.pop()
+                canvas.castShadow(false)
+                canvas.noStroke()
+                canvas.fill(.linear(red: 0.8, green: 0.8, blue: 0.8))
+                canvas.push()
+                canvas.translate(48, 72, 0)
+                canvas.box(96, 4, 96)
+                canvas.pop()
+            }
+        }
+        return try canvas.output.encodeForDisplay()
+    }
+
+    /// 成分の差が表示の 1 段 (1/255) を越える画素の数。
+    private func displayDifference(_ a: DisplayImage, _ b: DisplayImage) -> Int {
+        var count = 0
+        for y in 0..<a.height {
+            for x in 0..<a.width {
+                let left = a[x, y]
+                let right = b[x, y]
+                if abs(Int(left.red) - Int(right.red)) > 1 || abs(Int(left.green) - Int(right.green)) > 1
+                    || abs(Int(left.blue) - Int(right.blue)) > 1
+                {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    @Test("途中の描き切りを挟んでも、置き場所の道の影は、分けずに描いた絵と一致する (#1656)")
+    func aMidFrameCutKeepsTheShadowsOfThePositionPath() throws {
+        let plain = try shadowedFrame(cut: false, shadows: true)
+        let cut = try shadowedFrame(cut: true, shadows: true)
+        let gap = displayDifference(plain, cut)
+        #expect(gap == 0, "描き切りを挟むと影の絵が \(gap) 画素違う")
+
+        // 比べる側が影を持つ: 影を切った絵と比べて、床が暗い
+        let unshadowed = try shadowedFrame(cut: false, shadows: false)
+        var darker = 0
+        for y in 0..<plain.height {
+            for x in 0..<plain.width where Int(unshadowed[x, y].red) - Int(plain[x, y].red) > 20 {
+                darker += 1
+            }
+        }
+        #expect(darker > 50, "床に影が落ちていない (\(darker) 画素)")
+    }
+
     // MARK: - 置き場を畳む・組み立ての失敗を覚える
 
-    @Test("手放した並びの置き場は、別の並びを置かない呼び出しでも畳まれる")
-    func releasedPlacersAreFoldedOnEveryCall() throws {
+    @Test("手放した並びの置き場は、フレームの頭で畳まれる。呼び出しのたびには畳まない")
+    func releasedPlacersAreFoldedAtTheFrameStart() throws {
         let canvas = try makeCanvas()
         let cube = cube(canvas)
         var gone: Numbers? = try canvas.makeNumbers(count: 6)
@@ -808,29 +927,73 @@ struct PositionLayoutDrawingTests {
             canvas.shape(cube, at: stays, layout: .position)
         }
         #expect(canvas.positionLayouts.placerCount == 2)
-        gone = nil
-        // 新しい置き場を作らない呼び出し (残った並びを置くだけ)
+        // 手放したフレームの中では、残った並びを置く呼び出しがあっても畳まない
+        // (呼び出しごとに置き場の数だけ走査しない)。畳むのは次のフレームの頭
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shape(cube, at: stays, layout: .position)
+            gone = nil
+            canvas.shape(cube, at: stays, layout: .position)
+            #expect(canvas.positionLayouts.placerCount == 2, "呼び出しが畳んだ")
         }
-        #expect(canvas.positionLayouts.placerCount == 1, "手放した並びの置き場が、次の呼び出しで畳まれていない")
+        try canvas.draw {
+            #expect(canvas.positionLayouts.placerCount == 1, "フレームの頭で畳まれていない")
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(cube, at: stays, layout: .position)
+        }
+        #expect(canvas.positionLayouts.placerCount == 1)
     }
 
-    @Test("置き場を用意できなかった並びは、失敗を覚えて毎フレーム確保し直さない。別の並びは置ける")
-    func placerFailureIsRememberedPerSequence() throws {
+    @Test("最後の呼び出しの後に並びを手放すと、何も置かないフレームを 1 枚描くだけで置き場が畳まれる")
+    func releasedPlacerIsFoldedByAFrameThatPlacesNothing() throws {
+        let canvas = try makeCanvas()
+        let cube = cube(canvas)
+        var gone: Numbers? = try canvas.makeNumbers(count: 6)
+        gone?.set([60, 100, 0, 140, 200, 0])
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            if let gone { canvas.shape(cube, at: gone, layout: .position) }
+        }
+        #expect(canvas.positionLayouts.placerCount == 1)
+        gone = nil
+        #expect(canvas.positionLayouts.placerCount == 1, "検査の前提: 手放しただけでは畳まれない")
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+        }
+        #expect(canvas.positionLayouts.placerCount == 0, "呼び出しの無いフレームで畳まれていない")
+    }
+
+    @Test("置き場を用意できなかった並びを手放すと、失敗の記憶も次のフレームの頭で畳まれる")
+    func releasedFailureIsFoldedAtTheFrameStart() throws {
+        let canvas = try makeCanvas()
+        let cube = cube(canvas)
+        var broken: Numbers? = try canvas.makeNumbers(count: 6)
+        broken?.set([60, 100, 0, 140, 200, 0])
+        canvas.positionLayouts.placerFailureForTesting = .bufferUnavailable(byteCount: 1)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            if let broken { canvas.shape(cube, at: broken, layout: .position) }
+        }
+        #expect(canvas.positionLayouts.placerFailureCount == 1)
+        broken = nil
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+        }
+        #expect(canvas.positionLayouts.placerFailureCount == 0, "手放した並びの失敗の記憶が残っている")
+    }
+
+    @Test("置き場を用意できなかった並びの失敗は並びごとで、別の並びは置ける")
+    func placerFailureIsPerSequence() throws {
         let canvas = try makeCanvas()
         let cube = cube(canvas)
         let broken = try canvas.makeNumbers(count: 6)
         broken.set([60, 100, 0, 140, 200, 0])
         canvas.positionLayouts.placerFailureForTesting = .bufferUnavailable(byteCount: 1)
-        for _ in 0..<3 {
-            try canvas.draw {
-                canvas.background(.linear(red: 0, green: 0, blue: 0))
-                canvas.shape(cube, at: broken, layout: .position)
-            }
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(cube, at: broken, layout: .position)
         }
-        #expect(canvas.positionLayouts.placerBuildAttempts == 1, "失敗した置き場を毎フレーム組み直している")
+        #expect(canvas.positionLayouts.placerBuildAttempts == 1)
         #expect(canvas.warnings.hasWarned(.positionLayoutUnavailable))
         #expect(canvas.positionLayouts.placerCount == 0)
 
@@ -848,23 +1011,101 @@ struct PositionLayoutDrawingTests {
         #expect(coveredPixels(try canvas.target.readPixels()) > 0)
     }
 
-    @Test("計算の入口を組めなかったら、失敗を覚えて毎フレーム組み直さない")
-    func kernelFailureIsRemembered() throws {
-        let canvas = try makeCanvas()
+    /// 組み立ての失敗の種類。
+    enum BuildFailure: CaseIterable, CustomTestStringConvertible {
+        /// 計算の入口を組めない。
+        case kernel
+        /// 置き場を確保できない。
+        case placer
+        /// 組を足せない (同じフレームの 2 回目以降の呼び出し)。
+        case drawAllocation
+
+        var testDescription: String { "\(self)" }
+    }
+
+    @Test(
+        "組み立ての失敗は、間隔を 1・2・4…フレームと延ばしながら試し直し、同じフレームでは試さない。直れば置ける",
+        arguments: BuildFailure.allCases)
+    func buildFailuresAreRetriedWithGrowingIntervals(kind: BuildFailure) throws {
+        let canvas = try makeCanvas(width: 96, height: 96)
         let cube = cube(canvas)
         let positions = try canvas.makeNumbers(count: 6)
-        positions.set([60, 100, 0, 140, 200, 0])
-        canvas.positionLayouts.kernelFailureForTesting = .bufferUnavailable(byteCount: 1)
-        for _ in 0..<3 {
+        positions.set([30, 30, 0, 60, 60, 0])
+        let layouts = canvas.positionLayouts
+
+        // 組を足す失敗は、置き場と最初の組ができてから差し替える
+        if kind == .drawAllocation {
             try canvas.draw {
                 canvas.background(.linear(red: 0, green: 0, blue: 0))
                 canvas.shape(cube, at: positions, layout: .position)
             }
         }
-        #expect(canvas.positionLayouts.kernelBuildAttempts == 1, "失敗した入口を毎フレーム組み直している")
-        #expect(canvas.positionLayouts.placerBuildAttempts == 0, "入口が無いのに置き場を確保している")
+        func attempts() -> Int {
+            switch kind {
+            case .kernel: layouts.kernelBuildAttempts
+            case .placer: layouts.placerBuildAttempts
+            case .drawAllocation: layouts.existingPlacer(for: positions)?.drawAllocationAttempts ?? 0
+            }
+        }
+        func inject(_ failure: RenderFailure?) {
+            switch kind {
+            case .kernel: layouts.kernelFailureForTesting = failure
+            case .placer: layouts.placerFailureForTesting = failure
+            case .drawAllocation:
+                layouts.existingPlacer(for: positions)?.drawAllocationFailureForTesting = failure
+            }
+        }
+        /// 1 フレームに 3 回呼ぶ (同じフレームの 2 回目以降は、試さずに断られる)。試みが増えたフレームを返す。
+        func drawFrame(limit: Int) throws -> Int? {
+            let frame = canvas.framesDrawn
+            let before = attempts()
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.lights()
+                for index in 0..<3 {
+                    canvas.push()
+                    canvas.translate(Float(index) * 2, 0)
+                    canvas.shape(cube, at: positions, layout: .position)
+                    canvas.pop()
+                }
+            }
+            let grown = attempts() - before
+            #expect(grown <= limit, "同じフレームで \(grown) 回試した")
+            return grown > 0 ? frame : nil
+        }
+
+        inject(.bufferUnavailable(byteCount: 1))
+        var attemptFrames: [Int] = []
+        for _ in 0..<20 { if let frame = try drawFrame(limit: 1) { attemptFrames.append(frame) } }
+        let gaps = zip(attemptFrames.dropFirst(), attemptFrames).map { $0 - $1 }
+        #expect(gaps == [1, 2, 4, 8], Comment(rawValue: "試したフレーム \(attemptFrames)"))
         #expect(canvas.warnings.hasWarned(.positionLayoutUnavailable))
-        #expect(coveredPixels(try canvas.target.readPixels()) == 0)
+        if kind != .drawAllocation {
+            #expect(layouts.placerCount == 0)
+            #expect(coveredPixels(try canvas.target.readPixels()) == 0, "失敗したのに描かれた")
+        }
+
+        // 直す: 次に試してよいフレームで置ける。その間隔は前の倍 (16)
+        inject(nil)
+        var recovered: Int?
+        // 直った回は、3 回目の呼び出しがもう 1 つ組を足すので、試みが 2 回になりうる
+        for _ in 0..<20 where recovered == nil { recovered = try drawFrame(limit: 2) }
+        let last = try #require(attemptFrames.last)
+        #expect(recovered == last + 16, Comment(rawValue: "直った後の試み \(String(describing: recovered))"))
+        // 直った後は毎フレーム置ける (試し直さずに済む)
+        let settled = attempts()
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(cube, at: positions, layout: .position)
+        }
+        #expect(attempts() == settled)
+        #expect(layouts.placerCount == 1)
+        #expect(layouts.kernels != nil)
+        if kind == .drawAllocation {
+            #expect((layouts.existingPlacer(for: positions)?.draws.count ?? 0) >= 2)
+        }
+        #expect(coveredPixels(try canvas.target.readPixels()) > 0, "直ったのに描かれない")
     }
 
     // MARK: - setup() など、描く外
@@ -903,6 +1144,30 @@ struct PositionLayoutDrawingTests {
         #expect(warnings.hasWarned(.computeOutsideFrame), "検査の前提: 先に計算の口が断られている")
         #expect(runtime.canvas.positionLayouts.placerCount == 0, "断った呼び出しが置き場を作った")
     }
+
+    @Test("フレームの外の注意は、本体の面は draw()、自分でフレームを開く面は beginDraw() と endDraw() と言い分ける")
+    func outsideTheFrameNoticeFollowsTheSurface() throws {
+        // 本体の面 (setup() の中)
+        let runtime = try SketchRuntime(sketch: PlacedInSetup(), gpu: try RenderDevice())
+        try runtime.advance()
+        let body = try #require(runtime.canvas.warnings.message(for: .positionLayoutOutsideFrame))
+
+        // 自分でフレームを開く面。持ち越しの区間は本体の面だけが立てるので、検査で立てて関所の先へ通す
+        let canvas = try makeCanvas()
+        canvas.carriesOver = true
+        let cube = cube(canvas)
+        let positions = try canvas.makeNumbers(count: 6)
+        canvas.shape(cube, at: positions, layout: .position)
+        let target = try #require(canvas.warnings.message(for: .positionLayoutOutsideFrame))
+
+        #expect(body != target, "本体の面と自分でフレームを開く面で文面が同じ")
+        #expect(body.contains("from draw()"), Comment(rawValue: body))
+        #expect(!body.contains("inside its draw { }"), Comment(rawValue: body))
+        #expect(target.hasPrefix("shape(at:layout:)"), Comment(rawValue: target))
+        #expect(target.contains("beginDraw() and endDraw()"), Comment(rawValue: target))
+        #expect(target.contains("draw { }"), Comment(rawValue: target))
+        #expect(!target.contains("from draw()"), Comment(rawValue: target))
+    }
 }
 
 /// 数の並びでは置けない形。
@@ -912,6 +1177,10 @@ enum IneligibleShape: CaseIterable, CustomTestStringConvertible {
     case indexed
     case translucent
     case flat
+    /// 自分で並べた頂点 (`beginShape`) は巻き方の向きを求めず部品を持たないが、半透明の色なら通してはならない。
+    case freeformTranslucent
+    /// 同じく部品を持たない形が、重ねる以外の混ぜ方で描く。
+    case freeformBlended
 
     var testDescription: String { "\(self)" }
 
@@ -923,6 +1192,7 @@ enum IneligibleShape: CaseIterable, CustomTestStringConvertible {
         case .indexed: "by index"
         case .translucent: "back faces first"
         case .flat: "not a 3D solid"
+        case .freeformTranslucent, .freeformBlended: "back faces first"
         }
     }
 
@@ -966,6 +1236,28 @@ enum IneligibleShape: CaseIterable, CustomTestStringConvertible {
                 canvas.noStroke()
                 canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
                 canvas.rect(-10, -10, 20, 20)
+            }
+        case .freeformTranslucent:
+            canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(204, 153, 102, 128)
+                canvas.beginShape(.triangles)
+                for point in [(-18, -18), (18, -18), (0, 18)] as [(Float, Float)] {
+                    canvas.vertex(point.0, point.1, 0)
+                }
+                canvas.endShape()
+            }
+        case .freeformBlended:
+            canvas.createShape {
+                canvas.noStroke()
+                canvas.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
+                canvas.blendMode(.add)
+                canvas.beginShape(.triangles)
+                for point in [(-18, -18), (18, -18), (0, 18)] as [(Float, Float)] {
+                    canvas.vertex(point.0, point.1, 0)
+                }
+                canvas.endShape()
+                canvas.blendMode(.blend)
             }
         }
     }
