@@ -246,7 +246,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       skip: ${{ steps.version.outputs.skip }}
 
-  # 公開 API の一覧を、その版に紐づけて配る。
+  # 公開 API の一覧 (索引) と、口ごとの詳細 (説明の全文) を、その版に紐づけて配る。
+  # どちらも同じシンボルグラフから 1 回の `make api-list` で組む (ADR-0027 決定 1 の改訂 (2026-10-31)・#3583)。
   #
   # **リポジトリには置かない。** 置くと「古くないことを守る検査」が要るようになり、
   # 以後すべての変更がその検査に引っかかる (ADR-0001 原則 8)。版ごとに組み立てて
@@ -267,14 +268,15 @@ jobs:
       - name: 一覧を組み立てる
         env:
           VERSION: ${{ needs.release.outputs.version }}
-        run: make api-list OUT="$RUNNER_TEMP/mokume-api.md" VERSION="$VERSION"
+        run: make api-list OUT="$RUNNER_TEMP/mokume-api.md" DETAILS="$RUNNER_TEMP/mokume-api-details.json" VERSION="$VERSION"
       - name: Release へ付ける
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           mv "$RUNNER_TEMP/mokume-api.md" "$RUNNER_TEMP/mokume-api-$VERSION.md"
-          gh release upload "$VERSION" "$RUNNER_TEMP/mokume-api-$VERSION.md"
+          mv "$RUNNER_TEMP/mokume-api-details.json" "$RUNNER_TEMP/mokume-api-details-$VERSION.json"
+          gh release upload "$VERSION" "$RUNNER_TEMP/mokume-api-$VERSION.md" "$RUNNER_TEMP/mokume-api-details-$VERSION.json"
 
   # 道具を入れる手段。**タグを起点に配る** (ADR-0001 原則 6)。
   #

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "version": "v0.38.0",
+  "symbols": {
+    "Sketch": [
+      {
+        "owner": "",
+        "declaration": "@MainActor protocol Sketch : AnyObject, SketchPart",
+        "doc": "利用者が書く単位。"
+      }
+    ],
+    "ambientLight": [
+      {
+        "owner": "SketchPart",
+        "declaration": "@MainActor func ambientLight(_ color: LinearRGBA)",
+        "doc": "全体を底上げする光を置く。\n\n**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**"
+      },
+      {
+        "owner": "SketchPart",
+        "declaration": "@MainActor func ambientLight(_ gray: some ScalarConvertible)",
+        "doc": ""
+      }
+    ]
+  }
+}

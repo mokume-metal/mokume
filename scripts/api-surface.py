@@ -311,6 +311,46 @@ def render(symbols: list[dict], version: str) -> str:
     return "\n".join(out) + "\n"
 
 
+# ---------------------------------------------------------------- 口ごとの詳細
+
+# 詳細の JSON の形の版。形の正典は Schemas/api-details.schema.json (ADR-0018 決定 4)
+DETAILS_SCHEMA_VERSION = 1
+
+
+def base_name(symbol: dict) -> str:
+    """多重定義をまとめる名前。`ambientLight(_:)` の `ambientLight`。"""
+    return title(symbol).split("(")[0]
+
+
+def details(symbols: list[dict], version: str) -> dict:
+    """口ごとの説明と宣言。**一覧 (`render`) と同じ `symbols` を 1 つも落とさず写す**。
+
+    一覧は宣言と型の説明の 1 行目だけを出し、口の説明 (目盛り・寿命・注意) と例は
+    載らない (ADR-0027 決定 1 の改訂 (2026-10-31)・#3420)。説明は `doc()` を通すので、
+    `///` も `//` も一覧の検査と同じ読み方で全文が入る。**要約も写しも作らない** — 説明の
+    正典は `///` だけである。
+
+    形は基底名ごとの配列で、同名の多重定義は同じ配列に並ぶ。型そのもの (トップレベル) は
+    持ち主が空の項になる。並びは (持ち主・引数の型・宣言) で決め、入力の順に依らない
+    (`order` が一覧に対して担うのと同じ理由 — 版の間で diff したときのノイズを避ける)。
+    """
+    grouped: dict[str, list[dict]] = {}
+    for symbol in sorted(symbols, key=lambda s: (owner(s), *order(s), declaration(s))):
+        grouped.setdefault(base_name(symbol), []).append(
+            {"owner": owner(symbol), "declaration": declaration(symbol), "doc": doc(symbol)})
+    return {"schemaVersion": DETAILS_SCHEMA_VERSION, "version": version, "symbols": grouped}
+
+
+def count_details(data: dict) -> int:
+    """詳細の項の数。一覧の 3 つの出口 (`top`・`by_owner`・`その他`) の件数の合計と一致する。"""
+    return sum(len(entries) for entries in data["symbols"].values())
+
+
+def render_details(data: dict) -> str:
+    """`details` の結果を JSON の文字列にする。日本語を `\\uXXXX` に潰さない (資産を人も読める)。"""
+    return json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+
+
 # ---------------------------------------------------------------- 検査
 
 ONOFF_PREFIXES = ("enable", "disable", "clear")
@@ -1331,6 +1371,8 @@ def main() -> int:
     parser.add_argument("--module", action="append", dest="modules")
     parser.add_argument("--version", default="(開発版)")
     parser.add_argument("--output", type=pathlib.Path)
+    # list のとき、口ごとの詳細 (説明の全文つき) の JSON の出力先。省くと詳細は組まない
+    parser.add_argument("--details", type=pathlib.Path)
     arguments = parser.parse_args()
 
     modules = arguments.modules or ["MokumeCore"]
@@ -1349,6 +1391,10 @@ def main() -> int:
             print(f"ok: {arguments.output} に公開シンボル {len(symbols)} 個を書いた")
         else:
             sys.stdout.write(text)
+        if arguments.details:
+            data = details(symbols, arguments.version)
+            arguments.details.write_text(render_details(data), encoding="utf-8")
+            print(f"ok: {arguments.details} に口ごとの詳細 {count_details(data)} 個を書いた")
         return 0
 
     owned = load_owned_identifiers(arguments.graphs)

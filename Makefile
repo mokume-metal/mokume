@@ -625,9 +625,11 @@ runtime-math: ## 本体の超越関数が RuntimeMath を通さずに直に呼�
 attach-result: ## 道具を通さない attach の呼び出し・参照 (返す false を捨てる素の口) が無いかを検査する
 	python3 scripts/check-attach-result.py
 
-api-list: build ## 公開 API の一覧を組み立てる (OUT=path VERSION=v0.0.0)
+# 索引 (OUT=。宣言と型の説明の 1 行目) と、口ごとの詳細 (DETAILS=。説明の全文・JSON) の 2 つを出す。
+# どちらも同じシンボルグラフから組む (ADR-0027 決定 1 の改訂 (2026-10-31)・#3583)。DETAILS= を省くと詳細は組まない
+api-list: build ## 公開 API の一覧と口ごとの詳細を組み立てる (OUT=path DETAILS=path VERSION=v0.0.0)
 	python3 scripts/api-surface.py list --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m)) \
-		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",)
+		--version "$(or $(VERSION),(開発版))" $(if $(OUT),--output "$(OUT)",) $(if $(DETAILS),--details "$(DETAILS)",)
 
 # 参照の面 (人が読む API の面)。**説明文 (`///`) が唯一の入力**で、面はその生成物
 # (ADR-0027 決定 1)。リポジトリには置かず、公開のワークフローがここを呼んで配る。
