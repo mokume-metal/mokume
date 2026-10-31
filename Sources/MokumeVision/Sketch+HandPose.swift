@@ -32,7 +32,7 @@ extension Sketch {
     ///     func setup() {
     ///         // 手首から指先まで 21 の関節が、1 秒かけて右へ動く手を流す
     ///         hands = createHandPose(results: (0..<60).map { frame in
-    ///             let joints = HandJointName.allCases.map { name in
+    ///             let joints = HandJointName.allCases.compactMap { name in
     ///                 let x = 100 + Float(frame) * 3 + Float(name.rawValue) * 8
     ///                 return HandJoint(position: Vector2(x, 100 + Float(name.rawValue) * 6), confidence: 1)
     ///             }
@@ -51,7 +51,7 @@ extension Sketch {
     /// - **`nil` のフレームは、新しい結果がまだ届いていない。** 前の結果が最新のまま残る (実物では、結果は絵より
     ///   遅れて届き、毎フレーム新しいとは限らない)
     /// - 結果は ``HandPoseResult`` が持つ host time を、そのまま元の絵の host time として入れる
-    /// - 結果の列は `Codable` なので、書き出して読み戻した列からも同じ点が出る
+    /// - 結果の列は `Codable` なので、書き出して読み戻した列からも同じ点が出る。読み戻すときは、位置が有限でない関節・信頼度が 0〜1 を外れた関節を読めないものとして断る
     /// - 外して足し直しても、i 番目のフレームには `results[i]` が入る (外していた間の分は届かない・[#3152](https://github.com/mokume-metal/mokume/issues/3152))
     ///
     /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、走っている

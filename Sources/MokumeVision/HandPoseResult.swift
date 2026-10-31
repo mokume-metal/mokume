@@ -31,13 +31,43 @@ public nonisolated enum HandJointName: Int, Sendable, CaseIterable, Hashable, Co
 }
 
 /// 手の関節 1 つの位置と信頼度。
+///
+/// **値は有限で、信頼度は 0〜1 に収まる。** 位置が有限でない (`NaN`・無限大) 関節は作れず、信頼度は 0〜1 に
+/// 収めて持つ。`NaN` を持つと、自分自身と `==` が偽になり、JSON に書くと投げて、結果の列が書き出して読み戻せなくなる。
 public nonisolated struct HandJoint: Sendable, Hashable, Codable {
     /// 位置。**入力の絵の画素の座標**で、左上が原点、y は下向き。描いた絵の上にそのまま重なる。
+    ///
+    /// 絵の外を指すことはある (画素の範囲を越える値は、そのまま写す)。有限でない値は持たない。
     public let position: Vector2
     /// 信頼度 (0〜1)。1 に近いほど確か。
     public let confidence: Float
 
-    public init(position: Vector2, confidence: Float) {
+    /// 位置と信頼度から関節を作る。**位置が有限でない、または信頼度が `NaN` なら `nil` を返す。**
+    /// 信頼度が 0〜1 を外れていれば、0〜1 に収める。
+    public init?(position: Vector2, confidence: Float) {
+        guard position.x.isFinite, position.y.isFinite, !confidence.isNaN else { return nil }
+        self.position = position
+        self.confidence = min(max(confidence, 0), 1)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case position, confidence
+    }
+
+    /// 位置が有限でない、または信頼度が 0〜1 を外れていれば読めない (書き出した列が壊れていたことを黙って通さない)。
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let position = try container.decode(Vector2.self, forKey: .position)
+        let confidence = try container.decode(Float.self, forKey: .confidence)
+        guard position.x.isFinite, position.y.isFinite else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .position, in: container, debugDescription: "A joint position must be finite")
+        }
+        guard (0...1).contains(confidence) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .confidence, in: container,
+                debugDescription: "A joint confidence must be between 0 and 1, but it was \(confidence)")
+        }
         self.position = position
         self.confidence = confidence
     }

@@ -108,7 +108,7 @@ let package = Package(
         // 映像から取り出す (Vision。手の関節点から)。結果を最新の 1 つの入り口で受ける。MokumeCamera には依存しない —
         // 受ける入力は Image と到着の記録で、カメラも動画も自作の絵も区別しない (ADR-0014 の改訂 (2026-10-23)・#3586)
         .target(
-            name: "MokumeVision", dependencies: ["MokumeCore"],
+            name: "MokumeVision", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
