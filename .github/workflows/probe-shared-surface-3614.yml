@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: Probe shared surface 3614
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: probe-shared-surface-3614-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  turn:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+  probe:
+    needs: turn
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 30
+    env:
+      MTL_DEBUG_LAYER: '1'
+      MTL_DEBUG_LAYER_WARNING_MODE: nslog
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/runner-preflight.sh
+      - run: swift build --build-tests -Xswiftc -gline-tables-only
+      - run: python3 -u scripts/probe-shared-surface-3614.py
+      - name: Related suites
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p out
+          python3 scripts/gpu-slot.py -- swift test --skip-build \
+            --filter 'FrameSyncTests|SharedFrameSurfaceTests' \
+            --xunit-output out/related.xml \
+            --event-stream-output-path out/related-events.jsonl --event-stream-version 0 \
+            > out/related.log 2>&1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: shared-surface-3614
+          path: out/
+          retention-days: 14
