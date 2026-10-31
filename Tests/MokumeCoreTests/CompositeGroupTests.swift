@@ -40,8 +40,12 @@ struct CompositeGroupTests {
     }
 
     private func box(_ left: Float, _ top: Float, _ right: Float, _ bottom: Float) -> PlaneBox {
-        var box = PlaneBox(SIMD2(left, top))
-        box.add(SIMD2(right, bottom))
+        // `PlaneBox.add` は数でない・無限の点を落とすので、値は欄に直に置く (数でない外接の検査のため)
+        var box = PlaneBox(SIMD2(0, 0))
+        box.minX = left
+        box.minY = top
+        box.maxX = right
+        box.maxY = bottom
         return box
     }
 
@@ -256,8 +260,10 @@ struct CompositeGroupTests {
     func outsideTheFrameNothingIsDrawn() throws {
         let canvas = try makeCanvas()
         var calls = 0
-        canvas.withCompositeGroup(opacity: 0.5, covering: wholeSurface) { _ in calls += 1 }
+        let grouped = canvas.withCompositeGroup(opacity: 0.5, covering: wholeSurface) { _ in calls += 1 }
         #expect(calls == 0)
+        // 単位にできなかったので偽 (呼ぶ側が別の道へ落とせる)
+        #expect(grouped == false)
     }
 
     // MARK: - 位置: 単位あり・なしで同じ画素
@@ -315,5 +321,166 @@ struct CompositeGroupTests {
         // 単位の中身は、平行移動の先 (10…14) に半分の濃さで出る
         #expect(abs(Int(image[12, 2].alpha) - 128) <= 1)
         #expect(image[2, 2].alpha == 0)
+    }
+
+    // MARK: - 単位にできないとき: 偽を返し、中は呼ばない
+
+    @Test("不透明度 +∞ は 1 に締める (見えない側へは倒さない)")
+    func infiniteOpacityIsClampedToOne() throws {
+        let canvas = try makeCanvas()
+        var calls = 0
+        try canvas.draw {
+            canvas.withCompositeGroup(opacity: .infinity, covering: wholeSurface) { group in
+                calls += 1
+                group.noStroke()
+                group.fill(white)
+                group.rect(10, 10, 20, 20)
+            }
+        }
+        #expect(calls == 1)
+        #expect(try pixels(of: canvas)[20, 20] == (255, 255, 255, 255))
+    }
+
+    @Test("外接の角が数でない・無限になるときは、箱を小さくせずに偽を返し、中を呼ばない")
+    func nonFiniteCornersAreRefused() throws {
+        let canvas = try makeCanvas()
+        var calls = 0
+        var results: [Bool] = []
+        try canvas.draw {
+            // 角の一部が無限 (右端だけ)・数でない (変換が NaN を作る)
+            results.append(canvas.withCompositeGroup(opacity: 0.5, covering: box(0, 0, .infinity, 10)) { _ in calls += 1 })
+            results.append(canvas.withCompositeGroup(opacity: 0.5, covering: box(.nan, 0, 10, 10)) { _ in calls += 1 })
+            // 有限だが、変換で桁があふれて無限になる
+            canvas.scale(Float.greatestFiniteMagnitude, 1)
+            results.append(canvas.withCompositeGroup(opacity: 0.5, covering: box(0, 0, 10, 10)) { _ in calls += 1 })
+        }
+        #expect(results == [false, false, false])
+        #expect(calls == 0)
+    }
+
+    @Test("細かさを 1 未満にした面では、描く格子が座標の格子と違うので単位にならない")
+    func aReducedDensitySurfaceIsNotGrouped() throws {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: Self.size, height: Self.size)
+        let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .spatial)
+        var calls = 0
+        var result: Bool?
+        try canvas.draw {
+            result = canvas.withCompositeGroup(opacity: 1, covering: wholeSurface) { _ in calls += 1 }
+        }
+        #expect(result == false)
+        #expect(calls == 0)
+        // 細かさ 1 の面は単位になる (対照)
+        let plain = try makeCanvas()
+        var plainResult: Bool?
+        try plain.draw {
+            plainResult = plain.withCompositeGroup(opacity: 1, covering: wholeSurface) { _ in }
+        }
+        #expect(plainResult == true)
+    }
+
+    @Test("形の組み立ての中では、記録せずに偽を返し、中を呼ばない")
+    func insideCreateShapeIsRefused() throws {
+        let canvas = try makeCanvas()
+        var calls = 0
+        var result: Bool?
+        try canvas.draw {
+            _ = canvas.createShape {
+                result = canvas.withCompositeGroup(opacity: 0.5, covering: wholeSurface) { _ in calls += 1 }
+            }
+        }
+        #expect(result == false)
+        #expect(calls == 0)
+    }
+
+    // MARK: - 置く側の混ぜ方
+
+    /// 下地を描いてから `mode` で、何も描いていない (透明な) 描き場所を置き、下地が変わるかを実測する。
+    /// 単位の箱いっぱいの四角が、中の透明な画素でも下地に載ることの、そのままの再現である。
+    private func transparentPictureChangesTheBase(under mode: BlendMode) throws -> Bool {
+        func render(placingTransparent placing: Bool) throws -> DisplayImage {
+            let canvas = try makeCanvas()
+            let blank = try canvas.createGraphics(Self.size, Self.size)
+            blank.beginDraw()
+            blank.endDraw()
+            try canvas.draw {
+                canvas.noStroke()
+                // 不透明な下地・半透明な下地・何も無い所
+                canvas.fill(51, 128, 204, 255)
+                canvas.rect(0, 0, 32, 64)
+                canvas.fill(51, 128, 204, 128)
+                canvas.rect(32, 0, 32, 32)
+                if placing {
+                    canvas.blendMode(mode)
+                    canvas.image(blank, 0, 0)
+                }
+            }
+            return try pixels(of: canvas)
+        }
+        let (with, without) = (try render(placingTransparent: true), try render(placingTransparent: false))
+        var worst = 0
+        for (a, b) in zip(with.bytes, without.bytes) { worst = max(worst, abs(Int(a) - Int(b))) }
+        return worst > 1
+    }
+
+    @Test("透明な画素が下地を変える混ぜ方は replace だけ (全部の混ぜ方で実測し、判定の表と突き合わせる)")
+    func onlyReplaceChangesTheBaseUnderTransparentPixels() throws {
+        var changing: [BlendMode] = []
+        for mode in BlendMode.allCases {
+            let changes = try transparentPictureChangesTheBase(under: mode)
+            if changes { changing.append(mode) }
+            // 表 (leavesBaseUnderTransparent) が実測と食い違えば、単位にしてよい混ぜ方を取り違えている
+            #expect(mode.leavesBaseUnderTransparent == !changes, "\(mode): measured changes = \(changes)")
+        }
+        #expect(changing == [.replace], "\(changing)")
+    }
+
+    @Test("置き換える混ぜ方では単位にならず、偽を返し、中を呼ばず、下地も消さない")
+    func replaceIsNotGrouped() throws {
+        let canvas = try makeCanvas()
+        var calls = 0
+        var result: Bool?
+        try canvas.draw {
+            canvas.background(0, 0, 255)
+            canvas.blendMode(.replace)
+            result = canvas.withCompositeGroup(opacity: 0.5, covering: wholeSurface) { _ in calls += 1 }
+        }
+        #expect(result == false)
+        #expect(calls == 0)
+        // 下地は消えていない (単位なしで同じ背景だけを描いた絵と同じ)
+        let reference = try makeCanvas()
+        try reference.draw { reference.background(0, 0, 255) }
+        let (center, expected) = (try pixels(of: canvas)[32, 32], try pixels(of: reference)[32, 32])
+        #expect(center == expected && center.alpha == 255, "\(center) vs \(expected)")
+    }
+
+    @Test("透明な画素が下地を変えない混ぜ方 (darkest・multiply) では単位になり、箱の中の透明な所の下地は変わらない")
+    func otherBlendModesAreGroupedAndKeepTheBase() throws {
+        for mode in [BlendMode.darkest, .multiply] {
+            func render(group makeGroup: Bool) throws -> (DisplayImage, Bool?) {
+                let canvas = try makeCanvas()
+                var result: Bool?
+                try canvas.draw {
+                    canvas.background(200, 220, 240)
+                    canvas.blendMode(mode)
+                    if makeGroup {
+                        result = canvas.withCompositeGroup(opacity: 1, covering: wholeSurface) { group in
+                            group.noStroke()
+                            group.fill(white)
+                            group.rect(0, 0, 8, 8)
+                        }
+                    }
+                }
+                return (try pixels(of: canvas), result)
+            }
+            let (grouped, result) = try render(group: true)
+            let (plain, _) = try render(group: false)
+            #expect(result == true, "\(mode)")
+            // 中の矩形 (0…8) の外は、箱いっぱいの四角が透明でも、単位なしと同じ
+            for (x, y) in [(20, 20), (40, 8), (60, 60), (12, 12)] {
+                let (a, b) = (grouped[x, y], plain[x, y])
+                #expect(a == b, "\(mode) (\(x), \(y)) group \(a) plain \(b)")
+            }
+        }
     }
 }

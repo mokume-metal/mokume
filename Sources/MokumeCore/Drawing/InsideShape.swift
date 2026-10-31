@@ -126,6 +126,10 @@ extension Canvas {
         ///
         /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
         case debug
+        /// 合成の単位を開こうとした ([#3560])。単位は中間面へ描いて置くもので、組み立てている形には記録できない。
+        ///
+        /// [#3560]: https://github.com/mokume-metal/mokume/issues/3560
+        case compositeGroup
 
         /// フレームの外で書いたときに言う種類。**フレームに属するものだけが持つ** — 露出と明るさの
         /// 丸め方はフレームの外でも効き、塗り直しと画素の口はフレームの外での扱いを口が自分で持つ。
@@ -141,7 +145,7 @@ extension Canvas {
             case .particles: .particles
             case .compute: .compute
             case .debug: .debug
-            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness: nil
+            case .background, .pixels, .filter, .drawnOut, .frameEnd, .frameStart, .brightness, .compositeGroup: nil
             }
         }
 
@@ -165,6 +169,7 @@ extension Canvas {
             case .compute: .computeInsideShape
             case .brightness: .brightnessInsideShape
             case .debug: .debugInsideShape
+            case .compositeGroup: .compositeGroupInsideShape
             }
         }
 
@@ -230,6 +235,10 @@ extension Canvas {
             case .debug:
                 "debugMode() and noDebugMode() do nothing inside createShape { }. A shape cannot "
                     + "hold the debug grid and axes, so call them before or after building the shape"
+            case .compositeGroup:
+                "A composite group is not opened inside createShape { }. It draws into an "
+                    + "intermediate surface when it is placed, which a shape cannot record, so it was "
+                    + "not drawn as one group"
             }
         }
     }
