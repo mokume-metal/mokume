@@ -53,13 +53,14 @@ curl -fL --output job-started.sh \
 chmod 755 job-started.sh
 ```
 
-`~/actions-runner-2/.env` を開き、次の 1 行を追加する。`<ユーザー名>` は実際の
-ユーザー名に替える。`.env` の値はシェル展開されないので、`$HOME` や `~` は書かない。
-既に同じキーがあれば追加せず、その行を直す。
+初回は、続けて次を実行し、`.env` に hook の絶対パスを追加する。
+既に `ACTIONS_RUNNER_HOOK_JOB_STARTED` がある場合は追加せず、その行のパスを直す。
 
-```text
-ACTIONS_RUNNER_HOOK_JOB_STARTED=/Users/<ユーザー名>/actions-runner-2/job-started.sh
+```bash
+printf '\nACTIONS_RUNNER_HOOK_JOB_STARTED=%s/job-started.sh\n' "$PWD" >> .env
 ```
+
+`.env` の値はシェル展開されないので、上のコマンドで展開済みのパスを書く。
 
 GPU の枠は、両 runner が同じユーザーの
 `~/Library/Caches/mokume/gpu-slots` を共有する (既定 3 枠)。両 runner の `.env` や
