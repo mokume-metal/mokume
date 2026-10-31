@@ -509,6 +509,8 @@ public final class SketchRuntime {
     private var firstAdvanceRealAt: Double?
     /// いまフレームを描いている最中か。入れ子で描き始めないための目印。
     private var isAdvancingFrame = false
+    /// この実行の識別と、`draw()` を始めた回数 (``DrawProgress``)。`sketch.draw()` を呼ぶ直前に進む。
+    private(set) var drawProgress = DrawProgress(run: DrawLedger.nextRun(), draws: 0)
     /// 描き終えた (描けなかったものも含む) 最後のフレームの番号。**録りの幅の終わりになる。**
     ///
     /// `frameCount` そのものは、描いている最中なら描き終えていないフレームを、止まっている
@@ -1198,6 +1200,10 @@ public final class SketchRuntime {
                 defer { FrameSignposts.endDraw(drawInterval) }
                 // `draw()` の外で頼まれた SVG は、この `draw()` を丸ごと書く。窓は `draw()` の間だけ開く (#3139)
                 canvas.beginVectorWindow(pending: recorder?.takePendingVectors() ?? [])
+                // **`draw()` を始めた回数は、呼ぶ直前に進める** (``DrawProgress``)。ここまでに走る入力の
+                // コールバック・入り口の供給が頼んだ切り替えは、この `draw()` で効く
+                drawProgress = drawProgress.advanced()
+                DrawLedger.note(drawProgress)
                 sketch.draw()
                 finishVectorWindow()
                 // **`draw()` の中で後から決まったことは、ここで知る。** `noLoop()` で止めた・`save()` や
@@ -2766,6 +2772,7 @@ public final class SketchRuntime {
     func withActiveRuntime(_ body: () throws -> Void) rethrows {
         let previous = runningSketch
         let previousListener = shapeAssemblyListener
+        DrawLedger.note(drawProgress)
         runningSketch = self
         shapeAssemblyListener = self
         defer {

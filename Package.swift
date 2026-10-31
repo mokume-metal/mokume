@@ -101,11 +101,17 @@ let package = Package(
         .target(
             name: "MokumeMIDI", dependencies: ["MokumeCore", "MokumeDiagnostics"],
             swiftSettings: .mokume),
+        // ゲーム (シーン・アーケード物理・カメラの追従など)。ゲームの作りが要る口で、他のどのターゲットとも
+        // 依存も意味も重ならないので分ける (ADR-0045・#3588)
+        .target(
+            name: "MokumeGame", dependencies: ["MokumeCore"],
+            swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(
             name: "mokume",
             dependencies: [
                 "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI",
+                "MokumeGame",
             ],
             swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
@@ -164,6 +170,9 @@ let package = Package(
             swiftSettings: .mokume),
         .testTarget(
             name: "MokumeMIDITests", dependencies: ["mokume", "MokumeMIDI"],
+            swiftSettings: .mokume),
+        .testTarget(
+            name: "MokumeGameTests", dependencies: ["mokume", "MokumeGame", "MokumeDiagnostics", "MokumeTestSupport"],
             swiftSettings: .mokume),
 
     ]
