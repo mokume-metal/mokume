@@ -10,6 +10,7 @@
 @_exported import MokumeAudio
 @_exported import MokumeCamera
 @_exported import MokumeCore
+@_exported import MokumeGame
 @_exported import MokumeGamepad
 @_exported import MokumeMIDI
 @_exported import MokumeNetwork

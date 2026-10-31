@@ -50,7 +50,7 @@ struct NewNameTests {
         arguments: [
             "sketch", "Sketch", "sketch-settings", "sketch_settings", "Self", "self", "Any",
             "mokume", "Mokume", "swift-syntax", "Swift-Syntax", "MokumeCore", "MokumeCamera",
-            "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeDiagnostics", "MokumeMacros", "Foundation",
+            "MokumeAudio", "MokumeNetwork", "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeDiagnostics", "MokumeMacros", "Foundation",
             "foundation", "FOUNDATION", "Swift", "SwiftSyntax", "SwiftCompilerPlugin", "Network",
             "Observation", "SwiftUI", "Accelerate", "AppKit", "simd", "Metal", "Darwin", "GameController", "CoreMIDI",
         ])

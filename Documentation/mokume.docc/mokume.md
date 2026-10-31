@@ -1125,6 +1125,10 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``MIDIDevice``
 - ``MIDIMessage``
 
+### ゲームを組む
+
+- ``Scene``
+
 ### 走らせたまま値を動かす
 
 - ``Sketch/params``
