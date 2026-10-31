@@ -1,0 +1,184 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
+# 利用ガイド
+
+最初のスケッチを動かす手順は [README の「はじめる」](../README.md#はじめる) にあります。
+
+- [インストール](#インストール) / [Homebrew を使わない場合](#homebrew-を使わない場合)
+- [作例から始める](#作例から始める)
+- [コマンド](#コマンド) / [動画に書き出す](#動画に書き出す) / [アプリとして配布する](#アプリとして配布する)
+- [AI エージェントから操作する](#ai-エージェントから操作する) / [うまく動かないとき](#うまく動かないとき)
+
+## 必要な環境
+
+Apple Silicon の Mac と macOS 26 以降が必要です。
+
+スケッチのビルドには Command Line Tools (26 以降) を使い、Xcode は要りません。Command Line Tools は [Homebrew](https://brew.sh) を入れるときに一緒に入ります。Homebrew を使わない場合は `xcode-select --install` で入れてください。
+
+## インストール
+
+```bash
+brew install mokume-metal/tap/mokume
+```
+
+### Homebrew を使わない場合
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/mokume-metal/mokume/releases/latest/download/mokume-macos-arm64.tar.gz | tar xz -C ~/.local/bin
+```
+
+`mokume` と `mokume_*.bundle` は同じディレクトリに置いたまま使ってください。更新は同じコマンドの再実行です。
+
+## 作例から始める
+
+例を開いて始めるなら、`mokume examples` で一覧を出し、`mokume new my-shape --from triangle` のように API の名前で 1 本を選びます (括弧を含む名前はシェルでは引用符で包みます)。
+
+使える API は [API リファレンス](https://mokume.org/documentation/mokume/) に、実行結果の絵つきでまとまっています。Processing や p5.js から来たなら、先に [Swift で 3 つだけ違うこと](https://mokume.org/documentation/mokume/#Swift-で-3-つだけ違うこと)を読むと、最初の赤いエラーで迷いません。
+
+## コマンド
+
+| コマンド | |
+| --- | --- |
+| `mokume new <name>` | スケッチを作成 |
+| `mokume examples` | 同梱した作例の一覧 (`mokume new <name> --from <例>` で開く) |
+| `mokume run` | ビルドして実行 |
+| `mokume watch` | 実行し、保存のたびに再ビルドして差し替え |
+| `mokume render` | ウィンドウを開かずに動画・連番画像・GIF・MP4 へ書き出し |
+| `mokume bundle` | 配布用の `.app` を作成 |
+| `mokume doctor` | 環境とスケッチの状態を表示 |
+| `mokume mcp` | AI エージェント向けの MCP サーバを起動 |
+
+オプションの一覧は `mokume help` で確認できます。
+
+`mokume watch` で保存後のビルドに失敗したときは、直前の絵が動き続け、エラーがターミナルに表示されます。
+
+`mokume watch` が見張るのは、`Package.swift`・`Sources/` の下の `.swift`・`Sources/<名前>/assets/` の下の普通のファイルです (隠しファイルとシンボリックリンクは数えません)。`.metal` の断片は作り直さず、走らせたまま差し替わります。**範囲の外を変えても作り直しません** — `Package.swift` で `assets/` 以外に宣言した資材 (`.process("Resources")`・`.copy("data.json")`・`path:` を変えた target)・`Package.resolved`・パスで指した依存 (`--local` の mokume のチェックアウト) です。変えたときは `mokume watch` を起こし直してください。
+
+### 動画に書き出す
+
+```bash
+mokume render --fps 60 --seconds 4 --out motion.mov
+```
+
+`time` は 1 フレームごとに `1 / fps` 秒ずつ進むので、描画の重さに左右されず、同じ引数からは同じ動きが得られます。`--out` には `.mov` (ProRes 4444) か、`out/frame-####.png` のような連番を指定します。この 2 つは元にする形で、同じ引数から同じ画素が得られます。
+
+貼ったり送ったりする形には `.gif` と `.mp4` (H.264) を指定できます。外の変換ツールは要りません。
+
+```bash
+mokume render --fps 25 --seconds 4 --out loop.gif   # 100 枚。4 秒で 1 周する作品なら継ぎ目なしのループ
+```
+
+`--scale N` (1 以上の整数) を足すと、**座標を変えずに出す画素だけを縦横 N 倍にして**書き出します。1920×1080 で書いた作品を 4K で出すなら `--scale 2`、印刷用に 4 倍なら `--scale 4` です (作品のコードは書き換えません)。
+
+```bash
+mokume render --fps 1 --seconds 1 --scale 4 --out print-####.png   # 7680×4320 の 1 枚
+```
+
+`width` / `height` は 1920 / 1080 のまま、線の太さ・効果の半径・`clip` の矩形・断片が受け取る位置と大きさ・字 (`textSize`) は座標と同じく倍率を掛けて描かれるので、構図はそのままで画素だけが増えます。実際の画素で数える `pixelWidth` / `pixelHeight` と `pixels`・`get`・`set` の索引は倍率の画素 (倍率 2 なら 3840 / 2160) で、`width` で画素を回す作品は倍率の下で絵が変わります。倍率ごとに別の絵なので (倍率 1 と 2 の画素は一致しません)、同じ倍率・同じ引数からは同じ画素が得られます。`createGraphics(w, h)` の描き場所も同じで、座標の大きさは `w`×`h` のまま、画素は倍率を掛けた数 (倍率 2 の `createGraphics(1920, 1080)` は 3840×2160) で刻まれ、`image(描き場所, …)` は描き場所の座標の大きさで置きます (描き場所の `pixels`・`get`・`set` の索引も実際の画素です)。描き場所から作った描き場所も倍率を引き継ぎます。描き場所のメモリは倍率の 2 乗で増え、置いた後に描き換える前の絵を写しとして最大 4 枚まで持つので、その写しも同じだけ増えます。**描き場所にも面と同じ 16384 画素の上限があり、倍率 1 では描けた作品が、倍率 N では `setup()` (描き場所を作る所) で止まることがあります** — 本体より大きい描き場所 (たとえば `createGraphics(8192, 64)` を `--scale 3` で書くと 24576 画素になる) が当たります。止まるときは、倍率を名指して、その倍率で作れる最大の大きさを添えて断ります。影の焼き付けの細かさ (`shadowDetail`) は倍率に追従しません (焼き付け先の一辺の画素数のままなので、倍率を上げても影の縁は細かくなりません)。大きな面のメモリが要り、`.mp4` (H.264) は大きな面だと符号化器の上限に当たります (手元の機械では 7680×4320 まで書け、8192×4608 は書き損じました。機械で変わります)。大きな倍率は連番 PNG か `.mov` で書くことを勧めます。掛けた大きさが 16384 画素を越える組 (幅 8192 の作品の `--scale 3` など) は、最初のフレームを描く前に断ります。
+
+この 2 つは配る形で、**同じ引数から書いても画素が一致するとは約束しません** (元にするなら `.mov` か連番)。書き終わりにもそう表示します。GIF は 256 色で、色は sRGB に直して書き、透けた画素は不透明か透明かの 2 通りにします (アルファ 128 以上が不透明)。遅延は 1/100 秒の整数倍なので、`--fps` は 100 を割り切る値 (50・25・20 など) だけを受け付け、`--fps 60` はビルドの前にエラーになります。MP4 は透けを書かず、色は sRGB に直して書きます。H.264 は奇数の幅や高さを 1 画素削ることがあり (65×49 は 64×48 になります)、削ったときは標準エラーに書けた大きさを表示します。
+
+<details>
+<summary>詳しい挙動</summary>
+
+- `fps × seconds` 枚を描き終えると終了し、書き出し先と枚数を表示します。`fps × seconds` が整数にならない組み合わせはエラーになります
+- 書き出しにかかる時間は、`--fps` がスケッチの `frameRate` と同じならほぼ実時間です
+- 相対パスは実行した場所が基準です。スケッチの場所・`-c`・`--scratch-path` は `run` と同じように指定できます
+- 動画 (`.mov`・`.mp4`・`.gif`) は、書いている間は行き先の隣の隠した一時ファイル (`.motion.mov.<番号>.tmp` のような名前) へ書き、**書き損じなく閉じ終えたときだけ**、1 回の置き換えで行き先に置きます。同じ名前へ撮り直すのは上書きですが、途中で書き出しに失敗したり、プロセスが落ちたりしても、行き先に前からあったファイルはそのまま残ります (失敗の行がそう伝えます)。落ちたときの一時ファイルは、次に同じ名前へ書き出すときに片付きます。連番は 1 枚ずつ行き先へ書くので、この保証の外です。代償が 3 つあります: 書いている間は前のファイルと一時ファイルが並ぶので、ディスクの要りようが一時的に倍になります。書き出しの準備は開始時にするので、親のディレクトリの作成も開始時になり、1 枚も描かれないまま終わっても空のディレクトリが残ります。`.gif` は、書けないディレクトリにある書き込める既存ファイルを上書きできなくなりました (隣に一時ファイルを作れないため。`.mov`・`.mp4` は元から断っていました)
+- 連番の番号は 0 から振ります。`N` 番目のフレーム (`frameCount == N`) は番号 `N - 1` のファイルになるので、1 枚だけ欲しいときは `--seconds` を `N / fps` にして最後の 1 枚を取ります。`--fps 60 --seconds 2 --out shots/f-####.png` なら、最後の `shots/f-0119.png` が `frameCount == 120` (`time` は 1.9833…) の絵です
+- 書き出しを確かめてから 0 で終わり、書けなかったときは 0 以外で終わるので、`mokume render … --out motion.mov && open motion.mov` のようにつなぐと、書けたときだけ開けます
+- `Control` + `C` で中断すると、それまでの分を閉じて行き先に置きます (前のファイルはその分に置き換わります)。最後まで書き出せなかったときは 0 以外で終了します
+
+</details>
+
+### アプリとして配布する
+
+スケッチのディレクトリに `mokume-app.json` を置いて `mokume bundle` を実行すると、`bundle/<name>.app` ができます。
+
+```json
+{
+  "name": "Grain",
+  "identifier": "org.example.grain",
+  "version": "0.1.0"
+}
+```
+
+`Package.swift` で宣言したリソースも同梱されます。`mokume-app.json` は `mokume new` では作られません。識別子は macOS が権限の許可を覚えるときの鍵になるので、作品ごとに付けてください。上の例の `org.example.grain` のままだと、束ねるときに警告を出します (`.app` は作ります)。`name` は `.app` と隣にできる開き方の紙のファイル名にもなるので、`/` は使えず、長さは 239 までです (APFS のファイル名の上限 255 から決まります)。長さは macOS がファイル名として渡す形 (UTF-16 で、字に付いた記号を分けた形) で数えるので、アクセントや濁点の付いた字 (é・が) と絵文字は 2、記号が 2 つ付く字 (ệ) は 3、ハングルの音節は 2〜3、国旗は 4、ZWJ でつないだ家族の絵文字 (👨‍👩‍👧‍👦) は 11 と数えます。`/` を含めたり長さを越えたりすると、組み立ての前に止まります。
+
+この検めは名前だけを見るので、**検めを通っても組み立ての後で止まる形**があります。いずれも、止まったときは理由を名乗って 0 以外で終わります (開き方の紙は署名の前に書くので、紙が書けない回に署名済みの `.app` は残りません)。
+
+- 長さ以外の理由で APFS がファイル名にできない名前 (分解後に結合文字が 32 個以上続くもの・非文字・未割り当ての字)
+- `--out` が深く、`<name>.app` の中のパスが 1024 バイト (PATH_MAX) を越えるとき
+- `--out` が exFAT や FAT32 のとき。名前を分解しない形で数えるので、240 以上と数える名前 (`が` を 120 字など) でも作れることがあり、そのときは検めが断ります
+
+すでに同じ名前の `<name>.app` があるときは、`mokume bundle` が前に作ったものだけを作り直します。mokume が作ったと確かめられないもの (無関係なフォルダやファイル、別のアプリ) は、ビルドの前に何も消さずに止まるので、要らなければ手で消してください。開き方の紙 `How to open <name>.txt` も同じで、先頭の行が `How to open <name>` の紙を、前の回に mokume が書いたものとみなして上書きします (先頭の行を残して書き足した紙も上書きされます)。先頭の行が違うファイルや、シンボリックリンクがそこにあれば、ビルドの前に何も書かずに止まります。
+
+標準では ad-hoc 署名のため、受け取った人が初めて開くときは macOS にブロックされ、「システム設定」→「プライバシーとセキュリティ」の「このまま開く」から開く必要があります。その手順を書いた `How to open <name>.txt` が `.app` の隣にできるので、一緒に渡してください。
+
+<details>
+<summary>カメラ・マイクを使う場合</summary>
+
+許可を求めるダイアログに出す説明文を `mokume-app.json` に書きます:
+
+```json
+{
+  "name": "Grain",
+  "identifier": "org.example.grain",
+  "version": "0.1.0",
+  "cameraUsage": "Grain は、カメラに映ったものを絵にします",
+  "microphoneUsage": "Grain は、部屋の音を聞いて動きます"
+}
+```
+
+説明文は Info.plist (`NSCameraUsageDescription` / `NSMicrophoneUsageDescription`) に入り、Developer ID で署名するときは対応する entitlement (`com.apple.security.device.camera` / `com.apple.security.device.audio-input`) も付きます。
+
+`Sources/` で `createCapture()` を呼んでいるのに `cameraUsage` が無いと、`mokume bundle` は足すべき 1 行を示して止まります (説明文の無いアプリは、カメラに触れた時点で macOS に止められるため)。依存パッケージの中や別名を通した呼び出しは検出しないので、その場合は自分で書いてください。`createCapture(frames:)` はカメラを使わないので不要です。マイクも同じで、`createAudioIn()` を呼んでいるのに `microphoneUsage` が無いと止まります。`createAudioIn(file:)` と `createAudioIn(samples:sampleRate:)` はマイクを使わないので不要です。
+
+許可が記録される先は実行のしかたで変わります:
+
+| 実行のしかた | 許可の記録先 | 備考 |
+| --- | --- | --- |
+| `mokume run` など | 起動したターミナルのアプリ | 同じターミナルから実行するスケッチは 1 度の許可で済みます |
+| `.app` (ad-hoc 署名) | その `.app` | 中身で識別されるため、作り直すたびに許可が外れます |
+| `.app` (Developer ID 署名) | 署名者と識別子 | 作り直しても同じアプリとして扱われます |
+
+制作中の確認は `mokume run` で行い、`.app` は配布の直前に作るのがおすすめです。
+
+</details>
+
+<details>
+<summary>Developer ID で署名する</summary>
+
+```bash
+MOKUME_SIGN_IDENTITY="Developer ID Application: 名前 (TEAMID)" mokume bundle
+```
+
+Hardened Runtime とタイムスタンプ付きで署名し、公証に提出できる形になります。公証 (`notarytool` での提出と `stapler` での添付) は `mokume bundle` の外で行ってください。どちらの署名を使ったかは出力に表示されます。
+
+配布前に、手元のビルド結果に依存していないかは次で確かめられます。描けたらアプリを閉じてください (閉じると `.build` が戻ります。Ctrl-C で止めても戻ります):
+
+```bash
+( build=.build; held=.build-held; mv "$build" "$held" || exit; trap 'mv "$held" "$build"' EXIT; trap exit HUP INT TERM; open -n -W bundle/Grain.app )
+```
+
+</details>
+
+### AI エージェントから操作する
+
+`mokume mcp` は、実行中のスケッチのスクリーンショット・ビルド結果・マウスとキーボードの入力・API の一覧を AI エージェントに提供する MCP サーバです。`mokume new` で作ったディレクトリには `.mcp.json` が含まれているので、Claude Code ならそのまま使えます。手動で追加する場合:
+
+```bash
+claude mcp add mokume -- mokume mcp
+```
+
+場所を渡さない窓口は、起こされた場所 (Claude Code ならそれを起動した場所) で立ち、`MOKUME_WORK_DIR` が無ければその場所の `.mokume/` を見ます。スケッチのディレクトリで起動するか、`mokume mcp <スケッチのディレクトリ>` と場所を渡して登録してください。スケッチでない場所で立てた窓口は、走っているスケッチと繋がりません (応えないときの答えがそう名乗ります)。窓口は繋がった時点の挨拶 (`initialize`) の `instructions` でも、立てた場所とそこがスケッチかどうかを名乗るので、`instructions` を読むクライアントなら、最初の操作の前にスケッチでない場所で立っていることに気付けます。
+
+### うまく動かないとき
+
+スケッチのディレクトリで `mokume doctor` を実行すると、環境 (`What the environment provides`) とスケッチの状態 (`What is here`) が表示されます。何も変更しないので、問題の切り分けに気軽に使えます。
+
+`draw()` の途中で止めて変数を見たいときは、`mokume run -c debug` で起こして `lldb` で付けます。手順は [止めて変数を見る](https://mokume.org/documentation/mokume/#止めて変数を見る) にあります。
