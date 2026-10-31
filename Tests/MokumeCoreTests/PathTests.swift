@@ -122,6 +122,33 @@ nonisolated struct PathValueTests {
         #expect(!same.contains([150, 50]))
     }
 
+    @Test("座標が ±3e38 級でも、弧長の歩みは Double で行い、point(at:) は端を取り違えない")
+    func hugeCoordinates() {
+        let path = Path(subpaths: [
+            Path.Subpath(points: [[-3e38, 0], [3e38, 0]], isClosed: false, isCurveStep: [false, false])
+        ])
+        #expect(path.length.isInfinite, "Float に収まらない長さは無限になる (length は Float)")
+        #expect(path.point(at: 0) == [-3e38, 0], "始点を返す (終点ではない)")
+        #expect(path.point(at: 1) == [3e38, 0])
+        let middle = path.point(at: 0.5)
+        #expect(abs(middle.x) < 1e32 && middle.y == 0, "真ん中: \(middle)")
+        let quarter = path.point(at: 0.25)
+        #expect(abs(quarter.x - -1.5e38) < 1e32, "\(quarter)")
+    }
+
+    @Test("大きな半径の円も、刻みの上限 2048 本まで細かく刻む (Float で作ると 8 角形に退化していた)")
+    func largeCirclesAreNotOctagons() {
+        for radius: Float in [1e5, 7e5, 1e6, 1e9] {
+            let count = Path(Circle(center: [0, 0], radius: radius)).subpaths[0].points.count
+            #expect(count > 100, "r=\(radius): \(count) 本")
+        }
+        #expect(Path(Circle(center: [0, 0], radius: 1e9)).subpaths[0].points.count == 2048)
+        #expect(Path(Circle(center: [0, 0], radius: 1e6)).subpaths[0].points.count == 2048)
+        // 刻みは半径が上がるほど増える (単調)
+        let counts = [10, 100, 1000, 10000].map { Path(Circle(center: [0, 0], radius: Float($0))).subpaths[0].points.count }
+        #expect(counts == counts.sorted())
+    }
+
     @Test("数でない点は内側ではない")
     func nonFiniteProbe() {
         let path = square()
@@ -273,6 +300,189 @@ struct PathRecordingTests {
     func anEmptyRecording() throws {
         let path = try record(try makeCanvas()) { _ in }
         #expect(path.length == 0 && !path.contains([0, 0]) && path.point(at: 0.5) == [0, 0])
+    }
+
+    @Test("入れ子: createPath の中の createShape の輪郭は外の道へ漏れず、createShape の中の createPath も外の形へ漏れない")
+    func nestingDoesNotLeak() throws {
+        let canvas = try makeCanvas()
+        var inner = Shape.empty
+        var outer = Path()
+        try canvas.draw {
+            outer = canvas.createPath {
+                inner = canvas.createShape { squareOutline(canvas) }
+            }
+        }
+        #expect(outer.length == 0, "中の形の輪郭が外の道へ漏れている")
+        #expect(inner.bounds != nil, "中の形が空になっている")
+
+        var innerPath = Path()
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = canvas.createShape {
+                innerPath = canvas.createPath { squareOutline(canvas) }
+            }
+        }
+        #expect(innerPath.length == 400)
+        #expect(shape.isEmpty, "中の道の輪郭が外の形に描かれている")
+        // 入れ子を抜けた後も、外の記録は続く
+        let both = try record(canvas) { canvas in
+            _ = canvas.createShape { canvas.rect(0, 0, 5, 5) }
+            squareOutline(canvas)
+        }
+        #expect(both.length == 400)
+    }
+
+    @Test("bezier() は道に入る (開いた部分道)。基本図形のように断らない")
+    func bezierIsRecorded() throws {
+        let canvas = try makeCanvas()
+        let path = try record(canvas) { $0.bezier(0, 0, 0, 60, 100, 60, 100, 0) }
+        #expect(path.subpaths.count == 1 && !path.subpaths[0].isClosed)
+        #expect(path.length > 110)
+        #expect(simd_distance(path.point(at: 1).simd, SIMD2<Float>(100, 0)) < 1e-3)
+        #expect(canvas.warnings.message(for: .insidePath(.primitive)) == nil, "bezier() は基本図形の断りを出さない")
+    }
+
+    @Test("createPath の中の shape(path) は、描き方に依らず、変換を掛けた部分道を 1 回ずつ足す")
+    func shapeInsideCreatePathAddsSubpaths() throws {
+        let canvas = try makeCanvas()
+        let source = try record(canvas) { squareOutline($0) }
+        func length(fill: Bool, stroke: Bool, subpaths: Int = 1) throws -> Path {
+            try record(canvas) { canvas in
+                fill ? canvas.fill(red) : canvas.noFill()
+                stroke ? canvas.stroke(blue) : canvas.noStroke()
+                canvas.translate(10, 20)
+                for _ in 0..<subpaths { canvas.shape(source, 5, 0) }
+            }
+        }
+        for (fill, stroke) in [(true, true), (false, false), (true, false), (false, true)] {
+            let path = try length(fill: fill, stroke: stroke)
+            #expect(path.length == 400, "fill=\(fill) stroke=\(stroke): \(path.length)")
+            #expect(path.point(at: 0) == [15, 20], "変換 (10,20) と位置 (5,0) を掛けて足す")
+        }
+        let twice = try length(fill: true, stroke: true, subpaths: 2)
+        #expect(twice.subpaths.count == 2 && twice.length == 800)
+        // 複数の部分道の道も、描き方に依らず部分道の数のまま
+        let two = try record(canvas) { canvas in
+            squareOutline(canvas)
+            canvas.beginShape()
+            canvas.vertex(25, 25); canvas.vertex(25, 75); canvas.vertex(75, 75)
+            canvas.endShape(.close)
+        }
+        for (fill, stroke) in [(true, true), (false, false)] {
+            let nested = try record(canvas) { canvas in
+                fill ? canvas.fill(red) : canvas.noFill()
+                stroke ? canvas.stroke(blue) : canvas.noStroke()
+                canvas.shape(two)
+            }
+            #expect(nested.subpaths.count == 2 && nested.length == two.length, "fill=\(fill) stroke=\(stroke)")
+        }
+    }
+
+    @Test("開いた beginShape の途中で shape(path) を呼んでも、外の形を黙って捨てない")
+    func shapePathKeepsTheOpenShape() throws {
+        let canvas = try makeCanvas()
+        let source = try record(canvas) { squareOutline($0) }
+        // 道の記録の中
+        let inPath = try record(canvas) { canvas in
+            canvas.beginShape()
+            canvas.vertex(0, 0)
+            canvas.vertex(10, 0)
+            canvas.shape(source)
+            canvas.vertex(10, 10)
+            canvas.endShape(.close)
+        }
+        #expect(inPath.subpaths.count == 2)
+        let expected: Float = 400 + 10 + 10 + 10 * Float(2).squareRoot()
+        #expect(abs(inPath.length - expected) < 1e-3, "\(inPath.length)")
+        // 形の組み立ての中 (描く側)
+        var shape = Shape.empty
+        try canvas.draw {
+            shape = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(0, 0)
+                canvas.vertex(10, 0)
+                canvas.shape(source)
+                canvas.vertex(10, 10)
+                canvas.endShape(.close)
+            }
+        }
+        #expect(!canvas.warnings.hasWarned(.shapeBegunWhileOpen), "外の形を捨てた")
+        #expect(shape.bounds != nil)
+    }
+
+    @Test("先頭の部分道が 3 点に満たなくても (線・点)、残りの部分道は塗られ、contains とずれない")
+    func fillSkipsSubpathsWithoutArea() throws {
+        let line = Path.Subpath(points: [[0, 0], [5, 5]], isClosed: false, isCurveStep: [false, false])
+        let box = Path.Subpath(
+            points: [[20, 20], [100, 20], [100, 100], [20, 100]], isClosed: true,
+            isCurveStep: [false, false, false, false])
+        let path = Path(subpaths: [line, box])
+        #expect(path.contains([60, 60]))
+        let canvas = try makeCanvas()
+        let image = try picture(canvas) { canvas in
+            canvas.noStroke()
+            canvas.fill(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+            canvas.shape(path)
+        }
+        let at = (60 * image.width + 60) * 4
+        #expect(image.bytes[at] > 235, "先頭が線だと全体が塗られなかった: \(image.bytes[at])")
+        // 線は線として引く: 線だけの道でも、線を引く側は落ちない
+        let stroked = try picture(canvas) { canvas in
+            canvas.noFill()
+            canvas.stroke(LinearRGBA.linear(red: 1, green: 1, blue: 1))
+            canvas.strokeWeight(3)
+            canvas.shape(Path(subpaths: [line, box]))
+        }
+        #expect(stroked.bytes != (try picture(canvas) { _ in }).bytes)
+    }
+
+    @Test("残らない値 (頂点ごとの色・読み取り位置・面の向き) は、輪郭を残したまま、種類ごとに 1 度知らせる")
+    func droppedVertexAttributesAreNamed() throws {
+        let canvas = try makeCanvas()
+        let path = try record(canvas) { canvas in
+            canvas.beginShape()
+            canvas.fill(red)
+            canvas.vertex(0, 0)
+            canvas.fill(blue)
+            canvas.vertex(100, 0)
+            canvas.vertex(100, 100, 3, 4)
+            canvas.normal(0, 0, 1)
+            canvas.vertex(0, 100)
+            canvas.endShape(.close)
+        }
+        #expect(path.length == 400, "輪郭は残る")
+        #expect(canvas.warnings.message(for: .insidePath(.vertexColour)) != nil)
+        #expect(canvas.warnings.message(for: .insidePath(.textureCoordinate)) != nil)
+        #expect(canvas.warnings.message(for: .insidePath(.normal)) != nil)
+        // 同じ色・座標だけの形は黙っている
+        let quiet = try makeCanvas()
+        _ = try record(quiet) { squareOutline($0) }
+        #expect(quiet.warnings.count { key in if case .insidePath = key { true } else { false } } == 0)
+    }
+
+    @Test("断りの文面は、呼んだ口の名前で言う: createPath の中は createPath、createShape の中は createShape")
+    func noticesNameTheCaller() throws {
+        let canvas = try makeCanvas()
+        _ = try record(canvas) { canvas in
+            canvas.background(red)
+            canvas.push()
+        }
+        let background = try #require(canvas.warnings.message(for: .backgroundInsideShape))
+        #expect(background.contains("createPath { }") && !background.contains("createShape"), "\(background)")
+        let stacks = try #require(canvas.warnings.message(for: .pushLeftOpen))
+        #expect(stacks.contains("createPath { … }") && !stacks.contains("createShape"), "\(stacks)")
+
+        let other = try makeCanvas()
+        try other.draw {
+            _ = other.createShape {
+                other.background(red)
+                other.push()
+            }
+        }
+        let shapeBackground = try #require(other.warnings.message(for: .backgroundInsideShape))
+        #expect(shapeBackground.contains("createShape { }") && !shapeBackground.contains("createPath"))
+        let shapeStacks = try #require(other.warnings.message(for: .pushLeftOpen))
+        #expect(shapeStacks.contains("createShape { … }"))
     }
 
     // MARK: - 閉包の中で断るもの

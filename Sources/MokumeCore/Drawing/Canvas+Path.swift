@@ -20,9 +20,12 @@ extension Canvas {
 
     /// 道の記録の中で効かなかったこと。**種類ごとに 1 度**知らせる。
     ///
-    /// 道に入るのは、`beginShape()` から `endShape()` までに並べた周と穴だけである。基本図形 (`rect()` など) や
-    /// 字・画像・立体・画素・粒は、描かず、道にも入れない。ベクターへ書けない口を数え上げた
-    /// (``VectorDrop``) 口と同じところから呼ぶので、書けない種類を足せば、ここも同じ口で断る。
+    /// 道に入るのは、`beginShape()` から `endShape()` までに並べた周と穴の**座標だけ**である。基本図形
+    /// (`rect()` など) や字・画像・立体は、描かず、道にも入れない。頂点ごとの色・貼る絵の読み取り位置・面の向きは、
+    /// 輪郭は道に入るが、その値は残らない。ベクターへ書けない口を数え上げた (``VectorDrop``) 口と同じところから
+    /// 呼ぶので、書けない種類を足せば、ここも同じ口で断る。
+    ///
+    /// 画素・フィルター・粒は、既存の形の組み立ての断り (``InsideShape``) が先に断るので、ここには来ない。
     enum PathRefusal: Hashable, CaseIterable {
         /// `rect()`・`circle()`・`line()` などの基本図形。
         case primitive
@@ -32,9 +35,12 @@ extension Canvas {
         case image
         case retainedShape
         case solid
-        case pixels
-        case filter
-        case particles
+        /// 頂点ごとに違う塗りの色。
+        case vertexColour
+        /// 貼る絵の読み取り位置 (`vertex(x, y, u, v)`)。
+        case textureCoordinate
+        /// 面の向き (`normal()`)。
+        case normal
 
         /// 何を断ったかの呼び名 (文頭に置く)。
         var subject: String {
@@ -45,16 +51,27 @@ extension Canvas {
             case .image: "An image"
             case .retainedShape: "A retained shape"
             case .solid: "A 3D solid"
-            case .pixels: "A pixel read or write"
-            case .filter: "filter()"
-            case .particles: "Particles"
+            case .vertexColour, .textureCoordinate, .normal: ""
             }
         }
 
         var notice: String {
-            "\(subject) inside createPath { } is not drawn and is not recorded in the path. "
-                + "createPath { } records only the outline built between beginShape() and endShape(), "
-                + "so build the outline with vertex(), bezierVertex() and beginContour()"
+            switch self {
+            case .vertexColour:
+                "createPath { }: the outline is recorded, but a different fill colour at each vertex is not kept. "
+                    + "A path holds only the outline; shape(path) draws it with the fill at that time"
+            case .textureCoordinate:
+                "createPath { }: the outline is recorded, but the texture coordinates given to vertex(x, y, u, v) "
+                    + "are not kept. A path holds only the outline"
+            case .normal:
+                "createPath { }: the outline is recorded, but the direction set by normal() is not kept. "
+                    + "A path holds only the outline"
+            default:
+                "\(subject) inside createPath { } is not drawn and is not recorded in the path. "
+                    + "createPath { } records only the outline built between beginShape() and endShape() "
+                    + "(bezier() is recorded too, as an open subpath), so build the outline with vertex(), "
+                    + "bezierVertex() and beginContour()"
+            }
         }
 
         /// ベクターへ書けない口の種類から、道が断る種類へ。道に関わりのない種類 (貼る絵や混ぜ方など) は `nil`。
@@ -64,10 +81,9 @@ extension Canvas {
             case .image: self = .image
             case .retainedShape: self = .retainedShape
             case .solid: self = .solid
-            case .pixels: self = .pixels
-            case .filter: self = .filter
-            case .particles: self = .particles
-            case .shader, .texture, .gradient, .blendMode, .clip, .effects, .vertexColours, .tooLarge: return nil
+            case .pixels, .filter, .particles, .shader, .texture, .gradient, .blendMode, .clip, .effects,
+                .vertexColours, .tooLarge:
+                return nil
             }
         }
     }
@@ -79,26 +95,49 @@ extension Canvas {
 
     /// 道を組み立てて返す。
     public func createPath(_ body: () -> Void) -> Path {
-        let outer = pathRecorder
         let recorder = PathRecorder()
-        pathRecorder = recorder
-        defer { pathRecorder = outer }
-        // 組み立ての中の記録は捨てる。道に入るのは、閉じた形の周と穴だけ (`recorder` に控える)
-        _ = createShape(body)
+        // 組み立ての中の記録は捨てる。道に入るのは、閉じた形の周と穴だけ (`recorder` に控える)。控えを立てるのは
+        // 組み立ての中 — 組み立ては入口で外の控えを退け、出口で戻す (``createShape(_:)``)
+        _ = createShape {
+            pathRecorder = recorder
+            body()
+        }
         return Path(subpaths: recorder.subpaths)
     }
 
-    /// 道を描く。
+    /// 道を描く。道を記録している間 (``createPath(_:)`` の中) なら、描かずに、外の道へ部分道を足す。
     public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
         let offset = SIMD2(x.asFloat, y.asFloat)
         let subpaths = path.subpaths.filter { !$0.points.isEmpty }
         guard let first = subpaths.first else { return }
+
+        // 道を記録している間は、描き方に依らず、内側の道の部分道を、いまの変換を掛けて 1 回ずつ外の道へ足す。
+        // 変換の奥行きの成分 (`rotateX()` など) は平面に落ちる。開いた形を作っている途中でも、それは触らない
+        if let recorder = pathRecorder {
+            let place = vectorPlacer()
+            for subpath in subpaths {
+                var moved: [SIMD2<Float>] = []
+                for point in subpath.points {
+                    let placed = place(point + offset)
+                    guard placed.x.isFinite, placed.y.isFinite else { break }
+                    moved.append(placed)
+                }
+                guard moved.count == subpath.points.count else { continue }
+                recorder.subpaths.append(
+                    Path.Subpath(points: moved, isClosed: subpath.isClosed, isCurveStep: subpath.isCurveStep))
+            }
+            return
+        }
 
         func trace(_ subpath: Path.Subpath) {
             for (point, isStep) in zip(subpath.points, subpath.isCurveStep) {
                 appendVertex(SIMD3(point.x + offset.x, point.y + offset.y, 0), hasDepth: false, isCurveStep: isStep)
             }
         }
+
+        // 組み立て中の形があっても、それは触らない (``bezier(_:_:_:_:_:_:_:_:)`` と同じく、取り出して戻す)
+        let outer = takeOpenShape()
+        defer { restoreOpenShape(outer) }
 
         // 部分道が 1 つなら、同じ `beginShape()` をその場で描いたときと同じに、塗りと線を一緒に描く
         guard subpaths.count > 1 else {
@@ -108,14 +147,16 @@ extension Canvas {
             return
         }
 
-        // 2 つ以上なら、塗りは全部を 1 つの形として 1 本の `beginShape()` で描き (最初の部分道が外周、残りは
-        // `beginContour()`)、線は部分道ごとに引く。回り数で塗るので、SVG の `<path>` と同じ内側になる
+        // 2 つ以上なら、塗りは 3 点以上の部分道を 1 つの形として 1 本の `beginShape()` で描き (最初が外周、残りは
+        // `beginContour()`)、線は部分道ごとに引く。回り数で塗るので、SVG の `<path>` と同じ内側になる。
+        // 3 点に満たない部分道 (線・点) は面積が無く、外周にすると全体が塗られなくなるので、塗りには使わない
         let saved = currentStyle
-        if saved.hasFill {
+        let fillable = subpaths.filter { $0.points.count >= 3 }
+        if saved.hasFill, let outline = fillable.first {
             noStroke()
             beginShape()
-            trace(first)
-            for subpath in subpaths.dropFirst() {
+            trace(outline)
+            for subpath in fillable.dropFirst() {
                 beginContour()
                 trace(subpath)
                 endContour()

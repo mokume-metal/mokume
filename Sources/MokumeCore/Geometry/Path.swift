@@ -74,9 +74,11 @@ public nonisolated struct Path: Sendable, Hashable {
             self.init()
             return
         }
-        let tolerance = min(0.02, radius / 2000)
-        let ratio = max(-1, min(1, 1 - tolerance / radius))
-        let steps = ratio >= 1 ? 8 : max(8, min(2048, Int((Float.pi / acos(ratio)).rounded(.up))))
+        // 刻みは Double で求める。Float で `1 - 隔たり / 半径` を作ると、半径が 6.7e5 を越えたあたりで 1 に丸まり、
+        // 8 角形に退化する
+        let tolerance = min(0.02, Double(radius) / 2000)
+        let ratio = max(-1, min(1, 1 - tolerance / Double(radius)))
+        let steps = ratio >= 1 ? 8 : max(8, min(2048, Int((Double.pi / acos(ratio)).rounded(.up))))
         var points: [SIMD2<Float>] = []
         points.reserveCapacity(steps)
         for step in 0..<steps {
@@ -90,7 +92,8 @@ public nonisolated struct Path: Sendable, Hashable {
 
     /// 道の長さ。部分道の長さの和で、開いた部分道は閉じる辺を数えない。
     ///
-    /// 空の道は 0。曲線は刻んだ折れ線の長さで測る。
+    /// 空の道は 0。曲線は刻んだ折れ線の長さで測る。座標が Float に収まらないほど大きく、長さが Float を越えるときは無限に
+    /// なる (``point(at:)`` は弧長を Double で辿るので、無限にならない)。
     public var length: Float {
         var total: Double = 0
         for subpath in subpaths {
@@ -108,9 +111,14 @@ public nonisolated struct Path: Sendable, Hashable {
         guard let first = subpaths.first(where: { !$0.points.isEmpty })?.points.first else { return Vector2(0, 0) }
         let given = t.asFloat
         let amount = given.isNaN ? 0 : min(max(given, 0), 1)
-        let total = length
-        guard total > 0 else { return Vector2(first) }
-        let target = Double(amount) * Double(total)
+        // 弧長の歩みは Double のまま行う。`length` は Float に丸めるので、座標が ±3e38 級だと無限になり、
+        // それで割ると始点を返してしまう
+        var total: Double = 0
+        for subpath in subpaths {
+            for (from, to) in subpath.edges() { total += Self.distance(from, to) }
+        }
+        guard total > 0, total.isFinite else { return Vector2(first) }
+        let target = Double(amount) * total
         var walked: Double = 0
         var last = first
         for subpath in subpaths {
@@ -118,8 +126,11 @@ public nonisolated struct Path: Sendable, Hashable {
                 let edge = Self.distance(from, to)
                 last = to
                 if edge > 0, walked + edge >= target {
-                    let along = Float((target - walked) / edge)
-                    return Vector2(from + (to - from) * along)
+                    let along = (target - walked) / edge
+                    // 差も Double で取る (±3e38 の両端の差は Float に収まらない)
+                    let x = Double(from.x) + (Double(to.x) - Double(from.x)) * along
+                    let y = Double(from.y) + (Double(to.y) - Double(from.y)) * along
+                    return Vector2(Float(x), Float(y))
                 }
                 walked += edge
             }

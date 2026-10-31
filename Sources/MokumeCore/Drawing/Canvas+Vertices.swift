@@ -472,6 +472,12 @@ extension Canvas {
             refuseInsidePath(.depth)
             return
         }
+        // 道は座標だけを持つ。残らない値があれば、種類ごとに知らせる
+        if let first = points.first {
+            if points.contains(where: { $0.fill != first.fill }) { refuseInsidePath(.vertexColour) }
+            if points.contains(where: { $0.uv != nil }) { refuseInsidePath(.textureCoordinate) }
+            if points.contains(where: { $0.normal != nil }) { refuseInsidePath(.normal) }
+        }
         let place = vectorPlacer()
         func subpath(_ indices: some Sequence<Int>, isClosed: Bool) -> Path.Subpath? {
             var positions: [SIMD2<Float>] = []
@@ -1393,7 +1399,7 @@ extension Canvas {
     private func warnShapeNotEndedOnce() {
         warnOnce(
             .shapeNotEnded,
-            "beginShape(): a shape begun in setup(), draw(), an input callback, a createShape() "
+            "beginShape(): a shape begun in setup(), draw(), an input callback, a \(assemblyCall)() "
                 + "body or between beginDraw() and endDraw() was still open when the frame or body "
                 + "ended, or when the next frame started, so it was dropped without being drawn. End "
                 + "each shape with endShape() in the same place that began it")
