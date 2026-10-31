@@ -64,6 +64,7 @@ case "$all" in
   *"/actions/workflows/render.yml/runs?event=merge_group&status="*)
     kind=${all#*status=}; kind=${kind%%&*} ;;
   *"/git/matching-refs/heads/main"*) kind=tip ;;
+  *"/git/matching-refs/heads/"*) kind=head ;;
   *) echo "偽 gh が知らない呼び出し: $*" >&2; exit 1 ;;
 esac
 
@@ -75,8 +76,8 @@ file=""
 for ((i = n; i >= 1; i--)); do
   if [ -f "$DATA/$kind-$i.json" ]; then file="$DATA/$kind-$i.json"; break; fi
 done
-if [ -n "$file" ]; then jq -r "$filter" < "$file"
-elif [ "$kind" = tip ]; then echo '[]' | jq -r "$filter"
+if [ -n "$file" ]; then jq -r "${filter:-.}" < "$file"
+elif [ "$kind" = tip ] || [ "$kind" = head ]; then echo '[]' | jq -r "${filter:-.}"
 else echo '{"workflow_runs":[]}' | jq -r "$filter"; fi
 """
 
@@ -151,6 +152,8 @@ class RenderTurnTest(unittest.TestCase):
         env.pop("RENDER_TURN_LIMIT", None)
         env.pop("GH_FAIL", None)
         env.pop("RENDER_TURN_SLOTS", None)
+        env.pop("RENDER_TURN_HEAD_SHA", None)
+        env.pop("RENDER_TURN_HEAD_REF", None)
         env.update({k: str(v) for k, v in extra.items()})
         return subprocess.run(
             ["/bin/bash", str(TURN), *args],
@@ -360,6 +363,89 @@ class RenderTurnTest(unittest.TestCase):
         r = self.turn("yield", GH_FAIL=1)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.go(), "true")
+
+    # --- 古い head (#3551) ------------------------------------------------------
+    # render-pr の concurrency は「後から群に入った job が残る」ので、旧 head の門番が遅れて新 head の
+    # job より後に群へ入ると、走っている新 head の job を取り消す。比べる場所は門番の出口
+
+    OLD_HEAD = "a" * 40
+    NEW_HEAD = "b" * 40
+
+    def branch_tip(self, sha, ref="refs/heads/fix/x"):
+        """matching-refs は前方一致で返すので、名前の似た別の branch も混ぜる。"""
+        refs = [
+            {"ref": ref + "-old", "object": {"sha": "c" * 40}},
+            {"ref": ref, "object": {"sha": sha}},
+        ]
+        (self.data / "head-1.json").write_text(json.dumps(refs), encoding="utf-8")
+
+    def test_yield_は_head_が_branch_の先端と違えば見送る(self):
+        self.branch_tip(self.NEW_HEAD)
+        r = self.turn("yield", RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "false", r.stdout)
+        text = self.summary.read_text(encoding="utf-8")
+        self.assertIn("aaaaaaaa", text)
+        self.assertIn("bbbbbbbb", text)
+        self.assertIn("#3551", text)
+
+    def test_yield_は_head_が_branch_の先端のままなら通す(self):
+        self.branch_tip(self.OLD_HEAD)
+        r = self.turn("yield", RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(len(self.calls_of("matching-refs/heads/fix/x")), 1)
+
+    def test_yield_は名前の似た別の_branch_の先端と取り違えない(self):
+        """前方一致で返る `fix/x-old` の先端が違っても、`fix/x` 自身が同じなら通す。"""
+        self.branch_tip(self.OLD_HEAD)
+        r = self.turn("yield", RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(self.go(), "true", r.stdout)
+
+    def test_yield_は_branch_が無ければ通す(self):
+        """merge して消えた branch。先端が無いことは古いことの証拠にならない。"""
+        r = self.turn("yield", RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(self.go(), "true", r.stdout)
+
+    def test_yield_は先端を読めなければ通す(self):
+        r = self.turn(
+            "yield", GH_FAIL=1, RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go(), "true")
+        self.assertIn("head が古いかは見ずに通す", r.stdout)
+
+    def test_yield_は環境変数が無ければ先端を引かない(self):
+        self.branch_tip(self.NEW_HEAD)
+        r = self.turn("yield")
+        self.assertEqual(self.go(), "true", r.stdout)
+        self.assertEqual(self.calls_of("matching-refs"), [])
+
+    def test_yield_は_merge_queue_が忙しければ先端を引くまでもなく見送る(self):
+        self.answer("queued", 1, [run_of(21, OTHER, "queued")])
+        self.branch_tip(self.OLD_HEAD)
+        r = self.turn("yield", RENDER_TURN_HEAD_SHA=self.OLD_HEAD, RENDER_TURN_HEAD_REF="fix/x")
+        self.assertEqual(self.go(), "false", r.stdout)
+        self.assertEqual(self.calls_of("matching-refs/heads/fix"), [])
+
+    def test_wait_と_merge_group_は_head_を比べない(self):
+        self.branch_tip(self.NEW_HEAD)
+        env = {"RENDER_TURN_HEAD_SHA": self.OLD_HEAD, "RENDER_TURN_HEAD_REF": "fix/x"}
+        self.turn("wait", **env)
+        self.assertEqual(self.go(), "true")
+        self.output.unlink()
+        self.main_tip(BASE)
+        self.turn("merge_group", BASE, **env)
+        self.assertEqual(self.go(), "true")
+        self.assertEqual(self.calls_of("matching-refs/heads/fix"), [])
+
+    def test_render_yml_は_head_を門番へ渡し権限を広げない(self):
+        text = (REPO / ".github" / "workflows" / "render.yml").read_text(encoding="utf-8")
+        job = text.split("\n  render-turn:\n", 1)[1].split("\n  render:\n", 1)[0]
+        self.assertIn("RENDER_TURN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", job)
+        self.assertIn("RENDER_TURN_HEAD_REF: ${{ github.event.pull_request.head.ref }}", job)
+        # 先端は contents: read で引く。権限は actions: read のまま
+        self.assertIn("actions: read", job)
+        self.assertNotIn(": write", job)
+        self.assertNotIn("pull-requests", job)
 
     # --- wait ----------------------------------------------------------------
 
