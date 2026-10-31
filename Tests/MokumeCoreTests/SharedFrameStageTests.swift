@@ -2338,6 +2338,23 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **覚えから押し出された世代でも、区画の目録が今もその世代のものなら、読み直して戻る** (#3565 の反証)。
+    /// 読んだ改訂は印が付いて二度と配られない。覚えに無い世代へ戻れないと、乗り換えを待つ本番へ戻る口が閉じる。
+    @Test("覚えに無い世代へ戻るとき、区画の目録が今もその世代のものなら読み直して戻る。別の世代は戻れない")
+    func returningRereadsTheCurrentManifestWhenNothingIsRemembered() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("return-reread"))
+            defer { stage.close() }
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu))
+            #expect(!stage.returnToGeneration(pid: 999), "区画の目録が別の世代のものなのに戻れたことにした")
+            #expect(stage.returnToGeneration(pid: 100), "区画の目録が今もその世代のものなのに戻れない")
+            stage.displayLinkFired()
+            #expect(stage.displayedPID == 100)
+        }
+    }
+
     /// **完了条件 9。** 試聴中に試聴の版が大きさ・全画面の頼みを変えて保存しても、作品の窓へは当てない。
     @Test("作品の窓の台は、試聴の子の目録の大きさ・全画面の頼みを当てない。本番の目録の頼みは当てる")
     func requestsOfAnAuditionedGenerationDoNotReachTheArtworkWindow() throws {

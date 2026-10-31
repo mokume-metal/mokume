@@ -175,7 +175,8 @@ enum WatchCommand {
         let prepared = prepareFacets(under: session.facetBase)
         // **見張りが答える区画は、見張り自身が作る** ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
         // 前の見張りの要求は引き継がず、終わるときに畳む (``teardown(_:_:created:keepTimeFile:)``)
-        session.serveRequests()
+        // **作れなかったら、1 度だけ名乗る** — 黙っていると、置いた要求にいつまでも応答が返らない
+        if let failure = session.serveRequests() { say(requestFacetFailedLine(reason: failure)) }
 
         // **窓を先に出す。** 出せたときだけ区画ができ、子は窓を持たずに走る
         // ([ADR-0032] 決定 1)。子を起こしてからでは間に合わない — 区画は起動の瞬間に
@@ -569,6 +570,8 @@ enum WatchCommand {
         session.returnsPreviewToGeneration = { [weak preview] pid in
             preview?.returnToGeneration(pid: pid) ?? false
         }
+        // 入る要求が、作品の窓が番号を名乗る本番を映しているかを問う口
+        session.windowShowsPID = { [weak window] in window?.displayedPID }
     }
 
     /// 絵を渡す区画の場所。**見張っているスケッチの側の基準へ置く** — 道具自身の作業
@@ -817,6 +820,14 @@ enum WatchCommand {
             } else {
                 showInPreview(lines.last, false)
             }
+        }
+        // **番号を名乗らない版を試聴の子として起こした回は、止めて名乗る** (#3565)。本番と番号で区別できず、
+        // 作品の窓にも出せない・プレビューで触った出来事の宛先も引けない。試聴は続く
+        if session.auditionIsUnidentified {
+            announce(await session.stopUnidentifiedAudition())
+            say(auditionUnidentifiedLine)
+            viewer?.firstFrame.settle()
+            showInPreview(auditionUnidentifiedLine, false)
         }
         if session.auditionFellBack() {
             say(auditionFellBackLine)
@@ -1162,6 +1173,18 @@ enum WatchCommand {
     static let auditionStartedLine =
         "Started under audition — only the preview shows it, and the work's window still runs "
         + "the version it had"
+
+    /// 区画 `watch` を作れなかったことを名乗る行 (#3565)。
+    static func requestFacetFailedLine(reason: String) -> String {
+        "Could not set up the place for requests to the watcher (\(reason)) — auditioning cannot be "
+            + "requested in this run"
+    }
+
+    /// 試聴の版が目録で自分の番号を名乗らなかったので止めたことを名乗る行 (#3565)。
+    static let auditionUnidentifiedLine =
+        "Stopped the version under audition — it does not name itself in the shared-frame manifest "
+        + "(an older mokume library), so it cannot be told apart from the work's version. The "
+        + "work's window keeps running the version it had"
 
     /// 試聴の版が共有面を作れず自分の窓を開いたことを名乗る行 (#3565)。
     static let auditionFellBackLine =

@@ -58,6 +58,9 @@ struct WatchReport: Encodable, Equatable {
         case noPreview
         /// 走っている本番が無い。試聴は本番を守るためのもので、守る相手が居ない。
         case noProduction
+        /// 作品の窓が映している本番の子が、目録で自分の番号を名乗らない (古いライブラリ)。試聴の版と本番を、番号で
+        /// 区別して別の窓に出し分けられない。入ると、試聴の版が作品の窓にも出て、窓の入力は本番へ届く。
+        case unidentifiedGeneration
         /// 知らない動作。
         case unknownAction
         /// 要求の形として解けなかった (`id` だけ読めた)。

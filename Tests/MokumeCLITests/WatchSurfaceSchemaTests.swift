@@ -73,6 +73,23 @@ struct WatchSurfaceSchemaTests {
         #expect(Set(object.keys) == declared)
     }
 
+    @Test("区画 build の記録が試聴の版に付ける欄 audition は、スキーマの欄にあり、試聴でなければ書かない")
+    func buildRecordAuditionKeyIsDeclared() throws {
+        let schema = try Self.schema("build-status")
+        let declared = try Self.properties(schema)
+        #expect(declared["audition"] != nil)
+        var report = BuildReport.launched(
+            output: "", stamp: "s", configuration: "debug", timings: .init(buildMs: 1))
+        let plain = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        #expect(plain["audition"] == nil, "試聴でない記録に audition を書いた")
+        report.audition = true
+        let marked = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        #expect(marked["audition"] as? Bool == true)
+        #expect(Set(marked.keys).isSubset(of: Set(declared.keys)))
+    }
+
     @Test("要求が読む動作の綴りは、スキーマの例に挙がり、代表例は読める")
     func actionsAreListedAndTheExampleDecodes() throws {
         let schema = try Self.schema("watch-request")

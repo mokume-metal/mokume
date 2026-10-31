@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "agent-4713",
+  "action": "audition",
+  "accepted": false,
+  "reason": "unidentifiedGeneration",
+  "auditioning": false,
+  "production": {
+    "pid": 48213,
+    "stamp": "s1f3a9c"
+  }
+}

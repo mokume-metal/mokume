@@ -718,7 +718,12 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             }
             return true
         }
-        guard let manifest = remembered.first(where: { $0.pid == pid })?.manifest,
+        // **覚えから押し出されていても、区画の目録が今もその世代のものなら読み直す。** 読んだ改訂は印が付いて
+        // 二度と配られない (``reloadSourceIfChanged()``) ので、関所に弾かれた間に読んだだけの世代は、ここで
+        // 拾わなければ、次に書き直されるまで戻れない
+        guard
+            let manifest = remembered.first(where: { $0.pid == pid })?.manifest
+                ?? SharedFrameSurface.readManifest(at: facet).flatMap { $0.pid == pid ? $0 : nil },
             manifest.ids.contains(where: { IOSurfaceLookup($0) != nil })
         else { return false }
         adopt(manifest)
