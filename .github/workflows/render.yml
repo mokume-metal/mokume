@@ -93,7 +93,9 @@ name: Render
 #   - render (merge_group) — 前の group のうち終わっていないものが runner の数 (リポジトリの
 #     変数 RENDER_TURN_SLOTS・既定 1) 未満になるまで積まない。既定では 1 つ前の group の run が
 #     終わるまで待ち、group は queue の順に 1 本ずつ専用機に載る (#3319・ADR-0019 決定 7 の改訂 (2026-10-27))
-#   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)
+#   - render-pr — merge_group の run が 1 本でも残っていれば見送る (必須ではない)。通す直前に、
+#     この run の head が PR の branch の今の先端と違えば、同じく見送る (旧い head の job が
+#     走っている新しい head の job を取り消さないため・#3551)
 #   - scheduled-* — merge_group の run が残っている間は待つ
 # 門番の判断は積む前の 1 回だけで、queue が空いている間に積まれた job は後から group が
 # できても引き下がらない。そのうち**まだ拾われていない render-pr は、group ができた瞬間に
@@ -155,8 +157,8 @@ jobs:
           # 専用機で並走させる merge_group の render の数 (#3319)。runner の数に合わせて
           # リポジトリの変数で切り替える。未設定なら 1 (scripts/render-turn.sh の「並走の数」)
           RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
-          # render-pr の旧い head を群に入れない (#3551)。pull_request の yield だけが読む。branch の名前は
-          # 環境変数で渡す (run: の中に展開しない)
+          # render-pr の旧い head が群に入る窓を縮める (#3551)。pull_request の yield だけが読む。
+          # branch の名前は環境変数で渡す (run: の中に展開しない)
           RENDER_TURN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RENDER_TURN_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
@@ -256,7 +258,9 @@ jobs:
     # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
     # 塞がないようにする。**GitHub は後から群に入った job を残す**ので、群に入る順が push の順と
     # 逆になると (旧 head の門番が遅れたとき)、旧 head の job が走っている新 head の job を取り消す。
-    # 古い head はここへ入る前に門番 (render-turn の yield) が見送る (#3551)
+    # 古い head は、ここへ入る前に門番 (render-turn の yield) が見送って窓を縮める (#3551)。比べるのは
+    # 門番の出口の 1 回だけで、出口から群に入るまでの遅れが新しい push の門番の所要を超えれば、
+    # 逆向きは残る — 窓を縮めるだけでゼロにはならない (権限を広げない決定の下では根まで消せない)
     concurrency:
       group: render-pr-${{ github.ref }}
       cancel-in-progress: true

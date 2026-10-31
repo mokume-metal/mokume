@@ -64,8 +64,13 @@
 # 比べる場所はここ (群に入る前の最後の場所) で、render-pr の最初の step ではない — job レベルの
 # concurrency は step が始まる前に評価されるので、step で比べても旧 head はもう群に入っている。
 # 先端は matching-refs の API (contents: read) で引く。権限は actions: read のまま広げない。
-# 読めない・branch が無い・環境変数が無いときは比べずに通す。門番を出た後、群に入るまでの数秒に
-# 押された push は従来どおり新しい job が旧い job を取り消す (向きは正しい)。
+# 読めない・branch が無い・環境変数が無いときは比べずに通す。
+#
+# **窓を縮めるだけで、ゼロにはならない。** 比べるのは出口の 1 回だけなので、出口から旧 head の
+# render-pr が群に入るまでの遅れが、新しい push の門番の所要を超えれば、旧 head が新 head を取り消す向きは
+# 残る (権限を広げない決定の下では、根まで消せない)。見送られた run も、新しい push の run が立たなければ
+# (`[skip ci]`・GITHUB_TOKEN による push・main との衝突) 誰も render-pr を走らせないが、render-pr は
+# 必須ではないので merge は止まらない。
 #
 # ## 前の group の run が見つからないとき
 #
@@ -207,7 +212,8 @@ finish() { # $1=go の値
   # なる。比べる場所は、群に入る前の最後の場所であるこの出口である
   if [ "$go" = true ] && [ "$mode" = yield ] && stale_head; then
     say "この run の head (${RENDER_TURN_HEAD_SHA:0:8}) は PR の今の先端 (${current_head:0:8}) と違うので、render-pr は見送った (#3551):"
-    say "- 新しい push の render-pr が走る。旧 head の job が群に入ると、走っている新 head の job を取り消す"
+    say "- 新しい push の run があれば、render-pr はそちらで走る。旧 head の job が群に入ると、走っている新 head の job を取り消しうる"
+    say "- この run を rerun しても同じく見送られる。rerun ではなく、新しい head の run を見る"
     go=false
   fi
   if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "go=$go" >> "$GITHUB_OUTPUT"; fi
