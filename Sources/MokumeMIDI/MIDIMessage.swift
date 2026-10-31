@@ -18,6 +18,9 @@
 /// - **速度 0 のノートオンは、ノートオフとして届く。** MIDI は「速度 0 のノートオン」でも離したことを
 ///   伝えるので、読む側が 2 通りを見分けなくてよいようにしてある。機材から届いたものも、
 ///   ``Sketch/createMIDI(messages:)`` に渡した列も同じに扱う
+/// - **クロック・開始・停止・再開・曲の位置は、拍を数える材料である。** ``MIDIPort/beat`` が数えるので、拍だけが
+///   要るなら読まなくてよい。クロックは 120 BPM で毎秒 48 個届くので、``MIDIPort/messages`` を読むスケッチは
+///   `default` で受ける (ほかのメッセージと同じく、届いた順に全部入る)
 ///
 /// `Codable`・`Sendable` で、記録した列として書き出して読み戻せる。``Sketch/createMIDI(messages:)`` に
 /// そのまま渡せる。
@@ -29,6 +32,17 @@ public nonisolated enum MIDIMessage: Codable, Sendable, Equatable {
     /// つまみ・フェーダ・ペダルなどの値が変わった (コントロールチェンジ)。`controller` は 0〜127 の番号で、
     /// `value` は 0〜127。
     case controlChange(channel: Int, controller: Int, value: Int)
+    /// テンポのクロック。**24 個で 1 拍** (4 分音符 1 つ) で、走っている間だけ ``MIDIPort/beat`` に数える。
+    case clock
+    /// 演奏の開始。数えたクロックを 0 に戻し、数え始める。
+    case start
+    /// 演奏の停止。数えるのを止める。止めている間に届くクロックは、拍を進めない。
+    case stop
+    /// 演奏の再開。止めた位置 (止めている間に ``songPosition(sixteenths:)`` が届いていればその位置) から数え続ける。
+    case `continue`
+    /// 曲の位置 (Song Position Pointer)。16 分音符 (= 6 クロック) の数で、数えたクロックをこの数の 6 倍に置く。
+    /// `sixteenths` は 0〜16383 (MIDI の 14 ビット)。
+    case songPosition(sixteenths: Int)
 }
 
 nonisolated extension MIDIMessage {
@@ -43,6 +57,10 @@ nonisolated extension MIDIMessage {
         case .controlChange(let channel, let controller, let value):
             return Self.channels.contains(channel) && Self.data.contains(controller)
                 && Self.data.contains(value)
+        case .clock, .start, .stop, .continue:
+            return true
+        case .songPosition(let sixteenths):
+            return Self.positions.contains(sixteenths)
         }
     }
 
@@ -54,4 +72,6 @@ nonisolated extension MIDIMessage {
 
     static let channels = 1...16
     static let data = 0...127
+    /// 曲の位置の範囲 (14 ビット)。
+    static let positions = 0...16383
 }

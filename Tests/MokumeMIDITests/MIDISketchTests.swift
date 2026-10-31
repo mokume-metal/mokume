@@ -60,6 +60,32 @@ struct MIDISketchTests {
         #expect(try record() == first)
     }
 
+    @Test("開始の後に 1 フレーム 1 クロックを注入すると、24 個目が届いたフレームの draw() で拍が 1 になり、割り当てられたフレームが一致する (#3591)")
+    func clockBeatReachesDrawOnItsFrame() throws {
+        // 0 番目のフレームに開始、以降は 1 フレーム 1 クロック (24 個目は 24 番目のフレーム)
+        let recorded: [[MIDIMessage]?] = [[.start]] + (1..<60).map { _ in [.clock] }
+        func record() throws -> [String] {
+            var port: MIDIPort?
+            var seen: [String] = []
+            MIDISketch.onSetup = { port = $0.createMIDI(messages: recorded) }
+            MIDISketch.onDraw = { sketch in
+                guard let port else { return }
+                let arrived = port.report?.lastArrival.map { "\($0.frame == sketch.frameCount)" } ?? "none"
+                seen.append("\(port.beat) \(arrived)")
+            }
+            try run(frames: 50)
+            return seen
+        }
+        let first = try record()
+        #expect(first.count == 50)
+        #expect(first[0] == "0 true", "開始が届いたフレーム")
+        #expect(first[23] == "0 true")
+        #expect(first[24] == "1 true", "24 個目のクロックが届いたフレームで 0 から 1")
+        #expect(first[47] == "1 true")
+        #expect(first[48] == "2 true", "48 個目で 2")
+        #expect(try record() == first, "何度回しても同じ")
+    }
+
     @Test("外して足し直した記録の入り口は、外さずに回したときと同じメッセージを、足し直した後のフレームで受け取る (時刻どおり・#3152)")
     func reattachedPortKeepsTheTimeline() throws {
         // 要素ごとに違う CC の値。6 つで、10 フレームまで回すと最後まで行って最初に戻る

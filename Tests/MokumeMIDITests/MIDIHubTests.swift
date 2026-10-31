@@ -166,7 +166,7 @@ struct MIDIHubTests {
         hub.start()
         let port = try port("Pad #1", on: hub)
         backend.deliver(1, [0x20E0_0040, 0x20E0_0140, 0x20E0_0240])
-        backend.deliver(1, [0x10F8_0000])  // クロックは数えない
+        backend.deliver(1, [0x10FE_0000, 0x10FF_0000])  // アクティブセンシング・リセットは数えずに読み飛ばす
         port.supply()
         #expect(port.messages.isEmpty)
         #expect(port.inbox.messages.unreadable == 3)

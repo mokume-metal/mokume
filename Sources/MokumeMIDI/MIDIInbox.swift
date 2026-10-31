@@ -41,27 +41,32 @@ nonisolated struct MIDIControllers: Sendable, Equatable {
     }
 }
 
-/// 入り口 1 つぶんの入れ物。**届き方の違う 2 つを分けて持つ** ([ADR-0028] 決定 2)。
+/// 入り口 1 つぶんの入れ物。**届き方の違う 2 種を分けて持つ** ([ADR-0028] 決定 2)。
 ///
 /// - ノートの押し離しとコントロールチェンジの出来事は落とさない列 (``ExternalQueue``)。1 フレームに
 ///   押して離した鍵も、届いた順に全部読む
 /// - コントロールチェンジの現在値は最新の 1 つ (``ExternalInput``)。列が上限で古いものを捨てても、
 ///   現在値はいつも最新である
+/// - クロックから数えた拍 (``MIDIClock``) も最新の 1 つ。クロックも出来事の列に入るが、拍は列を数え直さずに
+///   読める。届いたクロックは、**届いた後の最初のフレーム**に割り当てられる ([ADR-0042] 決定 4)
 ///
-/// 状態は 2 つに同じものを置く。読むのは列の側である。
+/// 状態は 3 つに同じものを置く。読むのは列の側である。
 ///
 /// **入れ物へ入れるのは ``receive(_:hostTime:)`` の 1 本だけ。** 実機も記録の再生も同じ口を通るので、
 /// 入れ物から先は出どころを知らない ([ADR-0028] 決定 6)。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
+/// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated final class MIDIInbox: Sendable {
     let name: String
     let messages: ExternalQueue<MIDIMessage>
     let controllers: ExternalInput<MIDIControllers>
+    let clock: ExternalInput<MIDIClock>
 
     /// 錠の内側でだけ触る、受けた側の記憶。
     private struct Memory: Sendable {
         var controllers = MIDIControllers()
+        var clock = MIDIClock()
         /// 押されているノート。(チャンネル, ノート) を 1 つの数にして持つ。
         var held: Set<Int> = []
     }
@@ -71,6 +76,7 @@ nonisolated final class MIDIInbox: Sendable {
         self.name = name
         messages = ExternalQueue(name: name, state: state, capacity: capacity)
         controllers = ExternalInput(name: name, state: state)
+        clock = ExternalInput(name: name, state: state)
     }
 
     // MARK: - 入れる (どのスレッドからでも)
@@ -95,6 +101,9 @@ nonisolated final class MIDIInbox: Sendable {
             case .controlChange(let channel, let controller, let value):
                 memory.controllers.set(channel: channel, controller: controller, value: value)
                 controllers.send(memory.controllers, hostTime: hostTime)
+            case .clock, .start, .stop, .continue, .songPosition:
+                memory.clock.apply(message)
+                clock.send(memory.clock, hostTime: hostTime)
             }
             messages.send(message, hostTime: hostTime)
         }
@@ -109,6 +118,7 @@ nonisolated final class MIDIInbox: Sendable {
     func setState(_ state: SourceState) {
         messages.setState(state)
         controllers.setState(state)
+        clock.setState(state)
     }
 
     /// 抜かれた。押していたノートを離したことにして、抜かれたと名乗る。
@@ -128,7 +138,7 @@ nonisolated final class MIDIInbox: Sendable {
     }
 
     /// 読んだ現在値の表を、最新の 1 つへ入れ直す。外されていた入り口が足し直されたとき
-    /// (``discardWaiting()`` で捨てた表を戻す)。
+    /// (``discardWaiting()`` で捨てた表を戻す)。数えた拍は、入り口が自分で持っている (``MIDIPort/beat``) ので戻さない。
     ///
     /// **錠の内側で送る。** 錠を放してから送ると、その隙間に届いた新しい値を、古い表が上書きする。
     func resendControllers() {
@@ -137,23 +147,28 @@ nonisolated final class MIDIInbox: Sendable {
         }
     }
 
-    /// 中継 (``MIDIFeed``) が持つ最後の現在値の表を、この入れ物の表にして最新の 1 つへ入れる。
-    /// 後から繋いだ入り口・足し直された入り口が、繋ぐ前に動いたつまみの値を読めるようにする。
-    /// 何も届いていない表では何もしない。
-    func adopt(_ table: MIDIControllers) {
+    /// 中継 (``MIDIFeed``) が持つ最後の現在値の表と数えた拍を、この入れ物のものにして最新の 1 つへ入れる。
+    /// 後から繋いだ入り口・足し直された入り口が、繋ぐ前に動いたつまみの値と、数えていた拍を読めるようにする。
+    /// 何も届いていなければ何もしない。
+    func adopt(_ table: MIDIControllers, clock adopted: MIDIClock) {
         memory.withLock { memory in
-            guard !table.isEmpty else { return }
-            memory.controllers = table
-            controllers.send(table)
+            if !table.isEmpty {
+                memory.controllers = table
+                controllers.send(table)
+            }
+            if adopted != MIDIClock() {
+                memory.clock = adopted
+                clock.send(adopted)
+            }
         }
     }
 
-    /// 現在値の表と出来事を、**同じ錠の内側で**取り出す。別々に取ると、その間に届いたものを片方だけが
+    /// 現在値の表・数えた拍・出来事を、**同じ錠の内側で**取り出す。別々に取ると、その間に届いたものを片方だけが
     /// 持ち、同じフレームで表と列が食い違う。
     @MainActor
-    func take() -> (controllers: MIDIControllers?, messages: [MIDIMessage]) {
+    func take() -> (controllers: MIDIControllers?, clock: MIDIClock?, messages: [MIDIMessage]) {
         memory.withLock { _ in
-            MainActor.assumeIsolated { (controllers.take(), messages.take()) }
+            MainActor.assumeIsolated { (controllers.take(), clock.take(), messages.take()) }
         }
     }
 
@@ -161,15 +176,16 @@ nonisolated final class MIDIInbox: Sendable {
     func discardWaiting() {
         messages.discardWaiting()
         controllers.discardWaiting()
+        clock.discardWaiting()
         memory.withLock { $0.held.removeAll() }
     }
 
     /// 出どころの状態。
     var state: SourceState { messages.state }
 
-    /// 観測の応答に載せる名乗り。最後に届いたのは、2 つの入れ物のうち後に取り出したほう。
+    /// 観測の応答に載せる名乗り。最後に届いたのは、3 つの入れ物のうち後に取り出したほう。
     var report: SourceReport {
-        let arrivals = [messages.lastArrival, controllers.lastArrival].compactMap { $0 }
+        let arrivals = [messages.lastArrival, controllers.lastArrival, clock.lastArrival].compactMap { $0 }
         let latest = arrivals.max { ($0.frame, $0.hostTime) < ($1.frame, $1.hostTime) }
         return SourceReport(name: name, state: state, lastArrival: latest)
     }
