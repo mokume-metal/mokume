@@ -12,10 +12,14 @@ import Testing
 /// `setup()` と `draw()` で、検査が渡した手続きを走らせるスケッチ。フレームレートを選べる。
 final class MovieSketch: Sketch {
     nonisolated(unsafe) static var frameRate = 30
+    /// 窓で回すときの時計の選び方 (`onScreen` で回す検査だけが読む)。
+    nonisolated(unsafe) static var clockMode = SketchSettings.ClockMode.wallClock
     nonisolated(unsafe) static var onSetup: (MovieSketch) throws -> Void = { _ in }
     nonisolated(unsafe) static var onDraw: (MovieSketch) -> Void = { _ in }
     init() {}
-    var settings: SketchSettings { SketchSettings(width: 8, height: 8, frameRate: Self.frameRate) }
+    var settings: SketchSettings {
+        SketchSettings(width: 8, height: 8, frameRate: Self.frameRate, clock: Self.clockMode)
+    }
     func setup() throws { try Self.onSetup(self) }
     func draw() {
         background(0, 0, 0)
@@ -83,7 +87,7 @@ struct MovieTests {
         return received
     }
 
-    private static func pixels(of image: Image) -> [LinearRGBA] {
+    static func pixels(of image: Image) -> [LinearRGBA] {
         (0..<image.height).flatMap { y in (0..<image.width).map { x in image.get(x, y) } }
     }
 
@@ -174,6 +178,209 @@ struct MovieTests {
             let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
             #expect(row.pixels == expected[index], "\(row.frame) 枚目 (\(row.time) 秒)")
         }
+    }
+
+    // MARK: - 実時間の時計の先読み (#2523)
+
+    /// 鍵のコマ 30 枚ごと・3 秒・128×96 の動画。
+    private func keyFramedMovie() async throws -> URL {
+        try await TestMovie.write(frames: 90, width: 128, height: 96, keyFrameInterval: 30, paint: TestMovie.stripe)
+    }
+
+    /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (5 秒) を越えたら落とす。
+    private func settle(_ movie: Movie) async throws {
+        guard let prefetcher = movie.prefetcher else { return }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !prefetcher.isSettled {
+            try #require(ContinuousClock.now < deadline, "係が 5 秒で列を埋め終えない")
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
+    /// 実時間の時計 (手で進める時刻) で回す。フレームごとに `step` 秒進める。
+    private final class WallClockRun {
+        var now = 100.0
+        let runtime: SketchRuntime
+        var movie: Movie?
+        var rows: [MovieFrame] = []
+        var onDraw: (MovieSketch, Movie) -> Void = { _, _ in }
+
+        init(_ url: URL, frameRate: Int = 30, observer: FrameObserver? = nil, prepare: @escaping (Movie) -> Void)
+            throws
+        {
+            MovieSketch.frameRate = frameRate
+            MovieSketch.clockMode = .wallClock
+            var run: WallClockRun?
+            // `setup()` は最初の ``advance(by:)`` で走る
+            MovieSketch.onSetup = { sketch in
+                let movie = try sketch.createVideo(url.path)
+                prepare(movie)
+                run?.movie = movie
+            }
+            MovieSketch.onDraw = { sketch in
+                guard let run, let movie = run.movie else { return }
+                run.rows.append(
+                    MovieFrame(
+                        frame: sketch.frameCount, time: movie.time, isNewFrame: movie.isNewFrame,
+                        pixels: MovieTests.pixels(of: movie.image)))
+                run.onDraw(sketch, movie)
+            }
+            let clock: () -> Double = { run?.now ?? 0 }
+            if let observer {
+                runtime = try SketchRuntime(
+                    sketch: MovieSketch(), gpu: try RenderDevice(), clock: .wallClock, now: clock, observer: observer)
+            } else {
+                runtime = try SketchRuntime(sketch: MovieSketch(), gpu: try RenderDevice(), clock: .wallClock, now: clock)
+            }
+            run = self
+        }
+
+        /// 1 フレーム進める (時刻は 1/30 秒)。
+        func advance(by step: Double = 1.0 / 30) throws {
+            now += step
+            try runtime.advance()
+        }
+    }
+
+    @Test("フレームの時計 (固定の時計・clock: .frames の窓) では先読みを使わず、ループと jump を混ぜた 300 フレームに位置のコマが出る")
+    func frameClocksReadSynchronously() async throws {
+        let url = try await keyFramedMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        for onScreen in [false, true] {
+            var movie: Movie?
+            var rows: [MovieFrame] = []
+            MovieSketch.frameRate = 30
+            MovieSketch.clockMode = .frames
+            defer { MovieSketch.clockMode = .wallClock }
+            MovieSketch.onSetup = { sketch in
+                let made = try sketch.createVideo(url.path)
+                made.loop()
+                movie = made
+            }
+            MovieSketch.onDraw = { sketch in
+                guard let movie else { return }
+                rows.append(
+                    MovieFrame(
+                        frame: sketch.frameCount, time: movie.time, isNewFrame: movie.isNewFrame,
+                        pixels: Self.pixels(of: movie.image)))
+                switch sketch.frameCount {
+                case 100: movie.jump(2.5)
+                case 140: movie.jump(0.9)
+                default: break
+                }
+            }
+            // 窓の経路は時計を作品の設定 (clock: .frames) から決める
+            let runtime =
+                onScreen
+                ? try SketchRuntime(sketch: MovieSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 }, onScreen: true)
+                : try SketchRuntime(sketch: MovieSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 })
+            #expect(runtime.clock == .frameIndex(frameRate: 30))
+            for _ in 0..<300 { try runtime.advance() }
+            #expect(movie?.prefetcher == nil, "フレームの時計で先読みの係が起きた")
+            runtime.closePlugins()
+            #expect(rows.count == 300)
+            for row in rows {
+                let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
+                #expect(row.pixels == expected[index], "\(onScreen ? "窓" : "固定") の \(row.frame) 枚目 (\(row.time) 秒)")
+            }
+        }
+    }
+
+    @Test("実時間の時計で飛んだ直後のフレームは前のコマのまま isNewFrame が false で、係が届けたフレームで飛び先のコマになる")
+    func wallClockJumpShowsThePreviousFrameUntilItArrives() async throws {
+        let url = try await keyFramedMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        let run = try WallClockRun(url) { $0.pause() }
+        defer { run.runtime.closePlugins() }
+        try run.advance()  // 1 枚目は同期に読む
+        let movie = try #require(run.movie)
+        #expect(run.rows.last?.pixels == expected[0])
+        try run.advance()  // 2 枚目から先読み (係を起こす)
+        try await settle(movie)
+        #expect(movie.prefetcher != nil)
+        movie.jump(2.5)
+        try run.advance()
+        // 飛んだフレーム: 待たない。前のコマのまま
+        #expect(run.rows.last?.isNewFrame == false)
+        #expect(run.rows.last?.pixels == expected[0])
+        try await settle(movie)
+        try run.advance()
+        #expect(run.rows.last?.isNewFrame == true)
+        #expect(run.rows.last?.pixels == expected[75])
+    }
+
+    @Test("実時間の時計で流すと、ループの継ぎ目でも待たずに頭のコマが出る")
+    func wallClockLoopSeamDoesNotWait() async throws {
+        let url = try await keyFramedMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        let run = try WallClockRun(url) { $0.loop() }
+        defer { run.runtime.closePlugins() }
+        try run.advance()
+        let movie = try #require(run.movie)
+        // 1 周と少し流す。各フレームの後に係を待つ (画面の更新の間に係が進むのと同じ)
+        for _ in 0..<100 {
+            try run.advance()
+            try await settle(movie)
+        }
+        let rows = Array(run.rows.dropFirst(3))  // 係の立ち上がりを除く
+        for row in rows {
+            let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
+            #expect(row.pixels == expected[index], "\(row.frame) 枚目 (\(row.time) 秒)")
+            #expect(row.isNewFrame, "\(row.frame) 枚目で新しいコマが出ていない")
+        }
+        #expect(rows.contains { $0.time < 0.05 }, "継ぎ目を越えていない")
+    }
+
+    @Test("実時間の時計で流していても、time: 2.5 の観測の 1 枚は 2.5 秒のコマで、次の枚から先読みに戻る")
+    func wallClockObservationReadsTheRequestedSecond() async throws {
+        let url = try await keyFramedMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let expected = try await expectedPixels(url)
+        let facet = try TestScratch.directory("mokume-movie-prefetch-observe")
+        defer { try? FileManager.default.removeItem(at: facet) }
+        // 240 fps で回し、観測の前の枚を動画のコマの頭 (1/6 秒 = 5 枚目) に置く — 動画の 1 コマが 8 フレームに
+        // 映るので、観測の後の枚も観測の前と同じコマになる (列にはもう無いコマを、映し直さなければならない)
+        let step = 1.0 / 240
+        let run = try WallClockRun(url, frameRate: 240, observer: FrameObserver(directory: facet)) { $0.loop() }
+        defer { run.runtime.closePlugins() }
+        try run.advance(by: step)
+        let movie = try #require(run.movie)
+        for _ in 0..<40 {
+            try run.advance(by: step)
+            try await settle(movie)
+        }
+        let before = try #require(run.rows.last)
+        try AtomicFile.write(
+            Data(#"{"id":"o","time":2.5}"#.utf8), to: facet.appendingPathComponent("request.json"))
+        try run.advance(by: step)
+        // 観測の枚: 先読みの列に 2.5 秒のコマは無いが、待って (同期に読んで) 2.5 秒のコマを出す
+        #expect(run.rows.last?.pixels == expected[75], "観測の枚に 2.5 秒のコマが出ていない")
+        try await settle(movie)
+        try run.advance(by: step)
+        // 次の枚: 作者の時計の位置 (観測の前から 2 枚ぶん進んだ所) のコマに戻る
+        let after = try #require(run.rows.last)
+        let index = min(89, Int((Double(after.time) * 30 + 0.03).rounded(.down)))
+        #expect(index == Int((Double(before.time) * 30 + 0.03).rounded(.down)), "前提: 観測の前後で同じコマ (\(before.time) → \(after.time) 秒)")
+        #expect(after.pixels == expected[index], "観測の後の枚が作者の時計の位置のコマでない (\(after.time) 秒)")
+        #expect(after.time > before.time && after.time < 1, "観測の後の位置: \(after.time)")
+    }
+
+    @Test("実時間の時計の先読みの係は、スケッチが終わると止まってから閉じる")
+    func closingStopsTheWorker() async throws {
+        let url = try await keyFramedMovie()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let run = try WallClockRun(url) { $0.loop() }
+        for _ in 0..<5 { try run.advance() }
+        let movie = try #require(run.movie)
+        let prefetcher = try #require(movie.prefetcher)
+        #expect(!prefetcher.hasExited)
+        run.runtime.closePlugins()
+        #expect(!prefetcher.stopTimedOut, "係が期限の内に止まらなかった")
+        #expect(prefetcher.hasExited, "閉じた後も係が抜けていない")
+        #expect(movie.state == .stopped)
     }
 
     // MARK: - 操作

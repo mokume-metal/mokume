@@ -66,7 +66,7 @@ nonisolated final class MovieFrames {
     /// いま映しているコマ。
     private(set) var current: Decoded?
     /// 次のコマ (読み終えていれば `nil`)。
-    private var upcoming: Decoded?
+    private(set) var upcoming: Decoded?
     private var serial = 0
     /// 読めなくなった後、読み直しを試してよい位置 (秒)。
     private var retryAfter = 0.0
@@ -126,17 +126,35 @@ nonisolated final class MovieFrames {
                 upcoming = try readNext()
             }
         } catch {
-            reader?.cancelReading()
-            reader = nil
-            output = nil
-            upcoming = nil
-            retryAfter = target + Self.retryDistance
-            isWaitingToRetry = true
+            stop(retryingAfter: target + Self.retryDistance)
             throw error
         }
         // 投げずにここへ来たのは、読めている (読み直して読めた) とき
         isWaitingToRetry = false
         return true
+    }
+
+    /// 次のコマへ 1 枚進める (``upcoming`` を ``current`` に)。読み終えていれば何もしない。
+    ///
+    /// 読めなくなったら投げ、``advance(to:)`` と同じく止まる。先読みの係が、列を 1 枚ずつ埋めるのに使う。
+    func step() throws(Failure) {
+        guard let next = upcoming else { return }
+        current = next
+        do {
+            upcoming = try readNext()
+        } catch {
+            stop(retryingAfter: next.time + Playhead.tolerance + Self.retryDistance)
+            throw error
+        }
+    }
+
+    /// 読み手と持っているコマを手放す。次の ``advance(to:)`` は、頼まれた位置から読み直す。
+    ///
+    /// ``close()`` と違い、映していたコマも手放す (4K で 2 枚・約 63 MiB)。実時間の時計で先読みに移った
+    /// main の読み手を休ませるのに使う。
+    func park() {
+        close()
+        current = nil
     }
 
     /// 読むのをやめる。
@@ -153,6 +171,17 @@ nonisolated final class MovieFrames {
     }
 
     // MARK: - 読む
+
+    /// 読めなくなったところで止まる。最後に読めたコマは ``current`` に残し、`position` 秒より先へ
+    /// 進むか手前へ戻るまで読み直しを試さない。
+    private func stop(retryingAfter position: Double) {
+        reader?.cancelReading()
+        reader = nil
+        output = nil
+        upcoming = nil
+        retryAfter = position
+        isWaitingToRetry = true
+    }
 
     /// `target` 秒のコマを、読み進めずに読み直して得るか。
     private func needsRestart(to target: Double) -> Bool {

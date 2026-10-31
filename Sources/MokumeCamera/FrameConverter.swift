@@ -39,7 +39,8 @@ import MokumeCore
 /// しまう (半透明の色が暗くなり、透明な所は黒い不透明になる。#2881)。
 ///
 /// **スレッドを持たない。** 1 つの変換器を呼ぶのは 1 本の流れだけで (カメラは受け取りの
-/// 待ち行列 — ``CameraSource``、動画は main actor — ``MovieReader``)、この型はその上に閉じている。
+/// 待ち行列 — ``CameraSource``、動画は main actor — ``MovieReader`` と、先読みの係 — ``MoviePrefetcher``
+/// が、それぞれ自分の 1 つを持つ)、この型はその上に閉じている。
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 nonisolated final class FrameConverter {
