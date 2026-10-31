@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: probe-scratch-3500
+on:
+  pull_request:
+    paths:
+      - .github/workflows/probe-scratch-3500.yml
+concurrency:
+  group: probe-scratch-3500-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  turn:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/render-turn.sh wait
+  profile:
+    needs: turn
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          mkdir -p .build/scratch-probe
+          git rev-parse HEAD
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+          sysctl hw.ncpu hw.memsize
+          cat > .build/scratch-probe/main.swift <<'SWIFT'
+          import Foundation
+          import Darwin
+          let clock = ContinuousClock()
+          let base = FileManager.default.temporaryDirectory
+          for round in 1...3 {
+              var names: [String] = []
+              let enumerate = clock.measure {
+                  names = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []
+              }
+              var candidates = 0
+              var dead = 0
+              var pidTime: Duration = .zero
+              let parse = clock.measure {
+                  for name in names {
+                      guard let pid = ScratchSweep.ownerPid(ofName: name) else { continue }
+                      candidates += 1
+                      pidTime += clock.measure { if !ScratchSweep.processExists(pid) { dead += 1 } }
+                  }
+              }
+              print("round=\(round) entries=\(names.count) enumeration=\(enumerate) parseAndPid=\(parse) pid=\(pidTime) candidates=\(candidates) dead=\(dead)")
+              var streamed = 0
+              var streamedCandidates = 0
+              let stream = clock.measure {
+                  guard let dir = opendir(base.path) else { return }
+                  defer { closedir(dir) }
+                  while let entry = readdir(dir) {
+                      let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                          $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+                      }
+                      if name == "." || name == ".." { continue }
+                      streamed += 1
+                      if ScratchSweep.ownerPid(ofName: name) != nil { streamedCandidates += 1 }
+                  }
+              }
+              print("round=\(round) streamed=\(streamed) enumerationAndParse=\(stream) candidates=\(streamedCandidates)")
+          }
+          let probe = base.appendingPathComponent("mokume-3500-probe-\(UUID().uuidString)", isDirectory: true)
+          try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
+          defer { try? FileManager.default.removeItem(at: probe) }
+          var createTime: Duration = .zero
+          var removeTime: Duration = .zero
+          for _ in 0..<6 {
+              var created: URL?
+              createTime += try clock.measure {
+                  created = try ScratchOwner(base: probe).directory("owned")
+                  try Data("x".utf8).write(to: created!.appendingPathComponent("entry"))
+              }
+              removeTime += clock.measure { _ = ScratchRemoval.remove(created!) }
+          }
+          print("ownedFixtureCount=6 create=\(createTime) remove=\(removeTime)")
+          SWIFT
+          swiftc -O Tests/MokumeTestSupport/TestScratch.swift .build/scratch-probe/main.swift -o .build/scratch-probe/profile
+          .build/scratch-probe/profile 2>&1 | tee .build/scratch-probe/results.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: scratch-probe-3500
+          path: .build/scratch-probe/results.txt
+          include-hidden-files: true
+          retention-days: 14
