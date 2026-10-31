@@ -58,10 +58,15 @@ nonisolated enum SVGFile {
         /// 要素の `opacity` を子の色ごとに掛けるので、重なった所が SVG より濃く出る (#2884)。
         /// ``skipped`` には混ぜない — 捨てたのではなく、近似で描いている。
         ///
-        /// **つなぎの欄である。** 層の `opacity` を本体が持ち、群をそれで描くようになれば ([#2878]) 、
-        /// この欄と名乗りごと消える。
+        /// 入れ子の `<svg>` の表示枠の外に描くものがあるときも、ここに数える (#3563)。SVG は表示枠で切り抜くが、
+        /// 読み込みは切り抜かずに描く。
+        ///
+        /// **つなぎの欄である。** `opacity` の名乗りは、層の `opacity` を本体が持ち、群をそれで描くようになれば
+        /// ([#2878]) 、表示枠の名乗りは、入れ子の `<svg>` を表示枠で切り抜いて描くようになれば ([#2879]) 消える。
+        /// 両方が済めば、この欄ごと消える。
         ///
         /// [#2878]: https://github.com/mokume-metal/mokume/issues/2878
+        /// [#2879]: https://github.com/mokume-metal/mokume/issues/2879
         var approximated: [Skip] = []
     }
 
@@ -69,6 +74,8 @@ nonisolated enum SVGFile {
     static let groupOpacityNote = "opacity on a group whose shapes overlap"
     static let fillAndStrokeOpacityNote = "opacity on a shape with both fill and stroke"
     static let strokeSubpathsOpacityNote = "translucent stroke on a path whose subpaths overlap"
+    /// 入れ子の `<svg>` の表示枠の外に描くもの (#3563)。行は、はみ出した入れ子の `<svg>` の行。
+    static let nestedViewportNote = "content outside the viewport of a nested <svg>"
 
     /// 描かずに捨てたものの 1 種類。
     struct Skip: Sendable, Equatable {
@@ -298,6 +305,9 @@ nonisolated enum SVGFile {
         /// 要素自身の `opacity` (祖先の分は掛けていない)。
         var opacity: Float = 1
         var isDisplayed = true
+        /// `overflow` が表示枠で切る値か (`hidden`・`scroll`・`clip`)。入れ子の `<svg>` の既定は `hidden` (UA の
+        /// 規則)。切り抜かない読み込みが、枠の外に描くものを名乗るかの判断にだけ使う (#3563)。
+        var clipsOverflow = false
         /// 描けない効果 (`clip-path` など) を持つ性質の名前。`marker` は `marker-start` / `marker-mid` /
         /// `marker-end` に分けて持つ。
         var effects: Set<String> = []
@@ -316,6 +326,7 @@ nonisolated enum SVGFile {
             switch property {
             case "opacity": opacity = parent.opacity
             case "display": isDisplayed = parent.isDisplayed
+            case "overflow": clipsOverflow = parent.clipsOverflow
             case _ where SVGFile.effectProperties.contains(property):
                 if parent.effects.contains(property) { effects.insert(property) }
             default: break
@@ -342,6 +353,20 @@ nonisolated enum SVGFile {
         var chose = false
         /// この要素が `opacity` < 1 の容器なら、``Walk/groups`` の中の番号 (#2884)。
         var group: Int?
+        /// この要素が、表示枠で切り抜くはずの入れ子の `<svg>` なら、その枠 (#3563)。
+        var clip: ViewportClip?
+    }
+
+    /// 表示枠で切り抜くはずの入れ子の `<svg>` 1 つ。中で描くものが枠をはみ出したら 1 度だけ名乗る。
+    struct ViewportClip {
+        /// `<svg>` の中の座標から、ファイル全体の座標への変換。
+        var base: Affine
+        /// 表示枠 (`<svg>` の中の座標)。
+        var box: Box
+        /// `<svg>` の行。
+        var line: Int
+        /// 名乗り済みか。
+        var named = false
     }
 
     /// 外接矩形 (形の座標)。``Drawing/approximated`` の重なりの判定にだけ使う。
@@ -522,6 +547,11 @@ nonisolated enum SVGFile {
                 context.viewport = viewport.size
                 context.ownSizes = viewport.texts
                 pushContainer(.render, context)
+                // 入れ子の `<svg>` は SVG なら表示枠で切り抜くが、読み込みは切り抜かない。はみ出すものを見張る (#3563)
+                if stack.count > 1, context.own.clipsOverflow {
+                    stack[stack.count - 1].clip = ViewportClip(
+                        base: context.transform, box: viewport.clip, line: line)
+                }
             case "g", "a":
                 context.transform = context.transform * ownTransform(attributes, line: line)
                 pushContainer(.render, context)
@@ -639,6 +669,9 @@ nonisolated enum SVGFile {
             context.parentSizes = inherited.ownSizes
             context.ownSizes = [:]
             var own = Own()
+            // 入れ子の `svg` は UA の規則で `overflow: hidden`。根は切らない (ブラウザは画像の枠で切るが、読み込みは形を
+            // 枠の無い図形として置く)
+            if name == "svg", !isRoot { own.clipsOverflow = true }
             for (property, reading) in winners {
                 switch reading {
                 case .inherit: own.inherit(property, from: inherited.own)
@@ -676,6 +709,8 @@ nonisolated enum SVGFile {
             case "inherit": return .inherit
             case "initial": return Self.initial(of: property)
             case "unset", "revert", "revert-layer":
+                // `overflow` の `revert` は UA の規則に戻る。入れ子の `svg` では `hidden` なので、切る側に倒す (#3563)
+                if property == "overflow", lowered != "unset" { return .set { _, own in own.clipsOverflow = true } }
                 return SVGFile.inheritedProperties.contains(property) ? .inherit : Self.initial(of: property)
             default: break
             }
@@ -762,6 +797,16 @@ nonisolated enum SVGFile {
                 // `none` だけが描かない。CSS Display の値の外は無かったものとして、下の宣言のまま (#2650)
                 guard let isDisplayed = SVGFile.parseDisplay(value) else { return .unreadable }
                 return .set { _, own in own.isDisplayed = isDisplayed }
+            case "overflow":
+                // 切る値は `hidden`・`scroll`・`clip`。`visible`・`auto` は切らない。2 つ書く形 (`hidden visible`) は、
+                // どちらかの軸が切るなら切る側に倒す。値の外は無かったものとして、下の宣言のまま (#3563)
+                let words = lowered.split(whereSeparator: \.isWhitespace)
+                let known: Set<String> = ["visible", "hidden", "clip", "scroll", "auto"]
+                guard (1...2).contains(words.count), words.allSatisfy({ known.contains(String($0)) }) else {
+                    return .unreadable
+                }
+                let clips = words.contains { ["hidden", "clip", "scroll"].contains(String($0)) }
+                return .set { _, own in own.clipsOverflow = clips }
             case _ where SVGFile.effectProperties.contains(property) || property == "marker":
                 // 文法の外の値を「効果あり」へ倒さず、無かったものとして名乗る (#2410)
                 guard let present = SVGFile.parseEffect(property, value) else { return .unreadable }
@@ -796,6 +841,7 @@ nonisolated enum SVGFile {
             case "stroke-dasharray": return .set { context, _ in context.isDashed = false }
             case "visibility": return .set { context, _ in context.isVisible = true }
             case "display": return .set { _, own in own.isDisplayed = true }
+            case "overflow": return .set { _, own in own.clipsOverflow = false }
             default: return .effect(false)  // `clip-path`・`mask`・`filter`・`marker*`・`mix-blend-mode`
             }
         }
@@ -872,7 +918,7 @@ nonisolated enum SVGFile {
         private mutating func viewport(
             of attributes: [String: String], sizes: [String: [String]], in context: Context, isRoot: Bool,
             line: Int
-        ) -> (transform: Affine, size: SIMD2<Float>, texts: [String: String])? {
+        ) -> (transform: Affine, size: SIMD2<Float>, texts: [String: String], clip: Box)? {
             var box: [Float]?
             if let text = attributes["viewBox"] {
                 if let numbers = SVGFile.parseNumbers(text), numbers.count == 4, numbers[2] > 0,
@@ -960,11 +1006,15 @@ nonisolated enum SVGFile {
             }
             guard width > 0, height > 0 else { return nil }
             var transform = Affine.translate(x, y)
-            guard let box else { return (transform, SIMD2(width, height), texts) }
-            transform =
-                transform
-                * SVGFile.viewBoxTransform(box, width: width, height: height, aspect: aspect)
-            return (transform, SIMD2(box[2], box[3]), texts)
+            // 表示枠 (0, 0, width, height) を `svg` の中の座標で。viewBox の変換は拡大と平行移動だけなので、逆に戻せる (#3563)
+            let frame = Box(low: SIMD2(0, 0), high: SIMD2(width, height))
+            guard let box else { return (transform, SIMD2(width, height), texts, frame) }
+            let fit = SVGFile.viewBoxTransform(box, width: width, height: height, aspect: aspect)
+            transform = transform * fit
+            let clip = Box(
+                low: SIMD2((0 - fit.e) / fit.a, (0 - fit.f) / fit.d),
+                high: SIMD2((width - fit.e) / fit.a, (height - fit.f) / fit.d))
+            return (transform, SIMD2(box[2], box[3]), texts, clip)
         }
 
         // MARK: 形を作る
@@ -1094,6 +1144,7 @@ nonisolated enum SVGFile {
             if stroke != nil, context.isDashed { tally.note("stroke-dasharray", line: line) }
             if fill == nil && stroke == nil { return }
             noteOpacityApproximations(outline, context, fill: fill, stroke: stroke, line: line)
+            noteViewportOverflow(outline, context)
             items.append(
                 Item(
                     outline: outline, fill: fill, fillRule: context.fillRule, stroke: stroke,
@@ -1134,6 +1185,27 @@ nonisolated enum SVGFile {
         for index in open { groups[index].boxes.append(box) }
     }
 
+    /// 描くもの 1 つが、開いている入れ子の `<svg>` の表示枠をはみ出すなら、その `<svg>` につき 1 度だけ名乗りに数える
+    /// (#3563)。描く絵は変えない — SVG なら切り抜かれるが、読み込みは切り抜かない。
+    ///
+    /// **表示枠の座標で比べる**: 祖先の回転や剪断は、`<svg>` の中の座標へ戻して消す。`preserveAspectRatio` が
+    /// `slice` で viewBox が枠をはみ出すときも、枠のほうで比べるので名乗る。線の太さは数えず、形の外接矩形
+    /// (曲線は制御点を含める) だけで見る。名乗り過ぎる側に倒すので、実際には枠に収まる形でも名乗ることがある。
+    private mutating func noteViewportOverflow(_ outline: Outline, _ context: Context) {
+        for index in stack.indices {
+            guard let clip = stack[index].clip, !clip.named, let inverse = clip.base.inverted else { continue }
+            let box = Self.box(of: outline, inverse * context.transform)
+            // 逆の変換を掛けた分の丸めの誤差で、ちょうど枠に収まる形を名乗らない
+            let slack = 1e-4 * max(clip.box.high.x - clip.box.low.x, clip.box.high.y - clip.box.low.y)
+            guard
+                box.low.x < clip.box.low.x - slack || box.low.y < clip.box.low.y - slack
+                    || box.high.x > clip.box.high.x + slack || box.high.y > clip.box.high.y + slack
+            else { continue }
+            stack[index].clip?.named = true
+            approximations.note(SVGFile.nestedViewportNote, line: clip.line, earliest: true)
+        }
+    }
+
     /// 輪郭の外接矩形 (形の座標)。曲線は制御点を含めた矩形にする (曲線は制御点の外へ出ない)。
     private static func box(of outline: Outline, _ transform: Affine) -> Box {
         var points: [SIMD2<Float>] = []
@@ -1166,7 +1238,7 @@ nonisolated enum SVGFile {
     private static let properties: Set<String> = [
         "fill", "fill-opacity", "fill-rule", "stroke", "stroke-opacity", "stroke-width",
         "stroke-linecap", "stroke-linejoin", "stroke-dasharray", "opacity", "color", "visibility",
-        "display", "clip-path", "mask", "filter", "marker", "marker-start", "marker-mid",
+        "display", "overflow", "clip-path", "mask", "filter", "marker", "marker-start", "marker-mid",
         "marker-end", "mix-blend-mode",
     ]
 
