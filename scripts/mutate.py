@@ -75,7 +75,25 @@ suite・段は JSON に残す。
 ## 要約 (`summary`)
 
 記録が無い・読めない・形が違うときは `unreadable` を名乗って 1 で終わる。**「生き残り 0」とは
-出さない** — 読めない回を緑に読ませると、検査の検証力が落ちても誰も気付かない。
+出さない** — 読めない回を緑に読ませると、検査の検証力が落ちても誰も気付かない。生き残りと無効
+(束の原文が当たらない `anchor` など) は理由つきで表にする (行は `SUMMARY_ROWS` で切り、残りを名乗る)。
+定期の job は結果を追跡用の Issue に置く (scripts/report-mutation.py・#3221)。
+
+## 範囲の運用 (定期の job・#3221)
+
+**候補が 0 件の範囲は正常な記録である** (`since` があり `candidates` が 0)。変更の無い日に job を
+赤にしない。束が空・候補の数を名乗らない記録は、いままでどおり読めない記録として扱う。
+範囲は**標本**である (起点は毎回 HEAD へ進む。回しきれなかった数は結果に名乗る)。網羅の物差しは
+固定の束が担う。改名つきの変更も候補にする (`-M`・`--diff-filter=AMR`)。
+
+**変異なしの基準 (build と test) は `--baseline-timeout` で、1 件の期限 `--timeout` と別に持つ**
+(cold な build は数分かかる)。基準が成り立たない・期限を越えた filter は、結果の `baseline_failures` に
+名乗って次へ進み (その変異は別の段で測り、どの段も測れなければ `invalid`)、残りを止めない。1 件でも
+あれば終了コードは 1 (job を赤にする)。
+
+**次の 1 件を始めるのは、その最悪の所要 (段の数 × 1 件の期限 + 基準を取っていない filter 数 ×
+基準の期限) が `--budget` の残りに収まるときだけ**。収まらない件は `unrun`。始めて期限を越えると、
+外側の job の期限に切られて記録が書かれない。
 
 検査は scripts/tests/mutate_test.py (make hooks-test)。`swift` は `MOKUME_MUTATE_SWIFT` で
 差し替えられる (検査が偽の実行ファイルで全体を通すため)。
@@ -97,8 +115,12 @@ from pathlib import Path
 VERSION = 1
 OUTCOMES = ("killed", "survived", "timeout", "invalid", "unevaluated", "unrun")
 DEFAULT_TIMEOUT = 900
+# 変異なしの基準 (build と test) の期限。cold な build は 1 件の期限に収まらないことがある (303 秒の build が
+# 3 コアのホストで数回かかる)。超えても記録を書いて名乗る (BaselineFailed)
+DEFAULT_BASELINE_TIMEOUT = 1800
 DEFAULT_CATALOG = "Tests/probe-catalog.tsv"
 NOT_IN_CATALOG = "-"
+SUMMARY_ROWS = 30  # 要約の表の行の上限 (Issue の本文の上限 65536 字に収める)
 
 
 def _read_test_record():
@@ -248,7 +270,7 @@ def round_robin(groups):
 
 
 def range_candidates(repo, since):
-    diff = git(repo, "diff", "-U0", "--no-color", "--diff-filter=AM", since, "HEAD", "--",
+    diff = git(repo, "diff", "-U0", "--no-color", "-M", "--diff-filter=AMR", since, "HEAD", "--",
                "Sources/*.swift", "Sources/**/*.swift")
     groups = []
     for path, lines in sorted(changed_lines(diff).items()):
@@ -541,6 +563,10 @@ class Interrupted(Exception):
     pass
 
 
+class BaselineFailed(Exception):
+    """変異なしの build か test の記録が成り立たない (期限を越えた回を含む)。その filter は測れない。"""
+
+
 def git(repo, *args):
     return subprocess.run(["git", "-C", str(repo), *args], check=True,
                           capture_output=True, text=True).stdout
@@ -567,13 +593,15 @@ def run_limited(command, cwd, seconds, log):
 
 
 class Runner:
-    def __init__(self, repo, work, timeout, gpu_slot):
+    def __init__(self, repo, work, timeout, gpu_slot, baseline_timeout=DEFAULT_BASELINE_TIMEOUT):
         self.repo, self.work, self.timeout = repo, Path(work), timeout
+        self.baseline_timeout = baseline_timeout
         self.swift = os.environ.get("MOKUME_MUTATE_SWIFT", "swift")
         self.wrap = ["python3", str(repo / "scripts" / "gpu-slot.py"), "--"] if gpu_slot else []
         self.log = self.work / "mutate-log.txt"
         self.baselines = {}
         self.baseline_problems = {}
+        self.baseline_failures = []
         self.runs = 0
 
     def once(self, pattern, deadline):
@@ -602,14 +630,19 @@ class Runner:
             cases = cases + cancelled
         return build, test, state, cases
 
+    def worst_case(self, plans):
+        """次の 1 件の最悪の所要 (秒)。段ごとの 1 件の期限と、まだ基準を取っていない filter の基準の期限。"""
+        return plans * self.timeout + max(0, plans - len(self.baselines)) * self.baseline_timeout
+
     def baseline(self, pattern):
         """変異なしで同じ集合を回し、もとから赤い検査を覚える。組めなければ None (理由は baseline_problems)。"""
         if pattern not in self.baselines:
-            build, test, state, cases = self.once(pattern, time.monotonic() + self.timeout)
+            build, test, state, cases = self.once(pattern, time.monotonic() + self.baseline_timeout)
             if build != "ok" or state != "ok":
                 self.baselines[pattern] = None
                 self.baseline_problems[pattern] = (
                     f"build が {build}" if build != "ok"
+                    else f"test が {test} (期限 {self.baseline_timeout:g} 秒)" if test == "timeout"
                     else f"記録が {state}" if state in ("missing", "unreadable")
                     else state  # 事象の記録が読めない (「事象の記録: …」)
                 )
@@ -621,8 +654,10 @@ class Runner:
 def stage(runner, path, original, mutated, pattern, related, gpu_hint, scope):
     baseline = runner.baseline(pattern)
     if baseline is None:
-        raise SystemExit(f"mutate: 変異なしの build か test の記録が成り立たない: {runner.baseline_problems[pattern]}"
-                         f" (--filter {pattern})。材料は {runner.log}")
+        reason = f"変異なしの build か test の記録が成り立たない: {runner.baseline_problems[pattern]}"
+        if not any(f["filter"] == pattern for f in runner.baseline_failures):
+            runner.baseline_failures.append({"filter": pattern, "reason": reason})
+        raise BaselineFailed(f"{reason} (--filter {pattern})。材料は {runner.log}")
     started = time.monotonic()
     path.write_text(mutated, encoding="utf-8")
     try:
@@ -660,11 +695,21 @@ def evaluate(runner, package, mutant, wide_only):
     if related and not wide_only:
         plans.append(("suites", filter_for(targets, related)))
     plans.append(("targets", filter_for(targets, [])))  # 関連の suite は target の中から選ぶので含まれる
+    unmeasured = []
     for scope, pattern in plans:
-        result = stage(runner, path, original, mutated, pattern, related, gpu_hint, scope)
+        try:
+            result = stage(runner, path, original, mutated, pattern, related, gpu_hint, scope)
+        except BaselineFailed as failure:
+            # その filter は測れない。名乗って次の段へ進む (毎日同じ所で全体を止めない)
+            unmeasured.append(str(failure))
+            print(f"mutate: {failure}", file=sys.stderr)
+            continue
         mutant["stages"].append(result)
         if result["outcome"] not in ("survived", "unevaluated"):
             break
+    if not mutant["stages"]:
+        mutant.update({"outcome": "invalid", "reason": unmeasured[-1], "killers": []})
+        return
     last = mutant["stages"][-1]
     mutant.update({"outcome": last["outcome"], "reason": last["reason"], "killers": last["killers"]})
 
@@ -683,6 +728,7 @@ def run(args):
         mutants, wide_only = load_bundle(repo / args.bundle), True
     else:
         mutants, wide_only = range_candidates(repo, args.since), False
+    candidates_count = len(mutants)
     if args.limit is not None:
         mutants = mutants[: args.limit]
     package = json.loads(subprocess.run([os.environ.get("MOKUME_MUTATE_SWIFT", "swift"), "package",
@@ -690,7 +736,7 @@ def run(args):
                                         capture_output=True, text=True).stdout)
     work = Path(args.work or tempfile.mkdtemp(prefix="mutate-"))
     work.mkdir(parents=True, exist_ok=True)
-    runner = Runner(repo, work, args.timeout, not args.no_gpu_slot)
+    runner = Runner(repo, work, args.timeout, not args.no_gpu_slot, args.baseline_timeout)
     started = time.monotonic()
     deadline = started + args.budget if args.budget is not None else None
 
@@ -700,10 +746,17 @@ def run(args):
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
     interrupted = False
+    plans_per_mutant = 1 if wide_only else 2
     try:
         for mutant in mutants:
-            if interrupted or (deadline is not None and time.monotonic() >= deadline):
-                mutant.update({"outcome": "unrun", "reason": "全体の期限", "killers": []})
+            if interrupted:
+                mutant.update({"outcome": "unrun", "reason": "止められた", "killers": []})
+                continue
+            # 次の 1 件の最悪が残りに収まるときだけ始める (始めて期限を越えると、job の期限に切られて
+            # 記録が書かれず、要約も状態の段も走らない)
+            if deadline is not None and deadline - time.monotonic() < runner.worst_case(plans_per_mutant):
+                mutant.update({"outcome": "unrun", "killers": [],
+                               "reason": f"全体の期限 (次の 1 件の最悪 {runner.worst_case(plans_per_mutant):g} 秒が残りに収まらない)"})
                 continue
             begun = time.monotonic()
             try:
@@ -726,6 +779,8 @@ def run(args):
         "head": git(repo, "rev-parse", "HEAD").strip(),
         "since": None if args.bundle else args.since,
         "bundle": args.bundle,
+        "candidates": candidates_count,
+        "baseline_failures": runner.baseline_failures,
         "catalog": {"path": args.catalog, "state": catalog_state, "rows": len(catalog)},
         "seconds": round(time.monotonic() - started, 1),
         "budget": args.budget,
@@ -737,7 +792,7 @@ def run(args):
     }
     Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"mutate: 結果を {args.out} へ書いた。材料は {runner.log}", file=sys.stderr)
-    return 130 if interrupted else 0
+    return 130 if interrupted else (1 if runner.baseline_failures else 0)
 
 
 def candidates(args):
@@ -757,19 +812,33 @@ def check_result(data):
     if not isinstance(data, dict) or data.get("version") != VERSION:
         return f"version {VERSION} の結果ではない"
     counts = data.get("counts")
-    if not isinstance(counts, dict) or any(not isinstance(counts.get(k), int) for k in OUTCOMES):
+    if not isinstance(counts, dict) or any(
+            not isinstance(counts.get(k), int) or isinstance(counts.get(k), bool) for k in OUTCOMES):
         return "counts に結末の件数が揃っていない"
     mutants = data.get("mutants")
     if not isinstance(mutants, list):
         return "mutants が無い"
     if sum(counts.values()) != len(mutants):
         return f"counts の合計 {sum(counts.values())} が mutants の {len(mutants)} 件と合わない"
+    for entry in mutants:
+        if (not isinstance(entry, dict) or not isinstance(entry.get("id"), str)
+                or not isinstance(entry.get("file"), str) or entry.get("outcome") not in OUTCOMES):
+            return f"mutants の要素が id・file・outcome の形でない ({str(entry)[:60]})"
+    for name in OUTCOMES:
+        if counts[name] != sum(1 for m in mutants if m["outcome"] == name):
+            return f"counts の {name} が mutants の結末と合わない"
     if not mutants:
+        # 範囲に回す候補が無い日 (変わった行が無い・残りが前の回で全部済んだ) は正常である。束が空・
+        # 候補の数を名乗らない記録は、読めなかった記録と分けられないので読まない
+        candidates = data.get("candidates")
+        if data.get("since") and type(candidates) is int and candidates == 0:
+            return None
         return "変異が 1 件も無い (回す候補が無かったのか、読めなかったのかを記録から分けられない)"
     return None
 
 
-def summary_text(data):
+def summary_text(data, rows=None):
+    rows = SUMMARY_ROWS if rows is None else rows
     counts, score = data["counts"], data.get("score")
     evaluated = counts["killed"] + counts["survived"] + counts["invalid"]
     lines = [
@@ -782,6 +851,10 @@ def summary_text(data):
         f" (所要 {data.get('seconds')} 秒)",
         "",
     ]
+    for failure in data.get("baseline_failures") or []:
+        lines += [f"**基準が成り立たなかった filter**: `{failure.get('filter')}` — {failure.get('reason')}", ""]
+    if not data["mutants"]:
+        lines += ["回す候補が 0 件だった (範囲に変わった `Sources/` の行が無い、または前の回で済んだ)", ""]
     catalog = data.get("catalog") or {}
     if catalog.get("state") != "present":
         lines += [f"帰属: `{catalog.get('path')}` が {catalog.get('state')} なので、提案へ引いていない", ""]
@@ -793,11 +866,24 @@ def summary_text(data):
     survivors = [m for m in data["mutants"] if m.get("outcome") == "survived"]
     if survivors:
         lines += ["#### 生き残り", "", "| id | 位置 | 変異 |", "| --- | --- | --- |"]
-        for m in survivors:
+        for m in survivors[:rows]:
             change = m.get("operator") or m.get("note") or ""
             lines.append(f"| {m['id']} | `{m['file']}:{m.get('line')}` | {change} |")
-        lines.append("")
+        lines += more_rows(len(survivors), rows)
+    # 無効は分母に入れないので、黙ると束の原文が当たらなくなったこと (anchor) に気付けない
+    invalid = [m for m in data["mutants"] if m.get("outcome") == "invalid"]
+    if invalid:
+        lines += ["#### 無効", "", "| id | 位置 | 理由 |", "| --- | --- | --- |"]
+        for m in invalid[:rows]:
+            reason = str(m.get("reason") or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {m['id']} | `{m['file']}:{m.get('line')}` | {reason} |")
+        lines += more_rows(len(invalid), rows)
     return "\n".join(lines)
+
+
+def more_rows(total, rows):
+    """表の行を切ったとき、残りの件数を名乗る行 (と、表の後ろの空行)。"""
+    return ([f"| ほか {total - rows} 件 (全部は artifact の JSON) | | |"] if total > rows else []) + [""]
 
 
 def summary(args):
@@ -840,6 +926,8 @@ def main(argv):
         if name == "run":
             sub.add_argument("--out", required=True)
             sub.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="1 件の期限 (秒)")
+            sub.add_argument("--baseline-timeout", type=float, default=DEFAULT_BASELINE_TIMEOUT,
+                             help="変異なしの基準 (build と test) の期限 (秒)。cold な build を 1 件の期限に食わせない")
             sub.add_argument("--budget", type=float, default=None, help="全体の期限 (秒)")
             sub.add_argument("--limit", type=int, default=None)
             sub.add_argument("--catalog", default=DEFAULT_CATALOG)

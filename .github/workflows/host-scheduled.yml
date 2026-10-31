@@ -3,9 +3,10 @@
 name: Host scheduled
 
 # GitHub ホストの macOS で、**merge の前には重すぎる検査**を定期に回す置き場 (#3220)。
-# 検査ごとに「走らせる job」と「赤を起票する job」の 2 本を置く。後から足す検査
-# (変異の定期・#3221 など) も、同じ形の 2 本をこのファイルへ足す — workflow を検査ごとに
-# 増やさない (起動の時刻・権限の分け方・起票の形を 1 箇所で読めるようにするため)。
+# 検査ごとに「走らせる job」と「結果を発信する job」の 2 本を置く (tsan と tsan-report、
+# 変異の mutation と mutation-report #3221)。後から足す検査も、同じ形の 2 本をこのファイルへ足す —
+# workflow を検査ごとに増やさない (起動の時刻・権限の分け方・起票の形を 1 箇所で読めるようにするため)。
+# tsan-report は赤の回だけ起票し、mutation-report は緑の回も点数を置く。
 #
 # **専用機 (render.yml) には載せない。** 専用機の定期は描画の検査のためのもので、schedule で
 # 起動する専用機の job は scheduled-debug / scheduled-release に限っている (ADR-0019 決定 7・
@@ -104,3 +105,158 @@ jobs:
           xml=$(find_one record test-results-tsan-swift-testing.xml)
           log=$(find_one record test-log-tsan.txt)
           bash scripts/report-tsan.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}"
+
+  # 検査の検証力を測る (#3221)。実装を 1 か所ずつ壊し、関連の検査が赤になるかを見る
+  # (scripts/mutate.py)。塞ぐ実害は #3207 — 検査の提案を一括で入れても、どれが効いたかが
+  # 後から引けない。固定の束 (Tests/mutation-bundle.json) と、前回の点数の commit から HEAD までに
+  # 変わった行を、全体の期限の内側で回し、回しきれなかった数を名乗る。
+  #
+  # **点数の低下では赤にしない** (測るための job で、止める関門ではない)。赤にするのは、記録が
+  # 読めない回 (`mutate.py summary` が unreadable を返す・build が組めない) だけ — 読めない回を
+  # 緑に読ませると、検査の検証力が落ちても誰も気付かない。点数・帰属・新しい生き残りを追跡用の
+  # Issue へ置くのは mutation-report (scripts/report-mutation.py)。
+  #
+  # **GPU の suite はホストで飛ぶ** (RenderDevice.isAvailable が偽)。その分の変異は `未評価` と名乗り、
+  # 殺せなかったとは数えない (2026-10-30 の決定・#3221)。
+  #
+  # **前回の点数の commit は追跡用の Issue の本文から読む** (`issues: read` だけを持つ)。履歴は
+  # fetch-depth 0 で取る。起点が読めない・HEAD の祖先でない回は範囲を回さず、理由 (`reason`) を
+  # 報告へ渡す — 報告は `first` 以外の理由では起点を動かさない。**continue-on-error を付けない**:
+  # 赤が success に化けると報告が読み違える。
+  mutation:
+    runs-on: macos-26
+    # 同じ時間に 2 本は回さない (schedule と dispatch の重なり)。待たせるだけで、走っている run は切らない
+    concurrency:
+      group: mutation
+      cancel-in-progress: false
+    # mutate.py は「次の 1 件の最悪が --budget の残りに収まるときだけ」始めるので、走る時間は予算を
+    # 越えない: 束 150 分 + 範囲 60 分 + 組み立てと要約の余裕。束の予算は実測 (2026-10-31・run
+    # 41169853173) から: 1 件目が cold build 込みで 1382 秒、以降は 1 件の中央値 157 秒で、33 件は
+    # 約 130 分。90 分では 11 件が回らなかった
+    timeout-minutes: 270
+    permissions:
+      contents: read
+      issues: read # 前回の点数の commit を追跡用の Issue から読む
+    outputs:
+      since: ${{ steps.previous.outputs.since }}
+      reason: ${{ steps.previous.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # 範囲を回す起点。読めない・祖先でないときは範囲を回さず、理由を出力に残す (終了コードは束を
+      # 回すために握る。理由が ok / first / missing-commit でなければ、下の「状態を確かめる」の段が
+      # job を赤にする。missing-commit は報告が名乗って起点を置き直すので赤にしない)
+      - name: 前回の点数の commit を読む
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .build
+          python3 scripts/mutation_state.py previous \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY" || true
+      - name: 固定の束を回す
+        run: |
+          python3 scripts/mutate.py run --bundle Tests/mutation-bundle.json \
+            --out .build/mutation-bundle.json --work .build/mutation-bundle-work \
+            --budget 9000 --timeout 600 --baseline-timeout 1800
+      - name: 前回の点数の commit からの範囲を回す
+        if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
+        env:
+          SINCE: ${{ steps.previous.outputs.since }}
+        run: |
+          python3 scripts/mutate.py run --since "$SINCE" \
+            --out .build/mutation-range.json --work .build/mutation-range-work \
+            --budget 3600 --timeout 600 --baseline-timeout 600
+      # 読めない記録は unreadable と名乗って赤になる。job の要約にも載る
+      - name: 要約 (固定の束)
+        if: ${{ !cancelled() }}
+        run: python3 scripts/mutate.py summary .build/mutation-bundle.json
+      - name: 要約 (範囲)
+        if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
+        run: python3 scripts/mutate.py summary .build/mutation-range.json
+      # 追跡用の Issue の状態を読めなかった回 (gh の失敗・区画の破損) は赤にする。
+      # 束は回し終えてから落とすので、点数は報告に載る
+      - name: 状態を確かめる
+        if: ${{ !cancelled() && steps.previous.outputs.reason != 'ok' && steps.previous.outputs.reason != 'first' && steps.previous.outputs.reason != 'missing-commit' }}
+        env:
+          REASON: ${{ steps.previous.outputs.reason }}
+        run: |
+          echo "追跡用の Issue の状態を読めなかった回: reason='${REASON}'" >&2
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mutation-record
+          path: |
+            .build/mutation-bundle.json
+            .build/mutation-range.json
+            .build/mutation-bundle-work/mutate-log.txt
+            .build/mutation-range-work/mutate-log.txt
+          if-no-files-found: ignore
+          # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
+          include-hidden-files: true
+          retention-days: 14
+
+  # 変異の点数・帰属・新しい生き残りを、固定タイトルの追跡用 Issue に置く (#3221)。
+  # 本文の機械の区画を書き換える (通知しない)。コメントするのは新しい生き残りと、記録が読めなく
+  # なった回だけ。**緑の回も走る** (点数を置くのが仕事なので) — `always()` を外さない:
+  # 暗黙の success() が足され、mutation が赤の回に skipped になって、読めない回が黙る。
+  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる mutation には持たせない。
+  #
+  # **Issue を書くのは main の run だけ**。他の ref の workflow_dispatch (計測の run など) は、共有の
+  # 追跡 Issue を枝の版が書き換えないよう、区画を job の要約に出すだけにする (--dry-run)。
+  # **concurrency で直列にする**: schedule と dispatch が重なると、同じ本文を読んだ 2 つの run が
+  # 互いの更新を消し、Issue が二重に立つ。待たせるだけで、走っている run は切らない。
+  mutation-report:
+    needs: mutation
+    if: always()
+    runs-on: ubuntu-latest
+    concurrency:
+      group: mutation-report
+      cancel-in-progress: false
+    permissions:
+      contents: read # checkout
+      issues: write # 追跡用 Issue の起票・本文の書き換え・コメント (#3221)
+    steps:
+      # 履歴を取る: 報告は自分の HEAD が区画の起点の祖先かを見て、古い run が起点を巻き戻さないようにする
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # 組み立てで落ちて記録が上がらなかった回も報告する。artifact が無くても止まらない
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: mutation-record
+          path: record
+      # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (tsan-report と同じ)
+      - name: 点数を追跡用の Issue に置く
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.mutation.result }}
+          SINCE: ${{ needs.mutation.outputs.since }}
+          REASON: ${{ needs.mutation.outputs.reason }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          bundle=$(find_one record mutation-bundle.json)
+          range=$(find_one record mutation-range.json)
+          python3 scripts/report-mutation.py --result "$RESULT" \
+            --bundle "${bundle:-record/none-bundle.json}" \
+            --range "${range:-record/none-range.json}" --range-since "$SINCE" \
+            --range-reason "${REASON:-unknown}"
+      - name: 点数を job の要約に出す (main 以外の run は Issue に書かない)
+        if: ${{ github.ref != 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.mutation.result }}
+          SINCE: ${{ needs.mutation.outputs.since }}
+          REASON: ${{ needs.mutation.outputs.reason }}
+        run: |
+          find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
+          bundle=$(find_one record mutation-bundle.json)
+          range=$(find_one record mutation-range.json)
+          python3 scripts/report-mutation.py --dry-run --result "$RESULT" \
+            --bundle "${bundle:-record/none-bundle.json}" \
+            --range "${range:-record/none-range.json}" --range-since "$SINCE" \
+            --range-reason "${REASON:-unknown}"

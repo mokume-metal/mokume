@@ -167,8 +167,8 @@
       "id": "2983-stage-reads-released-requests",
       "origin": "#2983",
       "file": "Sources/MokumeCore/Display/SharedFrameStage.swift",
-      "find": "if !isReleased(source) {",
-      "replace": "if true {",
+      "find": "if !isReleased(source) {\n            pointerLockRequested =",
+      "replace": "if true {\n            pointerLockRequested =",
       "gpu": true,
       "note": "手放した世代の面からもカーソルの頼みを読み直し、捕まえ・隠しが戻る (SharedFrameStageTests の「映している世代を手放したと伝えられたら…」が殺すはず)"
     },
