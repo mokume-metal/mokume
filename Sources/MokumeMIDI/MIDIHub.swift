@@ -169,13 +169,16 @@ final class MIDIHub {
 /// **どのスレッドから呼ばれてもよい** (CoreMIDI の受け取りの口は隔離の外で呼ばれる)。入れ物は弱く持つ —
 /// 入れ物を持つのは入り口 (``MIDIPort``) で、閉じずに捨てられた入り口のぶんがここに溜まらない。
 ///
-/// **コントロールチェンジの最後の表を持つ。** 入れ物が無い間に動いたつまみも数え、後から繋いだ入り口・足し直された
-/// 入り口へ、繋ぐ瞬間に渡す (ゲームパッドが繋いだときにいまの値を入れるのと同じ)。表の更新と入れ物への配りは、
-/// 繋ぐ処理と同じ錠の内側で行う — 外すと、繋ぐ瞬間に古い表が新しい値を上書きする。
+/// **コントロールチェンジの最後の表と、数えた拍を持つ。** 入れ物が無い間に動いたつまみも、届いたクロックも数え、
+/// 後から繋いだ入り口・足し直された入り口へ、繋ぐ瞬間に渡す (ゲームパッドが繋いだときにいまの値を入れるのと同じ。
+/// `watch` で作り直した直後に、拍が 0 へ戻らない)。表と拍の更新と入れ物への配りは、繋ぐ処理と同じ錠の内側で行う —
+/// 外すと、繋ぐ瞬間に古いものが新しい値を上書きする。
 nonisolated final class MIDIFeed: Sendable {
     private struct State: Sendable {
         var entries: [Entry] = []
         var controllers = MIDIControllers()
+        /// 拍に関わるメッセージが 1 つも届いていなければ `nil`。
+        var clock: MIDIClock?
     }
     private let state = Mutex(State())
 
@@ -188,12 +191,12 @@ nonisolated final class MIDIFeed: Sendable {
         state.withLock { $0.entries.compactMap(\.inbox) }
     }
 
-    /// 入れ物を繋ぎ、ここまでに届いたコントロールチェンジの現在値を渡す。
+    /// 入れ物を繋ぎ、ここまでに届いたコントロールチェンジの現在値と数えた拍を渡す。
     func add(_ inbox: MIDIInbox) {
         state.withLock { state in
             state.entries.removeAll { $0.inbox == nil || $0.inbox === inbox }
             state.entries.append(Entry(inbox: inbox))
-            inbox.adopt(state.controllers)
+            inbox.adopt(state.controllers, clock: state.clock)
         }
     }
 
@@ -205,7 +208,7 @@ nonisolated final class MIDIFeed: Sendable {
         for inbox in inboxes { inbox.setState(state) }
     }
 
-    /// 届いた語を読んで、表を更新し、入れ物へ入れる。入れ物が無くても表は更新する。
+    /// 届いた語を読んで、表と拍を更新し、入れ物へ入れる。入れ物が無くても表と拍は更新する。
     func receive(_ words: [UInt32], hostTime: UInt64) {
         let decoded = MIDIUMP.decode(words)
         guard !decoded.messages.isEmpty || decoded.unreadable > 0 else { return }
@@ -214,6 +217,9 @@ nonisolated final class MIDIFeed: Sendable {
                 if case .controlChange(let channel, let controller, let value) = message, message.isValid {
                     state.controllers.set(channel: channel, controller: controller, value: value)
                 }
+                // 拍に関わるメッセージが初めて届いたときに、拍の持ち主になる
+                var counted = state.clock ?? MIDIClock()
+                if counted.apply(message) { state.clock = counted }
             }
             for inbox in state.entries.compactMap(\.inbox) {
                 for message in decoded.messages { inbox.receive(message, hostTime: hostTime) }

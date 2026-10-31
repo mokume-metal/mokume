@@ -14,6 +14,7 @@ nonisolated struct MIDIMessageTests {
             .noteOn(channel: 1, note: 60, velocity: 100),
             .noteOff(channel: 16, note: 127, velocity: 0),
             .controlChange(channel: 10, controller: 1, value: 64),
+            .clock, .start, .stop, .continue, .songPosition(sixteenths: 16383),
         ]
         let data = try JSONEncoder().encode(messages)
         #expect(try JSONDecoder().decode([MIDIMessage].self, from: data) == messages)
@@ -28,6 +29,15 @@ nonisolated struct MIDIMessageTests {
         #expect(!MIDIMessage.noteOff(channel: 1, note: 128, velocity: 0).isValid)
         #expect(!MIDIMessage.controlChange(channel: 1, controller: 1, value: -1).isValid)
         #expect(!MIDIMessage.controlChange(channel: 1, controller: 128, value: 0).isValid)
+    }
+
+    @Test("曲の位置は 0〜16383 (14 ビット) だけが有効。クロック・開始・停止・再開は常に有効")
+    func songPositionValidity() {
+        #expect(MIDIMessage.songPosition(sixteenths: 0).isValid)
+        #expect(MIDIMessage.songPosition(sixteenths: 16383).isValid)
+        #expect(!MIDIMessage.songPosition(sixteenths: 16384).isValid)
+        #expect(!MIDIMessage.songPosition(sixteenths: -1).isValid)
+        #expect([MIDIMessage.clock, .start, .stop, .continue].allSatisfy { $0.isValid })
     }
 
     // UMP の MIDI 1.0 チャンネルボイス: 0x2 | グループ | 状態 | チャンネル | データ 1 | データ 2
@@ -53,10 +63,45 @@ nonisolated struct MIDIMessageTests {
         #expect(MIDIUMP.decode([0x2090_3C00]).messages == [.noteOn(channel: 1, note: 60, velocity: 0)])
     }
 
-    @Test("クロック・開始・ユーティリティは数えずに読み飛ばす。ピッチベンド・SysEx は読めないと数える")
+    // UMP のシステム: 0x1 | グループ | 状態 | データ 1 | データ 2
+
+    @Test("クロック・開始・再開・停止・曲の位置を読む。曲の位置は下位 7 ビットが先の 14 ビット")
+    func decodesSystemTiming() {
+        let decoded = MIDIUMP.decode([
+            0x10F8_0000,  // クロック
+            0x10FA_0000,  // 開始
+            0x10FB_0000,  // 再開
+            0x10FC_0000,  // 停止
+            0x10F2_0800,  // 曲の位置: 下位 8・上位 0 = 8
+            0x10F2_0001,  // 曲の位置: 下位 0・上位 1 = 128
+            0x10F2_7F7F,  // 曲の位置: 16383
+        ])
+        #expect(
+            decoded.messages == [
+                .clock, .start, .continue, .stop,
+                .songPosition(sixteenths: 8), .songPosition(sixteenths: 128), .songPosition(sixteenths: 16383),
+            ])
+        #expect(decoded.unreadable == 0)
+    }
+
+    @Test("グループが 0 でないシステムも、同じに読む。ユーティリティと拍に関わらないシステムは数えずに読み飛ばす")
+    func skipsOtherSystemMessages() {
+        let decoded = MIDIUMP.decode([
+            0x13F8_0000,  // グループ 3 のクロック
+            0x10FE_0000,  // アクティブセンシング
+            0x10FF_0000,  // リセット
+            0x10F1_0000,  // MIDI タイムコード
+            0x10F3_0000,  // 曲の選択
+            0x0000_0000,  // NOOP
+        ])
+        #expect(decoded.messages == [.clock])
+        #expect(decoded.unreadable == 0)
+    }
+
+    @Test("ユーティリティは数えずに読み飛ばす。ピッチベンド・SysEx は読めないと数える")
     func skipsAndCounts() {
         let decoded = MIDIUMP.decode([
-            0x10F8_0000,  // クロック (システムリアルタイム)
+            0x10FE_0000,  // アクティブセンシング (読み飛ばす)
             0x0000_0000,  // NOOP
             0x20E0_0040,  // ピッチベンド
             0x20C0_0500,  // プログラムチェンジ

@@ -7,12 +7,13 @@
 /// CoreMIDI を `MIDIInputPortCreateWithProtocol` の MIDI 1.0 の写像で開くと、機材が MIDI 2.0 でも
 /// 1.0 のチャンネルボイス (7 ビット) に落ちて届く。読むのはその形である。
 ///
-/// **UMP の group は読まない。** MIDI 1.0 の口は端点ごとに受けるので、1 つの端点には group 0 の 1 本だけが届く。
+/// **UMP の group は読まない。** MIDI 1.0 の口は端点ごとに受けるので、1 つの端点には group 0 の 1 本だけが届く
+/// (届いたら group を問わず同じに読み、クロックは合算で数える)。システムリセット (0xFF) は拍を戻さず読み飛ばす。
 ///
 /// | UMP の種別 | 扱い |
 /// | --- | --- |
 /// | 0 (ユーティリティ) | 読み飛ばす (数えない) |
-/// | 1 (クロック・開始・停止などのシステム) | 読み飛ばす (数えない)。クロックは 2 本目で受ける |
+/// | 1 (クロック・開始・停止などのシステム) | クロック (0xF8)・開始 (0xFA)・再開 (0xFB)・停止 (0xFC)・曲の位置 (0xF2) を読む。ほか (アクティブセンシング・リセット・MIDI タイムコード・曲の選択など) は読み飛ばす (数えない) |
 /// | 2 (MIDI 1.0 チャンネルボイス) | ノートオン・ノートオフ・コントロールチェンジを読む。ほかは「読めない」 |
 /// | それ以外 (SysEx など) | 「読めない」 |
 nonisolated enum MIDIUMP {
@@ -37,8 +38,10 @@ nonisolated enum MIDIUMP {
             }
             index += size
             switch word >> 28 {
-            case 0, 1:
+            case 0:
                 continue
+            case 1:
+                if let message = system(word) { result.messages.append(message) }
             case 2:
                 if let message = channelVoice(word) {
                     result.messages.append(message)
@@ -59,6 +62,20 @@ nonisolated enum MIDIUMP {
         case 0x3, 0x4, 0x8, 0x9, 0xA: 2
         case 0xB, 0xC: 3
         default: 4
+        }
+    }
+
+    /// システムの 1 語。拍を数える 5 種だけを読み、ほかは `nil` (読み飛ばす)。
+    ///
+    /// 曲の位置は 14 ビットで、データ 1 が下位 7 ビット・データ 2 が上位 7 ビット。
+    private static func system(_ word: UInt32) -> MIDIMessage? {
+        switch (word >> 16) & 0xFF {
+        case 0xF8: .clock
+        case 0xFA: .start
+        case 0xFB: .continue
+        case 0xFC: .stop
+        case 0xF2: .songPosition(sixteenths: Int((word >> 8) & 0x7F) | Int(word & 0x7F) << 7)
+        default: nil
         }
     }
 

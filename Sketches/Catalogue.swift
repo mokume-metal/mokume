@@ -69,6 +69,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "file-and-movie") { FileAndMovie() },
     ReferenceSketch(name: "gamepad-and-players") { GamepadAndPlayers() },
     ReferenceSketch(name: "midi-and-hue") { MIDIAndHue() },
+    ReferenceSketch(name: "midi-and-beat") { MIDIAndBeat() },
     // 実物のポートを開く。窓で走らせるだけで、書き出しと台帳には入れない
     ReferenceSketch(name: "osc-and-reply", reachesOutside: true) { OSCAndReply() },
     ReferenceSketch(name: "net-and-reply", reachesOutside: true) { NetAndReply() },

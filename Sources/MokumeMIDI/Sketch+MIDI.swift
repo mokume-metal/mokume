@@ -12,8 +12,8 @@ import MokumeCore
 // 一覧と作る口はカメラ・シリアルの口 (`captureDevices()`・`serialPorts()`・`createSerial`) に揃える。
 // 記録を流す口の `messages:` は、通信の `createOSC(messages:)` と揃える。
 //
-// 入力だけで、クロックの受けと出力 (ノートを送る・クロックを送る) は持たない。それは #1963 の続きで、作例と
-// 一緒に足す ([ADR-0041] 決定 3)。
+// 入力 (ノート・コントロールチェンジ・拍を数えるクロックの受け) だけで、出力 (ノートを送る・クロックを送る) は
+// 持たない。それは #1963 の続きで、作例と一緒に足す ([ADR-0041] 決定 3)。
 //
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 // [ADR-0041]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md
@@ -104,8 +104,16 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 実機と同じ入れ物を通る — ノートとコントロールチェンジの出来事は落とさない列に、コントロールチェンジの現在値は
-    /// 最新の 1 つに入る。`nil` のフレームは抜かれている (``MIDIPort/state`` が ``SourceState/disconnected`` になり、
+    /// クロック・開始・停止・再開・曲の位置 (``MIDIMessage``) も同じ列に書ける。``MIDIPort/beat`` が 24 クロックで 1 拍に
+    /// 数え、テンポは書いたクロックの間隔がそのまま決める (クロックは ``MIDIPort/messages`` に入らない)。
+    ///
+    /// ```swift
+    /// // 開始の後、1 フレームに 1 クロック。24 フレームごとに拍が 1 つ進む
+    /// let clocks: [[MIDIMessage]?] = [[.start]] + Array(repeating: [.clock], count: 71)
+    /// ```
+    ///
+    /// 実機と同じ入れ物を通る — ノートとコントロールチェンジの出来事は落とさない列に、コントロールチェンジの現在値と
+    /// 数えた拍は最新の 1 つに入る。`nil` のフレームは抜かれている (``MIDIPort/state`` が ``SourceState/disconnected`` になり、
     /// 押していたノートは離したことになる)。範囲に収まらないメッセージ (チャンネルが 1〜16 の外・値が 0〜127 の外)
     /// は「読めずに捨てた」と数える。
     ///
