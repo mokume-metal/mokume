@@ -21,6 +21,25 @@ struct LoopbackNamingTests {
         #expect(rangesText([3]) == "[3]")
     }
 
+    @Test("繋げなかった素の相手は、connect の errno と局所のポートと受け口のポートを名乗り、PeerGroup の名乗りにも載る (#3537)")
+    func rawPeersNameAFailedConnect() async throws {
+        let refuse: RawStream.Connector = { _, _ in EADDRINUSE }
+        let streams = PeerGroup { StreamClient(port: 58147, connector: refuse) }
+        defer { streams.closeAll() }
+        let browsers = PeerGroup { BrowserSocket(port: 58147, connector: refuse) }
+        defer { browsers.closeAll() }
+        try await requireWait("素の相手が繋げなかったと名乗らなかった") {
+            streams[0].state != .connecting && browsers[0].state != .connecting
+        }
+        for text in [streams.statesText, browsers.statesText] {
+            #expect(text.contains("connect failed"), "\(text)")
+            #expect(text.contains("errno \(EADDRINUSE) Address already in use"), "\(text)")
+            #expect(text.contains("局所のポート"), "\(text)")
+            #expect(text.contains("受け口のポート 58147"), "\(text)")
+        }
+        #expect(!streams[0].isReady && !browsers[0].isReady)
+    }
+
     @Test("期限つきの読みは、答えない読みを期限で諦めて nil を返し、答える読みはその値を返す")
     func readWithinGivesUpOnABlockedRead() async {
         let gate = DispatchSemaphore(value: 0)
