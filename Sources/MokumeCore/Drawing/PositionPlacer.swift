@@ -62,10 +62,13 @@ final class PositionPlacer {
 
     /// 組。**先頭は作るときに確保し**、2 つ目からは、まだ読まれていない組しか無いときに 1 つずつ足す。
     private(set) var draws: [Draw]
-    /// 組ごとに、最後に使った面と、そのときの描き切りの印 (``Canvas/settleMark``)。
-    private var claims: [(canvas: Weak<Canvas>, mark: Canvas.SettleMark)?]
+    /// 組ごとの使われ方の帳簿。粒と同じ規則で選ぶ (``DrawClaims``)。
+    private var claims = DrawClaims()
     /// 組を足すときに投げる失敗。**検査が差し替える** (確保の失敗は検査の中で起こせない)。
-    var drawAllocationFailureForTesting: RenderFailure?
+    var drawAllocationFailureForTesting: RenderFailure? {
+        get { claims.allocationFailureForTesting }
+        set { claims.allocationFailureForTesting = newValue }
+    }
 
     /// スキャンの段の数。容量 1 なら 0 (旗そのものが置ける数)。
     var scanCount: Int { levelLengths.count - 1 }
@@ -101,7 +104,6 @@ final class PositionPlacer {
                 instances: try Numbers(gpu: gpu, count: places),
                 arguments: try Numbers(gpu: gpu, count: Particles.argumentFloats))
         ]
-        self.claims = [nil]
 
         // 段の頭は容量から決まるので、**ここで 1 度だけ書く** (粒と同じ)
         for (level, header) in headers.enumerated() {
@@ -115,39 +117,21 @@ final class PositionPlacer {
     }
 
     /// `canvas` のこの呼び出しが使う置き場の組を選ぶ。**まだ読まれていない組は使わない** —
-    /// 空いた組のうち先頭のものを使い、空きが無ければ 1 つ足す。
-    ///
-    /// 空いているのは、使った面が居なくなったか、使ったときから面の描き切りの印が変わった組である。
-    /// ただし途中の描き切りから持ち越した落とす列は、印が変わった後も置き場所を読むので、使い回す前に
-    /// 面へ尋ねる (``Particles/claimDraw(by:)`` と同じ。#1656)。
+    /// 選び方は粒と同じ 1 つの規則 (``DrawClaims``・``Particles/claimDraw(by:)``。#1656 の持ち越した
+    /// 落とす列への尋ね方も含む) で、空きが無ければ 1 つ足す。足すのに失敗したら投げる。
     func claimDraw(by canvas: Canvas) throws(RenderFailure) -> Draw {
-        var free: Int?
-        for (index, claim) in claims.enumerated() {
-            guard let claim, let owner = claim.canvas.value else {
-                free = index
-                break
-            }
-            if owner.settleMark != claim.mark, !owner.keepsCaster(reading: draws[index].instances) {
-                free = index
-                break
-            }
-        }
-        let index: Int
-        if let free {
-            index = free
-        } else {
-            if let drawAllocationFailureForTesting { throw drawAllocationFailureForTesting }
-            let first = draws[0]
-            let gpu = first.parameters.gpu
-            draws.append(
-                Draw(
-                    parameters: try Numbers(gpu: gpu, count: first.parameters.count),
-                    instances: try Numbers(gpu: gpu, count: first.instances.count),
-                    arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
-            claims.append(nil)
-            index = draws.count - 1
-        }
-        claims[index] = (Weak(canvas), canvas.settleMark)
+        let index = try claims.claim(
+            by: canvas,
+            instances: { draws[$0].instances },
+            addDraw: { () throws(RenderFailure) in
+                let first = draws[0]
+                let gpu = first.parameters.gpu
+                draws.append(
+                    Draw(
+                        parameters: try Numbers(gpu: gpu, count: first.parameters.count),
+                        instances: try Numbers(gpu: gpu, count: first.instances.count),
+                        arguments: try Numbers(gpu: gpu, count: first.arguments.count)))
+            })
         return draws[index]
     }
 
