@@ -141,7 +141,9 @@ struct Facets {
         do {
             try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
             // 鍵の並びは ``AtomicFile/writeJSON(_:to:)`` と揃える。ここは辞書を直に
-            // 書くので `Encodable` の口を通せない (#989)。**形を先に見る** — JSON に
+            // 書くので `Encodable` の口を通せない (#989)。**置き方は揃えない**: 区画の JSON (`writeJSON`・
+            // プロセス内の `RemoteParams.send` の `publishJSON`) は毎フレームも書くので `rename(2)` で置くが、
+            // 窓口の要求は決定の 6 種に入らず、毎フレーム書かないので `AtomicFile.write` (`replaceItemAt`) のまま (#2382)。**形を先に見る** — JSON に
             // できない値を渡すと `JSONSerialization` は Swift の error ではなく ObjC の
             // 例外を出すので、`try` では捕まらず窓口ごと落ちる
             guard JSONSerialization.isValidJSONObject(request) else {
