@@ -56,6 +56,8 @@ LIBRARY = textwrap.dedent("""\
 #   `OTHERCANCEL`          → 関連でない OtherTests が取り消される
 #   `UNKEYEDCANCEL`        → testID の欄が無い取り消しが出る
 #   `NOEVENTS`             → 事象の記録を書かない
+#   `SLOWFIRST`            → 最初の build だけ 3 秒かかる (cold な build の形)
+#   `SLOWBASE`             → どの build も 60 秒かかる (変異なしの基準が期限を越える形)
 #   いつでも               → BrokenTests/always が赤 (もとから赤い検査)
 FAKE_SWIFT = textwrap.dedent("""\
     #!/usr/bin/env python3
@@ -69,8 +71,11 @@ FAKE_SWIFT = textwrap.dedent("""\
             {"name": "LibTests", "type": "test", "dependencies": [{"byName": ["Lib", None]}]}]}))
         sys.exit(0)
     if args[0] == "build":
-        if "HANG" in source:
+        if "HANG" in source or "SLOWBASE" in source:
             time.sleep(60)
+        if "SLOWFIRST" in source and not Path(".built").exists():
+            Path(".built").write_text("x")
+            time.sleep(3)
         sys.exit(1 if "BREAK" in source else 0)
     if args[0] == "test":
         if "CRASH" in source:
@@ -436,6 +441,107 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("| stale | `Sources/Y.swift:3` | anchor: 原文が 2 回当たる \\| 1 回でなければ当てない |", out)
         self.assertIn("ほか 5 件", out)
         self.assertNotIn(f"| s{many - 1} |", out)
+
+
+class ZeroCandidatesTest(unittest.TestCase):
+    """変更の無い日の範囲は候補が 0 件で、読めなかった記録ではない (指摘 1)。"""
+
+    def test_a_range_with_nothing_changed_is_a_readable_record(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            result, data = package.run("--since", "HEAD")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(data["candidates"], 0)
+            self.assertEqual(data["mutants"], [])
+            self.assertIsNone(mutate.check_result(data))
+            out = Path(root) / "result.json"
+            summary = subprocess.run([sys.executable, str(SCRIPT), "summary", str(out)],
+                                     capture_output=True, text=True)
+            self.assertEqual(summary.returncode, 0, summary.stdout)
+            self.assertIn("候補が 0 件", summary.stdout)
+
+    def test_an_empty_bundle_or_a_record_without_the_candidate_count_is_still_unreadable(self):
+        counts = {k: 0 for k in mutate.OUTCOMES}
+        base = {"version": 1, "counts": counts, "mutants": []}
+        self.assertIsNotNone(mutate.check_result(dict(base, since=None, bundle="b.json", candidates=0)))
+        self.assertIsNotNone(mutate.check_result(dict(base, since="abc")))
+        self.assertIsNotNone(mutate.check_result(dict(base, since="abc", candidates=3)))
+        self.assertIsNone(mutate.check_result(dict(base, since="abc", candidates=0)))
+
+
+class ExcludeTest(unittest.TestCase):
+    """前の回で評価した候補は、次の回の範囲から外す (指摘 2: 末尾が毎回切れない)。"""
+
+    def test_excluded_keys_are_skipped_and_keys_survive_line_shifts(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            first = subprocess.run([sys.executable, str(SCRIPT), "candidates", "--repo", str(package.repo),
+                                    "--since", "HEAD~1"], capture_output=True, text=True)
+            found = json.loads(first.stdout)
+            keys = [m["key"] for m in found]
+            self.assertEqual(len(keys), len(set(keys)), "候補ごとに別のキー")
+            done = Path(root) / "done.json"
+            done.write_text(json.dumps(keys[:2]))
+            second = subprocess.run([sys.executable, str(SCRIPT), "candidates", "--repo", str(package.repo),
+                                     "--since", "HEAD~1", "--exclude-file", str(done)],
+                                    capture_output=True, text=True)
+            rest = json.loads(second.stdout)
+            self.assertEqual([m["key"] for m in rest], keys[2:])
+            # 行が下へ動いても、同じ候補は同じキーになる (行番号をキーに入れない)
+            shifted = dict(found[0], line=found[0]["line"] + 40)
+            self.assertEqual(mutate.candidate_key(shifted), found[0]["key"])
+
+    def test_a_run_records_the_key_of_every_mutant(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            result, data = package.run("--since", "HEAD~1")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(all(m["key"] for m in data["mutants"]))
+
+    def test_a_corrupt_exclude_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            bad = Path(root) / "bad.json"
+            bad.write_text('{"not": "a list"}')
+            with self.assertRaises(ValueError):
+                mutate.read_exclude(str(bad))
+            self.assertEqual(mutate.read_exclude(str(Path(root) / "none.json")), set())
+
+
+class BaselineTest(unittest.TestCase):
+    """cold な build は 1 件の期限に食わせず、基準が成り立たない回も記録を残す (指摘 11)。"""
+
+    def test_the_baseline_has_its_own_deadline(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// SLOWFIRST\n")
+            git(package.repo, "commit", "-qam", "marker")
+            # 最初の build は 3 秒。1 件の期限 (1 秒) には収まらないが、基準の期限 (30 秒) には収まる
+            result, data = package.run("--bundle", package.bundle([
+                mutant("kill", "x.isFinite, x >= 0", "x.isFinite, x > 0")]), "--timeout", "1",
+                "--baseline-timeout", "30")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIsNone(data["aborted"])
+            self.assertEqual(data["mutants"][0]["outcome"], "killed")
+
+    def test_a_baseline_over_its_deadline_still_writes_a_record_and_names_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// SLOWBASE\n")
+            git(package.repo, "commit", "-qam", "marker")
+            before = package.library.read_bytes()
+            result, data = package.run("--bundle", package.bundle([
+                mutant("a", "x.isFinite, x >= 0", "x.isFinite, x > 0"),
+                mutant("b", "x.isFinite, x >= 0", "x.isFinite, x > 0")]), "--baseline-timeout", "1")
+            self.assertEqual(result.returncode, 1)
+            self.assertIsNotNone(data, "記録を書かずに落ちない")
+            self.assertIn("build が timeout", data["aborted"])
+            self.assertEqual([m["outcome"] for m in data["mutants"]], ["unrun", "unrun"])
+            self.assertIsNone(mutate.check_result(data))
+            self.assertEqual(package.library.read_bytes(), before)
+            out = Path(root) / "result.json"
+            summary = subprocess.run([sys.executable, str(SCRIPT), "summary", str(out)],
+                                     capture_output=True, text=True)
+            self.assertIn("中断", summary.stdout)
 
 
 class RunTest(unittest.TestCase):
