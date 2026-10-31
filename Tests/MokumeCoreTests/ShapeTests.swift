@@ -1524,6 +1524,10 @@ private let insideShapeNotices: [Canvas.InsideShape: String] = [
     .compute:
         "Compute is not run inside createShape { }. A shape cannot hold it, so ask for it before "
             + "or after building the shape",
+    .positionLayout:
+        "shape(at:layout:) does nothing inside createShape { }. A shape bakes the positions it "
+            + "places into its vertices, but positions that a computation wrote live on the GPU "
+            + "and are never read back, so call it before or after building the shape",
     .brightness:
         "exposure() and toneMapping() do nothing inside createShape { }. They set the brightness "
             + "of the whole surface, which a shape cannot hold, so call them before or after "

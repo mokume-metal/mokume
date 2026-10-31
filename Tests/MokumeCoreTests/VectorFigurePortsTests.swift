@@ -161,6 +161,15 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.image(layer, 0, 0, 10, 10, 0, 0, 2, 2) } == 1)
         #expect(try handled(canvas) { $0.shape(shape) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: [Placement(x: 1, y: 1)]) } == 1)
+        // 数の並びを置き場所として読む口 (#3581)。置くのは GPU で、何個になるかは CPU に分からないので、
+        // 呼び出しごとに 1 つ名乗る。載らない形は何も置かないので数えない
+        let solid = canvas.createShape {
+            canvas.noStroke()
+            canvas.box(5)
+        }
+        let positions = try canvas.makeNumbers(count: 6)
+        #expect(try handled(canvas) { $0.shape(solid, at: positions, layout: .position) } == 1)
+        #expect(try handled(canvas) { $0.shape(shape, at: positions, layout: .position) } == 0)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
         // 画素の窓 (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
         // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)

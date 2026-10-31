@@ -680,6 +680,9 @@ public final class Canvas {
     /// 前のフレームにも置かれた形の見分け (#2791)。置き場を作るのは 2 フレーム続けて置かれた形だけで、
     /// 毎フレーム組み直す形に作っては捨てない。
     var solidPromotion = SolidPromotion()
+    /// 数の並びを置き場所として読む道 (``shape(_:at:layout:)``) の、位置の並びごとの常駐の置き場と計算の入口。
+    /// 使うまで何も確保しない。手放された並びの置き場は、次に置き場を作るときに畳む。
+    let positionLayouts = PositionLayouts()
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
     let solidVertexStorage: GrowableBuffer
     private let solidIndexStorage: GrowableBuffer

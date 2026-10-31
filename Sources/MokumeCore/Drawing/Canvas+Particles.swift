@@ -91,7 +91,7 @@ extension Canvas {
     ///
     /// **組むのは呼ぶ側である。** ここは組んだものから入口を 1 本取り出すだけにして、
     /// 同じ原文を入口の数だけ組まない。
-    private func particleKernel(
+    func particleKernel(
         _ entry: String, in library: any MTLLibrary, from source: String
     ) throws(RenderFailure) -> Computation {
         let computation = try Computation(
