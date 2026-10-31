@@ -70,14 +70,19 @@
 # ために開き直した親・開き直されたことの無い親 (段を持つ Design・Bug の根)・子を持たない親は、自分の
 # 仕事を持つ。「open の子を持つ親は ready に出さない」と一律にはしない。
 #
-# **開き直された親の open の子には、ready のまま添え書きを付ける** (#3559)。親の PR が子の条件も
-# 満たしていたのに、子を閉じずに親だけが閉じられて開き直されると、子は誰にも閉じられずに残る
+# **PR で閉じられて開き直された親の open の子には、ready のまま添え書きを付ける** (#3559)。親の PR が
+# 子の条件も満たしていたのに、子を閉じずに親だけが閉じられて開き直されると、子は誰にも閉じられずに残る
 # (#3399 は #3396 の PR #3468 で満たされていた)。ready の行の末尾に「親 #N の PR で満たされた疑い
 # — 閉じてよいかを見る」と添え、拾った人が確かめる。**busy へは回さない** — 親が「子を待つ」・子が
-# 「親を待つ」の形が戻り、疑いが外れた (子に残りの仕事がある) ときに子が拾われなくなる。疑いは
-# 親の PR で満たされたことの決定論の証拠ではない。run や別の Issue で満たされる形 (#2303・#1527) は
-# ここでは拾えず、棚卸しの手順 (stock-triage の「現況を確かめる」) に任せる。親を読んだ範囲でしか
-# 名乗れない (親が ready・stock・open な Bug・Design の候補に入らない開き直された親は読まない)
+# 「親を待つ」の形が戻り、疑いが外れた (子に残りの仕事がある) ときに子が拾われなくなる。
+#
+# **名乗る条件は、親の PR とつながるときだけ** — 開き直した手が bot で、その直前の close の closer が PR で、
+# 子がその close より前に作られているとき (`satisfied_parent`)。parent-guard は閉じ方を問わず開き直すので、
+# 「bot に開き直された」だけでは、人が決定として閉じた Design の子 (本当に残りの仕事がある) にも付く。
+# 疑いは親の PR で満たされたことの決定論の証拠ではない。**限界**: 名乗れるのは直接の親だけ (孫は名乗らない)。
+# 親が ready の候補・stock・open な Bug・Design の候補に入らず読まれない形 (busy になった親・未トリアージの
+# Task など) も名乗らない。run や別の Issue で満たされる形 (#2303・#1527) はここでは拾えず、棚卸しの手順
+# (stock-triage の「現況を確かめる」) に任せる
 #
 # **この判定は 1 つで、4 つの口が使う。** 口ごとに別の式を持つと、1 つだけ直して他が残る:
 #
@@ -548,12 +553,16 @@ fi
 #                                                      (空にすると欄がずれる)。親の印は
 #                                                      verify: triaged があれば triaged、無ければ -
 #                                                      で、Design の根を見分けるのに使う (#2228)
-#   self <番号> <手> <最小の open の子> <open の子の数> <子の総数>
+#   self <番号> <手> <最小の open の子> <open の子の数> <子の総数> <閉じた PR> <閉じた時刻> <作られた時刻>
 #                                                      番号ごとに必ず 1 行。手は、最後の開き直しが
 #                                                      bot の手 (scripts/bot-hand.sh) なら bot、
 #                                                      それ以外 (人・無い・分からない) は -。
 #                                                      子が無い・最初のページに open の子が載らない
-#                                                      ときの子の番号は -
+#                                                      ときの子の番号は -。閉じた PR は、直近の close の
+#                                                      closer が PullRequest ならその番号、それ以外
+#                                                      (手で閉じた・コミット・無い) は -。閉じた時刻は
+#                                                      その close の時刻 (無ければ -)。この 2 つと作られた
+#                                                      時刻は「親の PR で満たされた疑い」を名乗るのに使う (#3559)
 #
 # self の行は「閉じた後に parent-guard が開き直した親」を見分けるのに使う。親の行と同じ応答に
 # 載せるので、呼び出しは増えない。**子は open のものだけ数え、手は最後の 1 回だけ読む** —
@@ -571,7 +580,11 @@ read_parents() { # $1=番号 (空白区切り)
     q+=" labels(first: 100) { nodes { name } } }"
     q+=" subIssuesSummary { total completed } subIssues(first: 100) { nodes { number state } }"
     q+=" timelineItems(itemTypes: [REOPENED_EVENT], last: 1) { nodes { ... on ReopenedEvent {"
-    q+=" actor { __typename login } } } } } "
+    q+=" actor { __typename login } } } }"
+    # 開き直しの直前の close が PR で行われたか (#3559)。closer は PR・コミットなどの和で、手で
+    # 閉じたときは null。自分の作られた時刻は、親の close より後に作られた子を見分けるのに使う
+    q+=" createdAt closes: timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes {"
+    q+=" ... on ClosedEvent { createdAt closer { __typename ... on PullRequest { number } } } } } } "
   done
   gh api graphql -f query="{ repository(owner: \"$owner\", name: \"$name\") { $q } }" \
     --jq "$BOT_HAND_JQ"'.data.repository | to_entries[]
@@ -583,7 +596,9 @@ read_parents() { # $1=番号 (空白区切り)
         | (.value.timelineItems.nodes // [] | last) as $reopened
         | (if ($reopened != null) and ($reopened | bot_hand) then "bot" else "-" end) as $by
         | (.value.subIssuesSummary.total // 0) as $total
-        | "self \(.key | ltrimstr("i")) \($by) \($page[0] // "-") \($open) \($total)"'
+        | (.value.closes.nodes // [] | last) as $closed
+        | (if ($closed.closer.__typename // "") == "PullRequest" then ($closed.closer.number | tostring) else "-" end) as $pr
+        | "self \(.key | ltrimstr("i")) \($by) \($page[0] // "-") \($open) \($total) \($pr) \($closed.createdAt // "-") \(.value.createdAt // "-")"'
 }
 
 # 引くのは open な Bug・ready の候補・stock の候補と、(open な Bug があるときの) 未トリアージの
@@ -617,6 +632,26 @@ is_waiting() { # $1=番号
   awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' <<<"$waiting"
 }
 
+# **親の PR で満たされた疑い** (#3559)。次がすべて揃うときだけ、親の番号を返す:
+#   - 親が open で、自分の仕事を持たない (上の `waiting` — bot に開き直された・子を持つ)
+#   - その親の直近の close が PR によるもの (closer が PullRequest)。parent-guard は閉じ方を問わず
+#     開き直すので、人が決定として閉じた Design (子に本当に残りの仕事がある・ADR-0040) を除く
+#   - 子がその close より前に作られている。close より後に作られた子は、親の PR の時点では無かった
+#   - 子の作られた時刻を読めている (読めなければ名乗らない)
+# 返すのは直接の親だけ — 孫、親が ready の候補・stock・open な Bug・Design の候補に入らず読まれない形は
+# 名乗れない。疑いであって証拠ではない (PR が子の条件を満たしたかは、本文と PR を読む人が確かめる)
+satisfied_parent() { # $1=子の番号
+  local parent created
+  parent=$(awk -v n="$1" '$1 == n && $3 == "OPEN" { print $2; exit }' <<<"$parents")
+  [ -n "$parent" ] || return 0
+  created=$(awk -v n="$1" '$1 == "self" && $2 == n { print $9; exit }' <<<"$parents")
+  [ -n "$created" ] && [ "$created" != "-" ] || return 0
+  awk -v p="$parent" -v created="$created" '
+    $1 == "self" && $2 == p && $3 == "bot" && $6 > 0 && $7 != "-" && $8 != "-" && created <= $8 {
+      print p
+    }' <<<"$parents"
+}
+
 # (a) 根が開いていれば、子は根を直す側で閉じる (ADR-0040 決定 2)。子を ready に出すと
 # 症状の 1 か所だけが直され、同じ根の兄弟が残る — #1659 が数えた「深いが狭い」直しの形である。
 # 根は 2 つの形をとる (冒頭の「根と判断」):
@@ -648,8 +683,7 @@ while read -r n type title; do
   else
     # 親が開き直された親なら、この子は親の PR で満たされたかもしれない (#3559)。ready のまま
     # 添え書きだけを付ける — busy へ回すと、親は子を待ち、子は親を待つ形が戻る (#3399 と #3396)
-    suspect=$(awk -v n="$n" -v waiting="$(awk '{ printf " %s ", $1 }' <<<"$waiting")" '
-      $1 == n && $3 == "OPEN" && index(waiting, " " $2 " ") != 0 { print $2; exit }' <<<"$parents")
+    suspect=$(satisfied_parent "$n")
     note=''
     [ -z "$suspect" ] || note=" ・親 #$suspect の PR で満たされた疑い — 閉じてよいかを見る"
     ready+="$n ready [$type] $title$note"$'\n'

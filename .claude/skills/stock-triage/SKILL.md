@@ -56,7 +56,7 @@ git fetch origin main && git log --oneline origin/main -5
 
 実害の出ていない機構の提案は、題に「(実害待ち)」を付けて待たせてある
 (理由: [ADR-0008](../../../docs/decisions/0008-mechanism-needs-demonstrated-harm.md) 決定 2)。
-この提案は上の 4 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
+この提案は上の 5 つを調べ直さない。見るのは 1 つ — **前回の棚卸し以降に起票された Issue・
 入った PR に、その実害や同じ根に当たるものがあるか**。
 
 ```bash
