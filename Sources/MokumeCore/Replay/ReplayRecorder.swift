@@ -26,10 +26,15 @@ import MokumeDiagnostics
 ///
 /// ## 終わり方
 ///
-/// 書き途中は `<行き先>.partial` で、``finish(last:)`` が `"complete": true` を書き、閉じてから行き先へ
-/// 改名する。**落ちた回は `.partial` のまま残り、行き先は作られない** — 完成として読まれない。
-/// 開始の時点で、前の回が同じ行き先に残した完成品は消す (今回の回が落ちたとき、古い完成品を今回のものと
-/// 取り違えない)。
+/// 書き途中は `<行き先>.<プロセス番号>.partial` で、``finish(last:)`` が `"complete": true` を書き、同期
+/// (`fsync`) して閉じてから行き先へ改名する (電源が落ちても、改名した後の完成品が空にならない)。
+/// **落ちた回は `.partial` のまま残り、行き先は作られない** — 完成として読まれない。`setup()` が投げて
+/// 終わった実行も完成と呼ばない (``abandon(because:)``)。
+///
+/// 同じ行き先へ書く実行は、行き先の隣の錠 (`<行き先>.lock`・``ReplayClaim``) で 1 つに絞る。取れなければ
+/// 記録を始めない。錠を取った実行は、前の回が同じ行き先に残した完成品と `.partial` を消す (今回の回が
+/// 落ちたとき、古い完成品を今回のものと取り違えない)。**消すのは、実時間の時計で記録を始めない回も同じ**
+/// (``ReplayClaim/discardPrevious()``)。
 ///
 /// ## 形は足せる向きにだけ変える
 ///
@@ -43,22 +48,45 @@ final class ReplayRecorder {
     /// 画素のハッシュを取るフレーム番号の間隔。**そのフレーム番号が 60 の倍数のとき**に取る。
     static let hashInterval = 60
     /// 書き途中のファイルの名前の末尾。
-    static let partialSuffix = ".partial"
+    static let partialSuffix = ReplayClaim.partialSuffix
     /// 1 回の束に溜める入力の上限。**越えたら残りは載せず、再現を保証しないと書く。**
     private static let pendingInputLimit = 65_536
     /// 理由の文面 (記録に書く・英語)。
+    ///
+    /// 「再現を保証しない」ものは、記録の `unreproducible` に**種類ごとに 1 度**書く。保証の外にあるものを使った
+    /// 実行が、黙って保証の内と名乗らないために、使われた時点でここへ書く。
     enum Reason {
         static let nonFiniteInput = "Replay is not guaranteed (non-finite input)"
         static let tooManyInputs = "Replay is not guaranteed (too many inputs between two frames)"
+        /// ファイルのドロップと `selectInput`。パスだけを持ち、中身は持たない (`WebFile` の取得も同じ)。
+        static let fileByPath =
+            "Replay is not guaranteed (a dropped or chosen file is recorded by its path, not its contents)"
+        static let webFile =
+            "Replay is not guaranteed (a file fetched from a URL is not recorded, and its contents can change)"
+        /// 画素のハッシュを取るために絵を読み戻せなかった。その枚は照らせない。
+        static let pictureUnreadable =
+            "Replay cannot be checked against every picture (a picture could not be read back to hash it)"
+        static let drawFailed = "Replay is not guaranteed (a frame failed to draw)"
+        /// 外から値が届く入り口 (ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・シリアル・マイク・カメラ) を足した。
+        /// この段の記録は、入り口の値を持たない (#2603 の後段)。
+        static func outsideInput(_ name: String) -> String {
+            "Replay is not guaranteed (input from outside the sketch, which the record does not hold: \(name))"
+        }
+        /// 窓では音が実時間で鳴り、窓なしで流すときは数で進む。音の解析値を絵に使う作品は割れうる。
+        static func realtimeSound(_ kind: String) -> String {
+            "Replay is not guaranteed (sound plays in real time in a window, and counts frames when replayed: \(kind))"
+        }
     }
 
     /// 記録の識別子。**この記録を指す** (#2618 の観測 1 枚と条件の組)。
     let id: String
     /// 記録の行き先。
     let destination: URL
-    /// 書き途中のファイル。
+    /// 書き途中のファイル (`<行き先>.<プロセス番号>.partial`)。
     let partial: URL
 
+    /// 行き先の錠。閉じる (終わり・書けなくなった・手放す) まで握る。
+    private var claim: ReplayClaim?
     private var handle: FileHandle?
     private var buffer = ""
     private var failed = false
@@ -84,6 +112,8 @@ final class ReplayRecorder {
         var frameRate: Int
         var width: Int
         var height: Int
+        /// 窓に出しながら回したか。
+        var window: Bool
     }
 
     /// 1 回の `advance()` が、入力を配った時点で持ち込んだもの。
@@ -100,38 +130,34 @@ final class ReplayRecorder {
         var reason: String
     }
 
-    /// 開く。**書き途中のファイルを作れなければ `nil`** で、理由を `failure` に載せる。
-    ///
-    /// 行き先の親が無ければ作る。行き先が既に在るファイルなら、先に消す (上の「終わり方」)。
+    /// 錠を取り、前の回の残りを消して、開く。**開けなければ `nil`** で、理由を `failure` に載せる。
     static func open(destination: URL) -> (recorder: ReplayRecorder?, failure: String?) {
-        let manager = FileManager.default
-        var isDirectory: ObjCBool = false
-        if manager.fileExists(atPath: destination.path, isDirectory: &isDirectory) {
-            guard !isDirectory.boolValue else {
-                return (nil, "\(destination.path) is a directory, not a file")
-            }
-            do { try manager.removeItem(at: destination) } catch {
-                return (nil, "Could not replace \(destination.path): \(Diagnostics.reason(error))")
-            }
-        }
-        let partial = URL(fileURLWithPath: destination.path + partialSuffix)
+        let taken = ReplayClaim.take(destination: destination)
+        guard let claim = taken.claim else { return (nil, taken.failure) }
+        if let failure = claim.discardPrevious() { return (nil, failure) }
+        return open(claim: claim)
+    }
+
+    /// 取った錠のもとで、書き途中のファイルを作る。**錠は記録が握り、終わりで手放す。**
+    static func open(claim: ReplayClaim) -> (recorder: ReplayRecorder?, failure: String?) {
+        let partial = URL(
+            fileURLWithPath: claim.destination.path + ".\(getpid())" + partialSuffix)
         do {
-            try manager.createDirectory(
-                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            guard manager.createFile(atPath: partial.path, contents: nil) else {
+            guard FileManager.default.createFile(atPath: partial.path, contents: nil) else {
                 return (nil, "Could not create \(partial.path)")
             }
             let handle = try FileHandle(forWritingTo: partial)
-            return (ReplayRecorder(destination: destination, partial: partial, handle: handle), nil)
+            return (ReplayRecorder(claim: claim, partial: partial, handle: handle), nil)
         } catch {
             return (nil, "Could not open \(partial.path): \(Diagnostics.reason(error))")
         }
     }
 
-    private init(destination: URL, partial: URL, handle: FileHandle) {
+    private init(claim: ReplayClaim, partial: URL, handle: FileHandle) {
         self.id = UUID().uuidString.lowercased()
-        self.destination = destination
+        self.destination = claim.destination
         self.partial = partial
+        self.claim = claim
         self.handle = handle
     }
 
@@ -140,8 +166,14 @@ final class ReplayRecorder {
     /// 開始の状態を控える。**`setup()` の前に呼ぶ** — 保存から戻した `@Param` の値を含む。
     ///
     /// 乱数の種は、作者が `randomSeed` を呼ぶまで常に 0 (`Randomness()`) なので、開始の種は 0 である。
-    func noteStart(seed: Int, params: [NamedParamValue], frameRate: Int, width: Int, height: Int) {
-        start = Start(seed: seed, params: params, frameRate: frameRate, width: width, height: height)
+    ///
+    /// `window` は、窓に出しながら回したか。窓では音が実時間で鳴り、拡大した字の焼きを次のフレームへ送る経路も
+    /// 窓のものなので、流す側が「窓で録った記録」と知っておくために残す。
+    func noteStart(
+        seed: Int, params: [NamedParamValue], frameRate: Int, width: Int, height: Int, window: Bool = false
+    ) {
+        start = Start(
+            seed: seed, params: params, frameRate: frameRate, width: width, height: height, window: window)
     }
 
     /// 最初の枚が実際に使った、作者の時計の開始の秒と止めているか。**1 度だけ。**
@@ -164,6 +196,8 @@ final class ReplayRecorder {
         if line.hasSuffix("\n") { line.removeLast() }
         pendingInputs.append(line)
         if event.hasNonFiniteNumber { noteUnreproducible(Self.Reason.nonFiniteInput) }
+        // 届いたパスの先の中身は持たない。届いた回に名乗る
+        if event.carriesAFileByPath { noteUnreproducible(Self.Reason.fileByPath) }
     }
 
     /// 外から来た `@Param` の書き込みが入った (窓のつまみ・区画)。**収めた後の値**を残す。
@@ -212,28 +246,46 @@ final class ReplayRecorder {
     ///
     /// - Parameters:
     ///   - frame: その回の終わりのフレーム番号。
-    ///   - drew: フレームを描いたか。
-    ///   - hash: 画素のハッシュ。**描いた回で、フレーム番号が間隔の倍数のときだけ呼ぶ。**
-    func endStep(frame: Int, drew: Bool, hash: () -> String?) {
+    ///   - drew: フレームを**描けたか**。描けなかった枚 (止めた作品の回・描くのに失敗した枚) は偽で、ハッシュを取らない。
+    ///   - drawFailed: 描こうとして失敗した枚か (`drew` は偽)。再現を保証しないと書く。
+    ///   - hash: 画素のハッシュ。**描いた回で、フレーム番号が間隔の倍数のときだけ呼ぶ。** 読み戻せなければ
+    ///     `nil` を返し、その枚は照らせないと記録に書く。
+    func endStep(frame: Int, drew: Bool, drawFailed: Bool = false, hash: () -> String?) {
         guard let step = openStep else { return }
         openStep = nil
         let values = exposed
         exposed.removeAll(keepingCapacity: true)
         guard !isFinished, !failed else { return }
         let hasContent =
-            drew || !step.inputs.isEmpty || !step.params.isEmpty || step.observeTime != nil
+            drew || drawFailed || !step.inputs.isEmpty || !step.params.isEmpty || step.observeTime != nil
             || !values.isEmpty
         guard hasContent else { return }
+        if drawFailed { noteUnreproducible(Self.Reason.drawFailed) }
         var line = "{\"step\":\(step.ordinal),\"frame\":\(frame),\"drew\":\(drew)"
         if !step.inputs.isEmpty { line += ",\"inputs\":[" + step.inputs.joined(separator: ",") + "]" }
-        if !step.params.isEmpty { line += ",\"params\":" + Self.json(step.params) }
-        if let time = step.observeTime { line += ",\"observe\":{\"time\":" + Self.json(Double(time)) + "}" }
-        if !values.isEmpty { line += ",\"expose\":" + Self.json(values) }
-        if drew, frame % Self.hashInterval == 0, let hash = hash() {
-            line += ",\"pixelHash\":" + Self.json(hash)
+        if !step.params.isEmpty {
+            guard let json = encode(step.params) else { return }
+            line += ",\"params\":" + json
+        }
+        if let time = step.observeTime {
+            guard let json = encode(Double(time)) else { return }
+            line += ",\"observe\":{\"time\":" + json + "}"
+        }
+        if !values.isEmpty {
+            guard let json = encode(values) else { return }
+            line += ",\"expose\":" + json
+        }
+        if drew, frame % Self.hashInterval == 0 {
+            if let hash = hash(), let json = encode(hash) {
+                line += ",\"pixelHash\":" + json
+            } else if !failed {
+                // 読み戻せなかった枚は、欠けたまま黙らない
+                noteUnreproducible(Self.Reason.pictureUnreadable)
+            }
         }
         line += "}"
         writeHeaderIfNeeded()
+        guard !failed else { return }
         buffer += (stepsWritten == 0 ? "" : ",") + line
         stepsWritten += 1
         stepsSinceFlush += 1
@@ -244,24 +296,34 @@ final class ReplayRecorder {
 
     /// 最後まで書いて閉じ、行き先へ改名する。**2 度目からは何もしない。**
     ///
+    /// 閉じる前に同期する (`fsync`)。改名の後に電源が落ちても、行き先が空のまま残らない。
+    ///
     /// - Parameter last: 最後に描いたフレームの番号と画素のハッシュ。1 枚も描いていなければ `nil`。
+    ///   描いたのに読み戻せなかった枚は ``noteUnreproducible(_:)`` で名乗ってから呼ぶ。
     func finish(last: (frame: Int, hash: String)?) {
         guard !isFinished else { return }
         isFinished = true
         guard !failed else { return }
         writeHeaderIfNeeded()
+        guard !failed else { return }
         buffer += "]"
         if !notes.isEmpty {
-            let items = notes.map { "{\"step\":\($0.step),\"reason\":\(Self.json($0.reason))}" }
+            var items: [String] = []
+            for note in notes {
+                guard let reason = encode(note.reason) else { return }
+                items.append("{\"step\":\(note.step),\"reason\":\(reason)}")
+            }
             buffer += ",\"unreproducible\":[" + items.joined(separator: ",") + "]"
         }
         if let last {
-            buffer += ",\"last\":{\"frame\":\(last.frame),\"pixelHash\":\(Self.json(last.hash))}"
+            guard let hash = encode(last.hash) else { return }
+            buffer += ",\"last\":{\"frame\":\(last.frame),\"pixelHash\":\(hash)}"
         }
         buffer += ",\"complete\":true}\n"
         flush()
         guard !failed, let handle else { return }
         do {
+            try handle.synchronize()
             try handle.close()
             self.handle = nil
             guard rename(partial.path, destination.path) == 0 else {
@@ -269,22 +331,35 @@ final class ReplayRecorder {
             }
         } catch {
             fail("Could not finish \(destination.path): \(Diagnostics.reason(error))")
+            return
         }
+        claim?.release()
+        claim = nil
+    }
+
+    /// 完成と呼べない終わり方をした。**行き先は作らず、`.partial` を残す** — `setup()` が投げて終わった
+    /// 実行は、1 枚も描いておらず、再生の土台にならない。理由を 1 度言う。2 度目からは何もしない。
+    func abandon(because reason: String) {
+        guard !isFinished else { return }
+        fail(reason)
     }
 
     // MARK: - 書く
 
     private func writeHeaderIfNeeded() {
-        guard !wroteHeader else { return }
+        guard !wroteHeader, !failed else { return }
         wroteHeader = true
         let start =
-            start ?? Start(seed: 0, params: [], frameRate: 0, width: 0, height: 0)
+            start ?? Start(seed: 0, params: [], frameRate: 0, width: 0, height: 0, window: false)
         let clock = startClock ?? (0, false)
-        buffer += "{\"schemaVersion\":\(Self.schemaVersion),\"id\":\(Self.json(id))"
+        guard let identifier = encode(id), let seconds = encode(clock.seconds), let params = encode(start.params)
+        else { return }
+        buffer += "{\"schemaVersion\":\(Self.schemaVersion),\"id\":\(identifier)"
         buffer += ",\"clock\":{\"kind\":\"frames\",\"frameRate\":\(start.frameRate)}"
         buffer += ",\"size\":{\"width\":\(start.width),\"height\":\(start.height)}"
-        buffer += ",\"start\":{\"seed\":\(start.seed),\"seconds\":\(Self.json(clock.seconds))"
-        buffer += ",\"paused\":\(clock.paused),\"params\":\(Self.json(start.params))}"
+        buffer += ",\"window\":\(start.window)"
+        buffer += ",\"start\":{\"seed\":\(start.seed),\"seconds\":\(seconds)"
+        buffer += ",\"paused\":\(clock.paused),\"params\":\(params)}"
         buffer += ",\"steps\":["
     }
 
@@ -299,22 +374,36 @@ final class ReplayRecorder {
         }
     }
 
-    /// 書けなくなった。**1 度だけ言い、以後は何も書かない。** 書き途中のファイルは完成として読まれない形で残る。
+    /// 書けなくなった・完成と呼べなくなった。**1 度だけ言い、以後は何も書かない。** 書き途中のファイルは
+    /// 完成として読まれない形で残る。
     private func fail(_ message: String) {
         guard !failed else { return }
         failed = true
+        isFinished = true
         buffer.removeAll()
         try? handle?.close()
         handle = nil
+        claim?.release()
+        claim = nil
         Diagnostics.warn("Recording stopped: \(message). The record is left unfinished at \(partial.path)")
     }
 
-    /// 値を JSON にする。**キーを並べ直して、同じ値から同じ文字を出す。**
-    private static func json<Value: Encodable>(_ value: Value) -> String {
+    /// 値を JSON にする。**キーを並べ直して、同じ値から同じ文字を出す。** 有限でない数 (`@Param` の既定値が
+    /// `.nan` など) は、数としては書けないので文字列 `"nan"`・`"inf"`・`"-inf"` にする。
+    ///
+    /// **書けなければ黙って `null` にせず、記録を止める** — `null` はスキーマに無い形で、そのまま完成品に
+    /// なれば、読み手が壊れた記録を正しいものとして受け取る。
+    private func encode<Value: Encodable>(_ value: Value) -> String? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(value) else { return "null" }
-        return String(decoding: data, as: UTF8.self)
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
+        do {
+            return String(decoding: try encoder.encode(value), as: UTF8.self)
+        } catch {
+            fail("Could not write a value of the record: \(Diagnostics.reason(error))")
+            return nil
+        }
     }
 
     /// 画素のバイト列のハッシュ (SHA-256・16 進)。**出口が受け取るのと同じ道の絵**(``DisplayImage``) を渡す。
@@ -324,6 +413,16 @@ final class ReplayRecorder {
 }
 
 extension InputEvent {
+    /// パスだけを持つ出来事か (ドロップした先・`selectInput` で選んだ先)。**中身は記録に持たない。**
+    /// パスの無い落とし・取り消し (`path` が `nil`) は含めない。
+    var carriesAFileByPath: Bool {
+        switch self {
+        case .fileDropped(let paths, _, _): !paths.isEmpty
+        case .fileSelected(let path, _): path != nil
+        default: false
+        }
+    }
+
     /// 数のどれかが有限でないか。**線は有限でない数を 0 で書く** (``wireLine``) ので、記録の中で 0 になり、
     /// 流すと食い違う — 記録は「再現を保証しない」と理由を書く。
     var hasNonFiniteNumber: Bool {

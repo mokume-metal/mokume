@@ -92,16 +92,28 @@ enum RunCommand {
         //
         // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
         if let recording { print("Recording to: \(recording)") }
+        let launchedAt = Date()
         try launch(
             executable, in: directory,
             environment: childEnvironment(
                 reportingRate: context.configurationName,
                 confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
                 recording: recording))
-        // **記録を頼んだのに残っていなければ、黙らない** (子が理由を言っている — 実時間の時計・行き先を開けない)
-        if let recording, !FileManager.default.fileExists(atPath: recording) {
+        // **記録を頼んだのに、この実行が書いていなければ、黙らない** (子が理由を言っている — 実時間の時計・
+        // 行き先を開けない・別の実行が書いている)。在るかでは判らない: 前の回の完成品が残っているかもしれない
+        if let recording, !recordWasWritten(at: recording, since: launchedAt) {
             print("No record was written to \(recording) (the sketch says why above)")
         }
+    }
+
+    /// 記録の行き先に、**この実行が始まった後に**書かれたファイルが在るか。
+    ///
+    /// 在るかだけで見ると、記録を始めなかった回に、前の回の完成品が残っていて「書いた」と読む。子は錠を取れば
+    /// 前の完成品を消す (実時間の時計でも) が、錠が取れなかった回は消さないので、新しさでも見る。
+    static func recordWasWritten(at path: String, since start: Date) -> Bool {
+        guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        else { return false }
+        return modified >= start
     }
 
     /// 1 回の実行で 1 度だけ、置き場と構成と product を決める。

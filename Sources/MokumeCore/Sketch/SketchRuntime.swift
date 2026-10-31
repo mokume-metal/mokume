@@ -814,6 +814,7 @@ public final class SketchRuntime {
             }
             outlets += registry.outlets.map { ($0, SeamHealth()) }
             inlets += registry.inlets.map { ($0, SeamHealth()) }
+            for inlet in registry.inlets { noteReplaySource(inlet) }
         }
     }
 
@@ -1146,7 +1147,9 @@ public final class SketchRuntime {
             replay.noteStartClock(
                 seconds: timing.handoverStart?.seconds ?? 0, paused: timing.handoverStart?.isHeld ?? false)
         }
-        defer { endReplayStep(drew: true) }
+        // 描けたのは、描く手順を最後まで通ったときだけ。落ちた枚は `drew: false` で、画素のハッシュは取らない
+        var replayDrew = false
+        defer { endReplayStep(drew: replayDrew, drawFailed: !replayDrew) }
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
@@ -1206,6 +1209,7 @@ public final class SketchRuntime {
                 stepSoundTrack()
             }
         }
+        replayDrew = true
     }
 
     // MARK: - 記録 ([#3570])
@@ -1226,18 +1230,34 @@ public final class SketchRuntime {
             Diagnostics.warn("Not recording: the sketch already started, and a record always begins at its first frame")
             return false
         }
+        // **先に行き先の錠を取る。** 同じ行き先へ書く実行が 2 つあると互いの書き途中と完成品を壊す。取れなければ
+        // 先の実行に触らず、始めない (ReplayClaim)
+        let taken = ReplayClaim.take(destination: request.destination)
+        guard let claim = taken.claim else {
+            Diagnostics.warn("Not recording: \(taken.failure ?? "the destination could not be claimed"). It keeps running")
+            return false
+        }
+        // **前の回の完成品は、時計を見る前に消す。** 実時間の時計で記録を始めない回も、前の回の完成品が今回の
+        // 記録として残ってはいけない (道具は「No record was written」と言う)
+        if let failure = claim.discardPrevious() {
+            Diagnostics.warn("Not recording: \(failure). It keeps running")
+            return false
+        }
         guard case .frameIndex = clock else {
             Diagnostics.warn(
                 "Not recording: this sketch runs on the wall clock, so its run cannot be replayed. "
                     + "Declare clock: .frames in its settings to record it. It keeps running")
             return false
         }
-        let opened = ReplayRecorder.open(destination: request.destination)
+        let opened = ReplayRecorder.open(claim: claim)
         guard let recorder = opened.recorder else {
             Diagnostics.warn("Not recording: \(opened.failure ?? "the destination could not be opened"). It keeps running")
             return false
         }
         replay = recorder
+        // 窓へ出す経路は、拡大した字の焼きを次のフレームへ送る (``defersEnlargedGlyphBakes``)。記録している実行は
+        // 送らない — 窓なしで流す側と同じ手順で描くので、画素のハッシュが書き出しの道と食い違わない
+        defersEnlargedGlyphBakes = false
         // 入力は届いた生の形で拾う。`setup()` の前に届いたものも、最初の回の束に入る
         input.enqueueObserver = { [weak recorder] event in recorder?.noteInput(event) }
         return true
@@ -1262,16 +1282,16 @@ public final class SketchRuntime {
         // 乱数の種は、作者が `randomSeed` を呼ぶまで常に 0 (`Randomness()`)
         replay.noteStart(
             seed: 0, params: params, frameRate: frameRate, width: canvas.output.width,
-            height: canvas.output.height)
+            height: canvas.output.height, window: isOnScreen)
         for knob in paramRegistry.knobs {
             knob.observeWrites { [weak replay] name, value in replay?.noteParam(name, value) }
         }
     }
 
     /// 記録の回を閉じる。入力を配った回だけが対象で、何も起きなかった止めた回は載らない。
-    private func endReplayStep(drew: Bool) {
+    private func endReplayStep(drew: Bool, drawFailed: Bool = false) {
         guard let replay else { return }
-        replay.endStep(frame: timing.frameCount, drew: drew) { [self] in
+        replay.endStep(frame: timing.frameCount, drew: drew, drawFailed: drawFailed) { [self] in
             (try? target.encodeToImageAndRead(avoiding: outletStorageToAvoid()))
                 .map(ReplayRecorder.hash(of:))
         }
@@ -1279,15 +1299,40 @@ public final class SketchRuntime {
 
     /// 記録を最後に描いた枚まで書いて閉じる。``closePlugins(_:)`` が呼ぶので、窓を閉じる・SIGTERM・
     /// Control + C のどれでも通る。出口へ配る絵は閉じる前に決着している。
+    ///
+    /// **`setup()` が投げて終わった実行は、完成と呼ばない** — 1 枚も描いておらず、再生の土台にならない。
+    /// 行き先は作らず `.partial` を残して、理由を言う。
     private func finishReplayRecording() {
         guard let replay, !replay.isFinished else { return }
+        if setupFailure != nil {
+            replay.abandon(because: "the sketch's setup() threw, so this run never drew a frame")
+            return
+        }
         var last: (frame: Int, hash: String)?
-        if timing.frameCount > 0, setupFailure == nil, !lastFrameFailedToDraw,
-            let image = try? target.encodeToImageAndRead()
-        {
-            last = (timing.frameCount, ReplayRecorder.hash(of: image))
+        if timing.frameCount > 0, !lastFrameFailedToDraw {
+            if let image = try? target.encodeToImageAndRead() {
+                last = (timing.frameCount, ReplayRecorder.hash(of: image))
+            } else {
+                // 描いたのに読み戻せない。最後の絵が欠けたまま黙らない
+                replay.noteUnreproducible(ReplayRecorder.Reason.pictureUnreadable)
+            }
         }
         replay.finish(last: last)
+    }
+
+    /// 入り口を足した。**記録が持たない値の出どころなら、その種類を名乗る** (種類ごとに 1 度)。
+    ///
+    /// - 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
+    ///   シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)
+    /// - 音を実際に鳴らす入り口 (``RealtimeSound``) は、窓では実時間で鳴り、窓なしで流すときは数で進む。窓で
+    ///   録った記録だけ名乗る (窓なしで録った記録は、流す側と同じ数え方である)
+    private func noteReplaySource(_ inlet: any Inlet) {
+        guard let replay else { return }
+        if let report = inlet.report {
+            replay.noteUnreproducible(ReplayRecorder.Reason.outsideInput(report.name))
+        } else if isOnScreen, inlet is any RealtimeSound {
+            replay.noteUnreproducible(ReplayRecorder.Reason.realtimeSound("\(type(of: inlet))"))
+        }
     }
 
     // MARK: - 音声トラック ([#3125])
@@ -1849,6 +1894,7 @@ public final class SketchRuntime {
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
         SeamHomes.record(inlet, in: self)
+        noteReplaySource(inlet)
         return true
     }
 
@@ -2728,7 +2774,9 @@ public final class SketchRuntime {
         }
         try LaunchingSketch.$canvas.withValue(canvas) {
             try LaunchingSketch.$selection.withValue(input.selection) {
-                try LaunchingSketch.$attachments.withValue(attachRequests, operation: body)
+                try LaunchingSketch.$attachments.withValue(attachRequests) {
+                    try LaunchingSketch.$replay.withValue(replay, operation: body)
+                }
             }
         }
     }

@@ -145,6 +145,12 @@ enum WatchCommand {
                 resolver: resolver, running: running, keepTime: keepTimeFile?.path, recording: recording))
         say("Watching: \(directory.path)")
         if let recording {
+            // 1 から振り直すので、前の見張りが残した同じ並び (take-1.json, take-2.json, …) は先に消す。
+            // 残すと、前回の take-3 が今回の記録に混ざる (`run` が前回の完成品を消すのと同じ扱い)
+            let removed = ReplayRequest.discardGenerations(of: recording)
+            if !removed.isEmpty {
+                say("Removed the records of the previous watch: \(removed.joined(separator: ", "))")
+            }
             say(
                 "Recording: each build gets its own file, "
                     + "\(ReplayRequest.generation(of: recording, number: 1)), "

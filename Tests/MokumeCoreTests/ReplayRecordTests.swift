@@ -35,6 +35,10 @@ struct ReplayRecordFormatTests {
         #expect(ReplayRequest(destination: "take.json") == nil, "相対の値は読む側の作業ディレクトリで別の場所になる")
         #expect(ReplayRequest(destination: "") == nil)
         #expect(ReplayRequest(destination: "/") == nil)
+        // 前後の空白や改行は削らない (道具が言った綴りと、子が書く場所が食い違わない)
+        #expect(ReplayRequest(destination: "/tmp/ take.json ")?.destination.path == "/tmp/ take.json ")
+        #expect(ReplayRequest(destination: " /tmp/take.json") == nil, "先頭の空白は絶対パスではない")
+        #expect(ReplayRequest(destination: "/tmp/take.json\n")?.environmentValue == "/tmp/take.json\n")
         #expect(ReplayRequest.generation(of: "/tmp/out/take.json", number: 2) == "/tmp/out/take-2.json")
         #expect(ReplayRequest.generation(of: "/tmp/out/take", number: 1) == "/tmp/out/take-1")
         #expect(ReplayRequest.generation(of: "/tmp/a.b/take.rec.json", number: 3) == "/tmp/a.b/take.rec-3.json")
@@ -77,7 +81,8 @@ struct ReplayRecordFormatTests {
         let destination = directory.appendingPathComponent("take.json")
         let (opened, failure) = ReplayRecorder.open(destination: destination)
         let recorder = try #require(opened, "開けなかった: \(failure ?? "")")
-        let partial = directory.appendingPathComponent("take.json.partial")
+        let partial = recorder.partial
+        #expect(partial.lastPathComponent == "take.json.\(getpid()).partial", "プロセス番号を含む名前")
         #expect(FileManager.default.fileExists(atPath: partial.path))
         #expect(!FileManager.default.fileExists(atPath: destination.path), "書き終えるまで行き先は作られない")
 
@@ -113,13 +118,14 @@ struct ReplayRecordFormatTests {
         try Data("{\"complete\":true}".utf8).write(to: destination)
         var recorder: ReplayRecorder? = ReplayRecorder.open(destination: destination).recorder
         #expect(recorder != nil)
+        let partial = try #require(recorder?.partial)
         #expect(!FileManager.default.fileExists(atPath: destination.path), "前の回の完成品は消す")
         recorder?.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
         recorder?.beginStep()
         recorder?.endStep(frame: 1, drew: true) { nil }
         recorder = nil  // finish を呼ばずに手放す = 終わりの経路を通らなかった
         #expect(!FileManager.default.fileExists(atPath: destination.path), "完成として読まれるものが無い")
-        #expect(FileManager.default.fileExists(atPath: destination.path + ".partial"))
+        #expect(FileManager.default.fileExists(atPath: partial.path))
     }
 
     @Test("行き先がフォルダなら開かず、理由を返す")
@@ -196,6 +202,270 @@ struct ReplayRecordFormatTests {
         #expect(hashed == [60, 120])
     }
 
+    // MARK: - 行き先の錠・前の回の残り・世代 (反証 1 回目)
+
+    @Test("同じ行き先へ 2 つの実行は書けず、あとの実行は記録を始めず理由を言い、先の実行は壊れない")
+    func aSecondRunCannotRecordToTheSameDestination() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let first = try #require(ReplayRecorder.open(destination: destination).recorder)
+        first.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        first.beginStep()
+        first.endStep(frame: 1, drew: true) { nil }
+
+        let (second, failure) = ReplayRecorder.open(destination: destination)
+        #expect(second == nil)
+        #expect(failure?.contains("another run is already recording") == true, "理由: \(failure ?? "nil")")
+        #expect(FileManager.default.fileExists(atPath: first.partial.path), "先の実行の書き途中に触らない")
+
+        first.finish(last: nil)
+        #expect(try object(at: destination)["complete"] as? Bool == true, "先の実行は完成する")
+        // 終えたら錠は手放され、錠のファイルも残らない。次の実行は書ける
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(names == ["take.json"], "錠も .partial も残らない: \(names)")
+        #expect(ReplayRecorder.open(destination: destination).recorder != nil)
+    }
+
+    @Test("落ちた実行の錠は手放される: 錠のファイルが残っていても次の実行は書け、死んだ実行の .partial は消える")
+    func aCrashedRunsLockDoesNotBlockTheNext() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        var crashed: ReplayRecorder? = ReplayRecorder.open(destination: destination).recorder
+        let stale = try #require(crashed?.partial)
+        crashed = nil  // 終わりの経路を通らずに手放す (プロセスが落ちて記述子が閉じるのと同じ)
+        #expect(FileManager.default.fileExists(atPath: stale.path), "落ちた回の .partial は残る")
+        // 別のプロセスの .partial (プロセス番号違い) と、無関係なファイル
+        let other = directory.appendingPathComponent("take.json.99999.partial")
+        try Data("x".utf8).write(to: other)
+        let unrelated = directory.appendingPathComponent("take.json.notes")
+        try Data("keep".utf8).write(to: unrelated)
+
+        let next = try #require(ReplayRecorder.open(destination: destination).recorder)
+        #expect(!FileManager.default.fileExists(atPath: other.path), "死んだ実行の .partial は錠を握った実行が消す")
+        #expect(FileManager.default.fileExists(atPath: unrelated.path), "無関係なファイルには触らない")
+        #expect(next.partial.lastPathComponent == stale.lastPathComponent, "同じプロセスなので同じ名前になる")
+    }
+
+    @Test("前の回の残りを消すのは錠を取った実行だけで、取れなかった実行は先の実行の完成品に触らない")
+    func onlyTheLockHolderDiscardsThePreviousRun() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        try Data("{\"complete\":true}".utf8).write(to: destination)
+        let claim = try #require(ReplayClaim.take(destination: destination).claim)
+        // 錠を握っている間に、別の実行が来る
+        let refused = ReplayClaim.take(destination: destination)
+        #expect(refused.claim == nil)
+        #expect(FileManager.default.fileExists(atPath: destination.path), "取れなかった実行は消さない")
+        #expect(claim.discardPrevious() == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        claim.release()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
+    @Test("ReplayClaim.isPartial は <名前>.<プロセス番号>.partial の形だけを指す")
+    func thePartialNameIsRecognised() {
+        #expect(ReplayClaim.isPartial("take.json.123.partial", of: "take.json"))
+        #expect(!ReplayClaim.isPartial("take.json.partial", of: "take.json"))
+        #expect(!ReplayClaim.isPartial("take.json.12a.partial", of: "take.json"))
+        #expect(!ReplayClaim.isPartial("take.json.123.partial.bak", of: "take.json"))
+        #expect(!ReplayClaim.isPartial("other.json.123.partial", of: "take.json"))
+    }
+
+    private func writeRecordHead(_ url: URL) throws {
+        try Data("{\"schemaVersion\":1,\"id\":\"x\",\"complete\":true}\n".utf8).write(to: url)
+    }
+
+    @Test("watch の始まりは前の見張りの <stem>-<N>.<ext> の記録と .partial を消し、記録でないファイルや他の並びには触らない")
+    func aWatchStartRemovesThePreviousGenerations() throws {
+        let directory = try scratch()
+        let first = directory.appendingPathComponent("take-1.json")
+        let second = directory.appendingPathComponent("take-2.json")
+        let tenth = directory.appendingPathComponent("take-10.json")
+        let partial = directory.appendingPathComponent("take-3.json.4242.partial")
+        try writeRecordHead(first)
+        try writeRecordHead(second)
+        try writeRecordHead(tenth)
+        try Data("half".utf8).write(to: partial)
+        // 触らないもの: 記録でないファイル・基の名前・別の並び・番号の無い名前
+        let notARecord = directory.appendingPathComponent("take-4.json")
+        try Data("my notes".utf8).write(to: notARecord)
+        let base = directory.appendingPathComponent("take.json")
+        try writeRecordHead(base)
+        let otherStem = directory.appendingPathComponent("retake-1.json")
+        try writeRecordHead(otherStem)
+        let otherExt = directory.appendingPathComponent("take-5.txt")
+        try writeRecordHead(otherExt)
+        let named = directory.appendingPathComponent("take-final.json")
+        try writeRecordHead(named)
+
+        let removed = ReplayRequest.discardGenerations(of: base.path)
+        #expect(
+            Set(removed) == ["take-1.json", "take-2.json", "take-10.json", "take-3.json.4242.partial"],
+            "消したもの: \(removed)")
+        for gone in [first, second, tenth, partial] {
+            #expect(!FileManager.default.fileExists(atPath: gone.path), "\(gone.lastPathComponent) が残っている")
+        }
+        for kept in [notARecord, base, otherStem, otherExt, named] {
+            #expect(FileManager.default.fileExists(atPath: kept.path), "\(kept.lastPathComponent) を消した")
+        }
+        // 別の実行が書いている世代 (錠を握られている) は飛ばす
+        try writeRecordHead(first)
+        let busy = try #require(ReplayClaim.take(destination: first).claim)
+        #expect(ReplayRequest.discardGenerations(of: base.path).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        busy.release()
+    }
+
+    @Test("拡張子の無い行き先の世代も同じ並びで消す")
+    func generationsWithoutAnExtension() throws {
+        let directory = try scratch()
+        let base = directory.appendingPathComponent("take")
+        let one = directory.appendingPathComponent("take-1")
+        try writeRecordHead(one)
+        #expect(ReplayRequest.discardGenerations(of: base.path) == ["take-1"])
+    }
+
+    @Test("合図は使わなくても環境から消す: 記録しない実行 (ホストのアプリ・書き出しの子) が孫へ継がせない")
+    func theSignalIsForgottenEvenWhenUnused() {
+        var unset: [String] = []
+        let skipped = ReplayRequest.startup(
+            forRun: false, environment: [StartupReads.record.key: "/tmp/take.json"],
+            unset: { unset.append($0) }, say: { _ in })
+        #expect(skipped == nil)
+        #expect(unset == [StartupReads.record.key], "読まなくても消す")
+
+        unset = []
+        let used = ReplayRequest.startup(
+            forRun: true, environment: [StartupReads.record.key: "/tmp/take.json"],
+            unset: { unset.append($0) }, say: { _ in })
+        #expect(used?.destination.path == "/tmp/take.json")
+        #expect(unset == [StartupReads.record.key])
+    }
+
+    @Test("有限でない @Param の開始値は、文字列 nan / inf で完成品に書く (null にして壊れた完成品にしない)")
+    func nonFiniteStartParamsAreWrittenAsStrings() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        recorder.noteStart(
+            seed: 0,
+            params: [
+                NamedParamValue(name: "gain", value: .float(.nan)),
+                NamedParamValue(name: "ceiling", value: .float(.infinity)),
+                NamedParamValue(name: "floor", value: .float(-.infinity)),
+                NamedParamValue(name: "ok", value: .float(2.5)),
+            ], frameRate: 60, width: 4, height: 2)
+        recorder.beginStep()
+        recorder.endStep(frame: 1, drew: true) { nil }
+        recorder.finish(last: nil)
+
+        let record = try object(at: destination)
+        #expect(record["complete"] as? Bool == true)
+        let params = try #require((record["start"] as? [String: Any])?["params"] as? [[String: Any]])
+        #expect(params.map { $0["value"] as? String } == ["nan", "inf", "-inf", nil])
+        #expect(params.map { $0["type"] as? String } == ["float", "float", "float", "float"])
+        #expect(params[3]["value"] as? Double == 2.5)
+        let text = try String(contentsOf: destination, encoding: .utf8)
+        #expect(!text.contains("null"), "スキーマに無い null が入った")
+    }
+
+    @Test("窓で回したかは 1 欄で残る")
+    func theRecordSaysWhetherItRanInAWindow() throws {
+        let directory = try scratch()
+        for window in [true, false] {
+            let destination = directory.appendingPathComponent("take-\(window).json")
+            let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+            recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2, window: window)
+            recorder.beginStep()
+            recorder.endStep(frame: 1, drew: true) { nil }
+            recorder.finish(last: nil)
+            #expect(try object(at: destination)["window"] as? Bool == window)
+        }
+    }
+
+    @Test("完成と呼べない終わり方 (abandon) は行き先を作らず、.partial を残し、完成の印を書かない")
+    func anAbandonedRecordIsNotComplete() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        recorder.abandon(because: "the sketch's setup() threw")
+        recorder.finish(last: nil)  // 閉じの経路が続けて呼んでも、完成にならない
+        #expect(recorder.isFinished)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        let partial = try String(contentsOf: recorder.partial, encoding: .utf8)
+        #expect(!partial.contains("\"complete\""))
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(names == [recorder.partial.lastPathComponent], "錠は手放される: \(names)")
+    }
+
+    @Test("読み戻せなかった絵と、描けなかった枚は、黙って欠けず理由を名乗り、描けなかった枚はハッシュを取らない")
+    func missingPicturesAreNamed() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        recorder.beginStep()
+        recorder.endStep(frame: 60, drew: true) { nil }  // 読み戻せない
+        recorder.beginStep()
+        var asked = false
+        recorder.endStep(frame: 120, drew: false, drawFailed: true) {
+            asked = true
+            return "never"
+        }
+        recorder.finish(last: nil)
+        #expect(!asked, "描けなかった枚の絵は読まない")
+        let record = try object(at: destination)
+        let steps = try #require(record["steps"] as? [[String: Any]])
+        #expect(steps.count == 2, "描けなかった枚も載る (drew は偽): \(steps)")
+        #expect(steps[0]["pixelHash"] == nil && steps[0]["frame"] as? Int == 60)
+        #expect(steps[1]["drew"] as? Bool == false && steps[1]["pixelHash"] == nil)
+        let reasons = (record["unreproducible"] as? [[String: Any]])?.compactMap { $0["reason"] as? String }
+        #expect(
+            Set(reasons ?? []) == [ReplayRecorder.Reason.pictureUnreadable, ReplayRecorder.Reason.drawFailed],
+            "\(reasons ?? [])")
+
+        // 描けなかった枚が入力を持っていれば載り、drew は偽で、理由を名乗る
+        let again = directory.appendingPathComponent("failed.json")
+        let second = try #require(ReplayRecorder.open(destination: again).recorder)
+        second.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        second.noteInput(.scrolled(dx: 0, dy: 1))
+        second.beginStep()
+        second.endStep(frame: 60, drew: false, drawFailed: true) { "never" }
+        second.finish(last: nil)
+        let failedRecord = try object(at: again)
+        let failedSteps = try #require(failedRecord["steps"] as? [[String: Any]])
+        #expect(failedSteps.first?["drew"] as? Bool == false && failedSteps.first?["pixelHash"] == nil)
+        let failedReasons = (failedRecord["unreproducible"] as? [[String: Any]])?.compactMap {
+            $0["reason"] as? String
+        }
+        #expect(failedReasons == [ReplayRecorder.Reason.drawFailed])
+    }
+
+    @Test("ドロップしたファイルと選んだファイルは届いた回に名乗り、パスの無い落としや取り消しは名乗らない")
+    func filesArriveByPathOnly() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let recorder = try #require(ReplayRecorder.open(destination: destination).recorder)
+        recorder.noteStart(seed: 0, params: [], frameRate: 60, width: 4, height: 2)
+        recorder.beginStep()
+        recorder.endStep(frame: 1, drew: true) { nil }
+        recorder.noteInput(.fileDropped(paths: [], x: 1, y: 1))
+        recorder.noteInput(.fileSelected(path: nil))
+        recorder.beginStep()
+        recorder.endStep(frame: 2, drew: true) { nil }
+        recorder.noteInput(.fileDropped(paths: ["/tmp/a.png"], x: 1, y: 1))
+        recorder.noteInput(.fileSelected(path: "/tmp/b.csv"))
+        recorder.beginStep()
+        recorder.endStep(frame: 3, drew: true) { nil }
+        recorder.finish(last: nil)
+
+        let notes = try #require(try object(at: destination)["unreproducible"] as? [[String: Any]])
+        #expect(notes.count == 1, "同じ理由は 1 度だけ: \(notes)")
+        #expect(notes[0]["reason"] as? String == ReplayRecorder.Reason.fileByPath)
+        #expect(notes[0]["step"] as? Int == 2, "届いた回 (3 回目の advance) に名乗る")
+    }
+
     @Test("有限でない数を持つ出来事を見分ける")
     func nonFiniteEventsAreRecognised() {
         #expect(InputEvent.mouseMoved(x: .nan, y: 0).hasNonFiniteNumber)
@@ -245,10 +515,14 @@ struct ReplayRecordingRuntimeTests {
 
     private func makeRuntime(
         _ sketch: any Sketch, to destination: URL, clock: Clock = .frameIndex(frameRate: 60),
-        observer: FrameObserver? = nil, handover: ClockHandover? = nil
+        observer: FrameObserver? = nil, handover: ClockHandover? = nil, onScreen: Bool = false
     ) throws -> SketchRuntime {
         let runtime: SketchRuntime
-        if let handover {
+        if onScreen {
+            runtime = try SketchRuntime(
+                sketch: sketch, gpu: RenderDevice(), clock: clock, now: { 0 }, onScreen: true,
+                persistsParams: false)
+        } else if let handover {
             runtime = try SketchRuntime(
                 sketch: sketch, gpu: RenderDevice(), clock: clock, now: { 500 }, persistsParams: false,
                 handover: handover)
@@ -504,7 +778,8 @@ struct ReplayRecordingRuntimeTests {
         for _ in 0..<3 { try runtime.advance() }
         runtime.closePlugins()
         #expect(!FileManager.default.fileExists(atPath: destination.path))
-        #expect(!FileManager.default.fileExists(atPath: destination.path + ".partial"))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(leftovers.isEmpty, "実時間の時計では、.partial も錠も残さない: \(leftovers)")
     }
 
     @Test("記録を頼まない実行は、記録の係も入力の聴き手も持たない")
@@ -550,7 +825,243 @@ struct ReplayRecordingRuntimeTests {
         for _ in 0..<70 { try runtime?.advance() }
         runtime = nil  // 終わりの経路 (closePlugins) を通らずに手放す
         #expect(!FileManager.default.fileExists(atPath: destination.path), "完成として読まれるものが無い")
-        let partial = try String(contentsOfFile: destination.path + ".partial", encoding: .utf8)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { ReplayClaim.isPartial($0, of: "take.json") }
+        let partial = try String(
+            contentsOfFile: directory.appendingPathComponent(try #require(leftovers.first)).path,
+            encoding: .utf8)
         #expect(!partial.contains("\"complete\""))
+    }
+
+    // MARK: - 反証 1 回目
+
+    /// 外から値が届く入り口 (`report` を名乗る)。
+    final class Doorbell: Inlet {
+        let input = ExternalInput<Float>(name: "Doorbell", state: .running)
+        func supply() {}
+        var report: SourceReport? { input.report }
+    }
+
+    /// 音を鳴らす入り口 (窓では実時間で鳴る)。
+    final class Chime: RealtimeSound {
+        func supply() {}
+    }
+
+    /// 入り口を登録する束。
+    struct InletPlugin: Plugin {
+        let inlets: [any Inlet]
+        func register(into registry: PluginRegistry) {
+            for inlet in inlets { registry.add(inlet: inlet) }
+        }
+    }
+
+    /// 束を持つ検査用のスケッチ。
+    final class Wired: Sketch {
+        var bundle: [any Inlet] = []
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        var plugins: [any Plugin] { [InletPlugin(inlets: bundle)] }
+        init() {}
+        convenience init(_ inlets: [any Inlet]) {
+            self.init()
+            bundle = inlets
+        }
+        func draw() { background(0.1) }
+    }
+
+    private func reasons(of record: [String: Any]) -> [String] {
+        (record["unreproducible"] as? [[String: Any]])?.compactMap { $0["reason"] as? String } ?? []
+    }
+
+    private func run(_ runtime: SketchRuntime, frames: Int = 3, at destination: URL) throws -> [String: Any] {
+        for _ in 0..<frames { try runtime.advance() }
+        runtime.closePlugins()
+        return try read(destination)
+    }
+
+    @Test("外から値が届く入り口を足すと、記録の保証の外と名乗る。束で登録しても実行中に足しても同じで、足さない作品には付かない")
+    func outsideInputsAreNamedInTheRecord() throws {
+        let directory = try scratch()
+        // 束で登録する (registerPlugins)
+        let registered = directory.appendingPathComponent("registered.json")
+        let wired = try makeRuntime(Wired([Doorbell()]), to: registered)
+        let first = try run(wired, at: registered)
+        #expect(
+            reasons(of: first) == [ReplayRecorder.Reason.outsideInput("Doorbell")], "\(reasons(of: first))")
+        #expect((first["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 0)
+
+        // 実行中に足す (attachNow)。同じ種類を 2 つ足しても 1 度
+        let attached = directory.appendingPathComponent("attached.json")
+        let runtime = try makeRuntime(Playground(), to: attached)
+        try runtime.advance()
+        runtime.attach(Doorbell())
+        runtime.attach(Doorbell())
+        let second = try run(runtime, at: attached)
+        #expect(reasons(of: second) == [ReplayRecorder.Reason.outsideInput("Doorbell")], "\(reasons(of: second))")
+        #expect((second["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 1, "足した回に名乗る")
+
+        // 足さない作品には付かない
+        let plain = directory.appendingPathComponent("plain.json")
+        let third = try run(try makeRuntime(Playground(), to: plain), at: plain)
+        #expect(third["unreproducible"] == nil)
+    }
+
+    @Test("音を鳴らす入り口は、窓で録った記録にだけ名乗る (窓なしは数で進むので保証の内)")
+    func realtimeSoundIsNamedOnlyInAWindow() throws {
+        let directory = try scratch()
+        let headless = directory.appendingPathComponent("headless.json")
+        let quiet = try run(try makeRuntime(Wired([Chime()]), to: headless), at: headless)
+        #expect(quiet["unreproducible"] == nil, "窓なしの音は数で進む")
+        #expect(quiet["window"] as? Bool == false)
+
+        let windowed = directory.appendingPathComponent("windowed.json")
+        let runtime = try makeRuntime(Wired([Chime()]), to: windowed, onScreen: true)
+        let loud = try run(runtime, at: windowed)
+        #expect(loud["window"] as? Bool == true)
+        #expect(
+            reasons(of: loud) == [ReplayRecorder.Reason.realtimeSound("Chime")], "\(reasons(of: loud))")
+    }
+
+    @Test("記録している実行は、拡大した字の焼きを次のフレームへ送らない。記録を頼まない窓は送ったまま")
+    func aRecordedRunDoesNotDeferGlyphBakes() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let runtime = try SketchRuntime(
+            sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            onScreen: true, persistsParams: false)
+        runtime.defersEnlargedGlyphBakes = true  // 窓の経路が立てる
+        runtime.startRecording(try #require(ReplayRequest(destination: destination.path)))
+        #expect(!runtime.defersEnlargedGlyphBakes, "記録を始めたら切る")
+        runtime.closePlugins()
+
+        let plain = try SketchRuntime(
+            sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
+            onScreen: true, persistsParams: false)
+        plain.defersEnlargedGlyphBakes = true
+        #expect(plain.defersEnlargedGlyphBakes, "記録を頼まない実行は変わらない")
+    }
+
+    @Test("ドロップ・選んだファイルは届いた回に、URL から読んだ本文はその回に、記録の保証の外と名乗る")
+    func fileContentsAreNotInTheRecord() throws {
+        final class Fetcher: Sketch {
+            var url = ""
+            var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+            init() {}
+            convenience init(_ url: String) {
+                self.init()
+                self.url = url
+            }
+            func draw() {
+                background(0.1)
+                if frameCount == 3 { _ = try? loadStrings(url) }
+            }
+        }
+        let directory = try scratch()
+        let dropped = directory.appendingPathComponent("dropped.json")
+        let runtime = try makeRuntime(Playground(), to: dropped)
+        try runtime.advance()
+        runtime.input.enqueue(.fileDropped(paths: ["/tmp/a.png"], x: 1, y: 1))
+        let first = try run(runtime, at: dropped)
+        #expect(reasons(of: first) == [ReplayRecorder.Reason.fileByPath], "\(reasons(of: first))")
+        #expect((first["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 1)
+
+        let fetched = directory.appendingPathComponent("fetched.json")
+        let url = CannedResponses.serve("a\nb\n")
+        let web = try makeRuntime(Fetcher(url), to: fetched)
+        let second = try run(web, frames: 5, at: fetched)
+        #expect(reasons(of: second) == [ReplayRecorder.Reason.webFile], "\(reasons(of: second))")
+        #expect((second["unreproducible"] as? [[String: Any]])?.first?["step"] as? Int == 2, "3 枚目の draw の中")
+
+        // 読み込みを呼ばない作品には付かない
+        let local = directory.appendingPathComponent("local.json")
+        let third = try run(try makeRuntime(Playground(), to: local), at: local)
+        #expect(third["unreproducible"] == nil)
+    }
+
+    @Test("描くのに失敗した枚は drew が偽で画素のハッシュを取らず、理由を名乗り、最後の絵も書かない")
+    func aFailedDrawIsNotHashed() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let runtime = try makeRuntime(Playground(), to: destination)
+        for _ in 0..<59 { try runtime.advance() }
+        runtime.canvas.failureForTesting = .encoderUnavailable
+        #expect(throws: RenderFailure.self) { try runtime.advance() }  // 60 枚目 (ハッシュの間隔の倍数)
+        runtime.closePlugins()
+
+        let record = try read(destination)
+        let steps = try #require(record["steps"] as? [[String: Any]])
+        let failed = try #require(steps.last)
+        #expect(failed["frame"] as? Int == 60 && failed["drew"] as? Bool == false)
+        #expect(failed["pixelHash"] == nil, "失敗した枚の画素をハッシュにしない")
+        #expect(record["last"] == nil, "最後の枚が描けていなければ、最後の絵は無い")
+        #expect(reasons(of: record) == [ReplayRecorder.Reason.drawFailed], "\(reasons(of: record))")
+        #expect(record["complete"] as? Bool == true)
+    }
+
+    /// `setup()` が投げるスケッチ。
+    final class BadSetup: Sketch {
+        struct Failure: Error {}
+        var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+        func setup() throws { throw Failure() }
+        func draw() { background(0.1) }
+    }
+
+    @Test("setup() が投げて終わった実行は完成と呼ばない: 行き先は作られず、.partial が残る")
+    func aRunWhoseSetupThrewIsNotComplete() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let runtime = try makeRuntime(BadSetup(), to: destination)
+        #expect(throws: RenderFailure.self) { try runtime.advance() }
+        runtime.closePlugins()
+        #expect(!FileManager.default.fileExists(atPath: destination.path), "完成として読まれるものが無い")
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let partials = names.filter { ReplayClaim.isPartial($0, of: "take.json") }
+        #expect(partials.count == 1 && names.count == 1, "\(names)")
+        let text = try String(contentsOf: directory.appendingPathComponent(partials[0]), encoding: .utf8)
+        #expect(!text.contains("\"complete\""))
+        #expect(runtime.recordingStatus == nil)
+    }
+
+    @Test("実時間の時計では記録を始めないが、前の回の完成品は消す。同じ行き先の 2 つ目の実行は始めず、1 つ目を壊さない")
+    func thePreviousRecordIsClearedAndAnotherRunCannotShare() throws {
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        // 実時間の時計: 前の回の完成品は残らない (道具は「No record was written」と言う)
+        try Data("{\"schemaVersion\":1,\"complete\":true}".utf8).write(to: destination)
+        let wall = try makeRuntime(Playground(), to: destination, clock: .wallClock)
+        #expect(wall.replay == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path), "前の回の完成品を残さない")
+        for _ in 0..<2 { try wall.advance() }
+        wall.closePlugins()
+
+        // 同じ行き先の 2 つ目の実行: 始めず、先の実行は完成する
+        let first = try makeRuntime(Playground(), to: destination)
+        let second = try SketchRuntime(
+            sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), persistsParams: false)
+        #expect(!second.startRecording(try #require(ReplayRequest(destination: destination.path))))
+        #expect(second.replay == nil)
+        try second.advance()
+        second.closePlugins()
+        for _ in 0..<3 { try first.advance() }
+        first.closePlugins()
+        let record = try read(destination)
+        #expect(record["complete"] as? Bool == true && (record["steps"] as? [[String: Any]])?.count == 3)
+    }
+
+    @Test("非有限の @Param の既定値でも、完成品はスキーマの形で書ける (関所が零へ畳んだ値が開始の値になる)")
+    func aNonFiniteParamDefaultStillMakesAValidRecord() throws {
+        final class Wild: Sketch {
+            @Param var gain: Double = .nan
+            var settings: SketchSettings { SketchSettings(width: 16, height: 16, frameRate: 60) }
+            func draw() { background(0.1) }
+        }
+        let directory = try scratch()
+        let destination = directory.appendingPathComponent("take.json")
+        let record = try run(try makeRuntime(Wild(), to: destination), at: destination)
+        #expect(record["complete"] as? Bool == true)
+        let params = try #require((record["start"] as? [String: Any])?["params"] as? [[String: Any]])
+        // @Param の関所が、生まれのときの非有限を型の零へ畳む (ADR-0030 決定 3)。畳んだ後の値が開始の値
+        #expect(params.first?["name"] as? String == "gain" && params.first?["value"] as? Double == 0)
+        let text = try String(contentsOf: destination, encoding: .utf8)
+        #expect(!text.contains("null"))
     }
 }

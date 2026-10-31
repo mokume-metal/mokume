@@ -108,4 +108,34 @@ struct RecordOptionTests {
         // 別の見張りは別の数え
         #expect(RecordGenerations(destination: "/tmp/out/take.json").next() == "/tmp/out/take-1.json")
     }
+
+    // MARK: - 反証 1 回目
+
+    @Test("記録が書かれたかは、在るかではなく、この実行の始まりより後に書かれたかで決める")
+    func anEarlierRecordDoesNotCountAsWritten() throws {
+        let directory = try TestScratch.directory("mokume-record-written")
+        let path = directory.appendingPathComponent("take.json").path
+        let launched = Date()
+        #expect(!RunCommand.recordWasWritten(at: path, since: launched), "無ければ書かれていない")
+
+        // 前の回の完成品が残っている (子が記録を始めなかった回) — 書かれたことにしない
+        try Data("{}".utf8).write(to: URL(fileURLWithPath: path))
+        try FileManager.default.setAttributes(
+            [.modificationDate: launched.addingTimeInterval(-60)], ofItemAtPath: path)
+        #expect(!RunCommand.recordWasWritten(at: path, since: launched), "前の回の完成品を、今回のものと読んだ")
+
+        // この実行が書いた
+        try FileManager.default.setAttributes(
+            [.modificationDate: launched.addingTimeInterval(5)], ofItemAtPath: path)
+        #expect(RunCommand.recordWasWritten(at: path, since: launched))
+    }
+
+    @Test("道具が言う行き先と、子が書く場所は同じ綴りで、前後の空白も削らない")
+    func theToldDestinationIsTheWrittenOne() throws {
+        let given = try #require(try destination(["--record", "/tmp/ record dir/take .json "]))
+        #expect(given == "/tmp/ record dir/take .json ")
+        #expect(ReplayRequest(destination: given)?.environmentValue == given)
+        let carried = RunCommand.childEnvironment([:], recording: given)[StartupReads.record.key]
+        #expect(carried == given)
+    }
 }

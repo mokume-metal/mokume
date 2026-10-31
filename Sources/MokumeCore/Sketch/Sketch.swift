@@ -682,6 +682,10 @@ enum LaunchingSketch {
     /// 後も、足すのを実行へ頼めるようにする** — 足すのは実行がフレームの頭で行い、ここが持ち越すのは頼む窓口だけである
     /// (``AttachRequests``)。実行そのものは持ち越さないので、描く口は `Task` から効かない。
     @TaskLocal static var attachments: AttachRequests?
+    /// 実行を記録している係 (``ReplayRecorder``・#3570)。**中で起こされた `Task` の読み込み (``SketchPart/requestJSONObject(_:)``
+    /// など) が、URL から受け取ったこと (記録は本文を持たない) をその回に名乗れるようにする。** 名乗るだけで、
+    /// 実行の状態には触らない。記録していない実行は `nil`。
+    @TaskLocal static var replay: ReplayRecorder?
 }
 
 extension SketchPart {

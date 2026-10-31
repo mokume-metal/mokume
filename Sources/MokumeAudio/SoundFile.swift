@@ -146,7 +146,7 @@ import MokumeDiagnostics
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
-public final class SoundFile: Inlet, EffectInput {
+public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// ファイルの標本化率 (Hz)。帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz。
     public let sampleRate: Float
 

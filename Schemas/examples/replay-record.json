@@ -3,13 +3,15 @@
   "id": "6f1d6b0e-52a7-4c9e-9a1d-3f58f1a3c0de",
   "clock": { "kind": "frames", "frameRate": 60 },
   "size": { "width": 640, "height": 360 },
+  "window": true,
   "start": {
     "seed": 0,
     "seconds": 0,
     "paused": false,
     "params": [
       { "name": "radius", "type": "float", "value": 120 },
-      { "name": "spinning", "type": "bool", "value": false }
+      { "name": "spinning", "type": "bool", "value": false },
+      { "name": "gain", "type": "float", "value": "nan" }
     ]
   },
   "steps": [
@@ -59,7 +61,11 @@
     }
   ],
   "unreproducible": [
-    { "step": 1, "reason": "Replay is not guaranteed (non-finite input)" }
+    { "step": 1, "reason": "Replay is not guaranteed (non-finite input)" },
+    {
+      "step": 0,
+      "reason": "Replay is not guaranteed (input from outside the sketch, which the record does not hold: MIDI)"
+    }
   ],
   "last": {
     "frame": 60,

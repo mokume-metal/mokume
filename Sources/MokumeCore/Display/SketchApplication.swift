@@ -421,8 +421,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         _ = ShaderOrigin.startup()
         // **作り直しをまたぐ時計の合図も同じ** (#2414)。書き出しの頼みが在れば使わない (下の `render`)
         let render = try RenderRequest.startup()
-        // **記録の合図も同じ** (#3570)。ホストのアプリの中 (``SketchView``) と書き出しの子は記録しない
-        let record = embedded || render != nil ? nil : ReplayRequest.startup()
+        // **記録の合図も同じ** (#3570)。ホストのアプリの中 (``SketchView``) と書き出しの子は記録しない。**使わなくても、
+        // 環境からは必ず消す** — 残れば、そこから起こす子が継いで、頼んでいない実行が記録を始める
+        let record = ReplayRequest.startup(forRun: !(embedded || render != nil))
         try self.init(
             sketch: sketch, gpu: gpu, render: render,
             handover: ClockHandover.startup(), embedded: embedded, record: record)
@@ -474,7 +475,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **記録は最初の枚の前に始める** (途中から始める口は無い・#3570)。実時間の時計なら始めず、理由を言って走り続ける
         if let record { runtime.startRecording(record) }
         // 先送りを許すのは、窓・共有面で回すときだけ。書き出す経路は絵が残るので、焼き切る (#2446)
-        runtime.defersEnlargedGlyphBakes = render == nil
+        // **記録している実行は送らない** (窓なしで流す側と同じ手順で描くので、画素のハッシュが割れない・#3570)
+        runtime.defersEnlargedGlyphBakes = render == nil && runtime.replay == nil
         self.runtime = runtime
         self.driverDeparted = { runtime.takeDriverDeparture() }
         self.presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)

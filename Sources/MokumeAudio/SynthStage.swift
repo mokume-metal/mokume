@@ -28,7 +28,7 @@ import MokumeDiagnostics
 /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
-final class SynthStage: Inlet {
+final class SynthStage: Inlet, RealtimeSound {
     /// 標本化率 (Hz)。実機の出力と違えば、混ぜる節が変換する。
     static let sampleRate = 48_000.0
 
