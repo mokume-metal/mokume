@@ -33,9 +33,9 @@
 /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
 /// [#2761]: https://github.com/mokume-metal/mokume/issues/2761
 @MainActor
-final class OutsideRun {
+package final class OutsideRun {
     /// 外から呼ばれたとき、どう倒したか。
-    enum Use {
+    package enum Use {
         /// 描く・状態を書く口。何もしなかった。入力の止める口 (`AudioIn.stop()` など)
         /// ``SketchPart/detach(_:calledAs:)``) も使う。
         case act
@@ -58,6 +58,11 @@ final class OutsideRun {
         ///
         /// [#2740]: https://github.com/mokume-metal/mokume/issues/2740
         case thrownUnattached
+        /// 読み取りの口のうち、外では**最後に描いたフレームの値**を返すもの。代わりに `value` (人が読む綴り) を返した。
+        /// 毎フレームの値を 1 つ持つ口 (`MokumeGame` の `Scene.current` など) が使う。`.read` の助言「`setup()` の中で決める」は
+        /// 持ち主が毎フレーム変える値には成り立たないので、`draw()` の中で読み、他の所では自分の状態へ写して使う、と言う
+        /// (SwiftUI の `body` のような、`draw()` の外に置く読み手にも実行できる助言)。
+        case readLast(returning: String)
     }
 
     /// 検査が自分の控えを差す口。差していなければ ``shared``。
@@ -70,7 +75,7 @@ final class OutsideRun {
     static let shared = OutsideRun()
 
     /// いま言う先の控え。
-    static var log: OutsideRun { current ?? shared }
+    package static var log: OutsideRun { current ?? shared }
 
     /// 鍵。口の名前と、読んだか呼んだか。
     private struct Key: Hashable {
@@ -84,10 +89,11 @@ final class OutsideRun {
     private(set) var messages: [String] = []
 
     /// その口について、まだ言っていなければ 1 度だけ言う。
-    func warn(_ call: String, _ use: Use) {
-        if case .read = use {
+    package func warn(_ call: String, _ use: Use) {
+        switch use {
+        case .read, .readLast:
             say(Key(call: call, reading: true), Self.notice(call, use))
-        } else {
+        case .act, .make, .thrown, .thrownUnattached:
             say(Key(call: call, reading: false), Self.notice(call, use))
         }
     }
@@ -121,6 +127,11 @@ final class OutsideRun {
             "\(call) is only known inside setup(), draw() or an input callback. It was read "
                 + "outside them — from an initialiser, after the sketch ended, or from a Task — so "
                 + "\(value) was returned instead. Make anything that depends on it inside setup()"
+        case .readLast(let value):
+            "\(call) is only known while the sketch is running (inside setup(), draw() or an input "
+                + "callback). It was read outside — from an initialiser, a Task, or a SwiftUI view body — so "
+                + "\(value) was returned instead. Read it inside draw(), and copy it into your own state "
+                + "there (or expose() it) to use it anywhere else"
         case .make(let value):
             "\(call) only works inside setup(), draw() or an input callback. It was called "
                 + "outside them — from an initialiser, after the sketch ended, or from a Task — so "

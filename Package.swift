@@ -103,7 +103,7 @@ let package = Package(
         // ゲーム (シーン・アーケード物理・カメラの追従など)。ゲームの作りが要る口で、他のどのターゲットとも
         // 依存も意味も重ならないので分ける (ADR-0045・#3588)
         .target(
-            name: "MokumeGame", dependencies: ["MokumeCore", "MokumeDiagnostics"],
+            name: "MokumeGame", dependencies: ["MokumeCore"],
             swiftSettings: .mokume),
         // アンブレラ — 全モジュールを再エクスポートする
         .target(

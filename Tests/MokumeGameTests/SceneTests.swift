@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import MokumeDiagnostics
 import MokumeTestSupport
 import Testing
 
@@ -12,193 +13,235 @@ enum Screen: String, Sendable {
     case title, game, result
 }
 
-/// フレーム番号を直に渡して、場面の切り替えの約束を表で確かめる (#3588)。窓も GPU も要らない。
+/// `draw()` を始めた回数を直に渡して、場面の切り替えの約束を表で確かめる (#3588)。窓も GPU も要らない。
 ///
-/// フレーム 0 は `setup()` (最初の `draw()` の前)、フレーム 1 が最初の `draw()`。
+/// 回数 0 は `setup()` と最初の `draw()` の前、回数 1 が最初の `draw()`。`draw()` の中で頼んだ切り替えも、
+/// `draw()` の前に走る入力のコールバック・`Task` が頼んだ切り替えも、頼んだ時点で始まっていた `draw()` の
+/// 回数 k に紐づき、k + 1 回目の `draw()` で効く (どこから頼んでも同じ規則)。
 @MainActor
 struct SceneTableTests {
-    @Test("始まりの場面は、最初のフレームから入っていて、そのフレームだけ justEntered")
-    func startingSceneIsEnteredAtTheFirstFrame() {
-        let scene = Scene(starting: Screen.title)
-        #expect(scene.current(at: 0) == .title)
-        #expect(!scene.justEntered(at: 0), "setup() では入っていない")
-        for frame in 1...3 { #expect(scene.current(at: frame) == .title) }
-        #expect(scene.justEntered(at: 1))
-        #expect(!scene.justEntered(at: 2))
-        #expect(!scene.justEntered(at: 3))
+    /// 実行 `run` が `draw()` を `draws` 回始めたときの目盛り。
+    private func at(_ draws: Int, run: Int = 1) -> DrawProgress {
+        DrawProgress(run: run, draws: draws)
     }
 
-    @Test("フレーム 10 で切り替えると、10 は最後まで元の場面、11 の頭から新しい場面で、11 だけ justEntered")
-    func changeTakesEffectAtTheNextFrame() {
+    @Test("始まりの場面は、最初の draw() から入っていて、その draw() だけ justEntered")
+    func startingSceneIsEnteredAtTheFirstDraw() {
         let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 10)
-        #expect(scene.current(at: 10) == .title, "呼んだフレームは元の場面のまま")
-        #expect(!scene.justEntered(at: 10))
-        #expect(scene.current(at: 11) == .game)
-        #expect(scene.justEntered(at: 11))
-        #expect(scene.current(at: 12) == .game)
-        #expect(!scene.justEntered(at: 12), "その 1 フレームだけ")
-        #expect(scene.current(at: 500) == .game)
+        #expect(scene.sceneVisible(at: at(0)) == .title)
+        #expect(!scene.enteredAtDraw(at: at(0)), "setup() では入っていない")
+        for draws in 1...3 { #expect(scene.sceneVisible(at: at(draws)) == .title) }
+        #expect(scene.enteredAtDraw(at: at(1)))
+        #expect(!scene.enteredAtDraw(at: at(2)))
+        #expect(!scene.enteredAtDraw(at: at(3)))
     }
 
-    @Test("同じフレームで何度か切り替えると、最後に呼んだものが効く")
-    func theLastChangeInAFrameWins() {
+    @Test("10 回目の draw() で切り替えると、10 回目は最後まで元の場面、11 回目の頭から新しい場面で、11 回目だけ justEntered")
+    func changeTakesEffectAtTheNextDraw() {
         let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 10)
-        scene.change(to: .result, at: 10)
-        #expect(scene.current(at: 10) == .title)
-        #expect(scene.current(at: 11) == .result)
-        #expect(scene.justEntered(at: 11))
+        scene.requestChange(to: .game, at: at(10))
+        #expect(scene.sceneVisible(at: at(10)) == .title, "呼んだ draw() は元の場面のまま")
+        #expect(!scene.enteredAtDraw(at: at(10)))
+        #expect(scene.sceneVisible(at: at(11)) == .game)
+        #expect(scene.enteredAtDraw(at: at(11)))
+        #expect(scene.sceneVisible(at: at(12)) == .game)
+        #expect(!scene.enteredAtDraw(at: at(12)), "その 1 回だけ")
+        #expect(scene.sceneVisible(at: at(500)) == .game)
+    }
+
+    @Test("同じ draw() で何度か切り替えると、最後に呼んだものが効く")
+    func theLastChangeInADrawWins() {
+        let scene = Scene(starting: Screen.title)
+        scene.requestChange(to: .game, at: at(10))
+        scene.requestChange(to: .result, at: at(10))
+        #expect(scene.sceneVisible(at: at(10)) == .title)
+        #expect(scene.sceneVisible(at: at(11)) == .result)
+        #expect(scene.enteredAtDraw(at: at(11)))
     }
 
     @Test("立て続けに切り替えても、効いた場面に入った位置を失わない")
     func consecutiveChangesKeepEachEntry() {
         let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 10)
-        // 11 で game に入り、その draw() の中で次の切り替えを頼む
-        #expect(scene.current(at: 11) == .game)
-        scene.change(to: .result, at: 11)
-        #expect(scene.current(at: 11) == .game, "頼んだフレームは game のまま")
-        #expect(scene.justEntered(at: 11), "game に入った最初のフレーム")
-        #expect(scene.current(at: 12) == .result)
-        #expect(scene.justEntered(at: 12))
-        #expect(!scene.justEntered(at: 13))
+        scene.requestChange(to: .game, at: at(10))
+        // 11 回目で game に入り、その draw() の中で次の切り替えを頼む
+        #expect(scene.sceneVisible(at: at(11)) == .game)
+        scene.requestChange(to: .result, at: at(11))
+        #expect(scene.sceneVisible(at: at(11)) == .game, "頼んだ draw() は game のまま")
+        #expect(scene.enteredAtDraw(at: at(11)), "game に入った最初の draw()")
+        #expect(scene.sceneVisible(at: at(12)) == .result)
+        #expect(scene.enteredAtDraw(at: at(12)))
+        #expect(!scene.enteredAtDraw(at: at(13)))
     }
 
-    @Test("setup() (フレーム 0) で切り替えると、最初のフレームで効いて justEntered")
-    func changeInSetupTakesEffectAtTheFirstFrame() {
+    @Test("setup() (回数 0) で切り替えると、最初の draw() で効いて justEntered")
+    func changeInSetupTakesEffectAtTheFirstDraw() {
         let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 0)
-        #expect(scene.current(at: 0) == .title)
-        #expect(scene.current(at: 1) == .game)
-        #expect(scene.justEntered(at: 1))
-        #expect(!scene.justEntered(at: 2))
+        scene.requestChange(to: .game, at: at(0))
+        #expect(scene.sceneVisible(at: at(0)) == .title, "setup() の間は元の場面")
+        #expect(scene.sceneVisible(at: at(1)) == .game)
+        #expect(scene.enteredAtDraw(at: at(1)))
+        #expect(!scene.enteredAtDraw(at: at(2)))
     }
 
-    @Test("同じ場面への切り替えは入り直しで、次のフレームで justEntered が真")
+    @Test("同じ場面への切り替えは入り直しで、次の draw() で justEntered が真")
     func changingToTheSameSceneReentersIt() {
         let scene = Scene(starting: Screen.game)
-        scene.change(to: .game, at: 20)
-        #expect(!scene.justEntered(at: 20))
-        #expect(scene.current(at: 21) == .game)
-        #expect(scene.justEntered(at: 21))
-        #expect(!scene.justEntered(at: 22))
+        scene.requestChange(to: .game, at: at(20))
+        #expect(!scene.enteredAtDraw(at: at(20)))
+        #expect(scene.sceneVisible(at: at(21)) == .game)
+        #expect(scene.enteredAtDraw(at: at(21)))
+        #expect(!scene.enteredAtDraw(at: at(22)))
     }
 
     @Test("場面の値は Sendable で、隔離の外からも作れる")
     func sceneCanBeCreatedOutsideTheMainActor() async {
         let scene = await Task.detached { Scene(starting: Screen.title) }.value
-        #expect(scene.current(at: 1) == .title)
+        #expect(scene.sceneVisible(at: at(1)) == .title)
     }
 
-    // MARK: - 描いている最中でない所から (Task・コールバック・止めている間)
+    // MARK: - 読まれない draw()・止めている間 (頼んだ時点で効く draw() が決まる)
 
-    @Test("フレームが分からない所 (Task の中) から切り替えると、次に読まれたフレームの頭で効き、そのフレームだけ justEntered")
-    func changeFromWhereTheFrameIsUnknownTakesEffectAtTheNextRead() {
+    @Test("読まれない draw() を挟んでも、入った最初の draw() は頼んだ回数で決まる。後で読んでも justEntered は偽")
+    func theEntryDrawIsFixedWhenAskedNotWhenRead() {
         let scene = Scene(starting: Screen.title)
-        for frame in 1...5 { #expect(scene.current(at: frame) == .title) }
-        scene.change(to: .game, at: nil)  // フレーム 5 を描き終えた後の Task
-        #expect(scene.current(at: 6) == .game)
-        #expect(scene.justEntered(at: 6), "効いたフレームで 1 度は真になる")
-        #expect(scene.current(at: 7) == .game)
-        #expect(!scene.justEntered(at: 7), "1 度だけ")
+        for draws in 1...5 { #expect(scene.sceneVisible(at: at(draws)) == .title) }
+        scene.requestChange(to: .game, at: at(5))  // 5 回目の draw() が返った後の Task
+        // 6〜8 回目は誰も読まない
+        #expect(scene.sceneVisible(at: at(9)) == .game)
+        #expect(!scene.enteredAtDraw(at: at(9)), "game に入ったのは 6 回目。読んだ 9 回目ではない")
+        #expect(scene.enteredAtDraw(at: at(6)), "入った最初の draw() は 6 回目で、後から引いても変わらない")
     }
 
-    @Test("描く前 (プロパティの初期値・setup() の前) から切り替えても、最初のフレームで効いて justEntered")
-    func changeBeforeTheFirstFrame() {
+    @Test("毎回読んでも、まばらにしか読まなくても、入った draw() が割れない")
+    func skippingReadsDoesNotMoveTheEntry() {
+        let readEveryDraw = Scene(starting: Screen.title)
+        let readRarely = Scene(starting: Screen.title)
+        for scene in [readEveryDraw, readRarely] { scene.requestChange(to: .game, at: at(5)) }
+        for draws in 5...8 { _ = readEveryDraw.sceneVisible(at: at(draws)) }
+        let every = (6...9).map { readEveryDraw.enteredAtDraw(at: at($0)) }
+        let rarely = (6...9).map { readRarely.enteredAtDraw(at: at($0)) }
+        #expect(every == [true, false, false, false])
+        #expect(rarely == every)
+    }
+
+    @Test("頼んだ切り替えが効く前に、別の切り替えを頼んでも、後のものが効く")
+    func aLaterRequestReplacesAPendingOne() {
         let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: nil)
-        #expect(scene.current(at: 0) == .game || scene.current(at: 0) == .title)  // setup() の中。どちらでも約束しない
-        #expect(scene.current(at: 1) == .game)
-        #expect(scene.justEntered(at: 1))
-        #expect(!scene.justEntered(at: 2))
+        scene.requestChange(to: .game, at: at(10))
+        scene.requestChange(to: .result, at: at(10))  // 11 回目の前に走る Task
+        #expect(scene.sceneVisible(at: at(11)) == .result)
+        #expect(scene.enteredAtDraw(at: at(11)))
+        #expect(!scene.enteredAtDraw(at: at(12)))
     }
 
-    @Test("頼んだ切り替えが読まれる前に、別の切り替えを Task から頼んでも、古い場面で潰さず、後のものが効く")
-    func aPendingChangeIsNotOverwrittenByTheSettledScene() {
-        let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 10)
-        scene.change(to: .result, at: nil)  // 11 を読む前の Task
-        #expect(scene.current(at: 11) == .result)
-        #expect(scene.justEntered(at: 11))
-        #expect(!scene.justEntered(at: 12))
-    }
-
-    @Test("効いた後に Task から次の切り替えを頼むと、効いた場面に入った位置を失わず、次のフレームで次の場面に入る")
-    func aTaskChangeAfterAnEffectiveOneKeepsBoth() {
-        let scene = Scene(starting: Screen.title)
-        scene.change(to: .game, at: 10)
-        #expect(scene.current(at: 11) == .game && scene.justEntered(at: 11))
-        scene.change(to: .result, at: nil)
-        #expect(scene.current(at: 12) == .result)
-        #expect(scene.justEntered(at: 12))
-        #expect(scene.current(at: 13) == .result && !scene.justEntered(at: 13))
-    }
-
-    @Test("止めている間のコールバックで切り替えても、次に描くフレームの頭で効く。それまで読む current は元の場面")
+    @Test("止めている間 (最後に描いたのは 10 回目) に頼んだ切り替えは、次に描く 11 回目で効く。それまで読む current は元の場面")
     func changeWhileStoppedTakesEffectOnTheNextDrawnFrame() {
         let scene = Scene(starting: Screen.title)
-        for frame in 1...10 { _ = scene.current(at: frame) }  // 10 で noLoop()
-        scene.change(to: .game, at: 10)  // 止めている間のコールバック (最後に描いたのは 10)
-        #expect(scene.current(at: 10) == .title, "止めている間の読みは元の場面")
-        #expect(scene.current(at: 10) == .title)
-        #expect(scene.current(at: 11) == .game, "redraw() で描く次のフレーム")
-        #expect(scene.justEntered(at: 11))
+        for draws in 1...10 { _ = scene.sceneVisible(at: at(draws)) }  // 10 回目に noLoop()
+        scene.requestChange(to: .game, at: at(10))  // 止めている間の Task
+        #expect(scene.sceneVisible(at: at(10)) == .title, "止めている間のコールバックが読む current は元の場面")
+        #expect(scene.sceneVisible(at: at(10)) == .title)
+        #expect(!scene.enteredAtDraw(at: at(10)))
+        #expect(scene.sceneVisible(at: at(11)) == .game, "redraw() で描く次の draw()")
+        #expect(scene.enteredAtDraw(at: at(11)), "redraw() の draw() で justEntered")
     }
 
     // MARK: - 走っていない所で読む
 
-    @Test("走っていない所で読むと、最後に描いたフレームで見えていた場面を返し、justEntered は偽。口の名前で 1 度だけ警告する")
+    @Test("走っていない所で読むと、最後に描いた draw() で見えていた場面を返す。口の名前ごとに 1 度だけ、観測の応答にも載せて警告する")
     func readingOutsideARunReturnsTheLastVisibleScene() {
-        let notices = SceneNotices()
-        SceneNotices.$override.withValue(notices) {
-            let scene = Scene(starting: Screen.title)
-            #expect(scene.current(at: nil) == .title, "まだ描いていなければ始まりの場面")
-            scene.change(to: .game, at: 10)
-            #expect(scene.current(at: 11) == .game)
-            for _ in 0..<3 {
-                #expect(scene.current(at: nil) == .game, "最後に描いた 11 で見えていた場面")
-                #expect(!scene.justEntered(at: nil))
+        let log = OutsideRun()
+        let digest = WarningDigest()
+        Diagnostics.$digest.withValue(digest) {
+            OutsideRun.$current.withValue(log) {
+                let scene = Scene(starting: Screen.title)
+                #expect(
+                    scene.lastDrawnScene(at: at(0), calledAs: "Scene.current") == .title, "まだ描いていなければ始まりの場面")
+                scene.requestChange(to: .game, at: at(10))
+                #expect(scene.sceneVisible(at: at(11)) == .game)
+                for _ in 0..<3 {
+                    #expect(
+                        scene.lastDrawnScene(at: at(11), calledAs: "Scene.current") == .game,
+                        "最後に描いた 11 回目で見えていた場面")
+                    _ = scene.lastDrawnScene(at: at(11), calledAs: "Scene.justEntered")
+                }
+                #expect(log.messages.count == 2, "current と justEntered が 1 度ずつ")
+                #expect(log.messageForRead(of: "Scene.current")?.hasPrefix("Scene.current ") == true)
+                #expect(log.messageForRead(of: "Scene.justEntered")?.hasPrefix("Scene.justEntered ") == true)
+                // 観測の応答の warnings に載る文面と同じ
+                #expect(digest.takeUnreported() == log.messages)
             }
-            #expect(notices.messages.count == 2, "current と justEntered が 1 度ずつ")
-            #expect(notices.messages.contains { $0.hasPrefix("Scene.current ") })
-            #expect(notices.messages.contains { $0.hasPrefix("Scene.justEntered ") })
-            #expect(!notices.messages.contains { $0.contains("frameCount") }, "作者の frameCount の警告と鍵を共有しない")
+        }
+    }
+
+    @Test("走っている実行が無い所の current / justEntered は、場面と偽を返し、観測の応答に載る警告を言う")
+    func publicReadsOutsideARunWarn() {
+        let log = OutsideRun()
+        let digest = WarningDigest()
+        Diagnostics.$digest.withValue(digest) {
+            OutsideRun.$current.withValue(log) {
+                let scene = Scene(starting: Screen.title)
+                #expect(scene.current == .title)
+                #expect(!scene.justEntered)
+                #expect(log.messages.count == 2)
+                #expect(digest.takeUnreported().count == 2, "観測の応答に載る")
+                // SwiftUI の body で読む場合にも実行できる助言にする: 「setup() の中で決めろ」とは言わない
+                for message in log.messages {
+                    #expect(message.contains("SwiftUI"), "\(message)")
+                    #expect(message.contains("Read it inside draw()"), "\(message)")
+                    #expect(!message.contains("Make anything that depends on it inside setup()"), "\(message)")
+                }
+            }
         }
     }
 
     @Test("切り替えはどこから頼んでも警告しない")
     func changingNeverWarns() {
-        let notices = SceneNotices()
-        SceneNotices.$override.withValue(notices) {
-            let scene = Scene(starting: Screen.title)
-            scene.change(to: .game, at: nil)
-            scene.change(to: .result, at: 3)
-            #expect(notices.messages.isEmpty)
+        let log = OutsideRun()
+        let digest = WarningDigest()
+        Diagnostics.$digest.withValue(digest) {
+            OutsideRun.$current.withValue(log) {
+                let scene = Scene(starting: Screen.title)
+                scene.change(to: .game)  // 走っていない所から
+                scene.requestChange(to: .result, at: at(3))
+                #expect(log.messages.isEmpty)
+                #expect(digest.takeUnreported().isEmpty)
+            }
         }
     }
 
-    // MARK: - フレーム番号が戻る (別の実行)
+    // MARK: - 実行の識別 (別の実行)
 
-    @Test("読んだ番号が戻ったら新しい実行とみなし、頼んであった切り替えを確定して、最初のフレームで justEntered")
-    func aFrameNumberThatGoesBackStartsANewRun() {
+    @Test("実行が変わったら新しい実行とみなし、頼んであった切り替えを確定して、その実行の最初の draw() で justEntered")
+    func aDifferentRunStartsOver() {
         let scene = Scene(starting: Screen.title)
-        for frame in 1...400 { _ = scene.current(at: frame) }
-        scene.change(to: .game, at: 400)  // 効く前に実行が終わる
+        for draws in 1...400 { _ = scene.sceneVisible(at: at(draws)) }
+        scene.requestChange(to: .game, at: at(400))  // 効く前に実行が終わる
         // 別の実行 (同じ値を static に置いて持ち越した)
-        #expect(scene.current(at: 1) == .game, "頼んでいた切り替えは確定する")
-        #expect(scene.justEntered(at: 1), "新しい実行の最初のフレーム")
-        #expect(!scene.justEntered(at: 2))
-        #expect(scene.current(at: 401) == .game, "401 フレーム目に突然何かが効くことはない")
-        #expect(!scene.justEntered(at: 401))
+        #expect(scene.sceneVisible(at: at(1, run: 2)) == .game, "頼んでいた切り替えは確定する")
+        #expect(scene.enteredAtDraw(at: at(1, run: 2)), "新しい実行の最初の draw()")
+        #expect(!scene.enteredAtDraw(at: at(2, run: 2)))
+        #expect(scene.sceneVisible(at: at(401, run: 2)) == .game, "401 回目に突然何かが効くことはない")
+        #expect(!scene.enteredAtDraw(at: at(401, run: 2)))
     }
 
-    @Test("新しい実行の setup() (フレーム 0) で読んでも、最初の draw() で justEntered")
+    @Test("新しい実行の最初の読みが前の実行の回数以上でも、別の実行と分かる (番号の大小で推し量らない)")
+    func aLaterFirstReadInTheNewRunIsStillANewRun() {
+        let scene = Scene(starting: Screen.title)
+        for draws in 1...3 { _ = scene.sceneVisible(at: at(draws)) }
+        scene.requestChange(to: .game, at: at(3))  // 前の実行の 4 回目で効くはずだった
+        // 前の実行は 3 回で終わり、新しい実行が 4 回目の draw() で初めて読む。番号は前の実行の 3 より大きい
+        #expect(scene.sceneVisible(at: at(4, run: 2)) == .game, "頼んでいた切り替えは確定する")
+        #expect(!scene.enteredAtDraw(at: at(4, run: 2)), "前の実行で頼んだ 4 回目の入りを、新しい実行の 4 回目に持ち越さない")
+        #expect(scene.sceneVisible(at: at(5, run: 2)) == .game)
+    }
+
+    @Test("新しい実行の setup() (回数 0) で読んでも、最初の draw() で justEntered")
     func aNewRunReadInSetup() {
         let scene = Scene(starting: Screen.title)
-        for frame in 1...5 { _ = scene.current(at: frame) }
-        _ = scene.current(at: 0)  // 新しい実行の setup()
-        #expect(scene.justEntered(at: 1))
+        for draws in 1...5 { _ = scene.sceneVisible(at: at(draws)) }
+        _ = scene.sceneVisible(at: at(0, run: 2))  // 新しい実行の setup()
+        #expect(scene.enteredAtDraw(at: at(1, run: 2)))
     }
 
     // MARK: - 複製は同じ場面を指す
@@ -207,12 +250,12 @@ struct SceneTableTests {
     func copiesShareTheScene() {
         let scene = Scene(starting: Screen.title)
         let handedToAPart = scene
-        handedToAPart.change(to: .game, at: 3)
-        #expect(scene.current(at: 4) == .game)
-        #expect(scene.justEntered(at: 4))
+        handedToAPart.requestChange(to: .game, at: at(3))
+        #expect(scene.sceneVisible(at: at(4)) == .game)
+        #expect(scene.enteredAtDraw(at: at(4)))
         // 別の場面は Scene(starting:) で作る
         let other = Scene(starting: Screen.title)
-        #expect(other.current(at: 4) == .title)
+        #expect(other.sceneVisible(at: at(4)) == .title)
     }
 }
 
@@ -295,62 +338,162 @@ struct SceneSketchTests {
         #expect(first.seen.map(\.entered) == second.seen.map(\.entered))
     }
 
-    /// 検査が渡した手続きを `draw()` で走らせる、場面を持つスケッチ。
-    final class Hooked: Sketch {
-        var scene = Scene(starting: Screen.title)
-        nonisolated(unsafe) static var onDraw: (Hooked) -> Void = { _ in }
+    /// 部品。`Scene` を複製して渡された先から切り替える。
+    struct Gate: SketchPart {
+        let scene: Scene<Screen>
+        func open() { scene.change(to: .game) }
+    }
+
+    /// 検査が渡した手続きを `draw()`・キーのコールバックで走らせる、場面を持つスケッチ。
+    final class Probe: Sketch {
+        let scene = Scene(starting: Screen.title)
+        let gate: Gate
+        /// `draw()` の頭に走る手続き。
+        nonisolated(unsafe) static var onDraw: (Probe) -> Void = { _ in }
+        /// `keyPressed()` で走る手続き。
+        nonisolated(unsafe) static var onKey: (Probe) -> Void = { _ in }
+        /// `draw()` の頭で読む回数の絞り込み (`nil` は毎回読む)。読まない `draw()` の挟み方を作る。
+        nonisolated(unsafe) static var readOnly: Set<Int>?
         /// 各フレームの `draw()` で見えた (フレーム番号, 場面の名前, justEntered)。
         nonisolated(unsafe) static var seen: [(frame: Int, name: String, entered: Bool)] = []
-        init() {}
+        /// `keyPressed()` が読んだ (フレーム番号, 場面の名前)。
+        nonisolated(unsafe) static var seenInCallback: [(frame: Int, name: String)] = []
+        init() { gate = Gate(scene: scene) }
         var settings: SketchSettings { SketchSettings(width: 16, height: 16, clock: .frames) }
+        static func reset() {
+            onDraw = { _ in }
+            onKey = { _ in }
+            readOnly = nil
+            seen = []
+            seenInCallback = []
+        }
         func draw() {
             background(0, 0, 0)
-            Self.seen.append((frameCount, scene.current.rawValue, scene.justEntered))
+            if Self.readOnly?.contains(frameCount) ?? true {
+                Self.seen.append((frameCount, scene.current.rawValue, scene.justEntered))
+            }
             Self.onDraw(self)
         }
+        func keyPressed() {
+            Self.seenInCallback.append((frameCount, scene.current.rawValue))
+            Self.onKey(self)
+        }
+    }
+
+    private func makeProbe() throws -> (Probe, SketchRuntime) {
+        let probe = Probe()
+        let runtime = try SketchRuntime(sketch: probe, gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
+        return (probe, runtime)
+    }
+
+    private func enteredFrames() -> [Int] {
+        Probe.seen.filter(\.entered).map(\.frame)
     }
 
     @Test("Task の中 (draw() が返った後) から切り替えると、次に描くフレームから効き、そのフレームだけ justEntered")
     func changeFromATaskTakesEffectAtTheNextDrawnFrame() async throws {
-        Hooked.seen = []
-        Hooked.onDraw = { sketch in
-            if sketch.frameCount == 5 {
-                // 読み込みが終わった、のつもり。draw() が返った後に走る (このとき runningSketch は外れている)
-                Task { sketch.scene.change(to: .game) }
-            }
+        Probe.reset()
+        let (probe, runtime) = try makeProbe()
+        Probe.onDraw = { sketch in
+            // 読み込みが終わった、のつもり。draw() が返った後に走る (このとき runningSketch は外れている)
+            if sketch.frameCount == 5 { Task { sketch.scene.change(to: .game) } }
         }
-        let runtime = try SketchRuntime(sketch: Hooked(), gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
         for frame in 1...8 {
             try runtime.advance()
             if frame == 5 { try await Task.sleep(for: .milliseconds(30)) }
         }
-        let seen = Hooked.seen
-        #expect(seen.map(\.frame) == Array(1...8))
-        #expect(seen.map(\.name) == Array(repeating: "title", count: 5) + Array(repeating: "game", count: 3), "\(seen)")
-        #expect(seen.enumerated().filter { $0.element.entered }.map { $0.offset + 1 } == [1, 6], "最初のフレームと、game に入った 6 だけ")
+        #expect(Probe.seen.map(\.frame) == Array(1...8))
+        #expect(
+            Probe.seen.map(\.name) == Array(repeating: "title", count: 5) + Array(repeating: "game", count: 3),
+            "\(Probe.seen)")
+        #expect(enteredFrames() == [1, 6], "最初のフレームと、game に入った 6 だけ")
+        _ = probe
     }
 
-    @Test("noLoop() で止めている間に切り替えても、redraw() で描く次のフレームの頭で効く。止めている間に読んだ current は元の場面")
-    func changeWhileStoppedTakesEffectAtTheRedrawnFrame() throws {
-        Hooked.seen = []
-        Hooked.onDraw = { sketch in
+    @Test("読まれないフレームを挟んでも、Task が頼んだ切り替えで入ったフレームは、頼んだ次のフレームに決まる")
+    func unreadFramesDoNotMoveTheEntryFrame() async throws {
+        Probe.reset()
+        Probe.readOnly = [1, 2, 3, 4, 5, 9, 10]  // 6〜8 は誰も読まない
+        let (_, runtime) = try makeProbe()
+        Probe.onDraw = { sketch in
+            if sketch.frameCount == 5 { Task { sketch.scene.change(to: .game) } }
+        }
+        for frame in 1...10 {
+            try runtime.advance()
+            if frame == 5 { try await Task.sleep(for: .milliseconds(30)) }
+        }
+        let late = Probe.seen.filter { $0.frame >= 9 }
+        #expect(late.map(\.name) == ["game", "game"])
+        #expect(late.map(\.entered) == [false, false], "game に入ったのは 6 回目で、読んだ 9 回目ではない")
+    }
+
+    @Test("noLoop() で止めている間、Task が切り替えを頼んでも、止めている間のコールバックが読む current は元の場面。redraw() の draw() で効く")
+    func aTaskChangeWhileStoppedWaitsForTheRedraw() async throws {
+        Probe.reset()
+        let (probe, runtime) = try makeProbe()
+        Probe.onDraw = { sketch in
             if sketch.frameCount == 3 { sketch.noLoop() }
         }
-        let hooked = Hooked()
-        let runtime = try SketchRuntime(sketch: hooked, gpu: try RenderDevice(), clock: .frameIndex(frameRate: 60))
         for _ in 1...5 { try runtime.advance() }  // 3 で止まり、4・5 は描かない
-        #expect(Hooked.seen.map(\.frame) == [1, 2, 3])
-        // 止めている間のコールバックの代わり。走っている最中ではないので、フレームは分からない
-        let notices = SceneNotices()
-        SceneNotices.$override.withValue(notices) {
-            hooked.scene.change(to: .game)
-            #expect(hooked.scene.current == .title, "止めている間に読む current は元の場面")
-        }
-        Hooked.onDraw = { _ in }
+        #expect(Probe.seen.map(\.frame) == [1, 2, 3])
+        Task { probe.scene.change(to: .game) }  // 止めている間に走る Task
+        try await Task.sleep(for: .milliseconds(30))
+        // 止めている間のコールバック (実行は差さっている)。Task が頼んだ切り替えは、まだ効かない
+        runtime.input.enqueue(Self.enterDown)
+        try runtime.advance()
+        #expect(Probe.seenInCallback.map(\.name) == ["title"], "redraw() を待たずに効いてはいけない")
+        #expect(Probe.seen.map(\.frame) == [1, 2, 3], "止めている間は描かない")
+        Probe.onDraw = { _ in }
         runtime.redraw()
         try runtime.advance()
-        #expect(Hooked.seen.map(\.frame) == [1, 2, 3, 4])
-        #expect(Hooked.seen.last?.name == "game" && Hooked.seen.last?.entered == true)
+        #expect(Probe.seen.map(\.frame) == [1, 2, 3, 4])
+        #expect(Probe.seen.last?.name == "game" && Probe.seen.last?.entered == true)
+    }
+
+    @Test("ループ中の入力のコールバックが切り替えると、直後の draw() で効く。コールバックが読む current は元の場面")
+    func aCallbackChangeInTheLoopTakesEffectAtTheFollowingDraw() throws {
+        Probe.reset()
+        let (_, runtime) = try makeProbe()
+        Probe.onKey = { sketch in sketch.scene.change(to: .game) }
+        for frame in 1...12 {
+            if frame == 10 { runtime.input.enqueue(Self.enterDown) }
+            try runtime.advance()
+        }
+        #expect(Probe.seenInCallback.map(\.name) == ["title"], "コールバックが読むのは元の場面")
+        #expect(Probe.seen.map(\.name) == Array(repeating: "title", count: 9) + Array(repeating: "game", count: 3))
+        #expect(enteredFrames() == [1, 10], "コールバックの直後の draw() で効き、1 枚遅れない")
+    }
+
+    @Test("止めている間のコールバックが切り替えても、redraw() の draw() で効く (ループ中と同じく、直後の draw())")
+    func aCallbackChangeWhileStoppedTakesEffectAtTheRedraw() throws {
+        Probe.reset()
+        let (_, runtime) = try makeProbe()
+        Probe.onDraw = { sketch in
+            if sketch.frameCount == 3 { sketch.noLoop() }
+        }
+        Probe.onKey = { sketch in sketch.scene.change(to: .game) }
+        for _ in 1...5 { try runtime.advance() }
+        runtime.input.enqueue(Self.enterDown)
+        try runtime.advance()  // 止めている間にコールバックが配られる
+        #expect(Probe.seenInCallback.map(\.name) == ["title"])
+        #expect(Probe.seen.map(\.frame) == [1, 2, 3])
+        Probe.onDraw = { _ in }
+        runtime.redraw()
+        try runtime.advance()
+        #expect(Probe.seen.map(\.frame) == [1, 2, 3, 4])
+        #expect(Probe.seen.last?.name == "game" && Probe.seen.last?.entered == true)
+    }
+
+    @Test("部品 (SketchPart の struct) へ渡した複製から、走っているスケッチの draw() の中で切り替えると、元の Scene が切り替わる")
+    func aCopyHandedToAPartSwitchesTheSketchScene() throws {
+        Probe.reset()
+        let (_, runtime) = try makeProbe()
+        Probe.onDraw = { sketch in
+            if sketch.frameCount == 4 { sketch.gate.open() }
+        }
+        for _ in 1...7 { try runtime.advance() }
+        #expect(Probe.seen.map(\.name) == Array(repeating: "title", count: 4) + Array(repeating: "game", count: 3))
+        #expect(enteredFrames() == [1, 5])
     }
 
     @Test("陰性対照: Enter を注入しなければ、場面は切り替わらない")
