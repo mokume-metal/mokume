@@ -129,9 +129,11 @@ jobs:
     concurrency:
       group: mutation
       cancel-in-progress: false
-    # 仮の値 (実測前)。mutate.py は「次の 1 件の最悪が --budget の残りに収まるときだけ」始めるので、
-    # 走る時間は予算を越えない: 束 90 分 + 範囲 60 分 + 組み立てと要約の余裕。実測で直す
-    timeout-minutes: 240
+    # mutate.py は「次の 1 件の最悪が --budget の残りに収まるときだけ」始めるので、走る時間は予算を
+    # 越えない: 束 150 分 + 範囲 60 分 + 組み立てと要約の余裕。束の予算は実測 (2026-10-31・run
+    # 41169853173) から: 1 件目が cold build 込みで 1382 秒、以降は 1 件の中央値 157 秒で、33 件は
+    # 約 130 分。90 分では 11 件が回らなかった
+    timeout-minutes: 270
     permissions:
       contents: read
       issues: read # 前回の点数の commit を追跡用の Issue から読む
@@ -157,7 +159,7 @@ jobs:
         run: |
           python3 scripts/mutate.py run --bundle Tests/mutation-bundle.json \
             --out .build/mutation-bundle.json --work .build/mutation-bundle-work \
-            --budget 5400 --timeout 600 --baseline-timeout 1800
+            --budget 9000 --timeout 600 --baseline-timeout 1800
       - name: 前回の点数の commit からの範囲を回す
         if: ${{ !cancelled() && steps.previous.outputs.since != '' }}
         env:
