@@ -216,6 +216,9 @@ struct WatchSessionModelTests {
             [.save, .audition, .save, .stop],
             // 乗り換えを待つ間に入る → 保存 (前の本番を畳む) → 出る → 保存
             [.save, .save, .audition, .save, .save, .leave, .save],
+            // 乗り換えを待つ間に入る → 保存 (試聴の子は保留) → 待つ世代が 1 枚目の前に落ちる / 映る → 試聴の子が起きる
+            [.save, .promoteWaiting, .save, .audition, .save, .exitWaitingFailing, .beat, .leave],
+            [.save, .promoteWaiting, .save, .audition, .save, .promoteWaiting, .beat, .save, .leave],
         ])
     @MainActor
     func auditionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
@@ -295,6 +298,8 @@ struct WatchSessionModelTests {
             session.relinquishesDisplay = { [unowned self] pids in
                 for pid in pids { if let index = self.index(of: pid) { self.relinquished[index, default: 0] += 1 } }
             }
+            // プレビューは本番へ戻れる役を演じる (戻れない回は `WatchAuditionRefutationTests` が見る)
+            session.returnsPreviewToGeneration = { _ in true }
             // 作品の窓は、いま走っている本番を映している (番号を名乗る子) 役を演じる
             session.windowShowsPID = { [unowned self] in
                 (session.outgoing ?? session.child)?.processIdentifier
@@ -321,6 +326,9 @@ struct WatchSessionModelTests {
             } catch {
                 throw .cannotLaunch(tool: "sh", place: "", reason: "\(error)")
             }
+            // **試聴の子かは、起こした時点で試聴に入っているかで決める。** 試聴の子は、本番の乗り換えが決着してから
+            // 起こされる (保存の拍とは限らない)
+            if session.isAuditioning { auditionGens.insert(gens.count) }
             gens.append(process)
             return process
         }
@@ -446,18 +454,11 @@ struct WatchSessionModelTests {
                 let childBefore = session.child.flatMap { child in gens.firstIndex { $0 === child } }
                 let unseenBefore = unseen
                 let productionBefore = productionAlive()
-                // 乗り換えを待つ前の本番 (映っている側) は、最初の試聴の保存で畳まれる — 生きている子を「本番 + 試聴」の
-                // 2 つまでにするため。畳んでよいのはこの世代だけである
-                let outgoingBefore = session.outgoing.flatMap { outgoing in gens.firstIndex { $0 === outgoing } }
                 let auditioningBefore = auditioning
                 await beat()
                 if gens.count > launched {
-                    // 試聴に入っている間に起こした子は試聴の側。本番の乗り換えは待たない
-                    if auditioningBefore {
-                        auditionGens.insert(gens.count - 1)
-                    } else {
-                        waiting = gens.count - 1
-                    }
+                    // 試聴に入っている間に起こした子は試聴の側 (``launch(_:)``)。本番の乗り換えは待たない
+                    if !auditionGens.contains(gens.count - 1) { waiting = gens.count - 1 }
                 }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
@@ -465,8 +466,8 @@ struct WatchSessionModelTests {
                     if childAfter != childBefore {
                         return Violation(number: 7, text: "試聴中の保存で、本番の子が G\(childBefore.map(String.init) ?? "-") から G\(childAfter.map(String.init) ?? "-") へ入れ替わった")
                     }
-                    if !productionBefore.subtracting(outgoingBefore.map { [$0] } ?? []).isSubset(of: alive()) {
-                        return Violation(number: 7, text: "試聴中の保存で、乗り換えを待つ前の本番のほかの、生きていた本番の側が落ちた (前 \(name(productionBefore)) → 後 \(name(alive())))")
+                    if !productionBefore.isSubset(of: alive()) {
+                        return Violation(number: 7, text: "試聴中の保存で、生きていた本番の側が落ちた (前 \(name(productionBefore)) → 後 \(name(alive())))")
                     }
                 }
                 guard unseenBefore.isEmpty else { return nil }
@@ -621,7 +622,8 @@ struct WatchSessionModelTests {
                 if !auditionAlive().isEmpty {
                     return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
                 }
-                if productionAlive() != productionBefore {
+                // 本番が居ない回は、出た時点のソースで本番を起こし直す (守る相手が居ない)。居る回は動かさない
+                if !productionBefore.isEmpty, productionAlive() != productionBefore {
                     return Violation(number: 7, text: "出る要求で、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")
                 }
                 return nil
@@ -700,8 +702,14 @@ struct WatchSessionModelTests {
             if auditionAlive().count > 1 {
                 return Violation(number: 1, text: "生きている試聴の子が \(auditionAlive().count) 個 (\(name(auditionAlive())))")
             }
-            // 試聴の子が居る間の本番の側は 1 つまで — 乗り換えを待つ前の本番は、試聴の子を起こす前に畳む。
-            // 3 つ (本番 2 つ + 試聴) 生きる形を作らない (決定「本番 + 試聴の 2 つまで」)
+            // 試聴の子が居る間の本番の側は 1 つまで、本番が乗り換えを待つこともない — 試聴の子は、本番の乗り換えが
+            // 決着してから起こす (前の本番を畳んで起こすと、乗り換えを待つ本番が 1 枚目の前に落ちたとき戻る先が無い)。
+            // 3 つ (本番 2 つ + 試聴) 生きる形も作らない (決定「本番 + 試聴の 2 つまで」)
+            if !auditionAlive().isEmpty, session.waitingGeneration != nil {
+                return Violation(
+                    number: 1,
+                    text: "試聴の子 \(name(auditionAlive())) が居るのに、本番が乗り換えを待っている (G\(session.waitingGeneration.flatMap { w in gens.firstIndex { $0 === w } }.map(String.init) ?? "-"))")
+            }
             if !auditionAlive().isEmpty, productionLiving.count > 1 {
                 return Violation(
                     number: 1,

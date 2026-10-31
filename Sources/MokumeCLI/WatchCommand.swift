@@ -843,7 +843,9 @@ enum WatchCommand {
             viewer?.firstFrame.settle()
             showInPreview(line, false)
         }
-        if let outcome = await session.tick() {
+        // **保留していた試聴の子は、本番の乗り換えが決着したら起こす** (#3565)
+        let resumed = session.resumePendingAudition()
+        if let outcome = resumed != nil ? resumed : await session.tick() {
             // **終われと言われた後に戻ってきた結果は名乗らない** (最初の 1 回と同じ規律)。どう
             // 終えたかは ``finish(_:)`` が名乗る — ここで名乗ると、止めた作り直しを「直して保存
             // し直せ」と案内することになる (#2875 の反証)

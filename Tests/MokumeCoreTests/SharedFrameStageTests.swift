@@ -2355,6 +2355,29 @@ struct SharedFrameStageTests {
         }
     }
 
+    /// **覚えが古い改訂で、区画に同じ子の新しい改訂が在るなら、新しいほうへ戻る** (#3565 の 2 回目の反証)。
+    /// 同じ子が目録を書き直す (大きさの頼みを変える、など) と面も作り直される。古い改訂を優先すると、戻った先が
+    /// 頼みの古い絵になる (面が消えていれば戻れない)。
+    @Test("覚えている改訂より区画の同じ子の新しい改訂を採って戻る")
+    func returningPrefersTheNewerRevisionOfTheSameChild() throws {
+        try withFacet { facet in
+            let gpu = try RenderDevice()
+            var kept: [SharedFrameSurface] = []
+            var first: SharedFrameSurface? = try publishAs(pid: 100, in: facet, gpu: gpu)
+            let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("return-newer"))
+            defer { stage.close() }
+            stage.acceptsGeneration = { $0 == 200 }
+            stage.displayLinkFired()  // 100 の最初の改訂を読んで覚える (関所が弾く)
+            #expect(stage.displayedPID == nil)
+            first = nil  // 古い改訂の面は消える
+            _ = first
+            // 同じ子が目録を書き直した (新しい面)。台はまだ読んでいない
+            kept.append(try publishAs(pid: 100, in: facet, gpu: gpu, windowScale: 2))
+            #expect(stage.returnToGeneration(pid: 100), "区画に在る同じ子の新しい改訂を採らず、消えた古い改訂へ戻ろうとした")
+            _ = kept
+        }
+    }
+
     /// **完了条件 9。** 試聴中に試聴の版が大きさ・全画面の頼みを変えて保存しても、作品の窓へは当てない。
     @Test("作品の窓の台は、試聴の子の目録の大きさ・全画面の頼みを当てない。本番の目録の頼みは当てる")
     func requestsOfAnAuditionedGenerationDoNotReachTheArtworkWindow() throws {

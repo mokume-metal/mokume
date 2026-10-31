@@ -718,12 +718,14 @@ final class SharedFrameStage: NSObject, ScreenDisplayLinkOwner {
             }
             return true
         }
-        // **覚えから押し出されていても、区画の目録が今もその世代のものなら読み直す。** 読んだ改訂は印が付いて
-        // 二度と配られない (``reloadSourceIfChanged()``) ので、関所に弾かれた間に読んだだけの世代は、ここで
-        // 拾わなければ、次に書き直されるまで戻れない
+        // **区画の目録が今もその世代のものなら、覚えより区画を採る。** 同じ子が目録を書き直した (大きさの頼みを
+        // 変えた、など) とき、覚えは古い改訂で、区画に在るのが新しい改訂である — 古い改訂を優先すると、戻った先が
+        // 頼みの古い絵になる。覚えから押し出されていた世代も、これで読み直せる。読んだ改訂は印が付いて二度と
+        // 配られない (``reloadSourceIfChanged()``) ので、関所に弾かれた間に読んだだけの世代は、ここで拾わなければ
+        // 次に書き直されるまで戻れない
         guard
-            let manifest = remembered.first(where: { $0.pid == pid })?.manifest
-                ?? SharedFrameSurface.readManifest(at: facet).flatMap { $0.pid == pid ? $0 : nil },
+            let manifest = SharedFrameSurface.readManifest(at: facet).flatMap({ $0.pid == pid ? $0 : nil })
+                ?? remembered.first(where: { $0.pid == pid })?.manifest,
             manifest.ids.contains(where: { IOSurfaceLookup($0) != nil })
         else { return false }
         adopt(manifest)

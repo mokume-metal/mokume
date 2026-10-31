@@ -67,7 +67,7 @@
     },
     "audition": {
       "const": true,
-      "description": "Present (true) when this record is of a version under audition, written while the watching tool is auditioning (see the watching tool's request place). A version under audition is shown only in the preview, not in the work's window, so launched true here means it was started for the preview. Leaving the audition writes the record of the version in the work's window back, which has no audition. Absent when not auditioning. It is not in required because putting it there would stop older writers' records from validating (the same reason as launched)."
+      "description": "Present (true) when this record is of a version under audition, written while the watching tool is auditioning (see the watching tool's request place). A version under audition is shown only in the preview, not in the work's window, so launched true here means it was started for the preview. While the work's window is still switching to the version just started, a version to audition waits: its record is launched false with the reason in notStartedReason, and it is started once the switch is settled. Leaving the audition writes the record of the version in the work's window back, which has no audition. Absent when not auditioning. It is not in required because putting it there would stop older writers' records from validating (the same reason as launched)."
     },
     "timings": {
       "type": "object",

@@ -22,29 +22,76 @@ struct WatchAuditionRefutationTests {
         return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    // MARK: - 生きている子は「本番 + 試聴」の 2 つまで
+    // MARK: - 本番が乗り換えを待つ間は、試聴の子を起こさない
 
-    @Test("乗り換えを待つ前の本番が居る間の試聴の保存は、前の本番を畳んでから試聴の子を起こし、生きている子は 2 つまで")
-    func savingWhileProductionAwaitsPromotionRetiresThePreviousProductionFirst() async throws {
+    @Test("本番が乗り換えを待つ間の試聴の保存は、前の本番を畳まず試聴の子を保留し、乗り換えが決着してから起こす")
+    func auditionIsHeldWhileProductionAwaitsPromotion() async throws {
         let harness = try Harness()
+        harness.autoPromote = false
         let previous = try #require(await harness.save())
         let production = try #require(await harness.save())
         #expect(harness.session.outgoing === previous && harness.session.waitingGeneration === production)
         _ = try await harness.ask("audition")
-        #expect(harness.alive().count == 2, "入る要求だけでは何も動かない")
 
-        let first = try #require(await harness.save())
-        #expect(!previous.isRunning, "前の本番を畳まずに試聴の子を起こした")
-        #expect(harness.alive().count == 2, "生きている子は「本番 + 試聴」の 2 つまで: \(harness.alive().count)")
-        #expect(harness.session.outgoing == nil && harness.session.child === production)
-        #expect(harness.session.waitingGeneration === production, "本番は乗り換えを待ったまま")
+        #expect(await harness.save() == nil, "乗り換えを待つ間に、試聴の子を起こした")
+        #expect(previous.isRunning && production.isRunning, "前の本番を畳んだ")
+        #expect(harness.alive().count == 2 && harness.session.auditionChild == nil)
+        let held = try buildRecord(harness)
+        #expect(held["audition"] as? Bool == true && held["launched"] as? Bool == false)
         #expect(
-            harness.relinquished.contains([previous.processIdentifier]),
-            "畳んだ前の本番を台へ伝えていない (通常の保存と同じ作法)")
+            (held["notStartedReason"] as? String)?.hasPrefix(BuildReport.auditionDeferredNotice) == true,
+            "\(held)")
 
-        let second = try #require(await harness.save())
-        #expect(!first.isRunning && second.isRunning && production.isRunning)
-        #expect(harness.alive().count == 2)
+        // 乗り換えが決着する (本番が映った) と、前の本番が畳まれ、保留していた試聴の子が起きる
+        await harness.session.generationPromoted(pid: production.processIdentifier)
+        #expect(!previous.isRunning)
+        await harness.beat()
+        let audition = try #require(harness.session.auditionChild, "決着したのに、保留した試聴の子を起こさない")
+        #expect(harness.alive().count == 2 && audition.isRunning && production.isRunning)
+        #expect(try buildRecord(harness)["launched"] as? Bool == true)
+        #expect(harness.session.lastStamp == "s3")
+        // 起こした後は、もう保留は無い
+        let again = harness.gens.count
+        await harness.beat()
+        #expect(harness.gens.count == again)
+    }
+
+    @Test("乗り換えを待つ新しい本番が 1 枚目の前に落ちたら、前の本番へ戻り、保留していた試聴の子を起こす。作品の窓は凍らない")
+    func theNewProductionFailingBeforeItsFirstFrameFallsBackToThePreviousOne() async throws {
+        let harness = try Harness()
+        harness.autoPromote = false
+        let previous = try #require(await harness.save())
+        harness.session.generationShown(pid: previous.processIdentifier)
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        #expect(await harness.save() == nil)
+
+        harness.tell(production, "fail")
+        harness.previewLines.removeAll()
+        await harness.beat()
+
+        #expect(harness.session.child === previous && previous.isRunning, "前の本番へ戻れず、作品の窓が凍る")
+        #expect(harness.session.waitingGeneration == nil)
+        let audition = try #require(harness.session.auditionChild, "戻った後に、保留していた試聴の子を起こさない")
+        #expect(audition.isRunning && harness.alive().count == 2)
+        #expect(harness.session.outgoing == nil)
+    }
+
+    @Test("試聴の保存が保留されている間に出たら、保留は捨てられ、試聴の子は起こされない")
+    func leavingDropsTheHeldAudition() async throws {
+        let harness = try Harness()
+        harness.autoPromote = false
+        _ = try await harness.save()
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        #expect(await harness.save() == nil)
+        _ = try await harness.ask("leave")
+        await harness.session.generationPromoted(pid: production.processIdentifier)
+        let launched = harness.gens.count
+        await harness.beat()
+        await harness.beat()
+        #expect(harness.session.auditionChild == nil && !harness.session.isAuditioning)
+        #expect(harness.gens.count == launched, "出た後に、保留していた試聴の子を起こした")
     }
 
     // MARK: - 出る要求の戻り先
@@ -52,6 +99,7 @@ struct WatchAuditionRefutationTests {
     @Test("乗り換えを待つ間に出る要求は、作品の窓が最終的に映す新しい側へ戻す。戻れなければ前の世代へ")
     func leavingWhileProductionAwaitsPromotionReturnsToTheNewerSide() async throws {
         let harness = try Harness()
+        harness.autoPromote = false
         let previous = try #require(await harness.save())
         let production = try #require(await harness.save())
         _ = try await harness.ask("audition")
@@ -64,6 +112,7 @@ struct WatchAuditionRefutationTests {
 
         // 新しい側へ戻れないとき (目録が押し出された・面を引けない) は、まだ映っている前の世代へ
         let other = try Harness()
+        other.autoPromote = false
         let oldest = try #require(await other.save())
         let newest = try #require(await other.save())
         other.canReturn = { $0 != newest.processIdentifier }
@@ -191,22 +240,19 @@ struct WatchAuditionRefutationTests {
         #expect(await harness.save() != nil)
     }
 
-    @Test("試聴の子が居る間は、番号を名乗らない受け取れない知らせ (読めない目録) で、乗り換えを待つ本番を乗り換え済みとしない")
-    func anAnonymousUndeliverableNoticeDoesNotSettleProductionDuringAudition() async throws {
+    @Test("乗り換えを待つ本番が居る間は試聴の子が居ないので、番号を名乗らない受け取れない知らせは、本番のものとして受ける")
+    func anAnonymousUndeliverableNoticeSettlesTheWaitingProductionDuringAudition() async throws {
         let harness = try Harness()
+        harness.autoPromote = false
+        _ = try await harness.save()
         let production = try #require(await harness.save())
         let session = harness.session
-        #expect(session.waitingGeneration === production)
         _ = try await harness.ask("audition")
-        _ = try #require(await harness.save())
+        #expect(await harness.save() == nil)
+        #expect(session.auditionChild == nil, "乗り換えを待つ間は、取り違える試聴の子を起こさない")
         let result = await session.retireAfterUndeliverable(waiting: production, pid: nil)
-        #expect(result == nil)
-        #expect(session.waitingGeneration === production, "誰のものか分からない知らせで、本番の待ちが下りた")
-
-        // 試聴に入っていなければ、これまでどおり受ける
-        let plain = try Harness()
-        let waiting = try #require(await plain.save())
-        #expect(await plain.session.retireAfterUndeliverable(waiting: waiting, pid: nil) != nil)
+        #expect(result != nil, "試聴の間も、待っている本番の知らせを握りつぶした")
+        #expect(session.waitingGeneration == nil)
     }
 
     // MARK: - 区画 build の記録
@@ -303,5 +349,85 @@ struct WatchAuditionRefutationTests {
         session.flushPendingInput()
         #expect(session.unsentInputBytes(for: audition) == 0)
         #expect(session.unsentInputBytes(for: production) == productionHeld)
+    }
+
+    // MARK: - 出た後の本番と記録 (2 回目の反証)
+
+    @Test("本番は居るがプレビューを戻せなかった回は、出た時点のソースを作り直して両方の窓に出す (保留しない)")
+    func leavingWithoutBeingAbleToReturnRebuildsTheSource() async throws {
+        let harness = try Harness()
+        let production = try #require(await harness.save())
+        harness.canReturn = { _ in false }
+        _ = try await harness.ask("audition")
+        _ = try #require(await harness.save())
+        let launched = harness.gens.count
+        _ = try await harness.ask("leave")
+        #expect(harness.gens.count == launched + 1, "戻れなかったのに、出た時点のソースが作り直されない")
+        #expect(harness.session.child !== production)
+        #expect(try buildRecord(harness)["audition"] == nil && harness.session.lastStamp == "s2")
+    }
+
+    @Test("作り直しの最中に出たら、控えも記録も戻さず、保留も立てない。進行中の版が通常の差し替えで本番になる")
+    func leavingDuringARebuildLetsThatVersionBecomeProduction() async throws {
+        let harness = try Harness()
+        _ = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        _ = try #require(await harness.save())
+
+        harness.holdRebuild = true
+        let building = Task { await harness.save() }
+        for _ in 0..<50 where !harness.isRebuildHeld { await Task.yield() }
+        try #require(harness.isRebuildHeld, "作り直しが進行中にならない")
+        #expect(harness.session.isRebuilding)
+
+        _ = try await harness.ask("leave")
+        #expect(harness.session.lastStamp == "s3", "進行中の版の世代の控えを、古い本番の版へ戻した")
+        harness.releaseRebuild()
+        let started = try #require(await building.value, "進行中の版が本番にならない")
+        #expect(harness.session.child === started)
+        #expect(try buildRecord(harness)["stamp"] as? String == "s3" && buildRecord(harness)["audition"] == nil)
+
+        // 進行中だった版が本番なので、ソースを古い本番の版へ戻したら、作り直される
+        let launched = harness.gens.count
+        harness.stampOverride = "s1"
+        await harness.beat()
+        #expect(harness.gens.count == launched + 1, "本番の版と違うソースへ戻したのに、作り直されない")
+    }
+
+    @Test("試聴の間の本番の昇格は、試聴の記録を書き換えず、本番の版の記録の firstFrameMs を落とさない。出ると戻る")
+    func aPromotionDuringAuditionKeepsTheProductionRecordAndItsMeasurement() async throws {
+        let harness = try Harness()
+        harness.autoPromote = false
+        let first = try #require(await harness.save())
+        await harness.session.generationPromoted(pid: first.processIdentifier)
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        _ = try await harness.save()  // 試聴の保存は保留される
+
+        // 試聴の記録 (保留の記録) が区画に在る間に、本番が映った
+        await harness.session.generationPromoted(pid: production.processIdentifier)
+        let during = try buildRecord(harness)
+        #expect(during["audition"] as? Bool == true, "本番の昇格が試聴の記録を書き換えた")
+        #expect((during["timings"] as? [String: Any])?["firstFrameMs"] == nil)
+
+        await harness.beat()  // 保留していた試聴の子が起きる
+        _ = try await harness.ask("leave")
+        let after = try buildRecord(harness)
+        #expect(after["audition"] == nil && after["stamp"] as? String == "s2")
+        #expect(
+            (after["timings"] as? [String: Any])?["firstFrameMs"] != nil,
+            "試聴の記録が、本番の昇格の測定を落とした: \(after)")
+    }
+
+    @Test("試聴の子が居ない間に来た番号を名乗らない目録は断るが、試聴の子が名乗らなかったとは控えない")
+    func anAnonymousManifestBeforeTheAuditionChildExistsIsNotBlamedOnIt() async throws {
+        let harness = try Harness()
+        _ = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        #expect(!harness.session.previewAccepts(pid: nil))
+        #expect(!harness.session.auditionIsUnidentified, "試聴の子が居ないのに、名乗らなかったと控えた")
+        _ = try #require(await harness.save())
+        #expect(!harness.session.previewAccepts(pid: nil))
+        #expect(harness.session.auditionIsUnidentified)
     }
 }

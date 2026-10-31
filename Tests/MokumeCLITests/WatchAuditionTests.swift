@@ -34,6 +34,25 @@ struct WatchAuditionTests {
         var canReturn: (Int32) -> Bool = { _ in true }
         /// 作品の窓が映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
         var windowShows: (() -> Int32?)?
+        /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
+        var holdRebuild = false
+        private var rebuildGate: CheckedContinuation<Void, Never>?
+        /// 作り直しが門で止まっているか。
+        var isRebuildHeld: Bool { rebuildGate != nil }
+
+        func waitForRebuildGate() async {
+            await withCheckedContinuation { rebuildGate = $0 }
+        }
+
+        /// 止めていた作り直しを進める。
+        func releaseRebuild() {
+            holdRebuild = false
+            rebuildGate?.resume()
+            rebuildGate = nil
+        }
+
+        /// 新しい本番の子を起こしたら、台が乗り換えた合図を送るか。
+        var autoPromote = true
         /// 起こす子の台本 (`sh -c`)。
         private let script: String
 
@@ -49,7 +68,9 @@ struct WatchAuditionTests {
                 directory: directory, context: testContext(),
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
-                        RunCommand.Rebuilt(
+                        // 作り直しの途中で止めておく (作り直しの最中の出来事を演じる)
+                        if let harness = box.harness, harness.holdRebuild { await harness.waitForRebuildGate() }
+                        return RunCommand.Rebuilt(
                             status: 0, output: "", executable: URL(fileURLWithPath: "/bin/sh"),
                             binPath: directory, product: "sketch")
                     },
@@ -118,6 +139,11 @@ struct WatchAuditionTests {
             stampCount += 1
             let before = gens.count
             await beat()
+            // 窓の台が新しい本番に乗り換えたことを演じる (この検査は台を作らない)。**乗り換えを待つ間を調べる検査は
+            // `autoPromote` を下ろす** — 試聴の子は、本番が乗り換えを待つ間は起こされない
+            if gens.count > before, autoPromote, let last = gens.last, session.child === last {
+                await session.generationPromoted(pid: last.processIdentifier)
+            }
             return gens.count > before ? gens.last : nil
         }
 
@@ -247,8 +273,7 @@ struct WatchAuditionTests {
         #expect(harness.session.child === production, "本番の子が入れ替わった")
         #expect(harness.session.outgoing == nil)
         #expect(harness.session.auditionChild === first)
-        // 本番はまだ台の乗り換えを待っている (この検査は台を作らない)。試聴の子はその待ちを動かさない
-        #expect(harness.session.waitingGeneration === production)
+        #expect(harness.session.waitingGeneration == nil, "試聴の子を起こして、本番が乗り換えを待つ形になった")
 
         // 試聴中にもう 1 度保存: 前の試聴の子を先に止めてから新しい試聴の子を起こす。本番は止まらない
         let second = try #require(await harness.save())
@@ -267,6 +292,7 @@ struct WatchAuditionTests {
     @Test("試聴に入らない見張りは、保存したら本番が入れ替わり、試聴の枠は使われない (これまでどおり)")
     func withoutAuditionSavingReplacesProduction() async throws {
         let harness = try Harness()
+        harness.autoPromote = false
         let first = try #require(await harness.save())
         let second = try #require(await harness.save())
         #expect(harness.session.child === second && harness.session.outgoing === first)
@@ -282,47 +308,35 @@ struct WatchAuditionTests {
     @Test("試聴の子の乗り換えの合図は、本番の待ちも前の世代も動かさない")
     func promotionsOfTheAuditionDoNotTouchProduction() async throws {
         let harness = try Harness()
-        let previous = try #require(await harness.save())
         let production = try #require(await harness.save())
-        // 本番はまだ乗り換えを待っている (前の世代が映っている)
-        #expect(harness.session.waitingGeneration === production && harness.session.outgoing === previous)
         _ = try await harness.ask("audition")
         let audition = try #require(await harness.save())
-        // 試聴の子を起こす前に、乗り換えを待つ前の本番は畳まれる (生きている子は「本番 + 試聴」の 2 つまで)
-        #expect(!previous.isRunning, "試聴の子を起こす保存が、乗り換えを待つ前の本番を畳んでいない")
-        #expect(harness.session.waitingGeneration === production)
+        #expect(harness.session.waitingGeneration == nil)
 
+        // 試聴の子の合図は、本番の側の何も動かさない (記録の測定にも触れない)
         let outcome = await harness.session.generationPromoted(pid: audition.processIdentifier)
         #expect(outcome == nil)
-        #expect(harness.session.waitingGeneration === production, "試聴の子の合図で本番の待ちが下りた")
-
-        // 本番の合図は、これまでどおり待ちを下ろす
-        await harness.session.generationPromoted(pid: production.processIdentifier)
-        #expect(harness.session.waitingGeneration == nil && production.isRunning && audition.isRunning)
+        #expect(production.isRunning && audition.isRunning && harness.session.child === production)
     }
 
     @Test("試聴の子の乗り換えられない知らせ・倒れた知らせは、本番を畳まない")
     func undeliverableOrFallenAuditionDoesNotRetireProduction() async throws {
         let harness = try Harness()
-        let previous = try #require(await harness.save())
         let production = try #require(await harness.save())
         _ = try await harness.ask("audition")
         let audition = try #require(await harness.save())
-        #expect(harness.session.waitingGeneration === production && !previous.isRunning)
 
         // 台が試聴の子の絵を受け取れない知らせ (目録が名乗る番号つき)
         let undelivered = await harness.session.retireAfterUndeliverable(
-            waiting: harness.session.waitingGeneration, pid: audition.processIdentifier)
+            waiting: production, pid: audition.processIdentifier)
         #expect(undelivered == nil)
         #expect(production.isRunning, "試聴の子の知らせで本番を畳んだ")
-        #expect(harness.session.waitingGeneration === production, "試聴の子の知らせで本番の待ちが下りた")
 
         // 試聴の子が倒れた目印は、本番を待たせている世代の知らせとは読まれない
         let facet = WatchCommand.viewportFacet(under: harness.session.facetBase)
         try FileManager.default.createDirectory(at: facet, withIntermediateDirectories: true)
         try Data().write(to: WorkDirectory.fellBackURL(forProcess: audition.processIdentifier, under: facet))
         #expect(await harness.session.retireAfterFallback() == nil)
-        #expect(harness.session.waitingGeneration === production, "試聴の子が倒れて本番の待ちが下りた")
         #expect(harness.session.auditionFellBack(), "試聴の子の倒れた目印を見つけない")
         #expect(!harness.session.auditionFellBack(), "目印は見たら消える")
         #expect(production.isRunning && audition.isRunning)
@@ -406,6 +420,7 @@ struct WatchAuditionTests {
         #expect(harness.session.previewAccepts(pid: production.processIdentifier))
 
         // 次の保存は、これまでどおり両方の窓を入れ替える
+        harness.autoPromote = false
         let next = try #require(await harness.save())
         #expect(harness.session.child === next && harness.session.outgoing === production)
         #expect(harness.session.auditionPIDs.isEmpty, "通常の差し替えで試聴の覚えを捨てていない")
@@ -428,6 +443,17 @@ struct WatchAuditionTests {
         #expect(report["production"] == nil)
         #expect(!audition.isRunning)
         #expect(harness.returned.isEmpty, "居ない本番へ戻ろうとした")
+        // 守る相手が居ないので、出た時点のソースで本番を起こし直す (作り直す道を閉じない)。同じ拍の巡回が起こした
+        let restarted = try #require(harness.session.child)
+        #expect(restarted !== production && restarted.isRunning, "出た後に本番が居ないまま、作り直されない")
+        #expect(harness.session.lastStamp == "s2")
+        #expect(try buildRecord(harness)["audition"] == nil, "出た後の記録が試聴の版のままである")
+    }
+
+    /// 区画 `build` の記録 (JSON)。
+    func buildRecord(_ harness: Harness) throws -> [String: Any] {
+        let data = try Data(contentsOf: BuildReport.statusURL(under: harness.session.facetBase))
+        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     // MARK: - 試聴中に本番が自分で消えた回 (完了条件 10)
@@ -504,6 +530,7 @@ struct WatchAuditionTests {
     @Test("試聴に入っていなければ、プレビューの宛先の引数は読まず、これまでどおり映っている世代へ送る")
     func inputIgnoresTheShownPIDOutsideAudition() async throws {
         let harness = try Harness()
+        harness.autoPromote = false
         _ = await harness.save()
         let production = try #require(await harness.save())
         // 引数が別の世代を指していても、試聴に入っていなければ読まない: 映っている前の世代 (outgoing) へ
