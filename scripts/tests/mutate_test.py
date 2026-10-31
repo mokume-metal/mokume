@@ -58,6 +58,7 @@ LIBRARY = textwrap.dedent("""\
 #   `NOEVENTS`             → 事象の記録を書かない
 #   `SLOWFIRST`            → 最初の build だけ 3 秒かかる (cold な build の形)
 #   `SLOWBASE`             → どの build も 60 秒かかる (変異なしの基準が期限を越える形)
+#   `BADNARROW`            → GuardTests だけを絞った filter の test が記録を残さず落ちる (その filter の基準が成り立たない)
 #   いつでも               → BrokenTests/always が赤 (もとから赤い検査)
 FAKE_SWIFT = textwrap.dedent("""\
     #!/usr/bin/env python3
@@ -81,6 +82,8 @@ FAKE_SWIFT = textwrap.dedent("""\
         if "CRASH" in source:
             sys.exit(134)
         pattern = args[args.index("--filter") + 1]
+        if "BADNARROW" in source and "GuardTests" in pattern:
+            sys.exit(134)
         base = args[args.index("--xunit-output") + 1]
         cases = [("LibTests.GuardTests", "rejectsNegative()"), ("LibTests.OtherTests", "far()"),
                  ("LibTests.BrokenTests", "always()")]
@@ -215,7 +218,8 @@ class CandidatesTest(unittest.TestCase):
 
 
 class BundleTest(unittest.TestCase):
-    """束の形だけを見る。原文が当たるかは回したときに `invalid (anchor)` と名乗る (PR を赤くしない)。"""
+    """束の形と、原文が `Sources/` に 1 回ずつ当たること。当たらない変異は定期の job で `invalid (anchor)` と
+    名乗るが、PR で見ないと次の日まで気付かない (2983 の原文が 2 回当たっていたのを見逃した)。"""
 
     def test_the_bundle_is_readable_and_ids_are_unique(self):
         mutants = mutate.load_bundle(REPO / "Tests" / "mutation-bundle.json")
@@ -225,6 +229,18 @@ class BundleTest(unittest.TestCase):
             self.assertTrue((REPO / m["file"]).is_file(), m["id"])
             self.assertNotEqual(m["find"], m["replace"], m["id"])
             self.assertIsInstance(m.get("gpu"), bool, m["id"])
+
+    def test_every_find_hits_the_tree_exactly_once(self):
+        # 読むだけ (GPU も swift も要らない)。当たらない・2 回以上当たる原文は、回す前にここで赤にする
+        for m in mutate.load_bundle(REPO / "Tests" / "mutation-bundle.json"):
+            text = (REPO / m["file"]).read_text(encoding="utf-8")
+            mutated, reason = mutate.apply(text, m)
+            self.assertIsNotNone(mutated, f"{m['id']}: {reason}")
+
+    def test_an_anchor_that_hits_twice_or_not_at_all_is_named(self):
+        self.assertEqual(mutate.apply("a a", {"find": "a", "replace": "b"})[0], None)
+        self.assertEqual(mutate.apply("c", {"find": "a", "replace": "b"})[0], None)
+        self.assertEqual(mutate.apply("a c", {"find": "a", "replace": "b"})[0], "b c")
 
     def test_a_misshapen_bundle_is_refused(self):
         with tempfile.TemporaryDirectory() as root:
@@ -444,7 +460,7 @@ class SummaryTest(unittest.TestCase):
 
 
 class ZeroCandidatesTest(unittest.TestCase):
-    """変更の無い日の範囲は候補が 0 件で、読めなかった記録ではない (指摘 1)。"""
+    """変更の無い日の範囲は候補が 0 件で、読めなかった記録ではない。"""
 
     def test_a_range_with_nothing_changed_is_a_readable_record(self):
         with tempfile.TemporaryDirectory() as root:
@@ -467,48 +483,52 @@ class ZeroCandidatesTest(unittest.TestCase):
         self.assertIsNotNone(mutate.check_result(dict(base, since="abc")))
         self.assertIsNotNone(mutate.check_result(dict(base, since="abc", candidates=3)))
         self.assertIsNone(mutate.check_result(dict(base, since="abc", candidates=0)))
+        # False は 0 と等しいが、候補の数ではない
+        self.assertIsNotNone(mutate.check_result(dict(base, since="abc", candidates=False)))
+        self.assertIsNotNone(mutate.check_result(dict(base, since="abc", candidates=0.0)))
 
 
-class ExcludeTest(unittest.TestCase):
-    """前の回で評価した候補は、次の回の範囲から外す (指摘 2: 末尾が毎回切れない)。"""
+class ResultShapeTest(unittest.TestCase):
+    """読み手が KeyError で落ちないよう、変異の要素の形と件数を結末と突き合わせる。"""
 
-    def test_excluded_keys_are_skipped_and_keys_survive_line_shifts(self):
+    def result(self, mutants, **counts):
+        base = {k: 0 for k in mutate.OUTCOMES}
+        base.update(counts)
+        return {"version": 1, "counts": base, "mutants": mutants}
+
+    def test_elements_without_id_file_or_a_known_outcome_are_unreadable(self):
+        good = {"id": "a", "file": "f", "outcome": "killed"}
+        self.assertIsNone(mutate.check_result(self.result([good], killed=1)))
+        for bad in ({"file": "f", "outcome": "killed"}, {"id": "a", "outcome": "killed"},
+                    {"id": "a", "file": "f"}, {"id": "a", "file": "f", "outcome": "odd"}, "text", None):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(mutate.check_result(self.result([bad], killed=1)))
+
+    def test_counts_must_match_the_outcomes_not_only_the_total(self):
+        mutants = [{"id": "a", "file": "f", "outcome": "killed"}, {"id": "b", "file": "f", "outcome": "survived"}]
+        self.assertIsNone(mutate.check_result(self.result(mutants, killed=1, survived=1)))
+        self.assertIsNotNone(mutate.check_result(self.result(mutants, killed=2)))
+        self.assertIsNotNone(mutate.check_result(self.result(mutants, killed=True, survived=1)))
+
+
+class RenameTest(unittest.TestCase):
+    def test_a_renamed_and_edited_file_still_yields_candidates(self):
         with tempfile.TemporaryDirectory() as root:
             package = Package(root)
-            first = subprocess.run([sys.executable, str(SCRIPT), "candidates", "--repo", str(package.repo),
-                                    "--since", "HEAD~1"], capture_output=True, text=True)
-            found = json.loads(first.stdout)
-            keys = [m["key"] for m in found]
-            self.assertEqual(len(keys), len(set(keys)), "候補ごとに別のキー")
-            done = Path(root) / "done.json"
-            done.write_text(json.dumps(keys[:2]))
-            second = subprocess.run([sys.executable, str(SCRIPT), "candidates", "--repo", str(package.repo),
-                                     "--since", "HEAD~1", "--exclude-file", str(done)],
-                                    capture_output=True, text=True)
-            rest = json.loads(second.stdout)
-            self.assertEqual([m["key"] for m in rest], keys[2:])
-            # 行が下へ動いても、同じ候補は同じキーになる (行番号をキーに入れない)
-            shifted = dict(found[0], line=found[0]["line"] + 40)
-            self.assertEqual(mutate.candidate_key(shifted), found[0]["key"])
-
-    def test_a_run_records_the_key_of_every_mutant(self):
-        with tempfile.TemporaryDirectory() as root:
-            package = Package(root)
-            result, data = package.run("--since", "HEAD~1")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(all(m["key"] for m in data["mutants"]))
-
-    def test_a_corrupt_exclude_file_is_refused(self):
-        with tempfile.TemporaryDirectory() as root:
-            bad = Path(root) / "bad.json"
-            bad.write_text('{"not": "a list"}')
-            with self.assertRaises(ValueError):
-                mutate.read_exclude(str(bad))
-            self.assertEqual(mutate.read_exclude(str(Path(root) / "none.json")), set())
+            git(package.repo, "mv", "Sources/Lib/Lib.swift", "Sources/Lib/Renamed.swift")
+            renamed = package.repo / "Sources" / "Lib" / "Renamed.swift"
+            renamed.write_text(LIBRARY + "let bigger = 3 >= 2\n")
+            git(package.repo, "add", "-A")
+            git(package.repo, "commit", "-qm", "rename and edit")
+            out = subprocess.run([sys.executable, str(SCRIPT), "candidates", "--repo", str(package.repo),
+                                  "--since", "HEAD~1"], capture_output=True, text=True)
+            found = json.loads(out.stdout)
+            self.assertEqual({m["file"] for m in found}, {"Sources/Lib/Renamed.swift"})
+            self.assertIn(">= -> >", {m["operator"] for m in found})
 
 
 class BaselineTest(unittest.TestCase):
-    """cold な build は 1 件の期限に食わせず、基準が成り立たない回も記録を残す (指摘 11)。"""
+    """cold な build は 1 件の期限に食わせず、基準が成り立たない filter は名乗って次へ進む。"""
 
     def test_the_baseline_has_its_own_deadline(self):
         with tempfile.TemporaryDirectory() as root:
@@ -520,10 +540,10 @@ class BaselineTest(unittest.TestCase):
                 mutant("kill", "x.isFinite, x >= 0", "x.isFinite, x > 0")]), "--timeout", "1",
                 "--baseline-timeout", "30")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIsNone(data["aborted"])
+            self.assertEqual(data["baseline_failures"], [])
             self.assertEqual(data["mutants"][0]["outcome"], "killed")
 
-    def test_a_baseline_over_its_deadline_still_writes_a_record_and_names_it(self):
+    def test_a_baseline_over_its_deadline_still_writes_a_record_and_names_the_filter(self):
         with tempfile.TemporaryDirectory() as root:
             package = Package(root)
             package.library.write_text(LIBRARY + "// SLOWBASE\n")
@@ -534,14 +554,61 @@ class BaselineTest(unittest.TestCase):
                 mutant("b", "x.isFinite, x >= 0", "x.isFinite, x > 0")]), "--baseline-timeout", "1")
             self.assertEqual(result.returncode, 1)
             self.assertIsNotNone(data, "記録を書かずに落ちない")
-            self.assertIn("build が timeout", data["aborted"])
-            self.assertEqual([m["outcome"] for m in data["mutants"]], ["unrun", "unrun"])
+            self.assertEqual(len(data["baseline_failures"]), 1, "同じ filter は 1 度だけ名乗る")
+            self.assertIn("build が timeout", data["baseline_failures"][0]["reason"])
+            # 測れなかった変異は unrun でなく invalid (分母に入れず、件数で名乗る)
+            self.assertEqual([m["outcome"] for m in data["mutants"]], ["invalid", "invalid"])
             self.assertIsNone(mutate.check_result(data))
             self.assertEqual(package.library.read_bytes(), before)
             out = Path(root) / "result.json"
             summary = subprocess.run([sys.executable, str(SCRIPT), "summary", str(out)],
                                      capture_output=True, text=True)
-            self.assertIn("中断", summary.stdout)
+            self.assertIn("基準が成り立たなかった filter", summary.stdout)
+
+    def test_one_filter_failing_does_not_stop_the_others(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            package.library.write_text(LIBRARY + "// BADNARROW\n")
+            git(package.repo, "commit", "-qam", "marker")
+            result, data = package.run("--since", "HEAD~2")
+            self.assertEqual(result.returncode, 1, "基準が成り立たない filter があれば赤にする")
+            self.assertEqual(len(data["baseline_failures"]), 1)
+            self.assertIn("GuardTests", data["baseline_failures"][0]["filter"])
+            outcomes = {m["outcome"] for m in data["mutants"]}
+            # 絞った filter が測れなくても、target 全体の段で測って結末が出る (全部 invalid にしない)
+            self.assertTrue(outcomes & {"killed", "survived"}, outcomes)
+            self.assertNotIn("unrun", outcomes)
+
+
+class BudgetTest(unittest.TestCase):
+    """次の 1 件の最悪が残りに収まるときだけ始める。"""
+
+    def test_a_range_item_needing_two_stages_is_not_started_if_its_worst_case_does_not_fit(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            # 範囲は 1 件で段が 2 つ (絞った filter と target 全体)。最悪 2 × (4 + 4) = 16 秒 > 残り 10 秒
+            result, data = package.run("--since", "HEAD~1", "--budget", "10", "--timeout", "4",
+                                       "--baseline-timeout", "4")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual({m["outcome"] for m in data["mutants"]}, {"unrun"})
+            self.assertIn("最悪", data["mutants"][0]["reason"])
+
+    def test_a_bundle_item_has_one_stage_so_the_same_budget_starts_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            package = Package(root)
+            result, data = package.run("--bundle", package.bundle([
+                mutant("kill", "x.isFinite, x >= 0", "x.isFinite, x > 0")]), "--budget", "10", "--timeout", "4",
+                "--baseline-timeout", "4")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(data["mutants"][0]["outcome"], "killed")
+
+    def test_the_worst_case_counts_only_filters_without_a_baseline_yet(self):
+        runner = mutate.Runner(Path("."), tempfile.gettempdir(), 10, False, 100)
+        self.assertEqual(runner.worst_case(2), 2 * 10 + 2 * 100)
+        runner.baselines = {"a": set()}
+        self.assertEqual(runner.worst_case(2), 2 * 10 + 1 * 100)
+        runner.baselines = {"a": set(), "b": set()}
+        self.assertEqual(runner.worst_case(2), 2 * 10)
 
 
 class RunTest(unittest.TestCase):
