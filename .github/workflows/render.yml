@@ -155,6 +155,10 @@ jobs:
           # 専用機で並走させる merge_group の render の数 (#3319)。runner の数に合わせて
           # リポジトリの変数で切り替える。未設定なら 1 (scripts/render-turn.sh の「並走の数」)
           RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
+          # render-pr の旧い head を群に入れない (#3551)。pull_request の yield だけが読む。branch の名前は
+          # 環境変数で渡す (run: の中に展開しない)
+          RENDER_TURN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RENDER_TURN_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           case "$EVENT" in
             merge_group) bash scripts/render-turn.sh merge_group "$BASE_SHA" "$BASE_REF" ;;
@@ -250,7 +254,9 @@ jobs:
     runs-on: [self-hosted, mokume-render]
     timeout-minutes: 30
     # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
-    # 塞がないようにする
+    # 塞がないようにする。**GitHub は後から群に入った job を残す**ので、群に入る順が push の順と
+    # 逆になると (旧 head の門番が遅れたとき)、旧 head の job が走っている新 head の job を取り消す。
+    # 古い head はここへ入る前に門番 (render-turn の yield) が見送る (#3551)
     concurrency:
       group: render-pr-${{ github.ref }}
       cancel-in-progress: true
