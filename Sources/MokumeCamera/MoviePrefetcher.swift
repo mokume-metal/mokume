@@ -17,8 +17,9 @@ import Synchronization
 ///
 /// - 係は自分の読み進めの核 (``MovieFrames``、自分の `AVAssetReader`) を、動画ファイルの場所から開き直して
 ///   持つ。main の読み手 (``MovieReader``) とは共有しない ([ADR-0042] 決定 7 の改訂 (2026-10-31))
-/// - 境界を越えるのは、頼み (位置・世代・何周目か) と、変換と向きを済ませたコマ (`DisplayImage`) だけで、
-///   `CVPixelBuffer` などの OS の型は越えない
+/// - 境界を越えるのは、頼み (位置・世代・何周目か) と、用意したコマ (``VideoFrame`` — 変換と向きを済ませた
+///   `DisplayImage` か、面のまま GPU で色を変換する `PixelSurface`) だけで、`CVPixelBuffer` などの OS の型は越えない
+///   (`PixelSurface` は面を包んだ自前の `Sendable` な値 — ADR-0042 決定 5 の改訂 (2026-11-01))
 /// - 列の長さは ``depth`` 枚。ループで流していれば、終わりの後に頭から読み続け、継ぎ目の先を
 ///   先に用意する
 /// - 並列は `Task` で分ける (ADR-0010 決定 4。`DispatchQueue` は足さない)。復号の間は協調スレッドを
