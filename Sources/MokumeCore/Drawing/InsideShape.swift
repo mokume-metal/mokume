@@ -249,7 +249,7 @@ extension Canvas {
                 "debugMode() and noDebugMode() do nothing inside \(call) { }. A shape cannot "
                     + "hold the debug grid and axes, so call them before or after building the shape"
             case .compositeGroup:
-                "A composite group is not opened inside createShape { }. It draws into an "
+                "A composite group is not opened inside \(call) { }. It draws into an "
                     + "intermediate surface when it is placed, which a shape cannot record, so it was "
                     + "not drawn as one group"
             }
