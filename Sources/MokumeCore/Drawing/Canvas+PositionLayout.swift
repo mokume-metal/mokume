@@ -29,32 +29,86 @@ extension Canvas {
     /// (``Numbers``) ごとで、並びを手放したら次の呼び出しで畳む。際限なく増えない
     /// ([ADR-0023] 決定 5)。
     ///
+    /// **組み立てに失敗したら、失敗を覚えて同じものを組み直さない。** 失敗は 1 度しか知らせないので、
+    /// 覚えないと、見えないまま毎フレーム原文を組み直し、置き場を確保し直して重くなる
+    /// (描き切りの失敗を同じ番号のうちは繰り返さない ``Canvas`` の `framesDrawn` の扱いと同じ考え)。
+    /// 覚えるのは計算の入口が面ごとに 1 つ、置き場が並びごとに 1 つ。
+    ///
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     final class PositionLayouts {
+        /// 組んだ計算の入口。
         var kernels: PositionKernels?
+        /// 計算の入口の組み立てが失敗した理由。あれば、組み直さずにこれを投げる。
+        var kernelsFailure: RenderFailure?
         private var placers: [ObjectIdentifier: PositionPlacer] = [:]
+        private var placerFailures: [ObjectIdentifier: PlacerFailure] = [:]
+
+        /// 置き場の組み立てが失敗した並びと、その理由。
+        private struct PlacerFailure {
+            let source: Weak<Numbers>
+            let capacity: Int
+            let failure: RenderFailure
+        }
+
+        /// 計算の入口・置き場を組もうとした回数。**検査が読む** (失敗の後に組み直していないことを見る)。
+        private(set) var kernelBuildAttempts = 0
+        private(set) var placerBuildAttempts = 0
+        /// 次に組むときに投げる失敗。**検査が差し替える** (組み立ての失敗は検査の中で起こせない)。
+        var kernelFailureForTesting: RenderFailure?
+        var placerFailureForTesting: RenderFailure?
+
+        /// 計算の入口を組もうとする回を数え、検査が差し替えた失敗があれば投げる。
+        func beginKernelBuild() throws(RenderFailure) {
+            kernelBuildAttempts += 1
+            if let kernelFailureForTesting { throw kernelFailureForTesting }
+        }
 
         /// `positions` の置き場。無ければ作る。
         ///
-        /// **手放された並びの置き場は、作るときに畳む。** 並びの識別子は手放した後に別の並びが
-        /// 使い回しうるので、同じ識別子でも読み元が同じ並びかを確かめる。
+        /// **手放された並びの置き場は、呼び出しのたびに畳む。** 作るときだけ畳むと、新しい並びを
+        /// 使わない間は手放した並びの置き場が残る。並びの識別子は手放した後に別の並びが使い回しうるので、
+        /// 同じ識別子でも読み元が同じ並びかを確かめる。
         func placer(
             for positions: Numbers, capacity: Int, gpu: RenderDevice
         ) throws(RenderFailure) -> PositionPlacer {
+            foldReleased()
             let key = ObjectIdentifier(positions)
             if let existing = placers[key], existing.source === positions,
                 existing.capacity == capacity
             {
                 return existing
             }
-            placers = placers.filter { $0.value.source != nil }
-            let made = try PositionPlacer(source: positions, capacity: capacity, gpu: gpu)
-            placers[key] = made
-            return made
+            if let failed = placerFailures[key], failed.source.value === positions,
+                failed.capacity == capacity
+            {
+                throw failed.failure
+            }
+            placerBuildAttempts += 1
+            do throws(RenderFailure) {
+                if let placerFailureForTesting { throw placerFailureForTesting }
+                let made = try PositionPlacer(source: positions, capacity: capacity, gpu: gpu)
+                placers[key] = made
+                placerFailures[key] = nil
+                return made
+            } catch {
+                placerFailures[key] = PlacerFailure(
+                    source: Weak(positions), capacity: capacity, failure: error)
+                throw error
+            }
         }
 
-        /// 置き場の数。**検査が読む。**
-        var placerCount: Int { placers.values.filter { $0.source != nil }.count }
+        /// 手放された並びの置き場と、その失敗の記録を畳む。
+        private func foldReleased() {
+            if placers.values.contains(where: { $0.source == nil }) {
+                placers = placers.filter { $0.value.source != nil }
+            }
+            if placerFailures.values.contains(where: { $0.source.value == nil }) {
+                placerFailures = placerFailures.filter { $0.value.source.value != nil }
+            }
+        }
+
+        /// 持っている置き場の数。**手放された並びのものも数える** — 畳んだかを検査が読む。
+        var placerCount: Int { placers.count }
 
         /// 作ってあれば `positions` の置き場。**検査が読む。**
         func existingPlacer(for positions: Numbers) -> PositionPlacer? {
@@ -118,7 +172,7 @@ extension Canvas {
         guard canPlace else { return warnOutsideFrame(.placing) }
         guard !recordingShape else { return warnInsideShape(.positionLayout) }
         // 計算は描くところの外からは効かない (ADR-0023 決定 3)。外では頼まれない計算の結果を読む列を開かない
-        guard isDrawing else { return warnOutsideFrame(.compute) }
+        guard isDrawing else { return warnPositionLayoutOutsideFrame() }
         guard !shape.isEmpty else { return }
 
         switch layout {
@@ -188,22 +242,42 @@ extension Canvas {
             writes: [draw.instances, draw.arguments])
     }
 
-    /// 計算の入口。**初めて使うときに 1 度だけ組む。** 粒と同じ原文から取る。
+    /// 計算の入口。**初めて使うときに 1 度だけ組む。** 粒と同じ原文から取る。失敗したらそれを覚え、
+    /// 次からは組み直さずに同じ失敗を投げる (``PositionLayouts``)。
     private func positionKernels() throws(RenderFailure) -> PositionKernels {
         if let kernels = positionLayouts.kernels { return kernels }
-        let name = Self.particleShaderName
-        let source = try gpu.shaders.bundledShaderSource(named: name)
-        let library = try gpu.shaders.makeComputeLibrary(
-            named: name, body: source, bodyName: ShaderLibraries.bundledName(name))
-        let kernels = PositionKernels(
-            flag: try particleKernel(PositionKernels.flagName, in: library, from: source),
-            scan: try particleKernel(Self.particleScanKernelName, in: library, from: source),
-            place: try particleKernel(PositionKernels.placeName, in: library, from: source))
-        positionLayouts.kernels = kernels
-        return kernels
+        if let failure = positionLayouts.kernelsFailure { throw failure }
+        do throws(RenderFailure) {
+            try positionLayouts.beginKernelBuild()
+            let name = Self.particleShaderName
+            let source = try gpu.shaders.bundledShaderSource(named: name)
+            let library = try gpu.shaders.makeComputeLibrary(
+                named: name, body: source, bodyName: ShaderLibraries.bundledName(name))
+            let kernels = PositionKernels(
+                flag: try particleKernel(PositionKernels.flagName, in: library, from: source),
+                scan: try particleKernel(Self.particleScanKernelName, in: library, from: source),
+                place: try particleKernel(PositionKernels.placeName, in: library, from: source))
+            positionLayouts.kernels = kernels
+            return kernels
+        } catch {
+            positionLayouts.kernelsFailure = error
+            throw error
+        }
     }
 
     // MARK: - 知らせる
+
+    /// フレームの外で呼ばれた。**この口の名前で言う** — 計算を頼む口 (`compute`) の注意の鍵と文面を
+    /// 借りると、`setup()` で `shape(at:layout:)` を呼んだ人に「計算は draw() から頼め」と言い、先に
+    /// `compute` が同じ鍵で言っていればこちらは黙る。直す先は同じ (draw() の中) でも、何が断られたかが違う。
+    private func warnPositionLayoutOutsideFrame() {
+        warnOnce(
+            .positionLayoutOutsideFrame,
+            "shape(at:layout:) places shapes at positions that a computation wrote, and a "
+                + "computation runs only while a frame is drawn, so call it from draw() (on a surface you "
+                + "open yourself, between beginDraw() and endDraw()). This was called outside a frame, so "
+                + "it belongs to no frame, and was ignored")
+    }
 
     /// 並びの長さが 3 で割り切れない。端数は置かない。
     private func warnPositionRemainder(count: Int) {

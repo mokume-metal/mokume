@@ -83,7 +83,7 @@ struct PositionLayoutDrawingTests {
             uint columns = uint(values.columns);
             position[id * 3] = values.originX + values.stepX * float(id % columns) + values.turn;
             position[id * 3 + 1] = values.originY + values.stepY * float(id / columns);
-            position[id * 3 + 2] = 0.0;
+            position[id * 3 + 2] = values.originZ + values.stepZ * float(id % columns);
             if (uint(values.nanAt) == id + 1u) { position[id * 3 + 1] = as_type<float>(0x7fc00000u); }
             if (uint(values.infinityAt) == id + 1u) { position[id * 3] = as_type<float>(0x7f800000u); }
             if (uint(values.negativeInfinityAt) == id + 1u) {
@@ -101,6 +101,9 @@ struct PositionLayoutDrawingTests {
         var stepX: Float = 30
         var stepY: Float = 70
         var turn: Float = 0
+        /// 奥行き。列ごとに stepZ ずつ奥へずらす (0 なら全部 z = originZ)。
+        var originZ: Float = 0
+        var stepZ: Float = 0
         /// 数でない値・無限にする番号 (0 起点)。無ければ nil。
         var nanAt: Int?
         var infinityAt: Int?
@@ -115,7 +118,8 @@ struct PositionLayoutDrawingTests {
                 placements.append(
                     Placement(
                         x: originX + stepX * Float(id % Int(columns)) + turn,
-                        y: originY + stepY * Float(id / Int(columns))))
+                        y: originY + stepY * Float(id / Int(columns)),
+                        z: originZ + stepZ * Float(id % Int(columns))))
             }
             return placements
         }
@@ -127,6 +131,7 @@ struct PositionLayoutDrawingTests {
             values: [
                 "columns": 6, "originX": 25, "originY": 60, "stepX": 30, "stepY": 70, "turn": 0,
                 "nanAt": 0, "infinityAt": 0, "negativeInfinityAt": 0, "nanAlso": 0,
+                "originZ": 0, "stepZ": 0,
             ])
     }
 
@@ -137,6 +142,8 @@ struct PositionLayoutDrawingTests {
         computation.set("stepX", .number(grid.stepX))
         computation.set("stepY", .number(grid.stepY))
         computation.set("turn", .number(grid.turn))
+        computation.set("originZ", .number(grid.originZ))
+        computation.set("stepZ", .number(grid.stepZ))
         computation.set("nanAt", .number(Float((grid.nanAt ?? -1) + 1)))
         computation.set("infinityAt", .number(Float((grid.infinityAt ?? -1) + 1)))
         computation.set("negativeInfinityAt", .number(Float((grid.negativeInfinityAt ?? -1) + 1)))
@@ -146,9 +153,9 @@ struct PositionLayoutDrawingTests {
     /// 計算が位置を書き、その並びで置いた絵。
     private func fromNumbers(
         _ grid: Grid, frames: [Grid]? = nil, size: Float = 20, lit: Bool = true,
-        setup: (Canvas) -> Void = { _ in }
+        width: Int = 200, height: Int = 300, setup: (Canvas) -> Void = { _ in }
     ) throws -> (picture: PixelBuffer, canvas: Canvas, positions: Numbers) {
-        let canvas = try makeCanvas()
+        let canvas = try makeCanvas(width: width, height: height)
         let positions = try canvas.makeNumbers(count: grid.count * 3)
         let computation = try makeGrid(canvas)
         let cube = cube(canvas, size)
@@ -168,9 +175,9 @@ struct PositionLayoutDrawingTests {
     /// 同じ位置を `[Placement]` で置いた絵。
     private func fromPlacements(
         _ placements: [Placement], size: Float = 20, lit: Bool = true,
-        setup: (Canvas) -> Void = { _ in }
+        width: Int = 200, height: Int = 300, setup: (Canvas) -> Void = { _ in }
     ) throws -> PixelBuffer {
-        let canvas = try makeCanvas()
+        let canvas = try makeCanvas(width: width, height: height)
         let cube = cube(canvas, size)
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
@@ -528,14 +535,373 @@ struct PositionLayoutDrawingTests {
             if let kept { canvas.shape(cube, at: kept, layout: .position) }
         }
         #expect(canvas.positionLayouts.placerCount == 1)
-        kept = nil
+        // **手放す前に次の並びを作る。** 手放した後に作ると、同じ番地を使い回して、畳まなくても置き場が
+        // 入れ替わって見える
         let next = try canvas.makeNumbers(count: 9)
         next.set([30, 30, 0, 90, 90, 0, 150, 150, 0])
+        kept = nil
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
             canvas.shape(cube, at: next, layout: .position)
         }
         #expect(canvas.positionLayouts.placerCount == 1, "手放した並びの置き場が残っている")
+    }
+
+    // MARK: - 画素の一致を、奥行き・回転・遠近・影・描き場所へ広げる (「同じ位置の [Placement] と画素まで一致」の範囲)
+
+    /// 回して、軸ごとに違う倍率を掛け、遠近のある視点で見る。**GPU の `world * float4(位置, 1)` と
+    /// CPU の `transform.matrix * 置き場所.matrix` は演算の順が違う**ので、回転の入った変換で食い違わないかを見る。
+    private static let tiltedScene: (Canvas) -> Void = { canvas in
+        canvas.perspective(Float.pi / 3, 200.0 / 300.0, 10, 3000)
+        canvas.translate(100, 150, 0)
+        canvas.rotateY(0.6)
+        canvas.rotateX(0.35)
+        canvas.rotateZ(0.2)
+        canvas.scale(1.5, 0.8, 1.2)
+    }
+
+    @Test("奥行き (z) のある位置も、回した変換と遠近のある視点の下で、同じ位置の [Placement] と画素で一致する")
+    func depthRotationAndPerspectiveMatch() throws {
+        let grid = Grid(
+            count: 12, columns: 6, originX: -75, originY: -35, stepX: 30, stepY: 70, originZ: -60,
+            stepZ: 25)
+        let numbers = try fromNumbers(grid, setup: Self.tiltedScene)
+        let placed = try fromPlacements(grid.usable(), setup: Self.tiltedScene)
+        let gap = differingPixels(numbers.picture, placed)
+        #expect(gap == 0, "奥行きと回転のある絵が \(gap) 画素違う")
+        #expect(coveredPixels(placed) > 0, "何も描かれていない (検査の前提)")
+        // 検査の前提: 遠近のある視点では、z が絵に効いている
+        let flat = try fromPlacements(
+            grid.usable().map { Placement(x: $0.x, y: $0.y, z: 0) }, setup: Self.tiltedScene)
+        #expect(differingPixels(placed, flat) > 0, "奥行きが絵に効いていない — 検査の前提")
+    }
+
+    @Test("球 (法線のある形) も、軸ごとに違う倍率で回した変換の下で、同じ位置の [Placement] と画素で一致する")
+    func normalsFollowTheTiltedTransform() throws {
+        let grid = Grid(
+            count: 6, columns: 3, originX: -50, originY: -30, stepX: 50, stepY: 60, originZ: -30,
+            stepZ: 30)
+        let canvas = try makeCanvas()
+        let sphere = canvas.createShape {
+            canvas.noStroke()
+            canvas.fill(.linear(red: 0.5, green: 0.7, blue: 0.9))
+            canvas.sphere(18, detail: 12)
+        }
+        let positions = try canvas.makeNumbers(count: grid.count * 3)
+        let computation = try makeGrid(canvas)
+        try canvas.draw {
+            configure(computation, grid)
+            canvas.compute(computation, over: grid.count, writes: [positions])
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            Self.tiltedScene(canvas)
+            canvas.shape(sphere, at: positions, layout: .position)
+        }
+        let numbers = try canvas.target.readPixels()
+
+        let other = try makeCanvas()
+        let otherSphere = other.createShape {
+            other.noStroke()
+            other.fill(.linear(red: 0.5, green: 0.7, blue: 0.9))
+            other.sphere(18, detail: 12)
+        }
+        try other.draw {
+            other.background(.linear(red: 0, green: 0, blue: 0))
+            other.lights()
+            Self.tiltedScene(other)
+            other.shape(otherSphere, at: grid.usable())
+        }
+        let gap = differingPixels(numbers, try other.target.readPixels())
+        #expect(gap == 0, "回した変換の下の球が \(gap) 画素違う")
+        #expect(coveredPixels(numbers) > 0, "何も描かれていない (検査の前提)")
+    }
+
+    /// 影を落とす光と、影を受ける床のある場面。床は落とす側から外す。
+    private static let shadowedScene: (Canvas) -> Void = { canvas in
+        canvas.camera(64, -24, 170, 64, 14, 0, 0, 1, 0)
+        canvas.perspective(Float.pi / 3, 1, 1, 500)
+        canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+        canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+        canvas.shadows(true)
+        canvas.noStroke()
+        canvas.castShadow(false)
+        canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+        canvas.push()
+        canvas.translate(64, 40, -20)
+        canvas.box(190, 8, 190)
+        canvas.pop()
+        canvas.castShadow(true)
+    }
+
+    @Test("影を落とす・受ける場面でも、同じ位置の [Placement] と画素で一致する")
+    func shadowsMatch() throws {
+        let grid = Grid(
+            count: 3, columns: 3, originX: 34, originY: 8, stepX: 30, stepY: 0, originZ: 0, stepZ: 12)
+        let numbers = try fromNumbers(
+            grid, lit: false, width: 128, height: 128, setup: Self.shadowedScene)
+        let placed = try fromPlacements(
+            grid.usable(), lit: false, width: 128, height: 128, setup: Self.shadowedScene)
+        let gap = differingPixels(numbers.picture, placed)
+        #expect(gap == 0, "影のある絵が \(gap) 画素違う")
+        // 検査の前提: 影が絵に効いている (影を切った絵と違う)
+        let unshadowed = try fromPlacements(
+            grid.usable(), lit: false, width: 128, height: 128,
+            setup: { canvas in
+                Self.shadowedScene(canvas)
+                canvas.shadows(false)
+            })
+        #expect(differingPixels(placed, unshadowed) > 0, "影が絵に効いていない — 検査の前提")
+    }
+
+    @Test("描き場所 (createGraphics) の面でも、同じ位置の [Placement] と画素で一致する")
+    func graphicsSurfaceMatches() throws {
+        let canvas = try makeCanvas()
+        let layer = try canvas.createGraphics(120, 160)
+        let positions = try canvas.makeNumbers(count: 6)
+        positions.set([30, 40, 0, 80, 110, 10])
+        let cube = layer.createShape {
+            layer.noStroke()
+            layer.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
+            layer.box(20)
+        }
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            layer.beginDraw()
+            layer.background(.linear(red: 0, green: 0, blue: 0))
+            layer.lights()
+            layer.shape(cube, at: positions, layout: .position)
+            layer.endDraw()
+        }
+        let numbers = try layer.target.readPixels()
+
+        let other = try makeCanvas()
+        let flat = try other.createGraphics(120, 160)
+        let otherCube = flat.createShape {
+            flat.noStroke()
+            flat.fill(.linear(red: 0.8, green: 0.6, blue: 0.4))
+            flat.box(20)
+        }
+        try other.draw {
+            other.background(.linear(red: 0, green: 0, blue: 0))
+            flat.beginDraw()
+            flat.background(.linear(red: 0, green: 0, blue: 0))
+            flat.lights()
+            flat.shape(otherCube, at: [Placement(x: 30, y: 40), Placement(x: 80, y: 110, z: 10)])
+            flat.endDraw()
+        }
+        let gap = differingPixels(numbers, try flat.target.readPixels())
+        #expect(gap == 0, "描き場所の絵が \(gap) 画素違う")
+        #expect(coveredPixels(numbers) > 0, "何も描かれていない (検査の前提)")
+        #expect(!layer.warnings.hasWarned(.positionLayoutOutsideFrame))
+    }
+
+    // MARK: - 個数 (引数) を、区画をまたぐ数・容量 1・全部が数でない値・段 3 以上で読む
+
+    /// x に番号を書いた `count` 個の位置の並びで置き、描く引数の置いた数と、置き場所の x を読む。
+    /// `isBad` が真の番号は x を数でない値にする。
+    private func placedCount(
+        of count: Int, bad isBad: (Int) -> Bool
+    ) throws -> (placed: Int, xs: [Float], expected: [Float], scanCount: Int) {
+        let canvas = try makeCanvas()
+        let positions = try canvas.makeNumbers(count: count * 3)
+        var values = [Float](repeating: 0, count: count * 3)
+        var expected: [Float] = []
+        for index in 0..<count {
+            if isBad(index) {
+                values[index * 3] = .nan
+            } else {
+                values[index * 3] = Float(index)
+                expected.append(Float(index))
+            }
+        }
+        positions.set(values)
+        let cube = cube(canvas, 1)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(cube, at: positions, layout: .position)
+        }
+        let placer = try #require(canvas.positionLayouts.existingPlacer(for: positions))
+        let draw = placer.draws[0]
+        let arguments = canvas.read(draw.arguments)
+        let placed = Int(arguments[1].bitPattern)
+        let instances = canvas.read(draw.instances)
+        let xs = (0..<min(placed, count)).map { instances[$0 * 32 + 12] }
+        return (placed, xs, expected, placer.scanCount)
+    }
+
+    @Test(
+        "置いた数と並びの順が、区画の境・容量 1・段が 3 以上・全部が数でない値でも合う",
+        arguments: [
+            (1, "none"), (1, "all"), (2, "all"), (255, "fifth"), (256, "fifth"), (257, "fifth"),
+            (513, "third"), (1000, "all"), (65_536, "seventh"), (65_537, "seventh"),
+            (65_537, "last"),
+        ] as [(Int, String)])
+    func placedCountAndOrderAcrossScanLevels(count: Int, rule: String) throws {
+        let isBad: (Int) -> Bool
+        switch rule {
+        case "none": isBad = { _ in false }
+        case "all": isBad = { _ in true }
+        case "fifth": isBad = { $0 % 5 == 2 }
+        case "third": isBad = { $0 % 3 == 0 }
+        case "seventh": isBad = { $0 % 7 == 5 }
+        default: isBad = { $0 == count - 1 }
+        }
+        let result = try placedCount(of: count, bad: isBad)
+        #expect(
+            result.placed == result.expected.count,
+            "置いた数 \(result.placed) が \(result.expected.count) と違う")
+        #expect(result.xs == result.expected, "置き場所が並びの順に詰まっていない")
+        let levels = Particles.levelLengths(capacity: count).count - 1
+        #expect(result.scanCount == levels)
+    }
+
+    // MARK: - 呼んだ順
+
+    @Test("置いた後に同じフレームで並びへ書いても、置いた絵は書く前の値で描かれる")
+    func writesAfterPlacingDoNotReachTheEarlierCall() throws {
+        let canvas = try makeCanvas()
+        let positions = try canvas.makeNumbers(count: 6)
+        positions.set([60, 100, 0, 140, 200, 0])
+        let cube = cube(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(cube, at: positions, layout: .position)
+            positions.set([160, 40, 0, 30, 260, 0])
+        }
+        let picture = try canvas.target.readPixels()
+        let placedBefore = try fromPlacements([Placement(x: 60, y: 100), Placement(x: 140, y: 200)])
+        let placedAfter = try fromPlacements([Placement(x: 160, y: 40), Placement(x: 30, y: 260)])
+        #expect(differingPixels(picture, placedBefore) == 0, "書く前の値で置かれていない")
+        #expect(differingPixels(picture, placedAfter) > 0, "書いた後の値と見分けられない — 検査の前提")
+    }
+
+    @Test("置く前に同じフレームで書いた値で置かれる")
+    func writesBeforePlacingAreRead() throws {
+        let canvas = try makeCanvas()
+        let positions = try canvas.makeNumbers(count: 6)
+        positions.set([60, 100, 0, 140, 200, 0])
+        let cube = cube(canvas)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            positions.set([160, 40, 0, 30, 260, 0])
+            canvas.shape(cube, at: positions, layout: .position)
+        }
+        let placed = try fromPlacements([Placement(x: 160, y: 40), Placement(x: 30, y: 260)])
+        #expect(differingPixels(try canvas.target.readPixels(), placed) == 0)
+    }
+
+    // MARK: - 置き場を畳む・組み立ての失敗を覚える
+
+    @Test("手放した並びの置き場は、別の並びを置かない呼び出しでも畳まれる")
+    func releasedPlacersAreFoldedOnEveryCall() throws {
+        let canvas = try makeCanvas()
+        let cube = cube(canvas)
+        var gone: Numbers? = try canvas.makeNumbers(count: 6)
+        gone?.set([60, 100, 0, 140, 200, 0])
+        let stays = try canvas.makeNumbers(count: 6)
+        stays.set([30, 30, 0, 90, 90, 0])
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            if let gone { canvas.shape(cube, at: gone, layout: .position) }
+            canvas.shape(cube, at: stays, layout: .position)
+        }
+        #expect(canvas.positionLayouts.placerCount == 2)
+        gone = nil
+        // 新しい置き場を作らない呼び出し (残った並びを置くだけ)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.shape(cube, at: stays, layout: .position)
+        }
+        #expect(canvas.positionLayouts.placerCount == 1, "手放した並びの置き場が、次の呼び出しで畳まれていない")
+    }
+
+    @Test("置き場を用意できなかった並びは、失敗を覚えて毎フレーム確保し直さない。別の並びは置ける")
+    func placerFailureIsRememberedPerSequence() throws {
+        let canvas = try makeCanvas()
+        let cube = cube(canvas)
+        let broken = try canvas.makeNumbers(count: 6)
+        broken.set([60, 100, 0, 140, 200, 0])
+        canvas.positionLayouts.placerFailureForTesting = .bufferUnavailable(byteCount: 1)
+        for _ in 0..<3 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.shape(cube, at: broken, layout: .position)
+            }
+        }
+        #expect(canvas.positionLayouts.placerBuildAttempts == 1, "失敗した置き場を毎フレーム組み直している")
+        #expect(canvas.warnings.hasWarned(.positionLayoutUnavailable))
+        #expect(canvas.positionLayouts.placerCount == 0)
+
+        // 失敗は並びごと: 別の並びは、失敗の差し替えを外せば置ける
+        canvas.positionLayouts.placerFailureForTesting = nil
+        let other = try canvas.makeNumbers(count: 6)
+        other.set([60, 100, 0, 140, 200, 0])
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.lights()
+            canvas.shape(cube, at: other, layout: .position)
+        }
+        #expect(canvas.positionLayouts.placerBuildAttempts == 2)
+        #expect(canvas.positionLayouts.placerCount == 1)
+        #expect(coveredPixels(try canvas.target.readPixels()) > 0)
+    }
+
+    @Test("計算の入口を組めなかったら、失敗を覚えて毎フレーム組み直さない")
+    func kernelFailureIsRemembered() throws {
+        let canvas = try makeCanvas()
+        let cube = cube(canvas)
+        let positions = try canvas.makeNumbers(count: 6)
+        positions.set([60, 100, 0, 140, 200, 0])
+        canvas.positionLayouts.kernelFailureForTesting = .bufferUnavailable(byteCount: 1)
+        for _ in 0..<3 {
+            try canvas.draw {
+                canvas.background(.linear(red: 0, green: 0, blue: 0))
+                canvas.shape(cube, at: positions, layout: .position)
+            }
+        }
+        #expect(canvas.positionLayouts.kernelBuildAttempts == 1, "失敗した入口を毎フレーム組み直している")
+        #expect(canvas.positionLayouts.placerBuildAttempts == 0, "入口が無いのに置き場を確保している")
+        #expect(canvas.warnings.hasWarned(.positionLayoutUnavailable))
+        #expect(coveredPixels(try canvas.target.readPixels()) == 0)
+    }
+
+    // MARK: - setup() など、描く外
+
+    final class PlacedInSetup: Sketch {
+        var cube: Shape!
+        var positions: Numbers!
+        var fill: Computation!
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 64, height: 64) }
+        func setup() throws {
+            cube = createShape {
+                noStroke()
+                box(10)
+            }
+            positions = try makeNumbers(count: 6)
+            fill = try makeComputation(
+                "kernel void fill(device float *p [[buffer(0)]], uint id [[thread_position_in_grid]]) "
+                    + "{ p[id] = 1.0; }",
+                name: "fill")
+            // 計算が先に、同じ場面 (描く外) で断られる
+            compute(fill, over: 6, writes: [positions])
+            shape(cube, at: positions, layout: .position)
+        }
+        func draw() {}
+    }
+
+    @Test("setup() で呼ぶと、この口の名前で 1 度知らせる。計算を頼む口の注意とは別の鍵で言う")
+    func outsideTheFrameNamesThisCall() throws {
+        let runtime = try SketchRuntime(sketch: PlacedInSetup(), gpu: try RenderDevice())
+        try runtime.advance()
+        let warnings = runtime.canvas.warnings
+        let message = try #require(warnings.message(for: .positionLayoutOutsideFrame))
+        #expect(message.hasPrefix("shape(at:layout:)"), Comment(rawValue: message))
+        #expect(message.contains("draw()"), Comment(rawValue: message))
+        #expect(warnings.hasWarned(.computeOutsideFrame), "検査の前提: 先に計算の口が断られている")
+        #expect(runtime.canvas.positionLayouts.placerCount == 0, "断った呼び出しが置き場を作った")
     }
 }
 
