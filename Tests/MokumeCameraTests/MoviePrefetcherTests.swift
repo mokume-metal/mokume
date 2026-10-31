@@ -6,7 +6,7 @@ import Synchronization
 import Testing
 
 @testable import MokumeCamera
-import MokumeCore
+@testable import MokumeCore
 
 /// 実時間の時計の先読みの係 (#2523)。GPU は要らない。動画は検査の中で作る。
 ///
@@ -28,11 +28,11 @@ struct MoviePrefetcherTests {
             orientation: .identity)
     }
 
-    /// 係が列を埋め終えるまで待つ。期限 (5 秒) を越えたら落とす。
+    /// 係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ prefetcher: MoviePrefetcher) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 5 秒で列を埋め終えない")
+            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
             try await Task.sleep(for: .milliseconds(1))
         }
     }
@@ -47,7 +47,7 @@ struct MoviePrefetcherTests {
         _ = try prefetcher.picture(at: 0, generation: 0, lap: 0, looping: false)
         try await settle(prefetcher)
         for frame in 0..<89 {
-            let picture = try prefetcher.picture(at: Double(frame) / 30, generation: 0, lap: 0, looping: false)
+            let picture = try prefetcher.picture(at: Double(frame) / 30, generation: 0, lap: 0, looping: false)?.picture
             #expect(picture == expected[frame].picture, "\(frame) 枚目")
             try await settle(prefetcher)
         }
@@ -63,12 +63,12 @@ struct MoviePrefetcherTests {
         defer { prefetcher.close() }
         _ = try prefetcher.picture(at: 0.5, generation: 0, lap: 0, looping: false)
         try await settle(prefetcher)
-        #expect(try prefetcher.picture(at: 0.5, generation: 0, lap: 0, looping: false) == expected[15].picture)
+        #expect(try prefetcher.picture(at: 0.5, generation: 0, lap: 0, looping: false)?.picture == expected[15].picture)
         // 世代が進んだ頼みは、前の世代の列から選ばない (頼みと選びが同じ錠の中なので、係は割り込めない)
-        #expect(try prefetcher.picture(at: 2.5, generation: 1, lap: 0, looping: false) == nil)
+        #expect(try prefetcher.picture(at: 2.5, generation: 1, lap: 0, looping: false)?.picture == nil)
         try await settle(prefetcher)
-        #expect(try prefetcher.picture(at: 2.5, generation: 1, lap: 0, looping: false) == expected[75].picture)
-        #expect(try prefetcher.picture(at: 2.5 + 1.0 / 30, generation: 1, lap: 0, looping: false) == expected[76].picture)
+        #expect(try prefetcher.picture(at: 2.5, generation: 1, lap: 0, looping: false)?.picture == expected[75].picture)
+        #expect(try prefetcher.picture(at: 2.5 + 1.0 / 30, generation: 1, lap: 0, looping: false)?.picture == expected[76].picture)
     }
 
     @Test("ループで流すと、継ぎ目の先のコマは継ぎ目に着く前に列に入っている")
@@ -86,8 +86,8 @@ struct MoviePrefetcherTests {
             try await settle(prefetcher)
         }
         // 継ぎ目のフレームで、待たずに頭のコマが出る
-        #expect(try prefetcher.picture(at: 0, generation: 0, lap: 1, looping: true) == expected[0].picture)
-        #expect(try prefetcher.picture(at: 1.0 / 30, generation: 0, lap: 1, looping: true) == expected[1].picture)
+        #expect(try prefetcher.picture(at: 0, generation: 0, lap: 1, looping: true)?.picture == expected[0].picture)
+        #expect(try prefetcher.picture(at: 1.0 / 30, generation: 0, lap: 1, looping: true)?.picture == expected[1].picture)
     }
 
     @Test("ループでなければ終わりのコマで止まり、列を埋めようとしない")
@@ -101,9 +101,9 @@ struct MoviePrefetcherTests {
         try await settle(prefetcher)
         _ = try prefetcher.picture(at: 2.9, generation: 0, lap: 0, looping: false)
         try await settle(prefetcher)
-        #expect(try prefetcher.picture(at: 3, generation: 0, lap: 0, looping: false) == expected[89].picture)
+        #expect(try prefetcher.picture(at: 3, generation: 0, lap: 0, looping: false)?.picture == expected[89].picture)
         try await settle(prefetcher)
-        #expect(try prefetcher.picture(at: 3.5, generation: 0, lap: 0, looping: false) == nil, "同じ終わりのコマは渡さない")
+        #expect(try prefetcher.picture(at: 3.5, generation: 0, lap: 0, looping: false)?.picture == nil, "同じ終わりのコマは渡さない")
     }
 
     @Test("閉じると係が止まり、期限の内に返る")
@@ -174,7 +174,7 @@ struct MoviePrefetcherTests {
         // 頭へ飛べば (新しい世代) 読み直して戻る
         _ = try? prefetcher.picture(at: 0, generation: 1, lap: 0, looping: false)
         try await settle(prefetcher)
-        #expect(try prefetcher.picture(at: 0, generation: 1, lap: 0, looping: false) == expected[0].picture)
+        #expect(try prefetcher.picture(at: 0, generation: 1, lap: 0, looping: false)?.picture == expected[0].picture)
     }
 
     // MARK: - 世代と何周目か
@@ -205,5 +205,15 @@ nonisolated private final class Switch: Sendable {
     var isOn: Bool {
         get { state.withLock { $0 } }
         set { state.withLock { $0 = newValue } }
+    }
+}
+
+extension VideoFrame {
+    /// 比べるための 8 bit の絵。面なら表を CPU で引く (GPU で引いた結果と bit が同じ — #2962)。
+    var picture: DisplayImage {
+        switch self {
+        case .converted(let picture): picture
+        case .surface(let surface): surface.converted()
+        }
     }
 }

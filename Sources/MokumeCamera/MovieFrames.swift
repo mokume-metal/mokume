@@ -241,10 +241,15 @@ nonisolated final class MovieFrames {
             throw Failure(reason: error.localizedDescription)
         }
         // **画素の形式は 32BGRA を頼む** — YpCbCr から RGB へは AVFoundation に変換させる
-        // (``FrameConverter`` は BGRA だけを受ける。カメラと同じ理由)
+        // (``FrameConverter`` は BGRA だけを受ける。カメラと同じ理由)。面 (IOSurface) の裏付きで Metal が
+        // 読める形も頼む — 面のまま絵へ渡す道 (``SurfaceRoute``・#2962) が要る
         let output = AVAssetReaderTrackOutput(
             track: track,
-            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+            ])
         // 書き換えないので写さない
         output.alwaysCopiesSampleData = false
         reader.timeRange = CMTimeRange(start: from, duration: .positiveInfinity)

@@ -58,7 +58,7 @@ nonisolated final class FrameConverter {
     }
 
     /// 元の絵の不透明度の扱い。
-    enum Alpha: Equatable {
+    enum Alpha: Hashable, Sendable {
         /// 不透明として扱う。元の不透明度は読まず、すべての画素を 255 で埋める (カメラ)。
         case opaque
         /// 元の不透明度を、乗算していないまま運ぶ (動画)。元が乗算済みを名乗れば、乗算を戻してから変換する。

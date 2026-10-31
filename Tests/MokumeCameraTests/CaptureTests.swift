@@ -11,8 +11,8 @@ final class SilentSource: CaptureSource {
     let initial: SourceState
     private(set) var stopped = 0
     init(_ initial: SourceState) { self.initial = initial }
-    func start(into input: ExternalInput<DisplayImage>) { input.setState(initial) }
-    func pump(into input: ExternalInput<DisplayImage>) {}
+    func start(into input: ExternalInput<VideoFrame>) { input.setState(initial) }
+    func pump(into input: ExternalInput<VideoFrame>) {}
     func stop() { stopped += 1 }
 }
 
@@ -143,7 +143,7 @@ struct CaptureTests {
                 switch sketch.frameCount {
                 case 1:
                     // 届いたが、まだ読まれていない赤い絵を残したまま外す
-                    camera.input.send(solid(255, 0, 0))
+                    camera.input.send(.converted(solid(255, 0, 0)))
                     sketch.detach(camera)
                 case 2:
                     sketch.attach(camera)

@@ -83,7 +83,7 @@ final class MoviePrefetcher {
     /// 位置のコマがまだ列に無いか、前に渡したコマのままなら `nil`。係が読めなくなっていて、渡せる
     /// コマも無ければ投げる。
     func picture(at position: Double, generation: Int, lap: Int, looping: Bool) throws(MovieFrames.Failure)
-        -> DisplayImage?
+        -> VideoFrame?
     {
         serial += 1
         let request = PrefetchRequest(
@@ -221,12 +221,14 @@ nonisolated struct PrefetchRequest: Sendable {
     let looping: Bool
 }
 
-/// 係が変換したコマ。**OS の型を持たない。**
+/// 係が用意したコマ。**`CVPixelBuffer`・`CMSampleBuffer` を持たない** — 変換した絵か、面の値 (``PixelSurface``。
+/// 面を包んだ自前の `Sendable` な値で、ADR-0042 決定 7 の条件 2 の「OS の型」に当たらない — 決定 5 の改訂
+/// (2026-11-01))。
 nonisolated struct PrefetchedFrame: Sendable {
     let generation: Int
     let lap: Int
     let time: Double
-    let image: DisplayImage
+    let image: VideoFrame
 
     var key: PrefetchKey { PrefetchKey(lap: lap, time: time) }
 }
@@ -379,18 +381,24 @@ nonisolated struct PrefetchWorker {
         defer { mailbox.state.withLock { $0.restarts = frames.restarts } }
         guard let frame = frames.current, frame.serial != published else { return }
         published = frame.serial
-        let image: DisplayImage
-        do {
-            image = try converter.convert(frame.buffer)
-        } catch {
-            failing = true
-            mailbox.state.withLock { [generation] in
-                $0.failure = (generation, MovieFrames.Failure(reason: error.description))
+        let image: VideoFrame
+        // 面のまま渡せるなら面で (#2962)。色の表が無ければ、係の上で作る (main では作らない)
+        if case .success(let surface) = SurfaceRoute.surface(
+            for: frame.buffer, alpha: .straight, reshaped: orientation != .identity, builds: true)
+        {
+            image = .surface(surface)
+        } else {
+            do {
+                image = .converted(try converter.convert(frame.buffer).oriented(orientation))
+            } catch {
+                failing = true
+                mailbox.state.withLock { [generation] in
+                    $0.failure = (generation, MovieFrames.Failure(reason: error.description))
+                }
+                return
             }
-            return
         }
-        let prefetched = PrefetchedFrame(
-            generation: generation, lap: lap, time: frame.time, image: image.oriented(orientation))
+        let prefetched = PrefetchedFrame(generation: generation, lap: lap, time: frame.time, image: image)
         mailbox.state.withLock { state in
             // 変換の間に飛んでいれば積まない
             guard state.request?.generation == prefetched.generation, !state.stopping else { return }

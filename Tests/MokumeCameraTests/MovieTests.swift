@@ -187,12 +187,12 @@ struct MovieTests {
         try await TestMovie.write(frames: 90, width: 128, height: 96, keyFrameInterval: 30, paint: TestMovie.stripe)
     }
 
-    /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (5 秒) を越えたら落とす。
+    /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ movie: Movie) async throws {
         guard let prefetcher = movie.prefetcher else { return }
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 5 秒で列を埋め終えない")
+            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
             try await Task.sleep(for: .milliseconds(1))
         }
     }

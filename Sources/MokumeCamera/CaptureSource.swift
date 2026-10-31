@@ -13,9 +13,9 @@ import MokumeCore
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 protocol CaptureSource: AnyObject {
     /// 始める。届いた絵と状態は `input` へ入れる。
-    func start(into input: ExternalInput<DisplayImage>)
+    func start(into input: ExternalInput<VideoFrame>)
     /// フレームごと、取り出す前に呼ばれる。**実機は何もしない** (絵は向こうの都合で届く)。
-    func pump(into input: ExternalInput<DisplayImage>)
+    func pump(into input: ExternalInput<VideoFrame>)
     /// 止める。
     func stop()
 }
@@ -41,15 +41,15 @@ final class FramesSource: CaptureSource {
         detached = DetachedFrames(owner: owner)
     }
 
-    func start(into input: ExternalInput<DisplayImage>) {
+    func start(into input: ExternalInput<VideoFrame>) {
         // 最初の開きは 0。足し直しは、外していた間に進んだフレームの数だけ進める
         if !frames.isEmpty { next = (next + detached.reopen()) % frames.count }
         input.setState(frames.isEmpty ? .unavailable : .running)
     }
 
-    func pump(into input: ExternalInput<DisplayImage>) {
+    func pump(into input: ExternalInput<VideoFrame>) {
         guard !frames.isEmpty, input.state == .running else { return }
-        input.send(frames[next % frames.count])
+        input.send(.converted(frames[next % frames.count]))
         next += 1
     }
 

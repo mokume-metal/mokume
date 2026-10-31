@@ -40,7 +40,7 @@ public final class Capture: Inlet {
     /// このフレームで新しい 1 枚が ``image`` に書かれたか。
     public private(set) var isNewFrame = false
 
-    let input: ExternalInput<DisplayImage>
+    let input: ExternalInput<VideoFrame>
     private let source: any CaptureSource
     /// 届いた 1 枚の左右を入れ替えるか。機材の道も注入の道も、ここで当てる。
     private let mirrored: Bool
@@ -109,8 +109,12 @@ public final class Capture: Inlet {
 
     public func supply() {
         source.pump(into: input)
-        if let picture = input.take() {
-            image.write(mirrored ? picture.horizontallyReflected() : picture)
+        if let frame = input.take() {
+            switch frame {
+            case .converted(let picture): image.write(mirrored ? picture.horizontallyReflected() : picture)
+            // 鏡映するカメラは面に乗せない (絵の列が CPU の道を選ぶ — ``CameraSource``)
+            case .surface(let surface): image.write(surface)
+            }
             isNewFrame = true
         } else {
             isNewFrame = false
