@@ -3,7 +3,6 @@
 
 import Darwin
 import Foundation
-import Network
 import Synchronization
 import Testing
 
@@ -315,7 +314,7 @@ nonisolated enum PeerState: Equatable, Sendable {
     case connecting
     /// 繋がった。
     case ready
-    /// 繋ぎが成り立たないと名乗った (`waiting`・`failed` と、その理由)。
+    /// 繋ぎが成り立たないと名乗った (`connect` の失敗の errno・握手の拒み・書けなかった事情・壊れた frame)。
     case trouble(String)
 
     var text: String {
@@ -344,10 +343,10 @@ extension LoopbackPeer {
 /// 替える** (#2940)。
 ///
 /// 全段が並走する CI で、受け口へ繋ぎに行く検査の側の相手が 10〜20 秒たっても繋がらず、後の期待が
-/// 連鎖して外れたことが 2 回あった (同じ suite の直後の検査は普通に繋がっていた)。**止まった繋ぎが
-/// `waiting` なのか `preparing` のままなのか、なぜ止まったのかは、確かめていない** (CI のログには相手の
-/// 状態が残っていなかった)。UDP の送り元が `Address already in use` で `waiting` のまま回復しなかった
-/// #2910 と同じ形の見込みで、製品の ``ClientSource`` も `waiting` を自分で閉じて張り直している。
+/// 連鎖して外れたことが 2 回あった (同じ suite の直後の検査は普通に繋がっていた)。相手は
+/// Network.framework の繋ぎで、止まった繋ぎは `waiting(Address already in use)` だった (#3537)。
+/// 相手を素の BSD socket (`RawStreams.swift`) に替えた後は、繋げなかった相手が `connect` の errno と
+/// 局所のポート・受け口のポートを名乗るので、止まった原因は名乗りから読める。
 ///
 /// 替え方は、状態を問わない。**繋がっていない相手は、猶予 (`within` を替える回数 + 1 で割った間) が
 /// 過ぎたら、古い相手を閉じてから新しい相手に替える** (1 人あたり `replacements` 回まで)。猶予を置くのは、

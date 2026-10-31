@@ -19,6 +19,7 @@ import Synchronization
 ///
 /// 繋げなかったら、その事情 (errno・局所のポート・受け口のポート) を ``PeerState/trouble(_:)`` に名乗り、
 /// socket を閉じる。**作り直すのは ``PeerGroup`` の仕事** (替える回数と猶予はそちらのまま)。
+/// 書けなかったとき (繋がる前・読む thread が終わった後・errno) も、黙って捨てずに同じ口で名乗る。
 nonisolated class RawStream: @unchecked Sendable {
     /// 繋ぐ手続き。socket を非ブロックにして `connect` した戻りの errno (成功は 0・`EINPROGRESS` は
     /// 繋ぎの途中) を返す。検査が失敗を作るために差し替える。
@@ -37,8 +38,12 @@ nonisolated class RawStream: @unchecked Sendable {
         var ended = false
         /// TCP が繋がった (書いてよい)。
         var connected = false
+        /// 送っている最中の数。読む thread は、これが 0 になってから descriptor を閉じる。
+        var writers = 0
     }
     private let inner = Mutex(Inner())
+    /// 送りの直列化 (複数の thread が同じ socket へ書いても、frame が混ざらない)。`inner` の錠は持たずに送る。
+    private let sendLock = Mutex(())
 
     init(port: Int, connector: @escaping Connector = RawStream.systemConnector) {
         self.port = port
@@ -69,6 +74,7 @@ nonisolated class RawStream: @unchecked Sendable {
     final var closedByPeer: Bool { inner.withLock { $0.ended } }
 
     /// 繋ぎの状態を決める。**繋がった後の `trouble` は無視する** (切れた相手は、受け口の数が示す)。
+    /// 書けなかった・壊れた frame のように、相手でなく検査の側が見つけた事情は ``fail(_:)`` で名乗る。
     final func setState(_ next: PeerState) {
         inner.withLock { inner in
             if case .trouble = next, inner.state == .ready { return }
@@ -76,21 +82,38 @@ nonisolated class RawStream: @unchecked Sendable {
         }
     }
 
+    /// 事情を名乗る。**繋がった後でも状態を `trouble` に替える** — 黙って捨てると、後ろの期待が連鎖して外れる。
+    /// 最初に名乗った事情を残す (後からの二次的な失敗で上書きしない)。
+    final func fail(_ reason: String) {
+        inner.withLock { inner in
+            if case .trouble = inner.state { return }
+            inner.state = .trouble(reason)
+        }
+    }
+
     /// 向こうが閉じたと読む。
     final func markEnded() { inner.withLock { $0.ended = true } }
 
-    /// 全部書く。繋がっていない・閉じた後は何もしない。書けなければ偽。
+    /// 全部書く。検査が `close()` した後は何もしない。書けなければ偽で、事情を名乗る
+    /// (繋がる前・読む thread が終わった後・errno)。**錠を持たずに送る** — 送りが待たされても、
+    /// `state`・`close()`・読む thread は止まらない。
     @discardableResult
     final func write(_ bytes: [UInt8]) -> Bool {
-        inner.withLock { inner in
-            guard !inner.stopped, inner.connected, let descriptor = inner.descriptor else { return false }
+        guard let descriptor = acquire("send", bytes.count) else { return false }
+        defer { release() }
+        return sendLock.withLock { _ in
             var offset = 0
             while offset < bytes.count {
                 let written = bytes[offset...].withUnsafeBytes {
                     Darwin.send(descriptor, $0.baseAddress, $0.count, 0)
                 }
+                let code = errno
                 if written < 0 {
-                    if errno == EINTR { continue }
+                    if code == EINTR { continue }
+                    if inner.withLock({ $0.stopped }) { return false }
+                    fail(
+                        "send failed (errno \(code) \(Self.describe(code))・\(bytes.count) バイト中 \(offset) 書けた・受け口のポート \(port))"
+                    )
                     return false
                 }
                 offset += written
@@ -101,9 +124,12 @@ nonisolated class RawStream: @unchecked Sendable {
 
     /// 書く向きを閉じる (書いたものの後に、終わりの印が届く)。読む向きは開いたまま。
     final func finishWriting() {
-        inner.withLock { inner in
-            guard !inner.stopped, inner.connected, let descriptor = inner.descriptor else { return }
-            shutdown(descriptor, SHUT_WR)
+        guard let descriptor = acquire("finish", 0) else { return }
+        defer { release() }
+        if shutdown(descriptor, SHUT_WR) != 0 {
+            let code = errno
+            if inner.withLock({ $0.stopped }) { return }
+            fail("finish failed (errno \(code) \(Self.describe(code))・受け口のポート \(port))")
         }
     }
 
@@ -115,17 +141,43 @@ nonisolated class RawStream: @unchecked Sendable {
         }
     }
 
+    /// 書く・閉じる前に descriptor を借りる。借りられなければ、事情を名乗って nil。
+    /// `close()` の後は、検査が閉じたのだから黙って nil。
+    private func acquire(_ what: String, _ size: Int) -> Int32? {
+        let result = inner.withLock { inner -> (descriptor: Int32?, reason: String?) in
+            if inner.stopped { return (nil, nil) }
+            guard inner.connected else {
+                return (nil, "\(what) before connected (\(size) バイトを捨てた・受け口のポート \(port))")
+            }
+            guard let descriptor = inner.descriptor else {
+                return (nil, "\(what) after the connection ended (\(size) バイトを捨てた・受け口のポート \(port))")
+            }
+            inner.writers += 1
+            return (descriptor, nil)
+        }
+        if let reason = result.reason { fail(reason) }
+        return result.descriptor
+    }
+
+    private func release() { inner.withLock { $0.writers -= 1 } }
+
     // MARK: - 読む thread
 
     private func run() {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        let opened = errno
         guard descriptor >= 0 else {
-            setState(.trouble("socket failed (\(Self.describe(errno)))"))
+            setState(.trouble("socket failed (errno \(opened) \(Self.describe(opened)))"))
             markEnded()
             return
         }
         defer {
-            inner.withLock { $0.descriptor = nil }
+            // 新しい送りを断ち、送っている最中のものを起こして、終わるのを待ってから閉じる
+            inner.withLock { inner in
+                inner.descriptor = nil
+                shutdown(descriptor, SHUT_RDWR)
+            }
+            while inner.withLock({ $0.writers }) > 0 { usleep(1000) }
             Darwin.close(descriptor)
         }
         var on: Int32 = 1
@@ -147,9 +199,11 @@ nonisolated class RawStream: @unchecked Sendable {
         if inner.withLock({ $0.stopped }) { return }
         guard code == 0 else {
             let local = Self.localPort(of: descriptor)
+            let localText = local == 0 ? "未割り当て" : String(local)
             setState(
                 .trouble(
-                    "connect failed (errno \(code) \(Self.describe(code))・局所のポート \(local)・受け口のポート \(port))"))
+                    "connect failed (errno \(code) \(Self.describe(code))・局所のポート \(localText)・受け口のポート \(port))"
+                ))
             markEnded()
             return
         }
@@ -160,12 +214,14 @@ nonisolated class RawStream: @unchecked Sendable {
         var buffer = [UInt8](repeating: 0, count: 65536)
         while true {
             let count = buffer.withUnsafeMutableBytes { recv(descriptor, $0.baseAddress, $0.count, 0) }
+            // errno は、錠を取るなど他の呼びが書き換える前に控える
+            let code = errno
             if count > 0 {
                 receive(Array(buffer[0..<count]))
                 continue
             }
             if inner.withLock({ $0.stopped }) { return }
-            if count < 0, errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { continue }
+            if count < 0, code == EAGAIN || code == EWOULDBLOCK || code == EINTR { continue }
             markEnded()
             return
         }
@@ -178,9 +234,10 @@ nonisolated class RawStream: @unchecked Sendable {
             if inner.withLock({ $0.stopped }) { return ECANCELED }
             var poller = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
             let ready = poll(&poller, 1, 50)
+            let code = errno
             if ready < 0 {
-                if errno == EINTR { continue }
-                return errno
+                if code == EINTR { continue }
+                return code
             }
             if ready > 0 {
                 var failure: Int32 = 0
@@ -209,7 +266,8 @@ nonisolated class RawStream: @unchecked Sendable {
         return result == 0 ? 0 : errno
     }
 
-    /// 自分側のポート。繋げなかった socket では 0 のことがある。
+    /// 自分側のポート。繋げなかった socket では 0 (未割り当て) のことがある。
+    /// 宛先を知らずに局所のポートを選ばないよう、`connect` の前に `bind` はしない (衝突を増やしうる)。
     static func localPort(of descriptor: Int32) -> Int {
         var address = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -262,6 +320,7 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
     private var shook = false
     private var fragments: [UInt8] = []
     private var fragmentIsText = false
+    private var broken = false
 
     init(port: Int, path: String = "/", connector: @escaping Connector = RawStream.systemConnector) {
         self.path = path
@@ -286,10 +345,11 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
         let request =
             "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
             + "Sec-WebSocket-Key: \(key)\r\nSec-WebSocket-Version: 13\r\n\r\n"
-        if !write(Array(request.utf8)) { setState(.trouble("handshake could not be written (受け口のポート \(port))")) }
+        write(Array(request.utf8))
     }
 
     override func receive(_ chunk: [UInt8]) {
+        if broken { return }
         pending += chunk
         if !shook, !readHandshake() { return }
         readFrames()
@@ -323,23 +383,40 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
     // MARK: - frame
 
     private func readFrames() {
-        while let frame = nextFrame() {
-            switch frame.opcode {
-            case 0x1, 0x2:
-                fragmentIsText = frame.opcode == 0x1
-                fragments = frame.payload
-                if frame.fin { finishMessage() }
-            case 0x0:
-                fragments += frame.payload
-                if frame.fin { finishMessage() }
-            case 0x8:
+        while true {
+            switch WebSocketFrames.decode(pending) {
+            case .incomplete:
+                return
+            case .invalid(let reason):
+                // 受け口の約束が破れた (壊れた frame)。落ちずに名乗って、以後読まない
+                fail("invalid frame from the receiver: \(reason)・受け口のポート \(port)")
                 markEnded()
-                sendFrame(opcode: 0x8, payload: Array(frame.payload.prefix(2)))
-            case 0x9:
-                sendFrame(opcode: 0xA, payload: frame.payload)
-            default:
-                break
+                pending = []
+                broken = true
+                return
+            case .frame(let frame, let consumed):
+                pending.removeSubrange(0..<consumed)
+                handle(frame)
             }
+        }
+    }
+
+    private func handle(_ frame: WebSocketFrames.Frame) {
+        switch frame.opcode {
+        case 0x1, 0x2:
+            fragmentIsText = frame.opcode == 0x1
+            fragments = frame.payload
+            if frame.fin { finishMessage() }
+        case 0x0:
+            fragments += frame.payload
+            if frame.fin { finishMessage() }
+        case 0x8:
+            markEnded()
+            sendFrame(opcode: 0x8, payload: Array(frame.payload.prefix(2)))
+        case 0x9:
+            sendFrame(opcode: 0xA, payload: frame.payload)
+        default:
+            break
         }
     }
 
@@ -349,57 +426,10 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
         fragments = []
     }
 
-    private struct Frame {
-        let fin: Bool
-        let opcode: UInt8
-        let payload: [UInt8]
-    }
-
-    /// 溜まったバイト列から frame を 1 つ取り出す。揃っていなければ nil。
-    private func nextFrame() -> Frame? {
-        guard pending.count >= 2 else { return nil }
-        let fin = pending[0] & 0x80 != 0
-        let opcode = pending[0] & 0x0F
-        let masked = pending[1] & 0x80 != 0
-        var length = Int(pending[1] & 0x7F)
-        var offset = 2
-        if length == 126 {
-            guard pending.count >= 4 else { return nil }
-            length = Int(pending[2]) << 8 | Int(pending[3])
-            offset = 4
-        } else if length == 127 {
-            guard pending.count >= 10 else { return nil }
-            length = (2..<10).reduce(0) { $0 << 8 | Int(pending[$1]) }
-            offset = 10
-        }
-        var mask: [UInt8] = []
-        if masked {
-            guard pending.count >= offset + 4 else { return nil }
-            mask = Array(pending[offset..<offset + 4])
-            offset += 4
-        }
-        guard pending.count >= offset + length else { return nil }
-        var payload = Array(pending[offset..<offset + length])
-        if masked { for index in payload.indices { payload[index] ^= mask[index % 4] } }
-        pending.removeSubrange(0..<offset + length)
-        return Frame(fin: fin, opcode: opcode, payload: payload)
-    }
-
     /// client の frame を 1 つ送る。**client の frame は必ずマスクする** (RFC 6455 5.3)。
+    /// 書けなければ ``RawStream/write(_:)`` が名乗る。
     private func sendFrame(opcode: UInt8, payload: [UInt8]) {
-        var frame: [UInt8] = [0x80 | opcode]
-        if payload.count < 126 {
-            frame.append(0x80 | UInt8(payload.count))
-        } else if payload.count <= 0xFFFF {
-            frame += [0x80 | 126, UInt8(payload.count >> 8), UInt8(payload.count & 0xFF)]
-        } else {
-            frame.append(0x80 | 127)
-            frame += (0..<8).map { UInt8((payload.count >> (8 * (7 - $0))) & 0xFF) }
-        }
-        let mask = (0..<4).map { _ in UInt8.random(in: 0...255) }
-        frame += mask
-        frame += payload.enumerated().map { $0.element ^ mask[$0.offset % 4] }
-        write(frame)
+        write(WebSocketFrames.encode(opcode: opcode, payload: payload))
     }
 
     private static func find(_ needle: [UInt8], in haystack: [UInt8]) -> Range<Int>? {
@@ -409,5 +439,78 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
             return start..<start + needle.count
         }
         return nil
+    }
+}
+
+/// WebSocket (RFC 6455) の frame の符号化と読み。socket に触らない純関数で、検査が長さの符号化を直に見る。
+nonisolated enum WebSocketFrames {
+    struct Frame: Equatable {
+        let fin: Bool
+        let opcode: UInt8
+        let payload: [UInt8]
+    }
+
+    enum Decoded: Equatable {
+        /// まだ揃っていない。
+        case incomplete
+        /// 1 つ取り出せた。`consumed` は使ったバイト数。
+        case frame(Frame, consumed: Int)
+        /// 壊れている (長さが範囲外など)。
+        case invalid(String)
+    }
+
+    /// 1 つの frame の中身の上限。検査が扱う大きさの桁を大きく越えるものは、壊れたとみなす。
+    static let payloadLimit = 1 << 26
+
+    /// client の frame を作る。**client の frame は必ずマスクする** (RFC 6455 5.3)。`mask` は検査が固定できる。
+    static func encode(
+        opcode: UInt8, payload: [UInt8], fin: Bool = true,
+        mask: [UInt8] = (0..<4).map { _ in UInt8.random(in: 0...255) }
+    ) -> [UInt8] {
+        var frame: [UInt8] = [(fin ? 0x80 : 0) | opcode]
+        if payload.count < 126 {
+            frame.append(0x80 | UInt8(payload.count))
+        } else if payload.count <= 0xFFFF {
+            frame += [0x80 | 126, UInt8(payload.count >> 8), UInt8(payload.count & 0xFF)]
+        } else {
+            frame.append(0x80 | 127)
+            frame += (0..<8).map { UInt8((payload.count >> (8 * (7 - $0))) & 0xFF) }
+        }
+        frame += mask
+        frame += payload.enumerated().map { $0.element ^ mask[$0.offset % 4] }
+        return frame
+    }
+
+    /// 溜まったバイト列から frame を 1 つ取り出す。マスクされていれば外す (server の frame は普通マスクしない)。
+    static func decode(_ pending: [UInt8]) -> Decoded {
+        guard pending.count >= 2 else { return .incomplete }
+        let fin = pending[0] & 0x80 != 0
+        let opcode = pending[0] & 0x0F
+        let masked = pending[1] & 0x80 != 0
+        var length = UInt64(pending[1] & 0x7F)
+        var offset = 2
+        if length == 126 {
+            guard pending.count >= 4 else { return .incomplete }
+            length = UInt64(pending[2]) << 8 | UInt64(pending[3])
+            offset = 4
+        } else if length == 127 {
+            guard pending.count >= 10 else { return .incomplete }
+            length = (2..<10).reduce(UInt64(0)) { $0 << 8 | UInt64(pending[$1]) }
+            offset = 10
+        }
+        guard length <= UInt64(payloadLimit) else {
+            return .invalid("payload length \(length) is out of range (limit \(payloadLimit))")
+        }
+        let size = Int(length)
+        var mask: [UInt8] = []
+        if masked {
+            guard pending.count >= offset + 4 else { return .incomplete }
+            mask = Array(pending[offset..<offset + 4])
+            offset += 4
+        }
+        guard pending.count >= offset + size else { return .incomplete }
+        var payload = Array(pending[offset..<offset + size])
+        if masked { for index in payload.indices { payload[index] ^= mask[index % 4] } }
+        return .frame(Frame(fin: fin, opcode: opcode, payload: payload), consumed: offset + size)
     }
 }
