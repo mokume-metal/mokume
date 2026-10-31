@@ -12,4 +12,7 @@
 /// 別の理由で名乗る。
 ///
 /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
-package protocol RealtimeSound: Inlet {}
+///
+/// 目印だけで要件を持たない。``Inlet`` を継がせないのは、入り口の適合が main actor に隔離されていて、
+/// それを継ぐと下限の Swift (6.3) が目印の適合まで隔離の越境と拒むため。入り口は `Inlet` と並べて適合する。
+package nonisolated protocol RealtimeSound {}

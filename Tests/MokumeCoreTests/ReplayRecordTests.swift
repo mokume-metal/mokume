@@ -843,7 +843,7 @@ struct ReplayRecordingRuntimeTests {
     }
 
     /// 音を鳴らす入り口 (窓では実時間で鳴る)。
-    final class Chime: RealtimeSound {
+    final class Chime: Inlet, RealtimeSound {
         func supply() {}
     }
 
