@@ -639,7 +639,7 @@ struct AtomicFileTests {
 
     // MARK: - 区画の JSON は rename(2) で置き、保存・作品の出力は属性を引き継ぐ (#2382)
 
-    /// 既存のファイルの権限 (0640) が、置いた後どうなるか。`replaceItemAt` は引き継ぎ、`rename(2)` は
+    /// 既存のファイルの権限が、置いた後どうなるか。`replaceItemAt` は引き継ぎ、`rename(2)` は
     /// 一時ファイルの既定のままにする。
     private func permissions(of url: URL) throws -> Int {
         try #require(FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int)
@@ -654,9 +654,11 @@ struct AtomicFileTests {
         ] {
             let url = facet.appendingPathComponent(name)
             try "old".write(to: url, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: url.path)
+            // 一時ファイルの権限は `0666 & ~umask` で、実行ビットは決して立たない。umask に頼らず「引き継がれた」と
+            // 分かるよう、umask から生まれえない 0750 を行き先に付ける
+            try FileManager.default.setAttributes([.posixPermissions: 0o750], ofItemAtPath: url.path)
             try put(url)
-            #expect(try permissions(of: url) != 0o640, "\(name): 属性を引き継いでいる (replaceItemAt のまま)")
+            #expect(try permissions(of: url) != 0o750, "\(name): 属性を引き継いでいる (replaceItemAt のまま)")
             #expect(keys(in: try String(contentsOf: url, encoding: .utf8)) == ["apple", "middle", "zebra"])
         }
     }
