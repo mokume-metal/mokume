@@ -73,6 +73,7 @@ let package = Package(
                 .copy("Drawing/Shaders/Effect.metal"),
                 .copy("Drawing/Shaders/Effects/Builtin.metal"),
                 .copy("Drawing/Shaders/Kinds.metal"),
+                .copy("Drawing/Shaders/Noise.metal"),
                 .copy("Drawing/Shaders/Shapes.metal"),
                 .copy("Drawing/Shaders/UnitShape.metal"),
             ],

@@ -252,9 +252,29 @@ nonisolated public enum StartupReads {
             + "or knob facets even when they are present",
         readSite: "Sources/MokumeCore/Display/RenderRequest.swift")
 
+    /// 実行を頭から終わりまで 1 本の記録にするか (`mokume run --record <path>`・`mokume watch --record <path>`・[#3570])。
+    ///
+    /// **記録の行き先は旗が必ず指す** (既定の行き先は持たない)。値は行き先のファイルの絶対パスで、道具が子へ
+    /// 渡す (``viewportOwner`` と同じく、渡さなければ親の環境に在っても落とす — `render` の子や旗の無い実行へ継がせない)。
+    /// `watch` は世代ごとに別の行き先を渡す。**受け取った子は読んだ時点で自分の環境から消す** — 合図はその子 1 つの
+    /// もので、スケッチがさらに起こすプロセスへは継がせない。フレームの時計のスケッチだけを記録し、実時間の時計なら
+    /// 記録を始めず理由を言って走り続ける。
+    ///
+    /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+    public static let record = Entry(
+        name: "Record", origin: .environment, key: "MOKUME_RECORD", decidedBy: .tool,
+        note: "Records the run from its first frame to its end into one file, so it can be replayed. "
+            + "The value is the absolute path of that file, and the tool passes it only for run --record "
+            + "and watch --record (a generation of watch gets its own file). Only a sketch on the frame "
+            + "clock is recorded; on the wall clock it says why and keeps running. The sketch takes it "
+            + "out of its own environment once read",
+        readSite: "Sources/MokumeCore/Replay/ReplayRequest.swift",
+        // 一方通行の面で、応答を持たない。仕様が名乗るのは記録そのもの
+        schemaName: "replay-record")
+
     /// 全部。**案内も検査もここを読む。**
     public static let all: [Entry] = [
         workDirectory, sourceStamp, frameRateNotice, closeConfirmation, render, viewportOwner,
-        assetOrigin, keepTime, observe, input, params, viewport,
+        assetOrigin, keepTime, record, observe, input, params, viewport,
     ]
 }

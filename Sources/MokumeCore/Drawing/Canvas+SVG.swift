@@ -154,18 +154,36 @@ extension Canvas {
 
     /// 近似で描いたものの知らせ。**何を・何回・最初はどの行か**を並べる。近似が無ければ `nil`。
     ///
-    /// 描く絵は変えない。SVG は群や要素の `opacity` を、中身をひとまとめに描いてから 1 度だけ掛けるが、
-    /// mokume は子の色ごとに掛けるので、重なった所が濃く出る。
+    /// 描く絵は変えない。2 種類ある。
+    ///
+    /// - `opacity`: SVG は群や要素の `opacity` を、中身をひとまとめに描いてから 1 度だけ掛けるが、mokume は
+    ///   子の色ごとに掛けるので、重なった所が濃く出る
+    /// - 入れ子の `<svg>` の表示枠: SVG は枠の外を切り抜くが、mokume は切り抜かず枠の外まで描く (#3563)
     static func svgApproximatedNotice(_ drawing: SVGFile.Drawing, path: String) -> String? {
         guard !drawing.approximated.isEmpty else { return nil }
-        let listing = drawing.approximated.prefix(20).map { note in
-            note.count == 1
-                ? "\(note.what) (line \(note.line))"
-                : "\(note.what) (\(note.count) times, first at line \(note.line))"
-        }.joined(separator: ", ")
-        return "\"\(path)\": drew opacity as an approximation. SVG draws a group or element once and "
-            + "then applies its opacity to the whole, but mokume applies it to each colour, so where "
-            + "shapes overlap the result is more opaque than in SVG. Affected: \(listing)"
+        func listing(_ notes: [SVGFile.Skip]) -> String {
+            notes.prefix(20).map { note in
+                note.count == 1
+                    ? "\(note.what) (line \(note.line))"
+                    : "\(note.what) (\(note.count) times, first at line \(note.line))"
+            }.joined(separator: ", ")
+        }
+        let viewport = drawing.approximated.filter { $0.what == SVGFile.nestedViewportNote }
+        let opacity = drawing.approximated.filter { $0.what != SVGFile.nestedViewportNote }
+        var parts: [String] = []
+        if !opacity.isEmpty {
+            parts.append(
+                "drew opacity as an approximation. SVG draws a group or element once and "
+                    + "then applies its opacity to the whole, but mokume applies it to each colour, so where "
+                    + "shapes overlap the result is more opaque than in SVG. Affected: \(listing(opacity))")
+        }
+        if !viewport.isEmpty {
+            parts.append(
+                "drew a nested <svg> without clipping it to its viewport. SVG clips what lies outside "
+                    + "the viewport (overflow is hidden by default), but mokume draws all of it, so the "
+                    + "shapes that cross the viewport show beyond it. Affected: \(listing(viewport))")
+        }
+        return "\"\(path)\": " + parts.joined(separator: " ")
     }
 
     /// 捨てたものの知らせ。**何を・何回・最初はどの行か**を並べる (20 種類まで)。

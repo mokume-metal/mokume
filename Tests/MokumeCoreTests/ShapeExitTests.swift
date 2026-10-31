@@ -98,6 +98,8 @@ enum ShapeExit {
         ]
         let detached = [
             "transformStack", "styleStack", "recordingShape",
+            // 道を記録している間の控え (#3561)。``Canvas/createPath(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
+            "pathRecorder",
             // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
             "shapeMarks",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
@@ -127,7 +129,8 @@ enum ShapeExit {
             ("shadowRangeValue", { c, _ in c.shadowRange(50) }),
             ("shadowDetailValue", { c, _ in c.shadowDetail(512) }),
             ("shadowBiasValue", { c, _ in c.shadowBias(0.5) }),
-            ("pendingEffects", nil), ("pendingComputations", nil), ("forcesThisFrame", nil),
+            ("pendingEffects", nil), ("pendingEffectsNoise", nil),
+            ("pendingComputations", nil), ("forcesThisFrame", nil),
             // 頼んだ粒の進めの控え (#1710)。溜めた計算と同じく、組み立ての中では `particles()` を断る
             ("particleAdvancesThisFrame", nil),
             ("style.clip", { c, _ in c.clip(1, 2, 3, 4) }),
@@ -190,6 +193,7 @@ enum ShapeExit {
             "retainedSerial": "保持した形を置くたびの通し番号。組み立ての中で置いた形も数える",
             "retainsShapeSolids": "保持した形の立体を置き場に持つかの切り替え (#2791)。検査と計測だけが書く口で、組み立ての中でも動かない",
             "retainedSolidThreshold": "置き場に持つ形の大きさの下限 (#2791)。検査と計測だけが書く値で、組み立ての中でも動かない",
+            "positionLayouts": "数の並びを置き場所として読む道の常駐の置き場と計算の入口 (#3581)。使うまで何も持たず、中身は並びの長さで決まる。組み立ての中では置かず (断る)、絵にも効かない",
             "solidPromotion": "形が前のフレームにも置かれたかの控え (#2791)。組み立ての中の置き直しは数えず (記録の中は置き場に持たない)、絵にも効かない",
             "pendingDiscards": "溜め場を捨てた通し番号。出口が入口と比べ、捨てていたら空の形を返す (#1588)",
             "framesDrawn": frame, "isDrawing": frame, "beginDrawFrame": frame,
@@ -376,6 +380,8 @@ extension ShapeExit {
             "outlets": seam, "inlets": seam, "seamVisitDepth": seam, "deferredSeamChanges": seam,
             "seamsClosed": seam, "outletJoinedAt": seam,
             "recorder": recording, "closingRecorder": recording, "recordingFailed": recording,
+            // 実行の記録 (#3570)。入力・つまみ・観測を写して残す係で、形に焼き付く値を生まない
+            "replay": recording,
             "pendingOutletFrames": recording, "warnedEncodeFailed": recording, "capture": recording, "settling": observation,
             "frameDrawnAfter": recording, "readyOutletFrames": recording,
             "isHandingOverOutletFrames": recording, "outletJudgedThrough": recording,

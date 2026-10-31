@@ -309,6 +309,9 @@ final class RemoteParam: DeclaredParam {
         return .applied
     }
 
+    /// **聴かない。** 値を置くのも記録するのも子の側 (``ParamBox``) で、道具の窓のつまみは要求を置くだけである (#3570)。
+    func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
+
     /// 子が名乗った値へ合わせる。
     func adopt(_ settled: ParamValue) {
         guard settled != value else { return }

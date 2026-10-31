@@ -28,16 +28,17 @@
 #
 # どの前置きを付けるかは置き場で決まる。
 #
-#   Shaders/               図形を塗る断片   値の宣言 + Kinds.metal + Common.metal
-#   Shaders/Computations/  計算の断片       値の宣言 + Kinds.metal + Compute.metal
-#   Shaders/Effects/       効果の断片       値の宣言 + Kinds.metal + Effect.metal
+#   Shaders/               図形を塗る断片   値の宣言 + Kinds.metal + Noise.metal + Common.metal
+#   Shaders/Computations/  計算の断片       値の宣言 + Kinds.metal + Noise.metal + Compute.metal
+#   Shaders/Effects/       効果の断片       値の宣言 + Kinds.metal + Noise.metal + Effect.metal
 #   それ以外               単体で組み立てられる
 #
 # 前置きが 3 通りあるのは、書く側が受け取るものと返すものが違うためである (それぞれの
 # 前置きの冒頭が理由を持つ)。置き場で分けているので、判定に中身を読む必要が無い。
 #
 # **Kinds.metal は 3 通りすべてに入る。** 種別番号の正本で、どの断片からも同じ名前で
-# 読める必要があるためである (#802)。
+# 読める必要があるためである (#802)。**Noise.metal も同じ** — 揺らぎの式の本体で、塗り・効果・
+# 計算の断片が CPU の `noise()` と同じ式から引くためである (#3569)。
 #
 # **前置きそのものは単体では確かめない。** どれも「呼ぶ先を利用者が書く」形なので
 # 単体では組み上がらず、代わりに**その前置きを使う断片が 1 つでもあれば確かめられる**。
@@ -92,6 +93,7 @@ first_named() {
 }
 
 kinds=$(first_named Kinds.metal)
+noise=$(first_named Noise.metal)
 
 common=$(first_named Common.metal)
 common_dir=""
@@ -122,11 +124,12 @@ part() {
   printf '\n'
 }
 
-# 前置きつきの断片を組み立てる: 値の宣言 → Kinds.metal → 前置き → 断片
+# 前置きつきの断片を組み立てる: 値の宣言 → Kinds.metal → Noise.metal → 前置き → 断片
 assemble() {
   local prelude="$1" shader="$2"
   part mokume/Values "$work/values.metal"
   if [ -n "$kinds" ]; then part "$kinds" "$kinds"; fi
+  if [ -n "$noise" ]; then part "$noise" "$noise"; fi
   part "$prelude" "$prelude"
   part "$shader" "$shader"
 }
@@ -134,7 +137,7 @@ assemble() {
 failed=0
 for shader in "${shaders[@]}"; do
   # 前置きは飛ばす (上の理由)
-  case "$shader" in "$common" | "$compute" | "$effect" | "$kinds") continue ;; esac
+  case "$shader" in "$common" | "$compute" | "$effect" | "$kinds" | "$noise") continue ;; esac
   source="$work/$(basename "$shader")"
   if [ -n "$effect_dir" ] && [ "$(dirname "$shader")" = "$effect_dir" ]; then
     assemble "$effect" "$shader" > "$source"

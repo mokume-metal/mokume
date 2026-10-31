@@ -41,7 +41,11 @@ bash scripts/apply-rulesets.sh --degraded --apply   # 適用する (メンテナ
 
 ## 復帰する
 
-復帰の条件は 2 つ。**runner が online に戻っていること**と、**前検査 ([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が緑**であること。
+復帰の条件は 2 つ。**`RENDER_TURN_SLOTS` (未設定は 1) で通す数の runner が、
+`mokume-render` ラベル付きで online に戻っていること**と、**前検査
+([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が緑**であること。
+2 本運用で 1 本だけ戻せる場合は、先に変数を 1 へ戻してから復帰する。
+runner の起動・変数の確認と切り替えは [専用機の runner の手順](render-runners.md)を参照する。
 
 ```bash
 bash scripts/apply-rulesets.sh --restore           # 差分を見る。render を足す 3 行だけのはず

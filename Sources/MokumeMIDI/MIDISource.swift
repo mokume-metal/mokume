@@ -50,7 +50,8 @@ final class DeviceSource: MIDISource {
 /// 何度回しても同じメッセージが同じフレームに出る ([ADR-0028] 決定 7)。
 ///
 /// **外して足し直しても、フレームの数え方は変わらない** (時刻どおり・[#3152])。外していた間もフレームは
-/// 進んでいたものとして、足し直したときに列の位置をその数だけ進める (外していた間のものは届かない)。
+/// 進んでいたものとして、足し直したときに列の位置をその数だけ進める (外していた間のものは届かない。ただし
+/// 拍に関わるクロック・開始・停止・再開・曲の位置は、実機の中継が数え続けるのと同じく拍だけを進める)。
 ///
 /// 実機と同じ入れ物を通す。`nil` (抜かれている) は実機が抜かれたときと同じ形で入れる。
 ///
@@ -71,7 +72,16 @@ final class RecordedMIDISource: MIDISource {
     func start(into inbox: MIDIInbox) {
         // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は、外していた間に進んだフレームの数だけ進める
         stopped = false
-        if !frames.isEmpty { next = (next + detached.reopen()) % frames.count }
+        if !frames.isEmpty {
+            // 外していた間に進んだフレームの、拍に関わるメッセージ (クロック・開始・停止・再開・曲の位置) は数える。
+            // 実機は外している間も中継が数え続け、足し直すときに渡すので、記録も同じ拍になるようにする
+            // (ほかのメッセージは、外していた間のものとして届かない)
+            let skipped = detached.reopen()
+            if skipped > 0 {
+                inbox.advanceClock(through: (0..<skipped).flatMap { frames[(next + $0) % frames.count] ?? [] })
+            }
+            next = (next + skipped) % frames.count
+        }
         inbox.setState(frames.isEmpty ? .unavailable : .running)
         // 外す前に読んだ現在値は、外したときに捨てた入れ物へ戻す (つまみは動いていない)
         inbox.resendControllers()

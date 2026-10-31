@@ -1075,11 +1075,13 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     constant FlatFrame &frame [[buffer(1)]],
     constant SolidStrokePlacement &s [[buffer(5)]])
 {
-    SolidStrokePiece piece = pieces[index / 6];
+    // **片 1 つは 4 頂点で、添字 6 つ (0 1 2・0 2 3) の 2 枚の三角形に並べる** (`SolidStrokeGeometry`)。
+    // 頂点番号は添字の値そのもので、片が 4 つずつ。非添字で 6 頂点ずつ流すと、同じ角を 2 度求める
+    // (向きの決定を毎頂点で求め直すので、頂点段の費用が 6/4 倍になる・#3246)
+    SolidStrokePiece piece = pieces[index / 4];
     // 点の記録は片の後ろに積んである (`SolidStrokeGeometry.Piece`)
     constant float4 *words = (constant float4 *)pieces;
-    const uint corners[6] = {0, 1, 2, 0, 2, 3};
-    uint corner = corners[index % 6];
+    uint corner = index % 4;
     float3 shapeA = piece.a.xyz * s.shapeScale.xyz;
     float3 shapeB = piece.b.xyz * s.shapeScale.xyz;
     float3 a = solidStrokeMatrixPoint(shapeA, s);

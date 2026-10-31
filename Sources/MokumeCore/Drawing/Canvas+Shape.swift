@@ -25,6 +25,11 @@ extension Canvas {
         let listener = shapeAssemblyListener
         listener?.shapeAssemblyBegan()
         defer { listener?.shapeAssemblyEnded() }
+        // **道の記録 (``createPath(_:)``) は、入れ子の組み立てへ持ち込まない。** 中の `createShape { }` の輪郭が
+        // 外の道へ漏れ、中の形が空になる。外の記録は出口で戻す (``createPath(_:)`` は、この中で立てる)
+        let savedPathRecorder = pathRecorder
+        pathRecorder = nil
+        defer { pathRecorder = savedPathRecorder }
         closeBatch()
         // **入口の長さは、局所変数ではなく溜め場の側に積む** ([#2850])。組み立ての途中で置いた側を描き切る
         // 逃げ道 (``flushBeforeBuild()``) が、組み立てている区間を溜め場の先頭へ引き戻すとき、入れ子の
@@ -93,7 +98,7 @@ extension Canvas {
         // 断った `beginDraw()` の数は、一番外の出口で下ろす (#2834)
         if !savedRecording { refusedBeginDrawsInsideShape = 0 }
         // 記録の中で積んだまま抜けた段は、名指してから捨てる (#2399)
-        warnIfStacksLeftOpen(before: "createShape { … }")
+        warnIfStacksLeftOpen(before: pathRecorder == nil ? "createShape { … }" : "createPath { … }")
         restore(savedStacks)
         closeBatch()
         // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**

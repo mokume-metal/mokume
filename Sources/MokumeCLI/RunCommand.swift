@@ -58,7 +58,9 @@ enum RunCommand {
     nonisolated static let defaultConfigurationName = "debug"
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
-        let invocation = try Invocation.parse(arguments)
+        let (invocation, values) = try Invocation.parse(arguments, adding: RecordOption.options)
+        // **ビルドの前に解く。** 行き先の誤りを、数分のビルドの後で知らせない (#3570)
+        let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)
         let directory = try invocation.directory
         let package = directory.appendingPathComponent("Package.swift")
         guard FileManager.default.fileExists(atPath: package.path) else {
@@ -89,11 +91,29 @@ enum RunCommand {
         // なるかを言う文面へそのまま入る
         //
         // [#1120]: https://github.com/mokume-metal/mokume/issues/1120
+        if let recording { print("Recording to: \(recording)") }
+        let launchedAt = Date()
         try launch(
             executable, in: directory,
             environment: childEnvironment(
                 reportingRate: context.configurationName,
-                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)"))
+                confirmingCloseFor: "\(Command.name) \(Command.Verb.run.rawValue)",
+                recording: recording))
+        // **記録を頼んだのに、この実行が書いていなければ、黙らない** (子が理由を言っている — 実時間の時計・
+        // 行き先を開けない・別の実行が書いている)。在るかでは判らない: 前の回の完成品が残っているかもしれない
+        if let recording, !recordWasWritten(at: recording, since: launchedAt) {
+            print("No record was written to \(recording) (the sketch says why above)")
+        }
+    }
+
+    /// 記録の行き先に、**この実行が始まった後に**書かれたファイルが在るか。
+    ///
+    /// 在るかだけで見ると、記録を始めなかった回に、前の回の完成品が残っていて「書いた」と読む。子は錠を取れば
+    /// 前の完成品を消す (実時間の時計でも) が、錠が取れなかった回は消さないので、新しさでも見る。
+    static func recordWasWritten(at path: String, since start: Date) -> Bool {
+        guard let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        else { return false }
+        return modified >= start
     }
 
     /// 1 回の実行で 1 度だけ、置き場と構成と product を決める。
@@ -743,6 +763,9 @@ enum RunCommand {
     ///   渡す)。子は最初の枚の前にここから前の世代の作者の時計を読み、必要なときに自分のを書く
     ///   (``StartupReads/keepTime``・[#2414](https://github.com/mokume-metal/mokume/issues/2414))。
     ///   **渡さなければ、親の環境に在っても落とす** — 旗の無い `watch`・`run`・`render` は 0 秒から始まる。
+    /// - Parameter recording: 実行を頭から終わりまで記録する行き先の絶対パス (`run --record`・`watch --record` だけが
+    ///   渡す)。子は最初の枚の前から記録し、終わりで書き切って閉じる (``StartupReads/record``・
+    ///   [#3570](https://github.com/mokume-metal/mokume/issues/3570))。**渡さなければ、親の環境に在っても落とす。**
     ///
     /// **区画の基準 (`MOKUME_WORK_DIR`) だけは、道具が解いた絶対パスに置き換えて運ぶ。**
     /// 相対の値は読む側の作業ディレクトリから解かれる (`WorkDirectory.given`) が、子は作業
@@ -755,7 +778,7 @@ enum RunCommand {
         _ base: [String: String] = ProcessInfo.processInfo.environment,
         stamp: String? = nil, reportingRate: String? = nil, confirmingCloseFor tool: String? = nil,
         rendering request: RenderRequest? = nil, viewportOwner: String? = nil,
-        assetOrigin: String? = nil, keepTime: String? = nil
+        assetOrigin: String? = nil, keepTime: String? = nil, recording: String? = nil
     ) -> [String: String] {
         var environment = base
         if let workDirectory = WorkDirectory.given(environment: base) {
@@ -775,6 +798,9 @@ enum RunCommand {
         // **これも渡さなければ落とす。** 時計を運ぶ旗は `watch --keep-time` だけのもので、旗の無い実行や `render` の子へ
         // 継がせると、別の世代の時計から始まってしまう (#2414)
         environment[StartupReads.keepTime.key] = keepTime
+        // **これも渡さなければ落とす。** 記録を頼む旗は `run --record` と `watch --record` だけのもので、`render` の子や
+        // 旗の無い実行へ継がせると、頼んでいない実行が記録を始める (#3570)
+        environment[StartupReads.record.key] = recording
         return environment
     }
 

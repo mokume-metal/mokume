@@ -433,6 +433,11 @@ public final class SketchRuntime {
     private let paramStore: ParamStore?
     /// 入力の合流点。窓からの操作も、外から送られたものもここへ集まる。
     public let input = InputState()
+    /// 実行を頭から終わりまで 1 本の記録にする係 ([#3570])。記録を頼まれていない実行は `nil` で、
+    /// 記録点はどれも `nil` の判定だけで通り過ぎる。
+    ///
+    /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+    private(set) var replay: ReplayRecorder?
     /// カーソルを捕まえる要求 (``SketchPart/requestPointerLock()``)。``SketchPart/exitPointerLock()`` まで残る。
     ///
     /// **読むのは窓である** — 直に走らせた窓は ``SketchApplication`` が毎リフレッシュ渡し、見張りの
@@ -756,6 +761,8 @@ public final class SketchRuntime {
         // **前の世代の作者の時計を入れるのも `setup()` より先** (`watch --keep-time`・#2414)。`setup()` の
         // `pauseTime()`・`playTime()`・`jumpTime(_:)` が、前の世代の状態によらず通常どおり効く
         timing.beginHandover()
+        // 記録は**開始の状態をここで取る** — 保存の戻しと時計の受け渡しの後、`setup()` の前 (#3570)
+        noteReplayStart()
         // `setup()` で置いたものは最初のフレームへ持ち越す (``carryingOver(_:)``)。
         // **投げたら控えて、最初のフレームが投げ直す** (``setupFailure``・#2401)
         do {
@@ -809,6 +816,7 @@ public final class SketchRuntime {
             }
             outlets += registry.outlets.map { ($0, SeamHealth()) }
             inlets += registry.inlets.map { ($0, SeamHealth()) }
+            for inlet in registry.inlets { noteReplaySource(inlet) }
         }
     }
 
@@ -879,6 +887,8 @@ public final class SketchRuntime {
         SeamHomes.forgetAll(in: self)
         outletJoinedAt.removeAll()
         seamsClosed = true
+        // **記録は、最後に描いた枚まで書いて閉じる** (窓を閉じる・SIGTERM・Control + C はどれもここを通る・#3570)
+        finishReplayRecording()
         // **終わった実行の `selectInput` は待たせない** — 結果を届ける合流点はもう配られず、待てば返らない
         input.selection.end()
         // 足してもらうのを待っている `Task` も同じ。当てる者がもう居ないので、足せなかったとして終える
@@ -1031,6 +1041,8 @@ public final class SketchRuntime {
         if !isLooping, requestedTime == nil {
             if !redrawRequested {
                 guard deliverWhileStopped() else {
+                    // 描かなかった回は、入力が届いていれば記録に載る (#3570)
+                    endReplayStep(drew: false)
                     // **配ったコールバックが描く先を変えたなら、ここで出す先を追い付かせる**
                     // (書いた画素を書き戻し、細かさを下げた面なら広げ直す・[#1882]・[#1906])。
                     // 窓・共有の面・書き出し・観測・CPU の読み出しはどれも出す先を読むので、
@@ -1057,6 +1069,7 @@ public final class SketchRuntime {
             timing.stepOneFrameNext()
         }
         var drawFailure: RenderFailure?
+        if let requestedTime { replay?.noteTimedObservation(requestedTime) }
         do {
             try drawSketchFrame(deliveredInput: deliveredInput, at: requestedTime, displayTime: displayTime)
         } catch {
@@ -1131,6 +1144,14 @@ public final class SketchRuntime {
         timing.advance(at: requestedTime, displayTime: displayTime)
         // 描けなかったフレームも、録りの幅には入る (落ちた 1 枚として数える・ADR-0025 決定 2)
         defer { drawnThrough = timing.frameCount }
+        // 記録の回は、描いた枚の終わりで閉じる (入力を配った回が、この枚を描く)。開始の時計は最初の枚で決まる (#3570)
+        if let replay {
+            replay.noteStartClock(
+                seconds: timing.handoverStart?.seconds ?? 0, paused: timing.handoverStart?.isHeld ?? false)
+        }
+        // 描けたのは、描く手順を最後まで通ったときだけ。落ちた枚は `drew: false` で、画素のハッシュは取らない
+        var replayDrew = false
+        defer { endReplayStep(drew: replayDrew, drawFailed: !replayDrew) }
         beginFrame()
         if !deliveredInput { collectInput() }
         canvas.time = timing.time
@@ -1155,6 +1176,8 @@ public final class SketchRuntime {
                 // **コールバック 1 つが 1 つの区間である** (止まっている間と同じ規則・#3408)。書いた変換・光・
                 // 切り抜きなどは出口で戻り、続くコールバックにも同じフレームの `draw()` にも漏れない
                 if !deliveredInput {
+                    // 配る前に、溜まった入力をこの回へ持ち込む (記録の単位は `advance()` の 1 回・#3570)
+                    replay?.beginStep()
                     input.beginFrame { callback in
                         deliver(callback)
                         canvas.leaveInputCallbackInsideFrame()
@@ -1191,6 +1214,130 @@ public final class SketchRuntime {
                 // `draw()` が頼んだ操作は、この窓の先頭から効く
                 stepSoundTrack()
             }
+        }
+        replayDrew = true
+    }
+
+    // MARK: - 記録 ([#3570])
+
+    /// 実行を頭から終わりまで記録し始める。**``start()`` の前に呼ぶ** — 途中から始める口は無い (始めた時点の
+    /// 作者の変数や積み上がった状態が記録に無く、何フレーム目の絵もバイト単位で一致する約束を守れない)。
+    ///
+    /// **フレームの時計のスケッチだけを記録する。** 実時間の時計なら、記録を始めず理由を 1 度言って
+    /// 走り続ける (ファイルは作らない)。行き先を開けなかったときも同じ。
+    ///
+    /// - Returns: 記録を始めたか。
+    ///
+    /// [#3570]: https://github.com/mokume-metal/mokume/issues/3570
+    @discardableResult
+    func startRecording(_ request: ReplayRequest) -> Bool {
+        guard replay == nil else { return true }
+        guard !hasSetUp else {
+            Diagnostics.warn("Not recording: the sketch already started, and a record always begins at its first frame")
+            return false
+        }
+        // **先に行き先の錠を取る。** 同じ行き先へ書く実行が 2 つあると互いの書き途中と完成品を壊す。取れなければ
+        // 先の実行に触らず、始めない (ReplayClaim)
+        let taken = ReplayClaim.take(destination: request.destination)
+        guard let claim = taken.claim else {
+            Diagnostics.warn("Not recording: \(taken.failure ?? "the destination could not be claimed"). It keeps running")
+            return false
+        }
+        // **前の回の完成品は、時計を見る前に消す。** 実時間の時計で記録を始めない回も、前の回の完成品が今回の
+        // 記録として残ってはいけない (道具は「No record was written」と言う)
+        if let failure = claim.discardPrevious() {
+            Diagnostics.warn("Not recording: \(failure). It keeps running")
+            return false
+        }
+        guard case .frameIndex = clock else {
+            Diagnostics.warn(
+                "Not recording: this sketch runs on the wall clock, so its run cannot be replayed. "
+                    + "Declare clock: .frames in its settings to record it. It keeps running")
+            return false
+        }
+        let opened = ReplayRecorder.open(claim: claim)
+        guard let recorder = opened.recorder else {
+            Diagnostics.warn("Not recording: \(opened.failure ?? "the destination could not be opened"). It keeps running")
+            return false
+        }
+        replay = recorder
+        // 窓へ出す経路は、拡大した字の焼きを次のフレームへ送る (``defersEnlargedGlyphBakes``)。記録している実行は
+        // 送らない — 窓なしで流す側と同じ手順で描くので、画素のハッシュが書き出しの道と食い違わない
+        defersEnlargedGlyphBakes = false
+        // 入力は届いた生の形で拾う。`setup()` の前に届いたものも、最初の回の束に入る
+        input.enqueueObserver = { [weak recorder] event in recorder?.noteInput(event) }
+        return true
+    }
+
+    /// 記録している実行の識別子と、いまのフレーム番号 ([#2618] が観測の応答へ載せる)。**記録していない実行は `nil`**
+    /// — 閉じ終えた記録も「記録中」ではない。
+    ///
+    /// [#2618]: https://github.com/mokume-metal/mokume/issues/2618
+    package var recordingStatus: ReplayStatus? {
+        guard let replay, !replay.isFinished else { return nil }
+        return ReplayStatus(id: replay.id, frame: timing.frameCount)
+    }
+
+    /// 開始の状態を記録へ渡し、外から来る `@Param` の書き込みを聴き始める。**保存の戻しと時計の受け渡しの後、
+    /// `setup()` の前。** 保存から戻した値は開始の値に入り、戻す書き込み自体は載らない。
+    private func noteReplayStart() {
+        guard let replay else { return }
+        let params = paramRegistry.declarations.map { NamedParamValue(name: $0.name, value: $0.value) }
+        let frameRate: Int
+        if case .frameIndex(let rate) = clock { frameRate = rate } else { frameRate = declaredFrameRate }
+        // 乱数の種は、作者が `randomSeed` を呼ぶまで常に 0 (`Randomness()`)
+        replay.noteStart(
+            seed: 0, params: params, frameRate: frameRate, width: canvas.output.width,
+            height: canvas.output.height, window: isOnScreen)
+        for knob in paramRegistry.knobs {
+            knob.observeWrites { [weak replay] name, value in replay?.noteParam(name, value) }
+        }
+    }
+
+    /// 記録の回を閉じる。入力を配った回だけが対象で、何も起きなかった止めた回は載らない。
+    private func endReplayStep(drew: Bool, drawFailed: Bool = false) {
+        guard let replay else { return }
+        replay.endStep(frame: timing.frameCount, drew: drew, drawFailed: drawFailed) { [self] in
+            (try? target.encodeToImageAndRead(avoiding: outletStorageToAvoid()))
+                .map(ReplayRecorder.hash(of:))
+        }
+    }
+
+    /// 記録を最後に描いた枚まで書いて閉じる。``closePlugins(_:)`` が呼ぶので、窓を閉じる・SIGTERM・
+    /// Control + C のどれでも通る。出口へ配る絵は閉じる前に決着している。
+    ///
+    /// **`setup()` が投げて終わった実行は、完成と呼ばない** — 1 枚も描いておらず、再生の土台にならない。
+    /// 行き先は作らず `.partial` を残して、理由を言う。
+    private func finishReplayRecording() {
+        guard let replay, !replay.isFinished else { return }
+        if setupFailure != nil {
+            replay.abandon(because: "the sketch's setup() threw, so this run never drew a frame")
+            return
+        }
+        var last: (frame: Int, hash: String)?
+        if timing.frameCount > 0, !lastFrameFailedToDraw {
+            if let image = try? target.encodeToImageAndRead() {
+                last = (timing.frameCount, ReplayRecorder.hash(of: image))
+            } else {
+                // 描いたのに読み戻せない。最後の絵が欠けたまま黙らない
+                replay.noteUnreproducible(ReplayRecorder.Reason.pictureUnreadable)
+            }
+        }
+        replay.finish(last: last)
+    }
+
+    /// 入り口を足した。**記録が持たない値の出どころなら、その種類を名乗る** (種類ごとに 1 度)。
+    ///
+    /// - 外から値が届く入り口 (``Inlet/report`` を持つもの。ゲームパッド・MIDI・OSC / TCP / UDP / WebSocket・
+    ///   シリアル・マイク・カメラ・動画) は、届いた値が `InputState.enqueue` を通らず、記録に載らない (#2603 の後段)
+    /// - 音を実際に鳴らす入り口 (``RealtimeSound``) は、窓では実時間で鳴り、窓なしで流すときは数で進む。窓で
+    ///   録った記録だけ名乗る (窓なしで録った記録は、流す側と同じ数え方である)
+    private func noteReplaySource(_ inlet: any Inlet) {
+        guard let replay else { return }
+        if let report = inlet.report {
+            replay.noteUnreproducible(ReplayRecorder.Reason.outsideInput(report.name))
+        } else if isOnScreen, inlet is any RealtimeSound {
+            replay.noteUnreproducible(ReplayRecorder.Reason.realtimeSound("\(type(of: inlet))"))
         }
     }
 
@@ -1289,6 +1436,7 @@ public final class SketchRuntime {
         collectInput()
         // **コールバック 1 つが 1 つの区間である** (#3273)。変換と積み履歴は区間の出口で戻るので、続けて配る
         // 2 つ目のコールバックへ、1 つ目で書いた変換は漏れない
+        replay?.beginStep()
         withActiveRuntime { input.beginFrame { callback in carryingOver { deliver(callback) } } }
         // 描き直しの 1 枚の経過は ``runFrame()`` が決める
         return isLooping || redrawRequested
@@ -1752,6 +1900,7 @@ public final class SketchRuntime {
         guard Self.open(inlet, opening: inlet.open) else { return false }
         inlets.append((inlet, SeamHealth()))
         SeamHomes.record(inlet, in: self)
+        noteReplaySource(inlet)
         return true
     }
 
@@ -1954,6 +2103,8 @@ public final class SketchRuntime {
         tempo.record(now: now())
         // GPU 時間を数えるフレームの区切り (#2378)。投入を待たず、番号を 1 つ控えるだけ
         target.gpu.markFrameStart()
+        // 記録の差し出した値も、観測と同じ位置で捨てる (#3570)
+        replay?.clearExposed()
         guard observer != nil else { return }
         exposedValues.removeAll(keepingCapacity: true)
         // **測った値はここで差し戻す。** 差し出した値はフレームごとに消えるが、測った値は
@@ -2260,13 +2411,15 @@ public final class SketchRuntime {
     /// フレームの頭で消える (``beginFrame()``)。**例外は ``measure(_:_:)`` で測った名前**: 測った
     /// 値はフレームの頭で差し戻されるので、その名前に非有限を差し出しても、載るのは測った値である。
     func expose(_ name: String, _ value: ExposedValue) {
-        guard observer != nil else { return }
+        // 観測も記録も無ければ溜めない。記録は照合の値として、差し出された値を回ごとに残す (#3570)
+        guard observer != nil || replay != nil else { return }
         guard value.paramValue.hasOnlyFiniteNumbers else {
             // 文面は言う回にしか組まない (毎フレーム差し出す口で、黙る回に文字列を確保しない)
             warnings.warnOnce(.nonFiniteExposed, Self.nonFiniteExposedNotice(name, value))
             return
         }
-        exposedValues[name] = value
+        if observer != nil { exposedValues[name] = value }
+        replay?.noteExposed(name, value)
     }
 
     /// 非有限の値を差し出されたときの 1 行。数は今は `.float` だけが持つ。
@@ -2628,7 +2781,9 @@ public final class SketchRuntime {
         }
         try LaunchingSketch.$canvas.withValue(canvas) {
             try LaunchingSketch.$selection.withValue(input.selection) {
-                try LaunchingSketch.$attachments.withValue(attachRequests, operation: body)
+                try LaunchingSketch.$attachments.withValue(attachRequests) {
+                    try LaunchingSketch.$replay.withValue(replay, operation: body)
+                }
             }
         }
     }

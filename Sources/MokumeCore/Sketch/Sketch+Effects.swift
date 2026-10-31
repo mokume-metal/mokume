@@ -406,6 +406,14 @@ extension SketchPart {
     /// 同じ大きさのまま出る。細かさ 1 未満では、`in.position` は描く画素の中心を出す画素へ
     /// 換算した値 (0.5 なら 1, 3, 5, …) になる。
     ///
+    /// `in.time` は ``time`` と同じ秒数で、`mokume_noise(in, p)` は CPU で引く ``noise(_:_:_:_:)`` と
+    /// 同じ式の揺らぎ (0…1) を返す。**種と細かさは効果を積んだ時点 (``effects(_:)``・``filter(_:)`` を呼んだ
+    /// 時点) の ``noiseSeed(_:)``・``noiseDetail(_:_:)`` が届く**ので、配線は要らない。
+    ///
+    /// ```metal
+    /// float g = mokume_noise(in, in.place * 8.0);   // float2・float3・float4 の座標が取れる
+    /// ```
+    ///
     /// 使うときは ``Effect/custom(_:)`` として並びへ入れる。
     ///
     /// - Throws: 組み立てられないときに ``ShaderFailure``。

@@ -63,8 +63,9 @@ public nonisolated struct MIDIDevice: Sendable, Equatable {
 /// | ``SourceState/unavailable`` | その機材が一度も繋がっていない・走っていないスケッチから作った・記録した列が空 |
 /// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。足し直せば戻る |
 ///
-/// 許可は要らない。受けるのは ノートオン・ノートオフ・コントロールチェンジだけで、ピッチベンドなどほかの
-/// メッセージは「読めずに捨てた」と数えて診断に出す。クロックは受けない。
+/// 許可は要らない。受けるのは ノートオン・ノートオフ・コントロールチェンジと、拍を数えるクロック (``beat``)
+/// だけで、ピッチベンドなどほかのメッセージは「読めずに捨てた」と数えて診断に出す
+/// (アクティブセンシングなど、機材が絶えず送るものは数えずに読み飛ばす)。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class MIDIPort: Inlet {
@@ -78,6 +79,7 @@ public final class MIDIPort: Inlet {
     let inbox: MIDIInbox
     private let source: any MIDISource
     private var controllers = MIDIControllers()
+    private var clock = MIDIClock()
 
     init(id: String, name: String, source: any MIDISource, capacity: Int = 4096) {
         self.id = id
@@ -87,6 +89,39 @@ public final class MIDIPort: Inlet {
 
     /// 出どころの状態。
     public var state: SourceState { inbox.state }
+
+    /// 受けたクロックから数えた拍 (0 から)。何も届いていなければ 0。
+    ///
+    /// <!-- example: 文脈 var midi: MIDIPort! -->
+    /// ```swift
+    /// // 拍ごとに背景の明るさが切り替わる
+    /// background(midi.beat % 2 == 0 ? 30 : 200)
+    /// ```
+    ///
+    /// **24 クロックで 1 拍** (4 分音符 1 つ) で、テンポは数えない。届く間隔がそのままテンポなので、DAW のテンポを
+    /// 変えれば切り替わる間隔もついてくる。フレームの頭の値で答える — **届いた後の最初のフレーム**で変わり、
+    /// 1 フレームに拍をまたいで複数のクロックが届けば、そのフレームの終わりの拍になる。
+    ///
+    /// | 届くもの | 拍の扱い |
+    /// | --- | --- |
+    /// | ``MIDIMessage/clock`` | 走っている間だけ数える |
+    /// | ``MIDIMessage/start`` | 0 に戻して、数え始める |
+    /// | ``MIDIMessage/stop`` | 数えるのを止める。止めている間のクロックは進めない |
+    /// | ``MIDIMessage/continue`` | 止めた位置から数え続ける |
+    /// | ``MIDIMessage/songPosition(sixteenths:)`` | 16 分音符の数の 6 倍のクロックを数えたことにする |
+    ///
+    /// 曲の位置は、MIDI 1.0 では主に止めている間に届き、続く再開がそこから数える。**走っている間に届いても、位置を置く。**
+    ///
+    /// **最初の開始が届く前は、走っているものとして数える。** 開始を送らずクロックだけ流す機材でも拍が進む。
+    /// 代償として、止めている間もクロックを流し続ける機材は、最初の開始が届くまで拍がずれて数える
+    /// (開始で 0 に戻る)。
+    /// 同じ機材から後で入り口を作り直しても (`watch` の作り直しなど)、数えていた拍から続く。
+    ///
+    /// **限界が 2 つある。** UMP のグループは区別せず (1 台 1 グループの前提)、別のグループから届いたクロックも
+    /// 合算で数える。システムリセット (0xFF) は拍を戻さず読み飛ばす。
+    ///
+    /// **クロックは ``messages`` に入らない。** 拍を進めるだけで、開始・停止・再開・曲の位置は ``messages`` にも入る。
+    public var beat: Int { clock.beat }
 
     /// コントロールチェンジの現在値 (0〜1)。そのコントローラがまだ 1 度も届いていなければ `nil`。
     ///
@@ -126,6 +161,7 @@ public final class MIDIPort: Inlet {
         // 現在値の表と出来事は、同じ錠の内側で一緒に取る (同じフレームで食い違わない)
         let taken = inbox.take()
         if let table = taken.controllers { controllers = table }
+        if let counted = taken.clock { clock = counted }
         messages = taken.messages
     }
 

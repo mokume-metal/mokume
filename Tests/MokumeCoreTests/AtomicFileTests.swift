@@ -636,4 +636,74 @@ struct AtomicFileTests {
         #expect(isDirectory(directory))
         #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
     }
+
+    // MARK: - 区画の JSON は rename(2) で置き、保存・作品の出力は属性を引き継ぐ (#2382)
+
+    /// 既存のファイルの権限が、置いた後どうなるか。`replaceItemAt` は引き継ぎ、`rename(2)` は
+    /// 一時ファイルの既定のままにする。
+    private func permissions(of url: URL) throws -> Int {
+        try #require(FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int)
+    }
+
+    @Test("区画の JSON (writeJSON・publishJSON) は rename(2) で置くので、既存のファイルの権限を引き継がない")
+    func jsonReplacementDoesNotCarryAttributes() throws {
+        let facet = try makeFacet()
+        for (name, put) in [
+            ("write.json", { (url: URL) in try AtomicFile.writeJSON(self.sample, to: url) }),
+            ("publish.json", { (url: URL) in _ = AtomicFile.publishJSON(self.sample, to: url, "見本") }),
+        ] {
+            let url = facet.appendingPathComponent(name)
+            try "old".write(to: url, atomically: true, encoding: .utf8)
+            // 一時ファイルの権限は `0666 & ~umask` で、実行ビットは決して立たない。umask に頼らず「引き継がれた」と
+            // 分かるよう、umask から生まれえない 0750 を行き先に付ける
+            try FileManager.default.setAttributes([.posixPermissions: 0o750], ofItemAtPath: url.path)
+            try put(url)
+            #expect(try permissions(of: url) != 0o750, "\(name): 属性を引き継いでいる (replaceItemAt のまま)")
+            #expect(keys(in: try String(contentsOf: url, encoding: .utf8)) == ["apple", "middle", "zebra"])
+        }
+    }
+
+    @Test("保存や作品の出力の口 (write) は、これまでどおり既存のファイルの権限を引き継ぐ (#2859 の完了条件 4)")
+    func plainWriteStillCarriesAttributes() throws {
+        let url = try makeFacet().appendingPathComponent("saved.json")
+        try "old".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: url.path)
+        try AtomicFile.write(Data("new".utf8), to: url)
+        #expect(try permissions(of: url) == 0o640)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "new")
+    }
+
+    @Test("区画の JSON を何度書き直しても、読み手は前か新しい中身だけを見て、一時ファイルは残らない")
+    func jsonRewritesLeaveNoTemporaries() throws {
+        let facet = try makeFacet()
+        let url = facet.appendingPathComponent("loop.json")
+        for round in 0..<50 {
+            try AtomicFile.writeJSON(Sample(zebra: round, apple: "a", middle: true), to: url)
+            let text = try String(contentsOf: url, encoding: .utf8)
+            #expect(text.contains("\"zebra\" : \(round)"), "round \(round): \(text)")
+        }
+        #expect(try temporaries(in: facet).isEmpty)
+    }
+
+    @Test("区画の JSON は、書く先がディレクトリなら置かず、一時ファイルも残さない")
+    func jsonRefusesADirectoryWithoutLeavingTemporaries() throws {
+        let (directory, inner) = try makeFullDirectory()
+        #expect(throws: (any Error).self) { try AtomicFile.writeJSON(sample, to: directory) }
+        #expect(isDirectory(directory))
+        #expect(try String(contentsOf: inner, encoding: .utf8) == "keep me")
+        #expect(try temporaries(in: directory.deletingLastPathComponent()).isEmpty)
+    }
+
+    @Test("行き先がファイルを指す symlink なら、リンク自身が普通のファイルに置き換わり、指す先は変わらない")
+    func jsonReplacesASymlinkItself() throws {
+        let facet = try makeFacet()
+        let target = facet.appendingPathComponent("target.json")
+        try "keep".write(to: target, atomically: true, encoding: .utf8)
+        let link = facet.appendingPathComponent("link.json")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        try AtomicFile.writeJSON(sample, to: link)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil, "リンクのまま")
+        #expect(try String(contentsOf: target, encoding: .utf8) == "keep")
+        #expect(keys(in: try String(contentsOf: link, encoding: .utf8)) == ["apple", "middle", "zebra"])
+    }
 }

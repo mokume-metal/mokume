@@ -389,6 +389,20 @@ extension SVGFile {
             SIMD2(a * point.x + c * point.y + e, b * point.x + d * point.y + f)
         }
 
+        /// 逆の変換。つぶれている (行列式が 0 か有限でない) なら `nil`。
+        var inverted: Affine? {
+            let determinant = a * d - b * c
+            guard determinant != 0, determinant.isFinite else { return nil }
+            let scaleA = d / determinant
+            let scaleB = -b / determinant
+            let scaleC = -c / determinant
+            let scaleD = a / determinant
+            let result = Affine(
+                a: scaleA, b: scaleB, c: scaleC, d: scaleD,
+                e: -(scaleA * e + scaleC * f), f: -(scaleB * e + scaleD * f))
+            return [result.a, result.b, result.c, result.d, result.e, result.f].allSatisfy(\.isFinite) ? result : nil
+        }
+
         /// 長さがいちばん伸びる向きの倍率 (行列の最大の特異値)。曲線をどれだけ細かく刻むかを
         /// 決めるのに使う。
         var largestScale: Float {

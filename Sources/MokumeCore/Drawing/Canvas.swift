@@ -179,6 +179,11 @@ public final class Canvas {
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
     var recordingShape = false
 
+    /// 道 (``Path``) を記録している間の控え。``createPath(_:)`` の入口で立て、出口で下ろす。
+    /// 立っている間は、閉じた形の周と穴を三角形に割らずにここへ控え、書けない口 (基本図形・字・画像・立体など)
+    /// は断る。記録は形の組み立ての中で行うので、``recordingShape`` も立っている。
+    var pathRecorder: PathRecorder?
+
     /// 保持する形を記録している間に、輪郭が積んだ平面の頂点の区間。
     ///
     /// 輪郭は画面で半画素寄せる ([ADR-0039] 決定 2) が、記録の間は置く場所の変換が
@@ -680,6 +685,9 @@ public final class Canvas {
     /// 前のフレームにも置かれた形の見分け (#2791)。置き場を作るのは 2 フレーム続けて置かれた形だけで、
     /// 毎フレーム組み直す形に作っては捨てない。
     var solidPromotion = SolidPromotion()
+    /// 数の並びを置き場所として読む道 (``shape(_:at:layout:)``) の、位置の並びごとの常駐の置き場と計算の入口。
+    /// 使うまで何も確保しない。手放された並びの置き場は、次のフレームの頭で畳む。
+    let positionLayouts = PositionLayouts()
     /// 立体の頂点の置き場。**写した回数 (``GrowableBuffer/writes``) を検査が読む** (#1790)。
     let solidVertexStorage: GrowableBuffer
     private let solidIndexStorage: GrowableBuffer
@@ -992,6 +1000,12 @@ public final class Canvas {
 
     /// このフレームにかける効果の並び。**フレームを越えない** (ADR-0021 決定 4)。
     var pendingEffects: [Effect] = []
+    /// ``pendingEffects`` を積んだ時点 (``effects(_:)``) の揺らぎの種と細かさ。効果の断片の
+    /// `mokume_noise` が引く ([#3569])。**効果と同じくフレームを越えない** — 効果を決め直さない
+    /// フレームには効果が無いので、読まれるのは積んだフレームだけである。
+    ///
+    /// [#3569]: https://github.com/mokume-metal/mokume/issues/3569
+    var pendingEffectsNoise = ValueNoise()
     /// このフレームで力を積んだ粒と、最初に積む前に積んであった力の数 ([#1622])。
     ///
     /// **閉じ忘れたフレームを描かずに捨てるとき、そのフレームで積んだ力だけを落とす**ために
@@ -2278,6 +2292,8 @@ public final class Canvas {
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
 
         /// 添字を溜め場ではなく自分の置き場から読む列なら、その置き場 (#2791)。モデルの塗りは添字を持たない。
+        /// **GPU で広げる線の骨の列は含まない** — 骨は `run` に添字を持たず (`isIndexed` は偽)、自分の置き場の
+        /// 添字 (`SolidStrokeGeometry.indexByteOffset`) で描く (`Canvas.encodeSolidDraw`)。
         var ownedIndices: SolidFillGeometry? { run.isIndexed ? fillGeometry : nil }
 
         /// 頂点を溜め場から読む列か。**詰め直すとき (`Canvas.compact(_:)`) に頂点を区画へ写して、
@@ -3819,6 +3835,8 @@ public final class Canvas {
         drawsDebugGuides = false
         passesThisFrame = 0
         rollPreviousFrameUse()
+        // 手放された並びの、数の並びで置く道の置き場を畳む。呼び出しの無いフレームでも畳む (#3581)
+        positionLayouts.foldReleased()
 
         isDrawing = true
         beginDrawFrame = nil
@@ -3980,7 +3998,7 @@ public final class Canvas {
             try endFrame()
         } catch {
             Diagnostics.warn(
-                "createShape { }: could not finish drawing the frame closed at the end of the "
+                "\(assemblyCall) { }: could not finish drawing the frame closed at the end of the "
                     + "shape: \(error.headline)")
         }
     }
@@ -5506,7 +5524,8 @@ public final class Canvas {
                 encodeSolidDraw(
                     run, instances: 0..<batch.instanceCount,
                     indices: batch.ownedIndices?.buffer ?? geometry.solidIndices,
-                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0, on: encoder)
+                    indexBase: batch.ownedIndices?.indexElementOffset ?? 0,
+                    strokeGeometry: batch.strokeGeometry, on: encoder)
                 draws += 1
             }
         }
@@ -5595,7 +5614,7 @@ public final class Canvas {
             encoder.setCullMode(culled)
             encodeSolidDraw(
                 run, section: range, instances: instances, indices: indices, indexBase: indexBase,
-                on: encoder)
+                strokeGeometry: batch.strokeGeometry, on: encoder)
             draws += 1
         }
         let runs = SolidSweep.runs(
@@ -5629,7 +5648,9 @@ public final class Canvas {
         return draws
     }
 
-    /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。
+    /// 列の三角形を出す。**添字を持つ列は添字で読む** (``Shape/Run/isIndexed``)。**例外が 1 つある — GPU で
+    /// 広げる線の骨の列** (`strokeGeometry`) は `run.indexCount` が 0 のまま (`isIndexed` は偽) で、骨の置き場の
+    /// 添字で描く。
     ///
     /// 画面と影の焼き付けで**同じ判定を通す**。片方だけ非添字のまま残すと、影だけが
     /// 別の形 (頂点を 3 つずつ束ねた並び) で焼かれる — 絵は出るので、影が崩れるまで
@@ -5642,11 +5663,29 @@ public final class Canvas {
     ///
     /// `indexBase` は添字の置き場の中で区画が始まる位置で、途中の描き切りから持ち越した落とす列
     /// (``frameCasters``) だけが 0 でない値を渡す。
+    ///
+    /// `strokeGeometry` は GPU で広げる線の骨 (``Batch/strokeGeometry``)。**骨は自分の置き場の添字で描く** —
+    /// 片 1 つは 4 頂点で、添字 6 つが 2 枚の三角形に並べる (``SolidStrokeGeometry/count``)。この列の
+    /// `run.start`・`run.count` は頂点ではなく**骨の添字の位置と数**で、`section` も添字の数え方である
+    /// (`indices`・`indexBase` は読まない)。**呼ぶ口はすべて、列の `strokeGeometry` をそのまま渡す (既定値を
+    /// 持たない)。** 渡し忘れて非添字で描くと、頂点関数は頂点番号を `index / 4`・`index % 4` で読むので別の片・
+    /// 別の角を描く — 絵は出るので、崩れるまで誰も気づけない。線の列でなければ `nil` を渡す。
     private func encodeSolidDraw(
         _ run: Shape.Run, section: Range<Int>? = nil, instances: Range<Int>, indices: any MTLBuffer,
-        indexBase: Int = 0,
+        indexBase: Int = 0, strokeGeometry: SolidStrokeGeometry?,
         on encoder: any MTL4RenderCommandEncoder
     ) {
+        if let strokeGeometry {
+            let range = section ?? run.start..<(run.start + run.count)
+            let stride = MemoryLayout<UInt32>.stride
+            encoder.drawIndexedPrimitives(
+                primitiveType: .triangle, indexCount: range.count, indexType: .uint32,
+                indexBuffer: strokeGeometry.buffer.gpuAddress
+                    + UInt64(strokeGeometry.indexByteOffset + range.lowerBound * stride),
+                indexBufferLength: range.count * stride,
+                instanceCount: instances.count, baseVertex: 0, baseInstance: instances.lowerBound)
+            return
+        }
         guard run.isIndexed else {
             let range = section ?? run.start..<(run.start + run.count)
             encoder.drawPrimitives(
@@ -6403,7 +6442,7 @@ public final class Canvas {
             // 影は奥行きだけを焼くので、裏 → 表に分けない (`Batch.backFaceParts`)
             encodeSolidDraw(
                 batch.run, instances: 0..<batch.instanceCount, indices: source.indices,
-                indexBase: source.indexBase, on: encoder)
+                indexBase: source.indexBase, strokeGeometry: batch.strokeGeometry, on: encoder)
         }
     }
 

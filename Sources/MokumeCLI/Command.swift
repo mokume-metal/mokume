@@ -38,7 +38,8 @@ enum Command {
     /// ([#2484](https://github.com/mokume-metal/mokume/issues/2484))。口に選択肢を足したら、
     /// ここに並べる — 並べ忘れは `ArgumentsTests` が全口の綴りで見つける。`mcp` は選択肢を取らない。
     static var valueOptions: [Arguments.Option] {
-        Invocation.options + RenderCommand.options + BundleCommand.options + NewCommand.options
+        Invocation.options + RecordOption.options + RenderCommand.options + BundleCommand.options
+            + NewCommand.options
     }
 
     /// 打てる口。
@@ -92,20 +93,36 @@ enum Command {
                 )
             case .run:
                 (
-                    "run [<directory>] [-c <configuration>] [--scratch-path <directory>]",
+                    "run [<directory>] [-c <configuration>] [--scratch-path <directory>] [--record <path>]",
                     """
                     Build a sketch and run it. Defaults to the current directory.
                     -c takes debug or release (defaults to whatever the toolchain uses).
                     Build products are shared per version by default. Pass --scratch-path
                     to put them in a directory of your own instead (doctor reports where they are).
                     Relative paths start from where you run this, --scratch-path included
+                    Pass --record to write the run, from its first frame to its end, into one file
+                    that can be replayed. There is no default place for it: --record takes the file
+                    (a relative one starts from where you run this too). Only a sketch on the frame
+                    clock (clock: .frames) is recorded; on the wall clock it says why, does not
+                    record, and keeps running. The previous run's file at that path is removed when
+                    the sketch starts (also when it does not record), and a second run writing to the
+                    same path does not record. What comes from outside the sketch (a gamepad, MIDI,
+                    OSC, a camera, a dropped file, sound in the window) is not in the record, and the
+                    record names it under unreproducible
                     """
                 )
             case .watch:
                 (
-                    "watch [<directory>] [-c <configuration>] [--scratch-path <directory>] [--keep-time]",
+                    """
+                    watch [<directory>] [-c <configuration>] [--scratch-path <directory>] \
+                    [--keep-time] [--record <path>]
+                    """,
                     """
                     Rebuild the sketch and swap it in whenever you save.
+                    Pass --record to write each build's run, from its first frame to its end, into a file
+                    that can be replayed. Every rebuild starts a new record, a cut between two files:
+                    --record take.json writes take-1.json, take-2.json and so on, one per build,
+                    numbered from 1: the files a previous watch left under those names are removed first.
                     Pass --keep-time to carry the sketch's clock across a rebuild: the new version starts
                     from where the old one was (a time you stopped with pauseTime() stays stopped), instead
                     of at 0. It carries only that clock's seconds and whether it is stopped, not frameCount,

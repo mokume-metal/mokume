@@ -25,7 +25,9 @@ import MokumeDiagnostics
 ///
 /// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。繋ぎ直す間
 /// ``TextPort/state`` は、まだ一度も繋がっていなければ ``SourceState/unavailable``、繋がっていたのが切れたなら
-/// ``SourceState/disconnected`` を名乗り、繋がれば ``SourceState/running`` に戻る。
+/// ``SourceState/disconnected`` を名乗り、繋がれば ``SourceState/running`` に戻る。このアプリにローカルネットワークの
+/// 許可が無くて繋げないときは ``SourceState/denied`` を名乗り、診断に許可の直し方を 1 度だけ出す (許可されれば
+/// 次の繋ぎ直しで ``SourceState/running`` に戻る)。
 ///
 /// **Processing の `Client` (`processing.net`) に当たる。** ``write(_:)`` の名前と引数の順序はそれに倣う。
 /// 型の名前は方式を名乗る (``TCPServer``・``WebSocketClient`` と並べて方式が名前で分かるように —

@@ -233,7 +233,7 @@ struct MIDIPortTests {
             var taken = 0
             let deadline = ContinuousClock.now + .seconds(5)
             while taken < 127 * 128, ContinuousClock.now < deadline {
-                let (table, messages) = inbox.take()
+                let (table, _, messages) = inbox.take()
                 taken += messages.count
                 // 取り出した出来事の最後の CC は、同じ時点の表の値と一致する
                 if case .controlChange(_, let controller, let value)? = messages.last,

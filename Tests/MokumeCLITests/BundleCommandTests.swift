@@ -1099,43 +1099,43 @@ struct BundleCommandTests {
         #expect(note.contains("Open Anyway"))
     }
 
-    /// README は紙の名前を利用者に約束している。**名前は実関数から引く** — 検査の側に
-    /// 写しを持つと、実装と README と検査の 3 か所が別々に古くなる ([#2488])。`<name>` は
-    /// README が作品名の場所に書く綴りで、`name` に入れて求めた名前がそのまま載る。
+    /// 利用ガイドは紙の名前を利用者に約束している。**名前は実関数から引く** — 検査の側に
+    /// 写しを持つと、実装と利用ガイドと検査の 3 か所が別々に古くなる ([#2488])。`<name>` は
+    /// 利用ガイドが作品名の場所に書く綴りで、`name` に入れて求めた名前がそのまま載る。
     ///
     /// [#2488]: https://github.com/mokume-metal/mokume/issues/2488
-    @Test("README が書く開き方の紙の名前は、実際に作る名前と同じ")
-    func theReadmeNamesTheOpeningNoteTheWayItIsWritten() throws {
-        let readme = try String(
+    @Test("利用ガイドが書く開き方の紙の名前は、実際に作る名前と同じ")
+    func theGuideNamesTheOpeningNoteTheWayItIsWritten() throws {
+        let guide = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()  // MokumeCLITests
                 .deletingLastPathComponent()  // Tests
                 .deletingLastPathComponent()  // リポジトリ直下
-                .appendingPathComponent("README.md"),
+                .appendingPathComponent("docs/guide.md"),
             encoding: .utf8)
         let placeholder = AppIdentity(
             name: "<name>", identifier: "org.example.grain", version: "0.1.0")
         let fileName = BundleCommand.noteFileName(for: placeholder)
         #expect(
-            readme.contains("`\(fileName)`"),
-            "README が開き方の紙を `\(fileName)` と書いていない (実際に作る名前と食い違っている)")
+            guide.contains("`\(fileName)`"),
+            "利用ガイドが開き方の紙を `\(fileName)` と書いていない (実際に作る名前と食い違っている)")
     }
 
-    /// README は `name` の長さの上限も利用者に約束している (#2501)。**数は実装の上限から引く** —
-    /// 紙の名前と同じく、写しを持つと上限を動かした日に README だけが古くなる。
-    @Test("README が書く name の長さの上限は、実際の上限と同じ")
-    func theReadmeStatesTheNameLimitTheWayItIsChecked() throws {
-        let readme = try String(
+    /// 利用ガイドは `name` の長さの上限も利用者に約束している (#2501)。**数は実装の上限から引く** —
+    /// 紙の名前と同じく、写しを持つと上限を動かした日に利用ガイドだけが古くなる。
+    @Test("利用ガイドが書く name の長さの上限は、実際の上限と同じ")
+    func theGuideStatesTheNameLimitTheWayItIsChecked() throws {
+        let guide = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent()  // MokumeCLITests
                 .deletingLastPathComponent()  // Tests
                 .deletingLastPathComponent()  // リポジトリ直下
-                .appendingPathComponent("README.md"),
+                .appendingPathComponent("docs/guide.md"),
             encoding: .utf8)
         let phrase = "長さは \(AppIdentity.maximumNameLength) まで"
         #expect(
-            readme.contains(phrase),
-            "README が name の長さの上限を「\(phrase)」と書いていない (実際の上限と食い違っている)")
+            guide.contains(phrase),
+            "利用ガイドが name の長さの上限を「\(phrase)」と書いていない (実際の上限と食い違っている)")
     }
 
     /// 手順を報せに書くと、読んだ送り手が伝え直すことになる。名指しなら物が動く。
@@ -1743,25 +1743,25 @@ struct BundleCommandTests {
             "資材が欠けているのに紙が書かれた")
     }
 
-    /// README と `maximumNameLength` の説明は、名前の検めでは止まらず組み立ての後で落ちうる形を
+    /// 利用ガイドと `maximumNameLength` の説明は、名前の検めでは止まらず組み立ての後で落ちうる形を
     /// 限界として書く (#2773)。書く 3 つの形を名指しする。
-    @Test("README と上限の説明が、検めでは止まらず組み立ての後で落ちうる形を書く")
+    @Test("利用ガイドと上限の説明が、検めでは止まらず組み立ての後で落ちうる形を書く")
     func theLimitsBeyondTheNameCheckAreDocumented() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // MokumeCLITests
             .deletingLastPathComponent()  // Tests
             .deletingLastPathComponent()  // リポジトリ直下
-        let readme = try String(
-            contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)
+        let guide = try String(
+            contentsOf: root.appendingPathComponent("docs/guide.md"), encoding: .utf8)
         let source = try String(
             contentsOf: root.appendingPathComponent("Sources/MokumeCLI/AppIdentity.swift"),
             encoding: .utf8)
-        for (label, text) in [("README", readme), ("AppIdentity.swift", source)] {
+        for (label, text) in [("利用ガイド", guide), ("AppIdentity.swift", source)] {
             for phrase in ["exFAT", "1024"] {
                 #expect(text.contains(phrase), "\(label) が「\(phrase)」の限界を書いていない")
             }
         }
-        #expect(readme.contains("組み立ての後"), "README が組み立ての後で落ちうることを書いていない")
+        #expect(guide.contains("組み立ての後"), "利用ガイドが組み立ての後で落ちうることを書いていない")
     }
 
     /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。紙の場所のディレクトリは

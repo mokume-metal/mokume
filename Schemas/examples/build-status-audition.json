@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "status": 0,
+  "output": "Build complete! (0.91s)\n",
+  "stamp": "b04e7d51c2a8",
+  "configuration": "debug",
+  "launched": true,
+  "audition": true,
+  "timings": {
+    "detectMs": 96.2,
+    "buildMs": 801.5,
+    "relaunchMs": 33.8
+  }
+}
