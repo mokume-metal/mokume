@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import Darwin
 import Foundation
 
 /// **検査が一時の場所に作った区画の持ち主** (#3298)。
@@ -158,7 +159,25 @@ public nonisolated enum ScratchSweep {
     public static func sweepDead(
         in directory: URL, isAlive: (pid_t) -> Bool = processExists
     ) -> [URL] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        // 全項目を Foundation の配列へ展開せず、名前だけ読んで候補を集める。
+        // 列挙を終えてから消すので、削除が列挙の続きを変えることもない。
+        guard let stream = opendir(directory.path) else { return [] }
+        defer { closedir(stream) }
+        var names: [String] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(stream) else {
+                if errno != 0 { return [] }
+                break
+            }
+            let capacity = MemoryLayout.size(ofValue: entry.pointee.d_name)
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: capacity) {
+                    String(cString: $0)
+                }
+            }
+            if name.hasPrefix(prefix) { names.append(name) }
+        }
         var removed: [URL] = []
         for name in names {
             guard let pid = ownerPid(ofName: name), !isAlive(pid) else { continue }

@@ -224,6 +224,34 @@ struct ScratchOwnerTests {
         #expect(!FileManager.default.fileExists(atPath: dead.path))
     }
 
+    @Test("多数の一般名が混ざっても直下の死んだ親を全部回収し、生きた親と一般名の中は触らない")
+    func mixedEntriesLeaveNoDeadParentsBehind() throws {
+        let base = try TestScratch.directory("mokume-sweep-mixed")
+        let foreign = base.appendingPathComponent("一般の区画", isDirectory: true)
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+        let nested = try parent(4_000_030, in: foreign)
+        let alive = try parent(getpid(), in: base)
+        var dead: [URL] = []
+        let longName = base.appendingPathComponent(String(repeating: "木", count: 100))
+        try Data("keep".utf8).write(to: longName)
+        var unrelated: [URL] = [longName]
+        for index in 0..<64 {
+            dead.append(try parent(pid_t(4_000_031 + index), in: base))
+            let file = base.appendingPathComponent("一般-\(index)-\(UUID().uuidString)")
+            try Data("keep".utf8).write(to: file)
+            unrelated.append(file)
+        }
+
+        let removed = ScratchSweep.sweepDead(in: base)
+        #expect(Set(removed) == Set(dead), "直下の死んだ親に回収漏れがある: \(removed.count)/\(dead.count)")
+        for url in dead {
+            #expect(!FileManager.default.fileExists(atPath: url.path))
+        }
+        for url in unrelated + [alive, nested] {
+            #expect(FileManager.default.fileExists(atPath: url.path), "消してはいけない: \(url.lastPathComponent)")
+        }
+    }
+
     @Test("名前の読み方: 数字だけの pid と UUID の末尾だけを持ち主として読む")
     func ownerPidIsReadStrictly() {
         let uuid = UUID().uuidString
