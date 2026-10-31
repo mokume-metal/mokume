@@ -46,9 +46,11 @@ nonisolated enum TestWindowAnimations {
     }
 }
 
-/// テストバンドルの読み込み時 (どの検査よりも前) に 1 度だけ走る。
+/// テストバンドルの読み込み時 (どの検査よりも前) に 1 度だけ走る。窓のアニメーションを止め (#3286)、
+/// 並べた窓を透明にする (`TestWindowConcealment`・#3652)。
 @section("__DATA,__mod_init_func")
 @used
-private let testWindowAnimationsConstructor: @convention(c) () -> Void = {
+private let testWindowsConstructor: @convention(c) () -> Void = {
     TestWindowAnimations.install()
+    TestWindowConcealment.install()
 }
