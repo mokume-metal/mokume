@@ -40,30 +40,102 @@ struct LoopbackNamingTests {
         #expect(!streams[0].isReady && !browsers[0].isReady)
     }
 
+    /// 閉じたポートへ繋ぎに行く相手の、名乗りの文面。**手放した番号を他が取って繋がってしまった回は、別の番号で
+    /// 1 回だけやり直す** (並走する suite の `bind(0)` や ephemeral が同じ番号を取りうる)。それでも繋がれば止まる。
+    private func refusedConnect(_ make: (Int) -> RawStream) async throws -> (port: Int, text: String) {
+        var lastPort = 0
+        for _ in 0..<2 {
+            // 待ち受けて番号を知り、手放して閉じたポートにする
+            let holder = try PortHolder(port: 0, stream: true)
+            let port = holder.port
+            lastPort = port
+            holder.release()
+            let peer = make(port)
+            defer { peer.close() }
+            let deadline = Date().addingTimeInterval(2)
+            while Date() < deadline {
+                if case .trouble = peer.state { return (port, peer.state.text) }
+                if peer.state == .ready { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        try #require(Bool(false), "閉じたはずの番号 \(lastPort) へ 2 回とも繋がった (他が同じ番号を取った)")
+        return (lastPort, "")
+    }
+
     @Test("閉じたポートへ繋ぎに行く素の相手は、実経路 (EINPROGRESS → poll → SO_ERROR) で ECONNREFUSED を受け口のポートつきで名乗る (#3537)")
     func rawPeersNameARefusedConnectOnTheRealPath() async throws {
-        // 待ち受けて番号を知り、手放して閉じたポートにする
-        let holder = try PortHolder(port: 0, stream: true)
-        let port = holder.port
-        holder.release()
-        let stream = StreamClient(port: port)
-        defer { stream.close() }
-        let browser = BrowserSocket(port: port)
-        defer { browser.close() }
-        try await requireWait("閉じたポートへの繋ぎが名乗られなかった") {
-            stream.state != .connecting && browser.state != .connecting
-        }
-        for peer in [stream.state.text, browser.state.text] {
-            #expect(peer.contains("connect failed"), "\(peer)")
-            #expect(peer.contains("errno \(ECONNREFUSED) \(String(cString: strerror(ECONNREFUSED)))"), "\(peer)")
-            #expect(peer.contains("受け口のポート \(port)"), "\(peer)")
-            #expect(peer.contains("局所のポート"), "\(peer)")
+        let stream = try await refusedConnect { StreamClient(port: $0) }
+        let browser = try await refusedConnect { BrowserSocket(port: $0) }
+        for (port, text) in [stream, browser] {
+            #expect(text.contains("connect failed"), "\(text)")
+            #expect(text.contains("errno \(ECONNREFUSED) \(String(cString: strerror(ECONNREFUSED)))"), "\(text)")
+            #expect(text.contains("受け口のポート \(port)"), "\(text)")
+            #expect(text.contains("局所のポート"), "\(text)")
         }
         // 局所のポートが割り当てられなかった socket は、0 でなく「未割り当て」と名乗る
         let unassigned = StreamClient(port: 58147, connector: { _, _ in EADDRINUSE })
         defer { unassigned.close() }
         try await requireWait("名乗られなかった") { unassigned.state != .connecting }
+        #expect(unassigned.state.text.contains("局所のポート 未割り当て"), "\(unassigned.state.text)")
         #expect(!unassigned.state.text.contains("局所のポート 0"), "\(unassigned.state.text)")
+    }
+
+    @Test("繋がる前の送りの名乗りは、後で繋がっても消えない。繋がった後に書けなかった errno も名乗り、向こうが閉じた後の送りは名乗らない (#3537)")
+    func rawPeersKeepWhatTheyNamedAboutWrites() async throws {
+        let listener = try PortHolder(port: 0, stream: true)
+        defer { listener.release() }
+        // 繋ぎを遅らせて、繋がる前に送る
+        let late = StreamClient(
+            port: listener.port,
+            connector: { descriptor, port in
+                usleep(200_000)
+                return RawStream.systemConnector(descriptor, port)
+            })
+        defer { late.close() }
+        late.send("early")
+        #expect(late.state.text.contains("send before connected"), "\(late.state.text)")
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(late.state.text.contains("send before connected"), "繋がった後に名乗りが消えた: \(late.state.text)")
+
+        // 繋がった後、書く向きを閉じてから送ると EPIPE。向こうは閉じていないので名乗る
+        let open = StreamClient(port: listener.port)
+        defer { open.close() }
+        try await requireWait("繋がらなかった") { open.state == .ready }
+        open.finish()
+        open.send("after finish")
+        #expect(open.state.text.contains("send failed (errno \(EPIPE) "), "\(open.state.text)")
+        #expect(open.state.text.contains("受け口のポート \(listener.port)"), "\(open.state.text)")
+        #expect(!open.closedByPeer)
+
+        // 向こうが閉じた後の送りは、受け口の約束の話ではないので名乗らない
+        let closing = try PortHolder(port: 0, stream: true)
+        let ended = StreamClient(port: closing.port)
+        defer { ended.close() }
+        try await requireWait("繋がらなかった") { ended.state == .ready }
+        closing.release()
+        try await requireWait("向こうが閉じたと読まなかった") { ended.closedByPeer }
+        ended.send("late")
+        ended.finish()
+        #expect(ended.state == .ready, "\(ended.state.text)")
+    }
+
+    @Test("壊れた frame は名乗って読みを止めるが、向こうが閉じた (closedByPeer) とは読まない")
+    func brokenFrameIsNotAClose() async throws {
+        let stalled: RawStream.Connector = { _, _ in EINPROGRESS }
+        let browser = BrowserSocket(port: 58147, connector: stalled)
+        defer { browser.close() }
+        let response =
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: \(WebSocketFrames.accept(for: browser.key))\r\n\r\n"
+        browser.receive(Array(response.utf8))
+        #expect(browser.state == .ready, "\(browser.state.text)")
+        browser.receive([0x81, 127, 0x80, 0, 0, 0, 0, 0, 0, 0])
+        #expect(browser.state.text.contains("invalid frame from the receiver"), "\(browser.state.text)")
+        #expect(!browser.closedByPeer)
+        // 名乗った後は読まない (後ろの frame で状態が替わらない)
+        browser.receive(WebSocketFrames.encode(opcode: 0x1, payload: Array("x".utf8), mask: [0, 0, 0, 0]))
+        #expect(browser.received.isEmpty)
     }
 
     @Test("繋がる前の送りと finish は黙って捨てず、捨てたと名乗る。検査が閉じた後の送りは黙る (#3537)")
@@ -116,6 +188,18 @@ struct LoopbackNamingTests {
         #expect(
             WebSocketFrames.decode(sixtyFour)
                 == .frame(.init(fin: true, opcode: 0x1, payload: medium), consumed: sixtyFour.count))
+    }
+
+    @Test("WebSocket の frame の長さの上限ちょうどは揃うのを待ち、上限 + 1 は範囲外と読む")
+    func webSocketFrameLengthLimitIsExact() {
+        func header(_ length: Int) -> [UInt8] {
+            [0x81, 127] + (0..<8).map { UInt8((length >> (8 * (7 - $0))) & 0xFF) }
+        }
+        #expect(WebSocketFrames.decode(header(WebSocketFrames.payloadLimit)) == .incomplete)
+        guard case .invalid = WebSocketFrames.decode(header(WebSocketFrames.payloadLimit + 1)) else {
+            Issue.record("上限 + 1 を範囲外と読まなかった")
+            return
+        }
     }
 
     @Test("WebSocket の壊れた frame (長さの上位ビット・大きすぎる長さ) は、落ちずに範囲外と読む")

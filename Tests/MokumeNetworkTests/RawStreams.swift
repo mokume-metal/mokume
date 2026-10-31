@@ -40,6 +40,8 @@ nonisolated class RawStream: @unchecked Sendable {
         var connected = false
         /// 送っている最中の数。読む thread は、これが 0 になってから descriptor を閉じる。
         var writers = 0
+        /// 検査の側が見つけた事情 (書けなかった・壊れた frame)。**一度名乗ったら消さない。**
+        var failure: String?
     }
     private let inner = Mutex(Inner())
     /// 送りの直列化 (複数の thread が同じ socket へ書いても、frame が混ざらない)。`inner` の錠は持たずに送る。
@@ -68,7 +70,12 @@ nonisolated class RawStream: @unchecked Sendable {
     // MARK: - 子と検査が使う
 
     /// 繋ぎの状態 (``LoopbackPeer``)。
-    final var state: PeerState { inner.withLock { $0.state } }
+    final var state: PeerState {
+        inner.withLock { inner in
+            if let failure = inner.failure { return .trouble(failure) }
+            return inner.state
+        }
+    }
 
     /// 向こうが閉じた (または読めなくなった)。
     final var closedByPeer: Bool { inner.withLock { $0.ended } }
@@ -82,12 +89,11 @@ nonisolated class RawStream: @unchecked Sendable {
         }
     }
 
-    /// 事情を名乗る。**繋がった後でも状態を `trouble` に替える** — 黙って捨てると、後ろの期待が連鎖して外れる。
-    /// 最初に名乗った事情を残す (後からの二次的な失敗で上書きしない)。
+    /// 事情を名乗る。**繋がった後でも、後の `setState(.ready)` (繋がった・握手が済んだ) でも消えない** —
+    /// 黙って捨てると、後ろの期待が連鎖して外れる。最初に名乗った事情を残す (後からの二次的な失敗で上書きしない)。
     final func fail(_ reason: String) {
         inner.withLock { inner in
-            if case .trouble = inner.state { return }
-            inner.state = .trouble(reason)
+            if inner.failure == nil { inner.failure = reason }
         }
     }
 
@@ -110,7 +116,8 @@ nonisolated class RawStream: @unchecked Sendable {
                 let code = errno
                 if written < 0 {
                     if code == EINTR { continue }
-                    if inner.withLock({ $0.stopped }) { return false }
+                    // 検査が閉じた後と、向こうが閉じた後 (close の返事や pong が EPIPE になる) は名乗らない
+                    if inner.withLock({ $0.stopped || $0.ended }) { return false }
                     fail(
                         "send failed (errno \(code) \(Self.describe(code))・\(bytes.count) バイト中 \(offset) 書けた・受け口のポート \(port))"
                     )
@@ -126,10 +133,12 @@ nonisolated class RawStream: @unchecked Sendable {
     final func finishWriting() {
         guard let descriptor = acquire("finish", 0) else { return }
         defer { release() }
-        if shutdown(descriptor, SHUT_WR) != 0 {
-            let code = errno
-            if inner.withLock({ $0.stopped }) { return }
-            fail("finish failed (errno \(code) \(Self.describe(code))・受け口のポート \(port))")
+        sendLock.withLock { _ in
+            if shutdown(descriptor, SHUT_WR) != 0 {
+                let code = errno
+                if inner.withLock({ $0.stopped || $0.ended }) { return }
+                fail("finish failed (errno \(code) \(Self.describe(code))・受け口のポート \(port))")
+            }
         }
     }
 
@@ -150,6 +159,8 @@ nonisolated class RawStream: @unchecked Sendable {
                 return (nil, "\(what) before connected (\(size) バイトを捨てた・受け口のポート \(port))")
             }
             guard let descriptor = inner.descriptor else {
+                // 向こうが閉じた後の送りは、受け口の約束の話ではない。名乗らない
+                if inner.ended { return (nil, nil) }
                 return (nil, "\(what) after the connection ended (\(size) バイトを捨てた・受け口のポート \(port))")
             }
             inner.writers += 1
@@ -242,7 +253,9 @@ nonisolated class RawStream: @unchecked Sendable {
             if ready > 0 {
                 var failure: Int32 = 0
                 var length = socklen_t(MemoryLayout<Int32>.size)
-                getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length)
+                guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length) == 0 else {
+                    return errno
+                }
                 return failure
             }
         }
@@ -312,7 +325,7 @@ nonisolated final class StreamClient: RawStream, LoopbackPeer, @unchecked Sendab
 /// 届いた text / continuation / ping (pong で答える) / close。
 nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Sendable {
     private let path: String
-    private let key: String
+    let key: String
     private let texts = Mutex<[String]>([])
 
     // 読む thread だけが触る
@@ -367,10 +380,7 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
             let parts = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             return parts.count == 2 && parts[0].lowercased() == "sec-websocket-accept" ? parts[1] : nil
         }.first
-        let expected = Data(
-            Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))
-        ).base64EncodedString()
-        guard status.contains(" 101"), accept == expected else {
+        guard status.contains(" 101"), accept == WebSocketFrames.accept(for: key) else {
             setState(.trouble("handshake refused (\(status)・accept \(accept ?? "なし"))"))
             markEnded()
             return false
@@ -389,8 +399,8 @@ nonisolated final class BrowserSocket: RawStream, LoopbackPeer, @unchecked Senda
                 return
             case .invalid(let reason):
                 // 受け口の約束が破れた (壊れた frame)。落ちずに名乗って、以後読まない
+                // 壊れた frame は「向こうが閉じた」ではない: 読みを止めるだけで closedByPeer は立てない
                 fail("invalid frame from the receiver: \(reason)・受け口のポート \(port)")
-                markEnded()
                 pending = []
                 broken = true
                 return
@@ -457,6 +467,11 @@ nonisolated enum WebSocketFrames {
         case frame(Frame, consumed: Int)
         /// 壊れている (長さが範囲外など)。
         case invalid(String)
+    }
+
+    /// 握手の応答の `Sec-WebSocket-Accept` (RFC 6455 4.2.2)。
+    static func accept(for key: String) -> String {
+        Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
     }
 
     /// 1 つの frame の中身の上限。検査が扱う大きさの桁を大きく越えるものは、壊れたとみなす。
