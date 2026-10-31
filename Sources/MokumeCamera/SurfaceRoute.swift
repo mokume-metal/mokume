@@ -38,6 +38,8 @@ nonisolated enum VideoFrame: Sendable {
 nonisolated enum SurfaceRoute {
     /// 面に乗せなかった理由。**検査が読む** (どちらの道を通ったか)。
     enum Refusal: Error, Equatable, Sendable {
+        /// 計測が、変更前の CPU の道を測るために面の道を閉じている (``isEnabled``)。
+        case disabled
         case noSurface
         case notBGRA
         case notOpaque
@@ -46,6 +48,9 @@ nonisolated enum SurfaceRoute {
         case tableRejected
         case tablePending
     }
+
+    /// 面の道を開いているか。**計測が倒す** (同じ実行の中で、変更前の CPU の道と並べる)。
+    static let isEnabled = Atomic<Bool>(true)
 
     /// `buffer` を面のまま渡せるなら面の値を、渡せなければ理由を返す。
     ///
@@ -57,6 +62,7 @@ nonisolated enum SurfaceRoute {
         for buffer: CVPixelBuffer, alpha: FrameConverter.Alpha, reshaped: Bool, builds: Bool,
         tables: SurfaceTables = .shared
     ) -> Result<PixelSurface, Refusal> {
+        guard isEnabled.load(ordering: .relaxed) else { return .failure(.disabled) }
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return .failure(.notBGRA) }
         guard let reference = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue() else {
             return .failure(.noSurface)

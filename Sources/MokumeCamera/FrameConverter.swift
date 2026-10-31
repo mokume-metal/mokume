@@ -5,6 +5,7 @@ import Accelerate
 import CoreGraphics
 import CoreVideo
 import MokumeCore
+import Synchronization
 
 /// 外から来た 1 枚 (カメラ・動画ファイルの `CVPixelBuffer`) を、本体が絵にできる形
 /// (``DisplayImage``) にする。
@@ -120,8 +121,12 @@ nonisolated final class FrameConverter {
         self.alpha = alpha
     }
 
+    /// 変換した枚数 (プロセスの通算)。**計測が読む** (面の道に乗ったコマで CPU の全画素の変換が起きないこと — #2962)。
+    static let conversions = Atomic<Int>(0)
+
     /// 1 枚を変換する。
     func convert(_ buffer: CVPixelBuffer) throws(Failure) -> DisplayImage {
+        Self.conversions.add(1, ordering: .relaxed)
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
 
