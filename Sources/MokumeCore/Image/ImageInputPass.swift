@@ -9,6 +9,7 @@ import Metal
 @MainActor final class ImageInputPass {
     private let gpu: RenderDevice
     private let decodeState: any MTLRenderPipelineState
+    private let surfaceState: any MTLRenderPipelineState
     private let patchState: any MTLRenderPipelineState
     private let lookup: any MTLBuffer
     private var tables: [ArgumentTablePool]
@@ -37,6 +38,7 @@ import Metal
             }
         }
         decodeState = try state(vertex: "imageInputVertex", fragment: "imageInputFragment")
+        surfaceState = try state(vertex: "imageInputVertex", fragment: "imageSurfaceFragment")
         patchState = try state(vertex: "imagePatchVertex", fragment: "imagePatchFragment")
         let lookup = try gpu.makeReadableBuffer(byteCount: 512 * MemoryLayout<Float>.stride)
         // アルファも CPU と同じ丸めの表を使う。Metal の高速な除算近似に任せない。
@@ -48,21 +50,47 @@ import Metal
         self.lookup = lookup
         self.gpu = gpu
         tables = (0..<slotCount).map {
-            ArgumentTablePool(gpu: gpu, label: "mokume.image.input.\($0)", bufferBindCount: 3)
+            ArgumentTablePool(
+                gpu: gpu, label: "mokume.image.input.\($0)", bufferBindCount: 3, textureBindCount: 1)
         }
     }
 
     isolated deinit { gpu.retire(lookup) }
 
+    /// 面の入力を GPU が読む準備。面に被せたテクスチャと、色の表の置き場。
+    struct SurfaceSource {
+        let texture: any MTLTexture
+        let table: any MTLBuffer
+        let lease: SurfaceLease
+    }
+
+    /// 面の入力を読む準備をする。**作れなければ `nil`** — 呼び手はその 1 枚だけを CPU で届ける
+    /// (表を CPU で引く)。他の絵の GPU の変換は止めない。
+    func surfaceSource(for surface: PixelSurface) -> SurfaceSource? {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: surface.width, height: surface.height, mipmapped: false)
+        // 読むだけ。`storageMode` は面が決めるので触らない
+        descriptor.usage = .shaderRead
+        guard
+            let texture = gpu.device.makeTexture(
+                descriptor: descriptor, iosurface: surface.lease.surface, plane: 0),
+            let table = try? gpu.colorTableBuffer(for: surface.conversion)
+        else { return nil }
+        return SurfaceSource(texture: texture, table: table, lease: surface.lease)
+    }
+
     /// 失敗しうる準備をすべて済ませてから積む。失敗時は呼び手が従来の CPU 経路へ戻す。
+    ///
+    /// - Parameter source: 面の入力を変換するときの準備 (``surfaceSource(for:)``)。8 bit の並びの入力と、
+    ///   編集だけを届けるときは `nil`。
     func stage(
-        _ image: Image, into bytes: UnsafeMutableRawPointer, of staging: any MTLBuffer,
+        _ image: Image, source: SurfaceSource?, into bytes: UnsafeMutableRawPointer, of staging: any MTLBuffer,
         at offset: Int, slot: Int, index: Int, in commands: any MTL4CommandBuffer
     ) throws(RenderFailure) -> UInt64 {
         let decodeTable = try tables[slot].table(at: index * 2)
         let patchTable = try tables[slot].table(at: index * 2 + 1)
-        let picture = image.displayInput!
-        let rawByteCount = image.inputNeedsDecode ? picture.bytes.count : 0
+        let picture = image.displayInput
+        let rawByteCount = image.inputNeedsDecode ? picture?.bytes.count ?? 0 : 0
         let patchOffset = (rawByteCount + 7) & ~7
         let sizeOffset = patchOffset + image.inputPatches.count * 16
         // 予約は従来の半精度全画素と同じ。少数編集を足しても容量の倍増を起こさない。
@@ -85,7 +113,18 @@ import Metal
         encoder.setViewport(MTLViewport(
             originX: 0, originY: 0, width: Double(image.width), height: Double(image.height),
             znear: 0, zfar: 1))
-        if image.inputNeedsDecode {
+        if image.inputNeedsDecode, let source {
+            // 面を読む。面と表は、この投入が終わるまで持つ (面は使用中の印ごと持つので、置き場に使い回されない)
+            gpu.makeResident(source.texture)
+            decodeTable.setTexture(source.texture.gpuResourceID, index: 0)
+            decodeTable.setAddress(source.table.gpuAddress, index: 0)
+            decodeTable.setAddress(lookup.gpuAddress, index: 1)
+            encoder.setRenderPipelineState(surfaceState)
+            encoder.setArgumentTable(decodeTable, stages: [.vertex, .fragment])
+            encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
+            gpu.holdUntilSubmittedWorkFinishes([source.texture, source.table, source.lease])
+            gpu.retire(source.texture)
+        } else if image.inputNeedsDecode, let picture {
             picture.bytes.withUnsafeBytes { source in
                 bytes.copyMemory(from: source.baseAddress!, byteCount: source.count)
             }

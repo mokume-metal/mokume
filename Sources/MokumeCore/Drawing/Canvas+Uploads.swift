@@ -68,16 +68,26 @@ extension Canvas {
         var cpuStaged: [(owner: any PendingUpload, offset: Int)] = []
         var imageIndex = 0
         for item in staged {
-            if let image = item.owner as? Image, image.displayInput != nil,
+            if let image = item.owner as? Image, image.deferredInput != nil,
                 !imageInputUnavailable, !failImageInputForTesting
             {
                 do {
                     if imageInputPass == nil {
                         imageInputPass = try ImageInputPass(gpu: gpu, slotCount: frameRing.slotCount)
                     }
+                    // 面の入力は、面を読む準備ができなければその 1 枚だけを CPU で届ける (表を CPU で引く)。
+                    // 他の絵の GPU の変換は止めない (#2962)
+                    var source: ImageInputPass.SurfaceSource?
+                    if image.inputNeedsDecode, let surface = image.surfaceInput {
+                        guard let prepared = imageInputPass!.surfaceSource(for: surface) else {
+                            cpuStaged.append(item)
+                            continue
+                        }
+                        source = prepared
+                    }
                     let generation = try imageInputPass!.stage(
-                        image, into: bytes.advanced(by: item.offset), of: staging, at: item.offset,
-                        slot: frameRing.slot, index: imageIndex, in: commands)
+                        image, source: source, into: bytes.advanced(by: item.offset), of: staging,
+                        at: item.offset, slot: frameRing.slot, index: imageIndex, in: commands)
                     imageIndex += 1
                     uploaded.append((image, generation, direct: false))
                     uploadBarriersEncoded += 1

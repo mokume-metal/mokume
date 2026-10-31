@@ -172,6 +172,12 @@ import MokumeDiagnostics
     /// CPU が書いて、まだ GPU 側へ届けていない数の並びと画像 (#749)。届けるのは描き切り。
     let pendingUploads = PendingUploads()
 
+    /// 面の入力 (``PixelSurface``) の色の表を GPU が読む置き場。最近使った ``colorTableLimit`` 本まで持ち、
+    /// 古いものから退かせる。**表ごとに 1 本で、面を書く絵や Canvas の数には増えない** (#2962)。
+    private var colorTableBuffers: [(table: PixelSurface.ColorTable, buffer: any MTLBuffer)] = []
+    /// 持っておく色の表の数。動画やカメラの色の意味の数 (ふつう 1〜2) より十分に多い。
+    static let colorTableLimit = 8
+
     /// 未投入の計算を持ちうる面。**面をまたいで、計算を頼んだ順に効かせるための名簿**
     /// (`PendingComputations`・#1870)。溜めは面ごと、描き切りも面ごとなので、別の面で
     /// 後から頼んだ計算が先に走らないよう、頼む側が相手を引く。
@@ -965,6 +971,25 @@ import MokumeDiagnostics
             commit(commands)
         }
         return texture
+    }
+
+    /// 色の表を GPU が読む置き場。無ければ作り、あふれたら最も古く使ったものを退かせる (退かせた置き場は、
+    /// 読んでいる投入が終わるまで常駐に残る — ``retire(_:)``)。
+    func colorTableBuffer(for table: PixelSurface.ColorTable) throws(RenderFailure) -> any MTLBuffer {
+        if let index = colorTableBuffers.firstIndex(where: { $0.table === table }) {
+            let entry = colorTableBuffers.remove(at: index)
+            colorTableBuffers.append(entry)
+            return entry.buffer
+        }
+        let bytes = table.gpuBytes
+        let buffer = try makeReadableBuffer(byteCount: bytes.count)
+        buffer.label = "mokume.image.colorTable"
+        bytes.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        colorTableBuffers.append((table, buffer))
+        if colorTableBuffers.count > Self.colorTableLimit {
+            retire(colorTableBuffers.removeFirst().buffer)
+        }
+        return buffer
     }
 
     /// CPU から読める領域を確保して常駐させる。

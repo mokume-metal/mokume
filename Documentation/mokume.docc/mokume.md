@@ -760,6 +760,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Image``
 - ``ImageFailure``
 - ``DisplayImage``
+- ``PixelSurface``
 - ``SketchPart/assetURL(_:)``
 - ``AssetFailure``
 

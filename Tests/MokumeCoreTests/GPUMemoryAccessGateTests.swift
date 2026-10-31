@@ -134,6 +134,9 @@ struct GPUMemoryAccessGateTests {
             file: "Text/GlyphPage.swift", discipline: .settlesOrSkips,
             reason: "焼いた画素は描き切りが GPU 側のコピーで頁へ届ける (#1792・#749)。面へ直に書くのは、控えに載せられないほど大きい頁の逃げ道だけで、直前に待ち、待てなければ書かず控えに残す (#934)"),
         Permit(
+            file: "Rendering/RenderDevice.swift", discipline: .waitedElsewhere,
+            reason: "面の入力の色の表の置き場 (colorTableBuffer) は、作成時だけ新しい置き場へ書き、以後は変更しない (#2962)。読む投入の完了までは holdUntilSubmittedWorkFinishes が置き場を保持し、追い出し後の解放は RenderDevice.retire が待つ"),
+        Permit(
             file: "Image/Image.swift", discipline: .settlesOrSkips,
             reason: "送りは描き切りが GPU 側のコピーで面へ届ける (#749)。面へ直に書くのは作成時 (新しい面) と、控えに載せられないほど大きい画像の逃げ道だけで、逃げ道は直前に待ち、待てなければ送らず旗を立てたままにする (#934)"),
     ]
