@@ -186,12 +186,25 @@ struct MIDIClockTests {
         #expect(port.beat == 2)
     }
 
-    @Test("クロックは出来事の列にも届いた順に入り、ノートと混ざっても落ちない")
-    func clocksAreListedInOrder() throws {
+    @Test("クロックは拍を進めるだけで出来事の列に入らない。開始・停止・再開・曲の位置は届いた順に入る")
+    func clocksAreNotListedButTransportIs() throws {
         let note = MIDIMessage.noteOn(channel: 1, note: 60, velocity: 100)
-        let port = try port([[.start, .clock, note, .clock, .stop]])
+        let frame: [MIDIMessage] = [
+            .start, .clock, note, .clock, .stop, .songPosition(sixteenths: 8), .continue, .clock,
+        ]
+        let port = try port([frame])
         port.supply()
-        #expect(port.messages == [.start, .clock, note, .clock, .stop])
+        #expect(port.messages == [.start, note, .stop, .songPosition(sixteenths: 8), .continue])
+        #expect(port.beat == 2)
+    }
+
+    @Test("クロックを大量に流しても、出来事の列の上限を薄めない (捨てた数は増えない)")
+    func clocksDoNotFillTheQueue() throws {
+        let port = try port([Self.clocks(500)], capacity: 4)
+        port.supply()
+        #expect(port.messages.isEmpty)
+        #expect(port.inbox.messages.overflowed == 0)
+        #expect(port.beat == 20)
     }
 
     @Test("何も届いていないうちの拍は 0。ノートとコントロールチェンジだけでは動かない")
@@ -240,8 +253,14 @@ struct MIDIClockTests {
         let port = try port([[.start] + Self.clocks(24) + [.songPosition(sixteenths: 16384), .songPosition(sixteenths: -1)]])
         port.supply()
         #expect(port.beat == 1)
-        #expect(port.messages.count == 25)
+        #expect(port.messages == [.start], "クロックは列に入らない")
         #expect(port.inbox.messages.unreadable == 2)
+    }
+
+    @Test("走っている間に曲の位置が届いても、位置を置く")
+    func songPositionWhileRunning() throws {
+        let frames: [[MIDIMessage]?] = [[.start] + Self.clocks(72), [.songPosition(sixteenths: 8)], Self.clocks(24)]
+        #expect(beats(try port(frames), 3) == [3, 2, 3])
     }
 
     // MARK: - 実機の配線 (偽の CoreMIDI)
@@ -294,6 +313,55 @@ struct MIDIClockTests {
         #expect(fresh.beat == 0, "作っただけでは supply() するまで読めない")
         fresh.supply()
         #expect(fresh.beat == 5)
+    }
+
+    @Test("外している間に開始が届いて数えたクロックが 0 に戻っても、足し直した入り口の拍は古い値のまま残らない")
+    func reattachedPortAdoptsAStartThatEqualsTheDefault() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [FakeMIDIBackend.source(1, "Deck")]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        let port = MIDIPort(id: "Deck #1", name: "midi: Deck #1", source: DeviceSource(id: "Deck #1", hub: hub))
+        try port.open()
+        backend.deliver(1, [UInt32](repeating: 0x10F8_0000, count: 48))
+        port.supply()
+        #expect(port.beat == 2)
+
+        port.close()
+        backend.deliver(1, [0x10FA_0000])  // 開始: 数えたクロック 0・走行中 (既定値と同じ)
+        try port.open()
+        port.supply()
+        #expect(port.beat == 0, "外す前の拍 2 が残った")
+        backend.deliver(1, [UInt32](repeating: 0x10F8_0000, count: 24))
+        port.supply()
+        #expect(port.beat == 1)
+    }
+
+    @Test("クロックを一度も受けていない機材では、足し直した入り口に拍を渡さない (名乗りの最後に届いたフレームが付かない)")
+    func noClockNoAdoption() throws {
+        let backend = FakeMIDIBackend()
+        backend.current = [FakeMIDIBackend.source(1, "Deck")]
+        let hub = MIDIHub(backend: backend)
+        hub.start()
+        let port = MIDIPort(id: "Deck #1", name: "midi: Deck #1", source: DeviceSource(id: "Deck #1", hub: hub))
+        try port.open()
+        backend.deliver(1, [0x2090_3C64])
+        port.supply()
+        #expect(port.inbox.clock.lastArrival == nil)
+    }
+
+    @Test("外していた間に進めたフレームの拍に関わるメッセージは、記録の入り口でも数える (実機の中継と同じ拍)")
+    func recordedPortCountsSkippedFrames() throws {
+        // 持ち主の無い入り口は位置を進めない (``DetachedFrames``) ので、飛ばす数を入れ物へ直に渡して見る
+        let inbox = MIDIInbox(name: "recorded", state: .running)
+        let skipped: [MIDIMessage] =
+            [.start] + Self.clocks(30) + [.stop] + Self.clocks(10) + [.continue] + Self.clocks(18)
+            + [.noteOn(channel: 1, note: 60, velocity: 1), .controlChange(channel: 1, controller: 1, value: 5)]
+        inbox.advanceClock(through: skipped)
+        let taken = inbox.take()
+        #expect(taken.clock?.beat == 2, "止めた位置 30 から 18 個で 48")
+        #expect(taken.messages.isEmpty, "出来事は届かない (外していた間のもの)")
+        #expect(taken.controllers == nil)
     }
 }
 

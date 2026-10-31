@@ -47,8 +47,9 @@ nonisolated struct MIDIControllers: Sendable, Equatable {
 ///   押して離した鍵も、届いた順に全部読む
 /// - コントロールチェンジの現在値は最新の 1 つ (``ExternalInput``)。列が上限で古いものを捨てても、
 ///   現在値はいつも最新である
-/// - クロックから数えた拍 (``MIDIClock``) も最新の 1 つ。クロックも出来事の列に入るが、拍は列を数え直さずに
-///   読める。届いたクロックは、**届いた後の最初のフレーム**に割り当てられる ([ADR-0042] 決定 4)
+/// - クロックから数えた拍 (``MIDIClock``) も最新の 1 つ。**クロック (0xF8) は出来事の列に入れない** — 毎秒 48 個
+///   届き、列の上限を薄めるうえ、読む側が要るのは拍だからである。開始・停止・再開・曲の位置は、拍を動かして
+///   列にも入る。届いたクロックは、**届いた後の最初のフレーム**に割り当てられる ([ADR-0042] 決定 4)
 ///
 /// 状態は 3 つに同じものを置く。読むのは列の側である。
 ///
@@ -104,8 +105,23 @@ nonisolated final class MIDIInbox: Sendable {
             case .clock, .start, .stop, .continue, .songPosition:
                 memory.clock.apply(message)
                 clock.send(memory.clock, hostTime: hostTime)
+                // クロックは拍だけを進め、出来事の列には入れない
+                if message == .clock { return }
             }
             messages.send(message, hostTime: hostTime)
+        }
+    }
+
+    /// 拍に関わるメッセージ (クロック・開始・停止・再開・曲の位置) だけを、出来事の列に入れずに拍へ通す。
+    ///
+    /// 外されていた記録の入り口が足し直されるとき、外していた間に進んだフレームの分を渡す (``RecordedMIDISource``)。
+    /// 実機は外している間も中継 (``MIDIFeed``) が数え続け、足し直すときに ``adopt(_:clock:)`` で渡すので、
+    /// 記録も同じ拍になるよう、飛ばしたフレームのクロックを数える。ほかのメッセージは外していた間のものとして届かない。
+    func advanceClock(through skipped: [MIDIMessage]) {
+        memory.withLock { memory in
+            var changed = false
+            for message in skipped where message.isValid { changed = memory.clock.apply(message) || changed }
+            if changed { clock.send(memory.clock) }
         }
     }
 
@@ -149,14 +165,15 @@ nonisolated final class MIDIInbox: Sendable {
 
     /// 中継 (``MIDIFeed``) が持つ最後の現在値の表と数えた拍を、この入れ物のものにして最新の 1 つへ入れる。
     /// 後から繋いだ入り口・足し直された入り口が、繋ぐ前に動いたつまみの値と、数えていた拍を読めるようにする。
-    /// 何も届いていなければ何もしない。
-    func adopt(_ table: MIDIControllers, clock adopted: MIDIClock) {
+    /// 何も届いていなければ (`nil`・空の表) 何もしない。**拍は届いていれば、既定値と等しくても渡す** — 開始の直後
+    /// (数えたクロック 0・走行中) は既定値と同じで、渡さないと、足し直した入り口の拍が外す前の古い値のまま残る。
+    func adopt(_ table: MIDIControllers, clock adopted: MIDIClock?) {
         memory.withLock { memory in
             if !table.isEmpty {
                 memory.controllers = table
                 controllers.send(table)
             }
-            if adopted != MIDIClock() {
+            if let adopted {
                 memory.clock = adopted
                 clock.send(adopted)
             }

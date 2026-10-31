@@ -177,7 +177,8 @@ nonisolated final class MIDIFeed: Sendable {
     private struct State: Sendable {
         var entries: [Entry] = []
         var controllers = MIDIControllers()
-        var clock = MIDIClock()
+        /// 拍に関わるメッセージが 1 つも届いていなければ `nil`。
+        var clock: MIDIClock?
     }
     private let state = Mutex(State())
 
@@ -216,7 +217,9 @@ nonisolated final class MIDIFeed: Sendable {
                 if case .controlChange(let channel, let controller, let value) = message, message.isValid {
                     state.controllers.set(channel: channel, controller: controller, value: value)
                 }
-                state.clock.apply(message)
+                // 拍に関わるメッセージが初めて届いたときに、拍の持ち主になる
+                var counted = state.clock ?? MIDIClock()
+                if counted.apply(message) { state.clock = counted }
             }
             for inbox in state.entries.compactMap(\.inbox) {
                 for message in decoded.messages { inbox.receive(message, hostTime: hostTime) }
