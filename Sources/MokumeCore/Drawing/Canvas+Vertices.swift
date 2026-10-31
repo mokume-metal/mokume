@@ -460,10 +460,12 @@ extension Canvas {
     ///
     /// - 奥行きを持つ頂点の形は立体として数えて落とす。
     /// - 塗りの色は最初の頂点の色。頂点ごとに色が違えば、そのことを数える (落としてはいない)。
-    /// - 穴のある形は `evenodd` で塗る (穴の向きによらず抜ける)。穴の無い形は、塗りの規則の選び方
-    ///   (``endShape(_:evenOdd:)``) に従う。
+    /// - 塗りの規則は、穴の有無で替えず、塗りの規則の選び方 (``endShape(_:evenOdd:)``) に従う。画面と同じく、
+    ///   既定は回り数で塗る (SVG の `nonzero`) ので、外周と逆向きの穴は抜け、同じ向きの穴は塗られる
+    ///   (`beginContour()` の説明)。書き出しが穴だけ別の規則で塗ると、画面と違う絵になる ([#3558])。
     ///
     /// [#3139]: https://github.com/mokume-metal/mokume/issues/3139
+    /// [#3558]: https://github.com/mokume-metal/mokume/issues/3558
     private func recordVectorShape(
         _ sink: VectorCapture, primitives: [Primitive], points: [BuildingVertex], evenOdd: Bool
     ) {
@@ -502,7 +504,7 @@ extension Canvas {
             if fills, primitive.fills, let first = primitive.ring.first {
                 let color = points[first].fill
                 mixesColours = primitive.ring.contains(where: { points[$0].fill != color })
-                fill = vectorFill(color: color, evenOdd: evenOdd || primitive.holes.contains { !$0.isEmpty })
+                fill = vectorFill(color: color, evenOdd: evenOdd)
             }
             var stroke: VectorStroke?
             if strokes {

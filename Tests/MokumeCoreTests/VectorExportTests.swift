@@ -360,27 +360,61 @@ struct VectorCaptureTests {
         #expect(SVG.attribute("fill", in: elements[0]) == "#ff0000", "開いた形の塗りも書く (SVG が閉じて塗る)")
     }
 
-    @Test("穴のある形は、外周と穴を 1 つの道に並べ、穴の向きによらず抜ける規則で塗る")
-    func aShapeWithAHoleKeepsItsHole() throws {
+    /// 外周は時計回り。穴は `sameDirection` なら外周と同じ向き (画面では回り数 2 で塗られる)、でなければ逆向き (抜ける)。
+    private func holedShape(
+        _ canvas: Canvas, sameDirection: Bool, mirrored: Bool = false, evenOdd: Bool = false
+    ) {
+        canvas.fill(red)
+        canvas.noStroke()
+        if mirrored {
+            canvas.translate(100, 0)
+            canvas.scale(-1, 1)
+        }
+        canvas.beginShape()
+        canvas.vertex(10, 10)
+        canvas.vertex(90, 10)
+        canvas.vertex(90, 90)
+        canvas.vertex(10, 90)
+        canvas.beginContour()
+        let hole = [(30, 30), (70, 30), (70, 70), (30, 70)]
+        for point in sameDirection ? hole : hole.reversed() { canvas.vertex(Float(point.0), Float(point.1)) }
+        canvas.endContour()
+        canvas.endShape(.close, evenOdd: evenOdd)
+    }
+
+    @Test("穴のある形は、外周と穴を 1 つの道に並べ、塗りの規則は穴の有無で替えない (外周と逆向きの穴は回り数で抜ける)", arguments: [false, true])
+    func aShapeWithAHoleKeepsItsHole(mirrored: Bool) throws {
         let harness = try Harness()
-        let elements = try harness.elements { canvas in
-            canvas.fill(red)
-            canvas.noStroke()
-            canvas.beginShape()
-            canvas.vertex(10, 10)
-            canvas.vertex(90, 10)
-            canvas.vertex(90, 90)
-            canvas.vertex(10, 90)
-            canvas.beginContour()
-            canvas.vertex(30, 30)
-            canvas.vertex(70, 30)
-            canvas.vertex(70, 70)
-            canvas.vertex(30, 70)
-            canvas.endContour()
-            canvas.endShape(.close)
+        let elements = try harness.elements { holedShape($0, sameDirection: false, mirrored: mirrored) }
+        try #require(elements.count == 1)
+        let expected =
+            mirrored
+            ? "M90 10L10 10 10 90 90 90ZM70 70L30 70 30 30 70 30Z"
+            : "M10 10L90 10 90 90 10 90ZM30 70L70 70 70 30 30 30Z"
+        #expect(SVG.attribute("d", in: elements[0]) == expected)
+        #expect(SVG.attribute("fill-rule", in: elements[0]) == nil, "規則は書かない (既定の nonzero)。逆向きの穴は回り数 0 で抜ける")
+    }
+
+    @Test("外周と同じ向きの穴は、画面と同じく回り数 2 で塗られるので、書き出しも nonzero のまま (evenodd にしない)", arguments: [false, true])
+    func aSameDirectionHoleIsFilledLikeTheScreen(mirrored: Bool) throws {
+        let harness = try Harness()
+        let elements = try harness.elements { holedShape($0, sameDirection: true, mirrored: mirrored) }
+        try #require(elements.count == 1)
+        let expected =
+            mirrored
+            ? "M90 10L10 10 10 90 90 90ZM70 30L30 30 30 70 70 70Z"
+            : "M10 10L90 10 90 90 10 90ZM30 30L70 30 70 70 30 70Z"
+        #expect(SVG.attribute("d", in: elements[0]) == expected)
+        #expect(SVG.attribute("fill-rule", in: elements[0]) == nil)
+    }
+
+    @Test("endShape(_:evenOdd: true) で閉じた形は、穴の向きによらず evenodd で書く", arguments: [false, true], [false, true])
+    func anEvenOddShapeKeepsTheEvenOddRule(sameDirection: Bool, mirrored: Bool) throws {
+        let harness = try Harness()
+        let elements = try harness.elements {
+            holedShape($0, sameDirection: sameDirection, mirrored: mirrored, evenOdd: true)
         }
         try #require(elements.count == 1)
-        #expect(SVG.attribute("d", in: elements[0]) == "M10 10L90 10 90 90 10 90ZM30 30L70 30 70 70 30 70Z")
         #expect(SVG.attribute("fill-rule", in: elements[0]) == "evenodd")
     }
 
