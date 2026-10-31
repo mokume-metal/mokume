@@ -129,9 +129,9 @@ SPDX-License-Identifier: MIT
 
 CPUだけで判定する図形の全探索のうち、#3338で列挙した座標変換・固定seedの交差と穴・橋の角度走査を、毎回の`test`から日次へ移す。入力・seed・許容誤差・判定器を維持し、既知の不具合を検出する固定回帰と境界例は毎回残す。固定回帰は、該当の修正を外す具体的な変異を検出できることを確かめる。日次で新たに見つかった不具合も固定回帰へ加える。
 
-入口はMakefileに置く。`test-geometry-exploration`は元と同じdebugで全探索を実行し、`test-release`と`test-tsan`も全探索を有効にする。GitHubホストの既存`release-check`で、**版を出すSHAそのもの**のdebug全探索とrelease検査を通す。出す版がない日も日次で実行する。専用機の`scheduled-debug`も全探索を有効にして、既存の定期debugの全範囲を維持する。ホストと専用機のOS・コンパイラの違いも見続ける。毎回の`render`・`render-pr`では固定回帰を走らせる。
+入口はMakefileに置く。`test-geometry-exploration`は元と同じdebugで全探索を実行し、`test-release`と`test-tsan`も全探索を有効にする。GitHubホストの`release.yml`で、**版を出すSHAそのもの**のdebug全探索（並走する`geometry-exploration`）とrelease検査（`release-check`）を通し、どちらかが欠ければ版を出さない（debug全探索は当初`release-check`の中の直列の段だったが、所要が上限を越えて版が出なくなったため別jobにした・#3342。検査の中身と保証は同じ）。出す版がない日も日次で実行する。専用機の`scheduled-debug`も全探索を有効にして、既存の定期debugの全範囲を維持する。ホストと専用機のOS・コンパイラの違いも見続ける。毎回の`render`・`render-pr`では固定回帰を走らせる。
 
-全探索はXMLに対象が揃い、skip・失敗・重複がないことまで照合する。記録欠落・timeoutも成功とは数えず、既存の`release-check-report`で報告する。`make hooks-test`が記録照合と報告経路を検査する。SHA・構成・入力とseed・件数・所要を記録し、日次の古い成功を新しい版の保証へ流用しない。
+全探索はXMLに対象が揃い、skip・失敗・重複がないことまで照合する。記録欠落・timeoutも成功とは数えず、既存の`release-check-report`で報告する（どちらのjobの赤も同じIssueに載る）。`make hooks-test`が記録照合と報告経路を検査する。SHA・構成・入力とseed・件数・所要を記録し、日次の古い成功を新しい版の保証へ流用しない。
 
 理由は#3190・#3192の毎回の検査時間の増加である。全探索を削除する案や単にケース数を減らす案は、未知の破れを見つける範囲を失うため採らない。別の日次ジョブの成功だけで版を出す案も、その後に入った変更を検査したことにならないため採らない。**代償**は、探索だけで見つかる不具合がmerge後に検出されうること。scheduleの遅延・欠落があるので24時間以内の検出は約束しないが、検査が通っていないSHAの版は出さない。
 

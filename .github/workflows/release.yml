@@ -7,7 +7,8 @@ name: Release
 # 増やす。ノートの置き場は Releases で足り、ファイルに写すと二重管理になる
 # (ADR-0001 原則 9)。判断の詳細は scripts/release.py の冒頭。
 #
-# **版は、下限 OS の release の検査 (release-check) が緑の SHA にだけ打つ** (#2662)。
+# **版は、下限 OS の release の検査 (release-check) と、並走する debug の全探索
+# (geometry-exploration・#3342) がどちらも緑の SHA にだけ打つ** (#2662)。
 # release でだけ出る赤は merge の前には止めない (merge queue から外した) ので、main には
 # 入りうる。版には入れない。理由と代償は release-check の上。
 
@@ -83,7 +84,12 @@ jobs:
       || (github.event.pull_request.merged
       && contains(github.event.pull_request.labels.*.name, 'release:now'))
     runs-on: macos-26
-    # #3338: 同じSHAのdebug全探索もここで確認する。ビルド2構成を含め60分で止める。
+    # 60 分 (#3342)。debug の全探索 (#3338) は別 job (geometry-exploration) に出したので、ここは
+    # release のビルドと検査だけである。実測 (日次の run 41021728107・41180712758): release の
+    # ビルド 38〜39 分 + 検査 8 分 + 検査の中の入れ子のビルド 約 3 分で、遅い日でも約 50 分。
+    # **下げない** — release のビルドは MokumeCoreTests 1 モジュールの直列のコンパイルが大半で、
+    # 日に約 1 分ずつ伸び、ランナーの速さも 1.7 倍ぶれる (10-28 は 20.8 分、10-30 は 38.4 分)。
+    # 下げると余裕が無くなり、上げると症状の手当てになる。今の余裕は約 10 分
     timeout-minutes: 60
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
@@ -91,22 +97,17 @@ jobs:
       - uses: actions/checkout@v7
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      # 日次と版の前に同じSHAのdebug全探索を通す (#3338)。別の時刻の成功は流用しない。
-      - name: 図形の全探索 (debug)
-        run: make test-geometry-exploration
       # 端末出力を test-log に残す (起票の本文が末尾を載せる)。pipefail が make の赤を通す (#2609)
       - run: |
           mkdir -p .build
           make test-release 2>&1 | tee .build/test-log.txt
-      # assertion/buildの失敗でも、読めた件数・欠落とSHA/構成/入力条件を残す。
+      # assertion/buildの失敗でも、読めた件数・欠落とSHA/構成/入力条件を残す。release の側の
+      # 全探索だけをここで見る (debug は geometry-exploration)
       - name: 全探索の記録をまとめる
         if: always()
         run: |
           mkdir -p .build
-          result=0
-          python3 scripts/check-geometry-record.py .build/test-results-geometry-swift-testing.xml --configuration debug --summary .build/geometry-debug.md || result=1
-          python3 scripts/check-geometry-record.py .build/test-results-release-swift-testing.xml --configuration release --summary .build/geometry-release.md || result=1
-          exit "$result"
+          python3 scripts/check-geometry-record.py .build/test-results-release-swift-testing.xml --configuration release --summary .build/geometry-release.md
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -115,25 +116,72 @@ jobs:
             .build/test-results-release-swift-testing.xml
             .build/test-events-release.jsonl
             .build/test-log.txt
-            .build/test-results-geometry-swift-testing.xml
-            .build/test-log-geometry.txt
-            .build/geometry-debug.md
             .build/geometry-release.md
           if-no-files-found: ignore
           # .build は隠しディレクトリで、v4.4 以降の既定では中身が 1 つも上がらない
           include-hidden-files: true
           retention-days: 14
 
-  # 緑で終わらなかった release-check を起票する (または開いた Issue へ追記する)。
-  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる release-check には
+  # 日次と版の前に、**同じ SHA の debug の図形の全探索**を通す (#3338)。別の時刻の成功は流用しない。
+  #
+  # **release-check と並走する別 job にした** (#3342)。#3338 は同じ job の中に足していて、debug の
+  # ビルド (5.5〜9 分) と探索 (2.4〜3.8 分) の 8〜16 分が release の検査の後ろに直列に並び、
+  # 10-30 は 59.4 分で緑、10-29 と 10-31 は 60 分の上限で切れて版が出なかった (release の検査は
+  # 日々伸びていて、#3341 が上限を決めた 44 分の実測は、この段を足す前の数字だった)。**検査の中身と
+  # 保証は変えない** — どちらかが赤・切れ・走らなかった回には版を出さない (release は両方を needs に
+  # 持つ)。代償は、ホストの macOS をその日 1 本余計に使うこと (約 13 分)。
+  #
+  # timeout は 30 分。実測の所要は 8.2〜15.8 分 (debug のビルドを含む。5 回)。ランナーの速さが 1.7 倍
+  # ぶれる日があるので、遅い日でも約 27 分で、そこに届かない上限にした。上限だけ大きくすると、
+  # 固まった回を長く待つ
+  #
+  # **起動の可否は release-check と同じ式で持つ。** 食い違うと、片方だけ走った回が release の
+  # needs で skipped になり、版が出ないまま気付かれない (scripts/tests/release_workflow_test.py が揃いを見る)
+  geometry-exploration:
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.merged
+      && contains(github.event.pull_request.labels.*.name, 'release:now'))
+    runs-on: macos-26
+    timeout-minutes: 30
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: 図形の全探索 (debug)
+        run: make test-geometry-exploration
+      # assertion/buildの失敗でも、読めた件数・欠落とSHA/構成/入力条件を残す
+      - name: 全探索の記録をまとめる
+        if: always()
+        run: |
+          mkdir -p .build
+          python3 scripts/check-geometry-record.py .build/test-results-geometry-swift-testing.xml --configuration debug --summary .build/geometry-debug.md
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: geometry-exploration-record
+          path: |
+            .build/test-results-geometry-swift-testing.xml
+            .build/test-log-geometry.txt
+            .build/geometry-debug.md
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 14
+
+  # 緑で終わらなかった release-check か geometry-exploration を起票する (または開いた Issue へ
+  # 追記する)。どちらの job が赤でも、同じ固定タイトルの 1 本の Issue に載る (#3342)。
+  # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる job には
   # 持たせない (render.yml の scheduled-report と同じ分け方・ADR-0019 決定 7)。落ちた
   # (failure) 回に加え、切れた (cancelled) 回も起票する (#2084 と同じ理由)。`!=` で書かない:
   # skipped で起票する。always() を外さない: 暗黙の success() が足され、赤の回に skipped になる
   release-check-report:
-    needs: release-check
+    needs: [release-check, geometry-exploration]
     if: >-
       always()
-      && (needs.release-check.result == 'failure' || needs.release-check.result == 'cancelled')
+      && (needs.release-check.result == 'failure' || needs.release-check.result == 'cancelled'
+      || needs.geometry-exploration.result == 'failure' || needs.geometry-exploration.result == 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
@@ -146,22 +194,29 @@ jobs:
         with:
           name: release-check-record
           path: record
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: geometry-exploration-record
+          path: geometry-record
       # 置き場所は上げたファイルの共通の親で決まるので、名前で探す (render.yml の scheduled-report)
       - name: 赤を発信する
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ needs.release-check.result }}
+          GEOMETRY_RESULT: ${{ needs.geometry-exploration.result }}
         run: |
           find_one() { find "$1" -name "$2" -print -quit 2>/dev/null || true; }
           xml=$(find_one record test-results-release-swift-testing.xml)
           log=$(find_one record test-log.txt)
-          geometry=$(find_one record test-results-geometry-swift-testing.xml)
-          geometry_log=$(find_one record test-log-geometry.txt)
+          geometry=$(find_one geometry-record test-results-geometry-swift-testing.xml)
+          geometry_log=$(find_one geometry-record test-log-geometry.txt)
           bash scripts/report-release-check.sh "$RESULT" "${xml:-record/none.xml}" "${log:-record/none.txt}" \
-            "${geometry:-record/geometry-missing.xml}" "${geometry_log:-record/geometry-missing.txt}"
+            "${geometry:-geometry-record/geometry-missing.xml}" "${geometry_log:-geometry-record/geometry-missing.txt}" \
+            "$GEOMETRY_RESULT"
 
   # **版を出す run を 1 本ずつ並べる** (#2666)。日次と release:now の run が重なると、どちらも
-  # 同じ版を決め、後から push した側が既にあるタグで赤くなる。release-check (約 15 分) が
+  # 同じ版を決め、後から push した側が既にあるタグで赤くなる。release-check (約 50 分) が
   # 前にあるので、重なる窓は広い。待った側はこのジョブの checkout で先の版のタグを見てから
   # 版を決める — 新しい木なら次の版を出し、古い木なら断片が増えていないので見送る。
   #
@@ -170,7 +225,7 @@ jobs:
   # 全 PR の closed で起きるので、ワークフロー単位にすると、普通の PR の merge が待っている
   # release:now の run を cancel する。
   #
-  # **共有の group に入るのは release-check が緑の run だけ**にする。skipped のジョブが group に
+  # **共有の group に入るのは release-check と geometry-exploration が緑の run だけ**にする。skipped のジョブが group に
   # 入るかは公式に書かれていないので、それに頼らず、緑でない run は run ごとの group へ逃がす
   # (式は needs を引けるので、needs が済んでから評価される)。
   #
@@ -178,10 +233,10 @@ jobs:
   # なる。3 本目が古い木なら、2 本目の中身は次の版を待つ。queue: max (保留を並べる) は固定して
   # いる actionlint が知らない (rhysd/actionlint#657)。形は scripts/tests/release_workflow_test.py
   release:
-    needs: release-check
+    needs: [release-check, geometry-exploration]
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ needs.release-check.result == 'success' && 'release-tag' || format('release-tag-unused-{0}', github.run_id) }}
+      group: ${{ needs.release-check.result == 'success' && needs.geometry-exploration.result == 'success' && 'release-tag' || format('release-tag-unused-{0}', github.run_id) }}
       cancel-in-progress: false
     permissions:
       contents: write # タグを push し、Release を作る
@@ -219,17 +274,19 @@ jobs:
           python3 scripts/release.py notes > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
-      # タグは release-check が検査した SHA に打つ (#2662)。同じ run の checkout は同じ SHA を
-      # 取るはずだが、食い違えば検査していない木に版を打つことになるので、打たずに止まる
+      # タグは release-check と geometry-exploration が検査した SHA に打つ (#2662・#3342)。同じ run の
+      # checkout は同じ SHA を取るはずだが、食い違えば検査していない木に版を打つことになるので、
+      # 打たずに止まる。別の job の checkout なので、3 つが揃うことまで見る
       - name: タグを打つ
         if: steps.version.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           CHECKED_SHA: ${{ needs.release-check.outputs.sha }}
+          GEOMETRY_SHA: ${{ needs.geometry-exploration.outputs.sha }}
         run: |
           head=$(git rev-parse HEAD)
-          if [ -z "$CHECKED_SHA" ] || [ "$head" != "$CHECKED_SHA" ]; then
-            echo "検査した SHA ($CHECKED_SHA) と版にする SHA ($head) が違う — 版を打たない" >&2
+          if [ -z "$CHECKED_SHA" ] || [ "$head" != "$CHECKED_SHA" ] || [ "$head" != "$GEOMETRY_SHA" ]; then
+            echo "検査した SHA (release: $CHECKED_SHA・全探索: $GEOMETRY_SHA) と版にする SHA ($head) が違う — 版を打たない" >&2
             exit 1
           fi
           git tag "$VERSION" "$CHECKED_SHA"

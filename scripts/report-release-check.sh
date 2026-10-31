@@ -4,8 +4,10 @@
 #
 # 版を出す前の release の検査 (release.yml の release-check) の赤を発信する (#2662)。
 #
-#   report-release-check.sh <結論> <記録> <test-log> [<debug探索の記録> <debug探索のlog>]
-# #3338: 日次へ移したdebug探索も同じ失敗起票経路に載せる。
+#   report-release-check.sh <結論> <記録> <test-log> [<debug探索の記録> <debug探索のlog> [<debug探索の結論>]]
+# #3338: 日次へ移したdebug探索も同じ失敗起票経路に載せる。#3342: debug探索は release-check と
+# 並走する別 job (geometry-exploration) になったので、その job の結論 (success / failure /
+# cancelled) を 6 番目で受ける。無ければ探索の結論は書かない (release-check の中で走っていた頃の呼び方)。
 #
 # 結論は release-check の `needs.release-check.result` (failure / cancelled)。記録は xunit XML、
 # test-log は検査の端末出力で、どちらも artifact から落とした先のパスである。記録と test-log は
@@ -34,8 +36,8 @@ REPO="$(this_repo)"
 # 接頭辞が `fix(` なので triage.sh が Bug を付ける — 動いていたものが赤になった事象である
 readonly TITLE="fix(release): 下限 OS の release の検査が落ちて、版を見送っている"
 
-{ [ $# -eq 3 ] || [ $# -eq 5 ]; } || {
-  echo "使い方: report-release-check.sh <結論> <記録> <test-log>" >&2
+{ [ $# -eq 3 ] || [ $# -eq 5 ] || [ $# -eq 6 ]; } || {
+  echo "使い方: report-release-check.sh <結論> <記録> <test-log> [<探索の記録> <探索のlog> [<探索の結論>]]" >&2
   exit 64
 }
 RESULT="$1"
@@ -43,6 +45,7 @@ RECORD="$2"
 LOG="$3"
 GEOMETRY_RECORD="${4:-}"
 GEOMETRY_LOG="${5:-}"
+GEOMETRY_RESULT="${6:-}"
 
 here="$(dirname "${BASH_SOURCE[0]}")"
 
@@ -66,7 +69,7 @@ trap 'rm -f "$body" "$log"' EXIT
 
 {
   cat <<'BODY'
-版を出す前の release の検査 (`.github/workflows/release.yml` の `release-check`) が緑で終わらなかった (落ちたか、切れた)。**この回は版を出していない** — 版は、この検査が緑の SHA にだけ打つ (#2662)。
+版を出す前の release の検査 (`.github/workflows/release.yml` の `release-check`)、または並走する debug の図形の全探索 (同じ workflow の `geometry-exploration`) が緑で終わらなかった (落ちたか、切れた)。**この回は版を出していない** — 版は、この 2 つがどちらも緑の SHA にだけ打つ (#2662・#3342)。
 
 見ているのは、**版にしようとした main の木**を下限 OS (GitHub ホストの `macos-26`) で `make test-release` したものである。GPU を要する検査は GitHub ホストではスキップされる (GPU 付きの release は専用機の定期が見る)。release でだけ出る赤は merge の前には止めないので、main には入りうる。
 
@@ -83,6 +86,15 @@ BODY
   python3 "$here/read-test-record.py" --failure-messages "$RECORD"
   if [ -n "$GEOMETRY_RECORD" ]; then
     printf '\n## debugの図形全探索 (#3338)\n\n'
+    case "$GEOMETRY_RESULT" in
+      cancelled)
+        printf '結論: `cancelled` — **`geometry-exploration` の timeout (`release.yml` の `timeout-minutes`) か、人の cancel で切れた。** 記録が無ければ、どこまで走ったかは下の「検査の出力」の探索の末尾で読む\n\n'
+        ;;
+      "") ;;
+      *)
+        printf '結論: `%s`\n\n' "$GEOMETRY_RESULT"
+        ;;
+    esac
     python3 "$here/read-test-record.py" --failure-messages "$GEOMETRY_RECORD"
     # 検査側が既に失敗した回の報告。欠落/skipも文面にし、起票まで進める。
     # 本文は同じ落ち方の鍵でもあるため、SHA・時刻・所要は載せずartifactへ残す。
@@ -95,12 +107,12 @@ BODY
 ## 対処
 
 1. 上の落ちた検査 (記録が無ければ下の「検査の出力」) から、ビルドで落ちたか、検査が落ちたかを読む
-2. 手元で再現する: `make test-release`
+2. 手元で再現する: `make test-release` (debug の全探索の側は `make test-geometry-exploration`)
 3. 落ちた検査を入れた PR を探して直す。日次の 1 回には前の版からの PR が並ぶので、`git log <前の版のタグ>..<この run の SHA>` で候補を絞る
 
 ## 解消の判定
 
-直す PR が merge された後、**次の日次の `release.yml` の run で `release-check` が緑になり、版が出れば解消**。急ぐなら、直す PR に `release:now` を付ける (merge の直後にこの検査を通って版が出る)。
+直す PR が merge された後、**次の日次の `release.yml` の run で `release-check` と `geometry-exploration` がどちらも緑になり、版が出れば解消**。急ぐなら、直す PR に `release:now` を付ける (merge の直後にこの検査を通って版が出る)。
 
 **解消したらこの Issue を閉じる。** open な間は、次の赤は新しく立たずにこの Issue へ追記される (#2658)。閉じ忘れると、別の事象が前の事象の続きに見える。**閉じる前に、追記された分も同じ直しで解けたかを確かめる** — 別の原因なら、閉じる前に別の Issue へ起こす。
 BODY

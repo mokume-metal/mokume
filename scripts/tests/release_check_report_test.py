@@ -55,7 +55,9 @@ class ReportReleaseCheckTest(unittest.TestCase):
         self.log.write_text("")
         self.body = self.dir / "body.md"
 
-    def report(self, content=RED, result="failure", issue_list="[]", has_log=None, geometry=None):
+    def report(
+        self, content=RED, result="failure", issue_list="[]", has_log=None, geometry=None, geometry_result=None
+    ):
         """結論と記録 (None なら無いまま渡す) で呼ぶ。test-log は既定で記録と同じく置く。"""
         xml = self.dir / "release.xml"
         log = self.dir / "release.log"
@@ -81,6 +83,8 @@ class ReportReleaseCheckTest(unittest.TestCase):
             if geometry != "missing":
                 exploration.write_text(geometry, encoding="utf-8")
             arguments += [str(exploration), str(self.dir / "geometry.log")]
+            if geometry_result is not None:
+                arguments.append(geometry_result)
         return subprocess.run(
             arguments,
             capture_output=True,
@@ -111,6 +115,30 @@ class ReportReleaseCheckTest(unittest.TestCase):
         body = self.body.read_text()
         self.assertIn("探索がskipped", body)
         self.assertIn("timeout", body)
+
+    def test_探索の_job_だけが切れた回は_release_check_が緑でも起票し_探索の_timeout_を名乗る(self):
+        # 全探索は release-check と並走する別 job (#3342)。release-check が success でも、探索の job が
+        # 切れれば版は出ない。本文は、どちらの job の timeout かを分けて名乗る
+        r = self.report(content=None, result="success", has_log=True, geometry="missing", geometry_result="cancelled")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue create", self.gh_log())
+        body = self.body.read_text()
+        self.assertIn("`geometry-exploration` の timeout", body)
+        self.assertIn("この回は版を出していない", body)
+        self.assertIn("make test-geometry-exploration", body)
+        self.assertIn("記録を読めない", body)
+
+    def test_探索の_job_が落ちた回は結論を名乗る(self):
+        r = self.report(result="success", geometry="missing", geometry_result="failure")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.body.read_text()
+        self.assertIn("結論: `failure`", body)
+        self.assertNotIn("`geometry-exploration` の timeout", body)
+
+    def test_探索の結論を渡さない呼び方も受ける(self):
+        r = self.report(geometry="missing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("`geometry-exploration` の timeout", self.body.read_text())
 
     def test_探索の所要だけが変わっても報告の鍵は変わらない(self):
         xml = '<testsuites><testsuite><testcase classname="MokumeCoreTests.NonzeroSplitTests" name="randomHolesFollowNonzero()" time="{}"/></testsuite></testsuites>'
