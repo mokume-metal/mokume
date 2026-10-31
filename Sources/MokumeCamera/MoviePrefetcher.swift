@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import AVFoundation
-import Dispatch
 import Foundation
 import MokumeCore
 import Synchronization

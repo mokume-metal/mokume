@@ -102,20 +102,28 @@ struct MovieStallMeasurement {
     }
 }
 
-extension MovieStallMeasurement {
-    /// 実時間の時計で、`Movie.supply()` 1 回の main の時間を測る (#2523 完了条件 1)。
-    ///
-    /// 動画の入り口の前後に時刻を読む入り口を足し (``Stopwatch``)、その差を supply 1 回の時間とする
-    /// (入り口は足した順に回る)。画面の更新の代わりに、1 フレームごとに 1/60 秒の刻みまで眠る。
-    /// 先読みを止めた回 (`allowsPrefetch = false` = 変更前の同期の読み) を同じ実行で並べる。
+/// 実時間の時計で、`Movie.supply()` 1 回の main の時間を測る (#2523 完了条件 1)。**検査ではなく計測で、
+/// 既定では走らない** (開き方は ``MovieStallMeasurement`` と同じ)。`Movie` を走るスケッチに足すので GPU が要る。
+///
+/// 動画の入り口の前後に時刻を読む入り口を足し (``Stopwatch``)、その差を supply 1 回の時間とする
+/// (入り口は足した順に回る)。画面の更新の代わりに、1 フレームごとに 1/60 秒の刻みまで眠る。
+/// 先読みを止めた回 (`allowsPrefetch = false` = 変更前の同期の読み) を同じ実行で並べる。
+@Suite(
+    "動画の supply の止まり (計測)",
+    .serialized,
+    .enabled(if: ProcessInfo.processInfo.environment["MOKUME_MOVIE_STALLS"] != nil, "MOKUME_MOVIE_STALLS で開く"),
+    .enabled(if: !MovieStall.isDebugBuild, "性能は release で測る"),
+    .enabled(if: TestMovie.canWrite, "この機械には H.264 の符号化器が無い"),
+    .enabled(if: RenderDevice.isAvailable, "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct MovieSupplyStallMeasurement {
     @Test(
         "2523 Movie.supply() の main の時間 — 実時間の時計の先読みと、同期の読み (変更前)",
-        .enabled(if: RenderDevice.isAvailable, "GPU が無い"),
         arguments: ["h264.gop30", "h264.gop90", "hevc.gop30"])
     func supplyStalls(variant: String) async throws {
         let hevc = variant.hasPrefix("hevc")
         try #require(!hevc || TestMovie.canWriteHEVC, "この機械には HEVC の符号化器が無い")
-        for (width, height) in Self.sizes {
+        for (width, height) in MovieStallMeasurement.sizes {
             let url = try await TestMovie.write(
                 frames: 90, width: width, height: height, codec: hevc ? .hevc : .h264,
                 keyFrameInterval: variant.hasSuffix("gop90") ? 90 : 30, hardware: true, bitRate: width * height * 4,
