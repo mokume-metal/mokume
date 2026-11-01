@@ -120,7 +120,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// ```
     ///
     /// 点は置いた点として持ち、**曲線の刻みの印は付けない** (``init(_:)-(Circle)`` は刻みの印を付ける)。
-    /// ``SketchPart/shape(_:_:_:)-(Path,_,_)`` は、同じ周を ``SketchPart/vertex(_:_:)`` で並べて描いたときと
+    /// 点が 3 つ以上の周について、``SketchPart/shape(_:_:_:)-(Path,_,_)`` は、同じ周を ``SketchPart/vertex(_:_:)`` で並べて描いたときと
     /// 同じ輪郭になるので、太い線の `strokeJoin(.bevel)` では、曲線を割った点ごとに継ぎ目の形が出る。
     // shot: 撮れない 道を作る口で、描く結果が無い (絵は参照スケッチ type-and-path の字を回る粒が持つ)
     public init(_ contours: [TextContour]) {

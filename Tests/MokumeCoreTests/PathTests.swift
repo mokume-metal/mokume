@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import CoreGraphics
+import CoreText
 import Foundation
 import simd
 import Testing
@@ -782,42 +783,90 @@ nonisolated struct PathFromContoursValueTests {
         for t: Float in [0, 0.3, 1] { #expect(withRing.point(at: t).simd.x.isFinite && withRing.point(at: t).simd.y.isFinite) }
     }
 
-    /// 書体の巻きは書体ごとに逆になる (CFF は外周が逆回り)。字ごとに外周を正の向きへそろえる。
+    // MARK: - rings(of:) が字ごとに向きをそろえる
+
+    /// 字の座標 (y が上向き) の周の並びから CGPath を作る。`returnToStart` は、曲線の字 (`o` など) のように
+    /// 最後の点が最初の点と重なって終わる周にする。
+    private func glyphPath(_ rings: [[CGPoint]], reversed: Bool, returnToStart: Bool = false) -> CGPath {
+        let path = CGMutablePath()
+        for ring in rings {
+            let points = reversed ? Array(ring.reversed()) : ring
+            path.move(to: points[0])
+            for point in points.dropFirst() { path.addLine(to: point) }
+            if returnToStart { path.addLine(to: points[0]) }
+            path.closeSubpath()
+        }
+        return path
+    }
+
+    private func box(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) -> [CGPoint] {
+        [CGPoint(x: x, y: y), CGPoint(x: x, y: y + height), CGPoint(x: x + width, y: y + height), CGPoint(x: x + width, y: y)]
+    }
+
+    /// 書体の巻きは書体ごとに逆になる (CFF は外周が逆回り)。字ごとに全周の符号つき面積の和が正になるようそろえる。
     @Test("巻きが逆の字 (CFF 系) も、外周が先・穴が後の正の向きへそろえる。字ごとに独立")
     func rings_alignTheWinding() {
-        func glyph(reversed: Bool, at x: CGFloat) -> CGPath {
-            let path = CGMutablePath()
-            // 字の座標は y が上向き。外周 (大) と穴 (小)。TrueType は外周が時計回り・穴が反時計回り
-            let outerCorners: [[CGFloat]] = [[0, 0], [0, 100], [100, 100], [100, 0]]
-            let holeCorners: [[CGFloat]] = [[30, 30], [70, 30], [70, 70], [30, 70]]
-            var outer: [CGPoint] = outerCorners.map { CGPoint(x: x + $0[0], y: $0[1]) }
-            var hole: [CGPoint] = holeCorners.map { CGPoint(x: x + $0[0], y: $0[1]) }
-            if reversed {
-                outer.reverse()
-                hole.reverse()
-            }
-            for ring in [outer, hole] {
-                path.move(to: ring[0])
-                for point in ring.dropFirst() { path.addLine(to: point) }
-                path.closeSubpath()
-            }
-            return path
-        }
-        let normal = Canvas.rings(of: glyph(reversed: false, at: 0), originX: 0, baseline: 100)
-        let flipped = Canvas.rings(of: glyph(reversed: true, at: 0), originX: 0, baseline: 100)
-        for rings in [normal, flipped] {
-            #expect(rings.count == 2)
-            #expect(rings.map(\.isHole) == [false, true], "外周が先・穴が後 (isHole)")
-            let areas = rings.map { Canvas.signedArea(of: $0.outline) }
+        let rings = [box(0, 0, 100, 100), box(30, 30, 40, 40).reversed() as [CGPoint]]
+        let normal = Canvas.rings(of: glyphPath(rings, reversed: false), originX: 0, baseline: 100)
+        let flipped = Canvas.rings(of: glyphPath(rings, reversed: true), originX: 0, baseline: 100)
+        for result in [normal, flipped] {
+            #expect(result.count == 2)
+            #expect(result.map(\.isHole) == [false, true], "外周が先・穴が後 (isHole)")
+            let areas = result.map { Canvas.signedArea(of: $0.outline) }
             #expect(areas[0] > 0 && areas[1] < 0, "外周は正・穴は負の向き: \(areas)")
         }
-        #expect(Set(normal.map(\.outline.count)) == Set(flipped.map(\.outline.count)), "点の数は変わらない")
+        // 反転しても、始点と点の集合は保たれる (並びだけが逆)
+        for (before, after) in zip(normal, flipped) {
+            #expect(Set(before.outline) == Set(after.outline), "点の集合が同じ")
+        }
+        let reversedInput = glyphPath(rings, reversed: true)
+        let firstPoints = Canvas.rings(of: reversedInput, originX: 0, baseline: 100).map { $0.outline[0] }
+        let expectedStarts = rings.map { ring in
+            let start = Array(ring.reversed())[0]
+            return SIMD2<Float>(Float(start.x), 100 - Float(start.y))
+        }
+        #expect(firstPoints == expectedStarts, "始点は入力の最初の点のまま")
+
         // 字ごとに独立: 逆な字と普通の字を並べても、回り数が打ち消し合わない
         let mixed = Path(
-            Canvas.rings(of: glyph(reversed: true, at: 0), originX: 0, baseline: 100)
-                + Canvas.rings(of: glyph(reversed: false, at: 50), originX: 0, baseline: 100))
-        #expect(mixed.contains([40, 90]) && mixed.contains([95, 90]), "2 字が重なる所 (x 50〜100) の外周は内側のまま")
-        #expect(mixed.contains([75, 90]), "重なりの中")
+            Canvas.rings(of: glyphPath(rings, reversed: true), originX: 0, baseline: 100)
+                + Canvas.rings(of: glyphPath([box(50, 0, 100, 100)], reversed: false), originX: 0, baseline: 100))
+        #expect(mixed.contains([40, 90]) && mixed.contains([140, 90]), "2 字が重ならない所の外周は内側")
+        #expect(mixed.contains([75, 90]), "重なりの中 (回り数 2) も内側のまま")
+    }
+
+    @Test("曲線の字のように最後の点が最初の点と重なる周も、反転後に始点と末尾の重なりを保つ")
+    func rings_keepTheClosingOverlap() {
+        let rings = [box(0, 0, 100, 100), box(30, 30, 40, 40).reversed() as [CGPoint]]
+        for reversed in [false, true] {
+            let result = Canvas.rings(of: glyphPath(rings, reversed: reversed, returnToStart: true), originX: 0, baseline: 100)
+            #expect(result.map(\.isHole) == [false, true])
+            for contour in result {
+                #expect(contour.outline.first == contour.outline.last, "最後が最初と重なる (reversed=\(reversed))")
+                #expect(contour.outline.count == 5, "点が増えも減りもしない")
+            }
+        }
+        // 反転した入力の出力の並びが、普通の入力のそれを逆順にしたもの (始点は入力の最初の点)
+        let normal = Canvas.rings(of: glyphPath(rings, reversed: false, returnToStart: true), originX: 0, baseline: 100)
+        let flipped = Canvas.rings(of: glyphPath(rings, reversed: true, returnToStart: true), originX: 0, baseline: 100)
+        for (before, after) in zip(normal, flipped) {
+            #expect(Set(before.outline) == Set(after.outline) && before.outline.count == after.outline.count)
+        }
+    }
+
+    @Test("重なった部品の外周で作る字は、単独の外周が穴より小さくても向きを反転しない。逆巻きなら反転する")
+    func rings_decideTheDirectionByTheSumOfAreas() {
+        // 4 本の棒 (各 100×20 = 2000) が四角い枠をなし、枠の穴 (80×80 = 6400) は単独の外周のどれよりも大きい。
+        // 面積の和は 4 × 2000 - 6400 > 0 で、TrueType の向きのまま
+        let bars = [box(0, 0, 100, 20), box(0, 80, 100, 20), box(0, 0, 20, 100), box(80, 0, 20, 100)]
+        let frame = bars + [box(10, 10, 80, 80).reversed() as [CGPoint]]
+        let normal = Canvas.rings(of: glyphPath(frame, reversed: false), originX: 0, baseline: 100)
+        #expect(normal.map(\.isHole) == [false, false, false, false, true], "反転しない: 棒は外周のまま・穴は穴のまま")
+        #expect(normal.map { Canvas.signedArea(of: $0.outline) > 0 } == [true, true, true, true, false])
+        let flipped = Canvas.rings(of: glyphPath(frame, reversed: true), originX: 0, baseline: 100)
+        #expect(flipped.map(\.isHole) == [false, false, false, false, true], "逆巻きの字は反転して同じになる")
+        #expect(flipped.map { Canvas.signedArea(of: $0.outline) > 0 } == [true, true, true, true, false])
+        #expect(Set(flipped.map { Set($0.outline) }) == Set(normal.map { Set($0.outline) }))
     }
 
     @Test("点は置いた点として持ち、曲線の刻みの印は付けない。周は閉じた部分道")
@@ -993,11 +1042,16 @@ struct PathFromTextOutlineTests {
 
     /// PostScript 系 (CFF) の書体は、外周を逆回りで持つ。巻きをそろえないと、`isHole` が逆になり、外周が穴・穴が外周で返る。
     nonisolated static let cff = "AppleSDGothicNeo-Regular"
-    nonisolated static let hasCFF = FileManager.default.fileExists(atPath: "/System/Library/Fonts/AppleSDGothicNeo.ttc")
+    /// 名前で引いた書体が実際にある (既定の書体へ落ちていない) うえで、輪郭が CFF 表 (PostScript 系) を持つか。
+    nonisolated static let hasCFF: Bool = {
+        let font = CTFontCreateWithName(cff as CFString, 12, nil)
+        guard CTFontCopyPostScriptName(font) as String == cff else { return false }
+        return CTFontCopyTable(font, CTFontTableTag(kCTFontTableCFF), []) != nil
+    }()
 
     @Test(
         "CFF の書体でも、外周が先・穴が後で、穴は外周と逆回り。道は穴を外と読む",
-        .enabled(if: PathFromTextOutlineTests.hasCFF, "この環境には CFF の書体 (AppleSDGothicNeo) が無い"))
+        .enabled(if: PathFromTextOutlineTests.hasCFF, "この環境には CFF の輪郭を持つ書体 (AppleSDGothicNeo) が無い"))
     func aCFFTypefaceKeepsTheOuterRingFirst() throws {
         let canvas = try makeCanvas(size: 90)
         canvas.textFont(Self.cff)
