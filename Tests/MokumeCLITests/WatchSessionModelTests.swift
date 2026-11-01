@@ -379,18 +379,26 @@ struct WatchSessionModelTests {
             waitUntilGone(index)
         }
 
-        /// 直近の拍で起きた試聴の子。**保留していた試聴の子は、本番の乗り換えが決着した後の最初の拍で起きる**
-        /// (``WatchSession/resumePendingAudition()``・その拍の保存の作り直しは次の拍に回る)。保存でも入る要求でも
-        /// ない拍で生きている世代が増えるので、「この操作で世代が変わらない」約束は、これを引いて比べる。
-        private var startedAudition: Set<Int> = []
-
-        private func beat() async {
+        /// 1 拍回し、**その拍で起きた試聴の子**を返す。**保留していた試聴の子は、本番の乗り換えが決着した後の最初の拍で
+        /// 起きる** (``WatchSession/resumePendingAudition()``・その拍の保存の作り直しは次の拍に回る)。保存でも入る要求でも
+        /// ない拍で生きている世代が増えるので、「この操作で世代が変わらない」約束は、この戻り値を引いて比べる
+        /// (引いてよいのは ``deferredSave`` で保留があり得る回だけ)。
+        @discardableResult
+        private func beat() async -> Set<Int> {
             let auditionsBefore = auditionGens
             await WatchCommand.step(session, stopped: { false }, preview: { _, _ in })
-            startedAudition = auditionGens.subtracting(auditionsBefore)
             unseen = []
             unseenAudition = []
+            let started = auditionGens.subtracting(auditionsBefore)
+            // 試聴の子が起きれば、保留は済んだ (保存の拍で起きた子は、保留ではなく保存の結果)
+            if !started.isEmpty { deferredSave = false }
+            return started
         }
+
+        /// 試聴中に、成功する保存が着いた (保留した試聴の子が居るかもしれない)。**保留の有無は ``WatchSession`` の内部の
+        /// 事情なので、模型は「あり得る」だけを控える** — 試聴の子が起きるか、出る・入る要求を受ける・終えるまで立ったまま。
+        /// 立っていない回の拍で試聴の子が起きたら、免除せずに破れとして見る。
+        private var deferredSave = false
 
         /// 巡回がまだ見ていない子の離脱があれば、1 拍回して済ませる。**要求の前後を比べる操作は、離脱の後始末を
         /// 要求の結果と取り違えない**ために、先にこれを済ませる。
@@ -399,15 +407,15 @@ struct WatchSessionModelTests {
         }
 
         /// 区画 `watch` へ要求を置いて 1 拍回し、受けたかを返す。
-        private func ask(_ action: String) async throws -> Bool {
+        private func ask(_ action: String) async throws -> (accepted: Bool, started: Set<Int>) {
             requestCount += 1
             let request = #"{"id":"m\#(requestCount)","action":"\#(action)"}"#
             try AtomicFile.write(
                 Data(request.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
-            await beat()
+            let started = await beat()
             let data = try Data(contentsOf: WorkDirectory.reportURL(under: session.watchFacet))
             let report = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-            return report["accepted"] as? Bool == true
+            return (report["accepted"] as? Bool == true, started)
         }
 
         private func placeFellBackMarker(of index: Int) throws {
@@ -486,7 +494,9 @@ struct WatchSessionModelTests {
                 let unseenBefore = unseen
                 let productionBefore = productionAlive()
                 let auditioningBefore = auditioning
-                await beat()
+                let deferredBefore = deferredSave
+                let started = await beat()
+                if auditioningBefore, buildStatus == 0, !stopped { deferredSave = deferredSave || started.isEmpty }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
                     let childAfter = session.child.flatMap { child in gens.firstIndex { $0 === child } }
@@ -501,7 +511,7 @@ struct WatchSessionModelTests {
                 switch op {
                 case .saveBuildFail:
                     // 作り直しが通らない回は、走っている世代を 1 つも落とさない (事後条件 5 の裏)
-                    if alive().subtracting(startedAudition) != before {
+                    if alive().subtracting(deferredBefore ? started : []) != before {
                         return Violation(number: 5, text: "作り直しが通らない保存で、走っている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
                     }
                 case .saveLaunchFail:
@@ -624,14 +634,20 @@ struct WatchSessionModelTests {
                 await settleUnseen()
                 let before = alive()
                 let expected = !auditioning && !productionAlive().isEmpty
-                let accepted = try await ask("audition")
+                let deferredBefore = deferredSave
+                let (accepted, started) = try await ask("audition")
                 if accepted != expected {
                     return Violation(
                         number: 7,
                         text: "入る要求を\(accepted ? "受けた" : "断った") (期待は\(expected ? "受ける" : "断る")・試聴中 \(auditioning)・本番の側 \(name(productionAlive())))")
                 }
-                if accepted { auditioning = true }
-                if alive().subtracting(startedAudition) != before {
+                if accepted {
+                    auditioning = true
+                    deferredSave = false
+                }
+                // **受理した回は保留を捨てる** (``WatchSession/enterAudition``)。受理した拍で試聴の子が起きれば破れ。
+                // 断った回の拍だけ、保留していた試聴の子が起きうる
+                if alive().subtracting(accepted || !deferredBefore ? [] : started) != before {
                     return Violation(number: 7, text: "入る要求で、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
                 }
                 return nil
@@ -640,12 +656,13 @@ struct WatchSessionModelTests {
                 guard !stopped else { return nil }
                 await settleUnseen()
                 let productionBefore = productionAlive()
-                let accepted = try await ask("leave")
+                let (accepted, _) = try await ask("leave")
                 if accepted != auditioning {
                     return Violation(number: 7, text: "出る要求を\(accepted ? "受けた" : "断った") (試聴中 \(auditioning))")
                 }
                 guard accepted else { return nil }
                 auditioning = false
+                deferredSave = false
                 if !auditionAlive().isEmpty {
                     return Violation(number: 7, text: "出る要求の後に、試聴の子が残る (\(name(auditionAlive())))")
                 }
@@ -695,6 +712,7 @@ struct WatchSessionModelTests {
 
             case .stop:
                 stopped = true
+                deferredSave = false
                 session.noteStopRequested()
                 await session.end()
                 return nil
