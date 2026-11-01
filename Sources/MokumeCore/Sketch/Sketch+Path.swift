@@ -36,7 +36,7 @@ extension SketchPart {
     ///
     /// 走っている実行の面を取れない所 (初期化子の中・後片付けの後など) で呼ぶと、落ちずに空の道を返し、1 度だけ
     /// 警告する。中身は呼ばれる。
-    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。道を辿る作例は参照スケッチ type-and-path が持つ)
+    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。createPath を呼ぶ作例は #2432 (破線) が持つ。参照スケッチ type-and-path は Path(textOutline) で道を作る)
     public func createPath(_ body: () -> Void) -> Path {
         guard let canvas = Self.liveCanvas(.make(returning: "an empty path")) else {
             body()

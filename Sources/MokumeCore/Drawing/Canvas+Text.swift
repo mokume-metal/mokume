@@ -826,7 +826,8 @@ extension Canvas {
     ///
     /// 書体の座標は基準線から**上向き**に測るので、面の縦向きに合わせて折り返す。
     /// 折り返すと巻きの向きも入れ替わるので、穴かどうかは折り返した後の面積で見る
-    /// (面の座標では、外側が正・穴が負になる)。
+    /// (面の座標では、外側が正・穴が負になる)。**書体の巻きは書体ごとに逆になりうる** (PostScript 系の CFF は
+    /// 外周が逆回り) ので、字ごとに面積が最大の周が正の向きになるよう、全部の周の向きをそろえてから読む。
     nonisolated static func rings(of path: CGPath, originX: Float, baseline: Float) -> [TextContour] {
         var rings: [[SIMD2<Float>]] = []
         var current: [SIMD2<Float>] = []
@@ -869,7 +870,16 @@ extension Canvas {
         }
         close()
 
-        return rings.map { TextContour(outline: $0, isHole: signedArea(of: $0) < 0) }
+        // **巻きの向きは書体ごとに逆になる。** TrueType 系は外周が正の向きだが、PostScript 系 (CFF) は外周が
+        // 逆回りで、そのまま面積の符号で読むと外周が穴・穴が外周になる ([#3562])。字ごとに、面積が最大の
+        // 周を外周とみなして正の向きへそろえる (残りは相対のまま)。字をまたいで巻きがそろうので、重なった字を
+        // 1 つの道にしても回り数が打ち消し合わない。始点は変えない
+        let areas = rings.map { signedArea(of: $0) }
+        let reversedWinding = (areas.max { abs($0) < abs($1) } ?? 0) < 0
+        return zip(rings, areas).map { ring, area in
+            guard reversedWinding else { return TextContour(outline: ring, isHole: area < 0) }
+            return TextContour(outline: [ring[0]] + ring.dropFirst().reversed(), isHole: -area < 0)
+        }
     }
 
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は

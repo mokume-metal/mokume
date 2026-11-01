@@ -95,11 +95,20 @@ public nonisolated struct Path: Sendable, Hashable {
 
     /// 字の輪郭を道にする。
     ///
-    /// ``SketchPart/textOutline(_:_:_:)`` が返す周を、**返る順のまま**、周 1 つが閉じた部分道 1 つになる。外周が先で
-    /// 穴が後に並ぶので、``point(at:)`` は字の外周を辿った後に穴を辿る。穴は外周と逆回りで返るので、``contains(_:)``
-    /// は穴の中を外として答える (`o` の輪の中の点だけが内側で、穴の中の点は外側)。
+    /// ``SketchPart/textOutline(_:_:_:)`` が返す周を、返る順のまま 1 つずつ閉じた部分道にする。``point(at:)`` は
+    /// その順に、全部の周を繋いだ全体の弧長で辿る。``SketchPart/textOutline(_:_:_:)`` は字ごとに外周を先・穴を後に並べるので、
+    /// 複数の字では「1 字目の外周・1 字目の穴・2 字目の外周…」の順になる。
     ///
-    /// 既定の書体の `A` のように、重なった外周で返る字は、回り数が 2 になる重なりも内側のまま、和として読める。
+    /// ``contains(_:)`` は、穴を外として答える (`o` の輪の上の点だけが内側で、穴の中の点は外側)。**穴かどうかは
+    /// 周の向きで決まり、``TextContour/isHole`` は読まない** — ``SketchPart/textOutline(_:_:_:)`` は外周を正の向き・穴を逆回りで
+    /// 返すので、``TextContour/isHole`` と向きは揃っている。向きを揃えずに作った周を渡すと、``TextContour/isHole`` が
+    /// `true` でも、外周と同じ向きなら穴にならない。既定の書体の `A` のように、重なった外周で返る字は、回り数が 2 になる
+    /// 重なりも内側のまま、和として読める。
+    ///
+    /// **道に入らない周がある。** 点が 3 つに満たない周 (面を持たない) と、非有限の座標を持つ周は、飛ばす
+    /// (``init(_:)-(Circle)`` が半径の合わない円を空の道にするのと同じ向きで、落とさない)。色や絵を持つ字
+    /// (絵文字など) は、``SketchPart/textOutline(_:_:_:)`` が周を返さないので、道にも入らない。
+    ///
     /// 点の間隔を揃えて辿りたいなら、``point(at:)`` に等間隔の `t` を渡す。
     ///
     /// ```swift
@@ -110,17 +119,18 @@ public nonisolated struct Path: Sendable, Hashable {
     /// word.point(at: 0.25)             // 輪郭を辿って 4 分の 1 の所
     /// ```
     ///
-    /// 周の点を何も持たない入力 (空の並び・点のない周) は、空の道になる。**点は置いた点として持ち、曲線の刻みの印は
-    /// 付けない** — ``SketchPart/shape(_:_:_:)-(Path,_,_)`` は、同じ周を ``SketchPart/vertex(_:_:)`` で並べて描いたときと
-    /// 同じ輪郭になる。
+    /// 点は置いた点として持ち、**曲線の刻みの印は付けない** (``init(_:)-(Circle)`` は刻みの印を付ける)。
+    /// ``SketchPart/shape(_:_:_:)-(Path,_,_)`` は、同じ周を ``SketchPart/vertex(_:_:)`` で並べて描いたときと
+    /// 同じ輪郭になるので、太い線の `strokeJoin(.bevel)` では、曲線を割った点ごとに継ぎ目の形が出る。
     // shot: 撮れない 道を作る口で、描く結果が無い (絵は参照スケッチ type-and-path の字を回る粒が持つ)
     public init(_ contours: [TextContour]) {
         self.init(
             subpaths: contours.compactMap { contour in
-                guard !contour.outline.isEmpty else { return nil }
+                let points = contour.outline
+                guard points.count >= 3, points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
                 return Subpath(
-                    points: contour.outline, isClosed: true,
-                    isCurveStep: Array(repeating: false, count: contour.outline.count))
+                    points: points, isClosed: true,
+                    isCurveStep: Array(repeating: false, count: points.count))
             })
     }
 

@@ -665,7 +665,7 @@ UNSHOWN = {
     "createWebSocketClient": "createTCPClient と同じ理由",
     "assetURL": "資材の在処を返す口で、絵にならない。正しさはテストが見る",
     "requestModel": "モデルが届くフレームが実行ごとに違い、--render と台帳で同じ絵を回せない (口の説明の Note)。`Task` の中から Sketch の口を呼ぶのは走っている状態の外になりうる (#1367)。参照スケッチ (CrowdAndModel) は描き場所 (canvas) を先に取って、同じ非同期の読み込みを Canvas の口で示す。絵は loadModel が見る",
-    "createPath": "測って問う値を作る口で、絵は shape(path) が描く。道に沿って動く粒は参照スケッチ type-and-path (字の輪郭を Path(textOutline) で道にする) が、破線は #2432 が示す。正しさはテストが見る (#3561)",
+    "createPath": "測って問う値を作る口で、絵は shape(path) が描く。createPath を呼ぶ作例 (破線) は #2432 が持つ。参照スケッチ type-and-path は createPath ではなく Path(textOutline) で道を作る。正しさはテストが見る (#3561)",
     "loadShader": "ファイルから読む口で、見どころの「ファイルを直すと変わる」は自己完結したスケッチでは示せない",
     "loadComputation": "loadShader と同じ理由",
     "loadEffect": "loadShader と同じ理由",

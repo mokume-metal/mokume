@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CoreGraphics
 import Foundation
 import simd
 import Testing
@@ -762,14 +763,61 @@ nonisolated struct PathFromContoursValueTests {
         near(440.0 / 560.0, [30, 70], "穴の 2 つ目の角")
     }
 
-    @Test("空の並びと、点のない周は、空の道になる")
-    func emptyInputs() {
+    @Test("空の並びと、道にならない周 (点が 3 つに満たない・非有限の座標) は飛ばし、残りは並びを保つ")
+    func unusableContoursAreSkipped() {
         #expect(Path([]) == Path())
         let hollow = Path([TextContour(points: [], isHole: false)])
         #expect(hollow == Path() && hollow.length == 0 && !hollow.contains([0, 0]))
-        // 点のない周は飛ばし、残りは並びを保つ
-        let skipped = Path([TextContour(points: [], isHole: true)] + ring)
-        #expect(skipped == Path(ring))
+        let unusable: [TextContour] = [
+            TextContour(points: [], isHole: true),
+            TextContour(points: [[1, 1]], isHole: false),
+            TextContour(points: [[0, 0], [10, 0]], isHole: false),  // 往復の線で、面が無い
+            TextContour(points: [[0, 0], [.nan, 0], [0, 10]], isHole: false),
+            TextContour(points: [[0, 0], [.infinity, 0], [0, 10]], isHole: false),
+        ]
+        #expect(Path(unusable) == Path(), "全部飛ばすと空の道")
+        let withRing = Path(unusable + ring)
+        #expect(withRing == Path(ring), "飛ばした残りは並びを保つ")
+        #expect(withRing.length == 560 && withRing.point(at: 0.5).simd.x.isFinite)
+        for t: Float in [0, 0.3, 1] { #expect(withRing.point(at: t).simd.x.isFinite && withRing.point(at: t).simd.y.isFinite) }
+    }
+
+    /// 書体の巻きは書体ごとに逆になる (CFF は外周が逆回り)。字ごとに外周を正の向きへそろえる。
+    @Test("巻きが逆の字 (CFF 系) も、外周が先・穴が後の正の向きへそろえる。字ごとに独立")
+    func rings_alignTheWinding() {
+        func glyph(reversed: Bool, at x: CGFloat) -> CGPath {
+            let path = CGMutablePath()
+            // 字の座標は y が上向き。外周 (大) と穴 (小)。TrueType は外周が時計回り・穴が反時計回り
+            let outerCorners: [[CGFloat]] = [[0, 0], [0, 100], [100, 100], [100, 0]]
+            let holeCorners: [[CGFloat]] = [[30, 30], [70, 30], [70, 70], [30, 70]]
+            var outer: [CGPoint] = outerCorners.map { CGPoint(x: x + $0[0], y: $0[1]) }
+            var hole: [CGPoint] = holeCorners.map { CGPoint(x: x + $0[0], y: $0[1]) }
+            if reversed {
+                outer.reverse()
+                hole.reverse()
+            }
+            for ring in [outer, hole] {
+                path.move(to: ring[0])
+                for point in ring.dropFirst() { path.addLine(to: point) }
+                path.closeSubpath()
+            }
+            return path
+        }
+        let normal = Canvas.rings(of: glyph(reversed: false, at: 0), originX: 0, baseline: 100)
+        let flipped = Canvas.rings(of: glyph(reversed: true, at: 0), originX: 0, baseline: 100)
+        for rings in [normal, flipped] {
+            #expect(rings.count == 2)
+            #expect(rings.map(\.isHole) == [false, true], "外周が先・穴が後 (isHole)")
+            let areas = rings.map { Canvas.signedArea(of: $0.outline) }
+            #expect(areas[0] > 0 && areas[1] < 0, "外周は正・穴は負の向き: \(areas)")
+        }
+        #expect(Set(normal.map(\.outline.count)) == Set(flipped.map(\.outline.count)), "点の数は変わらない")
+        // 字ごとに独立: 逆な字と普通の字を並べても、回り数が打ち消し合わない
+        let mixed = Path(
+            Canvas.rings(of: glyph(reversed: true, at: 0), originX: 0, baseline: 100)
+                + Canvas.rings(of: glyph(reversed: false, at: 50), originX: 0, baseline: 100))
+        #expect(mixed.contains([40, 90]) && mixed.contains([95, 90]), "2 字が重なる所 (x 50〜100) の外周は内側のまま")
+        #expect(mixed.contains([75, 90]), "重なりの中")
     }
 
     @Test("点は置いた点として持ち、曲線の刻みの印は付けない。周は閉じた部分道")
@@ -836,69 +884,139 @@ struct PathFromTextOutlineTests {
         #expect(area(outer.points) * area(hole.points) < 0, "外周 \(area(outer.points)) / 穴 \(area(hole.points))")
     }
 
-    @Test("既定の書体の A は重なった外周で返るが、和として読める")
+    @Test("既定の書体の A は重なった外周で返るが、和として読める。重なりの中も、どれかの周の中なら内側")
     func theDefaultTypefaceAIsAUnion() throws {
         let canvas = try makeCanvas(size: 90)
         canvas.noTextFont()
         let contours = canvas.textOutline("A", 20, 90)
         #expect(contours.count > 1 && contours.allSatisfy { !$0.isHole }, "重なった外周で返る")
         let path = Path(contours)
+        let each = contours.map { Path([$0]) }
         let box = bounds(contours.flatMap(\.points))
-        let top = box.minY
-        let base = box.maxY
-        let centre = (box.minX + box.maxX) / 2
-        // 二本の脚が交わる頂は内側、脚の根元の間 (三角の穴の下) は外側
-        #expect(path.contains([centre, top + (base - top) * 0.1]), "頂")
-        #expect(!path.contains([centre, base - (base - top) * 0.1]), "二本の脚の間")
-        #expect(path.contains([box.minX + (box.maxX - box.minX) * 0.12, base - 3]), "左の脚の根元")
-        #expect(path.contains([box.maxX - (box.maxX - box.minX) * 0.12, base - 3]), "右の脚の根元")
+        // 外接の中を細かく見て、「どれかの周の中」と「道の中」が一致することを見る。見る点は周の点から
+        // 導かずに格子で取る (書体の版で字形が動いても、重なる所が 1 つも無くならない限り同じ約束を見る)
+        var overlapped = 0
+        var single = 0
+        var outside = 0
+        var wrong: [String] = []
+        var y = box.minY + 0.37
+        while y < box.maxY {
+            var x = box.minX + 0.37
+            while x < box.maxX {
+                let count = each.filter { $0.contains([x, y]) }.count
+                if count >= 2 { overlapped += 1 } else if count == 1 { single += 1 } else { outside += 1 }
+                if path.contains([x, y]) != (count >= 1) { wrong.append("(\(x), \(y)) ×\(count)") }
+                x += 1
+            }
+            y += 1
+        }
+        #expect(overlapped > 0 && single > 0 && outside > 0, "重なり \(overlapped)・1 つだけ \(single)・外 \(outside)")
+        #expect(wrong.isEmpty, "和と食い違う点 \(wrong.count): \(wrong.prefix(5))")
     }
 
-    /// 墨の載った画素と `contains` が、字の縁から離れた画素の全部で一致する。字は `text` で描く。
-    @Test("contains は、text が描いた墨の載る所と、縁から離れた画素の全部で一致する (穴も重なりも)")
-    func containsMatchesTheInk() throws {
-        for (string, plain) in [("mokume", false), ("O8", false), ("AB", true)] {
-            let canvas = try makeCanvas(width: 240, height: 110, size: 64)
-            if plain { canvas.noTextFont() }
-            let contours = canvas.textOutline(string, 10, 80)
-            let path = Path(contours)
+    /// 字を `text` で描いた墨と、道の問い・道の塗りが、字の縁から離れた画素の全部で一致する。
+    private func inkMismatches(
+        _ string: String, font: String?, throughShape: Bool
+    ) throws -> (inkCount: Int, checked: Int, mismatches: [String]) {
+        let canvas = try makeCanvas(width: 240, height: 110, size: 64)
+        if let font { canvas.textFont(font) } else { canvas.noTextFont() }
+        let contours = canvas.textOutline(string, 10, 80)
+        let path = Path(contours)
+        let reference = try makeCanvas(width: 240, height: 110, size: 64)
+        if let font { reference.textFont(font) } else { reference.noTextFont() }
+        try reference.draw {
+            reference.background(black)
+            reference.noStroke()
+            reference.fill(white)
+            reference.text(string, 10, 80)
+        }
+        let ink = try reference.target.encodeForDisplay()
+        var filled: DisplayImage?
+        if throughShape {
             try canvas.draw {
                 canvas.background(black)
                 canvas.noStroke()
                 canvas.fill(white)
-                canvas.text(string, 10, 80)
+                canvas.shape(path)
             }
-            let image = try canvas.target.encodeForDisplay()
-
-            let edges = contours.flatMap { contour in
-                contour.outline.indices.map { (contour.outline[$0], contour.outline[($0 + 1) % contour.outline.count]) }
-            }
-            func nearEdge(_ x: Float, _ y: Float) -> Bool {
-                let p = SIMD2<Float>(x, y)
-                for (a, b) in edges {
-                    let ab = b - a
-                    let t = max(0, min(1, simd_dot(p - a, ab) / max(simd_dot(ab, ab), 1e-9)))
-                    if simd_length(p - (a + t * ab)) < 1.5 { return true }
-                }
-                return false
-            }
-            var checked = 0
-            var inkCount = 0
-            var mismatches: [String] = []
-            for y in 0..<image.height {
-                for x in 0..<image.width {
-                    let px = Float(x) + 0.5
-                    let py = Float(y) + 0.5
-                    if nearEdge(px, py) { continue }
-                    let ink = image.bytes[(y * image.width + x) * 4] > 127
-                    checked += 1
-                    if ink { inkCount += 1 }
-                    if path.contains([px, py]) != ink { mismatches.append("(\(x), \(y)) ink=\(ink)") }
-                }
-            }
-            #expect(inkCount > 300, "\(string): 墨が載った画素が少なすぎる (\(inkCount))")
-            #expect(mismatches.isEmpty, "\(string): \(checked) 画素のうち \(mismatches.count) 画素が不一致 \(mismatches.prefix(5))")
+            filled = try canvas.target.encodeForDisplay()
         }
+
+        let edges = contours.flatMap { contour in
+            contour.outline.indices.map { (contour.outline[$0], contour.outline[($0 + 1) % contour.outline.count]) }
+        }
+        func nearEdge(_ x: Float, _ y: Float) -> Bool {
+            let p = SIMD2<Float>(x, y)
+            for (a, b) in edges {
+                let ab = b - a
+                let t = max(0, min(1, simd_dot(p - a, ab) / max(simd_dot(ab, ab), 1e-9)))
+                if simd_length(p - (a + t * ab)) < 1.5 { return true }
+            }
+            return false
+        }
+        var checked = 0
+        var inkCount = 0
+        var mismatches: [String] = []
+        for y in 0..<ink.height {
+            for x in 0..<ink.width {
+                let px = Float(x) + 0.5
+                let py = Float(y) + 0.5
+                if nearEdge(px, py) { continue }
+                let isInk = ink.bytes[(y * ink.width + x) * 4] > 127
+                checked += 1
+                if isInk { inkCount += 1 }
+                let answered: Bool
+                if let filled { answered = filled.bytes[(y * filled.width + x) * 4] > 127 } else { answered = path.contains([px, py]) }
+                if answered != isInk { mismatches.append("(\(x), \(y)) ink=\(isInk)") }
+            }
+        }
+        return (inkCount, checked, mismatches)
+    }
+
+    @Test("contains は、text が描いた墨の載る所と、縁から離れた画素の全部で一致する (穴も重なりも)")
+    func containsMatchesTheInk() throws {
+        for (string, font) in [("mokume", "Helvetica"), ("O8", "Helvetica"), ("AB", nil)] as [(String, String?)] {
+            let result = try inkMismatches(string, font: font, throughShape: false)
+            #expect(result.inkCount > 300, "\(string): 墨が載った画素が少なすぎる (\(result.inkCount))")
+            #expect(result.mismatches.isEmpty, "\(string): \(result.checked) 画素のうち \(result.mismatches.count) 画素が不一致 \(result.mismatches.prefix(5))")
+        }
+    }
+
+    @Test("shape(Path(textOutline)) の塗りは、複数の字でも text が描いた墨と、縁から離れた画素の全部で一致する")
+    func shapeFillMatchesTheInkAcrossGlyphs() throws {
+        for (string, font) in [("mokume", "Helvetica"), ("O8", "Helvetica"), ("AB", nil)] as [(String, String?)] {
+            let result = try inkMismatches(string, font: font, throughShape: true)
+            #expect(result.inkCount > 300, "\(string): 墨が載った画素が少なすぎる (\(result.inkCount))")
+            #expect(result.mismatches.isEmpty, "\(string): \(result.checked) 画素のうち \(result.mismatches.count) 画素が不一致 \(result.mismatches.prefix(5))")
+        }
+    }
+
+    /// PostScript 系 (CFF) の書体は、外周を逆回りで持つ。巻きをそろえないと、`isHole` が逆になり、外周が穴・穴が外周で返る。
+    nonisolated static let cff = "AppleSDGothicNeo-Regular"
+    nonisolated static let hasCFF = FileManager.default.fileExists(atPath: "/System/Library/Fonts/AppleSDGothicNeo.ttc")
+
+    @Test(
+        "CFF の書体でも、外周が先・穴が後で、穴は外周と逆回り。道は穴を外と読む",
+        .enabled(if: PathFromTextOutlineTests.hasCFF, "この環境には CFF の書体 (AppleSDGothicNeo) が無い"))
+    func aCFFTypefaceKeepsTheOuterRingFirst() throws {
+        let canvas = try makeCanvas(size: 90)
+        canvas.textFont(Self.cff)
+        let contours = canvas.textOutline("O", 20, 90)
+        #expect(contours.count == 2)
+        let outer = try #require(contours.first)
+        let hole = try #require(contours.last)
+        #expect(!outer.isHole && hole.isHole, "外周が先・穴が後")
+        let outerArea = Canvas.signedArea(of: outer.outline)
+        let holeArea = Canvas.signedArea(of: hole.outline)
+        #expect(outerArea > 0 && holeArea < 0 && abs(outerArea) > abs(holeArea), "外周 \(outerArea) / 穴 \(holeArea)")
+        let path = Path(contours)
+        let box = bounds(outer.points)
+        let inner = bounds(hole.points)
+        #expect(path.contains([(box.minX + inner.minX) / 2, (box.minY + box.maxY) / 2]), "輪の上")
+        #expect(!path.contains([(inner.minX + inner.maxX) / 2, (inner.minY + inner.maxY) / 2]), "穴の中")
+        // text が描いた墨とも合う
+        let result = try inkMismatches("O8", font: Self.cff, throughShape: true)
+        #expect(result.inkCount > 300 && result.mismatches.isEmpty, "不一致 \(result.mismatches.count): \(result.mismatches.prefix(5))")
     }
 
     @Test("周が複数の字で、point(at:) は外周を辿った後に穴へ渡る。全体の弧長で読む")
