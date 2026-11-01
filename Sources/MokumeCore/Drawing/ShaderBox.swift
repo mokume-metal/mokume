@@ -50,7 +50,7 @@ final class ShaderBox {
     /// copy-on-write が分けるので、**積んだ後に値を変えても前の仕事は変わらない**。控えるのは 1 つだけで、
     /// 版ごとの控えは作らない。
     private(set) var packedValues: [Float]
-    /// 名前ごとの、``packedValues`` の中の先頭の位置。宣言は組み立てるときに固定されるので 1 度引く。
+    /// 名前ごとの、``packedValues`` の中の先頭のバイト位置。宣言は組み立てるときに固定されるので 1 度引く。
     private let packedOffsets: [String: Int]
     /// いまのファイルの中身で差し替えられていなければ、その理由。**いま効いている中身と
     /// ファイルが揃えば下りる** (公開の説明は持ち主の `failure`)。
@@ -120,7 +120,7 @@ final class ShaderBox {
                     + "(what is there now: \(values.keys.sorted().joined(separator: ", ")))")
             return false
         }
-        guard existing.componentCount == value.componentCount else {
+        guard existing.metalType == value.metalType else {
             Diagnostics.warn(
                 "\(label): \"\(name)\" has a different shape from its declaration "
                     + "(\(value.metalType) where \(existing.metalType) was declared)")
@@ -131,7 +131,7 @@ final class ShaderBox {
         values[name] = value
         // **詰めた写しも同じ所で書き換える。** 忘れると、列が閉じても次の列が古い値を拾う
         if let offset = packedOffsets[name] {
-            packedValues.withUnsafeMutableBufferPointer { value.store(into: $0, at: offset) }
+            packedValues.withUnsafeMutableBytes { value.store(into: $0, at: offset) }
         }
         return true
     }

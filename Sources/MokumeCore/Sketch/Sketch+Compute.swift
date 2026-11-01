@@ -143,9 +143,9 @@ extension SketchPart {
     /// ``compute(_:over:reads:writes:)`` に渡した `reads + writes` の並びが、そのまま
     /// `buffer(0)`, `buffer(1)`, … になる。渡した値は `MOKUME_VALUES` の口に載る
     /// (番号を書き写さずに済むよう名前で配ってある)。値は後から差し替えられる
-    /// (``Computation/set(_:_:)``)。
+    /// (``Computation/set(_:_:)-(_,ShaderValueConvertible)``)。
     ///
-    /// 下は、山の数 (`peaks`) を `values` で宣言した計算を 1 つ作り、``Computation/set(_:_:)`` で
+    /// 下は、山の数 (`peaks`) を `values` で宣言した計算を 1 つ作り、``Computation/set(_:_:)-(_,ShaderValueConvertible)`` で
     /// 1・2・3 と差し替えながら 3 本の並びへ頼んだもの。**頼んだ時点の値が効く**ので、同じ
     /// フレームの中で差し替えても、上の帯から順に山が 1 つ・2 つ・3 つになる。
     ///

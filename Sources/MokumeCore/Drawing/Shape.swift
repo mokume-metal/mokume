@@ -151,6 +151,16 @@ public struct Shape {
 
         /// 組み込みの塗り。**利用者の断片が効いていない区間**が持つ。
         static let builtIn = Paint(shader: nil, values: [], surfaces: [], numbers: nil)
+
+        /// **値はビット列で比べる。** 値の並びには `int` の整数と `bool` のバイトがそのまま入っている
+        /// ので、`Float ==` で比べると誤る — `Int.min` の `0x80000000` は `-0.0` で `0` と等しく、
+        /// 記録した塗りに移れない。`-1` のように NaN のビット列になる整数は自分自身とも等しくならず、
+        /// 同じ塗りで毎回列を閉じる (`BitwiseEquality.swift` と同じ作法)。
+        static func == (left: Paint, right: Paint) -> Bool {
+            left._shader == right._shader && left.surfaces == right.surfaces
+                && left._numbers == right._numbers && left.values.count == right.values.count
+                && zip(left.values, right.values).allSatisfy { $0.bitPattern == $1.bitPattern }
+        }
     }
 
     /// 同じ設定で続けて描ける区間。

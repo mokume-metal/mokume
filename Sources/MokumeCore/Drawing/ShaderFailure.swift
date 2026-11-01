@@ -78,12 +78,14 @@ extension ShaderFailure: CustomStringConvertible {
             return """
                 Too many values for the fragment "\(path)" (\(count) counted as floats, but the \
                 limit is \(capacity)).
-                A color (float4) counts as 4 and a pair (float2) as 2 \
+                A float or an int counts as 1, a pair (float2) as 2, a color (float4) as 4, \
+                a vector3 (float3, which takes 16 bytes) as 4, a transform (float4x4) as 16 and \
+                a bool as a quarter (it takes 1 byte) \
                 (a struct's size rounds up to a multiple of 4, so the count can come out higher \
                 than what you declared).
-                The values ride in one fixed-size block per batch (per request, for compute), so \
-                the limit cannot be raised. Pass fewer, or bundle what you can into a single color \
-                or pair
+                The values ride in one fixed-size block per batch (per pass for an effect, per request for compute), so \
+                the limit cannot be raised. Pass fewer, or bundle what you can into a single \
+                color, vector3 or pair
                 """
         case .tooManySurfaces(let path, let count, let capacity):
             return """
