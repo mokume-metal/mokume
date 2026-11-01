@@ -417,8 +417,12 @@ public enum ShaderValue: Equatable, Sendable {
     ///
     /// **`Int` を渡すだけなら要らない** — `set("bands", n)` の `n` は `float` で届き、整数の
     /// リテラルも同じである (宣言を黙って変えない・[ADR-0035])。`int` で宣言されるのは、この case で
-    /// 明示した値だけで、添字・`%`・ビット演算のように断片が整数で扱いたいときに使う。32 ビットに
-    /// 収まらない値は、端 (`Int32.min`・`Int32.max`) に丸めて渡す。
+    /// 明示した値だけで、添字・`%`・ビット演算のように断片が整数で扱いたいときに使う。
+    ///
+    /// **宣言が `.int` なら、書き換えも `.int(n)` と書く。** `set("n", 5)` の `5` は `float` で届くので、
+    /// `int` の宣言には「`float` を渡された」と断られる (宣言と違う型は受け付けない)。
+    ///
+    /// 32 ビットに収まらない値は、断らずに端 (`Int32.min`・`Int32.max`) に丸めて渡す。
     ///
     /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
     case int(Int)

@@ -245,4 +245,22 @@ struct ShaderValueConvertibleTests {
         #expect(ShaderSource.pack(["m": .transform(.identity), "a": 1]).count == 20)
         #expect(ShaderSource.pack(["d": .vector3(Vector3(1, 2, 3))]).count == 4)
     }
+
+    // MARK: - 保持した形の塗りの比較
+
+    private static func paint(_ value: ShaderValue) -> Shape.Paint {
+        Shape.Paint(shader: nil, values: ShaderSource.pack(["n": value]), surfaces: [], numbers: nil)
+    }
+
+    @Test("保持した形の塗りは値をビット列で比べる: Int.min は 0 と別、-1 は自分と等しい")
+    func paintsCompareValuesByBits() {
+        // Int.min は 0x80000000 で、Float としては -0.0。`Float ==` では 0 と等しくなり、記録した塗りに移れない
+        #expect(Self.paint(.int(Int.min)) != Self.paint(.int(0)))
+        // -1 は 0xFFFFFFFF で NaN のビット列。`Float ==` では自分とも等しくならず、同じ塗りで毎回列を閉じる
+        #expect(Self.paint(.int(-1)) == Self.paint(.int(-1)))
+        #expect(Self.paint(.number(.nan)) == Self.paint(.number(.nan)))
+        #expect(Self.paint(.number(-0.0)) != Self.paint(.number(0)))
+        #expect(Self.paint(.bool(true)) != Self.paint(.bool(false)))
+        #expect(Self.paint(.int(3)) == Self.paint(.int(3)))
+    }
 }

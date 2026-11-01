@@ -20,6 +20,8 @@
 /// ``ShaderValue/int(_:)`` と書く。
 ///
 /// 値の型は、断片を作るときの宣言 (`values:`) が決める。後から別の型の値を渡すと、警告して断る。
+/// `int` で宣言した値は、`set("n", 5)` の `5` が `float` で届くので断られる。**宣言が `.int` なら
+/// 書き換えも `.int(n)` と書く。**
 /// `SIMD3<Float>` のような SIMD の値は直に受けず、`Vector3(simd)` を通す。
 ///
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md

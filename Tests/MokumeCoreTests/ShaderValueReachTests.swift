@@ -237,4 +237,23 @@ struct ShaderValueReachTests {
         #expect(canvas.read(out) == [1.5, 4, 0.25, 9])
         #expect(!probe.values.values.contains { $0.metalType == "int" }, "整数が int の宣言に変わっている")
     }
+
+    @Test("効果の上限は詰めた長さで数える: float4x4 を 3 つで区画がいっぱい、もう 1 つ足すと断る")
+    func anEffectCountsATransformAsSixteen() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 8, height: 8)
+        let body = "float4 effect(Pixel in, Values values) { return float4(values.a[0][0]); }"
+        var values: [String: ShaderValue] = [
+            "a": .transform(.identity), "b": .transform(.identity), "c": .transform(.identity),
+        ]
+        // 48 個ちょうど (区画の大きさ) は通る
+        _ = try canvas.makeEffect(body, values: values)
+        // 値の数は 4 つで、数 × 4 なら収まるが、詰めた長さは区画を越える
+        values["d"] = 1
+        do {
+            _ = try canvas.makeEffect(body, values: values)
+            Issue.record("区画を越える値の組が断られなかった")
+        } catch {
+            #expect("\(error)".contains("Too many values"), "\(error)")
+        }
+    }
 }

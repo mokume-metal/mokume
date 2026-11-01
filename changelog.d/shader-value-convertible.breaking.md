@@ -16,7 +16,7 @@ SPDX-License-Identifier: MIT
 | `Transform` | `float4x4` |
 | `.int(n)` と明示したものだけ | `int` |
 
-整数は変数もリテラルも `float` のままなので、`set("speed", 6)` の宣言は今までと同じ `float speed;` です。
+整数は変数もリテラルも `float` のままなので、`set("speed", 6)` の宣言は今までと同じ `float speed;` です。`int` で宣言した値 (`values:` に `.int(n)` で渡したもの) の書き換えは、宣言と同じ型でないと断られるので、`set("n", .int(5))` と `.int` で書いてください (`set("n", 5)` の `5` は `float` で届きます)。
 
 この型の割り当てのために、公開の `ShaderValue` に case を 4 つ足しました: `.vector3(Vector3)`・`.bool(Bool)`・`.int(Int)`・`.transform(Transform)`。`Vector2` は既存の `.pair` で渡します。値の詰め方は Metal の構造体の配置に合わせて、`float3` は 16 バイト、`float4x4` は 64 バイト、`bool` は 1 バイトで詰めます。上限を超えたときの案内も、足した型の数え方 (`float3` は 4、`float4x4` は 16) に直しました。
 

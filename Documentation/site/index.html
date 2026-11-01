@@ -884,7 +884,7 @@ particles(sparks)</code></pre></div>
               計算のシェーダで場を毎フレーム書き換え、同じ場を塗りのシェーダで読む。
               CPU へ読み戻すのは、要るときだけでいい。
             </p>
-            <div class="code" data-lang="swift" translate="no"><pre><code>stir.set("time", .number(time))
+            <div class="code" data-lang="swift" translate="no"><pre><code>stir.set("time", time)
 compute(stir, over: columns, by: rows, writes: [field])
 
 numbers(field)
