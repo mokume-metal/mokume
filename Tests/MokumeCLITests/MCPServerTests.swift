@@ -1171,7 +1171,7 @@ struct MCPServerTests {
         arguments: [
             ("build_status", #"{"x":1}"#, "Unknown argument: x. build_status takes no arguments."),
             ("build_status", #"{"x":null}"#, "Unknown argument: x. build_status takes no arguments."),
-            ("reference", #"{"nam":"api"}"#, "Unknown argument: nam. reference accepts name."),
+            ("reference", #"{"nam":"api"}"#, "Unknown argument: nam. reference accepts name, symbol."),
             ("input", #"{"events":[],"evnts":[]}"#, "Unknown argument: evnts. input accepts events."),
             // 知っている名前の `null` は余りに数えない。数えるのは知らない名前だけ
             ("observe", #"{"scale":null,"scal":1}"#,
@@ -2280,6 +2280,284 @@ struct MCPServerTests {
         let outcome = tools.call("reference", arguments: [:])
         #expect(!outcome.isError)
         #expect(outcome.text.contains("- api"))
+    }
+
+    // ---------------------------------------------------------- 口ごとの詳細 (`symbol`・#3420)
+
+    /// 口ごとの詳細の資産の見本。型・持ち主が違う同名の口・説明の無い口を含む。
+    private static let detailsAsset = """
+        {"schemaVersion":1,"version":"v0.2.0","symbols":{
+        "ambientLight":[
+        {"owner":"SketchPart","declaration":"@MainActor func ambientLight(_ color: LinearRGBA)","doc":"全体を底上げする光を置く。\\n\\n**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**\\n\\n```swift\\nambientLight(.linear(red: 1, green: 1, blue: 1))\\n```"},
+        {"owner":"SketchPart","declaration":"@MainActor func ambientLight(_ gray: some ScalarConvertible)","doc":""}],
+        "play":[
+        {"owner":"MoviePlayer","declaration":"func play()","doc":"動画を流す。"},
+        {"owner":"SoundFile","declaration":"func play()","doc":"音を鳴らす。"}],
+        "SoundFile":[{"owner":"","declaration":"struct SoundFile","doc":"音の読み込み。"}]}}
+        """
+
+    private func putDetails(_ text: String = detailsAsset, at name: String, in directory: URL) throws {
+        try putList(text, at: name, in: directory)
+    }
+
+    private func reference(_ tools: Tools, _ symbol: Any?, name: Any? = "api") -> (text: String, isError: Bool) {
+        var arguments: [String: Any] = [:]
+        if let name { arguments["name"] = name }
+        if let symbol { arguments["symbol"] = symbol }
+        return tools.call("reference", arguments: arguments)
+    }
+
+    /// 例 1: 取り置き済みの詳細から、多重定義のすべてと説明の全文が返る。**取りに行かない。**
+    @Test("symbol を渡すと、取り置き済みの詳細から、多重定義のすべての持ち主・宣言・説明の全文が返る")
+    func servesTheDetailsOfASymbol() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())  // 取りに行ったら落ちる
+        let outcome = reference(makeTools(directory: directory, fetches: fetches), "ambientLight")
+
+        #expect(!outcome.isError, "\(outcome.text)")
+        #expect(fetches.urls.isEmpty)
+        #expect(outcome.text.hasPrefix("Source: cached ("), "\(outcome.text)")
+        #expect(!outcome.text.contains("tied to no version or revision"), "版の取り置きには添えない")
+        // 持ち主と宣言は多重定義のぶんすべて
+        #expect(outcome.text.contains("## SketchPart"))
+        #expect(outcome.text.contains("func ambientLight(_ color: LinearRGBA)"))
+        #expect(outcome.text.contains("func ambientLight(_ gray: some ScalarConvertible)"))
+        // 説明は全文のまま (目盛りの注意も例も落ちない)
+        #expect(outcome.text.contains("**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**"), "\(outcome.text)")
+        #expect(outcome.text.contains("ambientLight(.linear(red: 1, green: 1, blue: 1))"))
+        #expect(outcome.text.contains("(no description in the source)"), "説明の無い口は、無いと言う")
+        // 引数部を付けた綴りでも、同じ口
+        let spelled = reference(makeTools(directory: directory, fetches: fetches), "ambientLight(_:)")
+        #expect(!spelled.isError, "\(spelled.text)")
+        #expect(spelled.text.contains("func ambientLight(_ gray: some ScalarConvertible)"), "\(spelled.text)")
+        #expect(spelled.text.contains("**この口の目盛りは 0…1 で、塗りと同じ 0–255 ではない。**"), "\(spelled.text)")
+    }
+
+    /// 例 2: `型.基底名` はその型の口だけに絞る。
+    @Test("型.名前 と書けば、その型の口だけに絞り、その型に無ければ持ち主を案内する")
+    func narrowsToTheOwnerType() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let all = reference(tools, "play")
+        #expect(all.text.contains("動画を流す。") && all.text.contains("音を鳴らす。"), "\(all.text)")
+        let narrowed = reference(tools, "SoundFile.play")
+        #expect(!narrowed.isError, "\(narrowed.text)")
+        #expect(narrowed.text.contains("音を鳴らす。"))
+        #expect(!narrowed.text.contains("動画を流す。"), "絞った型の口だけ: \(narrowed.text)")
+        // 型そのもの
+        #expect(reference(tools, "SoundFile").text.contains("struct SoundFile"))
+
+        // その型に持ち主が無い基底名は、断って持ち主を挙げる
+        let wrong = reference(tools, "Sketch.ambientLight")
+        #expect(wrong.isError)
+        #expect(wrong.text.contains("SketchPart"), "\(wrong.text)")
+    }
+
+    /// 例 3: 無い名前・頼み方の誤りは `isError`。受けて黙って捨てない (#2319 と同じ扱い)。
+    @Test("無い名前は索引で綴りを確かめるよう案内し、api 以外の文書や型の違う symbol は黙って捨てずに断る")
+    func refusesWhatItCannotAnswer() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        try putList("# 取り置かれた索引\n", at: "mokume-api-v0.2.0.md", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let unknown = reference(tools, "ambientLite")
+        #expect(unknown.isError)
+        #expect(unknown.text.contains("no public symbol named ambientLite"), "\(unknown.text)")
+        #expect(unknown.text.contains("`reference` with name api and no symbol"), "索引を引くよう案内する: \(unknown.text)")
+        // 他の文書・name 省略に symbol を渡しても、受けて黙って捨てない
+        for name in ["startup", "observe-report"] {
+            let other = reference(tools, "ambientLight", name: name)
+            #expect(other.isError, "\(name)")
+            #expect(other.text.contains("takes no symbol"), "\(other.text)")
+            #expect(!other.text.contains("ambientLight(_ color"), "別の文書が成功として返らない")
+        }
+        let nameless = reference(tools, "ambientLight", name: nil)
+        #expect(nameless.isError)
+        #expect(!nameless.text.contains("Documents this interface serves"), "\(nameless.text)")
+        // 文字列でない symbol・空の symbol は、索引に倒さずに断る
+        for bad: Any in [5, true, ["ambientLight"], "", "  "] {
+            let refused = reference(tools, bad)
+            #expect(refused.isError, "\(bad)")
+            #expect(!refused.text.hasPrefix("Source:"), "\(bad): \(refused.text)")
+        }
+        // null は省略と同じ (#2393)。索引が返る
+        let omitted = tools.call("reference", arguments: ["name": "api", "symbol": NSNull()])
+        #expect(!omitted.isError)
+        #expect(omitted.text.contains("# 取り置かれた索引"), "\(omitted.text)")
+    }
+
+    /// `tools/list` に出る引数の形が、`symbol` を名乗る。
+    @Test("reference の入力の形と説明が symbol を名乗る")
+    func advertisesTheSymbolArgument() throws {
+        let definition = Tools.ToolName.reference.definition
+        let schema = try #require(definition["inputSchema"] as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let symbol = try #require(properties["symbol"] as? [String: Any])
+        #expect(symbol["type"] as? String == "string")
+        #expect(Tools.ToolName.reference.acceptedArguments == ["name", "symbol"])
+        #expect((definition["description"] as? String)?.contains("symbol") == true)
+    }
+
+    /// 取り置きが無ければ、依存の版の資産を取ってきて取り置き、次からは取りに行かない。
+    @Test("詳細の取り置きが無ければ、解決された版の資産を取ってきて取り置き、次からは取りに行かない")
+    func fetchesTheDetailsForTheResolvedVersionOnce() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        fetches.answer = .success(Data(Self.detailsAsset.utf8))
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let first = reference(tools, "play")
+        #expect(!first.isError, "\(first.text)")
+        #expect(first.text.hasPrefix("Source: fetched and cached"), "\(first.text)")
+        #expect(
+            fetches.urls.map(\.absoluteString) == [
+                "https://github.com/mokume-metal/mokume/releases/download/v0.2.0/mokume-api-details-v0.2.0.json"
+            ])
+        #expect(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-details-v0.2.0.json").path))
+        // 索引の取り置きは作らない (別の資産)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-v0.2.0.md").path))
+
+        let second = reference(tools, "SoundFile.play")
+        #expect(second.text.hasPrefix("Source: cached ("), "\(second.text)")
+        #expect(fetches.urls.count == 1)
+    }
+
+    /// **別の版・共通名・最新で穴埋めしない。** 依存版の資産が無ければ、そう言って失敗し、索引は引けると添える。
+    @Test("依存版の詳細の資産が無ければ、別の版や共通名の詳細で穴埋めせず、失敗して索引を案内する")
+    func doesNotFillInAnotherVersionsDetails() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        // 別の版と共通名には詳細が在る — どちらも依存の版 (0.2.0) のものではない
+        let other = Self.detailsAsset.replacingOccurrences(of: "音を鳴らす。", with: "別の版の説明")
+        try putDetails(other, at: "mokume-api-details-v0.1.0.json", in: directory)
+        try putDetails(other, at: "mokume-api-details.json", in: directory)
+        try putList("# 取り置かれた索引\n", at: "mokume-api-v0.2.0.md", in: directory)
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let outcome = reference(tools, "SoundFile.play")
+        #expect(outcome.isError)
+        #expect(!outcome.text.contains("別の版の説明"), "\(outcome.text)")
+        #expect(outcome.text.contains("the response was 404"), "\(outcome.text)")
+        #expect(outcome.text.contains("v0.2.0/mokume-api-details-v0.2.0.json"), "取りに行った宛先を言う: \(outcome.text)")
+        #expect(outcome.text.contains("`reference` with name api and no symbol"), "索引は引けると添える: \(outcome.text)")
+        #expect(
+            fetches.urls.map(\.absoluteString) == [
+                "https://github.com/mokume-metal/mokume/releases/download/v0.2.0/mokume-api-details-v0.2.0.json"
+            ], "依存の版の資産だけを取りに行く")
+        // 取れなかったものを取り置かない
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-details-v0.2.0.json").path))
+        // 索引は、詳細が無くても引ける
+        let index = tools.call("reference", arguments: ["name": "api"])
+        #expect(!index.isError)
+        #expect(index.text.contains("# 取り置かれた索引"))
+    }
+
+    /// 取り置きの名前は、索引と同じ 3 通りの鍵で分ける。改訂を上げたら前の改訂の詳細は返らない。
+    @Test("詳細の取り置きは改訂の名前で分け、前の改訂や共通名の詳細は改訂の依存では返さない")
+    func keysTheDetailsByRevision() throws {
+        let directory = try makeSketch()
+        let revisionA = "aaaaaaaaaaaa1111111111111111111111111111"
+        let revisionB = "bbbbbbbbbbbb2222222222222222222222222222"
+        try writeRevisionPin(directory, revisionA)
+        try putDetails(at: "mokume-api-details-rev-aaaaaaaaaaaa.json", in: directory)
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())  // 改訂は資産が無く、取りに行かない
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let served = reference(tools, "SoundFile.play")
+        #expect(!served.isError, "\(served.text)")
+        #expect(served.text.contains("音を鳴らす。"))
+        #expect(!served.text.contains("tied to no version or revision"), "改訂の名前から返す回は鍵がある")
+
+        // 改訂を B に上げる。A の詳細も、共通名の詳細も返さず、B の名前へ置く手を案内する
+        try putDetails(
+            Self.detailsAsset.replacingOccurrences(of: "音を鳴らす。", with: "共通名の説明"),
+            at: "mokume-api-details.json", in: directory)
+        try writeRevisionPin(directory, revisionB)
+        let moved = reference(tools, "SoundFile.play")
+        #expect(moved.isError)
+        #expect(!moved.text.contains("音を鳴らす。") && !moved.text.contains("共通名の説明"), "\(moved.text)")
+        let nameB = directory.appendingPathComponent(".mokume/reference/mokume-api-details-rev-bbbbbbbbbbbb.json")
+        #expect(moved.text.contains("DETAILS=\(GivenPath.shellWord(nameB))"), "\(moved.text)")
+        #expect(moved.text.contains("not read for a pinned revision"), "\(moved.text)")
+        #expect(fetches.urls.isEmpty)
+    }
+
+    /// 鍵の無い状態は共通名から返し、鍵が無いことを名乗る (索引と同じ)。
+    @Test("pin が無い (パスで指す) 依存の詳細は共通名から返し、鍵が無いことを添える")
+    func servesTheSharedDetailsAndNamesTheMissingKey() throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("swift-syntax", "603.0.2"))  // mokume の pin が無い
+        let fetches = Fetches()
+        fetches.answer = .failure(Refused())
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let missing = reference(tools, "play")
+        #expect(missing.isError)
+        let shared = directory.appendingPathComponent(".mokume/reference/mokume-api-details.json")
+        let index = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
+        #expect(missing.text.contains("DETAILS=\(GivenPath.shellWord(shared))"), "\(missing.text)")
+        #expect(missing.text.contains("OUT=\(GivenPath.shellWord(index))"), "\(missing.text)")
+        #expect(!missing.text.contains("The public API list"), "詳細の案内は詳細を主語にする: \(missing.text)")
+
+        try putDetails(at: "mokume-api-details.json", in: directory)
+        let served = reference(tools, "play")
+        #expect(!served.isError, "\(served.text)")
+        #expect(served.text.contains("tied to no version or revision"), "\(served.text)")
+    }
+
+    /// 依存の版が出した資産が、この道具の知らない形のとき・壊れているときは、読めないと言う。
+    @Test("知らない形の版や壊れた詳細は、取り置かずに読めないと答える")
+    func refusesDetailsItCannotRead() throws {
+        for (label, body, expected) in [
+            ("新しい形", #"{"schemaVersion":2,"version":"v0.2.0","symbols":{}}"#, "format 2"),
+            ("壊れた JSON", "{ これは JSON ではない", "not a details file"),
+        ] {
+            let directory = try makeDirectory()
+            try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+            let fetches = Fetches()
+            fetches.answer = .success(Data(body.utf8))
+            let outcome = reference(makeTools(directory: directory, fetches: fetches), "play")
+            #expect(outcome.isError, "\(label)")
+            #expect(outcome.text.contains("could not be read"), "\(label): \(outcome.text)")
+            #expect(outcome.text.contains(expected), "\(label): \(outcome.text)")
+            #expect(
+                !FileManager.default.fileExists(
+                    atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-details-v0.2.0.json").path),
+                "\(label)")
+        }
+    }
+
+    /// 道具が読む形は、`Schemas/` の代表例と同じ (形の正典と読む側が離れない)。
+    @Test("Schemas の代表例を、そのまま読んで引ける")
+    func readsTheSchemaExample() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Schemas/examples/api-details.json")
+        let details = try APIDetails.parse(Data(contentsOf: url)).get()
+        guard case .found(let lights) = details.lookup("ambientLight") else {
+            Issue.record("ambientLight が引けない")
+            return
+        }
+        #expect(lights.count == 2)
+        #expect(lights.first?.doc.contains("目盛りは 0…1") == true)
     }
 
     /// 文字列でない名前を「引数なし」に倒すと、頼んだ文書の代わりに一覧が成功として返り、

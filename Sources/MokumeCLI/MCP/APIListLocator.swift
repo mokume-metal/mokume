@@ -18,6 +18,10 @@ import mokume
 /// 枝・改訂は `mokume-api-rev-<改訂の先頭 12 字>.md` で、依存を上げれば別の名前になり、古い一覧は
 /// 返らない。**追随できない (鍵が無い) 状態だけ共通名 `mokume-api.md`** を読み、そこから返す回は
 /// 答えが鍵の無いことを名乗る (``Source/cached(_:keyed:)``・#3478)。
+///
+/// **口ごとの説明と例 (``Asset/details``・``readDetails()``) も、同じ計算で同じ版から得る** (#3420)。
+/// 名前は `mokume-api-details-…json` で、鍵の分け方・取りに行く期限・版が引けない案内は索引と同じ。
+/// **依存の版の資産が得られなければ失敗し、別の版 (最新・共通名の他の版) の詳細で穴埋めしない。**
 struct APIListLocator {
     /// 資産の置き場。
     static let releases = "https://github.com/mokume-metal/mokume/releases/download"
@@ -88,17 +92,74 @@ struct APIListLocator {
     /// 依存の版の状態。**読み方は [DependencyVersion] が持つ** (`doctor` と写しを作らない)。
     func versionState() -> DependencyVersion.State { DependencyVersion.state(forPackageAt: directory) }
 
+    /// 取り置く・取ってくる資産の種類。**同じ版の同じ公開シンボルから組んだ 2 つ**で、取り置きの名前の鍵・
+    /// 取りに行く期限・版が引けないときの案内は、どちらも同じ計算を通る。
+    enum Asset: Equatable {
+        /// 宣言の索引 (`mokume-api-v<版>.md`)
+        case index
+        /// 口ごとの説明と例 (`mokume-api-details-v<版>.json`・#3420)
+        case details
+
+        /// 名前の頭。
+        var stem: String { self == .index ? "mokume-api" : "mokume-api-details" }
+        /// 名前の拡張子。
+        var fileExtension: String { self == .index ? "md" : "json" }
+        /// 案内の主語。
+        var subject: String { self == .index ? "The public API list" : "The per-symbol details of the public API" }
+        /// 案内の中で指す名前。
+        var noun: String { self == .index ? "list" : "details file" }
+        /// 資産が付いていない版があるときの、その事情。
+        var absenceNote: String {
+            self == .index
+                ? "the list started shipping after v0.1.0"
+                : "the details file ships only from the release that added `symbol` to `reference`; earlier versions have none"
+        }
+    }
+
+    /// 取ってきた・取り置いたものを受け入れるか。**受け入れなければ、取り置きは無いものとして取りに行く。**
+    enum Reading {
+        case accepted
+        /// `detail` は、読めなかった理由 (あれば案内に添える)
+        case rejected(detail: String?)
+    }
+
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {
+        let found = try obtain(.index) { data in
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty { .accepted } else { .rejected(detail: nil) }
+        }
+        return (String(decoding: found.data, as: UTF8.self), found.source)
+    }
+
+    /// 口ごとの詳細を読む。**取り置きの名前・取りに行く期限・版が引けない案内は一覧と同じ計算を通り**、
+    /// 依存の版の資産が得られなければ失敗する — **別の版の詳細で穴埋めしない** (#3420)。
+    func readDetails() throws -> (details: APIDetails, source: Source) {
+        let found = try obtain(.details) { data in
+            switch APIDetails.parse(data) {
+            case .success: .accepted
+            case .failure(let failure): .rejected(detail: failure.reason)
+            }
+        }
+        guard case .success(let details) = APIDetails.parse(found.data) else {
+            // 受け入れ (`reading`) を通したものは読める。ここへは来ない
+            throw Missing(advice: "The details could not be read.", cause: .unreadable)
+        }
+        return (details, found.source)
+    }
+
+    /// 資産を得る。取り置きを先に見て、無ければ**依存として解決された版**のものを取ってきて取り置く。
+    private func obtain(
+        _ asset: Asset, reading: (Data) -> Reading
+    ) throws -> (data: Data, source: Source) {
         let state = versionState()
         let version: String? = if case .version(let found) = state { found } else { nil }
-        let cache = cacheURL(for: state)
-        if let text = try? String(contentsOf: cache, encoding: .utf8), !text.isEmpty {
-            return (text, .cached(cache, keyed: Self.isKeyed(state)))
+        let cache = cacheURL(for: state, asset: asset)
+        if let data = try? Data(contentsOf: cache), case .accepted = reading(data) {
+            return (data, .cached(cache, keyed: Self.isKeyed(state)))
         }
         // **版の形でなければ取りに行かない** (``DependencyVersion/isVersion(_:)``)。URL を作れない版も同じ
-        guard let version, let remote = Self.assetURL(version: version) else {
-            throw Missing(advice: unknownVersionAdvice(state, cache: cache), cause: .versionUnknown)
+        guard let version, let remote = Self.assetURL(version: version, asset: asset) else {
+            throw Missing(advice: unknownVersionAdvice(state, asset: asset), cause: .versionUnknown)
         }
         let data: Data
         do {
@@ -109,18 +170,20 @@ struct APIListLocator {
                     reason: """
                         Could not fetch the asset for this version (\(remote)): \(error)
                         Besides having no network, this also happens when **that version has no
-                        such asset attached** (the list started shipping after v0.1.0).
-                        """, cache: cache),
+                        such asset attached** (\(asset.absenceNote)).
+                        """, asset: asset),
                 cause: .fetchFailed)
         }
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+        if case .rejected(let detail) = reading(data) {
             throw Missing(
-                advice: advice(reason: "what came back could not be read (\(remote))", cache: cache),
+                advice: advice(
+                    reason: "what came back could not be read (\(remote))" + (detail.map { ": \($0)" } ?? ""),
+                    asset: asset),
                 cause: .unreadable)
         }
         // 取り置けなくても、いま得たものは返す。**答えを返すほうが先** (ADR-0018 決定 3)
         try? AtomicFile.write(data, to: cache)
-        return (text, .downloaded(cache, from: remote))
+        return (data, .downloaded(cache, from: remote))
     }
 
     /// 依存として解決された版。パスで指しているときは pin が無いので `nil`。
@@ -136,12 +199,18 @@ struct APIListLocator {
     ///
     /// **読む側 (``read()``) も案内の `OUT=` も、この 1 つの計算を通る。** 改訂の名前が無いときに共通名へ
     /// 落ちて読むと、前の改訂の一覧を今のものとして返す (#3478)。
-    func cacheURL(for state: DependencyVersion.State) -> URL {
-        facet.appendingPathComponent(Self.keyedName(for: state) ?? Self.sharedName)
+    ///
+    /// 口ごとの詳細 (`asset: .details`) も同じ鍵で名前を分ける (`mokume-api-details-v<版>.json`・
+    /// `mokume-api-details-rev-<先頭 12 字>.json`・共通名 `mokume-api-details.json`)。
+    func cacheURL(for state: DependencyVersion.State, asset: Asset = .index) -> URL {
+        facet.appendingPathComponent(Self.keyedName(for: state, asset: asset) ?? Self.sharedName(of: asset))
     }
 
     /// 鍵の無い取り置きの共通名 (手で置くための枠)。
-    static let sharedName = "mokume-api.md"
+    static let sharedName = sharedName(of: .index)
+
+    /// 資産の種類ごとの共通名。
+    static func sharedName(of asset: Asset) -> String { "\(asset.stem).\(asset.fileExtension)" }
 
     /// 取り置きの名前に、依存の版・改訂が入るか。
     static func isKeyed(_ state: DependencyVersion.State) -> Bool { keyedName(for: state) != nil }
@@ -149,20 +218,20 @@ struct APIListLocator {
     /// 版・改訂が入る取り置きの名前。**名前の 1 段にしてよい形でなければ `nil`** (``DependencyVersion/isVersion(_:)``・
     /// ``DependencyVersion/isRevision(_:)``) — 状態を作る側が検めているが、名前を作るここでも同じ判定を通す (#3535)。
     /// ``cacheURL(for:)`` と ``isKeyed(_:)`` はこれ 1 つから決まるので、名前と「鍵が入るか」は食い違わない。
-    private static func keyedName(for state: DependencyVersion.State) -> String? {
+    private static func keyedName(for state: DependencyVersion.State, asset: Asset = .index) -> String? {
         switch state {
         case .version(let version) where DependencyVersion.isVersion(version):
-            "mokume-api-v\(version).md"
+            "\(asset.stem)-v\(version).\(asset.fileExtension)"
         case .revision(let revision) where DependencyVersion.isRevision(revision):
-            "mokume-api-\(BuildDirectory.revisionSegment(revision)).md"
+            "\(asset.stem)-\(BuildDirectory.revisionSegment(revision)).\(asset.fileExtension)"
         case .version, .revision, .unresolved, .notPinned, .unreadable, .malformed, .noPackage: nil
         }
     }
 
     /// 資産の在処。タグは版に `v` を付けたもの。**版の形でなければ (URL を作れなければ) `nil`** — 取りに行かない。
-    static func assetURL(version: String) -> URL? {
+    static func assetURL(version: String, asset: Asset = .index) -> URL? {
         guard DependencyVersion.isVersion(version) else { return nil }
-        return URL(string: "\(releases)/v\(version)/mokume-api-v\(version).md")
+        return URL(string: "\(releases)/v\(version)/\(asset.stem)-v\(version).\(asset.fileExtension)")
     }
 
     /// 版が引けなかった理由ごとの答え (#3419)。**`Cannot tell which version is depended on` の
@@ -175,37 +244,38 @@ struct APIListLocator {
     /// `swift package resolve` は `--scratch-path` を渡さないので、スケッチ直下に約 200MB の
     /// `.build/` を作る。`run` / `watch` は解決を共有の置き場 (`BuildDirectory.resolveSegment`) へ
     /// 固定しているので、`Package.resolved` だけがスケッチ直下にでき、`.build/` は作られない。
-    private func unknownVersionAdvice(_ state: DependencyVersion.State, cache: URL) -> String {
+    private func unknownVersionAdvice(_ state: DependencyVersion.State, asset: Asset) -> String {
+        let (subject, noun) = (asset.subject, asset.noun)
         let head = "Cannot tell which version is depended on"
         // 案内のコマンドは `GivenPath.shellWord` で包む。二重引用は `$` と `` ` `` を解く
         let run = "\(Command.name) run \(GivenPath.shellWord(directory))"
-        let makeList = Self.buildCommand(cache: cache)
+        let makeList = buildCommand(for: asset, state: state)
         switch state {
         case .unresolved:
             return """
-                The public API list is not available yet.
+                \(subject) is not available yet.
 
                 \(head): this sketch has not resolved its dependencies yet
                 (there is no `Package.resolved`), which is normal right after
                 `\(Command.name) new`. Build it once — `\(Command.name) run` and `\(Command.name) watch`
                 resolve the dependencies as part of building, in the shared build directory
-                (not under the sketch) — then ask again; the list for the resolved version
+                (not under the sketch) — then ask again; the \(noun) for the resolved version
                 is fetched and kept:
 
                   \(run)
 
                 If the sketch points at mokume by path (while developing mokume), there is no version
-                to resolve. Build the list in the mokume repository and put it here instead:
+                to resolve. Build the \(noun) in the mokume repository and put it here instead:
 
                   \(makeList)
                 """
         case .notPinned:
             return """
-                The public API list is not available here.
+                \(subject) is not available here.
 
                 \(head): `Package.resolved` has no pin for `\(Self.identity)`.
                 That is how it looks when the sketch points at mokume by path (while developing
-                mokume): build the list in the mokume repository and put it here, and it is
+                mokume): build the \(noun) in the mokume repository and put it here, and it is
                 returned from then on:
 
                   \(makeList)
@@ -217,7 +287,7 @@ struct APIListLocator {
                 """
         case .unreadable:
             return """
-                The public API list is not available here.
+                \(subject) is not available here.
 
                 \(head): `Package.resolved` is there but could not be read
                 (damaged, or in a form this tool does not know), so whether it pins
@@ -226,7 +296,7 @@ struct APIListLocator {
 
                   \(run)
 
-                If the sketch points at mokume by path (while developing mokume), build the list
+                If the sketch points at mokume by path (while developing mokume), build the \(noun)
                 in the mokume repository and put it here instead:
 
                   \(makeList)
@@ -234,34 +304,34 @@ struct APIListLocator {
         case .revision(let revision):
             let segment = BuildDirectory.revisionSegment(revision)
             // 共通名に一覧が在っても、改訂の鍵を持たないので読まない。**読まないことを、答えが名乗る** (#3478)
-            let shared = facet.appendingPathComponent(Self.sharedName)
+            let shared = facet.appendingPathComponent(Self.sharedName(of: asset))
             let sharedNote =
                 if let text = try? String(contentsOf: shared, encoding: .utf8), !text.isEmpty {
                     """
 
 
-                    A list is kept under the shared name (\(shared.path)), but that name carries no
-                    revision, so it is not read for a pinned revision. Put the list for this revision
+                    A \(noun) is kept under the shared name (\(shared.path)), but that name carries no
+                    revision, so it is not read for a pinned revision. Put the \(noun) for this revision
                     under the name above instead.
                     """
                 } else { "" }
             return """
-                The public API list is not available here.
+                \(subject) is not available here.
 
                 \(head): `\(Self.identity)` is pinned to a branch or revision
-                (\(segment)), not to a release, and the list is published per release.
-                Depend on a release version and build the sketch again, or build the list from the
+                (\(segment)), not to a release, and the \(noun) is published per release.
+                Depend on a release version and build the sketch again, or build the \(noun) from the
                 revision in use in the mokume repository and put it here (the file name carries the
-                revision, so a list kept for another revision is never returned for this one):
+                revision, so a \(noun) kept for another revision is never returned for this one):
 
-                  \(Self.buildCommand(cache: cache, version: segment))\(sharedNote)
+                  \(buildCommand(for: asset, state: state, version: segment))\(sharedNote)
                 """
         case .malformed(let pin):
             // **どんな形なら受けるかだけを名乗り、弾いた値は出さない。** この答えは LLM のクライアントが読み、
             // `Package.resolved` は第三者のリポジトリから来うる。値は人が端末で読む `doctor` が見せる。
             // 壊れているとも、パスで指しているとも決めつけない
             return """
-                The public API list is not available here.
+                \(subject) is not available here.
 
                 \(head): the pin for `\(Self.identity)` in `Package.resolved` is not in a form this tool can use
                 as a name (\(DependencyVersion.rule(for: pin))). The value is shown by
@@ -273,20 +343,20 @@ struct APIListLocator {
 
                   \(run)
 
-                If the sketch points at mokume by path (while developing mokume), build the list
+                If the sketch points at mokume by path (while developing mokume), build the \(noun)
                 in the mokume repository and put it here instead:
 
                   \(makeList)
                 """
         case .noPackage:
             return """
-                The public API list is not available here.
+                \(subject) is not available here.
 
                 \(head): there is no `Package.swift` in \(directory.path) to read it from.
                 """
         case .version:
             // 版があるときはここへ来ない
-            return advice(reason: head, cache: cache)
+            return advice(reason: head, asset: asset)
         }
     }
 
@@ -294,21 +364,31 @@ struct APIListLocator {
     ///
     /// `version` を渡すと、組み上がる一覧の見出し (`# mokume <version> の公開 API`) にそれが出る。改訂のときは
     /// 改訂の名前を渡す — 名前だけでなく、中身も、どの改訂のものかを名乗る (#3478)。
-    static func buildCommand(cache: URL, version: String? = nil) -> String {
+    ///
+    /// 詳細 (`details` を渡したとき) は一覧と同じ 1 回の `make api-list` が `DETAILS=` に出す。
+    static func buildCommand(cache: URL, details: URL? = nil, version: String? = nil) -> String {
+        let detailsArgument = details.map { " DETAILS=\(GivenPath.shellWord($0))" } ?? ""
         let pin = version.map { " VERSION=\(GivenPath.shellWord(quoting: $0))" } ?? ""
-        return "make api-list OUT=\(GivenPath.shellWord(cache))\(pin)"
+        return "make api-list OUT=\(GivenPath.shellWord(cache))\(detailsArgument)\(pin)"
+    }
+
+    /// `asset` を取り置きの場所へ置く手。詳細は一覧と一緒に組むので、両方の場所を渡す。
+    private func buildCommand(for asset: Asset, state: DependencyVersion.State, version: String? = nil) -> String {
+        Self.buildCommand(
+            cache: cacheURL(for: state), details: asset == .details ? cacheURL(for: state, asset: .details) : nil,
+            version: version)
     }
 
     /// 得られなかった理由と、そこからの一手。
-    private func advice(reason: String, cache: URL) -> String {
+    private func advice(reason: String, asset: Asset) -> String {
         """
-        The public API list is not available here.
+        \(asset.subject) is not available here.
 
         \(reason)
 
         Build it in the mokume repository and put it here, and it is returned from then on:
 
-          \(Self.buildCommand(cache: cache))
+          \(buildCommand(for: asset, state: versionState()))
         """
     }
 

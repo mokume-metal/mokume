@@ -276,6 +276,10 @@ def render(symbols: list[dict], version: str) -> str:
         f"公開シンボル {len(symbols)} 個 / 型 {len(top)} 個。"
         "この一覧は版ごとに組み立てたもので、リポジトリには置かれていない。"
     )
+    out.append(
+        '口の説明と例 (目盛り・寿命・注意) はこの一覧に無い。MCP の `reference(name: "api", symbol: "<名前>")` '
+        "で、同じ版のものを口ごとに引ける。"
+    )
     out.append("")
 
     def sort_key(symbol: dict) -> tuple:

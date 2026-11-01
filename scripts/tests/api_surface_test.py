@@ -423,6 +423,14 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("mokume v1.2.3", text)
         self.assertIn("公開シンボル 1 個", text)
 
+    def test_一覧の冒頭が口ごとの詳細の引き方を名乗る(self):
+        # #3584: 索引は説明の全文を持たない。口の説明と例は MCP の `symbol` で同じ版のものを引ける
+        text = api.render([symbol("Sketch", kind="swift.protocol")], "v1.2.3")
+        head = text.split("\n## ")[0]
+        self.assertIn('reference(name: "api", symbol: "<名前>")', head)
+        # 一覧の本体 (宣言と型の説明の 1 行目) は変えない
+        self.assertIn("## Sketch", text)
+
     def test_同名オーバーロードの並びが入力の順に依らない(self):
         # #880: `title` だけを鍵にすると、同名オーバーロードは全部同じ鍵になり、
         # 安定ソートがソースの並び順をそのまま残す。#797 で Sketch.swift を 24 ファイルに
