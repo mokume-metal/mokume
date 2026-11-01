@@ -31,6 +31,12 @@ import Synchronization
 /// 大きさが頼んだものと違って届いたときは、真ん中を頼んだ縦横比で切り取ってから縮める
 /// (ゆがめない)。
 ///
+/// **縮めるときは、光の量で平均する** (#3682)。元を半精度の線形の Display P3 へ変換し、
+/// その上で縮めてから 8 bit のエンコードへ戻す。エンコードした値のまま平均すると、
+/// 明暗が強く接する縁が暗く出る (白黒の縞が 128 になる。光の量で平均すれば 188)。作業空間の
+/// 中の縮小と同じ平均にする ([ADR-0011] 決定 1)。代償は、縮める道の一時の器が 1 画素 8 バイトに
+/// なること (4K で 66 MB)。大きさが同じ道は 8 bit の変換 1 回のままである。
+///
 /// ## 不透明度は呼ぶ側が決める (``Alpha``)
 ///
 /// カメラの BGRA に不透明度の意味は無い (絵は不透明) ので、**行き先から不透明度を外し、
@@ -72,6 +78,10 @@ nonisolated final class FrameConverter {
 
     /// 持ち回している変換器と、それを作ったときの元の形式。
     private var cached: (key: Key, converter: vImageConverter, sourceCount: Int)?
+    /// 縮める道で使う、元から半精度の線形へ移す変換器 (キーは ``cached`` と同じ)。
+    private var cachedLinear: (key: Key, converter: vImageConverter, sourceCount: Int)?
+    /// 縮める道で使う、半精度の線形から行き先 (8 bit のエンコード) へ戻す変換器。元の形式に依らない。
+    private var cachedEncoder: vImageConverter?
 
     private struct Key: Equatable {
         let pixelFormat: OSType
@@ -100,12 +110,15 @@ nonisolated final class FrameConverter {
     /// 乗算を戻した元を置く器。
     private var straightened = Reusable()
 
-    /// 大きさが違う元を、元の大きさのまま変換して置く器 (切り取って縮める前)。
+    /// 大きさが違う元を、元の大きさのまま半精度の線形へ変換して置く器 (切り取って縮める前)。
     ///
     /// ``straightened`` とは別にする — 乗算を戻した元は、同じ呼び出しの中で変換の入力として
     /// 読まれ続けるので、変換の行き先にはできない。**代償:** 大きさが違う元が一度でも来たら、
-    /// このインスタンスが生きている間、元の大きさ 1 枚分 (4K で 33 MB) を持ち続ける。
+    /// このインスタンスが生きている間、元の大きさ 1 枚分 (1 画素 8 バイト。4K で 66 MB) を持ち続ける。
     private var resized = Reusable()
+
+    /// 縮めた半精度の線形を置く器 (頼んだ大きさ 1 枚分)。ここから 8 bit のエンコードへ戻す。
+    private var scaled = Reusable()
 
     /// 検査用: 大きさが違う元の変換に使う器の先頭のアドレス。続けて呼んで変わらなければ、取り直していない。
     var resizedBufferAddress: UnsafeRawPointer? { resized.address }
@@ -113,6 +126,7 @@ nonisolated final class FrameConverter {
     deinit {
         straightened.release()
         resized.release()
+        scaled.release()
     }
 
     init(width: Int, height: Int, alpha: Alpha = .opaque) {
@@ -157,29 +171,37 @@ nonisolated final class FrameConverter {
                 vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
             }
         }
-        // 大きさが違えば、元の大きさで変換してから切り取って縮める。**変換の行き先は持ち回しの器**
-        // (毎枚 0 埋めで確保しない)。全部を書き直すので、前の枚の中身は誰も読まない
-        let full = resized.pointer(byteCount: sourceWidth * sourceHeight * 4)
-        var destination = vImage_Buffer(
+        // 大きさが違えば、元の大きさのまま半精度の線形へ変換し、切り取って縮めてから 8 bit へ戻す。
+        // **変換の行き先は持ち回しの器** (毎枚 0 埋めで確保しない)。全部を書き直すので、前の枚の中身は誰も読まない
+        let (linear, _) = try linearConverter(for: buffer)
+        let encoder = try encoder()
+        let full = resized.pointer(byteCount: sourceWidth * sourceHeight * Self.linearPixelBytes)
+        var whole = vImage_Buffer(
             data: full, height: vImagePixelCount(sourceHeight),
-            width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
-        let converted = vImageConvert_AnyToAny(
-            converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
+            width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * Self.linearPixelBytes)
+        let converted = vImageConvert_AnyToAny(linear, &sources, &whole, nil, vImage_Flags(kvImageNoFlags))
         guard converted == kvImageNoError else { throw .conversion(converted) }
-        return try Self.picture(width: width, height: height, alpha: alpha, scaled: true) { destination in
-            var whole = vImage_Buffer(
-                data: full, height: vImagePixelCount(sourceHeight),
-                width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * 4)
-            // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
-            // 不透明な画素の縁へにじむ
-            if alpha == .straight {
-                let premultiplied = vImagePremultiplyData_RGBA8888(
-                    &whole, &whole, vImage_Flags(kvImageNoFlags))
-                guard premultiplied == kvImageNoError else { return premultiplied }
-            }
-            var crop = Self.centreCrop(
-                of: full, width: sourceWidth, height: sourceHeight, toAspectOf: width, height)
-            return vImageScale_ARGB8888(&crop, &destination, nil, vImage_Flags(kvImageNoFlags))
+        // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
+        // 不透明な画素の縁へにじむ
+        if alpha == .straight {
+            let premultiplied = vImagePremultiplyData_RGBA16F(&whole, &whole, vImage_Flags(kvImageNoFlags))
+            guard premultiplied == kvImageNoError else { throw .conversion(premultiplied) }
+        }
+        var crop = Self.centreCrop(
+            of: full, width: sourceWidth, height: sourceHeight, toAspectOf: width, height,
+            pixelBytes: Self.linearPixelBytes)
+        var small = vImage_Buffer(
+            data: scaled.pointer(byteCount: width * height * Self.linearPixelBytes),
+            height: vImagePixelCount(height), width: vImagePixelCount(width),
+            rowBytes: width * Self.linearPixelBytes)
+        let shrunk = vImageScale_ARGB16F(&crop, &small, nil, vImage_Flags(kvImageNoFlags))
+        guard shrunk == kvImageNoError else { throw .conversion(shrunk) }
+        if alpha == .straight {
+            let unpremultiplied = vImageUnpremultiplyData_RGBA16F(&small, &small, vImage_Flags(kvImageNoFlags))
+            guard unpremultiplied == kvImageNoError else { throw .conversion(unpremultiplied) }
+        }
+        return try Self.picture(width: width, height: height, alpha: alpha) { destination in
+            vImageConvert_AnyToAny(encoder, &small, &destination, nil, vImage_Flags(kvImageNoFlags))
         }
     }
 
@@ -193,6 +215,53 @@ nonisolated final class FrameConverter {
     // MARK: - 変換器
 
     private func converter(for buffer: CVPixelBuffer) throws(Failure) -> (vImageConverter, Int) {
+        let (format, key) = try sourceFormat(of: buffer)
+        if let cached, cached.key == key { return (cached.converter, cached.sourceCount) }
+        let made = try Self.makeConverter(from: format, to: Self.destinationFormat(alpha), key.pixelFormat)
+        cached = (key, made.0, made.1)
+        return made
+    }
+
+    /// 縮める道の、元から半精度の線形 Display P3 へ移す変換器。
+    private func linearConverter(for buffer: CVPixelBuffer) throws(Failure) -> (vImageConverter, Int) {
+        let (format, key) = try sourceFormat(of: buffer)
+        if let cachedLinear, cachedLinear.key == key { return (cachedLinear.converter, cachedLinear.sourceCount) }
+        let made = try Self.makeConverter(from: format, to: Self.linearFormat(alpha), key.pixelFormat)
+        cachedLinear = (key, made.0, made.1)
+        return made
+    }
+
+    /// 縮める道の、半精度の線形から行き先 (8 bit のエンコード) へ戻す変換器。
+    private func encoder() throws(Failure) -> vImageConverter {
+        if let cachedEncoder { return cachedEncoder }
+        var source = Self.linearFormat(alpha)
+        var destination = Self.destinationFormat(alpha)
+        var error = kvImageNoError
+        guard
+            let made = vImageConverter_CreateWithCGImageFormat(
+                &source, &destination, nil, vImage_Flags(kvImageNoFlags), &error)?.takeRetainedValue(),
+            error == kvImageNoError
+        else { throw .conversion(error) }
+        cachedEncoder = made
+        return made
+    }
+
+    private static func makeConverter(
+        from format: vImageCVImageFormat, to destination: vImage_CGImageFormat, _ pixelFormat: OSType
+    ) throws(Failure) -> (vImageConverter, Int) {
+        var destination = destination
+        var error = kvImageNoError
+        guard
+            let made = vImageConverter_CreateForCVToCGImageFormat(
+                format, &destination, nil, vImage_Flags(kvImageNoFlags), &error)?
+                .takeRetainedValue(),
+            error == kvImageNoError
+        else { throw .unsupportedFormat(pixelFormat) }
+        return (made, Int(vImageConverter_GetNumberOfSourceBuffers(made)))
+    }
+
+    /// 元の形式を読み、名乗りの欠けを補って、変換器を持ち回すキーと一緒に返す。
+    private func sourceFormat(of buffer: CVPixelBuffer) throws(Failure) -> (vImageCVImageFormat, Key) {
         let pixelFormat = CVPixelBufferGetPixelFormatType(buffer)
         guard pixelFormat == kCVPixelFormatType_32BGRA else { throw .unsupportedFormat(pixelFormat) }
         guard let format = vImageCVImageFormat_CreateWithCVPixelBuffer(buffer)?.takeRetainedValue()
@@ -211,20 +280,7 @@ nonisolated final class FrameConverter {
         // vImage は透けた画素を黒へ平坦化する (半透明の色が暗くなる)。「不透明」の合図で抑える
         if alpha == .opaque { vImageCVImageFormat_SetAlphaHint(format, 1) }
         let colorSpace = vImageCVImageFormat_GetColorSpace(reading)?.takeUnretainedValue()
-        let key = Key(pixelFormat: pixelFormat, colorSpace: colorSpace?.name as String?)
-        if let cached, cached.key == key { return (cached.converter, cached.sourceCount) }
-
-        var destination = Self.destinationFormat(alpha)
-        var error = kvImageNoError
-        guard
-            let made = vImageConverter_CreateForCVToCGImageFormat(
-                format, &destination, nil, vImage_Flags(kvImageNoFlags), &error)?
-                .takeRetainedValue(),
-            error == kvImageNoError
-        else { throw .unsupportedFormat(pixelFormat) }
-        let count = Int(vImageConverter_GetNumberOfSourceBuffers(made))
-        cached = (key, made, count)
-        return (made, count)
+        return (format, Key(pixelFormat: pixelFormat, colorSpace: colorSpace?.name as String?))
     }
 
     /// 行き先の形式: Display P3・1 画素 4 バイトを赤・緑・青・不透明度の順で。
@@ -244,6 +300,26 @@ nonisolated final class FrameConverter {
             version: 0, decode: nil, renderingIntent: .defaultIntent)
     }
 
+    /// 縮める道の途中の形式: 半精度の線形 Display P3・1 画素 8 バイトを赤・緑・青・不透明度の順で。
+    /// 不透明度の扱いは ``destinationFormat(_:)`` と揃える。
+    private static func linearFormat(_ alpha: Alpha) -> vImage_CGImageFormat {
+        let info =
+            switch alpha {
+            case .opaque: CGImageAlphaInfo.noneSkipLast
+            case .straight: CGImageAlphaInfo.last
+            }
+        return vImage_CGImageFormat(
+            bitsPerComponent: 16, bitsPerPixel: 64,
+            colorSpace: Unmanaged.passUnretained(CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)!),
+            bitmapInfo: CGBitmapInfo(
+                rawValue: info.rawValue | CGBitmapInfo.floatComponents.rawValue
+                    | CGBitmapInfo.byteOrder16Little.rawValue),
+            version: 0, decode: nil, renderingIntent: .defaultIntent)
+    }
+
+    /// ``linearFormat(_:)`` の 1 画素のバイト数。
+    private static let linearPixelBytes = 8
+
     /// 詰め物の無い `width * height * 4` の器を作り、`fill` に書かせて返す。
     ///
     /// **器は 0 で埋めずに確保する** (録画側の読み戻しと同じ・#2372)。`fill` が全画素を書き、
@@ -252,12 +328,11 @@ nonisolated final class FrameConverter {
     ///
     /// - Parameters:
     ///   - alpha: ``Alpha/opaque`` なら不透明度を 255 に埋める。
-    ///   - scaled: `fill` が乗算したまま縮めた絵を書くとき `true`。乗算を戻す。
     ///   - fill: 器へ書き、vImage の結果を返す。
     ///
     /// 検査が失敗の道を直に突くため、`private` にしていない。
     static func picture(
-        width: Int, height: Int, alpha: Alpha, scaled: Bool = false,
+        width: Int, height: Int, alpha: Alpha,
         fill: (inout vImage_Buffer) -> vImage_Error
     ) throws(Failure) -> DisplayImage {
         var status = kvImageNoError
@@ -267,19 +342,11 @@ nonisolated final class FrameConverter {
                 data: buffer.baseAddress, height: vImagePixelCount(height),
                 width: vImagePixelCount(width), rowBytes: width * 4)
             status = fill(&destination)
-            if status == kvImageNoError {
-                switch alpha {
-                case .opaque:
-                    // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
-                    // バイトが 0x8、最後のバイトが 0x1
-                    status = vImageOverwriteChannelsWithScalar_ARGB8888(
-                        255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
-                case .straight:
-                    if scaled {
-                        status = vImageUnpremultiplyData_RGBA8888(
-                            &destination, &destination, vImage_Flags(kvImageNoFlags))
-                    }
-                }
+            if status == kvImageNoError, alpha == .opaque {
+                // 1 画素 4 バイトのうち最後 (不透明度) だけを埋める。vImage の印は先頭の
+                // バイトが 0x8、最後のバイトが 0x1
+                status = vImageOverwriteChannelsWithScalar_ARGB8888(
+                    255, &destination, &destination, 0x1, vImage_Flags(kvImageNoFlags))
             }
             if status == kvImageNoError { initializedCount = buffer.count }
         }
@@ -287,10 +354,10 @@ nonisolated final class FrameConverter {
         return DisplayImage(width: width, height: height, bytes: bytes)
     }
 
-    /// 真ん中を、頼んだ縦横比で切り取った範囲。
+    /// 真ん中を、頼んだ縦横比で切り取った範囲。`pixelBytes` は 1 画素のバイト数。
     static func centreCrop(
         of base: UnsafeMutableRawPointer, width: Int, height: Int,
-        toAspectOf targetWidth: Int, _ targetHeight: Int
+        toAspectOf targetWidth: Int, _ targetHeight: Int, pixelBytes: Int
     ) -> vImage_Buffer {
         var cropWidth = width
         var cropHeight = height
@@ -303,7 +370,7 @@ nonisolated final class FrameConverter {
         let x = (width - cropWidth) / 2
         let y = (height - cropHeight) / 2
         return vImage_Buffer(
-            data: base + y * width * 4 + x * 4, height: vImagePixelCount(cropHeight),
-            width: vImagePixelCount(cropWidth), rowBytes: width * 4)
+            data: base + (y * width + x) * pixelBytes, height: vImagePixelCount(cropHeight),
+            width: vImagePixelCount(cropWidth), rowBytes: width * pixelBytes)
     }
 }

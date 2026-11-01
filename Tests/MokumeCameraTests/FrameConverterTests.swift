@@ -178,6 +178,67 @@ nonisolated struct FrameConverterTests {
         }
     }
 
+    // MARK: - 縮めるときは光の量で平均する (#3682)
+
+    /// 8 bit のエンコード値を、sRGB の曲線で光の量 (0–1) へ戻す。実装の表を使わず式で出す。
+    private func light(_ encoded: Int) -> Double {
+        let value = Double(encoded) / 255
+        return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+    }
+
+    /// 白と黒が 1 画素ずつ交互に並ぶ縦縞。
+    private func stripes(_ x: Int, _ alpha: UInt8) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
+        x.isMultiple(of: 2) ? (255, 255, 255, alpha) : (0, 0, 0, alpha)
+    }
+
+    /// 縮めた行の、光の量の平均。
+    ///
+    /// **画素ごとではなく行の平均で見る。** 縮める窓 (Lanczos) は縞の周期で揺れ (1 画素ずつ ±0.07 ほど)、
+    /// その揺れは平均の取り方と関係が無い。エンコードした値のまま平均すると、行の平均は 0.23 になる
+    /// (縞が 128 前後に並ぶ)。光の量で平均すれば 0.5 になる。
+    private func rowLight(_ picture: DisplayImage, _ y: Int, channel: Int = 0) -> Double {
+        (0..<picture.width).map { light(rgba(picture, $0, y)[channel]) }.reduce(0, +) / Double(picture.width)
+    }
+
+    @Test("縮める道: 白黒の縞を半分に縮めると、光の量で平均した値になる", arguments: [
+        FrameConverter.Alpha.opaque, FrameConverter.Alpha.straight,
+    ])
+    func scalingAveragesLinearLight(alpha: FrameConverter.Alpha) throws {
+        let source = try alphaBuffer(
+            width: 8, height: 8, mode: kCVImageBufferAlphaChannelMode_StraightAlpha
+        ) { x, _ in stripes(x, 255) }
+        let picture = try FrameConverter(width: 4, height: 4, alpha: alpha).convert(source)
+        for y in 0..<4 {
+            let mean = rowLight(picture, y)
+            #expect(abs(mean - 0.5) < 0.04, "y=\(y): 光の量の平均 \(mean)")
+            for x in 0..<4 {
+                let pixel = rgba(picture, x, y)
+                #expect(pixel[0] == pixel[1] && pixel[1] == pixel[2] && pixel[3] == 255, "(\(x), \(y)): \(pixel)")
+            }
+        }
+    }
+
+    @Test("縮める道: 半透明の縞も、乗算を戻した色が光の量で平均した値になる")
+    func scalingAveragesLinearLightThroughAlpha() throws {
+        let source = try alphaBuffer(
+            width: 8, height: 8, mode: kCVImageBufferAlphaChannelMode_StraightAlpha
+        ) { x, _ in stripes(x, 128) }
+        let picture = try FrameConverter(width: 4, height: 4, alpha: .straight).convert(source)
+        for y in 0..<4 {
+            let mean = rowLight(picture, y)
+            #expect(abs(mean - 0.5) < 0.04, "y=\(y): 光の量の平均 \(mean)")
+            for x in 0..<4 { #expect(abs(rgba(picture, x, y)[3] - 128) <= 1, "(\(x), \(y))") }
+        }
+    }
+
+    @Test("縮める道でも、名乗りの無い絵の原色を Display P3 へ移す")
+    func scalingMovesSRGBPrimariesIntoDisplayP3() throws {
+        let source = try buffer(width: 4, height: 4) { _, _ in (blue: 0, green: 0, red: 255) }
+        let picture = try FrameConverter(width: 2, height: 2).convert(source)
+        // sRGB の (1, 0, 0) は Display P3 で 8 bit の (234, 51, 35)
+        #expect(near(rgba(picture, 1, 1), [234, 51, 35, 255]), "\(rgba(picture, 1, 1))")
+    }
+
     // MARK: - 不透明度 (#2881)
 
     /// 左から 透明 / 半透明 / 不透明 の 3 画素 (乗算していない赤橙)。
