@@ -144,7 +144,7 @@ func setup() {
 - **読み取りと描く口。** 読み取りは 0 や空を返し (``SketchPart/width`` は 0)、描く口は何もしない。警告は観測の応答にも載る。面の大きさで決まる値は、``Sketch/setup()`` の中で部品を作り直して決める
 - **面から作る資源** (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など)。返すものを作れないので、型のついたエラー (``ImageFailure/notRunning(call:)`` など) を投げる。`try?` で受ければ `nil` になる。投げない ``SketchPart/createShape(_:)`` は空の形を返す
 - **音・通信・シリアルの作る口** (``Sketch/loadSound(_:)``・``Sketch/createTCPServer(_:)``・``Sketch/createSerial(_:baudRate:)`` など)。スケッチの `init()` などで呼ぶと、作ったものを走っているスケッチへ足せないので、同じく ``AudioFailure/notRunning(call:)``・``SerialFailure/notRunning(call:)`` などを投げる
-- **投げない作る口**は、足されていないものを返す。合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを、MIDI の口 (``Sketch/createMIDI(_:)``・``Sketch/createMIDI(messages:)``) は何も届かない入り口を返す
+- **投げない作る口**は、足されていないものを返す。合成音の口 (``Sketch/createSinOsc()`` など) は、音の流れをまだ足していなければ鳴らない音を (``Sketch/setup()`` などで先に合成音を作ってあれば、その流れに入って鳴る音を)、``Sketch/createAudioIn(device:)`` は何も聞かない入力を、記録を流す 5 口 (``Sketch/createTCPServer(messages:)``・``Sketch/createWebSocketServer(messages:)``・``Sketch/createUDP(messages:)``・``Sketch/createOSC(messages:)``・``Sketch/createSerial(lines:)``) は何も届かないポートを、ゲームパッドの口 (``Sketch/gamepads()``・``Sketch/createGamepad(inputs:)``) は何も入らないパッドを、MIDI の口 (``Sketch/createMIDI(_:)``・``Sketch/createMIDI(messages:)``) は何も届かない入り口を、手の関節点の口 (``Sketch/createHandPose(results:)``) は何も入らない入り口を返す
 - **入力の止める口** (``AudioIn/stop()``・``Capture/stop()``・``Serial/stop()`` など)。外で呼ぶと何もせず、`AudioIn.stop()` のように型を付けた名前で 1 度だけ警告する
 
 **止まるのは、面そのもの (``SketchPart/canvas``) を外から読んだときだけである。**
@@ -1132,6 +1132,16 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``MIDIPort``
 - ``MIDIDevice``
 - ``MIDIMessage``
+
+### 映像から手を取り出す
+
+- ``Sketch/createHandPose(results:)``
+- ``HandPose``
+- ``HandPoseResult``
+- ``Hand``
+- ``HandJoint``
+- ``HandJointName``
+- ``Handedness``
 
 ### ゲームを組む
 
