@@ -169,6 +169,20 @@ struct SketchPresenceTests {
             elapsed: 0)
         #expect(description.title == "evidence")
     }
+
+    // MARK: - プレビューの絵 (#3683)
+
+    /// ``DisplayImage`` の画素は Display P3 の原色である (ADR-0011 決定 6)。DeviceRGB と名乗ると、
+    /// P3 ではない画面で彩度がずれる。名乗りだけを変え、画素は 1 バイトも動かさない。
+    @Test("プレビューの絵は Display P3 と名乗り、画素はそのまま渡す")
+    func previewDeclaresDisplayP3() throws {
+        let bytes: [UInt8] = [255, 0, 0, 255, 128, 128, 128, 255, 0, 200, 40, 128, 0, 0, 0, 0]
+        let cgImage = try #require(SketchPresence.makeCGImage(DisplayImage(width: 2, height: 2, bytes: bytes)))
+        #expect(cgImage.colorSpace?.name == CGColorSpace.displayP3)
+        #expect(cgImage.alphaInfo == .last)
+        let data = try #require(cgImage.dataProvider?.data) as Data
+        #expect([UInt8](data) == bytes)
+    }
 }
 
 /// 名乗りの**時計の出どころ**を、`SketchRuntime` を通して見る検査 (#3119)。
