@@ -60,7 +60,8 @@ extension Sketch {
             Capture(
                 image: try createImage(width, height, calledAs: call), device: device,
                 name: device.map { "camera: \($0.name)" } ?? "camera",
-                source: CameraSource(device: device, width: width, height: height), mirrored: mirrored,
+                source: CameraSource(device: device, width: width, height: height, mirrored: mirrored),
+                mirrored: mirrored,
                 owner: self)
         }
     }

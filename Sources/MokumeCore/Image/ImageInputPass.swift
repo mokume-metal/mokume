@@ -13,6 +13,15 @@ import Metal
     private let patchState: any MTLRenderPipelineState
     private let lookup: any MTLBuffer
     private var tables: [ArgumentTablePool]
+    /// 面に被せたテクスチャの持ち回し (#2962)。動画の読み手のプールは同じ面を巡らせるので、作って常駐させる
+    /// のは初めて見た面だけにする — 毎フレーム作ると、作る・常駐の確定・外すを 1 枚ごとに main で払う。
+    /// テクスチャは面の使用数を上げない (プールの使い回しを妨げない) が、面の記憶は抱えるので、しばらく
+    /// 使わなかった面と上限を越えた古い面は手放す
+    private var surfaceTextures: [(surface: IOSurface, texture: any MTLTexture, lastUse: UInt64)] = []
+    /// 持ち回す面の数の上限。4K の動画 4 本のプール (1 本 6〜12 面) が収まる
+    static let surfaceTextureLimit = 48
+    /// この本数の投入のあいだ使わなかった面は手放す。止めた・閉じた動画の面を抱え続けない
+    static let surfaceTextureIdleSubmissions: UInt64 = 120
 
     init(gpu: RenderDevice, slotCount: Int) throws(RenderFailure) {
         let library = try gpu.shaders.imageInputLibrary()
@@ -55,7 +64,10 @@ import Metal
         }
     }
 
-    isolated deinit { gpu.retire(lookup) }
+    isolated deinit {
+        gpu.retire(lookup)
+        for entry in surfaceTextures { gpu.retire(entry.texture) }
+    }
 
     /// 面の入力を GPU が読む準備。面に被せたテクスチャと、色の表の置き場。
     struct SurfaceSource {
@@ -67,16 +79,50 @@ import Metal
     /// 面の入力を読む準備をする。**作れなければ `nil`** — 呼び手はその 1 枚だけを CPU で届ける
     /// (表を CPU で引く)。他の絵の GPU の変換は止めない。
     func surfaceSource(for surface: PixelSurface) -> SurfaceSource? {
+        guard let texture = surfaceTexture(for: surface.lease.surface),
+            let table = try? gpu.colorTableBuffer(for: surface.conversion)
+        else { return nil }
+        return SurfaceSource(texture: texture, table: table, lease: surface.lease)
+    }
+
+    /// 面に被せた常駐済みのテクスチャ。持ち回しに無ければ作って常駐させる。
+    ///
+    /// 鍵は面そのもの (`===`)。持ち回しのテクスチャが面を抱えるので、同じ番地に別の面が来ることはない。
+    private func surfaceTexture(for surface: IOSurface) -> (any MTLTexture)? {
+        let now = gpu.submissionCount
+        if let index = surfaceTextures.firstIndex(where: { $0.surface === surface }) {
+            surfaceTextures[index].lastUse = now
+            return surfaceTextures[index].texture
+        }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: surface.width, height: surface.height, mipmapped: false)
         // 読むだけ。`storageMode` は面が決めるので触らない
         descriptor.usage = .shaderRead
-        guard
-            let texture = gpu.device.makeTexture(
-                descriptor: descriptor, iosurface: surface.lease.surface, plane: 0),
-            let table = try? gpu.colorTableBuffer(for: surface.conversion)
-        else { return nil }
-        return SurfaceSource(texture: texture, table: table, lease: surface.lease)
+        guard let texture = gpu.device.makeTexture(descriptor: descriptor, iosurface: surface, plane: 0) else {
+            return nil
+        }
+        gpu.makeResident(texture)
+        surfaceTextures.append((surface, texture, now))
+        if surfaceTextures.count > Self.surfaceTextureLimit,
+            let oldest = surfaceTextures.indices.min(by: { surfaceTextures[$0].lastUse < surfaceTextures[$1].lastUse })
+        {
+            gpu.retire(surfaceTextures.remove(at: oldest).texture)
+        }
+        return texture
+    }
+
+    /// 持ち回している面のテクスチャの数 (検査が読む)。
+    var surfaceTextureCount: Int { surfaceTextures.count }
+
+    /// しばらく使わなかった面のテクスチャを手放す。届けるものが無いフレームも含めて、毎フレーム呼ぶ。
+    func forgetIdleSurfaces() {
+        guard !surfaceTextures.isEmpty else { return }
+        let now = gpu.submissionCount
+        surfaceTextures.removeAll { entry in
+            guard now - entry.lastUse > Self.surfaceTextureIdleSubmissions else { return false }
+            gpu.retire(entry.texture)
+            return true
+        }
     }
 
     /// 失敗しうる準備をすべて済ませてから積む。失敗時は呼び手が従来の CPU 経路へ戻す。
@@ -114,8 +160,8 @@ import Metal
             originX: 0, originY: 0, width: Double(image.width), height: Double(image.height),
             znear: 0, zfar: 1))
         if image.inputNeedsDecode, let source {
-            // 面を読む。面と表は、この投入が終わるまで持つ (面は使用中の印ごと持つので、置き場に使い回されない)
-            gpu.makeResident(source.texture)
+            // 面を読む。面と表は、この投入が終わるまで持つ (面は使用中の印ごと持つので、置き場に使い回されない)。
+            // テクスチャは持ち回しが常駐させている
             decodeTable.setTexture(source.texture.gpuResourceID, index: 0)
             decodeTable.setAddress(source.table.gpuAddress, index: 0)
             decodeTable.setAddress(lookup.gpuAddress, index: 1)
@@ -123,7 +169,6 @@ import Metal
             encoder.setArgumentTable(decodeTable, stages: [.vertex, .fragment])
             encoder.drawPrimitives(primitiveType: .triangle, vertexStart: 0, vertexCount: 3)
             gpu.holdUntilSubmittedWorkFinishes([source.texture, source.table, source.lease])
-            gpu.retire(source.texture)
         } else if image.inputNeedsDecode, let picture {
             picture.bytes.withUnsafeBytes { source in
                 bytes.copyMemory(from: source.baseAddress!, byteCount: source.count)

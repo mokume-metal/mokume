@@ -139,6 +139,23 @@ final class MovieReader {
             orientation: orientation)
     }
 
+    /// `position` 秒に映っているコマ。**前に渡したコマと同じなら `nil`。** 面のまま渡せるコマは面で返す
+    /// (``SurfaceRoute``。表は作らず、先読みの係やカメラが作った表があるときだけ — main で作らない)。
+    ///
+    /// 範囲の外・読めなくなったときは ``picture(at:)`` と同じ。
+    func frame(at position: Double) throws(Failure) -> VideoFrame? {
+        guard try frames.advance(to: position) else { return nil }
+        guard let current = frames.current, current.serial != handed else { return nil }
+        if case .success(let surface) = SurfaceRoute.surface(
+            for: current.buffer, alpha: .straight, reshaped: orientation != .identity || conversion != nil,
+            builds: false)
+        {
+            handed = current.serial
+            return .surface(surface)
+        }
+        return try picture(at: position).map(VideoFrame.converted)
+    }
+
     /// `position` 秒に映っているコマ。**前に渡したコマと同じなら `nil`。**
     ///
     /// 範囲の外は端のコマを返す。読めなくなったら投げ、最後に読めたコマを持ったまま止まる。

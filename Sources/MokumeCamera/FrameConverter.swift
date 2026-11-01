@@ -5,6 +5,7 @@ import Accelerate
 import CoreGraphics
 import CoreVideo
 import MokumeCore
+import Synchronization
 
 /// 外から来た 1 枚 (カメラ・動画ファイルの `CVPixelBuffer`) を、本体が絵にできる形
 /// (``DisplayImage``) にする。
@@ -58,7 +59,7 @@ nonisolated final class FrameConverter {
     }
 
     /// 元の絵の不透明度の扱い。
-    enum Alpha: Equatable {
+    enum Alpha: Hashable, Sendable {
         /// 不透明として扱う。元の不透明度は読まず、すべての画素を 255 で埋める (カメラ)。
         case opaque
         /// 元の不透明度を、乗算していないまま運ぶ (動画)。元が乗算済みを名乗れば、乗算を戻してから変換する。
@@ -120,8 +121,12 @@ nonisolated final class FrameConverter {
         self.alpha = alpha
     }
 
+    /// 変換した枚数 (プロセスの通算)。**計測が読む** (面の道に乗ったコマで CPU の全画素の変換が起きないこと — #2962)。
+    static let conversions = Atomic<Int>(0)
+
     /// 1 枚を変換する。
     func convert(_ buffer: CVPixelBuffer) throws(Failure) -> DisplayImage {
+        Self.conversions.add(1, ordering: .relaxed)
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
 

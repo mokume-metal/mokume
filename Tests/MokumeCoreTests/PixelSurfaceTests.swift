@@ -262,6 +262,28 @@ struct ColorTableTests {
         #expect(SurfaceLease.live.load(ordering: .relaxed) == before)
     }
 
+    @Test("同じ面を書き直してもテクスチャは作り直さず、しばらく使わない面のテクスチャは手放す")
+    func texturesFollowSurfaces() throws {
+        let gpu = try RenderDevice()
+        let canvas = try CanvasFixture.make(gpu: gpu, width: 32, height: 32)
+        let table = TableMapping.identityTable
+        let first = try Self.surface(width: side, height: side) { _, _ in (10, 20, 30) }
+        let second = try Self.surface(width: side, height: side) { _, _ in (40, 50, 60) }
+        let image = try canvas.createImage(side, side)
+        for surface in [first, first, second, first] {
+            image.write(try #require(PixelSurface(surface, conversion: table)))
+            try canvas.draw { canvas.image(image, 0, 0, 32, 32) }
+        }
+        let pass = try #require(canvas.imageInputPass)
+        #expect(pass.surfaceTextureCount == 2, "動画のプールのように巡ってくる面は、初めて見たときだけ作る")
+        #expect(try texels(image, on: gpu) == expected(try #require(PixelSurface(first, conversion: table))))
+        for _ in 0...ImageInputPass.surfaceTextureIdleSubmissions {
+            try canvas.draw { canvas.background(.transparent) }
+        }
+        #expect(pass.surfaceTextureCount == 0, "書かなくなった面は、届けるものが無いフレームでも手放す")
+        try gpu.settle()
+    }
+
     @Test("CPU で読むと表を CPU で引いて写し、面を放す。編集も載る")
     func readingOnTheCPUMaterializes() throws {
         let gpu = try RenderDevice()

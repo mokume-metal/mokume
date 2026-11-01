@@ -187,12 +187,12 @@ struct MovieTests {
         try await TestMovie.write(frames: 90, width: 128, height: 96, keyFrameInterval: 30, paint: TestMovie.stripe)
     }
 
-    /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (5 秒) を越えたら落とす。
+    /// 動画の先読みの係が列を埋め終えるまで待つ。期限 (60 秒) を越えたら落とす。期限は、係が最初のコマで面の色の表を作る (debug で数秒・#2962) 間を含む。
     private func settle(_ movie: Movie) async throws {
         guard let prefetcher = movie.prefetcher else { return }
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !prefetcher.isSettled {
-            try #require(ContinuousClock.now < deadline, "係が 5 秒で列を埋め終えない")
+            try #require(ContinuousClock.now < deadline, "係が 60 秒で列を埋め終えない")
             try await Task.sleep(for: .milliseconds(1))
         }
     }
@@ -366,6 +366,54 @@ struct MovieTests {
         #expect(index == Int((Double(before.time) * 30 + 0.03).rounded(.down)), "前提: 観測の前後で同じコマ (\(before.time) → \(after.time) 秒)")
         #expect(after.pixels == expected[index], "観測の後の枚が作者の時計の位置のコマでない (\(after.time) 秒)")
         #expect(after.time > before.time && after.time < 1, "観測の後の位置: \(after.time)")
+    }
+
+    @Test("実時間の時計で流す 100 万画素以上の不透明な動画は、面のまま絵へ届き、長く流しても面を抱え込まず、手放せば放す (#2962)")
+    func wallClockOpaqueMovieArrivesAsSurfaces() async throws {
+        // 100 万画素以上 (絵が GPU で変換する大きさ)・30 fps・2 秒
+        let url = try await TestMovie.write(frames: 60, width: 1280, height: 832, keyFrameInterval: 30, paint: TestMovie.stripe)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let before = SurfaceLease.live.load(ordering: .relaxed)
+        var movie: Movie?
+        var surfaces = 0
+        var frames = 0
+        MovieSketch.frameRate = 30
+        MovieSketch.clockMode = .wallClock
+        MovieSketch.onSetup = { sketch in
+            let made = try sketch.createVideo(url.path)
+            made.loop()
+            movie = made
+        }
+        // 画素は読まない (読むと CPU へ写して面を放す)。面で届いたかだけを見る
+        MovieSketch.onDraw = { _ in
+            guard let movie, movie.isNewFrame else { return }
+            frames += 1
+            if movie.image.surfaceInput != nil { surfaces += 1 }
+        }
+        var now = 100.0
+        let gpu = try RenderDevice()
+        var runtime: SketchRuntime? = try SketchRuntime(sketch: MovieSketch(), gpu: gpu, clock: .wallClock, now: { now })
+        // 4 周 (240 フレーム)。各フレームの後に係を待つ (画面の更新の間に係が進むのと同じ)
+        for _ in 0..<240 {
+            now += 1.0 / 30
+            try runtime!.advance()
+            try await settle(try #require(movie))
+        }
+        #expect(frames > 200)
+        #expect(surfaces >= frames - 3, "面で届いたのは \(surfaces) / \(frames) 枚 (最初の 1 枚と係の立ち上がりは CPU の道)")
+        // 抱えている面は、列の 3 枚・最後に出した 1 枚・絵の 1 枚・投入中の分で頭打ち (増え続けない)
+        let held = SurfaceLease.live.load(ordering: .relaxed) - before
+        #expect(held <= 8, "長く流した後に \(held) 面を抱えている")
+        // 絵が持つ最後の 1 面は絵の寿命に従う (2026-11-01 の判断)。スケッチを閉じて Movie と絵を手放せば放す
+        runtime!.closePlugins()
+        try gpu.settle()
+        #expect(
+            SurfaceLease.live.load(ordering: .relaxed) - before >= 1,
+            "Movie を閉じても、絵 (movie.image) が持つ最後の 1 面は残る (絵の寿命に従う)")
+        movie = nil
+        runtime = nil
+        try gpu.settle()
+        #expect(SurfaceLease.live.load(ordering: .relaxed) == before, "Movie と絵を手放した後も面を抱えている")
     }
 
     @Test("実時間の時計の先読みの係は、スケッチが終わると止まってから閉じる")

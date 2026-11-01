@@ -17,10 +17,11 @@ import Synchronization
 /// - **操作の列** (``control``): 開始・停止・許可の答え・抜き差しの知らせを順に進める。
 ///   開始と停止を直列に並べないと、止めた後に始まる・始める前に止める、が起きる。
 ///   状態 (``lifecycle`` ほか) はこの上に閉じていて、錠は要らない
-/// - **絵の列** (``frames``): 届いた 1 枚を変換する。操作の列と分けるのは、止める手
-///   (`stopRunning()`) が操作の列の上で待つ間に、届いた 1 枚が同じ列に詰まらないため
-/// - 境界を越えるのは ``DisplayImage`` (`Sendable`) と状態だけで、`CMSampleBuffer` は
-///   越えさせない
+/// - **絵の列** (``frames``): 届いた 1 枚を変換する (面のまま渡せる 1 枚は面で渡し、その色の表もこの列で作る —
+///   ``SurfaceRoute``)。操作の列と分けるのは、止める手 (`stopRunning()`) が操作の列の上で待つ間に、届いた 1 枚が
+///   同じ列に詰まらないため
+/// - 境界を越えるのは ``VideoFrame`` (`DisplayImage` か、面を包んだ自前の `PixelSurface`。どちらも `Sendable`) と
+///   状態だけで、`CMSampleBuffer`・`CVPixelBuffer` は越えさせない
 /// - 受けたものは ``ExternalInput`` へ入れるところで手を離す。フレームへ渡すのは
 ///   ``Capture/supply()`` である
 ///
@@ -44,22 +45,25 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
     let frames = DispatchQueue(label: "org.mokume.camera.frames")
 
     /// 入れ物。操作の列が置き、絵の列が読む。1 度置くだけなので、錠は読み書きの境目のため
-    private let input = Mutex<ExternalInput<DisplayImage>?>(nil)
+    private let input = Mutex<ExternalInput<VideoFrame>?>(nil)
     private var lifecycle = CameraLifecycle()
     private var session: AVCaptureSession?
     /// いま使っている機材の識別子。抜かれたのがこれかを見分ける。
     private var currentID: String?
     private var observers: [any NSObjectProtocol] = []
     private var warnedConversion = false
+    /// 届いた絵を左右反転して映すか。反転するなら面に乗せない (反転は CPU で画素を動かす — ``SurfaceRoute``)。
+    private let mirrored: Bool
 
-    init(device: CaptureDevice?, width: Int, height: Int) {
+    init(device: CaptureDevice?, width: Int, height: Int, mirrored: Bool = false) {
         requested = device
         converter = FrameConverter(width: width, height: height)
+        self.mirrored = mirrored
     }
 
     // MARK: - CaptureSource (main actor から)
 
-    func start(into input: ExternalInput<DisplayImage>) {
+    func start(into input: ExternalInput<VideoFrame>) {
         self.input.withLock { $0 = input }
         observeConnections()
         control.async { [self] in
@@ -71,7 +75,7 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         }
     }
 
-    func pump(into input: ExternalInput<DisplayImage>) {}
+    func pump(into input: ExternalInput<VideoFrame>) {}
 
     func stop() {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
@@ -208,16 +212,27 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         from connection: AVCaptureConnection
     ) {
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let picture: DisplayImage
-        do {
-            picture = try converter.convert(pixels)
-        } catch {
-            // 毎フレーム走る経路なので投げない。1 度だけ言う (ADR-0020 決定 5)
-            if !warnedConversion {
-                warnedConversion = true
-                Diagnostics.warn("Could not convert a camera frame: \(error)")
+        // 面のまま渡せるなら面で (#2962)。色の表が無ければ、この絵の列の上で作る (main では作らない)。
+        // 頼んだ大きさと違う絵は、変換器が縮めるので面に乗せない
+        let reshaped =
+            mirrored || CVPixelBufferGetWidth(pixels) != converter.width
+            || CVPixelBufferGetHeight(pixels) != converter.height
+        let picture: VideoFrame
+        if case .success(let surface) = SurfaceRoute.surface(
+            for: pixels, alpha: .opaque, reshaped: reshaped, builds: true)
+        {
+            picture = .surface(surface)
+        } else {
+            do {
+                picture = .converted(try converter.convert(pixels))
+            } catch {
+                // 毎フレーム走る経路なので投げない。1 度だけ言う (ADR-0020 決定 5)
+                if !warnedConversion {
+                    warnedConversion = true
+                    Diagnostics.warn("Could not convert a camera frame: \(error)")
+                }
+                return
             }
-            return
         }
         // 届いた時刻は機材の時計 (host time) のまま持つ (ADR-0042 決定 4)
         let stamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)

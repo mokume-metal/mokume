@@ -177,7 +177,7 @@ public final class Movie: Inlet {
     /// このフレームで新しいコマが ``image`` に書かれたか。
     public private(set) var isNewFrame = false
 
-    let input: ExternalInput<DisplayImage>
+    let input: ExternalInput<VideoFrame>
     private let reader: MovieReader
     private var playhead: Playhead
     private weak var owner: (any Sketch)?
@@ -194,7 +194,7 @@ public final class Movie: Inlet {
     /// 前のフレームを先読みの列から出したか。
     private var prefetching = false
     /// 先読みの列から最後に出したコマ。同期の読み (観測の枚) から戻ったフレームで映し直す。
-    private var lastPrefetched: DisplayImage?
+    private var lastPrefetched: VideoFrame?
     /// 1 枚でもコマを出したか。最初の 1 枚は同期に読む (作るときに読んだコマを変換するだけ)。
     private var hasShown = false
 
@@ -323,7 +323,7 @@ public final class Movie: Inlet {
             noticeOnce(error, at: position)
         }
         if let picture = input.take() {
-            image.write(picture)
+            picture.write(to: image)
             isNewFrame = true
         } else {
             isNewFrame = false
@@ -345,13 +345,13 @@ public final class Movie: Inlet {
     /// 観測の枚・最初の 1 枚・先読みの係が動画を開けなかったときは、この場で同期に読む。2 つの読み手は
     /// 別々に持ち、同時に触らない (同期に読む間、係は前の頼みのまま休んでいる)。
     private func picture(at position: Double, jumped: Bool, observing: Bool) throws(MovieReader.Failure)
-        -> DisplayImage?
+        -> VideoFrame?
     {
         guard allowsPrefetch, hasShown, !observing, owner?.clock == .wallClock,
             let prefetcher = prefetcherIfUsable()
         else {
             prefetching = false
-            return try reader.picture(at: position)
+            return try reader.frame(at: position)
         }
         let returning = !prefetching
         if returning {
