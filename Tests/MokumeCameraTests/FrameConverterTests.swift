@@ -231,6 +231,22 @@ nonisolated struct FrameConverterTests {
         }
     }
 
+    /// 乗算済みを名乗る元 (アルファ付きの HEVC) は、8 bit で乗算を戻してから線形へ移し、乗算して縮める。
+    /// 戻し忘れれば色が半分の暗さになり、二重に掛ければもっと暗くなる。
+    @Test("縮める道: 乗算済みを名乗る半透明の縞も、光の量で平均した値になる")
+    func scalingPremultipliedSourcesAveragesLinearLight() throws {
+        // 乗算していない白 (255) を不透明度 128 で乗算すると 128
+        let source = try alphaBuffer(
+            width: 8, height: 8, mode: kCVImageBufferAlphaChannelMode_PremultipliedAlpha
+        ) { x, _ in x.isMultiple(of: 2) ? (128, 128, 128, 128) : (0, 0, 0, 128) }
+        let picture = try FrameConverter(width: 4, height: 4, alpha: .straight).convert(source)
+        for y in 0..<4 {
+            let mean = rowLight(picture, y)
+            #expect(abs(mean - 0.5) < 0.04, "y=\(y): 光の量の平均 \(mean)")
+            for x in 0..<4 { #expect(abs(rgba(picture, x, y)[3] - 128) <= 1, "(\(x), \(y))") }
+        }
+    }
+
     @Test("縮める道でも、名乗りの無い絵の原色を Display P3 へ移す")
     func scalingMovesSRGBPrimariesIntoDisplayP3() throws {
         let source = try buffer(width: 4, height: 4) { _, _ in (blue: 0, green: 0, red: 255) }
@@ -339,14 +355,18 @@ nonisolated struct FrameConverterTests {
     func keepsTheResizeBufferForTheSameSize() throws {
         let converter = FrameConverter(width: 2, height: 2)
         #expect(converter.resizedBufferAddress == nil, "大きさが同じ経路は器を使わない")
+        #expect(converter.scaledBufferAddress == nil)
         let source = try patterned(width: 8, height: 4)
         _ = try converter.convert(source)
         let first = try #require(converter.resizedBufferAddress)
+        let firstScaled = try #require(converter.scaledBufferAddress)
         for _ in 0..<3 { _ = try converter.convert(source) }
         #expect(converter.resizedBufferAddress == first)
+        #expect(converter.scaledBufferAddress == firstScaled)
         // 小さい元でも、足りているので取り直さない
         _ = try converter.convert(try patterned(width: 4, height: 4))
         #expect(converter.resizedBufferAddress == first)
+        #expect(converter.scaledBufferAddress == firstScaled)
     }
 
     @Test("頼んだ大きさと同じ元は、一時の器を使わない")

@@ -123,6 +123,9 @@ nonisolated final class FrameConverter {
     /// 検査用: 大きさが違う元の変換に使う器の先頭のアドレス。続けて呼んで変わらなければ、取り直していない。
     var resizedBufferAddress: UnsafeRawPointer? { resized.address }
 
+    /// 検査用: 縮めた絵を置く器の先頭のアドレス (``resizedBufferAddress`` と同じ見方)。
+    var scaledBufferAddress: UnsafeRawPointer? { scaled.address }
+
     deinit {
         straightened.release()
         resized.release()
@@ -144,7 +147,12 @@ nonisolated final class FrameConverter {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
 
-        let (converter, sourceCount) = try converter(for: buffer)
+        let sourceWidth = CVPixelBufferGetWidth(buffer)
+        let sourceHeight = CVPixelBufferGetHeight(buffer)
+        let sameSize = sourceWidth == width && sourceHeight == height
+        // 大きさが同じなら行き先 (8 bit) へ直に、違えば半精度の線形へ移す変換器。元の器の数と並びは
+        // 使う変換器から読む (2 本の変換器で揃っていることを当てにしない)
+        let (converter, sourceCount) = try sameSize ? converter(for: buffer) : linearConverter(for: buffer)
         var sources = [vImage_Buffer](repeating: vImage_Buffer(), count: sourceCount)
         let initialized = vImageBuffer_InitForCopyFromCVPixelBuffer(
             &sources, converter, buffer, vImage_Flags(kvImageNoAllocate))
@@ -164,22 +172,19 @@ nonisolated final class FrameConverter {
             sources[0] = target
         }
 
-        let sourceWidth = CVPixelBufferGetWidth(buffer)
-        let sourceHeight = CVPixelBufferGetHeight(buffer)
-        if sourceWidth == width, sourceHeight == height {
+        if sameSize {
             return try Self.picture(width: width, height: height, alpha: alpha) { destination in
                 vImageConvert_AnyToAny(converter, &sources, &destination, nil, vImage_Flags(kvImageNoFlags))
             }
         }
         // 大きさが違えば、元の大きさのまま半精度の線形へ変換し、切り取って縮めてから 8 bit へ戻す。
         // **変換の行き先は持ち回しの器** (毎枚 0 埋めで確保しない)。全部を書き直すので、前の枚の中身は誰も読まない
-        let (linear, _) = try linearConverter(for: buffer)
         let encoder = try encoder()
         let full = resized.pointer(byteCount: sourceWidth * sourceHeight * Self.linearPixelBytes)
         var whole = vImage_Buffer(
             data: full, height: vImagePixelCount(sourceHeight),
             width: vImagePixelCount(sourceWidth), rowBytes: sourceWidth * Self.linearPixelBytes)
-        let converted = vImageConvert_AnyToAny(linear, &sources, &whole, nil, vImage_Flags(kvImageNoFlags))
+        let converted = vImageConvert_AnyToAny(converter, &sources, &whole, nil, vImage_Flags(kvImageNoFlags))
         guard converted == kvImageNoError else { throw .conversion(converted) }
         // **縮めるあいだは乗算する。** 乗算していないまま混ぜると、透明な画素の色が
         // 不透明な画素の縁へにじむ
