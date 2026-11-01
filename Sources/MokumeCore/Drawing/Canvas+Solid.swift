@@ -378,6 +378,11 @@ extension Canvas {
     ) {
         // `showsBackFaces` と `mirrored` は、置き場所を先に掛けた頂点 (`placement` は単位) を積む
         // ときに、元の置き場所の判定を渡す口 (保持した形の線を組み直して差し込む・#1893)
+        //
+        // **1 回だけ混ぜる線の区間を持つ列に、部品を足さない** — 部品を持つ列は裏 → 表で描く口
+        // (`encodeBackThenFront`) を通り、区間を割って描かない。線の区間を部品の列に入れない側は
+        // ``recordingSolidStroke(_:_:)`` が受け持つ (線の後に部品が来る順はここ)
+        if !parts.isEmpty, openSolid?.strokeStencilSections.isEmpty == false { closeBatch() }
         if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
         let base = solidVertices.count
         notePlacedParts(
@@ -666,6 +671,12 @@ extension Canvas {
     /// (#1637・``ThinStroke``)。太さは出す画素なので、細さは置く面の細かさだけで決まる。
     /// 記録の間は判断せず、置くときに置く面で組み直す (``rebuiltSolidStroke(_:)``)。
     ///
+    /// **半透明の線は、1 つの図形の線全体を 1 回だけ混ぜる** ([ADR-0046])。帯・折れ目・端の形・曲線の
+    /// 刻みの円板は重ねたまま積み、型板が同じ画素の 2 つ目以降の片を落とす。画面で折れ目が重なる所・
+    /// 奥行きの違う辺が画面で交わる所も 1 回で、別々の図形の線どうしは 2 回混ぜる。範囲の外は
+    /// ``solidStrokeOverlapsShow`` にある (`shader()`・保持した形・細い線は、これまでどおり片を重ねて混ぜる)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
     func strokeSolidRing(
         _ points: [SIMD3<Float>], shapePoints: [SIMD3<Float>], isClosed: Bool,
@@ -697,6 +708,12 @@ extension Canvas {
     /// 帯は視線に合わせて**世界の座標で**組み立てるので、置き場所の変換を点へ焼き込む。
     /// 形自身の座標は稜線の点をそのまま渡す — 頂点を並べた形の輪郭と同じ約束で、
     /// 利用者の断片からは線も形の表面に留まって見える。
+    ///
+    /// **半透明の稜線は、形 1 つの稜線全体を 1 回だけ混ぜる** ([ADR-0046])。稜が集まる角も、奥行きの違う
+    /// 稜が画面で交わる所も 1 回で、別々に置いた形どうしは 2 回混ぜる。重なりが絵に出る線は GPU の骨
+    /// (``placeGPUStroke(of:mesh:)``・不透明の `blend` だけ) を通らず、CPU の帯で組んで型板を通る。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
         // 区間の外では引かない。`noFill()` の立体はここだけを通る (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
@@ -735,14 +752,63 @@ extension Canvas {
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
+        let stenciled = !recordingShape && solidStrokeCoverage == 1 && solidStrokeOverlapsShow
+        // **線の区間を、裏 → 表で描く部品を持つ列に入れない** — その列は部品ごとに捨て方を変えて描く
+        // (`encodeBackThenFront`) ので、区間を割って描く口を通らない
+        if stenciled, openSolid?.parts.isEmpty == false { closeBatch() }
         let start = solidVertices.count
+        let indexStart = solidIndices.count
         build()
+        if stenciled { noteStrokeStencilSection(vertexStart: start, indexStart: indexStart) }
         guard recordingShape, solidVertices.count > start else { return }
         recordedSolidStrokes.append(
             SolidStrokePiece(
                 source: source, weight: style.strokeWeight, join: style.strokeJoin, cap: style.strokeCap,
                 vertexStart: start, vertexCount: solidVertices.count - start,
                 isLonePoint: solidStrokeIsLonePoint))
+    }
+
+    /// 立体の線の片の重なりが絵に出るか — 出るなら、1 つの図形の線全体を型板で 1 回だけ混ぜる
+    /// ([ADR-0046]・``Batch/strokeStencilSections``)。
+    ///
+    /// 出るのは、半透明の色を `blend` / `lightest` / `darkest` で置くか、下地を読む混ぜ方で置く線である
+    /// (平面の線の ``strokeOverlapsShow`` と同じ混ぜ方の分け方)。`replace` と不透明の色は、重ねて混ぜても
+    /// 同じ色になるので型板を通さない。
+    ///
+    /// **`shader()` が効いている線は、この段では通さない** ([#3577])。断片が出す不透明度は分からず、平面の
+    /// 線と同じく「出るもの」と扱うと、不透明の色の線まで描く呼び出しが増える。保持した形の線
+    /// (`recordingShape`・置くときに組み直す・[#3577]) と、描く画素で 1 画素より細い線 (被覆 < 1・[#3578]) も
+    /// 同じく範囲の外で、これまでどおり片を重ねて混ぜる。細さは描く面の細かさで決まるので、同じ線でも
+    /// 面の細かさによって型板を通るかが変わる (段 3 で揃える)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#3577]: https://github.com/mokume-metal/mokume/issues/3577
+    /// [#3578]: https://github.com/mokume-metal/mokume/issues/3578
+    var solidStrokeOverlapsShow: Bool {
+        guard currentShader == nil else { return false }
+        switch style.blendMode {
+        case .replace: return false
+        case .blend, .lightest, .darkest: return style.stroke.alpha < 1
+        case .add, .subtract, .difference, .exclusion, .multiply, .screen: return true
+        }
+    }
+
+    /// 組み終えた線 1 本の区間を、開いている列に 1 回だけ混ぜる区間として覚える (``OpenSolid/strokeStencilSections``)。
+    ///
+    /// 区間は列の描く単位で持つ — 添字の列 (奥行きのある `beginShape` の列など) では読む順の並び、
+    /// そうでなければ頂点の並び。添字の列に並べた線の頂点も自分の番号を名乗る
+    /// (``appendSolidVertex(position:shapePosition:normal:shapeNormal:isDerived:uv:isStroke:strokeCoverage:color:)``)
+    /// ので、読む順の並びの中で連なる。組む途中で列が閉じたら、いまの列に入った分だけを覚える。
+    private func noteStrokeStencilSection(vertexStart: Int, indexStart: Int) {
+        guard let open = openSolid, open.external == nil, open.strokeGeometry == nil else { return }
+        let section: Range<Int>
+        if let openIndexStart = open.indexStart {
+            section = max(indexStart, openIndexStart)..<solidIndices.count
+        } else {
+            section = max(vertexStart, open.vertexStart)..<solidVertices.count
+        }
+        guard !section.isEmpty else { return }
+        openSolid?.strokeStencilSections.append(section)
     }
 
     /// 線 1 本を、いまのスタイルといまの視点で組む。積むか位置だけを受け取るかは

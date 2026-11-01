@@ -160,6 +160,11 @@ extension Canvas {
     /// 等しければ小さい番号) の位置で 1 度だけ置く — 奥の点に置くと、透視で群の点の間にある
     /// 不透明な面に隠れる。
     ///
+    /// **骨は片の重なりを引かない。** 帯と折れ目・端の形は重ねたまま積む。立体の線 (``Canvas/strokeSolidRing``・
+    /// ``Canvas/strokeSolidEdges(of:mesh:)``) の重なりは、1 つの図形の線全体を型板で 1 回だけ混ぜることで
+    /// 絵に出さない ([ADR-0046])。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1889]: https://github.com/mokume-metal/mokume/issues/1889
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
     ///

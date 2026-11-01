@@ -23,6 +23,11 @@ import MokumeDiagnostics
 
     /// 奥行きを覚えておく面の形式。
     static let depthFormat: MTLPixelFormat = .depth32Float
+    /// 型板の面の形式 (``stencilTexture``)。奥行きの面とは別に持つ — 奥行きを `depth32Float_stencil8` に
+    /// 替えると、形式を借りる影の面 (``ShadowMap``) と控えの奥行きの写しまで動く ([ADR-0046])。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    static let stencilFormat: MTLPixelFormat = .stencil8
 
     /// 1 画素あたりのバイト数 (4 成分 × 半精度浮動小数 2 バイト)。
     static let bytesPerPixel = 8
@@ -88,6 +93,19 @@ import MokumeDiagnostics
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1888]: https://github.com/mokume-metal/mokume/issues/1888
     let depthTexture: any MTLTexture
+
+    /// 線を 1 回だけ混ぜる型板の面 ([ADR-0046]・[#3574])。
+    ///
+    /// **パスごとに 0 から始めて捨てる** (``makeRenderPass(clearColor:continuingDepth:keepingDepth:)``) ので、
+    /// 中身は GPU のタイルの上にしか無い (`memoryless`)。印を付けた区間は、同じパスの中で消し描きが
+    /// 0 へ戻す (``ShapePipeline``)。描き切りをまたいで運ぶものは無い。標本の数は色の面に合わせる。
+    ///
+    /// 上の 1 ビット (0x80) が線の印で、下の 7 ビットは切り抜きの段数のために空けておく ([#2431])。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    /// [#3574]: https://github.com/mokume-metal/mokume/issues/3574
+    let stencilTexture: any MTLTexture
 
     let gpu: RenderDevice
 
@@ -321,6 +339,17 @@ import MokumeDiagnostics
         let depthTexture = try gpu.makeTexture(descriptor: depth)
         depthTexture.label = "mokume.target.depth"
         self.depthTexture = depthTexture
+
+        let stencil = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: Self.stencilFormat, width: width, height: height, mipmapped: false)
+        stencil.textureType = texture.sampleCount > 1 ? .type2DMultisample : .type2D
+        stencil.sampleCount = texture.sampleCount
+        stencil.usage = [.renderTarget]
+        stencil.storageMode = .memoryless
+        // memoryless の面は常駐の集合へ入れられない (``RenderDevice/makeMemorylessTexture(descriptor:)``)
+        let stencilTexture = try gpu.makeMemorylessTexture(descriptor: stencil)
+        stencilTexture.label = "mokume.target.stencil"
+        self.stencilTexture = stencilTexture
         // 塗りが打ち切られたら、後に書く投入が無ければ塗り直す (``submissionSettled(_:dropped:)``・#2199)
         gpu.awaitSettlement(of: clearSubmission, by: self)
     }
@@ -337,6 +366,7 @@ import MokumeDiagnostics
     isolated deinit {
         gpu.retire(texture)
         gpu.retire(depthTexture)
+        // 型板の面は常駐していない (memoryless) ので、外す番も無い
     }
 
     // MARK: - 画素として見る
@@ -671,6 +701,14 @@ import MokumeDiagnostics
             depth.clearDepth = 1
         }
         depth.storeAction = keepingDepth ? .store : .dontCare
+
+        // 型板は**パスごと**に 0 から始めて捨てる (``stencilTexture``)。印を付けた区間は同じパスの中で
+        // 消し描きが 0 へ戻すので、引き継ぐものが無い
+        let stencil = pass.stencilAttachment!
+        stencil.texture = stencilTexture
+        stencil.loadAction = .clear
+        stencil.clearStencil = 0
+        stencil.storeAction = .dontCare
         return pass
     }
 

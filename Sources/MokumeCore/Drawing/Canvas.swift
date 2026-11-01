@@ -561,6 +561,8 @@ public final class Canvas {
         /// 置いたとき) と、保持した形を置き場所で置く列である。部品の境目は記録した形 1 つずつで、
         /// 1 つの `createShape` に複数の形を記録しても、形どうしは記録した順のまま描く。
         var parts: [SolidPart] = []
+        /// 1 回だけ混ぜる線の区間 (``Batch/strokeStencilSections``)。区間はこの列の描く単位で数える。
+        var strokeStencilSections: [Range<Int>] = []
         /// この列の置き場所が形を鏡映するか (``SolidInstance/isMirrored``)。
         ///
         /// **列の置き場所はどれも同じ符号を持つ。** 表の巻き方は列ごとに 1 つ
@@ -2220,8 +2222,9 @@ public final class Canvas {
         ///   形の塗りが 1 つの区間にまとまらず、巻き方の向きも利用者が決める。
         /// - **粒は部品にしない。** 板 1 枚で自分の手前の面が自分の奥の面を隠すことが無く、
         ///   GPU が個数を書く経路は置き場所ごとに分けようがない。
-        /// - **立体の線の帯は部品の外**で、呼び出し順のまま 1 回で描く (半透明の線の重なりは
-        ///   [#1561](https://github.com/mokume-metal/mokume/issues/1561))。
+        /// - **立体の線の帯は部品の外**で、呼び出し順のまま 1 回で描く。半透明の線を 1 回だけ混ぜる区間
+        ///   (``strokeStencilSections``) と部品は同じ列に同居させない (線を積む `recordingSolidStroke` と部品を足す
+        ///   `appendPlacedSolidVertices` が、相手を持つ列を先に閉じる)。
         var backFaceParts: [SolidPart] = []
         /// 裏面が絵に出うる置き場所の、列の中での番号 (``OpenSolid/backFaceInstances``)。
         var backFaceInstances: [Int] = []
@@ -2287,6 +2290,16 @@ public final class Canvas {
         ///
         /// [#3107]: https://github.com/mokume-metal/mokume/issues/3107
         var readsDepthOnly = false
+        /// 型板で 1 回だけ混ぜる線の区間 ([ADR-0046])。区間は列の描く単位 (添字の列なら読む順、そうで
+        /// なければ頂点の並び) で数え、1 つが線 1 本 (輪郭 1 つ・形 1 つの稜線) の全体である。
+        ///
+        /// 描く側 (``Canvas/encodeBatches(into:prepared:)``) は列を「前・区間・後」に割り、区間を
+        /// 印 (``ShapePipeline/strokeMarkDepthState``) → 消し描き (``ShapePipeline/strokeEraseDepthState``) の
+        /// 2 回で描く。持つのは、その場で組む立体の線のうち重なりが絵に出るもの
+        /// (``Canvas/solidStrokeOverlapsShow``) を積んだ列だけである。
+        ///
+        /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+        var strokeStencilSections: [Range<Int>] = []
 
         /// 頂点を溜め場ではなく自分の置き場から読むなら、その置き場。
         var ownVertices: (any MTLBuffer)? { strokeGeometry?.buffer ?? fillGeometry?.buffer }
@@ -2356,6 +2369,11 @@ public final class Canvas {
             let indexShift = relocated.indexStart - run.indexStart
             backFaceParts = backFaceParts.map {
                 $0.shifted(by: $0.isIndexed ? indexShift : vertexShift)
+            }
+            // 線の区間は列の描く単位で持つ (``strokeStencilSections``)
+            let sectionShift = run.isIndexed ? indexShift : vertexShift
+            strokeStencilSections = strokeStencilSections.map {
+                ($0.lowerBound + sectionShift)..<($0.upperBound + sectionShift)
             }
             run = relocated
         }
@@ -5275,6 +5293,9 @@ public final class Canvas {
         /// 列が使う、特化した立体の組 (``Batch/solidVariant``・光の枝を外す / ブレンドを外す)。
         /// **ここに無い鍵の列は既定の組で描く** (組めなかった鍵・#1795)。積む側は錠も辞書も引かずに、これを引くだけ。
         let solidVariantStates: [ShapePipeline.SolidVariantKey: any MTLRenderPipelineState]
+        /// 線の印を消し描きするパイプライン (``ShapePipeline/strokeEraseState()``)。1 回だけ混ぜる線の区間
+        /// (``Batch/strokeStencilSections``) を持つ列があるフレームだけが組んで持つ。
+        let strokeEraseState: (any MTLRenderPipelineState)?
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -5311,7 +5332,9 @@ public final class Canvas {
         return PreparedBatches(
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
             perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
-            sweeps: try uploadSweeps(), solidVariantStates: variants.states)
+            sweeps: try uploadSweeps(), solidVariantStates: variants.states,
+            strokeEraseState: batches.contains { !$0.strokeStencilSections.isEmpty }
+                ? try pipeline.strokeEraseState() : nil)
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -5372,6 +5395,8 @@ public final class Canvas {
         var detailIndex = 0
         for (index, batch) in batches.enumerated() {
             let run = batch.run
+            // 立体の列を描くパイプライン。線の区間 (``Batch/strokeStencilSections``) を描いた後に戻す
+            var solidState: (any MTLRenderPipelineState)?
             if batch.replacesSurface != pinnedFar {
                 pinnedFar = batch.replacesSurface
                 encoder.setViewport(viewport(pinnedFar: pinnedFar))
@@ -5410,16 +5435,17 @@ public final class Canvas {
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の枝を
                 // 外した断片で (#1795)、不透明と分かる塗りはブレンドなしで (#2366) 描く
                 if let key = batch.solidVariant, let state = variantState(for: key) {
-                    use(state)
+                    solidState = state
                 } else {
-                    use(
+                    solidState =
                         (batch.strokeGeometry != nil
                             ? pipeline.solidStrokeStates
                             : batch.usesUnitShape
                                 ? (run.paint.shader?.unitShapeStates ?? pipeline.unitShapeStates)
                                 : (run.paint.shader?.solidStates ?? pipeline.solidStates))
-                            .drawing(batch))
+                        .drawing(batch)
                 }
+                use(solidState!)
                 use(
                     depth: batch.replacesSurface
                         ? pipeline.replaceDepthState
@@ -5519,6 +5545,39 @@ public final class Canvas {
                     on: encoder)
                 // 置き場所ごとに捨て方を書き換えるので、次の列は設定し直す
                 memory.forgetCullMode()
+            } else if !batch.strokeStencilSections.isEmpty, batch.strokeGeometry == nil,
+                batch.ownedIndices == nil, !batch.replacesSurface,
+                let eraseState = prepared.strokeEraseState, let solidState
+            {
+                // 1 回だけ混ぜる線の区間を持つ列は、「前・区間・後」に割って描く ([ADR-0046])。区間は
+                // 印 → 消し描きの 2 回で描き、描き終えたら列の組と奥行きの扱いへ戻す
+                let solidDepth =
+                    batch.readsDepthOnly ? pipeline.solidReadOnlyDepthState : pipeline.solidDepthState
+                func draw(_ range: Range<Int>) {
+                    guard !range.isEmpty else { return }
+                    encodeSolidDraw(
+                        run, section: range, instances: 0..<batch.instanceCount,
+                        indices: geometry.solidIndices, strokeGeometry: nil, on: encoder)
+                    draws += 1
+                }
+                let whole =
+                    run.isIndexed
+                    ? run.indexStart..<(run.indexStart + run.indexCount) : run.start..<(run.start + run.count)
+                var cursor = whole.lowerBound
+                for section in batch.strokeStencilSections {
+                    let clamped = section.clamped(to: cursor..<whole.upperBound)
+                    guard !clamped.isEmpty else { continue }
+                    draw(cursor..<clamped.lowerBound)
+                    use(depth: pipeline.strokeMarkDepthState)
+                    draw(clamped)
+                    use(eraseState)
+                    use(depth: pipeline.strokeEraseDepthState)
+                    draw(clamped)
+                    use(solidState)
+                    use(depth: solidDepth)
+                    cursor = clamped.upperBound
+                }
+                draw(cursor..<whole.upperBound)
             } else {
                 // 添字を自分の置き場に持つ列 (保持した形の塗り・#2791) は、そこから読む
                 encodeSolidDraw(
