@@ -53,11 +53,10 @@ nonisolated enum DistributionColor {
             guard let base = source.baseAddress,
                 let provider = CGDataProvider(
                     dataInfo: nil, data: base, size: count, releaseData: { _, _, _ in }),
-                let from = CGColorSpace(name: CGColorSpace.displayP3),
                 let to = CGColorSpace(name: CGColorSpace.sRGB),
                 let picture = CGImage(
                     width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                    bytesPerRow: width * 4, space: from,
+                    bytesPerRow: width * 4, space: DisplayImage.colorSpace,
                     bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                     provider: provider, decode: nil, shouldInterpolate: false, intent: .relativeColorimetric)
             else { return false }

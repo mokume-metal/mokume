@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import CoreGraphics
+
 /// 表示できる形になった絵。
 ///
 /// 作業空間の値ではなく、**出力段を通した後**の画素が入っている — 標準レンジへ収め、
 /// ディスプレイのエンコードを掛け、チャンネルあたり 8 bit へ量子化した状態
 /// ([ADR-0011] 決定 3・6)。
+///
+/// 色は **Display P3 の原色に sRGB の転送関数を掛けた値**である ([ADR-0011] 決定 6)。
+/// `CGImage` などへ渡すときは、この色空間を名乗らせる。画面の色空間
+/// (DeviceRGB) と名乗ると、P3 ではない画面で彩度がずれる (#3683)。
 ///
 /// アルファは乗算していない (straight)。作業空間の内側では乗算済みで運ぶが、外へ出す
 /// 境界で戻す ([ADR-0011] 決定 4)。
@@ -61,4 +67,10 @@ public nonisolated struct DisplayImage: Equatable, Sendable {
         let base = (y * width + x) * 4
         return (bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3])
     }
+}
+
+nonisolated extension DisplayImage {
+    /// 画素の色が名乗る色空間 (Display P3)。本体の中で `CGImage` を作る口はすべてこれを使い、
+    /// 名乗りを写しで持たない (写しの 1 つが DeviceRGB に外れていた。#3683)。
+    static let colorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
 }
