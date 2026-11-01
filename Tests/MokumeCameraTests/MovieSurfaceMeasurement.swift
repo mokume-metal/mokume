@@ -11,10 +11,13 @@ import Testing
 /// 4K の動画 4 本を流す複合場面で、面の道と CPU の道 (変更前) を並べて測る (#2962 の完了条件 1)。
 /// **検査ではなく計測で、既定では走らない。**
 ///
-/// `MOKUME_MOVIE_SURFACES=1` で開き、release でだけ走る。専有して測る:
+/// `MOKUME_MOVIE_SURFACES` で開き、release でだけ走る。最大の記憶が前の回の残りを拾わないよう、
+/// 道ごとに別のプロセスで専有して測る (値は `cpu` か `surface`。それ以外なら両方を続けて測る):
 ///
 /// ```sh
-/// MOKUME_MOVIE_SURFACES=1 python3 scripts/gpu-slot.py --exclusive -- \
+/// MOKUME_MOVIE_SURFACES=cpu python3 scripts/gpu-slot.py --exclusive -- \
+///   make test-release TEST_RELEASE_ARGS='--filter MovieSurfaceMeasurement'
+/// MOKUME_MOVIE_SURFACES=surface python3 scripts/gpu-slot.py --exclusive -- \
 ///   make test-release TEST_RELEASE_ARGS='--filter MovieSurfaceMeasurement'
 /// ```
 ///
@@ -41,14 +44,14 @@ struct MovieSurfaceMeasurement {
                     bitRate: 3840 * 2160 * 4, paint: MovieStall.busy))
         }
         defer { for url in urls { try? FileManager.default.removeItem(at: url) } }
-        // 表を作る費用 (1 度だけ) を数えに入れないよう、面の道を先に 1 度温めてから、CPU → 面の順に測る
-        try measure(urls, surfaces: true, report: false)
-        try measure(urls, surfaces: false, report: true)
-        try measure(urls, surfaces: true, report: true)
+        // 表を作る費用 (1 度だけ・先読みの係の上) は立ち上がりの 2 秒に入る
+        let chosen = ProcessInfo.processInfo.environment["MOKUME_MOVIE_SURFACES"]
+        if chosen != "surface" { try measure(urls, surfaces: false) }
+        if chosen != "cpu" { try measure(urls, surfaces: true) }
         SurfaceRoute.isEnabled.store(true, ordering: .relaxed)
     }
 
-    private func measure(_ urls: [URL], surfaces: Bool, report: Bool) throws {
+    private func measure(_ urls: [URL], surfaces: Bool) throws {
         SurfaceRoute.isEnabled.store(surfaces, ordering: .relaxed)
         let path = surfaces ? "surface" : "cpu"
         var movies: [Movie] = []
@@ -77,6 +80,7 @@ struct MovieSurfaceMeasurement {
         defer { runtime.closePlugins() }
         var main: [Double] = []
         var footprint = 0.0
+        var leases = 0
         var conversionsAtStart = 0
         let warmUp = 240
         let counted = 720
@@ -90,10 +94,10 @@ struct MovieSurfaceMeasurement {
             if tick >= warmUp {
                 main.append(MovieStall.ms(ContinuousClock.now - started))
                 footprint = max(footprint, Self.footprintMB())
+                leases = max(leases, SurfaceLease.live.load(ordering: .relaxed))
             }
         }
         try gpu.settle()
-        guard report else { return }
         let conversions = FrameConverter.conversions.load(ordering: .relaxed) - conversionsAtStart
         let gpuTimes = gpu.completedGPUFrameTimes.map(\.milliseconds)
         MovieStall.report("2962", path, "main.advance", main)
@@ -101,6 +105,7 @@ struct MovieSurfaceMeasurement {
         MovieStall.report("2962", path, "gpu.span", gpuTimes)
         MovieStall.line("2962", path, "cpuConversions", "\(conversions)", "frames")
         MovieStall.line("2962", path, "footprint.max", String(format: "%.0f", footprint), "MiB")
+        MovieStall.line("2962", path, "leases.max", "\(leases)", "surfaces")
     }
 
     private static func percentile(_ values: [Double], _ p: Double) -> Double {

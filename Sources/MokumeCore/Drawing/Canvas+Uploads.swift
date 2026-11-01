@@ -40,6 +40,8 @@ extension Canvas {
     func encodeUploads(into commands: any MTL4CommandBuffer) throws(RenderFailure)
         -> EncodedUploads
     {
+        // 届けるものが無いフレームでも、止めた動画の面を手放す (#2962)
+        imageInputPass?.forgetIdleSurfaces()
         guard encodesUploads else { return [] }
         let owners = gpu.pendingUploads.owners
 
