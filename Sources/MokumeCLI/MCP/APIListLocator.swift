@@ -43,17 +43,17 @@ struct APIListLocator {
     enum Source {
         /// 取り置きから。`keyed` は、その名前に依存の版・改訂が入っているか。**入っていない (共通名) 一覧は、
         /// 何から組んだものか分からない**ので、答えがそう名乗る (#3478)。
-        case cached(URL, keyed: Bool)
+        case cached(URL, keyed: Bool, asset: Asset = .index)
         case downloaded(URL, from: URL)
 
         var text: String {
             switch self {
-            case .cached(let url, let keyed):
+            case .cached(let url, let keyed, let asset):
                 // 頭の `cached (…)` は変えない (検査も読み手も頭で見ている)
                 keyed
                     ? "cached (\(url.path))"
                     : """
-                    cached (\(url.path)) — a list put here by hand, tied to no version or revision, \
+                    cached (\(url.path)) — a \(asset.noun) put here by hand, tied to no version or revision, \
                     so it may differ from the dependency in use
                     """
             case .downloaded(let url, let remote): "fetched and cached (\(remote) → \(url.path))"
@@ -112,78 +112,160 @@ struct APIListLocator {
         var absenceNote: String {
             self == .index
                 ? "the list started shipping after v0.1.0"
-                : "the details file ships only from the release that added `symbol` to `reference`; earlier versions have none"
+                : "the details file is attached to the releases that include the change that builds it (mokume PR #3602); earlier versions have none"
         }
     }
 
     /// 取ってきた・取り置いたものを受け入れるか。**受け入れなければ、取り置きは無いものとして取りに行く。**
-    enum Reading {
-        case accepted
-        /// `detail` は、読めなかった理由 (あれば案内に添える)
+    /// 受け入れるときは、判定で読んだ値をそのまま持ち帰る (同じものを 2 度読まない)。
+    enum Reading<Value> {
+        case accepted(Value)
+        /// `detail` は、読めなかった理由 (案内に添える)
         case rejected(detail: String?)
     }
 
+    /// 窓口 (プロセス) の寿命の間だけ覚えておくこと。**値型の `APIListLocator` を複製しても同じものを見る。**
+    ///
+    /// - 詳細の取得の失敗 (1.8 MB を取りに行く回の失敗) — 同じ宛先を `symbol` のたびに取り直すと、
+    ///   そのたびに最大 ``APIListLocator/fetchLimit`` 秒、応答ごと止まる。取り置きが後から置かれたときは、
+    ///   取りに行く前に取り置きを見るので、覚えていても読める。
+    /// - 索引が引けるかの確かめの失敗 — 詳細の失敗に「索引は引ける」と添えるための確かめを、1 度で済ませる。
+    final class Memory: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failures: [URL: Missing] = [:]
+        private var indexFailures: Set<String> = []
+
+        func failure(of remote: URL) -> Missing? {
+            lock.lock()
+            defer { lock.unlock() }
+            return failures[remote]
+        }
+
+        func remember(_ missing: Missing, of remote: URL) {
+            lock.lock()
+            defer { lock.unlock() }
+            failures[remote] = missing
+        }
+
+        func indexFailed(at cache: String) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return indexFailures.contains(cache)
+        }
+
+        func rememberIndexFailure(at cache: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            indexFailures.insert(cache)
+        }
+    }
+
+    /// 覚えておくこと。
+    let memory = Memory()
+
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {
-        let found = try obtain(.index) { data in
-            if let text = String(data: data, encoding: .utf8), !text.isEmpty { .accepted } else { .rejected(detail: nil) }
+        let found = try obtain(.index) { data, _ in
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty { .accepted(text) }
+            else { .rejected(detail: "it is empty or not UTF-8 text") }
         }
-        return (String(decoding: found.data, as: UTF8.self), found.source)
+        return (found.value, found.source)
+    }
+
+    /// 索引が、いま引けるか。**詳細の失敗に「索引は引ける」と添える前の確かめ** — 引けないのに引けると言うと、
+    /// オフラインで次の一手が偽になる。取り置きがあればそれを、無ければ 1 度だけ取りに行き (取れれば取り置かれる)、
+    /// 取れなかったことは覚えて打ち直さない。
+    func indexIsReadable() -> Bool {
+        let cache = cacheURL(for: versionState())
+        if memory.indexFailed(at: cache.path) { return false }
+        if (try? read()) != nil { return true }
+        memory.rememberIndexFailure(at: cache.path)
+        return false
     }
 
     /// 口ごとの詳細を読む。**取り置きの名前・取りに行く期限・版が引けない案内は一覧と同じ計算を通り**、
     /// 依存の版の資産が得られなければ失敗する — **別の版の詳細で穴埋めしない** (#3420)。
+    ///
+    /// 版の鍵で読んだ資産は、`version` が依存の版と一致するものだけ受け入れる (ファイル名が合っていても、
+    /// 中身が別の版のものなら返さない)。
     func readDetails() throws -> (details: APIDetails, source: Source) {
-        let found = try obtain(.details) { data in
+        let found = try obtain(.details) { (data: Data, state: DependencyVersion.State) -> Reading<APIDetails> in
             switch APIDetails.parse(data) {
-            case .success: .accepted
-            case .failure(let failure): .rejected(detail: failure.reason)
+            case .failure(let failure): return .rejected(detail: failure.reason)
+            case .success(let details):
+                if case .version(let version) = state, details.version != "v\(version)" {
+                    return .rejected(
+                        detail: "it was built for \(details.version), not for the dependency (v\(version))")
+                }
+                return .accepted(details)
             }
         }
-        guard case .success(let details) = APIDetails.parse(found.data) else {
-            // 受け入れ (`reading`) を通したものは読める。ここへは来ない
-            throw Missing(advice: "The details could not be read.", cause: .unreadable)
-        }
-        return (details, found.source)
+        return (found.value, found.source)
     }
 
     /// 資産を得る。取り置きを先に見て、無ければ**依存として解決された版**のものを取ってきて取り置く。
-    private func obtain(
-        _ asset: Asset, reading: (Data) -> Reading
-    ) throws -> (data: Data, source: Source) {
+    private func obtain<Value>(
+        _ asset: Asset, reading: (Data, DependencyVersion.State) -> Reading<Value>
+    ) throws -> (value: Value, source: Source) {
         let state = versionState()
         let version: String? = if case .version(let found) = state { found } else { nil }
         let cache = cacheURL(for: state, asset: asset)
-        if let data = try? Data(contentsOf: cache), case .accepted = reading(data) {
-            return (data, .cached(cache, keyed: Self.isKeyed(state)))
+        // 置いてあるのに受け入れられなかったもの。**取れなかった回の案内に、どのファイルがなぜ使えなかったかを名乗る**
+        var unusable = ""
+        if let data = try? Data(contentsOf: cache), !data.isEmpty {
+            switch reading(data, state) {
+            case .accepted(let value): return (value, .cached(cache, keyed: Self.isKeyed(state), asset: asset))
+            case .rejected(let detail):
+                unusable =
+                    "\n\nA \(asset.noun) is kept at \(cache.path), but it could not be used"
+                    + (detail.map { ": \($0)" } ?? "") + "."
+            }
         }
         // **版の形でなければ取りに行かない** (``DependencyVersion/isVersion(_:)``)。URL を作れない版も同じ
         guard let version, let remote = Self.assetURL(version: version, asset: asset) else {
-            throw Missing(advice: unknownVersionAdvice(state, asset: asset), cause: .versionUnknown)
+            throw Missing(advice: unknownVersionAdvice(state, asset: asset) + unusable, cause: .versionUnknown)
+        }
+        // 詳細は、前に取れなかった宛先を打ち直さない (打ち直すたびに応答ごと止まる)
+        let remembered =
+            "\n\nThis failure is remembered until the interface is restarted, so asking again does not retry the download."
+        if asset == .details, let before = memory.failure(of: remote) {
+            throw Missing(advice: before.advice + unusable + remembered, cause: before.cause)
+        }
+        func fail(_ missing: Missing) -> Missing {
+            if asset == .details {
+                memory.remember(missing, of: remote)
+                return Missing(advice: missing.advice + unusable + remembered, cause: missing.cause)
+            }
+            return Missing(advice: missing.advice + unusable, cause: missing.cause)
         }
         let data: Data
         do {
             data = try fetch(remote)
         } catch {
-            throw Missing(
-                advice: advice(
-                    reason: """
-                        Could not fetch the asset for this version (\(remote)): \(error)
-                        Besides having no network, this also happens when **that version has no
-                        such asset attached** (\(asset.absenceNote)).
-                        """, asset: asset),
-                cause: .fetchFailed)
+            throw fail(
+                Missing(
+                    advice: advice(
+                        reason: """
+                            Could not fetch the asset for this version (\(remote)): \(error)
+                            Besides having no network, this also happens when **that version has no
+                            such asset attached** (\(asset.absenceNote)).
+                            """, asset: asset, state: state),
+                    cause: .fetchFailed))
         }
-        if case .rejected(let detail) = reading(data) {
-            throw Missing(
-                advice: advice(
-                    reason: "what came back could not be read (\(remote))" + (detail.map { ": \($0)" } ?? ""),
-                    asset: asset),
-                cause: .unreadable)
+        let value: Value
+        switch reading(data, state) {
+        case .accepted(let accepted): value = accepted
+        case .rejected(let detail):
+            throw fail(
+                Missing(
+                    advice: advice(
+                        reason: "what came back could not be read (\(remote))" + (detail.map { ": \($0)" } ?? ""),
+                        asset: asset, state: state),
+                    cause: .unreadable))
         }
         // 取り置けなくても、いま得たものは返す。**答えを返すほうが先** (ADR-0018 決定 3)
         try? AtomicFile.write(data, to: cache)
-        return (data, .downloaded(cache, from: remote))
+        return (value, .downloaded(cache, from: remote))
     }
 
     /// 依存として解決された版。パスで指しているときは pin が無いので `nil`。
@@ -245,6 +327,13 @@ struct APIListLocator {
     /// `.build/` を作る。`run` / `watch` は解決を共有の置き場 (`BuildDirectory.resolveSegment`) へ
     /// 固定しているので、`Package.resolved` だけがスケッチ直下にでき、`.build/` は作られない。
     private func unknownVersionAdvice(_ state: DependencyVersion.State, asset: Asset) -> String {
+        let body = unknownVersionBody(state, asset: asset)
+        // 詳細を組む手は、鍵の無い状態では中身が作業ツリーのものになる。名乗る (手を示す回だけ)
+        guard asset == .details, body.contains("make api-list") else { return body }
+        return "\(body)\n\n\(checkoutNote(for: state))"
+    }
+
+    private func unknownVersionBody(_ state: DependencyVersion.State, asset: Asset) -> String {
         let (subject, noun) = (asset.subject, asset.noun)
         let head = "Cannot tell which version is depended on"
         // 案内のコマンドは `GivenPath.shellWord` で包む。二重引用は `$` と `` ` `` を解く
@@ -364,32 +453,63 @@ struct APIListLocator {
     ///
     /// `version` を渡すと、組み上がる一覧の見出し (`# mokume <version> の公開 API`) にそれが出る。改訂のときは
     /// 改訂の名前を渡す — 名前だけでなく、中身も、どの改訂のものかを名乗る (#3478)。
-    ///
-    /// 詳細 (`details` を渡したとき) は一覧と同じ 1 回の `make api-list` が `DETAILS=` に出す。
-    static func buildCommand(cache: URL, details: URL? = nil, version: String? = nil) -> String {
-        let detailsArgument = details.map { " DETAILS=\(GivenPath.shellWord($0))" } ?? ""
+    static func buildCommand(cache: URL, version: String? = nil) -> String {
         let pin = version.map { " VERSION=\(GivenPath.shellWord(quoting: $0))" } ?? ""
-        return "make api-list OUT=\(GivenPath.shellWord(cache))\(detailsArgument)\(pin)"
+        return "make api-list OUT=\(GivenPath.shellWord(cache))\(pin)"
     }
 
-    /// `asset` を取り置きの場所へ置く手。詳細は一覧と一緒に組むので、両方の場所を渡す。
+    /// `asset` を取り置きの場所へ置く手。
+    ///
+    /// **詳細の手は、索引の取り置きを書き換えない** — 索引は `OUT=/dev/null` へ捨てる (組み立てが開発版の中身で、
+    /// 取得済みの正しい索引を上書きすると、版が合わなくなる)。詳細には版の名乗りを渡し、中身が依存の版のものに見える
+    /// ようにする。鍵の無い状態は名乗れる版が無く、中身は組んだ作業ツリーのものになる (``checkoutNote(for:)``)。
     private func buildCommand(for asset: Asset, state: DependencyVersion.State, version: String? = nil) -> String {
-        Self.buildCommand(
-            cache: cacheURL(for: state), details: asset == .details ? cacheURL(for: state, asset: .details) : nil,
-            version: version)
+        switch asset {
+        case .index:
+            return Self.buildCommand(cache: cacheURL(for: state), version: version)
+        case .details:
+            let label = version ?? Self.versionLabel(state)
+            let pin = label.map { " VERSION=\(GivenPath.shellWord(quoting: $0))" } ?? ""
+            return "make api-list OUT=/dev/null DETAILS=\(GivenPath.shellWord(cacheURL(for: state, asset: .details)))\(pin)"
+        }
+    }
+
+    /// 組み立てに名乗らせる版の綴り。鍵にできない状態は `nil`。
+    private static func versionLabel(_ state: DependencyVersion.State) -> String? {
+        switch state {
+        case .version(let version) where DependencyVersion.isVersion(version): "v\(version)"
+        case .revision(let revision) where DependencyVersion.isRevision(revision):
+            BuildDirectory.revisionSegment(revision)
+        default: nil
+        }
+    }
+
+    /// 詳細を組む手の注意。**組んだ作業ツリーの中身になる**ので、版・改訂で鍵が付く回はその版・改訂の
+    /// 作業ツリーで走らせ、鍵の無い回は中身がその作業ツリーのものだと名乗る。索引の取り置きには触れない。
+    private func checkoutNote(for state: DependencyVersion.State) -> String {
+        switch state {
+        case .version(let version) where DependencyVersion.isVersion(version):
+            "Run it in a mokume checkout of the tag v\(version): the file describes the checkout it is built from. The list kept here is left as it is."
+        case .revision(let revision) where DependencyVersion.isRevision(revision):
+            "Run it in a mokume checkout of that revision: the file describes the checkout it is built from. The list kept here is left as it is."
+        default:
+            "The file describes the checkout it is built from, so it may differ from the dependency in use. The list kept here is left as it is."
+        }
     }
 
     /// 得られなかった理由と、そこからの一手。
-    private func advice(reason: String, asset: Asset) -> String {
-        """
-        \(asset.subject) is not available here.
+    private func advice(reason: String, asset: Asset, state: DependencyVersion.State? = nil) -> String {
+        let state = state ?? versionState()
+        let note = asset == .details ? "\n\n\(checkoutNote(for: state))" : ""
+        return """
+            \(asset.subject) is not available here.
 
-        \(reason)
+            \(reason)
 
-        Build it in the mokume repository and put it here, and it is returned from then on:
+            Build it in the mokume repository and put it here, and it is returned from then on:
 
-          \(buildCommand(for: asset, state: versionState()))
-        """
+              \(buildCommand(for: asset, state: state))\(note)
+            """
     }
 
     /// 既定の取り方。

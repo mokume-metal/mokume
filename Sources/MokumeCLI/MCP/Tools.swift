@@ -74,7 +74,7 @@ struct Tools {
             case .input:
                 "Send input events to the running sketch. Coordinates are in the canvas coordinate system. The types are mouseDown / mouseUp / mouseMoved / mouseMovedBy / scrolled / pinched / fileDropped / fileSelected / keyDown / keyUp. The four positional types (mouseDown / mouseUp / mouseMoved / fileDropped) need x and y; the two key types need code (the macOS virtual key code: 49 = Space, 0 = A, 126 = up arrow); pinched needs amount (the change in magnification, as a trackpad pinch gives it: 0.1 = opened to 1.1 times, negative = closed; the sketch reads a frame's total as pinch); fileDropped needs paths (an array of absolute file paths, as when files are dropped on the window; an empty array, or an element that does not start with / such as a URL or a relative path, counts in ignored) and the position x / y of the drop, and the sketch's fileDropped(_ paths: [String]) is called once with the paths while mouseX / mouseY move to that position. fileSelected is the result of the dialog the sketch asked for with selectInput(): paths holds the one chosen file (an absolute path), or is empty for a cancel (selectInput then returns nil); a fileSelected without paths, with two or more, or sent when no selectInput is waiting counts in ignored. It can also carry serial, the number of the selectInput request it answers (an integer from 1; leave it out to answer the wait there is now): a result whose serial is not the one waiting counts in ignored. The dialog is shown by the tool's window under mokume watch, so an old tool window shows none and the wait only ends when you send the result. An event missing one is counted in ignored and the rest still go through. A mouseDown can also carry clickCount (1 for a single press, the default; 2 for the second press of a double-click; a value that is not a non-negative integer counts that event in ignored). amount is read on pinched only, clickCount on mouseDown only, paths on fileDropped and fileSelected only and serial on fileSelected only: on any other type they are not read and the reply's warnings name them. scrolled carries dx and dy in points as they are, never converted (a wheel notch is about 10, a trackpad swipe tens to hundreds; the tail of motion after the fingers leave a trackpad is the same kind of amount). mouseMovedBy moves by dx and dy (canvas pixels, down is positive) without changing mouseX / mouseY, as a sketch that holds the pointer (requestPointerLock()) receives it; it reaches mouseMoved(deltaX:deltaY:), or mouseDragged(deltaX:deltaY:) while a button is held. button / dx / dy / characters / isRepeat can be left out. keyPressed() fires only when a key that is not held goes down, so a repeat (isRepeat true) reaches keyTyped() alone. The modifier keys (56 / 60 = Shift, 59 / 62 = Control, 58 / 61 = Option, 55 / 54 = Command) only change which keys are held, which the sketch reads with keyboard.isPressed(.shift). button is the macOS button number (0 = left, the primary one, and the default; 1 = right; 2 = center), which is not the browser order, where 1 is the middle button and 2 the secondary one."
             case .reference:
-                "Return a document this interface serves. With no argument you get the list; pass name for one of them. Pass api for the public API of the version currently depended on (which types and functions exist, and how to call them: the declarations only). To read what a function or type means (its scale, lifetime, cautions and an example, as written in the source of that same version), pass api as name together with symbol, for example symbol \"ambientLight\", or \"SoundFile.play\" to narrow it to one type; every overload comes back. Pass startup for the things decided the moment a process starts (the ones that have no effect while it runs). The rest are surface specs (the shape of requests and replies). symbol goes only with name api; with any other name it is refused."
+                "Return a document this interface serves. With no argument you get the list; pass name for one of them. Pass api for the public API of the version currently depended on (which types and functions exist, and how to call them: the declarations only). To read what a function or type means (its scale, lifetime, cautions and an example, as written in the source of that same version), pass api as name together with symbol, for example symbol \"ambientLight\", or \"SoundFile.play\" to narrow it to one type (\"Camera.init\" for initializers, \"ArcMode.pie\" for an enum case); every overload comes back. Pass startup for the things decided the moment a process starts (the ones that have no effect while it runs). The rest are surface specs (the shape of requests and replies). symbol goes only with name api; with any other name it is refused."
             }
         }
 
@@ -156,7 +156,7 @@ struct Tools {
                         ],
                         "symbol": [
                             "type": "string",
-                            "description": "With name api: the name of a function, property or type to read in full (its description and example, from the version depended on), by its base name without parameters (ambientLight), or Type.name (SoundFile.play) for the members of that type. Omit it to get the declarations of the whole public API.",
+                            "description": "With name api: the name of a function, property or type to read in full (its description and example, from the version depended on), by its base name without parameters (ambientLight), or Type.name (SoundFile.play, Camera.init) for the members of that type. Omit it to get the declarations of the whole public API.",
                         ],
                     ],
                 ]
@@ -646,28 +646,36 @@ struct Tools {
             let found = try apiList.readDetails()
             switch found.details.lookup(named) {
             case .found(let entries):
-                return ("Source: \(found.source.text)\n\n\(Self.symbolText(named, entries: entries))", false)
-            case .unknown:
+                // 型そのものを引いたときは、その型の `init` と列挙の case へ辿る綴りを添える
+                let members =
+                    entries.contains { $0.owner.isEmpty }
+                    ? found.details.members(of: APIDetails.baseName(named)) : nil
+                return (
+                    "Source: \(found.source.text)\n\n\(Self.symbolText(named, entries: entries, members: members))",
+                    false
+                )
+            case .unknown(let candidates):
                 return (
                     """
                     There is no public symbol named \(named) in the version depended on. Names are matched \
                     exactly (case matters), by the name without parameters. Look the spelling up in the list \
-                    (\(index)), or name the type too (Type.name).
+                    (\(index)), or name the type too (Type.name).\(Self.candidatesNote(candidates))
                     """, true
                 )
-            case .notOnOwner(let type, let base, let owners):
+            case .notOnOwner(let type, let base, let owners, let candidates):
                 let held = owners.map { $0.isEmpty ? "(top level)" : $0 }.joined(separator: ", ")
                 return (
                     """
                     \(base) is not declared on \(type). It is declared on: \(held). \
-                    Pass one of those as Type.\(base), or just \(base) for all of them.
+                    Pass one of those as Type.\(base), or just \(base) for all of them.\(Self.candidatesNote(candidates))
                     """, true
                 )
             }
         } catch let missing as APIListLocator.Missing {
             // 取りに行けない・読めない回は、索引なら引けることを添える (版が引けない回は、索引も同じ理由で引けない)
             let (text, isError) = apiMissing(missing)
-            guard missing.cause != .versionUnknown else { return (text, isError) }
+            // **索引が実際に引けるときだけ**添える (オフラインで索引も取れていなければ、偽の次の一手になる)
+            guard missing.cause != .versionUnknown, apiList.indexIsReadable() else { return (text, isError) }
             return ("\(text)\n\nThe list of declarations does not need this file: use \(index) to read it.", true)
         } catch {
             return ("Could not read the public API details: \(error)", true)
@@ -675,7 +683,9 @@ struct Tools {
     }
 
     /// 口の説明を、宣言ごとに並べた本文にする。説明は資産の全文のまま (要約も整形もしない)。
-    static func symbolText(_ symbol: String, entries: [APIDetails.Entry]) -> String {
+    static func symbolText(
+        _ symbol: String, entries: [APIDetails.Entry], members: APIDetails.Members? = nil
+    ) -> String {
         var lines = ["# \(symbol) — \(entries.count) \(entries.count == 1 ? "declaration" : "declarations")", ""]
         for entry in entries {
             lines.append("## \(entry.owner.isEmpty ? "(top level)" : entry.owner)")
@@ -683,7 +693,26 @@ struct Tools {
             lines += ["```swift", entry.declaration, "```", ""]
             lines += [entry.doc.isEmpty ? "(no description in the source)" : entry.doc, ""]
         }
+        if let members, !members.isEmpty {
+            let type = APIDetails.baseName(symbol)
+            var hints: [String] = []
+            if members.hasInit { hints.append("`\(type).init` for its initializers") }
+            if !members.keys.isEmpty {
+                let more = members.omitted > 0 ? ", and \(members.omitted) more" : ""
+                hints.append("`" + members.keys.joined(separator: "`, `") + "`" + more + " (cases and nested types)")
+            }
+            lines.append(
+                "This is the type itself; its members are read the same way, with the type in front: "
+                    + hints.joined(separator: "; ") + ". Any other member: `\(type).<name>`.")
+            lines.append("")
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// 綴りの候補 (入れ子の型の case など、`.` を含む名前の後ろが一致したもの)。引けたことにはしない。
+    static func candidatesNote(_ candidates: [String]) -> String {
+        guard !candidates.isEmpty else { return "" }
+        return " Did you mean " + candidates.map { "`\($0)`" }.joined(separator: ", ") + "?"
     }
 
     /// 版が引けない・取れない・読めないときの答え。

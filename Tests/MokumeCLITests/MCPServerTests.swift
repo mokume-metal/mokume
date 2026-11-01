@@ -2293,7 +2293,14 @@ struct MCPServerTests {
         "play":[
         {"owner":"MoviePlayer","declaration":"func play()","doc":"動画を流す。"},
         {"owner":"SoundFile","declaration":"func play()","doc":"音を鳴らす。"}],
-        "SoundFile":[{"owner":"","declaration":"struct SoundFile","doc":"音の読み込み。"}]}}
+        "SoundFile":[{"owner":"","declaration":"struct SoundFile","doc":"音の読み込み。"}],
+        "Camera":[{"owner":"","declaration":"final class Camera","doc":"視点。"}],
+        "init":[{"owner":"Camera","declaration":"init(eye: Vector3)","doc":"視点を置く。"},{"owner":"SoundFile","declaration":"init(_ name: String)","doc":"音を読む。"}],
+        "Camera.Projection":[{"owner":"Camera","declaration":"enum Projection","doc":"投影の方式。"}],
+        "Camera.Projection.perspective":[{"owner":"Camera","declaration":"case perspective","doc":"遠近法。"}],
+        "ArcMode":[{"owner":"","declaration":"enum ArcMode","doc":"弧の閉じ方。"}],
+        "ArcMode.pie":[{"owner":"ArcMode","declaration":"case pie","doc":"扇形に閉じる。"}],
+        "empty":[]}}
         """
 
     private func putDetails(_ text: String = detailsAsset, at name: String, in directory: URL) throws {
@@ -2454,6 +2461,15 @@ struct MCPServerTests {
         #expect(!outcome.text.contains("別の版の説明"), "\(outcome.text)")
         #expect(outcome.text.contains("the response was 404"), "\(outcome.text)")
         #expect(outcome.text.contains("v0.2.0/mokume-api-details-v0.2.0.json"), "取りに行った宛先を言う: \(outcome.text)")
+        // 組み立ての手は、取得済みの索引を上書きせず、依存の版を名乗る
+        let cachedIndex = directory.appendingPathComponent(".mokume/reference/mokume-api-v0.2.0.md")
+        let cachedDetails = directory.appendingPathComponent(".mokume/reference/mokume-api-details-v0.2.0.json")
+        #expect(
+            outcome.text.contains("OUT=/dev/null DETAILS=\(GivenPath.shellWord(cachedDetails)) VERSION='v0.2.0'"),
+            "\(outcome.text)")
+        #expect(!outcome.text.contains("OUT=\(GivenPath.shellWord(cachedIndex))"), "\(outcome.text)")
+        #expect(outcome.text.contains("checkout of the tag v0.2.0"), "\(outcome.text)")
+        #expect(outcome.text.contains("PR #3602"), "資産が付く版の事実を言う: \(outcome.text)")
         #expect(outcome.text.contains("`reference` with name api and no symbol"), "索引は引けると添える: \(outcome.text)")
         #expect(
             fetches.urls.map(\.absoluteString) == [
@@ -2496,6 +2512,8 @@ struct MCPServerTests {
         #expect(!moved.text.contains("音を鳴らす。") && !moved.text.contains("共通名の説明"), "\(moved.text)")
         let nameB = directory.appendingPathComponent(".mokume/reference/mokume-api-details-rev-bbbbbbbbbbbb.json")
         #expect(moved.text.contains("DETAILS=\(GivenPath.shellWord(nameB))"), "\(moved.text)")
+        #expect(moved.text.contains("VERSION='rev-bbbbbbbbbbbb'"), "\(moved.text)")
+        #expect(moved.text.contains("OUT=/dev/null"), "\(moved.text)")
         #expect(moved.text.contains("not read for a pinned revision"), "\(moved.text)")
         #expect(fetches.urls.isEmpty)
     }
@@ -2514,7 +2532,10 @@ struct MCPServerTests {
         let shared = directory.appendingPathComponent(".mokume/reference/mokume-api-details.json")
         let index = directory.appendingPathComponent(".mokume/reference/mokume-api.md")
         #expect(missing.text.contains("DETAILS=\(GivenPath.shellWord(shared))"), "\(missing.text)")
-        #expect(missing.text.contains("OUT=\(GivenPath.shellWord(index))"), "\(missing.text)")
+        // 索引の取り置きは上書きさせない。鍵の無い回は中身が作業ツリーのものになると名乗る
+        #expect(missing.text.contains("OUT=/dev/null"), "\(missing.text)")
+        #expect(!missing.text.contains("OUT=\(GivenPath.shellWord(index))"), "\(missing.text)")
+        #expect(missing.text.contains("describes the checkout it is built from"), "\(missing.text)")
         #expect(!missing.text.contains("The public API list"), "詳細の案内は詳細を主語にする: \(missing.text)")
 
         try putDetails(at: "mokume-api-details.json", in: directory)
@@ -2527,7 +2548,8 @@ struct MCPServerTests {
     @Test("知らない形の版や壊れた詳細は、取り置かずに読めないと答える")
     func refusesDetailsItCannotRead() throws {
         for (label, body, expected) in [
-            ("新しい形", #"{"schemaVersion":2,"version":"v0.2.0","symbols":{}}"#, "format 2"),
+            // 形そのものが変わった新しい版 (symbols が配列) でも、「更新せよ」と言う (版を先に見る)
+            ("新しい形", #"{"schemaVersion":2,"version":"v0.2.0","symbols":[]}"#, "update the tool"),
             ("壊れた JSON", "{ これは JSON ではない", "not a details file"),
         ] {
             let directory = try makeDirectory()
@@ -2543,6 +2565,166 @@ struct MCPServerTests {
                     atPath: directory.appendingPathComponent(".mokume/reference/mokume-api-details-v0.2.0.json").path),
                 "\(label)")
         }
+    }
+
+    /// 反証: 取れなかった詳細を、`symbol` のたびに取り直さない (1.8 MB を取りに行く回は最大 10 秒止まる)。
+    @Test("詳細を取れなかった宛先は打ち直さず、取り置きが後から置かれれば読む")
+    func doesNotRefetchADetailsFailure() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let first = reference(tools, "play")
+        let second = reference(tools, "SoundFile.play")
+        #expect(first.isError && second.isError)
+        // 詳細の宛先は 1 度だけ。索引の確かめ (別の宛先) は数えない
+        let detailsFetches = fetches.urls.filter { $0.lastPathComponent.hasSuffix(".json") }
+        #expect(detailsFetches.count == 1, "同じ宛先を取り直した: \(fetches.urls)")
+        #expect(second.text.contains("the response was 404"), "\(second.text)")
+        #expect(second.text.contains("remembered until the interface is restarted"), "\(second.text)")
+
+        // 手で置けば、覚えている失敗より取り置きが先
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        #expect(!reference(tools, "SoundFile.play").isError)
+        #expect(fetches.urls.filter { $0.lastPathComponent.hasSuffix(".json") }.count == 1)
+    }
+
+    /// 反証: 取り置きが使えなかったとき、取れない回でもそのファイルとわけを名乗る。版の鍵で読むときは
+    /// `version` を依存の版と突き合わせる。
+    @Test("使えない取り置きは、どのファイルがなぜ使えないかを名乗り、別の版の中身は受け入れない")
+    func namesAnUnusableKeptFile() throws {
+        // 手で置いた共通名の詳細が、知らない形 (鍵が無く取りにも行けない)
+        let shared = try makeSketch()
+        try writeResolved(shared, pins: pin("swift-syntax", "603.0.2"))
+        try putDetails(#"{"schemaVersion":2,"version":"v0.2.0","symbols":[]}"#, at: "mokume-api-details.json", in: shared)
+        let sharedOutcome = reference(makeTools(directory: shared, fetches: Fetches()), "play")
+        #expect(sharedOutcome.isError)
+        let sharedPath = shared.appendingPathComponent(".mokume/reference/mokume-api-details.json").path
+        #expect(
+            sharedOutcome.text.contains("is kept at \(sharedPath), but it could not be used"), "\(sharedOutcome.text)")
+        #expect(sharedOutcome.text.contains("format 2"), "\(sharedOutcome.text)")
+
+        // 版の名前なのに中身が別の版 (v0.1.0 向け)。取りに行けなければ受け入れない
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let wrong = Self.detailsAsset.replacingOccurrences(of: "v0.2.0", with: "v0.1.0")
+            .replacingOccurrences(of: "音を鳴らす。", with: "別の版の説明")
+        try putDetails(wrong, at: "mokume-api-details-v0.2.0.json", in: directory)
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let refused = reference(makeTools(directory: directory, fetches: fetches), "SoundFile.play")
+        #expect(refused.isError)
+        #expect(!refused.text.contains("別の版の説明"), "\(refused.text)")
+        #expect(refused.text.contains("built for v0.1.0, not for the dependency (v0.2.0)"), "\(refused.text)")
+
+        // 取れれば、使えなかった取り置きを正しいもので置き換える
+        let other = try makeDirectory()
+        try writeResolved(other, pins: pin("mokume", "0.2.0"))
+        try putDetails(wrong, at: "mokume-api-details-v0.2.0.json", in: other)
+        let good = Fetches()
+        good.answer = .success(Data(Self.detailsAsset.utf8))
+        let healed = reference(makeTools(directory: other, fetches: good), "SoundFile.play")
+        #expect(!healed.isError, "\(healed.text)")
+        #expect(
+            healed.text.contains("音を鳴らす。") && healed.text.hasPrefix("Source: fetched and cached"),
+            "\(healed.text)")
+    }
+
+    /// 反証: 共通名の出所表示は、詳細なら「details file」と名乗る。
+    @Test("共通名の詳細の出所表示は、詳細の資産だと名乗る")
+    func namesTheDetailsFileInTheSharedSource() throws {
+        let directory = try makeSketch()
+        try writeResolved(directory, pins: pin("swift-syntax", "603.0.2"))
+        try putDetails(at: "mokume-api-details.json", in: directory)
+        let served = reference(makeTools(directory: directory, fetches: Fetches()), "play")
+        #expect(served.text.contains("a details file put here by hand"), "\(served.text)")
+        #expect(!served.text.contains("a list put here by hand"), "\(served.text)")
+    }
+
+    /// 反証: 型そのものを引いたら、`init` と case への辿り方を添える。入れ子の case は後ろの綴りから候補を言う。
+    @Test("型を引くと init と case の引き方を添え、入れ子の case は候補の綴りを案内する")
+    func pointsFromATypeToItsMembersAndNestedCases() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        let tools = makeTools(directory: directory, fetches: Fetches())
+
+        let camera = reference(tools, "Camera")
+        #expect(!camera.isError, "\(camera.text)")
+        #expect(camera.text.contains("`Camera.init`"), "\(camera.text)")
+        #expect(
+            camera.text.contains("`Camera.Projection`") && camera.text.contains("`Camera.Projection.perspective`"),
+            "\(camera.text)")
+        let arc = reference(tools, "ArcMode")
+        #expect(arc.text.contains("`ArcMode.pie`"), "\(arc.text)")
+        #expect(!arc.text.contains("`ArcMode.init`"), "init の無い型には言わない: \(arc.text)")
+        // 型でない口 (最上位の関数など) には添えない
+        #expect(!reference(tools, "SoundFile.play").text.contains("This is the type itself"))
+        // 辿り先の綴りで引ける
+        let initializer = reference(tools, "Camera.init")
+        #expect(initializer.text.contains("視点を置く。"))
+        #expect(!initializer.text.contains("音を読む。"), "型で絞る")
+        #expect(reference(tools, "ArcMode.pie").text.contains("扇形に閉じる。"))
+        #expect(reference(tools, "Camera.Projection.perspective").text.contains("遠近法。"))
+
+        // 後ろの部分や素の case 名は、引けたことにせず候補を言う
+        for spelled in ["Projection.perspective", "perspective", "pie"] {
+            let outcome = reference(tools, spelled)
+            #expect(outcome.isError, "\(spelled)")
+            #expect(!outcome.text.hasPrefix("Source:"), "\(spelled)")
+            let want = spelled.hasSuffix("perspective") ? "`Camera.Projection.perspective`" : "`ArcMode.pie`"
+            #expect(outcome.text.contains("Did you mean \(want)"), "\(spelled): \(outcome.text)")
+        }
+    }
+
+    /// 反証: 空の並びは「無い」と同じ。成功の「0 declarations」で返さない。
+    @Test("空の並びの項は、無い名前と同じに断る")
+    func treatsAnEmptyEntryListAsAbsent() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
+        let outcome = reference(makeTools(directory: directory, fetches: Fetches()), "empty")
+        #expect(outcome.isError, "\(outcome.text)")
+        #expect(outcome.text.contains("no public symbol named empty"), "\(outcome.text)")
+    }
+
+    /// 反証: 「索引は引ける」は、実際に引けるときだけ添える。オフラインで索引も無ければ書かず、確かめを打ち直さない。
+    @Test("索引が実際に引けないときは、索引を引けると添えず、確かめも打ち直さない")
+    func doesNotPromiseAnIndexItCannotRead() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("no network"))  // 索引も詳細も取れない
+        let tools = makeTools(directory: directory, fetches: fetches)
+
+        let first = reference(tools, "play")
+        #expect(first.isError)
+        #expect(!first.text.contains("does not need this file"), "引けない索引を勧めた: \(first.text)")
+        let afterFirst = fetches.urls.count  // 詳細 1 回 + 索引の確かめ 1 回
+        #expect(afterFirst == 2, "\(fetches.urls)")
+        _ = reference(tools, "SoundFile.play")
+        #expect(fetches.urls.count == afterFirst, "二度目は打ち直さない: \(fetches.urls)")
+
+        // 索引だけが取れるなら、取れた索引を取り置いたうえで添える
+        let other = try makeDirectory()
+        try writeResolved(other, pins: pin("mokume", "0.2.0"))
+        let tools2 = Tools(
+            facets: Facets(directory: other, waitLimit: 0.2),
+            apiList: APIListLocator(
+                directory: other,
+                fetch: { url in
+                    if url.lastPathComponent.hasSuffix(".md") { return Data("# 取れた索引\n".utf8) }
+                    throw APIListLocator.FetchFailure("the response was 404")
+                }),
+            makeID: { "fixed" })
+        let withIndex = reference(tools2, "play")
+        #expect(withIndex.isError)
+        #expect(withIndex.text.contains("does not need this file"), "\(withIndex.text)")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: other.appendingPathComponent(".mokume/reference/mokume-api-v0.2.0.md").path))
     }
 
     /// 道具が読む形は、`Schemas/` の代表例と同じ (形の正典と読む側が離れない)。

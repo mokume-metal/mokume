@@ -260,7 +260,7 @@ def title(symbol: dict) -> str:
 # ---------------------------------------------------------------- 一覧
 
 
-def render(symbols: list[dict], version: str) -> str:
+def render(symbols: list[dict], version: str, with_details: bool = False) -> str:
     by_owner: dict[str, list[dict]] = {}
     top: list[dict] = []
     for symbol in symbols:
@@ -276,10 +276,12 @@ def render(symbols: list[dict], version: str) -> str:
         f"公開シンボル {len(symbols)} 個 / 型 {len(top)} 個。"
         "この一覧は版ごとに組み立てたもので、リポジトリには置かれていない。"
     )
-    out.append(
-        '口の説明と例 (目盛り・寿命・注意) はこの一覧に無い。MCP の `reference(name: "api", symbol: "<名前>")` '
-        "で、同じ版のものを口ごとに引ける。"
-    )
+    if with_details:
+        # 詳細の資産を一緒に組む回だけ名乗る (詳細の無い索引に、引けない先を案内しない)
+        out.append(
+            '口の説明と例 (目盛り・寿命・注意) はこの一覧に無い。MCP の `reference(name: "api", symbol: "<名前>")` '
+            "で、同じ版のものを口ごとに引ける。"
+        )
     out.append("")
 
     def sort_key(symbol: dict) -> tuple:
@@ -1394,7 +1396,7 @@ def main() -> int:
         symbols += found
 
     if arguments.action == "list":
-        text = render(symbols, arguments.version)
+        text = render(symbols, arguments.version, with_details=bool(arguments.details))
         if arguments.output:
             arguments.output.write_text(text, encoding="utf-8")
             print(f"ok: {arguments.output} に公開シンボル {len(symbols)} 個を書いた")
