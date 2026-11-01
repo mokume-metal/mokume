@@ -226,6 +226,26 @@ struct WatchSessionModelTests {
         #expect(outcome == .pass, "\(outcome)")
     }
 
+    /// 本番を起こす口は保存だけではない (#3693)。**生成する検査の seed に頼らず、決定的に回す。** 試聴を出る要求が
+    /// 本番を起こし直す回 (本番が試聴中に落ちた) は、起こした本番が乗り換えを待ち、その世代への窓の知らせは受ける。
+    /// 保留していた試聴の子は、乗り換えが決着した後の最初の拍 (保存・入る要求の拍でも) で起きる。
+    @Test(
+        "本番を起こし直す口・保留していた試聴の子が起きる拍でも、事後条件を破らない (#3693)",
+        arguments: [
+            [Op.save, .audition, .exitWaiting, .leave, .fellBackStale],
+            [.save, .audition, .exitWaiting, .leave, .undeliverableStale],
+            [.save, .audition, .exitWaiting, .leave, .fellBack],
+            [.save, .audition, .exitWaiting, .leave, .undeliverable],
+            [.save, .audition, .exitWaiting, .leave, .promoteWaiting, .save],
+            [.save, .audition, .save, .fellBack, .saveBuildFail],
+            [.save, .audition, .save, .promoteWaiting, .audition],
+        ])
+    @MainActor
+    func restartedProductionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
     nonisolated final class Outcome: @unchecked Sendable {
         var value: Probe.Outcome = .pass
@@ -328,7 +348,12 @@ struct WatchSessionModelTests {
             }
             // **試聴の子かは、起こした時点で試聴に入っているかで決める。** 試聴の子は、本番の乗り換えが決着してから
             // 起こされる (保存の拍とは限らない)
-            if session.isAuditioning { auditionGens.insert(gens.count) }
+            let isAudition = session.isAuditioning
+            if isAudition { auditionGens.insert(gens.count) }
+            // **本番の子は、どの口で起こしても、起こした時点から乗り換えを待つ** (``WatchSession`` は新しい子を起こすたびに
+            // 待ち印を立てる)。保存だけでなく、試聴を出る要求が本番を起こし直す回 (本番が居ない・#3565) や、
+            // 進行中の作り直しが出た後に着く回も同じ
+            if !isAudition { waiting = gens.count }
             gens.append(process)
             return process
         }
@@ -354,8 +379,15 @@ struct WatchSessionModelTests {
             waitUntilGone(index)
         }
 
+        /// 直近の拍で起きた試聴の子。**保留していた試聴の子は、本番の乗り換えが決着した後の最初の拍で起きる**
+        /// (``WatchSession/resumePendingAudition()``・その拍の保存の作り直しは次の拍に回る)。保存でも入る要求でも
+        /// ない拍で生きている世代が増えるので、「この操作で世代が変わらない」約束は、これを引いて比べる。
+        private var startedAudition: Set<Int> = []
+
         private func beat() async {
+            let auditionsBefore = auditionGens
             await WatchCommand.step(session, stopped: { false }, preview: { _, _ in })
+            startedAudition = auditionGens.subtracting(auditionsBefore)
             unseen = []
             unseenAudition = []
         }
@@ -450,16 +482,11 @@ struct WatchSessionModelTests {
                 stampCount += 1
                 buildStatus = op == .saveBuildFail ? 1 : 0
                 launchFails = op == .saveLaunchFail
-                let launched = gens.count
                 let childBefore = session.child.flatMap { child in gens.firstIndex { $0 === child } }
                 let unseenBefore = unseen
                 let productionBefore = productionAlive()
                 let auditioningBefore = auditioning
                 await beat()
-                if gens.count > launched {
-                    // 試聴に入っている間に起こした子は試聴の側 (``launch(_:)``)。本番の乗り換えは待たない
-                    if !auditionGens.contains(gens.count - 1) { waiting = gens.count - 1 }
-                }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
                     let childAfter = session.child.flatMap { child in gens.firstIndex { $0 === child } }
@@ -474,7 +501,7 @@ struct WatchSessionModelTests {
                 switch op {
                 case .saveBuildFail:
                     // 作り直しが通らない回は、走っている世代を 1 つも落とさない (事後条件 5 の裏)
-                    if alive() != before {
+                    if alive().subtracting(startedAudition) != before {
                         return Violation(number: 5, text: "作り直しが通らない保存で、走っている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
                     }
                 case .saveLaunchFail:
@@ -604,7 +631,7 @@ struct WatchSessionModelTests {
                         text: "入る要求を\(accepted ? "受けた" : "断った") (期待は\(expected ? "受ける" : "断る")・試聴中 \(auditioning)・本番の側 \(name(productionAlive())))")
                 }
                 if accepted { auditioning = true }
-                if alive() != before {
+                if alive().subtracting(startedAudition) != before {
                     return Violation(number: 7, text: "入る要求で、生きている世代が変わった (前 \(name(before)) → 後 \(name(alive())))")
                 }
                 return nil
