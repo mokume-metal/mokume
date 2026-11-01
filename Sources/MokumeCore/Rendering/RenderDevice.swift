@@ -933,6 +933,22 @@ import MokumeDiagnostics
         return texture
     }
 
+    /// タイルの上にしか中身を持たない面 (`memoryless`) を作る。**常駐の集合へ入れない。**
+    ///
+    /// 常駐の集合は memoryless の面を受け付けず、Metal の検証層が表明で止める (`residency sets do not
+    /// support memoryless resources`・[#3574])。置き場を持たないので、常駐させる中身も、外す番 (``retire(_:)``)
+    /// も無い。パスの添え付けとしてだけ使う (描く先の型板 ``RenderTarget/stencilTexture``)。
+    ///
+    /// [#3574]: https://github.com/mokume-metal/mokume/issues/3574
+    func makeMemorylessTexture(descriptor: MTLTextureDescriptor) throws(RenderFailure) -> any MTLTexture {
+        precondition(descriptor.storageMode == .memoryless, "only memoryless textures skip residency")
+        try Self.checkTextureSize(width: descriptor.width, height: descriptor.height)
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw .textureUnavailable(width: descriptor.width, height: descriptor.height)
+        }
+        return texture
+    }
+
     /// GPU 専用 (`.private`) の色の面を確保して常駐させ、**透明な黒で塗っておく**。
     ///
     /// GPU 専用の面の初期値は未定義で、CPU から読める置き場 (作られた時点で 0) とは違う。

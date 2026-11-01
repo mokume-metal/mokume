@@ -509,6 +509,7 @@ extension CanvasTests {
                 "exchangePartner": "面を取り替える相手 (効果の控え) の持ち主。初めて取り替えたときに結び、面と同じだけ生きる。面を溜める側が描き場所だけを抱えても、相手の面が先に常駐から外れないため (#2388)",
                 "texturesReplaced": "打ち切られた投入の取り消しで面の中身が変わったと名乗った回数 (作ってから通算)。止まっている間に窓と出口へ出し直すかを決める内容の変更番号の一部で、増える一方 (#2388)",
                 "depthTexture": construction, "gpu": construction,
+                "stencilTexture": "型板の面 (memoryless)。作ったときに決まり、中身はパスごとに 0 から始めて捨てる (ADR-0046・#3574)",
                 "drawer": "この面を出す先に持つ描き場所 (弱く持つ)。組み立ての最後に 1 度だけ書く",
                 "brightness": "明るさを画面へ写す段の設定。画面の性質なのでフレームを越える",
                 "encodedStorage": resource, "spareEncodedStorage": resource, "displayStorage": resource,

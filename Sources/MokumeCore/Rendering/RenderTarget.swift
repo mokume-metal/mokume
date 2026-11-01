@@ -346,7 +346,8 @@ import MokumeDiagnostics
         stencil.sampleCount = texture.sampleCount
         stencil.usage = [.renderTarget]
         stencil.storageMode = .memoryless
-        let stencilTexture = try gpu.makeTexture(descriptor: stencil)
+        // memoryless の面は常駐の集合へ入れられない (``RenderDevice/makeMemorylessTexture(descriptor:)``)
+        let stencilTexture = try gpu.makeMemorylessTexture(descriptor: stencil)
         stencilTexture.label = "mokume.target.stencil"
         self.stencilTexture = stencilTexture
         // 塗りが打ち切られたら、後に書く投入が無ければ塗り直す (``submissionSettled(_:dropped:)``・#2199)
@@ -365,7 +366,7 @@ import MokumeDiagnostics
     isolated deinit {
         gpu.retire(texture)
         gpu.retire(depthTexture)
-        gpu.retire(stencilTexture)
+        // 型板の面は常駐していない (memoryless) ので、外す番も無い
     }
 
     // MARK: - 画素として見る
