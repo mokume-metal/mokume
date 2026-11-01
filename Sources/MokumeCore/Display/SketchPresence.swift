@@ -456,13 +456,19 @@ final class SketchPresence {
     ///
     /// ``DisplayImage`` は出力段を通った後の 8 bit・アルファ非乗算 (straight)・行優先で、
     /// これは `CGImage` がそのまま受け取れる形である。**画素の計算は 1 つも要らない。**
-    private static func makeCGImage(_ image: DisplayImage) -> CGImage? {
+    /// 原色は Display P3 なので ([ADR-0011] 決定 6)、``DisplayImage`` の色空間を名乗る。
+    /// DeviceRGB と名乗ると、P3 ではない画面で彩度がずれる (#3683)。
+    ///
+    /// 検査が直に突くため、`private` にしていない。
+    ///
+    /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    static func makeCGImage(_ image: DisplayImage) -> CGImage? {
         guard image.width > 0, image.height > 0,
             let provider = CGDataProvider(data: Data(image.bytes) as CFData)
         else { return nil }
         return CGImage(
             width: image.width, height: image.height, bitsPerComponent: 8, bitsPerPixel: 32,
-            bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bytesPerRow: image.width * 4, space: DisplayImage.colorSpace,
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }

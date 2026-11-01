@@ -62,14 +62,13 @@ public nonisolated enum PNGFile {
 
         let data = Data(image.bytes)
         guard let provider = CGDataProvider(data: data as CFData),
-            let colorSpace = CGColorSpace(name: CGColorSpace.displayP3),
             let cgImage = CGImage(
                 width: image.width,
                 height: image.height,
                 bitsPerComponent: 8,
                 bitsPerPixel: 32,
                 bytesPerRow: image.width * 4,
-                space: colorSpace,
+                space: DisplayImage.colorSpace,
                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
                 provider: provider,
                 decode: nil,
