@@ -357,6 +357,84 @@ nonisolated enum TestMovie {
         return url
     }
 
+    /// `first` の後ろに `second` を継いだ動画を、再符号化せず (圧縮したままの標本で) 書く。**途中でコマの
+    /// 大きさが変わる動画の作り方**: `AVAssetWriterInput` は入力を 1 つの大きさに縮めて書くので、大きさの違う
+    /// 2 本を別々に書き、標本の形式の記述 (大きさを持つ) ごと継ぐ。標本は 1 トラックの中に 2 つの形式を持つ。
+    /// `second` の時刻は `first` の終わりから続ける。2 本は同じ符号化 (と色の名乗り) で書くこと。
+    static func concatenated(_ first: URL, _ second: URL) async throws -> URL {
+        // トラックを読み込みの側へ渡す箱。**渡した後は、こちらからは触らない**
+        nonisolated final class Handoff: @unchecked Sendable {
+            let assets: [AVURLAsset]
+            let tracks: [AVAssetTrack]
+            init(_ assets: [AVURLAsset], _ tracks: [AVAssetTrack]) {
+                self.assets = assets
+                self.tracks = tracks
+            }
+        }
+        let assets = [AVURLAsset(url: first), AVURLAsset(url: second)]
+        var tracks: [AVAssetTrack] = []
+        for asset in assets { tracks.append(try #require(try await asset.loadTracks(withMediaType: .video).first)) }
+        let handoff = Handoff(assets, tracks)
+        let url = temporaryURL()
+        // 読み進める同期の待ちは協調プールの外で回す (`reference` と同じ理由・#3196)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try concatenate(handoff.assets, handoff.tracks, into: url) })
+            }
+        }
+        return url
+    }
+
+    private static func concatenate(_ assets: [AVURLAsset], _ tracks: [AVAssetTrack], into url: URL) throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        guard let hint = tracks[0].formatDescriptions.first.map({ $0 as! CMFormatDescription }) else {
+            throw ConcatenationFailure(reason: "no format description")
+        }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: hint)
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        guard writer.startWriting() else { throw ConcatenationFailure(reason: "startWriting: \(String(describing: writer.error))") }
+        writer.startSession(atSourceTime: .zero)
+        var offset = CMTime.zero
+        for (asset, track) in zip(assets, tracks) {
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            reader.add(output)
+            guard reader.startReading() else { throw ConcatenationFailure(reason: "startReading: \(String(describing: reader.error))") }
+            var end = offset
+            while let sample = output.copyNextSampleBuffer() {
+                // 標本を持たない印 (読み手が差し込む) は書かない
+                guard CMSampleBufferGetNumSamples(sample) > 0 else { continue }
+                var timing = CMSampleTimingInfo()
+                let status = CMSampleBufferGetSampleTimingInfo(sample, at: 0, timingInfoOut: &timing)
+                guard status == noErr else { throw ConcatenationFailure(reason: "timing info: \(status)") }
+                timing.presentationTimeStamp = timing.presentationTimeStamp + offset
+                if timing.decodeTimeStamp.isValid { timing.decodeTimeStamp = timing.decodeTimeStamp + offset }
+                var retimed: CMSampleBuffer?
+                let made = CMSampleBufferCreateCopyWithNewTiming(
+                    allocator: nil, sampleBuffer: sample, sampleTimingEntryCount: 1,
+                    sampleTimingArray: &timing, sampleBufferOut: &retimed)
+                guard made == noErr, let copy = retimed else { throw ConcatenationFailure(reason: "retime: \(made)") }
+                while !input.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.001) }
+                guard input.append(copy) else { throw ConcatenationFailure(reason: "append: \(String(describing: writer.error))") }
+                end = max(end, timing.presentationTimeStamp + timing.duration)
+            }
+            offset = end
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: offset)
+        let finished = DispatchSemaphore(value: 0)
+        writer.finishWriting { finished.signal() }
+        finished.wait()
+        guard writer.status == .completed else { throw ConcatenationFailure(reason: "finish: \(String(describing: writer.error))") }
+    }
+
+    /// ``concatenated(_:_:)`` が継げなかった理由。協調プールの外で回るので、`#require` ではなく投げる。
+    private struct ConcatenationFailure: Error, CustomStringConvertible {
+        let reason: String
+        var description: String { reason }
+    }
+
     /// 動画を頭から順に全部読み、枚ごとの表示時刻と絵を返す。**比べる相手で、読み手とは別に読む。**
     ///
     /// **読み進める同期の待ち (`copyNextSampleBuffer`) は、Swift の協調プールの外で回す** (#3196)。

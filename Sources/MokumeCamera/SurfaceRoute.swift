@@ -81,6 +81,14 @@ nonisolated enum SurfaceRoute {
         return .success(frame)
     }
 
+    /// 届いたコマの大きさが、変換器の記録の大きさと違うか。**違うコマは面に乗せない** (`surface` の `reshaped` に
+    /// 入れる)。変換器は違う大きさを真ん中の切り取りで縮めて渡すが、面の絵は大きさの不一致を警告して捨てるので、
+    /// 乗せると絵は前のコマのまま止まる (#3690)。動画は途中でコマの大きさが変わりうる (形式の記述が変わる動画)。
+    /// カメラも頼んだ大きさと違う絵が来うる。
+    static func differs(_ buffer: CVPixelBuffer, from converter: FrameConverter) -> Bool {
+        CVPixelBufferGetWidth(buffer) != converter.width || CVPixelBufferGetHeight(buffer) != converter.height
+    }
+
     /// 復号器が「不透明」と名乗っているか (`AlphaChannelIsOpaque`)。
     static func declaresOpaque(_ buffer: CVPixelBuffer) -> Bool {
         guard let value = CVBufferCopyAttachment(buffer, "AlphaChannelIsOpaque" as CFString, nil) else { return false }
