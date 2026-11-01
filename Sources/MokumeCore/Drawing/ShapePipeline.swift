@@ -448,6 +448,38 @@ final class ShapePipeline {
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     let replaceDepthState: (any MTLDepthStencilState)?
 
+    /// 1 つの図形の線を 1 回だけ混ぜる区間の**印**の扱い ([ADR-0046]・``Canvas/Batch/strokeStencilSections``)。
+    ///
+    /// 奥行きは立体と同じ (手前だけを通し、書く)。型板は参照値 (いまは 0) と等しい画素だけを通し
+    /// (読む 0xFF)、通った画素の線のビット (0x80) を立てる。**同じ区間の 2 つ目以降の片は、印の立った
+    /// 画素で落ちる** — 折れ目・端・稜の集まる点も、奥行きの違う稜が画面で交わる所も 1 回だけ混ざる。
+    /// 型板で落ちた片は奥行きも書かない。
+    ///
+    /// 印を「参照値と等しい」にしてあるのは、切り抜き ([#2431]) が参照値を自分の段数に変えるだけで、
+    /// 線も切り抜きの中だけに塗られるようにするためである。下の 7 ビットは切り抜きのために空けておく。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let strokeMarkDepthState: (any MTLDepthStencilState)?
+
+    /// 印を付けた区間の**消し描き**の扱い — 同じ区間をもう 1 度描き、線のビットを 0 へ戻す ([ADR-0046])。
+    ///
+    /// 色は書かない (``strokeEraseState()``)。**奥行きは書く** — 印では、奥の稜を先に積んだ交点で手前の稜が
+    /// 型板で落ちて奥行きを書かないので、交点に奥の稜の奥行きが残る。消し描きが手前の稜の奥行きを書き直さ
+    /// ないと、後に置いた形がそこだけ手前の稜を突き抜ける ([#2183])。奥行きで落ちた画素も型板は戻す
+    /// (`depthFailureOperation`)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#2183]: https://github.com/mokume-metal/mokume/issues/2183
+    let strokeEraseDepthState: (any MTLDepthStencilState)?
+
+    /// 線のビット。下の 7 ビットは切り抜きの段数のために空けておく ([#2431])。
+    static let strokeStencilBit: UInt32 = 0x80
+
+    /// 消し描きのパイプライン。**区間を描くフレームの頭で初めて組み、控えて使い回す** (``strokeEraseState()``・
+    /// 起動の時間を戻さない・#3114)。
+    private let strokeErasePipeline = Mutex<(any MTLRenderPipelineState)?>(nil)
+
     private let vertexLibrary: any MTLLibrary
     /// 単位の形の頂点関数だけを持つライブラリ。**Shapes とは別に組む** — 同じライブラリへ足すと、
     /// 既存の頂点関数の組み上がり方が変わりうる (`UnitShape.metal` の冒頭)。
@@ -530,6 +562,60 @@ final class ShapePipeline {
         replacing.depthCompareFunction = .always
         replacing.isDepthWriteEnabled = true
         self.replaceDepthState = gpu.device.makeDepthStencilState(descriptor: replacing)
+
+        func strokeStencil(
+            compare: MTLCompareFunction, pass: MTLStencilOperation, depthFailure: MTLStencilOperation
+        ) -> MTLStencilDescriptor {
+            let stencil = MTLStencilDescriptor()
+            stencil.stencilCompareFunction = compare
+            stencil.stencilFailureOperation = .keep
+            stencil.depthFailureOperation = depthFailure
+            stencil.depthStencilPassOperation = pass
+            stencil.readMask = 0xFF
+            stencil.writeMask = Self.strokeStencilBit
+            return stencil
+        }
+        // 印: 型板が参照値と等しい画素だけを通し、線のビットを立てる (いまのビットは 0 なので反転で立つ)
+        let mark = MTLDepthStencilDescriptor()
+        mark.label = "mokume.stencil.stroke-mark"
+        mark.depthCompareFunction = .lessEqual
+        mark.isDepthWriteEnabled = true
+        let marking = strokeStencil(compare: .equal, pass: .invert, depthFailure: .keep)
+        mark.frontFaceStencil = marking
+        mark.backFaceStencil = marking
+        self.strokeMarkDepthState = gpu.device.makeDepthStencilState(descriptor: mark)
+        // 消し描き: 型板によらず通し、奥行きで落ちても線のビットを 0 へ戻す
+        let erase = MTLDepthStencilDescriptor()
+        erase.label = "mokume.stencil.stroke-erase"
+        erase.depthCompareFunction = .lessEqual
+        erase.isDepthWriteEnabled = true
+        let erasing = strokeStencil(compare: .always, pass: .zero, depthFailure: .zero)
+        erase.frontFaceStencil = erasing
+        erase.backFaceStencil = erasing
+        self.strokeEraseDepthState = gpu.device.makeDepthStencilState(descriptor: erase)
+    }
+
+    /// 線の印を消し描きするパイプライン ([ADR-0046])。**まだ組んでいなければここで組む。**
+    ///
+    /// **印と同じライブラリの同じ頂点関数** (``solidVertexFunctionName``) で組む。消し描きは印と同じ画素を
+    /// 覆う前提に立つ — 同じライブラリへ関数を足すだけで既存の頂点関数の組み上がり方が変わりうる
+    /// (`UnitShape.metal` の冒頭・#1796 で影の奥行きが 1 ビット動いた) ので、別の頂点関数は使わない。
+    /// 断片は捨てない直の断片で、色は書かない (書くマスクを空に)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    func strokeEraseState() throws(RenderFailure) -> any MTLRenderPipelineState {
+        try strokeErasePipeline.withLock { (built) throws(RenderFailure) in
+            if let built { return built }
+            var plan = Self.plan(
+                label: "mokume.stencil.stroke-erase", vertexFunctionName: Self.solidVertexFunctionName,
+                fragmentFunctionName: Self.flatDirectFragmentFunctionName, sourceOver: false,
+                formFlags: nil, unlit: true, pixelFormat: pixelFormat)
+            plan.writesColor = false
+            let state = try plan.makeNow(
+                compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
+            built = state
+            return state
+        }
     }
 
     /// 面が自分で持つ引数のテーブル。**面ごとに 1 つ作る** — 共有しない理由は型の説明を参照。
@@ -848,6 +934,8 @@ final class ShapePipeline {
         let specialization: [BoolConstant]
         let sourceOver: Bool
         let pixelFormat: MTLPixelFormat
+        /// 色を書くか。書かない組 (線の印の消し描き・``ShapePipeline/strokeEraseState()``) は書くマスクを空にする。
+        var writesColor = true
 
         func descriptor(
             vertexLibrary: any MTLLibrary, fragmentLibrary: any MTLLibrary
@@ -895,6 +983,7 @@ final class ShapePipeline {
             } else {
                 attachment.blendingState = .disabled
             }
+            if !writesColor { attachment.writeMask = [] }
             return descriptor
         }
 

@@ -25,8 +25,9 @@ public nonisolated enum VertexKind: Sendable, Equatable {
     /// 含む) は線全体を 1 回だけ混ぜ、向かい合う辺が交わる 4 点は交点で 2 回混ぜる。1 つの
     /// ``Canvas/beginShape(_:)`` に並べた四角どうしは別々の輪郭なので、重なれば 2 回混ぜる。
     /// ``polygon`` は変わらず、線に沿って離れた部分が交わる所を 2 回混ぜる。
-    /// 立体 (`vertex(x, y, z)`) の輪郭は、この規則に当たらない — 立体の半透明の線は、四角に限らず
-    /// 折れ目や稜の集まる点で重ねて混ぜる ([#1561](https://github.com/mokume-metal/mokume/issues/1561))。
+    /// 立体 (`vertex(x, y, z)`) の輪郭は、交わりの判定を持たない — 立体の半透明の線は、輪郭 1 つ
+    /// (四角 1 枚) の線全体を 1 回だけ混ぜる。辺が画面で交わる所も、奥行きの違う辺が重なる所も 1 回で、
+    /// 別々の輪郭どうしは 2 回混ぜる ([ADR-0046](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md))。
     case quads
     /// 帯として読む。**3 つ目からは直前の 2 点を使い回す** — n 点で n-2 枚。
     case triangleStrip
