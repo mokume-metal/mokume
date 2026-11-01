@@ -80,13 +80,30 @@ nonisolated enum ColorAttachments {
 @Suite("面に乗せるかの判定")
 struct SurfaceRouteTests {
     private func route(
-        _ buffer: CVPixelBuffer, alpha: FrameConverter.Alpha = .straight, reshaped: Bool = false, builds: Bool = true,
-        tables: SurfaceTables
+        _ buffer: CVPixelBuffer, alpha: FrameConverter.Alpha = .straight, reshaped: Bool = false,
+        expecting size: (width: Int, height: Int)? = nil, builds: Bool = true, tables: SurfaceTables
     ) -> SurfaceRoute.Refusal? {
-        switch SurfaceRoute.surface(for: buffer, alpha: alpha, reshaped: reshaped, builds: builds, tables: tables) {
+        // 既定は、受け手の期待がコマの大きさと同じ (大きさの判定に当たらない)
+        let size = size ?? (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer))
+        return switch SurfaceRoute.surface(
+            for: buffer, alpha: alpha, reshaped: reshaped, expecting: size, builds: builds, tables: tables)
+        {
         case .success: nil
         case .failure(let refusal): refusal
         }
+    }
+
+    @Test("受け手の期待と大きさが違うコマは、向きなどを当てなくても (reshaped: false でも) 面に乗せない。幅だけ・高さだけの違いも (#3690)")
+    func sizeMismatchIsRefusedByTheRouteItself() throws {
+        let tables = SurfaceTables()
+        let fine = try ColorAttachments.buffer(width: 8, height: 6, attachments: ColorAttachments.rec709)
+        #expect(route(fine, expecting: (8, 6), tables: tables) == nil, "表の用意を兼ねる。大きさが同じなら乗る")
+        #expect(route(fine, expecting: (4, 3), tables: tables) == .resized, "縮めて渡す側の大きさ")
+        #expect(route(fine, expecting: (16, 12), tables: tables) == .resized, "広げて渡す側の大きさ")
+        #expect(route(fine, expecting: (8, 7), tables: tables) == .resized, "高さだけ違う")
+        #expect(route(fine, expecting: (9, 6), tables: tables) == .resized, "幅だけ違う")
+        #expect(route(fine, expecting: (4, 3), builds: false, tables: tables) == .resized, "表が出来ていても乗らない")
+        #expect(route(fine, reshaped: true, expecting: (4, 3), tables: tables) == .reshaped, "向きなどの理由が先に名乗る")
     }
 
     @Test("面・BGRA・不透明・検証した色・形を変えない、が揃ったコマだけを面で渡し、理由を名乗る")
@@ -184,7 +201,7 @@ struct SurfaceRouteTests {
                 return (UInt8(color & 255), UInt8(color >> 8 & 255), UInt8(color >> 16 & 255))
             }
             let surface = try SurfaceRoute.surface(
-                for: buffer, alpha: .straight, reshaped: false, builds: true, tables: tables
+                for: buffer, alpha: .straight, reshaped: false, expecting: (side, side), builds: true, tables: tables
             ).get()
             viaSurface.write(surface)
             viaConverter.write(try converter.convert(buffer))

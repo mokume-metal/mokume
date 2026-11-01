@@ -383,9 +383,11 @@ nonisolated struct PrefetchWorker {
         guard let frame = frames.current, frame.serial != published else { return }
         published = frame.serial
         let image: VideoFrame
-        // 面のまま渡せるなら面で (#2962)。色の表が無ければ、係の上で作る (main では作らない)
+        // 面のまま渡せるなら面で (#2962)。色の表が無ければ、係の上で作る (main では作らない)。
+        // 記録の大きさと違うコマ (途中で大きさが変わる動画) は、変換器が縮めるので面に乗せない (#3690)
         if case .success(let surface) = SurfaceRoute.surface(
-            for: frame.buffer, alpha: .straight, reshaped: orientation != .identity, builds: true)
+            for: frame.buffer, alpha: .straight, reshaped: orientation != .identity,
+            expecting: (converter.width, converter.height), builds: true)
         {
             image = .surface(surface)
         } else {

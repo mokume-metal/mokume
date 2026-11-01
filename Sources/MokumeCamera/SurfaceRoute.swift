@@ -33,7 +33,9 @@ nonisolated enum VideoFrame: Sendable {
 /// - **不透明** — 画素を読まずに決める。動画は付帯の `AlphaChannelIsOpaque` が真のとき (復号器が付ける)、
 ///   カメラはいつも (``FrameConverter/Alpha/opaque``)
 /// - **検証した色の意味** (``ColorMeaning``) — 付帯の組が許可の一覧に当たるとき。未知の ICC・HDR などは CPU
-/// - 向きを当てない・鏡映しない・大きさを変えない (変換の後に CPU で画素を動かす仕事が残るため)
+/// - 向きを当てない・鏡映しない (変換の後に CPU で画素を動かす仕事が残るため)
+/// - 受け手が期待する大きさと同じ — 違えば変換器が縮めるので面には乗せない。**この判定は ``surface(for:alpha:reshaped:expecting:builds:tables:)`` が
+///   自分で行う** (呼び出し側が `reshaped` に混ぜると、足し忘れた呼び出し元で面の絵が大きさの不一致を捨てる・#3690)
 /// - その色の意味の表が既にある (``SurfaceTables``)。表は作るのに数十 ms かかるので、main では作らない
 nonisolated enum SurfaceRoute {
     /// 面に乗せなかった理由。**検査が読む** (どちらの道を通ったか)。
@@ -45,6 +47,8 @@ nonisolated enum SurfaceRoute {
         case notOpaque
         case unverifiedColor
         case reshaped
+        /// コマの大きさが受け手の期待と違う。変換器が縮めるので、面の絵には書かせない (#3690)。
+        case resized
         case tableRejected
         case tablePending
     }
@@ -56,11 +60,13 @@ nonisolated enum SurfaceRoute {
     ///
     /// - Parameters:
     ///   - alpha: 変換器の不透明度の扱い (動画は `.straight`、カメラは `.opaque`)。
-    ///   - reshaped: 向き・鏡映・大きさのどれかを当てるか。当てるなら面に乗せない。
+    ///   - reshaped: 向き・鏡映・検査の変換のどれかを当てるか。当てるなら面に乗せない。
+    ///   - size: 受け手が期待する大きさ (画素。変換器の記録の大きさ)。**`buffer` の大きさが違えば乗せない。**
+    ///     面の絵 (``Image/write(_:)-(PixelSurface)``) は大きさの不一致を警告して捨てるが、変換器は縮めて渡すため。
     ///   - builds: 表が無いとき、ここで作るか。**main からは `false`** (作るのは先読みの係とカメラの絵の列)。
     static func surface(
-        for buffer: CVPixelBuffer, alpha: FrameConverter.Alpha, reshaped: Bool, builds: Bool,
-        tables: SurfaceTables = .shared
+        for buffer: CVPixelBuffer, alpha: FrameConverter.Alpha, reshaped: Bool, expecting size: (width: Int, height: Int),
+        builds: Bool, tables: SurfaceTables = .shared
     ) -> Result<PixelSurface, Refusal> {
         guard isEnabled.load(ordering: .relaxed) else { return .failure(.disabled) }
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return .failure(.notBGRA) }
@@ -68,6 +74,9 @@ nonisolated enum SurfaceRoute {
             return .failure(.noSurface)
         }
         guard !reshaped else { return .failure(.reshaped) }
+        guard CVPixelBufferGetWidth(buffer) == size.width, CVPixelBufferGetHeight(buffer) == size.height else {
+            return .failure(.resized)
+        }
         guard alpha == .opaque || declaresOpaque(buffer) else { return .failure(.notOpaque) }
         guard let meaning = ColorMeaning(buffer) else { return .failure(.unverifiedColor) }
         let table: PixelSurface.ColorTable

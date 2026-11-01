@@ -214,12 +214,10 @@ nonisolated final class CameraSource: NSObject, CaptureSource, AVCaptureVideoDat
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         // 面のまま渡せるなら面で (#2962)。色の表が無ければ、この絵の列の上で作る (main では作らない)。
         // 頼んだ大きさと違う絵は、変換器が縮めるので面に乗せない
-        let reshaped =
-            mirrored || CVPixelBufferGetWidth(pixels) != converter.width
-            || CVPixelBufferGetHeight(pixels) != converter.height
         let picture: VideoFrame
         if case .success(let surface) = SurfaceRoute.surface(
-            for: pixels, alpha: .opaque, reshaped: reshaped, builds: true)
+            for: pixels, alpha: .opaque, reshaped: mirrored, expecting: (converter.width, converter.height),
+            builds: true)
         {
             picture = .surface(surface)
         } else {
