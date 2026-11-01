@@ -67,24 +67,7 @@ struct MovieSurfaceMeasurement {
                 return movie
             }
         }
-        SurfaceScene.onDraw = { sketch in
-            sketch.background(20, 20, 30)
-            for (index, movie) in movies.enumerated() {
-                sketch.image(movie.image, Float(index % 2) * 960, Float(index / 2) * 540, 960, 540)
-            }
-            sketch.noStroke()
-            for index in 0..<200 {
-                sketch.fill(Float(index % 255), 120, 200, 90)
-                sketch.rect(Float(index * 37 % 1880), Float(index * 53 % 1040), 40, 40)
-            }
-            sketch.lights()
-            sketch.fill(230, 160, 60)
-            sketch.translate(960, 540, 0)
-            sketch.rotateX(Float(sketch.frameCount) * 0.01)
-            sketch.rotateY(Float(sketch.frameCount) * 0.013)
-            sketch.box(300)
-            sketch.filter([.blur(radius: 2)])
-        }
+        SurfaceScene.onDraw = { sketch in sketch.composite(movies) }
         let origin = ContinuousClock.now
         let gpu = try RenderDevice()
         let runtime = try SketchRuntime(
@@ -132,7 +115,7 @@ struct MovieSurfaceMeasurement {
         MovieStall.line("2962", path, "delivered", "\(gpu.arrivedNoticeCount)", "commands")
     }
 
-    private static func percentile(_ values: [Double], _ p: Double) -> Double {
+    static func percentile(_ values: [Double], _ p: Double) -> Double {
         let sorted = values.sorted()
         guard !sorted.isEmpty else { return 0 }
         return sorted[min(sorted.count - 1, Int((Double(sorted.count) * p).rounded(.up)) - 1)]
@@ -159,4 +142,25 @@ final class SurfaceScene: Sketch {
     var settings: SketchSettings { SketchSettings(width: 1920, height: 1080, frameRate: 120) }
     func setup() throws { try Self.onSetup(self) }
     func draw() { Self.onDraw(self) }
+
+    /// 複合場面を 1 フレーム描く: 動画を 4 分割で貼り、200 個の半透明の矩形と照らして回る立方体を重ね、
+    /// 全体にぼかしを掛ける (#2962・#2961 の計測が共有する)。
+    func composite(_ movies: [Movie]) {
+        background(20, 20, 30)
+        for (index, movie) in movies.enumerated() {
+            image(movie.image, Float(index % 2) * 960, Float(index / 2) * 540, 960, 540)
+        }
+        noStroke()
+        for index in 0..<200 {
+            fill(Float(index % 255), 120, 200, 90)
+            rect(Float(index * 37 % 1880), Float(index * 53 % 1040), 40, 40)
+        }
+        lights()
+        fill(230, 160, 60)
+        translate(960, 540, 0)
+        rotateX(Float(frameCount) * 0.01)
+        rotateY(Float(frameCount) * 0.013)
+        box(300)
+        filter([.blur(radius: 2)])
+    }
 }
