@@ -275,7 +275,8 @@ nonisolated struct PathOperationsValueTests {
             ("輪と島", island, disc(130, 100, 40)),
             ("島と輪", island, ring),
             ("大きな座標", disc(1e6, 1e6, 50), disc(1e6 + 60, 1e6, 50)),
-            ("小さな形", disc(0, 0, 1e-3), disc(0.6e-3, 0, 1e-3)),
+            // CoreGraphics の演算は半径 1e-6 でも面積の収支が 1e-4 以内で合う (実測) ので、その 4 桁上の大きさで測る
+            ("小さな形", disc(0, 0, 0.01), disc(0.006, 0, 0.01)),
         ]
         for (label, p, q) in pairs {
             let inside = expectSetAlgebra(p, q, label)
@@ -395,7 +396,7 @@ nonisolated struct PathOperationsValueTests {
     @Test("刻みの印は、座標が丸めの範囲でずれていても引き継ぎ、入力から離れた点は角にする")
     func marksSurviveSmallShifts() {
         let circle = a.subpaths[0]
-        for offset in [0, 1e-5, -2e-4] {
+        for offset in [0, 1e-5, -3e-5] {
             let result = Path(cgPath: closedCG(circle.points, offset: offset), inputs: [a])
             #expect(result.subpaths.count == 1 && result.subpaths[0].isCurveStep.allSatisfy { $0 }, "ずれ \(offset)")
         }
@@ -410,6 +411,37 @@ nonisolated struct PathOperationsValueTests {
         ])
         let mixed = Path(cgPath: closedCG(circle.points), inputs: [withCorner])
         #expect(!mixed.subpaths[0].isCurveStep[0] && mixed.subpaths[0].isCurveStep[1])
+    }
+
+    @Test("遠い形が 1 つ混ざっても、手前の交点は角のまま残り、許容が全体の最大の座標に引きずられない")
+    func farShapeDoesNotWidenTheTolerance() {
+        let far = disc(1e7, 0, 10)
+        let union = Path.union([a, b, far])
+        let near = union.subpaths.filter { subpath in subpath.points.allSatisfy { $0.x < 1000 } }
+        let all = near.flatMap { zip($0.points, $0.isCurveStep) }
+        func nearIntersection(_ p: SIMD2<Float>) -> Bool {
+            let dx = p.x - 130
+            let dy = abs(p.y - 100) - 40
+            return (dx * dx + dy * dy).squareRoot() < 0.1
+        }
+        #expect(all.count > 100)
+        #expect(all.filter { !$0.1 }.count >= 2, "交点が角のまま残る")
+        for (point, isStep) in all { #expect(isStep != nearIntersection(point), "\(point) 刻み=\(isStep)") }
+    }
+
+    @Test("閉じた後に moveTo を挟まず線が来たら、閉じた部分道の始点から続ける")
+    func lineAfterCloseStartsAtTheClosedStart() {
+        let cg = CGMutablePath()
+        cg.addLines(between: [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 100), CGPoint(x: 0, y: 100)])
+        cg.closeSubpath()
+        cg.addLine(to: CGPoint(x: 50, y: 200))
+        cg.addLine(to: CGPoint(x: 0, y: 200))
+        cg.closeSubpath()
+        let path = Path(cgPath: cg, inputs: [])
+        #expect(path.subpaths.count == 2, "\(path.subpaths.count) 本")
+        #expect(path.subpaths.last?.points.first == SIMD2<Float>(0, 0), "2 本目は (0, 0) から始まる")
+        #expect(path.subpaths.first?.points.count == 4)
+        #expect(path.contains([10, 150]) && !path.contains([100, 150]) && path.contains([50, 50]))
     }
 
     @Test("CoreGraphics が始点へ戻る終点を返しても、重複を落とす。点が 3 つに満たない・Float に収まらない部分道は入れない")
@@ -439,6 +471,9 @@ nonisolated struct PathOperationsValueTests {
         #expect(ellipse.contains([50, 50]) && !ellipse.contains([-1, 50]) && !ellipse.contains([50, 101]))
         let circumference = 2 * Float.pi * 50
         #expect(abs(ellipse.length - circumference) < circumference * 5e-4, "\(ellipse.length)")
+        // 曲線の端点 4 つだけが入力に無い点 (角)。刻んだ途中の点は刻みの印を持つ
+        let steps = ellipse.subpaths[0].isCurveStep
+        #expect(steps.filter { !$0 }.count == 4 && steps.filter { $0 }.count == steps.count - 4)
         for point in ellipse.subpaths[0].points {
             let radius = ((point.x - 50) * (point.x - 50) + (point.y - 50) * (point.y - 50)).squareRoot()
             #expect(abs(radius - 50) < 0.05, "刻んだ点は円の上にある (ベジェ自身の近似が 0.013 ほど): \(radius)")
