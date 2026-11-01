@@ -126,6 +126,14 @@ public final class Shader {
         box.assign(name, value) { paintWillChange() }
     }
 
+    /// 渡す値を、Swift の値のまま書き換える (``ShaderValueConvertible``)。
+    ///
+    /// `Float`・`Int`・`Double` の変数も、`Vector2`・`Vector3`・`LinearRGBA`・`Bool`・`Transform` も
+    /// 包まずに渡せる。宣言と違う型の値は警告して断る。
+    public func set(_ name: String, _ value: some ShaderValueConvertible) {
+        set(name, value.shaderValue)
+    }
+
     /// 渡す面を差し替える。
     ///
     /// **宣言していない名前は受け付けない** — 面の宣言も断片と一緒に組み上がるので、

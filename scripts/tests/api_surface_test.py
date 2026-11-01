@@ -423,6 +423,23 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("mokume v1.2.3", text)
         self.assertIn("公開シンボル 1 個", text)
 
+    def test_一覧の冒頭が口ごとの詳細の引き方を名乗る(self):
+        # #3584: 索引は説明の全文を持たない。口の説明と例は MCP の `symbol` で同じ版のものを引ける
+        text = api.render([symbol("Sketch", kind="swift.protocol")], "v1.2.3", with_details=True)
+        head = text.split("\n## ")[0]
+        self.assertIn('reference(name: "api", symbol: "<名前>")', head)
+        # 一覧の本体 (宣言と型の説明の 1 行目) は変えない
+        self.assertIn("## Sketch", text)
+
+    def test_詳細を組まない回の索引は引き方を名乗らない(self):
+        # 詳細の資産が一緒に出ない索引に「symbol で引ける」と書くと、引けない先を案内する
+        text = api.render([symbol("Sketch", kind="swift.protocol")], "v1.2.3")
+        self.assertNotIn("symbol", text)
+        # 索引の本体は名乗りの有無によらず同じ
+        self.assertEqual(
+            text.split("\n## ", 1)[1],
+            api.render([symbol("Sketch", kind="swift.protocol")], "v1.2.3", with_details=True).split("\n## ", 1)[1])
+
     def test_同名オーバーロードの並びが入力の順に依らない(self):
         # #880: `title` だけを鍵にすると、同名オーバーロードは全部同じ鍵になり、
         # 安定ソートがソースの並び順をそのまま残す。#797 で Sketch.swift を 24 ファイルに
@@ -550,11 +567,32 @@ class ApiSurfaceTests(unittest.TestCase):
             indexed = index.read_text(encoding="utf-8")
             done = run("--details", str(details))
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertEqual(index.read_text(encoding="utf-8"), indexed, "詳細を足して索引が変わった")
+            # 詳細を一緒に組む回だけ、冒頭が引き方を名乗る (#3584)。索引の本体は変わらない
+            self.assertNotIn("symbol", indexed)
+            with_details = index.read_text(encoding="utf-8")
+            self.assertIn('reference(name: "api", symbol: "<名前>")', with_details)
+            self.assertEqual(
+                with_details.split("\n## ", 1)[1], indexed.split("\n## ", 1)[1], "詳細を足して索引の本体が変わった")
             data = json.loads(details.read_text(encoding="utf-8"))
             self.assertEqual(data["version"], "v1.2.3")
             self.assertEqual(api.count_details(data), 3)
             self.assertIn("口ごとの詳細 3 個", done.stdout)
+
+    def test_listは出力先の親ディレクトリが無くても作って書く(self):
+        # MCP の案内どおり `make api-list OUT=.mokume/reference/… DETAILS=…` と打つと、区画はまだ無い (#3584)
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory) / "graphs"
+            graphs.mkdir()
+            document = {"symbols": self._detail_symbols(directory)[:3]}
+            (graphs / "MokumeCore.symbols.json").write_text(json.dumps(document), encoding="utf-8")
+            index = Path(directory) / "sketch/.mokume/reference/mokume-api.md"
+            details = Path(directory) / "sketch/.mokume/reference/mokume-api-details.json"
+            done = subprocess.run(
+                ["python3", str(SCRIPT), "list", "--graphs", str(graphs), "--module", "MokumeCore",
+                 "--version", "v1.2.3", "--output", str(index), "--details", str(details)],
+                capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertTrue(index.exists() and details.exists())
 
     def test_その他の節でも同名オーバーロードの並びが入力の順に依らない(self):
         # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の枝で並べられる**。

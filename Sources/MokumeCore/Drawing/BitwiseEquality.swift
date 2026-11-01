@@ -27,9 +27,26 @@ extension SIMD3 where Scalar == Float {
     }
 }
 
+extension SIMD4 where Scalar == Float {
+    @inline(__always)
+    func isBitwiseEqual(to other: SIMD4<Float>) -> Bool {
+        x.isBitwiseEqual(to: other.x) && y.isBitwiseEqual(to: other.y) && z.isBitwiseEqual(to: other.z)
+            && w.isBitwiseEqual(to: other.w)
+    }
+}
+
 extension Vector3 {
     @inline(__always)
     func isBitwiseEqual(to other: Vector3) -> Bool { simd.isBitwiseEqual(to: other.simd) }
+}
+
+extension Transform {
+    @inline(__always)
+    func isBitwiseEqual(to other: Transform) -> Bool {
+        let (a, b) = (matrix.columns, other.matrix.columns)
+        return a.0.isBitwiseEqual(to: b.0) && a.1.isBitwiseEqual(to: b.1)
+            && a.2.isBitwiseEqual(to: b.2) && a.3.isBitwiseEqual(to: b.3)
+    }
 }
 
 extension LinearRGBA {
@@ -49,6 +66,14 @@ extension ShaderValue {
         case let (.pair(ax, ay), .pair(bx, by)):
             return ax.isBitwiseEqual(to: bx) && ay.isBitwiseEqual(to: by)
         case let (.color(a), .color(b)):
+            return a.isBitwiseEqual(to: b)
+        case let (.vector3(a), .vector3(b)):
+            return a.isBitwiseEqual(to: b)
+        case let (.bool(a), .bool(b)):
+            return a == b
+        case let (.int(a), .int(b)):
+            return a == b
+        case let (.transform(a), .transform(b)):
             return a.isBitwiseEqual(to: b)
         default:
             return false

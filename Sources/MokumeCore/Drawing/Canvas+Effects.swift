@@ -281,10 +281,16 @@ extension Canvas {
     private func makeEffect(
         name: String, url: URL?, body: String, values: [String: ShaderValue]
     ) throws(ShaderFailure) -> EffectShader {
-        guard values.count * 4 <= EffectPipeline.valueSlotCapacity else {
+        // **詰め物込みの長さで見る** (塗り・計算の ``checkValuesFit(_:path:)`` と同じ数え方)。値の数 × 4 で
+        // 見ると、1 値が 4 個を超える `float4x4` (16 個) が区画 (``EffectPipeline/valueSlotCapacity``) を
+        // 越えても通り、描くときの写しが末尾を黙って切る
+        let packed = ShaderSource.pack(values).count
+        guard packed <= EffectPipeline.valueSlotCapacity else {
             throw .notCompilable(
                 path: url?.path ?? name,
-                reason: "At most \(EffectPipeline.valueSlotCapacity / 4) values can go into one effect")
+                reason: ShaderFailure.tooManyValues(
+                    path: url?.path ?? name, count: packed, capacity: EffectPipeline.valueSlotCapacity
+                ).description)
         }
         do {
             // **弱く持って、失敗だけを読む** ([#787])。強く持つと利用者が手放した断片まで
@@ -567,6 +573,9 @@ extension Canvas {
         frameBlock.storeBytes(
             of: pass.noise.falloff, toByteOffset: EffectPipeline.noiseFalloffOffset, as: Float.self)
         var values = pass.shader?.packedValues ?? [0, 0, 0, 0]
+        // 入口 (``makeEffect(name:url:body:values:)``) が詰めた長さで断っているので、区画を越える長さは来ない。
+        // 来たら、写しが末尾を黙って切って別の値で描くので、そこで止める
+        precondition(values.count <= EffectPipeline.valueSlotCapacity, "effect values exceed the block")
         while values.count < EffectPipeline.valueSlotCapacity { values.append(0) }
         block.advanced(by: EffectPipeline.valuesOffset)
             .copyMemory(

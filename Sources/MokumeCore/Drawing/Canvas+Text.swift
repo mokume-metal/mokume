@@ -615,7 +615,9 @@ extension Canvas {
     /// 返る点は**いまの座標のまま**で、変換は掛かっていない — そのまま
     /// ``vertex(_:_:)`` へ渡せば、文字を描いたのと同じ場所に出る。
     ///
-    /// 字ごとに、外側の周が先・穴が後の順で並ぶ。
+    /// 字ごとに、外側の周が先・穴が後の順で並ぶ。**周の向きは書体に依らずそろう** — 外側の周は面で時計回りに見える向き (`y` が
+    /// 下向きの面の座標で、符号つき面積が正)、穴は逆回りで返る。書体の巻きは書体ごとに逆になりうる (PostScript 系は
+    /// 外周が逆回り) ので、`textOutline` が字ごとにそろえてから返す。
     ///
     /// **周の分かれ方は書体の持ち方どおりで、書体と字によって変わる。** 既定の書体は
     /// `A` や `B` のような字を重なった部品で持つので、`A` は重なった外周がいくつも返り、
@@ -826,7 +828,8 @@ extension Canvas {
     ///
     /// 書体の座標は基準線から**上向き**に測るので、面の縦向きに合わせて折り返す。
     /// 折り返すと巻きの向きも入れ替わるので、穴かどうかは折り返した後の面積で見る
-    /// (面の座標では、外側が正・穴が負になる)。
+    /// (面の座標では、外側が正・穴が負になる)。**書体の巻きは書体ごとに逆になりうる** (PostScript 系の CFF は
+    /// 外周が逆回り) ので、字ごとに全部の周の符号つき面積の和が正になるよう、全部の周の向きをそろえてから読む。
     nonisolated static func rings(of path: CGPath, originX: Float, baseline: Float) -> [TextContour] {
         var rings: [[SIMD2<Float>]] = []
         var current: [SIMD2<Float>] = []
@@ -869,7 +872,21 @@ extension Canvas {
         }
         close()
 
-        return rings.map { TextContour(outline: $0, isHole: signedArea(of: $0) < 0) }
+        // **巻きの向きは書体ごとに逆になる。** TrueType 系は外周が正の向きだが、PostScript 系 (CFF) は外周が
+        // 逆回りで、そのまま面積の符号で読むと外周が穴・穴が外周になる ([#3562])。字ごとに、全部の周の符号つき
+        // 面積の和 (字が塗る面の回り数の積分) が負なら、全部の周の向きを反転して正にそろえる。単独の周の大きさは
+        // 見ない — 重なった部品の外周で作る字では、単独の外周が穴より小さいことがあるが、和は重なりを数えるので
+        // 符号が保たれる (1 本の周が自己交差する字は、その周の面積が打ち消し合い、和でも符号が定まらないことがある)。
+        // 字をまたいで巻きがそろうので、重なった字を 1 つの道にしても回り数が打ち消し合わない。
+        // 始点は変えない。曲線が始点へ戻って終わる周 (`o` など。最後の点が最初の点と重なる) は、全体を逆順にして
+        // 重なりを末尾に保つ
+        let areas = rings.map { signedArea(of: $0) }
+        let reversedWinding = areas.reduce(0, +) < 0
+        return zip(rings, areas).map { ring, area in
+            guard reversedWinding else { return TextContour(outline: ring, isHole: area < 0) }
+            let flipped = ring.last == ring.first ? ring.reversed() : [ring[0]] + ring.dropFirst().reversed()
+            return TextContour(outline: flipped, isHole: -area < 0)
+        }
     }
 
     /// 曲線を直線の並びへ割る。**細かさは曲線の大きさから決める** — 字形の曲線は

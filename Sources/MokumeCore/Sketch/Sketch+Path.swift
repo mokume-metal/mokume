@@ -36,7 +36,7 @@ extension SketchPart {
     ///
     /// 走っている実行の面を取れない所 (初期化子の中・後片付けの後など) で呼ぶと、落ちずに空の道を返し、1 度だけ
     /// 警告する。中身は呼ばれる。
-    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。作例は #3562 が持つ)
+    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。createPath を呼ぶ作例は #2432 (破線) が持つ。参照スケッチ type-and-path は Path(textOutline) で道を作る)
     public func createPath(_ body: () -> Void) -> Path {
         guard let canvas = Self.liveCanvas(.make(returning: "an empty path")) else {
             body()
@@ -58,7 +58,7 @@ extension SketchPart {
     /// なる。SVG へ書き出すときも、塗りは 1 つの図形、線は部分道ごとの図形になる。
     ///
     /// ``createPath(_:)`` の中で呼ぶと、描かずに、外の道へ部分道を足す。
-    // shot: 撮れない 作例 (道に沿って動くもの・破線) は #2432・#3562 が持つ。同じ beginShape との画素の一致は PathTests が見る
+    // shot: 撮れない 道に沿って動く粒は参照スケッチ type-and-path が、破線は #2432 が示す。同じ beginShape との画素の一致は PathTests が見る
     public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(path, x, y)

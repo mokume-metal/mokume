@@ -99,6 +99,14 @@ import MokumeDiagnostics
         box.assign(name, value)
     }
 
+    /// 渡す値を、Swift の値のまま書き換える (``ShaderValueConvertible``)。
+    ///
+    /// `Float`・`Int`・`Double` の変数も、`Vector2`・`Vector3`・`LinearRGBA`・`Bool`・`Transform` も
+    /// 包まずに渡せる。宣言と違う型の値は警告して断る。
+    public func set(_ name: String, _ value: some ShaderValueConvertible) {
+        set(name, value.shaderValue)
+    }
+
     // MARK: - 差し替え
 
     /// 断片を読み直して組み直す。**読み直しと控えの更新は骨が持つ** (``ShaderBox/reload(inBackground:prepare:adopt:)``)。
