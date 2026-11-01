@@ -359,7 +359,7 @@ enum GradientShader {
         return values
     }
 
-    /// 値の並びの中での、各項目の先頭の位置 (宣言と同じ詰め方 ``ShaderSource/packedOffsets(of:)``)。
+    /// 値の並びの中での、各項目の先頭の位置 (`Float` 単位。宣言と同じ詰め方 ``ShaderSource/packedOffsets(of:)``)。
     struct Layout {
         let count: Int
         let row0: Int
@@ -372,7 +372,8 @@ enum GradientShader {
 
     static let layout: Layout = {
         let declared = declarations
-        let offsets = ShaderSource.packedOffsets(of: declared)
+        // 宣言は浮動小数だけなので、バイトの位置は 4 の倍数で、`Float` の位置に直せる
+        let offsets = ShaderSource.packedOffsets(of: declared).mapValues { $0 / MemoryLayout<Float>.stride }
         return Layout(
             count: ShaderSource.pack(declared).count,
             row0: offsets["row0"]!, row1: offsets["row1"]!, offset: offsets["offset"]!,

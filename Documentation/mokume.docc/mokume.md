@@ -1063,6 +1063,7 @@ fill(palette.randomElement()!)                       // 種に従わない。走
 - ``Computation``
 - ``Numbers``
 - ``ShaderValue``
+- ``ShaderValueConvertible``
 - ``ShaderSurface``
 - ``ShaderFailure``
 

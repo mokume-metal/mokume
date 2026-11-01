@@ -125,7 +125,7 @@ enum ShaderSource {
         let fields: [DeclarationLine] =
             sorted.isEmpty
             ? [("    float4 mokume_unused;", nil)]
-            : sorted.map { ("    \($0.value.metalType) \($0.key);", $0.key) }
+            : sorted.map { ("    \($0.value.declaredType) \($0.key);", $0.key) }
         return [("struct Values {", nil)] + fields + [("};", nil)]
     }
 
@@ -141,37 +141,51 @@ enum ShaderSource {
 
     /// 値を詰める並び (= 宣言する並び)。**宣言と詰め方が別々に動かないよう、ここで 1 か所に決める。**
     ///
-    /// 4 成分のものを先に、同じ成分の数なら名前の降順。16 バイト境界に揃うものを先に置けば、
-    /// 詰め物の入り方が Swift 側の並べ方と一致する。
+    /// Metal の構造体での大きさ (``ShaderValue/byteSize``) の降順で、同じ大きさなら名前の降順。
+    /// 大きさは 64・16・8・4・1 バイトのどれかで、どれも前の大きさの約数であり、置く境界
+    /// (`float3`・`float4`・`float4x4` は 16、`float2` は 8) は大きさ以下である。**大きいものから
+    /// 並べれば、各値は自分の境界にちょうど載り、境界に揃えるための詰め物が間に入らない** — 宣言の
+    /// 並びと Swift 側の詰め方が一致する理由はこれだけである。
     private static func packingOrder(
         of values: [String: ShaderValue]
     ) -> [(key: String, value: ShaderValue)] {
-        values.sorted { ($0.value.componentCount, $0.key) > ($1.value.componentCount, $1.key) }
+        values.sorted { ($0.value.byteSize, $0.key) > ($1.value.byteSize, $1.key) }
     }
 
-    /// 値の名前ごとの、詰めた並びの中での先頭の位置 (``pack(_:)`` と同じ並び)。
+    /// 値の名前ごとの、詰めた並びの中での先頭の**バイト位置** (``pack(_:)`` と同じ並び)。
     ///
     /// 宣言は組み立てるときに固定され、後から名前も形も変わらない (``ShaderBox/assign(_:_:willChange:)``)
-    /// ので、持ち主は 1 度引いた表で、変えた値だけを詰め直せる (#2790)。
+    /// ので、持ち主は 1 度引いた表で、変えた値だけを詰め直せる (#2790)。位置を数でなくバイトで持つのは、
+    /// `bool` が 1 バイトだからである。
     static func packedOffsets(of values: [String: ShaderValue]) -> [String: Int] {
         var offsets: [String: Int] = [:]
         offsets.reserveCapacity(values.count)
         var next = 0
         for (key, value) in packingOrder(of: values) {
             offsets[key] = next
-            next += value.componentCount
+            next += value.byteSize
         }
         return offsets
     }
 
     /// 値を、宣言した並びのとおりに詰める。
+    ///
+    /// 入れ物は `Float` の並びだが、中は Metal の構造体のバイト列そのもの (`int` は 32 ビットの整数、
+    /// `bool` は 1 バイト)。長さは構造体の大きさを 16 バイト境界へ切り上げた分で、値の区画の数え方
+    /// (``ShaderFailure/tooManyValues(path:count:capacity:)``) もこの長さで見る。
     static func pack(_ values: [String: ShaderValue]) -> [Float] {
         let sorted = packingOrder(of: values)
         guard !sorted.isEmpty else { return [0, 0, 0, 0] }
-        var packed: [Float] = []
-        for (_, value) in sorted { packed.append(contentsOf: value.components) }
         // 構造体の大きさは 16 バイト境界へ切り上がる
-        while packed.count % 4 != 0 { packed.append(0) }
+        let bytes = sorted.reduce(0) { $0 + $1.value.byteSize }
+        var packed = [Float](repeating: 0, count: (bytes + 15) / 16 * 4)
+        packed.withUnsafeMutableBytes { buffer in
+            var offset = 0
+            for (_, value) in sorted {
+                value.store(into: buffer, at: offset)
+                offset += value.byteSize
+            }
+        }
         return packed
     }
 
@@ -378,6 +392,9 @@ enum ShaderSource {
 }
 
 /// 断片へ渡せる値。
+///
+/// `set(_:_:)` は Swift の値をそのまま受ける (``ShaderValueConvertible``)。この型を直に書くのは、
+/// 作るときの `values:` の宣言か、`.int(n)` のように型を明示したいときだけである。
 public enum ShaderValue: Equatable, Sendable {
     /// 1 つの数。断片からは `float` として見える。
     case number(Float)
@@ -388,44 +405,107 @@ public enum ShaderValue: Equatable, Sendable {
     /// 断片の中で不透明度を変えるときは、`values.tint * 0.3` のように 4 成分に同じ数を掛ける。
     /// `float4(values.tint.rgb, 0.3)` は乗算済みの約束を崩す。
     case color(LinearRGBA)
+    /// 3 つ組。断片からは `float3` として見える。向き・位置・軸ごとの倍率のように、3 つの数で 1 つの
+    /// 意味を持つものに使う。
+    ///
+    /// Metal の `float3` は大きさが 16 バイトで、4 つめの場所は詰め物になる (宣言と詰め方は組み立てが
+    /// 合わせるので、書く側は気にしなくてよい)。
+    case vector3(Vector3)
+    /// 真偽。断片からは `bool` として見える。
+    case bool(Bool)
+    /// 整数。断片からは `int` (32 ビット) として見える。
+    ///
+    /// **`Int` を渡すだけなら要らない** — `set("bands", n)` の `n` は `float` で届き、整数の
+    /// リテラルも同じである (宣言を黙って変えない・[ADR-0035])。`int` で宣言されるのは、この case で
+    /// 明示した値だけで、添字・`%`・ビット演算のように断片が整数で扱いたいときに使う。32 ビットに
+    /// 収まらない値は、端 (`Int32.min`・`Int32.max`) に丸めて渡す。
+    ///
+    /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
+    case int(Int)
+    /// 座標変換。断片からは `float4x4` として見える。
+    ///
+    /// 列を先に並べる Metal の行列で、`values.placement * float4(p, 1.0)` と書くと、``Transform`` を
+    /// 掛けたときと同じ点に移る。
+    case transform(Transform)
 
     var metalType: String {
         switch self {
         case .number: "float"
         case .pair: "float2"
         case .color: "float4"
+        case .vector3: "float3"
+        case .bool: "bool"
+        case .int: "int"
+        case .transform: "float4x4"
         }
     }
 
-    var componentCount: Int {
+    /// 値の宣言に書く型の綴り。**行列だけ名前空間ごと書く** — 値の宣言は共通部分より前に出るので
+    /// `using namespace metal;` がまだ効いておらず、裸の `float4x4` は「そんな型は無い」で落ちる
+    /// (ベクトルの型は組み込みで、裸で書ける)。断片の中では、いつもどおり `float4x4` と書ける。
+    var declaredType: String {
+        if case .transform = self { return "metal::float4x4" }
+        return metalType
+    }
+
+    /// Metal の構造体の中で占めるバイト数。**置く境界は、この大きさか 16 の小さいほう**
+    /// (`float3` は 12 ではなく 16 バイトを占め、16 バイト境界に置かれる)。
+    var byteSize: Int {
         switch self {
-        case .number: 1
-        case .pair: 2
-        case .color: 4
+        case .number, .int: 4
+        case .pair: 8
+        case .color, .vector3: 16
+        case .bool: 1
+        case .transform: 64
         }
     }
 
-    /// 成分を、詰めた並び (``ShaderSource/pack(_:)``) の `offset` から書き込む。**配列を作らない。**
-    func store(into buffer: UnsafeMutableBufferPointer<Float>, at offset: Int) {
+    /// 値を、詰めた並び (``ShaderSource/pack(_:)``) の `offset` (バイト) から書き込む。**配列を作らない。**
+    ///
+    /// 書くのは値の成分だけで、詰め物 (`float3` の 4 つめなど) には触れない — 詰め物は最初から 0 で、
+    /// 書き換えの間も 0 のままになる。
+    func store(into buffer: UnsafeMutableRawBufferPointer, at offset: Int) {
+        // 1 つの `Float` を、値の先頭から `byte` バイトの所へ書く
+        func put(_ component: Float, _ byte: Int) {
+            buffer.storeBytes(of: component, toByteOffset: offset + byte, as: Float.self)
+        }
         switch self {
         case .number(let value):
-            buffer[offset] = value
+            put(value, 0)
         case .pair(let x, let y):
-            buffer[offset] = x
-            buffer[offset + 1] = y
+            put(x, 0)
+            put(y, 4)
         case .color(let color):
-            buffer[offset] = color.red
-            buffer[offset + 1] = color.green
-            buffer[offset + 2] = color.blue
-            buffer[offset + 3] = color.alpha
-        }
-    }
-
-    var components: [Float] {
-        switch self {
-        case .number(let value): [value]
-        case .pair(let x, let y): [x, y]
-        case .color(let color): [color.red, color.green, color.blue, color.alpha]
+            put(color.red, 0)
+            put(color.green, 4)
+            put(color.blue, 8)
+            put(color.alpha, 12)
+        case .vector3(let vector):
+            put(vector.x, 0)
+            put(vector.y, 4)
+            put(vector.z, 8)
+        case .bool(let value):
+            buffer.storeBytes(of: value ? 1 : 0, toByteOffset: offset, as: UInt8.self)
+        case .int(let value):
+            buffer.storeBytes(of: Int32(clamping: value), toByteOffset: offset, as: Int32.self)
+        case .transform(let transform):
+            let columns = transform.matrix.columns
+            put(columns.0.x, 0)
+            put(columns.0.y, 4)
+            put(columns.0.z, 8)
+            put(columns.0.w, 12)
+            put(columns.1.x, 16)
+            put(columns.1.y, 20)
+            put(columns.1.z, 24)
+            put(columns.1.w, 28)
+            put(columns.2.x, 32)
+            put(columns.2.y, 36)
+            put(columns.2.z, 40)
+            put(columns.2.w, 44)
+            put(columns.3.x, 48)
+            put(columns.3.y, 52)
+            put(columns.3.z, 56)
+            put(columns.3.w, 60)
         }
     }
 }
