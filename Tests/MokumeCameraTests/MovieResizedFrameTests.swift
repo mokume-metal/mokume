@@ -109,7 +109,10 @@ struct MovieResizedFrameTests {
         let buffer = try #require(try decodedBuffers(url).first)
         let deadline = ContinuousClock.now + .seconds(60)
         while true {
-            switch SurfaceRoute.surface(for: buffer, alpha: .straight, reshaped: false, builds: true) {
+            switch SurfaceRoute.surface(
+                for: buffer, alpha: .straight, reshaped: false,
+                expecting: (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer)), builds: true)
+            {
             case .success: return
             case .failure(.tablePending): break
             case .failure(let refusal): Issue.record("表を作れない: \(refusal)"); return
@@ -131,7 +134,10 @@ struct MovieResizedFrameTests {
         #expect(sizes.suffix(Self.count).allSatisfy { $0 == Self.later }, "後半は大きさが変わる: \(sizes.suffix(Self.count))")
         // 大きさの判定が無ければ、後半のコマも面に乗る。ここが乗らないと、下の検査は理由の違う緑になる
         for (index, buffer) in buffers.enumerated() {
-            let route = SurfaceRoute.surface(for: buffer, alpha: .straight, reshaped: false, builds: false)
+            // 受け手の期待を、このコマ自身の大きさにする (大きさの判定を外して見る)
+            let route = SurfaceRoute.surface(
+                for: buffer, alpha: .straight, reshaped: false,
+                expecting: (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer)), builds: false)
             #expect((try? route.get()) != nil, "\(index) 枚目が面の道に乗らない: \(route)")
         }
     }
@@ -204,9 +210,10 @@ struct MovieResizedFrameTests {
         #expect(!isSurface(frame))
     }
 
-    @Test("透過を持つコマも、途中で大きさが変われば、同じく記録の大きさの絵として届く (読み手・係)")
+    @Test(
+        "透過を持つコマも、途中で大きさが変われば、同じく記録の大きさの絵として届く (読み手・係)",
+        .enabled(if: TestMovie.canWriteTransparent, "この機械には ProRes 4444 の符号化器が無い"))
     func resizedTransparentFramesAreShrunkToo() async throws {
-        try #require(TestMovie.canWriteTransparent, "ProRes 4444 の符号化器が無い")
         let url = try await resizedTransparentMovie()
         defer { try? FileManager.default.removeItem(at: url) }
         let reader = try MovieReader(url: url, path: url.path)
@@ -218,6 +225,26 @@ struct MovieResizedFrameTests {
             #expect(!isSurface(frame), "透過のコマは面に乗らない")
         }
         #expect(count == 8)
+
+        let prefetcher = MoviePrefetcher(
+            source: MovieSource(
+                url: url, path: url.lastPathComponent, indexesKeyFrames: true, width: Self.recorded.width,
+                height: Self.recorded.height, orientation: .identity))
+        defer { prefetcher.close() }
+        _ = try prefetcher.picture(at: 0, generation: 0, lap: 0, looping: false)
+        try await settle(prefetcher)
+        var delivered: [VideoFrame] = []
+        for index in 0..<8 {
+            if let frame = try prefetcher.picture(at: Double(index) / 30, generation: 0, lap: 0, looping: false) {
+                delivered.append(frame)
+            }
+            try await settle(prefetcher)
+        }
+        #expect(delivered.count >= 5, "係: 後半のコマが届かない (届いたのは \(delivered.count) 枚)")
+        for (index, frame) in delivered.enumerated() {
+            #expect(size(of: frame) == Self.recorded, "係: \(index) 枚目")
+            #expect(!isSurface(frame), "透過のコマは面に乗らない")
+        }
     }
 
     @Test("大きさが変わらない不透明な動画は、これまでどおり面の道に乗る (読み手・係)")

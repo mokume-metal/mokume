@@ -147,10 +147,9 @@ final class MovieReader {
         guard try frames.advance(to: position) else { return nil }
         guard let current = frames.current, current.serial != handed else { return nil }
         // 記録の大きさと違うコマ (途中で大きさが変わる動画) は、変換器が縮めるので面に乗せない (#3690)
-        let reshaped =
-            orientation != .identity || conversion != nil || SurfaceRoute.differs(current.buffer, from: converter)
         if case .success(let surface) = SurfaceRoute.surface(
-            for: current.buffer, alpha: .straight, reshaped: reshaped, builds: false)
+            for: current.buffer, alpha: .straight, reshaped: orientation != .identity || conversion != nil,
+            expecting: (converter.width, converter.height), builds: false)
         {
             handed = current.serial
             return .surface(surface)
