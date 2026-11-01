@@ -715,3 +715,246 @@ struct PathRecordingTests {
         #expect(same > 235, "同じ向きの周は塗られる: \(same)")
     }
 }
+
+/// 字の輪郭から道を作る (`Path(textOutline(…))`・#3562)。周を値で渡す検査は GPU が要らない。
+@Suite("字の輪郭からの道 (値)")
+nonisolated struct PathFromContoursValueTests {
+    /// 時計回り (面の座標で外側が正) の 100 四方と、その中の逆回りの穴 (30〜70)。字 `O` と同じ並び。
+    private let ring: [TextContour] = [
+        TextContour(points: [[0, 0], [100, 0], [100, 100], [0, 100]], isHole: false),
+        TextContour(points: [[30, 30], [30, 70], [70, 70], [70, 30]], isHole: true),
+    ]
+
+    @Test("穴は外になり、輪の上は内側。周の外は外側")
+    func theHoleIsOutside() {
+        let path = Path(ring)
+        #expect(path.contains([10, 50]) && path.contains([90, 50]) && path.contains([50, 15]), "輪の上")
+        #expect(!path.contains([50, 50]), "穴の中")
+        #expect(!path.contains([120, 50]) && !path.contains([-5, -5]), "周の外")
+    }
+
+    @Test("重なった外周は和になる。重なりの中も、重ならない所も内側で、どれにも入らない所は外側")
+    func overlappingOutersAreAUnion() {
+        let path = Path([
+            TextContour(points: [[0, 0], [60, 0], [60, 60], [0, 60]], isHole: false),
+            TextContour(points: [[40, 40], [100, 40], [100, 100], [40, 100]], isHole: false),
+        ])
+        #expect(path.contains([10, 10]) && path.contains([90, 90]), "重ならない所")
+        #expect(path.contains([50, 50]), "重なりの中 (回り数 2) も内側のまま")
+        #expect(!path.contains([90, 10]) && !path.contains([10, 90]), "どちらにも入らない角")
+    }
+
+    @Test("point(at:) は周を並んだ順に繋いだ全体の弧長で読む。外周が先、穴が後")
+    func pointAtWalksTheContoursInOrder() {
+        let path = Path(ring)
+        #expect(path.length == 400 + 160)
+        // t は Float の割り算なので、端の丸めの分だけ許す
+        func near(_ t: Float, _ expected: Vector2, _ message: Comment) {
+            #expect(simd_length(path.point(at: t).simd - expected.simd) < 1e-3, message)
+        }
+        near(0, [0, 0], "外周の始点")
+        // 継ぎ目では、外周の終わり (= 始点) から穴の始点へ飛ぶ。継ぎ目そのものは丸めでどちらにも倒れるので、前後で見る
+        near(399.0 / 560.0, [0, 1], "外周の最後の辺の終わりぎわ")
+        near(401.0 / 560.0, [30, 31], "穴の最初の辺の始まりぎわ")
+        near(1, [30, 30], "穴も閉じた周なので、終点は穴の始点へ戻る")
+        // 外周の途中と、穴の途中
+        near(100.0 / 560.0, [100, 0], "外周の 2 つ目の角")
+        near(440.0 / 560.0, [30, 70], "穴の 2 つ目の角")
+    }
+
+    @Test("空の並びと、点のない周は、空の道になる")
+    func emptyInputs() {
+        #expect(Path([]) == Path())
+        let hollow = Path([TextContour(points: [], isHole: false)])
+        #expect(hollow == Path() && hollow.length == 0 && !hollow.contains([0, 0]))
+        // 点のない周は飛ばし、残りは並びを保つ
+        let skipped = Path([TextContour(points: [], isHole: true)] + ring)
+        #expect(skipped == Path(ring))
+    }
+
+    @Test("点は置いた点として持ち、曲線の刻みの印は付けない。周は閉じた部分道")
+    func contoursKeepPlacedPoints() {
+        let path = Path(ring)
+        #expect(path.subpaths.count == 2)
+        #expect(path.subpaths.allSatisfy { $0.isClosed && !$0.isCurveStep.contains(true) })
+        #expect(path.subpaths[0].points == [[0, 0], [100, 0], [100, 100], [0, 100]])
+    }
+}
+
+/// 実物の字の輪郭から作った道 (#3562)。`textOutline` は描き場所を要るので GPU の条件に置く。
+@Suite(
+    "字の輪郭からの道 (実物の字)",
+    .enabled(
+        if: RenderDevice.isAvailable,
+        "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
+)
+struct PathFromTextOutlineTests {
+    private let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+    private let black = LinearRGBA.linear(red: 0, green: 0, blue: 0)
+
+    private func makeCanvas(width: Int = 240, height: Int = 110, size: Float = 64) throws -> Canvas {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: width, height: height)
+        canvas.textFont("Helvetica")
+        canvas.textSize(size)
+        return canvas
+    }
+
+    private func bounds(_ points: [Vector2]) -> (minX: Float, maxX: Float, minY: Float, maxY: Float) {
+        (
+            points.map(\.x).min()!, points.map(\.x).max()!,
+            points.map(\.y).min()!, points.map(\.y).max()!
+        )
+    }
+
+    @Test("字 O: 穴の中は外側、輪の上は内側。穴は外周と逆回りで返る")
+    func theHoleOfAnO() throws {
+        let canvas = try makeCanvas(size: 90)
+        let contours = canvas.textOutline("O", 20, 90)
+        let outer = try #require(contours.first { !$0.isHole })
+        let hole = try #require(contours.first { $0.isHole })
+        let path = Path(contours)
+
+        let box = bounds(outer.points)
+        let inner = bounds(hole.points)
+        let middle = (box.minY + box.maxY) / 2
+        // 輪の左の帯 (外周の左端と穴の左端の間) の真ん中
+        #expect(path.contains([(box.minX + inner.minX) / 2, middle]), "輪の左の帯")
+        #expect(path.contains([(inner.maxX + box.maxX) / 2, middle]), "輪の右の帯")
+        #expect(path.contains([(inner.minX + inner.maxX) / 2, (box.minY + inner.minY) / 2]), "輪の上の帯")
+        #expect(!path.contains([(inner.minX + inner.maxX) / 2, (inner.minY + inner.maxY) / 2]), "穴の中")
+        #expect(!path.contains([box.minX - 5, middle]) && !path.contains([box.maxX + 5, middle]), "字の外")
+        // 穴は外周と逆回り (符号つきの面積の符号が逆)
+        func area(_ points: [Vector2]) -> Float {
+            var sum: Float = 0
+            for index in points.indices {
+                let a = points[index]
+                let b = points[(index + 1) % points.count]
+                sum += a.x * b.y - b.x * a.y
+            }
+            return sum / 2
+        }
+        #expect(area(outer.points) * area(hole.points) < 0, "外周 \(area(outer.points)) / 穴 \(area(hole.points))")
+    }
+
+    @Test("既定の書体の A は重なった外周で返るが、和として読める")
+    func theDefaultTypefaceAIsAUnion() throws {
+        let canvas = try makeCanvas(size: 90)
+        canvas.noTextFont()
+        let contours = canvas.textOutline("A", 20, 90)
+        #expect(contours.count > 1 && contours.allSatisfy { !$0.isHole }, "重なった外周で返る")
+        let path = Path(contours)
+        let box = bounds(contours.flatMap(\.points))
+        let top = box.minY
+        let base = box.maxY
+        let centre = (box.minX + box.maxX) / 2
+        // 二本の脚が交わる頂は内側、脚の根元の間 (三角の穴の下) は外側
+        #expect(path.contains([centre, top + (base - top) * 0.1]), "頂")
+        #expect(!path.contains([centre, base - (base - top) * 0.1]), "二本の脚の間")
+        #expect(path.contains([box.minX + (box.maxX - box.minX) * 0.12, base - 3]), "左の脚の根元")
+        #expect(path.contains([box.maxX - (box.maxX - box.minX) * 0.12, base - 3]), "右の脚の根元")
+    }
+
+    /// 墨の載った画素と `contains` が、字の縁から離れた画素の全部で一致する。字は `text` で描く。
+    @Test("contains は、text が描いた墨の載る所と、縁から離れた画素の全部で一致する (穴も重なりも)")
+    func containsMatchesTheInk() throws {
+        for (string, plain) in [("mokume", false), ("O8", false), ("AB", true)] {
+            let canvas = try makeCanvas(width: 240, height: 110, size: 64)
+            if plain { canvas.noTextFont() }
+            let contours = canvas.textOutline(string, 10, 80)
+            let path = Path(contours)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noStroke()
+                canvas.fill(white)
+                canvas.text(string, 10, 80)
+            }
+            let image = try canvas.target.encodeForDisplay()
+
+            let edges = contours.flatMap { contour in
+                contour.outline.indices.map { (contour.outline[$0], contour.outline[($0 + 1) % contour.outline.count]) }
+            }
+            func nearEdge(_ x: Float, _ y: Float) -> Bool {
+                let p = SIMD2<Float>(x, y)
+                for (a, b) in edges {
+                    let ab = b - a
+                    let t = max(0, min(1, simd_dot(p - a, ab) / max(simd_dot(ab, ab), 1e-9)))
+                    if simd_length(p - (a + t * ab)) < 1.5 { return true }
+                }
+                return false
+            }
+            var checked = 0
+            var inkCount = 0
+            var mismatches: [String] = []
+            for y in 0..<image.height {
+                for x in 0..<image.width {
+                    let px = Float(x) + 0.5
+                    let py = Float(y) + 0.5
+                    if nearEdge(px, py) { continue }
+                    let ink = image.bytes[(y * image.width + x) * 4] > 127
+                    checked += 1
+                    if ink { inkCount += 1 }
+                    if path.contains([px, py]) != ink { mismatches.append("(\(x), \(y)) ink=\(ink)") }
+                }
+            }
+            #expect(inkCount > 300, "\(string): 墨が載った画素が少なすぎる (\(inkCount))")
+            #expect(mismatches.isEmpty, "\(string): \(checked) 画素のうち \(mismatches.count) 画素が不一致 \(mismatches.prefix(5))")
+        }
+    }
+
+    @Test("周が複数の字で、point(at:) は外周を辿った後に穴へ渡る。全体の弧長で読む")
+    func pointAtCrossesFromTheOuterRingToTheHole() throws {
+        let canvas = try makeCanvas(size: 90)
+        let contours = canvas.textOutline("O", 20, 90)
+        let outer = try #require(contours.first { !$0.isHole })
+        let hole = try #require(contours.first { $0.isHole })
+        let path = Path(contours)
+        #expect(contours.first == outer, "外周が先")
+        let outerLength = Path([outer]).length
+        let holeLength = Path([hole]).length
+        #expect(abs(path.length - (outerLength + holeLength)) < 1e-2)
+        func near(_ a: Vector2, _ b: Vector2, _ message: Comment) {
+            // 継ぎ目の前後 0.25 の点は、始点から最大 0.25 離れる
+            #expect(simd_length(a.simd - b.simd) < 0.3, message)
+        }
+        near(path.point(at: 0), outer.points[0], "外周の始点")
+        // 継ぎ目では外周の終わり (= 始点) から穴の始点へ飛ぶ。継ぎ目そのものは丸めでどちらにも倒れるので、前後 0.25 で見る
+        near(path.point(at: (outerLength - 0.25) / path.length), outer.points[0], "外周を辿り終える手前は外周の始点の近く")
+        near(path.point(at: (outerLength + 0.25) / path.length), hole.points[0], "辿り終えた直後は穴の始点の近く")
+        near(path.point(at: (outerLength + holeLength * 0.5) / path.length), Path([hole]).point(at: 0.5), "穴の半周")
+        near(path.point(at: 1), hole.points[0], "終点は穴の始点へ戻る")
+    }
+
+    @Test("shape(path) は、同じ周を beginShape と beginContour で並べて描いたときと同じ画素になる")
+    func drawsLikeTheContoursByHand() throws {
+        func fresh() throws -> Canvas { try makeCanvas(width: 120, height: 110, size: 90) }
+        func paint(_ canvas: Canvas, _ body: () -> Void) throws -> DisplayImage {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.fill(LinearRGBA.linear(red: 1, green: 0.3, blue: 0))
+                canvas.stroke(LinearRGBA.linear(red: 0, green: 0.3, blue: 1))
+                canvas.strokeWeight(3)
+                body()
+            }
+            return try canvas.target.encodeForDisplay()
+        }
+        let probe = try fresh()
+        let contours = probe.textOutline("O", 15, 90)
+        let outer = try #require(contours.first { !$0.isHole })
+        let hole = try #require(contours.first { $0.isHole })
+
+        let byHand = try fresh()
+        let manual = try paint(byHand) {
+            byHand.beginShape()
+            for point in outer.points { byHand.vertex(point.x, point.y) }
+            byHand.beginContour()
+            for point in hole.points { byHand.vertex(point.x, point.y) }
+            byHand.endContour()
+            byHand.endShape(.close)
+        }
+        let throughPath = try fresh()
+        let drawn = try paint(throughPath) { throughPath.shape(Path(contours)) }
+        #expect(drawn.bytes.contains { $0 != 0 }, "何も描かれていない")
+        // 1 本の beginShape と同じ読み (外周 + 穴) なので、塗りは同じ。輪郭の継ぎ目も刻みの印が無いので同じ
+        #expect(drawn.bytes == manual.bytes)
+    }
+}
