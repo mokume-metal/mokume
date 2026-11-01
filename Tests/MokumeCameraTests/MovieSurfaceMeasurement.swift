@@ -22,9 +22,13 @@ import Testing
 /// ```
 ///
 /// 場面: 1920×1080 の面に、4K・30 fps・H.264 の動画 4 本 (同じ大きさ・不透明・ループ) を 4 分割で貼り、
-/// 200 個の半透明の矩形と照らした立方体を重ねる。実時間の時計で 120 Hz の刻みまで眠りながら回す
-/// (通常再生: 各 30 fps の動画を 120 Hz で描く)。立ち上がりの 2 秒を除いた 6 秒 (720 フレーム) を数える。
-/// 値は `PERF\t2962\t<道>\t<指標>\t<値>\t<単位>` の行で出す。
+/// 200 個の半透明の矩形と照らして回る立方体を重ね、全体にぼかしの効果を掛ける (2D・3D・GPU の効果。
+/// 音の FFT はこの検査の束から音のモジュールを引けないので入れない)。実時間の時計で 120 Hz の刻みまで
+/// 眠りながら回す (通常再生: 各 30 fps の動画を 120 Hz で描く)。立ち上がりの 2 秒を除いた 6 秒
+/// (720 フレーム) を数える。値は `PERF\t2962\t<道>\t<指標>\t<値>\t<単位>` の行で出す。
+///
+/// 再発検出 (#2962 の完了条件 6) の値も出す: GPU が打ち切った数 (command buffer の失敗) と、投入した数と
+/// 結末が届いた数。
 @Suite(
     "動画を面のまま渡す道の費用 (計測)",
     .serialized,
@@ -72,6 +76,13 @@ struct MovieSurfaceMeasurement {
                 sketch.fill(Float(index % 255), 120, 200, 90)
                 sketch.rect(Float(index * 37 % 1880), Float(index * 53 % 1040), 40, 40)
             }
+            sketch.lights()
+            sketch.fill(230, 160, 60)
+            sketch.translate(960, 540, 0)
+            sketch.rotateX(Float(sketch.frameCount) * 0.01)
+            sketch.rotateY(Float(sketch.frameCount) * 0.013)
+            sketch.box(300)
+            sketch.filter([.blur(radius: 2)])
         }
         let origin = ContinuousClock.now
         let gpu = try RenderDevice()
@@ -106,6 +117,9 @@ struct MovieSurfaceMeasurement {
         MovieStall.line("2962", path, "cpuConversions", "\(conversions)", "frames")
         MovieStall.line("2962", path, "footprint.max", String(format: "%.0f", footprint), "MiB")
         MovieStall.line("2962", path, "leases.max", "\(leases)", "surfaces")
+        MovieStall.line("2962", path, "gpu.faults", "\(gpu.commandFaultCount)", "commands")
+        MovieStall.line("2962", path, "submitted", "\(gpu.submissionCount)", "commands")
+        MovieStall.line("2962", path, "delivered", "\(gpu.arrivedNoticeCount)", "commands")
     }
 
     private static func percentile(_ values: [Double], _ p: Double) -> Double {
