@@ -59,7 +59,7 @@ interval=${JOB_STARTED_RETRY_SEC:-2}
 # 作業場所の下を開いている・作業ディレクトリに置いているプロセスの pid。lsof +D は作業ディレクトリが
 # 作業場所そのもの (または下) のプロセスも拾う。自分と親 (runner) は除く。見つからなければ空
 writers_of() {
-  { lsof -Fp +D "$ws" 2>/dev/null || true; } | sed -n 's/^p//p' | sort -u | { grep -vx -e "$$" -e "$PPID" || true; }
+  { "$lsof_bin" -Fp +D "$ws" 2>/dev/null || true; } | sed -n 's/^p//p' | sort -u | { grep -vx -e "$$" -e "$PPID" || true; }
 }
 
 # 書き手 1 本を `名前 (pid N, ppid N, 経過 E)` で名乗る
@@ -72,34 +72,50 @@ describe() {
   fi
 }
 
-if ! command -v lsof >/dev/null 2>&1; then
-  echo "runner-job-started: 書き手を探す lsof が無いので、作業場所に前の job の書き手が残っていないか確かめられない" >&2
+# 書き手の一覧 ($1 は pid を改行で並べたもの) を `名前 (pid …), …` で名乗る。最大 5 本
+describe_all() {
+  local list="" count=0 pid
+  for pid in $1; do
+    count=$((count + 1))
+    [ "$count" -le 5 ] || continue
+    list+="${list:+, }$(describe "$pid")"
+  done
+  [ "$count" -le 5 ] || list+=" ほか $((count - 5)) 本"
+  printf '%s' "$list"
+}
+
+# lsof は PATH に無くても macOS の標準の在処 (/usr/sbin) にある。runner の PATH に /usr/sbin がある保証は無い。
+# 在処は JOB_STARTED_LSOF_FALLBACK で差し替えられる (検査のため)
+lsof_bin=$(command -v lsof 2>/dev/null || true)
+if [ -z "$lsof_bin" ] && [ -x "${JOB_STARTED_LSOF_FALLBACK:-/usr/sbin/lsof}" ]; then
+  lsof_bin=${JOB_STARTED_LSOF_FALLBACK:-/usr/sbin/lsof}
+fi
+if [ -z "$lsof_bin" ]; then
+  echo "runner-job-started: 書き手を探す lsof が PATH にも ${JOB_STARTED_LSOF_FALLBACK:-/usr/sbin/lsof} にも無いので、作業場所に前の job の書き手が残っていないか確かめられない" >&2
   exit 1
 fi
 
 start=$SECONDS
 retries=0
+# 打ち直しの間に最初に見えた書き手。打ち直しで緑になった回の成功の行に名乗る (次に出た名前を #3616 に書くため)。
+# 見えた周に引く — 緑になるころには書き手のプロセスは消えている
+seen=""
 while :; do
   rm_status=0
   # rm の「Directory not empty」は stderr に出たままにして、ログに残す
   find "$ws" -mindepth 1 -maxdepth 1 -exec rm -rf {} + || rm_status=$?
   left=$(find "$ws" -mindepth 1 -maxdepth 1 2>/dev/null | sed -n '1p')
   writers=$(writers_of)
+  if [ -n "$writers" ] && [ -z "$seen" ]; then
+    seen=$(describe_all "$writers")
+  fi
   if [ "$rm_status" -eq 0 ] && [ -z "$left" ] && [ -z "$writers" ]; then
     break
   fi
   waited=$((SECONDS - start))
   if [ "$waited" -ge "$deadline" ]; then
     if [ -n "$writers" ]; then
-      list="" count=0
-      for pid in $writers; do
-        count=$((count + 1))
-        [ "$count" -le 5 ] || continue
-        list+="${list:+, }$(describe "$pid")"
-      done
-      more=""
-      [ "$count" -le 5 ] || more=" ほか $((count - 5)) 本"
-      echo "runner-job-started: 作業場所に前の job の書き手が残っている (${waited} 秒待って打ち直し ${retries} 回): ${list}${more}。何も止めていない。出所を確かめて人が止める: $ws" >&2
+      echo "runner-job-started: 作業場所に前の job の書き手が残っている (${waited} 秒待って打ち直し ${retries} 回): $(describe_all "$writers")。何も止めていない。出所を確かめて人が止める: $ws" >&2
     else
       echo "runner-job-started: 作業場所を空にできなかった (${waited} 秒待って打ち直し ${retries} 回)。書き手は見つからなかった (lsof +D で開いているファイルも作業ディレクトリも無い)。何も止めていない。出所を確かめて人が止める: $ws" >&2
     fi
@@ -112,5 +128,5 @@ done
 if [ "$retries" -eq 0 ]; then
   echo "runner-job-started: 作業ディレクトリを空にした: $ws"
 else
-  echo "runner-job-started: 作業ディレクトリを空にした (打ち直し ${retries} 回・待った $((SECONDS - start)) 秒): $ws"
+  echo "runner-job-started: 作業ディレクトリを空にした (打ち直し ${retries} 回・待った $((SECONDS - start)) 秒・打ち直しの間に見えた書き手: ${seen:-見えなかった}): $ws"
 fi

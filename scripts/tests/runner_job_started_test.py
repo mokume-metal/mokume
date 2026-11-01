@@ -34,22 +34,27 @@ REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "runner-job-started.sh"
 
 
-# FAKE_RM_FAILS 回目までは「Directory not empty」で落ち (何も消さない)、以後は本物の rm に渡す。
-# 負の数なら期限まで落ち続ける。呼ばれた回数は FAKE_RM_COUNT のファイルに数える
+# FAKE_RM_FAILS 回目までは何も消さず、以後は本物の rm に渡す。負の数なら期限まで消さない。
+# 消さない回は、既定では「Directory not empty」で落ち、FAKE_RM_MODE=noop なら 0 で終わる
+# (rm は成功したのに中身が残る形。#3616 の反証)。呼ばれた回数は FAKE_RM_COUNT のファイルに数える
 FAKE_RM = """#!/bin/sh
 n=$(cat "$FAKE_RM_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$FAKE_RM_COUNT"
 if [ "$FAKE_RM_FAILS" -lt 0 ] || [ "$n" -le "$FAKE_RM_FAILS" ]; then
+  [ "$FAKE_RM_MODE" = "noop" ] && exit 0
   echo "rm: $FAKE_WORKSPACE/.build/out: Directory not empty" >&2
   exit 1
 fi
 exec /bin/rm "$@"
 """
 
-# 作業場所の下を開いているプロセスの一覧 (`lsof -Fp +D <dir>` の形)。FAKE_WRITERS の pid を返す。空なら何も返さず 1
+# 作業場所の下を開いているプロセスの一覧 (`lsof -Fp +D <dir>` の形)。FAKE_WRITERS の pid を返す。空なら何も返さず 1。
+# FAKE_WRITERS_UNTIL があれば、rm が呼ばれた回数がそれ以下のあいだだけ見える (書き手が途中で止まる形)
 FAKE_LSOF = """#!/bin/sh
 [ -n "$FAKE_WRITERS" ] || exit 1
+n=$(cat "$FAKE_RM_COUNT" 2>/dev/null || echo 0)
+[ "$n" -le "${FAKE_WRITERS_UNTIL:-999999}" ] || exit 1
 for pid in $FAKE_WRITERS; do
   printf 'p%s\\nfcwd\\nn%s\\n' "$pid" "$FAKE_WORKSPACE"
 done
@@ -80,7 +85,7 @@ class RunnerJobStartedTest(unittest.TestCase):
         (ws / "Sources").mkdir()
         return ws
 
-    def run_with_stubs(self, ws, rm_fails, writers="", ps="", **extra):
+    def run_with_stubs(self, ws, rm_fails, writers="", writers_until=None, ps="", rm_mode="fail", **extra):
         """偽の rm・lsof・ps を PATH の先頭に置いて走らせる。rm_fails は落ちる回数 (負なら落ち続ける)"""
         bin_dir = self.root / "bin"
         bin_dir.mkdir(exist_ok=True)
@@ -96,7 +101,9 @@ class RunnerJobStartedTest(unittest.TestCase):
             PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             FAKE_RM_COUNT=str(count),
             FAKE_RM_FAILS=str(rm_fails),
+            FAKE_RM_MODE=rm_mode,
             FAKE_WRITERS=writers,
+            **({} if writers_until is None else {"FAKE_WRITERS_UNTIL": str(writers_until)}),
             FAKE_PS=ps,
             FAKE_WORKSPACE=str(ws),
             JOB_STARTED_DEADLINE_SEC="1",
@@ -141,6 +148,69 @@ class RunnerJobStartedTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
         self.assertIn("打ち直し 1 回", proc.stdout)
+        # 書き手が一度も見えなかった回は、そう書く
+        self.assertIn("見えなかった", proc.stdout)
+
+    def test_names_the_writer_seen_while_retrying_even_when_it_stops(self):
+        # 打ち直しの間に見えた書き手は、緑になった後の成功の行に名乗る。次に出た名前を #3616 に書くため
+        ws = self.make_workspace()
+        proc = self.run_with_stubs(
+            ws,
+            rm_fails=1,
+            writers="4242",
+            writers_until=1,
+            ps="    1 00:09 /Library/Developer/swift-frontend",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(list(ws.iterdir()), [])
+        self.assertIn("swift-frontend (pid 4242, ppid 1, 経過 00:09)", proc.stdout)
+        self.assertNotIn("見えなかった", proc.stdout)
+
+    def test_a_rm_that_succeeds_but_leaves_files_is_retried_until_empty(self):
+        # rm が 0 で終わっても中身が残っていれば緑にしない (rm の終了コードだけを見ていない)
+        ws = self.make_workspace()
+        proc = self.run_with_stubs(ws, rm_fails=1, rm_mode="noop")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(list(ws.iterdir()), [])
+        self.assertIn("打ち直し 1 回", proc.stdout)
+
+    def test_a_rm_that_succeeds_but_leaves_files_goes_red_at_the_deadline(self):
+        ws = self.make_workspace()
+        proc = self.run_with_stubs(ws, rm_fails=-1, rm_mode="noop")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("作業場所を空にできなかった", proc.stdout + proc.stderr)
+        self.assertTrue((ws / ".build").exists())
+
+    def test_finds_lsof_in_the_fallback_place_when_path_has_none(self):
+        # runner の PATH に /usr/sbin が無い形。PATH から引けなければ在処の既定 (/usr/sbin/lsof) に落ちる
+        ws = self.make_workspace()
+        fallback_dir = self.root / "sbin"
+        fallback_dir.mkdir()
+        fallback = fallback_dir / "lsof"
+        fallback.write_text(FAKE_LSOF, encoding="utf-8")
+        fallback.chmod(0o755)
+        count = self.root / "rm-count"
+        env = dict(
+            PATH="/usr/bin:/bin",
+            JOB_STARTED_LSOF_FALLBACK=str(fallback),
+            FAKE_RM_COUNT=str(count),
+            FAKE_WRITERS="4242",
+            FAKE_WORKSPACE=str(ws),
+            JOB_STARTED_DEADLINE_SEC="1",
+            JOB_STARTED_RETRY_SEC="0.2",
+        )
+        proc = self.run_hook(ws, **env)
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("pid 4242", message)
+        self.assertNotIn("lsof が", message)
+
+    def test_goes_red_without_cleaning_when_lsof_is_nowhere(self):
+        ws = self.make_workspace()
+        proc = self.run_hook(ws, PATH="/usr/bin:/bin", JOB_STARTED_LSOF_FALLBACK=str(self.root / "no-such-lsof"))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("lsof が", proc.stdout + proc.stderr)
+        self.assertTrue((ws / ".build").exists(), "書き手を確かめられないまま消していない")
 
     def test_a_clean_first_try_does_not_mention_retries(self):
         ws = self.make_workspace()
@@ -158,7 +228,7 @@ class RunnerJobStartedTest(unittest.TestCase):
             ws,
             rm_fails=-1,
             writers="4242",
-            ps="    1 01:12 /Library/Developer/swift-frontend -c foo.swift",
+            ps="    1 01:12 /Library/Developer/swift-frontend",
         )
         self.assertNotEqual(proc.returncode, 0)
         message = proc.stdout + proc.stderr
