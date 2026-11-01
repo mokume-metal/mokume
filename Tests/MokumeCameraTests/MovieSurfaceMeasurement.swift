@@ -24,11 +24,12 @@ import Testing
 /// 場面: 1920×1080 の面に、4K・30 fps・H.264 の動画 4 本 (同じ大きさ・不透明・ループ) を 4 分割で貼り、
 /// 200 個の半透明の矩形と照らして回る立方体を重ね、全体にぼかしの効果を掛ける (2D・3D・GPU の効果。
 /// 音の FFT はこの検査の束から音のモジュールを引けないので入れない)。実時間の時計で 120 Hz の刻みまで
-/// 眠りながら回す (通常再生: 各 30 fps の動画を 120 Hz で描く)。立ち上がりの 2 秒を除いた 6 秒
-/// (720 フレーム) を数える。値は `PERF\t2962\t<道>\t<指標>\t<値>\t<単位>` の行で出す。
+/// 眠りながら回す (通常再生: 各 30 fps の動画を 120 Hz で描く)。1,200 フレームのうち、立ち上がりの 2 秒を
+/// 除いた 8 秒 (960 フレーム) を数える。値は `PERF\t2962\t<道>\t<指標>\t<値>\t<単位>` の行で出す。
 ///
 /// 再発検出 (#2962 の完了条件 6) の値も出す: GPU が打ち切った数 (command buffer の失敗) と、投入した数と
-/// 結末が届いた数。
+/// 結末が届いた数。所有と上限 (完了条件 4) の値も出す: 回している間の面の貸し札の最大と、`Movie` と
+/// 絵を手放して GPU が読み終えた後の数 (0 になる)。
 @Suite(
     "動画を面のまま渡す道の費用 (計測)",
     .serialized,
@@ -88,13 +89,14 @@ struct MovieSurfaceMeasurement {
         let gpu = try RenderDevice()
         let runtime = try SketchRuntime(
             sketch: SurfaceScene(), gpu: gpu, clock: .wallClock, now: { MovieStall.seconds(ContinuousClock.now - origin) })
+        // 途中で投げても閉じる (呼び直しは続きを見るだけ)。数え終えた後は下で先に閉じる
         defer { runtime.closePlugins() }
         var main: [Double] = []
         var footprint = 0.0
         var leases = 0
         var conversionsAtStart = 0
         let warmUp = 240
-        let counted = 720
+        let counted = 960
         for tick in 0..<(warmUp + counted) {
             let due = origin + .microseconds(Int64(Double(tick + 1) * 1_000_000 / 120))
             let wait = due - ContinuousClock.now
@@ -109,6 +111,13 @@ struct MovieSurfaceMeasurement {
             }
         }
         try gpu.settle()
+        // 手放す: 動画 (と、それが持つ絵) を捨て、GPU が読み終えるのを待ってから貸し札を数える
+        runtime.closePlugins()
+        movies = []
+        SurfaceScene.onSetup = { _ in }
+        SurfaceScene.onDraw = { _ in }
+        try gpu.settle()
+        let leasesAfter = SurfaceLease.live.load(ordering: .relaxed)
         let conversions = FrameConverter.conversions.load(ordering: .relaxed) - conversionsAtStart
         let gpuTimes = gpu.completedGPUFrameTimes.map(\.milliseconds)
         MovieStall.report("2962", path, "main.advance", main)
@@ -117,6 +126,7 @@ struct MovieSurfaceMeasurement {
         MovieStall.line("2962", path, "cpuConversions", "\(conversions)", "frames")
         MovieStall.line("2962", path, "footprint.max", String(format: "%.0f", footprint), "MiB")
         MovieStall.line("2962", path, "leases.max", "\(leases)", "surfaces")
+        MovieStall.line("2962", path, "leases.afterRelease", "\(leasesAfter)", "surfaces")
         MovieStall.line("2962", path, "gpu.faults", "\(gpu.commandFaultCount)", "commands")
         MovieStall.line("2962", path, "submitted", "\(gpu.submissionCount)", "commands")
         MovieStall.line("2962", path, "delivered", "\(gpu.arrivedNoticeCount)", "commands")
