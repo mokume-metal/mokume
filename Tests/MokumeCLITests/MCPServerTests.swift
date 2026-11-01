@@ -2492,7 +2492,10 @@ struct MCPServerTests {
         let revisionA = "aaaaaaaaaaaa1111111111111111111111111111"
         let revisionB = "bbbbbbbbbbbb2222222222222222222222222222"
         try writeRevisionPin(directory, revisionA)
-        try putDetails(at: "mokume-api-details-rev-aaaaaaaaaaaa.json", in: directory)
+        // 改訂の鍵で読む資産は、組むときに名乗らせた版 (`rev-…`) でなければ受け入れない
+        try putDetails(
+            Self.detailsAsset.replacingOccurrences(of: "v0.2.0", with: "rev-aaaaaaaaaaaa"),
+            at: "mokume-api-details-rev-aaaaaaaaaaaa.json", in: directory)
         let fetches = Fetches()
         fetches.answer = .failure(Refused())  // 改訂は資産が無く、取りに行かない
         let tools = makeTools(directory: directory, fetches: fetches)
@@ -2583,12 +2586,47 @@ struct MCPServerTests {
         let detailsFetches = fetches.urls.filter { $0.lastPathComponent.hasSuffix(".json") }
         #expect(detailsFetches.count == 1, "同じ宛先を取り直した: \(fetches.urls)")
         #expect(second.text.contains("the response was 404"), "\(second.text)")
-        #expect(second.text.contains("remembered until the interface is restarted"), "\(second.text)")
+        #expect(second.text.contains("remembered for 5 minutes"), "\(second.text)")
 
         // 手で置けば、覚えている失敗より取り置きが先
         try putDetails(at: "mokume-api-details-v0.2.0.json", in: directory)
         #expect(!reference(tools, "SoundFile.play").isError)
         #expect(fetches.urls.filter { $0.lastPathComponent.hasSuffix(".json") }.count == 1)
+    }
+
+    /// 差し替えられる時計。
+    nonisolated final class Clock: @unchecked Sendable {
+        nonisolated(unsafe) var date = Date(timeIntervalSince1970: 1_000_000)
+        func advance(_ seconds: TimeInterval) { date = date.addingTimeInterval(seconds) }
+    }
+
+    /// 反証 2: 覚えた失敗には期限がある。リリース直後は資産が数分 404 になるので、その窓で引いた失敗を
+    /// 寿命の間ずっと覚えると、資産が付いた後も 404 のままになる。
+    @Test("覚えた詳細の失敗は、期限の前は打ち直さず、期限が過ぎたら取りに行く")
+    func forgetsADetailsFailureAfterTheLimit() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let fetches = Fetches()
+        fetches.answer = .failure(APIListLocator.FetchFailure("the response was 404"))
+        let clock = Clock()
+        let tools = Tools(
+            facets: Facets(directory: directory, waitLimit: 0.2),
+            apiList: APIListLocator(
+                directory: directory, fetch: fetches.fetch, memory: .init(now: { clock.date })),
+            makeID: { "fixed" })
+        func detailsFetches() -> Int { fetches.urls.filter { $0.lastPathComponent.hasSuffix(".json") }.count }
+
+        #expect(reference(tools, "play").isError)
+        clock.advance(APIListLocator.failureMemory - 1)  // 期限の直前
+        #expect(reference(tools, "play").isError)
+        #expect(detailsFetches() == 1, "期限の前に取り直した")
+
+        // 期限が過ぎる前に資産が付いた。過ぎたら取りに行き、取れれば読める
+        fetches.answer = .success(Data(Self.detailsAsset.utf8))
+        clock.advance(2)
+        let after = reference(tools, "SoundFile.play")
+        #expect(!after.isError, "\(after.text)")
+        #expect(detailsFetches() == 2, "期限が過ぎても取りに行かない")
     }
 
     /// 反証: 取り置きが使えなかったとき、取れない回でもそのファイルとわけを名乗る。版の鍵で読むときは
@@ -2690,41 +2728,76 @@ struct MCPServerTests {
         #expect(outcome.text.contains("no public symbol named empty"), "\(outcome.text)")
     }
 
-    /// 反証: 「索引は引ける」は、実際に引けるときだけ添える。オフラインで索引も無ければ書かず、確かめを打ち直さない。
-    @Test("索引が実際に引けないときは、索引を引けると添えず、確かめも打ち直さない")
-    func doesNotPromiseAnIndexItCannotRead() throws {
+    /// 反証: 「索引は引ける」は、引けると分かっているときだけ言う。**確かめのために取りに行かない**
+    /// (詳細の失敗の応答が、さらに最大 10 秒止まる)。取り置きは、覚えている失敗より先に見る。
+    @Test("索引が引けるかは取りに行かずに見て、取り置きがあれば引けると言い、取れなかったと分かっていれば言わない")
+    func saysTheIndexIsReadableOnlyWhenItKnows() throws {
         let directory = try makeDirectory()
         try writeResolved(directory, pins: pin("mokume", "0.2.0"))
         let fetches = Fetches()
         fetches.answer = .failure(APIListLocator.FetchFailure("no network"))  // 索引も詳細も取れない
         let tools = makeTools(directory: directory, fetches: fetches)
 
+        // 索引を試したことが無い: 引けるとは断言せず、確かめにも行かない (取りに行ったのは詳細の 1 回だけ)
         let first = reference(tools, "play")
         #expect(first.isError)
-        #expect(!first.text.contains("does not need this file"), "引けない索引を勧めた: \(first.text)")
-        let afterFirst = fetches.urls.count  // 詳細 1 回 + 索引の確かめ 1 回
-        #expect(afterFirst == 2, "\(fetches.urls)")
-        _ = reference(tools, "SoundFile.play")
-        #expect(fetches.urls.count == afterFirst, "二度目は打ち直さない: \(fetches.urls)")
+        #expect(!first.text.contains("does not need this file"), "\(first.text)")
+        #expect(first.text.contains("tries to read it (it may not be available either)"), "\(first.text)")
+        #expect(fetches.urls.count == 1, "応答の中で索引を取りに行った: \(fetches.urls)")
 
-        // 索引だけが取れるなら、取れた索引を取り置いたうえで添える
-        let other = try makeDirectory()
-        try writeResolved(other, pins: pin("mokume", "0.2.0"))
-        let tools2 = Tools(
-            facets: Facets(directory: other, waitLimit: 0.2),
+        // 索引を引いて取れなかった: 以後の詳細の失敗は、索引について何も勧めない
+        let index = tools.call("reference", arguments: ["name": "api"])
+        #expect(index.isError)
+        let count = fetches.urls.count
+        let second = reference(tools, "SoundFile.play")
+        #expect(second.isError)
+        #expect(!second.text.contains("does not need this file"), "\(second.text)")
+        #expect(!second.text.contains("tries to read it"), "\(second.text)")
+        #expect(fetches.urls.count == count, "二度目の失敗でも取りに行かない: \(fetches.urls)")
+
+        // 後から索引が取り置かれたら、覚えている失敗より取り置きが先: 引けると言う
+        try putList("# 取り置いた索引\n", at: "mokume-api-v0.2.0.md", in: directory)
+        let third = reference(tools, "SoundFile.play")
+        #expect(third.text.contains("does not need this file"), "取り置きを先に見ていない: \(third.text)")
+    }
+
+    /// 反証 2: 索引だけが取れる環境で、索引を引いた後の詳細の失敗は、引けると言う。
+    @Test("索引が取り置かれていれば、詳細の失敗に索引は引けると添える")
+    func saysTheIndexIsReadableAfterItWasFetched() throws {
+        let directory = try makeDirectory()
+        try writeResolved(directory, pins: pin("mokume", "0.2.0"))
+        let tools = Tools(
+            facets: Facets(directory: directory, waitLimit: 0.2),
             apiList: APIListLocator(
-                directory: other,
+                directory: directory,
                 fetch: { url in
                     if url.lastPathComponent.hasSuffix(".md") { return Data("# 取れた索引\n".utf8) }
                     throw APIListLocator.FetchFailure("the response was 404")
                 }),
             makeID: { "fixed" })
-        let withIndex = reference(tools2, "play")
-        #expect(withIndex.isError)
-        #expect(withIndex.text.contains("does not need this file"), "\(withIndex.text)")
+        #expect(!tools.call("reference", arguments: ["name": "api"]).isError)
+        let outcome = reference(tools, "play")
+        #expect(outcome.isError)
+        #expect(outcome.text.contains("does not need this file"), "\(outcome.text)")
+    }
+
+    /// 反証 2: 改訂の鍵で読む資産も、`version` が案内の渡す綴り (`rev-…`) と合うものだけ受け入れる。
+    @Test("改訂の名前の詳細でも、中身が別の改訂のものなら受け入れない")
+    func refusesDetailsBuiltForAnotherRevision() throws {
+        let directory = try makeSketch()
+        try writeRevisionPin(directory, "aaaaaaaaaaaa1111111111111111111111111111")
+        // 名前は A の改訂なのに、中身は B の改訂向け
+        try putDetails(
+            Self.detailsAsset.replacingOccurrences(of: "v0.2.0", with: "rev-bbbbbbbbbbbb"),
+            at: "mokume-api-details-rev-aaaaaaaaaaaa.json", in: directory)
+        let outcome = reference(makeTools(directory: directory, fetches: Fetches()), "SoundFile.play")
+        #expect(outcome.isError)
+        #expect(!outcome.text.contains("音を鳴らす。"), "\(outcome.text)")
         #expect(
-            FileManager.default.fileExists(
-                atPath: other.appendingPathComponent(".mokume/reference/mokume-api-v0.2.0.md").path))
+            outcome.text.contains("built for rev-bbbbbbbbbbbb, not for the dependency (rev-aaaaaaaaaaaa)"),
+            "\(outcome.text)")
+        // 案内は、組む版の名乗りを渡す手を示す
+        #expect(outcome.text.contains("VERSION='rev-aaaaaaaaaaaa'"), "\(outcome.text)")
     }
 
     /// 道具が読む形は、`Schemas/` の代表例と同じ (形の正典と読む側が離れない)。

@@ -674,9 +674,20 @@ struct Tools {
         } catch let missing as APIListLocator.Missing {
             // 取りに行けない・読めない回は、索引なら引けることを添える (版が引けない回は、索引も同じ理由で引けない)
             let (text, isError) = apiMissing(missing)
-            // **索引が実際に引けるときだけ**添える (オフラインで索引も取れていなければ、偽の次の一手になる)
-            guard missing.cause != .versionUnknown, apiList.indexIsReadable() else { return (text, isError) }
-            return ("\(text)\n\nThe list of declarations does not need this file: use \(index) to read it.", true)
+            // **索引が引けると分かっているときだけ「引ける」と言う** (取りに行って確かめない。応答がさらに止まる)。
+            // 最近取れなかったと分かっていれば書かず、分からなければ引けるとは断言しない
+            guard missing.cause != .versionUnknown else { return (text, isError) }
+            switch apiList.indexOutlook() {
+            case .readable:
+                return ("\(text)\n\nThe list of declarations does not need this file: use \(index) to read it.", true)
+            case .unreadable:
+                return (text, isError)
+            case .unknown:
+                return (
+                    "\(text)\n\nThe list of declarations is a separate file: \(index) tries to read it (it may not be available either).",
+                    true
+                )
+            }
         } catch {
             return ("Could not read the public API details: \(error)", true)
         }

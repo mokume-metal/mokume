@@ -1398,12 +1398,15 @@ def main() -> int:
     if arguments.action == "list":
         text = render(symbols, arguments.version, with_details=bool(arguments.details))
         if arguments.output:
+            # 案内どおりの取り置き先 (`.mokume/reference/`) は、まだ無いことがある
+            arguments.output.parent.mkdir(parents=True, exist_ok=True)
             arguments.output.write_text(text, encoding="utf-8")
             print(f"ok: {arguments.output} に公開シンボル {len(symbols)} 個を書いた")
         else:
             sys.stdout.write(text)
         if arguments.details:
             data = details(symbols, arguments.version)
+            arguments.details.parent.mkdir(parents=True, exist_ok=True)
             arguments.details.write_text(render_details(data), encoding="utf-8")
             print(f"ok: {arguments.details} に口ごとの詳細 {count_details(data)} 個を書いた")
         return 0

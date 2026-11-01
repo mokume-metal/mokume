@@ -124,44 +124,66 @@ struct APIListLocator {
         case rejected(detail: String?)
     }
 
-    /// 窓口 (プロセス) の寿命の間だけ覚えておくこと。**値型の `APIListLocator` を複製しても同じものを見る。**
+    /// 取れなかったことを覚えておく長さ (秒)。**5 分。**
+    ///
+    /// 長さの根拠: リリースは `release` ジョブの後に `api-surface` ジョブが資産を付けるので、出た直後の数分は
+    /// 本物の版でも資産が 404 になる (`release.yml`)。その窓で 1 度引いた失敗を寿命の間ずっと覚えると、資産が
+    /// 付いた後も 404 のままになる。かといって短すぎると、`symbol` のたびに最大 ``fetchLimit`` 秒の取り直しが
+    /// 戻る。一過性の失敗 (時間切れ・名前解決) も同じ長さで済む。
+    nonisolated static let failureMemory: TimeInterval = 300
+
+    /// 窓口 (プロセス) が、少しの間だけ覚えておくこと。**値型の `APIListLocator` を複製しても同じものを見る。**
+    /// 覚えるのは ``APIListLocator/failureMemory`` 秒で、過ぎたら忘れて取りに行く。
     ///
     /// - 詳細の取得の失敗 (1.8 MB を取りに行く回の失敗) — 同じ宛先を `symbol` のたびに取り直すと、
     ///   そのたびに最大 ``APIListLocator/fetchLimit`` 秒、応答ごと止まる。取り置きが後から置かれたときは、
     ///   取りに行く前に取り置きを見るので、覚えていても読める。
-    /// - 索引が引けるかの確かめの失敗 — 詳細の失敗に「索引は引ける」と添えるための確かめを、1 度で済ませる。
+    /// - 索引を取れなかったこと — 詳細の失敗に「索引は引ける」と添えるか決めるための手掛かり。
+    ///   **確かめのために取りに行くことはしない** (応答がさらに最大 ``APIListLocator/fetchLimit`` 秒止まる)。
     final class Memory: @unchecked Sendable {
         private let lock = NSLock()
-        private var failures: [URL: Missing] = [:]
-        private var indexFailures: Set<String> = []
+        private let now: @Sendable () -> Date
+        private var failures: [URL: (missing: Missing, at: Date)] = [:]
+        private var indexFailures: [String: Date] = [:]
+
+        /// - Parameter now: 時計。検査が期限の前後を作るために差し替える。
+        init(now: @escaping @Sendable () -> Date = { Date() }) { self.now = now }
+
+        private func fresh(_ at: Date) -> Bool { now().timeIntervalSince(at) < APIListLocator.failureMemory }
 
         func failure(of remote: URL) -> Missing? {
             lock.lock()
             defer { lock.unlock() }
-            return failures[remote]
+            guard let found = failures[remote] else { return nil }
+            if fresh(found.at) { return found.missing }
+            failures[remote] = nil
+            return nil
         }
 
         func remember(_ missing: Missing, of remote: URL) {
             lock.lock()
             defer { lock.unlock() }
-            failures[remote] = missing
+            failures[remote] = (missing, now())
         }
 
         func indexFailed(at cache: String) -> Bool {
             lock.lock()
             defer { lock.unlock() }
-            return indexFailures.contains(cache)
+            guard let at = indexFailures[cache] else { return false }
+            if fresh(at) { return true }
+            indexFailures[cache] = nil
+            return false
         }
 
         func rememberIndexFailure(at cache: String) {
             lock.lock()
             defer { lock.unlock() }
-            indexFailures.insert(cache)
+            indexFailures[cache] = now()
         }
     }
 
-    /// 覚えておくこと。
-    let memory = Memory()
+    /// 覚えておくこと。検査が時計を差し替えられるよう、組み立てで渡せる。
+    var memory = Memory()
 
     /// 一覧を読む。
     func read() throws -> (text: String, source: Source) {
@@ -172,30 +194,40 @@ struct APIListLocator {
         return (found.value, found.source)
     }
 
-    /// 索引が、いま引けるか。**詳細の失敗に「索引は引ける」と添える前の確かめ** — 引けないのに引けると言うと、
-    /// オフラインで次の一手が偽になる。取り置きがあればそれを、無ければ 1 度だけ取りに行き (取れれば取り置かれる)、
-    /// 取れなかったことは覚えて打ち直さない。
-    func indexIsReadable() -> Bool {
-        let cache = cacheURL(for: versionState())
-        if memory.indexFailed(at: cache.path) { return false }
-        if (try? read()) != nil { return true }
-        memory.rememberIndexFailure(at: cache.path)
-        return false
+    /// 索引が引けるかの見込み。
+    enum IndexOutlook: Equatable {
+        /// 取り置きがあり、取りに行かずに読める
+        case readable
+        /// 取り置きは無く、最近取れなかった
+        case unreadable
+        /// 取り置きは無く、取れるかは分からない
+        case unknown
+    }
+
+    /// 索引が引けるかの見込み。**詳細の失敗に「索引は引ける」と添えるか決めるための、取りに行かない確かめ。**
+    /// `obtain` と同じ順 — 取り置きを先に見て、無ければ覚えている失敗を見る (後から取り置かれた索引は、覚えていても読める)。
+    func indexOutlook() -> IndexOutlook {
+        let state = versionState()
+        let cache = cacheURL(for: state)
+        if let data = try? Data(contentsOf: cache), let text = String(data: data, encoding: .utf8), !text.isEmpty {
+            return .readable
+        }
+        return memory.indexFailed(at: cache.path) ? .unreadable : .unknown
     }
 
     /// 口ごとの詳細を読む。**取り置きの名前・取りに行く期限・版が引けない案内は一覧と同じ計算を通り**、
     /// 依存の版の資産が得られなければ失敗する — **別の版の詳細で穴埋めしない** (#3420)。
     ///
-    /// 版の鍵で読んだ資産は、`version` が依存の版と一致するものだけ受け入れる (ファイル名が合っていても、
-    /// 中身が別の版のものなら返さない)。
+    /// 版・改訂の鍵で読んだ資産は、`version` が案内の渡す綴り (`v0.2.0`・`rev-…`) と一致するものだけ受け入れる
+    /// (ファイル名が合っていても、中身が別の版・改訂のものなら返さない)。鍵の無い共通名は突き合わせる相手が無い。
     func readDetails() throws -> (details: APIDetails, source: Source) {
         let found = try obtain(.details) { (data: Data, state: DependencyVersion.State) -> Reading<APIDetails> in
             switch APIDetails.parse(data) {
             case .failure(let failure): return .rejected(detail: failure.reason)
             case .success(let details):
-                if case .version(let version) = state, details.version != "v\(version)" {
+                if let label = Self.versionLabel(state), details.version != label {
                     return .rejected(
-                        detail: "it was built for \(details.version), not for the dependency (v\(version))")
+                        detail: "it was built for \(details.version), not for the dependency (\(label))")
                 }
                 return .accepted(details)
             }
@@ -227,7 +259,7 @@ struct APIListLocator {
         }
         // 詳細は、前に取れなかった宛先を打ち直さない (打ち直すたびに応答ごと止まる)
         let remembered =
-            "\n\nThis failure is remembered until the interface is restarted, so asking again does not retry the download."
+            "\n\nThis failure is remembered for \(Int(Self.failureMemory / 60)) minutes, so asking again before then does not retry the download."
         if asset == .details, let before = memory.failure(of: remote) {
             throw Missing(advice: before.advice + unusable + remembered, cause: before.cause)
         }
@@ -236,6 +268,7 @@ struct APIListLocator {
                 memory.remember(missing, of: remote)
                 return Missing(advice: missing.advice + unusable + remembered, cause: missing.cause)
             }
+            memory.rememberIndexFailure(at: cache.path)
             return Missing(advice: missing.advice + unusable, cause: missing.cause)
         }
         let data: Data

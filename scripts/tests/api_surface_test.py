@@ -578,6 +578,22 @@ class ApiSurfaceTests(unittest.TestCase):
             self.assertEqual(api.count_details(data), 3)
             self.assertIn("口ごとの詳細 3 個", done.stdout)
 
+    def test_listは出力先の親ディレクトリが無くても作って書く(self):
+        # MCP の案内どおり `make api-list OUT=.mokume/reference/… DETAILS=…` と打つと、区画はまだ無い (#3584)
+        with tempfile.TemporaryDirectory() as directory:
+            graphs = Path(directory) / "graphs"
+            graphs.mkdir()
+            document = {"symbols": self._detail_symbols(directory)[:3]}
+            (graphs / "MokumeCore.symbols.json").write_text(json.dumps(document), encoding="utf-8")
+            index = Path(directory) / "sketch/.mokume/reference/mokume-api.md"
+            details = Path(directory) / "sketch/.mokume/reference/mokume-api-details.json"
+            done = subprocess.run(
+                ["python3", str(SCRIPT), "list", "--graphs", str(graphs), "--module", "MokumeCore",
+                 "--version", "v1.2.3", "--output", str(index), "--details", str(details)],
+                capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertTrue(index.exists() and details.exists())
+
     def test_その他の節でも同名オーバーロードの並びが入力の順に依らない(self):
         # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の枝で並べられる**。
         # 片方だけ直しても残るので、両方を見る
