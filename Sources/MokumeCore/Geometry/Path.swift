@@ -8,7 +8,7 @@ import Foundation
 /// ``SketchPart/createPath(_:)`` の中で ``SketchPart/beginShape(_:)`` から ``SketchPart/endShape(_:)`` まで
 /// 並べた頂点を記録して作る。**記録するのは道の形だけ**で、色や線の太さなどの見た目は持たない。描くのは
 /// ``SketchPart/shape(_:_:_:)-(Path,_,_)`` で、そのときの ``SketchPart/fill(_:)-(LinearRGBA)`` と
-/// ``SketchPart/stroke(_:)-(LinearRGBA)`` に従う。値から作るなら ``init(_:)`` が円を道にする。
+/// ``SketchPart/stroke(_:)-(LinearRGBA)`` に従う。値から作るなら ``init(_:)-(Circle)`` が円を、``init(_:)-([TextContour])`` が字の輪郭を道にする。
 ///
 /// 道は**部分道**の並びである。`beginShape()` から `endShape()` までが 1 つ、`beginContour()` で置いた穴が
 /// 1 つ、`createPath { }` の中で `beginShape()` を何度か呼べば、その数だけ部分道が増える。曲線は刻んだ折れ線で
@@ -67,7 +67,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// 2π × 10 との差は 0.011 ほど)。半径が極端に大きく、刻みが上限の 2048 本に当たる円 (半径が 17000 ほどから先) では、
     /// 隔たりが 0.02 を越えうる。
     /// 半径が 0 以下か数でない円は、空の道になる。
-    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。作例は #3562 が持つ)
+    // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path))
     public init(_ circle: Circle) {
         let radius = circle.radius
         let center = circle.center.simd
@@ -91,6 +91,47 @@ public nonisolated struct Path: Sendable, Hashable {
         self.init(subpaths: [
             Subpath(points: points, isClosed: true, isCurveStep: Array(repeating: true, count: steps))
         ])
+    }
+
+    /// 字の輪郭を道にする。
+    ///
+    /// ``SketchPart/textOutline(_:_:_:)`` が返す周を、返る順のまま 1 つずつ閉じた部分道にする。``point(at:)`` は
+    /// その順に、全部の周を繋いだ全体の弧長で辿る。``SketchPart/textOutline(_:_:_:)`` は字ごとに外周を先・穴を後に並べるので、
+    /// 複数の字では「1 字目の外周・1 字目の穴・2 字目の外周…」の順になる。
+    ///
+    /// ``contains(_:)`` は、穴を外として答える (`o` の輪の上の点だけが内側で、穴の中の点は外側)。**穴かどうかは
+    /// 周の向きで決まり、``TextContour/isHole`` は読まない** — ``SketchPart/textOutline(_:_:_:)`` は外周を正の向き・穴を逆回りで
+    /// 返すので、``TextContour/isHole`` と向きは揃っている。向きを揃えずに作った周を渡すと、``TextContour/isHole`` が
+    /// `true` でも、外周と同じ向きなら穴にならない。既定の書体の `A` のように、重なった外周で返る字は、回り数が 2 になる
+    /// 重なりも内側のまま、和として読める。
+    ///
+    /// **道に入らない周がある。** 点が 3 つに満たない周 (面を持たない) と、非有限の座標を持つ周は、飛ばす
+    /// (``init(_:)-(Circle)`` が半径の合わない円を空の道にするのと同じ向きで、落とさない)。色や絵を持つ字
+    /// (絵文字など) は、``SketchPart/textOutline(_:_:_:)`` が周を返さないので、道にも入らない。
+    ///
+    /// 点の間隔を揃えて辿りたいなら、``point(at:)`` に等間隔の `t` を渡す。
+    ///
+    /// ```swift
+    /// textFont("Helvetica")
+    /// textSize(180)
+    /// let word = Path(textOutline("mokume", 60, 320))
+    /// word.contains([mouseX, mouseY])  // 字の墨の上か
+    /// word.point(at: 0.25)             // 輪郭を辿って 4 分の 1 の所
+    /// ```
+    ///
+    /// 点は置いた点として持ち、**曲線の刻みの印は付けない** (``init(_:)-(Circle)`` は刻みの印を付ける)。
+    /// 点が 3 つ以上の周について、``SketchPart/shape(_:_:_:)-(Path,_,_)`` は、同じ周を ``SketchPart/vertex(_:_:)`` で並べて描いたときと
+    /// 同じ輪郭になるので、太い線の `strokeJoin(.bevel)` では、曲線を割った点ごとに継ぎ目の形が出る。
+    // shot: 撮れない 道を作る口で、描く結果が無い (絵は参照スケッチ type-and-path の字を回る粒が持つ)
+    public init(_ contours: [TextContour]) {
+        self.init(
+            subpaths: contours.compactMap { contour in
+                let points = contour.outline
+                guard points.count >= 3, points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
+                return Subpath(
+                    points: points, isClosed: true,
+                    isCurveStep: Array(repeating: false, count: points.count))
+            })
     }
 
     /// 道の長さ。部分道の長さの和で、開いた部分道は閉じる辺を数えない。
