@@ -349,6 +349,43 @@ struct SolidStrokeStencilTests {
         #expect(abs(pixels[80, 50].red - Self.once) < 0.01)
     }
 
+    /// 半透明の線の後に、線を持つ保持した形を透けた色で置くと、同じ列に裏 → 表で描く部品が足される。
+    /// 部品を持つ列は区間を割って描く口を通らないので、先に積んだ線が重ねて混ざっていた (反証の指摘)。
+    /// 形は前のフレームで作っておく — 同じフレームで記録すると、記録が列を閉じてこの経路を外れる。
+    @Test("線の後に、透けた色の保持した形を置いても、先の線は 1 回だけ混ぜる")
+    func strokeBeforeTintedRetainedShapeMixesOnce() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var made: Shape?
+        try canvas.draw {
+            made = canvas.createShape {
+                // 半透明の線は GPU の骨にならず、置くときに CPU の帯で組み直して同じ列へ差し込む
+                canvas.fill(255)
+                canvas.stroke(255, 255, 255, 200)
+                canvas.strokeWeight(1)
+                canvas.box(8)
+            }
+        }
+        let crate = try #require(made)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(255, 0, 0, 128)
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+            let veil: Float = 0.5
+            canvas.shape(
+                crate,
+                at: [
+                    Placement(
+                        x: 150, y: 150,
+                        fill: LinearRGBA(premultipliedRed: 0, green: 0, blue: veil, alpha: veil))
+                ])
+        }
+        let pixels = try canvas.target.readPixels()
+        #expect(abs(pixels[45, 45].red - Self.once) < 0.01, "角 (45, 45) は \(pixels[45, 45].red)")
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
     @Test("不透明の塗りの箱でも、線は 1 回だけ混ぜて、手前の線が欠けない", arguments: [false, true])
     func filledBoxKeepsItsStroke(flipped: Bool) throws {
         func picture(alpha: Float) throws -> PixelBuffer {

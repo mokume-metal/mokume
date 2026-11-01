@@ -378,6 +378,11 @@ extension Canvas {
     ) {
         // `showsBackFaces` と `mirrored` は、置き場所を先に掛けた頂点 (`placement` は単位) を積む
         // ときに、元の置き場所の判定を渡す口 (保持した形の線を組み直して差し込む・#1893)
+        //
+        // **1 回だけ混ぜる線の区間を持つ列に、部品を足さない** — 部品を持つ列は裏 → 表で描く口
+        // (`encodeBackThenFront`) を通り、区間を割って描かない。線の区間を部品の列に入れない側は
+        // ``recordingSolidStroke(_:_:)`` が受け持つ (線の後に部品が来る順はここ)
+        if !parts.isEmpty, openSolid?.strokeStencilSections.isEmpty == false { closeBatch() }
         if indices != nil { openIndexedFreeformSolid() } else { openFreeformSolid() }
         let base = solidVertices.count
         notePlacedParts(
@@ -772,8 +777,9 @@ extension Canvas {
     ///
     /// **`shader()` が効いている線は、この段では通さない** ([#3577])。断片が出す不透明度は分からず、平面の
     /// 線と同じく「出るもの」と扱うと、不透明の色の線まで描く呼び出しが増える。保持した形の線
-    /// (`recordingShape`・置くときに組み直す) と、描く画素で 1 画素より細い線 (被覆 < 1・[#3578]) も同じく
-    /// 範囲の外で、これまでどおり片を重ねて混ぜる。
+    /// (`recordingShape`・置くときに組み直す・[#3577]) と、描く画素で 1 画素より細い線 (被覆 < 1・[#3578]) も
+    /// 同じく範囲の外で、これまでどおり片を重ねて混ぜる。細さは描く面の細かさで決まるので、同じ線でも
+    /// 面の細かさによって型板を通るかが変わる (段 3 で揃える)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#3577]: https://github.com/mokume-metal/mokume/issues/3577

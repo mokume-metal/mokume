@@ -2223,7 +2223,8 @@ public final class Canvas {
         /// - **粒は部品にしない。** 板 1 枚で自分の手前の面が自分の奥の面を隠すことが無く、
         ///   GPU が個数を書く経路は置き場所ごとに分けようがない。
         /// - **立体の線の帯は部品の外**で、呼び出し順のまま 1 回で描く。半透明の線を 1 回だけ混ぜる区間
-        ///   (``strokeStencilSections``) は、部品を持つ列に入れない (`recordingSolidStroke` が先に列を閉じる)。
+        ///   (``strokeStencilSections``) と部品は同じ列に同居させない (線を積む `recordingSolidStroke` と部品を足す
+        ///   `appendPlacedSolidVertices` が、相手を持つ列を先に閉じる)。
         var backFaceParts: [SolidPart] = []
         /// 裏面が絵に出うる置き場所の、列の中での番号 (``OpenSolid/backFaceInstances``)。
         var backFaceInstances: [Int] = []
