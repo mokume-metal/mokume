@@ -1,0 +1,43 @@
+# 使い捨て: #2962 の完了条件 1・6 を専用機で測る (#3662)。merge しない — 測り終えたら PR ごと閉じる
+name: measure-2962
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/measure-2962.yml]
+permissions:
+  contents: read
+concurrency:
+  group: measure-2962
+  cancel-in-progress: true
+jobs:
+  measure:
+    runs-on: [self-hosted, mokume-render]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/runner-preflight.sh
+      - name: 起動時刻 (前)
+        run: sysctl -n kern.boottime | tee boot-before.txt
+      # 道ごとに別のプロセスで測る (最大の記憶が前の回の残りを拾わないように)
+      - name: CPU の道 (変更前)
+        run: MOKUME_MOVIE_SURFACES=cpu make test-release TEST_RELEASE_ARGS='--filter MovieSurfaceMeasurement' 2>&1 | tee cpu.log
+      - name: 面の道
+        run: MOKUME_MOVIE_SURFACES=surface make test-release TEST_RELEASE_ARGS='--filter MovieSurfaceMeasurement' 2>&1 | tee surface.log
+      - name: 起動時刻 (後) と結果
+        if: ${{ !cancelled() }}
+        run: |
+          sysctl -n kern.boottime | tee boot-after.txt
+          cmp boot-before.txt boot-after.txt && echo "再起動なし"
+          sysctl -n machdep.cpu.brand_string hw.memsize
+          sw_vers
+          { echo '```'; grep -h '^PERF' cpu.log surface.log; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: measure-2962
+          path: |
+            cpu.log
+            surface.log
+            boot-before.txt
+            boot-after.txt
+          retention-days: 14
