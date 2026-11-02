@@ -43,17 +43,17 @@ bash scripts/apply-rulesets.sh --degraded --apply   # 適用する (メンテナ
 
 復帰の条件は 2 つ。**`RENDER_TURN_SLOTS` (未設定は 1) で通す数の runner が、
 `mokume-render` ラベル付きで online に戻っていること**と、**事前チェック
-([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が緑**であること。
+([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が成功している**こと。
 2 本運用で 1 本だけ戻せる場合は、先に変数を 1 へ戻してから復帰する。
 runner の起動・変数の確認と切り替えは [専用機の runner の手順](render-runners.md)を参照する。
 
 ```bash
 bash scripts/apply-rulesets.sh --restore           # 差分を見る。render を足す 3 行だけのはず
 bash scripts/apply-rulesets.sh --restore --apply   # 適用する (メンテナだけ)
-bash scripts/check-rulesets.sh                     # 定義と実設定が一致している (緑)
+bash scripts/check-rulesets.sh                     # 定義と実設定が一致している (成功)
 ```
 
-`--restore` は縮退の定義にある名前の保護だけを、`.github/rulesets/` の定義へ戻す。戻したら、**最初の merge_group の `render` が緑で通ること**を見る。縮退中に merge したものがそこで初めてマージ後のツリーの build・test・描画のテストにかかるので、赤ならその PR を直す。最後に、縮退中に立った ruleset-drift の Issue を、再照合が緑なことを確かめて閉じる。
+`--restore` は縮退の定義にある名前の保護だけを、`.github/rulesets/` の定義へ戻す。戻したら、**最初の merge_group の `render` が成功すること**を見る。縮退中に merge したものがそこで初めてマージ後のツリーの build・test・描画のテストにかかるので、失敗したらその PR を直す。最後に、縮退中に立った ruleset-drift の Issue を、再照合が成功したことを確かめて閉じる。
 
 ## 例: #2507 の形
 
@@ -61,4 +61,4 @@ bash scripts/check-rulesets.sh                     # 定義と実設定が一致
 
 ## 定義の保守
 
-縮退の定義と `main-protection.json` の差は、**必須チェックの `render` の 1 つだけ**でなければならない。`main-protection.json` を変える PR は、縮退の定義にも同じ変更を入れる。入れ忘れると `scripts/tests/rulesets_test.py` が赤になる (縮退の発動が、意図しない保護の変更を同時に起こさないため)。
+縮退の定義と `main-protection.json` の差は、**必須チェックの `render` の 1 つだけ**でなければならない。`main-protection.json` を変える PR は、縮退の定義にも同じ変更を入れる。入れ忘れると `scripts/tests/rulesets_test.py` が失敗する (縮退の発動が、意図しない保護の変更を同時に起こさないため)。
