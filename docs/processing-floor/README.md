@@ -27,7 +27,7 @@ ADR-0041 決定 3 の改訂の基準を、行に当てる形にしたもの。�
 
 | 区分 | 当てるとき | mokume の口の欄 |
 | --- | --- | --- |
-| 同等 | 同じ受け手に、同じ働きの mokume の口を 1 つ名指せる。Swift 流の別名・プロパティ・型の準拠で得る口 (`count`) でよい (`Table.getRowCount()` は `Table.rowCount`) | その口 |
+| 同等 | 同じ受け手に、同じ働きの mokume の口を 1 つ名指せる。Swift 流の別名・プロパティ・型の準拠で得る口 (`count`) でよい (`Table.getRowCount()` は `Table.rowCount`)。値の受け手が別の型へ移った形も含む (`BeatDetector.isBeat()` は音源の `isBeat`、`Waveform.analyze()` は音源の `waveform`。[#3137]) | その口 |
 | 持たない | 受け手の上に口を持たず、別の受け手の口か Swift の言語・標準ライブラリで同じことをする。または macOS で意味が無い・基準 2〜5 を割る・値の型では成り立たない | 同じことをする書き方 (無ければ `—`) |
 | 作例待ち | 下限の口だが、名前・引数・振る舞いの選び方が割れる。割れる点を理由に書く | `—` |
 | 入れる | 上のどれにも当たらず、決定 1 の基準 2〜5 を満たす (OS のフレームワークだけで書ける・本体の型に合流する・機材なしで検査できる・専用の道具の仕事でない) | `—` |
@@ -129,5 +129,6 @@ jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 [#2472]: https://github.com/mokume-metal/mokume/issues/2472
 [#3035]: https://github.com/mokume-metal/mokume/issues/3035
 [#3133]: https://github.com/mokume-metal/mokume/issues/3133
+[#3137]: https://github.com/mokume-metal/mokume/issues/3137
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
 [#3684]: https://github.com/mokume-metal/mokume/issues/3684
