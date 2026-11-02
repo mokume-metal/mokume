@@ -27,7 +27,7 @@ ADR-0041 決定 3 の改訂の基準を、行に当てる形にしたもの。�
 
 | 区分 | 当てるとき | mokume の口の欄 |
 | --- | --- | --- |
-| 同等 | 同じ受け手に、同じ働きの mokume の口を 1 つ名指せる。Swift 流の別名・プロパティ・型の準拠で得る口 (`count`) でよい (`Table.getRowCount()` は `Table.rowCount`) | その口 |
+| 同等 | 同じ受け手に、同じ働きの mokume の口を 1 つ名指せる。Swift 流の別名・プロパティ・型の準拠で得る口 (`count`) でよい (`Table.getRowCount()` は `Table.rowCount`)。値の受け手が別の型へ移った形も含む (`BeatDetector.isBeat()` は音源の `isBeat`、`Waveform.analyze()` は音源の `waveform`。[#3137]) | その口 |
 | 持たない | 受け手の上に口を持たず、別の受け手の口か Swift の言語・標準ライブラリで同じことをする。または macOS で意味が無い・基準 2〜5 を割る・値の型では成り立たない | 同じことをする書き方 (無ければ `—`) |
 | 作例待ち | 下限の口だが、名前・引数・振る舞いの選び方が割れる。割れる点を理由に書く | `—` |
 | 入れる | 上のどれにも当たらず、決定 1 の基準 2〜5 を満たす (OS のフレームワークだけで書ける・本体の型に合流する・機材なしで検査できる・専用の道具の仕事でない) | `—` |
@@ -88,6 +88,13 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
   | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
+Sound の 165 件は、`sound` の項目すべてである。クラスの頁 25 (`type` が `class`) と、そのメソッド 140 (`method`) に分かれる:
+
+```bash
+ls "$ref"/sound/*.json | wc -l                      # 165
+jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
+```
+
 画像の 34 件は、category が `image` (27) か `pimage` (6) の項目と、所属 (`classanchor`) が `PImage` で category が `color` の `PImage.blendColor()` 1 件である:
 
 ```bash
@@ -118,7 +125,7 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 | 順 | 領域 | 項目 | ファイル | 子 |
 | --- | --- | --- | --- | --- |
 | 1 | データ: JSON・Table・XML | 108 | `data-json-table-xml.md` | [#3592] |
-| 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | 順 1 の後に起票 |
+| 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | [#3684] |
 | 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | 順 1 の後に起票 |
 | 2 | 画像 | 34 | `image.md` | [#3686] |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
@@ -145,7 +152,9 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 [#2472]: https://github.com/mokume-metal/mokume/issues/2472
 [#3035]: https://github.com/mokume-metal/mokume/issues/3035
 [#3133]: https://github.com/mokume-metal/mokume/issues/3133
+[#3137]: https://github.com/mokume-metal/mokume/issues/3137
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
+[#3684]: https://github.com/mokume-metal/mokume/issues/3684
 [#3686]: https://github.com/mokume-metal/mokume/issues/3686
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
