@@ -95,6 +95,12 @@ ls "$ref"/sound/*.json | wc -l                      # 165
 jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 ```
 
+Video の 21 件は、参照の `video` の項目すべてである (`Movie` のクラスの頁 1 とメソッド 12・`movieEvent()`・`Capture` のクラスの頁 1 とメソッド 5・`captureEvent()`)。ディレクトリの下がこの領域だけなので、数えるだけでよい:
+
+```bash
+ls "$ref"/video/*.json | wc -l   # 21
+```
+
 ## 領域の一覧
 
 [#3133] の本文の表の順と項目数 (processing-website `f4acef8`)。順 1 の後に順 2 の 5 領域を並行し、残りはその後にする。ファイルの名前は予定で、まだ無いものもある (表を作る子が置く)。
@@ -105,7 +111,7 @@ jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 | 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | [#3684] |
 | 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | 順 1 の後に起票 |
 | 2 | 画像 | 35 | `image.md` | 順 1 の後に起票 |
-| 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | 順 1 の後に起票 |
+| 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 74 + ライブラリの頁 | `input-output-environment.md` | 順 1 の後に起票 |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | 順 2 の後 |
 | 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
@@ -132,3 +138,4 @@ jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 [#3137]: https://github.com/mokume-metal/mokume/issues/3137
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
 [#3684]: https://github.com/mokume-metal/mokume/issues/3684
+[#3687]: https://github.com/mokume-metal/mokume/issues/3687
