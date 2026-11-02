@@ -88,6 +88,13 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
   | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
+画像の 34 件は、category が `image` (27) か `pimage` (6) の項目と、所属 (`classanchor`) が `PImage` で category が `color` の `PImage.blendColor()` 1 件である:
+
+```bash
+jq -r 'select(((.category // "") | test("^p?image$")) or ((.classanchor // "") == "PImage"))
+  | input_filename' "$ref"/processing/*.json | wc -l
+```
+
 Video の 21 件は、参照の `video` の項目すべてである (`Movie` のクラスの頁 1 とメソッド 12・`movieEvent()`・`Capture` のクラスの頁 1 とメソッド 5・`captureEvent()`)。ディレクトリの下がこの領域だけなので、数えるだけでよい:
 
 ```bash
@@ -113,7 +120,7 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 | 1 | データ: JSON・Table・XML | 108 | `data-json-table-xml.md` | [#3592] |
 | 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | 順 1 の後に起票 |
 | 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | 順 1 の後に起票 |
-| 2 | 画像 | 35 | `image.md` | 順 1 の後に起票 |
+| 2 | 画像 | 34 | `image.md` | [#3686] |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | 順 2 の後 |
@@ -139,5 +146,6 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 [#3035]: https://github.com/mokume-metal/mokume/issues/3035
 [#3133]: https://github.com/mokume-metal/mokume/issues/3133
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
+[#3686]: https://github.com/mokume-metal/mokume/issues/3686
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
