@@ -5,14 +5,14 @@ SPDX-License-Identifier: MIT
 
 # 専用機が止まったときの縮退 (必須チェックから `render` を外す)
 
-merge queue の必須チェック `render` は、専用機 `mokume-m4` の 1 台でだけ走る。専用機の runner が止まると、描画に触れない PR (docs・scripts・CI) も含めて、queue に入った PR が期限 (95 分) ごとに弾かれ続ける。専用機は SSH で入れず、runner は物理操作でしか戻せない ([#1767](https://github.com/mokume-metal/mokume/issues/1767))。runner を戻せない間も merge を通すために、**必須チェックから `render` だけを外した保護の定義**を前もって用意してある ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。
+merge queue の必須チェック `render` は、専用機 `mokume-m4` の 1 台でだけ走る。専用機の runner が止まると、描画に触れない PR (docs・scripts・CI) も含めて、queue に入った PR がタイムアウト (95 分) ごとに queue から外され続ける。専用機は SSH で入れず、runner は物理操作でしか戻せない ([#1767](https://github.com/mokume-metal/mokume/issues/1767))。runner を戻せない間も merge を通すために、**必須チェックから `render` だけを外した保護の定義**を前もって用意してある ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。
 
 この文書が縮退と復帰の手順の唯一の置き場である。`scripts/stall-watch.sh` の読み分け 8 の対処は、ここを指す。
 
 ## 誰が・いつ使うか
 
-- **発動するのはメンテナだけである。エージェントは `--apply` を打たない** (`--degraded --apply`・`--restore --apply`)。保護を書き換える操作で、`--apply` を付けなければ何も書き換えない dry-run は誰が打ってもよい (実設定の読み出しだけ)。
-- **発動の条件**: 当番 (`scripts/stall-watch.sh`) が `runner-offline` を名乗っていて、専用機の前で runner を戻せない間。runner が戻せるなら戻すのが先で、縮退は戻せない間の手当てである。
+- **発動するのはメンテナだけである。エージェントは `--apply` を実行しない** (`--degraded --apply`・`--restore --apply`)。保護を書き換える操作で、`--apply` を付けなければ何も書き換えない dry-run は誰が実行してもよい (実設定の読み出しだけ)。
+- **発動の条件**: 監視ジョブ (`scripts/stall-watch.sh`) が `runner-offline` を報告していて、専用機の前で runner を戻せない間。runner が戻せるなら戻すのが先で、縮退は戻せない間の手当てである。
 - 先に確かめること: `bash scripts/stall-watch.sh` の `runner-offline` の行と、`gh api repos/mokume-metal/mokume/actions/runners` の `status` (メンテナの権限)。
 
 ## 発動する
@@ -30,35 +30,35 @@ bash scripts/apply-rulesets.sh --degraded --apply   # 適用する (メンテナ
 
 ## 失う保証
 
-縮退の間は、**合流後の木の build・test・gpu-ran と描画の検査がどこでも走らない**。merge_group のホストの `ci-check` は build と test を外していて ([#1985](https://github.com/mokume-metal/mokume/issues/1985))、それを担うのが専用機の `render` だけだからである。縮退中に merge したものは、復帰後の最初の merge_group の `render` と定期の検査が見る。
+縮退の間は、**マージ後のツリーの build・test・gpu-ran と描画のテストがどこでも走らない**。merge_group のホストの `ci-check` は build と test を外していて ([#1985](https://github.com/mokume-metal/mokume/issues/1985))、それを担うのが専用機の `render` だけだからである。縮退中に merge したものは、復帰後の最初の merge_group の `render` と定期のテストが見る。
 
 ほかの必須チェック (`ci-gate`・`pr-gate`) は変わらない。必須の承認も `bypass_actors` も変わらない。
 
 ## 縮退の間に起きること
 
 - **日次の ruleset のずれの照合** (`.github/workflows/ruleset-drift.yml`) が、`ci: ルールセットが定義とずれている` を起票する。縮退によるものは、**本文の「検査の出力」の差分が `main-protection` の必須チェックから `render` が無い 3 行だけ**で分かる。ほかのずれが混ざっていれば縮退とは別の原因なので、別に調べる。縮退中は閉じない (復帰後に確かめて閉じる)。
-- 手元の `bash scripts/check-rulesets.sh` も、同じ `render` の差分を言って赤になる。それが縮退中の正しい状態である。
+- 手元の `bash scripts/check-rulesets.sh` も、同じ `render` の差分を出力して失敗する。それが縮退中の正しい状態である。
 
 ## 復帰する
 
 復帰の条件は 2 つ。**`RENDER_TURN_SLOTS` (未設定は 1) で通す数の runner が、
-`mokume-render` ラベル付きで online に戻っていること**と、**前検査
-([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が緑**であること。
+`mokume-render` ラベル付きで online に戻っていること**と、**事前チェック
+([#2588](https://github.com/mokume-metal/mokume/issues/2588)) が成功している**こと。
 2 本運用で 1 本だけ戻せる場合は、先に変数を 1 へ戻してから復帰する。
 runner の起動・変数の確認と切り替えは [専用機の runner の手順](render-runners.md)を参照する。
 
 ```bash
 bash scripts/apply-rulesets.sh --restore           # 差分を見る。render を足す 3 行だけのはず
 bash scripts/apply-rulesets.sh --restore --apply   # 適用する (メンテナだけ)
-bash scripts/check-rulesets.sh                     # 定義と実設定が一致している (緑)
+bash scripts/check-rulesets.sh                     # 定義と実設定が一致している (成功)
 ```
 
-`--restore` は縮退の定義にある名前の保護だけを、`.github/rulesets/` の定義へ戻す。戻したら、**最初の merge_group の `render` が緑で通ること**を見る。縮退中に merge したものがそこで初めて合流後の木の build・test・描画の検査にかかるので、赤ならその PR を直す。最後に、縮退中に立った ruleset-drift の Issue を、再照合が緑なことを確かめて閉じる。
+`--restore` は縮退の定義にある名前の保護だけを、`.github/rulesets/` の定義へ戻す。戻したら、**最初の merge_group の `render` が成功すること**を見る。縮退中に merge したものがそこで初めてマージ後のツリーの build・test・描画のテストにかかるので、失敗したらその PR を直す。最後に、縮退中に立った ruleset-drift の Issue を、再照合が成功したことを確かめて閉じる。
 
 ## 例: #2507 の形
 
-専用機が止まり、先頭の `render` が 14 回続けて落ちた (#2507)。当時 (2026-10-12・queue の期限は 60 分だった) は AGENTS.md だけの PR (#2474) も 60 分ごとに弾かれ続けた (いまの期限は 95 分)。この手順で縮退を適用すると、その PR は `render` を待たずに merge される。復帰の適用で `render` が必須に戻る。
+専用機が止まり、先頭の `render` が 14 回続けて失敗した (#2507)。当時 (2026-10-12・queue のタイムアウトは 60 分だった) は AGENTS.md だけの PR (#2474) も 60 分ごとに queue から外され続けた (いまのタイムアウトは 95 分)。この手順で縮退を適用すると、その PR は `render` を待たずに merge される。復帰の適用で `render` が必須に戻る。
 
 ## 定義の保守
 
-縮退の定義と `main-protection.json` の差は、**必須チェックの `render` の 1 つだけ**でなければならない。`main-protection.json` を変える PR は、縮退の定義にも同じ変更を入れる。入れ忘れると `scripts/tests/rulesets_test.py` が赤になる (縮退の発動が、意図しない保護の変更を同時に起こさないため)。
+縮退の定義と `main-protection.json` の差は、**必須チェックの `render` の 1 つだけ**でなければならない。`main-protection.json` を変える PR は、縮退の定義にも同じ変更を入れる。入れ忘れると `scripts/tests/rulesets_test.py` が失敗する (縮退の発動が、意図しない保護の変更を同時に起こさないため)。

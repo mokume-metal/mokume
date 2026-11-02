@@ -2,101 +2,101 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# 止まった PR の判定 (#961)。下の「読み分け表」の実行者。
+# 止まった PR の判定 (#961)。下の「読み分け表」を実行するスクリプト。
 #
 #   stall-watch.sh
 #
-# **手元で打ってもよい** (読み取りしかしない)。当番は数時間おきにしか回らないので
-# (#1197)、急ぐときは自分で打って分類を読む。
+# **手元で実行してもよい** (読み取りしかしない)。監視ジョブは数時間おきにしか回らないので
+# (#1197)、急ぐときは自分で実行して分類を読む。
 #
 # ## 読み分け表
 #
-# 以前は AGENTS.md が持っていた (#1364 でここへ移した)。行番号は下の「分類」が指す。
+# 以前は AGENTS.md にあった (#1364 でここへ移した)。行番号は下の「分類」が指す。
 #
 #   1. autoMerge: true + UNKNOWN で **check が 1 本も付かない**
-#      原因: main と衝突していて合流後の木が作れず、pull_request の workflow が起動して
-#      いない (#694)。衝突しても赤くならず DIRTY にもならない — 「まだ来ていない」では
+#      原因: main と衝突していてマージ後のツリーが作れず、pull_request の workflow が起動して
+#      いない (#694)。衝突しても失敗にならず DIRTY にもならない — 「まだ来ていない」では
 #      なく「来ない」(#690)
 #      対処: git merge-tree --write-tree origin/main HEAD で確かめ、手元で解いて push する。
 #      ラベルの付け直しも close → reopen も効かない
 #   2. autoMerge: false + BLOCKED
 #      原因: auto-merge が外れた (#114 に出来事ごとの実測)。承認待ちはもう無い —
 #      ADR-0044 が承認のゲートを外した (#2108)
-#      対処: gh pr merge <番号> --auto --squash を打ち直す
-#   3. 全 check が緑なのに進まない
-#      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)。作法の検査が
-#      ci-gate を離れた (#2669) 後に残るのは、同じコミットに段を走らせる ci.yml の run が複数
-#      立つ場面 (reopen・閉じて作り直した PR) のコードの検査の赤である。base の変更と本文の編集
-#      では ci.yml の run が立たない (#2718)。#2718 より前の本文の編集の run の緑 (段が skipped)
+#      対処: gh pr merge <番号> --auto --squash を再実行する
+#   3. 全 check が成功しているのに進まない
+#      原因: 同じコミットに残る古い失敗 check run が判定を固定している (#259)。作法のチェックが
+#      ci-gate から外れた (#2669) 後に残るのは、同じコミットにジョブを走らせる ci.yml の run が複数
+#      立つ場面 (reopen・閉じて作り直した PR) のコードのチェックの失敗である。base の変更と本文の編集
+#      では ci.yml の run が立たない (#2718)。#2718 より前の本文の編集の run の成功 (ジョブが skipped)
 #      は直った証拠に数えない — 10 行目
-#      対処: gh run rerun <run-id> --failed — **ただし render-pr・pr-gate には打たない**
-#      (#2062・#2668。render-pr の rerun は門番を通らずに専用機へ積む。必須ではないので
-#      打たなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い赤・cancelled は
-#      この表の判定に数えない — normalize_checks。ただし最新の suite に載って必須を塞ぐ
+#      対処: gh run rerun <run-id> --failed — **ただし render-pr・pr-gate には実行しない**
+#      (#2062・#2668。render-pr の rerun はゲートのジョブを通らずに専用機のキューへ入る。必須ではないので
+#      実行しなくても merge は止まらない。pr-gate は最新の run の結論が判定で、古い失敗・cancelled は
+#      この表の判定に数えない — normalize_checks。ただし最新の suite に含まれて必須を塞ぐ
 #      cancelled は 13 行目)
-#   4. autoMerge: false + CLEAN + 全 check 緑 で isInMergeQueue: true
+#   4. autoMerge: false + CLEAN + 全 check が成功 で isInMergeQueue: true
 #      原因: 止まっていない — 予約が queue へ移ると autoMergeRequest は null になる (#628)
-#      対処: 何も打たない
+#      対処: 何も実行しない
 #   5. 同じ 3 つで isInMergeQueue: false
-#      原因: merge queue の合流後の木で必須チェック (ci-gate か、専用機の render) が落ちて
-#      弾かれ、auto-merge も一緒に外れた (eject の副作用)
-#      対処: 弾いた merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
-#      (当番は auto-merge-dropped と名乗り、猶予を超えたら赤くするだけで、掛け直すのは
+#      原因: merge queue のマージ後のツリーで必須チェック (ci-gate か、専用機の render) が失敗して
+#      queue から外され、auto-merge も一緒に外れた (eject の副作用)
+#      対処: 外した merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
+#      (監視ジョブは auto-merge-dropped と報告し、猶予を超えたら失敗にするだけで、掛け直すのは
 #      人 — #2614)。PR 側で直すものなら直して push する
-#   6. pr-gate のタイトルの検査が落ちた
+#   6. pr-gate のタイトルのチェックが失敗した
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
 #      対処: タイトルを直す。edited で pr-gate の新しい run が作られ、必須はその結論を読む
 #      (作成順で最新の suite・規則は scripts/ci-gate.sh 冒頭)
 #      — 打ち直しも新しいコミットも要らない (pr-gate はタイトルを API から読む・#2669)。
-#      **最新 (run の id の順) の pr-gate が赤く、そのタイトルの step が落ちている PR だけ**が
-#      ここで名乗る (step の結論は Actions の job の API で読む。照合の正規表現は持たない)
-#   7. close して作り直した PR が、全 check 緑なのに赤い
-#      原因: close した側の run が付けた赤が同じコミットに残っている (#513)
-#      対処: **新しい PR の側**の run を rerun する (close した側を打つと同じ赤を再生産する)。
+#      **最新 (run の id の順) の pr-gate が失敗していて、そのタイトルの step が失敗している PR だけ**が
+#      ここで報告される (step の結論は Actions の job の API で読む。照合の正規表現は持たない)
+#   7. close して作り直した PR が、全 check が成功しているのに、失敗が残る
+#      原因: close した側の run が付けた失敗が同じコミットに残っている (#513)
+#      対処: **新しい PR の側**の run を rerun する (close した側を実行すると同じ失敗を再生産する)。
 #      render.yml の run は rerun しない (3 と同じ)
-#   8. 描画に触れない PR も含めて、queue に入った PR が期限 (95 分) ごとに弾かれ続ける
+#   8. 描画に触れない PR も含めて、queue に入った PR がタイムアウト (95 分) ごとに外され続ける
 #      原因: 専用機の runner が止まっていて、必須の render が queued のまま走らない
 #      (#1774)。専用機は runner の数 (RENDER_TURN_SLOTS・既定 1) 本で、render は paths で
-#      絞らず merge_group ごとに走る。runner が複数のとき、1 本が落ちても残りが走っている間は
-#      空いた runner の数だけ queued が拾われないままになる (#3320)。弾かれた
+#      絞らず merge_group ごとに走る。runner が複数のとき、1 本が止まっても残りが走っている間は
+#      空いた runner の数だけ queued が拾われないままになる (#3320)。外された
 #      PR には 5 の行も出るが、掛け直しても同じ 95 分を待つだけである
 #      対処: 1) 専用機の前で runner を戻す (ssh では入れない — #1767)。戻ったかは
 #      Settings → Actions → Runners か gh api repos/<repo>/actions/runners (メンテナの権限)
 #      で見る。2) 戻せない間も merge を通すなら、メンテナが docs/runner-degraded-mode.md の
-#      手順で縮退 (必須チェックから render を外す) を適用する — 発動の条件・失う保証・復帰の
-#      条件は、その文書だけに書いてある (#2252)。エージェントは --apply を打たない
+#      手順で縮退運転 (必須チェックから render を外す) を適用する — 発動の条件・失う保証・復帰の
+#      条件は、その文書だけに書いてある (#2252)。エージェントは --apply を実行しない
 #   9. 専用機は online で busy なのに、queue の先頭の render だけが queued のまま進まない
 #      原因: 専用機は queued の job を先着順に拾わない (#2062)。先頭の render が後から
-#      積まれた render-pr や後ろの group の render に抜かれ続け、95 分の期限で弾かれる。
-#      render.yml の門番 (render-turn) が積む順番を絞るので、普段は起きない。起きたら
-#      門番が効いていない (render-turn が赤) か、門番より前に積まれた job が残っている。
-#      門番より前に積まれた render-pr のうち、まだ拾われていないものは、group ができた
+#      キューに入った render-pr や後ろの group の render に抜かれ続け、95 分のタイムアウトで外される。
+#      render.yml のゲートのジョブ (render-turn) がキューに入る順番を絞るので、普段は起きない。起きたら
+#      ゲートのジョブが効いていない (render-turn が失敗) か、ゲートのジョブより前にキューに入った job が残っている。
+#      ゲートのジョブより前にキューに入った render-pr のうち、まだ拾われていないものは、group ができた
 #      瞬間に queue-sweep が cancel する (#2064)。残りうるのは、走っている render-pr と
-#      定期の scheduled-* (1 本まで・退かせない) と、queue-sweep が赤で掃除できなかった回
+#      定期の scheduled-* (1 本まで・キャンセルできない) と、queue-sweep が失敗で掃除できなかった回
 #      対処: 先頭の group と、専用機で走っている job の run の render-turn の要約と、先頭の
 #      group の queue-sweep の出力 (render-pr の cancel 行) を読む。専用機で走っている・
-#      queued の job が render-pr なら、gh run cancel で退かせてよい (必須ではなく、stall-act
-#      も rerun しない — 戻すなら queue が空いてから push し直す)。弾かれた先頭は 5 と同じく予約を掛け直す。
+#      queued の job が render-pr なら、gh run cancel でキャンセルしてよい (必須ではなく、stall-act
+#      も rerun しない — 戻すなら queue が空いてから push し直す)。外された先頭は 5 と同じく予約を掛け直す。
 #      8 との見分け: 8 は runner が offline で、どの render も走らない。9 は runner が
 #      busy で、後ろの render や render-pr は走っている。runner が online なのに専用機の
-#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 8 と名乗る)、
+#      job が 1 本も走らないまま先頭の render だけが queued なら (stall-watch は 8 と報告する)、
 #      job そのものが詰まっている — 先頭の PR を queue から出し入れして job を作り直す
-#  10. 最新の ci-gate が、段を走らせていない run (本文・タイトルの編集の run) の緑で、
-#      コードの検査 (ci-check・ci-static) の赤がその下に残っている
-#      原因: その run の ci-gate は needs が skipped なので緑になる。直った証拠ではない
-#      (#2669 の反証 4)。必須の判定は最新の ci-gate を読むので、赤いまま queue に入りうる
-#      対処: コードを直して push する。**打ち直さない** — 本当に赤い検査を当番のたびに macOS
+#  10. 最新の ci-gate が、ジョブを走らせていない run (本文・タイトルの編集の run) の成功で、
+#      コードのチェック (ci-check・ci-static) の失敗がその下に残っている
+#      原因: その run の ci-gate は needs が skipped なので成功になる。直った証拠ではない
+#      (#2669 の反証 4)。必須の判定は最新の ci-gate を読むので、失敗したまま queue に入りうる
+#      対処: コードを直して push する。**再実行しない** — 本当に失敗しているチェックを監視ジョブのたびに macOS
 #      で回し直すだけになる
-#      (移行期) #2690 の後の run では起きない — 本文の編集の run の ci-gate は、同じ SHA の検査の
-#      最新が success で終わったときしか緑にならない。**#2690 より前の ci.yml の run の緑を最新の ci-gate に
+#      (移行期) #2690 の後の run では起きない — 本文の編集の run の ci-gate は、同じ SHA のチェックの
+#      最新が success で終わったときしか成功にならない。**#2690 より前の ci.yml の run の成功を最新の ci-gate に
 #      持つ open な PR が無くなったら、この行と masked の判定ごと消してよい**
-#  11. (移行期) 最新の ci-gate が、作法のジョブを含む古い ci.yml の run の赤で、最新の
-#      pr-gate は緑
+#  11. (移行期) 最新の ci-gate が、作法のジョブを含む古い ci.yml の run の失敗で、最新の
+#      pr-gate は成功
 #      原因: #2669 より前の ci.yml の run の ci-gate は作法のジョブを待っていた。作法をラベル
-#      だけで直すと、ci.yml はラベルでは起きないので新しい ci-gate が付かない (#2669 の反証 2)。
-#      その run は打ち直さない (古いイベントを再生し、needs の赤で ci-gate も赤く返す・#699)
+#      だけで直すと、ci.yml はラベルではトリガーされないので新しい ci-gate が付かない (#2669 の反証 2)。
+#      その run は再実行しない (古いイベントを再生し、needs の失敗で ci-gate も失敗を返す・#699)
 #      対処: 新しいコミットを push する。本文の編集では新しい ci-gate が付かない — ci.yml は
-#      edited で起きない (#2718)。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な
+#      edited でトリガーされない (#2718)。**作法のジョブ (LEGACY_JOBS) を含む run を head に持つ open な
 #      PR が無くなったら、この行と legacy の判定ごと消してよい**
 #  12. autoMerge: true + CLEAN (か UNSTABLE・BEHIND) で isInMergeQueue: false のまま、揃ってから猶予を超えた
 #      原因: 予約は掛かっていて必須も揃っているのに、予約が queue へ動かない (#2693)。予約が
@@ -104,8 +104,8 @@
 #      分かっていない (#2693)。作成と同時のラベルで残る cancelled の pr-gate は、必須を塞ぐなら
 #      BLOCKED になるので (13 行目)、CLEAN のこの形の説明にはならない (#2716 の反証 7)
 #      対処: gh pr merge <番号> --disable-auto の後に gh pr merge <番号> --auto --squash で
-#      掛け直す (#2691 はこれで直後に queue へ入った)。当番は掛けない (2・5 と同じ・#2614)
-#  13. autoMerge: true + BLOCKED で、pr-gate 以外の必須は揃っている (最新が緑か skipped) のに、
+#      掛け直す (#2691 はこれで直後に queue へ入った)。監視ジョブは掛けない (2・5 と同じ・#2614)
+#  13. autoMerge: true + BLOCKED で、pr-gate 以外の必須は揃っている (最新が成功か skipped) のに、
 #      作成順で最新の check suite の pr-gate の run が cancelled (結論の無い打ち切り)
 #      原因: run が打ち切られた。必須は最新の suite の pr-gate を読む (規則は scripts/ci-gate.sh
 #      冒頭の「必須の判定が読む check run」・#2577)。打ち切られたのが古い suite なら止まらない
@@ -113,34 +113,34 @@
 #      queue に入らない (#2712・#2716)。かつては pr-gate の concurrency が打ち切っていた (走っている
 #      run の打ち切り・待ちの置き換え)。#2716 で concurrency を外したので、残るのは手で cancel した
 #      ときである。待ちを置き換えられた run はジョブを作らないので、suite の順は run の一覧で読む。
-#      最新の suite の赤は打ち切りではなく PR を読んだ結論なので、ここには当てない
-#      対処: 名乗りの行に出る gh run rerun <run-id> で cancelled の run を打ち直す (#2712 は打ち直しの
-#      14 秒後に CLEAN になった)。ジョブの無い run で打ち直せなければ、本文を編集して新しい run を
-#      作る。**当番は打たない** — 古い pr-gate を当番に打たせない決まり (#2668・stall-act.sh の
+#      最新の suite の失敗は打ち切りではなく PR を読んだ結論なので、ここには当てない
+#      対処: 報告の行に出る gh run rerun <run-id> で cancelled の run を再実行する (#2712 は再実行の
+#      14 秒後に CLEAN になった)。ジョブの無い run で再実行できなければ、本文を編集して新しい run を
+#      作る。**監視ジョブは実行しない** — 古い pr-gate を監視ジョブに実行させない決まり (#2668・stall-act.sh の
 #      除外) を変えるのは人の判断である
-#  14. (移行期) 最新の ci-gate が、段を走らせていない run (#2718 より前の本文・タイトルの編集の
-#      run) の赤で、同じ SHA の ci-check・ci-static の最新はどちらも success
-#      原因: その run の ci-gate は同じ SHA の検査の最新を読んで結論を返した (#2690)。検査の赤を
-#      読んだ後や待ちの期限を越えた後に、検査を打ち直して緑にしても、run の id の大きいその赤が
+#  14. (移行期) 最新の ci-gate が、ジョブを走らせていない run (#2718 より前の本文・タイトルの編集の
+#      run) の失敗で、同じ SHA の ci-check・ci-static の最新はどちらも success
+#      原因: その run の ci-gate は同じ SHA のチェックの最新を読んで結論を返した (#2690)。チェックの失敗を
+#      読んだ後や待ちのタイムアウトを越えた後に、チェックを再実行して成功にしても、run の id の大きいその失敗が
 #      必須を塞ぎ続ける (#2717)。#2718 からは本文の編集で ci.yml の run が立たないので、新しくは
-#      生まれない。当番の打ち直し (reread) は #2718 で外した
-#      対処: 名乗りの行に出る gh run rerun <run-id> --failed で、その run を打ち直す (その run の版の
-#      scripts/ci-gate.sh が同じ SHA を読み直して緑を返す) か、新しいコミットを push する。当番は
-#      打たない。検査の最新が赤・走っている途中・片方が無いなら名乗らない (読み直しても緑に
-#      ならない。直すのはコードの側)。**#2718 より前の本文の編集の run の赤を最新の ci-gate に持つ
+#      生まれない。監視ジョブの再実行 (reread) は #2718 で外した
+#      対処: 報告の行に出る gh run rerun <run-id> --failed で、その run を再実行する (その run のバージョンの
+#      scripts/ci-gate.sh が同じ SHA を読み直して成功を返す) か、新しいコミットを push する。監視ジョブは
+#      実行しない。チェックの最新が失敗・走っている途中・片方が無いなら報告しない (読み直しても成功に
+#      ならない。直すのはコードの側)。**#2718 より前の本文の編集の run の失敗を最新の ci-gate に持つ
 #      open な PR が無くなったら、この行と edited の判定ごと消してよい**
-#  15. 着手印 (status: in progress) が付いたまま、紐づく open PR が無く、人の手 (bot の追記を除く) が
+#  15. 着手ラベル (status: in progress) が付いたまま、紐づく open PR が無く、人の操作 (bot の追記を除く) が
 #      3 日以上無い Issue (stale-claim・#3366)
-#      原因: 着手したセッションが PR を出さずに終わった・束の記録の閉じ忘れ・Refs の PR が merge された後の
-#      段を持つ者がいない・bot の追記だけが続く。2026-10-27 には 14 件が溜まり、次の仕事を選ぶ側からは
-#      どの Issue も「誰かが持っている」ように見えた。#2251 では印が付いていたせいで、release の赤が
+#      原因: 着手したセッションが PR を出さずに終わった・バッチの記録の閉じ忘れ・Refs の PR が merge された後の
+#      ステップを持つ者がいない・bot の追記だけが続く。2026-10-27 には 14 件が溜まり、次の仕事を選ぶ側からは
+#      どの Issue も「誰かが持っている」ように見えた。#2251 ではラベルが付いていたせいで、release の失敗が
 #      9 日間誰にも読まれなかった (#3365)
-#      対処: 条件を満たしているなら閉じる。残るなら印を外し、残る条件と再開の手順を Issue に書く。続けて
-#      いるなら、プランを更新して人の手を残す (それで名乗りが止まる)。当番は印を外さない・起票しない
-#      見えないもの: CI からは手元の worktree / 枝が見えない。枝の名前は番号を持たないことが多いので、
-#      リモートの枝を読んでも補えない。だから閾値は日単位 (CLAIM_STALL_MINUTES・既定 3 日) で、PR を出す
-#      前に 1 日を越えた着手は、手元で動いていても名乗られうる。判定の式は scripts/ready-queue.sh の
-#      dropped と 1 つで、ここに写しは無い
+#      対処: 条件を満たしているなら閉じる。残るならラベルを外し、残る条件と再開の手順を Issue に書く。続けて
+#      いるなら、プランを更新して人の操作を残す (それで報告が止まる)。監視ジョブはラベルを外さない・起票しない
+#      見えないもの: CI からは手元の worktree / ブランチが見えない。ブランチの名前は番号を持たないことが多いので、
+#      リモートのブランチを読んでも補えない。だから閾値は日単位 (CLAIM_STALL_MINUTES・既定 3 日) で、PR を出す
+#      前に 1 日を越えた着手は、手元で動いていても報告されうる。判定の式は scripts/ready-queue.sh の
+#      dropped と 1 つで、ここにコピーは無い
 #
 # 読むときの注意:
 #
@@ -153,42 +153,42 @@
 # 止まったままになる (#840 は 2 時間 47 分・#690 は 45 分)。
 #
 # 詰まりは *何かが起きること* ではなく ***何も起きないこと*** なので、pull_request や
-# merge_group を契機に走る既存の機構 (review-gate / drawing-evidence / render)
-# では原理的に捕まえられない。時計を持つ機構が要る、というのがこのスクリプトの理由で
+# merge_group をきっかけに走る既存の仕組み (review-gate / drawing-evidence / render)
+# では原理的に捕まえられない。時計を持つ仕組みが要る、というのがこのスクリプトの理由で
 # ある。
 #
 # ## ここは判定しかしない
 #
-# 打つのは scripts/stall-act.sh で、**スクリプトごと分けてある**。理由は
+# 実行するのは scripts/stall-act.sh で、**スクリプトごと分けてある**。理由は
 # report-ruleset-drift.sh を check-rulesets.sh から分けたのと同じで、手元で様子を見る
-# ために打っただけで auto-merge が掛かってしまうのを防ぐため。こちらは読み取りしか
-# しないので、いつ打っても安全である。
+# ために実行しただけで auto-merge が掛かってしまうのを防ぐため。こちらは読み取りしか
+# しないので、いつ実行しても安全である。
 #
 # ## 分類 (表の行に対応する)
 #
 #   分類                 別     表の行  なぜその別か
-#   bad-title            name   6       タイトルの修正は人手。打ち直しでは直らない
+#   bad-title            name   6       タイトルの修正は人手。再実行では直らない
 #   conflict             name   1       衝突の解消は人手
 #   in-queue             quiet  4       止まっていない (queue が進めている)
-#   stale-checks         act    3・7    古い失敗 check を打ち直す。冪等
-#   masked-red           name   10      コードの直しは人手。打ち直しても同じ赤を返す
-#   legacy-gate          name   11      push は人手。古い run は打ち直さない
-#   edited-gate          name   14      (移行期) 打ち直しか push は人手。当番の読み直しは外した (#2718)
-#   auto-merge-dropped   name   2・5    予約の掛け直しは人手。当番の権限では掛けられない
+#   stale-checks         act    3・7    古い失敗 check を再実行する。冪等
+#   masked-red           name   10      コードの修正は人手。再実行しても同じ失敗を返す
+#   legacy-gate          name   11      push は人手。古い run は再実行しない
+#   edited-gate          name   14      (移行期) 再実行か push は人手。監視ジョブの読み直しは外した (#2718)
+#   auto-merge-dropped   name   2・5    予約の掛け直しは人手。監視ジョブの権限では掛けられない
 #   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
-#   stale-gate           name   13      古い pr-gate の打ち直しは人手。当番には打たせていない (#2668)
+#   stale-gate           name   13      古い pr-gate の再実行は人手。監視ジョブには実行させていない (#2668)
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
-#   stale-claim          name   15      着手印を外す・閉じる・プランを更新するのは人手。番号は Issue のもの
-#   unreadable           name   —       読めなかった。**何も判定していない**ので打たない
+#   stale-claim          name   15      着手ラベルを外す・閉じる・プランを更新するのは人手。番号は Issue のもの
+#   unreadable           name   —       読めなかった。**何も判定していない**ので実行しない
 #
-# **auto-merge-dropped は打たずに名乗り、猶予を超えたら赤で人に返す** (#2614)。以前は act
-# で、stall-act.sh が gh pr merge --auto --squash を打っていたが一度も成功しなかった — 当番の
+# **auto-merge-dropped は実行せずに報告し、猶予を超えたら失敗にして人に返す** (#2614)。以前は act
+# で、stall-act.sh が gh pr merge --auto --squash を実行していたが一度も成功しなかった — 監視ジョブの
 # GITHUB_TOKEN (contents: read) では enablePullRequestAutoMerge が FORBIDDEN になる。掛けるには
-# リポジトリへの書き込みを当番に渡すことになり、それは人の判断なので、掛けずに人へ返す。
+# リポジトリへの書き込み権限を監視ジョブに渡すことになり、それは人の判断なので、掛けずに人へ返す。
 #
 # **「外れた」は PR の状態ではなく timeline の出来事で読む。** 予約が無いという状態は、外れた
 # PR と、一度も掛けていない PR (後からコミットを足す PR は掛けずに置く・AGENTS.md「マージの
-# 判断基準」) の両方を指す。状態で読むと、掛けずに置いた PR に猶予の後で赤を返してしまう
+# 判断基準」) の両方を指す。状態で読むと、掛けずに置いた PR に猶予の後で失敗を返してしまう
 # (#642)。予約と queue の出来事のうち**最新のもの**が次のどちらかのときだけ外れたと読み、
 # その時刻から経過を測る:
 #
@@ -200,26 +200,26 @@
 # 前に --disable-auto で外すのは決まりどおりの操作である。出来事を読めなければ unreadable。
 #
 # **unreadable は表の行を持たない。** PR そのものか専用機の render の run が読めなかった回で、
-# 詰まりの種類を言っていない — 黙って通す (quiet) と、読めていないことが誰にも見えない
+# 詰まりの種類を言っていない — 何も出力せずに通す (quiet) と、読めていないことが誰にも見えない
 # まま「正常」に混ざる (#1303)。
 #
 # 表の行 3 と 7 が同じ分類になるのは、対処が同じ (失敗ジョブの rerun) だからである。
 # 7 が言う「**新しい PR の側**を rerun する」は、ここが open な PR しか見ないことで
 # 自動的に満たされる。
 #
-# **承認待ち (awaiting-approval) と落ちた承認 (dismissed-approval) の分類はもう無い。**
+# **承認待ち (awaiting-approval) と取り消された承認 (dismissed-approval) の分類はもう無い。**
 # ADR-0044 が承認のゲートを外したので、BLOCKED のまま予約が外れていれば常に
 # auto-merge-dropped である (#2108。分類の経緯は #1033・#1303)。
 #
 # ## 順序に意味がある
 #
-# **名乗る側を先に判定する。** 特に bad-title は stale-checks より前に置く — 後ろに
-# 置くと、同じ PR にコードの検査の古い赤もあれば stale-checks に当たって打ち直すだけになり、
-# 人が直すまで進まないタイトルを誰にも名乗らない。
+# **報告する側を先に判定する。** 特に bad-title は stale-checks より前に置く — 後ろに
+# 置くと、同じ PR にコードのチェックの古い失敗もあれば stale-checks に当たって再実行するだけになり、
+# 人が直すまで進まないタイトルを誰にも報告しない。
 #
 # ## 騒がしさの上限
 #
-# 名乗る行は人が動くまで消えないので、毎回赤くすると走るたびに通知が飛び、「毎回出る
+# 報告する行は人が動くまで消えないので、毎回失敗にすると走るたびに通知が飛び、「毎回出る
 # 注意は意味を失う」(#642) を踏む。**閾値 (既定 60 分) を超えて続いているものがある
 # ときだけ 1 で終える。** それ以下は出力するだけで 0。例外は runner-offline と
 # queue-not-entered・stale-gate で、猶予を短くする代わりに猶予の内は行を出さない (下のそれぞれの節)。
@@ -228,7 +228,7 @@
 # check が 1 本も無い conflict では PR の updatedAt、auto-merge-dropped では外れた出来事の
 # createdAt、queue-not-entered と stale-gate では check のうち最新の時刻と予約を掛けた時刻の遅い方
 # (必須が揃い、予約も掛かった時刻の近似)。**状態をどこにも記録しない**ので、
-# 当番が落ちていても復帰すればそのまま正しく測れる。
+# 監視ジョブが止まっていても復帰すればそのまま正しく測れる。
 #
 # **猶予の値は、走る間隔に合わせて動かさない** (#1197)。cron は 15 分ごとに頼んでいるが、
 # GitHub の schedule は間引かれて実測は数時間おきにしか走らない。それでも値 (60 分) は
@@ -243,44 +243,44 @@
 # `-` になる。判定は render.yml の終わっていない run の、**専用機の job** (ラベル
 # mokume-render) の並びから読む — runners API は GITHUB_TOKEN では読めないためである。
 # 「queued の専用機の job があり、in_progress の専用機の job が runner の数
-# (RENDER_TURN_SLOTS) 本未満で、最古の queued が猶予を超えた」ときに名乗る。
+# (RENDER_TURN_SLOTS) 本未満で、最古の queued が猶予を超えた」ときに報告する。
 #
-# - **run ではなく job で見る** (#2062)。render.yml の run はどれも先に GitHub ホストの門番
+# - **run ではなく job で見る** (#2062)。render.yml の run はどれも先に GitHub ホストのゲートのジョブ
 #   (render-turn) が走るので、専用機が止まっていても run は数秒で in_progress になる。run の
-#   status で読むと、runner が落ちても「走っている」に倒れて黙る
-# - **専用機の job が runner の数 (RENDER_TURN_SLOTS) 本そろって in_progress なら名乗らない。**
+#   status で読むと、runner が止まっても「走っている」と判定して何も出力しない
+# - **専用機の job が runner の数 (RENDER_TURN_SLOTS) 本そろって in_progress なら報告しない。**
 #   runner は生きていて、全部が埋まっているので順番を待っているだけである (render の所要は
 #   約 7〜8 分)。**未満なら、空いている runner があるのに queued が拾われていない** — 2 本の
-#   うち 1 本が落ちて、残りが走っている間も名乗る。N は門番 (scripts/render-turn.sh) と同じ
+#   うち 1 本が止まって、残りが走っている間も報告する。N はゲートのジョブ (scripts/render-turn.sh) と同じ
 #   vars.RENDER_TURN_SLOTS を stall-watch.yml が渡して読み、未設定なら 1 (従来どおり 1 本でも
-#   走っていれば黙る)。1 以上の整数でなければ unreadable を名乗る (#3320)
+#   走っていれば何も出力しない)。1 以上の整数でなければ unreadable を報告する (#3320)
 # - 生きている runner は queued の run を数秒で拾うので、猶予 (既定 15 分) は PR の猶予より
 #   短い。**ここは猶予を超えたときにしか行を出さず、出したら必ず 1 で終える** — 猶予の
 #   内の queued は正常な順番待ちなので、出すと毎回の注意になる (#642)
-# - run の一覧を読めなかったら unreadable を名乗る。黙ると「止まっていない」に倒れる (#1303)
+# - run の一覧を読めなかったら unreadable を報告する。何も出力しないと「止まっていない」と判定される (#1303)
 #
 # ## Issue を見る行 (stale-claim・#3366)
 #
-# PR ではなく **着手印の残った Issue** を見る。番号の欄は Issue の番号である。判定は
-# scripts/ready-queue.sh の dropped で、**ここに式を写さない** — `DROPPED_MINUTES=
-# $CLAIM_STALL_MINUTES bash scripts/ready-queue.sh` を打って dropped の行だけを取る。
-# DROPPED_MINUTES は静けさの境目と bot の手を読む窓の両方を決める (ready-queue.sh の
-# QUIET_BEFORE)。窓と境目を分ける必要が出たら、判定を関数に切り出して両方から読む。
+# PR ではなく **着手ラベルの残った Issue** を見る。番号の欄は Issue の番号である。判定は
+# scripts/ready-queue.sh の dropped で、**ここに式をコピーしない** — `DROPPED_MINUTES=
+# $CLAIM_STALL_MINUTES bash scripts/ready-queue.sh` を実行して dropped の行だけを取る。
+# DROPPED_MINUTES は静かな期間の境目と bot の操作を読む期間の両方を決める (ready-queue.sh の
+# QUIET_BEFORE)。期間と境目を分ける必要が出たら、判定を関数に切り出して両方から読む。
 #
 # - ready-queue.sh の終了コードは 0 (ready がある)・1 (ready が 0 件) のどちらも読めている。
-#   2 (一覧を読めなかった) は unreadable を名乗る。1 で終えた回も、件数の行 (標準エラーの
-#   `ready N / ...`) が無ければ途中で落ちているので unreadable にする
+#   2 (一覧を読めなかった) は unreadable を報告する。1 で終えた回も、件数の行 (標準エラーの
+#   `ready N / ...`) が無ければ途中で終了しているので unreadable にする
 # - 経過の欄は閾値 (CLAIM_STALL_MINUTES) を出す。dropped の行は実際の経過を持たない下限である
-# - **猶予を超えた名乗りしか出ないので、出したら必ず 1 で終える** (runner-offline と同じ形)。
-#   人が印を外す・閉じる・プランで人の手を残すまで赤が続く。その間に起きた PR の詰まりの赤が
-#   同じ赤に紛れる代償は、対処が 1 手で済むことで受ける (#3366)
+# - **猶予を超えた報告しか出ないので、出したら必ず 1 で終える** (runner-offline と同じ形)。
+#   人がラベルを外す・閉じる・プランで人の操作を残すまで失敗が続く。その間に起きた PR の詰まりの失敗が
+#   同じ失敗に紛れる代償は、対処が 1 手で済むことで受ける (#3366)
 # - **一部を読めないまま完走した回** (ready-queue.sh が標準エラーの最後に出す `incomplete: <印>`) も
-#   unreadable を名乗る。読めなかった番号は busy へ倒れるので、dropped が 0 件の緑と区別がつかない
-#   (人の手を読めなかった hands-unread・一覧が上限に張り付いた capped-*)。見つかった dropped はそのまま名乗る
-# - unreadable は赤にしない (ほかの unreadable と同じ)。ただし続けて読めなくても誰も見ないので、
-#   当番の run の要約と annotation (::warning::) に出す (stall-watch.yml の最後の step)
-# - 当番に要る権限は issues: read (読み取りだけ)。印の付け外しも起票もしない
-# - 当番は ubuntu で、ready-queue.sh は BSD の date -v が断られたときの GNU の枝と mawk で走る。
+#   unreadable を報告する。読めなかった番号は busy と判定されるので、dropped が 0 件の成功と区別がつかない
+#   (人の操作を読めなかった hands-unread・一覧が上限に張り付いた capped-*)。見つかった dropped はそのまま報告する
+# - unreadable は失敗にしない (ほかの unreadable と同じ)。ただし続けて読めなくても誰も見ないので、
+#   監視ジョブの run の要約と annotation (::warning::) に出す (stall-watch.yml の最後の step)
+# - 監視ジョブに要る権限は issues: read (読み取りだけ)。ラベルの付け外しも起票もしない
+# - 監視ジョブは ubuntu で、ready-queue.sh は BSD の date -v が拒否されたときの GNU のブランチと mawk で走る。
 #   手元の Mac と同じに出ることは scripts/tests/ready_queue_test.py が固定している
 #
 # ## 予約が queue へ動かない行 (queue-not-entered・#2693)
@@ -288,31 +288,31 @@
 # 予約が効いていれば、必須が揃ってから数秒で queue に入る。なので猶予 (既定 15 分) は PR の
 # 猶予より短く、runner-offline と同じく**猶予を超えたときにしか行を出さず、出したら必ず 1 で
 # 終える** — 揃った直後の隙間は正常で、出すと毎回の注意になる (#642)。UNSTABLE (必須でない
-# check の赤・render-pr など) と BEHIND (保護は最新の main を求めず、queue が合流後の木で
-# 測り直す) も必須は揃っているので含める。queue に居るかの GraphQL は、この形に当たった
-# PR だけで引く。
+# check の失敗・render-pr など) と BEHIND (保護は最新の main を求めず、queue がマージ後のツリーで
+# 測り直す) も必須は揃っているので含める。queue にあるかの GraphQL は、この形に当たった
+# PR だけで取得する。
 #
 # 経過は check の最新の時刻と予約を掛けた時刻 (enabledAt) の遅い方から測る。揃ってから
-# 何時間も後に予約を掛けた PR を、掛けた直後の隙間で名乗らないため。check の時刻には
-# 必須でない check や本文の編集の run も入るので、起点は遅い側に寄る — 誤って赤くするより、
-# 名乗りが遅れるほうに倒している
+# 何時間も後に予約を掛けた PR を、掛けた直後の隙間で報告しないため。check の時刻には
+# 必須でない check や本文の編集の run も入るので、起点は遅い側に寄る — 誤って失敗にするより、
+# 報告が遅れるほうに寄せている
 #
 # BLOCKED のうち、必須は揃っているのに最新の suite の pr-gate が cancelled の形 (stale-gate・
 # #2716) も同じ猶予と出し方にする。必須かどうかは .github/rulesets/main-protection.json (正本) から
-# 読み、待っている必須・赤い必須・まだ付いていない必須があれば名乗らない — それは予約が正しく
-# 待っている形で、pr-gate を打ち直しても進まない。cancelled が古い suite のほうなら必須を塞いで
-# いないので、BLOCKED の理由は別にあり、名乗らない
+# 読み、待っている必須・失敗した必須・まだ付いていない必須があれば報告しない — それは予約が正しく
+# 待っている形で、pr-gate を再実行しても進まない。cancelled が古い suite のほうなら必須を塞いで
+# いないので、BLOCKED の理由は別にあり、報告しない
 #
 # ## 出力
 #
 #   <番号> <分類> <act|name|quiet> <経過分> <説明>
 #
-# 終了コード: 0 = 詰まりなし / 閾値内、1 = 閾値を超えた名乗りがある。
+# 終了コード: 0 = 詰まりなし / 閾値内、1 = 閾値を超えた報告がある。
 #
 # **読めなかったときの gh の stderr は捨てずに stderr へ流す** (#2614)。標準出力は機械が
-# 読む契約なので混ぜないが、unreadable と名乗った理由はジョブのログに残す。
+# 読む契約なので混ぜないが、unreadable と報告した理由はジョブのログに残す。
 #
-# 呼び出しは .github/workflows/stall-watch.yml、検査は scripts/tests/stall_watch_test.py。
+# 呼び出しは .github/workflows/stall-watch.yml、テストは scripts/tests/stall_watch_test.py。
 set -euo pipefail
 
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
@@ -375,7 +375,7 @@ minutes_since() { # $1=ISO8601 (空可)
 # 欄の名前が違うので、ここで 1 つの形にしておく。
 #
 # **run は「どちらが新しいか」の基準である。** at (完了時刻) では測れない — 古い run の
-# ci-gate は macOS の ci-check を待つ分だけ新しい run より遅く完了し、古い赤が時刻の上では最新に
+# ci-gate は macOS の ci-check を待つ分だけ新しい run より遅く完了し、古い失敗が時刻の上では最新に
 # 見える (#2568)。run の id は単調に増えるので、detailsUrl の /actions/runs/<id> を新旧の順に
 # する。読めなければ 0 (StatusContext など)。**同じ名前の check が全部 0 のときだけ at だけで
 # 並ぶ** — 0 はどの run id よりも古いと読む。job は detailsUrl の /job/<id> で、bad-title が
@@ -386,9 +386,9 @@ minutes_since() { # $1=ISO8601 (空可)
 #
 # **pr-gate は最新の 1 本だけを残す** (#2668)。pr-gate (.github/workflows/pr-gate.yml) は API を
 # 読むだけの数十秒のジョブで、直すと新しい run が付け直す。判定になるのは作成順で最新の run
-# (check suite) の結論で、古い赤・cancelled は必須が読まない名残である。残すと新しい緑と組になって stale-checks に読まれ、当番が head SHA の失敗ジョブを
+# (check suite) の結論で、古い失敗・cancelled は必須が読まない名残である。残すと新しい緑と組になって stale-checks に読まれ、当番が head SHA の失敗ジョブを
 # 打ち直す (凍結された run の ci-gate まで打ち直して「最新の赤」を作りうる)。新旧は上と同じく
-# run の id で決める。最新が赤なら、その赤はそのまま残る
+# run の id で決める。最新が失敗なら、その赤はそのまま残る
 #
 # **run の id の順は、必須が読む check suite の作成順と同じに並ぶ** (観測。規則と根拠は
 # scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・#2577)。rollup には suite の id が無いので、
@@ -574,7 +574,7 @@ stale_names() { # 標準入力=均した checks
 # - edited: (移行期) 最新の ci-gate が skips の赤で、ci-check・ci-static の最新の結論 (SKIPPED を
 #   除く) がどちらも在って SUCCESS (#2717)。打ち直せば同じ SHA を読み直して緑を返すので、その
 #   run の id を添えて名乗る。かつては当番が打ち直していた (reread) が、本文の編集で ci.yml の
-#   run が立たなくなったので (#2718) 外した。検査の最新が赤・走っている途中なら出さない
+#   run が立たなくなったので (#2718) 外した。検査の最新が失敗・走っている途中なら出さない
 #   (読み直しても同じ赤を返す・待ちで runner を占める)。
 #   **検査の「最新」は、その run の版の ci-gate.sh の latest_run と同じものを読む** (#2717 の反証 2)
 #   — 作成順で最新の run (suite) の、その中の最後の attempt (job の id の最大)。run の id は suite の

@@ -384,7 +384,7 @@ class RoundtripTest(unittest.TestCase):
     # 期限は応答が返らない回の上限でしかない (返れば即座に抜ける)。短くすると、CPU が
     # 混んだ回に偽スケッチの応答が遅れただけで赤になる (#1857)
     def run_roundtrip(self, rounds, deadline="5"):
-        # **待つ側も期限を持ち、越えたら殺す** (AGENTS.md「待ちを含む検査を書く」・#2396)。
+        # **待つ側も期限を持ち、越えたら殺す** (AGENTS.md「待ちを含むテストを書く」・#2396)。
         # 数える側が待ちうるのは 回数 × 面 2 つ × 1 往復の期限 までで、それに起動の余裕を
         # 足す。期限が無いと、数える側が固まったとき検査ごと止まり、子が残る
         limit = rounds * 2 * float(deadline) + 30
@@ -461,7 +461,7 @@ class RoundtripTest(unittest.TestCase):
         """`pressure` を走らせ、`count` 件置かれるか、自分で戻るか、期限を越えるまで待って止める。
 
         返すのは (止めた時点でまだ走っていたか, 起動から待ち終えるまでの秒数, stderr)。
-        **待つ側が期限を持ち、越えたら殺す** (AGENTS.md「待ちを含む検査を書く」)。
+        **待つ側が期限を持ち、越えたら殺す** (AGENTS.md「待ちを含むテストを書く」)。
         """
         started = time.monotonic()
         proc = subprocess.Popen(

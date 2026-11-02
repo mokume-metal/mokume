@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT
 
 # 専用機の render を 2 本並走させる
 
-同じ Mac に runner を 2 本置き、既存の門番の `RENDER_TURN_SLOTS` を 2 にする
+同じ Mac に runner を 2 本置き、既存のゲートのジョブの `RENDER_TURN_SLOTS` を 2 にする
 ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。GitHub の merge queue が
-組む group の上限は 2 のまま。先頭が失敗して後続の group が組み直される場合は、
+作る group の上限は 2 のまま。先頭が失敗して後続の group が作り直される場合は、
 後続で済ませた処理を捨てる。この先行実行を最大 1 本に抑えて、成功が続くときの待ちを縮める。
 
 ## 専用機で行うこと
@@ -65,7 +65,7 @@ printf '\nACTIONS_RUNNER_HOOK_JOB_STARTED=%s/job-started.sh\n' "$PWD" >> .env
 GPU の枠は、両 runner が同じユーザーの
 `~/Library/Caches/mokume/gpu-slots` を共有する (既定 3 枠)。両 runner の `.env` や
 LaunchAgent に `MOKUME_GPU_SLOT_DIR`・`MOKUME_GPU_SLOTS` の指定が無ければ、
-追加設定は不要。指定がある場合は両 runner と定期検査・診断の実行でパスと枠数を揃える。
+追加設定は不要。指定がある場合は両 runner と定期チェック・診断の実行でパスと枠数を揃える。
 runner ごとのディレクトリを GPU の枠の置き場にしない。
 
 ### 3. 画面のセッションの LaunchAgent として起動する
@@ -81,7 +81,7 @@ cd "$HOME/actions-runner-2"
 ```
 
 `Started` と表示されることを確かめる。ログイン中の同じユーザーの画面を使い続ける。
-画面のユーザーを替えると窓の検査が走れなくなる。
+画面のユーザーを替えるとウィンドウのテストが走れなくなる。
 詳しくは [GitHub のサービスの手順 (Mac)](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/configure-the-application?platform=mac)を参照する。
 
 hook や `.env` を起動後に直した場合も、その runner のディレクトリで
@@ -90,7 +90,7 @@ hook や `.env` を起動後に直した場合も、その runner のディレ�
 
 ## GitHub 側で確認・切り替えする
 
-ここはメンテナの権限を持つ手元機からでも実行できる。
+ここはメンテナの権限を持つ手元の Macからでも実行できる。
 
 ### 4. 2 本が online であることを確認する
 
@@ -105,7 +105,7 @@ gh api repos/mokume-metal/mokume/actions/runners \
 
 片方が offline なら、変数を 2 にせず、その runner の `./svc.sh status` とログを確認する。
 
-### 5. 門番を 2 本に切り替える
+### 5. ゲートのジョブを 2 本に切り替える
 
 **2 本とも online になってから**実行する。
 
@@ -116,14 +116,14 @@ date -u '+%Y-%m-%dT%H:%M:%SZ'
 ```
 
 値が `2` であることを確かめ、切り替えの UTC 時刻を #2252 に記録する。
-既に起動した門番は取り込んだ値で動き続けるので、新しく起動する門番から確認する。
+既に起動したゲートのジョブは取り込んだ値で動き続けるので、新しく起動するゲートのジョブから確認する。
 queue に複数の PR があるとき、同時刻に 2 本の `render` が別々の runner で走り、
-両方が前検査と検査を通ることを run の時刻と runner 名で確かめる。
+両方が事前チェックとテストを通ることを run の時刻と runner 名で確かめる。
 `render-pr` はこれまでどおり、merge group が残っていれば見送る。
 
 切り替え後 7 日の評価は #2252 の完了条件 4 に従う。開始待ち p50 が 5 分以下、
-並走した回の所要が単独の +25% 以内、GPU の打ち切り・窓の検査の赤が増えないことを見る。
-組み直しで捨てた実行時間と、時間あたりの merge 数も併記し、待ちだけの短縮を効果に数えない。
+並走した回の所要が単独の +25% 以内、GPU の打ち切り・ウィンドウのテストの失敗が増えないことを見る。
+group の作り直しで捨てた実行時間と、時間あたりの merge 数も併記し、待ちだけの短縮を効果に数えない。
 ほかの CI 改善と比較する際は、切り替え時刻と job の重なりで期間・並走の有無を分ける。
 
 ## 1 本へ戻す
@@ -133,9 +133,9 @@ gh variable set RENDER_TURN_SLOTS --body 1 --repo mokume-metal/mokume
 gh variable get RENDER_TURN_SLOTS --repo mokume-metal/mokume
 ```
 
-新しく起動する門番から、merge group を 1 本ずつ通す。実行中・待機中の job は
+新しく起動するゲートのジョブから、merge group を 1 本ずつ通す。実行中・待機中の job は
 この変更だけでは止まらない。2 本目の runner 自体を止める場合は、変数を先に戻し、
-既に 2 を取り込んだ門番と専用機に積まれた job が終わってから、専用機で実行する。
+既に 2 を取り込んだゲートのジョブと専用機のキューに入った job が終わってから、専用機で実行する。
 
 ```bash
 cd "$HOME/actions-runner-2"

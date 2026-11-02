@@ -15,7 +15,7 @@ import Testing
 /// 相手のサーバは mokume 自身の ``TCPServer``・``WebSocketServer`` が務める。
 ///
 /// **繋ぎ直しの間隔を縮める** (`retryAfter` を 0.05 秒に) — 製品の間隔は固定の 1 秒で、検査が毎回
-/// 秒単位で待たないため。**待つ側が期限を持つ** (`until`・AGENTS.md「待ちを含む検査を書く」)。
+/// 秒単位で待たないため。**待つ側が期限を持つ** (`until`・AGENTS.md「待ちを含むテストを書く」)。
 @Suite("TCP・WebSocket のクライアント", .serialized)
 struct StreamClientTests {
     private static let retry = 0.05

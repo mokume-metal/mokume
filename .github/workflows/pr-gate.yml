@@ -157,6 +157,15 @@ jobs:
           fi
           if grep -qE '^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([^)]+\))?!?: .+' <<<"$title"; then
             echo "ok: $title"
+            # 英語の技術用語を和語に置き換えた直訳 (path → 道、API → 口、window → 窓、
+            # report → 名乗る) は読み手が意味を取れない (#3698)。squash のコミットとして残るので
+            # 警告で気付かせるが、普通の日本語と紛れる語もあるので赤にはしない。語は数語に留める。
+            # grep -o は C ロケールで多バイト文字を途中で切るので、bash の部分一致で見る
+            for word in 'の道' 'の口' '窓' '名乗'; do
+              if [[ $title == *"$word"* ]]; then
+                echo "::warning title=PR タイトルの直訳::「${word}」を含む。パス・API・ウィンドウ・報告する など一般的な技術用語で書けないか見直す (#3698)"
+              fi
+            done
           else
             echo "PR タイトルが Conventional Commits ではない: $title" >&2
             echo '形式: <type>(<scope>): <要約>  (type: feat/fix/docs/refactor/test/chore/ci/perf/build)' >&2

@@ -245,6 +245,32 @@ class TitleCheckTest(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("Conventional Commits ではない", r.stderr)
 
+    def test_直訳の語を含むタイトルは警告するが通す(self):
+        for title, hit in (
+            ("fix(video): 面の道の入口で縮める", "の道"),
+            ("feat(input): 保存以外の口で起こす", "の口"),
+            ("fix(display): 窓を閉じる", "窓"),
+            ("fix(scripts): 読めないと名乗る", "名乗"),
+        ):
+            with self.subTest(title=title):
+                r, _ = self.check(title)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("::warning", r.stdout)
+                self.assertIn(f"「{hit}」", r.stdout)
+
+    def test_直訳の語を含まないタイトルは警告しない(self):
+        # 「入口」「道具」のように字を含んでも、一覧の形に当たらなければ黙る
+        for title in ("fix(video): パスの入口で縮める", "ci: pr-gate を足す", "feat(cli): 道具を足す"):
+            with self.subTest(title=title):
+                r, _ = self.check(title)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("::warning", r.stdout)
+
+    def test_形式の誤りは直訳の語があっても従来どおり落とす(self):
+        r, _ = self.check("面の道を直す")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Conventional Commits ではない", r.stderr)
+
     def test_落ちた文面は付け直されると言い_新しいコミットを案内しない(self):
         r, _ = self.check("Initial commit")
         self.assertEqual(r.returncode, 1, r.stdout)
