@@ -88,6 +88,14 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
   | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
+入力・出力・環境の 81 件は、category が `environment` (27)・`input` (40)・`output` (20) の項目と、所属 (`classanchor`) が `BufferedReader`・`PrintWriter` の項目 (5) から、上のデータの領域が数えた `load`・`parse`・`save` の 11 件を除いたものである:
+
+```bash
+jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.classanchor // "") | test("^(BufferedReader|PrintWriter)$")))
+  | select(input_filename | test("/(load|parse|save)(JSONArray|JSONObject|Table|XML)_[.]json$") | not)
+  | input_filename' "$ref"/processing/*.json | wc -l   # 81
+```
+
 ## 領域の一覧
 
 [#3133] の本文の表の順と項目数 (processing-website `f4acef8`)。順 1 の後に順 2 の 5 領域を並行し、残りはその後にする。ファイルの名前は予定で、まだ無いものもある (表を作る子が置く)。
@@ -99,7 +107,7 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
 | 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | 順 1 の後に起票 |
 | 2 | 画像 | 35 | `image.md` | 順 1 の後に起票 |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | 順 1 の後に起票 |
-| 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 74 + ライブラリの頁 | `input-output-environment.md` | 順 1 の後に起票 |
+| 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
 | 3 | 数学・PVector・定数 | 64 | `math.md` | 順 2 の後 |
 | 3 | 色・変換・光とカメラ・描画 | 70 | `color-transform-rendering.md` | 順 2 の後 |
 | 3 | 文字 | 13 | `typography.md` | 順 2 の後 |
@@ -123,3 +131,4 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
 [#3035]: https://github.com/mokume-metal/mokume/issues/3035
 [#3133]: https://github.com/mokume-metal/mokume/issues/3133
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
+[#3688]: https://github.com/mokume-metal/mokume/issues/3688
