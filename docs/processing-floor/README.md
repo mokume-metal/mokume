@@ -88,11 +88,11 @@ jq -r 'select(((.classanchor // "") | test("^(JSONArray|JSONObject|Table|TableRo
   | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
-形 (図形・曲線・頂点・`PShape`・`loadShape`) の 61 件は、category が `shape` (41) か `pshape` (20) の項目である。`PShape` のメンバーのうち category が空の 3 件 (`getChildCount()`・`setFill()`・`setStroke()`) は拾わない。この 3 件を足した 64 は `classanchor` が `PShape` の頁 26 件と、それ以外の 38 件の和で、`shape.md` の末尾の節に件数に入れずに置いた:
+形 (図形・曲線・頂点・`PShape`・`loadShape`) の 64 件は、category が `shape` (41) か `pshape` (20) の項目 61 件と、category が空で所属 (`classanchor`) が `PShape` の 3 件 (`getChildCount()`・`setFill()`・`setStroke()`) である (所属が `PShape` の項目は、クラスの頁とメンバーで 26 件):
 
 ```bash
-jq -r 'select((.category // "") | test("^p?shape$")) | input_filename' "$ref"/processing/*.json | wc -l   # 61
-jq -r 'select((.category // "") == "" and .classanchor == "PShape") | input_filename' "$ref"/processing/*.json | wc -l   # 3
+jq -r 'select(((.category // "") | test("^p?shape$")) or ((.classanchor // "") == "PShape"))
+  | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
 ## 領域の一覧
@@ -103,7 +103,7 @@ jq -r 'select((.category // "") == "" and .classanchor == "PShape") | input_file
 | --- | --- | --- | --- | --- |
 | 1 | データ: JSON・Table・XML | 108 | `data-json-table-xml.md` | [#3592] |
 | 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | 順 1 の後に起票 |
-| 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 61 | `shape.md` | [#3685] |
+| 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | [#3685] |
 | 2 | 画像 | 35 | `image.md` | 順 1 の後に起票 |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | 順 1 の後に起票 |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 74 + ライブラリの頁 | `input-output-environment.md` | 順 1 の後に起票 |
