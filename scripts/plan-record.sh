@@ -7,40 +7,40 @@
 #
 # 設計の要点:
 #   1. 置き場は GitHub のコメント (リポジトリにはコミットしない)
-#   2. 持ち出す前に落とす。秘密は落とさず投稿ごと止める
-#   3. 投稿はフックが行わず scripts/comment.sh を打たせる (人間の目を一度通す)
+#   2. 持ち出す前に取り除く。秘密は取り除かず投稿ごと止める
+#   3. 投稿はフックが行わず scripts/comment.sh を実行させる (人間の目を一度通す)
 #   4. 着手の瞬間に、完了条件がまだ妥当かを問う (ADR-0031 決定 4 — recheck_missing)
-#   5. 対象が Bug なら、破られた約束とそれが及ぶ範囲を問う (ADR-0040 決定 1 — bug_scope_missing)
+#   5. 対象が Bug なら、破られた仕様とそれが及ぶ範囲を問う (ADR-0040 決定 1 — bug_scope_missing)
 #   6. 4 と 5 は**承認の前にも**問う (#2135 — precheck)。capture は承認の後に動くので、
 #      そこだけで差し戻すと、直したプランを人がもう一度承認することになる
 #
 # 明示入力: register/check は --help を参照。codex-stop は Codex Stop 用。
 # Claude の capture/guard の入力契約と記録の置き場は変えない (#1728)。
-# precheck は Claude の PreToolUse だけが呼ぶ。Codex の経路 (register/codex-stop) は変えない。
+# precheck は Claude の PreToolUse だけが呼ぶ。Codex の処理の経路 (register/codex-stop) は変えない。
 #
-# 契約 (詳細は各関数の頭):
+# 契約 (詳細は各関数の冒頭):
 #   precheck  stdin に PreToolUse (ExitPlanMode) の JSON。足りなければ承認の前に差し戻す
 #             (deny の JSON を stdout へ。足りるときは無出力で exit 0 — 記録は作らない)
 #   capture   stdin に PostToolUse (ExitPlanMode) の JSON。記録し指示を stderr へ (exit 2)
 #   guard     stdin に Stop の JSON。未投稿が残っていれば差し戻す (exit 2)
-#   sanitize  stdin の本文からパス類を落として stdout へ
+#   sanitize  stdin の本文からパス類を取り除いて stdout へ
 #   scan      stdin の本文から BLOCK / WARN 行を stdout へ
 #
 # 無人セッション (ADR-0036 決定 2):
-#   MOKUME_UNATTENDED=1 は「このセッションを起こしたのは人ではない」の名乗りである。
-#   立てるのは**外に居る起動側**で (どのリポジトリにも属さない場所で走る — ADR-0017
+#   MOKUME_UNATTENDED=1 は「このセッションを起動したのは人ではない」という宣言である。
+#   立てるのは**外にある起動側**で (どのリポジトリにも属さない場所で走る — ADR-0017
 #   決定 1 の類型 2)、読むのはここ。判定の根拠を持っている側が判定する、の向きに従う。
 #
 #   .claude/settings.json の env に書けないのは、あれが**そのリポジトリの全セッション**に
 #   効くためである。「無人のときだけ」を静的な設定では表せない。
 #
 #   変わるのは 2 つだけで、記録も投稿先の解決も投稿の仕方も変わらない:
-#     capture  「承認は待たない」と言い添える (待ってもらう相手が居ない)
+#     capture  「承認は待たない」と言い添える (待ってもらう相手がいない)
 #     guard    **MAX_NAGS で諦めない** — 諦めた先が「人間の判断へ返す」なので、
-#              返す先が居ない無人では、そのままプランが投稿されずに終わる
+#              返す先がいない無人では、そのままプランが投稿されずに終わる
 #
 #   **投稿はここでは代行しない** (下の設計の要点 3)。人が見ていなくてもエージェントの目は
-#   通るので、scripts/comment.sh を打たせる形のままでよい。
+#   通るので、scripts/comment.sh を実行させる形のままでよい。
 #
 # 環境変数: MOKUME_PLAN_RECORD=0 / MOKUME_PLAN_RECORD_DEBUG=1 / MOKUME_UNATTENDED=1 /
 #           GITHUB_REPOSITORY
@@ -94,7 +94,7 @@ STALE_DAYS=14   # 投稿先が現れないまま放置された記録を捨て�
 # 永遠に待つ。**固まるのは EOF が来ない stdin** である — 空を渡した場合 (< /dev/null)
 # は昔から返っていたので、端末やパイプが開いたまま打たれたときだけ無言で止まっていた
 # (実際に 40 分放置された・#636)。AGENTS.md の「待つ側が期限を持ち、越えたら殺す」
-# (「待ちを含む検査を書く」) がそのまま当たる。
+# (「待ちを含むテストを書く」) がそのまま当たる。
 #
 # 5 秒にする根拠は、呼び手 (フック) が payload を即座に書くこと — 遅い機械でも届かない。
 readonly STDIN_DEADLINE=5

@@ -2061,7 +2061,7 @@ def write_back(
 # - 書き方は説明文の例と同じ (`level_of` が draw() の本体か setup() / draw() の段かを見分ける)
 # - `--zoom K` は最近傍で K 倍に拡げる。1 画素の継ぎ目・透けは原寸では見えない
 # - `--frames N` は動きにする。束ねるのは Issue / PR 向けの可逆 WebP で、参照の面向けの
-#   GIF (`_bundle_gif`) ではない (visual-evidence「動きを束ねる」)
+#   GIF (`_bundle_gif`) ではない (visual-evidence「動きをエンコードする」)
 # - 上げるのは `--upload` を付けたときだけ。付けなければ手元の場所を出して終わるので、
 #   送る前に写り込みを検められる (撮るのは mokume の絵だけなので、写り込みは構造的に無い)
 
