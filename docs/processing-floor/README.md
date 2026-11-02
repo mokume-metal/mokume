@@ -96,6 +96,8 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
   | input_filename' "$ref"/processing/*.json | wc -l   # 81
 ```
 
+書き出しのライブラリ (`processing.pdf`・`processing.svg`・`processing.dxf`) の頁は、項目に数えない ([#3688 の決定](https://github.com/mokume-metal/mokume/issues/3688#issuecomment-6586703173)・2026-11-03)。参照の写しに項目が無く、頁が名指す API のうち本体の参照に載るもの (`beginRecord()`・`endRecord()`・`beginRaw()`・`endRaw()`・`size()` ほか) は、本体の領域の行が持つ。種類 (PDF・SVG・DXF) との関係は、その行の理由に書く。`createGraphics(w, h, PDF)` の描画先の指定は、順 3 の「色・変換・光とカメラ・描画」の行で書く。
+
 ## 領域の一覧
 
 [#3133] の本文の表の順と項目数 (processing-website `f4acef8`)。順 1 の後に順 2 の 5 領域を並行し、残りはその後にする。ファイルの名前は予定で、まだ無いものもある (表を作る子が置く)。
