@@ -284,8 +284,9 @@ struct FlatStrokeStencilTests {
         return levels
     }
 
-    /// 細い片は被覆 1 未満なので、不透明の色でも重なると濃くなる。帯はどれも同じ太さで同じ被覆を持つので、
-    /// 1 回だけ混ぜれば塗られた画素はどれも同じ値になる。交点が 2 回混ざると、そこだけ値が上がる。
+    /// 細い片は被覆 1 未満なので、不透明の色でも重なると濃くなる。交点 (80, 80) で交わる 2 本はどちらも 45° の
+    /// 帯で同じ被覆を持つので、1 回だけ混ぜれば交点も帯 1 本ぶんの値を越えない。2 回混ざると、そこだけ
+    /// 値が上がる。縦の帯は被覆が違う (帯ごとの被覆は向きで決まる・#2172) ので、比べるのは 45° の帯の値。
     @Test("細い線は色によらず区間に入り、自己交差も 1 回だけ混ぜる", arguments: [Float(255), 128])
     func thinSelfCrossingMixesOnce(alpha: Float) throws {
         let sections = Box()
@@ -299,8 +300,17 @@ struct FlatStrokeStencilTests {
             canvas.endShape()
         }
         #expect(sections.counts == [1], "区間: \(sections.counts)")
-        let levels = redLevels(pixels)
-        #expect(levels.count == 1, "塗られた画素の値: \(levels.sorted().map { Float($0) * 0.002 })")
+        // 45° の帯 1 本ぶんの値: 交点と縦の帯から離れた所 (描く画素の x < 30) の明るさの最大
+        var band: Float = 0
+        var brightest: Float = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                brightest = max(brightest, pixels[x, y].red)
+                if x < 30 { band = max(band, pixels[x, y].red) }
+            }
+        }
+        #expect(band > 0.02)
+        #expect(brightest <= band + 0.004, "帯 \(band)・いちばん明るい画素 \(brightest)")
     }
 
     /// 細い線でも、1 つの領域として引ける輪郭は引き算のまま (畳む雛形と揃える)。

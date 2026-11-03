@@ -443,8 +443,8 @@ extension Canvas {
     /// 掛けて置くとき最初の 1 度だけ** — 記録のときは素材を組んだところで止める。掛けない形は、
     /// 今までどおり重ねて積んだ頂点を置き、引く費用を払わない。
     ///
-    /// **描く画素で 1 画素より細い片は、描く画素 1 つの太さへ広げ、太さの割合を被覆として
-    /// 断片の後で掛ける** ([#1637]・``ThinStroke``・``thinOutline(_:weight:placedBy:)``)。細さは
+    /// **描く画素で 1 画素より細い片は、列 (行) が帯を切る長さが整数になる太さへ広げ、太さの割合を
+    /// 被覆として断片の後で掛ける** (#2172) ([#1637]・``ThinStroke``・``thinOutline(_:weight:placedBy:acrossTheLine:)``)。細さは
     /// 片ごとに、線の向きに垂直に測る。保持する形の記録では置くときに判断し、畳みの雛形は
     /// 鍵が持つ置き場所の変換で判断する。
     ///
@@ -537,7 +537,9 @@ extension Canvas {
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
     func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
         guard let matrix = thinStrokeMatrix,
-            let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
+            let thin = thinOutline(
+                outline, weight: style.strokeWeight, placedBy: matrix,
+                acrossTheLine: buildingFlatTemplate || outline.widensAcrossTheLine)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
         // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので、色によらず型板に載せて重ねて積むか、
         // 引いて積む (#1948)。1 つの領域として引ける輪郭は、太い線と同じく引き算のまま (畳む雛形と揃える)。

@@ -448,7 +448,7 @@ extension Canvas {
     ///
     /// 帯が横寄り (|x| ≥ |y|) なら列が、縦寄りなら行が帯を切る。切る長さは `span` を、帯の向きの
     /// 大きいほうの成分で割ったものになる。
-    private static func widenedBand(
+    static func widenedBand(
         _ span: Float, along direction: SIMD2<Float>
     ) -> (widen: Float, coverage: Float) {
         let axis = max(abs(direction.x), abs(direction.y))

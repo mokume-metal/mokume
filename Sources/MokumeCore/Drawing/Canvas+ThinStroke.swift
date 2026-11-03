@@ -15,13 +15,23 @@ extension Canvas {
     /// 同じ)。`strokeWeight` の説明 (「1 画素より細い線は、置く位置によらず太さに比例した濃さで
     /// 出る」) は経路を限らないので、距離関数の経路 (#1488) と同じ約束をここで守る。
     ///
-    /// **帯を描く画素 1 つの太さへ広げ、太さの割合を被覆として断片の後で掛ける。** 太さちょうど
-    /// 1 の帯は、向きが軸に沿っていれば置く位置によらず 1 行 (1 列) の画素の中心を跨ぐので、
-    /// 光の量が太さに比例する。斜めの帯は列ごとに 1 行か 2 行になるが、跨ぐ中心の数の平均は
-    /// 面積に等しい。被覆は頂点の色ではなく別の値で運ぶ (`ShapeFragmentIn.coverage`) ので、
-    /// 利用者の断片が `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で
-    /// 渡した値のまま届く。1 未満の被覆を持つ片の重なりは、引いて積む経路 (#1536) が 1 回だけ
-    /// 混ぜる。
+    /// **帯を広げ、太さの割合を被覆として断片の後で掛ける。** 広げる量は、**描く画素の軸に沿って
+    /// 列 (行) が帯を切る長さ**がちょうど整数 n になる量で、被覆は「元の切る長さ / n」である
+    /// (``widenedBand(_:along:)``・塗りの #2182 と同じ・[#2172])。列ごとに跨ぐ画素の中心がちょうど n 個に
+    /// なるので、光の量は向きにも置く位置にもよらず太さに比例する。帯が横寄りなら列が、縦寄りなら行が
+    /// 帯を切る。軸に沿った帯は n = 1 で、太さちょうど 1 へ広げる。元の太さが 1 未満なら切る長さは √2
+    /// 未満なので、n は 1 か 2 である。
+    ///
+    /// 線に垂直な太さを 1 にする広げ方 (#1637 の当初の形) は、45° の帯で列が切る長さが √2 になり、
+    /// 跨ぐ中心が置く位置で全部の列そろって 1 つか 2 つになって、光の量が 1/√2 倍か √2 倍に振れた
+    /// (傾きが p/q なら位相は q 列で一巡して均されるが、45° は q = 1)。**畳む雛形と、畳む相手を待つ
+    /// 1 つ目は、まだこの広げ方のまま** — 雛形は回転を除いた鍵で回した置き場所を 1 つにまとめるので、
+    /// 向きで広げ方を変えられない ([#3733] で頂点段へ移す・``Outline/widensAcrossTheLine``)。
+    ///
+    /// 被覆は頂点の色ではなく別の値で運ぶ (`ShapeFragmentIn.coverage`) ので、利用者の断片が
+    /// `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で渡した値のまま届く。
+    /// 1 未満の被覆を持つ片の重なりは、その場で引く線なら型板が (#1948)、畳む雛形と保持した形なら
+    /// 引いて積む経路 (#1536) が、1 回だけ混ぜる。
     ///
     /// **点は描く画素 1 つの軸に沿った正方形にして、被覆を面積 (太さの 2 乗) にする。** 直径 1 の
     /// 円板は置く位置によって画素の中心を 1 つも含まないので、丸い点もこの形にする (距離関数の
@@ -30,8 +40,17 @@ extension Canvas {
     /// 描く画素で 1 画素以上の線は何も変えない (この型が作られない)。
     ///
     /// [#1637]: https://github.com/mokume-metal/mokume/issues/1637
+    /// [#2172]: https://github.com/mokume-metal/mokume/issues/2172
+    /// [#3733]: https://github.com/mokume-metal/mokume/issues/3733
+    ///
+    /// **この型の `widen` は線に垂直に 1 へ広げる倍率である。** 平面の輪郭の帯は、ここで細いかを決めた後、
+    /// ``thinOutline(_:weight:placedBy:acrossTheLine:)`` が整数 n の幅に置き換える。`widen` をそのまま使うのは、
+    /// 立体の線 (``withThinSolidStroke(_:isPoint:_:)``・GPU で広げる稜線・[#3734]) と、畳む雛形とその 1 つ目
+    /// ([#3733]) で、どちらもまだ 45° で振れる。点は向きを持たないので、この倍率のままでよい。
+    ///
+    /// [#3734]: https://github.com/mokume-metal/mokume/issues/3734
     struct ThinStroke {
-        /// 太さに掛ける倍率。掛けると描く画素でちょうど 1 になる。
+        /// 太さに掛ける倍率。掛けると描く画素で、線に垂直に測ってちょうど 1 になる。
         let widen: Float
         /// 断片の後で掛ける被覆。線は太さ、点は面積。
         let coverage: Float
@@ -97,8 +116,8 @@ extension Canvas {
     /// 細い枝の境目 (`reachPerPixel`・#2991) とは、**直線の縁では 45° で √2 食い違う** — 距離関数の経路は
     /// 帯の両縁が 1 つの画素に入るかを、画素の正方形を法線へ射影した幅 (行の絶対値の和・45° で行ノルムの √2 倍) で
     /// 決める (縁の被覆を面積で数えるため)。**三角形の経路は、これに揃えない。** 縁に AA が無く (ADR-0039
-    /// 決定 3)、補う目的は「列ごとに画素の中心を少なくとも 1 つ跨がせる」ことで、45° の帯は水平の断面が √2 倍に
-    /// なるので、法線の太さ 1 で足りる。法線向きの幅で補うと帯がさらに太くなり、頂点の数・被覆の掛け方が動く。
+    /// 決定 3)、補う目的は「列ごとに画素の中心をちょうど整数個跨がせる」ことで、広げる量は列 (行) が帯を切る
+    /// 長さで決める (``ThinStroke``・#2172)。細いかどうかの境目は、この法線の太さ 1 のままにする。
     /// そのため、描く画素での太さが 1〜1.41 の斜めの線は、距離関数の経路では細い枝で面積に比例した濃さになり、
     /// 三角形の経路では補わず中心を数えた濃さになる (平均では面積に等しい)。
     ///
@@ -269,9 +288,10 @@ extension Canvas {
         var inverse: simd_float2x2
         /// 線分ごとの、描く画素で測った元の太さ (線の向きに垂直)。
         var bandWeight: [Float]
-        /// 線分ごとの、組む帯の太さの半分 (描く画素)。細い帯は 0.5、そうでなければ元の太さの半分。
+        /// 線分ごとの、組む帯の太さの半分 (描く画素)。細い帯は列 (行) が帯を切る長さを整数 n にする幅の半分
+        /// (``widenedBand(_:along:)``。線に垂直に広げる輪郭は 0.5)、そうでなければ元の太さの半分。
         var bandHalf: [Float]
-        /// 線分ごとの被覆 (細い帯は元の太さ、そうでなければ 1)。
+        /// 線分ごとの被覆 (細い帯は「元の切る長さ / n」・線に垂直に広げる輪郭は元の太さ、そうでなければ 1)。
         var bandCoverage: [Float]
         /// 点 1 つの周か (描く画素 1 つの軸に沿った正方形にする)。
         var isPoint: Bool
@@ -286,8 +306,15 @@ extension Canvas {
     /// 帯は**その帯の向きに垂直に測った**描く画素での太さで判断する。縦と横で倍率の違う変換
     /// (`scale(4, 0.25)`) では、横の辺だけが細くなる。点 1 つの周は向きを持たないので、面積の
     /// 倍率で測る。変換が潰れている (行列式 0) と何も補わない。
+    ///
+    /// 細い帯の広げ方は ``ThinStroke`` の説明のとおり、列 (行) が帯を切る長さを整数 n にする
+    /// (``widenedBand(_:along:)``・[#2172])。`acrossTheLine` なら線に垂直に 1 へ広げる (#1637 の広げ方) —
+    /// 畳む雛形と、畳む相手を待つ 1 つ目が使う (``Outline/widensAcrossTheLine``・[#3733])。
+    ///
+    /// [#2172]: https://github.com/mokume-metal/mokume/issues/2172
+    /// [#3733]: https://github.com/mokume-metal/mokume/issues/3733
     func thinOutline(
-        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4
+        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, acrossTheLine: Bool = false
     ) -> ThinOutline? {
         let linear = drawnLinear(matrix)
         let determinant = simd_determinant(linear)
@@ -316,9 +343,18 @@ extension Canvas {
             bandWeight[index] = drawn
             bandHalf[index] = drawn / 2
             guard let thin = ThinStroke(drawnWeight: drawn, isPoint: false) else { continue }
-            bandHalf[index] = 0.5
-            bandCoverage[index] = thin.coverage
             any = true
+            // 描く画素での帯の向き。長さ 0 の線分 (向きが決まらない) は線に垂直に広げる
+            let along = linear * direction
+            let length = simd_length(along)
+            guard !acrossTheLine, length > 0, length.isFinite else {
+                bandHalf[index] = 0.5
+                bandCoverage[index] = thin.coverage
+                continue
+            }
+            let widened = Self.widenedBand(drawn, along: along / length)
+            bandHalf[index] = drawn * widened.widen / 2
+            bandCoverage[index] = widened.coverage
         }
         guard any else { return nil }
         return ThinOutline(
@@ -537,8 +573,8 @@ extension Canvas {
     ///
     /// 頂点は記録した頂点と同じ座標 (形自身の座標に記録のときの変換を掛け、半画素寄せの前)
     /// で返すので、呼ぶ側は記録した頂点と同じく置き場所の行列と色を掛けて寄せる。**組み直しは
-    /// 置き場所の 2x2 ごとに 1 度だけ** — 同じ大きさで置き続ける形は、控えた頂点を移すだけで
-    /// 済む (``ThinStrokeRecipe``)。
+    /// 置き場所の 2x2 ごとに 1 度だけ** — 同じ大きさ・向きで置き続ける形は、控えた頂点を移すだけで
+    /// 済む (``ThinStrokeRecipe``)。回して置き続ける形は、向きごとに組み直す (#2172)。
     func thinVertices(
         _ recipe: ThinStrokeRecipe, placedBy matrix: simd_float4x4, cache: ThinStrokeCache,
         stroke: Int
@@ -546,19 +582,18 @@ extension Canvas {
         let combined = matrix * recipe.transform.matrix
         let linear = drawnLinear(combined)
         // 点 1 つの周は描く画素の軸に沿って置くので、回転ごとに形が違う。それ以外は回転に依らない
-        let key =
-            recipe.outline.points.count == 1
-            ? SIMD4<Float>(
-                linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y)
-            : Self.rotationFreeKey(linear)
+        // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
+        // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
+        let key = SIMD4<Float>(
+            linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y)
         if let cached = cache.built(stroke, key) { return cached }
         let built = buildThinVertices(recipe, placedBy: combined)
         cache.remember(built, stroke, key)
         return built
     }
 
-    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD` を、控えと畳みの鍵に
-    /// する (#1637)。
+    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD` を、畳みの鍵にする (#1637)。
+    /// 保持した形の控えの鍵は、#2172 で 2x2 そのものにした (``thinVertices(_:placedBy:cache:stroke:)``)。
     ///
     /// 片は描く画素の空間で、点どうしの向きと隔たりだけから組む (``thinCarving(_:thin:)``) ので、
     /// 描く画素の空間で回しても片は一緒に回る。形自身の座標へ戻した頂点は `DᵀD` が同じなら同じ
@@ -605,7 +640,7 @@ extension Canvas {
 /// ``Canvas/thinVertices(_:placedBy:cache:stroke:)`` で細さを測って、細ければ組み直した頂点で
 /// 区間を差し替える。細くならない置き方 (いちばんよくある) は費用を払わない — 形の中で最も細い
 /// 線でも細くならなければ区間を走査しない (``Shape/thinnestRecordedWeight``)。組み直した頂点は
-/// 形が控える (``ThinStrokeCache``) ので、同じ大きさで置き続ける形は組み直さない。
+/// 形が控える (``ThinStrokeCache``) ので、同じ大きさ・向きで置き続ける形は組み直さない。
 ///
 /// **値で持つ** (記録のたびに箱を作らない)。周の点の並びは図形が組んだものを共有する。
 ///
@@ -667,7 +702,7 @@ struct ThinStrokeRecipe {
 }
 
 /// 保持した形の、組み直した細い輪郭の控え (#1637)。**形 1 つに 1 つ**で、輪郭ごと・描く画素へ
-/// 写す 2x2 (回転を除く・``Canvas/rotationFreeKey(_:)``) ごとに持つ。
+/// 写す 2x2 ごとに持つ (#2172 までは回転を除いた鍵だった。細い帯の広げ方が向きで変わるので、回転も含める)。
 ///
 /// 輪郭ごとに箱を持たないのは、記録のたびに輪郭の数だけ箱を作る費用を払わないためである
 /// (細くならない形にも払わせることになる)。参照の箱にしてあるのは、形 (値型) を写しても控えを
