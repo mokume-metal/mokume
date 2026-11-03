@@ -85,7 +85,7 @@ extension Canvas {
         /// 角度 0 から刻んだ点) から数えるときに持つ。点の数は ``points`` と同じで、刻みの印 (``curveSteps``) を共有する。
         var dashPoints: [SIMD2<Float>]?
         /// 描く画素で 1 画素より細い帯を、**線に垂直に** 1 へ広げるか (#1637 の広げ方)。偽なら、列 (行) が帯を
-        /// 切る長さを整数にして広げる (``Canvas/thinOutline(_:weight:placedBy:)``・#2172)。
+        /// 切る長さを整数にして広げる (``Canvas/thinOutline(_:weight:placedBy:acrossTheLine:)``・#2172)。
         ///
         /// 畳む相手を待って直に描く 1 つ目 (``Canvas/draw(folding:at:outline:)``) だけが立てる。畳んだ雛形は
         /// 回転を除いた鍵で回した置き場所を 1 つにまとめるので、向きで広げ方を変えられない — 頂点段で広げる
