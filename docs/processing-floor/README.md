@@ -95,6 +95,13 @@ ls "$ref"/sound/*.json | wc -l                      # 165
 jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 ```
 
+形 (図形・曲線・頂点・`PShape`・`loadShape`) の 64 件は、category が `shape` (41) か `pshape` (20) の項目 61 件と、category が空で所属 (`classanchor`) が `PShape` の 3 件 (`getChildCount()`・`setFill()`・`setStroke()`) である (所属が `PShape` の項目は、クラスの頁とメンバーで 26 件):
+
+```bash
+jq -r 'select(((.category // "") | test("^p?shape$")) or ((.classanchor // "") == "PShape"))
+  | input_filename' "$ref"/processing/*.json | wc -l
+```
+
 画像の 34 件は、category が `image` (27) か `pimage` (6) の項目と、所属 (`classanchor`) が `PImage` で category が `color` の `PImage.blendColor()` 1 件である:
 
 ```bash
@@ -126,7 +133,7 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 | --- | --- | --- | --- | --- |
 | 1 | データ: JSON・Table・XML | 108 | `data-json-table-xml.md` | [#3592] |
 | 2 | Sound (PR [#2221] の表を取り込む) | 165 | `sound.md` | [#3684] |
-| 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | 順 1 の後に起票 |
+| 2 | 形 (図形・曲線・頂点・PShape・loadShape) | 64 | `shape.md` | [#3685] |
 | 2 | 画像 | 34 | `image.md` | [#3686] |
 | 2 | Video (`Movie.swift` の表は説明文に残し、行からそこを指す) | 21 | `video.md` | [#3687] |
 | 2 | 入力・出力・環境 (pdf・svg・dxf の書き出しを含む) | 81 | `input-output-environment.md` | [#3688] |
@@ -155,6 +162,7 @@ jq -r 'select(((.category // "") | test("^(environment|input|output)$")) or ((.c
 [#3137]: https://github.com/mokume-metal/mokume/issues/3137
 [#3592]: https://github.com/mokume-metal/mokume/issues/3592
 [#3684]: https://github.com/mokume-metal/mokume/issues/3684
+[#3685]: https://github.com/mokume-metal/mokume/issues/3685
 [#3686]: https://github.com/mokume-metal/mokume/issues/3686
 [#3687]: https://github.com/mokume-metal/mokume/issues/3687
 [#3688]: https://github.com/mokume-metal/mokume/issues/3688
