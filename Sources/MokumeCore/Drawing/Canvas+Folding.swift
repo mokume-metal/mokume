@@ -387,6 +387,9 @@ extension Canvas {
         if key.hasStroke {
             if key.strokeLinear?.widensInVertexStage == true {
                 thinStrokeParams = appendWidenedTemplateStroke(outline)
+                // 鍵と額縁は同じ規則 (``framesThinRect(width:height:weight:join:drawn:)``) で決めるので、ここで
+                // 組めないことは無い。組めないまま積むと、回した置き場所へ 1 つ目の向きの広げ方を使い回す
+                assert(thinStrokeParams != nil, "the key promised a vertex-stage thin rect, but the frame was not built")
             }
             if thinStrokeParams == nil { strokeOutline(outline, discSegments: key.discSegments) }
         }
@@ -406,7 +409,7 @@ extension Canvas {
     /// ならない線は `nil` で、これまでどおり変換の違う置き場所も同じ雛形に畳む。
     ///
     /// **回転だけが違う置き場所を 1 つに畳むのは、額縁の片で組める矩形だけ** (``ThinFold/widensInVertexStage``・
-    /// ``framesThinRect(width:height:join:drawn:)``・#3733)。ほかの形 (楕円・弧・角丸・丸い角・相似でない
+    /// ``framesThinRect(width:height:weight:join:drawn:)``・#3733)。ほかの形 (楕円・弧・角丸・丸い角・相似でない
     /// 置き場所) は鍵を 2x2 そのものにし、向きごとに畳む (2026-11-03 の決定) — 帯の向きが周に沿って変わり、
     /// 広げ方が帯ごとに違うので、1 つの雛形から置き場所ごとに広げ直せない。
     private func thinStrokeLinear(form: FlatForm) -> ThinFold? {
@@ -417,7 +420,8 @@ extension Canvas {
         let linear = SIMD4(
             matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y)
         if case .rect(let width, let height) = form,
-            Self.framesThinRect(width: width, height: height, join: style.strokeJoin, drawn: drawn)
+            Self.framesThinRect(
+                width: width, height: height, weight: style.strokeWeight, join: style.strokeJoin, drawn: drawn)
         {
             return ThinFold(key: Self.rotationFreeKey(drawn), linear: linear, widensInVertexStage: true)
         }

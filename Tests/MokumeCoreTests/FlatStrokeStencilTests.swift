@@ -329,8 +329,10 @@ struct FlatStrokeStencilTests {
 
     /// 細い輪郭の矩形を、回さずに 1 つと 45° に回して 1 つ置く。雛形は回さない 1 つ目の向きで組まれ、2 つ目は
     /// 雛形から置かれて頂点段で広げ直す。
-    private static func rotatedRects(_ canvas: Canvas, quads: Bool) {
-        for (center, turn) in [(SIMD2<Float>(40, 40), Float(0)), (SIMD2<Float>(110, 100), Float.pi / 4)] {
+    private static func rotatedRects(
+        _ canvas: Canvas, quads: Bool, turns: (Float, Float) = (0, Float.pi / 4)
+    ) {
+        for (center, turn) in [(SIMD2<Float>(40, 40), turns.0), (SIMD2<Float>(110, 100), turns.1)] {
             canvas.pushMatrix()
             canvas.translate(center.x, center.y)
             canvas.rotate(turn)
@@ -364,13 +366,17 @@ struct FlatStrokeStencilTests {
         }
     }
 
-    /// 幾何の等しい図形は、呼び方 (畳む `rect` / 畳まない `quad`) によらず同じ光の量で出る。
-    @Test("畳んだ回した細い rect の輪郭と、同じ 4 点の quad の輪郭は同じ光の量で出る")
-    func foldedRotatedThinRectMatchesQuad() throws {
+    /// 幾何の等しい図形は、呼び方 (畳む `rect` / 畳まない `quad`) によらず同じ光の量で出る。雛形は 1 つ目の向きで
+    /// 組まれるので、1 つ目を回さない組 (2 つ目で n = 2 側へ広げ直す) と、1 つ目を回した組 (2 つ目で回さない向き・
+    /// 別の角度へ広げ直す) の両方を見る。
+    @Test(
+        "畳んだ回した細い rect の輪郭と、同じ 4 点の quad の輪郭は同じ光の量で出る",
+        arguments: [(Float(0), Float.pi / 4), (Float.pi / 4, Float(0)), (Float.pi / 4, Float(0.3))] as [(Float, Float)])
+    func foldedRotatedThinRectMatchesQuad(first: Float, second: Float) throws {
         func light(_ quads: Bool) throws -> Float {
             let pixels = try renderThin(shaded: true, sections: Box()) { canvas in
                 canvas.stroke(255, 0, 0)
-                Self.rotatedRects(canvas, quads: quads)
+                Self.rotatedRects(canvas, quads: quads, turns: (first, second))
             }
             var sum: Float = 0
             for y in 0..<pixels.height { for x in 0..<pixels.width { sum += pixels[x, y].red } }
@@ -379,5 +385,52 @@ struct FlatStrokeStencilTests {
         let (rects, quads) = (try light(false), try light(true))
         #expect(quads > 0)
         #expect(abs(rects - quads) <= quads * 0.01, "rect \(rects)・quad \(quads)")
+    }
+
+    /// 矩形以外の畳める形 (楕円・円・弧) は向きごとに畳む (#3733)。同じ向きで 2 つ置くと 2 つ目は雛形から置かれ、
+    /// 1 つだけ直に置いた同じ円と同じ光の量で出る。違う向きの 2 つ目は別の雛形になる。
+    @Test("回した細い輪郭の円は、畳んだ 2 つ目も直に置いた 1 つ目と同じ光の量で出て、違う向きでは別の雛形になる")
+    func foldedRotatedThinCircleMatchesDirect() throws {
+        func light(_ body: (Canvas) -> Void) throws -> (Float, Int) {
+            let gpu = try RenderDevice()
+            let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+            let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .spatial)
+            let shader = try canvas.makeShader(Self.passThrough)
+            var instances = 0
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.strokeWeight(1)
+                canvas.stroke(255, 0, 0)
+                canvas.shader(shader)
+                body(canvas)
+                instances = canvas.flatInstances.count
+            }
+            let pixels = try canvas.target.readPixels()
+            var sum: Float = 0
+            for y in 0..<pixels.height { for x in 0..<pixels.width { sum += pixels[x, y].red } }
+            return (sum, instances)
+        }
+        func circle(_ canvas: Canvas, _ x: Float, _ turn: Float) {
+            canvas.pushMatrix()
+            canvas.translate(x, 80)
+            canvas.rotate(turn)
+            canvas.ellipse(0, 0, 50, 30)
+            canvas.popMatrix()
+        }
+        // 置き場所の並びは、何も動かさない置き場所 (添字 0) から始まる。直に置いた回の数を基準にする
+        let (direct, baseInstances) = try light { circle($0, 110, 0.7) }
+        let (folded, foldedInstances) = try light { canvas in
+            circle(canvas, 400, 0.7)  // 面の外の 1 つ目
+            circle(canvas, 110, 0.7)
+        }
+        let (_, turnedInstances) = try light { canvas in
+            circle(canvas, 40, 0.7)
+            circle(canvas, 110, 0.3)
+        }
+        #expect(foldedInstances == baseInstances + 2, "同じ向きの 2 つ目が畳まれていない: \(foldedInstances)")
+        #expect(turnedInstances == baseInstances, "違う向きの 2 つ目が同じ雛形に畳まれた: \(turnedInstances)")
+        #expect(direct > 0)
+        #expect(abs(folded - direct) <= direct * 0.01, "畳んだ \(folded)・直に置いた \(direct)")
     }
 }

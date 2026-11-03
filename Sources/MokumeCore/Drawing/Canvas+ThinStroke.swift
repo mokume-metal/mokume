@@ -537,7 +537,7 @@ extension Canvas {
 
     /// 平面の輪郭を補うときに細さを測る行列。**最後の変換が決まらない所では測らない** —
     /// 保持する形の記録 (置くときに測る・``ThinStrokeRecipe``)。畳みの雛形は、雛形の鍵が持つ
-    /// 置き場所の変換 (``templateStrokeMatrix``・細い線の雛形は同じ変換の置き場所だけで畳む)
+    /// 置き場所の変換 (``templateStrokeMatrix``・細い線の雛形は同じ 2x2 の置き場所か、頂点段で広げ直す矩形だけで畳む)
     /// で測る。線の半画素の寄せ (`strokePoint`) を先送りする所と同じである。
     var thinStrokeMatrix: simd_float4x4? {
         if recordingShape { return nil }
@@ -567,10 +567,14 @@ extension Canvas {
     ///
     /// 置き場所の描く画素の 2x2 が相似 (回転と一様な拡大) で、角が丸くなく (`round` は円板の刻みが半径で変わる)、
     /// 描く画素での辺の長さが 4 以上 (額縁の内側が潰れない) のときだけ組む。
-    static func framesThinRect(width: Float, height: Float, join: StrokeJoin, drawn: simd_float2x2) -> Bool {
+    static func framesThinRect(
+        width: Float, height: Float, weight: Float, join: StrokeJoin, drawn: simd_float2x2
+    ) -> Bool {
         guard join != .round, isSimilarity(drawn) else { return false }
         let scale = abs(simd_determinant(drawn)).squareRoot()
+        // 細いかは額縁を組む口と同じ式で決める (畳みの鍵と食い違うと、鍵が頂点段を約束したのに組めない)
         return min(abs(width), abs(height)) * scale >= 4
+            && ThinStroke(drawnWeight: roundedDrawnWeight(weight * scale), isPoint: false) != nil
     }
 
     /// 矩形の細い輪郭を、**重ならない片**で組む (#3733)。組めなければ `nil` で、呼ぶ側はこれまでどおり
@@ -595,10 +599,12 @@ extension Canvas {
         let (y0, y1) = (min(points[0].y, points[2].y), max(points[0].y, points[2].y))
         let join = style.strokeJoin
         let drawn = drawnLinear(matrix)
-        guard Self.framesThinRect(width: x1 - x0, height: y1 - y0, join: join, drawn: drawn) else { return nil }
+        guard
+            Self.framesThinRect(
+                width: x1 - x0, height: y1 - y0, weight: style.strokeWeight, join: join, drawn: drawn)
+        else { return nil }
         let scale = abs(simd_determinant(drawn)).squareRoot()
         let drawnWeight = Self.roundedDrawnWeight(style.strokeWeight * scale)
-        guard ThinStroke(drawnWeight: drawnWeight, isPoint: false) != nil else { return nil }
         let along = drawn * SIMD2<Float>(1, 0)
         let length = simd_length(along)
         guard length > 0, length.isFinite else { return nil }
@@ -680,8 +686,9 @@ extension Canvas {
         }
         let start = vertices.count
         appendThinRectFrame(frame)
-        // 被覆は頂点段が置き場所ごとに求める (頂点に付けた被覆は読まない)。1 未満なので、置き換える列は
-        // 下地を読む組で描く (#3111・``appendThinRectFrame(_:)`` が印を立てる)
+        // 被覆は頂点段が置き場所ごとに求める (頂点に付けた被覆は読まない)。鍵の置き場所でちょうど 1 でも、
+        // 回した置き場所では 1 未満になりうるので、置き換える列は下地を読む組で描く印を必ず立てる (#3111)
+        openBatchHasThinCoverage = true
         for (offset, slope) in frame.slopes.enumerated() {
             vertices[start + offset].uv = slope / frame.scale
         }
@@ -735,12 +742,13 @@ extension Canvas {
         return built
     }
 
-    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD` を、畳みの鍵にする (#1637)。
-    /// 保持した形の控えの鍵は、#2172 で 2x2 そのものにした (``thinVertices(_:placedBy:cache:stroke:)``)。
+    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD`。額縁の片で組める矩形の畳みの鍵に
+    /// する (``ThinFold/widensInVertexStage``・#3733)。
     ///
-    /// 片は描く画素の空間で、点どうしの向きと隔たりだけから組む (``thinCarving(_:thin:)``) ので、
-    /// 描く画素の空間で回しても片は一緒に回る。形自身の座標へ戻した頂点は `DᵀD` が同じなら同じ
-    /// である。回して置き続ける形 (回転の角度が毎回違う) も、控えた頂点と雛形を使い回せる。
+    /// **#2172 からは、`DᵀD` が同じでも片は同じにならない** — 細い帯は列 (行) が帯を切る長さで広げるので、
+    /// 回すと広げ方が変わる。回転だけが違う置き場所に 1 つの雛形を使い回せるのは、頂点段で置き場所ごとに
+    /// 広げ直す矩形だけである。保持した形の控えとほかの形の畳みの鍵は 2x2 そのもの
+    /// (``thinVertices(_:placedBy:cache:stroke:)``・``thinStrokeLinear(form:)``)。
     ///
     /// 単精度の丸めで、同じ大きさの回転どうしでも `DᵀD` の最下位の桁は揺れる (0.25 と
     /// 0.24999999 のように指数をまたぐこともある)。鍵は大きさ (対角の和) の対数と、和で割った
