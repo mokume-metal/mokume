@@ -98,6 +98,23 @@ public nonisolated enum CoreSVGReference {
         return total > 0 ? sum / total : nil
     }
 
+    /// CoreGraphics の AA が、被覆 1 の円の縁で画素ごとに外れる最大 (#3217 の実測)。不透明度 a で塗った縁では、
+    /// 外れも a 倍になる。
+    public static let antialiasingError = 0.064
+
+    /// 2 つの被覆を `threshold` で白黒にして、白黒が食い違い、**しかも被覆の差が `margin` を越える**画素の数。
+    ///
+    /// 差が `margin` 以内の画素は、境目のすぐ両側に分かれただけで、参照の AA の誤差と見分けられない。そうした画素は
+    /// 縁に沿って同じ向きに並びうるので、数えると誤差の内の差が赤になる (#3725: 0.50 と 0.49 の画素が 11)。
+    public static func mismatches(
+        _ measured: [Double], _ reference: [Double], margin: Double, threshold: Double = 0.5
+    ) -> Int {
+        precondition(measured.count == reference.count, "被覆の大きさが違う")
+        return zip(measured, reference).reduce(0) {
+            $0 + (($1.0 >= threshold) != ($1.1 >= threshold) && abs($1.0 - $1.1) > margin ? 1 : 0)
+        }
+    }
+
     /// 2 つの白黒の、一致しない画素の数。
     public static func mismatches(_ a: [Bool], _ b: [Bool]) -> Int {
         precondition(a.count == b.count, "白黒の大きさが違う")
