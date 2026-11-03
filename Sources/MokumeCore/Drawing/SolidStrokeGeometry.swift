@@ -421,12 +421,14 @@ extension Canvas {
             indexStart: nil, instanceStart: solidInstances.count,
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
-        guard thin != nil else { return }
-        openBatchHasThinCoverage = true
+        if thin != nil { openBatchHasThinCoverage = true }
         // **細い線の列は、列全体を 1 回だけ混ぜる区間にする** (ADR-0046・#2185 の決定 D)。被覆 < 1 の片は下地と
-        // 混ぜるので、色が不透明でも角で重なる片が 2 回混ざる。列は線 1 本ごとに開く (上の `closeBatch()`)
+        // 混ぜるので、色が不透明でも角で重なる片が 2 回混ざる。判定はほかの立体の線と同じ口で、骨に乗る線
+        // (不透明の `blend`・断片なし) では細いときだけ真になる。列は線 1 本ごとに開く (上の `closeBatch()`)
         // ので、区間は図形ごとに切れ、別々の図形どうしは 2 回混ぜる。区間は骨の添字の並びで数える
-        openSolid?.strokeStencilSections = [0..<geometry.count]
+        if solidStrokeTakesSection(alpha: color.alpha, coverage: thin?.coverage ?? 1, isLonePoint: false) {
+            openSolid?.strokeStencilSections = [0..<geometry.count]
+        }
     }
 
     /// GPU で広げる太さ `weight` の線の補い。**細さは置く面で判断する** (#1637)。描く画素で 1 画素

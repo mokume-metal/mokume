@@ -763,6 +763,37 @@ struct SolidStrokeStencilTests {
         #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
     }
 
+    /// 保持した形の CPU の帯 (骨に乗らない丸い折れ目の稜線) も、置くときに組み直して 1 回だけ混ぜる (段 3 の反証 #4)。
+    @Test("保持した形の細い CPU の帯も、組み直して 1 回だけ混ぜる")
+    func thinRetainedCPUBandMixesOnce() throws {
+        let (pixels, batches) = try placingRetained(
+            record: { canvas in
+                canvas.noFill()
+                canvas.stroke(255, 0, 0)
+                canvas.strokeWeight(0.5)
+                canvas.strokeJoin(.round)
+                canvas.box(80)
+            },
+            place: { canvas, crate in
+                canvas.translate(80, 80, 0)
+                canvas.shape(crate)
+            })
+        #expect(batches.compactMap(\.strokeGeometry).isEmpty)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 細い点 1 つは画面の軸に沿った正方形 1 枚で、片が重ならない。区間にすると描く呼び出しが増えるだけなので
+    /// 入れない (段 3 の反証 #2)。
+    @Test("細い不透明の点 1 つは、区間を持たない")
+    func thinLonePointHasNoSection() throws {
+        let (pixels, batches) = try thin { canvas in
+            canvas.point(80, 80, 0)
+        }
+        #expect(!painted(pixels).isEmpty)
+        #expect(batches.allSatisfy { $0.strokeStencilSections.isEmpty })
+    }
+
     @Test("読み込んだモデルの細い稜線も、骨の経路で 1 回だけ混ぜる")
     func thinModelMixesOnceOnTheBone() throws {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
