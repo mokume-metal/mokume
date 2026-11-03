@@ -17,7 +17,9 @@ import simd
 /// 円で画素ごとに最大 0.064 外れ (#3217 の実測)、mokume の許容より粗いので、**中間値は比べず**、
 ///
 /// - **50% の被覆で白黒にした形** (一致しない画素の数を、縁の画素の数で割った割合。被覆の差が参照の AA の誤差
-///   (``CoreSVGReference/antialiasingError`` × 見本の不透明度) の内の画素は、白黒が食い違っても数えない — #3725)
+///   (``CoreSVGReference/antialiasingError`` × 見本の不透明度) の内の画素は、白黒が食い違っても数えない — #3725)。
+///   閾値は不透明度に依らず 0.5 で、群の `opacity` を掛け忘れた絵をここで捕まえる (子が同じ倍率で薄まるので、
+///   重心は動かない)。そのため見本の不透明度は 0.5 を越える (``templatesDeclareTheirOpacity()``)
 /// - **線形の被覆で重みを付けた重心** (ずれの画素数)
 ///
 /// だけを比べる (``CoverageTable`` の「50% の白黒と重心」の行)。許容と根拠は表が持つ。
@@ -82,7 +84,8 @@ struct SVGCoverageTests {
         let svg: String
         /// 参照の側の重みの付け方。三角形の経路は AA なしで、参照の AA の重みを写せない (表の根拠)。
         let weightsReferenceByHalfTone: Bool
-        /// 塗りの不透明度 (群の `opacity`)。縁の値はこの倍に薄まり、参照の AA の誤差も同じ倍になる。
+        /// 塗りの不透明度 (群の `opacity`)。縁の値はこの倍に薄まり、参照の AA の誤差も同じ倍になる。`svg` の
+        /// `opacity='…'` と同じ値を書く (``templatesDeclareTheirOpacity()`` が突き合わせる)。
         var opacity: Double = 1
     }
 
@@ -245,6 +248,16 @@ struct SVGCoverageTests {
         // 重なる群を primitivesMatchTheReference の見本へ移す
         withKnownIssue("#2878: 群の opacity を子ごとに掛けるので、重なった所が参照より濃く、重心がずれる") {
             #expect(report.failure == nil, "\(report.failure ?? "")")
+        }
+    }
+
+    @Test("見本の opacity は、SVG の文の opacity と同じ値を名乗り (無ければ 1)、白黒の閾値 0.5 を越える")
+    func templatesDeclareTheirOpacity() throws {
+        for template in Self.pathTemplates + Self.primitiveTemplates + [Self.overlappingGroup] {
+            let declared = try #/opacity='([0-9.]+)'/#.firstMatch(in: template.svg).map { Double($0.1) } ?? 1
+            #expect(declared == template.opacity, "\(template.name): SVG は \(declared ?? .nan)・見本は \(template.opacity)")
+            // 0.5 以下では参照の白黒が空になり、何を描いても白黒は一致する
+            #expect(template.opacity > 0.5, "\(template.name): 不透明度 \(template.opacity) では白黒の検査が空になる")
         }
     }
 

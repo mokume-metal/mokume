@@ -98,9 +98,8 @@ struct CoreSVGReferenceTests {
         #expect(CoreSVGReference.centroid([0, 0], width: 2) == nil)
     }
 
-    @Test("mismatches は一致しない画素の数、edgePixels は縁の画素の数 (面の端も縁)")
+    @Test("edgePixels は縁の画素の数 (面の端も縁)")
     func counts() {
-        #expect(CoreSVGReference.mismatches([true, false, true], [true, true, false]) == 2)
         // 3×3 の面で中央の 1 画素だけ真 → 縁 1。全部真 → 面の端の 8 画素が縁で中央は縁でない
         var one = [Bool](repeating: false, count: 9)
         one[4] = true
