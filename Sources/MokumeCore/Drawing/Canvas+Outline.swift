@@ -537,7 +537,9 @@ extension Canvas {
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
     func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
         guard let matrix = thinStrokeMatrix,
-            let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
+            let thin = thinOutline(
+                outline, weight: style.strokeWeight, placedBy: matrix,
+                acrossTheLine: buildingFlatTemplate || outline.widensAcrossTheLine)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
         // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので、色によらず型板に載せて重ねて積むか、
         // 引いて積む (#1948)。1 つの領域として引ける輪郭は、太い線と同じく引き算のまま (畳む雛形と揃える)。
