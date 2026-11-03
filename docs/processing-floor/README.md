@@ -99,6 +99,7 @@ jq -r '.type' "$ref"/sound/*.json | sort | uniq -c  # class 25・method 140
 
 ```bash
 jq -r 'select(((.category // "") | test("^p?shape$")) or ((.classanchor // "") == "PShape"))
+  | input_filename' "$ref"/processing/*.json | wc -l
 ```
 
 画像の 34 件は、category が `image` (27) か `pimage` (6) の項目と、所属 (`classanchor`) が `PImage` で category が `color` の `PImage.blendColor()` 1 件である:
