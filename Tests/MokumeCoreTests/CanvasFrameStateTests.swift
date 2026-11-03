@@ -376,6 +376,10 @@ extension CanvasTests {
                 ("coverageSpans", end, all, { c, _ in
                     c.coverageSpans.append(Canvas.CoverageSpan(range: 0..<3, value: 0.5))
                 }),
+                // 平面の線を型板で 1 回だけ混ぜる区間 (#3579)。頂点の位置を指すので、頂点と一緒に捨てる。
+                // 開いている平面の列 (雛形でない) が持つ — 越える列のどの種類を開いても、開く前に平面の列を
+                // 閉じて区間を列へ移すので、汚したまま越える列は無い。戻ることだけを見る
+                ("flatStrokeStencilSections", end, [], { c, _ in c.flatStrokeStencilSections.append(0..<3) }),
                 ("recordedStrokeRanges", end, all, { c, _ in c.recordedStrokeRanges.append(StrokeRange(0..<0)) }),
                 ("recordedFillRanges", end, all, { c, _ in
                     c.recordedFillRanges.append(
@@ -651,7 +655,7 @@ extension CanvasTests {
                 "solidStrokeCapture": transient,
                 "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
                 "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
-                "openBatchGlyphColored": transient,
+                "openBatchGlyphColored": transient, "flatStrokeFigure": transient,
                 "coverageStorage": resource, "thinStrokesRebuilt": count,
                 "thinFillMemo": "細い塗りの記述の直前の問い合わせ 1 件。中身は入力で決まり、組み立てとは関わらない (#2208)",
                 "thinFillRecordsBuilt": count,

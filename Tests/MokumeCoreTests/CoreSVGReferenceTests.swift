@@ -98,13 +98,20 @@ struct CoreSVGReferenceTests {
         #expect(CoreSVGReference.centroid([0, 0], width: 2) == nil)
     }
 
-    @Test("mismatches は一致しない画素の数、edgePixels は縁の画素の数 (面の端も縁)")
+    @Test("edgePixels は縁の画素の数 (面の端も縁)")
     func counts() {
-        #expect(CoreSVGReference.mismatches([true, false, true], [true, true, false]) == 2)
         // 3×3 の面で中央の 1 画素だけ真 → 縁 1。全部真 → 面の端の 8 画素が縁で中央は縁でない
         var one = [Bool](repeating: false, count: 9)
         one[4] = true
         #expect(CoreSVGReference.edgePixels(one, width: 3) == 1)
         #expect(CoreSVGReference.edgePixels([Bool](repeating: true, count: 9), width: 3) == 8)
+    }
+
+    @Test("被覆の mismatches は、白黒が食い違い差が margin を越える画素だけを数える。差がちょうど margin なら数えない")
+    func coverageMismatches() {
+        // 0.5 と 0.25 (差 0.25 = margin) は数えず、0.5 と 0.125 は数える。白黒が同じ 0.75 と 0.5 は差が大きくても数えない
+        #expect(CoreSVGReference.mismatches([0.5, 0.5, 0.75, 0.25], [0.25, 0.125, 0.5, 0.75], margin: 0.25) == 2)
+        // margin が 0 なら、白黒の食い違いをすべて数える
+        #expect(CoreSVGReference.mismatches([0.5, 0.5, 0.75], [0.25, 0.125, 0.5], margin: 0) == 2)
     }
 }

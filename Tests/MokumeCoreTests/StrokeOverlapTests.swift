@@ -13,7 +13,8 @@ import Testing
 /// 経路は線を 1 つの領域として 1 回だけ塗るので、`shader()` を 1 行足しただけで同じ `rect` の
 /// 角の濃さが変わっていた。
 ///
-/// **単位 ([#1536] の判断 1):**
+/// **単位:** その場で引く線は、1 つの図形 (原始形 1 つ) の線全体を型板で 1 回だけ混ぜる ([#3579])。
+/// 自己交差も 1 回になる。保持した形の線は、これまでどおり片の重なりを引いて積む ([#1536] の判断 1):
 ///
 /// - 任意多角形 (`beginShape`・`triangle`・`quad`・`line`) は、線に沿って太さ以内で繋がる片
 ///   どうしを 1 回だけ混ぜる。線に沿って離れた部分が交わる所 (自己交差) は、別々の線と同じく
@@ -30,6 +31,7 @@ import Testing
 ///
 /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
 /// [#1562]: https://github.com/mokume-metal/mokume/issues/1562
+/// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
 /// [ADR-0019]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md
 @Suite(
     "三角形の経路の線の重ね塗り",
@@ -259,12 +261,12 @@ struct StrokeOverlapTests {
         #expect(brightest <= 0.11, "赤の最大: \(brightest)")
     }
 
-    // MARK: - #1536 条件 5: 自己交差は 2 回のまま
+    // MARK: - #1536 条件 5 (#3579 で差し替え): 自己交差も 1 回
 
-    /// 線に沿って離れた部分が交わる所は、別々の `line` が交わるのと同じく 2 回混ぜる
-    /// (#1536 の判断 1)。重ね塗りは交点の近くにしか残らない。
-    @Test("開いた折れ線の自己交差は、別々の線の交差と同じく 2 回混ぜる")
-    func selfIntersectionBlendsTwice() throws {
+    /// 線に沿って離れた部分が交わる所も、1 つの図形の中なので 1 回だけ混ぜる (#3579)。#1536 の判断 1 では
+    /// 別々の `line` が交わるのと同じく 2 回混ぜていた。
+    @Test("開いた折れ線の自己交差も 1 回だけ混ぜる")
+    func selfIntersectionBlendsOnce() throws {
         let pixels = try translucent { canvas in
             canvas.strokeWeight(10)
             canvas.strokeJoin(.round)
@@ -275,12 +277,8 @@ struct StrokeOverlapTests {
             canvas.vertex(20, 140)
             canvas.endShape()
         }
-        #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
-        let far = overpainted(pixels).filter { point in
-            let offset = SIMD2<Float>(Float(point.x - 80), Float(point.y - 80))
-            return (offset * offset).sum() > 100
-        }
-        #expect(far.isEmpty, "交点から 10 画素より遠い重ね塗り: \(far)")
+        #expect(abs(pixels[80, 80].red - Self.once) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(overpainted(pixels).isEmpty, "重ね塗り: \(overpainted(pixels).count) 画素")
     }
 
     // MARK: - #1536 条件 6: 塗る領域は変わらない
@@ -354,14 +352,15 @@ struct StrokeOverlapTests {
         #expect(overpainted(quad).count <= 5, "quad: \(overpainted(quad).count)")
     }
 
-    /// 辺が交差する `quad` (砂時計) は、任意多角形の自己交差と同じく交点で 2 回混ぜる。
-    @Test("辺が交差する quad の半透明の線は、交点で 2 回混ぜる")
-    func crossedQuadBlendsTwiceAtTheCrossing() throws {
+    /// 辺が交差する `quad` (砂時計) も、1 つの図形なので交点を 1 回だけ混ぜる (#3579。それまでは 2 回)。
+    @Test("辺が交差する quad の半透明の線も、交点を 1 回だけ混ぜる")
+    func crossedQuadBlendsOnceAtTheCrossing() throws {
         let pixels = try translucent { canvas in
             canvas.strokeWeight(10)
             canvas.quad(20, 20, 140, 140, 140, 20, 20, 140)
         }
-        #expect(abs(pixels[80, 80].red - Self.twice) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(abs(pixels[80, 80].red - Self.once) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(overpainted(pixels).isEmpty, "重ね塗り: \(overpainted(pixels).count) 画素")
     }
 
     // MARK: - #1910: beginShape(.quads) の輪郭は quad() と同じ規則
@@ -396,8 +395,8 @@ struct StrokeOverlapTests {
         #expect(differingPixels(byQuads, byCall) == 0, "quad() との差: \(differingPixels(byQuads, byCall))")
     }
 
-    @Test("beginShape(.quads) の辺が交差する 4 点は、quad() と同じく交点で 2 回混ぜる")
-    func crossedQuadsBlendTwiceAtTheCrossing() throws {
+    @Test("beginShape(.quads) の辺が交差する 4 点も、quad() と同じく交点を 1 回だけ混ぜる")
+    func crossedQuadsBlendOnceAtTheCrossing() throws {
         let byQuads = try translucent { canvas in
             canvas.strokeWeight(10)
             Self.quadVertices(canvas, Self.crossed)
@@ -406,20 +405,22 @@ struct StrokeOverlapTests {
             canvas.strokeWeight(10)
             Self.quadCall(canvas, Self.crossed)
         }
-        #expect(abs(byQuads[80, 80].red - Self.twice) <= 0.01, "交点: \(byQuads[80, 80].red)")
+        #expect(abs(byQuads[80, 80].red - Self.once) <= 0.01, "交点: \(byQuads[80, 80].red)")
         #expect(differingPixels(byQuads, byCall) == 0, "quad() との差: \(differingPixels(byQuads, byCall))")
     }
 
-    /// `.polygon` は周をなす読み方のまま (#1536 判断 1)。同じ凹んだ 4 点は、起票時と同じ重なりを 2 回混ぜる。
-    @Test("beginShape(.polygon) の凹んだ 4 点は変わらず、向かい合う辺の重なりを 2 回混ぜる")
-    func concavePolygonStillBlendsTwice() throws {
+    /// `.polygon` の凹んだ 4 点も、1 つの図形なので向かい合う辺の重なりを 1 回だけ混ぜる (#3579)。
+    /// #1536 の判断 1 では 149 画素を 2 回混ぜていた。
+    @Test("beginShape(.polygon) の凹んだ 4 点も、向かい合う辺の重なりを 1 回だけ混ぜる")
+    func concavePolygonBlendsOnce() throws {
         let pixels = try translucent { canvas in
             canvas.strokeWeight(20)
             canvas.beginShape(.polygon)
             for (x, y) in Self.concave { canvas.vertex(x, y) }
             canvas.endShape(.close)
         }
-        #expect(overpainted(pixels).count == 149, "polygon: \(overpainted(pixels).count)")
+        #expect(painted(pixels) > 0)
+        #expect(overpainted(pixels).isEmpty, "polygon: \(overpainted(pixels).count)")
     }
 
     /// 四角どうしは別々の輪郭。1 枚の中だけが 1 領域で、重なる 2 枚は別々の図形と同じく 2 回混ぜる。

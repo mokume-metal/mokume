@@ -16,7 +16,10 @@ import simd
 /// (CoreSVG・`NSImage(contentsOf:)`・``CoreSVGReference``) が CPU で描いた絵を参照にする。CoreGraphics の AA は
 /// 円で画素ごとに最大 0.064 外れ (#3217 の実測)、mokume の許容より粗いので、**中間値は比べず**、
 ///
-/// - **50% の被覆で白黒にした形** (一致しない画素の数を、縁の画素の数で割った割合)
+/// - **50% の被覆で白黒にした形** (一致しない画素の数を、縁の画素の数で割った割合。被覆の差が参照の AA の誤差
+///   (``CoreSVGReference/antialiasingError`` × 見本の不透明度) の内の画素は、白黒が食い違っても数えない — #3725)。
+///   閾値は不透明度に依らず 0.5 で、群の `opacity` を掛け忘れた絵をここで捕まえる (子が同じ倍率で薄まるので、
+///   重心は動かない)。そのため見本の不透明度は 0.5 を越える (``templatesDeclareTheirOpacity()``)
 /// - **線形の被覆で重みを付けた重心** (ずれの画素数)
 ///
 /// だけを比べる (``CoverageTable`` の「50% の白黒と重心」の行)。許容と根拠は表が持つ。
@@ -81,6 +84,9 @@ struct SVGCoverageTests {
         let svg: String
         /// 参照の側の重みの付け方。三角形の経路は AA なしで、参照の AA の重みを写せない (表の根拠)。
         let weightsReferenceByHalfTone: Bool
+        /// 塗りの不透明度 (群の `opacity`)。縁の値はこの倍に薄まり、参照の AA の誤差も同じ倍になる。`svg` の
+        /// `opacity='…'` と同じ値を書く (``templatesDeclareTheirOpacity()`` が突き合わせる)。
+        var opacity: Double = 1
     }
 
     /// 一筆書きの五芒星 (中央の五角形は回り数 2)。`rule` は `evenodd` か `nonzero`。
@@ -122,7 +128,7 @@ struct SVGCoverageTests {
             name: "group-opacity-apart",
             svg: "<g opacity='0.6'><circle cx='-24' cy='0' r='14' fill='white'/>"
                 + "<circle cx='24' cy='4' r='10' fill='white'/></g>",
-            weightsReferenceByHalfTone: false),
+            weightsReferenceByHalfTone: false, opacity: 0.6),
     ]
 
     /// 群の `opacity` が重なる子の間で変わる見本 (#2878)。大きさの違う円が深く重なり、重なった所が偏るので、
@@ -131,7 +137,7 @@ struct SVGCoverageTests {
         name: "group-opacity-overlap",
         svg: "<g opacity='0.6'><circle cx='-8' cy='0' r='26' fill='white'/>"
             + "<circle cx='14' cy='8' r='20' fill='white'/></g>",
-        weightsReferenceByHalfTone: false)
+        weightsReferenceByHalfTone: false, opacity: 0.6)
 
     static func axes(_ count: Int) -> [ProbeAxis] {
         [
@@ -169,9 +175,9 @@ struct SVGCoverageTests {
         let measured = (0..<(size * size)).map { Double(pixels[$0 % size, $0 / size].red) }
         let reference = try CoreSVGReference.render(svg: text, width: size, height: size).coverage
 
-        let measuredShape = CoreSVGReference.halfTone(measured)
         let referenceShape = CoreSVGReference.halfTone(reference)
-        let mismatches = CoreSVGReference.mismatches(measuredShape, referenceShape)
+        let mismatches = CoreSVGReference.mismatches(
+            measured, reference, margin: CoreSVGReference.antialiasingError * template.opacity)
         let edge = max(1, CoreSVGReference.edgePixels(referenceShape, width: size))
         let rate = Double(mismatches) / Double(edge)
 
@@ -193,12 +199,14 @@ struct SVGCoverageTests {
 
     /// 見本を生成した置き方で描き、全部が参照と一致するかを見る。
     private static func run(
-        _ key: String, templates: [Template], row: CoverageTable.Row
+        _ key: String, templates: [Template], row: CoverageTable.Row,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> Probe.Report {
         let sketch = Loaded()
         let runtime = try SketchRuntime(sketch: sketch, gpu: RenderDevice())
         return try Probe.run(
-            "coverage", suite: "SVGCoverageTests", key: key, axes: axes(templates.count), cases: cases
+            "coverage", suite: "SVGCoverageTests", key: key, axes: axes(templates.count), cases: cases,
+            environment: environment
         ) { input in
             try outcome(templates[Int(input["template"])], input, row: row, sketch: sketch, runtime: runtime)
         }
@@ -220,6 +228,18 @@ struct SVGCoverageTests {
         #expect(report.skipped == 0, "約束の外は無いはず: \(report.skipped) 件")
     }
 
+    /// 定期の検査で、群の opacity の見本が白黒の割合 0.104 (許容 0.1) で赤になった置き方 (#3725)。食い違った 11 画素は
+    /// どれも mokume が 0.50〜0.52・参照が 0.47〜0.49 で、差は参照の AA の誤差 (0.064 × 0.6) の内だった。
+    @Test("参照の AA の誤差の内で境目の両側に分かれた画素は数えない: 定期の検査で赤になった置き方 (#3725) が通る")
+    func seamPixelsWithinTheReferenceErrorAreNotMismatches() throws {
+        let row = try CoverageTable.row(.svgPrimitives, on: .distanceField, comparing: .halfToneAndCentroid)
+        let report = try Self.run(
+            "svg-primitives", templates: Self.primitiveTemplates, row: row,
+            environment: ["MOKUME_PROBE_SEED": "0x1d8bb61aa528b27b"])
+        #expect(report.failure == nil, "\(report.failure ?? "")")
+        #expect(report.ran == 1, "seed の 1 件だけが走るはず: \(report.ran) 件")
+    }
+
     @Test("重なる子の群の opacity は、子ごとに掛かる近似 (#2878) のあいだ、参照と重心が外れる (既知)")
     func overlappingGroupOpacityIsAKnownMismatch() throws {
         let row = try CoverageTable.row(.svgPrimitives, on: .distanceField, comparing: .halfToneAndCentroid)
@@ -228,6 +248,16 @@ struct SVGCoverageTests {
         // 重なる群を primitivesMatchTheReference の見本へ移す
         withKnownIssue("#2878: 群の opacity を子ごとに掛けるので、重なった所が参照より濃く、重心がずれる") {
             #expect(report.failure == nil, "\(report.failure ?? "")")
+        }
+    }
+
+    @Test("見本の opacity は、SVG の文の opacity と同じ値を名乗り (無ければ 1)、白黒の閾値 0.5 を越える")
+    func templatesDeclareTheirOpacity() throws {
+        for template in Self.pathTemplates + Self.primitiveTemplates + [Self.overlappingGroup] {
+            let declared = try #/opacity='([0-9.]+)'/#.firstMatch(in: template.svg).map { Double($0.1) } ?? 1
+            #expect(declared == template.opacity, "\(template.name): SVG は \(declared ?? .nan)・見本は \(template.opacity)")
+            // 0.5 以下では参照の白黒が空になり、何を描いても白黒は一致する
+            #expect(template.opacity > 0.5, "\(template.name): 不透明度 \(template.opacity) では白黒の検査が空になる")
         }
     }
 

@@ -429,10 +429,12 @@ extension Canvas {
     /// 線で削ぐので、`shader()` や `texture()` を足して三角形の経路へ落ちても角の形が
     /// 変わらない。閉じた周の `square` は折れ目からしか呼ばれないので、端の形には及ばない。
     ///
-    /// **片どうしの重なりは引いて積む** ([#1536]・[#1562])。帯・折れ目の形・端の形・刻みの
-    /// 円板は互いに重なるので、そのまま積むと半透明の線や下地を読む混ぜ方で、重なった所
-    /// だけが 2〜3 回混ざって濃くなる。先に置いた片との差を積めば、形も塗る領域も変えずに
-    /// 1 回だけ混ぜられる (``StrokeCarving``)。重ねても絵が変わらない線
+    /// **片どうしの重なりは、型板で 1 回だけ混ぜるか、引いて積む** ([#1536]・[#1562]・[#3579])。帯・折れ目の
+    /// 形・端の形・刻みの円板は互いに重なるので、そのまま混ぜると半透明の線や下地を読む混ぜ方で、重なった所
+    /// だけが 2〜3 回混ざって濃くなる。その場で引く線は片を重ねたまま積み、1 つの図形
+    /// (``strokingOneFigure(_:)``) の線全体を型板で 1 回だけ混ぜる (``stencilsFlatStroke``)。自己交差も
+    /// 1 回になる。型板に載せない線 (畳む雛形・保持する形の記録・細い片) は、先に置いた片との差を積んで、
+    /// 形も塗る領域も変えずに 1 回だけ混ぜる (``StrokeCarving``)。重ねても絵が変わらない線
     /// (``strokeOverlapsShow`` が偽) は、引かずにこれまでどおり積む。
     ///
     /// **保持する形の記録の間は、重ねて積んだ線に、引く素材 (``CarvedStroke``) を添える**
@@ -457,13 +459,71 @@ extension Canvas {
     /// [#1645]: https://github.com/mokume-metal/mokume/issues/1645
     /// [#1829]: https://github.com/mokume-metal/mokume/issues/1829
     /// [#1920]: https://github.com/mokume-metal/mokume/issues/1920
+    /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     func strokeOutline(_ outline: Outline, discSegments: Int? = nil) {
-        // 破線なら、輪郭を片に刻んで 1 つずつ引く ([#2835])。閉じた輪郭は一周して始点へ戻る
-        if let dash = style.strokeDash, let pieces = dashedPieces(of: outline, by: dash)
-        {
-            return strokeDashedPieces(pieces, discSegments: discSegments)
+        // 輪郭 1 つ (破線なら片のすべて) が 1 つの図形。原始形の外周と穴を引くときは、呼ぶ側が
+        // 外側で包む (``strokingOneFigure(_:)``)
+        strokingOneFigure {
+            // 破線なら、輪郭を片に刻んで 1 つずつ引く ([#2835])。閉じた輪郭は一周して始点へ戻る
+            if let dash = style.strokeDash, let pieces = dashedPieces(of: outline, by: dash)
+            {
+                return strokeDashedPieces(pieces, discSegments: discSegments)
+            }
+            strokeSolidOutline(outline, discSegments: discSegments)
         }
-        strokeSolidOutline(outline, discSegments: discSegments)
+    }
+
+    /// `build` が積む平面の線を、**1 つの図形**として型板で 1 回だけ混ぜる ([ADR-0046]・[#3579])。
+    ///
+    /// 図形の単位は原始形 1 つ — `beginShape` の外周と穴とそれぞれの破線の片、基本図形なら輪郭 1 つ
+    /// (破線の片のすべて) である。**入れ子は外側が勝つ** — 原始形を包む ``emitStroke`` の中で呼ばれる
+    /// ``strokeOutline(_:discSegments:)`` は、新しい図形を始めない。
+    ///
+    /// 型板に載せる片 (``stencilsFlatStroke``) を積んだ図形だけが、終わりに区間を残す
+    /// (``noteFlatStrokeSection(from:)``)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
+    func strokingOneFigure(_ build: () -> Void) {
+        guard flatStrokeFigure == nil else { return build() }
+        flatStrokeFigure = (start: vertices.count, stenciled: false)
+        build()
+        guard let figure = flatStrokeFigure else { return }
+        flatStrokeFigure = nil
+        if figure.stenciled { noteFlatStrokeSection(from: figure.start) }
+    }
+
+    /// 図形の頂点を、開いている平面の列の区間として覚える (``flatStrokeStencilSections``)。列の頭より前の
+    /// 頂点 (図形の途中で閉じた列の分) は数えない。
+    func noteFlatStrokeSection(from start: Int) {
+        guard openSource == .flat, openFlat == nil else { return }
+        let section = max(start, openFlatRunStart)..<vertices.count
+        guard !section.isEmpty else { return }
+        flatStrokeStencilSections.append(section)
+    }
+
+    /// 平面の線を型板に載せるか — 載せるなら、片を引かずに重ねて積み、図形の線全体を 1 回だけ混ぜる
+    /// ([ADR-0046]・[#3579])。
+    ///
+    /// 載せるのは、図形の中で (``strokingOneFigure(_:)``) その場で引く線のうち、重なりが絵に出るもの
+    /// (``strokeOverlapsShow``) である。置き換える線 (`replace`) は、被覆 1 の片を重ねても同じ値を書くので
+    /// 載せない (立体の線と同じ・#3577 の条件 6 と #3579 の条件 5 の差し替え)。下地を読む細い線は段 5 ([#1948])。
+    ///
+    /// 次は載せず、これまでどおり片の重なりを引いて積む (``StrokeCarving``):
+    ///
+    /// - 畳む雛形 (`buildingFlatTemplate`) と保持する形の記録 (`recordingShape`)。置き場所ごとに色と変換が
+    ///   掛かる ([#3580])
+    /// - 描く画素で 1 画素より細い片を持つ輪郭 (``thinOutline(_:weight:placedBy:)``・[#1948])
+    /// - 1 つの領域として引ける輪郭 (``Outline/strokesAsOneRegion`` — 矩形・楕円・弧・辺の交差しない
+    ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。畳める形の雛形と同じ積み方に揃う
+    ///   (``strokeOutlineAsStyled(_:discSegments:)``)。破線の片はこの印を持たないので型板に載る
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#1948]: https://github.com/mokume-metal/mokume/issues/1948
+    /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
+    /// [#3580]: https://github.com/mokume-metal/mokume/issues/3580
+    var stencilsFlatStroke: Bool {
+        flatStrokeFigure != nil && !buildingFlatTemplate && !recordingShape && strokeOverlapsShow
     }
 
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
@@ -501,7 +561,13 @@ extension Canvas {
             discSegments = discSplitMemo.count(
                 forRadius: half, scale: Self.splitScale(of: transform.matrix))
         }
-        if overlaps {
+        // 型板に載せる線は、片を引かずに重ねて積む。重なりは型板が落とす (``stencilsFlatStroke``)。
+        // **1 つの領域として引ける輪郭は、引き算のまま型板に載せない** — 引き算で既に 1 回になる。
+        // 畳める形 (矩形・楕円・弧) は雛形が引き算で積むので、1 つ目を直に描くときも同じ積み方にして、
+        // 畳むかどうかで頂点の数も絵も変えない (``draw(folding:at:outline:)``)。描く呼び出しも増やさない
+        let stenciled = stencilsFlatStroke && !outline.strokesAsOneRegion
+        if stenciled { flatStrokeFigure?.stenciled = true }
+        if overlaps, !stenciled {
             strokeCarved(
                 outline, half: half, chamfers: chamfers, thin: nil, discSegments: discSegments)
         } else {
@@ -652,7 +718,8 @@ extension Canvas {
             carving: carving, offset: offset, transform: transform, color: color, uv: uv)
     }
 
-    /// 線の片の重なりが絵に出るか。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
+    /// 線の片の重なりが絵に出るか — 出るなら、その場で引く線は型板で 1 回だけ混ぜ (``stencilsFlatStroke``)、
+    /// 型板に載せない線は片の重なりを引いて積む。**出ないのは、重ねて混ぜても同じ色になる線だけ** —
     /// 組み込みの断片で、不透明の色を `blend` / `lightest` / `darkest` で置くか、`replace` で
     /// 置き換える線である。
     ///
