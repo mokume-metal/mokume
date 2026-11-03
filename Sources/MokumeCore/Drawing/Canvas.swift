@@ -266,6 +266,14 @@ public final class Canvas {
     /// 色を持つ字形は絵と同じく透けた画素をそのまま写す (``appendGlyphQuad(_:penX:baseline:color:inDeferredRun:)``)。
     /// 列を閉じるときに下ろす。
     var openBatchGlyphColored: Bool?
+    /// 開いている平面の列の、型板で 1 回だけ混ぜる線の区間 (頂点の並びの番号・``Batch/strokeStencilSections``)。
+    /// 列を閉じるときに列へ移す ([#3579])。
+    ///
+    /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
+    var flatStrokeStencilSections: [Range<Int>] = []
+    /// 組んでいる平面の線の図形 (``strokingOneFigure(_:)``)。始まりの頂点の番号と、型板に載せる片を
+    /// 積んだか。図形の外では `nil`。
+    var flatStrokeFigure: (start: Int, stenciled: Bool)?
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///
@@ -2296,7 +2304,8 @@ public final class Canvas {
         /// 描く側 (``Canvas/encodeBatches(into:prepared:)``) は列を「前・区間・後」に割り、区間を
         /// 印 (``ShapePipeline/strokeMarkDepthState``) → 消し描き (``ShapePipeline/strokeEraseDepthState``) の
         /// 2 回で描く。持つのは、その場で組む立体の線のうち重なりが絵に出るもの
-        /// (``Canvas/solidStrokeOverlapsShow``) を積んだ列だけである。
+        /// (``Canvas/solidStrokeOverlapsShow``) を積んだ列と、その場で引く平面の線のうち型板に載せるもの
+        /// (``Canvas/stencilsFlatStroke``・原始形 1 つが区間 1 つ・#3579) を積んだ平面の列だけである。
         ///
         /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
         var strokeStencilSections: [Range<Int>] = []
@@ -3420,6 +3429,9 @@ public final class Canvas {
         list(&coverageSpans, counted: false)
         if emptying { openBatchHasThinCoverage = false }
         if emptying { openBatchGlyphColored = nil }
+        // 線の区間は頂点の位置を指す。頂点ごと捨てたので、区間も要らない
+        list(&flatStrokeStencilSections, counted: false)
+        if emptying { flatStrokeFigure = nil }
         list(&recordedStrokeRanges)
         list(&recordedFillRanges)
         list(&recordedGeometryForms, counted: false)
@@ -5293,9 +5305,11 @@ public final class Canvas {
         /// 列が使う、特化した立体の組 (``Batch/solidVariant``・光の枝を外す / ブレンドを外す)。
         /// **ここに無い鍵の列は既定の組で描く** (組めなかった鍵・#1795)。積む側は錠も辞書も引かずに、これを引くだけ。
         let solidVariantStates: [ShapePipeline.SolidVariantKey: any MTLRenderPipelineState]
-        /// 線の印を消し描きするパイプライン (``ShapePipeline/strokeEraseState()``)。1 回だけ混ぜる線の区間
-        /// (``Batch/strokeStencilSections``) を持つ列があるフレームだけが組んで持つ。
+        /// 立体の線の印を消し描きするパイプライン (``ShapePipeline/strokeEraseState(vertexFunctionName:)``)。
+        /// 1 回だけ混ぜる線の区間 (``Batch/strokeStencilSections``) を持つ立体の列があるフレームだけが組んで持つ。
         let strokeEraseState: (any MTLRenderPipelineState)?
+        /// 平面の線の印を消し描きするパイプライン。区間を持つ平面の列があるフレームだけが組んで持つ (#3579)。
+        let flatStrokeEraseState: (any MTLRenderPipelineState)?
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -5333,8 +5347,11 @@ public final class Canvas {
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
             perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
             sweeps: try uploadSweeps(), solidVariantStates: variants.states,
-            strokeEraseState: batches.contains { !$0.strokeStencilSections.isEmpty }
-                ? try pipeline.strokeEraseState() : nil)
+            strokeEraseState: batches.contains { $0.source == .solid && !$0.strokeStencilSections.isEmpty }
+                ? try pipeline.strokeEraseState() : nil,
+            flatStrokeEraseState: batches.contains { $0.source == .flat && !$0.strokeStencilSections.isEmpty }
+                ? try pipeline.strokeEraseState(vertexFunctionName: ShapePipeline.flatVertexFunctionName)
+                : nil)
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -5395,8 +5412,8 @@ public final class Canvas {
         var detailIndex = 0
         for (index, batch) in batches.enumerated() {
             let run = batch.run
-            // 立体の列を描くパイプライン。線の区間 (``Batch/strokeStencilSections``) を描いた後に戻す
-            var solidState: (any MTLRenderPipelineState)?
+            // 列を描くパイプライン。線の区間 (``Batch/strokeStencilSections``) を描いた後に戻す
+            var batchState: (any MTLRenderPipelineState)?
             if batch.replacesSurface != pinnedFar {
                 pinnedFar = batch.replacesSurface
                 encoder.setViewport(viewport(pinnedFar: pinnedFar))
@@ -5405,7 +5422,8 @@ public final class Canvas {
             // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
             switch batch.source {
             case .flat:
-                use((run.paint.shader?.states ?? pipeline.states).drawing(batch))
+                batchState = (run.paint.shader?.states ?? pipeline.states).drawing(batch)
+                use(batchState!)
                 use(depth: pipeline.flatDepthState)
                 bind(geometry.flatVertices.gpuAddress, ShapePipeline.vertexBufferIndex)
                 bind(geometry.coverages.gpuAddress, ShapePipeline.coverageBufferIndex)
@@ -5435,9 +5453,9 @@ public final class Canvas {
                 // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の枝を
                 // 外した断片で (#1795)、不透明と分かる塗りはブレンドなしで (#2366) 描く
                 if let key = batch.solidVariant, let state = variantState(for: key) {
-                    solidState = state
+                    batchState = state
                 } else {
-                    solidState =
+                    batchState =
                         (batch.strokeGeometry != nil
                             ? pipeline.solidStrokeStates
                             : batch.usesUnitShape
@@ -5445,7 +5463,7 @@ public final class Canvas {
                                 : (run.paint.shader?.solidStates ?? pipeline.solidStates))
                         .drawing(batch)
                 }
-                use(solidState!)
+                use(batchState!)
                 use(
                     depth: batch.replacesSurface
                         ? pipeline.replaceDepthState
@@ -5547,12 +5565,20 @@ public final class Canvas {
                 memory.forgetCullMode()
             } else if !batch.strokeStencilSections.isEmpty, batch.strokeGeometry == nil,
                 batch.ownedIndices == nil, !batch.replacesSurface,
-                let eraseState = prepared.strokeEraseState, let solidState
+                let eraseState = batch.source == .flat
+                    ? prepared.flatStrokeEraseState : prepared.strokeEraseState,
+                let batchState
             {
                 // 1 回だけ混ぜる線の区間を持つ列は、「前・区間・後」に割って描く ([ADR-0046])。区間は
-                // 印 → 消し描きの 2 回で描き、描き終えたら列の組と奥行きの扱いへ戻す
-                let solidDepth =
-                    batch.readsDepthOnly ? pipeline.solidReadOnlyDepthState : pipeline.solidDepthState
+                // 印 → 消し描きの 2 回で描き、描き終えたら列の組と奥行きの扱いへ戻す。平面の列は奥行きを
+                // 比べない印と消し描きで描く (#3579)
+                let flat = batch.source == .flat
+                let batchDepth =
+                    flat
+                    ? pipeline.flatDepthState
+                    : batch.readsDepthOnly ? pipeline.solidReadOnlyDepthState : pipeline.solidDepthState
+                let markDepth = flat ? pipeline.flatStrokeMarkDepthState : pipeline.strokeMarkDepthState
+                let eraseDepth = flat ? pipeline.flatStrokeEraseDepthState : pipeline.strokeEraseDepthState
                 func draw(_ range: Range<Int>) {
                     guard !range.isEmpty else { return }
                     encodeSolidDraw(
@@ -5568,13 +5594,13 @@ public final class Canvas {
                     let clamped = section.clamped(to: cursor..<whole.upperBound)
                     guard !clamped.isEmpty else { continue }
                     draw(cursor..<clamped.lowerBound)
-                    use(depth: pipeline.strokeMarkDepthState)
+                    use(depth: markDepth)
                     draw(clamped)
                     use(eraseState)
-                    use(depth: pipeline.strokeEraseDepthState)
+                    use(depth: eraseDepth)
                     draw(clamped)
-                    use(solidState)
-                    use(depth: solidDepth)
+                    use(batchState)
+                    use(depth: batchDepth)
                     cursor = clamped.upperBound
                 }
                 draw(cursor..<whole.upperBound)

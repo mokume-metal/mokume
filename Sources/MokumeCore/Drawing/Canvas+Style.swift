@@ -318,12 +318,15 @@ extension Canvas {
         // 列の頂点」を指す置き場所を足してしまう
         let template = openFlat
         openFlat = nil
-        // 後ろから探す。閉包を標準ライブラリへ渡すと、列ごとに隔離の実行時検査を払う (#1779)
-        var start = 0
-        for batch in batches.reversed() where batch.source == .flat {
-            start = batch.run.start + batch.run.count
-            break
+        // **線の区間は閉じる列が持っていく** (#3579)。図形の途中で閉じたら、ここまでを区間にして、続きは
+        // 次の列で数える
+        if let figure = flatStrokeFigure {
+            if figure.stenciled { noteFlatStrokeSection(from: figure.start) }
+            flatStrokeFigure?.start = vertices.count
         }
+        let sections = flatStrokeStencilSections
+        flatStrokeStencilSections.removeAll(keepingCapacity: true)
+        let start = openFlatRunStart
         let count = vertices.count - start
         guard count > 0 else { return }
         batches.append(
@@ -350,12 +353,22 @@ extension Canvas {
                 instanceCount: template.map { flatInstances.count - $0.instanceStart } ?? 1,
                 strokeStart: template?.strokeStart ?? .max))
         batches[batches.count - 1].thinCoverage = openBatchHasThinCoverage
+        batches[batches.count - 1].strokeStencilSections = sections
         // 細い塗りの雛形の列は、塗りの頂点を頂点段で組む (#2208)
         if let template, template.key.thinFillCapacity > 0 {
             batches[batches.count - 1].thinFillExpands = true
             batches[batches.count - 1].thinFillStart = template.thinFillStart
             batches[batches.count - 1].thinFillUV = template.thinFillUV
         }
+    }
+
+    /// 開いている平面の列が始まる頂点の番号 (最後に閉じた平面の列の終わり)。
+    var openFlatRunStart: Int {
+        // 後ろから探す。閉包を標準ライブラリへ渡すと、列ごとに隔離の実行時検査を払う (#1779)
+        for batch in batches.reversed() where batch.source == .flat {
+            return batch.run.start + batch.run.count
+        }
+        return 0
     }
 
     /// 断片へ渡す面を、いま列に写し取る ([#407](https://github.com/mokume-metal/mokume/issues/407))。

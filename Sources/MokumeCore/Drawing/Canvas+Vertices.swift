@@ -1189,21 +1189,30 @@ extension Canvas {
 
     /// 線を出す。**穴の縁も輪郭を持つ。**
     ///
-    /// **`.quads` の四角 1 枚の輪郭は、`quad()` と同じ規則で混ぜる** ([#1910])。辺が交差しない 4 点は
-    /// 線全体を 1 回だけ混ぜ、辺が交差する 4 点 (砂時計) は交点で 2 回混ぜる。四角どうしは別々の輪郭
-    /// なので、重なれば 2 回混ぜる。`.polygon` などの周は変えない (任意多角形は、線に沿って離れた
-    /// 部分が交わる所を別々の線と同じく 2 回混ぜる・[#1536])。
+    /// **原始形 1 つ (外周・穴・それぞれの破線の片) が 1 つの図形**で、平面の半透明の線はその線全体を型板で
+    /// 1 回だけ混ぜる ([ADR-0046]・[#3579])。自己交差も、外周と穴の線が接する所も 1 回になる。`.quads` の
+    /// 四角は 1 枚ずつ別の原始形なので、重なれば 2 回混ぜる。
     ///
+    /// 型板に載せない線 (保持する形の記録・細い片・``Canvas/stencilsFlatStroke``) は、これまでどおり片の
+    /// 重なりを引いて積む。`.quads` の四角 1 枚の輪郭は `quad()` と同じ規則で引き ([#1910])、任意多角形は
+    /// 線に沿って離れた部分が交わる所を 2 回混ぜる ([#1536])。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
     /// [#1910]: https://github.com/mokume-metal/mokume/issues/1910
+    /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     private func emitStroke(
         _ primitive: Primitive, points: [BuildingVertex], placed: [PlacedVertex]
     ) {
-        strokeRing(
-            primitive.ring, closed: primitive.isClosed, points: points, placed: placed,
-            isQuad: primitive.splitsAsQuad)
-        for hole in primitive.holes {
-            strokeRing(hole[...], closed: true, points: points, placed: placed)
+        // **原始形 1 つが 1 つの図形** — 平面の半透明の線は、外周と穴 (と破線の片) の全体を型板で
+        // 1 回だけ混ぜる (``strokingOneFigure(_:)``・#3579)
+        strokingOneFigure {
+            strokeRing(
+                primitive.ring, closed: primitive.isClosed, points: points, placed: placed,
+                isQuad: primitive.splitsAsQuad)
+            for hole in primitive.holes {
+                strokeRing(hole[...], closed: true, points: points, placed: placed)
+            }
         }
     }
 
