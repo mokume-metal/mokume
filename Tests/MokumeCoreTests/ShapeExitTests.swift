@@ -227,6 +227,9 @@ enum ShapeExit {
             "openBatchHasThinCoverage": "openSource と同じ (列を閉じるときに Batch.thinCoverage へ移して下ろす)",
             // #3111 (置き換えで積んだ字の列に、色を持つ字形と単色の字形を混ぜない)
             "openBatchGlyphColored": "openSource と同じ (列を閉じるときに下ろす)",
+            // #3579 (平面の線を型板で 1 回だけ混ぜる区間)
+            "flatStrokeStencilSections": "openSource と同じ (列を閉じるときに Batch.strokeStencilSections へ移して下ろす)。記録の間は足さない (stencilsFlatStroke が偽) ので、記録の前に足した区間は抜く頂点より前を指す",
+            "flatStrokeFigure": "平面の線の図形を 1 つ組む間だけ立つ (strokingOneFigure)。形の組み立ての出入口では動かない",
             "solidStrokeCoverage": "立体の線を 1 本組む間だけ使う被覆。次の線を組む前に書き直す",
             "solidStrokeIsLonePoint": "立体の線を 1 本組む間だけ使う印。次の線を組む前に書き直す",
             "templateStrokeMatrix": "畳みの雛形を組む間だけ立つ。記録の間は畳まない (unused と同じ理由)",

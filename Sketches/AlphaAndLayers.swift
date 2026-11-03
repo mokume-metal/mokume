@@ -11,8 +11,8 @@ import mokume
 /// 中間面だけに暗い縁や二重の薄まり、透明部の黒が出ないかを見る。
 /// multiply 等の背景依存の合成に、この比較条件をそのまま広げない。
 ///
-/// 下段は半透明線の接続部・自己交差・別々の線。接続部は一度の合成、線に沿って離れた
-/// 部分の自己交差と別々の線の交差は重なるのが現行の約束 (#2209)。3D の並び替えは扱わない。
+/// 下段は半透明線の接続部・自己交差・別々の線。1 つの図形の線は接続部も自己交差も一度の合成で、
+/// 別々の線の交差は重なるのが現行の約束 (#2209・#3579)。3D の並び替えは扱わない。
 final class AlphaAndLayers: Sketch {
     private var pad: Canvas?
     private var feather: Image?
@@ -114,7 +114,7 @@ final class AlphaAndLayers: Sketch {
         fill(230)
         textSize(16)
         text("stroke alpha 0.5: connected join (once)", 20, 940)
-        text("self crossing (overlap)", 430, 940)
+        text("self crossing (once)", 430, 940)
         text("separate lines (overlap)", 820, 940)
         noFill()
         stroke(255, 128, 40, 127.5)

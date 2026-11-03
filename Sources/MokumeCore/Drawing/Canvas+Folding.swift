@@ -294,6 +294,12 @@ extension Canvas {
             // 閉じていない末尾**にいるときだけで、上の 2 つの条件がそれを見ている
             vertices.removeLast(vertices.count - waiting.vertexStart)
             trimCoverage(to: waiting.vertexStart)
+            // 抜いた頂点を指す線の区間も捨てる (#3579)。残すと、後に積む頂点を区間として描く。いまは届かない
+            // 備えである — 畳める形 (矩形・楕円・弧) の輪郭は 1 つの領域として引き算のまま積み、区間を
+            // 持たない (``stencilsFlatStroke``)
+            while let last = flatStrokeStencilSections.last, last.upperBound > waiting.vertexStart {
+                flatStrokeStencilSections.removeLast()
+            }
             pendingFlat = nil
             openFlatTemplate(key: joined, outline: outline)
             flatInstances.append(waiting.placement)
