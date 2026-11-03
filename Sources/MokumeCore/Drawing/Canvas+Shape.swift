@@ -1132,13 +1132,20 @@ extension Canvas {
     ///
     /// 鏡映する置き場所では、添字を持たない区間の三角形を 1 枚ずつ裏返す (焼いた頂点と同じ)。
     ///
+    /// **組み直した線のうち重なりが絵に出るもの (``solidStrokeOverlapsShow(alpha:)``) は、線 1 本を 1 回だけ
+    /// 混ぜる区間として列に覚える** ([ADR-0046]・[#3577])。その場で組む線と同じ約束で、置く向きによらず、
+    /// 折れ目・端・稜の集まる点も、奥行きの違う稜が画面で交わる所も 1 回になる。区間は塗りの部品の外に
+    /// あり、同じ列の部品は裏 → 表のまま描く (`Canvas.encodeBackThenFront`)。
+    ///
     /// **組み立ての中では組み直さず、焼いた頂点のまま線を外側の記録へ渡す。** 置き場所が決まる
     /// のは外側の形を置くときなので、そこで組み直す (``createShape(_:)``)。
     ///
     /// - Parameter strokes: 区間の中の線。`vertexStart` は `vertices` の番号 (形の頂点の並びの番号)
     ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
+    /// [#3577]: https://github.com/mokume-metal/mokume/issues/3577
     private func appendPlacedSolidVertices(
         _ vertices: ArraySlice<SolidVertex>, indices: ArraySlice<UInt32>?, strokes: [SolidStrokePiece],
         placedBy instance: SolidInstance, parts: [SolidPart]
@@ -1161,7 +1168,8 @@ extension Canvas {
         var placed: [SolidVertex] = []
         placed.reserveCapacity(vertices.count)
         var numbers = [Int](repeating: -1, count: vertices.count)
-        var blocks: [(recorded: Range<Int>, placed: Range<Int>)] = []
+        // `stenciled` は 1 回だけ混ぜる線か (ADR-0046・`solidStrokeOverlapsShow(alpha:)`)
+        var blocks: [(recorded: Range<Int>, placed: Range<Int>, stenciled: Bool)] = []
         var cursor = lower
         func appendBaked(upTo end: Int) {
             while cursor < end {
@@ -1188,7 +1196,11 @@ extension Canvas {
                 placed.append(vertex)
             }
             numbers[piece.vertexStart - lower] = start
-            blocks.append((piece.vertexStart..<(piece.vertexStart + piece.vertexCount), start..<placed.count))
+            // 置き場所の色を掛けた不透明度で決める — 不透明の線も、透けた色で置けば重なりが絵に出る。
+            // 細い線 (被覆 < 1) は段 3 (#3578) まで範囲の外
+            blocks.append((
+                piece.vertexStart..<(piece.vertexStart + piece.vertexCount), start..<placed.count,
+                coverage == 1 && solidStrokeOverlapsShow(alpha: prototype.color.w)))
             cursor = piece.vertexStart + piece.vertexCount
         }
         appendBaked(upTo: vertices.endIndex)
@@ -1197,6 +1209,8 @@ extension Canvas {
         // 番号を並べ、残りは捨てる。記録した読む順の位置 → 差し替えた位置も控える (部品を写すため)
         var order: [UInt32]?
         var positions: [Int] = []
+        // 1 回だけ混ぜる線の区間。添字を持つなら差し替えた読む順の並び、持たなければ並びの位置で数える
+        var strokeSections: [Range<Int>] = []
         if let indices {
             var heads: [Int: Int] = [:]
             for (offset, block) in blocks.enumerated() { heads[block.recorded.lowerBound] = offset }
@@ -1207,12 +1221,16 @@ extension Canvas {
                 positions.append(built.count)
                 let number = Int(index)
                 if let block = heads[number] {
+                    let start = built.count
                     for placedIndex in blocks[block].placed { built.append(UInt32(placedIndex)) }
+                    if blocks[block].stenciled { strokeSections.append(start..<built.count) }
                 } else if numbers[number - lower] >= 0 {
                     built.append(UInt32(numbers[number - lower]))
                 }
             }
             order = built
+        } else {
+            for block in blocks where block.stenciled { strokeSections.append(block.placed) }
         }
         // 塗りの部品を差し込んだ後の位置へ写す (部品は塗りの区間で、線の区間を跨がない)
         var movedParts: [SolidPart] = []
@@ -1238,7 +1256,7 @@ extension Canvas {
         appendPlacedSolidVertices(
             placed[...], indices: order?[...], placedBy: .identity, parts: movedParts,
             showsBackFaces: placementShowsBackFaces(instance, styled: false),
-            mirrored: instance.isMirrored)
+            mirrored: instance.isMirrored, strokeSections: strokeSections)
         if thin { openBatchHasThinCoverage = true }
     }
 

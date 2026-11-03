@@ -170,6 +170,11 @@ enum SolidSweep {
     struct Pass: Equatable {
         var range: Range<Int>
         var cull: MTLCullMode
+        /// 1 回だけ混ぜる線の区間か (``Canvas/Batch/strokeStencilSections``・[ADR-0046])。描く側は印 → 消し描きの
+        /// 2 回で描く。
+        ///
+        /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+        var stroke = false
     }
 
     /// 置き場所 1 つを描く区間を、描く順に並べる。
@@ -177,21 +182,41 @@ enum SolidSweep {
     /// 部品の外の区間と立っていない部品は列の捨て方 (`plainCull`) で 1 回、立っている部品は
     /// `.front` → `.back` (内向きなら `.back` → `.front`) の 2 回で描く。表の巻き方は列が決めてある
     /// (``Canvas/Batch/frontFacing``) ので、`.front` を捨てれば裏の面、`.back` を捨てれば表の面になる。
-    static func passes(whole: Range<Int>, shown: [SolidPart], plainCull: MTLCullMode) -> [Pass] {
+    ///
+    /// `sections` は 1 回だけ混ぜる線の区間 (昇順・``Canvas/Batch/strokeStencilSections``)。部品の外の区間を
+    /// さらに区間の前・区間・後に割り、区間には ``Pass/stroke`` を立てる。線は部品の外に積まれる
+    /// (部品は塗りの区間) ので、部品に掛かる区間は部品の外の分だけを読む。
+    static func passes(
+        whole: Range<Int>, shown: [SolidPart], plainCull: MTLCullMode, sections: [Range<Int>] = []
+    ) -> [Pass] {
         var passes: [Pass] = []
+        var section = 0
+        func appendPlain(_ range: Range<Int>) {
+            var cursor = range.lowerBound
+            while section < sections.count, sections[section].lowerBound < range.upperBound {
+                let clamped = sections[section].clamped(to: cursor..<range.upperBound)
+                if !clamped.isEmpty {
+                    if clamped.lowerBound > cursor {
+                        passes.append(Pass(range: cursor..<clamped.lowerBound, cull: plainCull))
+                    }
+                    passes.append(Pass(range: clamped, cull: plainCull, stroke: true))
+                    cursor = clamped.upperBound
+                }
+                // 区間が部品を跨いで続くなら、次の部品の外の区間でも読む
+                guard sections[section].upperBound <= range.upperBound else { break }
+                section += 1
+            }
+            if cursor < range.upperBound { passes.append(Pass(range: cursor..<range.upperBound, cull: plainCull)) }
+        }
         var cursor = whole.lowerBound
         for part in shown {
-            if part.range.lowerBound > cursor {
-                passes.append(Pass(range: cursor..<part.range.lowerBound, cull: plainCull))
-            }
+            if part.range.lowerBound > cursor { appendPlain(cursor..<part.range.lowerBound) }
             for cull in part.insideOut ? [MTLCullMode.back, .front] : [.front, .back] {
                 passes.append(Pass(range: part.range, cull: cull))
             }
             cursor = part.range.upperBound
         }
-        if cursor < whole.upperBound {
-            passes.append(Pass(range: cursor..<whole.upperBound, cull: plainCull))
-        }
+        if cursor < whole.upperBound { appendPlain(cursor..<whole.upperBound) }
         return passes
     }
 

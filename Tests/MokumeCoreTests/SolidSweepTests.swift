@@ -154,6 +154,40 @@ struct SolidSweepTests {
         #expect(passes == [.init(range: 0..<30, cull: .none)])
     }
 
+    /// 1 回だけ混ぜる線の区間 (#3577) は部品の外の区間を割り、印 → 消し描きで描く印が立つ。部品と区間の
+    /// 順は記録した順のまま。部品に掛かる分は読まない。
+    @Test("線の区間は部品の外の区間を割り、記録した順のまま挟まる")
+    func strokeSectionsSplitTheGaps() {
+        let passes = SolidSweep.passes(
+            whole: 0..<36, shown: [part(6..<12)], plainCull: .none,
+            sections: [0..<3, 12..<18, 21..<27, 30..<33])
+        #expect(
+            passes == [
+                .init(range: 0..<3, cull: .none, stroke: true),
+                .init(range: 3..<6, cull: .none),
+                .init(range: 6..<12, cull: .front), .init(range: 6..<12, cull: .back),
+                .init(range: 12..<18, cull: .none, stroke: true),
+                .init(range: 18..<21, cull: .none),
+                .init(range: 21..<27, cull: .none, stroke: true),
+                .init(range: 27..<30, cull: .none),
+                .init(range: 30..<33, cull: .none, stroke: true),
+                .init(range: 33..<36, cull: .none),
+            ])
+        // 部品に掛かる区間は部品の外の分だけを読み、続く区間も落とさない
+        let straddling = SolidSweep.passes(
+            whole: 0..<24, shown: [part(6..<12)], plainCull: .back, sections: [3..<15, 18..<21])
+        #expect(
+            straddling == [
+                .init(range: 0..<3, cull: .back),
+                .init(range: 3..<6, cull: .back, stroke: true),
+                .init(range: 6..<12, cull: .front), .init(range: 6..<12, cull: .back),
+                .init(range: 12..<15, cull: .back, stroke: true),
+                .init(range: 15..<18, cull: .back),
+                .init(range: 18..<21, cull: .back, stroke: true),
+                .init(range: 21..<24, cull: .back),
+            ])
+    }
+
     // MARK: - 添字の列の中身
 
     /// 模擬の描画で、1 枚の三角形が表を向くか。面積 0 なら `nil` (どの捨て方でも画素を生まない)。

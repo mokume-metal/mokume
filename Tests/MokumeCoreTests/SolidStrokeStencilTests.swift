@@ -386,6 +386,289 @@ struct SolidStrokeStencilTests {
         #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
     }
 
+    // MARK: - 保持した形 (#3577・#2183 の条件 2)
+
+    /// 前のフレームで形を記録し、描くフレームでいまの変換のうえに置く。記録と置く描き切りを分けるのは、
+    /// 同じフレームで記録すると記録が列を閉じて、置くときの経路の一部を外れるため。
+    private func placingRetained(
+        sweep: SolidSweepPolicy = .automatic, record: (Canvas) -> Void, place: (Canvas, Shape) -> Void
+    ) throws -> (pixels: PixelBuffer, batches: [Canvas.Batch]) {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        canvas.sweepPolicy = sweep
+        var made: Shape?
+        try canvas.draw { made = canvas.createShape { record(canvas) } }
+        let shape = try #require(made)
+        var batches: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.background(black)
+            place(canvas, shape)
+            canvas.closeBatch()
+            batches = canvas.batches
+        }
+        return (try canvas.target.readPixels(), batches)
+    }
+
+    /// 前の対角 (奥行き 40) と後ろの対角 (奥行き -40) が画面の (80, 80) で交わる、閉じた周
+    /// (#2183 の条件 2 の例)。`flipped` なら `rotateY(π)` を前に置き、奥の対角を先に積む。`indexed` なら
+    /// 同じ周を `index()` で読む順に並べ、添字の列に積む。
+    private static func crossedRing(_ canvas: Canvas, indexed: Bool = false) {
+        canvas.beginShape()
+        for (x, y, z) in [(-40, -40, 40), (40, 40, 40), (40, -40, -40), (-40, 40, -40)]
+            as [(Float, Float, Float)]
+        {
+            canvas.vertex(x, y, z)
+        }
+        if indexed { for number in 0..<4 { canvas.index(number) } }
+        canvas.endShape(.close)
+    }
+
+    @Test("保持した box(70) を置いても、稜が画面で交わる所はどちらの向きでも 1 回だけ混ぜる", arguments: [false, true])
+    func retainedBoxCrossingsMixOnce(flipped: Bool) throws {
+        var crossings: [Crossing] = []
+        let (pixels, _) = try placingRetained(
+            record: { canvas in
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(4)
+                canvas.box(70)
+            },
+            place: { canvas, crate in
+                Self.placeRotatedBox(canvas, flipped: flipped)
+                crossings = Self.boxCrossings(canvas, size: 70)
+                canvas.shape(crate)
+            })
+        for expected in [SIMD2<Float>(65.6, 67.3), SIMD2<Float>(87.0, 98.8)] {
+            #expect(crossings.contains { simd_distance($0.screen, expected) < 0.2 }, "\(crossings)")
+        }
+        for crossing in crossings {
+            let value = red(pixels, at: crossing.screen)
+            #expect(abs(value - Self.once) < 0.01, "交点 \(crossing.screen) は \(value)")
+        }
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 奥行きのある `beginShape` の周は、その場でも保持した形でも、前と後ろの対角の交点 (80, 80) を
+    /// 向きによらず 1 回だけ混ぜる。保持した形の周は `index()` で添字の列に積み、組み直した線の区間を
+    /// 読む順の並びへ写す口も通す。
+    @Test(
+        "奥行きのある周の対角が画面で交わる所は、その場でも保持した形でも 1 回だけ混ぜる",
+        arguments: [false, true], [false, true])
+    func crossedRingMixesOnce(retained: Bool, flipped: Bool) throws {
+        func orient(_ canvas: Canvas) {
+            canvas.translate(80, 80, 0)
+            if flipped { canvas.rotateY(Float.pi) }
+        }
+        let pixels: PixelBuffer
+        if retained {
+            let placed = try placingRetained(
+                record: { canvas in
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0, 128)
+                    canvas.strokeWeight(10)
+                    Self.crossedRing(canvas, indexed: true)
+                },
+                place: { canvas, ring in
+                    orient(canvas)
+                    canvas.shape(ring)
+                })
+            pixels = placed.pixels
+            // 保持した周は添字の列に積まれ、区間を読む順の並びで持つ
+            #expect(placed.batches.contains { $0.run.isIndexed && !$0.strokeStencilSections.isEmpty })
+        } else {
+            pixels = try translucent { canvas in
+                canvas.strokeWeight(10)
+                orient(canvas)
+                Self.crossedRing(canvas)
+            }
+        }
+        #expect(abs(pixels[80, 80].red - Self.once) < 0.01, "交点 (80, 80) は \(pixels[80, 80].red)")
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    @Test("読み込んだモデルの稜線も、その場でも保持した形でも 1 回だけ混ぜる", arguments: [false, true])
+    func modelEdgesMixOnce(retained: Bool) throws {
+        func orient(_ canvas: Canvas) {
+            // 整えたモデルはいちばん長い辺が面の半分 (80) になる (`loadModel` の `normalize`)
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.4)
+            canvas.rotateY(0.7)
+        }
+        let pixels: PixelBuffer
+        if retained {
+            pixels = try placingRetained(
+                record: { canvas in
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0, 128)
+                    canvas.strokeWeight(8)
+                    if let pyramid = try? canvas.loadModel(ModelFixture.pyramid) { canvas.model(pyramid) }
+                },
+                place: { canvas, made in
+                    orient(canvas)
+                    canvas.shape(made)
+                }
+            ).pixels
+        } else {
+            let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+            let pyramid = try canvas.loadModel(ModelFixture.pyramid)
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(8)
+                orient(canvas)
+                canvas.model(pyramid)
+            }
+            pixels = try canvas.target.readPixels()
+        }
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 鏡映した置き場所では、焼いた三角形の巻き方を戻す (``Canvas/reverseTriangles(in:from:)``)。
+    /// 区間は三角形の並びの中で動かないので、そのまま 1 回だけ混ぜる。
+    @Test("鏡映して置いた保持した形の線も 1 回だけ混ぜる")
+    func mirroredRetainedBoxMixesOnce() throws {
+        let (pixels, _) = try placingRetained(
+            record: { canvas in
+                canvas.noFill()
+                canvas.stroke(255, 0, 0, 128)
+                canvas.strokeWeight(8)
+                canvas.box(80)
+            },
+            place: { canvas, crate in
+                canvas.translate(80, 80, 0)
+                canvas.scale(-1, 1, 1)
+                canvas.shape(crate)
+            })
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 半透明の塗りと半透明の線を持つ保持した箱を 2 か所に置く (#3577 の条件 4)。塗りの裏 → 表は
+    /// 部品の描き方 (``Canvas/Batch/backFaceParts``) で、線の区間は同じ列の部品の外で 1 回だけ混ぜる。
+    /// 塗りは青だけ・線は赤だけなので、赤で線の回数を、青で塗りの順を読める。`.always` は、裏 → 表の描き方を
+    /// 1 回のインスタンス描画に畳む口 (``SolidSweep``) を費用によらず使う方針で、区間を持つ列は畳まずに描く。
+    @Test(
+        "半透明の塗りと線を持つ保持した箱を 2 か所に置いても、線は 1 回・塗りは裏 → 表のまま",
+        arguments: [SolidSweepPolicy.automatic, .always])
+    func retainedTranslucentBoxesKeepFillOrder(sweep: SolidSweepPolicy) throws {
+        func picture(stroked: Bool) throws -> (pixels: PixelBuffer, batches: [Canvas.Batch]) {
+            try placingRetained(
+                sweep: sweep,
+                record: { canvas in
+                    canvas.fill(0, 0, 255, 128)
+                    if stroked {
+                        canvas.stroke(255, 0, 0, 128)
+                        canvas.strokeWeight(6)
+                    } else {
+                        canvas.noStroke()
+                    }
+                    canvas.box(44)
+                },
+                place: { canvas, crate in
+                    canvas.rotateX(0.5)
+                    canvas.rotateY(0.6)
+                    canvas.shape(crate, at: [Placement(x: 45, y: 70), Placement(x: 115, y: 70)])
+                })
+        }
+        let stroked = try picture(stroked: true)
+        let bare = try picture(stroked: false)
+        #expect(stroked.batches.contains { $0.drawsBackThenFront && !$0.strokeStencilSections.isEmpty })
+        #expect(!painted(stroked.pixels).isEmpty)
+        #expect(overpainted(stroked.pixels).count == 0, "重ね塗り \(overpainted(stroked.pixels).count) 画素")
+        // 線の無い所の塗りは、線を持たない同じ箱と画素で一致する (裏 → 表の順が崩れていない)
+        let strokePixels = painted(stroked.pixels)
+        var differing = 0
+        var compared = 0
+        for y in 0..<160 {
+            for x in 0..<160 where !strokePixels.contains(SIMD2(x, y)) && bare.pixels[x, y].blue > 0.05 {
+                compared += 1
+                if abs(stroked.pixels[x, y].blue - bare.pixels[x, y].blue) > 1e-4 { differing += 1 }
+            }
+        }
+        #expect(compared > 500)
+        #expect(differing == 0, "塗りの違う画素 \(differing) / \(compared)")
+    }
+
+    // MARK: - shader() を付けた線 (#2184)
+
+    /// 断片が `in.color * 0.5` を返す線。色は不透明の赤で、混ぜる量は `stroke(255, 0, 0, 128)` と同じ。
+    private func halved(_ body: (Canvas) -> Void) throws -> PixelBuffer {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        let shader = try canvas.makeShader(
+            "float4 paint(Fragment in, Values values) { return in.color * 0.5; }")
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(255, 0, 0)
+            canvas.shader(shader)
+            body(canvas)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    @Test("半透明を返す断片の閉じた 4 点は、角も 1 回だけ混ぜ、平面の同じ 4 点と同じになる")
+    func shadedSquareMixesOnce() throws {
+        let solid = try halved { canvas in
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas)
+        }
+        let flat = try halved { canvas in
+            canvas.strokeWeight(20)
+            Self.closedSquare(canvas, depth: false)
+        }
+        #expect(overpainted(solid).count == 0, "重ね塗り \(overpainted(solid).count) 画素")
+        for (x, y) in [(45, 45), (115, 115), (80, 45)] {
+            #expect(abs(solid[x, y].red - Self.once) < 0.01, "(\(x), \(y)) は \(solid[x, y].red)")
+            #expect(solid[x, y].red == flat[x, y].red, "(\(x), \(y)) が平面と違う")
+        }
+        #expect(overpainted(flat).count == 0)
+    }
+
+    @Test("半透明を返す断片の box(80) の稜線も、稜の集まる角を 1 回だけ混ぜる")
+    func shadedBoxMixesOnce() throws {
+        let pixels = try halved { canvas in
+            canvas.strokeWeight(8)
+            canvas.translate(80, 80, 0)
+            canvas.box(80)
+        }
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    @Test("半透明を返す断片でも、別々の図形の線が交わる所は 2 回混ぜる")
+    func shadedSeparateShapesMixTwice() throws {
+        let pixels = try halved { canvas in
+            canvas.strokeWeight(10)
+            canvas.strokeCap(.square)
+            Self.segment(canvas, SIMD2(40, 80), SIMD2(120, 80))
+            Self.segment(canvas, SIMD2(80, 40), SIMD2(80, 120))
+        }
+        #expect(abs(pixels[80, 80].red - 0.617) < 0.01, "交点 (80, 80) は \(pixels[80, 80].red)")
+    }
+
+    // MARK: - 範囲の外
+
+    /// `replace` の太い線 (被覆 1) は下地を読まず、重ねても同じ色に置き換わるので型板を通さない
+    /// (#3577 の完了条件 6 の差し替え・2026-11-03)。下地を読む細い線は段 3 (#3578) で入る。
+    @Test("replace の太い立体の線は、区間を持たない")
+    func replacedStrokeHasNoSection() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var sections = -1
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.blendMode(.replace)
+            canvas.stroke(255, 0, 0, 128)
+            canvas.strokeWeight(8)
+            canvas.translate(80, 80, 0)
+            canvas.box(80)
+            canvas.closeBatch()
+            sections = canvas.batches.reduce(0) { $0 + $1.strokeStencilSections.count }
+        }
+        #expect(sections == 0)
+    }
+
     @Test("不透明の塗りの箱でも、線は 1 回だけ混ぜて、手前の線が欠けない", arguments: [false, true])
     func filledBoxKeepsItsStroke(flipped: Bool) throws {
         func picture(alpha: Float) throws -> PixelBuffer {
