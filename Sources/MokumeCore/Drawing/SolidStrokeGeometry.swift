@@ -402,6 +402,9 @@ extension Canvas {
     /// 列は次の操作で閉じる (塗りの列を開くときも、この列には足さない)。視点は置く時点の
     /// もので、変換・太さ・色・白い区画は呼ぶ側が決める (その場で描くならいまのスタイル、
     /// 保持した形なら記録したもの)。
+    ///
+    /// 描く画素で 1 画素より細い線の列は、列全体を 1 回だけ混ぜる区間として持つ
+    /// (``Canvas/Batch/strokeStencilSections``)。描く側が、骨の頂点関数で組んだ消し描きで描く。
     func openGPUStroke(
         of source: SolidSource, geometry: SolidStrokeGeometry, matrix: simd_float4x4,
         weight: Float, cap: StrokeCap, color: LinearRGBA, uv: SIMD2<Float>, geometryScale: SIMD3<Float>
@@ -418,7 +421,12 @@ extension Canvas {
             indexStart: nil, instanceStart: solidInstances.count,
             strokeGeometry: geometry, strokePlacement: placement)
         solidInstances.append(.identity)
-        if thin != nil { openBatchHasThinCoverage = true }
+        guard thin != nil else { return }
+        openBatchHasThinCoverage = true
+        // **細い線の列は、列全体を 1 回だけ混ぜる区間にする** (ADR-0046・#2185 の決定 D)。被覆 < 1 の片は下地と
+        // 混ぜるので、色が不透明でも角で重なる片が 2 回混ざる。列は線 1 本ごとに開く (上の `closeBatch()`)
+        // ので、区間は図形ごとに切れ、別々の図形どうしは 2 回混ぜる。区間は骨の添字の並びで数える
+        openSolid?.strokeStencilSections = [0..<geometry.count]
     }
 
     /// GPU で広げる太さ `weight` の線の補い。**細さは置く面で判断する** (#1637)。描く画素で 1 画素

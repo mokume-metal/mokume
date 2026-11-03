@@ -1197,10 +1197,10 @@ extension Canvas {
             }
             numbers[piece.vertexStart - lower] = start
             // 置き場所の色を掛けた不透明度で決める — 不透明の線も、透けた色で置けば重なりが絵に出る。
-            // 細い線 (被覆 < 1) は段 3 (#3578) まで範囲の外
+            // 細い線 (被覆 < 1) は下地と混ぜるので、色によらず入れる (#2185 の決定 D)
             blocks.append((
                 piece.vertexStart..<(piece.vertexStart + piece.vertexCount), start..<placed.count,
-                coverage == 1 && solidStrokeOverlapsShow(alpha: prototype.color.w)))
+                coverage < 1 || solidStrokeOverlapsShow(alpha: prototype.color.w)))
             cursor = piece.vertexStart + piece.vertexCount
         }
         appendBaked(upTo: vertices.endIndex)

@@ -687,7 +687,7 @@ extension Canvas {
     /// 奥行きの違う辺が画面で交わる所も 1 回で、別々の図形の線どうしは 2 回混ぜる。`shader()` を付けた線と、
     /// 保持した形を置くときに組み直す線 (``rebuiltSolidStroke(_:)``) も同じで、断片の出力が場所で違う線の
     /// 重なりは先に積んだ片の色になる。どの線が入るかは ``solidStrokeOverlapsShow(alpha:)`` にあり、描く画素で
-    /// 1 画素より細い線 (被覆 < 1) は、これまでどおり片を重ねて混ぜる。
+    /// 1 画素より細い線 (被覆 < 1) は、色によらず入る (#2185 の決定 D)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
@@ -766,7 +766,8 @@ extension Canvas {
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
-        let stenciled = !recordingShape && solidStrokeCoverage == 1 && solidStrokeOverlapsShow
+        // 細い線 (被覆 < 1) は下地と混ぜるので、色によらず区間に入れる (#2185 の決定 D)
+        let stenciled = !recordingShape && (solidStrokeCoverage < 1 || solidStrokeOverlapsShow)
         let start = solidVertices.count
         let indexStart = solidIndices.count
         build()
@@ -802,7 +803,8 @@ extension Canvas {
     /// 塗りと混ぜ方は ``effectivePaint``・`style.blendMode` から読む。保持した形を置く間は記録したものが
     /// 当たっている (``replaying(_:_:)``) ので、置き場所の色を掛けた不透明度を渡せば、組み直す線
     /// (``rebuiltSolidStroke(_:)``) も同じ判定になる ([#3577])。描く画素で 1 画素より細い線 (被覆 < 1・[#3578]) は、
-    /// 呼ぶ側が範囲の外にしている (段 3 で入れる)。
+    /// この判定によらず、呼ぶ側が色によらず区間に入れる — 被覆の残りに下地を読むので、不透明の色でも重なりが
+    /// 絵に出る (#2185 の決定 D)。GPU で広げる骨の細い線も、列全体を区間にする (``openGPUStroke``)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#2184]: https://github.com/mokume-metal/mokume/issues/2184
