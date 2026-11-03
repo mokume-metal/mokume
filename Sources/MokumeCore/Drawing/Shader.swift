@@ -75,6 +75,11 @@ public final class Shader {
     /// この断片の版)。
     /// 断片は ``solidStates`` と同じで、3 組は**揃って**差し替わる (``reload()``)。
     private(set) var unitShapeStates: ShapePipeline.BlendStates
+    /// いまの断片のライブラリ。立体の線の消し描き (``strokeEraseState()``) を、同じ断片で組むために持つ。
+    /// 3 組と揃って差し替わる (``reload()``)。
+    private var library: any MTLLibrary
+    /// 組んだ消し描きのパイプラインと、組んだときのライブラリ (``strokeEraseState()``)。
+    private var strokeErase: (library: ObjectIdentifier, state: any MTLRenderPipelineState)?
 
     private let pipeline: ShapePipeline
     private let gpu: RenderDevice
@@ -103,6 +108,7 @@ public final class Shader {
 
         let library = try gpu.shaders.makeShapeLibrary(
             named: name, body: body, bodyName: box.bodyName, values: values, surfaces: surfaces)
+        self.library = library
         self.states = try pipeline.makeStates(
             fragmentLibrary: library, label: "mokume.shader.\(name)")
         self.solidStates = try pipeline.makeStates(
@@ -188,6 +194,7 @@ public final class Shader {
                     now: { () throws(RenderFailure) in
                         let made = try library.runNow()
                         return Rebuilt(
+                            library: made,
                             flat: try flat.makeNow(fragmentLibrary: made),
                             solid: try solid.makeNow(fragmentLibrary: made),
                             unitShape: try unitShape.makeNow(fragmentLibrary: made))
@@ -195,6 +202,7 @@ public final class Shader {
                     later: { () async throws(RenderFailure) in
                         let made = try await library.run()
                         return Rebuilt(
+                            library: made,
                             flat: try await flat.make(fragmentLibrary: made),
                             solid: try await solid.make(fragmentLibrary: made),
                             unitShape: try await unitShape.make(fragmentLibrary: made))
@@ -211,11 +219,33 @@ public final class Shader {
                 states = ShapePipeline.BlendStates(rebuilt.flat)
                 solidStates = ShapePipeline.BlendStates(rebuilt.solid)
                 unitShapeStates = ShapePipeline.BlendStates(rebuilt.unitShape)
+                // 消し描きは、次に要るフレームが新しいライブラリで組み直す (``strokeEraseState()``)
+                library = rebuilt.library
             })
+    }
+
+    /// 立体の線の印を消し描きするパイプライン ([ADR-0046])。**この断片で組む** — 印は列の組 (この
+    /// `paint()`) で描くので、`discard_fragment()` で捨てる画素も印と揃う
+    /// (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:)``)。
+    ///
+    /// 1 回だけ混ぜる線の区間を描くフレームで初めて組み、ライブラリが差し替わるまで使い回す
+    /// (起動の時間を戻さない・#3114)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    func strokeEraseState() throws(RenderFailure) -> any MTLRenderPipelineState {
+        let current = ObjectIdentifier(library)
+        if let strokeErase, strokeErase.library == current { return strokeErase.state }
+        let state = try pipeline.makeStrokeEraseState(
+            fragmentLibrary: library, label: "mokume.shader.\(name).stroke-erase")
+        // 前のライブラリの消し描きは、投入済みのフレームが終わるまで抱える (``reload()`` の 3 組と同じ)
+        if let strokeErase { gpu.holdUntilSubmittedWorkFinishes([strokeErase.state]) }
+        strokeErase = (current, state)
+        return state
     }
 
     /// 組み直した平面・立体・単位の形の 3 本ずつ。
     struct Rebuilt: Sendable {
+        let library: any MTLLibrary
         let flat: ShapePipeline.BuiltStates
         let solid: ShapePipeline.BuiltStates
         let unitShape: ShapePipeline.BuiltStates

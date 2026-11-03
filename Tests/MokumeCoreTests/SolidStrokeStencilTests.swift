@@ -647,7 +647,65 @@ struct SolidStrokeStencilTests {
         #expect(abs(pixels[80, 80].red - 0.617) < 0.01, "交点 (80, 80) は \(pixels[80, 80].red)")
     }
 
+    /// 断片が `discard_fragment()` で捨てた画素には、線は奥行きも書かない (反証 #2)。消し描きを組み込みの断片で
+    /// 描くと、捨てた画素にも線の奥行きが残り、後に奥へ置いた形がそこだけ隠れる。消し描きは列と同じ断片で組む
+    /// (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:)``)。
+    @Test("断片が捨てた画素には、線の奥行きも残らない")
+    func discardedStrokeLeavesNoDepth() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        // 左半分を捨てる。残る右半分は 1 回だけ混ぜる
+        let shader = try canvas.makeShader(
+            """
+            float4 paint(Fragment in, Values values) {
+                if (in.place.x < 0.5) { discard_fragment(); }
+                return in.color * 0.5;
+            }
+            """)
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(20)
+            canvas.shader(shader)
+            Self.closedSquare(canvas)
+            canvas.resetShader()
+            // 線より奥に、不透明の緑の板を全面に置く
+            canvas.noStroke()
+            canvas.fill(0, 255, 0)
+            canvas.translate(80, 80, -10)
+            canvas.box(160, 160, 1)
+        }
+        let pixels = try canvas.target.readPixels()
+        // 捨てた左の辺は、奥の板が見える
+        #expect(pixels[40, 80].green > 0.9, "左の辺 (40, 80) は \(pixels[40, 80])")
+        // 残した右の辺は、線が板を隠す (奥行きを書いている)
+        #expect(pixels[120, 80].green < 0.1, "右の辺 (120, 80) は \(pixels[120, 80])")
+        #expect(abs(pixels[120, 80].red - Self.once) < 0.01, "右の辺 (120, 80) は \(pixels[120, 80].red)")
+    }
+
     // MARK: - 範囲の外
+
+    /// 勾配の塗りは面が持つ断片で塗るが、線は色のまま出すので、不透明の線は型板を通さない (反証 #1)。
+    @Test("勾配で塗った立体の不透明の線は、区間を持たない")
+    func gradientFillOpaqueStrokeHasNoSection() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var sections = -1
+        try canvas.draw {
+            canvas.background(black)
+            canvas.fill(
+                .linearGradient(
+                    (.linear(red: 1, green: 0, blue: 0), 0), (.linear(red: 0, green: 0, blue: 1), 1),
+                    from: [0, 0], to: [160, 0]))
+            canvas.stroke(255, 255, 255)
+            canvas.strokeWeight(8)
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.4)
+            canvas.box(60)
+            canvas.closeBatch()
+            sections = canvas.batches.reduce(0) { $0 + $1.strokeStencilSections.count }
+        }
+        #expect(sections == 0)
+    }
 
     /// `replace` の太い線 (被覆 1) は下地を読まず、重ねても同じ色に置き換わるので型板を通さない
     /// (#3577 の完了条件 6 の差し替え・2026-11-03)。下地を読む細い線は段 3 (#3578) で入る。

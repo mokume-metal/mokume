@@ -791,7 +791,8 @@ extension Canvas {
     /// 出るのは次の線である:
     ///
     /// - `shader()` が効いている線 ([#2184])。断片が出す不透明度は分からない (平面の線の ``strokeOverlapsShow`` と
-    ///   同じ)。断片の出力が場所で違う線の重なりは、先に積んだ片の色になる
+    ///   同じ)。断片の出力が場所で違う線の重なりは、先に積んだ片の色になる。`replace` で置いても同じく入る。
+    ///   勾配の塗り (`fill(Gradient)`) も面が持つ断片で塗るが、線は色のまま出すので数えない
     /// - 半透明の色を `blend` / `lightest` / `darkest` で置く線
     /// - 下地を読む混ぜ方 (`add` ほか) で置く線
     ///
@@ -809,7 +810,8 @@ extension Canvas {
     /// [#3577]: https://github.com/mokume-metal/mokume/issues/3577
     /// [#3578]: https://github.com/mokume-metal/mokume/issues/3578
     func solidStrokeOverlapsShow(alpha: Float) -> Bool {
-        if effectivePaint.shader != nil { return true }
+        // 勾配の断片 (``paintsWithGradient``) は塗りにだけ効き、線は色のまま出す
+        if let shader = effectivePaint.shader, shader !== gradientShaderStorage { return true }
         switch style.blendMode {
         case .replace: return false
         case .blend, .lightest, .darkest: return alpha < 1

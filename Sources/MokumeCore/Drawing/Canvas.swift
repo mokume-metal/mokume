@@ -5296,6 +5296,9 @@ public final class Canvas {
         /// 線の印を消し描きするパイプライン (``ShapePipeline/strokeEraseState()``)。1 回だけ混ぜる線の区間
         /// (``Batch/strokeStencilSections``) を持つ列があるフレームだけが組んで持つ。
         let strokeEraseState: (any MTLRenderPipelineState)?
+        /// 利用者の断片の列の消し描き (``Shader/strokeEraseState()``)。断片 (``Shape/Paint/shader``) の同一性で引く。
+        /// 区間を持つ列の断片だけが載る。
+        let shaderStrokeEraseStates: [ObjectIdentifier: any MTLRenderPipelineState]
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -5334,7 +5337,18 @@ public final class Canvas {
             perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
             sweeps: try uploadSweeps(), solidVariantStates: variants.states,
             strokeEraseState: batches.contains { !$0.strokeStencilSections.isEmpty }
-                ? try pipeline.strokeEraseState() : nil)
+                ? try pipeline.strokeEraseState() : nil,
+            shaderStrokeEraseStates: try shaderStrokeEraseStates())
+    }
+
+    /// 1 回だけ混ぜる線の区間を持つ列のうち、利用者の断片で塗る列の消し描き (``Shader/strokeEraseState()``)。
+    private func shaderStrokeEraseStates() throws(RenderFailure) -> [ObjectIdentifier: any MTLRenderPipelineState] {
+        var states: [ObjectIdentifier: any MTLRenderPipelineState] = [:]
+        for batch in batches where !batch.strokeStencilSections.isEmpty {
+            guard let shader = batch.run.paint.shader, states[ObjectIdentifier(shader)] == nil else { continue }
+            states[ObjectIdentifier(shader)] = try shader.strokeEraseState()
+        }
+        return states
     }
 
     /// 溜めた列をエンコーダへ積む。返すのは積んだ描く呼び出しの数 (``drawsEncodedInLastFrame``)。
@@ -5528,8 +5542,12 @@ public final class Canvas {
             // 列の組と奥行きの扱いへ戻す。組と奥行きは記憶 (`use`) を通して替える — 通さずに替えると、
             // 次の列が同じ組を「替えなくてよい」と読み違える
             var strokeSection: ((() -> Void) -> Void)?
+            // 消し描きは列と同じ断片で組んだもの (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:)``)
+            let eraseState =
+                run.paint.shader.map { prepared.shaderStrokeEraseStates[ObjectIdentifier($0)] }
+                ?? prepared.strokeEraseState
             if !batch.strokeStencilSections.isEmpty, batch.strokeGeometry == nil, batch.ownedIndices == nil,
-                !batch.replacesSurface, let eraseState = prepared.strokeEraseState, let solidState
+                !batch.replacesSurface, let eraseState, let solidState
             {
                 let (markDepth, eraseDepth) = (pipeline.strokeMarkDepthState, pipeline.strokeEraseDepthState)
                 strokeSection = { draw in

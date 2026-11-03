@@ -602,20 +602,38 @@ final class ShapePipeline {
     /// (`UnitShape.metal` の冒頭・#1796 で影の奥行きが 1 ビット動いた) ので、別の頂点関数は使わない。
     /// 断片は捨てない直の断片で、色は書かない (書くマスクを空に)。
     ///
+    /// 利用者の断片 (``Shader``) の列の消し描きは、ここではなく断片ごとに組む
+    /// (``makeStrokeEraseState(fragmentLibrary:label:)``・``Shader/strokeEraseState()``)。
+    ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     func strokeEraseState() throws(RenderFailure) -> any MTLRenderPipelineState {
         try strokeErasePipeline.withLock { (built) throws(RenderFailure) in
             if let built { return built }
-            var plan = Self.plan(
-                label: "mokume.stencil.stroke-erase", vertexFunctionName: Self.solidVertexFunctionName,
-                fragmentFunctionName: Self.flatDirectFragmentFunctionName, sourceOver: false,
-                formFlags: nil, unlit: true, pixelFormat: pixelFormat)
-            plan.writesColor = false
-            let state = try plan.makeNow(
-                compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
+            let state = try makeStrokeEraseState(
+                fragmentLibrary: vertexLibrary, label: "mokume.stencil.stroke-erase")
             built = state
             return state
         }
+    }
+
+    /// 消し描きのパイプラインを、`fragmentLibrary` の直の断片 (`mokume_fragmentDirect`) で組む。控えない。
+    ///
+    /// **利用者の断片の列は、その断片のライブラリで組む** ([#3577])。印は列の組 (利用者の `paint()`) で
+    /// 描くので、`paint()` が `discard_fragment()` で捨てた画素には何も書かない。組み込みの断片で消し描きすると、
+    /// 捨てた画素にも線の奥行きを書き、見えない線が後に置く立体を隠す。同じ断片で消し描きすれば、印と同じ
+    /// 画素を捨てる。頂点関数は印と同じ ``solidVertexFunctionName`` である。
+    ///
+    /// [#3577]: https://github.com/mokume-metal/mokume/issues/3577
+    func makeStrokeEraseState(
+        fragmentLibrary: any MTLLibrary, label: String
+    ) throws(RenderFailure) -> any MTLRenderPipelineState {
+        var plan = Self.plan(
+            label: label, vertexFunctionName: Self.solidVertexFunctionName,
+            fragmentFunctionName: Self.flatDirectFragmentFunctionName, sourceOver: false,
+            formFlags: nil, unlit: true, pixelFormat: pixelFormat)
+        plan.writesColor = false
+        return try plan.makeNow(
+            compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: fragmentLibrary)
     }
 
     /// 面が自分で持つ引数のテーブル。**面ごとに 1 つ作る** — 共有しない理由は型の説明を参照。
