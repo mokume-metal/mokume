@@ -136,6 +136,24 @@ nonisolated struct StrokeCarving {
         return pieces.ranges.count - 1
     }
 
+    /// 片を引かずに、積んだ順のまま返す。`emit` に渡す形は ``carved(_:)`` と同じで、要は `nil` (周の最初の
+    /// 点から扇に割る。片はどれも凸)。
+    ///
+    /// 型板で図形の線全体を 1 回だけ混ぜる線が使う ([ADR-0046]・[#1948])。重なった画素は、先に積んだ片
+    /// (と、その被覆) が残る — 引いて積んだときと同じ。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    /// [#1948]: https://github.com/mokume-metal/mokume/issues/1948
+    func stacked(
+        _ emit: (
+            _ points: [SIMD2<Float>], _ rim: Range<Int>, _ hub: SIMD2<Float>?, _ coverage: Float
+        ) -> Void
+    ) {
+        for index in pieces.ranges.indices {
+            emit(pieces.points, pieces.ranges[index], nil, coverages[index])
+        }
+    }
+
     /// 片を積む順に、先に置いた関係する片を引いた残りを返す。
     ///
     /// 残りは片ごとに 0 個以上の凸多角形で、和は片の和と同じである。`emit` には周の点の並びと
