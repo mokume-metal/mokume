@@ -202,10 +202,10 @@ struct FlatStrokeStencilTests {
         #expect(sections.counts == [0], "区間: \(sections.counts)")
     }
 
-    /// `.replace` の線は「下地に依る線」に入る (#3111 の完了条件 4)。被覆 1 の片は重ねても同じ値を
-    /// 書くので、絵は重ねて積んだときと同じで、塗る画素は不透明の線と同じ集合になる。
-    @Test("置き換えの線は区間に入り、塗る画素は不透明の線と同じ")
-    func replaceStrokesTakeASection() throws {
+    /// 被覆 1 の `.replace` の線は、片を重ねても同じ値を書くので型板に載せない (#3579 の条件 5 の差し替え・
+    /// 2026-11-03)。塗る画素は不透明の線と同じ集合で、色は一様。
+    @Test("置き換えの線は区間を持たず、塗る画素は不透明の線と同じ")
+    func replaceStrokesTakeNoSection() throws {
         let sections = Box()
         let replaced = try translucent(sections: sections) { canvas in
             canvas.blendMode(.replace)
@@ -215,7 +215,7 @@ struct FlatStrokeStencilTests {
             canvas.stroke(255, 0, 0)
             Self.crossingPolyline(canvas)
         }
-        #expect(sections.counts == [1], "区間: \(sections.counts)")
+        #expect(sections.counts == [0], "区間: \(sections.counts)")
         #expect(painted(replaced) == painted(opaque))
         #expect(abs(replaced[80, 80].red - replaced[30, 30].red) < 0.002)
     }

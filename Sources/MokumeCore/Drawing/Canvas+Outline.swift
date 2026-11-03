@@ -506,8 +506,8 @@ extension Canvas {
     /// ([ADR-0046]・[#3579])。
     ///
     /// 載せるのは、図形の中で (``strokingOneFigure(_:)``) その場で引く線のうち、重なりが絵に出るもの
-    /// (``strokeOverlapsShow``) と、置き換える線 (`replace`) である。置き換える線は、被覆 1 の片を重ねても
-    /// 同じ値を書くので絵は変わらないが、「下地に依る線」に揃える (#3111 の完了条件 4)。
+    /// (``strokeOverlapsShow``) である。置き換える線 (`replace`) は、被覆 1 の片を重ねても同じ値を書くので
+    /// 載せない (立体の線と同じ・#3577 の条件 6 と #3579 の条件 5 の差し替え)。下地を読む細い線は段 5 ([#1948])。
     ///
     /// 次は載せず、これまでどおり片の重なりを引いて積む (``StrokeCarving``):
     ///
@@ -523,8 +523,7 @@ extension Canvas {
     /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     /// [#3580]: https://github.com/mokume-metal/mokume/issues/3580
     var stencilsFlatStroke: Bool {
-        guard flatStrokeFigure != nil, !buildingFlatTemplate, !recordingShape else { return false }
-        return style.blendMode == .replace || strokeOverlapsShow
+        flatStrokeFigure != nil && !buildingFlatTemplate && !recordingShape && strokeOverlapsShow
     }
 
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
@@ -566,7 +565,7 @@ extension Canvas {
         // **1 つの領域として引ける輪郭は、引き算のまま型板に載せない** — 引き算で既に 1 回になる。
         // 畳める形 (矩形・楕円・弧) は雛形が引き算で積むので、1 つ目を直に描くときも同じ積み方にして、
         // 畳むかどうかで頂点の数も絵も変えない (``draw(folding:at:outline:)``)。描く呼び出しも増やさない
-        let stenciled = stencilsFlatStroke && !(overlaps && outline.strokesAsOneRegion)
+        let stenciled = stencilsFlatStroke && !outline.strokesAsOneRegion
         if stenciled { flatStrokeFigure?.stenciled = true }
         if overlaps, !stenciled {
             strokeCarved(
