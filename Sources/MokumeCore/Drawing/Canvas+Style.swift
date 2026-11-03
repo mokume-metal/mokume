@@ -360,6 +360,8 @@ extension Canvas {
             batches[batches.count - 1].thinFillStart = template.thinFillStart
             batches[batches.count - 1].thinFillUV = template.thinFillUV
         }
+        // 細い輪郭を頂点段で広げ直す雛形 (#3733)
+        if let template { batches[batches.count - 1].thinStrokeParams = template.thinStrokeParams }
     }
 
     /// 開いている平面の列が始まる頂点の番号 (最後に閉じた平面の列の終わり)。

@@ -39,6 +39,11 @@ struct FlatFrame {
     uint thinFill;
     /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
     float4 thinFillUV;
+    /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (#3733)。1 なら `strokeStart` から後ろの頂点の
+    /// `uv` は、広げた半幅 h (描く画素) に対する位置の微分 (形自身の座標)。
+    uint thinStroke;
+    /// x: 線の太さ (形自身の座標)・y: 雛形を組んだ半幅 h0 (描く画素)・zw: 白い区画の読み取り位置。
+    float4 thinStrokeParams;
 };
 
 /// 細い塗りの置き場所ごとの記述 (#2208)。並びは Swift 側の `Canvas.ThinFillRecord` と一致する。
@@ -194,6 +199,27 @@ vertex ShapeFragmentIn shapeVertexMain(
         }
     }
 
+    // **畳んだ矩形の雛形の細い輪郭は、置き場所ごとに広げ直す** (#3733)。相似な置き場所では矩形の 4 本の帯が
+    // 同じ半幅 h と被覆を持ち、輪郭の頂点はどれも「雛形の位置 + (h − h0) × 微分」になる。h は CPU の
+    // `widenedBand` と同じ量で、帯 (形自身の座標で (1, 0) の向き) を描く画素の軸に沿って列 (行) が切る長さを
+    // 整数 n にする。微分は `uv` に入っていて、断片へは白い区画の読み取り位置を渡す
+    bool widensThinStroke = frame.thinStroke != 0 && index >= frame.strokeStart;
+    float thinStrokeCoverage = 1.0;
+    if (widensThinStroke) {
+        float2 column0 = placement.linear.xy / frame.unitsPerDrawnPixel;
+        float2 column1 = placement.linear.zw / frame.unitsPerDrawnPixel;
+        float area = abs(column0.x * column1.y - column1.x * column0.y);
+        float stretched = length(column0);
+        float drawn = precise::divide(frame.thinStrokeParams.x * area, stretched);
+        float axis = precise::divide(max(abs(column0.x), abs(column0.y)), stretched);
+        float crossings = precise::divide(drawn, axis) <= 1.0 ? 1.0 : 2.0;
+        float target = crossings * axis;
+        float widenedHalf = target * 0.5;
+        formPosition = fma(float2(widenedHalf - frame.thinStrokeParams.y), vertex_in.uv, vertex_in.position);
+        formUV = frame.thinStrokeParams.zw;
+        thinStrokeCoverage = precise::divide(drawn, target);
+    }
+
     // **形自身の座標を、置き場所の変換で描画先の座標へ移す。** 何も動かさない置き場所
     // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
     float2 placed = placement.linear.xy * formPosition.x
@@ -229,7 +255,9 @@ vertex ShapeFragmentIn shapeVertexMain(
     out.shapePosition = float3(0.0);
     out.shapeNormal = float3(0.0);
     // 細い線を広げた頂点だけが 1 未満の被覆を持つ (#1637)。持つ頂点の無いフレームは読まない
-    out.coverage = expandsThin ? thinCoverage : (frame.readsCoverage != 0 ? coverages[index] : 1.0);
+    out.coverage = expandsThin
+        ? thinCoverage
+        : (widensThinStroke ? thinStrokeCoverage : (frame.readsCoverage != 0 ? coverages[index] : 1.0));
     out.particleAge = 0.0;
     return out;
 }

@@ -43,6 +43,11 @@ struct FlatFrame {
     uint thinFill;
     /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
     float4 thinFillUV;
+    /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (#3733)。1 なら `strokeStart` から後ろの頂点の
+    /// `uv` は、広げた半幅 h (描く画素) に対する位置の微分 (形自身の座標)。
+    uint thinStroke;
+    /// x: 線の太さ (形自身の座標)・y: 雛形を組んだ半幅 h0 (描く画素)・zw: 白い区画の読み取り位置。
+    float4 thinStrokeParams;
 };
 
 struct SolidVertex {

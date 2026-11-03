@@ -444,7 +444,7 @@ extension Canvas {
     /// 今までどおり重ねて積んだ頂点を置き、引く費用を払わない。
     ///
     /// **描く画素で 1 画素より細い片は、列 (行) が帯を切る長さが整数になる太さへ広げ、太さの割合を
-    /// 被覆として断片の後で掛ける** (#2172) ([#1637]・``ThinStroke``・``thinOutline(_:weight:placedBy:acrossTheLine:)``)。細さは
+    /// 被覆として断片の後で掛ける** (#2172) ([#1637]・``ThinStroke``・``thinOutline(_:weight:placedBy:)``)。細さは
     /// 片ごとに、線の向きに垂直に測る。保持する形の記録では置くときに判断し、畳みの雛形は
     /// 鍵が持つ置き場所の変換で判断する。
     ///
@@ -537,10 +537,11 @@ extension Canvas {
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
     func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
         guard let matrix = thinStrokeMatrix,
-            let thin = thinOutline(
-                outline, weight: style.strokeWeight, placedBy: matrix,
-                acrossTheLine: buildingFlatTemplate || outline.widensAcrossTheLine)
+            let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
+        // 相似な置き場所の矩形は、重ならない額縁の片で組む。畳んだ雛形 (頂点段で広げ直す) と同じ積み方に
+        // 揃え、畳むかどうかで頂点の数も絵も変えない (#3733・``thinRectFrame(_:placedBy:)``)
+        if let frame = thinRectFrame(outline, placedBy: matrix) { return appendThinRectFrame(frame) }
         // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので、色によらず型板に載せて重ねて積むか、
         // 引いて積む (#1948)。1 つの領域として引ける輪郭は、太い線と同じく引き算のまま (畳む雛形と揃える)。
         // 片は描く画素の空間で組み (``thinCarving(_:thin:)``)、円板の周もその空間の半径で刻む。
@@ -967,7 +968,7 @@ extension Canvas {
     ///   (`Canvas.place(_:of:at:)`)
     ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
-    private func strokePoint(x: Float, y: Float) -> SIMD2<Float> {
+    func strokePoint(x: Float, y: Float) -> SIMD2<Float> {
         let placed = transform.placed(x: x, y: y)
         return buildingFlatTemplate || recordingShape ? placed : placed + 0.5
     }

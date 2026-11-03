@@ -84,15 +84,6 @@ extension Canvas {
         /// 塗りと実線の周は `start` から刻んだ点のまま動かさず、破線だけを別の点の並び (一周の弧は
         /// 角度 0 から刻んだ点) から数えるときに持つ。点の数は ``points`` と同じで、刻みの印 (``curveSteps``) を共有する。
         var dashPoints: [SIMD2<Float>]?
-        /// 描く画素で 1 画素より細い帯を、**線に垂直に** 1 へ広げるか (#1637 の広げ方)。偽なら、列 (行) が帯を
-        /// 切る長さを整数にして広げる (``Canvas/thinOutline(_:weight:placedBy:acrossTheLine:)``・#2172)。
-        ///
-        /// 畳む相手を待って直に描く 1 つ目 (``Canvas/draw(folding:at:outline:)``) だけが立てる。畳んだ雛形は
-        /// 回転を除いた鍵で回した置き場所を 1 つにまとめるので、向きで広げ方を変えられない — 頂点段で広げる
-        /// までは雛形も 1 つ目も線に垂直に広げ、畳むかどうかで絵を変えない ([#3733])。
-        ///
-        /// [#3733]: https://github.com/mokume-metal/mokume/issues/3733
-        var widensAcrossTheLine = false
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {
@@ -164,7 +155,6 @@ extension Canvas {
                 strokesAsOneRegion: strokesAsOneRegion, ring: ring, namedFill: shiftedFill)
             moved.dashStart = dashStart
             moved.dashPoints = dashPoints.map { $0.map { $0 + offset } }
-            moved.widensAcrossTheLine = widensAcrossTheLine
             moved.unmoved = unmoved.map { ($0.points, $0.offset + offset) } ?? (points, offset)
             return moved
         }
@@ -255,7 +245,7 @@ extension Canvas {
             ringSegments: thinFillCapacity > 0 && !hasStroke && style.picture == nil ? 0 : ringSegments,
             discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
-            strokeLinear: thinStrokeLinear(),
+            strokeLinear: thinStrokeLinear(form: form),
             fillLinear: fillLinear,
             thinFillCapacity: thinFillCapacity,
             texture: style.hasFill ? style.picture?.held : nil)
@@ -322,10 +312,7 @@ extension Canvas {
         closeFlatTemplate()
         let batchesBefore = batches.count
         let vertexStart = vertices.count
-        // 雛形と同じく、細い帯を線に垂直に広げる (``Outline/widensAcrossTheLine``・#3733)
-        var first = outline.moved(by: anchor)
-        first.widensAcrossTheLine = true
-        draw(first)
+        draw(outline.moved(by: anchor))
         guard batches.count == batchesBefore, vertices.count > vertexStart else {
             pendingFlat = nil
             return
@@ -394,8 +381,15 @@ extension Canvas {
             }
         }
         let strokeStart = vertices.count
-        // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)
-        if key.hasStroke { strokeOutline(outline, discSegments: key.discSegments) }
+        // 円板の分割数は鍵が持つ。雛形は変換を掛けずに積むので、変換からは決まらない (#1645)。
+        // 相似な置き場所の矩形の細い輪郭は、頂点段で置き場所ごとに広げ直す形で積む (#3733)
+        var thinStrokeParams: SIMD4<Float>?
+        if key.hasStroke {
+            if key.strokeLinear?.widensInVertexStage == true {
+                thinStrokeParams = appendWidenedTemplateStroke(outline)
+            }
+            if thinStrokeParams == nil { strokeOutline(outline, discSegments: key.discSegments) }
+        }
         buildingFlatTemplate = false
         templateStrokeMatrix = nil
         transform = savedTransform
@@ -404,21 +398,42 @@ extension Canvas {
 
         openFlat = OpenFlat(
             key: key, strokeStart: strokeStart, instanceStart: flatInstances.count,
-            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV)
+            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV, thinStrokeParams: thinStrokeParams)
     }
 
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
     /// 畳みの鍵 (``FlatKey/strokeLinear``) に入る。線を持たない図形と、どの向きでも細く
     /// ならない線は `nil` で、これまでどおり変換の違う置き場所も同じ雛形に畳む。
-    private func thinStrokeLinear() -> ThinFold? {
+    ///
+    /// **回転だけが違う置き場所を 1 つに畳むのは、額縁の片で組める矩形だけ** (``ThinFold/widensInVertexStage``・
+    /// ``framesThinRect(width:height:join:drawn:)``・#3733)。ほかの形 (楕円・弧・角丸・丸い角・相似でない
+    /// 置き場所) は鍵を 2x2 そのものにし、向きごとに畳む (2026-11-03 の決定) — 帯の向きが周に沿って変わり、
+    /// 広げ方が帯ごとに違うので、1 つの雛形から置き場所ごとに広げ直せない。
+    private func thinStrokeLinear(form: FlatForm) -> ThinFold? {
         guard style.hasStroke, style.strokeWeight > 0 else { return nil }
         let matrix = transform.matrix
         let drawn = drawnLinear(matrix)
         guard Self.thinnestDrawnWeight(style.strokeWeight, by: drawn) < 1 else { return nil }
+        let linear = SIMD4(
+            matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y)
+        if case .rect(let width, let height) = form,
+            Self.framesThinRect(width: width, height: height, join: style.strokeJoin, drawn: drawn)
+        {
+            return ThinFold(key: Self.rotationFreeKey(drawn), linear: linear, widensInVertexStage: true)
+        }
         return ThinFold(
-            key: Self.rotationFreeKey(drawn),
-            linear: SIMD4(
-                matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y))
+            key: SIMD4(drawn.columns.0.x, drawn.columns.0.y, drawn.columns.1.x, drawn.columns.1.y),
+            linear: linear)
+    }
+
+    /// 2x2 が回転 (と鏡映) と一様な拡大だけか。列 2 本が直交して同じ長さなら真 (相対 1/10000 の揺れは許す)。
+    static func isSimilarity(_ linear: simd_float2x2) -> Bool {
+        let (a, b) = (linear.columns.0.x, linear.columns.0.y)
+        let (c, d) = (linear.columns.1.x, linear.columns.1.y)
+        let tolerance = max(abs(a), abs(b), abs(c), abs(d)) * 1e-4
+        guard tolerance > 0, tolerance.isFinite else { return false }
+        return (abs(a - d) <= tolerance && abs(b + c) <= tolerance)
+            || (abs(a + d) <= tolerance && abs(b - c) <= tolerance)
     }
 
     /// 置き場所の 2x2 (``ThinFold/linear``) を、細さを測る行列にする (平行移動は細さに効かない)。

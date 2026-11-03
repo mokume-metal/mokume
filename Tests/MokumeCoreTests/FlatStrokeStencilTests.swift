@@ -324,4 +324,60 @@ struct FlatStrokeStencilTests {
         #expect(sections.counts.allSatisfy { $0 == 0 }, "区間: \(sections.counts)")
         #expect(redLevels(pixels).count >= 1)
     }
+
+    // MARK: - 畳んだ雛形の細い輪郭 (#3733)
+
+    /// 細い輪郭の矩形を、回さずに 1 つと 45° に回して 1 つ置く。雛形は回さない 1 つ目の向きで組まれ、2 つ目は
+    /// 雛形から置かれて頂点段で広げ直す。
+    private static func rotatedRects(_ canvas: Canvas, quads: Bool) {
+        for (center, turn) in [(SIMD2<Float>(40, 40), Float(0)), (SIMD2<Float>(110, 100), Float.pi / 4)] {
+            canvas.pushMatrix()
+            canvas.translate(center.x, center.y)
+            canvas.rotate(turn)
+            if quads {
+                canvas.quad(-20, -10, 20, -10, 20, 10, -20, 10)
+            } else {
+                canvas.rect(-20, -10, 40, 20)
+            }
+            canvas.popMatrix()
+        }
+    }
+
+    /// 雛形の片は、置き場所ごとに広げ直しても重ならない (額縁の片は h について線形に動く)。半透明の色で
+    /// 描いて、矩形ごとに、塗られた画素がどれも 1 回ぶんの値になる (回さない矩形と 45° の矩形は被覆が違う
+    /// — 帯の被覆は向きで決まる・#2172)。描く画素 (80×80) の x < 38 が 1 つ目、それより右が 2 つ目。
+    @Test("畳んだ回した細い rect の輪郭は、半透明の色でも角を重ねて混ぜない")
+    func foldedRotatedThinRectMixesOnce() throws {
+        let sections = Box()
+        let pixels = try renderThin(shaded: true, sections: sections) { canvas in
+            canvas.stroke(255, 0, 0, 128)
+            Self.rotatedRects(canvas, quads: false)
+        }
+        for (name, columns) in [("回さない 1 つ目", 0..<38), ("45° の 2 つ目 (雛形)", 38..<pixels.width)] {
+            var levels: Set<Int> = []
+            for y in 0..<pixels.height {
+                for x in columns where pixels[x, y].red > 0.02 {
+                    levels.insert(Int((pixels[x, y].red / 0.002).rounded()))
+                }
+            }
+            #expect(levels.count == 1, "\(name) の塗られた画素の値: \(levels.sorted().map { Float($0) * 0.002 })")
+        }
+    }
+
+    /// 幾何の等しい図形は、呼び方 (畳む `rect` / 畳まない `quad`) によらず同じ光の量で出る。
+    @Test("畳んだ回した細い rect の輪郭と、同じ 4 点の quad の輪郭は同じ光の量で出る")
+    func foldedRotatedThinRectMatchesQuad() throws {
+        func light(_ quads: Bool) throws -> Float {
+            let pixels = try renderThin(shaded: true, sections: Box()) { canvas in
+                canvas.stroke(255, 0, 0)
+                Self.rotatedRects(canvas, quads: quads)
+            }
+            var sum: Float = 0
+            for y in 0..<pixels.height { for x in 0..<pixels.width { sum += pixels[x, y].red } }
+            return sum
+        }
+        let (rects, quads) = (try light(false), try light(true))
+        #expect(quads > 0)
+        #expect(abs(rects - quads) <= quads * 0.01, "rect \(rects)・quad \(quads)")
+    }
 }

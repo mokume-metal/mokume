@@ -321,6 +321,8 @@ public final class Canvas {
         var thinFillStart = 0
         /// 細い塗りの雛形が貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
+        /// 細い輪郭を頂点段で広げ直す雛形なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
+        var thinStrokeParams: SIMD4<Float>?
     }
 
     /// 平面を畳む鍵。**これが等しい図形どうしだけが 1 つの雛形に収まる。**
@@ -393,11 +395,22 @@ public final class Canvas {
     /// 組むので、回転だけが違う置き場所には同じ雛形が合う。細い塗りは頂点段で置き場所ごとに広げる
     /// ので鍵に変換を入れない (#2208・``FlatKey/thinFillCapacity``)。広げ方を頂点段へ移さない形
     /// (検査用) だけが、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``・#1934)。
+    ///
+    /// **細い線の帯は、列 (行) が帯を切る長さを整数にして広げる** (#2172) ので、広げ方が向きで変わる。
+    /// 回転だけが違う置き場所を 1 つの雛形に畳めるのは、頂点段で置き場所ごとに広げ直せる形
+    /// (``widensInVertexStage``) だけで、ほかの形は ``key`` に 2x2 そのものを入れて向きごとに畳む (#3733)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
+        /// 雛形の細い輪郭を、頂点段で置き場所ごとに広げ直すか (#3733)。**額縁の片で組める矩形**だけが立てる
+        /// (``Canvas/framesThinRect(width:height:join:drawn:)``) — 相似な置き場所では矩形の 4 本の帯が同じ半幅 h と
+        /// 被覆を持ち、額縁の頂点は角の形も含めて「雛形の位置 + h × 微分」になる (``FlatFrame/thinStroke``)。
+        /// 偽なら ``key`` は 2x2 そのもの。
+        var widensInVertexStage = false
 
-        static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
+        }
     }
 
     /// 畳める図形の形。
@@ -2150,6 +2163,8 @@ public final class Canvas {
         var thinFillStart = 0
         /// 広げた片の貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
+        /// 細い輪郭を頂点段で広げ直す雛形の列なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
+        var thinStrokeParams: SIMD4<Float>?
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -5946,7 +5961,9 @@ public final class Canvas {
                 strokeShift: solidStrokeShift,
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage,
                 thinFill: batch.thinFillExpands ? (batch.thinFillUV == nil ? 1 : 2) : 0,
-                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0))
+                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0),
+                thinStroke: batch.thinStrokeParams == nil ? 0 : 1,
+                thinStrokeParams: batch.thinStrokeParams ?? SIMD4(repeating: 0))
             matrices.contents().advanced(by: matrixOffset)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
 

@@ -418,7 +418,8 @@ struct ShaderInterfaceTests {
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
             ("readsCoverage", \.readsCoverage), ("thinFill", \.thinFill),
-            ("thinFillUV", \.thinFillUV),
+            ("thinFillUV", \.thinFillUV), ("thinStroke", \.thinStroke),
+            ("thinStrokeParams", \.thinStrokeParams),
         ])
 
     static let thinFillRecord = layout(

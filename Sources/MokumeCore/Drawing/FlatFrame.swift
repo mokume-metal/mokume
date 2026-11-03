@@ -39,4 +39,11 @@ struct FlatFrame {
     var thinFill: UInt32 = 0
     /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
     var thinFillUV = SIMD4<Float>(repeating: 0)
+    /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (``Canvas/ThinFold/widensInVertexStage``・#3733)。
+    /// 1 なら、`strokeStart` から後ろの頂点の `uv` は、広げた半幅 h (描く画素) に対する位置の微分 (形自身の座標)
+    /// で、頂点段が置き場所の 2x2 から h と被覆を求めて `位置 + (h − h0) × 微分` に置く。0 は広げない。
+    var thinStroke: UInt32 = 0
+    /// x: 線の太さ (形自身の座標)・y: 雛形を組んだ半幅 h0 (描く画素)・zw: 白い区画の読み取り位置 (輪郭の頂点の
+    /// `uv` の代わりに断片へ渡す)。`thinStroke` が 1 のときだけ読む。
+    var thinStrokeParams = SIMD4<Float>(repeating: 0)
 }
