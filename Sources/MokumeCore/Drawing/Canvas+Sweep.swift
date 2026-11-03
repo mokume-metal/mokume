@@ -38,14 +38,17 @@ extension Canvas {
     /// (``SolidSweep/paysOff(instances:passes:programLength:vertices:)``)、写しにする三角形の 3 点で
     /// 向きを形から求めたかが揃わないとき (``SolidSweep/appendProgram(_:indices:vertexBase:vertices:to:)``)、
     /// 頂点を自分の置き場から読む列のうち、CPU の写しを持たないもの (GPU が持つモデル) と、引数を GPU が
-    /// 書く列 (粒) のときである。保持した形の置き場の列は、置き場の写しから組む ([#3201])。
+    /// 書く列 (粒)、1 回だけ混ぜる線の区間を持つ列 (``Batch/strokeStencilSections``) のときである。保持した形の置き場の列は、置き場の写しから組む ([#3201])。
     ///
     /// [#3201]: https://github.com/mokume-metal/mokume/issues/3201
     func uploadSweeps() throws(RenderFailure) -> SweepUploads {
         guard sweepPolicy != .never else { return .none }
         var program: [UInt32] = []
         var draws: [Int: [Int: SweepDraw]] = [:]
-        for (index, batch) in batches.enumerated() where batch.drawsBackThenFront {
+        // 1 回だけ混ぜる線の区間を持つ列は畳まない — 畳んだ 1 回の描画は区間を割れない
+        // (``Canvas/Batch/strokeStencilSections``)。そうした列は置き場所 1 つの焼いた列で、畳む得も無い
+        for (index, batch) in batches.enumerated()
+        where batch.drawsBackThenFront && batch.strokeStencilSections.isEmpty {
             let built = sweepDraws(for: batch, into: &program)
             if !built.isEmpty { draws[index] = built }
         }
