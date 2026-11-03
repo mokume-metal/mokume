@@ -505,15 +505,16 @@ extension Canvas {
     /// 平面の線を型板に載せるか — 載せるなら、片を引かずに重ねて積み、図形の線全体を 1 回だけ混ぜる
     /// ([ADR-0046]・[#3579])。
     ///
-    /// 載せるのは、図形の中で (``strokingOneFigure(_:)``) その場で引く線のうち、重なりが絵に出るもの
-    /// (``strokeOverlapsShow``) である。置き換える線 (`replace`) は、被覆 1 の片を重ねても同じ値を書くので
-    /// 載せない (立体の線と同じ・#3577 の条件 6 と #3579 の条件 5 の差し替え)。下地を読む細い線は段 5 ([#1948])。
+    /// 載せるのは、図形の中で (``strokingOneFigure(_:)``) その場で引く線 (``takesFlatStrokeSection``) のうち、
+    /// 重なりが絵に出るもの (``strokeOverlapsShow``) である。置き換える線 (`replace`) は、被覆 1 の片を重ねても
+    /// 同じ値を書くので載せない (立体の線と同じ・#3577 の条件 6 と #3579 の条件 5 の差し替え)。描く画素で
+    /// 1 画素より細い片を持つ輪郭は、被覆 1 未満の片が重なると濃くなるので、**色と混ぜ方によらず**載せる
+    /// (``strokeSolidOutline(_:discSegments:)``・[#1948]。#2185 の決定 D を平面へ延ばした)。
     ///
     /// 次は載せず、これまでどおり片の重なりを引いて積む (``StrokeCarving``):
     ///
     /// - 畳む雛形 (`buildingFlatTemplate`) と保持する形の記録 (`recordingShape`)。置き場所ごとに色と変換が
     ///   掛かる ([#3580])
-    /// - 描く画素で 1 画素より細い片を持つ輪郭 (``thinOutline(_:weight:placedBy:)``・[#1948])
     /// - 1 つの領域として引ける輪郭 (``Outline/strokesAsOneRegion`` — 矩形・楕円・弧・辺の交差しない
     ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。畳める形の雛形と同じ積み方に揃う
     ///   (``strokeOutlineAsStyled(_:discSegments:)``)。破線の片はこの印を持たないので型板に載る
@@ -523,7 +524,14 @@ extension Canvas {
     /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     /// [#3580]: https://github.com/mokume-metal/mokume/issues/3580
     var stencilsFlatStroke: Bool {
-        flatStrokeFigure != nil && !buildingFlatTemplate && !recordingShape && strokeOverlapsShow
+        takesFlatStrokeSection && strokeOverlapsShow
+    }
+
+    /// いま引く平面の線が、型板の区間に入りうるか — 図形の中で (``strokingOneFigure(_:)``)、その場で引く
+    /// (畳む雛形でも保持する形の記録でもない) 線である。入れるかは、太い線は ``stencilsFlatStroke``、細い
+    /// 線は色によらずここだけで決める。
+    var takesFlatStrokeSection: Bool {
+        flatStrokeFigure != nil && !buildingFlatTemplate && !recordingShape
     }
 
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
@@ -531,11 +539,15 @@ extension Canvas {
         guard let matrix = thinStrokeMatrix,
             let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
-        // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので必ず引いて積む。片は描く画素の
-        // 空間で組む (``thinCarving(_:thin:)``)
-        // 細い片は描く画素の空間で組み、円板の周もその空間の半径で刻む。この分割数は使わない
+        // 細い片を持つ輪郭は、被覆が 1 未満の片が重なるので、色によらず型板に載せて重ねて積むか、
+        // 引いて積む (#1948)。1 つの領域として引ける輪郭は、太い線と同じく引き算のまま (畳む雛形と揃える)。
+        // 片は描く画素の空間で組み (``thinCarving(_:thin:)``)、円板の周もその空間の半径で刻む。
+        // この分割数は使わない
+        let stenciled = takesFlatStrokeSection && !outline.strokesAsOneRegion
+        if stenciled { flatStrokeFigure?.stenciled = true }
         strokeCarved(
-            outline, half: style.strokeWeight / 2, chamfers: [], thin: thin, discSegments: 0)
+            outline, half: style.strokeWeight / 2, chamfers: [], thin: thin, discSegments: 0,
+            stacked: stenciled)
     }
 
     /// いまの線の設定のまま、周を帯でなぞる (細い線の補いは ``strokeOutline(_:)`` が当てる)。
@@ -757,9 +769,12 @@ extension Canvas {
     ///
     /// 細い片を補うとき (`thin`) は、片を描く画素の空間で組んで形自身の座標へ戻し
     /// (``thinCarving(_:thin:)``)、片の被覆を積んだ頂点に付ける (``noteCoverage(_:in:)``・#1637)。
+    ///
+    /// `stacked` なら引かずに積む (``StrokeCarving/stacked(_:)``)。型板に載せた細い片が使う — 重なりは
+    /// 型板が落とす (#1948)。
     private func strokeCarved(
         _ outline: Outline, half: Float, chamfers: [SIMD2<Float>], thin: ThinOutline?,
-        discSegments: Int
+        discSegments: Int, stacked: Bool = false
     ) {
         // `Optional.map` に閉包を渡さない — 点ごとに隔離の実行時検査を払う (#1779)
         let carving: StrokeCarving
@@ -776,7 +791,9 @@ extension Canvas {
             let moved = (mapsBack ? inverse * point : point) + offset
             return strokePoint(x: moved.x, y: moved.y)
         }
-        carving.carved { polygon, range, hub, coverage in
+        func emit(
+            _ polygon: [SIMD2<Float>], _ range: Range<Int>, _ hub: SIMD2<Float>?, _ coverage: Float
+        ) {
             let start = vertices.count
             defer { noteCoverage(coverage, in: start..<vertices.count) }
             guard let hub else {
@@ -799,6 +816,7 @@ extension Canvas {
             }
             appendTriangle(center, previous, first, color: style.stroke)
         }
+        if stacked { carving.stacked(emit) } else { carving.carved(emit) }
     }
 
     /// 片を集める。引くのは ``StrokeCarving/carved(_:)`` が行い、集めた値は Canvas の状態を

@@ -249,4 +249,69 @@ struct FlatStrokeStencilTests {
         }
         #expect(sections.counts == [1], "区間: \(sections.counts)")
     }
+
+    // MARK: - 細い線 (#1948)
+
+    /// 細かさ 0.5 の面に描いて、描く画素 (80×80) を読む。既定の `strokeWeight(1)` は描く画素で 0.5 の細い線に
+    /// なり、描く画素 1 つの太さへ広げて被覆を掛ける (#1637)。
+    private func renderThin(
+        shaded: Bool = false, sections: Box, _ body: (Canvas) -> Void
+    ) throws -> PixelBuffer {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+        let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .spatial)
+        let shader = shaded ? try canvas.makeShader(Self.passThrough) : nil
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.strokeWeight(1)
+            if let shader { canvas.shader(shader) }
+            body(canvas)
+            canvas.closeBatch()
+            sections.counts = canvas.batches.filter { $0.source == .flat }.map(\.strokeStencilSections.count)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 赤の値の種類 (0.002 刻みに丸める)。塗られていない画素は数えない。
+    private func redLevels(_ pixels: PixelBuffer) -> Set<Int> {
+        var levels: Set<Int> = []
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width where pixels[x, y].red > 0.02 {
+                levels.insert(Int((pixels[x, y].red / 0.002).rounded()))
+            }
+        }
+        return levels
+    }
+
+    /// 細い片は被覆 1 未満なので、不透明の色でも重なると濃くなる。帯はどれも同じ太さで同じ被覆を持つので、
+    /// 1 回だけ混ぜれば塗られた画素はどれも同じ値になる。交点が 2 回混ざると、そこだけ値が上がる。
+    @Test("細い線は色によらず区間に入り、自己交差も 1 回だけ混ぜる", arguments: [Float(255), 128])
+    func thinSelfCrossingMixesOnce(alpha: Float) throws {
+        let sections = Box()
+        let pixels = try renderThin(sections: sections) { canvas in
+            canvas.stroke(255, 0, 0, alpha)
+            canvas.beginShape()
+            canvas.vertex(20, 20)
+            canvas.vertex(140, 140)
+            canvas.vertex(140, 20)
+            canvas.vertex(20, 140)
+            canvas.endShape()
+        }
+        #expect(sections.counts == [1], "区間: \(sections.counts)")
+        let levels = redLevels(pixels)
+        #expect(levels.count == 1, "塗られた画素の値: \(levels.sorted().map { Float($0) * 0.002 })")
+    }
+
+    /// 細い線でも、1 つの領域として引ける輪郭は引き算のまま (畳む雛形と揃える)。
+    @Test("細い線の rect は区間を持たない")
+    func thinRectStaysCarved() throws {
+        let sections = Box()
+        let pixels = try renderThin(shaded: true, sections: sections) { canvas in
+            canvas.stroke(255, 0, 0)
+            canvas.rect(20, 20, 100, 100)
+        }
+        #expect(sections.counts.allSatisfy { $0 == 0 }, "区間: \(sections.counts)")
+        #expect(redLevels(pixels).count >= 1)
+    }
 }
