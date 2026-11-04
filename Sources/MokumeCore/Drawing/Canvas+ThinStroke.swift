@@ -46,9 +46,9 @@ extension Canvas {
     /// [#3733]: https://github.com/mokume-metal/mokume/issues/3733
     ///
     /// **この型の `widen` は線に垂直に 1 へ広げる倍率である。** 平面の輪郭の帯は、ここで細いかを決めた後、
-    /// ``thinOutline(_:weight:placedBy:)`` が整数 n の幅に置き換える。`widen` をそのまま使うのは立体の線
-    /// (``withThinSolidStroke(_:isPoint:_:)``・GPU で広げる稜線・[#3734]) で、まだ 45° で振れる。点は向きを
-    /// 持たないので、この倍率のままでよい。
+    /// ``thinOutline(_:weight:placedBy:)`` が整数 n の幅に置き換える。立体の線の帯も、帯ごとに画面の向きで
+    /// 整数 n の幅に置き換える ([#3734]): CPU の帯は ``SolidThinBand``、GPU で広げる稜線は頂点段
+    /// (`Shapes.metal` の `solidStrokeThinBand`)。`widen` のまま使うのは、向きを持たない片 (円板・点) だけである。
     ///
     /// [#3734]: https://github.com/mokume-metal/mokume/issues/3734
     struct ThinStroke {
@@ -705,15 +705,59 @@ extension Canvas {
     }
 
     /// 補いを当てた立体の線の設定 (太さ・被覆・点の端の形) で `body` を走らせ、元へ戻す。
+    ///
+    /// 太さと被覆は線に垂直に 1 へ広げたもので、帯を持たない片 (円板・点) が使う。帯は帯ごとに画面の向きで
+    /// 広げ直す (``solidThinBand``・``SolidThinBand``・[#3734])。
+    ///
+    /// [#3734]: https://github.com/mokume-metal/mokume/issues/3734
     func withThinSolidStroke(_ thin: ThinStroke?, isPoint: Bool, _ body: () -> Void) {
         guard let thin else { return body() }
-        let saved = (style.strokeWeight, style.strokeCap, solidStrokeCoverage)
+        let saved = (style.strokeWeight, style.strokeCap, solidStrokeCoverage, solidThinBand)
+        solidThinBand = isPoint ? nil : solidThinBand(weight: style.strokeWeight)
         style.strokeWeight *= thin.widen
         solidStrokeCoverage = thin.coverage
         // 向きの無い点の四角い端は、画面の軸に沿った正方形
         if isPoint { style.strokeCap = .square }
         body()
-        (style.strokeWeight, style.strokeCap, solidStrokeCoverage) = saved
+        (style.strokeWeight, style.strokeCap, solidStrokeCoverage, solidThinBand) = saved
+    }
+
+    /// 細い立体の線の帯の広げ方の元。**帯ごとに、画面に写した帯の向きで広げる** ([#3734])。
+    ///
+    /// 平面の線と同じく、描く画素の軸に沿って列 (行) が帯を切る長さを整数 n にする (``widenedBand(_:along:)``・
+    /// [#2172])。線に垂直に 1 へ広げると、45° の帯で列が切る長さが √2 になり、光の量が置く位置で 1/√2 倍か
+    /// √2 倍に振れる。立体の線は画面に正対させて出す画素で組むので、帯の向きは画面に写した向き
+    /// (``screenToward``) で測り、出す画素へ戻して半幅にする。
+    ///
+    /// [#2172]: https://github.com/mokume-metal/mokume/issues/2172
+    /// [#3734]: https://github.com/mokume-metal/mokume/issues/3734
+    struct SolidThinBand {
+        /// 描く画素での元の太さ (1 未満)。
+        var drawn: Float
+        /// 描く画素 1 つの、出す画素での長さ。
+        var outputPerDrawn: Float
+
+        /// 線に沿って出す長さの半分 (出す画素)。端の形は、線の向きには元の太さの半分だけ出す (平面の
+        /// ``thinCarving(_:thin:)`` の端と同じ)。
+        var alongHalf: Float { drawn * outputPerDrawn / 2 }
+
+        /// 画面の向き `toward` (長さ 1) の帯の、出す画素での半幅と被覆。量は ``Canvas/widenedBand(_:along:)`` と同じで、
+        /// **式は GPU の頂点段 (`Shapes.metal` の `solidStrokeThinBand`) と同じ順で書く** — 同じ稜が骨に乗るか
+        /// CPU の帯へ戻るかで、半幅が 1 ulp 違わないようにする (`drawn × (target / drawn)` は `target` にならない
+        /// ことがある・#3734 の反証 #4)。
+        func band(along toward: SIMD2<Float>) -> (half: Float, coverage: Float) {
+            let axis = max(abs(toward.x), abs(toward.y))
+            let crossings: Float = drawn / axis <= 1 ? 1 : 2
+            let target = crossings * axis
+            return (target * outputPerDrawn * 0.5, drawn / target)
+        }
+    }
+
+    /// 出す画素での太さ `weight` の立体の線の、帯の広げ方の元 (``SolidThinBand``)。細くなければ `nil`。
+    func solidThinBand(weight: Float) -> SolidThinBand? {
+        let drawn = drawnSolidWeight(weight)
+        guard drawn > 0, drawn < 1, drawn.isFinite else { return nil }
+        return SolidThinBand(drawn: drawn, outputPerDrawn: (unitsPerDrawnPixel.x * unitsPerDrawnPixel.y).squareRoot())
     }
 
     // MARK: - 保持した形

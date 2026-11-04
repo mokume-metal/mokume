@@ -653,7 +653,7 @@ extension CanvasTests {
                 "placedGraphicsDrops": count,
                 "isFlushing": transient, "replayedPaint": transient,
                 "solidStrokeCapture": transient,
-                "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient,
+                "solidStrokeCoverage": transient, "solidStrokeIsLonePoint": transient, "solidThinBand": transient,
                 "templateStrokeMatrix": transient, "openBatchHasThinCoverage": transient,
                 "openBatchGlyphColored": transient, "flatStrokeFigure": transient,
                 "coverageStorage": resource, "thinStrokesRebuilt": count,

@@ -32,6 +32,7 @@ import simd
 /// | 斜めの縁・細い枝の境目 (距離関数の経路・#2991) | `ExactEdgeCoverageTests` (回した輪郭・線を 16 通りの置き方で面積の 1 ± 0.03・境目の両側の差 0.01 以下) | 量 |
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
+/// | 回した細い立体の線 (#3734) | ``Amount/diagonalSolidLine``・``Amount/diagonalRetainedSolid``・``Amount/diagonalBox`` | 量 |
 /// | 効果の半径 (#1545) | ``Outline/blur`` | 形 (2 つの濃さで切る) |
 /// | 効果の断片の `position` / `size` (#1639) | ``Outline/effectPosition``・``Outline/effectSize`` | 形 |
 /// | 塗りの断片の `position` / `resolution` (#1639) | ``Outline/paintPosition``・``Outline/paintResolution`` | 形 |
@@ -112,6 +113,10 @@ struct DensityInvarianceTests {
         case diagonalRetained = "rotate(θ) で置く保持した形の輪郭 (三角形の経路)"
         // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す
         case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
+        // 回した細い立体の線 (#3734)。帯ごとに画面の向きで、列 (行) が帯を切る長さを整数にして広げる
+        case diagonalSolidLine = "rotate(θ) の奥行きを持つ 2 点の beginShape (立体の線)"
+        case diagonalRetainedSolid = "rotate(θ) で置く、奥行きを持つ 2 点を記録した保持した形 (立体の線)"
+        case diagonalBox = "ortho() で rotate(θ) の noFill() の box の稜線 (立体の線・GPU で広げる骨)"
         case squashedShaderPoint = "scale(1, s) の shader() の point (三角形の経路)"
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
@@ -226,7 +231,8 @@ struct DensityInvarianceTests {
         var rotates: Bool {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect:
+                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
+                .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
             default: false
             }
@@ -278,7 +284,8 @@ struct DensityInvarianceTests {
         var offsets: [Float] {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect:
+                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalSolidLine,
+                .diagonalRetainedSolid, .diagonalBox:
                 [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
             default: [0, 0.5, 1, 1.5]
             }
@@ -297,6 +304,10 @@ struct DensityInvarianceTests {
             case .diagonalLine, .diagonalFill: 40
             // 回した細い線 (#2172)。長さ 40 の帯 (四角い端は長さちょうどで切る)
             case .diagonalShaderLine, .diagonalRetained: 40
+            // 回した細い立体の線 (#3734)。2 点の線は長さ 40 (四角い端は長さちょうどで切る)。平行投影の箱は、
+            // 正面と背面の稜が画面で重なる 1 辺 40 の正方形で、輪郭の面積は周 160 × 太さ
+            case .diagonalSolidLine, .diagonalRetainedSolid: 40
+            case .diagonalBox: 160
             // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
             case .diagonalFoldedRect: 120
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
@@ -382,6 +393,35 @@ struct DensityInvarianceTests {
                     canvas.rotate(turn)
                     canvas.rect(-20, -10, 40, 20)
                     canvas.popMatrix()
+                }
+            case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
+                // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
+                canvas.strokeCap(.square)
+                switch self {
+                case .diagonalSolidLine:
+                    canvas.translate(64, 64 + offset)
+                    canvas.rotate(angle)
+                    canvas.beginShape()
+                    canvas.vertex(-20, 0, 0)
+                    canvas.vertex(20, 0, 0)
+                    canvas.endShape()
+                case .diagonalRetainedSolid:
+                    // 奥行きを持つ 2 点を記録し、回して置く。立体の線は置くときに組み直す (``Canvas/rebuiltSolidStroke(_:)``)
+                    let shape = canvas.createShape {
+                        canvas.beginShape()
+                        canvas.vertex(-20, 0, 0)
+                        canvas.vertex(20, 0, 0)
+                        canvas.endShape()
+                    }
+                    canvas.translate(64, 64 + offset)
+                    canvas.rotate(angle)
+                    canvas.shape(shape)
+                default:
+                    // 平行投影なので、正面と背面の稜が画面で重なり、奥行きの向きの稜は点に潰れる
+                    canvas.ortho()
+                    canvas.translate(64, 64 + offset)
+                    canvas.rotate(angle)
+                    canvas.box(40)
                 }
             case .diagonalShaderLine, .diagonalRetained:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
@@ -698,6 +738,9 @@ struct DensityInvarianceTests {
                 FixedPose(mouth: .diagonalShaderLine, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalRetained, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalFoldedRect, angle: .pi / 4, squash: 1, issue: 3733),
+                FixedPose(mouth: .diagonalSolidLine, angle: .pi / 4, squash: 1, issue: 3734),
+                FixedPose(mouth: .diagonalRetainedSolid, angle: .pi / 4, squash: 1, issue: 3734),
+                FixedPose(mouth: .diagonalBox, angle: .pi / 4, squash: 1, issue: 3734),
                 FixedPose(mouth: .squashedShaderPoint, angle: 0, squash: 0.1, issue: 1637),
                 FixedPose(mouth: .stretchedQuad, angle: 0, squash: 0.25, issue: 1637),
                 FixedPose(mouth: .squashedQuad, angle: 0, squash: 0.1, issue: 1637),

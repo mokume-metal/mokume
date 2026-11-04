@@ -491,6 +491,18 @@ bool solidStrokeToward(float3 a, float3 b, constant SolidStrokePlacement &s, thr
     return true;
 }
 
+/// 細い線の帯を画面の向き `toward` (長さ 1) で広げる、出す画素での半幅 (x) と被覆 (y) (#3734)。CPU の
+/// `Canvas.SolidThinBand.band(along:)` と同じ式で、描く画素の軸に沿って列 (行) が帯を切る長さを整数 n に
+/// する (`Canvas.widenedBand`・#2172)。元の描く画素での太さは `uv.z`、描く画素 1 つの出す画素での長さは
+/// `shapeScale.w` にある。細くない線 (`uv.z` が 0) では呼ばない
+float2 solidStrokeThinBand(float2 toward, constant SolidStrokePlacement &s) {
+    float drawn = s.uv.z;
+    float axis = max(abs(toward.x), abs(toward.y));
+    float crossings = precise::divide(drawn, axis) <= 1.0f ? 1.0f : 2.0f;
+    float target = crossings * axis;
+    return float2(target * s.shapeScale.w * 0.5f, precise::divide(drawn, target));
+}
+
 /// 円板の周の点の向き (画面の横と縦の成分)。CPU の円板の下限の分割数 (16) の周の点
 /// (`Canvas.solidDiscFloorUnits`。`cos` / `sin` で求める) をそのまま書き写したもの (0 番は横そのもの)。
 /// 検査 (`SolidGPUStrokeTests.discUnitsMatchTheCPU`) が CPU の値とビットで突き合わせる。CPU は円板を
@@ -864,8 +876,8 @@ SolidStrokeCorner solidStrokeRunShape(
         if (cap == 2) {
             result.kind = 3;
         } else if (roundEnd) {
+            // 丸い端。細い線の端は腕の向きの楕円にするので、腕の点も下で求める (#3734)
             result.kind = 1;
-            return result;
         } else {
             if (arms < 2) return result;
             result.kind = 4;
@@ -1050,8 +1062,8 @@ SolidStrokeCorner solidStrokeCornerShape(
         if (cap == 2) {
             result.kind = 3;
         } else if (roundEnd) {
+            // 丸い端。細い線の端は腕の向きの楕円にするので、腕の点も下で求める (#3734)
             result.kind = 1;
-            return result;
         } else {
             // 容量の無い点では 1 本と数えない (2 本の腕の折り返し)
             if (g.arms < 2) return result;
@@ -1116,9 +1128,19 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     float3 world = a;
     float3 shape = shapeA;
     float halfWeight = s.parameters.x / 2;
+    // 被覆は置き場所が持つ (細い線を広げたとき 1 未満・#1637)。細い線の帯と、帯に沿う端・折れ目は、帯ごとに
+    // 画面の向きで広げ直した被覆にする (#3734)
+    float coverage = s.uv.w;
+    bool thin = s.uv.z > 0;
     if (piece.a.w == 0) {
         float3 b = solidStrokeMatrixPoint(shapeB, s);
         float3 side;
+        float2 toward;
+        if (thin && solidStrokeToward(a, b, s, toward)) {
+            float2 band = solidStrokeThinBand(toward, s);
+            halfWeight = band.x;
+            coverage = band.y;
+        }
         // CPU が積まない帯は面積0にする。角は独立した部品のまま残る。
         if (solidStrokeAcross(a, b, s, side)) {
             bool end = corner == 1 || corner == 2;
@@ -1137,6 +1159,23 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             float2 unit = kSolidStrokeDisc[step];
             world = corner == 0 ? placed.center
                 : placed.center + solidStrokeWorld(unit, s) * radius;
+            float3 right;
+            float2 toward;
+            if (thin && solidStrokeAcross(placed.far1, placed.center, s, right)
+                && solidStrokeToward(placed.far1, placed.center, s, toward)) {
+                // 細い線の丸い端は、線に沿って元の太さの半分・横は帯と同じ幅の楕円 (CPU の `appendSolidEllipse`・#3734)。
+                // 周の点は円板の表を、楕円の 2 軸の座標として読む
+                float2 band = solidStrokeThinBand(toward, s);
+                coverage = band.y;
+                if (corner != 0) {
+                    float2 onScreen = solidStrokeOnScreen(right, s);
+                    float3 down = solidStrokeWorld(float2(-onScreen.y, onScreen.x), s);
+                    float pixel = solidStrokePixel(placed.center, s);
+                    float3 wide = right * (band.x * pixel);
+                    float3 lengthwise = down * (s.uv.z * s.shapeScale.w * 0.5f * pixel);
+                    world = placed.center + wide * unit.x + lengthwise * unit.y;
+                }
+            }
         }
     } else {
         // 網の点の半分 (#1644・#1889・#1893)。形は点の記録から決める (`solidStrokeCornerShape`)
@@ -1146,16 +1185,32 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
         float radius = halfWeight * solidStrokePixel(center, s);
         world = center;
         if (placed.kind == 3 && firstHalf) {
-            // 出っ張らせる端。CPU の `appendSolidSquare(at:awayFrom:shape:half:camera:)` と同じ 2 軸
+            // 出っ張らせる端。CPU の `appendSolidSquare(at:awayFrom:shape:half:along:camera:)` と同じ 2 軸
             float3 right;
             if (solidStrokeAcross(placed.far1, center, s, right)) {
                 float2 onScreen = solidStrokeOnScreen(right, s);
                 float3 down = solidStrokeWorld(float2(-onScreen.y, onScreen.x), s);
-                switch (corner) {
-                    case 0: world = center + (-right - down) * radius; break;
-                    case 1: world = center + (right - down) * radius; break;
-                    case 2: world = center + (right + down) * radius; break;
-                    default: world = center + (-right + down) * radius; break;
+                float2 toward;
+                if (thin && solidStrokeToward(placed.far1, center, s, toward)) {
+                    // 細い線の端は、横を帯と同じ幅・同じ被覆にし、線に沿っては元の太さの半分だけ出す
+                    float2 band = solidStrokeThinBand(toward, s);
+                    float pixel = solidStrokePixel(center, s);
+                    float3 across = right * (band.x * pixel);
+                    float3 lengthwise = down * (s.uv.z * s.shapeScale.w * 0.5f * pixel);
+                    coverage = band.y;
+                    switch (corner) {
+                        case 0: world = center - across - lengthwise; break;
+                        case 1: world = center + across - lengthwise; break;
+                        case 2: world = center + across + lengthwise; break;
+                        default: world = center - across + lengthwise; break;
+                    }
+                } else {
+                    switch (corner) {
+                        case 0: world = center + (-right - down) * radius; break;
+                        case 1: world = center + (right - down) * radius; break;
+                        case 2: world = center + (right + down) * radius; break;
+                        default: world = center + (-right + down) * radius; break;
+                    }
                 }
             }
         } else if (placed.kind == 4) {
@@ -1177,6 +1232,14 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 && solidStrokeAcross(otherOrigin, other, s, acrossOther)
                 && solidStrokeToward(ownOrigin, own, s, armOwn) && solidStrokeToward(otherOrigin, other, s, armOther);
             float2 inward = armOwn + armOther;
+            if (built && thin) {
+                // 細い線の折れ目は、2 本の帯の半幅と被覆の小さいほうで組む (CPU の `buildSolidStroke` の角・細い帯の外へ
+                // はみ出さない)。腕の向きは角から外へ向かうので、帯の向きとしては符号によらない
+                float2 own = solidStrokeThinBand(armOwn, s);
+                float2 other = solidStrokeThinBand(armOther, s);
+                radius = min(own.x, other.x) * solidStrokePixel(center, s);
+                coverage = min(own.y, other.y);
+            }
             if (built && !(inward.x == 0 && inward.y == 0)) {
                 float2 sideOwn = solidStrokeOnScreen(acrossOwn, s);
                 // 同じ向きへ折り返す角では、2 枚が外側の縁を左右へ分ける (`b.y`)。**向きが等しいかは値で見る**
@@ -1233,8 +1296,7 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
     out.isDerivedNormal = 0;
     out.shapePosition = shape;
     out.shapeNormal = float3(0);
-    // 被覆は置き場所が持つ (細い線を広げたとき 1 未満・#1637)
-    out.coverage = s.uv.w;
+    out.coverage = coverage;
     out.particleAge = 0.0;
     return out;
 }

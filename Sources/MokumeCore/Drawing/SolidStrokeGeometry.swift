@@ -234,8 +234,10 @@ struct SolidStrokePlacement {
     var forward: SIMD4<Float>
     var parameters: SIMD4<Float>  // 太さ、2*tan(fov/2) または世界での幅、near、高さ
     var color: SIMD4<Float>
-    var uv: SIMD4<Float>  // xy: 白い区画、z: 使わない (0)、w: 被覆 (#1637)
-    // xyz: 単位の形の骨を元の寸法へ戻す軸ごとの倍率 (#1606・#2386)。寸法ごとの骨は 1。w は使わない (0)
+    // xy: 白い区画、z: 細い線の元の描く画素での太さ (細くなければ 0・#3734)、w: 被覆 (#1637)
+    var uv: SIMD4<Float>
+    // xyz: 単位の形の骨を元の寸法へ戻す軸ごとの倍率 (#1606・#2386)。寸法ごとの骨は 1。
+    // w: 描く画素 1 つの、出す画素での長さ (細い線の帯を広げ直すときだけ読む・#3734)
     var shapeScale: SIMD4<Float>
 
     init(
@@ -412,10 +414,15 @@ extension Canvas {
         beginSolids()
         closeBatch()
         let thin = gpuStrokeThin(weight)
-        let placement = SolidStrokePlacement(
+        var placement = SolidStrokePlacement(
             matrix: matrix, camera: currentCamera, width: width, height: height,
             weight: weight * (thin?.widen ?? 1), cap: cap, color: color, uv: uv,
             geometryScale: geometryScale, coverage: thin?.coverage ?? 1)
+        // 細い線の帯は、頂点段が帯ごとに画面の向きで広げ直す (``SolidThinBand``・#3734)
+        if thin != nil, let band = solidThinBand(weight: weight) {
+            placement.uv.z = band.drawn
+            placement.shapeScale.w = band.outputPerDrawn
+        }
         openSolid = OpenSolid(
             source: source, vertexStart: 0, vertexCount: geometry.count,
             indexStart: nil, instanceStart: solidInstances.count,
