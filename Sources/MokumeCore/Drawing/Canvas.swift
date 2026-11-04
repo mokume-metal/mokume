@@ -5325,6 +5325,9 @@ public final class Canvas {
         let strokeEraseState: (any MTLRenderPipelineState)?
         /// 平面の線の印を消し描きするパイプライン。区間を持つ平面の列があるフレームだけが組んで持つ (#3579)。
         let flatStrokeEraseState: (any MTLRenderPipelineState)?
+        /// GPU で広げる細い線の骨の列 (``Batch/strokeGeometry``) を消し描きするパイプライン。骨の頂点関数
+        /// (``ShapePipeline/solidStrokeVertexFunctionName``) で組む。区間を持つ骨の列があるフレームだけが組んで持つ (#3578)。
+        let boneStrokeEraseState: (any MTLRenderPipelineState)?
         /// 利用者の断片で塗る立体の列の消し描き (``Shader/strokeEraseState()``)。断片 (``Shape/Paint/shader``) の
         /// 同一性で引く。区間を持つ立体の列の断片だけが載る。平面の列は奥行きを書かない消し描きなので、組み込みの
         /// ``flatStrokeEraseState`` で足りる (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:vertexFunctionName:)``)。
@@ -5366,10 +5369,14 @@ public final class Canvas {
             geometry: try uploadGeometry(reusing: bakedShadow?.solidUploads),
             perBatch: try uploadPerBatch(shadow: bakedShadow, drawingInFrame: drawingInFrame),
             sweeps: try uploadSweeps(), solidVariantStates: variants.states,
-            strokeEraseState: batches.contains { $0.source == .solid && !$0.strokeStencilSections.isEmpty }
-                ? try pipeline.strokeEraseState() : nil,
+            strokeEraseState: batches.contains {
+                $0.source == .solid && $0.strokeGeometry == nil && !$0.strokeStencilSections.isEmpty
+            } ? try pipeline.strokeEraseState() : nil,
             flatStrokeEraseState: batches.contains { $0.source == .flat && !$0.strokeStencilSections.isEmpty }
                 ? try pipeline.strokeEraseState(vertexFunctionName: ShapePipeline.flatVertexFunctionName)
+                : nil,
+            boneStrokeEraseState: batches.contains { $0.strokeGeometry != nil && !$0.strokeStencilSections.isEmpty }
+                ? try pipeline.strokeEraseState(vertexFunctionName: ShapePipeline.solidStrokeVertexFunctionName)
                 : nil,
             shaderStrokeEraseStates: try shaderStrokeEraseStates())
     }
@@ -5377,7 +5384,8 @@ public final class Canvas {
     /// 1 回だけ混ぜる線の区間を持つ立体の列のうち、利用者の断片で塗る列の消し描き (``Shader/strokeEraseState()``)。
     private func shaderStrokeEraseStates() throws(RenderFailure) -> [ObjectIdentifier: any MTLRenderPipelineState] {
         var states: [ObjectIdentifier: any MTLRenderPipelineState] = [:]
-        for batch in batches where batch.source == .solid && !batch.strokeStencilSections.isEmpty {
+        for batch in batches
+        where batch.source == .solid && batch.strokeGeometry == nil && !batch.strokeStencilSections.isEmpty {
             guard let shader = batch.run.paint.shader, states[ObjectIdentifier(shader)] == nil else { continue }
             states[ObjectIdentifier(shader)] = try shader.strokeEraseState()
         }
@@ -5579,14 +5587,17 @@ public final class Canvas {
             var strokeSection: ((() -> Void) -> Void)?
             // 平面の列は奥行きを比べない印と消し描きで描く (#3579)。立体の列の消し描きは、列と同じ断片で
             // 組んだもの (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:vertexFunctionName:)``)
+            // GPU で広げる骨の列 (細い線) は、骨の頂点関数で組んだ消し描きで描く (#3578)
             let flat = batch.source == .flat
             let eraseState =
                 flat
                 ? prepared.flatStrokeEraseState
-                : run.paint.shader.map { prepared.shaderStrokeEraseStates[ObjectIdentifier($0)] }
-                    ?? prepared.strokeEraseState
-            if !batch.strokeStencilSections.isEmpty, batch.strokeGeometry == nil, batch.ownedIndices == nil,
-                !batch.replacesSurface, let eraseState, let batchState
+                : batch.strokeGeometry != nil
+                    ? prepared.boneStrokeEraseState
+                    : run.paint.shader.map { prepared.shaderStrokeEraseStates[ObjectIdentifier($0)] }
+                        ?? prepared.strokeEraseState
+            if !batch.strokeStencilSections.isEmpty, batch.ownedIndices == nil, !batch.replacesSurface,
+                let eraseState, let batchState
             {
                 let markDepth = flat ? pipeline.flatStrokeMarkDepthState : pipeline.strokeMarkDepthState
                 let eraseDepth = flat ? pipeline.flatStrokeEraseDepthState : pipeline.strokeEraseDepthState
@@ -5634,7 +5645,7 @@ public final class Canvas {
                     func draw() {
                         encodeSolidDraw(
                             run, section: pass.range, instances: 0..<batch.instanceCount,
-                            indices: geometry.solidIndices, strokeGeometry: nil, on: encoder)
+                            indices: geometry.solidIndices, strokeGeometry: batch.strokeGeometry, on: encoder)
                         draws += 1
                     }
                     if pass.stroke, let strokeSection { strokeSection(draw) } else { draw() }

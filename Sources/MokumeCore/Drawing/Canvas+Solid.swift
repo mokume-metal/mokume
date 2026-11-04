@@ -687,7 +687,7 @@ extension Canvas {
     /// 奥行きの違う辺が画面で交わる所も 1 回で、別々の図形の線どうしは 2 回混ぜる。`shader()` を付けた線と、
     /// 保持した形を置くときに組み直す線 (``rebuiltSolidStroke(_:)``) も同じで、断片の出力が場所で違う線の
     /// 重なりは先に積んだ片の色になる。どの線が入るかは ``solidStrokeOverlapsShow(alpha:)`` にあり、描く画素で
-    /// 1 画素より細い線 (被覆 < 1) は、これまでどおり片を重ねて混ぜる。
+    /// 1 画素より細い線 (被覆 < 1) は、色によらず入る (#2185 の決定 D)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
@@ -724,8 +724,9 @@ extension Canvas {
     ///
     /// **半透明の稜線は、形 1 つの稜線全体を 1 回だけ混ぜる** ([ADR-0046])。稜が集まる角も、奥行きの違う
     /// 稜が画面で交わる所も 1 回で、別々に置いた形どうしは 2 回混ぜる。`shader()` を付けた稜線と、保持した
-    /// 形に記録して置く稜線も同じである。重なりが絵に出る線は GPU の骨 (``placeGPUStroke(of:mesh:)``・
-    /// 不透明の `blend` で断片なしだけ) を通らず、CPU の帯で組んで型板を通る。
+    /// 形に記録して置く稜線も同じである。色と混ぜ方で重なりが絵に出る線は GPU の骨 (``placeGPUStroke(of:mesh:)``・
+    /// 不透明の `blend` で断片なしだけ) を通らず、CPU の帯で組んで型板を通る。描く画素で 1 画素より細い不透明の
+    /// 線は骨のまま、骨の列全体を区間にして型板を通る (``openGPUStroke``)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     func strokeSolidEdges(of source: SolidSource, mesh build: () -> SolidMesh) {
@@ -766,7 +767,10 @@ extension Canvas {
     ///
     /// [#1547]: https://github.com/mokume-metal/mokume/issues/1547
     private func recordingSolidStroke(_ source: SolidStrokePiece.Source, _ build: () -> Void) {
-        let stenciled = !recordingShape && solidStrokeCoverage == 1 && solidStrokeOverlapsShow
+        let stenciled =
+            !recordingShape
+            && solidStrokeTakesSection(
+                alpha: style.stroke.alpha, coverage: solidStrokeCoverage, isLonePoint: solidStrokeIsLonePoint)
         let start = solidVertices.count
         let indexStart = solidIndices.count
         build()
@@ -777,6 +781,27 @@ extension Canvas {
                 source: source, weight: style.strokeWeight, join: style.strokeJoin, cap: style.strokeCap,
                 vertexStart: start, vertexCount: solidVertices.count - start,
                 isLonePoint: solidStrokeIsLonePoint))
+    }
+
+    /// 立体の線 1 本を、1 回だけ混ぜる区間に入れるか ([ADR-0046])。**立体の線を積む口はどれもここで決める** —
+    /// その場の線 (``recordingSolidStroke(_:_:)``)・保持した形の組み直し (``rebuiltSolidStroke(_:)``)・GPU で広げる
+    /// 骨 (``openGPUStroke``)。
+    ///
+    /// - 描く画素で 1 画素より細い線 (被覆 < 1) は、色によらず入れる (#2185 の決定 D)。被覆の残りに下地を読む
+    ///   ので、不透明の色でも片が重なると濃くなる
+    /// - ただし点 1 つの線 (端の形だけ) は入れない。細い点は画面の軸に沿った正方形 1 枚 (対角線を共有する
+    ///   三角形 2 枚) で組むので片が重ならず、区間にしても描く呼び出しが増えるだけである (``ThinStroke``)
+    /// - それ以外は、重なりが色と混ぜ方で絵に出るか (``solidStrokeOverlapsShow(alpha:)``)
+    ///
+    /// - Parameters:
+    ///   - alpha: 線の不透明度。保持した形なら置き場所の色を掛けたもの。
+    ///   - coverage: 描く画素での被覆 (細い線の補い・#1637)。
+    ///   - isLonePoint: 点 1 つの線か (``SolidStrokePiece/isLonePoint``)。
+    ///
+    /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
+    func solidStrokeTakesSection(alpha: Float, coverage: Float, isLonePoint: Bool) -> Bool {
+        if coverage < 1, !isLonePoint { return true }
+        return solidStrokeOverlapsShow(alpha: alpha)
     }
 
     /// 立体の線の片の重なりが絵に出るか — 出るなら、1 つの図形の線全体を型板で 1 回だけ混ぜる
@@ -801,8 +826,8 @@ extension Canvas {
     ///
     /// 塗りと混ぜ方は ``effectivePaint``・`style.blendMode` から読む。保持した形を置く間は記録したものが
     /// 当たっている (``replaying(_:_:)``) ので、置き場所の色を掛けた不透明度を渡せば、組み直す線
-    /// (``rebuiltSolidStroke(_:)``) も同じ判定になる ([#3577])。描く画素で 1 画素より細い線 (被覆 < 1・[#3578]) は、
-    /// 呼ぶ側が範囲の外にしている (段 3 で入れる)。
+    /// (``rebuiltSolidStroke(_:)``) も同じ判定になる ([#3577])。色と混ぜ方だけを見る判定で、描く画素で 1 画素より
+    /// 細い線 (被覆 < 1・[#3578]) を色によらず入れるのは、区間に入れるかの判定 (``solidStrokeTakesSection(alpha:coverage:isLonePoint:)``) である。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#2184]: https://github.com/mokume-metal/mokume/issues/2184
@@ -833,7 +858,8 @@ extension Canvas {
     }
 
     /// 列の描く単位で数えた区間を、開いている列の 1 回だけ混ぜる区間に足す。外の置き場から読む列と
-    /// GPU の骨の列は区間を割って描けないので、足さない。
+    /// GPU の骨の列には足さない — 骨の列は、開くときに列全体を 1 つの区間にする (``openGPUStroke``) ので、
+    /// 頂点の並びで数えた区間を混ぜられない。
     private func appendStrokeStencilSection(_ section: Range<Int>) {
         guard let open = openSolid, open.external == nil, open.strokeGeometry == nil, !section.isEmpty else { return }
         openSolid?.strokeStencilSections.append(section)

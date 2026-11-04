@@ -683,6 +683,164 @@ struct SolidStrokeStencilTests {
         #expect(abs(pixels[120, 80].red - Self.once) < 0.01, "右の辺 (120, 80) は \(pixels[120, 80].red)")
     }
 
+    // MARK: - 細い線 (#3578・#2185)
+
+    /// 描く画素で 1 画素より細い不透明の赤の線 (`strokeWeight(0.5)`・被覆 0.5) で描き、絵と閉じた列を返す。
+    /// 1 回混ぜると線形の赤が 0.411 前後、2 回で 0.5 を超える。
+    private func thin(_ body: (Canvas) -> Void) throws -> (pixels: PixelBuffer, batches: [Canvas.Batch]) {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var batches: [Canvas.Batch] = []
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(0.5)
+            body(canvas)
+            canvas.closeBatch()
+            batches = canvas.batches
+        }
+        return (try canvas.target.readPixels(), batches)
+    }
+
+    /// 細い線が塗った画素がどれも 1 回だけ混ぜた値 (0.411 ± 0.01) か。外れた画素を返す。
+    private func notOnce(_ pixels: PixelBuffer) -> [SIMD2<Int>] {
+        painted(pixels).filter { abs(pixels[$0.x, $0.y].red - 0.411) >= 0.01 }.sorted { ($0.y, $0.x) < ($1.y, $1.x) }
+    }
+
+    @Test("細い不透明の線の box(80) は、GPU で広げる骨のまま、稜の集まる角も 1 回だけ混ぜる")
+    func thinBoxMixesOnceOnTheBone() throws {
+        let (pixels, batches) = try thin { canvas in
+            canvas.translate(80, 80, 0)
+            canvas.box(80)
+        }
+        #expect(batches.compactMap(\.strokeGeometry).count == 1)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+        #expect(notOnce(pixels).isEmpty, "1 回でない画素 \(notOnce(pixels).prefix(8))")
+    }
+
+    @Test("保持した形の細い線も、骨の経路で 1 回だけ混ぜる")
+    func thinRetainedBoxMixesOnceOnTheBone() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var made: Shape?
+        try canvas.draw {
+            made = canvas.createShape {
+                canvas.noFill()
+                canvas.stroke(255, 0, 0)
+                canvas.strokeWeight(0.5)
+                canvas.box(80)
+            }
+        }
+        let crate = try #require(made)
+        var bones = 0
+        try canvas.draw {
+            canvas.background(black)
+            canvas.translate(80, 80, 0)
+            canvas.shape(crate)
+            canvas.closeBatch()
+            bones = canvas.batches.compactMap(\.strokeGeometry).count
+        }
+        let pixels = try canvas.target.readPixels()
+        #expect(bones == 1)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    @Test("細い線の CPU の帯 (奥行きを持つ閉じた 4 点・丸い折れ目の箱) も、角を 1 回だけ混ぜる", arguments: [false, true])
+    func thinCPUBandsMixOnce(roundBox: Bool) throws {
+        let (pixels, batches) = try thin { canvas in
+            if roundBox {
+                // 丸い折れ目の稜線は GPU に乗らず、CPU の帯で組む
+                canvas.strokeJoin(.round)
+                canvas.translate(80, 80, 0)
+                canvas.box(80)
+            } else {
+                Self.closedSquare(canvas)
+            }
+        }
+        #expect(batches.compactMap(\.strokeGeometry).isEmpty)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 保持した形の CPU の帯 (骨に乗らない丸い折れ目の稜線) も、置くときに組み直して 1 回だけ混ぜる (段 3 の反証 #4)。
+    @Test("保持した形の細い CPU の帯も、組み直して 1 回だけ混ぜる")
+    func thinRetainedCPUBandMixesOnce() throws {
+        let (pixels, batches) = try placingRetained(
+            record: { canvas in
+                canvas.noFill()
+                canvas.stroke(255, 0, 0)
+                canvas.strokeWeight(0.5)
+                canvas.strokeJoin(.round)
+                canvas.box(80)
+            },
+            place: { canvas, crate in
+                canvas.translate(80, 80, 0)
+                canvas.shape(crate)
+            })
+        #expect(batches.compactMap(\.strokeGeometry).isEmpty)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 細い点 1 つは画面の軸に沿った正方形 1 枚で、片が重ならない。区間にすると描く呼び出しが増えるだけなので
+    /// 入れない (段 3 の反証 #2)。
+    @Test("細い不透明の点 1 つは、区間を持たない")
+    func thinLonePointHasNoSection() throws {
+        let (pixels, batches) = try thin { canvas in
+            canvas.point(80, 80, 0)
+        }
+        #expect(!painted(pixels).isEmpty)
+        #expect(batches.allSatisfy { $0.strokeStencilSections.isEmpty })
+    }
+
+    @Test("読み込んだモデルの細い稜線も、骨の経路で 1 回だけ混ぜる")
+    func thinModelMixesOnceOnTheBone() throws {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        let pyramid = try canvas.loadModel(ModelFixture.pyramid)
+        var bones = 0
+        try canvas.draw {
+            canvas.background(black)
+            canvas.noFill()
+            canvas.stroke(255, 0, 0)
+            canvas.strokeWeight(0.5)
+            canvas.translate(80, 80, 0)
+            canvas.rotateX(0.4)
+            canvas.rotateY(0.7)
+            canvas.model(pyramid)
+            canvas.closeBatch()
+            bones = canvas.batches.compactMap(\.strokeGeometry).count
+        }
+        let pixels = try canvas.target.readPixels()
+        #expect(bones == 1)
+        #expect(!painted(pixels).isEmpty)
+        #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
+    }
+
+    /// 別々の図形の細い線どうしは 2 回混ぜる (#2185 の条件 3)。同じ骨の線が続いても、区間は図形ごとに切る。
+    /// 2 回混ぜた画素は、それぞれの箱だけを描いたときに両方が塗った画素の中にだけあり、そこに確かにある
+    /// (両方が塗った画素のうち、後の箱の稜が奥で奥行きに落ちる所は 1 回のまま)。区間を図形をまたいで
+    /// まとめると、両方が塗った画素も 1 回になる。
+    @Test("細い線の別々の箱どうしが交わる所は、2 回混ぜる")
+    func thinSeparateBoxesMixTwice() throws {
+        func boxes(_ which: Set<Int>) throws -> PixelBuffer {
+            try thin { canvas in
+                for (index, offset) in [(0, Float(70)), (1, Float(90))] where which.contains(index) {
+                    canvas.push()
+                    canvas.translate(offset, offset, 0)
+                    canvas.box(80)
+                    canvas.pop()
+                }
+            }.pixels
+        }
+        let both = try boxes([0, 1])
+        let shared = painted(try boxes([0])).intersection(painted(try boxes([1])))
+        let twice = Set(overpainted(both))
+        #expect(!shared.isEmpty)
+        #expect(!twice.isEmpty, "両方が塗った \(shared.count) 画素のどれも 2 回混ぜていない")
+        #expect(twice.isSubset(of: shared), "片方だけが塗った画素の 2 回 \(twice.subtracting(shared).count)")
+    }
+
     // MARK: - 範囲の外
 
     /// 勾配の塗りは面が持つ断片で塗るが、線は色のまま出すので、不透明の線は型板を通さない (反証 #1)。
