@@ -319,8 +319,13 @@ struct SketchApplicationRenderTests {
         }
     }
 
-    /// 書き出す経路は画面のリフレッシュ (``ScreenDisplayLink``) に繋がない ([#3474])。窓を持たないだけでなく、
+    /// 書き出す経路は画面のリフレッシュ (``ScreenDisplayLink``) に繋がない ([#3474])。ウィンドウを持たないだけでなく、
     /// 画面の刻みにも、画面のスリープを断ることにも頼らない。描き終えたら駆動を畳み、書き切りを待つ間に空回りしない。
+    ///
+    /// **畳むところで見ているのは、終わりが駆動の外から頼まれた順である** (メニューの「終了」など)。検査の
+    /// ``SketchApplication/onRenderFinished`` は `terminate(_:)` を呼ばずに返事だけを控えるので、描き終えた後も
+    /// 駆動は次の回を叩く。本番の駆動の中から `terminate(_:)` を呼ぶ順では、後始末の待ちが入れ子の run loop で
+    /// 回っても発火中のタイマーは入れ子では再発火しない (CFRunLoop の振る舞いによる) ので、この回は来ない。
     ///
     /// [#3474]: https://github.com/mokume-metal/mokume/issues/3474
     @Test("書き出す経路は画面の駆動源に繋がず、画面のスリープも断らず、全速の駆動は描き終えたら畳む")
@@ -337,7 +342,7 @@ struct SketchApplicationRenderTests {
 
             fire(application, times: 3)
             #expect(ending.finishedCalls == 1)
-            // 描き終えた後の最初の回で畳む (終わりを頼んだ回はまだ AppKit の中にいる)
+            // 描き終えた後の最初の回で畳む (駆動の外から終わりを頼まれた順。上の説明)
             fire(application, times: 1)
             #expect(!application.fullSpeedDriver.isAttached, "描き終えた後も全速の駆動が回っている")
             try finishTerminating(application, ending)
