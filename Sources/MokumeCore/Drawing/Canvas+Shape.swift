@@ -670,19 +670,6 @@ extension Canvas {
         stopReplayingPaint()
     }
 
-    /// 保持した形の平面の線の、置き方での重なりが絵に出るか (``Canvas/strokeOverlapsShow`` と同じ分け方・#3580)。
-    ///
-    /// `alpha` は記録の色と置き場所の色を掛けた不透明度。`replace` は被覆 1 の片を重ねても同じ値を書くので
-    /// 出ない (細い片は呼ぶ側が別に見る)。
-    static func retainedStrokeOverlapsShow(mode: BlendMode, shaded: Bool, alpha: Float) -> Bool {
-        if shaded { return true }
-        switch mode {
-        case .replace: return false
-        case .blend, .lightest, .darkest: return alpha < 1
-        case .add, .subtract, .difference, .exclusion, .multiply, .screen: return true
-        }
-    }
-
     /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。
     ///
     /// **掛ける色が半透明なら、不透明の線の区間は、引いて積んだ頂点に差し替える**
@@ -747,12 +734,13 @@ extension Canvas {
         var shift = 0
         var next = 0
         // **型板の区間は図形ごとにまとめる** (#3580)。同じ図形の番号 (``StrokeRange/figure``) で続く輪郭が 1 つの
-        // 区間になる。記録の中で置き直すときは、置くたびに番号を振り直して外側の記録へ渡す (同じ形を 2 回置けば
-        // 別々の図形)
-        var section: (figure: Int?, range: Range<Int>)?
+        // 区間になる。**入れるかも図形ごとに決める** — 輪郭が 1 つでも入るなら図形全体を入れる (その場で描くときの
+        // ``Canvas/strokingOneFigure(_:)`` と同じ単位。一様でない拡大で一部の輪郭だけが細くなっても図形を割らない)。
+        // 記録の中で置き直すときは、置くたびに番号を振り直して外側の記録へ渡す (同じ形を 2 回置けば別々の図形)
+        var section: (figure: Int?, range: Range<Int>, takes: Bool)?
         var figureIDs: [Int: Int] = [:]
         func closeSection() {
-            if let open = section { noteFlatStrokeSection(open.range) }
+            if let open = section, open.takes { noteFlatStrokeSection(open.range) }
             section = nil
         }
         // 区間だけを読む。`StrokeRange` ごと写すと、置くたびに引いた頂点の参照を数え直す
@@ -809,7 +797,9 @@ extension Canvas {
                     figureIDs[figure] = placedFigure
                 }
                 recordedStrokeRanges.append(
-                    StrokeRange(placed, carved: carved, thin: thin, figure: placedFigure))
+                    StrokeRange(
+                        placed, carved: carved, thin: thin, figure: placedFigure,
+                        stacked: shape.strokeRanges[index].stacked))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
@@ -819,20 +809,16 @@ extension Canvas {
             // 引かずに積んである・``Canvas/strokeOutlineAsStyled(_:discSegments:)``)
             let stroke = shape.strokeRanges[index]
             let stencils =
-                !placed.isEmpty && stroke.thin?.outline.strokesAsOneRegion == false
+                !placed.isEmpty && stroke.stacked
                 && (rebuiltThin
-                    || Self.retainedStrokeOverlapsShow(
-                        mode: run.mode, shaded: run.paint.shader != nil,
+                    || Self.overlapsShow(
+                        blendMode: run.mode, shaded: run.paint.shader != nil,
                         alpha: shape.vertices[whole.lowerBound].color.w * (tint?.alpha ?? 1)))
-            guard stencils else {
-                closeSection()
-                continue
-            }
             if let open = section, figure != nil, open.figure == figure, open.range.upperBound == placed.lowerBound {
-                section = (figure, open.range.lowerBound..<placed.upperBound)
+                section = (figure, open.range.lowerBound..<placed.upperBound, open.takes || stencils)
             } else {
                 closeSection()
-                section = (figure, placed)
+                section = (figure, placed, stencils)
             }
         }
         closeSection()

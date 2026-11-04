@@ -562,6 +562,56 @@ struct FlatStrokeStencilTests {
         #expect(abs(two[110, 80].red - Self.twice) <= 0.01, "別々の道の交わり: \(two[110, 80].red)")
     }
 
+    /// 一様でない拡大で一部の輪郭だけが細くなっても、図形を割らない (その場で描くときと同じく、輪郭が 1 つでも
+    /// 型板に入るなら図形全体を 1 つの区間にする・#3580 の反証)。縦に 1/20 へ潰して置くと、横の部分道は細く
+    /// (被覆を持つ片に組み直され)、縦の部分道は太いまま。横の部分道を 2 本重ねても、間に縦の部分道が挟まって
+    /// いても 1 回だけ混ぜる。
+    @Test("一部の輪郭だけが細くなる置き方でも、図形全体を 1 つの区間に入れる")
+    func partlyThinFigureStaysOneSection() throws {
+        func recorded(repeats: Bool) -> (Canvas) -> Shape {
+            { canvas in
+                let path = canvas.createPath {
+                    canvas.beginShape()
+                    canvas.vertex(20, 80)
+                    canvas.vertex(140, 80)
+                    canvas.endShape()
+                    canvas.beginShape()
+                    canvas.vertex(100, 20)
+                    canvas.vertex(100, 140)
+                    canvas.endShape()
+                    if repeats {
+                        canvas.beginShape()
+                        canvas.vertex(20, 80)
+                        canvas.vertex(140, 80)
+                        canvas.endShape()
+                    }
+                }
+                return canvas.createShape {
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0)
+                    canvas.strokeWeight(10)
+                    canvas.strokeCap(.square)
+                    canvas.shape(path)
+                }
+            }
+        }
+        let squash = [Placement(y: 76, scale: Vector3(1, 0.05, 1))]
+        let single = try placed(recorded(repeats: false), at: squash)
+        let sections = Box()
+        let doubled = try placed(sections: sections, recorded(repeats: true), at: squash)
+        #expect(sections.counts.reduce(0, +) == 1, "区間: \(sections.counts)")
+        var lit = 0
+        for y in 77...83 {
+            for x in 30..<80 {
+                if single[x, y].red > 0.01 { lit += 1 }
+                #expect(
+                    abs(doubled[x, y].red - single[x, y].red) <= 0.002,
+                    "(\(x), \(y)): 重ねた \(doubled[x, y].red)・1 本 \(single[x, y].red)")
+            }
+        }
+        #expect(lit > 0, "細い横の部分道が描かれていない")
+    }
+
     /// 畳んだ雛形は引き算のまま (型板の外)。1 つの図形の中は 1 回、重なる 2 つの図形どうしは 2 回。
     @Test("畳んだ雛形の半透明の線は、1 つの中は 1 回、重なる 2 つは 2 回")
     func foldedTemplateMixesOncePerFigure() throws {

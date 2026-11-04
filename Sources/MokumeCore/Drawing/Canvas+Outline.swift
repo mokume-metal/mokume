@@ -433,12 +433,13 @@ extension Canvas {
     /// 形・端の形・刻みの円板は互いに重なるので、そのまま混ぜると半透明の線や下地を読む混ぜ方で、重なった所
     /// だけが 2〜3 回混ざって濃くなる。その場で引く線は片を重ねたまま積み、1 つの図形
     /// (``strokingOneFigure(_:)``) の線全体を型板で 1 回だけ混ぜる (``stencilsFlatStroke``)。自己交差も
-    /// 1 回になる。型板に載せない線 (畳む雛形・保持する形の記録・細い片) は、先に置いた片との差を積んで、
-    /// 形も塗る領域も変えずに 1 回だけ混ぜる (``StrokeCarving``)。重ねても絵が変わらない線
+    /// 1 回になる。保持する形の記録も引かずに積み、置くときに図形ごとに型板の区間へ入れる (#3580)。
+    /// 型板に載せない線 (畳む雛形・1 つの領域として引ける輪郭・図形の外で引く線) は、先に置いた片との差を
+    /// 積んで、形も塗る領域も変えずに 1 回だけ混ぜる (``StrokeCarving``)。重ねても絵が変わらない線
     /// (``strokeOverlapsShow`` が偽) は、引かずにこれまでどおり積む。
     ///
-    /// **保持する形の記録の間は、重ねて積んだ線に、引く素材 (``CarvedStroke``) を添える**
-    /// ([#1829]・[#1920]・``StrokeRange``)。保持した形は置くときに半透明の色を掛けられ、
+    /// **保持する形の記録の間は、1 つの領域として引ける輪郭を重ねて積んだ線に、引く素材 (``CarvedStroke``)
+    /// を添える** ([#1829]・[#1920]・``StrokeRange``)。保持した形は置くときに半透明の色を掛けられ、
     /// そのとき重ねて積んだ片は角と継ぎ目で濃くなるからである。**引くのは、半透明の色を
     /// 掛けて置くとき最初の 1 度だけ** — 記録のときは素材を組んだところで止める。掛けない形は、
     /// 今までどおり重ねて積んだ頂点を置き、引く費用を払わない。
@@ -520,8 +521,9 @@ extension Canvas {
     ///
     /// 次は載せず、これまでどおり片の重なりを引いて積む (``StrokeCarving``):
     ///
-    /// - 畳む雛形 (`buildingFlatTemplate`) と保持する形の記録 (`recordingShape`)。置き場所ごとに色と変換が
-    ///   掛かる ([#3580])
+    /// - 畳む雛形 (`buildingFlatTemplate`)。置き場所ごとに色と変換が掛かり、区間を置き場所ごとに切れない
+    ///   ([#3580])。保持する形の記録 (`recordingShape`) もここでは載せないが、1 つの領域として引けない輪郭は
+    ///   引かずに積み、置くときに区間へ入れる (``Canvas/place(_:of:at:carved:)``)
     /// - 1 つの領域として引ける輪郭 (``Outline/strokesAsOneRegion`` — 矩形・楕円・弧・辺の交差しない
     ///   四角)。引き算で既に線全体が 1 回になるので、約束は同じ。畳める形の雛形と同じ積み方に揃う
     ///   (``strokeOutlineAsStyled(_:discSegments:)``)。破線の片はこの印を持たないので型板に載る
@@ -637,7 +639,9 @@ extension Canvas {
                     ? discSegments : 0,
                 recordedCarved: overlaps && !stacks, carvesWhenTinted: carved != nil)
             recordedStrokeRanges.append(
-                StrokeRange(start..<vertices.count, carved: carved, thin: thin, figure: flatStrokeFigure?.id))
+                StrokeRange(
+                    start..<vertices.count, carved: carved, thin: thin, figure: flatStrokeFigure?.id,
+                    stacked: !outline.strokesAsOneRegion))
         }
     }
 
@@ -761,16 +765,25 @@ extension Canvas {
     /// 絵が変わらない線は引かないので、この揺れは引いた線にしか出ない。
     ///
     /// 保持する形の記録は、**積み方を記録したときの色で決める**。記録の間も引いて積むと、
-    /// 不透明のまま置く (いちばんよくある) 形の縁が動く。置くときに半透明の色を掛ける
-    /// (``Placement/fill``) 形のために、不透明の線は引く素材も持ち、置くときに引く
-    /// (``StrokeRange``・``strokeOutline(_:)``・#1829)。
+    /// 不透明のまま置く (いちばんよくある) 形の縁が動く。1 つの領域として引ける輪郭は、置くときに
+    /// 半透明の色を掛ける (``Placement/fill``) 形のために引く素材も持ち、置くときに引く
+    /// (``StrokeRange``・#1829)。ほかの輪郭は記録のときに引かずに積み、置くときに同じ分け方
+    /// (``overlapsShow(blendMode:shaded:alpha:)``) で型板の区間に入れる (#3580)。
     var strokeOverlapsShow: Bool {
-        if buildingFlatTemplate || currentShader != nil { return true }
-        switch style.blendMode {
+        buildingFlatTemplate
+            || Self.overlapsShow(
+                blendMode: style.blendMode, shaded: currentShader != nil, alpha: style.stroke.alpha)
+    }
+
+    /// 線の片の重なりが絵に出るか (``strokeOverlapsShow`` の分け方)。保持した形を置くときも、記録の色と
+    /// 置き場所の色を掛けた不透明度 (`alpha`) で同じ分け方をする (#3580)。
+    static func overlapsShow(blendMode: BlendMode, shaded: Bool, alpha: Float) -> Bool {
+        if shaded { return true }
+        switch blendMode {
         case .replace: return false
         // 不透明なら、明るいほう・暗いほうを採る混ぜ方も 2 回目で値が変わらない
         // (`mokume_composite` の `max(s, d)` / `min(s, d)`)。半透明なら 2 回目で寄っていく
-        case .blend, .lightest, .darkest: return style.stroke.alpha < 1
+        case .blend, .lightest, .darkest: return alpha < 1
         case .add, .subtract, .difference, .exclusion, .multiply, .screen: return true
         }
     }
