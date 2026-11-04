@@ -1193,14 +1193,16 @@ extension Canvas {
     /// 1 回だけ混ぜる ([ADR-0046]・[#3579])。自己交差も、外周と穴の線が接する所も 1 回になる。`.quads` の
     /// 四角は 1 枚ずつ別の原始形なので、重なれば 2 回混ぜる。
     ///
-    /// 型板に載せない線 (保持する形の記録・``Canvas/takesFlatStrokeSection``) は、これまでどおり片の
-    /// 重なりを引いて積む。`.quads` の四角 1 枚の輪郭は `quad()` と同じ規則で引き ([#1910])、任意多角形は
-    /// 線に沿って離れた部分が交わる所を 2 回混ぜる ([#1536])。
+    /// 保持する形の記録も、1 つの領域として引けない輪郭は引かずに積み、置くときに同じ図形の単位で型板の
+    /// 区間に入れる ([#3580])。型板に載せない線 (図形の外で引く線・``Canvas/takesFlatStrokeSection``) は、
+    /// これまでどおり片の重なりを引いて積む。`.quads` の四角 1 枚の輪郭は `quad()` と同じ規則で引き ([#1910])、
+    /// 任意多角形は線に沿って離れた部分が交わる所を 2 回混ぜる ([#1536])。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     /// [#1536]: https://github.com/mokume-metal/mokume/issues/1536
     /// [#1910]: https://github.com/mokume-metal/mokume/issues/1910
     /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
+    /// [#3580]: https://github.com/mokume-metal/mokume/issues/3580
     private func emitStroke(
         _ primitive: Primitive, points: [BuildingVertex], placed: [PlacedVertex]
     ) {

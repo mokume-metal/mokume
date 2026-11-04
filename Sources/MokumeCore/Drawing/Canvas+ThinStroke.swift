@@ -824,7 +824,9 @@ extension Canvas {
             outline, half: recipe.weight / 2, thin: thin, transform: recipe.transform,
             color: recipe.color, uv: recipe.uv, discSegments: 0)
         (style.strokeCap, style.strokeJoin) = saved
-        return carved.built()
+        // 1 つの領域として引けない輪郭は、引かずに積む。置く側が型板の区間に入れて 1 回だけ混ぜる
+        // (段 5 の直に描く細い線と同じ・#3580・``Canvas/place(_:of:at:carved:)``)
+        return carved.built(stacked: !outline.strokesAsOneRegion)
     }
 }
 

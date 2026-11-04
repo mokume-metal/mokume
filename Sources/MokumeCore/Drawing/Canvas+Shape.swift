@@ -733,6 +733,16 @@ extension Canvas {
         // 輪郭は頂点の数が変わるので、置いた先の区間はずれを足して求める
         var shift = 0
         var next = 0
+        // **型板の区間は図形ごとにまとめる** (#3580)。同じ図形の番号 (``StrokeRange/figure``) で続く輪郭が 1 つの
+        // 区間になる。**入れるかも図形ごとに決める** — 輪郭が 1 つでも入るなら図形全体を入れる (その場で描くときの
+        // ``Canvas/strokingOneFigure(_:)`` と同じ単位。一様でない拡大で一部の輪郭だけが細くなっても図形を割らない)。
+        // 記録の中で置き直すときは、置くたびに番号を振り直して外側の記録へ渡す (同じ形を 2 回置けば別々の図形)
+        var section: (figure: Int?, range: Range<Int>, takes: Bool)?
+        var figureIDs: [Int: Int] = [:]
+        func closeSection() {
+            if let open = section, open.takes { noteFlatStrokeSection(open.range) }
+            section = nil
+        }
         // 区間だけを読む。`StrokeRange` ごと写すと、置くたびに引いた頂点の参照を数え直す
         for index in shape.strokeRanges.indices {
             let whole = shape.strokeRanges[index].range
@@ -747,7 +757,10 @@ extension Canvas {
             let placed: Range<Int>
             var carved: CarvedStroke?
             var thin: ThinStrokeRecipe?
+            // 置いた後に細くなって組み直した輪郭か (被覆を持つ)。細い片は色によらず重なりが絵に出る
+            var rebuiltThin = false
             if next < replaced.count, replaced[next].range == whole {
+                rebuiltThin = !replaced[next].coverage.isEmpty
                 // 差し替えた頂点 (引いて積んだ・細さを補って組み直した) は、色と太さが確定している。
                 // 外側の記録へは、この頂点の区間として渡す
                 let count = replaced[next].vertices.count
@@ -776,14 +789,39 @@ extension Canvas {
                     }
                 }
             }
+            let figure = shape.strokeRanges[index].figure
             if recordingShape {
-                recordedStrokeRanges.append(StrokeRange(placed, carved: carved, thin: thin))
+                var placedFigure: Int?
+                if let figure {
+                    placedFigure = figureIDs[figure] ?? placed.lowerBound
+                    figureIDs[figure] = placedFigure
+                }
+                recordedStrokeRanges.append(
+                    StrokeRange(
+                        placed, carved: carved, thin: thin, figure: placedFigure,
+                        stacked: shape.strokeRanges[index].stacked))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
                 for index in placed { buffer[index].position += 0.5 }
             }
+            // 1 つの領域として引けない輪郭で、重なりが絵に出る置き方なら、型板の区間に入れる (記録のときに
+            // 引かずに積んである・``Canvas/strokeOutlineAsStyled(_:discSegments:)``)
+            let stroke = shape.strokeRanges[index]
+            let stencils =
+                !placed.isEmpty && stroke.stacked
+                && (rebuiltThin
+                    || Self.overlapsShow(
+                        blendMode: run.mode, shaded: run.paint.shader != nil,
+                        alpha: shape.vertices[whole.lowerBound].color.w * (tint?.alpha ?? 1)))
+            if let open = section, figure != nil, open.figure == figure, open.range.upperBound == placed.lowerBound {
+                section = (figure, open.range.lowerBound..<placed.upperBound, open.takes || stencils)
+            } else {
+                closeSection()
+                section = (figure, placed, stencils)
+            }
         }
+        closeSection()
         // 記録の中で置き直すときは、楕円・弧の塗りを刻み直す素材も外側の記録へ渡す (使うのは外側を
         // 置くとき・#1645)。**その場で置くときは要らない。** 塗りは半画素寄せないので、区間の
         // 番号だけを求める

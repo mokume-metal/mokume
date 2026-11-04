@@ -509,23 +509,38 @@ struct StrokeRange {
     /// ``Shape/vertices`` の中での区間。
     var range: Range<Int>
     /// 区間の代わりに積む、片を引いた頂点の元。**区間の頂点と同じ座標** (形自身の座標で、
-    /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した区間は記録のときに
-    /// 引いてあり、`replace` は重ねても同じ色になる。
+    /// 半画素寄せの前)。`nil` なら差し替えない — 半透明の線で記録した 1 つの領域の輪郭は記録のときに
+    /// 引いてあり、`replace` は重ねても同じ色になり、引かずに積んだ輪郭 (``stacked``) は型板で 1 回にする。
     var carved: CarvedStroke?
     /// 置いた後に描く画素で 1 画素より細くなるなら、広げて組み直す素材 (#1637)。`nil` なら
     /// 組み直さない (区間の一部だけを置き直したもの)。
     var thin: ThinStrokeRecipe?
+    /// この輪郭が属する図形の番号 (#3580)。**同じ番号の区間が 1 つの図形** — 原始形の外周・穴・破線の片で、
+    /// 置くときに型板の区間 1 つにまとめる (``Canvas/place(_:of:at:carved:)``)。番号は図形の最初の頂点の番号で、
+    /// 区間と一緒にずらす (``shifted(by:)``) ので、形の中で一意かつ形の頭からの位置になる。`nil` は図形の外で
+    /// 積んだ輪郭 (区間 1 つが図形 1 つ)。
+    var figure: Int?
+    /// 1 つの領域として引けない輪郭を、記録のときに片を引かずに重ねて積んだか (#3580)。置くときに重なりが
+    /// 絵に出るなら、この区間を型板の区間に入れる。**記録のときに決めて持ち越す** — 組み直す素材
+    /// (``thin``) を持ち越さない区間 (一部だけを置き直したもの) でも、積み方は変わらない。
+    var stacked: Bool
 
-    init(_ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil) {
+    init(
+        _ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil, figure: Int? = nil,
+        stacked: Bool = false
+    ) {
         self.range = range
         self.carved = carved
         self.thin = thin
+        self.figure = figure
+        self.stacked = stacked
     }
 
     /// 区間だけを `offset` ずらした写し。
     func shifted(by offset: Int) -> StrokeRange {
         StrokeRange(
-            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin)
+            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin,
+            figure: figure.map { $0 + offset }, stacked: stacked)
     }
 }
 

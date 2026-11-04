@@ -113,6 +113,13 @@ struct StrokeOverlapTests {
 
     // MARK: - 形
 
+    /// 起票時の閉じた 4 点と同じ四角を `quad()` で。**辺の交差しない四角は 1 つの領域として引ける輪郭**で、
+    /// 保持した形の引く素材 (#1829) を持つのはこの輪郭だけである (ほかの輪郭は置くときに型板で 1 回だけ
+    /// 混ぜる・#3580)。素材の控えを見る検査が使う。
+    private static func squareQuad(_ canvas: Canvas) {
+        canvas.quad(40, 40, 120, 40, 120, 120, 40, 120)
+    }
+
     /// 起票時の閉じた 4 点。
     private static func closedSquare(_ canvas: Canvas) {
         canvas.beginShape()
@@ -1087,13 +1094,13 @@ struct StrokeOverlapTests {
     @Test("不透明の線で記録した形は、記録のあいだは線の片を引かず、素材だけを持つ")
     func recordingKeepsOnlyTheMaterial() throws {
         for mode in [BlendMode.blend, .lightest, .darkest] {
-            let (_, shape) = try recorded { Self.opaqueShape($0, mode: mode, Self.closedSquare) }
+            let (_, shape) = try recorded { Self.opaqueShape($0, mode: mode, Self.squareQuad) }
             let boxes = Self.carvedBoxes(shape)
             #expect(boxes.count == 1, "\(mode): \(boxes.count)")
             #expect(boxes.allSatisfy { !$0.isRealized }, "\(mode): 記録のときに引いている")
         }
         let (_, replacing) = try recorded {
-            Self.opaqueShape($0, mode: .replace, Self.closedSquare)
+            Self.opaqueShape($0, mode: .replace, Self.squareQuad)
         }
         #expect(Self.carvedBoxes(replacing).isEmpty, "replace は素材を持たない")
         let (_, translucentRecording) = try recorded { canvas in
@@ -1101,7 +1108,7 @@ struct StrokeOverlapTests {
                 canvas.noFill()
                 canvas.stroke(255, 0, 0, 128)
                 canvas.strokeWeight(20)
-                Self.closedSquare(canvas)
+                Self.squareQuad(canvas)
             }
         }
         #expect(Self.carvedBoxes(translucentRecording).isEmpty, "半透明の線は記録のときに引いてある")
@@ -1111,7 +1118,7 @@ struct StrokeOverlapTests {
     /// 回して縮めた置き場所は、何度置いても素材のままである。
     @Test("不透明の線で記録した形は、色を掛けずに置いても不透明の色を掛けて置いても、線の片を引かない")
     func untintedPlacementsDoNotCarve() throws {
-        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.closedSquare) }
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.squareQuad) }
         let boxes = Self.carvedBoxes(shape)
         #expect(boxes.count == 1)
         let tinted = LinearRGBA(premultipliedRed: 1, green: 0.5, blue: 0.25, alpha: 1)
@@ -1129,12 +1136,12 @@ struct StrokeOverlapTests {
     /// 直に半透明の線で描いた絵と 1 画素も違わない。
     @Test("不透明の線で記録した形は、半透明の色で最初に置くとき線の片を引き、2 回目以降は引き直さない")
     func carvesOnTheFirstTranslucentPlacementOnly() throws {
-        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.closedSquare) }
+        let (canvas, shape) = try recorded { Self.opaqueShape($0, Self.squareQuad) }
         let boxes = Self.carvedBoxes(shape)
         #expect(boxes.count == 1)
         #expect(boxes.allSatisfy { !$0.isRealized })
 
-        let direct = try directlyTranslucent(Self.closedSquare)
+        let direct = try directlyTranslucent(Self.squareQuad)
         let first = try drawn(canvas, shape, at: [Placement(fill: Self.veil)])
         #expect(boxes.allSatisfy { $0.isRealized }, "半透明の色で置いたのに引いていない")
         #expect(differingPixels(first, direct) == 0, "1 回目: \(holes(first, direct))")
@@ -1158,12 +1165,7 @@ struct StrokeOverlapTests {
     @Test("不透明の線で記録した形を入れ子に置き直すことを重ねても、引く素材の箱の鎖は伸びない")
     func rewrappingKeepsTheChainShort() throws {
         func small(_ canvas: Canvas) {
-            canvas.beginShape()
-            canvas.vertex(20, 20)
-            canvas.vertex(50, 20)
-            canvas.vertex(50, 50)
-            canvas.vertex(20, 50)
-            canvas.endShape(.close)
+            canvas.quad(20, 20, 50, 20, 50, 50, 20, 50)
         }
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
         var shape = Shape.empty
@@ -1201,7 +1203,7 @@ struct StrokeOverlapTests {
                 canvas.noFill()
                 canvas.stroke(Self.redInk)
                 canvas.strokeWeight(20)
-                Self.closedSquare(canvas)
+                Self.squareQuad(canvas)
             }
             let middle = canvas.createShape { canvas.shape(inner, at: [Placement(fill: dim)]) }
             return canvas.createShape { canvas.shape(middle, at: [Placement(fill: dim)]) }
@@ -1216,7 +1218,7 @@ struct StrokeOverlapTests {
         let direct = try render { canvas in
             canvas.stroke(LinearRGBA(premultipliedRed: 0.125, green: 0, blue: 0, alpha: 0.5))
             canvas.strokeWeight(20)
-            Self.closedSquare(canvas)
+            Self.squareQuad(canvas)
         }
         #expect(painted(direct) > 0)
         #expect(differingPixels(pixels, direct) == 0, "\(holes(pixels, direct).count) 画素")

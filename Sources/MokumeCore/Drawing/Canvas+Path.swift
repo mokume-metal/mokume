@@ -152,7 +152,9 @@ extension Canvas {
 
         // 2 つ以上なら、塗りは 3 点以上の部分道を 1 つの形として 1 本の `beginShape()` で描き (最初が外周、残りは
         // `beginContour()`)、線は部分道ごとに引く。回り数で塗るので、SVG の `<path>` と同じ内側になる。
-        // 3 点に満たない部分道 (線・点) は面積が無く、外周にすると全体が塗られなくなるので、塗りには使わない
+        // 3 点に満たない部分道 (線・点) は面積が無く、外周にすると全体が塗られなくなるので、塗りには使わない。
+        // **線は部分道をまとめて 1 つの図形** (#3580) — 半透明の線でも、部分道どうしの重なりを 1 回だけ混ぜる
+        // (SVG・Canvas 2D の 1 本の path と同じ)
         let saved = currentStyle
         let fillable = subpaths.filter { $0.points.count >= 3 }
         if saved.hasFill, let outline = fillable.first {
@@ -169,12 +171,45 @@ extension Canvas {
         }
         if saved.hasStroke, saved.strokeWeight > 0 {
             noFill()
-            for subpath in subpaths {
-                beginShape()
-                trace(subpath)
-                endShape(subpath.isClosed ? .close : .open)
+            let held = recordPathStrokeAsOneFigure(subpaths, offset: offset)
+            strokingOneFigure {
+                for subpath in subpaths {
+                    beginShape()
+                    trace(subpath)
+                    endShape(subpath.isClosed ? .close : .open)
+                }
             }
+            resumeVector(held)
             currentStyle = saved
         }
+    }
+
+    /// 部分道が 2 つ以上の道の線を、ベクターへ **部分道を並べた 1 つの図形**として控え、部分道ごとに線を引く間は
+    /// 控えを止める (#3580)。画面は道の線を 1 つの図形として 1 回だけ混ぜるので、書き出しも 1 つの `<path>` に
+    /// して、SVG の描き手で見た絵と揃える。止めたなら元の器を返す (``resumeVector(_:)`` で戻す)。
+    ///
+    /// 1 つの図形に書けない道 (点 1 つの部分道を含む・破線の並びが部分道ごとに違う) は控えず `nil` を返し、
+    /// これまでどおり部分道ごとの図形として控える。
+    private func recordPathStrokeAsOneFigure(_ subpaths: [Path.Subpath], offset: SIMD2<Float>) -> VectorCapture? {
+        guard let sink = vectorSink() else { return nil }
+        guard !subpaths.contains(where: { $0.points.count < 2 }) else { return nil }
+        var dash: [Float]?
+        var placedSubpaths: [VectorSubpath] = []
+        let place = vectorPlacer()
+        for subpath in subpaths {
+            let local = subpath.points.map { $0 + offset }
+            let own = vectorDash(of: local, isClosed: subpath.isClosed)
+            if let dash, dash != own { return nil }
+            dash = own
+            let moved = local.map(place)
+            guard !moved.contains(where: { SVGWriter.fit(of: $0.x) == .notANumber || SVGWriter.fit(of: $0.y) == .notANumber })
+            else { return nil }
+            placedSubpaths.append(VectorSubpath(points: moved, isClosed: subpath.isClosed))
+        }
+        guard let writable = vectorWritable(fills: false, strokes: true, into: sink), writable.strokes else {
+            return suspendVector()
+        }
+        sink.add(VectorFigure(subpaths: placedSubpaths, fill: nil, stroke: vectorStroke(dash: dash ?? [])))
+        return suspendVector()
     }
 }

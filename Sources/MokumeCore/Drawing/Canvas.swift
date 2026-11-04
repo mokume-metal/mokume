@@ -274,8 +274,8 @@ public final class Canvas {
     /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     var flatStrokeStencilSections: [Range<Int>] = []
     /// 組んでいる平面の線の図形 (``strokingOneFigure(_:)``)。始まりの頂点の番号と、型板に載せる片を
-    /// 積んだか。図形の外では `nil`。
-    var flatStrokeFigure: (start: Int, stenciled: Bool)?
+    /// 積んだか、図形の番号 (保持する形の記録が ``StrokeRange/figure`` に写す・#3580)。図形の外では `nil`。
+    var flatStrokeFigure: (start: Int, stenciled: Bool, id: Int)?
 
     /// 畳む相手を待っている図形。**今までどおり置かれた 1 つ目**である。
     ///

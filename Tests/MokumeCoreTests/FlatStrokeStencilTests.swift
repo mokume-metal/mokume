@@ -433,4 +433,197 @@ struct FlatStrokeStencilTests {
         #expect(direct > 0)
         #expect(abs(folded - direct) <= direct * 0.01, "畳んだ \(folded)・直に置いた \(direct)")
     }
+
+    // MARK: - 保持した形と道 (#3580)
+
+    /// 置き場所で掛ける半透明の白。不透明度は `stroke(255, 0, 0, 128)` と同じ 128/255。
+    private static let veil: LinearRGBA = {
+        let alpha = Float(128) / 255
+        return LinearRGBA(premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
+    }()
+
+    /// 形を前のフレームで組み (`build`)、黒地へ置き場所を渡して置く。
+    private func placed(
+        sections: Box? = nil, _ build: (Canvas) -> Shape, at placements: [Placement]
+    ) throws -> PixelBuffer {
+        let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
+        var shape = Shape.empty
+        try canvas.draw { shape = build(canvas) }
+        try canvas.draw {
+            canvas.background(black)
+            canvas.shape(shape, at: placements)
+            canvas.closeBatch()
+            sections?.counts = canvas.batches.filter { $0.source == .flat }.map(\.strokeStencilSections.count)
+        }
+        return try canvas.target.readPixels()
+    }
+
+    /// 自分と交わる折れ線を記録した形。`translucent` なら半透明の赤、そうでなければ不透明の赤で記録する。
+    private static func crossingShape(_ canvas: Canvas, translucent: Bool) -> Shape {
+        canvas.createShape {
+            canvas.noFill()
+            if translucent { canvas.stroke(255, 0, 0, 128) } else { canvas.stroke(255, 0, 0) }
+            crossingPolyline(canvas)
+        }
+    }
+
+    /// 半透明で記録した形を置くときも、不透明で記録して置き場所で半透明の色を掛けるときも、自己交差は 1 回。
+    @Test("保持した形の自分と交わる折れ線は、交点も 1 回だけ混ぜる", arguments: [false, true])
+    func retainedSelfCrossingMixesOnce(tinted: Bool) throws {
+        let sections = Box()
+        let pixels = try placed(
+            sections: sections, { Self.crossingShape($0, translucent: !tinted) },
+            at: [Placement(fill: tinted ? Self.veil : nil)])
+        #expect(abs(pixels[80, 80].red - Self.once) <= 0.01, "交点: \(pixels[80, 80].red)")
+        #expect(overpainted(pixels).isEmpty, "重ね塗り \(overpainted(pixels).count) 画素")
+        #expect(sections.counts == [1], "区間: \(sections.counts)")
+    }
+
+    /// 同じ形を 2 か所に置くと別々の図形で、2 つ目の 3 本目の辺が 1 つ目の 1 本目の辺と (95, 95) で交わる所は
+    /// 2 回混ぜる。入れ子に記録した形 (外側の記録へ置き直した線) も、置くときに 1 回になる。
+    @Test("保持した形を 2 か所に置くと重なりは 2 回、入れ子に記録しても交点は 1 回")
+    func retainedPlacementsStaySeparateFigures() throws {
+        let twice = try placed(
+            { Self.crossingShape($0, translucent: true) }, at: [Placement(), Placement(x: 30)])
+        #expect(abs(twice[95, 95].red - Self.twice) <= 0.01, "2 つの置き場所の重なり: \(twice[95, 95].red)")
+        #expect(abs(twice[80, 80].red - Self.once) <= 0.01, "1 つ目の交点: \(twice[80, 80].red)")
+        let nested = try placed(
+            { canvas in
+                let inner = Self.crossingShape(canvas, translucent: true)
+                return canvas.createShape { canvas.shape(inner) }
+            }, at: [Placement()])
+        #expect(abs(nested[80, 80].red - Self.once) <= 0.01, "入れ子の交点: \(nested[80, 80].red)")
+        #expect(overpainted(nested).isEmpty, "入れ子の重ね塗り \(overpainted(nested).count) 画素")
+    }
+
+    /// 置いた後に細くなる保持した形も、細い片の重なりを型板で 1 回にする (段 5 と同じ)。
+    @Test("縮めて置いて細くなった保持した形の自己交差も 1 回だけ混ぜる")
+    func retainedThinSelfCrossingMixesOnce() throws {
+        let sections = Box()
+        let pixels = try placed(
+            sections: sections,
+            { canvas in
+                canvas.createShape {
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0)
+                    canvas.strokeWeight(1)
+                    canvas.beginShape()
+                    canvas.vertex(20, 20)
+                    canvas.vertex(140, 140)
+                    canvas.vertex(140, 20)
+                    canvas.vertex(20, 140)
+                    canvas.endShape()
+                }
+            }, at: [Placement(scale: 0.5)])
+        #expect(sections.counts == [1], "区間: \(sections.counts)")
+        // 45° の帯 1 本ぶんの値と比べる (``thinSelfCrossingMixesOnce`` と同じ見方。縮めた交点は (40, 40))
+        var band: Float = 0
+        var brightest: Float = 0
+        for y in 0..<pixels.height {
+            for x in 0..<pixels.width {
+                brightest = max(brightest, pixels[x, y].red)
+                if x < 30 { band = max(band, pixels[x, y].red) }
+            }
+        }
+        #expect(band > 0.02)
+        #expect(brightest <= band + 0.004, "帯 \(band)・いちばん明るい画素 \(brightest)")
+    }
+
+    /// 道 (`Path`) の線は、部分道をまとめて 1 つの図形 (2026-11-04 の決定)。2 つの部分道が交わる所は 1 回、別々の
+    /// 道どうしは 2 回。
+    @Test("道の部分道どうしの交わりは 1 回、別々の道どうしは 2 回")
+    func pathSubpathsFormOneFigure() throws {
+        func cross(_ canvas: Canvas) -> Path {
+            canvas.createPath {
+                canvas.beginShape()
+                canvas.vertex(40, 80)
+                canvas.vertex(120, 80)
+                canvas.endShape()
+                canvas.beginShape()
+                canvas.vertex(80, 40)
+                canvas.vertex(80, 120)
+                canvas.endShape()
+            }
+        }
+        let one = try translucent { canvas in
+            canvas.strokeWeight(10)
+            canvas.strokeCap(.square)
+            canvas.shape(cross(canvas))
+        }
+        #expect(abs(one[80, 80].red - Self.once) <= 0.01, "部分道の交わり: \(one[80, 80].red)")
+        #expect(overpainted(one).isEmpty, "重ね塗り \(overpainted(one).count) 画素")
+        let two = try translucent { canvas in
+            canvas.strokeWeight(10)
+            canvas.strokeCap(.square)
+            canvas.shape(cross(canvas))
+            canvas.shape(cross(canvas), 30, 0)
+        }
+        // 2 つ目の縦の線 (x = 110) が 1 つ目の横の線 (y = 80) と交わる所
+        #expect(abs(two[110, 80].red - Self.twice) <= 0.01, "別々の道の交わり: \(two[110, 80].red)")
+    }
+
+    /// 一様でない拡大で一部の輪郭だけが細くなっても、図形を割らない (その場で描くときと同じく、輪郭が 1 つでも
+    /// 型板に入るなら図形全体を 1 つの区間にする・#3580 の反証)。縦に 1/20 へ潰して置くと、横の部分道は細く
+    /// (被覆を持つ片に組み直され)、縦の部分道は太いまま。横の部分道を 2 本重ねても、間に縦の部分道が挟まって
+    /// いても 1 回だけ混ぜる。
+    @Test("一部の輪郭だけが細くなる置き方でも、図形全体を 1 つの区間に入れる")
+    func partlyThinFigureStaysOneSection() throws {
+        func recorded(repeats: Bool) -> (Canvas) -> Shape {
+            { canvas in
+                let path = canvas.createPath {
+                    canvas.beginShape()
+                    canvas.vertex(20, 80)
+                    canvas.vertex(140, 80)
+                    canvas.endShape()
+                    canvas.beginShape()
+                    canvas.vertex(100, 20)
+                    canvas.vertex(100, 140)
+                    canvas.endShape()
+                    if repeats {
+                        canvas.beginShape()
+                        canvas.vertex(20, 80)
+                        canvas.vertex(140, 80)
+                        canvas.endShape()
+                    }
+                }
+                return canvas.createShape {
+                    canvas.noFill()
+                    canvas.stroke(255, 0, 0)
+                    canvas.strokeWeight(10)
+                    canvas.strokeCap(.square)
+                    canvas.shape(path)
+                }
+            }
+        }
+        let squash = [Placement(y: 76, scale: Vector3(1, 0.05, 1))]
+        let single = try placed(recorded(repeats: false), at: squash)
+        let sections = Box()
+        let doubled = try placed(sections: sections, recorded(repeats: true), at: squash)
+        #expect(sections.counts.reduce(0, +) == 1, "区間: \(sections.counts)")
+        var lit = 0
+        for y in 77...83 {
+            for x in 30..<80 {
+                if single[x, y].red > 0.01 { lit += 1 }
+                #expect(
+                    abs(doubled[x, y].red - single[x, y].red) <= 0.002,
+                    "(\(x), \(y)): 重ねた \(doubled[x, y].red)・1 本 \(single[x, y].red)")
+            }
+        }
+        #expect(lit > 0, "細い横の部分道が描かれていない")
+    }
+
+    /// 畳んだ雛形は引き算のまま (型板の外)。1 つの図形の中は 1 回、重なる 2 つの図形どうしは 2 回。
+    @Test("畳んだ雛形の半透明の線は、1 つの中は 1 回、重なる 2 つは 2 回")
+    func foldedTemplateMixesOncePerFigure() throws {
+        let sections = Box()
+        let pixels = try translucent(shaded: true, sections: sections) { canvas in
+            canvas.strokeWeight(10)
+            canvas.rect(30, 30, 60, 60)
+            canvas.rect(60, 60, 60, 60)
+        }
+        #expect(sections.counts.allSatisfy { $0 == 0 }, "区間: \(sections.counts)")
+        #expect(abs(pixels[30, 30].red - Self.once) <= 0.01, "角: \(pixels[30, 30].red)")
+        // 1 つ目の右の辺 (x = 90) と 2 つ目の上の辺 (y = 60) の交わり
+        #expect(abs(pixels[90, 60].red - Self.twice) <= 0.01, "2 つの重なり: \(pixels[90, 60].red)")
+    }
 }
