@@ -189,7 +189,8 @@ struct TemplateBuildTests {
           "identifier": "org.example.grain",
           "version": "0.1.0",
           "cameraUsage": "Grain looks at the camera to draw what it sees",
-          "microphoneUsage": "Grain listens to the room to move"
+          "microphoneUsage": "Grain listens to the room to move",
+          "localNetworkUsage": "Grain sends cues to TouchDesigner on the same network"
         }
         """.write(
             to: root.appendingPathComponent(AppIdentity.fileName), atomically: true,
@@ -210,6 +211,9 @@ struct TemplateBuildTests {
         #expect(
             plist?["NSMicrophoneUsageDescription"] as? String
                 == "Grain listens to the room to move")
+        #expect(
+            plist?["NSLocalNetworkUsageDescription"] as? String
+                == "Grain sends cues to TouchDesigner on the same network")
 
         // 開き方は包みの**隣**に出る。中にあっては、開けない人には読めない
         let note = root.appendingPathComponent("bundle/How to open Grain.txt")

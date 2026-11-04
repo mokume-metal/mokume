@@ -259,7 +259,8 @@ struct AppIdentityTests {
           "identifier": "org.example.grain",
           "version": "0.1.0",
           "cameraUsage": "Grain looks at the camera to draw what it sees",
-          "microphoneUsage": "Grain listens to the room to move"
+          "microphoneUsage": "Grain listens to the room to move",
+          "localNetworkUsage": "Grain sends cues to TouchDesigner on the same network"
         }
         """
 
@@ -270,6 +271,8 @@ struct AppIdentityTests {
         let identity = try AppIdentity.read(in: root)
         #expect(identity.cameraUsage == "Grain looks at the camera to draw what it sees")
         #expect(identity.microphoneUsage == "Grain listens to the room to move")
+        #expect(
+            identity.localNetworkUsage == "Grain sends cues to TouchDesigner on the same network")
     }
 
     /// 要らない作品がほとんどなので、書かなくても名乗りは揃う。
@@ -280,6 +283,7 @@ struct AppIdentityTests {
         let identity = try AppIdentity.read(in: root)
         #expect(identity.cameraUsage == nil)
         #expect(identity.microphoneUsage == nil)
+        #expect(identity.localNetworkUsage == nil)
     }
 
     /// 鍵があることではなく、見せられる中身があることを見る。
@@ -288,10 +292,11 @@ struct AppIdentityTests {
         let identity = try AppIdentity.make(
             from: AppIdentity.Wire(
                 name: "Grain", identifier: "org.example.grain", version: "0.1.0",
-                cameraUsage: "   ", microphoneUsage: ""),
+                cameraUsage: "   ", microphoneUsage: "", localNetworkUsage: " \n"),
             path: "/demo")
         #expect(identity.cameraUsage == nil)
         #expect(identity.microphoneUsage == nil)
+        #expect(identity.localNetworkUsage == nil)
     }
 
     /// 文言を持たない作品の包みに空の鍵を置くと、使わない許可を名乗ることになる。
@@ -301,6 +306,7 @@ struct AppIdentityTests {
         let none = plain.infoPlist(executable: "grain", minimumSystemVersion: "26.0")
         #expect(none["NSCameraUsageDescription"] == nil)
         #expect(none["NSMicrophoneUsageDescription"] == nil)
+        #expect(none["NSLocalNetworkUsageDescription"] == nil)
 
         var camera = plain
         camera.cameraUsage = "for the drawing"
@@ -314,6 +320,13 @@ struct AppIdentityTests {
             executable: "grain", minimumSystemVersion: "26.0")
         #expect(onlyMicrophone["NSMicrophoneUsageDescription"] as? String == "for the motion")
         #expect(onlyMicrophone["NSCameraUsageDescription"] == nil)
+
+        var network = plain
+        network.localNetworkUsage = "for the cues"
+        let onlyNetwork = network.infoPlist(executable: "grain", minimumSystemVersion: "26.0")
+        #expect(onlyNetwork["NSLocalNetworkUsageDescription"] as? String == "for the cues")
+        #expect(onlyNetwork["NSCameraUsageDescription"] == nil)
+        #expect(onlyNetwork["NSMicrophoneUsageDescription"] == nil)
     }
 
     /// 文言と entitlement を別々に宣言させると、片方だけ書いた食い違い (文言はあるのに
@@ -338,6 +351,11 @@ struct AppIdentityTests {
                 "com.apple.security.device.camera": true,
                 "com.apple.security.device.audio-input": true,
             ])
+
+        // ローカルネットワークの許可には entitlement が無い。文言を書いても何も足さない (#2224)
+        var network = plain
+        network.localNetworkUsage = "for the cues"
+        #expect(network.entitlements.isEmpty)
     }
 }
 

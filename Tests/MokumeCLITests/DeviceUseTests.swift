@@ -166,6 +166,20 @@ struct DeviceUseTests {
         #expect(throws: Never.self) { try DeviceUse.check(in: root, identity: identity) }
     }
 
+    /// 文言が無くてもダイアログは出て、答えれば送れる (#2224 の実測)。止める実害が無い。
+    @Test("ネットワークで送る作品は、ローカルネットワークの文言が無くても止まらない")
+    func networkUseNeedsNoText() throws {
+        let root = try makeSketch(files: [
+            "Sources/cue/Cue.swift": """
+            osc = try? createOSC(send: ("192.168.0.20", 7000))
+            udp = try? createUDP(listen: 6000, send: ("192.168.0.20", 6001))
+            """
+        ])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        #expect(throws: Never.self) { try DeviceUse.check(in: root, identity: identity) }
+    }
+
     // MARK: - マイク (#1978)
 
     @Test("マイクを開く呼び出しを見つける")

@@ -151,6 +151,34 @@ mokume render --fps 1 --seconds 1 --scale 4 --out print-####.png   # 7680×4320 
 </details>
 
 <details>
+<summary>ネットワークで送る場合</summary>
+
+OSC (`createOSC`) や UDP (`createUDP`) で同じネットワークの別の機械へ送る作品は、束ねた `.app` ではローカルネットワークの許可が要ります。初めて送ったときに macOS がダイアログを出し、許可するまで (許可しなかったときはその後も) 送ったものは届きません。受けるほうは許可が無くても届きます。`mokume run` で動かしている間は、起動したターミナルのアプリの許可で送れます。
+
+ダイアログに出す説明文は `mokume-app.json` の `localNetworkUsage` に書きます:
+
+```json
+{
+  "name": "Grain",
+  "identifier": "org.example.grain",
+  "version": "0.1.0",
+  "localNetworkUsage": "Grain は、同じネットワークの TouchDesigner に合図を送ります"
+}
+```
+
+説明文は Info.plist の `NSLocalNetworkUsageDescription` に入ります。書かなくてもダイアログは出て、`mokume bundle` も止まりません (カメラ・マイクと違います)。entitlement は付きません。
+
+送りが塞がれているとき、送る側の `state` は `running` のままで、診断に次の 1 行が 1 度だけ出ます (`Network is down` は Wi-Fi が落ちているときにも出ます):
+
+```
+mokume: Could not send to 192.168.11.15:7000 (Network is down). If the network is up, this app may not be allowed to reach the local network: check System Settings > Privacy & Security > Local Network. It keeps waiting for the connection
+```
+
+許可の状態は「システム設定」→「プライバシーとセキュリティ」→「ローカルネットワーク」で見られ、そこでオンにすれば送れるようになります。一覧の行には `.app` の名前ではなく、中の実行ファイルの名前 (スケッチのターゲットの名前) が出ます。識別子だけを変えた `.app` は、同じ実行ファイルが許可済みでも許可を引き継がず、ダイアログも出ないまま塞がれることがあります。
+
+</details>
+
+<details>
 <summary>Developer ID で署名する</summary>
 
 ```bash
