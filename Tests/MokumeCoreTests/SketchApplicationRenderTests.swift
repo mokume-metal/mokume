@@ -13,7 +13,8 @@ import Testing
 /// **本番と同じ経路を、run loop を回さずに辿る。** 駆動源の代わりに ``SketchApplication/displayLinkFired()``
 /// を叩き、`terminate(_:)` の代わりに AppKit が同じ呼び出しの中で問う ``SketchApplication/shouldTerminate()``
 /// を呼ぶ。返事を待たせたら ``SketchApplication/pollTermination()`` で見に来て、最後に
-/// ``SketchApplication/willTerminate()`` で畳む — AppKit が踏む順そのものである。
+/// ``SketchApplication/willTerminate()`` で畳む — AppKit が踏む順そのものである。**本番の駆動
+/// (画面を持たない全速の駆動・#3474) そのものを見る検査だけは、main の run loop を回して駆動に叩かせる。**
 ///
 /// 見るのは読み戻した `.mov` (符号化を通った実物) と、スケッチから見えた時刻である。
 ///
@@ -54,9 +55,14 @@ struct SketchApplicationRenderTests {
         /// 作品から見えた大きさ: 座標 (`width`/`height`) と、実際に刻む画素 (`pixelWidth`/`pixelHeight`)。
         /// **倍率が組み立てから描く面まで渡っているかは、PNG の大きさだけでなく作品の側からも見る** (#2441 の反証)。
         private(set) var sizes: [[Float]] = []
+        /// 作品が宣言する速さ。書き出しの速さがこれに縛られないことを見る検査だけが下げる。
+        let declaredFrameRate: Int
 
-        init() {}
-        var settings: SketchSettings { SketchSettings(width: 48, height: 24, frameRate: 60) }
+        init() { declaredFrameRate = 60 }
+        init(declaredFrameRate: Int) { self.declaredFrameRate = declaredFrameRate }
+        var settings: SketchSettings {
+            SketchSettings(width: 48, height: 24, frameRate: declaredFrameRate)
+        }
 
         func draw() {
             canvas.failureForTesting = frameCount == failsAtFrame ? .timedOut(seconds: 5) : nil
@@ -84,6 +90,8 @@ struct SketchApplicationRenderTests {
         var replied = false
         /// ``SketchApplication/exitProcess`` へ渡った終了コード。**呼ばれなければ `nil`** (0 で終わる)。
         var exitStatus: Int32?
+        /// 起こした道具が居なくなったことにする (``SketchApplication/driverDeparted``)。
+        var toolGone = false
     }
 
     /// 書き出す経路で組み、終わりの経路の口を検査の側へ差し替える。
@@ -301,6 +309,129 @@ struct SketchApplicationRenderTests {
         }
     }
 
+    // MARK: - 画面を持たない全速の駆動 (#3474)
+
+    /// 本番の駆動に回させる: 条件が揃うまで main の run loop を回す。**待つ側が期限を持つ。**
+    private func runMainLoop(until done: () -> Bool, deadline seconds: Double) {
+        let end = Date(timeIntervalSinceNow: seconds)
+        while !done(), Date() < end {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+    }
+
+    /// 書き出す経路は画面のリフレッシュ (``ScreenDisplayLink``) に繋がない ([#3474])。ウィンドウを持たないだけでなく、
+    /// 画面の刻みにも、画面のスリープを断ることにも頼らない。描き終えたら駆動を畳み、書き切りを待つ間に空回りしない。
+    ///
+    /// **畳むところで見ているのは、終わりが駆動の外から頼まれた順である** (メニューの「終了」など)。検査の
+    /// ``SketchApplication/onRenderFinished`` は `terminate(_:)` を呼ばずに返事だけを控えるので、描き終えた後も
+    /// 駆動は次の回を叩く。本番の駆動の中から `terminate(_:)` を呼ぶ順では、後始末の待ちが入れ子の run loop で
+    /// 回っても発火中のタイマーは入れ子では再発火しない (CFRunLoop の振る舞いによる) ので、この回は来ない。
+    ///
+    /// [#3474]: https://github.com/mokume-metal/mokume/issues/3474
+    @Test("書き出す経路は画面の駆動源に繋がず、画面のスリープも断らず、全速の駆動は描き終えたら畳む")
+    func renderingIsDrivenWithoutTheScreen() async throws {
+        try await withTemporaryDirectory("mokume-render-driver") { directory in
+            let path = directory.appendingPathComponent("driver.mov").path
+            let request = try #require(RenderRequest(frameRate: 30, frameCount: 3, destination: path))
+            let ending = Ending()
+            let application = try makeApplication(Sweep(), request, ending)
+            #expect(!application.holdsDisplayAwake, "書き出すだけの実行が画面のスリープを断る")
+            application.didFinishLaunching()
+            #expect(!application.screenLink.isAttached, "書き出す経路が画面の駆動源に繋いだ")
+            #expect(application.fullSpeedDriver.isAttached, "書き出す経路が全速の駆動に繋いでいない")
+
+            fire(application, times: 3)
+            #expect(ending.finishedCalls == 1)
+            // 描き終えた後の最初の回で畳む (駆動の外から終わりを頼まれた順。上の説明)
+            fire(application, times: 1)
+            #expect(!application.fullSpeedDriver.isAttached, "描き終えた後も全速の駆動が回っている")
+            try finishTerminating(application, ending)
+            #expect(ending.exitStatus == nil)
+        }
+    }
+
+    /// **作品の宣言 (ここでは 1 fps) にも画面のリフレッシュにも縛られない** ([#3474])。画面の駆動源で回して
+    /// いた頃は、1 枚の速さの上限が宣言だったので、20 枚に 19 秒以上かかった。run loop の上で本番の駆動に
+    /// 回させ、手で入口を叩いた書き出し (画面の駆動源が叩いていたのと同じ入口・同じ順) と、作品から見えた
+    /// `frameCount`・`time`・`deltaTime`、読み戻した画素と時刻が一致することも見る — 同じ固定の時計なら同じ絵。
+    ///
+    /// [#3474]: https://github.com/mokume-metal/mokume/issues/3474
+    @Test("宣言が 1 fps の作品も宣言に縛られずに書き出し、手で入口を叩いた書き出しと時刻・画素が一致する")
+    func renderingRunsAtFullSpeedAndMatchesTheSteppedRender() async throws {
+        try await withTemporaryDirectory("mokume-render-full-speed") { directory in
+            let frames = 20
+            let driven = directory.appendingPathComponent("driven.mov").path
+            let stepped = directory.appendingPathComponent("stepped.mov").path
+
+            let sketch = Sweep(declaredFrameRate: 1)
+            let request = try #require(
+                RenderRequest(frameRate: 30, frameCount: frames, destination: driven))
+            let ending = Ending()
+            let application = try makeApplication(sketch, request, ending)
+            application.didFinishLaunching()
+            // 宣言の 1 fps に縛られていれば 19 秒以上かかる。期限はその手前に置く
+            runMainLoop(until: { ending.finishedCalls > 0 }, deadline: 15)
+            try #require(
+                ending.finishedCalls == 1,
+                "宣言の 1 fps なら 19 秒かかる \(frames) 枚を、15 秒で描き終えていない (\(sketch.seen.count) 枚)")
+            runMainLoop(until: { !application.fullSpeedDriver.isAttached }, deadline: 5)
+            #expect(!application.fullSpeedDriver.isAttached, "描き終えた後も全速の駆動が回っている")
+            try finishTerminating(application, ending)
+            #expect(ending.exitStatus == nil, "揃ったのに 0 以外で終わった")
+
+            let reference = Sweep(declaredFrameRate: 1)
+            _ = try render(reference, frameRate: 30, frames: frames, to: stepped)
+
+            #expect(sketch.seen.map(\.frame) == Array(1...frames), "枚数 + 1 枚目を描いた・欠けた")
+            #expect(sketch.seen == reference.seen, "作品から見えた時刻が、手で入口を叩いた書き出しと違う")
+            let a = try await decodeMovie(driven)
+            let b = try await decodeMovie(stepped)
+            #expect(a.frames.count == frames)
+            #expect(a.times == b.times)
+            #expect(a.frames == b.frames, "同じ固定の時計から違う絵が出た")
+            // **動いていることも見る。** 全部同じ絵なら、一致は何も言っていない
+            #expect(Set(a.frames).count == a.frames.count, "絵がフレームごとに変わっていない")
+        }
+    }
+
+    /// **全速でも 1 枚ごとに run loop へ戻る** ([#3474])。終わりの頼みは駆動の回の頭でしか見ない
+    /// (``SketchApplication/pollStopSignal()``) ので、run loop へ戻らない密なループで回すと、決めた枚数を
+    /// 描き終えるまで止められない (Control + C が効かない)。
+    ///
+    /// 頼みは、起こした道具が居なくなったこと (Control + C と同じ 1 本に入る・#1427) で送る — 終わりの旗
+    /// (`sketchStopRequested`) はプロセスに 1 つで、立てたまま run loop を回すと、その間に走るほかの検査が
+    /// 拾いうる (``SignalState``)。
+    ///
+    /// [#3474]: https://github.com/mokume-metal/mokume/issues/3474
+    @Test("全速で回している最中に終わりを頼まれたら、次の枚の前で止め、それまでの枚の入った開ける動画を残して 0 以外で終わる")
+    func aStopWhileRunningAtFullSpeedIsTakenBetweenFrames() async throws {
+        try await withTemporaryDirectory("mokume-render-full-speed-stop") { directory in
+            let path = directory.appendingPathComponent("stopped.mov").path
+            let frames = 900
+            let sketch = Sweep()
+            let request = try #require(
+                RenderRequest(frameRate: 30, frameCount: frames, destination: path))
+            let ending = Ending()
+            let application = try makeApplication(sketch, request, ending)
+            application.driverDeparted = { ending.toolGone }
+            application.didFinishLaunching()
+            runMainLoop(until: { sketch.seen.count >= 5 }, deadline: 30)
+            try #require(sketch.seen.count >= 5, "期限までに 5 枚描いていない (\(sketch.seen.count) 枚)")
+
+            ending.toolGone = true
+            runMainLoop(until: { ending.stopCalls > 0 || ending.finishedCalls > 0 }, deadline: 30)
+            #expect(ending.stopCalls == 1, "終わりの頼みを拾っていない")
+            #expect(
+                ending.finishedCalls == 0,
+                "止める前に \(frames) 枚を描き終えた — 1 枚ごとに run loop へ戻っていない")
+            let drawn = sketch.seen.count
+            #expect(drawn < frames)
+            try finishTerminating(application, ending)
+            #expect(ending.exitStatus == 1, "揃っていないのに 0 で終わる")
+            #expect(try await decodeMovie(path).times.count == drawn, "止めるまでに描いた枚が動画に揃っていない")
+        }
+    }
+
     // MARK: - 書けなかったら 0 以外 (完了条件 6)
 
     /// 読み取り専用のディレクトリ。撮る係が理由を名乗り (書き損じ)、締めくくりが 0 以外で終わる。
@@ -474,6 +605,8 @@ struct SketchApplicationRenderTests {
         #expect(application.gpu.rebuildsShadersInBackground)
         #expect(application.activationPolicy == .regular)
         #expect(application.endsAfterLastWindowClosed)
+        // 画面に出す経路は、画面のスリープを断る (#874)
+        #expect(application.holdsDisplayAwake)
     }
 
     @Test("書き出しの頼みがあれば、時計はその刻みのフレーム番号になる")

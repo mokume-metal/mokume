@@ -18,9 +18,10 @@ import mokume
 /// 前から撮る係へ渡し、決めた枚数で終わる — 読み手は `SketchApplication` で、合図は
 /// `StartupReads.render` の環境変数 1 つである。作品のコードは 1 行も変えない。
 ///
-/// **全速では回さない。** 1 枚を描く速さは画面のリフレッシュ (作品が宣言した `frameRate` が
-/// 上限) のままで、全速で回す駆動源は足さない (ADR-0012 決定 3)。`--fps` が宣言と同じなら、
-/// 書き出しには実時間と同じだけかかる。
+/// **全速で回す。** 子は画面のリフレッシュに繋がず、画面を持たない全速の駆動 (`FullSpeedFrameDriver`) で
+/// 進めるので、1 枚を描く速さは描画・符号化・書き込みと書き手の背圧だけで決まり、作品が宣言した
+/// `frameRate` にも画面にも縛られない ([#3474]・ADR-0032 決定 1「書き出す起こし方」の改訂 2026-11-04)。
+/// 時刻はフレーム番号から導くので、速さが変わっても絵は変わらない。全速を選ぶ引数は無い (常に全速)。
 ///
 /// ## 倍率 (`--scale N`)
 ///
@@ -35,6 +36,7 @@ import mokume
 ///
 /// [#2441]: https://github.com/mokume-metal/mokume/issues/2441
 /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
+/// [#3474]: https://github.com/mokume-metal/mokume/issues/3474
 /// [#1282]: https://github.com/mokume-metal/mokume/issues/1282
 enum RenderCommand {
     /// 解いた引数。

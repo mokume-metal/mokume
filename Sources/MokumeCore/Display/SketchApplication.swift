@@ -181,10 +181,18 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// 書き出す経路で、描けなかったフレームの数。
     private var framesFailedToDraw = 0
 
-    /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。
+    /// フレームの駆動源。**画面に紐づく** (``ScreenDisplayLink`` が理由を持つ)。書き出す経路は繋がない
+    /// (``fullSpeedDriver``)。
     ///
     /// **検査が読む** (据えた速さ・#1642)。
     let screenLink: ScreenDisplayLink
+
+    /// 画面を持たない全速の駆動。**書き出す経路だけが繋ぐ** ([#3474](https://github.com/mokume-metal/mokume/issues/3474))。
+    /// 画面に出さない経路が画面の刻みを待つと、作品が宣言した `frameRate` と画面のリフレッシュが書き出しの
+    /// 速さの上限になる。叩く入口は画面の駆動源と同じ (``displayLinkFired(at:)``) である。
+    ///
+    /// **検査が読む** (繋いだか・描き終えて畳んだか)。
+    let fullSpeedDriver = FullSpeedFrameDriver()
 
     /// × を押した人に問う言葉。**無ければ確かめずに閉じる。**
     ///
@@ -310,7 +318,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private var activity: (any NSObjectProtocol)?
     /// ディスプレイが勝手に消えるのを断っているもの。**窓を出す経路でだけ持つ。**
     private var displaySleepBlock: DisplaySleepBlock?
-    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。
+    /// 走っている間、ディスプレイが消えるのを断るか。**既定は断る** (#874)。書き出す経路 (`mokume render`) は
+    /// 画面に出さないので、この値に依らず断らない (#3474)。
     ///
     /// 外してよいのは、**画面が消えることそのものを測る検査**だけである
     /// (`scripts/check-observation-roundtrip.sh --display-asleep`)。断ったまま測ると
@@ -485,6 +494,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         self.screenLink = ScreenDisplayLink(frameRate: Float(runtime.declaredFrameRate))
         super.init()
         screenLink.owner = self
+        fullSpeedDriver.owner = self
         windowRelay.application = self
         // `advance()` の外で `setup()` の失敗を見つけた回 (名乗りのメニューが進めた回) も、同じ道で終わらせる (#2401)
         runtime.setupFailureHandler = { [weak self] failure in self?.stopForSetupFailure(failure) }
@@ -530,15 +540,16 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **画面が消えると絵が止まる。** 駆動源は画面のリフレッシュに紐づいているので、
         // ディスプレイがスリープすると絵も観測も入力も同時に黙る (#874)。断りを立てて
         // おく — `beginActivity` から `AllowingIdleSystemSleep` を外したのは、片方で
-        // 「寝てよい」と言いながら片方で断るコードにしないためである
-        if blocksDisplaySleep {
+        // 「寝てよい」と言いながら片方で断るコードにしないためである。書き出す経路は画面を持たない
+        // 全速の駆動で回るので当たらず、断らない (``holdsDisplayAwake``・#3474)
+        if holdsDisplayAwake {
             displaySleepBlock = DisplaySleepBlock(reason: "keeping the sketch on screen")
         }
         // **断りは保証ではない。** 外部ディスプレイの電源を切る・蓋を閉じるといった
         // 経路は断れないので、止まったときに拾う側も要る — そちらは駆動源
         // (`ScreenDisplayLink`) が持っており、繋いだ時点で回り始める
-        // **終わりの合図を、後始末を待つ経路へ運ぶ** (#1219)。見に来るのは駆動源が叩く
-        // ``displayLinkFired()`` で、`app.run()` の前に立った旗は最初の 1 回が拾う
+        // **終わりの合図を、後始末を待つ経路へ運ぶ** (#1219)。見に来るのは駆動源 (書き出す経路では
+        // 全速の駆動) が叩く ``displayLinkFired()`` で、`app.run()` の前に立った旗は最初の 1 回が拾う
         StopSignals.install()
         // **与えられたときだけ仕掛ける。** 与えられなければ何も足さないので、窓口から
         // 立てたスケッチの出力は 1 バイトも変わらない ([ADR-0029] 決定 5 の 2 番目)
@@ -552,6 +563,17 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // **戻ったら、もう走っていない** (`NSApp.stop`)。外さないと、以後の ``run()`` が
         // 「既に走っている」と言って断る (#2027)
         SketchApplication.running = nil
+    }
+
+    /// 画面のスリープを断るか。**画面に絵が出る経路で、``blocksDisplaySleep`` が立っているときだけ。**
+    ///
+    /// 断るのは、駆動源が画面のリフレッシュに紐づいていて、画面が消えると絵も観測も入力も黙るからである (#874)。
+    /// 書き出す経路は画面に出さず、画面を持たない全速の駆動で回るので (``fullSpeedDriver``)、断る理由が無い
+    /// ([#3474](https://github.com/mokume-metal/mokume/issues/3474))。**検査が読む** — 据えるのは ``run()`` だけである。
+    var holdsDisplayAwake: Bool {
+        guard blocksDisplaySleep else { return false }
+        if case .render = outlet { return false }
+        return true
     }
 
     /// 席を求めるもの。**席は 1 プロセスに 1 つ**で、``run()`` (``Sketch/main()``) と ``SketchView`` が同じ席を取り合う。
@@ -988,7 +1010,10 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
             // **最初のフレームより前に撮り始める。** 撮る係は頼まれたフレームの絵から録るので
             // (#1456)、ここで頼めば 1 枚目から入る。作品が `beginRecord` を呼ぶ必要は無い
             runtime.beginRecord(request.destination, rendering: request.frameCount)
-            screenLink.attach(to: NSScreen.main)
+            // **画面には繋がない** (#3474)。画面の刻みを待つと、作品が宣言した `frameRate` と画面のリフレッシュが
+            // 書き出しの速さの上限になる。全速の駆動は run loop の 1 回ごとに 1 枚だけ進めて戻るので、終わりの
+            // 合図も AppKit の終わりの経路も回る
+            fullSpeedDriver.start()
             return
         // AppKit は 1 度しか呼ばないので来ないが、網羅のために名乗る。埋め込んだ経路は
         // ここを通らず、ホストの窓に載ったとき ``attachEmbeddedDriver()`` が繋ぐ
@@ -1151,7 +1176,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ///
     /// ## 待っている間
     ///
-    /// 駆動源は止まらずに呼んでくるが、フレームはランタイムの側で進めない。窓の × と
+    /// 駆動源 (画面のリフレッシュと予備) は止まらずに呼んでくるが、フレームはランタイムの側で進めない。
+    /// 書き出しの全速の駆動は、描き終えた後の最初の回で畳む (``displayLinkFired(at:)``)。ウィンドウの × と
     /// 問いへの答えは、終わりを重ねないよう ``shouldClose(_:)`` が受け流す。
     ///
     /// **何も書き出していなければ、その場で終わる** (`.terminateNow`) — いつもの終わり方は
@@ -1195,6 +1221,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         // `terminate(_:)` が重なったとき) だけで、ここが最後の砦である
         runtime.closePlugins()
         screenLink.invalidate()
+        fullSpeedDriver.invalidate()
         NotificationCenter.default.removeObserver(
             self, name: NSWindow.didEnterFullScreenNotification, object: nil)
         // **返し忘れると、プロセスが終わるまで画面が消えなくなる**
@@ -1249,7 +1276,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         if !complete { exitProcess(1) }
     }
 
-    /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。
+    /// 表示のリフレッシュごとに 1 フレーム進めて差し出す。書き出す経路では、画面を持たない全速の駆動
+    /// (``fullSpeedDriver``) が run loop の 1 回ごとに叩く。
     ///
     /// **止めるのは「出す」ほうだけ。** 窓が見えていなくてもフレームは進める — 観測が
     /// 返すのは「最後に描いた絵」ではなく「いま描いた絵」で (ADR-0018)、進めるのを
@@ -1261,8 +1289,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     func displayLinkFired(at displayTime: Double?) {
         pollStopSignal()
         // **書き出す経路では、決めた枚数より先を描かない。** 終わりを頼んだ後も駆動源は
-        // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く
-        guard !rendersNoMore else { return }
+        // 呼んでくるので、描けば枚数 + 1 枚目が撮る係へ届く。
+        //
+        // **全速の駆動はここで畳む** (#3474)。効くのは、終わりが駆動の外から頼まれたとき (メニューの
+        // 「終了」など) である。そのとき後始末を待つ間 (`.terminateLater`) も全速の駆動は回り続けるので、
+        // 畳まないと書き切りを待つ間ずっと空回りする。駆動の中から頼んだ回 (``onRenderFinished``・
+        // ``onStopSignal`` は全速の駆動のタイマーの中から同期で `terminate(_:)` を呼ぶ) は、待ちが入れ子の
+        // run loop で回っても発火中のタイマーは入れ子では再発火しないので (CFRunLoop の振る舞いによる)、
+        // ここへは来ない
+        guard !rendersNoMore else { return fullSpeedDriver.invalidate() }
         advanceAndPresent(displayTime: displayTime)
         followPointerLockRequest()
         finishRenderIfDone()
@@ -1380,6 +1415,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **見に来るのは駆動源が叩く回である** (``displayLinkFired()``)。表示のリフレッシュが
     /// 止まっている間は予備が叩くので (``ScreenDisplayLink``)、画面が眠っていても、
     /// `noLoop()` で止めていても、後始末を待たせている間も来る (畳むのは ``willTerminate()``)。
+    /// 書き出す経路で叩くのは画面を持たない全速の駆動 (``fullSpeedDriver``) で、描き終えた後と終わりに
+    /// 向かってからは畳む — その後の合図は下のとおり受け流すので、見に来なくても変わらない。
     ///
     /// **終わりに向かっている間の合図は受け流す。** 返事を待たせている間に `terminate(_:)` を
     /// 重ねると、AppKit は返事を待たずに終わらせる (``willTerminate()`` の「最後の砦」)。
@@ -1456,6 +1493,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         reportStartFailure(failure, note: noteStartFailure)
         runtime.closePlugins()
         screenLink.invalidate()
+        fullSpeedDriver.invalidate()
         exitProcess(1)
     }
 

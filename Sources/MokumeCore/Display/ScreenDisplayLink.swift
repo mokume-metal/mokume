@@ -19,8 +19,8 @@ protocol ScreenDisplayLinkOwner: AnyObject {
     /// リフレッシュが来た。
     ///
     /// - Parameter displayTime: この回で描く枚が表示される予定の時刻 (`CACurrentMediaTime()` と同じ時間軸の秒)。
-    ///   表示のリフレッシュが運んだ回だけが持つ。**予備のタイマーが進めた回は `nil`** — 予定の時刻が無いので、
-    ///   持ち主は現在時刻で代える。
+    ///   表示のリフレッシュが運んだ回だけが持つ。**予備のタイマーと、画面を持たない全速の駆動
+    ///   (``FullSpeedFrameDriver``・#3474) が進めた回は `nil`** — 予定の時刻が無いので、持ち主は現在時刻で代える。
     func displayLinkFired(at displayTime: Double?)
 }
 

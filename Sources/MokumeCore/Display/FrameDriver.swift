@@ -82,8 +82,9 @@ enum FrameDriver {
 ///
 /// **画面に絵が出る実行で取る。** 自分で窓を出す実行だけでなく、外のプロセスの窓へ
 /// 差し出す実行 (``SketchApplication`` の共有面の出口) も取る — 窓を持っているのが
-/// 見張りの道具というだけで、消えて困るのは同じ画面である。断らないのは書き出しや
-/// 観測だけの実行で、そこは ``SketchApplication`` を通らない。
+/// 見張りの道具というだけで、消えて困るのは同じ画面である。断らないのは書き出しと
+/// 観測だけの実行である。書き出しは ``SketchApplication`` を通るが、画面に出さず画面を持たない全速の駆動
+/// (``FullSpeedFrameDriver``) で回るので断らない (``SketchApplication/holdsDisplayAwake``・#3474)。
 @MainActor
 final class DisplaySleepBlock {
     private var assertion: IOPMAssertionID = 0

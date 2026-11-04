@@ -954,9 +954,10 @@ public final class SketchRuntime {
     /// 名乗りの世話が入れ子になる。
     private func runFrame(displayTime: Double? = nil) throws(RenderFailure) {
         // **閉じ終えるのを待っている間は進めない** ([#978])。待ちは塞がずに見に来る形なので、
-        // その間も駆動源 (画面の link・予備の Timer・名乗りのメニューの Timer) は呼んでくる。
+        // その間も駆動源 (画面の link・予備の Timer・メニューバーの表示のメニューの Timer) は呼んでくる
+        // (書き出しの全速の駆動は、`SketchApplication` が手前で止めて畳むので、ここへは来ない・#3474)。
         // 進めると `draw()` が新しい録りや `save()` を頼み、誰にも閉じられないまま終わる。
-        // 駆動源の側で止めないのは、3 本のどれを止め忘れても同じ穴になるためである
+        // 駆動源の側で止めるのに頼らないのは、どれか 1 本を止め忘れても同じ穴になるためである
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
         let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
