@@ -547,7 +547,9 @@ nonisolated protocol SendTracing: AnyObject {
 /// 状態の知らせは待ち行列を通って遅れうるので、いまの繋ぎかを確かめる守りを置く (実測した形ではない —
 /// #3045)。待ちの名乗りを誤り無しの完了で戻すのも、いまの繋ぎの完了だけである。
 ///
-/// 送れないことは受け口の状態 (``OSCPort/state``) には出さない。
+/// 送れないことは受け口の状態 (``OSCPort/state``) には出さない ([ADR-0028] 決定 4)。
+///
+/// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 nonisolated final class DatagramSender: DatagramSending, SendTracing, @unchecked Sendable {
     // `@unchecked Sendable`: 可変の状態 (``connection``・``warned``) は ``queue`` の上でだけ触る。
 
