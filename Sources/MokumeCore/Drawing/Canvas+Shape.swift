@@ -670,6 +670,19 @@ extension Canvas {
         stopReplayingPaint()
     }
 
+    /// 保持した形の平面の線の、置き方での重なりが絵に出るか (``Canvas/strokeOverlapsShow`` と同じ分け方・#3580)。
+    ///
+    /// `alpha` は記録の色と置き場所の色を掛けた不透明度。`replace` は被覆 1 の片を重ねても同じ値を書くので
+    /// 出ない (細い片は呼ぶ側が別に見る)。
+    static func retainedStrokeOverlapsShow(mode: BlendMode, shaded: Bool, alpha: Float) -> Bool {
+        if shaded { return true }
+        switch mode {
+        case .replace: return false
+        case .blend, .lightest, .darkest: return alpha < 1
+        case .add, .subtract, .difference, .exclusion, .multiply, .screen: return true
+        }
+    }
+
     /// 平面の区間を置く。**立体の列が開いていれば閉じる** (呼び出し順どおりに重ねる)。
     ///
     /// **掛ける色が半透明なら、不透明の線の区間は、引いて積んだ頂点に差し替える**
@@ -733,6 +746,15 @@ extension Canvas {
         // 輪郭は頂点の数が変わるので、置いた先の区間はずれを足して求める
         var shift = 0
         var next = 0
+        // **型板の区間は図形ごとにまとめる** (#3580)。同じ図形の番号 (``StrokeRange/figure``) で続く輪郭が 1 つの
+        // 区間になる。記録の中で置き直すときは、置くたびに番号を振り直して外側の記録へ渡す (同じ形を 2 回置けば
+        // 別々の図形)
+        var section: (figure: Int?, range: Range<Int>)?
+        var figureIDs: [Int: Int] = [:]
+        func closeSection() {
+            if let open = section { noteFlatStrokeSection(open.range) }
+            section = nil
+        }
         // 区間だけを読む。`StrokeRange` ごと写すと、置くたびに引いた頂点の参照を数え直す
         for index in shape.strokeRanges.indices {
             let whole = shape.strokeRanges[index].range
@@ -747,7 +769,10 @@ extension Canvas {
             let placed: Range<Int>
             var carved: CarvedStroke?
             var thin: ThinStrokeRecipe?
+            // 置いた後に細くなって組み直した輪郭か (被覆を持つ)。細い片は色によらず重なりが絵に出る
+            var rebuiltThin = false
             if next < replaced.count, replaced[next].range == whole {
+                rebuiltThin = !replaced[next].coverage.isEmpty
                 // 差し替えた頂点 (引いて積んだ・細さを補って組み直した) は、色と太さが確定している。
                 // 外側の記録へは、この頂点の区間として渡す
                 let count = replaced[next].vertices.count
@@ -776,14 +801,41 @@ extension Canvas {
                     }
                 }
             }
+            let figure = shape.strokeRanges[index].figure
             if recordingShape {
-                recordedStrokeRanges.append(StrokeRange(placed, carved: carved, thin: thin))
+                var placedFigure: Int?
+                if let figure {
+                    placedFigure = figureIDs[figure] ?? placed.lowerBound
+                    figureIDs[figure] = placedFigure
+                }
+                recordedStrokeRanges.append(
+                    StrokeRange(placed, carved: carved, thin: thin, figure: placedFigure))
                 continue
             }
             vertices.withUnsafeMutableBufferPointer { buffer in
                 for index in placed { buffer[index].position += 0.5 }
             }
+            // 1 つの領域として引けない輪郭で、重なりが絵に出る置き方なら、型板の区間に入れる (記録のときに
+            // 引かずに積んである・``Canvas/strokeOutlineAsStyled(_:discSegments:)``)
+            let stroke = shape.strokeRanges[index]
+            let stencils =
+                !placed.isEmpty && stroke.thin?.outline.strokesAsOneRegion == false
+                && (rebuiltThin
+                    || Self.retainedStrokeOverlapsShow(
+                        mode: run.mode, shaded: run.paint.shader != nil,
+                        alpha: shape.vertices[whole.lowerBound].color.w * (tint?.alpha ?? 1)))
+            guard stencils else {
+                closeSection()
+                continue
+            }
+            if let open = section, figure != nil, open.figure == figure, open.range.upperBound == placed.lowerBound {
+                section = (figure, open.range.lowerBound..<placed.upperBound)
+            } else {
+                closeSection()
+                section = (figure, placed)
+            }
         }
+        closeSection()
         // 記録の中で置き直すときは、楕円・弧の塗りを刻み直す素材も外側の記録へ渡す (使うのは外側を
         // 置くとき・#1645)。**その場で置くときは要らない。** 塗りは半画素寄せないので、区間の
         // 番号だけを求める

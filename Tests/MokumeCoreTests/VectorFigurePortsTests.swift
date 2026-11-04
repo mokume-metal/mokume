@@ -204,4 +204,32 @@ struct VectorFigurePortsTests {
         #expect(figures == 1 && drops == 0, "figures=\(figures) drops=\(drops)")
         #expect(try handled(canvas) { $0.shape(path) } == 1)
     }
+
+    /// 部分道が 2 つ以上の道の線は、画面で 1 つの図形として 1 回だけ混ぜる (#3580)。書き出しも、線を部分道を
+    /// 並べた 1 つの図形として控える (SVG の描き手でも重なりが 1 回になる)。塗りは前から 1 つの図形。
+    @Test("部分道が 2 つの道の線は、部分道を並べた 1 つの図形として控える")
+    func pathStrokeIsCapturedAsOneFigure() throws {
+        let canvas = try makeCanvas()
+        let path = canvas.createPath {
+            canvas.beginShape()
+            canvas.vertex(10, 30)
+            canvas.vertex(60, 30)
+            canvas.endShape()
+            canvas.beginShape()
+            canvas.vertex(30, 10)
+            canvas.vertex(30, 60)
+            canvas.endShape()
+        }
+        var subpathCounts: [Int] = []
+        try canvas.draw {
+            canvas.beginVectorWindow(pending: [])
+            canvas.startVectorCapture(path: "x.svg")
+            canvas.noFill()
+            canvas.stroke(.linear(red: 1, green: 0, blue: 0))
+            canvas.shape(path)
+            let captured = canvas.endVectorWindow()
+            subpathCounts = captured?.figures.map(\.subpaths.count) ?? []
+        }
+        #expect(subpathCounts == [2], "図形ごとの部分道の数: \(subpathCounts)")
+    }
 }

@@ -31,7 +31,10 @@ struct CarveRecipe {
 
     /// 引いた頂点と、被覆が 1 でない区間 (頂点の並びの中の番号・#1637)。細い線を広げた片
     /// だけが区間を持つ。区間は並びの順で、置く側が頂点を積んだ先の番号へずらして付ける。
-    func built() -> (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan]) {
+    ///
+    /// `stacked` なら引かずに積んだ順のまま (``StrokeCarving/stacked(_:)``) 頂点にする。置いた後に細くなる
+    /// 保持した形の輪郭を、型板で 1 回だけ混ぜるときに使う (#3580)。
+    func built(stacked: Bool = false) -> (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan]) {
         var out: [ShapeVertex] = []
         var spans: [Canvas.CoverageSpan] = []
         let inverse = self.inverse ?? matrix_identity_float2x2
@@ -45,7 +48,9 @@ struct CarveRecipe {
             out.append(ShapeVertex(position: b, uv: uv, color: color))
             out.append(ShapeVertex(position: c, uv: uv, color: color))
         }
-        carving.carved { polygon, range, hub, coverage in
+        func emitPiece(
+            _ polygon: [SIMD2<Float>], _ range: Range<Int>, _ hub: SIMD2<Float>?, _ coverage: Float
+        ) {
             let start = out.count
             defer { Canvas.CoverageSpan.note(coverage, in: start..<out.count, to: &spans) }
             guard let hub else {
@@ -68,6 +73,7 @@ struct CarveRecipe {
             }
             emit(center, previous, first)
         }
+        if stacked { carving.stacked(emitPiece) } else { carving.carved(emitPiece) }
         return (out, spans)
     }
 }

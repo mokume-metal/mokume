@@ -486,7 +486,9 @@ extension Canvas {
     /// [#3579]: https://github.com/mokume-metal/mokume/issues/3579
     func strokingOneFigure(_ build: () -> Void) {
         guard flatStrokeFigure == nil else { return build() }
-        flatStrokeFigure = (start: vertices.count, stenciled: false)
+        // 図形の番号は始まりの頂点の番号 (記録の中で一意・``StrokeRange/figure``)。列の切れ目で `start` が
+        // 動いても番号は動かさない
+        flatStrokeFigure = (start: vertices.count, stenciled: false, id: vertices.count)
         build()
         guard let figure = flatStrokeFigure else { return }
         flatStrokeFigure = nil
@@ -496,8 +498,13 @@ extension Canvas {
     /// 図形の頂点を、開いている平面の列の区間として覚える (``flatStrokeStencilSections``)。列の頭より前の
     /// 頂点 (図形の途中で閉じた列の分) は数えない。
     func noteFlatStrokeSection(from start: Int) {
+        noteFlatStrokeSection(start..<vertices.count)
+    }
+
+    /// 頂点の区間 `range` を、開いている平面の列の区間として覚える (保持した形を置く口も使う・#3580)。
+    func noteFlatStrokeSection(_ range: Range<Int>) {
         guard openSource == .flat, openFlat == nil else { return }
-        let section = max(start, openFlatRunStart)..<vertices.count
+        let section = max(range.lowerBound, openFlatRunStart)..<range.upperBound
         guard !section.isEmpty else { return }
         flatStrokeStencilSections.append(section)
     }
@@ -582,7 +589,10 @@ extension Canvas {
         // 畳むかどうかで頂点の数も絵も変えない (``draw(folding:at:outline:)``)。描く呼び出しも増やさない
         let stenciled = stencilsFlatStroke && !outline.strokesAsOneRegion
         if stenciled { flatStrokeFigure?.stenciled = true }
-        if overlaps, !stenciled {
+        // **保持する形の記録も、1 つの領域として引けない輪郭は引かずに積む** (#3580)。置く側が、重なりが
+        // 絵に出る置き方のときに型板の区間へ入れる (``Canvas/place(_:of:at:carved:)``)
+        let stacks = stenciled || (recordingShape && !outline.strokesAsOneRegion)
+        if overlaps, !stacks {
             strokeCarved(
                 outline, half: half, chamfers: chamfers, thin: nil, discSegments: discSegments)
         } else {
@@ -607,8 +617,11 @@ extension Canvas {
             // 半透明のまま同じ色になる (縁に被覆を持つ細い線の帯は下地を残すが、重ねた分は 2 回目も同じ式・#3111)。残りの `blend` / `lightest` / `darkest` は、半透明の色を掛けて
             // 置かれると 2 回目で寄っていくので、引く素材を持っておく。点 1 つの輪郭は
             // 端の形が 1 枚だけで、重なる相手が無いので持たない
+            //
+            // **引く素材を持つのは、1 つの領域として引ける輪郭だけ** (#3580)。ほかの輪郭は、半透明の色を
+            // 掛けて置かれると型板で 1 回だけ混ぜる
             let carved: CarvedStroke? =
-                !overlaps && style.blendMode != .replace && points.count > 1
+                !overlaps && style.blendMode != .replace && points.count > 1 && outline.strokesAsOneRegion
                 ? CarvedStroke(
                     recipe: carveRecipe(
                         outline, half: half, thin: nil, transform: transform, color: style.stroke,
@@ -622,9 +635,9 @@ extension Canvas {
                 join: style.strokeJoin, color: style.stroke, transform: transform, uv: whiteUV,
                 discSegments: outline.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                     ? discSegments : 0,
-                recordedCarved: overlaps, carvesWhenTinted: carved != nil)
+                recordedCarved: overlaps && !stacks, carvesWhenTinted: carved != nil)
             recordedStrokeRanges.append(
-                StrokeRange(start..<vertices.count, carved: carved, thin: thin))
+                StrokeRange(start..<vertices.count, carved: carved, thin: thin, figure: flatStrokeFigure?.id))
         }
     }
 

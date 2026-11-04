@@ -27,7 +27,7 @@ public nonisolated enum VertexKind: Sendable, Equatable {
     /// 画面で交わる所も、奥行きの違う辺が重なる所も 1 回になる
     /// ([ADR-0046](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md))。
     ///
-    /// 保持した形 (``Canvas/createShape(_:)``) の平面の線は、これまでどおり片の重なりを引いて積む。辺が交わらない 4 点は 1 回で、辺が交わる 4 点は交点で 2 回混ぜる。
+    /// 保持した形 (``Canvas/createShape(_:)``) に記録した四角も同じ (#3580)。
     case quads
     /// 帯として読む。**3 つ目からは直前の 2 点を使い回す** — n 点で n-2 枚。
     case triangleStrip

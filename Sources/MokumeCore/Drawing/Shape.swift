@@ -515,17 +515,26 @@ struct StrokeRange {
     /// 置いた後に描く画素で 1 画素より細くなるなら、広げて組み直す素材 (#1637)。`nil` なら
     /// 組み直さない (区間の一部だけを置き直したもの)。
     var thin: ThinStrokeRecipe?
+    /// この輪郭が属する図形の番号 (#3580)。**同じ番号の区間が 1 つの図形** — 原始形の外周・穴・破線の片で、
+    /// 置くときに型板の区間 1 つにまとめる (``Canvas/place(_:of:at:carved:)``)。番号は図形の最初の頂点の番号で、
+    /// 区間と一緒にずらす (``shifted(by:)``) ので、形の中で一意かつ形の頭からの位置になる。`nil` は図形の外で
+    /// 積んだ輪郭 (区間 1 つが図形 1 つ)。
+    var figure: Int?
 
-    init(_ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil) {
+    init(
+        _ range: Range<Int>, carved: CarvedStroke? = nil, thin: ThinStrokeRecipe? = nil, figure: Int? = nil
+    ) {
         self.range = range
         self.carved = carved
         self.thin = thin
+        self.figure = figure
     }
 
     /// 区間だけを `offset` ずらした写し。
     func shifted(by offset: Int) -> StrokeRange {
         StrokeRange(
-            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin)
+            (range.lowerBound + offset)..<(range.upperBound + offset), carved: carved, thin: thin,
+            figure: figure.map { $0 + offset })
     }
 }
 
