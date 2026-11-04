@@ -35,7 +35,9 @@ extension DatagramSource where Message == OSCMessage {
 /// 何も受けない出どころ。送るだけの入り口 (``Sketch/createOSC(send:)``) が持つ。**ポートを開かない。**
 ///
 /// 受けるものが無いので来ない理由も無く、動いている間は `running` を名乗る。送れないことは
-/// (受けるほうの様子ではないので) 状態には出さず、送り手が診断で言う。
+/// (受信側の様子ではないので) 状態には出さず、送り手が診断で言う ([ADR-0028] 決定 4)。
+///
+/// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 final class SendOnlySource: MessageSource {
     typealias Message = OSCMessage
 

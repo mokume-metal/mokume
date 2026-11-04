@@ -419,8 +419,8 @@ extension Sketch {
     ///   ``SourceState/unavailable`` になり、空けば受け始める
     /// - 送り先を自分のポート (`("127.0.0.1", listen と同じ番号)`) にすれば、自分で送って自分で
     ///   受けられる。相手が居なくても動きを確かめられる
-    /// - **送れないことは ``TextPort/state`` に出ない。** 送れないとき (宛先で誰も受けていない・
-    ///   このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
+    /// - **送れないことは ``TextPort/state`` に出ない** ([ADR-0028] 決定 4)。送れないとき (宛先で誰も
+    ///   受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
     ///   診断に出す。宛先に拒まれた後は、間 (既定 0.5 秒) を空けた次の送信まで拒まれずに終わって初めて
     ///   「送れた」と読み、また診断に出せるように戻る
     ///
@@ -432,6 +432,8 @@ extension Sketch {
     /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。使える値を
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
     ///   ポートを開く前に ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createUDP(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(NetworkFailure) -> UDPPort {

@@ -54,8 +54,8 @@ extension Sketch {
     /// - 束ねずに動かしている間は、受けるのに OS の許可は要らない。別の機械とやりとりするとき、
     ///   macOS がローカルネットワークの許可を求めることがある。受けるほうが拒まれていれば
     ///   ``OSCPort/state`` が ``SourceState/denied`` を名乗る
-    /// - **送れないことは ``OSCPort/state`` に出ない。** 送れないとき (宛先で誰も受けていない・
-    ///   このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
+    /// - **送れないことは ``OSCPort/state`` に出ない** ([ADR-0028] 決定 4)。送れないとき (宛先で誰も
+    ///   受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
     ///   診断に出す。宛先に拒まれた後は、間 (既定 0.5 秒) を空けた次の送信まで拒まれずに終わって初めて
     ///   「送れた」と読み、また診断に出せるように戻る
     ///
@@ -67,6 +67,8 @@ extension Sketch {
     /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。使える値を
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
     ///   ポートを開く前に ``OSCFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(
         listen port: Int, send destination: (host: String, port: Int)? = nil
     ) throws(OSCFailure) -> OSCPort {
@@ -108,8 +110,9 @@ extension Sketch {
     /// - ``OSCPort/port`` は `nil`、``OSCPort/messages`` は常に空、``OSCPort/latest(_:)`` は常に `nil`
     /// - 受け口ではないので、観測の応答の `inputs` に行を出さない。``OSCPort/state`` は、動いている間は
     ///   ``SourceState/running``、止めたら ``SourceState/stopped``
-    /// - **送れないことは ``OSCPort/state`` に出ない。** 送れないとき (宛先で誰も受けていない・このアプリに
-    ///   ローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ診断に出す
+    /// - **送れないことは ``OSCPort/state`` に出ない** ([ADR-0028] 決定 4)。送れないとき (宛先で誰も
+    ///   受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
+    ///   診断に出す
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
@@ -117,6 +120,8 @@ extension Sketch {
     /// - Throws: 送り先のポートの番号が 1〜65535 に入っていない・ホストが空のとき。使える値を
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
     ///   ``OSCFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///
+    /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createOSC(send destination: (host: String, port: Int)) throws(OSCFailure) -> OSCPort {
         guard Endpoint.usablePorts.contains(destination.port) else {
             throw .invalidPort(destination.port)

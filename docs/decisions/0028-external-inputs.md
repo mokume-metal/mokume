@@ -98,6 +98,20 @@ SPDX-License-Identifier: MIT
 
 **状態が読めることを求める理由は動いていない。** 拒否のあいだと未回答のあいだが黙って止まることは変わらず、ダイアログが出ない起動の仕方 (前身の例) も残りうる。変わったのは「束ねた形でしか動かない」という前提だけで、決定の本文はそこを直した。
 
+#### 改訂 (2026-11-04) — 送信側の許可は、入力の状態に出さず診断で 1 度示す
+
+**決定 4 が求めるのは入力の状態である。** 外へ送る側が OS の許可で塞がれても、受信側の状態 (`SourceState`) には出さない。送れないあいだは、診断に 1 度だけ出し、送れたらまた出せるように戻る。自分から宛先へ送る手段は `OSCPort.send` と `UDPPort.send` の 2 つで、どちらも同じ送り手を通るので、両方に同じ扱いを当てる ([#2224](https://github.com/mokume-metal/mokume/issues/2224)・2026-10-16 の決定)。送るだけの `createOSC(send:)` も同じで、受信のポートを持たないので、動いている間は `state` が `running` を示す。
+
+これを書き足したのは、束ねた `.app` でローカルネットワークの許可が無いとき、**受信は届き、送信だけが塞がれる**と分かったためである ([#2193](https://github.com/mokume-metal/mokume/issues/2193)・#2224 の実測。macOS 27.0.1)。送りの接続は `waiting(Network is down)` のまま止まり、受信側の `state` は `running` のままだった。決定 4 を字面どおりに読むと「許可が要る資源の状態が読めていない」に見えるので、送る側を状態に出さないことを、退けた案とともにここに書く。
+
+| 案 | 例: 許可の無い `.app` が `osc?.send("/ping")` を LAN の宛先へ送る | 採らなかった理由 |
+| --- | --- | --- |
+| **A (採った)** | `osc.state` は `running`、診断に 1 行が 1 度 | — |
+| B | 送りが `waiting` のあいだ `state` を `waitingForPermission` にする | `Network is down` は Wi-Fi が落ちたときにも出るので、「許可待ち」と示すと嘘になりうる。受信できている入力が「許可待ち」を示す |
+| C | `state` とは別に送る側の状態を読む API を足す | 公開の面が増え、それで困る作例がまだ無い。困る作例が出たら、TCP・UDP・WebSocket の手段と揃えて考える |
+
+診断の文は、拒否と断定しない形で見る場所を案内する: `Could not send to <host>:<port> (Network is down). If the network is up, this app may not be allowed to reach the local network: check System Settings > Privacy & Security > Local Network. It keeps waiting for the connection`。ダイアログに出す文言は、作者が `mokume-app.json` の `localNetworkUsage` に書く (カメラ・マイクと同じく CLI が持つ。[ADR-0042](0042-camera-and-audio-standard.md) 決定 8)。カメラと違い、文言が無くてもダイアログは出るので、無いことで束ねを止めない。
+
 ### 5. 外から来た画素は、内で作る絵と同じ型になる
 
 外から受け取った画素は `Image` になり、以降は普通の絵として扱える (貼る・効果を通す・保存する)。**「外から来た絵」を表す専用の型を作らない。**

@@ -37,11 +37,13 @@ import MokumeDiagnostics
 /// 端末から `nc -u 127.0.0.1 6000` で繋いで `0.3` と打つと円が変わり、`nc -u -l 6001` で
 /// 待っていればクリックの `hit` が出る。
 ///
-/// **送れないことは ``TextPort/state`` に出ない。** ``TextPort/state`` が名乗るのは受けるほうの
-/// 様子である。送れないとき (宛先で誰も受けていない・このアプリにローカルネットワークの許可が
-/// 無い・ネットワークが落ちている) は、1 度だけ診断に出す。送れたら、また言えるように戻る (UDP の送信の
+/// **送れないことは ``TextPort/state`` に出ない** ([ADR-0028] 決定 4)。``TextPort/state`` が示すのは
+/// 受信側の様子である。送れないとき (宛先で誰も受けていない・このアプリにローカルネットワークの
+/// 許可が無い・ネットワークが落ちている) は、1 度だけ診断に出す。送れたら、また言えるように戻る (UDP の送信の
 /// 完了は届いたことを言わず、拒否は次の送信の失敗として返るので、宛先に拒まれた後は、間 (既定 0.5 秒) を
 /// 空けた次の送信まで拒まれずに終わって初めて「送れた」と読む)。
+///
+/// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class UDPPort: TextPort {
     private let outbound: (any DatagramSending)?
 

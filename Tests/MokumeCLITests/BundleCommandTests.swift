@@ -79,6 +79,7 @@ struct BundleCommandTests {
         var written = identity
         written.cameraUsage = "木目のカメラ映像を絵にするため"
         written.microphoneUsage = "Grain listens to the room"
+        written.localNetworkUsage = "Grain は、同じネットワークの照明卓に合図を送ります"
 
         let app = try BundleCommand.assemble(
             executable: executable, identity: written, minimumSystemVersion: "26.0",
@@ -87,6 +88,9 @@ struct BundleCommandTests {
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] as? String == "木目のカメラ映像を絵にするため")
         #expect(plist["NSMicrophoneUsageDescription"] as? String == "Grain listens to the room")
+        #expect(
+            plist["NSLocalNetworkUsageDescription"] as? String
+                == "Grain は、同じネットワークの照明卓に合図を送ります")
     }
 
     @Test("文言を書かなければ、許可の鍵は包みに入らない")
@@ -102,6 +106,7 @@ struct BundleCommandTests {
         let plist = try readInfoPlist(of: app)
         #expect(plist["NSCameraUsageDescription"] == nil)
         #expect(plist["NSMicrophoneUsageDescription"] == nil)
+        #expect(plist["NSLocalNetworkUsageDescription"] == nil)
     }
 
     private func readInfoPlist(of app: URL) throws -> [String: Any] {

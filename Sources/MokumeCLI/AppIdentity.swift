@@ -4,7 +4,7 @@
 import Foundation
 import mokume
 
-/// 束ねた作品の名乗り — 表示名・識別子・版と、カメラ・マイクの許可を求めるときの文言。
+/// 束ねた作品の識別情報 — 表示名・識別子・版と、カメラ・マイク・ローカルネットワークの許可を求めるときの文言。
 ///
 /// ## なぜ作品の設定と分けて持つのか
 ///
@@ -36,6 +36,12 @@ nonisolated struct AppIdentity: Equatable {
     var cameraUsage: String?
     /// マイクの許可を求めるときの文言。書かなければ `nil`。カメラと同じ扱い。
     var microphoneUsage: String?
+    /// ローカルネットワークの許可を求めるときの文言。書かなければ `nil`。
+    ///
+    /// **カメラ・マイクと違い、書かなくても束ねを止めない。** 文言が無くてもダイアログは出て、
+    /// 答えれば送れる。書けばダイアログに作品の言葉が出る (#2224 の実測)。entitlement も付けない —
+    /// ローカルネットワークの許可には、機材の `com.apple.security.device.*` に当たるものが無い。
+    var localNetworkUsage: String?
 
     /// 置き場。スケッチの直下。
     static let fileName = "mokume-app.json"
@@ -91,6 +97,7 @@ nonisolated struct AppIdentity: Equatable {
         var version: String?
         var cameraUsage: String?
         var microphoneUsage: String?
+        var localNetworkUsage: String?
     }
 
     /// スケッチの直下から読む。
@@ -149,7 +156,8 @@ nonisolated struct AppIdentity: Equatable {
         }
         return AppIdentity(
             name: name, identifier: identifier, version: version,
-            cameraUsage: written(wire.cameraUsage), microphoneUsage: written(wire.microphoneUsage))
+            cameraUsage: written(wire.cameraUsage), microphoneUsage: written(wire.microphoneUsage),
+            localNetworkUsage: written(wire.localNetworkUsage))
     }
 
     /// ファイル名の長さの上限 (``FileNameLength/of(_:)`` の数え方で)。数え方と上限は
@@ -217,6 +225,7 @@ nonisolated struct AppIdentity: Equatable {
         ]
         if let cameraUsage { plist["NSCameraUsageDescription"] = cameraUsage }
         if let microphoneUsage { plist["NSMicrophoneUsageDescription"] = microphoneUsage }
+        if let localNetworkUsage { plist["NSLocalNetworkUsageDescription"] = localNetworkUsage }
         return plist
     }
 
