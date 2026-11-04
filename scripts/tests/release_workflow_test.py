@@ -80,7 +80,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", exploration)
 
     def test_各_job_の_timeout_は実測の余裕を持つ(self):
-        # 実測 (#3342): release-check は遅い日で約 50 分 → 60。全探索は debug のビルドを含め 8〜16 分 → 30。
+        # release-check は #3342 で 60 (遅い日で約 50 分)。11-04 に 60 分で切れ、#3750 の根の直しまでの
+        # つなぎとして 90 にした (#3743)。直ったら 60 へ戻す。全探索は debug のビルドを含め 8〜16 分 → 30。
         # 黙って下げて切れる回を作らない・黙って上げて症状だけ隠さない — 数字を変えるなら
         # 根拠 (release.yml の注釈) と一緒に変える
         def minutes(job):
@@ -88,7 +89,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIsNotNone(m, job)
             return int(m.group(1))
 
-        self.assertEqual(minutes("release-check"), 60)
+        self.assertEqual(minutes("release-check"), 90)
         self.assertEqual(minutes("geometry-exploration"), 30)
 
     def test_図形探索は版と同じ_SHAで実行し記録と報告を残す(self):
