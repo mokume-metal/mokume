@@ -46,6 +46,16 @@ import Testing
 /// 場面は 3 つ: `columns` (塗りだけ・輪郭だけの矩形を交互に 20,000 個置く — 列が 20,000 本になる・#2364)、
 /// `vertices` (三角形 20,000 個の頂点を 1 本の `beginShape(.triangles)` に積む — 平面の頂点を積む場面)、
 /// `circles` (円 2,000 個 — 1 回の instanced draw に束ねられる軽い場面で、他の 2 つと見比べる)。
+///
+/// 加えて、**動く三角形の組み立て**の場面 `moving.<2d|3d>.<頂点数>` (#3416): 毎フレーム位置をずらした三角形を
+/// 1 本の `beginShape(.triangles)` に 600・6 万・60 万頂点積む。3D は `vertex(x, y, z)` で面の向きを形から
+/// 求める (法線を書かない) のを基準にし、`moving.3d-normal.60000` だけ `normal(_:_:_:)` を書いた対照にする。
+/// **場面ごとに別のプロセスで打つ** (`footprintPeak` は前の場面の最大を引き継ぐ):
+///
+/// ```bash
+/// MOKUME_FRAME_PROBE=1 python3 scripts/gpu-slot.py --exclusive -- \
+///   swift test -c release -Xswiftc -enable-testing --skip-build --filter 'FrameProbeTests/moving3D60k'
+/// ```
 @Suite(
     "フレームの内訳の計測",
     .serialized,
@@ -97,6 +107,47 @@ struct FrameProbeTests {
                 vertex(x, y)
                 vertex(x + 4, y)
                 vertex(x, y + 4)
+            }
+            endShape()
+        }
+    }
+
+    /// 毎フレーム位置をずらした三角形を 1 本の `beginShape(.triangles)` に積む場面 (#3416)。
+    ///
+    /// 三角形は格子に並べ、`frameCount` で全体を少しずつずらす (毎フレーム頂点の位置が変わる)。3D は
+    /// 奥行きを 3 段に振るので、置き直し (`placedVertices`) と面の向きの足し込みを通る。
+    final class MovingTriangles: Sketch {
+        var triangles = 0
+        var hasDepth = false
+        var writesNormal = false
+        init() {}
+        convenience init(triangles: Int, hasDepth: Bool, writesNormal: Bool = false) {
+            self.init()
+            self.triangles = triangles
+            self.hasDepth = hasDepth
+            self.writesNormal = writesNormal
+        }
+        var settings: SketchSettings { SketchSettings(width: 1024, height: 768) }
+        func draw() {
+            background(.display(red: 0.05, green: 0.05, blue: 0.08))
+            noStroke()
+            fill(.display(red: 0.7, green: 0.5, blue: 0.9))
+            let shift = Float(frameCount % 8)
+            beginShape(.triangles)
+            if writesNormal { normal(0, 0, 1) }
+            for index in 0..<triangles {
+                let x = Float(index % 500) * 2 + shift
+                let y = Float((index / 500) % 380) * 2 + shift * 0.5
+                if hasDepth {
+                    let z = Float(index % 3) * -2
+                    vertex(x, y, z)
+                    vertex(x + 2, y, z)
+                    vertex(x, y + 2, z)
+                } else {
+                    vertex(x, y)
+                    vertex(x + 2, y)
+                    vertex(x, y + 2)
+                }
             }
             endShape()
         }
@@ -186,4 +237,38 @@ struct FrameProbeTests {
 
     @Test("円 2,000 個 (軽い場面・見比べる基準)")
     func circles() throws { try probe("circles", sketch: Circles()) }
+
+    // 動く三角形の組み立て (#3416)。600 頂点は小入力の対照
+
+    @Test("動く平面の三角形・600 頂点")
+    func moving2D600() throws { try probe("moving.2d.600", sketch: MovingTriangles(triangles: 200, hasDepth: false)) }
+
+    @Test("動く平面の三角形・6 万頂点")
+    func moving2D60k() throws {
+        try probe("moving.2d.60000", sketch: MovingTriangles(triangles: 20_000, hasDepth: false))
+    }
+
+    @Test("動く平面の三角形・60 万頂点")
+    func moving2D600k() throws {
+        try probe("moving.2d.600000", sketch: MovingTriangles(triangles: 200_000, hasDepth: false))
+    }
+
+    @Test("動く立体の三角形・600 頂点 (面の向きを形から求める)")
+    func moving3D600() throws { try probe("moving.3d.600", sketch: MovingTriangles(triangles: 200, hasDepth: true)) }
+
+    @Test("動く立体の三角形・6 万頂点 (面の向きを形から求める)")
+    func moving3D60k() throws {
+        try probe("moving.3d.60000", sketch: MovingTriangles(triangles: 20_000, hasDepth: true))
+    }
+
+    @Test("動く立体の三角形・60 万頂点 (面の向きを形から求める)")
+    func moving3D600k() throws {
+        try probe("moving.3d.600000", sketch: MovingTriangles(triangles: 200_000, hasDepth: true))
+    }
+
+    @Test("動く立体の三角形・6 万頂点 (面の向きを書いた対照)")
+    func moving3DNormal60k() throws {
+        try probe(
+            "moving.3d-normal.60000", sketch: MovingTriangles(triangles: 20_000, hasDepth: true, writesNormal: true))
+    }
 }
