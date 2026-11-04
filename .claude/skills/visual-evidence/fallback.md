@@ -99,10 +99,11 @@ bash scripts/comment.sh {issue,pr} <番号> --body-file <ファイル>
 
 ### リファレンスには使わない
 
-GitHub の添付は同じ画像でも毎回別の URL を返すので、リファレンス (`make example-shots`) で使うと、ピクセルが同じ
-絵のドキュメントコメントの URL まで全件変わる (撮り直しの判定そのものは、記録の `image=` が持つ・
-[ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2)。**フォールバックをリファレンスへ広げるかは
-[#3526](https://github.com/mokume-metal/mokume/issues/3526) で決める。それまでは通常の経路だけ**で、通常の経路が戻るまで待つ。
+リファレンス (`make example-shots`) の絵は通常の経路 (Gyazo) だけに上げ、通常の経路が落ちていれば戻るまで待つ
+([ADR-0027](../../../docs/decisions/0027-readable-surfaces.md) 決定 2・[#3526](https://github.com/mokume-metal/mokume/issues/3526))。
+上げ先を 2 つにすると、ドキュメントコメントの URL が 2 つの置き場に散り、URL を読み書きする正規表現
+(`scripts/example-shots.py` の `IMAGE_LINE`) が 2 系統になり、死活のチェック (`scripts/check-external-assets.py`) が引く絵も 2 つの置き場にまたがる。
+GitHub の添付は API で消せないので、絵を差し替えるたびに孤児も残る。
 
 ### 通らない方法
 
