@@ -110,6 +110,8 @@ struct DensityInvarianceTests {
         // 回した細い線 (#2172)。帯は列 (行) が帯を切る長さを整数にして広げるので、45° でも置く位置で振れない
         case diagonalShaderLine = "rotate(θ) の shader() の line (三角形の経路)"
         case diagonalRetained = "rotate(θ) で置く保持した形の輪郭 (三角形の経路)"
+        // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す
+        case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
         case squashedShaderPoint = "scale(1, s) の shader() の point (三角形の経路)"
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
@@ -224,7 +226,7 @@ struct DensityInvarianceTests {
         var rotates: Bool {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained:
+                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect:
                 true
             default: false
             }
@@ -276,7 +278,7 @@ struct DensityInvarianceTests {
         var offsets: [Float] {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .diagonalShaderLine, .diagonalRetained:
+                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect:
                 [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
             default: [0, 0.5, 1, 1.5]
             }
@@ -295,6 +297,8 @@ struct DensityInvarianceTests {
             case .diagonalLine, .diagonalFill: 40
             // 回した細い線 (#2172)。長さ 40 の帯 (四角い端は長さちょうどで切る)
             case .diagonalShaderLine, .diagonalRetained: 40
+            // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
+            case .diagonalFoldedRect: 120
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
             default: nil
             }
@@ -367,6 +371,18 @@ struct DensityInvarianceTests {
                 canvas.translate(64 + offset, 64 + offset)
                 if self == .rotatedShaderPoint { canvas.rotate(angle) } else { canvas.scale(1, squash) }
                 canvas.point(0, 0)
+            case .diagonalFoldedRect:
+                // 同じ形が 2 つ続くと 2 つ目で雛形を開く。1 つ目は面の外へ**回さずに**置き、見るのは雛形から
+                // 置いた 2 つ目である (``foldedRect`` と同じ)。雛形は回さない向きで組まれるので、2 つ目は頂点段で
+                // 置き場所の向きに広げ直す (#3733)
+                canvas.shader(try Self.plainShader(canvas))
+                for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), Float(0)), (SIMD2(64, 64 + offset), angle)] {
+                    canvas.pushMatrix()
+                    canvas.translate(anchor.x, anchor.y)
+                    canvas.rotate(turn)
+                    canvas.rect(-20, -10, 40, 20)
+                    canvas.popMatrix()
+                }
             case .diagonalShaderLine, .diagonalRetained:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
                 canvas.strokeCap(.square)
@@ -681,6 +697,7 @@ struct DensityInvarianceTests {
                 FixedPose(mouth: .rotatedShaderPoint, angle: .pi / 4, squash: 1, issue: 1637),
                 FixedPose(mouth: .diagonalShaderLine, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalRetained, angle: .pi / 4, squash: 1, issue: 2172),
+                FixedPose(mouth: .diagonalFoldedRect, angle: .pi / 4, squash: 1, issue: 3733),
                 FixedPose(mouth: .squashedShaderPoint, angle: 0, squash: 0.1, issue: 1637),
                 FixedPose(mouth: .stretchedQuad, angle: 0, squash: 0.25, issue: 1637),
                 FixedPose(mouth: .squashedQuad, angle: 0, squash: 0.1, issue: 1637),

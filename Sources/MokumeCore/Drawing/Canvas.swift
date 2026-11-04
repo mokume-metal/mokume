@@ -321,6 +321,8 @@ public final class Canvas {
         var thinFillStart = 0
         /// 細い塗りの雛形が貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
+        /// 細い輪郭を頂点段で広げ直す雛形なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
+        var thinStrokeParams: SIMD4<Float>?
     }
 
     /// 平面を畳む鍵。**これが等しい図形どうしだけが 1 つの雛形に収まる。**
@@ -360,9 +362,9 @@ public final class Canvas {
         /// 輪郭 (丸めない矩形・輪郭の無い図形) は 0 で、拡大の違いで雛形を割らない。
         var discSegments: Int
         /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換 (#1637)。細い線は
-        /// 置き場所の大きさごとに広げ方が違うので、**回転を除いて同じ変換の置き場所だけを畳む**
-        /// (``ThinFold``)。細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む
-        /// (これまでどおり)。
+        /// 置き場所の大きさと向きごとに広げ方が違う (#2172) ので、**同じ 2x2 の置き場所だけを畳む**。
+        /// 額縁の片で組める矩形だけは、回転だけが違う置き場所も畳み、頂点段で広げ直す (``ThinFold``・#3733)。
+        /// 細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む (これまでどおり)。
         var strokeLinear: ThinFold?
         /// 置き場所の変換で描く画素 1 画素より細くなる塗りを持つなら、その変換 (#1934)。細い塗りの
         /// 広げ方は帯の向き (描く画素の軸との角度) で決まるので、**2x2 がそのまま同じ置き場所だけを
@@ -388,16 +390,27 @@ public final class Canvas {
         var texture: HeldTexture?
     }
 
-    /// 細い線を持つ雛形の鍵 (#1637)。**比べるのは回転に依らない部分** (``rotationFreeKey(_:)``)
-    /// だけで、雛形を組むのは最初の置き場所の 2x2 (``linear``) である。片は描く画素の空間で
-    /// 組むので、回転だけが違う置き場所には同じ雛形が合う。細い塗りは頂点段で置き場所ごとに広げる
+    /// 細い線を持つ雛形の鍵 (#1637)。比べるのは ``key`` だけで、雛形を組むのは最初の置き場所の 2x2
+    /// (``linear``) である。``key`` は 2x2 そのもの (向きごとに畳む・#3733) で、額縁の片で組める矩形だけが
+    /// 回転に依らない部分 (``rotationFreeKey(_:)``) を入れる (``widensInVertexStage``)。細い塗りは頂点段で置き場所ごとに広げる
     /// ので鍵に変換を入れない (#2208・``FlatKey/thinFillCapacity``)。広げ方を頂点段へ移さない形
     /// (検査用) だけが、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``・#1934)。
+    ///
+    /// **細い線の帯は、列 (行) が帯を切る長さを整数にして広げる** (#2172) ので、広げ方が向きで変わる。
+    /// 回転だけが違う置き場所を 1 つの雛形に畳めるのは、頂点段で置き場所ごとに広げ直せる形
+    /// (``widensInVertexStage``) だけで、ほかの形は ``key`` に 2x2 そのものを入れて向きごとに畳む (#3733)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
+        /// 雛形の細い輪郭を、頂点段で置き場所ごとに広げ直すか (#3733)。**額縁の片で組める矩形**だけが立てる
+        /// (``Canvas/framesThinRect(width:height:weight:join:drawn:)``) — 相似な置き場所では矩形の 4 本の帯が同じ半幅 h と
+        /// 被覆を持ち、額縁の頂点は角の形も含めて「雛形の位置 + h × 微分」になる (``FlatFrame/thinStroke``)。
+        /// 偽なら ``key`` は 2x2 そのもの。
+        var widensInVertexStage = false
 
-        static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
+        }
     }
 
     /// 畳める図形の形。
@@ -2150,6 +2163,8 @@ public final class Canvas {
         var thinFillStart = 0
         /// 広げた片の貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
         var thinFillUV: SIMD4<Float>?
+        /// 細い輪郭を頂点段で広げ直す雛形の列なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
+        var thinStrokeParams: SIMD4<Float>?
         /// 裏を向いた面をどう扱うか。
         ///
         /// 既定は両面を描く (`.none`)。**閉じた組み込みの形の、不透明な列だけ**が裏面を
@@ -5946,7 +5961,9 @@ public final class Canvas {
                 strokeShift: solidStrokeShift,
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage,
                 thinFill: batch.thinFillExpands ? (batch.thinFillUV == nil ? 1 : 2) : 0,
-                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0))
+                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0),
+                thinStroke: batch.thinStrokeParams == nil ? 0 : 1,
+                thinStrokeParams: batch.thinStrokeParams ?? SIMD4(repeating: 0))
             matrices.contents().advanced(by: matrixOffset)
                 .copyMemory(from: &frame, byteCount: MemoryLayout<FlatFrame>.stride)
 
