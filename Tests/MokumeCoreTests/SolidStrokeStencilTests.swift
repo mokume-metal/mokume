@@ -790,6 +790,76 @@ struct SolidStrokeStencilTests {
         #expect(overpainted(pixels).count == 0, "重ね塗り \(overpainted(pixels).count) 画素")
     }
 
+    /// 斜めの稜でも 1 回だけ混ぜる (#3734 の反証 #5)。細い線の帯は画面の向きで広げ、被覆は 45° でいちばん大きい
+    /// (約 0.71)。1 回だけ混ぜた画素は、重なりの無い 45° の細い線 1 本の値を越えない。2 回混ぜた画素 (被覆 0.5 以上を
+    /// 2 回) はそれを越える。透視の箱は稜の向きがまちまちで、稜の集まる角で片が重なる。丸い折れ目の箱は CPU の帯で組む。
+    @Test("斜めの細い稜も、稜の集まる角を 1 回だけ混ぜる", arguments: [false, true], [false, true])
+    func thinObliqueBoxMixesOnce(roundJoin: Bool, turned: Bool) throws {
+        let single = try thin { canvas in
+            canvas.strokeCap(.square)
+            canvas.translate(80, 80, 0)
+            canvas.rotate(Float.pi / 4)
+            canvas.beginShape()
+            canvas.vertex(-40, 0, 0)
+            canvas.vertex(40, 0, 0)
+            canvas.endShape()
+        }.pixels
+        let ceiling = painted(single).map { single[$0.x, $0.y].red }.max() ?? 0
+        let (pixels, batches) = try thin { canvas in
+            if roundJoin { canvas.strokeJoin(.round) }
+            canvas.translate(80, 80, 0)
+            if turned {
+                canvas.rotateX(0.5)
+                canvas.rotateY(0.6)
+            }
+            canvas.box(80)
+        }
+        #expect(batches.compactMap(\.strokeGeometry).count == (roundJoin ? 0 : 1))
+        let brighter = painted(pixels).filter { pixels[$0.x, $0.y].red > ceiling + 0.005 }
+        #expect(ceiling > 0.4)
+        #expect(brighter.isEmpty, "45° の線 1 本の値 \(ceiling) を越える画素 \(brighter.count)")
+    }
+
+    /// 曲線の刻みの継ぎ目に置く円板は、帯からはみ出さない (#3734 の反証 #1)。まっすぐな 3 次の曲線は、刻みの
+    /// 継ぎ目に円板を置くだけで、同じ 2 点の線と同じ画素を塗る。置く位置を 1/8 画素ずつ 8 通りにずらして見る。円板を線に垂直に 1 へ広げたままだと、
+    /// 斜めの細い帯 (半幅 0.35) から円板 (半径 0.5) がはみ出して画素が増える。
+    @Test("斜めのまっすぐな細い曲線は、同じ 2 点の線と同じ画素を塗る", arguments: [Float(0.5), 1])
+    func thinDiagonalCurveMatchesItsLine(density: Float) throws {
+        for step in 0..<8 {
+            let shift = Float(step) / 8
+            let line = try picture(curve: false, shift: shift)
+            let curve = try picture(curve: true, shift: shift)
+            #expect(!painted(line).isEmpty)
+            let extra = painted(curve).subtracting(painted(line))
+            #expect(extra.isEmpty, "ずらし \(shift): 曲線だけが塗った画素 \(extra.count)")
+        }
+        func picture(curve: Bool, shift: Float) throws -> PixelBuffer {
+            let gpu = try RenderDevice()
+            let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+            let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: density, upscale: .spatial)
+            let body: () -> Void = {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.stroke(255, 0, 0)
+                canvas.strokeWeight(0.5 / density)
+                canvas.strokeCap(.square)
+                canvas.curveDetail(64)
+                canvas.translate(80, 80 + shift, 0)
+                canvas.rotate(Float.pi / 4)
+                canvas.beginShape()
+                canvas.vertex(-40, 0, 0)
+                if curve {
+                    canvas.bezierVertex(-15, 0, 15, 0, 40, 0)
+                } else {
+                    canvas.vertex(40, 0, 0)
+                }
+                canvas.endShape()
+            }
+            try canvas.draw(body)
+            return try canvas.target.readPixels()
+        }
+    }
+
     /// 細い点 1 つは画面の軸に沿った正方形 1 枚で、片が重ならない。区間にすると描く呼び出しが増えるだけなので
     /// 入れない (段 3 の反証 #2)。
     @Test("細い不透明の点 1 つは、区間を持たない")

@@ -876,8 +876,8 @@ SolidStrokeCorner solidStrokeRunShape(
         if (cap == 2) {
             result.kind = 3;
         } else if (roundEnd) {
+            // 丸い端。細い線の端は腕の向きの楕円にするので、腕の点も下で求める (#3734)
             result.kind = 1;
-            return result;
         } else {
             if (arms < 2) return result;
             result.kind = 4;
@@ -1062,8 +1062,8 @@ SolidStrokeCorner solidStrokeCornerShape(
         if (cap == 2) {
             result.kind = 3;
         } else if (roundEnd) {
+            // 丸い端。細い線の端は腕の向きの楕円にするので、腕の点も下で求める (#3734)
             result.kind = 1;
-            return result;
         } else {
             // 容量の無い点では 1 本と数えない (2 本の腕の折り返し)
             if (g.arms < 2) return result;
@@ -1159,6 +1159,23 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
             float2 unit = kSolidStrokeDisc[step];
             world = corner == 0 ? placed.center
                 : placed.center + solidStrokeWorld(unit, s) * radius;
+            float3 right;
+            float2 toward;
+            if (thin && solidStrokeAcross(placed.far1, placed.center, s, right)
+                && solidStrokeToward(placed.far1, placed.center, s, toward)) {
+                // 細い線の丸い端は、線に沿って元の太さの半分・横は帯と同じ幅の楕円 (CPU の `appendSolidEllipse`・#3734)。
+                // 周の点は円板の表を、楕円の 2 軸の座標として読む
+                float2 band = solidStrokeThinBand(toward, s);
+                coverage = band.y;
+                if (corner != 0) {
+                    float2 onScreen = solidStrokeOnScreen(right, s);
+                    float3 down = solidStrokeWorld(float2(-onScreen.y, onScreen.x), s);
+                    float pixel = solidStrokePixel(placed.center, s);
+                    float3 wide = right * (band.x * pixel);
+                    float3 lengthwise = down * (s.uv.z * s.shapeScale.w * 0.5f * pixel);
+                    world = placed.center + wide * unit.x + lengthwise * unit.y;
+                }
+            }
         }
     } else {
         // 網の点の半分 (#1644・#1889・#1893)。形は点の記録から決める (`solidStrokeCornerShape`)
@@ -1216,11 +1233,11 @@ vertex ShapeFragmentIn solidStrokeVertexMain(
                 && solidStrokeToward(ownOrigin, own, s, armOwn) && solidStrokeToward(otherOrigin, other, s, armOther);
             float2 inward = armOwn + armOther;
             if (built && thin) {
-                // 細い線の折れ目は、2 本の帯の半幅の大きいほうで組み、被覆は小さいほう (CPU の `buildSolidStroke` の角)。
-                // 腕の向きは角から外へ向かうので、帯の向きとしては符号によらない
+                // 細い線の折れ目は、2 本の帯の半幅と被覆の小さいほうで組む (CPU の `buildSolidStroke` の角・細い帯の外へ
+                // はみ出さない)。腕の向きは角から外へ向かうので、帯の向きとしては符号によらない
                 float2 own = solidStrokeThinBand(armOwn, s);
                 float2 other = solidStrokeThinBand(armOther, s);
-                radius = max(own.x, other.x) * solidStrokePixel(center, s);
+                radius = min(own.x, other.x) * solidStrokePixel(center, s);
                 coverage = min(own.y, other.y);
             }
             if (built && !(inward.x == 0 && inward.y == 0)) {

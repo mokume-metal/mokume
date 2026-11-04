@@ -232,6 +232,8 @@ enum ShapeExit {
             "flatStrokeFigure": "平面の線の図形を 1 つ組む間だけ立つ (strokingOneFigure)。形の組み立ての出入口では動かない",
             "solidStrokeCoverage": "立体の線を 1 本組む間だけ使う被覆。次の線を組む前に書き直す",
             "solidStrokeIsLonePoint": "立体の線を 1 本組む間だけ使う印。次の線を組む前に書き直す",
+            // #3734 (細い立体の線の帯を、帯ごとに画面の向きで広げる元)
+            "solidThinBand": "立体の線を 1 本組む間だけ使う (withThinSolidStroke・rebuiltSolidStroke が立てて戻す)",
             "templateStrokeMatrix": "畳みの雛形を組む間だけ立つ。記録の間は畳まない (unused と同じ理由)",
             // #1656 (途中の描き切りの持ち越しと、置いた描き場所の写し)
             "frameCasters": flush, "casterSegmentsFree": resource,

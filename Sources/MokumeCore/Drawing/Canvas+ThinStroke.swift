@@ -741,10 +741,15 @@ extension Canvas {
         /// ``thinCarving(_:thin:)`` の端と同じ)。
         var alongHalf: Float { drawn * outputPerDrawn / 2 }
 
-        /// 画面の向き `toward` (長さ 1) の帯の、出す画素での半幅と被覆。
+        /// 画面の向き `toward` (長さ 1) の帯の、出す画素での半幅と被覆。量は ``Canvas/widenedBand(_:along:)`` と同じで、
+        /// **式は GPU の頂点段 (`Shapes.metal` の `solidStrokeThinBand`) と同じ順で書く** — 同じ稜が骨に乗るか
+        /// CPU の帯へ戻るかで、半幅が 1 ulp 違わないようにする (`drawn × (target / drawn)` は `target` にならない
+        /// ことがある・#3734 の反証 #4)。
         func band(along toward: SIMD2<Float>) -> (half: Float, coverage: Float) {
-            let widened = Canvas.widenedBand(drawn, along: toward)
-            return (drawn * widened.widen * outputPerDrawn / 2, widened.coverage)
+            let axis = max(abs(toward.x), abs(toward.y))
+            let crossings: Float = drawn / axis <= 1 ? 1 : 2
+            let target = crossings * axis
+            return (target * outputPerDrawn * 0.5, drawn / target)
         }
     }
 

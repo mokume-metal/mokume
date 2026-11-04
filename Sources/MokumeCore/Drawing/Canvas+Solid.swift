@@ -917,6 +917,16 @@ extension Canvas {
             guard let thin, let toward = screenToward(world[from], world[to], camera: camera) else { return nil }
             return thin.band(along: toward)
         }
+        // 細い線の円板 (丸い端・丸い折れ目・曲線の刻みの継ぎ目) が載る帯。点ごとに、その点から出る辺を控える
+        // (細くない線では求めない)
+        var incident: [[Int]] = []
+        if thin != nil {
+            incident = Array(repeating: [], count: world.count)
+            for (number, (a, b)) in edges.enumerated() {
+                incident[a].append(number)
+                incident[b].append(number)
+            }
+        }
         func covering(_ coverage: Float?, _ body: () -> Void) {
             guard let coverage else { return body() }
             let saved = solidStrokeCoverage
@@ -946,16 +956,42 @@ extension Canvas {
                         camera: camera)
                 }
             },
-            disc: {
-                appendSolidDisc(at: world[$0], shape: shape[$0], half: half, units: discUnits, camera: camera)
+            disc: { index in
+                // 細い線の円板は、載る帯に合わせる (#3734 の反証 #1)。線に垂直に 1 へ広げたままだと、斜めの細い帯から
+                // はみ出して光が足される。端 (帯 1 本) は線に沿って元の太さの半分・横は帯と同じ幅の楕円、折れ目と
+                // 刻みの継ぎ目は帯の半幅と被覆の小さいほうの円板 (平面の ``thinCarving(_:thin:)`` と同じ)
+                var bands: [(half: Float, coverage: Float, far: Int)] = []
+                if !incident.isEmpty {
+                    for number in incident[index] {
+                        let (a, b) = edges[number]
+                        let far = a == index ? b : a
+                        if let band = thinBand(index, far) { bands.append((band.half, band.coverage, far)) }
+                    }
+                }
+                guard let thin, let first = bands.first else {
+                    return appendSolidDisc(
+                        at: world[index], shape: shape[index], half: half, units: discUnits, camera: camera)
+                }
+                if bands.count == 1 {
+                    return covering(first.coverage) {
+                        appendSolidEllipse(
+                            at: world[index], awayFrom: world[first.far], shape: shape[index], across: first.half,
+                            along: thin.alongHalf, units: discUnits, camera: camera)
+                    }
+                }
+                covering(bands.map(\.coverage).min()) {
+                    appendSolidDisc(
+                        at: world[index], shape: shape[index], half: bands.map(\.half).min() ?? half, units: discUnits,
+                        camera: camera)
+                }
             },
             square: { appendSolidSquare(at: world[$0], shape: shape[$0], half: half, camera: camera) },
             corner: { index, first, second in
-                // 細い線の折れ目は、2 本の帯の半幅の大きいほうで組み、被覆は小さいほう (平面の角と同じ)
+                // 細い線の折れ目は、2 本の帯の半幅と被覆の小さいほうで組む (細い帯の外へはみ出さない・#3734 の反証 #3)
                 var joinHalf = half
                 var coverage: Float?
                 if let one = thinBand(first.0, first.1), let other = thinBand(second.0, second.1) {
-                    joinHalf = max(one.half, other.half)
+                    joinHalf = min(one.half, other.half)
                     coverage = min(one.coverage, other.coverage)
                 }
                 covering(coverage) {
@@ -1233,6 +1269,29 @@ extension Canvas {
             appendSolidStrokeTriangle(
                 corners[0], corners[index], corners[index + 1], shape: (shape, shape, shape),
                 camera: camera)
+        }
+    }
+
+    /// 視線に正対し、線の向きに沿った楕円を置く (細い線の丸い端・#3734)。`across` は線に垂直に、`along` は線に沿って
+    /// 出す半径 (出す画素)。軸は ``appendSolidSquare(at:awayFrom:shape:half:along:camera:)`` と同じで、周の点
+    /// `units` は円板と同じ刻み (``solidDiscUnits(half:)``) を、楕円の 2 軸の座標として読む。向きが決まらなければ
+    /// 半径 `across` の円板へ倒す。
+    private func appendSolidEllipse(
+        at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>, across: Float, along: Float,
+        units: [SIMD2<Float>], camera: StrokeCamera
+    ) {
+        guard let right = screenAcross(from, center, camera: camera) else {
+            return appendSolidDisc(at: center, shape: shape, half: across, units: units, camera: camera)
+        }
+        let onScreen = camera.onScreen(right)
+        let down = camera.world(SIMD2(-onScreen.y, onScreen.x))
+        let pixel = camera.worldPerPixel(at: center, height: height)
+        let (wide, long) = (right * (across * pixel), down * (along * pixel))
+        var previous = center + wide
+        for unit in units.dropFirst() {
+            let current = center + wide * unit.x + long * unit.y
+            appendSolidStrokeTriangle(center, previous, current, shape: (shape, shape, shape), camera: camera)
+            previous = current
         }
     }
 
