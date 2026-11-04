@@ -1193,6 +1193,8 @@ extension Canvas {
                 var vertex = prototype
                 vertex.position = corner.position
                 vertex.shapePosition = corner.shape
+                // 細い線の帯は、帯ごとに画面の向きで被覆が違う (#3734)
+                vertex.stroke = corner.coverage
                 placed.append(vertex)
             }
             numbers[piece.vertexStart - lower] = start

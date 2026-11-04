@@ -910,26 +910,59 @@ extension Canvas {
             shape = net.points
             edges = net.edges
         }
+        // 細い線の帯は、帯ごとに画面の向きで広げ直す (``SolidThinBand``・#3734)。帯を持たない片 (円板・点の
+        // 正方形) は、線に垂直に 1 へ広げた太さと被覆のまま
+        let thin = solidThinBand
+        func thinBand(_ from: Int, _ to: Int) -> (half: Float, coverage: Float)? {
+            guard let thin, let toward = screenToward(world[from], world[to], camera: camera) else { return nil }
+            return thin.band(along: toward)
+        }
+        func covering(_ coverage: Float?, _ body: () -> Void) {
+            guard let coverage else { return body() }
+            let saved = solidStrokeCoverage
+            solidStrokeCoverage = coverage
+            body()
+            solidStrokeCoverage = saved
+        }
         strokeNet(
             count: world.count, edges: edges, curveSteps: curveSteps,
             samePoint: { world[$0] == world[$1] },
             depth: { dot(world[$0] - camera.eye, camera.forward) },
             toward: { screenToward(world[$0], world[$1], camera: camera) },
-            endSquare: {
-                appendSolidSquare(
-                    at: world[$0], awayFrom: world[$1], shape: shape[$0], half: half, camera: camera)
+            endSquare: { end, far in
+                // 端は線に沿って元の太さの半分だけ出し、横は帯と同じ幅・同じ被覆にする
+                let band = thinBand(far, end)
+                covering(band?.coverage) {
+                    appendSolidSquare(
+                        at: world[end], awayFrom: world[far], shape: shape[end], half: band?.half ?? half,
+                        along: thin?.alongHalf, camera: camera)
+                }
             },
-            band: {
-                appendSolidBand(world[$0], world[$1], shape: (shape[$0], shape[$1]), half: half, camera: camera)
+            band: { from, to in
+                let band = thinBand(from, to)
+                covering(band?.coverage) {
+                    appendSolidBand(
+                        world[from], world[to], shape: (shape[from], shape[to]), half: band?.half ?? half,
+                        camera: camera)
+                }
             },
             disc: {
                 appendSolidDisc(at: world[$0], shape: shape[$0], half: half, units: discUnits, camera: camera)
             },
             square: { appendSolidSquare(at: world[$0], shape: shape[$0], half: half, camera: camera) },
             corner: { index, first, second in
-                buildSolidJoin(
-                    at: world[index], (world[first.0], world[first.1]), (world[second.0], world[second.1]),
-                    join: style.strokeJoin, shape: shape[index], half: half, camera: camera)
+                // 細い線の折れ目は、2 本の帯の半幅の大きいほうで組み、被覆は小さいほう (平面の角と同じ)
+                var joinHalf = half
+                var coverage: Float?
+                if let one = thinBand(first.0, first.1), let other = thinBand(second.0, second.1) {
+                    joinHalf = max(one.half, other.half)
+                    coverage = min(one.coverage, other.coverage)
+                }
+                covering(coverage) {
+                    buildSolidJoin(
+                        at: world[index], (world[first.0], world[first.1]), (world[second.0], world[second.1]),
+                        join: style.strokeJoin, shape: shape[index], half: joinHalf, camera: camera)
+                }
             })
     }
 
@@ -965,18 +998,21 @@ extension Canvas {
     /// 沿った正方形にする (その場の線の ``withThinSolidStroke(_:isPoint:_:)`` と同じ)。
     func rebuiltSolidStroke(
         _ piece: SolidStrokePiece
-    ) -> (corners: [(position: SIMD3<Float>, shape: SIMD3<Float>)], coverage: Float) {
+    ) -> (corners: [(position: SIMD3<Float>, shape: SIMD3<Float>, coverage: Float)], coverage: Float) {
         let thin = ThinStroke(drawnWeight: drawnSolidWeight(piece.weight), isPoint: piece.isLonePoint)
-        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組む太さで組む
-        let saved = (style.strokeWeight, style.strokeJoin, style.strokeCap)
+        // 寄せる量は線の太さから決まる (`liftedTowardViewer`)。組む太さで組む。細い線の帯は帯ごとに
+        // 画面の向きで広げ直すので、片ごとの被覆も受け取る (``SolidThinBand``・#3734)
+        let saved = (style.strokeWeight, style.strokeJoin, style.strokeCap, solidStrokeCoverage, solidThinBand)
+        solidThinBand = thin != nil && !piece.isLonePoint ? solidThinBand(weight: piece.weight) : nil
         style.strokeWeight = piece.weight * (thin?.widen ?? 1)
         style.strokeJoin = piece.join
         style.strokeCap = thin != nil && piece.isLonePoint ? .square : piece.cap
+        solidStrokeCoverage = thin?.coverage ?? 1
         solidStrokeCapture = []
         buildSolidStroke(piece.source)
         var built = solidStrokeCapture ?? []
         solidStrokeCapture = nil
-        (style.strokeWeight, style.strokeJoin, style.strokeCap) = saved
+        (style.strokeWeight, style.strokeJoin, style.strokeCap, solidStrokeCoverage, solidThinBand) = saved
         if piece.isReversed { Self.reverseTriangles(in: &built, from: 0) }
         return (built, thin?.coverage ?? 1)
     }
@@ -1221,9 +1257,12 @@ extension Canvas {
     ///
     /// [#1535]: https://github.com/mokume-metal/mokume/issues/1535
     /// [#1893]: https://github.com/mokume-metal/mokume/issues/1893
+    ///
+    /// `along` は線に沿って出す長さの半分 (出す画素)。`nil` なら `half` と同じ (正方形)。細い線の端は、横を帯と
+    /// 同じ幅にし、線に沿っては元の太さの半分だけ出す (``SolidThinBand/alongHalf``・#3734)。
     private func appendSolidSquare(
         at center: SIMD3<Float>, awayFrom from: SIMD3<Float>, shape: SIMD3<Float>,
-        half: Float, camera: StrokeCamera
+        half: Float, along: Float? = nil, camera: StrokeCamera
     ) {
         guard let right = screenAcross(from, center, camera: camera) else {
             return appendSolidSquare(at: center, shape: shape, half: half, camera: camera)
@@ -1232,19 +1271,30 @@ extension Canvas {
         // 画面の画素で測った成分である (縦横比を面と違えた投影では、世界の向きのまま回すと菱形になる)
         let onScreen = camera.onScreen(right)
         let down = camera.world(SIMD2(-onScreen.y, onScreen.x))
-        appendSolidSquare(at: center, right: right, down: down, shape: shape, half: half, camera: camera)
+        appendSolidSquare(
+            at: center, right: right, down: down, shape: shape, half: half, along: along ?? half, camera: camera)
     }
 
-    /// 視線に正対する正方形を、`right` / `down` の 2 軸で張る。
+    /// 視線に正対する長方形を、`right` / `down` の 2 軸で張る。`right` の向きに `half`、`down` の向きに
+    /// `along` (省けば `half`・正方形) だけ出す。
     private func appendSolidSquare(
         at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, shape: SIMD3<Float>,
-        half: Float, camera: StrokeCamera
+        half: Float, along: Float? = nil, camera: StrokeCamera
     ) {
         let radius = half * camera.worldPerPixel(at: center, height: height)
-        let a = center + (-right - down) * radius
-        let b = center + (right - down) * radius
-        let c = center + (right + down) * radius
-        let d = center + (-right + down) * radius
+        var a = center + (-right - down) * radius
+        var b = center + (right - down) * radius
+        var c = center + (right + down) * radius
+        var d = center + (-right + down) * radius
+        // 線に沿って違う長さを出す端だけ、長方形に組み直す (正方形の式はそのまま残し、細くない線の頂点を動かさない)
+        if let along, along != half {
+            let pixel = camera.worldPerPixel(at: center, height: height)
+            let (across, lengthwise) = (right * (half * pixel), down * (along * pixel))
+            a = center - across - lengthwise
+            b = center + across - lengthwise
+            c = center + across + lengthwise
+            d = center - across + lengthwise
+        }
         appendSolidStrokeTriangle(a, b, c, shape: (shape, shape, shape), camera: camera)
         appendSolidStrokeTriangle(a, c, d, shape: (shape, shape, shape), camera: camera)
     }
@@ -1255,9 +1305,10 @@ extension Canvas {
     ) {
         // 組み直しの間は積まずに、位置と形自身の座標だけを渡す (``rebuiltSolidStroke(_:)``)
         if solidStrokeCapture != nil {
-            solidStrokeCapture?.append((liftedTowardViewer(a, camera: camera), shape.0))
-            solidStrokeCapture?.append((liftedTowardViewer(b, camera: camera), shape.1))
-            solidStrokeCapture?.append((liftedTowardViewer(c, camera: camera), shape.2))
+            let coverage = solidStrokeCoverage
+            solidStrokeCapture?.append((liftedTowardViewer(a, camera: camera), shape.0, coverage))
+            solidStrokeCapture?.append((liftedTowardViewer(b, camera: camera), shape.1, coverage))
+            solidStrokeCapture?.append((liftedTowardViewer(c, camera: camera), shape.2, coverage))
             return
         }
         // 輪郭の頂点を名乗る。頂点関数が画面で半画素寄せる (`SolidVertex.stroke`)。名乗る値は

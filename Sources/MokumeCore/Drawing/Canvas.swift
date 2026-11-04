@@ -231,13 +231,15 @@ public final class Canvas {
     /// 組み直しは即時に描くときと**同じ関数** (網の骨・帯・円板・正方形・折れ目) を通す。向き・
     /// 幅・寄せの式や、画面で重なる点のまとめ方を 2 か所に書くと、片方だけ直した誤りが保持した
     /// 形でだけ現れる (#1547・#1893)。
-    var solidStrokeCapture: [(position: SIMD3<Float>, shape: SIMD3<Float>)]?
+    var solidStrokeCapture: [(position: SIMD3<Float>, shape: SIMD3<Float>, coverage: Float)]?
 
     /// いま組んでいる立体の線の被覆 (細い線を広げたとき 1 未満・#1637)。線の頂点が
     /// ``SolidVertex/stroke`` に名乗る。
     var solidStrokeCoverage: Float = 1
     /// いま組んでいる立体の線が、点 1 つの線か。記録する部品が覚える (``SolidStrokePiece/isLonePoint``)。
     var solidStrokeIsLonePoint = false
+    /// いま組んでいる細い立体の線の、帯ごとの広げ方の元 (``SolidThinBand``)。細くない線と点 1 つの線は `nil`。
+    var solidThinBand: SolidThinBand?
 
     /// 平面の頂点のうち、被覆が 1 でない区間 (#1637)。**頂点の番号で、番号の順に並ぶ。**
     ///

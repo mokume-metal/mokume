@@ -687,6 +687,9 @@ struct SolidStrokeStencilTests {
 
     /// 描く画素で 1 画素より細い不透明の赤の線 (`strokeWeight(0.5)`・被覆 0.5) で描き、絵と閉じた列を返す。
     /// 1 回混ぜると線形の赤が 0.411 前後、2 回で 0.5 を超える。
+    ///
+    /// **形は平行投影の正面から見て、画面の稜をどれも軸に沿わせる。** 細い線の帯は画面の向きで広げ、斜めの帯は
+    /// 被覆が 0.5 より大きい (45° で約 0.71・#3734) ので、斜めの稜があると 1 回でも 0.5 を超える。
     private func thin(_ body: (Canvas) -> Void) throws -> (pixels: PixelBuffer, batches: [Canvas.Batch]) {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
         var batches: [Canvas.Batch] = []
@@ -710,6 +713,7 @@ struct SolidStrokeStencilTests {
     @Test("細い不透明の線の box(80) は、GPU で広げる骨のまま、稜の集まる角も 1 回だけ混ぜる")
     func thinBoxMixesOnceOnTheBone() throws {
         let (pixels, batches) = try thin { canvas in
+            canvas.ortho()
             canvas.translate(80, 80, 0)
             canvas.box(80)
         }
@@ -735,6 +739,7 @@ struct SolidStrokeStencilTests {
         var bones = 0
         try canvas.draw {
             canvas.background(black)
+            canvas.ortho()
             canvas.translate(80, 80, 0)
             canvas.shape(crate)
             canvas.closeBatch()
@@ -752,6 +757,7 @@ struct SolidStrokeStencilTests {
             if roundBox {
                 // 丸い折れ目の稜線は GPU に乗らず、CPU の帯で組む
                 canvas.strokeJoin(.round)
+                canvas.ortho()
                 canvas.translate(80, 80, 0)
                 canvas.box(80)
             } else {
@@ -775,6 +781,7 @@ struct SolidStrokeStencilTests {
                 canvas.box(80)
             },
             place: { canvas, crate in
+                canvas.ortho()
                 canvas.translate(80, 80, 0)
                 canvas.shape(crate)
             })
@@ -797,17 +804,16 @@ struct SolidStrokeStencilTests {
     @Test("読み込んだモデルの細い稜線も、骨の経路で 1 回だけ混ぜる")
     func thinModelMixesOnceOnTheBone() throws {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 160, height: 160)
-        let pyramid = try canvas.loadModel(ModelFixture.pyramid)
+        let cube = try canvas.loadModel(ModelFixture.cube)
         var bones = 0
         try canvas.draw {
             canvas.background(black)
             canvas.noFill()
             canvas.stroke(255, 0, 0)
             canvas.strokeWeight(0.5)
+            canvas.ortho()
             canvas.translate(80, 80, 0)
-            canvas.rotateX(0.4)
-            canvas.rotateY(0.7)
-            canvas.model(pyramid)
+            canvas.model(cube)
             canvas.closeBatch()
             bones = canvas.batches.compactMap(\.strokeGeometry).count
         }
@@ -825,6 +831,7 @@ struct SolidStrokeStencilTests {
     func thinSeparateBoxesMixTwice() throws {
         func boxes(_ which: Set<Int>) throws -> PixelBuffer {
             try thin { canvas in
+                canvas.ortho()
                 for (index, offset) in [(0, Float(70)), (1, Float(90))] where which.contains(index) {
                     canvas.push()
                     canvas.translate(offset, offset, 0)
