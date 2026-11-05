@@ -80,8 +80,8 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", exploration)
 
     def test_各_job_の_timeout_は実測の余裕を持つ(self):
-        # release-check は #3342 で 60 (遅い日で約 50 分)。11-04 に 60 分で切れ、#3750 の根の直しまでの
-        # つなぎとして 90 にした (#3743)。直ったら 60 へ戻す。全探索は debug のビルドを含め 8〜16 分 → 30。
+        # release-check は #3342 で 60。11-04 に 60 分で切れて 90 でつなぎ (#3743)、検査のターゲットの
+        # WMO を外して (約 33 分) 60 へ戻した (#3750)。全探索は debug のビルドを含め 8〜16 分 → 30。
         # 黙って下げて切れる回を作らない・黙って上げて症状だけ隠さない — 数字を変えるなら
         # 根拠 (release.yml の注釈) と一緒に変える
         def minutes(job):
@@ -89,8 +89,18 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIsNotNone(m, job)
             return int(m.group(1))
 
-        self.assertEqual(minutes("release-check"), 90)
+        self.assertEqual(minutes("release-check"), 60)
         self.assertEqual(minutes("geometry-exploration"), 30)
+
+    def test_release_check_だけが検査のターゲットの_WMO_を外す(self):
+        # 外さないと MokumeCoreTests の WMO の 1 本で 60 分に収まらない (#3743・#3750)。他の経路で
+        # 立てると、Swift 6.4 の既定のビルド系 (swiftbuild) で組めなくなる (#2596・Package.swift の mokumeTests)
+        flag = r'(?m)^          MOKUME_TESTS_WITHOUT_WMO: "1"$'
+        self.assertRegex(self.jobs["release-check"], flag)
+        self.assertNotIn("MOKUME_TESTS_WITHOUT_WMO", self.jobs["geometry-exploration"])
+        manifest = (REPO / "Package.swift").read_text(encoding="utf-8")
+        self.assertIn('Context.environment["MOKUME_TESTS_WITHOUT_WMO"] == "1"', manifest)
+        self.assertIn('"-no-whole-module-optimization"], .when(configuration: .release)', manifest)
 
     def test_図形探索は版と同じ_SHAで実行し記録と報告を残す(self):
         check = self.jobs["release-check"]

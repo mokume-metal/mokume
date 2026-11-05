@@ -412,6 +412,10 @@ gpu-ran:
 # `tee` は付けない。debug の tee は「人が実行中に読む先」で、こちらは計測のときに端末を
 # 見ながら打つ器なので、同じものが 2 つ要らない
 #
+# **ホストの release-check だけは、検査のターゲットの WMO を外して組む** (環境変数
+# MOKUME_TESTS_WITHOUT_WMO=1・#3750)。手元と専用機の定期は既定 (WMO) のまま。理由と既定にしない
+# 理由は Package.swift の mokumeTests
+#
 # **TEST_RELEASE_ARGS は swift test へそのまま渡す追加の引数** (既定は空)。素で打ったときの
 # 動作は変えない。範囲を絞る口で、手元で台帳だけを回すときなどに使う
 TEST_RELEASE_ARGS ?=
