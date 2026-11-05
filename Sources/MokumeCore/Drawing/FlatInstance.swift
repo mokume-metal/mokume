@@ -24,16 +24,25 @@ struct FlatInstance {
     /// 変換は最後に 1 度だけ掛かる — 畳まずに 1 つずつ置いたときとまったく同じ順序で
     /// ある (``Canvas/appendBand(_:_:half:)``)。
     var linear: SIMD4<Float>
-    /// 平行移動。z と w は詰め物 (16 バイト境界に揃える)。
+    /// xy が置き場所の位置 (形自身の座標の原点を置く点)、zw が変換の平行移動 (#3555)。
+    ///
+    /// **位置は変換を掛ける前に足す。** 畳まずに置くときは、周を位置ぶんずらしてから
+    /// (``Canvas/Outline/moved(by:)``) `Transform.placed` で移す。頂点段も同じ順 (位置を足す → 線形 →
+    /// 平行移動) で置くので、畳んだ頂点は畳まずに置いた頂点と 1 ビットも違わない (`Shapes.metal` の
+    /// `mokume_flatMove`・`mokume_flatPlace`)。位置を変換してから足す (`L·p + M·位置`) と、縁の頂点が
+    /// 1 ulp 違い、縁の画素が畳むかどうかで入れ替わる。
     var offset: SIMD4<Float>
     /// この置き場所の塗り。**塗りの頂点の色に掛かる。**
     var fill: SIMD4<Float>
     /// この置き場所の輪郭。**輪郭の頂点の色に掛かる。**
     var stroke: SIMD4<Float>
 
-    init(linear: SIMD4<Float>, offset: SIMD2<Float>, fill: LinearRGBA, stroke: LinearRGBA) {
+    init(
+        linear: SIMD4<Float>, anchor: SIMD2<Float>, translation: SIMD2<Float>, fill: LinearRGBA,
+        stroke: LinearRGBA
+    ) {
         self.linear = linear
-        self.offset = SIMD4(offset.x, offset.y, 0, 0)
+        self.offset = SIMD4(anchor.x, anchor.y, translation.x, translation.y)
         self.fill = SIMD4(fill.red, fill.green, fill.blue, fill.alpha)
         self.stroke = SIMD4(stroke.red, stroke.green, stroke.blue, stroke.alpha)
     }
@@ -44,7 +53,7 @@ struct FlatInstance {
     /// その場で並べた頂点も — 畳みようのないものすべてを — この置き場所へ通せる。
     /// 畳む経路と畳まない経路で頂点関数が 2 本に割れない (``SolidInstance/identity``)。
     static let identity = FlatInstance(
-        linear: SIMD4(1, 0, 0, 1), offset: SIMD2(0, 0),
+        linear: SIMD4(1, 0, 0, 1), anchor: SIMD2(0, 0), translation: SIMD2(0, 0),
         fill: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1),
         stroke: LinearRGBA(premultipliedRed: 1, green: 1, blue: 1, alpha: 1))
 }

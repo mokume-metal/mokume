@@ -723,7 +723,7 @@ extension Canvas {
     /// `position` に持ち、置き場所ごとの記述 (``ThinFillRecord``) から頂点関数が片の角を出す。
     /// `capacity` 個の片ぶん (片 1 つが三角形 2 枚 = 6 頂点) を積み、使わない片は頂点関数が潰す。
     ///
-    /// 貼る絵があるときの読み取り位置は、周の囲みの箱から頂点関数が作る (``FlatFrame/thinFillUV``)。
+    /// 貼る絵があるときの読み取り位置は、周の囲みの箱から頂点関数が作る (``FlatFrame/fillBox``)。
     /// その箱を返す (絵が無ければ `nil`)。
     func fillThinTemplate(capacity: Int, outline: Outline) -> SIMD4<Float>? {
         guard canPlace else {

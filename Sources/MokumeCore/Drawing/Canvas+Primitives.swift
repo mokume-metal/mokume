@@ -70,10 +70,10 @@ extension Canvas {
         if radius > 0 {
             // **塗りだけのときは、角を丸めない矩形と同じく畳む** (#3170)。周は形自身の座標で作って左上の角を
             // 置き場所として渡し、角の弧の刻みは鍵が持つ数 (置き場所の拡大で決まる整数) で刻む。
-            // **輪郭があれば畳まず、置き場所ごとに組む。** 畳んだ雛形は輪郭の頂点を「雛形の座標を置き場所の
-            // 行列で移す」順で置き、畳まない道は「位置を足してから移す」順で置くので、縁の頂点が 1 ulp 違い、
-            // 縁の画素が畳まない絵と変わりうる (16×10・半径 5・`strokeWeight(0.7)`・回転 0.29 で 3 成分)。
-            // 絵を動かさない約束 (完了条件 2) を守るため、輪郭つきは今までの道に残す
+            // **輪郭があれば畳まず、置き場所ごとに組む。** #3170 のときは、畳んだ雛形が輪郭の頂点を「雛形の座標を
+            // 置き場所の行列で移す」順で置き、縁の頂点が 1 ulp 違って縁の画素が畳まない絵と変わった (16×10・半径 5・
+            // `strokeWeight(0.7)`・回転 0.29 で 3 成分)。頂点段は #3555 で畳まない道と同じ順に置くようになったので、
+            // 畳む側へ寄せられるはずだが、許容 0 を検査で縛るまでは今までの道に残す (#3759)
             if !(style.hasStroke && style.strokeWeight > 0) {
                 return draw(folding: .roundedRect(width: w, height: h, radius: radius), at: SIMD2(box.x, box.y)) {
                     segments in
@@ -99,15 +99,21 @@ extension Canvas {
         // 4 つの角は直角なので、外向きの対角を添える。`bevel` の角を距離関数の経路と
         // 同じ線で削ぐのに使う (#1506)
         draw(folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y)) { _ in
-            Outline(
-                points: [
-                    SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
-                ], isClosed: true,
-                cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
-                strokesAsOneRegion: true,
-                namedFill: Outline.NamedFill(
-                    isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
+            Self.rectOutline(width: w, height: h)
         }
+    }
+
+    /// 角を丸めない矩形の周 (形自身の座標・左上が原点)。畳む口 (``draw(folding:at:outline:)``) が雛形と 1 つ目を
+    /// 組む周で、畳まない道と比べる検査 (`FoldedPlacementTests`) も同じ周を `moved(by:)` して描く。
+    static func rectOutline(width w: Float, height h: Float) -> Outline {
+        Outline(
+            points: [
+                SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
+            ], isClosed: true,
+            cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
+            strokesAsOneRegion: true,
+            namedFill: Outline.NamedFill(
+                isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
     }
 
     /// 角を半径 `radius` の円弧で丸めた矩形の周 (形自身の座標・左上が原点)。
@@ -222,8 +228,8 @@ extension Canvas {
     /// 距離関数の経路を使えないとき — `texture()` か `shader()` を効かせた塗りは三角形の経路へ — は、輪郭の周
     /// (``Outline``) を描く。**畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open`
     /// の塗り**で、同じ形が続く間は 1 つの雛形に畳む (``draw(folding:at:outline:)``・#3248)。輪郭つきの弧と、貼る絵つきの
-    /// `.chord` / `.open` は、畳むと縁の数成分が畳まない絵と違うので畳まず、部分ごとに組んで描く
-    /// (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``)。
+    /// `.chord` / `.open` は畳まず、部分ごとに組んで描く (``placeArcInParts(mode:center:radiusX:radiusY:start:sweep:)``。
+    /// #3248 のときは畳むと縁の数成分が畳まない絵と違った。#3555 で頂点段の順を揃えた後に畳む側へ寄せるのは #3759)。
     /// 破線の輪郭 (#2835) は、塗りを距離関数のまま置き、輪郭だけを周の片で引く。
     ///
     /// **一周は、どの閉じ方でも楕円と同じ** (終わりが始まりの 2π 以上先なら、閉じ方に差が出る端が無い)。
@@ -277,9 +283,9 @@ extension Canvas {
                     arc: SIMD2(start, sweep), arcClosure: closure, fills: true)
         }
         // **畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open` の塗り**
-        // (どちらも弦で結んだ形の塗り・#3248)。輪郭つきと貼る絵つきの `.chord` / `.open`・輪郭つきの既定は、畳んだ絵が
-        // 畳まない絵と縁の数成分違い (置き場所の変換を GPU で掛けるぶん・#3170 の角丸の輪郭つきと同じ根) — 絵を
-        // 動かさない約束を守るため、今までの道 (``placeArcInParts``) に残す
+        // (どちらも弦で結んだ形の塗り・#3248)。輪郭つきと貼る絵つきの `.chord` / `.open`・輪郭つきの既定は、#3248 のときは
+        // 畳んだ絵が畳まない絵と縁の数成分違った (置き場所の変換を GPU で掛けるぶん)。頂点段は #3555 で畳まない道と
+        // 同じ順に置くようになったが、許容 0 を検査で縛るまでは今までの道 (``placeArcInParts``) に残す (#3759)
         let foldsChordFill = !drawsStroke && style.picture == nil && (mode == .chord || mode == .open)
         guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) || foldsChordFill else {
             return placeArcInParts(

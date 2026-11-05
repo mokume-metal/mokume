@@ -679,10 +679,6 @@ extension Canvas {
         var slopes: [SIMD2<Float>]
         /// 形自身の座標の半幅 t (= 描く画素の半幅 / 拡大率)。
         var half: Float
-        /// 描く画素の半幅 h (``widenedBand(_:along:)`` の幅の半分)。
-        var drawnHalf: Float
-        /// 描く画素での拡大率 (相似な 2x2 の |det| の平方根)。
-        var scale: Float
         /// 被覆 (4 本の帯で同じ)。
         var coverage: Float
     }
@@ -715,8 +711,10 @@ extension Canvas {
     /// - 左右の帯: 上下の帯の間 (`bevel` は外側の半分だけ角の点まで延ばす)
     /// - `bevel` の角: 角の点と、2 本の帯の外の縁の角を結んだ三角形
     ///
-    /// 頂点が t について線形なので、雛形は t の微分を持たせて頂点段で置き場所ごとに広げ直せる
-    /// (``appendWidenedTemplateStroke(_:)``)。
+    /// 頂点が t について線形なので、雛形は角と向きを持たせて頂点段で置き場所ごとに広げ直せる
+    /// (``appendWidenedTemplateStroke(_:)``)。**半幅と被覆の式は、頂点段 (`Shapes.metal` の `mokume_thinRectBand`) と
+    /// 1 つずつ同じ順である** — 1 つ目 (ここで直に組む) と雛形で額縁の角が 1 ulp も違わないよう、式を変えるときは
+    /// 両方を同時に変える (#3555)。
     func thinRectFrame(_ outline: Outline, placedBy matrix: simd_float4x4) -> ThinRectFrame? {
         guard outline.isClosed, outline.points.count == 4, outline.cornerDiagonals.count == 4 else { return nil }
         let points = outline.points
@@ -776,8 +774,7 @@ extension Canvas {
             piece([(x0, 0, y1, 0), (x0, -1, y1, 0), (x0, 0, y1, 1)])
         }
         return ThinRectFrame(
-            bases: bases, slopes: slopes, half: drawnHalf / scale, drawnHalf: drawnHalf, scale: scale,
-            coverage: widened.coverage)
+            bases: bases, slopes: slopes, half: drawnHalf / scale, coverage: widened.coverage)
     }
 
     /// 額縁の片を、いまの変換で積む (直に描く口)。被覆を頂点に付ける。
@@ -801,23 +798,30 @@ extension Canvas {
     /// ``ThinFold/widensInVertexStage``)。返すのは列に渡す値 (``FlatFrame/thinStrokeParams``)。積めなければ
     /// `nil` で、呼ぶ側はこれまでどおり積む。
     ///
-    /// 片は直に描く口と同じ額縁 (``thinRectFrame(_:placedBy:)``) で、鍵の置き場所の半幅 h0 で置き、頂点の
-    /// `uv` に描く画素の半幅についての微分 (`向き / 拡大率`・形自身の座標) を入れる。頂点段
-    /// (`shapeVertexMain`) は置き場所の 2x2 から h と被覆を求め、`位置 + (h − h0) × 微分` に置く。鍵の置き場所
-    /// (h = h0) では、組んだ頂点がそのまま出る。回転だけが違う置き場所は拡大率が同じなので、微分も同じである。
+    /// 片は直に描く口と同じ額縁 (``thinRectFrame(_:placedBy:)``) で、頂点の `position` に片の角 (`bases`・形自身の
+    /// 座標)、`uv` に角から広げる向き (`slopes`・各成分 −1・0・1) を入れる。頂点段 (`shapeVertexMain`) は置き場所の
+    /// 2x2 から半幅と被覆を ``thinRectFrame(_:placedBy:)`` と同じ式で求め、`(角 + 位置) + 半幅 × 向き` に置く —
+    /// 1 つ目を直に組むときの `ずらした角 + 半幅 × 向き` と同じ順で、畳んだ頂点が 1 ビットも違わない (#3555)。
+    /// 鍵の置き場所で組んだ半幅を雛形に焼いて置き場所ごとに差分を足す形にすると、丸めが 1 つ目と違う。
     func appendWidenedTemplateStroke(_ outline: Outline) -> SIMD4<Float>? {
         guard let matrix = thinStrokeMatrix, let frame = thinRectFrame(outline, placedBy: matrix) else {
             return nil
         }
         let start = vertices.count
-        appendThinRectFrame(frame)
-        // 被覆は頂点段が置き場所ごとに求める (頂点に付けた被覆は読まない)。鍵の置き場所でちょうど 1 でも、
+        // 角だけを積む (半幅を足さない)。雛形は変換を掛けずに積むので、角は形自身の座標のまま
+        var index = 0
+        while index + 2 < frame.bases.count {
+            appendTriangle(
+                frame.bases[index], frame.bases[index + 1], frame.bases[index + 2], color: style.stroke)
+            index += 3
+        }
+        // 被覆は頂点段が置き場所ごとに求める (頂点に被覆を付けない)。鍵の置き場所でちょうど 1 でも、
         // 回した置き場所では 1 未満になりうるので、置き換える列は下地を読む組で描く印を必ず立てる (#3111)
         openBatchHasThinCoverage = true
         for (offset, slope) in frame.slopes.enumerated() {
-            vertices[start + offset].uv = slope / frame.scale
+            vertices[start + offset].uv = slope
         }
-        return SIMD4(style.strokeWeight, frame.drawnHalf, whiteUV.x, whiteUV.y)
+        return SIMD4(style.strokeWeight, Float(1 - Self.thinStrokeTolerance), whiteUV.x, whiteUV.y)
     }
 
     // MARK: - 立体の線

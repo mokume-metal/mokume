@@ -368,8 +368,9 @@ extension Canvas {
         if let template, template.key.thinFillCapacity > 0 {
             batches[batches.count - 1].thinFillExpands = true
             batches[batches.count - 1].thinFillStart = template.thinFillStart
-            batches[batches.count - 1].thinFillUV = template.thinFillUV
         }
+        // 貼る絵のある雛形の塗りは、読み取り位置を置き場所ごとに箱から作る (#3555)
+        if let template { batches[batches.count - 1].fillBox = template.fillBox }
         // 細い輪郭を頂点段で広げ直す雛形 (#3733)
         if let template { batches[batches.count - 1].thinStrokeParams = template.thinStrokeParams }
     }
