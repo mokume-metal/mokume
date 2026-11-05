@@ -1047,7 +1047,7 @@ extension Canvas {
     /// - 1 本の辺の両端が同じ列に入る (画面で短い線) なら、1 つの片にして割合は両端の差にする
     /// - 別の辺の端どうしの列の片が重なる (端点の重なる開いた周など) なら、その 2 つの端は切らない。片の割合が
     ///   同じ列を 2 度数えるからである
-    private func solidEndCuts(
+    func solidEndCuts(
         world: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool], thin: SolidThinBand, camera: StrokeCamera
     ) -> SolidEndCuts {
         let screen = SolidDrawnScreen(
