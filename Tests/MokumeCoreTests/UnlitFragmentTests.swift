@@ -5,11 +5,11 @@ import Testing
 
 @testable import MokumeCore
 
-/// 光と周囲の枝を外した断片を、どの頂点関数で組むかの検査 ([#1778])。GPU を要しない。
+/// 光と周囲の分岐を外した断片を、どの頂点関数で組むかの検査 ([#1778])。GPU を要しない。
 ///
-/// **絵では見分けられない退行を、ここで捕まえる。** 平面と立体の輪郭で枝を残しても
-/// 色は変わらない (枝は必ず偽になる) — 変わるのは速さだけなので、台帳も画素の検査も
-/// 黙る。逆に立体の塗りから枝を外すと光も周囲も背景も消えるが、それは光の検査
+/// **絵では見分けられない退行を、ここで捕まえる。** 平面と立体の輪郭で分岐を残しても
+/// 色は変わらない (分岐は必ず偽になる) — 変わるのは速さだけなので、台帳も画素の検査も
+/// 黙る。逆に立体の塗りから分岐を外すと光も周囲も背景も消えるが、それは光の検査
 /// (`LightTests` など) が絵で捕まえる。ここが見るのは前者の側である。
 ///
 /// **見るのは、組み立てが特化に渡す値そのもの** (``ShapePipeline/fragmentConstants(vertexFunctionName:formFlags:)``)。
@@ -18,9 +18,9 @@ import Testing
 ///
 /// [#1778]: https://github.com/mokume-metal/mokume/issues/1778
 /// [#2293]: https://github.com/mokume-metal/mokume/issues/2293
-@Suite("光の枝を外す断片")
+@Suite("光の分岐を外す断片")
 struct UnlitFragmentTests {
-    /// **平面と立体の輪郭は枝を外す。** どちらも向きを 0 で出し、光も周囲も持たない列。
+    /// **平面と立体の輪郭は分岐を外す。** どちらも向きを 0 で出し、光も周囲も持たない列。
     @Test func flatAndSolidStrokeDropTheLightingBranches() {
         #expect(ShapePipeline.shapeLit(forVertexFunction: ShapePipeline.flatVertexFunctionName) == false)
         #expect(
@@ -28,12 +28,12 @@ struct UnlitFragmentTests {
                 == false)
     }
 
-    /// **立体の塗りは枝を残す** — 光・周囲・背景のすべてがこの頂点関数の列を通る。
+    /// **立体の塗りは分岐を残す** — 光・周囲・背景のすべてがこの頂点関数の列を通る。
     @Test func solidFillKeepsTheLightingBranches() {
         #expect(ShapePipeline.shapeLit(forVertexFunction: ShapePipeline.solidVertexFunctionName))
     }
 
-    /// **知らない頂点関数は枝を残す側に倒す。** 外してよいのは「必ず偽」と言える関数だけ
+    /// **知らない頂点関数は分岐を残す側に倒す。** 外してよいのは「必ず偽」と言える関数だけ
     /// なので、名前を足したときに黙って外れる形にしない。
     @Test func unknownVertexFunctionsKeepTheLightingBranches() {
         #expect(ShapePipeline.shapeLit(forVertexFunction: "someFutureVertexMain"))

@@ -110,7 +110,7 @@ struct CommandQueueGateTests {
 
     /// 期限切れで手放した発行口は、後から環の上限より多くが手放されても解放されない (#2235)。
     /// 実行中の仕事を載せたまま集合ごと解放すると、「実行中のものが終わる前に土台を畳まない」の約束を、
-    /// 期限切れの枝だけが破る。
+    /// 期限切れの分岐だけが破る。
     @Test("期限切れで手放した発行口は、後から上限より多くが手放されても、関所が持ち続ける")
     func aQueueRetiredPastTheDeadlineOutlivesTheRing() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw RenderFailure.deviceUnavailable }

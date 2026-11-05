@@ -41,7 +41,7 @@ struct ArcClosureShapeTests {
         ]
 
         /// 角が 60° 未満で尖っているのに、既定の太さ (1) の輪郭の穴は 1 画素より十分に太い弧 (穴の半径が画素の 3 つ分
-        /// 以上)。尖りの先の画素を標本で数える枝 (弦で結んだ形は `mokume_chordApex`・扇は `mokume_sectorApex`) の対象。
+        /// 以上)。尖りの先の画素を標本で数える分岐 (弦で結んだ形は `mokume_chordApex`・扇は `mokume_sectorApex`) の対象。
         /// 弓形の角は掃引の半分、扇の中心の角は掃引そのもの。
         static let sharpCornered: [(Arc, Style)] = [
             (Arc(name: "円・尖った弓形", radii: SIMD2(100, 100), start: 0.4, sweep: 1.0), Style(mode: .chord, cap: .round)),
@@ -349,7 +349,7 @@ struct ArcClosureShapeTests {
         #expect(
             measured.worst < 0.4,
             "\(spec) \(String(describing: mode)): 最悪 \(measured.worst) \(measured.worstAt)")
-        // 塗りは細い枝を持たない (1 画素より細い弓形は縁 1 本で数えるので数割多く出る・
+        // 塗りは細い形の分岐を持たない (1 画素より細い弓形は縁 1 本で数えるので数割多く出る・
         // `Sketch.fill` の説明の「約束の外」)。浅い弧の弦で結んだ形が最も外れる
         #expect(
             measured.rootMeanSquare < 0.08,

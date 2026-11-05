@@ -961,22 +961,22 @@ public final class SketchRuntime {
         //
         // [#978]: https://github.com/mokume-metal/mokume/issues/978
         let observation = capture == nil && settling == nil ? takeObservationRequest() : nil
-        // **`setup()` が投げているなら、どの枝にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
+        // **`setup()` が投げているなら、どの分岐にも入らず投げる** ([#2401])。時刻指定の観測・外の停止・作者の停止
         // (`setup()` で `noLoop()` を呼んでから投げる形はここ) のどれも、この失敗より先に動かない — 動くと、
         // 入力が失敗したスケッチへ配られ、窓は終わらず、書き出しは空の絵を書く。観測の要求には失敗を載せて
         // 応える (ADR-0018 決定 3 の「失敗しても必ず応答する」)。
         //
         // **ここで見えるのは 2 枚目以降。** ``setupFailure`` が立つのは ``start()`` の中で、`start()` を呼ぶ最初の
-        // 場所はこの先にある。最初のフレームで `setup()` を走らせる枝は、走らせた直後に自分で見て投げる —
-        // 通常の枝は下の ``drawSketchFrame(deliveredInput:at:displayTime:)``、時刻指定の観測の枝は
-        // `start()` の直後、外から止められた枝・作者が止めた枝の観測の一枚描きは、応えた直後。見落とすと、
+        // 場所はこの先にある。最初のフレームで `setup()` を走らせる分岐は、走らせた直後に自分で見て投げる —
+        // 通常の分岐は下の ``drawSketchFrame(deliveredInput:at:displayTime:)``、時刻指定の観測の分岐は
+        // `start()` の直後、外から止められた分岐・作者が止めた分岐の観測の一枚描きは、応えた直後。見落とすと、
         // 窓の経路は `presentFrame()` へ進み、共有の面は絵を 1 枚書く
         try throwSetupFailure(answering: observation)
         // **足してもらうのを待っている `Task` の頼みは、フレームの頭で当てる** (止めている間も、外から止めている間も
         // フレームは回るので待ちは終わる)。描く前で、巡回の外である
         serveAttachRequests()
         // **観測のフレームでは、保存した断片の組み上がりを待つ** ([#2365])。観測が返す絵と目録は、
-        // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない枝の取り込みも
+        // 保存した中身で描いたものでなければならない (ADR-0018 決定 3)。描かない分岐の取り込みも
         // このフレームの中なので、ここで立てれば覆える
         //
         // [#2365]: https://github.com/mokume-metal/mokume/issues/2365
@@ -1057,7 +1057,7 @@ public final class SketchRuntime {
                     takeFragmentChangesWithoutAFrame()
                     settleWithoutAnotherFrame()
                     serveObservationIfRequested(request: observation)
-                    if let setupFailure { throw setupFailure }  // 上の外の停止の枝と同じ (#2401)
+                    if let setupFailure { throw setupFailure }  // 上の外の停止の分岐と同じ (#2401)
                     return
                 }
                 deliveredInput = true
@@ -1105,7 +1105,7 @@ public final class SketchRuntime {
 
     /// ``setup()`` が投げているなら、観測の要求には失敗を載せて応え、同じ失敗を投げる ([#2401])。
     ///
-    /// 立っていなければ何もしない。``runFrame(displayTime:)`` の頭と、時刻指定の観測の枝が `start()` を
+    /// 立っていなければ何もしない。``runFrame(displayTime:)`` の頭と、時刻指定の観測の分岐が `start()` を
     /// 呼んだ直後に使う。
     ///
     /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
@@ -1858,7 +1858,7 @@ public final class SketchRuntime {
         guard seamVisitDepth == 0 else { return }
         // **走っている実行として足す。** 入り口の `open()` は、時計・画面へ出しているか・音声トラックの混ぜ役を
         // 走っている実行から読む (`SoundFile` の `owner.clock` など)。差し込まずに開くと、書き出しの時計の下でも
-        // 機材へ鳴らす枝に入る。フレームの頭は `withActiveRuntime` の外 (``drawSketchFrame(deliveredInput:at:displayTime:)``
+        // 機材へ鳴らす分岐に入る。フレームの頭は `withActiveRuntime` の外 (``drawSketchFrame(deliveredInput:at:displayTime:)``
         // が中で差す) なので、ここで差す
         withActiveRuntime {
             attachRequests.serve { _ = attachNow($0) }

@@ -21,7 +21,7 @@ import Testing
 struct ColorValueGuardTests {
     private static let side = 16
 
-    /// 色の値を受ける口。**口を足したら、ここへ 1 行と、下の 3 つの `switch` に 1 枝ずつ足す。**
+    /// 色の値を受ける口。**口を足したら、ここへ 1 行と、下の 3 つの `switch` に 1 分岐ずつ足す。**
     nonisolated enum Port: String, CaseIterable, CustomTestStringConvertible, Sendable {
         case fill = "fill(_:)"
         case fillWithOpacity = "fill(_:_:)"

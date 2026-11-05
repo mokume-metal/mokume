@@ -124,7 +124,7 @@ class SourceTest(unittest.TestCase):
                 server.server_close()
 
     def test_引けない先は_Unreachable_で名乗る(self):
-        """**traceback にしない。** 名前解決・接続断・証明書はどれもこの枝を通る (#865)。
+        """**traceback にしない。** 名前解決・接続断・証明書はどれもこの分岐を通る (#865)。
 
         誰も listen していない口を狙う。`HTTPError` ではないので、`URLError` を
         受けていなければここで素の traceback が上がる。

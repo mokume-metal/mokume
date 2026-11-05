@@ -236,9 +236,9 @@ struct RequestSoundTests {
         #expect(sketch.failure == .notRunning(call: "requestSound(_:)"))
     }
 
-    /// 本番の時計の枝を通す。ここまでの検査は `flow` を差し込んで、機材に出さない流れで鳴らした。
+    /// 本番の時計の分岐を通す。ここまでの検査は `flow` を差し込んで、機材に出さない流れで鳴らした。
     /// 書き出しの時計 (固定のフレーム時計) は機材に出さずに、フレームの数から決めた位置で進むので、`flow` を
-    /// 差し込まずに `owner.clock` の枝 (`soundFrameRate`)・音声トラックの混ぜ役 (`SoundTrackMixer`) を通せる。
+    /// 差し込まずに `owner.clock` の分岐 (`soundFrameRate`)・音声トラックの混ぜ役 (`SoundTrackMixer`) を通せる。
     @Test("書き出しの時計では、flow を差し込まずに読んでも、足された音がフレームの数から決めた位置で進む")
     func aSoundRequestedUnderTheExportClockFollowsTheFrames() async throws {
         let url = try writeWAV(chord, sampleRate: 48_000)

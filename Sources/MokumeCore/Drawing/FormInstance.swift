@@ -87,8 +87,8 @@ struct FormInstance {
     /// ``mayHaveThinHole(unitsPerDrawnPixel:)``・``mayNeedExactRing(unitsPerDrawnPixel:)``)。
     ///
     /// 塗り・輪郭の旗と違って、変わっても列を切らない。含む図形が 1 つでもある列は、
-    /// 断片の枝を残した組で描く ([#1477])。名前は細い塗りの旗として入ったときのままで、
-    /// 帯の細い穴の枝 ([#2186]) と、楕円の輪郭を真の距離で解く枝 ([#2742]) も同じ旗に乗る — 枝は
+    /// 断片の分岐を残した組で描く ([#1477])。名前は細い塗りの旗として入ったときのままで、
+    /// 帯の細い穴の分岐 ([#2186]) と、楕円の輪郭を真の距離で解く分岐 ([#2742]) も同じ旗に乗る — 分岐は
     /// 図形ごとの判定でさらに分かれるので、片方しか含まない列も絵は変わらない。
     ///
     /// [#1477]: https://github.com/mokume-metal/mokume/issues/1477
@@ -99,15 +99,15 @@ struct FormInstance {
     /// 縁が画素の軸に斜めになりうる形を含む列の旗 ([#2991])。**列の旗** (``thinFillsFlag`` と同じく、
     /// 変わっても列を切らない)。
     ///
-    /// 立っていれば、断片に「縁の被覆を半平面と画素の正方形の重なりの面積で数える」枝を残した組
-    /// (`kFormHasObliqueEdge`) で描く。立っていない列は、その枝を原稿から外す — 軸に沿った `rect`・線だけの
-    /// 列 (面を覆う塗りなど) の費用を、枝が在るだけで増やさないため。**迷ったら「含む」と答える**
+    /// 立っていれば、断片に「縁の被覆を半平面と画素の正方形の重なりの面積で数える」分岐を残した組
+    /// (`kFormHasObliqueEdge`) で描く。立っていない列は、その分岐を原稿から外す — 軸に沿った `rect`・線だけの
+    /// 列 (面を覆う塗りなど) の費用を、分岐が在るだけで増やさないため。**迷ったら「含む」と答える**
     /// (``mayHaveObliqueEdge(unitsPerDrawnPixel:)``)。
     ///
     /// [#2991]: https://github.com/mokume-metal/mokume/issues/2991
     static let obliqueEdgesFlag: UInt32 = 8
 
-    /// 基本図形の縁の分類 ([#2991])。**境目 (細い枝との境の測り方) と被覆 (縁 1 本を線形の渡しか面積で数えるか)
+    /// 基本図形の縁の分類 ([#2991])。**境目 (細い形の分岐との境の測り方) と被覆 (縁 1 本を線形の渡しか面積で数えるか)
     /// の両方が、この 1 つの表を読む。** 正本は `Shaders/Kinds.metal` の `mokume_formEdgeClass` ほか (同じ表)。
     /// `KindLayoutTests` が GPU 自身にその関数を評価させ、CPU のこの表と突き合わせる。
     ///
@@ -168,7 +168,7 @@ struct FormInstance {
         meta.x == Kind.arc.rawValue ? ArcClosure(rawValue: UInt32(max(size.w, 0))) ?? .pie : .pie
     }
 
-    /// 細い枝の境目を測る幅の、行ノルムの割合 (0: 画素の法線向きの幅・1: 行ノルム)。塗りと線の太さの境目が読む。
+    /// 細い形の分岐の境目を測る幅の、行ノルムの割合 (0: 画素の法線向きの幅・1: 行ノルム)。塗りと線の太さの境目が読む。
     /// `Kinds.metal` の `mokume_formReachCurved` と同じ式。丸い端の線は、半分の長さが太さの半分の 1/4 までは
     /// 丸い点から直線の線へつなぐ (点と長さ 1e-3 の線の間で境目が跳ばない。辺が画素ほど長い線は和で測る)。
     var reachCurved: Float {
@@ -213,7 +213,7 @@ struct FormInstance {
         return aligned(firstRow) && aligned(secondRow)
     }
 
-    /// この形が、**画素の軸に斜めの縁**を持ちうるか ([#2991])。断片の縁の被覆の枝
+    /// この形が、**画素の軸に斜めの縁**を持ちうるか ([#2991])。断片の縁の被覆の分岐
     /// (`mokume_formCoverage` の面積) を残した組で描くかを決める。**縁の分類の表** (``EdgeClass``) の被覆の
     /// 数え方が、線形の渡しだけでなければ「含む」。
     ///
@@ -234,19 +234,19 @@ struct FormInstance {
     ///
     /// 断片の境目 (`2 × 半幅 × (1 + 2/256) < 描く画素 1 つ`) と同じ式を CPU で解くが、
     /// 逆行列と長さの丸めは GPU と 1 ビットまでは揃わない (1e-7 ほど)。境目の近くで
-    /// 「含まない」と答えると、断片が細い枝に入るはずの形を枝の無い組で描いて絵が変わる
+    /// 「含まない」と答えると、断片が細い形の分岐に入るはずの形を分岐の無い組で描いて絵が変わる
     /// ので、1/1024 だけ「含む」側へ広げる。幅 1 画素の塗りは境目から 0.8% 離れている
     /// ので、広げても「含む」側に入らない。
     private static let thinFillSlack: Float = 1.0 / 1024
 
     /// この形の塗りが、**描く画素で 1 画素より細い向き**を持ちうるか ([#1477])。
     ///
-    /// 断片の `rect` と楕円の塗りの枝 (`Shapes.metal` の `mokume_formPaint`) に入るかを、
-    /// 置いた時点の変換 (``linear``) と大きさから CPU で先に判定する。立った列だけが枝を
+    /// 断片の `rect` と楕円の塗りの分岐 (`Shapes.metal` の `mokume_formPaint`) に入るかを、
+    /// 置いた時点の変換 (``linear``) と大きさから CPU で先に判定する。立った列だけが分岐を
     /// 残した組で描かれる (`kFormHasThinFill`)。**迷ったら「含む」と答える** — 余計に
     /// 立てても速さを失うだけだが、立て損なうと細い塗りの濃さが置く位置で揺れる形に戻る。
     ///
-    /// 扇 (`arc`) の塗りと線・点は枝を持たないので、常に「含まない」。
+    /// 扇 (`arc`) の塗りと線・点は分岐を持たないので、常に「含まない」。
     ///
     /// - Parameter unitsPerDrawnPixel: 描く画素 1 つが描画先の座標でいくらか
     ///   (細かさ 1 なら 1。`FlatFrame.unitsPerDrawnPixel` と同じ値)。
@@ -319,13 +319,13 @@ struct FormInstance {
         )
     }
 
-    /// ``isThin(half:unitsPerDrawnPixel:axes:)`` が見る向き。線の枝は太さの向き (y) だけを見る。
+    /// ``isThin(half:unitsPerDrawnPixel:axes:)`` が見る向き。線の分岐は太さの向き (y) だけを見る。
     private enum ThinAxes { case both, y }
 
     /// この形の輪郭の帯の穴 (内縁の内) が、**描く画素で 1 画素より細いか潰れている**ことがありうるか
     /// ([#2186])。
     ///
-    /// 断片の `rect` と楕円の輪郭の、帯の穴を両縁を見る積で数える枝 (`Shapes.metal` の
+    /// 断片の `rect` と楕円の輪郭の、帯の穴を両縁を見る積で数える分岐 (`Shapes.metal` の
     /// `mokume_thinHole`) を残した組で描くかを決める。``mayHaveThinFill(unitsPerDrawnPixel:)`` と
     /// 同じく**迷ったら「含む」と答える** — 立て損なうと、潰れた穴を縁 1 本で数えて帯が欠ける。
     /// 穴の大きさは断片と同じ式で出す (`rect` は半幅 − 太さの半分、楕円は ``ellipseHole(radii:halfWeight:)``)。
@@ -334,7 +334,7 @@ struct FormInstance {
     /// 扇 (`arc`) の穴は、内接円の半径の上限 (``sectorDepthBound(radii:sweep:)``) から太さの半分を引いた
     /// 1 つの半径で測る ([#2747])。弦で結んだ形の周は弓形の内接円で測る (``chordDepthLower(radii:sweep:)``)。
     /// **開いた弧の帯は穴を持たない**ので「含まない」(帯の細さは ``mayHaveThinPart(unitsPerDrawnPixel:)`` が見る)。
-    /// 線・点、輪郭の無い形は枝を持たないので、常に「含まない」。
+    /// 線・点、輪郭の無い形は分岐を持たないので、常に「含まない」。
     ///
     /// [#2186]: https://github.com/mokume-metal/mokume/issues/2186
     /// [#2747]: https://github.com/mokume-metal/mokume/issues/2747
@@ -367,7 +367,7 @@ struct FormInstance {
     /// 扇 (#2747) は、以前は常に偽で費用が無視できたが、中心の角の判定 (``mayNeedApexSampling()``) が三角関数を
     /// 解くので、図形 1 つあたり、円の扇 21.7 ns・楕円の扇 30.6 ns になった (release・20 万個ずつ・9 回の中央値)。
     func mayHaveThinPart(unitsPerDrawnPixel: SIMD2<Float>) -> Bool {
-        // 線と点 (#2226): 太さが描く画素で 1 画素より細いか。断片の線の枝の境目
+        // 線と点 (#2226): 太さが描く画素で 1 画素より細いか。断片の線の分岐の境目
         // (`2 × 太さの半分 × (1 + 2/256) < 描く画素 1 つの太さの向きの長さ`) と同じ式で、
         // 太さの向き (形自身の y) だけを見る
         if meta.x == Kind.line.rawValue {
@@ -377,12 +377,12 @@ struct FormInstance {
         }
         let isArc = meta.x == Kind.arc.rawValue
         guard meta.x == Kind.rect.rawValue || meta.x == Kind.ellipse.rawValue || isArc else { return false }
-        // 扇の塗りは細い枝を持たない
+        // 扇の塗りは細い形の分岐を持たない
         let fills = meta.w & Self.fillsFlag != 0 && !isArc
         let strokes = meta.w & Self.strokesFlag != 0
         let half = SIMD2(size.x, size.y)
         // 開いた弧の帯は閉じた周が無いので穴を持たない ([#2428])。帯そのものが描く画素で 1 画素より細いかを
-        // 見る (線の細い枝と同じ。断片は画素ごとに、距離場の勾配の向きの幅で決める)
+        // 見る (細い線の分岐と同じ。断片は画素ごとに、距離場の勾配の向きの幅で決める)
         let isOpenBand = strokes && isArc && arcClosure.strokesOpenArc
         let hasHole = strokes && !isOpenBand
         var hole = SIMD2<Float>(1, 1)
@@ -396,7 +396,7 @@ struct FormInstance {
         let determinant = linear.x * linear.w - linear.y * linear.z
         let rowX = simd_length_squared(SIMD2(linear.w, -linear.z) * unitsPerDrawnPixel)
         let rowY = simd_length_squared(SIMD2(-linear.y, linear.x) * unitsPerDrawnPixel)
-        // 細い枝の境目は、縁の形で分けた幅 (#2991・``EdgeClass``): 塗りは ``reachCurved``、穴は
+        // 細い形の分岐の境目は、縁の形で分けた幅 (#2991・``EdgeClass``): 塗りは ``reachCurved``、穴は
         // ``holeReachIsCurved`` で、行の絶対値の和と行ノルムのどちらで測るかを決める
         let (reachX, reachY) = reachTimesDeterminant(unitsPerDrawnPixel)
         let fillCurved = reachCurved
@@ -495,7 +495,7 @@ struct FormInstance {
             || sharp(end: end2, other: end1, tangent: -tangent2)
     }
 
-    /// 穴は細くなくても、中心の角が尖った扇か ([#2747])。尖りの先の画素を標本で数える枝に入る。弦で結んだ形の周は
+    /// 穴は細くなくても、中心の角が尖った扇か ([#2747])。尖りの先の画素を標本で数える分岐に入る。弦で結んだ形の周は
     /// 弧の両端の 2 つの角のどちらかが尖っているか (``chordApexIsSharp(radii:start:sweep:)``)。輪郭の無い
     /// 扇、開いた弧の帯 (角が無い)、扇でない形は「含まない」。
     ///
@@ -525,7 +525,7 @@ struct FormInstance {
         return min(shortRadius, longRadius * halfSine / (1 + halfSine))
     }
 
-    /// 楕円の輪郭の内縁・外縁を、近似の距離場ではなく**真の距離**で解く枝に入りうるか ([#2742])。
+    /// 楕円の輪郭の内縁・外縁を、近似の距離場ではなく**真の距離**で解く分岐に入りうるか ([#2742])。
     ///
     /// 断片の `mokume_needsExactRing` (`Shapes.metal`) と同じ式で、理由もそちらにある。円は距離場が
     /// 真の距離なので「含まない」。立て損なうと近似の距離場の外れた帯が出るので、**迷ったら「含む」と

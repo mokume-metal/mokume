@@ -136,7 +136,7 @@ class Source:
                 raise Unreachable(f"{url} が引けない (HTTP {error.code})") from error
             except Exception as error:
                 # 証明書・名前解決・接続断・待ち切れ。**HTTPError の後ろに置く**
-                # (HTTPError は URLError の派生なので、上の枝で先に捕まる)
+                # (HTTPError は URLError の派生なので、上の分岐で先に捕まる)
                 raise Unreachable(f"{url} が引けない: {error}") from error
         path = self.root / relative
         return path.read_bytes() if path.is_file() else None

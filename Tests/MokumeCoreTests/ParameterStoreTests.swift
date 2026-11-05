@@ -102,7 +102,7 @@ struct ParameterStoreTests {
     }
 
     /// 符号化の守りが、拒まれた値の名前を引けること (#2263)。非有限の宣言は
-    /// ``ParamRegistry/declarations`` が外す (#2858) ので、保存の経路ではこの枝へ届かない。
+    /// ``ParamRegistry/declarations`` が外す (#2858) ので、保存の経路ではこの分岐へ届かない。
     /// 絞っていない並び (``ParamStore/Saved``) を直に符号化して、守りの関数を確かめる。
     @Test("符号化が非有限の値を拒んだとき、守りは拒まれた値の名前を引ける")
     func theEncodingGuardNamesTheRefusedValue() throws {

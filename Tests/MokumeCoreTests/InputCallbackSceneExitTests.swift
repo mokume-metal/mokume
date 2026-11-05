@@ -55,7 +55,7 @@ struct InputCallbackSceneExitTests {
     /// 押した次のフレームの絵。`pressed` が偽なら押さない (同じ回数だけ進める)。
     ///
     /// - Parameter redrawsOutside: 真なら `noLoop()` で止めておき、外から `redraw()` を頼む。止まっているのに
-    ///   フレームの内側で配る道である (`!redrawRequested` の枝の外)。
+    ///   フレームの内側で配る道である (`!redrawRequested` の分岐の外)。
     private func secondFrame(
         of scene: Scene, pressed: Bool, redrawsOutside: Bool = false
     ) throws -> (image: DisplayImage, runtime: SketchRuntime) {

@@ -44,7 +44,7 @@ extension SketchPart {
     /// ほうがよい。
     ///
     /// `switch` で分けるときも `case .left:` と書ける。まだ何も押していないときの `nil` は
-    /// `default` の枝へ落ちる。
+    /// `default` の分岐へ落ちる。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     public var mouseButton: MouseButton? { Self.input.button }

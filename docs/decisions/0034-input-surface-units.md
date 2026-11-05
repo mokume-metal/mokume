@@ -99,7 +99,7 @@ public nonisolated struct Key: Sendable, Hashable {
 }
 ```
 
-列挙にすると**名前を付けたキーしか表せない**。外からは任意の符号が送られてくる ([ADR-0018](0018-observation-and-control-surface.md) 決定 1) ので、知らないキーを押しただけで出来事が消えるか、`unknown(Int)` のような枝が要る。包む形なら、名前が無いキーもそのまま運べて、名前は後から足せる。
+列挙にすると**名前を付けたキーしか表せない**。外からは任意の符号が送られてくる ([ADR-0018](0018-observation-and-control-surface.md) 決定 1) ので、知らないキーを押しただけで出来事が消えるか、`unknown(Int)` のような分岐が要る。包む形なら、名前が無いキーもそのまま運べて、名前は後から足せる。
 
 **並べる名前は、手本のスケッチが実際に使う範囲から始める** — 矢印 4・`space`・`enter`・`escape`・`tab`・`backspace`・`a`〜`z`・`digit0`〜`digit9`。全部を先回りで並べるのは [ADR-0008](0008-mechanism-needs-demonstrated-harm.md) に反するので、踏んだら足す。
 
@@ -292,5 +292,5 @@ if startButton.justPressed { startGame() }   // 左の釦がこのフレーム�
 - **`mouseButton` は `MouseButton?` になる** (決定 6)。何も押していないときの `nil` は、`keyCode` を `Key?` にした理由と同じく、`MouseButton(rawValue: 0)` が左の釦であって「無い」ではないからである。**押しても離しても入れ替わる**のも `keyCode` と同じで、`mouseReleased()` の中から離した釦を知る口は他に無い。`InputState.button` と `InputEvent.mouseDown` / `mouseUp` の `button:` も同じ型へ揃う。0.x なので minor で出る
 - **`mouseDragged()` も引数を取る形へ変わる** (決定 5。ただし引数なしの形は改訂 (2026-10-28) で要件へ戻した)。[#831](https://github.com/mokume-metal/mokume/pull/831) が引数なしで出したばかりだが、0.x では形が動くことを織り込んでいる
 - **注意書きが 3 か所消える** (**`dragX` の doc の「コールバックの中で読まない」は、改訂 (2026-10-28) で引数なしの `mouseDragged()` の中について戻した**)。`mouseDragged()` の doc・`dragX` の doc・`orbitControl()` の `- Important:` に、同じ「フレームの累計であって 1 件ぶんではない」が重複して書かれていた。**注意書きで凌ぐのは面が正しくないことの印**で、面が正しくなれば書くことは「どちらを読むか」だけになる
-- **`orbitControl()` は `draw()` から 1 回呼ぶ形のまま。** 1 件ぶんが渡るようになっても、あちらが食うのはフレーム合計である。`mouseDragged` から呼べるようにすると、引きずっていない間に回り続ける枝 (慣性) が 1 フレームに複数回進む別の欠陥が出る
+- **`orbitControl()` は `draw()` から 1 回呼ぶ形のまま。** 1 件ぶんが渡るようになっても、あちらが食うのはフレーム合計である。`mouseDragged` から呼べるようにすると、引きずっていない間に回り続ける分岐 (慣性) が 1 フレームに複数回進む別の欠陥が出る
 - **参照スケッチが手本になる。** `Sketches/PointerAndKeys.swift` の `size += scrollY * 4` は、#807 が「そのまま `mouseWheel()` へ移すと壊れる書き方の実例」として名指ししていた行である。移した先で正しく書けることが、この決定の効き目の確かめになる (当時の `* 4` は、決定 8 でスクロールの単位を点に揃えたときに `deltaY` へ選び直した)

@@ -455,7 +455,7 @@ import MokumeDiagnostics
     /// 検査から「GPU が答えない」を作る差し込み。製品の経路からは呼ばない。
     ///
     /// **番号だけを 1 つ進め、GPU には何も投入しない。** 合図はその番号へ決して届かないので、次の
-    /// 待ちは本物の期限切れになる (``signalWaitLimit`` まで待つ)。期限切れの枝 ([#2052] — 期限を越えた
+    /// 待ちは本物の期限切れになる (``signalWaitLimit`` まで待つ)。期限切れの分岐 ([#2052] — 期限を越えた
     /// プロセスでは、新しい発行口を作らない) を、GPU を詰まらせずに通すための穴である。待ちの期限切れは、
     /// GPU が 5 秒答えないときにしか起きないので、検査から自然には作れない (``failSettleForTesting`` と
     /// 同じ事情)。あちらは待つ前に投げるので、待ちそのものは通らない。
@@ -826,7 +826,7 @@ import MokumeDiagnostics
             queue.removeResidencySet(residencySet)
             queue.removeResidencySet(drawableResidency)
         }
-        // 期限切れの枝は、環に入れずプロセスの終わりまで持たせる (#2235)
+        // 期限切れの分岐は、環に入れずプロセスの終わりまで持たせる (#2235)
         queueGate.retire(queue, pastDeadline: !finished)
     }
 

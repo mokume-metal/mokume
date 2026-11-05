@@ -595,7 +595,7 @@ class ApiSurfaceTests(unittest.TestCase):
             self.assertTrue(index.exists() and details.exists())
 
     def test_その他の節でも同名オーバーロードの並びが入力の順に依らない(self):
-        # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の枝で並べられる**。
+        # 型そのものが一覧に無い所有者は「その他」節へ落ち、**別の分岐で並べられる**。
         # 片方だけ直しても残るので、両方を見る
         picture = symbol(
             "image(_:)", owner="Orphan", precise="a",

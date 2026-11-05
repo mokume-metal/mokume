@@ -7,4 +7,4 @@ SPDX-License-Identifier: MIT
 
 これまでは、読めない値を窓の経路へ倒していたため、`mokume render` は何も書かれていないのに書けたと読んでいました。値が無いスケッチ (ふだんの `run` など) は、これまでどおり窓で走ります。
 
-移行: `SketchApplication(sketch:gpu:)` を自分で呼んで `RenderFailure` を `switch` で網羅している場合は、コンパイル時に `unreadableRenderRequest` の枝が足りないと指摘されます。枝を足してください (文面は `\(failure)` で人向けに出せます)。環境に `MOKUME_RENDER` を手で置いていて、窓で走らせたいスケッチは、その変数を外してください。
+移行: `SketchApplication(sketch:gpu:)` を自分で呼んで `RenderFailure` を `switch` で網羅している場合は、コンパイル時に `unreadableRenderRequest` の case が足りないと指摘されます。case を足してください (文面は `\(failure)` で人向けに出せます)。環境に `MOKUME_RENDER` を手で置いていて、窓で走らせたいスケッチは、その変数を外してください。

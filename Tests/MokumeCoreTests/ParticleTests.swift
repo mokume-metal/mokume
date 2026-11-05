@@ -175,7 +175,7 @@ struct ParticleEmissionTests {
 
     @Test("遠ざける力は、引く力の符号を返したもの")
     func repelIsAttractWithTheSignFlipped() {
-        // 枝を 2 本持たない。名前が 2 つあるだけ
+        // 分岐を 2 本持たない。名前が 2 つあるだけ
         #expect(Force.repel(3, 4, strength: 5) == .attract(3, 4, strength: -5))
         // 弱まり始める距離は、符号を返さずにそのまま渡る
         #expect(

@@ -534,7 +534,7 @@ static inline float mokume_noiseGradient(Fragment f, float x) {
 /// **`kBlend` (0) と `kReplace` (9) はここへ来ない。** 前者は乗算済みの source-over で
 /// 固定機能のブレンドと式が一致し (`mokume_fragmentDirect` / `mokume_formFragmentBlend`)、後者は
 /// 形が掛かる面積を置き換えて掛からない面積に下地を残す (`mokume_formFragmentReplace` と、被覆が
-/// 1 未満になりうる列の `mokume_fragmentMain` の枝・[#3111]) ([#758])。**どの混ぜ方がどちらの経路へ
+/// 1 未満になりうる列の `mokume_fragmentMain` の分岐・[#3111]) ([#758])。**どの混ぜ方がどちらの経路へ
 /// 行くかの一覧は `ShapePipeline.BlendStates` の doc が持つ** ([#887])。
 ///
 /// **式は W3C の合成の一般式である** ([Compositing and Blending Level 1] の 6 節・10 節)。
@@ -667,13 +667,13 @@ float4 paint(Fragment in, Values values);
 /// この列の頂点が光と周囲を受けうるか。**頂点関数ごとに決まる** ([#1778])。
 ///
 /// 平面 (`shapeVertexMain`) と立体の輪郭 (`solidStrokeVertexMain`) は向きを 0 で出し、
-/// 光も周囲も背景の旗も持たない列なので、下の 2 つの枝は必ず偽になる。それでも枝が
+/// 光も周囲も背景の旗も持たない列なので、下の 2 つの分岐は必ず偽になる。それでも分岐が
 /// 原稿に残っていると、影の PCF・GGX・周囲色まで抱えた断片として走る — 面を覆う
 /// 半透明のクアッド 40 枚で GPU 時間の 35% がそれだった ([#771] と同じく、走らない綴りも
-/// 居るだけで費用になる)。その 2 つの頂点関数で組むときだけ `false` を渡して枝ごと外す。
+/// 居るだけで費用になる)。その 2 つの頂点関数で組むときだけ `false` を渡して分岐ごと外す。
 ///
 /// 組む側 (`ShapePipeline.shapeLit`) は三角形の経路の断片に必ず値を渡す。**渡し忘れた
-/// ときは `true`** — 枝を持つ今までの断片になり、絵は変わらず速さだけを失う側に倒れる。
+/// ときは `true`** — 分岐を持つ今までの断片になり、絵は変わらず速さだけを失う側に倒れる。
 /// 番号を大きく取るのは、利用者の断片が自分で宣言した function constant と重ならないため。
 ///
 /// [#771]: https://github.com/mokume-metal/mokume/issues/771
@@ -837,7 +837,7 @@ fragment float4 mokume_fragmentDirect(
 ///
 /// **縁の画素に下地を残す列はここへ来ない** ([#3111])。三角形の経路の縁は被覆 1 (AA を持たない) で、
 /// 被覆 1 未満になるのは細い線を広げた帯と単色の字の縁だけである。どちらも列が `thinCoverage` の印を
-/// 持ち、下地を読む `mokume_fragmentMain` の置き換えの枝で描かれる
+/// 持ち、下地を読む `mokume_fragmentMain` の置き換えの分岐で描かれる
 /// (`ShapePipeline.BlendStates.Column.init(drawing:)`)。**色を持つ字形 (絵と同じ性質で、透けた画素を
 /// そのまま写す) と、利用者の断片が効いている字 (被覆は断片が持つ) は印を立てず、ここで色をそのまま置く。**
 /// ここを下地を読む断片にすると、

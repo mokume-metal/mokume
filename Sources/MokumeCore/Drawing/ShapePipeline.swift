@@ -82,7 +82,7 @@ final class ShapePipeline {
 
         /// その列を描くパイプライン。**置き換える列のうち、被覆が 1 未満になりうる列 (細い線を広げた頂点を
         /// 持つ列・置き換えで字を置いた列) だけは下地を読む列** (`composite`) で描く (#1637・#3111)。
-        /// 覆う割合だけを置き換え、残りの下地を残す (`mokume_fragmentMain` の置き換えの枝)。
+        /// 覆う割合だけを置き換え、残りの下地を残す (`mokume_fragmentMain` の置き換えの分岐)。
         func drawing(_ batch: Canvas.Batch) -> any MTLRenderPipelineState {
             state(in: Column(drawing: batch))
         }
@@ -225,7 +225,7 @@ final class ShapePipeline {
     /// 塗りも輪郭も無い図形は置かれないので 0 は使わない。
     ///
     /// **1 画素より細い塗り・輪郭の帯の細い穴を含むかでも分かれる** (``FormInstance/thinFillsFlag``・
-    /// [#1477]・[#2186])。3 つの組 (旗 1・2・3) のそれぞれに、細い枝を残した組 (旗 5・6・7) がある。
+    /// [#1477]・[#2186])。3 つの組 (旗 1・2・3) のそれぞれに、細い形の分岐を残した組 (旗 5・6・7) がある。
     ///
     /// [#752]: https://github.com/mokume-metal/mokume/issues/752
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
@@ -248,8 +248,8 @@ final class ShapePipeline {
     /// 立体の塗りの既定の組 (``solidStates``・``unitShapeStates``) は、光・周囲・背景のどれも通り、
     /// 混ぜ方ごとに固定機能のブレンドを付けた形で組む。列の中身が分かれば、その組より軽い組で描ける:
     ///
-    /// - **光も周囲も置かない列** (``SolidVariantKey/unlit``・#1795): 光の枝を function constant で
-    ///   外す。枝は必ず偽なので画素は変わらず、塗りが律速の場面で断片の費用だけが減る
+    /// - **光も周囲も置かない列** (``SolidVariantKey/unlit``・#1795): 光の分岐を function constant で
+    ///   外す。分岐は必ず偽なので画素は変わらず、塗りが律速の場面で断片の費用だけが減る
     /// - **不透明と CPU で分かる列** (``SolidVariantKey/opaque``・#2366): ブレンドを外す。Apple GPU
     ///   (TBDR) の隠面除去は、遮る側になれるのがブレンドなし・捨てなしの断片だけなので、奥から手前へ
     ///   重ねても隠れた層の断片を走らせずに済む。α がちょうど 1 の source-over と書き込みは一致する
@@ -279,7 +279,7 @@ final class ShapePipeline {
     struct SolidVariantKey: Hashable, Sendable {
         /// 単位の形の頂点関数 (``unitShapeVertexFunctionName``) で組むか。偽なら ``solidVertexFunctionName``。
         let isUnitShape: Bool
-        /// 光の枝を外すか (#1795)。
+        /// 光の分岐を外すか (#1795)。
         let unlit: Bool
         /// ブレンドを外すか (#2366)。**重ねる列 (`.blend`) だけが不透明でありうる** ので、真の鍵の
         /// 列は `blend` に決まる。
@@ -366,12 +366,12 @@ final class ShapePipeline {
         flags: FormInstance.fillsFlag | FormInstance.strokesFlag | FormInstance.obliqueEdgesFlag,
         column: .blend)
 
-    /// 組むパイプラインの旗の組。細い枝の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
+    /// 組むパイプラインの旗の組。細い形の分岐の旗は、塗りだけの組には細い塗りで、輪郭だけの組には
     /// 帯の細い穴で立つ (``FormInstance/mayHaveThinFill(unitsPerDrawnPixel:)`` は塗りの無い形に、
     /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)`` は輪郭の無い形に「含まない」と答える)。
     ///
     /// **縁が画素の軸に斜めになりうる形を含むか** (``FormInstance/obliqueEdgesFlag``・#2991) でも分かれ、
-    /// 上の 6 つのそれぞれに、斜めの縁の枝を残した組がある (12 組)。
+    /// 上の 6 つのそれぞれに、斜めの縁の分岐を残した組がある (12 組)。
     static let formFlagCombinations: [UInt32] = {
         let base: [UInt32] = [
             FormInstance.fillsFlag, FormInstance.strokesFlag,
@@ -586,7 +586,7 @@ final class ShapePipeline {
                 key: defaultKey)
         ])
 
-        // 光の枝を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
+        // 光の分岐を外した立体の塗りも使うときに組む (#1795)。起動では 1 本も組まない
         self.solidVariantPipelines = Mutex(SolidVariantPipelines())
 
         let flat = MTLDepthStencilDescriptor()
@@ -955,14 +955,14 @@ final class ShapePipeline {
     /// 利用者の断片が宣言する番号と重ならないよう、大きく取ってある。
     static let shapeLitConstantIndex = 65000
 
-    /// その頂点関数で組む断片に、光と周囲の枝を残すか ([#1778])。
+    /// その頂点関数で組む断片に、光と周囲の分岐を残すか ([#1778])。
     ///
-    /// **`false` は枝を原稿から外す。** 平面と立体の輪郭は向きを 0 で出し、光・周囲・
-    /// 背景の旗も持たない列なので、枝は必ず偽になる — 外しても色の式は同じで、居るだけの
+    /// **`false` は分岐を原稿から外す。** 平面と立体の輪郭は向きを 0 で出し、光・周囲・
+    /// 背景の旗も持たない列なので、分岐は必ず偽になる — 外しても色の式は同じで、居るだけの
     /// 費用だけが消える (面を覆う半透明のクアッド 40 枚で GPU 時間 −35%)。
     ///
-    /// **`true` は枝を残す。** 立体の塗りは光・周囲・背景 (`Canvas.replaceSurface(with:)` の
-    /// 置き換える列) のすべてを通るので枝が要る。知らない頂点関数も同じく残す側に倒す —
+    /// **`true` は分岐を残す。** 立体の塗りは光・周囲・背景 (`Canvas.replaceSurface(with:)` の
+    /// 置き換える列) のすべてを通るので分岐が要る。知らない頂点関数も同じく残す側に倒す —
     /// 外すのは「必ず偽」と言える関数に限る。
     ///
     /// **三角形の経路の断片は、どちらの値でも必ず特化して組む。** function constant を
@@ -988,13 +988,13 @@ final class ShapePipeline {
     /// その列の断片へ渡す特化の値。**光の有無を決めるのはここだけ**で、``makeState`` は
     /// 返した値をそのまま特化に渡す ([#2293])。
     ///
-    /// 光の枝を外し損ねても色は変わらず遅くなるだけなので、絵の検査では捕まらない。
+    /// 光の分岐を外し損ねても色は変わらず遅くなるだけなので、絵の検査では捕まらない。
     /// 決める箇所を 1 つにして、`UnlitFragmentTests` がここを見る。
     ///
     /// - 基本図形の断片 (`formFlags` あり) は旗だけを受け取り、`kShapeLitValue` を読まない
     /// - 三角形の経路の断片は光の有無だけを受け取り、`kFormHas*` を読まない
     ///   (値は ``shapeLit(forVertexFunction:)``。**`unlit` は、光も周囲も置かない列だと呼ぶ側が
-    ///   言い切れるとき**で、頂点関数が枝を残す立体の塗りも枝を外して組む・[#1795])
+    ///   言い切れるとき**で、頂点関数が分岐を残す立体の塗りも分岐を外して組む・[#1795])
     ///
     /// [#2293]: https://github.com/mokume-metal/mokume/issues/2293
     /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795

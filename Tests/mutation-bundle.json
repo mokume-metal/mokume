@@ -134,7 +134,7 @@
       "find": "lit: formFlags == nil ? !unlit && shapeLit(forVertexFunction: vertexFunctionName) : nil)",
       "replace": "lit: formFlags == nil ? true : nil)",
       "gpu": false,
-      "note": "三角形の経路の断片を常に光の枝つきで組む (UnlitFragmentTests.theAssemblyPassesTheLightingDecisionThrough が殺すはず)"
+      "note": "三角形の経路の断片を常に光の分岐つきで組む (UnlitFragmentTests.theAssemblyPassesTheLightingDecisionThrough が殺すはず)"
     },
     {
       "id": "2916-writer-overwrites-reader-window",
@@ -188,7 +188,7 @@
       "find": "guard meta.w & Self.strokesFlag != 0 else { return false }\n            return isThin(\n                half: SIMD2(0, size.z), unitsPerDrawnPixel: unitsPerDrawnPixel, axes: .y, curved: reachCurved)",
       "replace": "return false",
       "gpu": true,
-      "note": "1 画素より細い線と点を細い枝の列へ送らない (FormShapeTests.thinLineJudgementLeansToIncluding が殺すはず。suite は GPU で条件づけ)"
+      "note": "1 画素より細い線と点を細い形の分岐の列へ送らない (FormShapeTests.thinLineJudgementLeansToIncluding が殺すはず。suite は GPU で条件づけ)"
     },
     {
       "id": "1637-thin-stroke-never-widened",

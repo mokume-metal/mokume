@@ -7,4 +7,4 @@ SPDX-License-Identifier: MIT
 
 投げない作る口 — `createSerial(lines:)`・`gamepads()`・`createGamepad(inputs:)` — は、外で呼んでも今までどおり足されていないものを返しますが、警告が呼んでいない `attach()` ではなく、呼んだ口の名前を名乗るようになりました。走っている所 (`setup()` など) から呼ぶスケッチの動きは、4 つとも変わりません。
 
-移行: `SerialFailure` を `switch` で網羅しているコードは、枝が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` の枝を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、型の上の変更は要りません。外で `createSerial(_:baudRate:)` を呼んでいたコードは、呼ぶところを `setup()` へ移してください。外で作った `Serial` は走っているスケッチへ足されないので、これまでも何も受けていません。
+移行: `SerialFailure` を `switch` で網羅しているコードは、case が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、型の上の変更は要りません。外で `createSerial(_:baudRate:)` を呼んでいたコードは、呼ぶところを `setup()` へ移してください。外で作った `Serial` は走っているスケッチへ足されないので、これまでも何も受けていません。

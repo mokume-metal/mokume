@@ -1092,7 +1092,7 @@ struct ShapeTests {
     @Test("番号で指した、向きを書かない形を形の中で鏡映して置き直しても、見る側から光を受ける")
     func anIndexedShapeMirroredInsideAShapeCatchesTheLight() throws {
         // 入れ子の置き直しは読む順ごと焼く。巻き方を戻すのは頂点ではなく読む順の側になる
-        // ので、上の検査 (並べた順に読む頂点) とは別の枝を通る。頂点は三角形ごとに別に
+        // ので、上の検査 (並べた順に読む頂点) とは別の分岐を通る。頂点は三角形ごとに別に
         // 並べて共有しない — 共有すると向きが角ごとに均されて、鏡映で自分に重ならない
         func gem(on canvas: Canvas) -> Shape {
             canvas.createShape {

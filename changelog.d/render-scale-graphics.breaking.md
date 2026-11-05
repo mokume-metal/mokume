@@ -9,4 +9,4 @@ SPDX-License-Identifier: MIT
 
 **倍率 1 では描けた作品が、倍率 N では `setup()` で止まることがあります。** 描き場所にも面と同じ 16384 画素の上限があり、座標に倍率を掛けた大きさがそれを越える描き場所 (本体より大きい描き場所。たとえば `createGraphics(8192, 64)` を `--scale 3` で書くと 24576 画素) は、作る所 (`setup()` や `draw()`) で失敗します。この失敗のために、`RenderFailure` に `sizeBeyondOutputScale(width:height:scale:)` の case を足しました。倍率と、その倍率で作れる最大の大きさを名乗ります。幅・高さが 1 を割る指定や、倍率の前から上限を越える指定は、これまでどおり `invalidSize(width:height:)` です。
 
-**`RenderFailure` を `switch` で全 case 数えている作品は、コンパイル時に `sizeBeyondOutputScale` の枝が足りないと指摘されます。** 移行: 枝を足してください。描き場所の大きさを直すか倍率を下げるよう案内する枝にするか、`createGraphics` の失敗だけを扱う `switch` なら `case .sizeBeyondOutputScale: break` のように何もしない枝で足ります。`default:` を置いていれば直す必要はありません。
+**`RenderFailure` を `switch` で全 case 数えている作品は、コンパイル時に `sizeBeyondOutputScale` の case が足りないと指摘されます。** 移行: case を足してください。描き場所の大きさを直すか倍率を下げるよう案内する case にするか、`createGraphics` の失敗だけを扱う `switch` なら `case .sizeBeyondOutputScale: break` のように何もしない case で足ります。`default:` を置いていれば直す必要はありません。

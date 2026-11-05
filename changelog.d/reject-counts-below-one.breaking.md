@@ -9,4 +9,4 @@ SPDX-License-Identifier: MIT
 - `createGraphics(_:_:)` の幅・高さが 0 以下なら `RenderFailure.invalidSize` を、`createImage(_:_:)` なら `ImageFailure.unplaceable` を投げます。これまでは 1×1 が返っていました
 - `makeNumbers(count:)` と `makeParticles(count:)` の `count` が 0 以下なら、新しい `RenderFailure.invalidCount` を投げます。これまでは 1 個ぶんが返っていました
 
-移行: `frameRate: 0` を「止める」の意味で書いていたなら、`frameRate` は 1 以上にして `setup()` で `noLoop()` を呼んでください。大きさや数に 0 以下が入りうるなら、渡す前に 1 以上へ直してください。`RenderFailure` を `switch` で網羅している場合は、コンパイル時に `invalidFrameRate` と `invalidCount` の枝が足りないと指摘されるので、枝を足してください。
+移行: `frameRate: 0` を「止める」の意味で書いていたなら、`frameRate` は 1 以上にして `setup()` で `noLoop()` を呼んでください。大きさや数に 0 以下が入りうるなら、渡す前に 1 以上へ直してください。`RenderFailure` を `switch` で網羅している場合は、コンパイル時に `invalidFrameRate` と `invalidCount` の case が足りないと指摘されるので、case を足してください。
