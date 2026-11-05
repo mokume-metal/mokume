@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # 入力・出力・環境
 
-Processing の本体の参照のうち、マウス・キー・時刻・ファイル・書き出し・ウィンドウにあたる 81 件。category が `environment` (27)・`input` (40)・`output` (20) の項目と、所属が `BufferedReader`・`PrintWriter` のメソッド (5) から、[データ: JSON・Table・XML](data-json-table-xml.md) が数えた `load`・`parse`・`save` の 11 件 (`loadJSONArray()` ほか) を除いたもの。形・版・数え直す式は [README](README.md) にある。照合したのは processing-website `f4acef8` (2026-10-29) と mokume の main `fe258089` (2026-11-02)。
+Processing の本体の参照のうち、マウス・キー・時刻・ファイル・書き出し・ウィンドウにあたる 81 件。category が `environment` (27)・`input` (40)・`output` (20) の項目と、所属が `BufferedReader`・`PrintWriter` のメソッド (5) から、[データ: JSON・Table・XML](data-json-table-xml.md) が数えた `load`・`parse`・`save` の 11 件 (`loadJSONArray()` ほか) を除いたもの。形・バージョン・数え直す式は [README](README.md) にある。照合したのは processing-website `f4acef8` (2026-10-29) と mokume の main `fe258089` (2026-11-02)。
 
 | 区分 | 件数 |
 | --- | --- |
@@ -38,7 +38,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 27 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `size()` | `SketchSettings.size(_:_:frameRate:title:)`・`SketchSettings(width:height:)` | 同等 | `settings` で返す。1 画素をウィンドウの何点にするかは `windowScale` (既定 0.5) で、Processing のように 1 画素 = 1 点ではない。無い形: 描き手の指定 (`size(w, h, P3D)`。2D も 3D も同じ面に描く) | [#2437] |
 | `fullScreen()` | `SketchSettings.fullScreen(_:)` | 同等 | 番号でディスプレイを選び、省けば 1 (メニューバーのある画面)。選んだ画面が無ければ別の画面へ出さず、起動で断る。無い形: 描き手の指定、複数の画面にまたがる `SPAN` (マッピングの仕事) | [#2020]・[#2437] |
@@ -64,7 +64,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 6 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `key` | `key` | 同等 | `String`。文字を生むキーでだけ変わり、矢印・ファンクション・Escape・Delete では更新されない | [ADR-0034](../decisions/0034-input-surface-units.md) |
 | `keyCode` | `keyCode` | 同等 | `Key?`。`keyCode == .arrowUp` と書く。押しても離しても入れ替わり、`keyReleased()` の中でも離したキーを指す。数との比較はコンパイルで止まる | [ADR-0034](../decisions/0034-input-surface-units.md) |
@@ -76,7 +76,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 12 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `mouseX`・`mouseY`・`pmouseX`・`pmouseY` (4 件) | `mouseX`・`mouseY`・`pmouseX`・`pmouseY` | 同等 | 単位は描く解像度の画素で、ウィンドウの大きさによらない。ウィンドウと縦横比が合わない帯の上では面の外の値になる (丸めない) | [ADR-0034](../decisions/0034-input-surface-units.md) |
 | `mouseButton` | `mouseButton` | 同等 | `MouseButton?`。`mouseButton == .left` と書く。押しても離しても入れ替わる。数との比較はコンパイルで止まる | [#1555] |
@@ -89,7 +89,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 7 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `millis()` | `time` (秒)・`measure(_:_:)` | 持たない | 起動からの実時間を返す API は、描く値にも使えてしまい、書き出しやテストが使うフレーム番号から時刻を導く時計の下でも、実時間で動く絵を黙って作る。絵を動かすのは `time`、区間を測るのは `measure(_:_:)` | [#1554] |
 | `year()`・`month()`・`day()`・`hour()`・`minute()`・`second()` (6 件) | — (`Calendar.current.dateComponents(_:from:)`) | 作例待ち | 現在の日時をどの時計から読むかが割れる。実時間で読めば `millis()` と同じく、`ClockMode.frames` の書き出しで同じ絵にならない ([ADR-0025](../decisions/0025-determinism-levels.md))。作者の時計 (`time`) から導く案もあり、その起点を何にするかを決める必要がある。時計の絵を書く作例が来たら選ぶ。それまでは Foundation で書ける (実時間なので、書き出しの再現は崩れる) | — |
@@ -98,7 +98,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 9 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `loadStrings()` | `loadStrings(_:)`・`requestStrings(_:)` | 同等 | UTF-8 を 1 行ずつの `[String]` にする。名前が `http://` か `https://` で始まれば URL から読む。読めなければ `DataFailure` を投げる。無い形: `File` や `InputStream` を渡す形 | [#2470] |
 | `loadBytes()` | — | 入れる | 文字でないファイルや URL を `Data` にする API が無い。`loadStrings(_:)` と同じく、探す場所を `loadImage(_:)` と揃え (`assetURL(_:)`)、URL を受け、読めなければ投げる。`Data(contentsOf:)` では探す場所が揃わず、URL の扱い (時間切れ・2xx 以外) も自前になる | [#3708] |
@@ -112,7 +112,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 15 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `saveStrings()` | `saveStrings(_:_:)` | 同等 | UTF-8・行末 LF で書き、書きかけを残さない。**引数は `saveStrings(lines, path)` で、Processing の `saveStrings(filename, data)` と逆** (p5.js と同じ順。型が違うのでコンパイルで止まる) | [#2468]・[ADR-0020](../decisions/0020-api-naming-and-surface.md) |
 | `saveBytes()` | — | 入れる | バイト列をファイルに書く API が無い。`saveStrings(_:_:)` と同じく、途中のディレクトリを作り、書きかけを残さず、書けなければ投げる。`Data.write(to:)` ではこの 3 つが作者の手に残る。引数の順は `saveStrings(_:_:)` と合わせる (値が先、置き場が後) | [#3708] |
@@ -127,7 +127,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 2 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `save()` | `save(_:)` | 同等 | 形式は PNG で、色空間は作業空間と同じ Display P3。**透けたところは透けたまま残る** (Processing は不透明に書く)。名前が `.svg` で終わるときだけ、絵でなく線を書く ([ADR-0023](../decisions/0023-frame-stages-and-outputs.md))。呼んだ時点では予約するだけで、書き込みはフレームの外で走る。無い形: TIFF・TARGA・JPEG、拡張子を省いた名前 | [#3139] |
 | `saveFrame()` | `beginRecord("out/f-####.png")` … `endRecord()`。1 枚なら `save("f-\(frameCount).png")` | 同等 | 連番は 2 つの API で挟む。**`####` は `frameCount` ではなく、録りの中の通し番号 (0 から)**。名前が `.mov` で終われば 1 本の動画になる。無い形: 引数なしの `saveFrame()` (既定の名前 `screen-####.tif`)、`####` に `frameCount` を入れる書き方 | [#2437] |
@@ -136,7 +136,7 @@ Processing の本体の参照のうち、マウス・キー・時刻・ファイ
 
 3 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `print()`・`println()`・`printArray()` (3 件) | Swift の `print(_:)`・`print(_:terminator:)` | 持たない | Swift の標準ライブラリが同じことをする。`println()` は `print(_:)`、`print()` は `terminator: ""` を渡す形、`printArray()` は配列を渡す `print(array)` | — |
 

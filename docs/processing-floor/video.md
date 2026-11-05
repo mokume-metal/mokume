@@ -27,7 +27,7 @@ Processing Video の参照のうち、`Movie` と `Capture` の 2 つのクラ�
 
 14 件。`Movie` の行のうち `Sources/MokumeCamera/Movie.swift` の表にある API は、その表を指す。表は利用者の面なので説明を写さない。ここで足すのは、その表に無い API の区分と、無い形である。表の場所は [`Movie` の「操作」の表][movie-table] (`Movie` の説明文の「操作」の節)。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Movie` (クラス) | `Movie`・`createVideo(_:)` | 同等 | 動画ファイルを流す入り口。見つからない・開けない・動画として読めないときは投げる (`MovieFailure`)。無い形: ネットワーク上の動画 (名前はファイルだけ) | — |
 | `Movie.play()`・`loop()`・`pause()`・`jump()` (4 件) | `Movie.play()`・`loop()`・`pause()`・`jump(_:)` | 同等 | [`Movie` の「操作」の表][movie-table]の同名の行。`play()`・`loop()`・`jump(_:)` は次のフレームで効く | — |
@@ -50,7 +50,7 @@ Processing Video の参照のうち、`Movie` と `Capture` の 2 つのクラ�
 
 7 件。Processing の `Capture` はカメラの入力で、mokume の API は `MokumeCamera` にある。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Capture` (クラス) | `Capture`・`createCapture(_:_:device:mirrored:)` | 同等 | カメラの絵を受け取る入り口。大きさは引数で頼む (既定 640×480)。使うカメラは名前の文字でなく、`captureDevices()` が返す `CaptureDevice` で選ぶ (参照の説明に出る `Capture.list()` に当たる)。無い形: フレームレートを渡す形 `Capture(parent, width, height, fps)` ほか (下の `frameRate()`)。カメラが無くても作れ、`state` が理由を報告する (許可待ち・拒まれた・カメラが無い・抜かれた) | — |
 | `Capture.available()` | `Capture.isNewFrame` | 同等 | `Movie.available()` と同じ。プロパティで、そのフレームに新しい絵が `image` へ書かれたか | — |
