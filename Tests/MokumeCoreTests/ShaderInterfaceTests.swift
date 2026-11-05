@@ -418,7 +418,7 @@ struct ShaderInterfaceTests {
             ("projection", \.projection), ("strokeStart", \.strokeStart),
             ("strokeShift", \.strokeShift), ("unitsPerDrawnPixel", \.unitsPerDrawnPixel),
             ("readsCoverage", \.readsCoverage), ("thinFill", \.thinFill),
-            ("thinFillUV", \.thinFillUV), ("thinStroke", \.thinStroke),
+            ("fillUVFromBox", \.fillUVFromBox), ("fillBox", \.fillBox), ("thinStroke", \.thinStroke),
             ("thinStrokeParams", \.thinStrokeParams),
         ])
 

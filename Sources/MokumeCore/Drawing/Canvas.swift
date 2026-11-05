@@ -325,8 +325,8 @@ public final class Canvas {
         var instanceStart: Int
         /// 置き場所ごとの記述の先頭と数 (``Canvas/thinFillSpans``) の並びの中で、この雛形が始まる位置 (#2208)。
         var thinFillStart = 0
-        /// 細い塗りの雛形が貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
-        var thinFillUV: SIMD4<Float>?
+        /// 貼る絵のある雛形の塗りの読み取り位置を作る箱 (``FlatFrame/fillBox``)。貼る絵が無ければ `nil`。
+        var fillBox: SIMD4<Float>?
         /// 細い輪郭を頂点段で広げ直す雛形なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
         var thinStrokeParams: SIMD4<Float>?
     }
@@ -2176,8 +2176,8 @@ public final class Canvas {
         var thinFillExpands = false
         /// その先頭と数の並びの、この列の先頭の位置。
         var thinFillStart = 0
-        /// 広げた片の貼る絵の読み取り位置を作る箱 (``FlatFrame/thinFillUV``)。貼る絵が無ければ `nil`。
-        var thinFillUV: SIMD4<Float>?
+        /// 雛形の塗りの貼る絵の読み取り位置を作る箱 (``FlatFrame/fillBox``)。貼る絵が無ければ `nil`。
+        var fillBox: SIMD4<Float>?
         /// 細い輪郭を頂点段で広げ直す雛形の列なら、その値 (``FlatFrame/thinStrokeParams``・#3733)。
         var thinStrokeParams: SIMD4<Float>?
         /// 裏を向いた面をどう扱うか。
@@ -6112,8 +6112,9 @@ public final class Canvas {
                 strokeStart: UInt32(min(batch.strokeStart, Int(UInt32.max))),
                 strokeShift: solidStrokeShift,
                 unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: readsCoverage,
-                thinFill: batch.thinFillExpands ? (batch.thinFillUV == nil ? 1 : 2) : 0,
-                thinFillUV: batch.thinFillUV ?? SIMD4(repeating: 0),
+                thinFill: batch.thinFillExpands ? 1 : 0,
+                fillUVFromBox: batch.fillBox == nil ? 0 : 1,
+                fillBox: batch.fillBox ?? SIMD4(repeating: 0),
                 thinStroke: batch.thinStrokeParams == nil ? 0 : 1,
                 thinStrokeParams: batch.thinStrokeParams ?? SIMD4(repeating: 0))
             matrices.contents().advanced(by: matrixOffset)
@@ -6160,7 +6161,7 @@ public final class Canvas {
             projection: jittered(projection, drawingInFrame: drawingInFrame),
             strokeStart: UInt32.max, strokeShift: solidStrokeShift,
             unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: 0,
-            thinFill: 0, thinFillUV: SIMD4(repeating: 0),
+            thinFill: 0, fillUVFromBox: 0, fillBox: SIMD4(repeating: 0),
             thinStroke: 0, thinStrokeParams: SIMD4(repeating: 0))
         matrices.contents().advanced(by: batches.count * Self.valuesStride)
             .copyMemory(from: &clipLayerFrame, byteCount: MemoryLayout<FlatFrame>.stride)

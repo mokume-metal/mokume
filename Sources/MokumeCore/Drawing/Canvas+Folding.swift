@@ -372,14 +372,19 @@ extension Canvas {
         templateStrokeMatrix = key.strokeLinear.map { Self.placementMatrix($0.linear) }
         outlinesAssembledThisFrame += 1
         // 細い塗りの雛形は、鍵の変換で細さを測って広げる (#1934・``FlatKey/fillLinear``)
-        var thinFillUV: SIMD4<Float>?
+        //
+        // **貼る絵のある塗りは、読み取り位置を作る箱を列へ渡す** (#3555)。畳まずに置くときは、置き場所ぶんずらした
+        // 周の囲みの箱から読み取り位置を作る (``boxUV(of:)``)。雛形の頂点はずらす前の箱から作るので、箱の幅の
+        // 丸めが置き場所ごとに違いうる。頂点段が位置を足した箱から同じ順で作り直す (`mokume_flatFillUV`)
+        var fillBox: SIMD4<Float>?
         if key.hasFill {
             if key.thinFillCapacity > 0 {
                 // 頂点は「片の番号と角の番号」で、片は頂点段が置き場所ごとの記述から組む (#2208)
-                thinFillUV = fillThinTemplate(capacity: key.thinFillCapacity, outline: outline)
+                fillBox = fillThinTemplate(capacity: key.thinFillCapacity, outline: outline)
             } else {
                 fillInterior(
                     outline, thinFillMatrix: key.fillLinear.map { Self.placementMatrix($0.linear) })
+                if key.texture != nil { fillBox = Self.uvBounds(of: outline.points) }
             }
         }
         let strokeStart = vertices.count
@@ -403,7 +408,7 @@ extension Canvas {
 
         openFlat = OpenFlat(
             key: key, strokeStart: strokeStart, instanceStart: flatInstances.count,
-            thinFillStart: thinFillSpans.count, thinFillUV: thinFillUV, thinStrokeParams: thinStrokeParams)
+            thinFillStart: thinFillSpans.count, fillBox: fillBox, thinStrokeParams: thinStrokeParams)
     }
 
     /// いまの変換で、線が描く画素 1 画素より細くなる向きがあるなら、その変換の 2x2 (#1637)。
@@ -454,11 +459,14 @@ extension Canvas {
         premultipliedRed: 1, green: 1, blue: 1, alpha: 1)
 
     /// いまの変換と塗りから、置き場所を 1 つ作る。
+    ///
+    /// **位置は変換を掛けずに渡す** (#3555)。頂点段が位置を先に足してから変換を掛ける — 畳まずに置くときの
+    /// `moved(by:)` の後の `Transform.placed` と同じ順で、畳んだ頂点が畳まずに置いた頂点と 1 ビットも違わない。
     private func placement(at anchor: SIMD2<Float>) -> FlatInstance {
         let columns = transform.matrix.columns
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
-            offset: transform.placed(x: anchor.x, y: anchor.y),
+            anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y),
             fill: fillVertexColor, stroke: style.stroke)
     }
 

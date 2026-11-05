@@ -800,7 +800,7 @@ struct ThinFillVertexStageTests {
 
     // MARK: - 頂点段の出力を読み戻す
 
-    /// 頂点関数が呼ぶ片の角 (`mokume_thinFillCorner`) と置き場所への移し (`mokume_thinFillPlace`) を、
+    /// 頂点関数が呼ぶ片の角 (`mokume_thinFillCorner`) と置き場所への移し (`mokume_flatPlace`) を、
     /// Shapes.metal の原文に足した計算の入口から呼び、出力を読み戻して CPU の式と **1 ビットずつ**
     /// 突き合わせる。画素の比べでは 1 ulp の差は赤にならない (縁や継ぎ目の画素が振れたときだけ見える)。
     /// 置き場所の位置 (anchor) が 0 でない場面と、鏡映・剪断・大きな平行移動を含む。
@@ -819,7 +819,7 @@ struct ThinFillVertexStageTests {
             ThinFillSpan span = spans[0];
             float2 corner = mokume_thinFillCorner(records[span.first], span.anchor, inputs[id].x, inputs[id].y);
             corners[id] = corner;
-            placed[id] = mokume_thinFillPlace(linears[0], span.translation, corner);
+            placed[id] = mokume_flatPlace(linears[0], span.translation, corner);
         }
         """
         let library = try gpu.shaders.makeShapeLibrary(named: "ThinFillProbe", body: shapes + probe)

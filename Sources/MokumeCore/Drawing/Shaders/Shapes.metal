@@ -12,6 +12,7 @@ struct ShapeVertex {
 /// 平面の図形を置く 1 か所ぶん。並びは Swift 側の `FlatInstance` と一致する。
 struct FlatInstance {
     float4 linear;
+    /// xy が置き場所の位置 (形自身の座標の原点を置く点)、zw が変換の平行移動 (#3555)。
     float4 offset;
     float4 fill;
     float4 stroke;
@@ -34,15 +35,18 @@ struct FlatFrame {
     /// 平面の頂点ごとの被覆 (`coverages`) を読むか。0 なら読まずに 1 とする (#1637)。
     uint readsCoverage;
     /// 塗りの頂点を、置き場所ごとの記述 (`ThinFillRecord`) から頂点段で広げるか (#2208)。0 は広げない。
-    /// 1 と 2 なら、`strokeStart` より前の頂点の `position` は「片の番号と角の番号」で、頂点段が片の
-    /// 角を組む。2 は貼る絵があり、読み取り位置を `thinFillUV` の箱から作る。
+    /// 1 なら、`strokeStart` より前の頂点の `position` は「片の番号と角の番号」で、頂点段が片の角を組む。
     uint thinFill;
-    /// 広げた片の貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前)。`thinFill` が 2 のときだけ読む。
-    float4 thinFillUV;
+    /// 塗りの頂点 (`strokeStart` より前) の読み取り位置を、`fillBox` の箱から置き場所ごとに作るか (#3555)。
+    /// 貼る絵のある雛形が 1 にする。0 は頂点の `uv` のまま。
+    uint fillUVFromBox;
+    /// 塗りの貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前の周の囲み)。
+    /// `fillUVFromBox` が 1 のときだけ読む。
+    float4 fillBox;
     /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (#3733)。1 なら `strokeStart` から後ろの頂点の
-    /// `uv` は、広げた半幅 h (描く画素) に対する位置の微分 (形自身の座標)。
+    /// `position` は額縁の片の角 (形自身の座標・置き場所の位置を足す前)、`uv` は角から広げる向き (各成分 −1・0・1)。
     uint thinStroke;
-    /// x: 線の太さ (形自身の座標)・y: 雛形を組んだ半幅 h0 (描く画素)・zw: 白い区画の読み取り位置。
+    /// x: 線の太さ (形自身の座標)・y: 1 に丸める描く画素の太さの下限・zw: 白い区画の読み取り位置。
     float4 thinStrokeParams;
 };
 
@@ -103,9 +107,26 @@ static inline float2 mokume_thinFillCorner(
     return center + moved;
 }
 
-/// 広げた片の貼る絵の読み取り位置。箱 `bounds` (xy が下限・zw が上限) は置き場所の位置を足す前の周の
+// MARK: - 畳んだ頂点を置く (#3555)
+//
+// **畳んだ雛形の頂点は、畳まずに CPU が置いた頂点と 1 ビットも違わない位置に置く。** CPU は周を置き場所の位置ぶん
+// ずらしてから (`Outline.moved(by:)`)、`Transform.placed` で `fma(列 y, y, 列 x · x)` に平行移動を足す。頂点段も
+// 同じ順 (位置を足す → 線形 → 平行移動) で置く。Shapes は既定の fast-math で組むので、ここの関数は
+// `math_mode(safe)`・`contract(off)` で演算の順を固定する (`mokume_thinFillCorner` と同じ理由)。順を変えると、
+// 縁の頂点が 1 ulp 違い、縁の画素が畳むかどうか・続けて置くか 1 つだけ置くかで入れ替わる。
+
+/// 形自身の座標の点 `position` を、置き場所の位置 `anchor` ぶんずらす (CPU の `Outline.moved(by:)` と同じ足し算)。
+static inline float2 mokume_flatMove(float2 position, float2 anchor) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return position + anchor;
+}
+
+/// 塗りの貼る絵の読み取り位置。箱 `bounds` (xy が下限・zw が上限) は置き場所の位置を足す前の周の
 /// 囲みで、位置を足して幅を引き直す — CPU が周を置き場所ぶんずらしてから `boxUV` で作るのと同じ順。
-static inline float2 mokume_thinFillUV(float4 bounds, float2 anchor, float2 position) {
+/// `position` はずらした後の点。箱の外へ広げた細い塗りの角は箱の縁へ寄せる (CPU の `clampedUV`)。箱の
+/// 中の点は寄せても値が変わらないので、寄せない CPU の塗り (`fillInteriorTriangles`) とも揃う。
+static inline float2 mokume_flatFillUV(float4 bounds, float2 anchor, float2 position) {
 #pragma METAL fp math_mode(safe)
 #pragma METAL fp contract(off)
     float2 lowest = bounds.xy + anchor;
@@ -116,12 +137,51 @@ static inline float2 mokume_thinFillUV(float4 bounds, float2 anchor, float2 posi
     return clamp(mapped, float2(0.0), float2(1.0));
 }
 
-/// 形自身の座標の点 `position` を、置き場所の線形 `linear` (列 2 本)・平行移動 `translation` で置く。
+/// ずらした点 `position` を、置き場所の線形 `linear` (列 2 本)・平行移動 `translation` で置く。
 /// CPU の `Transform.placed` (行列の積 `fma(列 y, y, 列 x * x)` の後に平行移動を足す) と同じ順。
-static inline float2 mokume_thinFillPlace(float4 linear, float2 translation, float2 position) {
+static inline float2 mokume_flatPlace(float4 linear, float2 translation, float2 position) {
 #pragma METAL fp math_mode(safe)
 #pragma METAL fp contract(off)
     return fma(linear.zw, float2(position.y), linear.xy * position.x) + translation;
+}
+
+/// 額縁の片で組む細い矩形の輪郭の、置き場所ごとの半幅 (x・形自身の座標) と被覆 (y) (#3733)。
+///
+/// **式は CPU の `thinRectFrame(_:placedBy:)` と 1 つずつ同じ順で書く** — 1 つ目 (畳まずに置く) と雛形で、
+/// 額縁の角が 1 ulp も違わないようにする。`simd_determinant` は `fma(a, d, −(b · c))`、`simd_length` は融合
+/// しない和の平方根で、割り算と平方根は丸めを揃えるため `precise` で行う。
+static inline float2 mokume_thinRectBand(
+    float4 linear, float2 unitsPerDrawnPixel, float weight, float roundsToOne)
+{
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    float2 column0 = float2(
+        precise::divide(linear.x, unitsPerDrawnPixel.x), precise::divide(linear.y, unitsPerDrawnPixel.y));
+    float2 column1 = float2(
+        precise::divide(linear.z, unitsPerDrawnPixel.x), precise::divide(linear.w, unitsPerDrawnPixel.y));
+    float determinant = fma(column0.x, column1.y, -(column0.y * column1.x));
+    float scale = precise::sqrt(abs(determinant));
+    // `roundedDrawnWeight`: 1 をわずかに割る太さは 1 に丸める
+    float drawn = weight * scale;
+    drawn = (drawn < 1.0 && drawn >= roundsToOne) ? 1.0 : drawn;
+    float length = precise::sqrt(column0.x * column0.x + column0.y * column0.y);
+    float2 along = float2(precise::divide(column0.x, length), precise::divide(column0.y, length));
+    // `widenedBand`: 列 (行) が帯を切る長さを整数 n にする
+    float axis = max(abs(along.x), abs(along.y));
+    float crossings = precise::divide(drawn, axis) <= 1.0 ? 1.0 : 2.0;
+    float target = crossings * axis;
+    float widen = precise::divide(target, drawn);
+    float coverage = precise::divide(drawn, target);
+    float drawnHalf = precise::divide(drawn * widen, 2.0);
+    return float2(precise::divide(drawnHalf, scale), coverage);
+}
+
+/// 額縁の片の角 `corner` (ずらした後) を、向き `slope` (各成分 −1・0・1) に半幅 `half` だけ広げる
+/// (CPU の `bases[i] + half * slopes[i]` と同じ順)。
+static inline float2 mokume_thinRectCorner(float2 corner, float half, float2 slope) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return corner + half * slope;
 }
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -136,19 +196,20 @@ vertex ShapeFragmentIn shapeVertexMain(
 {
     ShapeVertex vertex_in = vertices[index];
     FlatInstance placement = instances[instance];
+    // 置き場所の位置 (形自身の座標の原点を置く点) と、変換の平行移動 (#3555)
+    float2 anchor = placement.offset.xy;
+    float2 translation = placement.offset.zw;
 
     // **細い塗りの雛形の塗りの頂点は、片の番号と角の番号だけを持つ** (#2208)。置き場所ごとの記述から
-    // 片の角を形自身の座標で組み、以降は畳んだ頂点と同じ経路を通る。使わない片と、置かない片
-    // (被覆 0) は、角を 1 点に潰して面積 0 にする
+    // 片の角を形自身の座標で組み (置き場所の位置は角へ足し済み)、以降は畳んだ頂点と同じ経路を通る。
+    // 使わない片と、置かない片 (被覆 0) は、角を 1 点に潰して面積 0 にする
     float2 formPosition = vertex_in.position;
     float2 formUV = vertex_in.uv;
     float thinCoverage = 1.0;
-    float2 thinSpanTranslation = float2(0.0);
     bool expandsThin = frame.thinFill != 0 && index < frame.strokeStart;
     if (expandsThin) {
         // 置き場所の記述は、先頭から順に片の数を引いて、片が入る記述を探す (塗りの置き場所は記述が 1 つ)
         ThinFillSpan recordSpan = thinFillSpans[instance];
-        thinSpanTranslation = recordSpan.translation;
         uint slot = recordSpan.first;
         uint lastSlot = recordSpan.first + max(recordSpan.count, 1u) - 1u;
         float piece = vertex_in.position.x;
@@ -194,42 +255,35 @@ vertex ShapeFragmentIn shapeVertexMain(
             }
         }
         formPosition = mokume_thinFillCorner(record, recordSpan.anchor, along, offset);
-        if (frame.thinFill == 2) {
-            formUV = mokume_thinFillUV(frame.thinFillUV, recordSpan.anchor, formPosition);
-        }
+    } else {
+        // **ほかの頂点は、置き場所の位置を先に足す** (#3555)。CPU が畳まずに置くときは周をずらしてから
+        // (`Outline.moved(by:)`) 変換するので、同じ順にする。何も動かさない置き場所は位置 0 で、足しても
+        // 値は変わらない (畳めない頂点も同じ経路を通る)
+        formPosition = mokume_flatMove(vertex_in.position, anchor);
+    }
+    // 貼る絵のある雛形の塗りは、読み取り位置を置き場所ぶんずらした周の箱から作る (CPU の `boxUV` と同じ順)。
+    // 雛形の頂点が持つ読み取り位置はずらす前の箱から作ったもので、箱の幅の丸めがずらした後と違う
+    if (frame.fillUVFromBox != 0 && index < frame.strokeStart) {
+        formUV = mokume_flatFillUV(frame.fillBox, anchor, formPosition);
     }
 
     // **畳んだ矩形の雛形の細い輪郭は、置き場所ごとに広げ直す** (#3733)。相似な置き場所では矩形の 4 本の帯が
-    // 同じ半幅 h と被覆を持ち、輪郭の頂点はどれも「雛形の位置 + (h − h0) × 微分」になる。h は CPU の
-    // `widenedBand` と同じ量で、帯 (形自身の座標で (1, 0) の向き) を描く画素の軸に沿って列 (行) が切る長さを
-    // 整数 n にする。微分は `uv` に入っていて、断片へは白い区画の読み取り位置を渡す
+    // 同じ半幅と被覆を持ち、輪郭の頂点はどれも「額縁の片の角 + 半幅 × 向き」になる。半幅は CPU の
+    // `thinRectFrame` と同じ式で置き場所の 2x2 から求め、角 (位置を足した後) へ CPU と同じ順で足す。
+    // 向きは `uv` に入っていて、断片へは白い区画の読み取り位置を渡す
     bool widensThinStroke = frame.thinStroke != 0 && index >= frame.strokeStart;
     float thinStrokeCoverage = 1.0;
     if (widensThinStroke) {
-        float2 column0 = placement.linear.xy / frame.unitsPerDrawnPixel;
-        float2 column1 = placement.linear.zw / frame.unitsPerDrawnPixel;
-        float area = abs(column0.x * column1.y - column1.x * column0.y);
-        float stretched = length(column0);
-        float drawn = precise::divide(frame.thinStrokeParams.x * area, stretched);
-        float axis = precise::divide(max(abs(column0.x), abs(column0.y)), stretched);
-        float crossings = precise::divide(drawn, axis) <= 1.0 ? 1.0 : 2.0;
-        float target = crossings * axis;
-        float widenedHalf = target * 0.5;
-        formPosition = fma(float2(widenedHalf - frame.thinStrokeParams.y), vertex_in.uv, vertex_in.position);
+        float2 band = mokume_thinRectBand(
+            placement.linear, frame.unitsPerDrawnPixel, frame.thinStrokeParams.x, frame.thinStrokeParams.y);
+        formPosition = mokume_thinRectCorner(formPosition, band.x, vertex_in.uv);
         formUV = frame.thinStrokeParams.zw;
-        thinStrokeCoverage = precise::divide(drawn, target);
+        thinStrokeCoverage = band.y;
     }
 
-    // **形自身の座標を、置き場所の変換で描画先の座標へ移す。** 何も動かさない置き場所
-    // (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
-    float2 placed = placement.linear.xy * formPosition.x
-        + placement.linear.zw * formPosition.y + placement.offset.xy;
-    if (expandsThin) {
-        // 広げた片は、畳まずに CPU が置いた頂点と 1 ビットも違わない位置に置く。畳まない細い塗りと同じ
-        // フレームに並ぶので、順を固定しないと融合の仕方で位置が 1 つ違い、貼る絵の読み取りの継ぎ目や
-        // 縁の画素が振れる。置き場所の位置は角へ足し済みで、平行移動は記述の並びが持つ
-        placed = mokume_thinFillPlace(placement.linear, thinSpanTranslation, formPosition);
-    }
+    // **ずらした点を、置き場所の変換で描画先の座標へ移す** (`Transform.placed` と同じ順・#3555)。何も動かさない
+    // 置き場所 (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
+    float2 placed = mokume_flatPlace(placement.linear, translation, formPosition);
     // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
     // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
     // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が
