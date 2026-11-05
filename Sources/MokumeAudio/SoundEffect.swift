@@ -3,12 +3,12 @@
 
 import Foundation
 
-/// 合成した音を処理するエフェクトに共通の操作。種類ごとに ``LowPass``・``HighPass``・``BandPass``・
+/// 合成音を処理するエフェクトに共通の操作。種類ごとに ``LowPass``・``HighPass``・``BandPass``・
 /// ``Reverb``・``Delay`` がある。
 ///
-/// ``process(_:)`` で音を通すと、通された音は直には鳴らず、エフェクトの出口を通ってだけ鳴る。
-/// 通せるのは合成した音 (オシレータ・ノイズ・別のエフェクト) と音声ファイル (``SoundFile``) で
-/// (``EffectInput``)、``AudioIn`` は通せない。
+/// ``process(_:)`` で音を入力すると、入力された音は直接は出力されず、エフェクトの出力を通してだけ聞こえる。
+/// 入力できるのは合成音 (オシレータ・ノイズ・別のエフェクト) と音声ファイル (``SoundFile``) で
+/// (``EffectInput``)、``AudioIn`` は入力できない。
 ///
 /// ```swift
 /// final class Muffled: Sketch {
@@ -22,26 +22,26 @@ import Foundation
 ///     }
 ///     func draw() {
 ///         background(0)
-///         // マウスの左右で切れ目を動かす
+///         // マウスの左右でカットオフ周波数を動かす
 ///         filter?.freq(map(mouseX, 0, width, 200, 8000))
 ///         if let filter { circle(width / 2, height / 2, 40 + filter.level * 300) }
 ///     }
 /// }
 /// ```
 ///
-/// - エフェクトを別のエフェクトへ通せる (`reverb.process(lowPass)`)。エフェクトの出口が輪になる
-///   通し方は拒み、1 度だけ知らせる
-/// - 1 つのエフェクトへ複数の音を通すと、足し合わされて処理される。1 つの音を複数のエフェクトへ
-///   通すと、エフェクトごとの出口が足し合わされて鳴る
-/// - エフェクトの定位は中央で、通した音の定位は引き継がない。**左右のある ``SoundFile`` も、エフェクトの
-///   出口ではモノラル (中央) に畳まれる**
-/// - 解析の値 (``SynthSound/level`` ほか) は、エフェクトの出口の音のものになる
+/// - エフェクトを別のエフェクトへ入力できる (`reverb.process(lowPass)`)。エフェクトの出力が循環する
+///   接続は拒否し、1 度だけ警告する
+/// - 1 つのエフェクトへ複数の音を入力すると、ミックスして処理される。1 つの音を複数のエフェクトへ
+///   入力すると、エフェクトごとの出力がミックスされて聞こえる
+/// - エフェクトの定位は中央で、入力した音の定位は引き継がない。**ステレオの ``SoundFile`` も、エフェクトの
+///   出力ではモノラル (中央) にまとめられる**
+/// - 解析値 (``SynthSound/level`` ほか) は、エフェクトの出力の音のものになる
 ///
-/// どの口も投げない ([ADR-0020] 決定 5)。
+/// どのメソッドも投げない ([ADR-0020] 決定 5)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public class SoundEffect: SynthSound {
-    /// 通した音に、いまの設定のままエフェクトをかける。
+    /// 入力した音に、現在の設定のままエフェクトをかける。
     ///
     /// <!-- example: 文脈 var osc: SinOsc?; var reverb: Reverb? -->
     /// ```swift
@@ -53,10 +53,10 @@ public class SoundEffect: SynthSound {
     /// }
     /// ```
     ///
-    /// 同じ音を何度通しても 1 度かかるだけ。別の音を通すと、足し合わされて処理される。
+    /// 同じ音を何度入力しても 1 度かかるだけ。別の音を入力すると、ミックスして処理される。
     ///
-    /// ``SoundFile`` も通せる。最初に通したときから、そのファイルはラックで鳴る (左右は畳まれ、節の上限を
-    /// 1 つ使う — ``SoundFile``)。``EffectInput`` に準拠しない型は通らず、1 度だけ知らせる。
+    /// ``SoundFile`` も入力できる。最初に入力したときから、そのファイルは合成音と同じオーディオグラフ (ラック) で再生される (左右はモノラルにまとめられ、ノードの上限を
+    /// 1 つ使う — ``SoundFile``)。``EffectInput`` に準拠しない型は処理されず、1 度だけ警告する。
     ///
     /// <!-- example: 文脈 var song: SoundFile?; var reverb: Reverb? -->
     /// ```swift
@@ -71,10 +71,10 @@ public class SoundEffect: SynthSound {
         connect(input)
     }
 
-    /// エフェクトをやめる。通していた音は、直に鳴る形へ戻る。
+    /// エフェクトを解除する。入力していた音は、エフェクトを通さず直接出力される状態へ戻る。
     ///
-    /// 残響や反響の尾は残さず、すぐ途切れる。もう一度 ``process(_:)`` で通せる。通していた
-    /// ``SoundFile`` は、いったんラックで鳴らした後なので、中央のモノラルのまま直に鳴り続ける。
+    /// リバーブやディレイの余韻は残さず、すぐ途切れる。もう一度 ``process(_:)`` で入力できる。入力していた
+    /// ``SoundFile`` は、いったんラックで再生した後なので、中央のモノラルのまま直接出力され続ける。
     public func stop() {
         guard let node, !stage.isClosed else { return }
         stage.rack.setInputs(node.id, 0)
@@ -121,16 +121,16 @@ public class SoundEffect: SynthSound {
 
 // MARK: - 濾波器
 
-/// 低域か高域を通す濾波器に共通の操作。``LowPass`` と ``HighPass`` が使う。
+/// ローパスかハイパスのフィルタに共通の操作。``LowPass`` と ``HighPass`` が使う。
 ///
-/// 既定は切れ目 1000 Hz・山の高さ (Q) 1。山の高さは、切れ目のあたりをどれだけ強調するか。
-/// 0.7071 で山が出ず、大きいほど切れ目の音が鳴る。
+/// 既定はカットオフ周波数 1000 Hz・レゾナンス (Q) 1。レゾナンスは、カットオフ周波数の付近をどれだけ強調するか。
+/// 0.7071 でピークが出ず、大きいほどカットオフ周波数の付近の音が強く出る。
 public class Filter: SoundEffect {
     init(stage: SynthStage, shape: FilterShape, name: String) {
         super.init(stage: stage, node: stage.rack.addFilter(shape), name: name)
     }
 
-    /// 通した音に、切れ目を決めてエフェクトをかける。
+    /// 入力した音に、カットオフ周波数を指定してエフェクトをかける。
     ///
     /// <!-- example: 文脈 var noise: PinkNoise?; var filter: LowPass? -->
     /// ```swift
@@ -142,23 +142,23 @@ public class Filter: SoundEffect {
     /// }
     /// ```
     ///
-    /// 範囲の外・数でない値は ``freq(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
     public func process(_ input: any EffectInput, _ freq: Float) {
         self.freq(freq)
         process(input)
     }
 
-    /// 通した音に、切れ目と山の高さを決めてエフェクトをかける。
+    /// 入力した音に、カットオフ周波数とレゾナンスを指定してエフェクトをかける。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
     public func process(_ input: any EffectInput, _ freq: Float, _ res: Float) {
         set(freq, res)
         process(input)
     }
 
-    /// 切れ目の周波数を決める。単位は Hz で、10 から 20000 まで。既定は 1000。
+    /// カットオフ周波数を設定する。単位は Hz で、10 から 20000 まで。既定は 1000。
     ///
-    /// 範囲の外は端へ丸め、数でない値・無限の値は無視する。どちらもそのことを 1 度だけ知らせる
+    /// 範囲の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -169,47 +169,47 @@ public class Filter: SoundEffect {
         send(.cutoff, value)
     }
 
-    /// 山の高さ (Q) を決める。0.1 から 100 まで。既定は 1。
+    /// レゾナンス (Q) を設定する。0.1 から 100 まで。既定は 1。
     ///
-    /// 範囲の外・数でない値は ``freq(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
     public func res(_ quality: Float) {
         guard let value = accept(quality, 0.1...100, call: "res", meaning: "a resonance")
         else { return }
         send(.resonance, value)
     }
 
-    /// 切れ目と山の高さを決める。
+    /// カットオフ周波数とレゾナンスを設定する。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
     public func set(_ freq: Float, _ res: Float) {
         self.freq(freq)
         self.res(res)
     }
 }
 
-/// 低い音を通し、切れ目より高い音を小さくする濾波器。
+/// 低い音を通し、カットオフ周波数より高い音を減衰させるフィルタ。
 ///
-/// 手本は Processing Sound の `LowPass`。作る口は ``Sketch/createLowPass()``。使い方は ``Filter``。
-/// 切れ目から 1 オクターブ上がるごとに約 12 dB 小さくなる。
+/// Processing Sound の `LowPass` に当たる。作る関数は ``Sketch/createLowPass()``。使い方は ``Filter``。
+/// カットオフ周波数から 1 オクターブ上がるごとに約 12 dB 減衰する。
 public final class LowPass: Filter {
     init(stage: SynthStage) {
         super.init(stage: stage, shape: .lowPass, name: "LowPass")
     }
 }
 
-/// 高い音を通し、切れ目より低い音を小さくする濾波器。
+/// 高い音を通し、カットオフ周波数より低い音を減衰させるフィルタ。
 ///
-/// 手本は Processing Sound の `HighPass`。作る口は ``Sketch/createHighPass()``。使い方は ``Filter``。
-/// 切れ目から 1 オクターブ下がるごとに約 12 dB 小さくなる。
+/// Processing Sound の `HighPass` に当たる。作る関数は ``Sketch/createHighPass()``。使い方は ``Filter``。
+/// カットオフ周波数から 1 オクターブ下がるごとに約 12 dB 減衰する。
 public final class HighPass: Filter {
     init(stage: SynthStage) {
         super.init(stage: stage, shape: .highPass, name: "HighPass")
     }
 }
 
-/// 中心の周りの帯域だけを通す濾波器。
+/// 中心周波数の周りの帯域だけを通すフィルタ。
 ///
-/// 手本は Processing Sound の `BandPass`。作る口は ``Sketch/createBandPass()``。
+/// Processing Sound の `BandPass` に当たる。作る関数は ``Sketch/createBandPass()``。
 ///
 /// <!-- example: 文脈 var noise: WhiteNoise?; var band: BandPass? -->
 /// ```swift
@@ -221,23 +221,23 @@ public final class HighPass: Filter {
 /// }
 /// ```
 ///
-/// 既定は中心 1000 Hz・幅 500 Hz。中心の音はそのまま通り、幅が狭いほど細い音になる。
+/// 既定は中心周波数 1000 Hz・帯域幅 500 Hz。中心周波数の音はそのまま通り、帯域幅が狭いほど細い音になる。
 public final class BandPass: SoundEffect {
     init(stage: SynthStage) {
         super.init(stage: stage, node: stage.rack.addFilter(.bandPass), name: "BandPass")
     }
 
-    /// 通した音に、中心と幅を決めてエフェクトをかける。
+    /// 入力した音に、中心周波数と帯域幅を指定してエフェクトをかける。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
     public func process(_ input: any EffectInput, _ freq: Float, _ bw: Float) {
         set(freq, bw)
         process(input)
     }
 
-    /// 通す帯域の中心の周波数を決める。単位は Hz で、10 から 20000 まで。既定は 1000。
+    /// 通す帯域の中心周波数を設定する。単位は Hz で、10 から 20000 まで。既定は 1000。
     ///
-    /// 範囲の外は端へ丸め、数でない値・無限の値は無視する。どちらもそのことを 1 度だけ知らせる
+    /// 範囲の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -248,18 +248,18 @@ public final class BandPass: SoundEffect {
         send(.cutoff, value)
     }
 
-    /// 通す帯域の幅を決める。単位は Hz で、1 から 20000 まで。既定は 500。
+    /// 通す帯域の幅を設定する。単位は Hz で、1 から 20000 まで。既定は 500。
     ///
-    /// 範囲の外・数でない値は ``freq(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
     public func bw(_ bandwidth: Float) {
         guard let value = accept(bandwidth, 1...20_000, call: "bw", meaning: "a bandwidth")
         else { return }
         send(.bandwidth, value)
     }
 
-    /// 中心と幅を決める。
+    /// 中心周波数と帯域幅を設定する。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
     public func set(_ freq: Float, _ bw: Float) {
         self.freq(freq)
         self.bw(bw)
@@ -268,9 +268,9 @@ public final class BandPass: SoundEffect {
 
 // MARK: - リバーブ
 
-/// 残響を足すエフェクト。
+/// 残響を加えるエフェクト。
 ///
-/// 手本は Processing Sound の `Reverb`。作る口は ``Sketch/createReverb()``。
+/// Processing Sound の `Reverb` に当たる。作る関数は ``Sketch/createReverb()``。
 ///
 /// <!-- example: 文脈 var osc: SinOsc?; var reverb: Reverb? -->
 /// ```swift
@@ -282,24 +282,24 @@ public final class BandPass: SoundEffect {
 /// }
 /// ```
 ///
-/// Freeverb と同じ並べ方 (8 本の櫛形濾波器の後に 4 本の全域通過濾波器) で、既定は部屋の大きさ 0.5・
-/// 高い音の吸われ方 0.5・残響の割合 0.5。残響の割合 0 では通した音がそのまま出る。
+/// Freeverb と同じ構成 (8 本のコムフィルタの後に 4 本のオールパスフィルタ) で、既定は部屋の大きさ 0.5・
+/// 高域の減衰 0.5・ウェットの割合 0.5。ウェットの割合 0 では入力した音がそのまま出る。
 public final class Reverb: SoundEffect {
     init(stage: SynthStage) {
         super.init(stage: stage, node: stage.rack.addReverb(), name: "Reverb")
     }
 
-    /// 通した音に、部屋の大きさ・高い音の吸われ方・残響の割合を決めてエフェクトをかける。
+    /// 入力した音に、部屋の大きさ・高域の減衰・ウェットの割合を指定してエフェクトをかける。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
     public func process(_ input: any EffectInput, _ room: Float, _ damp: Float, _ wet: Float) {
         set(room, damp, wet)
         process(input)
     }
 
-    /// 部屋の大きさを決める。0〜1 で、大きいほど残響が長い。既定は 0.5。
+    /// 部屋の大きさを設定する。0〜1 で、大きいほど残響が長い。既定は 0.5。
     ///
-    /// 範囲の外は端へ丸め、数でない値・無限の値は無視する。どちらもそのことを 1 度だけ知らせる
+    /// 範囲の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -310,9 +310,9 @@ public final class Reverb: SoundEffect {
         send(.room, value)
     }
 
-    /// 高い音の吸われ方を決める。0〜1 で、大きいほど残響がこもる。既定は 0.5。
+    /// 高域の減衰 (ダンピング) を設定する。0〜1 で、大きいほど残響がこもる。既定は 0.5。
     ///
-    /// 範囲の外・数でない値は ``room(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は ``room(_:)`` と同じに扱う。
     public func damp(_ amount: Float) {
         guard let value = accept(amount, 0...1, call: "damp", meaning: "a damping") else {
             return
@@ -320,9 +320,9 @@ public final class Reverb: SoundEffect {
         send(.damping, value)
     }
 
-    /// 残響の割合を決める。0 で通した音だけ、1 で残響だけ。既定は 0.5。
+    /// ウェット (残響) の割合を設定する。0 で入力した音だけ、1 で残響だけ。既定は 0.5。
     ///
-    /// 範囲の外・数でない値は ``room(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は ``room(_:)`` と同じに扱う。
     public func wet(_ amount: Float) {
         guard let value = accept(amount, 0...1, call: "wet", meaning: "a wet amount") else {
             return
@@ -330,9 +330,9 @@ public final class Reverb: SoundEffect {
         send(.wetness, value)
     }
 
-    /// 部屋の大きさ・高い音の吸われ方・残響の割合を決める。
+    /// 部屋の大きさ・高域の減衰・ウェットの割合を設定する。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
     public func set(_ room: Float, _ damp: Float, _ wet: Float) {
         self.room(room)
         self.damp(damp)
@@ -344,7 +344,7 @@ public final class Reverb: SoundEffect {
 
 /// 遅れた音を重ねて、反響を繰り返すエフェクト。
 ///
-/// 手本は Processing Sound の `Delay`。作る口は ``Sketch/createDelay()``。
+/// Processing Sound の `Delay` に当たる。作る関数は ``Sketch/createDelay()``。
 ///
 /// <!-- example: 文脈 var osc: SinOsc?; var env: Env?; var delay: Delay? -->
 /// ```swift
@@ -361,8 +361,8 @@ public final class Reverb: SoundEffect {
 /// ```
 ///
 /// 元の音に、`time` 秒遅れた同じ大きさの音を重ね、その音を `feedback` の割合で小さくしながら
-/// 繰り返す。`feedback` が 0 なら反響は 1 度、大きいほど長く続く。**重なったぶん大きくなる**ので、
-/// 歪むときは音源の音量を下げる。既定は遅れ 0.25 秒・戻す割合 0.5。
+/// 繰り返す。`feedback` が 0 なら反響は 1 度、大きいほど長く続く。**重なったぶん音量が大きくなる**ので、
+/// 歪むときは音源の音量を下げる。既定はディレイタイム 0.25 秒・フィードバック 0.5。
 public final class Delay: SoundEffect {
     /// 遅れの上限 (秒)。``process(_:_:)`` で変える。
     private var maximumTime: Float = Float(EchoKernel.maximumSeconds)
@@ -371,10 +371,10 @@ public final class Delay: SoundEffect {
         super.init(stage: stage, node: stage.rack.addDelay(), name: "Delay")
     }
 
-    /// 通した音に、遅れの上限を決めてエフェクトをかける。
+    /// 入力した音に、ディレイタイムの上限を指定してエフェクトをかける。
     ///
-    /// 遅れ (``time(_:)``) は 0 から `maxDelayTime` 秒まで。0 から 5 秒の外は端へ丸め、数でない値・
-    /// 無限の値は無視する。どちらもそのことを 1 度だけ知らせる (投げない — [ADR-0020] 決定 5)。
+    /// ディレイタイム (``time(_:)``) は 0 から `maxDelayTime` 秒まで。0 から 5 秒の外は端にクランプし、NaN・
+    /// 無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
@@ -387,18 +387,18 @@ public final class Delay: SoundEffect {
         process(input)
     }
 
-    /// 通した音に、遅れの上限と戻す割合を決めてエフェクトをかける。
+    /// 入力した音に、ディレイタイムの上限とフィードバックの割合を指定してエフェクトをかける。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
     public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ feedback: Float) {
         self.feedback(feedback)
         process(input, maxDelayTime)
     }
 
-    /// 遅れを決める。単位は秒で、0 から ``process(_:_:)`` で決めた上限まで (既定は 5)。既定の遅れは 0.25。
+    /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
     ///
-    /// 範囲の外は端へ丸め、数でない値・無限の値は無視する。どちらもそのことを 1 度だけ知らせる
-    /// (投げない — [ADR-0020] 決定 5)。遅れを動かしている最中は、音の高さが揺れる。
+    /// 範囲の外は端にクランプし、NaN・無限大は無視する。どちらもそのことを 1 度だけ警告する
+    /// (投げない — [ADR-0020] 決定 5)。ディレイタイムを変えている最中は、音の高さが揺れる。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func time(_ seconds: Float) {
@@ -408,9 +408,9 @@ public final class Delay: SoundEffect {
         send(.time, value)
     }
 
-    /// 戻す割合を決める。0〜1 で、大きいほど反響が長く続く。既定は 0.5。
+    /// フィードバックの割合を設定する。0〜1 で、大きいほど反響が長く続く。既定は 0.5。
     ///
-    /// 範囲の外・数でない値は ``time(_:)`` と同じに扱う。1 は止まらなくなるので、手前の 0.99 で止める。
+    /// 範囲の外・NaN は ``time(_:)`` と同じに扱う。1 では減衰しなくなるので、手前の 0.99 に制限する。
     public func feedback(_ amount: Float) {
         guard let value = accept(amount, 0...1, call: "feedback", meaning: "a feedback") else {
             return
@@ -418,9 +418,9 @@ public final class Delay: SoundEffect {
         send(.feedback, value)
     }
 
-    /// 遅れと戻す割合を決める。
+    /// ディレイタイムとフィードバックの割合を設定する。
     ///
-    /// 範囲の外・数でない値は、それぞれ ``time(_:)``・``feedback(_:)`` と同じに扱う。
+    /// 範囲の外・NaN は、それぞれ ``time(_:)``・``feedback(_:)`` と同じに扱う。
     public func set(_ time: Float, _ feedback: Float) {
         self.time(time)
         self.feedback(feedback)

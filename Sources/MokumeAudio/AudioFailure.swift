@@ -3,43 +3,43 @@
 
 import MokumeCore
 
-/// 音声ファイルや標本列から ``AudioIn`` や ``SoundFile`` を作れなかったこと。
+/// 音声ファイルやサンプル列から ``AudioIn`` や ``SoundFile`` を作れなかったことを表すエラー。
 ///
-/// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。失敗したときに別の道を
-/// 選ぶ判断が要るのは作るときだけで、作れた後に値が来ないことは ``AudioIn/state`` が名乗る。
-/// 鳴らす・止める口 (``SoundFile/play()`` ほか) も投げず、受けられない値は知らせて無視する。
+/// **作成時に投げ、フレームの処理中は投げない** ([ADR-0020] 決定 5)。失敗したときに別の方法を
+/// 選ぶ判断が要るのは作成時だけで、作成後に値が届かないことは ``AudioIn/state`` が示す。
+/// 再生・停止のメソッド (``SoundFile/play()`` ほか) も投げず、受け付けられない値は警告して無視する。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public enum AudioFailure: Error, Equatable, Sendable {
     /// その名前のファイルが見つからない。`searched` は探した場所を、探した順に並べたもの。
     case notFound(path: String, searched: [String])
-    /// 見つかったが、開けない。`location` は名前が解けた場所 (`..` を畳んだもの)、`reason` は
-    /// OS が名乗った開けなかった事情 (ディレクトリだった・読む権利が無い、など)。中身の形式とは
-    /// 関係が無いので、直すのは `location` にあるものの置き場か権利である
+    /// 見つかったが、開けない。`location` はパスを解決した場所 (`..` を正規化したもの)、`reason` は
+    /// OS が返した、開けなかった理由 (ディレクトリだった・読み取り権限が無い、など)。ファイルの形式とは
+    /// 関係が無いので、直すのは `location` にあるファイルの配置か権限である
     /// (``DataFailure/unopenable(path:location:reason:)`` と同じ形・
     /// [#2358](https://github.com/mokume-metal/mokume/issues/2358))。
     ///
-    /// **親のフォルダに入れず、在るかを確かめられない場合も、この case で運ぶ** — `location` は確かめられ
-    /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。説明は
-    /// 「見つかった」と言わず、資源の宣言の助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
+    /// **親フォルダに入れず、存在するかを確かめられない場合も、この case で返す** — `location` は確かめられ
+    /// なかった場所で、`reason` は `cannot tell whether it exists (Permission denied)` の形になる。エラーの説明は
+    /// 「見つかった」と言わず、リソースの宣言についての助言も出さない ([#2838](https://github.com/mokume-metal/mokume/issues/2838))。
     case unopenable(path: String, location: String, reason: String)
     /// 開けたが、音声として読めない (壊れている・対応していない形式)。
     case unreadable(path: String)
-    /// 標本が 1 つも無い。
+    /// サンプルが 1 つも無い。
     case empty
-    /// 標本化率が正でない。
+    /// サンプルレートが正でない。
     case invalidSampleRate(Float)
-    /// 走っている実行へ足せない所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
-    /// 後片付けの後・`Task` の中) で作る口を呼んだ。`call` は呼んだ口の名前 (`"loadSound(_:)"` など)。
-    /// 作ったものは走っている実行へ足さないと鳴らず解析もされないので、ファイルを読む前に断る。
+    /// 実行中のスケッチへ追加できない場所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
+    /// 終了処理の後・`Task` の中) で、作成用の関数を呼んだ。`call` は呼んだ関数の名前 (`"loadSound(_:)"` など)。
+    /// 作ったものは実行中のスケッチへ追加しないと再生も解析もされないので、ファイルを読む前にエラーにする。
     /// `setup()` などから呼び直す ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。
-    /// 渡した標本列が使えないときは、こちらより先にその場合 (``empty``・``invalidSampleRate(_:)``) を投げる。
+    /// 渡したサンプル列が使えないときは、こちらより先にその case (``empty``・``invalidSampleRate(_:)``) を投げる。
     ///
-    /// **名前に反して、スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした
-    /// `Task` から呼んでもこの場合になる (``ImageFailure/notRunning(call:)`` と同じ)。
-    /// 待つ口 (``Sketch/requestSound(_:)``) は別で、走っている実行の中で起こした `Task` から呼べる。
+    /// **名前に反して、スケッチの実行中にも起きる** — `draw()` が実行されている間に、そこで生成した
+    /// `Task` から呼んでもこの case になる (``ImageFailure/notRunning(call:)`` と同じ)。
+    /// 完了を待つ非同期の関数 (``Sketch/requestSound(_:)``) は別で、実行中のスケッチの中で生成した `Task` から呼べる。
     /// ``SketchPart/selectInput(_:)`` で選んだファイルなど、`Task` の中で読むなら、``Sketch/loadSound(_:)`` ではなくこちらを使う。
-    /// 呼べないのは、`init`・後片付けの後・`Task.detached` と、待っている最中にスケッチが終わったとき。
+    /// 呼べないのは、`init`・終了処理の後・`Task.detached` と、待っている最中にスケッチが終了したとき。
     case notRunning(call: String)
 }
 

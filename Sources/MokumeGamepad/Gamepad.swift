@@ -3,12 +3,12 @@
 
 import MokumeCore
 
-/// ゲームパッド 1 台の入り口。``Sketch/gamepads()`` が繋がったパッドごとに作り、走っている
-/// スケッチへ足す。
+/// ゲームパッド 1 台からの入力。``Sketch/gamepads()`` が接続されたパッドごとに作り、実行中の
+/// スケッチへ追加する。
 ///
-/// 毎フレーム呼ぶ口は無い。`draw()` の前に、そのときのスティックの傾きが ``leftStick`` に入り、
-/// 前のフレームの後に届いた釦の押し離しが**全部、届いた順に**当てられている ([ADR-0028] 決定 2 の
-/// 「落とさない列」)。
+/// 毎フレーム呼ぶメソッドは無い。`draw()` の前に、その時点のスティックの傾きが ``leftStick`` に入り、
+/// 前のフレームの後に届いたボタンの押下・解放が**すべて、届いた順に**反映されている ([ADR-0028] 決定 2 の
+/// 「イベントを取りこぼさないキュー」)。
 ///
 /// ```swift
 /// final class TwoPlayers: Sketch {
@@ -24,41 +24,41 @@ import MokumeCore
 /// }
 /// ```
 ///
-/// ## 抜かれたことが読める
+/// ## 切断を検出できる
 ///
-/// 抜かれると ``state`` が ``SourceState/disconnected`` になり、``leftStick`` は 0 に、押していた
-/// 釦は離したことになる。挿し直せば同じ物が ``SourceState/running`` に戻る。観測の応答の
-/// `inputs` にも、パッドごとに同じものが載る ([ADR-0028] 決定 4)。
+/// 切断されると ``state`` が ``SourceState/disconnected`` になり、``leftStick`` は 0 に、押されていた
+/// ボタンは離されたものとして扱う。再接続すれば同じインスタンスが ``SourceState/running`` に戻る。
+/// `observe` の応答の `inputs` にも、パッドごとに同じ状態が載る ([ADR-0028] 決定 4)。
 ///
 /// | 状態 | いつ |
 /// | --- | --- |
-/// | ``SourceState/running`` | 繋がっている |
-/// | ``SourceState/disconnected`` | 抜かれた。挿し直せば戻る |
-/// | ``SourceState/unavailable`` | 走っていないスケッチから作った・記録した列が空 |
-/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。足し直せば戻る |
+/// | ``SourceState/running`` | 接続されている |
+/// | ``SourceState/disconnected`` | 切断された。再接続すれば戻る |
+/// | ``SourceState/unavailable`` | 実行中でないスケッチから作った・記録した入力の配列が空 |
+/// | ``SourceState/stopped`` | スケッチから外した (``SketchPart/detach(_:)-(Inlet)``)。追加し直せば戻る |
 ///
-/// 許可は要らない。**入力が届くのは、スケッチの窓が前面にある間だけ**である (GameController の
-/// 既定。窓のキーやマウスと同じ)。
+/// 許可は要らない。**入力が届くのは、スケッチのウィンドウが前面にある間だけ**である (GameController の
+/// 既定の挙動。ウィンドウのキーボードやマウスの入力と同じ)。
 ///
 /// 振動・ライト・傾きの検出は持たない。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class Gamepad: Inlet {
-    /// 識別子。``Sketch/gamepads()`` が「機種名 #番号」の形で振る (`"Xbox Wireless Controller #1"`)。
+    /// 識別子。``Sketch/gamepads()`` が「機種名 #番号」の形で割り当てる (`"Xbox Wireless Controller #1"`)。
     ///
-    /// **抜いて挿し直しても同じ値になる。** 挿し直したパッドは、同じ機種名で抜かれている番号の
-    /// 小さいものへ戻る。番号は、同じ機種名のパッドが初めて繋がった順に 1 から振る。
+    /// **再接続しても同じ値になる。** 再接続したパッドには、同じ機種名で切断中の番号のうち
+    /// 最も小さいものが割り当てられる。番号は、同じ機種名のパッドが初めて接続された順に 1 から振る。
     ///
-    /// **同じ機種の 2 台を両方抜いて、逆の順に挿すと入れ替わる。** GameController が機材ごとの
-    /// 識別子を持たないためで、1 台ずつの抜き差しや、機種の違う台どうしでは入れ替わらない。
+    /// **同じ機種の 2 台を両方切断し、逆の順に接続すると入れ替わる。** GameController がデバイスごとの
+    /// 識別子を持たないためで、1 台ずつの抜き差しや、機種の異なるパッドどうしでは入れ替わらない。
     ///
-    /// 記録した入力の列を流すパッド (``Sketch/createGamepad(inputs:)``) は `"recorded #1"` の形になる。
+    /// 記録した入力を再生するパッド (``Sketch/createGamepad(inputs:)``) は `"recorded #1"` の形になる。
     public let id: String
 
     /// 左スティックの傾き。各軸 -1〜1 で、倒していなければ 0。
     ///
-    /// **縦軸は下向き**で、手前に倒すと正になる (``SketchPart/mouseY`` と同じ約束)。だから
-    /// `pos += pad.leftStick * 8` で、倒した向きへ画面の上の点が動く。
+    /// **縦軸は下向き**で、手前に倒すと正になる (``SketchPart/mouseY`` と同じ座標系)。そのため
+    /// `pos += pad.leftStick * 8` で、倒した向きへ画面上の点が動く。
     public private(set) var leftStick: Vector2 = Vector2(0, 0)
 
     let inbox: GamepadInbox
@@ -78,18 +78,18 @@ public final class Gamepad: Inlet {
         inbox = GamepadInbox(name: name, state: .unavailable)
     }
 
-    /// 出どころの状態。
+    /// 入力ソースの状態。
     public var state: SourceState { inbox.state }
 
-    /// その釦が押されているか。
+    /// 指定したボタンが押されているか。
     ///
     /// <!-- example: 文脈 var pad: Gamepad! -->
     /// ```swift
     /// circle(width / 2, height / 2, pad.isPressed(.a) ? 120 : 60)
     /// ```
     ///
-    /// フレームの頭の状態で答える。前のフレームの後に押して離した釦は、離した後なので偽になる。
-    /// 抜かれている間は、どの釦も偽。
+    /// フレームの開始時点の状態を返す。前のフレームの後に押して離したボタンは、離した後なので `false` になる。
+    /// 切断されている間は、どのボタンも `false`。
     public func isPressed(_ button: GamepadButton) -> Bool {
         pressed.contains(button)
     }

@@ -3,17 +3,17 @@
 
 import CoreAudio
 
-/// 繋がっている音の入力の機材 1 つ。``Sketch/audioInputDevices()`` が返し、
-/// ``Sketch/createAudioIn(device:)`` で使う 1 つを選ぶ。
+/// 接続されている音声入力デバイス 1 つ。``Sketch/audioInputDevices()`` が返し、
+/// ``Sketch/createAudioIn(device:)`` に渡して使うデバイスを選ぶ。
 ///
-/// **一覧の位置では選ばない** ([ADR-0028] 決定 3)。抜き差しで並びが変わるので、一覧から得た
+/// **一覧の位置 (インデックス) では選ばない** ([ADR-0028] 決定 3)。抜き差しで順序が変わるので、一覧から得た
 /// 識別子で選ぶ。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public nonisolated struct AudioDevice: Sendable, Equatable, Hashable {
-    /// 識別子。抜いて挿し直しても同じ値になる。
+    /// 識別子。再接続しても同じ値になる。
     public let id: String
-    /// 人が読む名前 (`"MacBook Pro Microphone"` など)。
+    /// 表示用の名前 (`"MacBook Pro Microphone"` など)。
     public let name: String
 
     init(id: String, name: String) {
