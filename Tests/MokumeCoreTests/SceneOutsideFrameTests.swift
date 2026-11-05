@@ -94,6 +94,8 @@ struct SceneOutsideFrameTests {
             Mouth("pop", .transform, .style) { $0.pop() },
             // 切り抜き (#1505)
             Mouth("clip", .clip) { $0.clip(0, 0, 8, 8) },
+            // 形の切り抜き (#2431)。フレームの外では閉包を走らせずに注意する
+            Mouth("clip { }", .clip) { $0.clip({}) },
             Mouth("noClip", .clip) { $0.noClip() },
             // 効果 (#1605)
             Mouth("effects", .effects) { $0.effects([.invert()]) },
@@ -282,6 +284,7 @@ struct SceneOutsideFrameTests {
         #expect(canvas.transform == .identity, "\(name) で変換が効いている")
         #expect(canvas.cameraStorage == nil, "\(name) で視点が効いている")
         #expect(canvas.style.clip == nil, "\(name) で切り抜きが効いている")
+        #expect(canvas.style.clipShape == nil, "\(name) で形の切り抜きが効いている")
         #expect(canvas.pendingEffects.isEmpty, "\(name) で効果が残っている")
         #expect(canvas.activeLights.isEmpty, "\(name) で光が残っている")
         #expect(canvas.activeSurroundings == nil, "\(name) で周囲が残っている")

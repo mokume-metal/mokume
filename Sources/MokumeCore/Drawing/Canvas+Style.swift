@@ -63,7 +63,8 @@ extension Canvas {
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
         // **切り抜きはフレームを越えない** (ADR-0021 決定 4)。描画先の座標で効き、形に焼き付か
         // ないので、形の組み立ての中ではフレームの中でも断る (同 決定 4 の追補・#1529)。値の
-        // 検めより先に断る
+        // 検めより先に断る。形の切り抜きの閉包の中では、閉包の中だと分かる文面で言う
+        if clipRecorder != nil { return refuseInsideClip(.nested) }
         guard admits(.clip) else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         // 数でない値・無限は、収めた先が決まらない。切り抜きを触らずに返す
@@ -71,8 +72,8 @@ extension Canvas {
         guard a.isFinite, b.isFinite, c.isFinite, d.isFinite else { return warnBadClipOnce() }
         let box = Self.resolveBox(a, b, c, d, mode: style.rectMode)
         // **矩形は呼んだ時点の変換で面へ写す** ([#2721])。手本 (Processing) の既定の描き手は、切り抜きを
-        // 今の変換の下の座標で読む。面に沿わない変換 (回転・剪断) は、写した 4 つの角を囲む面に沿った矩形で
-        // 切り抜く (切り抜きは面に沿った矩形しか持てない)。角を取って最小・最大を取るので、幅や高さが負の
+        // 今の変換の下の座標で読む。面に沿わない変換 (回転・剪断) は、写した 4 つの角を囲む面に沿った矩形を
+        // scissor に置き、回した矩形そのものを型板の 1 段に置く ([#2431])。角を取って最小・最大を取るので、幅や高さが負の
         // 矩形・鏡映しの変換は裏返して読まれる (手本が負の幅・高さを裏返して読むのと同じ)
         //
         // [#2721]: https://github.com/mokume-metal/mokume/issues/2721
@@ -132,13 +133,6 @@ extension Canvas {
         var maxX = max(max(p0x, p1x), max(p2x, p3x))
         let minY = min(min(p0y, p1y), min(p2y, p3y))
         var maxY = max(max(p0y, p1y), max(p2y, p3y))
-        if !(diagonal || anti) {
-            warnOnce(
-                .clipUnderRotation,
-                "clip(): the transform at this call rotates or shears, but a clip is an axis-aligned "
-                    + "rectangle, so it was set to the rectangle that encloses the transformed corners. "
-                    + "Write clip() before rotate() or shearX()/shearY() to clip the rectangle as it is")
-        }
         // 幅か高さが 0 の矩形は空のままにする。回した後の囲む矩形は 0 でなくなるが、変換の無いときに
         // 空の切り抜きが、回すと線の太さを持つ切り抜きになってはいけない
         if rawLeft == rawRight { maxX = minX }
@@ -153,20 +147,35 @@ extension Canvas {
         let clipRight = min(max(clipLeft, maxX), width)
         let clipBottom = min(max(clipTop, maxY), height)
         let clip = ClipRect(left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom)
+        // **回した・剪断した矩形は、型板の 1 段で切る** ([#2431])。scissor は囲む矩形のまま残し、型板が回した
+        // 矩形の外を落とす。矩形の `clip()` は置き換えなので、形の切り抜きの段も外す (面に沿う矩形では空にする)。
+        // 幅か高さが 0 の矩形は scissor が空なので、段を置かない
+        //
+        // [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+        let rotated: ClipLayers? =
+            diagonal || anti || rawLeft == rawRight || rawTop == rawBottom
+            ? nil
+            : Self.rectangleClipLayers(
+                SIMD2(p0x, p0y), SIMD2(p1x, p1y), SIMD2(p2x, p2y), SIMD2(p3x, p3y))
         // **正規化まで済ませた後で、効く切り抜きが変わるときだけ閉じる** (#2789)。列が持つのは閉じた
         // 時点の切り抜きなので、ビット列まで同じなら閉じても閉じなくても列の中身は同じになる
-        if let current = style.clip, current.isBitwiseEqual(to: clip) { return }
+        if let current = style.clip, current.isBitwiseEqual(to: clip), style.clipShape == nil, rotated == nil {
+            return
+        }
         closeBatch()
         style.clip = clip
+        style.clipShape = rotated
     }
 
     public func noClip() {
         // 切り抜きの無いフレームの外でも言う。フレームの外では何も変えない口も、書いた
         // ことを知らせる (変換の `resetMatrix()` / `popMatrix()` と同じ扱い・#970)
+        if clipRecorder != nil { return refuseInsideClip(.nested) }
         guard admits(.clip) else { return }
-        guard style.clip != nil else { return }
+        guard style.clip != nil || style.clipShape != nil else { return }
         closeBatch()
         style.clip = nil
+        style.clipShape = nil
     }
 
     /// 収めようのない切り抜きを、初回だけ知らせる。
@@ -336,6 +345,7 @@ extension Canvas {
                     paint: effectivePaint,
                     source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
                 clip: style.clip,
+                clipShape: style.clipShape,
                 // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
                 // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
                 // `closeSolidBatch` が視点行列と閉じた時点の光を持って閉じる
@@ -468,6 +478,7 @@ extension Canvas {
                     start: open.vertexStart, count: open.vertexCount,
                     indexStart: indexStart, indexCount: indexCount),
                 clip: style.clip,
+                clipShape: style.clipShape,
                 matrix: viewProjection,
                 lightRange: bakeActiveLights(),
                 material: style.material.receiving(shadow: style.receivesShadow),

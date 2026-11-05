@@ -21,20 +21,25 @@ import Testing
 )
 struct ClipTransformTests {
     /// 面 100×100 で、黒の下地に `body` が白く塗ったもの。`body` の後に面全体を白で塗る。
-    private func drawn(_ body: (Canvas) -> Void) throws -> (pixels: PixelBuffer, canvas: Canvas) {
+    ///
+    /// `rotated` は、`body` の後に回した矩形の段 (型板・``Canvas/Style/clipShape``) が置かれていたか。面に沿わない
+    /// 変換の下の矩形だけが段を持つ (#2431。それまでは囲む矩形で切って `clipUnderRotation` を知らせていた)。
+    private func drawn(_ body: (Canvas) -> Void) throws -> (pixels: PixelBuffer, canvas: Canvas, rotated: Bool) {
         let gpu = try RenderDevice()
         let canvas = try CanvasFixture.make(gpu: gpu, width: 100, height: 100)
+        var rotated = false
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
             body(canvas)
+            rotated = canvas.currentStyle.clipShape != nil
             // 変換と読み方を戻してから面全体を塗る。切り抜きは残る
             canvas.resetMatrix()
             canvas.rectMode(.corner)
             canvas.rect(0, 0, 100, 100)
         }
-        return (try canvas.target.readPixels(), canvas)
+        return (try canvas.target.readPixels(), canvas, rotated)
     }
 
     /// 白い画素の外接矩形 (`x`・`y` は両端を含む範囲)。白い画素が矩形になっていることも確かめる。
@@ -86,7 +91,7 @@ struct ClipTransformTests {
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 30...49 && box.y == 10...29)
         #expect(result.pixels[10, 10].red < 0.5, "変換を無視した位置 (0, 0)〜(20, 20) は切り抜かない")
-        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!result.rotated)
     }
 
     @Test("scale(2) の clip(10, 10, 20, 20) は (20, 20)〜(60, 60) を通す")
@@ -119,7 +124,7 @@ struct ClipTransformTests {
         }
         let mirroredBox = try #require(whiteBox(mirrored.pixels))
         #expect(mirroredBox.x == 40...69 && mirroredBox.y == 10...39)
-        #expect(!mirrored.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!mirrored.rotated)
 
         let quarter = try drawn { canvas in
             canvas.translate(50, 0)
@@ -128,7 +133,7 @@ struct ClipTransformTests {
         }
         let quarterBox = try #require(whiteBox(quarter.pixels))
         #expect(quarterBox.x == 15...44 && quarterBox.y == 10...29)
-        #expect(!quarter.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!quarter.rotated)
 
         let half = try drawn { canvas in
             canvas.translate(60, 60)
@@ -137,21 +142,36 @@ struct ClipTransformTests {
         }
         let halfBox = try #require(whiteBox(half.pixels))
         #expect(halfBox.x == 30...49 && halfBox.y == 30...49)
-        #expect(!half.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!half.rotated)
     }
 
-    @Test("回転 (45 度) の下の clip は、写した 4 つの角を囲む矩形で切り抜き、clip() の名前で 1 度だけ知らせる")
-    func rotationClipsToTheEnclosingRectangle() throws {
+    @Test("回転 (45 度) の下の clip は、回した矩形そのもので切り抜き、警告しない (#2431)")
+    func rotationClipsToTheRotatedRectangle() throws {
         let result = try drawn { canvas in
             canvas.translate(50, 10)
             canvas.rotate(Float.pi / 4)
             canvas.clip(0, 0, 20, 20)  // 写した角: (50, 10)・(64.1, 24.1)・(50, 38.3)・(35.9, 24.1)
-            canvas.clip(0, 0, 20, 20)  // 同じ呼び出しを繰り返しても、知らせるのは 1 度
         }
-        let box = try #require(whiteBox(result.pixels))
-        #expect(box.x == 36...63 && box.y == 10...37, "囲む矩形 (35.86…64.14, 10…38.28) の画素の中心の規則")
-        #expect(result.canvas.warnings.hasWarned(.clipUnderRotation))
-        #expect(result.canvas.warnings.message(for: .clipUnderRotation)?.hasPrefix("clip()") == true)
+        #expect(result.rotated)
+        // 回した正方形 (菱形) の中心と、各辺の内側は通す
+        #expect(result.pixels[50, 24].red > 0.5, "中心")
+        for (x, y) in [(50, 13), (61, 24), (50, 35), (39, 24)] {
+            #expect(result.pixels[x, y].red > 0.5, "菱形の内 (\(x), \(y))")
+        }
+        // 囲む矩形 (35.9…64.1, 10…38.3) の 4 隅は、菱形の外なので落とす (#2721 では通していた)
+        for (x, y) in [(37, 11), (62, 11), (37, 36), (62, 36)] {
+            #expect(result.pixels[x, y].red < 0.5, "囲む矩形の隅 (\(x), \(y))")
+        }
+        // 菱形の外の画素は、囲む矩形の外にも出ない
+        var outside = 0
+        for y in 0..<100 {
+            for x in 0..<100 where result.pixels[x, y].red > 0.5 && !(36...63 ~= x && 10...37 ~= y) { outside += 1 }
+        }
+        #expect(outside == 0)
+        // 画素の数は回した正方形の面積 (400) に近い (縁は画素の中心の規則で ±1 列)
+        var inside = 0
+        for y in 0..<100 { for x in 0..<100 where result.pixels[x, y].red > 0.5 { inside += 1 } }
+        #expect(abs(inside - 400) <= 40, "白い画素 \(inside)")
         #expect(!result.canvas.warnings.hasWarned(.badClip))
     }
 
@@ -179,7 +199,7 @@ struct ClipTransformTests {
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 0...99 && box.y == 0...99)
         #expect(!result.canvas.warnings.hasWarned(.badClip))
-        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!result.rotated)
     }
     // MARK: - 反証 r1 の取りこぼし
 
@@ -222,7 +242,7 @@ struct ClipTransformTests {
         }
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 15...44 && box.y == 10...30)
-        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!result.rotated)
 
         // 面から遠い所で回すと、`cos(π / 2)` の誤差 (-4.4e-8) が座標の大きさを掛けて縁を越える
         let far = try drawn { canvas in
@@ -232,7 +252,7 @@ struct ClipTransformTests {
         }
         let farBox = try #require(whiteBox(far.pixels))
         #expect(farBox.x == 0...99 && farBox.y == 10...30, "誤差で縁の行が落ちた")
-        #expect(!far.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!far.rotated)
     }
 
     @Test("数でない値になる読み方 (rectMode(.radius) の -∞ + ∞) は、回転の警告ではなく bad clip で断り、切り抜きを触らない")
@@ -245,7 +265,7 @@ struct ClipTransformTests {
         #expect(result.canvas.warnings.hasWarned(.clipNotResolvable))
         #expect(!result.canvas.warnings.hasWarned(.badClip) && !result.canvas.warnings.hasWarned(.clipTransformOverflow))
         #expect(result.canvas.warnings.message(for: .clipNotResolvable)?.hasPrefix("clip()") == true)
-        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!result.rotated)
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 10...39 && box.y == 10...39, "前の切り抜きのまま")
     }
@@ -269,7 +289,7 @@ struct ClipTransformTests {
         }
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x == 0...99 && box.y == 0...49)
-        #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(!result.rotated)
     }
 
     /// 幅か高さが 0 の矩形 (`rectMode` ごとの書き方) と、変換 (なし・45 度・90 度・鏡映し) の組。
@@ -312,7 +332,8 @@ struct ClipTransformTests {
             canvas.clip(0, 0, 40, 40)
         }
         #expect(whiteBox(result.pixels) == nil)
-        for key: Canvas.Warning in [.badClip, .clipNotResolvable, .clipTransformOverflow, .clipUnderRotation] {
+        #expect(!result.rotated)
+        for key: Canvas.Warning in [.badClip, .clipNotResolvable, .clipTransformOverflow] {
             #expect(!result.canvas.warnings.hasWarned(key), "\(key)")
         }
     }
@@ -340,7 +361,7 @@ struct ClipTransformTests {
                 canvas.rotate(angle)
                 canvas.clip(0, 1e6, 100, 50)
             }
-            #expect(result.canvas.warnings.hasWarned(.clipUnderRotation), "回転 \(angle) rad")
+            #expect(result.rotated, "回転 \(angle) rad")
         }
         // 丸めだけの 90 度刻みは、同じ遠さでも警告せず、縁の画素を保つ
         for angle: Float in [Float.pi / 2, Float.pi, -Float.pi / 2] {
@@ -349,7 +370,7 @@ struct ClipTransformTests {
                 canvas.rotate(angle)
                 canvas.clip(0, 1e6, 100, 50)
             }
-            #expect(!result.canvas.warnings.hasWarned(.clipUnderRotation), "回転 \(angle) rad")
+            #expect(!result.rotated, "回転 \(angle) rad")
         }
     }
 
@@ -361,7 +382,7 @@ struct ClipTransformTests {
             canvas.scale(1000, 1)
             canvas.clip(0, 9950, 0.1, 100)  // y = 9950…10050 で、剪断が x を約 2 画素ずらす
         }
-        #expect(result.canvas.warnings.hasWarned(.clipUnderRotation))
+        #expect(result.rotated)
         let box = try #require(whiteBox(result.pixels))
         #expect(box.x.lowerBound == 2, "剪断のずれ (約 2 画素) が 0 に潰された: \(box.x)")
     }

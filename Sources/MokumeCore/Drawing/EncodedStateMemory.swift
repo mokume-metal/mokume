@@ -26,6 +26,7 @@ struct EncodedStateMemory {
     private var frontFacing: MTLWinding?
     private var cullMode: MTLCullMode?
     private var clip: Canvas.ClipRect??
+    private var stencilReference: UInt32?
 
     init(
         bufferSlots: Int = ShapePipeline.bufferBindCount,
@@ -80,6 +81,13 @@ struct EncodedStateMemory {
     mutating func changes(clip rect: Canvas.ClipRect?) -> Bool {
         guard clip != Optional(rect) else { return false }
         clip = Optional(rect)
+        return true
+    }
+
+    /// 型板の参照値が、最後に設定したものと違うか。encoder の既定は 0 だが、記録は空から始めて 1 度は設定する。
+    mutating func changes(stencilReference value: UInt32) -> Bool {
+        guard stencilReference != value else { return false }
+        stencilReference = value
         return true
     }
 

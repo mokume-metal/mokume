@@ -165,6 +165,8 @@ extension Canvas {
         // 区間の外では置かず、組み立てた数も数えない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
         outlinesAssembledThisFrame += 1
+        // 形の切り抜きを記録しているなら、塗りの三角形だけを控える。線の設定は読まずに黙って無視する (#2431)
+        if let recorder = clipRecorder { return recordClipOutline(outline, into: recorder) }
         // ベクターへ書くなら、周と置くときの変換をここで控える (#3139)
         if let sink = vectorSink() {
             recordVectorOutline(
@@ -496,6 +498,15 @@ extension Canvas {
                 recipe: RingFillRecipe(
                     outline: outline, color: fillVertexColor, hasPicture: style.picture != nil,
                     transform: transform, uv: whiteUV)))
+    }
+
+    /// 形の切り抜きの記録へ、周の塗りの三角形を控える (``clip(_:)``)。塗りを持たない周は断る。
+    private func recordClipOutline(_ outline: Outline, into recorder: ClipRecorder) {
+        if currentShader != nil, !paintsWithGradient { return refuseInsideClip(.shader) }
+        guard outline.fills, style.hasFill else { return refuseInsideClip(.noFill) }
+        let start = vertices.count
+        fillInteriorTriangles(outline)
+        takeClipFill(recorder, from: start)
     }
 
     private func fillInteriorTriangles(_ outline: Outline) {

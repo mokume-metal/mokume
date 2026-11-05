@@ -30,6 +30,10 @@ extension Canvas {
         let savedPathRecorder = pathRecorder
         pathRecorder = nil
         defer { pathRecorder = savedPathRecorder }
+        // 形の切り抜きの記録 (``clip(_:)``) も同じ。中の `createShape { }` の塗りが外の切り抜きへ漏れない
+        let savedClipRecorder = clipRecorder
+        clipRecorder = nil
+        defer { clipRecorder = savedClipRecorder }
         closeBatch()
         // **入口の長さは、局所変数ではなく溜め場の側に積む** ([#2850])。組み立ての途中で置いた側を描き切る
         // 逃げ道 (``flushBeforeBuild()``) が、組み立てている区間を溜め場の先頭へ引き戻すとき、入れ子の
@@ -98,7 +102,7 @@ extension Canvas {
         // 断った `beginDraw()` の数は、一番外の出口で下ろす (#2834)
         if !savedRecording { refusedBeginDrawsInsideShape = 0 }
         // 記録の中で積んだまま抜けた段は、名指してから捨てる (#2399)
-        warnIfStacksLeftOpen(before: pathRecorder == nil ? "createShape { … }" : "createPath { … }")
+        warnIfStacksLeftOpen(before: "\(assemblyCall) { … }")
         restore(savedStacks)
         closeBatch()
         // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**
@@ -1376,6 +1380,7 @@ extension Canvas.Style {
     func keepingFrameFields(of current: Self) -> Self {
         var style = self
         style.clip = current.clip
+        style.clipShape = current.clipShape
         style.material = current.material
         style.castsShadow = current.castsShadow
         style.receivesShadow = current.receivesShadow

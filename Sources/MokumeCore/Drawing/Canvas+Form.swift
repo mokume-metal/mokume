@@ -47,8 +47,11 @@ extension Canvas {
     ///
     /// 貼る絵は**塗りにしか効かない**ので、塗りを持たない線と点は絵が束ねてあっても
     /// この経路でよい。利用者の断片は塗りも輪郭も塗るので、どちらも三角形の経路へ。
+    ///
+    /// 形の切り抜きを記録している間 (``clip(_:)``) は使わない。型板には三角形の塗りを描く (距離関数の縁は
+    /// 型板に描けない)。
     func formAllowed(fills: Bool) -> Bool {
-        currentShader == nil && !(fills && style.hasFill && style.picture != nil)
+        currentShader == nil && !(fills && style.hasFill && style.picture != nil) && clipRecorder == nil
     }
 
     /// 基本図形を溜める側へ移る。**開いている平面の列・立体の列はここで閉じる**
@@ -109,6 +112,7 @@ extension Canvas {
                     source: .form, start: open.instanceStart, count: count,
                     indexStart: 0, indexCount: 0),
                 clip: style.clip,
+                clipShape: style.clipShape,
                 matrix: projection,
                 lightRange: 0..<0,
                 material: .default,

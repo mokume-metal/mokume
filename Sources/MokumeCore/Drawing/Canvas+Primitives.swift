@@ -347,15 +347,18 @@ extension Canvas {
                 closure: mode.map(\.closure) ?? .standard),
             at: center)
         defer { resumeVector(held) }
+        // 形の切り抜きの記録 (``clip(_:)``) は塗りだけを読むので、塗りを持たない弧の線の回は描かない。
+        // 描くと、塗りのある弧が「塗りの無い形」として断られる (#2431)
+        let strokesArc = clipRecorder == nil
         switch mode {
         case nil:
             draw(outline(.sectorFill))
-            draw(outline(.arcLine))
+            if strokesArc { draw(outline(.arcLine)) }
         case .chord:
             draw(outline(.chord))
         case .open:
             draw(outline(.chordFill))
-            draw(outline(.arcLine))
+            if strokesArc { draw(outline(.arcLine)) }
         case .pie:
             // 呼ぶ側が扇を 1 つの形で出す。ここへは来ない
             preconditionFailure("a pie is placed as a single form")

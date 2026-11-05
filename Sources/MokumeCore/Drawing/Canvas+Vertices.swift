@@ -417,6 +417,10 @@ extension Canvas {
             recordPathShape(recorder, primitives: primitives, points: points)
             return
         }
+        // 形の切り抜きを記録しているなら、塗りの三角形だけを控えて、描かない (``clip(_:)``)
+        if let recorder = clipRecorder {
+            return recordClipShape(recorder, primitives: primitives, points: points, evenOdd: evenOdd)
+        }
         // ベクターへ書くなら、三角形に割る前の周と穴をここで控える。割った後は三角形の頂点だけが残る (#3139)
         if let sink = vectorSink() {
             recordVectorShape(sink, primitives: primitives, points: points, evenOdd: evenOdd)
@@ -458,6 +462,31 @@ extension Canvas {
                     emitStroke(primitive, points: points, placed: placed)
                 }
             }
+        }
+    }
+
+    /// 並べ終えた頂点の塗りの三角形を、形の切り抜きの記録へ控える (``clip(_:)``・#2431)。
+    ///
+    /// 三角形は描くときと同じ割り方 (``fillTriangles(of:evenOdd:points:into:)``・穴・evenOdd・交わった周を含む) で
+    /// 求め、いまの変換で出す座標へ写す。線は読まない。奥行きを持つ形と利用者の断片の塗りは断る。
+    private func recordClipShape(
+        _ recorder: ClipRecorder, primitives: [Primitive], points: [BuildingVertex], evenOdd: Bool
+    ) {
+        if shapeHasDepth { return refuseInsideClip(.solid) }
+        if currentShader != nil, !paintsWithGradient { return refuseInsideClip(.shader) }
+        var fills = false
+        for primitive in primitives where primitive.fills { fills = true }
+        guard fills, style.hasFill else { return refuseInsideClip(.noFill) }
+        var points = points
+        var triangles: [(Int, Int, Int)] = []
+        for primitive in primitives {
+            fillTriangles(of: primitive, evenOdd: evenOdd, points: &points, into: &triangles)
+        }
+        recorder.positions.reserveCapacity(recorder.positions.count + triangles.count * 3)
+        for (a, b, c) in triangles {
+            recorder.positions.append(transform.placed(x: points[a].position.x, y: points[a].position.y))
+            recorder.positions.append(transform.placed(x: points[b].position.x, y: points[b].position.y))
+            recorder.positions.append(transform.placed(x: points[c].position.x, y: points[c].position.y))
         }
     }
 

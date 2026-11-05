@@ -263,7 +263,9 @@ extension Canvas {
     }
 
     /// いま形を組み立てている口の名前。断りの文面が、呼んだ口を名乗る。
-    var assemblyCall: String { pathRecorder == nil ? "createShape" : "createPath" }
+    var assemblyCall: String {
+        clipRecorder != nil ? "clip" : pathRecorder == nil ? "createShape" : "createPath"
+    }
 
     /// 形に焼き付かない設定を、いま書いてよいか。**書けなければ、なぜ効かないかを種類ごとに
     /// 1 度知らせて `false` を返す** ([#1529]・[#1684])。
