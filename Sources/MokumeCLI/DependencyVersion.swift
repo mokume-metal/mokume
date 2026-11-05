@@ -30,14 +30,14 @@ nonisolated enum DependencyVersion {
 
     /// 何で固定されているか。
     ///
-    /// **版と改訂を分ける。** 版が読めないことには 2 つの意味があり (枝や改訂で固定した /
+    /// **版と改訂を分ける。** 版が読めないことには 2 つの意味があり (ブランチや改訂で固定した /
     /// そもそもまだ解決されていない)、混ぜるとビルドの置き場の鍵が**違う改訂の mokume を
     /// 同じ部屋へ入れる** — 実測で、そうすると互いを作り直させ続けて増分ビルドが 1.6 秒
     /// から 8 秒へ落ちる ([#1055](https://github.com/mokume-metal/mokume/issues/1055))。
     enum Pin: Equatable {
         /// 版で固定されている。
         case version(String)
-        /// 枝または改訂で固定されている。
+        /// ブランチまたは改訂で固定されている。
         case revision(String)
     }
 
@@ -50,7 +50,7 @@ nonisolated enum DependencyVersion {
     enum State: Equatable {
         /// 版で固定されている。
         case version(String)
-        /// 枝または改訂で固定されている。リリースの版ではないので、公開 API の一覧の資産が無い。
+        /// ブランチまたは改訂で固定されている。リリースの版ではないので、公開 API の一覧の資産が無い。
         case revision(String)
         /// `Package.swift` はあるが `Package.resolved` が無い。**作ったばかりのスケッチの形。**
         /// パスで指している場合も、解決するまでは同じ形なので区別できない。

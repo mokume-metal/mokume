@@ -33,7 +33,7 @@
 
     ok                前回の点数の commit が木にあり、HEAD の祖先である → 範囲を回す
     first             追跡用の Issue / 区画 / 起点が無い (最初の回) → 範囲は回さず、起点を置く
-    missing-commit    起点が木に無い、または HEAD の祖先でない (履歴の書き換え・別の枝の run) → 範囲は回さず、
+    missing-commit    起点が木に無い、または HEAD の祖先でない (履歴の書き換え・別のブランチの run) → 範囲は回さず、
                       報告が名乗ったうえで起点を HEAD へ置き直す (自分では治らない状態を毎日赤にしない)
     unreadable-issue  gh が失敗した / 一覧の形が違う → 範囲は回さない
     unreadable-state  区画はあるが状態を読めない (broken) → 範囲は回さない
@@ -226,7 +226,7 @@ def issue_body(number):
 
 
 def is_ancestor(head, repo_dir="."):
-    """head が木にあり、HEAD の祖先か。別の枝の run や履歴の書き換えで外れる。"""
+    """head が木にあり、HEAD の祖先か。別のブランチの run や履歴の書き換えで外れる。"""
     have = subprocess.run(["git", "-C", repo_dir, "cat-file", "-e", f"{head}^{{commit}}"], capture_output=True)
     if have.returncode != 0:
         return False
@@ -256,7 +256,7 @@ def previous(repo_dir="."):
 NOTES = {
     "ok": "{detail}",
     "first": "{detail}。範囲は回さず、束を回して起点を置く",
-    "missing-commit": "{detail} (履歴の書き換えか、main 以外の枝の run)。範囲は回さない。報告が名乗って起点を置き直す",
+    "missing-commit": "{detail} (履歴の書き換えか、main 以外のブランチの run)。範囲は回さない。報告が名乗って起点を置き直す",
     "unreadable-issue": "{detail}。範囲は回さず、起点も動かさない",
     "unreadable-state": "{detail}。範囲は回さない。次の報告が区画を作り直してコメントで名乗る",
 }

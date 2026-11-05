@@ -330,7 +330,7 @@ struct DependencyVersionTests {
         #expect(DoctorCommand.dependencyLine(nil, state: .notPinned).contains("pointing at a path does this"))
     }
 
-    /// 読めない `Package.resolved` や枝・改訂の固定も、「パスで指している」とは言わない (#3419)。
+    /// 読めない `Package.resolved` やブランチ・改訂の固定も、「パスで指している」とは言わない (#3419)。
     @Test("読めない Package.resolved や改訂の固定を、パスで指しているとは言わない")
     func doesNotBlameAPathWhenTheVersionIsUnknownForOtherReasons() {
         let unreadable = DoctorCommand.dependencyLine(nil, state: .unreadable)

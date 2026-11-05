@@ -216,7 +216,7 @@ class HostScheduledWorkflowTest(unittest.TestCase):
 
     def test_mutation_report_は_main_の_run_だけが_Issue_に書き_同時には_1_つだけ走る(self):
         report = self.jobs["mutation-report"]
-        # 共有の追跡 Issue を、枝の dispatch が書き換えない (指摘 7)
+        # 共有の追跡 Issue を、ブランチの dispatch が書き換えない (指摘 7)
         write = re.search(r"- name: 点数を追跡用の Issue に置く\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)",
                           report, re.S)
         dry = re.search(r"- name: 点数を job の要約に出す[^\n]*\n        if: ([^\n]*)\n.*?run: \|\n(.*?)(?=\n      - |\Z)",

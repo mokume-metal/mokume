@@ -542,7 +542,7 @@ enum DoctorCommand {
     ) -> String {
         guard let dependency else {
             // **版が引けない理由は、読めた事実だけで言う** (#3419)。作ったばかりのスケッチ・読めない
-            // `Package.resolved`・枝や改訂の固定を、「パスで指している」と決めつけない
+            // `Package.resolved`・ブランチや改訂の固定を、「パスで指している」と決めつけない
             let prefix = "mokume dependency: \(unknown) — "
             switch state {
             case .unresolved:

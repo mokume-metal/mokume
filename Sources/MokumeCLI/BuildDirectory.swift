@@ -250,7 +250,7 @@ nonisolated enum BuildDirectory {
     static func keySegment(pin: DependencyVersion.Pin?) -> String? {
         switch pin {
         case .version(let version): DependencyVersion.isVersion(version) ? version : nil
-        // 枝や改訂で固定したものは版を名乗らない。**版と混ぜない** — 混ざると
+        // ブランチや改訂で固定したものは版を名乗らない。**版と混ぜない** — 混ざると
         // 互いを作り直させ続ける
         case .revision(let revision): DependencyVersion.isRevision(revision) ? revisionSegment(revision) : nil
         case nil: nil

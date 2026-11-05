@@ -145,7 +145,7 @@ struct SwiftPMTests {
                     ]}
                     """.utf8)))
         #expect(resolved.version(of: "mokume") == "0.4.0")
-        // 枝で固定した依存に版は無い。**断定できないときは断定しない**
+        // ブランチで固定した依存に版は無い。**断定できないときは断定しない**
         #expect(resolved.version(of: "other") == nil)
         #expect(resolved.version(of: "absent") == nil)
     }

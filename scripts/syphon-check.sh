@@ -23,7 +23,7 @@
 #
 # 作業場所 (無ければ作る) に mokume-syphon を clone し、記録をそこへ書く。
 #   SYPHON_REPO  clone 元 (既定は本体と同じ owner の mokume-syphon)
-#   SYPHON_REF   取る枝 (既定 main)
+#   SYPHON_REF   取るブランチ (既定 main)
 #
 # ## 終了コード
 #
