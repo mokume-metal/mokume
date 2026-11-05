@@ -13,7 +13,7 @@ import MokumeCore
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 extension Sketch {
 
-    /// マイク (音の入力の機材) を開く。音を解析した値は ``AudioIn`` から読む。
+    /// マイク (音声入力デバイス) を開く。音を解析した値は ``AudioIn`` から読む。
     ///
     /// ```swift
     /// final class Pulse: Sketch {
@@ -26,18 +26,18 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - **呼んだときだけ機材を開く。** `import mokume` しただけでマイクが開いたり、許可の
+    /// - **呼んだときに初めてデバイスを開く。** `import mokume` しただけでマイクが開いたり、許可の
     ///   ダイアログが出たりはしない
-    /// - チャンネルが複数あれば、平均して 1 つにしてから解析する
-    /// - **機材が無くても作れる。** ``AudioIn/state`` が ``SourceState/unavailable`` になり、
-    ///   挿されたら始まる。選んだ機材が抜かれたら ``SourceState/disconnected`` になり、挿し直せば戻る
-    /// - 初めて使うときは OS が許可を求める。束ねずに動かしている間は、許可はスケッチを
-    ///   起動した端末のアプリに付く。束ねるときは `mokume-app.json` に `microphoneUsage` を書く
+    /// - チャンネルが複数あれば、平均して 1 チャンネルにしてから解析する
+    /// - **デバイスが無くても作れる。** ``AudioIn/state`` が ``SourceState/unavailable`` になり、
+    ///   接続されたら開始する。選んだデバイスが切断されたら ``SourceState/disconnected`` になり、再接続すれば戻る
+    /// - 初めて使うときは OS が許可を求める。アプリにバンドルせずに実行している間は、許可はスケッチを
+    ///   起動したターミナルのアプリに付く。バンドルするときは `mokume-app.json` に `microphoneUsage` を書く
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で
-    /// 呼ぶと、機材を開かずに何も受けない入力を返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。それ以外 (初期化子の中・終了処理の後・`Task` の中) で
+    /// 呼ぶと、デバイスを開かずに何も受け取らない入力を返し、この関数の名前を添えて 1 度だけ警告する。
     ///
-    /// - Parameter device: 使う機材 (``audioInputDevices()`` から選ぶ)。省けば既定の入力。
+    /// - Parameter device: 使うデバイス (``audioInputDevices()`` から選ぶ)。省略すると既定の入力。
     public func createAudioIn(device: AudioDevice? = nil) -> AudioIn {
         let audio = AudioIn(
             device: device, name: device.map { "microphone: \($0.name)" } ?? "microphone",
@@ -46,7 +46,7 @@ extension Sketch {
         return audio
     }
 
-    /// 音声ファイルを、マイクの代わりに解析する。**鳴らさない。機材も許可も使わない。**
+    /// 音声ファイルを、マイクの代わりに解析する。**再生しない。デバイスも許可も使わない。**
     ///
     /// <!-- example: 文脈 var song: AudioIn? -->
     /// ```swift
@@ -59,25 +59,25 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 各フレームでは、前のフレームの時刻からそのフレームの時刻までに進んだ区間の標本を全部解析する
-    /// (値の意味は ``AudioIn`` と同じ)。終わりまで行けば始まりへ戻る。**どの区間を解析するかはフレームの
-    /// 時刻だけで決まる**ので、固定の時計で書き出すと、何度書き出しても同じフレームが同じ値を受け取る
-    /// ([ADR-0028] 決定 7)。**外して足し直しても、窓はフレームの時刻だけで決まる** (外していた間の標本は届かず、
-    /// 足し直した後のフレームは、外さずに回したときと同じ窓を解析する。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。開いた最初のフレームと、時間を止めている間 (``SketchPart/pauseTime()``) は
-    /// 標本が進まないので、何も届かず (``AudioIn/isNewFrame`` が false)、値は前のまま (最初は無音)。
-    /// 時刻を指定した観測の枚は、その秒で終わる 1 フレームぶんの区間の値を見せる (映すコマと同じ秒の音)。観測の枚の後の
-    /// 通常の枚は、観測が無かったときと同じ値になる。
-    /// マイクを使うスケッチを、機材の無い場所で確かめるときにも使う。
+    /// 各フレームでは、前のフレームの時刻からそのフレームの時刻までに進んだ区間のサンプルをすべて解析する
+    /// (値の意味は ``AudioIn`` と同じ)。末尾まで進むと先頭へ戻る。**どの区間を解析するかはフレームの
+    /// 時刻だけで決まる**ので、固定クロックで書き出すと、何度書き出しても同じフレームが同じ値を受け取る
+    /// ([ADR-0028] 決定 7)。**外して追加し直しても、解析する区間はフレームの時刻だけで決まる** (外していた間のサンプルは届かず、
+    /// 追加し直した後のフレームは、外さずに実行したときと同じ区間を解析する。時刻どおりに進む・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。開いた最初のフレームと、時間を止めている間 (``SketchPart/pauseTime()``) は
+    /// サンプルが進まないので、何も届かず (``AudioIn/isNewFrame`` が false)、値は前のまま (最初は無音)。
+    /// 時刻を指定した `observe` のフレームは、その秒で終わる 1 フレームぶんの区間の値を返す (撮るフレームと同じ時刻の音)。`observe` のフレームの後の
+    /// 通常のフレームは、`observe` が無かったときと同じ値になる。
+    /// マイクを使うスケッチを、デバイスの無い環境で確かめるときにも使う。
     ///
-    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作るときに 1 度だけで、
-    /// 全体を標本列として持つ。
+    /// 探す場所は ``SketchPart/loadImage(_:)`` と同じ (``SketchPart/assetURL(_:)``)。読み込みは作成時に 1 度だけで、
+    /// 全体をサンプル列としてメモリに持つ。
     ///
     /// - Parameter file: 音声ファイルの名前。macOS が読める形式 (WAV・AIFF・CAF・MP3・
-    ///   AAC/M4A・FLAC など。動画の容器 (`.mov`・`.mp4`) は音声トラックを読む)。
-    /// - Throws: 見つからない・見つかったが開けない (ディレクトリだった・読む権利が無い。解けた場所が載る
-    ///   ``AudioFailure/unopenable(path:location:reason:)``)・音声として読めない・標本が 1 つも無いとき。
-    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
-    ///   ファイルを読む前に ``AudioFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   AAC/M4A・FLAC など。動画のコンテナ (`.mov`・`.mp4`) は音声トラックを読む)。
+    /// - Throws: 見つからない・見つかったが開けない (ディレクトリだった・読み取り権限が無い。解決した場所が入る
+    ///   ``AudioFailure/unopenable(path:location:reason:)``)・音声として読めない・サンプルが 1 つも無いとき。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、
+    ///   ファイルを読む前に ``AudioFailure/notRunning(call:)`` を投げる (プロセスはクラッシュしない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createAudioIn(file: String) throws(AudioFailure) -> AudioIn {
@@ -88,7 +88,7 @@ extension Sketch {
         }
     }
 
-    /// 手元の標本列を、マイクの代わりに解析する。**鳴らさない。機材も許可も使わない。**
+    /// 用意したサンプル列を、マイクの代わりに解析する。**再生しない。デバイスも許可も使わない。**
     ///
     /// ```swift
     /// final class Beat: Sketch {
@@ -108,14 +108,14 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 解析する区間の決まり方は ``createAudioIn(file:)`` と同じで (外して足し直したときも)、終わりまで行けば始まりへ戻る。
+    /// 解析する区間の決まり方は ``createAudioIn(file:)`` と同じで (外して追加し直したときも)、末尾まで進むと先頭へ戻る。
     ///
     /// - Parameters:
-    ///   - samples: 標本 (-1〜1 が全振幅)。1 チャンネル。
-    ///   - sampleRate: 1 秒あたりの標本の数。
-    /// - Throws: 標本が 1 つも無いか、標本化率が正でないとき。使える標本列を `setup()`・`draw()`・入力の
-    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと ``AudioFailure/notRunning(call:)``
-    ///   (プロセスは落ちない)。
+    ///   - samples: サンプル (-1〜1 がフルスケール)。1 チャンネル。
+    ///   - sampleRate: サンプルレート (1 秒あたりのサンプル数)。
+    /// - Throws: サンプルが 1 つも無いか、サンプルレートが正でないとき。使えるサンプル列を `setup()`・`draw()`・入力の
+    ///   コールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと ``AudioFailure/notRunning(call:)`` を投げる
+    ///   (プロセスはクラッシュしない)。
     public func createAudioIn(samples: [Float], sampleRate: Float) throws(AudioFailure) -> AudioIn {
         guard !samples.isEmpty else { throw .empty }
         guard sampleRate > 0, sampleRate.isFinite else { throw .invalidSampleRate(sampleRate) }
@@ -124,7 +124,7 @@ extension Sketch {
         }
     }
 
-    /// 繋がっている音の入力の機材の一覧。``createAudioIn(device:)`` で 1 つを選ぶのに使う。
+    /// 接続されている音声入力デバイスの一覧。``createAudioIn(device:)`` で 1 つを選ぶのに使う。
     ///
     /// ```swift
     /// func setup() {

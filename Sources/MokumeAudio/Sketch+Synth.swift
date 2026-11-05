@@ -25,7 +25,7 @@ extension Sketch {
 
     // MARK: - オシレータ
 
-    /// 正弦波のオシレータを作る。鳴らすのは ``Oscillator/play(_:_:_:_:)`` か ``SynthSource/play()`` を
+    /// 正弦波のオシレータを作る。音が出るのは ``Oscillator/play(_:_:_:_:)`` か ``SynthSource/play()`` を
     /// 呼んでから。
     ///
     /// <!-- example: 文脈 var osc: SinOsc? -->
@@ -42,14 +42,14 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - **呼んだときだけ音の流れへ入る。** `import mokume` しただけで鳴ったり、出力の機材が
+    /// - **呼んだときに初めてオーディオストリームに加わる。** `import mokume` しただけで音が出たり、出力デバイスが
     ///   開いたりはしない。許可も要らない
-    /// - 作った音は ``Oscillator`` の口で操作し、``SynthSound`` の値で解析できる
-    /// - 窓に出している間は実際に鳴り、固定の時計で `.mov` へ書き出すと、動画の音声トラックに載る
-    ///   (``SynthSound``)。録っていない書き出しでは鳴らさずに、同じ操作から同じ値を解析できる
+    /// - 作った音は ``Oscillator`` のメソッドで操作し、``SynthSound`` のプロパティで解析できる
+    /// - ウィンドウを表示している間は実際に音が出て、固定クロックで `.mov` へ書き出すと、動画の音声トラックに入る
+    ///   (``SynthSound``)。録音しない書き出しでは音を出さずに、同じ操作から同じ値を解析できる
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で
-    /// 呼んで、音の流れを走っている実行へ足せなければ、鳴らない音を返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。それ以外 (初期化子の中・終了処理の後・`Task` の中) で
+    /// 呼んで、オーディオストリームを実行中のスケッチへ追加できなければ、音の出ないインスタンスを返し、この関数の名前を添えて 1 度だけ警告する。
     public func createSinOsc() -> SinOsc {
         SinOsc(stage: SynthStage.stage(for: self))
     }
@@ -95,8 +95,8 @@ extension Sketch {
 
     // MARK: - ノイズ
 
-    /// 白色雑音を作る。鳴らすのは ``Noise/play(_:_:_:)`` か ``SynthSource/play()`` を呼んでから。
-    /// 呼んだときの決まりは ``createSinOsc()`` と同じ。
+    /// ホワイトノイズを作る。音が出るのは ``Noise/play(_:_:_:)`` か ``SynthSource/play()`` を呼んでから。
+    /// 呼んだときの規則は ``createSinOsc()`` と同じ。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise? -->
     /// ```swift
@@ -124,7 +124,7 @@ extension Sketch {
 
     // MARK: - 包絡
 
-    /// 包絡 (音の大きさの形) を作る。かけるのは ``Env/play(_:_:_:_:_:)``。
+    /// エンベロープ (音量の時間変化) を作る。適用するのは ``Env/play(_:_:_:_:_:)``。
     ///
     /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
     /// ```swift
@@ -137,15 +137,15 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 包絡は音を持たず、作っても数に入らない。
+    /// エンベロープは音を持たず、作っても同時に存在できる音の数の上限には数えない。
     public func createEnv() -> Env {
         Env()
     }
 
     // MARK: - エフェクト
 
-    /// 低域を通す濾波器を作る。通す音は ``SoundEffect/process(_:)`` で渡す。
-    /// 呼んだときの決まりは ``createSinOsc()`` と同じ。
+    /// ローパスフィルタを作る。フィルタに通す音は ``SoundEffect/process(_:)`` で渡す。
+    /// 呼んだときの規則は ``createSinOsc()`` と同じ。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise?; var filter: LowPass? -->
     /// ```swift
@@ -160,7 +160,7 @@ extension Sketch {
         LowPass(stage: SynthStage.stage(for: self))
     }
 
-    /// 高域を通す濾波器を作る。使い方は ``createLowPass()`` と同じ。
+    /// ハイパスフィルタを作る。使い方は ``createLowPass()`` と同じ。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise?; var filter: HighPass? -->
     /// ```swift
@@ -175,7 +175,7 @@ extension Sketch {
         HighPass(stage: SynthStage.stage(for: self))
     }
 
-    /// 帯域を通す濾波器を作る。使い方は ``createLowPass()`` と同じ。
+    /// バンドパスフィルタを作る。使い方は ``createLowPass()`` と同じ。
     ///
     /// <!-- example: 文脈 var noise: WhiteNoise?; var band: BandPass? -->
     /// ```swift
@@ -223,7 +223,7 @@ extension Sketch {
 
     // MARK: - 音の時計
 
-    /// いまの音の時計 (秒)。合成した音の予約 (`play(at:)`・``Env/play(_:_:_:_:_:at:)``) が読む時計で、次の拍の頭を
+    /// 現在のオーディオクロック (秒)。合成音の予約 (`play(at:)`・``Env/play(_:_:_:_:_:at:)``) が参照するクロックで、次のビートの頭を
     /// 求めるのに使う。
     ///
     /// <!-- example: 文脈 var osc: SinOsc?; var env: Env? -->
@@ -236,23 +236,23 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// **起点は、最初の合成した音を作ったときで、そこが 0 秒。** スケッチの始まりではないので、
-    /// ``SketchPart/time`` (スケッチの始まりから数える。``SketchPart/pauseTime()`` で止まる)・``SoundFile/position``
-    /// (ファイルの先頭からの位置)・`.mov` の音声トラックの時刻 (録り始めが 0) とは、値が一致しない。
-    /// **合成した音を 1 つも作っていなければ、いつも 0 を返す** — ``SoundFile`` だけのスケッチでは読めない
+    /// **起点は、最初の合成音を作ったときで、そこが 0 秒。** スケッチの開始時点ではないので、
+    /// ``SketchPart/time`` (スケッチの開始から数える。``SketchPart/pauseTime()`` で止まる)・``SoundFile/position``
+    /// (ファイルの先頭からの位置)・`.mov` の音声トラックの時刻 (録画開始が 0) とは、値が一致しない。
+    /// **合成音を 1 つも作っていなければ、常に 0 を返す** — ``SoundFile`` だけのスケッチでは使えない
     /// (``SoundFile/position`` を使う)。
     ///
-    /// - 合成した音を `setup()` で作ったスケッチを 60 fps の固定の時計で回すと、`frameCount` が 121 の `draw()` で
+    /// - 合成音を `setup()` で作ったスケッチを 60 fps の固定クロックで実行すると、`frameCount` が 121 の `draw()` で
     ///   2.0 を返す (`SoundFile` の `position` と同じ数え方)
     /// - ``SketchPart/pauseTime()`` でも止まらず、``SketchPart/jumpTime(_:)`` でも飛ばない (音を進めるのは
-    ///   音の時計で、``SynthSound`` と同じ)
-    /// - 書き出し (固定の時計) では、フレームの数から決まるので、同じフレームはいつも同じ値を返す。窓では、
-    ///   音の側が**実際に作った標本の数**から読む (`clock: .frames` の窓も)。処理が落ちて音が遅れた間は、
+    ///   オーディオクロックで、``SynthSound`` と同じ)
+    /// - 書き出し (固定クロック) では、フレーム数から決まるので、同じフレームは常に同じ値を返す。ウィンドウでは、
+    ///   オーディオスレッドが**実際に生成したサンプル数**から読む (`clock: .frames` のウィンドウも)。処理が追いつかず音が遅れた間は、
     ///   ``SketchPart/time`` とずれうる
-    /// - 倍精度で、長く動かしても標本に揃う
-    /// - 読むのに錠は取らず、音の側を待たせない
+    /// - 倍精度で、長時間動かしてもサンプル単位の精度を保つ
+    /// - 読み取りにロックを取らず、オーディオスレッドを待たせない
     ///
-    /// 手本は Tone.js の `Tone.now()` と Web Audio の `AudioContext.currentTime`。
+    /// Tone.js の `Tone.now()` と Web Audio の `AudioContext.currentTime` に当たる。
     public var soundTime: Double {
         SynthStage.existing(for: self)?.soundSeconds ?? 0
     }
