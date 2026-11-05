@@ -301,6 +301,18 @@ extension Canvas {
         var pointCoverage: Float
         /// 片のうちいちばん広い太さ (描く画素)。重なりを引く相手を探す幅に使う。
         var widest: Float
+        /// 形自身の座標の原点が落ちる、**描く画素の絶対座標** (置き場所の平行移動と線の半画素の寄せを含む)。
+        /// 開いた端を描く画素の列 (行) の境目で切るのに使う (``thinEndCuts(_:thin:base:)``・#3745)。置き場所ごとに
+        /// 位相が変わる所 (畳む雛形) では `nil` で、端は線に垂直に切る。
+        var origin: SIMD2<Float>? = nil
+    }
+
+    /// 行列 `matrix` で置いた形自身の座標の原点が落ちる、描く画素の絶対座標 (``ThinOutline/origin``)。線の頂点は
+    /// 置いた後に出す画素で (+0.5, +0.5) 寄せる (``strokePoint(x:y:)``・保持した形は置くとき) ので、それを含める。
+    func drawnOrigin(of matrix: simd_float4x4) -> SIMD2<Float> {
+        let units = unitsPerDrawnPixel
+        return SIMD2(
+            (matrix.columns.3.x + 0.5) / units.x, (matrix.columns.3.y + 0.5) / units.y)
     }
 
     /// 輪郭の片ごとの補い。**どの片も細くならなければ `nil`** で、輪郭はこれまでどおり組む。
@@ -313,8 +325,11 @@ extension Canvas {
     /// (``widenedBand(_:along:)``・[#2172])。
     ///
     /// [#2172]: https://github.com/mokume-metal/mokume/issues/2172
+    ///
+    /// `snapped` は、組んだ片が `matrix` で置かれて線の半画素の寄せを受けるか (畳む雛形は偽)。真なら描く画素の
+    /// 絶対座標 (``ThinOutline/origin``) を持たせ、開いた端を列 (行) の境目で切る (#3745)。
     func thinOutline(
-        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4
+        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, snapped: Bool = false
     ) -> ThinOutline? {
         let linear = drawnLinear(matrix)
         let determinant = simd_determinant(linear)
@@ -360,7 +375,7 @@ extension Canvas {
         return ThinOutline(
             linear: linear, inverse: linear.inverse, bandWeight: bandWeight, bandHalf: bandHalf,
             bandCoverage: bandCoverage, isPoint: false, pointCoverage: 1,
-            widest: 2 * max(bandHalf.max() ?? 0.5, 0.5))
+            widest: 2 * max(bandHalf.max() ?? 0.5, 0.5), origin: snapped ? drawnOrigin(of: matrix) : nil)
     }
 
     /// 細い片を持つ輪郭の片を、**描く画素の空間で**集める (``ThinOutline``)。点は描く画素の
@@ -399,6 +414,16 @@ extension Canvas {
             return (carving, offset)
         }
         let segments = thin.bandHalf.count
+        // 開いた端は、描く画素の列 (行) の境目で切る (#3745・``ThinEndCut``)。**端の列の片は、ほかの片より先に
+        // 積む** — 曲線の短い端の線分で、後の片 (折れ目・次の帯) が端の列に入っても、引き算と型板で端の列の片が勝ち、
+        // 列の光の量は割合のとおりになる
+        let ends = thinEnds(points, outline: outline, thin: thin, offset: offset)
+        for (point, band, cut) in ends.pieces(count: count) {
+            let piece = cut.piece
+            carving.addPoint(point, coverage: thin.bandCoverage[band] * cut.fraction) { polygon in
+                polygon.append(contentsOf: piece)
+            }
+        }
         /// 点に来る帯 (前・後)。開いた周の端は片方が無い。
         func bands(at index: Int) -> (before: Int?, after: Int?) {
             let after = index < segments ? index : nil
@@ -503,19 +528,26 @@ extension Canvas {
         strokeRing(
             count: count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
             samePlace: { shapePoints[$0] == shapePoints[$1] },
-            endSquare: { index, _ in addCap(index, round: false) },
+            endSquare: { index, _ in
+                // 列の境目で切った端は、延ばした端点で切ってある (端の長方形は置かない)
+                if !ends.cuts(index, count: count) { addCap(index, round: false) }
+            },
             band: { a, b in
                 let half = thin.bandHalf[a]
-                let (start, end) = (points[a], points[b])
+                var (start, end) = (points[a], points[b])
+                // 列の境目で切る端の帯は、端の外まで延ばしてから境目で切る (端の列とその外は端の列の片が持つ)
+                let (startCut, endCut) = (ends.start(of: a), ends.end(of: a))
+                if let startCut { start = startCut.tip - startCut.inward * 4 }
+                if let endCut { end = endCut.tip - endCut.inward * 4 }
                 carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { polygon in
                     let delta = end - start
                     let length = simd_length(delta)
                     guard length > 0 else { return }
                     let normal = SIMD2(-delta.y, delta.x) / length * half
-                    polygon.append(start + normal)
-                    polygon.append(end + normal)
-                    polygon.append(end - normal)
-                    polygon.append(start - normal)
+                    var corners = [start + normal, end + normal, end - normal, start - normal]
+                    if let startCut { corners = startCut.trimmed(corners) }
+                    if let endCut { corners = endCut.trimmed(corners) }
+                    polygon.append(contentsOf: corners)
                 }
             },
             disc: { index in
@@ -533,6 +565,76 @@ extension Canvas {
                 addJoin(index, previous: previous, next: next, join: join)
             })
         return (carving, offset)
+    }
+
+    /// 開いた周の両端の、描く画素の列 (行) の境目での切り方 (#3745・``ThinEndCut``)。
+    ///
+    /// 切るのは、開いた周で、端の形が `.square` か `.project` で、端の帯 (同じ位置の点を飛ばした最初と最後の帯) が
+    /// 細い (広げた) 帯で、置き場所の描く画素の絶対座標が分かる (``ThinOutline/origin``) 端だけである。
+    ///
+    /// - 1 本の帯の両端が同じ列に入る (描く画素で短い線) なら、1 つの片にして割合は両端の差にする
+    /// - 両端の列の片が重なる (端点の重なる開いた周・ごく短い折れ線) なら、両端とも切らない (線に垂直に切る)。
+    ///   片の割合が同じ列を 2 度数えるからである
+    func thinEnds(
+        _ points: [SIMD2<Float>], outline: Outline, thin: ThinOutline, offset: SIMD2<Float>
+    ) -> ThinEnds {
+        let cap = style.strokeCap
+        let count = points.count
+        guard !outline.isClosed, count >= 2, cap == .square || cap == .project, let origin = thin.origin,
+            let first = (0..<(count - 1)).first(where: { points[$0 + 1] != points[$0] }),
+            let last = (0..<(count - 1)).last(where: { points[$0 + 1] != points[$0] })
+        else { return ThinEnds() }
+        let base = origin + thin.linear * offset
+        func cut(band: Int, end: Int, far: Int, axis: Int?) -> ThinEndCut? {
+            let weight = thin.bandWeight[band]
+            guard weight > 0, weight < 1 else { return nil }
+            return ThinEndCut(
+                end: points[end], far: points[far], extend: cap == .project ? weight / 2 : 0,
+                half: thin.bandHalf[band], base: base, axis: axis)
+        }
+        var ends = ThinEnds()
+        ends.startBand = first
+        ends.endBand = last
+        ends.startCut = cut(band: first, end: first, far: first + 1, axis: nil)
+        // 同じ帯の両端は、軸を揃える (45° ちょうどで向きの丸めにより軸が割れないように)
+        ends.endCut = cut(band: last, end: last + 1, far: last, axis: first == last ? ends.startCut?.axis : nil)
+        if let start = ends.startCut, let end = ends.endCut {
+            if first == last, let one = ThinEndCut.merged(start, end) {
+                ends.mergedCut = one
+            } else if first != last, start.overlaps(end) {
+                return ThinEnds()
+            }
+        }
+        return ends
+    }
+
+    /// 開いた周の両端の切り方 (``thinEnds(_:outline:thin:offset:)``)。
+    struct ThinEnds {
+        var startCut: ThinEndCut?
+        var startBand = -1
+        var endCut: ThinEndCut?
+        var endBand = -1
+        /// 1 本の帯の両端が同じ列に入るときの、1 つにした片。
+        var mergedCut: ThinEndCut?
+
+        /// 帯 `band` の始まりの端の切り方。
+        func start(of band: Int) -> ThinEndCut? { band == startBand ? startCut : nil }
+        /// 帯 `band` の終わりの端の切り方。
+        func end(of band: Int) -> ThinEndCut? { band == endBand ? endCut : nil }
+
+        /// 点 `index` が列の境目で切った端か。
+        func cuts(_ index: Int, count: Int) -> Bool {
+            (index == 0 && startCut != nil) || (index == count - 1 && endCut != nil)
+        }
+
+        /// 積む端の列の片 (点・端の帯・切り方)。
+        func pieces(count: Int) -> [(point: Int, band: Int, cut: ThinEndCut)] {
+            if let mergedCut { return [(0, startBand, mergedCut)] }
+            var found: [(point: Int, band: Int, cut: ThinEndCut)] = []
+            if let startCut { found.append((0, startBand, startCut)) }
+            if let endCut { found.append((count - 1, endBand, endCut)) }
+            return found
+        }
     }
 
     /// 平面の輪郭を補うときに細さを測る行列。**最後の変換が決まらない所では測らない** —
@@ -778,8 +880,18 @@ extension Canvas {
         // 点 1 つの周は描く画素の軸に沿って置くので、回転ごとに形が違う。それ以外は回転に依らない
         // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
         // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
-        let key = SIMD4<Float>(
-            linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y)
+        //
+        // **開いた `.square` / `.project` の端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
+        // 列 (行) の境目で切る (``ThinEndCut``) ので、置き場所の平行移動の端数で片が変わる。整数の画素だけずれた
+        // 置き場所は同じ片になる。閉じた輪郭と丸い端は、これまでどおり 2x2 だけで使い回す
+        var phase = SIMD2<Float>(0, 0)
+        if recipe.cutsEndsAtColumns {
+            let origin = drawnOrigin(of: combined)
+            phase = origin - origin.rounded(.down)
+        }
+        let key = ThinStrokeCache.Key(
+            linear: SIMD4(linear.columns.0.x, linear.columns.0.y, linear.columns.1.x, linear.columns.1.y),
+            phase: phase)
         if let cached = cache.built(stroke, key) { return cached }
         let built = buildThinVertices(recipe, placedBy: combined)
         cache.remember(built, stroke, key)
@@ -814,7 +926,8 @@ extension Canvas {
         // 周は、置いた後の大きさで刻み直す (#1645)。円板は描く画素の空間で組む
         // (``thinCarving(_:thin:)``) ので、この分割数は使わない
         let outline = recipe.outline(atScale: Self.splitScale(of: combined))
-        guard let thin = thinOutline(outline, weight: recipe.weight, placedBy: combined)
+        // 置いた頂点は置くときに半画素寄せる (``Canvas/place(_:of:at:)``) ので、描く画素の絶対座標が決まる
+        guard let thin = thinOutline(outline, weight: recipe.weight, placedBy: combined, snapped: true)
         else { return nil }
         let saved = (style.strokeCap, style.strokeJoin)
         style.strokeCap = thin.isPoint ? .square : recipe.cap
@@ -866,6 +979,12 @@ struct ThinStrokeRecipe {
     /// を持つ輪郭と同じ)。`replace` の線と点 1 つの輪郭は、重なっても同じ色なので引かない。
     let carvesWhenTinted: Bool
 
+    /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周で、
+    /// 端の形が `.square` か `.project` のもの。組み直した片が置き場所の副画素の位相で変わる。
+    var cutsEndsAtColumns: Bool {
+        !outline.isClosed && outline.points.count >= 2 && (cap == .square || cap == .project)
+    }
+
     /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
     var mayRescale: Bool { outline.ring != nil || discSegments > 0 }
 
@@ -908,8 +1027,15 @@ struct ThinStrokeRecipe {
 final class ThinStrokeCache {
     typealias Built = (vertices: [ShapeVertex], coverage: [Canvas.CoverageSpan])
     /// 輪郭 (``Shape/strokeRanges`` の番号) ごとの控え。`nil` を控えた鍵は「細くならない」。
-    private var entries: [Int: [SIMD4<Float>: Built?]] = [:]
+    private var entries: [Int: [Key: Built?]] = [:]
     static let capacity = 8
+
+    /// 組み直した輪郭の控えの鍵。描く画素へ写す 2x2 と、開いた端を列の境目で切る輪郭だけが持つ副画素の位相
+    /// (``ThinStrokeRecipe/cutsEndsAtColumns``・#3745。ほかの輪郭は 0)。
+    struct Key: Hashable {
+        var linear: SIMD4<Float>
+        var phase: SIMD2<Float>
+    }
 
     /// 置いた後の大きさで周と円板を刻み直した頂点の控えの鍵 (#1645)。
     struct ScaledKey: Hashable {
@@ -965,12 +1091,12 @@ final class ThinStrokeCache {
         scaled.insert(vertices, for: ScaledKey(isFill: true, index: fill, splits: splits))
     }
 
-    func built(_ stroke: Int, _ key: SIMD4<Float>) -> Built?? {
+    func built(_ stroke: Int, _ key: Key) -> Built?? {
         guard let table = entries[stroke] else { return nil }
         return table[key]
     }
 
-    func remember(_ value: Built?, _ stroke: Int, _ key: SIMD4<Float>) {
+    func remember(_ value: Built?, _ stroke: Int, _ key: Key) {
         if (entries[stroke]?.count ?? 0) >= Self.capacity { entries[stroke] = [:] }
         entries[stroke, default: [:]][key] = value
     }
@@ -1022,5 +1148,140 @@ final class ThinStrokeCache {
 
     func rememberThinFill(_ value: Built?, _ fill: Int, _ key: SIMD4<Float>) {
         thinFills.insert(value, for: ThinFillKey(fill: fill, linear: key))
+    }
+}
+
+/// 細い線の開いた端を、**描く画素の列 (行) の境目で切る**形 ([#3745])。
+///
+/// 細い帯は、列 (行) が帯を切る長さを整数 n にして広げる (``Canvas/widenedBand(_:along:)``・#2172) ので、端から
+/// 離れた列はどれも画素の中心をちょうど n 個拾う。端を線に垂直に切ると、斜めの帯では端の列が帯を切る区間が欠け、
+/// その列が拾う中心が置く位置 (副画素の位相) で 0 か 1 個に振れる。描く画素で短い線では ±1 個が光の量の ±10% を
+/// 越えた (#3745 の 2 つの seed)。
+///
+/// そこで端を、帯の主軸 (横寄りなら x) の**列の境目**で切る。端点を含む列は 1 列ぶんの平行四辺形 (``piece``) にし、
+/// 被覆に「その列の中で線が占める長さの割合」(``fraction``) を掛ける。残りの帯は境目から先だけにする (``trimmed(_:)``)。
+/// どの列の片も縁が列ごとに n だけ離れ、切り口の頂点は境目 (整数の座標) に乗るので、頂点を GPU の副画素の精度へ
+/// 丸めても列ごとの中心は n 個のままで、光の量は `被覆 × n × 主軸に沿った長さ` = `太さ × 長さ` に一致する。
+///
+/// `.project` の端は、太さの半分だけ延ばした端点 (``tip``) で同じ切り方をする (端の長方形の片は置かない)。
+///
+/// 座標は描く画素の空間で、`base` を足すと描く画素の絶対座標になる (``Canvas/ThinOutline/origin``)。
+///
+/// [#3745]: https://github.com/mokume-metal/mokume/issues/3745
+nonisolated struct ThinEndCut: Equatable {
+    /// 切る軸 (0 = x で列・1 = y で行)。帯の主軸。
+    var axis: Int
+    /// 線が端から内へ進む向き (長さ 1)。
+    var inward: SIMD2<Float>
+    /// 延ばした端点 (`.project` は太さの半分だけ外へ)。
+    var tip: SIMD2<Float>
+    /// 端の列の内側の境目 (``axis`` の成分)。端の列は、ここから外へ 1 の幅である。
+    var boundary: Float
+    /// 端の列の幅 1 のうち、線が占める割合 (0 より大きく 1 以下)。
+    var fraction: Float
+    /// 帯の半幅 (描く画素)。
+    var half: Float
+    /// 端の列の、主軸の絶対座標での下の境目 (整数)。2 つの端が同じ列かを比べる。
+    var column: Float
+
+    /// 内へ進む向きの、主軸の成分の符号。
+    var sign: Float { inward[axis] < 0 ? -1 : 1 }
+
+    /// 端 `end` から隣の点 `far` へ向かう帯の端の切り方。決まらない (長さ 0・数でない値) と `nil`。
+    ///
+    /// - Parameters:
+    ///   - extend: 端点を外へ延ばす長さ (`.project` は元の太さの半分・`.square` は 0)
+    ///   - half: 帯の半幅 (描く画素)
+    ///   - base: 座標に足すと描く画素の絶対座標になるずれ
+    ///   - axis: 切る軸を決めて渡す (同じ帯の両端で軸を揃える)。`nil` なら帯の主軸
+    init?(
+        end: SIMD2<Float>, far: SIMD2<Float>, extend: Float, half: Float, base: SIMD2<Float>,
+        axis given: Int? = nil
+    ) {
+        let delta = far - end
+        let length = simd_length(delta)
+        guard length > 0, length.isFinite, half > 0, half.isFinite, base.x.isFinite, base.y.isFinite else {
+            return nil
+        }
+        let inward = delta / length
+        let axis = given ?? (abs(inward.x) >= abs(inward.y) ? 0 : 1)
+        // 主軸の成分が 0 の帯 (渡された軸に直交する) は列で切れない
+        guard inward[axis] != 0 else { return nil }
+        let sign: Float = inward[axis] < 0 ? -1 : 1
+        let tip = end - inward * extend
+        // 内へ進む向きを正にした絶対座標 t で、端点を含む列は [⌊t⌋, ⌊t⌋ + 1]、内側の境目は ⌊t⌋ + 1
+        let along = sign * (tip[axis] + base[axis])
+        guard along.isFinite, abs(along) < 4_194_304 else { return nil }
+        let inner = along.rounded(.down) + 1
+        self.axis = axis
+        self.inward = inward
+        self.tip = tip
+        boundary = sign * inner - base[axis]
+        fraction = inner - along
+        self.half = half
+        column = sign > 0 ? inner - 1 : -inner
+    }
+
+    /// 帯 (向き ``inward``・半幅 ``half``) を ``tip`` から前後へ 4 画素ずつ延ばした長方形。主軸の成分は 1/√2 以上なので、
+    /// 端の列の前後 2 列を越えて覆う。
+    private var strip: [SIMD2<Float>] {
+        let normal = SIMD2(-inward.y, inward.x) * half
+        let (a, b) = (tip - inward * 4, tip + inward * 4)
+        return [a + normal, b + normal, b - normal, a - normal]
+    }
+
+    /// 端の列の片 (帯 ∩ 端の列)。被覆には ``fraction`` を掛ける。
+    var piece: [SIMD2<Float>] {
+        // 端の列は、内側の境目から外へ 1 の幅
+        let outer = Self.clipped(strip, axis: axis, keeping: sign, from: boundary - sign)
+        return Self.clipped(outer, axis: axis, keeping: -sign, from: boundary)
+    }
+
+    /// 帯の片 `polygon` (凸多角形) から、端の列とその外を除いた残り。
+    func trimmed(_ polygon: [SIMD2<Float>]) -> [SIMD2<Float>] {
+        Self.clipped(polygon, axis: axis, keeping: sign, from: boundary)
+    }
+
+    /// 同じ帯の両端 `start`・`end` が同じ列に入るなら、1 つの片にした切り方 (割合は両端の差)。
+    static func merged(_ start: ThinEndCut, _ end: ThinEndCut) -> ThinEndCut? {
+        guard start.axis == end.axis, start.column == end.column else { return nil }
+        var one = start
+        one.fraction = min(max(start.sign * (end.tip[start.axis] - start.tip[start.axis]), 0), 1)
+        return one
+    }
+
+    /// 2 つの端の列の片が重なるか (囲みの箱で見る。境目で接するだけなら重ならない)。
+    func overlaps(_ other: ThinEndCut) -> Bool {
+        let (mine, theirs) = (piece, other.piece)
+        guard !mine.isEmpty, !theirs.isEmpty else { return false }
+        let slack: Float = 1e-3
+        for axis in 0..<2 {
+            let low = max(mine.map { $0[axis] }.min()!, theirs.map { $0[axis] }.min()!)
+            let high = min(mine.map { $0[axis] }.max()!, theirs.map { $0[axis] }.max()!)
+            if high - low <= slack { return false }
+        }
+        return true
+    }
+
+    /// 凸多角形 `polygon` のうち、`keeping × (p[axis] − bound) ≥ 0` の側を残す。切り口の頂点は ``axis`` の成分を
+    /// ちょうど `bound` にする (境目の整数の座標に乗せる)。
+    static func clipped(
+        _ polygon: [SIMD2<Float>], axis: Int, keeping side: Float, from bound: Float
+    ) -> [SIMD2<Float>] {
+        guard polygon.count >= 3 else { return [] }
+        var kept: [SIMD2<Float>] = []
+        kept.reserveCapacity(polygon.count + 2)
+        for index in polygon.indices {
+            let current = polygon[index]
+            let next = polygon[(index + 1) % polygon.count]
+            let (here, there) = (side * (current[axis] - bound), side * (next[axis] - bound))
+            if here >= 0 { kept.append(current) }
+            if (here >= 0) != (there >= 0), here != there {
+                var cut = current + (next - current) * (here / (here - there))
+                cut[axis] = bound
+                kept.append(cut)
+            }
+        }
+        return kept.count >= 3 ? kept : []
     }
 }

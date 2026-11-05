@@ -546,7 +546,8 @@ extension Canvas {
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
     func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
         guard let matrix = thinStrokeMatrix,
-            let thin = thinOutline(outline, weight: style.strokeWeight, placedBy: matrix)
+            let thin = thinOutline(
+                outline, weight: style.strokeWeight, placedBy: matrix, snapped: !buildingFlatTemplate)
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
         // 相似な置き場所の矩形は、重ならない額縁の片で組む。畳んだ雛形 (頂点段で広げ直す) と同じ積み方に
         // 揃え、畳むかどうかで頂点の数も絵も変えない (#3733・``thinRectFrame(_:placedBy:)``)
