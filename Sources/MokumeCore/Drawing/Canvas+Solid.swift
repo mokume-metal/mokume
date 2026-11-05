@@ -934,12 +934,29 @@ extension Canvas {
             body()
             solidStrokeCoverage = saved
         }
+        // 細い線の開いた端は、画面の描く画素の列 (行) の境目で切る (#3745・平面の ``thinCarving(_:thin:)`` と同じ
+        // ``ThinEndCut``)。端の列の片は、ほかの片より先に積む (型板で先の片が勝つ・平面と同じ)
+        var ends: SolidEndCuts?
+        if let thin {
+            ends = solidEndCuts(world: world, edges: edges, curveSteps: curveSteps, thin: thin, camera: camera)
+        }
+        if let ends {
+            for piece in ends.pieces {
+                covering(piece.coverage * piece.cut.fraction) {
+                    appendSolidCutPolygon(
+                        piece.cut.piece, along: (piece.point, piece.far), world: world, shape: shape, ends: ends,
+                        camera: camera)
+                }
+            }
+        }
         strokeNet(
             count: world.count, edges: edges, curveSteps: curveSteps,
             samePoint: { world[$0] == world[$1] },
             depth: { dot(world[$0] - camera.eye, camera.forward) },
             toward: { screenToward(world[$0], world[$1], camera: camera) },
             endSquare: { end, far in
+                // 列の境目で切った端は、延ばした端点で切ってある (端の長方形は置かない・#3745)
+                if ends?.cuts[end] != nil { return }
                 // 端は線に沿って元の太さの半分だけ出し、横は帯と同じ幅・同じ被覆にする
                 let band = thinBand(far, end)
                 covering(band?.coverage) {
@@ -950,6 +967,25 @@ extension Canvas {
             },
             band: { from, to in
                 let band = thinBand(from, to)
+                // 列の境目で切る端の帯は、端の外まで延ばしてから境目で切る (端の列とその外は端の列の片が持つ)
+                if let ends, let band, ends.cuts[from] != nil || ends.cuts[to] != nil,
+                    let start = ends.screen.drawn(world[from]), let end = ends.screen.drawn(world[to])
+                {
+                    var (a, b) = (start, end)
+                    if let cut = ends.cuts[from] { a = cut.tip - cut.inward * 4 }
+                    if let cut = ends.cuts[to] { b = cut.tip - cut.inward * 4 }
+                    let delta = b - a
+                    let length = simd_length(delta)
+                    guard length > 0 else { return }
+                    let normal = SIMD2(-delta.y, delta.x) / length * (band.half / ends.outputPerDrawn)
+                    var corners = [a + normal, b + normal, b - normal, a - normal]
+                    if let cut = ends.cuts[from] { corners = cut.trimmed(corners) }
+                    if let cut = ends.cuts[to] { corners = cut.trimmed(corners) }
+                    return covering(band.coverage) {
+                        appendSolidCutPolygon(
+                            corners, along: (from, to), world: world, shape: shape, ends: ends, camera: camera)
+                    }
+                }
                 covering(band?.coverage) {
                     appendSolidBand(
                         world[from], world[to], shape: (shape[from], shape[to]), half: band?.half ?? half,
@@ -1000,6 +1036,123 @@ extension Canvas {
                         join: style.strokeJoin, shape: shape[index], half: joinHalf, camera: camera)
                 }
             })
+    }
+
+    /// 細い立体の線の開いた端を、画面の描く画素の列 (行) の境目で切る切り方 (#3745・``ThinEndCut``)。
+    ///
+    /// 端とみなすのは、辺が 1 本だけ来て、その辺が画面で長さを持つ点だけである。画面で重なる点の群 (``strokeNet``
+    /// の群) の点は、群の中の潰れた辺も数えるので辺が 2 本以上来て、ここでは端にならず今までどおり線に垂直に切る。
+    /// 曲線の刻みの点も切らない。端の形が `.square` か `.project` のときだけ切る。
+    ///
+    /// - 1 本の辺の両端が同じ列に入る (画面で短い線) なら、1 つの片にして割合は両端の差にする
+    /// - 別の辺の端どうしの列の片が重なる (端点の重なる開いた周など) なら、その 2 つの端は切らない。片の割合が
+    ///   同じ列を 2 度数えるからである
+    private func solidEndCuts(
+        world: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool], thin: SolidThinBand, camera: StrokeCamera
+    ) -> SolidEndCuts {
+        let screen = SolidDrawnScreen(
+            viewProjection: viewProjection, width: width, height: height, units: unitsPerDrawnPixel)
+        var ends = SolidEndCuts(screen: screen, outputPerDrawn: thin.outputPerDrawn)
+        let cap = style.strokeCap
+        guard cap == .square || cap == .project else { return ends }
+        var degree = [Int](repeating: 0, count: world.count)
+        var edgeOf = [Int](repeating: -1, count: world.count)
+        for (number, (a, b)) in edges.enumerated() {
+            degree[a] += 1
+            degree[b] += 1
+            edgeOf[a] = number
+            edgeOf[b] = number
+        }
+        var found: [SolidEndCuts.Piece] = []
+        for point in world.indices where degree[point] == 1 {
+            if point < curveSteps.count, curveSteps[point] { continue }
+            let (a, b) = edges[edgeOf[point]]
+            let far = a == point ? b : a
+            guard far != point, let toward = screenToward(world[point], world[far], camera: camera),
+                let end = screen.drawn(world[point]), let other = screen.drawn(world[far])
+            else { continue }
+            let band = thin.band(along: toward)
+            // 同じ辺の両端は、軸を揃える (45° ちょうどで向きの丸めにより軸が割れないように)
+            var axis: Int?
+            for earlier in found where earlier.edge == edgeOf[point] { axis = earlier.cut.axis }
+            guard
+                let cut = ThinEndCut(
+                    end: end, far: other, extend: cap == .project ? thin.drawn / 2 : 0,
+                    half: band.half / thin.outputPerDrawn, base: .zero, axis: axis)
+            else { continue }
+            found.append(
+                SolidEndCuts.Piece(point: point, far: far, edge: edgeOf[point], cut: cut, coverage: band.coverage))
+        }
+        var dropped = Set<Int>()
+        var merged: [Int: ThinEndCut] = [:]
+        var mergedAway = Set<Int>()
+        for first in found.indices {
+            for second in found.indices where second > first {
+                if found[first].edge == found[second].edge {
+                    if let one = ThinEndCut.merged(found[first].cut, found[second].cut) {
+                        merged[first] = one
+                        mergedAway.insert(second)
+                    }
+                } else if found[first].cut.overlaps(found[second].cut) {
+                    dropped.insert(first)
+                    dropped.insert(second)
+                }
+            }
+        }
+        for (index, piece) in found.enumerated() where !dropped.contains(index) {
+            // 1 つにした片の相方も、端の帯を境目で切る (帯は空になる)
+            ends.cuts[piece.point] = piece.cut
+            if mergedAway.contains(index) { continue }
+            var placed = piece
+            if let one = merged[index] { placed.cut = one }
+            ends.pieces.append(placed)
+        }
+        return ends
+    }
+
+    /// 画面の描く画素で組んだ凸多角形 `polygon` (辺 `along` の帯の上にある) を、世界の点へ戻して積む (#3745)。
+    ///
+    /// 頂点ごとに、画面の線の上の点と、線に垂直なずれ (描く画素) に分ける。線の上の点は、辺の上で画面の位置が
+    /// そこへ写る点を射影の式で解いて世界へ戻し (``SolidDrawnScreen/parameter(_:_:axis:value:)``)、ずれは帯と同じく
+    /// 画面に正対した横向き (``screenAcross(_:_:camera:)``) に `ずれ × その点の 1 画素の世界での長さ` だけ動かす。
+    /// 画面ではちょうど組んだ頂点に写る。
+    private func appendSolidCutPolygon(
+        _ polygon: [SIMD2<Float>], along edge: (Int, Int), world: [SIMD3<Float>], shape: [SIMD3<Float>],
+        ends: SolidEndCuts, camera: StrokeCamera
+    ) {
+        guard polygon.count >= 3 else { return }
+        let (a, b) = (world[edge.0], world[edge.1])
+        guard let start = ends.screen.drawn(a), let end = ends.screen.drawn(b),
+            let across = screenAcross(a, b, camera: camera), let normal = camera.screenNormal(a, b)
+        else { return }
+        let delta = end - start
+        let length = simd_length(delta)
+        guard length > 0 else { return }
+        let direction = delta / length
+        let side = SIMD2(-direction.y, direction.x)
+        // 画面の垂線 (世界の横向きが写る向き) と、描く画素で組んだ垂線の向きを揃える
+        let flip: Float = dot(normal, side) >= 0 ? 1 : -1
+        let axis = abs(direction.x) >= abs(direction.y) ? 0 : 1
+        var lifted: [(position: SIMD3<Float>, shape: SIMD3<Float>)] = []
+        lifted.reserveCapacity(polygon.count)
+        for vertex in polygon {
+            let offset = dot(vertex - start, side)
+            let onLine = vertex - side * offset
+            guard let parameter = ends.screen.parameter(a, b, axis: axis, value: onLine[axis]) else { return }
+            let point = a + (b - a) * parameter
+            let pixel = camera.worldPerPixel(at: point, height: height)
+            let clamped = min(max(parameter, 0), 1)
+            lifted.append(
+                (
+                    point + across * (flip * offset * ends.outputPerDrawn * pixel),
+                    shape[edge.0] + (shape[edge.1] - shape[edge.0]) * clamped
+                ))
+        }
+        for index in 2..<lifted.count {
+            appendSolidStrokeTriangle(
+                lifted[0].position, lifted[index - 1].position, lifted[index].position,
+                shape: (lifted[0].shape, lifted[index - 1].shape, lifted[index].shape), camera: camera)
+        }
     }
 
     /// 記録の間に CPU で積んだ組み込み立体の線を、**置くときに GPU で組める**ものなら覚える
@@ -1625,5 +1778,67 @@ extension Canvas {
             }
             return true
         }
+    }
+}
+
+/// 細い立体の線の開いた端の切り方 (#3745・``Canvas/solidEndCuts(world:edges:curveSteps:thin:camera:)``)。
+nonisolated struct SolidEndCuts {
+    /// 端の列の片 1 つ。
+    struct Piece {
+        /// 端の点と、端の辺の向こうの点。
+        var point: Int
+        var far: Int
+        /// 端の辺の番号。
+        var edge: Int
+        var cut: ThinEndCut
+        /// 端の辺の帯の被覆 (片には ``ThinEndCut/fraction`` を掛ける)。
+        var coverage: Float
+    }
+
+    let screen: SolidDrawnScreen
+    /// 描く画素 1 つの、出す画素での長さ。
+    let outputPerDrawn: Float
+    /// 点ごとの、その点から出る端の帯の切り方。
+    var cuts: [Int: ThinEndCut] = [:]
+    /// 積む端の列の片。
+    var pieces: [Piece] = []
+}
+
+/// 立体の線の点を、**画面の描く画素の絶対座標**へ写す (#3745)。頂点関数の半画素の寄せ
+/// (``Canvas/solidStrokeShift(width:height:)``・出す画素で +0.5) を含む。
+nonisolated struct SolidDrawnScreen {
+    let viewProjection: simd_float4x4
+    let width: Float
+    let height: Float
+    /// 描く画素 1 つが出す画素でいくらか (``Canvas/unitsPerDrawnPixel``)。
+    let units: SIMD2<Float>
+
+    /// 世界の点 `point` の描く画素の座標。目の後ろの点は `nil`。
+    func drawn(_ point: SIMD3<Float>) -> SIMD2<Float>? {
+        let clip = viewProjection * SIMD4(point, 1)
+        guard clip.w > 0, clip.w.isFinite else { return nil }
+        let canvas = SIMD2(
+            (clip.x / clip.w + 1) * 0.5 * width + 0.5, (1 - clip.y / clip.w) * 0.5 * height + 0.5)
+        let drawn = canvas / units
+        return drawn.x.isFinite && drawn.y.isFinite ? drawn : nil
+    }
+
+    /// 線分 a → b の上で、描く画素の `axis` の成分が `value` に写る点の媒介変数 (a で 0・b で 1)。画面の線は
+    /// 射影で写るので、切り取り座標で `成分 = 正規化した値 × w` を解く。決まらなければ `nil`。
+    func parameter(_ a: SIMD3<Float>, _ b: SIMD3<Float>, axis: Int, value: Float) -> Float? {
+        let (from, to) = (viewProjection * SIMD4(a, 1), viewProjection * SIMD4(b, 1))
+        let target: Float
+        let (start, end): (Float, Float)
+        if axis == 0 {
+            target = 2 * (value * units.x - 0.5) / width - 1
+            (start, end) = (from.x, to.x)
+        } else {
+            target = 1 - 2 * (value * units.y - 0.5) / height
+            (start, end) = (from.y, to.y)
+        }
+        let denominator = (end - start) - target * (to.w - from.w)
+        guard denominator != 0 else { return nil }
+        let parameter = (target * from.w - start) / denominator
+        return parameter.isFinite ? parameter : nil
     }
 }
