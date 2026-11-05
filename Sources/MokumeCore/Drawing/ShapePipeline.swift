@@ -486,8 +486,45 @@ final class ShapePipeline {
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
     let flatStrokeEraseDepthState: (any MTLDepthStencilState)?
 
-    /// 線のビット。下の 7 ビットは切り抜きの段数のために空けておく ([#2431])。
+    /// 形の切り抜きの中だけを通す奥行きの扱い ([#2431])。奥行きは対になる状態 (``flatDepthState``・
+    /// ``solidDepthState``・``solidReadOnlyDepthState``・``replaceDepthState``) と同じで、型板の下位 7 ビットが
+    /// 参照値 (列の段数) と等しい画素だけを通し、型板は書かない。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let clippedFlatDepthState: (any MTLDepthStencilState)?
+    let clippedSolidDepthState: (any MTLDepthStencilState)?
+    let clippedSolidReadOnlyDepthState: (any MTLDepthStencilState)?
+    let clippedReplaceDepthState: (any MTLDepthStencilState)?
+
+    /// 形の切り抜きの段を**足す**扱い ([#2431])。下位 7 ビットが参照値 (1 つ外の段数) と等しい画素だけを 1 増やす。
+    /// 1 つの段の中で三角形が重なっても、2 枚目は増えた画素で落ちるので**段の中は和**になり、外の段の外の画素は
+    /// 通らないので**外の段とは交わり**になる。奥行きは比べずに通し、書かない。色は書かない
+    /// (``clipLayerState()``)。上の 1 ビット (線の印) は読みも書きもしない。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let clipLayerAddDepthState: (any MTLDepthStencilState)?
+    /// 形の切り抜きの段を**外す**扱い ([#2431])。下位 7 ビットが参照値 (外す段の段数) と等しい画素だけを 1 減らす。
+    /// 足したときと同じ三角形で描くので、足した画素だけが正確に 1 つ外の段へ戻る。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let clipLayerRemoveDepthState: (any MTLDepthStencilState)?
+
+    /// 切り抜きのある列の線の印の**消し描き** ([#2431])。``strokeEraseDepthState``・``flatStrokeEraseDepthState``
+    /// と同じく線のビットを 0 へ戻すが、**切り抜きの中 (下位 7 ビットが列の段数) だけ**を描く。立体の消し描きは
+    /// 奥行きを書くので、窓の外まで描くと、見えない線の奥行きが残って後に置く立体を隠す。窓の外では印も
+    /// 付いていない (印は段数と等しい画素だけを通す) ので、戻すものも無い。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let clippedStrokeEraseDepthState: (any MTLDepthStencilState)?
+    let clippedFlatStrokeEraseDepthState: (any MTLDepthStencilState)?
+
+    /// 線のビット。下の 7 ビットは切り抜きの段数に使う ([#2431])。
     static let strokeStencilBit: UInt32 = 0x80
+    /// 形の切り抜きの段数のビット ([#2431])。
+    static let clipStencilBits: UInt32 = 0x7F
+
+    /// 形の切り抜きの層を型板へ描く組 ([#2431])。**層を描くフレームの頭で初めて組み、控えて使い回す。**
+    private let clipLayerPipeline = Mutex<(any MTLRenderPipelineState)?>(nil)
 
     /// 消し描きのパイプライン (頂点関数の名前ごと)。**区間を描くフレームの頭で初めて組み、控えて使い回す**
     /// (``strokeEraseState(vertexFunctionName:)``・起動の時間を戻さない・#3114)。
@@ -621,6 +658,70 @@ final class ShapePipeline {
         flatErase.frontFaceStencil = erasing
         flatErase.backFaceStencil = erasing
         self.flatStrokeEraseDepthState = gpu.device.makeDepthStencilState(descriptor: flatErase)
+
+        // 形の切り抜き (#2431)。型板の下位 7 ビットを段数として読み書きする
+        func clipStencil(
+            pass: MTLStencilOperation = .keep, depthFailure: MTLStencilOperation = .keep, writeMask: UInt32 = 0
+        ) -> MTLStencilDescriptor {
+            let stencil = MTLStencilDescriptor()
+            stencil.stencilCompareFunction = .equal
+            stencil.stencilFailureOperation = .keep
+            stencil.depthFailureOperation = depthFailure
+            stencil.depthStencilPassOperation = pass
+            stencil.readMask = Self.clipStencilBits
+            stencil.writeMask = writeMask
+            return stencil
+        }
+        func state(
+            _ label: String, depth: MTLCompareFunction, writesDepth: Bool, stencil: MTLStencilDescriptor
+        ) -> (any MTLDepthStencilState)? {
+            let descriptor = MTLDepthStencilDescriptor()
+            descriptor.label = label
+            descriptor.depthCompareFunction = depth
+            descriptor.isDepthWriteEnabled = writesDepth
+            descriptor.frontFaceStencil = stencil
+            descriptor.backFaceStencil = stencil
+            return gpu.device.makeDepthStencilState(descriptor: descriptor)
+        }
+        let inside = clipStencil()
+        self.clippedFlatDepthState = state(
+            "mokume.stencil.clipped-flat", depth: .always, writesDepth: false, stencil: inside)
+        self.clippedSolidDepthState = state(
+            "mokume.stencil.clipped-solid", depth: .lessEqual, writesDepth: true, stencil: inside)
+        self.clippedSolidReadOnlyDepthState = state(
+            "mokume.stencil.clipped-solid-read-only", depth: .lessEqual, writesDepth: false, stencil: inside)
+        self.clippedReplaceDepthState = state(
+            "mokume.stencil.clipped-replace", depth: .always, writesDepth: true, stencil: inside)
+        self.clipLayerAddDepthState = state(
+            "mokume.stencil.clip-layer-add", depth: .always, writesDepth: false,
+            stencil: clipStencil(pass: .incrementClamp, writeMask: Self.clipStencilBits))
+        self.clipLayerRemoveDepthState = state(
+            "mokume.stencil.clip-layer-remove", depth: .always, writesDepth: false,
+            stencil: clipStencil(pass: .decrementClamp, writeMask: Self.clipStencilBits))
+        let clippedErasing = clipStencil(pass: .zero, depthFailure: .zero, writeMask: Self.strokeStencilBit)
+        self.clippedStrokeEraseDepthState = state(
+            "mokume.stencil.clipped-stroke-erase", depth: .lessEqual, writesDepth: true, stencil: clippedErasing)
+        self.clippedFlatStrokeEraseDepthState = state(
+            "mokume.stencil.clipped-flat-stroke-erase", depth: .always, writesDepth: false,
+            stencil: clippedErasing)
+    }
+
+    /// 形の切り抜きの層を型板へ描く組 ([#2431])。**まだ組んでいなければここで組む。**
+    ///
+    /// 頂点関数は平面の ``flatVertexFunctionName`` で、**断片を持たない** — 型板だけを書き、色は書かない
+    /// (書くマスクを空に)。Shapes に断片を足さないので、既存の頂点関数の組み上がり方は動かない (#1796)。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    func clipLayerState() throws(RenderFailure) -> any MTLRenderPipelineState {
+        try clipLayerPipeline.withLock { (built) throws(RenderFailure) in
+            if let built { return built }
+            let state = try StatePlan(
+                label: "mokume.stencil.clip-layer", vertexFunctionName: Self.flatVertexFunctionName,
+                fragmentFunctionName: nil, specialization: [], sourceOver: false, pixelFormat: pixelFormat
+            ).makeNow(compiler: compiler, vertexLibrary: vertexLibrary, fragmentLibrary: vertexLibrary)
+            built = state
+            return state
+        }
     }
 
     /// 線の印を消し描きするパイプライン ([ADR-0046])。**まだ組んでいなければここで組む。**
@@ -983,7 +1084,7 @@ final class ShapePipeline {
 
         let label: String
         let vertexFunctionName: String
-        /// 断片の名前。`nil` なら奥行きだけを書く (色の面も宣言しない)。
+        /// 断片の名前。`nil` なら奥行きと型板だけを書く (色の面は、形式を持てば宣言して書かない)。
         let fragmentFunctionName: String?
         let specialization: [BoolConstant]
         let sourceOver: Bool
@@ -1003,6 +1104,13 @@ final class ShapePipeline {
             descriptor.vertexFunctionDescriptor = vertexFunction
             guard let fragmentFunctionName else {
                 descriptor.fragmentFunctionDescriptor = nil
+                // 色の面を持つパスで型板だけを書く組 (形の切り抜きの層・#2431) は、面の形式を宣言して書かない。
+                // 宣言しないと、パスの色の面と形式が食い違う。影の奥行きだけの組は形式を持たない (`.invalid`)
+                if pixelFormat != .invalid {
+                    let attachment = descriptor.colorAttachments[0]!
+                    attachment.pixelFormat = pixelFormat
+                    attachment.writeMask = []
+                }
                 return descriptor
             }
 

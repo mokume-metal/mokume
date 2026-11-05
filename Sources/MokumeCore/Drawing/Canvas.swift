@@ -183,6 +183,10 @@ public final class Canvas {
     /// 立っている間は、閉じた形の周と穴を三角形に割らずにここへ控え、書けない口 (基本図形・字・画像・立体など)
     /// は断る。記録は形の組み立ての中で行うので、``recordingShape`` も立っている。
     var pathRecorder: PathRecorder?
+    /// 形の切り抜き (``clip(_:)``) を記録している間の控え。``clip(_:)`` の入口で立て、出口で下ろす。
+    /// 立っている間は、2D の形の塗りの三角形をここへ控え、型板に描けない口 (線だけの形・字・画像・立体・断片・
+    /// 保持した形) は断る。記録は形の組み立ての中で行うので、``recordingShape`` も立っている。
+    var clipRecorder: ClipRecorder?
 
     /// 保持する形を記録している間に、輪郭が積んだ平面の頂点の区間。
     ///
@@ -721,6 +725,12 @@ public final class Canvas {
     ///
     /// [#1947]: https://github.com/mokume-metal/mokume/issues/1947
     let solidSweepStorage: GrowableBuffer
+    /// 形の切り抜きの層 (``ClipLayer``) の頂点の置き場 ([#2431])。**層は溜め場に入れない** — 層はスタイルに載って
+    /// 途中の描き切りをまたいで生き、溜め場は描き切りごとに空になる。描き切りのたびに、列が指す層だけを写す。
+    /// 切り抜きの層を持つ列が無いフレームは写さない。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    let clipLayerStorage: GrowableBuffer
     /// 裏 → 表で描く置き場所の連なりを、添字の列で 1 回にまとめるか。検査が切り替える (``SolidSweepPolicy``)。
     var sweepPolicy = SolidSweepPolicy.automatic
 
@@ -2089,6 +2099,9 @@ public final class Canvas {
     struct Batch {
         var run: Shape.Run
         var clip: ClipRect?
+        /// この列を切り抜く形の段の積み (``Style/clipShape``)。**既定の値を持たない** — 列を閉じる口が
+        /// 写し忘れると組み上がらない。描くときは、型板をこの積みに合わせてから、段数と等しい画素だけを通す。
+        var clipShape: ClipLayers?
         /// この列を描画先の座標へ落とす行列。**揺らす前のもの**で、時間方向の揺らしは描き切りが
         /// 列ごとの値を置くときに足す (``Canvas/jittered(_:drawingInFrame:)``・[#1913])。
         ///
@@ -2615,6 +2628,12 @@ public final class Canvas {
         var ellipseMode = ShapeMode.center
         var blendMode = BlendMode.blend
         var clip: ClipRect?
+        /// 形の切り抜きの段の積み (``Canvas/clip(_:)``・[#2431])。矩形の ``clip`` (scissor) と交わる。
+        /// **矩形の `clip()` は置き換え** (これも外す)、`clip { }` は段を積み、`noClip()` は両方を外す。
+        /// 回した・剪断した矩形の `clip()` も、ここに 1 段を置く。
+        ///
+        /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+        var clipShape: ClipLayers?
         /// 選んだ書体。`nil` は既定の書体。**名前とファイルは同時に持てない** — 後から選んだほうが勝つので、
         /// 1 つの値で持つ ([#2445])。読み書きは ``fontName``・``fontFile`` から。
         ///
@@ -2717,6 +2736,7 @@ public final class Canvas {
                 || style.receivesShadow != newValue.receivesShadow
                 || style.blendMode != newValue.blendMode
                 || style.clip != newValue.clip
+                || style.clipShape !== newValue.clipShape
             {
                 closeBatch()
             }
@@ -2809,6 +2829,8 @@ public final class Canvas {
             stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidIndices")
         self.solidSweepStorage = storage(
             stride: MemoryLayout<UInt32>.stride, minimum: 4096, label: "solidSweeps")
+        self.clipLayerStorage = storage(
+            stride: MemoryLayout<ShapeVertex>.stride, minimum: 256, label: "clipLayers")
         self.flatInstanceStorage = storage(
             stride: MemoryLayout<FlatInstance>.stride, minimum: 256, label: "flatInstances")
         self.thinFillRecordStorage = storage(
@@ -3236,7 +3258,7 @@ public final class Canvas {
     /// [#1658]: https://github.com/mokume-metal/mokume/issues/1658
     /// [#1685]: https://github.com/mokume-metal/mokume/issues/1685
     func replaceSurface(with content: SurfaceContent) {
-        if style.clip == nil {
+        if style.clip == nil, style.clipShape == nil {
             discardPending()
             // 画面が溜めた図形を捨てるのと同じく、ベクターに控えた図形も捨てる。残すと、ペンプロッタは
             // 画面に無い線を引く (#3139)。切り抜きがあるときは中だけの置き換えで、外の図形は画面に残る
@@ -3301,6 +3323,7 @@ public final class Canvas {
                     mode: .replace, texture: atlas.held, paint: .builtIn, source: .solid,
                     start: vertexStart, count: 6, indexStart: 0, indexCount: 0),
                 clip: style.clip,
+                clipShape: style.clipShape,
                 matrix: viewProjection,
                 lightRange: 0..<0,
                 material: .default,
@@ -3855,6 +3878,7 @@ public final class Canvas {
         // [#1591]: https://github.com/mokume-metal/mokume/issues/1591
         discardShapeLeftOpen()
         style.clip = nil
+        style.clipShape = nil
         // 効果もフレームを越えない (ADR-0021 決定 4)。毎フレーム書き直す
         pendingEffects.removeAll(keepingCapacity: true)
         // **持ち越しの区間の中で開いたフレームは、区間の変換と積み履歴を控える** (閉じた後に戻す・
@@ -4240,6 +4264,7 @@ public final class Canvas {
         drawsDebugGuides = false
         transform = .identity
         style.clip = nil
+        style.clipShape = nil
         activeLights.removeAll(keepingCapacity: true)
         activeSurroundings = nil
         style.material = .default
@@ -4292,6 +4317,7 @@ public final class Canvas {
     /// 既定でなければ、戻す前に開いている列を閉じる (``leaveInputCallbackInsideFrame()``)。
     private var columnsReadNonDefaultScene: Bool {
         cameraStorage != nil || !activeLights.isEmpty || activeSurroundings != nil || style.clip != nil
+            || style.clipShape != nil
             || style.material != .default || !style.castsShadow || !style.receivesShadow
     }
 
@@ -5334,6 +5360,50 @@ public final class Canvas {
         /// 同一性で引く。区間を持つ立体の列の断片だけが載る。平面の列は奥行きを書かない消し描きなので、組み込みの
         /// ``flatStrokeEraseState`` で足りる (``ShapePipeline/makeStrokeEraseState(fragmentLibrary:label:vertexFunctionName:)``)。
         let shaderStrokeEraseStates: [ObjectIdentifier: any MTLRenderPipelineState]
+        /// 形の切り抜きの層 (``Batch/clipShape``) を型板へ描く置き場と組。切り抜きの層を持つ列が無ければ `nil`。
+        let clipLayers: ClipLayerUploads?
+    }
+
+    /// 描き切り 1 回ぶんの、形の切り抜きの層の写し ([#2431])。
+    ///
+    /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+    struct ClipLayerUploads {
+        /// 層の頂点を並べた置き場。
+        let vertices: any MTLBuffer
+        /// 層ごとの頂点の区間。層の同一性で引く。
+        let ranges: [ObjectIdentifier: Range<Int>]
+        /// 層を型板へ描く組 (``ShapePipeline/clipLayerState()``)。
+        let state: any MTLRenderPipelineState
+    }
+
+    /// 列が指す形の切り抜きの層を、同一性で重複なく置き場へ写す。層を持つ列が無ければ `nil`。
+    private func uploadClipLayers() throws(RenderFailure) -> ClipLayerUploads? {
+        var ranges: [ObjectIdentifier: Range<Int>] = [:]
+        var positions: [SIMD2<Float>] = []
+        var previous: ClipLayers?
+        for batch in batches {
+            // 続く列は同じ積みを指すことが多い。同じなら辿り直さない
+            guard var layers = batch.clipShape, layers !== previous else { continue }
+            previous = layers
+            while true {
+                let key = ObjectIdentifier(layers.layer)
+                if ranges[key] == nil {
+                    let start = positions.count
+                    positions += layers.layer.positions
+                    ranges[key] = start..<positions.count
+                }
+                guard let parent = layers.parent else { break }
+                layers = parent
+            }
+        }
+        guard !ranges.isEmpty else { return nil }
+        var vertices: [ShapeVertex] = []
+        vertices.reserveCapacity(positions.count)
+        for position in positions {
+            vertices.append(ShapeVertex(position: position, uv: .zero, color: .transparent))
+        }
+        let buffer = try clipLayerStorage.write(vertices, holding: max(vertices.count, 1))
+        return ClipLayerUploads(vertices: buffer, ranges: ranges, state: try pipeline.clipLayerState())
     }
 
     /// 溜めた列の置き場を取る。列が無ければ `nil`。
@@ -5380,7 +5450,8 @@ public final class Canvas {
             boneStrokeEraseState: batches.contains { $0.strokeGeometry != nil && !$0.strokeStencilSections.isEmpty }
                 ? try pipeline.strokeEraseState(vertexFunctionName: ShapePipeline.solidStrokeVertexFunctionName)
                 : nil,
-            shaderStrokeEraseStates: try shaderStrokeEraseStates())
+            shaderStrokeEraseStates: try shaderStrokeEraseStates(),
+            clipLayers: try uploadClipLayers())
     }
 
     /// 1 回だけ混ぜる線の区間を持つ立体の列のうち、利用者の断片で塗る列の消し描き (``Shader/strokeEraseState()``)。
@@ -5448,6 +5519,59 @@ public final class Canvas {
             }
         }
 
+        // **形の切り抜き** ([#2431])。型板の下位 7 ビットに、いま入っている段の積み。パスの頭で型板は 0 に clear
+        // される (`RenderTarget.makeRenderPass`) ので、ここも空から始める。列ごとに、列の積みとの差分だけを描き直す
+        //
+        // [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+        var stenciled: ClipLayers?
+        // 段を 1 つ足す (`adding`) か外す。足すのは 1 つ外の段まで入っている画素だけを 1 増やし、外すのは
+        // その段まで入っている画素だけを 1 減らす — 同じ三角形で描くので、重なりも正確に戻る
+        // (``ShapePipeline/clipLayerAddDepthState``)。組・奥行き・束ねは記憶を通す — 続く列が自分の設定を張り直す
+        func drawClipLayer(_ layers: ClipLayers, adding: Bool) {
+            guard let uploads = prepared.clipLayers,
+                let range = uploads.ranges[ObjectIdentifier(layers.layer)], !range.isEmpty
+            else { return }
+            use(uploads.state)
+            use(depth: adding ? pipeline.clipLayerAddDepthState : pipeline.clipLayerRemoveDepthState)
+            // 層は面全体の scissor で描く。同じ積みを別の矩形の下の列が使い回すとき、型板が欠けないように
+            if memory.changes(clip: nil) { encoder.setScissorRect(scissor(nil)) }
+            if memory.changes(cullMode: .none) { encoder.setCullMode(.none) }
+            bind(uploads.vertices.gpuAddress, ShapePipeline.vertexBufferIndex)
+            bind(
+                perBatch.matrices.gpuAddress + UInt64(batches.count * Self.valuesStride),
+                ShapePipeline.projectionBufferIndex)
+            // 添字 0 は何も動かさない置き場所
+            bind(geometry.flatInstances.gpuAddress, ShapePipeline.instanceBufferIndex)
+            // 被覆と細い塗りの記述は、`FlatFrame` が読まないと言う (0) ので読まれないが、口を空けたまま走らせない
+            bind(geometry.coverages.gpuAddress, ShapePipeline.coverageBufferIndex)
+            bind(geometry.thinFillRecords.gpuAddress, ShapePipeline.thinFillBufferIndex)
+            bind(geometry.thinFillSpans.gpuAddress, ShapePipeline.thinFillSpanBufferIndex)
+            encoder.setArgumentTable(argumentTable, stages: [.vertex, .fragment])
+            let reference = UInt32(adding ? layers.depth - 1 : layers.depth)
+            if memory.changes(stencilReference: reference) { encoder.setStencilReferenceValue(reference) }
+            encoder.drawPrimitives(
+                primitiveType: .triangle, vertexStart: range.lowerBound, vertexCount: range.count)
+            draws += 1
+        }
+        // 型板の積みを `target` へ移す。共通の祖先まで上の段から外し、そこから `target` まで下の段から足す
+        func moveStencil(to target: ClipLayers?) {
+            var from = stenciled
+            var to = target
+            var adding: [ClipLayers] = []
+            while from !== to {
+                let (fromDepth, toDepth) = (from?.depth ?? 0, to?.depth ?? 0)
+                if let top = from, fromDepth >= toDepth {
+                    drawClipLayer(top, adding: false)
+                    from = top.parent
+                } else if let top = to {
+                    adding.append(top)
+                    to = top.parent
+                }
+            }
+            for layers in adding.reversed() { drawClipLayer(layers, adding: true) }
+            stenciled = target
+        }
+
         // 値・光・材質・周囲の区画は、基本図形を飛ばして詰めて番号を振る (``detailRegionCount``)
         var detailIndex = 0
         for (index, batch) in batches.enumerated() {
@@ -5459,13 +5583,16 @@ public final class Canvas {
                 pinnedFar = batch.replacesSurface
                 encoder.setViewport(viewport(pinnedFar: pinnedFar))
             }
+            // 型板を列の切り抜きの積みに合わせる。切り抜きの無い列も 0 へ戻す — 線の印は段数 0 の画素だけを通す
+            if batch.clipShape !== stenciled { moveStencil(to: batch.clipShape) }
+            let clipped = batch.clipShape != nil
             // 並びごとに、頂点の落とし方と奥行きの扱いを切り替える。**平面は奥行きを
             // 書かない**ので、あとから来た立体の前後関係を汚さない (ADR-0021 決定 2)
             switch batch.source {
             case .flat:
                 batchState = (run.paint.shader?.states ?? pipeline.states).drawing(batch)
                 use(batchState!)
-                batchDepth = pipeline.flatDepthState
+                batchDepth = clipped ? pipeline.clippedFlatDepthState : pipeline.flatDepthState
                 use(depth: batchDepth)
                 bind(geometry.flatVertices.gpuAddress, ShapePipeline.vertexBufferIndex)
                 bind(geometry.coverages.gpuAddress, ShapePipeline.coverageBufferIndex)
@@ -5486,7 +5613,7 @@ public final class Canvas {
                 // 基本図形。頂点の並びは読まず、置き場所の区間だけを渡す。奥行きの扱いは
                 // 平面と同じ (常に通し・書かない)
                 use(pipeline.builtFormState(for: batch.formFlags, mode: run.mode))
-                use(depth: pipeline.flatDepthState)
+                use(depth: clipped ? pipeline.clippedFlatDepthState : pipeline.flatDepthState)
                 bind(
                     geometry.formInstances.gpuAddress
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
@@ -5508,9 +5635,10 @@ public final class Canvas {
                 use(batchState!)
                 batchDepth =
                     batch.replacesSurface
-                    ? pipeline.replaceDepthState
+                    ? (clipped ? pipeline.clippedReplaceDepthState : pipeline.replaceDepthState)
                     : batch.readsDepthOnly
-                        ? pipeline.solidReadOnlyDepthState : pipeline.solidDepthState
+                        ? (clipped ? pipeline.clippedSolidReadOnlyDepthState : pipeline.solidReadOnlyDepthState)
+                        : (clipped ? pipeline.clippedSolidDepthState : pipeline.solidDepthState)
                 use(depth: batchDepth)
                 // 引数を GPU が書く列 (粒) は、列の頭までを番地へ足す (``Batch/vertexBaseShift``)
                 bind(
@@ -5536,6 +5664,9 @@ public final class Canvas {
                 perBatch.matrices.gpuAddress + UInt64(index * Self.valuesStride),
                 ShapePipeline.projectionBufferIndex)
             if memory.changes(clip: batch.clip) { encoder.setScissorRect(scissor(batch.clip)) }
+            // 列は型板の下位 7 ビットが自分の段数と等しい画素だけを通す。線の印も同じ参照値で比べる ([ADR-0046])
+            let clipDepth = UInt32(batch.clipShape?.depth ?? 0)
+            if memory.changes(stencilReference: clipDepth) { encoder.setStencilReferenceValue(clipDepth) }
             bind(
                 blendModeBuffer.gpuAddress
                     + UInt64(Int(run.mode.rawIndex) * Self.blendModeStride),
@@ -5602,7 +5733,12 @@ public final class Canvas {
                 let eraseState, let batchState
             {
                 let markDepth = flat ? pipeline.flatStrokeMarkDepthState : pipeline.strokeMarkDepthState
-                let eraseDepth = flat ? pipeline.flatStrokeEraseDepthState : pipeline.strokeEraseDepthState
+                // 切り抜きのある列の消し描きは、切り抜きの中だけを戻す。外まで戻すと、立体の線は窓の外に見えない
+                // 線の奥行きを残し、後に置く立体を隠す
+                let eraseDepth =
+                    flat
+                    ? (clipped ? pipeline.clippedFlatStrokeEraseDepthState : pipeline.flatStrokeEraseDepthState)
+                    : (clipped ? pipeline.clippedStrokeEraseDepthState : pipeline.strokeEraseDepthState)
                 strokeSection = { draw in
                     use(depth: markDepth)
                     draw()
@@ -5955,7 +6091,10 @@ public final class Canvas {
         // ([#2364])。列が閉じた時点の値がそのまま入り、揺らしだけは描き切りの時点で足す — 止まって
         // いる間に閉じた列も、描くのがどの描き切りかで揺らしが決まる (``jitter(drawingInFrame:)``)
         let detailCount = detailRegionCount
-        let matrices = try matrixStorage.buffer(holding: batches.count)
+        // **最後の区画は、形の切り抜きの層を描く `FlatFrame`** ([#2431])。層は出す座標の三角形で、列と同じく揺らす
+        //
+        // [#2431]: https://github.com/mokume-metal/mokume/issues/2431
+        let matrices = try matrixStorage.buffer(holding: batches.count + 1)
         let lighting = try lightingStorage.buffer(holding: detailCount)
         let materials = try materialStorage.buffer(holding: detailCount)
         let surroundings = try surroundingsStorage.buffer(holding: detailCount)
@@ -6016,6 +6155,15 @@ public final class Canvas {
 
             writeValues(of: batch, into: values.contents().advanced(by: offset))
         }
+        // 形の切り抜きの層を描く区画 (``clipLayerFrameIndex``)。輪郭も細い塗りも持たない平面の三角形として描く
+        var clipLayerFrame = FlatFrame(
+            projection: jittered(projection, drawingInFrame: drawingInFrame),
+            strokeStart: UInt32.max, strokeShift: solidStrokeShift,
+            unitsPerDrawnPixel: unitsPerDrawnPixel, readsCoverage: 0,
+            thinFill: 0, thinFillUV: SIMD4(repeating: 0),
+            thinStroke: 0, thinStrokeParams: SIMD4(repeating: 0))
+        matrices.contents().advanced(by: batches.count * Self.valuesStride)
+            .copyMemory(from: &clipLayerFrame, byteCount: MemoryLayout<FlatFrame>.stride)
 
         // 時刻と面の大きさは、フレームの中で変わらない。**大きさは出す画素**で、断片が
         // 受け取る位置 (`position`) も出す画素へ換算して渡す (#1639)。割って出す 0…1 の

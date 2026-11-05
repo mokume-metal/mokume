@@ -100,6 +100,8 @@ enum ShapeExit {
             "transformStack", "styleStack", "recordingShape",
             // 道を記録している間の控え (#3561)。``Canvas/createPath(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
             "pathRecorder",
+            // 形の切り抜きを記録している間の控え (#2431)。``Canvas/clip(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
+            "clipRecorder",
             // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
             "shapeMarks",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
@@ -134,6 +136,7 @@ enum ShapeExit {
             // 頼んだ粒の進めの控え (#1710)。溜めた計算と同じく、組み立ての中では `particles()` を断る
             ("particleAdvancesThisFrame", nil),
             ("style.clip", { c, _ in c.clip(1, 2, 3, 4) }),
+            ("style.clipShape", { c, _ in c.clip { c.rect(0, 0, 3, 3) } }),
             ("style.material", { c, _ in c.shininess(50) }),
             ("style.castsShadow", { c, _ in c.castShadow(false) }),
             ("style.receivesShadow", { c, _ in c.receiveShadow(false) }),
@@ -166,7 +169,7 @@ enum ShapeExit {
             "thinFillRecordStorage": resource, "thinFillSpanStorage": resource,
             "formInstanceStorage": resource, "solidVertexStorage": resource,
             "solidIndexStorage": resource, "solidInstanceStorage": resource,
-            "solidSweepStorage": resource,
+            "solidSweepStorage": resource, "clipLayerStorage": resource,
             "lightStorageBuffer": resource, "lightingStorage": resource, "materialStorage": resource,
             "surroundingsStorage": resource,
             "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,

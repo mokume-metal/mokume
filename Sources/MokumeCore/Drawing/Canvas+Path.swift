@@ -169,7 +169,9 @@ extension Canvas {
             endShape(.close)
             currentStyle = saved
         }
-        if saved.hasStroke, saved.strokeWeight > 0 {
+        // 形の切り抜きの記録 (``clip(_:)``) は塗りだけを読む。線の回は描かない — 描くと、塗りのある道が
+        // 「塗りの無い形」として断られる (#2431)
+        if saved.hasStroke, saved.strokeWeight > 0, clipRecorder == nil {
             noFill()
             let held = recordPathStrokeAsOneFigure(subpaths, offset: offset)
             strokingOneFigure {

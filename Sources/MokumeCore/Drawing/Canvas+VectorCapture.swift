@@ -226,6 +226,7 @@ extension Canvas {
     func noteVectorDrop(_ kind: VectorDrop) {
         guard !recordingShape else {
             if pathRecorder != nil, let refusal = PathRefusal(kind) { refuseInsidePath(refusal) }
+            if clipRecorder != nil, let refusal = ClipRefusal(kind) { refuseInsideClip(refusal) }
             return
         }
         if let capture = vector.capture {
@@ -441,7 +442,7 @@ extension Canvas {
         }
         if fills, style.picture != nil { return .texture }
         if style.blendMode != .blend { return .blendMode }
-        if style.clip != nil { return .clip }
+        if style.clip != nil || style.clipShape != nil { return .clip }
         return nil
     }
 

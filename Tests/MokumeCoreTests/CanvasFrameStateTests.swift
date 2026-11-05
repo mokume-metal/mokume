@@ -42,6 +42,7 @@ extension CanvasTests {
             style.ellipseMode = .corner
             style.blendMode = .add
             style.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6)
+            style.clipShape = Canvas.ClipLayers(layer: Canvas.ClipLayer(positions: []), parent: nil)
             style.fontName = "Helvetica"
             style.textSize = 30
             style.textStyle = .bold
@@ -568,7 +569,7 @@ extension CanvasTests {
                 "thinFillRecordStorage": resource, "thinFillSpanStorage": resource,
                 "formInstanceStorage": resource, "solidVertexStorage": resource,
                 "solidIndexStorage": resource, "solidInstanceStorage": resource,
-                "solidSweepStorage": resource,
+                "solidSweepStorage": resource, "clipLayerStorage": resource,
                 "lightStorageBuffer": resource, "lightingStorage": resource, "materialStorage": resource,
                 "surroundingsStorage": resource,
                 "blendModeBuffer": resource, "glyphPageBuffer": resource, "uniformsStorage": resource,
@@ -661,6 +662,7 @@ extension CanvasTests {
                 "thinFillRecordsBuilt": count,
                 "recordingShape": "形の組み立て (createShape) の入口と出口が対で戻す。閉包なので境目をまたがない",
                 "pathRecorder": "道の記録中の控え (#3561)。createPath の入口で立て、形の組み立ての出口 (defer) で外の値へ戻す。閉包なので境目をまたがない",
+                "clipRecorder": "形の切り抜きの記録中の控え (#2431)。clip { } の入口で立て、形の組み立ての出口 (defer) で外の値へ戻す。閉包なので境目をまたがない",
                 "frameEndAwaitingShape": "組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を出口まで待たせる印 (#1855)。一番外の出口が閉じて下ろし、フレームを出る道 (leaveFrame) でも下ろす。境目では常に既定",
                 "shapeMarks": "形の組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす。閉包なので境目をまたがない",
                 "refusedBeginDrawsInsideShape": "形の組み立ての中で断った beginDraw() の数で、対の endDraw() が下ろす (#2834)。一番外の組み立ての出口が 0 に戻すので、境目をまたがない",
@@ -692,6 +694,7 @@ extension CanvasTests {
         private var frameStyle: [String: (reset: FrameReset, dirty: (inout Canvas.Style) -> Void)] {
             [
                 "clip": (.sceneBoth, { $0.clip = Canvas.ClipRect(left: 1, top: 2, right: 4, bottom: 6) }),
+                "clipShape": (.sceneBoth, { $0.clipShape = Canvas.ClipLayers(layer: Canvas.ClipLayer(positions: []), parent: nil) }),
                 "material": (.sceneEnd, { $0.material.shininess = 8 }),
                 "castsShadow": (.sceneEnd, { $0.castsShadow = false }),
                 "receivesShadow": (.sceneEnd, { $0.receivesShadow = false }),
@@ -1025,14 +1028,14 @@ extension CanvasTests {
 
         /// 戻すときに変わるフィールド。列を閉じるかどうかの違いを持つものを並べる。
         enum StyleChange: CaseIterable, CustomTestStringConvertible {
-            case material, castsShadow, receivesShadow, blendMode, clip, picture, fill
+            case material, castsShadow, receivesShadow, blendMode, clip, clipShape, picture, fill
 
             /// 戻す前に列を閉じるか。**置いた図形が、列の持つ設定を後から書き換えられない**
             /// ためのもので、列が読むのは材質・影・混ぜ方・切り抜きだけである。塗りに貼る絵は
             /// 塗りを置く手前で面を選び直すので、戻すときには閉じない
             var closesBatch: Bool {
                 switch self {
-                case .material, .castsShadow, .receivesShadow, .blendMode, .clip: true
+                case .material, .castsShadow, .receivesShadow, .blendMode, .clip, .clipShape: true
                 case .picture, .fill: false
                 }
             }
@@ -1046,6 +1049,7 @@ extension CanvasTests {
                 case .receivesShadow: style.receivesShadow = source.receivesShadow
                 case .blendMode: style.blendMode = source.blendMode
                 case .clip: style.clip = source.clip
+                case .clipShape: style.clipShape = source.clipShape
                 case .picture: style.picture = source.picture
                 case .fill: style.fill = source.fill
                 }
