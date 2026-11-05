@@ -149,39 +149,39 @@ let package = Package(
             name: "MokumeCoreTests",
             dependencies: ["mokume", "reference-sketches", "MokumeProbe", "MokumeTestSupport"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
-            exclude: ["scene-ledger.txt"], swiftSettings: .mokume),
+            exclude: ["scene-ledger.txt"], swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeCLITests", dependencies: ["MokumeCLI", "MokumeProbe", "MokumeTestSupport"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         // 計測の道具の引数の解き方 (#2490)。道具の最上位は走らせると窓を開くので、
         // 解き方だけを ProbeArguments.swift に出して、ここから呼ぶ
         .testTarget(
             name: "FrameRateProbeTests", dependencies: ["frame-rate-probe"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeCameraTests",
             dependencies: ["mokume", "MokumeCamera", "MokumeTestSupport"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeAudioTests",
             dependencies: ["mokume", "MokumeAudio", "MokumeTestSupport"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeNetworkTests",
             dependencies: ["mokume", "MokumeNetwork", "MokumeTestSupport"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeGamepadTests", dependencies: ["mokume", "MokumeGamepad"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeMIDITests", dependencies: ["mokume", "MokumeMIDI"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeGameTests", dependencies: ["mokume", "MokumeGame", "MokumeDiagnostics", "MokumeTestSupport"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeVisionTests", dependencies: ["mokume", "MokumeVision"],
-            swiftSettings: .mokume),
+            swiftSettings: .mokumeTests),
 
     ]
 )
@@ -205,6 +205,27 @@ extension [SwiftSetting] {
     /// 共有すると、版の違うコンパイラの成果物が混ざって両方の組み直しになる)
     static var mokume: [SwiftSetting] {
         [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
+    }
+
+    /// 検査のターゲットの設定。`mokume` と同じで、**環境変数 `MOKUME_TESTS_WITHOUT_WMO=1` のときだけ**
+    /// release で whole-module 最適化 (WMO) を外す (#3750)。立てるのは `release.yml` の
+    /// `release-check` だけである。
+    ///
+    /// release の WMO は 1 モジュールを 1 本のフロントエンドで逐次に組むので、検査の大半を抱える
+    /// `MokumeCoreTests` がホストのランナー (3 コア) の 1 コアだけで 35 分余り走り、60 分の上限で
+    /// 切れた (#3743)。外すとファイルごとのフロントエンドに割れて 3 コアに広がり、同じ時刻の 2 台で
+    /// job 全体が 56.6 → 33.4 分になった (総仕事量は user で +8%)。
+    ///
+    /// - **`-O` は保つ。** `-Onone` にすると release でだけ走る検査の判定 (`isDebugBuild`) が真に
+    ///   なり、その検査が黙って飛ぶ
+    /// - **既定にはしない。** Swift 6.4 の既定のビルド系 (swiftbuild) は release を WMO と決め打ちして
+    ///   出力を計画するので、この旗で組めなくなる (#2596)。手元の `make test-release` は既定のまま
+    ///   組む。ホストのランナーの既定が swiftbuild に変わると `release-check` が組めなくなり、
+    ///   起票の job が拾う。そのときはここを外して別の手 (#3750 の案 B) に移る
+    /// - 検査のターゲットだけに掛ける。製品のターゲットは WMO のまま組む
+    static var mokumeTests: [SwiftSetting] {
+        guard Context.environment["MOKUME_TESTS_WITHOUT_WMO"] == "1" else { return mokume }
+        return mokume + [.unsafeFlags(["-no-whole-module-optimization"], .when(configuration: .release))]
     }
 
     /// ビルドの間だけ走るコードの言語設定 (macro の実装)。
