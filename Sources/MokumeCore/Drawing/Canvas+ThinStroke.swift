@@ -580,7 +580,8 @@ extension Canvas {
     ) -> ThinEnds {
         let cap = style.strokeCap
         let count = points.count
-        guard !outline.isClosed, count >= 2, cap == .square || cap == .project, let origin = thin.origin,
+        guard !outline.isClosed, !outline.isDashPiece, count >= 2, cap == .square || cap == .project,
+            let origin = thin.origin,
             let first = (0..<(count - 1)).first(where: { points[$0 + 1] != points[$0] }),
             let last = (0..<(count - 1)).last(where: { points[$0 + 1] != points[$0] })
         else { return ThinEnds() }
@@ -598,6 +599,28 @@ extension Canvas {
         ends.startCut = cut(band: first, end: first, far: first + 1, axis: nil)
         // 同じ帯の両端は、軸を揃える (45° ちょうどで向きの丸めにより軸が割れないように)
         ends.endCut = cut(band: last, end: last + 1, far: last, axis: first == last ? ends.startCut?.axis : nil)
+        // 端の帯が端の列より短い折れ線は、列の中で線が端の帯の向きからそれないときだけ切る (#3745 の反証 3)。
+        // それる (列の中で曲がる) と、端の列の片が角を越えて境目まで出て、後の片を消す
+        if first != last {
+            if let start = ends.startCut {
+                var index = first
+                if !start.staysStraight({
+                    index += 1
+                    return index < count ? points[index] : nil
+                }) {
+                    ends.startCut = nil
+                }
+            }
+            if let end = ends.endCut {
+                var index = last + 1
+                if !end.staysStraight({
+                    index -= 1
+                    return index >= 0 ? points[index] : nil
+                }) {
+                    ends.endCut = nil
+                }
+            }
+        }
         if let start = ends.startCut, let end = ends.endCut {
             if first == last, let one = ThinEndCut.merged(start, end) {
                 ends.mergedCut = one
@@ -982,7 +1005,7 @@ struct ThinStrokeRecipe {
     /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周で、
     /// 端の形が `.square` か `.project` のもの。組み直した片が置き場所の副画素の位相で変わる。
     var cutsEndsAtColumns: Bool {
-        !outline.isClosed && outline.points.count >= 2 && (cap == .square || cap == .project)
+        !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2 && (cap == .square || cap == .project)
     }
 
     /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
@@ -1252,16 +1275,54 @@ nonisolated struct ThinEndCut: Equatable {
 
     /// 2 つの端の列の片が重なるか (囲みの箱で見る。境目で接するだけなら重ならない)。
     func overlaps(_ other: ThinEndCut) -> Bool {
-        let (mine, theirs) = (piece, other.piece)
-        guard !mine.isEmpty, !theirs.isEmpty else { return false }
-        let slack: Float = 1e-3
-        for axis in 0..<2 {
-            let low = max(mine.map { $0[axis] }.min()!, theirs.map { $0[axis] }.min()!)
-            let high = min(mine.map { $0[axis] }.max()!, theirs.map { $0[axis] }.max()!)
-            if high - low <= slack { return false }
-        }
-        return true
+        guard let mine = box, let theirs = other.box else { return false }
+        return Self.overlap(mine, theirs)
     }
+
+    /// 端の列の片の囲みの箱。片が空なら `nil`。
+    var box: (low: SIMD2<Float>, high: SIMD2<Float>)? {
+        let corners = piece
+        guard var low = corners.first else { return nil }
+        var high = low
+        for corner in corners {
+            low = simd_min(low, corner)
+            high = simd_max(high, corner)
+        }
+        return (low, high)
+    }
+
+    /// 2 つの囲みの箱が重なるか。境目で接するだけ (隔たり 1/1000 画素以内) なら重ならない。
+    static func overlap(
+        _ one: (low: SIMD2<Float>, high: SIMD2<Float>), _ other: (low: SIMD2<Float>, high: SIMD2<Float>)
+    ) -> Bool {
+        let shared = simd_min(one.high, other.high) - simd_max(one.low, other.low)
+        return shared.x > 1e-3 && shared.y > 1e-3
+    }
+
+    /// 端から順に `next` が返す線の点 (端の帯の向こうの点から) が、端の列を出るまで端の帯の向きからそれないか
+    /// (#3745 の反証 3)。端の列の中の点と、列の境目を横切る所が、端の帯の中心線から ``straightness`` 以内なら真。
+    /// 列を出る前に線が尽きれば偽。
+    ///
+    /// 端の列の片は端の帯の向きの帯で列を覆い、後の片を消す。列の中で線が曲がると、片が角を越えて境目まで出る。
+    /// 一直線を細かく刻んだ線 (曲線のゆるい所) は、端の線分が 1 列より短くても切ってよい。
+    func staysStraight(_ next: () -> SIMD2<Float>?) -> Bool {
+        let normal = SIMD2(-inward.y, inward.x)
+        var last = tip
+        while let point = next() {
+            let beyond = sign * (point[axis] - boundary)
+            if beyond >= 0 {
+                let before = sign * (last[axis] - boundary)
+                let crossing = before < beyond ? last + (point - last) * (before / (before - beyond)) : point
+                return abs(dot(crossing - tip, normal)) <= Self.straightness
+            }
+            if abs(dot(point - tip, normal)) > Self.straightness { return false }
+            last = point
+        }
+        return false
+    }
+
+    /// 端の列の中で線がそれてよい幅 (描く画素)。半径 10 画素の弧は、端の列の中で 0.1 画素ほどそれる。
+    static let straightness: Float = 0.125
 
     /// 凸多角形 `polygon` のうち、`keeping × (p[axis] − bound) ≥ 0` の側を残す。切り口の頂点は ``axis`` の成分を
     /// ちょうど `bound` にする (境目の整数の座標に乗せる)。

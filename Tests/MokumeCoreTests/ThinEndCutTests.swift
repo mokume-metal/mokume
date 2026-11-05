@@ -254,8 +254,11 @@ struct ThinEndCutRenderTests {
         let (cosine, sine) = (cos(Float(0.81)), sin(Float(0.81)))
         let matrix = simd_float4x4(
             SIMD4(cosine, sine, 0, 0), SIMD4(-sine, cosine, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(64, 64.3, 0, 1))
-        func ends(_ points: [SIMD2<Float>], cap: StrokeCap, snapped: Bool = true) throws -> Canvas.ThinEnds {
-            let outline = Canvas.Outline(points: points, isClosed: false, fills: false)
+        func ends(
+            _ points: [SIMD2<Float>], cap: StrokeCap, snapped: Bool = true, dash: Bool = false
+        ) throws -> Canvas.ThinEnds {
+            var outline = Canvas.Outline(points: points, isClosed: false, fills: false)
+            outline.isDashPiece = dash
             let thin = try #require(canvas.thinOutline(outline, weight: 1, placedBy: matrix, snapped: snapped))
             canvas.strokeCap(cap)
             var drawn: [SIMD2<Float>] = []
@@ -271,6 +274,12 @@ struct ThinEndCutRenderTests {
         #expect(round.startCut == nil && round.endCut == nil)
         let unsnapped = try ends([a, b, c], cap: .project, snapped: false)
         #expect(unsnapped.startCut == nil && unsnapped.endCut == nil)
+        // 破線の片は切らない (隣の片の端の列の片と型板で食い合う・#3745 の反証 1)
+        let dash = try ends([a, b, c], cap: .square, dash: true)
+        #expect(dash.startCut == nil && dash.endCut == nil)
+        // 端の線分が 1 列より短く、列の中で曲がる線は、その端を切らない (#3745 の反証 3)。曲がらない側の端は切る
+        let bent = try ends([a, a + SIMD2(0.4, 0), a + SIMD2(0.4, 30), b], cap: .square)
+        #expect(bent.startCut == nil && bent.endCut != nil)
         canvas.strokeCap(.round)
     }
 
@@ -281,13 +290,14 @@ struct ThinEndCutRenderTests {
         let canvas = try Self.makeCanvas(density: 0.5)
         let thin = try #require(canvas.solidThinBand(weight: 1))
         let camera = StrokeCamera(canvas.currentCamera, width: canvas.width, height: canvas.height)
-        func pieces(_ points: [SIMD3<Float>]) -> Int {
+        func cuts(_ points: [SIMD3<Float>], edges given: [(Int, Int)]? = nil) -> SolidEndCuts {
             var edges: [(Int, Int)] = []
             for index in 0..<(points.count - 1) { edges.append((index, index + 1)) }
             canvas.strokeCap(.square)
             defer { canvas.strokeCap(.round) }
-            return canvas.solidEndCuts(world: points, edges: edges, curveSteps: [], thin: thin, camera: camera).pieces.count
+            return canvas.solidEndCuts(world: points, edges: given ?? edges, curveSteps: [], thin: thin, camera: camera)
         }
+        func pieces(_ points: [SIMD3<Float>]) -> Int { cuts(points).pieces.count }
         let (a, b, c) = (SIMD3<Float>(40, 50, 0), SIMD3<Float>(90, 70, 0), SIMD3<Float>(60, 100, 0))
         #expect(pieces([a, b, c]) == 2)
         #expect(pieces([a, b, c, a]) == 0)
@@ -295,5 +305,14 @@ struct ThinEndCutRenderTests {
         #expect(pieces([a, a, b, c]) == 1)
         // 2 点の短い線で両端が同じ列なら、1 つの片
         #expect(pieces([a, a + SIMD3(0.3, 0.1, 0)]) == 1)
+        // 端の辺が 1 列より短く、列の中で曲がる線は、その端を切らない (#3745 の反証 3)
+        #expect(pieces([a, a + SIMD3(0.3, 0, 0), a + SIMD3(0.3, 30, 0), b]) == 1)
+        // 1 つにまとめた短い辺の端が別の端と重なれば、相方も一緒に切らない (#3745 の反証 2)。相方の端の帯だけ
+        // 境目で切ると、短い辺が消える
+        let netted = cuts(
+            [a, a + SIMD3(0.3, 0.1, 0), a + SIMD3(0.6, 0, 0), SIMD3(80, 60, 0)], edges: [(0, 1), (2, 3)])
+        #expect(netted.cuts[0] == nil && netted.cuts[1] == nil && netted.cuts[2] == nil)
+        // 離れた端 (点 3) だけを切る
+        #expect(netted.pieces.map(\.point) == [3])
     }
 }

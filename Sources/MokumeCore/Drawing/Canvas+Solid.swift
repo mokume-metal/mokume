@@ -969,7 +969,7 @@ extension Canvas {
                 let band = thinBand(from, to)
                 // 列の境目で切る端の帯は、端の外まで延ばしてから境目で切る (端の列とその外は端の列の片が持つ)
                 if let ends, let band, ends.cuts[from] != nil || ends.cuts[to] != nil,
-                    let start = ends.screen.drawn(world[from]), let end = ends.screen.drawn(world[to])
+                    let start = ends.screen.locate(world[from]), let end = ends.screen.locate(world[to])
                 {
                     var (a, b) = (start, end)
                     if let cut = ends.cuts[from] { a = cut.tip - cut.inward * 4 }
@@ -1045,8 +1045,10 @@ extension Canvas {
     /// 曲線の刻みの点も切らない。端の形が `.square` か `.project` のときだけ切る。
     ///
     /// - 1 本の辺の両端が同じ列に入る (画面で短い線) なら、1 つの片にして割合は両端の差にする
+    /// - 端の辺が端の列より短いときは、辺が 2 本だけ来る点をたどって、列の中で線が端の辺の向きからそれないときだけ
+    ///   切る (``ThinEndCut/staysStraight(_:)``・平面と同じ)
     /// - 別の辺の端どうしの列の片が重なる (端点の重なる開いた周など) なら、その 2 つの端は切らない。片の割合が
-    ///   同じ列を 2 度数えるからである
+    ///   同じ列を 2 度数えるからである。1 つにまとめた端の相方も、一緒に切らない (#3745 の反証 2)
     func solidEndCuts(
         world: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool], thin: SolidThinBand, camera: StrokeCamera
     ) -> SolidEndCuts {
@@ -1055,54 +1057,83 @@ extension Canvas {
         var ends = SolidEndCuts(screen: screen, outputPerDrawn: thin.outputPerDrawn)
         let cap = style.strokeCap
         guard cap == .square || cap == .project else { return ends }
+        // 点ごとに来る辺の数と、最大 2 本の隣 (端の列の中をたどるのに使う)
         var degree = [Int](repeating: 0, count: world.count)
+        var neighbors = [SIMD2<Int32>](repeating: SIMD2(-1, -1), count: world.count)
         var edgeOf = [Int](repeating: -1, count: world.count)
         for (number, (a, b)) in edges.enumerated() {
-            degree[a] += 1
-            degree[b] += 1
-            edgeOf[a] = number
-            edgeOf[b] = number
+            for (point, other) in [(a, b), (b, a)] {
+                if degree[point] < 2 { neighbors[point][degree[point]] = Int32(other) }
+                degree[point] += 1
+                edgeOf[point] = number
+            }
         }
         var found: [SolidEndCuts.Piece] = []
+        var firstOnEdge: [Int: Int] = [:]
         for point in world.indices where degree[point] == 1 {
             if point < curveSteps.count, curveSteps[point] { continue }
-            let (a, b) = edges[edgeOf[point]]
-            let far = a == point ? b : a
+            let far = Int(neighbors[point][0])
             guard far != point, let toward = screenToward(world[point], world[far], camera: camera),
-                let end = screen.drawn(world[point]), let other = screen.drawn(world[far])
+                let end = screen.locate(world[point]), let other = screen.locate(world[far])
             else { continue }
             let band = thin.band(along: toward)
             // 同じ辺の両端は、軸を揃える (45° ちょうどで向きの丸めにより軸が割れないように)
-            var axis: Int?
-            for earlier in found where earlier.edge == edgeOf[point] { axis = earlier.cut.axis }
+            let partner = firstOnEdge[edgeOf[point]]
             guard
                 let cut = ThinEndCut(
                     end: end, far: other, extend: cap == .project ? thin.drawn / 2 : 0,
-                    half: band.half / thin.outputPerDrawn, base: .zero, axis: axis)
+                    half: band.half / thin.outputPerDrawn, base: .zero, axis: partner.map { found[$0].cut.axis })
             else { continue }
+            // 辺が 1 本の網 (2 点の線) でなければ、端の列の中で線がそれないかを見る
+            if degree[far] != 1 {
+                var (previous, current) = (point, far)
+                var ended = false
+                let straight = cut.staysStraight {
+                    guard !ended else { return nil }
+                    let here = current
+                    if degree[here] == 2 {
+                        let next = neighbors[here][0] == Int32(previous) ? neighbors[here][1] : neighbors[here][0]
+                        (previous, current) = (here, Int(next))
+                    } else {
+                        ended = true
+                    }
+                    return screen.locate(world[here])
+                }
+                if !straight { continue }
+            }
+            if partner == nil { firstOnEdge[edgeOf[point]] = found.count }
             found.append(
                 SolidEndCuts.Piece(point: point, far: far, edge: edgeOf[point], cut: cut, coverage: band.coverage))
         }
-        var dropped = Set<Int>()
+        // 同じ辺の両端が同じ列に入るなら 1 つにまとめる
         var merged: [Int: ThinEndCut] = [:]
-        var mergedAway = Set<Int>()
+        var mates: [Int: Int] = [:]
+        for (second, piece) in found.enumerated() {
+            guard let first = firstOnEdge[piece.edge], first != second,
+                let one = ThinEndCut.merged(found[first].cut, piece.cut)
+            else { continue }
+            merged[first] = one
+            mates[first] = second
+            mates[second] = first
+        }
+        // 別の辺の端どうしで列の片が重なれば、両方とも切らない。囲みの箱は 1 度だけ組む
+        var boxes: [(low: SIMD2<Float>, high: SIMD2<Float>)?] = []
+        boxes.reserveCapacity(found.count)
+        for (index, piece) in found.enumerated() { boxes.append((merged[index] ?? piece.cut).box) }
+        var dropped = Set<Int>()
         for first in found.indices {
-            for second in found.indices where second > first {
-                if found[first].edge == found[second].edge {
-                    if let one = ThinEndCut.merged(found[first].cut, found[second].cut) {
-                        merged[first] = one
-                        mergedAway.insert(second)
-                    }
-                } else if found[first].cut.overlaps(found[second].cut) {
-                    dropped.insert(first)
-                    dropped.insert(second)
-                }
+            guard let one = boxes[first] else { continue }
+            for second in found.indices where second > first && found[second].edge != found[first].edge {
+                guard let other = boxes[second], ThinEndCut.overlap(one, other) else { continue }
+                dropped.insert(first)
+                dropped.insert(second)
             }
         }
+        for index in Array(dropped) { if let mate = mates[index] { dropped.insert(mate) } }
         for (index, piece) in found.enumerated() where !dropped.contains(index) {
-            // 1 つにした片の相方も、端の帯を境目で切る (帯は空になる)
+            // 1 つにまとめた片の相方も、端の帯を境目で切る (帯は空になる)
             ends.cuts[piece.point] = piece.cut
-            if mergedAway.contains(index) { continue }
+            if mates[index] != nil, merged[index] == nil { continue }
             var placed = piece
             if let one = merged[index] { placed.cut = one }
             ends.pieces.append(placed)
@@ -1122,7 +1153,7 @@ extension Canvas {
     ) {
         guard polygon.count >= 3 else { return }
         let (a, b) = (world[edge.0], world[edge.1])
-        guard let start = ends.screen.drawn(a), let end = ends.screen.drawn(b),
+        guard let start = ends.screen.locate(a), let end = ends.screen.locate(b),
             let across = screenAcross(a, b, camera: camera), let normal = camera.screenNormal(a, b)
         else { return }
         let delta = end - start
@@ -1814,7 +1845,7 @@ nonisolated struct SolidDrawnScreen {
     let units: SIMD2<Float>
 
     /// 世界の点 `point` の描く画素の座標。目の後ろの点は `nil`。
-    func drawn(_ point: SIMD3<Float>) -> SIMD2<Float>? {
+    func locate(_ point: SIMD3<Float>) -> SIMD2<Float>? {
         let clip = viewProjection * SIMD4(point, 1)
         guard clip.w > 0, clip.w.isFinite else { return nil }
         let canvas = SIMD2(
