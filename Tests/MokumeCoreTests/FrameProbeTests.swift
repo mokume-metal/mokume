@@ -50,7 +50,11 @@ import Testing
 /// 加えて、**動く三角形の組み立て**の場面 `moving.<2d|3d>.<頂点数>` (#3416): 毎フレーム位置をずらした三角形を
 /// 1 本の `beginShape(.triangles)` に 600・6 万・60 万頂点積む。3D は `vertex(x, y, z)` で面の向きを形から
 /// 求める (法線を書かない) のを基準にし、`moving.3d-normal.60000` だけ `normal(_:_:_:)` を書いた対照にする。
-/// **場面ごとに別のプロセスで打つ** (`footprintPeak` は前の場面の最大を引き継ぐ):
+/// **場面ごとに別のプロセスで打つ** (`footprintPeak` は前の場面の最大を引き継ぐ)。
+///
+/// **切り抜きの場面** `clip.<none|rect|circle|nested2|switching>` (#2431): 同じ円 2,000 個を、切り抜き無し・矩形の
+/// `clip()`・`clip { circle }`・`clip { }` を 2 段・窓つきの部品 1,000 個 (`push(); clip { circle }; rect; pop()`) で
+/// 描く。型板を使う描き切りと使わない描き切りの GPU 時間を見比べる。打ち方は次と同じ:
 ///
 /// ```bash
 /// MOKUME_FRAME_PROBE=1 python3 scripts/gpu-slot.py --exclusive -- \
@@ -167,6 +171,45 @@ struct FrameProbeTests {
         }
     }
 
+    /// 同じ円 2,000 個を、切り抜きの仕方だけ変えて描く場面 (#2431)。`switching` は窓つきの部品 1,000 個で、
+    /// 部品ごとに型板を描き直す (段を足して外す) 最悪の場面。
+    final class Clipped: Sketch {
+        enum Mode { case none, rect, circle, nested2, switching }
+        var mode = Mode.none
+        init() {}
+        convenience init(_ mode: Mode) {
+            self.init()
+            self.mode = mode
+        }
+        var settings: SketchSettings { SketchSettings(width: 960, height: 540) }
+        func draw() {
+            background(.display(red: 0.05, green: 0.05, blue: 0.08))
+            noStroke()
+            switch mode {
+            case .none: break
+            case .rect: clip(80, 40, 800, 460)
+            case .circle: clip { circle(480, 270, 480) }
+            case .nested2:
+                clip { circle(480, 270, 480) }
+                clip { rect(240, 0, 480, 540) }
+            case .switching:
+                fill(.display(red: 0.4, green: 0.8, blue: 0.9))
+                for index in 0..<1_000 {
+                    let (x, y) = (Float(index % 40) * 24 + 12, Float(index / 40) * 21 + 10)
+                    push()
+                    clip { circle(x, y, 16) }
+                    rect(x - 10, y - 10, 20, 20)
+                    pop()
+                }
+                return
+            }
+            fill(.display(red: 0.9, green: 0.7, blue: 0.2))
+            for index in 0..<2_000 {
+                circle(Float(index % 50) * 19 + 10, Float(index / 50) * 13 + 10, 6)
+            }
+        }
+    }
+
     /// プロセスの最大の物理フットプリント (バイト)。読めなければ nil。
     private static func footprintPeak() -> UInt64? {
         var info = task_vm_info_data_t()
@@ -265,6 +308,23 @@ struct FrameProbeTests {
     func moving3D600k() throws {
         try probe("moving.3d.600000", sketch: MovingTriangles(triangles: 200_000, hasDepth: true))
     }
+
+    // 切り抜き (#2431)。clip.none が対照
+
+    @Test("切り抜き無しの円 2,000 個 (対照)")
+    func clipNone() throws { try probe("clip.none", sketch: Clipped(.none)) }
+
+    @Test("矩形の clip() の中の円 2,000 個")
+    func clipRect() throws { try probe("clip.rect", sketch: Clipped(.rect)) }
+
+    @Test("clip { circle } の中の円 2,000 個")
+    func clipCircle() throws { try probe("clip.circle", sketch: Clipped(.circle)) }
+
+    @Test("clip { } を 2 段重ねた中の円 2,000 個")
+    func clipNested2() throws { try probe("clip.nested2", sketch: Clipped(.nested2)) }
+
+    @Test("窓つきの部品 1,000 個 (部品ごとに型板を描き直す)")
+    func clipSwitching() throws { try probe("clip.switching", sketch: Clipped(.switching)) }
 
     @Test("動く立体の三角形・6 万頂点 (面の向きを書いた対照)")
     func moving3DNormal60k() throws {
