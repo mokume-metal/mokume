@@ -19,7 +19,7 @@ mokume は Apple Silicon の macOS で動くクリエイティブコーディン
 ## 進め方
 
 1. 変更は Issue の起票から始める。起票は雑でよい。未トリアージの Issue の完了条件を調べて本文に書くところまでは、着手を待たずにしてよい (ラベルは付けない)
-2. **着手できるのは `verify: triaged` の付いた Issue だけ**。無ければ「どうなれば解消か」を本文に固めるところから始める。このラベルは完了条件を知る起票者だけが付ける (エージェントは自分で起票し条件を書いた Issue に限る)。例外は外部の人の小さな修正で、PR から始めてよい。着手したら `status: in progress` を付け、merge か中断で外す
+2. **着手できるのは `verify: triaged` の付いた Issue だけ** (次に着手するものは `bash scripts/ready-queue.sh` の ready 行から選ぶ)。無ければ「どうなれば解消か」を本文に固めるところから始める。このラベルは完了条件を知る起票者だけが付ける (エージェントは自分で起票し条件を書いた Issue に限る)。例外は外部の人の小さな修正で、PR から始めてよい。着手したら `status: in progress` を付け、merge か中断で外す
 3. 着手時に、各完了条件を現行のコードと突き合わせ、「まだ有効」「既に満たされている」「差し替えが要る」のどれかをプランに書く。事実のずれ (満たされた条件・動いた行や表記・数え直した数) は先に Issue 本文を直す。条件を緩める・絞る・差し替えるなら、本文は直さず根拠をコメントして人の判断を待つ
 4. そのプラン (変更点・確認方法) を Issue にコメントする。実装中に変わったら差分をコメントする (PR を出した後なら PR 側へ)。Codex は `docs/agent-environment.md` の手順でプランを登録する
 5. `main` から `<type>/<短い説明>` ブランチを切る
@@ -50,6 +50,7 @@ PR 本文が揃い `ci-gate`・`pr-gate` が成功したら、指示を待たず
 - **後からコミットを足す予定の PR は、足し終えるまで auto-merge を掛けない。** 必須チェックが成功した瞬間に queue へ入り、足す前に merge される。掛けたなら 成功する前に `gh pr merge --disable-auto` で外す
 - **`BEHIND` でも "Update branch" は押さない。** 得るものが無く、auto-merge だけが外れる
 - check が 1 本も付かないのは main との衝突で、手元で解いて push する。他の止まり方は `bash scripts/stall-watch.sh` が判別する
+- **queue から外れて auto-merge も外れた PR は、PR 自身の必須チェックが green で、外れた原因が環境 (専用機の前検査の赤・時間切れ・他 PR の merge 後に解いた衝突) だと run から読めたら、人に聞かずに `gh pr merge --auto --squash` で掛け直してよい。** PR 側の赤なら直して push する
 
 ## 説明と報告
 
@@ -102,7 +103,7 @@ AI エージェントは、このリポジトリへの発言 (コメント・`gh
 | 待ちを含むテストを書く | 待つ側が期限を持ち、越えたら殺す。`.timeLimit` は使わない (main actor 上でテスト全体の秒数を縛る) |
 | queue から外された | 失敗した `render` の run を読む (`render-pr` は早期の情報で必須ではない)。専用機は画面とキーボードで操作する |
 | 止まって見える | `bash scripts/stall-watch.sh` (冒頭に症状と対処)。対象から外すなら Draft に |
-| リリース | 日に 1 度自動で出る。下限 OS の release のテストが失敗なら出ない (`release.yml`)。出し直しだけ `release:now` (`scripts/release.py` 冒頭) |
+| リリース | 日に 1 度自動で出る。下限 OS の release のテストが失敗なら出ない。出し直しだけ `release:now` (どちらも `.github/workflows/release.yml`) |
 | ブランチ保護の正本 | `.github/rulesets/*.json` を PR で変え、適用 (`scripts/apply-rulesets.sh --apply`) はメンテナが merge 後に行う。必須チェックを消すときだけ適用が先 |
 | sub-issue の使い方 | `scripts/sub-issue.sh <親番号> <タイトル>`。階層は 3 段までで、独立した Issue を無理にツリーにしない。open の子を残す親は not planned で閉じる |
 | 手元の Mac が落ちた・固まった | GPU のテストの起動元を `scripts/gpu-slot.py` 冒頭「起動元の記録」で見る |

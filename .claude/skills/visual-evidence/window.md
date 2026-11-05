@@ -11,6 +11,8 @@ SPDX-License-Identifier: MIT
 ## 撮る
 
 ウィンドウの一覧を `gyazo_list_capturable_windows` で取得する。得た id はそのまま `screencapture` に渡せる。
+gyazo-mac の MCP が無ければ、下の「ウィンドウの矩形と子ウィンドウを取得する」の Swift (`CGWindowListCopyWindowInfo`) の
+一覧の先頭の列 (ウィンドウ番号) を id に使う。
 
 ```bash
 screencapture -l <windowId> -o shot.png       # 静止画 (ウィンドウの影を含めない)

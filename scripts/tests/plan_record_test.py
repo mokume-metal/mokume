@@ -2314,10 +2314,10 @@ class SelfContainedTest(unittest.TestCase):
         self.assertEqual(self.settings.get("env", {}).get("CLAUDE_PLAN_RECORD"), "0")
 
     def test_ci_watch_hook_is_silenced_while_working_here(self):
-        # 重要パスの PR は承認が付くまでマージボックスで止まる (ADR-0002 決定 3 /
-        # ADR-0031 決定 1)。個人環境の CI 見届けフックはその設計を知らないので、直す
-        # 対象が無いまま「直せ」と鳴り続ける (#159 / #194)。CI の見届けはリポ側の
-        # ci-gate と merge queue が担うので、個人側は黙らせる
+        # CI の見届けはリポ側の merge queue と ci-gate が担い、必須チェックが成功すれば
+        # queue が merge まで進める。個人環境の CI 見届けフックはそれと重なるだけで、
+        # 直す対象が無いまま「直せ」と鳴る (#159 / #194) ので黙らせる。当初の理由だった
+        # 承認のゲート (承認待ちで止まる PR) は ADR-0044 で外れた
         self.assertEqual(self.settings.get("env", {}).get("RS_CI_WATCH"), "0")
 
 

@@ -40,9 +40,11 @@
 #   5. 同じ 3 つで isInMergeQueue: false
 #      原因: merge queue のマージ後のツリーで必須チェック (ci-gate か、専用機の render) が失敗して
 #      queue から外され、auto-merge も一緒に外れた (eject の副作用)
-#      対処: 外した merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す
-#      (監視ジョブは auto-merge-dropped と報告し、猶予を超えたら失敗にするだけで、掛け直すのは
-#      人 — #2614)。PR 側で直すものなら直して push する
+#      対処: 外した merge_group の run を読む。一過性か main 側で直ったなら予約を掛け直す。
+#      PR 自身の必須チェックが成功していて原因が環境 (専用機の前検査の赤・時間切れ・他 PR の
+#      merge 後に解いた衝突) だと読めたら、エージェントが人に聞かずに掛け直してよい (AGENTS.md
+#      「マージの判断基準」)。監視ジョブ自身は掛けない — auto-merge-dropped と報告し、猶予を超えたら
+#      失敗にするだけ (#2614)。PR 側で直すものなら直して push する
 #   6. pr-gate のタイトルのチェックが失敗した
 #      原因: タイトルが Conventional Commits ではない (design は Issue Type であって型ではない)
 #      対処: タイトルを直す。edited で pr-gate の新しい run が作られ、必須はその結論を読む
@@ -174,17 +176,18 @@
 #   masked-red           name   10      コードの修正は人手。再実行しても同じ失敗を返す
 #   legacy-gate          name   11      push は人手。古い run は再実行しない
 #   edited-gate          name   14      (移行期) 再実行か push は人手。監視ジョブの読み直しは外した (#2718)
-#   auto-merge-dropped   name   2・5    予約の掛け直しは人手。監視ジョブの権限では掛けられない
+#   auto-merge-dropped   name   2・5    掛け直すのは人かエージェント。監視ジョブの権限では掛けられない
 #   queue-not-entered    name   12      同上。掛かっている予約を外して掛け直す
 #   stale-gate           name   13      古い pr-gate の再実行は人手。監視ジョブには実行させていない (#2668)
 #   runner-offline       name   8       専用機の前での操作と、保護の定義の適用は人手
 #   stale-claim          name   15      着手ラベルを外す・閉じる・プランを更新するのは人手。番号は Issue のもの
 #   unreadable           name   —       読めなかった。**何も判定していない**ので実行しない
 #
-# **auto-merge-dropped は実行せずに報告し、猶予を超えたら失敗にして人に返す** (#2614)。以前は act
+# **auto-merge-dropped は実行せずに報告し、猶予を超えたら失敗にして返す** (#2614)。以前は act
 # で、stall-act.sh が gh pr merge --auto --squash を実行していたが一度も成功しなかった — 監視ジョブの
 # GITHUB_TOKEN (contents: read) では enablePullRequestAutoMerge が FORBIDDEN になる。掛けるには
-# リポジトリへの書き込み権限を監視ジョブに渡すことになり、それは人の判断なので、掛けずに人へ返す。
+# リポジトリへの書き込み権限を監視ジョブに渡すことになり、それは人の判断なので、監視ジョブは掛けずに
+# 返す。掛け直すのは報告を読んだ人か、5 行目の条件を満たすと読めたエージェントである。
 #
 # **「外れた」は PR の状態ではなく timeline の出来事で読む。** 予約が無いという状態は、外れた
 # PR と、一度も掛けていない PR (後からコミットを足す PR は掛けずに置く・AGENTS.md「マージの

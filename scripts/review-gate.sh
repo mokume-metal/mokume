@@ -5,8 +5,9 @@
 # ADR-0002 / ADR-0031 のマージ判定のうち、**GitHub にできないことだけ**を見る。
 #   - PR は Issue に紐づく (Closes #N)。**GitHub が実際に作った紐づけを読む** —
 #     本文の文字列ではない (下の「1.」)。例外は no-issue ラベルでのみ許す
-#     (この no-issue が、PR に付く唯一のラベルである — ADR-0005。dependabot の
-#      PR には .github/dependabot.yml が自動で付ける)
+#     (PR に付けるラベルは CI の判定を変える no-issue・release:now・no-visual-change の 3 つで、
+#      ここが読むのは no-issue だけ — AGENTS.md「PR のラベル」。dependabot の PR には
+#      .github/dependabot.yml が no-issue を自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
 #   - 閉じる Issue に Bug が含まれるなら、PR 本文に空でない「反証」の節があり、応えが
