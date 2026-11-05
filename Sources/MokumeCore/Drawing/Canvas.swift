@@ -258,8 +258,8 @@ public final class Canvas {
     /// 保持した形の細い輪郭を組み直した回数 (検査用・``thinVertices(_:placedBy:cache:stroke:)``)。控えが
     /// 効いていれば、同じ大きさで置き続けても増えない。
     var thinStrokesRebuilt = 0
-    /// 光も周囲も置かない立体の塗りを、光の枝を外した断片で描くか (``solidVariantKey(of:opaque:)``・#1795)。
-    /// 検査が偽にして、枝を残した断片との画素の一致を比べる。製品では常に真。
+    /// 光も周囲も置かない立体の塗りを、光の分岐を外した断片で描くか (``solidVariantKey(of:opaque:)``・#1795)。
+    /// 検査が偽にして、分岐を残した断片との画素の一致を比べる。製品では常に真。
     var specializesUnlitSolids = true
     /// 不透明と分かる立体の塗りを、ブレンドなしで描くか (``solidVariantKey(of:opaque:)``・#2366)。検査が偽にして、
     /// ブレンドありとの画素の一致を比べる。製品では常に真。
@@ -2133,9 +2133,9 @@ public final class Canvas {
         /// 畳めない列は**何も動かさない置き場所を 1 つ**指す (平面なら添字 0)。
         var instanceStart: Int = 0
         var instanceCount: Int = 1
-        /// 基本図形の列が持つもの (塗り・輪郭・細い枝を含みうるか・斜めの縁を含みうるか)。**基本図形の列だけが
+        /// 基本図形の列が持つもの (塗り・輪郭・細い形の分岐を含みうるか・斜めの縁を含みうるか)。**基本図形の列だけが
         /// 使う。** 旗は 4 つ — ``FormInstance/fillsFlag``・``FormInstance/strokesFlag`` (置き場所が持つ旗で、
-        /// 変わると列を切る)・``FormInstance/thinFillsFlag`` (1 画素より細い塗り・帯の穴・線の枝・#1477)・
+        /// 変わると列を切る)・``FormInstance/thinFillsFlag`` (1 画素より細い塗り・帯の穴・線の分岐・#1477)・
         /// ``FormInstance/obliqueEdgesFlag`` (縁が画素の軸に斜めになりうる形・#2991。この 2 つは列の旗で、
         /// 変わっても列を切らない)。
         ///
@@ -2164,7 +2164,7 @@ public final class Canvas {
         /// 字 (字形の縁の被覆・#3111) — があるか。置き換える列は、これが立つと下地を読む断片で描く
         /// (``ShapePipeline/BlendStates/drawing(_:)``)。
         var thinCoverage = false
-        /// この列を、特化した断片で描くときの組の鍵 (光の枝を外す #1795・ブレンドを外す #2366)。
+        /// この列を、特化した断片で描くときの組の鍵 (光の分岐を外す #1795・ブレンドを外す #2366)。
         /// `nil` なら既定の組。
         ///
         /// **列を閉じるときに 1 度だけ決める** (``Canvas/solidVariantKey(of:opaque:)``) — 光・周囲・切り抜きと同じく
@@ -5345,7 +5345,7 @@ public final class Canvas {
         let perBatch: BatchBuffers
         /// 裏 → 表で描く置き場所の連なりを 1 回で描く添字の列 (``SolidSweep``)。
         let sweeps: SweepUploads
-        /// 列が使う、特化した立体の組 (``Batch/solidVariant``・光の枝を外す / ブレンドを外す)。
+        /// 列が使う、特化した立体の組 (``Batch/solidVariant``・光の分岐を外す / ブレンドを外す)。
         /// **ここに無い鍵の列は既定の組で描く** (組めなかった鍵・#1795)。積む側は錠も辞書も引かずに、これを引くだけ。
         let solidVariantStates: [ShapePipeline.SolidVariantKey: any MTLRenderPipelineState]
         /// 立体の線の印を消し描きするパイプライン (``ShapePipeline/strokeEraseState(vertexFunctionName:)``)。
@@ -5416,7 +5416,7 @@ public final class Canvas {
         // フレームの頭が延びるが、同じ組は 2 度と組まない
         try pipeline.prepareForms(
             batches.lazy.filter { $0.source == .form }.map { ($0.formFlags, $0.run.mode) })
-        // 特化した立体の塗りの組も同じ — 光も周囲も置かない列の光の枝を外した組 (#1795)、不透明と分かる
+        // 特化した立体の塗りの組も同じ — 光も周囲も置かない列の光の分岐を外した組 (#1795)、不透明と分かる
         // 列のブレンドを外した組 (#2366)。**列に持たせた鍵を 1 フレームに 1 度だけ集めて**組み、どちらにも
         // 当たらない列だけの絵は 1 本も組まない。組めなければ (控えの失敗を引いただけでも) このキャンバスで
         // 1 度言い、その鍵の列は起動で組み済みの既定の組で描く — 画素は同じで、速さだけが戻る
@@ -5619,7 +5619,7 @@ public final class Canvas {
                         + UInt64(batch.instanceStart * MemoryLayout<FormInstance>.stride),
                     ShapePipeline.instanceBufferIndex)
             case .solid:
-                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の枝を
+                // **平面と同じ断片が効く。** 頂点の落とし方だけが違う。光も周囲も置かない塗りは光の分岐を
                 // 外した断片で (#1795)、不透明と分かる塗りはブレンドなしで (#2366) 描く
                 if let key = batch.solidVariant, let state = variantState(for: key) {
                     batchState = state

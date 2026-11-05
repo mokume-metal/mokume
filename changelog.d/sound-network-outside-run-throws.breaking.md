@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT
 
 **代償: 走る前に作った送り専用の UDP・OSC のポートは、これまで届いていたものが `notRunning` になります。** たとえば `final class Remote: Sketch { var osc: OSCPort?; init() { osc = try? createOSC(listen: 9000, send: ("127.0.0.1", 7000)) }; func draw() { osc?.send("/x", mouseX) } }` は、これまで受けこそしないものの送れていました (送るポートは足されていなくても送り、スケッチが終わっても閉じられずに残っていました)。いまは `osc` が `nil` になり、何も送りません。`createUDP(listen:send:)` も同じです。作るところを `setup()` へ移してください。
 
-移行: この 3 つの型のどれかを `switch` で網羅しているコードは、枝が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` の枝を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、型の上の変更は要りません。走る前に作っていたコードは、次のどれでも作るところを `setup()` へ移してください。
+移行: この 3 つの型のどれかを `switch` で網羅しているコードは、case が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、型の上の変更は要りません。走る前に作っていたコードは、次のどれでも作るところを `setup()` へ移してください。
 
 - スケッチや部品の `init()` で作っていた: 音は鳴らず、受けるポートは受けていなかった (送るだけのポートは上の代償のとおり届いていた)。いまは投げます
 - 外で作ったものを、`setup()` で公開の `attach(_:)` に渡して足していた (これまでの警告 "attach() is only accepted from inside setup() …" がこの直し方へ誘っていました): 投げる 7 口では、作るところで投げるようになったので、作るところごと `setup()` へ移します。投げない口のうち `createAudioIn(device:)` と記録を流す 4 口は、これまでどおり `setup()` で `attach(_:)` に渡せば足されます

@@ -309,7 +309,7 @@ refs=$(jq -r '
 claims=$(printf '%s\n%s\n' "$claims" "$refs" | awk 'NF')
 
 # 静けさの境目。**BSD の date を先に試す** (走るのは手元の Mac と、当番 (stall-watch・ubuntu) —
-# 当番では -v が断られ、GNU の -d の枝で同じ値になる。どちらも scripts/tests/ready_queue_test.py が通す)。
+# 当番では -v が断られ、GNU の -d の分岐で同じ値になる。どちらも scripts/tests/ready_queue_test.py が通す)。
 # 1 度だけ作って ISO8601 の字面で比べる — 同じ書式・同じ UTC なら辞書順が時刻順になる
 QUIET_BEFORE=$(date -u -v-"${DROPPED_MINUTES}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
   date -u -d "${DROPPED_MINUTES} minutes ago" +%Y-%m-%dT%H:%M:%SZ)

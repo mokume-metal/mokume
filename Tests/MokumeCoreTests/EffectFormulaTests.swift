@@ -408,7 +408,7 @@ struct EffectFormulaTests {
                     x: x, y: y, width: width, height: height, amount: amount)
                 let drawn = Self.channels(pixels[x, y])
                 let expected = [color.red * factor, color.green * factor, color.blue * factor, 1]
-                // 境目 0.4 の上に乗る画素は無い (距離の丸めで枝を取り違えないよう、少し離す)
+                // 境目 0.4 の上に乗る画素は無い (距離の丸めで分岐を取り違えないよう、少し離す)
                 let inner = distance < 0.4 - 1e-4
                 if inner { untouched += 1 }
                 for (index, value) in expected.enumerated() {
@@ -636,8 +636,8 @@ struct EffectFormulaTests {
 
     /// #1817 の反証 2-1・2-3・2-5。**不透明度 0 で色を持つ画素は、色ずれも色調整もそのまま運ぶ** —
     /// 作業空間は範囲の外の値を捨てず、畳むのは出力段だけである ([ADR-0011] 決定 1)。周辺減光・
-    /// 単色化・反転と同じく通す。色ずれでは、締めの部品の「上限の無い成分」の枝 (`unbounded`) を
-    /// 通る — 枝が無ければ、不透明度 0 × 乗算を戻した値で 0 へ落ちる。直す前の色調整は、乗算を
+    /// 単色化・反転と同じく通す。色ずれでは、締めの部品の「上限の無い成分」の分岐 (`unbounded`) を
+    /// 通る — 分岐が無ければ、不透明度 0 × 乗算を戻した値で 0 へ落ちる。直す前の色調整は、乗算を
     /// 戻すところで 0 を入れて潰していた。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md

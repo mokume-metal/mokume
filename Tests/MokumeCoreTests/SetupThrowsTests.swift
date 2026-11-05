@@ -152,7 +152,7 @@ struct SetupThrowsTests {
         #expect(sketch.draws == 0, "draw() が呼ばれた")
     }
 
-    // MARK: - どの枝からも通り抜けない (反証 1)
+    // MARK: - どの分岐からも通り抜けない (反証 1)
 
     /// `setup()` で `noLoop()` を呼んでから投げるスケッチ (Issue の想定例の 1 行目の形)。止めた後に入力を数える。
     final class StopsThenThrows: Sketch {
@@ -245,7 +245,7 @@ struct SetupThrowsTests {
         #expect(sketch.draws == 0)
     }
 
-    @Test("作者が止めた枝 (最初のフレームの前に noLoop()) の観測の一枚描きも、応えた後で投げる")
+    @Test("作者が止めた分岐 (最初のフレームの前に noLoop()) の観測の一枚描きも、応えた後で投げる")
     func aStoppedFirstObservationThrowsToo() throws {
         let facet = try makeFacet()
         let sketch = Plain()

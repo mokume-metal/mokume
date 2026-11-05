@@ -87,7 +87,7 @@ public enum Force: Equatable, Sendable {
     /// 1 点から遠ざける。
     ///
     /// **``attract(_:_:_:strength:weakeningBeyond:)`` の符号を返すだけ** — 引くと押すは同じ
-    /// 1 つの計算なので、枝を 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書く
+    /// 1 つの計算なので、分岐を 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書く
     /// より読みやすいためである。`weakeningBeyond` も同じ意味でそのまま渡る。
     public static func repel(
         _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil

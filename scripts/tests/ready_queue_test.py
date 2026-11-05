@@ -529,7 +529,7 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[20][0], "dropped", "16 進の名前に当たった子で生きていると読んでいる")
 
     # 3e. 当番 (stall-watch) が打つ形: 閾値 3 日で、手元の Mac の date と ubuntu の GNU の date が
-    # 同じ行を出す (#3366)。GNU の枝は `date -v` が断られたときの `date -d` である
+    # 同じ行を出す (#3366)。GNU の分岐は `date -v` が断られたときの `date -d` である
     def test_stale_claims_at_three_day_threshold(self):
         issues = [
             # #2507 の形: 印も人の最後の手も古い

@@ -405,7 +405,7 @@ struct SolidStrokeAspectTests {
 
     /// 端の円板 (`kind 1`)・出っ張らせる端 (`kind 3`) を GPU の骨で組む場面。平面を、視線に沿って縁だけが
     /// 見えるように置く (`rotateY(π/2)`)。画面で 1 本の線に潰れ、平行投影では 4 隅が端になる (透視では奥行きの辺が
-    /// 画素のずれで別の向きに数えられ、折れ目の形になる — 骨の枝は端の枝と別だが、同じ絵になることは見る)。
+    /// 画素のずれで別の向きに数えられ、折れ目の形になる — 骨の分岐は端の分岐と別だが、同じ絵になることは見る)。
     @Test("縦横比を違えた投影の端は、GPU の骨と CPU の帯で同じ絵になる", arguments: Skew.all, [StrokeCap.round, .project])
     func gpuEndsAgreeWithCPU(_ skew: Skew, cap: StrokeCap) throws {
         var pictures: [DisplayImage] = []

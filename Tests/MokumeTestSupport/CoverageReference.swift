@@ -150,7 +150,7 @@ public nonisolated enum CoverageReference {
 
     /// **本体が曲線の縁の被覆に使う式の写し** (円の塗り・#3493)。本体は画素の中心での距離と勾配から縁の
     /// 接線を作り、その**半平面**と画素の正方形の重なりの面積を被覆にする (`Shapes.metal` の
-    /// `mokume_formCoverage` の面積の枝・`mokume_pixelCdf`)。円の距離場は真の距離なので、中心 `center` から画素の
+    /// `mokume_formCoverage` の面積の分岐・`mokume_pixelCdf`)。円の距離場は真の距離なので、中心 `center` から画素の
     /// 中心までの距離 − 半径 が符号つきの距離、中心から画素へ向かう単位ベクトルが勾配になる。最後に
     /// ``snapped(_:)`` で写す。
     ///
@@ -345,16 +345,16 @@ public nonisolated enum CoverageTable {
 
     /// **曲線の縁の差の上限 `k / R` の k** (#3493)。R は描く画素での曲率半径 (画素)。
     ///
-    /// 本体は曲線の縁を、接線の半平面と画素の正方形の重なりで数える (`mokume_formCoverage` の面積の枝)。円板は
+    /// 本体は曲線の縁を、接線の半平面と画素の正方形の重なりで数える (`mokume_formCoverage` の面積の分岐)。円板は
     /// 凸なので被覆は面積より明るく (凹の縁は同じ大きさで暗く) 出て、差は画素の中の接線の長さ L に対し弧と接線の間の面積
     /// `L³ / (24 R)` までで、画素の正方形の対角 (L = √2) で最大 0.118 / R になる。**実測の最大に合わせずに**、本体の式の
     /// 写し (``CoverageReference/circleModelCoverage(center:radius:pixel:_:)``) を半径 3〜30・画素と縁の相対位置の格子で
     /// 数えた最大 (0.116) を覆う値に置いた。`CoverageReferenceTests` が、模型の最大がこの値の内で、この値が模型の最大より
     /// 緩すぎないこと (1.15 倍まで) を見る。
     ///
-    /// **効く範囲は、描く画素での曲率半径が ``minimumRadius`` 以上の、面積の枝を通る曲線の縁。** 円・楕円・扇の塗りと
+    /// **効く範囲は、描く画素での曲率半径が ``minimumRadius`` 以上の、面積の分岐を通る曲線の縁。** 円・楕円・扇の塗りと
     /// 輪郭の両縁・角丸の角・`strokeJoin(.round)` の外縁は同じ式を通るので、同じ向きに同じ根で外れる。**`point()` と、
-    /// 既定の丸い端 (`strokeCap(.round)`) の線の端は線形の渡しで面積の枝を通らず、この約束の外。** 測ったのは円 (一様な
+    /// 既定の丸い端 (`strokeCap(.round)`) の線の端は線形の渡しで面積の分岐を通らず、この約束の外。** 測ったのは円 (一様な
     /// 拡大) だけで、一様でない拡大 (軸 30×10 の楕円では差 × 局所の R が 0.168) と楕円は測っていない — 楕円は距離場そのものが
     /// 近似 (ADR-0039) なので別の誤差が重なる。
     public static let curvatureConstant = 0.12
@@ -372,7 +372,7 @@ public nonisolated enum CoverageTable {
         Row(
             shape: .axisAlignedRect, route: .distanceField, quantity: .snappedArea, tolerance: 1.0 / 255,
             basis: "軸に沿う縁は線形の渡しがそのまま面積だが、本体は両端に 1/256 の遊びを持たせて写す"
-                + " (`Shapes.metal` の `kFormSnap`・`mokume_formCoverage` の面積の枝の最後の `saturate(… * (1.0 + 2.0 * kFormSnap) - kFormSnap)`)。写した値と 1/255 以内"),
+                + " (`Shapes.metal` の `kFormSnap`・`mokume_formCoverage` の面積の分岐の最後の `saturate(… * (1.0 + 2.0 * kFormSnap) - kFormSnap)`)。写した値と 1/255 以内"),
         Row(
             shape: .rotatedRect, route: .distanceField, quantity: .area, tolerance: 0.012,
             basis: "直線の斜めの縁は半平面との重なりの面積 (`mokume_pixelCdf`)。45° の rect で 0.012 (#2991)"),
@@ -382,7 +382,7 @@ public nonisolated enum CoverageTable {
             basis: "曲線の縁は、画素の中心での距離と勾配から作った接線の半平面と画素の正方形の重なりで数えるので、"
                 + "凸の縁 (円の塗り) は面積より明るく出る (凹の縁は同じ大きさで暗い)。差は描く画素での曲率半径 R に反比例し、"
                 + "約 k / R (k = \(curvatureConstant)・本体の式の写しの格子の最大 0.116 を覆う)。許容は max(0.02, k / R + 丸めの余裕)で、"
-                + "半径 7 以上は 0.02 (#3493)。比べる量は kFormSnap で写した面積 — 面積の枝の最後の写しを許容から分ける"
+                + "半径 7 以上は 0.02 (#3493)。比べる量は kFormSnap で写した面積 — 面積の分岐の最後の写しを許容から分ける"
                 + " (軸に沿う rect の行と同じ)。0.02 は角丸・折れ目の既存の検査と同じ (#2991)。半径 3 未満は範囲の外"
                 + " (3 は置いた線で、GPU で測ったのは 3 から。本体の式の写しでは 1〜2.5 でも差 × R は k の内)"),
         Row(

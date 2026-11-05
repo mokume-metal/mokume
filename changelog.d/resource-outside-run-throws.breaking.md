@@ -7,4 +7,4 @@ SPDX-License-Identifier: MIT
 
 これまでは、投げる口なのに `try?` でも受けられず、窓が開く前に落ちていました。たとえば `struct Ship: SketchPart { var sprite: Image?; init() { sprite = try? loadImage("ship.png") } }` をスケッチのプロパティで作ると、スケッチを作った時点で落ちていました。いまは窓が開き、`sprite` は `nil` になります (走っている間に読み直すなら `setup()` で読みます)。投げない `createShape { }` は、同じ所では空の形を返し、1 度だけ警告します。
 
-移行: この 6 つの型のどれかを `switch` で網羅しているコードは、枝が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` の枝を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、コードの変更は要りません。
+移行: この 6 つの型のどれかを `switch` で網羅しているコードは、case が足りないとコンパイル時に指摘されます。`case .notRunning(let call):` を足してください。失敗をまとめて扱っている (`catch` で受けて `description` を出す、`try?` で受ける、など) なら、コードの変更は要りません。

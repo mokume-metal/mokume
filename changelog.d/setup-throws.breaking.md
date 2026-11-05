@@ -7,4 +7,4 @@ SPDX-License-Identifier: MIT
 
 投げない `func setup()` を書いたスケッチは、書き換えずにこれまでどおり組めて、呼ばれます。`async` にはしていません (`async` にすると、既存の同期の `setup()` が呼ばれなくなるため)。
 
-移行: `setup()` が投げたことを運ぶため、公開の列挙 `RenderFailure` に場合 `setupFailed(reason:)` が増えました。`RenderFailure` を `switch` で網羅しているコードは、枝が足りないとコンパイル時に指摘されます。`case .setupFailed(let reason):` の枝を足してください (`reason` は投げた失敗の全文です)。`default:` で受けているコードは変更が要りません。
+移行: `setup()` が投げたことを運ぶため、公開の列挙 `RenderFailure` に場合 `setupFailed(reason:)` が増えました。`RenderFailure` を `switch` で網羅しているコードは、case が足りないとコンパイル時に指摘されます。`case .setupFailed(let reason):` を足してください (`reason` は投げた失敗の全文です)。`default:` で受けているコードは変更が要りません。

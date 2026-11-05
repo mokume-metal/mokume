@@ -931,7 +931,7 @@ enum RunCommand {
     ) -> CommandFailure {
         let tool = toolName(of: process)
         // 起こす場所が決まっていなければ、子は走らせた場所で動く。それが読めなければ、使えない場所
-        // として名乗る。**この枝は今の呼び元からは辿れない** (`launch`・`capture`・見張りの起動は
+        // として名乗る。**この分岐は今の呼び元からは辿れない** (`launch`・`capture`・見張りの起動は
         // どれも `currentDirectoryURL` を据える) が、据え忘れた口が足されたときに、作業ディレクトリが
         // 消えた回を「在らない場所」と誤って言わないための受け皿である
         guard let place = process.currentDirectoryURL ?? GivenPath.currentDirectory else {

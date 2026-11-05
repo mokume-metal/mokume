@@ -88,7 +88,7 @@ test 段が 3 週間で約 2 倍になった (#3190) — 上位 10 本で累計�
 途中から取り消した検査を、名前・ケース・理由つきで名乗る。取り消しは xUnit の上では passed と
 同じ `<testcase/>` に見え、端末の出力にも (1 ケースの取り消しは) 出ない。前提が崩れた回に
 検査が何も確かめないまま緑になる — いま `Test.cancel` で取り消す検査は
-`DocumentLoadingTests` と `APIListDownloadTests` の「5 回とも前提が成り立たなかった」の枝である。
+`DocumentLoadingTests` と `APIListDownloadTests` の「5 回とも前提が成り立たなかった」の分岐である。
 
 **読む元は xUnit ではなく、`swift test --event-stream-output-path <置き場> --event-stream-version 0`
 の事象の記録** (1 行 1 JSON)。プロセスが自分でファイルへ書くので端末のように行を落とさず、
@@ -156,7 +156,7 @@ MAX_MESSAGES = 80
 # 関所が閉じた後の失敗の文面の頭 (RenderFailure.notResponding)。英語の文面を写しているので、
 # 本物と合っていることは scripts/tests/test_vanished_test.py が Sources から確かめる
 GATE_CLOSED_OWN = "A wait for the GPU went past its limit earlier in this process"
-# 別の回が残した gpu-slot の記録で止まった断り (RenderFailure.notResponding の record の枝・#2235)
+# 別の回が残した gpu-slot の記録で止まった断り (RenderFailure.notResponding の record の分岐・#2235)
 GATE_CLOSED_RECORD = "A wait for the GPU went past its limit in another run under gpu-slot.py"
 GATE_CLOSED = (GATE_CLOSED_OWN, GATE_CLOSED_RECORD)
 # gpu-slot の記録が絡む断りの目印。記録は起こし直しでは消えず、人が消すまで次の回も止まる

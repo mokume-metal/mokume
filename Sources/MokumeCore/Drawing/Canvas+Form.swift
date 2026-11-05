@@ -31,7 +31,7 @@ extension Canvas {
         /// ``FormInstance/mayHaveThinHole(unitsPerDrawnPixel:)``・#2186・
         /// ``FormInstance/mayNeedExactRing(unitsPerDrawnPixel:)``・#2742)。
         ///
-        /// 立っていれば、閉じるときに ``FormInstance/thinFillsFlag`` を足して、断片の枝を
+        /// 立っていれば、閉じるときに ``FormInstance/thinFillsFlag`` を足して、断片の分岐を
         /// 残した組で描く。**変わっても列を切らない** — 細い塗りと太い塗りが混ざった列は
         /// 含む側の組で描けば絵が変わらないので、寸法違いが 1 列に並ぶ性質を崩さない ([#1477])。
         ///

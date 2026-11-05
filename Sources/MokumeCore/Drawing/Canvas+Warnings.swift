@@ -300,7 +300,7 @@ extension Canvas {
         ///
         /// [#2835]: https://github.com/mokume-metal/mokume/issues/2835
         case strokeDashTooFine
-        /// 特化した立体のパイプライン (光の枝を外した組・ブレンドを外した組) を組めず、その立体を既定の
+        /// 特化した立体のパイプライン (光の分岐を外した組・ブレンドを外した組) を組めず、その立体を既定の
         /// パイプラインで描いた ([#1795]・[#2366])。絵は同じで、速さだけが戻る。
         ///
         /// [#1795]: https://github.com/mokume-metal/mokume/issues/1795

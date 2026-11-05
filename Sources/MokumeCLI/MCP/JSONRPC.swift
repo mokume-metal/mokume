@@ -203,7 +203,7 @@ nonisolated enum JSONRPC {
     }
 
     /// `ping` への答え (空の結果)。**答え方はここ 1 つ** — 読み取りの手 (`Inbox.feed`・道具が走っている
-    /// 間の即答) と `MCPServer.respond(to:)` の枝が、別々に組むと食い違う (#2355)。
+    /// 間の即答) と `MCPServer.respond(to:)` の分岐が、別々に組むと食い違う (#2355)。
     static func pingResponse(id: ID?) -> String {
         response(id: id, result: [:])
     }

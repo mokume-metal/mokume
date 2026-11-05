@@ -192,7 +192,7 @@ struct FillCoverageTests {
         ProbeAxis("cy", 36..<92, simplest: 64),
         // 半径 3 から生成する。曲線の縁は接線の半平面で数えるので面積より明るく出て、差は描く画素での曲率半径 R に
         // 反比例し約 k / R (``CoverageTable/curvatureConstant``・#3493)。許容は半径の関数で、半径 7 以上は 0.02 のまま。
-        // 3 未満は 1 画素の細い枝との境目に近く、約束の外に置く
+        // 3 未満は 1 画素の細い形の分岐との境目に近く、約束の外に置く
         ProbeAxis("radius", CoverageTable.minimumRadius..<30, simplest: 12),
     ]
 

@@ -75,10 +75,10 @@ struct MCPServer {
 
     /// 1 つの呼び出しに答える。答えを返さない通知なら `nil`。
     ///
-    /// **通知かどうかは、手続きの名前を見る前にここで 1 度だけ決める。** 名前ごとの枝で
-    /// 決めると、枝を足すたびに判断が漏れうる — `initialize`・`tools/list`・`tools/call`
-    /// の枝が通知にも `"id": null` で答え、`tools/call` は道具まで走らせていた (#2317)。
-    /// MCP 2024-11-05 の通知 (`notifications/` の 4 つ) に、下の枝の名前のものは無い。
+    /// **通知かどうかは、手続きの名前を見る前にここで 1 度だけ決める。** 名前ごとの分岐で
+    /// 決めると、分岐を足すたびに判断が漏れうる — `initialize`・`tools/list`・`tools/call`
+    /// の分岐が通知にも `"id": null` で答え、`tools/call` は道具まで走らせていた (#2317)。
+    /// MCP 2024-11-05 の通知 (`notifications/` の 4 つ) に、下の分岐の名前のものは無い。
     /// 名前によらず、知らない通知と同じく黙って捨てる
     func respond(to call: JSONRPC.Call, cancellation: Cancellation? = nil) -> String? {
         // JSON-RPC 2.0 §4.1 — 通知には、手続きの名前によらず答えない

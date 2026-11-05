@@ -19,6 +19,6 @@ func mouseReleased() {
 
 - `mouseButton == 0` → `mouseButton == .left`、`== 1` → `== .right`、`== 2` → `== .center`
 - 4 番目以降の釦 (戻る・進むなど) は `MouseButton(rawValue: 3)` のように番号で表せます
-- `switch mouseButton` の `case 0:` は `case .left:` と書き換えます。まだ何も押していないときの `nil` は `default:` の枝へ落ちます
+- `switch mouseButton` の `case 0:` は `case .left:` と書き換えます。まだ何も押していないときの `nil` は `default:` へ落ちます
 - `InputState.button` も `MouseButton?` に、`InputEvent.mouseDown` / `mouseUp` の `button:` も `MouseButton` になりました
 - 外から送る `.mokume/input` の `button` は今までどおりの数 (macOS の番号) で、送り手を変える必要はありません

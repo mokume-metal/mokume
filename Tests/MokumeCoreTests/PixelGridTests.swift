@@ -932,7 +932,7 @@ struct PixelGridTests {
     // MARK: - 細長い楕円の帯の内縁・外縁 (#2742)
 
     /// 太さの半分が長い軸の端の曲率半径 (`短半径² / 長半径`) を越える細長い楕円。穴は 1 画素以上
-    /// ある太さを選ぶ (穴が 1 画素より細い枝は #2186 が数える)。
+    /// ある太さを選ぶ (穴が 1 画素より細い形の分岐は #2186 が数える)。
     nonisolated static let elongatedRingShapes: [SeamShape] = [
         // 本文の 2 つ
         SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 4),
@@ -941,7 +941,7 @@ struct PixelGridTests {
         SeamShape(name: "ellipse(0, 0, 84, 26)", isEllipse: true, half: SIMD2(42, 13), weight: 14),
         SeamShape(name: "ellipse(0, 0, 40, 10)", isEllipse: true, half: SIMD2(20, 5), weight: 6),
         SeamShape(name: "ellipse(0, 0, 30, 6)", isEllipse: true, half: SIMD2(15, 3), weight: 4),
-        // 太さ 5.0 は穴の幅がちょうど 1 で #2186 の細い穴の枝に入らず、帯が丸ごと抜けていた
+        // 太さ 5.0 は穴の幅がちょうど 1 で #2186 の細い穴の分岐に入らず、帯が丸ごと抜けていた
         SeamShape(name: "ellipse(0, 0, 100, 6)", isEllipse: true, half: SIMD2(50, 3), weight: 5),
         // 縦長 (長い向きが y)
         SeamShape(name: "ellipse(0, 0, 26, 84)", isEllipse: true, half: SIMD2(13, 42), weight: 7),
@@ -971,15 +971,15 @@ struct PixelGridTests {
             "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
     }
 
-    /// 太さを動かしても、#2186 の細い穴の枝の境目で帯が跳ばない ([#2742])。
+    /// 太さを動かしても、#2186 の細い穴の分岐の境目で帯が跳ばない ([#2742])。
     ///
-    /// `ellipse(0, 0, 100, 6)` は太さ 5.0 で穴の幅がちょうど 1 画素になる。穴の幅が 1 画素より細い枝
-    /// (両縁を見る積) と、それ以上の枝 (距離場) が、境目の両側で同じ帯を出す。太さ 5.0 で 100%
+    /// `ellipse(0, 0, 100, 6)` は太さ 5.0 で穴の幅がちょうど 1 画素になる。穴の幅が 1 画素より細い形の分岐
+    /// (両縁を見る積) と、それ以上の分岐 (距離場) が、境目の両側で同じ帯を出す。太さ 5.0 で 100%
     /// 欠け、5.02 で 0 だった。
     ///
     /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
     @Test(
-        "太さを動かしても、細い穴の枝の境目で帯が欠けない",
+        "太さを動かしても、細い穴の分岐の境目で帯が欠けない",
         arguments: [Float(4.5), 4.9, 4.98, 5, 5.01, 5.02, 5.05, 5.1, 5.5])
     func elongatedEllipseRingDoesNotJumpAtTheThinHoleBoundary(_ weight: Float) throws {
         let shape = SeamShape(
@@ -1208,12 +1208,12 @@ struct PixelGridTests {
             "\(shape): 帯の外へ滲む: 最悪 \(measured.worstExcess) \(measured.excessAt)")
     }
 
-    /// 近似の距離場 (`exact` でない枝) の扇でも、輪郭の帯の縁の被覆が真の幾何から外れない ([#2914])。
+    /// 近似の距離場 (`exact` でない分岐) の扇でも、輪郭の帯の縁の被覆が真の幾何から外れない ([#2914])。
     ///
     /// 近似の距離場の勾配は中心から見た向き (`p / 半径²`) で、扇の内外 (`inWedge`) と同じ向きになる。
-    /// 弧を候補に入れるかを勾配だけで決めると、真の距離の枝に当てた直しが近似の枝には効かず、輪郭の帯の
+    /// 弧を候補に入れるかを勾配だけで決めると、真の距離の分岐に当てた直しが近似の分岐には効かず、輪郭の帯の
     /// 縁 (弧から太さの半分離れた所) が弧の端の近くで 0.1 画素ほどずれる。既定の太さ 1 の扇は、半径比
-    /// 2:1 でも近似の枝で描かれる (`mokume_needsExactRing` は近似の距離値のずれしか見ない)。`seamLeaks` は
+    /// 2:1 でも近似の分岐で描かれる (`mokume_needsExactRing` は近似の距離値のずれしか見ない)。`seamLeaks` は
     /// 帯に丸ごと入る画素しか見ず、太さ 1 では 1 つも無いので、帯の縁の画素の被覆を、真の距離から出した
     /// 期待値と比べる。
     ///
@@ -1296,7 +1296,7 @@ struct PixelGridTests {
     }
 
     nonisolated static let approximateArcEdgeShapes: [SeamShape] = ([
-        // 半径比 2:1・太さ 1 (既定の太さ)。弧の端の近くで、近似の枝の勾配だけでは弧の候補がずれる
+        // 半径比 2:1・太さ 1 (既定の太さ)。弧の端の近くで、近似の分岐の勾配だけでは弧の候補がずれる
         (50, 25, 5.4, 0.8, 1),
         (50, 25, 0.8, 3.4, 1),
         (25, 12.5, 5.4, 1.6, 1),
@@ -1399,7 +1399,7 @@ struct PixelGridTests {
     /// 真の距離の解き方 (`mokume_ellipseExactField`) は、短半径 / 長半径が 1 に近いと `m` が小さく、
     /// 内の点の根が出発点 (`zy`) よりずっと右にあって 16 回で収まらなかった (`a = 100, b = 99.9, h = 37.8`
     /// の長軸の上の行で距離が 9.8 外れた)。長軸を通る 3 行の画素の値を、真の距離から出した帯の被覆
-    /// (縁 1 本ずつを 1 画素幅で渡す・`max(0, 外縁の被覆 − 内縁の被覆)`) と比べる。真の距離の枝に入る形
+    /// (縁 1 本ずつを 1 画素幅で渡す・`max(0, 外縁の被覆 − 内縁の被覆)`) と比べる。真の距離の分岐に入る形
     /// (`mayNeedExactRing`) を選ぶ。
     ///
     /// [#2742]: https://github.com/mokume-metal/mokume/issues/2742
@@ -1413,7 +1413,7 @@ struct PixelGridTests {
             kind: .ellipse, linear: SIMD4(1, 0, 0, 1), offset: .zero, half: SIMD2(Float(radii.x), Float(radii.y)),
             halfWeight: Float(halfWeight), fill: .zero, stroke: SIMD4(1, 1, 1, 1), fills: false, strokes: true,
             cap: .round, join: .miter)
-        #expect(form.mayNeedExactRing(unitsPerDrawnPixel: SIMD2(1, 1)), "ratio \(ratio): 真の距離の枝に入らない形は検査にならない")
+        #expect(form.mayNeedExactRing(unitsPerDrawnPixel: SIMD2(1, 1)), "ratio \(ratio): 真の距離の分岐に入らない形は検査にならない")
         let size = 320
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: size, height: size)
         try canvas.draw {

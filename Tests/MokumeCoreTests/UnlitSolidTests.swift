@@ -7,11 +7,11 @@ import Testing
 
 /// 立体の塗りを、列の中身に合わせて特化したパイプラインで描く検査 ([#1795]・[#2366])。GPU を要する。
 ///
-/// - **光も周囲も置かない列は、光の枝を外した断片で描く** (#1795)
+/// - **光も周囲も置かない列は、光の分岐を外した断片で描く** (#1795)
 /// - **塗りの α がちょうど 1 と CPU で分かる列は、ブレンドなしで描く** (#2366)
 ///
-/// **この特化は速さだけを変え、画素は 1 ビットも変えない。** 枝は光・周囲・背景がどれも無い列では
-/// 必ず偽になるので、外し損ねても (入れ損ねても) 絵が崩れるのは「枝が要る列に外した断片を使った」
+/// **この特化は速さだけを変え、画素は 1 ビットも変えない。** 分岐は光・周囲・背景がどれも無い列では
+/// 必ず偽になるので、外し損ねても (入れ損ねても) 絵が崩れるのは「分岐が要る列に外した断片を使った」
 /// ときだけである — それを光の検査 (`LightTests` ほか) と、ここの「特化あり / なしで画素が全部同じ」が
 /// 受け持つ。ブレンドも同じで、α が 1 でない列をブレンドなしで描くと下地が消える・引かれる。逆向き
 /// (特化できる列に特化しない) は絵に出ないので、判定の述語そのものと、組んだ本数をここで見る。
@@ -31,7 +31,7 @@ struct UnlitSolidTests {
         try CanvasFixture.make(gpu: RenderDevice(), width: 96, height: 96)
     }
 
-    /// 絵を描いて、作業空間の画素をそのまま返す。`unlit` が偽なら光の枝を残した断片で、`opaque` が偽なら
+    /// 絵を描いて、作業空間の画素をそのまま返す。`unlit` が偽なら光の分岐を残した断片で、`opaque` が偽なら
     /// ブレンドありで描く (特化を止める)。
     private func render(
         unlit: Bool, opaque: Bool = false, sharesUnitShapes: Bool = true, scene: (Canvas) -> Void
@@ -224,7 +224,7 @@ struct UnlitSolidTests {
         #expect(try decide { $0.ambientLight(grey); $0.noLights(); $0.box(20) })
         // 平面は立体の列ではない
         #expect(try !decide { $0.rect(0, 0, 10, 10) })
-        // 特化を止めれば使わない (検査が枝を残した断片と比べる口)
+        // 特化を止めれば使わない (検査が分岐を残した断片と比べる口)
         specializing = false
         #expect(try !decide { $0.box(20) })
     }
@@ -405,7 +405,7 @@ struct UnlitSolidTests {
         #expect(second.warnings.hasWarned(.solidVariantUnavailable), "2 つ目のキャンバスが黙って既定の組で描いた")
     }
 
-    @Test("特化の組は、頂点関数が枝を残す立体でも光の枝を外す値を渡す")
+    @Test("特化の組は、頂点関数が分岐を残す立体でも光の分岐を外す値を渡す")
     func theAssemblyPassesUnlitThrough() {
         typealias Constants = ShapePipeline.FragmentConstants
         for vertex in [ShapePipeline.solidVertexFunctionName, ShapePipeline.unitShapeVertexFunctionName] {
@@ -790,7 +790,7 @@ struct UnlitSolidTests {
         #expect(found.allSatisfy { $0?.opaque != true })
     }
 
-    @Test("光を置いても不透明なら、特化の組は光の枝を残してブレンドだけを外す")
+    @Test("光を置いても不透明なら、特化の組は光の分岐を残してブレンドだけを外す")
     func opaqueLitColumnsBuildTheirOwnPipeline() throws {
         let canvas = try makeCanvas()
         let pipeline = canvas.pipeline

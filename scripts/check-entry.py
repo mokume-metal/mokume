@@ -233,7 +233,7 @@ def readme_face_problems(readme: pathlib.Path, surface: str) -> list[str]:
     `check-published-reference.py` からは原理的に見えない。
     """
     if not readme.is_file():
-        return []  # 「README が無い」は上の枝が既に名乗っている
+        return []  # 「README が無い」は上の分岐が既に名乗っている
     targets = {
         name.lower()
         for name in README_FACE_LINK.findall(readme.read_text(encoding="utf-8"))

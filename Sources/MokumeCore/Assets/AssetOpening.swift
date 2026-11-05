@@ -48,7 +48,7 @@ package nonisolated enum AssetOpening {
     /// 「見つかった」と言い切らない文面へ切り替える ([#2838])。
     ///
     /// 資材の失敗の型の `unopenable` は、`reason` に句を足す形で、この場合も運ぶ。関連値を足すと、
-    /// 利用者の `case .unopenable(let path, let location, let reason)` の枝がすべて壊れる。
+    /// 利用者の `case .unopenable(let path, let location, let reason)` の分岐がすべて壊れる。
     ///
     /// [#2838]: https://github.com/mokume-metal/mokume/issues/2838
     package static let unreachablePhrase = "cannot tell whether it exists"
