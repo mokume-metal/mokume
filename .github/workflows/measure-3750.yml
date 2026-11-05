@@ -1,0 +1,62 @@
+name: measure-3750
+# 使い捨て (#3750)。release-check と同じ macos-26・make test-release を、テストの WMO の有無で比べる。
+# merge しない (Draft のまま測って閉じる)
+on:
+  pull_request:
+    types: [opened]
+    paths: [.github/workflows/measure-3750.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        without_wmo: ["0", "1"]
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          MOKUME_TESTS_WITHOUT_WMO: ${{ matrix.without_wmo }}
+        run: |
+          mkdir -p .build
+          sysctl -n hw.ncpu hw.memsize machdep.cpu.brand_string
+          swift --version
+          start=$SECONDS
+          # 20 秒ごとに swift-frontend のモジュールごとの RSS (MB) とスワップの使用量を残す
+          (
+            while sleep 20; do
+              t=$((SECONDS - start))
+              echo "$t swap $(sysctl -n vm.swapusage | awk '{print $6}') level $(sysctl -n kern.memorystatus_level)"
+              ps -axww -o rss=,command= | awk -v t="$t" '/swift-frontend/ && !/awk/ { m="?"; for (i = 2; i <= NF; i++) if ($i == "-module-name") m = $(i + 1); printf "%d fe %s %d\n", t, m, $1 / 1024 }'
+            done
+          ) > .build/mem-samples.txt 2>&1 &
+          sampler=$!
+          set +e
+          /usr/bin/time -l make test-release 2>&1 | perl -pe 'BEGIN { $| = 1; $s = time } $_ = sprintf("+%ds %s", time - $s, $_)' | tee .build/test-log.txt
+          code=${PIPESTATUS[0]}
+          kill "$sampler" || true
+          echo "make test-release: $((SECONDS - start)) 秒 (終了コード $code)"
+          exit "$code"
+      - name: まとめ
+        if: always()
+        run: |
+          grep -E "\] Compiling Mokume(Diagnostics|Core|CoreTests|CLITests) |Build complete|Test run with|maximum resident set size|real " .build/test-log.txt | head -40 || true
+          echo "--- モジュールごとの最後に見えた秒・最大 RSS (MB)・同時に走った本数の最大"
+          awk '$2 == "fe" { last[$3] = $1; if ($4 > max[$3]) max[$3] = $4; n[$1 " " $3]++ } END { for (k in n) { split(k, a, " "); if (n[k] > c[a[2]]) c[a[2]] = n[k] } for (m in last) printf "%s last=%ds maxRSS=%dMB maxProcs=%d\n", m, last[m], max[m], c[m] }' .build/mem-samples.txt | sort || true
+          echo "--- 全 frontend の RSS の和の最大 (MB)・スワップの最大・memorystatus_level の最小"
+          awk '$2 == "fe" { s[$1] += $4 } $2 == "swap" { v = $3; sub(/M$/, "", v); if (v + 0 > sw) sw = v + 0; if (mn == "" || $5 + 0 < mn) mn = $5 + 0 } END { for (t in s) if (s[t] > mx) mx = s[t]; printf "sumRSS=%dMB swap=%dMB minLevel=%s\n", mx, sw, mn }' .build/mem-samples.txt || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: record-${{ matrix.without_wmo }}
+          path: |
+            .build/test-results-release-swift-testing.xml
+            .build/test-log.txt
+            .build/mem-samples.txt
+          include-hidden-files: true
+          retention-days: 7
