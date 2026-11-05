@@ -196,9 +196,9 @@ extension Canvas {
             // 点 1 つの片は、同じ点を 2 つ重ねた片として引く (長さ 0 の線と同じ規則)
             let points = piece.points.count == 1 ? [piece.points[0], piece.points[0]] : piece.points
             let steps = piece.curveSteps.count == points.count ? piece.curveSteps : []
-            strokeSolidOutline(
-                Outline(points: points, isClosed: piece.isClosed, fills: false, curveSteps: steps),
-                discSegments: discSegments)
+            var outline = Outline(points: points, isClosed: piece.isClosed, fills: false, curveSteps: steps)
+            outline.isDashPiece = true
+            strokeSolidOutline(outline, discSegments: discSegments)
         }
     }
 

@@ -84,6 +84,10 @@ extension Canvas {
         /// 塗りと実線の周は `start` から刻んだ点のまま動かさず、破線だけを別の点の並び (一周の弧は
         /// 角度 0 から刻んだ点) から数えるときに持つ。点の数は ``points`` と同じで、刻みの印 (``curveSteps``) を共有する。
         var dashPoints: [SIMD2<Float>]?
+        /// 破線の片 1 つか (``Canvas/strokeDashedPieces(_:discSegments:)``)。細い線の開いた端を描く画素の列の境目で
+        /// 切らない (#3745 の反証 1)。片はどれも 1 つの図形として型板で 1 回だけ混ぜ、重なった画素は先の片が勝つ
+        /// ので、隣の片の端が同じ列に入ると、割合の被覆を持つ端の列の片の一方が消えて光が減る。
+        var isDashPiece = false
 
         /// 楕円・弧の周の元。中心は原点で、形自身の座標で持つ。
         struct Ring: Equatable {

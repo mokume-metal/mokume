@@ -766,6 +766,34 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
     }
 
+    /// 固定の例: #3745 の開いた端の位相。**同じ角度・細かさの帯で、縦のずらしを 1 周期ぶん振る。**
+    ///
+    /// 開いた端 (`.square`) を線に垂直に切っていた頃は、端の列が拾う画素の中心が置く位置で 0 か 1 個に振れ、描く画素で
+    /// 短い線 (長さ 40 × 細かさ) では ±1 個が光の量の ±10% を越えた。行は #3745 の調査の表の 3 つ (定期の render が
+    /// 見つけた 2 つの seed の角度・細かさと、45°・細かさ 0.25)。調査のモデルで、いまの組み方は ×1.105・×0.956・×1.131
+    /// まで外れていた。太さ 1・横のずらし 0 で、ずらしは 0〜2.75 を 0.25 刻みに見る (細かさ 0.25 で描く画素の 1 周期を
+    /// 越える)。
+    nonisolated static let endPhaseRows: [(mouth: Amount, angle: Float, density: Float)] =
+        [Amount.diagonalShaderLine, .diagonalRetained, .diagonalSolidLine, .diagonalRetainedSolid].flatMap { mouth in
+            [
+                (mouth, Float(0.81), Float(0.34375)), (mouth, Float(0.3556817963340136), Float(0.390625)),
+                (mouth, Float.pi / 4, Float(0.25)),
+            ]
+        }
+
+    @Test(
+        "固定の例: 開いた四角い端の細い斜めの線は、縦のずらしを 1 周期振っても太さぶんの濃さで出る (#3745)",
+        arguments: endPhaseRows)
+    func openEndsKeepTheirWeightOverOnePhase(_ row: (mouth: Amount, angle: Float, density: Float)) throws {
+        var broken: [String] = []
+        for step in 0..<12 {
+            let pose = Pose(
+                weight: 1, density: row.density, offset: SIMD2(0, Float(step) * 0.25), angle: row.angle, squash: 1)
+            if case .fail(let text) = try Self.measure(row.mouth, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(broken.isEmpty, "\(row.mouth.rawValue): \(broken.joined(separator: " / "))")
+    }
+
     /// 固定の例: #3385 で落ちた box の稜線の置き方 (専用機の定期の回が生成した入力を縮めたもの。#2251 の追記)。
     ///
     /// 細かさ 0.36 以下で横のずらしが特定の位相のとき、見る列の最初の列が出す画素の 54 より左へ出て、
