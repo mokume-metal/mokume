@@ -53,7 +53,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 15 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `PImage` (クラス) | `Image` | 同等 | 参照型で、大きさは作った後で変わらない。`createImage(_:_:)` で透明な画像を作る。Processing の `format` (RGB・ARGB・ALPHA) は無く、画素はいつも RGBA | [#2449] |
 | `PImage.width`・`PImage.height` (2 件) | `Image.width`・`Image.height` | 同等 | `let` のプロパティ | — |
@@ -73,7 +73,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 7 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `createImage()` | `createImage(_:_:)` | 同等 | 透明な画像を返す。幅か高さが 1 を割るかテクスチャの大きさの上限を越えれば `ImageFailure.unplaceable` を投げ、1×1 へ丸めない。無い形: `format` (RGB・ARGB・ALPHA)。画素はいつも RGBA | — |
 | `image()` | `image(_:_:_:)`・`image(_:_:_:_:_:)` | 同等 | 描き場所 (`Canvas`) も渡せる。引数の読み方は `imageMode(_:)` が決める。切り出しつきの 9 引数の形もある (参照に無いので数えない) | — |
@@ -87,7 +87,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 9 件。画面の画素 (`Sketch` と `Canvas`) と、画面へ画像を置く関数。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `blend()` | — (`blendMode(_:)` と `image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 画像と画面の領域を混ぜる関数。混ぜ方は描画 API の `blendMode` が持ち、同じことを `image()` で描いて書ける。モードの欠けは `PImage.blend()` の行と同じ | [#2449]・[#2580] |
 | `copy()` | — (`image(src, dx, dy, dw, dh, sx, sy, sw, sh)`) | 持たない | 画像の領域を画面へ写すには、切り出しつきの `image()` で描く。画面の領域を画面へ写すには、画面の `get()` ([#3714]) で画像にして、`image(shot, …)` で置く。透けた画像は下地と混ざる (置き換えるなら `blendMode(.replace)`) | [#2449]・[#3714] |
@@ -103,7 +103,7 @@ Processing の本体の参照のうち、画像 (`PImage`・読み込みと表�
 
 3 件。形の頂点 (`vertex(x, y, u, v)`) の行は形の領域の表 ([#3685]) にある。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `texture()` | `texture(_:)` (`Image` と `Canvas` の 2 つ) | 同等 | これから置く塗りに画像を貼る。`noTexture()` を呼ぶまで続き、`push()` / `pop()` で積める (Processing は `beginShape()` と `endShape()` の間に呼ぶ)。読み取り位置は `vertex(x, y, u, v)` で貼る画像の画素で書き、書かなければ形の囲みの箱から決まる | — |
 | `textureMode()` | — | 入れる | 読み取り位置は画素の単位 (Processing の `IMAGE`) だけで、0〜1 の `NORMAL` が無い。いまは `u * image.width` と掛けて書くしかない。描き場所を貼ったときは座標の大きさで読む。単位を選ぶ状態を足す | [#3717] |

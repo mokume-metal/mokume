@@ -42,7 +42,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 28 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` (クラス 4 件) | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` (`Sketch.createSinOsc()`・`createSqrOsc()`・`createTriOsc()`・`createSawOsc()` が作る。基底は `Oscillator`・`SynthSource`) | 同等 | 型の名前は Processing のまま。矩形とのこぎりは、高い倍音が折り返して濁らないよう角を丸めてある。作る API は `new SinOsc(this)` ではなく `createSinOsc()` | [#1980]・PR [#2221] |
 | `SinOsc`・`SqrOsc`・`TriOsc`・`SawOsc` の `amp()`・`pan()`・`stop()` (4 クラス × 3 = 12 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | `amp` は 0〜1、`pan` は -1〜1 (左右の合わせた大きさが変わらない定位で、中央は左右とも 1/√2)。`stop()` は約 5 ミリ秒かけて消え、`play()` で鳴らし直せる。エフェクトを通した音の定位は、エフェクトの出口で中央になる | PR [#2221] |
@@ -54,7 +54,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 12 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `WhiteNoise`・`PinkNoise` (クラス 2 件) | `WhiteNoise`・`PinkNoise` (`Sketch.createWhiteNoise()`・`createPinkNoise()` が作る。基底は `Noise`・`SynthSource`) | 同等 | ノイズの列は決まっていて、同じ順に作れば何度鳴らしても書き出しても同じ音になる (種を選ぶ API は持たない) | [#1980]・PR [#2221] |
 | `WhiteNoise`・`PinkNoise` の `amp()`・`pan()`・`stop()` (2 クラス × 3 = 6 件) | `SynthSource.amp(_:)`・`pan(_:)`・`stop()` | 同等 | オシレータの同じ名前の API と同じ | PR [#2221] |
@@ -64,7 +64,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 18 件。PR [#2221] が「Issue ([#1980]) の範囲外・作例に要らない」として作らなかった 3 つ。`Pulse` と `AllPass` は割れる点があるので、見送りを写して作例待ちとした。`BrownNoise` は割れる点が無いので、2026-11-03 の決定 ([#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566)) で選び直し、「入れる」とした。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Pulse` (クラス)・`amp()`・`freq()`・`pan()`・`play()`・`set()`・`stop()`・`width()` (8 件) | — | 作例待ち | #2221 は作らなかった (範囲の外・作例に要らない)。割れる点: パルス幅 (`width`) を持つ別の型にするか、`SqrOsc` に幅を足すか。`Pulse.set(freq, width, amp, add, pos)` は引数が 5 つで、`Oscillator.set(_:_:_:_:)` の形とも違う | [#1980]・PR [#2221] |
 | `BrownNoise` (クラス)・`amp()`・`pan()`・`play()`・`set()`・`stop()` (6 件) | — | 入れる | #2221 の見送りのうち `BrownNoise` だけを選び直した (2026-11-03 の決定・[#3684 のコメント](https://github.com/mokume-metal/mokume/issues/3684#issuecomment-6586701566))。割れる点は無い: `Noise` を継ぐ色を 1 つ足すだけで、列は `WhiteNoise`・`PinkNoise` と同じく決まった種で固定する | [#3718]・[#1980]・PR [#2221] |
@@ -74,7 +74,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 2 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Env` (クラス) | `Env` (`Sketch.createEnv()` が作る) | 同等 | ASR (台形) の包絡。Processing と同じで、ADSR にはしない | [#1980]・PR [#2221] |
 | `Env.play()` | `Env.play(_:_:_:_:_:)`・`play(_:_:_:_:_:at:)` | 同等 | 音源 (`SynthSource`) に形を掛ける。形が終わると音源の音は 0 のまま、次に `env.play` を呼ぶまで無音。音源の音量にさらに掛かる。無い形: `input` に `SoundFile` を渡す形 (下の子の行)。エフェクトの出口には掛けられない (手本の `Effect` も `SoundObject` を継がず、掛けられない)。mokume にだけ、先の時刻から始める `at:` がある | [#1980]・PR [#2221]・[#3517] |
@@ -84,7 +84,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 32 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `LowPass`・`HighPass` (クラス 2 件) | `LowPass`・`HighPass` (`Sketch.createLowPass()`・`createHighPass()` が作る。基底は `Filter`・`SoundEffect`) | 同等 | 既定は切れ目 1000 Hz・Q 1 | [#1980]・PR [#2221] |
 | `LowPass`・`HighPass` の `freq()`・`res()`・`set()`・`stop()` (2 クラス × 4 = 8 件) | `Filter.freq(_:)`・`res(_:)`・`set(_:_:)`・`SoundEffect.stop()` | 同等 | `freq` は 10〜20000 Hz、`res` (Q) は 0.1〜100。`stop()` は通していた音を直に鳴る形へ戻し、尾は残さない | PR [#2221] |
@@ -100,7 +100,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 17 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Amplitude` (クラス)・`analyze()`・`input()` (3 件) | `AudioIn`・`SoundFile`・`SynthSound` の `rms`・`level` | 同等 | 解析器を作らず、音源が値を持つ。`rms` は区間の二乗平均の平方根 (振幅の単位。全振幅の正弦波で約 0.707)、`level` は音の大きさを 0〜1 にしたもの (-60 dBFS が 0、0 dBFS が 1)。区間は前のフレーム以後の全標本。`input()` で繋ぐ手間は無い | [#2463]・PR [#3265] |
 | `FFT` (クラス)・`analyze()`・`input()` (3 件) | `AudioIn`・`SoundFile`・`SynthSound` の `spectrum`・`spectrumLevels` | 同等 | 帯域の数は 512 で固定 (全振幅の正弦波が帯域の真ん中で 1)。`spectrumLevels` は同じ帯域を 0〜1 にしたもの。帯域 `k` の真ん中は `k × sampleRate ÷ 1024` Hz。無い形: 帯域の数を選ぶ `new FFT(this, bands)`、配列へ書き込ませる `analyze(target)` | [#2463]・PR [#3265] |
@@ -114,7 +114,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 7 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `AudioIn` (クラス)・`stop()` (2 件) | `AudioIn` (`Sketch.createAudioIn(device:)` が作る)・`AudioIn.stop()` | 同等 | マイクの音を解析する入り口。許可は OS が求め、機材が無くても作れる。利用者が止めたものは、足し直しても止まったまま (受け始めるには新しく作る)。無い形: 入力のチャンネルの番号を渡す `new AudioIn(this, in)` (mokume は機材 (`AudioDevice`) で選ぶ) | PR [#2160] |
 | `AudioIn.start()` | `Sketch.createAudioIn(device:)` | 持たない | 作ると同時に機材を開き、許可を待つ。参照の `start()` は「出力へ流さずに入力を始める」API で、mokume の `AudioIn` は出力へ流さないので、作ることがそれに当たる。止めた後に始め直す API は持たない | PR [#2160] |
@@ -124,7 +124,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 38 件。Processing では `SoundFile` が `AudioSample` を継ぎ、参照は同じ名前の API を両方に載せる (`play()`・`jump()` ほか 12 組)。組は 1 行に畳み、mokume の API は `SoundFile` に名指す。mokume には標本の配列から作る型が無く、`AudioSample` の API で `SoundFile` に当てはまるものだけが行を持つ。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `SoundFile` (クラス) | `SoundFile` (`Sketch.loadSound(_:)`・`requestSound(_:)` が作る) | 同等 | 読み込みは作るときに 1 度だけで、鳴らしながら解析の値が読める。無い形: 復号した標本を RAM に残すかを選ぶ `new SoundFile(this, path, cache)` の `cache` (mokume は残す置き場を持たない。`removeFromCache()` の行) | PR [#2200] |
 | `AudioSample` (クラス) | — | 作例待ち | 標本の配列から作って鳴らす型。mokume の `SoundFile` は読んだ標本を作ったあとで書き換えられない (`let`) ので、同じ型に足すのではなく、別の型にするか、作る API を足すか、作った後に書き換える `write()`・`resize()` (下の行) まで持つかが割れる。ファイルから読む `SoundFile` は同等 | — |
@@ -150,7 +150,7 @@ Processing Sound の参照のうち、25 のクラスの頁と、そのメソッ
 
 11 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Sound` (クラス) | `Sketch` の API (`audioInputDevices()` ほか) と、音ごとの API | 持たない | 音の全体の設定をまとめる静的な名前空間で、型を作る受け手ではない。設定ごとの行は下 | — |
 | `Sound.list()` | `Sketch.audioInputDevices()` | 同等 | 繋がっている入力の機材の一覧 (`AudioDevice` の `id` と `name`)。機材は抜き差しに追随し、一覧の位置では選ばない ([ADR-0028](../decisions/0028-external-inputs.md) 決定 3)。無い形: 出力の機材 (一覧に出ない)、名前で絞る `list(filter)`、一覧を書き出す `list(printAll)` | PR [#2160] |

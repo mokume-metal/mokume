@@ -41,7 +41,7 @@ class SurfaceVocabularyTest(unittest.TestCase):
             missing,
             [],
             f"アンブレラが通しているのに面の入口に出ていない: {', '.join(missing)}"
-            f" ({ENTRY.relative_to(REPO)} の「`import mokume` で通る語彙」へ足す)",
+            f" ({ENTRY.relative_to(REPO)} の「`import mokume` で使える標準の関数」へ足す)",
         )
 
 

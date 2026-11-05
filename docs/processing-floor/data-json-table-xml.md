@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # データ: JSON・Table・XML
 
-Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・`TableRow`・`XML` の 5 つのクラスと、それを読み書きする関数 (`loadJSONObject()` ほか 11) の 108 件。形・版・数え直す式は [README](README.md) にある。照合したのは processing-website `f4acef8` (2026-10-29) と mokume の main `5f6e4105` (2026-10-31)。
+Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・`TableRow`・`XML` の 5 つのクラスと、それを読み書きする関数 (`loadJSONObject()` ほか 11) の 108 件。形・バージョン・数え直す式は [README](README.md) にある。照合したのは processing-website `f4acef8` (2026-10-29) と mokume の main `5f6e4105` (2026-10-31)。
 
 | 区分 | 件数 |
 | --- | --- |
@@ -38,7 +38,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 14 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `JSONObject` (クラス) | `JSONObject` | 同等 | 値の型で、キーで値を取り出す。いまは読むだけで、空から作る `new JSONObject()` は無い ([#3643] で入れる) | [#2466]・PR [#3056] |
 | `JSONObject.getBoolean()` | `JSONObject.getBoolean(_:)` | 同等 | `true` / `false` だけを読む。数の `1` や文字の `"true"` は真偽にしない | [#2466]・PR [#3056] |
@@ -54,7 +54,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 21 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `JSONArray` (クラス) | `JSONArray` | 同等 | `RandomAccessCollection` で、要素は `JSONObject` として回る。いまは読むだけで、空から作る `new JSONArray()` は無い ([#3644] で入れる) | [#2466]・PR [#3056] |
 | `JSONArray.append()`・`remove()`・`setBoolean()`・`setFloat()`・`setInt()`・`setJSONArray()`・`setJSONObject()`・`setString()` (8 件) | — | 入れる | 番号に値を書く・末尾に足す・番号の値を除く。`JSONObject` の書き換えと同じく `mutating` の口で、Processing の名前と引数のまま形が割れない。範囲の外の番号には書かず、1 度だけ知らせる (Processing は `null` で埋めて伸ばす。2026-10-31 の決定) | [#3644] |
@@ -67,7 +67,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 25 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `Table` (クラス) | `Table` | 同等 | 値の型で、セルは読んだ文字のまま持つ。`new Table()` と `addColumn()` は、見出しを渡す `Table(columns:)` にまとめた | [#2468]・PR [#2861] |
 | `Table.addColumn()` | `Table.addColumn(_:)` | 同等 | 名前を渡す形だけ。無い形: 名前なしの `addColumn()` と、型を渡す `addColumn(title, type)` (mokume の表は列の型を持たず、数として読むのは取り出すとき) | — |
@@ -88,7 +88,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 9 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `TableRow` (クラス) | `TableRow` | 同等 | `Table.rows` から取り出す、読むための写し。書き換える口を持たない | [#2468]・PR [#2861] |
 | `TableRow.getColumnCount()`・`getColumnTitle()` (2 件) | `Table.columnCount`・`Table.columnTitles[column]` | 持たない | 行は表の写しで、どの行も同じ列を持つ。列の数と名前は表が持つ | — |
@@ -101,7 +101,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 28 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `XML` (クラス) | `XML` | 同等 | 値の型の要素 1 つで、読むだけ。空から作る `new XML(name)` は、書き換えと一緒に作例待ち (下の行) | PR [#2180]・[#2466] |
 | `XML.addChild()`・`format()`・`removeChild()`・`setContent()`・`setFloat()`・`setInt()`・`setLong()`・`setName()`・`setString()`・`toString()` (10 件) | — | 作例待ち | 値の型の要素で、子へ書き戻す形が割れる。Processing の `addChild` は足した子を参照で返してそこへ書かせ、`removeChild` は消す子を参照で指す。写しの子を書き換えても木は変わらないので、子を番号で置き換える口など、Processing に無い形を選ぶ必要がある。書き出す口 (`format`・`toString`・`saveXML()`) は書き換えと組でしか使い途が無い。書き換えて書き出す作例が来たら、形をまとめて決める | — |
@@ -120,7 +120,7 @@ Processing の本体の参照のうち、`JSONObject`・`JSONArray`・`Table`・
 
 11 件。
 
-| 口 | mokume の口 | 区分 | 理由 | 根拠の Issue・PR |
+| API | mokume の API | 区分 | 理由 | 根拠の Issue・PR |
 | --- | --- | --- | --- | --- |
 | `loadJSONArray()` | `loadJSONArray(_:)`・`requestJSONArray(_:)` | 同等 | 最上位が配列でなければ投げ、理由が `loadJSONObject` を案内する。無い形: `File` を渡す形 (名前の文字だけを受ける) | [#2466]・PR [#3056] |
 | `loadJSONObject()` | `loadJSONObject(_:)`・`requestJSONObject(_:)` | 同等 | 型で読む道 (`Decodable` と `JSONDecoder`) は口を足さず、`JSONObject` の説明文に例を置いた | PR [#2180]・[#2960]・PR [#3449] |

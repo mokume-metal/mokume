@@ -5,11 +5,11 @@ SPDX-License-Identifier: MIT
 
 # Examples
 
-道具 (`mokume examples` / `mokume new <名前> --from <例>`) に同梱する作例の置き場。
+`mokume` コマンド (`mokume examples` / `mokume new <名前> --from <例>`) に同梱する作例のディレクトリ。
 
-**中身は生成物で、コミットしない。** 説明文 (`///`) の中の例から `scripts/bundle-examples.py` が作る
-(`make cli-examples`。配布物を束ねる `make cli-dist` は先に自分で呼ぶ)。この 1 枚だけが追跡されるのは、
-資源の宣言 (`Package.swift` の `.copy("Examples")`) が置き場の実在を要るからで、束を作っていない手元でも
-`swift build` が通るようにしてある。束が無いまま走らせた道具は、束が無いと名乗る。
+**中身は生成物で、コミットしない。** ドキュメントコメント (`///`) の中の例から `scripts/bundle-examples.py` が生成する
+(`make cli-examples`。配布物を作る `make cli-dist` は、これを先に実行する)。このファイルだけが追跡されるのは、
+リソースの宣言 (`Package.swift` の `.copy("Examples")`) がこのディレクトリの存在を必要とするからで、作例を生成していない手元でも
+`swift build` が通るようにしてある。作例を生成しないまま実行した `mokume` コマンドは、作例が無いことを表示する。
 
-形と選ぶ規則は `scripts/bundle-examples.py` の冒頭、読む側は `Sources/MokumeCLI/Examples.swift`。
+形式と選ぶ規則は `scripts/bundle-examples.py` の冒頭、読み込む側は `Sources/MokumeCLI/Examples.swift`。
