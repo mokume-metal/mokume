@@ -159,9 +159,12 @@ struct ThinEndCutRenderTests {
     }
 
     /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた四角い端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
-    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。どの位相でも、控えた片で
-    /// 太さぶんの濃さに出る (違う位相の片を使い回すと外れる)。
-    @Test("開いた四角い端の保持した形は、位相ごとに組み直して控え、どの位相でも太さぶんの濃さで出る")
+    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。
+    ///
+    /// どの位相でも、その場で引いた同じ線と画素ごとに同じ絵になる。違う位相の片を使い回すと、線全体の光の量は
+    /// 変わらない (片はどれも主軸に幅 1 か整数の幅なので、平行移動しても拾う中心の数が同じ) が、端の画素の濃さが
+    /// 置いた位相の割合と食い違い、切り口の頂点も境目 (整数の座標) から外れる。
+    @Test("開いた四角い端の保持した形は、位相ごとに組み直して控え、どの位相でもその場で引いた線と同じ絵になる")
     func retainedOpenEndsAreKeyedByPhase() throws {
         // 細かさ 0.25 なら、ずらしを 1/8 刻みで選ぶと描く画素の位相がちょうど表せる (同じ位相の比べが丸めで割れない)
         let density: Float = 0.25
@@ -189,10 +192,10 @@ struct ThinEndCutRenderTests {
             }
         }
         let (open, closed) = (try #require(line), try #require(ring))
-        let expected = 40 * Double(density) * Double(density)
+        let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
         // 出す画素 1 / 細かさ は描く画素 1 つ (同じ位相)
         let pixel = 1 / density
-        func place(_ shape: Shape, dy: Float) throws -> (light: Double, rebuilt: Int) {
+        func place(_ shape: Shape, dy: Float) throws -> (pixels: PixelBuffer, rebuilt: Int) {
             let before = canvas.thinStrokesRebuilt
             try canvas.draw {
                 canvas.background(0)
@@ -200,14 +203,37 @@ struct ThinEndCutRenderTests {
                 canvas.rotate(0.81)
                 canvas.shape(shape)
             }
-            return (try Self.light(canvas), canvas.thinStrokesRebuilt - before)
+            return (try canvas.target.readPixels(), canvas.thinStrokesRebuilt - before)
         }
-        var broken: [String] = []
-        for dy in [Float(0.75), 0.25, 0.75 + pixel, 0.5, 0.25 + 2 * pixel, 1.75, 0.75, 1.125, 2.625] {
-            let placed = try place(open, dy: dy)
-            if abs(placed.light - expected) > 0.1 * expected {
-                broken.append("dy \(dy): 光の量 \(placed.light) (期待 \(expected))")
+        /// 同じ置き方でその場で引いた線 (三角形の経路)。控えた片が正しい位相のものなら、同じ片になる
+        func direct(dy: Float) throws -> PixelBuffer {
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(1)
+                canvas.strokeCap(.square)
+                canvas.shader(shader)
+                canvas.translate(64, 64 + dy)
+                canvas.rotate(0.81)
+                canvas.beginShape()
+                canvas.vertex(-20, 0)
+                canvas.vertex(20, 0)
+                canvas.endShape()
             }
+            return try canvas.target.readPixels()
+        }
+        // 帯は縦寄り (0.81 rad) なので、行の位相を 1/4 ずつ回す。同じ位相へ戻る置き場所も挟む
+        var broken: [String] = []
+        for dy in [Float(0), 1, 2, 3, pixel, 1 + 2 * pixel, 1.5, 0.5, 2.5, 0] {
+            let placed = try place(open, dy: dy).pixels
+            let reference = try direct(dy: dy)
+            var worst: Float = 0
+            for y in 0..<reference.height {
+                for x in 0..<reference.width { worst = max(worst, abs(placed[x, y].red - reference[x, y].red)) }
+            }
+            // 8 bit の 2 段まで (被覆を運ぶ値の丸め)
+            if worst > 2 / 255 { broken.append("dy \(dy): 画素の差 \(worst)") }
         }
         #expect(broken.isEmpty, "\(broken.joined(separator: " / "))")
         // 新しい位相は組み直し、同じ位相は控えを使う
