@@ -60,7 +60,7 @@ struct BuildDirectoryTests {
         #expect(shareability == .shareable("swiftlang-6.3.3.1.3/0.7.1"))
     }
 
-    /// **枝や改訂で固定したものを、版と混ぜない。** 混ぜると互いを作り直させ続け、
+    /// **ブランチや改訂で固定したものを、版と混ぜない。** 混ぜると互いを作り直させ続け、
     /// 増分ビルドが 1.6 秒から 8 秒へ落ちる (#1055 の実測)。
     @Test("改訂で固定されていれば、版とは別の名前になる")
     func aRevisionPinIsKeptApartFromVersions() throws {

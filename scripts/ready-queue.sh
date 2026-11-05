@@ -38,9 +38,9 @@
 #
 #   ready    verify: triaged が付き、着手中でもなく、紐づく open PR も無く、開いた根の子でもない
 #   stock    **B-1 の対象** — エージェントが起票したのに無印で、型が Bug / Task / Docs
-#   dropped  status: in progress なのに、open PR も手元の worktree / 枝も無く、静かで久しい。
+#   dropped  status: in progress なのに、open PR も手元の worktree / ブランチも無く、静かで久しい。
 #            家族 (親・兄弟・子) にも同じ証拠が無い
-#   busy     着手中 (紐づく open PR がある・手元に worktree / 枝がある・まだ動いている・
+#   busy     着手中 (紐づく open PR がある・手元に worktree / ブランチがある・まだ動いている・
 #            家族のどれかがそうである)。または ready の候補のうち、開いた根の子 (親が open な
 #            Bug か、親が open で印の付いた Design の Bug の子。根を直す側で閉じる)、または
 #            本体を閉じた後に parent-guard (bot) が開き直した、子を持つ親 (自分の仕事を持たず、
@@ -122,13 +122,13 @@
 #   B-1 の対象か    本文の 🤖 Assisted by の署名 (エージェントを問わない。#3149)。**これが唯一の手掛かり**
 #                   である — Issue の author は identity 分離の対象外なので (ADR-0003 が
 #                   分けたのは PR の作成だけ)、エージェントの起票も人の名義で立つ
-#   落ちて見えるか  紐づく open PR が無く、git worktree list の名前と枝の名前に番号が
+#   落ちて見えるか  紐づく open PR が無く、git worktree list の名前とブランチの名前に番号が
 #                   現れず (worktree は末尾の名前だけ・16 進の乱数を含む名前 (`agent-<16 進>`・
 #                   `<スラグ>-<16 進 6 桁>`) は見ない — 番号と関係の無い数字に当たるため。#3377)、
 #                   **そのうえ Issue が静かになって久しい**こと
 #
-# 3 つ目が要るのは、**枝の名前が番号を持たないことのほうが多い**からである — AGENTS.md が
-# 定める枝の形は `<type>/<短い説明>` で、番号はどこにも入らない。worktree の照合だけに頼ると
+# 3 つ目が要るのは、**ブランチの名前が番号を持たないことのほうが多い**からである — AGENTS.md が
+# 定めるブランチの形は `<type>/<短い説明>` で、番号はどこにも入らない。worktree の照合だけに頼ると
 # 「いま着手した Issue」がそのまま dropped に出る (実際にこのスクリプト自身の #1028 で出た)。
 # 静かさは Issue の updatedAt で測る — 着手すればラベルが動きプランが投稿されるので、
 # 生きている着手は必ず新しい。**ただし bot の手は数えない** (次の節)。
@@ -142,7 +142,7 @@
 #
 # 項目の種類は限らない — 窓の timeline はどの種類にも作者 / actor を引かせ (bot-hand.sh の
 # 断片)、Bot のものを全部 bot の手として扱う。
-# だから updatedAt が新しいだけの着手印 (PR も手元の worktree / 枝も無い) は、**窓の中
+# だから updatedAt が新しいだけの着手印 (PR も手元の worktree / ブランチも無い) は、**窓の中
 # (DROPPED_MINUTES 分) の timeline を引いて、人の手があるかを見る**。窓の中に bot の手が
 # **少なくとも 1 つあり**、それ以外が無いときだけ静かとみなして家族の判定へ回す — 新しさを
 # 説明しているのが bot の手だと分かるときに限る。それ以外 (人の手・作者の分からない項目・
@@ -164,7 +164,7 @@
 # 子で作業が進んでも自分の updatedAt は動かない — 子の PR の Closes が指すのは子だからである。
 # 2026-09-23 には、生きている #1350 / #1352 / #1355 がこれで dropped に出た。
 #
-# だから、自分に 3 つの証拠 (PR・手元の worktree か枝・新しい updatedAt) が無い着手印は、
+# だから、自分に 3 つの証拠 (PR・手元の worktree かブランチ・新しい updatedAt) が無い着手印は、
 # **家族**を見てから決める。家族は親・その親の子すべて・自分の子すべてで、閉じたものも含む。
 # 閉じた家族は PR も worktree も持たないので、updatedAt が新しいときだけ動いているとみなす。
 # 兄弟の PR が merge されてから、次の子の PR が出るまでの間を拾うためである。
@@ -174,7 +174,7 @@
 # 家族が動き続けている間、落ちた着手がその最後の動きから 3 日隠れること (ADR-0036 決定 5 の改訂)。
 #
 # **家族を渡るのは 1 段だけにする。** 家族の証拠に数えるのは上の 3 つだけで、家族を通じて
-# busy になったものは数えない。連鎖させると、1 本の生きた PR が無関係な枝まで生かしてしまう。
+# busy になったものは数えない。連鎖させると、1 本の生きた PR が無関係なブランチまで生かしてしまう。
 #
 # 家族を読む問い合わせは、そういう候補があるときだけ 1 回打つ。**読めなかったら dropped の
 # まま**出し、そう書く — 読めなかったことを「生きている」と読まない。
@@ -241,7 +241,7 @@ has_label() { # $1=ラベルの並び (改行区切り) $2=探すラベル
   grep -Fxq "$2" <<<"$1"
 }
 
-# 手元の worktree / 枝の名前に番号が現れるか。
+# 手元の worktree / ブランチの名前に番号が現れるか。
 #
 # 前後が数字でないことまで見る — 927 が 1927 に当たると、落ちた着手が「生きている」へ
 # 倒れて誰にも拾われなくなる。英字に続く番号 (`gui3243`・`m3087`) は当てる。
@@ -318,9 +318,9 @@ QUIET_BEFORE=$(date -u -v-"${DROPPED_MINUTES}"M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null 
 # (#3377)。落とすのは次の 2 つで、どちらも **英字 (a-f) を 1 字以上含む**ものだけ — 数字だけの
 # 並びは人が付けた番号かもしれない (`agent-3377` は #3377 を指す):
 #
-#   agent-<16 進 8 桁以上>   (`worktree-agent-` も同じ)  worktree の名前と、その枝の名前
+#   agent-<16 進 8 桁以上>   (`worktree-agent-` も同じ)  worktree の名前と、そのブランチの名前
 #   <スラグ>-<16 進 6 桁>    `.claude/worktrees/` の worktree (`ci-test-improvement-55719b`)
-#                            と枝 (`claude/task-coordination-subagent-c686f1`)
+#                            とブランチ (`claude/task-coordination-subagent-c686f1`)
 #
 # **代償**: 6 桁の 16 進で終わる意図的な名前 (`wt-3377ab` のように、番号に英字を足したもの) は
 # 当たらなくなる。`gui3243`・`merge-3267b` (5 桁)・`r1-3345` のような名前は当てる
@@ -336,7 +336,7 @@ numberless_name() { # $1=名前
   [[ $tail != "$1" && $tail =~ ^[0-9a-f]{6}$ && $tail =~ [a-f] ]]
 }
 
-# 手元の worktree の名前 (パスの末尾の 1 要素) と枝の名前から、番号を持たない名前を除いたもの。
+# 手元の worktree の名前 (パスの末尾の 1 要素) とブランチの名前から、番号を持たない名前を除いたもの。
 # 読めなければ空 (見えないものは「見えない」と扱う)。**パス全体は入れない** — 親ディレクトリの
 # 数字 (`/claude-501/` の uid) が番号に当たる (#3377)
 WORKTREE_NAMES=''
@@ -370,7 +370,7 @@ while IFS= read -r row; do
     if [ -n "$pr" ]; then
       busy+="$n busy PR #$pr が出ている ($title)"$'\n'
     elif seen_locally "$n"; then
-      busy+="$n busy 手元に worktree か枝がある ($title)"$'\n'
+      busy+="$n busy 手元に worktree かブランチがある ($title)"$'\n'
     elif [[ $updated > $QUIET_BEFORE ]]; then
       # 新しいのが人の手か bot の追記かは、まとめて読んでから分ける (#2660)
       recent+="$n $updated $title"$'\n'
@@ -499,7 +499,7 @@ member_evidence() { # $1=番号 $2=state $3=updatedAt
       return 0
     fi
     if seen_locally "$1"; then
-      echo "家族 #$1 の worktree か枝が手元にある"
+      echo "家族 #$1 の worktree かブランチが手元にある"
       return 0
     fi
     # 新しくても bot の追記だけなら数えない (#2660)
@@ -519,7 +519,7 @@ if [ -n "$candidates" ]; then
   families=$(read_families "$(awk '{ print $1 }' <<<"$candidates" | tr '\n' ' ')") ||
     { families='' family_note='・家族を読めなかった'; }
 
-  # 新しさだけが証拠になりうる open な家族の手を読む (#2660)。PR か手元の worktree / 枝が
+  # 新しさだけが証拠になりうる open な家族の手を読む (#2660)。PR か手元の worktree / ブランチが
   # あればそれで足り、既に読んだ番号は読み直さない
   read_hands_into "$(while read -r _ m state updated; do
     [ "$state" = OPEN ] && [[ $updated > $QUIET_BEFORE ]] || continue

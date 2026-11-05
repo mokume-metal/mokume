@@ -205,7 +205,7 @@ jobs:
   # **issues: write を持つのはこのジョブだけ**で、検査のコードを走らせる mutation には持たせない。
   #
   # **Issue を書くのは main の run だけ**。他の ref の workflow_dispatch (計測の run など) は、共有の
-  # 追跡 Issue を枝の版が書き換えないよう、区画を job の要約に出すだけにする (--dry-run)。
+  # 追跡 Issue をブランチの版が書き換えないよう、区画を job の要約に出すだけにする (--dry-run)。
   # **concurrency で直列にする**: schedule と dispatch が重なると、同じ本文を読んだ 2 つの run が
   # 互いの更新を消し、Issue が二重に立つ。待たせるだけで、走っている run は切らない。
   mutation-report:

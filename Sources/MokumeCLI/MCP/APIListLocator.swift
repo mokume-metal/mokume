@@ -15,7 +15,7 @@ import mokume
 /// 読める限り、飛行機の中でもスケッチは書ける。
 ///
 /// **取り置きの名前は、依存の同一性に追随する** (``cacheURL(for:)``)。版は `mokume-api-v<版>.md`、
-/// 枝・改訂は `mokume-api-rev-<改訂の先頭 12 字>.md` で、依存を上げれば別の名前になり、古い一覧は
+/// ブランチ・改訂は `mokume-api-rev-<改訂の先頭 12 字>.md` で、依存を上げれば別の名前になり、古い一覧は
 /// 返らない。**追随できない (鍵が無い) 状態だけ共通名 `mokume-api.md`** を読み、そこから返す回は
 /// 答えが鍵の無いことを名乗る (``Source/cached(_:keyed:)``・#3478)。
 ///
@@ -307,7 +307,7 @@ struct APIListLocator {
     /// 実装は 1 つにする。
     func resolvedVersion() -> String? { DependencyVersion.resolved(forPackageAt: directory) }
 
-    /// 取り置きの置き場。**名前は依存の同一性から作る** — 版は `mokume-api-v<版>.md`、枝・改訂は
+    /// 取り置きの置き場。**名前は依存の同一性から作る** — 版は `mokume-api-v<版>.md`、ブランチ・改訂は
     /// `mokume-api-rev-<先頭 12 字>.md` (12 字の計算は ``BuildDirectory/revisionSegment(_:)`` のもの)。
     /// 鍵にできるものが無い状態 (パスで指す・未解決・読めない・`Package.swift` が無い) は、
     /// **手で置くための枠**の共通名 `mokume-api.md` を指す。

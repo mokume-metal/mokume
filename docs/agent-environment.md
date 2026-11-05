@@ -147,7 +147,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    (macOS の `ci-check`) は Draft でも起動する。`Render` の `render-pr` は
    Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は
    専用機のキューに入り、計測が待たされる (#1922 では起動した `render-pr` を取り消した)。
-   `gh run list --branch <枝>` で run を見つけ、`gh run cancel <run-id>` で取り消す。反映に
+   `gh run list --branch <ブランチ>` で run を見つけ、`gh run cancel <run-id>` で取り消す。反映に
    30 秒ほどかかる。取り消すのは計測のワークフロー以外である。計測のワークフローには、
    render.yml と同じ `if: github.event.pull_request.head.repo.full_name == github.repository`
    と、push し直したら古い実行を捨てる `concurrency` (`cancel-in-progress: true`) を置く。
@@ -256,7 +256,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh pr edit --base` は GraphQL のエラーになる (#1861 で踏んだ)。base の切り替えも本文・
    タイトルの編集も `edited` のイベントで、起動するのは `edited` を持つワークフロー (`PR gate`) だけ
    である。`CI` は `edited` で起動しない (#2718) ので、切り替えや編集の前後で
-   `gh run list --branch <枝> --workflow CI` の本数が変わらないことを読む。`edited` で起動した
+   `gh run list --branch <ブランチ> --workflow CI` の本数が変わらないことを読む。`edited` で起動した
    run のジョブは `gh run view` で読む。
 
    ```bash
@@ -264,7 +264,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    git push origin "${SHA}:refs/heads/tmp/base-switch-<N>" # zsh では波括弧が要る ($SHA:refs の :r が修飾子になる)
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=tmp/base-switch-<N>
    gh api -X PATCH repos/mokume-metal/mokume/pulls/<PR 番号> -f base=main
-   gh run list --branch <枝> --workflow CI --json databaseId,event,createdAt --jq '.[] | [.databaseId, .event, .createdAt] | @tsv'
+   gh run list --branch <ブランチ> --workflow CI --json databaseId,event,createdAt --jq '.[] | [.databaseId, .event, .createdAt] | @tsv'
    gh run view <run-id> --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv'
    ```
 
@@ -272,6 +272,6 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    閉じる旨を `bash scripts/comment.sh pr <番号> --body-file <ファイル>` で書いてから
    `gh pr close <番号>` で閉じる。**worktree から `gh pr close --delete-branch` を実行しない。**
    gh が main へ切り替えようとして (main は別の worktree が使用中で) 失敗し、PR は閉じても
-   ブランチが残る。ブランチは `git push origin --delete <枝>` で消す。一時ブランチ
-   (`tmp/base-switch-<N>`) も同じである。消えたことは `git ls-remote --heads origin <枝>` が
+   ブランチが残る。ブランチは `git push origin --delete <ブランチ>` で消す。一時ブランチ
+   (`tmp/base-switch-<N>`) も同じである。消えたことは `git ls-remote --heads origin <ブランチ>` が
    空なことで確かめる。

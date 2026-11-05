@@ -9,7 +9,7 @@
    すると、判定と実行を分けた意味が消える (ADR-0036 決定 1)
 2. **`verify: triaged` が無ければ ready に出ない。** 着手ゲートは ADR-0002 決定 1 の
    ままで、この判定はそこを緩めない
-3. **着手印が残っているものは busy か dropped に分かれる。** 紐づく PR も手元の枝も
+3. **着手印が残っているものは busy か dropped に分かれる。** 紐づく PR も手元のブランチも
    無いときだけ dropped で、**それは「落ちた」ではなく「落ちて見える」**である
 4. **stock は署名つき・無印・型が Bug / Task / Docs のときだけ。** Design / Feature は
    判断が要る側なので出さない (ADR-0036 決定 6)
@@ -455,7 +455,7 @@ class ReadyQueueTest(unittest.TestCase):
         done, _ = self.run_queue(
             [
                 issue(55719, labels=["status: in progress"]),  # ci-test-improvement-55719b
-                issue(686, labels=["status: in progress"]),  # 枝 claude/…-c686f1
+                issue(686, labels=["status: in progress"]),  # ブランチ claude/…-c686f1
                 issue(1339, labels=["status: in progress"]),  # ci-fix-1339ab
                 issue(3267, labels=["status: in progress"]),  # merge-3267b (5 桁・当てる)
                 issue(3345, labels=["status: in progress"]),  # r1-3345 (当てる)
@@ -485,7 +485,7 @@ class ReadyQueueTest(unittest.TestCase):
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[3377][0], "busy", "数字だけの agent-3377 を落としている")
 
-    # 3c'. 英字に続く番号・枝の名前の番号には当たり続ける
+    # 3c'. 英字に続く番号・ブランチの名前の番号には当たり続ける
     def test_worktree_match_keeps_letter_prefixed_numbers(self):
         issues = [
             issue(n, labels=["status: in progress"]) for n in (3243, 3345, 3087, 3500, 243)
@@ -568,7 +568,7 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[70][0], "dropped", "閾値ちょうどを静かと読んでいない")
         self.assertEqual(seen[71][0], "busy", "閾値の 1 分前を静かと読んでいる")
 
-    # 3d. 静かになるまでは dropped と呼ばない (枝の名前は番号を持たないことが多い)
+    # 3d. 静かになるまでは dropped と呼ばない (ブランチの名前は番号を持たないことが多い)
     def test_recent_activity_is_still_busy(self):
         fresh = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         done, _ = self.run_queue(

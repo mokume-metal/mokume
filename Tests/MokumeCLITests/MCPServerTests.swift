@@ -1851,7 +1851,7 @@ struct MCPServerTests {
         #expect(!outcome.text.contains("has not resolved its dependencies yet"))
     }
 
-    @Test("枝や改訂で固定していれば、リリースの版ではないことと、版へ切り替える手を言う")
+    @Test("ブランチや改訂で固定していれば、リリースの版ではないことと、版へ切り替える手を言う")
     func explainsARevisionPin() throws {
         let directory = try makeSketch()
         try Data(
@@ -1895,7 +1895,7 @@ struct MCPServerTests {
         #expect(outcome.text.contains("mokume-api-rev-0123456789ab.md"), "\(outcome.text)")
     }
 
-    /// 枝・改訂で固定した `Package.resolved` を書く (`branch: "main"` を `swift package resolve` した後の形)。
+    /// ブランチ・改訂で固定した `Package.resolved` を書く (`branch: "main"` を `swift package resolve` した後の形)。
     private func writeRevisionPin(_ directory: URL, _ revision: String) throws {
         try Data(
             #"{"pins":[{"identity":"mokume","kind":"remoteSourceControl","location":"https://example.com/mokume.git","state":{"branch":"main","revision":"\#(revision)"}}],"version":3}"#

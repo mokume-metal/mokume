@@ -10,7 +10,7 @@
 呼ぶのは host-scheduled.yml の mutation-report (GitHub ホストの ubuntu) で、**`issues: write` を持つのは
 そのジョブだけ**である。変異を回す mutation には読む権限だけを渡す (読み手は scripts/mutation_state.py)。
 **Issue を書くのは main の run だけ**で、他の ref の `workflow_dispatch` は `--dry-run` (job の要約に出すだけ) で
-呼ぶ — 共有の追跡 Issue を枝の run が書き換えない。
+呼ぶ — 共有の追跡 Issue をブランチの run が書き換えない。
 
 ## 置き場 (#3221 の条件 6)
 
@@ -214,7 +214,7 @@ def build(previous_body, args, compact=False):
     replaced = None
     if reason == "missing-commit":
         replaced = (f"範囲の起点 {str(meta.get('range_head'))[:12]} が木に無いか、HEAD の祖先でなかった "
-                    "(履歴の書き換えか、main 以外の枝の run)。範囲は回さず、起点を置き直した")
+                    "(履歴の書き換えか、main 以外のブランチの run)。範囲は回さず、起点を置き直した")
 
     blocks = {name: state.read_block(previous_body, name) if kind == "ok" else "" for name in state.BLOCKS}
     if bundle is not None:

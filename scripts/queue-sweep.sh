@@ -79,7 +79,7 @@
 #
 #   <run id> <cancel|keep|done|unknown> <head_branch> <理由>
 #
-# head_branch は、merge_group の run ならグループの ref、render-pr の run なら PR の枝である。
+# head_branch は、merge_group の run ならグループの ref、render-pr の run なら PR のブランチである。
 # done は cancel を打つ前に run が終わっていたもの (409)。
 #
 # 終了コード: 0 = 判定できなかった run が無い、1 = ある (または cancel に失敗した)。

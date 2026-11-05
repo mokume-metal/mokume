@@ -332,7 +332,7 @@ RUNNER_STALL_MINUTES=${RUNNER_STALL_MINUTES:-15}
 # queue へ動かない行」
 QUEUE_ENTRY_MINUTES=${QUEUE_ENTRY_MINUTES:-15}
 
-# 着手印が残ったまま人の手が無いまま過ぎてよい時間 (既定 3 日)。CI からは手元の worktree / 枝が
+# 着手印が残ったまま人の手が無いまま過ぎてよい時間 (既定 3 日)。CI からは手元の worktree / ブランチが
 # 見えないので日単位に取る。理由は冒頭の「Issue を見る行」。**readonly にしない** — 検査が短い値で回す
 CLAIM_STALL_MINUTES=${CLAIM_STALL_MINUTES:-4320}
 
