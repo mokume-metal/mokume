@@ -99,15 +99,21 @@ extension Canvas {
         // 4 つの角は直角なので、外向きの対角を添える。`bevel` の角を距離関数の経路と
         // 同じ線で削ぐのに使う (#1506)
         draw(folding: .rect(width: w, height: h), at: SIMD2(box.x, box.y)) { _ in
-            Outline(
-                points: [
-                    SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
-                ], isClosed: true,
-                cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
-                strokesAsOneRegion: true,
-                namedFill: Outline.NamedFill(
-                    isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
+            Self.rectOutline(width: w, height: h)
         }
+    }
+
+    /// 角を丸めない矩形の周 (形自身の座標・左上が原点)。畳む口 (``draw(folding:at:outline:)``) が雛形と 1 つ目を
+    /// 組む周で、畳まない道と比べる検査 (`FoldedPlacementTests`) も同じ周を `moved(by:)` して描く。
+    static func rectOutline(width w: Float, height h: Float) -> Outline {
+        Outline(
+            points: [
+                SIMD2(0, 0), SIMD2(w, 0), SIMD2(w, h), SIMD2(0, h),
+            ], isClosed: true,
+            cornerDiagonals: [SIMD2(-1, -1), SIMD2(1, -1), SIMD2(1, 1), SIMD2(-1, 1)],
+            strokesAsOneRegion: true,
+            namedFill: Outline.NamedFill(
+                isEllipse: false, center: SIMD2(w / 2, h / 2), half: SIMD2(w / 2, h / 2)))
     }
 
     /// 角を半径 `radius` の円弧で丸めた矩形の周 (形自身の座標・左上が原点)。

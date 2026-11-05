@@ -176,12 +176,12 @@ static inline float2 mokume_thinRectBand(
     return float2(precise::divide(drawnHalf, scale), coverage);
 }
 
-/// 額縁の片の角 `corner` (ずらした後) を、向き `slope` (各成分 −1・0・1) に半幅 `half` だけ広げる
+/// 額縁の片の角 `corner` (ずらした後) を、向き `slope` (各成分 −1・0・1) に半幅 `halfWidth` だけ広げる
 /// (CPU の `bases[i] + half * slopes[i]` と同じ順)。
-static inline float2 mokume_thinRectCorner(float2 corner, float half, float2 slope) {
+static inline float2 mokume_thinRectCorner(float2 corner, float halfWidth, float2 slope) {
 #pragma METAL fp math_mode(safe)
 #pragma METAL fp contract(off)
-    return corner + half * slope;
+    return corner + halfWidth * slope;
 }
 
 vertex ShapeFragmentIn shapeVertexMain(
