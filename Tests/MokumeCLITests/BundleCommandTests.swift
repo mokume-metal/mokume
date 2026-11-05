@@ -1766,7 +1766,7 @@ struct BundleCommandTests {
                 #expect(text.contains(phrase), "\(label) が「\(phrase)」の限界を書いていない")
             }
         }
-        #expect(guide.contains("組み立ての後"), "利用ガイドが組み立ての後で落ちうることを書いていない")
+        #expect(guide.contains("ビルドの後"), "利用ガイドがビルドの後で止まりうることを書いていない")
     }
 
     /// 書けなかった事情は、言語の設定に左右されない OS の文面で名乗る (#2839)。紙の場所のディレクトリは
