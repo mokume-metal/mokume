@@ -192,7 +192,7 @@ camera(eye: eyePosition, center: target, up: Vector3(0, 1, 0))  // ラベル付�
 
 - (i) 同じ種類の成分が、広く共有された順で並ぶ: 色の成分 (`fill(r, g, b)`・`ambientLight(r, g, b)`)、座標や大きさの成分 (`translate(x, y)`・`point(x, y, z)`・`scale(x, y, z)`・`box(w, h, d)`)
 - (ii) 役割を入れ替えられる点が並ぶ: `line`・`triangle`・`quad`・`dist`。点を値で渡したいときは、[#3360](https://github.com/mokume-metal/mokume/issues/3360) と同じく、ラベルの無い `Vector2` / `Vector3` の形で足りる (`line(_:_:)`)
-- (iii) 第 1 引数が関数名から続く目的語で、残りが (i) に当たる: `text("hi", x, y)`・`image(img, x, y)`・`shape(s, x, y)`
+- (iii) 第 1 引数が関数名から続く目的語で、残りが 1 つだけか (i) に当たる: `text("hi", x, y)`・`image(img, x, y)`・`shape(s, x, y)`・`saveTable(table, path)`・`constrain(value, low, high)`
 
 ほかは対象になる。役割の違うまとまりが位置で並ぶ口として、視点 (`camera`)、投影 (`perspective`・`ortho`)、色と位置か向きを取る光 (`pointLight`・`directionalLight`・`spotLight`)、制御点と端点を取る曲線 (`bezier`・`quadraticVertex`)、位置と大きさを取る口 (`rect`・`arc`・`image(img, x, y, w, h)`) などがある。
 
