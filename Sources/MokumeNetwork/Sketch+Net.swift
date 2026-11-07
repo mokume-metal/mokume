@@ -38,14 +38,14 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 端末から `nc 127.0.0.1 5204` で繋いで `0.3` と打つと円が変わり、クリックの `hit` が同じ
+    /// 端末から `nc 127.0.0.1 5204` で繋いで `0.3` と入力すると円が変わり、クリックの `hit` が同じ
     /// 端末に出る。
     ///
     /// - **呼んだときだけポートを開く。** `import mokume` しただけでポートが開くことはない
-    /// - この機械のすべての口で受ける。別の機械からも繋げる。相手は何人でも繋げる
+    /// - このマシンのすべてのネットワークインターフェースで待ち受ける。別のマシンからも繋げる。相手は何人でも繋げる
     /// - 改行 (`\n`。`\r\n` も) で区切った 1 行が 1 つの文字列になる。相手が閉じたときに
     ///   改行で終わっていない残りがあれば、それも 1 行として渡す。UTF-8 として読めない行と、
-    ///   64 KiB を超える行は捨てて数え、次のフレームで診断に出す
+    ///   64 KiB を超える行は破棄して数え、次のフレームで診断に出す
     /// - **ポートを他のアプリが使っていても作れる。** ``TextPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
     /// - 繋いでいる相手の数は ``TCPServer/clientCount`` で読める。相手が居ないときの
@@ -57,8 +57,8 @@ extension Sketch {
     ///
     /// - Parameter port: 待つポート (1〜65535)。
     /// - Throws: ポートの番号が 1〜65535 に入っていないとき。使える番号を `setup()`・`draw()`・入力の
-    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、ポートを開く前に
-    ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   コールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと、ポートを開く前に
+    ///   ``NetworkFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     public func createTCPServer(_ port: Int) throws(NetworkFailure) -> TCPServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         return try attached(NetworkFailure.self, calledAs: #function) { tcpServer(port: port) }
@@ -88,17 +88,17 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// ブラウザの console で次の 1 行を打つと円が変わり、クリックの `hit` が console に出る。
+    /// ブラウザの console で次の 1 行を入力すると円が変わり、クリックの `hit` が console に出る。
     ///
     /// ```js
     /// ws = new WebSocket("ws://localhost:8025"); ws.onmessage = e => console.log(e.data); ws.onopen = () => ws.send("0.3")
     /// ```
     ///
-    /// - 1 通が 1 つの文字列になる (末尾の改行 1 つは落とす)。text も binary も UTF-8 として読み、
-    ///   読めないものは捨てて数え、次のフレームで診断に出す。``WebSocketServer/send(_:)`` は
+    /// - 1 通が 1 つの文字列になる (末尾の改行 1 つは取り除く)。text も binary も UTF-8 として読み、
+    ///   読めないものは破棄して数え、次のフレームで診断に出す。``WebSocketServer/send(_:)`` は
     ///   1 回で 1 通の text として届く
     /// - **呼んだときだけポートを開く。** `import mokume` しただけでポートが開くことはない
-    /// - この機械のすべての口で受ける。どのパスで繋いでも同じ受け口に届く (`ws://localhost:8025/`
+    /// - このマシンのすべてのネットワークインターフェースで待ち受ける。どのパスで繋いでも同じ入力に届く (`ws://localhost:8025/`
     ///   でも `ws://localhost:8025/remote` でもよい)。暗号化 (`wss://`) は持たない
     /// - **ポートを他のアプリが使っていても作れる。** ``TextPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
@@ -111,8 +111,8 @@ extension Sketch {
     ///
     /// - Parameter port: 待つポート (1〜65535)。
     /// - Throws: ポートの番号が 1〜65535 に入っていないとき。使える番号を `setup()`・`draw()`・入力の
-    ///   コールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、ポートを開く前に
-    ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   コールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと、ポートを開く前に
+    ///   ``NetworkFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     public func createWebSocketServer(_ port: Int) throws(NetworkFailure) -> WebSocketServer {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         return try attached(NetworkFailure.self, calledAs: #function) { webSocketServer(port: port) }
@@ -130,10 +130,10 @@ extension Sketch {
     /// ``Sketch/createTCPServer(_:)`` で受けるスケッチを相手なしで回すときは、これに差し替える。
     /// `messages[i]` が、作ってから i 番目のフレームで ``TextPort/messages`` に入る。最後まで行けば
     /// 最初に戻る。どの文字列が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても
-    /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に空回しするときに使う
+    /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前にリハーサルするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -151,10 +151,10 @@ extension Sketch {
     /// ```
     ///
     /// 繋いでくる相手は居ない (``TCPServer/clientCount`` は 0)。``TCPServer/write(_:)`` を呼んでも
-    /// 何も出ない (1 度だけ知らせる)。
+    /// 何も出ない (1 度だけ警告する)。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
-    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
@@ -174,7 +174,7 @@ extension Sketch {
     /// 流し方は ``Sketch/createTCPServer(messages:)`` と同じで、`messages[i]` が、作ってから i 番目の
     /// フレームで ``TextPort/messages`` に入る ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// <!-- example: 文脈 var socket: WebSocketServer? -->
     /// ```swift
@@ -182,10 +182,10 @@ extension Sketch {
     /// ```
     ///
     /// 繋いでくる相手は居ない (``WebSocketServer/clientCount`` は 0)。``WebSocketServer/send(_:)`` を
-    /// 呼んでも何も出ない (1 度だけ知らせる)。
+    /// 呼んでも何も出ない (1 度だけ警告する)。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
-    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
@@ -221,13 +221,13 @@ extension Sketch {
     /// - **呼んだときだけ繋ぐ。** `import mokume` しただけで繋ぎに行くことはない
     /// - 改行 (`\n`。`\r\n` も) で区切った 1 行が 1 つの文字列になる。相手が閉じたときに改行で終わって
     ///   いない残りがあれば、それも 1 行として渡す。UTF-8 として読めない行と、64 KiB を超える行は
-    ///   捨てて数え、次のフレームで診断に出す
+    ///   破棄して数え、次のフレームで診断に出す
     /// - **相手が居なくても、居なくなっても作れる。** 繋げない間は ``TextPort/state`` が
     ///   ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
     ///   ``SourceState/disconnected`` になる。このアプリにローカルネットワークの許可が無くて繋げないときは
     ///   ``SourceState/denied`` になり、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る
-    /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。返事をしない
-    ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で諦めて繋ぎ直す。止めるのは
+    /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える API は無い。応答しない
+    ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で打ち切って繋ぎ直す。止めるのは
     ///   ``TextPort/stop()`` だけ。繋げない・切れたことは、1 度だけ診断に出す
     /// - 繋がっていない間の ``TCPClient/write(_:)`` は、1 度だけ診断に出して何もしない
     ///
@@ -238,11 +238,11 @@ extension Sketch {
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameters:
-    ///   - host: 繋ぐ相手のホスト (名前かアドレス。この機械なら `"127.0.0.1"`)。
+    ///   - host: 繋ぐ相手のホスト (名前かアドレス。このマシンなら `"127.0.0.1"`)。
     ///   - port: 繋ぐ相手のポート (1〜65535)。
     /// - Throws: ポートの番号が 1〜65535 に入っていない・ホストが空のとき。使える値を `setup()`・`draw()`・
-    ///   入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、繋ぐ前に
-    ///   ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと、繋ぐ前に
+    ///   ``NetworkFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     public func createTCPClient(_ host: String, _ port: Int) throws(NetworkFailure) -> TCPClient {
         guard Endpoint.usablePorts.contains(port) else { throw .invalidPort(port) }
         guard Endpoint.isUsable(host: host) else { throw .invalidHost(host) }
@@ -278,10 +278,10 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 展示室の中継サーバに繋ぎ、別の機械のセンサーの値で円を動かす。
+    /// 展示室の中継サーバに繋ぎ、別のマシンのセンサーの値で円を動かす。
     ///
-    /// - 1 通が 1 つの文字列になる (末尾の改行 1 つは落とす)。text も binary も UTF-8 として読み、
-    ///   読めないものは捨てて数え、次のフレームで診断に出す。``WebSocketClient/send(_:)`` は
+    /// - 1 通が 1 つの文字列になる (末尾の改行 1 つは取り除く)。text も binary も UTF-8 として読み、
+    ///   読めないものは破棄して数え、次のフレームで診断に出す。``WebSocketClient/send(_:)`` は
     ///   1 回で 1 通の text として届く
     /// - **`ws://` も `wss://` (暗号化) も受ける。** パスと問い合わせ (`/room?id=3`) もそのまま渡る
     /// - **呼んだときだけ繋ぐ。** `import mokume` しただけで繋ぎに行くことはない
@@ -289,8 +289,8 @@ extension Sketch {
     ///   ``SourceState/unavailable``、繋がると ``SourceState/running``、繋がっていたのが切れると
     ///   ``SourceState/disconnected`` になる。このアプリにローカルネットワークの許可が無くて繋げないときは
     ///   ``SourceState/denied`` になり、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る
-    /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。返事をしない
-    ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で諦めて繋ぎ直す。止めるのは
+    /// - **切れても繋げなくても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える API は無い。応答しない
+    ///   相手 (繋がるのに 5 秒かかっても使えるようにならないもの) は、5 秒で打ち切って繋ぎ直す。止めるのは
     ///   ``TextPort/stop()`` だけ。繋げない・切れたことは、1 度だけ診断に出す
     /// - 繋がっていない間の ``WebSocketClient/send(_:)`` は、1 度だけ診断に出して何もしない
     ///
@@ -298,11 +298,11 @@ extension Sketch {
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
-    /// - Parameter url: 繋ぐ先の URL (`ws://` か `wss://` で始まる綴り)。
-    /// - Throws: URL が `ws://` か `wss://` の綴りとして読めない・ホストが空のとき
+    /// - Parameter url: 繋ぐ先の URL (`ws://` か `wss://` で始まる表記)。
+    /// - Throws: URL が `ws://` か `wss://` の表記として読めない・ホストが空のとき
     ///   (``NetworkFailure/invalidHost(_:)``)、書かれたポートが 1〜65535 に入っていないとき。使える値を
-    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
-    ///   繋ぐ前に ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと、
+    ///   繋ぐ前に ``NetworkFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     public func createWebSocketClient(_ url: String) throws(NetworkFailure) -> WebSocketClient {
         guard let parsed = Endpoint.webSocketURL(url) else { throw .invalidHost(url) }
         if let port = parsed.port, !Endpoint.usablePorts.contains(port) {
@@ -327,20 +327,20 @@ extension Sketch {
     /// ``Sketch/createTCPClient(_:_:)`` で受けるスケッチを相手なしで回すときは、これに差し替える。
     /// `messages[i]` が、作ってから i 番目のフレームで ``TextPort/messages`` に入る。最後まで行けば
     /// 最初に戻る。どの文字列が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても
-    /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に空回しするときに使う
+    /// 同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前にリハーサルするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// <!-- example: 文脈 var link: TCPClient? -->
     /// ```swift
     /// link = createTCPClient(messages: [["0.25"], [], ["0.75", "hit"]])
     /// ```
     ///
-    /// 繋ぐ先は無い。``TCPClient/write(_:)`` を呼んでも何も出ない (1 度だけ知らせる)。
+    /// 繋ぐ先は無い。``TCPClient/write(_:)`` を呼んでも何も出ない (1 度だけ警告する)。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
-    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
@@ -359,17 +359,17 @@ extension Sketch {
     /// 流し方は ``Sketch/createTCPClient(messages:)`` と同じで、`messages[i]` が、作ってから i 番目の
     /// フレームで ``TextPort/messages`` に入る ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// <!-- example: 文脈 var socket: WebSocketClient? -->
     /// ```swift
     /// socket = createWebSocketClient(messages: [["0.25"], [], ["0.75", "hit"]])
     /// ```
     ///
-    /// 繋ぐ先は無い。``WebSocketClient/send(_:)`` を呼んでも何も出ない (1 度だけ知らせる)。
+    /// 繋ぐ先は無い。``WebSocketClient/send(_:)`` を呼んでも何も出ない (1 度だけ警告する)。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
-    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///
@@ -398,29 +398,29 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 端末から `nc -u 127.0.0.1 6000` で繋いで `0.3` と打つと円が変わる (末尾の改行は落ちる)。
+    /// 端末から `nc -u 127.0.0.1 6000` で繋いで `0.3` と入力すると円が変わる (末尾の改行は取り除かれる)。
     /// `nc -u -l 6001` で待っていれば、クリックの `hit` が出る。
     ///
     /// - **呼んだときだけポートを開く。** `import mokume` しただけでポートが開くことはない
-    /// - この機械のすべての口で受ける。別の機械からも届く
-    /// - 1 つの datagram が 1 つの文字列になる。UTF-8 として読めないものは捨てて数え、次の
+    /// - このマシンのすべてのネットワークインターフェースで待ち受ける。別のマシンからも届く
+    /// - 1 つの datagram が 1 つの文字列になる。UTF-8 として読めないものは破棄して数え、次の
     ///   フレームで診断に出す
-    /// - **ちょうど 9216 バイトの datagram は捨てる。** macOS の受け口は、ループバックで届いた 9216 バイトを
-    ///   超える datagram を黙って 9216 バイトに切る (別の機械から届いたものは全長で届く)。切れたものと
-    ///   見分けられないので、ちょうど 9216 バイトのものは丸ごと捨てて数え、次のフレームで診断に出す。
+    /// - **ちょうど 9216 バイトの datagram は破棄する。** macOS の受信ソケットは、ループバックで届いた 9216 バイトを
+    ///   超える datagram を黙って 9216 バイトに切る (別のマシンから届いたものは全長で届く)。切れたものと
+    ///   見分けられないので、ちょうど 9216 バイトのものは丸ごと破棄して数え、次のフレームで診断に出す。
     ///   **送りは 9215 バイトまで。** ``UDPPort/send(_:)`` は、UTF-8 で 9216 バイト以上の文字列は
-    ///   送らず、知らせる
-    /// - 空の datagram (0 バイト) は空の文字列 `""` になる。ただし macOS の受け口は、空の datagram
-    ///   を受けるとその送り元の流れを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ
-    ///   送り元から届いたものは、数えずに落ちる。落ちた数は分からないので、空で流れが閉じたとき、落ちたかも
-    ///   しれないことを送り元ごとに 1 度だけ診断に出す (実際には何も落ちていなくても出る)。`""` を送った直後に同じポートから
-    ///   送ったものも、相手が mokume の受け口なら落ちうる
+    ///   送らず、警告する
+    /// - 空の datagram (0 バイト) は空の文字列 `""` になる。ただし macOS の受信ソケットは、空の datagram
+    ///   を受けるとその送信元のストリームを閉じることがあり、そのとき空の直後 (1 ミリ秒ほどの間) に同じ
+    ///   送信元から届いたものは、数えずに失われる。失われた数は分からないので、空でストリームが閉じたとき、失われたかも
+    ///   しれないことを送信元ごとに 1 度だけ診断に出す (実際には何も失われていなくても出る)。`""` を送った直後に同じポートから
+    ///   送ったものも、相手が mokume の受信ソケットなら失われうる
     /// - **ポートを他のアプリが使っていても作れる。** ``TextPort/state`` が
     ///   ``SourceState/unavailable`` になり、空けば受け始める
     /// - 送り先を自分のポート (`("127.0.0.1", listen と同じ番号)`) にすれば、自分で送って自分で
     ///   受けられる。相手が居なくても動きを確かめられる
     /// - **送れないことは ``TextPort/state`` に出ない** ([ADR-0028] 決定 4)。送れないとき (宛先で誰も
-    ///   受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが落ちている) は、1 度だけ
+    ///   受けていない・このアプリにローカルネットワークの許可が無い・ネットワークが切断されている) は、1 度だけ
     ///   診断に出す。宛先に拒まれた後は、間 (既定 0.5 秒) を空けた次の送信まで拒まれずに終わって初めて
     ///   「送れた」と読み、また診断に出せるように戻る
     ///
@@ -430,8 +430,8 @@ extension Sketch {
     ///   - port: 受けるポート (1〜65535)。
     ///   - destination: 送り先のホストとポート。省けば送らない。
     /// - Throws: ポートの番号が 1〜65535 に入っていない・送り先のホストが空のとき。使える値を
-    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で渡すと、
-    ///   ポートを開く前に ``NetworkFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと、
+    ///   ポートを開く前に ``NetworkFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createUDP(
@@ -465,9 +465,9 @@ extension Sketch {
     /// `messages[i]` が、作ってから i 番目のフレームで ``TextPort/messages`` に入る。最後まで
     /// 行けば最初に戻る。どの文字列が入るかはフレームの数え方だけで決まるので、同じ列からは
     /// 何度回しても同じ文字列が同じフレームに届く — 相手なしで確かめるときや、展示の前に
-    /// 空回しするときに使う ([ADR-0028] 決定 6・7)。
+    /// リハーサルするときに使う ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -484,10 +484,10 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// 送り先は持たない。``UDPPort/send(_:)`` を呼んでも何も出ない (1 度だけ知らせる)。
+    /// 送り先は持たない。``UDPPort/send(_:)`` を呼んでも何も出ない (1 度だけ警告する)。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、何も届かない
-    /// ポートを返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、何も届かない
+    /// ポートを返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter messages: フレームごとに届く文字列。何も届かないフレームは空の並びにする。
     ///

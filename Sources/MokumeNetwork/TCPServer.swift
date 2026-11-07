@@ -3,7 +3,7 @@
 
 import MokumeCore
 
-/// TCP で繋いでくる相手を待つ入り口。``Sketch/createTCPServer(_:)`` が作り、走っているスケッチへ足す。
+/// TCP で繋いでくる相手を待つ入力ソース。``Sketch/createTCPServer(_:)`` が作り、実行中のスケッチへ追加する。
 ///
 /// 相手は何人でも繋げる。どの相手から届いたものも、改行で区切った 1 行ずつ、届いた順に
 /// ``TextPort/messages`` へ入る。``write(_:)`` は繋いでいる相手全員へ書く。受け方・状態・止め方・
@@ -22,15 +22,15 @@ import MokumeCore
 /// }
 /// ```
 ///
-/// 端末から `nc 127.0.0.1 5204` で繋いで `0.3` と打つと円が変わり、クリックの `hit` が同じ
+/// 端末から `nc 127.0.0.1 5204` で繋いで `0.3` と入力すると円が変わり、クリックの `hit` が同じ
 /// 端末に出る。
 ///
 /// **Processing の `Server` (`processing.net`) に当たる。** ``write(_:)``・``clientCount``・
-/// ``TextPort/stop()`` の名前と引数の順序はそれに倣う。型の名前だけは方式を名乗る
+/// ``TextPort/stop()`` の名前と引数の順序はそれに倣う。型の名前だけは方式を報告する
 /// (``WebSocketServer``・``UDPPort`` と並べて方式が名前で分かるように — [ADR-0020] 決定 1)。
 /// 受けたものは、Processing の `available()` / `readString()` で相手ごとに引き出す形ではなく、
 /// フレームごとに ``TextPort/messages`` で読む ([ADR-0010] 決定 5 — 取りこぼすと意味が変わる
-/// 出来事の列は、落とさない列に溜めてフレームで読む)。
+/// イベントの列は、取りこぼさない列にバッファしてフレームで読む)。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -45,11 +45,11 @@ public final class TCPServer: TextPort {
     /// server?.write("hit\n")
     /// ```
     ///
-    /// UTF-8 のバイト列を流れにそのまま書き、**改行は足さない** (Processing の `write` と同じ)。
+    /// UTF-8 のバイト列をストリームにそのまま書き、**改行は追加しない** (Processing の `write` と同じ)。
     /// 行で読む相手 (`nc` や、別の mokume の ``TCPServer``) へは `"hit\n"` と改行まで書く。
     ///
-    /// **投げない。** 相手が 1 人も居ない・止めた後は、理由ごとに 1 度だけ知らせて何もしない。
-    /// 書けなかった相手は切り、``clientCount`` から外れる。待たずに返る。
+    /// **投げない。** 相手が 1 人も居ない・止めた後は、理由ごとに 1 度だけ警告して何もしない。
+    /// 書けなかった相手は切断し、``clientCount`` から外れる。待たずに返る。
     ///
     /// - Parameter text: 書く文字列。
     public func write(_ text: String) {

@@ -4,7 +4,7 @@
 import MokumeCore
 import MokumeDiagnostics
 
-/// TCP で外のサーバへ繋ぎに行く入り口。``Sketch/createTCPClient(_:_:)`` が作り、走っているスケッチへ足す。
+/// TCP で外のサーバへ繋ぎに行く入力ソース。``Sketch/createTCPClient(_:_:)`` が作り、実行中のスケッチへ追加する。
 ///
 /// サーバから届いたものは、改行で区切った 1 行ずつ、届いた順に ``TextPort/messages`` へ入る。
 /// ``write(_:)`` は繋いだ先のサーバへ書く。受け方・状態・止め方は ``TextPort`` のとおり。
@@ -23,14 +23,14 @@ import MokumeDiagnostics
 /// }
 /// ```
 ///
-/// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。繋ぎ直す間
+/// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える API は無い。繋ぎ直す間
 /// ``TextPort/state`` は、まだ一度も繋がっていなければ ``SourceState/unavailable``、繋がっていたのが切れたなら
-/// ``SourceState/disconnected`` を名乗り、繋がれば ``SourceState/running`` に戻る。このアプリにローカルネットワークの
-/// 許可が無くて繋げないときは ``SourceState/denied`` を名乗り、診断に許可の直し方を 1 度だけ出す (許可されれば
+/// ``SourceState/disconnected`` を報告し、繋がれば ``SourceState/running`` に戻る。このアプリにローカルネットワークの
+/// 許可が無くて繋げないときは ``SourceState/denied`` を報告し、診断に許可の直し方を 1 度だけ出す (許可されれば
 /// 次の繋ぎ直しで ``SourceState/running`` に戻る)。
 ///
 /// **Processing の `Client` (`processing.net`) に当たる。** ``write(_:)`` の名前と引数の順序はそれに倣う。
-/// 型の名前は方式を名乗る (``TCPServer``・``WebSocketClient`` と並べて方式が名前で分かるように —
+/// 型の名前は方式を表す (``TCPServer``・``WebSocketClient`` と並べて方式が名前で分かるように —
 /// [ADR-0020] 決定 1)。受けたものは、Processing の `available()` / `readString()` で引き出す形ではなく、
 /// フレームごとに ``TextPort/messages`` で読む ([ADR-0010] 決定 5)。
 ///
@@ -57,10 +57,10 @@ public final class TCPClient: TextPort {
     /// link?.write("0.3\n")
     /// ```
     ///
-    /// UTF-8 のバイト列を流れにそのまま書き、**改行は足さない** (Processing の `write` と同じ)。
+    /// UTF-8 のバイト列をストリームにそのまま書き、**改行は追加しない** (Processing の `write` と同じ)。
     /// 行で読む相手 (`nc -l` や、mokume の ``TCPServer``) へは `"0.3\n"` と改行まで書く。
     ///
-    /// **投げない。** 繋がっていない間・止めた後は、理由ごとに 1 度だけ知らせて何もしない — 繋がっていない
+    /// **投げない。** 繋がっていない間・止めた後は、理由ごとに 1 度だけ警告して何もしない — 繋がっていない
     /// 間に書いたものは、繋がった後に届かない。待たずに返る。
     ///
     /// - Parameter text: 書く文字列。
