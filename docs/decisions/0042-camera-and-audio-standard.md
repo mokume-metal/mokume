@@ -91,7 +91,7 @@ final class Mirror: Sketch {
 
 決定 1 の「呼べば使える」は、呼び出しの中で差込口を並びに入れることで実現する。そのための口を MokumeCore に**公開で**置く。
 
-- **公開にする。** 外のパッケージも同じ書き味 (`createSyphonServer()` のような) を作れる。呼べば入る手軽さを、組み込みだけの特権にしない ([ADR-0024](0024-extension-seams.md) 決定 10)
+- **公開にする。** 外のパッケージも同じ書き味 (`createSyphonServer()` のような) を作れる。呼べば入る手軽さを、組み込みだけの特権にしない ([ADR-0024](0024-extension-seams.md) 決定 10)。ただし、走っていない所で呼ばれたときの型付きの失敗と、呼ばれた口の名前での知らせは、いまは組み込みにだけある (決定 3 の改訂 (2026-11-07) の表)
 - **並びは本体の中で 1 本のまま。** 呼び出しで入ったものも `plugins` で宣言したものも、同じ並びに入る ([ADR-0024](0024-extension-seams.md) 決定 4)。書き出しの係が「頼まれている間だけ並びに居る」形 ([ADR-0023](0023-frame-stages-and-outputs.md) 決定 5) を、入り口にも開く
 - **読み込み時の自動登録はしない。** 並びに入るのは呼んだときだけである ([ADR-0024](0024-extension-seams.md) 決定 5)
 - **開けなかったときは黙らない。** 扱いは宣言で入れたものと同じ ([ADR-0024](0024-extension-seams.md) 決定 7)。ただし、機材が無いことは失敗ではなく状態として持つ (決定 4)。後から挿されるからである
@@ -124,17 +124,28 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は、
 | `attached` の系統 (`attachedWaiting`・`attachedOnSurface`・`canAttach`・`attach(_:calledAs:returning:)`・`detach(_:calledAs:)`・`createImage(_:_:calledAs:)`) と `NotRunningFailure` | 走っていない所で作る口が呼ばれたとき、型付きの失敗を投げ、呼ばれた口の名前で 1 度だけ知らせる。外のパッケージは公開の `attach(_:)` の `false` を見て、自分で断る | Camera・Audio・Network・Vision・MIDI・Gamepad |
 | `DetachedFrames` | 外して足し直したとき、外していた間のフレーム数だけ記録の位置を進める ([#3152](https://github.com/mokume-metal/mokume/issues/3152)) | Camera・Network・Vision・MIDI・Gamepad |
 | `RealtimeSound` | リプレイの記録で「実時間で鳴る音を使った」と名乗る | Audio |
+| `isOnScreen`・`Clock.soundFrameRate(onScreen:)`・`authorSeconds`・`observedSeconds` | 音の入り口が、窓では実時間で鳴らし、窓なしでは数で進むかを決める。作者の時計の秒を倍精度で読み、標本の位置を窓の継ぎ目と 1 標本も違わずに数える | Audio |
 | `RuntimeMath` | 決定論の水準 ([ADR-0025](0025-determinism-levels.md)) を守る数学関数を使う | Audio |
-| `AssetOpening` | 資材を開けないときの判定と文面を、組み込みどうしでそろえる | Camera・Audio |
+| `AssetOpening`・`noticeBlockingLoad` | 資材を開けないときの判定と文面、止まる読み込みの知らせを、組み込みどうしでそろえる | Camera・Audio |
 | `DrawLedger`・`DrawProgress`・`OutsideRun` | いま何回目の `draw()` かを読み、実行の外で読まれたら知らせる値型を書く | Game |
 
-表は種類ごとの代表で、名前の全件ではない。全件は、コア依存の層のターゲットを `package` の宣言の名前で検索して引く (#3803 の本文に、2026-11-07 時点の全件と検索の式がある)。
+表は種類ごとの代表で、名前の全件ではない。**全件の正本は、次の検索の結果である** (表に写した一覧を正本にすると、新しい道が足されたときに表だけが古くなる)。MokumeCore の `package` の宣言の名前を拾い、コア依存の層のターゲットで使われているものを出す (bash)。`id`・`cos`・`name` のような短い名前は同名の別物にも当たるので、当たった行を読んで除く:
 
-- **黙って誤るのは `RealtimeSound` だけである。** 他の道は、外のパッケージが同じ振る舞いを自分で書くか、書けずに機能が欠けるだけで済む。`RealtimeSound` には外の型が準拠できないので、外のパッケージの音の入り口が実時間で鳴っても、記録は再現できないと名乗らず、再現できると誤って約束する。2026-11-07 の時点で、外に音の入り口は無い
+```bash
+T="Sources/MokumeCamera Sources/MokumeAudio Sources/MokumeNetwork Sources/MokumeGame Sources/MokumeVision Sources/MokumeMIDI Sources/MokumeGamepad"
+for n in $(grep -rhoE "\bpackage (nonisolated |static |final |indirect |mutating |override |convenience |required |let |var |lazy )*(func|var|let|struct|enum|class|init|protocol|typealias|actor|subscript|case) +[A-Za-z_][A-Za-z0-9_]*" Sources/MokumeCore \
+  | awk '{print $NF}' | sort -u); do
+  grep -rqw --include='*.swift' "$n" $T && echo "$n"
+done
+```
+
+コア依存の層にターゲットを足したら `T` に足す。新しい種類の道 (表のどの行にも当たらないもの) を足す PR は、この表に行を足す。
+
+- **黙って誤る道は、`RealtimeSound` と音の時計の 2 つである。** 他の道は、外のパッケージが同じ振る舞いを自分で書くか、書けずに機能が欠けるだけで済む。`RealtimeSound` には外の型が準拠できないので、外のパッケージの音の入り口が実時間で鳴っても、記録は再現できないと名乗らず、再現できると誤って約束する。音の時計が読めない外の音源は、公開の単精度の `authorTime` で標本の位置を数えて継ぎ目を黙ってずらし、`isOnScreen` が読めないので書き出しでも実時間で鳴らしうる。2026-11-07 の時点で、外に音の入り口は無い
 - **外へ開く引き金は、外のパッケージが道を要求したときである。** 外のパッケージ ([ADR-0041](0041-standard-scope-map.md) の地図が外に置いた深度カメラ・剛体物理・NDI など) が、作る口・記録を流す入り口・音の入り口・`draw()` の回数を読む値型のどれかを持ったら、それが要る道を外から使える形で開く。形 (`@_spi` か、拡張する人向けの別ターゲットか) は、そのときの要求から決める。公開の `attach` を外のパッケージの作る口のために変えるのは実害が出たとき、と決めた [#2794](https://github.com/mokume-metal/mokume/issues/2794) と同じ引き金である
 - **CLI による `package` の使用は、この決定の外にある。** CLI は機能を足す側ではなく道具で、その結合は [#3826](https://github.com/mokume-metal/mokume/issues/3826) が扱う
 
-**当初の決定は**「MokumeCore の `public` だけを使う。`package` 可視性には触れない。差込口と決定 2 の口が、外から本当に使えることの証明になる」で、別ターゲットにする理由の 1 つ目に「`public` だけで書くことが、ビルドで強制される」を挙げていた。**この強制は最初から無かった。** Swift の `package` は、同じパッケージの中なら別のターゲットからも見える。採用の 12 日後 (2026-10-15・[#2741](https://github.com/mokume-metal/mokume/issues/2741)) に `NotRunningFailure` が `package` で入り、MokumeCore の `package` の宣言は 2026-11-07 に 163 件 (27 ファイル) まで増え、コア依存の層の 7 ターゲットのすべてが使っていた。#2794 で公開の `attach` を実害待ちと決めたときも、この決定の文面は直されなかった。
+**当初の決定は**「MokumeCore の `public` だけを使う。`package` 可視性には触れない。差込口と決定 2 の口が、外から本当に使えることの証明になる」で、別ターゲットにする理由の 1 つ目に「`public` だけで書くことが、ビルドで強制される」を挙げていた。**この強制は最初から無かった。** Swift の `package` は、同じパッケージの中なら別のターゲットからも見える。採用の 12 日後 (2026-10-15・[#2740](https://github.com/mokume-metal/mokume/issues/2740) の直し) に `NotRunningFailure` が `package` で入り、MokumeCore の `package` の宣言は 2026-11-07 に 163 件 (27 ファイル) まで増え、コア依存の層の 7 ターゲットのすべてが使っていた。#2794 で公開の `attach` を実害待ちと決めたときも、この決定の文面は直されなかった。
 
 **採らなかった案** (#3803):
 
@@ -171,7 +182,7 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は、
 | 6 注入 | 自分で作った画素の列を差し込む | 音声ファイル・合成したサンプル列を差し込む |
 | 7 名乗り | 台帳に入れるのは注入で回すときだけ | 音声ファイルで回すときは水準 2 を名乗れる (決定 6) |
 
-- 届き続ける値を `AsyncSequence` で公開する ([ADR-0010](0010-concurrency-model.md) 決定 5) か、フレームで読む値として持つかの使い分けは、下の改訂 (2026-10-06) で決まった
+- 届き続ける値を `AsyncSequence` で公開する ([ADR-0010](0010-concurrency-model.md) 決定 5) か、フレームで読む値として持つかの使い分けは、下の「届き続ける値は、フレームで読む値として持つ」で決めた
 
 > 破れたとき: 領域ごとに毎フレームの口・失敗の伝え方・時刻の持ち方が分かれる。前身で起きたことが、地図の領域の数だけ繰り返される。
 
@@ -187,7 +198,7 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は、
 
 - **下位の描画資源を、面に新しく出さない。** 露出は `OutputFrame.texture` の 1 点のまま ([ADR-0024](0024-extension-seams.md) 決定 8・[ADR-0028](0028-external-inputs.md) 決定 5)
 - 受け取る画素の形式 (420v / 420f で受けて変換するか、32BGRA で受けるか) は、実装で計測して決める ([TN3121](https://developer.apple.com/documentation/technotes/tn3121-selecting-a-pixel-format-for-an-avcapturevideodataoutput) は 420v / 420f を既定に勧めている)
-- **フレームの予算に収まらないと計測で示されたら、GPU のテクスチャを直に受ける道を足す。** 足すときは決定 3 のとおり MokumeCore の `public` に置き、外のパッケージも使えるようにする ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) の順序)
+- **フレームの予算に収まらないと計測で示されたら、GPU のテクスチャを直に受ける道を足す。** 足すときは MokumeCore の `public` に置き、外のパッケージも使えるようにする ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) の順序)
 - 長く持つと機材のメモリが枯れる sample buffer は、入れ物に最新の 1 枚だけを持ち、`supply()` は新しい 1 枚が来たときだけ書く
 
 **当初の案は、`CVMetalTextureCache` でコピーせずに Metal へ渡すことだった** (#1957)。しかし、それを MokumeCore の `public` だけで書くには下位の描画資源を面に出すことになり、決定 3 と ADR-0024 決定 8 の両方に反する。コピーの費用は #487 で予算内と測れているので、先にこちらを採る。
@@ -198,13 +209,13 @@ MokumeCore の中のフォルダでなく別ターゲットにする理由は、
 
 **現行の扱い: 外の画素は、`Image.write(DisplayImage)` に加えて、mokume 独自の `Sendable` な値 `PixelSurface` を受ける `Image.write(PixelSurface)` の重ねで書ける。** `PixelSurface` は `IOSurface` を 1 つと、8 bit の色を Display P3 の 8 bit へ写す表 (`PixelSurface.ColorTable`) を持つ。色の変換は表を GPU で引いて行い、結果は同じ表で CPU が作った `DisplayImage` を書いたときと 1 bit も違わない。
 
-- **形**: 決定 3 のとおり MokumeCore の `public` に置き、外のパッケージも同じ口で書ける。**色の意味は作り手が持つ** — 表は「どの 8 bit の色がどの 8 bit の色になるか」だけを持ち、作り手が自分の変換 (カメラと動画は `DisplayImage` を作るのと同じ変換) を 256 枚の絵に通して作る。MokumeCore は表を詰めて引くだけで、色空間の変換を写さない
+- **形**: MokumeCore の `public` に置き、外のパッケージも同じ口で書ける。**色の意味は作り手が持つ** — 表は「どの 8 bit の色がどの 8 bit の色になるか」だけを持ち、作り手が自分の変換 (カメラと動画は `DisplayImage` を作るのと同じ変換) を 256 枚の絵に通して作る。MokumeCore は表を詰めて引くだけで、色空間の変換を写さない
 - **「下位の描画資源を、面に新しく出さない」を `IOSurface` に及ぼさない。** `IOSurface` は Metal の型ではなく、OS が GPU と共有する面として用意した形で、iOS にもある。露出する Metal の資源は `OutputFrame.texture` の 1 点のままである。`IOSurface` を署名に出すのは `PixelSurface.init(_:conversion:)` の 1 点で、`scripts/api-surface.py` の許可の一覧に理由つきで載せる ([ADR-0020](0020-api-naming-and-surface.md) 決定 6)。`IOSurface` を返す公開の口は作らない
 - **決定 7 の条件 2 (OS の型を越えさせない) の読み**: `IOSurface` を包んだ自前の `Sendable` な値は、条件 2 の「OS の型」に当たらない (2026-11-01 にメンテナが決めた)。先読みの係・カメラの受け取りの列から main へ越えてよい。`CVPixelBuffer`・`CMSampleBuffer` は今までどおり越えさせない
 - **面の寿命**: 値を作った時点で面を「使用中」にし (`IOSurfaceIncrementUseCount`)、値の写しが全部消えたら外す。`CVPixelBuffer` の置き場は使用中の面を使い回さないので、元の `CVPixelBuffer` を先に手放しても中身は書き換わらない (#2962 の実験で、使用中にしないと 6/6 枚が上書きされ、使用中にすると 0/6 枚)。絵に書いた最後の 1 面は絵の寿命に従う
 - **受けるのは BGRA の 8 bit・平面なしの面だけ**で、不透明として書く。透けた画素・YpCbCr・HDR は `DisplayImage` の道のまま
 
-**採らなかった案 (2026-10-21・#2962)**: 生のポインタと返すための closure を受ける形 (面に生のポインタが出て、ページ境界に揃わない面は黙ってコピーへ戻る)。作る口を `package` に留める形 (決定 3・決定 5 の「外のパッケージも同じ道」に反する)。近似の表・GPU の bilinear の縮小 (色が 1 bit も変わらないことを約束できない)。
+**採らなかった案 (2026-10-21・#2962)**: 生のポインタと返すための closure を受ける形 (面に生のポインタが出て、ページ境界に揃わない面は黙ってコピーへ戻る)。作る口を `package` に留める形 (決定 5 の「外のパッケージも同じ道」に反する)。近似の表・GPU の bilinear の縮小 (色が 1 bit も変わらないことを約束できない)。
 
 ### 6. 音の範囲は、解析・再生・合成まで。音の流れは音のターゲットが持つ
 

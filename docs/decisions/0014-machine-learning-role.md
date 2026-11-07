@@ -96,7 +96,7 @@ SPDX-License-Identifier: MIT
 - [ADR-0016](0016-package-structure.md) 決定 1 は、コア依存の層の中での横の依存を許さない。**`MokumeVision` は `MokumeCamera` に依存できない**ので、カメラの型 (`Capture`) に直に繋がない
 - 受ける入力は、外から来た画素が内で作る絵と同じ型になる `Image` ([ADR-0028](0028-external-inputs.md) 決定 5) と、その絵が届いたときの到着の記録 (`Arrival`・MokumeCore の型) である。**カメラ・動画・自作の絵を区別しない**。カメラの `mirrored` で左右を入れ替えた後の絵を受けるので、点は描いた絵の上にそのまま重なる
 - 返す点は、**入力の絵の画素の座標** (左上原点・y は下向き) にする。Vision の 0〜1・左下原点を利用者に見せない ([ADR-0020](0020-api-naming-and-surface.md) 決定 6)
-- `Image` の画素を CPU へ一括で出す公開の口が MokumeCore に足りなければ、実装の `Feature` が最小のものを足す (`Image.write(DisplayImage)` の逆の向き)。足すなら MokumeCore の `public` に置き、外のパッケージも使えるようにする ([ADR-0042](0042-camera-and-audio-standard.md) 決定 3)。GPU のテクスチャを直に渡す道は、計測で足りないと分かってから足す ([ADR-0042](0042-camera-and-audio-standard.md) 決定 5 の順序)
+- `Image` の画素を CPU へ一括で出す公開の口が MokumeCore に足りなければ、実装の `Feature` が最小のものを足す (`Image.write(DisplayImage)` の逆の向き)。足すなら MokumeCore の `public` に置き、外のパッケージも使えるようにする ([ADR-0042](0042-camera-and-audio-standard.md) 決定 2・決定 5 と同じ理由)。GPU のテクスチャを直に渡す道は、計測で足りないと分かってから足す ([ADR-0042](0042-camera-and-audio-standard.md) 決定 5 の順序)
 - 利用者が選んで import する product にはしない。アンブレラが再輸出する。Vision は許可を要らない (カメラの許可は `Capture` が持つ)
 
 **結果の受け方: 最新の 1 つを、元のコマの時刻つきで**

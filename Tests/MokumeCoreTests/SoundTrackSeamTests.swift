@@ -7,7 +7,9 @@ import MokumeTestSupport
 import Testing
 
 // **`@testable` を付けない。** 外のパッケージが音を載せる口 (``SoundSource``・``SoundWindow``) は公開で、
-// 公開の口だけで音声トラックが付くことを見る ([#3125] の条件 10)。内部の口に触れると、ここで組めない。
+// 公開の口だけで音声トラックが付くことを見る ([#3125] の条件 10)。internal の口に触れると、ここで組めない。
+// `package` の口は同じパッケージのこの検査からも見えて、触れても組めてしまうので、使わないことで外の
+// パッケージと同じ形を保つ (ADR-0042 決定 3 の改訂 (2026-11-07))。
 //
 // [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 import MokumeCore
