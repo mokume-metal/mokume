@@ -120,40 +120,78 @@ struct ThinEndCutRenderTests {
         }
     }
 
+    /// 長さ 40 の一直線を 0.25 刻みの点で並べた開いた線を、`row` の置き方・端の形 `cap`・縦のずらし `dy` で描いた光の量。
+    private static func subdividedLight(
+        _ row: Subdivided, cap: StrokeCap, dy: Float, canvas: Canvas, shader: Shader
+    ) throws -> Double {
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.strokeCap(cap)
+            if !row.solid { canvas.shader(shader) }
+            canvas.translate(64, 64 + dy)
+            canvas.rotate(row.angle)
+            canvas.beginShape()
+            for index in 0...160 {
+                let x = -20 + Float(index) * 0.25
+                if row.solid { canvas.vertex(x, 0, 0) } else { canvas.vertex(x, 0) }
+            }
+            canvas.endShape()
+        }
+        return try light(canvas)
+    }
+
+    /// 端の形 `cap` の両端の面積 (描く画素で太さ `drawn` のとき)。**切り方の式 (``ThinEndCut/extent(of:weight:)``) から
+    /// 作らない** — 延ばす長さを誤っても期待が一緒に動かないように、端の形の定義から書く。`.project` は太さの半分ずつ
+    /// 延ばした長方形 2 つ、`.round` は直径が太さの半円 2 つ (#3748)。
+    static func endArea(_ cap: StrokeCap, drawn: Double) -> Double {
+        switch cap {
+        case .square: 0
+        case .project: drawn * drawn
+        case .round: Double.pi * drawn * drawn / 4
+        }
+    }
+
     /// 曲線の刻みのように、端の線分が描く画素の 1 列より短い開いた線 (第 34 波の反証の指摘)。長さ 40 の一直線を
     /// 0.25 刻みの点で並べると、端の列には短い線分が何本も入る。端の列の片を先に積むので、後の帯が列に入っても
-    /// 列の光の量は割合のとおりになる。期待は 2 点の線と同じ `(40 + 延ばした長さ) × 太さ` (描く画素)。丸い端は
-    /// 面積の等しい平らな延長 (両端で太さ × π / 8 ずつ・#3748) で、光の量は丸い端の面積と同じ。
+    /// 列の光の量は割合のとおりになる。期待は帯 `40 × 太さ` と両端の面積 (``endArea(_:drawn:)``) の和 (描く画素)。
     @Test("端の線分が 1 列より短い開いた線も、置く位置によらず太さぶんの濃さで出る", arguments: subdivided)
     func subdividedLinesKeepTheirWeight(_ row: Subdivided) throws {
         let canvas = try Self.makeCanvas(density: row.density)
         let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
-        let weight: Float = 1
-        let drawn = Double(weight * row.density)
-        let length = 40 + 2 * Double(ThinEndCut.extent(of: row.cap, weight: weight))
-        let expected = length * drawn * Double(row.density)
+        let drawn = Double(row.density)
+        let expected = 40 * drawn * Double(row.density) + Self.endArea(row.cap, drawn: drawn)
         var broken: [String] = []
         for step in 0..<12 {
             let dy = Float(step) * 0.25
-            try canvas.draw {
-                canvas.background(0)
-                canvas.noFill()
-                canvas.stroke(255)
-                canvas.strokeWeight(weight)
-                canvas.strokeCap(row.cap)
-                if !row.solid { canvas.shader(shader) }
-                canvas.translate(64, 64 + dy)
-                canvas.rotate(row.angle)
-                canvas.beginShape()
-                for index in 0...160 {
-                    let x = -20 + Float(index) * 0.25
-                    if row.solid { canvas.vertex(x, 0, 0) } else { canvas.vertex(x, 0) }
-                }
-                canvas.endShape()
-            }
-            let measured = try Self.light(canvas)
+            let measured = try Self.subdividedLight(row, cap: row.cap, dy: dy, canvas: canvas, shader: shader)
             if abs(measured - expected) > 0.1 * expected {
                 broken.append("dy \(dy): 光の量 \(measured) (期待 \(expected))")
+            }
+        }
+        #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
+    }
+
+    /// **端の光の量は、端の形の面積ぶん**。同じ置き方の四角い端の線との差を、両端の面積 (``endArea(_:drawn:)``) の
+    /// ±10% で見る (#3748)。線全体の ±10% では、長さ 40 の線の端の延長を誤っても (細かさ 0.25 で端の面積は全体の 2%)
+    /// 見えないので、端の量だけを取り出して比べる。列の境目で切った線は置く位置によらず光の量が合う (誤差は全体の
+    /// 0.1% 以下) ので、差は端の面積に近い。
+    @Test(
+        "端の光の量は、同じ線の四角い端との差で見て、端の形の面積ぶんになる (#3748)",
+        arguments: subdivided.filter { $0.cap != .square })
+    func capsAddTheirArea(_ row: Subdivided) throws {
+        let canvas = try Self.makeCanvas(density: row.density)
+        let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let expected = Self.endArea(row.cap, drawn: Double(row.density))
+        var broken: [String] = []
+        for step in 0..<12 {
+            let dy = Float(step) * 0.25
+            let capped = try Self.subdividedLight(row, cap: row.cap, dy: dy, canvas: canvas, shader: shader)
+            let flat = try Self.subdividedLight(row, cap: .square, dy: dy, canvas: canvas, shader: shader)
+            if abs(capped - flat - expected) > 0.1 * expected {
+                broken.append("dy \(dy): 端の光の量 \(capped - flat) (期待 \(expected))")
             }
         }
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
