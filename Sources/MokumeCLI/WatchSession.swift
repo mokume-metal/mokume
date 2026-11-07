@@ -414,6 +414,10 @@ final class WatchSession {
     /// 試聴を出た時点の、ソースの世代 (試聴の版のもの)。**ソースがこの世代のままの間は、作り直さない。**
     /// 出る要求は本番を動かさない — 世代の控えを本番の版へ戻した (``restoreProductionRecord()``) ので、そのままだと
     /// 次の拍が試聴の版を本番へ作り直してしまう。ソースが変わったら下ろす (``tick()``)。
+    ///
+    /// **控えるのは、見張りが最後に見た世代ではなく、出た時点にソースを読み直した世代である** — 見張りがまだ見て
+    /// いない保存の直後に出ると、その版が控えから漏れて本番に作り直される。**入り直しても下ろさない** — 下ろすと、
+    /// 入った拍に出た時点の版の試聴の子が起きる (入る要求は何も起こさない約束・[#3794](https://github.com/mokume-metal/mokume/issues/3794))。
     private var unadoptedStamp: String?
 
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
@@ -1816,7 +1820,7 @@ final class WatchSession {
         isAuditioning = true
         previewFollowing = nil
         auditionIsUnidentified = false
-        unadoptedStamp = nil
+        // 出た時点のソースのままの控え (``unadoptedStamp``) は下ろさない。入っても何も起こさず、別の版の保存が試聴の子を起こす
         pendingAudition = nil
         hasNamedAuditionDeparture = false
         // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品の窓が映す本番。乗り換えを待つ間は 2 つ) を失わない
@@ -1837,6 +1841,10 @@ final class WatchSession {
         guard isAuditioning else {
             return refusal(id: request.id, action: request.action, .notAuditioning)
         }
+        // **出た時点のソースの世代を読み直す** ([#3794](https://github.com/mokume-metal/mokume/issues/3794))。拍の中では
+        // 要求が保存の検出 (``tick()``) より先に効くので、見張りがまだ見ていない保存があれば ``lastStamp`` には無い。
+        // 役を変える前に読む — 読む間に来た拍は、試聴の中として扱う
+        let sourceStamp = await hooks.stamp(directory)
         isAuditioning = false
         previewFollowing = nil
         auditionIsUnidentified = false
@@ -1866,10 +1874,10 @@ final class WatchSession {
             lastStamp = nil
             left = .starts
         } else if returned {
-            restoreProductionRecord(holding: true)
+            restoreProductionRecord(holding: sourceStamp)
             left = .kept
         } else {
-            restoreProductionRecord(holding: false)
+            restoreProductionRecord(holding: nil)
             left = .rebuilds
         }
         let leaving = auditionChild
@@ -1885,12 +1893,12 @@ final class WatchSession {
     /// **戻した世代は「本番が作られた版」である。** 出た後にソースを元に戻せば (試聴の版を捨てれば)、世代が一致して
     /// 作り直されず、別の版へ直せば作り直される。
     ///
-    /// - Parameter holding: 出た時点のソースのままの間は作り直さないか (``unadoptedStamp``)。出る要求は本番を
-    ///   動かさない約束のためで、中身から導く世代では「同じ中身を再び保存した」ことは見分けられない。**本番が生きていて
-    ///   プレビューを戻せたときだけ立てる** — そうでなければ、出た時点のソースを作り直して本番に合わせる。
-    private func restoreProductionRecord(holding: Bool) {
+    /// - Parameter holding: このソースの世代のままの間は作り直さない (``unadoptedStamp``)。出た時点のソースの世代を
+    ///   渡す。出る要求は本番を動かさない約束のためで、中身から導く世代では「同じ中身を再び保存した」ことは見分けられない。
+    ///   **本番が生きていてプレビューを戻せたときだけ渡す** — `nil` なら、出た時点のソースを作り直して本番に合わせる。
+    private func restoreProductionRecord(holding: String?) {
         guard let record = productionReport else { return }
-        unadoptedStamp = holding ? lastStamp : nil
+        unadoptedStamp = holding
         lastStamp = record.stamp
         lastReport = record
         firstFrameSince = nil
