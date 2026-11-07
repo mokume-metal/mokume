@@ -24,14 +24,14 @@ extension SketchPart {
     /// ```
     ///
     /// **描き場所へ描く書き方は 3 つある。** 画面向けに書いた描く関数 (``circle(_:_:_:)`` など) を
-    /// そのまま使い回すなら ``draw(into:_:)`` (上の例)。描き場所を ``Canvas`` として明示して扱い、
-    /// 描き切りの失敗を自分で捕まえたいなら ``Canvas/draw(_:)``。区間を自分で開け閉めするなら
+    /// そのまま使い回すなら ``draw(into:_:)`` (上の例)。描き切りの失敗を自分で捕まえたいなら
+    /// ``Canvas/draw(_:)``。どちらも閉包の中の素の呼び出しは描き場所へ行く。区間を自分で開け閉めするなら
     /// ``Canvas/beginDraw()`` と ``Canvas/endDraw()``。
     ///
     /// | 書き方 | 素の `circle(…)` の描画先 | 描き切りの失敗 |
     /// | --- | --- | --- |
     /// | ``draw(into:_:)`` | 描き場所 (閉包を抜けると本体へ戻る) | 警告する |
-    /// | ``Canvas/draw(_:)`` (`try trail.draw { … }`) | 本体 (描き場所へは `trail.circle(…)` と書く) | ``RenderFailure`` を投げる |
+    /// | ``Canvas/draw(_:)`` (`try trail.draw { … }`) | 描き場所 (閉包を抜けると本体へ戻る) | ``RenderFailure`` を投げる |
     /// | ``Canvas/beginDraw()`` / ``Canvas/endDraw()`` | 本体 (描き場所へは `trail.circle(…)` と書く) | `endDraw()` で警告する |
     ///
     /// 3 つの違いの詳しい説明は ``draw(into:_:)`` の「3 つの `draw` の違い」に、手動の対の規則は
@@ -290,8 +290,13 @@ extension SketchPart {
     /// ## 3 つの `draw` の違い
     ///
     /// - ``Sketch/draw()``: 利用者が書く、1 フレームごとに呼ばれる関数
-    /// - ``Canvas/draw(_:)``: 描き場所のフレームを開く。**中の素の呼び出しは本体へ行く** (`pad.circle(…)` と書く)
-    /// - `draw(into:)`: 描き場所のフレームを開き、**中の素の呼び出しを描き場所へ向ける**
+    /// - ``Canvas/draw(_:)``: 描き場所のフレームを開き、スケッチの中なら**中の素の呼び出しを描き場所へ向ける**
+    ///   ([#3866])。描き切りの失敗は ``RenderFailure`` を投げる
+    /// - `draw(into:)`: 描き場所のフレームを開き、**中の素の呼び出しを描き場所へ向ける**。描き切りの失敗は警告する。
+    ///   本体の面を渡すとフレームを開き直さない (下の「本体の面を渡したとき」)
+    ///
+    /// 以前は ``Canvas/draw(_:)`` の中の素の呼び出しが本体へ行き、同じ形の `draw(into:)` と絵が黙って割れた
+    /// ([#3866])。手動の対 (``Canvas/beginDraw()`` / ``Canvas/endDraw()``) の間の素の呼び出しは、今も本体へ行く。
     ///
     /// ## 揺らぎの種・時刻・粒の刻みは、向き先によらずスケッチのもの
     ///
@@ -314,6 +319,8 @@ extension SketchPart {
     /// ``Canvas`` は `emit` を公開しない。乱数の列を 1 本に保つためである (``randomSeed(_:)`` が粒に効かなくなる)。
     /// 描き場所へ粒を出すときは、閉包の中で ``emit(_:from:toward:rate:speed:life:size:color:)`` を呼ぶ。
     ///
+    /// [#3866]: https://github.com/mokume-metal/mokume/issues/3866
+    ///
     /// - Parameters:
     ///   - graphics: 描く先の描き場所。
     ///   - body: 中の呼び出しが `graphics` へ向く閉包。
@@ -321,15 +328,16 @@ extension SketchPart {
     // shot: 2 snippet=ba1fde9c
     public func draw(into graphics: Canvas, _ body: () -> Void) {
         guard let runtime = Self.liveRuntime() else { return }
-        let previous = runtime.drawingInto
-        runtime.drawingInto = graphics
-        defer { runtime.drawingInto = previous }
         // 本体の面のフレームを約束するのはランタイム。ここで開くと、`setup()` の中から呼んだときに
         // 本体のフレームが余分に回る。向き先だけを立てて、閉包を走らせる
-        if graphics === runtime.canvas { return body() }
-        // 揺らぎの種・時刻・粒の刻みは、向き先が直に作った面でもスケッチのものを読む
-        let restore = graphics.borrowSketchState(from: runtime.canvas)
-        defer { restore() }
+        if graphics === runtime.canvas {
+            let previous = runtime.drawingInto
+            runtime.drawingInto = graphics
+            defer { runtime.drawingInto = previous }
+            return body()
+        }
+        // 向き先を立てて置き場を借りるのは `Canvas.draw(_:)` が走っているスケッチの中で行う (#3866)。
+        // ここで違うのは、描き切りの失敗を投げずに警告する所だけ
         do {
             try graphics.draw(body)
         } catch {
@@ -784,4 +792,25 @@ extension SketchPart {
     // shot: 1 snippet=3d8912c0
     // shot: 2 snippet=03298d4c
     public func noTexture() { Self.liveCanvas()?.noTexture() }
+}
+
+extension SketchRuntime {
+    /// `work` の間だけ、スケッチの口の向き先を `graphics` に立て、揺らぎの種・時刻・粒の刻みを本体の面から
+    /// 借りる ([#2454]・[#3866])。抜けると 1 つ前の向き先へ戻り、借りた置き場を手放す (手放し方は
+    /// ``Canvas/borrowSketchState(from:)``)。
+    ///
+    /// 本体以外の面の ``Canvas/draw(_:)`` が、走っているスケッチの中で呼ばれたときに通る 1 本で、
+    /// ``SketchPart/draw(into:_:)`` もここを通る (`Canvas.draw(_:)` を呼ぶ)。本体の面は渡さない —
+    /// 本体の置き場は借りるまでもなく本体のものである。
+    ///
+    /// [#2454]: https://github.com/mokume-metal/mokume/issues/2454
+    /// [#3866]: https://github.com/mokume-metal/mokume/issues/3866
+    func directing(to graphics: Canvas, _ work: () throws(RenderFailure) -> Void) throws(RenderFailure) {
+        let previous = drawingInto
+        drawingInto = graphics
+        defer { drawingInto = previous }
+        let restore = graphics.borrowSketchState(from: canvas)
+        defer { restore() }
+        try work()
+    }
 }

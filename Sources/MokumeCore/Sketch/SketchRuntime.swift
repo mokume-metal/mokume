@@ -1172,7 +1172,7 @@ public final class SketchRuntime {
         // 図形・絵・画素の口は `guard canPlace` で守られている。フレームの外で置けるのは、この面に
         // ランタイムが持ち越しを約束した区間 (`setup()` と止まっている間のコールバック・
         // ``carryingOver(_:)``) だけで、そこで置いたものは次に描くフレームへ出る
-        try canvas.draw {
+        try canvas.openFrame {
             withActiveRuntime {
                 // **コールバック 1 つが 1 つの区間である** (止まっている間と同じ規則・#3408)。書いた変換・光・
                 // 切り抜きなどは出口で戻り、続くコールバックにも同じフレームの `draw()` にも漏れない

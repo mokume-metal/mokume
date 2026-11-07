@@ -694,6 +694,103 @@ struct DrawIntoTests {
         #expect(sketch.inside == sketch.outside, "閉包の中と外で答えが割れた")
     }
 
+    // MARK: - スケッチの中の `pg.draw { }` も向き先を立てる (#3866)
+
+    @Test("走っている中の pg.draw { } で素のまま書いた呼び出しは pg へ行き、draw(into:) と同じ絵で本体に出ない (#3866)")
+    func canvasDrawInsideASketchDirectsBareCalls() throws {
+        var insideIsLayer = false
+        let viaCanvas = try run { probe in
+            let layer = probe.layer!
+            try layer.draw {
+                insideIsLayer = probe.canvas === layer
+                probe.brush()
+            }
+        }
+        let viaInto = try run { probe in
+            probe.draw(into: probe.layer!) { probe.brush() }
+        }
+        #expect(insideIsLayer, "閉包の中のスケッチの口が描き場所を向いていない")
+        let drawn = try image(of: viaCanvas.probe.layer)
+        #expect(drawn == (try image(of: viaInto.probe.layer)), "`pg.draw { }` と `draw(into: pg) { }` の絵が違う")
+        #expect(drawn[20, 20] != (0, 0, 0, 0), "描き場所の円が描かれていない")
+        let main = try image(of: viaCanvas.runtime.canvas)
+        #expect(main[20, 20] == main[60, 60], "閉包の中の素の呼び出しが本体の面に出た")
+    }
+
+    @Test("pg.draw { } の入れ子でも、抜けると 1 つ前の向き先へ戻り、指して書いた呼び出しは指した先へ行く (#3866)")
+    func canvasDrawNestsLikeDrawInto() throws {
+        var heads: [Bool] = []
+        let result = try run { probe in
+            let outer = probe.layer!
+            let inner = probe.pad!
+            try outer.draw {
+                probe.noStroke()
+                try? inner.draw {
+                    heads.append(probe.canvas === inner)
+                    probe.noStroke()
+                    probe.fill(Self.green)
+                    probe.rect(0, 0, 10, 10)  // inner へ
+                    outer.fill(Self.blue)
+                    outer.rect(20, 20, 10, 10)  // 指して書いたので outer へ
+                }
+                heads.append(probe.canvas === outer)
+                probe.fill(Self.red)
+                probe.rect(0, 0, 10, 10)  // outer へ
+            }
+            heads.append(probe.canvas === probe.runtime!.canvas)  // 閉包の外は本体
+        }
+        #expect(heads == [true, true, true])
+        let outer = try image(of: result.probe.layer)
+        #expect(outer[4, 4] == (255, 0, 0, 255), "内側を抜けた後の rect が外側へ戻っていない")
+        #expect(outer[24, 24] == (0, 0, 255, 255), "指して書いた呼び出しが指した面へ行っていない")
+        let inner = try image(of: result.probe.pad)
+        #expect(inner[4, 4] == (0, 255, 0, 255), "内側の rect が内側の描き場所へ行っていない")
+        let main = try image(of: result.runtime.canvas)
+        #expect(main[4, 4] == main[60, 60], "閉包の中の描画が本体の面に出た")
+    }
+
+    @Test("走っている中で直に作った面の draw { } は、閉包の間だけスケッチの種で noise() を引く (#3866)")
+    func canvasDrawOnADirectSurfaceBorrowsTheSketchSeed() throws {
+        var insideValue: Float = -1
+        var bodyValue: Float = -1
+        var ownValue: Float = -1
+        var ownBefore: ValueNoise?
+        var ownAfter: ValueNoise?
+        try run { probe in
+            let direct = probe.direct!
+            probe.noiseSeed(7)
+            bodyValue = probe.noise(1.3, 2.1)
+            ownValue = direct.noise(1.3, 2.1)  // 直に作った面が自分の種で引いた値
+            ownBefore = direct.noiseSettings
+            // 面自身の口で読む。素の `noise()` は向き先を立てなくても本体の種で引くので、借りたかを見分けない
+            try direct.draw { insideValue = direct.noise(1.3, 2.1) }
+            ownAfter = direct.noiseSettings
+        }
+        #expect(bodyValue != ownValue, "検査が成り立たない: 本体と直に作った面の種が同じ")
+        #expect(insideValue == bodyValue, "閉包の中の noise() が本体と別の種で引いた")
+        #expect(ownBefore != nil && ownAfter == ownBefore, "閉包を抜けても、直に作った面が借りた置き場のまま")
+    }
+
+    @Test("本体の面の draw { } と、走っていない所の pg.draw { } は向き先を立てない (#3866)")
+    func canvasDrawLeavesTheMainSurfaceAndOutsideRunsAlone() throws {
+        var mainDirected = true
+        let result = try run { probe in
+            let runtime = probe.runtime!
+            try runtime.canvas.draw { mainDirected = runtime.drawingInto != nil }
+        }
+        #expect(!mainDirected, "本体の面の draw { } が向き先を立てた")
+        // `run` は 1 フレームを描いて返るので、ランタイムはもう差されていない
+        let layer = try #require(result.probe.layer)
+        var ran = false
+        var directedOutside = true
+        try layer.draw {
+            ran = true
+            directedOutside = result.runtime.drawingInto != nil
+        }
+        #expect(ran, "走っていない所の draw { } が閉包を走らせない")
+        #expect(!directedOutside, "走っていない所の draw { } が向き先を立てた")
+    }
+
     // MARK: - 失敗系
 
     @Test("走っていない所から呼んでも落ちず、閉包は走らない")

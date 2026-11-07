@@ -103,7 +103,7 @@ extension Image {
         defer { release() }
         canvas.target.judgeDroppedWorkFromNow()
         var failure: RenderFailure?
-        try canvas.draw {
+        try canvas.openFrame {
             // 使い回す面なので、前の絵を消してから置く (透明の上に置けば、置いた絵がそのまま残る)
             canvas.background(.transparent)
             canvas.image(self, 0, 0)
