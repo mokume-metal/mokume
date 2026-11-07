@@ -344,29 +344,28 @@ struct ShadowTests {
         #expect(far.bytes == near.bytes, "後の視点の注視点に影の範囲が引っぱられた")
     }
 
-    /// 途中で描き切る絵。前の描き切りで落とす球を 1 つ置き (影は受けない)、`loadPixels()` で区切った
-    /// 後に、別の視点で床と 2 つ目の球を置く。
+    /// 区切りをまたいで視点を替える絵。落とす球を 1 つ置き (影は受けない)、`cut` なら `loadPixels()` で
+    /// 描き切ってから、別の視点で床と 2 つ目の球を置く。
     ///
     /// - Parameters:
-    ///   - fartherFirstFocus: 前の描き切りの視点の注視点を、同じ見え方のまま 2 倍遠くへ置くか。
+    ///   - cut: 球を 1 つ置いた後で描き切るか。
     ///   - resetAtEnd: 末尾で視点を戻すか。
+    ///   - secondCaster: 区切りの後にも落とす球を置くか。置かなければ、区切りの後の描き切りの落とす側は
+    ///     控えた列だけになる。
     private func castersAcrossACut(
-        shadows: Bool = true, fartherFirstFocus: Bool, resetAtEnd: Bool
+        shadows: Bool = true, cut: Bool, resetAtEnd: Bool, secondCaster: Bool = true
     ) throws -> DisplayImage {
         let canvas = try makeCanvas()
-        let eye = SIMD3<Float>(64, -24, 170)
         try canvas.draw {
             canvas.background(.linear(red: 0, green: 0, blue: 0))
-            let first = SIMD3<Float>(48, 14, 0)
-            let focus = fartherFirstFocus ? Self.fartherFocus(eye: eye, center: first) : first
-            canvas.camera(eye.x, eye.y, eye.z, focus.x, focus.y, focus.z, 0, 1, 0)
+            canvas.camera(64, -24, 170, 40, 14, 0, 0, 1, 0)
             canvas.perspective(Float.pi / 3, 1, 1, 500)
             canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
             canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
             canvas.shadows(shadows)
             canvas.noStroke()
-            // **前の描き切りは焼かない** (影を受ける立体が無い)。この球は持ち越され、後の描き切りで
-            // 焼かれる (#1656)。中心を決めるのは、後の描き切りで最初に置いた落とす側の視点
+            // **区切りの前の描き切りは焼かない** (影を受ける立体が無い)。この球は控えられ、後の
+            // 描き切りで焼かれる (#1656)
             canvas.castShadow(true)
             canvas.receiveShadow(false)
             canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
@@ -374,37 +373,45 @@ struct ShadowTests {
             canvas.translate(40, 8, 0)
             canvas.sphere(18)
             canvas.pop()
-            canvas.loadPixels()
+            if cut { canvas.loadPixels() }
             canvas.receiveShadow(true)
-            canvas.camera(eye.x, eye.y, eye.z, 64, 14, 0, 0, 1, 0)
+            canvas.camera(64, -24, 170, 72, 14, 0, 0, 1, 0)
             canvas.castShadow(false)
             canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
             canvas.push()
             canvas.translate(64, 40, -20)
             canvas.box(190, 8, 190)
             canvas.pop()
-            canvas.castShadow(true)
-            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
-            canvas.push()
-            canvas.translate(88, 8, 0)
-            canvas.sphere(18)
-            canvas.pop()
+            if secondCaster {
+                canvas.castShadow(true)
+                canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+                canvas.push()
+                canvas.translate(88, 8, 0)
+                canvas.sphere(18)
+                canvas.pop()
+            }
             if resetAtEnd { Self.resetCamera(canvas) }
         }
         return try canvas.target.encodeForDisplay()
     }
 
-    @Test("途中で描き切った後は、次の描き切りで最初に置いた落とす側の視点が影の中心を決める")
-    func aCutRestartsTheShadowCentre() throws {
-        let plain = try castersAcrossACut(fartherFirstFocus: false, resetAtEnd: false)
-        let unshadowed = try castersAcrossACut(shadows: false, fartherFirstFocus: false, resetAtEnd: false)
-        #expect(darkenedPixels(unshadowed, plain) > 100, "検査の前提: 影が落ちている")
-        // 後の描き切りの末尾で視点を戻しても動かない
-        let reset = try castersAcrossACut(fartherFirstFocus: false, resetAtEnd: true)
-        #expect(reset.bytes == plain.bytes, "後の描き切りの末尾で視点を戻したら影が動いた")
-        // 前の描き切りの視点の注視点は効かない (フレームの最初の落とす側で決めると食い違う)
-        let farther = try castersAcrossACut(fartherFirstFocus: true, resetAtEnd: true)
-        #expect(farther.bytes == plain.bytes, "前の描き切りの視点が、後の描き切りの影の中心を決めた")
+    @Test("区切りをまたいで視点を替えても、区切らずに描いたときと同じ影になる")
+    func aCutKeepsTheShadowCentre() throws {
+        // ADR-0021 決定 3: 区切りより後に描く面は、区切らずに描いたときと同じ影を受ける。**中心は
+        // フレームの最初の落とす立体の視点で決まり、区切りで決め直さない。** 区切りの後の描き切りの
+        // 最初の落とす立体で決めると、区切りの前後で視点が違うときに区切りの有無で影が割れる。描き切る
+        // 時点の視点で決めると (修正前)、末尾で戻した視点で割れる
+        let uncut = try castersAcrossACut(cut: false, resetAtEnd: false)
+        let unshadowed = try castersAcrossACut(shadows: false, cut: false, resetAtEnd: false)
+        #expect(darkenedPixels(unshadowed, uncut) > 100, "検査の前提: 影が落ちている")
+        let cut = try castersAcrossACut(cut: true, resetAtEnd: false)
+        #expect(cut.bytes == uncut.bytes, "区切りの有無で影が変わった")
+        let cutThenReset = try castersAcrossACut(cut: true, resetAtEnd: true)
+        #expect(cutThenReset.bytes == uncut.bytes, "区切りの後で視点を戻したら影が動いた")
+        // 区切りの後に落とす立体を置かず、受ける面だけのとき。落とす側は控えた列だけになる
+        let onlyKept = try castersAcrossACut(cut: true, resetAtEnd: true, secondCaster: false)
+        let onlyKeptUncut = try castersAcrossACut(cut: false, resetAtEnd: false, secondCaster: false)
+        #expect(onlyKept.bytes == onlyKeptUncut.bytes, "控えた列だけの描き切りで、戻した視点へ影が動いた")
     }
 
     // MARK: - 縮尺と、落とす / 受けるの切り分け

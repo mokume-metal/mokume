@@ -2151,8 +2151,8 @@ public final class Canvas {
         /// この列が影を落とす側か。焼き付けるときに、この旗で選り分ける。
         var castsShadow: Bool
         /// 影を落とす列を閉じた時点の視点の注視点 (``Camera/center``)。**落とす側の立体の列だけが持つ**
-        /// (``Canvas/closeSolidBatch()``)。焼く範囲の中心は、その描き切りの最初の落とす列のこれで決まる
-        /// (``Canvas/shadowMatrix``・[#3842])。視点を替える口は違う視点なら列を閉じるので、閉じた時点の
+        /// (``Canvas/closeSolidBatch()``)。焼く範囲の中心は、そのフレームの最初の落とす列のこれで決まる
+        /// (``Canvas/shadowFocus``・[#3842])。途中の描き切りで控えた列 (``Canvas/frameCasters``) も持ち歩く。視点を替える口は違う視点なら列を閉じるので、閉じた時点の
         /// 視点は形を置いた時点の視点である。
         ///
         /// [#3842]: https://github.com/mokume-metal/mokume/issues/3842
