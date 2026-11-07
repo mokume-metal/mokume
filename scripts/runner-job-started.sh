@@ -113,7 +113,10 @@ while :; do
     break
   fi
   waited=$((SECONDS - start))
-  if [ "$waited" -ge "$deadline" ]; then
+  # $SECONDS は壁時計の秒の境目で 1 進む整数なので、差が期限と等しいだけでは期限まで経っていない
+  # (1 周目で境目をまたぐと 0.1 秒でも 1 になり、期限 1 秒で打ち直し 0 回の赤になった — #3798)。
+  # 差が期限を越えていれば、実時間でも期限を越えている
+  if [ "$waited" -gt "$deadline" ]; then
     if [ -n "$writers" ]; then
       echo "runner-job-started: 作業場所に前の job の書き手が残っている (${waited} 秒待って打ち直し ${retries} 回): $(describe_all "$writers")。何も止めていない。出所を確かめて人が止める: $ws" >&2
     else
