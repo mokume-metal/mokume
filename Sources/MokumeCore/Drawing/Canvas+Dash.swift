@@ -239,7 +239,7 @@ extension Canvas {
         at center: SIMD2<Float>
     ) -> Outline {
         let segments = Self.segmentCount(
-            forRadius: max(radiusX, radiusY), scale: Self.splitScale(of: transform.matrix))
+            forRadius: max(radiusX, radiusY), scale: Self.splitScale(of: flatTransform.matrix))
         return Self.ringOutline(
             Outline.Ring(
                 radiusX: radiusX, radiusY: radiusY, start: start, sweep: sweep, segments: segments,

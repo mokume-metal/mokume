@@ -245,7 +245,8 @@ final class CrowdAndModel: Sketch {
         pop()
         noStroke()
 
-        // 説明。**2D の文字は視点を通らない**ので、落とした画面の座標へそのまま書く
+        // 説明。**2D の文字も視点を通る**ので、視点を既定へ戻してから、落とした画面の座標へ書く
+        camera()
         fill(225, 228, 238)
         textSize(13)
         textAlign(.center)

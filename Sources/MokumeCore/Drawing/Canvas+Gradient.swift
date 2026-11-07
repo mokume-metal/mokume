@@ -32,7 +32,7 @@ extension Canvas {
     /// 勾配を受けられなければ (区切りが無い・数でない値・点がつぶれている)、塗りは前のまま 1 度だけ知らせる。
     public func fill(_ gradient: Gradient) {
         let (resolved, problem) = ResolvedGradient.resolve(
-            gradient, under: Affine2(transform.matrix))
+            gradient, under: Affine2(flatTransform.matrix))
         if let problem { warnGradient(problem) }
         guard let resolved else { return }
         setGradient(resolved)

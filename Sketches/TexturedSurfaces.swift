@@ -91,6 +91,9 @@ final class TexturedSurfaces: Sketch {
 
         // MARK: 平面にも同じように効く
         //
+        // 平面の図形も視点を通るので、面の座標へ並べる前に視点と写し方を既定へ戻す
+        camera()
+        perspective()
         // **貼る絵は塗りにしか効かない。** 輪郭は線の色のまま出る
         rect(40, 40, 150, 110)
 

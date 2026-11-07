@@ -32,7 +32,7 @@ extension SketchPart {
     ///     translate(120, 100, 0)
     ///     plane(120, 120)
     ///     pop()
-    ///     // 同じ座標に描いた平面の図形。こちらは視点の影響を受けない
+    ///     // 同じ座標に描いた平面の図形も、同じ視点を通る
     ///     noFill()
     ///     stroke(89, 191, 242)
     ///     strokeWeight(3)
@@ -49,7 +49,7 @@ extension SketchPart {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときや、止まっている間の入力のコールバックで書いた視点はどのフレームにも
     ///   属さないので、警告して無視される。
-    // shot: 1 snippet=f5f742f6
+    // shot: 1 snippet=20da78b0 image=f063dd0f16fbc4c0
     public func camera() { Self.liveCanvas()?.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
@@ -57,11 +57,14 @@ extension SketchPart {
     /// 座標は世界の座標で、**いまの変換の影響を受けない** — 視点は「何をどう置くか」
     /// ではなく「どこから見るか」なので、積んだ変換とは別に決まる。
     ///
-    /// **平面の図形は視点を通らない。** `rect` / `circle` のような 2 次元の図形は、
-    /// 視点をどう動かしても面の座標へそのまま描かれる (奥行き 0 の立体と重なる様子は
-    /// ``camera()`` の絵にある)。視点を動かしたうえで 3 次元の点へ印を置くときは、
-    /// ``screenX(_:_:_:)`` / ``screenY(_:_:_:)`` で面の座標へ落として、2 次元の図形を
-    /// その座標のまま置く。
+    /// **平面の図形も視点を通る。** `rect` / `circle` / `text` / `image` のような 2 次元の図形も、
+    /// 立体と同じ空間 (奥行き 0 と、変換の奥行き) に置かれ、視点を動かせば立体と一緒に動く。
+    /// 奥行き 0 に置いた立体と、同じ座標に描いた平面の図形は、どの視点でも重なる (重なる様子は
+    /// ``camera()`` の絵にある)。重なりは呼び出し順のままで、平面の図形は立体の奥行きに隠れない。
+    ///
+    /// 画面に重ねる文字や印 (得点・照準など) は、``camera()`` で視点を戻してから描く。視点を
+    /// 動かしたうえで 3 次元の点へ面の座標の印を置くときは、``screenX(_:_:_:)`` /
+    /// ``screenY(_:_:_:)`` で面の座標を読み、``camera()`` で戻してからその座標に描く。
     ///
     /// 下は**同じ高さに置いた 3 つの立方体を、上から見下ろした**もの。正面から見た絵
     /// (``perspective()`` の 1 枚) では、どれが手前かは大きさの差でしか分からない —
@@ -209,8 +212,8 @@ extension SketchPart {
     ///   潰れている・画角が 0 以下か π 以上・横 ÷ 縦の比か手前の面までの距離が 0 以下・
     ///   数でない値) を持つ値は、警告して丸ごと捨て、それまでの視点のまま続ける。
     ///
-    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
-    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
+    /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
+    ///   ``camera()`` と ``perspective()`` で戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=1911c7b0
     public func setCamera(_ camera: Camera) { Self.liveCanvas()?.setCamera(camera) }
 
@@ -323,8 +326,8 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///
-    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
-    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
+    /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
+    ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=9980d6cc
     // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
@@ -431,8 +434,8 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///
-    /// - Note: **平面の図形はこの指定を通らない** — 面の座標へそのまま描かれる
-    ///   (``camera(_:_:_:_:_:_:_:_:_:)``)。
+    /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
+    ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=722294b1
     public func ortho(
         _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible

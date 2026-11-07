@@ -60,9 +60,9 @@ extension Canvas {
     /// - Returns: **単位にして描いたら (見えないので描くものが無い場合を含めて) `true`。単位にできなかった
     ///   ときは `body` を呼ばずに `false`。** 偽のとき何を描くか (子ごとに掛けるなど) は呼ぶ側が決める。
     ///   偽になるのは次のとき。
-    ///   - 視点を決めている (``camera()`` ほか)。平面の頂点は変換の x・y を視点の投影に通して落ちる。面に
-    ///     合わせた既定の視点なら変換の x・y がそのまま画素の位置だが、決めた視点の下では、中間面の画素と
-    ///     置く側の画素が重ならず、外接も移せない。
+    ///   - 平面の図形が視点を通る (既定と違う視点を決めている・変換が奥行きを持つ。``currentFlatView``・#3830)。
+    ///     素の場合 (既定の視点で、変換が平面を奥行き 0 の面に保つ) は変換の x・y がそのまま画素の位置だが、
+    ///     視点を通る下では、中間面の画素と置く側の画素が重ならず、外接も移せない。
     ///   - 描く格子が座標の格子と違う (細かさを 1 未満にしている)。中間面は細かさ 1 の描き場所なので、
     ///     置く側の描く画素と重ならない。
     ///   - 置く側の混ぜ方が、透明な画素でも下地を変える (``BlendMode/replace``)。単位の箱は四角で置かれ、
@@ -80,7 +80,7 @@ extension Canvas {
     func withCompositeGroup(
         opacity: Float, covering bounds: PlaneBox, _ body: (Canvas) -> Void
     ) -> Bool {
-        guard cameraStorage == nil, target === output, style.blendMode.leavesBaseUnderTransparent else {
+        guard currentFlatView.clip == nil, target === output, style.blendMode.leavesBaseUnderTransparent else {
             return false
         }
         guard !recordingShape else {

@@ -179,7 +179,7 @@ extension Canvas {
         }
         // 細い塗りはいまの変換で測る。記録の間は測らない — 置くときに測る (``RingFillRange``)
         if outline.fills, style.hasFill {
-            fillInterior(outline, thinFillMatrix: recordingShape ? nil : transform.matrix)
+            fillInterior(outline, thinFillMatrix: recordingShape ? nil : flatTransform.matrix)
         }
         if outline.strokes, style.hasStroke, style.strokeWeight > 0 { strokeOutline(outline) }
     }
@@ -211,13 +211,16 @@ extension Canvas {
         }
         // 区間の外では、畳む相手の控えも雛形も動かさない (``Canvas/canPlace``・#1672)
         guard canPlace else { return warnOutsideFrame(.placing) }
+        // **畳んだ置き場所は ``beginFlat()`` を通らない**ので、列の行列はここで揃える (#3830)。行列が変われば
+        // 列も雛形も閉じ、2 つ目を待つ控えも列の数が変わって外れる — 違う行列の置き場所を 1 つの雛形に畳まない
+        enterFlatView(currentFlatView.clip)
         // ここへ来るのは貼る絵か断片が効いている図形だけ (``formAllowed(fills:)``)。塗りはベクターへ書けないので
         // 数えて落とし、輪郭は真の形で書く。内側で通る `draw(_ outline:)` が 2 度控えないよう止める (#3139)
         let heldVector = suspendVectorRecordingShadedFigure(form, at: anchor)
         defer { resumeVector(heldVector) }
         let hasStroke = style.hasStroke && style.strokeWeight > 0
         // 拡大率は置き場所ごとに 1 度だけ求める。鍵・周・円板のどれもこの値から分割数を決める
-        let scale = Self.splitScale(of: transform.matrix)
+        let scale = Self.splitScale(of: flatTransform.matrix)
         // `Optional.map` に閉包を渡さない — 置き場所ごとに隔離の実行時検査を払う (#1779)
         var ringSegments = 0
         if let radius = form.ringRadius {
@@ -230,10 +233,10 @@ extension Canvas {
         var fillLinear: ThinFold?
         if expandsThinFillsInVertexStage {
             if style.hasFill,
-                let record = thinFillRecord(of: form, drawn: drawnLinear(transform.matrix))
+                let record = thinFillRecord(of: form, drawn: drawnLinear(flatTransform.matrix))
             {
                 // 位置と平行移動は記述の外に持つ — 位置が違うだけの置き場所は同じ記述を指す
-                let columns = transform.matrix.columns
+                let columns = flatTransform.matrix.columns
                 thinFill = ThinFillPlacing(
                     record: record, anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y))
                 thinFillCapacity = ThinFillRecord.capacity(forPieces: record.pieceCount)
@@ -430,7 +433,7 @@ extension Canvas {
     /// 広げ方が帯ごとに違うので、1 つの雛形から置き場所ごとに広げ直せない。
     private func thinStrokeLinear(form: FlatForm) -> ThinFold? {
         guard style.hasStroke, style.strokeWeight > 0 else { return nil }
-        let matrix = transform.matrix
+        let matrix = flatTransform.matrix
         let drawn = drawnLinear(matrix)
         guard Self.thinnestDrawnWeight(style.strokeWeight, by: drawn) < 1 else { return nil }
         let linear = SIMD4(
@@ -472,7 +475,7 @@ extension Canvas {
     /// **位置は変換を掛けずに渡す** (#3555)。頂点段が位置を先に足してから変換を掛ける — 畳まずに置くときの
     /// `moved(by:)` の後の `Transform.placed` と同じ順で、畳んだ頂点が畳まずに置いた頂点と 1 ビットも違わない。
     private func placement(at anchor: SIMD2<Float>) -> FlatInstance {
-        let columns = transform.matrix.columns
+        let columns = flatTransform.matrix.columns
         return FlatInstance(
             linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
             anchor: anchor, translation: SIMD2(columns.3.x, columns.3.y),
@@ -514,7 +517,7 @@ extension Canvas {
                 start..<vertices.count,
                 recipe: RingFillRecipe(
                     outline: outline, color: fillVertexColor, hasPicture: fillReadsUV,
-                    transform: transform, uv: whiteUV)))
+                    transform: flatTransform, uv: whiteUV)))
     }
 
     /// 形の切り抜きの記録へ、周の塗りの三角形を控える (``clip(_:)``)。塗りを持たない周は断る。
@@ -537,14 +540,14 @@ extension Canvas {
                 var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
                 if let uvOf { uvs = (uvOf(a), uvOf(b), uvOf(c)) }
                 appendTriangle(
-                    transform.placed(x: a.x, y: a.y), transform.placed(x: b.x, y: b.y),
-                    transform.placed(x: c.x, y: c.y),
+                    flatTransform.placed(x: a.x, y: a.y), flatTransform.placed(x: b.x, y: b.y),
+                    flatTransform.placed(x: c.x, y: c.y),
                     colors: (fillColor, fillColor, fillColor), uvs: uvs)
             }
             return
         }
         let pivot = outline.fanCenter ?? points[0]
-        let center = transform.placed(x: pivot.x, y: pivot.y)
+        let center = flatTransform.placed(x: pivot.x, y: pivot.y)
         // 中心を持つ図形は全周を扇に分け、持たない図形は最初の点から分ける
         let ring = outline.fanCenter == nil ? Array(points.dropFirst()) : points
         guard ring.count >= 2 else { return }
@@ -560,16 +563,16 @@ extension Canvas {
             appendTriangle(a, b, c, colors: (fillColor, fillColor, fillColor), uvs: uvs)
         }
 
-        var previous = transform.placed(x: ring[0].x, y: ring[0].y)
+        var previous = flatTransform.placed(x: ring[0].x, y: ring[0].y)
         var previousSource = ring[0]
         for point in ring.dropFirst() {
-            let current = transform.placed(x: point.x, y: point.y)
+            let current = flatTransform.placed(x: point.x, y: point.y)
             place(center, previous, previousSource, current, point)
             previous = current
             previousSource = point
         }
         if outline.fanCenter != nil, outline.isClosed {
-            let first = transform.placed(x: ring[0].x, y: ring[0].y)
+            let first = flatTransform.placed(x: ring[0].x, y: ring[0].y)
             place(center, previous, previousSource, first, ring[0])
         }
     }

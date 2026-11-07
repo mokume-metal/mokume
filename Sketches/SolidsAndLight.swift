@@ -106,9 +106,11 @@ final class SolidsAndLight: Sketch {
             pop()
         }
 
-        // 名札。**2D の文字は視点を通らない**ので、上で落とした画面の座標へそのまま書く。
-        // 奥行き (`screenZ`) は 0 が手前・1 が奥なので、並べた中での位置を `norm` で 0…1 に
-        // してから淡さに写す
+        // 名札。**2D の文字も視点を通る**ので、視点と写し方を既定へ戻してから、上で落とした画面の
+        // 座標へ書く。奥行き (`screenZ`) は 0 が手前・1 が奥なので、並べた中での位置を `norm` で
+        // 0…1 にしてから淡さに写す
+        camera()
+        perspective()
         noStroke()
         textSize(15)
         textAlign(.center)

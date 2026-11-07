@@ -170,7 +170,7 @@ extension Canvas {
     ///
     /// [#2446]: https://github.com/mokume-metal/mokume/issues/2446
     var glyphStep: Int {
-        let drawn = drawnLinear(transform.matrix)
+        let drawn = drawnLinear(flatTransform.matrix)
         let flat = simd_float4x4(
             columns: (
                 SIMD4(drawn.columns.0.x, drawn.columns.0.y, 0, 0),
@@ -373,7 +373,7 @@ extension Canvas {
         guard let start, start + 6 <= vertices.count else { return }
         let glyph = DeferredGlyph(
             start: start, key: key, font: font, topLeft: vertices[start].position,
-            uvMin: entry.uvMin, penX: penX, baseline: baseline, color: color, transform: transform,
+            uvMin: entry.uvMin, penX: penX, baseline: baseline, color: color, transform: flatTransform,
             caller: caller)
         if deferredRunOpen, !deferredRuns.isEmpty {
             deferredRuns[deferredRuns.count - 1].glyphs.append(glyph)
@@ -555,7 +555,7 @@ extension Canvas {
         uvMin: SIMD2<Float>, uvMax: SIMD2<Float>, color: LinearRGBA
     ) -> Int {
         let (topLeft, topRight, bottomRight, bottomLeft) = Self.placedCorners(
-            transform, x: x, y: y, width: width, height: height)
+            flatTransform, x: x, y: y, width: width, height: height)
 
         // **6 頂点を 1 度の書き込みで積む** ([#1783])。1 頂点ずつ面の並びへ足すと、足す
         // たびに排他の確かめ (`swift_beginAccess`) が走り、字 1 つで 12 回になっていた
