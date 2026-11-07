@@ -146,16 +146,18 @@ struct ScreenCoordinateTests {
         }
     }
 
-    @Test("奥行きを渡さない形は、視点を変えても値が変わらない")
-    func flatFormIgnoresTheCamera() throws {
+    /// 平面の図形は視点を通る (#3830) ので、平面の点の位置も視点を通す。変更前は視点を無視して変換の x・y を返した。
+    @Test("奥行きを渡さない形は、視点を決めた下では奥行き 0 の点として視点を通る")
+    func flatFormFollowsTheCamera() throws {
         let canvas = try makeCanvas()
         try canvas.draw {
             canvas.translate(20, 10)
             let before = SIMD2(canvas.screenX(5, 5), canvas.screenY(5, 5))
             canvas.camera(360, -80, 400, 128, 128, 0, 0, 1, 0)
             canvas.ortho()
-            #expect(canvas.screenX(5, 5) == before.x)
-            #expect(canvas.screenY(5, 5) == before.y)
+            #expect(canvas.screenX(5, 5) == canvas.screenX(5, 5, 0))
+            #expect(canvas.screenY(5, 5) == canvas.screenY(5, 5, 0))
+            #expect(SIMD2(canvas.screenX(5, 5), canvas.screenY(5, 5)) != before)
         }
     }
 

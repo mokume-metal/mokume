@@ -433,6 +433,8 @@ extension Canvas {
     ///
     /// - Parameter fills: この図形が塗りを描くか。貼る絵と勾配は塗りにしか効かない。
     func vectorBlocker(fills: Bool) -> VectorDrop? {
+        // 視点を通る 2D の図形は、画面には遠近で描かれる。射影の像は書けないので、塗りも輪郭も落とす (#3830)
+        if currentFlatView.clip != nil { return .throughView }
         // 勾配は面が持つ断片 (``paintsWithGradient``) で塗るので、断片が置かれていても利用者の断片とは
         // 見分ける。勾配が効くのは塗りだけで、輪郭と線は色のまま書ける
         if paintsWithGradient {

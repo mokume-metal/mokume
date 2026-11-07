@@ -693,7 +693,10 @@ extension Canvas {
     private func place(
         _ run: Shape.Run, of shape: Shape, at placement: Placement, carved candidates: [StrokeRange]
     ) {
-        let matrix = transform.matrix * placement.transform.matrix
+        // 置き場所の変換と合わせた行列で置き方を決める (#3830)。視点を決めた・奥行きのある置き場所は、寝かせた
+        // 座標へ置き、列の行列が視点を通す
+        let view = flatView(of: transform.matrix * placement.transform.matrix)
+        let matrix = view.placing.matrix
         // **勾配で塗った区間は、置く変換のぶん勾配の式を直して塗る** (#2433)。頂点は置き場所で動くので、
         // 勾配も形と一緒に動く。置き場所ごとに式が違うので、塗りは置き場所ごとに替わる (列が割れる)。
         // 開く前に替える — 替えると列を閉じる
@@ -701,7 +704,7 @@ extension Canvas {
         // **まとめて写してから、その場で移す。** 1 頂点ずつ足すと、置くたびに
         // 溜め場の伸長判定を通ることになる — 保持の速さはここで決まる
         let base = vertices.count
-        beginFlat()
+        beginFlat(view: view)
         let runRange = run.start..<(run.start + run.count)
         let tint = placement.fill
         // 差し替える輪郭 (頂点の並びの順)。色を掛けない置き場所は、半透明の分が空になる。
@@ -969,7 +972,9 @@ extension Canvas {
     /// 記録した置き場所は形自身の座標なので、いまの変換と置き場所の変換を合成して
     /// 掛ける。頂点を 1 つも触らないので、**円を含む形も、頂点を並べた形と同じ速さで置ける**。
     private func placeForms(_ run: Shape.Run, of shape: Shape, at placement: Placement) {
-        let matrix = transform.matrix * placement.transform.matrix
+        // 置き場所の変換と合わせた置き方 (#3830・平面の区間と同じ)
+        let view = flatView(of: transform.matrix * placement.transform.matrix)
+        let matrix = view.placing.matrix
         for form in shape.forms[run.start..<(run.start + run.count)] {
             let moved = form.placed(by: matrix, tint: placement.fill)
             // 潰れた変換で置いた形は面積を持たない (直に描いたときと同じく何も出ない)
@@ -979,7 +984,7 @@ extension Canvas {
             beginForm(
                 flags: moved.meta.w,
                 thinFill: moved.mayHaveThinPart(unitsPerDrawnPixel: unitsPerDrawnPixel),
-                obliqueEdge: moved.mayHaveObliqueEdge(unitsPerDrawnPixel: unitsPerDrawnPixel))
+                obliqueEdge: moved.mayHaveObliqueEdge(unitsPerDrawnPixel: unitsPerDrawnPixel), view: view)
             formInstances.append(moved)
         }
     }

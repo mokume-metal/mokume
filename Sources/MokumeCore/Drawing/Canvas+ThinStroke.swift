@@ -673,7 +673,7 @@ extension Canvas {
     var thinStrokeMatrix: simd_float4x4? {
         if recordingShape { return nil }
         if buildingFlatTemplate { return templateStrokeMatrix }
-        return transform.matrix
+        return flatTransform.matrix
     }
 
     // MARK: - 細い矩形の輪郭 (額縁)

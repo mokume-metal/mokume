@@ -36,9 +36,9 @@ import simd
 /// `scale(x:y:)`・`shearX`・`shearY`) の結果は、奥行きを持たない行列で計算したときと
 /// **1 ビットも変わらない** — 掛かる余分な項が厳密に 0 だからである。
 ///
-/// 立体の操作 (`rotateX` など) を挟んだあとの平面の図形は、**遠近の掛からない形**で
-/// 落ちる。平面は奥行きを持たない挿入レイヤーだからで、この扱いは [ADR-0021] 決定 2
-/// が定める。
+/// 立体の操作 (`rotateX` など) や奥行きの平行移動を挟んだあとの平面の図形は、変換が写す
+/// 空間の面に置かれ、視点を通って遠近が掛かる ([ADR-0021] 決定 1・#3830)。重なりは呼び出し
+/// 順のままで、平面は奥行きを読み書きしない (同 決定 2)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md

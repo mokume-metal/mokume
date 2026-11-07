@@ -119,6 +119,9 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
     /// **原因が種類でなく大きさ**なので、名乗りの文面は他の種類と別の節で、原因を言う。
     /// 数でない座標の図形は画面にも描かれないので、これには数えない (``SVGWriter/Fit``)。
     case tooLarge
+    /// 視点を通る 2D の図形 (既定と違う視点を決めた下・奥行きのある変換の下で描いた図形・#3830)。画面には遠近で
+    /// 描かれるが、射影の像は円や曲線のままでは書けないので落とす。
+    case throughView
 
     /// 名乗りの文面での呼び名 (英語・単数も複数も同じ)。
     var noun: String {
@@ -138,6 +141,7 @@ nonisolated enum VectorDrop: UInt8, Sendable, CaseIterable {
         case .effects: "effects() call"
         case .vertexColours: "shape with a different fill colour at each vertex"
         case .tooLarge: "shape"
+        case .throughView: "2D shape drawn through a camera or at a depth"
         }
     }
 
