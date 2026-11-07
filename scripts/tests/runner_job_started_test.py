@@ -17,6 +17,8 @@
    待つ・握りつぶす緑は、前の job の成果物を持ち越す (ADR-0019 決定 7)
 
 期限 (既定 60 秒) と打ち直しの間隔 (既定 2 秒) は JOB_STARTED_DEADLINE_SEC・JOB_STARTED_RETRY_SEC で縮める。
+期限まで待って赤になる形は期限 1 秒、打ち直して緑になる形は期限 10 秒で回す。緑の形を 1 秒で回すと、
+ホストが遅いだけで期限に触れて赤になりうる (#3798)。
 偽の rm・lsof・ps は PATH の先頭に置いた同名のスタブ (runner_preflight_test.py と同じ作法)。
 
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -36,11 +38,16 @@ SCRIPT = REPO / "scripts" / "runner-job-started.sh"
 
 # FAKE_RM_FAILS 回目までは何も消さず、以後は本物の rm に渡す。負の数なら期限まで消さない。
 # 消さない回は、既定では「Directory not empty」で落ち、FAKE_RM_MODE=noop なら 0 で終わる
-# (rm は成功したのに中身が残る形。#3616 の反証)。呼ばれた回数は FAKE_RM_COUNT のファイルに数える
+# (rm は成功したのに中身が残る形。#3616 の反証)。呼ばれた回数は FAKE_RM_COUNT のファイルに数える。
+# FAKE_RM_CROSS_SECOND=1 なら、1 回目は壁時計の次の秒の境目を 0.05 秒過ぎるまで眠ってから落ちる
+# (フックの 1 周目が $SECONDS の境目をまたぐ形。#3798)
 FAKE_RM = """#!/bin/sh
 n=$(cat "$FAKE_RM_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$FAKE_RM_COUNT"
+if [ "$n" -eq 1 ] && [ "${FAKE_RM_CROSS_SECOND:-0}" = 1 ]; then
+  python3 -c 'import time; time.sleep(1.05 - time.time() % 1)'
+fi
 if [ "$FAKE_RM_FAILS" -lt 0 ] || [ "$n" -le "$FAKE_RM_FAILS" ]; then
   [ "$FAKE_RM_MODE" = "noop" ] && exit 0
   echo "rm: $FAKE_WORKSPACE/.build/out: Directory not empty" >&2
@@ -85,8 +92,9 @@ class RunnerJobStartedTest(unittest.TestCase):
         (ws / "Sources").mkdir()
         return ws
 
-    def run_with_stubs(self, ws, rm_fails, writers="", writers_until=None, ps="", rm_mode="fail", **extra):
-        """偽の rm・lsof・ps を PATH の先頭に置いて走らせる。rm_fails は落ちる回数 (負なら落ち続ける)"""
+    def run_with_stubs(self, ws, rm_fails, writers="", writers_until=None, ps="", rm_mode="fail", deadline=1, **extra):
+        """偽の rm・lsof・ps を PATH の先頭に置いて走らせる。rm_fails は落ちる回数 (負なら落ち続ける)。
+        deadline は期限の秒数で、打ち直して緑になる形には 10 を渡す (冒頭の説明)"""
         bin_dir = self.root / "bin"
         bin_dir.mkdir(exist_ok=True)
         for name, body in (("rm", FAKE_RM), ("lsof", FAKE_LSOF), ("ps", FAKE_PS)):
@@ -106,7 +114,7 @@ class RunnerJobStartedTest(unittest.TestCase):
             **({} if writers_until is None else {"FAKE_WRITERS_UNTIL": str(writers_until)}),
             FAKE_PS=ps,
             FAKE_WORKSPACE=str(ws),
-            JOB_STARTED_DEADLINE_SEC="1",
+            JOB_STARTED_DEADLINE_SEC=str(deadline),
             JOB_STARTED_RETRY_SEC="0.2",
             **extra,
         )
@@ -144,12 +152,24 @@ class RunnerJobStartedTest(unittest.TestCase):
     def test_retries_when_a_writer_makes_the_first_rm_fail(self):
         # 1 回目の rm が「Directory not empty」で落ち、書き手が止まった 2 回目に空になる (#3616 の再現)
         ws = self.make_workspace()
-        proc = self.run_with_stubs(ws, rm_fails=1)
+        proc = self.run_with_stubs(ws, rm_fails=1, deadline=10)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
         self.assertIn("打ち直し 1 回", proc.stdout)
         # 書き手が一度も見えなかった回は、そう書く
         self.assertIn("見えなかった", proc.stdout)
+
+    def test_crossing_a_second_boundary_in_the_first_pass_still_retries(self):
+        # 期限 1 秒で、1 周目が壁時計の秒の境目をまたぐ (実時間は約 0.4 秒)。$SECONDS の差は 1 になるが、
+        # 期限までは経っていないので打ち直して緑で終える。差が期限と等しいだけで諦めると、打ち直し 0 回で
+        # 「書き手は見つからなかった」の赤になり、merge queue から無関係な PR を外した (#3798)
+        ws = self.make_workspace()
+        # 秒の 0.7 の位置で起こす。1 周目は次の境目 +0.05 まで眠るので、境目をまたいでも実時間は 1 秒に届かない
+        time.sleep((0.7 - time.time() % 1) % 1)
+        proc = self.run_with_stubs(ws, rm_fails=1, FAKE_RM_CROSS_SECOND="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(list(ws.iterdir()), [])
+        self.assertIn("打ち直し 1 回", proc.stdout)
 
     def test_names_the_writer_seen_while_retrying_even_when_it_stops(self):
         # 打ち直しの間に見えた書き手は、緑になった後の成功の行に名乗る。次に出た名前を #3616 に書くため
@@ -160,6 +180,7 @@ class RunnerJobStartedTest(unittest.TestCase):
             writers="4242",
             writers_until=1,
             ps="    1 00:09 /Library/Developer/swift-frontend",
+            deadline=10,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
@@ -169,7 +190,7 @@ class RunnerJobStartedTest(unittest.TestCase):
     def test_a_rm_that_succeeds_but_leaves_files_is_retried_until_empty(self):
         # rm が 0 で終わっても中身が残っていれば緑にしない (rm の終了コードだけを見ていない)
         ws = self.make_workspace()
-        proc = self.run_with_stubs(ws, rm_fails=1, rm_mode="noop")
+        proc = self.run_with_stubs(ws, rm_fails=1, rm_mode="noop", deadline=10)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
         self.assertIn("打ち直し 1 回", proc.stdout)
@@ -214,7 +235,7 @@ class RunnerJobStartedTest(unittest.TestCase):
 
     def test_a_clean_first_try_does_not_mention_retries(self):
         ws = self.make_workspace()
-        proc = self.run_with_stubs(ws, rm_fails=0)
+        proc = self.run_with_stubs(ws, rm_fails=0, deadline=10)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
         self.assertNotIn("打ち直し", proc.stdout)
