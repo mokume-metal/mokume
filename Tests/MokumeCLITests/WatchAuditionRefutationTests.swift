@@ -307,6 +307,107 @@ struct WatchAuditionRefutationTests {
         #expect(session.child === harness.gens.last && session.child !== production)
     }
 
+    @Test("出る要求の最中に次の拍が走っても、保留していた試聴の子を起こさない (#3794)")
+    func leavingDoesNotResumeAPendingAuditionInAnOverlappingBeat() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        harness.autoPromote = false
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        // 本番が乗り換えを待つ間の保存は、試聴の子を保留する。乗り換えが決着すれば、次の拍で起きる状態にする
+        #expect(await harness.save() == nil)
+        _ = await session.generationPromoted(pid: production.processIdentifier)
+        let launched = harness.gens.count
+
+        // 出る要求の拍の中で、ソースの世代の読みが止まる。その間に次の拍が走る
+        harness.holdStamp = true
+        try AtomicFile.write(
+            Data(#"{"id":"L1","action":"leave"}"#.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
+        let leaving = Task { await harness.beat() }
+        #expect(await harness.waitUntilStampReadsHeld(1), "出る要求の拍が、ソースの世代を読みに行かない")
+        let overlapping = Task { await harness.beat() }
+        await Task.yield()
+        _ = await harness.waitUntilStampReadsHeld(2, timeout: .milliseconds(200))
+        harness.releaseStamp()
+        await leaving.value
+        await overlapping.value
+
+        let report = try harness.report()
+        #expect(report["accepted"] as? Bool == true)
+        #expect(harness.gens.count == launched, "出る要求の最中の拍が、保留していた試聴の子を起こした")
+        #expect(session.auditionChild == nil && session.child === production && production.isRunning)
+    }
+
+    @Test("出る前に読み始めた世代が出た後に戻っても、その版で本番を作り直さない (#3794)")
+    func aStampReadStartedBeforeLeavingDoesNotRebuildProduction() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        _ = try #require(await harness.save())
+        let launched = harness.gens.count
+
+        // 見張りがまだ見ていない保存 (s3) を、前の拍が読み始めて止まる (大きな資材の読みが拍の間隔を越える)
+        harness.stampOverride = "s3"
+        harness.holdStamp = true
+        let reading = Task { await harness.beat() }
+        #expect(await harness.waitUntilStampReadsHeld(1), "前の拍が、ソースの世代を読みに行かない")
+        // その間に出る要求が届く
+        try AtomicFile.write(
+            Data(#"{"id":"L1","action":"leave"}"#.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
+        let leaving = Task { await harness.beat() }
+        await Task.yield()
+        _ = await harness.waitUntilStampReadsHeld(2, timeout: .milliseconds(200))
+        harness.releaseStamp()
+        await reading.value
+        await leaving.value
+        // 作り直しが始まっていれば、終わるまで拍を回す (期限つき)
+        let deadline = ContinuousClock.now + .seconds(3)
+        while session.isRebuilding, ContinuousClock.now < deadline { await harness.beat() }
+
+        let report = try harness.report()
+        #expect(report["accepted"] as? Bool == true)
+        #expect(session.child === production && production.isRunning, "出る前に読み始めた世代で、本番を作り直した")
+        #expect(harness.alive() == [production], "出た後に生きている子が本番だけでない")
+        await harness.beat()
+        #expect(session.child === production && harness.gens.count == launched, "出る前に読み始めた世代で、子を起こした")
+
+        // 出た後にソースを変えて保存すれば、本番を作り直す
+        harness.stampOverride = "s4"
+        await harness.beat()
+        #expect(session.child !== production && session.child === harness.gens.last, "出た後の保存が、本番を作り直さない")
+    }
+
+    @Test("出る前に読み始めた後、出る前に保存した版も、出た時点のソースとして控える (#3794)")
+    func aSaveBetweenAnEarlierReadAndLeavingIsHeld() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        _ = try #require(await harness.save())
+        let launched = harness.gens.count
+
+        // 前の拍が s3 を読み始めて止まる。読みの途中で s4 を保存し、その後に出る要求が届く
+        harness.stampOverride = "s3"
+        harness.holdStamp = true
+        let reading = Task { await harness.beat() }
+        #expect(await harness.waitUntilStampReadsHeld(1), "前の拍が、ソースの世代を読みに行かない")
+        harness.stampOverride = "s4"
+        try AtomicFile.write(
+            Data(#"{"id":"L1","action":"leave"}"#.utf8), to: WorkDirectory.requestURL(under: session.watchFacet))
+        let leaving = Task { await harness.beat() }
+        await Task.yield()
+        _ = await harness.waitUntilStampReadsHeld(2, timeout: .milliseconds(200))
+        harness.releaseStamp()
+        await reading.value
+        await leaving.value
+
+        // 出た時点のソースは s4。出る前に読み始めた読み (s3) を控えると、次の拍が s4 で本番を作り直す
+        for _ in 0..<3 { await harness.beat() }
+        #expect(harness.gens.count == launched, "出る前に保存した版 (s4) で、出た後に本番を作り直した")
+        #expect(session.child === production && production.isRunning)
+    }
+
     // MARK: - 区画 build の記録
 
     @Test("区画 build の記録は、試聴の版に audition: true を付け、出る要求で本番の版へ戻る。ソースを戻しても作り直されない")

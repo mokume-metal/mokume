@@ -51,6 +51,32 @@ struct WatchAuditionTests {
             rebuildGate = nil
         }
 
+        /// 立てると、ソースの世代を読む口が ``releaseStamp()`` まで戻らない (読みが拍の間隔より長くかかる回を演じる)。
+        /// 読みは重なりうるので、門で待つ読みは複数になる。
+        var holdStamp = false
+        private var stampGate: [CheckedContinuation<Void, Never>] = []
+        /// 門で止まっている読みの数。
+        var heldStampReads: Int { stampGate.count }
+
+        func waitForStampGate() async {
+            await withCheckedContinuation { stampGate.append($0) }
+        }
+
+        /// 止めていた読みを全部進める。
+        func releaseStamp() {
+            holdStamp = false
+            let waiting = stampGate
+            stampGate = []
+            for continuation in waiting { continuation.resume() }
+        }
+
+        /// 門で止まる読みが `count` 個になるまで待つ (待つ側が期限を持つ)。届かなければ `false`。
+        func waitUntilStampReadsHeld(_ count: Int, timeout: Duration = .seconds(3)) async -> Bool {
+            let deadline = ContinuousClock.now + timeout
+            while heldStampReads < count, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(2)) }
+            return heldStampReads >= count
+        }
+
         /// 新しい本番の子を起こしたら、台が乗り換えた合図を送るか。
         var autoPromote = true
         /// 起こす子の台本 (`sh -c`)。
@@ -81,7 +107,13 @@ struct WatchAuditionTests {
                         return try harness.launch(executable)
                     },
                     now: { 0 },
-                    stamp: { _ in box.harness?.stamp }),
+                    stamp: { _ in
+                        // 読みの途中で止めておく (読む間に main actor が空き、次の拍が走る回を演じる)。読んだ世代は
+                        // 読み始めた時点のソースのもの — 止まっている間の保存は、この読みには入らない
+                        let read = box.harness?.stamp
+                        if let harness = box.harness, harness.holdStamp { await harness.waitForStampGate() }
+                        return read
+                    }),
                 stopTimeout: stopTimeout, finishTimeout: 0.5)
             session.overlapsGenerations = overlapsGenerations
             box.harness = self

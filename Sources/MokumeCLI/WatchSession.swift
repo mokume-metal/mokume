@@ -411,14 +411,28 @@ final class WatchSession {
     }
     private var pendingAudition: PendingAudition?
 
+    /// 試聴を出た時点のソースのままの間は、作り直さない控え (``unadoptedSource``)。
+    enum UnadoptedSource: Equatable {
+        /// 出た直後。**出た後に読み始めた最初の世代を、出た時点のソースの世代として控える。** 番号は、出た時点までに
+        /// 読み始めた読みの数 — それ以前に読み始めた読みは、出る前のソースを見ているので、戻っても作り直さずに捨てる。
+        case nextReading(after: Int)
+        /// この世代のままの間は作り直さない。読めるファイルが 1 つも無い世代 (`nil`) も、そのまま控える。
+        case stamp(String?)
+    }
+
     /// 試聴を出た時点の、ソースの世代 (試聴の版のもの)。**ソースがこの世代のままの間は、作り直さない。**
-    /// 出る要求は本番を動かさない — 世代の控えを本番の版へ戻した (``restoreProductionRecord()``) ので、そのままだと
-    /// 次の拍が試聴の版を本番へ作り直してしまう。ソースが変わったら下ろす (``tick()``)。
+    /// 出る要求は本番を動かさない — 世代の控えを本番の版へ戻した (``restoreProductionRecord(holding:)``) ので、そのまま
+    /// だと次の拍が試聴の版を本番へ作り直してしまう。ソースが変わったら下ろす (``tick()``)。
     ///
-    /// **控えるのは、見張りが最後に見た世代ではなく、出た時点にソースを読み直した世代である** — 見張りがまだ見て
-    /// いない保存の直後に出ると、その版が控えから漏れて本番に作り直される。**入り直しても下ろさない** — 下ろすと、
-    /// 入った拍に出た時点の版の試聴の子が起きる (入る要求は何も起こさない約束・[#3794](https://github.com/mokume-metal/mokume/issues/3794))。
-    private var unadoptedStamp: String?
+    /// **控えるのは、見張りが最後に見た世代ではなく、出た後に読み直した世代である** ([#3794](https://github.com/mokume-metal/mokume/issues/3794))。
+    /// 拍の中では要求が保存の検出より先に効くので、見張りがまだ見ていない保存の直後に出ると、最後に見た世代ではその版が
+    /// 控えから漏れて本番に作り直される。出る要求の中では読まない — 読む間に main actor が空き、次の拍が出る途中の
+    /// 状態を見る。**入り直しても下ろさない** — 下ろすと、入った拍に出た時点の版の試聴の子が起きる (入る要求は何も
+    /// 起こさない約束)。
+    private var unadoptedSource: UnadoptedSource?
+
+    /// 読み始めたソースの世代の読みの数 (``takeStamp()``)。出る前に読み始めた読みを見分ける (``UnadoptedSource``)。
+    private var readingsStarted = 0
 
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
     private var productionReport: BuildReport?
@@ -559,14 +573,21 @@ final class WatchSession {
     @discardableResult
     func tick() async -> BuildReport? {
         guard !isStamping else { return nil }
-        let stamp = await takeStamp()
+        let (reading, stamp) = await takeStamp()
         guard !stopRequested else { return nil }
-        // **試聴を出た時点のソースは、本番の版へ作り直さない** (``restoreProductionRecord()``)。出た後のソースの
+        // **試聴を出た時点のソースは、本番の版へ作り直さない** (``restoreProductionRecord(holding:)``)。出た後のソースの
         // 世代は、本番の版と違う (試聴の版のまま) が、出る要求は本番を動かさない。ソースが変わったら (元に戻した
         // 回を含む) 印を下ろして、普段どおり本番の世代と比べる
-        if let held = unadoptedStamp {
+        switch unadoptedSource {
+        case .nextReading(let after)?:
+            // 出る前に読み始めた読みは捨てる (出る前のソースを見ている)。出た後に読み始めた最初の読みを控える
+            if reading > after { unadoptedSource = .stamp(stamp) }
+            return nil
+        case .stamp(let held)?:
             if stamp == held { return nil }
-            unadoptedStamp = nil
+            unadoptedSource = nil
+        case nil:
+            break
         }
         guard stamp != lastStamp else { return nil }
         if noticedAt == nil { noticedAt = hooks.now() }
@@ -585,7 +606,7 @@ final class WatchSession {
     @discardableResult
     func start() async -> BuildReport {
         discardStaleNotStartedRecord()
-        let stamp = await takeStamp()
+        let stamp = await takeStamp().stamp
         guard !stopRequested else {
             return finish(
                 .failed(
@@ -624,11 +645,13 @@ final class WatchSession {
 
     /// 世代を取る。**取っている間は印を立てる** (``isStamping``)。
     ///
-    /// - Returns: いまの世代。読めるファイルが 1 つも無ければ `nil`。
-    private func takeStamp() async -> String? {
+    /// - Returns: 読みの番号 (読み始めた順・``readingsStarted``) と、いまの世代。読めるファイルが 1 つも無ければ世代は `nil`。
+    private func takeStamp() async -> (reading: Int, stamp: String?) {
         isStamping = true
         defer { isStamping = false }
-        return await hooks.stamp(directory)
+        readingsStarted += 1
+        let reading = readingsStarted
+        return (reading, await hooks.stamp(directory))
     }
 
     /// 終われと言われたことを覚える。
@@ -1820,7 +1843,7 @@ final class WatchSession {
         isAuditioning = true
         previewFollowing = nil
         auditionIsUnidentified = false
-        // 出た時点のソースのままの控え (``unadoptedStamp``) は下ろさない。入っても何も起こさず、別の版の保存が試聴の子を起こす
+        // 出た時点のソースのままの控え (``unadoptedSource``) は下ろさない。入っても何も起こさず、別の版の保存が試聴の子を起こす
         pendingAudition = nil
         hasNamedAuditionDeparture = false
         // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品の窓が映す本番。乗り換えを待つ間は 2 つ) を失わない
@@ -1841,10 +1864,6 @@ final class WatchSession {
         guard isAuditioning else {
             return refusal(id: request.id, action: request.action, .notAuditioning)
         }
-        // **出た時点のソースの世代を読み直す** ([#3794](https://github.com/mokume-metal/mokume/issues/3794))。拍の中では
-        // 要求が保存の検出 (``tick()``) より先に効くので、見張りがまだ見ていない保存があれば ``lastStamp`` には無い。
-        // 役を変える前に読む — 読む間に来た拍は、試聴の中として扱う
-        let sourceStamp = await hooks.stamp(directory)
         isAuditioning = false
         previewFollowing = nil
         auditionIsUnidentified = false
@@ -1870,11 +1889,12 @@ final class WatchSession {
         if isRebuilding {
             left = .building
         } else if !hasProduction {
-            unadoptedStamp = nil
+            unadoptedSource = nil
             lastStamp = nil
             left = .starts
         } else if returned {
-            restoreProductionRecord(holding: sourceStamp)
+            // 出た時点のソースの世代は、ここでは読まない (``unadoptedSource``)。出た後に読み始めた最初の読みを控える
+            restoreProductionRecord(holding: .nextReading(after: readingsStarted))
             left = .kept
         } else {
             restoreProductionRecord(holding: nil)
@@ -1893,12 +1913,12 @@ final class WatchSession {
     /// **戻した世代は「本番が作られた版」である。** 出た後にソースを元に戻せば (試聴の版を捨てれば)、世代が一致して
     /// 作り直されず、別の版へ直せば作り直される。
     ///
-    /// - Parameter holding: このソースの世代のままの間は作り直さない (``unadoptedStamp``)。出た時点のソースの世代を
-    ///   渡す。出る要求は本番を動かさない約束のためで、中身から導く世代では「同じ中身を再び保存した」ことは見分けられない。
-    ///   **本番が生きていてプレビューを戻せたときだけ渡す** — `nil` なら、出た時点のソースを作り直して本番に合わせる。
-    private func restoreProductionRecord(holding: String?) {
+    /// - Parameter holding: 出た時点のソースのままの間は作り直さない控え (``unadoptedSource``)。出る要求は本番を動かさない
+    ///   約束のためで、中身から導く世代では「同じ中身を再び保存した」ことは見分けられない。**本番が生きていてプレビューを
+    ///   戻せたときだけ渡す** — `nil` (控えない) なら、出た時点のソースを作り直して本番に合わせる。
+    private func restoreProductionRecord(holding: UnadoptedSource?) {
         guard let record = productionReport else { return }
-        unadoptedStamp = holding
+        unadoptedSource = holding
         lastStamp = record.stamp
         lastReport = record
         firstFrameSince = nil
