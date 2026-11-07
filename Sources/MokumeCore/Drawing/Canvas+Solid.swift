@@ -210,9 +210,9 @@ extension Canvas {
         guard canPlace else { return warnOutsideFrame(.placing) }
         beginSolids()
         // **貼る絵が変わったら、ここで列が閉じる。** beginSolids は平面から移るときしか
-        // 効かないので、立体を続けて置いている最中の切り替えはここが拾う
-        useFillTexture()
-        let textured = style.picture != nil
+        // 効かないので、立体を続けて置いている最中の切り替えはここが拾う。頂点がメッシュの読み取り位置を
+        // 持つかは、束ねた面に合わせる (貼る絵か、利用者の断片だけのときの白い 1×1・#3797)
+        let textured = useFillTexture()
         var placement = SolidInstance(
             matrix: transform.matrix, normalMatrix: transform.normalMatrix,
             color: style.fill)
@@ -539,7 +539,8 @@ extension Canvas {
     /// 塗りをそのまま通せる (``SolidVertex/uv``)。
     ///
     /// `uv` を渡すのは**塗り**だけで、線と点は渡さない側に居続ける。
-    /// 渡さなければ白い区画を読むので、貼る絵は塗りにしか効かない。
+    /// 渡さなければ白い区画を指すので、貼る絵は塗りにしか効かない (利用者の断片だけを当てているときは
+    /// 塗りと同じ白い 1×1 を読む。どこを指しても白なので色は同じ — ``Canvas/useUnwrittenUVTexture()``)。
     func appendSolidVertex(
         position: SIMD3<Float>, shapePosition: SIMD3<Float>? = nil,
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>? = nil, isDerived: Bool = false,
@@ -548,7 +549,7 @@ extension Canvas {
     ) {
         // **面の切り替えが先。** 切り替えは列を閉じるので、開いてから切り替えると
         // 開いたばかりの列が閉じられ、この頂点がどの列にも属さなくなる
-        if uv != nil { useWrittenUVTexture() } else { useGlyphTexture() }
+        if uv != nil { useWrittenUVTexture() } else { useUnwrittenUVTexture() }
         openFreeformSolid()
         solidVertices.append(
             SolidVertex(
@@ -573,7 +574,7 @@ extension Canvas {
         normal: SIMD3<Float>, shapeNormal: SIMD3<Float>, isDerived: Bool,
         uv: SIMD2<Float>?, color: LinearRGBA
     ) {
-        if uv != nil { useWrittenUVTexture() } else { useGlyphTexture() }
+        if uv != nil { useWrittenUVTexture() } else { useUnwrittenUVTexture() }
         openIndexedFreeformSolid()
         if let shared = openSolid?.sharedSlots[slot] {
             solidIndices.append(shared)

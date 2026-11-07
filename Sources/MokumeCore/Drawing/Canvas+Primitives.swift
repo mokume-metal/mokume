@@ -285,7 +285,9 @@ extension Canvas {
         // **畳むのは、扇 (一周・`.pie`・輪郭を引かない既定) と、輪郭を引かず貼る絵も無い `.chord` / `.open` の塗り**
         // (どちらも弦で結んだ形の塗り・#3248)。輪郭つきと貼る絵つきの `.chord` / `.open`・輪郭つきの既定は、#3248 のときは
         // 畳んだ絵が畳まない絵と縁の数成分違った (置き場所の変換を GPU で掛けるぶん)。頂点段は #3555 で畳まない道と
-        // 同じ順に置くようになったが、許容 0 を検査で縛るまでは今までの道 (``placeArcInParts``) に残す (#3759)
+        // 同じ順に置くようになったが、許容 0 を検査で縛るまでは今までの道 (``placeArcInParts``) に残す (#3759)。
+        // 利用者の断片だけを当てた塗り (白い 1×1 を読む・#3797) はここに残して畳む — 畳んだ読み取り位置が
+        // 白い絵を貼って畳まないときと画素で一致することは ShaderUVWithoutPictureTests が見る
         let foldsChordFill = !drawsStroke && style.picture == nil && (mode == .chord || mode == .open)
         guard isFullTurn || mode == .pie || (mode == nil && !drawsStroke) || foldsChordFill else {
             return placeArcInParts(

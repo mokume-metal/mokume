@@ -967,13 +967,14 @@ extension Canvas {
             isCurveStep: true)
     }
 
-    /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、1 点でも書かれていれば持つ。**
+    /// 塗りが読み取り位置を持つか。**貼る絵を束ねているか、利用者の断片だけを当てているか
+    /// (``Canvas/shadesWithoutPicture``・#3797)、1 点でも書かれていれば持つ。**
     ///
-    /// 絵が無くても、書いた位置は割らずに断片へ届く (``textureUV(_:_:)``)。どちらでも
+    /// 絵が無くても、書いた位置は割らずに断片へ届く (``textureUV(_:_:)``)。どれでも
     /// ないときだけ焼き場の白い区画を読み、読み取り位置が無かった頃と 1 ビットも
     /// 変わらない。
     private func readsUV(_ points: [BuildingVertex]) -> Bool {
-        if style.picture != nil { return true }
+        if fillReadsUV { return true }
         for point in points where point.uv != nil { return true }
         return false
     }

@@ -390,9 +390,11 @@ public final class Canvas {
         /// 後に絵を差し替えても畳み続けて、2 枚目以降が前の絵で描かれる ([#1298])。
         ///
         /// 貼る絵は**塗りにしか効かない**ので、塗りを持たない図形はここが常に `nil` で、
-        /// 絵を差し替えても列は割れない。
+        /// 絵を差し替えても列は割れない。利用者の断片だけを当てた塗りは、白い 1×1 の面が入る
+        /// (``Canvas/fillPicture()``・[#3797])。
         ///
         /// [#1298]: https://github.com/mokume-metal/mokume/issues/1298
+        /// [#3797]: https://github.com/mokume-metal/mokume/issues/3797
         var texture: HeldTexture?
     }
 
@@ -2961,15 +2963,63 @@ public final class Canvas {
         useTexture(atlas.held)
     }
 
-    /// **塗り**が読む面へ切り替える。貼る絵が束ねてあればその面、無ければ焼き場。
+    /// 利用者の断片を、貼る絵の無い形に当てているか ([#3797])。
+    ///
+    /// **そのときは白い 1×1 の絵を貼ったことにする** — 塗りは形の読み取り位置 (平面は囲みの箱の 0…1、
+    /// 立体はメッシュの位置) を持ち、断片が `in.uv` で形の中の位置を読める。`texture()` で白い絵を
+    /// 貼ったときと同じ頂点・同じ画素になる。勾配の断片 (``paintsWithGradient``) は利用者の断片では
+    /// ないので外す — 勾配は読み取り位置を読まず、外さないと勾配の塗りの列と畳み方が変わる。
+    ///
+    /// [#3797]: https://github.com/mokume-metal/mokume/issues/3797
+    var shadesWithoutPicture: Bool {
+        style.picture == nil && currentShader != nil && !paintsWithGradient
+    }
+
+    /// 塗りが読み取り位置を持つか。貼る絵があるか、利用者の断片だけを当てているとき
+    /// (``shadesWithoutPicture``)。
+    var fillReadsUV: Bool { style.picture != nil || shadesWithoutPicture }
+
+    /// 塗りが読む絵。貼る絵、無ければ利用者の断片だけを当てているときの白い 1×1 (``shadesWithoutPicture``)。
+    /// どちらでもなければ `nil` (塗りは焼き場の白い区画を読む)。
+    func fillPicture() -> Picture? {
+        if let picture = style.picture { return picture }
+        return shadesWithoutPicture ? blankPictureCreatingIfNeeded() : nil
+    }
+
+    /// 1×1 の白い絵。**初めて要るときに作る。** 作れないのは GPU が面を出せないときだけで、
+    /// そのときは `nil` を返し、呼ぶ側は焼き場へ倒れる (塗りは汚れうるが、形は消えない)。
+    private func blankPictureCreatingIfNeeded() -> Picture? {
+        if blankPicture == nil {
+            let white = SIMD4<Float16>(repeating: 1)
+            blankPicture = (try? makeImage(
+                ImageFile.Decoded(width: 1, height: 1, pixels: [white]))).map { .loaded($0) }
+        }
+        return blankPicture
+    }
+
+    /// いま白い 1×1 の絵を読んでいるか。三角形ごとに通る口が、面の組を作らずに空振りできるように
+    /// (``useGlyphTexture()`` と同じ理由・#1785)。
+    private var readsBlankPicture: Bool {
+        guard let blank = blankPicture?.texture else { return false }
+        return currentTexture.texture === blank
+    }
+
+    /// **塗り**が読む面へ切り替える。貼る絵が束ねてあればその面、利用者の断片だけを当てていれば
+    /// 白い 1×1 (``fillPicture()``)、どちらでもなければ焼き場。**絵を束ねたかを返す** — 立体の頂点が
+    /// メッシュの読み取り位置を持つかは、束ねた面に合わせる (白い絵を作れず焼き場へ倒れたら持たない)。
     ///
     /// 塗りを置く手前で必ずこれを通すので、直前に画像や字を描いて面が変わっていても
-    /// 戻る。輪郭・端点・角・線と点はこれを通さず ``useGlyphTexture()`` のままなので、
+    /// 戻る。輪郭・端点・角・線と点はこれを通さず ``useUnwrittenUVTexture()`` を通るので、
     /// **貼る絵は塗りにしか効かない**。
-    func useFillTexture() {
-        guard let picture = style.picture else { return useGlyphTexture() }
+    @discardableResult
+    func useFillTexture() -> Bool {
+        guard let picture = fillPicture() else {
+            useGlyphTexture()
+            return false
+        }
         picture.prepare()
         useTexture(picture.held)
+        return true
     }
 
     /// **読み取り位置を書いた塗り**が読む面へ切り替える。貼る絵が束ねてあればその面。
@@ -2977,20 +3027,34 @@ public final class Canvas {
     /// 絵が無ければ 1×1 の白い絵を読む ([#1140])。書いた位置は割らずに `Fragment.uv`
     /// へ届くので、焼き場を読ませると 0…1 を越えた位置が字形を拾って塗りが汚れる —
     /// 白い 1 画素なら端を伸ばして読むのでどこを指しても白で、既定の塗りの色は
-    /// 変わらない。組み込みの形は絵が無いと読み取り位置を渡さないので、ここへは来ない
-    /// (``useFillTexture()`` のまま焼き場を読み、輪郭と同じ列に乗り続ける)。
+    /// 変わらない。組み込みの形は、絵も利用者の断片も無ければ読み取り位置を渡さないので、
+    /// ここへは来ない (``useFillTexture()`` のまま焼き場を読み、輪郭と同じ列に乗り続ける)。
     ///
     /// [#1140]: https://github.com/mokume-metal/mokume/issues/1140
     func useWrittenUVTexture() {
-        if style.picture != nil { return useFillTexture() }
-        if blankPicture == nil {
-            // 作れないのは GPU が面を出せないときだけで、そのときは焼き場へ倒れる
-            // (塗りは汚れうるが、形は消えない)
-            let white = SIMD4<Float16>(repeating: 1)
-            blankPicture = (try? makeImage(
-                ImageFile.Decoded(width: 1, height: 1, pixels: [white]))).map { .loaded($0) }
+        if style.picture != nil {
+            useFillTexture()
+            return
         }
-        guard let blankPicture else { return useGlyphTexture() }
+        if readsBlankPicture { return }
+        guard let blankPicture = blankPictureCreatingIfNeeded() else { return useGlyphTexture() }
+        blankPicture.prepare()
+        useTexture(blankPicture.held)
+    }
+
+    /// **読み取り位置を持たない三角形** (輪郭・端点・角・線と点・立体の線) が読む面へ切り替える。
+    ///
+    /// いつもは焼き場 (``useGlyphTexture()``)。**利用者の断片だけを当てているときは、塗りと同じ白い
+    /// 1×1 を読む** ([#3797]・``shadesWithoutPicture``)。三角形は焼き場の白い区画 (`whiteUV`) を指して
+    /// おり、白い 1×1 も端を伸ばしてどこを指しても白なので、画素は同じである。塗りだけ白い絵に替えると、
+    /// 線を引いた形 (線は既定で有効) が形ごとに塗りと輪郭の 2 列に割れ、畳みにも乗らなくなる。
+    /// 字 (``useGlyphTexture()`` を直に呼ぶ) は字形を読むので、ここを通さない。
+    ///
+    /// [#3797]: https://github.com/mokume-metal/mokume/issues/3797
+    func useUnwrittenUVTexture() {
+        guard shadesWithoutPicture else { return useGlyphTexture() }
+        if readsBlankPicture { return }
+        guard let blankPicture = blankPictureCreatingIfNeeded() else { return useGlyphTexture() }
         blankPicture.prepare()
         useTexture(blankPicture.held)
     }
