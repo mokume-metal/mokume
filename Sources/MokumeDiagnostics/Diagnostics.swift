@@ -8,16 +8,16 @@ import Foundation
 /// ライブラリが人へ伝えることを 1 箇所に集める。**素の `print` で書かない** —
 /// 出力先はスケッチの標準出力であり、そこはスケッチ自身のものだからである。
 ///
-/// 持っているのは ``warn(_:)`` と、その文面に失敗を埋める ``reason(_:)`` と、言った文面を
-/// 次の観測まで溜める ``takeUnreported()`` だけで、段階も分類もまだ無い。**要るものが
-/// 分かった時点で足す** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
+/// 持っているのは ``warn(_:)`` と、その文面に失敗を埋める ``reason(_:)`` と、出力した文面を
+/// 次の `observe` までバッファする ``takeUnreported()`` だけで、段階も分類もまだ無い。**要るものが
+/// 分かった時点で追加する** ([ADR-0001] 原則 4 / [ADR-0008] 決定 2)。
 ///
 /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
 /// [ADR-0008]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0008-mechanism-needs-demonstrated-harm.md
 /// [ADR-0016]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0016-package-structure.md
 ///
-/// **隔離の外からも言える** ([ADR-0010] 決定 4)。フレームの外へ逃がした仕事 —
-/// 書き出しや符号化 — も、気付いたことを人へ伝える必要がある。持っているのは
+/// **隔離の外からも出力できる** ([ADR-0010] 決定 4)。フレームの外へ逃がした仕事 —
+/// 書き出しやエンコード — も、気付いたことを人へ伝える必要がある。持っているのは
 /// 標準エラーへの 1 行だけで、共有する状態が無いので、隔離に縛る理由が無い。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
@@ -28,15 +28,15 @@ public nonisolated enum Diagnostics {
     /// ライブラリからの注意を 1 行、標準エラーへ書く。
     ///
     /// **標準出力ではなく標準エラーへ書く。** 標準出力はスケッチが自分の用途で使う
-    /// ものなので、ライブラリの都合で混ぜない。見張っている道具が出力を読んでいても、
+    /// ものなので、ライブラリの都合で混ぜない。監視しているツールが出力を読んでいても、
     /// 注意は別の流れで届く。
     ///
-    /// 何度も言うかどうかは呼び出し側が決める — 毎フレーム起きうることをそのまま
+    /// 何度も出力するかどうかは呼び出し側が決める — 毎フレーム起きうることをそのまま
     /// 流すと、本当に読むべき 1 行が埋まる。
     ///
-    /// **同じ文面を次の観測の応答にも載せるため、溜め場にも控える** (``WarningDigest``・#2761)。
-    /// 標準エラーの 1 行は MCP から読めないので、スケッチが言った警告を観測で辿れるようにする。
-    /// 言う口は呼び出し側のまま — 文面と頻度は変わらない。
+    /// **同じ文面を次の `observe` の応答にも載せるため、バッファにも保持する** (``WarningDigest``・#2761)。
+    /// 標準エラーの 1 行は MCP から読めないので、スケッチが出力した警告を `observe` で辿れるようにする。
+    /// 出力する側は呼び出し側のまま — 文面と頻度は変わらない。
     public static func warn(_ message: String) {
         FileHandle.standardError.write(Data("\(prefix): \(message)\n".utf8))
         (digest ?? sharedDigest).record(message)

@@ -32,31 +32,31 @@ import MokumeCore
 /// ```
 ///
 /// **始まりの場面は `Scene(starting: Screen.title)` か `Scene<Screen>(starting: .title)` と書く。**
-/// `Scene(starting: .title)` は、どの `enum` の `.title` か決まらず組めない。切り替えは型が決まっているので
+/// `Scene(starting: .title)` は、どの `enum` の `.title` か決まらずビルドできない。切り替えは型が決まっているので
 /// `change(to: .game)` と書ける。
 ///
-/// 観測 (`mokume` の MCP の `observe`) でいまの場面を読みたいときは、`expose("scene", …)` へ自分で渡す。
+/// MCP サーバーの `observe` でいまの場面を読みたいときは、`expose("scene", …)` へ自分で渡す。
 /// 渡すのは自分の `enum` を文字列にしたもの (`String` を元にした `enum` なら `rawValue`)。`Scene` が
-/// 勝手に公開することはない — 公開する名前と値は作品が決める。
+/// 勝手に公開することはない — 公開する名前と値はスケッチが決める。
 ///
 /// **SwiftUI にも `Scene` がある。** `import SwiftUI` と同じファイルで `some Scene` と書くと、どちらの `Scene`
-/// か決まらず組めない。`SwiftUI.Scene`・`mokume.Scene` と書き分ける。
+/// か決まらずビルドできない。`SwiftUI.Scene`・`mokume.Scene` と書き分ける。
 ///
 /// ## 切り替えは次のフレームの頭で効く
 ///
 /// **``change(to:)`` を呼んだフレームは、最後まで元の場面のまま描き終わる。** フレーム 10 の `draw()`
 /// の途中で ``change(to:)`` を呼べば、その `draw()` の ``current`` は元の場面のままで、フレーム 11 の
 /// `draw()` の頭から新しい場面になる。同じ `draw()` の中で場面が途中から変わらないので、`switch` の
-/// 一方の分岐が描きかけの絵を、もう一方の分岐が引き継ぐことがない。先例は ``Movie`` の再生の口 (``Movie/play()``
+/// 一方の分岐が描きかけの描画を、もう一方の分岐が引き継ぐことがない。先例は ``Movie`` の再生 API (``Movie/play()``
 /// など。次のフレームで効く)。
 ///
 /// 効くフレームは、**``change(to:)`` を呼んだ時点で決まる**。`draw()` を始めた回数で数えるので、時計
 /// (``SketchSettings/clock``) が実時間でも ``SketchSettings/ClockMode/frames`` でも同じで、**同じ入力を
-/// 流せば、何度走らせても同じフレームで切り替わる。**
+/// 流せば、何度実行しても同じフレームで切り替わる。**
 ///
-/// **`draw()` の前に走るものから呼んだ切り替えは、直後の `draw()` で効く。** 入力のコールバック
-/// (``Sketch/keyPressed()`` など)・入り口の供給・`Task`・OSC や WebSocket の受け取りは、`draw()` と `draw()`
-/// の間に走る。そこで呼べば、すぐ次に描くフレームから新しい場面になり、そのフレームで ``justEntered`` が真になる。
+/// **`draw()` の前に実行されるものから呼んだ切り替えは、直後の `draw()` で効く。** 入力のコールバック
+/// (``Sketch/keyPressed()`` など)・入力ソースの供給・`Task`・OSC や WebSocket の受信は、`draw()` と `draw()`
+/// の間に実行される。そこで呼べば、すぐ次に描くフレームから新しい場面になり、そのフレームで ``justEntered`` が真になる。
 /// ``SketchPart/noLoop()`` で止めている間のコールバックも同じで、``SketchPart/redraw()`` や ``SketchPart/loop()``
 /// で次に描くフレームの頭で効く。**効くまでの間、コールバックで読む ``current`` は元の場面のまま。**
 /// **`draw()` の中で呼んだものだけが、そのフレームの終わりまで元の場面で、次の `draw()` から効く。**
@@ -64,10 +64,10 @@ import MokumeCore
 /// ## 入った最初のフレーム
 ///
 /// ``justEntered`` は、その場面に入った最初の 1 フレームだけ真になる (``Keyboard/justPressed(_:)``
-/// と同じ「その枚だけ真」)。位置やスコアを戻す処理をここに置く。
+/// と同じ「そのフレームだけ真」)。位置やスコアを戻す処理をここに置く。
 ///
 /// - **始まりの場面は最初のフレーム (最初の `draw()`) から入っていて、そのフレームで真になる。**
-/// - ``Sketch/setup()`` の中や、プロパティの初期値のような描く前の所で ``change(to:)`` を呼べば、最初の
+/// - ``Sketch/setup()`` の中や、プロパティの初期値のような描く前の場所で ``change(to:)`` を呼べば、最初の
 ///   フレームで効く (``justEntered`` も真)
 /// - **同じ場面への ``change(to:)`` も、入り直しとして次のフレームで ``justEntered`` が真になる**
 ///   (やり直しに使える)
@@ -75,7 +75,7 @@ import MokumeCore
 /// - `draw()` の途中で `Scene(starting:)` を作った値は、始まりの場面でも ``justEntered`` が立たない
 ///   (最初のフレームではないため)。入り直すなら ``change(to:)`` を使う
 /// - **実行が変わったら、新しい実行とみなす。** 同じ `Scene` を別の実行へ持ち越す (`static` に置く・
-///   作り直したスケッチへ渡す) と、`draw()` の数は 1 から数え直される。頼んでいた切り替えがあれば確定させ、
+/// 作り直したスケッチへ渡す) と、`draw()` の数は 1 から数え直される。要求していた切り替えがあれば確定させ、
 ///   その実行の最初のフレームに入ったものとして ``justEntered`` を真にする
 ///
 /// ## 同じ場面を指す
@@ -84,13 +84,13 @@ import MokumeCore
 /// (`struct Player: SketchPart`) に渡した `Scene` で ``change(to:)`` を呼べば、スケッチが持つ `Scene` が
 /// 切り替わる。別の場面を並べて持ちたいときは、`Scene(starting:)` をもう 1 つ作る。
 ///
-/// ## 走っていない所で読む
+/// ## 実行中でない場所で読む
 ///
-/// ``current`` と ``justEntered`` を、走っているスケッチの外 (`Task` の中・走る前・SwiftUI の `body`) で読むと、
-/// いま描いているフレームが無いので、**最後に描いたフレームで見えていた場面** (まだ 1 枚も描いていなければ
-/// 始まりの場面) を返し、``justEntered`` は偽になる。1 度だけ警告する (口の名前 `Scene.current`・
-/// `Scene.justEntered` で。観測の応答の `warnings` にも載る)。場面を `draw()` の外で使いたいときは、`draw()` の中で
-/// 自分の状態へ写すか、`expose` で観測へ渡す。``change(to:)`` はどこから呼んでもよく、警告しない。
+/// ``current`` と ``justEntered`` を、実行中のスケッチの外 (`Task` の中・実行前・SwiftUI の `body`) で読むと、
+/// いま描いているフレームが無いので、**最後に描いたフレームで見えていた場面** (まだ 1 フレームも描いていなければ
+/// 始まりの場面) を返し、``justEntered`` は偽になる。1 度だけ警告する (API の名前 `Scene.current`・
+/// `Scene.justEntered` で。`observe` の応答の `warnings` にも載る)。場面を `draw()` の外で使いたいときは、`draw()` の中で
+/// 自分の状態へコピーするか、`expose` で `observe` へ渡す。``change(to:)`` はどこから呼んでもよく、警告しない。
 ///
 /// [#3588]: https://github.com/mokume-metal/mokume/issues/3588
 public nonisolated struct Scene<Value: Sendable>: Sendable {
@@ -108,7 +108,7 @@ public nonisolated struct Scene<Value: Sendable>: Sendable {
     /// }
     /// ```
     ///
-    /// 走っていない所 (プロパティの初期値など) からも作れる。作った瞬間のフレームは読まない。
+    /// 実行中でない場所 (プロパティの初期値など) からも作れる。作った瞬間のフレームは読まない。
     public init(starting scene: Value) {
         storage = Storage(starting: scene)
     }
@@ -116,7 +116,7 @@ public nonisolated struct Scene<Value: Sendable>: Sendable {
     /// いまの場面。
     ///
     /// ``change(to:)`` を呼んだフレームの間は、まだ元の場面を返す。効くのは次のフレームの頭から。
-    /// 走っていない所で読むと、最後に描いたフレームで見えていた場面を返し、1 度だけ警告する。
+    /// 実行中でない場所で読むと、最後に描いたフレームで見えていた場面を返し、1 度だけ警告する。
     @MainActor
     public var current: Value {
         guard DrawLedger.isInsideRun else {
@@ -127,7 +127,7 @@ public nonisolated struct Scene<Value: Sendable>: Sendable {
 
     /// 今のフレームが、いまの場面に入った最初のフレームか。その 1 フレームだけ真になる。
     ///
-    /// 始まりの場面は最初のフレームで真になる (「入った最初のフレーム」)。走っていない所で読むと偽を返し、
+    /// 始まりの場面は最初のフレームで真になる (「入った最初のフレーム」)。実行中でない場所で読むと偽を返し、
     /// 1 度だけ警告する。
     @MainActor
     public var justEntered: Bool {

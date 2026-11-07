@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// OSC のメッセージ 1 つ。宛名 (``address``) と、引数の並び (``arguments``) を持つ。
+/// OSC のメッセージ 1 つ。アドレス (``address``) と、引数の並び (``arguments``) を持つ。
 ///
-/// 届いたものは ``OSCPort/messages`` から読む。値を取り出す口 (``float(_:)`` ほか) は、
+/// 届いたものは ``OSCPort/messages`` から読む。値を取り出す API (``float(_:)`` ほか) は、
 /// 型が合わない・その番号の引数が無いときに `nil` を返す。**黙って別の値を返さない。**
 ///
 /// ```swift
@@ -20,22 +20,22 @@
 /// }
 /// ```
 ///
-/// 注入する列 (``Sketch/createOSC(messages:)``) を組むときは、自分で作る。
+/// 注入する列 (``Sketch/createOSC(messages:)``) を作るときは、メッセージを自分で作る。
 ///
 /// ```swift
 /// let wave = OSCMessage("/size", 0.25)
 /// let hit = OSCMessage("/hit", 1)
 /// ```
 public nonisolated struct OSCMessage: Sendable, Equatable {
-    /// 宛名。`/` で始まる (`/size`・`/layer/1/opacity`)。
+    /// アドレス。`/` で始まる (`/size`・`/layer/1/opacity`)。
     public let address: String
     /// 引数。届いた順。
     public let arguments: [OSCValue]
 
-    /// メッセージを組む。
+    /// メッセージを作る。
     ///
     /// - Parameters:
-    ///   - address: 宛名。`/` で始める。
+    ///   - address: アドレス。`/` で始める。
     ///   - arguments: 引数。`Int`・`Float`・`Double`・`String`・`Bool` か ``OSCValue``
     ///     (書き方は ``OSCArgument``)。
     public init(_ address: String, _ arguments: any OSCArgument...) {
@@ -86,16 +86,16 @@ public nonisolated struct OSCMessage: Sendable, Equatable {
     }
 }
 
-/// OSC の引数 1 つ。括弧の中は、送られてくるときの型の印。
+/// OSC の引数 1 つ。括弧の中は、送られてくるときの型タグ。
 ///
-/// ここに無い型 (時刻・色・MIDI・配列など) を含むメッセージは読まずに捨てる
+/// ここに無い型 (時刻・色・MIDI・配列など) を含むメッセージは読まずに破棄する
 /// (``OSCPort`` の「読めないものは打ち切る」)。
 public nonisolated enum OSCValue: Sendable, Equatable {
     /// 32 bit の整数 (`i`)。
     case int(Int32)
     /// 32 bit の小数 (`f`)。
     case float(Float)
-    /// 文字列 (`s`。届いたときは記号 `S` もここに入る)。
+    /// 文字列 (`s`。届いたときはシンボル `S` もここに入る)。
     case string(String)
     /// バイトの並び (`b`)。
     case blob([UInt8])
@@ -103,18 +103,18 @@ public nonisolated enum OSCValue: Sendable, Equatable {
     case int64(Int64)
     /// 64 bit の小数 (`d`)。
     case double(Double)
-    /// 真偽 (`T` / `F`)。値は型の印そのもので、中身のバイトを持たない。
+    /// 真偽 (`T` / `F`)。値は型タグそのもので、中身のバイトを持たない。
     case bool(Bool)
     /// 空 (`N`)。
     case null
-    /// 合図 (`I`)。値を持たない「いま」の印。
+    /// インパルス (`I`)。値を持たない「いま」を表すタグ。
     case impulse
 }
 
 /// メッセージの引数として渡せる値。
 ///
 /// `Int`・`Float`・`Double`・`String`・`Bool` と ``OSCValue`` が準拠している。小数は既定で
-/// 32 bit (`f`) で送る — 受け手 (TouchDesigner・Max など) が最も広く読む形だからである。
+/// 32 bit (`f`) で送る — 受信側 (TouchDesigner・Max など) が最も広く読む形だからである。
 /// 64 bit で送るときは ``OSCValue/double(_:)`` を渡す。
 ///
 /// ```swift

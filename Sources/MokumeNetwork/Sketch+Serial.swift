@@ -31,7 +31,7 @@ extension Sketch {
     ///
     /// **USB で繋いだもの (Arduino など) を先に並べる。** Mac 自身のポート
     /// (`/dev/cu.Bluetooth-Incoming-Port`・`/dev/cu.debug-console`) は後ろに来るので、USB で
-    /// 1 台だけ挿していれば `serialPorts().first` がそれになる。どちらの組の中も
+    /// 1 台だけ接続していれば `serialPorts().first` がそれになる。どちらの組の中も
     /// ``SerialPort/id`` の順。
     ///
     /// Processing の `Serial.list()` に当たる。
@@ -60,20 +60,20 @@ extension Sketch {
     /// ```
     ///
     /// Arduino には `Serial.begin(9600)` と `Serial.println(analogRead(A0))` を書き込んでおく。
-    /// つまみを回すと円が左右に動き、USB を抜くと円が止まって「切断」と出る。
+    /// つまみを回すと円が左右に動き、USB を切断すると円が止まって「切断」と出る。
     ///
     /// - **呼んだときだけポートを開く。** `import mokume` しただけでポートが開くことはない
-    /// - 8 ビット・パリティなし・ストップビット 1・流れ制御なしで開く (Arduino の `Serial.begin` の
+    /// - 8 ビット・パリティなし・ストップビット 1・フロー制御なしで開く (Arduino の `Serial.begin` の
     ///   既定と同じ)。変えられるのはボーレートだけ
     /// - **開いている間は、他のアプリはそのポートを開けない** (Arduino IDE の書き込みとシリアル
     ///   モニタも)。書き込む前に ``Serial/stop()`` するか、スケッチを止める。2 つのアプリが同じ
     ///   ポートを読むと、届いたバイト列が両方へ割れて、どちらにも欠けた行が届くからである
     /// - **ポートが繋がっていない・他のアプリが使っていても作れる。** ``Serial/state`` が
-    ///   ``SourceState/unavailable`` になり、挿されたら・空けば受け始める (1 秒ごとに開き直す)。
-    ///   抜かれたら ``SourceState/disconnected`` になり、挿し直せば戻る
+    ///   ``SourceState/unavailable`` になり、接続されたら・空けば受け始める (1 秒ごとに開き直す)。
+    ///   切断されたら ``SourceState/disconnected`` になり、再接続すれば戻る
     /// - OS の許可は要らない
     ///
-    /// 機材なしで確かめるときは、記録した行を ``Sketch/createSerial(lines:)`` で流す。
+    /// デバイスなしで確かめるときは、記録した行を ``Sketch/createSerial(lines:)`` で流す。
     ///
     /// Processing の `new Serial(this, name, 9600)` に当たる。
     ///
@@ -83,8 +83,8 @@ extension Sketch {
     ///   - port: 使うポート (``serialPorts()`` から選ぶ)。
     ///   - baudRate: 1 秒に送るビットの数。相手が `Serial.begin` に渡した値と同じにする。
     /// - Throws: ボーレートが 1 より小さいとき (``SerialFailure/invalidBaudRate(_:)``)。`setup()`・`draw()`・
-    ///   入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼んだときは、ポートを開く前に
-    ///   ``SerialFailure/notRunning(call:)`` (プロセスは落ちない)。
+    ///   入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼んだときは、ポートを開く前に
+    ///   ``SerialFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     public func createSerial(_ port: SerialPort, baudRate: Int) throws(SerialFailure) -> Serial {
         guard baudRate >= 1 else { throw .invalidBaudRate(baudRate) }
         // ポートを開く前に断る (`attached` が確かめてから作る)
@@ -98,13 +98,13 @@ extension Sketch {
 
     /// 記録した行の列を、シリアルポートから届いたかのように流す。**ポートを開かない。**
     ///
-    /// ``Sketch/createSerial(_:baudRate:)`` で受けるスケッチを機材なしで回すときは、これに差し替える。
+    /// ``Sketch/createSerial(_:baudRate:)`` で受けるスケッチをデバイスなしで回すときは、これに差し替える。
     /// `lines[i]` が、作ってから i 番目のフレームで ``Serial/lines`` に入る。最後まで行けば最初に
     /// 戻る。どの行が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても同じ行が
-    /// 同じフレームに届く — 機材の無い場所で確かめるときや、展示の前に空回しするときに使う
+    /// 同じフレームに届く — デバイスの無い場所で確かめるときや、展示の前にリハーサルするときに使う
     /// ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `lines[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `lines[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -124,10 +124,10 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// ``Serial/state`` は ``SourceState/running`` のままで、抜かれることはない。
+    /// ``Serial/state`` は ``SourceState/running`` のままで、切断されることはない。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、走っている
-    /// スケッチに足されず何も届かない ``Serial`` を返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、実行中の
+    /// スケッチに追加されず何も届かない ``Serial`` を返し、この API の名前で 1 度だけ警告する。
     ///
     /// - Parameter lines: フレームごとに届く行。何も届かないフレームは空の並びにする。
     ///
