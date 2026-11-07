@@ -17,7 +17,7 @@ extension Canvas {
         if enabled { shadowsEverEnabled = true }
     }
 
-    // 影を焼き付ける範囲の一辺 (世界の長さ)。
+    // 影を焼き付ける範囲の一辺 (世界の長さ)。中心は ``shadowMatrix`` が決める (#3842)。
     public func shadowRange(_ size: some ScalarConvertible) {
         let size = size.asFloat
         guard admits(.shadow) else { return }
@@ -80,13 +80,46 @@ extension Canvas {
     }
 
     /// 影を焼き付ける行列。落とす光が無ければ `nil`。
+    ///
+    /// 範囲の中心は ``shadowFocus``。
     var shadowMatrix: simd_float4x4? {
         guard shadowsEnabled, let caster = shadowCaster else { return nil }
         return ShadowMap.matrix(
             direction: SIMD3(
                 caster.directionAndCone.x, caster.directionAndCone.y, caster.directionAndCone.z),
-            center: currentCamera.center.simd,
+            center: shadowFocus,
             range: effectiveShadowRange)
+    }
+
+    /// 焼く範囲の中心。**このフレームでここまでに置いた、影を落とす立体のうち最初のものを置いたときの
+    /// 視点の注視点** ([#3842])。
+    ///
+    /// 描き切りの時点の視点を読むと、立体を置いた後に戻した視点 (手元の表示の前の `camera()`) へ
+    /// 範囲が動き、先に置いた立体の影が動く。閉じた列は閉じた時点の設定を持ち歩き、記録した列だけで
+    /// 絵が決まる ([ADR-0021] 決定 2) ので、中心も落とす列が持つ (``Batch/shadowFocus``)。最後の
+    /// 落とす列ではなく最初のものを取るのは、立体の途中で視点を変えたとき、後の視点に引っぱられ
+    /// ないため。
+    ///
+    /// **途中の描き切り (ADR-0021 決定 3) で控えた列 (``frameCasters``) を先に読む。** 控えた列は
+    /// 溜め場より前に置いたもので、この描き切りでも焼く。溜め場の最初の列から取ると、区切りの前後で
+    /// 落とす立体を違う視点で置いたとき、区切らずに描いたときと中心が食い違う (決定 3 の「区切りより後に
+    /// 描く面は、区切らずに描いたときと同じ影を受ける」が破れる)。中心が区切りをまたいで変わらないので、
+    /// 控えた列を焼いた面に足して焼く道 (``bakeShadow(into:)`` の `adding`) も行列が揃って使える。
+    ///
+    /// **このフレームに落とす列が 1 つも無ければ、描き切る時点の視点の注視点** (従来どおり。焼き付けは
+    /// 落とす列が無ければ走らないので、ここへ来るのは検査が行列を読むときだけ)。
+    ///
+    /// [#3842]: https://github.com/mokume-metal/mokume/issues/3842
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var shadowFocus: SIMD3<Float> {
+        // 前から探す。閉包を標準ライブラリへ渡すと、列ごとに隔離の実行時検査を払う (#1779)
+        for caster in frameCasters.casters {
+            if let focus = caster.batch.shadowFocus { return focus }
+        }
+        for batch in batches where batch.castsShadow {
+            if let focus = batch.shadowFocus { return focus }
+        }
+        return currentCamera.center.simd
     }
 
     /// 影を落とすと言ったのに落とす光が無いまま、フレームを終えようとしていれば初回だけ知らせる。

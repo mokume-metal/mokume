@@ -505,6 +505,8 @@ extension Canvas {
         batches[batches.count - 1].strokeStencilSections = open.strokeStencilSections
         // 粒の列は、順に依らない混ぜ方なら奥行きを読むだけで描く (#3107)
         batches[batches.count - 1].readsDepthOnly = open.isParticles && style.blendMode.isOrderIndependent
+        // 落とす列は、影を焼く範囲の中心にする注視点を閉じた時点の視点から持つ (#3842)
+        if style.castsShadow { batches[batches.count - 1].shadowFocus = currentCamera.center.simd }
         // 特化できる列か (光の分岐を外す・ブレンドを外す) は、ここで 1 度だけ決める (#1795・#2366)。
         // 細い線の被覆は直前に移したので、その後
         let closed = batches.count - 1
