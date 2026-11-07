@@ -996,6 +996,9 @@ extension Canvas {
                 // 細い線の円板は、載る帯に合わせる (#3734 の反証 #1)。線に垂直に 1 へ広げたままだと、斜めの細い帯から
                 // はみ出して光が足される。端 (帯 1 本) は線に沿って元の太さの半分・横は帯と同じ幅の楕円、折れ目と
                 // 刻みの継ぎ目は帯の半幅と被覆の小さいほうの円板 (平面の ``thinCarving(_:thin:)`` と同じ)
+                //
+                // 列の境目で切った丸い端は、面積の等しい平らな延長で切ってある (丸い片は置かない・#3748)
+                if ends?.cuts[index] != nil { return }
                 var bands: [(half: Float, coverage: Float, far: Int)] = []
                 if !incident.isEmpty {
                     for number in incident[index] {
@@ -1042,7 +1045,8 @@ extension Canvas {
     ///
     /// 端とみなすのは、辺が 1 本だけ来て、その辺が画面で長さを持つ点だけである。画面で重なる点の群 (``strokeNet``
     /// の群) の点は、群の中の潰れた辺も数えるので辺が 2 本以上来て、ここでは端にならず今までどおり線に垂直に切る。
-    /// 曲線の刻みの点も切らない。端の形が `.square` か `.project` のときだけ切る。
+    /// 曲線の刻みの点も切らない。端の形はどれも切る (`.round` は面積の等しい平らな延長にする・#3748・
+    /// ``ThinEndCut/extent(of:weight:)``)。
     ///
     /// - 1 本の辺の両端が同じ列に入る (画面で短い線) なら、1 つの片にして割合は両端の差にする
     /// - 端の辺が端の列より短いときは、辺が 2 本だけ来る点をたどって、列の中で線が端の辺の向きからそれないときだけ
@@ -1055,8 +1059,7 @@ extension Canvas {
         let screen = SolidDrawnScreen(
             viewProjection: viewProjection, width: width, height: height, units: unitsPerDrawnPixel)
         var ends = SolidEndCuts(screen: screen, outputPerDrawn: thin.outputPerDrawn)
-        let cap = style.strokeCap
-        guard cap == .square || cap == .project else { return ends }
+        let extend = ThinEndCut.extent(of: style.strokeCap, weight: thin.drawn)
         // 点ごとに来る辺の数と、最大 2 本の隣 (端の列の中をたどるのに使う)
         var degree = [Int](repeating: 0, count: world.count)
         var neighbors = [SIMD2<Int32>](repeating: SIMD2(-1, -1), count: world.count)
@@ -1081,7 +1084,7 @@ extension Canvas {
             let partner = firstOnEdge[edgeOf[point]]
             guard
                 let cut = ThinEndCut(
-                    end: end, far: other, extend: cap == .project ? thin.drawn / 2 : 0,
+                    end: end, far: other, extend: extend,
                     half: band.half / thin.outputPerDrawn, base: .zero, axis: partner.map { found[$0].cut.axis })
             else { continue }
             // 辺が 1 本の網 (2 点の線) でなければ、端の列の中で線がそれないかを見る
