@@ -63,6 +63,10 @@ struct WatchSessionModelTests {
         case audition
         /// 試聴を出る要求。
         case leave
+        /// 保存して、見張りがそれを見る前に試聴に入る要求を出す (#3794)。拍の中では要求が保存の検出より先に効く。
+        case saveThenAudition
+        /// 保存して、見張りがそれを見る前に試聴を出る要求を出す (#3794)。
+        case saveThenLeave
         /// 試聴の子が、自分から (終了コード 0 で) 終わる。
         case exitAudition
         /// 試聴の子が、最初の絵の前に失敗 (終了コード 3) で終わる。続けて 1 拍回る。
@@ -107,6 +111,8 @@ struct WatchSessionModelTests {
             case .none: "none"
             case .audition: "audition"
             case .leave: "leave"
+            case .saveThenAudition: "save+audition"
+            case .saveThenLeave: "save+leave"
             case .exitAudition: "exit(audition)"
             case .exitAuditionFailing: "exit(audition,failing)"
             case .promoteAudition: "promote(audition)"
@@ -141,6 +147,7 @@ struct WatchSessionModelTests {
         .exitWaiting, .exitWaitingFailing, .exitShown,
         .audition, .audition, .audition, .leave, .exitAudition, .exitAuditionFailing,
         .promoteAudition, .undeliverableAudition,
+        .saveThenAudition, .saveThenLeave,
     ]
 
     /// 列の長さ。縮めると `none` が並ぶので、実際の長さはこれ以下。
@@ -266,6 +273,26 @@ struct WatchSessionModelTests {
         ])
     @MainActor
     func saveOverlappingResumedAuditionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
+    /// 出た時点のソースのままの控え (#3794)。**生成する検査の seed に頼らず、決定的に回す。** 入り直しは何も起こさない。
+    /// 見張りがまだ見ていない保存と入る・出る要求が同じ拍に入っても、出る要求は本番を動かさず、入った後の保存は試聴の版になる。
+    @Test(
+        "出た時点のソースのままの入り直し・見ていない保存と同じ拍の要求は、事後条件を破らない (#3794)",
+        arguments: [
+            [Op.save, .promoteWaiting, .audition, .save, .leave, .audition],
+            [.save, .audition, .save, .promoteWaiting, .leave, .audition],
+            [.save, .promoteWaiting, .audition, .save, .leave, .audition, .save, .leave],
+            [.save, .promoteWaiting, .audition, .save, .saveThenLeave],
+            [.save, .promoteWaiting, .audition, .save, .saveThenLeave, .audition, .save],
+            [.save, .promoteWaiting, .audition, .save, .leave, .saveThenAudition],
+            [.save, .audition, .save, .promoteWaiting, .saveThenAudition, .leave],
+            [.save, .saveThenAudition, .promoteWaiting, .save, .saveThenLeave],
+        ])
+    @MainActor
+    func unadoptedSourceColumnsKeepTheirPostconditions(_ ops: [Op]) async {
         let outcome = await Driver.runCase(ops: ops, ends: false)
         #expect(outcome == .pass, "\(outcome)")
     }
@@ -541,7 +568,8 @@ struct WatchSessionModelTests {
                 // 見張りが作り直しに取りかかる」までを 1 つとし、残った保存を次の操作の拍へ持ち越さない — 1 拍の中では
                 // 要求 (``WatchSession/answerRequests()``) が作り直し (``WatchSession/tick()``) より先に効くので、持ち越すと
                 // 次の操作 (入る・出る要求) の結果に保存の結果が混ざる (#3789)。保存を見る前の要求が同じ拍に入る重なりは、
-                // 模型はまだ生成しない (#3794)。模型では保存のたびに世代が変わるので、取りかからない拍は 1 つまで
+                // 保存と要求を 1 つにした操作 (``Op/saveThenAudition``・``Op/saveThenLeave``) が生成する (#3794)。
+                // 模型では保存のたびに世代が変わるので、取りかからない拍は 1 つまで
                 if rebuilds == rebuildsBefore, !stopped {
                     startedByRebuild = await beat()
                     started.formUnion(startedByRebuild)
@@ -680,13 +708,24 @@ struct WatchSessionModelTests {
                 unseen.insert(target)
                 return nil
 
-            case .audition:
+            case .audition, .saveThenAudition:
                 guard !stopped else { return nil }
                 await settleUnseen()
                 let before = alive()
+                let productionBefore = productionAlive()
                 let expected = !auditioning && !productionAlive().isEmpty
                 let deferredBefore = deferredSave
-                let (accepted, started) = try await ask("audition")
+                let withSave = op == .saveThenAudition
+                let rebuildsBefore = rebuilds
+                if withSave { placeUnseenSave() }
+                let (accepted, startedByRequest) = try await ask("audition")
+                var started = startedByRequest
+                var startedByRebuild = startedByRequest
+                // 保留していた試聴の子を起こしに行った拍は、同じ拍の保存に取りかからない (保存の操作と同じ)
+                if withSave, rebuilds == rebuildsBefore, !stopped {
+                    startedByRebuild = await beat()
+                    started.formUnion(startedByRebuild)
+                }
                 if accepted != expected {
                     return Violation(
                         number: 7,
@@ -696,6 +735,18 @@ struct WatchSessionModelTests {
                     auditioning = true
                     deferredSave = false
                 }
+                // **同じ拍の保存は、要求の後に効く。** 試聴に入っていれば (受けた・入っていて断った) 試聴の版になり、
+                // 本番の側は動かない (事後条件 7 の後半)。入っておらず断った回 (本番が居ない) は、普通の保存である
+                if withSave {
+                    guard auditioning else { return nil }
+                    if productionAlive() != productionBefore {
+                        return Violation(
+                            number: 7,
+                            text: "入る要求と同じ拍の保存で、本番の側が動いた (前 \(name(productionBefore)) → 後 \(name(productionAlive())))")
+                    }
+                    deferredSave = startedByRebuild.isEmpty
+                    return nil
+                }
                 // **受理した回は保留を捨てる** (``WatchSession/enterAudition``)。受理した拍で試聴の子が起きれば破れ。
                 // 断った回の拍だけ、保留していた試聴の子が起きうる
                 if alive().subtracting(accepted || !deferredBefore ? [] : started) != before {
@@ -703,10 +754,13 @@ struct WatchSessionModelTests {
                 }
                 return nil
 
-            case .leave:
+            case .leave, .saveThenLeave:
                 guard !stopped else { return nil }
                 await settleUnseen()
                 let productionBefore = productionAlive()
+                // 同じ拍の保存は、出る要求の後に効く。出た時点のソースのままの版なので、本番を作り直さない (#3794)。
+                // 断った回 (試聴に入っていない) は、普通の保存である
+                if op == .saveThenLeave { placeUnseenSave() }
                 let (accepted, _) = try await ask("leave")
                 if accepted != auditioning {
                     return Violation(number: 7, text: "出る要求を\(accepted ? "受けた" : "断った") (試聴中 \(auditioning))")
@@ -768,6 +822,13 @@ struct WatchSessionModelTests {
                 await session.end()
                 return nil
             }
+        }
+
+        /// 作り直しが通り子を起こせる保存を置くが、拍は回さない (見張りはまだ見ていない)。
+        private func placeUnseenSave() {
+            stampCount += 1
+            buildStatus = 0
+            launchFails = false
         }
 
         /// 窓の知らせを 1 度送る。**受けたか** を返す。
