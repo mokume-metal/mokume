@@ -246,6 +246,25 @@ struct WatchSessionModelTests {
         #expect(outcome == .pass, "\(outcome)")
     }
 
+    /// 保留していた試聴の子を起こした拍に重なった保存 (#3789)。**生成する検査の seed に頼らず、決定的に回す。** その拍は
+    /// 作り直しに取りかからず、保存は次の拍に残る。残った保存の結果 (試聴の子の差し替え) を、次の操作 (入る・出る要求)
+    /// の結果と取り違えない。保留していた子を起こせない・残った保存の作り直しが通らない形も見る。
+    @Test(
+        "保留していた試聴の子を起こした拍に重なった保存は、次の要求の結果と取り違えない (#3789)",
+        arguments: [
+            [Op.save, .audition, .save, .promoteWaiting, .save, .audition],
+            [.save, .audition, .save, .promoteWaiting, .save, .leave],
+            [.save, .audition, .save, .promoteWaiting, .saveLaunchFail, .audition],
+            [.save, .audition, .save, .promoteWaiting, .saveBuildFail, .audition],
+            // 縮める前の列
+            [.promoteStale, .save, .save, .audition, .saveLaunchFail, .promoteWaiting, .save, .audition, .stop],
+        ])
+    @MainActor
+    func saveOverlappingResumedAuditionColumnsKeepTheirPostconditions(_ ops: [Op]) async {
+        let outcome = await Driver.runCase(ops: ops, ends: false)
+        #expect(outcome == .pass, "\(outcome)")
+    }
+
     /// 検査の結果を main actor の隔離の外へ持ち出す箱。書くのは 1 つの仕事だけで、読むのは待ち終えた後。
     nonisolated final class Outcome: @unchecked Sendable {
         var value: Probe.Outcome = .pass
@@ -290,6 +309,8 @@ struct WatchSessionModelTests {
         private var buildStatus: Int32 = 0
         private var launchFails = false
         private var launches = 0
+        /// 見張りが作り直しに取りかかった回数 (作り直しの口が呼ばれた回数)。
+        private var rebuilds = 0
         private var stopped = false
         private var history: [String] = []
 
@@ -301,6 +322,7 @@ struct WatchSessionModelTests {
                 directory: directory, context: testContext(),
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
+                        box.driver?.rebuilds += 1
                         let status = box.driver?.buildStatus ?? 0
                         return RunCommand.Rebuilt(
                             status: status, output: "", executable: status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
@@ -380,8 +402,9 @@ struct WatchSessionModelTests {
         }
 
         /// 1 拍回し、**その拍で起きた試聴の子**を返す。**保留していた試聴の子は、本番の乗り換えが決着した後の最初の拍で
-        /// 起きる** (``WatchSession/resumePendingAudition()``・その拍の保存の作り直しは次の拍に回る)。保存でも入る要求でも
-        /// ない拍で生きている世代が増えるので、「この操作で世代が変わらない」約束は、この戻り値を引いて比べる
+        /// 起きる** (``WatchSession/resumePendingAudition()``・その拍の保存の作り直しは次の拍に回るので、保存の操作は
+        /// その次の拍まで回す)。保存でも入る要求でもない拍で生きている世代が増えるので、「この操作で世代が変わらない」
+        /// 約束は、この戻り値を引いて比べる
         /// (引いてよいのは ``deferredSave`` で保留があり得る回だけ)。
         @discardableResult
         private func beat() async -> Set<Int> {
@@ -390,7 +413,8 @@ struct WatchSessionModelTests {
             unseen = []
             unseenAudition = []
             let started = auditionGens.subtracting(auditionsBefore)
-            // 試聴の子が起きれば、保留は済んだ (保存の拍で起きた子は、保留ではなく保存の結果)
+            // 試聴の子が起きれば、保留は済んだ (保存の拍で起きた子が保留していた版でも、保存の操作は作り直しに取りかかる
+            // 拍まで回すので、その保存の版は保留に回らないか、回れば ``deferredSave`` を立て直す)
             if !started.isEmpty { deferredSave = false }
             return started
         }
@@ -495,7 +519,12 @@ struct WatchSessionModelTests {
                 let productionBefore = productionAlive()
                 let auditioningBefore = auditioning
                 let deferredBefore = deferredSave
-                let started = await beat()
+                let rebuildsBefore = rebuilds
+                var started = await beat()
+                // **保留していた試聴の子を起こした拍は、作り直しに取りかからない** (``beat()``)。この保存は次の拍に
+                // 残るので、取りかかる拍まで回してから比べる。実際の見張りは拍を回し続けるので、残った保存は次の操作
+                // (入る・出る要求など) より先に取りかかる — 回さないと、次の操作の拍に保存の結果が混ざる (#3789)
+                if rebuilds == rebuildsBefore, !started.isEmpty, !stopped { started.formUnion(await beat()) }
                 if auditioningBefore, buildStatus == 0, !stopped { deferredSave = deferredSave || started.isEmpty }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
