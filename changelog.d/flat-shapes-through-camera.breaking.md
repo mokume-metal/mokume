@@ -26,3 +26,5 @@ text("score: 12", 20, 30)
 ```
 
 `screenX(x, y, z)`・`screenY(x, y, z)` で立体の画面の位置を求めて、そこへ字を置いている書き方も同じで、位置を求めた後・字を描く前に `camera()` (写し方を変えていれば `perspective()` も) を書きます。
+
+影 (`shadows(true)`) を使う作品では、HUD の前に視点を戻すと、影の位置がわずかに動くことがあります。影を焼く範囲の中心が、フレームの終わりの視点の注視点で決まるためです ([#3842](https://github.com/mokume-metal/mokume/issues/3842))。
