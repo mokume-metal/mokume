@@ -248,23 +248,26 @@ extension Canvas {
             strokeWeight: style.strokeWeight,
             strokeCap: style.strokeCap,
             strokeJoin: style.strokeJoin,
-            // 頂点段で広げる細い塗りは周を刻まない。貼る絵が無く輪郭も無ければ、刻み方の違う置き場所も
-            // 1 つの雛形に畳む (貼る絵の読み取り位置は周の囲みの箱から作るので、絵があれば刻み方も鍵に残す)
-            ringSegments: thinFillCapacity > 0 && !hasStroke && style.picture == nil ? 0 : ringSegments,
+            // 頂点段で広げる細い塗りは周を刻まない。塗りが読み取り位置を持たず輪郭も無ければ、刻み方の違う
+            // 置き場所も 1 つの雛形に畳む (読み取り位置は周の囲みの箱から作るので、貼る絵か利用者の断片が
+            // あれば刻み方も鍵に残す — 残さないと、白い絵を貼ったときと読み取り位置が食い違う・#3797)
+            ringSegments: thinFillCapacity > 0 && !hasStroke && !fillReadsUV ? 0 : ringSegments,
             discSegments: hasStroke && form.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                 ? discSplitMemo.count(forRadius: style.strokeWeight / 2, scale: scale) : 0,
             strokeLinear: thinStrokeLinear(form: form),
             fillLinear: fillLinear,
             thinFillCapacity: thinFillCapacity,
-            texture: style.hasFill ? style.picture?.held : nil)
+            texture: style.hasFill ? fillPicture()?.held : nil)
         guard key.hasFill || key.hasStroke else { return }
 
         // **貼る絵と輪郭が同居する図形は畳まない。** 塗りは絵の面を、輪郭は字形の面を
-        // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない
+        // 読むので、1 つの図形の途中で列が割れる (`useTexture`)。1 つの雛形に収まらない。
+        // 利用者の断片だけを当てた図形は、塗りも輪郭も白い 1×1 を読む (``useUnwrittenUVTexture()``・
+        // #3797) ので割れず、畳む
         //
         // 保持する形を記録している最中も畳まない (`recordingShape`)
         // **破線の輪郭は畳まない** ([#2835])。破線の片は置き場所ごとの輪郭から刻むので、雛形にならない
-        guard !(key.texture != nil && key.hasStroke), !recordingShape,
+        guard !(key.texture != nil && key.hasStroke && !shadesWithoutPicture), !recordingShape,
             !(hasStroke && style.strokeDash != nil)
         else {
             return draw(makeOutline(ringSegments).moved(by: anchor))
@@ -362,7 +365,7 @@ extension Canvas {
             texture.prepare()
             useTexture(texture)
         } else {
-            useGlyphTexture()
+            useUnwrittenUVTexture()
         }
 
         // **雛形の頂点は白で、変換を掛けずに積む。** 色も変換も置き場所が持つので、
@@ -510,7 +513,7 @@ extension Canvas {
             RingFillRange(
                 start..<vertices.count,
                 recipe: RingFillRecipe(
-                    outline: outline, color: fillVertexColor, hasPicture: style.picture != nil,
+                    outline: outline, color: fillVertexColor, hasPicture: fillReadsUV,
                     transform: transform, uv: whiteUV)))
     }
 
@@ -528,7 +531,7 @@ extension Canvas {
         guard points.count >= 3 else { return }
         let fillColor = fillVertexColor
         if let triangles = outline.fillTriangles {
-            let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
+            let uvOf = fillReadsUV ? Self.boxUV(of: points) : nil
             for (a, b, c) in triangles {
                 // `Optional.map` に閉包を渡さない — 三角形ごとに隔離の実行時検査を払う (#1779)
                 var uvs: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
@@ -547,7 +550,7 @@ extension Canvas {
         guard ring.count >= 2 else { return }
 
         // 箱は**周そのもの**から作る。扇の中心は周の内側にあるので、含めても広がらない
-        let uvOf = style.picture == nil ? nil : Self.boxUV(of: points)
+        let uvOf = fillReadsUV ? Self.boxUV(of: points) : nil
 
         func place(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ bSource: SIMD2<Float>,
             _ c: SIMD2<Float>, _ cSource: SIMD2<Float>)

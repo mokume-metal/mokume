@@ -715,7 +715,8 @@ extension Canvas {
     /// `uvs` は**塗りだけが渡す**読み取り位置。渡さなければ焼き場の白い区画を
     /// 読む — 白を掛けても色は変わらないので、**読み取り位置を持たない形の絵は
     /// 1 ビットも変わらない**。渡したときは貼る絵か 1×1 の白い絵を読む
-    /// (``useWrittenUVTexture()``)。輪郭・端点・角はここを渡さない側に居続ける。
+    /// (``useWrittenUVTexture()``)。輪郭・端点・角はここを渡さない側に居続ける
+    /// (利用者の断片だけを当てているときは、塗りと同じ白い 1×1 を読む — ``useUnwrittenUVTexture()``)。
     func appendTriangle(
         _ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>,
         colors: (LinearRGBA, LinearRGBA, LinearRGBA),
@@ -726,7 +727,7 @@ extension Canvas {
         // **図形は白い区画を読む。** 直前に画像を描いていたら、その面を読んだままに
         // なるので戻す (変わらなければ何も起きない)
         beginFlat()
-        if uvs != nil { useWrittenUVTexture() } else { useGlyphTexture() }
+        if uvs != nil { useWrittenUVTexture() } else { useUnwrittenUVTexture() }
         let uv = uvs ?? (whiteUV, whiteUV, whiteUV)
         vertices.append(ShapeVertex(position: a, uv: uv.0, color: colors.0))
         vertices.append(ShapeVertex(position: b, uv: uv.1, color: colors.1))

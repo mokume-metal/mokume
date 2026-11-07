@@ -693,7 +693,7 @@ extension Canvas {
     /// **貼る絵の読み取り位置は、元の周の囲みの箱から取り、箱の外へ広げた角は箱の縁へ寄せる**
     /// (``clampedUV(_:)``)。広げた帯にも絵の全体が載り、帯の中ほどの画素は元の帯と同じ所を読む。
     func fillThin(_ pieces: [ThinFillPiece], outline: Outline) {
-        let uvOf = style.picture == nil ? nil : Self.boxUV(of: outline.points)
+        let uvOf = fillReadsUV ? Self.boxUV(of: outline.points) : nil
         let fillColor = fillVertexColor
         let colors = (fillColor, fillColor, fillColor)
         for piece in pieces {
@@ -732,8 +732,9 @@ extension Canvas {
         }
         // appendTriangle と同じ手順で、読む面を決める
         beginFlat()
-        let hasPicture = style.picture != nil
-        if hasPicture { useWrittenUVTexture() } else { useGlyphTexture() }
+        // 利用者の断片だけを当てた塗りも読み取り位置を持つ (``fillReadsUV``・#3797)
+        let hasPicture = fillReadsUV
+        if hasPicture { useWrittenUVTexture() } else { useUnwrittenUVTexture() }
         let fillColor = fillVertexColor
         let uv = whiteUV
         vertices.reserveCapacity(vertices.count + capacity * 6)

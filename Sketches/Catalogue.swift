@@ -55,6 +55,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "noise-and-seed") { NoiseAndSeed() },
     ReferenceSketch(name: "surface-and-grain") { SurfaceAndGrain() },
     ReferenceSketch(name: "band-and-pattern") { BandAndPattern() },
+    ReferenceSketch(name: "pattern-and-shape") { PatternAndShape() },
     ReferenceSketch(name: "facing-and-view") { FacingAndView() },
     ReferenceSketch(name: "surfaces-and-blend") { SurfacesAndBlend() },
     ReferenceSketch(name: "field-and-flow") { FieldAndFlow() },

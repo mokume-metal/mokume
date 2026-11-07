@@ -30,7 +30,15 @@ struct ThinFillVertexStageTests {
         return try Canvas(output: output, gpu: gpu, pixelDensity: density, upscale: .spatial)
     }
 
-    private static let plain = "float4 paint(Fragment in, Values values) { return in.color; }"
+    /// 名指しの図形を距離関数の道から外し、三角形の道 (畳み・細い塗り) へ乗せる。**白から白への勾配で塗る** —
+    /// 色は `fill(255)` と同じ白のまま、勾配の断片が塗りを持つので距離関数の道に乗らない。
+    ///
+    /// 利用者の断片は乗り物にしない。利用者の断片を当てた塗りは読み取り位置を持ち (#3797)、周の刻み方が
+    /// 畳みの鍵に残るので、刻み方の違う置き場所を 1 つの雛形に畳むことを見る検査が成り立たない。
+    private static func leaveTheDistanceFieldPath(_ canvas: Canvas) {
+        let white = LinearRGBA.linear(red: 1, green: 1, blue: 1)
+        canvas.fill(.linearGradient((white, 0), (white, 1), from: [0, 0], to: [1, 0]))
+    }
 
     // MARK: - 畳まれる
 
@@ -38,13 +46,12 @@ struct ThinFillVertexStageTests {
     @Test("回転が全部違う細い楕円 (長い) は、1 つの雛形に畳まれる")
     func rotatedLongEllipsesFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         let count = 40
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             for index in 0..<count {
                 canvas.pushMatrix()
                 canvas.translate(64, 64)
@@ -67,13 +74,12 @@ struct ThinFillVertexStageTests {
     @Test("回転が全部違う細い rect は、1 つの雛形に畳まれる")
     func rotatedRectsFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 0.5)
-        let shader = try canvas.makeShader(Self.plain)
         let count = 40
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             for index in 0..<count {
                 canvas.pushMatrix()
                 canvas.translate(64, 64)
@@ -103,12 +109,11 @@ struct ThinFillVertexStageTests {
     @Test("片の数が下がる並びは、1 つの雛形に畳まれる")
     func descendingLengthsFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             // 長さ 60 から 0.3 まで、大きいほうから: 最初の雛形 1 つに全部受ける
             let outlines = canvas.outlinesAssembledThisFrame
             for (index, length) in [Float(60), 50, 40, 30, 20, 6, 5, 4, 0.4, 0.3].enumerated() {
@@ -126,12 +131,11 @@ struct ThinFillVertexStageTests {
     @Test("片の数が上がるときだけ雛形が開き直り、上がった後は交互に置いても割れない")
     func regionsSplitOnlyWhenRising() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             // 小さい片の数から 3 つずつ上がりながら: 上がるたびに 1 度開くだけ
             for (index, length) in [Float(0.4), 0.3, 0.2, 6, 5, 4, 50, 40, 30].enumerated() {
                 placeEllipse(canvas, length: length, at: index)
@@ -157,12 +161,11 @@ struct ThinFillVertexStageTests {
     func smallShapesTemplatesStayCompact() throws {
         for (length, pieces) in [(Float(0.4), 1...1), (6, 6...7), (14, 14...15), (39.5, 39...40), (63.5, 63...64)] {
             let canvas = try Self.makeCanvas(density: 1)
-            let shader = try canvas.makeShader(Self.plain)
             try canvas.draw {
                 canvas.background(0)
                 canvas.noStroke()
                 canvas.fill(255)
-                canvas.shader(shader)
+                Self.leaveTheDistanceFieldPath(canvas)
                 let before = canvas.vertices.count
                 // 片の数が上がるたびに雛形が開き直るので、開いた雛形の片の数を控える
                 var opened: [Int] = []
@@ -187,12 +190,11 @@ struct ThinFillVertexStageTests {
     @Test("向きと寸法が同じ置き場所は、細い塗りの記述を求め直さない")
     func sameOrientationReusesTheRecord() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             let before = canvas.thinFillRecordsBuilt
             for index in 0..<30 {
                 canvas.pushMatrix()
@@ -221,12 +223,11 @@ struct ThinFillVertexStageTests {
     @Test("置き場所の記述は、先頭と数で引ける並びで足される")
     func spansIndexTheirRecords() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             for index in 0..<5 { placeEllipse(canvas, length: 40, at: index) }
             #expect(canvas.thinFillSpans.count == 5)
             #expect(canvas.thinFillRecords.count == 5)
@@ -244,7 +245,6 @@ struct ThinFillVertexStageTests {
     ) throws -> PixelBuffer {
         let canvas = try Self.makeCanvas(density: density)
         canvas.expandsThinFillsInVertexStage = expands
-        let shader = try canvas.makeShader(Self.plain)
         var image: Image?
         if texture {
             let made = try canvas.createImage(8, 8)
@@ -264,7 +264,7 @@ struct ThinFillVertexStageTests {
             if let image {
                 canvas.texture(image)
             } else {
-                canvas.shader(shader)
+                Self.leaveTheDistanceFieldPath(canvas)
             }
             scene(canvas)
         }
@@ -569,13 +569,12 @@ struct ThinFillVertexStageTests {
     @Test("回転が全部違う細い角丸 rect は、1 つの雛形に畳まれる")
     func rotatedRoundedRectsFoldIntoOneTemplate() throws {
         let canvas = try Self.makeCanvas(density: 0.5)
-        let shader = try canvas.makeShader(Self.plain)
         let count = 10_000
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             for index in 0..<count {
                 canvas.pushMatrix()
                 canvas.translate(64, 64)
@@ -702,12 +701,11 @@ struct ThinFillVertexStageTests {
     @Test("角丸 rect は、半径の違う置き場所が別の雛形になり、角丸でない rect とも混ざらない")
     func roundedRectsKeepTheirOwnTemplates() throws {
         let canvas = try Self.makeCanvas(density: 1)
-        let shader = try canvas.makeShader(Self.plain)
         try canvas.draw {
             canvas.background(0)
             canvas.noStroke()
             canvas.fill(255)
-            canvas.shader(shader)
+            Self.leaveTheDistanceFieldPath(canvas)
             var keys: [Canvas.FlatKey] = []
             for radius in [Float(0.2), 0.3, 0] {
                 // 1 つ目は畳む相手を待って置き、2 つ目から雛形を開く
