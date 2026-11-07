@@ -79,7 +79,9 @@ let package = Package(
             ],
             swiftSettings: .mokume),
         // 層: コア依存 — 描画コアの上に載り、外とやりとりする領域 (ADR-0042 決定 3)。
-        // MokumeCore の public だけで書く。利用者が選んで import する product にはせず、
+        // MokumeCore の public に加えて package の道も使う。package の道は外のパッケージに届かないので、
+        // 使う道の名指しと外へ開く引き金は ADR-0042 決定 3 の改訂 (2026-11-07) に置く (#3803)。
+        // 利用者が選んで import する product にはせず、
         // アンブレラが再エクスポートする。MokumeCamera は外から来る映像 (カメラと動画ファイル) を
         // 持つ — 動画は 1 枚を絵にする変換 (FrameConverter) をカメラと共有するので、同じ所に置く (#1960)
         .target(
