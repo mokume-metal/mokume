@@ -28,7 +28,7 @@ import simd
 /// | 線の半画素の寄せ | ``Outline/thickLine``・``Outline/thickQuad`` | 形 |
 /// | 線・輪郭・点の太さ (距離関数の経路・#1488) | ``Amount/line``・``Amount/rectOutline``・``Amount/point`` | 量 |
 /// | 細い塗り (距離関数の経路・#1477) | ``Amount/thinFill`` | 量 |
-/// | 回した細い線・塗り・点 (距離関数の経路・#2226) | ``Amount/diagonalLine`` ほか、`diagonal` の行すべて | 量 (±5%) |
+/// | 回した細い線・塗り・点 (距離関数の経路・#2226) | ``Amount/diagonalLine`` ほか、`diagonal` の行すべて | 量 |
 /// | 斜めの縁・細い形の分岐の境目 (距離関数の経路・#2991) | `ExactEdgeCoverageTests` (回した輪郭・線を 16 通りの置き方で面積の 1 ± 0.03・境目の両側の差 0.01 以下) | 量 |
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
@@ -46,8 +46,8 @@ import simd
 /// ## 2 つの比べ方
 ///
 /// - **量** (太さ・面積の口): 描く面 (`Canvas.target`) の線形の値を足す。線は、線を横切る列の
-///   和が「太さ × 細かさ」の ±10%、点と軸に沿わない塗りは全体の和が「面積 × 細かさの 2 乗」の
-///   ±10% (回した ``Amount/diagonalLine`` ほかは ±5%・楕円は ±6%)。太さ・細かさ・置く位置・
+///   和が「太さ × 細かさ」の ±25%、点と軸に沿わない塗りは全体の和が「面積 × 細かさの 2 乗」の
+///   ±25% (口によらない。目に見える明滅だけを捕まえ、性能を優先する — #3859)。太さ・細かさ・置く位置・
 ///   角度・縦横の倍率は **seed つきで生成し**、赤なら縮めた置き方を名乗る (#3216・``axes``)。
 ///   直した Bug の置き方は固定の例 (``FixedPose``) に名指しで残す (細かさ 1 の 1 画素より細い
 ///   線も、同じ式で見る — `strokeWeight` の説明は経路も細かさも限らない)
@@ -205,6 +205,9 @@ struct DensityInvarianceTests {
         ///
         /// 発見の記録は seed 0x616304c188a0c9b6・0x38b3332de597de2f (``DensityInvarianceTests/amountKeepsItsWeight(_:)``)。
         ///
+        /// 許容を口によらず ±25% にした後 (#3859) は、短い形の広げ幅 (生成する長さ 10 以上で最大 0.12) は
+        /// ±25% の内に収まって効かない。±25% を越えて効くのは、幅の形の広げ幅 (最大 0.35) だけである。
+        ///
         /// **測り直し** (一時の検査・`dx` と細かさを連続に振った。数字の追記は #3242 の
         /// [issuecomment-6433901302](https://github.com/mokume-metal/mokume/issues/3242#issuecomment-6433901302))。
         /// 楕円の 2 口を、次の 4 つの格子で測った。
@@ -280,22 +283,15 @@ struct DensityInvarianceTests {
             }
         }
 
-        /// 光の量が理想の量から外れてよい割合。
+        /// 光の量が理想の量から外れてよい割合。口によらず ±25% ([#3859])。
         ///
-        /// 45° に回した細い形 (#2226) は、回さない形より狭い ±5% で見る。画素の格子と形の向きが
-        /// 揃わないので、画素ごとの重なりを画素の軸に沿った正方形で数えないと、置く位置で
-        /// 0.7〜1.4 倍に振れる。
-        var tolerance: Double {
-            switch self {
-            case .diagonalLine, .diagonalFill, .diagonalPoint:
-                0.05
-            // 楕円の塗りは「画素の中のいちばん広い所を取る」近似で、軸に沿った同じ楕円でも多めに出る
-            // (長さ 20 で +4.7%・長さ 40 で +2.7%)。回した楕円はそれと同程度に収める
-            case .diagonalEllipseAcross, .diagonalEllipseAlong:
-                0.06
-            default: 0.1
-            }
-        }
+        /// 見ているのは、細い形を動かしたときに目に見えて明滅するかである。#2172 の 45° の細い線
+        /// (置く位置で ×0.71〜×1.41) は越えて赤になる。それより小さい外れは、性能を優先して直さない
+        /// (メンテナの決定・ADR-0039 決定 6)。以前は口ごとに ±5%・±6%・±10% で見ており、限られた
+        /// 条件が重なったときだけの +11〜18% を 1 件ずつ直していた (#3745・#3748・#3763・#3788)。
+        ///
+        /// [#3859]: https://github.com/mokume-metal/mokume/issues/3859
+        var tolerance: Double { 0.25 }
 
         /// 固定の例 (``FixedPose``) で置く位置のずらし (描く画素ではなく、出す画素で見た y の向き)。
         /// 生成する検査は ``Pose/offset`` を連続の範囲から作る。
@@ -691,6 +687,21 @@ struct DensityInvarianceTests {
         return .pass
     }
 
+    /// 判定の許容は ±25% で、#2172 の 45° の細い線の外れ (置く位置で ×0.71〜×1.41。動かすと目に見えて
+    /// 明滅する) は赤に、±20% の外れは緑にする (#3859)。GPU を使わず、判定の関数だけを見る。
+    /// 楕円の口も、#3242 の広げ幅が掛からない置き方 (描く画素での太さ 0.5・長さ 40) では同じ許容で見る。
+    @Test("光の量の判定は ±25% で、#2172 の 45° の外れ (×0.71・×1.41) を赤にし、±20% は通す (#3859)")
+    func judgeCatchesTheVisibleFlickerOf2172() {
+        let pose = Pose(weight: 0.5, density: 1, offset: .zero, angle: .pi / 4, squash: 1)
+        let cases: [(ratio: Double, passes: Bool)] = [(1.41, false), (0.71, false), (1.2, true), (0.8, true)]
+        for mouth in [Amount.diagonalShaderLine, .diagonalLine, .diagonalEllipseAcross] {
+            for (ratio, passes) in cases {
+                let outcome = Self.judge(mouth, pose, measured: 10 * ratio, expected: 10)
+                #expect((outcome == .pass) == passes, "\(mouth.rawValue): 期待の ×\(ratio) → \(outcome)")
+            }
+        }
+    }
+
     /// 量の口を置き方 `pose` で描いて約束と比べる。生成する検査も固定の例も、ここを通る。
     @MainActor
     static func measure(_ mouth: Amount, _ pose: Pose) throws -> Probe.Outcome {
@@ -754,9 +765,9 @@ struct DensityInvarianceTests {
     ///
     /// 置き方は seed つきで生成する (#3216)。赤なら、縮めた置き方と seed を `[density seed=…]` で名乗る。
     /// 同じ赤は `MOKUME_PROBE_SEED=<その seed>` と `--filter` で、その 1 件だけを走らせて再現する。
-    /// **許容の幅は緩めない** — 生成した置き方で越えたら Bug として起票する。#3242 の限界と同じ根で
-    /// 記録の範囲だけが狭かったときは、測り直して ``Amount/overshootAllowance(_:)`` の範囲を改訂し、
-    /// 根拠を `///` に足す。±6% の許容の幅は動かさない。
+    /// **±25% (``Amount/tolerance``) を越えたら Bug として起票する。それより小さい外れは追わない**
+    /// (#3859)。#3242 の限界と同じ根で記録の範囲だけが狭かったときは、測り直して
+    /// ``Amount/overshootAllowance(_:)`` の範囲を改訂し、根拠を `///` に足す。
     @Test(
         "太さ・面積の口は、細かさ・置く位置・角度・倍率によらず描く画素での太さ (面積) ぶんの濃さで出る",
         arguments: Amount.allCases)
