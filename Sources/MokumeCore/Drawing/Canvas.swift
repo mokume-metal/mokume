@@ -3684,10 +3684,29 @@ public final class Canvas {
     /// 忘れとして捨てるか、フレームの頭の検めがそれまでの記録を「フレームの外で置いたもの」として捨て、
     /// 形が空になっていた。組み立ての前に開いたフレームが続いているなら、上のとおりその続きとして走る。
     ///
+    /// ## スケッチの中では、素の呼び出しもこの面へ向く
+    ///
+    /// **スケッチの実行中 (`setup()`・`draw()`・入力のコールバックの中) に本体以外の面で呼ぶと、`body` の間だけ
+    /// スケッチの口 (素の `circle(…)` など) をこの面へ向ける** ([#3866])。``SketchPart/draw(into:_:)`` と同じ
+    /// 手順で、揺らぎの種・時刻・粒の刻みもスケッチのものを借り、抜けると 1 つ前の向き先へ戻る。だから
+    /// `pad.draw { circle(…) }` と `draw(into: pad) { circle(…) }` は同じ絵になり、`pad.circle(…)` と書いても
+    /// 同じ `pad` へ行く。違いは描き切りの失敗で、こちらは ``RenderFailure`` を投げ、`draw(into:)` は警告する。
+    ///
+    /// 本体の面 (``SketchPart/canvas``) とスケッチの外 (面を直に回すテストや道具) では向き先を立てない。
+    /// 本体の面ではフレームを開き直す。閉包の中から本体へ描くには、閉包の外へ出して書く。
+    ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
+    /// [#3866]: https://github.com/mokume-metal/mokume/issues/3866
     public func draw(_ body: () -> Void) throws(RenderFailure) {
+        guard let runtime = runningSketch, runtime.canvas !== self else { return try openFrame(body) }
+        try runtime.directing(to: self) { () throws(RenderFailure) in try openFrame(body) }
+    }
+
+    /// 1 フレーム分を描く本体。**スケッチの口の向き先は変えない** — ランタイムが本体のフレームを開く所と、
+    /// 作業の面へ明示の呼び出しだけで描く内部の道 (``Image/filtered(_:)``) はここを呼ぶ。規則は ``draw(_:)`` の説明。
+    func openFrame(_ body: () -> Void) throws(RenderFailure) {
         if startsFrameInsideShape {
             warnInsideShape(.frameStart)
             body()
