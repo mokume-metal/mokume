@@ -248,13 +248,18 @@ struct WatchSessionModelTests {
 
     /// 保留していた試聴の子を起こした拍に重なった保存 (#3789)。**生成する検査の seed に頼らず、決定的に回す。** その拍は
     /// 作り直しに取りかからず、保存は次の拍に残る。残った保存の結果 (試聴の子の差し替え) を、次の操作 (入る・出る要求)
-    /// の結果と取り違えない。保留していた子を起こせない・残った保存の作り直しが通らない形も見る。
+    /// の結果と取り違えない。保留していた版を起こせない・残った保存の版を起こせない・残った保存の作り直しが通らない形も見る。
     @Test(
         "保留していた試聴の子を起こした拍に重なった保存は、次の要求の結果と取り違えない (#3789)",
         arguments: [
             [Op.save, .audition, .save, .promoteWaiting, .save, .audition],
             [.save, .audition, .save, .promoteWaiting, .save, .leave],
+            // 保留していた版 (s2) を起こせない。その拍は作り直しに取りかからず、試聴の子も起きない
+            [.save, .audition, .saveLaunchFail, .promoteWaiting, .save, .leave],
+            [.save, .audition, .saveLaunchFail, .promoteWaiting, .save, .audition],
+            // 残った保存の版 (s3) を起こせない
             [.save, .audition, .save, .promoteWaiting, .saveLaunchFail, .audition],
+            [.save, .audition, .save, .promoteWaiting, .saveLaunchFail, .leave],
             [.save, .audition, .save, .promoteWaiting, .saveBuildFail, .audition],
             // 縮める前の列
             [.promoteStale, .save, .save, .audition, .saveLaunchFail, .promoteWaiting, .save, .audition, .stop],
@@ -311,6 +316,9 @@ struct WatchSessionModelTests {
         private var launches = 0
         /// 見張りが作り直しに取りかかった回数 (作り直しの口が呼ばれた回数)。
         private var rebuilds = 0
+        /// 起こせない版 (`save(launchFail)` の保存の世代)。**起こせないのは版の性質で、起こす拍の性質ではない** —
+        /// 保留していた版を後の拍で起こすときも、その版を作った保存で決まる (#3789)。
+        private var refusedStamps: Set<String> = []
         private var stopped = false
         private var history: [String] = []
 
@@ -322,15 +330,15 @@ struct WatchSessionModelTests {
                 directory: directory, context: testContext(),
                 hooks: WatchSession.Hooks(
                     rebuild: { directory in
-                        box.driver?.rebuilds += 1
+                        box.driver?.noteRebuild()
                         let status = box.driver?.buildStatus ?? 0
                         return RunCommand.Rebuilt(
                             status: status, output: "", executable: status == 0 ? URL(fileURLWithPath: "/bin/sh") : nil,
                             binPath: directory, product: "sketch")
                     },
-                    launch: { executable, _, _, _ throws(CommandFailure) in
+                    launch: { executable, _, stamp, _ throws(CommandFailure) in
                         guard let driver = box.driver else { throw .cannotLaunch(tool: "sh", place: "", reason: "no driver") }
-                        return try driver.launch(executable)
+                        return try driver.launch(executable, stamp: stamp)
                     },
                     now: { 0 },
                     stamp: { _ in box.driver?.stamp }),
@@ -353,9 +361,15 @@ struct WatchSessionModelTests {
 
         private var stamp: String? { stampCount == 0 ? nil : "s\(stampCount)" }
 
-        private func launch(_ executable: URL) throws(CommandFailure) -> Process {
+        /// 作り直しの口が呼ばれた。見張りは世代を取ってから作り直すので、作っているのはいまの世代の版である。
+        private func noteRebuild() {
+            rebuilds += 1
+            if launchFails, let stamp { refusedStamps.insert(stamp) }
+        }
+
+        private func launch(_ executable: URL, stamp: String?) throws(CommandFailure) -> Process {
             launches += 1
-            if launchFails { throw .cannotLaunch(tool: "sh", place: "", reason: "the model refuses to start a child") }
+            if let stamp, refusedStamps.contains(stamp) { throw .cannotLaunch(tool: "sh", place: "", reason: "the model refuses to start a child") }
             let process = Process()
             process.executableURL = executable
             // 1 行読んだら終わる子。`fail` を読むと終了コード 3 で終わる (最初の絵の前の失敗)
@@ -413,8 +427,8 @@ struct WatchSessionModelTests {
             unseen = []
             unseenAudition = []
             let started = auditionGens.subtracting(auditionsBefore)
-            // 試聴の子が起きれば、保留は済んだ (保存の拍で起きた子が保留していた版でも、保存の操作は作り直しに取りかかる
-            // 拍まで回すので、その保存の版は保留に回らないか、回れば ``deferredSave`` を立て直す)
+            // 試聴の子が起きれば、保留は済んだ。保存の操作は、この後で作り直しに取りかかった拍の結果から ``deferredSave``
+            // を決め直す (その保存の版が保留に回ったか)
             if !started.isEmpty { deferredSave = false }
             return started
         }
@@ -521,11 +535,19 @@ struct WatchSessionModelTests {
                 let deferredBefore = deferredSave
                 let rebuildsBefore = rebuilds
                 var started = await beat()
-                // **保留していた試聴の子を起こした拍は、作り直しに取りかからない** (``beat()``)。この保存は次の拍に
-                // 残るので、取りかかる拍まで回してから比べる。実際の見張りは拍を回し続けるので、残った保存は次の操作
-                // (入る・出る要求など) より先に取りかかる — 回さないと、次の操作の拍に保存の結果が混ざる (#3789)
-                if rebuilds == rebuildsBefore, !started.isEmpty, !stopped { started.formUnion(await beat()) }
-                if auditioningBefore, buildStatus == 0, !stopped { deferredSave = deferredSave || started.isEmpty }
+                var startedByRebuild = started
+                // **保留していた試聴の子を起こしに行った拍は、作り直しに取りかからない** (``beat()``。起こせなかった回も
+                // 同じ)。この保存は次の拍に残るので、取りかかる拍まで回してから比べる。模型の保存の操作は「保存を置き、
+                // 見張りが作り直しに取りかかる」までを 1 つとし、残った保存を次の操作の拍へ持ち越さない — 1 拍の中では
+                // 要求 (``WatchSession/answerRequests()``) が作り直し (``WatchSession/tick()``) より先に効くので、持ち越すと
+                // 次の操作 (入る・出る要求) の結果に保存の結果が混ざる (#3789)。保存を見る前の要求が同じ拍に入る重なりは、
+                // 模型はまだ生成しない (#3794)。模型では保存のたびに世代が変わるので、取りかからない拍は 1 つまで
+                if rebuilds == rebuildsBefore, !stopped {
+                    startedByRebuild = await beat()
+                    started.formUnion(startedByRebuild)
+                }
+                // 作り直しが通った試聴中の保存は、取りかかった拍で試聴の子が起きなければ保留に回りうる
+                if auditioningBefore, buildStatus == 0, !stopped { deferredSave = startedByRebuild.isEmpty }
                 // 7. 試聴中の保存は、本番の側を動かさない (本番の子は入れ替わらず、生きている本番は落ちない)
                 if auditioningBefore, unseenBefore.isEmpty {
                     let childAfter = session.child.flatMap { child in gens.firstIndex { $0 === child } }
