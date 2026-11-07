@@ -346,10 +346,11 @@ extension Canvas {
                     source: .flat, start: start, count: count, indexStart: 0, indexCount: 0),
                 clip: style.clip,
                 clipShape: style.clipShape,
-                // ここへ来るのは平面だけ (上の `switch` が他を返している)。**平面は
-                // 奥行きを持たないので視点行列を通さず、光も受けない** — 立体の側は
-                // `closeSolidBatch` が視点行列と閉じた時点の光を持って閉じる
-                matrix: projection,
+                // ここへ来るのは平面だけ (上の `switch` が他を返している)。**列を開いたときの行列を持つ** —
+                // 素の場合は面の座標へ落とす行列、視点を決めた・奥行きのある変換の下では視点の行列を通す
+                // (``enterFlatView(_:)``・#3830)。平面は光を受けない — 立体の側は `closeSolidBatch` が
+                // 視点行列と閉じた時点の光を持って閉じる
+                matrix: openFlatClip ?? projection,
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
@@ -637,10 +638,14 @@ extension Canvas {
     /// ([ADR-0021] 決定 2)。
     ///
     /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
-    func beginFlat() {
+    ///
+    /// - Parameter view: 置き方。省くといまの変換と視点の置き方 (``currentFlatView``)。保持した形は、置き場所の
+    ///   変換と合わせた置き方を渡す。**列の行列が変わるなら閉じる** (``enterFlatView(_:)``・#3830)。
+    func beginFlat(view: FlatView? = nil) {
         // 先送りした四角だけの列へ、ほかの平面の頂点を足さない (#2446)。要る段の画素へ置き直すとき、列ごと
         // 読む面を差し替えるので、紛れ込んだ頂点の読む位置が合わなくなる
         if deferredRunOpen && !isPlacingDeferredGlyph { closeBatch() }
+        enterFlatView((view ?? currentFlatView).clip)
         notePaintPlacement()
         // **平面の頂点はどれもここを通る。** 畳めない頂点が開いている雛形へ紛れ込むのを
         // 止める場所を、1 つに保つ

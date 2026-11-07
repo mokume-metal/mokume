@@ -584,7 +584,7 @@ extension Canvas {
                 given == nil || !outline.placesDiscs(cap: style.strokeCap, join: style.strokeJoin),
                 "the key said this outline places no discs, but it does")
             discSegments = discSplitMemo.count(
-                forRadius: half, scale: Self.splitScale(of: transform.matrix))
+                forRadius: half, scale: Self.splitScale(of: flatTransform.matrix))
         }
         // 型板に載せる線は、片を引かずに重ねて積む。重なりは型板が落とす (``stencilsFlatStroke``)。
         // **1 つの領域として引ける輪郭は、引き算のまま型板に載せない** — 引き算で既に 1 回になる。
@@ -627,7 +627,7 @@ extension Canvas {
                 !overlaps && style.blendMode != .replace && points.count > 1 && outline.strokesAsOneRegion
                 ? CarvedStroke(
                     recipe: carveRecipe(
-                        outline, half: half, thin: nil, transform: transform, color: style.stroke,
+                        outline, half: half, thin: nil, transform: flatTransform, color: style.stroke,
                         uv: whiteUV, discSegments: discSegments))
                 : nil
             // 描く画素での細さと、置いた後の大きさでの刻みは、置くときに決める。組み直す素材を
@@ -635,7 +635,7 @@ extension Canvas {
             // — 刻み直すときも、記録のときの積み方に合わせる (``ThinStrokeRecipe/recordedCarved``)
             let thin = ThinStrokeRecipe(
                 outline: outline, weight: style.strokeWeight, cap: style.strokeCap,
-                join: style.strokeJoin, color: style.stroke, transform: transform, uv: whiteUV,
+                join: style.strokeJoin, color: style.stroke, transform: flatTransform, uv: whiteUV,
                 discSegments: outline.placesDiscs(cap: style.strokeCap, join: style.strokeJoin)
                     ? discSegments : 0,
                 recordedCarved: overlaps && !stacks, carvesWhenTinted: carved != nil)
@@ -996,7 +996,7 @@ extension Canvas {
     ///
     /// [ADR-0039]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0039-pixel-grid-and-edge-antialiasing.md
     func strokePoint(x: Float, y: Float) -> SIMD2<Float> {
-        let placed = transform.placed(x: x, y: y)
+        let placed = flatTransform.placed(x: x, y: y)
         return buildingFlatTemplate || recordingShape ? placed : placed + 0.5
     }
 

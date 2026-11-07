@@ -70,7 +70,9 @@ extension Canvas {
     /// 足す (``OpenForm/hasThinFill``)。
     ///
     /// [#771]: https://github.com/mokume-metal/mokume/issues/771
-    func beginForm(flags: UInt32, thinFill: Bool, obliqueEdge: Bool) {
+    func beginForm(flags: UInt32, thinFill: Bool, obliqueEdge: Bool, view: FlatView? = nil) {
+        // 列の行列が変わるなら閉じる (#3830)。保持した形は置き場所の変換と合わせた置き方を渡す
+        enterFlatView((view ?? currentFlatView).clip)
         if openSource != .form {
             closeBatch()
             openSource = .form
@@ -113,7 +115,8 @@ extension Canvas {
                     indexStart: 0, indexCount: 0),
                 clip: style.clip,
                 clipShape: style.clipShape,
-                matrix: projection,
+                // 列を開いたときの行列 (素の場合は面の座標へ落とす行列・``enterFlatView(_:)``・#3830)
+                matrix: openFlatClip ?? projection,
                 lightRange: 0..<0,
                 material: .default,
                 viewer: SIMD4(0, 0, -1, 0),
@@ -156,14 +159,14 @@ extension Canvas {
         guard drawsFill || drawsStroke else { return }
 
         // いまの変換の 2x2 に、形自身の横軸の向きを掛ける (線以外は単位)
-        let columns = transform.matrix.columns
+        let columns = flatTransform.matrix.columns
         let c0 = SIMD2(columns.0.x, columns.0.y)
         let c1 = SIMD2(columns.1.x, columns.1.y)
         let x = c0 * axis.x + c1 * axis.y
         let y = c0 * (-axis.y) + c1 * axis.x
         let instance = FormInstance(
             kind: kind, linear: SIMD4(x.x, x.y, y.x, y.y),
-            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
+            offset: flatTransform.placed(x: center.x, y: center.y), half: half, arc: arc,
             arcClosure: arcClosure, halfWeight: style.strokeWeight / 2, cornerRadius: cornerRadius,
             fill: style.fill.components, stroke: style.stroke.components,
             fills: drawsFill, strokes: drawsStroke,
@@ -198,10 +201,10 @@ extension Canvas {
         arcClosure: FormInstance.ArcClosure
     ) {
         guard recordingShape else { return }
-        let columns = transform.matrix.columns
+        let columns = flatTransform.matrix.columns
         let instance = FormInstance(
             kind: kind, linear: SIMD4(columns.0.x, columns.0.y, columns.1.x, columns.1.y),
-            offset: transform.placed(x: center.x, y: center.y), half: half, arc: arc,
+            offset: flatTransform.placed(x: center.x, y: center.y), half: half, arc: arc,
             arcClosure: arcClosure, halfWeight: 0, fill: .zero, stroke: .zero, fills: false,
             strokes: false, cap: style.strokeCap, join: style.strokeJoin)
         guard instance.isPlaceable, half.x.isFinite, half.y.isFinite, arc.x.isFinite, arc.y.isFinite
@@ -214,13 +217,13 @@ extension Canvas {
     func formIsPlaceable(
         center: SIMD2<Float>, half: SIMD2<Float>, axis: SIMD2<Float> = SIMD2(1, 0), arc: SIMD2<Float> = .zero
     ) -> Bool {
-        let columns = transform.matrix.columns
+        let columns = flatTransform.matrix.columns
         let c0 = SIMD2(columns.0.x, columns.0.y)
         let c1 = SIMD2(columns.1.x, columns.1.y)
         let x = c0 * axis.x + c1 * axis.y
         let y = c0 * (-axis.y) + c1 * axis.x
         return FormInstance.isPlaceable(
-            linear: SIMD4(x.x, x.y, y.x, y.y), offset: transform.placed(x: center.x, y: center.y))
+            linear: SIMD4(x.x, x.y, y.x, y.y), offset: flatTransform.placed(x: center.x, y: center.y))
             && half.x.isFinite && half.y.isFinite && style.strokeWeight.isFinite && arc.x.isFinite
             && arc.y.isFinite
     }

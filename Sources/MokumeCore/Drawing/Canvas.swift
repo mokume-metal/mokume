@@ -177,7 +177,9 @@ public final class Canvas {
     /// 頂点へ焼いて積む (``SolidInstance/placing(_:)``)。
     ///
     /// [#1297]: https://github.com/mokume-metal/mokume/issues/1297
-    var recordingShape = false
+    var recordingShape = false {
+        didSet { flatViewMemo = nil }
+    }
 
     /// 道 (``Path``) を記録している間の控え。``createPath(_:)`` の入口で立て、出口で下ろす。
     /// 立っている間は、閉じた形の周と穴を三角形に割らずにここへ控え、書けない口 (基本図形・字・画像・立体など)
@@ -1355,7 +1357,20 @@ public final class Canvas {
     ///
     /// `nil` の間は面に合わせた既定を使う。既定を実体で持たないのは、面の大きさが
     /// 変わったときに古い既定が残らないようにするため。
-    var cameraStorage: Camera?
+    var cameraStorage: Camera? {
+        didSet {
+            cameraPlainMemo = nil
+            flatViewMemo = nil
+        }
+    }
+
+    /// ``cameraIsPlain`` の控え。視点を書き換えると外す。
+    var cameraPlainMemo: Bool?
+    /// ``currentFlatView`` の控え。変換・視点・形の組み立ての旗が変わると外す (#3830)。
+    var flatViewMemo: FlatView?
+    /// 開いている (これから開く) 平面の列の行列。`nil` は素の場合 (``projection``)。``enterFlatView(_:)`` が書き、
+    /// 平面の列と基本図形の列が閉じるときに持っていく (#3830)。
+    var openFlatClip: simd_float4x4?
 
     /// このフレームの終わりに、目印の格子と軸を描くか (``drawDebugGuides()``)。**フレームを越えない**
     /// ([ADR-0021] 決定 4)。書くのは `debugMode()` / `noDebugMode()` で、頭と終わりで下ろす。
@@ -1778,7 +1793,9 @@ public final class Canvas {
     ///
     /// 丸ごと戻すときは ``currentStyle`` を通す — 列を閉じる条件はそこにある。
     var style = Style()
-    var transform = Transform.identity
+    var transform = Transform.identity {
+        didSet { flatViewMemo = nil }
+    }
     private var transformStack: [(Transform, StackSite)] = []
     private var styleStack: [(Style, StackSite)] = []
 

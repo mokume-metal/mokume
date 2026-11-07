@@ -17,17 +17,21 @@ extension Canvas {
 
     // MARK: - 空間 → 画面
 
-    /// 点が、いまの変換でどこへ移るか (横)。
+    /// 平面の点が、いまの変換といまの視点でどこへ移るか (横)。
+    ///
+    /// **平面の図形が描かれる位置と同じ式を通す** ([#3830])。素の場合 (既定の視点で、変換が平面を奥行き 0 の面に
+    /// 保つ) は変換の x・y そのもので、いままでと 1 ビットも変わらない。視点を決めた・奥行きのある変換の下では、
+    /// 奥行き 0 の点として視点を通した位置 (``screenX(_:_:_:)`` の z = 0) を返す。
+    ///
+    /// [#3830]: https://github.com/mokume-metal/mokume/issues/3830
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        noteTransformRead()
-        return transform.placed(x: x, y: y).x
+        return flatScreenPosition(x, y).x
     }
 
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        noteTransformRead()
-        return transform.placed(x: x, y: y).y
+        return flatScreenPosition(x, y).y
     }
 
     // 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
@@ -67,6 +71,14 @@ extension Canvas {
     }
 
     // MARK: - 中身
+
+    /// 平面の点 (x, y) の画面の位置。素の場合は変換の x・y、そうでなければ奥行き 0 の点として視点を通す。
+    private func flatScreenPosition(_ x: Float, _ y: Float) -> SIMD2<Float> {
+        noteTransformRead()
+        guard currentFlatView.clip != nil else { return transform.placed(x: x, y: y) }
+        let screen = screenPosition(x, y, 0)
+        return SIMD2(screen.x, screen.y)
+    }
 
     /// いまの変換といまの視点を通した、面の上の位置 (x, y) と奥行きの面の値 (z)。
     ///

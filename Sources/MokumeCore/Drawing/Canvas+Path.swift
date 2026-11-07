@@ -82,7 +82,7 @@ extension Canvas {
             case .retainedShape: self = .retainedShape
             case .solid: self = .solid
             case .pixels, .filter, .particles, .shader, .texture, .gradient, .blendMode, .clip, .effects,
-                .vertexColours, .tooLarge:
+                .vertexColours, .tooLarge, .throughView:
                 return nil
             }
         }

@@ -699,10 +699,10 @@ extension Canvas {
         for piece in pieces {
             let start = vertices.count
             let (a, b, c, d) = piece.corners
-            let placedA = transform.placed(x: a.x, y: a.y)
-            let placedB = transform.placed(x: b.x, y: b.y)
-            let placedC = transform.placed(x: c.x, y: c.y)
-            let placedD = transform.placed(x: d.x, y: d.y)
+            let placedA = flatTransform.placed(x: a.x, y: a.y)
+            let placedB = flatTransform.placed(x: b.x, y: b.y)
+            let placedC = flatTransform.placed(x: c.x, y: c.y)
+            let placedD = flatTransform.placed(x: d.x, y: d.y)
             var first: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             var second: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
             if let uvOf {
@@ -767,7 +767,7 @@ extension Canvas {
     /// 画素を比べるために残した形 (``expandsThinFillsInVertexStage`` が偽のとき)。
     func thinFillLinear(_ form: FlatForm) -> ThinFold? {
         guard style.hasFill, let named = form.namedFill else { return nil }
-        let matrix = transform.matrix
+        let matrix = flatTransform.matrix
         guard Self.isThinFill(named, by: drawnLinear(matrix)) else { return nil }
         let linear = SIMD4(
             matrix.columns.0.x, matrix.columns.0.y, matrix.columns.1.x, matrix.columns.1.y)

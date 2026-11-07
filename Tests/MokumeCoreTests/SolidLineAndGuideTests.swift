@@ -93,15 +93,16 @@ struct SolidLineAndGuideTests {
         #expect(mixed == floats)
     }
 
-    /// 4 つの数の `line` と 2 つの数の `point` は平面の図形のままで、視点を通らない (完了条件 3)。
-    /// 見下ろしても、視点を当てない絵と同じになる。
-    @Test("4 つの数の line・2 つの数の point は、視点を動かしても絵が変わらない")
-    func flatLineAndPointIgnoreTheCamera() throws {
-        func flat(lookingDown: Bool) throws -> DisplayImage {
+    /// 4 つの数の `line` と 2 つの数の `point` は平面の図形で、平面の図形も視点を通る (#3830)。見下ろすと絵が変わり、
+    /// `camera()` で戻すと視点を当てない絵と同じになる。変更前は、見下ろしても絵が変わらなかった。
+    @Test("4 つの数の line・2 つの数の point も視点を通り、camera() で戻すと視点を当てない絵と同じになる")
+    func flatLineAndPointFollowTheCamera() throws {
+        func flat(lookingDown: Bool, reset: Bool = false) throws -> DisplayImage {
             let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: Self.size, height: Self.size)
             try canvas.draw {
                 canvas.background(Self.black)
                 if lookingDown { Self.lookDown(canvas) }
+                if reset { canvas.camera() }
                 canvas.stroke(.display(red: 1, green: 0.7, blue: 0.35))
                 canvas.strokeWeight(6)
                 canvas.line(40, 40, 160, 120)
@@ -109,7 +110,9 @@ struct SolidLineAndGuideTests {
             }
             return try canvas.target.encodeForDisplay()
         }
-        #expect(try flat(lookingDown: true) == flat(lookingDown: false))
+        let untouched = try flat(lookingDown: false)
+        #expect(try flat(lookingDown: true) != untouched, "見下ろしても 2 次元の線と点が動かない")
+        #expect(try flat(lookingDown: true, reset: true) == untouched)
     }
 
     /// 開いたままの形の途中で 3 次元の `line` を書いても、開いた形を捨てない (2 次元の `line` と揃える)。

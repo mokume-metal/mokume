@@ -50,7 +50,7 @@ extension Canvas {
                     ? Self.roundedRectOutline(
                         width: w, height: h, radius: radius,
                         segments: Self.segmentCount(
-                            forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+                            forRadius: radius, scale: Self.splitScale(of: flatTransform.matrix))
                     ).moved(by: SIMD2(box.x, box.y))
                     : Outline(
                         points: [
@@ -81,7 +81,7 @@ extension Canvas {
                 }
             }
             let segments = Self.segmentCount(
-                forRadius: radius, scale: Self.splitScale(of: transform.matrix))
+                forRadius: radius, scale: Self.splitScale(of: flatTransform.matrix))
             // ベクターへは、周を刻んだ折れ線でなく**角丸の矩形そのもの**を書く (#3271)。控えは描く前に済ませ、
             // 内側の `draw(_:)` が周を 2 度控えないよう止める — 描く道は触らないので、絵は変わらない。
             // 区間の外では置かないので、控えもしない (``Canvas/canPlace``・#1672)
