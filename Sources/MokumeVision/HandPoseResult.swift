@@ -5,8 +5,8 @@ import MokumeCore
 
 /// どちらの手か。
 ///
-/// 絵に写った向きのまま答える。左右を入れ替えた絵 (`mirrored: true` のカメラの絵) を渡したときは、
-/// 入れ替えた後の絵で見て左右が決まる。
+/// 画像に写った向きのまま返す。左右を入れ替えた画像 (`mirrored: true` のカメラの画像) を渡したときは、
+/// 入れ替えた後の画像で見て左右が決まる。
 public nonisolated enum Handedness: String, Sendable, Hashable, Codable {
     /// 左手。
     case left
@@ -35,9 +35,9 @@ public nonisolated enum HandJointName: Int, Sendable, CaseIterable, Hashable, Co
 /// **値は有限で、信頼度は 0〜1 に収まる。** 位置が有限でない (`NaN`・無限大) 関節は作れず、信頼度は 0〜1 に
 /// 収めて持つ。`NaN` を持つと、自分自身と `==` が偽になり、JSON に書くと投げて、結果の列が書き出して読み戻せなくなる。
 public nonisolated struct HandJoint: Sendable, Hashable, Codable {
-    /// 位置。**入力の絵の画素の座標**で、左上が原点、y は下向き。描いた絵の上にそのまま重なる。
+    /// 位置。**入力画像のピクセル座標**で、左上が原点、y は下向き。描いた画像の上にそのまま重なる。
     ///
-    /// 絵の外を指すことはある (画素の範囲を越える値は、そのまま写す)。有限でない値は持たない。
+    /// 画像の外を指すことはある (ピクセルの範囲を越える値は、そのまま保持する)。有限でない値は持たない。
     public let position: Vector2
     /// 信頼度 (0〜1)。1 に近いほど確か。
     public let confidence: Float
@@ -73,7 +73,7 @@ public nonisolated struct HandJoint: Sendable, Hashable, Codable {
     }
 }
 
-/// 絵に写った手 1 つの関節点。
+/// 画像に写った手 1 つの関節点。
 ///
 /// 21 の関節が ``HandJointName`` の順に並ぶ。
 public nonisolated struct Hand: Sendable, Hashable, Codable {
@@ -112,14 +112,14 @@ public nonisolated struct Hand: Sendable, Hashable, Codable {
     }
 }
 
-/// 1 枚の絵に対する、手の関節点の結果。
+/// 1 枚の画像に対する、手の関節点の結果。
 ///
-/// 手が写っていなければ ``hands`` が空の結果になる (落ちない)。`Codable` なので、結果の列を書き出して
+/// 手が写っていなければ ``hands`` が空の結果になる (クラッシュしない)。`Codable` なので、結果の列を書き出して
 /// 読み戻せ、``Sketch/createHandPose(results:)`` で流し直せる。
 public nonisolated struct HandPoseResult: Sendable, Hashable, Codable {
-    /// 結果を出した元の絵が届いた瞬間の host time (`mach_absolute_time` の単位)。
+    /// 結果を出した元の画像が届いた瞬間の host time (`mach_absolute_time` の単位)。
     ///
-    /// **推論が終わった時刻ではない。** 結果は絵より遅れて届くので、この値と絵の host time
+    /// **推論が終わった時刻ではない。** 結果は画像より遅れて届くので、この値と画像の host time
     /// (``Arrival/hostTime``) を比べれば、遅れが分かる。
     public let hostTime: UInt64
     /// 写っていた手。写っていなければ空。
