@@ -13,7 +13,9 @@ import Foundation
 /// 版を作る段 (`make cli-dist`) で、入れた版の口と例はずれない。ネットワークは使わない。
 ///
 /// 束の形は `index.tsv` (`綴り<TAB>ファイル名<TAB>1 行の説明`) と、`@main` を持つスケッチ 1 本ずつ
-/// (`{{TYPE}}` と `{{NAME}}` を `new` が差し込む)。
+/// (`{{TYPE}}` と `{{NAME}}` を `new` が差し込む)。例が読む断片を説明文が添えていれば (#3836)、
+/// スケッチの隣の `NNNN.assets/` に `assets/` から下のパスのまま置かれ、`new` がスケッチの
+/// `assets/` へ写す。
 ///
 /// ## 引き方
 ///
@@ -50,6 +52,14 @@ nonisolated enum Examples {
         let spelling: String
         /// `{{TYPE}}` と `{{NAME}}` を持つスケッチ。
         let source: String
+        /// 例が読む資材。`path` は `assets/` から下のパス (`waves.metal`)。資材を読まない例は空。
+        var assets: [Asset] = []
+
+        /// 例に添えた資材 1 本。
+        nonisolated struct Asset: Equatable {
+            let path: String
+            let contents: String
+        }
 
         /// 例が名前として書いている語 (識別子としての出現)。**作るクラスの名前と同じだと、例が
         /// 使いたい型を隠して組めなくなる** (`new circle --from circle` で `Circle` が自分自身になる)。
@@ -64,6 +74,10 @@ nonisolated enum Examples {
     /// 束の置き場の名前 (``Templates`` と同じく、道具の資源の中)。
     static let directoryName = "Examples"
     static let indexName = "index.tsv"
+    /// スケッチのファイル名の終わりと、その例の資材の置き場の終わり (`0001.swift.template` の
+    /// 資材は `0001.assets/`)。束を作る側 (`scripts/bundle-examples.py`) と同じ綴り。
+    static let templateSuffix = ".swift.template"
+    static let assetsSuffix = ".assets"
 
     /// 候補を並べる上限。越えた分は件数で言う (一覧が全部を持つ)。
     static let candidateLimit = 20
@@ -120,7 +134,36 @@ nonisolated enum Examples {
             guard let source = try? String(contentsOf: url, encoding: .utf8) else {
                 throw CommandFailure.exampleUnreadable(spelling: first.spelling)
             }
-            return Chosen(spelling: first.spelling, source: source)
+            return Chosen(
+                spelling: first.spelling, source: source, assets: try assets(of: first))
+        }
+
+        /// 例の資材。**置き場が無ければ資材を読まない例** (束は資材のある例にしか置かない)。
+        /// 並びはパスの順に固定する (作るファイルの並びが、実行のたびに変わらない)。
+        func assets(of entry: Entry) throws(CommandFailure) -> [Chosen.Asset] {
+            guard entry.file.hasSuffix(Examples.templateSuffix) else { return [] }
+            let name = entry.file.dropLast(Examples.templateSuffix.count) + Examples.assetsSuffix
+            let folder = directory.appendingPathComponent(String(name), isDirectory: true)
+            // 列挙が返す URL と根を、同じ解き方で揃えてから差を取る (`/var` と `/private/var` が混ざらない)
+            let base = folder.resolvingSymlinksInPath().path
+            guard
+                let walker = FileManager.default.enumerator(
+                    at: folder, includingPropertiesForKeys: [.isRegularFileKey])
+            else { return [] }
+            var found: [Chosen.Asset] = []
+            for case let url as URL in walker {
+                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+                    continue
+                }
+                let full = url.resolvingSymlinksInPath().path
+                guard full.hasPrefix(base + "/") else { continue }
+                let path = String(full.dropFirst(base.count + 1))
+                guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
+                    throw CommandFailure.exampleUnreadable(spelling: entry.spelling)
+                }
+                found.append(Chosen.Asset(path: path, contents: contents))
+            }
+            return found.sorted { $0.path < $1.path }
         }
 
         /// `mokume examples` が印字する文。**行は綴りと説明の 2 欄**で、`grep` で絞れる。

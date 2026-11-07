@@ -12,4 +12,4 @@ SPDX-License-Identifier: MIT
 リソースの宣言 (`Package.swift` の `.copy("Examples")`) がこのディレクトリの存在を必要とするからで、作例を生成していない手元でも
 `swift build` が通るようにしてある。作例を生成しないまま実行した `mokume` コマンドは、作例が無いことを表示する。
 
-形式と選ぶ規則は `scripts/bundle-examples.py` の冒頭、読み込む側は `Sources/MokumeCLI/Examples.swift`。
+形式 (索引・スケッチ・作例が読む断片を置く `NNNN.assets/`) と選ぶ規則は `scripts/bundle-examples.py` の冒頭、読み込む側は `Sources/MokumeCLI/Examples.swift`。

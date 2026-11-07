@@ -22,6 +22,9 @@
 - **資材を読む例は同梱しない。** `assets/`・`data/` の下の名前を指す例 (`loadImage("assets/grain.png")`
   など) は、写せる実体が無いので一覧から外す。自分で書いたファイルを読む例 (`NSTemporaryDirectory()`
   の下に書いてから読む) は、資材を要らないので同梱する
+- **ただし説明文が本文を添えた資材は写せる** (#3836)。`資材` の印の付いた ```` ```metal ```` の囲み
+  (`check-examples.py` の冒頭「印」) が名乗る名前は実体があるので、資材を読む判定から除く。添えた
+  資材のほかにも資材を読む例 (断片と一緒に画像を読むもの) は、従来どおり外す
 - **型の段の例 (`enum` へ包まれるもの) は同梱しない。** `@main` を持つ 1 本のスケッチに
   包めない — 包み方は `example_wrapping.py` が持ち、ここは同じ規則に従う (撮る側・組める側と
   同じ。原則 9)
@@ -46,6 +49,9 @@
 - `index.tsv` — 1 行 1 本。`綴り<TAB>ファイル名<TAB>1 行の説明`
 - `NNNN.swift.template` — `@main` を持つスケッチ 1 本。`{{TYPE}}` (クラスの名前) と
   `{{NAME}}` (窓の題) は `mokume new` が差し込む
+- `NNNN.assets/` — その例に添えた資材 (`資材` の印)。中は `assets/` から下のパスのままで、
+  `mokume new` がスケッチの `Sources/<target>/assets/` へ写す。資材の無い例には置かない。
+  **索引は変えない** — 置き場の名前はスケッチの名前から決まる (`.swift.template` を `.assets` に)
 
 **`.swift` で置かない。** 道具のソースの下には、`.swift` の中の日本語を見る検査 (`tool-language`)
 がある。例は作例の中身 (日本語のコメントがありうる) で、道具が話す言葉ではない。
@@ -113,8 +119,11 @@ DECLARATION = re.compile(
 TYPE_KINDS = {"struct", "class", "enum", "actor", "protocol", "typealias"}
 # 例が読む資材。説明文の例は `assets/` か `data/` の下の、**在るつもりのファイル**を名指しする
 # (どちらも説明文のための名前で、リポジトリにも束にも実体が無い)。資材ごと写す道は採らず、
-# 一覧から外す — 写せるファイルが無いので、開いても資材が見つからず絵が出ない
+# 一覧から外す — 写せるファイルが無いので、開いても資材が見つからず絵が出ない。
+# **説明文が本文を添えた資材 (`資材` の印) だけは実体がある**ので、判定の前に名前を除く (#3836)
 ASSET_READ = re.compile(r'"(?:assets|data)/[^"]*"')
+TEMPLATE_SUFFIX = ".swift.template"
+ASSETS_SUFFIX = ".assets"
 
 
 @dataclasses.dataclass
@@ -127,6 +136,8 @@ class Entry:
     summary: str
     source: str  # `{{TYPE}}` と `{{NAME}}` を持つスケッチ
     spelling: str = ""  # 番号を添えた後の、引き方
+    # 例に添えた資材。(名前, 本文) で、名前は `assets/` から書く
+    assets: list[tuple[str, str]] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -283,7 +294,10 @@ def build(root: pathlib.Path) -> tuple[list[Entry], list[Left]]:
         if example.skip is not None:
             left.append(Left(example.where, f"組めない印 ({example.skip})"))
             continue
-        if ASSET_READ.search("\n".join(example.body + example.context)):
+        read = "\n".join(example.body + example.context)
+        for name, _ in example.assets:
+            read = read.replace(f'"{name}"', "")
+        if ASSET_READ.search(read):
             left.append(Left(example.where, "資材を読む (束に実体が無い)"))
             continue
         if level_of(example.body) == LEVEL_TYPE:
@@ -310,7 +324,7 @@ def build(root: pathlib.Path) -> tuple[list[Entry], list[Left]]:
         if "{{" in source.replace("{{TYPE}}", "").replace("{{NAME}}", ""):
             left.append(Left(example.where, "例の中に `{{` がある (差し込みの鍵と紛れる)"))
             continue
-        entries.append(Entry(heading, example.path, example.line, summary, source))
+        entries.append(Entry(heading, example.path, example.line, summary, source, assets=list(example.assets)))
     number(entries)
     return entries, left
 
@@ -334,7 +348,7 @@ def index_text(entries: list[Entry]) -> str:
         for field in (entry.spelling, entry.summary):
             if "\t" in field or "\n" in field:
                 raise SystemExit(f"{entry.path}:{entry.line}: 綴りか説明に tab か改行がある: {field!r}")
-        rows.append((entry, f"{number_:04d}.swift.template"))
+        rows.append((entry, f"{number_:04d}{TEMPLATE_SUFFIX}"))
     return "".join(f"{entry.spelling}\t{name}\t{entry.summary}\n" for entry, name in rows)
 
 
@@ -347,7 +361,12 @@ def write(entries: list[Entry], out: pathlib.Path) -> None:
         shutil.rmtree(child) if child.is_dir() else child.unlink()
     ordered = sorted(entries, key=lambda e: e.spelling.lower())
     for number_, entry in enumerate(ordered, start=1):
-        (out / f"{number_:04d}.swift.template").write_text(entry.source, encoding="utf-8")
+        (out / f"{number_:04d}{TEMPLATE_SUFFIX}").write_text(entry.source, encoding="utf-8")
+        for name, contents in entry.assets:
+            # 名前は check-examples が `assets/` の下に収まると検めてある (`asset_name_problem`)
+            target = out / f"{number_:04d}{ASSETS_SUFFIX}" / name.removeprefix("assets/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(contents, encoding="utf-8")
     (out / INDEX_NAME).write_text(index_text(entries), encoding="utf-8")
 
 
