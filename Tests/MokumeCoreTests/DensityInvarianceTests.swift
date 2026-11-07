@@ -33,6 +33,7 @@ import simd
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
 /// | 回した細い立体の線 (#3734) | ``Amount/diagonalSolidLine``・``Amount/diagonalRetainedSolid``・``Amount/diagonalBox`` | 量 |
+/// | 丸い端の回した細い線 (#3748) | ``Amount/diagonalRoundShaderLine`` ほか、`diagonalRound` の行すべて | 量 |
 /// | 効果の半径 (#1545) | ``Outline/blur`` | 形 (2 つの濃さで切る) |
 /// | 効果の断片の `position` / `size` (#1639) | ``Outline/effectPosition``・``Outline/effectSize`` | 形 |
 /// | 塗りの断片の `position` / `resolution` (#1639) | ``Outline/paintPosition``・``Outline/paintResolution`` | 形 |
@@ -117,6 +118,12 @@ struct DensityInvarianceTests {
         case diagonalSolidLine = "rotate(θ) の奥行きを持つ 2 点の beginShape (立体の線)"
         case diagonalRetainedSolid = "rotate(θ) で置く、奥行きを持つ 2 点を記録した保持した形 (立体の線)"
         case diagonalBox = "ortho() で rotate(θ) の noFill() の box の稜線 (立体の線・GPU で広げる骨)"
+        // 丸い端 (既定の `.round`) の回した細い線 (#3748)。四角い端の同じ行と同じ置き方で、端の形だけを丸くする。
+        // 光の量は帯に両端の半円 2 つ (直径が太さの円 1 つ) の面積を足した量 (``roundCaps``)
+        case diagonalRoundShaderLine = "rotate(θ) の丸い端の shader() の line (三角形の経路)"
+        case diagonalRoundRetained = "rotate(θ) で置く丸い端の保持した形の輪郭 (三角形の経路)"
+        case diagonalRoundSolidLine = "rotate(θ) の丸い端の、奥行きを持つ 2 点の beginShape (立体の線)"
+        case diagonalRoundRetainedSolid = "rotate(θ) で置く丸い端の、奥行きを持つ 2 点を記録した保持した形 (立体の線)"
         case squashedShaderPoint = "scale(1, s) の shader() の point (三角形の経路)"
         case retained = "保持した形を縮めて置く (三角形の経路)"
         case solidPolygon = "奥行きのある beginShape の輪郭 (立体の線)"
@@ -234,6 +241,18 @@ struct DensityInvarianceTests {
                 .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
                 .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
+            case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
+                true
+            default: false
+            }
+        }
+
+        /// 開いた端を丸くする口か (#3748)。光の量に両端の半円 2 つぶん、直径が描く画素での太さの円 1 つの面積
+        /// (π × 太さ² / 4) を足す (``DensityInvarianceTests/thinCapsKeepTheirArea(_:_:)`` と同じ端の面積)。
+        var roundCaps: Bool {
+            switch self {
+            case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
+                true
             default: false
             }
         }
@@ -287,6 +306,8 @@ struct DensityInvarianceTests {
                 .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalSolidLine,
                 .diagonalRetainedSolid, .diagonalBox:
                 [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
+            case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
+                [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
             default: [0, 0.5, 1, 1.5]
             }
         }
@@ -308,6 +329,9 @@ struct DensityInvarianceTests {
             // 正面と背面の稜が画面で重なる 1 辺 40 の正方形で、輪郭の面積は周 160 × 太さ
             case .diagonalSolidLine, .diagonalRetainedSolid: 40
             case .diagonalBox: 160
+            // 丸い端の回した細い線 (#3748)。帯は長さ 40 で、両端の丸い片は ``roundCaps`` が足す
+            case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
+                40
             // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
             case .diagonalFoldedRect: 120
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
@@ -442,6 +466,35 @@ struct DensityInvarianceTests {
                     canvas.translate(64, 64 + offset)
                     canvas.rotate(angle)
                     canvas.shape(shape)
+                }
+            case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
+                // 丸い端の行 (#3748)。四角い端の同じ行 (``diagonalShaderLine``・``diagonalRetained``・``diagonalSolidLine``・
+                // ``diagonalRetainedSolid``) と同じ置き方で、端の形だけを丸くする
+                canvas.strokeCap(.round)
+                let solid = self == .diagonalRoundSolidLine || self == .diagonalRoundRetainedSolid
+                func segment() {
+                    canvas.beginShape()
+                    if solid {
+                        canvas.vertex(-20, 0, 0)
+                        canvas.vertex(20, 0, 0)
+                    } else {
+                        canvas.vertex(-20, 0)
+                        canvas.vertex(20, 0)
+                    }
+                    canvas.endShape()
+                }
+                let shape =
+                    self == .diagonalRoundRetained || self == .diagonalRoundRetainedSolid
+                    ? canvas.createShape { segment() } : nil
+                if self == .diagonalRoundShaderLine { canvas.shader(try Self.plainShader(canvas)) }
+                canvas.translate(64, 64 + offset)
+                canvas.rotate(angle)
+                if let shape {
+                    canvas.shape(shape)
+                } else if self == .diagonalRoundShaderLine {
+                    canvas.line(-20, 0, 20, 0)
+                } else {
+                    segment()
                 }
             case .shaderSquarePoint:
                 canvas.shader(try Self.plainShader(canvas))
@@ -681,7 +734,8 @@ struct DensityInvarianceTests {
         }
         let pixels = try canvas.target.readPixels()
         if let area = mouth.fillArea {
-            return (totalSum(pixels), area * drawn * Double(density))
+            let caps = mouth.roundCaps ? Double.pi * drawn * drawn / 4 : 0
+            return (totalSum(pixels), area * drawn * Double(density) + caps)
         } else if crossings == 0 {
             return (totalSum(pixels), drawn * drawn * areaFactor)
         } else {
