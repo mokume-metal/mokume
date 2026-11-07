@@ -12,7 +12,7 @@ import MokumeCore
 // [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 extension Sketch {
 
-    /// カメラを開く。受け取った絵は ``Capture/image`` に入る。
+    /// カメラを開く。受け取った画像は ``Capture/image`` に入る。
     ///
     /// ```swift
     /// final class Mirror: Sketch {
@@ -24,31 +24,31 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - **`mirrored: true` で鏡に映したように左右が入れ替わる。** 左に置いた物が絵の右に映る。
-    ///   p5.js の `createCapture(VIDEO, {flipped: true})` に当たる。**`flipped` とは名乗らない** — Apple の
-    ///   API (`NSImage(size:flipped:)`・`NSView.isFlipped`) では `flipped` が上下の反転を指し、写すと別の向きを
+    /// - **`mirrored: true` で鏡に映したように左右が入れ替わる。** 左に置いた物が画像の右に映る。
+    ///   p5.js の `createCapture(VIDEO, {flipped: true})` に当たる。**`flipped` とは呼ばない** — Apple の
+    ///   API (`NSImage(size:flipped:)`・`NSView.isFlipped`) では `flipped` が上下の反転を指し、左右反転の意味で使うと別の向きを
     ///   思わせるため。AVFoundation も `isVideoMirrored` と呼ぶ。Processing の公式の Video は `scale(-1, 1)` を
     ///   自分で書く。既定は `false` (左右はカメラのまま)
-    /// - **呼んだときだけ機材を開く。** `import mokume` しただけでカメラが点いたり、許可の
+    /// - **呼んだときだけデバイスを開く。** `import mokume` しただけでカメラが点いたり、許可の
     ///   ダイアログが出たりはしない
-    /// - 絵は頼んだ大きさで届く。カメラの縦横比が違えば、真ん中を切り取って合わせる (ゆがめない)
-    /// - 色はカメラが名乗る色空間から作業空間へ移してある ([ADR-0011])
+    /// - 画像は要求した大きさで届く。カメラの縦横比が違えば、真ん中を切り取って合わせる (ゆがめない)
+    /// - 色はカメラが報告する色空間から作業空間へ変換してある ([ADR-0011])
     /// - **カメラが無くても作れる。** ``Capture/state`` が ``SourceState/unavailable`` になり、
-    ///   挿されたら始まる。抜かれたら ``SourceState/disconnected`` になり、挿し直せば戻る
-    /// - 初めて使うときは OS が許可を求める。束ねずに動かしている間は、許可はスケッチを
+    ///   接続されたら始まる。切断されたら ``SourceState/disconnected`` になり、再接続すれば戻る
+    /// - 初めて使うときは OS が許可を求める。バンドルせずに動かしている間は、許可はスケッチを
     ///   起動した端末のアプリに付く
     ///
     /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。
     ///
     /// - Parameters:
-    ///   - width: 受け取る絵の幅 (画素)。
-    ///   - height: 受け取る絵の高さ (画素)。既定の 640×480 は、縦横比の違うカメラ (Mac の内蔵カメラは 16:9)
+    ///   - width: 受け取る画像の幅 (画素)。
+    ///   - height: 受け取る画像の高さ (画素)。既定の 640×480 は、縦横比の違うカメラ (Mac の内蔵カメラは 16:9)
     ///     では真ん中を切り取る。切り取らずに受けるには、``CaptureDevice/formats`` から縦横比の合う大きさを選ぶ。
     ///   - device: 使うカメラ (``captureDevices()`` から選ぶ)。省けば既定の 1 台。
     ///   - mirrored: 鏡に映したように左右を入れ替えるか。省けば `false`。
-    /// - Throws: 大きさが絵として置けないとき (``SketchPart/createImage(_:_:)`` と同じ ``ImageFailure``)。
-    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
-    ///   機材を開く前に ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
+    /// - Throws: 大きさが画像として確保できないとき (``SketchPart/createImage(_:_:)`` と同じ ``ImageFailure``)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、
+    ///   デバイスを開く前に ``ImageFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     // shot: 撮れない カメラの映像が要る。鏡像は記録した絵を流す口 (createCapture(frames:mirrored:)) の検査で見る
@@ -66,14 +66,14 @@ extension Sketch {
         }
     }
 
-    /// 記録した絵の列を、カメラの代わりに流す。**機材も許可も使わない。**
+    /// 記録した画像の列を、カメラの代わりに流す。**デバイスも許可も使わない。**
     ///
     /// `frames[i]` が、作ってから i 番目のフレームで ``Capture/image`` に入り、最後まで行けば最初に戻る。
-    /// どの絵が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても同じ絵が
-    /// 同じフレームに出る — カメラを使うスケッチを、機材の無い場所で確かめるときや、展示の
-    /// 前に空回しするときに使う ([ADR-0028] 決定 6・7)。
+    /// どの画像が入るかはフレームの数え方だけで決まるので、同じ列からは何度回しても同じ画像が
+    /// 同じフレームに出る — カメラを使うスケッチを、デバイスの無い場所で確かめるときや、展示の
+    /// 前にリハーサルするときに使う ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `frames[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `frames[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -88,15 +88,15 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// `mirrored: true` なら、流す絵の左右を入れ替える。機材を使う ``createCapture(_:_:device:mirrored:)`` と
-    /// 同じ所で当てるので、機材の無い場所で鏡像を確かめられる。
+    /// `mirrored: true` なら、流す画像の左右を入れ替える。デバイスを使う ``createCapture(_:_:device:mirrored:)`` と
+    /// 同じ所で適用するので、デバイスの無い場所で鏡像を確かめられる。
     ///
     /// - Parameters:
-    ///   - frames: 流す絵。大きさは最初の 1 枚に揃える。
+    ///   - frames: 流す画像。大きさは最初の 1 枚に揃える。
     ///   - mirrored: 鏡に映したように左右を入れ替えるか。省けば `false`。
-    /// - Throws: 列が空のとき (大きさが決まらない) か、大きさが絵として置けないとき (``ImageFailure``)。
-    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
-    ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
+    /// - Throws: 列が空のとき (大きさが決まらない) か、大きさが画像として確保できないとき (``ImageFailure``)。
+    ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと
+    ///   ``ImageFailure/notRunning(call:)`` (プロセスはクラッシュしない)。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     public func createCapture(frames: [DisplayImage], mirrored: Bool = false) throws(ImageFailure) -> Capture {
@@ -110,7 +110,7 @@ extension Sketch {
         }
     }
 
-    /// 繋がっているカメラの一覧。``createCapture(_:_:device:mirrored:)`` で 1 台を選ぶのに使う。各機材が出せる形式
+    /// 接続されているカメラの一覧。``createCapture(_:_:device:mirrored:)`` で 1 台を選ぶのに使う。各デバイスが出せる形式
     /// (幅・高さ・フレームレート) は ``CaptureDevice/formats`` で引ける。
     ///
     /// ```swift

@@ -4,8 +4,8 @@
 import MokumeCore
 import MokumeDiagnostics
 
-/// WebSocket で外のサーバへ繋ぎに行く入り口。``Sketch/createWebSocketClient(_:)`` が作り、走っている
-/// スケッチへ足す。
+/// WebSocket で外のサーバへ繋ぎに行く入力ソース。``Sketch/createWebSocketClient(_:)`` が作り、実行中の
+/// スケッチへ追加する。
 ///
 /// サーバから届いたものは、1 通ずつ、届いた順に ``TextPort/messages`` へ入る。``send(_:)`` は繋いだ先の
 /// サーバへ 1 通の text を送る。受け方・状態・止め方は ``TextPort`` のとおり。
@@ -24,11 +24,11 @@ import MokumeDiagnostics
 /// }
 /// ```
 ///
-/// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える口は無い。状態の名乗り方は
+/// **繋げなくても、切れても、1 秒ごとに繋ぎ直し続ける。** 間隔は固定で、変える API は無い。状態の報告のしかたは
 /// ``TCPClient`` と同じ (``TextPort`` の「来ないことには理由がある」)。ローカルネットワークの許可が無くて
 /// 繋げないときは ``SourceState/denied`` で、許可すると次の繋ぎ直しで ``SourceState/running`` に戻る。
 ///
-/// 手本 (Processing / p5.js) の本体には無いので、ブラウザの `WebSocket.send` に揃えて 1 通を送る口を
+/// 元になった Processing / p5.js の本体には無いので、ブラウザの `WebSocket.send` に揃えて 1 通を送る API を
 /// ``send(_:)`` とする ([ADR-0020] 決定 1。``WebSocketServer`` と同じ)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -53,9 +53,9 @@ public final class WebSocketClient: TextPort {
     /// socket?.send("hit")
     /// ```
     ///
-    /// 1 回の `send` が、サーバに 1 通届く。改行は足さない。
+    /// 1 回の `send` が、サーバに 1 通届く。改行は追加しない。
     ///
-    /// **投げない。** 繋がっていない間・止めた後は、理由ごとに 1 度だけ知らせて何もしない — 繋がっていない
+    /// **投げない。** 繋がっていない間・止めた後は、理由ごとに 1 度だけ警告して何もしない — 繋がっていない
     /// 間に送ったものは、繋がった後に届かない。待たずに返る。
     ///
     /// - Parameter text: 送る文字列。

@@ -5,7 +5,7 @@ import Foundation
 import IOKit
 import IOKit.serial
 
-/// 繋がっているシリアルポート 1 つ。``Sketch/serialPorts()`` が返し、
+/// 接続されているシリアルポート 1 つ。``Sketch/serialPorts()`` が返し、
 /// ``Sketch/createSerial(_:baudRate:)`` で使う 1 つを選ぶ。
 ///
 /// **一覧から得た識別子で選ぶ** ([ADR-0028] 決定 3)。``CaptureDevice``・``AudioDevice`` と
@@ -13,11 +13,11 @@ import IOKit.serial
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public nonisolated struct SerialPort: Sendable, Equatable, Hashable {
-    /// 識別子。ポートの経路 (`"/dev/cu.usbmodem14101"` など)。同じ USB の口に挿し直せば同じ値に
-    /// なる (機材によっては、別の口に挿すと変わる)。
+    /// 識別子。ポートのパス (`"/dev/cu.usbmodem14101"` など)。同じ USB ポートに再接続すれば同じ値に
+    /// なる (デバイスによっては、別のポートに挿すと変わる)。
     public let id: String
-    /// 人が読む名前。USB で繋いだものは機材が名乗る製品名 (`"Arduino Uno"` など)、それ以外は
-    /// 経路の名前 (`"Bluetooth-Incoming-Port"` など)。
+    /// 人が読む名前。USB で接続したものはデバイスが報告する製品名 (`"Arduino Uno"` など)、それ以外は
+    /// パスの名前 (`"Bluetooth-Incoming-Port"` など)。
     public let name: String
 
     init(id: String, name: String) {

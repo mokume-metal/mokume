@@ -7,28 +7,28 @@ import MokumeCore
 /// ``TCPServer``・``WebSocketServer``・``TCPClient``・``WebSocketClient``・``UDPPort`` を作れなかったこと。
 ///
 /// **作るときに投げ、フレームの間は投げない** ([ADR-0020] 決定 5)。投げるのは渡した値が
-/// そもそも使えないときと、走っている実行へ足せない所から呼んだとき (``notRunning(call:)``) だけで、
+/// そもそも使えないときと、実行中のスケッチへ追加できない場所から呼んだとき (``notRunning(call:)``) だけで、
 /// ポートを他のアプリが使っているときは投げずに作り、
-/// ``TextPort/state`` が ``SourceState/unavailable`` を名乗る (空けば受け始める)。
+/// ``TextPort/state`` が ``SourceState/unavailable`` を報告する (空けば受信を始める)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated enum NetworkFailure: Error, Equatable, Sendable {
     /// ポートの番号が 1〜65535 に入っていない。
     case invalidPort(Int)
-    /// 送り先・繋ぎ先のホストが空 (``Sketch/createWebSocketClient(_:)`` では、`ws://` か `wss://` の
-    /// URL として読めない綴り)。
+    /// 送り先・接続先のホストが空 (``Sketch/createWebSocketClient(_:)`` では、`ws://` か `wss://` の
+    /// URL として読めない表記)。
     case invalidHost(String)
-    /// 走っている実行へ足せない所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
-    /// 後片付けの後・`Task` の中) で作る口を呼んだ。`call` は呼んだ口の名前 (`"createTCPServer(_:)"` など)。
-    /// 作ったものは走っている実行へ足さないと受けず (受けるポートは足したときに開く)、終わるときに閉じられも
-    /// しないので、ポートを開く前に断る。`setup()` などから呼び直す
-    /// ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。**送るだけなら、これまでは足されていなくても
-    /// 届いていた** (``UDPPort/send(_:)`` は足されているかを見ない) — 送り専用のポートを走る前に作っていた作品も、
-    /// いまはこの場合になる。
-    /// 渡した値が使えないときは、こちらより先にその場合 (``invalidPort(_:)``・``invalidHost(_:)``) を投げる。
+    /// 実行中のスケッチへ追加できない場所 (`setup()`・`draw()`・入力のコールバックの外 — 初期化子の中・
+    /// 終了処理の後・`Task` の中) で作る API を呼んだ。`call` は呼んだ API の名前 (`"createTCPServer(_:)"` など)。
+    /// 作ったものは実行中のスケッチへ追加しないと受信せず (受信するポートは追加したときに開く)、終わるときに閉じられも
+    /// しないので、ポートを開く前にエラーにする。`setup()` などから呼び直す
+    /// ([#2740](https://github.com/mokume-metal/mokume/issues/2740))。**送るだけなら、これまでは追加されていなくても
+    /// 届いていた** (``UDPPort/send(_:)`` は追加されているかを見ない) — 送り専用のポートを実行前に作っていたスケッチも、
+    /// いまはこの case になる。
+    /// 渡した値が使えないときは、こちらより先にその case (``invalidPort(_:)``・``invalidHost(_:)``) を投げる。
     ///
-    /// **名前に反して、スケッチが走っている最中にも起こる** — `draw()` が回っている間に、そこで起こした
-    /// `Task` から呼んでもこの場合になる (``ImageFailure/notRunning(call:)`` と同じ)。
+    /// **名前に反して、スケッチが実行中の最中にも起こる** — `draw()` が回っている間に、そこで開始した
+    /// `Task` から呼んでもこの case になる (``ImageFailure/notRunning(call:)`` と同じ)。
     case notRunning(call: String)
 }
 

@@ -19,7 +19,7 @@ import MokumeCore
 // [ADR-0041]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md
 extension Sketch {
 
-    /// 繋がっている MIDI 機材の一覧。``createMIDI(_:)`` で 1 台を選ぶのに使う。初めて繋がった順に並ぶ。
+    /// 接続されている MIDI デバイスの一覧。``createMIDI(_:)`` で 1 台を選ぶのに使う。初めて接続された順に並ぶ。
     ///
     /// ```swift
     /// func setup() {
@@ -27,11 +27,11 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - **抜いた機材も列に残る。** ``MIDIDevice/isConnected`` が `false` になり、挿し直せば `true` に戻る。
-    ///   いま繋がっているものだけが要るなら `isConnected` で絞る
-    /// - **毎回引き直す。** 起動した後に挿した機材も、OS が知らせた後に呼べば並ぶ
-    /// - **呼んだときだけ見張り始める。** `import mokume` しただけでは、CoreMIDI に触れない
-    /// - 他のアプリが作った仮想の入力 (IAC バスなど) も、機材と同じように並ぶ
+    /// - **切断したデバイスも列に残る。** ``MIDIDevice/isConnected`` が `false` になり、再接続すれば `true` に戻る。
+    ///   いま接続されているものだけが要るなら `isConnected` で絞る
+    /// - **毎回引き直す。** 起動した後に接続したデバイスも、OS が通知した後に呼べば並ぶ
+    /// - **呼んだときだけ監視を始める。** `import mokume` しただけでは、CoreMIDI に触れない
+    /// - 他のアプリが作った仮想の入力 (IAC バスなど) も、デバイスと同じように並ぶ
     public func midiDevices() -> [MIDIDevice] {
         let hub = MIDIHub.shared
         hub.start()
@@ -40,7 +40,7 @@ extension Sketch {
         return hub.devices
     }
 
-    /// 機材を 1 台選んで、その入力を受ける。届いたノートとコントロールチェンジは ``MIDIPort`` から読む。
+    /// デバイスを 1 台選んで、その入力を受け取る。届いたノートとコントロールチェンジは ``MIDIPort`` から読む。
     ///
     /// ```swift
     /// final class Knob: Sketch {
@@ -58,17 +58,17 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// - **機材が繋がっていなくても作れる。** ``MIDIPort/state`` が ``SourceState/unavailable`` (その機材が一度も
-    ///   繋がっていない) か ``SourceState/disconnected`` (抜かれた) になり、挿されたら受け始める
-    /// - **1 台の機材に、複数の ``MIDIPort`` を作ってよい。** どれにも同じメッセージが届く
+    /// - **デバイスが接続されていなくても作れる。** ``MIDIPort/state`` が ``SourceState/unavailable`` (そのデバイスが一度も
+    ///   接続されていない) か ``SourceState/disconnected`` (切断された) になり、接続されたら受け取り始める
+    /// - **1 台のデバイスに、複数の ``MIDIPort`` を作ってよい。** どれにも同じメッセージが届く
     /// - OS の許可は要らない
     ///
-    /// 機材なしで確かめるときは、記録した列を ``createMIDI(messages:)`` で流す。
+    /// デバイスなしで確かめるときは、記録した列を ``createMIDI(messages:)`` で流す。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、
-    /// 返る ``MIDIPort`` は走っているスケッチに足されず、何も届かない。この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの中で呼ぶ。外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、
+    /// 返る ``MIDIPort`` は実行中のスケッチに追加されず、何も届かない。この API の名前で 1 度だけ警告する。
     ///
-    /// - Parameter device: 使う機材 (``midiDevices()`` から選ぶ)。
+    /// - Parameter device: 使うデバイス (``midiDevices()`` から選ぶ)。
     public func createMIDI(_ device: MIDIDevice) -> MIDIPort {
         let hub = MIDIHub.shared
         hub.start()
@@ -78,14 +78,14 @@ extension Sketch {
         return port
     }
 
-    /// 記録したメッセージの列を、MIDI 機材から届いたかのように流す。**機材を使わない。**
+    /// 記録したメッセージの列を、MIDI デバイスから届いたかのように流す。**デバイスを使わない。**
     ///
-    /// ``createMIDI(_:)`` で受けるスケッチを機材なしで回すときは、これに差し替える。`messages[i]` が、作ってから
+    /// ``createMIDI(_:)`` で受け取るスケッチをデバイスなしで回すときは、これに差し替える。`messages[i]` が、作ってから
     /// i 番目のフレームで ``MIDIPort/messages`` に入る。最後まで行けば最初に戻る。どのメッセージが入るかは
-    /// フレームの数え方だけで決まるので、同じ列からは何度回しても同じメッセージが同じフレームに届く — 機材の
-    /// 無い場所で確かめるときや、展示の前に空回しするときに使う ([ADR-0028] 決定 6・7)。
+    /// フレームの数え方だけで決まるので、同じ列からは何度回しても同じメッセージが同じフレームに届く — デバイスの
+    /// 無い場所で確かめるときや、展示の前にリハーサルするときに使う ([ADR-0028] 決定 6・7)。
     ///
-    /// **外して足し直しても、i 番目のフレームには `messages[i]` が入る** (外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
+    /// **取り外して追加し直しても、i 番目のフレームには `messages[i]` が入る** (取り外していた間の分は届かない。時刻どおり・[#3152](https://github.com/mokume-metal/mokume/issues/3152))。
     ///
     /// ```swift
     /// final class Replay: Sketch {
@@ -104,23 +104,23 @@ extension Sketch {
     /// }
     /// ```
     ///
-    /// クロック・開始・停止・再開・曲の位置 (``MIDIMessage``) も同じ列に書ける。``MIDIPort/beat`` が 24 クロックで 1 拍に
+    /// クロック・開始・停止・再開・曲の位置 (``MIDIMessage``) も同じ列に書ける。``MIDIPort/beat`` が 24 クロックで 1 ビートに
     /// 数え、テンポは書いたクロックの間隔がそのまま決める (クロックは ``MIDIPort/messages`` に入らない)。
     ///
     /// ```swift
-    /// // 開始の後、1 フレームに 1 クロック。24 フレームごとに拍が 1 つ進む
+    /// // 開始の後、1 フレームに 1 クロック。24 フレームごとにビートが 1 つ進む
     /// let clocks: [[MIDIMessage]?] = [[.start]] + Array(repeating: [.clock], count: 71)
     /// ```
     ///
-    /// 実機と同じ入れ物を通る — ノートとコントロールチェンジの出来事は落とさない列に、コントロールチェンジの現在値と
-    /// 数えた拍は最新の 1 つに入る。`nil` のフレームは抜かれている (``MIDIPort/state`` が ``SourceState/disconnected`` になり、
+    /// 実機と同じ経路を通る — ノートとコントロールチェンジのイベントは取りこぼさない列 (`ExternalQueue`) に、コントロールチェンジの現在値と
+    /// 数えたビートは最新の 1 つに入る。`nil` のフレームは切断されている (``MIDIPort/state`` が ``SourceState/disconnected`` になり、
     /// 押していたノートは離したことになる)。範囲に収まらないメッセージ (チャンネルが 1〜16 の外・値が 0〜127 の外)
-    /// は「読めずに捨てた」と数える。
+    /// は「読めなかったもの」として数える。
     ///
-    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、走っている
-    /// スケッチに足されず何も届かない ``MIDIPort`` を返し、この口の名前で 1 度だけ警告する。
+    /// `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・終了処理の後・`Task` の中) で呼ぶと、実行中の
+    /// スケッチに追加されず何も届かない ``MIDIPort`` を返し、この API の名前で 1 度だけ警告する。
     ///
-    /// - Parameter messages: フレームごとに届くメッセージ。何も届かないフレームは空の並びにし、抜かれている
+    /// - Parameter messages: フレームごとに届くメッセージ。何も届かないフレームは空の並びにし、切断されている
     ///   フレームは `nil`。空の列なら ``MIDIPort/state`` が ``SourceState/unavailable`` のまま何も入らない。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md

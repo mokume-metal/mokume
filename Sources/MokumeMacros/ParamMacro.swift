@@ -8,7 +8,7 @@ import SwiftSyntaxMacros
 /// `@Param` の展開。
 ///
 /// 値の実体は 1 つだけにする ([ADR-0013] 決定 3) ため、宣言されたプロパティは
-/// 置き場 (`ParamBox`) への入口になる。名前はここで — つまり**コンパイル時に** —
+/// `ParamBox` へのアクセサになる。名前はここで — つまり**コンパイル時に** —
 /// 決まり、実行時に作り直されることがない ([ADR-0030] 決定 5)。
 ///
 /// [ADR-0013]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0013-parameter-model.md
@@ -119,9 +119,9 @@ public enum ParamMacro {
 }
 
 extension ParamMacro: AccessorMacro {
-    /// 読み書きを置き場へ通す。
+    /// 読み書きを `ParamBox` へ通す。
     ///
-    /// `init(initialValue)` を持つので、書いた初期値はそのまま置き場の最初の値になる
+    /// `init(initialValue)` を持つので、書いた初期値はそのまま `ParamBox` の最初の値になる
     /// (利用者の宣言から初期値が消えない)。
     public static func expansion(
         of node: AttributeSyntax,
@@ -144,11 +144,11 @@ extension ParamMacro: AccessorMacro {
 }
 
 extension ParamMacro: PeerMacro {
-    /// 置き場と、**名前の重なりをビルドで止めるための目印**を並べる。
+    /// `ParamBox` を持つ裏のプロパティと、**名前の重複をビルドで止めるためのマーカー**を並べる。
     ///
-    /// 目印は面から指す名前から作る。同じ名前を二度宣言すると同じ名前の宣言が
+    /// マーカーは公開するパラメータ名から作る。同じ名前を二度宣言すると同じ名前の宣言が
     /// 2 つ並ぶので、コンパイラが「二重の宣言」として止める — 実行時の警告に
-    /// 落とさない ([ADR-0030] 決定 5)。
+    /// 格下げしない ([ADR-0030] 決定 5)。
     ///
     /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
     public static func expansion(
