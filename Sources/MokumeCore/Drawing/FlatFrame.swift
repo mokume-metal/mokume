@@ -47,10 +47,11 @@ struct FlatFrame {
     /// 塗りの貼る絵の読み取り位置を作る箱 (xy が下限・zw が上限。置き場所の位置を足す前の周の囲み)。
     /// ``fillUVFromBox`` が 1 のときだけ読む。
     var fillBox = SIMD4<Float>(repeating: 0)
-    /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに広げるか (``Canvas/ThinFold/widensInVertexStage``・#3733)。
-    /// 1 なら、`strokeStart` から後ろの頂点の `position` は額縁の片の角 (形自身の座標・置き場所の位置を足す前)、
-    /// `uv` は角から広げる向き (各成分 −1・0・1) で、頂点段が置き場所の 2x2 から半幅と被覆を
-    /// ``Canvas/thinRectFrame(_:placedBy:)`` と同じ式で求め、`(角 + 位置) + 半幅 × 向き` に置く (#3555)。0 は広げない。
+    /// 畳んだ矩形の雛形の細い輪郭を、頂点段で置き場所ごとに組み直すか (``Canvas/ThinFold/widensInVertexStage``・#3733)。
+    /// 1 なら、`strokeStart` から後ろの頂点の `position` は矩形の左上・`uv` は右下 (形自身の座標・置き場所の位置を足す前) で、
+    /// 頂点段が輪郭の何番目の頂点かで片と片の中の頂点を決め、角を置き場所で描く画素へ置いて、帯の数と被覆を
+    /// ``Canvas/thinRectFrame(_:placedBy:)`` と、片の頂点を ``Canvas/thinRectPiece(corners:crossings:coverage:piece:vertex:)``
+    /// と同じ式で組む (#3555・#3788)。0 は広げない。
     var thinStroke: UInt32 = 0
     /// x: 線の太さ (形自身の座標)・y: 1 に丸める描く画素の太さの下限 (``Canvas/roundedDrawnWeight(_:)``)・
     /// zw: 白い区画の読み取り位置 (輪郭の頂点の `uv` の代わりに断片へ渡す)。`thinStroke` が 1 のときだけ読む。

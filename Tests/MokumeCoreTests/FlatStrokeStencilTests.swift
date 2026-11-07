@@ -345,9 +345,13 @@ struct FlatStrokeStencilTests {
         }
     }
 
-    /// 雛形の片は、置き場所ごとに広げ直しても重ならない (額縁の片は h について線形に動く)。半透明の色で
-    /// 描いて、矩形ごとに、塗られた画素がどれも 1 回ぶんの値になる (回さない矩形と 45° の矩形は被覆が違う
-    /// — 帯の被覆は向きで決まる・#2172)。描く画素 (80×80) の x < 38 が 1 つ目、それより右が 2 つ目。
+    /// 雛形の片は、置き場所ごとに組み直しても重ならない。半透明の色で描いて、矩形ごとに、塗られた画素が 1 回ぶんの
+    /// 値を越えない (回さない矩形と 45° の矩形は被覆が違う — 帯の被覆は向きで決まる・#2172)。描く画素 (80×80) の
+    /// x < 38 が 1 つ目、それより右が 2 つ目。
+    ///
+    /// 帯の端の列は、角を越えて延ばしたぶんを打ち消すため被覆が下がる (#3788・``Canvas/thinRectPiece(corners:crossings:coverage:piece:vertex:)``)
+    /// ので、値は 1 つではない。重なれば `a + a(1 − a)` のように帯の値を越えるので、いちばん多い値 (帯の値) が
+    /// 最大であることを見る。
     @Test("畳んだ回した細い rect の輪郭は、半透明の色でも角を重ねて混ぜない")
     func foldedRotatedThinRectMixesOnce() throws {
         let sections = Box()
@@ -356,13 +360,16 @@ struct FlatStrokeStencilTests {
             Self.rotatedRects(canvas, quads: false)
         }
         for (name, columns) in [("回さない 1 つ目", 0..<38), ("45° の 2 つ目 (雛形)", 38..<pixels.width)] {
-            var levels: Set<Int> = []
+            var levels: [Int: Int] = [:]
             for y in 0..<pixels.height {
-                for x in columns where pixels[x, y].red > 0.02 {
-                    levels.insert(Int((pixels[x, y].red / 0.002).rounded()))
+                for x in columns where pixels[x, y].red > 0.01 {
+                    levels[Int((pixels[x, y].red / 0.002).rounded()), default: 0] += 1
                 }
             }
-            #expect(levels.count == 1, "\(name) の塗られた画素の値: \(levels.sorted().map { Float($0) * 0.002 })")
+            let band = levels.max { $0.value < $1.value }?.key
+            #expect(
+                band != nil && band == levels.keys.max(),
+                "\(name) の塗られた画素の値と数: \(levels.sorted { $0.key < $1.key }.map { (Float($0.key) * 0.002, $0.value) })")
         }
     }
 

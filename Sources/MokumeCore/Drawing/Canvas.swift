@@ -409,8 +409,8 @@ public final class Canvas {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
         /// 雛形の細い輪郭を、頂点段で置き場所ごとに広げ直すか (#3733)。**額縁の片で組める矩形**だけが立てる
-        /// (``Canvas/framesThinRect(width:height:weight:join:drawn:)``) — 相似な置き場所では矩形の 4 本の帯が同じ半幅 h と
-        /// 被覆を持ち、額縁の頂点は角の形も含めて「雛形の位置 + h × 微分」になる (``FlatFrame/thinStroke``)。
+        /// (``Canvas/framesThinRect(width:height:weight:join:drawn:)``) — 相似な置き場所では矩形の 4 本の帯が同じ帯の数と
+        /// 被覆を持ち、額縁の頂点は矩形の 4 つの角と置き場所から決まる (``FlatFrame/thinStroke``・#3788)。
         /// 偽なら ``key`` は 2x2 そのもの。
         var widensInVertexStage = false
 

@@ -843,6 +843,34 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "\(Amount.diagonalFoldedRect.rawValue): \(broken.joined(separator: " / "))")
     }
 
+    /// **額縁で組む細い輪郭の矩形の光の量は、周 × 太さにちょうど一致する** (#3788)。±10% の約束より強い、組み方
+    /// (``Canvas/thinRectPiece(corners:crossings:coverage:piece:vertex:)``) の保証: 帯は列 (行) ごとにちょうど n 個の
+    /// 画素の中心を数え (反対側の縁は整数ぶんの写し)、角は列の境目で切って端数を最後の列の被覆で持つ。角度・細かさ・
+    /// 太さ・ずらしの格子で、期待との差を 0.2% (足し算と半精度の丸め) まで見る。回さない角度 (0) も含む。
+    @Test("額縁で組む細い輪郭の矩形の光の量は、角度・位相によらず周 × 太さにちょうど一致する (#3788)")
+    func framedRectLightIsExact() throws {
+        var broken: [String] = []
+        var seen = 0
+        for angle: Float in [0, 0.3, Float.pi / 4, 0.7859946616474819, 1.2] {
+            for density in [Float(1), 0.5, 0.3203125, 0.25] {
+                for weight in [Float(1), 0.55] {
+                    for step in 0..<8 {
+                        let pose = Pose(
+                            weight: weight, density: density, offset: SIMD2(1.87, Float(step) * 0.25), angle: angle,
+                            squash: 1)
+                        guard let (measured, expected) = try Self.measurement(.diagonalFoldedRect, pose) else { continue }
+                        seen += 1
+                        if abs(measured - expected) > expected * 0.002 {
+                            broken.append("\(pose): 光の量 \(measured) (期待 \(expected))")
+                        }
+                    }
+                }
+            }
+        }
+        #expect(seen >= 200, "見た置き方 \(seen)")
+        #expect(broken.isEmpty, "\(broken.count) 件: \(broken.prefix(6).joined(separator: " / "))")
+    }
+
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
     /// に置き、**出す面**の赤の総和 (線の光の量) を細かさ 1 の y = 10 と比べる。直す前は細かさ 0.5
     /// で y = 10 が 0・y = 11 が 351 (細かさ 1 は 280) だった。±20% は拡大の段が総光量を少し

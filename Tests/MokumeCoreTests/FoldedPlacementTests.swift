@@ -393,9 +393,9 @@ struct FoldedPlacementTests {
     // MARK: - 頂点段の出力を読み戻す
 
     /// 頂点段の置き方 (`mokume_flatMove` → `mokume_flatPlace`)・貼る絵の読み取り位置 (`mokume_flatFillUV`)・額縁の
-    /// 半幅と被覆 (`mokume_thinRectBand`) を、Shapes.metal の原文に足した計算の入口から呼び、CPU の式と **1 ビットずつ**
+    /// 帯の数と被覆 (`mokume_thinRectBand`)・額縁の片の頂点 (`mokume_thinRectPiece`・#3788) を、Shapes.metal の原文に足した計算の入口から呼び、CPU の式と **1 ビットずつ**
     /// 突き合わせる。画素の比べでは 1 ulp の差は縁の画素が振れたときしか見えない。
-    @Test("頂点段の置き方・読み取り位置・額縁の半幅は、CPU の式と 1 ビットも違わない")
+    @Test("頂点段の置き方・読み取り位置・額縁の帯と片の頂点は、CPU の式と 1 ビットも違わない")
     func vertexStageMatchesTheCPUBitForBit() throws {
         let gpu = try RenderDevice()
         let shapes = try gpu.shaders.bundledShaderSource(named: "Shapes")
@@ -406,12 +406,26 @@ struct FoldedPlacementTests {
             constant float4 *boxes [[buffer(2)]], constant float2 *inputs [[buffer(3)]],
             constant float4 *bands [[buffer(4)]],
             device float2 *placed [[buffer(5)]], device float2 *uvs [[buffer(6)]], device float2 *widths [[buffer(7)]],
+            device float4 *pieces [[buffer(8)]],
             uint id [[thread_position_in_grid]])
         {
             float2 moved = mokume_flatMove(inputs[id], offsets[0].xy);
             placed[id] = mokume_flatPlace(linears[0], offsets[0].zw, moved);
             uvs[id] = mokume_flatFillUV(boxes[0], offsets[0].xy, moved);
-            widths[id] = mokume_thinRectBand(linears[id], bands[0].xy, bands[0].z, bands[0].w);
+            float2 band = mokume_thinRectBand(linears[id], bands[0].xy, bands[0].z, bands[0].w);
+            widths[id] = band;
+            // 額縁の片の頂点 (#3788): 矩形 (0, 0)〜(40, 30) を置き場所 id で置く
+            float2 low = float2(0.0, 0.0);
+            float2 high = float2(40.0, 30.0);
+            float2 units = bands[0].xy;
+            float2 c0 = mokume_thinRectCornerPixel(linears[id], offsets[0].zw, offsets[0].xy, low, units);
+            float2 c1 = mokume_thinRectCornerPixel(linears[id], offsets[0].zw, offsets[0].xy, float2(high.x, low.y), units);
+            float2 c2 = mokume_thinRectCornerPixel(linears[id], offsets[0].zw, offsets[0].xy, high, units);
+            float2 c3 = mokume_thinRectCornerPixel(linears[id], offsets[0].zw, offsets[0].xy, float2(low.x, high.y), units);
+            for (int k = 0; k < 72; k++) {
+                float3 piece = mokume_thinRectPiece(c0, c1, c2, c3, band.x, band.y, k / 6, k % 6);
+                pieces[id * 72 + k] = float4(mokume_thinRectOutput(piece.xy, units), piece.z, 0.0);
+            }
         }
         """
         let library = try gpu.shaders.makeShapeLibrary(named: "FlatPlacementProbe", body: shapes + probe)
@@ -467,6 +481,9 @@ struct FoldedPlacementTests {
                 let commands = try #require(queue.makeCommandBuffer())
                 let encoder = try #require(commands.makeComputeCommandEncoder())
                 let (placedBuffer, uvBuffer, widthBuffer) = (try output(count), try output(count), try output(count))
+                let pieceBuffer = try #require(
+                    gpu.device.makeBuffer(
+                        length: count * 72 * MemoryLayout<SIMD4<Float>>.stride, options: .storageModeShared))
                 encoder.setComputePipelineState(pipeline)
                 encoder.setBuffer(
                     try buffer(
@@ -485,6 +502,7 @@ struct FoldedPlacementTests {
                 encoder.setBuffer(placedBuffer, offset: 0, index: 5)
                 encoder.setBuffer(uvBuffer, offset: 0, index: 6)
                 encoder.setBuffer(widthBuffer, offset: 0, index: 7)
+                encoder.setBuffer(pieceBuffer, offset: 0, index: 8)
                 encoder.dispatchThreads(
                     MTLSize(width: count, height: 1, depth: 1),
                     threadsPerThreadgroup: MTLSize(width: count, height: 1, depth: 1))
@@ -505,7 +523,7 @@ struct FoldedPlacementTests {
                     #expect(uvs[index] == uvOf(moved[index]), "読み取り位置 \(index): GPU \(uvs[index]) CPU \(uvOf(moved[index]))")
                     compared += 1
                 }
-                // CPU: 額縁 (`thinRectFrame`) の半幅と被覆。先頭は剪断を含みうる置き場所なので飛ばす
+                // CPU: 額縁 (`thinRectFrame`) の帯の数と被覆。先頭は剪断を含みうる置き場所なので飛ばす
                 canvas.strokeWeight(weight)
                 let rect = Canvas.rectOutline(width: 40, height: 30)
                 for index in 1..<count {
@@ -515,9 +533,34 @@ struct FoldedPlacementTests {
                     // 細くない置き場所は額縁を組まない (頂点段にも来ない)
                     guard let frame else { continue }
                     #expect(
-                        widths[index] == SIMD2(frame.half, frame.coverage),
-                        "額縁 \(index): GPU \(widths[index]) CPU \(SIMD2(frame.half, frame.coverage))")
+                        widths[index] == SIMD2(frame.crossings, frame.coverage),
+                        "額縁 \(index): GPU \(widths[index]) CPU \(SIMD2(frame.crossings, frame.coverage))")
                     compared += 1
+                    // CPU: 額縁の片の頂点 (`thinRectPiece`)。角は `strokePoint` と同じく置いて半画素寄せ、描く画素で割る
+                    let placing = simd_float4x4(
+                        SIMD4(similar[index].columns.0.x, similar[index].columns.0.y, 0, 0),
+                        SIMD4(similar[index].columns.1.x, similar[index].columns.1.y, 0, 0),
+                        SIMD4(0, 0, 1, 0), SIMD4(translation.x, translation.y, 0, 1))
+                    let corners = [SIMD2<Float>(0, 0), SIMD2(40, 0), SIMD2(40, 30), SIMD2(0, 30)].map {
+                        corner -> SIMD2<Float> in
+                        let moved = corner + anchor
+                        let at = Transform(matrix: placing).placed(x: moved.x, y: moved.y) + 0.5
+                        return SIMD2(at.x / units.x, at.y / units.y)
+                    }
+                    let gpuPieces = UnsafeBufferPointer(
+                        start: pieceBuffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: count * 72)
+                            .advanced(by: index * 72),
+                        count: 72)
+                    for ordinal in 0..<72 {
+                        let pixel = Canvas.thinRectPiece(
+                            corners: corners, crossings: frame.crossings, coverage: frame.coverage,
+                            piece: ordinal / 6, vertex: ordinal % 6)
+                        let expected = SIMD4(pixel.x * units.x, pixel.y * units.y, pixel.z, 0)
+                        #expect(
+                            gpuPieces[ordinal] == expected,
+                            "額縁の片 \(index) の頂点 \(ordinal): GPU \(gpuPieces[ordinal]) CPU \(expected)")
+                        compared += 1
+                    }
                 }
             }
         }

@@ -145,7 +145,7 @@ static inline float2 mokume_flatPlace(float4 linear, float2 translation, float2 
     return fma(linear.zw, float2(position.y), linear.xy * position.x) + translation;
 }
 
-/// 額縁の片で組む細い矩形の輪郭の、置き場所ごとの半幅 (x・形自身の座標) と被覆 (y) (#3733)。
+/// 額縁の片で組む細い矩形の輪郭の、置き場所ごとの帯の数 n (x・列 / 行が帯を切る長さ) と被覆 (y) (#3733・#3788)。
 ///
 /// **式は CPU の `thinRectFrame(_:placedBy:)` と 1 つずつ同じ順で書く** — 1 つ目 (畳まずに置く) と雛形で、
 /// 額縁の角が 1 ulp も違わないようにする。`simd_determinant` は `fma(a, d, −(b · c))`、`simd_length` は融合
@@ -170,18 +170,128 @@ static inline float2 mokume_thinRectBand(
     float axis = max(abs(along.x), abs(along.y));
     float crossings = precise::divide(drawn, axis) <= 1.0 ? 1.0 : 2.0;
     float target = crossings * axis;
-    float widen = precise::divide(target, drawn);
     float coverage = precise::divide(drawn, target);
-    float drawnHalf = precise::divide(drawn * widen, 2.0);
-    return float2(precise::divide(drawnHalf, scale), coverage);
+    return float2(crossings, coverage);
 }
 
-/// 額縁の片の角 `corner` (ずらした後) を、向き `slope` (各成分 −1・0・1) に半幅 `halfWidth` だけ広げる
-/// (CPU の `bases[i] + half * slopes[i]` と同じ順)。
-static inline float2 mokume_thinRectCorner(float2 corner, float halfWidth, float2 slope) {
+/// 細い矩形の輪郭の角 `corner` (形自身の座標・置き場所の位置を足す前) を、描く画素の座標へ置く (#3788)。
+/// CPU の `strokePoint` (`Transform.placed` の後に出す画素で半画素寄せる) を描く画素で割るのと同じ順。
+static inline float2 mokume_thinRectCornerPixel(
+    float4 linear, float2 translation, float2 anchor, float2 corner, float2 unitsPerDrawnPixel)
+{
 #pragma METAL fp math_mode(safe)
 #pragma METAL fp contract(off)
-    return corner + halfWidth * slope;
+    float2 placed = mokume_flatPlace(linear, translation, mokume_flatMove(corner, anchor)) + 0.5;
+    return float2(
+        precise::divide(placed.x, unitsPerDrawnPixel.x), precise::divide(placed.y, unitsPerDrawnPixel.y));
+}
+
+/// 額縁の帯 `band` の、帯を進む軸 (0 = x・1 = y)。形の x の辺の帯 (0・2) は `tAxis`、y の辺の帯はもう一方。
+static inline int mokume_thinRectAxis(int band, int tAxis) {
+    return band % 2 == 0 ? tAxis : 1 - tAxis;
+}
+
+/// 帯 `band` (角 `band` から角 `band + 1` へ) の傾き (帯を進む軸 1 あたりの、もう一方の軸の変化)。
+static inline float mokume_thinRectSlope(thread const float2 *corners, int band, int tAxis) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    int axis = mokume_thinRectAxis(band, tAxis);
+    float2 start = corners[band];
+    float2 end = corners[(band + 1) % 4];
+    return precise::divide(end[1 - axis] - start[1 - axis], end[axis] - start[axis]);
+}
+
+/// 角 `corner` で y の辺の帯が始まる位置 (#3788)。x: 角から境目までの長さ φ・y: 境目 (帯を進む軸の座標・整数)。
+/// 2 本の帯が交わる範囲 (角から κ 以内) と丸めの余裕 (1/64) を越えた最初の画素の中心の行から始める。
+static inline float2 mokume_thinRectStart(thread const float2 *corners, int corner, int tAxis, float halfBand) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    int tBand = corner % 2 == 0 ? corner : (corner + 3) % 4;
+    int rBand = corner % 2 == 0 ? (corner + 3) % 4 : corner;
+    int axis = 1 - tAxis;
+    float tSlope = mokume_thinRectSlope(corners, tBand, tAxis);
+    float rSlope = mokume_thinRectSlope(corners, rBand, tAxis);
+    float kappa = precise::divide(halfBand * (1.0 + abs(tSlope)), 1.0 - tSlope * rSlope);
+    int far = rBand == corner ? (corner + 1) % 4 : rBand;
+    float sign = corners[far][axis] > corners[corner][axis] ? 1.0 : -1.0;
+    float v = sign * corners[corner][axis];
+    float m = ceil(v + kappa + (1.0 / 64.0) - 0.5);
+    return float2(m - v, sign * m);
+}
+
+/// 角 `corner` で x の辺の帯が終わる位置 (#3788)。x: 境目 (帯を進む軸の座標・整数)・y: 最後の列の被覆の割合。
+/// 角を越えて、y の辺の帯の始まりの長さ φ 以上の最初の境目まで延ばし、延ばしすぎたぶんを最後の列で打ち消す。
+static inline float2 mokume_thinRectEnd(thread const float2 *corners, int corner, int tAxis, float halfBand) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    int tBand = corner % 2 == 0 ? corner : (corner + 3) % 4;
+    int far = tBand == corner ? (corner + 1) % 4 : tBand;
+    float sign = corners[corner][tAxis] > corners[far][tAxis] ? 1.0 : -1.0;
+    float v = sign * corners[corner][tAxis];
+    float phi = mokume_thinRectStart(corners, corner, tAxis, halfBand).x;
+    float e = ceil(v + phi);
+    return float2(sign * e, 1.0 - ((e - v) - phi));
+}
+
+/// 細い矩形の輪郭の片 `piece` (0〜11) の頂点 `slot` (0〜5) を、描く画素の空間で組む (#3788)。xy: 位置 (描く画素)・
+/// z: 被覆。角 `c0`〜`c3` は形の (x0, y0)・(x1, y0)・(x1, y1)・(x0, y1) を描く画素へ置いたもの。
+///
+/// **式は CPU の `Canvas.thinRectPiece(corners:crossings:coverage:piece:vertex:)` と 1 つずつ同じ順で書く** —
+/// 1 つ目 (畳まずに置く) と雛形で頂点が 1 ビットも違わないようにする。組み方の説明は CPU の側にある。
+static inline float3 mokume_thinRectPiece(
+    float2 c0, float2 c1, float2 c2, float2 c3, float crossings, float coverage, int piece, int slot)
+{
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    float2 corners[4] = { c0, c1, c2, c3 };
+    float halfBand = crossings * 0.5;
+    int tAxis = abs(c1.x - c0.x) >= abs(c1.y - c0.y) ? 0 : 1;
+    int band = piece / 3;
+    int part = piece % 3;
+    int axis = mokume_thinRectAxis(band, tAxis);
+    float2 start = corners[band];
+    float2 end = corners[(band + 1) % 4];
+    float slope = mokume_thinRectSlope(corners, band, tAxis);
+    float sign = end[axis] > start[axis] ? 1.0 : -1.0;
+    float from;
+    float to;
+    float cover = coverage;
+    if (band % 2 == 0) {
+        float2 first = mokume_thinRectEnd(corners, band, tAxis, halfBand);
+        float2 last = mokume_thinRectEnd(corners, (band + 1) % 4, tAxis, halfBand);
+        if (part == 0) {
+            from = first.x;
+            to = first.x + sign;
+            cover = coverage * first.y;
+        } else if (part == 1) {
+            from = first.x + sign;
+            to = last.x - sign;
+        } else {
+            from = last.x - sign;
+            to = last.x;
+            cover = coverage * last.y;
+        }
+    } else {
+        float first = mokume_thinRectStart(corners, band, tAxis, halfBand).y;
+        float last = mokume_thinRectStart(corners, (band + 1) % 4, tAxis, halfBand).y;
+        if (sign * (last - first) < 0.0) {
+            last = first;
+        }
+        from = part == 2 ? last : first;
+        to = part == 0 ? first : last;
+    }
+    int quad = slot < 3 ? slot : (slot == 3 ? 0 : slot - 2);
+    float along = (quad == 0 || quad == 3) ? from : to;
+    float low = start[1 - axis] + (along - start[axis]) * slope - halfBand;
+    float across = quad >= 2 ? low + crossings : low;
+    return axis == 0 ? float3(along, across, cover) : float3(across, along, cover);
+}
+
+/// 描く画素の位置を描画先の座標へ戻す (CPU の `appendThinRectFrame` と同じ掛け算)。
+static inline float2 mokume_thinRectOutput(float2 pixel, float2 unitsPerDrawnPixel) {
+#pragma METAL fp math_mode(safe)
+#pragma METAL fp contract(off)
+    return float2(pixel.x * unitsPerDrawnPixel.x, pixel.y * unitsPerDrawnPixel.y);
 }
 
 vertex ShapeFragmentIn shapeVertexMain(
@@ -267,29 +377,42 @@ vertex ShapeFragmentIn shapeVertexMain(
         formUV = mokume_flatFillUV(frame.fillBox, anchor, formPosition);
     }
 
-    // **畳んだ矩形の雛形の細い輪郭は、置き場所ごとに広げ直す** (#3733)。相似な置き場所では矩形の 4 本の帯が
-    // 同じ半幅と被覆を持ち、輪郭の頂点はどれも「額縁の片の角 + 半幅 × 向き」になる。半幅は CPU の
-    // `thinRectFrame` と同じ式で置き場所の 2x2 から求め、角 (位置を足した後) へ CPU と同じ順で足す。
-    // 向きは `uv` に入っていて、断片へは白い区画の読み取り位置を渡す
+    // **畳んだ矩形の雛形の細い輪郭は、置き場所ごとに組み直す** (#3733・#3788)。輪郭の頂点の `position` は矩形の
+    // 左上 (x0, y0)・`uv` は右下 (x1, y1) で (形自身の座標)、輪郭の何番目の頂点かで片と片の中の頂点が決まる。
+    // 4 つの角を CPU の `strokePoint` と同じ順で描く画素へ置き、帯の数と被覆を CPU の `thinRectFrame` と同じ式で
+    // 置き場所の 2x2 から求め、片の頂点を CPU の `thinRectPiece` と同じ式で描く画素の空間で組む。半画素の寄せは
+    // 角を置くときに済んでいる。断片へは白い区画の読み取り位置を渡す
     bool widensThinStroke = frame.thinStroke != 0 && index >= frame.strokeStart;
     float thinStrokeCoverage = 1.0;
+    float2 placed;
     if (widensThinStroke) {
         float2 band = mokume_thinRectBand(
             placement.linear, frame.unitsPerDrawnPixel, frame.thinStrokeParams.x, frame.thinStrokeParams.y);
-        formPosition = mokume_thinRectCorner(formPosition, band.x, vertex_in.uv);
+        float2 low = vertex_in.position;
+        float2 high = vertex_in.uv;
+        float4 linear = placement.linear;
+        float2 units = frame.unitsPerDrawnPixel;
+        uint ordinal = index - frame.strokeStart;
+        float3 piece = mokume_thinRectPiece(
+            mokume_thinRectCornerPixel(linear, translation, anchor, low, units),
+            mokume_thinRectCornerPixel(linear, translation, anchor, float2(high.x, low.y), units),
+            mokume_thinRectCornerPixel(linear, translation, anchor, high, units),
+            mokume_thinRectCornerPixel(linear, translation, anchor, float2(low.x, high.y), units),
+            band.x, band.y, int(ordinal / 6), int(ordinal % 6));
+        placed = mokume_thinRectOutput(piece.xy, units);
         formUV = frame.thinStrokeParams.zw;
-        thinStrokeCoverage = band.y;
-    }
-
-    // **ずらした点を、置き場所の変換で描画先の座標へ移す** (`Transform.placed` と同じ順・#3555)。何も動かさない
-    // 置き場所 (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
-    float2 placed = mokume_flatPlace(placement.linear, translation, formPosition);
-    // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
-    // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
-    // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が
-    // 最大なので足さない — そちらは CPU が描画先の座標で足し終えている (`Canvas+Outline`)
-    if (index >= frame.strokeStart) {
-        placed += 0.5;
+        thinStrokeCoverage = piece.z;
+    } else {
+        // **ずらした点を、置き場所の変換で描画先の座標へ移す** (`Transform.placed` と同じ順・#3555)。何も動かさない
+        // 置き場所 (単位行列) を通しても値は 1 ビットも変わらないので、畳めない頂点も同じ経路を通る
+        placed = mokume_flatPlace(placement.linear, translation, formPosition);
+        // **畳んだ雛形の輪郭は、置いた後・投影の前に半画素寄せる。** 塗りは整数の座標で
+        // 画素の境目、線は画素の中心に乗る約束で (ADR-0039 決定 2)、置き場所ごとに回転や
+        // 拡大が違っても画面でちょうど半画素になるよう、変換の後で足す。畳めない列は番号が
+        // 最大なので足さない — そちらは CPU が描画先の座標で足し終えている (`Canvas+Outline`)
+        if (index >= frame.strokeStart) {
+            placed += 0.5;
+        }
     }
 
     ShapeFragmentIn out;
