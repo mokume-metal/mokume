@@ -24,6 +24,7 @@
 実行は make hooks-test (CI もこれを呼ぶ)。
 """
 
+import math
 import os
 import shutil
 import subprocess
@@ -39,14 +40,14 @@ SCRIPT = REPO / "scripts" / "runner-job-started.sh"
 # FAKE_RM_FAILS 回目までは何も消さず、以後は本物の rm に渡す。負の数なら期限まで消さない。
 # 消さない回は、既定では「Directory not empty」で落ち、FAKE_RM_MODE=noop なら 0 で終わる
 # (rm は成功したのに中身が残る形。#3616 の反証)。呼ばれた回数は FAKE_RM_COUNT のファイルに数える。
-# FAKE_RM_CROSS_SECOND=1 なら、1 回目は壁時計の次の秒の境目を 0.05 秒過ぎるまで眠ってから落ちる
-# (フックの 1 周目が $SECONDS の境目をまたぐ形。#3798)
+# FAKE_RM_WAKE_AT (壁時計の絶対時刻) があれば、1 回目はその時刻まで眠ってから落ちる (過ぎていれば眠らない)。
+# 起こす側が秒の境目の直後を渡すと、フックの 1 周目が $SECONDS の境目をまたぐ形になる (#3798)
 FAKE_RM = """#!/bin/sh
 n=$(cat "$FAKE_RM_COUNT" 2>/dev/null || echo 0)
 n=$((n + 1))
 echo "$n" > "$FAKE_RM_COUNT"
-if [ "$n" -eq 1 ] && [ "${FAKE_RM_CROSS_SECOND:-0}" = 1 ]; then
-  python3 -c 'import time; time.sleep(1.05 - time.time() % 1)'
+if [ "$n" -eq 1 ] && [ -n "${FAKE_RM_WAKE_AT:-}" ]; then
+  python3 -c 'import sys, time; time.sleep(max(0.0, float(sys.argv[1]) - time.time()))' "$FAKE_RM_WAKE_AT"
 fi
 if [ "$FAKE_RM_FAILS" -lt 0 ] || [ "$n" -le "$FAKE_RM_FAILS" ]; then
   [ "$FAKE_RM_MODE" = "noop" ] && exit 0
@@ -164,9 +165,11 @@ class RunnerJobStartedTest(unittest.TestCase):
         # 期限までは経っていないので打ち直して緑で終える。差が期限と等しいだけで諦めると、打ち直し 0 回で
         # 「書き手は見つからなかった」の赤になり、merge queue から無関係な PR を外した (#3798)
         ws = self.make_workspace()
-        # 秒の 0.7 の位置で起こす。1 周目は次の境目 +0.05 まで眠るので、境目をまたいでも実時間は 1 秒に届かない
+        # 秒の 0.7 の位置で起こし、1 周目を次の境目 +0.05 (絶対時刻) まで眠らせる。境目をまたいでも実時間は
+        # 約 0.35 秒で、期限 1 秒に届かない。眠る先を絶対時刻で渡すので、起動が遅れても 2 つ目の境目はまたがない
         time.sleep((0.7 - time.time() % 1) % 1)
-        proc = self.run_with_stubs(ws, rm_fails=1, FAKE_RM_CROSS_SECOND="1")
+        wake_at = math.floor(time.time()) + 1.05
+        proc = self.run_with_stubs(ws, rm_fails=1, FAKE_RM_WAKE_AT=f"{wake_at:.3f}")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(list(ws.iterdir()), [])
         self.assertIn("打ち直し 1 回", proc.stdout)
