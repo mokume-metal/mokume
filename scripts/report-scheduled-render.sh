@@ -30,7 +30,9 @@
 #
 # 発信の実体は scripts/report-check-failure.sh が持ち、ここが持つのは**固定タイトルと本文**
 # だけである (report-dead-assets.sh と同じ分け方)。落ちた検査の名前と文面は
-# scripts/read-test-record.py --failure-messages が読む。
+# scripts/read-test-record.py --failure-messages が読む。**メンテナを名指す (`--mention`・#3771)**
+# — 11-05 は専用機の故障の定期の赤 (#3766) も、merge queue の #3760 と同じく bot の名義で
+# 誰も名指さず、人の最初の応答まで 6 時間あまりかかった。
 #
 # 呼ぶのは .github/workflows/render.yml の scheduled-report で、GitHub ホストのジョブである。
 # **`issues: write` を持つのはそのジョブだけ**で、専用機のジョブは contents: read・秘密なしの
@@ -169,4 +171,5 @@ bash "$here/report-check-failure.sh" \
   --log "$log" \
   --body-file "$body" \
   --key-file "$body" \
-  --source '.github/workflows/render.yml の scheduled-report が自動起票した (#1983)'
+  --source '.github/workflows/render.yml の scheduled-report が自動起票した (#1983)' \
+  --mention
