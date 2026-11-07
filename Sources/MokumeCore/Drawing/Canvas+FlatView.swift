@@ -58,6 +58,15 @@ extension Canvas {
         return plain
     }
 
+    /// 視点の行列の控え (``viewProjection`` と同じ値)。平面の図形は変換を書き換えるたびに置き方を作り直すので、
+    /// 視点の行列 (三角関数と正規化を含む) を毎回組まない。視点を書き換えると外れる。
+    var flatViewProjection: simd_float4x4 {
+        if let viewProjectionMemo { return viewProjectionMemo }
+        let matrix = viewProjection
+        viewProjectionMemo = matrix
+        return matrix
+    }
+
     /// 変換 `matrix` で置く平面の図形の置き方。
     ///
     /// **形の組み立ての中は素の置き方を返す。** 記録した頂点は形自身の座標で、置くとき (``shape(_:at:)``) に置き場所の
@@ -74,7 +83,7 @@ extension Canvas {
             return FlatView(placing: Transform(matrix: matrix), clip: nil)
         }
         let (placing, world) = Self.laidFlat(matrix)
-        return FlatView(placing: Transform(matrix: placing), clip: viewProjection * world)
+        return FlatView(placing: Transform(matrix: placing), clip: flatViewProjection * world)
     }
 
     /// 列の x・y・z が全部有限か。

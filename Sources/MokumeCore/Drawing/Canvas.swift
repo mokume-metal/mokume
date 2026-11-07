@@ -1360,12 +1360,15 @@ public final class Canvas {
     var cameraStorage: Camera? {
         didSet {
             cameraPlainMemo = nil
+            viewProjectionMemo = nil
             flatViewMemo = nil
         }
     }
 
     /// ``cameraIsPlain`` の控え。視点を書き換えると外す。
     var cameraPlainMemo: Bool?
+    /// ``flatViewProjection`` の控え。視点を書き換えると外す (#3830)。
+    var viewProjectionMemo: simd_float4x4?
     /// ``currentFlatView`` の控え。変換・視点・形の組み立ての旗が変わると外す (#3830)。
     var flatViewMemo: FlatView?
     /// 開いている (これから開く) 平面の列の行列。`nil` は素の場合 (``projection``)。``enterFlatView(_:)`` が書き、
