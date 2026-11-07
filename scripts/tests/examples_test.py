@@ -252,6 +252,86 @@ class 集める(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("行き先", problems[0])
 
+    def test_資材の本文が直後の例に結ばれる(self):
+        """`資材` の囲みは例ではなく、次の例が読む `assets/` の 1 本 (#3836)。"""
+        found, problems = self.拾う(
+            """\
+            /// <!-- example: 資材 assets/waves.metal -->
+            /// ```metal
+            /// float4 paint(Fragment in, Values values) {
+            ///     return in.color;
+            /// }
+            /// ```
+            /// <!-- example: 文脈 var waves: Shader! -->
+            /// ```swift
+            /// waves = try loadShader("assets/waves.metal")
+            /// ```
+            /// ```swift
+            /// circle(1, 2, 3)
+            /// ```
+            """
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(len(found), 2, "資材の囲みを例として数えている")
+        self.assertEqual(
+            found[0].assets,
+            [("assets/waves.metal", "float4 paint(Fragment in, Values values) {\n    return in.color;\n}\n")],
+        )
+        self.assertEqual(found[0].context, ["var waves: Shader!"])
+        self.assertEqual(found[1].assets, [], "資材が次の次の例まで持ち越されている")
+
+    def test_資材の誤りは名指しで赤(self):
+        cases = {
+            "名前が無い": ("<!-- example: 資材 -->", "```metal", "loadShader(\"assets/a.metal\")", "名前"),
+            "assets の外": ("<!-- example: 資材 data/a.metal -->", "```metal", "loadShader(\"data/a.metal\")", "assets/"),
+            "metal でない": ("<!-- example: 資材 assets/a.json -->", "```metal", "loadJSON(\"assets/a.json\")", ".metal"),
+            "外へ出る": ("<!-- example: 資材 assets/../a.metal -->", "```metal", "loadShader(\"assets/../a.metal\")", ".."),
+            "囲みが metal でない": ("<!-- example: 資材 assets/a.metal -->", "```json", "loadShader(\"assets/a.metal\")", "```metal"),
+            "例が読まない": ("<!-- example: 資材 assets/a.metal -->", "```metal", "loadShader(\"assets/b.metal\")", "読んでいない"),
+        }
+        for label, (mark, fence, call, expected) in cases.items():
+            with self.subTest(label):
+                _, problems = self.拾う(
+                    f"/// {mark}\n/// {fence}\n/// float4 paint() {{}}\n/// ```\n"
+                    f"/// ```swift\n/// _ = try? {call}\n/// ```\n"
+                )
+                self.assertTrue(any(expected in problem for problem in problems), problems)
+
+    def test_同じ名前の資材が2本あれば赤(self):
+        _, problems = self.拾う(
+            """\
+            /// <!-- example: 資材 assets/a.metal -->
+            /// ```metal
+            /// float4 paint() {}
+            /// ```
+            /// <!-- example: 資材 assets/a.metal -->
+            /// ```metal
+            /// float4 paint() {}
+            /// ```
+            /// ```swift
+            /// _ = try? loadShader("assets/a.metal")
+            /// ```
+            """
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("2 本", problems[0])
+
+    def test_例の続かない資材は行き先が無い(self):
+        _, problems = self.拾う(
+            """\
+            /// <!-- example: 資材 assets/a.metal -->
+            /// ```metal
+            /// float4 paint() {}
+            /// ```
+            /// ふつうの説明の行
+            /// ```swift
+            /// _ = try? loadShader("assets/a.metal")
+            /// ```
+            """
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("行き先", problems[0])
+
     def test_カタログの素の囲みも拾う(self):
         found, _ = examples.examples_in(
             "```swift\nimport mokume\n\nfinal class A: Sketch {}\n```\n",
@@ -526,6 +606,19 @@ class 綴りの共有(unittest.TestCase):
         found, _ = examples.examples_in("\n".join(lines), Path("Sources/A.swift"))
         self.assertEqual((found[0].context, found[0].skip), (["var dust: Particles!"], "投げる呼び出し"))
 
+
+    def test_撮る側は資材の印を組めない印と取り違えない(self):
+        """`資材` は ```metal の上に付く印。撮る側の印の読み方が kind を見ずに `組めない` へ
+        落とすと、例が理由の無い `組めない` として扱われる (#3836)。"""
+        lines = [
+            "/// <!-- example: 資材 assets/a.metal -->",
+            "/// <!-- example: 文脈 var a: Shader! -->",
+            "/// ```swift",
+            "/// a = try loadShader(\"assets/a.metal\")",
+            "/// ```",
+            "/// <!-- shot: 絵 -->",
+        ]
+        self.assertEqual(shots.marks_above(lines, len(lines) - 1), (["var a: Shader!"], None))
 
 if __name__ == "__main__":
     unittest.main()

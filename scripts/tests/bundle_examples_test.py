@@ -95,6 +95,29 @@ public extension Sketch {
     /// dust += 1
     /// ```
     func withContext() {}
+
+    /// 断片を読む。
+    ///
+    /// <!-- example: 資材 assets/shaders/waves.metal -->
+    /// ```metal
+    /// float4 paint(Fragment in, Values values) { return in.color; }
+    /// ```
+    /// ```swift
+    /// _ = try? loadShader("assets/shaders/waves.metal")
+    /// ```
+    func waves() {}
+
+    /// 断片と画像を読む。
+    ///
+    /// <!-- example: 資材 assets/blended.metal -->
+    /// ```metal
+    /// float4 paint(Fragment in, Values values) { return in.color; }
+    /// ```
+    /// ```swift
+    /// _ = try? loadImage("assets/bark.png")
+    /// _ = try? loadShader("assets/blended.metal")
+    /// ```
+    func blended() {}
 }
 
 public struct Circle {
@@ -193,10 +216,21 @@ class 束(unittest.TestCase):
         self.assertNotIn("mine()", headings)
         self.assertNotIn("external()", headings)
         self.assertNotIn("detached()", headings)
+        # 断片を添えても、ほかに添えていない資材 (画像) を読む例は外れる
+        self.assertNotIn("blended()", headings)
         self.assertEqual(
             reasons,
             {"資材を読む", "型の段", "組めない印", "宣言に結べない", "カタログの例"},
         )
+
+    def test_添えた資材だけを読む例は_資材ごと同梱する(self):
+        entries, _ = self.作る()
+        waves = next(entry for entry in entries if entry.heading == "waves()")
+        self.assertEqual(
+            waves.assets,
+            [("assets/shaders/waves.metal", "float4 paint(Fragment in, Values values) { return in.color; }\n")],
+        )
+        self.assertIn('loadShader("assets/shaders/waves.metal")', waves.source)
 
     def test_文脈の宣言は包みに入る(self):
         entries, _ = self.作る()
@@ -254,6 +288,18 @@ class 束(unittest.TestCase):
             self.assertTrue(summary, f"{spelling} の説明が空")
             self.assertTrue((out / file).is_file(), f"{file} が無い")
             self.assertTrue(file.endswith(".swift.template"))
+        # 資材は、スケッチと同じ番号の `.assets/` の下に、`assets/` から下のパスで置く
+        waves = next(row for row in rows if row[0] == "waves()")
+        written = out / waves[1].replace(".swift.template", ".assets") / "shaders" / "waves.metal"
+        self.assertEqual(
+            written.read_text(encoding="utf-8"),
+            "float4 paint(Fragment in, Values values) { return in.color; }\n",
+        )
+        others = [row[1] for row in rows if row[0] != "waves()"]
+        self.assertFalse(
+            [file for file in others if (out / file.replace(".swift.template", ".assets")).exists()],
+            "資材の無い例に .assets/ を置いている",
+        )
         # 並びは綴りの辞書順 (大小を区別しない)
         spellings = [row[0] for row in rows]
         self.assertEqual(spellings, sorted(spellings, key=str.lower))
@@ -298,9 +344,19 @@ class 本物の木(unittest.TestCase):
                 heading,
             )
 
-    def test_資材を読む例は1本も入らない(self):
+    def test_資材を読む例は_添えた資材しか読まない(self):
         for entry in self.entries:
-            self.assertNotRegex(entry.source, r'"(?:assets|data)/', entry.spelling)
+            source = entry.source
+            for name, _ in entry.assets:
+                source = source.replace(f'"{name}"', "")
+            self.assertNotRegex(source, r'"(?:assets|data)/', entry.spelling)
+
+    def test_断片を読む_loadShader_の例が資材ごと入る(self):
+        """#3836 の完了条件 1。`waves.metal` を添えた例が一覧に並ぶ。"""
+        shaders = [e for e in self.entries if e.heading == "loadShader(_:values:surfaces:)"]
+        self.assertEqual(len(shaders), 1, [e.spelling for e in shaders])
+        self.assertEqual([name for name, _ in shaders[0].assets], ["assets/waves.metal"])
+        self.assertIn("float4 paint(Fragment in, Values values)", shaders[0].assets[0][1])
 
     def test_全部の例が_main_と差し込み口を持つ(self):
         for entry in self.entries:

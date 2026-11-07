@@ -293,6 +293,7 @@ from example_wrapping import (  # noqa: E402
     LEVEL_TYPE,
     MARK,
     MARK_CONTEXT,
+    MARK_SKIP,
     dedent,
     file_imports,
     level_of,
@@ -516,7 +517,7 @@ def marks_above(lines: list[str], open_line: int) -> tuple[list[str], str | None
     while index >= 0 and (match := MARK.match(lines[index])):
         if match["kind"] == MARK_CONTEXT:
             context.insert(0, match["rest"] or "")
-        else:
+        elif match["kind"] == MARK_SKIP:
             # 上へ遡るので、最後に読んだものが塊のいちばん上 — 組める側 (上から読んで最初の 1 本) と揃う
             skip = (match["rest"] or "").strip()
         index -= 1

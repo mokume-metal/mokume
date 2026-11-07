@@ -121,7 +121,8 @@ enum NewCommand {
     ///
     /// - Parameter base: 走らせた場所。`--local` の名前を作る場所から解くのに要る。
     /// - Parameter example: `--from` で引いた例 (``Examples/Catalogue/select(_:)``)。あれば、ひな形の
-    ///   `Sketch.swift` の代わりに、この例を `@main` を持つ 1 本として置く。
+    ///   `Sketch.swift` の代わりに、この例を `@main` を持つ 1 本として置き、例が読む資材 (#3836) を
+    ///   `Sources/<target>/assets/` に置く。
     static func files(
         for options: Options, base: URL? = GivenPath.currentDirectory,
         example: Examples.Chosen? = nil
@@ -195,6 +196,8 @@ enum NewCommand {
             // 道具の性質は変わらない (窓口は走っているスケッチを起こさない)
             (".mcp.json", try Templates.render("mcp.json.template", values)),
         ]
+            // 例が読む資材 (#3836)。置き場はひな形が宣言した `assets/` で、`watch` の下なら保存で差し替わる
+            + (example?.assets ?? []).map { ("Sources/\(target)/assets/\($0.path)", $0.contents) }
     }
 
     /// 依存を指すときの名前 (package identity)。

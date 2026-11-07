@@ -173,6 +173,28 @@ struct ExamplesTests {
         }
     }
 
+    @Test("例の資材は、隣の .assets/ から assets/ の下のパスのまま読む")
+    func theAssetsComeFromTheFolderBesideTheSketch() throws {
+        let (catalogue, directory) = try ExamplesFixture.standard()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // 5 本目が triangle。資材の置き場は `.swift.template` を `.assets` に替えた名前
+        let folder = directory.appendingPathComponent("0005.assets/shaders", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "float4 paint() {}\n".write(
+            to: folder.appendingPathComponent("waves.metal"), atomically: true, encoding: .utf8)
+        try "float4 paint() { return 1; }\n".write(
+            to: directory.appendingPathComponent("0005.assets/a.metal"), atomically: true, encoding: .utf8)
+
+        let chosen = try catalogue.select("triangle")
+        #expect(
+            chosen.assets == [
+                .init(path: "a.metal", contents: "float4 paint() { return 1; }\n"),
+                .init(path: "shaders/waves.metal", contents: "float4 paint() {}\n"),
+            ])
+        // 置き場の無い例は資材を持たない
+        #expect(try catalogue.select("Circle.draw()").assets.isEmpty)
+    }
+
     // MARK: - 束
 
     @Test("索引が無い・空の置き場は、束が無いと断る")
@@ -367,6 +389,29 @@ struct NewFromExampleTests {
         }
     }
 
+    @Test("例の資材は、スケッチの assets/ に同じパスで写す")
+    func runCopiesTheAssets() throws {
+        let (catalogue, directory) = try ExamplesFixture.standard()
+        let place = try workspace()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: place)
+        }
+        let folder = directory.appendingPathComponent("0005.assets/shaders", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let body = "float4 paint(Fragment in, Values values) { return in.color; }\n"
+        try body.write(to: folder.appendingPathComponent("waves.metal"), atomically: true, encoding: .utf8)
+
+        try NewCommand.run(
+            ["waves", "--from", "triangle", "--path", place.path], examples: { catalogue })
+
+        let assets = place.appendingPathComponent("waves/Sources/waves/assets")
+        #expect(
+            try String(contentsOf: assets.appendingPathComponent("shaders/waves.metal"), encoding: .utf8) == body)
+        // ひな形の 1 枚は残る
+        #expect(FileManager.default.fileExists(atPath: assets.appendingPathComponent("README.md").path))
+    }
+
     /// **部分的なパッケージを残さない** (#2436 の完了条件 3)。どの断りでも、作る場所には何も
     /// 現れない。
     @Test(
@@ -515,11 +560,19 @@ struct EveryBundledExampleBuildsTests {
         #expect(throws: CommandFailure.self) { try catalogue.select("arc") }
         #expect(try catalogue.select("arc(_:_:_:_:_:_:)#4").spelling == "arc(_:_:_:_:_:_:)#4")
         #expect(throws: CommandFailure.self) { try catalogue.select("nope") }
-        // 資材を読む例は一覧に出ない (写せる実体が無い・束の作り方の注記)
+        // 資材を読む例は、読む資材を束が持つものだけが一覧に出る (写せる実体が無いものは外す・#3836)
         for entry in catalogue.entries {
-            let text = try String(
+            var text = try String(
                 contentsOf: bundle.appendingPathComponent(entry.file), encoding: .utf8)
+            for asset in try catalogue.assets(of: entry) {
+                text = text.replacingOccurrences(of: "\"assets/\(asset.path)\"", with: "")
+            }
             #expect(!text.contains("\"assets/") && !text.contains("\"data/"), "\(entry.spelling) が資材を読む")
         }
+        // #3836 の作例: 断片を読む例は、断片ごと引ける
+        let shader = try catalogue.select("loadShader")
+        #expect(shader.assets.map(\.path) == ["waves.metal"])
+        #expect(shader.assets.first?.contents.contains("float4 paint(Fragment in, Values values)") == true)
+        #expect(shader.source.contains("\"assets/waves.metal\""))
     }
 }

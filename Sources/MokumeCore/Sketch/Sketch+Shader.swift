@@ -5,19 +5,27 @@
 extension SketchPart {
     /// 断片を読み込む。
     ///
+    /// `assets/waves.metal` に置く断片と、それを読む例:
+    ///
+    /// <!-- example: 資材 assets/waves.metal -->
+    /// ```metal
+    /// float4 paint(Fragment in, Values values) {
+    ///     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
+    ///     return float4(values.tint.rgb * wave, 1);
+    /// }
+    /// ```
     /// <!-- example: 文脈 var waves: Shader! -->
     /// ```swift
-    /// // waves.metal
-    /// // float4 paint(Fragment in, Values values) {
-    /// //     float wave = 0.5 + 0.5 * sin(in.place.x * 20 + in.time * values.speed);
-    /// //     return float4(values.tint.rgb * wave, 1);
-    /// // }
-    /// do {
+    /// func setup() throws {
+    ///     // 組めなければ理由を名乗って投げる。行と桁は waves.metal の中で数える
     ///     waves = try loadShader(
     ///         "assets/waves.metal",
     ///         values: ["speed": 2, "tint": .color(color(255, 128, 51))])
-    /// } catch {
-    ///     print(error)  // 組めなければ理由が出る。行と桁は waves.metal の中で数える
+    /// }
+    ///
+    /// func draw() {
+    ///     shader(waves)
+    ///     rect(0, 0, width, height)
     /// }
     /// ```
     ///
@@ -72,14 +80,18 @@ extension SketchPart {
     /// `surfaces` に書いた名前が、断片から `surfaces.名前` で読める。**渡せるのは
     /// 読み込んだ絵と、自分で描いた面の両方**である。
     ///
+    /// `assets/blended.metal` に置く断片と、それを読む例:
+    ///
+    /// <!-- example: 資材 assets/blended.metal -->
+    /// ```metal
+    /// float4 paint(Fragment in, Values values, Surfaces surfaces) {
+    ///     float4 wood = mokume_sample(surfaces.grain, in.uv);
+    ///     float4 dirt = mokume_sample(surfaces.smudge, in.place);
+    ///     return float4(wood.rgb * mix(1.0, dirt.r, values.amount), wood.a);
+    /// }
+    /// ```
     /// <!-- example: 文脈 var blended: Shader! -->
     /// ```swift
-    /// // blended.metal
-    /// // float4 paint(Fragment in, Values values, Surfaces surfaces) {
-    /// //     float4 wood = mokume_sample(surfaces.grain, in.uv);
-    /// //     float4 dirt = mokume_sample(surfaces.smudge, in.place);
-    /// //     return float4(wood.rgb * mix(1.0, dirt.r, values.amount), wood.a);
-    /// // }
     /// func setup() throws {
     ///     let bark = try loadImage("assets/bark.png")
     ///     let smudge = try createGraphics(256, 256)
