@@ -366,6 +366,45 @@ struct FlatStrokeStencilTests {
         }
     }
 
+    /// `.temporal` の拡大は、フレームごとに描く位置を描く画素 1 個弱まで揺らす (``UpscaleStage``)。額縁の片は頂点を
+    /// 共有する重ならない分割 (帯の写しの平行四辺形と両端の片・#3788) なので、揺らしは頂点をまとめて動かすだけで、
+    /// どの揺らしでも塗られた画素は 1 回ぶんの値になる。揺らしの周期の 8 フレームを描いて、フレームごとに見る。
+    @Test("畳んだ回した細い rect の輪郭は、.temporal の揺らしの下でも角を重ねて混ぜない", arguments: [StrokeJoin.miter, .bevel])
+    func foldedRotatedThinRectMixesOnceUnderJitter(join: StrokeJoin) throws {
+        let gpu = try RenderDevice()
+        let output = try RenderTarget(gpu: gpu, width: 160, height: 160)
+        let canvas = try Canvas(output: output, gpu: gpu, pixelDensity: 0.5, upscale: .temporal)
+        let shader = try canvas.makeShader(Self.passThrough)
+        // 揺らしが効いていること (フレームごとに塗られる画素が動く) も見る
+        var pictures: Set<[Int]> = []
+        for frame in 0..<8 {
+            try canvas.draw {
+                canvas.background(black)
+                canvas.noFill()
+                canvas.strokeWeight(1)
+                canvas.strokeJoin(join)
+                canvas.shader(shader)
+                canvas.stroke(255, 0, 0, 128)
+                Self.rotatedRects(canvas, quads: false, turns: (0.3, Float.pi / 4))
+            }
+            let pixels = try canvas.target.readPixels()
+            pictures.insert(
+                (0..<(pixels.width * pixels.height)).filter { pixels[$0 % pixels.width, $0 / pixels.width].red > 0.02 })
+            for (name, columns) in [("0.3 回した 1 つ目", 0..<38), ("45° の 2 つ目 (雛形)", 38..<pixels.width)] {
+                var levels: Set<Int> = []
+                for y in 0..<pixels.height {
+                    for x in columns where pixels[x, y].red > 0.02 {
+                        levels.insert(Int((pixels[x, y].red / 0.002).rounded()))
+                    }
+                }
+                #expect(
+                    levels.count == 1,
+                    "\(join) のフレーム \(frame) の \(name) の塗られた画素の値: \(levels.sorted().map { Float($0) * 0.002 })")
+            }
+        }
+        #expect(pictures.count > 1, "\(join): 8 フレームで塗られた画素が動かない (揺らしが効いていない)")
+    }
+
     /// 幾何の等しい図形は、呼び方 (畳む `rect` / 畳まない `quad`) によらず同じ光の量で出る。雛形は 1 つ目の向きで
     /// 組まれるので、1 つ目を回さない組 (2 つ目で n = 2 側へ広げ直す) と、1 つ目を回した組 (2 つ目で回さない向き・
     /// 別の角度へ広げ直す) の両方を見る。

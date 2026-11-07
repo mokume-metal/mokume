@@ -900,6 +900,35 @@ struct DensityInvarianceTests {
             "#3385 box の稜線の列の和: \(measured) (期待 \(expected))・\(pose)")
     }
 
+    /// 固定の例: #3788 で落ちた、45° 近くに回した細い輪郭の矩形の置き方 (専用機の定期の回が生成した入力)。
+    ///
+    /// 帯を線に垂直な長方形で組んでいた頃は、2 つの外れが重なった。(1) 角を列の境目で切っていないので、角 1 つで
+    /// 画素の中心を ±1 個多く (少なく) 数える。(2) 帯の 2 本の縁は行の向きにちょうど n 離れているが、頂点が別々に
+    /// 1/256 画素へ丸められるので、縁が画素の中心とほぼ重なる行で中心を 2 つ数える。45° 近くでは縁が格子に沿って
+    /// 何行も続く。縮めた置き方 (太さ 1) で光の量 14.48 (期待 12.31・+17.6%)、縮める前 (太さ 0.5138) で +13.9% だった。
+    /// 縦のずらしは、同じ角度・細かさで 1 周期ぶん (1/32 刻み) も振る (main で 1 つが +21% になる位相を含む)。
+    nonisolated static let diagonalFrameRectPoses: [Pose] =
+        [
+            Pose(weight: 1, density: 0.3203125, offset: SIMD2(1.87, 1.95), angle: 0.7859946616474819, squash: 1),
+            Pose(
+                weight: 0.513813123155979, density: 0.3203125, offset: SIMD2(1.870843861676978, 1.945885737661104),
+                angle: 0.7859946616474819, squash: 1),
+        ]
+        + (0..<64).map {
+            Pose(
+                weight: 1, density: 0.3203125, offset: SIMD2(1.87, Float($0) / 32), angle: 0.7859946616474819,
+                squash: 1)
+        }
+
+    @Test("固定の例: 45° 近くに回した細い輪郭の矩形は、角と縁の位相によらず太さぶんの濃さで出る (#3788)")
+    func diagonalFrameRectKeepsItsWeight() throws {
+        var broken: [String] = []
+        for pose in Self.diagonalFrameRectPoses {
+            if case .fail(let text) = try Self.measure(.diagonalFoldedRect, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(broken.isEmpty, "\(Amount.diagonalFoldedRect.rawValue): \(broken.joined(separator: " / "))")
+    }
+
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
     /// に置き、**出す面**の赤の総和 (線の光の量) を細かさ 1 の y = 10 と比べる。直す前は細かさ 0.5
     /// で y = 10 が 0・y = 11 が 351 (細かさ 1 は 280) だった。±20% は拡大の段が総光量を少し
