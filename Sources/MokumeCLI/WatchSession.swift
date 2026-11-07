@@ -414,6 +414,10 @@ final class WatchSession {
     /// 試聴を出た時点の、ソースの世代 (試聴の版のもの)。**ソースがこの世代のままの間は、作り直さない。**
     /// 出る要求は本番を動かさない — 世代の控えを本番の版へ戻した (``restoreProductionRecord()``) ので、そのままだと
     /// 次の拍が試聴の版を本番へ作り直してしまう。ソースが変わったら下ろす (``tick()``)。
+    ///
+    /// **入り直しても下ろさない** — 下ろすと、入った拍の ``tick()`` が出た時点の版を試聴の子として起こす (入る要求は
+    /// 何も起こさない約束・[#3794](https://github.com/mokume-metal/mokume/issues/3794))。中身を変えて保存すれば下りて、
+    /// その版が試聴の子になる。
     private var unadoptedStamp: String?
 
     /// 試聴に入っていない間に最後に書いた記録 — **本番の版の記録。** 試聴を出るとき、区画 `build` の記録をこれへ戻す。
@@ -1816,7 +1820,7 @@ final class WatchSession {
         isAuditioning = true
         previewFollowing = nil
         auditionIsUnidentified = false
-        unadoptedStamp = nil
+        // 出た時点のソースのままの控え (``unadoptedStamp``) は下ろさない。入っても何も起こさず、中身を変えた保存が試聴の子を起こす
         pendingAudition = nil
         hasNamedAuditionDeparture = false
         // 試聴の子が何度入れ替わっても、出るときの戻り先 (作品の窓が映す本番。乗り換えを待つ間は 2 つ) を失わない
