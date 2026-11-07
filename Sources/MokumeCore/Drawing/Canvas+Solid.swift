@@ -1119,15 +1119,31 @@ extension Canvas {
             mates[first] = second
             mates[second] = first
         }
-        // 別の辺の端どうしで列の片が重なれば、両方とも切らない。囲みの箱は 1 度だけ組む
+        // 別の辺の端どうしで列の片が重なれば、両方とも切らない。囲みの箱は 1 度だけ組み、x の下端の順に並べて、
+        // x で重なりうる相手 (下端が自分の上端より左) だけを比べる。既定の丸い端も切るので、開いた端を多く持つ網
+        // (稜の途切れる点の多いモデルなど) でも端どうしを総当たりにしない (#3748 の反証 7。端 2 万の網で、総当たりの
+        // 267 ms が 17 ms になる)
         var boxes: [(low: SIMD2<Float>, high: SIMD2<Float>)?] = []
         boxes.reserveCapacity(found.count)
         for (index, piece) in found.enumerated() { boxes.append((merged[index] ?? piece.cut).box) }
+        var order: [(index: Int, low: Float, high: Float)] = []
+        order.reserveCapacity(found.count)
+        for (index, box) in boxes.enumerated() {
+            if let box { order.append((index, box.low.x, box.high.x)) }
+        }
+        order.sort { $0.low < $1.low }
         var dropped = Set<Int>()
-        for first in found.indices {
+        for rank in order.indices {
+            let first = order[rank].index
             guard let one = boxes[first] else { continue }
-            for second in found.indices where second > first && found[second].edge != found[first].edge {
-                guard let other = boxes[second], ThinEndCut.overlap(one, other) else { continue }
+            for next in order[(rank + 1)...] {
+                // x で重なるには、相手の下端が自分の上端より左にある (``ThinEndCut/overlap(_:_:)`` は隔たり 1/1000 画素を
+                // 越えて重なるときだけ真)。並べてあるので、以後の相手も重ならない
+                if next.low >= order[rank].high { break }
+                let second = next.index
+                guard found[second].edge != found[first].edge, let other = boxes[second],
+                    ThinEndCut.overlap(one, other)
+                else { continue }
                 dropped.insert(first)
                 dropped.insert(second)
             }

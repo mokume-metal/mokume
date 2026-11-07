@@ -368,5 +368,32 @@ struct ThinEndCutRenderTests {
         #expect(netted.cuts[0] == nil && netted.cuts[1] == nil && netted.cuts[2] == nil)
         // 離れた端 (点 3) だけを切る
         #expect(netted.pieces.map(\.point) == [3])
+        // 開いた端の多い網でも、別の辺の端どうしで重なる片は 1 つも残さない (#3748 の反証 7)。重なりは x の下端で
+        // 並べて近い相手だけと比べるので、並びで間に別の端が挟まる組も見落とさないことを、狭い所に短い辺を密に
+        // 置いた網で見る
+        var state: UInt64 = 0x3748
+        func next() -> Float {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Float(state >> 40) / Float(1 << 24)
+        }
+        var crowd: [SIMD3<Float>] = []
+        var crowdEdges: [(Int, Int)] = []
+        for index in 0..<300 {
+            let start = SIMD3(40 + next() * 40, 40 + next() * 40, 0)
+            let angle = next() * 2 * .pi
+            crowd.append(start)
+            crowd.append(start + SIMD3(cos(angle), sin(angle), 0) * (2 + next() * 6))
+            crowdEdges.append((2 * index, 2 * index + 1))
+        }
+        let crowded = cuts(crowd, edges: crowdEdges, cap: .round)
+        #expect(!crowded.pieces.isEmpty)
+        var overlapping = 0
+        for (one, first) in crowded.pieces.enumerated() {
+            for second in crowded.pieces[(one + 1)...] where second.edge != first.edge {
+                guard let box = first.cut.box, let other = second.cut.box else { continue }
+                if ThinEndCut.overlap(box, other) { overlapping += 1 }
+            }
+        }
+        #expect(overlapping == 0, "重なったまま残った片の組 \(overlapping)")
     }
 }
