@@ -62,11 +62,19 @@ BODY = """前置きの段落。
 """
 LOG = "NG: 例の検査が落ちた\n  詳しい理由\n"
 
+# --mention で名指す相手 (#3771)。report-check-failure.sh の MENTION_LOGIN と同じ
+MENTION = "@shinyaoguri"
+# --mention を渡す呼び手。止まると queue や main の赤が人の操作まで続き、遅れの実害が出たもの
+# (11-05 の #3760・#3766)。他の呼び手は名指さない
+MENTIONING_CALLERS = {"report-runner-environment.sh", "report-scheduled-render.sh"}
+
 # 偽 gh。report-check-failure.sh と、その後に呼ばれる triage.sh の分だけ答える。
 #   gh issue list  … --jq  → FAKE_ISSUE_LIST に jq を当てる
 #   gh issue create …      → 本文を FAKE_BODY_OUT へ写し、URL を返す
 #   gh issue view  … --jq  → ラベル無し / 型無しの Issue を演じる。`--json body` には
-#                            FAKE_ISSUE_BODY (ファイル) の中身を本文として返す (#2708)
+#                            FAKE_ISSUE_BODY (ファイル) の中身を本文として返す (#2708)。
+#                            `--json body,comments` には、それに FAKE_ISSUE_COMMENT (ファイル) を
+#                            1 件のコメントとして足して返す (#3771。FAKE_VIEW_FAIL で落ちる)
 #   gh issue comment …     → 本文を FAKE_BODY_OUT へ写して成功する (FAKE_COMMENT_FAIL で落ちる)
 #   gh issue edit  …       → 本文を FAKE_EDIT_OUT へ写して成功する (FAKE_EDIT_FAIL で落ちる)
 FAKE_GH = """#!/bin/sh
@@ -90,6 +98,10 @@ case "$1 $2" in
   "issue view")
     case "$*" in
       *issueType*) json='{"issueType":null}' ;;
+      *"--json body,comments"*)
+        [ -n "${FAKE_VIEW_FAIL:-}" ] && exit 1
+        json=$(jq -n --rawfile b "${FAKE_ISSUE_BODY:-/dev/null}" --rawfile c "${FAKE_ISSUE_COMMENT:-/dev/null}" \
+          '{body: $b, comments: (if $c == "" then [] else [{body: $c}] end)}') ;;
       *"--json body"*)
         json=$(jq -Rs '{body: .}' < "${FAKE_ISSUE_BODY:-/dev/null}") ;;
       *) json='{"labels":[]}' ;;
@@ -171,8 +183,11 @@ class ReportCheckFailureTest(unittest.TestCase):
         env_extra=None,
         key=None,
         issue_body=None,
+        mention=False,
+        issue_comment=None,
     ):
-        """key は「同じ落ち方」の鍵 (None なら渡さない)。issue_body は open な Issue の本文 (#2708)"""
+        """key は「同じ落ち方」の鍵 (None なら渡さない)。issue_body は open な Issue の本文 (#2708)。
+        mention は --mention を渡すか、issue_comment は open な Issue に付いたコメント 1 件 (#3771)"""
         log_file = self.dir / "check.log"
         log_file.write_text(log)
         body_file = self.dir / "prose.md"
@@ -196,6 +211,12 @@ class ReportCheckFailureTest(unittest.TestCase):
             issue_body_file = self.dir / "issue-body.md"
             issue_body_file.write_text(issue_body)
             env["FAKE_ISSUE_BODY"] = str(issue_body_file)
+        if issue_comment is not None:
+            issue_comment_file = self.dir / "issue-comment.md"
+            issue_comment_file.write_text(issue_comment)
+            env["FAKE_ISSUE_COMMENT"] = str(issue_comment_file)
+        if mention:
+            argv.append("--mention")
         env.update(env_extra or {})
         return self.run_script(argv, env_extra=env)
 
@@ -245,14 +266,84 @@ class ReportCheckFailureTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn("issue create", self.gh_log())
 
+    # --- --mention はメンテナを 1 つの Issue で 1 回だけ名指す (#3771) ---------------
+    #
+    # 起票は bot の名義で誰も名指さず、届くかが watch の設定次第になる。11-05 は #3760 が
+    # 前検査の赤の 1 分後に立ったのに、人が動くまで約 8 時間かかった
+
+    def test_名指しを頼まれた起票は本文でメンテナを名指す(self):
+        r = self.report(mention=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue create", self.gh_log())
+        self.assertIn(MENTION, self.body.read_text())
+
+    def test_名指しを頼まない呼び手の起票は誰も名指さない(self):
+        self.report()
+        self.assertNotIn("@", self.body.read_text().replace("<!--", ""))
+
+    def test_名指しの相手は_1_か所で決まる(self):
+        # 相手の login を本文の組み立てに散らさない。変えるのは定数の 1 行だけで済む
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertEqual(text.count(MENTION.lstrip("@")), 1, "login は MENTION_LOGIN の定義の 1 か所だけ")
+        self.assertIn(f'readonly MENTION_LOGIN="{MENTION.lstrip("@")}"', text)
+
+    def test_名指し済みの_Issue_への追記コメントは名指しを重ねない(self):
+        # 名指して起票した Issue へ、落ち方が変わって追記する。名指された人は購読者なので届く
+        created = self.created_body(mention=True, key="鍵 A\n")
+        self.assertIn(MENTION, created)
+        r = self.second_run(created, key="鍵 B\n", mention=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue comment 42", self.gh_log())
+        self.assertNotIn(MENTION, self.body.read_text())
+
+    def test_コメントで名指し済みなら追記コメントは名指しを重ねない(self):
+        r = self.report(
+            mention=True,
+            issue_list=f'[{{"number":42,"title":"{TITLE}"}}]',
+            issue_body="名指しの無い前からの本文\n",
+            issue_comment=f"名指し: {MENTION} — 前の追記\n",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue comment 42", self.gh_log())
+        self.assertNotIn(MENTION, self.body.read_text())
+
+    def test_名指しの無い_Issue_への最初の追記コメントは名指す(self):
+        # この仕組みより前に立った Issue や、人が立てた同じ題の Issue。購読されていないので名指す
+        r = self.report(
+            mention=True,
+            issue_list=f'[{{"number":42,"title":"{TITLE}"}}]',
+            issue_body="名指しの無い前からの本文\n",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue comment 42", self.gh_log())
+        self.assertIn(MENTION, self.body.read_text())
+
+    def test_名指し済みかを読めなければ名指す側に倒す(self):
+        r = self.report(
+            mention=True,
+            issue_list=f'[{{"number":42,"title":"{TITLE}"}}]',
+            env_extra={"FAKE_VIEW_FAIL": "1"},
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("issue comment 42", self.gh_log())
+        self.assertIn(MENTION, self.body.read_text())
+
+    def test_同じ落ち方の書き換えでは名指さない(self):
+        # 区画の書き換えは通知されない (#2708)。本文に名指しを足しても届かず、文が増えるだけ
+        created = self.created_body(mention=True, key="鍵 A\n")
+        r = self.second_run(created, key="鍵 A\n", mention=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("issue comment", self.gh_log())
+        self.assertEqual(self.edited.read_text().count(MENTION), 1, "起票の本文の 1 回だけが残る")
+
     # --- 同じ落ち方の間は、コメントせず本文の区画を書き換える (#2708) ---------------
 
     HUMAN_HEAD = "人が書いた先頭の文。\n\n"
     HUMAN_TAIL = "\n\n人が足した末尾の文。\n"
 
-    def created_body(self, key="鍵 A\n"):
+    def created_body(self, key="鍵 A\n", **kwargs):
         """鍵つきで起票した本文 (区画を持つ)。2 回目以降の「open な Issue の本文」に使う"""
-        r = self.report(key=key)
+        r = self.report(key=key, **kwargs)
         self.assertEqual(r.returncode, 0, r.stderr)
         # 起票の呼び出し (triage の型付けを含む) は、2 回目の検査の対象ではない
         self.log.write_text("")
@@ -559,6 +650,9 @@ class CallerKeysTest(unittest.TestCase):
         log = self.invoke(script, first())
         self.assertIn("issue create", log)
         self.assertIn("check-failure-state", self.issue_body)
+        # 名指しは止まると人の操作まで続く呼び手だけが頼み、起票の本文で 1 回だけ (#3771)
+        mentions = script in MENTIONING_CALLERS
+        self.assertEqual(self.issue_body.count(MENTION), 1 if mentions else 0, "起票の本文の名指し")
         log = self.invoke(script, same())
         self.assertNotIn("issue comment", log, "同じ落ち方 (揺れる値だけが違う) なのにコメントしている")
         self.assertIn("issue edit 42", log)
@@ -566,6 +660,9 @@ class CallerKeysTest(unittest.TestCase):
         log = self.invoke(script, different())
         self.assertIn("issue comment 42", log, "落ち方が変わったのに知らせていない")
         self.assertIn("連続 1 回", self.issue_body)
+        # 名指された人は購読者なので、続く追記コメントで名指しを重ねない (#3771)
+        self.assertNotIn(MENTION, self.body.read_text(), "追記コメントで名指しを重ねている")
+        self.assertEqual(self.issue_body.count(MENTION), 1 if mentions else 0, "書き換えた本文の名指し")
 
     def write(self, name, text):
         path = self.dir / name

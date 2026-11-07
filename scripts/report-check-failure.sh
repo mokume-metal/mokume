@@ -59,6 +59,18 @@
 # 「連続」は、このスクリプトが同じ鍵で呼ばれた回数である (緑の回は呼ばれないので、間に緑が
 # 挟まっても数え直さない — 自動では閉じないので、緑を数える口が無い)。
 #
+# **`--mention` を渡した呼び手の起票は、メンテナを名指す** (#3771)。起票は github-actions の
+# 名義で誰も名指さないので、届くかは見ている人の watch の設定次第になる。2026-11-05 は専用機の
+# GUI セッションが落ち、前検査の赤の 1 分後に #3760 が立ったが、人が動いたのは約 8 時間後で、
+# その間 merge queue の render が落ち続けた (定期の #3766 も同じ)。名指しは GitHub の通知の
+# 理由 `mention` になり、watch の設定に依らず届く。名指された人はその Issue の購読者になるので、
+# **名指すのは 1 つの Issue で 1 回だけ**: 新しく起票した本文か、名指しの無い open な Issue へ
+# コメントで追記する最初の 1 回 (本文とコメントに `@<login>` がまだ無いとき)。以降の追記
+# コメントは購読で届く。同じ落ち方の間の区画の書き換えは元々通知しない (#2708) ので名指さない。
+# 名指し済みかを読めなかったときは名指す側に倒す。相手は下の MENTION_LOGIN の 1 か所で決まる。
+# 渡すのは止まると queue や main の赤が人の操作まで続く呼び手だけで、遅れの実害が出た呼び手に
+# 限る (report-runner-environment.sh・report-scheduled-render.sh)
+#
 # **検査と発信を分けているのは、起票を CI に限るため** (report-ruleset-drift.sh と同じ)。
 # 検査スクリプトに起票を足すと、手元で打っただけで Issue が立つ。
 #
@@ -82,9 +94,13 @@ readonly VERIFY_LABEL="verify: triaged"
 # 頭を見せて run へ送る
 readonly MAX_LINES=200
 
+# --mention で名指す相手 (#3771)。**名指しの相手はこの 1 か所だけで決める**。リポジトリの変数
+# (vars.*) にしないのは、未設定のとき黙って名指しが消え、#3760 と同じ「届かない」に戻るから
+readonly MENTION_LOGIN="shinyaoguri"
+
 usage() {
   cat >&2 <<'USAGE'
-使い方: report-check-failure.sh --title <固定タイトル> --log <検査の出力> --body-file <本文> --source <出所の 1 行> [--key-file <鍵>]
+使い方: report-check-failure.sh --title <固定タイトル> --log <検査の出力> --body-file <本文> --source <出所の 1 行> [--key-file <鍵>] [--mention]
 
   --title      重複判定に使う固定タイトル (Conventional Commits の接頭辞を付けると型も付く)
   --log        検査の出力ファイル。先頭 200 行を本文へ載せる
@@ -93,6 +109,8 @@ usage() {
   --key-file   「同じ落ち方」の鍵 (省略可)。同じ鍵が続く間は、コメントせず本文の区画だけを
                書き換える。回ごとに揺れる値 (秒数・時刻・run の ID) を入れない。省略するか
                空なら、毎回コメントする
+  --mention    メンテナを名指す (#3771)。新しく起票した本文と、名指しの無い open な Issue への
+               最初の追記コメントにだけ入れる
 USAGE
   exit 64
 }
@@ -102,11 +120,16 @@ LOG=""
 BODY_FILE=""
 SOURCE=""
 KEY_FILE=""
+MENTION=""
 
 while [ $# -gt 0 ]; do
   # 値を取る選択肢は 2 引数で来る。足りないまま shift 2 すると set -u の下で
   # 読めないエラーになるので、使い方の誤りとして返す
   case "$1" in
+    --mention)
+      MENTION=1
+      shift
+      ;;
     --title | --log | --body-file | --source | --key-file)
       [ $# -ge 2 ] || usage
       case "$1" in
@@ -200,6 +223,22 @@ trap 'rm -f "$tmp" "$state" "$current" "$rewritten"' EXIT
 
 today=$(date -u +%Y-%m-%d)
 
+# 名指しの 1 行を入れるか (#3771)。新しく起票するなら入れる。open な Issue へ追記するなら、
+# 本文とコメントにまだ名指しが無いときだけ入れる (名指された人は購読者になり、以降は名指し
+# なしで届く)。読めなかったときは入れる側に倒す — 黙るより 1 回多く名指すほうが軽い
+mention_line=""
+if [ -n "$MENTION" ]; then
+  mentioned=false
+  if [ -n "$existing" ]; then
+    mentioned=$(gh issue view "$existing" -R "$REPO" --json body,comments \
+      --jq "[(.body // \"\"), ((.comments // [])[] | .body // \"\")] | any(contains(\"@$MENTION_LOGIN\"))" \
+      || echo false)
+  fi
+  if [ "$mentioned" != "true" ]; then
+    mention_line="名指し: @$MENTION_LOGIN — 自動の起票は bot の名義で誰も名指さず、watch の設定によっては通知が届かない (#3771)"
+  fi
+fi
+
 {
   cat "$BODY_FILE"
   printf '\n## 検査の出力\n\n```text\n'
@@ -207,6 +246,9 @@ today=$(date -u +%Y-%m-%d)
   printf '```\n%s\n' "$truncated"
   if [ -n "$run_url" ]; then
     printf '\n検出した run: %s\n' "$run_url"
+  fi
+  if [ -n "$mention_line" ]; then
+    printf '\n%s\n' "$mention_line"
   fi
   if [ -n "$existing" ]; then
     printf '\n<sub>🤖 出所: %s。同じ題の Issue が open なので、新しく立てずにここへ追記した (#2658)</sub>\n' \

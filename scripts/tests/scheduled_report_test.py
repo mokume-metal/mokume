@@ -321,6 +321,12 @@ class ReportScheduledRenderTest(unittest.TestCase):
         # 追記された別の赤を、前の赤の直しと一緒に黙って閉じない (#2658 の反証)
         self.assertIn("追記された分も同じ直しで解けたか", body)
 
+    def test_起票の本文でメンテナを名指す(self):
+        # 起票は bot の名義で、watch の設定によっては誰にも届かない。11-05 の #3766 は人の最初の
+        # 応答まで 6 時間あまりかかった (#3771。1 Issue に 1 回の規則は report_check_failure_test.py)
+        self.report()
+        self.assertIn("@shinyaoguri", self.body.read_text())
+
     def test_同じ_Issue_が_open_なら二重に立てずに追記する(self):
         r = self.report(issue_list=f'[{{"number":42,"title":"{TITLE}"}}]')
         self.assertEqual(r.returncode, 0, r.stderr)
