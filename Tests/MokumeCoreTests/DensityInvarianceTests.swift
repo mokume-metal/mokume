@@ -149,6 +149,8 @@ struct DensityInvarianceTests {
         case squashedFill = "scale(1, s) の shader() の細い rect (三角形の経路)"
         case retainedFill = "shader() で記録した rect を縮めて置く保持した形 (三角形の経路)"
         case shaderEllipse = "shader() の細長い ellipse の塗り (三角形の経路)"
+        /// 回した細長い楕円の片 (#3793)。片の縁を列 (行) の向きの写しにしたので、45° 近くでも丸めで中心を 2 つ数えない
+        case rotatedEllipse = "rotate(θ) の shader() の細長い ellipse の塗り (三角形の経路)"
 
         /// 線を横切る列の和に、線の太さが何本ぶん入るか。点は 0 (全体の和で見る)。
         ///
@@ -238,7 +240,7 @@ struct DensityInvarianceTests {
         var rotates: Bool {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
+                .rotatedShaderPoint, .rotatedFill, .rotatedEllipse, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
                 .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
@@ -272,7 +274,7 @@ struct DensityInvarianceTests {
         var isFill: Bool {
             switch self {
             case .thinFill, .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill,
-                .retainedFill, .shaderEllipse, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong:
+                .retainedFill, .shaderEllipse, .rotatedEllipse, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong:
                 true
             default: false
             }
@@ -320,7 +322,7 @@ struct DensityInvarianceTests {
         var fillArea: Double? {
             switch self {
             case .rotatedFill: 60
-            case .shaderEllipse: Double.pi / 4 * 88
+            case .shaderEllipse, .rotatedEllipse: Double.pi / 4 * 88
             // 回した細い形 (#2226)。長さ 40 の帯と、長さ 40 の楕円 (面積は π/4 × 長さ × 太さ)
             case .diagonalLine, .diagonalFill: 40
             // 回した細い線 (#2172)。長さ 40 の帯 (四角い端は長さちょうどで切る)
@@ -544,7 +546,7 @@ struct DensityInvarianceTests {
                 canvas.translate(20, y)
                 canvas.shape(outer)
             case .shaderFill, .textureFill, .foldedFill, .rotatedFill, .squashedFill, .retainedFill,
-                .shaderEllipse:
+                .shaderEllipse, .rotatedEllipse:
                 try drawFill(on: canvas, weight: weight, offset: offset, angle: angle, squash: squash)
             }
         }
@@ -586,6 +588,10 @@ struct DensityInvarianceTests {
                 canvas.shape(shape)
             case .shaderEllipse:
                 canvas.ellipse(64, y, 88, weight)
+            case .rotatedEllipse:
+                canvas.translate(64 + offset, 64 + offset)
+                canvas.rotate(angle)
+                canvas.ellipse(0, 0, 88, weight)
             default:
                 canvas.rect(20, y, 88, weight)
             }
@@ -927,6 +933,57 @@ struct DensityInvarianceTests {
             if case .fail(let text) = try Self.measure(.diagonalFoldedRect, pose) { broken.append("\(pose): \(text)") }
         }
         #expect(broken.isEmpty, "\(Amount.diagonalFoldedRect.rawValue): \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: #3763 で落ちた、回した細い rect の塗り (`shader()`・``Amount/rotatedFill``) の置き方。
+    ///
+    /// 帯を線に垂直な長方形で組んでいた頃は、2 つの外れがあった。(1) 帯の 2 本の縁を別々の頂点で置いたので、GPU が
+    /// 頂点を 1/256 画素へ丸めると、縁が画素の中心とほぼ重なる列で中心を 2 つ数えた (専用機の定期の回の seed
+    /// `0x48c3b77a6a45a277` を縮めた 1 行目で +11.5%)。(2) 端が帯に垂直なので、両端の傾いた区間が同じ向きに振れると
+    /// 1 列を越えて振れた (CPU の模型で 2 行目 +11.8%・3 行目 −12.3%。丸めが無くても出る)。どの行も、同じ角度・
+    /// 細かさで縦のずらしを 1 周期 (出す画素 4・1/16 刻み) 振る。模型では、どの行の周期にも直す前に越える位相がある。
+    nonisolated static let rotatedFillPoses: [Pose] = [
+        (Float(1), Float(0.2578125), Float(1.717), Float(1.636), Float(0.516)),
+        (0.9045701, 0.2734375, 1.8624225, 1.6510859, 0.78265345),
+        (0.90378995, 0.2578125, 0.017172789, 1.8671753, 0.74167108),
+    ].flatMap { weight, density, dx, dy, angle in
+        [Pose(weight: weight, density: density, offset: SIMD2(dx, dy), angle: angle, squash: 1)]
+            + (0..<64).map {
+                Pose(weight: weight, density: density, offset: SIMD2(dx, Float($0) / 16), angle: angle, squash: 1)
+            }
+    }
+
+    @Test("固定の例: 回した細い rect の塗りは、縁と端の位相によらず面積ぶんの濃さで出る (#3763)")
+    func rotatedFillKeepsItsAreaOverOnePhase() throws {
+        var broken: [String] = []
+        for pose in Self.rotatedFillPoses {
+            if case .fail(let text) = try Self.measure(.rotatedFill, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(broken.isEmpty, "\(Amount.rotatedFill.rawValue): \(broken.count) 件: \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: 回した細長い楕円の塗り (`shader()`・``Amount/rotatedEllipse``) の片の縁の丸め (#3793)。
+    ///
+    /// 片の 2 本の縁を長軸に垂直に離した別々の頂点で置いていた頃は、45° 近くで縁が画素の中心とほぼ重なる列で中心を
+    /// 2 つ数えた (CPU の模型で、1 行目の周期の 6 位相が最大 +13%・2 行目の 3 位相が最大 +17%)。同じ角度・細かさで
+    /// 縦のずらしを 1 周期 (出す画素 4・1/8 刻み) 振る。
+    nonisolated static let rotatedEllipsePoses: [Pose] = [
+        (Float(0.5825365), Float(0.3359375), Float(1.598195), Float(0.78134087)),
+        (0.8672863, 0.2578125, 1.9342227, 0.78803865),
+    ].flatMap { weight, density, dx, angle in
+        (0..<32).map {
+            Pose(weight: weight, density: density, offset: SIMD2(dx, Float($0) / 8), angle: angle, squash: 1)
+        }
+    }
+
+    @Test("固定の例: 回した細長い楕円の塗りは、縁の位相によらず面積ぶんの濃さで出る (#3793)")
+    func rotatedEllipseKeepsItsAreaOverOnePhase() throws {
+        var broken: [String] = []
+        for pose in Self.rotatedEllipsePoses {
+            if case .fail(let text) = try Self.measure(.rotatedEllipse, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(
+            broken.isEmpty, "\(Amount.rotatedEllipse.rawValue): \(broken.count) 件: \(broken.joined(separator: " / "))")
     }
 
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
