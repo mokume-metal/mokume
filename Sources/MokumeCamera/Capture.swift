@@ -5,11 +5,11 @@ import Foundation
 import MokumeCore
 import MokumeDiagnostics
 
-/// カメラの絵を受け取る入り口。``Sketch/createCapture(_:_:device:mirrored:)`` が作り、走っている
-/// スケッチへ足す。
+/// カメラの画像を受け取る入力ソース。``Sketch/createCapture(_:_:device:mirrored:)`` が作り、実行中の
+/// スケッチへ追加する。
 ///
-/// 受け取った絵は ``image`` に入り、普通の ``Image`` として描ける (貼る・効果を通す・
-/// 立体に貼る — [ADR-0028] 決定 5)。毎フレーム呼ぶ口は無い。`draw()` の前に、届いた
+/// 受け取った画像は ``image`` に入り、普通の ``Image`` として描ける (貼る・エフェクトを通す・
+/// 3D に貼る — [ADR-0028] 決定 5)。毎フレーム呼ぶ API は無い。`draw()` の前に、届いた
 /// 新しい 1 枚が ``image`` へ書かれている。
 ///
 /// ```swift
@@ -26,14 +26,14 @@ import MokumeDiagnostics
 ///
 /// ## 来ないことには理由がある
 ///
-/// 絵が来ないとき、``state`` がその理由を名乗る — 許可を待っている・拒まれた・カメラが
-/// 無い・抜かれた。観測の応答の `inputs` にも同じものが載る ([ADR-0028] 決定 4)。
+/// 画像が来ないとき、``state`` がその理由を報告する — 許可を待っている・拒まれた・カメラが
+/// 無い・切断された。`observe` の応答の `inputs` にも同じものが載る ([ADR-0028] 決定 4)。
 /// 許可を待ったまま 3 秒経っても 1 枚も来ないときと、許可を拒まれたときは、どのアプリの
-/// 許可を見ればよいかを 1 度だけ知らせる。
+/// 許可を見ればよいかを 1 度だけ警告する。
 ///
 /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
 public final class Capture: Inlet {
-    /// 受け取った絵。大きさは作ったときに決まり、変わらない。
+    /// 受け取った画像。大きさは作ったときに決まり、変わらない。
     public let image: Image
     /// 選んだカメラ。既定の 1 台を使っているなら `nil`。
     public let device: CaptureDevice?
@@ -72,9 +72,9 @@ public final class Capture: Inlet {
         input = ExternalInput(name: name, state: .waitingForPermission)
     }
 
-    /// 出どころの状態。
+    /// 入力元の状態。
     public var state: SourceState { input.state }
-    /// 最後に絵が届いたフレーム。まだ 1 枚も届いていなければ `nil`。
+    /// 最後に画像が届いたフレーム。まだ 1 枚も届いていなければ `nil`。
     public var lastArrival: Arrival? { input.lastArrival }
     /// 幅 (画素)。``image`` の幅と同じ。
     public var width: Int { image.width }
@@ -83,16 +83,16 @@ public final class Capture: Inlet {
 
     /// 止める。カメラを閉じ、以後 ``image`` は変わらない。
     ///
-    /// **利用者が止めたものは、足し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で足し直しても、
+    /// **利用者が止めたものは、追加し直しても止まったままである。** ``SketchPart/attach(_:)-(Inlet)`` で追加し直しても、
     /// カメラを開かず ``image`` は変わらず、``state`` は ``SourceState/stopped`` のまま (止めたのは利用者の意思なので、
-    /// 足し直しで戻さない)。受け始めるには、新しく作る。
+    /// 追加し直しで戻さない)。受け取り始めるには、新しく作る。
     ///
     /// **ランタイムが外した場合は別である。** ``SketchPart/detach(_:)-(Inlet)`` で外しただけ (``stop()`` は呼んで
-    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で足し直せば、カメラを開き直してまた受け取る。実行が終わった
-    /// ものは足し直す先が無い。
+    /// いない) なら、``SketchPart/attach(_:)-(Inlet)`` で追加し直せば、カメラを開き直してまた受け取る。実行が終わった
+    /// ものは追加し直す先が無い。
     ///
     /// `setup()`・`draw()`・入力のコールバックの中から呼ぶ (``SketchPart/detach(_:)-(Inlet)`` と同じ)。
-    /// 走っている実行の中で起こした `Task` からも止まる。外 (初期化子の中・後片付けの後) で呼ぶと何もせず、`Capture.stop()` のように型を付けた名前で 1 度だけ警告する。
+    /// 実行中のスケッチの中で開始した `Task` からも止まる。外 (初期化子の中・終了処理の後) で呼ぶと何もせず、`Capture.stop()` のように型名を付けた名前で 1 度だけ警告する。
     public func stop() {
         // 印は、外す頼みが実行に届いたときだけ立てる。外で呼んで警告だけ出した回に立てると、走っているカメラが止まる
         if owner?.detach(self, calledAs: "Capture.stop()") == true { stoppedByUser = true }
