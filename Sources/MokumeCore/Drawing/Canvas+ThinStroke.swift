@@ -528,16 +528,33 @@ extension Canvas {
         }
         /// 細い帯の本体を、点 `index` の側の端から内へ下げる長さ (帯に沿った描く画素・#3793・``thinBandPieces``)。
         /// 隣の帯の長方形と角の片 (`miter` の尖りは太いほうの半幅の √2 倍まで) が、帯 `band` の本体に届かない長さ。
-        /// 開いた端は端の片 (太さの半分) の長さで、列の境目で切った端は 0 (切り口の頂点はすでに写しである)。
+        /// 開いた端は端の片 (太さの半分) の長さで、列の境目で切った端は 0 (本体は境目で切られ、切り口の 2 つの頂点は
+        /// 同じ境目の上で写しの縁を別々に補間した点 — 単精度の誤差を除いて写し)。
         /// 隣の帯が折り返す・向きが決まらないなら `nil` (帯は割らない)。
         func bandMargin(at index: Int, band: Int, cut: Bool) -> Float? {
             let slack: Float = 1 / 64
             if isEnd(index) { return cut ? 0 : thin.bandWeight[band] / 2 + slack }
             let (before, after) = bands(at: index)
-            guard let other = before == band ? after : before, other != band else { return nil }
+            let ahead = after != band
+            guard var other = ahead ? after : before, other != band else { return nil }
+            // 同じ位置の点が続く (長さ 0 の帯) なら、その先の帯を隣とする (角の片も同じ位置の点を飛ばして組む)
+            func far(_ other: Int) -> SIMD2<Float> { ahead ? points[(other + 1) % count] : points[other] }
+            var steps = 0
+            while far(other) == points[index] {
+                steps += 1
+                guard steps < segments else { return nil }
+                if ahead {
+                    guard outline.isClosed || other + 1 < segments else { return nil }
+                    other = (other + 1) % segments
+                } else {
+                    guard outline.isClosed || other > 0 else { return nil }
+                    other = (other + segments - 1) % segments
+                }
+                guard other != band else { return nil }
+            }
             // 点から帯の向こうへ向く向き (自分と隣)
             let mine = (index == band ? points[(band + 1) % count] : points[band]) - points[index]
-            let theirs = (index == other ? points[(other + 1) % count] : points[other]) - points[index]
+            let theirs = far(other) - points[index]
             let (mineLength, theirLength) = (simd_length(mine), simd_length(theirs))
             guard mineLength > 0, theirLength > 0 else { return nil }
             let cosine = dot(mine, theirs) / (mineLength * theirLength)
@@ -626,7 +643,7 @@ extension Canvas {
     /// 画素の中心とほぼ重なる列で中心を 2 つ (か 0 個) 数える (#3788 の額縁・#3763 の塗りと同じ根)。そこで本体の
     /// 一方の縁の頂点 X・X′ を、もう一方の縁の頂点 + n の写し (Y・Y′) にする。
     ///
-    /// - 本体は、両端から `margins` (帯に沿った長さ) より内側に置く。呼ぶ側は、隣の帯と角の片 (と開いた端の片) が
+    /// - 本体は、両端から `margins` (帯に沿った長さ) より内側に置く (縁 1 の頂点も、写しの頂点も)。呼ぶ側は、隣の帯と角の片 (と開いた端の片) が
     ///   本体に届かない長さを渡す — 重なりを引く輪郭 (quad) でも、本体はどの片とも重ならないので積む順によらず
     ///   引かれず、写しのまま残る。写しの頂点が端の長方形の内に入るよう、本体は端から写しの斜めの分だけは内へ下げる
     /// - 両端の片は、長方形の残り (A, X, Y, D)・(B, C, Y′, X′) で、本体と頂点を共有する。帯の領域は割る前と同じ
@@ -649,12 +666,12 @@ extension Canvas {
         guard crossings >= 1 else { return nil }
         var copy = SIMD2<Float>(0, 0)
         copy[axis] = d[axis] - a[axis] >= 0 ? crossings : -crossings
-        // 写しの頂点が端の長方形の内に入る長さ (縁 2 の端を、写しの向きに縁 1 の線まで戻した点の、帯に沿った位置)
-        let startNeed = max(0, dot(d - copy - a, u))
-        let endNeed = max(0, dot(c - copy - b, -u))
+        // 写し Y = X + copy は、帯に沿って X から dot(copy, u) ずれる。X と Y の**両方**を、端から余白より内に置く
+        // (Y が端の側へ戻る端では、戻る分だけ X を内へ下げる)。これで写しの頂点は端の長方形の内にも入る
+        let shift = dot(copy, u)
         let slack: Float = 1 / 64
-        let startLength = max(margins.start, startNeed + slack)
-        let endLength = max(margins.end, endNeed + slack)
+        let startLength = margins.start + max(0, -shift) + slack
+        let endLength = margins.end + max(0, shift) + slack
         guard startLength + endLength < length else { return nil }
         let x = a + u * startLength
         let x2 = b - u * endLength
