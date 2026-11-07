@@ -113,44 +113,60 @@ struct ThinEndCutRenderTests {
     }
 
     nonisolated static let subdivided: [Subdivided] = [false, true].flatMap { solid in
-        [StrokeCap.square, .project].flatMap { cap in
+        [StrokeCap.square, .project, .round].flatMap { cap in
             [(Float(0.81), Float(0.34375)), (0.3556817963340136, 0.390625), (.pi / 4, 0.25)].map {
                 Subdivided(solid: solid, cap: cap, angle: $0.0, density: $0.1)
             }
         }
     }
 
+    /// 長さ 40 の一直線を 0.25 刻みの点で並べた開いた線を、`row` の置き方・端の形 `cap`・縦のずらし `dy` で描いた光の量。
+    private static func subdividedLight(
+        _ row: Subdivided, cap: StrokeCap, dy: Float, canvas: Canvas, shader: Shader
+    ) throws -> Double {
+        try canvas.draw {
+            canvas.background(0)
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.strokeCap(cap)
+            if !row.solid { canvas.shader(shader) }
+            canvas.translate(64, 64 + dy)
+            canvas.rotate(row.angle)
+            canvas.beginShape()
+            for index in 0...160 {
+                let x = -20 + Float(index) * 0.25
+                if row.solid { canvas.vertex(x, 0, 0) } else { canvas.vertex(x, 0) }
+            }
+            canvas.endShape()
+        }
+        return try light(canvas)
+    }
+
+    /// 端の形 `cap` の両端の面積 (描く画素で太さ `drawn` のとき)。**切り方の式 (``ThinEndCut/extent(of:weight:)``) から
+    /// 作らない** — 延ばす長さを誤っても期待が一緒に動かないように、端の形の定義から書く。`.project` は太さの半分ずつ
+    /// 延ばした長方形 2 つ、`.round` は直径が太さの半円 2 つ (#3748)。
+    static func endArea(_ cap: StrokeCap, drawn: Double) -> Double {
+        switch cap {
+        case .square: 0
+        case .project: drawn * drawn
+        case .round: Double.pi * drawn * drawn / 4
+        }
+    }
+
     /// 曲線の刻みのように、端の線分が描く画素の 1 列より短い開いた線 (第 34 波の反証の指摘)。長さ 40 の一直線を
     /// 0.25 刻みの点で並べると、端の列には短い線分が何本も入る。端の列の片を先に積むので、後の帯が列に入っても
-    /// 列の光の量は割合のとおりになる。期待は 2 点の線と同じ `(40 + 延ばした長さ) × 太さ` (描く画素)。
+    /// 列の光の量は割合のとおりになる。期待は帯 `40 × 太さ` と両端の面積 (``endArea(_:drawn:)``) の和 (描く画素)。
     @Test("端の線分が 1 列より短い開いた線も、置く位置によらず太さぶんの濃さで出る", arguments: subdivided)
     func subdividedLinesKeepTheirWeight(_ row: Subdivided) throws {
         let canvas = try Self.makeCanvas(density: row.density)
         let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
-        let weight: Float = 1
-        let drawn = Double(weight * row.density)
-        let length = 40 + (row.cap == .project ? Double(weight) : 0)
-        let expected = length * drawn * Double(row.density)
+        let drawn = Double(row.density)
+        let expected = 40 * drawn * Double(row.density) + Self.endArea(row.cap, drawn: drawn)
         var broken: [String] = []
         for step in 0..<12 {
             let dy = Float(step) * 0.25
-            try canvas.draw {
-                canvas.background(0)
-                canvas.noFill()
-                canvas.stroke(255)
-                canvas.strokeWeight(weight)
-                canvas.strokeCap(row.cap)
-                if !row.solid { canvas.shader(shader) }
-                canvas.translate(64, 64 + dy)
-                canvas.rotate(row.angle)
-                canvas.beginShape()
-                for index in 0...160 {
-                    let x = -20 + Float(index) * 0.25
-                    if row.solid { canvas.vertex(x, 0, 0) } else { canvas.vertex(x, 0) }
-                }
-                canvas.endShape()
-            }
-            let measured = try Self.light(canvas)
+            let measured = try Self.subdividedLight(row, cap: row.cap, dy: dy, canvas: canvas, shader: shader)
             if abs(measured - expected) > 0.1 * expected {
                 broken.append("dy \(dy): 光の量 \(measured) (期待 \(expected))")
             }
@@ -158,14 +174,40 @@ struct ThinEndCutRenderTests {
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
     }
 
-    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた四角い端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
-    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。
+    /// **端の光の量は、端の形の面積ぶん**。同じ置き方の四角い端の線との差を、両端の面積 (``endArea(_:drawn:)``) の
+    /// ±10% で見る (#3748)。線全体の ±10% では、長さ 40 の線の端の延長を誤っても (細かさ 0.25 で端の面積は全体の 2%)
+    /// 見えないので、端の量だけを取り出して比べる。列の境目で切った線は置く位置によらず光の量が合う (誤差は全体の
+    /// 0.1% 以下) ので、差は端の面積に近い。
+    @Test(
+        "端の光の量は、同じ線の四角い端との差で見て、端の形の面積ぶんになる (#3748)",
+        arguments: subdivided.filter { $0.cap != .square })
+    func capsAddTheirArea(_ row: Subdivided) throws {
+        let canvas = try Self.makeCanvas(density: row.density)
+        let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        let expected = Self.endArea(row.cap, drawn: Double(row.density))
+        var broken: [String] = []
+        for step in 0..<12 {
+            let dy = Float(step) * 0.25
+            let capped = try Self.subdividedLight(row, cap: row.cap, dy: dy, canvas: canvas, shader: shader)
+            let flat = try Self.subdividedLight(row, cap: .square, dy: dy, canvas: canvas, shader: shader)
+            if abs(capped - flat - expected) > 0.1 * expected {
+                broken.append("dy \(dy): 端の光の量 \(capped - flat) (期待 \(expected))")
+            }
+        }
+        #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
+    }
+
+    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
+    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。丸い端 (既定) も
+    /// 列の境目で切るので、同じ鍵で控える (#3748)。
     ///
     /// どの位相でも、その場で引いた同じ線と画素ごとに同じ絵になる。違う位相の片を使い回すと、線全体の光の量は
     /// 変わらない (片はどれも主軸に幅 1 か整数の幅なので、平行移動しても拾う中心の数が同じ) が、端の画素の濃さが
     /// 置いた位相の割合と食い違い、切り口の頂点も境目 (整数の座標) から外れる。
-    @Test("開いた四角い端の保持した形は、位相ごとに組み直して控え、どの位相でもその場で引いた線と同じ絵になる")
-    func retainedOpenEndsAreKeyedByPhase() throws {
+    @Test(
+        "開いた端の保持した形は、位相ごとに組み直して控え、どの位相でもその場で引いた線と同じ絵になる",
+        arguments: [StrokeCap.square, .round])
+    func retainedOpenEndsAreKeyedByPhase(_ cap: StrokeCap) throws {
         // 細かさ 0.25 なら、ずらしを 1/8 刻みで選ぶと描く画素の位相がちょうど表せる (同じ位相の比べが丸めで割れない)
         let density: Float = 0.25
         let canvas = try Self.makeCanvas(density: density)
@@ -175,7 +217,7 @@ struct ThinEndCutRenderTests {
             canvas.noFill()
             canvas.stroke(255)
             canvas.strokeWeight(1)
-            canvas.strokeCap(.square)
+            canvas.strokeCap(cap)
             line = canvas.createShape {
                 canvas.beginShape()
                 canvas.vertex(-20, 0)
@@ -212,7 +254,7 @@ struct ThinEndCutRenderTests {
                 canvas.noFill()
                 canvas.stroke(255)
                 canvas.strokeWeight(1)
-                canvas.strokeCap(.square)
+                canvas.strokeCap(cap)
                 canvas.shader(shader)
                 canvas.translate(64, 64 + dy)
                 canvas.rotate(0.81)
@@ -235,7 +277,7 @@ struct ThinEndCutRenderTests {
             // 8 bit の 2 段まで (被覆を運ぶ値の丸め)
             if worst > 2 / 255 { broken.append("dy \(dy): 画素の差 \(worst)") }
         }
-        #expect(broken.isEmpty, "\(broken.joined(separator: " / "))")
+        #expect(broken.isEmpty, "\(cap): \(broken.joined(separator: " / "))")
         // 新しい位相は組み直し、同じ位相は控えを使う
         #expect(try place(open, dy: 0.125).rebuilt == 1)
         #expect(try place(open, dy: 0.125 + pixel).rebuilt == 0)
@@ -246,8 +288,9 @@ struct ThinEndCutRenderTests {
     }
 
     /// 切るかどうかの選び方 (平面)。端点の重なる開いた周 (A → B → C → A) は、両端の列の片が同じ列を 2 度数えるので
-    /// 切らない (第 34 波の反証の指摘)。丸い端と、置き場所の位相が分からない組み方 (畳む雛形) も切らない。
-    @Test("平面の線は、端点の重なる開いた周・丸い端・位相の分からない組み方では端を切らない")
+    /// 切らない (第 34 波の反証の指摘)。置き場所の位相が分からない組み方 (畳む雛形) も切らない。丸い端は、面積の等しい
+    /// 平らな延長 (太さ × π / 8) で切る (#3748)。
+    @Test("平面の線は、端点の重なる開いた周・位相の分からない組み方では端を切らず、丸い端は面積の等しい延長で切る")
     func planeEndsAreCutOnlyWhereTheyCanBe() throws {
         let canvas = try Self.makeCanvas(density: 0.5)
         // translate(64, 64.3) の後に rotate(0.81)
@@ -270,8 +313,15 @@ struct ThinEndCutRenderTests {
         #expect(apart.startCut != nil && apart.endCut != nil)
         let touching = try ends([a, b, c, a], cap: .square)
         #expect(touching.startCut == nil && touching.endCut == nil)
+        // 丸い端は、四角い端の端点から `.project` の延長 (太さの半分) の π / 4 倍 (太さ × π / 8) だけ外で切る
         let round = try ends([a, b, c], cap: .round)
-        #expect(round.startCut == nil && round.endCut == nil)
+        let project = try ends([a, b, c], cap: .project)
+        for (square, rounded, projected) in [
+            (apart.startCut, round.startCut, project.startCut), (apart.endCut, round.endCut, project.endCut),
+        ] {
+            let (flat, tip, far) = (try #require(square), try #require(rounded), try #require(projected))
+            #expect(abs(simd_length(tip.tip - flat.tip) / simd_length(far.tip - flat.tip) - .pi / 4) < 1e-4)
+        }
         let unsnapped = try ends([a, b, c], cap: .project, snapped: false)
         #expect(unsnapped.startCut == nil && unsnapped.endCut == nil)
         // 破線の片は切らない (隣の片の端の列の片と型板で食い合う・#3745 の反証 1)
@@ -290,10 +340,12 @@ struct ThinEndCutRenderTests {
         let canvas = try Self.makeCanvas(density: 0.5)
         let thin = try #require(canvas.solidThinBand(weight: 1))
         let camera = StrokeCamera(canvas.currentCamera, width: canvas.width, height: canvas.height)
-        func cuts(_ points: [SIMD3<Float>], edges given: [(Int, Int)]? = nil) -> SolidEndCuts {
+        func cuts(
+            _ points: [SIMD3<Float>], edges given: [(Int, Int)]? = nil, cap: StrokeCap = .square
+        ) -> SolidEndCuts {
             var edges: [(Int, Int)] = []
             for index in 0..<(points.count - 1) { edges.append((index, index + 1)) }
-            canvas.strokeCap(.square)
+            canvas.strokeCap(cap)
             defer { canvas.strokeCap(.round) }
             return canvas.solidEndCuts(world: points, edges: given ?? edges, curveSteps: [], thin: thin, camera: camera)
         }
@@ -301,6 +353,8 @@ struct ThinEndCutRenderTests {
         let (a, b, c) = (SIMD3<Float>(40, 50, 0), SIMD3<Float>(90, 70, 0), SIMD3<Float>(60, 100, 0))
         #expect(pieces([a, b, c]) == 2)
         #expect(pieces([a, b, c, a]) == 0)
+        // 丸い端も切る (面積の等しい平らな延長・#3748)
+        #expect(cuts([a, b, c], cap: .round).pieces.count == 2)
         // 同じ位置の点を続けた端は、画面で潰れた辺を持つので端にならない (向こうの端だけ切る)
         #expect(pieces([a, a, b, c]) == 1)
         // 2 点の短い線で両端が同じ列なら、1 つの片
@@ -314,5 +368,32 @@ struct ThinEndCutRenderTests {
         #expect(netted.cuts[0] == nil && netted.cuts[1] == nil && netted.cuts[2] == nil)
         // 離れた端 (点 3) だけを切る
         #expect(netted.pieces.map(\.point) == [3])
+        // 開いた端の多い網でも、別の辺の端どうしで重なる片は 1 つも残さない (#3748 の反証 7)。重なりは x の下端で
+        // 並べて近い相手だけと比べるので、並びで間に別の端が挟まる組も見落とさないことを、狭い所に短い辺を密に
+        // 置いた網で見る
+        var state: UInt64 = 0x3748
+        func next() -> Float {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return Float(state >> 40) / Float(1 << 24)
+        }
+        var crowd: [SIMD3<Float>] = []
+        var crowdEdges: [(Int, Int)] = []
+        for index in 0..<300 {
+            let start = SIMD3(40 + next() * 40, 40 + next() * 40, 0)
+            let angle = next() * 2 * .pi
+            crowd.append(start)
+            crowd.append(start + SIMD3(cos(angle), sin(angle), 0) * (2 + next() * 6))
+            crowdEdges.append((2 * index, 2 * index + 1))
+        }
+        let crowded = cuts(crowd, edges: crowdEdges, cap: .round)
+        #expect(!crowded.pieces.isEmpty)
+        var overlapping = 0
+        for (one, first) in crowded.pieces.enumerated() {
+            for second in crowded.pieces[(one + 1)...] where second.edge != first.edge {
+                guard let box = first.cut.box, let other = second.cut.box else { continue }
+                if ThinEndCut.overlap(box, other) { overlapping += 1 }
+            }
+        }
+        #expect(overlapping == 0, "重なったまま残った片の組 \(overlapping)")
     }
 }

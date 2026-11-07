@@ -255,6 +255,33 @@ struct WatchAuditionRefutationTests {
         #expect(session.waitingGeneration == nil)
     }
 
+    // MARK: - 出た時点のソースのままの入り直しは何も起こさない (#3794)
+
+    @Test("出た後、ソースを変えずに入り直しても、入る拍では試聴の子を起こさない。次の保存で起こす (#3794)")
+    func reenteringWithTheSourceLeftAsItWasStartsNothing() async throws {
+        let harness = try Harness()
+        let session = harness.session
+        let production = try #require(await harness.save())
+        _ = try await harness.ask("audition")
+        let first = try #require(await harness.save())
+        _ = try await harness.ask("leave")
+        #expect(!first.isRunning && session.child === production)
+
+        // 入り直す。ソースは出た時点 (試聴の版 s2) のまま
+        let launched = harness.gens.count
+        let report = try await harness.ask("audition")
+        #expect(report["accepted"] as? Bool == true)
+        #expect(harness.gens.count == launched, "入り直した拍で、出た時点の版の試聴の子を起こした")
+        #expect(session.auditionChild == nil && session.child === production && production.isRunning)
+        await harness.beat()
+        #expect(harness.gens.count == launched, "入り直した後の拍で、出た時点の版の試聴の子を起こした")
+
+        // 別の版へ直して保存すれば、試聴の子が起きる (本番は動かない)
+        let next = try #require(await harness.save())
+        #expect(session.auditionChild === next, "入り直した後の保存が、試聴の子を起こさない")
+        #expect(session.child === production && production.isRunning)
+    }
+
     // MARK: - 区画 build の記録
 
     @Test("区画 build の記録は、試聴の版に audition: true を付け、出る要求で本番の版へ戻る。ソースを戻しても作り直されない")
