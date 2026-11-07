@@ -224,7 +224,10 @@ extension Canvas {
     ///   跨ぐ画素の中心がちょうど n 個になるので、光の量は帯の断面に比例する。線の補いのように
     ///   **線に垂直な太さ**を 1 にすると、45° の帯は列が切る長さが √2 になり、跨ぐ中心が 1 つか
     ///   2 つかを位相が決める — 向きが 45° ちょうどなら全部の列が揃い、置く位置で光の量が 1/√2 倍か
-    ///   √2 倍に振れる (線の側は #2172)。垂直な太さが 1 未満なら切る長さは √2 未満なので、n は 1 か 2
+    ///   √2 倍に振れる (線の側は #2172)。垂直な太さが 1 未満なら切る長さは √2 未満なので、n は 1 か 2。
+    ///   **帯は、長い辺に沿う基底と列 (行) の向きの基底の平行四辺形にする** (#3763・#3793): 2 本の縁は列の向きに
+    ///   ちょうど n の写しで、GPU が頂点を描く画素の 1/256 へ丸めても揃って動く。端は帯に垂直ではなく列の向きの
+    ///   切り口になる (面積は同じ)
     /// - **細長い楕円** (短軸だけが細い): 短軸を広げるだけでは、先端の弦が 1 より短いまま残る。
     ///   描く画素で長軸に沿って約 1 画素ごとの片に切り、片ごとに帯と同じ幅へ広げ、被覆を片の中で
     ///   いちばん太い弦から取る。距離関数の経路 (`mokume_thinEllipseCoverage`) が画素の中で中心に
@@ -249,7 +252,7 @@ extension Canvas {
     ///   同じ量) で、1 以上はならした量が箱の 0.976 倍になる (#1934 の 2 回目の反証 3)。小さい円の
     ///   約束 (外接する正方形の面積) を守るほうを取り、つなげない
     /// - **長い形** (``thinFillShortSpan`` 以上) は帯・片のまま描き、**置く位置による揺れが残る**
-    ///   (#1934 の 2 回目の反証 2)。rect は端の列の数が 1 つ振れて 1 / 長さ、楕円は片の数が切り上げ
+    ///   (#1934 の 2 回目の反証 2)。rect は端を列の向きで切るので列の数が 1 つ振れて 1 / 長さ (#3763)、楕円は片の数が切り上げ
     ///   なので、列が切り捨てになる位置で中心の片の列が抜けて 4 / (π 長さ) ほど — 長さ 10 で 10%・
     ///   12.7% が上限である (実測は長さ 10.01〜11 で `shader()` 無しとの差が rect 9.8%・楕円 10.5%・
     ///   `longThinFillsStayWithinTheirBound`)。長い形まで長い向きの手当てを当てると、端の画素の
@@ -377,7 +380,7 @@ extension Canvas {
         case square(coverage: Float)
         /// 帯: 1 組の辺の隔たり `span` だけが細い。`edge` は長い辺、`endAlong` は端の辺が列 (行) の
         /// 向きにどれだけ伸びるか (描く画素)。
-        case band(widensHeight: Bool, span: Float, edge: SIMD2<Float>, endAlong: Float, area: Float)
+        case band(span: Float, edge: SIMD2<Float>, endAlong: Float, area: Float)
     }
 
     /// 細い `rect` を、補いが成り立つ形のときだけどう補うか。細くないか、補いが成り立たない形
@@ -408,7 +411,7 @@ extension Canvas {
         // 弦の平らな所が無い (端の辺のほうが列の向きに長い) 形は、弦が端の辺に縛られる
         guard endAlong < edgeAlong else { return nil }
         return .band(
-            widensHeight: widensHeight, span: widensHeight ? span.height : span.width, edge: edge,
+            span: widensHeight ? span.height : span.width, edge: edge,
             endAlong: endAlong, area: span.area)
     }
 
@@ -416,31 +419,34 @@ extension Canvas {
         _ named: Outline.NamedFill, by linear: simd_float2x2
     ) -> ThinFillRecord? {
         guard let plan = rectPlan(named, by: linear) else { return nil }
-        let (widensHeight, thinSpan, edge, endAlong, area): (Bool, Float, SIMD2<Float>, Float, Float)
+        let (thinSpan, edge, endAlong, area): (Float, SIMD2<Float>, Float, Float)
         switch plan {
         case .square(let coverage):
             return .unitSquare(around: named.center, inverse: linear.inverse, coverage: coverage)
-        case .band(let widens, let span, let longEdge, let along, let drawnArea):
-            (widensHeight, thinSpan, edge, endAlong, area) = (widens, span, longEdge, along, drawnArea)
+        case .band(let span, let longEdge, let along, let drawnArea):
+            (thinSpan, edge, endAlong, area) = (span, longEdge, along, drawnArea)
         }
         // 長い向きが短い形の手当ては、端の辺が 1 列に収まるときだけ (剪断で端が長く伸びた形は、
         // 長さを長い辺だけで数えると形が縮む)。収まらなければ帯のまま広げる
         if endAlong <= 1, let profile = ShortProfile(rectEdge: edge, area: area) {
             return shortRecord(profile, center: named.center, inverse: linear.inverse)
         }
-        var half = named.half
-        let band = widenedBand(thinSpan, along: simd_normalize(edge))
-        let coverage = band.coverage
-        if widensHeight {
-            half.y *= band.widen
-        } else {
-            half.x *= band.widen
-        }
-        // 帯は形自身の座標の箱 (中心 ± 半幅・半高) なので、描く画素への写しは恒等にして記述する
+        let direction = simd_normalize(edge)
+        let band = widenedBand(thinSpan, along: direction)
+        // 帯の数 n (``widenedBand(_:along:)`` の中と同じ式)
+        let crossings: Float = thinSpan / max(abs(direction.x), abs(direction.y)) <= 1 ? 1 : 2
+        // **帯は、長い辺に沿う基底と列 (行) の向きの基底の平行四辺形で記述する** (#3763・#3793)。長い辺 `edge` を
+        // 刻みの向きに、帯を切る軸 (横寄りの帯なら y) を幅の向きに取り、幅は描く画素でちょうど n にする。
+        // - 2 本の縁は同じ刻みの位置の ±n/2 で、描く画素で列 (行) の向きにちょうど n の写しになる。GPU が頂点を描く
+        //   画素の 1/256 へ丸めても 2 本の縁は揃って動き、列ごとに画素の中心をちょうど n 個挟む。帯に垂直な長方形の
+        //   2 本の縁を別々の頂点で置くと、縁が画素の中心とほぼ重なる列で中心を 2 つ (か 0 個) 数えた
+        // - 端は列 (行) の向きの切り口で、列の数が 1 つ振れるだけになる (1 / 長さ・``thinFillPieces(_:by:)``)。帯に
+        //   垂直な端は、両端の傾いた区間が同じ向きに振れて 1 列を越えて振れた (細かさ 0.26・45° 近くで ±12%)
+        // 面積は広げた長方形と同じ (列の向きの長さ × n)。軸に沿った帯は、長方形そのものである
+        let across: SIMD2<Float> = abs(edge.y) > abs(edge.x) ? SIMD2(1, 0) : SIMD2(0, 1)
         return ThinFillRecord(
-            inverse: matrix_identity_float2x2, center: named.center, axis: SIMD2(1, 0),
-            across: SIMD2(0, 1), slope: 0, side: half.y, origin: -half.x, span: 2 * half.x,
-            divisor: 1, pieces: 1, coverage: .constant(coverage))
+            inverse: linear.inverse, center: named.center, axis: edge, across: across, slope: 0,
+            side: crossings / 2, origin: -0.5, span: 1, divisor: 1, pieces: 1, coverage: .constant(band.coverage))
     }
 
     /// 辺に垂直な隔たり `span` (描く画素・1 未満) の帯を、向き `direction` (描く画素・長さ 1) に
@@ -498,9 +504,13 @@ extension Canvas {
             return shortRecord(profile, center: named.center, inverse: inverse)
         }
         let along = axes.direction
-        let across = SIMD2(-along.y, along.x)
         let thin = 2 * axes.short
         let width = thin * widenedBand(thin, along: along).widen
+        // 片の縁は、帯 (``thinRectRecord(_:by:)``) と同じく列 (行) の向きにちょうど n 離した写しにする (#3793)。
+        // 長軸に垂直に離して置くと、GPU の 1/256 の丸めで 2 本の縁が別々に動き、列で中心を 2 つ (か 0 個) 数えた。
+        // 片の切り口も列の向きになる (面積と片ごとの被覆は同じ)
+        let crossings: Float = thin / max(abs(along.x), abs(along.y)) <= 1 ? 1 : 2
+        let across: SIMD2<Float> = abs(along.y) > abs(along.x) ? SIMD2(1, 0) : SIMD2(0, 1)
         let long = axes.long
         // 片の数は、上限で切ってから整数へ直す (巨大な直径を `Int` へ直すと実行時に落ちる)
         let span = 2 * long
@@ -510,7 +520,7 @@ extension Canvas {
             ? thinEllipseSliceLimit : max(1, Int(span.rounded(.up)))
         return ThinFillRecord(
             inverse: inverse, center: named.center, axis: along, across: across, slope: 0,
-            side: width / 2, origin: -long, span: span, divisor: Float(count), pieces: count,
+            side: crossings / 2, origin: -long, span: span, divisor: Float(count), pieces: count,
             coverage: .longEllipse(thin: thin, long: long, width: width))
     }
 
