@@ -962,6 +962,30 @@ struct DensityInvarianceTests {
         #expect(broken.isEmpty, "\(Amount.rotatedFill.rawValue): \(broken.count) 件: \(broken.joined(separator: " / "))")
     }
 
+    /// 固定の例: 回した細長い楕円の塗り (`shader()`・``Amount/rotatedEllipse``) の片の縁の丸め (#3793)。
+    ///
+    /// 片の 2 本の縁を長軸に垂直に離した別々の頂点で置いていた頃は、45° 近くで縁が画素の中心とほぼ重なる列で中心を
+    /// 2 つ数えた (CPU の模型で、1 行目の周期の 6 位相が最大 +13%・2 行目の 3 位相が最大 +17%)。同じ角度・細かさで
+    /// 縦のずらしを 1 周期 (出す画素 4・1/8 刻み) 振る。
+    nonisolated static let rotatedEllipsePoses: [Pose] = [
+        (Float(0.5825365), Float(0.3359375), Float(1.598195), Float(0.78134087)),
+        (0.8672863, 0.2578125, 1.9342227, 0.78803865),
+    ].flatMap { weight, density, dx, angle in
+        (0..<32).map {
+            Pose(weight: weight, density: density, offset: SIMD2(dx, Float($0) / 8), angle: angle, squash: 1)
+        }
+    }
+
+    @Test("固定の例: 回した細長い楕円の塗りは、縁の位相によらず面積ぶんの濃さで出る (#3793)")
+    func rotatedEllipseKeepsItsAreaOverOnePhase() throws {
+        var broken: [String] = []
+        for pose in Self.rotatedEllipsePoses {
+            if case .fail(let text) = try Self.measure(.rotatedEllipse, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(
+            broken.isEmpty, "\(Amount.rotatedEllipse.rawValue): \(broken.count) 件: \(broken.joined(separator: " / "))")
+    }
+
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11
     /// に置き、**出す面**の赤の総和 (線の光の量) を細かさ 1 の y = 10 と比べる。直す前は細かさ 0.5
     /// で y = 10 が 0・y = 11 が 351 (細かさ 1 は 280) だった。±20% は拡大の段が総光量を少し
