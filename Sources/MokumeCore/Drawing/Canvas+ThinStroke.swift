@@ -383,9 +383,11 @@ extension Canvas {
     /// 足す。
     ///
     /// - 帯: 線分の向きに垂直に、``ThinOutline/bandHalf`` の幅で組む
-    /// - 端 (開いた周の両端): **その帯の向きに沿っては元の太さの半分だけ**出し、横は帯と同じ幅に
-    ///   する。丸い端は楕円、出っ張らせる端は長方形。広げた帯の幅で丸めると、端の光が元の
-    ///   1 / 太さ 倍になる (細かさ 0.5 の太さ 1 で 2 倍)
+    /// - 端 (開いた周の両端): 置き場所の絶対座標が分かる端は、端の形によらず描く画素の列 (行) の境目で切る
+    ///   (``thinEnds(_:outline:thin:offset:)``・#3745・#3748)。`.project` は太さの半分、`.round` は面積の等しい
+    ///   太さ × π / 8 だけ延ばす。切れない端 (破線の片・畳む雛形・重なる端・列の中で曲がる短い端) は、**帯の向きに
+    ///   沿っては元の太さの半分だけ**出し、横は帯と同じ幅にする。丸い端は楕円、出っ張らせる端は長方形。広げた帯の
+    ///   幅で丸めると、端の光が元の 1 / 太さ 倍になる (細かさ 0.5 の太さ 1 で 2 倍)
     /// - 角: 2 本の帯の外側の縁を、それぞれの帯の幅で延ばして交わる所まで (`miter`)、または
     ///   2 つの縁の角を結んだ所まで (`bevel`)。尖りが太いほうの幅の √2 倍より遠ければ `bevel`
     ///   に倒す。丸める角と曲線の刻みは、細いほうの幅の円板と `bevel` の三角形で埋める
@@ -551,7 +553,11 @@ extension Canvas {
                 }
             },
             disc: { index in
-                if isEnd(index) { return addCap(index, round: true) }
+                if isEnd(index) {
+                    // 列の境目で切った丸い端は、面積の等しい平らな延長で切ってある (丸い片は置かない・#3748)
+                    if !ends.cuts(index, count: count) { addCap(index, round: true) }
+                    return
+                }
                 let (before, after) = bands(at: index)
                 var next = index
                 if let after { next = (after + 1) % count }
@@ -569,8 +575,9 @@ extension Canvas {
 
     /// 開いた周の両端の、描く画素の列 (行) の境目での切り方 (#3745・``ThinEndCut``)。
     ///
-    /// 切るのは、開いた周で、端の形が `.square` か `.project` で、端の帯 (同じ位置の点を飛ばした最初と最後の帯) が
-    /// 細い (広げた) 帯で、置き場所の描く画素の絶対座標が分かる (``ThinOutline/origin``) 端だけである。
+    /// 切るのは、開いた周で、端の帯 (同じ位置の点を飛ばした最初と最後の帯) が細い (広げた) 帯で、置き場所の描く画素の
+    /// 絶対座標が分かる (``ThinOutline/origin``) 端だけである。端の形はどれも切る (`.round` は面積の等しい平らな延長に
+    /// する・#3748・``ThinEndCut/extent(of:weight:)``)。
     ///
     /// - 1 本の帯の両端が同じ列に入る (描く画素で短い線) なら、1 つの片にして割合は両端の差にする
     /// - 両端の列の片が重なる (端点の重なる開いた周・ごく短い折れ線) なら、両端とも切らない (線に垂直に切る)。
@@ -580,8 +587,7 @@ extension Canvas {
     ) -> ThinEnds {
         let cap = style.strokeCap
         let count = points.count
-        guard !outline.isClosed, !outline.isDashPiece, count >= 2, cap == .square || cap == .project,
-            let origin = thin.origin,
+        guard !outline.isClosed, !outline.isDashPiece, count >= 2, let origin = thin.origin,
             let first = (0..<(count - 1)).first(where: { points[$0 + 1] != points[$0] }),
             let last = (0..<(count - 1)).last(where: { points[$0 + 1] != points[$0] })
         else { return ThinEnds() }
@@ -590,7 +596,7 @@ extension Canvas {
             let weight = thin.bandWeight[band]
             guard weight > 0, weight < 1 else { return nil }
             return ThinEndCut(
-                end: points[end], far: points[far], extend: cap == .project ? weight / 2 : 0,
+                end: points[end], far: points[far], extend: ThinEndCut.extent(of: cap, weight: weight),
                 half: thin.bandHalf[band], base: base, axis: axis)
         }
         var ends = ThinEnds()
@@ -866,8 +872,9 @@ extension Canvas {
         /// 描く画素 1 つの、出す画素での長さ。
         var outputPerDrawn: Float
 
-        /// 線に沿って出す長さの半分 (出す画素)。端の形は、線の向きには元の太さの半分だけ出す (平面の
-        /// ``thinCarving(_:thin:)`` の端と同じ)。
+        /// 線に沿って出す長さの半分 (出す画素)。列の境目で切れない端 (点の群の端・曲線の刻みの端・重なる端など。
+        /// ``Canvas/solidEndCuts(world:edges:curveSteps:thin:camera:)``) と GPU の骨の丸い端の形は、線の向きには元の
+        /// 太さの半分だけ出す (平面の ``thinCarving(_:thin:)`` の切れない端と同じ)。切れる端は ``ThinEndCut`` が延ばす。
         var alongHalf: Float { drawn * outputPerDrawn / 2 }
 
         /// 画面の向き `toward` (長さ 1) の帯の、出す画素での半幅と被覆。量は ``Canvas/widenedBand(_:along:)`` と同じで、
@@ -908,9 +915,9 @@ extension Canvas {
         // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
         // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
         //
-        // **開いた `.square` / `.project` の端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
+        // **開いた端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A。丸い端も #3748 から)。端を描く画素の
         // 列 (行) の境目で切る (``ThinEndCut``) ので、置き場所の平行移動の端数で片が変わる。整数の画素だけずれた
-        // 置き場所は同じ片になる。閉じた輪郭と丸い端は、これまでどおり 2x2 だけで使い回す
+        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す
         var phase = SIMD2<Float>(0, 0)
         if recipe.cutsEndsAtColumns {
             let origin = drawnOrigin(of: combined)
@@ -1006,10 +1013,10 @@ struct ThinStrokeRecipe {
     /// を持つ輪郭と同じ)。`replace` の線と点 1 つの輪郭は、重なっても同じ色なので引かない。
     let carvesWhenTinted: Bool
 
-    /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周で、
-    /// 端の形が `.square` か `.project` のもの。組み直した片が置き場所の副画素の位相で変わる。
+    /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周の
+    /// もので、端の形は問わない (丸い端も切る・#3748)。組み直した片が置き場所の副画素の位相で変わる。
     var cutsEndsAtColumns: Bool {
-        !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2 && (cap == .square || cap == .project)
+        !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2
     }
 
     /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
@@ -1191,16 +1198,32 @@ final class ThinStrokeCache {
 /// 丸めても列ごとの中心は n 個のままで、光の量は `被覆 × n × 主軸に沿った長さ` = `太さ × 長さ` に一致する。
 ///
 /// `.project` の端は、太さの半分だけ延ばした端点 (``tip``) で同じ切り方をする (端の長方形の片は置かない)。
+/// `.round` の端は、丸い端と面積の等しい平らな延長として、太さ × π / 8 だけ延ばした端点で切る
+/// ([#3748]・``extent(of:weight:)``)。
 ///
 /// 座標は描く画素の空間で、`base` を足すと描く画素の絶対座標になる (``Canvas/ThinOutline/origin``)。
 ///
 /// [#3745]: https://github.com/mokume-metal/mokume/issues/3745
+/// [#3748]: https://github.com/mokume-metal/mokume/issues/3748
 nonisolated struct ThinEndCut: Equatable {
+    /// 端の形 `cap` の端点を外へ延ばす長さ (描く画素の太さ `weight` で書く)。
+    ///
+    /// 丸い端は、半円の片 (面積 π × 太さ² / 8) と面積の等しい長さ π × 太さ / 8 の平らな延長にする (#3748 の決定 A)。
+    /// 丸い片のまま線に垂直に切ると、片が拾う画素の中心が置く位置で 0〜2 個に振れ、描く画素で短い線では光の量が
+    /// ±10% を越えた (`DensityInvarianceTests` の `diagonalRound` の行)。形の差は描く画素の 1 画素の中に収まる。
+    static func extent(of cap: StrokeCap, weight: Float) -> Float {
+        switch cap {
+        case .square: 0
+        case .project: weight / 2
+        case .round: .pi * weight / 8
+        }
+    }
+
     /// 切る軸 (0 = x で列・1 = y で行)。帯の主軸。
     var axis: Int
     /// 線が端から内へ進む向き (長さ 1)。
     var inward: SIMD2<Float>
-    /// 延ばした端点 (`.project` は太さの半分だけ外へ)。
+    /// 延ばした端点 (`.project` は太さの半分・`.round` は太さ × π / 8 だけ外へ)。
     var tip: SIMD2<Float>
     /// 端の列の内側の境目 (``axis`` の成分)。端の列は、ここから外へ 1 の幅である。
     var boundary: Float
@@ -1217,7 +1240,7 @@ nonisolated struct ThinEndCut: Equatable {
     /// 端 `end` から隣の点 `far` へ向かう帯の端の切り方。決まらない (長さ 0・数でない値) と `nil`。
     ///
     /// - Parameters:
-    ///   - extend: 端点を外へ延ばす長さ (`.project` は元の太さの半分・`.square` は 0)
+    ///   - extend: 端点を外へ延ばす長さ (``extent(of:weight:)``)
     ///   - half: 帯の半幅 (描く画素)
     ///   - base: 座標に足すと描く画素の絶対座標になるずれ
     ///   - axis: 切る軸を決めて渡す (同じ帯の両端で軸を揃える)。`nil` なら帯の主軸

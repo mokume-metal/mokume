@@ -996,6 +996,9 @@ extension Canvas {
                 // 細い線の円板は、載る帯に合わせる (#3734 の反証 #1)。線に垂直に 1 へ広げたままだと、斜めの細い帯から
                 // はみ出して光が足される。端 (帯 1 本) は線に沿って元の太さの半分・横は帯と同じ幅の楕円、折れ目と
                 // 刻みの継ぎ目は帯の半幅と被覆の小さいほうの円板 (平面の ``thinCarving(_:thin:)`` と同じ)
+                //
+                // 列の境目で切った丸い端は、面積の等しい平らな延長で切ってある (丸い片は置かない・#3748)
+                if ends?.cuts[index] != nil { return }
                 var bands: [(half: Float, coverage: Float, far: Int)] = []
                 if !incident.isEmpty {
                     for number in incident[index] {
@@ -1042,7 +1045,8 @@ extension Canvas {
     ///
     /// 端とみなすのは、辺が 1 本だけ来て、その辺が画面で長さを持つ点だけである。画面で重なる点の群 (``strokeNet``
     /// の群) の点は、群の中の潰れた辺も数えるので辺が 2 本以上来て、ここでは端にならず今までどおり線に垂直に切る。
-    /// 曲線の刻みの点も切らない。端の形が `.square` か `.project` のときだけ切る。
+    /// 曲線の刻みの点も切らない。端の形はどれも切る (`.round` は面積の等しい平らな延長にする・#3748・
+    /// ``ThinEndCut/extent(of:weight:)``)。
     ///
     /// - 1 本の辺の両端が同じ列に入る (画面で短い線) なら、1 つの片にして割合は両端の差にする
     /// - 端の辺が端の列より短いときは、辺が 2 本だけ来る点をたどって、列の中で線が端の辺の向きからそれないときだけ
@@ -1055,8 +1059,7 @@ extension Canvas {
         let screen = SolidDrawnScreen(
             viewProjection: viewProjection, width: width, height: height, units: unitsPerDrawnPixel)
         var ends = SolidEndCuts(screen: screen, outputPerDrawn: thin.outputPerDrawn)
-        let cap = style.strokeCap
-        guard cap == .square || cap == .project else { return ends }
+        let extend = ThinEndCut.extent(of: style.strokeCap, weight: thin.drawn)
         // 点ごとに来る辺の数と、最大 2 本の隣 (端の列の中をたどるのに使う)
         var degree = [Int](repeating: 0, count: world.count)
         var neighbors = [SIMD2<Int32>](repeating: SIMD2(-1, -1), count: world.count)
@@ -1081,7 +1084,7 @@ extension Canvas {
             let partner = firstOnEdge[edgeOf[point]]
             guard
                 let cut = ThinEndCut(
-                    end: end, far: other, extend: cap == .project ? thin.drawn / 2 : 0,
+                    end: end, far: other, extend: extend,
                     half: band.half / thin.outputPerDrawn, base: .zero, axis: partner.map { found[$0].cut.axis })
             else { continue }
             // 辺が 1 本の網 (2 点の線) でなければ、端の列の中で線がそれないかを見る
@@ -1116,15 +1119,31 @@ extension Canvas {
             mates[first] = second
             mates[second] = first
         }
-        // 別の辺の端どうしで列の片が重なれば、両方とも切らない。囲みの箱は 1 度だけ組む
+        // 別の辺の端どうしで列の片が重なれば、両方とも切らない。囲みの箱は 1 度だけ組み、x の下端の順に並べて、
+        // x で重なりうる相手 (下端が自分の上端より左) だけを比べる。既定の丸い端も切るので、開いた端を多く持つ網
+        // (稜の途切れる点の多いモデルなど) でも端どうしを総当たりにしない (#3748 の反証 7。端 2 万の網で、総当たりの
+        // 267 ms が 17 ms になる)
         var boxes: [(low: SIMD2<Float>, high: SIMD2<Float>)?] = []
         boxes.reserveCapacity(found.count)
         for (index, piece) in found.enumerated() { boxes.append((merged[index] ?? piece.cut).box) }
+        var order: [(index: Int, low: Float, high: Float)] = []
+        order.reserveCapacity(found.count)
+        for (index, box) in boxes.enumerated() {
+            if let box { order.append((index, box.low.x, box.high.x)) }
+        }
+        order.sort { $0.low < $1.low }
         var dropped = Set<Int>()
-        for first in found.indices {
+        for rank in order.indices {
+            let first = order[rank].index
             guard let one = boxes[first] else { continue }
-            for second in found.indices where second > first && found[second].edge != found[first].edge {
-                guard let other = boxes[second], ThinEndCut.overlap(one, other) else { continue }
+            for next in order[(rank + 1)...] {
+                // x で重なるには、相手の下端が自分の上端より左にある (``ThinEndCut/overlap(_:_:)`` は隔たり 1/1000 画素を
+                // 越えて重なるときだけ真)。並べてあるので、以後の相手も重ならない
+                if next.low >= order[rank].high { break }
+                let second = next.index
+                guard found[second].edge != found[first].edge, let other = boxes[second],
+                    ThinEndCut.overlap(one, other)
+                else { continue }
                 dropped.insert(first)
                 dropped.insert(second)
             }
