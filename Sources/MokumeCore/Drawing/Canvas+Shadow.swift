@@ -17,7 +17,7 @@ extension Canvas {
         if enabled { shadowsEverEnabled = true }
     }
 
-    // 影を焼き付ける範囲の一辺 (世界の長さ)。
+    // 影を焼き付ける範囲の一辺 (世界の長さ)。中心は ``shadowMatrix`` が決める (#3842)。
     public func shadowRange(_ size: some ScalarConvertible) {
         let size = size.asFloat
         guard admits(.shadow) else { return }
@@ -80,13 +80,38 @@ extension Canvas {
     }
 
     /// 影を焼き付ける行列。落とす光が無ければ `nil`。
+    ///
+    /// 範囲の中心は ``shadowFocus``。
     var shadowMatrix: simd_float4x4? {
         guard shadowsEnabled, let caster = shadowCaster else { return nil }
         return ShadowMap.matrix(
             direction: SIMD3(
                 caster.directionAndCone.x, caster.directionAndCone.y, caster.directionAndCone.z),
-            center: currentCamera.center.simd,
+            center: shadowFocus,
             range: effectiveShadowRange)
+    }
+
+    /// 焼く範囲の中心。**この描き切りで最初に影を落とす立体を置いたときの視点の注視点** ([#3842])。
+    ///
+    /// 描き切りの時点の視点を読むと、立体を置いた後に戻した視点 (手元の表示の前の `camera()`) へ
+    /// 範囲が動き、先に置いた立体の影が動く。閉じた列は閉じた時点の設定を持ち歩き、記録した列だけで
+    /// 絵が決まる ([ADR-0021] 決定 2) ので、中心も落とす列が持つ (``Batch/shadowFocus``)。最後の
+    /// 落とす列ではなく最初のものを取るのは、立体の途中で視点を変えたとき、後の視点に引っぱられ
+    /// ないため。
+    ///
+    /// 溜め場 (``batches``) はこの描き切りの分だけなので、途中の描き切り (ADR-0021 決定 3) の後は
+    /// 次の描き切りで最初に置いた落とす列で決まる。持ち越した列 (``frameCasters``) は前の描き切りの
+    /// もので、ここでは読まない。**この描き切りに落とす列が無ければ、描き切る時点の視点の注視点**
+    /// (従来どおり)。
+    ///
+    /// [#3842]: https://github.com/mokume-metal/mokume/issues/3842
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    var shadowFocus: SIMD3<Float> {
+        // 前から探す。閉包を標準ライブラリへ渡すと、列ごとに隔離の実行時検査を払う (#1779)
+        for batch in batches where batch.castsShadow {
+            if let focus = batch.shadowFocus { return focus }
+        }
+        return currentCamera.center.simd
     }
 
     /// 影を落とすと言ったのに落とす光が無いまま、フレームを終えようとしていれば初回だけ知らせる。

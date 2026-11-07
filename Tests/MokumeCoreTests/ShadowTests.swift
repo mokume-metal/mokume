@@ -33,21 +33,23 @@ struct ShadowTests {
     ///   - sphereCasts: 球を落とす側に置くか。床はいつも落とす側から外す。
     private func floorAndSphere(
         _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
-        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in }
+        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in },
+        after: (Canvas) -> Void = { _ in }
     ) throws -> DisplayImage {
         try drawFloorAndSphere(
             canvas, shadows: shadows, scale: scale, offset: offset, range: range,
-            sphereCasts: sphereCasts, extra: extra)
+            sphereCasts: sphereCasts, extra: extra, after: after)
         return try canvas.target.encodeForDisplay()
     }
 
-    /// ``floorAndSphere(_:shadows:scale:offset:range:extra:)`` の描く部分だけ。**読み出さない**
+    /// ``floorAndSphere(_:shadows:scale:offset:range:sphereCasts:extra:after:)`` の描く部分だけ。**読み出さない**
     /// — 描き切りで投げたかどうかを、読み出しの待ちと分けて見るため ([#1868])。
     ///
     /// [#1868]: https://github.com/mokume-metal/mokume/issues/1868
     private func drawFloorAndSphere(
         _ canvas: Canvas, shadows: Bool = true, scale: Float = 1, offset: Float = 0,
-        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in }
+        range: Float? = nil, sphereCasts: Bool = true, extra: (Canvas) -> Void = { _ in },
+        after: (Canvas) -> Void = { _ in }
     ) throws {
         let center: Float = 64
         try canvas.draw {
@@ -77,6 +79,7 @@ struct ShadowTests {
             canvas.translate(center + offset * scale, 8 * scale, 0)
             canvas.sphere(28 * scale)
             canvas.pop()
+            after(canvas)
         }
     }
 
@@ -248,6 +251,160 @@ struct ShadowTests {
         #expect(withoutShadows[32, 32].blue > withoutShadows[32, 32].red)
         // 読み戻した値も同じ
         #expect(readWith == readWithout)
+    }
+
+    // MARK: - 焼き付ける範囲の中心 (#3842)
+
+    /// 視点を決めて立体を置いた後、手元の表示 (HUD) のために視点を戻す。#3830 の移行手順
+    /// (2D の図形も視点を通るので、HUD の前に `camera()` で戻す) に従った形。
+    private static func resetCamera(_ canvas: Canvas) {
+        canvas.camera()
+        canvas.perspective()
+    }
+
+    /// 影を切った絵より 20 段以上暗い画素の数 (``shadowsDarkenTheFloor()`` と同じ物差し)。
+    private func darkenedPixels(_ lit: DisplayImage, _ shadowed: DisplayImage) -> Int {
+        var count = 0
+        for y in 0..<lit.height {
+            for x in 0..<lit.width
+            where Int(lit[x, y].red) - Int(shadowed[x, y].red) > 20 { count += 1 }
+        }
+        return count
+    }
+
+    /// 同じ見え方で、注視点だけを視線の上で 2 倍遠くへ置いた視点の注視点。
+    ///
+    /// 視線の向きは `center - eye` を正規化したものなので、2 倍しても行列は 1 ビットも変わらない
+    /// (2 の冪の倍率は浮動小数で正確)。**影の中心だけが動く**ので、どの視点の注視点を中心に
+    /// 使ったかを、絵を変えずに見分けられる。
+    private static func fartherFocus(eye: SIMD3<Float>, center: SIMD3<Float>) -> SIMD3<Float> {
+        eye + 2 * (center - eye)
+    }
+
+    @Test("立体を置いた後に視点を戻しても、影は動かない")
+    func resettingTheCameraAfterTheSolidsKeepsTheShadow() throws {
+        // **影の中心は、最初に影を落とす立体を置いたときの視点の注視点** (#3842)。描き切りの時点の
+        // 視点を読んでいた頃は、戻した既定の注視点 (面の中心) へ範囲が動き、影のまわりが変わった
+        let kept = try floorAndSphere(try makeCanvas())
+        let reset = try floorAndSphere(try makeCanvas(), after: Self.resetCamera)
+        let unshadowed = try floorAndSphere(try makeCanvas(), shadows: false)
+        #expect(darkenedPixels(unshadowed, kept) > 100, "検査の前提: 影が落ちている")
+        #expect(reset.bytes == kept.bytes, "視点を戻したら影が動いた")
+    }
+
+    /// 床と、影を落とす球を 2 つ。**2 つ目の球の前に視点を替える。**
+    ///
+    /// - Parameter fartherSecondFocus: 2 つ目の視点の注視点を、同じ見え方のまま 2 倍遠くへ置くか。
+    private func twoCastersAcrossCameras(
+        shadows: Bool = true, fartherSecondFocus: Bool
+    ) throws -> DisplayImage {
+        let canvas = try makeCanvas()
+        let eye = SIMD3<Float>(64, -24, 170)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            canvas.camera(eye.x, eye.y, eye.z, 64, 14, 0, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+            canvas.shadows(shadows)
+            canvas.noStroke()
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.push()
+            canvas.translate(64, 40, -20)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+            canvas.castShadow(true)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.push()
+            canvas.translate(40, 8, 0)
+            canvas.sphere(18)
+            canvas.pop()
+            // 立体の途中で視点を替える
+            let center = SIMD3<Float>(76, 14, 0)
+            let focus = fartherSecondFocus ? Self.fartherFocus(eye: eye, center: center) : center
+            canvas.camera(eye.x, eye.y, eye.z, focus.x, focus.y, focus.z, 0, 1, 0)
+            canvas.push()
+            canvas.translate(88, 8, 0)
+            canvas.sphere(18)
+            canvas.pop()
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("立体の途中で視点を替えても、影の中心は最初に影を落とした立体の視点で決まる")
+    func theFirstCastersCameraCentresTheShadow() throws {
+        // 2 つ目の視点は見え方が同じで、注視点だけが違う。**最初の落とす立体の視点で決まって
+        // いれば 2 枚は一致する。** 描き切りの時点の視点 (修正前) や、最後の落とす立体の視点 (案 B) で
+        // 決めると、2 つ目の視点の注視点へ範囲が動いて食い違う
+        let near = try twoCastersAcrossCameras(fartherSecondFocus: false)
+        let far = try twoCastersAcrossCameras(fartherSecondFocus: true)
+        let unshadowed = try twoCastersAcrossCameras(shadows: false, fartherSecondFocus: false)
+        #expect(darkenedPixels(unshadowed, near) > 100, "検査の前提: 影が落ちている")
+        #expect(far.bytes == near.bytes, "後の視点の注視点に影の範囲が引っぱられた")
+    }
+
+    /// 途中で描き切る絵。前の描き切りで落とす球を 1 つ置き (影は受けない)、`loadPixels()` で区切った
+    /// 後に、別の視点で床と 2 つ目の球を置く。
+    ///
+    /// - Parameters:
+    ///   - fartherFirstFocus: 前の描き切りの視点の注視点を、同じ見え方のまま 2 倍遠くへ置くか。
+    ///   - resetAtEnd: 末尾で視点を戻すか。
+    private func castersAcrossACut(
+        shadows: Bool = true, fartherFirstFocus: Bool, resetAtEnd: Bool
+    ) throws -> DisplayImage {
+        let canvas = try makeCanvas()
+        let eye = SIMD3<Float>(64, -24, 170)
+        try canvas.draw {
+            canvas.background(.linear(red: 0, green: 0, blue: 0))
+            let first = SIMD3<Float>(48, 14, 0)
+            let focus = fartherFirstFocus ? Self.fartherFocus(eye: eye, center: first) : first
+            canvas.camera(eye.x, eye.y, eye.z, focus.x, focus.y, focus.z, 0, 1, 0)
+            canvas.perspective(Float.pi / 3, 1, 1, 500)
+            canvas.ambientLight(.linear(red: 0.15, green: 0.15, blue: 0.15))
+            canvas.directionalLight(.linear(red: 0.85, green: 0.85, blue: 0.85), -0.6, 0.6, -0.5)
+            canvas.shadows(shadows)
+            canvas.noStroke()
+            // **前の描き切りは焼かない** (影を受ける立体が無い)。この球は持ち越され、後の描き切りで
+            // 焼かれる (#1656)。中心を決めるのは、後の描き切りで最初に置いた落とす側の視点
+            canvas.castShadow(true)
+            canvas.receiveShadow(false)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.push()
+            canvas.translate(40, 8, 0)
+            canvas.sphere(18)
+            canvas.pop()
+            canvas.loadPixels()
+            canvas.receiveShadow(true)
+            canvas.camera(eye.x, eye.y, eye.z, 64, 14, 0, 0, 1, 0)
+            canvas.castShadow(false)
+            canvas.fill(.linear(red: 0.7, green: 0.7, blue: 0.7))
+            canvas.push()
+            canvas.translate(64, 40, -20)
+            canvas.box(190, 8, 190)
+            canvas.pop()
+            canvas.castShadow(true)
+            canvas.fill(.linear(red: 0.85, green: 0.5, blue: 0.3))
+            canvas.push()
+            canvas.translate(88, 8, 0)
+            canvas.sphere(18)
+            canvas.pop()
+            if resetAtEnd { Self.resetCamera(canvas) }
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("途中で描き切った後は、次の描き切りで最初に置いた落とす側の視点が影の中心を決める")
+    func aCutRestartsTheShadowCentre() throws {
+        let plain = try castersAcrossACut(fartherFirstFocus: false, resetAtEnd: false)
+        let unshadowed = try castersAcrossACut(shadows: false, fartherFirstFocus: false, resetAtEnd: false)
+        #expect(darkenedPixels(unshadowed, plain) > 100, "検査の前提: 影が落ちている")
+        // 後の描き切りの末尾で視点を戻しても動かない
+        let reset = try castersAcrossACut(fartherFirstFocus: false, resetAtEnd: true)
+        #expect(reset.bytes == plain.bytes, "後の描き切りの末尾で視点を戻したら影が動いた")
+        // 前の描き切りの視点の注視点は効かない (フレームの最初の落とす側で決めると食い違う)
+        let farther = try castersAcrossACut(fartherFirstFocus: true, resetAtEnd: true)
+        #expect(farther.bytes == plain.bytes, "前の描き切りの視点が、後の描き切りの影の中心を決めた")
     }
 
     // MARK: - 縮尺と、落とす / 受けるの切り分け
