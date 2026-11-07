@@ -21,6 +21,8 @@
 #
 # 発信の実体 (重複して立てない・run の URL を足す) は scripts/report-check-failure.sh が持ち、
 # ここが持つのは**固定タイトルと本文**だけ (report-scheduled-render.sh と同じ分け方)。
+# **メンテナを名指す (`--mention`・#3771)。** 壊れている間は queue が人の操作まで止まるので、
+# watch の設定に依らず届ける。名指しの相手と 1 Issue に 1 回の規則は report-check-failure.sh が持つ。
 # 呼ぶのは render.yml の render-environment-report で、GitHub ホストのジョブである。
 # 検査は scripts/tests/report_runner_environment_test.py。
 set -euo pipefail
@@ -79,4 +81,5 @@ bash "$here/report-check-failure.sh" \
   --log "$log" \
   --body-file "$body" \
   --key-file "$log" \
-  --source '.github/workflows/render.yml の render-environment-report が自動起票した (#2588)'
+  --source '.github/workflows/render.yml の render-environment-report が自動起票した (#2588)' \
+  --mention

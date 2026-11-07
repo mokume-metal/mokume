@@ -17,6 +17,9 @@
   6. `-` で始まる値 (`--help`・`-h`・`--anything`・`-` 単独) は理由として読まず、gh を呼ばずに 64 で止まる —
      慣習の `--help` 1 回が、着手可の印つきの偽の障害 Issue にならない (#3047)
   7. 前検査が書く通常の理由 (`console:`・`screens:`・`metal:`・`gpu-slot:`・`orphan-load:` 始まり) は今どおり起票へ渡る
+  8. 起票の本文でメンテナを名指す (#3771) — 起票は bot の名義で、watch の設定によっては誰にも
+     届かない。11-05 は #3760 が赤の 1 分後に立ったのに、人が動くまで約 8 時間 queue が止まった。
+     名指しの無い open な Issue への追記でも名指す (1 Issue に 1 回の規則は report_check_failure_test.py)
 
 偽 gh は PATH の先頭に置いた同型のスタブ (`scheduled_report_test.py` と同じ形)。
 実行は make hooks-test (CI もこれを呼ぶ)。
@@ -56,6 +59,7 @@ case "$1 $2" in
   "issue view")
     case "$*" in
       *issueType*) json='{"issueType":null}' ;;
+      *"body,comments"*) json='{"body":"名指しの無い前からの本文","comments":[]}' ;;
       *) json='{"labels":[]}' ;;
     esac ;;
   "issue comment")
@@ -146,6 +150,16 @@ class ReportRunnerEnvironmentTest(unittest.TestCase):
         self.assertIn("人が止める", body)
         # 当番を走らせても予約は戻らない (#2614)。そう読める案内を残さない
         self.assertNotIn("gh workflow run stall-watch.yml", body)
+
+    def test_起票の本文でメンテナを名指す(self):
+        self.run_script(REASON)
+        self.assertIn("@shinyaoguri", self.body.read_text(encoding="utf-8"))
+
+    def test_名指しの無い_open_な_Issue_への追記でも名指す(self):
+        r = self.run_script(REASON, issue_list=json.dumps([{"number": 7, "title": TITLE}]))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("issue comment 7", self.log.read_text())
+        self.assertIn("@shinyaoguri", self.body.read_text(encoding="utf-8"))
 
     def test_理由が空なら起票しない(self):
         r = self.run_script("")
