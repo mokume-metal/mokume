@@ -32,6 +32,7 @@ import simd
 /// | 斜めの縁・細い形の分岐の境目 (距離関数の経路・#2991) | `ExactEdgeCoverageTests` (回した輪郭・線を 16 通りの置き方で面積の 1 ± 0.03・境目の両側の差 0.01 以下) | 量 |
 /// | 細い塗り (三角形の経路・#1934) | ``Amount/shaderFill`` ほか、三角形の経路の塗りの行すべて | 量 |
 /// | 線・輪郭・点の太さ (三角形の経路・#1637) | ``Amount/quad`` ほか、三角形の経路の線の行すべて | 量 |
+/// | 回した閉じた細い輪郭 (#3793) | ``Amount/rotatedQuad``・``Amount/rotatedPolygon`` | 量 |
 /// | 回した細い立体の線 (#3734) | ``Amount/diagonalSolidLine``・``Amount/diagonalRetainedSolid``・``Amount/diagonalBox`` | 量 |
 /// | 丸い端の回した細い線 (#3748) | ``Amount/diagonalRoundShaderLine`` ほか、`diagonalRound` の行すべて | 量 |
 /// | 効果の半径 (#1545) | ``Outline/blur`` | 形 (2 つの濃さで切る) |
@@ -113,6 +114,10 @@ struct DensityInvarianceTests {
         case diagonalShaderLine = "rotate(θ) の shader() の line (三角形の経路)"
         case diagonalRetained = "rotate(θ) で置く保持した形の輪郭 (三角形の経路)"
         // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す
+        /// 回した閉じた細い輪郭 (#3793)。40×20 の矩形を `quad` と `beginShape` の閉じた周で描く (`miter` の角)。
+        /// `quad` は重なる片を CPU で引き、`beginShape` は型板で重ねない (どちらも ``Canvas/thinCarving(_:thin:)``)
+        case rotatedQuad = "rotate(θ) の quad の輪郭 (三角形の経路)"
+        case rotatedPolygon = "rotate(θ) の beginShape の閉じた輪郭 (三角形の経路)"
         case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
         // 回した細い立体の線 (#3734)。帯ごとに画面の向きで、列 (行) が帯を切る長さを整数にして広げる
         case diagonalSolidLine = "rotate(θ) の奥行きを持つ 2 点の beginShape (立体の線)"
@@ -238,7 +243,7 @@ struct DensityInvarianceTests {
         var rotates: Bool {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .rotatedShaderPoint, .rotatedFill, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
+                .rotatedShaderPoint, .rotatedFill, .rotatedQuad, .rotatedPolygon, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
                 .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
@@ -333,7 +338,7 @@ struct DensityInvarianceTests {
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
                 40
             // 40×20 の矩形の輪郭 (留め継ぎの角)。額縁の面積は周の長さ 120 × 太さ
-            case .diagonalFoldedRect: 120
+            case .diagonalFoldedRect, .rotatedQuad, .rotatedPolygon: 120
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
             default: nil
             }
@@ -417,6 +422,20 @@ struct DensityInvarianceTests {
                     canvas.rotate(turn)
                     canvas.rect(-20, -10, 40, 20)
                     canvas.popMatrix()
+                }
+            case .rotatedQuad, .rotatedPolygon:
+                // 40×20 の矩形の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalFoldedRect`` と同じ置き方)
+                canvas.translate(64, 64 + offset)
+                canvas.rotate(angle)
+                if self == .rotatedQuad {
+                    canvas.quad(-20, -10, 20, -10, 20, 10, -20, 10)
+                } else {
+                    canvas.beginShape()
+                    canvas.vertex(-20, -10)
+                    canvas.vertex(20, -10)
+                    canvas.vertex(20, 10)
+                    canvas.vertex(-20, 10)
+                    canvas.endShape(.close)
                 }
             case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
@@ -927,6 +946,34 @@ struct DensityInvarianceTests {
             if case .fail(let text) = try Self.measure(.diagonalFoldedRect, pose) { broken.append("\(pose): \(text)") }
         }
         #expect(broken.isEmpty, "\(Amount.diagonalFoldedRect.rawValue): \(broken.joined(separator: " / "))")
+    }
+
+    /// 固定の例: 回した閉じた細い輪郭の帯の縁の丸め (#3793)。
+    ///
+    /// 帯を線に垂直な長方形 1 枚で組んでいた頃は、2 本の縁を別々の頂点で置いたので、GPU が頂点を 1/256 画素へ丸めると、
+    /// 縁が画素の中心とほぼ重なる列で中心を 2 つ数えた。CPU の模型で、1 行目 (角度 1.107・tan ≈ 2) は帯の 11 列中 5 列が
+    /// 中心 2 つで +16.9%、2 行目は +12.5%、3 行目 (#3788 の額縁と同じ置き方) は +14.0% だった。どの行も、縦のずらしを
+    /// 1 周期 (出す画素 4・1/16 刻み) 振る。
+    nonisolated static let rotatedRingPoses: [Pose] = [
+        (Float(0.9133), Float(0.390625), Float(1.3856), Float(1.3070), Float(1.10728)),
+        (0.9989, 0.25, 0.7316, 0.4757, 0.79089),
+        (1, 0.3203125, 1.87, 1.95, 0.78599),
+    ].flatMap { weight, density, dx, dy, angle in
+        [Pose(weight: weight, density: density, offset: SIMD2(dx, dy), angle: angle, squash: 1)]
+            + (0..<64).map {
+                Pose(weight: weight, density: density, offset: SIMD2(dx, Float($0) / 16), angle: angle, squash: 1)
+            }
+    }
+
+    @Test(
+        "固定の例: 回した閉じた細い輪郭は、帯の縁の位相によらず周 × 太さぶんの濃さで出る (#3793)",
+        arguments: [Amount.rotatedQuad, .rotatedPolygon])
+    func rotatedRingKeepsItsWeightOverOnePhase(_ mouth: Amount) throws {
+        var broken: [String] = []
+        for pose in Self.rotatedRingPoses {
+            if case .fail(let text) = try Self.measure(mouth, pose) { broken.append("\(pose): \(text)") }
+        }
+        #expect(broken.isEmpty, "\(mouth.rawValue): \(broken.count) 件: \(broken.joined(separator: " / "))")
     }
 
     /// #1637 の本文の再現 (`ThinOutline`)。軸に沿った `quad` の太さ 1 の輪郭を、上辺 y = 10 と 11

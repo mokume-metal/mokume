@@ -526,6 +526,28 @@ extension Canvas {
                 polygon.append(e2)
             }
         }
+        /// 細い帯の本体を、点 `index` の側の端から内へ下げる長さ (帯に沿った描く画素・#3793・``thinBandPieces``)。
+        /// 隣の帯の長方形と角の片 (`miter` の尖りは太いほうの半幅の √2 倍まで) が、帯 `band` の本体に届かない長さ。
+        /// 開いた端は端の片 (太さの半分) の長さで、列の境目で切った端は 0 (切り口の頂点はすでに写しである)。
+        /// 隣の帯が折り返す・向きが決まらないなら `nil` (帯は割らない)。
+        func bandMargin(at index: Int, band: Int, cut: Bool) -> Float? {
+            let slack: Float = 1 / 64
+            if isEnd(index) { return cut ? 0 : thin.bandWeight[band] / 2 + slack }
+            let (before, after) = bands(at: index)
+            guard let other = before == band ? after : before, other != band else { return nil }
+            // 点から帯の向こうへ向く向き (自分と隣)
+            let mine = (index == band ? points[(band + 1) % count] : points[band]) - points[index]
+            let theirs = (index == other ? points[(other + 1) % count] : points[other]) - points[index]
+            let (mineLength, theirLength) = (simd_length(mine), simd_length(theirs))
+            guard mineLength > 0, theirLength > 0 else { return nil }
+            let cosine = dot(mine, theirs) / (mineLength * theirLength)
+            let sine = abs(mine.x * theirs.y - mine.y * theirs.x) / (mineLength * theirLength)
+            let (own, near) = (thin.bandHalf[band], thin.bandHalf[other])
+            let tip = Float(2).squareRoot() * max(own, near)
+            guard sine > 1e-3 else { return cosine < 0 ? tip + slack : nil }
+            // 隣の帯の長方形が自分の帯の中に入る所の、帯に沿った最も遠い位置: (h_i + h_j)·cot φ + h_j (φ は内角)
+            return max((own + near) * max(0, cosine / sine) + near, tip) + slack
+        }
         let join = style.strokeJoin
         strokeRing(
             count: count, isClosed: outline.isClosed, curveSteps: outline.curveSteps,
@@ -541,16 +563,39 @@ extension Canvas {
                 let (startCut, endCut) = (ends.start(of: a), ends.end(of: a))
                 if let startCut { start = startCut.tip - startCut.inward * 4 }
                 if let endCut { end = endCut.tip - endCut.inward * 4 }
-                carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { polygon in
-                    let delta = end - start
-                    let length = simd_length(delta)
-                    guard length > 0 else { return }
-                    let normal = SIMD2(-delta.y, delta.x) / length * half
-                    var corners = [start + normal, end + normal, end - normal, start - normal]
-                    if let startCut { corners = startCut.trimmed(corners) }
-                    if let endCut { corners = endCut.trimmed(corners) }
-                    polygon.append(contentsOf: corners)
+                let delta = end - start
+                let length = simd_length(delta)
+                guard length > 0 else { return }
+                let normal = SIMD2(-delta.y, delta.x) / length * half
+                let corners = [start + normal, end + normal, end - normal, start - normal]
+                func trimmed(_ piece: [SIMD2<Float>]) -> [SIMD2<Float>] {
+                    var piece = piece
+                    if let startCut { piece = startCut.trimmed(piece) }
+                    if let endCut { piece = endCut.trimmed(piece) }
+                    return piece
                 }
+                // 細い帯は、写しの本体と両端の片に割る (#3793・``thinBandPieces``)。本体は隣の帯と角の片に届かない所に
+                // あるので、積む順によらず引かれない。両端の片は本体の後に積む (角の片が後から端の片を引く・割る前の帯と同じ順)
+                if thin.bandWeight[a] < 1,
+                    let startMargin = bandMargin(at: a, band: a, cut: startCut != nil),
+                    let endMargin = bandMargin(at: b, band: a, cut: endCut != nil),
+                    let split = Self.thinBandPieces(
+                        corners, half: half, margins: (startMargin, endMargin))
+                {
+                    let body = trimmed(split.body)
+                    if !body.isEmpty {
+                        carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { $0.append(contentsOf: body) }
+                    }
+                    for end in split.ends {
+                        let piece = trimmed(end)
+                        if !piece.isEmpty {
+                            carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { $0.append(contentsOf: piece) }
+                        }
+                    }
+                    return
+                }
+                let piece = trimmed(corners)
+                carving.addBand(segment: a, coverage: thin.bandCoverage[a]) { $0.append(contentsOf: piece) }
             },
             disc: { index in
                 if isEnd(index) {
@@ -571,6 +616,50 @@ extension Canvas {
                 addJoin(index, previous: previous, next: next, join: join)
             })
         return (carving, offset)
+    }
+
+    /// 細い帯の長方形 `corners` (`[始まり + 法線, 終わり + 法線, 終わり − 法線, 始まり − 法線]`・描く画素・半幅 `half`) を、
+    /// **縁を写しにした本体と両端の片**に割る (#3793)。割れない (本体が残らない) なら `nil`。
+    ///
+    /// 帯の 2 本の縁は、帯を切る軸 (横寄りの帯なら y) に沿ってちょうど n (``widenedBand(_:along:)`` の帯の数) 離れて
+    /// いる。長方形の 4 隅をそのまま置くと、GPU が頂点を描く画素の 1/256 へ丸めたときに 2 本の縁が別々に動き、縁が
+    /// 画素の中心とほぼ重なる列で中心を 2 つ (か 0 個) 数える (#3788 の額縁・#3763 の塗りと同じ根)。そこで本体の
+    /// 一方の縁の頂点 X・X′ を、もう一方の縁の頂点 + n の写し (Y・Y′) にする。
+    ///
+    /// - 本体は、両端から `margins` (帯に沿った長さ) より内側に置く。呼ぶ側は、隣の帯と角の片 (と開いた端の片) が
+    ///   本体に届かない長さを渡す — 重なりを引く輪郭 (quad) でも、本体はどの片とも重ならないので積む順によらず
+    ///   引かれず、写しのまま残る。写しの頂点が端の長方形の内に入るよう、本体は端から写しの斜めの分だけは内へ下げる
+    /// - 両端の片は、長方形の残り (A, X, Y, D)・(B, C, Y′, X′) で、本体と頂点を共有する。帯の領域は割る前と同じ
+    ///
+    /// 写しは描く画素の空間で足すので、出す座標へ戻して写し直す単精度の往復の誤差は残る (塗りの帯と同じ・
+    /// ``thinFillPieces(_:by:)``)。
+    static func thinBandPieces(
+        _ corners: [SIMD2<Float>], half: Float, margins: (start: Float, end: Float)
+    ) -> (body: [SIMD2<Float>], ends: [[SIMD2<Float>]])? {
+        guard corners.count == 4 else { return nil }
+        let (a, b, c, d) = (corners[0], corners[1], corners[2], corners[3])
+        let along = b - a
+        let length = simd_length(along)
+        guard length > 0, length.isFinite, half > 0 else { return nil }
+        let u = along / length
+        // 写しの軸 (帯が横寄りなら y) と、縁 1 (a, b) から縁 2 (d, c) への写し
+        let axis = abs(u.x) >= abs(u.y) ? 1 : 0
+        let major = max(abs(u.x), abs(u.y))
+        let crossings = (2 * half / major).rounded()
+        guard crossings >= 1 else { return nil }
+        var copy = SIMD2<Float>(0, 0)
+        copy[axis] = d[axis] - a[axis] >= 0 ? crossings : -crossings
+        // 写しの頂点が端の長方形の内に入る長さ (縁 2 の端を、写しの向きに縁 1 の線まで戻した点の、帯に沿った位置)
+        let startNeed = max(0, dot(d - copy - a, u))
+        let endNeed = max(0, dot(c - copy - b, -u))
+        let slack: Float = 1 / 64
+        let startLength = max(margins.start, startNeed + slack)
+        let endLength = max(margins.end, endNeed + slack)
+        guard startLength + endLength < length else { return nil }
+        let x = a + u * startLength
+        let x2 = b - u * endLength
+        let (y, y2) = (x + copy, x2 + copy)
+        return ([x, x2, y2, y], [[a, x, y, d], [b, c, y2, x2]])
     }
 
     /// 開いた周の両端の、描く画素の列 (行) の境目での切り方 (#3745・``ThinEndCut``)。

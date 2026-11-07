@@ -55,6 +55,9 @@ nonisolated struct StrokeCarving {
     private var coverages: [Float] = []
     /// 帯の添字ごとの片の添字。帯を置かなかった線分 (長さ 0) は -1。
     private var bandPieces: [Int]
+    /// 同じ帯に 2 つ目からの片が来たとき (細い帯を写しの本体と両端の片に割る・#3793) の、帯の添字ごとの片の添字。
+    /// 帯の片と同じく、線に沿った窓に掛かる帯の相手に数える。
+    private var extraBandPieces: [Int: [Int]] = [:]
     /// 点の添字ごとの、点に置いた形の片の添字。置かなかった点は -1。
     private var pointPieces: [Int]
     /// 同じ点に 2 つ目の形が来たときの片。骨はそうしないが、来たら常に相手に数える。
@@ -103,7 +106,11 @@ nonisolated struct StrokeCarving {
         guard segment < segmentCount,
             let index = add(positions[segment], positions[segment + 1], coverage, build)
         else { return }
-        bandPieces[segment] = index
+        if bandPieces[segment] < 0 {
+            bandPieces[segment] = index
+        } else {
+            extraBandPieces[segment, default: []].append(index)
+        }
     }
 
     /// 点 `point` に置いた形 (折れ目・端・刻みの円板) を足す。`build` が凸多角形の周を積む。
@@ -441,6 +448,9 @@ nonisolated struct StrokeCarving {
                 var segment = Self.firstIndex(in: positions, from: 1, notBelow: low) - 1
                 while segment < segmentCount, positions[segment] <= high {
                     take(bandPieces[segment])
+                    if !extraBandPieces.isEmpty, let extra = extraBandPieces[segment] {
+                        for other in extra { take(other) }
+                    }
                     segment += 1
                 }
             }
