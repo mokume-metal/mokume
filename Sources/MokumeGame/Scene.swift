@@ -3,7 +3,7 @@
 
 import MokumeCore
 
-/// ゲームの場面 (タイトル・プレイ中・結果など) を 1 つ持ち、切り替える値 ([#3588])。
+/// ゲームの場面 (タイトル・プレイ中・結果など) を 1 つ持ち、切り替える入れ物 ([#3588])。
 ///
 /// 場面の名前は自分の `enum` で書き、`Scene` はそのうちのどれが「いま」かだけを持つ。
 /// ``current`` を `switch` して、場面ごとの `draw()` の中身を分ける:
@@ -72,7 +72,7 @@ import MokumeCore
 /// - **同じ場面への ``change(to:)`` も、入り直しとして次のフレームで ``justEntered`` が真になる**
 ///   (やり直しに使える)
 /// - 1 つのフレームの中で ``change(to:)`` を何度か呼べば、最後に呼んだものが効く
-/// - `draw()` の途中で `Scene(starting:)` を作った値は、始まりの場面でも ``justEntered`` が立たない
+/// - `draw()` の途中で `Scene(starting:)` で作った `Scene` は、始まりの場面でも ``justEntered`` が立たない
 ///   (最初のフレームではないため)。入り直すなら ``change(to:)`` を使う
 /// - **実行が変わったら、新しい実行とみなす。** 同じ `Scene` を別の実行へ持ち越す (`static` に置く・
 /// 作り直したスケッチへ渡す) と、`draw()` の数は 1 から数え直される。要求していた切り替えがあれば確定させ、
@@ -80,9 +80,9 @@ import MokumeCore
 ///
 /// ## 同じ場面を指す
 ///
-/// **`Scene` を代入して渡した先は、同じ場面を指す。** 値を複製しても、場面の持ち主は 1 つ — 部品
-/// (`struct Player: SketchPart`) に渡した `Scene` で ``change(to:)`` を呼べば、スケッチが持つ `Scene` が
-/// 切り替わる。別の場面を並べて持ちたいときは、`Scene(starting:)` をもう 1 つ作る。
+/// **`Scene` は class なので、代入して渡した先は同じ場面を指す。** 部品 (`struct Player: SketchPart`) に渡した
+/// `Scene` で ``change(to:)`` を呼べば、スケッチが持つ `Scene` が切り替わる。同じ場面かどうかは `===` で問える。
+/// 別の場面を並べて持ちたいときは、`Scene(starting:)` をもう 1 つ作る。
 ///
 /// ## 実行中でない場所で読む
 ///
@@ -93,8 +93,8 @@ import MokumeCore
 /// 自分の状態へコピーするか、`expose` で `observe` へ渡す。``change(to:)`` はどこから呼んでもよく、警告しない。
 ///
 /// [#3588]: https://github.com/mokume-metal/mokume/issues/3588
-public nonisolated struct Scene<Value: Sendable>: Sendable {
-    /// 場面の持ち主。**複製した `Scene` が共有する** (「同じ場面を指す」)。
+public nonisolated final class Scene<Value: Sendable>: Sendable {
+    /// 場面の持ち主。main actor の上でだけ触る入れ物で、`Scene` は作ったときの 1 つを持ち続ける。
     private let storage: Storage
 
     /// `scene` を始まりの場面にして、最初のフレームから入っている状態で作る。

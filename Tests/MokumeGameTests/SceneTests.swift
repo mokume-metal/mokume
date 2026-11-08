@@ -244,9 +244,9 @@ struct SceneTableTests {
         #expect(scene.enteredAtDraw(at: at(1, run: 2)))
     }
 
-    // MARK: - 複製は同じ場面を指す
+    // MARK: - 代入して渡した先は同じ場面を指す (#3815)
 
-    @Test("Scene を複製して渡した先で切り替えると、元の Scene も切り替わる")
+    @Test("Scene を代入して渡した先で切り替えると、元の Scene も切り替わる")
     func copiesShareTheScene() {
         let scene = Scene(starting: Screen.title)
         let handedToAPart = scene
@@ -256,6 +256,18 @@ struct SceneTableTests {
         // 別の場面は Scene(starting:) で作る
         let other = Scene(starting: Screen.title)
         #expect(other.sceneVisible(at: at(4)) == .title)
+    }
+
+    /// struct に戻すと `===` が組めずに赤になる。`var` で持つ書き方も組めることをここで見る。
+    @Test("代入した先は同じ Scene (===)、Scene(starting:) を 2 度作れば別の Scene")
+    func assignmentKeepsTheIdentity() {
+        let scene = Scene(starting: Screen.title)
+        let handedToAPart = scene
+        #expect(scene === handedToAPart)
+        var another = Scene(starting: Screen.title)
+        #expect(!(scene === another))
+        another = handedToAPart
+        #expect(another === scene)
     }
 }
 
