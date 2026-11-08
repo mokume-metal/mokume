@@ -322,9 +322,10 @@ enum NewCommand {
     /// **大小は区別する。** `mokumecore` は組めた (実測)。区別しない名前は
     /// ``caseFoldedModules`` で別にする。
     static let unusableModules: Set<String> = [
-        // mokume の library product が辿るターゲット
+        // mokume の library product が辿るターゲット。`MokumeUI` はひな形が引かない別の product (ADR-0048) だが、
+        // スケッチを SwiftUI に埋め込むときに依存へ足すと、同じ名前のターゲットが 2 つになる
         "mokume", "MokumeCore", "MokumeCamera", "MokumeAudio", "MokumeNetwork",
-        "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeDiagnostics", "MokumeMacros",
+        "MokumeGamepad", "MokumeMIDI", "MokumeGame", "MokumeVision", "MokumeUI", "MokumeDiagnostics", "MokumeMacros",
         // ひな形が import するモジュール (`mokume` は上) と標準ライブラリ。`Foundation` はひな形が
         // import しなくなった (#2416) が、ライブラリのソースが import するので下の SDK の列にも要る
         "Foundation", "Swift",

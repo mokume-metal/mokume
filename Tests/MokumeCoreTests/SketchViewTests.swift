@@ -5,6 +5,7 @@ import AppKit
 import Foundation
 import MokumeDiagnostics
 import MokumeTestSupport
+import MokumeUI
 import SwiftUI
 import Testing
 
