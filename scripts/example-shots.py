@@ -42,8 +42,7 @@
 `Sources/MokumeCore/Geometry/*.swift` の値型 (`Vector2`・`Circle`・`Rect`) の `struct` / `extension` の
 本体に書かれた公開メンバで (#2600)、数える単位は **overload ごと = 参照の面の 1 ページ**。
 値型の口は型の名前を前に付けて数える (`Circle.draw()`) — 型をまたいで同じ名前の口
-(`draw()`・`intersects(_:)`) があるので、付けないと許容一覧の綴りと参照の行き先が型を
-取り違える。各メンバは次のどれかを持つ。
+(`draw()`・`intersects(_:)`) があるので、付けないと参照の行き先が型を取り違える。各メンバは次のどれかを持つ。
 
 | 持つもの | 書き方 |
 | --- | --- |
@@ -51,7 +50,7 @@
 | 撮れない宣言 | `// shot: 撮れない <理由>` |
 | 別の口の絵への参照 | `// shot: 参照 <口>` |
 
-どれも持たず、許容一覧にも載っていない口は、ファイルと行つきで名指しして赤になる。
+どれも持たない口は、ファイルと行つきで名指しして赤になる。
 
 **宣言は説明文 (`///`) と宣言の間の `//` の行に書く** — `///` に書くと公開される文章に
 指紋が出る (ADR-0027 決定 2)。撮影の記録 (`// shot: 1 snippet=…`) と同じ置き場で、
@@ -69,7 +68,7 @@
 - **参照 <口>** — 同じ例で足りる overload が、別の overload の絵を指す
   (`fill(_ gray:)` が `fill(_:_:_:_:)` を指す)。`<口>` は参照の面の見出しと同じ
   `fill(_:_:_:_:)` の綴りで、同名の口が複数ある (`fill(_:_:)` は 2 本ある) ときは、
-  許容一覧と同じ `fill(_:_:) (LinearRGBA, some ScalarConvertible)` で指す。
+  引数の型を添えた `fill(_:_:) (LinearRGBA, some ScalarConvertible)` で指す。
   **参照先が無い・複数ある・絵を持たない (別の宣言だけを持つ) と赤**
 - 絵を持つ口に、撮れない宣言や参照は付けない (どちらかが古い)。宣言は 1 つだけ。
   知らない `// shot:` の宣言 (綴りの誤り) も赤にする — 黙って普通のコメントになると、
@@ -77,7 +76,7 @@
 
 **Gyazo の鍵を持たない人 (外の貢献者を含む) は、`// shot: 後で撮る` の印で通す。** 例と
 囲みは書き、撮るのだけを鍵を持つ人に任せる印で、絵が無いことの赤 (「まだ撮っていない」・
-「撮り直していない」) が外れる。**撮れない宣言や許容一覧への追加で逃げる口ではない** —
+「撮り直していない」) が外れる。**撮れない宣言で逃げる口ではない** —
 印は例と囲みの実物を要求する (囲みの無い口に付けると赤) ので、撮れば絵になるものしか
 入らない。
 
@@ -94,22 +93,6 @@
 - **どう外れるか**: 鍵を持つ人が `make example-shots` で撮ると、書き戻しが印を外す。
   撮れているのに印が残っていれば赤 (外す)
 
-## 許容一覧 (`scripts/example-shots-gaps.txt`)
-
-**既存の穴は許容一覧に載せて緑のまま通す。一覧は減る方向にしか動かない (ラチェット)。**
-一覧は「いま例も宣言も持たない口」の全部で、1 行 1 口 (`ファイル: 口`)。口の綴りは
-`名前 (引数の型, …)` — `api-surface.py` が overload を見分ける鍵 (`title` と `signature`)
-と同じで、引数の名前や既定値を動かしても綴りは動かない。
-
-- **新しい口は載せない。** 載っていない穴は赤 — 例か宣言を足す
-- **載っている口に例か宣言が付いたら、一覧から消さないと赤。** 残すと、後で例や宣言を
-  外したときに穴が黙って戻る — 知らないうちに一覧が増えたのと同じになる
-- **ソースに無い口が載っていれば赤。** 引数の型を変えた・口を消したときは、その行を
-  書き直す (消す)。数を足す書き直しではない
-- **一覧への追加そのものは、検査では止めていない** (行を足せば緑になる)。足せば diff に
-  出るので、レビューが「足さない」を守らせる。base との差分で止める道は新しい機構に
-  なるので足していない (ADR-0008 決定 1・5。実害が出たら足す)
-
 ## 公開メンバの拾い方
 
 **ソースの字面で拾う。** 公開の判定はシンボルグラフが正確だが (`api-surface.py`)、組み
@@ -119,13 +102,12 @@
 の読み方は `slash_doc` と揃える — 宣言の直前の属性 (`@…`) を跨ぎ、その上の `//` の塊を
 跨いで、`///` の塊を説明文とする。
 
-**拾えた口が 1 本も無ければ赤。** 読み方が壊れても緑で通る空回りを隠さない。許容一覧の
-口がソースから拾えなくなっても赤になるので、拾う数が減ったことは一覧も気付かせる。
+**拾えた口が 1 本も無ければ赤。** 読み方が壊れても緑で通る空回りを隠さない。
 
 **範囲は `Sketch/` の下の `Sketch+*.swift` で、#526 の 8 束が見た範囲と同じ。**
 `Sketch/` の外の `extension Sketch` (Input・Orbit・Expose・Params・Capture) と
-`Sketch` プロトコルそのものは、まだ見ていない。広げるときは、拾える口を許容一覧へ
-載せ直す。
+`Sketch` プロトコルそのものは、まだ見ていない。広げるときは、拾える口のすべてに例か宣言を
+付けてから広げる。既存の穴を載せて緑のまま通す許容一覧は、0 口まで減ったので畳んだ (#3821)。
 
 ## 指紋が見ていない範囲
 
@@ -645,8 +627,6 @@ def collect(root: pathlib.Path) -> list[Shot]:
 MEMBER_FILES = "Sources/MokumeCore/Sketch/Sketch+*.swift"
 # 値型の口 (#2600)。型の本体と extension の両方を見て、口に型の名前を前置する
 VALUE_FILES = "Sources/MokumeCore/Geometry/*.swift"
-# 許容一覧。1 行 1 口 (`ファイル: 口`)。# で始まる行と空行は読まない
-GAPS_FILE = "scripts/example-shots-gaps.txt"
 
 # `extension Sketch` / `extension SketchPart` の頭。`public extension …` なら中の口は既定で
 # 公開になる。語彙は Sketch が継ぐ SketchPart に置いてある (ADR-0020 決定 7・#2616)
@@ -697,7 +677,7 @@ class Member:
 
     @property
     def key(self) -> str:
-        """口の綴り。許容一覧と参照が使う。引数の名前と既定値は入らない。"""
+        """口の綴り。参照が使う。引数の名前と既定値は入らない。"""
         return f"{self.title} ({', '.join(self.types)})" if self.types else self.title
 
     @property
@@ -864,28 +844,6 @@ def collect_members(root: pathlib.Path) -> list[Member]:
     return members
 
 
-def load_gaps(text: str, name: str = GAPS_FILE) -> tuple[dict[str, int], list[str]]:
-    """許容一覧 → ({`ファイル: 口`: 行番号 (1 起点)}, 読めなかった行の指摘)。"""
-    gaps: dict[str, int] = {}
-    problems: list[str] = []
-    for number, raw in enumerate(text.split("\n"), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        path, separator, member = line.partition(": ")
-        if not separator or not path.endswith(".swift") or not member.strip():
-            problems.append(f"{name}:{number}: 読めない行 (`ファイル: 口` の形で書く): {line}")
-        elif line in gaps:
-            problems.append(f"{name}:{number}: 同じ口が重なっている: {line}")
-        else:
-            gaps[line] = number
-    return gaps, problems
-
-
-def gap_entry(member: Member) -> str:
-    return f"{member.path}: {member.key}"
-
-
 # ---------------------------------------------------------------- 検査
 
 
@@ -1022,10 +980,8 @@ def classify(member: Member, members: list[Member]) -> tuple[str | None, list[st
     return ("broken" if problems else None), problems
 
 
-def check_members(
-    members: list[Member], gaps: dict[str, int], gaps_name: str = GAPS_FILE
-) -> list[str]:
-    """公開メンバが、例か宣言を持つか許容一覧に載っているか。"""
+def check_members(members: list[Member]) -> list[str]:
+    """公開メンバが、例か宣言を持つか。"""
     if not members:
         # **空回りを緑で隠さない。** 読み方が壊れても、拾えなければ何も言わずに通ってしまう
         return [
@@ -1033,38 +989,18 @@ def check_members(
             "(ファイルが動いたか、読み方が壊れている)"
         ]
     problems: list[str] = []
-    counts = {"shot": 0, "skip": 0, "refer": 0, "gap": 0}
-    seen: set[str] = set()
+    counts = {"shot": 0, "skip": 0, "refer": 0}
     for member in sorted(members, key=lambda m: (str(m.path), m.line)):
         held, found = classify(member, members)
         problems += found
-        entry = gap_entry(member)
-        seen.add(entry)
         if held is None:
-            if entry in gaps:
-                counts["gap"] += 1
-            else:
-                problems.append(
-                    f"{member.where}: {member.key} に例も撮れない宣言も無く、許容一覧にも無い"
-                )
+            problems.append(f"{member.where}: {member.key} に例も撮れない宣言も無い")
         elif held != "broken":
             counts[held] += 1
-            if entry in gaps:
-                problems.append(
-                    f"{gaps_name}:{gaps[entry]}: {entry} は例か宣言が付いた — "
-                    "許容一覧から消す (残すと、後で外したときに穴が黙って戻る)"
-                )
-    for entry, number in sorted(gaps.items(), key=lambda item: item[1]):
-        if entry not in seen:
-            problems.append(
-                f"{gaps_name}:{number}: {entry} はソースに無い — 口を消したなら行を消し、"
-                "引数の型を変えたなら行を書き直す"
-            )
     print(
         f"公開メンバ: {len(members)} 口 — 例と絵 {counts['shot']} / 撮れない宣言 {counts['skip']} / "
-        f"参照 {counts['refer']} / 許容一覧 {counts['gap']}"
+        f"参照 {counts['refer']}"
     )
-    print(f"  許容一覧 ({gaps_name}) は減る方向にしか動かない。いま {len(gaps)} 口")
     return problems
 
 
@@ -1073,18 +1009,13 @@ MEMBER_HELP = """\
   例と絵        説明文に ```swift の例と <!-- shot: … --> の囲みを書き、make example-shots で撮る
                 Gyazo の鍵が無ければ、`// shot: 後で撮る` を添えて通す (鍵を持つ人が撮る)
   撮れない      // shot: 撮れない <理由>
-  参照          // shot: 参照 <口>   (同じ例で足りる overload が別の口の絵を指す)
-許容一覧 (scripts/example-shots-gaps.txt) へは足さない — 減る方向にしか動かない。\
+  参照          // shot: 参照 <口>   (同じ例で足りる overload が別の口の絵を指す)\
 """
 
 
 def members_problems(root: pathlib.Path) -> list[str]:
-    """作業ツリーの公開メンバを許容一覧と突き合わせる。"""
-    path = root / GAPS_FILE
-    if not path.is_file():
-        return [f"許容一覧 {GAPS_FILE} が無い"]
-    gaps, problems = load_gaps(path.read_text(encoding="utf-8"))
-    return problems + check_members(collect_members(root), gaps)
+    """作業ツリーの公開メンバが、例か宣言を持つか。"""
+    return check_members(collect_members(root))
 
 
 # ---------------------------------------------------------------- 撮る
@@ -2274,7 +2205,7 @@ def main(
             return 1
         print(
             "ok: 例の絵は全部そろっていて、撮った後にスニペットが動いていない。"
-            "公開メンバはどれも例か宣言を持つか、許容一覧に載っている"
+            "公開メンバはどれも例か宣言を持つ"
         )
         return 0
 

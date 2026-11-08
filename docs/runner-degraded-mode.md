@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 merge queue の必須チェック `render` は、専用機 `mokume-m4` の 1 台でだけ走る。専用機の runner が止まると、描画に触れない PR (docs・scripts・CI) も含めて、queue に入った PR がタイムアウト (95 分) ごとに queue から外され続ける。専用機は SSH で入れず、runner は物理操作でしか戻せない ([#1767](https://github.com/mokume-metal/mokume/issues/1767))。runner を戻せない間も merge を通すために、**必須チェックから `render` だけを外した保護の定義**を前もって用意してある ([#2252](https://github.com/mokume-metal/mokume/issues/2252))。
 
-この文書が縮退と復帰の手順の唯一の置き場である。`scripts/stall-watch.sh` の読み分け 8 の対処は、ここを指す。
+この文書が縮退と復帰の手順の唯一の置き場である。`scripts/stall-watch.sh` の読み分け 6 の対処は、ここを指す。
 
 ## 誰が・いつ使うか
 

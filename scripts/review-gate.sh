@@ -78,7 +78,7 @@ fail() { # $1=理由 $2=次にすること (省略可)
 # 結論を読む (規則は scripts/ci-gate.sh 冒頭の「必須の判定が読む check run」・#2577)。直した後の
 # run はその出来事の後に PR を読むので、打ち直しは要らない (#2668 の probe)。pr-gate は concurrency
 # を持たないので run は打ち切られない (#2716)。例外は手で cancel した run が最新の suite に残った
-# ときで、stall-watch が stale-gate と名乗り、打ち直す run を出す。差し戻しの文面には書かない —
+# ときで、その run を打ち直す。差し戻しの文面には書かない —
 # 打ち切られた run は文面を出さないので、文面を読む人の手元の run は赤である
 #
 # かつて (#2134〜#2669) は ci.yml の ci-gate の needs に居て、直しても赤かった run の ci-gate が

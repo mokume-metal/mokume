@@ -57,7 +57,7 @@ permissions:
 #   5〜6 本立つことがある
 # - queue: max (待ちを並べる): 固定している actionlint が受けない (rhysd/actionlint#657)
 #
-# 手で cancel した run が最新の suite に残る形は、scripts/stall-watch.sh が stale-gate と名乗る。
+# 手で cancel した run が最新の suite に残ると、PR は必須が揃わず BLOCKED のまま残る。その run を打ち直す。
 
 # run: を pipefail 付きの bash で走らせる (#2609)。理由と固定は scripts/tests/workflow_pipe_test.py
 defaults:
