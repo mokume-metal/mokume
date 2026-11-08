@@ -35,6 +35,9 @@ extension Canvas {
         clipRecorder = nil
         defer { clipRecorder = savedClipRecorder }
         closeBatch()
+        // 目印を描く視点 (``firstSolidCamera``・#3857) は、記録した立体では決めない — 記録した立体は
+        // フレームに置いたものではない。入口で閉じた列までを控え、出口で記録の最後の列を閉じた後に戻す
+        let savedFirstSolidCamera = firstSolidCamera
         // **入口の長さは、局所変数ではなく溜め場の側に積む** ([#2850])。組み立ての途中で置いた側を描き切る
         // 逃げ道 (``flushBeforeBuild()``) が、組み立てている区間を溜め場の先頭へ引き戻すとき、入れ子の
         // 内側を含めて印も同じ量だけ引く。出口はここから読む
@@ -105,6 +108,8 @@ extension Canvas {
         warnIfStacksLeftOpen(before: "\(assemblyCall) { … }")
         restore(savedStacks)
         closeBatch()
+        // 上で閉じた記録の最後の列は、旗 (`recordingShape`) を下ろした後に閉じるので、ここで戻す (#3857)
+        firstSolidCamera = savedFirstSolidCamera
         // **組み立ての中で待たせた自分のフレームの終わり (`endDraw()`) を、一番外の出口で閉じる**
         // (#1855 の案 G)。
         // `defer` は後に書いたものから走るので、閉じるのは下の状態の戻しの後 — 閉じる側が既定へ

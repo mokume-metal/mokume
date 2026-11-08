@@ -49,18 +49,31 @@ extension Canvas {
 
     /// 印が立っていれば、格子と軸を描く。フレームの終わり (``endFrame()``) が、描き切る前に呼ぶ。
     ///
-    /// **描くのはその時点の視点からで、変換・スタイル・断片は使わない。** 変換は恒等、スタイルは
-    /// 既定 (塗らない・影を落とさない・受けない)、断片は組み込みにして描き、終わったら戻す。
-    /// 利用者が最後に書いた `translate()` や `stroke()` が目印へ漏れると、目印の位置と色が
-    /// 読めなくなる。組み立て中の形は ``placeSolidVertices(_:_:)`` が退かせて戻す。
+    /// **描くのは、そのフレームで最初に立体を置いたときの視点と投影から** (``firstSolidCamera``・[#3857])。
+    /// 立体が無ければ、その時点の視点から。描き切りの時点の視点を読むと、立体を置いた後に戻した
+    /// 視点 (HUD の前の `camera()`・#3830 の移行手順) から描かれ、場面と合わなくなる。閉じた列は
+    /// 閉じた時点の設定を持ち歩き、描く時点で“いまの状態”を読み直さない ([ADR-0021] 決定 2) — 目印も
+    /// 場面の立体が持った視点を使う。影の範囲の中心 (``shadowFocus``・#3842) と同じ決め方。
+    ///
+    /// **変換・スタイル・断片は使わない。** 変換は恒等、スタイルは既定 (塗らない・影を落とさない・
+    /// 受けない)、断片は組み込みにして描き、終わったら視点ともども戻す。利用者が最後に書いた
+    /// `translate()` や `stroke()` が目印へ漏れると、目印の位置と色が読めなくなる。組み立て中の形は
+    /// ``placeSolidVertices(_:_:)`` が退かせて戻す。
     ///
     /// 格子の中心線のうち軸と重なる区間 (中心から +x・+z へ軸の長さまで) は引かない。同じ線を
     /// 2 度引くと、奥行きの比べ方 (`lessEqual`) と丸めの揺れで、どちらの色が出るかが画素ごとに揺れる。
+    ///
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    /// [#3857]: https://github.com/mokume-metal/mokume/issues/3857
     func drawDebugGuides() {
         guard drawsDebugGuides, isDrawing, !recordingShape else { return }
         let savedTransform = transform
         let savedStyle = currentStyle
         let savedShader = currentShader
+        let savedCamera = cameraStorage
+        // 列は閉じた時点の視点を持つので、差し替える前に開いた列を、戻す前に目印の列を閉じる
+        let guideCamera = firstSolidCamera ?? currentCamera
+        let swapsCamera = !currentCamera.isBitwiseEqual(to: guideCamera)
         defer {
             currentStyle = savedStyle
             transform = savedTransform
@@ -68,6 +81,14 @@ extension Canvas {
                 closeBatch()
                 currentShader = savedShader
             }
+            if swapsCamera {
+                closeBatch()
+                cameraStorage = savedCamera
+            }
+        }
+        if swapsCamera {
+            closeBatch()
+            cameraStorage = guideCamera
         }
         transform = .identity
         var guides = Style()
