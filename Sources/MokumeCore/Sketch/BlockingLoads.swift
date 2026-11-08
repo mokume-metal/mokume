@@ -51,6 +51,6 @@ extension SketchPart {
     ///
     /// `package` なのは、音の口 (`MokumeAudio` の `loadSound(_:)`) も同じ控えへ言うためである。
     package static func noticeBlockingLoad(_ call: String, instead: String?) {
-        runningSketch?.blockingLoads.notice(call, instead: instead)
+        activeRun(for: .make)?.blockingLoads.notice(call, instead: instead)
     }
 }

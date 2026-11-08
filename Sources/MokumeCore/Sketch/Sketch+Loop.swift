@@ -126,7 +126,7 @@ extension SketchPart {
     // shot: 1 snippet=0c47b4c6
     // shot: 2 snippet=61f798db
     public func noLoop() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.noLoop)
         }
         runtime.noLoop()
@@ -149,7 +149,7 @@ extension SketchPart {
     /// そこで起こした `Task` から呼んでも回り出さない (``noLoop()`` の「呼べる場所」)。
     // shot: 撮れない 止めた後に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、setup() / draw() で呼んでも同じ呼び出しの noLoop() を打ち消すだけで絵に違いが出ない)
     public func loop() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.loop)
         }
         runtime.loop()
@@ -183,7 +183,7 @@ extension SketchPart {
     /// ``deltaTime`` の値はどちらの時計でも同じである。
     // shot: 撮れない 止めている間に呼べる入力のコールバックが撮影では来ない (撮る側は入力を配らず、回っている間と draw() の中では何もせず、setup() で止めた後に呼んでも必ず描かれる 1 枚目に畳まれる)
     public func redraw() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.redraw)
         }
         runtime.redraw()

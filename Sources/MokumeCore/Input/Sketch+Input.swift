@@ -192,7 +192,7 @@ extension SketchPart {
     /// 素直な答えである。
     @MainActor
     private static var input: InputState {
-        runningSketch?.input ?? InputState.empty
+        activeRun(for: .read)?.input ?? InputState.empty
     }
 }
 

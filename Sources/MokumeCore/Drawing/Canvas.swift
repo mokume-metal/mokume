@@ -3700,7 +3700,7 @@ public final class Canvas {
     /// [#2201]: https://github.com/mokume-metal/mokume/issues/2201
     /// [#3866]: https://github.com/mokume-metal/mokume/issues/3866
     public func draw(_ body: () -> Void) throws(RenderFailure) {
-        guard let runtime = runningSketch, runtime.canvas !== self else { return try openFrame(body) }
+        guard let runtime = activeRun(for: .act), runtime.canvas !== self else { return try openFrame(body) }
         try runtime.directing(to: self) { () throws(RenderFailure) in try openFrame(body) }
     }
 
