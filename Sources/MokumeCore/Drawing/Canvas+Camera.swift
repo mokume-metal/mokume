@@ -42,7 +42,7 @@ extension Canvas {
 
     // 透視投影を既定へ戻す。
     public func perspective() {
-        apply(replacingProjection: Camera.defaultPerspective(width: width, height: height))
+        apply(replacingProjection: Camera.defaultPerspective(width: Float(width), height: Float(height)))
     }
 
     // 遠くのものほど小さく写す。
@@ -55,7 +55,7 @@ extension Canvas {
 
     // 平行投影を既定へ戻す。
     public func ortho() {
-        apply(replacingProjection: Camera.defaultOrthographic(width: width, height: height))
+        apply(replacingProjection: Camera.defaultOrthographic(width: Float(width), height: Float(height)))
     }
 
     // 距離によらず同じ大きさで写す。

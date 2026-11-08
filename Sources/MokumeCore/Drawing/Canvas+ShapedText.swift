@@ -12,7 +12,8 @@ import CoreText
 // [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 extension Canvas {
     /// 組版した文字列の送り幅 (画素)。改行を含む文字列では、いちばん長い行の幅。
-    public func shapedTextWidth(_ string: String) -> Float {
+    public func shapedTextWidth(_ string: String) -> Double { Double(shapedTextWidthValue(string)) }
+    func shapedTextWidthValue(_ string: String) -> Float {
         guard style.textSize > 0 else { return 0 }
         let face = typeface
         var widest: Float = 0
@@ -77,7 +78,7 @@ extension Canvas {
         }
         guard !box.isNull else { return nil }
         return TextBounds(
-            x: Float(box.minX), y: Float(box.minY), width: Float(box.width), height: Float(box.height))
+            x: Double(Float(box.minX)), y: Double(Float(box.minY)), width: Double(Float(box.width)), height: Double(Float(box.height)))
     }
 
     /// 1 行の書き始め。**横の整列と、組版した行の幅から決まる。**

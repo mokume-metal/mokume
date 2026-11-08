@@ -12,7 +12,7 @@ extension Canvas {
     // MARK: - 見る位置
 
     /// 面がちょうど収まる位置から、面の正面を見る視点。
-    var defaultCamera: Camera { Camera.fitting(width: width, height: height) }
+    var defaultCamera: Camera { Camera.fitting(width: Float(width), height: Float(height)) }
 
     // いま効いている視点。何も指定していなければ、面に合わせた既定が返る。
     public var currentCamera: Camera { cameraStorage ?? defaultCamera }
@@ -21,7 +21,7 @@ extension Canvas {
     ///
     /// これを読むのは ``closeBatch()`` なので、列には**閉じた時点の視点**が入る。
     var viewProjection: simd_float4x4 {
-        currentCamera.viewProjection(width: width, height: height)
+        currentCamera.viewProjection(width: Float(width), height: Float(height))
     }
 
     /// 断片へ渡す「見ている場所」。
@@ -877,7 +877,7 @@ extension Canvas {
         let edges: [(Int, Int)]
         var curveSteps: [Bool] = []
         let half = style.strokeWeight / 2
-        let camera = StrokeCamera(currentCamera, width: width, height: height)
+        let camera = StrokeCamera(currentCamera, width: Float(width), height: Float(height))
         // 円板の周の点は線 1 本で 1 度だけ求める (太さは線の中で変わらない・#2011)
         let discUnits = Self.solidDiscUnits(half: half)
         switch source {
@@ -1058,7 +1058,7 @@ extension Canvas {
         world: [SIMD3<Float>], edges: [(Int, Int)], curveSteps: [Bool], thin: SolidThinBand, camera: StrokeCamera
     ) -> SolidEndCuts {
         let screen = SolidDrawnScreen(
-            viewProjection: viewProjection, width: width, height: height, units: unitsPerDrawnPixel)
+            viewProjection: viewProjection, width: Float(width), height: Float(height), units: unitsPerDrawnPixel)
         var ends = SolidEndCuts(screen: screen, outputPerDrawn: thin.outputPerDrawn)
         let extend = ThinEndCut.extent(of: style.strokeCap, weight: thin.drawn)
         // 点ごとに来る辺の数と、最大 2 本の隣 (端の列の中をたどるのに使う)
@@ -1191,7 +1191,7 @@ extension Canvas {
             let onLine = vertex - side * offset
             guard let parameter = ends.screen.parameter(a, b, axis: axis, value: onLine[axis]) else { return }
             let point = a + (b - a) * parameter
-            let pixel = camera.worldPerPixel(at: point, height: height)
+            let pixel = camera.worldPerPixel(at: point, height: Float(height))
             let clamped = min(max(parameter, 0), 1)
             lifted.append(
                 (
@@ -1299,8 +1299,8 @@ extension Canvas {
         // 画面で点に潰れる線 (目を通る線・平行で視線に沿う線) は帯の幅を持たない。両端は画面で
         // 重なる 1 点として、その先の帯との折れ目か端の形を置く (`strokeNet` の群・#1893)
         guard let side = screenAcross(a, b, camera: camera) else { return }
-        let atA = side * (half * camera.worldPerPixel(at: a, height: height))
-        let atB = side * (half * camera.worldPerPixel(at: b, height: height))
+        let atA = side * (half * camera.worldPerPixel(at: a, height: Float(height)))
+        let atB = side * (half * camera.worldPerPixel(at: b, height: Float(height)))
         appendSolidStrokeTriangle(
             a + atA, b + atB, b - atB, shape: (shape.0, shape.1, shape.1), camera: camera)
         appendSolidStrokeTriangle(
@@ -1372,7 +1372,7 @@ extension Canvas {
         at center: SIMD3<Float>, shape: SIMD3<Float>, half: Float, units: [SIMD2<Float>],
         camera: StrokeCamera
     ) {
-        let radius = half * camera.worldPerPixel(at: center, height: height)
+        let radius = half * camera.worldPerPixel(at: center, height: Float(height))
         var previous = center + camera.screenRight * radius
         for unit in units.dropFirst() {
             let current = center + camera.world(unit) * radius
@@ -1459,7 +1459,7 @@ extension Canvas {
         let rim = Self.joinRim(toward: arm1, arm2, half: 1, join: join)
         // 周は 角のすぐ内側・1 本目の外側の縁の角・(尖りか切り口)・2 本目の外側の縁の角
         guard rim.count >= 4, let lastOffset = rim.last else { return }
-        let radius = half * camera.worldPerPixel(at: center, height: height)
+        let radius = half * camera.worldPerPixel(at: center, height: Float(height))
         func placed(_ offset: SIMD2<Float>) -> SIMD3<Float> {
             center + camera.world(offset) * radius
         }
@@ -1489,7 +1489,7 @@ extension Canvas {
         }
         let onScreen = camera.onScreen(right)
         let down = camera.world(SIMD2(-onScreen.y, onScreen.x))
-        let pixel = camera.worldPerPixel(at: center, height: height)
+        let pixel = camera.worldPerPixel(at: center, height: Float(height))
         let (wide, long) = (right * (across * pixel), down * (along * pixel))
         var previous = center + wide
         for unit in units.dropFirst() {
@@ -1544,14 +1544,14 @@ extension Canvas {
         at center: SIMD3<Float>, right: SIMD3<Float>, down: SIMD3<Float>, shape: SIMD3<Float>,
         half: Float, along: Float? = nil, camera: StrokeCamera
     ) {
-        let radius = half * camera.worldPerPixel(at: center, height: height)
+        let radius = half * camera.worldPerPixel(at: center, height: Float(height))
         var a = center + (-right - down) * radius
         var b = center + (right - down) * radius
         var c = center + (right + down) * radius
         var d = center + (-right + down) * radius
         // 線に沿って違う長さを出す端だけ、長方形に組み直す (正方形の式はそのまま残し、細くない線の頂点を動かさない)
         if let along, along != half {
-            let pixel = camera.worldPerPixel(at: center, height: height)
+            let pixel = camera.worldPerPixel(at: center, height: Float(height))
             let (across, lengthwise) = (right * (half * pixel), down * (along * pixel))
             a = center - across - lengthwise
             b = center + across - lengthwise
@@ -1613,7 +1613,7 @@ extension Canvas {
     private func liftedTowardViewer(
         _ point: SIMD3<Float>, camera: StrokeCamera
     ) -> SIMD3<Float> {
-        let lift = (style.strokeWeight + 1) * camera.liftPerPixel(at: point, height: height)
+        let lift = (style.strokeWeight + 1) * camera.liftPerPixel(at: point, height: Float(height))
         if camera.isPerspective {
             let toEye = camera.eye - point
             let distance = length(toEye)

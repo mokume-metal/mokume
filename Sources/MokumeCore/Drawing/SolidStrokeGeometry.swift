@@ -415,7 +415,7 @@ extension Canvas {
         closeBatch()
         let thin = gpuStrokeThin(weight)
         var placement = SolidStrokePlacement(
-            matrix: matrix, camera: currentCamera, width: width, height: height,
+            matrix: matrix, camera: currentCamera, width: Float(width), height: Float(height),
             weight: weight * (thin?.widen ?? 1), cap: cap, color: color, uv: uv,
             geometryScale: geometryScale, coverage: thin?.coverage ?? 1)
         // 細い線の帯は、頂点段が帯ごとに画面の向きで広げ直す (``SolidThinBand``・#3734)

@@ -50,9 +50,11 @@ import simd
 public final class Canvas {
     /// 幅。**座標の単位**で、スケッチが書く座標もこの中にある。出す画素の数と同じだが、
     /// 書き出しの倍率 (`mokume render --scale`) を掛けているときは、倍率の前の数のまま。
-    public let width: Float
+    let widthValue: Float
+    public var width: Double { Double(widthValue) }
     /// 高さ。**座標の単位。**
-    public let height: Float
+    let heightValue: Float
+    public var height: Double { Double(heightValue) }
 
     /// 出す画素の倍率 (`mokume render --scale`・[#2441])。座標 1 つが出す画素いくつか。**1 のとき以外は書き出しの
     /// 子の本体の面と、そこから作った描き場所 (``createGraphics(_:_:)``・[#3453]) だけが持つ。**
@@ -72,7 +74,7 @@ public final class Canvas {
     /// 基本図形の頂点関数が縁の被覆を描く画素で測るために読み (`FlatFrame`・#1488)、
     /// 置く側が 1 画素より細い塗りを判定するのにも使う (`FormInstance.mayHaveThinFill`・#1477)。
     var unitsPerDrawnPixel: SIMD2<Float> {
-        SIMD2(width / Float(pixelWidth), height / Float(pixelHeight))
+        SIMD2(Float(widthValue / Float(pixelWidth)), Float(heightValue / Float(pixelHeight)))
     }
 
     /// 描く先。**細かさに従う**ので、``output`` より小さいことがある。
@@ -2893,13 +2895,13 @@ public final class Canvas {
             matrixStorage: storage(stride: Self.valuesStride, minimum: 1, label: "shadowMatrix"))
 
         // **座標の大きさ。** 出す先が倍率で大きくても、スケッチが書く座標は倍率の前のまま
-        self.width = Float(output.width / outputScale)
-        self.height = Float(output.height / outputScale)
+        self.widthValue = Float(output.width / outputScale)
+        self.heightValue = Float(output.height / outputScale)
         self.outputScale = outputScale
         self.pipeline = try gpu.shapePipeline(pixelFormat: RenderTarget.pixelFormat)
         self.argumentTable = try ShapePipeline.makeArgumentTable(gpu: gpu)
         self.emptyNumbers = try Numbers(gpu: gpu, count: 1)
-        self.projection = Self.makeProjection(width: self.width, height: self.height)
+        self.projection = Self.makeProjection(width: self.widthValue, height: self.heightValue)
 
         let atlas = try GlyphAtlas(gpu: gpu)
         self.atlas = atlas
@@ -6211,7 +6213,7 @@ public final class Canvas {
         let values = try valuesStorage.buffer(holding: detailCount)
         let unitsPerDrawnPixel = self.unitsPerDrawnPixel
         let readsCoverage: UInt32 = coverageSpans.isEmpty ? 0 : 1
-        let solidStrokeShift = Self.solidStrokeShift(width: width, height: height)
+        let solidStrokeShift = Self.solidStrokeShift(width: Float(width), height: Float(height))
         var detailIndex = 0
         for (index, batch) in batches.enumerated() {
             let matrixOffset = index * Self.valuesStride
@@ -6284,7 +6286,7 @@ public final class Canvas {
         // ここではなく列ごとの値に置く (上の `Lighting`・#1855)
         var uniforms = Uniforms(
             time: time,
-            resolution: SIMD2(width, height),
+            resolution: SIMD2(Float(width), Float(height)),
             shadowBias: shadowBiasValue,
             shadowMatrix: bakedShadow?.matrix ?? matrix_identity_float4x4,
             shadowParams: SIMD4(

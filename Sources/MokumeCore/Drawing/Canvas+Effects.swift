@@ -559,7 +559,7 @@ extension Canvas {
         // こともあるので、``unitsPerDrawnPixel`` ではなく段ごとの大きさで割る
         var frame = (
             SIMD4<Float>(Float(destination.width), Float(destination.height), time, 0),
-            SIMD4<Float>(width, height, 0, 0))
+            SIMD4<Float>(Float(width), Float(height), 0, 0))
         block.advanced(by: EffectPipeline.frameOffset)
             .copyMemory(from: &frame, byteCount: EffectPipeline.frameSize)
         // 揺らぎの種と細かさ (#3569)。**種と枚数は整数のまま、使っていなかった欄に載せる** —

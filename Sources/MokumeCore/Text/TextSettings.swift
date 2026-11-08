@@ -76,7 +76,7 @@ public nonisolated struct TextFlow: Equatable, Sendable {
     /// 折っても、空の行は数えない** — 切れ目の後ろに置く字が無いので、行にならない。
     public let lineCount: Int
     /// 実際に使った高さ (画素)。置いた行数 (``lineCount``) から決まる。
-    public let height: Float
+    public let height: Double
     /// 置けずに残った文字。全部置けたなら空。
     ///
     /// **元の文の後ろの部分そのもの**で、置いた最後の行との切れ目を消費した直後から
@@ -92,7 +92,7 @@ public nonisolated struct TextFlow: Equatable, Sendable {
     /// 収まりきらなかったか。
     public var isTruncated: Bool { !remainder.isEmpty }
 
-    public init(lineCount: Int, height: Float, remainder: String) {
+    public init(lineCount: Int, height: Double, remainder: String) {
         self.lineCount = lineCount
         self.height = height
         self.remainder = remainder
@@ -134,15 +134,15 @@ public nonisolated struct TextContour: Equatable, Sendable {
 /// **送り幅ではなく墨を囲む。** 字の左右に書体が付けている余白は入らない。
 public nonisolated struct TextBounds: Equatable, Sendable {
     /// 左端 (画素)。
-    public let x: Float
+    public let x: Double
     /// 上端 (画素)。**y は下向き**なので、いちばん小さい y である。
-    public let y: Float
+    public let y: Double
     /// 幅 (画素)。
-    public let width: Float
+    public let width: Double
     /// 高さ (画素)。
-    public let height: Float
+    public let height: Double
 
-    public init(x: Float, y: Float, width: Float, height: Float) {
+    public init(x: Double, y: Double, width: Double, height: Double) {
         self.x = x
         self.y = y
         self.width = width

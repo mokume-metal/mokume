@@ -429,17 +429,23 @@ public nonisolated func lerpColor(
 ///
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public nonisolated func red(_ color: LinearRGBA) -> Float {
+public nonisolated func red(_ color: LinearRGBA) -> Double { Double(redValue(color)) }
+
+nonisolated func redValue(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).x
 }
 
 /// 緑の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
-public nonisolated func green(_ color: LinearRGBA) -> Float {
+public nonisolated func green(_ color: LinearRGBA) -> Double { Double(greenValue(color)) }
+
+nonisolated func greenValue(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).y
 }
 
 /// 青の成分を 0–255 の目盛りで読む。契約は ``red(_:)`` と同じ。
-public nonisolated func blue(_ color: LinearRGBA) -> Float {
+public nonisolated func blue(_ color: LinearRGBA) -> Double { Double(blueValue(color)) }
+
+nonisolated func blueValue(_ color: LinearRGBA) -> Float {
     DisplayScale.readComponents(color).z
 }
 
@@ -454,7 +460,9 @@ public nonisolated func blue(_ color: LinearRGBA) -> Float {
 /// (``LinearRGBA/init(premultipliedRed:green:blue:alpha:)``) で作った色は締めずに読む。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public nonisolated func alpha(_ color: LinearRGBA) -> Float {
+public nonisolated func alpha(_ color: LinearRGBA) -> Double { Double(alphaValue(color)) }
+
+nonisolated func alphaValue(_ color: LinearRGBA) -> Float {
     guard color.alphaValue.isFinite else { return 0 }
     return color.alphaValue * DisplayScale.maximum
 }

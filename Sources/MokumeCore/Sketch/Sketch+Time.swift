@@ -177,9 +177,9 @@ extension SketchPart {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 撮れない 時計から周期の位相を読んで返す口で、撮影は 0 秒の 1 枚だけなので巡りが絵に出ない (位相は 0 のまま)
-    public func phase(period: Double) -> Float {
+    public func phase(period: Double) -> Double {
         guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
-        return periodPhase(ofSeconds: runtime.timeSeconds, period: Float(period))
+        return Double(periodPhase(ofSeconds: runtime.timeSeconds, period: Float(period)))
     }
 }
 

@@ -42,10 +42,10 @@ extension Canvas {
     }
 
     /// 目印の中心 (面の中心・奥行き 0)。既定の視点と ``Orbit`` の見ている先と同じ所。
-    var debugGuideCenter: SIMD3<Float> { SIMD3(width / 2, height / 2, 0) }
+    var debugGuideCenter: SIMD3<Float> { SIMD3(Float(width / 2), Float(height / 2), 0) }
 
     /// 軸の長さ (世界の座標)。
-    var debugAxisLength: Float { min(width, height) * DebugGuides.axisLength }
+    var debugAxisLength: Float { Float(min(widthValue, heightValue) * DebugGuides.axisLength) }
 
     /// 印が立っていれば、格子と軸を描く。フレームの終わり (``endFrame()``) が、描き切る前に呼ぶ。
     ///
@@ -81,7 +81,7 @@ extension Canvas {
         }
 
         let center = debugGuideCenter
-        let short = min(width, height)
+        let short = min(widthValue, heightValue)
         let half = short * DebugGuides.gridSpan / 2
         let axis = debugAxisLength
         let divisions = DebugGuides.gridDivisions

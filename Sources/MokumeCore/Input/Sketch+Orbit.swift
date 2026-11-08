@@ -146,8 +146,8 @@ extension SketchPart {
             let panHeld =
                 pans
                 && !orbit.pan(
-                    dragX: input.dragX, dragY: input.dragY, through: view, width: measure.width,
-                    height: measure.height)
+                    dragX: input.dragX, dragY: input.dragY, through: view, width: Float(measure.width),
+                    height: Float(measure.height))
             // 感度が有限なのに進めなかった軸 — 積が溢れた・届いた量が数でない・無限。
             // 別の軸の感度が使えなくても、こちらは別に知らせる。平行移動は感度を使わない
             let overflowed =

@@ -2240,7 +2240,7 @@ public final class SketchRuntime {
     /// `draw()` の終わりで、控えた図形を SVG にして書くよう頼む。頼まれていなければ何も払わない。
     private func finishVectorWindow() {
         guard let capture = canvas.endVectorWindow() else { return }
-        requireRecorder().writeVectors(capture, width: canvas.width, height: canvas.height)
+        requireRecorder().writeVectors(capture, width: Float(canvas.width), height: Float(canvas.height))
     }
 
     /// 連番を始める。転送 (正本は ``SketchPart/beginRecord(_:)``)。

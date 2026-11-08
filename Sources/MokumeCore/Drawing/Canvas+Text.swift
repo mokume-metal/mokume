@@ -337,7 +337,7 @@ extension Canvas {
         }
 
         guard fits > 0, let color = textFillColor else {
-            return TextFlow(lineCount: fits, height: height, remainder: remainder)
+            return TextFlow(lineCount: fits, height: Double(height), remainder: remainder)
         }
 
         // 縦の指定は塊全体に効く。基準線は矩形の中では意味を持たないので、上と同じに倒す
@@ -360,7 +360,7 @@ extension Canvas {
             baseline += leading
         }
 
-        return TextFlow(lineCount: fits, height: height, remainder: remainder)
+        return TextFlow(lineCount: fits, height: Double(height), remainder: remainder)
     }
 
     /// 幅に収まるように行へ切り分ける。
@@ -788,8 +788,8 @@ extension Canvas {
         // 墨が無ければ枠も無い。幅 0 の枠を返すと「そこに墨がある」と読めてしまう
         guard !box.isNull else { return nil }
         return TextBounds(
-            x: Float(box.minX), y: Float(box.minY), width: Float(box.width),
-            height: Float(box.height))
+            x: Double(Float(box.minX)), y: Double(Float(box.minY)), width: Double(Float(box.width)),
+            height: Double(Float(box.height)))
     }
 
     /// 文字列の字形を、**描くときと同じ送りと基準線**で 1 つずつ渡す。輪郭と墨の範囲が

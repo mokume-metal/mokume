@@ -76,7 +76,7 @@ extension Canvas {
     var effectiveShadowRange: Float {
         if let shadowRangeValue { return shadowRangeValue }
         // 面の対角。視点をどちらへ回しても、写っている範囲を覆える
-        return (width * width + height * height).squareRoot()
+        return (widthValue * widthValue + heightValue * heightValue).squareRoot()
     }
 
     /// 影を焼き付ける行列。落とす光が無ければ `nil`。

@@ -140,8 +140,8 @@ extension Canvas {
         let margin = Self.compositeGroupMargin
         let left = max(0, (placed.minX - margin).rounded(.down))
         let top = max(0, (placed.minY - margin).rounded(.down))
-        let right = min(width, (placed.maxX + margin).rounded(.up))
-        let bottom = min(height, (placed.maxY + margin).rounded(.up))
+        let right = min(widthValue, (placed.maxX + margin).rounded(.up))
+        let bottom = min(heightValue, (placed.maxY + margin).rounded(.up))
         guard right > left, bottom > top else { return .empty }
         return .box(
             CompositeGroupBox(

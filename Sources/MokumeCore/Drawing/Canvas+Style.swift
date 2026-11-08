@@ -142,10 +142,10 @@ extension Canvas {
         // [#1302])。入力が有限でも、読み方を解く算術 (`c * 2`) は ±∞ へ溢れうる
         //
         // [#1302]: https://github.com/mokume-metal/mokume/issues/1302
-        let clipLeft = min(max(0, minX), width)
-        let clipTop = min(max(0, minY), height)
-        let clipRight = min(max(clipLeft, maxX), width)
-        let clipBottom = min(max(clipTop, maxY), height)
+        let clipLeft = min(max(0, minX), widthValue)
+        let clipTop = min(max(0, minY), heightValue)
+        let clipRight = min(max(clipLeft, maxX), widthValue)
+        let clipBottom = min(max(clipTop, maxY), heightValue)
         let clip = ClipRect(left: clipLeft, top: clipTop, right: clipRight, bottom: clipBottom)
         // **回した・剪断した矩形は、型板の 1 段で切る** ([#2431])。scissor は囲む矩形のまま残し、型板が回した
         // 矩形の外を落とす。矩形の `clip()` は置き換えなので、形の切り抜きの段も外す (面に沿う矩形では空にする)。

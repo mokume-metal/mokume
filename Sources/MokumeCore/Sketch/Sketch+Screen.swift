@@ -136,7 +136,7 @@ extension SketchPart {
     // shot: 1 snippet=7702f10a
     // shot: 2 snippet=9bbf7c9f
     // shot: 3 snippet=da296039 image=c1861738afbee631
-    public func screenX(_ x: Double, _ y: Double) -> Float {
+    public func screenX(_ x: Double, _ y: Double) -> Double {
         let (x, y) = (x, y)
         return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
     }
@@ -224,7 +224,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=27c88e8f
     // shot: 2 snippet=d464e610
-    public func screenY(_ x: Double, _ y: Double) -> Float {
+    public func screenY(_ x: Double, _ y: Double) -> Double {
         let (x, y) = (x, y)
         return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y) ?? 0
     }
@@ -278,7 +278,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=25260204
-    public func screenX(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenX(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x, y, z)
         return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
     }
@@ -328,7 +328,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=45110c8e
-    public func screenY(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenY(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x, y, z)
         return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
     }
@@ -386,7 +386,7 @@ extension SketchPart {
     /// この値がそのまま ``spacePosition(screenX:screenY:depth:)`` の `depth` になる —
     /// 前向きの 3 本が、後ろ向きの入力を過不足なく作る。
     // shot: 1 snippet=1263b738
-    public func screenZ(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenZ(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x, y, z)
         return Self.liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
     }

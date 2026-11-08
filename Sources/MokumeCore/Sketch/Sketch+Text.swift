@@ -1015,7 +1015,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 後で撮る
-    public func shapedTextWidth(_ string: String) -> Float {
+    public func shapedTextWidth(_ string: String) -> Double {
         Self.liveCanvas(.read(returning: "0"))?.shapedTextWidth(string) ?? 0
     }
 

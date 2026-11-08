@@ -111,7 +111,7 @@ nonisolated enum NumberValues {
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0035]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0035-numeric-reception.md
-public nonisolated let PI: Float = .pi
+public nonisolated let PI: Double = .pi
 
 /// 円周率の半分 (π/2)。90 度。
 ///
@@ -120,14 +120,14 @@ public nonisolated let PI: Float = .pi
 /// ```
 ///
 /// 角度 0 は右向きなので、12 時を上にしたいときの戻し量にもなる (``PI`` の作例)。
-public nonisolated let HALF_PI: Float = .pi / 2
+public nonisolated let HALF_PI: Double = .pi / 2
 
 /// 円周率の 4 分の 1 (π/4)。45 度。
 ///
 /// ```swift
 /// rotate(QUARTER_PI)
 /// ```
-public nonisolated let QUARTER_PI: Float = .pi / 4
+public nonisolated let QUARTER_PI: Double = .pi / 4
 
 /// 円周率の 2 倍 (2π)。1 周。
 ///
@@ -136,7 +136,7 @@ public nonisolated let QUARTER_PI: Float = .pi / 4
 /// ```
 ///
 /// 範囲を 1 周へ写すときにも使う — `map(i, 0, n, 0, TWO_PI)`。``TAU`` と同じ値。
-public nonisolated let TWO_PI: Float = .pi * 2
+public nonisolated let TWO_PI: Double = .pi * 2
 
 /// 1 周 (2π)。``TWO_PI`` と同じ値。
 ///
@@ -145,7 +145,7 @@ public nonisolated let TWO_PI: Float = .pi * 2
 /// ```
 ///
 /// Processing・p5.js が `TWO_PI` と並べて持つ別名。
-public nonisolated let TAU: Float = .pi * 2
+public nonisolated let TAU: Double = .pi * 2
 
 // MARK: - 角度の単位を直す
 
@@ -163,7 +163,9 @@ public nonisolated let TAU: Float = .pi * 2
 /// 読める ([ADR-0033] 決定 4 が `colorMode()` を持たないのと同じ理由)。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public nonisolated func radians(_ degrees: Double) -> Float { degrees.asFloat * .pi / 180 }
+public nonisolated func radians(_ degrees: Double) -> Double { Double(radiansValue(degrees)) }
+
+nonisolated func radiansValue(_ degrees: Double) -> Float { degrees.asFloat * .pi / 180 }
 
 /// ラジアンを度に直す。``radians(_:)`` の逆。
 ///
@@ -173,7 +175,9 @@ public nonisolated func radians(_ degrees: Double) -> Float { degrees.asFloat * 
 ///
 /// 角度を**読みたい**ときのためにある — 画面に出す、度で書かれた表と突き合わせる、
 /// といった用途である。描く口へ渡す値は直さなくてよい。
-public nonisolated func degrees(_ radians: Double) -> Float { radians.asFloat * 180 / .pi }
+public nonisolated func degrees(_ radians: Double) -> Double { Double(degreesValue(radians)) }
+
+nonisolated func degreesValue(_ radians: Double) -> Float { radians.asFloat * 180 / .pi }
 
 // MARK: - 値を別の範囲へ写す
 
@@ -240,6 +244,11 @@ public nonisolated func degrees(_ radians: Double) -> Float { radians.asFloat * 
 public nonisolated func map(
     _ value: Double, _ inLow: Double, _ inHigh: Double,
     _ outLow: Double, _ outHigh: Double
+) -> Double { Double(mapValue(value, inLow, inHigh, outLow, outHigh)) }
+
+nonisolated func mapValue(
+    _ value: Double, _ inLow: Double, _ inHigh: Double,
+    _ outLow: Double, _ outHigh: Double
 ) -> Float {
     let (value, inLow, inHigh) = (value.asFloat, inLow.asFloat, inHigh.asFloat)
     let (outLow, outHigh) = (outLow.asFloat, outHigh.asFloat)
@@ -301,7 +310,9 @@ private nonisolated func proportion(_ value: Float, _ low: Float, _ high: Float)
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func lerp(_ start: Double, _ stop: Double, _ amount: Double) -> Float {
+public nonisolated func lerp(_ start: Double, _ stop: Double, _ amount: Double) -> Double { Double(lerpValue(start, stop, amount)) }
+
+nonisolated func lerpValue(_ start: Double, _ stop: Double, _ amount: Double) -> Float {
     let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
     guard start.isFinite, stop.isFinite, amount.isFinite else {
         NumberValues.warnOnce(
@@ -361,7 +372,9 @@ nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> 
 /// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func constrain(_ value: Double, _ low: Double, _ high: Double) -> Float {
+public nonisolated func constrain(_ value: Double, _ low: Double, _ high: Double) -> Double { Double(constrainValue(value, low, high)) }
+
+nonisolated func constrainValue(_ value: Double, _ low: Double, _ high: Double) -> Float {
     let (value, low, high) = (value.asFloat, low.asFloat, high.asFloat)
     guard value.isFinite, low.isFinite, high.isFinite else {
         NumberValues.warnOnce(
@@ -399,7 +412,9 @@ public nonisolated func constrain(_ value: Double, _ low: Double, _ high: Double
 /// 言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func norm(_ value: Double, _ start: Double, _ stop: Double) -> Float {
+public nonisolated func norm(_ value: Double, _ start: Double, _ stop: Double) -> Double { Double(normValue(value, start, stop)) }
+
+nonisolated func normValue(_ value: Double, _ start: Double, _ stop: Double) -> Float {
     let (value, start, stop) = (value.asFloat, start.asFloat, stop.asFloat)
     guard value.isFinite, start.isFinite, stop.isFinite else {
         NumberValues.warnOnce(
@@ -445,7 +460,9 @@ public nonisolated func norm(_ value: Double, _ start: Double, _ stop: Double) -
 /// 曲線を通さずに、窓の中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Float {
+public nonisolated func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double { Double(smoothstepValue(edge0, edge1, x)) }
+
+nonisolated func smoothstepValue(_ edge0: Double, _ edge1: Double, _ x: Double) -> Float {
     let (edge0, edge1, x) = (edge0.asFloat, edge1.asFloat, x.asFloat)
     guard edge0.isFinite, edge1.isFinite, x.isFinite else {
         NumberValues.warnOnce(
@@ -518,6 +535,11 @@ public nonisolated func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double
 public nonisolated func damp(
     _ current: Double, _ target: Double, _ lambda: Double,
     _ dt: Double
+) -> Double { Double(dampValue(current, target, lambda, dt)) }
+
+nonisolated func dampValue(
+    _ current: Double, _ target: Double, _ lambda: Double,
+    _ dt: Double
 ) -> Float {
     let (current, target, lambda, dt) = (current.asFloat, target.asFloat, lambda.asFloat, dt.asFloat)
     guard current.isFinite, target.isFinite, lambda.isFinite, dt.isFinite else {
@@ -559,7 +581,9 @@ public nonisolated func damp(
 /// 時刻を 0 以上 1 未満へ巡らせる口は別にある。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func pingpong(_ t: Double, _ length: Double) -> Float {
+public nonisolated func pingpong(_ t: Double, _ length: Double) -> Double { Double(pingpongValue(t, length)) }
+
+nonisolated func pingpongValue(_ t: Double, _ length: Double) -> Float {
     let (t, length) = (t.asFloat, length.asFloat)
     guard t.isFinite, length.isFinite else {
         NumberValues.warnOnce(
@@ -608,7 +632,9 @@ public nonisolated func pingpong(_ t: Double, _ length: Double) -> Float {
 /// **名前と並びは Unity・Godot に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func lerpAngle(_ start: Double, _ stop: Double, _ amount: Double) -> Float {
+public nonisolated func lerpAngle(_ start: Double, _ stop: Double, _ amount: Double) -> Double { Double(lerpAngleValue(start, stop, amount)) }
+
+nonisolated func lerpAngleValue(_ start: Double, _ stop: Double, _ amount: Double) -> Float {
     let (start, stop, amount) = (start.asFloat, stop.asFloat, amount.asFloat)
     guard start.isFinite, stop.isFinite, amount.isFinite else {
         NumberValues.warnOnce(
@@ -663,6 +689,10 @@ public nonisolated func lerpAngle(_ start: Double, _ stop: Double, _ amount: Dou
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func dist(
     _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double
+) -> Double { Double(distValue(x1, y1, x2, y2)) }
+
+nonisolated func distValue(
+    _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double
 ) -> Float {
     let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
     guard x1.isFinite, y1.isFinite, x2.isFinite, y2.isFinite else {
@@ -685,7 +715,9 @@ public nonisolated func dist(
 ///
 /// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
 /// 返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
-public nonisolated func mag(_ x: Double, _ y: Double) -> Float {
+public nonisolated func mag(_ x: Double, _ y: Double) -> Double { Double(magValue(x, y)) }
+
+nonisolated func magValue(_ x: Double, _ y: Double) -> Float {
     let (x, y) = (x.asFloat, y.asFloat)
     guard x.isFinite, y.isFinite else {
         NumberValues.warnOnce(
@@ -715,6 +747,11 @@ public nonisolated func mag(_ x: Double, _ y: Double) -> Float {
 public nonisolated func dist(
     _ x1: Double, _ y1: Double, _ z1: Double,
     _ x2: Double, _ y2: Double, _ z2: Double
+) -> Double { Double(distValue(x1, y1, z1, x2, y2, z2)) }
+
+nonisolated func distValue(
+    _ x1: Double, _ y1: Double, _ z1: Double,
+    _ x2: Double, _ y2: Double, _ z2: Double
 ) -> Float {
     let (x1, y1, z1) = (x1.asFloat, y1.asFloat, z1.asFloat)
     let (x2, y2, z2) = (x2.asFloat, y2.asFloat, z2.asFloat)
@@ -737,8 +774,10 @@ public nonisolated func dist(
 /// **数でない値・無限の値が混じったときは 0 を返し、1 度だけ注意を言う** (``dist(_:_:_:_:)`` と同じ。
 /// `distance(to:)` は数でない値のまま返る)。
 // shot: 撮れない 値を返すだけで、描く結果が無い
-public nonisolated func dist(_ a: Vector2, _ b: Vector2) -> Float {
-    dist(a.x, a.y, b.x, b.y)
+public nonisolated func dist(_ a: Vector2, _ b: Vector2) -> Double { Double(distValue(a, b)) }
+
+nonisolated func distValue(_ a: Vector2, _ b: Vector2) -> Float {
+    distValue(a.x, a.y, b.x, b.y)
 }
 
 /// 空間の 2 つの点 (`Vector3`) の間の距離。``dist(_:_:_:_:_:_:)`` に 2 つの点の成分を渡すのと同じで、
@@ -750,8 +789,10 @@ public nonisolated func dist(_ a: Vector2, _ b: Vector2) -> Float {
 ///
 /// **数でない値・無限の値が混じったときは 0 を返し、1 度だけ注意を言う** (``dist(_:_:_:_:_:_:)`` と同じ)。
 // shot: 撮れない 値を返すだけで、描く結果が無い
-public nonisolated func dist(_ a: Vector3, _ b: Vector3) -> Float {
-    dist(a.x, a.y, a.z, b.x, b.y, b.z)
+public nonisolated func dist(_ a: Vector3, _ b: Vector3) -> Double { Double(distValue(a, b)) }
+
+nonisolated func distValue(_ a: Vector3, _ b: Vector3) -> Float {
+    distValue(a.x, a.y, a.z, b.x, b.y, b.z)
 }
 
 /// 原点からの距離 (3 次元)。``dist(_:_:_:_:_:_:)`` の 1 つ目の点を原点 (0, 0, 0) にしたもの。
@@ -767,6 +808,10 @@ public nonisolated func dist(_ a: Vector3, _ b: Vector3) -> Float {
 /// 返す** (``mag(_:_:)`` と同じ)。注意は 1 度だけ言う。
 // shot: 撮れない 値を返すだけで、描く結果が無い
 public nonisolated func mag(
+    _ x: Double, _ y: Double, _ z: Double
+) -> Double { Double(magValue(x, y, z)) }
+
+nonisolated func magValue(
     _ x: Double, _ y: Double, _ z: Double
 ) -> Float {
     let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
@@ -805,7 +850,9 @@ private nonisolated func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func sq(_ value: Double) -> Float {
+public nonisolated func sq(_ value: Double) -> Double { Double(sqValue(value)) }
+
+nonisolated func sqValue(_ value: Double) -> Float {
     let value = value.asFloat
     guard value.isFinite else {
         NumberValues.warnOnce(
@@ -836,7 +883,9 @@ public nonisolated func sq(_ value: Double) -> Float {
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func fract(_ value: Double) -> Float {
+public nonisolated func fract(_ value: Double) -> Double { Double(fractValue(value)) }
+
+nonisolated func fractValue(_ value: Double) -> Float {
     let value = value.asFloat
     guard value.isFinite else {
         NumberValues.warnOnce(
@@ -871,7 +920,9 @@ public nonisolated func fract(_ value: Double) -> Float {
 /// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-public nonisolated func mod(_ value: Double, _ divisor: Double) -> Float {
+public nonisolated func mod(_ value: Double, _ divisor: Double) -> Double { Double(modValue(value, divisor)) }
+
+nonisolated func modValue(_ value: Double, _ divisor: Double) -> Float {
     let (value, divisor) = (value.asFloat, divisor.asFloat)
     guard value.isFinite, divisor.isFinite else {
         NumberValues.warnOnce(

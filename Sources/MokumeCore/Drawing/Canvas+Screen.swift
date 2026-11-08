@@ -24,30 +24,30 @@ extension Canvas {
     /// 奥行き 0 の点として視点を通した位置 (``screenX(_:_:_:)`` の z = 0) を返す。
     ///
     /// [#3830]: https://github.com/mokume-metal/mokume/issues/3830
-    public func screenX(_ x: Double, _ y: Double) -> Float {
+    public func screenX(_ x: Double, _ y: Double) -> Double {
         let (x, y) = (x.asFloat, y.asFloat)
-        return flatScreenPosition(x, y).x
+        return Double(flatScreenPosition(x, y).x)
     }
 
-    public func screenY(_ x: Double, _ y: Double) -> Float {
+    public func screenY(_ x: Double, _ y: Double) -> Double {
         let (x, y) = (x.asFloat, y.asFloat)
-        return flatScreenPosition(x, y).y
+        return Double(flatScreenPosition(x, y).y)
     }
 
     // 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
-    public func screenX(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenX(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return screenPosition(x, y, z).x
+        return Double(screenPosition(x, y, z).x)
     }
 
-    public func screenY(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenY(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return screenPosition(x, y, z).y
+        return Double(screenPosition(x, y, z).y)
     }
 
-    public func screenZ(_ x: Double, _ y: Double, _ z: Double) -> Float {
+    public func screenZ(_ x: Double, _ y: Double, _ z: Double) -> Double {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return screenPosition(x, y, z).z
+        return Double(screenPosition(x, y, z).z)
     }
 
     // MARK: - 画面 → 空間
@@ -60,7 +60,7 @@ extension Canvas {
         noteTransformRead()
         guard let undo = transform.inverted else { return Vector3(0, 0, 0) }
         let inside =
-            Self.makeProjection(width: width, height: height)
+            Self.makeProjection(width: Float(width), height: Float(height))
             * SIMD4<Float>(screenX, screenY, depth, 1)
         // **割るのは変換を戻したあと。** 変換の 4 行目は (0, 0, 0, 1) なので割る順序は
         // 結果を変えないが、先に割ると視点の逆行列だけで閉じたように読めてしまう
@@ -94,7 +94,7 @@ extension Canvas {
         noteTransformRead()
         let clip = viewProjection * transform.matrix * SIMD4<Float>(x, y, z, 1)
         let inside = SIMD4<Float>(SIMD3(clip.x, clip.y, clip.z) / clip.w, 1)
-        let screen = Self.makeProjection(width: width, height: height).inverse * inside
+        let screen = Self.makeProjection(width: Float(width), height: Float(height)).inverse * inside
         guard Camera.isDrawable(screen.x, screen.y, screen.z) else { return .zero }
         return SIMD3(screen.x, screen.y, screen.z)
     }

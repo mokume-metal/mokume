@@ -77,7 +77,7 @@ extension Canvas {
     /// **整える長さは面から決める。** 固定の長さにすると、面の大きさによって
     /// 「読めているのに見えない」が起きる
     private func fitting(normalize: Bool) -> Float? {
-        normalize ? min(width, height) / 2 : nil
+        normalize ? min(widthValue, heightValue) / 2 : nil
     }
 
     /// 控えに入れる。**量が上限を超えたら、収まるまで古い順に捨てる**

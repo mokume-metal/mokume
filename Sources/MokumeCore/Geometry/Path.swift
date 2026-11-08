@@ -139,7 +139,8 @@ public nonisolated struct Path: Sendable, Hashable {
     /// 空の道は 0。曲線は刻んだ折れ線の長さで測る。座標が Float に収まらないほど大きく、長さが Float を越えるときは無限に
     /// なる (``point(at:)`` は弧長を Double で辿るので、無限にならない)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public var length: Float {
+    public var length: Double { Double(lengthValue) }
+    var lengthValue: Float {
         var total: Double = 0
         for subpath in subpaths {
             for (from, to) in subpath.edges() { total += Self.distance(from, to) }

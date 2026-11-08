@@ -164,21 +164,27 @@ public nonisolated func color(
 /// 持つ色も 0 になる — 契約は ``red(_:)`` と同じ。
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-public nonisolated func hue(_ color: LinearRGBA) -> Float {
+public nonisolated func hue(_ color: LinearRGBA) -> Double { Double(hueValue(color)) }
+
+nonisolated func hueValue(_ color: LinearRGBA) -> Float {
     values(of: color).hue
 }
 
 /// 彩度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 色域の外の色では 100 を超えることがある (書いた値が保たれているため)。
-public nonisolated func saturation(_ color: LinearRGBA) -> Float {
+public nonisolated func saturation(_ color: LinearRGBA) -> Double { Double(saturationValue(color)) }
+
+nonisolated func saturationValue(_ color: LinearRGBA) -> Float {
     values(of: color).saturation
 }
 
 /// 明度を **0–100 の百分率**で読む。契約は ``hue(_:)`` と同じ。
 ///
 /// 表示範囲を超えた明るさでは 100 を超えることがある。
-public nonisolated func brightness(_ color: LinearRGBA) -> Float {
+public nonisolated func brightness(_ color: LinearRGBA) -> Double { Double(brightnessValue(color)) }
+
+nonisolated func brightnessValue(_ color: LinearRGBA) -> Float {
     values(of: color).brightness
 }
 
