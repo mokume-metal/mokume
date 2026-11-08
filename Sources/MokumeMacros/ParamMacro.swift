@@ -21,6 +21,7 @@ public enum ParamMacro {
         case isLet
         case multipleBindings
         case missingType
+        case insideStruct
 
         var message: String {
             switch self {
@@ -30,6 +31,9 @@ public enum ParamMacro {
             case .multipleBindings:
                 "@Param takes one value per declaration (not var a: Int = 0, b: Int = 0)"
             case .missingType: "write the type on a value you put @Param on (var radius: Double = 80)"
+            case .insideStruct:
+                "@Param goes on the sketch class (copies of a struct would share the value);"
+                    + " keep the value there and pass it to the part"
             }
         }
 
@@ -58,6 +62,14 @@ public enum ParamMacro {
         attribute: AttributeSyntax,
         in context: some MacroExpansionContext
     ) -> Subject? {
+        // 置き場 (`ParamBox`) は class なので、struct の中に置くと写しどうしが同じ値を指す
+        // (普通のプロパティと読み書きが違う)。そのうえ収集はスケッチの class しか見ないので、
+        // つまみにも出ない (#3876)。判定は最も内側の型で行う — スケッチの class に入れ子に
+        // した struct も、関数の中の局所の struct も止める。
+        if isInsideStruct(context) {
+            context.diagnose(Diagnostic(node: attribute, message: Problem.insideStruct))
+            return nil
+        }
         guard let variable = declaration.as(VariableDeclSyntax.self) else {
             context.diagnose(Diagnostic(node: declaration, message: Problem.notAVariable))
             return nil
@@ -115,6 +127,23 @@ public enum ParamMacro {
         }
         return Subject(
             identifier: identifier, type: type.trimmed, name: name, metadata: metadata)
+    }
+
+    /// 宣言を囲む型のうち、最も内側のものが struct か。
+    ///
+    /// class の部品 (`final class Brush: SketchPart`) は止めない。参照の意味なので写しの共有は
+    /// 起きず、構文からはスケッチの class と区別できない (準拠を extension で書ける)。
+    /// enum・extension・protocol は stored property を持てないので、コンパイラが止める。
+    static func isInsideStruct(_ context: some MacroExpansionContext) -> Bool {
+        for node in context.lexicalContext {
+            if node.is(StructDeclSyntax.self) { return true }
+            if node.is(ClassDeclSyntax.self) || node.is(ActorDeclSyntax.self)
+                || node.is(EnumDeclSyntax.self) || node.is(ExtensionDeclSyntax.self)
+                || node.is(ProtocolDeclSyntax.self) {
+                return false
+            }
+        }
+        return false
     }
 }
 
