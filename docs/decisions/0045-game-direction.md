@@ -478,6 +478,10 @@ AppKit に依存しているのは約 16 ファイル・約 4,300 行で、本�
 
 > 破れたとき: 1 プロセス 1 スケッチの前提のまま iOS へ出ようとして、アプリの外枠と窓を mokume が持つ形を iOS へ持ち込む。SwiftUI のアプリに描画面を置けない。
 
+#### 改訂 (2026-11-08) — `SketchView` は、埋め込む人の入口 `MokumeUI` に置く ([#3814](https://github.com/mokume-metal/mokume/issues/3814))
+
+`SketchView` を置く SwiftUI のファイルで `import mokume` と `import SwiftUI` を並べると、SwiftUI と同じ名前の型 (`Scene`・`Image` など) が型を書く位置で曖昧になって組めない。SwiftUI のアプリの入口 (`var body: some Scene`) で必ず起きる。[ADR-0048](0048-entry-per-reader.md) 決定 2 に従い、`SketchView` は埋め込む人の入口 `MokumeUI` に置く。埋め込むファイルは `import MokumeUI` を書き、スケッチは別のファイルで `import mokume` して書く。決定 12 の雛形が出すアプリの外枠も `import MokumeUI` を書く。iOS で描画面を SwiftUI に載せるという決定の理由は変わらない。実装は [#3872](https://github.com/mokume-metal/mokume/issues/3872) が持つ。
+
 ### 12. 配布は `.xcodeproj` の外枠とし、ゲームのコードは常に Swift パッケージに置く。外部サービスは mokume に入れない
 
 ```
