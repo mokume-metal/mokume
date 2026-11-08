@@ -62,16 +62,17 @@ public enum ParamMacro {
         attribute: AttributeSyntax,
         in context: some MacroExpansionContext
     ) -> Subject? {
+        guard let variable = declaration.as(VariableDeclSyntax.self) else {
+            context.diagnose(Diagnostic(node: declaration, message: Problem.notAVariable))
+            return nil
+        }
         // 置き場 (`ParamBox`) は class なので、struct の中に置くと写しどうしが同じ値を指す
         // (普通のプロパティと読み書きが違う)。そのうえ収集はスケッチの class しか見ないので、
         // つまみにも出ない (#3876)。判定は最も内側の型で行う — スケッチの class に入れ子に
-        // した struct も、関数の中の局所の struct も止める。
+        // した struct も、関数の中の局所の struct も止める。プロパティでないものは先の
+        // 診断で「プロパティに付ける」と名指しする
         if isInsideStruct(context) {
             context.diagnose(Diagnostic(node: attribute, message: Problem.insideStruct))
-            return nil
-        }
-        guard let variable = declaration.as(VariableDeclSyntax.self) else {
-            context.diagnose(Diagnostic(node: declaration, message: Problem.notAVariable))
             return nil
         }
         guard variable.bindingSpecifier.tokenKind == .keyword(.var) else {
