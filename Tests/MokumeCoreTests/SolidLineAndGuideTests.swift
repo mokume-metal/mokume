@@ -357,6 +357,48 @@ struct SolidLineAndGuideTests {
         #expect(cut == first, "区切った後の視点に目印が引っぱられた")
     }
 
+    @Test("createShape { } で記録しただけの立体は、目印の視点を決めない")
+    func recordedSolidsDoNotPlaceTheGuides() throws {
+        // 記録した立体はフレームに置いたものではない。既定の視点で記録してから見下ろす視点で置く形と、
+        // 見下ろす視点で記録して置く形は、同じ目印になる。組み立ての出口は記録の最後の列を、記録の
+        // 旗を下ろした後に閉じるので、出口が戻さないと既定の視点が残る (#3857 の反証 1)
+        func frame(recordUnderDefault: Bool) throws -> DisplayImage {
+            try guidedScene { canvas in
+                if recordUnderDefault { Self.resetCamera(canvas) }
+                let shape = canvas.createShape { canvas.box(30) }
+                if recordUnderDefault { Self.lookDown(canvas) }
+                canvas.push()
+                canvas.translate(140, 80, -30)
+                canvas.shape(shape)
+                canvas.pop()
+            }
+        }
+        let recordedUnderDefault = try frame(recordUnderDefault: true)
+        let recordedUnderScene = try frame(recordUnderDefault: false)
+        let placed = try guidedScene { Self.placeBox($0, x: 140) }
+        #expect(recordedUnderScene == placed, "検査の前提: 記録して置いた箱と、直に置いた箱が同じ絵")
+        #expect(recordedUnderDefault == recordedUnderScene, "記録した立体の視点に目印が引っぱられた")
+    }
+
+    @Test("組み立ての出口の安全網で溜め場を捨てたら、捨てた立体の視点は目印に使わない")
+    func discardedSolidsDoNotPlaceTheGuides() throws {
+        // 出口の安全網 (mokume の不具合に備えた網) を、組み立ての途中で溜め場を捨てて模す
+        // (`ShapeSeedExitTests.theLineIsBackWhenTheBuildIsDrawnOut` と同じ)。左手前の視点で置いた箱は
+        // 捨てられて描かれないので、目印は残った箱の視点 (見下ろす視点) で描く (#3857 の反証 3)
+        let netted = try guidedScene { canvas in
+            Self.lookFromLeft(canvas)
+            Self.placeBox(canvas, x: 60)
+            _ = canvas.createShape {
+                canvas.box(10)
+                canvas.discardPending(keepingCasters: true)
+            }
+            Self.lookDown(canvas)
+            Self.placeBox(canvas, x: 140)
+        }
+        let placed = try guidedScene { Self.placeBox($0, x: 140) }
+        #expect(netted == placed, "捨てた立体の視点に目印が引っぱられた")
+    }
+
     @Test("立体の無いフレームは、debugMode() を camera() の前に書いても後に書いても、終わりの視点で描く")
     func guidesWithoutSolidsFollowTheEndCamera() throws {
         // 立体が無ければ、目印はいまと同じく終わりの時点の視点で描く (#3857)

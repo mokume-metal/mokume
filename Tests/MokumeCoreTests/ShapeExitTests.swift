@@ -104,6 +104,8 @@ enum ShapeExit {
             "clipRecorder",
             // 組み立ての入口が控えた溜め場の各並びの長さの積み (#2850)。入口と出口が対で積み・降ろす
             "shapeMarks",
+            // 目印を描く視点 (#3857)。入口で列を閉じた後に控え、出口で記録の最後の列を閉じた後に戻す
+            "firstSolidCamera",
             // 組み立ての中で閉じようとした自分のフレーム (endDraw()・draw { } の終わり) を待たせる印
             // (#1855 の案 G)。一番外の出口が閉じて下ろす
             "frameEndAwaitingShape",
@@ -240,8 +242,6 @@ enum ShapeExit {
             "templateStrokeMatrix": "畳みの雛形を組む間だけ立つ。記録の間は畳まない (unused と同じ理由)",
             // #1656 (途中の描き切りの持ち越しと、置いた描き場所の写し)
             "frameCasters": flush, "casterSegmentsFree": resource,
-            // #3857 (目印を描く視点)
-            "firstSolidCamera": "フレームで最初に閉じた立体の列の視点。記録の中で閉じた列では書かない (recordingShape を見る) ので、組み立ての出入口では動かない",
             "placedPictureCopiesFree": resource, "placedPictureCopiesInUse": resource,
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,
