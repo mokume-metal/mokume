@@ -1,5 +1,6 @@
 # mokume 開発コマンド。検査の入口は ci-check の 1 つ — CI はこれを呼ぶだけにする
-# (ローカルと CI の乖離を構造的に不可能にする。ADR-0001 原則 8)。
+# (CI に検査を別に書かない。CI のジョブはこの並びを分け持ち、合わせると手元の全段に一致する —
+# 分担は下の並びの注釈。ADR-0001 原則 8)。
 
 # tee を挟んだパイプの失敗を拾うために bash を使う (test ターゲット)
 SHELL := /bin/bash
@@ -37,8 +38,17 @@ check: setup
 
 # ci-check が走らせる段の並び。
 #
-# **この並びは「CI と同一」から 1 つだけ意図的にずれている。** drawing-evidence は CI では
-# 必ず no-op になる — 段を走らせるジョブ (ci-check・ci-static) へ GH_TOKEN を持ち込まない設計
+# **手元の make ci-check は全段を走らせ、CI はそれをジョブに分けて走らせる。** どのジョブも
+# make ci-check を呼ぶだけで検査を別に書かないが、どのジョブも単体では手元の全段と同じではない:
+#   - ubuntu の ci-static: CI_STATIC_STEPS の段 (下の CI_CHECK_HOST)
+#   - macOS の ci-check: 残りの段。GPU を要するテストは飛ぶ。merge_group では build test も外す
+#     (下の CI_CHECK_SKIP)
+#   - 専用機の render: build test gpu-ran。描画の検査の merge の判定はここが持つ (下の 2 つ目の段落)
+#   - drawing-evidence の判定: pr-gate.yml の pr-gate。この段は CI では 0 で抜ける (次の段落)
+# ci-static と ci-check の段を合わせると全段にちょうど一致する (抜けも重なりも無い) ことは、
+# scripts/tests/ci_workflow_test.py が PR と merge_group の両方で見る。
+#
+# **drawing-evidence は CI では必ず no-op になる** —段を走らせるジョブ (ci-check・ci-static) へ GH_TOKEN を持ち込まない設計
 # (.github/workflows/ci.yml の ci-static の冒頭) のため理由を述べて 0 で抜け、本物の判定は
 # .github/workflows/pr-gate.yml の pr-gate (drawing-evidence の step) が持つ。ここに置いてあるのは
 # 手元のためである
@@ -113,7 +123,7 @@ endif
 # 段を prerequisite に並べず、駆動役に 1 つずつ走らせる (#1182)。数分かかる間に
 # いまどの段に居てあとどれくらいかを名乗らせるためで、落ちたらそこで止まる性質と、
 # 段ごとに build を組み直さないこと (-o build) は駆動役が持つ (scripts/ci-check.sh の冒頭)
-ci-check: ## per-PR CI と同一の検査 (全段)
+ci-check: ## 全段を走らせる (CI はこれをジョブに分けて走らせる。分担は段の並びの注釈)
 	@MAKE='$(MAKE)' bash scripts/ci-check.sh $(CI_CHECK_STEPS)
 
 no-binaries:
