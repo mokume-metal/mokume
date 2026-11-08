@@ -141,7 +141,7 @@ final class CrowdAndModel: Sketch {
         rotateX(0.4)
         beginShape(.triangles)
         for point in Self.icosahedronPoints {
-            vertex(point.x * 58, point.y * 58, point.z * 58)
+            vertex(Double(point.x * 58), Double(point.y * 58), Double(point.z * 58))
         }
         for face in Self.icosahedronFaces {
             index(face.0)
@@ -268,7 +268,7 @@ final class CrowdAndModel: Sketch {
 
     /// 正二十面体の 12 の点 (外接球の半径 1)。
     private static let icosahedronPoints: [SIMD3<Float>] = {
-        let golden = (1 + Double(5).squareRoot()) / 2
+        let golden = (1 + Float(5).squareRoot()) / 2
         let points: [SIMD3<Float>] = [
             SIMD3(-1, golden, 0), SIMD3(1, golden, 0), SIMD3(-1, -golden, 0), SIMD3(1, -golden, 0),
             SIMD3(0, -1, golden), SIMD3(0, 1, golden), SIMD3(0, -1, -golden), SIMD3(0, 1, -golden),

@@ -30,10 +30,10 @@ final class DepthAndLabels: Sketch {
         background(16, 20, 28)
         for index in 0..<2 {
             draw(into: panels[index]) { scene(movingCamera: index == 1) }
-            image(panels[index], 20 + index * 490, 40)
+            image(panels[index], Double(20 + index * 490), 40)
             fill(235)
             textSize(17)
-            text(index == 0 ? "fixed camera" : "moving camera", 20 + index * 490, 25)
+            text(index == 0 ? "fixed camera" : "moving camera", Double(20 + index * 490), 25)
         }
         fill(235)
         text("Opaque board: z = 0. Orange sphere crosses front / back / front. HUD stays on screen.", 20, 475)

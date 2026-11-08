@@ -27,7 +27,7 @@ final class BeatAndWaveform: Sketch {
     private var flash: Double = 0
 
     func setup() throws {
-        song = try createAudioIn(samples: Self.pattern(), sampleRate: Self.rate)
+        song = try createAudioIn(samples: Self.pattern().map { Float($0) }, sampleRate: Self.rate)
     }
 
     func draw() {
@@ -46,7 +46,7 @@ final class BeatAndWaveform: Sketch {
         stroke(255)
         beginShape()
         for (index, sample) in song.waveform.enumerated() {
-            vertex(Double(index) / 1024 * width, height * 0.8 + sample * 100)
+            vertex(Double(index) / 1024 * width, height * 0.8 + Double(sample * 100))
         }
         endShape()
     }

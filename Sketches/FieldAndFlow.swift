@@ -311,14 +311,14 @@ final class FieldAndFlow: Sketch {
     }
 
     /// 引き戻した場から、いちばん高いマスを探して画面の座標へ移す。
-    private func findPeak(in values: [Double]) {
+    private func findPeak(in values: [Float]) {
         guard values.count == columns * rows else { return }
         var best = 0
         for index in 1..<values.count where values[index] > values[best] { best = index }
         let column = Double(best % columns) + 0.5
         let row = Double(best / columns) + 0.5
         peak = (map(column, 0, Double(columns), 0, width), map(row, 0, Double(rows), 0, height))
-        peakHeight = values[best]
+        peakHeight = Double(values[best])
         peakRow = best / columns
         // 見つけた行を GPU へ返す。**待たない** — 次の描き切りが届ける
         probe?.set(Double(peakRow), at: 0)

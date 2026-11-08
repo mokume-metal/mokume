@@ -93,7 +93,7 @@ final class SynthAndFilter: Sketch {
             let levels = panel.sound.spectrumLevels
             for band in 1...bands {
                 let height = levels[band] * 216
-                rect(left + Double(band - 1) * 4, bottom - 2 - height, 3, height)
+                rect(left + Double(band - 1) * 4, bottom - 2 - Double(height), 3, Double(height))
             }
             // 全体の大きさ (左上の円)
             circle(left + 14, bottom - 206, 4 + panel.sound.level * 16)

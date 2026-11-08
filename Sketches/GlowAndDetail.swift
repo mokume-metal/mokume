@@ -69,7 +69,7 @@ final class GlowAndDetail: Sketch {
             let radius = 96 + index * 9
             let fade = 0.5 - Double(index) / 40
             stroke(.display(red: 0.3, green: 0.55, blue: 0.9, alpha: fade))
-            circle(centre.x, centre.y, radius * 2)
+            circle(centre.x, centre.y, Double(radius * 2))
         }
 
         // 真ん中の芯。**にじみがいちばん強く出る場所**を絵の中心に置く

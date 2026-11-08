@@ -68,7 +68,7 @@ final class SeedsAndFields: Sketch {
             for x in stride(from: Double(520), to: 940, by: 4) {
                 for y in stride(from: top, to: top + 110, by: 4) {
                     let grain = plank.value((x - 520) * 0.012, (y - top) * 0.09)
-                    fill(150 + grain * 90, 100 + grain * 60, 60 + grain * 30)
+                    fill(150 + Double(grain * 90), 100 + Double(grain * 60), 60 + Double(grain * 30))
                     rect(x, y, 4, 4)
                 }
             }

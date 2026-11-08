@@ -34,16 +34,16 @@ final class CurvesAndVertices: Sketch {
             let left = Double(40 + index * 310)
             noStroke()
             fill(89, 97, 115)
-            for knot in knots { circle(left + knot.x, 40 + knot.y, 10) }
+            for knot in knots { circle(left + Double(knot.x), 40 + Double(knot.y), 10) }
             curveTightness(variant.tightness)
             curveDetail(variant.detail)
             noFill()
-            stroke(variant.ink.0, variant.ink.1, variant.ink.2)
+            stroke(Double(variant.ink.0), Double(variant.ink.1), Double(variant.ink.2))
             strokeWeight(4)
             beginShape()
-            curveVertex(left + knots[0].x, 40 + knots[0].y)
-            for knot in knots { curveVertex(left + knot.x, 40 + knot.y) }
-            curveVertex(left + knots[knots.count - 1].x, 40 + knots[knots.count - 1].y)
+            curveVertex(left + Double(knots[0].x), 40 + Double(knots[0].y))
+            for knot in knots { curveVertex(left + Double(knot.x), 40 + Double(knot.y)) }
+            curveVertex(left + Double(knots[knots.count - 1].x), 40 + Double(knots[knots.count - 1].y))
             endShape()
         }
         curveTightness(0)
@@ -77,15 +77,15 @@ final class CurvesAndVertices: Sketch {
             // 扇は要の頂点 (1 つ目) を中心へ寄せる。要から残りの頂点へ向けて面が開く
             let points = entry.kind == .triangleFan
                 ? [SIMD2<Float>(90, 70)] + corners : corners
-            stroke(entry.ink.0, entry.ink.1, entry.ink.2)
+            stroke(Double(entry.ink.0), Double(entry.ink.1), Double(entry.ink.2))
             strokeWeight(entry.kind == .points ? 10 : 3)
             if entry.kind == .points || entry.kind == .lines {
                 noFill()
             } else {
-                fill(entry.ink.0, entry.ink.1, entry.ink.2, 140)
+                fill(Double(entry.ink.0), Double(entry.ink.1), Double(entry.ink.2), 140)
             }
             beginShape(entry.kind)
-            for spot in points { vertex(left + spot.x, top + spot.y) }
+            for spot in points { vertex(left + Double(spot.x), top + Double(spot.y)) }
             endShape()
         }
     }

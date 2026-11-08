@@ -82,11 +82,11 @@ final class PixelsAndPaint: Sketch {
         // 1 画素ずつ読む・書く。読めるのは書き換えた後の色で、白い輪が読んだ場所
         for (index, place) in [(630, 150), (770, 130), (690, 250), (830, 360)].enumerated() {
             fill(get(place.0, place.1))
-            rect(500 + index * 60, 420, 48, 48)
+            rect(Double(500 + index * 60), 420, 48, 48)
             noFill()
             stroke(242, 242, 230)
             strokeWeight(2)
-            circle(place.0, place.1, 12)
+            circle(Double(place.0), Double(place.1), 12)
             noStroke()
         }
         for y in 420..<468 {

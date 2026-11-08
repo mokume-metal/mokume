@@ -89,7 +89,7 @@ final class MaterialsAndSurroundings: Sketch {
                 ambient(255, 255, 255)
                 fill(184, 178, 173)
                 knob.apply(self, amount)
-                translate(200 + column * 140, 130 + row * 100, 0)
+                translate(Double(200 + column * 140), Double(130 + row * 100), 0)
                 sphere(42)
                 pop()
             }
@@ -102,7 +102,7 @@ final class MaterialsAndSurroundings: Sketch {
             shininess(90)
             metalness(0.6)
             fill(184, 178, 173)
-            translate(200 + slot * 140, 580, 0)
+            translate(Double(200 + slot * 140), 580, 0)
             sphere(42)
             pop()
         }
@@ -114,7 +114,7 @@ final class MaterialsAndSurroundings: Sketch {
         // **揃えはフレームを越える**ので、下の段の名前で中央へ寄せた分を毎フレーム戻す
         textAlign(.left)
         for (row, knob) in knobs.enumerated() {
-            text(knob.name, 24, 138 + row * 100)
+            text(knob.name, 24, Double(138 + row * 100))
         }
         text("surroundings: \(place.name)", 24, 500)
         text("0", 200, 60)
@@ -123,7 +123,7 @@ final class MaterialsAndSurroundings: Sketch {
         textSize(14)
         textAlign(.center)
         for (slot, variant) in variants.enumerated() {
-            text(variant.name, 200 + slot * 140, 648)
+            text(variant.name, Double(200 + slot * 140), 648)
         }
     }
 }

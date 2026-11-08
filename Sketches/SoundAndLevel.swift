@@ -32,7 +32,7 @@ final class SoundAndLevel: Sketch {
     private var sound: AudioIn?
 
     func setup() throws {
-        sound = try createAudioIn(samples: Self.phrase(), sampleRate: Self.rate)
+        sound = try createAudioIn(samples: Self.phrase().map { Float($0) }, sampleRate: Self.rate)
     }
 
     func draw() {
@@ -56,7 +56,7 @@ final class SoundAndLevel: Sketch {
         for band in 1...bands {
             let height = levels[band] * 380
             fill(lerp(120, 232, Double(band) / Double(bands)), 160, lerp(220, 92, Double(band) / Double(bands)))
-            rect(540 + Double(band - 1) * 6, 460 - height, 4, height)
+            rect(540 + Double(band - 1) * 6, 460 - Double(height), 4, Double(height))
         }
     }
 

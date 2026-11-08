@@ -162,7 +162,7 @@ final class FileAndSound: Sketch {
         for band in 1...bands {
             let height = levels[band] * 310
             fill(lerp(120, 232, Double(band) / Double(bands)), 160, lerp(220, 92, Double(band) / Double(bands)))
-            rect(200 + Double(band - 1) * 11, 440 - height, 9, height)
+            rect(200 + Double(band - 1) * 11, 440 - Double(height), 9, Double(height))
         }
 
         // 下: 区間の波形
@@ -173,7 +173,7 @@ final class FileAndSound: Sketch {
             strokeWeight(1.5)
             beginShape()
             for (index, value) in wave.enumerated() {
-                vertex(24 + Double(index) / Double(wave.count - 1) * (width - 48), 526 + constrain(value, -1, 1) * 12)
+                vertex(24 + Double(index) / Double(wave.count - 1) * (width - 48), 526 + constrain(Double(value), -1, 1) * 12)
             }
             endShape()
             noStroke()

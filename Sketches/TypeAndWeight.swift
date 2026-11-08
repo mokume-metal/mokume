@@ -69,7 +69,7 @@ final class TypeAndWeight: Sketch {
             let x = 60 + Double(index) * 180
             textFont(font)
             textSize(38)
-            textWeight(weight)
+            textWeight(Double(weight))
             fill(242, 242, 242)
             text("Mokume", x, top + 70)
 

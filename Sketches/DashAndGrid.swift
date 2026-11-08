@@ -25,12 +25,12 @@ final class DashAndGrid: Sketch {
         stroke(66, 74, 92)
         strokeWeight(1)
         strokeDash(4, 4)
-        for x in stride(from: 0, through: 640, by: 20) { line(x, 0, x, 480) }
-        for y in stride(from: 0, through: 480, by: 20) { line(0, y, 640, y) }
+        for x in stride(from: 0, through: 640, by: 20) { line(Double(x), 0, Double(x), 480) }
+        for y in stride(from: 0, through: 480, by: 20) { line(0, Double(y), 640, Double(y)) }
         noStrokeDash()
         stroke(120, 132, 158)
-        for x in stride(from: 0, through: 640, by: 160) { line(x, 0, x, 480) }
-        for y in stride(from: 0, through: 480, by: 160) { line(0, y, 640, y) }
+        for x in stride(from: 0, through: 640, by: 160) { line(Double(x), 0, Double(x), 480) }
+        for y in stride(from: 0, through: 480, by: 160) { line(0, Double(y), 640, Double(y)) }
 
         // 端の形 — 破線の 1 つずつに付く。同じ長さと間隔でも、丸い端は両側へはみ出して間が詰まる
         pushStyle()

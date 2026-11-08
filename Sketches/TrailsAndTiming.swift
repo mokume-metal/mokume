@@ -46,10 +46,10 @@ final class TrailsAndTiming: Sketch {
             }
             let x = 10 + (index < 3 ? index : index - 3) * 260
             let y = index < 3 ? 30 : 300
-            image(pad, x, y)
+            image(pad, Double(x), Double(y))
             fill(235)
             textSize(16)
-            text(["clear each frame", "retain", "fade with rect", "filter: accumulates", "effects: from source"][index], x, y + 205)
+            text(["clear each frame", "retain", "fade with rect", "filter: accumulates", "effects: from source"][index], Double(x), Double(y + 205))
         }
         fill(200)
         text("reset every 180 frames", 530, 325)

@@ -108,9 +108,9 @@ final class TableAndText: Sketch {
                 stroke(90)
                 line(x, Self.bottom + 6, x, Self.bottom + 16)
             }
-            let high = y(row.getFloat("high"))
-            let low = y(row.getFloat("low"))
-            let warmth = constrain(norm(row.getFloat("mean"), 0, 30), 0, 1)
+            let high = y(Double(row.getFloat("high")))
+            let low = y(Double(row.getFloat("low")))
+            let warmth = constrain(norm(Double(row.getFloat("mean")), 0, 30), 0, 1)
             noStroke()
             fill(lerp(80, 240, warmth), lerp(150, 140, warmth), lerp(230, 70, warmth))
             rect(x, high, 2, low - high)

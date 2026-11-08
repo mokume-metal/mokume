@@ -66,7 +66,7 @@ final class ColorAndScale: Sketch {
         text("color(hue:saturation:brightness:)", 40, 36)
         for index in 0..<14 {
             fill(color(hue: Double(index) * 26 + time * 40, saturation: 80, brightness: 95))
-            rect(40 + index * 63, 48, 56, 48)
+            rect(Double(40 + index * 63), 48, 56, 48)
         }
 
         // 灰色の段。塗りも線も 1 値で書ける
@@ -76,7 +76,7 @@ final class ColorAndScale: Sketch {
         strokeWeight(2)
         for index in 0..<11 {
             fill(Double(index) * 25.5)
-            rect(40 + index * 38, 134, 34, 30)
+            rect(Double(40 + index * 38), 134, 34, 30)
         }
 
         // 灰色の段の右 — 2 色の間を取る。上は線形の光の量で、下は 0–255 の数のまま混ぜる
@@ -89,11 +89,11 @@ final class ColorAndScale: Sketch {
             let amount = Double(index) / 10
             let x = 506 + index * 38
             fill(lerpColor(from, to, amount))
-            rect(x, 134, 34, 15)
+            rect(Double(x), 134, 34, 15)
             fill(
                 lerp(cool.red, warm.red, amount), lerp(cool.green, warm.green, amount),
                 lerp(cool.blue, warm.blue, amount))
-            rect(x, 149, 34, 15)
+            rect(Double(x), 149, 34, 15)
         }
 
         // 中段 — 読み出し。**不透明度が見えるよう、明暗 2 段の下敷きに置く**
@@ -103,20 +103,20 @@ final class ColorAndScale: Sketch {
         for (index, sample) in samples.enumerated() {
             let x = 40 + index * 128
             fill(64)
-            rect(x, 212, 72, 32)
+            rect(Double(x), 212, 72, 32)
             fill(200)
-            rect(x, 244, 72, 32)
+            rect(Double(x), 244, 72, 32)
             fill(sample.color)
-            rect(x + 8, 220, 28, 48)
+            rect(Double(x + 8), 220, 28, 48)
             // 右半分は同じ色を不透明度 128 で薄めたもの。**色が元から持つ不透明度に掛ける**
             fill(sample.color, 128)
-            rect(x + 36, 220, 28, 48)
+            rect(Double(x + 36), 220, 28, 48)
 
             fill(210)
-            text(sample.name, x, 296)
+            text(sample.name, Double(x), 296)
             fill(150)
             for (line, reading) in readings(of: sample.color).enumerated() {
-                text(reading, x, 314 + line * 17)
+                text(reading, Double(x), Double(314 + line * 17))
             }
         }
 

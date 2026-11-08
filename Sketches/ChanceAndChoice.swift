@@ -41,11 +41,11 @@ final class ChanceAndChoice: Sketch {
         // 右: 同じ棒を、上の段は低い順に、下の段は並べ替えて。渡した配列 (heights) は変わらない
         fill(150)
         for (i, h) in heights.enumerated() {
-            rect(620 + i * 26, 250 - h, 20, h)
+            rect(Double(620 + i * 26), 250 - h, 20, h)
         }
         fill(80, 140, 220)
         for (i, h) in shuffle(heights).enumerated() {
-            rect(620 + i * 26, 500 - h, 20, h)
+            rect(Double(620 + i * 26), 500 - h, 20, h)
         }
     }
 }

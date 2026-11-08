@@ -38,17 +38,17 @@ final class ShapesAndStyle: Sketch {
         stroke(217, 230, 255)
         for (index, cap) in [StrokeCap.square, .round, .project].enumerated() {
             strokeCap(cap)
-            strokeWeight(index * 6 + 6)
-            line(60, 190 + index * 34, 300, 190 + index * 34)
+            strokeWeight(Double(index * 6 + 6))
+            line(60, Double(190 + index * 34), 300, Double(190 + index * 34))
         }
         strokeWeight(10)
         for (index, join) in [StrokeJoin.miter, .round, .bevel].enumerated() {
             strokeJoin(join)
             let x = 360 + index * 110
             beginShape()
-            vertex(x, 280)
-            vertex(x + 50, 180)
-            vertex(x + 90, 280)
+            vertex(Double(x), 280)
+            vertex(Double(x + 50), 180)
+            vertex(Double(x + 90), 280)
             endShape()
         }
         popStyle()
@@ -82,7 +82,7 @@ final class ShapesAndStyle: Sketch {
         for (index, mode) in modes.enumerated() {
             blendMode(mode)
             fill(ink)
-            circle(98 + index % 5 * 80, 372 + index / 5 * 76, 64)
+            circle(Double(98 + index % 5 * 80), Double(372 + index / 5 * 76), 64)
         }
         blendMode(.blend)
 
@@ -142,7 +142,7 @@ final class ShapesAndStyle: Sketch {
         // 点 — 大きさは輪郭の太さで決まる。角度は度で数えて弧度へ直す
         stroke(217, 230, 255)
         for (index, degree) in stride(from: Double(0), to: degrees(2 * Double.pi), by: 30).enumerated() {
-            strokeWeight(2 + index)
+            strokeWeight(Double(2 + index))
             let angle = radians(degree)
             point(520 + cos(angle) * 55, 620 + sin(angle) * 55)
         }
@@ -168,7 +168,7 @@ final class ShapesAndStyle: Sketch {
         step.rotate(by: radians(18))
         step.scale(x: 0.85, y: 0.85)
         for index in 0..<5 {
-            fill(89 + index * 30, 191 - index * 20, 242)
+            fill(Double(89 + index * 30), Double(191 - index * 20), 242)
             square(-20, -20, 40)
             applyMatrix(step)
         }

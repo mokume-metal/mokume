@@ -193,7 +193,7 @@ final class BricksAndBall: Sketch {
         for row in 0..<5 {
             for col in 0..<10 {
                 bricks.append(
-                    Rect(left: 24 + col * 44, top: 48 + row * 18, width: 40, height: 14, fill: palette[row]))
+                    Rect(left: Double(24 + col * 44), top: Double(48 + row * 18), width: 40, height: 14, fill: palette[row]))
             }
         }
     }

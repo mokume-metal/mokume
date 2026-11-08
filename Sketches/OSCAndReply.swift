@@ -41,7 +41,7 @@ final class OSCAndReply: Sketch {
     func draw() {
         for message in osc?.messages ?? [] {
             switch message.address {
-            case "/size": size = constrain(message.float(0) ?? size, 0.05, 1)
+            case "/size": size = constrain(message.float(0).map { Double($0) } ?? size, 0.05, 1)
             case "/hit": hits += message.int(0) ?? 0
             default: break
             }

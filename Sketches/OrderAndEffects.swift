@@ -37,7 +37,7 @@ final class OrderAndEffects: Sketch {
                 for y in 0..<9 {
                     for x in 0..<11 {
                         fill((x + y) % 2 == 0 ? 35 : 125)
-                        rect(x * 20, y * 20, 20, 20)
+                        rect(Double(x * 20), Double(y * 20), 20, 20)
                     }
                 }
                 fill(255, 220, 30)
@@ -46,10 +46,10 @@ final class OrderAndEffects: Sketch {
                 circle(40, 35, 8)
                 effects(look.1)
             }
-            image(pad, 10 + index * 240, 20)
+            image(pad, Double(10 + index * 240), 20)
             fill(235)
             textSize(16)
-            text(look.0, 10 + index * 240, 230)
+            text(look.0, Double(10 + index * 240), 230)
         }
         text("Same source; effect order is left to right. Later repaint must not replace earlier panels.", 10, 265)
     }

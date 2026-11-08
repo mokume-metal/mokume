@@ -115,7 +115,7 @@ final class PartsAndFormats: Sketch {
         func corner(_ index: Int, radius: Double? = nil, z: Double) -> SIMD3<Float> {
             let point = outline[index % outline.count]
             let r = radius ?? point.radius
-            return SIMD3(cos(point.angle) * r, sin(point.angle) * r, z)
+            return SIMD3(cos(Float(point.angle)) * Float(r), sin(Float(point.angle)) * Float(r), Float(z))
         }
 
         var triangles: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] = []

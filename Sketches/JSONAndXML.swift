@@ -59,7 +59,7 @@ final class JSONAndXML: Sketch {
             do {
                 let weather = try loadJSONObject(city.url)
                 names.append(weather.getString("name"))
-                temps.append(weather.getJSONObject("main").getFloat("temp"))
+                temps.append(Double(weather.getJSONObject("main").getFloat("temp")))
                 reasons.append("")
             } catch {
                 names.append(city.label)
@@ -150,19 +150,19 @@ final class JSONAndXML: Sketch {
         for (i, star) in stars.enumerated() where i > 0 {
             let previous = stars[i - 1]
             line(
-                Self.skyLeft + previous.getFloat("x"), Self.skyTop + previous.getFloat("y"),
-                Self.skyLeft + star.getFloat("x"), Self.skyTop + star.getFloat("y"))
+                Self.skyLeft + Double(previous.getFloat("x")), Self.skyTop + Double(previous.getFloat("y")),
+                Self.skyLeft + Double(star.getFloat("x")), Self.skyTop + Double(star.getFloat("y")))
         }
 
         noStroke()
         for star in stars {
-            let x = Self.skyLeft + star.getFloat("x")
-            let y = Self.skyTop + star.getFloat("y")
+            let x = Self.skyLeft + Double(star.getFloat("x"))
+            let y = Self.skyTop + Double(star.getFloat("y"))
             let size = star.getFloat("size")
             fill(170, 190, 255, 50)
-            circle(x, y, size * 2.6)
+            circle(x, y, Double(size * 2.6))
             fill(240, 244, 255)
-            circle(x, y, size)
+            circle(x, y, Double(size))
         }
     }
 

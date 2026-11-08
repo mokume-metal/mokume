@@ -202,7 +202,7 @@ final class TypeAndImagery: Sketch {
         push()
         translate(560, 360)
         for index in 0..<4 {
-            shape(leaf, index * 52, 0)
+            shape(leaf, Double(index * 52), 0)
         }
         pop()
         shape(cluster, 790, 340)
@@ -237,7 +237,7 @@ final class TypeAndImagery: Sketch {
 
         // 葉と茎を畳んだ形
         for index in 0..<3 {
-            shape(sprout, 790 + index * 50, 590)
+            shape(sprout, Double(790 + index * 50), 590)
         }
         text("leaf + stem", 790, 690)
     }

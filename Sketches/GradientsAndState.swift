@@ -48,7 +48,7 @@ final class GradientsAndState: Sketch {
         noClip()
         for index in 0..<2 {
             push()
-            translate(30 + index * 500, 45)
+            translate(Double(30 + index * 500), 45)
             stroke(245)
             strokeWeight(2)
             if index == 0 { fill(ramp(from: [0, 0], to: [300, 0])) }

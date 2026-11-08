@@ -81,8 +81,8 @@ final class AlphaAndLayers: Sketch {
         for y in stride(from: 0, to: tall, by: 16) {
             for x in stride(from: 0, to: wide, by: 16) {
                 let gray = kind == 1 ? 0 : kind == 2 ? 255 : ((x / 16 + y / 16) % 2 == 0 ? 80 : 160)
-                fill(gray)
-                rect(x, y, min(16, wide - x), min(16, tall - y))
+                fill(Double(gray))
+                rect(Double(x), Double(y), Double(min(16, wide - x)), Double(min(16, tall - y)))
             }
         }
     }
