@@ -48,7 +48,7 @@ SPDX-License-Identifier: MIT
 
 ライブラリのターゲットは既定の隔離を main actor に設定する。スケッチを書く人は並行性の注釈を一切書かない。ライブラリの公開 API も、既定では main actor 隔離として提供する。
 
-#### 改訂 (2026-10-14) — 新しい値型は main actor の外に置く
+#### 新しい値型は main actor の外に置く
 
 **これから足す値型は `nonisolated` で宣言し、`Sendable`・`Hashable`・`Codable` を持たせる。走っているスケッチを読むメンバーだけを main actor に残す。** 先例は `Key` (`public nonisolated struct Key: Sendable, Hashable`・[ADR-0034](0034-input-surface-units.md) 決定 2) である。
 
@@ -67,17 +67,17 @@ SPDX-License-Identifier: MIT
 
 **代償:** 同じ値型に、どこからでも呼べるメンバーと main だけのメンバーが混ざる。学生のスケッチは main で動くので、書き味には出ない。スケッチを書く人が並行性の注釈を書かないこと (上の決定と影響節の受け入れ検査) は変わらない。
 
-#### 改訂 (2026-10-23) — 値だけを扱う数と色の関数も main actor の外に置く ([#2389](https://github.com/mokume-metal/mokume/issues/2389))
+#### 値だけを扱う数と色の関数も main actor の外に置く ([#2389](https://github.com/mokume-metal/mokume/issues/2389))
 
-上の改訂は、既存の関数 (`map`・`lerp`・`color` など) を main actor の外へ出すかを範囲の外に置いた。**決めた: 値を受けて値を返すだけのトップレベルの数と色の関数は `nonisolated` にする。** 対象は `map`・`lerp`・`constrain`・`norm`・`smoothstep`・`radians`・`degrees`・`damp`・`pingpong`・`lerpAngle`・`dist`・`mag`・`sq`・`fract`・`mod`・`bezierPoint`・`bezierTangent`、`color` の各口・`lerpColor`・`paletteLerp`、色の成分の読み出し (`red` ほか・`hue` ほか)、原色の移し替えを通る `LinearRGBA.display(...)`、作業空間の画素を表示形式へ移す `OutputStage.encode(_:)`、円周率の定数 (`PI` ほか) である。
+**値を受けて値を返すだけのトップレベルの数と色の関数は `nonisolated` にする。** 対象は `map`・`lerp`・`constrain`・`norm`・`smoothstep`・`radians`・`degrees`・`damp`・`pingpong`・`lerpAngle`・`dist`・`mag`・`sq`・`fract`・`mod`・`bezierPoint`・`bezierTangent`、`color` の各口・`lerpColor`・`paletteLerp`、色の成分の読み出し (`red` ほか・`hue` ほか)、原色の移し替えを通る `LinearRGBA.display(...)`、作業空間の画素を表示形式へ移す `OutputStage.encode(_:)`、円周率の定数 (`PI` ほか) である。
 
 - **隔離が要る理由は、注意を 1 度だけ言う記録だけだった。** 記録 (`NumberValues`・`ColorValues`・`PaletteValues` の `warnings`) は `static var` で、main actor でしか触れなかった。`Mutex` で守る控え (`SharedWarningLog`) に替え、複数のスレッドから同時に言っても注意は 1 度だけ出る。スケッチを書く人の書き味は変わらない
 - **理由は実測にある。** 1080p の全画素を `noise`→`map`→`color` で埋めるループは、main の 1 本で 169 ms、写しを `concurrentPerform` で 64 分割すると 11.3 ms だった (#2389 の 2026-10-12 のコメント)。並列にできる口が無いと、画素を計算する仕事を P コアと E コアに分けられない。いちばん使われる `map` と `color` が main 隔離だったことが、その邪魔になっていた
-- **範囲:** スケッチの状態 (描く状態・`noise` の種と細かさ) を読む `Sketch` / `Canvas` / `SketchPart` のメンバーは main actor に残る。`noise` のメソッドは種を読むので、並列から呼べない。値で持つ揺らぎは新しい値型として #2418 が決める (上の改訂のとおり `nonisolated` で生まれる)
+- **範囲:** スケッチの状態 (描く状態・`noise` の種と細かさ) を読む `Sketch` / `Canvas` / `SketchPart` のメンバーは main actor に残る。`noise` のメソッドは種を読むので、並列から呼べない。値で持つ揺らぎは新しい値型として #2418 が決める (上の小見出しのとおり `nonisolated` で生まれる)
 - **範囲の外: 文書の値型 (`JSONObject`・`JSONArray`・`XML`・`Table`/`TableRow`) の読み出し (`getFloat`・`getString` ほか) は、main actor に残す** ([#3166](https://github.com/mokume-metal/mokume/issues/3166))。並列に回したい人は、分ける前に main で `[Float]` などへ写す。形は `map` の説明文が名乗り、4 つの型の説明文がそこを指す
   - **理由は 3 つ。** (1) 注意の控え (`DocumentValues`・`TableValues` の `warnings`) の鍵が、キー・列の名前という値を持つ。`SharedWarningLog` は鍵を値を持たない有限の enum に限っているので、そのままでは使えず、値を持つ鍵を複数のスレッドから 1 度だけ言う控えを別に設計することになる。(2) 並列の閉包から文書を読みたい作品・作例・Issue が無く、#2389 にあった実測の利得も文書の読み出しには示されていない。(3) 後から `nonisolated` に広げても、呼ぶ側は壊れない (逆向きは壊れる)
   - **退けた案 A:** 読み出しを `nonisolated` にし、文書の控えを `Mutex` で守る。並列から読みたい作品が出たら、作例を添えて起票し直して比べる。**代償:** 数と色の関数 (`nonisolated`) と文書の読み出し (main actor) で隔離が食い違い、並列のループで表を引く人は先に配列へ写す 1 行が要る。ただし `map` の説明文は元から「読みたい値は、分ける前に変数へ取り出しておく」と言っており、同じ規律の延長になる
-  - **上の 2026-10-14 の改訂との食い違いの解き方:** 「これから足す値型は `nonisolated`」の対象に、文書の値型は入らない。その理由 (`ExternalQueue` の完了ハンドラで値を作る・リプレイで `Codable` な値を記録する) が当たらないからである。文書は `Sketch` の `load…`・`request…` (main actor) の口でしか作られず、`Codable` でもない。2026-10-21 に main actor の型として足した `JSONArray` (Collection の適合も main actor の上) がその例である
+  - **上の小見出し「新しい値型は main actor の外に置く」との食い違いの解き方:** 「これから足す値型は `nonisolated`」の対象に、文書の値型は入らない。その理由 (`ExternalQueue` の完了ハンドラで値を作る・リプレイで `Codable` な値を記録する) が当たらないからである。文書は `Sketch` の `load…`・`request…` (main actor) の口でしか作られず、`Codable` でもない。2026-10-21 に main actor の型として足した `JSONArray` (Collection の適合も main actor の上) がその例である
   - **一部の口だけを `nonisolated` にもしない** (注意を言わない `hasKey`・`keys`・`rowCount` など)。同じ値型の中で、並列から呼べる口と呼べない口が、注意を言うかどうかで分かれ、読む人に理由が見えなくなる
 - **これは明示的に選ぶ人向けの道である** ([ADR-0001](0001-founding-principles.md) 原則 1)。スケッチは変わらず注釈なしで書ける。`concurrentPerform` に渡す閉包は `@Sendable` になり、スケッチの口を呼ぶ main actor の閉包を渡すと実行時の隔離の検査で落ちる (SE-0423)。`map` の説明文がこれを名乗る
 
@@ -94,13 +94,11 @@ SPDX-License-Identifier: MIT
 
 **この決定に機械検査は付けない** ([ADR-0008](0008-mechanism-needs-demonstrated-harm.md) 決定 1・5)。隔離の検査はコンパイラが既に担っており、自作の lint が見るのは「escape hatch を書いたか」という字面だけである。実際に escape hatch が増え始めたら、そのとき実害を名指しして Issue から機構を足す。
 
-### 4. 並列は actor と Task で明示分離する (2026-10-21 改訂)
+### 4. 並列は actor と Task で明示分離する
 
 GPU コマンドの生成、書き出し、観測、アセット読み込みなど main actor の外で進める処理は、actor または `Task` (`Task {}`・`Task.detached {}`・`TaskGroup`) で明示的に分離する。分離した境界を越える値は `Sendable` を満たす形で設計する。**`DispatchQueue` を新たに導入しない。**
 
 **`Task {}` と `Task.detached {}` は非構造化タスクで、起こした側の寿命にも取消にも結ばれない** ([SE-0304](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0304-structured-concurrency.md))。起こした側を取り消しても止まらず、起こした側が終わっても走り続ける。構造化されているのは `TaskGroup` と `async let` だけで、子が親の範囲の中で終わる。ここで求めているのは、**どこで走るかを書いて分離すること**で、寿命を呼んだ側へ結ぶことではない。`Task {}` が main actor を引き継ぐときは、作っただけで重い仕事が main の外へ出るわけでもない。待つ読み込みの口 (決定 6) は、いまは呼んだ `Task` の取消を見ない ([#2920](https://github.com/mokume-metal/mokume/issues/2920))。取消を口に伝えるかは [#2760](https://github.com/mokume-metal/mokume/issues/2760) と合わせて決める。
-
-**当初の見出しと文言は、`Task` / `TaskGroup` を structured concurrency の例に挙げていた。** 決定の中身 (分離する・境界を越える値は `Sendable`・`DispatchQueue` を新たに導入しない) は変えず、`Task {}` が非構造化だと分かる言葉に直しただけである。見出しの綴りの経緯は [history/0010.md](history/0010.md)。
 
 #### 例外は 1 本ではなくなった。条件で認める
 
@@ -108,7 +106,7 @@ GPU コマンドの生成、書き出し、観測、アセット読み込みな�
 
 ### 5. 継続的な値の流れは AsyncSequence を一級 API とする
 
-時間とともに届き続ける値は、**入り口 (`Inlet`) が `supply()` でフレームごとに渡し、スケッチは `draw()` から読む**。値の性質によって入れ物が 2 つに分かれる (下の表)。新しいものが古いものを上書きして困らない値は最新の 1 つを、1 つでも取りこぼすと意味が変わる出来事の列は前の取り出し以後に届いたものを全部、届いた順に渡す。**見出しの `AsyncSequence` は採択時の選択で、いまは退けている** — 見出しは「ADR-0010 決定 5」の参照を保つために残した。退けた理由は下の 2 つの改訂 (2026-10-06・2026-10-08) にある。
+時間とともに届き続ける値は、**入り口 (`Inlet`) が `supply()` でフレームごとに渡し、スケッチは `draw()` から読む**。値の性質によって入れ物が 2 つに分かれる (下の表)。新しいものが古いものを上書きして困らない値は最新の 1 つを、1 つでも取りこぼすと意味が変わる出来事の列は前の取り出し以後に届いたものを全部、届いた順に渡す。**見出しの `AsyncSequence` は採択時の選択で、いまは退けている** — 見出しは「ADR-0010 決定 5」の参照を保つために残した。退けた理由は下の 2 つの小見出しにある (いつどう変えたかは [history/0010.md](history/0010.md))。
 
 | 値の性質 | 入れ物と出し方 | 例 |
 | --- | --- | --- |
@@ -127,25 +125,21 @@ func draw() {
 
 **completion callback を公開 API に置かない。** delegate や callback を要求する下層のフレームワークは、ライブラリ側で包んでから公開する — 届き続ける値は入り口の入れ物 ([ADR-0042](0042-camera-and-audio-standard.md) 決定 4) に受けて上の形にし、読み込みは `async` の口 (決定 6) にする。
 
-#### 改訂 (2026-10-06) — フレームで標本化する値は、フレームで読む値として持つ
+#### フレームで標本化する値は、フレームで読む値として持つ
 
-届き続ける値を、上の表の 2 つの性質に分けた。この改訂で決めたのは 1 行目 (フレームで標本化する値) で、2 行目 (出来事の列) は `AsyncSequence` のまま残していた (下の改訂 (2026-10-08) で変えた)。
-
-フレームで読む値にする理由は 2 つある。
+表の 1 行目 (フレームで標本化する値) をフレームで読む値にする理由は 2 つある。
 
 1. **`draw()` から直に読める。** `AsyncSequence` で出すと、作者は最新の値を預かる変数と、それを埋めるタスクを自分で書くことになる。標本化する値では、その 2 つは毎回同じ形になる
 2. **値とフレームの対応を本体が決められる。** `supply()` がフレームの開始時に取り出すので、時刻はフレームの時刻と 1 本になる ([ADR-0042](0042-camera-and-audio-standard.md) 決定 4)。ファイルや標本列を流すときは、フレームの時刻だけで値が決まるので、固定の時計で書き出すと同じフレームが同じ値を受け取る ([ADR-0025](0025-determinism-levels.md) の水準 2)。`AsyncSequence` では対応が届いた順と作者のタスクの進み方で決まり、本体はこれを保証できない
 
-当初の決定は「オーディオ解析の結果」を `AsyncSequence` の例に挙げていた。音の入力の実装 ([#1978](https://github.com/mokume-metal/mokume/issues/1978)) で、この例を外した。カメラ ([#1977](https://github.com/mokume-metal/mokume/issues/1977)) は、この使い分けを書く前に、既にフレームで読む値として入っていた。
+#### 取りこぼしたくない出来事の列も、フレームで読む値として持つ
 
-#### 改訂 (2026-10-08) — 取りこぼしたくない出来事の列も、フレームで読む値として持つ
-
-**2026-10-06 の改訂は、表の 2 行目 (1 つでも取りこぼすと意味が変わる出来事の列) を `AsyncSequence` で出すとしていた。** 例は「OSC・MIDI のメッセージ、ネットワーク経由の制御、入力イベント」で、当初の決定の冒頭も同じものを挙げ、`for await message in osc.messages { … }` を例にしていた。OSC の実装 ([#1962](https://github.com/mokume-metal/mokume/issues/1962)) で、これを落とさない列 ([ADR-0028](0028-external-inputs.md) 決定 2) に溜めてフレームごとに全部渡す形に変えた。スケッチは `draw()` から `osc.messages` を読む。
+**表の 2 行目 (1 つでも取りこぼすと意味が変わる出来事の列) は、落とさない列 ([ADR-0028](0028-external-inputs.md) 決定 2) に溜めてフレームごとに全部渡す。** スケッチは `draw()` から `osc.messages` を読む。形は OSC の実装 ([#1962](https://github.com/mokume-metal/mokume/issues/1962)) で決まった。
 
 **退けた案は `AsyncSequence` である。** 理由は 2 つある。
 
 1. **取りこぼさないことは、落とさない列で満たせる。** 出来事の列をフレームで読む値にしても、最新の 1 つへ標本化するのではない。前の取り出し以後に届いたものを全部・届いた順に渡すので、1 フレームの間に何度届いても失われない。`AsyncSequence` を選んだ理由だった「取りこぼすと意味が変わる」は、出し方ではなく入れ物で守れる
-2. **注入で回すときに水準 2 を名乗るには、出来事とフレームの対応を本体が決める必要がある** ([ADR-0028](0028-external-inputs.md) 決定 7)。記録した列を流して書き出すとき、同じフレームに同じ出来事が届かなければ同じ絵にならない。`AsyncSequence` では、どのフレームで読まれるかが届いた順と作者のタスクの進み方で決まり、本体はこれを保証できない。2026-10-06 の改訂がフレームで読む値に挙げた理由 2 と同じもので、出来事の列にもそのまま効く
+2. **注入で回すときに水準 2 を名乗るには、出来事とフレームの対応を本体が決める必要がある** ([ADR-0028](0028-external-inputs.md) 決定 7)。記録した列を流して書き出すとき、同じフレームに同じ出来事が届かなければ同じ絵にならない。`AsyncSequence` では、どのフレームで読まれるかが届いた順と作者のタスクの進み方で決まり、本体はこれを保証できない。上の小見出しがフレームで読む値に挙げた理由 2 と同じもので、出来事の列にもそのまま効く
 
 **代償:**
 
@@ -155,7 +149,7 @@ func draw() {
 
 入れ物は [ADR-0042](0042-camera-and-audio-standard.md) 決定 4 の共通の土台に並ぶ 2 つ目として MokumeCore に置いた (`ExternalQueue`)。MIDI・TCP・UDP・WebSocket・シリアルも、同じ列を使う案になっている (表の例の Issue)。
 
-窓のマウスとキーの入力イベントは表の例から外し、この改訂では決めない — 窓の入力は既に `mousePressed()` などの呼び出しと `mouseX` などの値として、フレームの頭に届いている。
+窓のマウスとキーの入力イベントは表の例から外し、ここでは決めない — 窓の入力は既に `mousePressed()` などの呼び出しと `mouseX` などの値として、フレームの頭に届いている。
 
 ### 6. 読み込み API は async を正とし、同期版は setup 用の糖衣とする
 
