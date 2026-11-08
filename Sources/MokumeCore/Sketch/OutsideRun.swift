@@ -63,6 +63,16 @@ package final class OutsideRun {
         /// 持ち主が毎フレーム変える値には成り立たないので、`draw()` の中で読み、他の所では自分の状態へ写して使う、と言う
         /// (SwiftUI の `body` のような、`draw()` の外に置く読み手にも実行できる助言)。
         case readLast(returning: String)
+
+        /// この倒し方をする口が、実行を引く目的 (``activeRun(for:)``)。外す口は倒し方が ``act`` でも
+        /// ``RunPurpose/release(_:)`` で引くので、ここを通さない。
+        var purpose: RunPurpose {
+            switch self {
+            case .read, .readLast: .read
+            case .act: .act
+            case .make, .thrown, .thrownUnattached: .make
+            }
+        }
     }
 
     /// 検査が自分の控えを差す口。差していなければ ``shared``。

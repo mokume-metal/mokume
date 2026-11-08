@@ -95,7 +95,7 @@ extension Image {
         let accepted = canvas.acceptedEffects(effects, calledBy: "filtered")
         guard !accepted.isEmpty else { return copy() }
         let release: () -> Void
-        if let main = runningSketch?.canvas, main.gpu === gpu {
+        if let main = activeRun(for: .make)?.canvas, main.gpu === gpu {
             release = canvas.borrowSketchState(from: main)
         } else {
             release = {}
@@ -142,7 +142,7 @@ extension Image {
             canvas = try pool.workspace(gpu: gpu, width: width, height: height)
         }
         filterWorkspace = canvas
-        if let main = runningSketch?.canvas, main.gpu === gpu { main.holdFilterWorkspace(canvas) }
+        if let main = activeRun(for: .make)?.canvas, main.gpu === gpu { main.holdFilterWorkspace(canvas) }
         return canvas
     }
 }

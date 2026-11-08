@@ -76,19 +76,19 @@ extension Clock {
 extension SketchPart {
     /// 画面へ出しながら回しているか (`SketchRuntime.isOnScreen`)。音の口が鳴らすかを決めるのに読む
     /// (``Clock/soundFrameRate(onScreen:)``)。走っていなければ `false`。
-    package var isOnScreen: Bool { runningSketch?.isOnScreen ?? false }
+    package var isOnScreen: Bool { activeRun(for: .read)?.isOnScreen ?? false }
 
     /// 作者の時計の上の、いまのフレームの時刻 (倍精度の秒)。止める・飛ぶ (``pauseTime()``・``jumpTime(_:)``) を
     /// 含み、時刻を指定した観測の枚でも観測の秒に置き換えない。単精度の ``authorTime`` では、音の標本の位置を
     /// 窓の継ぎ目 (``FrameSamples``) と 1 標本も違わずに数えられない。走っていなければ 0。
-    package var authorSeconds: Double { runningSketch?.authorSeconds ?? 0 }
+    package var authorSeconds: Double { activeRun(for: .read)?.authorSeconds ?? 0 }
 
     /// これまでに進めたフレームの数 (``frameCount`` と同じ)。**走っていなければ `nil`** で、警告も言わない。外された入り口が
     /// 足し直されるまでの間に進んだ数を、出どころが数える (`DetachedFrames`・#3152)。
-    package var runningFrameCount: Int? { runningSketch?.frameCount }
+    package var runningFrameCount: Int? { activeRun(for: .read)?.frameCount }
 
     /// 時刻を指定した観測の枚の、**`draw()` と入り口の供給の間だけ**の指定の秒。それ以外は `nil`。
-    package var observedSeconds: Double? { runningSketch?.observedSeconds }
+    package var observedSeconds: Double? { activeRun(for: .read)?.observedSeconds }
 }
 
 /// 1 フレームの長さ。

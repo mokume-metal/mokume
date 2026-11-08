@@ -88,7 +88,7 @@ extension SketchPart {
     /// 標準エラーで知らせる。
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func pauseTime() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.pauseTime)
         }
         runtime.pauseTime()
@@ -107,7 +107,7 @@ extension SketchPart {
     /// 止めていなければ何もしない。呼べる場所は ``pauseTime()`` と同じ。
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func playTime() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.playTime)
         }
         runtime.playTime()
@@ -138,7 +138,7 @@ extension SketchPart {
     /// 前半と後半で違う時刻の絵が混ざる。呼べる場所は ``pauseTime()`` と同じ。
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
     public func jumpTime(_ seconds: some ScalarConvertible) {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.jumpTime)
         }
         runtime.jumpTime(seconds.asFloat)

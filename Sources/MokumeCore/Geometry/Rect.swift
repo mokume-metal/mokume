@@ -474,7 +474,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
 /// `SketchPart` を名乗らないので、同じ控えへ自分の名前で言う。
 @MainActor
 func shapeValueCanvas(_ call: String) -> Canvas? {
-    guard let runtime = runningSketch else {
+    guard let runtime = activeRun(for: .act) else {
         OutsideRun.log.warn(call, .act)
         return nil
     }

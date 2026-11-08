@@ -134,7 +134,7 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
     /// 走っているスケッチの外で呼ぶと何もせず、1 度だけ警告する。
     @MainActor
     public mutating func restart() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn("Countdown.restart()", .act)
         }
         restart(at: runtime.elapsed)
@@ -168,7 +168,7 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
     /// 走っているスケッチの積み上げ。外なら 1 度だけ警告して `nil`。
     @MainActor
     private static func elapsed(_ call: String, returning value: String) -> Double? {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .read) else {
             OutsideRun.log.warn(call, .read(returning: value))
             return nil
         }

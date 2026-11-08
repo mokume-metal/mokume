@@ -123,7 +123,7 @@ public nonisolated final class ExternalQueue<Value: Sendable>: Sendable {
         let drained = waiting.withLock { $0.drain() }
         if let hostTime = drained.lastHostTime {
             let record = Arrival(
-                frame: runningSketch?.frameCount ?? 0, time: runningSketch?.authorTime ?? 0,
+                frame: activeRun(for: .read)?.frameCount ?? 0, time: activeRun(for: .read)?.authorTime ?? 0,
                 hostTime: hostTime)
             arrival.withLock { $0 = record }
         }

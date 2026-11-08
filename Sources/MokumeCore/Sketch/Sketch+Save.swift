@@ -168,7 +168,7 @@ extension SketchPart {
     /// [ADR-0024]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0024-extension-seams.md
     // shot: 撮れない 画面の絵を何も変えずにファイルを書く口で、書き終わる時点もフレームに紐づかない (確かなのは endRecord の後かスケッチの終わり) ので、書いたものを同じスケッチで読み戻して見せる絵も決まらない
     public func save(_ path: String) {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.save)
         }
         runtime.save(path)
@@ -335,7 +335,7 @@ extension SketchPart {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     // shot: 1 snippet=dbe3d06b
     public func beginRecord(_ pattern: String) {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.beginRecord)
         }
         runtime.beginRecord(pattern)
@@ -351,7 +351,7 @@ extension SketchPart {
     /// 伸びる。返った直後に連番を読み戻す例と絵は ``beginRecord(_:)`` にある。
     // shot: 参照 beginRecord(_:)
     public func endRecord() {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             return OutsideRun.log.warn(.endRecord)
         }
         runtime.endRecord()

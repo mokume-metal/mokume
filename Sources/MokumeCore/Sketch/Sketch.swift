@@ -646,11 +646,73 @@ public struct SketchSettings: Equatable, Sendable {
 ///
 /// [ADR-0010] 決定 2 のとおり、**隠された裏口ではなく明示的に main actor 隔離された
 /// グローバル**として置く。隔離されている以上、可変であることは問題にならない。
-/// 直接呼べる描画関数 (``SketchPart/circle(_:_:_:)`` など) はここを見る。
+///
+/// **書くのは ``SketchRuntime/withActiveRuntime(_:)`` だけ、読むのは ``activeRun(for:)`` だけ** ([#3846])。
+/// 語彙 (``SketchPart/circle(_:_:_:)``・``SketchPart/width`` など) はここを直に見ず、目的を名乗って
+/// ``activeRun(for:)`` から引く。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+/// [#3846]: https://github.com/mokume-metal/mokume/issues/3846
 @MainActor
 var runningSketch: SketchRuntime?
+
+/// 実行を引く目的。**目的ごとに引く順が違う** (``activeRun(for:)``)。
+///
+/// 選び方は、外で呼んだときの倒し方 (``OutsideRun/Use``) と対になる。読み取りの口は ``read``、何もしない口は
+/// ``act``、型付きのエラーを投げる口・代わりの値を作って返す口は ``make``。外す口だけは倒し方 (`act`) によらず
+/// ``release(_:)`` で、持ち主を先に見る。
+enum RunPurpose {
+    /// 読む口 (``SketchPart/width``・``SketchPart/frameCount``・入力・時刻・``DrawLedger``)。差している実行だけを見る。
+    case read
+    /// 描く・状態を書く口 (``SketchPart/circle(_:_:_:)``・``SketchPart/noLoop()``・``SketchPart/save(_:)``・
+    /// 観測へ差し出す ``SketchPart/expose(_:_:)-(_,Double)`` など)。差している実行だけを見る。
+    ///
+    /// **`Task` に持ち越した面へは倒れない。** `Task` から描けると、描く順が `Task` に番が回る時機で決まり、
+    /// 描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる (``LaunchingSketch``)。
+    ///
+    /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
+    case act
+    /// 資源を作る口 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など) と、走っている実行へ
+    /// 足して使うものを作る口 (音・通信)。差している実行を見る。
+    ///
+    /// 待つ読み込みの口は、ここが `nil` のとき続けて `Task` に持ち越した面 (``LaunchingSketch/canvas``) へ倒れる
+    /// (``SketchPart/loadingCanvas(_:_:)``)。持ち越すのは実行ではなく面なので、ここでは返さない。
+    case make
+    /// 外す口 (``SketchPart/detach(_:)-(Inlet)``・入り口の `stop()`)。その差込口を足した実行 (``SeamHomes``) を
+    /// 先に見て、無ければ差している実行を見る。足した実行を持ち主から引くので、`Task` の中からも外せる ([#2840])。
+    ///
+    /// [#2840]: https://github.com/mokume-metal/mokume/issues/2840
+    case release(AnyObject)
+}
+
+/// 走っている実行を、目的ごとの順で引く。**``runningSketch`` を読むのはここだけ** ([#3846])。
+///
+/// | 目的 | 引く順 |
+/// | --- | --- |
+/// | ``RunPurpose/read``・``RunPurpose/act`` | 差している実行だけ |
+/// | ``RunPurpose/make`` | 差している実行 (待つ読み込みの口は、続けて `Task` に持ち越した面) |
+/// | ``RunPurpose/release(_:)`` | 差込口を足した実行 → 差している実行 |
+///
+/// 引けなければ `nil` を返すだけで、外で呼んだときにどう倒すか (0 を返して警告・何もせず警告・型付きのエラー・
+/// ``SketchPart/canvas`` の停止) は呼ぶ側 (``SketchPart/liveRuntime(_:_:)``・``SketchPart/resourceCanvas(_:_:)``
+/// など) が決める ([ADR-0020] 決定 5)。
+///
+/// **「実行は同時に 1 つ」の前提に立つ所。** 差している実行が無いとき、``DrawLedger/progress`` は最後に動いた
+/// 実行の目盛り (``DrawLedger``) へ倒れる。実行が 1 つなら、それがいまの実行だからである。複数の実行の同居を
+/// opt-in で足すとき ([#3802]) は、この倒れ方とあわせて、ここで引く順を決め直す。フレームの外の規則を変える段
+/// ([#3847]) が変えるのは ``RunPurpose/read``・``RunPurpose/make`` の順で、``RunPurpose/act`` は変えない。
+///
+/// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [#3802]: https://github.com/mokume-metal/mokume/issues/3802
+/// [#3846]: https://github.com/mokume-metal/mokume/issues/3846
+/// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
+@MainActor
+func activeRun(for purpose: RunPurpose) -> SketchRuntime? {
+    switch purpose {
+    case .read, .act, .make: runningSketch
+    case .release(let seam): SeamHomes.runtime(of: seam) ?? runningSketch
+    }
+}
 
 /// 走っているランタイムの面を、その中で起こされた `Task` へ持ち越すもの。
 ///
@@ -700,7 +762,7 @@ extension SketchPart {
         // **止める口はここ 1 つだけに置く** (#2683 の反証 B3)。止める取り方を別の口にしておくと、
         // 新しい資源の口がそれを呼べてしまい、投げるべき所でまた落ちる。資源の口は
         // ``resourceCanvas(_:_:)`` / ``loadingCanvas(_:_:)`` を通って投げる
-        guard let runtime = runningSketch else { fatalError(OutsideRun.canvasStopNotice) }
+        guard let runtime = activeRun(for: .act) else { fatalError(OutsideRun.canvasStopNotice) }
         return runtime.activeCanvas
     }
 
@@ -919,7 +981,7 @@ extension SketchPart {
     /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
     @MainActor
     static func liveRuntime(_ use: OutsideRun.Use = .act, _ call: String = #function) -> SketchRuntime? {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: use.purpose) else {
             OutsideRun.log.warn(call, use)
             return nil
         }
@@ -952,7 +1014,7 @@ extension SketchPart {
     static func resourceCanvas<Failure: NotRunningFailure>(
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .make) else {
             // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
             OutsideRun.log.warn(call, .thrown)
             throw Failure.notRunning(call: call)
@@ -978,7 +1040,7 @@ extension SketchPart {
     static func loadingCanvas<Failure: NotRunningFailure>(
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
-        guard let canvas = runningSketch?.canvas ?? LaunchingSketch.canvas else {
+        guard let canvas = activeRun(for: .make)?.canvas ?? LaunchingSketch.canvas else {
             OutsideRun.log.warn(call, .thrown)
             throw Failure.notRunning(call: call)
         }

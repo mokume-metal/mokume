@@ -96,7 +96,7 @@ extension SketchPart {
     // shot: 1 snippet=5e96e124
     @discardableResult
     public func attach(_ inlet: any Inlet) -> Bool {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             OutsideRun.log.warn(.attach)
             return false
         }
@@ -145,7 +145,7 @@ extension SketchPart {
     // shot: 1 snippet=88bc7e3f
     @discardableResult
     public func attach(_ outlet: any Outlet) -> Bool {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .act) else {
             OutsideRun.log.warn(.attach)
             return false
         }
@@ -204,7 +204,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=56e84096
     public func detach(_ inlet: any Inlet) {
-        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
+        guard let runtime = activeRun(for: .release(inlet)) else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(inlet)
@@ -259,7 +259,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=463f1630
     public func detach(_ outlet: any Outlet) {
-        guard let runtime = SeamHomes.runtime(of: outlet) ?? runningSketch else {
+        guard let runtime = activeRun(for: .release(outlet)) else {
             return OutsideRun.log.warn(.detach)
         }
         runtime.detach(outlet)
@@ -282,7 +282,7 @@ extension SketchPart {
     package func requireAttachable<Failure: NotRunningFailure>(
         _ failure: Failure.Type, calledAs call: String
     ) throws(Failure) {
-        guard runningSketch != nil else {
+        guard activeRun(for: .make) != nil else {
             // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
@@ -334,13 +334,13 @@ extension SketchPart {
         _ failure: Failure.Type, calledAs call: String, making make: () async throws(Failure) -> Part
     ) async throws(Failure) -> Part {
         let requests = LaunchingSketch.attachments
-        guard runningSketch != nil || requests?.isEnded == false else {
+        guard activeRun(for: .make) != nil || requests?.isEnded == false else {
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
         }
         let part = try await make()
         // 走っている実行の中ならそのまま足す (`Task` の続きでは外れているので、ふつうは下の窓口を通る)
-        if runningSketch != nil { return attachAfterCheck(part) }
+        if activeRun(for: .make) != nil { return attachAfterCheck(part) }
         guard let requests, await requests.request(part), !requests.isEnded else {
             // 頼む前か待っている間に実行が終わった。足されなかったものを、足されたと偽って返さない。
             // **`request` が `true` を返した後でも、`Task` が戻る前に畳まれうる** — 実行が頼みを当てて待ちを終えてから、
@@ -389,7 +389,7 @@ extension SketchPart {
     /// 返すものが 0 個かもしれない口 (`gamepads()` は繋がっているパッドの数だけ足す) が、数に依らず外なら 1 度言うために、
     /// 先に呼ぶ。足すのはその後の ``attach(_:calledAs:returning:)`` で、同じ口の名前・同じ綴りなら重ねて言わない。
     package func canAttach(calledAs call: String, returning value: String) -> Bool {
-        guard runningSketch != nil else {
+        guard activeRun(for: .make) != nil else {
             OutsideRun.log.warn(call, .make(returning: value))
             return false
         }
@@ -401,7 +401,7 @@ extension SketchPart {
     /// (`a sound that is never heard` など)。
     @discardableResult
     package func attach(_ inlet: any Inlet, calledAs call: String, returning value: String) -> Bool {
-        guard let runtime = runningSketch else {
+        guard let runtime = activeRun(for: .make) else {
             OutsideRun.log.warn(call, .make(returning: value))
             return false
         }
@@ -426,7 +426,7 @@ extension SketchPart {
     /// [#2793]: https://github.com/mokume-metal/mokume/issues/2793
     @discardableResult
     package func detach(_ inlet: any Inlet, calledAs call: String) -> Bool {
-        guard let runtime = SeamHomes.runtime(of: inlet) ?? runningSketch else {
+        guard let runtime = activeRun(for: .release(inlet)) else {
             OutsideRun.log.warn(call, .act)
             return false
         }
