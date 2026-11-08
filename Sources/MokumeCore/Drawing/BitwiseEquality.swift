@@ -20,6 +20,10 @@ extension Float {
     func isBitwiseEqual(to other: Float) -> Bool { bitPattern == other.bitPattern }
 }
 
+extension Double {
+    func isBitwiseEqual(to other: Double) -> Bool { bitPattern == other.bitPattern }
+}
+
 extension SIMD3 where Scalar == Float {
     @inline(__always)
     func isBitwiseEqual(to other: SIMD3<Float>) -> Bool {

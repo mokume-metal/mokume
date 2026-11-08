@@ -31,15 +31,15 @@ public protocol ShaderValueConvertible {
 }
 
 extension Float: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .number(self) }
+    public var shaderValue: ShaderValue { .number(Double(self)) }
 }
 
 extension Double: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .number(Float(self)) }
+    public var shaderValue: ShaderValue { .number(Double(Float(self))) }
 }
 
 extension Int: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .number(Float(self)) }
+    public var shaderValue: ShaderValue { .number(Double(Float(self))) }
 }
 
 extension Bool: ShaderValueConvertible {
@@ -47,7 +47,7 @@ extension Bool: ShaderValueConvertible {
 }
 
 extension Vector2: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .pair(simd.x, simd.y) }
+    public var shaderValue: ShaderValue { .pair(Double(simd.x), Double(simd.y)) }
 }
 
 extension Vector3: ShaderValueConvertible {

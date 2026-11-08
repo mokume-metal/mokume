@@ -281,7 +281,8 @@ import MokumeDiagnostics
     /// が詳しい)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func set(_ value: Float, at index: Int) {
+    public func set(_ value: Double, at index: Int) {
+        let value = Float(value)
         guard index >= 0, index < count else { return warnOutOfRange(index) }
         write(at: index, count: 1) { $0[0] = value }
     }
@@ -304,7 +305,8 @@ import MokumeDiagnostics
     ///
     /// 待たないことと、計算に呼んだ順に効くこと、図形には描き切りの時点の中身が効くことは
     /// ``set(_:at:)`` と同じ。
-    public func fill(_ value: Float) {
+    public func fill(_ value: Double) {
+        let value = Float(value)
         write(at: 0, count: count) { $0.update(repeating: value) }
     }
 

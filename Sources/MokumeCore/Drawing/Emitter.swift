@@ -11,23 +11,23 @@ import simd
 /// 飛ぶ向きは変わらない — 2 つを 1 つの指定へ混ぜると、形を変えた瞬間に向きまで変わる。
 public enum Emitter: Equatable, Sendable {
     /// 1 点から。
-    case point(_ x: Float, _ y: Float, _ z: Float = 0)
+    case point(_ x: Double, _ y: Double, _ z: Double = 0)
     /// 2 点を結ぶ線分の上から (どこも同じ確からしさで)。
-    case line(_ x1: Float, _ y1: Float, _ x2: Float, _ y2: Float)
+    case line(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double)
     /// 円の内側から (どこも同じ確からしさで)。
-    case circle(_ x: Float, _ y: Float, radius: Float)
+    case circle(_ x: Double, _ y: Double, radius: Double)
     /// 球の内側から (どこも同じ確からしさで)。
-    case sphere(_ x: Float, _ y: Float, _ z: Float, radius: Float)
+    case sphere(_ x: Double, _ y: Double, _ z: Double, radius: Double)
 
     /// 数の成分。**受け口が、数でない値・無限を検めるのに読む** ([#1623])。
     ///
     /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
     var numbers: [Float] {
         switch self {
-        case .point(let x, let y, let z): [x, y, z]
-        case .line(let x1, let y1, let x2, let y2): [x1, y1, x2, y2]
-        case .circle(let x, let y, let radius): [x, y, radius]
-        case .sphere(let x, let y, let z, let radius): [x, y, z, radius]
+        case .point(let x, let y, let z): [x, y, z].map { Float($0) }
+        case .line(let x1, let y1, let x2, let y2): [x1, y1, x2, y2].map { Float($0) }
+        case .circle(let x, let y, let radius): [x, y, radius].map { Float($0) }
+        case .sphere(let x, let y, let z, let radius): [x, y, z, radius].map { Float($0) }
         }
     }
 
@@ -50,16 +50,20 @@ public enum Emitter: Equatable, Sendable {
     func sample(using randomness: inout Randomness) -> SIMD3<Float> {
         switch self {
         case .point(let x, let y, let z):
+            let (x, y, z) = (Float(x), Float(y), Float(z))
             return SIMD3(x, y, z)
         case .line(let x1, let y1, let x2, let y2):
+            let (x1, y1, x2, y2) = (Float(x1), Float(y1), Float(x2), Float(y2))
             let t = randomness.unitValue()
             return SIMD3(Self.mix(x1, x2, t), Self.mix(y1, y2, t), 0)
         case .circle(let x, let y, let radius):
+            let (x, y, radius) = (Float(x), Float(y), Float(radius))
             // **半径は平方根で引く。** そのまま引くと中心へ寄る
             let around = randomness.unitValue() * 2 * .pi
             let distance = abs(radius) * sqrt(randomness.unitValue())
             return SIMD3(x + RuntimeMath.cos(around) * distance, y + RuntimeMath.sin(around) * distance, 0)
         case .sphere(let x, let y, let z, let radius):
+            let (x, y, z, radius) = (Float(x), Float(y), Float(z), Float(radius))
             // 向きを 2 つの角から作り、半径は 3 乗根で引く (円と同じ理由の 3 次元版)
             let around = randomness.unitValue() * 2 * .pi
             let height = randomness.unitValue() * 2 - 1

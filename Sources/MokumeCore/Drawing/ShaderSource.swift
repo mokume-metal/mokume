@@ -397,9 +397,9 @@ enum ShaderSource {
 /// 作るときの `values:` の宣言か、`.int(n)` のように型を明示したいときだけである。
 public enum ShaderValue: Equatable, Sendable {
     /// 1 つの数。断片からは `float` として見える。
-    case number(Float)
+    case number(Double)
     /// 2 つ組。断片からは `float2` として見える。
-    case pair(Float, Float)
+    case pair(Double, Double)
     /// 色。断片からは `float4` として見える (線形・アルファ乗算済み)。
     ///
     /// 断片の中で不透明度を変えるときは、`values.tint * 0.3` のように 4 成分に同じ数を掛ける。
@@ -475,10 +475,10 @@ public enum ShaderValue: Equatable, Sendable {
         }
         switch self {
         case .number(let value):
-            put(value, 0)
+            put(Float(value), 0)
         case .pair(let x, let y):
-            put(x, 0)
-            put(y, 4)
+            put(Float(x), 0)
+            put(Float(y), 4)
         case .color(let color):
             put(color.redValue, 0)
             put(color.greenValue, 4)
@@ -515,9 +515,9 @@ public enum ShaderValue: Equatable, Sendable {
 }
 
 extension ShaderValue: ExpressibleByFloatLiteral {
-    public init(floatLiteral value: Double) { self = .number(Float(value)) }
+    public init(floatLiteral value: Double) { self = .number(Double(Float(value))) }
 }
 
 extension ShaderValue: ExpressibleByIntegerLiteral {
-    public init(integerLiteral value: Int) { self = .number(Float(value)) }
+    public init(integerLiteral value: Int) { self = .number(Double(Float(value))) }
 }

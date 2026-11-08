@@ -41,22 +41,22 @@ public enum Effect {
     /// 半径を描く画素に換算して 8 を越えると、縮めた絵の上でぼかして広げる (半径が大きい
     /// ほど小さく、1/8 まで)。細かさ 1 なら描く画素と出す画素は同じである。見え方は同じ
     /// 半径で揃えてあるが、絵は全解像度で回したものとは同じにならない。
-    case blur(radius: Float)
+    case blur(radius: Double)
     /// 明るいところをにじませる。`radius` は出す画素。
     ///
     /// `threshold` はにじませる明るさの下限で、**この明るさを越えた分だけがにじむ** (範囲を決めず、締めない)。
     /// 2 値化の ``threshold(level:)`` の `level` (明るさ以上を白にする境目) とは別の量である。
-    case bloom(amount: Float, threshold: Float = 0.7, radius: Float = 12)
+    case bloom(amount: Double, threshold: Double = 0.7, radius: Double = 12)
     /// 色を反転する。**アルファは動かない。**
-    case invert(amount: Float = 1)
+    case invert(amount: Double = 1)
     /// 色を抜く。
-    case monochrome(amount: Float = 1)
+    case monochrome(amount: Double = 1)
     /// 四隅を落とす。
-    case vignette(amount: Float)
+    case vignette(amount: Double)
     /// 色をずらす (色収差)。
-    case fringe(amount: Float)
+    case fringe(amount: Double)
     /// 明るさ・対比・彩度を動かす。**どれも 0 が無効。**
-    case adjust(brightness: Float = 0, contrast: Float = 0, saturation: Float = 0)
+    case adjust(brightness: Double = 0, contrast: Double = 0, saturation: Double = 0)
     /// 2 値化する。**明るさが `level` 以上の画素は白、未満は黒にし、アルファは動かさない。**
     ///
     /// `level` は 0…1 で、明るさは ``brightness(_:)`` と同じ物差し (乗算を戻した表示の色の 3 成分の最大) で
@@ -74,7 +74,7 @@ public enum Effect {
     /// 割り戻さずに比べるので、同じように成り立つ。**ただし、乗算済みの色が半精度の正規数の下限 (約 6e-5) に
     /// 近いほど暗く薄い画素** (たとえば不透明度 0.05 の `1 / 255` の灰) **は、半精度の丸めが幅を越えるので、
     /// ちょうどの値が白にならないことがある。**
-    case threshold(level: Float)
+    case threshold(level: Double)
     /// 利用者が書いた効果。
     case custom(EffectShader)
 
@@ -90,6 +90,7 @@ public enum Effect {
     func passes(drawnPerOutput scale: Float) -> [EffectPass] {
         switch self {
         case .blur(let written):
+            let written = Float(written)
             let radius = written * scale
             let level = Self.reductionLevel(for: radius)
             guard level > 0 else {
@@ -118,6 +119,7 @@ public enum Effect {
                     control: Self.control(kind: .resize, 1)),
             ]
         case .bloom(let amount, let threshold, let written):
+            let (amount, threshold, written) = (Float(amount), Float(threshold), Float(written))
             // 明るいところを取りながら縮める → 横へぼかす → 縦へぼかす → 元へ足す。
             // **脇の 2 枚を使う** — 往復の 2 枚とは別に持たないと、元の絵が消える。
             // にじみは 1/4 以下で足りる (#755) — 光の広がりに 1 画素の精度は要らない。
@@ -140,18 +142,24 @@ public enum Effect {
                     control: Self.control(kind: .bloomCombine, amount)),
             ]
         case .invert(let amount):
+            let amount = Float(amount)
             return [EffectPass(control: Self.control(kind: .invert, amount))]
         case .monochrome(let amount):
+            let amount = Float(amount)
             return [EffectPass(control: Self.control(kind: .monochrome, amount))]
         case .vignette(let amount):
+            let amount = Float(amount)
             return [EffectPass(control: Self.control(kind: .vignette, amount))]
         case .fringe(let amount):
+            let amount = Float(amount)
             return [EffectPass(control: Self.control(kind: .fringe, amount))]
         case .adjust(let brightness, let contrast, let saturation):
+            let (brightness, contrast, saturation) = (Float(brightness), Float(contrast), Float(saturation))
             return [
                 EffectPass(control: Self.control(kind: .adjust, brightness, contrast, saturation))
             ]
         case .threshold(let level):
+            let level = Float(level)
             // 比べるのは線形へ戻した値 (エンコードは単調なので答えは変わらない)。0 以下は 0 のまま
             return [EffectPass(control: Self.control(kind: .threshold, TransferFunction.decode(level)))]
         case .custom(let shader):
@@ -229,31 +237,39 @@ extension Effect {
     var accepted: Effect? {
         switch self {
         case .blur(let radius):
+            let radius = Float(radius)
             guard radius.isFinite else { return nil }
-            return .blur(radius: Self.clampRadius(radius))
+            return .blur(radius: Double(Self.clampRadius(radius)))
         case .bloom(let amount, let threshold, let radius):
+            let (amount, threshold, radius) = (Float(amount), Float(threshold), Float(radius))
             guard amount.isFinite, threshold.isFinite, radius.isFinite else { return nil }
             return .bloom(
-                amount: Self.clampAmount(amount), threshold: threshold,
-                radius: Self.clampRadius(radius))
+                amount: Double(Self.clampAmount(amount)), threshold: Double(threshold),
+                radius: Double(Self.clampRadius(radius)))
         case .invert(let amount):
+            let amount = Float(amount)
             guard amount.isFinite else { return nil }
-            return .invert(amount: Self.clampAmount(amount))
+            return .invert(amount: Double(Self.clampAmount(amount)))
         case .monochrome(let amount):
+            let amount = Float(amount)
             guard amount.isFinite else { return nil }
-            return .monochrome(amount: Self.clampAmount(amount))
+            return .monochrome(amount: Double(Self.clampAmount(amount)))
         case .vignette(let amount):
+            let amount = Float(amount)
             guard amount.isFinite else { return nil }
-            return .vignette(amount: Self.clampAmount(amount))
+            return .vignette(amount: Double(Self.clampAmount(amount)))
         case .fringe(let amount):
+            let amount = Float(amount)
             guard amount.isFinite else { return nil }
-            return .fringe(amount: Self.clampAmount(amount))
+            return .fringe(amount: Double(Self.clampAmount(amount)))
         case .adjust(let brightness, let contrast, let saturation):
+            let (brightness, contrast, saturation) = (Float(brightness), Float(contrast), Float(saturation))
             guard brightness.isFinite, contrast.isFinite, saturation.isFinite else { return nil }
             return self
         case .threshold(let level):
+            let level = Float(level)
             guard level.isFinite else { return nil }
-            return .threshold(level: Self.clampAmount(level))
+            return .threshold(level: Double(Self.clampAmount(level)))
         case .custom:
             return self
         }
@@ -290,17 +306,21 @@ extension Effect {
         }
         switch self {
         case .blur(let value):
+            let value = Float(value)
             return [radius(.roundedBlurRadius, "blur", value)].compactMap { $0 }
         case .bloom(let value, let threshold, let reach):
+            let (value, threshold, reach) = (Float(value), Float(threshold), Float(reach))
             guard threshold.isFinite else { return [] }
             return [amount(.roundedBloomAmount, "bloom", value), radius(.roundedBloomRadius, "bloom", reach)]
                 .compactMap { $0 }
-        case .invert(let value): return [amount(.roundedInvertAmount, "invert", value)].compactMap { $0 }
+        case .invert(let value): return [amount(.roundedInvertAmount, "invert", Float(value))].compactMap { $0 }
         case .monochrome(let value):
+            let value = Float(value)
             return [amount(.roundedMonochromeAmount, "monochrome", value)].compactMap { $0 }
-        case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", value)].compactMap { $0 }
-        case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", value)].compactMap { $0 }
+        case .vignette(let value): return [amount(.roundedVignetteAmount, "vignette", Float(value))].compactMap { $0 }
+        case .fringe(let value): return [amount(.roundedFringeAmount, "fringe", Float(value))].compactMap { $0 }
         case .threshold(let value):
+            let value = Float(value)
             guard value.isFinite, value < 0 || value > 1 else { return [] }
             return [
                 Rounding(

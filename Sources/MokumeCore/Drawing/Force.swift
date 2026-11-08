@@ -45,7 +45,7 @@
 ///   R の内側は距離に依らない引きなので、内側の粒は R の縁へ寄る
 public enum Force: Equatable, Sendable {
     /// どこにいても同じ向きへ引く。**(x, y, z) がそのまま加速度**になる。
-    case gravity(_ x: Float, _ y: Float, _ z: Float = 0)
+    case gravity(_ x: Double, _ y: Double, _ z: Double = 0)
     /// 1 点へ向かって引く。**強さを負にすると遠ざける**
     /// (``repel(_:_:_:strength:weakeningBeyond:)``)。
     ///
@@ -59,7 +59,7 @@ public enum Force: Equatable, Sendable {
     /// 組むと」)。R は 0 より大きい有限の値で、それ以外を渡すと注意を言って、弱まらない
     /// 力として効かせる。
     case attract(
-        _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil)
+        _ x: Double, _ y: Double, _ z: Double = 0, strength: Double, weakeningBeyond: Double? = nil)
     /// 粒ごとに違う向きへ揺らす。**同じ粒・同じフレームなら同じ揺れ**が出る。フレームは本体の
     /// フレームで数えるので、描き場所 (`createGraphics`) で呼んでも、同じ本体のフレームなら
     /// 本体で呼んだのと同じ揺れになる ([#1909](https://github.com/mokume-metal/mokume/issues/1909))。
@@ -68,13 +68,13 @@ public enum Force: Equatable, Sendable {
     /// いる間に置いたものは次のフレームに属する (ADR-0021 決定 4 の追補)。
     ///
     /// 加速度の各成分 (x・y・z) が、−`strength`…`strength` の一様な値になる。
-    case wander(strength: Float)
+    case wander(strength: Double)
     /// 1 点のまわりを回す (画面の面内)。
     ///
     /// (x, y) から粒への向き (面内) を **x 軸から y 軸へ 90° 回した向き**へ、大きさ
     /// `strength` の加速度。距離に依らず、奥行き (z) には効かない。y が下向きの画面では
     /// 時計回りになり、`strength` を負にすると逆へ回る。
-    case swirl(_ x: Float, _ y: Float, strength: Float)
+    case swirl(_ x: Double, _ y: Double, strength: Double)
     /// 速さに逆らう。1 秒あたりに削る割合で、0 なら効かない。
     ///
     /// 1 フレームで速度は e^(−`amount`·Δt) 倍になる — 1 秒で e^(−`amount`) 倍で、
@@ -82,7 +82,7 @@ public enum Force: Equatable, Sendable {
     /// (強いほど、その場に早く止まる)。ほかの力と組むと、それらで進めた速度に掛かる。
     ///
     /// `amount` は 0 以上。負の値は速さを増やしてしまうので、注意を言って効かせない。
-    case drag(_ amount: Float)
+    case drag(_ amount: Double)
 
     /// 1 点から遠ざける。
     ///
@@ -90,7 +90,7 @@ public enum Force: Equatable, Sendable {
     /// 1 つの計算なので、分岐を 2 本持たない。名前を 2 つ置いてあるのは、`strength` を負で書く
     /// より読みやすいためである。`weakeningBeyond` も同じ意味でそのまま渡る。
     public static func repel(
-        _ x: Float, _ y: Float, _ z: Float = 0, strength: Float, weakeningBeyond: Float? = nil
+        _ x: Double, _ y: Double, _ z: Double = 0, strength: Double, weakeningBeyond: Double? = nil
     ) -> Force {
         .attract(x, y, z, strength: -strength, weakeningBeyond: weakeningBeyond)
     }
@@ -123,11 +123,11 @@ public enum Force: Equatable, Sendable {
     /// [#1623]: https://github.com/mokume-metal/mokume/issues/1623
     var numbers: [Float] {
         switch self {
-        case .gravity(let x, let y, let z): [x, y, z]
-        case .attract(let x, let y, let z, let strength, _): [x, y, z, strength]
-        case .wander(let strength): [strength]
-        case .swirl(let x, let y, let strength): [x, y, strength]
-        case .drag(let amount): [amount]
+        case .gravity(let x, let y, let z): [x, y, z].map { Float($0) }
+        case .attract(let x, let y, let z, let strength, _): [x, y, z, strength].map { Float($0) }
+        case .wander(let strength): [strength].map { Float($0) }
+        case .swirl(let x, let y, let strength): [x, y, strength].map { Float($0) }
+        case .drag(let amount): [amount].map { Float($0) }
         }
     }
 
@@ -135,15 +135,20 @@ public enum Force: Equatable, Sendable {
         let code = Float(kind.rawValue)
         switch self {
         case .gravity(let x, let y, let z):
+            let (x, y, z) = (Float(x), Float(y), Float(z))
             return [code, x, y, z, 0, 0, 0, 0]
         case .attract(let x, let y, let z, let strength, let distance):
+            let (x, y, z, strength, distance) = (Float(x), Float(y), Float(z), Float(strength), distance.map { Float($0) })
             // **省いたら 0。** 0 は「弱まらない」と読まれ、いままでと同じ式を通る
             return [code, x, y, z, strength, distance ?? 0, 0, 0]
         case .wander(let strength):
+            let strength = Float(strength)
             return [code, 0, 0, 0, strength, 0, 0, 0]
         case .swirl(let x, let y, let strength):
+            let (x, y, strength) = (Float(x), Float(y), Float(strength))
             return [code, x, y, 0, strength, 0, 0, 0]
         case .drag(let amount):
+            let amount = Float(amount)
             return [code, 0, 0, 0, amount, 0, 0, 0]
         }
     }

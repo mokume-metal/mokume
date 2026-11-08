@@ -444,10 +444,10 @@ public final class Particles {
         switch force {
         case .attract(let x, let y, let z, let strength, let distance?)
         where !(distance.isFinite && distance > 0):
-            warnBadWeakeningDistance(distance)
+            warnBadWeakeningDistance(Float(distance))
             return .attract(x, y, z, strength: strength)
         case .drag(let amount) where amount < 0:
-            warnNegativeDrag(amount)
+            warnNegativeDrag(Float(amount))
             return nil
         default:
             return force

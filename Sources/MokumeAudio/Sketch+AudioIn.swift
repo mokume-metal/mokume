@@ -116,7 +116,8 @@ extension Sketch {
     /// - Throws: サンプルが 1 つも無いか、サンプルレートが正でないとき。使えるサンプル列を `setup()`・`draw()`・入力の
     ///   コールバックの外 (初期化子の中・終了処理の後・`Task` の中) で渡すと ``AudioFailure/notRunning(call:)`` を投げる
     ///   (プロセスはクラッシュしない)。
-    public func createAudioIn(samples: [Float], sampleRate: Float) throws(AudioFailure) -> AudioIn {
+    public func createAudioIn(samples: [Float], sampleRate: Double) throws(AudioFailure) -> AudioIn {
+        let sampleRate = Float(sampleRate)
         guard !samples.isEmpty else { throw .empty }
         guard sampleRate > 0, sampleRate.isFinite else { throw .invalidSampleRate(sampleRate) }
         return try attached(AudioFailure.self, calledAs: #function) {
