@@ -71,7 +71,7 @@ extension Canvas {
         // ([#1172])
         //
         // [#1172]: https://github.com/mokume-metal/mokume/issues/1172
-        let savedStacks = takeStacks()
+        let savedFloor = enterStackScope()
         // **組み立て中の形も記録の中で閉じる** ([#1607])。積み履歴と同じく、形の組み立ては
         // 釣り合う単位の 1 つである (ADR-0021 決定 4 の追補 (2026-09-15)・(2026-09-27))。
         // 切り離さないと、外で開いた形を記録の中の `beginShape()` が黙って上書きし、記録の中で
@@ -106,7 +106,7 @@ extension Canvas {
         if !savedRecording { refusedBeginDrawsInsideShape = 0 }
         // 記録の中で積んだまま抜けた段は、名指してから捨てる (#2399)
         warnIfStacksLeftOpen(before: "\(assemblyCall) { … }")
-        restore(savedStacks)
+        leaveStackScope(restoring: savedFloor)
         closeBatch()
         // 上で閉じた記録の最後の列は、旗 (`recordingShape`) を下ろした後に閉じるので、ここで戻す (#3857)
         firstSolidCamera = savedFirstSolidCamera

@@ -145,6 +145,119 @@ extension CanvasTests {
             #expect(canvas.warnings.hasWarned(.popWithoutPush))
         }
 
+        /// 床で切り離す (#3874) のは 3 つの降ろしのどれも同じ。中の降ろしは注意だけで、閉包の後の
+        /// 降ろしが外で積んだ段を取る。#3874 の本文の例 (`popMatrix`) を含む。
+        @Test("閉包の中の余分な降ろしは、どの口でも外の段を取らず、呼んだ行を名指す", arguments: ["popMatrix()", "popStyle()", "pop()"])
+        func extraPopOfEachKindLeavesOuterLevels(call: String) throws {
+            let canvas = try makeCanvas()
+            var poppedAt: UInt = 0
+            var afterClosure: (transform: Transform, fill: LinearRGBA)?
+            var afterOuterPop: (transform: Transform, fill: LinearRGBA)?
+            try canvas.draw {
+                canvas.fill(white)
+                switch call {
+                case "popMatrix()": canvas.pushMatrix()
+                case "popStyle()": canvas.pushStyle()
+                default: canvas.push()
+                }
+                canvas.translate(50, 0)
+                canvas.fill(blue)
+                canvas.push {
+                    switch call {
+                    case "popMatrix()": canvas.popMatrix(); poppedAt = #line
+                    case "popStyle()": canvas.popStyle(); poppedAt = #line
+                    default: canvas.pop(); poppedAt = #line
+                    }
+                }
+                afterClosure = (canvas.transform, canvas.style.fill)
+                switch call {
+                case "popMatrix()": canvas.popMatrix()
+                case "popStyle()": canvas.popStyle()
+                default: canvas.pop()
+                }
+                afterOuterPop = (canvas.transform, canvas.style.fill)
+            }
+            #expect(afterClosure?.transform == translated(50, 0), "閉包が戻す先が変わった")
+            #expect(afterClosure?.fill == blue, "閉包が戻す先が変わった")
+            let message = try #require(canvas.warnings.message(for: .popWithoutPush))
+            #expect(message.contains("\(call) at MokumeCoreTests/PushClosureTests.swift:\(poppedAt)"), "\(message)")
+            if call != "popStyle()" {
+                #expect(afterOuterPop?.transform == .identity, "閉包の中の \(call) が外の段を取った")
+            }
+            if call != "popMatrix()" {
+                #expect(afterOuterPop?.fill == white, "閉包の中の \(call) が外の段を取った")
+            }
+        }
+
+        /// 床は入れ子で積み重なり、内側の閉包を抜けると外側の床へ戻る (#3874)。どの段でも、余分な
+        /// 降ろしはその段の床で止まり、閉包を抜けた後の降ろしはその段で積んだ段を取る。
+        @Test("3 段の入れ子でも、内側の閉包は外側の閉包の段を取らず、抜けた後は外側の床へ戻る")
+        func nestedFloorsStackAndUnwind() throws {
+            let canvas = try makeCanvas()
+            var innermost: Transform?
+            var middlePop: Transform?
+            var middleExtraPop: Transform?
+            var outerPop: Transform?
+            var framePop: Transform?
+            try canvas.draw {
+                canvas.translate(1, 0)
+                canvas.pushMatrix()  // (1, 0) を積む
+                canvas.push {
+                    canvas.translate(10, 0)
+                    canvas.pushMatrix()  // (11, 0) を積む
+                    canvas.push {
+                        canvas.translate(100, 0)
+                        canvas.pushMatrix()  // (111, 0) を積む
+                        canvas.push {
+                            // この閉包の中には段が無い。床が無ければ (111, 0)・(11, 0) を取る
+                            canvas.popMatrix()
+                            canvas.popMatrix()
+                            innermost = canvas.transform
+                        }
+                        canvas.translate(1000, 0)
+                        canvas.popMatrix()  // この段で積んだ (111, 0) へ戻る
+                        middlePop = canvas.transform
+                        canvas.translate(2, 0)
+                        canvas.popMatrix()  // この段の床で止まる (外の (11, 0) を取らない)
+                        middleExtraPop = canvas.transform
+                    }
+                    canvas.translate(5, 0)
+                    canvas.popMatrix()  // この段で積んだ (11, 0) へ戻る
+                    outerPop = canvas.transform
+                }
+                canvas.translate(7, 0)
+                canvas.popMatrix()  // フレームで積んだ (1, 0) へ戻る
+                framePop = canvas.transform
+            }
+            #expect(innermost == translated(111, 0), "一番内側の降ろしが外側の閉包の段を取った")
+            #expect(middlePop == translated(111, 0), "内側の閉包を抜けた後に、中段の床へ戻っていない")
+            #expect(middleExtraPop == translated(113, 0), "中段の余分な降ろしが外側の閉包の段を取った")
+            #expect(outerPop == translated(11, 0), "外側の閉包の床へ戻っていない")
+            #expect(framePop == translated(1, 0), "フレームの床へ戻っていない")
+        }
+
+        /// フレームの頭は積み場と一緒に床も空にする (#3874)。床が残ると、新しいフレームの最初の段を
+        /// 降ろせない。
+        @Test("本体の中でフレームを閉じて開き直したら、新しいフレームの積み降ろしは床に止められない")
+        func frameHeadClearsTheFloor() throws {
+            let canvas = try makeCanvas()
+            var inNewFrame: Transform?
+            canvas.beginDraw()
+            canvas.pushMatrix()  // 床を 1 段の深さへ上げさせる
+            canvas.push {
+                canvas.endDraw()
+                canvas.beginDraw()
+                canvas.translate(4, 0)
+                canvas.pushMatrix()
+                canvas.translate(6, 0)
+                canvas.popMatrix()
+                inNewFrame = canvas.transform
+            }
+            canvas.endDraw()
+            #expect(inNewFrame == translated(4, 0), "新しいフレームの段を降ろせなかった")
+            #expect(!canvas.warnings.hasWarned(.popWithoutPush))
+        }
+
         @Test("本体の中で描き場所のフレームを閉じて開き直したら、閉じたフレームの状態を書き戻さない")
         func closedFrameIsNotWrittenBack() throws {
             let canvas = try makeCanvas()
