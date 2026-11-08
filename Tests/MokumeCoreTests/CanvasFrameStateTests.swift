@@ -326,6 +326,8 @@ extension CanvasTests {
                 // 途中の描き切りが既に描いた落とす側 (#1656)。塗り直しも捨てるので、その後で汚す。
                 // 描き切らせて汚すと、上の塗り直しの予定を描いてしまうので、中身を直に足す
                 ("frameCasters", end, all, { c, _ in c.frameCasters.chainValid = false }),
+                // 目印を描く視点 (#3857)。立体の列が閉じると残り、塗り直しで下ろす。途中の描き切りは越える
+                ("firstSolidCamera", end, all, { c, _ in c.firstSolidCamera = c.currentCamera }),
                 // シーンの記述
                 ("cameraStorage", sceneEnd, all, { c, _ in c.perspective() }),
                 ("drawsDebugGuides", sceneBoth, all, { c, _ in c.debugMode() }),

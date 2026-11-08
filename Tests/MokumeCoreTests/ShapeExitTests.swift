@@ -240,6 +240,8 @@ enum ShapeExit {
             "templateStrokeMatrix": "畳みの雛形を組む間だけ立つ。記録の間は畳まない (unused と同じ理由)",
             // #1656 (途中の描き切りの持ち越しと、置いた描き場所の写し)
             "frameCasters": flush, "casterSegmentsFree": resource,
+            // #3857 (目印を描く視点)
+            "firstSolidCamera": "フレームで最初に閉じた立体の列の視点。記録の中で閉じた列では書かない (recordingShape を見る) ので、組み立ての出入口では動かない",
             "placedPictureCopiesFree": resource, "placedPictureCopiesInUse": resource,
             "placedPictureEpoch": frame,
             "placedPictureCopiesMade": count, "placedPicturesCopied": count,

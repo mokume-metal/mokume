@@ -269,4 +269,112 @@ struct SolidLineAndGuideTests {
         #expect(canvas.style.stroke == mine)
         #expect(canvas.style.strokeWeight == 9)
     }
+
+    // MARK: - 目印を描く視点 (#3857)
+
+    /// 左手前から見る、``lookDown(_:)`` と違う視点。目印が引っぱられれば、格子と軸が別の所に出る。
+    private static func lookFromLeft(_ canvas: Canvas) {
+        canvas.camera(20, -90, 200, 100, 100, 0, 0, 1, 0)
+    }
+
+    /// HUD の前に視点を戻す (#3830 の移行手順)。
+    private static func resetCamera(_ canvas: Canvas) {
+        canvas.camera()
+        canvas.perspective()
+    }
+
+    /// 橙の箱を `x` に置く。
+    private static func placeBox(_ canvas: Canvas, x: Float) {
+        canvas.push()
+        canvas.translate(x, 80, -30)
+        canvas.box(30)
+        canvas.pop()
+    }
+
+    /// 見下ろす視点で `debugMode()` と光と塗りを書き、`scene` を描いた絵。
+    private func guidedScene(guides: Bool = true, _ scene: (Canvas) -> Void) throws -> DisplayImage {
+        let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: Self.size, height: Self.size)
+        try canvas.draw {
+            canvas.background(Self.black)
+            Self.lookDown(canvas)
+            if guides { canvas.debugMode() }
+            canvas.lights()
+            canvas.noStroke()
+            canvas.fill(.display(red: 0.95, green: 0.45, blue: 0.25))
+            scene(canvas)
+        }
+        return try canvas.target.encodeForDisplay()
+    }
+
+    @Test("立体を置いた後に camera() と perspective() で戻しても、目印は動かない")
+    func resettingTheCameraKeepsTheGuides() throws {
+        // **目印は、そのフレームで最初に立体を置いたときの視点と投影で描く** (#3857)。終わりの時点の
+        // 視点で描いていた頃は、戻した既定の視点から真横に見えて、格子が 1 本の線につぶれた
+        let kept = try guidedScene { Self.placeBox($0, x: 140) }
+        let reset = try guidedScene {
+            Self.placeBox($0, x: 140)
+            Self.resetCamera($0)
+        }
+        let unguided = try guidedScene(guides: false) { Self.placeBox($0, x: 140) }
+        #expect(kept != unguided, "検査の前提: 目印が出ている")
+        #expect(reset == kept, "視点を戻したら目印が動いた")
+    }
+
+    /// 見下ろす視点で 1 つ目の箱を置き、左手前の視点に替えて 2 つ目の箱を置く。
+    ///
+    /// - Parameters:
+    ///   - cut: 1 つ目の箱の後で、画素を読んで描き切るか (ADR-0021 決定 3)。
+    ///   - rewriteFirst: 最後に見下ろす視点を書き直して終えるか。
+    private func twoBoxesAcrossCameras(cut: Bool = false, rewriteFirst: Bool) throws -> DisplayImage {
+        try guidedScene { canvas in
+            Self.placeBox(canvas, x: 140)
+            if cut { canvas.loadPixels() }
+            Self.lookFromLeft(canvas)
+            Self.placeBox(canvas, x: 60)
+            if rewriteFirst { Self.lookDown(canvas) }
+        }
+    }
+
+    @Test("立体の途中で視点を替えても、目印は最初に立体を置いたときの視点で描く")
+    func theFirstSolidsCameraPlacesTheGuides() throws {
+        // 2 つ目の箱は左手前の視点で置く。目印が後の視点に引っぱられると、最後に見下ろす視点へ
+        // 書き直して終えた絵と食い違う
+        let ended = try twoBoxesAcrossCameras(rewriteFirst: false)
+        let rewritten = try twoBoxesAcrossCameras(rewriteFirst: true)
+        #expect(ended == rewritten, "後の視点に目印が引っぱられた")
+    }
+
+    @Test("途中の描き切りをまたいで視点を替えても、区切らずに描いたときと同じ目印になる")
+    func aCutKeepsTheGuides() throws {
+        // ADR-0021 決定 3。**目印の視点はフレームの最初の立体で決まり、区切りで決め直さない。**
+        // 区切りの後の最初の立体で決めると、区切りの有無で目印が割れる
+        let uncut = try twoBoxesAcrossCameras(rewriteFirst: false)
+        let cut = try twoBoxesAcrossCameras(cut: true, rewriteFirst: false)
+        #expect(cut == uncut, "区切りの有無で目印が変わった")
+        // 区切らずに描いた絵が終わりの時点の視点で描いていても、上の比較は一致してしまう。
+        // 最初の立体の視点 (見下ろす視点) で描いた絵とも比べる
+        let first = try twoBoxesAcrossCameras(rewriteFirst: true)
+        #expect(cut == first, "区切った後の視点に目印が引っぱられた")
+    }
+
+    @Test("立体の無いフレームは、debugMode() を camera() の前に書いても後に書いても、終わりの視点で描く")
+    func guidesWithoutSolidsFollowTheEndCamera() throws {
+        // 立体が無ければ、目印はいまと同じく終わりの時点の視点で描く (#3857)
+        func frame(guidesFirst: Bool) throws -> DisplayImage {
+            let canvas = try CanvasFixture.make(gpu: try RenderDevice(), width: Self.size, height: Self.size)
+            try canvas.draw {
+                canvas.background(Self.black)
+                if guidesFirst { canvas.debugMode() }
+                Self.lookFromLeft(canvas)
+                if !guidesFirst { canvas.debugMode() }
+            }
+            return try canvas.target.encodeForDisplay()
+        }
+        let before = try frame(guidesFirst: true)
+        let after = try frame(guidesFirst: false)
+        #expect(before == after)
+        // 左手前の視点で描いている (既定の視点の絵とも、見下ろす視点の絵とも違う)
+        let lookingDown = try guides { $0.debugMode() }
+        #expect(before != lookingDown.image, "目印が終わりの視点で描かれていない")
+    }
 }

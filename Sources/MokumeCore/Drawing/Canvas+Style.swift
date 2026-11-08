@@ -507,6 +507,9 @@ extension Canvas {
         batches[batches.count - 1].readsDepthOnly = open.isParticles && style.blendMode.isOrderIndependent
         // 落とす列は、影を焼く範囲の中心にする注視点を閉じた時点の視点から持つ (#3842)
         if style.castsShadow { batches[batches.count - 1].shadowFocus = currentCamera.center.simd }
+        // フレームで最初の立体の列は、目印の格子と軸を描く視点を残す (#3857)。組み立て中の形は
+        // フレームに置いたものではない
+        if firstSolidCamera == nil, !recordingShape { firstSolidCamera = currentCamera }
         // 特化できる列か (光の分岐を外す・ブレンドを外す) は、ここで 1 度だけ決める (#1795・#2366)。
         // 細い線の被覆は直前に移したので、その後
         let closed = batches.count - 1
