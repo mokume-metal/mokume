@@ -101,6 +101,53 @@ final class Tunables: Sketch {
     @Param(0...200) let radius: Double = 80
 }'
 
+# struct の中の @Param は止まる (#3876)。置き場 (ParamBox) は class なので、struct を写すと
+# 写しどうしが同じ値を指し、そのうえつまみにも出ない。入れ子は最も内側の型で判定するので、
+# スケッチの class の中に入れた struct も止まる
+check "struct の部品に書くと、スケッチの class に置くよう名指しして止まる" fail "@Param goes on the sketch class" 'import mokume
+
+struct Brush: SketchPart {
+    @Param(1...80) var size: Float = 12
+}'
+
+check "スケッチの class に入れ子にした struct に書いても止まる" fail "@Param goes on the sketch class" 'import mokume
+
+final class Painting: Sketch {
+    struct Brush {
+        @Param(1...80) var size: Float = 12
+    }
+    var left = Brush()
+}'
+
+check "関数の中の局所の struct に書いても止まる" fail "@Param goes on the sketch class" 'import mokume
+
+final class Painting: Sketch {
+    func draw() {
+        struct Stamp {
+            @Param(1...80) var size: Float = 12
+        }
+        _ = Stamp()
+    }
+}'
+
+# class の部品と基底クラスは今までどおり組める。class の部品はつまみには出ないが、構文からは
+# スケッチの class と区別できない (準拠を extension で書ける) ので止めない (#3876)
+check "class の部品と基底クラスに書いた宣言は組み上がる" pass "" 'import mokume
+
+final class Brush: SketchPart {
+    @Param(1...80) var size: Float = 12
+}
+
+class Base: Sketch {
+    @Param(0...1) var opacity: Float = 1
+    required init() {}
+}
+
+final class Painting: Base {
+    @Param(0...200) var radius: Double = 80
+    var brush = Brush()
+}'
+
 # 複数の束縛と独自の get / set は、専用の診断で止まる (#3301)。型検査が落ちるだけでは足りず、
 # **mokume の診断の文言が出ている**ことまで見る — 一般のコンパイル失敗に化けても、利用者へ
 # 「どう書くか」が届かないため。期待の語は ParamMacro.Problem の message の固有の部分

@@ -117,7 +117,8 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
   | 本体 | 入口が 3 つになり、どれを使うかを文書で教える。`MokumeUI` が出す型は名指しの一覧になり、足すたびに判断する。`MokumeHost` は公開の口として版ごとの互換を保つ対象になる |
 
 - **検査の対象**: `make api` の `API_MODULES` と参照の面 (`REFERENCE_MODULES`) に、新しいモジュールが加わる。生の部品を `package` に下げると、`REFERENCE_OMIT` の名指しの多くが要らなくなる
-- **未実装** (2026-11-08): 決定 1〜3 はまだコードに無い。実装は [#3870](https://github.com/mokume-metal/mokume/issues/3870) (`MokumeHost`)・[#3871](https://github.com/mokume-metal/mokume/issues/3871) (`package` に下げる。#3870 の後)・[#3872](https://github.com/mokume-metal/mokume/issues/3872) (`MokumeUI`) が持つ。iOS ([#2605](https://github.com/mokume-metal/mokume/issues/2605)) の `SketchView` は #3872 の上に載せる
+- **実装済み** (2026-11-08): 決定 2 (`MokumeUI`) は [#3872](https://github.com/mokume-metal/mokume/issues/3872) で入った。名指しの一覧は `Sources/MokumeUI/Exports.swift` の 1 か所で、`import SwiftUI` と `import MokumeUI` だけのファイルが組めることを `Tests/MokumeUITests` が組んで確かめる。iOS ([#2605](https://github.com/mokume-metal/mokume/issues/2605)) の `SketchView` はこの上に載せる
+- **未実装** (2026-11-08): 決定 1 の `MokumeHost` と決定 3 はまだコードに無い。実装は [#3870](https://github.com/mokume-metal/mokume/issues/3870) (`MokumeHost`)・[#3871](https://github.com/mokume-metal/mokume/issues/3871) (`package` に下げる。#3870 の後) が持つ
 - [#2595](https://github.com/mokume-metal/mokume/issues/2595) (`LinearRGBA` → `Color`) は、この ADR の実装を待たない。`MokumeUI` は `Color` を再エクスポートしない
 
 > 破れたとき: 埋め込むファイルが `import mokume` を書かないと SwiftUI の部品に届かない形にする (`MokumeUI` が `MokumeCore` を丸ごと再エクスポートする、または必要な型を出し漏らす)。衝突がアプリの入口に戻ってくる。

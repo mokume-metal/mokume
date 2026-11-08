@@ -1385,6 +1385,18 @@ public final class Canvas {
     /// [#2462]: https://github.com/mokume-metal/mokume/issues/2462
     var drawsDebugGuides = false
 
+    /// このフレームで最初に閉じた立体の列の視点 (視点と投影)。目印の格子と軸はこれから描く
+    /// (``drawDebugGuides()``・[#3857])。`nil` はまだ立体の列を閉じていないこと。
+    ///
+    /// 書くのは ``closeSolidBatch()`` で、視点を替える口は違う視点なら列を閉じるので、閉じた時点の
+    /// 視点は形を置いた時点の視点である。**途中の描き切り (ADR-0021 決定 3) は越えて持ち越し**
+    /// (``discardAfterFlush(applyingEffects:)``)、塗り直しは先に置いた立体ごと捨てるので下ろす
+    /// (``discardPending(keepingCasters:)``)。**形の組み立て (`createShape { }`) で記録した立体では
+    /// 決めない** — 出口が入口の値へ戻す。影の範囲の中心 (``shadowFocus``・#3842) と同じ決め方。
+    ///
+    /// [#3857]: https://github.com/mokume-metal/mokume/issues/3857
+    var firstSolidCamera: Camera?
+
     /// いまフレームの中か (``draw(_:)`` の閉包の中か、``beginDraw()``〜``endDraw()`` の間)。
     ///
     /// シーンの記述 (光・視点) は、フレームの外で書かれてもどのフレームにも属さない。
@@ -3466,6 +3478,10 @@ public final class Canvas {
             releaseCasterSegments(frameCasters.segments)
             frameCasters.removeAll()
         }
+        // 目印を描く視点も、捨てた立体のものは使わない (#3857)。持ち越した落とす側を残す道 (形の出口の
+        // 安全網) でも下ろす — 控えた視点が、いま捨てた未描画の立体から来たかを見分けられない。途中の
+        // 描き切りは、ここを通った後に戻す (``discardAfterFlush(applyingEffects:)``)
+        firstSolidCamera = nil
         // 開いている列の種類は溜めたものではなく、次に置くものの向き先である。空かを見る
         // 側 (``hasNothingPending``) は読まない — 形の組み立ては種類を `.solid` のまま抜ける
         openSource = .flat
@@ -4264,7 +4280,8 @@ public final class Canvas {
         // 溜めたものも書いた画素もフレームを越えない。`defer` は投げても走るので、どの経路を
         // 通ってもここでフレームの外に落ちる (``leaveFrame()``)
         defer { leaveFrame() }
-        // 目印の格子と軸は、そのフレームに書いたものを置き終えてから、最後の視点で描く (#2462)。
+        // 目印の格子と軸は、そのフレームに書いたものを置き終えてから描く (#2462)。視点は、そのフレームで
+        // 最初に立体を置いたときのもの (#3857・``drawDebugGuides()``)。
         // 置くのはフレームの中なので、フレームの外へ落とす前に描く
         drawDebugGuides()
         isDrawing = false
@@ -5347,12 +5364,17 @@ public final class Canvas {
     /// (``skipsFlush(mirroringPixels:changesTarget:)``) も同じここを通る。**
     private func discardAfterFlush(applyingEffects: Bool) {
         var kept = FrameCasters()
+        // 目印を描く視点も、途中の描き切りを越えてフレームの最初の立体のものを保つ (#3857)
+        let keptCamera = firstSolidCamera
         if !applyingEffects {
             swap(&kept, &frameCasters)
             keepCasters(into: &kept)
         }
         discardFrame()
-        if !applyingEffects { frameCasters = kept }
+        if !applyingEffects {
+            frameCasters = kept
+            firstSolidCamera = keptCamera
+        }
     }
 
     /// 組み立ての段ごとの「積むか」。**段の入口の守りと、省く判定 (``skipsFlush(mirroringPixels:changesTarget:)``)
