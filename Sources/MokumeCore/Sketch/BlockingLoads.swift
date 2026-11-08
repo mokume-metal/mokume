@@ -50,7 +50,7 @@ extension SketchPart {
     /// 走っていないときの扱いは、その口が面を取るところで決まる。
     ///
     /// `package` なのは、音の口 (`MokumeAudio` の `loadSound(_:)`) も同じ控えへ言うためである。
-    package static func noticeBlockingLoad(_ call: String, instead: String?) {
-        activeRun(for: .make)?.blockingLoads.notice(call, instead: instead)
+    package func noticeBlockingLoad(_ call: String, instead: String?) {
+        activeRun(for: .make, from: self)?.blockingLoads.notice(call, instead: instead)
     }
 }

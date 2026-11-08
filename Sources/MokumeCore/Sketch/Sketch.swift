@@ -647,51 +647,74 @@ public struct SketchSettings: Equatable, Sendable {
 /// [ADR-0010] 決定 2 のとおり、**隠された裏口ではなく明示的に main actor 隔離された
 /// グローバル**として置く。隔離されている以上、可変であることは問題にならない。
 ///
-/// **書くのは ``SketchRuntime/withActiveRuntime(_:)`` だけ、読むのは ``activeRun(for:)`` だけ** ([#3846])。
+/// **書くのは ``SketchRuntime/withActiveRuntime(_:)`` だけ、読むのは ``activeRun(for:from:)`` だけ** ([#3846])。
 /// 語彙 (``SketchPart/circle(_:_:_:)``・``SketchPart/width`` など) はここを直に見ず、目的を名乗って
-/// ``activeRun(for:)`` から引く。
+/// ``activeRun(for:from:)`` から引く。
 ///
 /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
 /// [#3846]: https://github.com/mokume-metal/mokume/issues/3846
 @MainActor
 var runningSketch: SketchRuntime?
 
-/// 実行を引く目的。**目的ごとに引く順が違う** (``activeRun(for:)``)。
+/// 実行を引く目的。**目的ごとに引く順が違う** (``activeRun(for:from:)``)。
 ///
 /// 選び方は、外で呼んだときの倒し方 (``OutsideRun/Use``) と対になる。読み取りの口は ``read``、何もしない口は
 /// ``act``、型付きのエラーを投げる口・代わりの値を作って返す口は ``make``。外す口だけは倒し方 (`act`) によらず
-/// ``release(_:)`` で、持ち主を先に見る。
+/// ``release(_:)`` で、持ち主を先に見る。足して使うものを作る口は ``attach``、フレームの中かを問う所は ``frame``。
 enum RunPurpose {
-    /// 読む口 (``SketchPart/width``・``SketchPart/frameCount``・入力・時刻・``DrawLedger``)。差している実行だけを見る。
+    /// 読む口 (``SketchPart/width``・``SketchPart/frameCount``・入力・時刻)。**フレームの外の規則に乗る** (``activeRun(for:from:)``)。
     case read
     /// 描く・状態を書く口 (``SketchPart/circle(_:_:_:)``・``SketchPart/noLoop()``・``SketchPart/save(_:)``・
     /// 観測へ差し出す ``SketchPart/expose(_:_:)-(_,Double)`` など)。差している実行だけを見る。
     ///
-    /// **`Task` に持ち越した面へは倒れない。** `Task` から描けると、描く順が `Task` に番が回る時機で決まり、
-    /// 描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる (``LaunchingSketch``)。
+    /// **フレームの外からは描かせない。** 外 (ホストのコード・`Task`) から描けると、描く先の時刻が決まらず、描く順が
+    /// 外の呼び出しの時機で決まる。描画順を main actor の上で直列に確定させている性質 ([ADR-0010] の影響欄) が崩れる
+    /// (``LaunchingSketch``)。
     ///
     /// [ADR-0010]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0010-concurrency-model.md
     case act
-    /// 資源を作る口 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)`` など) と、走っている実行へ
-    /// 足して使うものを作る口 (音・通信)。差している実行を見る。
+    /// 資源を作る口 (``SketchPart/createGraphics(_:_:)``・``SketchPart/loadImage(_:)``・``SketchPart/createShape(_:)`` など)。
+    /// **フレームの外の規則に乗る** (``activeRun(for:from:)``)。
     ///
-    /// 待つ読み込みの口は、ここが `nil` のとき続けて `Task` に持ち越した面 (``LaunchingSketch/canvas``) へ倒れる
+    /// 待つ読み込みの口は、差している実行の次に `Task` に持ち越した面 (``LaunchingSketch/canvas``) を見る
     /// (``SketchPart/loadingCanvas(_:_:)``)。持ち越すのは実行ではなく面なので、ここでは返さない。
     case make
+    /// 走っている実行へ足して使うものを作る口 (音・通信・シリアル・ゲームパッド・MIDI)。差している実行だけを見る。
+    ///
+    /// **足す番は実行の側が決める。** `Task` からの頼みも、実行がフレームの頭で当てる (``AttachRequests``)。描く順と
+    /// 同じ理由で、外から足す時機を持ち込まないためである。ホストのコードから足す形は [#2671] で決める。
+    ///
+    /// [#2671]: https://github.com/mokume-metal/mokume/issues/2671
+    case attach
     /// 外す口 (``SketchPart/detach(_:)-(Inlet)``・入り口の `stop()`)。その差込口を足した実行 (``SeamHomes``) を
     /// 先に見て、無ければ差している実行を見る。足した実行を持ち主から引くので、`Task` の中からも外せる ([#2840])。
     ///
     /// [#2840]: https://github.com/mokume-metal/mokume/issues/2840
     case release(AnyObject)
+    /// フレームの中か、どのフレームか (``DrawLedger``・外の入り口が取り出したフレームの記録)。差している実行だけを見る。
+    /// フレームの外で何を返すかは読み手が決める (`MokumeGame` の `Scene.current` は最後に描いた場面を返して警告し、
+    /// 外の入り口はフレーム 0 と記録する)。
+    case frame
 }
 
 /// 走っている実行を、目的ごとの順で引く。**``runningSketch`` を読むのはここだけ** ([#3846])。
 ///
 /// | 目的 | 引く順 |
 /// | --- | --- |
-/// | ``RunPurpose/read``・``RunPurpose/act`` | 差している実行だけ |
-/// | ``RunPurpose/make`` | 差している実行 (待つ読み込みの口は、続けて `Task` に持ち越した面) |
+/// | ``RunPurpose/read``・``RunPurpose/make`` | 差している実行 → `receiver` が ``Sketch`` の実体なら、それに結ばれた実行 (``SketchHomes``) → 部品・値の型なら、走っている実行が 1 つだけのときそれ (``OutsideRun/solePresented``) |
+/// | ``RunPurpose/act``・``RunPurpose/attach``・``RunPurpose/frame`` | 差している実行だけ |
 /// | ``RunPurpose/release(_:)`` | 差込口を足した実行 → 差している実行 |
+///
+/// **差している実行を先に見る。** フレームの中 (`setup()`・`draw()`・入力のコールバック) では
+/// ``SketchRuntime/withActiveRuntime(_:)`` が自分を差すので、どの実行に向けるかは曖昧にならず、ここから先の規則は
+/// フレームの外 — ホストのコード (`SketchView` の隣のボタンの処理)・`Task`・走る前 — だけに効く ([#3847])。
+///
+/// - **``Sketch`` の実体は、自分に結ばれた実行だけを見る。** 止まった実行の実体や、まだ映していない実体は、他の
+///   実行を拾わない
+/// - **部品 (``SketchPart`` を名乗った値の型) と、`self` を持たない呼び出しは、走っている実行が 1 つだけならそれを
+///   使う** (#3847 の案 Y)。走る前 (部品の `init()`)・実行が 1 つも無いとき・2 つ以上のときは `nil` で、いまどおり
+///   既定へ倒れる。代償は、走っている実行の数で同じコードの結果が変わること。どの実行に向けるかを明示する口は、複数の
+///   同居を opt-in で足すとき ([#3802]) に、2 つ以上のときの警告の文面とあわせて足す
 ///
 /// 引けなければ `nil` を返すだけで、外で呼んだときにどう倒すか (0 を返して警告・何もせず警告・型付きのエラー・
 /// ``SketchPart/canvas`` の停止) は呼ぶ側 (``SketchPart/liveRuntime(_:_:)``・``SketchPart/resourceCanvas(_:_:)``
@@ -699,18 +722,30 @@ enum RunPurpose {
 ///
 /// **「実行は同時に 1 つ」の前提に立つ所。** 差している実行が無いとき、``DrawLedger/progress`` は最後に動いた
 /// 実行の目盛り (``DrawLedger``) へ倒れる。実行が 1 つなら、それがいまの実行だからである。複数の実行の同居を
-/// opt-in で足すとき ([#3802]) は、この倒れ方とあわせて、ここで引く順を決め直す。フレームの外の規則を変える段
-/// ([#3847]) が変えるのは ``RunPurpose/read``・``RunPurpose/make`` の順で、``RunPurpose/act`` は変えない。
+/// opt-in で足すとき ([#3802]) は、この倒れ方とあわせて、ここで引く順を決め直す。
+///
+/// - Parameters:
+///   - purpose: 何のために引くか。
+///   - receiver: 語彙を呼んだ `self` (語彙の道具が渡す)。**評価するのは、差している実行が無いときだけ。**
+///     フレームの中の呼び出しには負担を足さない。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [#3802]: https://github.com/mokume-metal/mokume/issues/3802
 /// [#3846]: https://github.com/mokume-metal/mokume/issues/3846
 /// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
 @MainActor
-func activeRun(for purpose: RunPurpose) -> SketchRuntime? {
+func activeRun(
+    for purpose: RunPurpose, from receiver: @autoclosure () -> (any SketchPart)? = nil
+) -> SketchRuntime? {
     switch purpose {
-    case .read, .act, .make: runningSketch
-    case .release(let seam): SeamHomes.runtime(of: seam) ?? runningSketch
+    case .act, .attach, .frame:
+        return runningSketch
+    case .release(let seam):
+        return SeamHomes.runtime(of: seam) ?? runningSketch
+    case .read, .make:
+        if let runtime = runningSketch { return runtime }
+        if let sketch = receiver() as? any Sketch { return SketchHomes.runtime(of: sketch) }
+        return OutsideRun.log.solePresented
     }
 }
 
@@ -771,18 +806,18 @@ extension SketchPart {
     ///
     /// 走る前 (部品の `init()` の中など) に読むと 0 を返し、1 度だけ警告する。面の大きさで
     /// 決まる値は ``Sketch/setup()`` の中で決める。
-    public var width: Float { Self.liveCanvas(.read(returning: "0"))?.width ?? 0 }
+    public var width: Float { liveCanvas(.read(returning: "0"))?.width ?? 0 }
     /// 出す高さ (座標の単位)。**細かさも書き出しの倍率も、変えても動かない。**
-    public var height: Float { Self.liveCanvas(.read(returning: "0"))?.height ?? 0 }
+    public var height: Float { liveCanvas(.read(returning: "0"))?.height ?? 0 }
 
     /// 実際に刻んでいる幅 (画素)。細かさが 1 で、書き出しの倍率 (`mokume render --scale`) も掛けていなければ
     /// ``width`` と同じ。倍率 2 なら ``width`` の 2 倍。
     ///
     /// ``pixels`` の索引はこちらの数である。断片 (塗りと効果) が受け取る位置と大きさは
     /// こちらではなく、座標と同じ出す画素 (``width``) で届く。
-    public var pixelWidth: Int { Self.liveCanvas(.read(returning: "0"))?.pixelWidth ?? 0 }
+    public var pixelWidth: Int { liveCanvas(.read(returning: "0"))?.pixelWidth ?? 0 }
     /// 実際に刻んでいる高さ (画素)。
-    public var pixelHeight: Int { Self.liveCanvas(.read(returning: "0"))?.pixelHeight ?? 0 }
+    public var pixelHeight: Int { liveCanvas(.read(returning: "0"))?.pixelHeight ?? 0 }
 
     /// いまの絵が、前のフレームの結果に依っているか。
     ///
@@ -798,11 +833,11 @@ extension SketchPart {
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
     public var usesFrameHistory: Bool {
-        Self.liveRuntime(.read(returning: "false"))?.canvas.usesFrameHistory ?? false
+        liveRuntime(.read(returning: "false"))?.canvas.usesFrameHistory ?? false
     }
 
     /// これまでに描いたフレームの数。最初の ``Sketch/draw()`` の最中は 1。
-    public var frameCount: Int { Self.liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }
+    public var frameCount: Int { liveRuntime(.read(returning: "0"))?.frameCount ?? 0 }
     /// いまのフレームの時刻 (秒)。最初のフレームは 0。
     ///
     /// **最初のフレームが 0 なのは時計 (``clock``) によらない。** 窓に出して動かしている間も、
@@ -859,7 +894,7 @@ extension SketchPart {
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
+    public var time: Float { liveRuntime(.read(returning: "0"))?.time ?? 0 }
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。入り口・部品が、再生位置や起点といった**状態**を
     /// 進めるための秒である。**描く値には ``time`` を使う。**
     ///
@@ -893,7 +928,7 @@ extension SketchPart {
     ///
     /// ADR-0045 決定 9 の 2026-10-18 と 2026-10-20 の改訂が正典である
     /// ([ADR-0045](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0045-game-direction.md))。
-    public var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
+    public var authorTime: Float { liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
     /// 前のフレームからの経過 (**秒**)。
     ///
     /// **p5.js の `deltaTime` はミリ秒で、単位が 1000 倍違う。** p5.js から写した係数は 1000 倍して
@@ -940,7 +975,7 @@ extension SketchPart {
     /// - **実時間の時計では揃わない。** 刻み方が実行ごとに違い、同じ合計時間でも刻み方が違えば
     ///   結果が変わる。フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない — 揃えたい
     ///   ものは ``time`` から導く ([ADR-0025] 決定 6)
-    public var deltaTime: Float { Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
+    public var deltaTime: Float { liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
     /// ``time`` がどこから来ているか。
     ///
     /// 窓に出して動かしている間は、既定で ``Clock/wallClock`` (実際に流れた時間) で、書き出し
@@ -960,7 +995,7 @@ extension SketchPart {
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    public var clock: Clock { Self.liveRuntime(.read(returning: ".wallClock"))?.clock ?? .wallClock }
+    public var clock: Clock { liveRuntime(.read(returning: ".wallClock"))?.clock ?? .wallClock }
 
     // 描画 API が Sketch+*.swift に分かれているので private にはできない。
     // 公開もしない — 利用者が触る面ではない。
@@ -973,15 +1008,19 @@ extension SketchPart {
     /// 以前はここが `fatalError` で、`struct Player: SketchPart` の `init()` で `width` を
     /// 読むだけで窓が開かずに落ちた ([#2265])。
     ///
+    /// **実体のメソッドなのは、呼んだ `self` を渡すため** ([#3847])。フレームの外の読み取りと資源の口は、`self` が
+    /// スケッチの実体ならその実行を、部品なら映している唯一の実行を引く (``activeRun(for:from:)``)。
+    ///
     /// - Parameters:
     ///   - use: 外から呼ばれたとき、どう倒すか。警告の文面を選ぶ。
     ///   - call: 警告に載せる口の名前。呼ぶ側の `#function` が入る。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
+    /// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
     @MainActor
-    static func liveRuntime(_ use: OutsideRun.Use = .act, _ call: String = #function) -> SketchRuntime? {
-        guard let runtime = activeRun(for: use.purpose) else {
+    func liveRuntime(_ use: OutsideRun.Use = .act, _ call: String = #function) -> SketchRuntime? {
+        guard let runtime = activeRun(for: use.purpose, from: self) else {
             OutsideRun.log.warn(call, use)
             return nil
         }
@@ -990,7 +1029,7 @@ extension SketchPart {
 
     /// 走っている実行の面。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
     @MainActor
-    static func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
+    func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
         liveRuntime(use, call)?.activeCanvas
     }
 
@@ -1011,10 +1050,10 @@ extension SketchPart {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#2683]: https://github.com/mokume-metal/mokume/issues/2683
     @MainActor
-    static func resourceCanvas<Failure: NotRunningFailure>(
+    func resourceCanvas<Failure: NotRunningFailure>(
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
-        guard let runtime = activeRun(for: .make) else {
+        guard let runtime = activeRun(for: .make, from: self) else {
             // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
             OutsideRun.log.warn(call, .thrown)
             throw Failure.notRunning(call: call)
@@ -1025,10 +1064,10 @@ extension SketchPart {
     /// 待つ読み込みの口が使う面。**走っていなくても、走っている実行の中で起こされた
     /// `Task` からなら、その実行の面を返す** (``LaunchingSketch``)。
     ///
-    /// 先に見るのは ``runningSketch`` で、これまで動いていた経路は何も変わらない。
-    /// 持ち越した面へ倒れるのは、``runningSketch`` が外れた後の `Task` だけである。
+    /// 引く順は、差している実行 → 持ち越した面 → フレームの外の規則 (``activeRun(for:from:)`` の
+    /// ``RunPurpose/make``)。`Task` は、起こした実行の面を、映している実行より先に見る。
     ///
-    /// 走っている実行から起こされていない所 (`init`・後片付けの後・`Task.detached`) では、
+    /// どれでも引けない所 (走る前・後片付けの後・映している実行が無いときの `Task.detached`) では、
     /// どの面へ読み込むかが決まらず、返す資源を作れない。そこでは ``resourceCanvas(_:_:)`` と
     /// 同じく、口ごとに 1 度だけ警告して `notRunning(call:)` を投げる。
     ///
@@ -1037,10 +1076,13 @@ extension SketchPart {
     ///   - call: エラーに載せる口の名前。呼ぶ側の `#function` が入り、
     ///     ``OutsideRun/waitingLoads`` のどれかである。
     @MainActor
-    static func loadingCanvas<Failure: NotRunningFailure>(
+    func loadingCanvas<Failure: NotRunningFailure>(
         _ failure: Failure.Type, _ call: String = #function
     ) throws(Failure) -> Canvas {
-        guard let canvas = activeRun(for: .make)?.canvas ?? LaunchingSketch.canvas else {
+        guard
+            let canvas = activeRun(for: .frame)?.canvas ?? LaunchingSketch.canvas
+                ?? activeRun(for: .make, from: self)?.canvas
+        else {
             OutsideRun.log.warn(call, .thrown)
             throw Failure.notRunning(call: call)
         }
@@ -1085,13 +1127,13 @@ extension SketchPart {
     package func requireSurface<Failure: NotRunningFailure>(
         _ failure: Failure.Type, calledAs call: String
     ) throws(Failure) {
-        _ = try Self.resourceCanvas(failure, call)
+        _ = try resourceCanvas(failure, call)
     }
 
     /// ``createImage(_:_:)`` と同じ絵を作る。面を取れないときは `call` の名前で投げる。
     package func createImage(
         _ width: Int, _ height: Int, calledAs call: String
     ) throws(ImageFailure) -> Image {
-        try Self.resourceCanvas(ImageFailure.self, call).createImage(width, height)
+        try resourceCanvas(ImageFailure.self, call).createImage(width, height)
     }
 }

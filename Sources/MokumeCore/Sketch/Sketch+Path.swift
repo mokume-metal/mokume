@@ -38,7 +38,7 @@ extension SketchPart {
     /// 警告する。中身は呼ばれる。
     // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path)。createPath を呼ぶ作例は #2432 (破線) が持つ。参照スケッチ type-and-path は Path(textOutline) で道を作る)
     public func createPath(_ body: () -> Void) -> Path {
-        guard let canvas = Self.liveCanvas(.make(returning: "an empty path")) else {
+        guard let canvas = liveCanvas(.make(returning: "an empty path")) else {
             body()
             return Path()
         }
@@ -62,7 +62,7 @@ extension SketchPart {
     /// ``createPath(_:)`` の中で呼ぶと、描かずに、外の道へ部分道を足す。
     // shot: 撮れない 道に沿って動く粒は参照スケッチ type-and-path が、破線は #2432 が示す。同じ beginShape との画素の一致は PathTests が見る
     public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.shape(path, x, y)
     }
 }

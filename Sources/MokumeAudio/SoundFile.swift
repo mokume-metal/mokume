@@ -856,7 +856,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// [#3125]: https://github.com/mokume-metal/mokume/issues/3125
     func noticeRereadForTrack() {
         guard let owner, owner.isOnScreen else { return }
-        type(of: owner).noticeBlockingLoad(
+        owner.noticeBlockingLoad(
             "beginRecord() on a sketch with a SoundFile (the file is read again for the recording)",
             instead: nil)
     }
@@ -869,7 +869,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// [#2601]: https://github.com/mokume-metal/mokume/issues/2601
     private func loadPlayer(through flow: SoundFlow) {
         if let owner {
-            type(of: owner).noticeBlockingLoad(
+            owner.noticeBlockingLoad(
                 "play() or loop() on a SoundFile attached again", instead: nil)
         }
         switch reloadBuffer() {

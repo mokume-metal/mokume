@@ -270,7 +270,7 @@ extension SketchPart {
         // 走っていなければ、形を記録する面が無い。投げない口なので止めずに空の形を返し、1 度だけ
         // 警告する (#2683・#2265 の決定)。中身は呼ぶ — 中の語彙も同じ控えへ言い、何を呼んでいたかが
         // 警告に残る
-        guard let canvas = Self.liveCanvas(.make(returning: "an empty shape")) else {
+        guard let canvas = liveCanvas(.make(returning: "an empty shape")) else {
             body()
             return .empty
         }
@@ -372,7 +372,7 @@ extension SketchPart {
     // shot: 1 snippet=276142f3
     // shot: 後で撮る
     public func shape(_ shape: Shape, at placements: [Placement]) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: placements)
     }
 
@@ -475,7 +475,7 @@ extension SketchPart {
     ///   直れば、そのまま置かれるようになる
     // shot: 後で撮る
     public func shape(_ shape: Shape, at positions: Numbers, layout: Placement.Layout) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: positions, layout: layout)
     }
 
@@ -532,7 +532,7 @@ extension SketchPart {
     /// 置き直すので、置く数だけ描く回数が増える。
     // shot: 1 snippet=73a8868f
     public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)
     }

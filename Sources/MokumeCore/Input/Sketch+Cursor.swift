@@ -45,7 +45,7 @@ extension SketchPart {
     /// ので、頼みは絵と一緒に道具の窓へ渡され、各窓は自分が映している世代のスケッチの頼みに従う。
     /// 保存で作り直したスケッチが `noCursor()` を呼ばなければ、そこで矢印が戻る。
     public func noCursor() {
-        Self.liveRuntime()?.cursorHidingRequested = true
+        liveRuntime()?.cursorHidingRequested = true
     }
 
     /// ``noCursor()`` で隠した矢印のカーソルを、作品の面の上でも見せる。
@@ -54,6 +54,6 @@ extension SketchPart {
     /// 隠しは、これでは外れない (捕まえているあいだは隠れたまま)。窓の無い実行と、走っていない
     /// ときは何もしない。
     public func cursor() {
-        Self.liveRuntime()?.cursorHidingRequested = false
+        liveRuntime()?.cursorHidingRequested = false
     }
 }

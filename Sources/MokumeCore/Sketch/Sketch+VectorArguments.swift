@@ -19,7 +19,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 circle(_:_:_:)
     public func circle(_ center: Vector2, _ diameter: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.circle(center, diameter.asFloat)
     }
 
@@ -30,7 +30,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 point(_:_:)
     public func point(_ point: Vector2) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.point(point)
     }
 
@@ -41,7 +41,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 point(_:_:_:)
     public func point(_ point: Vector3) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.point(point)
     }
 
@@ -52,7 +52,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 line(_:_:_:_:)
     public func line(_ a: Vector2, _ b: Vector2) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.line(a, b)
     }
 
@@ -64,7 +64,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 line(_:_:_:_:_:_:)
     public func line(_ a: Vector3, _ b: Vector3) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.line(a, b)
     }
 
@@ -78,7 +78,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 参照 translate(_:_:)
     public func translate(_ offset: Vector2) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.translate(offset)
     }
 
@@ -92,7 +92,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 参照 translate(_:_:_:)
     public func translate(_ offset: Vector3) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.translate(offset)
     }
 
@@ -106,7 +106,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 vertex(_:_:)
     public func vertex(_ point: Vector2) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.vertex(point)
     }
 
@@ -120,7 +120,7 @@ extension SketchPart {
     /// ```
     // shot: 参照 vertex(_:_:_:)
     public func vertex(_ point: Vector3) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.vertex(point)
     }
 }

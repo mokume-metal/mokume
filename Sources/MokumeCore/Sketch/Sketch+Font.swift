@@ -37,7 +37,7 @@ extension SketchPart {
     ///   「走っていない」の場合は無い。
     // shot: 撮れない 読んだ書体を返す口で、書体のファイルはリポジトリに置けない。使った絵は textFont(_:) の説明が持つ
     public func loadFont(_ path: String) throws(FontFailure) -> Font {
-        Self.noticeBlockingLoad("loadFont(_:)", instead: nil)
+        noticeBlockingLoad("loadFont(_:)", instead: nil)
         return try Font.load(path)
     }
 }

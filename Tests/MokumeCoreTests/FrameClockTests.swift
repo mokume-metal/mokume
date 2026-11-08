@@ -682,10 +682,12 @@ struct SketchFrameClockTests {
         #expect(insideLog.messages.isEmpty, "draw() の中で走っていない口の警告が出た")
         #expect(runtime.blockingLoads.message(for: "loadImage(_:)") != nil)
 
-        // 外から呼ぶ (走っていない)。同期の読み込みの控えには何も増えない
+        // 外から呼ぶ (走っていない)。同期の読み込みの控えには何も増えない。呼ぶのは走らせていない実体 —
+        // 走っている実体のメソッドは、フレームの外でも自分の実行を読む (#3847)
         let outsideLog = OutsideRun()
+        let notRunning = Probe()
         OutsideRun.$current.withValue(outsideLog) {
-            for _ in 0..<3 { _ = try? inDraw.loadModel(url.path) }
+            for _ in 0..<3 { _ = try? notRunning.loadModel(url.path) }
         }
         #expect(outsideLog.messages.count == 1, "外の 3 回で \(outsideLog.messages.count) 行")
         #expect(runtime.blockingLoads.message(for: "loadModel(_:normalize:)") == nil)

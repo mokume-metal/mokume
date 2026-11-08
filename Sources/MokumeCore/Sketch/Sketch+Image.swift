@@ -167,8 +167,8 @@ extension SketchPart {
     // shot: 2 snippet=75a302ec
     // shot: 3 snippet=1417ff4a
     public func loadImage(_ path: String) throws(ImageFailure) -> Image {
-        Self.noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
-        return try Self.resourceCanvas(ImageFailure.self).loadImage(path)
+        noticeBlockingLoad("loadImage(_:)", instead: "requestImage(_:)")
+        return try resourceCanvas(ImageFailure.self).loadImage(path)
     }
 
     /// 絵を読む。**読んでいる間、他の仕事を止めない。**
@@ -264,7 +264,7 @@ extension SketchPart {
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadImage(_:)
     public func requestImage(_ path: String) async throws(ImageFailure) -> Image {
-        try await Self.loadingCanvas(ImageFailure.self).requestImage(path)
+        try await loadingCanvas(ImageFailure.self).requestImage(path)
     }
 
     /// 空の絵を作る。中身は透明。
@@ -308,7 +308,7 @@ extension SketchPart {
     ///   ``ImageFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=687277ab
     public func createImage(_ width: Int, _ height: Int) throws(ImageFailure) -> Image {
-        try Self.resourceCanvas(ImageFailure.self).createImage(width, height)
+        try resourceCanvas(ImageFailure.self).createImage(width, height)
     }
 
     /// 絵を等倍で置く。
@@ -349,7 +349,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=cbfaab04
     public func image(_ image: Image, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(image, x, y)
     }
@@ -388,7 +388,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=03eb840b
     public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(image, a, b, c, d)
     }
@@ -437,7 +437,7 @@ extension SketchPart {
         _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -581,7 +581,7 @@ extension SketchPart {
     // shot: 2 snippet=5313d2ba
     // shot: 3 snippet=c541dbbc
     // shot: 4 snippet=5b4df7b6
-    public func imageMode(_ mode: ShapeMode) { Self.liveCanvas()?.imageMode(mode) }
+    public func imageMode(_ mode: ShapeMode) { liveCanvas()?.imageMode(mode) }
 
     /// 絵に掛ける色。**掛け算なので、白は何も変えない。**
     ///
@@ -651,7 +651,7 @@ extension SketchPart {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=02205f1c
     // shot: 2 snippet=4729e607
-    public func tint(_ color: LinearRGBA) { Self.liveCanvas()?.tint(color) }
+    public func tint(_ color: LinearRGBA) { liveCanvas()?.tint(color) }
 
     /// 色掛けをやめる。
     ///
@@ -690,5 +690,5 @@ extension SketchPart {
     ///
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=88558c99
-    public func noTint() { Self.liveCanvas()?.noTint() }
+    public func noTint() { liveCanvas()?.noTint() }
 }

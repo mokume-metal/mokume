@@ -35,7 +35,7 @@ package struct DrawProgress: Sendable, Equatable {
 ///
 /// ``runningSketch`` は `setup()`・`draw()`・入力のコールバックが返ると外れる。外れた後に読まれても、
 /// **最後に動いた実行の目盛り**を返す。実行は同時に 1 つなので、それが「いまの実行」である。
-/// この前提は、実行を引く判断 (``activeRun(for:)``) の説明に書き、複数の同居を足すときはそこで決め直す。
+/// この前提は、実行を引く判断 (``activeRun(for:from:)``) の説明に書き、複数の同居を足すときはそこで決め直す。
 @MainActor
 package enum DrawLedger {
     /// 最後に動いた実行の目盛り。実行が差さるたび、`draw()` を始めるたびに更新される。
@@ -43,11 +43,11 @@ package enum DrawLedger {
     private static var runs = 0
 
     /// 走っている実行の中か (``runningSketch`` が差さっているか)。
-    package static var isInsideRun: Bool { activeRun(for: .read) != nil }
+    package static var isInsideRun: Bool { activeRun(for: .frame) != nil }
 
     /// いまの目盛り。走っていれば走っている実行の、外なら最後に動いた実行の。実行がまだ無ければ run 0・回数 0。
     package static var progress: DrawProgress {
-        activeRun(for: .read)?.drawProgress ?? latest ?? DrawProgress(run: 0, draws: 0)
+        activeRun(for: .frame)?.drawProgress ?? latest ?? DrawProgress(run: 0, draws: 0)
     }
 
     /// 新しい実行の識別。

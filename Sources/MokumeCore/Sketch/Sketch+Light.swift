@@ -48,7 +48,7 @@ extension SketchPart {
     ///   ときや、止まっている間の入力のコールバックで置いた光はどのフレームにも
     ///   属さないので、警告して無視される。
     // shot: 1 snippet=5e98096a
-    public func ambientLight(_ color: LinearRGBA) { Self.liveCanvas()?.ambientLight(color) }
+    public func ambientLight(_ color: LinearRGBA) { liveCanvas()?.ambientLight(color) }
 
     /// 向きだけを持つ光を置く (無限に遠くから差す光)。
     ///
@@ -94,7 +94,7 @@ extension SketchPart {
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=97d91466
     public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.directionalLight(color, x, y, z)
     }
@@ -137,7 +137,7 @@ extension SketchPart {
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=ebd428d6
     public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.pointLight(color, x, y, z)
     }
@@ -226,7 +226,7 @@ extension SketchPart {
         _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
         angle: some ScalarConvertible = Float.pi / 6
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         canvas.spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -289,7 +289,7 @@ extension SketchPart {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 1 snippet=44052481
-    public func lights() { Self.liveCanvas()?.lights() }
+    public func lights() { liveCanvas()?.lights() }
 
     /// 置いた光をすべて取り除く。以降の立体は塗り 1 色で描かれる。
     ///
@@ -332,5 +332,5 @@ extension SketchPart {
     /// - Note: 光は**フレームを越えない**ので、フレームの外 (初期化のときなど) には取り除く
     ///   光が無い。そこで呼ぶと、光を置く口と同じく警告して無視される。
     // shot: 1 snippet=a55d02ef
-    public func noLights() { Self.liveCanvas()?.noLights() }
+    public func noLights() { liveCanvas()?.noLights() }
 }

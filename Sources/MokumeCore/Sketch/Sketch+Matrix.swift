@@ -65,7 +65,7 @@ extension SketchPart {
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=9c067b7f
     // shot: 2 snippet=ad0cc1bf
-    public func applyMatrix(_ matrix: Transform) { Self.liveCanvas()?.applyMatrix(matrix) }
+    public func applyMatrix(_ matrix: Transform) { liveCanvas()?.applyMatrix(matrix) }
 
     /// 積み重ねた変換を捨てて、何も変換しない状態へ戻す。
     ///
@@ -97,7 +97,7 @@ extension SketchPart {
     ///
     /// - Note: 変換は**フレームを越えない**。`draw()` の中で毎フレーム書く。`setup()` と止まっている間の入力のコールバックでも効き、その後に置いたものへ焼き付くが、呼び出しを抜けると戻る (`draw()` へは持ち越さない)。
     // shot: 1 snippet=a95c28ee
-    public func resetMatrix() { Self.liveCanvas()?.resetMatrix() }
+    public func resetMatrix() { liveCanvas()?.resetMatrix() }
 
     /// いまの変換を積んでおく。
     ///
@@ -159,7 +159,7 @@ extension SketchPart {
     // shot: 1 snippet=ec08da66
     // shot: 2 snippet=f32daf1c
     public func pushMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "pushMatrix()")?.pushMatrix(fileID: fileID, line: line)
+        liveCanvas(.act, "pushMatrix()")?.pushMatrix(fileID: fileID, line: line)
     }
 
     /// 積んでおいた変換へ戻す。
@@ -194,7 +194,7 @@ extension SketchPart {
     /// - Note: 積んだ変換も**フレームを越えない** (`setup()` と止まっている間の入力のコールバックでも積めるが、その呼び出しを抜けるときに戻す)。フレームの頭で空に戻る。
     // shot: 1 snippet=2d914404
     public func popMatrix(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "popMatrix()")?.popMatrix(fileID: fileID, line: line)
+        liveCanvas(.act, "popMatrix()")?.popMatrix(fileID: fileID, line: line)
     }
 
     /// 変換とスタイルの**両方**を積んでおく。
@@ -242,7 +242,7 @@ extension SketchPart {
     ///   加算が効き続ける)。変換だけは頭で戻る。
     // shot: 1 snippet=2665a2c3
     public func push(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "push()")?.push(fileID: fileID, line: line)
+        liveCanvas(.act, "push()")?.push(fileID: fileID, line: line)
     }
 
     /// 積んでおいた変換とスタイルの両方へ戻す。
@@ -289,7 +289,7 @@ extension SketchPart {
     ///   変換だけは頭で戻る。
     // shot: 1 snippet=45e99a0e
     public func pop(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "pop()")?.pop(fileID: fileID, line: line)
+        liveCanvas(.act, "pop()")?.pop(fileID: fileID, line: line)
     }
 
     /// 閉包の間だけ変換とスタイルを積み、閉包を抜けたら戻す。
@@ -334,7 +334,7 @@ extension SketchPart {
     ///   コールバックの中でも、同じく閉包の範囲で変換とスタイルを戻す。
     // shot: 1 snippet=720a4372
     public func push(_ body: () throws -> Void) rethrows {
-        guard let canvas = Self.liveCanvas(.act, "push()") else { return try body() }
+        guard let canvas = liveCanvas(.act, "push()") else { return try body() }
         try canvas.push(body)
     }
 }

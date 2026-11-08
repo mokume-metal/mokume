@@ -55,7 +55,7 @@ extension SketchPart {
     /// 初回だけ理由を知らせる。
     // shot: 1 snippet=45bd9950
     // shot: 2 snippet=f68cd749
-    public func background(_ color: LinearRGBA) { Self.liveCanvas()?.background(color) }
+    public func background(_ color: LinearRGBA) { liveCanvas()?.background(color) }
 
     /// これから描く図形の塗りの色。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -117,7 +117,7 @@ extension SketchPart {
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=a705bbfd
     // shot: 2 snippet=bedf025c
-    public func fill(_ color: LinearRGBA) { Self.liveCanvas()?.fill(color) }
+    public func fill(_ color: LinearRGBA) { liveCanvas()?.fill(color) }
 
     /// これから描く図形の塗りを、勾配にする。**塗りを止めていたら、呼んだ時点で再び塗るようになる。**
     ///
@@ -172,7 +172,7 @@ extension SketchPart {
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 後で撮る
-    public func fill(_ gradient: Gradient) { Self.liveCanvas()?.fill(gradient) }
+    public func fill(_ gradient: Gradient) { liveCanvas()?.fill(gradient) }
 
     /// これから引く線の色。**線を止めていたら、呼んだ時点で再び引くようになる。**
     ///
@@ -239,7 +239,7 @@ extension SketchPart {
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=4c4fa3bb
     // shot: 2 snippet=fbfeb1bb
-    public func stroke(_ color: LinearRGBA) { Self.liveCanvas()?.stroke(color) }
+    public func stroke(_ color: LinearRGBA) { liveCanvas()?.stroke(color) }
 
     /// これから引く線の太さ (画素)。
     ///
@@ -293,7 +293,7 @@ extension SketchPart {
     // shot: 1 snippet=1f8ee8eb
     // shot: 2 snippet=edd890f7
     public func strokeWeight(_ weight: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let weight = weight.asFloat
         canvas.strokeWeight(weight)
     }
@@ -323,7 +323,7 @@ extension SketchPart {
     ///
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=8bdd372c
-    public func noFill() { Self.liveCanvas()?.noFill() }
+    public func noFill() { liveCanvas()?.noFill() }
 
     /// 線を引かない。図形の輪郭も出なくなる。
     ///
@@ -350,7 +350,7 @@ extension SketchPart {
     ///
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=ddde199c
-    public func noStroke() { Self.liveCanvas()?.noStroke() }
+    public func noStroke() { liveCanvas()?.noStroke() }
 
     /// 線の端の形。既定は丸。
     ///
@@ -431,7 +431,7 @@ extension SketchPart {
     // shot: 1 snippet=a8be414a
     // shot: 2 snippet=1620a3e0
     // shot: 3 snippet=ee04ab7c
-    public func strokeCap(_ cap: StrokeCap) { Self.liveCanvas()?.strokeCap(cap) }
+    public func strokeCap(_ cap: StrokeCap) { liveCanvas()?.strokeCap(cap) }
 
     /// これから引く線を、破線にする。`length` が線のある長さ、`gap` が空く長さ (どちらも画素)。
     ///
@@ -517,7 +517,7 @@ extension SketchPart {
     /// - Note: 破線は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 後で撮る
     public func strokeDash(_ length: some ScalarConvertible, _ gap: some ScalarConvertible) {
-        Self.liveCanvas()?.strokeDash(length, gap)
+        liveCanvas()?.strokeDash(length, gap)
     }
 
     /// 線を破線にするのをやめ、実線へ戻す。
@@ -526,7 +526,7 @@ extension SketchPart {
     ///
     /// - Note: 破線は**フレームを越える**。実線へ戻すのも、書き換えるまで残る。
     // shot: 参照 strokeDash(_:_:)
-    public func noStrokeDash() { Self.liveCanvas()?.noStrokeDash() }
+    public func noStrokeDash() { liveCanvas()?.noStrokeDash() }
 
     /// 描くものを、この矩形の中だけに収める。座標の読み方は ``rectMode(_:)`` が決める。
     ///
@@ -740,7 +740,7 @@ extension SketchPart {
     // shot: 5 snippet=b84ca0ec image=b953abec6aa746c5
     // shot: 6 snippet=bd0ccc48 image=2612ab9e73926215
     public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)
     }
@@ -830,7 +830,7 @@ extension SketchPart {
     // shot: 1 snippet=32d0c68d image=7dce5531afccccd4
     // shot: 2 snippet=7ae1d33c image=e65c50c9e67da342
     public func clip(_ body: () -> Void) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.clip(body)
     }
 
@@ -866,7 +866,7 @@ extension SketchPart {
     /// - Note: 切り抜きは**フレームを越えない**ので、フレームの外 (初期化のときなど) には
     ///   外す切り抜きが無い。そこで呼ぶと、``clip(_:_:_:_:)`` と同じく警告して無視される。
     // shot: 1 snippet=ac662413
-    public func noClip() { Self.liveCanvas()?.noClip() }
+    public func noClip() { liveCanvas()?.noClip() }
 
     /// 描くものを、下にある絵とどう混ぜるか。既定は上に重ねる。
     ///
@@ -1044,7 +1044,7 @@ extension SketchPart {
     // shot: 4 snippet=b5a144fd
     // shot: 5 snippet=43e3e4b7
     // shot: 6 snippet=5a37d22e
-    public func blendMode(_ mode: BlendMode) { Self.liveCanvas()?.blendMode(mode) }
+    public func blendMode(_ mode: BlendMode) { liveCanvas()?.blendMode(mode) }
 
     /// 線の折れ目の形。既定は尖らせる形。
     ///
@@ -1146,7 +1146,7 @@ extension SketchPart {
     // shot: 1 snippet=dc0e1fbc
     // shot: 2 snippet=449f0a0c
     // shot: 3 snippet=6ea17290
-    public func strokeJoin(_ join: StrokeJoin) { Self.liveCanvas()?.strokeJoin(join) }
+    public func strokeJoin(_ join: StrokeJoin) { liveCanvas()?.strokeJoin(join) }
 
     /// いまのスタイルを積んでおく。積むのは次の設定である。
     ///
@@ -1196,7 +1196,7 @@ extension SketchPart {
     ///   降ろし忘れても次のフレームへは積み上がらない。
     // shot: 1 snippet=793f4c1c
     public func pushStyle(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "pushStyle()")?.pushStyle(fileID: fileID, line: line)
+        liveCanvas(.act, "pushStyle()")?.pushStyle(fileID: fileID, line: line)
     }
 
     /// 積んでおいたスタイルへ戻す。
@@ -1259,6 +1259,6 @@ extension SketchPart {
     // shot: 1 snippet=e3863d1c
     // shot: 2 snippet=967253ab
     public func popStyle(fileID: StaticString = #fileID, line: UInt = #line) {
-        Self.liveCanvas(.act, "popStyle()")?.popStyle(fileID: fileID, line: line)
+        liveCanvas(.act, "popStyle()")?.popStyle(fileID: fileID, line: line)
     }
 }

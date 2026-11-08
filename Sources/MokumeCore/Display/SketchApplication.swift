@@ -283,10 +283,32 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     /// **入っていれば 2 つ目の ``run()`` を断り** (#2027)、2 つ目の ``SketchView`` は待たせる。
     ///
     /// 空になったら、待っている ``SketchView`` の先頭を起こす (``scheduleEmbeddedWake()``)。
+    ///
+    /// **入っている間、その実行を映している実行として控える** (``OutsideRun/present(_:)``・#3847)。フレームの外で部品から
+    /// 語彙を呼んだとき、映している実行が 1 つだけならそれへ向けるためである。
     private static var running: SketchApplication? {
         didSet {
+            if oldValue !== running {
+                oldValue?.endPresenting()
+                running?.beginPresenting()
+            }
             if oldValue != nil, running == nil { scheduleEmbeddedWake() }
         }
+    }
+
+    /// 映している実行を載せた控え。**降ろすときも同じ控えから降ろす** — 検査が控えを差して載せたものを、
+    /// 差していない所から降ろすと、プロセスの控えを探して残る。
+    private var presentedIn: OutsideRun?
+
+    private func beginPresenting() {
+        let log = OutsideRun.log
+        log.present(runtime)
+        presentedIn = log
+    }
+
+    private func endPresenting() {
+        presentedIn?.withdraw(runtime)
+        presentedIn = nil
     }
 
     /// 待っている ``SketchView`` を起こす仕事を、main の次の回へ送ってあるか。

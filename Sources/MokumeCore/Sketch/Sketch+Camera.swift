@@ -50,7 +50,7 @@ extension SketchPart {
     ///   ときや、止まっている間の入力のコールバックで書いた視点はどのフレームにも
     ///   属さないので、警告して無視される。
     // shot: 1 snippet=20da78b0 image=f063dd0f16fbc4c0
-    public func camera() { Self.liveCanvas()?.camera() }
+    public func camera() { liveCanvas()?.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
     ///
@@ -117,7 +117,7 @@ extension SketchPart {
         _ centerX: some ScalarConvertible, _ centerY: some ScalarConvertible, _ centerZ: some ScalarConvertible,
         _ upX: some ScalarConvertible, _ upY: some ScalarConvertible, _ upZ: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
         canvas.camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
     }
@@ -164,7 +164,7 @@ extension SketchPart {
     // shot: 1 snippet=4861898c
     // shot: 後で撮る
     public var currentCamera: Camera {
-        Self.liveCanvas(.read(returning: "the camera that fits a 1×1 surface"))?.currentCamera
+        liveCanvas(.read(returning: "the camera that fits a 1×1 surface"))?.currentCamera
             ?? Camera.fitting(width: 1, height: 1)
     }
 
@@ -215,7 +215,7 @@ extension SketchPart {
     /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
     ///   ``camera()`` と ``perspective()`` で戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=1911c7b0
-    public func setCamera(_ camera: Camera) { Self.liveCanvas()?.setCamera(camera) }
+    public func setCamera(_ camera: Camera) { liveCanvas()?.setCamera(camera) }
 
     /// 透視投影を既定へ戻す。
     ///
@@ -253,7 +253,7 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=2f8f127f
-    public func perspective() { Self.liveCanvas()?.perspective() }
+    public func perspective() { liveCanvas()?.perspective() }
 
     /// 遠くのものほど小さく写す。
     ///
@@ -331,7 +331,7 @@ extension SketchPart {
     // shot: 1 snippet=9980d6cc
     // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
         canvas.perspective(fieldOfView, aspect, near, far)
     }
@@ -374,7 +374,7 @@ extension SketchPart {
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=3a4c652b
-    public func ortho() { Self.liveCanvas()?.ortho() }
+    public func ortho() { liveCanvas()?.ortho() }
 
     /// 距離によらず同じ大きさで写す。
     ///
@@ -440,7 +440,7 @@ extension SketchPart {
     public func ortho(
         _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
         canvas.ortho(left, right, bottom, top, near, far)
     }
@@ -490,7 +490,7 @@ extension SketchPart {
     ///   間の入力のコールバックで書くと、ほかのシーンの記述 (``camera()``・``lights()`` など) と
     ///   同じく警告して無視される。同じフレームで後から消すときは ``noDebugMode()``。
     // shot: 後で撮る
-    public func debugMode() { Self.liveCanvas()?.debugMode() }
+    public func debugMode() { liveCanvas()?.debugMode() }
 
     /// このフレームでは、``debugMode()`` の格子と軸を出さない。
     ///
@@ -507,5 +507,5 @@ extension SketchPart {
     ///
     /// - Note: ``debugMode()`` と同じくシーンの記述で、`draw()` の外で書くと警告して無視される。
     // shot: 参照 debugMode()
-    public func noDebugMode() { Self.liveCanvas()?.noDebugMode() }
+    public func noDebugMode() { liveCanvas()?.noDebugMode() }
 }

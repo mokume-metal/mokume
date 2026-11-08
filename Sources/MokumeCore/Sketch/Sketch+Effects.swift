@@ -202,7 +202,7 @@ extension SketchPart {
     // shot: 4 snippet=d6f7db6c
     // shot: 5 snippet=4e94538e
     // shot: 6 snippet=d2be289c
-    public func effects(_ effects: [Effect]) { Self.liveCanvas()?.effects(effects) }
+    public func effects(_ effects: [Effect]) { liveCanvas()?.effects(effects) }
 
     /// 呼んだ時点までに描いた絵に、効果を**その場で**掛ける。Processing の `filter()` に当たる。
     ///
@@ -276,7 +276,7 @@ extension SketchPart {
     /// 並びは ``effects(_:)`` と同じ ``Effect`` の値で、数でない値・無限や範囲の外の扱いも同じである。
     /// 効果を通せなかったときは、絵はそのままで、理由を 1 度だけ警告する。
     // shot: 後で撮る
-    public func filter(_ effects: [Effect]) { Self.liveCanvas()?.filter(effects) }
+    public func filter(_ effects: [Effect]) { liveCanvas()?.filter(effects) }
 
     /// 文字列から効果を作る。保存の拾い直しは効かない (在処が無いため)。
     ///
@@ -425,7 +425,7 @@ extension SketchPart {
     public func makeEffect(
         _ body: String, name: String = "effect", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try Self.resourceCanvas(ShaderFailure.self).makeEffect(body, name: name, values: values)
+        try resourceCanvas(ShaderFailure.self).makeEffect(body, name: name, values: values)
     }
 
     /// ファイルから効果を読み込む。
@@ -444,6 +444,6 @@ extension SketchPart {
     public func loadEffect(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> EffectShader {
-        try Self.resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
+        try resourceCanvas(ShaderFailure.self).loadEffect(path, values: values)
     }
 }
