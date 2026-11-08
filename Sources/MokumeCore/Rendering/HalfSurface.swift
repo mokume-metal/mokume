@@ -46,14 +46,14 @@ enum HalfSurface {
     /// CPU で面へ書く 1 画素。
     static func texel(_ color: LinearRGBA) -> SIMD4<Float16> {
         SIMD4(
-            Float16(component(color.red)), Float16(component(color.green)),
-            Float16(component(color.blue)), Float16(component(color.alpha)))
+            Float16(component(color.redValue)), Float16(component(color.greenValue)),
+            Float16(component(color.blueValue)), Float16(component(color.alphaValue)))
     }
 
     /// 塗り直す色 (パスの clear 色)。
     static func clearColor(_ color: LinearRGBA) -> MTLClearColor {
         MTLClearColor(
-            red: Double(component(color.red)), green: Double(component(color.green)),
-            blue: Double(component(color.blue)), alpha: Double(component(color.alpha)))
+            red: Double(component(color.redValue)), green: Double(component(color.greenValue)),
+            blue: Double(component(color.blueValue)), alpha: Double(component(color.alphaValue)))
     }
 }

@@ -122,8 +122,8 @@ final class CarvedStroke {
         guard let first else { return second }
         guard let second else { return first }
         return LinearRGBA(
-            premultipliedRed: first.red * second.red, green: first.green * second.green,
-            blue: first.blue * second.blue, alpha: first.alpha * second.alpha)
+            premultipliedRed: first.redValue * second.redValue, green: first.greenValue * second.greenValue,
+            blue: first.blueValue * second.blueValue, alpha: first.alphaValue * second.alphaValue)
     }
 
     /// 引いて積んだ頂点。最初に読んだときに組む。

@@ -118,7 +118,7 @@ extension SketchPart {
         _ upX: Double, _ upY: Double, _ upZ: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
+        let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
         canvas.camera(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
     }
 
@@ -332,7 +332,7 @@ extension SketchPart {
     // shot: 2 snippet=3ae634c3
     public func perspective(_ fieldOfView: Double, _ aspect: Double, _ near: Double, _ far: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
+        let (fieldOfView, aspect, near, far) = (fieldOfView, aspect, near, far)
         canvas.perspective(fieldOfView, aspect, near, far)
     }
 
@@ -441,7 +441,7 @@ extension SketchPart {
         _ left: Double, _ right: Double, _ bottom: Double, _ top: Double, _ near: Double, _ far: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
+        let (left, right, bottom, top, near, far) = (left, right, bottom, top, near, far)
         canvas.ortho(left, right, bottom, top, near, far)
     }
 

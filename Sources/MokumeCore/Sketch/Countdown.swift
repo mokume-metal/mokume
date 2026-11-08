@@ -96,7 +96,7 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public init(seconds: Double) {
-        let value = seconds.asFloat
+        let value = Float(seconds)
         if value.isFinite, value >= 0 {
             self.seconds = value
         } else {
@@ -111,7 +111,8 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
     /// 走っているスケッチの外 (プロパティの初期値・`Task` の中など) で読むと、長さそのものを返し、
     /// 1 度だけ警告する。
     @MainActor
-    public var remaining: Float {
+    public var remaining: Double { Double(remainingValue) }
+    @MainActor var remainingValue: Float {
         guard let elapsed = Self.elapsed("Countdown.remaining", returning: "the full length") else {
             return seconds
         }

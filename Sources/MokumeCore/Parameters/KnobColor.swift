@@ -11,13 +11,13 @@ enum KnobColor {
     /// 乗算を戻してから符号化する — 作業空間の成分はアルファ乗算済みなので、そのまま
     /// 符号化すると透明な色ほど暗く見える。
     static func display(of value: LinearRGBA) -> Color {
-        let alpha = value.alpha
+        let alpha = value.alphaValue
         guard alpha > 0 else { return Color(.displayP3, red: 0, green: 0, blue: 0, opacity: 0) }
         return Color(
             .displayP3,
-            red: Double(TransferFunction.encode(value.red / alpha)),
-            green: Double(TransferFunction.encode(value.green / alpha)),
-            blue: Double(TransferFunction.encode(value.blue / alpha)),
+            red: Double(TransferFunction.encode(value.redValue / alpha)),
+            green: Double(TransferFunction.encode(value.greenValue / alpha)),
+            blue: Double(TransferFunction.encode(value.blueValue / alpha)),
             opacity: Double(alpha))
     }
 

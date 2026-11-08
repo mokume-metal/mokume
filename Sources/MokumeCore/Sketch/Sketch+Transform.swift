@@ -85,7 +85,7 @@ extension SketchPart {
     // shot: 3 snippet=58a41dae
     public func translate(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.translate(x, y)
     }
 
@@ -171,7 +171,7 @@ extension SketchPart {
     // shot: 3 snippet=8ea7daa7
     public func rotate(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.rotate(radians)
     }
 
@@ -258,7 +258,7 @@ extension SketchPart {
     // shot: 3 snippet=5ae25e26
     public func scale(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.scale(x, y)
     }
 
@@ -275,7 +275,7 @@ extension SketchPart {
     // shot: 参照 scale(_:_:)
     public func scale(_ s: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let s = s.asFloat
+        let s = s
         canvas.scale(s)
     }
 
@@ -313,7 +313,7 @@ extension SketchPart {
     // shot: 1 snippet=ceef2b2d
     public func translate(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.translate(x, y, z)
     }
 
@@ -350,7 +350,7 @@ extension SketchPart {
     // shot: 1 snippet=54abaf07
     public func rotateX(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.rotateX(radians)
     }
 
@@ -387,7 +387,7 @@ extension SketchPart {
     // shot: 1 snippet=d031c80c
     public func rotateY(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.rotateY(radians)
     }
 
@@ -422,7 +422,7 @@ extension SketchPart {
     // shot: 1 snippet=7f65053a
     public func rotateZ(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.rotateZ(radians)
     }
 
@@ -469,7 +469,7 @@ extension SketchPart {
     // shot: 1 snippet=e3260042
     public func scale(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.scale(x, y, z)
     }
 
@@ -530,7 +530,7 @@ extension SketchPart {
     // shot: 2 snippet=1e816167
     public func shearX(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.shearX(radians)
     }
 
@@ -590,7 +590,7 @@ extension SketchPart {
     // shot: 2 snippet=305667e2
     public func shearY(_ radians: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radians = radians.asFloat
+        let radians = radians
         canvas.shearY(radians)
     }
 }

@@ -69,8 +69,8 @@ enum KnobText {
             "#" + [red(value), green(value), blue(value)]
                 .map { String(format: "%02X", Int(min(max($0, 0), 255).rounded())) }
                 .joined()
-        case .vector2(let vector): Self.pair(vector.x, vector.y)
-        case .vector3(let vector): Self.pair(vector.x, vector.y, vector.z)
+        case .vector2(let vector): Self.pair(Float(vector.x), Float(vector.y))
+        case .vector3(let vector): Self.pair(Float(vector.x), Float(vector.y), Float(vector.z))
         }
     }
 

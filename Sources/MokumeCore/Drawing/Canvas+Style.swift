@@ -585,7 +585,7 @@ extension Canvas {
     /// には、記録したときのこの値が部品 (``SolidPart/showsBackFaces``) として残り、置くときの
     /// スタイルではなく記録したときのスタイルで判じる。
     var placementMayShowBackFaces: Bool {
-        style.fill.alpha < 1 || style.picture != nil || style.blendMode != .blend
+        style.fill.alphaValue < 1 || style.picture != nil || style.blendMode != .blend
             || currentShader != nil
     }
 

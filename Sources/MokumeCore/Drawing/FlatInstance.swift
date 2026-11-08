@@ -43,8 +43,8 @@ struct FlatInstance {
     ) {
         self.linear = linear
         self.offset = SIMD4(anchor.x, anchor.y, translation.x, translation.y)
-        self.fill = SIMD4(fill.red, fill.green, fill.blue, fill.alpha)
-        self.stroke = SIMD4(stroke.red, stroke.green, stroke.blue, stroke.alpha)
+        self.fill = SIMD4(fill.redValue, fill.greenValue, fill.blueValue, fill.alphaValue)
+        self.stroke = SIMD4(stroke.redValue, stroke.greenValue, stroke.blueValue, stroke.alphaValue)
     }
 
     /// 何も動かさない置き場所。

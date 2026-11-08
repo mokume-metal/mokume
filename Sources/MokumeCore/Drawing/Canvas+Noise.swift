@@ -32,9 +32,9 @@ extension Canvas {
     public func noise(
         _ x: Double, _ y: Double = 0, _ z: Double = 0,
         _ w: Double = 0
-    ) -> Float {
+    ) -> Double {
         let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
-        return noiseSettings.value(x, y, z, w)
+        return Double(noiseSettings.value(x, y, z, w))
     }
 
     /// 受け取れない値を、初回だけ知らせる。

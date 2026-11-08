@@ -150,9 +150,9 @@ extension Canvas {
         return widest
     }
 
-    public func textAscent() -> Float { style.textSize > 0 ? typeface.ascent : 0 }
+    public func textAscent() -> Double { Double(style.textSize > 0 ? typeface.ascent : 0) }
 
-    public func textDescent() -> Float { style.textSize > 0 ? typeface.descent : 0 }
+    public func textDescent() -> Double { Double(style.textSize > 0 ? typeface.descent : 0) }
 
     // MARK: - 描く
 

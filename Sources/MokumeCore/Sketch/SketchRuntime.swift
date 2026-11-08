@@ -654,7 +654,7 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
-        try Self.checkWindowScale(settings.windowScale)
+        try Self.checkWindowScale(Float(settings.windowScale))
         let stage =
             if embedded {
                 Self.embeddedStage(for: settings)
@@ -668,7 +668,7 @@ public final class SketchRuntime {
                 : .frameIndex(frameRate: settings.frameRate))
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
-        self.windowScale = settings.windowScale
+        self.windowScale = Float(settings.windowScale)
         self.fullScreenDisplay = stage.display
         self.isEmbedded = embedded
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
@@ -677,7 +677,7 @@ public final class SketchRuntime {
         let target = try Self.outputTarget(
             gpu: gpu, width: stage.width, height: stage.height, scale: outputScale)
         self.canvas = try Canvas(
-            output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
+            output: target, gpu: gpu, pixelDensity: Float(settings.pixelDensity),
             upscale: settings.upscale, outputScale: outputScale)
         self.timing = FrameTiming(
             clock: clock, frameRate: settings.frameRate, now: now, handover: handover)
@@ -720,18 +720,18 @@ public final class SketchRuntime {
     ) throws(RenderFailure) {
         let settings = sketch.settings
         try Self.checkFrameRates(declared: settings.frameRate, clock: clock)
-        try Self.checkWindowScale(settings.windowScale)
+        try Self.checkWindowScale(Float(settings.windowScale))
         let stage = try Self.stage(for: settings, displays: displays)
         let clock = clock ?? .frameIndex(frameRate: settings.frameRate)
         self.sketch = sketch
         self.declaredFrameRate = settings.frameRate
-        self.windowScale = settings.windowScale
+        self.windowScale = Float(settings.windowScale)
         self.fullScreenDisplay = stage.display
         self.isEmbedded = false
         self.launchFrameRate = Self.recordingFrameRate(clock: clock, declared: settings.frameRate)
         let target = try RenderTarget(gpu: gpu, width: stage.width, height: stage.height)
         self.canvas = try Canvas(
-            output: target, gpu: gpu, pixelDensity: settings.pixelDensity,
+            output: target, gpu: gpu, pixelDensity: Float(settings.pixelDensity),
             upscale: settings.upscale)
         self.timing = FrameTiming(clock: clock, frameRate: settings.frameRate, now: now)
         self.isOnScreen = clock == .wallClock
@@ -1454,12 +1454,12 @@ public final class SketchRuntime {
         case .mouseClicked: sketch.mouseClicked()
         case .mouseMoved: sketch.mouseMoved()
         case .mouseMovedBy(let deltaX, let deltaY):
-            sketch.mouseMoved(deltaX: deltaX, deltaY: deltaY)
+            sketch.mouseMoved(deltaX: Double(deltaX), deltaY: Double(deltaY))
         case .mouseDragged: sketch.mouseDragged()
         case .mouseDraggedBy(let deltaX, let deltaY):
-            sketch.mouseDragged(deltaX: deltaX, deltaY: deltaY)
+            sketch.mouseDragged(deltaX: Double(deltaX), deltaY: Double(deltaY))
         case .mouseWheel(let deltaX, let deltaY):
-            sketch.mouseWheel(deltaX: deltaX, deltaY: deltaY)
+            sketch.mouseWheel(deltaX: Double(deltaX), deltaY: Double(deltaY))
         case .fileDropped(let paths): sketch.fileDropped(paths)
         case .fileSelected(let path, let serial): input.selection.resolve(path, serial: serial)
         case .keyPressed: sketch.keyPressed()

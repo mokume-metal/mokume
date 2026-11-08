@@ -773,7 +773,7 @@ extension Canvas {
     var strokeOverlapsShow: Bool {
         buildingFlatTemplate
             || Self.overlapsShow(
-                blendMode: style.blendMode, shaded: currentShader != nil, alpha: style.stroke.alpha)
+                blendMode: style.blendMode, shaded: currentShader != nil, alpha: style.stroke.alphaValue)
     }
 
     /// 線の片の重なりが絵に出るか (``strokeOverlapsShow`` の分け方)。保持した形を置くときも、記録の色と

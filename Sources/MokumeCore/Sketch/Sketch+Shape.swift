@@ -533,7 +533,7 @@ extension SketchPart {
     // shot: 1 snippet=73a8868f
     public func shape(_ shape: Shape, _ x: Double = 0, _ y: Double = 0) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.shape(shape, x, y)
     }
 }

@@ -33,7 +33,7 @@ extension Canvas {
     public func spotLight(
         _ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double,
         _ directionX: Double, _ directionY: Double, _ directionZ: Double,
-        angle: Double = Float.pi / 6
+        angle: Double = Double.pi / 6
     ) {
         // フレームの外では光を置かないので、丸めの注意より先に断る (#1698 の反証 10)。
         // 丸めの注意を先に言うと、置かない光のために 1 度きりの鍵を使い切る

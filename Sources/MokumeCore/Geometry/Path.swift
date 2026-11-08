@@ -69,7 +69,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// 半径が 0 以下か数でない円は、空の道になる。
     // shot: 撮れない 道を作る口で、描く結果が無い (描くのは shape(path))
     public init(_ circle: Circle) {
-        let radius = circle.radius
+        let radius = circle.radiusValue
         let center = circle.center.simd
         guard radius > 0, radius.isFinite, center.x.isFinite, center.y.isFinite else {
             self.init()
@@ -176,7 +176,7 @@ public nonisolated struct Path: Sendable, Hashable {
                     // 差も Double で取る (±3e38 の両端の差は Float に収まらない)
                     let x = Double(from.x) + (Double(to.x) - Double(from.x)) * along
                     let y = Double(from.y) + (Double(to.y) - Double(from.y)) * along
-                    return Vector2(Float(x), Float(y))
+                    return Vector2(Double(Float(x)), Double(Float(y)))
                 }
                 walked += edge
             }

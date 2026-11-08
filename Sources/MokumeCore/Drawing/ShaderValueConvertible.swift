@@ -47,7 +47,7 @@ extension Bool: ShaderValueConvertible {
 }
 
 extension Vector2: ShaderValueConvertible {
-    public var shaderValue: ShaderValue { .pair(x, y) }
+    public var shaderValue: ShaderValue { .pair(simd.x, simd.y) }
 }
 
 extension Vector3: ShaderValueConvertible {

@@ -350,7 +350,7 @@ extension SketchPart {
     // shot: 1 snippet=cbfaab04
     public func image(_ image: Image, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.image(image, x, y)
     }
 
@@ -389,7 +389,7 @@ extension SketchPart {
     // shot: 1 snippet=03eb840b
     public func image(_ image: Image, _ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        let (a, b, c, d) = (a, b, c, d)
         canvas.image(image, a, b, c, d)
     }
 
@@ -438,7 +438,7 @@ extension SketchPart {
         _ sourceX: Double, _ sourceY: Double, _ sourceWidth: Double, _ sourceHeight: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
+        let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
         canvas.image(image, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 

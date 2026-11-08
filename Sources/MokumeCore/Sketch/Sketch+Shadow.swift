@@ -147,7 +147,7 @@ extension SketchPart {
     // shot: 1 snippet=10cc6754
     public func shadowRange(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let size = size.asFloat
+        let size = size
         canvas.shadowRange(size)
     }
 
@@ -248,7 +248,7 @@ extension SketchPart {
     // shot: 1 snippet=704ae6de
     public func shadowBias(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let amount = amount.asFloat
+        let amount = amount
         canvas.shadowBias(amount)
     }
 

@@ -141,7 +141,7 @@ extension SketchPart {
         guard let runtime = runningSketch else {
             return OutsideRun.log.warn(.jumpTime)
         }
-        runtime.jumpTime(seconds.asFloat)
+        runtime.jumpTime(Float(seconds))
     }
 
     /// いまの ``time`` を `period` 秒で 1 巡する位相 (0 以上 1 未満) にして返す。`period` は `Float`・
@@ -179,7 +179,7 @@ extension SketchPart {
     // shot: 撮れない 時計から周期の位相を読んで返す口で、撮影は 0 秒の 1 枚だけなので巡りが絵に出ない (位相は 0 のまま)
     public func phase(period: Double) -> Float {
         guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
-        return periodPhase(ofSeconds: runtime.timeSeconds, period: period.asFloat)
+        return periodPhase(ofSeconds: runtime.timeSeconds, period: Float(period))
     }
 }
 

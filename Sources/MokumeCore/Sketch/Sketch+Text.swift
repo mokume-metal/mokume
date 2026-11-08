@@ -66,7 +66,7 @@ extension SketchPart {
     // shot: 2 snippet=3044f8bc
     public func text(_ string: String, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.text(string, x, y)
     }
 
@@ -163,7 +163,7 @@ extension SketchPart {
     // shot: 2 snippet=02dd14ba
     public func textSize(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let size = size.asFloat
+        let size = size
         canvas.textSize(size)
     }
 
@@ -512,7 +512,7 @@ extension SketchPart {
     // shot: 2 snippet=26cf4f8a
     public func textLeading(_ leading: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let leading = leading.asFloat
+        let leading = leading
         canvas.textLeading(leading)
     }
 
@@ -550,7 +550,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=ebe1b460
-    public func textWidth(_ string: String) -> Float { Self.liveCanvas(.read(returning: "0"))?.textWidth(string) ?? 0 }
+    public func textWidth(_ string: String) -> Double { Double(Self.liveCanvas(.read(returning: "0"))?.textWidth(string) ?? 0) }
 
     /// 基準線から上へ伸びる高さ (画素)。
     ///
@@ -586,7 +586,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=f70f460d
-    public func textAscent() -> Float { Self.liveCanvas(.read(returning: "0"))?.textAscent() ?? 0 }
+    public func textAscent() -> Double { Double(Self.liveCanvas(.read(returning: "0"))?.textAscent() ?? 0) }
 
     /// 基準線から下へ伸びる深さ (画素)。
     ///
@@ -622,7 +622,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=cce8b3db
-    public func textDescent() -> Float { Self.liveCanvas(.read(returning: "0"))?.textDescent() ?? 0 }
+    public func textDescent() -> Double { Double(Self.liveCanvas(.read(returning: "0"))?.textDescent() ?? 0) }
 
     /// 矩形の中へ文字列を流し込む。
     ///
@@ -700,7 +700,7 @@ extension SketchPart {
     public func text(_ string: String, _ a: Double, _ b: Double, _ c: Double, _ d: Double)
         -> TextFlow
     {
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        let (a, b, c, d) = (a, b, c, d)
         // 外から呼ばれたら何も置かない。置けなかった文字は全部が残りになる
         guard let canvas = Self.liveCanvas() else { return TextFlow(lineCount: 0, height: 0, remainder: string) }
         return canvas.text(string, a, b, c, d)
@@ -825,7 +825,7 @@ extension SketchPart {
     /// 色で描かれる字 (絵文字) は輪郭を持たない絵なので、周を返さない (送りは進める)。
     // shot: 1 snippet=e9e2ccf8
     public func textOutline(_ string: String, _ x: Double, _ y: Double) -> [TextContour] {
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y) ?? []
     }
 
@@ -873,7 +873,7 @@ extension SketchPart {
         _ string: String, _ x: Double, _ y: Double,
         spacing: Double
     ) -> [TextContour] {
-        let (x, y, spacing) = (x.asFloat, y.asFloat, spacing.asFloat)
+        let (x, y, spacing) = (x, y, spacing)
         return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y, spacing: spacing) ?? []
     }
 
@@ -917,7 +917,7 @@ extension SketchPart {
     /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
     // shot: 1 snippet=f7ecb144
     public func textBounds(_ string: String, _ x: Double, _ y: Double) -> TextBounds? {
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         return Self.liveCanvas(.read(returning: "nil"))?.textBounds(string, x, y)
     }
 
@@ -984,7 +984,7 @@ extension SketchPart {
     // shot: 後で撮る
     public func shapedText(_ string: String, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.shapedText(string, x, y)
     }
 
@@ -1050,7 +1050,7 @@ extension SketchPart {
     public func shapedTextBounds(
         _ string: String, _ x: Double, _ y: Double
     ) -> TextBounds? {
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         return Self.liveCanvas(.read(returning: "nil"))?.shapedTextBounds(string, x, y)
     }
 }

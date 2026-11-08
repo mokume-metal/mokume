@@ -128,7 +128,7 @@ public nonisolated func paletteLerp(
         // 区間 [前の位置, この位置) の中。位置ちょうどは次の区間の始まり (同じ位置が並べば後ろの色)
         guard amount < stop.1 else { continue }
         let previous = usable[index - 1]
-        return lerpColor(previous.0, stop.0, (amount - previous.1) / (stop.1 - previous.1))
+        return lerpColor(previous.0, stop.0, Double((amount - previous.1) / (stop.1 - previous.1)))
     }
     return usable[usable.count - 1].0
 }

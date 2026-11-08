@@ -25,27 +25,36 @@
 /// [#2600]: https://github.com/mokume-metal/mokume/issues/2600
 public nonisolated struct LinearRGBA: Sendable {
     /// 赤成分 (線形・アルファ乗算済み)。
-    public var red: Float
+    var redValue: Float
+    public var red: Double { get { Double(redValue) } set { redValue = Float(newValue) } }
     /// 緑成分 (線形・アルファ乗算済み)。
-    public var green: Float
+    var greenValue: Float
+    public var green: Double { get { Double(greenValue) } set { greenValue = Float(newValue) } }
     /// 青成分 (線形・アルファ乗算済み)。
-    public var blue: Float
+    var blueValue: Float
+    public var blue: Double { get { Double(blueValue) } set { blueValue = Float(newValue) } }
     /// 不透明度。
     ///
     /// 乗算していない成分から作った色 (``init(straightRed:green:blue:alpha:)`` と、それを通る
     /// ``display(red:green:blue:alpha:)``・``color(_:_:_:_:)`` など) では **0…1 に締まっている**。
     /// このプロパティと ``init(premultipliedRed:green:blue:alpha:)`` は作業空間の
     /// 「計算のための値」なので締めない — 書き換えた値はそのまま残る。
-    public var alpha: Float
+    var alphaValue: Float
+    public var alpha: Double { get { Double(alphaValue) } set { alphaValue = Float(newValue) } }
 
     /// アルファを乗算済みの成分から作る (作業空間の内側で使う形)。
     ///
     /// **どの値も締めない。** 渡した不透明度が 0…1 の外でもそのまま持つ。
-    nonisolated public init(premultipliedRed red: Float, green: Float, blue: Float, alpha: Float) {
-        self.red = red
-        self.green = green
-        self.blue = blue
-        self.alpha = alpha
+    @_disfavoredOverload
+    nonisolated public init(premultipliedRed red: Double, green: Double, blue: Double, alpha: Double) {
+        self.init(premultipliedRed: Float(red), green: Float(green), blue: Float(blue), alpha: Float(alpha))
+    }
+
+    nonisolated init(premultipliedRed red: Float, green: Float, blue: Float, alpha: Float) {
+        self.redValue = red
+        self.greenValue = green
+        self.blueValue = blue
+        self.alphaValue = alpha
     }
 
     /// アルファを乗算していない成分から作る (作業空間へ入る境界で使う形)。
@@ -60,14 +69,19 @@ public nonisolated struct LinearRGBA: Sendable {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    nonisolated public init(straightRed red: Float, green: Float, blue: Float, alpha: Float = 1) {
+    @_disfavoredOverload
+    nonisolated public init(straightRed red: Double, green: Double, blue: Double, alpha: Double = 1) {
+        self.init(straightRed: Float(red), green: Float(green), blue: Float(blue), alpha: Float(alpha))
+    }
+
+    nonisolated init(straightRed red: Float, green: Float, blue: Float, alpha: Float) {
         // **この書き順を保つ。** Swift の `min` / `max` は第 1 引数の NaN を返すので、
         // `max(0, min(1, alpha))` と書くと NaN が 1 (不透明) に化ける
         let alpha = min(max(alpha, 0), 1)
-        self.red = red * alpha
-        self.green = green * alpha
-        self.blue = blue * alpha
-        self.alpha = alpha
+        self.redValue = red * alpha
+        self.greenValue = green * alpha
+        self.blueValue = blue * alpha
+        self.alphaValue = alpha
     }
 
     /// 利用者が見た目で指定する成分から作る (作業空間へ入る**入口**の境界)。
@@ -88,8 +102,15 @@ public nonisolated struct LinearRGBA: Sendable {
     /// `red: 2` は白を越える明るさのまま残る (``init(straightRed:green:blue:alpha:)`` と同じ)。
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
+    @_disfavoredOverload
     public static func display(
-        red: Float, green: Float, blue: Float, alpha: Float = 1
+        red: Double, green: Double, blue: Double, alpha: Double = 1
+    ) -> LinearRGBA {
+        display(red: Float(red), green: Float(green), blue: Float(blue), alpha: Float(alpha))
+    }
+
+    static func display(
+        red: Float, green: Float, blue: Float, alpha: Float
     ) -> LinearRGBA {
         let working = ColorPrimaries.working(
             fromSRGB: SIMD3(decodeComponent(red), decodeComponent(green), decodeComponent(blue)))
@@ -144,8 +165,8 @@ public nonisolated struct LinearRGBA: Sendable {
     ///
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    nonisolated public static func linear(red: Float, green: Float, blue: Float) -> LinearRGBA {
-        LinearRGBA(premultipliedRed: red, green: green, blue: blue, alpha: 1)
+    nonisolated public static func linear(red: Double, green: Double, blue: Double) -> LinearRGBA {
+        LinearRGBA(premultipliedRed: Float(red), green: Float(green), blue: Float(blue), alpha: Float(1))
     }
 
     /// 4 成分 (赤・緑・青・不透明度) がどれも有限か。
@@ -173,7 +194,7 @@ public nonisolated struct LinearRGBA: Sendable {
         premultipliedRed: 0, green: 0, blue: 0, alpha: 0)
 
     /// 4 成分を GPU へ渡す並びのまま (乗算済み・線形)。
-    var components: SIMD4<Float> { SIMD4(red, green, blue, alpha) }
+    var components: SIMD4<Float> { SIMD4(redValue, greenValue, blueValue, alphaValue) }
 }
 
 // 比べる・符号化する適合だけを隔離の外に置く (上の型の説明)。格納している 4 成分を

@@ -158,13 +158,13 @@ extension Canvas {
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
     public func square(_ a: Double, _ b: Double, _ extent: Double) {
         let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
-        rect(a, b, extent, extent)
+        rect(Double(a), Double(b), Double(extent), Double(extent))
     }
 
     /// 円。座標の読み方は ``ellipseMode(_:)`` が決める。
     public func circle(_ a: Double, _ b: Double, _ diameter: Double) {
         let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
-        ellipse(a, b, diameter, diameter)
+        ellipse(Double(a), Double(b), Double(diameter), Double(diameter))
     }
 
     /// 楕円。座標の読み方は ``ellipseMode(_:)`` が決める。
@@ -486,8 +486,8 @@ extension Canvas {
         // 捨ててしまうので、形の組み立て (`createShape`) と同じく取り出して、描いた後に戻す
         let outer = takeOpenShape()
         beginShape()
-        vertex(x1, y1)
-        bezierVertex(x2, y2, x3, y3, x4, y4)
+        vertex(Double(x1), Double(y1))
+        bezierVertex(Double(x2), Double(y2), Double(x3), Double(y3), Double(x4), Double(y4))
         endShape()
         restoreOpenShape(outer)
     }
@@ -545,7 +545,7 @@ extension Canvas {
         let open = takeOpenShape()
         defer { restoreOpenShape(open) }
         beginShape(kind)
-        for point in points { vertex(point.x, point.y, point.z) }
+        for point in points { vertex(Double(point.x), Double(point.y), Double(point.z)) }
         endShape()
     }
 

@@ -36,7 +36,7 @@ extension Canvas {
         if let color = item.fill { fill(Self.linear(color)) } else { noFill() }
         if let color = item.stroke {
             stroke(Self.linear(color))
-            strokeWeight(item.strokeWidth)
+            strokeWeight(Double(item.strokeWidth))
             strokeCap(item.cap)
             strokeJoin(item.join)
         } else {
@@ -44,11 +44,11 @@ extension Canvas {
         }
         switch item.outline {
         case .rect(let x, let y, let width, let height):
-            rect(x, y, width, height)
+            rect(Double(x), Double(y), Double(width), Double(height))
         case .ellipse(let centerX, let centerY, let radiusX, let radiusY):
-            ellipse(centerX, centerY, radiusX * 2, radiusY * 2)
+            ellipse(Double(centerX), Double(centerY), Double(radiusX * 2), Double(radiusY * 2))
         case .line(let from, let to):
-            line(from.x, from.y, to.x, to.y)
+            line(Double(from.x), Double(from.y), Double(to.x), Double(to.y))
         case .path(let subpaths):
             recordPath(subpaths, item)
         }
@@ -96,16 +96,16 @@ extension Canvas {
 
     /// 線 1 本ぶんの点を置く。曲線は、置いた後の大きさで滑らかに見えるだけの数に刻む。
     private func trace(_ subpath: SVGFile.Subpath, scale: Float) {
-        vertex(subpath.start.x, subpath.start.y)
+        vertex(Double(subpath.start.x), Double(subpath.start.y))
         var from = subpath.start
         for segment in subpath.segments {
             switch segment {
             case .line(let point):
-                vertex(point.x, point.y)
+                vertex(Double(point.x), Double(point.y))
                 from = point
             case .cubic(let first, let second, let point):
                 curveDetail(Self.curveSteps(from, first, second, point, scale: scale))
-                bezierVertex(first.x, first.y, second.x, second.y, point.x, point.y)
+                bezierVertex(Double(first.x), Double(first.y), Double(second.x), Double(second.y), Double(point.x), Double(point.y))
                 from = point
             }
         }

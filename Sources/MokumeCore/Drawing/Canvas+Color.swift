@@ -7,7 +7,7 @@
 extension Canvas {
     public func background(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
-        background(gray, gray, gray, alpha)
+        background(Double(gray), Double(gray), Double(gray), Double(alpha))
     }
 
     public func background(
@@ -21,7 +21,7 @@ extension Canvas {
 
     public func fill(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
-        fill(gray, gray, gray, alpha)
+        fill(Double(gray), Double(gray), Double(gray), Double(alpha))
     }
 
     public func fill(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
@@ -45,7 +45,7 @@ extension Canvas {
 
     public func stroke(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
-        stroke(gray, gray, gray, alpha)
+        stroke(Double(gray), Double(gray), Double(gray), Double(alpha))
     }
 
     public func stroke(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
@@ -69,7 +69,7 @@ extension Canvas {
 
     public func tint(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
-        tint(gray, gray, gray, alpha)
+        tint(Double(gray), Double(gray), Double(gray), Double(alpha))
     }
 
     public func tint(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {

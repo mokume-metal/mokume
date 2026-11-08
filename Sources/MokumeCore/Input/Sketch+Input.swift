@@ -11,13 +11,13 @@ extension SketchPart {
     /// 出すと、負や幅超えの値になる — 丸めていないので、面の外を面の外として扱える
     /// (外から送る経路も範囲外を送れるので、丸めると 2 つの経路で範囲が食い違う)。
     /// 面の中だけを相手にしたいなら、読む側で挟む。
-    public var mouseX: Float { Self.input.x }
+    public var mouseX: Double { Double(Self.input.x) }
     /// いまの位置 (縦)。**縦軸は下向き**で、面の上端が 0 (``mouseX`` と同じ約束)。
-    public var mouseY: Float { Self.input.y }
+    public var mouseY: Double { Double(Self.input.y) }
     /// 前のフレームでの位置 (横)。
-    public var pmouseX: Float { Self.input.previousX }
+    public var pmouseX: Double { Double(Self.input.previousX) }
     /// 前のフレームでの位置 (縦)。
-    public var pmouseY: Float { Self.input.previousY }
+    public var pmouseY: Double { Double(Self.input.previousY) }
     /// どれかの釦が押されているか。
     ///
     /// **釦ごとに数える** — 左を押したまま右を押して離しても、`true` のまま。窓が前から退くと、
@@ -56,9 +56,9 @@ extension SketchPart {
     /// ここを読むと、その出来事までの部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var scrollX: Float { Self.input.scrollX }
+    public var scrollX: Double { Double(Self.input.scrollX) }
     /// このフレームのスクロール量 (縦)。単位と慣性は ``scrollX`` と同じ。
-    public var scrollY: Float { Self.input.scrollY }
+    public var scrollY: Double { Double(Self.input.scrollY) }
     /// このフレームのピンチの量 (トラックパッドで指を開くと正、閉じると負)。
     ///
     /// **倍率の差分のフレーム合計** — 0.1 は「1.1 倍に開いた」である。AppKit の `magnification` と
@@ -68,7 +68,7 @@ extension SketchPart {
     /// `{"type": "pinched", "amount": 0.1}` で、同じフレームに 2 件届けば合計になる。
     /// ``orbitControl(_:_:_:)`` の寄りは、この合計ではなく**件ごとの倍率の積**で決まる (倍率は掛け算で重なるので、
     /// 閉じる件が溜まった合計が −1 以下になっても、閉じる操作は効く)。
-    public var pinch: Float { Self.input.pinch }
+    public var pinch: Double { Double(Self.input.pinch) }
     /// このフレームに、押したまま引きずった量 (横)。
     ///
     /// **押した瞬間には増えない。** `mouseX - pmouseX` を回す量に使うと、押した場所が
@@ -83,9 +83,9 @@ extension SketchPart {
     /// 改訂 (2026-10-28))。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var dragX: Float { Self.input.dragX }
+    public var dragX: Double { Double(Self.input.dragX) }
     /// このフレームに、押したまま引きずった量 (縦)。
-    public var dragY: Float { Self.input.dragY }
+    public var dragY: Double { Double(Self.input.dragY) }
     /// このフレームに動いた量 (横)。**押しているかによらず数える。**
     ///
     /// カーソルを捕まえている間 (``requestPointerLock()``) は ``mouseX`` が動かないので、
@@ -115,9 +115,9 @@ extension SketchPart {
     /// ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var movedX: Float { Self.input.movedX }
+    public var movedX: Double { Double(Self.input.movedX) }
     /// このフレームに動いた量 (縦)。**縦軸は下向き**で、手前へ引くと正になる。
-    public var movedY: Float { Self.input.movedY }
+    public var movedY: Double { Double(Self.input.movedY) }
     /// キーボードへの問い合わせ。押している間・押した瞬間・離した瞬間を、キーごとに問う。
     ///
     /// <!-- example: 文脈 var x: Float = 0 -->

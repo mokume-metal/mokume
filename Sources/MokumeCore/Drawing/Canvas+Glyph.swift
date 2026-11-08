@@ -654,7 +654,7 @@ extension Canvas {
 
     /// 塗りの透明度だけを持つ白 (乗算済み)。掛けても字形の色を変えない。
     private static func whiteScaled(byAlphaOf color: LinearRGBA) -> LinearRGBA {
-        let alpha = color.alpha
+        let alpha = color.alphaValue
         return LinearRGBA(
             premultipliedRed: alpha, green: alpha, blue: alpha, alpha: alpha)
     }

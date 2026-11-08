@@ -21,14 +21,14 @@ public enum Heading: Equatable, Sendable {
     /// 横から見ると、粒は出た場所を通る 1 枚の面の上を飛ぶ。奥行きへ散らすなら `.sphere` を使う。
     ///
     /// 幅を 1 つに決めたいときは `.plane(0...0)` のように書く。
-    case plane(_ angle: ClosedRange<Float>)
+    case plane(_ angle: ClosedRange<Double>)
     /// 全方位へ (球面上のどの向きも同じ確からしさで)。
     case sphere
 
     /// 数の成分。**受け口が、数でない値・無限を検めるのに読む** (``Emitter`` と同じ)。
     var numbers: [Float] {
         switch self {
-        case .plane(let angle): [angle.lowerBound, angle.upperBound]
+        case .plane(let angle): [Float(angle.lowerBound), Float(angle.upperBound)]
         case .sphere: []
         }
     }
@@ -45,7 +45,7 @@ public enum Heading: Equatable, Sendable {
     func sample(using randomness: inout Randomness) -> SIMD3<Float> {
         switch self {
         case .plane(let angle):
-            let turn = randomness.value(from: angle.lowerBound, to: angle.upperBound)
+            let turn = randomness.value(from: Float(angle.lowerBound), to: Float(angle.upperBound))
             return SIMD3(RuntimeMath.cos(turn), RuntimeMath.sin(turn), 0)
         case .sphere:
             // **高さ (z) を一様に引く。** 球面は高さで等間隔に輪切りにすると、どの帯も面積が

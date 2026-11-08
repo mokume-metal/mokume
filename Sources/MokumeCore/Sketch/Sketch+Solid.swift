@@ -54,7 +54,7 @@ extension SketchPart {
     // shot: 1 snippet=8d592c84
     public func box(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let size = size.asFloat
+        let size = size
         canvas.box(size)
     }
 
@@ -82,7 +82,7 @@ extension SketchPart {
     // shot: 1 snippet=2553ebe3
     public func box(_ width: Double, _ height: Double, _ depth: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (width, height, depth) = (width.asFloat, height.asFloat, depth.asFloat)
+        let (width, height, depth) = (width, height, depth)
         canvas.box(width, height, depth)
     }
 
@@ -147,7 +147,7 @@ extension SketchPart {
     // shot: 2 snippet=3c04508e
     public func sphere(_ radius: Double, detail: Int = Canvas.defaultSolidDetail) {
         guard let canvas = Self.liveCanvas() else { return }
-        let radius = radius.asFloat
+        let radius = radius
         canvas.sphere(radius, detail: detail)
     }
 
@@ -216,7 +216,7 @@ extension SketchPart {
         detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.ellipsoid(x, y, z, detail: detail)
     }
 
@@ -248,7 +248,7 @@ extension SketchPart {
     // shot: 1 snippet=3ddae47c
     public func plane(_ width: Double, _ height: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (width, height) = (width.asFloat, height.asFloat)
+        let (width, height) = (width, height)
         canvas.plane(width, height)
     }
 
@@ -310,7 +310,7 @@ extension SketchPart {
         _ radius: Double, _ height: Double, detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (radius, height) = (radius.asFloat, height.asFloat)
+        let (radius, height) = (radius, height)
         canvas.cylinder(radius, height, detail: detail)
     }
 
@@ -349,7 +349,7 @@ extension SketchPart {
         detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (radius, height) = (radius.asFloat, height.asFloat)
+        let (radius, height) = (radius, height)
         canvas.cone(radius, height, detail: detail)
     }
 
@@ -411,7 +411,7 @@ extension SketchPart {
         _ radius: Double, _ tubeRadius: Double, detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (radius, tubeRadius) = (radius.asFloat, tubeRadius.asFloat)
+        let (radius, tubeRadius) = (radius, tubeRadius)
         canvas.torus(radius, tubeRadius, detail: detail)
     }
 }

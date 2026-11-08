@@ -74,7 +74,7 @@ extension ParamValue: Codable {
                 var container = encoder.singleValueContainer()
                 try container.encode(
                     WireColor(
-                        red: color.red, green: color.green, blue: color.blue, alpha: color.alpha))
+                        red: color.redValue, green: color.greenValue, blue: color.blueValue, alpha: color.alphaValue))
             case .vector2(let vector):
                 var container = encoder.singleValueContainer()
                 try container.encode([vector.x, vector.y])
@@ -111,14 +111,14 @@ extension ParamValue: Codable {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec2 is written with 2 components")
             }
-            self = .vector2(Vector2(Float(components[0]), Float(components[1])))
+            self = .vector2(Vector2(components[0], components[1]))
         case .vec3:
             let components = try container.decode([Double].self, forKey: .value)
             guard components.count == 3 else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .value, in: container, debugDescription: "vec3 is written with 3 components")
             }
-            self = .vector3(Vector3(Float(components[0]), Float(components[1]), Float(components[2])))
+            self = .vector3(Vector3(components[0], components[1], components[2]))
         }
     }
 }

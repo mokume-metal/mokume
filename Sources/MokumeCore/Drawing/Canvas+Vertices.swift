@@ -146,7 +146,7 @@ extension Canvas {
         let end = SIMD2(x, y)
         let c1 = start + (control - start) * (2.0 / 3.0)
         let c2 = end + (control - end) * (2.0 / 3.0)
-        bezierVertex(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
+        bezierVertex(Double(c1.x), Double(c1.y), Double(c2.x), Double(c2.y), Double(end.x), Double(end.y))
     }
 
     /// 通過点を結ぶ曲線の制御点を置く。
@@ -928,8 +928,8 @@ extension Canvas {
         func mix(_ x: SIMD3<Float>, _ y: SIMD3<Float>, _ w: Float) -> SIMD3<Float> { x + w * (y - x) }
         func mix(_ x: SIMD2<Float>, _ y: SIMD2<Float>, _ w: Float) -> SIMD2<Float> { x + w * (y - x) }
         func mix(_ x: LinearRGBA, _ y: LinearRGBA, _ w: Float) -> SIMD4<Float> {
-            let from = SIMD4(x.red, x.green, x.blue, x.alpha)
-            return from + w * (SIMD4(y.red, y.green, y.blue, y.alpha) - from)
+            let from = SIMD4(x.redValue, x.greenValue, x.blueValue, x.alphaValue)
+            return from + w * (SIMD4(y.redValue, y.greenValue, y.blueValue, y.alphaValue) - from)
         }
         func average<Value: SIMD>(_ first: Value?, _ second: Value?) -> Value?
         where Value.Scalar == Float {

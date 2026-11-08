@@ -49,12 +49,12 @@ nonisolated enum DisplayScale {
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     static func readComponents(_ color: LinearRGBA) -> SIMD3<Float> {
-        guard color.alpha.isFinite else { return .zero }
+        guard color.alphaValue.isFinite else { return .zero }
         func straight(_ premultiplied: Float) -> Float {
-            premultiplied.isFinite ? OutputStage.straighten(premultiplied, alpha: color.alpha) : 0
+            premultiplied.isFinite ? OutputStage.straighten(premultiplied, alpha: color.alphaValue) : 0
         }
         let sRGB = ColorPrimaries.sRGB(
-            fromWorking: SIMD3(straight(color.red), straight(color.green), straight(color.blue)))
+            fromWorking: SIMD3(straight(color.redValue), straight(color.greenValue), straight(color.blueValue)))
         return SIMD3(component(sRGB.x), component(sRGB.y), component(sRGB.z))
     }
 
@@ -112,8 +112,8 @@ nonisolated enum DisplayScale {
         // 書き順は決定 3 の改訂と揃える (`max` は第 1 引数の NaN をそのまま返す)
         let rate = min(max(alpha / maximum, 0), 1)
         return LinearRGBA(
-            premultipliedRed: color.red * rate, green: color.green * rate,
-            blue: color.blue * rate, alpha: color.alpha * rate)
+            premultipliedRed: color.redValue * rate, green: color.greenValue * rate,
+            blue: color.blueValue * rate, alpha: color.alphaValue * rate)
     }
 }
 
@@ -263,8 +263,7 @@ nonisolated func makeColor(red: Float, green: Float, blue: Float, alpha: Float) 
 /// **不透明度は 0–255 に締める (締めたときは 1 度だけ知らせる)。灰色の値は締めない**
 /// (``color(_:_:_:_:)`` と同じ)。
 public nonisolated func color(_ gray: Double, _ alpha: Double = 255) -> LinearRGBA {
-    let gray = gray.asFloat
-    return color(gray, gray, gray, alpha.asFloat)
+    return color(gray, gray, gray, alpha)
 }
 
 /// 色の値の不透明度を薄めた色を作る。**不透明度は 0–255**、置き換えずに**掛ける**。
@@ -345,7 +344,7 @@ public nonisolated func color(_ color: LinearRGBA, _ alpha: Double) -> LinearRGB
 public nonisolated func color(hex: Int) -> LinearRGBA {
     let bits = hex & 0xFF_FFFF
     return color(
-        Float((bits >> 16) & 0xFF), Float((bits >> 8) & 0xFF), Float(bits & 0xFF))
+        Double((bits >> 16) & 0xFF), Double((bits >> 8) & 0xFF), Double(bits & 0xFF))
 }
 
 // MARK: - 色を混ぜる
@@ -405,10 +404,10 @@ public nonisolated func lerpColor(
     // 乗算済みの 4 成分を、そのまま成分ごとに混ぜる。割り戻しも掛け直しもしない
     // ([ADR-0011] 決定 4) — `init(straightRed:…)` を通すと、もう 1 度掛けてしまう
     return LinearRGBA(
-        premultipliedRed: interpolate(start.red, stop.red, amount),
-        green: interpolate(start.green, stop.green, amount),
-        blue: interpolate(start.blue, stop.blue, amount),
-        alpha: interpolate(start.alpha, stop.alpha, amount))
+        premultipliedRed: interpolate(start.redValue, stop.redValue, amount),
+        green: interpolate(start.greenValue, stop.greenValue, amount),
+        blue: interpolate(start.blueValue, stop.blueValue, amount),
+        alpha: interpolate(start.alphaValue, stop.alphaValue, amount))
 }
 
 // MARK: - 色を読む
@@ -456,6 +455,6 @@ public nonisolated func blue(_ color: LinearRGBA) -> Float {
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func alpha(_ color: LinearRGBA) -> Float {
-    guard color.alpha.isFinite else { return 0 }
-    return color.alpha * DisplayScale.maximum
+    guard color.alphaValue.isFinite else { return 0 }
+    return color.alphaValue * DisplayScale.maximum
 }

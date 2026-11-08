@@ -60,7 +60,8 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=4d0b540d
-    public var left: Float
+    var leftValue: Float
+    public var left: Double { get { Double(leftValue) } set { leftValue = Float(newValue) } }
     /// 上の辺の縦の位置。下向きが正である。
     ///
     /// @Row {
@@ -82,7 +83,8 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=2283b665
-    public var top: Float
+    var topValue: Float
+    public var top: Double { get { Double(topValue) } set { topValue = Float(newValue) } }
     /// 幅。0 以下の矩形は何も含まず、何とも当たらず、描いても何も出ない。
     ///
     /// @Row {
@@ -105,7 +107,8 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=bc264ebb
-    public var width: Float
+    var widthValue: Float
+    public var width: Double { get { Double(widthValue) } set { widthValue = Float(newValue) } }
     /// 高さ。0 以下の矩形は何も含まず、何とも当たらず、描いても何も出ない。
     ///
     /// @Row {
@@ -128,7 +131,8 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=9d853510
-    public var height: Float
+    var heightValue: Float
+    public var height: Double { get { Double(heightValue) } set { heightValue = Float(newValue) } }
     /// この矩形の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)`` に従う。
     ///
     /// 値が持つ塗りは、``SketchPart/noFill()`` の中でもその色で塗る。描いた後の塗りの状態は
@@ -183,10 +187,10 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
         left: Double, top: Double,
         width: Double, height: Double, fill: LinearRGBA? = nil
     ) {
-        self.left = left.asFloat
-        self.top = top.asFloat
-        self.width = width.asFloat
-        self.height = height.asFloat
+        self.leftValue = left.asFloat
+        self.topValue = top.asFloat
+        self.widthValue = width.asFloat
+        self.heightValue = height.asFloat
         self.fill = fill
     }
 
@@ -214,7 +218,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ) {
         let (width, height) = (width.asFloat, height.asFloat)
         self.init(
-            left: center.x - width / 2, top: center.y - height / 2, width: width, height: height,
+            left: center.x - Double(width / 2), top: center.y - Double(height / 2), width: Double(width), height: Double(height),
             fill: fill)
     }
 
@@ -236,7 +240,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=15e70745
-    public var right: Float { left + width }
+    public var right: Double { Double(left + width) }
 
     /// 下の辺の縦の位置 (`top + height`)。
     ///
@@ -256,7 +260,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=86140f0b
-    public var bottom: Float { top + height }
+    public var bottom: Double { Double(top + height) }
 
     /// 中心。
     ///
@@ -392,10 +396,10 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     // shot: 1 snippet=f97fa44c
     public func intersects(_ circle: Circle) -> Bool {
         guard hasArea, circle.radius > 0 else { return false }
-        let nearest = SIMD2(
-            min(max(circle.center.x, left), right), min(max(circle.center.y, top), bottom))
+        let nearest = SIMD2<Float>(
+            min(max(circle.center.simd.x, leftValue), leftValue + widthValue), min(max(circle.center.simd.y, topValue), topValue + heightValue))
         let gap = circle.center.simd - nearest
-        return Vector2.isWithin(gap: gap, reach: circle.radius)
+        return Vector2.isWithin(gap: gap, reach: circle.radiusValue)
     }
 
     /// 点を含むか。**辺の上の点も含むと数える。**

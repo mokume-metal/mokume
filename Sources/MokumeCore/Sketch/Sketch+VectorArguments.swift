@@ -20,7 +20,7 @@ extension SketchPart {
     // shot: 参照 circle(_:_:_:)
     public func circle(_ center: Vector2, _ diameter: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        canvas.circle(center, diameter.asFloat)
+        canvas.circle(center, diameter)
     }
 
     /// 点を打つ。位置を `Vector2` で渡す。``point(_:_:)`` に `point.x`・`point.y` を渡すのと同じ。

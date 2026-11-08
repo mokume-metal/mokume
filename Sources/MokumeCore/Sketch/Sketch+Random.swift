@@ -43,7 +43,7 @@ extension SketchPart {
     ///
     /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
     // shot: 1 snippet=48c34437
-    public func random() -> Float { Self.liveRuntime(.read(returning: "0"))?.randomness.unitValue() ?? 0 }
+    public func random() -> Double { Double(Self.liveRuntime(.read(returning: "0"))?.randomness.unitValue() ?? 0) }
 
     /// 0 以上 `high` 未満の値。`high` が負なら `high` 以上 0 未満。
     ///
@@ -96,9 +96,9 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=8fd1617a
     // shot: 2 snippet=59f8262e
-    public func random(_ high: Double) -> Float {
-        let high = high.asFloat
-        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0
+    public func random(_ high: Double) -> Double {
+        let high = Float(high)
+        return Double(Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0)
     }
 
     /// `low` 以上 `high` 未満の値。**順序が逆でも受け取る。**
@@ -133,9 +133,9 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=ceae014f
-    public func random(_ low: Double, _ high: Double) -> Float {
-        let (low, high) = (low.asFloat, high.asFloat)
-        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
+    public func random(_ low: Double, _ high: Double) -> Double {
+        let (low, high) = (Float(low), Float(high))
+        return Double(Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0)
     }
 
     /// 配列から 1 つ選んだ要素。**空の配列なら `nil`** (落ちない)。p5.js の `random(choices)` と同じ名前。
@@ -206,8 +206,8 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=768b4289
-    public func randomGaussian() -> Float {
-        Self.liveRuntime(.read(returning: "0"))?.randomness.gaussian() ?? 0
+    public func randomGaussian() -> Double {
+        Double(Self.liveRuntime(.read(returning: "0"))?.randomness.gaussian() ?? 0)
     }
 
     /// 平均 `mean`・標準偏差 `sd` の正規分布に従う値。p5.js の `randomGaussian(mean, sd)` と同じ並び。
@@ -240,10 +240,10 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=ec7af996
-    public func randomGaussian(_ mean: Double, _ sd: Double) -> Float {
-        let (mean, sd) = (mean.asFloat, sd.asFloat)
+    public func randomGaussian(_ mean: Double, _ sd: Double) -> Double {
+        let (mean, sd) = (Float(mean), Float(sd))
         guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
-        return runtime.randomness.gaussian() * sd + mean
+        return Double(runtime.randomness.gaussian() * sd + mean)
     }
 
     /// 要素を並べ替えた**新しい配列**。渡した配列は変わらない。p5.js の `shuffle(array)` と同じ名前。
@@ -451,8 +451,7 @@ extension SketchPart {
     public func noise(
         _ x: Double, _ y: Double = 0, _ z: Double = 0,
         _ w: Double = 0
-    ) -> Float {
-        let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
+    ) -> Double {
         return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z, w) ?? 0
     }
 
@@ -577,7 +576,7 @@ extension SketchPart {
     // shot: 2 snippet=52f4861b
     public func noiseDetail(_ lod: Int, _ falloff: Double = 0.5) {
         guard let canvas = Self.liveCanvas() else { return }
-        let falloff = falloff.asFloat
+        let falloff = falloff
         canvas.noiseDetail(lod, falloff)
     }
 }

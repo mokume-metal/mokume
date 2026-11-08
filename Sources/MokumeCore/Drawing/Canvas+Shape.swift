@@ -513,7 +513,7 @@ extension Canvas {
     // 保持した形を置く。
     public func shape(_ shape: Shape, _ x: Double = 0, _ y: Double = 0) {
         let (x, y) = (x.asFloat, y.asFloat)
-        place(shape, at: [Placement(x: x, y: y)])
+        place(shape, at: [Placement(x: Double(x), y: Double(y))])
     }
 
     // 保持した形を、置き場所ぶんだけまとめて置く。
@@ -820,7 +820,7 @@ extension Canvas {
                 && (rebuiltThin
                     || Self.overlapsShow(
                         blendMode: run.mode, shaded: run.paint.shader != nil,
-                        alpha: shape.vertices[whole.lowerBound].color.w * (tint?.alpha ?? 1)))
+                        alpha: shape.vertices[whole.lowerBound].color.w * (tint?.alphaValue ?? 1)))
             if let open = section, figure != nil, open.figure == figure, open.range.upperBound == placed.lowerBound {
                 section = (figure, open.range.lowerBound..<placed.upperBound, open.takes || stencils)
             } else {
@@ -954,7 +954,7 @@ extension Canvas {
         if let tint {
             let color = vertex.color
             vertex.color = SIMD4<Float>(
-                color.x * tint.red, color.y * tint.green, color.z * tint.blue, color.w * tint.alpha)
+                color.x * tint.redValue, color.y * tint.greenValue, color.z * tint.blueValue, color.w * tint.alphaValue)
         }
     }
 
@@ -1149,7 +1149,7 @@ extension Canvas {
             // 置き場所の色は線にも掛かる (焼いた頂点に掛かるのと同じ式)。透けたら GPU の
             // 条件 (不透明) から外れるので、焼いた帯のまま置く。骨の円板で刻みが足りない太さの
             // 丸い端 (#2011) も同じく、焼いた帯 (置くときに組み直す) のまま置く
-            let color = SIMD4(stroke.color.red, stroke.color.green, stroke.color.blue, stroke.color.alpha)
+            let color = SIMD4(stroke.color.redValue, stroke.color.greenValue, stroke.color.blueValue, stroke.color.alphaValue)
                 * instance.color
             guard color.w == 1, case .mesh(let solid) = stroke.source,
                 let (geometry, geometryScale) = gpuStrokeGeometry(

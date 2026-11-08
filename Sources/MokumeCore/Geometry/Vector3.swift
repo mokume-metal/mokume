@@ -33,23 +33,23 @@ public nonisolated struct Vector3: Sendable, Hashable {
 
     /// 横の成分。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
-    public var x: Float {
-        get { simd.x }
-        set { simd.x = newValue }
+    public var x: Double {
+        get { Double(simd.x) }
+        set { simd.x = Float(newValue) }
     }
 
     /// 縦の成分。下向きが正である。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
-    public var y: Float {
-        get { simd.y }
-        set { simd.y = newValue }
+    public var y: Double {
+        get { Double(simd.y) }
+        set { simd.y = Float(newValue) }
     }
 
     /// 奥行きの成分。視点に向かって手前が正である。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
-    public var z: Float {
-        get { simd.z }
-        set { simd.z = newValue }
+    public var z: Double {
+        get { Double(simd.z) }
+        set { simd.z = Float(newValue) }
     }
 
     /// 3 つの数から作る。
@@ -76,11 +76,11 @@ nonisolated extension Vector3: ExpressibleByArrayLiteral {
     /// **要素が 3 つでなければ止まる** — 書いた場所で必ず起きる誤りなので、その行で知らせる
     /// (``Vector2`` の配列リテラルと同じ)。
     // shot: 撮れない 値を作るだけで、描く結果が無い
-    public init(arrayLiteral elements: Float...) {
+    public init(arrayLiteral elements: Double...) {
         precondition(
             elements.count == 3,
             "A Vector3 literal needs exactly three numbers, like [200, 150, 500]. It had \(elements.count).")
-        simd = SIMD3(elements[0], elements[1], elements[2])
+        simd = SIMD3(Float(elements[0]), Float(elements[1]), Float(elements[2]))
     }
 }
 
@@ -233,7 +233,8 @@ nonisolated extension Vector3 {
     /// 2 乗が溢れるほど大きい値も、潰れるほど小さい値も有限の長さで返り、**0 になるのは 0 ベクトル
     /// だけ**。``Vector2/length`` と同じ規則で、関数の ``mag(_:_:_:)``・``dist(_:_:_:_:_:_:)`` と同じ答えになる。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public var length: Float {
+    public var length: Double { Double(lengthValue) }
+    var lengthValue: Float {
         Vector3.measuredLength(of: simd)
     }
 
@@ -244,7 +245,7 @@ nonisolated extension Vector3 {
     /// 成分が小さいだけの値は 0 ベクトルではないので、2 乗が 0 に潰れるほど小さくても長さ 1 の向きを返す。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public func normalized() -> Vector3 {
-        let magnitude = length
+        let magnitude = lengthValue
         guard magnitude > 0 else { return self }
         // 長さそのものが Float に収まらない (∞) か、非正規数に丸められる (約 1.2e-38 未満) だけの有限な値は、
         // 向きだけを寄せた成分から求める (``Vector2/normalized()`` と同じ)
@@ -266,7 +267,7 @@ nonisolated extension Vector3 {
     public func limited(to maximum: Double) -> Vector3 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector3(0, 0, 0) }
-        let magnitude = length
+        let magnitude = lengthValue
         guard magnitude > limit else { return self }
         let limited = simd * limit / magnitude
         // 成分が有限なのに、長さが Float に収まらない・`simd * limit` が溢れる・潰れるときは、向きに上限を
@@ -288,15 +289,17 @@ nonisolated extension Vector3 {
     /// ``length`` と同じ規則で測り、関数の層の ``dist(_:_:_:_:_:_:)`` と同じ値になる。
     /// **数でない値が混じれば数でない値のまま返る** (関数の `dist()` は 0 を返して注意する)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func distance(to other: Vector3) -> Float {
-        (other - self).length
+    public func distance(to other: Vector3) -> Double { Double(distanceValue(to: other)) }
+    func distanceValue(to other: Vector3) -> Float {
+        (other - self).lengthValue
     }
 
     /// 内積。Processing の `dot()` に当たる。
     ///
     /// 同じ向きなら正、直角なら 0、反対向きなら負になり、長さを掛けた値になる。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func dot(_ other: Vector3) -> Float {
+    public func dot(_ other: Vector3) -> Double { Double(dotValue(other)) }
+    func dotValue(_ other: Vector3) -> Float {
         (simd * other.simd).sum()
     }
 

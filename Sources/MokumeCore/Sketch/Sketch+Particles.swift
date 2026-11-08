@@ -447,17 +447,17 @@ extension SketchPart {
     // shot: 6 snippet=90be3e77
     public func emit(
         _ particles: Particles, from source: Emitter,
-        toward heading: Heading = .plane(0...(2 * Float.pi)),
+        toward heading: Heading = .plane(0...(2 * Double.pi)),
         rate: Double,
-        speed: ClosedRange<Float> = 20...60,
-        life: ClosedRange<Float> = 1...2,
-        size: ClosedRange<Float> = 2...6,
+        speed: ClosedRange<Double> = 20...60,
+        life: ClosedRange<Double> = 1...2,
+        size: ClosedRange<Double> = 2...6,
         color: LinearRGBA? = nil
     ) {
         guard let runtime = Self.liveRuntime() else { return }
         runtime.activeCanvas.emit(
-            particles, from: source, toward: heading, rate: rate.asFloat, speed: speed, life: life,
-            size: size, color: color, frame: runtime.frameCount, using: &runtime.randomness)
+            particles, from: source, toward: heading, rate: Float(rate), speed: speed.asFloatRange, life: life.asFloatRange,
+            size: size.asFloatRange, color: color, frame: runtime.frameCount, using: &runtime.randomness)
     }
 
     /// 粒に力を効かせる。

@@ -75,7 +75,7 @@ extension SketchPart {
     // shot: 2 snippet=674eb169
     public func ambientLight(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
+        let (red, green, blue) = (red, green, blue)
         canvas.ambientLight(red, green, blue)
     }
 
@@ -110,7 +110,7 @@ extension SketchPart {
     // shot: 1 snippet=463f0c89
     public func ambientLight(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let gray = gray.asFloat
+        let gray = gray
         canvas.ambientLight(gray)
     }
 
@@ -168,7 +168,7 @@ extension SketchPart {
         _ red: Double, _ green: Double, _ blue: Double, _ x: Double, _ y: Double, _ z: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
+        let (red, green, blue, x, y, z) = (red, green, blue, x, y, z)
         canvas.directionalLight(red, green, blue, x, y, z)
     }
 
@@ -209,7 +209,7 @@ extension SketchPart {
         _ red: Double, _ green: Double, _ blue: Double, _ x: Double, _ y: Double, _ z: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
+        let (red, green, blue, x, y, z) = (red, green, blue, x, y, z)
         canvas.pointLight(red, green, blue, x, y, z)
     }
 
@@ -272,10 +272,10 @@ extension SketchPart {
         _ red: Double, _ green: Double, _ blue: Double,
         _ x: Double, _ y: Double, _ z: Double,
         _ directionX: Double, _ directionY: Double, _ directionZ: Double,
-        angle: Double = Float.pi / 6
+        angle: Double = Double.pi / 6
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, x, y, z, directionX, directionY, directionZ, angle) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
+        let (red, green, blue, x, y, z, directionX, directionY, directionZ, angle) = (red, green, blue, x, y, z, directionX, directionY, directionZ, angle)
         canvas.spotLight(
             red, green, blue, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
@@ -311,7 +311,7 @@ extension SketchPart {
     // shot: 1 snippet=7a515c10
     public func ambient(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
+        let (red, green, blue) = (red, green, blue)
         canvas.ambient(red, green, blue)
     }
 
@@ -344,7 +344,7 @@ extension SketchPart {
     // shot: 1 snippet=56ca5230
     public func ambient(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let gray = gray.asFloat
+        let gray = gray
         canvas.ambient(gray)
     }
 
@@ -379,7 +379,7 @@ extension SketchPart {
     // shot: 1 snippet=438a495e
     public func emissive(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
+        let (red, green, blue) = (red, green, blue)
         canvas.emissive(red, green, blue)
     }
 
@@ -412,7 +412,7 @@ extension SketchPart {
     // shot: 1 snippet=53bc89e9
     public func emissive(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let gray = gray.asFloat
+        let gray = gray
         canvas.emissive(gray)
     }
 }

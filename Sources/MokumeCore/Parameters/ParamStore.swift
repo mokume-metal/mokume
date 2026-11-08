@@ -323,7 +323,7 @@ final class ParamStore: DeclarationWatcher {
         case .int(let number): "\(number)"
         case .bool(let flag): "\(flag)"
         case .string(let text): "\"\(text)\""
-        case .color(let color): "color(\(color.red), \(color.green), \(color.blue), \(color.alpha))"
+        case .color(let color): "color(\(color.redValue), \(color.greenValue), \(color.blueValue), \(color.alphaValue))"
         case .vector2(let vector): "(\(vector.x), \(vector.y))"
         case .vector3(let vector): "(\(vector.x), \(vector.y), \(vector.z))"
         }

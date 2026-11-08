@@ -35,7 +35,7 @@ extension Canvas {
     // 立方体を置く。
     public func box(_ size: Double) {
         let size = size.asFloat
-        box(size, size, size)
+        box(Double(size), Double(size), Double(size))
     }
 
     // 箱を置く。
@@ -108,7 +108,7 @@ extension Canvas {
     public func translate(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.translate(x: x, y: y, z: z)
+        transform.translate(x: Double(x), y: Double(y), z: Double(z))
         noteTransformWritten()
     }
 
@@ -116,7 +116,7 @@ extension Canvas {
     public func rotateX(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.rotateX(by: radians)
+        transform.rotateX(by: Double(radians))
         noteTransformWritten()
     }
 
@@ -124,7 +124,7 @@ extension Canvas {
     public func rotateY(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.rotateY(by: radians)
+        transform.rotateY(by: Double(radians))
         noteTransformWritten()
     }
 
@@ -132,14 +132,14 @@ extension Canvas {
     public func rotateZ(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.rotateZ(by: radians)
+        transform.rotateZ(by: Double(radians))
         noteTransformWritten()
     }
 
     public func scale(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.scale(x: x, y: y, z: z)
+        transform.scale(x: Double(x), y: Double(y), z: Double(z))
         noteTransformWritten()
     }
 
@@ -147,7 +147,7 @@ extension Canvas {
     public func scale(_ s: Double) {
         let s = s.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transform.scale(x: s, y: s, z: s)
+        transform.scale(x: Double(s), y: Double(s), z: Double(s))
         noteTransformWritten()
     }
 
@@ -771,7 +771,7 @@ extension Canvas {
         let stenciled =
             !recordingShape
             && solidStrokeTakesSection(
-                alpha: style.stroke.alpha, coverage: solidStrokeCoverage, isLonePoint: solidStrokeIsLonePoint)
+                alpha: style.stroke.alphaValue, coverage: solidStrokeCoverage, isLonePoint: solidStrokeIsLonePoint)
         let start = solidVertices.count
         let indexStart = solidIndices.count
         build()
@@ -810,7 +810,7 @@ extension Canvas {
     /// (``solidStrokeOverlapsShow(alpha:)``)。
     ///
     /// [ADR-0046]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0046-stroke-stencil.md
-    var solidStrokeOverlapsShow: Bool { solidStrokeOverlapsShow(alpha: style.stroke.alpha) }
+    var solidStrokeOverlapsShow: Bool { solidStrokeOverlapsShow(alpha: style.stroke.alphaValue) }
 
     /// 不透明度 `alpha` の立体の線の片の重なりが、いまの混ぜ方と塗りで絵に出るか ([ADR-0046])。
     ///

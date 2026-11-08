@@ -19,9 +19,12 @@ import simd
 /// ```
 public struct Placement: Equatable, Sendable {
     /// 置く位置。
-    public var x: Float
-    public var y: Float
-    public var z: Float
+    var storedX: Float
+    public var x: Double { get { Double(storedX) } set { storedX = Float(newValue) } }
+    var storedY: Float
+    public var y: Double { get { Double(storedY) } set { storedY = Float(newValue) } }
+    var storedZ: Float
+    public var z: Double { get { Double(storedZ) } set { storedZ = Float(newValue) } }
     /// 軸ごとの大きさの倍率。**既定は `Vector3(1, 1, 1)`** (どの軸も伸ばさない)。
     ///
     /// 高さだけ伸ばした箱 (棒グラフの街並み・音の柱) のように、軸ごとに大きさの違うものを
@@ -68,7 +71,7 @@ public struct Placement: Equatable, Sendable {
     ///
     /// 軸ごとに変えるなら `init(x:y:z:scale:rotation:fill:)` の `Vector3` を受ける側を使う。
     public init(
-        x: Float = 0, y: Float = 0, z: Float = 0, scale: Float = 1,
+        x: Double = 0, y: Double = 0, z: Double = 0, scale: Double = 1,
         rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
     ) {
         self.init(x: x, y: y, z: z, scale: Vector3(scale, scale, scale), rotation: rotation, fill: fill)
@@ -79,12 +82,12 @@ public struct Placement: Equatable, Sendable {
     /// `Placement(x: 100, y: 200, scale: Vector3(1, 4, 1))` で置いた形は、`push()` のあとに
     /// `translate(100, 200, 0)`・`scale(1, 4, 1)` を同じ順で書いて置いたものと同じ絵になる。
     public init(
-        x: Float = 0, y: Float = 0, z: Float = 0, scale: Vector3,
+        x: Double = 0, y: Double = 0, z: Double = 0, scale: Vector3,
         rotation: Vector3 = Vector3(0, 0, 0), fill: LinearRGBA? = nil
     ) {
-        self.x = x
-        self.y = y
-        self.z = z
+        self.storedX = Float(x)
+        self.storedY = Float(y)
+        self.storedZ = Float(z)
         self.scale = scale
         self.rotation = rotation
         self.fill = fill
@@ -124,7 +127,7 @@ public struct Placement: Equatable, Sendable {
 
     /// 位置・倍率 (軸ごとの倍率も)・回転がどれも有限か。
     var hasFiniteGeometry: Bool {
-        [x, y, z, scale.x, scale.y, scale.z, rotation.x, rotation.y, rotation.z]
+        [storedX, storedY, storedZ, scale.simd.x, scale.simd.y, scale.simd.z, rotation.simd.x, rotation.simd.y, rotation.simd.z]
             .allSatisfy(\.isFinite)
     }
 

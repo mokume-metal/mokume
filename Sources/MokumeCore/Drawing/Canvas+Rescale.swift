@@ -89,8 +89,8 @@ struct RingFillRecipe {
         var color = self.color
         if let tint {
             color = LinearRGBA(
-                premultipliedRed: color.red * tint.red, green: color.green * tint.green,
-                blue: color.blue * tint.blue, alpha: color.alpha * tint.alpha)
+                premultipliedRed: color.redValue * tint.redValue, green: color.greenValue * tint.greenValue,
+                blue: color.blueValue * tint.blueValue, alpha: color.alphaValue * tint.alphaValue)
         }
         return RingFillRecipe(
             outline: outline, color: color, hasPicture: hasPicture,

@@ -75,7 +75,7 @@ extension SketchPart {
         _ x3: Double, _ y3: Double, _ x4: Double, _ y4: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1, y1, x2, y2, x3, y3, x4, y4)
         canvas.bezier(x1, y1, x2, y2, x3, y3, x4, y4)
     }
 
@@ -142,7 +142,7 @@ extension SketchPart {
         _ cx1: Double, _ cy1: Double, _ cx2: Double, _ cy2: Double, _ x: Double, _ y: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
+        let (cx1, cy1, cx2, cy2, x, y) = (cx1, cy1, cx2, cy2, x, y)
         canvas.bezierVertex(cx1, cy1, cx2, cy2, x, y)
     }
 
@@ -180,7 +180,7 @@ extension SketchPart {
     // shot: 1 snippet=03aa6a6a
     public func quadraticVertex(_ cx: Double, _ cy: Double, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
+        let (cx, cy, x, y) = (cx, cy, x, y)
         canvas.quadraticVertex(cx, cy, x, y)
     }
 
@@ -269,7 +269,7 @@ extension SketchPart {
     // shot: 2 snippet=794ad9dd
     public func curveVertex(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.curveVertex(x, y)
     }
 
@@ -452,7 +452,7 @@ extension SketchPart {
     // shot: 3 snippet=6f809d80
     public func curveTightness(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let amount = amount.asFloat
+        let amount = amount
         canvas.curveTightness(amount)
     }
 }

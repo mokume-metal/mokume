@@ -135,7 +135,7 @@ nonisolated final class FrameConverter {
     init(width: Int, height: Int, alpha: Alpha = .opaque) {
         self.width = width
         self.height = height
-        self.alpha = alpha
+        self.alphaValue = alpha
     }
 
     /// 変換した枚数 (プロセスの通算)。**計測が読む** (面の道に乗ったコマで CPU の全画素の変換が起きないこと — #2962)。

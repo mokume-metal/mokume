@@ -45,7 +45,7 @@ extension SketchPart {
     // shot: 2 snippet=60541771
     public func rect(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        let (a, b, c, d) = (a, b, c, d)
         canvas.rect(a, b, c, d)
     }
 
@@ -99,7 +99,7 @@ extension SketchPart {
         _ r: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d, r) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, r.asFloat)
+        let (a, b, c, d, r) = (a, b, c, d, r)
         canvas.rect(a, b, c, d, r)
     }
 
@@ -124,7 +124,7 @@ extension SketchPart {
     // shot: 1 snippet=a14bfc0d
     public func square(_ a: Double, _ b: Double, _ extent: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
+        let (a, b, extent) = (a, b, extent)
         canvas.square(a, b, extent)
     }
 
@@ -171,7 +171,7 @@ extension SketchPart {
     // shot: 2 snippet=ccc7b2b7
     public func circle(_ a: Double, _ b: Double, _ diameter: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
+        let (a, b, diameter) = (a, b, diameter)
         canvas.circle(a, b, diameter)
     }
 
@@ -216,7 +216,7 @@ extension SketchPart {
     // shot: 2 snippet=b47c6582
     public func ellipse(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        let (a, b, c, d) = (a, b, c, d)
         canvas.ellipse(a, b, c, d)
     }
 
@@ -367,7 +367,7 @@ extension SketchPart {
         _ a: Double, _ b: Double, _ c: Double, _ d: Double, _ start: Double, _ stop: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
+        let (a, b, c, d, start, stop) = (a, b, c, d, start, stop)
         canvas.arc(a, b, c, d, start, stop)
     }
 
@@ -391,7 +391,7 @@ extension SketchPart {
         _ mode: ArcMode
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
+        let (a, b, c, d, start, stop) = (a, b, c, d, start, stop)
         canvas.arc(a, b, c, d, start, stop, mode)
     }
 
@@ -416,7 +416,7 @@ extension SketchPart {
         _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ x3: Double, _ y3: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x1, y1, x2, y2, x3, y3) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat)
+        let (x1, y1, x2, y2, x3, y3) = (x1, y1, x2, y2, x3, y3)
         canvas.triangle(x1, y1, x2, y2, x3, y3)
     }
 
@@ -461,7 +461,7 @@ extension SketchPart {
         _ x3: Double, _ y3: Double, _ x4: Double, _ y4: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
+        let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1, y1, x2, y2, x3, y3, x4, y4)
         canvas.quad(x1, y1, x2, y2, x3, y3, x4, y4)
     }
 
@@ -512,7 +512,7 @@ extension SketchPart {
     // shot: 2 snippet=8602b4e7
     public func point(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.point(x, y)
     }
 
@@ -683,7 +683,7 @@ extension SketchPart {
     // shot: 2 snippet=055b0309
     public func line(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
+        let (x1, y1, x2, y2) = (x1, y1, x2, y2)
         canvas.line(x1, y1, x2, y2)
     }
 
@@ -722,7 +722,7 @@ extension SketchPart {
         _ x2: Double, _ y2: Double, _ z2: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
+        let (x1, y1, z1, x2, y2, z2) = (x1, y1, z1, x2, y2, z2)
         canvas.line(x1, y1, z1, x2, y2, z2)
     }
 
@@ -756,7 +756,7 @@ extension SketchPart {
     // shot: 後で撮る
     public func point(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.point(x, y, z)
     }
 }

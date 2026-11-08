@@ -666,7 +666,7 @@ struct FormInstance {
         result.linear = SIMD4(x.x, x.y, y.x, y.y)
         result.offset = SIMD4(moved.x, moved.y, offset.z, offset.w)
         if let tint {
-            let scale = SIMD4<Float>(tint.red, tint.green, tint.blue, tint.alpha)
+            let scale = SIMD4<Float>(tint.redValue, tint.greenValue, tint.blueValue, tint.alphaValue)
             result.fill = fill * scale
             result.stroke = stroke * scale
         }

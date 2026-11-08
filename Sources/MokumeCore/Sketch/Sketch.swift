@@ -138,7 +138,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 読むと部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    func mouseMoved(deltaX: Float, deltaY: Float)
+    func mouseMoved(deltaX: Double, deltaY: Double)
 
     /// 押したまま動いたとき呼ばれる。押していない間は ``mouseMoved()`` が呼ばれる。
     ///
@@ -175,7 +175,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 食う**ことになり、回りすぎる。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    func mouseDragged(deltaX: Float, deltaY: Float)
+    func mouseDragged(deltaX: Double, deltaY: Double)
 
     /// スクロールされたとき呼ばれる。**その 1 件ぶんの量**を受け取る。
     ///
@@ -206,7 +206,7 @@ public protocol Sketch: AnyObject, SketchPart {
     /// 確かめている限り気付けない。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    func mouseWheel(deltaX: Float, deltaY: Float)
+    func mouseWheel(deltaX: Double, deltaY: Double)
 
     /// 窓へファイルが落とされたとき呼ばれる。**落とされたファイルの絶対パス**を受け取る (複数まとめて
     /// 落とせば 1 回の呼び出しに並ぶ。空にはならない)。
@@ -312,10 +312,10 @@ extension Sketch {
     public func mouseReleased() {}
     public func mouseClicked() {}
     public func mouseMoved() {}
-    public func mouseMoved(deltaX: Float, deltaY: Float) {}
+    public func mouseMoved(deltaX: Double, deltaY: Double) {}
     public func mouseDragged() {}
-    public func mouseDragged(deltaX: Float, deltaY: Float) {}
-    public func mouseWheel(deltaX: Float, deltaY: Float) {}
+    public func mouseDragged(deltaX: Double, deltaY: Double) {}
+    public func mouseWheel(deltaX: Double, deltaY: Double) {}
     public func fileDropped(_ paths: [String]) {}
     public func keyPressed() {}
     public func keyReleased() {}
@@ -434,7 +434,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// 引き受けないので、組み立ての時点で断る。
     ///
     /// [ADR-0015]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0015-metalfx-role.md
-    public var pixelDensity: Float
+    public var pixelDensity: Double
     /// 描く細かさと出す細かさの間を、どうやって埋めるか。既定は ``Upscale/spatial``。
     ///
     /// ## 時間方向を選ぶと、単一フレームの再現が失われる
@@ -491,7 +491,7 @@ public struct SketchSettings: Equatable, Sendable {
     /// **起動のときに読む。** 走っている最中に代入しても窓の大きさは変わらない。
     ///
     /// 全画面 (``fullScreenDisplay``) では読まない。
-    public var windowScale: Float
+    public var windowScale: Double
 
     /// 全画面で出すディスプレイの番号 (``Display/number``)。**`nil` なら窓で開く** (既定)。
     ///
@@ -500,7 +500,7 @@ public struct SketchSettings: Equatable, Sendable {
 
     public init(
         width: Int = 960, height: Int = 540, frameRate: Int = 60, title: String = "mokume",
-        pixelDensity: Float = 1, upscale: Upscale = .spatial, windowScale: Float = 0.5,
+        pixelDensity: Double = 1, upscale: Upscale = .spatial, windowScale: Double = 0.5,
         clock: ClockMode = .wallClock
     ) {
         self.width = width
@@ -709,9 +709,9 @@ extension SketchPart {
     ///
     /// 走る前 (部品の `init()` の中など) に読むと 0 を返し、1 度だけ警告する。面の大きさで
     /// 決まる値は ``Sketch/setup()`` の中で決める。
-    public var width: Float { Self.liveCanvas(.read(returning: "0"))?.width ?? 0 }
+    public var width: Double { Double(Self.liveCanvas(.read(returning: "0"))?.width ?? 0) }
     /// 出す高さ (座標の単位)。**細かさも書き出しの倍率も、変えても動かない。**
-    public var height: Float { Self.liveCanvas(.read(returning: "0"))?.height ?? 0 }
+    public var height: Double { Double(Self.liveCanvas(.read(returning: "0"))?.height ?? 0) }
 
     /// 実際に刻んでいる幅 (画素)。細かさが 1 で、書き出しの倍率 (`mokume render --scale`) も掛けていなければ
     /// ``width`` と同じ。倍率 2 なら ``width`` の 2 倍。
@@ -797,7 +797,7 @@ extension SketchPart {
     /// ```
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
-    public var time: Float { Self.liveRuntime(.read(returning: "0"))?.time ?? 0 }
+    public var time: Double { Self.liveRuntime(.read(returning: "0"))?.timeSeconds ?? 0 }
     /// 作者の時計の上の、いまのフレームの時刻 (秒)。入り口・部品が、再生位置や起点といった**状態**を
     /// 進めるための秒である。**描く値には ``time`` を使う。**
     ///
@@ -831,7 +831,7 @@ extension SketchPart {
     ///
     /// ADR-0045 決定 9 の 2026-10-18 と 2026-10-20 の改訂が正典である
     /// ([ADR-0045](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0045-game-direction.md))。
-    public var authorTime: Float { Self.liveRuntime(.read(returning: "0"))?.authorTime ?? 0 }
+    public var authorTime: Double { Self.liveRuntime(.read(returning: "0"))?.authorSeconds ?? 0 }
     /// 前のフレームからの経過 (**秒**)。
     ///
     /// **p5.js の `deltaTime` はミリ秒で、単位が 1000 倍違う。** p5.js から写した係数は 1000 倍して
@@ -878,7 +878,7 @@ extension SketchPart {
     /// - **実時間の時計では揃わない。** 刻み方が実行ごとに違い、同じ合計時間でも刻み方が違えば
     ///   結果が変わる。フレーム落ちの起き方が違う 2 つの実行は、足し込んだ状態が合わない — 揃えたい
     ///   ものは ``time`` から導く ([ADR-0025] 決定 6)
-    public var deltaTime: Float { Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0 }
+    public var deltaTime: Double { Double(Self.liveRuntime(.read(returning: "0"))?.deltaTime ?? 0) }
     /// ``time`` がどこから来ているか。
     ///
     /// 窓に出して動かしている間は、既定で ``Clock/wallClock`` (実際に流れた時間) で、書き出し

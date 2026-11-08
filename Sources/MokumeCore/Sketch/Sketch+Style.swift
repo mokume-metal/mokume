@@ -294,7 +294,7 @@ extension SketchPart {
     // shot: 2 snippet=edd890f7
     public func strokeWeight(_ weight: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let weight = weight.asFloat
+        let weight = weight
         canvas.strokeWeight(weight)
     }
 
@@ -741,7 +741,7 @@ extension SketchPart {
     // shot: 6 snippet=bd0ccc48 image=2612ab9e73926215
     public func clip(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
+        let (a, b, c, d) = (a, b, c, d)
         canvas.clip(a, b, c, d)
     }
 

@@ -340,8 +340,8 @@ public struct Camera: Equatable, Sendable {
     /// 見る位置と見ている先が同じだと視線の向きが決まらず、上方向が視線と重なると
     /// 横が決まらない。どちらも行列が壊れて絵が丸ごと消えるので、当てる前に見る。
     var isUsable: Bool {
-        guard Self.isDrawable(eye.x, eye.y, eye.z, center.x, center.y, center.z),
-            Self.isDrawable(up.x, up.y, up.z)
+        guard Self.isDrawable(Float(eye.x), Float(eye.y), Float(eye.z), Float(center.x), Float(center.y), Float(center.z)),
+            Self.isDrawable(Float(up.x), Float(up.y), Float(up.z))
         else { return false }
         guard length_squared(center.simd - eye.simd) > 0, length_squared(up.simd) > 0 else { return false }
         return length_squared(cross(up.simd, eye.simd - center.simd)) > 0

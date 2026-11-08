@@ -7,7 +7,7 @@
 extension Canvas {
     public func ambientLight(_ gray: Double) {
         let gray = gray.asFloat
-        ambientLight(gray, gray, gray)
+        ambientLight(Double(gray), Double(gray), Double(gray))
     }
 
     public func ambientLight(_ red: Double, _ green: Double, _ blue: Double) {
@@ -29,7 +29,7 @@ extension Canvas {
         else {
             return refuseLightColor(.directionalLight)
         }
-        directionalLight(color, x, y, z)
+        directionalLight(color, Double(x), Double(y), Double(z))
     }
 
     public func pointLight(
@@ -41,14 +41,14 @@ extension Canvas {
         else {
             return refuseLightColor(.pointLight)
         }
-        pointLight(color, x, y, z)
+        pointLight(color, Double(x), Double(y), Double(z))
     }
 
     public func spotLight(
         _ red: Double, _ green: Double, _ blue: Double,
         _ x: Double, _ y: Double, _ z: Double,
         _ directionX: Double, _ directionY: Double, _ directionZ: Double,
-        angle: Double = Float.pi / 6
+        angle: Double = Double.pi / 6
     ) {
         let (red, green, blue, x, y, z, directionX, directionY, directionZ, angle) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
         guard let color = DisplayScale.color(
@@ -56,12 +56,12 @@ extension Canvas {
         else {
             return refuseLightColor(.spotLight)
         }
-        spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
+        spotLight(color, Double(x), Double(y), Double(z), Double(directionX), Double(directionY), Double(directionZ), angle: Double(angle))
     }
 
     public func ambient(_ gray: Double) {
         let gray = gray.asFloat
-        ambient(gray, gray, gray)
+        ambient(Double(gray), Double(gray), Double(gray))
     }
 
     public func ambient(_ red: Double, _ green: Double, _ blue: Double) {
@@ -76,7 +76,7 @@ extension Canvas {
 
     public func emissive(_ gray: Double) {
         let gray = gray.asFloat
-        emissive(gray, gray, gray)
+        emissive(Double(gray), Double(gray), Double(gray))
     }
 
     public func emissive(_ red: Double, _ green: Double, _ blue: Double) {

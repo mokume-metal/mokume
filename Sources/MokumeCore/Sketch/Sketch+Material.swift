@@ -52,7 +52,7 @@ extension SketchPart {
     // shot: 1 snippet=d8f1f5d4
     public func shininess(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let amount = amount.asFloat
+        let amount = amount
         canvas.shininess(amount)
     }
 
@@ -98,7 +98,7 @@ extension SketchPart {
     // shot: 1 snippet=06e03582
     public func metalness(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let amount = amount.asFloat
+        let amount = amount
         canvas.metalness(amount)
     }
 

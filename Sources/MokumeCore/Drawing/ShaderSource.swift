@@ -480,14 +480,14 @@ public enum ShaderValue: Equatable, Sendable {
             put(x, 0)
             put(y, 4)
         case .color(let color):
-            put(color.red, 0)
-            put(color.green, 4)
-            put(color.blue, 8)
-            put(color.alpha, 12)
+            put(color.redValue, 0)
+            put(color.greenValue, 4)
+            put(color.blueValue, 8)
+            put(color.alphaValue, 12)
         case .vector3(let vector):
-            put(vector.x, 0)
-            put(vector.y, 4)
-            put(vector.z, 8)
+            put(vector.simd.x, 0)
+            put(vector.simd.y, 4)
+            put(vector.simd.z, 8)
         case .bool(let value):
             buffer.storeBytes(of: value ? 1 : 0, toByteOffset: offset, as: UInt8.self)
         case .int(let value):

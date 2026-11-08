@@ -54,7 +54,7 @@ struct PlaneBox: Equatable {
         return result
     }
 
-    var rect: Rect { Rect(left: minX, top: minY, width: maxX - minX, height: maxY - minY) }
+    var rect: Rect { Rect(left: Double(minX), top: Double(minY), width: Double(maxX - minX), height: Double(maxY - minY)) }
 }
 
 extension Optional where Wrapped == PlaneBox {

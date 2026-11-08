@@ -95,7 +95,7 @@ extension SketchPart {
     // shot: 1 snippet=97d91466
     public func directionalLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.directionalLight(color, x, y, z)
     }
 
@@ -138,7 +138,7 @@ extension SketchPart {
     // shot: 1 snippet=ebd428d6
     public func pointLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.pointLight(color, x, y, z)
     }
 
@@ -224,10 +224,10 @@ extension SketchPart {
     public func spotLight(
         _ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double,
         _ directionX: Double, _ directionY: Double, _ directionZ: Double,
-        angle: Double = Float.pi / 6
+        angle: Double = Double.pi / 6
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
+        let (x, y, z, directionX, directionY, directionZ, angle) = (x, y, z, directionX, directionY, directionZ, angle)
         canvas.spotLight(color, x, y, z, directionX, directionY, directionZ, angle: angle)
     }
 

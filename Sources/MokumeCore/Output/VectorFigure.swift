@@ -43,12 +43,12 @@ nonisolated struct VectorColor: Sendable, Equatable {
     ///
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     init(_ color: LinearRGBA) {
-        let alpha = color.alpha
+        let alpha = color.alphaValue
         guard alpha.isFinite, alpha > 0 else {
             self.init(red: 0, green: 0, blue: 0, opacity: 0)
             return
         }
-        let straight = SIMD3(color.red, color.green, color.blue) / alpha
+        let straight = SIMD3(color.redValue, color.greenValue, color.blueValue) / alpha
         let linear = ColorPrimaries.sRGB(fromWorking: straight)
         func byte(_ value: Float) -> UInt8 {
             guard value.isFinite else { return 0 }

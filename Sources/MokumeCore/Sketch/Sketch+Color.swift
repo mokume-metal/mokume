@@ -66,7 +66,7 @@ extension SketchPart {
         _ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255
     ) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
+        let (red, green, blue, alpha) = (red, green, blue, alpha)
         canvas.background(red, green, blue, alpha)
     }
 
@@ -146,7 +146,7 @@ extension SketchPart {
     // shot: 2 snippet=2e391461
     public func background(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
+        let (gray, alpha) = (gray, alpha)
         canvas.background(gray, alpha)
     }
 
@@ -260,7 +260,7 @@ extension SketchPart {
     // shot: 4 snippet=7d92c52c
     public func fill(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
+        let (red, green, blue, alpha) = (red, green, blue, alpha)
         canvas.fill(red, green, blue, alpha)
     }
 
@@ -311,7 +311,7 @@ extension SketchPart {
     // shot: 2 snippet=69804a28
     public func fill(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
+        let (gray, alpha) = (gray, alpha)
         canvas.fill(gray, alpha)
     }
 
@@ -389,7 +389,7 @@ extension SketchPart {
     // shot: 2 snippet=676235a6
     public func fill(_ color: LinearRGBA, _ alpha: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        canvas.fill(color, alpha.asFloat)
+        canvas.fill(color, alpha)
     }
 
     /// これから引く線の色を、素の数値で決める。**目盛りは 0–255**。
@@ -452,7 +452,7 @@ extension SketchPart {
     // shot: 2 snippet=7ac96242
     public func stroke(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
+        let (red, green, blue, alpha) = (red, green, blue, alpha)
         canvas.stroke(red, green, blue, alpha)
     }
 
@@ -504,7 +504,7 @@ extension SketchPart {
     // shot: 2 snippet=85a0c76b
     public func stroke(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
+        let (gray, alpha) = (gray, alpha)
         canvas.stroke(gray, alpha)
     }
 
@@ -556,7 +556,7 @@ extension SketchPart {
     // shot: 1 snippet=d86e117e
     public func stroke(_ color: LinearRGBA, _ alpha: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        canvas.stroke(color, alpha.asFloat)
+        canvas.stroke(color, alpha)
     }
 
     /// これから描く画像に掛ける色を、素の数値で決める。**目盛りは 0–255**。
@@ -637,7 +637,7 @@ extension SketchPart {
     // shot: 2 snippet=91381f9a
     public func tint(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
+        let (red, green, blue, alpha) = (red, green, blue, alpha)
         canvas.tint(red, green, blue, alpha)
     }
 
@@ -710,7 +710,7 @@ extension SketchPart {
     // shot: 2 snippet=ca7f00e4
     public func tint(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (gray, alpha) = (gray.asFloat, alpha.asFloat)
+        let (gray, alpha) = (gray, alpha)
         canvas.tint(gray, alpha)
     }
 }

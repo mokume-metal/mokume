@@ -18,33 +18,39 @@ public struct Orbit: Equatable, Sendable {
     /// 見ている先 (世界の座標)。
     public var center: Vector3
     /// 見ている先からの距離。
-    public var distance: Float
+    var distanceValue: Float
+    public var distance: Double { get { Double(distanceValue) } set { distanceValue = Float(newValue) } }
     /// 水平角 (ラジアン)。0 で真正面から。
-    public var yaw: Float
+    var yawValue: Float
+    public var yaw: Double { get { Double(yawValue) } set { yawValue = Float(newValue) } }
     /// 仰角 (ラジアン)。正で見下ろす。
-    public var pitch: Float
+    var pitchValue: Float
+    public var pitch: Double { get { Double(pitchValue) } set { pitchValue = Float(newValue) } }
     /// 離したあと、1 フレームごとに速さをどれだけ保つか。**0 で流れない (既定)。**
-    public var inertia: Float
+    var inertiaValue: Float
+    public var inertia: Double { get { Double(inertiaValue) } set { inertiaValue = Float(newValue) } }
     /// 寄れる限界。
-    public var minimumDistance: Float
+    var minimumDistanceValue: Float
+    public var minimumDistance: Double { get { Double(minimumDistanceValue) } set { minimumDistanceValue = Float(newValue) } }
     /// 引ける限界。
-    public var maximumDistance: Float
+    var maximumDistanceValue: Float
+    public var maximumDistance: Double { get { Double(maximumDistanceValue) } set { maximumDistanceValue = Float(newValue) } }
 
     /// 離したあとに続く速さ。**公開しない** — 慣性の作り物であって、外から意味を持つ量ではない。
     var yawSpeed: Float = 0
     var pitchSpeed: Float = 0
 
     public init(
-        center: Vector3, distance: Float, yaw: Float = 0, pitch: Float = 0,
-        inertia: Float = 0, minimumDistance: Float = 1, maximumDistance: Float = .infinity
+        center: Vector3, distance: Double, yaw: Double = 0, pitch: Double = 0,
+        inertia: Double = 0, minimumDistance: Double = 1, maximumDistance: Double = .infinity
     ) {
         self.center = center
-        self.distance = distance
-        self.yaw = yaw
-        self.pitch = pitch
-        self.inertia = inertia
-        self.minimumDistance = minimumDistance
-        self.maximumDistance = maximumDistance
+        self.distanceValue = Float(distance)
+        self.yawValue = Float(yaw)
+        self.pitchValue = Float(pitch)
+        self.inertiaValue = Float(inertia)
+        self.minimumDistanceValue = Float(minimumDistance)
+        self.maximumDistanceValue = Float(maximumDistance)
     }
 
     // MARK: - 既定
@@ -80,10 +86,10 @@ public struct Orbit: Equatable, Sendable {
         -> Orbit
     {
         let (width, height) = (width.asFloat, height.asFloat)
-        let distance = Camera.fittingDistance(height: height)
+        let distanceValue = Camera.fittingDistance(height: height)
         return Orbit(
-            center: Vector3(SIMD3(width / 2, height / 2, 0)), distance: distance,
-            minimumDistance: distance / 10, maximumDistance: distance * 10)
+            center: Vector3(SIMD3(width / 2, height / 2, 0)), distance: Double(distanceValue),
+            minimumDistance: Double(distanceValue / 10), maximumDistance: Double(distanceValue * 10))
     }
 
     /// 読み込んだモデルが、全体を収めて見える視点から始める操作。
@@ -123,13 +129,13 @@ public struct Orbit: Equatable, Sendable {
         let center = model.center
         let usableCenter = center.x.isFinite && center.y.isFinite && center.z.isFinite
         let radius = length(model.size.simd) / 2
-        let distance = radius / RuntimeMath.sin(Camera.defaultFieldOfView / 2)
-        guard usableCenter, distance.isFinite, distance > 0 else {
+        let distanceValue = radius / RuntimeMath.sin(Camera.defaultFieldOfView / 2)
+        guard usableCenter, distanceValue.isFinite, distanceValue > 0 else {
             return Orbit(center: usableCenter ? center : Vector3(0, 0, 0), distance: 1)
         }
         return Orbit(
-            center: center, distance: distance,
-            minimumDistance: distance / 10, maximumDistance: distance * 10)
+            center: center, distance: Double(distanceValue),
+            minimumDistance: Double(distanceValue / 10), maximumDistance: Double(distanceValue * 10))
     }
 
     // MARK: - 視点
@@ -138,8 +144,8 @@ public struct Orbit: Equatable, Sendable {
     public var eye: Vector3 {
         // 縦軸は下向きなので、見下ろす (正の仰角) と見る位置は -y へ上がる
         let offset = SIMD3<Float>(
-            RuntimeMath.sin(yaw) * RuntimeMath.cos(pitch), -RuntimeMath.sin(pitch), RuntimeMath.cos(yaw) * RuntimeMath.cos(pitch))
-        return center + Vector3(offset * distance)
+            RuntimeMath.sin(yawValue) * RuntimeMath.cos(pitchValue), -RuntimeMath.sin(pitchValue), RuntimeMath.cos(yawValue) * RuntimeMath.cos(pitchValue))
+        return center + Vector3(offset * distanceValue)
     }
 
     /// どちらを上とするか。仰角を限界で止めてあるので、視線と重ならない。
@@ -182,13 +188,13 @@ public struct Orbit: Equatable, Sendable {
         if isDragging {
             let turn = -dragX * sensitivity.x * Self.radiansPerPixel
             let tilt = dragY * sensitivity.y * Self.radiansPerPixel
-            held.turn = !Self.step(&yaw, speed: &yawSpeed, by: turn)
-            held.tilt = !Self.step(&pitch, speed: &pitchSpeed, by: tilt)
-        } else if inertia > 0 {
+            held.turn = !Self.step(&yawValue, speed: &yawSpeed, by: turn)
+            held.tilt = !Self.step(&pitchValue, speed: &pitchSpeed, by: tilt)
+        } else if inertiaValue > 0 {
             // 速さは有限に保ってあるので、溢れるのは角が極端に大きいときだけ
-            Self.step(&yaw, speed: &yawSpeed, by: yawSpeed)
-            Self.step(&pitch, speed: &pitchSpeed, by: pitchSpeed)
-            let keep = min(inertia, 0.99)
+            Self.step(&yawValue, speed: &yawSpeed, by: yawSpeed)
+            Self.step(&pitchValue, speed: &pitchSpeed, by: pitchSpeed)
+            let keep = min(inertiaValue, 0.99)
             yawSpeed *= keep
             pitchSpeed *= keep
         } else {
@@ -200,10 +206,10 @@ public struct Orbit: Equatable, Sendable {
         if scroll != 0 {
             let exponent = -scroll * sensitivity.z * Self.zoomPerScroll
             let (lower, upper) = distanceLimits
-            let next = exponent.isFinite ? distance * RuntimeMath.exp(exponent) : .nan
+            let next = exponent.isFinite ? distanceValue * RuntimeMath.exp(exponent) : .nan
             // 収めた先が有限なら進める。溢れた +∞ は上限へ、0 へ潰れたら下限へ収まる
             let clamped = next.isNaN ? next : min(max(next, lower), upper)
-            if clamped.isFinite { distance = clamped } else { held.zoom = true }
+            if clamped.isFinite { distanceValue = clamped } else { held.zoom = true }
         }
         // ピンチは、開いた倍率の分だけ寄る (距離を倍率の**積**で割る・[#2762])。**倍率は掛け算で重なる**
         // ので、足した合計ではなく件ごとの `1 + 量` の積 (`pinchScale`) を受ける — 合計だと、閉じる
@@ -216,9 +222,9 @@ public struct Orbit: Equatable, Sendable {
             let applied: Double =
                 pinchScale.isFinite && pinchScale > 0 && sensitivity.z.isFinite
                 ? RuntimeMath.pow(pinchScale, Double(sensitivity.z)) : .nan
-            let next = Float(Double(distance) / applied)
+            let next = Float(Double(distanceValue) / applied)
             let clamped = next.isNaN ? next : min(max(next, lower), upper)
-            if clamped.isFinite { distance = clamped } else { held.zoom = true }
+            if clamped.isFinite { distanceValue = clamped } else { held.zoom = true }
         }
         clampToLimits()
         return held
@@ -231,9 +237,9 @@ public struct Orbit: Equatable, Sendable {
     /// [#2762]: https://github.com/mokume-metal/mokume/issues/2762
     mutating func returnView(to home: Orbit) {
         center = home.center
-        distance = home.distance
-        yaw = home.yaw
-        pitch = home.pitch
+        distanceValue = home.distanceValue
+        yawValue = home.yawValue
+        pitchValue = home.pitchValue
         yawSpeed = 0
         pitchSpeed = 0
         clampToLimits()
@@ -296,7 +302,7 @@ public struct Orbit: Equatable, Sendable {
     /// 「500 より遠く」。使えないのは数でない値だけで、それは ``clampToLimits(fallbackCenter:)``
     /// が既定へ倒す。
     private var distanceLimits: (lower: Float, upper: Float) {
-        (min(minimumDistance, maximumDistance), max(minimumDistance, maximumDistance))
+        (min(minimumDistanceValue, maximumDistanceValue), max(minimumDistanceValue, maximumDistanceValue))
     }
 
     /// 限界へ収める。**手で書いた値にも効く** — 公開している以上、外から限界の外を
@@ -319,35 +325,35 @@ public struct Orbit: Equatable, Sendable {
             center = fallbackCenter
             fellBack = true
         }
-        if !pitch.isFinite {
-            pitch = 0
+        if !pitchValue.isFinite {
+            pitchValue = 0
             fellBack = true
         }
-        if !yaw.isFinite {
-            yaw = 0
+        if !yawValue.isFinite {
+            yawValue = 0
             fellBack = true
         }
-        if inertia.isNaN {
-            inertia = 0
+        if inertiaValue.isNaN {
+            inertiaValue = 0
             fellBack = true
         }
-        if minimumDistance.isNaN {
-            minimumDistance = 1
+        if minimumDistanceValue.isNaN {
+            minimumDistanceValue = 1
             fellBack = true
         }
-        if maximumDistance.isNaN {
-            maximumDistance = .infinity
+        if maximumDistanceValue.isNaN {
+            maximumDistanceValue = .infinity
             fellBack = true
         }
         if !yawSpeed.isFinite { yawSpeed = 0 }
         if !pitchSpeed.isFinite { pitchSpeed = 0 }
-        pitch = min(max(pitch, -Self.pitchLimit), Self.pitchLimit)
+        pitchValue = min(max(pitchValue, -Self.pitchLimit), Self.pitchLimit)
         let (lower, upper) = distanceLimits
-        let clamped = distance.isNaN ? distance : min(max(distance, lower), upper)
+        let clamped = distanceValue.isNaN ? distanceValue : min(max(distanceValue, lower), upper)
         if clamped.isFinite {
-            distance = clamped
+            distanceValue = clamped
         } else {
-            distance = lower.isFinite ? lower : upper.isFinite ? upper : 1
+            distanceValue = lower.isFinite ? lower : upper.isFinite ? upper : 1
             fellBack = true
         }
         return fellBack

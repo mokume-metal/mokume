@@ -257,7 +257,7 @@ struct SolidStrokePlacement {
             eye = SIMD4(camera.eye.simd, 0)
             parameters = SIMD4(weight, abs(bottom - top), 0, height)
         }
-        self.color = SIMD4(color.red, color.green, color.blue, color.alpha)
+        self.color = SIMD4(color.redValue, color.greenValue, color.blueValue, color.alphaValue)
         self.uv = SIMD4(uv.x, uv.y, 0, coverage)
         shapeScale = SIMD4(geometryScale, 0)
         // 端の形は画面の横の w (向きには使わない成分) に載せる (``capCode(_:)``)
@@ -295,7 +295,7 @@ extension Canvas {
         case .mesh, .model: break
         case .freeform, .retained, .retainedGeometry: return false
         }
-        return currentShader == nil && style.stroke.alpha == 1 && style.strokeJoin == .miter
+        return currentShader == nil && style.stroke.alphaValue == 1 && style.strokeJoin == .miter
             && style.blendMode == .blend && style.picture == nil
     }
 
@@ -433,7 +433,7 @@ extension Canvas {
         // 混ぜるので、色が不透明でも角で重なる片が 2 回混ざる。判定はほかの立体の線と同じ口で、骨に乗る線
         // (不透明の `blend`・断片なし) では細いときだけ真になる。列は線 1 本ごとに開く (上の `closeBatch()`)
         // ので、区間は図形ごとに切れ、別々の図形どうしは 2 回混ぜる。区間は骨の添字の並びで数える
-        if solidStrokeTakesSection(alpha: color.alpha, coverage: thin?.coverage ?? 1, isLonePoint: false) {
+        if solidStrokeTakesSection(alpha: color.alphaValue, coverage: thin?.coverage ?? 1, isLonePoint: false) {
             openSolid?.strokeStencilSections = [0..<geometry.count]
         }
     }

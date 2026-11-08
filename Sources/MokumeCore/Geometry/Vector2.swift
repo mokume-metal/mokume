@@ -98,9 +98,9 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=73089cbf
-    public var x: Float {
-        get { simd.x }
-        set { simd.x = newValue }
+    public var x: Double {
+        get { Double(simd.x) }
+        set { simd.x = Float(newValue) }
     }
 
     /// 縦の成分。下向きが正である。
@@ -124,9 +124,9 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=25ae9188
-    public var y: Float {
-        get { simd.y }
-        set { simd.y = newValue }
+    public var y: Double {
+        get { Double(simd.y) }
+        set { simd.y = Float(newValue) }
     }
 
     /// 2 つの数から作る。
@@ -206,7 +206,8 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=26b58a86
-    public var length: Float {
+    public var length: Double { Double(lengthValue) }
+    var lengthValue: Float {
         Vector2.measuredLength(of: simd)
     }
 }
@@ -238,11 +239,11 @@ nonisolated extension Vector2: ExpressibleByArrayLiteral {
     ///   }
     /// }
     // shot: 1 snippet=2f2591aa
-    public init(arrayLiteral elements: Float...) {
+    public init(arrayLiteral elements: Double...) {
         precondition(
             elements.count == 2,
             "A Vector2 literal needs exactly two numbers, like [300, 300]. It had \(elements.count).")
-        simd = SIMD2(elements[0], elements[1])
+        simd = SIMD2(Float(elements[0]), Float(elements[1]))
     }
 }
 
@@ -478,7 +479,7 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=d4ed6bb5
     public func normalized() -> Vector2 {
-        let magnitude = length
+        let magnitude = lengthValue
         guard magnitude > 0 else { return self }
         // 長さそのものが Float に収まらない (∞) か、非正規数に丸められる (約 1.2e-38 未満) だけの有限な値は、
         // 向きだけを寄せた成分から求める (#2885・#2935)。非正規数の長さは 1.4e-45 の刻みに丸められる
@@ -527,7 +528,7 @@ nonisolated extension Vector2 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector2(0, 0) }
         // `length` は 2 乗が溢れる・潰れる値も測れる (0 になるのは 0 ベクトルだけ・#2935)
-        let magnitude = length
+        let magnitude = lengthValue
         guard magnitude > limit else { return self }
         let limited = simd * limit / magnitude
         // 成分が有限なのに、長さが Float に収まらない・`simd * limit` が溢れる・潰れる (0 や非正規数に
@@ -675,7 +676,8 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=bdf11bb3
-    public var angle: Float {
+    public var angle: Double { Double(angleValue) }
+    var angleValue: Float {
         RuntimeMath.atan2(simd.y, simd.x)
     }
 
@@ -716,8 +718,9 @@ nonisolated extension Vector2 {
     /// `circle()` と `Circle` と同じ使い分け)。**数でない値が混じれば数でない値のまま返る**
     /// (関数の `dist()` は 0 を返して注意する)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func distance(to other: Vector2) -> Float {
-        (other - self).length
+    public func distance(to other: Vector2) -> Double { Double(distanceValue(to: other)) }
+    func distanceValue(to other: Vector2) -> Float {
+        (other - self).lengthValue
     }
 
     /// 内積。Processing の `dot()` に当たる。
@@ -725,7 +728,8 @@ nonisolated extension Vector2 {
     /// 2 つの値の向きの近さを測る。同じ向きなら正、直角なら 0、反対向きなら負になり、
     /// 長さを掛けた値になる。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func dot(_ other: Vector2) -> Float {
+    public func dot(_ other: Vector2) -> Double { Double(dotValue(other)) }
+    func dotValue(_ other: Vector2) -> Float {
         (simd * other.simd).sum()
     }
 

@@ -83,7 +83,8 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=36d281b2
-    public var radius: Float
+    var radiusValue: Float
+    public var radius: Double { get { Double(radiusValue) } set { radiusValue = Float(newValue) } }
     /// この円の塗り。`nil` なら、描いた時点の ``SketchPart/fill(_:)-(LinearRGBA)`` に従う。
     ///
     /// 値が持つ塗りは、``SketchPart/noFill()`` の中でもその色で塗る。描いた後の塗りの状態は
@@ -161,7 +162,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
         x: Double, y: Double, diameter: Double,
         fill: LinearRGBA? = nil
     ) {
-        self.init(center: Vector2(x, y), radius: diameter.asFloat / 2, fill: fill)
+        self.init(center: Vector2(x, y), radius: diameter / 2, fill: fill)
     }
 
     /// 中心の点と半径から作る。
@@ -184,7 +185,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     // shot: 1 snippet=f796decc
     public init(center: Vector2, radius: Double, fill: LinearRGBA? = nil) {
         self.center = center
-        self.radius = radius.asFloat
+        self.radiusValue = radius.asFloat
         self.fill = fill
     }
 
@@ -208,7 +209,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=bfdaee26
-    public var diameter: Float { radius * 2 }
+    public var diameter: Double { Double(radius * 2) }
 
     /// その場で動かす。
     ///
@@ -296,7 +297,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     public func intersects(_ other: Circle) -> Bool {
         guard radius > 0, other.radius > 0 else { return false }
         let gap = other.center.simd - center.simd
-        return Vector2.isWithin(gap: gap, reach: radius + other.radius)
+        return Vector2.isWithin(gap: gap, reach: radiusValue + other.radiusValue)
     }
 
     /// 矩形と重なるか。**縁が接するだけでも重なると数える。**
@@ -356,7 +357,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     public func contains(_ point: Vector2) -> Bool {
         guard radius > 0 else { return false }
         let gap = point.simd - center.simd
-        return Vector2.isWithin(gap: gap, reach: radius)
+        return Vector2.isWithin(gap: gap, reach: radiusValue)
     }
 
     /// 走っているスケッチへ描く。

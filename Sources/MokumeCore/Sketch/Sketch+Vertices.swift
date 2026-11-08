@@ -342,7 +342,7 @@ extension SketchPart {
     // shot: 2 snippet=be9944e2
     public func vertex(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y) = (x.asFloat, y.asFloat)
+        let (x, y) = (x, y)
         canvas.vertex(x, y)
     }
 
@@ -421,7 +421,7 @@ extension SketchPart {
     // shot: 2 snippet=06bac7b6
     public func vertex(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.vertex(x, y, z)
     }
 
@@ -504,7 +504,7 @@ extension SketchPart {
     // shot: 1 snippet=5f4f9da3
     public func vertex(_ x: Double, _ y: Double, _ u: Double, _ v: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
+        let (x, y, u, v) = (x, y, u, v)
         canvas.vertex(x, y, u, v)
     }
 
@@ -574,7 +574,7 @@ extension SketchPart {
     // shot: 1 snippet=1faf918a
     public func vertex(_ x: Double, _ y: Double, _ z: Double, _ u: Double, _ v: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
+        let (x, y, z, u, v) = (x, y, z, u, v)
         canvas.vertex(x, y, z, u, v)
     }
 
@@ -665,7 +665,7 @@ extension SketchPart {
     // shot: 2 snippet=1de4b1da
     public func normal(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
-        let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
+        let (x, y, z) = (x, y, z)
         canvas.normal(x, y, z)
     }
 
