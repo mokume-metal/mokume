@@ -60,7 +60,7 @@ mokume は、Processing の流儀で絵と動きを書く道具として作っ�
 | 4. 押下の語 | `isPressed` / `justPressed` / `justReleased` を入力の種類ごとに問う | [ADR-0034](0034-input-surface-units.md) 決定 7 |
 | 6・A1〜A3・R2. 時間 | `update()` は足さない。窓でもフレームの時計を選べる。止める口の意味は時計によらない | 決定 9・[ADR-0025](0025-determinism-levels.md) 決定 1・6 |
 | R1. リプレイ | 記録できるものは記録し、できないものは検出して名乗る。記録時と再生時を照合する | 決定 10・[ADR-0028](0028-external-inputs.md) 決定 6 |
-| 7. iOS | `SketchView` で埋め込む。タッチは 1 本目をマウスとして扱う。帯付きの拡大 | 決定 11・[ADR-0012](0012-view-layer.md) 決定 4・[ADR-0032](0032-window-ownership.md) 決定 1・[ADR-0009](0009-platform-floor-and-toolchain.md) 決定 1 |
+| 7. iOS | `SketchView` で埋め込む。同時に動かすのは既定で 1 つ・複数は後から opt-in。タッチは 1 本目をマウスとして扱う。帯付きの拡大 | 決定 11・[ADR-0012](0012-view-layer.md) 決定 4・[ADR-0032](0032-window-ownership.md) 決定 1・[ADR-0009](0009-platform-floor-and-toolchain.md) 決定 1 |
 | 7-5. 配布と外部サービス | `.xcodeproj` の外枠 + ゲームは Swift パッケージ。サービスの結果は `ExternalQueue` で渡す | 決定 12 |
 | 着手の時期・8. 順番 | 全体が整うのを待たず、段ごとに着手の条件を置く | 決定 13 |
 | 要判断 1. `deltaTime` の単位 | 秒の `Float` のまま。p5.js (ミリ秒) との違いは説明文で名乗る | [ADR-0020](0020-api-naming-and-surface.md) 決定 1 |
@@ -449,7 +449,7 @@ func draw() {                                   // 1 回 = きっちり 1/60 秒
 
 - **iOS:** SwiftUI の `SketchView` に描画面を載せる。アプリの外枠 (`@main struct …: App`) は雛形が出す (決定 12)
 - **macOS:** いまの `Sketch.main()` (mokume が窓を持つ形) を既定に残し、`SketchView` で埋め込むこともできるようにする
-- **同時に動かすスケッチは、最初は 1 つ。** 描画の関数と値型の `draw()` が「走っているスケッチ」を見るので、2 つ同時に動かすとどちらに描くかが曖昧になる。複数の要望は作例が来てから扱う
+- **同時に動かすスケッチは、既定で 1 つ。** `Sketch.main()` と `SketchView` 1 つの書き味は変えない。複数の同居は後から opt-in で足し、基盤はそれを妨げない形に保つ (下の「改訂 (2026-11-08) — 同時に動かすスケッチは既定で 1 つ…」)
 - スケッチの持ち主 (SwiftUI が組み直すたびに作り直さない形。`SketchView(Game.self)` など) は、`SketchView` の着手時に決める
 - 対象は iOS / iPadOS 26 以降、A14 / M1 以降である ([ADR-0009](0009-platform-floor-and-toolchain.md) 決定 1)。Metal 4 の要件で、iPhone 12 以降・iPad Air (2020) 以降などに当たる
 
@@ -481,6 +481,35 @@ AppKit に依存しているのは約 16 ファイル・約 4,300 行で、本�
 #### 改訂 (2026-11-08) — `SketchView` は、埋め込む人の入口 `MokumeUI` に置く ([#3814](https://github.com/mokume-metal/mokume/issues/3814))
 
 `SketchView` を置く SwiftUI のファイルで `import mokume` と `import SwiftUI` を並べると、SwiftUI と同じ名前の型 (`Scene`・`Image` など) が型を書く位置で曖昧になって組めない。SwiftUI のアプリの入口 (`var body: some Scene`) で必ず起きる。[ADR-0048](0048-entry-per-reader.md) 決定 2 に従い、`SketchView` は埋め込む人の入口 `MokumeUI` に置く。埋め込むファイルは `import MokumeUI` を書き、スケッチは別のファイルで `import mokume` して書く。決定 12 の雛形が出すアプリの外枠も `import MokumeUI` を書く。iOS で描画面を SwiftUI に載せるという決定の理由は変わらない。実装は [#3872](https://github.com/mokume-metal/mokume/issues/3872) が持つ。
+
+#### 改訂 (2026-11-08) — 同時に動かすスケッチは既定で 1 つ。複数は後から opt-in で足し、基盤はそれを妨げない ([#3802](https://github.com/mokume-metal/mokume/issues/3802))
+
+**当初の決定は「同時に動かすスケッチは、最初は 1 つ。…複数の要望は作例が来てから扱う」だった。** 理由は「描画の関数と値型の `draw()` が走っているスケッチを見るので、2 つ同時に動かすとどちらに描くかが曖昧になる」である。この書き方は暫定で、次の 2 つのどちらの根拠も ADR から読めなかった。
+
+- 複数へ寄せる基盤の作業 (実行を引く判断を 1 か所に寄せる [#3846](https://github.com/mokume-metal/mokume/issues/3846)・実体から実行を引く [#3847](https://github.com/mokume-metal/mokume/issues/3847)) を進める根拠
+- 単一の前提に立つ状態をプロセス単位に足していく変更を止める根拠
+
+**決めた: 既定は 1 つのまま、書き味は変えない。複数の同居は後から opt-in で足し、基盤はそれを妨げない形に保つ。**
+
+- **既定は変えない。** `Sketch.main()` で書く人と、`SketchView` を 1 つ置く人には、何も増えない ([ADR-0001](0001-founding-principles.md) 原則 1)。すぐに複数を要る作例は無い
+- **opt-in で足す場面**: iPad のマルチウィンドウ・Split View。画面の遷移の最中に、新旧の `SketchView` が並ぶとき。一覧のサムネイルのように、生きた絵を並べる画面
+- **曖昧になるのはフレームの外だけである。** フレームの中は、`withActiveRuntime` が自分の実行を差してから `setup()`・`draw()` を呼ぶ。フレームはどれも main actor の上で 1 本ずつ進むので、2 つの実行が交互に自分を差して描いても、どちらに描くかは決まっている。決まらないのは、どの実行も差していない場所である。ホストのコード (`Button { game.reset() }`)、実体や部品を作る時点、差されずに届く呼び返しがそれに当たる。その規則は [ADR-0020](0020-api-naming-and-surface.md) 決定 7 の改訂 (2026-11-08) と [ADR-0010](0010-concurrency-model.md) 決定 2 の改訂 (2026-11-08) が持つ。同居を塞いでいるのは「走っているスケッチ」の参照ではなく、プロセス単位の状態である
+- **基盤はそれを妨げない。** 新しく足す状態は実行の持ち物にし、プロセス単位に置かない (ADR-0010 決定 2 の改訂)
+
+**opt-in を足すときに決めること** (いまは決めない。iPad 対応 [#3636](https://github.com/mokume-metal/mokume/issues/3636)・[#2605](https://github.com/mokume-metal/mokume/issues/2605) か、複数の作例が来たときに、別の `Feature` として起票する):
+
+- 2 つ目を待たせる門 (`SketchApplication.running`) を外すこと
+- 入力の行き先 (キーボード・ゲームパッドは前面のシーンやウィンドウへ、など)
+- GPU と音声の共有 (GPU は実行ごとに作るのでメモリが数だけ重なる。音声はプロセスで 1 つのエンジンを参加者で数える)
+- 開発の道具 (観測・MCP・ホットリロード・区画) がどの実行を見るか
+- iPad で裏に回ったときに止めるのを、シーン単位にすること (上の iOS の既定の表は、いまアプリ単位で止める)
+
+**退けた案:**
+
+- **案 A — 走っているスケッチの参照を、タスクローカル (`@TaskLocal`) の現在値にする。** SwiftUI のボタンの処理のようなホストのコードには、タスクローカルの値は伝わらない。本当に曖昧になるフレームの外の場面を解けない。描画の呼び出しごとに参照のコストが乗るかという、測っていない懸念も増える
+- **案 C — 文脈を明示の引数にする (`func draw(_ g: Graphics)`)。** Swift らしい形だが、`circle(x, y, d)` と書ける Processing の書き味 (ADR-0001 原則 1) を失う
+
+**代償:** 複数の同居を求める人は、opt-in が入るまで、2 つ目の `SketchView` が待つ形のまま使う。基盤の側は、単一の前提で書けば短く済む状態でも、実行の持ち物として書く手間を払う。
 
 ### 12. 配布は `.xcodeproj` の外枠とし、ゲームのコードは常に Swift パッケージに置く。外部サービスは mokume に入れない
 
