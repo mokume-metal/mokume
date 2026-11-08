@@ -593,9 +593,9 @@ params: build
 # 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
 # 公開 API を見るモジュール。**利用者が import する入口から届く自前のモジュールを全部並べる** —
 # アンブレラ (mokume) が再エクスポートするもの (ADR-0042 決定 3) と、読み手ごとの入口 (ADR-0048
-# 決定 1: MokumeUI)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
+# 決定 1: MokumeUI・MokumeHost)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
 # 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
-API_MODULES := MokumeCore MokumeCamera MokumeAudio MokumeNetwork MokumeGamepad MokumeMIDI MokumeGame MokumeVision MokumeUI
+API_MODULES := MokumeCore MokumeCamera MokumeAudio MokumeNetwork MokumeGamepad MokumeMIDI MokumeGame MokumeVision MokumeUI MokumeHost
 
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
 	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))
@@ -682,11 +682,12 @@ REFERENCE_GRAPHS := .build/reference-graphs
 REFERENCE_OUT := .build/reference
 # 面から外す型。**面の相手はスケッチを書く人 1 種類**で、道具・エージェント・実行の
 # 土台だけが触るものは人が名指しして外す (ADR-0027 決定 5 が 1 本ずつ理由を持つ)。
-# public は 1 つも動かないので、一覧も ADR-0020 の検査も全部を見たままになる
+# public は 1 つも動かないので、一覧も ADR-0020 の検査も全部を見たままになる。InputEvent は道具の入口
+# MokumeHost の口 (HeadlessRun.send) の署名に出るので、差込口と同じく面に残す (ADR-0048 決定 3 の改訂・#3870)
 REFERENCE_OMIT := \
 	SketchApplication SharedFrameWindow SharedFramePreview SketchRuntime FrameRateNotice OutputStage \
 	StartupReads WorkDirectory SourceStamp RuntimeLoad BundledShaders \
-	InputState InputEvent \
+	InputState \
 	ObservationRequest ObservationReport ExposedValue FrameStats \
 	ParamBox UndeliverableGeneration
 

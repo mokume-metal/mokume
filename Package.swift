@@ -21,6 +21,7 @@ let package = Package(
         // ADR-0048 決定 1: SwiftUI に埋め込む人の入口。`SketchView` と、その署名に要る型だけを名指しで出す
         // (MokumeCore を丸ごと再エクスポートしない — SwiftUI と同じ名前の型を埋め込むファイルへ持ち込まない)
         .library(name: "MokumeUI", targets: ["MokumeUI"]),
+        .library(name: "MokumeHost", targets: ["MokumeHost"]),
         // 道具。**実行ファイルの名前は product の名前で決まる**ので、ライブラリと
         // 同じ名前は置けない (同名で両方を宣言すると、ビルドは通るのに実行ファイルが
         // 作られない — 実測)。配布のときに mokume という名前で入れる
@@ -128,6 +129,9 @@ let package = Package(
         // 入口: SwiftUI に埋め込む人 (ADR-0048 決定 1・2)。アンブレラは再エクスポートしない — スケッチを
         // 書くファイルに `SketchView` を、埋め込むファイルにスケッチ用の型を、互いに持ち込まない
         .target(name: "MokumeUI", dependencies: ["MokumeCore"], swiftSettings: .mokume),
+        // 入口: 道具・外のパッケージ (ADR-0048 決定 1・3)。窓を出さずにスケッチを走らせる口だけを持つ。
+        // アンブレラは再エクスポートしない — スケッチを書く人の補完に、実行の口を並べない
+        .target(name: "MokumeHost", dependencies: ["MokumeCore"], swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)。OS の事情の文面は本体と同じ関数で引くので
         // MokumeDiagnostics を直に使う (アンブレラは再輸出しない・#2839)
@@ -195,6 +199,11 @@ let package = Package(
         // スケッチは別のファイルで `import mokume` して書く — 埋め込む人の書き方そのもの
         .testTarget(
             name: "MokumeUITests", dependencies: ["MokumeUI", "mokume"],
+            swiftSettings: .mokumeTests),
+        // 窓なしで走らせる口が `import MokumeHost` だけのファイルで使えることを、組んで確かめる (#3870)。
+        // スケッチは別のファイルで `import mokume` して書く — 外のパッケージの書き方そのもの
+        .testTarget(
+            name: "MokumeHostTests", dependencies: ["MokumeHost", "mokume"],
             swiftSettings: .mokumeTests),
 
     ]

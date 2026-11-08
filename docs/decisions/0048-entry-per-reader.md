@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-11-08)
+採用 (2026-11-08) / 改訂あり (本文の「改訂 (日付)」見出し)
 
 ## 文脈
 
@@ -82,6 +82,24 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
 
 生の部品 (`SketchRuntime` など) は `package` に下げる ([#3871](https://github.com/mokume-metal/mokume/issues/3871))。外のパッケージが `MokumeHost` へ移った後に下げる。
 
+#### 改訂 (2026-11-08) — 窓を開いて走らせる口は持たない ([#3870](https://github.com/mokume-metal/mokume/issues/3870))
+
+**当初の決定は、窓を開いて走らせる口まで `MokumeHost` に持たせるかを、実装の段で probes の使い方を見て決めるとしていた。** 持たせない。`MokumeHost` が持つのは、窓を出さずに走らせる口 `HeadlessRun` だけである。
+
+probes が窓の経路 (`SketchApplication(sketch:gpu:).run()`) を使う 5 か所の目的は、既定の入口・2 つ目の窓を開く書き方の再現・`MOKUME_RENDER` を立てた書き出しの再現だった。どれもスケッチを窓で走らせることそのもので、窓の経路の組み方を変えたいわけではない。だから、スケッチを書く人の入口 `Sketch.main()` (`Game.main()`) で書ける。違いは起動に失敗したときの扱い (`SketchApplication(...)` は投げ、`Sketch.main()` は名乗って終わる) だけで、再現の判定には効かない。
+
+持たせると、窓の外枠を macOS 専用のターゲットに割る決定 ([#3804](https://github.com/mokume-metal/mokume/issues/3804)) の後に、窓なしの道具の入口が AppKit に依存する。`Sketch.main()` はその後も `import mokume` から届く。
+
+| probes の箇所 | 移し先 |
+| --- | --- |
+| 既定の入口 (Tumble) | `Tumble.main()` の既定。引数の振り分けは別の `@main` に分ける |
+| 2 つ目の窓の再現 (Imprint) | `First.main()`・`Second.main()`。`Sketch.main()` も 2 つ目を同じく断る |
+| `MOKUME_RENDER` の再現 (Imprint 2・Clause 1) | `Scene.main()` |
+
+`HeadlessRun.send(_:)` が受ける `InputEvent` は、`MokumeHost` の口の署名に出るので、参照の面に戻した ([ADR-0027](0027-readable-surfaces.md) 決定 5 の表から外す)。差込口と同じく、外のパッケージが読む面がほかに無いためである。
+
+probes は mokume の版を固定している (2026-11-08 に多くが 0.16.2)。移行は probes の版上げのときに行う。
+
 ### 4. スケッチの面は変えない
 
 - **スケッチ用の型の名前は、手本に寄せたまま残す。** `Image`・`Font`・`Shape`・`Scene`・`Color` を SwiftUI に合わせて改名しない
@@ -118,7 +136,8 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
 
 - **検査の対象**: `make api` の `API_MODULES` と参照の面 (`REFERENCE_MODULES`) に、新しいモジュールが加わる。生の部品を `package` に下げると、`REFERENCE_OMIT` の名指しの多くが要らなくなる
 - **実装済み** (2026-11-08): 決定 2 (`MokumeUI`) は [#3872](https://github.com/mokume-metal/mokume/issues/3872) で入った。名指しの一覧は `Sources/MokumeUI/Exports.swift` の 1 か所で、`import SwiftUI` と `import MokumeUI` だけのファイルが組めることを `Tests/MokumeUITests` が組んで確かめる。iOS ([#2605](https://github.com/mokume-metal/mokume/issues/2605)) の `SketchView` はこの上に載せる
-- **未実装** (2026-11-08): 決定 1 の `MokumeHost` と決定 3 はまだコードに無い。実装は [#3870](https://github.com/mokume-metal/mokume/issues/3870) (`MokumeHost`)・[#3871](https://github.com/mokume-metal/mokume/issues/3871) (`package` に下げる。#3870 の後) が持つ
+- **実装済み** (2026-11-08): 決定 1 の `MokumeHost` と決定 3 の口は [#3870](https://github.com/mokume-metal/mokume/issues/3870) で入った。口は `HeadlessRun` の 1 つで、名指しの一覧は `Sources/MokumeHost/Exports.swift` の 1 か所にある。`import MokumeHost` だけのファイルで使い切れることと、後始末を書かなくても差込口が閉じることは、`Tests/MokumeHostTests` が確かめる。mokume-syphon・mokumesh は同じ時期に移した
+- **未実装** (2026-11-08): 決定 3 の、生の部品を `package` に下げる段は [#3871](https://github.com/mokume-metal/mokume/issues/3871) が持つ
 - [#2595](https://github.com/mokume-metal/mokume/issues/2595) (`LinearRGBA` → `Color`) は、この ADR の実装を待たない。`MokumeUI` は `Color` を再エクスポートしない
 
 > 破れたとき: 埋め込むファイルが `import mokume` を書かないと SwiftUI の部品に届かない形にする (`MokumeUI` が `MokumeCore` を丸ごと再エクスポートする、または必要な型を出し漏らす)。衝突がアプリの入口に戻ってくる。

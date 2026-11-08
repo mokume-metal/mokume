@@ -496,6 +496,7 @@ FOREIGN_ALLOWLIST = {
     "RenderDevice.init(device:)": "既に持っている Metal の資源を持ち込む入口。意図して開けてある",
     "PixelSurface.init(_:conversion:)": "OS が GPU と共有する面をそのまま受け、CPU で画素を作り直さずに絵へ書く入口 (#2962・ADR-0042 決定 5 の改訂)。面の在処はこの型でなければ表せず、Metal の型ではないので描画資源を面に出さない。既に持っている資源を持ち込む点は RenderDevice.init(device:) と同じ",
     "RenderTarget.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)",
+    "HeadlessRun.writePNG(to:)": "書き出し先の指定 (PNGFile.write と同じ理由)。道具の入口 MokumeHost の口 (#3870)",
     "Shader.url": "読み込み元の在処。読んだファイルを指し直せる形で返す",
     "SketchPart.assetURL(_:)": "資材の在処を返す口。mokume が読まない形式を利用者や外のパッケージが読むのに、場所そのものを渡す (Shader.url と同じ理由)",
     "SketchView.body": "SwiftUI の `View` の要件そのもの。SwiftUI のアプリへ埋め込む口なので、`View` として並べるほかに表せない (ADR-0045 決定 11・#3511)",

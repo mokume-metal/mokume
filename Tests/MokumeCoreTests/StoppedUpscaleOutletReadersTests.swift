@@ -165,6 +165,10 @@ struct StoppedUpscaleOutletReadersTests {
             file: "MokumeCore/Output/RenderTarget+Output.swift", token: ".setSource(", count: 1,
             catchUp: .reading,
             reason: "出力段 (encodeToImage・encodeForDisplay・writePNG)。組む前に catchUpWithDrawnPicture() を通る (#1882)"),
+        Reader(
+            file: "MokumeHost/HeadlessRun.swift", token: "runtime.target", count: 3,
+            catchUp: .reading, vouchedIn: "MokumeCore/Output/RenderTarget+Output.swift",
+            reason: "窓なしの実行の読む口 (readPixels・displayImage・writePNG・#3870)。呼ぶ先の readPixels() (RenderTarget.swift) と encodeForDisplay・writePNG (出力段) が、どれも頭で catchUpWithDrawnPicture() を通る"),
         // MARK: ランタイムの配った後
         Reader(
             file: "MokumeCore/Display/SketchApplication.swift", token: "runtime.target", count: 3,

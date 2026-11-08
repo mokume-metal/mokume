@@ -249,7 +249,7 @@ SPDX-License-Identifier: MIT
 
 **`public` は 1 つも動かさない。** 外れるのは人が読む面へ渡すグラフだけで、一覧 (`make api-list`) も [ADR-0020](0020-api-naming-and-surface.md) の検査もビルドが出したグラフを見たままである。道具・エージェント・外のパッケージは今までどおり使える。
 
-> **一部置換 (2026-11-08 → [ADR-0048](0048-entry-per-reader.md) 決定 3)。** 「`public` は 1 つも動かさない」は置き換わった。面から外しても補完には並び続け、外のパッケージ (mokume-syphon・mokumesh・probes) は内部の部品 `SketchRuntime` をそのまま外への口として使っていた ([#3814](https://github.com/mokume-metal/mokume/issues/3814))。外のパッケージには設計した口 `MokumeHost` を渡し、そこへ移った後に上の表の型を `package` に下げる ([#3870](https://github.com/mokume-metal/mokume/issues/3870)・[#3871](https://github.com/mokume-metal/mokume/issues/3871))。下げた型は `REFERENCE_OMIT` の名指しも要らなくなる。それまでは、この表のとおり面から外す。差込口を面に残す下の段落は変わらない。
+> **一部置換 (2026-11-08 → [ADR-0048](0048-entry-per-reader.md) 決定 3)。** 「`public` は 1 つも動かさない」は置き換わった。面から外しても補完には並び続け、外のパッケージ (mokume-syphon・mokumesh・probes) は内部の部品 `SketchRuntime` をそのまま外への口として使っていた ([#3814](https://github.com/mokume-metal/mokume/issues/3814))。外のパッケージには設計した口 `MokumeHost` を渡し、そこへ移った後に上の表の型を `package` に下げる ([#3870](https://github.com/mokume-metal/mokume/issues/3870)・[#3871](https://github.com/mokume-metal/mokume/issues/3871))。下げた型は `REFERENCE_OMIT` の名指しも要らなくなる。それまでは、この表のとおり面から外す。ただし `InputEvent` は `MokumeHost` の口の署名に出るので、差込口と同じ理由で面に戻した ([#3870](https://github.com/mokume-metal/mokume/issues/3870))。差込口を面に残す下の段落は変わらない。
 
 **外れないもの**もここで名指ししておく。差込口 (`Plugin` / `PluginRegistry` / `Inlet` / `Outlet` / `OutputFrame` / `RenderDevice` / `RenderTarget`) は面に残す — 相手は書く人ではないが、[ADR-0026](0026-plugin-repository-alignment.md) が外のパッケージを正規の書き手として認めており、その人の読む面がここ以外に無いからである。**「相手は 1 種類」は読者の想定を絞る言い方で、書いた説明を隠す口実にしない。**
 
