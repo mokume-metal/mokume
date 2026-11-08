@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 ## 状態
 
-採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082)) / 改訂 (2026-09-22): 決定 7 が保留していた `lerp` / `constrain` を足した ([#1281](https://github.com/mokume-metal/mokume/issues/1281)) / 改訂あり (本文の「改訂 (日付)」見出し)
+採用 (2026-08-28) / 改訂 (2026-08-29): 決定 7 を追加 ([#193](https://github.com/mokume-metal/mokume/issues/193)) / 改訂 (2026-09-03): 決定 1 に、手本が割れている場合の段を追加 ([#669](https://github.com/mokume-metal/mokume/issues/669)) / 改訂 (2026-09-05): 決定 7 が保留していた語彙の置き場を決めた ([#883](https://github.com/mokume-metal/mokume/issues/883)) / 改訂 (2026-09-09): 決定 3 が 3D をまだ無いものとして書いていた箇所を、実装が入った後の姿に合わせた ([#733](https://github.com/mokume-metal/mokume/issues/733)) / 改訂 (2026-09-09): 決定 1 に、手本に倣う射程 (名前と引数の順序まで) の段を追加 ([#1082](https://github.com/mokume-metal/mokume/issues/1082)) / 改訂 (2026-09-22): 決定 7 が保留していた `lerp` / `constrain` を足した ([#1281](https://github.com/mokume-metal/mokume/issues/1281)) / 改訂あり (本文の「改訂 (日付)」見出し) / 一部置換 (→ ADR-0048): 決定 1 の規則 4 の根拠と、決定 7 の「入口は 1 つ」という前提
 
 改訂の経緯 (当初の決定・各改訂の理由・置き換わった決定) は [history/0020.md](history/0020.md) にある。
 
@@ -66,6 +66,7 @@ canvas.circle(x, y, d)  // ← 下の層。道具や検査はここを直接使�
    - (c) Swift で書けない
 3. **値型と mokume の型のメンバーは、Swift の慣行に従う。** ラベルを付け、略さず、新しい値を返すものは過去分詞にする。手本での名前は説明文で名乗る。`circle()` と `Circle`、`dist()` と `a.distance(to:)` は、規則 1 と 3 の使い分けである。**手本に同じ型があるもののメンバー** (`TCPServer` の `write`・`Image` の大きさを変える口) は規則 1 で手本の名前を既定にし、規則 2 に当たるときに規則 3 の形へ改める (下の当てはめの `resized`)
 4. **型の名前は、手本に近い普通の英単語にする。** Foundation と衝突する名前は取らない (`Timer` など。スケッチはほぼ全部 `import Foundation` するので、曖昧さのエラーが全員に出る)。SwiftUI と衝突する名前は取ってよい (`Circle`・`Font`。既存の `Image`・`Shape` と同じ扱い。衝突するのは埋め込むファイルだけで、`mokume.Circle` と書けば解ける)
+   > **一部置換 (2026-11-08 → [ADR-0048](0048-entry-per-reader.md) 決定 2)。** 「衝突するのは埋め込むファイルだけ」は、iOS の出口が SwiftUI の `SketchView` になって例外ではなくなった。いまは、埋め込むファイルが `mokume` ではなく `MokumeUI` を読み、`MokumeUI` は SwiftUI と衝突する名前を出さないことで、構造として保証する。SwiftUI と同じ名前を取ってよいのは `mokume` (スケッチの面) の型に限る。Foundation と衝突する名前を取らない規則は変わらない
 5. 手本の名前から mokume の口は、どれも手本からの索引 ([#2437](https://github.com/mokume-metal/mokume/issues/2437)) で引ける
 
 **手本に無い値型の名前**は、対応する描画関数の名前を大文字で始めたものにする (`circle()` → `Circle`・`rect()` → `Rect`・`box()` → `Box`)。`Rect` は略語だが、グラフィックスで定着した語 (`CGRect`) で、`rect()` と対になるので採る。ベクトルは `Vector2` / `Vector3` (Processing の `PVector` と p5 の `p5.Vector` に共通する語に次元を名乗らせる)、時間の値は `Stopwatch` と `Countdown` にする。値型の形 (ラベル・見た目・判定) は [ADR-0045](0045-game-direction.md) 決定 5〜8 が持つ。
@@ -309,6 +310,8 @@ camera(eye: eyePosition, center: target, up: Vector3(0, 1, 0))  // ラベル付�
 例外を認めるときは、**その型でなければ表せない理由**を書く。`URL` はファイルの場所の正典が標準ライブラリの外にあるため、`MTLDevice` は既存の Metal 資源を持ち込む入口を意図して開けているため — どちらも「置き換えられる自前の型が無い」ことが理由になっている。「便利だから」は理由にならない。
 
 ### 7. アンブレラは、外のモジュールを丸ごと再輸出しない
+
+> **一部置換 (2026-11-08 → [ADR-0048](0048-entry-per-reader.md) 決定 1)。** 入口は読み手ごとに `mokume`・`MokumeUI`・`MokumeHost` の 3 つになった。下の「入口は 1 つ」はスケッチを書く人の入口 `mokume` のことと読む。外のモジュールを丸ごと再エクスポートしない規律は、3 つの入口のどれにも同じく効く (`MokumeUI` が `MokumeCore` を丸ごと再エクスポートしないのも、この決定の延長である)。
 
 利用者の入口は `import mokume` の 1 つ ([ADR-0016](0016-package-structure.md) 決定 2)。そこから外のモジュールの語彙を通すときは、**宣言単位で名指しする** — モジュール名だけを書いた `@_exported import <外のモジュール>` は置かない。
 
