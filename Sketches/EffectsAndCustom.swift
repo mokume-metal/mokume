@@ -72,7 +72,7 @@ final class EffectsAndCustom: Sketch {
     func draw() {
         background(8, 10, 16)
 
-        let gap = (x: Double(24), y: Double(60))
+        let gap = (x: 24.0, y: 60.0)
         textFont("Helvetica")
         textSize(16)
         textAlign(.center)

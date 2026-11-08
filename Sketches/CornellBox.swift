@@ -30,7 +30,7 @@ final class CornellBox: Sketch {
     private let side: Double = 300
 
     /// 白い面の色。奥・床・天井と 2 つの箱で同じものを使う。
-    private let white = (red: Double(220), green: Double(220), blue: Double(214))
+    private let white = (red: 220.0, green: 220.0, blue: 214.0)
 
     func draw() {
         background(0)

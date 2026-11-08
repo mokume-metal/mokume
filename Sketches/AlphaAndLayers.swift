@@ -49,7 +49,7 @@ final class AlphaAndLayers: Sketch {
             text(label, left + 20, 55)
             text("direct", left + 20, 80)
             text("transparent graphics", left + 210, 80)
-            for (level, alpha) in [Double(0), 0.25, 0.5, 1].enumerated() {
+            for (level, alpha) in [0.0, 0.25, 0.5, 1].enumerated() {
                 for reverse in 0..<2 {
                     let top = Double(100 + (level * 2 + reverse) * 100)
                     fill(235)

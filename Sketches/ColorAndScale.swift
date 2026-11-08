@@ -30,8 +30,8 @@ final class ColorAndScale: Sketch {
     private var pad: Canvas?
 
     /// 混ぜる 2 色。0–255 の数でも持っておき、手本の混ぜ方 (数のまま混ぜる) と並べる。
-    private let cool = (red: Double(30), green: Double(60), blue: Double(220))
-    private let warm = (red: Double(255), green: Double(210), blue: Double(40))
+    private let cool = (red: 30.0, green: 60.0, blue: 220.0)
+    private let warm = (red: 255.0, green: 210.0, blue: 40.0)
 
     /// 読み出す色。作り方がそれぞれ違う。
     private var samples: [(name: String, color: LinearRGBA)] {

@@ -85,7 +85,7 @@ final class TableAndText: Sketch {
 
         // 10 度ごとの横線。0 度だけ濃くする
         strokeWeight(1)
-        for degrees in stride(from: Double(0), through: 40, by: 10) {
+        for degrees in stride(from: 0.0, through: 40, by: 10) {
             stroke(degrees == 0 ? 120 : 52)
             line(Self.left, y(degrees), Self.left + 365 * 3, y(degrees))
         }

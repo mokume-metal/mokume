@@ -42,7 +42,7 @@ final class SurfacesAndBlend: Sketch {
     private var blended: Shader?
 
     /// 板の寸法。読み取り位置をここから作るので、形と塗りで同じ数を使う。
-    private static let board = (width: Double(300), depth: Double(190))
+    private static let board = (width: 300.0, depth: 190.0)
 
     func setup() throws {
         let grain = try bakeGrain()
@@ -131,7 +131,7 @@ final class SurfacesAndBlend: Sketch {
         }
 
         // 差し替える候補。**描いた面をそのまま絵として置き**、いま掛けているほうに枠を付ける
-        let thumb = Double(88)
+        let thumb = 88.0
         for (index, candidate) in candidates.enumerated() {
             guard let candidate else { continue }
             let x = width / 2 - thumb - 6 + Double(index) * (thumb + 12)

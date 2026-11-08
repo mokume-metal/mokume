@@ -50,7 +50,7 @@ final class FieldAndFlow: Sketch {
     /// 断面を帯に描く塗り。
     private var graph: Shader?
     /// 帯の上端と下端 (画面の高さに対する割合)。
-    private let band = (top: Double(0.8), bottom: Double(0.96))
+    private let band = (top: 0.8, bottom: 0.96)
 
     /// 引き戻した場の、いちばん高かったところ (画面の座標)。
     private var peak: (x: Double, y: Double) = (480, 270)
@@ -272,7 +272,7 @@ final class FieldAndFlow: Sketch {
         // 読み戻すのは 30 フレームに 1 度なので、印は次の頂へ滑って移る
         shown.x += (peak.x - shown.x) * 0.15
         shown.y += (peak.y - shown.y) * 0.15
-        let ink = (r: Double(255), g: Double(242), b: Double(220))
+        let ink = (r: 255.0, g: 242.0, b: 220.0)
 
         // いま切り出している行。**帯の断面はこの線の上の値である** — 印から帯へ線を下ろし、
         // 帯の上の同じ点に打つ

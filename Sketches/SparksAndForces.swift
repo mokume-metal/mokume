@@ -29,7 +29,7 @@ final class SparksAndForces: Sketch {
     private let capacity = 24_000
 
     /// 渦の中心。**印を置くのは、粒が巻かれる理由をその場で読めるようにするため。**
-    private let eye = (x: Double(480), y: Double(270))
+    private let eye = (x: 480.0, y: 270.0)
     /// 噴き口が回る輪の半径。**釣り合う半径の近くに置く**ので、生まれた粒はすぐ腕に乗る。
     ///
     /// 釣り合いは 2 つの式で決まる。抵抗と渦が釣り合う速さがおよそ `渦 ÷ 抵抗` (1 フレーム

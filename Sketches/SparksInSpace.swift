@@ -42,15 +42,15 @@ final class SparksInSpace: Sketch {
     private let capacity = 16_000
 
     /// 場面の中心。球の噴き口・押す力・視点の見る先がここに揃う。
-    private let core = (x: Double(480), y: Double(270))
+    private let core = (x: 480.0, y: 270.0)
     /// 円の噴き口の半径。
     private let disc: Double = 230
     /// 線の噴き口の両端 (奥行き 0)。幕はここから上へ昇る。
-    private let ground = (y: Double(450), from: Double(250), to: Double(710))
+    private let ground = (y: 450.0, from: 250.0, to: 710.0)
     /// 星雲の噴き口。中心の上の、**奥行き 0 の面から奥へずらした所**に置く — 円盤と幕は
     /// 奥行き 0 の面にあるので、真横から見ると 1 本の線に重なる。奥へずらせば、真横からでも
     /// 星雲がその線から離れて見える。
-    private let nebulaAt = (x: Double(480), y: Double(120), z: Double(-200))
+    private let nebulaAt = (x: 480.0, y: 120.0, z: -200.0)
 
     private var sparks: Particles?
     private var nebula: Particles?

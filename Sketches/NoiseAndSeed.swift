@@ -26,7 +26,7 @@ final class NoiseAndSeed: Sketch {
     }
 
     /// 木目を見せる 2 枚の板の置き場 (左が CPU・右が断片)。
-    private let panel = (x: Double(20), y: Double(20), width: Double(440), height: Double(420))
+    private let panel = (x: 20.0, y: 20.0, width: 440.0, height: 420.0)
     private let gap: Double = 480
     /// 板 1 枚に何周ぶんの木目を写すか。
     private let span: Double = 6
@@ -103,8 +103,8 @@ final class NoiseAndSeed: Sketch {
         // 4 画素ごとに引いて結んでも線は途切れない
         stroke(209, 163, 112, 140)
         strokeWeight(1.5)
-        var previous = (x: Double(20), y: ridge(20))
-        for x in stride(from: Double(24), through: 940, by: 4) {
+        var previous = (x: 20.0, y: ridge(20))
+        for x in stride(from: 24.0, through: 940, by: 4) {
             line(previous.x, previous.y, x, ridge(x))
             previous = (x, ridge(x))
         }

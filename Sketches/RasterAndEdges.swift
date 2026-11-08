@@ -49,16 +49,16 @@ final class RasterAndEdges: Sketch {
             fill(230)
             noStroke()
             text(label, left + 20, 78)
-            for (column, offset) in [Double(0), 0.25, 0.5, 0.75].enumerated() {
+            for (column, offset) in [0.0, 0.25, 0.5, 0.75].enumerated() {
                 text("+\(offset)", left + 65 + Double(column * 80), 100)
             }
-            for (row, weight) in [Double(0.25), 0.5, 1, 2].enumerated() {
+            for (row, weight) in [0.25, 0.5, 1, 2].enumerated() {
                 let top = Double(120 + row * 195)
                 fill(150)
                 noStroke()
                 text("w\(weight)", left + 5, top + 15)
-                for (column, offset) in [Double(0), 0.25, 0.5, 0.75].enumerated() {
-                    for (moving, y) in [Double(0), 90].enumerated() {
+                for (column, offset) in [0.0, 0.25, 0.5, 0.75].enumerated() {
+                    for (moving, y) in [0.0, 90].enumerated() {
                         push()
                         let shift = offset + (moving == 1 ? drift : 0)
                         translate(left + 65 + Double(column * 80) + shift, top + y + shift)

@@ -65,7 +65,7 @@ final class SeedsAndFields: Sketch {
         // 右: 板ごとの種で、木目を引く。板どうしの種だけが違う
         for (i, plank) in planks.enumerated() {
             let top = 30 + Double(i) * 125
-            for x in stride(from: Double(520), to: 940, by: 4) {
+            for x in stride(from: 520.0, to: 940, by: 4) {
                 for y in stride(from: top, to: top + 110, by: 4) {
                     let grain = plank.value((x - 520) * 0.012, (y - top) * 0.09)
                     fill(150 + Double(grain * 90), 100 + Double(grain * 60), 60 + Double(grain * 30))
