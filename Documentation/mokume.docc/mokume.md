@@ -1194,3 +1194,11 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``RenderDevice``
 - ``RenderTarget``
 - ``RenderFailure``
+
+### 窓を出さずにスケッチを走らせる
+
+道具・外のパッケージ・検査のための口で、`import MokumeHost` で使う。スケッチを 1 フレームずつ進め、
+描いた絵を値で読み、入力を注入する。後始末は口が持つ。
+
+- ``HeadlessRun``
+- ``InputEvent``
