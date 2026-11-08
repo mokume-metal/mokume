@@ -30,7 +30,7 @@ final class OSCAndReply: Sketch {
 
     private var osc: OSCPort?
     /// 届いた `/size` の値 (0〜1)。円の直径は、高さに対するこの割合。
-    private var size: Float = 0.5
+    private var size: Double = 0.5
     /// 届いた `/hit` の数。
     private var hits = 0
 
@@ -65,7 +65,7 @@ final class OSCAndReply: Sketch {
         circle(28, 28, 16)
     }
 
-    func mouseDragged(deltaX: Float, deltaY: Float) {
+    func mouseDragged(deltaX: Double, deltaY: Double) {
         osc?.send("/size", constrain(mouseX / width, 0, 1))
     }
 

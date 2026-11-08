@@ -26,15 +26,15 @@ final class NoiseAndSeed: Sketch {
     }
 
     /// 木目を見せる 2 枚の板の置き場 (左が CPU・右が断片)。
-    private let panel = (x: Float(20), y: Float(20), width: Float(440), height: Float(420))
-    private let gap: Float = 480
+    private let panel = (x: Double(20), y: Double(20), width: Double(440), height: Double(420))
+    private let gap: Double = 480
     /// 板 1 枚に何周ぶんの木目を写すか。
-    private let span: Float = 6
+    private let span: Double = 6
     /// 早材と晩材の色。
     private let early = color(209, 163, 112)
     private let late = color(117, 76, 46)
     /// CPU 側を引く刻み (画素)。細かくするほど右に近づく。
-    private let cell: Float = 4
+    private let cell: Double = 4
 
     private var grain: Shader?
 
@@ -103,8 +103,8 @@ final class NoiseAndSeed: Sketch {
         // 4 画素ごとに引いて結んでも線は途切れない
         stroke(209, 163, 112, 140)
         strokeWeight(1.5)
-        var previous = (x: Float(20), y: ridge(20))
-        for x in stride(from: Float(24), through: 940, by: 4) {
+        var previous = (x: Double(20), y: ridge(20))
+        for x in stride(from: Double(24), through: 940, by: 4) {
             line(previous.x, previous.y, x, ridge(x))
             previous = (x, ridge(x))
         }
@@ -134,10 +134,10 @@ final class NoiseAndSeed: Sketch {
     }
 
     /// 下の帯の稜線の高さ。**1 次元の揺らぎ**で、同じ x には何度呼んでも同じ高さが返る。
-    private func ridge(_ x: Float) -> Float { lerp(448, 532, noise(x * 0.014)) }
+    private func ridge(_ x: Double) -> Double { lerp(448, 532, noise(x * 0.014)) }
 
     /// 木目 1 点ぶんの色。**上の断片と同じ式**を Swift で書いたもの。
-    private func wood(_ px: Float, _ py: Float) -> LinearRGBA {
+    private func wood(_ px: Double, _ py: Double) -> LinearRGBA {
         let drift = (noise(px * 0.6, py * 0.6) - 0.5) * 0.9
         let dx = px - span * 0.5
         let dy = py - span * 1.6
@@ -155,5 +155,5 @@ final class NoiseAndSeed: Sketch {
     // 断片の側にあるものを Swift で書いたもの。**式を揃えるためだけに置いてある**
     // (断片の `mix` / `clamp` にあたるものは `lerp` / `constrain` がそのまま使え、
     // `smoothstep` は断片と同じ名前・同じ式のものがある)
-    private func fract(_ value: Float) -> Float { value - value.rounded(.down) }
+    private func fract(_ value: Double) -> Double { value - value.rounded(.down) }
 }

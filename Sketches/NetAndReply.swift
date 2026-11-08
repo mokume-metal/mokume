@@ -38,7 +38,7 @@ final class NetAndReply: Sketch {
     private var udp: UDPPort?
     private var socket: WebSocketServer?
     /// 円ごとに、届いた数 (0〜1)。直径は、円の枠に対するこの割合。
-    private var sizes: [Float] = [0.5, 0.5, 0.5]
+    private var sizes: [Double] = [0.5, 0.5, 0.5]
     /// 円ごとに、届いた `hit` の数。
     private var hits = [0, 0, 0]
 
@@ -98,10 +98,10 @@ final class NetAndReply: Sketch {
     private enum Status { case connected, waiting, closed }
 
     /// 円の枠 (直径の最大)。
-    private var span: Float { min(height * 0.6, width / Float(Self.names.count) * 0.85) }
+    private var span: Double { min(height * 0.6, width / Double(Self.names.count) * 0.85) }
 
-    private func center(of lane: Int) -> Float {
-        width * (Float(lane) + 0.5) / Float(Self.names.count)
+    private func center(of lane: Int) -> Double {
+        width * (Double(lane) + 0.5) / Double(Self.names.count)
     }
 
     private func status(of lane: Int) -> Status {
@@ -119,7 +119,7 @@ final class NetAndReply: Sketch {
 
     /// 数なら大きさに、`hit` なら当たりに数える。それ以外は読まない。
     private func read(_ text: String, into lane: Int) {
-        if let value = Float(text) {
+        if let value = Double(text) {
             sizes[lane] = constrain(value, 0.05, 1)
         } else if text == "hit" {
             hits[lane] += 1

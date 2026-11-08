@@ -25,18 +25,18 @@ final class TimeAndScrub: Sketch {
     }
 
     /// 1 巡の長さ (秒)。
-    static let length: Float = 12
+    static let length: Double = 12
     /// 幕の頭 (秒)。1–4 のキーで飛ぶ先。
-    static let acts: [Float] = [0, 2, 6.5, 9.5]
+    static let acts: [Double] = [0, 2, 6.5, 9.5]
     /// 下の帯の高さ。ここをドラッグすると擦る。
-    static let barHeight: Float = 60
+    static let barHeight: Double = 60
 
     /// 時刻を止めているか。**止めた・再開したを自分で覚える** — 時刻の口は頼むだけで、
     /// いまの状態を読む口は無い。
     var paused = false
 
     /// 1 巡の中の位置 (0 ..< ``length``)。負の秒へ飛んでも巡る。
-    var cycle: Float { mod(time, Self.length) }
+    var cycle: Double { mod(time, Self.length) }
 
     func keyPressed() {
         switch keyCode {
@@ -57,7 +57,7 @@ final class TimeAndScrub: Sketch {
     /// 下の帯の上で押した・引きずった横位置を、1 巡の中の秒に写す。
     func mousePressed() { scrub() }
 
-    func mouseDragged(deltaX: Float, deltaY: Float) { scrub() }
+    func mouseDragged(deltaX: Double, deltaY: Double) { scrub() }
 
     private func scrub() {
         guard mouseY > height - Self.barHeight else { return }
@@ -73,8 +73,8 @@ final class TimeAndScrub: Sketch {
         let count = 24
         let field = height - Self.barHeight
         for index in 0..<count {
-            let phase = Float(index) / Float(count)
-            let x = (phase + 0.5 / Float(count)) * width
+            let phase = Double(index) / Double(count)
+            let x = (phase + 0.5 / Double(count)) * width
             let y = field / 2 + sin(t * 1.4 + phase * 6.283) * field * 0.32
             let size = 18 + (sin(t * 2.1 - phase * 9.4) + 1) * 14
             fill(242, 120 + phase * 100, 89, 220)

@@ -36,12 +36,12 @@ final class TableAndText: Sketch {
     private var rereadFailure: String?
 
     /// 縦軸に取る気温の幅 (°C)。
-    private static let coldest: Float = -5
-    private static let warmest: Float = 40
+    private static let coldest: Double = -5
+    private static let warmest: Double = 40
     /// 描く場所。1 日 3 画素で 365 日が収まる。
-    private static let left: Float = 70
-    private static let top: Float = 100
-    private static let bottom: Float = 500
+    private static let left: Double = 70
+    private static let top: Double = 100
+    private static let bottom: Double = 500
 
     func setup() throws {
         caption = try loadStrings(Self.data("temperatures.txt"))
@@ -80,12 +80,12 @@ final class TableAndText: Sketch {
         fill(220, 222, 228)
         textSize(16)
         for (i, line) in caption.enumerated() {
-            text(line, Self.left, 36 + Float(i) * 24)
+            text(line, Self.left, 36 + Double(i) * 24)
         }
 
         // 10 度ごとの横線。0 度だけ濃くする
         strokeWeight(1)
-        for degrees in stride(from: Float(0), through: 40, by: 10) {
+        for degrees in stride(from: Double(0), through: 40, by: 10) {
             stroke(degrees == 0 ? 120 : 52)
             line(Self.left, y(degrees), Self.left + 365 * 3, y(degrees))
         }
@@ -102,7 +102,7 @@ final class TableAndText: Sketch {
 
         guard let table else { return }
         for (i, row) in table.rows.enumerated() {
-            let x = Self.left + Float(i) * 3
+            let x = Self.left + Double(i) * 3
             // 月の頭に目盛り
             if row.getString("date").hasSuffix("-01") {
                 stroke(90)
@@ -118,7 +118,7 @@ final class TableAndText: Sketch {
     }
 
     /// 気温を縦の位置へ写す。
-    private func y(_ degrees: Float) -> Float {
+    private func y(_ degrees: Double) -> Double {
         map(degrees, Self.coldest, Self.warmest, Self.bottom, Self.top)
     }
 

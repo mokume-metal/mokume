@@ -68,8 +68,8 @@ final class FileAndMovie: Sketch {
     var choosing = false
 
     /// 映像を置く枠。
-    private static let frameWidth: Float = 600
-    private static let frameHeight: Float = 340
+    private static let frameWidth: Double = 600
+    private static let frameHeight: Double = 340
 
     /// 落とされた。**最初の 1 つだけ**読む。
     func fileDropped(_ paths: [String]) {
@@ -138,9 +138,9 @@ final class FileAndMovie: Sketch {
         }
 
         // 左: 映像。枠の中へ縦横比を保って置く
-        let scale = min(Self.frameWidth / Float(clip.width), Self.frameHeight / Float(clip.height))
-        let shownWidth = Float(clip.width) * scale
-        let shownHeight = Float(clip.height) * scale
+        let scale = min(Self.frameWidth / Double(clip.width), Self.frameHeight / Double(clip.height))
+        let shownWidth = Double(clip.width) * scale
+        let shownHeight = Double(clip.height) * scale
         fill(8, 8, 12)
         rect(24, 24, Self.frameWidth, Self.frameHeight)
         image(clip.image, 24 + (Self.frameWidth - shownWidth) / 2, 24 + (Self.frameHeight - shownHeight) / 2, shownWidth, shownHeight)

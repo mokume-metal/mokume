@@ -99,10 +99,10 @@ final class CaptureAndMirror: Sketch {
         background(18, 18, 24)
         noStroke()
 
-        let panelWidth: Float = 288
-        let panelHeight: Float = 216
-        let top: Float = 90
-        let xs: [Float] = [24, 336, 648]
+        let panelWidth: Double = 288
+        let panelHeight: Double = 216
+        let top: Double = 90
+        let xs: [Double] = [24, 336, 648]
 
         if let real {
             image(real.image, xs[0], top, panelWidth, panelHeight)
@@ -138,7 +138,7 @@ final class CaptureAndMirror: Sketch {
     }
 
     /// 3 つの絵の下の見出し。
-    private func caption(_ labels: [String], xs: [Float], y: Float) {
+    private func caption(_ labels: [String], xs: [Double], y: Double) {
         fill(230, 237, 255)
         textSize(18)
         for (label, x) in zip(labels, xs) {
@@ -189,7 +189,7 @@ final class CaptureAndMirror: Sketch {
             for x in 0..<width {
                 if y >= 100 {
                     // 下の帯: 左が赤、右が青
-                    let ratio = Float(x) / Float(width - 1)
+                    let ratio = Double(x) / Double(width - 1)
                     put(x, y, Int(255 * (1 - ratio)), 40, Int(255 * ratio))
                 } else {
                     // 地の色は番号ごとに少し変える

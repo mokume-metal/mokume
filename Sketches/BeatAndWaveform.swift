@@ -20,11 +20,11 @@ final class BeatAndWaveform: Sketch {
     }
 
     /// 1 秒あたりの標本の数。
-    private static let rate: Float = 48_000
+    private static let rate: Double = 48_000
 
     private var song: AudioIn?
     /// 拍で 1 に戻り、フレームごとに 0.9 倍ずつ消える光。
-    private var flash: Float = 0
+    private var flash: Double = 0
 
     func setup() throws {
         song = try createAudioIn(samples: Self.pattern(), sampleRate: Self.rate)
@@ -46,23 +46,23 @@ final class BeatAndWaveform: Sketch {
         stroke(255)
         beginShape()
         for (index, sample) in song.waveform.enumerated() {
-            vertex(Float(index) / 1024 * width, height * 0.8 + sample * 100)
+            vertex(Double(index) / 1024 * width, height * 0.8 + sample * 100)
         }
         endShape()
     }
 
     /// 4 秒の合成した音。0.5 秒ごとの低い拍 (55 Hz の正弦波を減衰させたもの) と、拍の間の小さな高い刻み。
-    private static func pattern() -> [Float] {
+    private static func pattern() -> [Double] {
         var state: UInt32 = 20_261_025
         return (0..<Int(rate * 4)).map { index in
-            let t = Float(index) / rate
+            let t = Double(index) / rate
             let beat = t.truncatingRemainder(dividingBy: 0.5)
             let fade = 1 - beat / 0.5
             let kick = sin(2 * .pi * 55 * beat) * fade * fade * fade * fade * 0.8
             // 拍と拍の真ん中に、10 ms の雑音の刻み
-            let tick: Float = (beat > 0.25 && beat < 0.26) ? 1 : 0
+            let tick: Double = (beat > 0.25 && beat < 0.26) ? 1 : 0
             state = state &* 1_664_525 &+ 1_013_904_223
-            let noise = Float(Int32(bitPattern: state)) / Float(Int32.max)
+            let noise = Double(Int32(bitPattern: state)) / Double(Int32.max)
             return kick + noise * tick * 0.05
         }
     }

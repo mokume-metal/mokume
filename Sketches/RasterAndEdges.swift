@@ -16,12 +16,12 @@ import mokume
 /// 低密度は拡大によるぼけ・格子への丸めも見える。三角形で描く経路に、基本図形と同じ
 /// AAや全画素一致を要求する表ではない。既知の細線の制約 (#2172・#2427・#3242) は残る。
 final class RasterAndEdges: Sketch {
-    private let density: Float
+    private let density: Double
     private var white: Image?
     private var solid: Shader?
 
     init() { density = 1 }
-    init(density: Float) { self.density = density }
+    init(density: Double) { self.density = density }
 
     var settings: SketchSettings {
         SketchSettings(width: 1200, height: 920, title: "raster and edges", pixelDensity: density)
@@ -41,27 +41,27 @@ final class RasterAndEdges: Sketch {
         noStroke()
         fill(230)
         textSize(16)
-        let drift = Float((frameCount - 1) % 120) / 120
+        let drift = Double((frameCount - 1) % 120) / 120
         text("density \(density) | \(pixelWidth)x\(pixelHeight) | moving offset \(drift)", 20, 25)
         text("Each cell: static above / moving below. No effects. Width rows; coordinate offset columns.", 20, 49)
         for (path, label) in ["plain", "shader: white", "texture: white"].enumerated() {
-            let left = Float(path * 400)
+            let left = Double(path * 400)
             fill(230)
             noStroke()
             text(label, left + 20, 78)
-            for (column, offset) in [Float(0), 0.25, 0.5, 0.75].enumerated() {
-                text("+\(offset)", left + 65 + Float(column * 80), 100)
+            for (column, offset) in [Double(0), 0.25, 0.5, 0.75].enumerated() {
+                text("+\(offset)", left + 65 + Double(column * 80), 100)
             }
-            for (row, weight) in [Float(0.25), 0.5, 1, 2].enumerated() {
-                let top = Float(120 + row * 195)
+            for (row, weight) in [Double(0.25), 0.5, 1, 2].enumerated() {
+                let top = Double(120 + row * 195)
                 fill(150)
                 noStroke()
                 text("w\(weight)", left + 5, top + 15)
-                for (column, offset) in [Float(0), 0.25, 0.5, 0.75].enumerated() {
-                    for (moving, y) in [Float(0), 90].enumerated() {
+                for (column, offset) in [Double(0), 0.25, 0.5, 0.75].enumerated() {
+                    for (moving, y) in [Double(0), 90].enumerated() {
                         push()
                         let shift = offset + (moving == 1 ? drift : 0)
-                        translate(left + 65 + Float(column * 80) + shift, top + y + shift)
+                        translate(left + 65 + Double(column * 80) + shift, top + y + shift)
                         if path == 1, let solid { shader(solid) }
                         if path == 2, let white { texture(white) }
                         sample(weight)
@@ -74,7 +74,7 @@ final class RasterAndEdges: Sketch {
         }
     }
 
-    private func sample(_ weight: Float) {
+    private func sample(_ weight: Double) {
         stroke(255)
         strokeWeight(weight)
         line(2, 6, 26, 6)

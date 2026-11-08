@@ -42,7 +42,7 @@ final class SurfacesAndBlend: Sketch {
     private var blended: Shader?
 
     /// 板の寸法。読み取り位置をここから作るので、形と塗りで同じ数を使う。
-    private static let board = (width: Float(300), depth: Float(190))
+    private static let board = (width: Double(300), depth: Double(190))
 
     func setup() throws {
         let grain = try bakeGrain()
@@ -106,7 +106,7 @@ final class SurfacesAndBlend: Sketch {
         let spin = time * 0.55
         for (index, painted) in [plain, blended].enumerated() {
             push()
-            translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
+            translate(width * 0.28 + Double(index) * width * 0.44, height * 0.52, 0)
             rotateX(-0.45)
             rotateY(spin)
             if let painted { shader(painted) }
@@ -131,10 +131,10 @@ final class SurfacesAndBlend: Sketch {
         }
 
         // 差し替える候補。**描いた面をそのまま絵として置き**、いま掛けているほうに枠を付ける
-        let thumb = Float(88)
+        let thumb = Double(88)
         for (index, candidate) in candidates.enumerated() {
             guard let candidate else { continue }
-            let x = width / 2 - thumb - 6 + Float(index) * (thumb + 12)
+            let x = width / 2 - thumb - 6 + Double(index) * (thumb + 12)
             let y = height * 0.8
             image(candidate, x, y, thumb, thumb)
             if index == showing {
@@ -153,8 +153,8 @@ final class SurfacesAndBlend: Sketch {
         for y in 0..<256 {
             for x in 0..<256 {
                 // 年輪の中心を板の外に置くと、弧が横切る挽いた板らしい面になる
-                let across = SIMD2(Float(x) * 0.34 - 150, Float(y))
-                let drift = sin(Float(y) * 0.05) * 7
+                let across = SIMD2(Double(x) * 0.34 - 150, Double(y))
+                let drift = sin(Double(y) * 0.05) * 7
                 let rings = 0.5 + 0.5 * sin((across.length + drift) * 0.26)
                 image.set(
                     x, y,
@@ -175,7 +175,7 @@ final class SurfacesAndBlend: Sketch {
         canvas.noStroke()
         // 濃さの違う染みを重ねる。**位置は式で決める** — 何度描いても同じ絵になる
         for index in 0..<48 {
-            let step = Float(index)
+            let step = Double(index)
             let x = 128 + cos(step * 2.4) * (30 + step * 2.1)
             let y = 128 + sin(step * 1.7) * (26 + step * 2.3)
             let shade = 0.35 + 0.5 * abs(sin(step * 0.9))
@@ -194,7 +194,7 @@ final class SurfacesAndBlend: Sketch {
         canvas.background(255, 255, 255)
         canvas.strokeWeight(5)
         for index in 0..<28 {
-            let step = Float(index)
+            let step = Double(index)
             let shade = 0.3 + 0.45 * abs(sin(step * 1.3))
             canvas.stroke(.display(red: shade, green: shade, blue: shade, alpha: 0.7))
             let start = -40 + step * 12
@@ -205,6 +205,6 @@ final class SurfacesAndBlend: Sketch {
     }
 }
 
-extension SIMD2 where Scalar == Float {
-    fileprivate var length: Float { (x * x + y * y).squareRoot() }
+extension SIMD2 where Scalar == Double {
+    fileprivate var length: Double { (x * x + y * y).squareRoot() }
 }

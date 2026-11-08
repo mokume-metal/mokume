@@ -97,18 +97,18 @@ final class PointerAndKeys: Sketch {
     }
 
     /// スクロールで積み上がる大きさ。フレームを越える。
-    var size: Float = 120
+    var size: Double = 120
 
     /// 押された点。**出来事として溜める**ので、1 フレームに収まった押下も残る。
-    var pressed: [(x: Float, y: Float)] = []
+    var pressed: [(x: Double, y: Double)] = []
     /// 離された点。押下を伴わない解放でも増える。
-    var released: [(x: Float, y: Float)] = []
+    var released: [(x: Double, y: Double)] = []
     /// クリックした点。押下を伴う解放でだけ、``released`` の直後に増える。
-    var clicked: [(x: Float, y: Float)] = []
+    var clicked: [(x: Double, y: Double)] = []
     /// 押さずに動いた件数。**1 フレームに何件届いても 1 件ずつ数える**。
     var movedCount = 0
     /// 引きずった線。1 件ぶんの量から、どこからどこへ動いたかを組み立てる。
-    var dragged: [(fromX: Float, fromY: Float, toX: Float, toY: Float)] = []
+    var dragged: [(fromX: Double, fromY: Double, toX: Double, toY: Double)] = []
     /// 打たれた文字。**打鍵だけが増やす**ので、矢印キーでは伸びない。
     var typed = ""
     /// 最後に動いたキーの符号。押しても離しても入れ替わる。
@@ -118,16 +118,16 @@ final class PointerAndKeys: Sketch {
     /// 選ばせるダイアログの状態の文。**選ぶまで・選んだ後だけ出す** — 触らずに書き出した絵は変えない。
     var selection = ""
     /// 落とされたファイルの名前と、落とした点。**出来事として溜める**。
-    var dropped: [(name: String, x: Float, y: Float)] = []
+    var dropped: [(name: String, x: Double, y: Double)] = []
 
     /// 回しているか。**止めた・再開したを自分で覚える** — 進行の口は頼むだけで、
     /// いまの状態を読む口は無い。
     var looping = true
 
     /// 矢印で動かす四角の位置。押している間だけ、1 秒あたり ``shipSpeed`` 画素進む。
-    var shipX: Float = 760
-    var shipY: Float = 360
-    static let shipSpeed: Float = 240
+    var shipX: Double = 760
+    var shipY: Double = 360
+    static let shipSpeed: Double = 240
 
     /// 溜める上限。触り続けても際限なく伸びないようにする。
     static let keepAtMost = 40
@@ -138,14 +138,14 @@ final class PointerAndKeys: Sketch {
     /// 見回しているか (L で切り替える)。入っている間は毎フレーム捕まえを頼む。
     var looking = false
     /// 見回した向き (ラジアン)。**フレーム合計 (`movedX` / `movedY`) を `draw()` で積む。**
-    var yaw: Float = 0
-    var pitch: Float = 0
+    var yaw: Double = 0
+    var pitch: Double = 0
     /// 動いた量 1 画素あたりに回す角度 (ラジアン)。
-    static let turnPerPixel: Float = 0.005
+    static let turnPerPixel: Double = 0.005
     /// このフレームに、1 件ずつの口 (`mouseMoved(deltaX:deltaY:)` / `mouseDragged(deltaX:deltaY:)`)
     /// へ渡った量の和。`draw()` が出して 0 に戻す。
-    var deliveredX: Float = 0
-    var deliveredY: Float = 0
+    var deliveredX: Double = 0
+    var deliveredY: Double = 0
 
     func mousePressed() {
         pressed.append((mouseX, mouseY))
@@ -171,7 +171,7 @@ final class PointerAndKeys: Sketch {
 
     /// 押さずに動いた 1 件の量。``mouseMoved()`` の直後に呼ばれる。**捕まえている間も届く** —
     /// 位置は動かないので、量はここで受け取る。
-    func mouseMoved(deltaX: Float, deltaY: Float) {
+    func mouseMoved(deltaX: Double, deltaY: Double) {
         deliveredX += deltaX
         deliveredY += deltaY
     }
@@ -182,7 +182,7 @@ final class PointerAndKeys: Sketch {
     /// フレームの合計なので、ここから読むと部分累計になって線がつながらない。
     ///
     /// [#807]: https://github.com/mokume-metal/mokume/issues/807
-    func mouseDragged(deltaX: Float, deltaY: Float) {
+    func mouseDragged(deltaX: Double, deltaY: Double) {
         dragged.append((mouseX - deltaX, mouseY - deltaY, mouseX, mouseY))
         if dragged.count > Self.keepAtMost { dragged.removeFirst() }
         deliveredX += deltaX
@@ -196,7 +196,7 @@ final class PointerAndKeys: Sketch {
     /// 触るぶんには 1 フレームに 1 件しか入らないので、ここを間違えても気付けない。
     ///
     /// [#807]: https://github.com/mokume-metal/mokume/issues/807
-    func mouseWheel(deltaX: Float, deltaY: Float) {
+    func mouseWheel(deltaX: Double, deltaY: Double) {
         size = constrain(size + deltaY, 20, 400)
     }
 
@@ -366,7 +366,7 @@ final class PointerAndKeys: Sketch {
         // 変えない。横の向きは針の角度、縦の向きは針の先の点の上下で出す
         if looking {
             let centerX = width - 120
-            let centerY: Float = 120
+            let centerY: Double = 120
             noFill()
             stroke(120, 230, 160, 200)
             strokeWeight(3)

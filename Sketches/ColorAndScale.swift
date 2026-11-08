@@ -30,8 +30,8 @@ final class ColorAndScale: Sketch {
     private var pad: Canvas?
 
     /// 混ぜる 2 色。0–255 の数でも持っておき、手本の混ぜ方 (数のまま混ぜる) と並べる。
-    private let cool = (red: Float(30), green: Float(60), blue: Float(220))
-    private let warm = (red: Float(255), green: Float(210), blue: Float(40))
+    private let cool = (red: Double(30), green: Double(60), blue: Double(220))
+    private let warm = (red: Double(255), green: Double(210), blue: Double(40))
 
     /// 読み出す色。作り方がそれぞれ違う。
     private var samples: [(name: String, color: LinearRGBA)] {
@@ -65,7 +65,7 @@ final class ColorAndScale: Sketch {
         fill(170)
         text("color(hue:saturation:brightness:)", 40, 36)
         for index in 0..<14 {
-            fill(color(hue: Float(index) * 26 + time * 40, saturation: 80, brightness: 95))
+            fill(color(hue: Double(index) * 26 + time * 40, saturation: 80, brightness: 95))
             rect(40 + index * 63, 48, 56, 48)
         }
 
@@ -75,7 +75,7 @@ final class ColorAndScale: Sketch {
         stroke(110)
         strokeWeight(2)
         for index in 0..<11 {
-            fill(Float(index) * 25.5)
+            fill(Double(index) * 25.5)
             rect(40 + index * 38, 134, 34, 30)
         }
 
@@ -86,7 +86,7 @@ final class ColorAndScale: Sketch {
         let from = color(cool.red, cool.green, cool.blue)
         let to = color(warm.red, warm.green, warm.blue)
         for index in 0..<11 {
-            let amount = Float(index) / 10
+            let amount = Double(index) / 10
             let x = 506 + index * 38
             fill(lerpColor(from, to, amount))
             rect(x, 134, 34, 15)
@@ -130,8 +130,8 @@ final class ColorAndScale: Sketch {
             pad.background(.transparent)
             pad.noStroke()
             for index in 0..<8 {
-                let around = Float(index) / 8 * 2 * .pi + time
-                pad.fill(color(hue: Float(index) * 45, saturation: 75, brightness: 100))
+                let around = Double(index) / 8 * 2 * .pi + time
+                pad.fill(color(hue: Double(index) * 45, saturation: 75, brightness: 100))
                 pad.circle(60 + cos(around) * 36, 60 + sin(around) * 36, 34)
             }
             pad.endDraw()
@@ -147,7 +147,7 @@ final class ColorAndScale: Sketch {
         // 下段右 — 光の色を数値で渡す。**目盛りは塗りと同じ 0–255**
         fill(170)
         text("ambientLight(gray) / directionalLight / pointLight / spotLight", 540, 388)
-        let lit: [(name: String, place: (ColorAndScale, Float, Float) -> Void)] = [
+        let lit: [(name: String, place: (ColorAndScale, Double, Double) -> Void)] = [
             ("ambient 96", { sketch, _, _ in sketch.ambientLight(96) }),
             ("directional", { sketch, _, _ in
                 sketch.ambientLight(56)
@@ -166,8 +166,8 @@ final class ColorAndScale: Sketch {
         ortho()
         textAlign(.center)
         for (index, entry) in lit.enumerated() {
-            let x = Float(590 + index * 104)
-            let y: Float = 452
+            let x = Double(590 + index * 104)
+            let y: Double = 452
             // **1 つずつ光を置き直す。** 取り除くと列が閉じるので、先の球は先の光のまま残る
             noLights()
             entry.place(self, x, y)
@@ -185,7 +185,7 @@ final class ColorAndScale: Sketch {
 
     /// 読み出した成分を文字にする。0–255 と 360 / 100 / 100 の目盛りのまま、丸めて出す。
     private func readings(of sample: LinearRGBA) -> [String] {
-        func rounded(_ value: Float) -> Int { Int(value.rounded()) }
+        func rounded(_ value: Double) -> Int { Int(value.rounded()) }
         return [
             "rgb \(rounded(red(sample))) \(rounded(green(sample))) \(rounded(blue(sample)))",
             "a \(rounded(alpha(sample)))",

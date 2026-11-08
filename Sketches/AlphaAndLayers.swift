@@ -28,7 +28,7 @@ final class AlphaAndLayers: Sketch {
         let image = try createImage(32, 32)
         for y in 0..<32 {
             for x in 0..<32 {
-                let radius = sqrt(pow(Float(x) - 15.5, 2) + pow(Float(y) - 15.5, 2))
+                let radius = sqrt(pow(Double(x) - 15.5, 2) + pow(Double(y) - 15.5, 2))
                 // LinearRGBA の非乗算色を渡す。Image が内部の形式へ変換する。
                 image.set(x, y, .display(red: 1, green: 0.65, blue: 0.15,
                                         alpha: constrain((16 - radius) / 6, 0, 1)))
@@ -44,14 +44,14 @@ final class AlphaAndLayers: Sketch {
         textSize(16)
         text("blend | same resolution / order | no effects / no group alpha", 20, 25)
         for (backgroundIndex, label) in ["checker", "black", "white"].enumerated() {
-            let left = Float(backgroundIndex * 400)
+            let left = Double(backgroundIndex * 400)
             fill(235)
             text(label, left + 20, 55)
             text("direct", left + 20, 80)
             text("transparent graphics", left + 210, 80)
-            for (level, alpha) in [Float(0), 0.25, 0.5, 1].enumerated() {
+            for (level, alpha) in [Double(0), 0.25, 0.5, 1].enumerated() {
                 for reverse in 0..<2 {
-                    let top = Float(100 + (level * 2 + reverse) * 100)
+                    let top = Double(100 + (level * 2 + reverse) * 100)
                     fill(235)
                     text("alpha \(alpha) | \(reverse == 0 ? "A > B" : "B > A")", left + 20, top + 12)
                     for column in 0..<2 {
@@ -87,7 +87,7 @@ final class AlphaAndLayers: Sketch {
         }
     }
 
-    private func content(_ alpha: Float, reverse: Bool) {
+    private func content(_ alpha: Double, reverse: Bool) {
         blendMode(.blend)
         noStroke()
         for item in reverse ? [1, 0] : [0, 1] {

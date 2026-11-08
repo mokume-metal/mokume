@@ -53,7 +53,7 @@ final class MIDIAndHue: Sketch {
         // 押されている鍵。ノートの番号を、左から右へ並べる
         fill(232, 232, 240)
         for note in held.sorted() {
-            rect(width / 2 + Float(note - 62) * 24 - 10, height - 80, 20, 20)
+            rect(width / 2 + Double(note - 62) * 24 - 10, height - 80, 20, 20)
         }
     }
 

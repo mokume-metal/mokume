@@ -42,9 +42,9 @@ final class TypeAndMeasure: Sketch {
 
     /// 太さと傾きの 4 通りを、測った幅と高さの枠に入れて並べる。
     private func measuredStyles() {
-        let left: Float = 150
+        let left: Double = 150
         for (index, style) in [TextStyle.normal, .bold, .italic, .boldItalic].enumerated() {
-            let base = 80 + Float(index) * 58
+            let base = 80 + Double(index) * 58
             textFont("Helvetica")
             textStyle(style)
             textSize(40)
@@ -83,7 +83,7 @@ final class TypeAndMeasure: Sketch {
 
     /// 縦の揃え方を、1 本の横線に対して並べる。
     private func verticalAlignment() {
-        let rule: Float = 150
+        let rule: Double = 150
         stroke(89, 191, 242)
         strokeWeight(1)
         line(520, rule, 920, rule)
@@ -93,7 +93,7 @@ final class TypeAndMeasure: Sketch {
         textSize(30)
         fill(242, 235, 217)
         // 次の語を置く位置も、測った幅から決める
-        var x: Float = 530
+        var x: Double = 530
         for vertical in [VerticalTextAlign.top, .center, .baseline, .bottom] {
             textAlign(.left, vertical)
             text("\(vertical)", x, rule)
@@ -115,8 +115,8 @@ final class TypeAndMeasure: Sketch {
         textWrap(.character)
         var rest = passage
         for index in 0..<3 {
-            let x = 40 + Float(index) * 160
-            let top: Float = 310
+            let x = 40 + Double(index) * 160
+            let top: Double = 310
             noFill()
             stroke(64, 76, 102)
             strokeWeight(1)

@@ -25,7 +25,7 @@ final class SoundAndLevel: Sketch {
     }
 
     /// 1 秒あたりの標本の数。
-    private static let rate: Float = 48_000
+    private static let rate: Double = 48_000
     /// 帯域を何本描くか (1〜64 本目。48 kHz で約 3 kHz まで)。
     private let bands = 64
 
@@ -55,13 +55,13 @@ final class SoundAndLevel: Sketch {
         let levels = sound.spectrumLevels
         for band in 1...bands {
             let height = levels[band] * 380
-            fill(lerp(120, 232, Float(band) / Float(bands)), 160, lerp(220, 92, Float(band) / Float(bands)))
-            rect(540 + Float(band - 1) * 6, 460 - height, 4, height)
+            fill(lerp(120, 232, Double(band) / Double(bands)), 160, lerp(220, 92, Double(band) / Double(bands)))
+            rect(540 + Double(band - 1) * 6, 460 - height, 4, height)
         }
     }
 
     /// 縦の目盛り 1 本。下から `value` (0〜1) の高さまで塗る。
-    private func meter(x: Float, value: Float, red: Float, green: Float, blue: Float) {
+    private func meter(x: Double, value: Double, red: Double, green: Double, blue: Double) {
         fill(40, 40, 48)
         rect(x, 80, 24, 380)
         fill(red, green, blue)
@@ -71,15 +71,15 @@ final class SoundAndLevel: Sketch {
 
     /// 2 秒の合成した音。半秒ごとの低い拍と、2 秒かけてふくらむ倍音の多い和音と、
     /// 1 秒に 3 度揺れる高い音を重ねる。
-    private static func phrase() -> [Float] {
+    private static func phrase() -> [Double] {
         (0..<Int(rate * 2)).map { index in
-            let t = Float(index) / rate
+            let t = Double(index) / rate
             let beat = t.truncatingRemainder(dividingBy: 0.5)
             let fade = 1 - beat / 0.5
             let kick = sin(2 * .pi * 55 * beat) * fade * fade * fade * fade * 0.7
-            var chord: Float = 0
+            var chord: Double = 0
             for harmonic in 1...8 {
-                chord += sin(2 * .pi * 234.375 * Float(harmonic) * t) / Float(harmonic)
+                chord += sin(2 * .pi * 234.375 * Double(harmonic) * t) / Double(harmonic)
             }
             let swell = 0.5 - 0.5 * cos(2 * .pi * t / 2)
             let shimmer = sin(2 * .pi * 2250 * t) * (0.5 + 0.5 * sin(2 * .pi * 3 * t)) * 0.05

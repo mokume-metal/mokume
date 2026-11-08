@@ -29,14 +29,14 @@ final class SparksAndForces: Sketch {
     private let capacity = 24_000
 
     /// 渦の中心。**印を置くのは、粒が巻かれる理由をその場で読めるようにするため。**
-    private let eye = (x: Float(480), y: Float(270))
+    private let eye = (x: Double(480), y: Double(270))
     /// 噴き口が回る輪の半径。**釣り合う半径の近くに置く**ので、生まれた粒はすぐ腕に乗る。
     ///
     /// 釣り合いは 2 つの式で決まる。抵抗と渦が釣り合う速さがおよそ `渦 ÷ 抵抗` (1 フレーム
     /// ずつ進めるので、60 fps・抵抗 1.2 ではそれより 1% 遅い — `Force` の説明の「渦と抵抗を
     /// 組むと」)、その速さで回り続けられる半径が `速さ² ÷ 引く力`。下の数はそこから逆に
     /// 決めてある。
-    private let ring: Float = 210
+    private let ring: Double = 210
 
     private var sparks: Particles?
 
@@ -54,10 +54,10 @@ final class SparksAndForces: Sketch {
         let sweep = time * 0.5
         noStroke()
         for side in 0..<2 {
-            let angle = sweep + Float(side) * Float.pi
+            let angle = sweep + Double(side) * Double.pi
             emit(
                 sparks, from: .point(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring),
-                toward: .plane(0...(2 * Float.pi)), rate: 800, speed: 30...90, life: 2.4...4,
+                toward: .plane(0...(2 * Double.pi)), rate: 800, speed: 30...90, life: 2.4...4,
                 size: 1.5...4, color: color(255, 173, 71))
         }
 
@@ -84,7 +84,7 @@ final class SparksAndForces: Sketch {
         // 噴き口そのもの。**動いていることが 1 枚でも読める**ようにする
         stroke(255, 255, 255, 115)
         for side in 0..<2 {
-            let angle = sweep + Float(side) * Float.pi
+            let angle = sweep + Double(side) * Double.pi
             circle(eye.x + cos(angle) * ring, eye.y + sin(angle) * ring, 16)
         }
     }

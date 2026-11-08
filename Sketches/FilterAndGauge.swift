@@ -24,8 +24,8 @@ final class FilterAndGauge: Sketch {
         let image = try createImage(220, 200)
         for y in 0..<200 {
             for x in 0..<220 {
-                let warp = sin(Float(y) * 0.06) * 14
-                let ring = 0.5 + 0.5 * sin((Float(x) + warp) * 0.16)
+                let warp = sin(Double(y) * 0.06) * 14
+                let ring = 0.5 + 0.5 * sin((Double(x) + warp) * 0.16)
                 image.set(x, y, .display(red: ring, green: ring * 0.8, blue: ring * 0.5))
             }
         }
@@ -39,7 +39,7 @@ final class FilterAndGauge: Sketch {
         // 左: 光の玉。ここまでの絵にだけ、ぼかしとにじみを掛ける
         noStroke()
         for index in 0..<6 {
-            let angle = Float(index) / 6 * 2 * Float.pi + time * 0.8
+            let angle = Double(index) / 6 * 2 * Double.pi + time * 0.8
             fill(
                 .display(
                     red: 0.9 + 0.1 * cos(angle), green: 0.45 + 0.35 * sin(angle), blue: 0.2 + 0.3 * cos(angle * 2)))
@@ -59,7 +59,7 @@ final class FilterAndGauge: Sketch {
         noStroke()
         fill(190, 196, 208)
         for step in 0..<10 {
-            rect(120 + Float(step) * 28, 420, 18, 24)
+            rect(120 + Double(step) * 28, 420, 18, 24)
         }
 
         // 右: 焼いた縞と、同じ縞に threshold を掛けた新しい絵

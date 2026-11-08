@@ -21,7 +21,7 @@ final class MaterialsAndSurroundings: Sketch {
     }
 
     /// 並べる質感。**同じ 1 本の式に入る 4 つの指定**で、それぞれ効き方が違う。
-    private var knobs: [(name: String, apply: (MaterialsAndSurroundings, Float) -> Void)] {
+    private var knobs: [(name: String, apply: (MaterialsAndSurroundings, Double) -> Void)] {
         [
             ("shininess", { $0.shininess($1 * 220) }),
             ("metalness", { $0.metalness($1) }),
@@ -80,7 +80,7 @@ final class MaterialsAndSurroundings: Sketch {
         let columns = 5
         for (row, knob) in knobs.enumerated() {
             for column in 0..<columns {
-                let amount = Float(column) / Float(columns - 1)
+                let amount = Double(column) / Double(columns - 1)
                 push()
                 // 4 つとも既定へ戻してから 1 つだけ動かす — 混ざると何が効いたか読めない
                 shininess(0)

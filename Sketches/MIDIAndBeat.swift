@@ -53,7 +53,7 @@ final class MIDIAndBeat: Sketch {
             } else {
                 fill(128, 128, 140)
             }
-            rect(width / 2 + Float(index - 2) * 80 + 10, height / 2 - 30, 60, 60)
+            rect(width / 2 + Double(index - 2) * 80 + 10, height / 2 - 30, 60, 60)
         }
     }
 

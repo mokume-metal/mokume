@@ -70,7 +70,7 @@ final class SurfaceAndGrain: Sketch {
         let spin = time * 0.55
         for (index, painted) in [grain, slipping].enumerated() {
             push()
-            translate(width * 0.28 + Float(index) * width * 0.44, height * 0.52, 0)
+            translate(width * 0.28 + Double(index) * width * 0.44, height * 0.52, 0)
             rotateX(-0.45)
             rotateY(spin)
             if let painted { shader(painted) }

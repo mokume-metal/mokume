@@ -51,7 +51,7 @@ final class FacingAndView: Sketch {
         noStroke()
 
         // **視点をゆっくり回り込ませる。** 時計はフレーム番号から導かれるので、何度撮っても同じ動き
-        let distance = (height / 2) / tan(Float.pi / 6)
+        let distance = (height / 2) / tan(Double.pi / 6)
         let orbit = sin(time * 0.4) * 0.5
         camera(
             width / 2 + distance * sin(orbit), height / 2 - distance * 0.25,
@@ -59,7 +59,7 @@ final class FacingAndView: Sketch {
         // **平行に写す。** 透視だと 3 つの箱が置き場所ごとに違う角度から見え、色の差が
         // 向きの欄の違いなのか見え方の違いなのかが読めなくなる。範囲は面の 1.2 倍に広げて
         // 上の段を縮め、下の段を置く余白を作る (縦軸は下向きなので、上端のほうが小さい数)
-        let reach: Float = 1.2
+        let reach: Double = 1.2
         ortho(
             -width / 2 * reach, width / 2 * reach, height / 2 * reach, -height / 2 * reach,
             distance / 10, distance * 10)
@@ -82,17 +82,17 @@ final class FacingAndView: Sketch {
         textSize(18)
         textAlign(.center)
         for (index, (_, caption)) in Self.fields.enumerated() {
-            text(caption, width * (0.2 + 0.3 * Float(index)), height * 0.6)
+            text(caption, width * (0.2 + 0.3 * Double(index)), height * 0.6)
         }
         textSize(14)
         text("下の段: 動かない視点・透視で見た同じ箱", width / 2, height * 0.94)
     }
 
     /// 3 つの向きの欄で、同じ形を同じ回し方で並べる。
-    private func drawBoxes(y: Float, size: Float, spin: Float) {
+    private func drawBoxes(y: Double, size: Double, spin: Double) {
         for (index, painter) in painters.enumerated() {
             push()
-            translate(width * (0.2 + 0.3 * Float(index)), y, 0)
+            translate(width * (0.2 + 0.3 * Double(index)), y, 0)
             rotateX(spin * 0.7)
             rotateY(spin)
             if let painter { shader(painter) }

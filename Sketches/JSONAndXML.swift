@@ -36,7 +36,7 @@ final class JSONAndXML: Sketch {
     /// 街ごとに読んだ名前 (応答の `name`)。読めなかった街は `cities` の名前のまま。
     private var names: [String] = []
     /// 街ごとに読んだ気温。読めなかった街は `nil` で、`reasons` に理由がある。
-    private var temps: [Float?] = []
+    private var temps: [Double?] = []
     private var reasons: [String] = []
     /// 星座。読めなければ `nil` のまま (枠だけが出る)。
     private var sky: XML?
@@ -45,13 +45,13 @@ final class JSONAndXML: Sketch {
     private var rereadFailure: String?
 
     /// 天気の帯の場所。
-    private static let left: Float = 40
-    private static let stripWidth: Float = 580
-    private static let stripHeight: Float = 130
-    private static let stripTops: [Float] = [70, 215, 360]
+    private static let left: Double = 40
+    private static let stripWidth: Double = 580
+    private static let stripHeight: Double = 130
+    private static let stripTops: [Double] = [70, 215, 360]
     /// 星座の枠の場所 (左上)。XML の座標はここからの位置。
-    private static let skyLeft: Float = 660
-    private static let skyTop: Float = 70
+    private static let skyLeft: Double = 660
+    private static let skyTop: Double = 70
 
     func setup() throws {
         _ = CannedWeather.installed
@@ -111,7 +111,7 @@ final class JSONAndXML: Sketch {
     }
 
     /// 天気の帯 1 枚。気温が読めれば寒色から暖色の間で塗り、読めなければ灰色に塗って隅に理由を出す。
-    private func drawStrip(_ label: String, _ url: String, _ temp: Float?, _ reason: String, top: Float) {
+    private func drawStrip(_ label: String, _ url: String, _ temp: Double?, _ reason: String, top: Double) {
         noStroke()
         if let temp {
             let warmth = constrain(norm(temp, -10, 35), 0, 1)

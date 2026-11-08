@@ -89,7 +89,7 @@ final class ShapesAndStyle: Sketch {
         // 頂点列 — 同じ穴付き曲線を、切り抜きなし / ありで比較する。
         // clip は呼んだ時点の変換で読む。ここは変換の前 (translate の前) に書くので、面の座標のまま。右の形は枠の右辺をまたぐ。
         pushStyle()
-        for (index, x) in [Float(540), 740].enumerated() {
+        for (index, x) in [Double(540), 740].enumerated() {
             noStroke()
             fill(217, 230, 255)
             textSize(14)
@@ -141,7 +141,7 @@ final class ShapesAndStyle: Sketch {
 
         // 点 — 大きさは輪郭の太さで決まる。角度は度で数えて弧度へ直す
         stroke(217, 230, 255)
-        for (index, degree) in stride(from: Float(0), to: degrees(2 * Float.pi), by: 30).enumerated() {
+        for (index, degree) in stride(from: Double(0), to: degrees(2 * Double.pi), by: 30).enumerated() {
             strokeWeight(2 + index)
             let angle = radians(degree)
             point(520 + cos(angle) * 55, 620 + sin(angle) * 55)

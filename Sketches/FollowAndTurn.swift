@@ -24,14 +24,14 @@ final class FollowAndTurn: Sketch {
         SketchSettings(width: 960, height: 540, title: "follow and turn")
     }
 
-    var eyeX: Float = 480
-    var eyeY: Float = 270
+    var eyeX: Double = 480
+    var eyeY: Double = 270
     /// 瞳の向き (ラジアン)。±π に畳まず、``lerpAngle(_:_:_:)`` が返した値をそのまま持つ。
-    var look: Float = 0
+    var look: Double = 0
 
     /// 最初に見たポインタの位置。ここから動いたら、ポインタを目標にする。
-    private var restingX: Float?
-    private var restingY: Float?
+    private var restingX: Double?
+    private var restingY: Double?
     private var pointerMoved = false
 
     func draw() {

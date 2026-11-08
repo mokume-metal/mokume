@@ -50,16 +50,16 @@ final class FieldAndFlow: Sketch {
     /// 断面を帯に描く塗り。
     private var graph: Shader?
     /// 帯の上端と下端 (画面の高さに対する割合)。
-    private let band = (top: Float(0.8), bottom: Float(0.96))
+    private let band = (top: Double(0.8), bottom: Double(0.96))
 
     /// 引き戻した場の、いちばん高かったところ (画面の座標)。
-    private var peak: (x: Float, y: Float) = (480, 270)
+    private var peak: (x: Double, y: Double) = (480, 270)
     /// そのときの高さ。札と、帯の上の点に使う。
-    private var peakHeight: Float = 0
+    private var peakHeight: Double = 0
     /// そのときの行。**断面を切り出す行**として GPU へ返す。
     private var peakRow = 45
     /// 印を置いている位置。頂へ滑って追いつく。
-    private var shown: (x: Float, y: Float) = (480, 270)
+    private var shown: (x: Double, y: Double) = (480, 270)
 
     func setup() throws {
         field = try makeNumbers(count: columns * rows)
@@ -101,7 +101,7 @@ final class FieldAndFlow: Sketch {
             }
             """,
             name: "stir",
-            values: ["grid": .pair(Float(columns), Float(rows))])
+            values: ["grid": .pair(Double(columns), Double(rows))])
 
         // 場を色にする側。**格子より画素のほうが細かい**ので、隣の 4 マスから混ぜて読む
         paint = try createShader(
@@ -162,11 +162,11 @@ final class FieldAndFlow: Sketch {
                 return float4(tint, 1.0);
             }
             """,
-            values: ["grid": .pair(Float(columns), Float(rows))])
+            values: ["grid": .pair(Double(columns), Double(rows))])
 
         // 切り出す行は CPU が決める。**書くのはいつでもよい** — 書いた値は次の描き切りが届ける
         probe = try makeNumbers(count: 1)
-        probe?.set(Float(peakRow), at: 0)
+        probe?.set(Double(peakRow), at: 0)
         profile = try makeNumbers(count: columns)
         profile?.fill(0)
 
@@ -186,7 +186,7 @@ final class FieldAndFlow: Sketch {
             }
             """,
             name: "slice",
-            values: ["columns": .number(Float(columns))])
+            values: ["columns": .number(Double(columns))])
 
         // 断面を帯にする。**高さがそのまま値**で、帯の下から塗り上げる
         graph = try createShader(
@@ -230,7 +230,7 @@ final class FieldAndFlow: Sketch {
             """,
             name: "graph",
             values: [
-                "columns": .number(Float(columns)),
+                "columns": .number(Double(columns)),
                 "band": .pair(band.top, band.bottom),
             ])
     }
@@ -272,11 +272,11 @@ final class FieldAndFlow: Sketch {
         // 読み戻すのは 30 フレームに 1 度なので、印は次の頂へ滑って移る
         shown.x += (peak.x - shown.x) * 0.15
         shown.y += (peak.y - shown.y) * 0.15
-        let ink = (r: Float(255), g: Float(242), b: Float(220))
+        let ink = (r: Double(255), g: Double(242), b: Double(220))
 
         // いま切り出している行。**帯の断面はこの線の上の値である** — 印から帯へ線を下ろし、
         // 帯の上の同じ点に打つ
-        let rowY = (Float(peakRow) + 0.5) / Float(rows) * height
+        let rowY = (Double(peakRow) + 0.5) / Double(rows) * height
         let bandY = height * (band.top + (1 - peakHeight) * (band.bottom - band.top))
         strokeWeight(1)
         stroke(ink.r, ink.g, ink.b, 40)
@@ -292,7 +292,7 @@ final class FieldAndFlow: Sketch {
         stroke(ink.r, ink.g, ink.b, 220)
         circle(shown.x, shown.y, 28)
         for step in 0..<4 {
-            let angle = Float(step) * .pi / 2
+            let angle = Double(step) * .pi / 2
             line(
                 shown.x + cos(angle) * 20, shown.y + sin(angle) * 20,
                 shown.x + cos(angle) * 30, shown.y + sin(angle) * 30)
@@ -311,16 +311,16 @@ final class FieldAndFlow: Sketch {
     }
 
     /// 引き戻した場から、いちばん高いマスを探して画面の座標へ移す。
-    private func findPeak(in values: [Float]) {
+    private func findPeak(in values: [Double]) {
         guard values.count == columns * rows else { return }
         var best = 0
         for index in 1..<values.count where values[index] > values[best] { best = index }
-        let column = Float(best % columns) + 0.5
-        let row = Float(best / columns) + 0.5
-        peak = (map(column, 0, Float(columns), 0, width), map(row, 0, Float(rows), 0, height))
+        let column = Double(best % columns) + 0.5
+        let row = Double(best / columns) + 0.5
+        peak = (map(column, 0, Double(columns), 0, width), map(row, 0, Double(rows), 0, height))
         peakHeight = values[best]
         peakRow = best / columns
         // 見つけた行を GPU へ返す。**待たない** — 次の描き切りが届ける
-        probe?.set(Float(peakRow), at: 0)
+        probe?.set(Double(peakRow), at: 0)
     }
 }

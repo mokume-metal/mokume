@@ -99,7 +99,7 @@ final class BricksAndBall: Sketch {
     }
 
     /// 当たった音を鳴らす。同じ音源に包絡をかけ直すので、音源は増えない。
-    func beep(_ frequency: Float) {
+    func beep(_ frequency: Double) {
         guard let tone, let envelope else { return }
         tone.freq(frequency)
         envelope.play(tone, 0.002, 0.03, 0.6, 0.08)

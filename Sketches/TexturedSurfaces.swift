@@ -24,10 +24,10 @@ final class TexturedSurfaces: Sketch {
             for x in 0..<256 {
                 // 年輪を歪めた縞。上下・左右が入れ替わったら分かるよう、
                 // 上端を明るく・左端を赤くしておく
-                let warp = sin(Float(y) * 0.05) * 12
-                let ring = 0.5 + 0.5 * sin((Float(x) + warp) * 0.16)
-                let top: Float = y < 16 ? 0.35 : 0
-                let left: Float = x < 16 ? 0.4 : 0
+                let warp = sin(Double(y) * 0.05) * 12
+                let ring = 0.5 + 0.5 * sin((Double(x) + warp) * 0.16)
+                let top: Double = y < 16 ? 0.35 : 0
+                let left: Double = x < 16 ? 0.4 : 0
                 image.set(
                     x, y,
                     .display(
@@ -48,7 +48,7 @@ final class TexturedSurfaces: Sketch {
             480 + sin(angle) * 420, 150, cos(angle) * 420,
             480, 300, 0,
             0, 1, 0)
-        perspective(Float.pi / 3, width / height, 10, 2000)
+        perspective(Double.pi / 3, width / height, 10, 2000)
 
         ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.24))
         directionalLight(.linear(red: 0.9, green: 0.86, blue: 0.78), -0.4, 0.8, -0.35)
@@ -80,12 +80,12 @@ final class TexturedSurfaces: Sketch {
         // 自分で並べた面には、読み取り位置を書いて貼れる
         push()
         translate(480, 450, 0)
-        rotateX(Float.pi / 2)
+        rotateX(Double.pi / 2)
         beginShape()
         vertex(-260, -120, 0, 0, 0)
-        vertex(260, -120, 0, Float(grain.width), 0)
-        vertex(260, 120, 0, Float(grain.width), Float(grain.height))
-        vertex(-260, 120, 0, 0, Float(grain.height))
+        vertex(260, -120, 0, Double(grain.width), 0)
+        vertex(260, 120, 0, Double(grain.width), Double(grain.height))
+        vertex(-260, 120, 0, 0, Double(grain.height))
         endShape(.close)
         pop()
 

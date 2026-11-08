@@ -89,7 +89,7 @@ final class CrowdAndModel: Sketch {
             for x in 0..<128 {
                 // 縞に加えて、**上端を白く・左端を赤く**する。展開がどこを読んで
                 // いるかが色で分かる (帯の向きと継ぎ目の位置が絵から読める)
-                let ring: Float = sin(Float(x) * 0.5) > 0 ? 0.85 : 0.25
+                let ring: Double = sin(Double(x) * 0.5) > 0 ? 0.85 : 0.25
                 let top = y < 12
                 let left = x < 12
                 image.set(
@@ -116,9 +116,9 @@ final class CrowdAndModel: Sketch {
         grain = crowd
         var places: [Placement] = []
         for index in 0..<1800 {
-            let around = Float(index) * 0.11
-            let radius = 70 + Float(index) * 0.075
-            let lift = sin(Float(index) * 0.05 + time * 1.4) * 34
+            let around = Double(index) * 0.11
+            let radius = 70 + Double(index) * 0.075
+            let lift = sin(Double(index) * 0.05 + time * 1.4) * 34
             places.append(
                 Placement(
                     x: width / 2 + cos(around) * radius,
@@ -127,7 +127,7 @@ final class CrowdAndModel: Sketch {
                     scale: 1,
                     rotation: Vector3(0, around, 0),
                     fill: .display(
-                        red: 0.4 + Float(index % 7) * 0.08, green: 0.55, blue: 0.9)))
+                        red: 0.4 + Double(index % 7) * 0.08, green: 0.55, blue: 0.9)))
         }
         shape(crowd, at: places)
 
@@ -161,12 +161,12 @@ final class CrowdAndModel: Sketch {
         // (どちらの側から見ても光を受けるので、符号によらず同じ明るさで出る)
         normal(0, 0, 1)
         for step in 0..<6 {
-            let around = Float(step) / 6 * 2 * .pi
+            let around = Double(step) / 6 * 2 * .pi
             vertex(cos(around) * 84, sin(around) * 84, 0)
         }
         beginContour()
         for step in 0..<6 {
-            let around = -Float(step) / 6 * 2 * .pi
+            let around = -Double(step) / 6 * 2 * .pi
             vertex(cos(around) * 37, sin(around) * 37, 0)
         }
         endContour()
@@ -174,7 +174,7 @@ final class CrowdAndModel: Sketch {
         pop()
 
         // モデルの説明を置く場所。立体の下の点を画面の座標へ落として集め、最後に 2D で書く
-        var captions: [(title: String, detail: String, x: Float, y: Float)] = []
+        var captions: [(title: String, detail: String, x: Double, y: Double)] = []
 
         // **読み込んだモデル。** 既定の整え方で、この面に見える大きさへ揃う
         if let gem {
@@ -268,7 +268,7 @@ final class CrowdAndModel: Sketch {
 
     /// 正二十面体の 12 の点 (外接球の半径 1)。
     private static let icosahedronPoints: [SIMD3<Float>] = {
-        let golden = (1 + Float(5).squareRoot()) / 2
+        let golden = (1 + Double(5).squareRoot()) / 2
         let points: [SIMD3<Float>] = [
             SIMD3(-1, golden, 0), SIMD3(1, golden, 0), SIMD3(-1, -golden, 0), SIMD3(1, -golden, 0),
             SIMD3(0, -1, golden), SIMD3(0, 1, golden), SIMD3(0, -1, -golden), SIMD3(0, 1, -golden),
@@ -292,8 +292,8 @@ final class CrowdAndModel: Sketch {
         var lines: [String] = []
         for row in 0...steps {
             for column in 0...steps {
-                let x = Float(column) / Float(steps) * 2 - 1
-                let z = Float(row) / Float(steps) * 2 - 1
+                let x = Double(column) / Double(steps) * 2 - 1
+                let z = Double(row) / Double(steps) * 2 - 1
                 lines.append("v \(x) \(0.18 * sin(x * 5) * cos(z * 5)) \(z)")
             }
         }

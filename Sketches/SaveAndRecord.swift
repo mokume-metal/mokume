@@ -130,9 +130,9 @@ final class SaveAndRecord: Sketch {
 
     /// 書き出す絵。時刻でなくフレーム番号で動くので、何度書いても同じフレームは同じ絵になる。
     private func scene() {
-        let turn = Float(frameCount) * 0.03
-        let centerX: Float = 700
-        let centerY: Float = 270
+        let turn = Double(frameCount) * 0.03
+        let centerX: Double = 700
+        let centerY: Double = 270
 
         noFill()
         stroke(76, 87, 107)
@@ -144,14 +144,14 @@ final class SaveAndRecord: Sketch {
         strokeWeight(3)
         beginShape()
         for index in 0..<6 {
-            let angle = turn + Float(index) * (.pi / 3)
+            let angle = turn + Double(index) * (.pi / 3)
             vertex(centerX + cos(angle) * 180, centerY + sin(angle) * 180)
         }
         endShape(.close)
 
         noStroke()
         for index in 0..<6 {
-            let angle = turn + Float(index) * (.pi / 3)
+            let angle = turn + Double(index) * (.pi / 3)
             fill(242, 115, 64)
             circle(centerX + cos(angle) * 180, centerY + sin(angle) * 180, 44)
         }
@@ -180,7 +180,7 @@ final class SaveAndRecord: Sketch {
         }
 
         textSize(18)
-        var y: Float = 130
+        var y: Double = 130
         for item in still {
             fill(item.done ? color(120, 230, 160) : color(242, 217, 89))
             text("\(item.label)  \(Self.name(of: item.path))", 24, y)

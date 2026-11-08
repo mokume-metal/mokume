@@ -45,7 +45,7 @@ final class DepthAndLabels: Sketch {
         let cy = height / 2
         camera(cx + (movingCamera ? 170 * sin(time * 0.8) : 0), cy - 55, 520,
                cx, cy, 0, 0, 1, 0)
-        perspective(Float.pi / 3, width / height, 10, 2000)
+        perspective(Double.pi / 3, width / height, 10, 2000)
         lights()
         noStroke()
         push()

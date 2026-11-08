@@ -25,13 +25,13 @@ final class CurvesAndVertices: Sketch {
         background(18, 20, 26)
 
         // 通過点を結ぶ曲線 — 張りと刻みを変えて 3 本
-        let variants: [(tightness: Float, detail: Int, ink: (Int, Int, Int))] = [
+        let variants: [(tightness: Double, detail: Int, ink: (Int, Int, Int))] = [
             (0, 20, (242, 115, 64)),
             (0.7, 20, (89, 191, 242)),
             (0, 3, (242, 217, 89)),
         ]
         for (index, variant) in variants.enumerated() {
-            let left = Float(40 + index * 310)
+            let left = Double(40 + index * 310)
             noStroke()
             fill(89, 97, 115)
             for knot in knots { circle(left + knot.x, 40 + knot.y, 10) }
@@ -56,7 +56,7 @@ final class CurvesAndVertices: Sketch {
         beginShape()
         vertex(40, 250)
         for index in 0..<8 {
-            let x = Float(40 + index * 110)
+            let x = Double(40 + index * 110)
             quadraticVertex(x + 55, index % 2 == 0 ? 190 : 310, x + 110, 250)
         }
         endShape()
@@ -72,8 +72,8 @@ final class CurvesAndVertices: Sketch {
             (.triangleFan, (230, 102, 153)),
         ]
         for (index, entry) in kinds.enumerated() {
-            let left = Float(50 + index * 230)
-            let top: Float = 350
+            let left = Double(50 + index * 230)
+            let top: Double = 350
             // 扇は要の頂点 (1 つ目) を中心へ寄せる。要から残りの頂点へ向けて面が開く
             let points = entry.kind == .triangleFan
                 ? [SIMD2<Float>(90, 70)] + corners : corners

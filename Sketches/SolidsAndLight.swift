@@ -19,19 +19,19 @@ final class SolidsAndLight: Sketch {
     }
 
     /// 注視点。床も立体もこのまわりに固める。
-    private var center: (x: Float, y: Float) { (width / 2, height / 2) }
+    private var center: (x: Double, y: Double) { (width / 2, height / 2) }
 
     func draw() {
         background(15, 18, 23)
 
         // **注視点のまわりを回る。** 時計はフレーム番号から導かれるので、何度撮っても同じ動き
         let angle = time * 0.5
-        let distance: Float = 470
+        let distance: Double = 470
         camera(
             center.x + sin(angle) * distance, center.y - 210, cos(angle) * distance,
             center.x, center.y + 110, 0,
             0, 1, 0)
-        perspective(Float.pi / 3, width / height, 10, 2000)
+        perspective(Double.pi / 3, width / height, 10, 2000)
 
         // 光を 4 種そろえて置く。縦軸は下向きなので、上から差す光の向きは +y
         //
@@ -61,7 +61,7 @@ final class SolidsAndLight: Sketch {
         fill(128, 128, 140)
         push()
         translate(center.x, center.y + 130, 0)
-        rotateX(Float.pi / 2)
+        rotateX(Double.pi / 2)
         plane(760, 760)
         pop()
 
@@ -87,10 +87,10 @@ final class SolidsAndLight: Sketch {
         castShadow(true)
         stroke(24, 26, 32)
         strokeWeight(1)
-        let radius: Float = 210
-        var tags: [(name: String, x: Float, y: Float, depth: Float)] = []
+        let radius: Double = 210
+        var tags: [(name: String, x: Double, y: Double, depth: Double)] = []
         for (index, solid) in solids.enumerated() {
-            let around = Float(index) / Float(solids.count) * 2 * .pi
+            let around = Double(index) / Double(solids.count) * 2 * .pi
             fill(solid.color)
             push()
             translate(center.x + cos(around) * radius, center.y + 55, sin(around) * radius)
@@ -125,7 +125,7 @@ final class SolidsAndLight: Sketch {
     }
 
     /// 灯りの印を置く場所と色。上で置いた点の光・スポットの光と同じ位置にする。
-    private var lamps: [(x: Float, y: Float, z: Float, color: LinearRGBA)] {
+    private var lamps: [(x: Double, y: Double, z: Double, color: LinearRGBA)] {
         [
             (center.x - 260, center.y - 60, 220, .linear(red: 0.25, green: 0.45, blue: 0.95)),
             (center.x + 240, center.y - 300, 160, .linear(red: 0.95, green: 0.35, blue: 0.4)),
@@ -140,7 +140,7 @@ final class SolidsAndLight: Sketch {
     /// 楕円体は**縦に長い卵形**にしてある。3 つの半径が揃うと球と見分けが付かない。
     /// 円柱は一周を 8 つに割る (`detail:`・既定は 24) — 割り方を落とすと面が見えてくる。
     private var solids:
-        [(name: String, color: LinearRGBA, tilt: Float, spin: Float, draw: (SolidsAndLight) -> Void)]
+        [(name: String, color: LinearRGBA, tilt: Double, spin: Double, draw: (SolidsAndLight) -> Void)]
     {
         [
             ("box", color(242, 115, 76), 0.3, 0.6, { $0.box(90) }),

@@ -69,9 +69,9 @@ final class EchoAndFeedback: Sketch {
     }
 
     /// 前の絵を読み直して描き、その上に円を 1 つ足す。**描き場所の中身は、毎フレーム消してから作り直す。**
-    private func feedback(_ echo: Shader, angle: Float, hue: Float) {
-        let w = Float(Self.panel.width)
-        let h = Float(Self.panel.height)
+    private func feedback(_ echo: Shader, angle: Double, hue: Double) {
+        let w = Double(Self.panel.width)
+        let h = Double(Self.panel.height)
         background(0)
         noStroke()
         shader(echo)

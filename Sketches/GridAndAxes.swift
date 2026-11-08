@@ -25,10 +25,10 @@ final class GridAndAxes: Sketch {
 
     /// 粒 1 つ。中心のまわりを回る円の半径・高さ・位相・速さで持つ。
     private struct Mote {
-        var radius: Float
-        var height: Float
-        var phase: Float
-        var speed: Float
+        var radius: Double
+        var height: Double
+        var phase: Double
+        var speed: Double
     }
 
     private var motes: [Mote] = []
@@ -39,7 +39,7 @@ final class GridAndAxes: Sketch {
         motes = (0..<60).map { _ in
             Mote(
                 radius: random(40, 230), height: random(-160, -20),
-                phase: random(0, 2 * Float.pi), speed: random(0.4, 1.1))
+                phase: random(0, 2 * Double.pi), speed: random(0.4, 1.1))
         }
         // 少し見下ろし、斜めから見る
         orbit.pitch = 0.45

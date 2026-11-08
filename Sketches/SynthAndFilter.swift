@@ -24,9 +24,9 @@ final class SynthAndFilter: Sketch {
     /// 1 枚のパネルに描く音と色。
     private struct Panel {
         var sound: SynthSound
-        var red: Float
-        var green: Float
-        var blue: Float
+        var red: Double
+        var green: Double
+        var blue: Double
     }
 
     /// 帯域を何本描くか (1〜54 本目。48 kHz で約 2.5 kHz まで)。
@@ -34,7 +34,7 @@ final class SynthAndFilter: Sketch {
     private var panels: [Panel] = []
 
     func setup() {
-        let tone: Float = 234.375
+        let tone: Double = 234.375
 
         let sine = createSinOsc()
         let square = createSqrOsc()
@@ -81,8 +81,8 @@ final class SynthAndFilter: Sketch {
         background(18, 18, 24)
         noStroke()
         for (index, panel) in panels.enumerated() {
-            let column = Float(index % 4)
-            let row = Float(index / 4)
+            let column = Double(index % 4)
+            let row = Double(index / 4)
             let left = 24 + column * 232
             let bottom = 250 + row * 250
             // 地
@@ -93,7 +93,7 @@ final class SynthAndFilter: Sketch {
             let levels = panel.sound.spectrumLevels
             for band in 1...bands {
                 let height = levels[band] * 216
-                rect(left + Float(band - 1) * 4, bottom - 2 - height, 3, height)
+                rect(left + Double(band - 1) * 4, bottom - 2 - height, 3, height)
             }
             // 全体の大きさ (左上の円)
             circle(left + 14, bottom - 206, 4 + panel.sound.level * 16)

@@ -24,7 +24,7 @@ final class ChanceAndChoice: Sketch {
 
     private let palette = [color(240, 90, 60), color(250, 200, 80), color(80, 140, 220)]
     /// 右の棒の高さ。低い順に並べてある。
-    private let heights: [Float] = (1...12).map { Float($0) * 16 }
+    private let heights: [Double] = (1...12).map { Double($0) * 16 }
 
     func draw() {
         // 毎フレーム同じ列から引き直す。置かなければ列はフレームを越えて進み、花畑が毎回変わる

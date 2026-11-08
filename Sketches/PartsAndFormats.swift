@@ -55,7 +55,7 @@ final class PartsAndFormats: Sketch {
         directionalLight(.linear(red: 0.85, green: 0.82, blue: 0.75), -0.4, 0.8, -0.35)
         noStroke()
 
-        var captions: [(title: String, lines: [String], x: Float)] = []
+        var captions: [(title: String, lines: [String], x: Double)] = []
         for (index, shelf) in shelves.enumerated() {
             let x = width * (index == 0 ? 0.28 : 0.72)
             guard let gear = shelf.model else {
@@ -81,7 +81,7 @@ final class PartsAndFormats: Sketch {
         for caption in captions {
             text(caption.title, caption.x, height - 110)
             for (index, line) in caption.lines.enumerated() {
-                text(line, caption.x, height - 88 + Float(index) * 19)
+                text(line, caption.x, height - 88 + Double(index) * 19)
             }
         }
     }
@@ -99,20 +99,20 @@ final class PartsAndFormats: Sketch {
     /// 軸は z で、厚みは z の ±0.15。歯は 1 枚ごとに根元 → 先 → 先 → 根元の 4 点で輪郭を取り、
     /// 中心に穴を開ける。輪郭の 1 区切りごとに上の面・下の面・外の壁・穴の壁を 2 枚ずつ張る。
     private static func gear(teeth: Int) -> [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] {
-        let tip: Float = 1
-        let root: Float = 0.82
-        let hole: Float = 0.3
-        let half: Float = 0.15
+        let tip: Double = 1
+        let root: Double = 0.82
+        let hole: Double = 0.3
+        let half: Double = 0.15
         // 歯 1 枚の中での位置 (0…1) と、そこでの半径
-        let profile: [(at: Float, radius: Float)] = [(0, root), (0.2, tip), (0.5, tip), (0.7, root)]
+        let profile: [(at: Double, radius: Double)] = [(0, root), (0.2, tip), (0.5, tip), (0.7, root)]
 
-        var outline: [(angle: Float, radius: Float)] = []
+        var outline: [(angle: Double, radius: Double)] = []
         for tooth in 0..<teeth {
             for point in profile {
-                outline.append(((Float(tooth) + point.at) / Float(teeth) * 2 * .pi, point.radius))
+                outline.append(((Double(tooth) + point.at) / Double(teeth) * 2 * .pi, point.radius))
             }
         }
-        func corner(_ index: Int, radius: Float? = nil, z: Float) -> SIMD3<Float> {
+        func corner(_ index: Int, radius: Double? = nil, z: Double) -> SIMD3<Float> {
             let point = outline[index % outline.count]
             let r = radius ?? point.radius
             return SIMD3(cos(point.angle) * r, sin(point.angle) * r, z)

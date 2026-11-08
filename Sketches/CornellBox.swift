@@ -27,10 +27,10 @@ final class CornellBox: Sketch {
     }
 
     /// 部屋の一辺。中心は窓の真ん中にあり、壁は中心から半辺ずつ離れる。
-    private let side: Float = 300
+    private let side: Double = 300
 
     /// 白い面の色。奥・床・天井と 2 つの箱で同じものを使う。
-    private let white = (red: Float(220), green: Float(220), blue: Float(214))
+    private let white = (red: Double(220), green: Double(220), blue: Double(214))
 
     func draw() {
         background(0)
@@ -40,7 +40,7 @@ final class CornellBox: Sketch {
 
         // 開いた手前の面から正面に覗く。画角は部屋が窓の 7 割ほどに収まる大きさ
         camera(center.x, center.y, 760, center.x, center.y, 0, 0, 1, 0)
-        perspective(Float.pi / 4.6, width / height, 10, 3000)
+        perspective(Double.pi / 4.6, width / height, 10, 3000)
 
         // 縦軸は下向きなので、上から差す光の向きは +y。奥 (-z) へ少し傾けると、
         // 箱の正面が光を受けたまま、影が床の上で手前右へ伸びて見える
@@ -58,13 +58,13 @@ final class CornellBox: Sketch {
         castShadow(false)
         fill(white.red, white.green, white.blue)
         wall(center.x, center.y, -half) { _ in }  // 奥
-        wall(center.x, center.y + half, 0) { $0.rotateX(Float.pi / 2) }  // 床
-        wall(center.x, center.y - half, 0) { $0.rotateX(Float.pi / 2) }  // 天井
+        wall(center.x, center.y + half, 0) { $0.rotateX(Double.pi / 2) }  // 床
+        wall(center.x, center.y - half, 0) { $0.rotateX(Double.pi / 2) }  // 天井
         // 側壁は**部屋の内側へ表を向ける** — 向きを揃えると片方が裏から光を受けて真っ暗になる
         fill(190, 40, 35)
-        wall(center.x - half, center.y, 0) { $0.rotateY(Float.pi / 2) }
+        wall(center.x - half, center.y, 0) { $0.rotateY(Double.pi / 2) }
         fill(45, 160, 60)
-        wall(center.x + half, center.y, 0) { $0.rotateY(-Float.pi / 2) }
+        wall(center.x + half, center.y, 0) { $0.rotateY(-Double.pi / 2) }
 
         // 天井の灯りの印。天井の面にわずかに埋めて、上から見ても浮かないようにする
         push()
@@ -91,7 +91,7 @@ final class CornellBox: Sketch {
     }
 
     /// 部屋の一辺の正方形の壁を 1 枚、`(x, y, z)` を中心に置く。`orient` で向きを変える。
-    private func wall(_ x: Float, _ y: Float, _ z: Float, orient: (CornellBox) -> Void) {
+    private func wall(_ x: Double, _ y: Double, _ z: Double, orient: (CornellBox) -> Void) {
         push()
         translate(x, y, z)
         orient(self)

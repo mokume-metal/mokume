@@ -64,7 +64,7 @@ final class GradientsAndState: Sketch {
             fill(235)
             textSize(16)
             text(index == 0 ? "linear + white stroke" : "radial + white stroke", 0, -15)
-            for (i, position) in [Float(0), 150, 300].enumerated() {
+            for (i, position) in [Double(0), 150, 300].enumerated() {
                 let x = index == 0 ? position : 150 + position / 2
                 stroke(220)
                 line(x, 140, x, 148)
@@ -135,12 +135,12 @@ final class GradientsAndState: Sketch {
         label("solid fill removes gradient", 650, 810)
     }
 
-    private func baseline(_ x: Float) {
+    private func baseline(_ x: Double) {
         circle(x, 495, 100)
         image(white, x + 60, 485) // tintの復元も白で分かる
     }
 
-    private func label(_ caption: String, _ x: Float, _ y: Float) {
+    private func label(_ caption: String, _ x: Double, _ y: Double) {
         pushStyle()
         noStroke()
         fill(235)

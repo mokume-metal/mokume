@@ -161,8 +161,8 @@ final class FileAndSound: Sketch {
         let levels = song.spectrumLevels
         for band in 1...bands {
             let height = levels[band] * 310
-            fill(lerp(120, 232, Float(band) / Float(bands)), 160, lerp(220, 92, Float(band) / Float(bands)))
-            rect(200 + Float(band - 1) * 11, 440 - height, 9, height)
+            fill(lerp(120, 232, Double(band) / Double(bands)), 160, lerp(220, 92, Double(band) / Double(bands)))
+            rect(200 + Double(band - 1) * 11, 440 - height, 9, height)
         }
 
         // 下: 区間の波形
@@ -173,7 +173,7 @@ final class FileAndSound: Sketch {
             strokeWeight(1.5)
             beginShape()
             for (index, value) in wave.enumerated() {
-                vertex(24 + Float(index) / Float(wave.count - 1) * (width - 48), 526 + constrain(value, -1, 1) * 12)
+                vertex(24 + Double(index) / Double(wave.count - 1) * (width - 48), 526 + constrain(value, -1, 1) * 12)
             }
             endShape()
             noStroke()
@@ -215,7 +215,7 @@ final class FileAndSound: Sketch {
     }
 
     /// 縦の目盛り 1 本。下から `value` (0〜1) の高さまで塗る。
-    private func meter(x: Float, value: Float, red: Float, green: Float, blue: Float) {
+    private func meter(x: Double, value: Double, red: Double, green: Double, blue: Double) {
         fill(40, 40, 48)
         rect(x, 130, 24, 310)
         fill(red, green, blue)

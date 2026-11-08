@@ -29,8 +29,8 @@ final class TypeAndPath: Sketch {
     private var word: Path?
 
     /// 最初に見たポインタの位置。ここから動いたら、ポインタを探る点にする。
-    private var restingX: Float?
-    private var restingY: Float?
+    private var restingX: Double?
+    private var restingY: Double?
     private var pointerMoved = false
 
     /// 輪郭を回る粒の数。
@@ -69,7 +69,7 @@ final class TypeAndPath: Sketch {
         // 輪郭を回る粒。`t` を等間隔に並べて、時間の分だけ全部をずらす
         fill(255, 160, 60)
         for index in 0..<grains {
-            let t = (Float(index) / Float(grains) + time * 0.04).truncatingRemainder(dividingBy: 1)
+            let t = (Double(index) / Double(grains) + time * 0.04).truncatingRemainder(dividingBy: 1)
             Circle(center: word.point(at: t), radius: 3).draw()
         }
 

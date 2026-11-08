@@ -72,15 +72,15 @@ final class EffectsAndCustom: Sketch {
     func draw() {
         background(8, 10, 16)
 
-        let gap = (x: Float(24), y: Float(60))
+        let gap = (x: Double(24), y: Double(60))
         textFont("Helvetica")
         textSize(16)
         textAlign(.center)
         for (index, look) in looks.enumerated() {
-            let column = Float(index % 3)
-            let row = Float(index / 3)
-            let x = gap.x + column * (Float(Self.panel.width) + gap.x)
-            let y = 24 + row * (Float(Self.panel.height) + gap.y)
+            let column = Double(index % 3)
+            let row = Double(index / 3)
+            let x = gap.x + column * (Double(Self.panel.width) + gap.x)
+            let y = 24 + row * (Double(Self.panel.height) + gap.y)
 
             // **描き直すたびに並びを決め直す。** 効果はフレームを越えないので、
             // `beginDraw()` のたびに空へ戻る — 前の 1 枚に掛けた並びは残らない
@@ -91,29 +91,29 @@ final class EffectsAndCustom: Sketch {
             image(stage, x, y)
 
             fill(220, 226, 236)
-            text(look.caption, x + Float(Self.panel.width) / 2, y + Float(Self.panel.height) + 24)
+            text(look.caption, x + Double(Self.panel.width) / 2, y + Double(Self.panel.height) + 24)
         }
     }
 
     /// 6 枚に共通の場面。**効果ごとに崩れるものを 1 つずつ置く。**
     private func paintScene(on canvas: Canvas) {
-        let centre = (x: Float(Self.panel.width) / 2, y: Float(Self.panel.height) / 2)
+        let centre = (x: Double(Self.panel.width) / 2, y: Double(Self.panel.height) / 2)
         canvas.background(16, 22, 38)
 
         // 細い格子。**ぼかしがまず消すもの**で、モザイクでは升と干渉する
         canvas.stroke(255, 255, 255, 70)
         canvas.strokeWeight(1)
         for step in stride(from: 12, to: Self.panel.width, by: 24) {
-            canvas.line(Float(step), 0, Float(step), Float(Self.panel.height))
+            canvas.line(Double(step), 0, Double(step), Double(Self.panel.height))
         }
         for step in stride(from: 12, to: Self.panel.height, by: 24) {
-            canvas.line(0, Float(step), Float(Self.panel.width), Float(step))
+            canvas.line(0, Double(step), Double(Self.panel.width), Double(step))
         }
 
         // 色の輪。**色抜きで濃淡だけになり、彩度で濃くなる**。回るので連番で動きが読める
         canvas.noStroke()
         for index in 0..<10 {
-            let angle = Float(index) / 10 * 2 * Float.pi + time * 0.6
+            let angle = Double(index) / 10 * 2 * Double.pi + time * 0.6
             canvas.fill(
                 .display(
                     red: 0.5 + 0.45 * cos(angle),

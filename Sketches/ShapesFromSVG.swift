@@ -85,13 +85,13 @@ final class ShapesFromSVG: Sketch {
             // 右: 置き場所ごとに位置・大きさ・回転・掛ける色を変える
             var places: [Placement] = []
             for index in 0..<6 {
-                let column = Float(index % 2)
-                let row = Float(index / 2)
+                let column = Double(index % 2)
+                let row = Double(index / 2)
                 places.append(
                     Placement(
                         x: 900 + column * 170, y: 130 + row * 170,
-                        scale: 1.2 + 0.3 * Float(index % 3),
-                        rotation: Vector3(0, 0, time * (0.4 + 0.2 * Float(index)) + Float(index)),
+                        scale: 1.2 + 0.3 * Double(index % 3),
+                        rotation: Vector3(0, 0, time * (0.4 + 0.2 * Double(index)) + Double(index)),
                         fill: Self.tints[index]))
             }
             shape(mark, at: places)

@@ -47,9 +47,9 @@ final class TypeAndWeight: Sketch {
     private func pulsingHeadline() {
         textFont(variable)
         textSize(120)
-        var x: Float = 60
+        var x: Double = 60
         for (index, letter) in "mokume".enumerated() {
-            textWeight(500 + 400 * sin(time * 2 + Float(index) * 0.6))
+            textWeight(500 + 400 * sin(time * 2 + Double(index) * 0.6))
             fill(242, 242, 242)
             text(String(letter), x, 150)
             // 太さが動くと送り幅も動く。測った幅を足すと、字が重ならず間も開かない
@@ -58,7 +58,7 @@ final class TypeAndWeight: Sketch {
     }
 
     /// 太さを 100 から 900 まで並べた 1 行。
-    private func weightRamp(font: Font, label: String, top: Float) {
+    private func weightRamp(font: Font, label: String, top: Double) {
         noTextFont()
         textWeight(400)
         textSize(14)
@@ -66,7 +66,7 @@ final class TypeAndWeight: Sketch {
         text(label, 60, top)
 
         for (index, weight) in [100, 300, 500, 700, 900].enumerated() {
-            let x = 60 + Float(index) * 180
+            let x = 60 + Double(index) * 180
             textFont(font)
             textSize(38)
             textWeight(weight)

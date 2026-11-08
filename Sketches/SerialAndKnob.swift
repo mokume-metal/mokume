@@ -31,7 +31,7 @@ final class SerialAndKnob: Sketch {
     private var opened = ""
     private var openFailure: String?
     /// 円の中心の横の位置。届いた値 (0〜1023) を幅に写したもの。
-    private var x: Float = 0
+    private var x: Double = 0
 
     func setup() {
         if let first = serialPorts().first {
@@ -48,7 +48,7 @@ final class SerialAndKnob: Sketch {
 
     func draw() {
         for line in port?.lines ?? [] {
-            if let value = Float(line) { x = constrain(value / 1023, 0, 1) * width }
+            if let value = Double(line) { x = constrain(value / 1023, 0, 1) * width }
         }
 
         background(18, 18, 24)

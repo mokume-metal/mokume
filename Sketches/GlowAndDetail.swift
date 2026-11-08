@@ -39,8 +39,8 @@ final class GlowAndDetail: Sketch {
         noFill()
         strokeWeight(1)
         for index in 0..<spokes {
-            let ratio = Float(index) / Float(spokes)
-            let angle = ratio * 2 * Float.pi + turn
+            let ratio = Double(index) / Double(spokes)
+            let angle = ratio * 2 * Double.pi + turn
             let inner = 70 + sin(angle * 3 + time) * 18
             let outer = 210 + sin(angle * 5 - time * 1.4) * 30
             stroke(
@@ -55,7 +55,7 @@ final class GlowAndDetail: Sketch {
         // 明るい点。**にじみの種**になるので、この点だけが周りへ光を漏らす
         noStroke()
         for index in 0..<24 {
-            let angle = Float(index) / 24 * 2 * Float.pi - turn * 2.2
+            let angle = Double(index) / 24 * 2 * Double.pi - turn * 2.2
             let radius = 250 + sin(angle * 4 + time * 0.8) * 30
             fill(255, 235, 178)
             circle(centre.x + cos(angle) * radius, centre.y + sin(angle) * radius, 7)
@@ -67,7 +67,7 @@ final class GlowAndDetail: Sketch {
         strokeWeight(1)
         for index in 0..<16 {
             let radius = 96 + index * 9
-            let fade = 0.5 - Float(index) / 40
+            let fade = 0.5 - Double(index) / 40
             stroke(.display(red: 0.3, green: 0.55, blue: 0.9, alpha: fade))
             circle(centre.x, centre.y, radius * 2)
         }

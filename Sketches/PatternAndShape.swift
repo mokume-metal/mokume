@@ -60,11 +60,11 @@ final class PatternAndShape: Sketch {
         pop()
 
         // 下の段: 立体。それぞれ回る
-        for (index, x) in [Float(150), 390, 620, 830].enumerated() {
+        for (index, x) in [Double(150), 390, 620, 830].enumerated() {
             push()
             translate(x, 390, 0)
             rotateX(0.5 + time * 0.4)
-            rotateY(0.6 + time * 0.5 + Float(index))
+            rotateY(0.6 + time * 0.5 + Double(index))
             switch index {
             case 0: box(110)
             case 1: sphere(72)

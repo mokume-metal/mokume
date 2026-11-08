@@ -58,8 +58,8 @@ final class TypeAndImagery: Sketch {
             (0..<9).map { index in
                 createShape {
                     push()
-                    translate(Float(index % 3) * 46, Float(index / 3) * 46)
-                    rotate(Float(index) * 0.4)
+                    translate(Double(index % 3) * 46, Double(index / 3) * 46)
+                    rotate(Double(index) * 0.4)
                     shape(leaf)
                     pop()
                 }
@@ -69,7 +69,7 @@ final class TypeAndImagery: Sketch {
         let image = try createImage(64, 64)
         for y in 0..<64 {
             for x in 0..<64 {
-                let wave = 0.5 + 0.5 * sin(Float(x) * 0.2) * cos(Float(y) * 0.2)
+                let wave = 0.5 + 0.5 * sin(Double(x) * 0.2) * cos(Double(y) * 0.2)
                 image.set(x, y, .display(red: wave, green: 0.35, blue: 1 - wave))
             }
         }
@@ -214,7 +214,7 @@ final class TypeAndImagery: Sketch {
             (written, "write"), (loaded, "loadImage"),
             (requested ?? pending, requestFailure ?? (requested == nil ? "requestImage (届く前)" : "requestImage")),
         ].enumerated() {
-            let x = 48 + Float(index) * 130
+            let x = 48 + Double(index) * 130
             if let picture = entry.0 { image(picture, x, 580) }
             text(entry.1, x, 690)
         }

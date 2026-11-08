@@ -84,7 +84,7 @@ final class KnobsAndValues: Sketch {
 
     /// 並びを置く幅。右の残り (420) は宣言の一覧に使う。**窓は広げない** — 14 インチの
     /// 画面 (既定 1512×982 pt) につまみの面と並べて収まる大きさに留める。
-    static let gridWidth: Float = 860
+    static let gridWidth: Double = 860
 
     /// 並びの数。範囲を書いたので、窓には刻みつきのスライダーが出る。
     @Param(1...12) var columns: Int = 6
@@ -98,11 +98,11 @@ final class KnobsAndValues: Sketch {
     /// 角は一周で戻るので端を決めようがなく、合わせたい値は外から書く。
     @Param var phase: Double = 0
 
-    /// 輪郭の太さ。`Float` も `Double` と同じく実数のスライダーになり、面では
+    /// 輪郭の太さ。`Double` も `Double` と同じく実数のスライダーになり、面では
     /// どちらも `float` を名乗る。**`name:` を書いたので、面から指す名前は
     /// `weight` になる** (プロパティの名前は使われない)。`step:` を書いたので、窓のスライダーは
     /// 0.5 ずつ動く — 刻みは窓の動き方だけで、外から書いた 0.7 は 0.7 のまま入る。
-    @Param(0...8, step: 0.5, name: "weight") var outlineWeight: Float = 2
+    @Param(0...8, step: 0.5, name: "weight") var outlineWeight: Double = 2
 
     /// 塗るか、輪郭だけか。
     @Param var filled: Bool = true
@@ -142,7 +142,7 @@ final class KnobsAndValues: Sketch {
     @Param var seed: Int = 7
 
     /// 並びの揺らぎ。行ごとに並べる。**種と並びの数が変わったときだけ組み直す。**
-    private var jitters: [Float] = []
+    private var jitters: [Double] = []
     /// ``jitters`` を組んだときの種と並びの数。
     private var jittersBuiltFor: [Int] = []
 
@@ -151,7 +151,7 @@ final class KnobsAndValues: Sketch {
         noiseSeed(seed)
 
         // 描く角と並べた数を、描くのと同じ値のまま観測へ差し出す
-        let angle = Float(spin) * time + Float(phase)
+        let angle = Double(spin) * time + Double(phase)
         let cells = columns * rows
         expose("angle", angle)
         expose("cells", cells)
@@ -163,28 +163,28 @@ final class KnobsAndValues: Sketch {
                 // 種でばらつく揺らぎ。同じ種なら同じ並びになる
                 (0..<rows).flatMap { row in
                     (0..<columns).map { column in
-                        noise(Float(column) * 0.6, Float(row) * 0.6) - 0.5
+                        noise(Double(column) * 0.6, Double(row) * 0.6) - 0.5
                     }
                 }
             }
             jittersBuiltFor = [seed, columns, rows]
         }
 
-        let stepX = Self.gridWidth / Float(columns + 1)
-        let stepY = height / Float(rows + 1)
+        let stepX = Self.gridWidth / Double(columns + 1)
+        let stepY = height / Double(rows + 1)
         if filled { fill(tint) } else { noFill() }
         stroke(tint)
         strokeWeight(outlineWeight)
 
         for row in 0..<rows {
             for column in 0..<columns {
-                let x = stepX * Float(column + 1) + drift.x * stepX * 0.5
-                let y = stepY * Float(row + 1) + drift.y * stepY * 0.5
+                let x = stepX * Double(column + 1) + drift.x * stepX * 0.5
+                let y = stepY * Double(row + 1) + drift.y * stepY * 0.5
                 let jitter = jitters[row * columns + column]
                 push()
                 translate(x, y)
                 rotate(angle + jitter * 2)
-                place(size: Float(size) * (0.7 + jitter))
+                place(size: Double(size) * (0.7 + jitter))
                 pop()
             }
         }
@@ -194,7 +194,7 @@ final class KnobsAndValues: Sketch {
 
     /// 宣言した値の一覧を右の列に並べる。**``params`` を読むだけで、ここに名前を
     /// 書き並べない** — 宣言を足せば、ここも黙って 1 つ伸びる。
-    private func listDeclarations(angle: Float, cells: Int) {
+    private func listDeclarations(angle: Double, cells: Int) {
         let left = Self.gridWidth + 32
         noStroke()
         fill(10, 12, 18, 220)
@@ -204,7 +204,7 @@ final class KnobsAndValues: Sketch {
         textSize(26)
         text(captionText, left, 52)
 
-        var y: Float = 104
+        var y: Double = 104
         for declaration in params {
             fill(230, 237, 255)
             textSize(19)
@@ -252,7 +252,7 @@ final class KnobsAndValues: Sketch {
     }
 
     /// 選ばれた形を 1 つ置く。原点は中心。
-    private func place(size extent: Float) {
+    private func place(size extent: Double) {
         switch shape {
         case .square: square(0, 0, extent)
         case .triangle:

@@ -53,7 +53,7 @@ final class GamepadAndPlayers: Sketch {
     /// 傾きは周期の整数倍で 1 巡するので、列が最初に戻っても円は同じところを回る。
     private static func left() -> [GamepadInput?] {
         (0..<length).map { frame in
-            let turn = Float(frame) / 120 * 2 * .pi
+            let turn = Double(frame) / 120 * 2 * .pi
             return GamepadInput(
                 leftStick: [0.8 * cos(turn), 0.8 * cos(2 * turn)],
                 pressed: (30..<55).contains(frame % 60) ? [.a] : [])
@@ -69,7 +69,7 @@ final class GamepadAndPlayers: Sketch {
         var step = 0
         return (0..<length).map { frame in
             guard !unplugged.contains(frame) else { return nil }
-            let turn = Float(step) / Float(connected / 2) * 2 * .pi
+            let turn = Double(step) / Double(connected / 2) * 2 * .pi
             step += 1
             return GamepadInput(
                 leftStick: [-0.9 * cos(2 * turn), 0.9 * cos(turn)],

@@ -29,7 +29,7 @@ final class TypeAndShaping: Sketch {
         background(18, 20, 28)
         textAlign(.left, .baseline)
         for (index, sample) in samples.enumerated() {
-            row(sample.label, sample.string, base: 130 + Float(index) * 170)
+            row(sample.label, sample.string, base: 130 + Double(index) * 170)
         }
         noStroke()
         noTextFont()
@@ -40,7 +40,7 @@ final class TypeAndShaping: Sketch {
     }
 
     /// 同じ文字列を、左にスカラ 1 つずつ・右に組版して描き、測った値を添える。
-    private func row(_ label: String, _ string: String, base: Float) {
+    private func row(_ label: String, _ string: String, base: Double) {
         noStroke()
         noTextFont()
         textSize(13)

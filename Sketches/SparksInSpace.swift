@@ -42,15 +42,15 @@ final class SparksInSpace: Sketch {
     private let capacity = 16_000
 
     /// 場面の中心。球の噴き口・押す力・視点の見る先がここに揃う。
-    private let core = (x: Float(480), y: Float(270))
+    private let core = (x: Double(480), y: Double(270))
     /// 円の噴き口の半径。
-    private let disc: Float = 230
+    private let disc: Double = 230
     /// 線の噴き口の両端 (奥行き 0)。幕はここから上へ昇る。
-    private let ground = (y: Float(450), from: Float(250), to: Float(710))
+    private let ground = (y: Double(450), from: Double(250), to: Double(710))
     /// 星雲の噴き口。中心の上の、**奥行き 0 の面から奥へずらした所**に置く — 円盤と幕は
     /// 奥行き 0 の面にあるので、真横から見ると 1 本の線に重なる。奥へずらせば、真横からでも
     /// 星雲がその線から離れて見える。
-    private let nebulaAt = (x: Float(480), y: Float(120), z: Float(-200))
+    private let nebulaAt = (x: Double(480), y: Double(120), z: Double(-200))
 
     private var sparks: Particles?
     private var nebula: Particles?
@@ -71,7 +71,7 @@ final class SparksInSpace: Sketch {
         // **視点を中心のまわりに回す。** 1.5 秒 (90 フレーム) で 4 分の 1 周を少し越え、
         // 終わり近くで円盤と幕を真横から見る
         let yaw = 0.35 + time * 0.9
-        let distance = (height / 2) / tan(Float.pi / 6) * 1.1
+        let distance = (height / 2) / tan(Double.pi / 6) * 1.1
         camera(
             core.x + distance * sin(yaw), core.y - distance * 0.1, distance * cos(yaw),
             core.x, core.y, 0, 0, 1, 0)
@@ -85,7 +85,7 @@ final class SparksInSpace: Sketch {
         strokeWeight(1.5)
         beginShape()
         for index in 0..<96 {
-            let angle = Float(index) / 96 * 2 * Float.pi
+            let angle = Double(index) / 96 * 2 * Double.pi
             vertex(core.x + cos(angle) * disc, core.y + sin(angle) * disc, 0)
         }
         endShape(.close)
@@ -106,7 +106,7 @@ final class SparksInSpace: Sketch {
             rate: 1500, speed: 0...10, life: 1.5...3, size: 2...5,
             color: color(110, 170, 255))
         // 線: 床の線分から上へ。向きは画面の面内 (`.plane`) なので、幕も奥行き 0 の面に立つ
-        let up = -Float.pi / 2
+        let up = -Double.pi / 2
         emit(
             sparks, from: .line(ground.from, ground.y, ground.to, ground.y),
             toward: .plane((up - 0.2)...(up + 0.2)), rate: 900, speed: 150...230, life: 2...3,
@@ -136,6 +136,6 @@ final class SparksInSpace: Sketch {
         fill(220, 226, 236)
         textFont("Helvetica")
         textSize(16)
-        text("視点 \(Int((yaw * 180 / Float.pi).rounded()))°", 24, 36)
+        text("視点 \(Int((yaw * 180 / Double.pi).rounded()))°", 24, 36)
     }
 }
