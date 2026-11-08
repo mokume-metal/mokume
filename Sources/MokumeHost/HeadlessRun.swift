@@ -55,7 +55,7 @@ public final class HeadlessRun {
     /// - Parameters:
     ///   - sketch: 走らせるスケッチ。
     ///   - gpu: 描画の土台。省くとこの実行のために作る。多くの実行を続けて組むなら、1 つを作って渡し回す。
-    /// - Throws: 組み立てられなかったとき (GPU が無い・設定が不正・`setup()` が投げた など)。
+    /// - Throws: 組み立てられなかったとき (GPU が無い・設定が不正 など)。
     public init(_ sketch: some Sketch, gpu: RenderDevice? = nil) throws(RenderFailure) {
         let device: RenderDevice
         if let gpu { device = gpu } else { device = try RenderDevice() }

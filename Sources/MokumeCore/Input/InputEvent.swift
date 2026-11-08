@@ -30,7 +30,7 @@ public enum InputEvent: Equatable, Sendable {
     /// 所は `x`・`y` で、スケッチからは ``SketchPart/mouseX``・``SketchPart/mouseY`` に当たる
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     ///
-    /// 窓は ``SketchSurface`` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
+    /// 窓は `SketchSurface` がファイルの URL だけを受け、1 本も無いドロップは送らない。外から送る線
     /// (`fileDropped`) は、`paths` が空の 1 件を読めない 1 件として落とす。
     case fileDropped(paths: [String], x: Float, y: Float)
     /// ファイルを選ばせるダイアログ (``SketchPart/selectInput(_:)``) の結果。選んだファイルの絶対パスで、
