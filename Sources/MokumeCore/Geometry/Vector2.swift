@@ -75,7 +75,12 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=b804ff9a
-    public var simd: SIMD2<Float>
+    /// 試作 5-b (#3811): 格納は Double。GPU と中の計算へは simd で Float に直して渡す。
+    public var storage: SIMD2<Double>
+    public var simd: SIMD2<Float> {
+        get { SIMD2<Float>(storage) }
+        set { storage = SIMD2<Double>(newValue) }
+    }
 
     /// 横の成分。
     ///
@@ -99,8 +104,8 @@ public nonisolated struct Vector2: Sendable, Hashable {
     /// }
     // shot: 1 snippet=73089cbf
     public var x: Double {
-        get { Double(simd.x) }
-        set { simd.x = Float(newValue) }
+        get { storage.x }
+        set { storage.x = newValue }
     }
 
     /// 縦の成分。下向きが正である。
@@ -125,8 +130,8 @@ public nonisolated struct Vector2: Sendable, Hashable {
     /// }
     // shot: 1 snippet=25ae9188
     public var y: Double {
-        get { Double(simd.y) }
-        set { simd.y = Float(newValue) }
+        get { storage.y }
+        set { storage.y = newValue }
     }
 
     /// 2 つの数から作る。
@@ -152,7 +157,7 @@ public nonisolated struct Vector2: Sendable, Hashable {
     /// }
     // shot: 1 snippet=7a48090c
     public init(_ x: Double, _ y: Double) {
-        simd = SIMD2(x.asFloat, y.asFloat)
+        storage = SIMD2(x, y)
     }
 
     /// SIMD の値から作る。
@@ -173,8 +178,10 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=5af85501
+    init(storage: SIMD2<Double>) { self.storage = storage }
+
     public init(_ simd: SIMD2<Float>) {
-        self.simd = simd
+        self.storage = SIMD2<Double>(simd)
     }
 
     /// 長さ。Processing の `mag()` に当たる。
@@ -243,7 +250,7 @@ nonisolated extension Vector2: ExpressibleByArrayLiteral {
         precondition(
             elements.count == 2,
             "A Vector2 literal needs exactly two numbers, like [300, 300]. It had \(elements.count).")
-        simd = SIMD2(Float(elements[0]), Float(elements[1]))
+        storage = SIMD2(elements[0], elements[1])
     }
 }
 
@@ -259,9 +266,9 @@ nonisolated extension Vector2: Codable {
     // shot: 撮れない 符号化した値を読む口で、描くものが無い
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        simd = SIMD2(
+        storage = SIMD2<Double>(SIMD2<Float>(
             try container.decode(Float.self, forKey: .x),
-            try container.decode(Float.self, forKey: .y))
+            try container.decode(Float.self, forKey: .y)))
     }
 
     /// `{"x": …, "y": …}` の形へ書く。
@@ -300,7 +307,7 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=77dfc474
     public static func + (lhs: Vector2, rhs: Vector2) -> Vector2 {
-        Vector2(lhs.simd + rhs.simd)
+        Vector2(storage: lhs.storage + rhs.storage)
     }
 
     /// 成分ごとに引く。2 点の差は、片方からもう片方への向きと距離になる。
@@ -329,7 +336,7 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=a14408e1
     public static func - (lhs: Vector2, rhs: Vector2) -> Vector2 {
-        Vector2(lhs.simd - rhs.simd)
+        Vector2(storage: lhs.storage - rhs.storage)
     }
 
     /// 向きを逆にする。
@@ -355,7 +362,7 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=5fc04afd
     public static prefix func - (vector: Vector2) -> Vector2 {
-        Vector2(-vector.simd)
+        Vector2(storage: -vector.storage)
     }
 
     /// 数を掛けて、向きを保ったまま長さを変える。
@@ -380,13 +387,13 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=4df2ce9e
     public static func * (lhs: Vector2, rhs: Double) -> Vector2 {
-        Vector2(lhs.simd * rhs.asFloat)
+        Vector2(storage: lhs.storage * rhs)
     }
 
     /// 数を前に置いて掛ける。`vector * scale` と同じ。
     // shot: 参照 Vector2.*(_:_:) (Vector2, Double)
     public static func * (lhs: Double, rhs: Vector2) -> Vector2 {
-        Vector2(lhs.asFloat * rhs.simd)
+        Vector2(storage: lhs * rhs.storage)
     }
 
     /// 数で割る。2 点の和を 2 で割ると、真ん中の点になる。
@@ -413,31 +420,31 @@ nonisolated extension Vector2 {
     /// }
     // shot: 1 snippet=dd132798
     public static func / (lhs: Vector2, rhs: Double) -> Vector2 {
-        Vector2(lhs.simd / rhs.asFloat)
+        Vector2(storage: lhs.storage / rhs)
     }
 
     /// 足して入れる。`position += velocity` で位置を進める。
     // shot: 参照 Vector2.+(_:_:)
     public static func += (lhs: inout Vector2, rhs: Vector2) {
-        lhs.simd += rhs.simd
+        lhs.storage += rhs.storage
     }
 
     /// 引いて入れる。
     // shot: 参照 Vector2.-(_:_:)
     public static func -= (lhs: inout Vector2, rhs: Vector2) {
-        lhs.simd -= rhs.simd
+        lhs.storage -= rhs.storage
     }
 
     /// 掛けて入れる。`velocity *= 0.98` で少しずつ遅くする。
     // shot: 参照 Vector2.*(_:_:) (Vector2, Double)
     public static func *= (lhs: inout Vector2, rhs: Double) {
-        lhs.simd *= rhs.asFloat
+        lhs.storage *= rhs
     }
 
     /// 割って入れる。
     // shot: 参照 Vector2./(_:_:)
     public static func /= (lhs: inout Vector2, rhs: Double) {
-        lhs.simd /= rhs.asFloat
+        lhs.storage /= rhs
     }
 }
 

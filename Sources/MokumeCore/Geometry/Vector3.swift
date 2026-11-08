@@ -29,27 +29,32 @@ public nonisolated struct Vector3: Sendable, Hashable {
     ///
     /// 中身はこの SIMD の値で、``x``・``y``・``z`` はその成分を読み書きする。
     // shot: 撮れない 値の入れ物の出入り口で、描く結果が無い
-    public var simd: SIMD3<Float>
+    /// 試作 5-b (#3811): 格納は Double。GPU と中の計算へは simd で Float に直して渡す。
+    public var storage: SIMD3<Double>
+    public var simd: SIMD3<Float> {
+        get { SIMD3<Float>(storage) }
+        set { storage = SIMD3<Double>(newValue) }
+    }
 
     /// 横の成分。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
     public var x: Double {
-        get { Double(simd.x) }
-        set { simd.x = Float(newValue) }
+        get { storage.x }
+        set { storage.x = newValue }
     }
 
     /// 縦の成分。下向きが正である。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
     public var y: Double {
-        get { Double(simd.y) }
-        set { simd.y = Float(newValue) }
+        get { storage.y }
+        set { storage.y = newValue }
     }
 
     /// 奥行きの成分。視点に向かって手前が正である。
     // shot: 撮れない 成分を読み書きするだけで、描く結果が無い
     public var z: Double {
-        get { Double(simd.z) }
-        set { simd.z = Float(newValue) }
+        get { storage.z }
+        set { storage.z = newValue }
     }
 
     /// 3 つの数から作る。
@@ -57,13 +62,15 @@ public nonisolated struct Vector3: Sendable, Hashable {
     /// 数は `Float`・`Double`・`Int` のどれでもよい。`Int` の変数もそのまま渡せる。
     // shot: 撮れない 値を作るだけで、描く結果が無い
     public init(_ x: Double, _ y: Double, _ z: Double) {
-        simd = SIMD3(x.asFloat, y.asFloat, z.asFloat)
+        storage = SIMD3(x, y, z)
     }
 
     /// SIMD の値から作る。
     // shot: 撮れない 値を作るだけで、描く結果が無い
+    init(storage: SIMD3<Double>) { self.storage = storage }
+
     public init(_ simd: SIMD3<Float>) {
-        self.simd = simd
+        self.storage = SIMD3<Double>(simd)
     }
 }
 
@@ -80,7 +87,7 @@ nonisolated extension Vector3: ExpressibleByArrayLiteral {
         precondition(
             elements.count == 3,
             "A Vector3 literal needs exactly three numbers, like [200, 150, 500]. It had \(elements.count).")
-        simd = SIMD3(Float(elements[0]), Float(elements[1]), Float(elements[2]))
+        storage = SIMD3(elements[0], elements[1], elements[2])
     }
 }
 
@@ -97,10 +104,10 @@ nonisolated extension Vector3: Codable {
     // shot: 撮れない 符号化した値を読む口で、描くものが無い
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        simd = SIMD3(
+        storage = SIMD3<Double>(SIMD3<Float>(
             try container.decode(Float.self, forKey: .x),
             try container.decode(Float.self, forKey: .y),
-            try container.decode(Float.self, forKey: .z))
+            try container.decode(Float.self, forKey: .z)))
     }
 
     /// `{"x": …, "y": …, "z": …}` の形へ書く。
@@ -119,61 +126,61 @@ nonisolated extension Vector3 {
     /// 成分ごとに足す。視点の位置をずらすのに使う。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static func + (lhs: Vector3, rhs: Vector3) -> Vector3 {
-        Vector3(lhs.simd + rhs.simd)
+        Vector3(storage: lhs.storage + rhs.storage)
     }
 
     /// 成分ごとに引く。2 点の差は、片方からもう片方への向きと距離になる。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static func - (lhs: Vector3, rhs: Vector3) -> Vector3 {
-        Vector3(lhs.simd - rhs.simd)
+        Vector3(storage: lhs.storage - rhs.storage)
     }
 
     /// 向きを逆にする。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static prefix func - (vector: Vector3) -> Vector3 {
-        Vector3(-vector.simd)
+        Vector3(storage: -vector.storage)
     }
 
     /// 数を掛けて、向きを保ったまま長さを変える。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static func * (lhs: Vector3, rhs: Double) -> Vector3 {
-        Vector3(lhs.simd * rhs.asFloat)
+        Vector3(storage: lhs.storage * rhs)
     }
 
     /// 数を前に置いて掛ける。`vector * scale` と同じ。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static func * (lhs: Double, rhs: Vector3) -> Vector3 {
-        Vector3(lhs.asFloat * rhs.simd)
+        Vector3(storage: lhs * rhs.storage)
     }
 
     /// 数で割る。
     // shot: 撮れない 値を返すだけで、描く結果が無い
     public static func / (lhs: Vector3, rhs: Double) -> Vector3 {
-        Vector3(lhs.simd / rhs.asFloat)
+        Vector3(storage: lhs.storage / rhs)
     }
 
     /// 足して入れる。`eye += Vector3(0, 0, 10)` で視点を引く。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
     public static func += (lhs: inout Vector3, rhs: Vector3) {
-        lhs.simd += rhs.simd
+        lhs.storage += rhs.storage
     }
 
     /// 引いて入れる。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
     public static func -= (lhs: inout Vector3, rhs: Vector3) {
-        lhs.simd -= rhs.simd
+        lhs.storage -= rhs.storage
     }
 
     /// 掛けて入れる。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
     public static func *= (lhs: inout Vector3, rhs: Double) {
-        lhs.simd *= rhs.asFloat
+        lhs.storage *= rhs
     }
 
     /// 割って入れる。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
     public static func /= (lhs: inout Vector3, rhs: Double) {
-        lhs.simd /= rhs.asFloat
+        lhs.storage /= rhs
     }
 }
 
