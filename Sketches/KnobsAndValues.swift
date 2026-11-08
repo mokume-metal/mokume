@@ -151,7 +151,7 @@ final class KnobsAndValues: Sketch {
         noiseSeed(seed)
 
         // 描く角と並べた数を、描くのと同じ値のまま観測へ差し出す
-        let angle = Double(spin) * time + Double(phase)
+        let angle = spin * time + phase
         let cells = columns * rows
         expose("angle", angle)
         expose("cells", cells)
@@ -184,7 +184,7 @@ final class KnobsAndValues: Sketch {
                 push()
                 translate(x, y)
                 rotate(angle + jitter * 2)
-                place(size: Double(size) * (0.7 + jitter))
+                place(size: size * (0.7 + jitter))
                 pop()
             }
         }
