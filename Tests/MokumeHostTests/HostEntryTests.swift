@@ -19,7 +19,11 @@ nonisolated struct HostEntryTests {
     func umbrellaDoesNotReexport() throws {
         let umbrella = try String(
             contentsOf: Self.root.appendingPathComponent("Sources/mokume/Umbrella.swift"), encoding: .utf8)
-        let imports = umbrella.split(separator: "\n").filter { $0.contains("import") && $0.contains("MokumeHost") }
+        // 注釈の行は数えない (「MokumeHost は import しない」と書いても赤にしない)
+        let imports = umbrella.split(separator: "\n").filter {
+            !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//")
+                && $0.contains("import") && $0.contains("MokumeHost")
+        }
         #expect(imports.isEmpty, "Umbrella.swift が MokumeHost を import している: \(imports)")
     }
 
