@@ -1518,7 +1518,7 @@ public final class Canvas {
     /// (``leaveFrame()``)。別の区間・区間の外で閉じたときは戻さない (その区間の値ではない)。
     ///
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
-    private var frameOpenedInCarriedSegment: (segment: Int, transform: Transform, stacks: Stacks, pending: Int)?
+    private var frameOpenedInCarriedSegment: (segment: Int, transform: Transform, stacks: StackState, pending: Int)?
 
     /// 区間の中で置いた量の通し数。**溜め場の量 (``pendingAmount``) に、捨てた分を足し戻したもの。**
     ///
@@ -1537,8 +1537,7 @@ public final class Canvas {
     /// [#3273]: https://github.com/mokume-metal/mokume/issues/3273
     private func beginCarriedSegment() {
         transform = .identity
-        transformStack.removeAll(keepingCapacity: true)
-        styleStack.removeAll(keepingCapacity: true)
+        stacks.clear()
         carriedTransformMark = nil
         carriedDiscardedAmount = 0
         carriedBackdropAmount = 0
@@ -1566,8 +1565,7 @@ public final class Canvas {
         }
         warnIfStacksLeftOpen(before: "setup() or the input callback")
         transform = .identity
-        transformStack.removeAll(keepingCapacity: true)
-        styleStack.removeAll(keepingCapacity: true)
+        stacks.clear()
         carriedTransformMark = nil
         carriedDiscardedAmount = 0
         carriedBackdropAmount = 0
@@ -1811,8 +1809,10 @@ public final class Canvas {
     var transform = Transform.identity {
         didSet { flatViewMemo = nil }
     }
-    private var transformStack: [(Transform, StackSite)] = []
-    private var styleStack: [(Style, StackSite)] = []
+    /// 積んだ履歴 (変換とスタイルの 2 本) と、その床 ([#3874])。
+    ///
+    /// [#3874]: https://github.com/mokume-metal/mokume/issues/3874
+    private var stacks = StackState()
 
     /// 積んだ段を、積んだ口と呼んだ場所とともに持つ ([#2399])。積んだまま捨てるときの注意が、
     /// 対の無い最後の段を名指すために使う。
@@ -1839,42 +1839,111 @@ public final class Canvas {
         return StackSite(call: call, fileID: fileID, line: line, order: nextStackOrder)
     }
 
-    /// 2 本の積み場の中身。
-    typealias Stacks = (transforms: [(Transform, StackSite)], styles: [(Style, StackSite)])
-
-    /// 積んだ履歴を取り出して空にする。**戻すのは ``restore(_:)``。**
+    /// 2 本の積み場と、その床。**2 本まとめて切り離す**のは、積んだ事実が変換とスタイルのどちらに
+    /// 属するかによらないためである ([ADR-0021] 決定 4 の追補)。
     ///
-    /// 形の組み立てと、閉包で戻す ``push(_:)`` が、本体の間だけ積み降ろしを切り離すために使う
-    /// ([#1172]・[#2399]) — 本体の中の `pop()` が本体より前に積んだ段を取らず、本体の中で積んだ
-    /// まま抜けた段が、あとの `pop()` に拾われないようにする。**2 本まとめて出し入れする**のは、
-    /// 積んだ事実が変換とスタイルのどちらに属するかによらないためである ([ADR-0021] 決定 4 の追補)。
+    /// **床** は、形の組み立てと閉包で戻す ``push(_:)`` が、本体の間だけ積み降ろしを切り離すための
+    /// 深さである ([#1172]・[#2399]) — 本体の中の `pop()` が本体より前に積んだ段を取らず、本体の中で
+    /// 積んだまま抜けた段が、あとの `pop()` に拾われないようにする。入口で床を今の深さへ上げ
+    /// (``enterScope()``)、出口で床より上を捨てて床を戻す (``leaveScope(restoring:)``)。
+    ///
+    /// 積み場を取り出して空にし、出口で戻す形は取らない — 取り出した配列と記憶を共有するので、
+    /// 空にするたびに 2 本を確保し直し、勧めている閉包の形が対の形より遅くなっていた ([#3874])。
+    ///
+    /// **空にするときは床も戻す** (``clear()``)。床を別の格納に置くと、空にする所 (フレームの頭・
+    /// 区間の出入り・入力のコールバックの出口) ごとに戻し忘れうる。床は常に積み場の深さ以下に保つ。
     ///
     /// [#1172]: https://github.com/mokume-metal/mokume/issues/1172
     /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
-    func takeStacks() -> Stacks {
-        let taken = (transforms: transformStack, styles: styleStack)
-        transformStack.removeAll(keepingCapacity: true)
-        styleStack.removeAll(keepingCapacity: true)
-        return taken
+    /// [#3874]: https://github.com/mokume-metal/mokume/issues/3874
+    /// [ADR-0021]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0021-solid-space-and-frame-assembly.md
+    struct StackState {
+        /// 切り離した範囲の入口の深さ。降ろしはこれより下の段を取らない。
+        struct Floor {
+            var transforms = 0
+            var styles = 0
+        }
+
+        private(set) var transforms: [(Transform, StackSite)] = []
+        private(set) var styles: [(Style, StackSite)] = []
+        private(set) var floor = Floor()
+
+        mutating func push(_ transform: Transform, _ site: StackSite) {
+            transforms.append((transform, site))
+        }
+
+        mutating func push(_ style: Style, _ site: StackSite) {
+            styles.append((style, site))
+        }
+
+        /// 床より上の頭の変換を降ろす。床より上に段が無ければ `nil`。
+        mutating func popTransform() -> Transform? {
+            guard transforms.count > floor.transforms else { return nil }
+            return transforms.removeLast().0
+        }
+
+        /// 床より上の頭のスタイルを降ろす。床より上に段が無ければ `nil`。
+        mutating func popStyle() -> Style? {
+            guard styles.count > floor.styles else { return nil }
+            return styles.removeLast().0
+        }
+
+        /// 床より上に段が残っているか。
+        var hasOpenLevels: Bool { transforms.count > floor.transforms || styles.count > floor.styles }
+
+        /// 床より上の段のうち、最後に積んだ段の場所。
+        var lastOpenSite: StackSite? {
+            let transform = transforms.count > floor.transforms ? transforms.last?.1 : nil
+            let style = styles.count > floor.styles ? styles.last?.1 : nil
+            guard let transform else { return style }
+            guard let style else { return transform }
+            return transform.order > style.order ? transform : style
+        }
+
+        /// 床を今の深さへ上げ、前の床を返す。戻すのは ``leaveScope(restoring:)``。
+        mutating func enterScope() -> Floor {
+            let saved = floor
+            floor = Floor(transforms: transforms.count, styles: styles.count)
+            return saved
+        }
+
+        /// 床より上の段を捨て、床を `saved` へ戻す。床は積み場の深さを越えない — 範囲の中で
+        /// 積み場が空になっていれば (フレームの頭)、戻した床もその深さで切る。
+        mutating func leaveScope(restoring saved: Floor) {
+            if transforms.count > floor.transforms { transforms.removeSubrange(floor.transforms...) }
+            if styles.count > floor.styles { styles.removeSubrange(floor.styles...) }
+            floor = Floor(
+                transforms: min(saved.transforms, transforms.count), styles: min(saved.styles, styles.count))
+        }
+
+        /// 2 本を空にし、床も戻す。
+        mutating func clear() {
+            transforms.removeAll(keepingCapacity: true)
+            styles.removeAll(keepingCapacity: true)
+            floor = Floor()
+        }
     }
 
-    /// 取り出しておいた積み履歴へ戻す。
-    func restore(_ stacks: Stacks) {
-        transformStack = stacks.transforms
-        styleStack = stacks.styles
+    /// 本体の間だけ積み降ろしを切り離す (``StackState``)。**戻すのは ``leaveStackScope(restoring:)``。**
+    func enterStackScope() -> StackState.Floor {
+        stacks.enterScope()
+    }
+
+    /// 本体の中で積んだまま抜けた段を捨て、床を入口の前へ戻す。
+    func leaveStackScope(restoring saved: StackState.Floor) {
+        stacks.leaveScope(restoring: saved)
     }
 
     /// 積んだまま残った段があれば、対の無い最後の段を名指して 1 度だけ知らせる ([#2399])。
-    /// 段は捨てない — 捨てるのは呼ぶ側 (フレームの頭・``restore(_:)``)。
+    /// 見るのは床より上の段だけ (``StackState``)。段は捨てない — 捨てるのは呼ぶ側 (フレームの頭・
+    /// ``leaveStackScope(restoring:)``)。
     ///
     /// `ended` は、段を捨てることになった区切りの名前 (`the frame`・`createShape { }` など)。
     ///
     /// [#2399]: https://github.com/mokume-metal/mokume/issues/2399
     func warnIfStacksLeftOpen(before ended: String) {
         // 段が無ければ、配列を作らずに抜ける (入力のコールバックの出口が、配るたびに通る・#3408)
-        guard !transformStack.isEmpty || !styleStack.isEmpty else { return }
-        let sites = [transformStack.last?.1, styleStack.last?.1].compactMap { $0 }
-        guard let last = sites.max(by: { $0.order < $1.order }) else { return }
+        guard let last = stacks.lastOpenSite else { return }
         warnOnce(
             .pushLeftOpen,
             "\(last.call) at \(last.location) was not matched by a pop() before \(ended) ended, so "
@@ -3234,7 +3303,7 @@ public final class Canvas {
         }
         let savedTransform = transform
         let savedStyle = currentStyle
-        let savedStacks = takeStacks()
+        let savedFloor = enterStackScope()
         let frame = framesDrawn
         // 区間の中で呼んだなら、中で開いて閉じたフレームを跨いでも戻す (#3273)。フレームを閉じると
         // ``leaveFrame()`` は開いた時点 (`push` の中) の値へ戻すので、戻さないと区間へ漏れる
@@ -3244,9 +3313,10 @@ public final class Canvas {
             // 閉じたフレームの状態は戻さない。中で開き直したフレームの段は、そのフレームのもの。
             // 区間の中で開いて同じ区間の中で閉じたフレームは、区間の値だから戻す
             let sameSegment = segment == carriedSegmentCount && carriesOver && !isDrawing
+            // 戻さないときは床もそのまま。中で開き直したフレームの頭が、積み場ごと床を空にしている
             if framesDrawn == frame || sameSegment, admitsTransform {
                 if finished { warnIfStacksLeftOpen(before: "push { … }") }
-                restore(savedStacks)
+                leaveStackScope(restoring: savedFloor)
                 transform = savedTransform
                 currentStyle = savedStyle
             }
@@ -3258,12 +3328,12 @@ public final class Canvas {
     /// 段を積む。フレームの外では注意して積まない。
     private func pushTransform(_ site: StackSite) {
         guard admitsTransform else { return warnOutsideFrame(.transform) }
-        transformStack.append((transform, site))
+        stacks.push(transform, site)
     }
 
     private func pushStyleEntry(_ site: StackSite) {
         guard admitsTransform else { return warnOutsideFrame(.style) }
-        styleStack.append((currentStyle, site))
+        stacks.push(currentStyle, site)
     }
 
     /// 段を降ろして戻す。戻したら `true`、戻す段が無ければ `false`、フレームの外なら注意して `nil`。
@@ -3272,7 +3342,7 @@ public final class Canvas {
             warnOutsideFrame(.transform)
             return nil
         }
-        guard let (restored, _) = transformStack.popLast() else { return false }
+        guard let restored = stacks.popTransform() else { return false }
         transform = restored
         return true
     }
@@ -3282,7 +3352,7 @@ public final class Canvas {
             warnOutsideFrame(.style)
             return nil
         }
-        guard let (restored, _) = styleStack.popLast() else { return false }
+        guard let restored = stacks.popStyle() else { return false }
         currentStyle = restored
         return true
     }
@@ -4011,7 +4081,7 @@ public final class Canvas {
         // ``frameOpenedInCarriedSegment``・#3273)。区間の外で開いたなら控えを捨てる
         if carriesOver {
             frameOpenedInCarriedSegment = (
-                carriedSegmentCount, transform, (transformStack, styleStack),
+                carriedSegmentCount, transform, stacks,
                 sweepPending(emptying: false, countsOpenColumns: false))
         } else {
             frameOpenedInCarriedSegment = nil
@@ -4022,8 +4092,7 @@ public final class Canvas {
         // フレームに属する — 片方だけ残すと `push()` が半分だけ効く形になる
         //
         // [#925]: https://github.com/mokume-metal/mokume/issues/925
-        transformStack.removeAll(keepingCapacity: true)
-        styleStack.removeAll(keepingCapacity: true)
+        stacks.clear()
         hasLoadedPixels = false
         // 光もフレームを越えない (同 決定 4)。ここで空に戻る
         activeLights.removeAll(keepingCapacity: true)
@@ -4342,7 +4411,7 @@ public final class Canvas {
             frameOpenedInCarriedSegment = nil
             if carriesOver, saved.segment == carriedSegmentCount {
                 transform = saved.transform
-                restore(saved.stacks)
+                stacks = saved.stacks
             }
         }
     }
@@ -4382,7 +4451,7 @@ public final class Canvas {
     /// (`CanvasTests.FrameState` の `FrameReset.isSceneDescription`) と、ここで戻すものは同じ集合**で、
     /// 足したらその表に印つきで足す。
     ///
-    /// 積み履歴 (``transformStack``・``styleStack``) と効果の予定 (``pendingEffects``) は、ここへ入れない —
+    /// 積み履歴 (``stacks``) と効果の予定 (``pendingEffects``) は、ここへ入れない —
     /// フレームの終わりでは頭が戻す (積んだ事実はフレームに属する・#925)。出口の側が自分で戻す。
     ///
     /// [#3408]: https://github.com/mokume-metal/mokume/issues/3408
@@ -4434,8 +4503,7 @@ public final class Canvas {
         warnIfFrameReadSceneNotCarried()
         if columnsReadNonDefaultScene { closeBatch() }
         resetSceneDescription()
-        transformStack.removeAll(keepingCapacity: true)
-        styleStack.removeAll(keepingCapacity: true)
+        stacks.clear()
         pendingEffects.removeAll(keepingCapacity: true)
         discardShapeLeftOpen()
     }

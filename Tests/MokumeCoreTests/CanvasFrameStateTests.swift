@@ -332,8 +332,11 @@ extension CanvasTests {
                 ("cameraStorage", sceneEnd, all, { c, _ in c.perspective() }),
                 ("drawsDebugGuides", sceneBoth, all, { c, _ in c.debugMode() }),
                 ("transform", sceneBoth, all, { c, _ in c.translate(5, 5) }),
-                ("transformStack", sceneHead, all, { c, _ in c.pushMatrix() }),
-                ("styleStack", sceneHead, all, { c, _ in c.pushStyle() }),
+                // 積み場 2 本と床 (#3874)。床はフレームの外から立てられないので、2 本を汚す
+                ("stacks", sceneHead, all, { c, _ in
+                    c.pushMatrix()
+                    c.pushStyle()
+                }),
                 ("activeLights", sceneBoth, all, { c, _ in c.ambientLight(.linear(red: 0.2, green: 0.2, blue: 0.2)) }),
                 ("activeSurroundings", sceneBoth, all, { c, _ in c.surroundings(.sky) }),
                 ("shadowsEnabled", sceneEnd, all, { c, _ in c.shadows(true) }),

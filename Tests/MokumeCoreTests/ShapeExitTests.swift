@@ -97,7 +97,8 @@ enum ShapeExit {
             ("style.hasFill", { c, _ in c.noFill() }),
         ]
         let detached = [
-            "transformStack", "styleStack", "recordingShape",
+            // 積み場 2 本と床 (#3874)。入口で床を上げ、出口で床より上を捨てて床を戻す
+            "stacks", "recordingShape",
             // 道を記録している間の控え (#3561)。``Canvas/createPath(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
             "pathRecorder",
             // 形の切り抜きを記録している間の控え (#2431)。``Canvas/clip(_:)`` が入口で立て、出口 (`defer`) で外の値へ戻す
