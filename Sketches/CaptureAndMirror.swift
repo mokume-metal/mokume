@@ -189,7 +189,7 @@ final class CaptureAndMirror: Sketch {
             for x in 0..<width {
                 if y >= 100 {
                     // 下の帯: 左が赤、右が青
-                    let ratio = x / (width - 1)
+                    let ratio = Double(x) / Double(width - 1)
                     put(x, y, Int(255 * (1 - ratio)), 40, Int(255 * ratio))
                 } else {
                     // 地の色は番号ごとに少し変える
