@@ -201,8 +201,8 @@ extension SketchPart {
     // shot: 1 snippet=b9a89f4b
     // shot: 2 snippet=d6a2a289
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
-        Self.noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
-        return try Self.resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
+        noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
+        return try resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
     }
 
     /// 外で作ったモデルを読む。**読んでいる間、他の仕事を止めない。**
@@ -247,7 +247,7 @@ extension SketchPart {
     public func requestModel(_ path: String, normalize: Bool = true) async throws(ModelFailure)
         -> Model
     {
-        try await Self.loadingCanvas(ModelFailure.self)
+        try await loadingCanvas(ModelFailure.self)
             .requestModel(path, normalize: normalize)
     }
 
@@ -311,5 +311,5 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=bbd93d4a
-    public func model(_ model: Model) { Self.liveCanvas()?.model(model) }
+    public func model(_ model: Model) { liveCanvas()?.model(model) }
 }

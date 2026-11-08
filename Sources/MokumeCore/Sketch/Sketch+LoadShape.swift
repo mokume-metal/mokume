@@ -303,10 +303,10 @@ extension SketchPart {
     // shot: 3 snippet=847c2a54
     // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
-        Self.noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
+        noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")
         let url = try dataURL(path)
         let drawing = try SVGFile.parse(try TextFile.read(url, path: path), path: path)
-        return try Self.resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
+        return try resourceCanvas(DataFailure.self).shape(of: drawing, readFrom: path)
     }
 
     /// SVG のファイルを読み、保持した形にする。**読んでいる間、他の仕事を止めない。**
@@ -345,7 +345,7 @@ extension SketchPart {
     /// [#2760]: https://github.com/mokume-metal/mokume/issues/2760
     // shot: 参照 loadShape(_:)
     public func requestShape(_ path: String) async throws(DataFailure) -> Shape {
-        let surface = try Self.loadingCanvas(DataFailure.self)
+        let surface = try loadingCanvas(DataFailure.self)
         let url = try dataURL(path)
         let drawing = try await Self.readAway { () throws(DataFailure) in
             try SVGFile.parse(try TextFile.read(url, path: path), path: path)

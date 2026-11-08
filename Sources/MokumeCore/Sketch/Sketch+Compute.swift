@@ -69,7 +69,7 @@ extension SketchPart {
     ///   ``RenderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=c489c9db
     public func makeNumbers(count: Int) throws(RenderFailure) -> Numbers {
-        try Self.resourceCanvas(RenderFailure.self).makeNumbers(count: count)
+        try resourceCanvas(RenderFailure.self).makeNumbers(count: count)
     }
 
     /// 文字列から計算を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -231,7 +231,7 @@ extension SketchPart {
     public func makeComputation(
         _ body: String, name: String = "computation", values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try Self.resourceCanvas(ShaderFailure.self).makeComputation(body, name: name, values: values)
+        try resourceCanvas(ShaderFailure.self).makeComputation(body, name: name, values: values)
     }
 
     /// ファイルから計算を読み込む。**入口の関数の名前はファイル名**になる。
@@ -250,7 +250,7 @@ extension SketchPart {
     public func loadComputation(
         _ path: String, values: [String: ShaderValue] = [:]
     ) throws(ShaderFailure) -> Computation {
-        try Self.resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
+        try resourceCanvas(ShaderFailure.self).loadComputation(path, values: values)
     }
 
     /// 描く前に計算させる (1 次元)。
@@ -463,7 +463,7 @@ extension SketchPart {
         _ computation: Computation, over count: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.compute(computation, over: count, reads: reads, writes: writes)
     }
 
@@ -623,7 +623,7 @@ extension SketchPart {
     // shot: 1 snippet=4debea82
     // shot: 2 snippet=dd1220ac
     // shot: 3 snippet=df83e98e
-    public func numbers(_ numbers: Numbers) { Self.liveCanvas()?.numbers(numbers) }
+    public func numbers(_ numbers: Numbers) { liveCanvas()?.numbers(numbers) }
 
     /// 並びを読まない状態へ戻す。
     ///
@@ -714,7 +714,7 @@ extension SketchPart {
     /// - Note: 並びは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=f95765cd
     // shot: 2 snippet=a6332d37
-    public func resetNumbers() { Self.liveCanvas()?.resetNumbers() }
+    public func resetNumbers() { liveCanvas()?.resetNumbers() }
 
     /// 描く前に計算させる (2 次元)。
     ///
@@ -788,7 +788,7 @@ extension SketchPart {
         _ computation: Computation, over width: Int, by height: Int,
         reads: [Numbers] = [], writes: [Numbers] = []
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         canvas.compute(computation, over: width, by: height, reads: reads, writes: writes)
     }
 
@@ -921,5 +921,5 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=2835ba04
     // shot: 2 snippet=3c337d6d
-    public func read(_ numbers: Numbers) -> [Float] { Self.liveCanvas(.read(returning: "[]"))?.read(numbers) ?? [] }
+    public func read(_ numbers: Numbers) -> [Float] { liveCanvas(.read(returning: "[]"))?.read(numbers) ?? [] }
 }

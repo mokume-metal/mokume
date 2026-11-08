@@ -84,7 +84,7 @@ public nonisolated final class ExternalInput<Value: Sendable>: Sendable {
             return nil
         }
         let record = Arrival(
-            frame: activeRun(for: .read)?.frameCount ?? 0, time: activeRun(for: .read)?.authorTime ?? 0,
+            frame: activeRun(for: .frame)?.frameCount ?? 0, time: activeRun(for: .frame)?.authorTime ?? 0,
             hostTime: taken.hostTime)
         arrival.withLock { $0 = record }
         return taken.value

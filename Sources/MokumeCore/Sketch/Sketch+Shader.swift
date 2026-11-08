@@ -139,7 +139,7 @@ extension SketchPart {
         _ path: String, values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try Self.resourceCanvas(ShaderFailure.self).loadShader(path, values: values, surfaces: surfaces)
+        try resourceCanvas(ShaderFailure.self).loadShader(path, values: values, surfaces: surfaces)
     }
 
     /// 文字列から断片を作る。保存の拾い直しは効かない (在処が無いため)。
@@ -353,7 +353,7 @@ extension SketchPart {
         _ body: String, name: String = "shader", values: [String: ShaderValue] = [:],
         surfaces: [String: ShaderSurface] = [:]
     ) throws(ShaderFailure) -> Shader {
-        try Self.resourceCanvas(ShaderFailure.self).makeShader(body, name: name, values: values, surfaces: surfaces)
+        try resourceCanvas(ShaderFailure.self).makeShader(body, name: name, values: values, surfaces: surfaces)
     }
 
     /// これから描くものを、この断片で塗る。
@@ -447,7 +447,7 @@ extension SketchPart {
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=705d4ba0
     // shot: 2 snippet=4dbe0e9e
-    public func shader(_ shader: Shader) { Self.liveCanvas()?.shader(shader) }
+    public func shader(_ shader: Shader) { liveCanvas()?.shader(shader) }
 
     /// 組み込みの塗りへ戻す。
     ///
@@ -489,5 +489,5 @@ extension SketchPart {
     ///
     /// - Note: 断片は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=17eacaa6
-    public func resetShader() { Self.liveCanvas()?.resetShader() }
+    public func resetShader() { liveCanvas()?.resetShader() }
 }

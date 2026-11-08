@@ -703,6 +703,8 @@ public final class SketchRuntime {
         self.paramStore = store
         self.params = opensFacets ? ParamSurface.makeIfEnabled(for: registry, store: store) : nil
         canvas.isRuntimeSurface = true
+        // **実体から自分を引けるようにする** (ホストのコードから実体のメソッドを呼んだとき・#3847)
+        SketchHomes.record(sketch, in: self)
     }
 
     /// 観測の窓口を差し替えられる入口 (検査用)。
@@ -745,6 +747,8 @@ public final class SketchRuntime {
         self.params = params
         self.paramStore = paramStore
         canvas.isRuntimeSurface = true
+        // **実体から自分を引けるようにする** (ホストのコードから実体のメソッドを呼んだとき・#3847)
+        SketchHomes.record(sketch, in: self)
     }
 
     // MARK: - 進める
@@ -885,6 +889,8 @@ public final class SketchRuntime {
         outlets.removeAll()
         inlets.removeAll()
         SeamHomes.forgetAll(in: self)
+        // 止まった実行の実体は、ホストのコードから呼ばれても他の実行を拾わず、既定へ倒れる (#3847)
+        SketchHomes.forget(self)
         outletJoinedAt.removeAll()
         seamsClosed = true
         // **記録は、最後に描いた枚まで書いて閉じる** (窓を閉じる・SIGTERM・Control + C はどれもここを通る・#3570)

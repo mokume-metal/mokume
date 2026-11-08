@@ -43,7 +43,7 @@ extension SketchPart {
     ///
     /// [ADR-0001]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0001-founding-principles.md
     // shot: 1 snippet=48c34437
-    public func random() -> Float { Self.liveRuntime(.read(returning: "0"))?.randomness.unitValue() ?? 0 }
+    public func random() -> Float { liveRuntime(.read(returning: "0"))?.randomness.unitValue() ?? 0 }
 
     /// 0 以上 `high` 未満の値。`high` が負なら `high` 以上 0 未満。
     ///
@@ -98,7 +98,7 @@ extension SketchPart {
     // shot: 2 snippet=59f8262e
     public func random(_ high: some ScalarConvertible) -> Float {
         let high = high.asFloat
-        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0
+        return liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0
     }
 
     /// `low` 以上 `high` 未満の値。**順序が逆でも受け取る。**
@@ -135,7 +135,7 @@ extension SketchPart {
     // shot: 1 snippet=ceae014f
     public func random(_ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
         let (low, high) = (low.asFloat, high.asFloat)
-        return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
+        return liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
     }
 
     /// 配列から 1 つ選んだ要素。**空の配列なら `nil`** (落ちない)。p5.js の `random(choices)` と同じ名前。
@@ -173,7 +173,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=70d9ff8d
     public func random<Element>(_ choices: [Element]) -> Element? {
-        guard let runtime = Self.liveRuntime(.read(returning: "nil")) else { return nil }
+        guard let runtime = liveRuntime(.read(returning: "nil")) else { return nil }
         return runtime.randomness.index(below: choices.count).map { choices[$0] }
     }
 
@@ -207,7 +207,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=768b4289
     public func randomGaussian() -> Float {
-        Self.liveRuntime(.read(returning: "0"))?.randomness.gaussian() ?? 0
+        liveRuntime(.read(returning: "0"))?.randomness.gaussian() ?? 0
     }
 
     /// 平均 `mean`・標準偏差 `sd` の正規分布に従う値。p5.js の `randomGaussian(mean, sd)` と同じ並び。
@@ -242,7 +242,7 @@ extension SketchPart {
     // shot: 1 snippet=ec7af996
     public func randomGaussian(_ mean: some ScalarConvertible, _ sd: some ScalarConvertible) -> Float {
         let (mean, sd) = (mean.asFloat, sd.asFloat)
-        guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
+        guard let runtime = liveRuntime(.read(returning: "0")) else { return 0 }
         return runtime.randomness.gaussian() * sd + mean
     }
 
@@ -284,7 +284,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=092f4a6d
     public func shuffle<Element>(_ array: [Element]) -> [Element] {
-        guard let runtime = Self.liveRuntime(.read(returning: "the array unchanged")) else { return array }
+        guard let runtime = liveRuntime(.read(returning: "the array unchanged")) else { return array }
         return runtime.randomness.shuffled(array)
     }
 
@@ -323,7 +323,7 @@ extension SketchPart {
     /// そこから抜けるまでは中で決めた列で引き、抜けた後の列は**最初に書く直前**の状態から続く。
     /// 種を書く前に中で引いた分と、種を書かずに引いた分は、外で引いたのと同じく列を進める。
     // shot: 1 snippet=c29016d0
-    public func randomSeed(_ seed: Int) { Self.liveRuntime()?.writeSeed(seed) }
+    public func randomSeed(_ seed: Int) { liveRuntime()?.writeSeed(seed) }
 
     /// スケッチの乱数の列を、Swift 標準の乱数の口へ渡せる乱数源として出す。``random()`` と同じ列を引く。
     ///
@@ -357,10 +357,10 @@ extension SketchPart {
     // shot: 撮れない 列の持ち方の口で、絵にしても差は「走らせるたびに変わる」ことでしか見えない。正しさはテストが見る
     public var randomSource: RandomSource {
         get {
-            Self.liveRuntime(.read(returning: "a source seeded with 0"))?.randomSource
+            liveRuntime(.read(returning: "a source seeded with 0"))?.randomSource
                 ?? RandomSource(seed: 0)
         }
-        nonmutating set { Self.liveRuntime()?.writeSource(newValue) }
+        nonmutating set { liveRuntime()?.writeSource(newValue) }
     }
 
     /// その座標の揺らぎ (0…1)。**近い座標には近い値**が返る、なめらかな乱れ。
@@ -453,7 +453,7 @@ extension SketchPart {
         _ w: some ScalarConvertible = 0
     ) -> Float {
         let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z, w) ?? 0
+        return liveCanvas(.read(returning: "0"))?.noise(x, y, z, w) ?? 0
     }
 
     /// 揺らぎの種。**断片にも同じ種が届く**ので、配線しなくてよい。
@@ -499,7 +499,7 @@ extension SketchPart {
     ///
     /// - Note: 揺らぎの種は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3bc41d48
-    public func noiseSeed(_ seed: Int) { Self.liveCanvas()?.noiseSeed(seed) }
+    public func noiseSeed(_ seed: Int) { liveCanvas()?.noiseSeed(seed) }
 
     /// 揺らぎの細かさ — 重ねる枚数 `lod` と、1 枚ごとの弱まり `falloff`。
     ///
@@ -576,7 +576,7 @@ extension SketchPart {
     // shot: 1 snippet=feae6dd5
     // shot: 2 snippet=52f4861b
     public func noiseDetail(_ lod: Int, _ falloff: some ScalarConvertible = 0.5) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let falloff = falloff.asFloat
         canvas.noiseDetail(lod, falloff)
     }

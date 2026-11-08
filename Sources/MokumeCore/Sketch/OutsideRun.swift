@@ -64,13 +64,14 @@ package final class OutsideRun {
         /// (SwiftUI の `body` のような、`draw()` の外に置く読み手にも実行できる助言)。
         case readLast(returning: String)
 
-        /// この倒し方をする口が、実行を引く目的 (``activeRun(for:)``)。外す口は倒し方が ``act`` でも
+        /// この倒し方をする口が、実行を引く目的 (``activeRun(for:from:)``)。外す口は倒し方が ``act`` でも
         /// ``RunPurpose/release(_:)`` で引くので、ここを通さない。
         var purpose: RunPurpose {
             switch self {
             case .read, .readLast: .read
             case .act: .act
-            case .make, .thrown, .thrownUnattached: .make
+            case .make, .thrown: .make
+            case .thrownUnattached: .attach
             }
         }
     }
@@ -86,6 +87,39 @@ package final class OutsideRun {
 
     /// いま言う先の控え。
     package static var log: OutsideRun { current ?? shared }
+
+    /// 映している実行 (``SketchApplication`` が `run()`・``SketchView`` で走らせているもの)。**弱く持つ** ([#3847])。
+    ///
+    /// フレームの外で部品から語彙を呼んだとき、ここに 1 つだけ居ればそれへ向ける (``activeRun(for:from:)``)。検査が
+    /// 単体で作る実行は映していないので数えない。
+    ///
+    /// **控えと同じ範囲に置く。** プロセスで 1 つにすると、並んで走る検査と共有される — ``SketchView`` を映したまま
+    /// 待つ検査の間に、別の検査の「走る前は 0」の読み取りがその実行を拾う。``current`` を差した検査は、自分で載せた
+    /// 実行だけを見る。ホストのアプリ (検査でない所) は差さないので、``shared`` に載る。
+    ///
+    /// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
+    private var presented: [WeakRuntime] = []
+
+    private struct WeakRuntime {
+        weak var runtime: SketchRuntime?
+    }
+
+    /// 映し始めた実行を載せる。同じものを 2 度載せない。
+    func present(_ runtime: SketchRuntime) {
+        presented.removeAll { $0.runtime == nil || $0.runtime === runtime }
+        presented.append(WeakRuntime(runtime: runtime))
+    }
+
+    /// 映し終えた実行を降ろす。
+    func withdraw(_ runtime: SketchRuntime) {
+        presented.removeAll { $0.runtime == nil || $0.runtime === runtime }
+    }
+
+    /// 映している実行が 1 つだけなら、それ。無い・2 つ以上なら `nil`。
+    var solePresented: SketchRuntime? {
+        let live = presented.compactMap(\.runtime)
+        return live.count == 1 ? live[0] : nil
+    }
 
     /// 鍵。口の名前と、読んだか呼んだか。
     private struct Key: Hashable {

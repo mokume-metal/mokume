@@ -282,7 +282,7 @@ extension SketchPart {
     package func requireAttachable<Failure: NotRunningFailure>(
         _ failure: Failure.Type, calledAs call: String
     ) throws(Failure) {
-        guard activeRun(for: .make) != nil else {
+        guard activeRun(for: .attach) != nil else {
             // 投げるだけでは `try?` で受けた側に何も残らないので、口ごとに 1 度言う
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
@@ -334,13 +334,13 @@ extension SketchPart {
         _ failure: Failure.Type, calledAs call: String, making make: () async throws(Failure) -> Part
     ) async throws(Failure) -> Part {
         let requests = LaunchingSketch.attachments
-        guard activeRun(for: .make) != nil || requests?.isEnded == false else {
+        guard activeRun(for: .attach) != nil || requests?.isEnded == false else {
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)
         }
         let part = try await make()
         // 走っている実行の中ならそのまま足す (`Task` の続きでは外れているので、ふつうは下の窓口を通る)
-        if activeRun(for: .make) != nil { return attachAfterCheck(part) }
+        if activeRun(for: .attach) != nil { return attachAfterCheck(part) }
         guard let requests, await requests.request(part), !requests.isEnded else {
             // 頼む前か待っている間に実行が終わった。足されなかったものを、足されたと偽って返さない。
             // **`request` が `true` を返した後でも、`Task` が戻る前に畳まれうる** — 実行が頼みを当てて待ちを終えてから、
@@ -389,7 +389,7 @@ extension SketchPart {
     /// 返すものが 0 個かもしれない口 (`gamepads()` は繋がっているパッドの数だけ足す) が、数に依らず外なら 1 度言うために、
     /// 先に呼ぶ。足すのはその後の ``attach(_:calledAs:returning:)`` で、同じ口の名前・同じ綴りなら重ねて言わない。
     package func canAttach(calledAs call: String, returning value: String) -> Bool {
-        guard activeRun(for: .make) != nil else {
+        guard activeRun(for: .attach) != nil else {
             OutsideRun.log.warn(call, .make(returning: value))
             return false
         }
@@ -401,7 +401,7 @@ extension SketchPart {
     /// (`a sound that is never heard` など)。
     @discardableResult
     package func attach(_ inlet: any Inlet, calledAs call: String, returning value: String) -> Bool {
-        guard let runtime = activeRun(for: .make) else {
+        guard let runtime = activeRun(for: .attach) else {
             OutsideRun.log.warn(call, .make(returning: value))
             return false
         }

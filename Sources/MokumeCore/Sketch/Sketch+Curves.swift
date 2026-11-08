@@ -74,7 +74,7 @@ extension SketchPart {
         _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
         _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         canvas.bezier(x1, y1, x2, y2, x3, y3, x4, y4)
     }
@@ -141,7 +141,7 @@ extension SketchPart {
     public func bezierVertex(
         _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         canvas.bezierVertex(cx1, cy1, cx2, cy2, x, y)
     }
@@ -179,7 +179,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=03aa6a6a
     public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         canvas.quadraticVertex(cx, cy, x, y)
     }
@@ -268,7 +268,7 @@ extension SketchPart {
     // shot: 1 snippet=398e30fc
     // shot: 2 snippet=794ad9dd
     public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.curveVertex(x, y)
     }
@@ -347,7 +347,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=73597f78
     // shot: 2 snippet=04b76040
-    public func curveDetail(_ steps: Int) { Self.liveCanvas()?.curveDetail(steps) }
+    public func curveDetail(_ steps: Int) { liveCanvas()?.curveDetail(steps) }
 
     /// 通過点を結ぶ曲線の張り具合。**0 が既定で、1 にすると点と点が直線で結ばれる。**
     ///
@@ -451,7 +451,7 @@ extension SketchPart {
     // shot: 2 snippet=a33d48f9
     // shot: 3 snippet=6f809d80
     public func curveTightness(_ amount: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.curveTightness(amount)
     }

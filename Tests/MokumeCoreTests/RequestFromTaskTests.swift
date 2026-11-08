@@ -178,13 +178,13 @@ struct RequestFromTaskTests {
         #expect(isClose(picture.get(0, 0), 1, 0, 0), "左の画素: \(picture.get(0, 0))")
     }
 
-    /// **同期の資源の口は、走っている実行の中で起こした `Task` から呼んでも面を取れない** (#2683)。
-    /// 持ち越した面 (``LaunchingSketch``) を読むのは待つ読み込みだけで、同じ `Task` の中でも割れる。
-    /// `draw()` が回っている最中でもそうなので、文面は「走っていない」と言わない (#1322)。
+    /// **同期の資源の口も、走っている実行の中で起こした `Task` から、そのスケッチの面で作れる** (#3847)。
+    /// スケッチの実体のメソッドは、フレームの外でも自分の実行を引く (``SketchHomes``)。以前は持ち越した面
+    /// (``LaunchingSketch``) を読むのが待つ読み込みだけで、同じ `Task` の中で同期の口だけが `notRunning` を投げた (#2683)。
     @Test(
-        "setup() / draw() で起こした Task から、同期の createImage は notRunning を投げ、待つ読み込みは読める",
+        "setup() / draw() で起こした Task から、同期の createImage も待つ読み込みも、そのスケッチの面で作れる",
         arguments: [false, true])
-    func synchronousResourcesFromARunningTaskThrow(startsInDraw: Bool) async throws {
+    func synchronousResourcesFromARunningTaskUseTheRun(startsInDraw: Bool) async throws {
         let url = try writePicture()
         defer { try? FileManager.default.removeItem(at: url) }
         let sketch = Requesting()
@@ -195,8 +195,8 @@ struct RequestFromTaskTests {
         try runtime.advance()
 
         await sketch.loading?.value
-        #expect(sketch.madeImage == nil, "同期の口が Task の中で面を取れている")
-        #expect(sketch.madeImageFailure == .notRunning(call: "createImage(_:_:)"))
+        #expect(sketch.madeImage != nil, "同期の口が Task の中で面を取れていない: \(String(describing: sketch.madeImageFailure))")
+        #expect(sketch.madeImageFailure == nil)
         #expect(sketch.picture != nil, "同じ Task の中の待つ読み込みが読めていない")
         // 実行は畳まれていない — 走っている最中でもこの場合になる
         try runtime.advance()

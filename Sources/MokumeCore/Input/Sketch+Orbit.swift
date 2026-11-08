@@ -84,7 +84,7 @@ extension SketchPart {
         _ sensitivityX: some ScalarConvertible = 1, _ sensitivityY: some ScalarConvertible = 1,
         _ sensitivityZ: some ScalarConvertible = 1
     ) {
-        guard let runtime = Self.liveRuntime() else { return }
+        guard let runtime = liveRuntime() else { return }
         let canvas = runtime.activeCanvas
         let (sensitivityX, sensitivityY, sensitivityZ) = (
             sensitivityX.asFloat, sensitivityY.asFloat, sensitivityZ.asFloat
@@ -188,7 +188,7 @@ extension SketchPart {
     /// 状態の読み書きでスケッチを止めない (ADR-0020 決定 5)。
     public var orbit: Orbit {
         get {
-            guard let runtime = Self.liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
+            guard let runtime = liveRuntime(.read(returning: "an orbit at the origin with no distance")) else {
                 return Orbit(center: Vector3(0, 0, 0), distance: 0)
             }
             // 道具の始まりは本体の面の中央で、向き先によらない (``orbitControl(_:_:_:)``)
@@ -196,7 +196,7 @@ extension SketchPart {
         }
         // 部品 (struct) から書いても、書く先は走っているスケッチで、部品の値は変わらない
         nonmutating set {
-            guard let runtime = Self.liveRuntime() else { return }
+            guard let runtime = liveRuntime() else { return }
             var orbit = newValue
             // 見ている先の既定は、道具の始まりと同じ面の中央 (本体の面)
             let start = Orbit.fitting(width: runtime.canvas.width, height: runtime.canvas.height)

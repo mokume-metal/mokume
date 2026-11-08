@@ -64,7 +64,7 @@ extension Sketch {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     public func loadSound(_ file: String) throws(AudioFailure) -> SoundFile {
-        Self.noticeBlockingLoad("loadSound(_:)", instead: "requestSound(_:)")
+        noticeBlockingLoad("loadSound(_:)", instead: "requestSound(_:)")
         return try loadSound(file, flow: nil)
     }
 

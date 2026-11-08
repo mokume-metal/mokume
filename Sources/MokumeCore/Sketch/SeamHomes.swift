@@ -48,3 +48,42 @@ enum SeamHomes {
         homes = homes.filter { $0.value.runtime !== runtime }
     }
 }
+
+/// スケッチの実体ごとに、それを走らせている実行を**弱く**控える ([#3847])。
+///
+/// ホストのコード (``SketchView`` の隣のボタンの処理) は、実行の差し込み (``SketchRuntime/withActiveRuntime(_:)``)
+/// の外で走る。そこから実体のメソッドを呼んで ``SketchPart/width`` を読むと、差している実行が無いので 0 になった。
+/// 実体から実行を引ければ、映しているスケッチが 1 つでも複数でも、そのメソッドは自分の実行を読む
+/// (``activeRun(for:from:)``)。
+///
+/// - 形は ``SeamHomes`` と同じで、実体も実行も弱く持つ。控えが実行や実体を生かし続けない
+/// - 結ぶのは実行を作ったとき、忘れるのは実行の後片付け (``SketchRuntime/closePlugins()``)。止まった実行の実体は、
+///   他の実行を拾わない
+///
+/// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
+enum SketchHomes {
+    private struct Home {
+        weak var sketch: AnyObject?
+        weak var runtime: SketchRuntime?
+    }
+
+    private static var homes: [ObjectIdentifier: Home] = [:]
+
+    /// `sketch` を走らせる実行を控える。
+    static func record(_ sketch: any Sketch, in runtime: SketchRuntime) {
+        // 持ち主の消えた控えを、結ぶたびに掃く (数は作った実行の数だけで小さい)
+        homes = homes.filter { $0.value.sketch != nil && $0.value.runtime != nil }
+        homes[ObjectIdentifier(sketch)] = Home(sketch: sketch, runtime: runtime)
+    }
+
+    /// `sketch` を走らせている実行。結ばれていない・後片付けを終えた・消えた、なら `nil`。
+    static func runtime(of sketch: any Sketch) -> SketchRuntime? {
+        guard let home = homes[ObjectIdentifier(sketch)], home.sketch === sketch else { return nil }
+        return home.runtime
+    }
+
+    /// 実行の後片付けで、その実行の結びを忘れる。
+    static func forget(_ runtime: SketchRuntime) {
+        homes = homes.filter { $0.value.runtime !== runtime }
+    }
+}

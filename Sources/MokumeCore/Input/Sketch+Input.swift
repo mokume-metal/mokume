@@ -11,18 +11,18 @@ extension SketchPart {
     /// 出すと、負や幅超えの値になる — 丸めていないので、面の外を面の外として扱える
     /// (外から送る経路も範囲外を送れるので、丸めると 2 つの経路で範囲が食い違う)。
     /// 面の中だけを相手にしたいなら、読む側で挟む。
-    public var mouseX: Float { Self.input.x }
+    public var mouseX: Float { liveInput.x }
     /// いまの位置 (縦)。**縦軸は下向き**で、面の上端が 0 (``mouseX`` と同じ約束)。
-    public var mouseY: Float { Self.input.y }
+    public var mouseY: Float { liveInput.y }
     /// 前のフレームでの位置 (横)。
-    public var pmouseX: Float { Self.input.previousX }
+    public var pmouseX: Float { liveInput.previousX }
     /// 前のフレームでの位置 (縦)。
-    public var pmouseY: Float { Self.input.previousY }
+    public var pmouseY: Float { liveInput.previousY }
     /// どれかの釦が押されているか。
     ///
     /// **釦ごとに数える** — 左を押したまま右を押して離しても、`true` のまま。窓が前から退くと、
     /// 押していた釦は離された扱いになる (``Sketch/mouseReleased()``)。
-    public var isMousePressed: Bool { Self.input.isMouseDown }
+    public var isMousePressed: Bool { liveInput.isMouseDown }
     /// 最後に押されたか離された釦。まだ何も押していなければ `nil`。
     ///
     /// <!-- example: 文脈 var marks: [Float] = [] -->
@@ -47,7 +47,7 @@ extension SketchPart {
     /// `default` の分岐へ落ちる。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var mouseButton: MouseButton? { Self.input.button }
+    public var mouseButton: MouseButton? { liveInput.button }
     /// このフレームのスクロール量 (横)。**単位は点** (トラックパッドは指の動いた点、ふつうのホイールは
     /// 1 行 = 10 点に換算した量)。指を離した後の慣性の続きも足し込まれる ([ADR-0034] 決定 8)。
     ///
@@ -56,9 +56,9 @@ extension SketchPart {
     /// ここを読むと、その出来事までの部分累計を何度も足し込む形になる ([ADR-0034] 決定 5)。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var scrollX: Float { Self.input.scrollX }
+    public var scrollX: Float { liveInput.scrollX }
     /// このフレームのスクロール量 (縦)。単位と慣性は ``scrollX`` と同じ。
-    public var scrollY: Float { Self.input.scrollY }
+    public var scrollY: Float { liveInput.scrollY }
     /// このフレームのピンチの量 (トラックパッドで指を開くと正、閉じると負)。
     ///
     /// **倍率の差分のフレーム合計** — 0.1 は「1.1 倍に開いた」である。AppKit の `magnification` と
@@ -68,7 +68,7 @@ extension SketchPart {
     /// `{"type": "pinched", "amount": 0.1}` で、同じフレームに 2 件届けば合計になる。
     /// ``orbitControl(_:_:_:)`` の寄りは、この合計ではなく**件ごとの倍率の積**で決まる (倍率は掛け算で重なるので、
     /// 閉じる件が溜まった合計が −1 以下になっても、閉じる操作は効く)。
-    public var pinch: Float { Self.input.pinch }
+    public var pinch: Float { liveInput.pinch }
     /// このフレームに、押したまま引きずった量 (横)。
     ///
     /// **押した瞬間には増えない。** `mouseX - pmouseX` を回す量に使うと、押した場所が
@@ -83,9 +83,9 @@ extension SketchPart {
     /// 改訂 (2026-10-28))。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var dragX: Float { Self.input.dragX }
+    public var dragX: Float { liveInput.dragX }
     /// このフレームに、押したまま引きずった量 (縦)。
-    public var dragY: Float { Self.input.dragY }
+    public var dragY: Float { liveInput.dragY }
     /// このフレームに動いた量 (横)。**押しているかによらず数える。**
     ///
     /// カーソルを捕まえている間 (``requestPointerLock()``) は ``mouseX`` が動かないので、
@@ -115,9 +115,9 @@ extension SketchPart {
     /// ``Sketch/mouseMoved(deltaX:deltaY:)`` の引数で受け取る。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var movedX: Float { Self.input.movedX }
+    public var movedX: Float { liveInput.movedX }
     /// このフレームに動いた量 (縦)。**縦軸は下向き**で、手前へ引くと正になる。
-    public var movedY: Float { Self.input.movedY }
+    public var movedY: Float { liveInput.movedY }
     /// キーボードへの問い合わせ。押している間・押した瞬間・離した瞬間を、キーごとに問う。
     ///
     /// <!-- example: 文脈 var x: Float = 0 -->
@@ -158,14 +158,14 @@ extension SketchPart {
     /// 瞬間に 1 回、後者は押している間ずっとである。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var keyboard: Keyboard { Keyboard(state: Self.input) }
+    public var keyboard: Keyboard { Keyboard(state: liveInput) }
     /// 最後に入力された文字。
     ///
     /// **文字を生むキーでだけ変わる。** 矢印・ファンクションキー・Escape・Delete では
     /// 更新されない — AppKit がそれらへ返すのは私用領域や制御文字なので、そのまま
     /// 入れると画面に見えない文字が出る。打鍵そのものを受け取る口は
     /// ``Sketch/keyTyped()``。
-    public var key: String { Self.input.characters }
+    public var key: String { liveInput.characters }
     /// 最後に押されたか離されたキー。まだ何も来ていなければ `nil`。
     ///
     /// **どの文字が打たれたかではなく、どのキーが動いたか**を表す。配列や修飾キーに
@@ -183,7 +183,7 @@ extension SketchPart {
     /// なるより、そこで気付けるほうがよい。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    public var keyCode: Key? { Self.input.lastKey }
+    public var keyCode: Key? { liveInput.lastKey }
 
     /// 走っているランタイムの合流点。走っていなければ**空の状態**を返す。
     ///
@@ -191,8 +191,8 @@ extension SketchPart {
     /// 位置を参照しただけのスケッチが動かなくなる。走っていないなら入力は無い、が
     /// 素直な答えである。
     @MainActor
-    private static var input: InputState {
-        activeRun(for: .read)?.input ?? InputState.empty
+    private var liveInput: InputState {
+        activeRun(for: .read, from: self)?.input ?? InputState.empty
     }
 }
 

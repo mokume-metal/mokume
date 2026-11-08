@@ -51,7 +51,7 @@ extension SketchPart {
     ///   UTF-8 の文字として読めないときに ``DataFailure/unreadable(path:)``。
     // shot: 撮れない 読んだ文字列を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadStrings(_ path: String) throws(DataFailure) -> [String] {
-        Self.noticeBlockingLoad("loadStrings(_:)", instead: "requestStrings(_:)")
+        noticeBlockingLoad("loadStrings(_:)", instead: "requestStrings(_:)")
         return TextFile.lines(of: try readText(path))
     }
 
@@ -169,7 +169,7 @@ extension SketchPart {
     ///   (``DataFailure/malformed(path:line:reason:)``) とき。
     // shot: 撮れない 読んだ表を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadTable(_ path: String, header: Bool = false) throws(DataFailure) -> Table {
-        Self.noticeBlockingLoad("loadTable(_:header:)", instead: "requestTable(_:header:)")
+        noticeBlockingLoad("loadTable(_:header:)", instead: "requestTable(_:header:)")
         return Table(try TableFile.parse(try readText(path), header: header, path: path))
     }
 
@@ -308,7 +308,7 @@ extension SketchPart {
     /// - Throws: 上のどれか (``DataFailure``)。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadJSONObject(_ path: String) throws(DataFailure) -> JSONObject {
-        Self.noticeBlockingLoad("loadJSONObject(_:)", instead: "requestJSONObject(_:)")
+        noticeBlockingLoad("loadJSONObject(_:)", instead: "requestJSONObject(_:)")
         return JSONObject(
             try JSONFile.parseObject(try readText(path), path: path, instead: "loadJSONArray(_:)"))
     }
@@ -394,7 +394,7 @@ extension SketchPart {
     /// - Throws: ``DataFailure``。投げる場合は ``loadJSONObject(_:)`` と同じ。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadJSONArray(_ path: String) throws(DataFailure) -> JSONArray {
-        Self.noticeBlockingLoad("loadJSONArray(_:)", instead: "requestJSONArray(_:)")
+        noticeBlockingLoad("loadJSONArray(_:)", instead: "requestJSONArray(_:)")
         return JSONArray(
             try JSONFile.parseArray(try readText(path), path: path, instead: "loadJSONObject(_:)"))
     }
@@ -542,7 +542,7 @@ extension SketchPart {
     /// - Throws: ``DataFailure``。
     // shot: 撮れない 読んだ値を返す口で、読む先のファイルがこのリポジトリの例には無い
     public func loadXML(_ path: String) throws(DataFailure) -> XML {
-        Self.noticeBlockingLoad("loadXML(_:)", instead: "requestXML(_:)")
+        noticeBlockingLoad("loadXML(_:)", instead: "requestXML(_:)")
         return XML(try XMLFile.parse(try readText(path), path: path))
     }
 

@@ -93,7 +93,7 @@ extension SketchPart {
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
     // shot: 1 snippet=1a72b4f9
-    public func shadows(_ enabled: Bool) { Self.liveCanvas()?.shadows(enabled) }
+    public func shadows(_ enabled: Bool) { liveCanvas()?.shadows(enabled) }
 
     /// 影を焼き付ける範囲の一辺 (世界の長さ)。
     ///
@@ -146,7 +146,7 @@ extension SketchPart {
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=10cc6754
     public func shadowRange(_ size: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let size = size.asFloat
         canvas.shadowRange(size)
     }
@@ -200,7 +200,7 @@ extension SketchPart {
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   同じ数を書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
     // shot: 1 snippet=6803da11
-    public func shadowDetail(_ size: Int) { Self.liveCanvas()?.shadowDetail(size) }
+    public func shadowDetail(_ size: Int) { liveCanvas()?.shadowDetail(size) }
 
     /// 影の縁の破綻を抑える量。既定は `0.0025`。
     ///
@@ -247,7 +247,7 @@ extension SketchPart {
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=704ae6de
     public func shadowBias(_ amount: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.shadowBias(amount)
     }
@@ -294,7 +294,7 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=95162799
-    public func castShadow(_ enabled: Bool) { Self.liveCanvas()?.castShadow(enabled) }
+    public func castShadow(_ enabled: Bool) { liveCanvas()?.castShadow(enabled) }
 
     /// これから置く形が、影を受ける側か。既定は受ける。
     ///
@@ -340,5 +340,5 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=86dc1877
-    public func receiveShadow(_ enabled: Bool) { Self.liveCanvas()?.receiveShadow(enabled) }
+    public func receiveShadow(_ enabled: Bool) { liveCanvas()?.receiveShadow(enabled) }
 }

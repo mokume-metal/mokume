@@ -147,7 +147,7 @@ extension SketchPart {
     /// [#1834]: https://github.com/mokume-metal/mokume/issues/1834
     // shot: 1 snippet=a1f4852e
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {
-        try Self.resourceCanvas(RenderFailure.self).createGraphics(width, height)
+        try resourceCanvas(RenderFailure.self).createGraphics(width, height)
     }
 
     /// 描き場所へ描く間だけ、スケッチの口 (``circle(_:_:_:)``・``fill(_:)-(LinearRGBA)`` など) をその描き場所へ
@@ -327,7 +327,7 @@ extension SketchPart {
     // shot: 1 snippet=52cdbef4
     // shot: 2 snippet=ba1fde9c
     public func draw(into graphics: Canvas, _ body: () -> Void) {
-        guard let runtime = Self.liveRuntime() else { return }
+        guard let runtime = liveRuntime() else { return }
         // 本体の面のフレームを約束するのはランタイム。ここで開くと、`setup()` の中から呼んだときに
         // 本体のフレームが余分に回る。向き先だけを立てて、閉包を走らせる
         if graphics === runtime.canvas {
@@ -388,7 +388,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=423340e2
     public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(graphics, x, y)
     }
@@ -427,7 +427,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=d40247f8
     public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(graphics, a, b, c, d)
     }
@@ -472,7 +472,7 @@ extension SketchPart {
         _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
         _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
     ) {
-        guard let canvas = Self.liveCanvas() else { return }
+        guard let canvas = liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         canvas.image(graphics, a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
@@ -615,7 +615,7 @@ extension SketchPart {
     // shot: 1 snippet=ae1a14cd
     // shot: 2 snippet=8457adaf
     // shot: 3 snippet=17433594
-    public func texture(_ image: Image) { Self.liveCanvas()?.texture(image) }
+    public func texture(_ image: Image) { liveCanvas()?.texture(image) }
 
     /// これから置く塗りに描き場所を貼る。
     ///
@@ -706,7 +706,7 @@ extension SketchPart {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=b95f51a7
     // shot: 2 snippet=a78d202e
-    public func texture(_ graphics: Canvas) { Self.liveCanvas()?.texture(graphics) }
+    public func texture(_ graphics: Canvas) { liveCanvas()?.texture(graphics) }
 
     /// 絵を貼るのをやめる。
     ///
@@ -791,7 +791,7 @@ extension SketchPart {
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3d8912c0
     // shot: 2 snippet=03298d4c
-    public func noTexture() { Self.liveCanvas()?.noTexture() }
+    public func noTexture() { liveCanvas()?.noTexture() }
 }
 
 extension SketchRuntime {

@@ -138,7 +138,7 @@ extension SketchPart {
     // shot: 3 snippet=da296039 image=c1861738afbee631
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
+        return liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
     }
 
     /// 平面の点が、いまの変換といまの視点でどこへ移るか (縦)。
@@ -226,7 +226,7 @@ extension SketchPart {
     // shot: 2 snippet=d464e610
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y) ?? 0
+        return liveCanvas(.read(returning: "0"))?.screenY(x, y) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
@@ -280,7 +280,7 @@ extension SketchPart {
     // shot: 1 snippet=25260204
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
+        return liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (縦)。
@@ -330,7 +330,7 @@ extension SketchPart {
     // shot: 1 snippet=45110c8e
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
+        return liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
     }
 
     /// 奥行きを持つ点が、いまの視点でどれだけ奥にあるか。
@@ -388,7 +388,7 @@ extension SketchPart {
     // shot: 1 snippet=1263b738
     public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
-        return Self.liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
+        return liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
     }
 
     // MARK: - 画面 → 空間
@@ -490,7 +490,7 @@ extension SketchPart {
     // shot: 2 snippet=7cd7de68
     public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
-        return Self.liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
+        return liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
             ?? Vector3(0, 0, 0)
     }
 }

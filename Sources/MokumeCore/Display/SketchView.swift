@@ -47,6 +47,34 @@ import SwiftUI
 /// そう言って何も映さない。待っている間に ``Sketch/main()`` が席を取ったときも、待っていたビューは同じく、
 /// そう言って何も映さない (``Sketch/main()`` は、先の `SketchView` が消えた直後でも断られない)。
 ///
+/// ## ホストのコードから呼ぶ
+///
+/// ボタンの処理のようなホストのコードは、スケッチのフレーム (``Sketch/setup()``・``Sketch/draw()``) の外で走る。
+/// そこからスケッチのメソッドを呼ぶと、**読み取り (``SketchPart/width``・``SketchPart/random(_:_:)`` など) と資源の口は、
+/// そのスケッチ自身の実行を読む**。部品 (``SketchPart``) のメソッドなら、映しているスケッチを読む。**描く口
+/// (``SketchPart/circle(_:_:_:)`` など) は効かない** — 描く時刻が決まらないので、何もせず警告する。描くのは
+/// ``Sketch/draw()`` の中で、ホストのコードは状態を変えるだけにする。
+///
+/// ```swift
+/// final class Game: Sketch {
+///     var x: Float = 0
+///     func reset() { x = width / 2 }  // ボタンから呼んでも、映している幅の半分になる
+///     func draw() { circle(x, height / 2, 40) }
+/// }
+///
+/// struct ContentView: View {
+///     @State private var game = Game()
+///     var body: some View {
+///         VStack {
+///             SketchView(game)
+///             Button("Reset") { game.reset() }
+///         }
+///     }
+/// }
+/// ```
+///
+/// ホストのコードから ``SketchPart/random(_:_:)`` を呼ぶと、そのスケッチの乱数列がフレームの間に進む。
+///
 /// ## ``Sketch/main()`` との違い
 ///
 /// `SketchView` は、ホストのアプリの窓の中に絵を映す別の入口で、窓・アプリの寿命・メニュー・Dock の方針は
