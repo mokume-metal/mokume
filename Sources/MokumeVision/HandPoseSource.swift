@@ -130,7 +130,7 @@ nonisolated extension HandPoseResult {
         var dropped = 0
         for raw in hands {
             let joints = raw.joints.compactMap {
-                HandJoint(position: Vector2($0.x * width, (1 - $0.y) * height), confidence: $0.confidence)
+                HandJoint(position: Vector2(Double($0.x * width), Double((1 - $0.y) * height)), confidence: Double($0.confidence))
             }
             // 1 つでも関節を作れなかった手は、数が 21 に見えても捨てる
             guard joints.count == raw.joints.count,

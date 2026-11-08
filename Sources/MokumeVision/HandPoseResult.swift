@@ -40,11 +40,11 @@ public nonisolated struct HandJoint: Sendable, Hashable, Codable {
     /// 画像の外を指すことはある (ピクセルの範囲を越える値は、そのまま保持する)。有限でない値は持たない。
     public let position: Vector2
     /// 信頼度 (0〜1)。1 に近いほど確か。
-    public let confidence: Float
+    public let confidence: Double
 
     /// 位置と信頼度から関節を作る。**位置が有限でない、または信頼度が `NaN` なら `nil` を返す。**
     /// 信頼度が 0〜1 を外れていれば、0〜1 に収める。
-    public init?(position: Vector2, confidence: Float) {
+    public init?(position: Vector2, confidence: Double) {
         guard position.x.isFinite, position.y.isFinite, !confidence.isNaN else { return nil }
         self.position = position
         self.confidence = min(max(confidence, 0), 1)
@@ -69,7 +69,7 @@ public nonisolated struct HandJoint: Sendable, Hashable, Codable {
                 debugDescription: "A joint confidence must be between 0 and 1, but it was \(confidence)")
         }
         self.position = position
-        self.confidence = confidence
+        self.confidence = Double(confidence)
     }
 }
 

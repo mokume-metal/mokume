@@ -102,14 +102,14 @@ public final class AudioIn: Inlet {
     // MARK: - 生の値
 
     /// 区間の二乗平均平方根 (振幅の単位)。無音で 0、フルスケールの正弦波で約 0.707。
-    public var rms: Float { shown.rms }
+    public var rms: Double { Double(shown.rms) }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
-    public var decibels: Float { shown.decibels }
+    public var decibels: Double { Double(shown.decibels) }
     /// 区間のサンプルの絶対値の最大 (振幅の単位)。無音で 0、フルスケールの音で 1。
     ///
     /// アタックの鋭い音 (キックなど) を、区間のどこにあっても拾う。``rms`` は区間の長さで薄まるが、これは薄まらない。
     /// マイク・サンプル列は毎フレーム解析するので、取りこぼしはない。
-    public var peak: Float { shown.peak }
+    public var peak: Double { Double(shown.peak) }
     /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の中心にあるフルスケールの正弦波で 1。区間に終わりが入る
     /// ウィンドウの平均。
     public var spectrum: [Float] { shown.spectrum }
@@ -117,7 +117,7 @@ public final class AudioIn: Inlet {
     // MARK: - 0〜1 へ写した値
 
     /// 音の大きさを 0〜1 にしたもの。-60 dBFS 以下で 0、0 dBFS で 1。
-    public var level: Float { shown.level }
+    public var level: Double { Double(shown.level) }
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。変換の仕方は ``level`` と同じ。
     public var spectrumLevels: [Float] { shown.spectrumLevels }
 
@@ -140,8 +140,12 @@ public final class AudioIn: Inlet {
     /// - NaN・無限大は 0 を返し、そのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func energy(from low: Float, to high: Float) -> Float {
-        let result = AudioAnalysis.energy(of: shown.spectrum, from: low, to: high, sampleRate: sampleRate)
+    public func energy(from low: Double, to high: Double) -> Double {
+        Double(energyValue(from: Float(low), to: Float(high)))
+    }
+
+    func energyValue(from low: Float, to high: Float) -> Float {
+        let result = AudioAnalysis.energy(of: shown.spectrum, from: low, to: high, sampleRate: Float(sampleRate))
         if !result.isNumber, !warnedEnergy {
             warnedEnergy = true
             warn("energy() got a value that is not a number, or an infinite one, so it returns 0")
@@ -198,7 +202,7 @@ public final class AudioIn: Inlet {
     // MARK: - 出どころ
 
     /// サンプルレート (Hz)。マイクはデバイスが開くまで 0。
-    public var sampleRate: Float { source.sampleRate }
+    public var sampleRate: Double { Double(source.sampleRate) }
     /// 入力ソースの状態。
     public var state: SourceState { input.state }
     /// 最後に音が届いたフレーム。まだ何も届いていなければ `nil`。

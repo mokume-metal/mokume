@@ -384,7 +384,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 無音で停止する** (先頭の音は出ない)。停止中に末尾へシークした後の ``play()`` は先頭から再生する。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func jump(_ seconds: Float) {
+    public func jump(_ seconds: Double) {
+        let seconds = Float(seconds)
         guard seconds.isFinite else {
             notice(
                 .jumpNotANumber,
@@ -425,10 +426,10 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 位置を進めるのはオーディオクロックで、``SketchPart/time`` ではない。書き出し (固定クロック) では、再生を
     /// 始めてから進んだフレーム数で決まるので、同じフレームは常に同じ位置で描かれる。値はその
     /// フレームの開始時点のもの (``isPlaying`` と同じ)。停止中は停止した位置、再生が終わった後は 0。
-    public var position: Float { seconds(waitingTarget ?? pendingJump ?? samplePosition) }
+    public var position: Double { Double(seconds(waitingTarget ?? pendingJump ?? samplePosition)) }
 
     /// 長さ (秒)。サンプル数 ÷ ``sampleRate``。
-    public var duration: Float { seconds(samples.count) }
+    public var duration: Double { Double(seconds(samples.count)) }
 
     /// 標本の位置を秒にする。
     private func seconds(_ sample: Int) -> Float {
@@ -446,7 +447,8 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// 無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func amp(_ volume: Float) {
+    public func amp(_ volume: Double) {
+        let volume = Float(volume)
         guard volume.isFinite else {
             notice(
                 .volumeNotANumber,
@@ -473,16 +475,16 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     // MARK: - 生の値
 
     /// 区間の二乗平均平方根 (振幅の単位)。無音で 0、フルスケールの正弦波で約 0.707。
-    public var rms: Float { levels.rms }
+    public var rms: Double { Double(levels.rms) }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
-    public var decibels: Float { levels.decibels }
+    public var decibels: Double { Double(levels.decibels) }
     /// 区間のサンプルの絶対値の最大 (振幅の単位)。無音で 0、フルスケールの音で 1。求め方は ``AudioIn/peak`` と同じで、
     /// 音量 (``amp(_:)``) を掛けた後の値。
     ///
     /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解析するので、`draw()` が読まなかった
     /// フレームの区間は解析されず、次のフレームの値にも混ざらない — `if 条件 { use(song.peak) }` で条件が偽だった
     /// フレームのキックは、後から読んでも失われたままである。取りこぼしたくない値は、毎フレーム読む。
-    public var peak: Float { levels.peak }
+    public var peak: Double { Double(levels.peak) }
     /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の中心にあるフルスケールの正弦波で 1。区間に終わりが入る
     /// ウィンドウの平均。
     public var spectrum: [Float] { levels.spectrum }
@@ -490,7 +492,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     // MARK: - 0〜1 へ写した値
 
     /// 音の大きさを 0〜1 にしたもの。-60 dBFS 以下で 0、0 dBFS で 1。変換の仕方は ``AudioIn/level`` と同じ。
-    public var level: Float { levels.level }
+    public var level: Double { Double(levels.level) }
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。変換の仕方は ``level`` と同じ。
     public var spectrumLevels: [Float] { levels.spectrumLevels }
 
@@ -513,7 +515,11 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
     /// - NaN・無限大は 0 を返し、そのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func energy(from low: Float, to high: Float) -> Float {
+    public func energy(from low: Double, to high: Double) -> Double {
+        Double(energyValue(from: Float(low), to: Float(high)))
+    }
+
+    func energyValue(from low: Float, to high: Float) -> Float {
         let result = AudioAnalysis.energy(of: levels.spectrum, from: low, to: high, sampleRate: sampleRate)
         if !result.isNumber {
             notice(

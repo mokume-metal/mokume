@@ -103,14 +103,14 @@ public class SynthSound: EffectInput {
     // MARK: - 生の値
 
     /// 区間の二乗平均平方根 (振幅の単位)。無音で 0、フルスケールの正弦波で約 0.707。
-    public var rms: Float { levels.rms }
+    public var rms: Double { Double(levels.rms) }
     /// ``rms`` を dBFS にしたもの。0 が最大で、無音は -160 (∞ にはしない)。
-    public var decibels: Float { levels.decibels }
+    public var decibels: Double { Double(levels.decibels) }
     /// 区間のサンプルの絶対値の最大 (振幅の単位)。無音で 0、フルスケールの音で 1。求め方は ``AudioIn/peak`` と同じ。
     ///
     /// **各フレームの値は、そのフレームの区間のものである。** 値は読まれたときに解析するので、`draw()` が読まなかった
     /// フレームの区間は解析されず、次のフレームの値にも混ざらない。取りこぼしたくない値は、毎フレーム読む。
-    public var peak: Float { levels.peak }
+    public var peak: Double { Double(levels.peak) }
     /// 帯域ごとの大きさ (振幅の単位)。512 本で、帯域の中心にあるフルスケールの正弦波で 1。区間に終わりが入る
     /// ウィンドウの平均。
     public var spectrum: [Float] { levels.spectrum }
@@ -118,7 +118,7 @@ public class SynthSound: EffectInput {
     // MARK: - 0〜1 へ写した値
 
     /// 音の大きさを 0〜1 にしたもの。-60 dBFS 以下で 0、0 dBFS で 1。変換の仕方は ``AudioIn/level`` と同じ。
-    public var level: Float { levels.level }
+    public var level: Double { Double(levels.level) }
     /// ``spectrum`` を帯域ごとに 0〜1 にしたもの。変換の仕方は ``level`` と同じ。
     public var spectrumLevels: [Float] { levels.spectrumLevels }
 
@@ -141,8 +141,12 @@ public class SynthSound: EffectInput {
     /// - NaN・無限大は 0 を返し、そのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func energy(from low: Float, to high: Float) -> Float {
-        let result = AudioAnalysis.energy(of: levels.spectrum, from: low, to: high, sampleRate: sampleRate)
+    public func energy(from low: Double, to high: Double) -> Double {
+        Double(energyValue(from: Float(low), to: Float(high)))
+    }
+
+    func energyValue(from low: Float, to high: Float) -> Float {
+        let result = AudioAnalysis.energy(of: levels.spectrum, from: low, to: high, sampleRate: Float(sampleRate))
         if !result.isNumber {
             notice(
                 "energy.notFinite",
@@ -198,7 +202,7 @@ public class SynthSound: EffectInput {
     // MARK: - 出どころ
 
     /// サンプルレート (Hz)。帯域 `k` の中心は `k × sampleRate ÷ 1024` Hz。常に 48000。
-    public var sampleRate: Float { Float(stage.rack.sampleRate) }
+    public var sampleRate: Double { Double(Float(stage.rack.sampleRate)) }
 
     // MARK: - ステージとの受け渡し
 
@@ -385,7 +389,8 @@ public class SynthSource: SynthSound {
     /// (投げない — [ADR-0020] 決定 5)。解析値も、この音量を掛けた音のものになる。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func amp(_ volume: Float) {
+    public func amp(_ volume: Double) {
+        let volume = Float(volume)
         guard let value = accept(volume, 0...1, call: "amp", meaning: "a volume") else { return }
         send(.amplitude, value)
     }
@@ -394,7 +399,8 @@ public class SynthSource: SynthSound {
     ///
     /// 波形の全体を上下へずらす (直流成分を加える)。普通の音では 0 のままでよい。範囲の外・NaN は
     /// ``amp(_:)`` と同じに扱う。
-    public func add(_ offset: Float) {
+    public func add(_ offset: Double) {
+        let offset = Float(offset)
         guard let value = accept(offset, -1...1, call: "add", meaning: "an offset") else { return }
         send(.offset, value)
     }
@@ -403,7 +409,8 @@ public class SynthSource: SynthSound {
     ///
     /// 左右を合わせた大きさが変わらないパンニング (等パワー) で、中央では左右とも 1/√2 になる。**エフェクトへ通した
     /// 音の定位は、エフェクトの出力で中央になる**。範囲の外・NaN は ``amp(_:)`` と同じに扱う。
-    public func pan(_ position: Float) {
+    public func pan(_ position: Double) {
+        let position = Float(position)
         guard let value = accept(position, -1...1, call: "pan", meaning: "a position") else {
             return
         }
@@ -510,8 +517,9 @@ public class Oscillator: SynthSource {
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:_:at:)``。
-    public func play(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        play(freq, amp, add, pan, at: 0)
+    public func play(_ freq: Double, _ amp: Double, _ add: Double = 0, _ pan: Double = 0) {
+        let (freq, amp, add, pan) = (Float(freq), Float(amp), Float(add), Float(pan))
+        play(Double(freq), Double(amp), Double(add), Double(pan), at: 0)
     }
 
     /// 周波数・音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
@@ -531,9 +539,8 @@ public class Oscillator: SynthSource {
     /// **エンベロープ (``Env``) と組み合わせて、音高を変えながら連続して鳴らせる**: ``Env/play(_:_:_:_:_:at:)`` と同じ `time` で呼ぶと、音高も
     /// エンベロープも同じサンプルの先頭から変わる (作例は ``Env/play(_:_:_:_:_:at:)`` の「音高を変えながら連続して鳴らす」)。`add`・`pan` も
     /// 毎回渡し直す (省略すると 0 に戻る)。``freq(_:)`` をすぐに呼ぶと、再生中の音の音高も変わってしまう。
-    public func play(
-        _ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double
-    ) {
+    public func play(_ freq: Double, _ amp: Double, _ add: Double = 0, _ pan: Double = 0, at time: Double) {
+        let (freq, amp, add, pan) = (Float(freq), Float(amp), Float(add), Float(pan))
         guard let position = reservationPosition(time, call: "play") else { return }
         postReservation(values: voiceValues(freq, amp, add, pan), ops: [.play], at: position)
         isActive = true
@@ -559,7 +566,8 @@ public class Oscillator: SynthSource {
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func freq(_ frequency: Float) {
+    public func freq(_ frequency: Double) {
+        let frequency = Float(frequency)
         let limit = Float(stage.rack.sampleRate / 2)
         guard let value = accept(frequency, 0...limit, call: "freq", meaning: "a frequency")
         else { return }
@@ -570,11 +578,12 @@ public class Oscillator: SynthSource {
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ freq: Float, _ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        self.freq(freq)
-        self.amp(amp)
-        self.add(add)
-        self.pan(pan)
+    public func set(_ freq: Double, _ amp: Double, _ add: Double = 0, _ pan: Double = 0) {
+        let (freq, amp, add, pan) = (Float(freq), Float(amp), Float(add), Float(pan))
+        self.freq(Double(freq))
+        self.amp(Double(amp))
+        self.add(Double(add))
+        self.pan(Double(pan))
     }
 }
 
@@ -652,8 +661,9 @@ public class Noise: SynthSource {
     ///
     /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。先の時刻に再生するなら ``play(_:_:_:at:)``。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        play(amp, add, pan, at: 0)
+    public func play(_ amp: Double, _ add: Double = 0, _ pan: Double = 0) {
+        let (amp, add, pan) = (Float(amp), Float(add), Float(pan))
+        play(Double(amp), Double(add), Double(pan), at: 0)
     }
 
     /// 音量・オフセット・定位を指定して、オーディオクロックの `time` 秒のサンプルの先頭から再生を始める (先の時刻へ予約する)。
@@ -668,7 +678,8 @@ public class Noise: SynthSource {
     /// **値も、再生と同じサンプルの先頭から反映される。** `time` の意味・現在より前の値・``SynthSource/stop()`` が予約を
     /// 取り消すことは ``SynthSource/play(at:)`` と同じ。範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・
     /// ``SynthSource/add(_:)``・``SynthSource/pan(_:)`` と同じに扱う。
-    public func play(_ amp: Float, _ add: Float = 0, _ pan: Float = 0, at time: Double) {
+    public func play(_ amp: Double, _ add: Double = 0, _ pan: Double = 0, at time: Double) {
+        let (amp, add, pan) = (Float(amp), Float(add), Float(pan))
         guard let position = reservationPosition(time, call: "play") else { return }
         postReservation(values: mixValues(amp, add, pan), ops: [.play], at: position)
         isActive = true
@@ -679,10 +690,11 @@ public class Noise: SynthSource {
     ///
     /// 範囲の外・NaN は、それぞれ ``SynthSource/amp(_:)``・``SynthSource/add(_:)``・
     /// ``SynthSource/pan(_:)`` と同じに扱う。
-    public func set(_ amp: Float, _ add: Float = 0, _ pan: Float = 0) {
-        self.amp(amp)
-        self.add(add)
-        self.pan(pan)
+    public func set(_ amp: Double, _ add: Double = 0, _ pan: Double = 0) {
+        let (amp, add, pan) = (Float(amp), Float(add), Float(pan))
+        self.amp(Double(amp))
+        self.add(Double(add))
+        self.pan(Double(pan))
     }
 }
 
@@ -760,11 +772,9 @@ public final class Env {
     /// すぐに始める。先の時刻に始めるなら ``play(_:_:_:_:_:at:)``。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func play(
-        _ input: SynthSource, _ attackTime: Float, _ sustainTime: Float, _ sustainLevel: Float,
-        _ releaseTime: Float
-    ) {
-        play(input, attackTime, sustainTime, sustainLevel, releaseTime, at: 0)
+    public func play(_ input: SynthSource, _ attackTime: Double, _ sustainTime: Double, _ sustainLevel: Double, _ releaseTime: Double) {
+        let (attackTime, sustainTime, sustainLevel, releaseTime) = (Float(attackTime), Float(sustainTime), Float(sustainLevel), Float(releaseTime))
+        play(input, Double(attackTime), Double(sustainTime), Double(sustainLevel), Double(releaseTime), at: 0)
     }
 
     /// エンベロープを `input` にかけ、オーディオクロックの `time` 秒のサンプルの先頭から始める (先の時刻へ予約する)。`input` が再生されていなければ
@@ -885,10 +895,8 @@ public final class Env {
     /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func play(
-        _ input: SynthSource, _ attackTime: Float, _ sustainTime: Float, _ sustainLevel: Float,
-        _ releaseTime: Float, at time: Double
-    ) {
+    public func play(_ input: SynthSource, _ attackTime: Double, _ sustainTime: Double, _ sustainLevel: Double, _ releaseTime: Double, at time: Double) {
+        let (attackTime, sustainTime, sustainLevel, releaseTime) = (Float(attackTime), Float(sustainTime), Float(sustainLevel), Float(releaseTime))
         input.triggerEnvelope(
             attack: attackTime, sustain: sustainTime, level: sustainLevel, release: releaseTime,
             at: time)

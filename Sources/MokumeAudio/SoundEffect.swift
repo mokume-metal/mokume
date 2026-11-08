@@ -143,16 +143,18 @@ public class Filter: SoundEffect {
     /// ```
     ///
     /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ freq: Float) {
-        self.freq(freq)
+    public func process(_ input: any EffectInput, _ freq: Double) {
+        let freq = Float(freq)
+        self.freq(Double(freq))
         process(input)
     }
 
     /// 入力した音に、カットオフ周波数とレゾナンスを指定してエフェクトをかける。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ freq: Float, _ res: Float) {
-        set(freq, res)
+    public func process(_ input: any EffectInput, _ freq: Double, _ res: Double) {
+        let (freq, res) = (Float(freq), Float(res))
+        set(Double(freq), Double(res))
         process(input)
     }
 
@@ -162,7 +164,8 @@ public class Filter: SoundEffect {
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func freq(_ frequency: Float) {
+    public func freq(_ frequency: Double) {
+        let frequency = Float(frequency)
         guard let value = accept(
             frequency, 10...20_000, call: "freq", meaning: "a cutoff frequency")
         else { return }
@@ -172,7 +175,8 @@ public class Filter: SoundEffect {
     /// レゾナンス (Q) を設定する。0.1 から 100 まで。既定は 1。
     ///
     /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
-    public func res(_ quality: Float) {
+    public func res(_ quality: Double) {
+        let quality = Float(quality)
         guard let value = accept(quality, 0.1...100, call: "res", meaning: "a resonance")
         else { return }
         send(.resonance, value)
@@ -181,9 +185,10 @@ public class Filter: SoundEffect {
     /// カットオフ周波数とレゾナンスを設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``res(_:)`` と同じに扱う。
-    public func set(_ freq: Float, _ res: Float) {
-        self.freq(freq)
-        self.res(res)
+    public func set(_ freq: Double, _ res: Double) {
+        let (freq, res) = (Float(freq), Float(res))
+        self.freq(Double(freq))
+        self.res(Double(res))
     }
 }
 
@@ -230,8 +235,9 @@ public final class BandPass: SoundEffect {
     /// 入力した音に、中心周波数と帯域幅を指定してエフェクトをかける。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ freq: Float, _ bw: Float) {
-        set(freq, bw)
+    public func process(_ input: any EffectInput, _ freq: Double, _ bw: Double) {
+        let (freq, bw) = (Float(freq), Float(bw))
+        set(Double(freq), Double(bw))
         process(input)
     }
 
@@ -241,7 +247,8 @@ public final class BandPass: SoundEffect {
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func freq(_ frequency: Float) {
+    public func freq(_ frequency: Double) {
+        let frequency = Float(frequency)
         guard let value = accept(
             frequency, 10...20_000, call: "freq", meaning: "a center frequency")
         else { return }
@@ -251,7 +258,8 @@ public final class BandPass: SoundEffect {
     /// 通す帯域の幅を設定する。単位は Hz で、1 から 20000 まで。既定は 500。
     ///
     /// 範囲の外・NaN は ``freq(_:)`` と同じに扱う。
-    public func bw(_ bandwidth: Float) {
+    public func bw(_ bandwidth: Double) {
+        let bandwidth = Float(bandwidth)
         guard let value = accept(bandwidth, 1...20_000, call: "bw", meaning: "a bandwidth")
         else { return }
         send(.bandwidth, value)
@@ -260,9 +268,10 @@ public final class BandPass: SoundEffect {
     /// 中心周波数と帯域幅を設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``freq(_:)``・``bw(_:)`` と同じに扱う。
-    public func set(_ freq: Float, _ bw: Float) {
-        self.freq(freq)
-        self.bw(bw)
+    public func set(_ freq: Double, _ bw: Double) {
+        let (freq, bw) = (Float(freq), Float(bw))
+        self.freq(Double(freq))
+        self.bw(Double(bw))
     }
 }
 
@@ -292,8 +301,9 @@ public final class Reverb: SoundEffect {
     /// 入力した音に、部屋の大きさ・高域の減衰・ウェットの割合を指定してエフェクトをかける。
     ///
     /// 範囲の外・NaN は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ room: Float, _ damp: Float, _ wet: Float) {
-        set(room, damp, wet)
+    public func process(_ input: any EffectInput, _ room: Double, _ damp: Double, _ wet: Double) {
+        let (room, damp, wet) = (Float(room), Float(damp), Float(wet))
+        set(Double(room), Double(damp), Double(wet))
         process(input)
     }
 
@@ -303,7 +313,8 @@ public final class Reverb: SoundEffect {
     /// (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func room(_ size: Float) {
+    public func room(_ size: Double) {
+        let size = Float(size)
         guard let value = accept(size, 0...1, call: "room", meaning: "a room size") else {
             return
         }
@@ -313,7 +324,8 @@ public final class Reverb: SoundEffect {
     /// 高域の減衰 (ダンピング) を設定する。0〜1 で、大きいほど残響がこもる。既定は 0.5。
     ///
     /// 範囲の外・NaN は ``room(_:)`` と同じに扱う。
-    public func damp(_ amount: Float) {
+    public func damp(_ amount: Double) {
+        let amount = Float(amount)
         guard let value = accept(amount, 0...1, call: "damp", meaning: "a damping") else {
             return
         }
@@ -323,7 +335,8 @@ public final class Reverb: SoundEffect {
     /// ウェット (残響) の割合を設定する。0 で入力した音だけ、1 で残響だけ。既定は 0.5。
     ///
     /// 範囲の外・NaN は ``room(_:)`` と同じに扱う。
-    public func wet(_ amount: Float) {
+    public func wet(_ amount: Double) {
+        let amount = Float(amount)
         guard let value = accept(amount, 0...1, call: "wet", meaning: "a wet amount") else {
             return
         }
@@ -333,10 +346,11 @@ public final class Reverb: SoundEffect {
     /// 部屋の大きさ・高域の減衰・ウェットの割合を設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``room(_:)``・``damp(_:)``・``wet(_:)`` と同じに扱う。
-    public func set(_ room: Float, _ damp: Float, _ wet: Float) {
-        self.room(room)
-        self.damp(damp)
-        self.wet(wet)
+    public func set(_ room: Double, _ damp: Double, _ wet: Double) {
+        let (room, damp, wet) = (Float(room), Float(damp), Float(wet))
+        self.room(Double(room))
+        self.damp(Double(damp))
+        self.wet(Double(wet))
     }
 }
 
@@ -377,7 +391,8 @@ public final class Delay: SoundEffect {
     /// 無限大は無視する。どちらもそのことを 1 度だけ警告する (投げない — [ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func process(_ input: any EffectInput, _ maxDelayTime: Float) {
+    public func process(_ input: any EffectInput, _ maxDelayTime: Double) {
+        let maxDelayTime = Float(maxDelayTime)
         if let value = accept(
             maxDelayTime, 0...Float(EchoKernel.maximumSeconds), call: "process",
             meaning: "a maxDelayTime")
@@ -390,9 +405,10 @@ public final class Delay: SoundEffect {
     /// 入力した音に、ディレイタイムの上限とフィードバックの割合を指定してエフェクトをかける。
     ///
     /// 範囲の外・NaN は、それぞれ ``process(_:_:)``・``feedback(_:)`` と同じに扱う。
-    public func process(_ input: any EffectInput, _ maxDelayTime: Float, _ feedback: Float) {
-        self.feedback(feedback)
-        process(input, maxDelayTime)
+    public func process(_ input: any EffectInput, _ maxDelayTime: Double, _ feedback: Double) {
+        let (maxDelayTime, feedback) = (Float(maxDelayTime), Float(feedback))
+        self.feedback(Double(feedback))
+        process(input, Double(maxDelayTime))
     }
 
     /// ディレイタイムを設定する。単位は秒で、0 から ``process(_:_:)`` で指定した上限まで (既定は 5)。既定のディレイタイムは 0.25。
@@ -401,7 +417,8 @@ public final class Delay: SoundEffect {
     /// (投げない — [ADR-0020] 決定 5)。ディレイタイムを変えている最中は、音の高さが揺れる。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public func time(_ seconds: Float) {
+    public func time(_ seconds: Double) {
+        let seconds = Float(seconds)
         guard let value = accept(
             seconds, 0...maximumTime, call: "time", meaning: "a delay time")
         else { return }
@@ -411,7 +428,8 @@ public final class Delay: SoundEffect {
     /// フィードバックの割合を設定する。0〜1 で、大きいほど反響が長く続く。既定は 0.5。
     ///
     /// 範囲の外・NaN は ``time(_:)`` と同じに扱う。1 では減衰しなくなるので、手前の 0.99 に制限する。
-    public func feedback(_ amount: Float) {
+    public func feedback(_ amount: Double) {
+        let amount = Float(amount)
         guard let value = accept(amount, 0...1, call: "feedback", meaning: "a feedback") else {
             return
         }
@@ -421,8 +439,9 @@ public final class Delay: SoundEffect {
     /// ディレイタイムとフィードバックの割合を設定する。
     ///
     /// 範囲の外・NaN は、それぞれ ``time(_:)``・``feedback(_:)`` と同じに扱う。
-    public func set(_ time: Float, _ feedback: Float) {
-        self.time(time)
-        self.feedback(feedback)
+    public func set(_ time: Double, _ feedback: Double) {
+        let (time, feedback) = (Float(time), Float(feedback))
+        self.time(Double(time))
+        self.feedback(Double(feedback))
     }
 }

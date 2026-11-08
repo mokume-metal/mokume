@@ -146,7 +146,11 @@ public final class MIDIPort: Inlet {
     /// - Parameters:
     ///   - controller: コントローラの番号 (0〜127)。1 がモジュレーションホイール、7 がボリューム。範囲外は `nil`。
     ///   - channel: チャンネル (1〜16)。省けば、どのチャンネルでもよい。範囲外は `nil`。
-    public func controlChange(_ controller: Int, channel: Int? = nil) -> Float? {
+    public func controlChange(_ controller: Int, channel: Int? = nil) -> Double? {
+        controlChangeValue(controller, channel: channel).map(Double.init)
+    }
+
+    func controlChangeValue(_ controller: Int, channel: Int? = nil) -> Float? {
         controllers.value(controller: controller, channel: channel).map { Float($0) / 127 }
     }
 

@@ -198,7 +198,7 @@ nonisolated final class SurfaceTables: Sendable {
             }
         }
         if let claimed { return claimed }
-        let made = Self.build(from: buffer, alpha: key.alphaValue)
+        let made = Self.build(from: buffer, alpha: key.alpha)
         built.add(1, ordering: .relaxed)
         entries.withLock { $0[key] = made.map(Entry.ready) ?? .rejected }
         return made.map(Result.success) ?? .failure(.tableRejected)

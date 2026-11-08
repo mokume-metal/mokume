@@ -219,13 +219,14 @@ public final class Movie: Inlet {
     /// 高さ (画素)。``image`` の高さと同じで、回転情報を適用した後の値。
     public var height: Int { image.height }
     /// 長さ (秒)。
-    public var duration: Float { Float(reader.duration) }
+    public var duration: Double { Double(Float(reader.duration)) }
     /// いまの位置 (秒)。0 から ``duration`` まで。``jump(_:)`` を要求した後なら、その飛び先。
     ///
     /// **時刻を指定した `observe` の 1 フレームの `draw()` の中では、映しているコマの位置**を返す — そこで読む
     /// ``SketchPart/time`` が `observe` の秒なのと揃う。再生の状態はスケッチの時計に沿って進んでいて、
     /// `observe` の後のフレームはそこから続く ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
-    public var time: Float {
+    public var time: Double { Double(timeValue) }
+    var timeValue: Float {
         let shown = owner?.time ?? 0
         // 観測の枚の `draw()` の中だけ、見せる時刻と作者の時計の秒が違う。飛ぶよう頼んだ後は飛び先
         guard let owner, shown != owner.authorTime, playhead.reported == playhead.position else {
@@ -258,7 +259,8 @@ public final class Movie: Inlet {
     ///
     /// 流している間なら、そこから流れ続ける。0 より前は頭、``duration`` より後は終わりへ
     /// クランプする (``duration`` を渡せば、長さが単精度で表せない値でも、終わりへ着く)。`.nan`・無限は位置を変えず、1 度だけ警告する。
-    public func jump(_ seconds: Float) {
+    public func jump(_ seconds: Double) {
+        let seconds = Float(seconds)
         guard playhead.jump(to: playhead.landing(seconds)) else {
             guard !warnedJump else { return }
             warnedJump = true
@@ -282,7 +284,8 @@ public final class Movie: Inlet {
     /// ```swift
     /// movie.speed(map(mouseX, 0, width, 0.25, 4))   // マウスの x 座標で 0.25 倍から 4 倍
     /// ```
-    public func speed(_ rate: Float) {
+    public func speed(_ rate: Double) {
+        let rate = Float(rate)
         guard playhead.setSpeed(Double(rate)) else {
             guard !warnedSpeed else { return }
             warnedSpeed = true
