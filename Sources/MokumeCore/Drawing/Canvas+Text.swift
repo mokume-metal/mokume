@@ -28,7 +28,7 @@ extension Canvas {
     public func noTextFont() { style.fontSelection = nil }
 
     /// これから描く文字の大きさ (画素)。
-    public func textSize(_ size: some ScalarConvertible) {
+    public func textSize(_ size: Double) {
         style.textSize = textMeasure(
             size.asFloat, from: "textSize", "the size", negative: .negativeTextSize)
     }
@@ -42,7 +42,7 @@ extension Canvas {
     /// これから描く文字の太さ (100〜900)。
     ///
     /// 整数に丸め、100 未満・900 超は端へ丸めて 1 度知らせる。数でない値は 1 度知らせて、前の太さのまま。
-    public func textWeight(_ weight: some ScalarConvertible) {
+    public func textWeight(_ weight: Double) {
         let value = weight.asFloat
         guard value.isFinite else {
             warnOnce(
@@ -71,7 +71,7 @@ extension Canvas {
     }
 
     /// 行と行の間隔 (画素)。
-    public func textLeading(_ leading: some ScalarConvertible) {
+    public func textLeading(_ leading: Double) {
         style.textLeading = textMeasure(
             leading.asFloat, from: "textLeading", "the leading", negative: .negativeTextLeading)
     }
@@ -162,7 +162,7 @@ extension Canvas {
     /// 改行で行が分かれ、行の間隔は ``textLeading(_:)`` が決める。
     /// 字は Unicode のスカラ 1 つずつ引き当てて並べ、組版はしない (複数のスカラでできた絵文字は部品ごとに描かれる。
     /// 組版して描くのは ``shapedText(_:_:_:)``)。
-    public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func text(_ string: String, _ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
         // 字はベクターへ書けない。字形の輪郭を持たない (#3139)
@@ -303,7 +303,7 @@ extension Canvas {
     /// [#1452]: https://github.com/mokume-metal/mokume/issues/1452
     /// [#1540]: https://github.com/mokume-metal/mokume/issues/1540
     @discardableResult
-    public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
+    public func text(_ string: String, _ a: Double, _ b: Double, _ c: Double, _ d: Double)
         -> TextFlow
     {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
@@ -632,7 +632,7 @@ extension Canvas {
     /// (`Typeface.measuresByDrawing(_:path:)`) — 返る周の外接は、いつも枠と揃う。
     ///
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
-    public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
+    public func textOutline(_ string: String, _ x: Double, _ y: Double) -> [TextContour] {
         outlineContours(string, x.asFloat, y.asFloat)
     }
 
@@ -649,8 +649,8 @@ extension Canvas {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#2447]: https://github.com/mokume-metal/mokume/issues/2447
     public func textOutline(
-        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible,
-        spacing: some ScalarConvertible
+        _ string: String, _ x: Double, _ y: Double,
+        spacing: Double
     ) -> [TextContour] {
         let spacing = spacing.asFloat
         guard spacing.isFinite, spacing > 0 else {
@@ -763,7 +763,7 @@ extension Canvas {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [#1284]: https://github.com/mokume-metal/mokume/issues/1284
     /// [#2308]: https://github.com/mokume-metal/mokume/issues/2308
-    public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
+    public func textBounds(_ string: String, _ x: Double, _ y: Double) -> TextBounds? {
         var box = CGRect.null
         let face = typeface
         // 拡大した字 (段 0 より上) は、`text()` が別の鍵の画素で焼く。**段 0 の画素を預けても引き取られない**

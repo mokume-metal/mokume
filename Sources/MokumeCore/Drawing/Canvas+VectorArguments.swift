@@ -9,7 +9,7 @@
 
 extension Canvas {
     /// 円。座標の読み方は ``ellipseMode(_:)`` が決める。``circle(_:_:_:)`` に `center.x`・`center.y` を渡すのと同じ。
-    public func circle(_ center: Vector2, _ diameter: some ScalarConvertible) {
+    public func circle(_ center: Vector2, _ diameter: Double) {
         circle(center.x, center.y, diameter)
     }
 

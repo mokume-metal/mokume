@@ -18,7 +18,7 @@ extension Canvas {
     }
 
     // 影を焼き付ける範囲の一辺 (世界の長さ)。中心は ``shadowMatrix`` が決める (#3842)。
-    public func shadowRange(_ size: some ScalarConvertible) {
+    public func shadowRange(_ size: Double) {
         let size = size.asFloat
         guard admits(.shadow) else { return }
         guard size.isFinite, size > 0 else { return warnBadShadow("shadowRange") }
@@ -35,7 +35,7 @@ extension Canvas {
     }
 
     // 影の縁の破綻を抑える量。
-    public func shadowBias(_ amount: some ScalarConvertible) {
+    public func shadowBias(_ amount: Double) {
         let amount = amount.asFloat
         guard admits(.shadow) else { return }
         guard amount.isFinite, amount >= 0 else { return warnBadShadow("shadowBias") }

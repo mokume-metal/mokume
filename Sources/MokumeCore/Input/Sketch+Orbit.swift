@@ -81,8 +81,8 @@ extension SketchPart {
     /// - Note: 視点と同じく**フレームを越えない**。`setup()` や止まっている間の入力の
     ///   コールバックで呼ぶと、警告して無視される (道具の状態も進めない)。
     public func orbitControl(
-        _ sensitivityX: some ScalarConvertible = 1, _ sensitivityY: some ScalarConvertible = 1,
-        _ sensitivityZ: some ScalarConvertible = 1
+        _ sensitivityX: Double = 1, _ sensitivityY: Double = 1,
+        _ sensitivityZ: Double = 1
     ) {
         guard let runtime = Self.liveRuntime() else { return }
         let canvas = runtime.activeCanvas

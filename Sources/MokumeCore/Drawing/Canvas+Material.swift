@@ -9,7 +9,7 @@ import simd
 extension Canvas {
 
     // 艶の鋭さ。0 なら艶を出さない。
-    public func shininess(_ amount: some ScalarConvertible) {
+    public func shininess(_ amount: Double) {
         // フレームの外の断りを、範囲の外の断りより先に言う (``refuseMaterialColor(_:)``)
         guard admits(.material) else { return }
         let amount = amount.asFloat
@@ -18,7 +18,7 @@ extension Canvas {
     }
 
     // 金属らしさ。0 が非金属、1 が金属。
-    public func metalness(_ amount: some ScalarConvertible) {
+    public func metalness(_ amount: Double) {
         guard admits(.material) else { return }
         let amount = amount.asFloat
         guard amount.isFinite, amount >= 0, amount <= 1 else {

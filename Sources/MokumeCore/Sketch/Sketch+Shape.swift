@@ -531,7 +531,7 @@ extension SketchPart {
     /// **たくさん置くときは shape(_:at:) を使う。** こちらは 1 回ごとに頂点を
     /// 置き直すので、置く数だけ描く回数が増える。
     // shot: 1 snippet=73a8868f
-    public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+    public func shape(_ shape: Shape, _ x: Double = 0, _ y: Double = 0) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shape(shape, x, y)

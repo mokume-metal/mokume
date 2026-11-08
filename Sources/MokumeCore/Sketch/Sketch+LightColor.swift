@@ -73,7 +73,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=35d60dbe
     // shot: 2 snippet=674eb169
-    public func ambientLight(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+    public func ambientLight(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         canvas.ambientLight(red, green, blue)
@@ -108,7 +108,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=463f0c89
-    public func ambientLight(_ gray: some ScalarConvertible) {
+    public func ambientLight(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let gray = gray.asFloat
         canvas.ambientLight(gray)
@@ -165,7 +165,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=746cf48b
     public func directionalLight(
-        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+        _ red: Double, _ green: Double, _ blue: Double, _ x: Double, _ y: Double, _ z: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
@@ -206,7 +206,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=b0b4f19a
     public func pointLight(
-        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
+        _ red: Double, _ green: Double, _ blue: Double, _ x: Double, _ y: Double, _ z: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, x, y, z) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat)
@@ -269,10 +269,10 @@ extension SketchPart {
     // shot: 1 snippet=86836e88
     // shot: 2 snippet=c1634f5d
     public func spotLight(
-        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible,
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
-        _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
-        angle: some ScalarConvertible = Float.pi / 6
+        _ red: Double, _ green: Double, _ blue: Double,
+        _ x: Double, _ y: Double, _ z: Double,
+        _ directionX: Double, _ directionY: Double, _ directionZ: Double,
+        angle: Double = Float.pi / 6
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, x, y, z, directionX, directionY, directionZ, angle) = (red.asFloat, green.asFloat, blue.asFloat, x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)
@@ -309,7 +309,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=7a515c10
-    public func ambient(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+    public func ambient(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         canvas.ambient(red, green, blue)
@@ -342,7 +342,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=56ca5230
-    public func ambient(_ gray: some ScalarConvertible) {
+    public func ambient(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let gray = gray.asFloat
         canvas.ambient(gray)
@@ -377,7 +377,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=438a495e
-    public func emissive(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
+    public func emissive(_ red: Double, _ green: Double, _ blue: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
         canvas.emissive(red, green, blue)
@@ -410,7 +410,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=53bc89e9
-    public func emissive(_ gray: some ScalarConvertible) {
+    public func emissive(_ gray: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let gray = gray.asFloat
         canvas.emissive(gray)

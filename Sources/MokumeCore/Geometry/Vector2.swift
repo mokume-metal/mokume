@@ -151,7 +151,7 @@ public nonisolated struct Vector2: Sendable, Hashable {
     ///   }
     /// }
     // shot: 1 snippet=7a48090c
-    public init(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public init(_ x: Double, _ y: Double) {
         simd = SIMD2(x.asFloat, y.asFloat)
     }
 
@@ -378,13 +378,13 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=4df2ce9e
-    public static func * (lhs: Vector2, rhs: some ScalarConvertible) -> Vector2 {
+    public static func * (lhs: Vector2, rhs: Double) -> Vector2 {
         Vector2(lhs.simd * rhs.asFloat)
     }
 
     /// 数を前に置いて掛ける。`vector * scale` と同じ。
-    // shot: 参照 Vector2.*(_:_:) (Vector2, some ScalarConvertible)
-    public static func * (lhs: some ScalarConvertible, rhs: Vector2) -> Vector2 {
+    // shot: 参照 Vector2.*(_:_:) (Vector2, Double)
+    public static func * (lhs: Double, rhs: Vector2) -> Vector2 {
         Vector2(lhs.asFloat * rhs.simd)
     }
 
@@ -411,7 +411,7 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=dd132798
-    public static func / (lhs: Vector2, rhs: some ScalarConvertible) -> Vector2 {
+    public static func / (lhs: Vector2, rhs: Double) -> Vector2 {
         Vector2(lhs.simd / rhs.asFloat)
     }
 
@@ -428,14 +428,14 @@ nonisolated extension Vector2 {
     }
 
     /// 掛けて入れる。`velocity *= 0.98` で少しずつ遅くする。
-    // shot: 参照 Vector2.*(_:_:) (Vector2, some ScalarConvertible)
-    public static func *= (lhs: inout Vector2, rhs: some ScalarConvertible) {
+    // shot: 参照 Vector2.*(_:_:) (Vector2, Double)
+    public static func *= (lhs: inout Vector2, rhs: Double) {
         lhs.simd *= rhs.asFloat
     }
 
     /// 割って入れる。
     // shot: 参照 Vector2./(_:_:)
-    public static func /= (lhs: inout Vector2, rhs: some ScalarConvertible) {
+    public static func /= (lhs: inout Vector2, rhs: Double) {
         lhs.simd /= rhs.asFloat
     }
 }
@@ -523,7 +523,7 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=91efd0d7
-    public func limited(to maximum: some ScalarConvertible) -> Vector2 {
+    public func limited(to maximum: Double) -> Vector2 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector2(0, 0) }
         // `length` は 2 乗が溢れる・潰れる値も測れる (0 になるのは 0 ベクトルだけ・#2935)
@@ -643,7 +643,7 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=eade7c59
-    public init(angle: some ScalarConvertible, length: some ScalarConvertible = 1) {
+    public init(angle: Double, length: Double = 1) {
         let (angle, length) = (angle.asFloat, length.asFloat)
         self.init(SIMD2(RuntimeMath.cos(angle), RuntimeMath.sin(angle)) * length)
     }
@@ -703,7 +703,7 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=5d1ac7b7
-    public func rotated(by angle: some ScalarConvertible) -> Vector2 {
+    public func rotated(by angle: Double) -> Vector2 {
         let angle = angle.asFloat
         let (cosine, sine) = (RuntimeMath.cos(angle), RuntimeMath.sin(angle))
         return Vector2(SIMD2(simd.x * cosine - simd.y * sine, simd.x * sine + simd.y * cosine))
@@ -756,7 +756,7 @@ nonisolated extension Vector2 {
     ///   }
     /// }
     // shot: 1 snippet=56e2c36f
-    public func interpolated(to target: Vector2, amount: some ScalarConvertible) -> Vector2 {
+    public func interpolated(to target: Vector2, amount: Double) -> Vector2 {
         let amount = amount.asFloat
         return Vector2(SIMD2(interpolate(simd.x, target.simd.x, amount), interpolate(simd.y, target.simd.y, amount)))
     }

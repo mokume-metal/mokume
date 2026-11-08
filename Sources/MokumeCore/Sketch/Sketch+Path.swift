@@ -61,7 +61,7 @@ extension SketchPart {
     ///
     /// ``createPath(_:)`` の中で呼ぶと、描かずに、外の道へ部分道を足す。
     // shot: 撮れない 道に沿って動く粒は参照スケッチ type-and-path が、破線は #2432 が示す。同じ beginShape との画素の一致は PathTests が見る
-    public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+    public func shape(_ path: Path, _ x: Double = 0, _ y: Double = 0) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.shape(path, x, y)
     }

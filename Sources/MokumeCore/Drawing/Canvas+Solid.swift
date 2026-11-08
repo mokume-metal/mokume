@@ -33,20 +33,20 @@ extension Canvas {
     // MARK: - 基本の形
 
     // 立方体を置く。
-    public func box(_ size: some ScalarConvertible) {
+    public func box(_ size: Double) {
         let size = size.asFloat
         box(size, size, size)
     }
 
     // 箱を置く。
-    public func box(_ width: some ScalarConvertible, _ height: some ScalarConvertible, _ depth: some ScalarConvertible) {
+    public func box(_ width: Double, _ height: Double, _ depth: Double) {
         let (width, height, depth) = (width.asFloat, height.asFloat, depth.asFloat)
         guard SolidShape.isDrawable(width, height, depth) else { return warnBadSize("box") }
         place(.box(width: width, height: height, depth: depth))
     }
 
     // 球を置く。
-    public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
+    public func sphere(_ radius: Double, detail: Int = Canvas.defaultSolidDetail) {
         let radius = radius.asFloat
         guard SolidShape.isDrawable(radius) else { return warnBadSize("sphere") }
         place(.sphere(radius: radius, detail: admittedDetail(detail, for: "sphere", .badSphereDetail)))
@@ -54,7 +54,7 @@ extension Canvas {
 
     // 楕円体を置く。
     public func ellipsoid(
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ x: Double, _ y: Double, _ z: Double,
         detail: Int = Canvas.defaultSolidDetail
     ) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
@@ -65,7 +65,7 @@ extension Canvas {
     }
 
     // 平らな面を置く。
-    public func plane(_ width: some ScalarConvertible, _ height: some ScalarConvertible) {
+    public func plane(_ width: Double, _ height: Double) {
         let (width, height) = (width.asFloat, height.asFloat)
         guard SolidShape.isDrawable(width, height) else { return warnBadSize("plane") }
         place(.plane(width: width, height: height))
@@ -73,7 +73,7 @@ extension Canvas {
 
     // 円柱を置く。
     public func cylinder(
-        _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
+        _ radius: Double, _ height: Double,
         detail: Int = Canvas.defaultSolidDetail
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
@@ -83,7 +83,7 @@ extension Canvas {
 
     // 円錐を置く。
     public func cone(
-        _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
+        _ radius: Double, _ height: Double,
         detail: Int = Canvas.defaultSolidDetail
     ) {
         let (radius, height) = (radius.asFloat, height.asFloat)
@@ -93,7 +93,7 @@ extension Canvas {
 
     // 輪を置く。
     public func torus(
-        _ radius: some ScalarConvertible, _ tubeRadius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail
+        _ radius: Double, _ tubeRadius: Double, detail: Int = Canvas.defaultSolidDetail
     ) {
         let (radius, tubeRadius) = (radius.asFloat, tubeRadius.asFloat)
         guard SolidShape.isDrawable(radius, tubeRadius) else { return warnBadSize("torus") }
@@ -105,7 +105,7 @@ extension Canvas {
     // MARK: - 奥行きを持つ変換
 
     // 原点を奥行きも含めてずらす。
-    public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func translate(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y, z: z)
@@ -113,7 +113,7 @@ extension Canvas {
     }
 
     // 横軸まわりに回す。
-    public func rotateX(_ radians: some ScalarConvertible) {
+    public func rotateX(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateX(by: radians)
@@ -121,7 +121,7 @@ extension Canvas {
     }
 
     // 縦軸まわりに回す。
-    public func rotateY(_ radians: some ScalarConvertible) {
+    public func rotateY(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateY(by: radians)
@@ -129,14 +129,14 @@ extension Canvas {
     }
 
     // 奥行きの軸まわりに回す。
-    public func rotateZ(_ radians: some ScalarConvertible) {
+    public func rotateZ(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotateZ(by: radians)
         noteTransformWritten()
     }
 
-    public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func scale(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y, z: z)
@@ -144,7 +144,7 @@ extension Canvas {
     }
 
     /// 縦横と奥行きを同じ倍率で伸ばす (`scale(s, s, s)`)。
-    public func scale(_ s: some ScalarConvertible) {
+    public func scale(_ s: Double) {
         let s = s.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: s, y: s, z: s)

@@ -180,8 +180,8 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=f81c2d48
     public init(
-        left: some ScalarConvertible, top: some ScalarConvertible,
-        width: some ScalarConvertible, height: some ScalarConvertible, fill: LinearRGBA? = nil
+        left: Double, top: Double,
+        width: Double, height: Double, fill: LinearRGBA? = nil
     ) {
         self.left = left.asFloat
         self.top = top.asFloat
@@ -209,7 +209,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=ce3dcac6
     public init(
-        center: Vector2, width: some ScalarConvertible, height: some ScalarConvertible,
+        center: Vector2, width: Double, height: Double,
         fill: LinearRGBA? = nil
     ) {
         let (width, height) = (width.asFloat, height.asFloat)

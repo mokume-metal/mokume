@@ -98,7 +98,7 @@ extension SketchPart {
     // shot: 1 snippet=a7caa890
     // shot: 2 snippet=64e28a7d
     // shot: 3 snippet=47e0d876
-    public func exposure(_ multiplier: some ScalarConvertible) {
+    public func exposure(_ multiplier: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.exposure(multiplier)
     }

@@ -292,7 +292,7 @@ extension SketchPart {
     /// - Note: 線の太さは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=1f8ee8eb
     // shot: 2 snippet=edd890f7
-    public func strokeWeight(_ weight: some ScalarConvertible) {
+    public func strokeWeight(_ weight: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let weight = weight.asFloat
         canvas.strokeWeight(weight)
@@ -516,7 +516,7 @@ extension SketchPart {
     ///
     /// - Note: 破線は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 後で撮る
-    public func strokeDash(_ length: some ScalarConvertible, _ gap: some ScalarConvertible) {
+    public func strokeDash(_ length: Double, _ gap: Double) {
         Self.liveCanvas()?.strokeDash(length, gap)
     }
 
@@ -739,7 +739,7 @@ extension SketchPart {
     // shot: 4 snippet=023d04a6 image=07190cd1ac2f47b4
     // shot: 5 snippet=b84ca0ec image=b953abec6aa746c5
     // shot: 6 snippet=bd0ccc48 image=2612ab9e73926215
-    public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func clip(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.clip(a, b, c, d)

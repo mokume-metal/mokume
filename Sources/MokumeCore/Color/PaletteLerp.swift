@@ -85,7 +85,7 @@ nonisolated enum PaletteValues {
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func paletteLerp(
-    _ stops: [(LinearRGBA, Float)], _ amount: some ScalarConvertible
+    _ stops: [(LinearRGBA, Float)], _ amount: Double
 ) -> LinearRGBA {
     var usable = stops
     if !stops.allSatisfy({ $0.1.isFinite }) {

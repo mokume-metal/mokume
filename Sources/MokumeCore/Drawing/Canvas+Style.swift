@@ -35,7 +35,7 @@ extension Canvas {
     /// 線を引かない。図形の輪郭も出なくなる。
     public func noStroke() { style.hasStroke = false }
 
-    public func strokeWeight(_ weight: some ScalarConvertible) {
+    public func strokeWeight(_ weight: Double) {
         let weight = weight.asFloat
         // 負の太さ・数でない値・無限は 0 にして、1 度知らせる (#1698)。`>=` は NaN も弾く。
         // 無限を通すと、形の経路 (`appendForm`) が形ごと黙って捨て、塗りも出ない (#1698 の
@@ -60,7 +60,7 @@ extension Canvas {
     // 左へ寄り、細かさ 1 未満では丸めが 2 段に重なる。
     //
     // [#1641]: https://github.com/mokume-metal/mokume/issues/1641
-    public func clip(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func clip(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         // **切り抜きはフレームを越えない** (ADR-0021 決定 4)。描画先の座標で効き、形に焼き付か
         // ないので、形の組み立ての中ではフレームの中でも断る (同 決定 4 の追補・#1529)。値の
         // 検めより先に断る。形の切り抜きの閉包の中では、閉包の中だと分かる文面で言う
@@ -709,7 +709,7 @@ extension Canvas {
     /// 線の折れ目の形。
     public func strokeJoin(_ join: StrokeJoin) { style.strokeJoin = join }
 
-    public func strokeDash(_ length: some ScalarConvertible, _ gap: some ScalarConvertible) {
+    public func strokeDash(_ length: Double, _ gap: Double) {
         let (length, gap) = (length.asFloat, gap.asFloat)
         // 負の値・数でない値・無限・両方 0 は、破線を置かず実線へ戻して 1 度知らせる (#2835)。
         // `>=` は NaN も弾く。足して溢れる周期も、刻めないので同じに扱う

@@ -53,28 +53,28 @@ extension Canvas {
         shapeKind = kind
     }
 
-    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func vertex(_ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false)
     }
 
     // 奥行きを持つ頂点を 1 つ置く。
-    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func vertex(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true)
     }
 
     // 貼る絵の読み取り位置つきで頂点を 1 つ置く。
-    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+    public func vertex(_ x: Double, _ y: Double, _ u: Double, _ v: Double) {
         let (x, y, u, v) = (x.asFloat, y.asFloat, u.asFloat, v.asFloat)
         breakCurveSequence()
         appendVertex(SIMD3(x, y, 0), hasDepth: false, uv: textureUV(u, v))
     }
 
     // 奥行きと読み取り位置を持つ頂点を 1 つ置く。
-    public func vertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible, _ u: some ScalarConvertible, _ v: some ScalarConvertible) {
+    public func vertex(_ x: Double, _ y: Double, _ z: Double, _ u: Double, _ v: Double) {
         let (x, y, z, u, v) = (x.asFloat, y.asFloat, z.asFloat, u.asFloat, v.asFloat)
         breakCurveSequence()
         appendVertex(SIMD3(x, y, z), hasDepth: true, uv: textureUV(u, v))
@@ -101,7 +101,7 @@ extension Canvas {
     }
 
     // これから置く頂点の面の向きを決める。
-    public func normal(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func normal(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         // 形の外で控えても、次の beginShape() が消すのでどの頂点にも効かない (#1520)
         guard admitsShapeCall("normal") else { return }
@@ -119,7 +119,7 @@ extension Canvas {
     }
 
     public func bezierVertex(
-        _ cx1: some ScalarConvertible, _ cy1: some ScalarConvertible, _ cx2: some ScalarConvertible, _ cy2: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible
+        _ cx1: Double, _ cy1: Double, _ cx2: Double, _ cy2: Double, _ x: Double, _ y: Double
     ) {
         let (cx1, cy1, cx2, cy2, x, y) = (cx1.asFloat, cy1.asFloat, cx2.asFloat, cy2.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
@@ -136,7 +136,7 @@ extension Canvas {
         }
     }
 
-    public func quadraticVertex(_ cx: some ScalarConvertible, _ cy: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func quadraticVertex(_ cx: Double, _ cy: Double, _ x: Double, _ y: Double) {
         let (cx, cy, x, y) = (cx.asFloat, cy.asFloat, x.asFloat, y.asFloat)
         breakCurveSequence()
         guard admitsShapeCall("quadraticVertex") else { return }
@@ -165,7 +165,7 @@ extension Canvas {
     ///
     /// [#1449]: https://github.com/mokume-metal/mokume/issues/1449
     /// [#1537]: https://github.com/mokume-metal/mokume/issues/1537
-    public func curveVertex(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func curveVertex(_ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard admitsShapeCall("curveVertex") else { return }
         curveGuides.append(SIMD2(x, y))
@@ -211,7 +211,7 @@ extension Canvas {
         currentCurveDetail = used
     }
 
-    public func curveTightness(_ amount: some ScalarConvertible) {
+    public func curveTightness(_ amount: Double) {
         let amount = amount.asFloat
         currentCurveTightness = amount
     }

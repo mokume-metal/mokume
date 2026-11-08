@@ -132,7 +132,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=dc046896
     public init(
-        x: some ScalarConvertible, y: some ScalarConvertible, radius: some ScalarConvertible,
+        x: Double, y: Double, radius: Double,
         fill: LinearRGBA? = nil
     ) {
         self.init(center: Vector2(x, y), radius: radius, fill: fill)
@@ -158,7 +158,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     /// }
     // shot: 1 snippet=28dcde00
     public init(
-        x: some ScalarConvertible, y: some ScalarConvertible, diameter: some ScalarConvertible,
+        x: Double, y: Double, diameter: Double,
         fill: LinearRGBA? = nil
     ) {
         self.init(center: Vector2(x, y), radius: diameter.asFloat / 2, fill: fill)
@@ -182,7 +182,7 @@ public nonisolated struct Circle: Sendable, Hashable, Codable {
     ///   }
     /// }
     // shot: 1 snippet=f796decc
-    public init(center: Vector2, radius: some ScalarConvertible, fill: LinearRGBA? = nil) {
+    public init(center: Vector2, radius: Double, fill: LinearRGBA? = nil) {
         self.center = center
         self.radius = radius.asFloat
         self.fill = fill

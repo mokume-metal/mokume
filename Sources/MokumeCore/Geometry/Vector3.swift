@@ -56,7 +56,7 @@ public nonisolated struct Vector3: Sendable, Hashable {
     ///
     /// 数は `Float`・`Double`・`Int` のどれでもよい。`Int` の変数もそのまま渡せる。
     // shot: 撮れない 値を作るだけで、描く結果が無い
-    public init(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public init(_ x: Double, _ y: Double, _ z: Double) {
         simd = SIMD3(x.asFloat, y.asFloat, z.asFloat)
     }
 
@@ -136,19 +136,19 @@ nonisolated extension Vector3 {
 
     /// 数を掛けて、向きを保ったまま長さを変える。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public static func * (lhs: Vector3, rhs: some ScalarConvertible) -> Vector3 {
+    public static func * (lhs: Vector3, rhs: Double) -> Vector3 {
         Vector3(lhs.simd * rhs.asFloat)
     }
 
     /// 数を前に置いて掛ける。`vector * scale` と同じ。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public static func * (lhs: some ScalarConvertible, rhs: Vector3) -> Vector3 {
+    public static func * (lhs: Double, rhs: Vector3) -> Vector3 {
         Vector3(lhs.asFloat * rhs.simd)
     }
 
     /// 数で割る。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public static func / (lhs: Vector3, rhs: some ScalarConvertible) -> Vector3 {
+    public static func / (lhs: Vector3, rhs: Double) -> Vector3 {
         Vector3(lhs.simd / rhs.asFloat)
     }
 
@@ -166,13 +166,13 @@ nonisolated extension Vector3 {
 
     /// 掛けて入れる。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
-    public static func *= (lhs: inout Vector3, rhs: some ScalarConvertible) {
+    public static func *= (lhs: inout Vector3, rhs: Double) {
         lhs.simd *= rhs.asFloat
     }
 
     /// 割って入れる。
     // shot: 撮れない 値を書き換えるだけで、描く結果が無い
-    public static func /= (lhs: inout Vector3, rhs: some ScalarConvertible) {
+    public static func /= (lhs: inout Vector3, rhs: Double) {
         lhs.simd /= rhs.asFloat
     }
 }
@@ -263,7 +263,7 @@ nonisolated extension Vector3 {
     /// (数でない値も同じ。``Vector2/limited(to:)`` と同じで、Processing の `limit()` が負の上限で向きを
     /// 反転させるのとは違う)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func limited(to maximum: some ScalarConvertible) -> Vector3 {
+    public func limited(to maximum: Double) -> Vector3 {
         let limit = maximum.asFloat
         guard limit > 0 else { return Vector3(0, 0, 0) }
         let magnitude = length
@@ -318,7 +318,7 @@ nonisolated extension Vector3 {
     /// 成分ごとに、関数の層の ``lerp(_:_:_:)`` と同じ式で間を取る。**0…1 の外は締めない**。
     /// 元の値は変わらない (新しい値を返す)。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func interpolated(to target: Vector3, amount: some ScalarConvertible) -> Vector3 {
+    public func interpolated(to target: Vector3, amount: Double) -> Vector3 {
         let amount = amount.asFloat
         return Vector3(
             SIMD3(

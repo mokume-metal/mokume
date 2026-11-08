@@ -23,7 +23,7 @@ extension Canvas {
     }
 
     /// 組版した文字列を描く。
-    public func shapedText(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func shapedText(_ string: String, _ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard let color = textFillColor, !string.isEmpty, style.textSize > 0 else { return }
         // 字はベクターへ書けない。字形の輪郭を持たない (#3139)
@@ -41,7 +41,7 @@ extension Canvas {
 
     /// 組版した文字列の墨が載る範囲。墨が無ければ `nil`。
     public func shapedTextBounds(
-        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible
+        _ string: String, _ x: Double, _ y: Double
     ) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
         guard !string.isEmpty, style.textSize > 0, x.isFinite, y.isFinite else { return nil }

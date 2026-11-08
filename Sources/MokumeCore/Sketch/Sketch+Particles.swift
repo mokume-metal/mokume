@@ -448,7 +448,7 @@ extension SketchPart {
     public func emit(
         _ particles: Particles, from source: Emitter,
         toward heading: Heading = .plane(0...(2 * Float.pi)),
-        rate: some ScalarConvertible,
+        rate: Double,
         speed: ClosedRange<Float> = 20...60,
         life: ClosedRange<Float> = 1...2,
         size: ClosedRange<Float> = 2...6,

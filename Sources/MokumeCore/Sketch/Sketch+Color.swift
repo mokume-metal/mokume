@@ -63,7 +63,7 @@ extension SketchPart {
     // shot: 1 snippet=3b229f0e
     // shot: 2 snippet=c017b8a7
     public func background(
-        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
+        _ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
@@ -144,7 +144,7 @@ extension SketchPart {
     /// [ADR-0023]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0023-frame-stages-and-outputs.md
     // shot: 1 snippet=724387cf
     // shot: 2 snippet=2e391461
-    public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func background(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.background(gray, alpha)
@@ -258,7 +258,7 @@ extension SketchPart {
     // shot: 2 snippet=3cbdf982
     // shot: 3 snippet=dacf980c
     // shot: 4 snippet=7d92c52c
-    public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func fill(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.fill(red, green, blue, alpha)
@@ -309,7 +309,7 @@ extension SketchPart {
     /// - Note: 塗りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=40012a72
     // shot: 2 snippet=69804a28
-    public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func fill(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.fill(gray, alpha)
@@ -387,7 +387,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=bdde8bba
     // shot: 2 snippet=676235a6
-    public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func fill(_ color: LinearRGBA, _ alpha: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.fill(color, alpha.asFloat)
     }
@@ -450,7 +450,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=c65d0ace
     // shot: 2 snippet=7ac96242
-    public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func stroke(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.stroke(red, green, blue, alpha)
@@ -502,7 +502,7 @@ extension SketchPart {
     /// - Note: 線の色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=c77eab1c
     // shot: 2 snippet=85a0c76b
-    public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func stroke(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.stroke(gray, alpha)
@@ -554,7 +554,7 @@ extension SketchPart {
     ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=d86e117e
-    public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func stroke(_ color: LinearRGBA, _ alpha: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.stroke(color, alpha.asFloat)
     }
@@ -635,7 +635,7 @@ extension SketchPart {
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
     // shot: 1 snippet=d94b64bf
     // shot: 2 snippet=91381f9a
-    public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func tint(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         canvas.tint(red, green, blue, alpha)
@@ -708,7 +708,7 @@ extension SketchPart {
     /// - Note: 絵に掛ける色は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=bceed6ce
     // shot: 2 snippet=ca7f00e4
-    public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func tint(_ gray: Double, _ alpha: Double = 255) {
         guard let canvas = Self.liveCanvas() else { return }
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         canvas.tint(gray, alpha)

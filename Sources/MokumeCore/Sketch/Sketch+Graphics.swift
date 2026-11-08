@@ -387,7 +387,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=423340e2
-    public func image(_ graphics: Canvas, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func image(_ graphics: Canvas, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.image(graphics, x, y)
@@ -426,7 +426,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=d40247f8
-    public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func image(_ graphics: Canvas, _ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.image(graphics, a, b, c, d)
@@ -469,8 +469,8 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=9f3f2df0
     public func image(
-        _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
-        _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
+        _ graphics: Canvas, _ a: Double, _ b: Double, _ c: Double, _ d: Double,
+        _ sourceX: Double, _ sourceY: Double, _ sourceWidth: Double, _ sourceHeight: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)

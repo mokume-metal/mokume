@@ -43,7 +43,7 @@ extension SketchPart {
     /// 幅か高さが 0 以下になる指定では**何も描かない**。
     // shot: 1 snippet=74598101
     // shot: 2 snippet=60541771
-    public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func rect(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.rect(a, b, c, d)
@@ -95,8 +95,8 @@ extension SketchPart {
     // shot: 1 snippet=e0feea22
     // shot: 2 snippet=5c86dbd7
     public func rect(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
-        _ r: some ScalarConvertible
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double,
+        _ r: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, r) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, r.asFloat)
@@ -122,7 +122,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=a14bfc0d
-    public func square(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ extent: some ScalarConvertible) {
+    public func square(_ a: Double, _ b: Double, _ extent: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
         canvas.square(a, b, extent)
@@ -169,7 +169,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=dddecdb4
     // shot: 2 snippet=ccc7b2b7
-    public func circle(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ diameter: some ScalarConvertible) {
+    public func circle(_ a: Double, _ b: Double, _ diameter: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
         canvas.circle(a, b, diameter)
@@ -214,7 +214,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=5db22851
     // shot: 2 snippet=b47c6582
-    public func ellipse(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func ellipse(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         canvas.ellipse(a, b, c, d)
@@ -364,7 +364,7 @@ extension SketchPart {
     // shot: 5 snippet=6cae2c65
     // shot: 6 snippet=8e587865
     public func arc(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double, _ start: Double, _ stop: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (a, b, c, d, start, stop) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat)
@@ -387,7 +387,7 @@ extension SketchPart {
     /// 一周ぶんの弧は、どの閉じ方でも楕円と同じ形になる。
     // shot: 参照 arc(_:_:_:_:_:_:)
     public func arc(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible,
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double, _ start: Double, _ stop: Double,
         _ mode: ArcMode
     ) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -413,7 +413,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=f5d478e8
     public func triangle(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ x3: some ScalarConvertible, _ y3: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ x3: Double, _ y3: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2, x3, y3) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat)
@@ -457,8 +457,8 @@ extension SketchPart {
     // shot: 1 snippet=34577789
     // shot: 2 snippet=23b24af9
     public func quad(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
-        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double,
+        _ x3: Double, _ y3: Double, _ x4: Double, _ y4: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
@@ -510,7 +510,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=72c60508
     // shot: 2 snippet=8602b4e7
-    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func point(_ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.point(x, y)
@@ -681,7 +681,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=f2777671
     // shot: 2 snippet=055b0309
-    public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
+    public func line(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         canvas.line(x1, y1, x2, y2)
@@ -718,8 +718,8 @@ extension SketchPart {
     /// 描き方は `beginShape(.lines)` に 2 つの点を ``vertex(_:_:_:)`` で並べたのと同じである。
     // shot: 後で撮る
     public func line(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
-        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ z1: Double,
+        _ x2: Double, _ y2: Double, _ z2: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
@@ -754,7 +754,7 @@ extension SketchPart {
     /// 大きさは ``strokeWeight(_:)`` の太さ (画面の画素)、色は ``stroke(_:)`` の色。描き方は
     /// `beginShape(.points)` に ``vertex(_:_:_:)`` を 1 つ置いたのと同じである。
     // shot: 後で撮る
-    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func point(_ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.point(x, y, z)

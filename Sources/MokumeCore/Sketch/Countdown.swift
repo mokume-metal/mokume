@@ -95,7 +95,7 @@ public nonisolated struct Countdown: Sendable, Hashable, Codable {
     /// 1 度だけ警告する ([ADR-0020] 決定 5)。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
-    public init(seconds: some ScalarConvertible) {
+    public init(seconds: Double) {
         let value = seconds.asFloat
         if value.isFinite, value >= 0 {
             self.seconds = value

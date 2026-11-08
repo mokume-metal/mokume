@@ -52,7 +52,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=8d592c84
-    public func box(_ size: some ScalarConvertible) {
+    public func box(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let size = size.asFloat
         canvas.box(size)
@@ -80,7 +80,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=2553ebe3
-    public func box(_ width: some ScalarConvertible, _ height: some ScalarConvertible, _ depth: some ScalarConvertible) {
+    public func box(_ width: Double, _ height: Double, _ depth: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (width, height, depth) = (width.asFloat, height.asFloat, depth.asFloat)
         canvas.box(width, height, depth)
@@ -145,7 +145,7 @@ extension SketchPart {
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 1 snippet=51775b2d
     // shot: 2 snippet=3c04508e
-    public func sphere(_ radius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail) {
+    public func sphere(_ radius: Double, detail: Int = Canvas.defaultSolidDetail) {
         guard let canvas = Self.liveCanvas() else { return }
         let radius = radius.asFloat
         canvas.sphere(radius, detail: detail)
@@ -212,7 +212,7 @@ extension SketchPart {
     // shot: 1 snippet=b469d265
     // shot: 2 snippet=44cb3b83
     public func ellipsoid(
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
+        _ x: Double, _ y: Double, _ z: Double,
         detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -246,7 +246,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=3ddae47c
-    public func plane(_ width: some ScalarConvertible, _ height: some ScalarConvertible) {
+    public func plane(_ width: Double, _ height: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (width, height) = (width.asFloat, height.asFloat)
         canvas.plane(width, height)
@@ -307,7 +307,7 @@ extension SketchPart {
     // shot: 1 snippet=3382160f
     // shot: 2 snippet=14bac537
     public func cylinder(
-        _ radius: some ScalarConvertible, _ height: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail
+        _ radius: Double, _ height: Double, detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (radius, height) = (radius.asFloat, height.asFloat)
@@ -345,7 +345,7 @@ extension SketchPart {
     /// - Note: **`detail` は手本とは違う形である。** 理由は ``sphere(_:detail:)`` の Note。
     // shot: 1 snippet=c6e05232
     public func cone(
-        _ radius: some ScalarConvertible, _ height: some ScalarConvertible,
+        _ radius: Double, _ height: Double,
         detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
@@ -408,7 +408,7 @@ extension SketchPart {
     // shot: 1 snippet=7978e71b
     // shot: 2 snippet=21763f89
     public func torus(
-        _ radius: some ScalarConvertible, _ tubeRadius: some ScalarConvertible, detail: Int = Canvas.defaultSolidDetail
+        _ radius: Double, _ tubeRadius: Double, detail: Int = Canvas.defaultSolidDetail
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (radius, tubeRadius) = (radius.asFloat, tubeRadius.asFloat)

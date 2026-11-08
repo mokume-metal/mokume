@@ -125,8 +125,8 @@ nonisolated enum HueSaturationBrightness {
 /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func color(
-    hue: some ScalarConvertible, saturation: some ScalarConvertible, brightness: some ScalarConvertible,
-    alpha: some ScalarConvertible = 255
+    hue: Double, saturation: Double, brightness: Double,
+    alpha: Double = 255
 ) -> LinearRGBA {
     let (hue, saturation, brightness) = (hue.asFloat, saturation.asFloat, brightness.asFloat)
     let alpha = alpha.asFloat

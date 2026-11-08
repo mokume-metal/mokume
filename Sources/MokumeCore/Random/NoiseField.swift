@@ -60,7 +60,7 @@ public nonisolated struct NoiseField: Equatable, Sendable {
     ///
     /// **外れた値は丸めて受け取る** (``SketchPart/noiseDetail(_:_:)`` は外れた値を無視して知らせるが、値には
     /// 無視する前の設定が無い)。
-    public init(seed: Int, octaves: Int = 4, falloff: some ScalarConvertible = 0.5) {
+    public init(seed: Int, octaves: Int = 4, falloff: Double = 0.5) {
         let falloff = falloff.asFloat
         noise = ValueNoise(
             seed: UInt32(bitPattern: Int32(truncatingIfNeeded: seed)),
@@ -82,8 +82,8 @@ public nonisolated struct NoiseField: Equatable, Sendable {
     ///
     /// 読み方と座標の扱いは ``SketchPart/noise(_:_:_:_:)`` と同じ (欠けた座標は 0。±1e6 まで。数でない座標には 0)。
     public func value(
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0,
-        _ w: some ScalarConvertible = 0
+        _ x: Double, _ y: Double = 0, _ z: Double = 0,
+        _ w: Double = 0
     ) -> Float {
         noise.value(x.asFloat, y.asFloat, z.asFloat, w.asFloat)
     }

@@ -106,7 +106,7 @@ extension Canvas {
     }
 
     /// 道を描く。道を記録している間 (``createPath(_:)`` の中) なら、描かずに、外の道へ部分道を足す。
-    public func shape(_ path: Path, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+    public func shape(_ path: Path, _ x: Double = 0, _ y: Double = 0) {
         let offset = SIMD2(x.asFloat, y.asFloat)
         let subpaths = path.subpaths.filter { !$0.points.isEmpty }
         guard let first = subpaths.first else { return }

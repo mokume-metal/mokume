@@ -145,7 +145,7 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=10cc6754
-    public func shadowRange(_ size: some ScalarConvertible) {
+    public func shadowRange(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let size = size.asFloat
         canvas.shadowRange(size)
@@ -246,7 +246,7 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=704ae6de
-    public func shadowBias(_ amount: some ScalarConvertible) {
+    public func shadowBias(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.shadowBias(amount)

@@ -14,7 +14,7 @@ extension Canvas {
     }
 
     // 向きだけを持つ光を置く。
-    public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func directionalLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
             Light(kind: .directional, color: color, direction: transformedDirection(x, y, z)),
@@ -22,7 +22,7 @@ extension Canvas {
     }
 
     // 位置を持つ光を置く。
-    public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func pointLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         addLight(
             Light(kind: .point, color: color, position: transform.placed(x: x, y: y, z: z)),
@@ -31,9 +31,9 @@ extension Canvas {
 
     // 位置と向きと広がりを持つ光を置く。
     public func spotLight(
-        _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
-        _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
-        angle: some ScalarConvertible = Float.pi / 6
+        _ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double,
+        _ directionX: Double, _ directionY: Double, _ directionZ: Double,
+        angle: Double = Float.pi / 6
     ) {
         // フレームの外では光を置かないので、丸めの注意より先に断る (#1698 の反証 10)。
         // 丸めの注意を先に言うと、置かない光のために 1 度きりの鍵を使い切る

@@ -96,7 +96,7 @@ extension SketchPart {
     /// }
     // shot: 1 snippet=8fd1617a
     // shot: 2 snippet=59f8262e
-    public func random(_ high: some ScalarConvertible) -> Float {
+    public func random(_ high: Double) -> Float {
         let high = high.asFloat
         return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: 0, to: high) ?? 0
     }
@@ -133,7 +133,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=ceae014f
-    public func random(_ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
+    public func random(_ low: Double, _ high: Double) -> Float {
         let (low, high) = (low.asFloat, high.asFloat)
         return Self.liveRuntime(.read(returning: "0"))?.randomness.value(from: low, to: high) ?? 0
     }
@@ -240,7 +240,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 1 snippet=ec7af996
-    public func randomGaussian(_ mean: some ScalarConvertible, _ sd: some ScalarConvertible) -> Float {
+    public func randomGaussian(_ mean: Double, _ sd: Double) -> Float {
         let (mean, sd) = (mean.asFloat, sd.asFloat)
         guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
         return runtime.randomness.gaussian() * sd + mean
@@ -449,8 +449,8 @@ extension SketchPart {
     // shot: 1 snippet=235577a7
     // shot: 2 snippet=e807b119
     public func noise(
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0,
-        _ w: some ScalarConvertible = 0
+        _ x: Double, _ y: Double = 0, _ z: Double = 0,
+        _ w: Double = 0
     ) -> Float {
         let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
         return Self.liveCanvas(.read(returning: "0"))?.noise(x, y, z, w) ?? 0
@@ -575,7 +575,7 @@ extension SketchPart {
     /// - Note: 揺らぎの細かさは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=feae6dd5
     // shot: 2 snippet=52f4861b
-    public func noiseDetail(_ lod: Int, _ falloff: some ScalarConvertible = 0.5) {
+    public func noiseDetail(_ lod: Int, _ falloff: Double = 0.5) {
         guard let canvas = Self.liveCanvas() else { return }
         let falloff = falloff.asFloat
         canvas.noiseDetail(lod, falloff)

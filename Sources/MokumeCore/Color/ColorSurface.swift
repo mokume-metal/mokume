@@ -230,7 +230,7 @@ nonisolated enum ColorValues {
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func color(
-    _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
+    _ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255
 ) -> LinearRGBA {
     let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
     ColorValues.warnIfOpacityRounded(.roundedOpacity, "color()", passed: alpha)
@@ -262,7 +262,7 @@ nonisolated func makeColor(red: Float, green: Float, blue: Float, alpha: Float) 
 ///
 /// **不透明度は 0–255 に締める (締めたときは 1 度だけ知らせる)。灰色の値は締めない**
 /// (``color(_:_:_:_:)`` と同じ)。
-public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) -> LinearRGBA {
+public nonisolated func color(_ gray: Double, _ alpha: Double = 255) -> LinearRGBA {
     let gray = gray.asFloat
     return color(gray, gray, gray, alpha.asFloat)
 }
@@ -322,7 +322,7 @@ public nonisolated func color(_ gray: some ScalarConvertible, _ alpha: some Scal
 ///
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 // shot: 1 snippet=8273a2d1
-public nonisolated func color(_ color: LinearRGBA, _ alpha: some ScalarConvertible) -> LinearRGBA {
+public nonisolated func color(_ color: LinearRGBA, _ alpha: Double) -> LinearRGBA {
     ColorValues.warnIfOpacityRounded(.roundedFading, "color()", passed: alpha.asFloat)
     guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
         ColorValues.warnOnce(
@@ -386,7 +386,7 @@ public nonisolated func color(hex: Int) -> LinearRGBA {
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
 public nonisolated func lerpColor(
-    _ start: LinearRGBA, _ stop: LinearRGBA, _ amount: some ScalarConvertible
+    _ start: LinearRGBA, _ stop: LinearRGBA, _ amount: Double
 ) -> LinearRGBA {
     let given = amount.asFloat
     // 締める前に弾く — Swift の `max` は第 1 引数の NaN をそのまま返すので、締めても NaN は残る

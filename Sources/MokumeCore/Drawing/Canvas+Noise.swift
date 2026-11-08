@@ -16,7 +16,7 @@ extension Canvas {
     }
 
     // 揺らぎの細かさ (重ねる枚数と、1 枚ごとの弱まり)。
-    public func noiseDetail(_ lod: Int, _ falloff: some ScalarConvertible = 0.5) {
+    public func noiseDetail(_ lod: Int, _ falloff: Double = 0.5) {
         let falloff = falloff.asFloat
         guard ValueNoise.octaveRange.contains(lod) else { return warnBadNoise("noiseDetail") }
         guard falloff.isFinite, (0...1).contains(falloff) else {
@@ -30,8 +30,8 @@ extension Canvas {
 
     // その座標の揺らぎ (0…1)。
     public func noise(
-        _ x: some ScalarConvertible, _ y: some ScalarConvertible = 0, _ z: some ScalarConvertible = 0,
-        _ w: some ScalarConvertible = 0
+        _ x: Double, _ y: Double = 0, _ z: Double = 0,
+        _ w: Double = 0
     ) -> Float {
         let (x, y, z, w) = (x.asFloat, y.asFloat, z.asFloat, w.asFloat)
         return noiseSettings.value(x, y, z, w)

@@ -5,13 +5,13 @@
 // 上で書けて下で書けない食い違いを作らないため (同 決定 8)。
 
 extension Canvas {
-    public func background(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func background(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         background(gray, gray, gray, alpha)
     }
 
     public func background(
-        _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255
+        _ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255
     ) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         // 作れなければ `nil` のまま渡す。区間の外の断りを先に言うのは受け口 (#1706 の反証 2)
@@ -19,12 +19,12 @@ extension Canvas {
             DisplayScale.color(red: red, green: green, blue: blue, alpha: alpha), opacity: alpha)
     }
 
-    public func fill(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func fill(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         fill(gray, gray, gray, alpha)
     }
 
-    public func fill(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func fill(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
@@ -35,7 +35,7 @@ extension Canvas {
         fill(color)
     }
 
-    public func fill(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func fill(_ color: LinearRGBA, _ alpha: Double) {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.fill)
         }
@@ -43,12 +43,12 @@ extension Canvas {
         fill(faded)
     }
 
-    public func stroke(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func stroke(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         stroke(gray, gray, gray, alpha)
     }
 
-    public func stroke(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func stroke(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)
@@ -59,7 +59,7 @@ extension Canvas {
         stroke(color)
     }
 
-    public func stroke(_ color: LinearRGBA, _ alpha: some ScalarConvertible) {
+    public func stroke(_ color: LinearRGBA, _ alpha: Double) {
         guard let faded = DisplayScale.fading(color, by: alpha.asFloat) else {
             return warnNotANumberColor(.stroke)
         }
@@ -67,12 +67,12 @@ extension Canvas {
         stroke(faded)
     }
 
-    public func tint(_ gray: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func tint(_ gray: Double, _ alpha: Double = 255) {
         let (gray, alpha) = (gray.asFloat, alpha.asFloat)
         tint(gray, gray, gray, alpha)
     }
 
-    public func tint(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ alpha: some ScalarConvertible = 255) {
+    public func tint(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double = 255) {
         let (red, green, blue, alpha) = (red.asFloat, green.asFloat, blue.asFloat, alpha.asFloat)
         guard let color = DisplayScale.color(
             red: red, green: green, blue: blue, alpha: alpha)

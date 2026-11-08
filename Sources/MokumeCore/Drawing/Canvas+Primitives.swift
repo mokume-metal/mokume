@@ -7,15 +7,15 @@ import simd
 
 extension Canvas {
     /// 矩形。座標の読み方は ``rectMode(_:)`` が決める。
-    public func rect(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func rect(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         placeRect(a, b, c, d, cornerRadius: 0)
     }
 
     /// 4 つの角を同じ半径で丸めた矩形。座標の読み方は ``rectMode(_:)`` が決める。
     public func rect(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
-        _ r: some ScalarConvertible
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double,
+        _ r: Double
     ) {
         let (a, b, c, d, r) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, r.asFloat)
         // 負の半径・数でない値は 0 にして (角を丸めない)、1 度知らせる (ADR-0020 決定 5・#2757)。
@@ -156,19 +156,19 @@ extension Canvas {
     }
 
     /// 正方形。座標の読み方は ``rectMode(_:)`` が決める。
-    public func square(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ extent: some ScalarConvertible) {
+    public func square(_ a: Double, _ b: Double, _ extent: Double) {
         let (a, b, extent) = (a.asFloat, b.asFloat, extent.asFloat)
         rect(a, b, extent, extent)
     }
 
     /// 円。座標の読み方は ``ellipseMode(_:)`` が決める。
-    public func circle(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ diameter: some ScalarConvertible) {
+    public func circle(_ a: Double, _ b: Double, _ diameter: Double) {
         let (a, b, diameter) = (a.asFloat, b.asFloat, diameter.asFloat)
         ellipse(a, b, diameter, diameter)
     }
 
     /// 楕円。座標の読み方は ``ellipseMode(_:)`` が決める。
-    public func ellipse(_ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func ellipse(_ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         let box = Self.resolveBox(a, b, c, d, mode: style.ellipseMode)
         let radiusX = box.width / 2
@@ -202,7 +202,7 @@ extension Canvas {
     /// 塗りは中心を含む扇形で、輪郭は開いた弧 (中心へ半径を引かない)。閉じ方を選ぶなら
     /// ``arc(_:_:_:_:_:_:_:)`` を使う。
     public func arc(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double, _ start: Double, _ stop: Double
     ) {
         placeArc(a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat, mode: nil)
     }
@@ -212,7 +212,7 @@ extension Canvas {
     /// `.pie` は塗りも輪郭も扇、`.chord` は弧の両端を弦で結んだ形、`.open` は輪郭を閉じない
     /// (塗りは弦で結んだ形)。
     public func arc(
-        _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible, _ start: some ScalarConvertible, _ stop: some ScalarConvertible,
+        _ a: Double, _ b: Double, _ c: Double, _ d: Double, _ start: Double, _ stop: Double,
         _ mode: ArcMode
     ) {
         placeArc(a.asFloat, b.asFloat, c.asFloat, d.asFloat, start.asFloat, stop.asFloat, mode: mode)
@@ -375,7 +375,7 @@ extension Canvas {
 
     /// 三角形。
     public func triangle(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ x3: some ScalarConvertible, _ y3: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ x3: Double, _ y3: Double
     ) {
         let (x1, y1, x2, y2, x3, y3) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat)
         draw(
@@ -385,8 +385,8 @@ extension Canvas {
 
     /// 四角形。頂点は与えた順に結ばれる。
     public func quad(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
-        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double,
+        _ x3: Double, _ y3: Double, _ x4: Double, _ y4: Double
     ) {
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         let points = [SIMD2(x1, y1), SIMD2(x2, y2), SIMD2(x3, y3), SIMD2(x4, y4)]
@@ -476,8 +476,8 @@ extension Canvas {
 
     // 3 次の曲線を 1 本引く。`beginShape()`・`vertex()`・`bezierVertex()`・`endShape()` と同じ道を通る。
     public func bezier(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible,
-        _ x3: some ScalarConvertible, _ y3: some ScalarConvertible, _ x4: some ScalarConvertible, _ y4: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double,
+        _ x3: Double, _ y3: Double, _ x4: Double, _ y4: Double
     ) {
         let (x1, y1, x2, y2, x3, y3, x4, y4) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat, x3.asFloat, y3.asFloat, x4.asFloat, y4.asFloat)
         // 区間の外では `beginShape()` が断るのと同じ注意を、先に言って何もしない
@@ -493,7 +493,7 @@ extension Canvas {
     }
 
     // 線。塗りは持たない。
-    public func line(_ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ x2: some ScalarConvertible, _ y2: some ScalarConvertible) {
+    public func line(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) {
         let (x1, y1, x2, y2) = (x1.asFloat, y1.asFloat, x2.asFloat, y2.asFloat)
         if formAllowed(fills: false) {
             if let dash = style.strokeDash {
@@ -507,7 +507,7 @@ extension Canvas {
     }
 
     /// 点。大きさは線の太さ、形は端点の形 (``strokeCap(_:)``) が決める。
-    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func point(_ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         if formAllowed(fills: false) {
             return appendPointForm(SIMD2(x, y))
@@ -517,15 +517,15 @@ extension Canvas {
 
     // 立体の空間に線を引く。視点と奥行きを通る。
     public func line(
-        _ x1: some ScalarConvertible, _ y1: some ScalarConvertible, _ z1: some ScalarConvertible,
-        _ x2: some ScalarConvertible, _ y2: some ScalarConvertible, _ z2: some ScalarConvertible
+        _ x1: Double, _ y1: Double, _ z1: Double,
+        _ x2: Double, _ y2: Double, _ z2: Double
     ) {
         let (x1, y1, z1, x2, y2, z2) = (x1.asFloat, y1.asFloat, z1.asFloat, x2.asFloat, y2.asFloat, z2.asFloat)
         placeSolidVertices(.lines, [SIMD3(x1, y1, z1), SIMD3(x2, y2, z2)])
     }
 
     // 立体の空間に点を打つ。視点と奥行きを通る。
-    public func point(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func point(_ x: Double, _ y: Double, _ z: Double) {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         placeSolidVertices(.points, [SIMD3(x, y, z)])
     }

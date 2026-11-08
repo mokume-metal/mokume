@@ -153,7 +153,7 @@ public nonisolated struct Path: Sendable, Hashable {
     /// 返し、長さが 0 の道 (点が 1 つだけ・全部同じ所) は最初の点を返す。部分道の継ぎ目では、閉じていない部分道の
     /// 終点から次の部分道の始点へ飛ぶ — その間の辺は数えない。
     // shot: 撮れない 値を返すだけで、描く結果が無い
-    public func point(at t: some ScalarConvertible) -> Vector2 {
+    public func point(at t: Double) -> Vector2 {
         guard let first = subpaths.first(where: { !$0.points.isEmpty })?.points.first else { return Vector2(0, 0) }
         let given = t.asFloat
         let amount = given.isNaN ? 0 : min(max(given, 0), 1)

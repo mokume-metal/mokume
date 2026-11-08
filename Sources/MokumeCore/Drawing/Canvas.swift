@@ -3112,35 +3112,35 @@ public final class Canvas {
 
     // MARK: - 変換
 
-    public func translate(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func translate(_ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.translate(x: x, y: y)
         noteTransformWritten()
     }
 
-    public func rotate(_ radians: some ScalarConvertible) {
+    public func rotate(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.rotate(by: radians)
         noteTransformWritten()
     }
 
-    public func scale(_ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func scale(_ x: Double, _ y: Double) {
         let (x, y) = (x.asFloat, y.asFloat)
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.scale(x: x, y: y)
         noteTransformWritten()
     }
 
-    public func shearX(_ radians: some ScalarConvertible) {
+    public func shearX(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.shearX(by: radians)
         noteTransformWritten()
     }
 
-    public func shearY(_ radians: some ScalarConvertible) {
+    public func shearY(_ radians: Double) {
         let radians = radians.asFloat
         guard admitsTransform else { return warnOutsideFrame(.transform) }
         transform.shearY(by: radians)

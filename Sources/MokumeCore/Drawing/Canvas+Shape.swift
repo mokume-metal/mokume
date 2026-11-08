@@ -511,7 +511,7 @@ extension Canvas {
     }
 
     // 保持した形を置く。
-    public func shape(_ shape: Shape, _ x: some ScalarConvertible = 0, _ y: some ScalarConvertible = 0) {
+    public func shape(_ shape: Shape, _ x: Double = 0, _ y: Double = 0) {
         let (x, y) = (x.asFloat, y.asFloat)
         place(shape, at: [Placement(x: x, y: y)])
     }

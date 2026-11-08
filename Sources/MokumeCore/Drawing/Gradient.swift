@@ -103,7 +103,7 @@ public nonisolated struct Gradient: Sendable, Equatable {
     /// 座標・区切りの規則・混ぜる空間は `linearGradient(_:from:to:)` と同じ。`radius` が 0 以下・
     /// 数でない値・無限のときは、勾配を受けず (塗りは前のまま)、1 度だけ知らせる。
     public static func radialGradient(
-        _ stops: (LinearRGBA, Float)..., center: Vector2, radius: some ScalarConvertible
+        _ stops: (LinearRGBA, Float)..., center: Vector2, radius: Double
     ) -> Gradient {
         radialGradient(stops, center: center, radius: radius)
     }
@@ -119,7 +119,7 @@ public nonisolated struct Gradient: Sendable, Equatable {
     /// circle(200, 150, 280)
     /// ```
     public static func radialGradient(
-        _ stops: [(LinearRGBA, Float)], center: Vector2, radius: some ScalarConvertible
+        _ stops: [(LinearRGBA, Float)], center: Vector2, radius: Double
     ) -> Gradient {
         Gradient(
             kind: .radial(center: center.simd, radius: radius.asFloat),

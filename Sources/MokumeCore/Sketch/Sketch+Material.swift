@@ -50,7 +50,7 @@ extension SketchPart {
     ///   **光を 1 つも置かなければ立体は塗り 1 色で出る**ので、材質はどれも効かない
     ///   (書いてあれば警告が出る)。
     // shot: 1 snippet=d8f1f5d4
-    public func shininess(_ amount: some ScalarConvertible) {
+    public func shininess(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.shininess(amount)
@@ -96,7 +96,7 @@ extension SketchPart {
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     // shot: 1 snippet=06e03582
-    public func metalness(_ amount: some ScalarConvertible) {
+    public func metalness(_ amount: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let amount = amount.asFloat
         canvas.metalness(amount)

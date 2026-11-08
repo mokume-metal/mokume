@@ -137,7 +137,7 @@ extension SketchPart {
     /// 描いている最中のフレームの ``time`` は変えない — 1 枚の中で時刻が 2 つあると、
     /// 前半と後半で違う時刻の絵が混ざる。呼べる場所は ``pauseTime()`` と同じ。
     // shot: 撮れない 時刻の進み方を変える口で、1 枚の絵では違いが出ない
-    public func jumpTime(_ seconds: some ScalarConvertible) {
+    public func jumpTime(_ seconds: Double) {
         guard let runtime = runningSketch else {
             return OutsideRun.log.warn(.jumpTime)
         }
@@ -177,7 +177,7 @@ extension SketchPart {
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     // shot: 撮れない 時計から周期の位相を読んで返す口で、撮影は 0 秒の 1 枚だけなので巡りが絵に出ない (位相は 0 のまま)
-    public func phase(period: some ScalarConvertible) -> Float {
+    public func phase(period: Double) -> Float {
         guard let runtime = Self.liveRuntime(.read(returning: "0")) else { return 0 }
         return periodPhase(ofSeconds: runtime.timeSeconds, period: period.asFloat)
     }

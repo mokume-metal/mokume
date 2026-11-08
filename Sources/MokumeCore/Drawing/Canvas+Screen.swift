@@ -24,28 +24,28 @@ extension Canvas {
     /// 奥行き 0 の点として視点を通した位置 (``screenX(_:_:_:)`` の z = 0) を返す。
     ///
     /// [#3830]: https://github.com/mokume-metal/mokume/issues/3830
-    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+    public func screenX(_ x: Double, _ y: Double) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
         return flatScreenPosition(x, y).x
     }
 
-    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
+    public func screenY(_ x: Double, _ y: Double) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
         return flatScreenPosition(x, y).y
     }
 
     // 奥行きを持つ点が、いまの変換といまの視点でどこへ移るか (横)。
-    public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+    public func screenX(_ x: Double, _ y: Double, _ z: Double) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return screenPosition(x, y, z).x
     }
 
-    public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+    public func screenY(_ x: Double, _ y: Double, _ z: Double) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return screenPosition(x, y, z).y
     }
 
-    public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
+    public func screenZ(_ x: Double, _ y: Double, _ z: Double) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return screenPosition(x, y, z).z
     }
@@ -53,7 +53,7 @@ extension Canvas {
     // MARK: - 画面 → 空間
 
     // 面の位置が、いまの視点で空間のどこを指すか。
-    public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
+    public func spacePosition(screenX: Double, screenY: Double, depth: Double) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         // 潰れた変換 (どこかの軸を 0 倍したもの。判定は `Transform.isCollapsed`) には
         // 打ち消しが無い = 戻し先が決まらない。倍率が小さいだけなら打ち消しはある (#1541)

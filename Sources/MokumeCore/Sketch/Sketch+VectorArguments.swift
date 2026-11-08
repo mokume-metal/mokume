@@ -18,7 +18,7 @@ extension SketchPart {
     /// circle(pos, 80)
     /// ```
     // shot: 参照 circle(_:_:_:)
-    public func circle(_ center: Vector2, _ diameter: some ScalarConvertible) {
+    public func circle(_ center: Vector2, _ diameter: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         canvas.circle(center, diameter.asFloat)
     }

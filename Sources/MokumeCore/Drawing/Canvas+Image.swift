@@ -133,13 +133,13 @@ extension Canvas {
     var drawnPicture: Picture { .drawn(output, width: Int(width), height: Int(height)) }
 
     /// 絵を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは絵の画素数のまま。
-    public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
+    public func image(_ image: Image, _ a: Double, _ b: Double) {
         let (a, b) = (a.asFloat, b.asFloat)
         place(.loaded(image), a, b)
     }
 
     /// 絵を、指定した寸法に合わせて置く。
-    public func image(_ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func image(_ image: Image, _ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         place(.loaded(image), a, b, c, d)
     }
@@ -148,22 +148,22 @@ extension Canvas {
     ///
     /// 前の 4 つが置き先、後の 4 つが**絵の中のどこを切り出すか** (左上と大きさ)。
     public func image(
-        _ image: Image, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
-        _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
+        _ image: Image, _ a: Double, _ b: Double, _ c: Double, _ d: Double,
+        _ sourceX: Double, _ sourceY: Double, _ sourceWidth: Double, _ sourceHeight: Double
     ) {
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         place(.loaded(image), a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight)
     }
 
     /// 描き場所を等倍で置く。(`a`, `b`) の読み方は ``imageMode(_:)`` が決め、大きさは描き場所の座標の大きさのまま (書き出しの倍率の下でも変わらない)。
-    public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible) {
+    public func image(_ graphics: Canvas, _ a: Double, _ b: Double) {
         let (a, b) = (a.asFloat, b.asFloat)
         note(placing: graphics)
         place(graphics.drawnPicture, a, b)
     }
 
     /// 描き場所を、指定した寸法に合わせて置く。
-    public func image(_ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible) {
+    public func image(_ graphics: Canvas, _ a: Double, _ b: Double, _ c: Double, _ d: Double) {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
         note(placing: graphics)
         place(graphics.drawnPicture, a, b, c, d)
@@ -171,8 +171,8 @@ extension Canvas {
 
     /// 描き場所の一部を切り出して置く。
     public func image(
-        _ graphics: Canvas, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible,
-        _ sourceX: some ScalarConvertible, _ sourceY: some ScalarConvertible, _ sourceWidth: some ScalarConvertible, _ sourceHeight: some ScalarConvertible
+        _ graphics: Canvas, _ a: Double, _ b: Double, _ c: Double, _ d: Double,
+        _ sourceX: Double, _ sourceY: Double, _ sourceWidth: Double, _ sourceHeight: Double
     ) {
         let (a, b, c, d, sourceX, sourceY, sourceWidth, sourceHeight) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat, sourceX.asFloat, sourceY.asFloat, sourceWidth.asFloat, sourceHeight.asFloat)
         note(placing: graphics)

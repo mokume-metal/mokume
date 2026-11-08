@@ -64,7 +64,7 @@ extension SketchPart {
     /// 焼く** — ``shape(_:_:_:)-(Shape,_,_)`` で拡大して置いても焼き直さない (``textSize(_:)``)。
     // shot: 1 snippet=0c8959e5
     // shot: 2 snippet=3044f8bc
-    public func text(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func text(_ string: String, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.text(string, x, y)
@@ -161,7 +161,7 @@ extension SketchPart {
     ///   (上) ので、縁は鮮明なまま、書体の控えも増えない。
     // shot: 1 snippet=a8143a74
     // shot: 2 snippet=02dd14ba
-    public func textSize(_ size: some ScalarConvertible) {
+    public func textSize(_ size: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let size = size.asFloat
         canvas.textSize(size)
@@ -388,7 +388,7 @@ extension SketchPart {
     ///
     /// - Note: 字の太さは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 後で撮る
-    public func textWeight(_ weight: some ScalarConvertible) { Self.liveCanvas()?.textWeight(weight) }
+    public func textWeight(_ weight: Double) { Self.liveCanvas()?.textWeight(weight) }
 
     /// 文字列を、指定した位置のどちら側へ置くか。既定は**左から右へ・基準線**。
     ///
@@ -510,7 +510,7 @@ extension SketchPart {
     /// - Note: 行送りは**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=c1e64917
     // shot: 2 snippet=26cf4f8a
-    public func textLeading(_ leading: some ScalarConvertible) {
+    public func textLeading(_ leading: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let leading = leading.asFloat
         canvas.textLeading(leading)
@@ -697,7 +697,7 @@ extension SketchPart {
     // shot: 1 snippet=82f3bb5e
     // shot: 2 snippet=6b763151
     @discardableResult
-    public func text(_ string: String, _ a: some ScalarConvertible, _ b: some ScalarConvertible, _ c: some ScalarConvertible, _ d: some ScalarConvertible)
+    public func text(_ string: String, _ a: Double, _ b: Double, _ c: Double, _ d: Double)
         -> TextFlow
     {
         let (a, b, c, d) = (a.asFloat, b.asFloat, c.asFloat, d.asFloat)
@@ -824,7 +824,7 @@ extension SketchPart {
     ///
     /// 色で描かれる字 (絵文字) は輪郭を持たない絵なので、周を返さない (送りは進める)。
     // shot: 1 snippet=e9e2ccf8
-    public func textOutline(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> [TextContour] {
+    public func textOutline(_ string: String, _ x: Double, _ y: Double) -> [TextContour] {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y) ?? []
     }
@@ -870,8 +870,8 @@ extension SketchPart {
     /// 点を 65536 までに抑える。
     // shot: 後で撮る
     public func textOutline(
-        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible,
-        spacing: some ScalarConvertible
+        _ string: String, _ x: Double, _ y: Double,
+        spacing: Double
     ) -> [TextContour] {
         let (x, y, spacing) = (x.asFloat, y.asFloat, spacing.asFloat)
         return Self.liveCanvas(.read(returning: "[]"))?.textOutline(string, x, y, spacing: spacing) ?? []
@@ -916,7 +916,7 @@ extension SketchPart {
     /// 墨が無いときは `nil` を返す — 空の文字列・空白や改行だけの文字列・大きさ 0
     /// (``textSize(_:)``)・位置に数でない値や無限を渡したとき。
     // shot: 1 snippet=f7ecb144
-    public func textBounds(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) -> TextBounds? {
+    public func textBounds(_ string: String, _ x: Double, _ y: Double) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "nil"))?.textBounds(string, x, y)
     }
@@ -982,7 +982,7 @@ extension SketchPart {
     ///   }
     /// }
     // shot: 後で撮る
-    public func shapedText(_ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible) {
+    public func shapedText(_ string: String, _ x: Double, _ y: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y) = (x.asFloat, y.asFloat)
         canvas.shapedText(string, x, y)
@@ -1048,7 +1048,7 @@ extension SketchPart {
     /// }
     // shot: 後で撮る
     public func shapedTextBounds(
-        _ string: String, _ x: some ScalarConvertible, _ y: some ScalarConvertible
+        _ string: String, _ x: Double, _ y: Double
     ) -> TextBounds? {
         let (x, y) = (x.asFloat, y.asFloat)
         return Self.liveCanvas(.read(returning: "nil"))?.shapedTextBounds(string, x, y)

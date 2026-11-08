@@ -93,7 +93,7 @@ extension SketchPart {
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=97d91466
-    public func directionalLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func directionalLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.directionalLight(color, x, y, z)
@@ -136,7 +136,7 @@ extension SketchPart {
     ///
     /// - Note: 光は**フレームを越えない**。`draw()` の中で毎フレーム置く。
     // shot: 1 snippet=ebd428d6
-    public func pointLight(_ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) {
+    public func pointLight(_ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         canvas.pointLight(color, x, y, z)
@@ -222,9 +222,9 @@ extension SketchPart {
     // shot: 1 snippet=3525df13
     // shot: 2 snippet=6b577fab
     public func spotLight(
-        _ color: LinearRGBA, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
-        _ directionX: some ScalarConvertible, _ directionY: some ScalarConvertible, _ directionZ: some ScalarConvertible,
-        angle: some ScalarConvertible = Float.pi / 6
+        _ color: LinearRGBA, _ x: Double, _ y: Double, _ z: Double,
+        _ directionX: Double, _ directionY: Double, _ directionZ: Double,
+        angle: Double = Float.pi / 6
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (x, y, z, directionX, directionY, directionZ, angle) = (x.asFloat, y.asFloat, z.asFloat, directionX.asFloat, directionY.asFloat, directionZ.asFloat, angle.asFloat)

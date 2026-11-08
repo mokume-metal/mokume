@@ -113,9 +113,9 @@ extension SketchPart {
     ///   警告してそれまでの視点のまま続ける。
     // shot: 1 snippet=471a8642
     public func camera(
-        _ eyeX: some ScalarConvertible, _ eyeY: some ScalarConvertible, _ eyeZ: some ScalarConvertible,
-        _ centerX: some ScalarConvertible, _ centerY: some ScalarConvertible, _ centerZ: some ScalarConvertible,
-        _ upX: some ScalarConvertible, _ upY: some ScalarConvertible, _ upZ: some ScalarConvertible
+        _ eyeX: Double, _ eyeY: Double, _ eyeZ: Double,
+        _ centerX: Double, _ centerY: Double, _ centerZ: Double,
+        _ upX: Double, _ upY: Double, _ upZ: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ) = (eyeX.asFloat, eyeY.asFloat, eyeZ.asFloat, centerX.asFloat, centerY.asFloat, centerZ.asFloat, upX.asFloat, upY.asFloat, upZ.asFloat)
@@ -330,7 +330,7 @@ extension SketchPart {
     ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=9980d6cc
     // shot: 2 snippet=3ae634c3
-    public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
+    public func perspective(_ fieldOfView: Double, _ aspect: Double, _ near: Double, _ far: Double) {
         guard let canvas = Self.liveCanvas() else { return }
         let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
         canvas.perspective(fieldOfView, aspect, near, far)
@@ -438,7 +438,7 @@ extension SketchPart {
     ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
     // shot: 1 snippet=722294b1
     public func ortho(
-        _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
+        _ left: Double, _ right: Double, _ bottom: Double, _ top: Double, _ near: Double, _ far: Double
     ) {
         guard let canvas = Self.liveCanvas() else { return }
         let (left, right, bottom, top, near, far) = (left.asFloat, right.asFloat, bottom.asFloat, top.asFloat, near.asFloat, far.asFloat)
