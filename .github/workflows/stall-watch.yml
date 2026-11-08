@@ -1,9 +1,9 @@
 name: Stall watch
 
-# 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表が定める対処を
-# 打つ (#961)。**PR のほかに、着手印 (status: in progress) が付いたまま人の手が 3 日以上無い
-# Issue も名乗る** (stale-claim・#3366)。当番の job に Issue を読む権限 (issues: read) を足して
-# あり、見えないもの (手元の worktree) は表の 15 行目に書いてある。
+# 止まった PR を見つけて、scripts/stall-watch.sh 冒頭の読み分け表の分類で名乗る (#961)。
+# 対処を打つのは人で、当番は何も書き込まない。**PR のほかに、着手印 (status: in progress) が
+# 付いたまま人の手が 3 日以上無い Issue も名乗る** (stale-claim・#3366)。当番の job に Issue を読む権限 (issues: read) を足して
+# あり、見えないもの (手元の worktree) は表の 8 行目に書いてある。
 #
 # 表は PR が止まるたびに 1 行ずつ増えてきたが、読むのは人間とエージェントの目だけで、
 # 気付く経路が「誰かがたまたま見る」しか無かった (#840 は 2 時間 47 分・#690 は 45 分
@@ -15,17 +15,7 @@ name: Stall watch
 # 捕まえられない。時計を持つ機構が要る。
 #
 # ロジックを YAML に埋めないのは単体テストで固定できないため (#66 / triage.sh と同じ
-# 理由)。判定は scripts/stall-watch.sh、対処は scripts/stall-act.sh、検査は
-# scripts/tests/stall_watch_test.py。
-#
-# **判定と対処をスクリプトごと分けてある。** 手元で様子を見るために判定を打っただけで
-# auto-merge が掛かってしまうのを防ぐためで、report-ruleset-drift.sh を
-# check-rulesets.sh から分けたのと同じ理由である。
-#
-# **対処は判定の終了コードに関わらず打つ。** ruleset-drift.yml が発信を
-# `if: steps.check.outputs.status != '0'` で絞っているのとはここが違う — 終了コードが
-# 表すのは「人手が要る名乗りが猶予を超えたか」であって、機械が打てる行があるかでは
-# ないからである。打つ行があるかは stall-act.sh が出力を読んで決める。
+# 理由)。判定は scripts/stall-watch.sh、検査は scripts/tests/stall_watch_test.py。
 #
 # **起票はしない。** publication.yml と同じ形で、赤くするところまでに留める
 # (ADR-0008 決定 5 の段 1)。赤を見落とす事象が実際に起きたら、そのとき
@@ -54,12 +44,12 @@ jobs:
     permissions:
       contents: read # checkout
       # PR を読むだけ。auto-merge の掛け直しはやめた — 掛けるには contents: write が要り、
-      # 当番に書き込みを渡すかは人の判断なので名乗るだけにした (#2614・scripts/stall-act.sh 冒頭)
+      # 当番に書き込みを渡すかは人の判断なので名乗るだけにした (#2614・scripts/stall-watch.sh 冒頭)
       pull-requests: read
       # 着手印の残った Issue を読むだけ (scripts/ready-queue.sh の dropped・#3366)。印の付け外しも
       # 起票もしないので write は渡さない
       issues: read
-      actions: write # 判定を固定している古い失敗ジョブの rerun
+      actions: read # render.yml の run と job・pr-gate の job の step を読む (runner-offline・bad-title)
     steps:
       - uses: actions/checkout@v7
 
@@ -79,11 +69,6 @@ jobs:
           set -e
           cat stall.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
-
-      - name: 表が定める対処を打つ
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/stall-act.sh stall.log
 
       - name: 名乗りの結果
         env:
@@ -106,4 +91,4 @@ jobs:
             exit 1
           fi
           # 猶予の内の名乗りと、猶予に数えない unreadable は残りうる
-          echo "ok: 猶予を超えた詰まりは無い (機械が打てる分は打ってある。猶予の内の名乗りが出ていれば上のログ)"
+          echo "ok: 猶予を超えた詰まりは無い (猶予の内の名乗りが出ていれば上のログ)"

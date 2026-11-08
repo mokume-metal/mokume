@@ -43,8 +43,8 @@
 #
 # ## 必須の判定が読む check run (#2577)
 #
-# **必須チェックの規則の置き場はここ 1 か所である** (ci.yml・stall-act.sh・stall-watch.sh・
-# pr-gate.yml はここを指す)。観測からの推定で、GitHub の文書では確かめていない:
+# **必須チェックの規則の置き場はここ 1 か所である** (ci.yml・stall-watch.sh・pr-gate.yml は
+# ここを指す)。観測からの推定で、GitHub の文書では確かめていない:
 #
 # > 必須の判定は、**ワークフローごとに、作成順で最新の check suite (run) に載った、その名前の
 # > check run** を読む。古い suite の赤・cancelled は読まない。同じ run の打ち直しは同じ suite に
