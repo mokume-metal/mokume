@@ -581,10 +581,11 @@ params: build
 #
 # **組み直さない。** build が出したシンボルグラフをそのまま読む (examples と同じ形)。
 # 材料の出どころと、置き場を 1 本にした理由は SYMBOL_GRAPHS の宣言にある
-# 公開 API を見るモジュール。**アンブレラが再エクスポートする自前のモジュールを全部並べる**
-# (ADR-0042 決定 3)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
+# 公開 API を見るモジュール。**利用者が import する入口から届く自前のモジュールを全部並べる** —
+# アンブレラ (mokume) が再エクスポートするもの (ADR-0042 決定 3) と、読み手ごとの入口 (ADR-0048
+# 決定 1: MokumeUI)。並べ漏れたモジュールの公開シンボルは、検査にも一覧にも出ないまま
 # 黙って抜ける — 参照の面の REFERENCE_MODULES と同じ並びに保つ
-API_MODULES := MokumeCore MokumeCamera MokumeAudio MokumeNetwork MokumeGamepad MokumeMIDI MokumeGame MokumeVision
+API_MODULES := MokumeCore MokumeCamera MokumeAudio MokumeNetwork MokumeGamepad MokumeMIDI MokumeGame MokumeVision MokumeUI
 
 api: build ## 公開 API が名前と面の規範 (ADR-0020) に沿っているかを検査する
 	python3 scripts/api-surface.py check --graphs $(SYMBOL_GRAPHS) $(foreach m,$(API_MODULES),--module $(m))

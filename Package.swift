@@ -15,8 +15,12 @@ let package = Package(
     // ADR-0009: macOS 26 (Tahoe) 以上・Apple Silicon 専用・Metal 4 世代のみ
     platforms: [.macOS("26.0")],
     products: [
-        // ADR-0016 決定 2: 利用者から見た入口は 1 つ。内部の割り方は書き味に漏らさない
+        // 入口は読み手ごとに 1 つ (ADR-0048 決定 1。ADR-0016 決定 2 を置き換えた)。内部の割り方は書き味に
+        // 漏らさない。mokume はスケッチを書く人の入口
         .library(name: "mokume", targets: ["mokume"]),
+        // ADR-0048 決定 1: SwiftUI に埋め込む人の入口。`SketchView` と、その署名に要る型だけを名指しで出す
+        // (MokumeCore を丸ごと再エクスポートしない — SwiftUI と同じ名前の型を埋め込むファイルへ持ち込まない)
+        .library(name: "MokumeUI", targets: ["MokumeUI"]),
         // 道具。**実行ファイルの名前は product の名前で決まる**ので、ライブラリと
         // 同じ名前は置けない (同名で両方を宣言すると、ビルドは通るのに実行ファイルが
         // 作られない — 実測)。配布のときに mokume という名前で入れる
@@ -121,6 +125,9 @@ let package = Package(
                 "MokumeGame", "MokumeVision",
             ],
             swiftSettings: .mokume),
+        // 入口: SwiftUI に埋め込む人 (ADR-0048 決定 1・2)。アンブレラは再エクスポートしない — スケッチを
+        // 書くファイルに `SketchView` を、埋め込むファイルにスケッチ用の型を、互いに持ち込まない
+        .target(name: "MokumeUI", dependencies: ["MokumeCore"], swiftSettings: .mokume),
         // 道具 — スケッチを作って走らせる。テンプレートはソースとして持ち、
         // 生成物はコミットしない (ADR-0001 原則 8)。OS の事情の文面は本体と同じ関数で引くので
         // MokumeDiagnostics を直に使う (アンブレラは再輸出しない・#2839)
@@ -149,7 +156,7 @@ let package = Package(
         .target(name: "MokumeTestSupport", path: "Tests/MokumeTestSupport", swiftSettings: .mokume),
         .testTarget(
             name: "MokumeCoreTests",
-            dependencies: ["mokume", "reference-sketches", "MokumeProbe", "MokumeTestSupport"],
+            dependencies: ["mokume", "MokumeUI", "reference-sketches", "MokumeProbe", "MokumeTestSupport"],
             // 台帳は検査が自分の場所から読むテキストで、束ねる資源ではない
             exclude: ["scene-ledger.txt"], swiftSettings: .mokumeTests),
         .testTarget(
@@ -183,6 +190,11 @@ let package = Package(
             swiftSettings: .mokumeTests),
         .testTarget(
             name: "MokumeVisionTests", dependencies: ["mokume", "MokumeVision"],
+            swiftSettings: .mokumeTests),
+        // 埋め込むファイルが `import SwiftUI` と `import MokumeUI` だけで組めることを、組んで確かめる (#3872)。
+        // スケッチは別のファイルで `import mokume` して書く — 埋め込む人の書き方そのもの
+        .testTarget(
+            name: "MokumeUITests", dependencies: ["MokumeUI", "mokume"],
             swiftSettings: .mokumeTests),
 
     ]
