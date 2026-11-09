@@ -197,7 +197,7 @@ struct ThinEndCutRenderTests {
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
     }
 
-    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた四角い端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
+    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた四角い端・延ばす端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
     /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。丸い端 (既定) は
     /// 位相を鍵に含めない (#3864・``retainedRoundEndsReuseAcrossPhases()``)。
     ///
@@ -206,12 +206,13 @@ struct ThinEndCutRenderTests {
     /// 置いた位相の割合と食い違い、切り口の頂点も境目 (整数の座標) から外れる。
     @Test(
         "開いた端の保持した形は、位相ごとに組み直して控え、どの位相でもその場で引いた線と同じ絵になる",
-        arguments: [StrokeCap.square])
+        arguments: [StrokeCap.square, .project])
     func retainedOpenEndsAreKeyedByPhase(_ cap: StrokeCap) throws {
         // 細かさ 0.25 なら、ずらしを 1/8 刻みで選ぶと描く画素の位相がちょうど表せる (同じ位相の比べが丸めで割れない)
         let density: Float = 0.25
         let canvas = try Self.makeCanvas(density: density)
         var line: Shape?
+        var longLine: Shape?
         var ring: Shape?
         try canvas.draw {
             canvas.noFill()
@@ -222,6 +223,13 @@ struct ThinEndCutRenderTests {
                 canvas.beginShape()
                 canvas.vertex(-20, 0)
                 canvas.vertex(20, 0)
+                canvas.endShape()
+            }
+            // 描く画素で長さ 40。丸い端なら位相を鍵から外す長さ (``ThinStrokeRecipe/phaseFreeMinimumLength`` 以上・#3864)
+            longLine = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(-80, 0)
+                canvas.vertex(80, 0)
                 canvas.endShape()
             }
             ring = canvas.createShape {
@@ -282,6 +290,10 @@ struct ThinEndCutRenderTests {
         #expect(try place(open, dy: 0.125).rebuilt == 1)
         #expect(try place(open, dy: 0.125 + pixel).rebuilt == 0)
         #expect(try place(open, dy: 0.125).rebuilt == 0)
+        // 丸い端なら控えを使い回す長さの線も、四角い端・延ばす端は位相ごとに組み直す (#3864 は丸い端だけを戻した)
+        let long = try #require(longLine)
+        _ = try place(long, dy: 0)
+        #expect(try place(long, dy: 0.125).rebuilt == 1, "\(cap): 長い線")
         // 閉じた輪郭は、位相を変えても組み直さない (最初の 1 度だけ)
         _ = try place(closed, dy: 0)
         #expect(try place(closed, dy: 0.37).rebuilt == 0)
@@ -345,7 +357,7 @@ struct ThinEndCutRenderTests {
 
     /// 丸い端の保持した形は、十分に長ければ位相の違う置き場所でも控えた片を使い回す (#3864)。#3748 の決定 A は丸い端も
     /// 位相ごとに組み直したが、#3859 の決定 (光の量の許容 ±25%) の下で戻した。平らな延長の片は平行移動しても面積が
-    /// 変わらないので、光の量はその場で引いた線と、直線で 0.5%・折れ線で 3% 以内で変わらない (測った値は ±0.1% と ×0.984。許容の ±25% とは別)。代償: 端の
+    /// 変わらないので、光の量はその場で引いた線とほぼ変わらない (測った値は直線で ±0.1%・折れ線で ×0.984)。代償: 端の
     /// 画素の濃さは、その場で引いた線と最大 0.2 ほど違う (片を作った位相の列の境目で切ったままなので)。
     @Test("丸い端の保持した形は、位相・向きが変わっても組み直さず、光の量はその場で引いた線と変わらない (#3864)", arguments: [false, true])
     func retainedRoundEndsReuseAcrossPhases(bent: Bool) throws {
@@ -358,8 +370,9 @@ struct ThinEndCutRenderTests {
         let (rebuilt, worst) = try Self.roundRetained(points, density: 0.5, placements: placements)
         // 向きが違う置き場所 (2x2 が違う) は組み直す。向き 4 通りで 4 回、同じ向きの位相違いでは組み直さない
         #expect(rebuilt == 4, "組み直した回数: \(rebuilt)")
-        // 測った値: 直線は ±0.1%、折れ線は ×0.984 (端を切るかどうかの判定が位相で変わる分)。許容の ±25% とは別に、これを越えたら知らせる
-        #expect(abs(worst - 1) <= (bent ? 0.03 : 0.005), "光の量の比 \(worst)")
+        // 光の量は ±10% で粗く見張るだけ。測った値 (直線で ±0.1%・折れ線で ×0.984) に張り付けると、端の画素の丸めが GPU や
+        // 細かさで揺れたときに割れる。±25% (#3859) の門は ``DensityInvarianceTests`` の `roundRetainedReusedAcrossPhases` が持つ
+        #expect(abs(worst - 1) <= 0.1, "光の量の比 \(worst)")
     }
 
     /// 短い丸い端の線 (描く画素で ``ThinStrokeRecipe/phaseFreeMinimumLength`` より短い) と、両端が近い線 (描く画素で
