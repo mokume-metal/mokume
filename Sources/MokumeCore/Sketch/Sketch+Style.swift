@@ -828,7 +828,7 @@ extension SketchPart {
     /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化のときや、止まっている間の
     ///   入力のコールバックで書いた切り抜きはどのフレームにも属さないので、警告して無視される。``createShape(_:)``
     ///   の中でも、形は切り抜きを持てないので警告して無視される。
-    // shot: 1 snippet=32d0c68d image=7dce5531afccccd4
+    // shot: 1 snippet=9d8d6bd5 image=7dce5531afccccd4
     // shot: 2 snippet=7ae1d33c image=e65c50c9e67da342
     public func clip(_ body: () -> Void) {
         guard let canvas = liveCanvas() else { return }

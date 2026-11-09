@@ -264,7 +264,7 @@ extension SketchPart {
     /// (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、落ちずに空の形 (``Shape/empty``) を返し、
     /// 1 度だけ警告する。中身は呼ばれ、中の語彙も何もせずに警告する
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
-    // shot: 1 snippet=2caf9b37
+    // shot: 1 snippet=f93591b4 image=a2f9a1aa7a52630e
     // shot: 2 snippet=77b00113
     public func createShape(_ body: () -> Void) -> Shape {
         // 走っていなければ、形を記録する面が無い。投げない口なので止めずに空の形を返し、1 度だけ
@@ -369,8 +369,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=276142f3
-    // shot: 後で撮る
+    // shot: 1 snippet=b621476e image=48bbd111f44404a3
     public func shape(_ shape: Shape, at placements: [Placement]) {
         guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: placements)

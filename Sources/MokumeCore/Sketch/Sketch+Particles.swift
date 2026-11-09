@@ -733,7 +733,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=23168877
-    // shot: 2 snippet=7099ec83 image=6a59a5899fc2d899
+    // shot: 1 snippet=04c7e4d7 image=37028854409f1620
+    // shot: 2 snippet=dc653019 image=6a59a5899fc2d899
     public func particles(_ particles: Particles) { liveCanvas()?.particles(particles) }
 }

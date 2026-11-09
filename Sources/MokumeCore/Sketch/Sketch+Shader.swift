@@ -346,7 +346,7 @@ extension SketchPart {
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ShaderFailure/notRunning(call:)`` (プロセスは落ちない)。
     // shot: 1 snippet=bf971035
-    // shot: 2 snippet=5b4c9e1b
+    // shot: 2 snippet=5f5357c8 image=e93c134eeb4344b4
     // shot: 3 snippet=935650ae
     // shot: 4 snippet=94dcd4a6
     public func createShader(

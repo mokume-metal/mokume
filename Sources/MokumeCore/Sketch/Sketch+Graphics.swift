@@ -612,7 +612,7 @@ extension SketchPart {
     ///
     /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
     /// ``noTexture()`` を呼ぶまで続き、``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
-    // shot: 1 snippet=ae1a14cd
+    // shot: 1 snippet=56054e65 image=592a9bcf077af6ce
     // shot: 2 snippet=8457adaf
     // shot: 3 snippet=17433594
     public func texture(_ image: Image) { liveCanvas()?.texture(image) }
@@ -656,7 +656,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある -->
-    ///     ![左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある](https://i.gyazo.com/0b363f8077db4c7b85d97381ed5aac4c.png)
+    ///     ![左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある](https://i.gyazo.com/fbf158869e8ae93c6d64d9288cab0770.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -704,7 +704,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=b95f51a7
+    // shot: 1 snippet=f7249143 image=74746e0b7fc5a93d
     // shot: 2 snippet=a78d202e
     public func texture(_ graphics: Canvas) { liveCanvas()?.texture(graphics) }
 
@@ -790,7 +790,7 @@ extension SketchPart {
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3d8912c0
-    // shot: 2 snippet=03298d4c
+    // shot: 2 snippet=cd9091a0 image=6f8d871270ab0592
     public func noTexture() { liveCanvas()?.noTexture() }
 }
 

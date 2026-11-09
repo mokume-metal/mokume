@@ -198,8 +198,8 @@ extension SketchPart {
     ///   形式のときに ``ModelFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=b9a89f4b
-    // shot: 2 snippet=d6a2a289
+    // shot: 1 snippet=15a796b3 image=172473c3a049fd1c
+    // shot: 2 snippet=8e989fd9 image=a0443fbf8215c644
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
         return try resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
@@ -310,6 +310,6 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bbd93d4a
+    // shot: 1 snippet=64b4eaac image=dade448ce712c53f
     public func model(_ model: Model) { liveCanvas()?.model(model) }
 }

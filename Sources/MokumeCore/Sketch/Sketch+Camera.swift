@@ -49,7 +49,7 @@ extension SketchPart {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化の
     ///   ときや、止まっている間の入力のコールバックで書いた視点はどのフレームにも
     ///   属さないので、警告して無視される。
-    // shot: 1 snippet=20da78b0 image=f063dd0f16fbc4c0
+    // shot: 1 snippet=9ea4458d image=f063dd0f16fbc4c0
     public func camera() { liveCanvas()?.camera() }
 
     /// 見る位置・見ている先・上方向を決める。
@@ -111,7 +111,7 @@ extension SketchPart {
     /// - Note: 視点は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   見る位置と見ている先が同じ・上方向が視線と重なるといった成り立たない指定は、
     ///   警告してそれまでの視点のまま続ける。
-    // shot: 1 snippet=471a8642
+    // shot: 1 snippet=13204ba3 image=7bc301c4b6996786
     public func camera(
         _ eyeX: some ScalarConvertible, _ eyeY: some ScalarConvertible, _ eyeZ: some ScalarConvertible,
         _ centerX: some ScalarConvertible, _ centerY: some ScalarConvertible, _ centerZ: some ScalarConvertible,
@@ -161,8 +161,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=4861898c
-    // shot: 後で撮る
+    // shot: 1 snippet=c2908b1d image=a624d3ad4a0a984f
     public var currentCamera: Camera {
         liveCanvas(.read(returning: "the camera that fits a 1×1 surface"))?.currentCamera
             ?? Camera.fitting(width: 1, height: 1)
@@ -214,7 +213,7 @@ extension SketchPart {
     ///
     /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
     ///   ``camera()`` と ``perspective()`` で戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
-    // shot: 1 snippet=1911c7b0
+    // shot: 1 snippet=bb6efab1 image=7beea09249272a91
     public func setCamera(_ camera: Camera) { liveCanvas()?.setCamera(camera) }
 
     /// 透視投影を既定へ戻す。
@@ -252,7 +251,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=2f8f127f
+    // shot: 1 snippet=55783d4c image=71e6dca3403a80ef
     public func perspective() { liveCanvas()?.perspective() }
 
     /// 遠くのものほど小さく写す。
@@ -328,8 +327,8 @@ extension SketchPart {
     ///
     /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
     ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
-    // shot: 1 snippet=9980d6cc
-    // shot: 2 snippet=3ae634c3
+    // shot: 1 snippet=3a4d0190 image=7c7fe971c2d4353c
+    // shot: 2 snippet=f4171074 image=9767c69ace8214f9
     public func perspective(_ fieldOfView: some ScalarConvertible, _ aspect: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (fieldOfView, aspect, near, far) = (fieldOfView.asFloat, aspect.asFloat, near.asFloat, far.asFloat)
@@ -373,7 +372,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 投影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=3a4c652b
+    // shot: 1 snippet=54ae93a5 image=1da618c187e8c46c
     public func ortho() { liveCanvas()?.ortho() }
 
     /// 距離によらず同じ大きさで写す。
@@ -436,7 +435,7 @@ extension SketchPart {
     ///
     /// - Note: **平面の図形もこの指定を通る** — 立体と同じ空間に置かれる。画面に重ねる 2D は、
     ///   ``perspective()`` で写し方を戻してから描く (``camera(_:_:_:_:_:_:_:_:_:)``)。
-    // shot: 1 snippet=722294b1
+    // shot: 1 snippet=c3c58354 image=9ef9dc917d20d8e0
     public func ortho(
         _ left: some ScalarConvertible, _ right: some ScalarConvertible, _ bottom: some ScalarConvertible, _ top: some ScalarConvertible, _ near: some ScalarConvertible, _ far: some ScalarConvertible
     ) {
@@ -471,6 +470,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 斜め上から見た灰色の床の格子の中央から、赤・緑・青の短い軸が伸び、緑は下へ向かう。格子の右奥の上に橙色の箱が浮く -->
+    ///     ![斜め上から見た灰色の床の格子の中央から、赤・緑・青の短い軸が伸び、緑は下へ向かう。格子の右奥の上に橙色の箱が浮く](https://i.gyazo.com/f3054232c2f9f19b227210dcd8b0ae9b.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -489,7 +489,7 @@ extension SketchPart {
     ///   出ない。手本の p5.js は `setup()` で 1 度だけ書く形だが、ここでは `setup()` や止まっている
     ///   間の入力のコールバックで書くと、ほかのシーンの記述 (``camera()``・``lights()`` など) と
     ///   同じく警告して無視される。同じフレームで後から消すときは ``noDebugMode()``。
-    // shot: 後で撮る
+    // shot: 1 snippet=503bc3f4 image=c8f2a2609848a276
     public func debugMode() { liveCanvas()?.debugMode() }
 
     /// このフレームでは、``debugMode()`` の格子と軸を出さない。

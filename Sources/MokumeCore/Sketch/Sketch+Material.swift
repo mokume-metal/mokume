@@ -49,7 +49,7 @@ extension SketchPart {
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
     ///   **光を 1 つも置かなければ立体は塗り 1 色で出る**ので、材質はどれも効かない
     ///   (書いてあれば警告が出る)。
-    // shot: 1 snippet=d8f1f5d4
+    // shot: 1 snippet=ef37adf4 image=68f42c0259980584
     public func shininess(_ amount: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
@@ -95,7 +95,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=06e03582
+    // shot: 1 snippet=83243899 image=bce6ac9996474075
     public func metalness(_ amount: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
@@ -149,7 +149,7 @@ extension SketchPart {
     /// 材質に効かないので見ない。初回だけ理由を知らせる。
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=49cec9a2
+    // shot: 1 snippet=dd0b994f image=0b6534ec9100d8b5
     public func ambient(_ color: LinearRGBA) { liveCanvas()?.ambient(color) }
 
     /// 自ら出す光。光が当たっていない側にも同じだけ出る。
@@ -193,6 +193,6 @@ extension SketchPart {
     /// 材質に効かないので見ない。初回だけ理由を知らせる。
     ///
     /// - Note: 材質は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=dec7f776
+    // shot: 1 snippet=86fb7447 image=0f20e258a621253b
     public func emissive(_ color: LinearRGBA) { liveCanvas()?.emissive(color) }
 }

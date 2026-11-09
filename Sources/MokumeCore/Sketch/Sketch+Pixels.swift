@@ -264,8 +264,8 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=1276c674
-    // shot: 2 snippet=2bff752d
+    // shot: 1 snippet=4d4d8899 image=a9cb98156acb92ed
+    // shot: 2 snippet=c5818c56 image=ba0ac101f13c7b4f
     public func loadPixels() { liveCanvas()?.loadPixels() }
 
     /// 1 画素の色。原点は左上。範囲の外は透明を返す。索引は ``pixels`` と同じ。

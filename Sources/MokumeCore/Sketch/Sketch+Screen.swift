@@ -46,7 +46,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている -->
-    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている](https://i.gyazo.com/c0db6e05a4b0f4d081b9eb858fbc7b57.png)
+    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の縦線が通っている](https://i.gyazo.com/fba79cc6fb6625fb048b526424e970a6.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -134,9 +134,9 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7702f10a
+    // shot: 1 snippet=2d2bdbd0 image=b217b93c0aa09713
     // shot: 2 snippet=9bbf7c9f
-    // shot: 3 snippet=da296039 image=c1861738afbee631
+    // shot: 3 snippet=3d657186 image=c1861738afbee631
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenX(x, y) ?? 0
@@ -178,7 +178,7 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている -->
-    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている](https://i.gyazo.com/2ec48886c31bfff78238038533e21206.png)
+    ///     ![灰色の枠の長方形が 3 つ。左から右へ 0 度・45 度・90 度と回してあり、どれも枠の同じ角に打った橙色の点を、橙色の横線が通っている](https://i.gyazo.com/792fd0d32ecd5b4335aebadd8ba3fbfe.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -224,7 +224,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=27c88e8f
+    // shot: 1 snippet=f32feae7 image=d67699aac9e6c5fb
     // shot: 2 snippet=d464e610
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible) -> Float {
         let (x, y) = (x.asFloat, y.asFloat)
@@ -279,7 +279,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=25260204
+    // shot: 1 snippet=0ccb0d37 image=6a0ac36a89d506e0
     public func screenX(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenX(x, y, z) ?? 0
@@ -329,7 +329,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=45110c8e
+    // shot: 1 snippet=95656753 image=5d9d537e5c172b8e
     public func screenY(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenY(x, y, z) ?? 0
@@ -380,14 +380,14 @@ extension SketchPart {
     ///   }
     ///   @Column {
     ///     <!-- shot: 手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる -->
-    ///     ![手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる](https://i.gyazo.com/f787cbabe310bbe64fc17f62d23fe953.png)
+    ///     ![手前の橙色から青、黄色の順に奥へ小さくなる 3 つの球。下の 0 から 1 の帯には、球と同じ色の目盛りが手前の橙色から奥の黄色へ右へ寄って並んでいる](https://i.gyazo.com/5548089bd4d0f8986920e4cc629aabc3.png)
     ///     <!-- /shot -->
     ///   }
     /// }
     ///
     /// この値がそのまま ``spacePosition(screenX:screenY:depth:)`` の `depth` になる —
     /// 前向きの 3 本が、後ろ向きの入力を過不足なく作る。
-    // shot: 1 snippet=1263b738
+    // shot: 1 snippet=3b9579ce image=27f84a999968c8c7
     public func screenZ(_ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible) -> Float {
         let (x, y, z) = (x.asFloat, y.asFloat, z.asFloat)
         return liveCanvas(.read(returning: "0"))?.screenZ(x, y, z) ?? 0
@@ -488,8 +488,8 @@ extension SketchPart {
     /// ```
     ///
     /// 平行投影でも透視投影でも同じように使える (式の違いは視点の側が持つ)。
-    // shot: 1 snippet=e8bfd5e4
-    // shot: 2 snippet=7cd7de68
+    // shot: 1 snippet=aa3da8a5 image=0d65a01e40847ae8
+    // shot: 2 snippet=e5663892 image=fd194d2c59ae96be
     public func spacePosition(screenX: some ScalarConvertible, screenY: some ScalarConvertible, depth: some ScalarConvertible) -> Vector3 {
         let (screenX, screenY, depth) = (screenX.asFloat, screenY.asFloat, depth.asFloat)
         return liveCanvas(.read(returning: "(0, 0, 0)"))?.spacePosition(screenX: screenX, screenY: screenY, depth: depth)
