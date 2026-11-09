@@ -59,6 +59,8 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     private let runtime: SketchRuntime
     private let presenter: FramePresenter
     private let title: String
+    /// 別のアプリへ名乗り、絵を渡すか (``SketchSettings/sharesFrames``)。**組み立てのときに 1 度だけ読む。**
+    private let sharesFrames: Bool
 
     /// 画面の出口。
     ///
@@ -489,6 +491,7 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
     ) throws(RenderFailure) {
         self.gpu = gpu
         self.title = sketch.settings.title
+        self.sharesFrames = sketch.settings.sharesFrames
         // **刻みは頼みから採る。** 撮る係の刻みも時計から決まる (`SketchRuntime.launchFrameRate`)
         // ので、`--fps` が作品の宣言と違っても最後の 1 枚まで揃う。頼みが無ければ、ランタイムが
         // 組み立てで読んだ作品の時計 (`SketchSettings.clock`) で、既定は実時間 (#2601)。**ここで
@@ -966,8 +969,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         }
         outlet = .shared(shared)
         // **名乗るのは道具** ([ADR-0049] 決定 2)。子は「断っていない」と作品名・題を面に載せ、道具がそれを見て名乗る
-        shared.frameShare = FrameShare(
-            sketch: FrameAnnouncement.ownSketchName, title: title)
+        // **断った作品は載せない** (#3921)。道具は載っていない世代では名乗らず、名乗っていれば下ろす
+        shared.frameShare =
+            sharesFrames ? FrameShare(sketch: FrameAnnouncement.ownSketchName, title: title) : nil
         // **全画面の頼みは、目録に載せて道具へ渡した** (#2188)。作品のウィンドウは道具が持つので
         // ([ADR-0032] 決定 1)、こちらからは全画面にできない。道具が頼みを受けて、宣言した
         // ディスプレイで全画面にする。**道具が頼みを読んだかは、こちらからは分からない** —
@@ -1006,6 +1010,9 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
 
     /// 名乗っている項目。自分のウィンドウを開くまでと、名乗れなかった実行では `nil`。
     private(set) var frameAnnouncement: FrameAnnouncement?
+
+    /// メニューバーの名乗りへ渡している相手 (``SketchRuntime/presenceReceivers``)。**検査から読む。**
+    var presenceReceivers: [String] { runtime.presenceReceivers }
 
     /// 受け手の頼みを main queue で受けるか。**検査は `false` にして**、送り手の ``FrameSender/drain()`` を直に呼ぶ。
     var listensForReceivers = true
@@ -1142,10 +1149,15 @@ public final class SketchApplication: NSObject, ScreenDisplayLinkOwner {
         outlet = .window(window, surface, hasPresented: false)
         // **ウィンドウを持ったので名乗る** ([ADR-0049] 決定 2)。名乗れなくても走り続ける。名乗れたら受け手の頼みを
         // 受け始める (繋がっていない間はフレームの仕事は増えない・#3920)
-        frameAnnouncement = listFrames(title)
-        frameAnnouncement?.startSending(
+        // **断った作品は名乗らない** (``SketchSettings/sharesFrames``・#3921)
+        if sharesFrames { frameAnnouncement = listFrames(title) }
+        if let sender = frameAnnouncement?.startSending(
             gpu: gpu, width: runtime.target.width, height: runtime.target.height,
             startsListening: listensForReceivers)
+        {
+            // **繋がった相手をメニューバーの名乗りに出す** (ADR-0049 決定 6)。繋がれば猶予を待たずに名乗る
+            sender.onReceiversChanged = { [runtime] names in runtime.presenceReceivers = names }
+        }
 
         if takesFocus { NSApp.activate() }
 

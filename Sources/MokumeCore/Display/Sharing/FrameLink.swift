@@ -12,7 +12,7 @@ import IOSurface
 ///
 /// | id | 向き | 中身 (inline) |
 /// | --- | --- | --- |
-/// | 1 connect | 受け手 → 送り手 | 版。port の記述子は [受け手の port, 面 ×N] |
+/// | 1 connect | 受け手 → 送り手 | 版・受け手の名前 (任意。長さ + UTF-8、``nameLimit`` バイトまで)。port の記述子は [受け手の port, 面 ×N] |
 /// | 2 accepted | 送り手 → 受け手 | 受け手の番号・幅・高さ |
 /// | 3 refused | 送り手 → 受け手 | 理由 (``Refusal``) |
 /// | 4 frame | 送り手 → 受け手 | 受け手の番号・面の番号・フレームの番号・書いた回数・host time |
@@ -76,6 +76,10 @@ package nonisolated enum FrameLink {
     package static let receiverLimit = 4
     /// 受け手 1 つが渡せる面の枚数。下限 2 は、1 枚を受け手が読んでいる間に次を書くため。
     package static let surfaceCountRange = 2...8
+    /// 受け手の名前の長さの上限 (UTF-8 のバイト数)。越えた名前・名乗らない受け手は ``unnamedReceiver`` と呼ぶ。
+    package static let nameLimit = 128
+    /// 名乗らない受け手の呼び名。
+    package static let unnamedReceiver = "a receiver"
     /// 面の形式 (半精度の RGBA)。
     package static let surfaceFormat: OSType = 0x5247_6841  // 'RGhA'
 
@@ -105,6 +109,12 @@ package nonisolated enum FrameLink {
         package mutating func append(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { bytes += $0 } }
         package mutating func append(_ value: Int64) { withUnsafeBytes(of: value.littleEndian) { bytes += $0 } }
         package mutating func append(_ value: UInt64) { withUnsafeBytes(of: value.littleEndian) { bytes += $0 } }
+        /// 文字列を、長さ (UInt32) と UTF-8 の並びで足す。
+        package mutating func append(_ value: String) {
+            let utf8 = Array(value.utf8)
+            append(UInt32(utf8.count))
+            bytes += utf8
+        }
 
         /// 先頭から読む。
         package struct Reader {
@@ -114,6 +124,16 @@ package nonisolated enum FrameLink {
             package mutating func uint32() -> UInt32? { read(UInt32.self).map { UInt32(littleEndian: $0) } }
             package mutating func int64() -> Int64? { read(Int64.self).map { Int64(littleEndian: $0) } }
             package mutating func uint64() -> UInt64? { read(UInt64.self).map { UInt64(littleEndian: $0) } }
+
+            /// 長さ (UInt32) と UTF-8 の並びを読む。**`limit` バイトを越える長さ・足りない並びは `nil`。** 壊れた UTF-8 は
+            /// 置き換え文字にして読む。
+            package mutating func string(limit: Int) -> String? {
+                guard let count = uint32().map(Int.init), count <= limit, offset + count <= bytes.count else {
+                    return nil
+                }
+                defer { offset += count }
+                return String(decoding: bytes[offset..<offset + count], as: UTF8.self)
+            }
 
             private mutating func read<T: FixedWidthInteger>(_: T.Type) -> T? {
                 let size = MemoryLayout<T>.size
@@ -153,10 +173,12 @@ package nonisolated enum FrameLink {
     /// **待たない。** 面の port は送れても送れなくても手放される (送れなければこの関数が手放す)。
     @discardableResult
     package static func connect(
-        to service: mach_port_t, reply: mach_port_t, surfaces: [IOSurfaceRef], version: UInt32 = version
+        to service: mach_port_t, reply: mach_port_t, surfaces: [IOSurfaceRef], version: UInt32 = version,
+        name: String? = nil
     ) -> kern_return_t {
         var payload = Payload()
         payload.append(version)
+        if let name { payload.append(name) }
         var ports: [(mach_port_t, mach_msg_type_name_t)] = [(reply, mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND))]
         for surface in surfaces {
             ports.append((IOSurfaceCreateMachPort(surface), mach_msg_type_name_t(MACH_MSG_TYPE_MOVE_SEND)))
@@ -168,7 +190,10 @@ package nonisolated enum FrameLink {
         id: Int32, to port: mach_port_t, ports: [(mach_port_t, mach_msg_type_name_t)], payload: Payload
     ) -> kern_return_t {
         let complex = !ports.isEmpty
-        let size = headerSize + (complex ? bodySize + descriptorSize * ports.count : 0) + payload.bytes.count
+        // **大きさは 4 バイト境界にそろえる。** 揃っていない 1 通は `mach_msg` が断る (名前の長さは自由なので、後ろを
+        // 0 で詰める。読む側は長さで読むので詰め物は読まない)
+        let padded = (payload.bytes.count + 3) & ~3
+        let size = headerSize + (complex ? bodySize + descriptorSize * ports.count : 0) + padded
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 8)
         defer { buffer.deallocate() }
         buffer.initializeMemory(as: UInt8.self, repeating: 0, count: size)

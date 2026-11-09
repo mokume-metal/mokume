@@ -32,6 +32,8 @@ package final class FrameSender {
     /// 受け入れた受け手 1 つ。
     private final class Receiver {
         let id: UInt32
+        /// 受け手が名乗った名前。メニューバーの名乗りと診断に出す。
+        let name: String
         /// 受け手の port (送信の権利)。
         let port: mach_port_t
         var surfaces: [HandedSurface]
@@ -44,8 +46,9 @@ package final class FrameSender {
         /// 最後に書いたフレームの番号。同じ番号の絵を 2 度書かない。
         var lastFrameCount: Int64?
 
-        init(id: UInt32, port: mach_port_t, surfaces: [HandedSurface]) {
+        init(id: UInt32, name: String, port: mach_port_t, surfaces: [HandedSurface]) {
             self.id = id
+            self.name = name
             self.port = port
             self.surfaces = surfaces
             self.held = Array(repeating: false, count: surfaces.count)
@@ -64,6 +67,12 @@ package final class FrameSender {
     package var alpha = "premultiplied"
     /// 人へ 1 行伝える口。**検査から差し替える。**
     package var warn: (String) -> Void = { Diagnostics.warn($0) }
+    /// 繋がっている相手の名前が変わったときの知らせ (受け入れた・外した)。メニューバーの名乗りに出す
+    /// ([ADR-0049] 決定 6・#3921)。
+    package var onReceiversChanged: (([String]) -> Void)?
+
+    /// 繋がっている相手の名前 (繋いだ順)。
+    package var receiverNames: [String] { receivers.map(\.name) }
 
     private var receivers: [Receiver] = []
     private var nextID: UInt32 = 1
@@ -101,8 +110,13 @@ package final class FrameSender {
     package func stop() {
         source?.cancel()
         source = nil
-        for receiver in receivers { forget(receiver) }
+        let cut = receivers
         receivers.removeAll()
+        for receiver in cut {
+            forget(receiver)
+            warn("Stopped handing this sketch's frames to \(receiver.name)")
+        }
+        if !cut.isEmpty { onReceiversChanged?([]) }
     }
 
     /// 届いている頼みをすべて捌く。待たない。
@@ -148,9 +162,12 @@ package final class FrameSender {
             return IOSurfaceLookupFromMachPort(name)
         }
         var reader = received.payload.reader
+        let version = reader.uint32()
+        let name = reader.string(limit: FrameLink.nameLimit).flatMap { $0.isEmpty ? nil : $0 }
+            ?? FrameLink.unnamedReceiver
         let existing = receivers.first { $0.port == reply }
         let refusal: FrameLink.Refusal? =
-            if reader.uint32() != FrameLink.version {
+            if version != FrameLink.version {
                 .version
             } else if !FrameLink.surfaceCountRange.contains(surfaces.count) {
                 .surfaceCount
@@ -190,7 +207,7 @@ package final class FrameSender {
             accept(existing)
             return
         }
-        let receiver = Receiver(id: nextID, port: reply, surfaces: handed)
+        let receiver = Receiver(id: nextID, name: name, port: reply, surfaces: handed)
         nextID &+= 1
         var previous: mach_port_t = 0
         mach_port_request_notification(
@@ -198,6 +215,9 @@ package final class FrameSender {
             mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND_ONCE), &previous)
         receivers.append(receiver)
         accept(receiver)
+        // **繋がったことを 1 行言う** (ADR-0020 決定 5・ADR-0049 決定 6)
+        warn("Handing this sketch's frames to \(name)")
+        onReceiversChanged?(receiverNames)
     }
 
     private func accept(_ receiver: Receiver) {
@@ -228,6 +248,8 @@ package final class FrameSender {
     private func remove(_ receiver: Receiver) {
         receivers.removeAll { $0 === receiver }
         forget(receiver)
+        warn("Stopped handing this sketch's frames to \(receiver.name)")
+        onReceiversChanged?(receiverNames)
     }
 
     private func forget(_ receiver: Receiver) {

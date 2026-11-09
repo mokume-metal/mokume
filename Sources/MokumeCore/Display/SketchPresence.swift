@@ -81,8 +81,14 @@ final class SketchPresence {
     /// **本番から渡るのは常に `false`** だった。`true` を通していたのは検査だけで、その検査は
     /// 二度名乗らないことではなく**その引数**を確かめていた
     /// ([#960](https://github.com/mokume-metal/mokume/issues/960) の 7)。
-    static func shouldAnnounce(runningFor elapsed: Double) -> Bool {
-        elapsed >= grace
+    ///
+    /// **絵を渡している間 (`connected`) は猶予を待たない** ([ADR-0049] 決定 6)。
+    ///
+    /// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+    static func shouldAnnounce(runningFor elapsed: Double, connected: Bool = false) -> Bool {
+        // **絵を渡している間は猶予を待たない** ([ADR-0049] 決定 6・#3921)。最初の 30 秒に絵を渡していることが
+        // 見えないと、ADR-0024 決定 5 が「書いてあれば効く」で守っていた「変わったことが分かる」が欠ける
+        connected || elapsed >= grace
     }
 
     /// 名乗りが、自分で run loop を回す (``pump()``) べきか。
@@ -134,6 +140,13 @@ final class SketchPresence {
         var identity: String
         /// 出所の行。どの作業ディレクトリから起動されたか。
         var origin: String
+        /// 絵を渡している相手の行。**渡していなければ `nil`** で、メニューに出さない (#3921)。
+        var receivers: String? = nil
+    }
+
+    /// 絵を渡している相手の行を組む。相手が居なければ `nil`。
+    static func receiversLine(_ names: [String]) -> String? {
+        names.isEmpty ? nil : "Frames to \(names.joined(separator: ", "))"
     }
 
     /// 経過を「1:23:45」「12:34」の形にする。
@@ -209,6 +222,14 @@ final class SketchPresence {
     /// 名乗っているか。
     var isAnnounced: Bool { item != nil }
 
+    /// 絵を渡している相手 (受け手が名乗った名前)。**空でなければ、猶予を待たずに次のフレームで名乗る** (#3921)。
+    /// 開いているメニューにも、すぐ反映する。
+    var receivers: [String] = [] {
+        didSet {
+            if let menu = item?.menu { refresh(menu) }
+        }
+    }
+
     init(source: SketchRuntime) {
         self.source = source
     }
@@ -221,7 +242,7 @@ final class SketchPresence {
         // 破れたときの姿である。検査では覆えない — 覆うには実際に名乗らせるしかなく、
         // 走らせるたびにメニューバーへ物が増える
         guard isAnnounced else {
-            if Self.shouldAnnounce(runningFor: elapsed) { announce() }
+            if Self.shouldAnnounce(runningFor: elapsed, connected: !receivers.isEmpty) { announce() }
             return
         }
         // 出た後は撫でるだけ。**回す人が別に居るなら触らない** (AppKit の event loop への再入)
@@ -328,6 +349,7 @@ final class SketchPresence {
         let identity = Self.label(description.identity, prominent: false)
         menu.addItem(identity)
         menu.addItem(Self.label(description.origin, prominent: false))
+        if let receivers = description.receivers { menu.addItem(Self.label(receivers, prominent: false)) }
         identityItem = identity
         // **落とす項目は置かない。** 片付けるかどうかは人が決める、が #454 / #473 の
         // どちらでも範囲の外に置かれた線である (ADR-0008)
@@ -342,7 +364,7 @@ final class SketchPresence {
 
     /// いま出すべき文言。
     private func describe(_ source: SketchRuntime) -> Description {
-        Self.describe(
+        var description = Self.describe(
             title: source.sketch.settings.title,
             executable: (CommandLine.arguments.first as NSString?)?.lastPathComponent
                 ?? ProcessInfo.processInfo.processName,
@@ -350,6 +372,8 @@ final class SketchPresence {
             directory: FileManager.default.currentDirectoryPath,
             home: NSHomeDirectory(),
             elapsed: source.presenceElapsed)
+        description.receivers = Self.receiversLine(receivers)
+        return description
     }
 
     // MARK: - 開いている間、絵を動かす

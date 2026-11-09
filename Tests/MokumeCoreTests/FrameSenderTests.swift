@@ -41,9 +41,12 @@ final class ModelReceiver {
         }
     }
 
+    /// 名乗る名前。`nil` なら名乗らない。
+    var name: String?
+
     @discardableResult
     func connect(to service: mach_port_t, version: UInt32 = FrameLink.version) -> kern_return_t {
-        FrameLink.connect(to: service, reply: port, surfaces: surfaces, version: version)
+        FrameLink.connect(to: service, reply: port, surfaces: surfaces, version: version, name: name)
     }
 
     /// 面を作り直して繋ぎ直す (大きさの変更の後)。
@@ -383,6 +386,70 @@ struct FrameSenderTests {
         // 受け手が居なければ何もしない
         try harness.step(frame: 1)
         #expect(harness.sender.deliveredFrames == 0)
+    }
+
+    /// **繋がった・切れたことを 1 行ずつ言い、相手の名前をメニューバーの名乗りへ渡す** (ADR-0049 決定 6・#3921)。
+    @Test("受け入れ・外し・畳むたびに相手の名前を知らせ、繋がった・切れたことを 1 行ずつ言う")
+    func reportsWhoIsConnected() throws {
+        let harness = try makeHarness()
+        var lines: [String] = []
+        var names: [[String]] = []
+        harness.sender.warn = { lines.append($0) }
+        harness.sender.onReceiversChanged = { names.append($0) }
+        let mapper = ModelReceiver(width: Self.width, height: Self.height, count: 2)
+        mapper.name = "mokumesh"
+        let recorder = ModelReceiver(width: Self.width, height: Self.height, count: 2)
+        recorder.name = "recorder"
+        defer { recorder.die() }
+        mapper.connect(to: harness.service)
+        recorder.connect(to: harness.service)
+        harness.sender.drain()
+        #expect(names == [["mokumesh"], ["mokumesh", "recorder"]])
+        #expect(harness.sender.receiverNames == ["mokumesh", "recorder"])
+
+        mapper.die()
+        harness.sender.drain()
+        #expect(names.last == ["recorder"])
+        harness.sender.stop()
+        #expect(names.last == [])
+        #expect(
+            lines == [
+                "Handing this sketch's frames to mokumesh", "Handing this sketch's frames to recorder",
+                "Stopped handing this sketch's frames to mokumesh", "Stopped handing this sketch's frames to recorder",
+            ])
+    }
+
+    @Test(
+        "名乗らない受け手・長すぎる名前は、呼び名で呼ぶ。壊れた UTF-8 は置き換えて読む",
+        arguments: [
+            (name: String?.none, expected: FrameLink.unnamedReceiver),
+            (name: "", expected: FrameLink.unnamedReceiver),
+            (name: String(repeating: "x", count: FrameLink.nameLimit + 1), expected: FrameLink.unnamedReceiver),
+            (name: String(repeating: "x", count: FrameLink.nameLimit), expected: String(repeating: "x", count: FrameLink.nameLimit)),
+        ])
+    func namesReceivers(_ request: (name: String?, expected: String)) throws {
+        let harness = try makeHarness()
+        defer { harness.sender.stop() }
+        harness.sender.warn = { _ in }
+        let receiver = ModelReceiver(width: Self.width, height: Self.height, count: 2)
+        defer { receiver.die() }
+        receiver.name = request.name
+        receiver.connect(to: harness.service)
+        harness.sender.drain()
+        #expect(harness.sender.receiverNames == [request.expected])
+    }
+
+    @Test("壊れた UTF-8 の名前は置き換え文字で読み、断らない")
+    func readsMalformedNames() {
+        var payload = FrameLink.Payload()
+        payload.append(UInt32(3))
+        var bytes = payload.bytes
+        bytes += [0x61, 0xFF, 0x62]
+        var reader = FrameLink.Payload.Reader(bytes: bytes)
+        #expect(reader.string(limit: FrameLink.nameLimit) == "a\u{FFFD}b")
+        // 長さが並びより長い
+        var short = FrameLink.Payload.Reader(bytes: payload.bytes + [0x61])
+        #expect(short.string(limit: FrameLink.nameLimit) == nil)
     }
 
     @Test("見張りの道具は、子の面を焼き直さずに写し、子が面に載せた色空間と alpha の扱いを写す")

@@ -36,6 +36,10 @@ final class WatchFrameListing {
     private(set) var frameCount: Int64 = 0
     /// 写せなかったことを言ったか。毎フレーム同じ 1 行を流さない。
     private var saidCopyFailure = false
+    /// 繋がった・切れたことを人へ 1 行言う口 (端末)。**既定は診断の 1 行**で、見張りは端末の行 (`say`) を渡す (#3921)。
+    var say: (String) -> Void = { Diagnostics.warn($0) }
+    /// 繋がっている相手の名前が変わったときの知らせ。見張りはプレビューの題に出す (ADR-0049 決定 6・#3921)。
+    var onReceiversChanged: (([String]) -> Void)?
 
     init(
         identity: String, gpu: RenderDevice? = nil,
@@ -53,9 +57,14 @@ final class WatchFrameListing {
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
     func handOver(_ texture: any MTLTexture) {
-        guard let announcement, let gpu,
-            let sender = announcement.startSending(gpu: gpu, width: texture.width, height: texture.height)
+        guard let announcement, let gpu else { return }
+        let fresh = announcement.sender == nil
+        guard let sender = announcement.startSending(gpu: gpu, width: texture.width, height: texture.height)
         else { return }
+        if fresh {
+            sender.warn = { [weak self] line in self?.say(line) }
+            sender.onReceiversChanged = { [weak self] names in self?.onReceiversChanged?(names) }
+        }
         frameCount += 1
         do {
             try sender.deliver(copying: texture, frameCount: frameCount, hostTime: mach_absolute_time())

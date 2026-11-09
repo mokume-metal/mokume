@@ -114,6 +114,35 @@ struct WatchFrameHandOverTests {
     /// **番号は道具が数える** ([#3920])。保存で子が入れ替わって (面が変わって) も、受け手の見る番号は途切れない。
     ///
     /// [#3920]: https://github.com/mokume-metal/mokume/issues/3920
+    /// **見張りの下で受け手と繋がっているのは道具** (ADR-0049 決定 6・[#3921](https://github.com/mokume-metal/mokume/issues/3921))。
+    /// 道具が端末に 1 行ずつ言い、相手をプレビューへ渡す。
+    @Test("受け手が繋がる・切れると、道具は端末に 1 行ずつ言い、相手の名前を知らせる")
+    func toldWhoIsConnected() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let listing = WatchFrameListing(identity: "/work/Bricks", gpu: gpu) { identity, share in
+            FrameAnnouncement.announce(
+                sketch: share.sketch, identity: identity, title: share.title, in: directory, warn: { _ in })
+        }
+        var said: [String] = []
+        var names: [[String]] = []
+        listing.say = { said.append($0) }
+        listing.onReceiversChanged = { names.append($0) }
+        listing.follow(FrameShare(sketch: "Bricks", title: "Bricks"))
+        let service = try #require(listing.announcement.flatMap { Bootstrap.lookUp($0.entry.serviceName) })
+        defer { Bootstrap.releaseSend(service) }
+        let texture = try childTexture(gpu: gpu)
+        listing.handOver(texture)
+        let receiver = try ReceiverForWatch(width: 16, height: 8, service: service, name: "mapper")
+        listing.announcement?.sender?.drain()
+        #expect(names == [["mapper"]])
+        receiver.close()
+        listing.announcement?.sender?.drain()
+        #expect(names == [["mapper"], []])
+        #expect(said == ["Handing this sketch's frames to mapper", "Stopped handing this sketch's frames to mapper"])
+        listing.withdraw()
+    }
+
     @Test("子の面を受け手へ写し、子が入れ替わっても番号は道具の側で途切れず進む")
     func handsOverAcrossGenerations() throws {
         let directory = try TestScratch.directory("mokume-frames")
@@ -173,7 +202,7 @@ private final class ReceiverForWatch {
     let surfaces: [IOSurfaceRef]
     var id: UInt32 = 0
 
-    init(width: Int, height: Int, service: mach_port_t) throws {
+    init(width: Int, height: Int, service: mach_port_t, name: String? = nil) throws {
         var port: mach_port_t = 0
         mach_port_allocate(mach_task_self_, MACH_PORT_RIGHT_RECEIVE, &port)
         self.port = port
@@ -185,7 +214,7 @@ private final class ReceiverForWatch {
                     kIOSurfaceBytesPerElement: 8,
                 ] as [CFString: Any] as CFDictionary)
         }
-        try #require(FrameLink.connect(to: service, reply: port, surfaces: surfaces) == KERN_SUCCESS)
+        try #require(FrameLink.connect(to: service, reply: port, surfaces: surfaces, name: name) == KERN_SUCCESS)
     }
 
     /// 届いた frame の番号を読み、面を返す。
