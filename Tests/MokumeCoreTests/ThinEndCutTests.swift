@@ -379,6 +379,24 @@ struct ThinEndCutRenderTests {
         #expect(rebuilt == 3, "組み直した回数: \(rebuilt)")
     }
 
+    /// 位相を残す線引きの両側 (#3864)。`drawnLength` は描く画素での長さ (2 点の線)、`drawnGap` は描く画素での両端の距離
+    /// (長さ 40 以上の U 字)。線引き (``ThinStrokeRecipe/phaseFreeMinimumLength`` の 32・``ThinStrokeRecipe/phaseFreeMinimumGap``
+    /// の 6) の 0.1 手前は位相 3 通りで 3 回組み直し、0.1 先は 1 回だけ組む。**数はわざと書き写す** — 線引きを動かすと、
+    /// どちらかの側が赤になる (線引きの根拠は ``ThinStrokeRecipe/phaseFreeMinimumLength`` の注釈)。
+    @Test(
+        "丸い端の線は、描く画素で長さ 32・両端の距離 6 を境に、手前は位相ごとに組み直し、先は控えを使い回す (#3864)",
+        arguments: [(Float(31.9), Float(0), 3), (32.1, 0, 1), (0, 5.9, 3), (0, 6.1, 1)])
+    func retainedRoundEndsPhaseFreeBoundary(drawnLength: Float, drawnGap: Float, rebuilds: Int) throws {
+        // 細かさ 0.5 なので、出す画素の座標は描く画素の 2 倍
+        let points: [SIMD2<Float>] =
+            drawnGap == 0
+            ? [SIMD2(-drawnLength, 0), SIMD2(drawnLength, 0)]
+            : [SIMD2(-drawnGap, 0), SIMD2(-drawnGap, 40), SIMD2(drawnGap, 40), SIMD2(drawnGap, 0)]
+        let placements: [(dx: Float, dy: Float, angle: Float)] = [(0, 0, 0.81), (0.125, 0.5, 0.81), (0.5, 1.5, 0.81)]
+        let (rebuilt, _) = try Self.roundRetained(points, density: 0.5, placements: placements)
+        #expect(rebuilt == rebuilds, "組み直した回数: \(rebuilt)")
+    }
+
     /// 切るかどうかの選び方 (平面)。端点の重なる開いた周 (A → B → C → A) は、両端の列の片が同じ列を 2 度数えるので
     /// 切らない (第 34 波の反証の指摘)。置き場所の位相が分からない組み方 (畳む雛形) も切らない。丸い端は、面積の等しい
     /// 平らな延長 (太さ × π / 8) で切る (#3748)。
