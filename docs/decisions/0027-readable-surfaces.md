@@ -243,9 +243,9 @@ SPDX-License-Identifier: MIT
 | `StartupReads` / `WorkDirectory` / `SourceStamp` / `RuntimeLoad` | 道具。待ち合わせ場所・起動時に読むもの・版の刻印・走らせている重さ |
 | `BundledShaders` (2026-09-07 追加) | 道具。同梱のシェーダの原文が読めるかを切り分けの口 (`mokume doctor`) が名乗るための 1 点で、書く人は描く経路から間接に使う ([#1059](https://github.com/mokume-metal/mokume/issues/1059)) |
 | `InputState` / `InputEvent` | 道具。**外から入力を注入する口**で、書く人が触るのは `mouseX` の側である |
-| `ObservationRequest` / `ObservationReport` / `ExposedValue` / `FrameStats` | エージェント。観測の窓口の wire format |
+| `ObservationRequest` / `ObservationReport` / `ExposedValue` / `FrameStats` | エージェント。観測の MCP サーバの wire format |
 | `ParamBox` | つまみの展開が作るもの。説明文が自分で「手で書くことはない」と述べている |
-| `UndeliverableGeneration` (2026-10-20 追加) | 道具。道具の窓が新しい世代の絵を受け取れないことを台が知らせるための口 (`SharedFrameWindow` の `onGenerationUndeliverable`) の引数で、`SharedFrameWindow` と同じく書く人は触らない ([#2928](https://github.com/mokume-metal/mokume/issues/2928)) |
+| `UndeliverableGeneration` (2026-10-20 追加) | 道具。道具のウィンドウが新しい世代の絵を受け取れないことを台が知らせるための口 (`SharedFrameWindow` の `onGenerationUndeliverable`) の引数で、`SharedFrameWindow` と同じく書く人は触らない ([#2928](https://github.com/mokume-metal/mokume/issues/2928)) |
 
 **`public` は 1 つも動かさない。** 外れるのは人が読む面へ渡すグラフだけで、一覧 (`make api-list`) も [ADR-0020](0020-api-naming-and-surface.md) の検査もビルドが出したグラフを見たままである。道具・エージェント・外のパッケージは今までどおり使える。
 
