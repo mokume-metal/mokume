@@ -81,6 +81,14 @@ struct ArcClosureShapeTests {
         let cap: StrokeCap
         let mode: ArcMode?
         let arc: [SIMD2<Double>]
+        /// 中心線の折れ線 (扇は中心から始める) の各線分 (閉じていれば最後と最初を結ぶ線分も) の始点・向き・向きの二乗の長さ。
+        /// 画素に依らないので、形ごとに 1 回だけ組む (問い合わせごとに配列を作らない)
+        private let segmentStartX: [Double]
+        private let segmentStartY: [Double]
+        private let segmentAlongX: [Double]
+        private let segmentAlongY: [Double]
+        private let segmentLengthSquared: [Double]
+        private let closed: Bool
 
         init(
             center: SIMD2<Double>, arc spec: Arc, halfWeight: Double, cap: StrokeCap, mode: ArcMode?
@@ -97,6 +105,16 @@ struct ArcClosureShapeTests {
                 let t = spec.start + spec.sweep * Double(index) / Double(count)
                 return SIMD2(spec.radii.x * cos(t), spec.radii.y * sin(t))
             }
+            let closed = mode == .pie || mode == .chord
+            let line = mode == .pie ? [.zero] + self.arc : self.arc
+            self.closed = closed
+            let last = closed ? line.count : line.count - 1
+            let alongs = (0..<last).map { line[($0 + 1) % line.count] - line[$0] }
+            self.segmentStartX = (0..<last).map { line[$0].x }
+            self.segmentStartY = (0..<last).map { line[$0].y }
+            self.segmentAlongX = alongs.map(\.x)
+            self.segmentAlongY = alongs.map(\.y)
+            self.segmentLengthSquared = alongs.map { simd_dot($0, $0) }
         }
 
         /// 塗りの内側か (中心を原点にした座標)。
@@ -114,39 +132,39 @@ struct ArcClosureShapeTests {
             }
         }
 
-        /// 線分 `a`→`b` への距離と、最近点の位置 (0…1)。
-        private static func nearest(
-            _ p: SIMD2<Double>, _ a: SIMD2<Double>, _ b: SIMD2<Double>
-        ) -> (distance: Double, t: Double) {
-            let along = b - a
-            let t = min(max(simd_dot(p - a, along) / max(simd_dot(along, along), 1e-300), 0), 1)
-            return (simd_distance(p, a + along * t), t)
-        }
-
-        /// 折れ線 (閉じていれば最後と最初も結ぶ) への距離。`atEnd` は、最近点が開いた折れ線の端か。
-        private static func distance(
-            _ p: SIMD2<Double>, _ points: [SIMD2<Double>], closed: Bool
-        ) -> (distance: Double, atEnd: Bool) {
+        /// 輪郭の中心線 (折れ線) までの距離と、最近点が開いた折れ線の端か。扇と弦は閉じた折れ線で、端は無い。
+        /// 各線分の最近点は線分の上の点 `a + along * t` (t は 0…1 に丸める)。成分ごとの演算で、SIMD の版と同じ式・同じ順序
+        /// (debug の SIMD とタプルの分解は、この関数の呼び出しの大半を占めていた・#3299)。
+        private func centerline(_ p: SIMD2<Double>) -> (distance: Double, atEnd: Bool) {
             var best = Double.infinity
             var atEnd = false
-            let last = closed ? points.count : points.count - 1
-            for index in 0..<last {
-                let (d, t) = nearest(p, points[index], points[(index + 1) % points.count])
-                if d < best {
-                    best = d
-                    atEnd = !closed && ((index == 0 && t == 0) || (index == last - 1 && t == 1))
+            let last = segmentLengthSquared.count
+            segmentStartX.withUnsafeBufferPointer { ax in
+                segmentStartY.withUnsafeBufferPointer { ay in
+                    segmentAlongX.withUnsafeBufferPointer { lx in
+                        segmentAlongY.withUnsafeBufferPointer { ly in
+                            segmentLengthSquared.withUnsafeBufferPointer { ll in
+                                var index = 0
+                                while index < last {
+                                    var t = ((p.x - ax[index]) * lx[index] + (p.y - ay[index]) * ly[index])
+                                        / (ll[index] > 1e-300 ? ll[index] : 1e-300)
+                                    if t < 0 { t = 0 }
+                                    if t > 1 { t = 1 }
+                                    let dx = p.x - (ax[index] + lx[index] * t)
+                                    let dy = p.y - (ay[index] + ly[index] * t)
+                                    let d = (dx * dx + dy * dy).squareRoot()
+                                    if d < best {
+                                        best = d
+                                        atEnd = !closed && ((index == 0 && t == 0) || (index == last - 1 && t == 1))
+                                    }
+                                    index += 1
+                                }
+                            }
+                        }
+                    }
                 }
             }
             return (best, atEnd)
-        }
-
-        /// 輪郭の中心線 (折れ線) までの距離と、最近点が開いた折れ線の端か。扇と弦は閉じた折れ線で、端は無い。
-        private func centerline(_ p: SIMD2<Double>) -> (distance: Double, atEnd: Bool) {
-            switch mode {
-            case .pie?: return Self.distance(p, [.zero] + arc, closed: true)
-            case .chord?: return Self.distance(p, arc, closed: true)
-            default: return Self.distance(p, arc, closed: false)
-            }
         }
 
         /// 輪郭の帯の内側か (中心を原点にした座標)。
