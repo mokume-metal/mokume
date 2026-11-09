@@ -1067,7 +1067,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 0)
 
     # --- capture が指示した先も見る (#631) -----------------------------------
-    # AGENTS.md 「進め方」は 4 (プランを Issue へ) → 6 (PR) の順を求めるので、guard の
+    # AGENTS.md は「着手」3 (プランを Issue へ) → 「PR」の順を求めるので、guard の
     # 時点では resolve_target の答えが Issue から PR へ移っている。引き直した先だけを
     # 見ていた頃は、規約どおりに進めたセッションが毎回差し戻されていた。
 
@@ -1164,7 +1164,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
     def test_send_back_names_the_summary_lines(self):
         """差し戻しの文面が、プランの先頭に置く要約の 2 行を名指す (#3188)。
 
-        AGENTS.md「説明と報告」は長いコメントの先頭に 2 行を求めるが、プランを書く場で
+        AGENTS.md「発言」は長いコメントの先頭に 2 行を求めるが、プランを書く場で
         それが見えないと、着手時のプランは見出しから始まったままになる (#3184 の実例)。
         書き直す瞬間に読む文面で伝える。Bug の約束と範囲の差し戻しも同じ。
         """
@@ -1256,7 +1256,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertEqual(self.records(), [])
 
     # --- ブランチの PR が別の仕事なら確定しない (#659) -----------------------
-    # AGENTS.md 「進め方」は 4 (プランを Issue へ) → 5 (ブランチを切る) → 6 (PR) の順
+    # AGENTS.md は「着手」3 (プランを Issue へ) → 「PR」(ブランチを切って PR を出す) の順
     # なので、**前の作業のブランチに居るまま次のプランを立てるのは規約どおりの流れ**である。
     # かつては PR が見つかった時点で打ち切っていたため、見出しの番号も名乗りも見ずに
     # 無関係な PR を指した。投稿済みプラン 123 件で測ると、投稿先が PR だったものは
@@ -1853,7 +1853,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         """PR ができた後に取ったプランは PR 側を要求する。
 
         「Issue にも PR にも無いこと」で判定すると、ここが黙ってしまい
-        AGENTS.md 「進め方」4 の「PR を出した後なら PR 側へ」が効かなくなる。
+        AGENTS.md「着手」3 の「PR を出した後は PR へ」が効かなくなる。
         """
         self.capture("計画。\n", FAKE_GH_PR="42", FAKE_GH_ISSUE="123")
         result = self.guard(

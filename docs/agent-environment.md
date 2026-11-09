@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 # エージェントの開発環境
 
 規約は [AGENTS.md](../AGENTS.md)。macOS / Apple Silicon 上で `make setup` を実行し、
-不足するツールは出力に従って用意する。検証の入口は `make ci-check` (手元で実行する範囲は AGENTS.md「コミット・PR の規約」)。
+不足するツールは出力に従って用意する。検証の入口は `make ci-check` (手元で実行する範囲は AGENTS.md「PR」)。
 
 ## スキル
 
@@ -18,7 +18,7 @@ Claude Code は従来どおり `.claude/skills/` を読む。Codex は `.agents/
 ## 認証と証跡
 
 エージェントを起動する環境から `gh auth status` を確認する。PR もその認証 (メンテナ自身) で
-作る (AGENTS.md「コミット・PR の規約」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
+作る (AGENTS.md「PR」)。証跡用の `MOKUME_GYAZO_TOKEN_CMD` は、
 利用する秘密管理から取得するコマンドを起動環境で渡す。
 値や秘密の在処をリポジトリに書かない。署名の自動検出が効かない環境は
 `MOKUME_AGENT_NAME` (必要なら `MOKUME_AGENT_URL`) を明示する。モデルは Claude Code と Codex なら
@@ -82,7 +82,7 @@ ON にするなら、次の失敗と状態は**コードを直して push して
 | `render` のベースラインの不一致 | 2 回描いても一致しないなら決定性が壊れている。ベースラインを書き換えて消さない ([ADR-0019](decisions/0019-drawing-verification.md) 決定 3) |
 | `BEHIND` | 何もしない。"Update branch" を押すと auto-merge だけが外れる |
 
-直してよいのは、check が 1 本も付かない本物の衝突 (AGENTS.md「マージの判断基準」) と、
+直してよいのは、check が 1 本も付かない本物の衝突 (AGENTS.md「マージ」) と、
 コードの不具合による `ci-check` の失敗である。後者は再実行の前に `.build/test-log.txt` を
 退避する。
 
@@ -142,7 +142,7 @@ gh api graphql -f query='{repository(owner:"mokume-metal",name:"mokume"){mergeQu
    `gh pr create --draft --label no-issue` で作る (ラベルは作成と同時に付ける)。本文の先頭に
    「使い捨て。マージしない・auto-merge を掛けない」と書く (#1922)。Ready にしない・
    `gh pr merge --auto` を実行しない。入れると、計測のワークフローや検証用のコミットが main へ
-   入る。AGENTS.md「マージの判断基準」の「queue に入れてよい」は、この PR には当てはまらない。
+   入る。AGENTS.md「マージ」の「queue に入れる」は、この PR には当てはまらない。
 2. **起動した `render-pr` と `CI` を、作った直後と push のたびに取り消す。** hosted の `CI`
    (macOS の `ci-check`) は Draft でも起動する。`Render` の `render-pr` は
    Draft では skipped だが (render.yml の `!github.event.pull_request.draft`)、Ready の間は

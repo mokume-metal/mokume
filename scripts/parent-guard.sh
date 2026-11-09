@@ -44,7 +44,7 @@ if [ -z "$children" ]; then
   exit 0
 fi
 
-# 発言と状態の変更は 2 手に分ける (AGENTS.md「コメント」節)。
+# 発言と状態の変更は 2 手に分ける (AGENTS.md「発言」節)。
 #
 # **投稿は scripts/comment.sh を通さない。** あちらは「どの AI が書いたか」を名乗らせる
 # ラッパーで、ここは AI ではなく決定論的な機械である。github.token での投稿は GitHub が

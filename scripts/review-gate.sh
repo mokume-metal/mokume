@@ -6,7 +6,7 @@
 #   - PR は Issue に紐づく (Closes #N)。**GitHub が実際に作った紐づけを読む** —
 #     本文の文字列ではない (下の「1.」)。例外は no-issue ラベルでのみ許す
 #     (PR に付けるラベルは CI の判定を変える no-issue・release:now・no-visual-change の 3 つで、
-#      ここが読むのは no-issue だけ — AGENTS.md「PR のラベル」。dependabot の PR には
+#      ここが読むのは no-issue だけ — AGENTS.md「PR」のラベルの項。dependabot の PR には
 #      .github/dependabot.yml が no-issue を自動で付ける)
 #   - 対象 Issue に verify: ラベルが無ければ、完了条件が未確定のまま実装に入っている
 #   - PR 本文の「確認方法」節に、閉じる Issue の番号がすべて現れる (ADR-0031 決定 2)
@@ -343,7 +343,7 @@ for n in $issues; do
     # Issue 側のラベル操作は PR の run を起こさない。pr-gate の run は打ち直せば API から
     # 読み直すので通る (after_fix_note の上の注記)
     fail "対象 Issue #$n に verify: ラベルが無い (完了条件が未確定のまま実装に入っている)" \
-         "Issue 本文に完了条件を固める (調べて本文に書くところまではしてよい)。**verify: triaged を付けてよいのは完了条件を知る起票者だけ**で、エージェントは自分で起票し条件を書いた Issue に限る (AGENTS.md「進め方」2)。他の人が起票した Issue なら自分では付けず、本文に固めたことを Issue にコメントして、付与を起票者 (メンテナ) に頼む。付いたら、pr-gate の赤い run を打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。本文を編集して新しい run を起こしてもよい)。Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない"
+         "Issue 本文に完了条件を固める (調べて本文に書くところまではしてよい)。**verify: triaged を付けてよいのは完了条件を知る起票者だけ**で、エージェントは自分で起票し条件を書いた Issue に限る (AGENTS.md「着手」1)。他の人が起票した Issue なら自分では付けず、本文に固めたことを Issue にコメントして、付与を起票者 (メンテナ) に頼む。付いたら、pr-gate の赤い run を打ち直す (gh run rerun ${GITHUB_RUN_ID:-<run-id>} --failed。本文を編集して新しい run を起こしてもよい)。Issue 側のラベル操作は PR の run を起こさないので、自動では再評価されない"
   fi
 done
 

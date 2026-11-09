@@ -12,19 +12,19 @@ Issue の起票から PR のマージまで、守ることは [AGENTS.md](AGENTS
 
 | 知りたいこと | AGENTS.md の節 |
 | --- | --- |
-| 何から始めるか | **進め方** — 起票は雑でよいが、着手は完了条件が固まって `verify: triaged` が付いてから (外部の人の小さな修正は例外で、PR から始めてよい) |
-| Issue に何を書くか | **Issue の分類** — 型は Issue Type、ラベルは状態 (`status: *`) とトリアージ済みの印 (`verify: triaged`) |
-| 経過をどこに残すか | **コメント** — PR ができるまでは Issue、できてからは PR |
-| PR の出し方 | **進め方** の 6 と **コミット・PR の規約** — Conventional Commits・1 PR は 1 つの説明で筋が通る範囲・`Closes #N` は本文に・「確認方法」に完了条件の対応表 |
-| いつマージされるか | **マージの判断基準** — `ci-gate`・`pr-gate` が green なら、承認なしで merge queue に入る |
+| 何から始めるか | **Issue** と **着手** — 起票は雑でよいが、着手は完了条件が固まって `verify: triaged` が付いてから (外部の人の小さな修正は例外で、PR から始めてよい) |
+| Issue に何を書くか | **Issue** — 型は Issue Type、ラベルは状態 (`status: *`) とトリアージ済みの印 (`verify: triaged`) |
+| 経過をどこに残すか | **発言** — PR ができるまでは Issue、できてからは PR |
+| PR の出し方 | **PR** — Conventional Commits・1 PR は 1 つの説明で筋が通る範囲・`Closes #N` は本文に・「確認方法」に完了条件の対応表 |
+| いつマージされるか | **マージ** — `ci-gate`・`pr-gate` が成功したら、承認なしで merge queue に入る |
 | やってはいけないこと | **してはならないこと** — 帰属の不明なファイル・生成物のコミット・作例の無い先回り |
-| 見た目が変わる変更 | **描画に影響する変更** — before/after の絵を PR に載せる (入力欄へ落とせば GitHub が保管する) |
+| 見た目が変わる変更 | **絵** — before/after の絵を PR に載せる (入力欄へ落とせば GitHub が保管する) |
 
 ## 外部からの PR
 
 fork から出してよい。**リポジトリへの書き込み権限が要る手順は、メンテナが引き取る。**
 
-1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (AGENTS.md **進め方** の 2)
+1. 大きな変更は、先に Issue で相談すると早い。小さな修正なら PR から始めてよい (AGENTS.md **着手** の 1)
 2. fork してブランチを切り、触った範囲の検査 (`make test` など。段の並びは Makefile の `CI_CHECK_ALL`) を通してから PR を出す。全段は CI が回す (手元なら `make ci-check`)。本文はテンプレートを埋める
 3. 残りはメンテナが引き取る:
    - ラベル (`verify: triaged` / `no-issue` / `no-visual-change`) を付ける。PR のラベルは `pr-gate` が付け直す。`verify: triaged` は Issue 側の操作で PR の run が起きないので、`pr-gate` の赤い run を `gh run rerun <run-id> --failed` で打ち直す
