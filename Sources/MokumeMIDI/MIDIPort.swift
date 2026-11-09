@@ -71,8 +71,8 @@ public nonisolated struct MIDIDevice: Sendable, Equatable {
 public final class MIDIPort: Inlet {
     /// 前のフレームの後に届いたメッセージ。届いた順で、無ければ空。
     ///
-    /// **1 つも落とさない。** 1 フレームに押して離した鍵も、全部入る。列には上限があり、読まれないまま溜まりすぎると
-    /// 古いものから捨て、捨てた数を診断に出す。
+    /// **1 つも落とさない。** 1 フレームに押して離したキーも、全部入る。キューには上限があり、読まれないまま溜まりすぎると
+    /// 古いものから破棄し、破棄した数を診断に出す。
     public private(set) var messages: [MIDIMessage] = []
 
     let id: String
