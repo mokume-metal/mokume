@@ -729,7 +729,9 @@ struct DensityInvarianceTests {
 
     /// 量の口を置き方 `pose` で描いて測った光の量と、約束の量。`nil` なら置き方が約束の外で、見ない。
     @MainActor
-    static func measurement(_ mouth: Amount, _ pose: Pose) throws -> (measured: Double, expected: Double)? {
+    static func measurement(
+        _ mouth: Amount, _ pose: Pose, primedAt prime: Pose? = nil
+    ) throws -> (measured: Double, expected: Double)? {
         let (weight, density) = (pose.weight, pose.density)
         let drawn = Double(weight * density)
         // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)
@@ -743,11 +745,38 @@ struct DensityInvarianceTests {
         // 距離関数の経路の塗りは縁を面積で数えるので、太くても見る
         if mouth.fillArea != nil, !mouth.isDistanceField, drawn >= 1 { return nil }
         let canvas = try makeCanvas(density: density)
-        try draw(on: canvas) {
-            canvas.background(0)
-            canvas.noFill()
-            canvas.stroke(255)
-            try mouth.draw(on: canvas, pose)
+        if let prime {
+            // 保持した形を 1 つだけ作り、別の位相で 1 フレーム置いてから、測る位相で置き直す (控えた片を使い回す)
+            precondition(mouth == .diagonalRoundRetained)
+            var held: Shape?
+            func place(_ at: Pose) {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeCap(.round)
+                canvas.translate(at.offset.x, 0)
+                canvas.strokeWeight(at.weight)
+                if held == nil {
+                    held = canvas.createShape {
+                        canvas.beginShape()
+                        canvas.vertex(-20, 0)
+                        canvas.vertex(20, 0)
+                        canvas.endShape()
+                    }
+                }
+                canvas.translate(64, 64 + at.offset.y)
+                canvas.rotate(at.angle)
+                canvas.shape(held!)
+            }
+            try draw(on: canvas) { place(prime) }
+            try draw(on: canvas) { place(pose) }
+        } else {
+            try draw(on: canvas) {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                try mouth.draw(on: canvas, pose)
+            }
         }
         let pixels = try canvas.target.readPixels()
         if let area = mouth.fillArea {
@@ -895,6 +924,27 @@ struct DensityInvarianceTests {
             if case .fail(let text) = try Self.measure(mouth, pose) { broken.append("\(pose): \(text)") }
         }
         #expect(broken.isEmpty, "\(mouth.rawValue): \(broken.joined(separator: " / "))")
+    }
+
+    /// 丸い端の保持した形は、位相の違う置き場所でも控えた片を使い回す (#3864)。別の位相で置いた後に測る位相へ置き直しても、
+    /// 光の量は ±25% に収まる (平らな延長の片は、平行移動しても面積が変わらない)。
+    @Test("丸い端の保持した形は、別の位相で置いた控えを使い回しても、光の量が許容に収まる (#3864)")
+    func roundRetainedReusedAcrossPhases() throws {
+        let mouth = Amount.diagonalRoundRetained
+        let report = try Probe.run(
+            "density", suite: "DensityInvarianceTests", key: "reuse/\(mouth)", axes: Self.axes(for: mouth),
+            cases: Self.generatedCases
+        ) { input in
+            let pose = Pose(
+                weight: input.float("weight"), density: input.float("density"),
+                offset: SIMD2(input.float("dx"), input.float("dy")), angle: input.float("angle"), squash: 1)
+            // 控えを作る位相は、測る位相と必ず違う (副画素で 0.5 画素ずらす)
+            var prime = pose
+            prime.offset = SIMD2(pose.offset.x + 0.5, pose.offset.y + 0.37)
+            guard let (measured, expected) = try Self.measurement(mouth, pose, primedAt: prime) else { return .skip }
+            return Self.judge(mouth, pose, measured: measured, expected: expected)
+        }
+        #expect(report.failure == nil, "\(mouth.rawValue): \(report.failure ?? "")")
     }
 
     /// 固定の例: #3385 で落ちた box の稜線の置き方 (専用機の定期の回が生成した入力を縮めたもの。#2251 の追記)。

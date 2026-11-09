@@ -197,16 +197,16 @@ struct ThinEndCutRenderTests {
         #expect(broken.isEmpty, "\(row.testDescription): \(broken.joined(separator: " / "))")
     }
 
-    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
-    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。丸い端 (既定) も
-    /// 列の境目で切るので、同じ鍵で控える (#3748)。
+    /// 保持した形の控えの鍵 (#3745 の決定 A)。開いた四角い端を持つ輪郭は、副画素の位相が変わると組み直し、描く画素で
+    /// 整数だけずれた置き場所 (同じ位相) では組み直さない。閉じた輪郭は位相で組み直さない。丸い端 (既定) は
+    /// 位相を鍵に含めない (#3864・``retainedRoundEndsReuseAcrossPhases()``)。
     ///
     /// どの位相でも、その場で引いた同じ線と画素ごとに同じ絵になる。違う位相の片を使い回すと、線全体の光の量は
     /// 変わらない (片はどれも主軸に幅 1 か整数の幅なので、平行移動しても拾う中心の数が同じ) が、端の画素の濃さが
     /// 置いた位相の割合と食い違い、切り口の頂点も境目 (整数の座標) から外れる。
     @Test(
         "開いた端の保持した形は、位相ごとに組み直して控え、どの位相でもその場で引いた線と同じ絵になる",
-        arguments: [StrokeCap.square, .round])
+        arguments: [StrokeCap.square])
     func retainedOpenEndsAreKeyedByPhase(_ cap: StrokeCap) throws {
         // 細かさ 0.25 なら、ずらしを 1/8 刻みで選ぶと描く画素の位相がちょうど表せる (同じ位相の比べが丸めで割れない)
         let density: Float = 0.25
@@ -285,6 +285,67 @@ struct ThinEndCutRenderTests {
         // 閉じた輪郭は、位相を変えても組み直さない (最初の 1 度だけ)
         _ = try place(closed, dy: 0)
         #expect(try place(closed, dy: 0.37).rebuilt == 0)
+    }
+
+    /// 丸い端の保持した形は、位相の違う置き場所でも控えた片を使い回す (#3864)。#3748 の決定 A は丸い端も位相ごとに
+    /// 組み直したが、#3859 の決定 (光の量の許容 ±25%) の下で戻した。平らな延長の片は平行移動しても面積が変わらないので、
+    /// 光の量はその場で引いた線と 0.5% 以内で変わらない。代償: 端の画素の濃さは、その場で引いた線と最大 0.2 ほど違う
+    /// (片を作った位相の列の境目で切ったままなので)。
+    @Test("丸い端の保持した形は、位相が変わっても組み直さず、光の量はその場で引いた線と変わらない (#3864)")
+    func retainedRoundEndsReuseAcrossPhases() throws {
+        let density: Float = 0.25
+        let canvas = try Self.makeCanvas(density: density)
+        var line: Shape?
+        try canvas.draw {
+            canvas.noFill()
+            canvas.stroke(255)
+            canvas.strokeWeight(1)
+            canvas.strokeCap(.round)
+            line = canvas.createShape {
+                canvas.beginShape()
+                canvas.vertex(-20, 0)
+                canvas.vertex(20, 0)
+                canvas.endShape()
+            }
+        }
+        let shape = try #require(line)
+        let shader = try canvas.makeShader("float4 paint(Fragment in, Values values) { return in.color; }")
+        func total(_ pixels: PixelBuffer) -> Double {
+            var sum = 0.0
+            for y in 0..<pixels.height { for x in 0..<pixels.width { sum += Double(pixels[x, y].red) } }
+            return sum
+        }
+        var rebuilt = 0
+        var broken: [String] = []
+        for dy: Float in [0, 0.125, 0.5, 1.5, 2.375, 3.1, 0.125] {
+            let before = canvas.thinStrokesRebuilt
+            try canvas.draw {
+                canvas.background(0)
+                canvas.translate(64, 64 + dy)
+                canvas.rotate(0.81)
+                canvas.shape(shape)
+            }
+            rebuilt += canvas.thinStrokesRebuilt - before
+            let placed = total(try canvas.target.readPixels())
+            try canvas.draw {
+                canvas.background(0)
+                canvas.noFill()
+                canvas.stroke(255)
+                canvas.strokeWeight(1)
+                canvas.strokeCap(.round)
+                canvas.shader(shader)
+                canvas.translate(64, 64 + dy)
+                canvas.rotate(0.81)
+                canvas.beginShape()
+                canvas.vertex(-20, 0)
+                canvas.vertex(20, 0)
+                canvas.endShape()
+            }
+            let direct = total(try canvas.target.readPixels())
+            if abs(placed - direct) > 0.005 * direct { broken.append("dy \(dy): \(placed) (その場で \(direct))") }
+        }
+        #expect(rebuilt == 1, "組み直した回数: \(rebuilt)")
+        #expect(broken.isEmpty, Comment(rawValue: broken.joined(separator: " / ")))
     }
 
     /// 切るかどうかの選び方 (平面)。端点の重なる開いた周 (A → B → C → A) は、両端の列の片が同じ列を 2 度数えるので

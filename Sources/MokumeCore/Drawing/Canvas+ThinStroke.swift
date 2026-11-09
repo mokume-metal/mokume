@@ -1029,11 +1029,14 @@ extension Canvas {
         // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
         // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
         //
-        // **開いた端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A。丸い端も #3748 から)。端を描く画素の
+        // **開いた四角い端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
         // 列 (行) の境目で切る (``ThinEndCut``) ので、置き場所の平行移動の端数で片が変わる。整数の画素だけずれた
-        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す
+        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す。**丸い端は足さない** (#3864)。
+        // 平らな延長の片は平行移動しても面積が変わらず、光の量は位相によらない。位相ごとに組み直すと、100 個の
+        // 形を副画素ずつ動かす場面で毎フレーム 100 回組み直して 5.9 ms、使い回せば 1.0 ms (release)。代償は、
+        // 端の画素の濃さがその場で引いた線と最大 0.2 ほど違うこと
         var phase = SIMD2<Float>(0, 0)
-        if recipe.cutsEndsAtColumns {
+        if recipe.cutsEndsAtColumns && recipe.cap != .round {
             let origin = drawnOrigin(of: combined)
             phase = origin - origin.rounded(.down)
         }
@@ -1128,7 +1131,8 @@ struct ThinStrokeRecipe {
     let carvesWhenTinted: Bool
 
     /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周の
-    /// もので、端の形は問わない (丸い端も切る・#3748)。組み直した片が置き場所の副画素の位相で変わる。
+    /// もので、端の形は問わない (丸い端も切る・#3748)。組み直した片が置き場所の副画素の位相で変わる。ただし
+    /// 控えの鍵に位相を足すのは丸くない端だけ (#3864)。
     var cutsEndsAtColumns: Bool {
         !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2
     }
@@ -1178,8 +1182,8 @@ final class ThinStrokeCache {
     private var entries: [Int: [Key: Built?]] = [:]
     static let capacity = 8
 
-    /// 組み直した輪郭の控えの鍵。描く画素へ写す 2x2 と、開いた端を列の境目で切る輪郭だけが持つ副画素の位相
-    /// (``ThinStrokeRecipe/cutsEndsAtColumns``・#3745。ほかの輪郭は 0)。
+    /// 組み直した輪郭の控えの鍵。描く画素へ写す 2x2 と、開いた四角い端を列の境目で切る輪郭だけが持つ副画素の位相
+    /// (``ThinStrokeRecipe/cutsEndsAtColumns``・#3745。丸い端とほかの輪郭は 0)。
     struct Key: Hashable {
         var linear: SIMD4<Float>
         var phase: SIMD2<Float>
