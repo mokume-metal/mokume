@@ -68,9 +68,9 @@ layered@20 937b0708bc32bbe5d35dba2d5e615bab336b14c071c895c8f47b8474d82d3d21
 # 経路はここにしか無い (#1377)。requestImage / requestModel で読む 2 本は「届く前」の絵。
 # 文字を描くものは Helvetica と既定の書体に依る — text の行と同じく、OS の書体が変わると動く。
 # 実物のポートを開くもの (osc-and-reply) は載せない — 外から届いた値が絵に入りうる (ADR-0028 決定 7)。
-sketch:raster-and-edges@45 54332ee1a445a117f09be9248fd48c96d18ae20a54f03c04a455c477d3b730de
-sketch:raster-and-edges-075@45 14996fd7775eb409915b257fc13208c63137609b0277f90493d5d4d4a0e19cc7
-sketch:raster-and-edges-050@45 95120d05573e7e43134181bdea07ac45bae9cce264f65511ea854d10fafa514d
+sketch:raster-and-edges@45 7463303a54d7181377104ceba4887422bda5b9b9b0e3a5a3f5d6fc2e8951b734
+sketch:raster-and-edges-075@45 551d76c24eca4466b1bd5f77edc3ae39ffc25051755f98049adf01f9fabbebcf
+sketch:raster-and-edges-050@45 0db33fdeb4da6bc6668a29fb8f5a22e45f9f9a0f4d6d371b7de2f3adc1af8dca
 sketch:alpha-and-layers@45 e36f7b890f1b28764b924b1b9a10eff95da125f03236a36c3c47153b599b65c7
 sketch:shapes-and-style@45 72cfc07b0b47be41a1121f0e9385da86e2cb6da5f53917898004b0c8b6ca2fe3
 sketch:curves-and-vertices@45 544fa3563aebbdd75e34eb39dd958d1b59da4d04ec06eaaa5c9291844aa493ab

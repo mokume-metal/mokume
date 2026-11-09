@@ -371,7 +371,8 @@ public final class Canvas {
         var discSegments: Int
         /// 置き場所の変換で描く画素 1 画素より細くなる線を持つなら、その変換 (#1637)。細い線は
         /// 置き場所の大きさと向きごとに広げ方が違う (#2172) ので、**同じ 2x2 の置き場所だけを畳む**。
-        /// 額縁の片で組める矩形だけは、回転だけが違う置き場所も畳み、頂点段で広げ直す (``ThinFold``・#3733)。
+        /// 額縁の片で組める矩形と丸い周だけは、回転だけが違う置き場所も畳む。矩形は頂点段で広げ直し (#3733)、丸い周は
+        /// 雛形を線に垂直に広げる (#3863・``ThinFold``)。
         /// 細くならなければ `nil` で、変換の違う置き場所も同じ雛形に畳む (これまでどおり)。
         var strokeLinear: ThinFold?
         /// 置き場所の変換で描く画素 1 画素より細くなる塗りを持つなら、その変換 (#1934)。細い塗りの
@@ -401,14 +402,16 @@ public final class Canvas {
     }
 
     /// 細い線を持つ雛形の鍵 (#1637)。比べるのは ``key`` だけで、雛形を組むのは最初の置き場所の 2x2
-    /// (``linear``) である。``key`` は 2x2 そのもの (向きごとに畳む・#3733) で、額縁の片で組める矩形だけが
-    /// 回転に依らない部分 (``rotationFreeKey(_:)``) を入れる (``widensInVertexStage``)。細い塗りは頂点段で置き場所ごとに広げる
+    /// (``linear``) である。``key`` は 2x2 そのもの (向きごとに畳む・#3733) で、額縁の片で組める矩形
+    /// (``widensInVertexStage``) と丸い周 (``widensAcrossTheLine``) だけが回転に依らない部分 (``rotationFreeKey(_:)``)
+    /// を入れる。細い塗りは頂点段で置き場所ごとに広げる
     /// ので鍵に変換を入れない (#2208・``FlatKey/thinFillCapacity``)。広げ方を頂点段へ移さない形
     /// (検査用) だけが、``key`` に 2x2 そのものを入れる (``FlatKey/fillLinear``・#1934)。
     ///
     /// **細い線の帯は、列 (行) が帯を切る長さを整数にして広げる** (#2172) ので、広げ方が向きで変わる。
     /// 回転だけが違う置き場所を 1 つの雛形に畳めるのは、頂点段で置き場所ごとに広げ直せる形
-    /// (``widensInVertexStage``) だけで、ほかの形は ``key`` に 2x2 そのものを入れて向きごとに畳む (#3733)。
+    /// (``widensInVertexStage``) と、線に垂直に広げる丸い周 (``widensAcrossTheLine``・#3863) だけで、ほかの形は ``key``
+    /// に 2x2 そのものを入れて向きごとに畳む (#3733)。
     struct ThinFold: Equatable {
         var key: SIMD4<Float>
         var linear: SIMD4<Float>
@@ -417,9 +420,13 @@ public final class Canvas {
         /// 被覆を持ち、額縁の頂点は角の形も含めて「雛形の位置 + h × 微分」になる (``FlatFrame/thinStroke``)。
         /// 偽なら ``key`` は 2x2 そのもの。
         var widensInVertexStage = false
+        /// 線に垂直に広げる丸い周の雛形で、回転だけが違う置き場所を 1 つの雛形に畳むか (#3863)。
+        /// ``Canvas/foldsThinRingAcrossTurns(_:drawn:)`` だけが立てる。真なら ``key`` は回転に依らない部分。
+        var widensAcrossTheLine = false
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.key == rhs.key && lhs.widensInVertexStage == rhs.widensInVertexStage
+                && lhs.widensAcrossTheLine == rhs.widensAcrossTheLine
         }
     }
 

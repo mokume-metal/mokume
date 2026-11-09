@@ -115,6 +115,10 @@ struct DensityInvarianceTests {
         // 回した細い輪郭の雛形 (#3733)。相似な置き場所の矩形は、回した置き場所も 1 つの雛形に畳み、頂点段で広げ直す。
         // 角の形と矩形の寸法も生成する (``Pose/join``・``Pose/size``・#3862)
         case diagonalFoldedRect = "rotate(θ) の shader() の rect の輪郭を畳んだ雛形 (三角形の経路)"
+        /// 回転をまたいで 1 つの雛形に畳む丸い周 (#3863)。生成する検査は、描く画素での短い径・縦横比・縦の倍率・1 つ目の
+        /// 向きを、畳む境目 (``Canvas/foldsThinRingAcrossTurns(_:drawn:)``) のすぐ内側から振る (``Pose/Ring``)。固定の例は
+        /// 64×40 の楕円で、細かさ 0.5〜1 で描く画素の短い径 20 以上・縦横比 0.625
+        case diagonalFoldedRing = "rotate(θ) の shader() の ellipse の輪郭を回転をまたいで畳んだ雛形 (三角形の経路)"
         // 回した細い立体の線 (#3734)。帯ごとに画面の向きで、列 (行) が帯を切る長さを整数にして広げる
         case diagonalSolidLine = "rotate(θ) の奥行きを持つ 2 点の beginShape (立体の線)"
         case diagonalRetainedSolid = "rotate(θ) で置く、奥行きを持つ 2 点を記録した保持した形 (立体の線)"
@@ -245,7 +249,7 @@ struct DensityInvarianceTests {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
                 .rotatedShaderPoint, .rotatedFill, .rotatedEllipse, .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect,
-                .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
+                .diagonalFoldedRing, .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 true
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
                 true
@@ -302,7 +306,7 @@ struct DensityInvarianceTests {
         var offsets: [Float] {
             switch self {
             case .diagonalLine, .diagonalFill, .diagonalEllipseAcross, .diagonalEllipseAlong, .diagonalPoint,
-                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalSolidLine,
+                .diagonalShaderLine, .diagonalRetained, .diagonalFoldedRect, .diagonalFoldedRing, .diagonalSolidLine,
                 .diagonalRetainedSolid, .diagonalBox:
                 [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75]
             case .diagonalRoundShaderLine, .diagonalRoundRetained, .diagonalRoundSolidLine, .diagonalRoundRetainedSolid:
@@ -334,6 +338,8 @@ struct DensityInvarianceTests {
             // 矩形の輪郭。額縁の面積は周の長さ × 太さ (既定の 40×20 で 120)。周と面取りの角は置き方から出す
             // (``DensityInvarianceTests/measurement(_:_:)``・``Pose/framePerimeter``)
             case .diagonalFoldedRect: 120
+            // 楕円の輪郭。量は置き方で決まる (``Pose/ringArea``)。ここでは面全体で見る印だけを持つ
+            case .diagonalFoldedRing: 0
             case .diagonalEllipseAcross, .diagonalEllipseAlong: Double.pi / 4 * 40
             default: nil
             }
@@ -419,6 +425,29 @@ struct DensityInvarianceTests {
                     canvas.rotate(turn)
                     canvas.rect(-size.x / 2, -size.y / 2, size.x, size.y)
                     canvas.popMatrix()
+                }
+            case .diagonalFoldedRing:
+                // 1 つ目は面の外へ `first` の向きで置き、見るのは雛形から回して置いた 2 つ目である (``diagonalFoldedRect``
+                // と同じ)。雛形は線に垂直に広げてあるので、回して置いても広げ方は変わらない (#3863)。縦の倍率は回転の内側に
+                // 掛ける — 外側だと回転ごとに描く画素の形が違い、畳まない
+                let ring = pose.ringShape
+                canvas.shader(try Self.plainShader(canvas))
+                let before = canvas.flatInstances.count
+                var keys: [SIMD4<Float>] = []
+                for (anchor, turn) in [(SIMD2<Float>(64, 64 + offset - 400), ring.first), (SIMD2(64, 64 + offset), angle)] {
+                    canvas.pushMatrix()
+                    canvas.translate(anchor.x, anchor.y)
+                    canvas.rotate(turn)
+                    canvas.scale(1, ring.squash)
+                    keys.append(Canvas.rotationFreeKey(canvas.drawnLinear(canvas.flatTransform.matrix)))
+                    canvas.ellipse(0, 0, ring.width, ring.height)
+                    canvas.popMatrix()
+                }
+                // 2 つ目が 1 つ目の雛形に畳まれていなければ、この口は畳んだ雛形を見ていない (置き方の作り損ない)。
+                // 鍵の丸めの境目をまたいで 2 つの鍵が分かれた置き方だけは、畳まれず直に描かれる (正しい絵のまま)
+                let placed = canvas.flatInstances.count - before
+                if placed < 2, keys[0] == keys[1] {
+                    throw RingNotFolded(description: "丸い周の 2 つ目が雛形に畳まれていない (置き場所 \(placed)): \(pose)")
                 }
             case .diagonalSolidLine, .diagonalRetainedSolid, .diagonalBox:
                 // 帯の中心を (64, 64 + ずらし) に置き、`angle` だけ回す (``diagonalLine`` と同じ置き方)
@@ -642,6 +671,37 @@ struct DensityInvarianceTests {
         var angle: Float
         /// 縦横で倍率の違う変換を持つ口 (``Amount/squashes``) の縦の倍率。
         var squash: Float
+        /// 丸い周の口 (``Amount/diagonalFoldedRing``) の形。`nil` なら 64×40 の楕円を倍率なしで置き、1 つ目は回さない
+        /// (固定の例)。
+        var ring: Ring? = nil
+
+        /// 丸い周の口の形 (#3863)。描く画素で書く。
+        struct Ring: Sendable {
+            /// 楕円の短い径 (直径)。
+            var minor: Float
+            /// 短い径 / 長い径。
+            var aspect: Float
+            /// 回転の内側に掛ける縦の倍率。
+            var squash: Float
+            /// 雛形を組む 1 つ目の向き。
+            var first: Float
+        }
+
+        /// 丸い周の口が置く楕円 (出す画素の幅と高さ)・回転の内側の縦の倍率・1 つ目の向き。描く画素の楕円は、
+        /// 長い径が横 (幅 × 細かさ)、短い径が縦 (高さ × 倍率 × 細かさ) になる。
+        var ringShape: (width: Float, height: Float, squash: Float, first: Float) {
+            guard let ring else { return (64, 40, 1, 0) }
+            return (ring.minor / (ring.aspect * density), ring.minor / (ring.squash * density), ring.squash, ring.first)
+        }
+
+        /// 丸い周の口の、太さ 1 あたりの輪郭の面積 (出す画素)。細い帯の面積は形自身の座標の周 × 太さで、置き場所の
+        /// 2x2 がそれを行列式 (縦の倍率) 倍にする。周は Ramanujan の近似
+        var ringArea: Double {
+            let shape = ringShape
+            let (a, b) = (Double(shape.width) / 2, Double(shape.height) / 2)
+            return Double(shape.squash) * Double.pi * (3 * (a + b) - ((3 * a + b) * (a + 3 * b)).squareRoot())
+        }
+
         /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) の角の形。
         var join: StrokeJoin = .miter
         /// 矩形の輪郭の口 (``Amount/diagonalFoldedRect``) の幅と高さ (出す画素)。
@@ -652,8 +712,15 @@ struct DensityInvarianceTests {
 
         var description: String {
             let frame = join == .miter && size == SIMD2(40, 20) ? "" : "・角 \(join)・矩形 \(size.x)×\(size.y)"
-            return "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)" + frame
+            let base = "太さ \(weight)・細かさ \(density)・ずらし (\(offset.x), \(offset.y))・角度 \(angle)・倍率 \(squash)" + frame
+            guard let ring else { return base }
+            return base + "・周 (短い径 \(ring.minor)・縦横比 \(ring.aspect)・縦の倍率 \(ring.squash)・1 つ目 \(ring.first))"
         }
+    }
+
+    /// 丸い周の口の 2 つ目が、1 つ目の雛形に畳まれなかった (#3863)。置き方を境目の内側に作り損ねている。
+    nonisolated struct RingNotFolded: Error, CustomStringConvertible {
+        let description: String
     }
 
     /// 生成する座標と範囲 (#3216 の条件 2)。**範囲は口の説明が約束している範囲そのもの** で、狭めた
@@ -679,6 +746,7 @@ struct DensityInvarianceTests {
     ///   決まり、どちらも周の長さに対する割合が寸法で変わる。下端 16 は、細かさ 0.25 でも描く画素で辺が 4 以上
     ///   (額縁で組む下限・``Canvas/framesThinRect(width:height:weight:join:drawn:)``) になる長さ。上端は、45° に回しても
     ///   回さなくても形が出す面 (128) に収まる長さ。`round` の角は額縁で組まない (一般の細い輪郭の帯で組む) ので振らない
+    /// - 丸い周の口 (``Amount/diagonalFoldedRing``・#3863) だけが、形の座標を足す (``ringAxes``)
     static func axes(for mouth: Amount) -> [ProbeAxis] {
         var axes = [
             ProbeAxis("weight", 0.07..<(mouth.maxWeight + 0.0001), simplest: 1),
@@ -695,7 +763,34 @@ struct DensityInvarianceTests {
                 ProbeAxis("height", 16..<40, simplest: 20),
             ]
         }
+        if mouth == .diagonalFoldedRing { axes += ringAxes }
         return axes
+    }
+
+    /// 丸い周の口の形の座標 (#3863)。畳む境目 (描く画素で短い径 8・縦横比 0.5。``Canvas/ringFoldMinimumDiameter``・
+    /// ``Canvas/ringFoldMinimumAspect``) のすぐ内側から振る。
+    ///
+    /// - 短い径: 描く画素で 8.02 から、出す画素の長い径が 100 (面 128 に収まる) か描く画素の短い径が 40 になるまでを、
+    ///   `ringMinor` の [0, 1) で線形に選ぶ (``ringPose(_:density:)``)。境目の 8 ちょうどは単精度の特異値が境目の外へ
+    ///   落ちうるので、0.02 だけ内側から始める
+    /// - 縦横比: 0.502 から 1。同じ理由で 0.002 だけ内側から
+    /// - 縦の倍率: 回転の内側に掛ける (``Amount/diagonalFoldedRing``)。0.5 から 1。描く画素で最も細い帯は太さ × 細かさ ×
+    ///   倍率で、0.07 を割る置き方は見ない (``measurement(_:_:)``)
+    /// - 1 つ目の向き: `[0, π/2)`
+    static let ringAxes: [ProbeAxis] = [
+        ProbeAxis("ringMinor", 0..<1, simplest: 0),
+        ProbeAxis("ringAspect", 0.502..<1.0001, simplest: 1),
+        ProbeAxis("ringSquash", 0.5..<1.0001, simplest: 1),
+        ProbeAxis("ringFirst", 0..<(Double.pi / 2), simplest: 0),
+    ]
+
+    /// 生成した座標から、丸い周の口の形を作る (``ringAxes``)。
+    static func ringPose(_ input: ProbeInput, density: Float) -> Pose.Ring {
+        let aspect = input.float("ringAspect")
+        let largest = min(40, 100 * aspect * density)
+        return Pose.Ring(
+            minor: 8.02 + input.float("ringMinor") * (largest - 8.02), aspect: aspect,
+            squash: input.float("ringSquash"), first: input.float("ringFirst"))
     }
 
     /// PR・queue で口ごとに回す件数 (固定の seed)。定期の検査は `MOKUME_PROBE_SCALE` で増やす。
@@ -759,8 +854,8 @@ struct DensityInvarianceTests {
     static func measurement(_ mouth: Amount, _ pose: Pose) throws -> (measured: Double, expected: Double)? {
         let (weight, density) = (pose.weight, pose.density)
         let drawn = Double(weight * density)
-        // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)
-        if drawn < 0.07 { return nil }
+        // 描く画素で 0.07 より細い線は約束の外 (``axes`` の注釈)。丸い周の口は、縦の倍率で最も細る帯で測る
+        if drawn * Double(pose.ring?.squash ?? 1) < 0.07 { return nil }
         // 点は描く画素で 1 画素より小さいときだけ見る。1 画素以上の点の形は経路ごとの
         // 量子化で、この約束の外 (ADR-0039 決定 3)。縦横で倍率の違う点は、面積の倍率で縮む
         let areaFactor = mouth.areaFactor(squash: pose.squash)
@@ -782,7 +877,8 @@ struct DensityInvarianceTests {
             let bevel = pose.join == .bevel ? drawn * drawn / 2 : 0
             return (totalSum(pixels), pose.framePerimeter * drawn * Double(density) - bevel)
         }
-        if let area = mouth.fillArea {
+        if var area = mouth.fillArea {
+            if mouth == .diagonalFoldedRing { area = pose.ringArea }
             let caps = mouth.roundCaps ? Double.pi * drawn * drawn / 4 : 0
             return (totalSum(pixels), area * drawn * Double(density) + caps)
         } else if crossings == 0 {
@@ -812,7 +908,8 @@ struct DensityInvarianceTests {
                 weight: input.float("weight"), density: input.float("density"),
                 offset: SIMD2(input.float("dx"), input.float("dy")),
                 angle: mouth.rotates ? input.float("angle") : 0,
-                squash: mouth.squashes ? input.float("squash") : 1)
+                squash: mouth.squashes ? input.float("squash") : 1,
+                ring: mouth == .diagonalFoldedRing ? Self.ringPose(input, density: input.float("density")) : nil)
             if mouth == .diagonalFoldedRect {
                 pose.join = input["join"] >= 1 ? .bevel : .miter
                 pose.size = SIMD2(input.float("width"), input.float("height"))
@@ -845,6 +942,7 @@ struct DensityInvarianceTests {
                 FixedPose(mouth: .diagonalShaderLine, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalRetained, angle: .pi / 4, squash: 1, issue: 2172),
                 FixedPose(mouth: .diagonalFoldedRect, angle: .pi / 4, squash: 1, issue: 3733),
+                FixedPose(mouth: .diagonalFoldedRing, angle: .pi / 4, squash: 1, issue: 3863),
                 FixedPose(mouth: .diagonalSolidLine, angle: .pi / 4, squash: 1, issue: 3734),
                 FixedPose(mouth: .diagonalRetainedSolid, angle: .pi / 4, squash: 1, issue: 3734),
                 FixedPose(mouth: .diagonalBox, angle: .pi / 4, squash: 1, issue: 3734),

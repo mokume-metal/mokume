@@ -29,6 +29,10 @@ extension Canvas {
     /// **畳む雛形も同じ広げ方である** ([#3733])。広げ方が向きで変わるので、雛形は向きごとに畳む
     /// (``ThinFold``)。相似な置き場所の矩形だけは、雛形に半幅の微分を持たせて頂点段で置き場所ごとに広げ直し、
     /// 回した置き場所も 1 つの雛形に畳む (``appendWidenedTemplateStroke(_:)``・``FlatFrame/thinStroke``)。
+    /// 丸い周 (描く画素で短い径 8 以上・縦横比 0.5 以上の楕円と一周の弧) は、畳むかどうかによらず線に垂直に広げて、
+    /// 回した置き場所も 1 つの雛形に畳む (``widensAcrossTheLine(_:placedBy:)``・#3863)。保持した形を置くときも同じ
+    /// 広げ方である。周に沿って向きが変わるので、
+    /// 45° の振れは均されて ±25% (#3859) に収まる。
     ///
     /// 被覆は頂点の色ではなく別の値で運ぶ (`ShapeFragmentIn.coverage`) ので、利用者の断片が
     /// `in.color` を掛けずに色を返しても、`in.color.a` を読んでも、`stroke()` で渡した値のまま届く。
@@ -328,8 +332,12 @@ extension Canvas {
     ///
     /// `snapped` は、組んだ片が `matrix` で置かれて線の半画素の寄せを受けるか (畳む雛形は偽)。真なら描く画素の
     /// 絶対座標 (``ThinOutline/origin``) を持たせ、開いた端を列 (行) の境目で切る (#3745)。
+    ///
+    /// `acrossTheLine` なら、帯を整数 n の幅ではなく線に垂直に 1 へ広げる (#1637 の広げ方)。丸い周が使う
+    /// (``isRoundThinRing(radii:drawn:)``・#3863)。
     func thinOutline(
-        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, snapped: Bool = false
+        _ outline: Outline, weight: Float, placedBy matrix: simd_float4x4, snapped: Bool = false,
+        acrossTheLine: Bool = false
     ) -> ThinOutline? {
         let linear = drawnLinear(matrix)
         let determinant = simd_determinant(linear)
@@ -359,10 +367,11 @@ extension Canvas {
             bandHalf[index] = drawn / 2
             guard let thin = ThinStroke(drawnWeight: drawn, isPoint: false) else { continue }
             any = true
-            // 描く画素での帯の向き。長さ 0 の線分 (向きが決まらない) は線に垂直に広げる
+            // 描く画素での帯の向き。長さ 0 の線分 (向きが決まらない) と、丸い周 (``isRoundThinRing(radii:drawn:)``・
+            // #3863) は線に垂直に広げる
             let along = linear * direction
             let length = simd_length(along)
-            guard length > 0, length.isFinite else {
+            guard !acrossTheLine, length > 0, length.isFinite else {
                 bandHalf[index] = 0.5
                 bandCoverage[index] = thin.coverage
                 continue
@@ -668,7 +677,8 @@ extension Canvas {
 
     /// 平面の輪郭を補うときに細さを測る行列。**最後の変換が決まらない所では測らない** —
     /// 保持する形の記録 (置くときに測る・``ThinStrokeRecipe``)。畳みの雛形は、雛形の鍵が持つ
-    /// 置き場所の変換 (``templateStrokeMatrix``・細い線の雛形は同じ 2x2 の置き場所か、頂点段で広げ直す矩形だけで畳む)
+    /// 置き場所の変換 (``templateStrokeMatrix``・細い線の雛形は同じ 2x2 の置き場所か、頂点段で広げ直す矩形と線に垂直に
+    /// 広げる丸い周だけで畳む。丸い周は 1 つ目の置き場所の 2x2 で組み、回した置き場所へ使い回す)
     /// で測る。線の半画素の寄せ (`strokePoint`) を先送りする所と同じである。
     var thinStrokeMatrix: simd_float4x4? {
         if recordingShape { return nil }
@@ -939,13 +949,14 @@ extension Canvas {
         return built
     }
 
-    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD`。額縁の片で組める矩形の畳みの鍵に
-    /// する (``ThinFold/widensInVertexStage``・#3733)。
+    /// 描く画素へ写す 2x2 のうち、**回転 (と鏡映) に依らない部分** `DᵀD`。額縁の片で組める矩形と丸い周の畳みの鍵に
+    /// する (``ThinFold/widensInVertexStage``・#3733、``ThinFold/widensAcrossTheLine``・#3863)。
     ///
     /// **#2172 からは、`DᵀD` が同じでも片は同じにならない** — 細い帯は列 (行) が帯を切る長さで広げるので、
     /// 回すと広げ方が変わる。回転だけが違う置き場所に 1 つの雛形を使い回せるのは、頂点段で置き場所ごとに
-    /// 広げ直す矩形だけである。保持した形の控えとほかの形の畳みの鍵は 2x2 そのもの
-    /// (``thinVertices(_:placedBy:cache:stroke:)``・``thinStrokeLinear(form:)``)。
+    /// 広げ直す矩形と、向きによらない広げ方 (線に垂直) をする丸い周 (``widensAcrossTheLine(_:placedBy:)``) だけである。
+    /// 保持した形の控えとほかの形の畳みの鍵は 2x2 そのもの (``thinVertices(_:placedBy:cache:stroke:)``・
+    /// ``thinStrokeLinear(form:)``)。
     ///
     /// 単精度の丸めで、同じ大きさの回転どうしでも `DᵀD` の最下位の桁は揺れる (0.25 と
     /// 0.24999999 のように指数をまたぐこともある)。鍵は大きさ (対角の和) の対数と、和で割った
@@ -967,8 +978,13 @@ extension Canvas {
         // 周は、置いた後の大きさで刻み直す (#1645)。円板は描く画素の空間で組む
         // (``thinCarving(_:thin:)``) ので、この分割数は使わない
         let outline = recipe.outline(atScale: Self.splitScale(of: combined))
-        // 置いた頂点は置くときに半画素寄せる (``Canvas/place(_:of:at:)``) ので、描く画素の絶対座標が決まる
-        guard let thin = thinOutline(outline, weight: recipe.weight, placedBy: combined, snapped: true)
+        // 置いた頂点は置くときに半画素寄せる (``Canvas/place(_:of:at:)``) ので、描く画素の絶対座標が決まる。
+        // 丸い周は、直に引く線と同じく線に垂直に広げる (``widensAcrossTheLine(_:placedBy:)``・#3863)。判断は置いた
+        // 2x2 だけで決まり、控えの鍵 (``thinVertices(_:placedBy:cache:stroke:)``) に入っている
+        guard
+            let thin = thinOutline(
+                outline, weight: recipe.weight, placedBy: combined, snapped: true,
+                acrossTheLine: widensAcrossTheLine(outline, placedBy: combined))
         else { return nil }
         let saved = (style.strokeCap, style.strokeJoin)
         style.strokeCap = thin.isPoint ? .square : recipe.cap
