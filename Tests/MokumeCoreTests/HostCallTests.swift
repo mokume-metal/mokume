@@ -138,4 +138,41 @@ struct HostCallTests {
         #expect(game.x == 0, "x = \(game.x)")
         #expect(log.messageForRead(of: "width") != nil, "\(log.messages)")
     }
+
+    /// ``activeRun(for:from:)`` の `receiver` は、差している実行が無い読み取り・資源の口でだけ、ちょうど 1 回評価する。
+    /// 評価は展開しない関数 (`activeRunOutsideFrame`) へ移したので、フレームの中で評価する・2 回評価する誤りを
+    /// 数で縛る ([#3082])。フレームの中の描く口は 1 回ごとにここを通るので、評価が混ざると負担が増える。
+    ///
+    /// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
+    @Test("実行を引くときの receiver は、フレームの中では評価せず、外の読み取り・資源の口でだけちょうど 1 回評価する")
+    func receiverIsEvaluatedOnlyOutsideTheFrameExactlyOnce() throws {
+        let game = Game()
+        let runtime = try SketchRuntime(sketch: game, gpu: try RenderDevice())
+        defer { runtime.closePlugins() }
+        try runtime.advance()
+        var evaluated = 0
+        func receiver() -> (any SketchPart)? {
+            evaluated += 1
+            return game
+        }
+        let purposes: [RunPurpose] = [.read, .make, .act, .attach, .frame]
+
+        runtime.withActiveRuntime {
+            for purpose in purposes {
+                #expect(activeRun(for: purpose, from: receiver()) === runtime, "\(purpose)")
+            }
+        }
+        #expect(evaluated == 0, "フレームの中では評価しない: \(evaluated) 回")
+
+        for purpose in [RunPurpose.read, .make] {
+            evaluated = 0
+            #expect(activeRun(for: purpose, from: receiver()) === runtime, "\(purpose) は結ばれた実行を引く")
+            #expect(evaluated == 1, "\(purpose) はフレームの外でちょうど 1 回評価する: \(evaluated) 回")
+        }
+        for purpose in [RunPurpose.act, .attach, .frame] {
+            evaluated = 0
+            #expect(activeRun(for: purpose, from: receiver()) == nil, "\(purpose) は差している実行だけを見る")
+            #expect(evaluated == 0, "\(purpose) は外でも評価しない: \(evaluated) 回")
+        }
+    }
 }
