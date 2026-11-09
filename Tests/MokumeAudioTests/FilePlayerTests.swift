@@ -131,16 +131,16 @@ struct FilePlayerTests {
         player.leave()
     }
 
-    /// 描いている途中の流れへ鳴らし始めても、直後の最初の窓の先頭の標本から鳴る (#3270・#3277)。
-    /// `AVAudioPlayerNode` の命令の取り込みが描くのに間に合わないと、窓まるごと無音になった (M3 Max で
+    /// 描いている途中の流れへ鳴らし始めても、直後の最初のウィンドウの先頭の標本から鳴る (#3270・#3277)。
+    /// `AVAudioPlayerNode` の命令の取り込みが描くのに間に合わないと、ウィンドウまるごと無音になった (M3 Max で
     /// 5〜10%)。命令を原子値で渡す形では起きないので、回数で数える。
     ///
     /// **負荷なしと負荷ありの両方を回す。** 負荷なしは、`AVAudioPlayerNode` に戻すと確かに赤になる側 (負荷を
     /// 掛けると呼ぶ側も遅れて、取り込みが間に合ってしまい、赤になる回が減る) で、退行の検知役。負荷ありは、
-    /// コア数ぶんの busy スレッドを回した重い機械でも、窓の先頭から鳴ることを見る確認役 (検知役ではない)。
+    /// コア数ぶんの busy スレッドを回した重い機械でも、ウィンドウの先頭から鳴ることを見る確認役 (検知役ではない)。
     /// 負荷が期限で切れたら、負荷なしで走った回が混じるので、黙らず失敗にする。
     @Test(
-        "描いている途中の流れへ鳴らし始めると、直後に描いた窓の先頭の標本から鳴る",
+        "描いている途中の流れへ鳴らし始めると、直後に描いたウィンドウの先頭の標本から鳴る",
         arguments: [false, true])
     func startsAtTheFirstSampleOfTheNextWindow(underLoad: Bool) throws {
         let attempts = 200
@@ -173,7 +173,7 @@ struct FilePlayerTests {
         let loadWasCut = load?.expired ?? false
         load?.stop()
         #expect(!loadWasCut, "負荷が期限で切れた: 残りの回は負荷なしで走った")
-        #expect(silentWindows == 0, "\(attempts) 回のうち \(silentWindows) 回、窓の先頭から鳴らなかった")
+        #expect(silentWindows == 0, "\(attempts) 回のうち \(silentWindows) 回、ウィンドウの先頭から鳴らなかった")
     }
 
     @Test("途中から鳴らす・ループの折り返しは、描き出しの区切りをまたいでも同じ標本になる")

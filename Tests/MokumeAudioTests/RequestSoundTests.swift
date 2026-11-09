@@ -12,7 +12,7 @@ import Testing
 ///
 /// `selectInput` の結果は `Task` に届く。そこでは `runningSketch` が外れているので、同期の `loadSound` は
 /// `notRunning` を投げ、`draw()` へ持ち越して読むと「`draw()` の中の同期の読み込み」の警告が出る。
-/// `requestSound` は、`Task` が持ち越した窓口 (``AttachRequests``) へ足すことを頼み、**実行がフレームの頭で
+/// `requestSound` は、`Task` が持ち越した受付 (``AttachRequests``) へ足すことを頼み、**実行がフレームの頭で
 /// 足し終えてから**返る。待つ検査は、フレームを回しながら待つ — 頭で当てる者が実行だからである。
 ///
 /// **呼んだ時点で差し込みが外れていたことを、検査が自分で確かめる** (`RequestFromTaskTests` と同じ)。
@@ -186,12 +186,12 @@ struct RequestSoundTests {
         let runtime = try makeRuntime(sketch)
         // 最初のフレームで Task が起きる。以後はフレームを回さない — 頭で当てる者が居ない
         try runtime.advance()
-        // 読み終えて窓口へ頼むまでは待つ (読むのは裏で、頭では当てない)
+        // 読み終えて受付へ頼むまでは待つ (読むのは裏で、頭では当てない)
         let deadline = ContinuousClock.now + .seconds(30)
         while !runtime.attachRequests.hasWaiting, !sketch.finished, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(runtime.attachRequests.hasWaiting, "頼みが窓口に届いていない")
+        #expect(runtime.attachRequests.hasWaiting, "頼みが受付に届いていない")
         runtime.closePlugins()
         // 待つ側が期限を持つ。畳んでも待ちが終わらなければ、ここで失敗にして返る
         let closedAt = ContinuousClock.now
@@ -220,7 +220,7 @@ struct RequestSoundTests {
         while !runtime.attachRequests.hasWaiting, !sketch.finished, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(runtime.attachRequests.hasWaiting, "頼みが窓口に届いていない")
+        #expect(runtime.attachRequests.hasWaiting, "頼みが受付に届いていない")
         // ここから await しない: フレームが頼みを当てて待ちを終え (`Task` はまだ戻っていない)、続けて畳む
         try runtime.advance()
         #expect(!runtime.attachRequests.hasWaiting, "頼みが当てられていない")
