@@ -12,9 +12,9 @@ import simd
 /// トラックパッドのピンチと、押した回数 (ダブルクリック)
 /// ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
 ///
-/// 量 (倍率の差分・押した回数) が窓から外から同じ線を通って合流点へ届くこと、`orbitControl` がその量で
+/// 量 (倍率の差分・押した回数) がウィンドウから外から同じ線を通って合流点へ届くこと、`orbitControl` がその量で
 /// 寄る・戻ることを、入力と計算の側で固める。GPU を要するのは最後の 1 組 (`orbitControl` を絵まで通す)
-/// だけで、実際のトラックパッドの身振りは窓での手の確認に回る (PR 本文の手順)。
+/// だけで、実際のトラックパッドの身振りはウィンドウでの手の確認に回る (PR 本文の手順)。
 @Suite("ピンチと押した回数: 合流点")
 @MainActor
 struct PinchAndClickCountInputTests {
@@ -174,7 +174,7 @@ struct PinchAndClickCountWireTests {
         }
     }
 
-    @Test("clickCount は mouseDown でだけ読む。型違いの値が付いた mouseUp も解ける (釦が押されたまま残らない)")
+    @Test("clickCount は mouseDown でだけ読む。型違いの値が付いた mouseUp も解ける (ボタンが押されたまま残らない)")
     func clickCountIsReadOnMouseDownOnly() throws {
         #expect(
             try decode(#"{"type": "mouseUp", "x": 1, "y": 2, "clickCount": 1.5}"#).event
@@ -450,7 +450,7 @@ struct PinchAndClickCountOrbitControlTests {
     }
 }
 
-@Suite("ピンチと押した回数: 窓")
+@Suite("ピンチと押した回数: ウィンドウ")
 @MainActor
 struct PinchAndClickCountSurfaceTests {
     private func makeSurface(_ input: InputState) throws -> SketchSurface {
@@ -461,7 +461,7 @@ struct PinchAndClickCountSurfaceTests {
     }
 
     @Test(
-        "窓が運んだピンチは、合流点へも運び先の 1 行へも行く",
+        "ウィンドウが運んだピンチは、合流点へも運び先の 1 行へも行く",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
     func theSurfaceRelaysAPinch() throws {
         let input = InputState()
@@ -474,9 +474,9 @@ struct PinchAndClickCountSurfaceTests {
         #expect(lines == [InputEvent.pinched(amount: 0.25).wireLine])
     }
 
-    /// 窓が拾った押下は、`NSEvent.clickCount` をそのまま運ぶ。
+    /// ウィンドウが拾った押下は、`NSEvent.clickCount` をそのまま運ぶ。
     @Test(
-        "窓の押下は、押した回数を運ぶ",
+        "ウィンドウの押下は、押した回数を運ぶ",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"))
     func theSurfaceCarriesTheClickCount() throws {
         let input = InputState()

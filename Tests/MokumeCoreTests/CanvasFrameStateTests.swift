@@ -517,7 +517,7 @@ extension CanvasTests {
                 "width": construction, "height": construction,
                 "texture": "色の面。作ったときに決まり、効果を通すフレームの終わりと次のフレームの頭で効果の控えと取り替わる (フレームの外へ持ち越す・#2388)",
                 "exchangePartner": "面を取り替える相手 (効果の控え) の持ち主。初めて取り替えたときに結び、面と同じだけ生きる。面を溜める側が描き場所だけを抱えても、相手の面が先に常駐から外れないため (#2388)",
-                "texturesReplaced": "打ち切られた投入の取り消しで面の中身が変わったと名乗った回数 (作ってから通算)。止まっている間に窓と出口へ出し直すかを決める内容の変更番号の一部で、増える一方 (#2388)",
+                "texturesReplaced": "打ち切られた投入の取り消しで面の中身が変わったと名乗った回数 (作ってから通算)。止まっている間にウィンドウと出口へ出し直すかを決める内容の変更番号の一部で、増える一方 (#2388)",
                 "depthTexture": construction, "gpu": construction,
                 "stencilTexture": "型板の面 (memoryless)。作ったときに決まり、中身はパスごとに 0 から始めて捨てる (ADR-0046・#3574)",
                 "drawer": "この面を出す先に持つ描き場所 (弱く持つ)。組み立ての最後に 1 度だけ書く",
@@ -525,7 +525,7 @@ extension CanvasTests {
                 "encodedStorage": resource, "spareEncodedStorage": resource, "displayStorage": resource,
                 "outputPassStorage": resource,
                 "lastEncodeSubmission": "最後に出力段を投入した番号。次の出力段の前に名指しで待つ (#927)",
-                "readableWindow": "前に返した画素の窓。写しごとに不変で、有効かは返すたびに待ちと写しの新しさで確かめる (#2369)",
+                "readableWindow": "前に返した画素のビュー。写しごとに不変で、有効かは返すたびに待ちと写しの新しさで確かめる (#2369)",
                 "pixelMirrorsMade": count, "pixelWriteBacksEncoded": count,
                 "pixelReadbacksEncoded": count, "encodedImagesMade": count, "encodePassCount": count,
                 "failPixelWriteBackForTesting": "検査の差し込み。製品の経路では常に nil (#1906)",
@@ -545,7 +545,7 @@ extension CanvasTests {
             return [
                 "storage": construction, "gpu": construction, "bytesPerRow": construction,
                 "syncedThrough": "写しが映した投入の番号。読む口が進め、捨てる口と、打ち切りを見つけた投げる読む口 (#1932) が 0 に戻す。映した絵の印で、フレームに属さない",
-                "cpuWriteCount": "CPU が写しへ書いた回数 (作ってから通算)。止まっている間に窓と出口へ出し直すかを決める内容の変更番号の一部で、増える一方。フレームに属さない (#2367)",
+                "cpuWriteCount": "CPU が写しへ書いた回数 (作ってから通算)。止まっている間にウィンドウと出口へ出し直すかを決める内容の変更番号の一部で、増える一方。フレームに属さない (#2367)",
                 "writtenBackBy": "CPU が書いた画素を最後に書き戻した投入の番号。書き戻しが打ち切られたときに書き込み待ちを立て直すための印で、捨てる口が 0 に戻す。フレームに属さない (#1932)",
             ]
         }
@@ -651,7 +651,7 @@ extension CanvasTests {
                 "previousFrameCopiesMade": count, "previousFramePicturesCopied": count,
                 "shadowBake": "影の焼き付けが持ち越す格納 (#2257)。焼いた面・記帳・資源・数えは面と同じだけ生きる。宣言 4 本 (shadowsEnabled ほか) は frameState に残る。中の分け方は everyTargetStoredPropertyIsClassified (shadowBake の層) が見る",
                 "pixelLoadFailed": "直前の読む前の描き切りが失敗したか。描き切れたときに戻る (#1368・頭では戻さない)",
-                "pixelWriteGateMade": "窓へ渡す書いてよいかの問い合わせ。面を弱く持つだけで状態を抱えず、答えは呼ばれた時点で決まる。面ごとに使い回す (#2369)",
+                "pixelWriteGateMade": "ウィンドウへ渡す書いてよいかの問い合わせ。面を弱く持つだけで状態を抱えず、答えは呼ばれた時点で決まる。面ごとに使い回す (#2369)",
                 "isDrawing": "フレームの内外の印そのもの。境目の関数だけが書く",
                 "beginDrawFrame": "isDrawing と組のフレームの印 (beginDraw が開いた本体のフレームの番号)。境目の関数だけが書く",
                 "droppedAtTheMainFrame": "本体のフレームが始まる所で閉じ忘れを捨てた後、遅れた endDraw() をまだ名乗っていないかの印 (#1834)。捨てる関数が立て、名乗ったとき・次に本体のフレームが始まる所・自分の次のフレームの頭で下ろす",

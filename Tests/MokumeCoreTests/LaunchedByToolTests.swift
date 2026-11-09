@@ -10,12 +10,12 @@ import Testing
 
 /// 画面の出口と道具の管を誰が持つかは、**起こし方**で決まる ([#2028])。
 ///
-/// 見張り (`watch`) が起こした子だけが、窓を持たずに共有面へ差し出し、標準入力の管を読む。
-/// それ以外の実行は、同じ場所に区画 `.mokume/viewport` が在っても自分の窓を開き、標準入力
+/// 見張り (`watch`) が起こした子だけが、ウィンドウを持たずに共有面へ差し出し、標準入力の管を読む。
+/// それ以外の実行は、同じ場所に区画 `.mokume/viewport` が在っても自分のウィンドウを開き、標準入力
 /// にも見張りの目録 (`surface.json`) にも触らない ([ADR-0032] 決定 1)。かつては区画の在る
-/// 無しで起こし方を代用しており、居合わせた実行が見張りの窓と管を奪っていた — 標準入力に
+/// 無しで起こし方を代用しており、居合わせた実行が見張りのウィンドウと管を奪っていた — 標準入力に
 /// `O_NONBLOCK` を残す (#2024)・閉じた標準入力で書き出しが 0 枚で止まる (#2025)・見張りの
-/// 目録を上書きして窓を開かない (#2026)。
+/// 目録を上書きしてウィンドウを開かない (#2026)。
 ///
 /// ## 区画は本番と同じ場所に置く
 ///
@@ -97,7 +97,7 @@ struct LaunchedByToolTests {
         return try body()
     }
 
-    /// 窓の経路で組む。**終わりの行き先は赤を記録する口へ差し替える** — 既定の
+    /// ウィンドウの経路で組む。**終わりの行き先は赤を記録する口へ差し替える** — 既定の
     /// `terminate(nil)` は検査のプロセスを終わらせる (`SketchApplicationTests` と同じ理由)。
     private func makeApplication() throws -> SketchApplication {
         let application = try SketchApplication(sketch: Blank(), gpu: RenderDevice())
@@ -113,9 +113,9 @@ struct LaunchedByToolTests {
         return pipe
     }
 
-    // MARK: - 窓を持たない SketchRuntime (#2024)
+    // MARK: - ウィンドウを持たない SketchRuntime (#2024)
 
-    @Test("区画が在っても、窓を持たない SketchRuntime は標準入力のフラグを変えない")
+    @Test("区画が在っても、ウィンドウを持たない SketchRuntime は標準入力のフラグを変えない")
     func aWindowlessRuntimeLeavesStandardInputAlone() throws {
         let pipe = Pipe()
         defer { try? pipe.fileHandleForWriting.close() }
@@ -198,9 +198,9 @@ struct LaunchedByToolTests {
         }
     }
 
-    // MARK: - 窓の経路 (#2026)
+    // MARK: - ウィンドウの経路 (#2026)
 
-    @Test("区画が在っても合図が無ければ、自分の窓を開き、目録に触らず、そのことを 1 度名乗る")
+    @Test("区画が在っても合図が無ければ、自分のウィンドウを開き、目録に触らず、そのことを 1 度名乗る")
     func withoutTheSignalTheSketchOpensItsOwnWindow() throws {
         let pipe = Pipe()
         defer { try? pipe.fileHandleForWriting.close() }
@@ -216,20 +216,20 @@ struct LaunchedByToolTests {
                 #expect(SharedFrameSurface.launchOwner == nil, "検査のプロセスに合図が立っている")
                 application.resolveOutlet()
 
-                #expect(application.endsAfterLastWindowClosed, "窓の経路になっていない")
-                // 窓を開く経路の窓の層は、1 枚目の前に不透明な黒で塗られている (#2876)
+                #expect(application.endsAfterLastWindowClosed, "ウィンドウの経路になっていない")
+                // ウィンドウを開く経路のウィンドウの層は、1 枚目の前に不透明な黒で塗られている (#2876)
                 application.didFinishLaunching()
                 defer { application.window?.close() }
                 #expect(
                     OpaqueBlackLayer.problem(with: application.window?.contentView?.layer) == nil,
-                    "自分の窓の層")
-                #expect(application.activationPolicy == .regular, "Dock に並ばない (窓を開かない) 経路になった")
+                    "自分のウィンドウの層")
+                #expect(application.activationPolicy == .regular, "Dock に並ばない (ウィンドウを開かない) 経路になった")
                 #expect(
                     try String(
                         contentsOf: facet.appendingPathComponent(SharedFrameSurface.manifestName),
                         encoding: .utf8) == Self.watchedManifest,
                     "見張りの目録を書き換えた")
-                #expect(said.count == 1, "区画が在るのに窓を開くことを名乗っていない (\(said))")
+                #expect(said.count == 1, "区画が在るのにウィンドウを開くことを名乗っていない (\(said))")
                 #expect(said.first?.contains(facet.path) == true, "名乗りが区画の在処を言わない")
                 // 古い見張りは合図を渡さないので、見張りから起こした人を版のずれへ導く
                 #expect(said.first?.contains("mokume watch") == true, "版のずれを疑わせる手掛かりが無い")
@@ -240,7 +240,7 @@ struct LaunchedByToolTests {
     }
 
     /// **区画が無ければ名乗らない。** 直に走らせたいつもの実行の出力を 1 行も増やさない。
-    @Test("区画が無ければ、窓を開くことを名乗らない")
+    @Test("区画が無ければ、ウィンドウを開くことを名乗らない")
     func withoutTheFacetNothingIsSaid() throws {
         let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         let application = try makeApplication()
@@ -254,7 +254,7 @@ struct LaunchedByToolTests {
 
     // MARK: - 見張りの子 (合図あり・#1427 はそのまま)
 
-    @Test("合図のある子は、窓を開かずに共有面へ差し出し、目録を置き、管を読み、管が畳まれたら気付く")
+    @Test("合図のある子は、ウィンドウを開かずに共有面へ差し出し、目録を置き、管を読み、管が畳まれたら気付く")
     func withTheSignalTheChildHandsFramesToTheTool() throws {
         try withProductionFacet(manifest: Self.watchedManifest) { facet in
             let pipe = Pipe()
@@ -266,9 +266,9 @@ struct LaunchedByToolTests {
 
             application.resolveOutlet(owner: "mokume watch")
 
-            #expect(!application.endsAfterLastWindowClosed, "窓の経路のまま")
+            #expect(!application.endsAfterLastWindowClosed, "ウィンドウの経路のまま")
             #expect(application.activationPolicy == .accessory)
-            #expect(said.isEmpty, "合図があるのに、窓を開くと名乗った")
+            #expect(said.isEmpty, "合図があるのに、ウィンドウを開くと名乗った")
             let placed = try String(
                 contentsOf: facet.appendingPathComponent(SharedFrameSurface.manifestName),
                 encoding: .utf8)
@@ -285,7 +285,7 @@ struct LaunchedByToolTests {
         }
     }
 
-    /// **全画面の頼みは目録に載せて道具へ渡し、道具が読まない古さでも黙らない** ([#2020]・[#2188])。作品の窓は
+    /// **全画面の頼みは目録に載せて道具へ渡し、道具が読まない古さでも黙らない** ([#2020]・[#2188])。作品のウィンドウは
     /// 道具が持つので ([ADR-0032] 決定 1)、子からは全画面にできない。描く大きさはディスプレイから決まっている。
     ///
     /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
@@ -319,10 +319,10 @@ struct LaunchedByToolTests {
                 "目録に全画面の頼みを載せていない: \(String(describing: manifest.fullScreenDisplay))")
         }
     }
-    /// **共有面を用意できずに窓へ倒れても、見張りの子は管を読む。** 管を引いたのは見張りで、
+    /// **共有面を用意できずにウィンドウへ倒れても、見張りの子は管を読む。** 管を引いたのは見張りで、
     /// 見張りが去ったことに気付く口はこの管しか無い ([#1427](https://github.com/mokume-metal/mokume/issues/1427))。
     /// 区画に目録を書けない形 (書き込めない区画) で倒す。
-    @Test("合図と区画が揃っていれば、共有面を用意できずに窓へ倒れても、管を読んで道具の去ったことに気付く")
+    @Test("合図と区画が揃っていれば、共有面を用意できずにウィンドウへ倒れても、管を読んで道具の去ったことに気付く")
     func aChildThatFallsBackToAWindowStillWatchesTheTool() throws {
         let facet = try TestScratch.directory("mokume-viewport-locked")
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
@@ -338,24 +338,24 @@ struct LaunchedByToolTests {
         application.resolveOutlet(at: facet, owner: "mokume watch")
 
         #expect(application.endsAfterLastWindowClosed, "目録を書けないのに共有面の経路になった")
-        // 窓へ倒れた子の窓も、1 枚目の前に不透明な黒で塗られている (#2876)
+        // ウィンドウへ倒れた子のウィンドウも、1 枚目の前に不透明な黒で塗られている (#2876)
         application.didFinishLaunching()
         defer { application.window?.close() }
         #expect(
             OpaqueBlackLayer.problem(with: application.window?.contentView?.layer) == nil,
-            "窓へ倒れた子の窓の層")
+            "ウィンドウへ倒れた子のウィンドウの層")
         let flags = fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFL)
-        #expect(flags & O_NONBLOCK != 0, "窓へ倒れた見張りの子が、道具の管を読んでいない")
+        #expect(flags & O_NONBLOCK != 0, "ウィンドウへ倒れた見張りの子が、道具の管を読んでいない")
         #expect(!application.driverDeparted())
         try pipe.fileHandleForWriting.close()
-        #expect(application.driverDeparted(), "窓へ倒れた見張りの子が、道具の去ったことに気付かない")
+        #expect(application.driverDeparted(), "ウィンドウへ倒れた見張りの子が、道具の去ったことに気付かない")
     }
 
     /// **倒れたことを、見張りへ知らせる** ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
     /// 見張りが前の世代を畳むのは、新しい世代の目録を採った合図が来たときだけで、目録を置かない子には
     /// 合図が来ない。区画の中に自分の pid の目印を置けば、見張りは乗り換えを待たずに前の世代を畳める。
     /// 目録の場所をディレクトリに塞いで倒す (区画そのものは書ける)。
-    @Test("共有面を用意できずに窓へ倒れた子は、区画に自分の pid の目印を置く")
+    @Test("共有面を用意できずにウィンドウへ倒れた子は、区画に自分の pid の目印を置く")
     func aChildThatFallsBackDeclaresItToTheTool() throws {
         let facet = TestScratch.path("mokume-viewport-blocked", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -395,8 +395,8 @@ struct LaunchedByToolTests {
         }
     }
 
-    /// 区画そのものを書けない倒れ方では、知らせようが無い。置けなくても落ちず、窓へ倒れる。
-    @Test("区画を書けずに倒れた子は、目印を置けなくても落ちずに窓を開く")
+    /// 区画そのものを書けない倒れ方では、知らせようが無い。置けなくても落ちず、ウィンドウへ倒れる。
+    @Test("区画を書けずに倒れた子は、目印を置けなくても落ちずにウィンドウを開く")
     func aChildThatCannotWriteTheFacetStillFallsBack() throws {
         let facet = try TestScratch.directory("mokume-viewport-locked")
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: facet.path)
@@ -421,7 +421,7 @@ struct LaunchedByToolTests {
 
     /// **合図はこのプロセスを起こした道具のもので、このプロセスが起こす子のものではない。**
     /// 見張りの子のスケッチが `Process` で別の実行ファイルを直に起こすと、継いだ孫まで見張りの
-    /// 窓と管を持っているかのように振る舞う (#2028)。読んだら環境から消す。
+    /// ウィンドウと管を持っているかのように振る舞う (#2028)。読んだら環境から消す。
     @Test("合図は読んだときに環境から消え、起こした子へは継がれない")
     func theSignalIsNotInheritedByChildren() throws {
         let key = StartupReads.viewportOwner.key

@@ -47,8 +47,8 @@ final class FramePresenter {
     /// 最後に差し出した投入の番号。まだ 1 枚も差し出していなければ 0。
     ///
     /// ``present(_:to:)`` が `true` を返した直後に読む。**差し出した側が結末を待つための口**で、
-    /// 投入を GPU が打ち切ったら同じ絵を出し直す ([#2735]。道具の窓 ``SharedFrameStage`` が使う)。
-    /// 返り値の形 (`Bool`) を変えないのは、毎リフレッシュ差し出す走っているスケッチの窓
+    /// 投入を GPU が打ち切ったら同じ絵を出し直す ([#2735]。道具のウィンドウ ``SharedFrameStage`` が使う)。
+    /// 返り値の形 (`Bool`) を変えないのは、毎リフレッシュ差し出す走っているスケッチのウィンドウ
     /// (`SketchApplication`) は出し直しを待つ必要が無く、番号を要らないためである。
     ///
     /// [#2735]: https://github.com/mokume-metal/mokume/issues/2735
@@ -56,10 +56,10 @@ final class FramePresenter {
 
     /// 描いた絵を画面へ出すべきか。
     ///
-    /// 窓が見えていない間は出さない — 誰も見ない絵のために `nextDrawable()` の待ちを
+    /// ウィンドウが見えていない間は出さない — 誰も見ない絵のために `nextDrawable()` の待ちを
     /// 払わないためで、**描くほうは止めない** (止めるのは出すほうだけ・#223)。
     ///
-    /// **最初の 1 回は無条件に通す。** 見えているかの判定は窓が出てから更新されるので、
+    /// **最初の 1 回は無条件に通す。** 見えているかの判定はウィンドウが出てから更新されるので、
     /// それを待たずに描き終えるスケッチ (1 枚しか描かないもの) が、永久に何も表示
     /// しないことになる。
     static func shouldPresent(windowIsVisible: Bool, hasPresented: Bool) -> Bool {
@@ -155,7 +155,7 @@ final class FramePresenter {
             throw .encoderUnavailable
         }
         pipeline.setSource(source.texture)
-        // 明るさを写す段は**画面が持つ**。行き先が窓でも面でも同じ設定が効く
+        // 明るさを写す段は**画面が持つ**。行き先がウィンドウでも面でも同じ設定が効く
         try pipeline.setBrightness(source.brightness)
         encoder.setRenderPipelineState(pipeline.state)
         encoder.setViewport(

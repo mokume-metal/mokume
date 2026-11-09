@@ -6,11 +6,11 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓の × を押した人に確かめる合図 ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
+/// ウィンドウの × を押した人に確かめる合図 ([#1120](https://github.com/mokume-metal/mokume/issues/1120))。
 ///
-/// **窓を建てずに見る。** ここで見たいのは「合図をどう読み、何と言うか」であって、窓の
-/// 建ち方ではない — そちらは `SketchApplicationTests` が実際の窓で見る。
-@Suite("窓の × を確かめる合図")
+/// **ウィンドウを建てずに見る。** ここで見たいのは「合図をどう読み、何と言うか」であって、ウィンドウの
+/// 建ち方ではない — そちらは `SketchApplicationTests` が実際のウィンドウで見る。
+@Suite("ウィンドウの × を確かめる合図")
 struct CloseConfirmationTests {
     @Test("合図が無ければ、問いを持たない")
     func noSignalMeansNoQuestion() {
@@ -27,7 +27,7 @@ struct CloseConfirmationTests {
     }
 
     /// **押した後どうなるかは、起こし方で違う。** 名乗りを文面へ入れるのはそのためで、
-    /// 入っていなければ「窓を閉じたら端末の道具も終わる」ことが誰にも伝わらない。
+    /// 入っていなければ「ウィンドウを閉じたら端末の道具も終わる」ことが誰にも伝わらない。
     @Test("問いの文面に、渡した道具の名乗りが入る")
     func theQuestionNamesTheTool() throws {
         let question = try #require(

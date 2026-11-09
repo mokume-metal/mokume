@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 宣言 1 つに対して窓が出すつまみ。
+/// 宣言 1 つに対してウィンドウが出すつまみ。
 ///
 /// **型からつまみへの対応は 1 通りに固定する** ([ADR-0030] 決定 8)。決めるのはここ
 /// 1 箇所で、SwiftUI の側は決まったものを組むだけである — 対応の規則は AppKit を
-/// 立ち上げずに検められる必要があり、窓の中に埋めるとそれができない。
+/// 立ち上げずに検められる必要があり、ウィンドウの中に埋めるとそれができない。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 enum KnobKind: Equatable {
@@ -24,7 +24,7 @@ enum KnobKind: Equatable {
     /// つまみを出さない。値だけを、触れない見た目で出す。
     case none(Reason)
 
-    /// つまみを出さない理由。**黙って消さない** — 窓に並ばない値があると、書いたのに
+    /// つまみを出さない理由。**黙って消さない** — ウィンドウに並ばない値があると、書いたのに
     /// 効かないのか出していないだけなのかが読み手には区別できない。
     enum Reason: Equatable {
         /// 数値だが範囲を書いていない。
@@ -36,7 +36,7 @@ enum KnobKind: Equatable {
         /// 文字だが候補を書いていない。
         case choicesNotDeclared
 
-        /// 窓に添える 1 行。**次に何を書けばよいかまで書く。**
+        /// ウィンドウに添える 1 行。**次に何を書けばよいかまで書く。**
         var note: String {
             switch self {
             case .rangeNotDeclared: "declare a range and a knob appears"
@@ -79,8 +79,8 @@ extension KnobKind {
             guard let range = declaration.range else { return .none(missingRange(declaration)) }
             return .components(count: 3, range: range, step: declaration.step)
         case .string:
-            // 候補を書いていない文字は、窓からは触らせない。自由に打てる欄を出すと
-            // 「作者が想定していない文字が入った状態」を窓が作れてしまい、その状態を
+            // 候補を書いていない文字は、ウィンドウからは触らせない。自由に打てる欄を出すと
+            // 「作者が想定していない文字が入った状態」をウィンドウが作れてしまい、その状態を
             // 面の側 (候補による拒否) と揃える方法が無くなる
             guard let choices = declaration.choices, !choices.isEmpty else {
                 return .none(.choicesNotDeclared)

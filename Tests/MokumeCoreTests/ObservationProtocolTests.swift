@@ -225,7 +225,7 @@ struct ObservationProtocolTests {
 
     @Test("消すのは目録が先で、絵は後")
     func removesTheIndexBeforeTheImagesItPointsAt() throws {
-        // 逆順だと、古い目録が指す絵だけが消えた状態を読み手が掴む窓が空く
+        // 逆順だと、古い目録が指す絵だけが消えた状態を読み手が掴むウィンドウが空く
         let facet = try makeFacet()
         let observer = FrameObserver(directory: facet)
         for name in ["frame-000.png", "frame-001.png"] {
@@ -456,7 +456,7 @@ struct ObservationProtocolTests {
     }
 
     /// **省略できる欄の `null` は、省略と同じに読む** (#2392)。`time: null` は「時刻なし」で、断らない。
-    /// MCP の窓口はいまの `time`・`count`・`every` の `null` を断る。窓口の側は #2393 で揃える。
+    /// MCP サーバはいまの `time`・`count`・`every` の `null` を断る。MCP サーバの側は #2393 で揃える。
     @Test(
         "省略できる欄の null は、書かなかった要求と同じに撮る",
         arguments: ["scale", "count", "every", "time"])
@@ -494,7 +494,7 @@ struct ObservationProtocolTests {
 
     /// **型に収まる整数・数の範囲を越えた大きな数は、読めない要求にしない** (#2805)。スキーマの integer / number は
     /// 桁に上限が無く、`1e19` は正しい型で範囲の外の値である。符号の側の端へ寄せ、範囲の丸め (枚数・間隔) と
-    /// 実寸 (縮小率) で撮って `warnings` で名乗る — MCP の窓口が同じ値を寄せるのと揃う (`Tools.seriesArgument`)。
+    /// 実寸 (縮小率) で撮って `warnings` で名乗る — MCP サーバが同じ値を寄せるのと揃う (`Tools.seriesArgument`)。
     @Test(
         "範囲を越えた大きな数は、符号の側の端へ寄せて丸め、warnings で名乗って撮る",
         arguments: [

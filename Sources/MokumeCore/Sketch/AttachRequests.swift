@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
-/// 走っている実行へ入り口を足すことの頼みの窓口 (``SketchPart/requestSound(_:)`` など)。
+/// 走っている実行へ入り口を足すことの頼みの受付 (``SketchPart/requestSound(_:)`` など)。
 ///
 /// 待つ読み込みの口は `Task` の続きで返る。そこでは ``runningSketch`` が外れているので、走っている実行へ
 /// 足す口 (``SketchPart/attached(_:calledAs:making:)``) はそのままでは断る。**足すのは実行の側で、
-/// 窓口はそれを頼んで待たせるだけ**にする — ``LaunchingSketch`` が持ち越すのはこの窓口で、実行ではない。
+/// 受付はそれを頼んで待たせるだけ**にする — ``LaunchingSketch`` が持ち越すのはこの受付で、実行ではない。
 /// 描く口を `Task` から効かせると描く順が `Task` に番が回る時機で決まってしまうので
 /// ([ADR-0010]・``LaunchingSketch``)、足す番も `Task` には渡さない。
 ///

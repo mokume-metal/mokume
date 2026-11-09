@@ -54,7 +54,7 @@ import MokumeDiagnostics
     /// [#753]: https://github.com/mokume-metal/mokume/issues/753
     ///
     /// **効果を通すフレームでは、効果の控え (``StageImage``) と取り替わる** ([#2388])。取り替えるのは
-    /// ``exchangeTexture(with:)`` だけで、窓・書き出し・読む画素はどれも、そのときの
+    /// ``exchangeTexture(with:)`` だけで、ウィンドウ・書き出し・読む画素はどれも、そのときの
     /// この面を読めばよい (読む口に手は入れない)。
     ///
     /// **面を持ち歩く側は、面を値で写し取らない。** 取り替えた後は、組んだ時点の面が控えの面になる。
@@ -173,8 +173,8 @@ import MokumeDiagnostics
     /// 読まない描画先はここで 1 バイトも払わない。
     private(set) var pixelMirror: PixelMirror?
 
-    /// 前に ``pixels`` が返した窓。写しごとに不変 (置き場の先頭・大きさ・行の間隔) なので取っておき、
-    /// 有効なら作り直さずに返す (``pixels``・#2369)。窓は写しを抱えるだけで、中身の新しさは持たない。
+    /// 前に ``pixels`` が返したビュー。写しごとに不変 (置き場の先頭・大きさ・行の間隔) なので取っておき、
+    /// 有効なら作り直さずに返す (``pixels``・#2369)。ビューは写しを抱えるだけで、中身の新しさは持たない。
     private var readableWindow: Pixels?
 
     /// CPU が写しへ書いたまま、まだテクスチャへ戻していないか。
@@ -213,7 +213,7 @@ import MokumeDiagnostics
     /// 出口へ配るのは、その絵を組んだ投入の結末 (GPU が打ち切ったか) を確かめてからである
     /// (`SketchRuntime` の `settleOldestOutletFrame(waiting:)`)。結末が配る時点で届いていなければ
     /// 配るのを次のフレームへ持ち越すので、その間のフレームはこちらへ組む
-    /// (``encodeToImage(avoiding:)``)。持ち越さないスケッチ (間合いを取って回る窓) は作らない。
+    /// (``encodeToImage(avoiding:)``)。持ち越さないスケッチ (間合いを取って回るウィンドウ) は作らない。
     ///
     /// [#2743]: https://github.com/mokume-metal/mokume/issues/2743
     var spareEncodedStorage: EncodedImage?
@@ -272,7 +272,7 @@ import MokumeDiagnostics
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
     private(set) var lastWriteSubmission: UInt64 = 0
 
-    /// この面の絵が変わったことの印 — 窓と出口へ出し直すかを決める番号 ([#2367])。
+    /// この面の絵が変わったことの印 — ウィンドウと出口へ出し直すかを決める番号 ([#2367])。
     ///
     /// **増える一方で、絵が変わるたびに増える。** 2 つの足し合わせである:
     ///
@@ -283,7 +283,7 @@ import MokumeDiagnostics
     /// - 投入を介さない面の持ち替え: 打ち切られた投入の取り替えを戻すとき (``noteTextureReplaced()``・
     ///   [#2388])。持ち替えは投入の番号を進めないので、別に数える
     ///
-    /// 止まっている間のスケッチが、この番号が前に出したときと同じなら、窓の present も共有面の写しも
+    /// 止まっている間のスケッチが、この番号が前に出したときと同じなら、ウィンドウの present も共有面の写しも
     /// 飛ばす (``SketchApplication``)。**番号を上げる場所はこの 3 つの口だけである** — 面を変える口を
     /// 足したら、どれかを通す。
     ///
@@ -371,15 +371,15 @@ import MokumeDiagnostics
 
     // MARK: - 画素として見る
 
-    /// 描いた結果を画素として読み書きする面。返るのは描画先の写しへの窓である。
+    /// 描いた結果を画素として読み書きする面。返るのは描画先の写しへのビューである。
     ///
     /// 中身が確定しているのは GPU の仕事が終わったあとだけで、描画の経路は投入しても
     /// 待たない (#727)。だから**ここで待つ** — 投入済みのものが全部終わっていれば
     /// 何もせず返る。写しが最後に映してから GPU に新しい投入があれば、ここで読み戻しを
-    /// 1 本積んで待つ (描き切りが読み戻しを積んでいれば、それは起きない)。窓は生の
+    /// 1 本積んで待つ (描き切りが読み戻しを積んでいれば、それは起きない)。ウィンドウは生の
     /// ポインタなので、**取ったフレームの中で使い切る**。
     ///
-    /// **落ちない** ([ADR-0020] 決定 5)。写しを用意できなければ大きさ 0 の窓を返す —
+    /// **落ちない** ([ADR-0020] 決定 5)。写しを用意できなければ大きさ 0 のビューを返す —
     /// 読むと透明、書いても何も起きない。
     ///
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -387,7 +387,7 @@ import MokumeDiagnostics
     /// ## 同じ答えを 1 画素ごとに取り直さない ([#2369])
     ///
     /// 画素を 1 つ読み書きするたびにこの口を通る書き方 (`pixels[x, y]`) では、待ちと写しの確かめを
-    /// 毎回やり直すと、費用の大半がそこに行く。前に返した窓がまだ有効なら、**待たずに同じ窓を返す**。
+    /// 毎回やり直すと、費用の大半がそこに行く。前に返したウィンドウがまだ有効なら、**待たずに同じウィンドウを返す**。
     /// 有効とは、次の 3 つがそろうこと:
     ///
     /// - 前に ``RenderDevice/settle()`` が成功した後に、新しい投入が無い (``RenderDevice/isSettledThroughLatest``)。
@@ -395,7 +395,7 @@ import MokumeDiagnostics
     /// - 打ち切られた読み戻しの照会 (``RenderDevice/revokeDroppedDeliveries()``) を通した後でも、写しが
     ///   最新である (CPU が書いたままか、この面への最後の書き込み以後に映してある。別の面への投入では
     ///   崩れない・``mirrorIsCurrent(_:)``・#2786)
-    /// - 写しが同じである (窓は写しごとに不変)
+    /// - 写しが同じである (ビューは写しごとに不変)
     ///
     /// どれかが崩れていれば、今までどおりの遅い道 (待つ・映し直す・警告する) を通る。
     ///
@@ -410,8 +410,8 @@ import MokumeDiagnostics
         gpu.settleQuietly(orWarn: "Could not wait for the GPU before reading pixels")
         do {
             let mirror = try mirrorForReading()
-            // **写しが同じなら、窓も同じでよい** (窓は写しごとに不変)。別の面への投入で高速路の
-            // 「新しい投入が無い」が崩れた回でも、窓の作り直しを払わない ([#2786])
+            // **写しが同じなら、ビューも同じでよい** (ビューは写しごとに不変)。別の面への投入で高速路の
+            // 「新しい投入が無い」が崩れた回でも、ウィンドウの作り直しを払わない ([#2786])
             //
             // [#2786]: https://github.com/mokume-metal/mokume/issues/2786
             if let window = readableWindow, window.mirror === mirror { return window }
@@ -437,7 +437,7 @@ import MokumeDiagnostics
         return mirror
     }
 
-    /// 写しが、この面のいまの中身を映しているか。**読み戻しを積み直す要否も、前に返した窓を
+    /// 写しが、この面のいまの中身を映しているか。**読み戻しを積み直す要否も、前に返したビューを
     /// 使い回してよいかも、この 1 つの式で決める** (``mirrorForReading()``・``pixels``)。
     ///
     /// 見るのは**この面への書き込み**である — ``lastWriteSubmission`` 以後に映していれば、その後に
@@ -576,7 +576,7 @@ import MokumeDiagnostics
     /// 読み戻しで上書きしていなければ、書き込み待ちを立て直す (``judgeDroppedWork()``・[#1932])。
     ///
     /// **その投入が打ち切られたら、結末が届いた後で土台が同じ立て直しをする** (``rewritePixels(droppedAt:)``・
-    /// [#2199])。投げる読む口を呼ばない経路 (窓・`save()`・録り) でも、書いた画素を次の描き切りが戻す。
+    /// [#2199])。投げる読む口を呼ばない経路 (ウィンドウ・`save()`・録り) でも、書いた画素を次の描き切りが戻す。
     /// 呼び手 (描き切り・追い付き・出力段の書き戻し) はすべてここを通るので、預けるのもここ 1 か所である。
     ///
     /// [#1932]: https://github.com/mokume-metal/mokume/issues/1932
@@ -870,7 +870,7 @@ import MokumeDiagnostics
     ///
     /// 持ち替えは ``exchangeTexture(with:)`` を、打ち切られた投入の記帳を取り消すとき (``Canvas/carryDropped(_:)``)
     /// にもう一度呼ぶ。投入が書いた面の番号 (``lastWriteSubmission``) は進まないので、映してある写しを
-    /// 新しいと見誤らないように下ろし、止まっている間の窓が出し直せるように印を進める。CPU が書いた
+    /// 新しいと見誤らないように下ろし、止まっている間のウィンドウが出し直せるように印を進める。CPU が書いた
     /// まま戻していない写しは CPU の側が最新なので触らない。
     ///
     /// [#2388]: https://github.com/mokume-metal/mokume/issues/2388
@@ -935,12 +935,12 @@ import MokumeDiagnostics
     var hasPendingWrites = false
     /// CPU が写しへ書いた回数 (作ってから通算)。``RenderTarget/contentRevision`` の一部。
     ///
-    /// 書き込み待ちの旗とは別に数える: 旗は戻すと下りるが、この数は下りない。窓へ出す側は「前に出した
+    /// 書き込み待ちの旗とは別に数える: 旗は戻すと下りるが、この数は下りない。ウィンドウへ出す側は「前に出した
     /// ときから書かれたか」を見るので、書き込み待ちが戻された後でも、書いた事実が残らなければならない。
     private(set) var cpuWriteCount: UInt64 = 0
 
     /// CPU が写しへ書いた。**書く口 (``Pixels``) はすべてここを通る** — 旗を直に立てると数えそびれ、
-    /// 止まっている間に書いた画素が窓にも出口にも出ない ([#2367])。
+    /// 止まっている間に書いた画素がウィンドウにも出口にも出ない ([#2367])。
     ///
     /// [#2367]: https://github.com/mokume-metal/mokume/issues/2367
     func noteCPUWrite() {
@@ -976,8 +976,8 @@ import MokumeDiagnostics
         self.gpu = gpu
     }
 
-    /// **置き場を常駐から退かせる** ([#795])。画素の窓 (``Pixels``) は写しを抱えるので、
-    /// 窓を使い切るまではここは走らない。
+    /// **置き場を常駐から退かせる** ([#795])。画素のビュー (``Pixels``) は写しを抱えるので、
+    /// ウィンドウを使い切るまではここは走らない。
     ///
     /// [#795]: https://github.com/mokume-metal/mokume/issues/795
     isolated deinit { gpu.retire(storage) }

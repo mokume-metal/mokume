@@ -7,13 +7,13 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓の出し方 (#679・#1624)。GPU は要らない — 起動の性質と、開く大きさの指定から
-/// 決まるところだけを見る (大きさの指定は窓を 1 枚作って当てるが、画面に出さない)。
+/// ウィンドウの出し方 (#679・#1624)。GPU は要らない — 起動の性質と、開く大きさの指定から
+/// 決まるところだけを見る (大きさの指定はウィンドウを 1 枚作って当てるが、画面に出さない)。
 ///
 /// **位置そのものは見ない。** 覚えるのも復元するのも AppKit が持っており、こちらは
 /// 「覚えているものがあればそれを使う」と書いただけである。実際に動かないことは
 /// 動きの証跡が担う ([ADR-0019](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0019-drawing-verification.md) 決定 1 と同じ分担)。
-@Suite("窓の出し方")
+@Suite("ウィンドウの出し方")
 struct WindowPlacementTests {
     /// **合図は版の刻印 1 つ。** 道具が渡すもので、新しい合図を作っていない。
     @Test("刻印が渡されていれば、見張りが起こした入れ替えとみなす")
@@ -47,7 +47,7 @@ struct WindowPlacementTests {
         #expect(
             WindowPlacement.requestedSize(width: 1280, height: 720, scale: scale)
                 == NSSize(width: 640, height: 360))
-        // 道具の窓の既定 (差し出し元が来る前の大きさ) は、既定のスケッチの開く大きさと同じ
+        // 道具のウィンドウの既定 (差し出し元が来る前の大きさ) は、既定のスケッチの開く大きさと同じ
         let settings = SketchSettings()
         #expect(
             WindowPlacement.requestedSize(
@@ -55,7 +55,7 @@ struct WindowPlacementTests {
                 == SharedFrameWindow.defaultSize)
     }
 
-    /// 作例 1 (#1624): 320x180 の画素絵を 4 倍の窓で見せる。
+    /// 作例 1 (#1624): 320x180 の画素絵を 4 倍のウィンドウで見せる。
     @Test("倍率 4 なら、320x180 を 1280x720 点で開く")
     func pixelArtOpensFourTimesLarger() {
         #expect(
@@ -91,16 +91,16 @@ struct WindowPlacementTests {
             #expect(!WindowPlacement.takesNewRequest(small, autosaveName: name, defaults: defaults))
             #expect(WindowPlacement.takesNewRequest(large, autosaveName: name, defaults: defaults))
             #expect(!WindowPlacement.takesNewRequest(large, autosaveName: name, defaults: defaults))
-            // 名前が違えば別に覚える (作品の窓とプレビュー)
+            // 名前が違えば別に覚える (作品のウィンドウとプレビュー)
             #expect(
                 WindowPlacement.takesNewRequest(
                     large, autosaveName: name + ".other", defaults: defaults))
         }
     }
 
-    /// 完了条件 3 の 2 つを窓で見る。**指定を変えれば新しい指定で開き、変えなければ手で
-    /// 変えた大きさが残る** — 後者が破れると、見張りの下で保存のたびに窓が戻る (#679)。
-    @Test("指定を変えれば窓は新しい指定の大きさになり、変えなければ手で変えた大きさが残る")
+    /// 完了条件 3 の 2 つをウィンドウで見る。**指定を変えれば新しい指定で開き、変えなければ手で
+    /// 変えた大きさが残る** — 後者が破れると、見張りの下で保存のたびにウィンドウが戻る (#679)。
+    @Test("指定を変えればウィンドウは新しい指定の大きさになり、変えなければ手で変えた大きさが残る")
     @MainActor
     func honoursOnlyAChangedRequest() throws {
         try withDefaults { defaults, name in
@@ -136,7 +136,7 @@ struct WindowPlacementTests {
         }
     }
 
-    /// **既定の 480x270 どうしなら、これまでと同じずらし量** (`-(270 + 44)`)。作品の窓が
+    /// **既定の 480x270 どうしなら、これまでと同じずらし量** (`-(270 + 44)`)。作品のウィンドウが
     /// 高くなれば、そのぶん下へ (#1624)。
     @Test("プレビューのずらし量は 2 枚の丈から決まり、既定どうしならこれまでと同じ")
     func previewNudgeFollowsBothHeights() {

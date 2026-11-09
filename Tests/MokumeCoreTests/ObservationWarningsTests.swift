@@ -101,9 +101,9 @@ struct ObservationWarningsTests {
         }
     }
 
-    /// 窓が数える警告 (#3087) は、観測の `warnings` が持っていく行を奪わない。窓の数は読んでも空にならず、
+    /// ウィンドウが数える警告 (#3087) は、観測の `warnings` が持っていく行を奪わない。ウィンドウの数は読んでも空にならず、
     /// 溜め場の上限にも縛られない。
-    @Test("窓のために警告の件数と最後の 1 行を読んでも、次の観測の warnings には欠けずに 1 度載る")
+    @Test("ウィンドウのために警告の件数と最後の 1 行を読んでも、次の観測の warnings には欠けずに 1 度載る")
     func theWindowCountDoesNotTakeLinesFromTheObservation() throws {
         try Diagnostics.$digest.withValue(WarningDigest()) {
             let facet = try makeFacet()
@@ -113,7 +113,7 @@ struct ObservationWarningsTests {
             try runtime.advance()
             try runtime.advance()
 
-            // 窓が子の面に載せる数字を採る (毎フレーム採られる)
+            // ウィンドウが子の面に載せる数字を採る (毎フレーム採られる)
             let numbers = runtime.frameNumbers
             #expect(numbers.warningCount == 1)
             #expect(numbers.lastWarning == "Transforms are written again every frame")
@@ -121,7 +121,7 @@ struct ObservationWarningsTests {
 
             let first = try observe(id: "a1", in: facet, with: runtime)
             #expect(first == ["Transforms are written again every frame"], "\(first)")
-            // 観測が持っていった後も、窓の数は子が入れ替わるまで残る
+            // 観測が持っていった後も、ウィンドウの数は子が入れ替わるまで残る
             #expect(runtime.frameNumbers.warningCount == 1)
             #expect(try observe(id: "a2", in: facet, with: runtime).isEmpty, "2 度目の応答にも載った")
             runtime.closePlugins()

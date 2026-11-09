@@ -205,7 +205,7 @@ struct ParameterDeclaredNonFiniteTests {
 
     /// 作者は範囲を書いているので、「範囲を書けばつまみが出る」と言うと誤る。範囲を書いていない数値とは
     /// 言い分ける。
-    @Test("窓は、端が非有限で出さないことを、範囲を書いていない数値とは別の注記で添える")
+    @Test("ウィンドウは、端が非有限で出さないことを、範囲を書いていない数値とは別の注記で添える")
     func theWindowSaysWhyThereIsNoKnob() throws {
         let note = KnobKind.Reason.rangeNotFinite.note
         #expect(note != KnobKind.Reason.rangeNotDeclared.note)

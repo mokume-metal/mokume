@@ -55,7 +55,7 @@ struct ParameterExchangeTests {
         let surface = ParamSurface(directory: facet, sketch: sketch)
 
         sketch.radius = 120
-        // 譲るループ (窓) の形で回す。知らせは譲らなくても届く (#1704)
+        // 譲るループ (ウィンドウ) の形で回す。知らせは譲らなくても届く (#1704)
         await Task.yield()
 
         let report = try #require(surface.drain())
@@ -182,7 +182,7 @@ struct ParameterExchangeTests {
         #expect(clamped.first?["value"] as? Int == 8)
     }
 
-    /// 組の範囲は**成分ごとに、宣言した 1 つの範囲へ独立に**収める。窓の成分スライダーが
+    /// 組の範囲は**成分ごとに、宣言した 1 つの範囲へ独立に**収める。ウィンドウの成分スライダーが
     /// 同じ 1 つの範囲で縛っているので、外から書ける幅をそれと揃える ([#859](https://github.com/mokume-metal/mokume/issues/859))。
     final class Paired: Sketch {
         @Param(-1...1) var pair: Vector2 = Vector2(0, 0)

@@ -12,7 +12,7 @@ import Testing
 ///
 /// **渡す値を作る純関数** (``ClockHandover/Snapshot/start(at:writerIsAlive:)``) と、**渡された値から始まる
 /// ``FrameTiming``**、**書く側** (``ClockHandover/publish(seconds:isHeld:kind:frames:at:)``・
-/// ``ClockHandover/FileSink``) を、時計を差し替えて確かめる。窓の振る舞い (止めた秒で止まったまま新しい世代が出る)
+/// ``ClockHandover/FileSink``) を、時計を差し替えて確かめる。ウィンドウの振る舞い (止めた秒で止まったまま新しい世代が出る)
 /// は見張りの実走で見る。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
@@ -618,7 +618,7 @@ struct ClockHandoverTests {
             old.noteStill(true)
             #expect(written.values.count == before + 1)
 
-            // 60 秒後に保存して作り直した世代は、窓に出ている秒から始まる
+            // 60 秒後に保存して作り直した世代は、ウィンドウに出ている秒から始まる
             now += 60
             let new = timing(clock, handover(Readings([.found(last!)])), now: { now })
             new.beginHandover()
@@ -836,7 +836,7 @@ struct ClockHandoverTests {
     }
 }
 
-/// 窓の経路の組み立てが、渡された時計を `FrameTiming` まで運び、`setup()` の前に入れること ([#2414])。GPU を要する。
+/// ウィンドウの経路の組み立てが、渡された時計を `FrameTiming` まで運び、`setup()` の前に入れること ([#2414])。GPU を要する。
 ///
 /// [#2414]: https://github.com/mokume-metal/mokume/issues/2414
 @Suite(
@@ -875,7 +875,7 @@ struct ClockHandoverRuntimeTests {
             seconds: seconds, isHeld: true, isStill: false, rate: 1, at: 90, writer: 1, generation: 1)
     }
 
-    @Test("窓の経路で組んだ実行は、渡された止めた秒から始まり、止まったまま動く。setup() はその秒を見る")
+    @Test("ウィンドウの経路で組んだ実行は、渡された止めた秒から始まり、止まったまま動く。setup() はその秒を見る")
     func theRuntimeStartsFromTheHandedSecond() throws {
         var now = 500.0
         let sketch = Probe()
@@ -943,7 +943,7 @@ struct ClockHandoverRuntimeTests {
         }
         let stopped = try #require(written.values.last)
         #expect(stopped.isStill && !stopped.isHeld, "noLoop() の枚で止まったと書く: \(stopped)")
-        #expect(abs(stopped.seconds - 2.0 / 60) < 1e-9, "窓に出ている枚の秒: \(stopped.seconds)")
+        #expect(abs(stopped.seconds - 2.0 / 60) < 1e-9, "ウィンドウに出ている枚の秒: \(stopped.seconds)")
 
         // 外からの停止と再開
         runtime.loop()

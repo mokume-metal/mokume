@@ -390,7 +390,7 @@ public nonisolated func constrain(_ value: some ScalarConvertible, _ low: some S
 /// 範囲も受ける (`norm(20, 80, 0)` は 0.75)。
 ///
 /// **範囲の外は締めない。** `norm(120, 0, 80)` は 1.5 を、`norm(-40, 0, 80)` は -0.5 を返す
-/// (手本と同じ)。0…1 に収めたいときは ``constrain(_:_:_:)`` を通すか、窓・締め・曲線を 1 本で
+/// (手本と同じ)。0…1 に収めたいときは ``constrain(_:_:_:)`` を通すか、ウィンドウ・締め・曲線を 1 本で
 /// 済ませる ``smoothstep(_:_:_:)`` を使う。
 ///
 /// **範囲の幅が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 手本は ±∞ や NaN を
@@ -415,23 +415,23 @@ public nonisolated func norm(_ value: some ScalarConvertible, _ start: some Scal
     return proportion(value, start, stop)
 }
 
-// MARK: - 窓・締め・曲線を 1 本で
+// MARK: - ウィンドウ・締め・曲線を 1 本で
 
-/// 窓の中で 0 から 1 へ、両端で速さが 0 になる曲線で移る。
+/// ウィンドウの中で 0 から 1 へ、両端で速さが 0 になる曲線で移る。
 ///
 /// ```swift
 /// let fade = smoothstep(2.4, 5.4, time)
 /// ```
 ///
-/// **断片 (MSL) の `smoothstep` と同じ名前・同じ引数の並び・同じ式である。** 窓の中の割合を
+/// **断片 (MSL) の `smoothstep` と同じ名前・同じ引数の並び・同じ式である。** ウィンドウの中の割合を
 /// 0…1 に締めて `t` とし、`t * t * (3 - 2 * t)` を返す。シェーダに書いた式を、そのまま Swift の
 /// 側へ写せる。
 ///
-/// - **窓の外は締める。** 縁を含めて `edge0` の側の外では 0、`edge1` の側の外では 1 を返す —
+/// - **ウィンドウの外は締める。** 縁を含めて `edge0` の側の外では 0、`edge1` の側の外では 1 を返す —
 ///   `smoothstep(2, 6, 1)` は 0、`smoothstep(2, 6, 9)` は 1
-/// - **逆向きの窓 (`edge0 > edge1`) は入れ替えず、下り坂になる。** `smoothstep(6, 2, 3)` は
+/// - **逆向きのウィンドウ (`edge0 > edge1`) は入れ替えず、下り坂になる。** `smoothstep(6, 2, 3)` は
 ///   `1 - smoothstep(2, 6, 3)` と同じ 0.84375。断片の式も場合分けせずに同じ値を出す
-/// - **幅 0 の窓 (`edge0 == edge1`) は段になる** — `x` が縁より下なら 0、縁から上は 1 (断片の
+/// - **幅 0 のウィンドウ (`edge0 == edge1`) は段になる** — `x` が縁より下なら 0、縁から上は 1 (断片の
 ///   `step(edge, x)` と同じ)。注意は言わない。縁の外では断片の式と同じ値で、縁ちょうどは断片の
 ///   式では決まらない (0 ÷ 0)。締める口には段という答えがあるので、幅 0 で 0 を返して注意を
 ///   言う ``norm(_:_:_:)`` / ``map(_:_:_:_:_:)`` とはここが違う
@@ -439,10 +439,10 @@ public nonisolated func norm(_ value: some ScalarConvertible, _ start: some Scal
 /// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
 /// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。**ここだけは断片の
 /// `smoothstep` と値が違いうる** — 断片が無限や数でない値に何を返すかには揃えない。幅が `Float`
-/// で溢れる窓 (`smoothstep(-3e38, 3e38, 0)`) も、ここは窓の中の割合どおりの値 (0.5) を返す。
+/// で溢れるウィンドウ (`smoothstep(-3e38, 3e38, 0)`) も、ここはウィンドウの中の割合どおりの値 (0.5) を返す。
 /// 同じ名前でも、画素まで揃えることは約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。
 ///
-/// 曲線を通さずに、窓の中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
+/// 曲線を通さずに、ウィンドウの中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: some ScalarConvertible, _ x: some ScalarConvertible) -> Float {
@@ -453,7 +453,7 @@ public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: som
             "smoothstep(): got a value that is not a number, or an infinite one, so 0 was returned")
         return 0
     }
-    // 幅 0 の窓は段 (#1283 の判断 A)。断片の `step(edge, x)` と同じく、縁ちょうどから 1
+    // 幅 0 のウィンドウは段 (#1283 の判断 A)。断片の `step(edge, x)` と同じく、縁ちょうどから 1
     guard edge1 != edge0 else { return x < edge0 ? 0 : 1 }
     // 締めは `constrain` を呼ばずに書く — 呼ぶと、そちらの名で注意が鳴りうる
     let t = min(max(proportion(x, edge0, edge1), 0), 1)
@@ -497,7 +497,7 @@ public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: som
 /// }
 /// ```
 ///
-/// **`deltaTime` を渡すと、積分で作った状態になる。** 実時計で動く窓では、フレームの長さが
+/// **`deltaTime` を渡すと、積分で作った状態になる。** 実時計で動くウィンドウでは、フレームの長さが
 /// 実行ごとに違うので、同じ時刻の絵が実行ごとに揃わない ([ADR-0025] 決定 6 の「揃わない」側)。
 /// フレームの時計 (`mokume render`・設定の `clock: .frames`) では、`deltaTime` が毎回同じなので
 /// 揃う。時刻から絵が決まる作りにしたいなら、``damp(_:_:_:_:)`` ではなく ``smoothstep(_:_:_:)`` などで

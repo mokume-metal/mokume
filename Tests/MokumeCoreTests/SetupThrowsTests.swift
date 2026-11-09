@@ -10,7 +10,7 @@ import Testing
 /// `setup()` は `throws` で書ける ([#2401])。
 ///
 /// 約束は 3 つ。**投げない `func setup()` はこれまでどおり組めて、呼ばれる** / **投げたら、`draw()` を 1 度も呼ばずに
-/// 起動の失敗として止まり、失敗の全文が運ばれる** / **どの経路 (`SketchRuntime` を直に回す・書き出す・窓) でも同じ
+/// 起動の失敗として止まり、失敗の全文が運ばれる** / **どの経路 (`SketchRuntime` を直に回す・書き出す・ウィンドウ) でも同じ
 /// 失敗で止まる**。
 ///
 /// [#2401]: https://github.com/mokume-metal/mokume/issues/2401
@@ -138,9 +138,9 @@ struct SetupThrowsTests {
         #expect(sketch.draws == 0)
     }
 
-    // MARK: - 窓の経路
+    // MARK: - ウィンドウの経路
 
-    @Test("窓の経路は、起動の失敗として 1 を終了コードに終わり、draw() を呼ばない")
+    @Test("ウィンドウの経路は、起動の失敗として 1 を終了コードに終わり、draw() を呼ばない")
     func theApplicationStopsWithStatusOne() throws {
         let sketch = Missing()
         let application = try SketchApplication(sketch: sketch, gpu: RenderDevice())
@@ -218,7 +218,7 @@ struct SetupThrowsTests {
             let all = answer.warnings.joined(separator: "\n")
             #expect(all.contains("my own failure"), "\(round) 回目: 断りに理由が載っていない: \(all)")
             #expect(answer.complete != true, "\(round) 回目: 撮れたと答えた")
-            // **最初のフレームも投げる** (2 回目の反証 4a)。断って返ると、窓の経路は絵を出しに進む
+            // **最初のフレームも投げる** (2 回目の反証 4a)。断って返ると、ウィンドウの経路は絵を出しに進む
             #expect(
                 answer.thrown == .setupFailed(reason: Custom().description),
                 "\(round) 回目: 投げずに返った: \(String(describing: answer.thrown))")
@@ -238,7 +238,7 @@ struct SetupThrowsTests {
         let all = answer.warnings.joined(separator: "\n")
         #expect(all.contains("my own failure"), "応えに理由が載っていない: \(all)")
         #expect(answer.complete != true, "撮れたと答えた")
-        // **最初のフレームも投げる** (2 回目の反証 4b)。投げずに返ると、窓の経路は絵を出しに進む
+        // **最初のフレームも投げる** (2 回目の反証 4b)。投げずに返ると、ウィンドウの経路は絵を出しに進む
         #expect(
             answer.thrown == .setupFailed(reason: Custom().description),
             "投げずに返った: \(String(describing: answer.thrown))")
@@ -263,7 +263,7 @@ struct SetupThrowsTests {
         #expect(sketch.draws == 0)
     }
 
-    @Test("名乗りのメニューが進めた回に setup() が投げたら、捨てずに窓の経路へ知らせる")
+    @Test("名乗りのメニューが進めた回に setup() が投げたら、捨てずにウィンドウの経路へ知らせる")
     func presenceReportsTheSetupFailure() throws {
         let sketch = Plain()
         let runtime = try SketchRuntime(
@@ -361,7 +361,7 @@ struct SetupThrowsTests {
         func setup() throws { throw Custom() }
     }
 
-    @Test("窓の経路は、setup() が投げたら、差込口を閉じてから終わる")
+    @Test("ウィンドウの経路は、setup() が投げたら、差込口を閉じてから終わる")
     func theApplicationClosesTheInletsBeforeExiting() throws {
         WithAnInlet.inlet = Opened()
         let inlet = WithAnInlet.inlet
@@ -379,7 +379,7 @@ struct SetupThrowsTests {
     }
     // MARK: - 起動の失敗を見張りへ渡す (#3169)
 
-    @Test("窓の経路は、setup() が投げたら、終わる前に理由の全文を見張りへ渡す")
+    @Test("ウィンドウの経路は、setup() が投げたら、終わる前に理由の全文を見張りへ渡す")
     func theApplicationHandsTheReasonOverBeforeExiting() throws {
         let application = try SketchApplication(sketch: Missing(), gpu: RenderDevice())
         var order: [String] = []
@@ -424,7 +424,7 @@ struct SetupThrowsTests {
 
     // MARK: - 起動中の印を見張りへ渡す (#3222)
 
-    /// 子は `Sketch.main()` の頭で印を置き (`markOwnStarting`)、最初の絵を出したら 1 度だけ消す。見張りは窓の無い見張りと倒れた子について、
+    /// 子は `Sketch.main()` の頭で印を置き (`markOwnStarting`)、最初の絵を出したら 1 度だけ消す。見張りはウィンドウの無い見張りと倒れた子について、
     /// 印が残ったまま終わった子を「最初の絵の前に終わった」と読む。
     @Test("最初の絵を出したら、起動中の印を 1 度だけ消す")
     func theFirstFrameClearsTheStartingMark() throws {

@@ -213,9 +213,9 @@ struct ParameterIntRangeTests {
         #expect(sketch.lower == Int.min)
     }
 
-    // MARK: - 窓から (完了条件 3)
+    // MARK: - ウィンドウから (完了条件 3)
 
-    @Test("窓の段付きスライダーを右端 (2^63) へ寄せても落ちず、Int.max になる")
+    @Test("ウィンドウの段付きスライダーを右端 (2^63) へ寄せても落ちず、Int.max になる")
     func theSliderAtTheRightEndDoesNotCrash() throws {
         let sketch = Wide()
         let box = try knob(sketch, "upper")
@@ -235,7 +235,7 @@ struct ParameterIntRangeTests {
         #expect(sketch.nearMax == Int.max - 1)
     }
 
-    @Test("窓のスライダーを左端 (-2^63) へ寄せても落ちず、Int.min になる")
+    @Test("ウィンドウのスライダーを左端 (-2^63) へ寄せても落ちず、Int.min になる")
     func theSliderAtTheLeftEndDoesNotCrash() throws {
         let sketch = Wide()
         let box = try knob(sketch, "lower")

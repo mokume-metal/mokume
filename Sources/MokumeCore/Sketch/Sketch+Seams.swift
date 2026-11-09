@@ -316,7 +316,7 @@ extension SketchPart {
     /// ``attached(_:calledAs:making:)`` の、**待って返す口** (``SketchPart/requestSound(_:)``・[#3398]) の版。
     ///
     /// 待って返す口は、走っている実行の中で起こした `Task` の続きから呼ばれる。そこでは ``runningSketch`` が外れているので、
-    /// 素の ``attached(_:calledAs:making:)`` は断る。代わりに、`Task` へ持ち越した窓口 (``AttachRequests``・
+    /// 素の ``attached(_:calledAs:making:)`` は断る。代わりに、`Task` へ持ち越した受付 (``AttachRequests``・
     /// ``LaunchingSketch``) へ足すことを頼み、**実行がフレームの頭で足し終えてから**返る。足す者は実行で、
     /// `Task` から直に足さない ([ADR-0010])。
     ///
@@ -339,12 +339,12 @@ extension SketchPart {
             throw Failure.notRunning(call: call)
         }
         let part = try await make()
-        // 走っている実行の中ならそのまま足す (`Task` の続きでは外れているので、ふつうは下の窓口を通る)
+        // 走っている実行の中ならそのまま足す (`Task` の続きでは外れているので、ふつうは下の受付を通る)
         if activeRun(for: .attach) != nil { return attachAfterCheck(part) }
         guard let requests, await requests.request(part), !requests.isEnded else {
             // 頼む前か待っている間に実行が終わった。足されなかったものを、足されたと偽って返さない。
             // **`request` が `true` を返した後でも、`Task` が戻る前に畳まれうる** — 実行が頼みを当てて待ちを終えてから、
-            // 呼んだ `Task` に番が回るまでの間に `closePlugins` が走ると、足した入り口は閉じられている。窓口は畳まれた
+            // 呼んだ `Task` に番が回るまでの間に `closePlugins` が走ると、足した入り口は閉じられている。受付は畳まれた
             // ときに終わる (``AttachRequests/end()``) ので、戻った後にもう 1 度見て、閉じられたものを成功として返さない
             OutsideRun.log.warn(call, .thrownUnattached)
             throw Failure.notRunning(call: call)

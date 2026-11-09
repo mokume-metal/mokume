@@ -17,7 +17,7 @@
 /// 面に載った数字は、書いた側が消えても残り続ける — 子が死んでも、固まっても、最後の
 /// 数字はそこに在る。だから受け取ってからの古さを見て、古ければ「測れていない」へ戻す。
 /// **しきい値は ``FrameTempo/staleAfter`` を使い回す** — 同じ問い (この数字はまだ生きて
-/// いるか) に 2 つのしきい値を持つと、片方だけ直した日に窓と応答が違うことを言い始める。
+/// いるか) に 2 つのしきい値を持つと、片方だけ直した日にウィンドウと応答が違うことを言い始める。
 ///
 /// [ADR-0030]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0030-parameter-surfaces.md
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md

@@ -7,14 +7,14 @@ import AppKit
 ///
 /// ## 隠すのは、作品の面の上にあるあいだだけ
 ///
-/// 隠すのは、スケッチの要求 (``SketchPart/noCursor()``)・窓が前に出ていること・ポインタが
-/// **作品の面そのものの上**にあることの 3 つが揃う間だけである。窓の枠・別の窓・別の画面へ
+/// 隠すのは、スケッチの要求 (``SketchPart/noCursor()``)・ウィンドウが前に出ていること・ポインタが
+/// **作品の面そのものの上**にあることの 3 つが揃う間だけである。ウィンドウの枠・別のウィンドウ・別の画面へ
 /// 出せば見える。重ねたつまみ (`KnobOverlay`) の上も面には数えない — つまみは絵の外に立つので
 /// (ADR-0030 決定 1)、触るときに矢印が要る。
 ///
-/// 窓の部品 (``SketchSurface``) が状況を観て渡し、決めるのはここ 1 か所である。直に走らせた窓も、
-/// 道具の 2 つの窓も同じ部品なので、隠し方の規則は 1 つで済む。OS の呼び出しは差し替えられる口
-/// (``System``) で持つので、**判定は窓も OS も使わずに検査で回せる**。
+/// ウィンドウの部品 (``SketchSurface``) が状況を観て渡し、決めるのはここ 1 か所である。直に走らせたウィンドウも、
+/// 道具の 2 つのウィンドウも同じ部品なので、隠し方の規則は 1 つで済む。OS の呼び出しは差し替えられる口
+/// (``System``) で持つので、**判定はウィンドウも OS も使わずに検査で回せる**。
 ///
 /// ## 数の食い違いを作らない
 ///
@@ -42,14 +42,14 @@ final class CursorHiding {
         static let appKit = System(hide: { NSCursor.hide() }, unhide: { NSCursor.unhide() })
     }
 
-    /// 面がいまどこに居るか。**窓が答える** — 検査は値を渡す。
+    /// 面がいまどこに居るか。**ウィンドウが答える** — 検査は値を渡す。
     struct Situation: Equatable {
-        /// 窓が前に出ていて、キーを受け取っているか。
+        /// ウィンドウが前に出ていて、キーを受け取っているか。
         var isKeyWindow: Bool
         /// ポインタが作品の面そのものの上にあるか。**重ねたつまみの上は含まない。**
         var pointerIsOverSurface: Bool
 
-        /// 窓が無い・退いている・ポインタが面の外にある状況。
+        /// ウィンドウが無い・退いている・ポインタが面の外にある状況。
         static let away = Situation(isKeyWindow: false, pointerIsOverSurface: false)
     }
 
@@ -65,12 +65,12 @@ final class CursorHiding {
         self.system = system
     }
 
-    /// **手放したら見せる。** 窓が畳まれる通知を逃しても、隠したまま残さない。
+    /// **手放したら見せる。** ウィンドウが畳まれる通知を逃しても、隠したまま残さない。
     isolated deinit {
         stop()
     }
 
-    /// スケッチの要求と窓の状況を渡し、隠すか見せるかを決める。**毎リフレッシュ呼ばれる。**
+    /// スケッチの要求とウィンドウの状況を渡し、隠すか見せるかを決める。**毎リフレッシュ呼ばれる。**
     func update(requested: Bool, in situation: Situation) {
         isRequested = requested
         let shouldHide = requested && situation.isKeyWindow && situation.pointerIsOverSurface
@@ -82,7 +82,7 @@ final class CursorHiding {
         }
     }
 
-    /// 窓が退いた・畳まれる・移る。**隠していれば見せる。** 要求は残す — 窓が前に戻って
+    /// ウィンドウが退いた・畳まれる・移る。**隠していれば見せる。** 要求は残す — ウィンドウが前に戻って
     /// ポインタが面の上に来れば、次のリフレッシュで隠し直す。
     func stop() {
         guard isHiding else { return }

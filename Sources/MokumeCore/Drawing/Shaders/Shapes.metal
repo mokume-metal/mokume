@@ -1941,7 +1941,7 @@ vertex FormFragmentIn formVertexMain(
     float4 inverseRows = float4(columnY.y, -columnY.x, -columnX.y, columnX.x) / determinant;
 
     // **被覆は描く画素で測る** ([#1488](https://github.com/mokume-metal/mokume/issues/1488))。
-    // 座標と太さは描画先の座標 (出す画素) で書かれ、描く画素への縮みは投影と見る窓が持つ。
+    // 座標と太さは描画先の座標 (出す画素) で書かれ、描く画素への縮みは投影と見るウィンドウが持つ。
     // 逆行列のままだと、細かさ 0.5 の面では描く画素 1 つを 1 単位と数えるので、縁を
     // 滑らかにする幅が描く画素の半分に縮む — 太さ 1 の線は描く画素では太さ 0.5 なのに
     // 被覆の式からは太さ 1 に見え、描く画素の中心が縁から 1 単位離れる位置に置くと

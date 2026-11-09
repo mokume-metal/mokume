@@ -25,7 +25,7 @@ import simd
 ///   である ([#1562])。周の点は高々 1025 個 (``Canvas/segmentCount(forRadius:)``) なので、
 ///   全部を相手にしても箱で絞れば足りる
 ///
-/// **相手は線に沿って前後へ探す。** 点の位置 (弧長) は単調に増えるので、窓に入る帯と点は
+/// **相手は線に沿って前後へ探す。** 点の位置 (弧長) は単調に増えるので、ウィンドウに入る帯と点は
 /// それぞれ添字の連続した範囲になる。先に置いた片を全部なめると、自己交差の多い線で
 /// 費用が線の長さの 2 乗で増える。
 ///
@@ -433,7 +433,7 @@ nonisolated struct StrokeCarving {
         for other in unindexedPieces { take(other) }
         for turn in isClosed ? -1...1 : 0...0 {
             let shift = Float(turn) * perimeter
-            // 相手の区間を一周ずらしたものが [lower, upper] を太さだけ広げた窓に掛かるか
+            // 相手の区間を一周ずらしたものが [lower, upper] を太さだけ広げたウィンドウに掛かるか
             let low = lower - weight - shift
             let high = upper + weight - shift
             // 帯: positions[k + 1] >= low かつ positions[k] <= high の k は連続する
@@ -444,7 +444,7 @@ nonisolated struct StrokeCarving {
                     segment += 1
                 }
             }
-            // 点: positions[p] が窓に入る p も連続する
+            // 点: positions[p] がウィンドウに入る p も連続する
             var point = Self.firstIndex(in: positions, from: 0, notBelow: low)
             while point < pointCount, positions[point] <= high {
                 take(pointPieces[point])

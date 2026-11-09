@@ -5,15 +5,15 @@ import Testing
 
 @testable import MokumeCore
 
-@Suite("窓の座標をキャンバスの座標へ写す")
+@Suite("ウィンドウの座標をキャンバスの座標へ写す")
 struct SurfaceMappingTests {
-    /// 960x540 のキャンバスを、縦横比の合う窓へ等倍で映したときの規則。帯は出ない。
+    /// 960x540 のキャンバスを、縦横比の合うウィンドウへ等倍で映したときの規則。帯は出ない。
     private let exact = SurfaceMapping(
         viewWidth: 960, viewHeight: 540,
         drawableWidth: 960, drawableHeight: 540,
         canvasWidth: 960, canvasHeight: 540)
 
-    @Test("縦軸が反転する — 窓の左下は、キャンバスの左下 (y = 高さ) を指す")
+    @Test("縦軸が反転する — ウィンドウの左下は、キャンバスの左下 (y = 高さ) を指す")
     func flipsTheVerticalAxis() throws {
         let origin = try #require(exact.canvasPoint(x: 0, y: 0))
         #expect(origin.x == 0)
@@ -33,7 +33,7 @@ struct SurfaceMappingTests {
 
     @Test("画面の倍率が上がっても、読める座標は変わらない")
     func retinaDoesNotChangeTheResult() throws {
-        // 同じ大きさの窓を、倍率 2 の画面で映す。面の画素数だけが倍になる
+        // 同じ大きさのウィンドウを、倍率 2 の画面で映す。面の画素数だけが倍になる
         let retina = SurfaceMapping(
             viewWidth: 960, viewHeight: 540,
             drawableWidth: 1920, drawableHeight: 1080,
@@ -44,14 +44,14 @@ struct SurfaceMappingTests {
         #expect(point.y == same.y)
     }
 
-    @Test("窓の大きさを変えても、読める座標は描く解像度の座標系のまま")
+    @Test("ウィンドウの大きさを変えても、読める座標は描く解像度の座標系のまま")
     func windowSizeDoesNotLeakIntoTheCoordinates() throws {
-        // 描く解像度の半分で開いた窓 (既定)。縦横比は合っているので帯は出ない
+        // 描く解像度の半分で開いたウィンドウ (既定)。縦横比は合っているので帯は出ない
         let half = SurfaceMapping(
             viewWidth: 480, viewHeight: 270,
             drawableWidth: 480, drawableHeight: 270,
             canvasWidth: 960, canvasHeight: 540)
-        // 窓の中央は、窓の大きさによらずキャンバスの中央
+        // ウィンドウの中央は、ウィンドウの大きさによらずキャンバスの中央
         let centre = try #require(half.canvasPoint(x: 240, y: 135))
         #expect(centre.x == 480)
         #expect(centre.y == 270)
@@ -61,7 +61,7 @@ struct SurfaceMappingTests {
         #expect(corner.y == 0)
     }
 
-    /// 16:9 のキャンバスを 2:1 の窓へ映す。左右に 100 画素ずつの帯が出る
+    /// 16:9 のキャンバスを 2:1 のウィンドウへ映す。左右に 100 画素ずつの帯が出る
     /// (`ViewportFitTests` の「面のほうが横長なら、左右に帯が出る」と同じ形)。
     private let banded = SurfaceMapping(
         viewWidth: 1800, viewHeight: 900,
@@ -70,7 +70,7 @@ struct SurfaceMappingTests {
 
     @Test("帯があっても、絵が収まった矩形の角がキャンバスの角へ写る")
     func bandsAreRemoved() throws {
-        // 収まった矩形の左上の角 (窓の座標では x = 100・上端)
+        // 収まった矩形の左上の角 (ウィンドウの座標では x = 100・上端)
         let topLeft = try #require(banded.canvasPoint(x: 100, y: 900))
         #expect(abs(topLeft.x - 0) < 1e-3)
         #expect(abs(topLeft.y - 0) < 1e-3)
@@ -102,7 +102,7 @@ struct SurfaceMappingTests {
 
     @Test("面の画素数が丸められていても、上下が同じだけずれる")
     func roundedDrawableSizeStaysSymmetric() throws {
-        // 倍率 2 の画面で 400.5 点の窓を映すと、面の画素数は 801 ではなく 800 に
+        // 倍率 2 の画面で 400.5 点のウィンドウを映すと、面の画素数は 801 ではなく 800 に
         // なりうる。**画面の倍率 (2) と実際の比 (800 ÷ 400.5) が食い違う**ので、
         // 反転を画素の空間で倍率のほうを使って行うと、上端が -0.5 へずれる
         let rounded = SurfaceMapping(
@@ -141,7 +141,7 @@ struct SurfaceMappingTests {
     /// 位置の写し方そのもので、2 点の位置の差と量が一致することを見る。
     @Test("動いた量は、位置を写すのと同じ比で描く解像度の画素へ写る")
     func deltaUsesThePositionRatio() throws {
-        // 等倍・Retina・既定の半分の窓・帯のある窓
+        // 等倍・Retina・既定の半分のウィンドウ・帯のあるウィンドウ
         let mappings = [
             exact,
             SurfaceMapping(
@@ -153,7 +153,7 @@ struct SurfaceMappingTests {
             banded,
         ]
         for mapping in mappings {
-            // 窓の点で右へ 30・下へ 20 (窓の座標は上向きが正なので、下へは y が減る)
+            // ウィンドウの点で右へ 30・下へ 20 (ウィンドウの座標は上向きが正なので、下へは y が減る)
             let from = try #require(mapping.canvasPoint(x: 100, y: 200))
             let to = try #require(mapping.canvasPoint(x: 130, y: 180))
             // 量は下向きを正として渡す約束

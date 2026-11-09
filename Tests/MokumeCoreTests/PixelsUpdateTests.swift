@@ -58,7 +58,7 @@ struct PixelsUpdateTests {
             for x in 0..<3 {
                 let expected = try quantized(color(Float(x * 10 + y)), on: canvas)
                 #expect(image.get(x, y) == expected, "(\(x), \(y))")
-                #expect(image.pixels[x, y] == expected, "窓の添字が get と違う (\(x), \(y))")
+                #expect(image.pixels[x, y] == expected, "ビューの添字が get と違う (\(x), \(y))")
             }
         }
     }
@@ -80,7 +80,7 @@ struct PixelsUpdateTests {
         #expect(seen == (0..<3).flatMap { y in (0..<3).map { image.get($0, y) } })
     }
 
-    @Test("絵の窓の fill と添字は、絵の fill・set と同じ画素を書く")
+    @Test("絵のビューの fill と添字は、絵の fill・set と同じ画素を書く")
     func theImageWindowAgreesWithTheImage() throws {
         let canvas = try makeCanvas()
         let image = try canvas.createImage(4, 4)
@@ -170,7 +170,7 @@ struct PixelsUpdateTests {
     }
 
     /// 書いてよいかの尋ねは、全画素を回る前に **1 度だけ** — 画素ごとに尋ねると、添字の 2 重ループと
-    /// 同じ費用になる。尋ねる先を数える窓 (面を通さない・GPU を要さない) で見る。
+    /// 同じ費用になる。尋ねる先を数えるビュー (面を通さない・GPU を要さない) で見る。
     @Test("書いてよいかの尋ねは、画素の数にかかわらず入口で 1 回で、断られれば閉包を呼ばない")
     func theGateIsAskedOncePerCall() {
         let width = 7
@@ -294,7 +294,7 @@ struct PixelsUpdateTests {
         #expect(canvas.get(2, 2) == black)
     }
 
-    @Test("前のフレームで取った窓でも、許可は呼んだ時点で見る")
+    @Test("前のフレームで取ったビューでも、許可は呼んだ時点で見る")
     func aKeptWindowAsksAtCallTime() throws {
         let canvas = try makeCanvas(width: 16, height: 16)
         var window: Pixels?
@@ -307,7 +307,7 @@ struct PixelsUpdateTests {
             calls += 1
             return red
         }
-        #expect(calls == 0, "区間の外で、取っておいた窓が閉包を呼んだ")
+        #expect(calls == 0, "区間の外で、取っておいたビューが閉包を呼んだ")
 
         try canvas.draw {
             canvas.background(black)
@@ -320,7 +320,7 @@ struct PixelsUpdateTests {
         #expect(canvas.get(3, 3) == red)
     }
 
-    @Test("前のフレームで取った窓で書き換えても、効果は 1 回だけ掛かる")
+    @Test("前のフレームで取ったビューで書き換えても、効果は 1 回だけ掛かる")
     func effectsAreAppliedOnceWhenAKeptWindowUpdates() throws {
         func secondFrame(updates: Bool) throws -> LinearRGBA {
             let canvas = try makeCanvas(width: 16, height: 16)
@@ -341,7 +341,7 @@ struct PixelsUpdateTests {
         #expect(try secondFrame(updates: true) == secondFrame(updates: false))
     }
 
-    @Test("大きさ 0 の窓では、閉包を呼ばずに何も起きない")
+    @Test("大きさ 0 のビューでは、閉包を呼ばずに何も起きない")
     func anUnavailableWindowCallsNothing() {
         var calls = 0
         Pixels.unavailable.update { _, _, c in

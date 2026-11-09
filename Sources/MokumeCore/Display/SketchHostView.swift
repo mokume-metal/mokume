@@ -9,7 +9,7 @@ import MokumeDiagnostics
 // や順番待ちの列は MokumeCore の内側のもので、`MokumeUI` が触るのはこの型の `package` の 2 つの口
 // (`init(sketch:)`・``stop()``) だけである。
 
-/// 面を載せる `NSView`。**窓に載ったとき駆動源を繋ぎ、外れたら畳む。**
+/// 面を載せる `NSView`。**ウィンドウに載ったとき駆動源を繋ぎ、外れたら畳む。**
 ///
 /// 別のスケッチが走っているときは始めず、順番を待つ (``EmbeddedWaiter``)。先が終わると起こされて始める。
 @MainActor
@@ -62,7 +62,7 @@ package final class SketchHostView: NSView, EmbeddedWaiter {
             self.application = application
             surface.frame = bounds
             addSubview(surface)
-            // 待っている間に窓へ載っていたら、いま繋ぐ (`viewDidMoveToWindow` はもう過ぎている)
+            // 待っている間にウィンドウへ載っていたら、いま繋ぐ (`viewDidMoveToWindow` はもう過ぎている)
             if window != nil { application.attachEmbeddedDriver() }
         } catch {
             // **組み立てられなかった理由を、観測に載る警告として言う** (`Diagnostics.warn`)。ホストのアプリごと

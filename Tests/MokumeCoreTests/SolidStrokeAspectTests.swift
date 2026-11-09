@@ -84,7 +84,7 @@ struct SolidStrokeAspectTests {
             return lit[y * width + x]
         }
 
-        /// 行 `y` の、画面の位置 `x` の前後 `reach` 列に入る白の数。辺 1 本だけが入る窓で数える。
+        /// 行 `y` の、画面の位置 `x` の前後 `reach` 列に入る白の数。辺 1 本だけが入るウィンドウで数える。
         func across(row y: Int, near x: Float, reach: Int = 8) -> Int {
             let center = Int(x)
             return ((center - reach)...(center + reach)).filter { self[$0, y] }.count

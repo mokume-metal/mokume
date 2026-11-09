@@ -81,7 +81,7 @@ nonisolated public enum WorkDirectory {
         facet.appendingPathComponent(".claim")
     }
 
-    /// 区画 `viewport` の中の、**共有面へ差し出せずに自分の窓へ倒れた**ことを道具へ知らせる目印
+    /// 区画 `viewport` の中の、**共有面へ差し出せずに自分のウィンドウへ倒れた**ことを道具へ知らせる目印
     /// ([#2350](https://github.com/mokume-metal/mokume/issues/2350))。
     ///
     /// 倒れた子が自分の pid で置き、見張りは乗り換えを待っている子の pid の目印を見る。**中身は
@@ -126,7 +126,7 @@ nonisolated public enum WorkDirectory {
     ///
     /// **置くのは、見張りに起こされた子だけである。** 見張りの外の実行 (`mokume run`・`render`・手で起こした
     /// 子) が前の見張りの残した区画に置くと、読む者も掃く者も居ないファイルが溜まる。起こし方は
-    /// ``SharedFrameSurface/launchOwner`` (`MOKUME_VIEWPORT_OWNER`) が伝える — 見張りは窓の有る無しに
+    /// ``SharedFrameSurface/launchOwner`` (`MOKUME_VIEWPORT_OWNER`) が伝える — 見張りはウィンドウの有る無しに
     /// よらず子へ渡す。
     ///
     /// **区画が既に在るときだけ置く。** `build` は見張りが子を起こす前に作るもので、子が作ると、無い場所に
@@ -136,7 +136,7 @@ nonisolated public enum WorkDirectory {
     /// - Parameters:
     ///   - text: 理由の全文。
     ///   - base: 区画の基準。検査から差し替える。
-    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。** 検査から渡す。
+    ///   - owner: 子を起こしたウィンドウを持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。** 検査から渡す。
     package static func noteStartFailure(
         _ text: String, forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
         under base: URL = WorkDirectory.base, owner: String?
@@ -153,7 +153,7 @@ nonisolated public enum WorkDirectory {
     ///
     /// 子が `Sketch.main()` の頭で自分の pid で置き (``markStarting(forProcess:under:owner:)``)、最初の絵を出したら消す。見張りも、読んだ子の印は消す。**中身は空で、在ることが知らせである**
     /// (JSON ではない・``fellBackURL(forProcess:under:)`` と同じ)。見張りは終わった子の印が残っていれば、その子は
-    /// 最初の絵を出す前に終わったと読む — 台 (道具の窓) が最初の絵を知らせてくれない、窓の無い見張りと自分の窓に
+    /// 最初の絵を出す前に終わったと読む — 台 (道具のウィンドウ) が最初の絵を知らせてくれない、ウィンドウの無い見張りと自分のウィンドウに
     /// 倒れた子のための合図である。
     ///
     /// **「出した」ではなく「まだ出していない」を運ぶ。** 道具と別の版のライブラリで組まれた子は印を置かない。
@@ -172,7 +172,7 @@ nonisolated public enum WorkDirectory {
     ///
     /// - Parameters:
     ///   - base: 区画の基準。検査から差し替える。
-    ///   - owner: 子を起こした窓を持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。**
+    ///   - owner: 子を起こしたウィンドウを持つ道具の名乗り (``SharedFrameSurface/launchOwner``)。**無ければ置かない。**
     package static func markStarting(
         forProcess pid: Int32 = ProcessInfo.processInfo.processIdentifier,
         under base: URL = WorkDirectory.base, owner: String?

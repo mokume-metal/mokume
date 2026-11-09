@@ -86,8 +86,8 @@ struct SecondRunTests {
         }
     }
 
-    /// **1 つ目を窓を持たない経路 (`.accessory`) で走らせる。** 2 つ目は窓を開く経路
-    /// (`.regular`) なので、活動の方針を決め直せば変わったことが見える — 両方が窓を開く経路だと、
+    /// **1 つ目をウィンドウを持たない経路 (`.accessory`) で走らせる。** 2 つ目はウィンドウを開く経路
+    /// (`.regular`) なので、活動の方針を決め直せば変わったことが見える — 両方がウィンドウを開く経路だと、
     /// 決め直しても同じ値で、検査が見逃す。
     @Test("2 つ目の run() は、delegate と活動の方針を 1 つ目のまま残して戻る")
     func secondRunKeepsTheProcessState() async {
@@ -206,7 +206,7 @@ struct SecondRunTests {
 
         // MARK: - 条件 2: delegate と活動の方針が 1 つ目のまま
 
-        /// 1 つ目を書き出す経路 (窓を持たない・`.accessory`) で走らせ、5 枚目で 2 つ目の `run()` を
+        /// 1 つ目を書き出す経路 (ウィンドウを持たない・`.accessory`) で走らせ、5 枚目で 2 つ目の `run()` を
         /// 呼ぶ。前後で `NSApp.delegate` と活動の方針を比べる。書き出しが決めた枚数を描き終えると
         /// 1 つ目が自分で終わる。**戻らない。**
         static func checkProcessStateKept() async {
@@ -242,7 +242,7 @@ struct SecondRunTests {
                 let app = NSApplication.shared
                 let delegate = app.delegate
                 let policy = app.activationPolicy()
-                // 2 つ目は窓を開く経路 (`.regular`) で組む — 1 つ目の `.accessory` と違う値を据えうる
+                // 2 つ目はウィンドウを開く経路 (`.regular`) で組む — 1 つ目の `.accessory` と違う値を据えうる
                 try? SketchApplication(sketch: Second(), gpu: RenderDevice()).run()
                 SecondRunChild.secondRunReturned = true
                 if app.delegate !== delegate {
@@ -282,7 +282,7 @@ struct SecondRunTests {
                         frameRate: 30, frameCount: 10_000, destination: SecondRunChild.movie.path)
                 else { fail(.cannotStart, "書き出しの頼みを組めなかった") }
                 do {
-                    // 窓を開かない経路で走らせる (止めるまでの数枚のために窓を出さない)
+                    // ウィンドウを開かない経路で走らせる (止めるまでの数枚のためにウィンドウを出さない)
                     try SketchApplication(sketch: Stopping(), gpu: RenderDevice(), render: request).run()
                 } catch {
                     fail(.cannotStart, "1 つ目を組めなかった: \(error)")

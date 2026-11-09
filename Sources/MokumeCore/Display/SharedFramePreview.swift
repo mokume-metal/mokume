@@ -3,19 +3,19 @@
 
 import AppKit
 
-/// 制作を助けるための窓。**作品の窓とは別に立つ。**
+/// 制作を助けるためのウィンドウ。**作品のウィンドウとは別に立つ。**
 ///
 /// ## なぜ分けるのか
 ///
-/// 道具の窓が 1 つしかないと、作り直しの状態やつまみを重ねる面が、そのまま本番の画面に
+/// 道具のウィンドウが 1 つしかないと、作り直しの状態やつまみを重ねる面が、そのまま本番の画面に
 /// 出る面になる。見張りから起こした作品も本番になりうる (外部ディスプレイへ全画面で
 /// 据える) ので、**混ぜた時点で開発の都合が本番へ出る** ([ADR-0032] 決定 1)。
 ///
-/// ## 作品の窓の子ではない
+/// ## 作品のウィンドウの子ではない
 ///
-/// 両方が同じ区画を独立に見る**兄弟**である。だから作品の窓が 0 つでもプレビューは
-/// 成立する — 窓を持たず外へ流す作品 (Syphon で渡すなど) では、これだけが出る。
-/// 作品が窓の数を宣言する口ができた日に、こちら側は何も変えなくてよい。
+/// 両方が同じ区画を独立に見る**兄弟**である。だから作品のウィンドウが 0 つでもプレビューは
+/// 成立する — ウィンドウを持たず外へ流す作品 (Syphon で渡すなど) では、これだけが出る。
+/// 作品がウィンドウの数を宣言する口ができた日に、こちら側は何も変えなくてよい。
 ///
 /// ## 重ねるものは絵に触らない
 ///
@@ -27,17 +27,17 @@ import AppKit
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 public final class SharedFramePreview {
-    /// 覚えている枠が無いときの大きさ。作品の窓 (`SharedFrameWindow.defaultSize`) と揃える。
+    /// 覚えている枠が無いときの大きさ。作品のウィンドウ (`SharedFrameWindow.defaultSize`) と揃える。
     static let defaultSize = NSSize(width: 480, height: 270)
 
     /// 覚えている枠が無いとき、中央からどれだけずらすか。
     ///
-    /// **作品の窓の下へ出す。** どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が
-    /// 寸分違わず重なり、窓が 1 つしか無いように見える (実測)。丈のぶんに窓枠と隙間を
+    /// **作品のウィンドウの下へ出す。** どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が
+    /// 寸分違わず重なり、ウィンドウが 1 つしか無いように見える (実測)。丈のぶんにウィンドウ枠と隙間を
     /// 足しただけずらす。
     ///
-    /// 効くのは差し出し元が来る前の 1 回で、作品の窓はまだ既定の大きさである。差し出し元が
-    /// 窓の倍率を名乗れば、作品の窓はその大きさで置き直され、プレビューもその真下へ
+    /// 効くのは差し出し元が来る前の 1 回で、作品のウィンドウはまだ既定の大きさである。差し出し元が
+    /// ウィンドウの倍率を名乗れば、作品のウィンドウはその大きさで置き直され、プレビューもその真下へ
     /// 置き直す (``WindowPlacement/placeBeneathArtwork(_:window:autosaveName:defaults:)``・#1624)。
     static let nudge = WindowPlacement.nudgeBelow(
         artworkHeight: SharedFrameWindow.defaultSize.height, previewHeight: defaultSize.height)
@@ -53,7 +53,7 @@ public final class SharedFramePreview {
     /// - Parameters:
     ///   - facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
     ///   - params: つまみの区画 (`.mokume/params`)。渡さなければつまみは出ない。
-    ///   - title: 窓の名前。
+    ///   - title: ウィンドウの名前。
     public init(gpu: RenderDevice, facet: URL, params: URL? = nil, title: String)
         throws(RenderFailure)
     {
@@ -135,13 +135,13 @@ public final class SharedFramePreview {
 
     /// いま映している世代の目録が名乗った子の番号 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// 見張りが、この窓で触った出来事の宛先を引くのに使う。名乗らない子 (古いライブラリ)・まだ何も映していない
+    /// 見張りが、このウィンドウで触った出来事の宛先を引くのに使う。名乗らない子 (古いライブラリ)・まだ何も映していない
     /// ときは `nil`。
     package var displayedPID: Int32? { stage.displayedPID }
 
-    /// この窓が採る目録の関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
+    /// このウィンドウが採る目録の関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
-    /// 引数は目録が名乗る子の番号で、名乗らない子は `nil`。`false` を返した目録は採らない。試聴の間、作品の窓は
+    /// 引数は目録が名乗る子の番号で、名乗らない子は `nil`。`false` を返した目録は採らない。試聴の間、作品のウィンドウは
     /// 試聴の子の目録を、プレビューは本番の目録を採らないために使う。設定しなければ、どの目録も採る。
     package var acceptsGeneration: ((Int32?) -> Bool)? {
         get { stage.acceptsGeneration }
@@ -174,7 +174,7 @@ public final class SharedFramePreview {
 
     /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
     ///
-    /// **作品の窓と同じ経路を通す** ([ADR-0032] 決定 7)。プレビューだけが消える形を作ると、
+    /// **作品のウィンドウと同じ経路を通す** ([ADR-0032] 決定 7)。プレビューだけが消える形を作ると、
     /// 決定 7 が作らないと決めた「既定を外す口」がここに開く
     /// ([#826](https://github.com/mokume-metal/mokume/issues/826))。
     ///
@@ -189,7 +189,7 @@ public final class SharedFramePreview {
             then: confirmed)
     }
 
-    /// 窓を出し、区画を見張り始める。
+    /// ウィンドウを出し、区画を見張り始める。
     public func open() {
         stage.open(overlay: notice)
         // **1 拍ごとに面を読み直す。** 走っている側が値を変えることもあるので、
@@ -205,7 +205,7 @@ public final class SharedFramePreview {
         stage.close()
     }
 
-    /// 重ねる面が出ているか。**検査から見る** — 「作品の窓には出ない」を機械で確かめるには、
+    /// 重ねる面が出ているか。**検査から見る** — 「作品のウィンドウには出ない」を機械で確かめるには、
     /// 出ている側も見えている必要がある。
     var hasPanel: Bool { knobs != nil }
 
@@ -224,8 +224,8 @@ public final class SharedFramePreview {
     /// つまみと速さの読み出しを面と合わせる。
     ///
     /// **宣言が 1 つも無くても、速さは出す。** つまみが宣言から出る ([ADR-0030] 決定 8) のは
-    /// そのままだが、速さは宣言ではない — ここは**道具の窓**なので、宣言の有無と関係なく
-    /// 制作を助けるものが載る ([ADR-0032] 決定 1)。作品の窓 (`run` の窓) の振る舞いは
+    /// そのままだが、速さは宣言ではない — ここは**道具のウィンドウ**なので、宣言の有無と関係なく
+    /// 制作を助けるものが載る ([ADR-0032] 決定 1)。作品のウィンドウ (`run` のウィンドウ) の振る舞いは
     /// 変わらない。
     ///
     /// 顔ぶれが変わったときだけ組み直すのは、値が変わるたびに作り直すと触っている手から

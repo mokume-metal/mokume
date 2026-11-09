@@ -388,7 +388,7 @@ struct UnitShapeTests {
             "組めなかった後に、前の断片のまま描いていない")
     }
 
-    /// 窓の経路 (裏で組む) のスケッチ。単位の形の列と寸法ごとの形の列を交互に置く。
+    /// ウィンドウの経路 (裏で組む) のスケッチ。単位の形の列と寸法ごとの形の列を交互に置く。
     final class Alternating: Sketch {
         var settings = SketchSettings(width: 80, height: 32, frameRate: 60)
         var paint: Shader?

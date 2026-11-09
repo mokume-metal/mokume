@@ -10,11 +10,11 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓が受けたスクロールの量を点へ揃える関数。
+/// ウィンドウが受けたスクロールの量を点へ揃える関数。
 ///
-/// **GPU も窓も要らない** — 見るのは機器の別と量から点を返す対応だけで、AppKit の出来事は作らない。
-/// 窓がこの関数を通しているか (`scrollWheel(with:)` から呼ばれているか) は、下の「窓」の検査が見る。
-/// 実機のホイールとトラックパッドで合わせた感触は、人の手で窓を回して確かめる
+/// **GPU もウィンドウも要らない** — 見るのは機器の別と量から点を返す対応だけで、AppKit の出来事は作らない。
+/// ウィンドウがこの関数を通しているか (`scrollWheel(with:)` から呼ばれているか) は、下の「ウィンドウ」の検査が見る。
+/// 実機のホイールとトラックパッドで合わせた感触は、人の手でウィンドウを回して確かめる
 /// ([#2442](https://github.com/mokume-metal/mokume/issues/2442))。
 @Suite("スクロールの単位")
 @MainActor
@@ -79,7 +79,7 @@ struct ScrollUnitsTests {
         #expect(delivered.contains(.mouseWheel(deltaX: -2, deltaY: 1)))
     }
 
-    @Test("標準入力の 1 行 (道具の窓の運び口) も、dx・dy が換算されず点のまま届く")
+    @Test("標準入力の 1 行 (道具のウィンドウの運び口) も、dx・dy が換算されず点のまま届く")
     func theStandardInputIsNotConverted() throws {
         let pipe = Pipe()
         let reader = StandardInputEvents(descriptor: pipe.fileHandleForReading.fileDescriptor)
@@ -97,14 +97,14 @@ struct ScrollUnitsTests {
     }
 }
 
-/// 窓が出来事から量を取り出して、換算の関数を通して合流点へ流すところ。
+/// ウィンドウが出来事から量を取り出して、換算の関数を通して合流点へ流すところ。
 ///
 /// **量は OS が `CGEvent` から作る値を前提にしない。** 行の出来事の `scrollingDeltaY` が何になるかは OS の側の約束で、
 /// 手元と専用機で違いうる ([#3214](https://github.com/mokume-metal/mokume/issues/3214))。見るのは、
-/// 出来事が名乗った量と機器の別から、期待する点を**その場で**出して、窓が流した量と揃うことである。
+/// 出来事が名乗った量と機器の別から、期待する点を**その場で**出して、ウィンドウが流した量と揃うことである。
 /// **ただし機器の別 (`hasPreciseScrollingDeltas`) は縛る** — 行の出来事が precise を名乗る環境では、
 /// 換算を外しても期待値が揃ってしまうので、そこは赤にして知らせる。
-@Suite("スクロールの単位: 窓")
+@Suite("スクロールの単位: ウィンドウ")
 @MainActor
 struct ScrollSurfaceTests {
     private func scrollEvent(units: CGScrollEventUnit, amount: Int32) throws -> NSEvent {
@@ -116,7 +116,7 @@ struct ScrollSurfaceTests {
     }
 
     @Test(
-        "窓が流す量は、出来事が名乗った量を機器の別で換算した点と揃う",
+        "ウィンドウが流す量は、出来事が名乗った量を機器の別で換算した点と揃う",
         .enabled(if: RenderDevice.isAvailable, "面を作るのに Metal の装置が要る"),
         arguments: [CGScrollEventUnit.line, .pixel])
     func theSurfaceConvertsWhatTheEventSays(units: CGScrollEventUnit) throws {

@@ -8,7 +8,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// マウスの釦の番号が名乗る体系 ([ADR-0034] 決定 1〜3 を釦へ当てたもの)。
+/// マウスのボタンの番号が名乗る体系 ([ADR-0034] 決定 1〜3 をボタンへ当てたもの)。
 ///
 /// **定数を手で書いている以上、正典と突き合わせないと嘘に気付けない。** 番号が 1 つ
 /// ずれても絵は出るし検査も通り、症状は「右で押したのに中と読まれる」としか出ない。
@@ -18,10 +18,10 @@ import Testing
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-@Suite("マウスの釦の番号")
+@Suite("マウスのボタンの番号")
 struct MouseButtonTests {
     @Test(
-        "名前の付いた釦の番号は、macOS の定数と一致する",
+        "名前の付いたボタンの番号は、macOS の定数と一致する",
         arguments: [
             (MouseButton.left, CGMouseButton.left),
             (.right, .right),
@@ -32,8 +32,8 @@ struct MouseButtonTests {
     }
 
     /// 外からは任意の番号が送られてくる ([ADR-0018] 決定 1)。戻る・進むのような 4 番目
-    /// 以降の釦も、名前が無いだけで押せば届く — **名前の付いたものしか表せない形にすると、
-    /// その釦を押しただけで出来事が消える。**
+    /// 以降のボタンも、名前が無いだけで押せば届く — **名前の付いたものしか表せない形にすると、
+    /// そのボタンを押しただけで出来事が消える。**
     ///
     /// [ADR-0018]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md
     @Test("名前の無い番号も、そのまま表せる")
@@ -44,23 +44,23 @@ struct MouseButtonTests {
     }
 
     /// **`mouseButton == 0` や、手本の定数を写した `mouseButton == 37` を型で止める。**
-    /// 整数のリテラルから作れると、写した比較が黙って通り、別の釦か常に偽になる。
+    /// 整数のリテラルから作れると、写した比較が黙って通り、別のボタンか常に偽になる。
     @Test("数のリテラルからは作れない")
     func cannotBeWrittenAsANumber() {
         #expect(!(MouseButton.self is any ExpressibleByIntegerLiteral.Type))
     }
 }
 
-@Suite("釦を読む面")
+@Suite("ボタンを読む面")
 @MainActor
 struct MouseButtonSurfaceTests {
     /// **外から送った番号が、面では名前として読める。** 線は macOS の番号のまま据え置いた
     /// ので ([ADR-0034] 決定 4)、送り手を変えずに書き味だけが変わる。`button` を省いた
-    /// 1 件は主釦 (左) として読む — 省略が自然に読める値である。
+    /// 1 件は主ボタン (左) として読む — 省略が自然に読める値である。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
     @Test(
-        "外から送った番号は、面では名前の付いた釦になる",
+        "外から送った番号は、面では名前の付いたボタンになる",
         arguments: [
             (#"{"type":"mouseDown","x":1,"y":2,"button":1}"#, MouseButton.right),
             (#"{"type":"mouseDown","x":1,"y":2,"button":2}"#, .center),
@@ -93,12 +93,12 @@ struct MouseButtonSurfaceTests {
     /// `Key?` にした理由と同じ ([ADR-0034] 影響節)。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    @Test("まだ押していなければ、指している釦は無い")
+    @Test("まだ押していなければ、指しているボタンは無い")
     func hasNoButtonBeforeAnyPress() {
         let state = InputState()
         #expect(state.button == nil)
 
-        // 押さずに動いても、スクロールしても、キーを押しても釦は現れない
+        // 押さずに動いても、スクロールしても、キーを押してもボタンは現れない
         state.enqueue(.mouseMoved(x: 3, y: 4))
         state.enqueue(.scrolled(dx: 1, dy: 1))
         state.enqueue(.keyDown(code: .space, characters: " ", isRepeat: false))
@@ -109,13 +109,13 @@ struct MouseButtonSurfaceTests {
         #expect(InputState.empty.button == nil)
     }
 
-    /// `mouseReleased()` の中から「どの釦が離されたか」を知る口は他に無い
-    /// ([ADR-0034] 影響節の `keyCode` と同じ)。押した釦と違う釦で離すと、離した側に
-    /// 入れ替わる。押下は釦ごとに持つので、押した右はまだ押されたまま
+    /// `mouseReleased()` の中から「どのボタンが離されたか」を知る口は他に無い
+    /// ([ADR-0034] 影響節の `keyCode` と同じ)。押したボタンと違うボタンで離すと、離した側に
+    /// 入れ替わる。押下はボタンごとに持つので、押した右はまだ押されたまま
     /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。
     ///
     /// [ADR-0034]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0034-input-surface-units.md
-    @Test("最後に動いた釦は、押しても離しても入れ替わる")
+    @Test("最後に動いたボタンは、押しても離しても入れ替わる")
     func remembersTheButtonThatMovedLast() {
         let state = InputState()
         state.enqueue(.mouseDown(x: 1, y: 2, button: .right))
@@ -131,13 +131,13 @@ struct MouseButtonSurfaceTests {
 
 /// 面 (``Sketch/mouseButton``) から、コールバックの中で読む。GPU を要する。
 @Suite(
-    "釦をコールバックから読む",
+    "ボタンをコールバックから読む",
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct MouseButtonCallbackTests {
-    /// 呼ばれた口と、その中で読めた釦を控える。
+    /// 呼ばれた口と、その中で読めたボタンを控える。
     final class Recorder: Sketch {
         var seen: [(name: String, button: MouseButton?)] = []
         init() {}
@@ -150,9 +150,9 @@ struct MouseButtonCallbackTests {
         func mouseReleased() { seen.append(("released", mouseButton)) }
     }
 
-    /// works の Quarry が `mouseReleased()` の中で離した釦を見て、掘る / 置くを分けている。
+    /// works の Quarry が `mouseReleased()` の中で離したボタンを見て、掘る / 置くを分けている。
     /// 押す前の `draw()` では `nil` で、送った番号は面では名前で読める。
-    @Test("離した釦を、mouseReleased() の中から読める")
+    @Test("離したボタンを、mouseReleased() の中から読める")
     func readsTheReleasedButtonInMouseReleased() throws {
         let facet = try TestScratch.directory("mokume-mouse-button")
         let sketch = Recorder()

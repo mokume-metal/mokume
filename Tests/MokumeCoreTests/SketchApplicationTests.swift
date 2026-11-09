@@ -8,9 +8,9 @@ import Testing
 
 @testable import MokumeCore
 
-/// スケッチが自分で持つ窓 ([#714](https://github.com/mokume-metal/mokume/issues/714))。
+/// スケッチが自分で持つウィンドウ ([#714](https://github.com/mokume-metal/mokume/issues/714))。
 ///
-/// **窓の寿命を、窓自身に決めさせない。** 素の `NSWindow` の既定は「閉じたら自分を解放する」
+/// **ウィンドウの寿命を、ウィンドウ自身に決めさせない。** 素の `NSWindow` の既定は「閉じたら自分を解放する」
 /// なので、こちらが強い参照を持ったまま閉じられると、参照の指す先が消える。以後その参照を
 /// 触るのは未定義で、**症状は原因から遠いところにしか出ない** — 隣の ``SharedFrameStage``
 /// では検査の走り終わりでの落下 (signal 11) として出た
@@ -21,14 +21,14 @@ import Testing
 /// 原因は分かっていない (#1527 の材料)。この suite で旗を立てる検査は、それぞれ
 /// ``SignalState`` で控えて戻す。
 @Suite(
-    "スケッチの窓",
+    "スケッチのウィンドウ",
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 @MainActor
 struct SketchApplicationTests {
-    /// 何も描かないスケッチ。窓を開くのに要るのは大きさだけなので、既定のままでよい。
+    /// 何も描かないスケッチ。ウィンドウを開くのに要るのは大きさだけなので、既定のままでよい。
     private final class Blank: Sketch {}
 
     /// 組む。**終わりの行き先は、呼ばれたら赤を記録する口へ差し替える** ([#1937])。
@@ -59,14 +59,14 @@ struct SketchApplicationTests {
         func draw() { Self.seen.append((time, deltaTime)) }
     }
 
-    /// **窓の経路は、表示のリフレッシュが運んだ予定の時刻を、その枚の時刻にする** ([#2390])。
+    /// **ウィンドウの経路は、表示のリフレッシュが運んだ予定の時刻を、その枚の時刻にする** ([#2390])。
     ///
     /// 駆動源 (`displayLinkFired(at:)`) が持ち主へ運んだ時刻が、ランタイムの時計へ届く区間を見る。
     /// 時刻は実時間 (`CACurrentMediaTime()`) より先の等間隔の列にして、コールバックの時点 (いまの時刻) が
     /// 時計へ入ると食い違うようにする。
     ///
     /// [#2390]: https://github.com/mokume-metal/mokume/issues/2390
-    @Test("窓の経路の time と deltaTime は、表示の予定の時刻の間隔で進む")
+    @Test("ウィンドウの経路の time と deltaTime は、表示の予定の時刻の間隔で進む")
     func theWindowAdvancesByTheDisplayTime() throws {
         Timed.seen = []
         let application = try makeApplication(Timed())
@@ -84,24 +84,24 @@ struct SketchApplicationTests {
         }
     }
 
-    /// **閉じた窓を、閉じた後に触る。**
+    /// **閉じたウィンドウを、閉じた後に触る。**
     ///
-    /// 窓を閉じるとアプリケーションは終わりに向かうが、即死ではない。加えてフレームの
-    /// 駆動源は窓ではなく**画面**に紐づいているので
-    /// ([#223](https://github.com/mokume-metal/mokume/issues/223))、窓が消えた後も
+    /// ウィンドウを閉じるとアプリケーションは終わりに向かうが、即死ではない。加えてフレームの
+    /// 駆動源はウィンドウではなく**画面**に紐づいているので
+    /// ([#223](https://github.com/mokume-metal/mokume/issues/223))、ウィンドウが消えた後も
     /// `step(_:)` は呼ばれ続け、`presentFrame()` から `window?.occlusionState` を触る。
     ///
     /// ## 落ちるのを待つ形にしていない理由
     ///
-    /// 閉じた瞬間に解放されるわけではない。実測すると、閉じた直後の窓には AppKit の側から
+    /// 閉じた瞬間に解放されるわけではない。実測すると、閉じた直後のウィンドウには AppKit の側から
     /// 数百の参照が付いている — つまり**解放が 1 回余分になったことは、ここでは何も起こさない**。
     /// #705 でそれが signal 11 として出たのは 1008 本を走らせた最後であり、いつ・どこで
     /// 出るかを検査から決められない。
     ///
-    /// だから**窓が自分を解放しないこと自体**を見る。これは実装の細部ではなく、この窓が
+    /// だから**ウィンドウが自分を解放しないこと自体**を見る。これは実装の細部ではなく、このウィンドウが
     /// AppKit と結んでいる約束そのものである。開いて閉じて触るところまでを同じ検査に置くのは、
-    /// 約束が実際の経路の窓に掛かっていることと、走り終わりまで生きていることを併せて見るため。
-    @Test("窓を閉じても、その後に窓を触る経路が未定義にならない")
+    /// 約束が実際の経路のウィンドウに掛かっていることと、走り終わりまで生きていることを併せて見るため。
+    @Test("ウィンドウを閉じても、その後にウィンドウを触る経路が未定義にならない")
     func theWindowOutlivesItsClosing() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -109,26 +109,26 @@ struct SketchApplicationTests {
 
         let window = try #require(application.window)
         #expect(!window.isReleasedWhenClosed)
-        // 本物の経路で開いた窓も、検査のプロセスでは透明になる (`TestWindowConcealment`・#3652)。
+        // 本物の経路で開いたウィンドウも、検査のプロセスでは透明になる (`TestWindowConcealment`・#3652)。
         // 並べる口を直に打つ検査だけでは、本体が別の並べ方に変わったときに気付けない
-        #expect(window.alphaValue == 0, "検査の窓が画面に見えている")
+        #expect(window.alphaValue == 0, "検査のウィンドウが画面に見えている")
 
         window.close()
         #expect(!application.isWindowOnScreen)
     }
 
-    /// **スケッチ自身の窓でも、キーは面へ届く。**
+    /// **スケッチ自身のウィンドウでも、キーは面へ届く。**
     ///
-    /// キーは第一応答者へ配られるので、面がそこに居ない窓では `keyDown` が 1 度も呼ばれず、
-    /// 警告も出ない。据え方は道具が出す窓と揃えてあるが ([#963])、揃っていることを人の目に
+    /// キーは第一応答者へ配られるので、面がそこに居ないウィンドウでは `keyDown` が 1 度も呼ばれず、
+    /// 警告も出ない。据え方は道具が出すウィンドウと揃えてあるが ([#963])、揃っていることを人の目に
     /// 委ねると片方だけが直る形になるので、**両方の経路で同じ形の検査を持つ**。
     ///
     /// 合流点ではなく運び先 (`relay`) から見るのは、走らせている入れ物が `private` で
-    /// 検査から触れないためである。見たい区間 (窓 → 第一応答者 → 面) はどちらでも同じだけ
+    /// 検査から触れないためである。見たい区間 (ウィンドウ → 第一応答者 → 面) はどちらでも同じだけ
     /// 通る。
     ///
     /// [#963]: https://github.com/mokume-metal/mokume/issues/963
-    @Test("スケッチの窓へ送ったキーも、面へ届く")
+    @Test("スケッチのウィンドウへ送ったキーも、面へ届く")
     func keysReachTheSurfaceThroughTheWindow() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -148,9 +148,9 @@ struct SketchApplicationTests {
             ])
     }
 
-    /// **スケッチ自身の窓でも、落としたファイルは面へ届く** ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
-    /// 道具の窓 (`SharedFrameStageTests`) と同じ形で、窓から取り出した面へ落としを渡して運び先まで見る。
-    @Test("スケッチの窓へ落としたファイルも、面へ届く")
+    /// **スケッチ自身のウィンドウでも、落としたファイルは面へ届く** ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
+    /// 道具のウィンドウ (`SharedFrameStageTests`) と同じ形で、ウィンドウから取り出した面へ落としを渡して運び先まで見る。
+    @Test("スケッチのウィンドウへ落としたファイルも、面へ届く")
     func droppedFilesReachTheSurfaceThroughTheWindow() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -183,10 +183,10 @@ struct SketchApplicationTests {
         }
     }
 
-    /// **スケッチ自身の窓は、頼まれたファイルを選ばせるダイアログを自分の窓に出し、結果を同じ形の出来事にして
+    /// **スケッチ自身のウィンドウは、頼まれたファイルを選ばせるダイアログを自分のウィンドウに出し、結果を同じ形の出来事にして
     /// 自分の合流点へ積む** ([#3062](https://github.com/mokume-metal/mokume/issues/3062))。同じ頼みを出し直さず、
     /// 結果が当たって頼みが消えたら、出していたダイアログを閉じる。
-    @Test("スケッチの窓は頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える")
+    @Test("スケッチのウィンドウは頼まれた選ばせるダイアログを 1 度だけ出し、結果で待ちを終える")
     func theWindowShowsTheSelectionAndEndsTheWait() async throws {
         let sketch = SelectAsker()
         let application = try makeApplication(sketch)
@@ -196,7 +196,7 @@ struct SketchApplicationTests {
         defer { application.willTerminate() }
 
         #expect(await eventually { application.displayLinkFired(); return !picker.shown.isEmpty })
-        #expect(picker.shown.map(\.prompt) == ["pick"], "頼みの窓に出ていない")
+        #expect(picker.shown.map(\.prompt) == ["pick"], "頼みのウィンドウに出ていない")
         application.displayLinkFired()
         #expect(picker.shown.count == 1, "同じ頼みを出し直した")
         #expect(sketch.result == nil)
@@ -243,9 +243,9 @@ struct SketchApplicationTests {
         #expect(asked == 1, "問いを二重に出した")
     }
 
-    /// **窓が key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
-    /// 離したキーは窓へ届かないので、流さないと押されたまま残る。
-    @Test("窓が退く知らせで、押していたキーの解放が流れる")
+    /// **ウィンドウが key でなくなったら、押していたキーを離した扱いにする** (#2443)。退いている間に
+    /// 離したキーはウィンドウへ届かないので、流さないと押されたまま残る。
+    @Test("ウィンドウが退く知らせで、押していたキーの解放が流れる")
     func resigningKeyReleasesHeldKeys() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -267,7 +267,7 @@ struct SketchApplicationTests {
             ])
     }
 
-    /// **同じ窓の中で第一応答者が面から移っても離す** (#2443 の兄弟)。窓は key のままなので、
+    /// **同じウィンドウの中で第一応答者が面から移っても離す** (#2443 の兄弟)。ウィンドウは key のままなので、
     /// 退く知らせは来ず、押していたキーの解放は移った先へ配られる。
     @Test("第一応答者が面から移ると、押していたキーの解放が流れる")
     func losingFirstResponderReleasesHeldKeys() throws {
@@ -287,9 +287,9 @@ struct SketchApplicationTests {
         window.makeFirstResponder(surface)
     }
 
-    /// 退いて離した扱いにした釦の、本物の解放は流さない。押した窓は解放も受け取るので、
+    /// 退いて離した扱いにしたボタンの、本物の解放は流さない。押したウィンドウは解放も受け取るので、
     /// 流すと `mouseReleased()` が 2 度呼ばれる (#2443 の反証の指摘 4)。
-    @Test("退いて離した扱いにした釦の、本物の解放は流さない")
+    @Test("退いて離した扱いにしたボタンの、本物の解放は流さない")
     func doesNotReleaseAButtonTwice() throws {
         let application = try makeApplication(Blank())
         application.didFinishLaunching()
@@ -320,7 +320,7 @@ struct SketchApplicationTests {
         }
         #expect(kinds == ["mouseDown", "mouseUp", "mouseDown", "mouseUp"])
 
-        // 退いた後に本物の解放が来ないまま押し直したら (窓の外で離した、など)、次の解放は流す
+        // 退いた後に本物の解放が来ないまま押し直したら (ウィンドウの外で離した、など)、次の解放は流す
         lines.removeAll()
         surface.mouseDown(with: try mouse(.leftMouseDown))
         NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
@@ -332,8 +332,8 @@ struct SketchApplicationTests {
         #expect(again == ["mouseDown", "mouseUp", "mouseDown", "mouseUp"])
     }
 
-    /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (#2435)。アプリへ送った 1 件が、面の
-    /// 監視を通って解放として流れることを見る。窓へ直に送る (`window.sendEvent`) と、落とす
+    /// **AppKit は ⌘ を伴う keyUp をウィンドウへ配らない** (#2435)。アプリへ送った 1 件が、面の
+    /// 監視を通って解放として流れることを見る。ウィンドウへ直に送る (`window.sendEvent`) と、落とす
     /// 区間 (`NSApplication.sendEvent(_:)`) を飛ばしてしまう。
     @Test("⌘ を押したままの keyUp も、面へ届く")
     func commandKeyUpReachesTheSurface() throws {
@@ -355,7 +355,7 @@ struct SketchApplicationTests {
         #expect(lines == [InputEvent.keyUp(code: .s).wireLine])
     }
 
-    // MARK: - 最後の窓が閉じたときに終わるか (#1102)
+    // MARK: - 最後のウィンドウが閉じたときに終わるか (#1102)
 
     /// 区画を 1 つ作って渡す。後片付けまで面倒を見る。
     private func withFacet<T>(_ body: (URL) throws -> T) throws -> T {
@@ -364,12 +364,12 @@ struct SketchApplicationTests {
         return try body(directory)
     }
 
-    /// **窓を 1 枚も開かずに見る。** `didFinishLaunching()` を呼ばないので、この 2 本は
-    /// AppKit の窓を建てない — 見たいのは判定であって、窓の建ち方ではない。
+    /// **ウィンドウを 1 枚も開かずに見る。** `didFinishLaunching()` を呼ばないので、この 2 本は
+    /// AppKit のウィンドウを建てない — 見たいのは判定であって、ウィンドウの建ち方ではない。
     ///
     /// 名乗り (``SketchPresence``) を実際に出して確かめる形は採れない。出せば走らせるたびに
     /// メニューバーへ物が増える (#473 の理由で、名乗り自体は検査から出さない)。
-    @Test("窓を道具が持つ経路では、最後の窓が閉じてもスケッチは終わらない")
+    @Test("ウィンドウを道具が持つ経路では、最後のウィンドウが閉じてもスケッチは終わらない")
     func theSketchOutlivesTheLastWindowWhenTheToolOwnsIt() throws {
         try withFacet { facet in
             let application = try makeApplication(Blank())
@@ -378,7 +378,7 @@ struct SketchApplicationTests {
             let pipe = Pipe()
             defer { try? pipe.fileHandleForWriting.close() }
             application.toolInput = pipe.fileHandleForReading.fileDescriptor
-            // 窓を持つ道具に起こされた子と同じ形 (#2028)
+            // ウィンドウを持つ道具に起こされた子と同じ形 (#2028)
             application.resolveOutlet(at: facet, owner: "mokume watch")
 
             let delegate = SketchApplicationDelegate(application: application)
@@ -386,14 +386,14 @@ struct SketchApplicationTests {
         }
     }
 
-    /// **窓の経路は動かさない。** 作品の窓の × が作品を終えることは ADR-0032 の追補
-    /// (#826) が決めており、#1102 が触ってよいのは窓を持たない側だけである。
-    @Test("自分の窓を持つ経路では、最後の窓が閉じたらスケッチも終わる")
+    /// **ウィンドウの経路は動かさない。** 作品のウィンドウの × が作品を終えることは ADR-0032 の追補
+    /// (#826) が決めており、#1102 が触ってよいのはウィンドウを持たない側だけである。
+    @Test("自分のウィンドウを持つ経路では、最後のウィンドウが閉じたらスケッチも終わる")
     func theSketchEndsWithItsOwnLastWindow() throws {
         let missing = TestScratch.path("mokume-viewport", isDirectory: true)
         let application = try makeApplication(Blank())
         defer { application.willTerminate() }
-        // 区画が無いので、窓を持つ道具に起こされていても出口は窓のまま
+        // 区画が無いので、ウィンドウを持つ道具に起こされていても出口はウィンドウのまま
         application.resolveOutlet(at: missing, owner: "mokume watch")
 
         let delegate = SketchApplicationDelegate(application: application)
@@ -406,10 +406,10 @@ struct SketchApplicationTests {
     private static let question = CloseQuestion(
         message: "Quit?", detail: "It stops.", confirm: "Quit", cancel: "Keep running")
 
-    /// 窓の × を押す。**中継まで含めて訊く** (`SharedFrameStageTests` と同じ形) — 台を直に
+    /// ウィンドウの × を押す。**中継まで含めて訊く** (`SharedFrameStageTests` と同じ形) — 台を直に
     /// 呼ぶと、delegate を据える配線が外れたことに気付けない。
     ///
-    /// delegate が据わっていない窓は AppKit の既定でそのまま閉じるので `true` を返す。
+    /// delegate が据わっていないウィンドウは AppKit の既定でそのまま閉じるので `true` を返す。
     private func asksToClose(_ application: SketchApplication) throws -> Bool {
         let window = try #require(application.window)
         guard let delegate = window.delegate else { return true }
@@ -425,11 +425,11 @@ struct SketchApplicationTests {
         application.didFinishLaunching()
         defer { application.willTerminate() }
 
-        #expect(try #require(application.window).delegate == nil, "問いを持たない窓が受け口を持つ")
+        #expect(try #require(application.window).delegate == nil, "問いを持たないウィンドウが受け口を持つ")
         #expect(try asksToClose(application))
     }
 
-    /// **× を押した瞬間には閉じない** (#1120)。窓はこの経路の唯一の出口なので、閉じれば
+    /// **× を押した瞬間には閉じない** (#1120)。ウィンドウはこの経路の唯一の出口なので、閉じれば
     /// 制作中の作品がそのまま終わる。
     @Test("合図があれば、× ではまだ閉じず、問いが出る")
     func asksInsteadOfClosing() throws {
@@ -561,7 +561,7 @@ struct SketchApplicationTests {
 
     /// **問いが出ている間に終わりが始まったら、答えで終わりを重ねない** ([#978])。
     ///
-    /// シートは窓にだけ掛かるので、出ている間も Dock からの終了は届く。そのまま「終える」の
+    /// シートはウィンドウにだけ掛かるので、出ている間も Dock からの終了は届く。そのまま「終える」の
     /// 答えで `terminate(_:)` を呼ぶと、待っている後始末が飛ばされる。
     ///
     /// [#978]: https://github.com/mokume-metal/mokume/issues/978
@@ -635,7 +635,7 @@ struct SketchApplicationTests {
 
     // MARK: - 起こした道具が居なくなったとき (#1427)
 
-    /// **道具が居なくなったら、終わりの合図と同じ経路で終わる。** 窓は道具のものなので一緒に
+    /// **道具が居なくなったら、終わりの合図と同じ経路で終わる。** ウィンドウは道具のものなので一緒に
     /// 消えており、残った子には人が止める入口が無い ([#1427])。
     ///
     /// [#1427]: https://github.com/mokume-metal/mokume/issues/1427

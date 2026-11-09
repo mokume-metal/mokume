@@ -7,8 +7,8 @@ import Testing
 
 @testable import MokumeCore
 
-/// 標準入力から受け取る、道具の窓の出来事。
-@Suite("窓の出来事を標準入力から受ける")
+/// 標準入力から受け取る、道具のウィンドウの出来事。
+@Suite("ウィンドウの出来事を標準入力から受ける")
 @MainActor
 struct StandardInputEventsTests {
     /// 管を 1 本張って、書く側と読む側を渡す。
@@ -112,7 +112,7 @@ struct StandardInputEventsTests {
         }
     }
 
-    /// **窓から来ても、直に入れたときと同じ扱いを受ける。**
+    /// **ウィンドウから来ても、直に入れたときと同じ扱いを受ける。**
     ///
     /// 合流が 1 箇所なら、送られた出来事が実操作と違う扱いを受けることは構造的に
     /// 起きない ([ADR-0018](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0018-observation-and-control-surface.md) 決定 1)。
@@ -145,7 +145,7 @@ struct StandardInputEventsTests {
 
     /// **同じ出来事の並びは、同じ呼び出しの並びを生む。**
     ///
-    /// 窓は 1 件ずつ複数フレームに散り、外から送る経路は 1 フレームにまとめて届く。
+    /// ウィンドウは 1 件ずつ複数フレームに散り、外から送る経路は 1 フレームにまとめて届く。
     /// 出来事ごとに配れば、どちらも同じ列になる — [#218](https://github.com/mokume-metal/mokume/issues/218)
     /// が置いた「合流点は 1 つ」の約束が、状態だけでなく呼び出しの側でも成り立つ
     /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
@@ -178,7 +178,7 @@ struct StandardInputEventsTests {
         }
     }
 
-    /// 移動・引きずり・キーも同じ機構に載る。**窓は 1 件ずつ複数フレームに散り、外から
+    /// 移動・引きずり・キーも同じ機構に載る。**ウィンドウは 1 件ずつ複数フレームに散り、外から
     /// 送る経路は 1 フレームにまとめて届く**が、出来事ごとに配れば列は一致する。
     @Test("移動とキーも、直に入れたときと同じ呼び出しになる")
     func motionAndKeyCallbacksMatchTheDirectPath() throws {
@@ -227,7 +227,7 @@ struct StandardInputEventsTests {
 
     // MARK: - 道具が居なくなったこと (#1427)
 
-    /// **管が畳まれたら、1 度だけ知らせる。** 畳まれたのは窓の持ち主 (道具) が消えたという
+    /// **管が畳まれたら、1 度だけ知らせる。** 畳まれたのはウィンドウの持ち主 (道具) が消えたという
     /// ことで、残った子には人が止める入口が無い ([#1427])。見に来るのは刻みごとなので、印を
     /// 下ろさないと刻みの数だけ終わりを頼む。
     ///
@@ -267,8 +267,8 @@ struct StandardInputEventsTests {
     ///
     /// **区画の在る無しは合図にならない** ([#2028](https://github.com/mokume-metal/mokume/issues/2028))。
     /// 区画は同じ場所の誰からも見えるので、在るだけで「道具に起こされた」と読むと、居合わせた
-    /// 実行が道具の窓と管を奪う。区画が在っても合図が無ければ、共有面へは差し出さない。
-    @Test("合図は窓を持つ道具が渡す名乗りで、区画が在るだけでは共有面にならない")
+    /// 実行が道具のウィンドウと管を奪う。区画が在っても合図が無ければ、共有面へは差し出さない。
+    @Test("合図はウィンドウを持つ道具が渡す名乗りで、区画が在るだけでは共有面にならない")
     func theSignalIsTheOwnerTheToolPasses() throws {
         let key = StartupReads.viewportOwner.key
         #expect(SharedFrameSurface.owner(environment: [:]) == nil)

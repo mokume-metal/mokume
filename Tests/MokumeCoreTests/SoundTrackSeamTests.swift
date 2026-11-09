@@ -14,7 +14,7 @@ import Testing
 // [#3125]: https://github.com/mokume-metal/mokume/issues/3125
 import MokumeCore
 
-/// 書き出しの `.mov` への音声トラック (#3125)。外のパッケージが載せるのと同じ公開の口だけで、窓の標本を渡して
+/// 書き出しの `.mov` への音声トラック (#3125)。外のパッケージが載せるのと同じ公開の口だけで、ウィンドウの標本を渡して
 /// 音声トラックが付くことを見る。GPU を要する (スケッチを走らせて書き出す)。
 @Suite(
     "書き出しの音声トラック (公開の口)",
@@ -23,8 +23,8 @@ import MokumeCore
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SoundTrackSeamTests {
-    /// 標本の番号だけで決まる値。**読み戻した標本の位置を、番号で突き合わせるため** — 窓の継ぎ目が 1 標本ずれれば
-    /// 読んだ値が合わない。左は番号の関数、右は逆符号。0 を避けて、窓の外の埋め (0) と見分ける。
+    /// 標本の番号だけで決まる値。**読み戻した標本の位置を、番号で突き合わせるため** — ウィンドウの継ぎ目が 1 標本ずれれば
+    /// 読んだ値が合わない。左は番号の関数、右は逆符号。0 を避けて、ウィンドウの外の埋め (0) と見分ける。
     static func value(at sample: Int) -> Float {
         Float(sample % 997 + 1) / 1000
     }
@@ -178,7 +178,7 @@ struct SoundTrackSeamTests {
         #expect(heard.start == .zero, "\(heard.start)")
         #expect(heard.samples.count == 2 * 48_000, "\(heard.samples.count / 2) 標本")
         #expect(abs(heard.duration.seconds - 1) < 1e-3 && abs(heard.videoDuration.seconds - 1) < 1e-3)
-        // 全標本が、番号の関数と一致する (窓の継ぎ目の欠けも重なりも無い)
+        // 全標本が、番号の関数と一致する (ウィンドウの継ぎ目の欠けも重なりも無い)
         var worst = 0
         for sample in 0..<48_000 {
             let expected = Self.value(at: sample)
@@ -187,7 +187,7 @@ struct SoundTrackSeamTests {
             }
         }
         #expect(worst == 0, "\(worst) 標本が違う")
-        // 音源が受けた窓: 60 個・フレームの番号の順・窓の先頭は ⌊N·48000/60⌋ = 800N
+        // 音源が受けたウィンドウ: 60 個・フレームの番号の順・ウィンドウの先頭は ⌊N·48000/60⌋ = 800N
         #expect(probe.begun == [60] && probe.ended == 1)
         #expect(probe.windows.count == 60)
         #expect(probe.windows.enumerated().allSatisfy { $1.frame == $0 && $1.start == 800 * $0 && $1.count == 800 })

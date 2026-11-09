@@ -72,7 +72,7 @@ final class ReplayRecorder {
         static func outsideInput(_ name: String) -> String {
             "Replay is not guaranteed (input from outside the sketch, which the record does not hold: \(name))"
         }
-        /// 窓では音が実時間で鳴り、窓なしで流すときは数で進む。音の解析値を絵に使う作品は割れうる。
+        /// ウィンドウでは音が実時間で鳴り、ウィンドウなしで流すときは数で進む。音の解析値を絵に使う作品は割れうる。
         static func realtimeSound(_ kind: String) -> String {
             "Replay is not guaranteed (sound plays in real time in a window, and counts frames when replayed: \(kind))"
         }
@@ -112,7 +112,7 @@ final class ReplayRecorder {
         var frameRate: Int
         var width: Int
         var height: Int
-        /// 窓に出しながら回したか。
+        /// ウィンドウに出しながら回したか。
         var window: Bool
     }
 
@@ -167,8 +167,8 @@ final class ReplayRecorder {
     ///
     /// 乱数の種は、作者が `randomSeed` を呼ぶまで常に 0 (`Randomness()`) なので、開始の種は 0 である。
     ///
-    /// `window` は、窓に出しながら回したか。窓では音が実時間で鳴り、拡大した字の焼きを次のフレームへ送る経路も
-    /// 窓のものなので、流す側が「窓で録った記録」と知っておくために残す。
+    /// `window` は、ウィンドウに出しながら回したか。ウィンドウでは音が実時間で鳴り、拡大した字の焼きを次のフレームへ送る経路も
+    /// ウィンドウのものなので、流す側が「ウィンドウで録った記録」と知っておくために残す。
     func noteStart(
         seed: Int, params: [NamedParamValue], frameRate: Int, width: Int, height: Int, window: Bool = false
     ) {
@@ -200,7 +200,7 @@ final class ReplayRecorder {
         if event.carriesAFileByPath { noteUnreproducible(Self.Reason.fileByPath) }
     }
 
-    /// 外から来た `@Param` の書き込みが入った (窓のつまみ・区画)。**収めた後の値**を残す。
+    /// 外から来た `@Param` の書き込みが入った (ウィンドウのつまみ・区画)。**収めた後の値**を残す。
     func noteParam(_ name: String, _ value: ParamValue) {
         guard !isFinished, !failed else { return }
         pendingParams.append(NamedParamValue(name: name, value: value))

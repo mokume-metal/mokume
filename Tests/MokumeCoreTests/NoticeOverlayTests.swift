@@ -9,7 +9,7 @@ import Testing
 
 /// 絵に重ねる 1 行の置き方。
 ///
-/// **窓を立てずに検められる形にしてある。** 大きさと置き場所を決める規則を AppKit の
+/// **ウィンドウを立てずに検められる形にしてある。** 大きさと置き場所を決める規則を AppKit の
 /// 描画の中へ埋めると、正しいかどうかは画面を見るまで分からなくなる (`KnobOverlay` と同じ)。
 @Suite("重ねる 1 行 (置き方)")
 @MainActor
@@ -29,9 +29,9 @@ struct NoticeOverlayLayoutTests {
         #expect(frame.minY == NoticeOverlay.inset)
     }
 
-    /// **窓を縮めても、はみ出さない。** つまみ (`KnobOverlay`) が丈を詰めるのと同じ理由で、
+    /// **ウィンドウを縮めても、はみ出さない。** つまみ (`KnobOverlay`) が丈を詰めるのと同じ理由で、
     /// 幅を詰める。
-    @Test("窓より広くはならない")
+    @Test("ウィンドウより広くはならない")
     func neverWiderThanTheWindow() {
         let host = NSRect(x: 0, y: 0, width: 120, height: 300)
         let frame = NoticeOverlay.frame(in: host, size: NSSize(width: 400, height: 30))

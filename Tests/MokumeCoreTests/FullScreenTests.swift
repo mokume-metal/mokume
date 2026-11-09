@@ -12,7 +12,7 @@ import Testing
 /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
 enum DisplayReadings {
     /// 手元の内蔵画面 (実測・#2020): 1800×1169 点・2 倍・切り欠き 38 点・使える範囲の上端 1130 点。
-    /// 全画面の窓は 1800×1130 点で開いた。
+    /// 全画面のウィンドウは 1800×1130 点で開いた。
     static let builtIn = Display.Reading(
         screenID: 1, name: "Built-in Retina Display",
         frame: CGRect(x: 0, y: 0, width: 1800, height: 1169),
@@ -41,7 +41,7 @@ enum DisplayReadings {
     static let desk = [builtIn, rightProjector, upperRightMonitor, leftProjector]
 }
 
-/// 全画面と、出すディスプレイの選び方 ([#2020])。GPU も窓も要らない — 画面の読みから先は
+/// 全画面と、出すディスプレイの選び方 ([#2020])。GPU もウィンドウも要らない — 画面の読みから先は
 /// 純粋な関数なので、読みを差し替えて確かめる (ADR-0041 決定 2 の基準 4)。
 ///
 /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
@@ -97,7 +97,7 @@ struct FullScreenChoiceTests {
     // MARK: - 大きさ
 
     /// **描く 1 画素が画面の 1 画素に載る** — 点に画素密度を掛ける。切り欠きのある画面は、
-    /// 全画面の窓がメニューバーの帯の下に置かれるので、使える範囲の上端まで (実測の 1130 点)。
+    /// 全画面のウィンドウがメニューバーの帯の下に置かれるので、使える範囲の上端まで (実測の 1130 点)。
     @Test("全画面の大きさは点 × 画素密度で、切り欠きのある画面はメニューバーの帯の下まで")
     func theSizeIsTheFullScreenInPixels() {
         let sizes = desk.map { [$0.width, $0.height] }
@@ -149,7 +149,7 @@ struct FullScreenChoiceTests {
 
     // MARK: - 設定と組み立て
 
-    @Test("fullScreen() は 1 を、fullScreen(n) は n を頼み、既定の設定は窓で開く")
+    @Test("fullScreen() は 1 を、fullScreen(n) は n を頼み、既定の設定はウィンドウで開く")
     func theSettingsSpellingsAskForADisplay() {
         #expect(SketchSettings().fullScreenDisplay == nil)
         #expect(SketchSettings.fullScreen().fullScreenDisplay == 1)
@@ -160,14 +160,14 @@ struct FullScreenChoiceTests {
         #expect(settings == SketchSettings())
     }
 
-    /// **窓で開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの
+    /// **ウィンドウで開くなら一覧を読まない** — 全画面を頼まないスケッチの起動は、ディスプレイの
     /// 顔ぶれに何も依らない。
-    @Test("窓で開く設定は一覧を読まず、書いた大きさで描く")
+    @Test("ウィンドウで開く設定は一覧を読まず、書いた大きさで描く")
     func aWindowedSketchDoesNotReadTheDisplays() throws {
         let stage = try SketchRuntime.stage(
             for: SketchSettings(width: 320, height: 180),
             displays: {
-                Issue.record("窓で開くのに、ディスプレイの一覧を読んだ")
+                Issue.record("ウィンドウで開くのに、ディスプレイの一覧を読んだ")
                 return []
             })
         #expect(stage.width == 320)
@@ -213,7 +213,7 @@ struct FullScreenChoiceTests {
     }
 }
 
-/// 小さな全画面の大きさを持つ 2 枚。**GPU に確保させる面を小さく保つ** (窓の枠の最小に掛からない程度に) — 見たいのは選び方と
+/// 小さな全画面の大きさを持つ 2 枚。**GPU に確保させる面を小さく保つ** (ウィンドウの枠の最小に掛からない程度に) — 見たいのは選び方と
 /// 繋ぎ方で、大きさの規則は ``FullScreenChoiceTests`` が持つ。
 @MainActor
 enum SmallDisplays {
@@ -280,13 +280,13 @@ struct FullScreenAssemblyTests {
     }
 }
 
-/// 全画面の窓 ([#2020])。**実際には全画面にしない** — 全画面にする口を差し替え、頼んだかを
+/// 全画面のウィンドウ ([#2020])。**実際には全画面にしない** — 全画面にする口を差し替え、頼んだかを
 /// 数える。既定のままだと、検査を走らせた機械の画面が全画面の操作スペースへ切り替わる。
-/// 窓は 1 枚ずつ開いて閉じる (``SketchApplicationTests`` と同じ扱い)。
+/// ウィンドウは 1 枚ずつ開いて閉じる (``SketchApplicationTests`` と同じ扱い)。
 ///
 /// [#2020]: https://github.com/mokume-metal/mokume/issues/2020
 @Suite(
-    "全画面の窓",
+    "全画面のウィンドウ",
     .serialized,
     .enabled(
         if: RenderDevice.isAvailable,
@@ -303,7 +303,7 @@ struct FullScreenWindowTests {
         return application
     }
 
-    @Test("選んだディスプレイの画面に窓を立て、位置を覚えずに全画面を 1 度頼む")
+    @Test("選んだディスプレイの画面にウィンドウを立て、位置を覚えずに全画面を 1 度頼む")
     func opensOnTheChosenScreenAndAsksForFullScreen() throws {
         let screen = try #require(NSScreen.screens.first, "画面の無い実行環境")
         let application = try makeApplication(display: 2)
@@ -327,15 +327,15 @@ struct FullScreenWindowTests {
         #expect(asked.first === window)
         #expect(window.screen == screen)
         #expect(window.collectionBehavior.contains(.fullScreenPrimary))
-        #expect(window.frameAutosaveName.isEmpty, "全画面の窓が位置を覚えている")
+        #expect(window.frameAutosaveName.isEmpty, "全画面のウィンドウが位置を覚えている")
         #expect(said.isEmpty)
-        // 1 枚目の前の層は不透明な黒 (#2876)。窓を作る側が層を塗るのではなく、層を作る所が塗る
-        #expect(OpaqueBlackLayer.problem(with: window.contentView?.layer) == nil, "全画面の窓の層")
+        // 1 枚目の前の層は不透明な黒 (#2876)。ウィンドウを作る側が層を塗るのではなく、層を作る所が塗る
+        #expect(OpaqueBlackLayer.problem(with: window.contentView?.layer) == nil, "全画面のウィンドウの層")
     }
 
     /// **全画面に入った後に、実物と描く大きさを突き合わせる。** 通知は手で送る — 実際に全画面に
     /// すると機械の画面が切り替わる。
-    @Test("全画面に入った窓の中身が描く大きさと違えば、1 行言う")
+    @Test("全画面に入ったウィンドウの中身が描く大きさと違えば、1 行言う")
     func saysWhenTheFullScreenDoesNotMatch() throws {
         let screen = try #require(NSScreen.screens.first, "画面の無い実行環境")
         let application = try makeApplication(display: 2)
@@ -348,7 +348,7 @@ struct FullScreenWindowTests {
         let window = try #require(application.window)
         defer { window.close() }
 
-        // 窓の中身は描く大きさを画面の点へ直したもの — 合っているので何も言わない
+        // ウィンドウの中身は描く大きさを画面の点へ直したもの — 合っているので何も言わない
         NotificationCenter.default.post(
             name: NSWindow.didEnterFullScreenNotification, object: window)
         #expect(said.isEmpty, "合っているのに言った: \(said)")
@@ -362,8 +362,8 @@ struct FullScreenWindowTests {
         #expect(said.first?.contains("640×360") == true)
     }
 
-    /// 組み立ての後、窓を出すまでの間にディスプレイが外れた。**黙って全画面にしない。**
-    @Test("窓を出す前にディスプレイが外れていたら、窓で開くことを言い、全画面を頼まない")
+    /// 組み立ての後、ウィンドウを出すまでの間にディスプレイが外れた。**黙って全画面にしない。**
+    @Test("ウィンドウを出す前にディスプレイが外れていたら、ウィンドウで開くことを言い、全画面を頼まない")
     func fallsBackToAWindowWhenTheDisplayWentAway() throws {
         let application = try makeApplication(display: 2)
         defer { application.willTerminate() }

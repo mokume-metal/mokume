@@ -8,7 +8,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 書き出しの音声トラックの、書き手と撮る係の側 (#3125)。GPU を要さない。スケッチを走らせずに、窓と絵を直に渡す。
+/// 書き出しの音声トラックの、書き手と撮る係の側 (#3125)。GPU を要さない。スケッチを走らせずに、ウィンドウと絵を直に渡す。
 @Suite(
     "書き出しの音声トラック (書き手と撮る係)",
     .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
@@ -17,7 +17,7 @@ struct SoundTrackWriterTests {
         DisplayImage(width: 64, height: 48, bytes: [UInt8](repeating: level, count: 64 * 48 * 4))
     }
 
-    /// 全部が `value` の窓。
+    /// 全部が `value` のウィンドウ。
     private func window(frame: Int, frameRate: Int = 60, value: Float = 0.25) -> SoundWindow {
         var window = SoundWindow(frame: frame, frameRate: frameRate)
         for index in 0..<window.count {
@@ -33,15 +33,15 @@ struct SoundTrackWriterTests {
         try await body(directory)
     }
 
-    // MARK: - 窓の式
+    // MARK: - ウィンドウの式
 
-    @Test("窓の先頭は、フレームの番号から直に求める。144 fps・48000 Hz の 144 フレームで 48000 標本ちょうど")
+    @Test("ウィンドウの先頭は、フレームの番号から直に求める。144 fps・48000 Hz の 144 フレームで 48000 標本ちょうど")
     func windowStartsComeFromTheFrameNumber() {
         // 丸めて足すと 47952 になる
         #expect(144 * (48_000 / 144) == 47_952)
         let total = (0..<144).reduce(0) { $0 + SoundWindow.count(ofFrame: $1, frameRate: 144) }
         #expect(total == 48_000)
-        // 窓は継ぎ目なく並ぶ (前の窓の先頭 + 長さ = 次の窓の先頭)
+        // ウィンドウは継ぎ目なく並ぶ (前のウィンドウの先頭 + 長さ = 次のウィンドウの先頭)
         for frame in 0..<400 {
             #expect(
                 SoundWindow.start(ofFrame: frame, frameRate: 144)
@@ -58,7 +58,7 @@ struct SoundTrackWriterTests {
 
     // MARK: - 書き手
 
-    @Test("窓を窓ごとに渡しても、音声トラックの標本は窓の継ぎ目で欠けも重なりも無い")
+    @Test("ウィンドウをウィンドウごとに渡しても、音声トラックの標本はウィンドウの継ぎ目で欠けも重なりも無い")
     func windowsAreWrittenSeamlessly() async throws {
         try await withDirectory { directory in
             let path = directory.appendingPathComponent("sound.mov").path
@@ -107,7 +107,7 @@ struct SoundTrackWriterTests {
         }
     }
 
-    @Test("音声の書き損じ (標本の束を作れない窓) は、映像と同じ道で名乗られ、撮る係の「書き出しに穴がある」に立つ")
+    @Test("音声の書き損じ (標本の束を作れないウィンドウ) は、映像と同じ道で名乗られ、撮る係の「書き出しに穴がある」に立つ")
     func aFailedSoundWindowIsReportedLikeAFailedPicture() async throws {
         try await withDirectory { directory in
             let recorder = FrameRecorder(frameRate: 60)
@@ -118,7 +118,7 @@ struct SoundTrackWriterTests {
 
             recorder.writeSound(window(frame: 0))
             movie.write(image(40), frame: 1, time: 0)
-            // 左右の長さが違う窓は、標本の束を作れない
+            // 左右の長さが違うウィンドウは、標本の束を作れない
             var broken = window(frame: 1)
             broken.right.removeLast()
             recorder.writeSound(broken)
@@ -181,7 +181,7 @@ struct SoundTrackWriterTests {
                 #expect(recorder.warnings.message(for: .soundNotCarried)?.contains("does not carry sound") == true, "\(pattern)")
                 #expect(
                     recorder.warnings.count { if case .soundNotCarried = $0 { true } else { false } } == 1)
-                // 載せないので、窓を渡しても何も書かれない
+                // 載せないので、ウィンドウを渡しても何も書かれない
                 recorder.writeSound(window(frame: 0))
                 recorder.close()
             }

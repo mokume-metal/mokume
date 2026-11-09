@@ -18,12 +18,12 @@ import QuartzCore
 /// ## 触った操作の行き先
 ///
 /// 面が拾ったマウス・キー・スクロールは、**外から送られたものと同じ合流点**
-/// (``InputState``) へ入る ([ADR-0018] 決定 1)。窓側だけが座標の変換を通る —
+/// (``InputState``) へ入る ([ADR-0018] 決定 1)。ウィンドウ側だけが座標の変換を通る —
 /// 外から送るときは既にキャンバスの座標だからである (``SurfaceMapping``)。
 ///
 /// ## カーソルを捕まえる
 ///
-/// 捕まえるかの判定 (``PointerLock``) もこの面が持つ。直に走らせた窓も、道具が出す 2 つの窓も
+/// 捕まえるかの判定 (``PointerLock``) もこの面が持つ。直に走らせたウィンドウも、道具が出す 2 つのウィンドウも
 /// この部品なので、捕まえ方は 1 か所に書ける。捕まえている間は位置ではなく量を送り
 /// (``motion(isLocked:location:delta:)``)、押下と解放は捕まえた時点の位置を名乗る
 /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
@@ -37,12 +37,12 @@ final class SketchSurface: NSView {
     private let device: any MTLDevice
 
     /// 拾った操作の行き先。**省略できない** — 入力の行き先を持たない面を作れると、
-    /// 「窓は出ているのに触っても効かない」がまた作れてしまう
+    /// 「ウィンドウは出ているのに触っても効かない」がまた作れてしまう
     /// ([#217](https://github.com/mokume-metal/mokume/issues/217))。
     private let input: InputState
-    /// 描く解像度。窓の大きさとは独立。
+    /// 描く解像度。ウィンドウの大きさとは独立。
     ///
-    /// **走っているスケッチの窓では変わらない**が、道具が出す窓では**差し替わる** —
+    /// **走っているスケッチのウィンドウでは変わらない**が、道具が出すウィンドウでは**差し替わる** —
     /// 見張りが起こし直した子が別の解像度を名乗ることがあるためである
     /// ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
     ///
@@ -52,7 +52,7 @@ final class SketchSurface: NSView {
 
     /// 拾った出来事を、合流点のほかにもう 1 か所へ渡す口。
     ///
-    /// **道具の窓のためにある。** 絵を描いているのは別のプロセスなので、拾っただけでは
+    /// **道具のウィンドウのためにある。** 絵を描いているのは別のプロセスなので、拾っただけでは
     /// 何も起きない — 運ばないと効かない ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
     /// 渡すのは**そのまま子の標準入力へ書ける 1 行**で、道具は中身を見ずに転送する。
     var relay: ((String) -> Void)?
@@ -62,40 +62,40 @@ final class SketchSurface: NSView {
     fileprivate var pointerTracking: NSTrackingArea?
 
     /// カーソルを捕まえるかの判定 ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
-    /// **この面が観たこと** (押された・Escape・窓が退いた・畳まれる) を伝え、スケッチの要求は
-    /// 窓を持つ側が ``followPointerLock(requested:)`` で渡す。
+    /// **この面が観たこと** (押された・Escape・ウィンドウが退いた・畳まれる) を伝え、スケッチの要求は
+    /// ウィンドウを持つ側が ``followPointerLock(requested:)`` で渡す。
     let pointerLock: PointerLock
 
     /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
-    /// ``pointerLock`` と同じく、スケッチの要求は窓を持つ側が ``followCursorHiding(requested:)`` で渡し、
-    /// 窓の状況はこの面が答える。
+    /// ``pointerLock`` と同じく、スケッチの要求はウィンドウを持つ側が ``followCursorHiding(requested:)`` で渡し、
+    /// ウィンドウの状況はこの面が答える。
     let cursorHiding: CursorHiding
 
     /// 最後に合流点へ名乗った位置 (キャンバスの座標)。**捕まえている間の押下と解放はここを
     /// 名乗る** — 捕まえた時点の位置で、捕まえている間は動かない。
     fileprivate var lastPoint: (x: Float, y: Float)?
 
-    /// 退く・閉じる知らせを受けている窓。外すときに名指しする。
+    /// 退く・閉じる知らせを受けているウィンドウ。外すときに名指しする。
     fileprivate weak var observedWindow: NSWindow?
 
-    /// この面が合流点へ押下として流し、まだ解放を流していないキーと釦。
+    /// この面が合流点へ押下として流し、まだ解放を流していないキーとボタン。
     ///
-    /// **窓が前から退いたら、ここに残っているものへ解放を流す** (``releaseHeld()``)。退いている
-    /// 間に離したキーは窓へ届かないので、流さないと押されたまま残る
+    /// **ウィンドウが前から退いたら、ここに残っているものへ解放を流す** (``releaseHeld()``)。退いている
+    /// 間に離したキーはウィンドウへ届かないので、流さないと押されたまま残る
     /// ([#2443](https://github.com/mokume-metal/mokume/issues/2443))。持つのは面が流した分だけで、
-    /// 外から注入した押下は離さない — 人が触っていないものを、窓の都合で動かさない。
+    /// 外から注入した押下は離さない — 人が触っていないものを、ウィンドウの都合で動かさない。
     fileprivate var heldKeys: Set<Key> = []
     fileprivate var heldButtons: Set<MouseButton> = []
-    /// 退いたときに離した扱いにした釦。**その後に届く本物の解放は流さない** — 押した窓は
+    /// 退いたときに離した扱いにしたボタン。**その後に届く本物の解放は流さない** — 押したウィンドウは
     /// 解放も受け取るので、流すと `mouseReleased()` が 2 度呼ばれる。押し直せば外す。
     fileprivate var releasedOnLeave: Set<MouseButton> = []
 
-    /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。窓に載っている間だけ持つ。
+    /// ⌘ を押している間の keyUp を拾う監視 (``commandKeyUpMonitor(for:)``)。ウィンドウに載っている間だけ持つ。
     fileprivate var keyUpMonitor: Any?
 
-    /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前の窓と道具の窓は受ける** (既定)。
-    ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — 窓はホストのもので、ホスト側のドロップと
-    ///   取り合わない。受けるのは macOS の自前の窓だけである。
+    /// - Parameter acceptsFileDrops: ファイルのドロップを受けるか。**自前のウィンドウと道具のウィンドウは受ける** (既定)。
+    ///   **ホストのアプリへ埋め込む面 (``SketchView``) は受けない** — ウィンドウはホストのもので、ホスト側のドロップと
+    ///   取り合わない。受けるのは macOS の自前のウィンドウだけである。
     init(
         frame: NSRect, device: any MTLDevice, input: InputState, canvasSize: (Int, Int),
         pointerLock: PointerLock = PointerLock(), cursorHiding: CursorHiding = CursorHiding(),
@@ -111,18 +111,18 @@ final class SketchSurface: NSView {
         // **ファイルの URL だけを受ける** — ブラウザから落とした文字列や URL では、ドラッグを断る (``droppedPaths(from:)``)。
         // 埋め込む面は登録しない: 登録しない面はドラッグの宛先にならず、ホストのビューが受けられる
         if acceptsFileDrops { registerForDraggedTypes([.fileURL]) }
-        // **終わるときに放す** — 終わりの経路 (× の確定・Ctrl-C・`terminate(_:)`) は窓を閉じずに
-        // プロセスを畳むことがあり、窓が閉じる知らせだけでは取りこぼす
+        // **終わるときに放す** — 終わりの経路 (× の確定・Ctrl-C・`terminate(_:)`) はウィンドウを閉じずに
+        // プロセスを畳むことがあり、ウィンドウが閉じる知らせだけでは取りこぼす
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationWillTerminate(_:)),
             name: NSApplication.willTerminateNotification, object: nil)
-        // **アプリが退いたときも離す。** 窓が key のまま他のアプリへ移ることがある (窓の
+        // **アプリが退いたときも離す。** ウィンドウが key のまま他のアプリへ移ることがある (ウィンドウの
         // 知らせだけでは取りこぼす)
         NotificationCenter.default.addObserver(
             self, selector: #selector(applicationDidResignActive(_:)),
             name: NSApplication.didResignActiveNotification, object: nil)
         // **メニューを開いている間も離す。** AppKit は自前の追跡ループへ入り、その間に離した
-        // キーはメニューが取る。窓は key のままでフレームは回り続けるので、押されたまま走る
+        // キーはメニューが取る。ウィンドウは key のままでフレームは回り続けるので、押されたまま走る
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
@@ -151,11 +151,11 @@ final class SketchSurface: NSView {
         layer.wantsExtendedDynamicRangeContent = false
         layer.framebufferOnly = true
         // **1 枚目が出るまでは黒で塗る** ([#2876](https://github.com/mokume-metal/mokume/issues/2876))。
-        // 窓は作り直しや `setup()` より先に開くので、最初の 1 枚までは drawable を一度も受け取っていない
+        // ウィンドウは作り直しや `setup()` より先に開くので、最初の 1 枚までは drawable を一度も受け取っていない
         // 層が見え、中身が透明か不定になる。黒は、絵が収まらない帯の色 (`FramePresenter`) と、半透明の面の
-        // 下地 (窓では後ろが透けない・`Sketch+Color.swift`) が既に出している色で、作品の表示に無いものを
-        // 足さない。**窓 (`NSWindow.backgroundColor`) は塗らない** — 層の外 (タイトルバーの下の縁など)
-        // まで色が変わり、帯の黒とも別の経路になる。直に走らせる窓も道具の窓も、この面を使うので、
+        // 下地 (ウィンドウでは後ろが透けない・`Sketch+Color.swift`) が既に出している色で、作品の表示に無いものを
+        // 足さない。**ウィンドウ (`NSWindow.backgroundColor`) は塗らない** — 層の外 (タイトルバーの下の縁など)
+        // まで色が変わり、帯の黒とも別の経路になる。直に走らせるウィンドウも道具のウィンドウも、この面を使うので、
         // 起こし方で分けずに作る所 1 か所で塗る (ADR-0032 決定 6 の追補)。1 枚目より後は、drawable が
         // 層を覆うので見え方は変わらない
         layer.backgroundColor = CGColor(gray: 0, alpha: 1)
@@ -194,34 +194,34 @@ extension SketchSurface {
     /// **キーを受け取るために要る。** `false` のままだと `keyDown` は 1 度も呼ばれず、
     /// 警告も出ない — 「マウスは効くのにキーだけ効かない」という形でしか気付けない。
     ///
-    /// ## 窓を出す側は、面を第一応答者に据える
+    /// ## ウィンドウを出す側は、面を第一応答者に据える
     ///
-    /// これを返すだけでは足りない。キーは第一応答者へ配られるので、面がそこに居ない窓では
-    /// 1 件も来ない。**据える責任は窓を出す側にある** —
+    /// これを返すだけでは足りない。キーは第一応答者へ配られるので、面がそこに居ないウィンドウでは
+    /// 1 件も来ない。**据える責任はウィンドウを出す側にある** —
     /// `SharedFrameStage.open(overlay:)` と `SketchApplication.didFinishLaunching()` が
-    /// どちらも窓を前へ出した後に `makeFirstResponder(_:)` を呼ぶ。
+    /// どちらもウィンドウを前へ出した後に `makeFirstResponder(_:)` を呼ぶ。
     ///
-    /// **AppKit の自動選択には頼らない。** 窓を最初に前へ出すとき、AppKit はキービューの
+    /// **AppKit の自動選択には頼らない。** ウィンドウを最初に前へ出すとき、AppKit はキービューの
     /// 環の先頭 — これを返す contentView — を `initialFirstResponder` に自分で選ぶので、
     /// 呼ばなくてもキーは届く (`orderFrontRegardless` でも、応答者になりうる部品を重ねた
-    /// 窓でも届く。実測)。**それは文書化されていない挙動である**うえ、窓を出した**後**に
-    /// contentView を差し替えると応答者は窓へ戻る (実測) ので、頼ると破れ方が上の
+    /// ウィンドウでも届く。実測)。**それは文書化されていない挙動である**うえ、ウィンドウを出した**後**に
+    /// contentView を差し替えると応答者はウィンドウへ戻る (実測) ので、頼ると破れ方が上の
     /// 「キーだけ効かない」になる — 1 行で名乗るほうが安い ([#963])。
     ///
     /// **`makeFirstResponder(_:)` はこの値を見ない。** 拒む面でも据わり、キーはそこへ配られる
     /// (実測)。この値が効くのは AppKit が応答者を**自分で選ぶ**ところ — 環の先頭の選定・
     /// 押して焦点を移す・Tab で辿る — なので、両方が要る。
     ///
-    /// 届くこと自体は、窓を出して本物の `NSEvent` を通す検査が覆っている
+    /// 届くこと自体は、ウィンドウを出して本物の `NSEvent` を通す検査が覆っている
     /// (`SharedFrameStageTests` / `SketchApplicationTests`)。面の `keyDown` を直に呼ぶ形では、
-    /// 窓 → 第一応答者 → 面という覆いたい区間を飛ばすことになる。
+    /// ウィンドウ → 第一応答者 → 面という覆いたい区間を飛ばすことになる。
     ///
     /// [#963]: https://github.com/mokume-metal/mokume/issues/963
     override var acceptsFirstResponder: Bool { true }
 
-    /// 窓が前に出ていなくても、最初の一撃をその場で拾う。
+    /// ウィンドウが前に出ていなくても、最初の一撃をその場で拾う。
     ///
-    /// 無いと 1 回目のクリックが「窓を前に出す」ことにだけ使われて捨てられる。触って
+    /// 無いと 1 回目のクリックが「ウィンドウを前に出す」ことにだけ使われて捨てられる。触って
     /// 動かすものなので、押した回数と効いた回数が食い違わないほうがよい。
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -248,7 +248,7 @@ extension SketchSurface {
         super.updateTrackingAreas()
     }
 
-    /// いま面の座標をキャンバスの座標へ写す規則。窓の大きさが変わるたびに変わる。
+    /// いま面の座標をキャンバスの座標へ写す規則。ウィンドウの大きさが変わるたびに変わる。
     private var mapping: SurfaceMapping {
         let size = bounds.size
         let drawable = metalLayer?.drawableSize ?? .zero
@@ -263,7 +263,7 @@ extension SketchSurface {
         canvasLocation(atWindowPoint: event.locationInWindow)
     }
 
-    /// 窓の座標 (左下原点) の 1 点を、キャンバスの座標で返す。写せなければ `nil`。
+    /// ウィンドウの座標 (左下原点) の 1 点を、キャンバスの座標で返す。写せなければ `nil`。
     private func canvasLocation(atWindowPoint windowPoint: NSPoint) -> (x: Float, y: Float)? {
         let point = convert(windowPoint, from: nil)
         return mapping.canvasPoint(x: Double(point.x), y: Double(point.y))
@@ -283,7 +283,7 @@ extension SketchSurface {
     override func mouseMoved(with event: NSEvent) { noteMove(event) }
 
     /// 押している間の移動。**押している間は `mouseMoved` ではなくこちらが来る**ので、
-    /// 釦ごとに 3 つとも受ける必要がある。
+    /// ボタンごとに 3 つとも受ける必要がある。
     override func mouseDragged(with event: NSEvent) { noteMove(event) }
     override func rightMouseDragged(with event: NSEvent) { noteMove(event) }
     override func otherMouseDragged(with event: NSEvent) { noteMove(event) }
@@ -301,7 +301,7 @@ extension SketchSurface {
     }
 
     private func noteRelease(_ event: NSEvent) {
-        // 退いたときに離した扱いにした釦の、本物の解放は流さない (``releasedOnLeave``)
+        // 退いたときに離した扱いにしたボタンの、本物の解放は流さない (``releasedOnLeave``)
         if releasedOnLeave.remove(Self.button(of: event)) != nil { return }
         guard let point = pressPoint(of: event) else { return }
         deliver(.mouseUp(x: point.x, y: point.y, button: Self.button(of: event)))
@@ -313,7 +313,7 @@ extension SketchSurface {
         pressPoint(atWindowPoint: event.locationInWindow)
     }
 
-    /// 窓の座標の 1 点を、押下・解放と同じ規則で名乗る位置にする。ファイルの落としも通る
+    /// ウィンドウの座標の 1 点を、押下・解放と同じ規則で名乗る位置にする。ファイルの落としも通る
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。
     private func pressPoint(atWindowPoint windowPoint: NSPoint) -> (x: Float, y: Float)? {
         if pointerLock.isLocked { return lastPoint }
@@ -325,13 +325,13 @@ extension SketchSurface {
         isOverSurface(atWindowPoint: event.locationInWindow)
     }
 
-    /// 窓の座標の 1 点が、面そのものの上か (重ねた面の上ではないか)。
+    /// ウィンドウの座標の 1 点が、面そのものの上か (重ねた面の上ではないか)。
     private func isOverSurface(atWindowPoint point: NSPoint) -> Bool {
         guard let superview else { return true }
         return hitTest(superview.convert(point, from: nil)) === self
     }
 
-    /// 出来事の釦。**番号を型へ絞る関所は、ここと外から送る経路 (`RawInputEvent`) の
+    /// 出来事のボタン。**番号を型へ絞る関所は、ここと外から送る経路 (`RawInputEvent`) の
     /// 2 つだけ。** `buttonNumber` は ``MouseButton`` の番号と同じ体系なので、変換はせず
     /// 包むだけにする ([ADR-0034] 決定 1)。
     ///
@@ -356,7 +356,7 @@ extension SketchSurface {
     /// `deltaX` / `deltaY` を ``SurfaceMapping/canvasDelta(dx:dy:)`` で位置と同じ比に写したもの
     /// である。**`deltaY` は下向きを正、単位は点として読む** — 位置の `locationInWindow` (上向きが
     /// 正) と違い、移動の出来事の量は画面の座標 (左上が原点) で数えられる。この読み方は、手元の
-    /// macOS で窓を触って確かめた (#1144 — 手前へ引くと下向きの量になり、捕まえる前と後で同じ
+    /// macOS でウィンドウを触って確かめた (#1144 — 手前へ引くと下向きの量になり、捕まえる前と後で同じ
     /// 手つきが同じくらいの量になった)。食い違う環境が見つかれば、直すのはここ 1 か所である。
     ///
     /// 量が 0 の 1 件は送らない — 動いていないのに `mouseMoved()` を呼ぶことになる。
@@ -382,7 +382,7 @@ extension SketchSurface {
     }
 
     /// 流した出来事から、面が覚えておくものを控える — 名乗った位置 (``lastPoint``) と、
-    /// 押したまま残っているキーと釦 (``heldKeys``)。**流す口 1 つで控える**ので、拾い方の違う
+    /// 押したまま残っているキーとボタン (``heldKeys``)。**流す口 1 つで控える**ので、拾い方の違う
     /// 経路 (押下・移動・退いたときの解放) で控え忘れない。
     private func note(_ event: InputEvent) {
         switch event {
@@ -401,8 +401,8 @@ extension SketchSurface {
         }
     }
 
-    /// 押したまま残っているキーと釦に、解放を流す。**キーと釦がこの面へ届かなくなるときに呼ぶ** —
-    /// 窓が退く・アプリが退く・同じ窓の中で第一応答者が移る・メニューを開く。
+    /// 押したまま残っているキーとボタンに、解放を流す。**キーとボタンがこの面へ届かなくなるときに呼ぶ** —
+    /// ウィンドウが退く・アプリが退く・同じウィンドウの中で第一応答者が移る・メニューを開く。
     ///
     /// 解放は普通の出来事として合流点へ入るので、`keyReleased()` / `mouseReleased()` も呼ばれ、
     /// 次のフレームで `keyboard.justReleased` が立つ (ADR-0034 決定 7 の挙動 3)。並びは番号順に
@@ -411,7 +411,7 @@ extension SketchSurface {
         for code in heldKeys.sorted(by: { $0.rawValue < $1.rawValue }) {
             deliver(.keyUp(code: code))
         }
-        // 釦が残っているなら、押下を流したときに位置を控えてある (``note(_:)``)
+        // ボタンが残っているなら、押下を流したときに位置を控えてある (``note(_:)``)
         guard let point = lastPoint else { return }
         for button in heldButtons.sorted(by: { $0.rawValue < $1.rawValue }) {
             deliver(.mouseUp(x: point.x, y: point.y, button: button))
@@ -424,7 +424,7 @@ extension SketchSurface {
     /// スクロール量。
     ///
     /// **位置と違って尺度を変えない。** これは面の上の場所ではなく身振りの量なので、
-    /// 窓の大きさで割り増すと同じ手つきが窓の大きさによって違う意味になる
+    /// ウィンドウの大きさで割り増すと同じ手つきがウィンドウの大きさによって違う意味になる
     /// (``Orbit/radiansPerPixel`` が面の大きさに依らない割合を選んでいるのと同じ理由)。
     ///
     /// **ただし機器の違いは揃える。** ホイールは行、トラックパッドは点で量が届くので、行の機器だけ
@@ -441,7 +441,7 @@ extension SketchSurface {
 
     /// トラックパッドのピンチ。**倍率の差分をそのまま運ぶ** (0.1 で 1.1 倍に開いた・
     /// [#2762](https://github.com/mokume-metal/mokume/issues/2762))。スクロールと同じく身振りの量なので、
-    /// 窓の大きさでは変えない。
+    /// ウィンドウの大きさでは変えない。
     override func magnify(with event: NSEvent) {
         deliver(.pinched(amount: Float(event.magnification)))
     }
@@ -467,7 +467,7 @@ extension SketchSurface {
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
     }
 
-    /// ファイルを引きずって窓へ入った。**ファイルの URL が 1 本もなければ断る** — 落とす先に見せない。
+    /// ファイルを引きずってウィンドウへ入った。**ファイルの URL が 1 本もなければ断る** — 落とす先に見せない。
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         Self.hasDroppedFiles(in: sender.draggingPasteboard) ? .copy : []
     }
@@ -478,7 +478,7 @@ extension SketchSurface {
 
     /// ファイルが落とされた。**1 回の落としを 1 件の出来事にして**、合流点と運び先へ流す。
     ///
-    /// 自前の窓も道具の窓も同じ ``SketchSurface`` なので、ここ 1 か所で両方に効く — 道具の窓では
+    /// 自前のウィンドウも道具のウィンドウも同じ ``SketchSurface`` なので、ここ 1 か所で両方に効く — 道具のウィンドウでは
     /// ``relay`` が `wireLine` を子へ渡す ([ADR-0032] 決定 4)。パスが 0 本の落としは送らない。
     /// 落とした所を写せないとき (面の大きさが 0) も送らず、断る。
     ///
@@ -496,7 +496,7 @@ extension SketchSurface {
 
     override func keyDown(with event: NSEvent) {
         let code = Key(rawValue: Int(event.keyCode))
-        // **Escape は捕まえを外してから、普通のキーとして配る** (#1144)。外すのは窓の側なので、
+        // **Escape は捕まえを外してから、普通のキーとして配る** (#1144)。外すのはウィンドウの側なので、
         // 子が居なくても・スケッチが止まっていても (`noLoop()`) 効く
         if code == .escape { pointerLock.releaseByUser() }
         deliver(.keyDown(code: code, characters: event.characters ?? "", isRepeat: event.isARepeat))
@@ -507,7 +507,7 @@ extension SketchSurface {
     }
 
     /// 修飾キー (Shift・Control・Option・Command) の押下と解放。**AppKit は `keyDown` ではなく
-    /// ここへ配る** — 受けていなかった頃は、窓で Shift を押しても押されていない扱いだった
+    /// ここへ配る** — 受けていなかった頃は、ウィンドウで Shift を押しても押されていない扱いだった
     /// ([#2435](https://github.com/mokume-metal/mokume/issues/2435))。
     ///
     /// 合流点へは普通の `keyDown` / `keyUp` として流す。外から `code` 56 を送ったものと同じ形
@@ -547,12 +547,12 @@ extension SketchSurface {
 
     /// ⌘ を押している間の keyUp を拾う監視を作る。
     ///
-    /// **AppKit は ⌘ を伴う keyUp を窓へ配らない** (`NSApplication.sendEvent(_:)` が落とす)。
+    /// **AppKit は ⌘ を伴う keyUp をウィンドウへ配らない** (`NSApplication.sendEvent(_:)` が落とす)。
     /// 受けないと、⌘S のように組んだ S が押されたまま残る
     /// ([#2435](https://github.com/mokume-metal/mokume/issues/2435))。そこで配られる前に拾って
     /// 面へ流し、出来事は消費する — 配られる版の AppKit でも、2 度は流れない。
     ///
-    /// 拾うのは、この面が載る窓宛てで、面が第一応答者のときだけである (キーが本来ここへ
+    /// 拾うのは、この面が載るウィンドウ宛てで、面が第一応答者のときだけである (キーが本来ここへ
     /// 届く場合に揃える)。
     private func commandKeyUpMonitor(for window: NSWindow) -> Any? {
         NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self, weak window] event in
@@ -568,24 +568,24 @@ extension SketchSurface {
 // MARK: - カーソルを捕まえる
 
 extension SketchSurface {
-    /// スケッチの要求を渡す。**毎リフレッシュ呼ぶ** — 窓を持つ側が、要求の出どころ
-    /// (直に走らせた窓は走っている実行、道具の窓は共有面の属性) から読んで渡す
+    /// スケッチの要求を渡す。**毎リフレッシュ呼ぶ** — ウィンドウを持つ側が、要求の出どころ
+    /// (直に走らせたウィンドウは走っている実行、道具のウィンドウは共有面の属性) から読んで渡す
     /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
     func followPointerLock(requested: Bool) {
         pointerLock.update(requested: requested, in: pointerSituation)
     }
 
     /// 矢印のカーソルを隠すかの要求を渡す。**毎リフレッシュ呼ぶ** — ``followPointerLock(requested:)``
-    /// と同じく、窓を持つ側が要求の出どころから読んで渡す
+    /// と同じく、ウィンドウを持つ側が要求の出どころから読んで渡す
     /// ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
     func followCursorHiding(requested: Bool) {
         cursorHiding.update(requested: requested, in: cursorSituation)
     }
 
-    /// 窓が前に出ているか・ポインタが**面そのもの**の上にあるか。窓が無ければどちらも偽。
+    /// ウィンドウが前に出ているか・ポインタが**面そのもの**の上にあるか。ウィンドウが無ければどちらも偽。
     ///
-    /// 面の上とは、(1) その点でいちばん手前の窓がこの窓で (別の窓が重なっていれば、面の座標は
-    /// 当たっていても見えているのは別の窓)、(2) 重ねたつまみの上ではない、こと。
+    /// 面の上とは、(1) その点でいちばん手前のウィンドウがこのウィンドウで (別のウィンドウが重なっていれば、面の座標は
+    /// 当たっていても見えているのは別のウィンドウ)、(2) 重ねたつまみの上ではない、こと。
     private var cursorSituation: CursorHiding.Situation {
         guard let window else { return .away }
         let onTop =
@@ -597,7 +597,7 @@ extension SketchSurface {
                 && isOverSurface(atWindowPoint: window.mouseLocationOutsideOfEventStream))
     }
 
-    /// 窓が前に出ているか・ポインタがこの面の上にあるか。窓が無ければどちらも偽。
+    /// ウィンドウが前に出ているか・ポインタがこの面の上にあるか。ウィンドウが無ければどちらも偽。
     private var pointerSituation: PointerLock.Situation {
         guard let window else {
             return PointerLock.Situation(isKeyWindow: false, pointerIsInside: false)
@@ -607,7 +607,7 @@ extension SketchSurface {
             isKeyWindow: window.isKeyWindow, pointerIsInside: bounds.contains(point))
     }
 
-    /// 窓を移る前に放し、前の窓の知らせを外す。
+    /// ウィンドウを移る前に放し、前のウィンドウの知らせを外す。
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         guard newWindow !== window else { return }
@@ -616,7 +616,7 @@ extension SketchSurface {
         stopObservingWindow()
     }
 
-    /// 載った窓が退く・閉じる知らせを受ける。**放すのは窓の側の出来事なので、面が自分で聞く。**
+    /// 載ったウィンドウが退く・閉じる知らせを受ける。**放すのはウィンドウの側の出来事なので、面が自分で聞く。**
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         stopObservingWindow()
@@ -644,16 +644,16 @@ extension SketchSurface {
         observedWindow = nil
     }
 
-    /// 窓が退いた (⌘Tab・他の窓)。**利用者が外したものとして放す** — 押すまで掛け直さない。
+    /// ウィンドウが退いた (⌘Tab・他のウィンドウ)。**利用者が外したものとして放す** — 押すまで掛け直さない。
     ///
-    /// **押しているキーと釦も離す** (``releaseHeld()``)。
+    /// **押しているキーとボタンも離す** (``releaseHeld()``)。
     @objc private func windowDidResignKey(_ notification: Notification) {
         pointerLock.releaseByUser()
         cursorHiding.stop()
         releaseHeld()
     }
 
-    /// アプリが退いた。窓が key のまま他のアプリへ移る経路でも、押しているものを離す。
+    /// アプリが退いた。ウィンドウが key のまま他のアプリへ移る経路でも、押しているものを離す。
     @objc fileprivate func applicationDidResignActive(_ notification: Notification) {
         releaseHeld()
     }
@@ -663,7 +663,7 @@ extension SketchSurface {
         releaseHeld()
     }
 
-    /// 同じ窓の中で、キーの行き先がこの面から移る (重ねたつまみが応答者を取る、など)。窓は
+    /// 同じウィンドウの中で、キーの行き先がこの面から移る (重ねたつまみが応答者を取る、など)。ウィンドウは
     /// key のままなので、退く知らせは来ない。
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
@@ -671,7 +671,7 @@ extension SketchSurface {
         return resigned
     }
 
-    /// 窓が閉じる。
+    /// ウィンドウが閉じる。
     @objc private func windowWillClose(_ notification: Notification) {
         pointerLock.tearDown()
         cursorHiding.stop()

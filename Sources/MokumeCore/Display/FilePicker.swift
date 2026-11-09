@@ -5,7 +5,7 @@ import AppKit
 
 /// ファイルを選ばせるダイアログを出す口。
 ///
-/// **窓を持つ側 (``SketchApplication`` と ``SharedFrameStage``) が、これを通して出す。** 差し替えられる形に
+/// **ウィンドウを持つ側 (``SketchApplication`` と ``SharedFrameStage``) が、これを通して出す。** 差し替えられる形に
 /// してあるのは、検査が機材も人の操作も無しに、結果の取り消し・選択を作れるようにするため
 /// ([ADR-0041](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0041-standard-scope-map.md)
 /// 基準 4・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
@@ -15,7 +15,7 @@ protocol FilePicker {
     ///
     /// - Parameters:
     ///   - prompt: ダイアログに添える文言。
-    ///   - window: 出す窓。見えていれば、その窓のシートとして出す。
+    ///   - window: 出すウィンドウ。見えていれば、そのウィンドウのシートとして出す。
     /// - Returns: 結果を捨ててダイアログを閉じる口。新しい頼みが来たときや、待ちが終わったときに呼ぶ。
     ///   呼んだ後は `completion` が呼ばれない。
     func pick(
@@ -41,8 +41,8 @@ struct OpenPanelPicker: FilePicker {
             state.discarded = true
             completion(response == .OK ? panel.url?.path : nil)
         }
-        // **道具のプロセスは、触っている窓の持ち主ではないことがある** (他のアプリから戻ってきた直後など)。
-        // 前に出さないとパネルが他の窓の後ろに隠れる
+        // **道具のプロセスは、触っているウィンドウの持ち主ではないことがある** (他のアプリから戻ってきた直後など)。
+        // 前に出さないとパネルが他のウィンドウの後ろに隠れる
         NSApp.activate(ignoringOtherApps: true)
         if let window, window.isVisible {
             panel.beginSheetModal(for: window, completionHandler: finish)

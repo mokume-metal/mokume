@@ -11,7 +11,7 @@ import mokume
 ///
 /// **確かめているのは組めることである。** 下の型が組めなければ、この suite のファイルごと
 /// `swift build --build-tests` が赤になる。呼んだときに描かれることは
-/// [SketchPartDrawingTests](SketchPartDrawingTests.swift) が GPU で見る。装置にも窓にも
+/// [SketchPartDrawingTests](SketchPartDrawingTests.swift) が GPU で見る。装置にもウィンドウにも
 /// 触らないので、この suite にゲートは付かない。
 @Suite("部品の型の中の語彙 (公開の面だけ)")
 struct SketchPartSurfaceTests {

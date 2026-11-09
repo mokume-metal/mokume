@@ -23,7 +23,7 @@ private final class ClockReading: Sketch {
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct SketchClockTests {
-    @Test("窓を開かずに回すとフレームの数え方を、差し替えた時計ならその時計を名乗る")
+    @Test("ウィンドウを開かずに回すとフレームの数え方を、差し替えた時計ならその時計を名乗る")
     func clockNamesTheSource() throws {
         ClockReading.seen = []
         for clock in [nil, Clock.frameIndex(frameRate: 24), .wallClock] {

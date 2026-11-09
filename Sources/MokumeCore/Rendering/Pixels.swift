@@ -3,7 +3,7 @@
 
 import simd
 
-/// 画素の面 — 描画先の写しへの窓。
+/// 画素の面 — 描画先の写しへのビュー。
 ///
 /// 読むときに写しは作られず、書き換えは次に GPU が描画先へ触る前に自動で戻される
 /// (送り直しの手順は無い)。使い方と、そう作った理由は ``SketchPart/pixels`` にある。
@@ -23,17 +23,17 @@ public struct Pixels {
     /// 1 行あたりのバイト数。
     let bytesPerRow: Int
     /// 書いたことを知らせる先。**書く口はすべてここへ知らせる** (``PixelMirror/noteCPUWrite()``) —
-    /// 知らせ忘れると、書いた画素が描画先へ戻らず、止まっている間は窓にも出口にも出ない。
+    /// 知らせ忘れると、書いた画素が描画先へ戻らず、止まっている間はウィンドウにも出口にも出ない。
     let mirror: PixelMirror?
     /// 書いてよいかを尋ねる先。**書く口はすべて、書く前にここを通る** ([#1672])。
     ///
-    /// 答えるのは窓を渡した面 (``Canvas/pixels``) で、だめなら面がそのわけを 1 度言う。窓は
+    /// 答えるのはビューを渡した面 (``Canvas/pixels``) で、だめなら面がそのわけを 1 度言う。ビューは
     /// プロパティに取っておけるので、取った時点ではなく書く時点で尋ねる。`nil` なら尋ねない
-    /// (面を通さずに取った窓)。
+    /// (面を通さずに取ったビュー)。
     ///
     /// [#1672]: https://github.com/mokume-metal/mokume/issues/1672
     let admitsWrite: (() -> Bool)?
-    /// この窓が ``Image`` の画素への窓のとき、その絵 (``Image/pixels``)。
+    /// このビューが ``Image`` の画素へのビューのとき、その絵 (``Image/pixels``)。
     ///
     /// 絵の画素は GPU と共有する写しではなく `Image` が持つ並びなので、読み書きは絵の口
     /// (`get`・`set`・`fill`・`transformPixels`) へ渡す。`base` は使わない。
@@ -52,7 +52,7 @@ public struct Pixels {
         self.image = nil
     }
 
-    /// 絵の画素への窓。書く前に尋ねる先は無い (絵は置いてよい区間を持たない)。
+    /// 絵の画素へのビュー。書く前に尋ねる先は無い (絵は置いてよい区間を持たない)。
     init(image: Image) {
         self.base = Self.unavailableBase
         self.width = image.width
@@ -63,17 +63,17 @@ public struct Pixels {
         self.image = image
     }
 
-    /// 書く前に `admits` へ尋ねる窓。中身は同じ写しを指す。
+    /// 書く前に `admits` へ尋ねるビュー。中身は同じ写しを指す。
     func asking(_ admits: @escaping () -> Bool) -> Pixels {
         Pixels(
             base: base, width: width, height: height, bytesPerRow: bytesPerRow, mirror: mirror,
             admitsWrite: admits)
     }
 
-    /// 大きさ 0 の窓。写しを用意できなかったときに返す — 読むと透明、書いても何も起きない。
+    /// 大きさ 0 のビュー。写しを用意できなかったときに返す — 読むと透明、書いても何も起きない。
     static let unavailable = Pixels(
         base: unavailableBase, width: 0, height: 0, bytesPerRow: 0, mirror: nil)
-    /// 大きさ 0 の窓が指す先。大きさが 0 なので触られることはない。
+    /// 大きさ 0 のビューが指す先。大きさが 0 なので触られることはない。
     private static let unavailableBase = UnsafeMutableRawPointer.allocate(
         byteCount: 8, alignment: 8)
 
@@ -157,7 +157,7 @@ public struct Pixels {
     /// 呼ぶ前の値のどちらが読めるかは決まっていない (面ごとに違う)。必要なら、呼ぶ前に別の
     /// 並びへ読んでおく。
     ///
-    /// ``Image/pixels`` から取った窓なら、その絵の画素を書き換える。**絵ごとに効果を掛けて新しい絵を
+    /// ``Image/pixels`` から取ったビューなら、その絵の画素を書き換える。**絵ごとに効果を掛けて新しい絵を
     /// 返す口 (``Image/filtered(_:)``) とは違い、この口は自分を変える** — ``subscript(_:_:)``・
     /// ``fill(_:)`` と同じである。
     public func update(_ transform: (_ x: Int, _ y: Int, _ color: LinearRGBA) -> LinearRGBA) {

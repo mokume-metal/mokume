@@ -69,7 +69,7 @@ struct PointerLockOutsideRunTests {
     }
 }
 
-/// 捕まえの要求が、窓の無い実行と見張りの子の出口でどう扱われるか
+/// 捕まえの要求が、ウィンドウの無い実行と見張りの子の出口でどう扱われるか
 /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。GPU を要する。
 @Suite(
     "捕まえを頼むスケッチを走らせる",
@@ -90,9 +90,9 @@ struct PointerLockSketchTests {
             to: facet.appendingPathComponent("request.json"))
     }
 
-    /// 書き出し (`mokume render`・参照スケッチの `--render`) と同じく、窓を持たない実行。
-    /// 要求は覚えるが、読む窓が無いので何も起きない — 止まらず、描き続ける。
-    @Test("窓の無い実行で頼んでも、止まらずに描き、要求は取り下げるまで残る")
+    /// 書き出し (`mokume render`・参照スケッチの `--render`) と同じく、ウィンドウを持たない実行。
+    /// 要求は覚えるが、読むウィンドウが無いので何も起きない — 止まらず、描き続ける。
+    @Test("ウィンドウの無い実行で頼んでも、止まらずに描き、要求は取り下げるまで残る")
     func aWindowlessRunKeepsDrawing() throws {
         let sketch = PointerLockLooker()
         let runtime = try SketchRuntime(
@@ -109,7 +109,7 @@ struct PointerLockSketchTests {
     }
 
     /// **捕まえたスケッチも外から動かせる** (ADR-0001 原則 3)。外から送った位置を持たない移動は、
-    /// 窓が捕まえている間に送るものと同じ出来事で、`mouseX` を動かさず量だけを運ぶ。決定論も
+    /// ウィンドウが捕まえている間に送るものと同じ出来事で、`mouseX` を動かさず量だけを運ぶ。決定論も
     /// ここで閉じる — 同じ出来事を送れば同じ値が読める (ADR-0025 の水準 2)。
     @Test("外から送った位置を持たない移動は、位置を動かさず、1 件ぶんの和がフレーム合計と一致する")
     func relativeMotionFromOutsideReachesTheSketch() throws {
@@ -141,7 +141,7 @@ struct PointerLockSketchTests {
         #expect(frame.deliveredY == frame.movedY)
     }
 
-    /// 見張りの子は窓を持たない ([ADR-0032] 決定 1)。捕まえるのは道具の窓なので、要求は
+    /// 見張りの子はウィンドウを持たない ([ADR-0032] 決定 1)。捕まえるのは道具のウィンドウなので、要求は
     /// 速さと同じく共有面の属性で渡る (決定 4 の追補 (2026-10-07))。名乗るのは 1 枚遅れる (#748)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md

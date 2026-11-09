@@ -39,7 +39,7 @@ final class SharedCursorCount {
 
 /// 矢印のカーソルを隠すかの判定 ([#2439](https://github.com/mokume-metal/mokume/issues/2439))。
 ///
-/// **OS の口を記録するだけの口へ差し替えて回す。** 実際に矢印が消えるか・出るかは、窓で手で確かめる。
+/// **OS の口を記録するだけの口へ差し替えて回す。** 実際に矢印が消えるか・出るかは、ウィンドウで手で確かめる。
 @Suite("矢印のカーソルを隠す")
 @MainActor
 struct CursorHidingTests {
@@ -53,7 +53,7 @@ struct CursorHidingTests {
 
     // MARK: - 隠すとき (条件 1)
 
-    @Test("要求が出ていなければ、窓が前でポインタが面の上にあっても隠さない")
+    @Test("要求が出ていなければ、ウィンドウが前でポインタが面の上にあっても隠さない")
     func noRequestNoHiding() {
         let count = SharedCursorCount()
         let hiding = make(count)
@@ -62,7 +62,7 @@ struct CursorHidingTests {
         #expect(!hiding.isHiding)
     }
 
-    @Test("要求があり、窓が前で、ポインタが面の上にあれば隠し、続けても 1 度しか頼まない")
+    @Test("要求があり、ウィンドウが前で、ポインタが面の上にあれば隠し、続けても 1 度しか頼まない")
     func hidesOnceOverTheSurface() {
         let count = SharedCursorCount()
         let hiding = make(count)
@@ -72,7 +72,7 @@ struct CursorHidingTests {
         #expect(!count.isVisible)
     }
 
-    @Test("窓が前に無い・ポインタが面の外なら、要求があっても隠さない")
+    @Test("ウィンドウが前に無い・ポインタが面の外なら、要求があっても隠さない")
     func hidesOnlyOverTheSurfaceOfAFrontWindow() {
         let count = SharedCursorCount()
         let hiding = make(count)
@@ -89,11 +89,11 @@ struct CursorHidingTests {
         let hiding = make(count)
         hiding.update(requested: true, in: over)
         hiding.update(requested: true, in: outside)
-        #expect(count.isVisible, "面の外 (窓の枠・別の窓・別の画面) へ出ても隠れたまま")
+        #expect(count.isVisible, "面の外 (ウィンドウの枠・別のウィンドウ・別の画面) へ出ても隠れたまま")
         hiding.update(requested: true, in: over)
         #expect(!count.isVisible)
         hiding.update(requested: true, in: behind)
-        #expect(count.isVisible, "窓が退いても隠れたまま")
+        #expect(count.isVisible, "ウィンドウが退いても隠れたまま")
         #expect(count.hides == 2)
         #expect(count.unhides == 2)
     }
@@ -112,7 +112,7 @@ struct CursorHidingTests {
 
     // MARK: - 手放すとき
 
-    @Test("窓が畳まれる・退く (stop) と見せる。要求は残るので、戻ったら隠し直す")
+    @Test("ウィンドウが畳まれる・退く (stop) と見せる。要求は残るので、戻ったら隠し直す")
     func stopShowsAndKeepsTheRequest() {
         let count = SharedCursorCount()
         let hiding = make(count)
@@ -147,16 +147,16 @@ struct CursorHidingTests {
         #expect(count.unhides == 1)
     }
 
-    @Test("道具の 2 つの窓は、前に出ている窓の上でだけ隠す")
+    @Test("道具の 2 つのウィンドウは、前に出ているウィンドウの上でだけ隠す")
     func onlyTheFrontWindowHides() {
         let count = SharedCursorCount()
         let work = make(count)
         let preview = make(count)
-        // 作品の窓が前: ポインタは作品の面の上
+        // 作品のウィンドウが前: ポインタは作品の面の上
         work.update(requested: true, in: over)
         preview.update(requested: true, in: CursorHiding.Situation(isKeyWindow: false, pointerIsOverSurface: false))
         #expect(count.hiddenCount == 1)
-        // プレビューが前へ出た: 作品の窓が退き、プレビューの面の上へ動いた
+        // プレビューが前へ出た: 作品のウィンドウが退き、プレビューの面の上へ動いた
         work.update(requested: true, in: behind)
         preview.update(requested: true, in: over)
         #expect(count.hiddenCount == 1)
@@ -329,7 +329,7 @@ struct CursorHidingOutsideRunTests {
     }
 }
 
-/// 矢印を隠す要求が、窓の無い実行と見張りの子の出口でどう扱われるか。GPU を要する。
+/// 矢印を隠す要求が、ウィンドウの無い実行と見張りの子の出口でどう扱われるか。GPU を要する。
 @Suite(
     "矢印を隠すスケッチを走らせる",
     .enabled(
@@ -343,9 +343,9 @@ struct CursorHidingSketchTests {
         return facet
     }
 
-    /// 書き出し (`mokume render`・参照スケッチの `--render`) と同じく、窓を持たない実行。
-    /// 要求は覚えるが、読む窓が無いので何も起きない — 止まらず、描き続ける (条件 4)。
-    @Test("窓の無い実行で隠しても、止まらずに描き、要求は cursor() まで残る")
+    /// 書き出し (`mokume render`・参照スケッチの `--render`) と同じく、ウィンドウを持たない実行。
+    /// 要求は覚えるが、読むウィンドウが無いので何も起きない — 止まらず、描き続ける (条件 4)。
+    @Test("ウィンドウの無い実行で隠しても、止まらずに描き、要求は cursor() まで残る")
     func aWindowlessRunKeepsDrawing() throws {
         let sketch = CursorHider()
         let runtime = try SketchRuntime(
@@ -376,7 +376,7 @@ struct CursorHidingSketchTests {
         #expect(!second.cursorHidingRequested)
     }
 
-    /// 見張りの子は窓を持たない ([ADR-0032] 決定 1)。隠すのは道具の窓なので、要求は共有面の属性で渡る。
+    /// 見張りの子はウィンドウを持たない ([ADR-0032] 決定 1)。隠すのは道具のウィンドウなので、要求は共有面の属性で渡る。
     /// 名乗るのは 1 枚遅れる (#748)。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md

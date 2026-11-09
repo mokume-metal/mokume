@@ -49,7 +49,7 @@ struct FrameTimingTests {
 
     /// **最初の枚は、時計によらず `time == 0`・経過は目標の 1 フレームぶん** (`Sketch.time` の
     /// 説明・[#2413](https://github.com/mokume-metal/mokume/issues/2413))。時計を作ってから
-    /// 最初の枚までの間 (アプリの起動・窓・`setup()`) は乗らない。
+    /// 最初の枚までの間 (アプリの起動・ウィンドウ・`setup()`) は乗らない。
     @Test("実時間の時計でも、時計を作ってから最初の枚までの長さは time にも経過にも乗らない", arguments: [0.1, 2.0, 600.0])
     func wallClockStartsAtTheFirstFrame(gap: Double) {
         let clock = ManualClock(100)
@@ -254,8 +254,8 @@ struct SketchRuntimeTests {
     }
 
     /// `Sketch.time` の説明「最初のフレームは 0」は時計によらない
-    /// ([#2413](https://github.com/mokume-metal/mokume/issues/2413))。窓の実時間の時計では、
-    /// ランタイムを作ってから最初の枚までにアプリの起動・窓の作成・`setup()` が挟まる。
+    /// ([#2413](https://github.com/mokume-metal/mokume/issues/2413))。ウィンドウの実時間の時計では、
+    /// ランタイムを作ってから最初の枚までにアプリの起動・ウィンドウの作成・`setup()` が挟まる。
     @Test("実時間の時計でも、setup() にかかった時間は最初の枚の time にも deltaTime にも乗らない")
     func setupTimeIsNotCountedOnTheWallClock() throws {
         /// `setup()` で時計を 2 秒進め (重い準備の代わり)、描いた枚の時刻と経過を控える。
@@ -304,7 +304,7 @@ struct SketchRuntimeTests {
         }
     }
 
-    /// **#2413 の約束は、表示の予定の時刻で進むときにも守る** ([#2390])。窓の経路では、予定の時刻は
+    /// **#2413 の約束は、表示の予定の時刻で進むときにも守る** ([#2390])。ウィンドウの経路では、予定の時刻は
     /// コールバックの時点で決まり (`setup()` の前)、`setup()` は最初の枚の `advance` の中で走る。
     /// 予定の時刻を起点にすると、`setup()` にかかった時間が 2 枚目の `time`・`deltaTime` に戻る。
     /// **実際の順** — 予定の時刻 → `setup()` が 2 秒 → 進める — で通す。

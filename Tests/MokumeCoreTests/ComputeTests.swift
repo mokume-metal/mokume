@@ -1652,8 +1652,8 @@ struct ComputeTests {
         #expect(canvas.lastComputeBarrierQueueStages.isSuperset(of: later), "描き切りの最後の口も同じ段を待たせる")
     }
 
-    /// 遅い断片。`spin` 回まわしてから、読んだ値を書き写す。**競合の窓を広げる**ための形で、
-    /// 1 要素の並びでは窓が狭すぎて、順の抜けがあっても間に合ってしまう。
+    /// 遅い断片。`spin` 回まわしてから、読んだ値を書き写す。**競合のウィンドウを広げる**ための形で、
+    /// 1 要素の並びではウィンドウが狭すぎて、順の抜けがあっても間に合ってしまう。
     private static let slowCopy = """
         kernel void slowCopy(device const float *from [[buffer(0)]],
                              device float *to [[buffer(1)]],

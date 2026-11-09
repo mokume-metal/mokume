@@ -9,8 +9,8 @@ import Testing
 
 @testable import MokumeCore
 
-/// 書き手が音の窓を絵に合わせて書く順と、書き損じの扱い (#3125)。順と書き損じの検査は符号化器も GPU も要らない —
-/// 書く先を差し替えて、書き手が渡した順を記録する。末尾の 2 本 (絵が落ちた末尾・0 標本の窓) だけは本物の
+/// 書き手が音のウィンドウを絵に合わせて書く順と、書き損じの扱い (#3125)。順と書き損じの検査は符号化器も GPU も要らない —
+/// 書く先を差し替えて、書き手が渡した順を記録する。末尾の 2 本 (絵が落ちた末尾・0 標本のウィンドウ) だけは本物の
 /// `MovieWriter` と `AVAssetReader` で .mov を書いて読むので、符号化器が無い機械では `.enabled(if:)` でスキップに残す。
 @Suite("書き出しの音声トラック (書く順と書き損じ)")
 struct SoundTrackOrderTests {
@@ -84,22 +84,22 @@ struct SoundTrackOrderTests {
 
     // MARK: - 先行を抑える
 
-    @Test("音の窓が絵より何フレームも先に届いても、書き手は絵が書けた分より 2 フレームまでしか先へ書かない。全部の窓が順に書かれる")
+    @Test("音のウィンドウが絵より何フレームも先に届いても、書き手は絵が書けた分より 2 フレームまでしか先へ書かない。全部のウィンドウが順に書かれる")
     func soundRunsAheadOfThePicturesByAtMostTheLead() {
         let output = Recording()
         let movie = writer(output)
-        // 窓 0〜9 が先に積まれ、絵が遅れて 1〜10 と届く (先行 10 フレーム)
+        // ウィンドウ 0〜9 が先に積まれ、絵が遅れて 1〜10 と届く (先行 10 フレーム)
         for frame in 0..<10 { movie.writeSound(window(frame)) }
         for frame in 1...10 { picture(movie, frame: frame) }
-        // 最後の絵より先の窓 (絵が落ちた末尾) は、閉じるときに書かれる
+        // 最後の絵より先のウィンドウ (絵が落ちた末尾) は、閉じるときに書かれる
         for frame in 10..<13 { movie.writeSound(window(frame)) }
         movie.finish()
         #expect(movie.takeFailure() == nil)
 
         let events = output.events
-        // 全部の窓が、番号の順に、1 つずつ書かれた
+        // 全部のウィンドウが、番号の順に、1 つずつ書かれた
         #expect(sounds(events) == Array(0..<13), "\(sounds(events))")
-        // 窓 w は、絵 w - 1 が書けた後に書かれる (窓 w - 1 が絵 w と同じ時刻なので、2 フレームぶんの先行)
+        // ウィンドウ w は、絵 w - 1 が書けた後に書かれる (ウィンドウ w - 1 が絵 w と同じ時刻なので、2 フレームぶんの先行)
         var picturesSoFar = 0
         for event in events {
             switch event {
@@ -107,17 +107,17 @@ struct SoundTrackOrderTests {
             case .sound(let frame) where frame < 10:
                 #expect(
                     picturesSoFar >= frame - 1,  // 先行は 2 フレームまで
-                    "窓 \(frame) が、絵が \(picturesSoFar) 枚しか書けていない時点で書かれた (先行が soundLead を越えた)")
+                    "ウィンドウ \(frame) が、絵が \(picturesSoFar) 枚しか書けていない時点で書かれた (先行が soundLead を越えた)")
             case .sound: break
             }
         }
-        // 絵の窓が先に書かれず、絵と窓が交互に並ぶ (全部の窓が絵の前に書かれていない)
+        // 絵のウィンドウが先に書かれず、絵とウィンドウが交互に並ぶ (全部のウィンドウが絵の前に書かれていない)
         #expect(events.first == .picture(frame: 1))
     }
 
     // MARK: - 最初の絵の書き損じ
 
-    @Test("最初の絵が書けなかったら、音声トラックの書き込みを止める。窓は欠けも重なりもなく書かれず、後の絵は書かれる")
+    @Test("最初の絵が書けなかったら、音声トラックの書き込みを止める。ウィンドウは欠けも重なりもなく書かれず、後の絵は書かれる")
     func aFailedFirstPictureStopsTheSound() {
         let output = Recording(failingPictures: [0])
         let movie = writer(output)
@@ -126,7 +126,7 @@ struct SoundTrackOrderTests {
         movie.finish()
 
         let events = output.events
-        #expect(sounds(events).isEmpty, "最初の絵が書けなかったのに、古い窓が後から書かれた: \(sounds(events))")
+        #expect(sounds(events).isEmpty, "最初の絵が書けなかったのに、古いウィンドウが後から書かれた: \(sounds(events))")
         #expect(events == (2...6).map { .picture(frame: $0) })
         // 書き損じは絵の側が名乗っている
         #expect(movie.takeFailure()?.contains("picture 0 refused") == true)
@@ -154,11 +154,11 @@ struct SoundTrackOrderTests {
         #expect(movie.takeFailure() != nil)
     }
 
-    // MARK: - 窓の途中の書き損じ
+    // MARK: - ウィンドウの途中の書き損じ
 
-    @Test("窓の書き込みが途中で断られたら、音声トラックを止める。同じ窓を二重に書かず、後の窓も書かない。書き損じは 1 度名乗る")
+    @Test("ウィンドウの書き込みが途中で断られたら、音声トラックを止める。同じウィンドウを二重に書かず、後のウィンドウも書かない。書き損じは 1 度名乗る")
     func aFailedWindowStopsTheSoundWithoutRepeats() {
-        // 窓の 3 番目の書き込みを断る
+        // ウィンドウの 3 番目の書き込みを断る
         let output = Recording(failingSounds: [2])
         let movie = writer(output)
         for frame in 0..<8 { movie.writeSound(window(frame)) }
@@ -166,7 +166,7 @@ struct SoundTrackOrderTests {
         movie.finish()
 
         let events = output.events
-        #expect(sounds(events) == [0, 1], "断られた窓より後ろが書かれた、または窓が二重に書かれた: \(sounds(events))")
+        #expect(sounds(events) == [0, 1], "断られたウィンドウより後ろが書かれた、またはウィンドウが二重に書かれた: \(sounds(events))")
         // 映像は最後まで書かれる
         #expect(events.filter { if case .picture = $0 { true } else { false } }.count == 9)
         #expect(movie.takeFailure()?.contains("sound 2 refused") == true)
@@ -175,14 +175,14 @@ struct SoundTrackOrderTests {
     // MARK: - 絵が落ちた末尾
 
     @Test(
-        "末尾の絵が落ちても、窓は描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)",
+        "末尾の絵が落ちても、ウィンドウは描いて書かれるが、動画の長さで切られる。音声トラックの長さは映像と同じで、落ちた絵の分の音は残らない (#3125 の決定)",
         .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
     func theSoundOfADroppedTailPictureIsCutAtTheVideoLength() async throws {
         let directory = try TestScratch.directory("mokume-sound-tail")
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("tail.mov").path
 
-        // 60 fps・48000 Hz は 1 フレームがちょうど 800 標本。窓は 0〜9 の 10 個、絵は 1〜9 の 9 枚 (10 枚目が落ちた)
+        // 60 fps・48000 Hz は 1 フレームがちょうど 800 標本。ウィンドウは 0〜9 の 10 個、絵は 1〜9 の 9 枚 (10 枚目が落ちた)
         let rate = 60
         let windows = 10
         let movie = MovieWriter(path: path, frameRate: rate)
@@ -207,7 +207,7 @@ struct SoundTrackOrderTests {
         let audio = try #require(try await asset.loadTracks(withMediaType: .audio).first)
         let videoRange = try await video.load(.timeRange)
         let audioRange = try await audio.load(.timeRange)
-        // 映像は 9 フレームぶん (9/60 秒)。音声トラックも同じ長さで、10 個目の窓の音は残らない
+        // 映像は 9 フレームぶん (9/60 秒)。音声トラックも同じ長さで、10 個目のウィンドウの音は残らない
         #expect(abs(videoRange.duration.seconds - 9.0 / 60.0) < 1e-6, "映像 \(videoRange.duration.seconds) 秒")
         #expect(
             abs(audioRange.duration.seconds - videoRange.duration.seconds) < 1e-6,
@@ -229,10 +229,10 @@ struct SoundTrackOrderTests {
         #expect(read == (windows - 1) * 800, "\(read) 標本 (期待 \((windows - 1) * 800))")
     }
 
-    // MARK: - 0 標本の窓
+    // MARK: - 0 標本のウィンドウ
 
     @Test(
-        "fps が標本化率を越えて窓が 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる",
+        "fps が標本化率を越えてウィンドウが 0 標本になるフレームがあっても、書き損じにならず、継ぎ目が詰まって全標本が書かれる",
         .enabled(if: MovieFile.isAvailable, "この機械には ProRes 4444 の符号化器が無い"))
     func zeroSampleWindowsAreSkipped() async throws {
         let directory = try TestScratch.directory("mokume-sound-zero")
@@ -241,9 +241,9 @@ struct SoundTrackOrderTests {
 
         let rate = 90_000
         let frames = 40
-        // 90000 fps・48000 Hz: ⌊N·48000/90000⌋ は 1 フレームおきにしか進まない (0 標本の窓がある)
+        // 90000 fps・48000 Hz: ⌊N·48000/90000⌋ は 1 フレームおきにしか進まない (0 標本のウィンドウがある)
         let counts = (0..<frames).map { SoundWindow.count(ofFrame: $0, frameRate: rate) }
-        try #require(counts.contains(0), "0 標本の窓が無い")
+        try #require(counts.contains(0), "0 標本のウィンドウが無い")
         let total = counts.reduce(0, +)
         let movie = MovieWriter(path: path, frameRate: rate)
         for frame in 0..<frames {
@@ -258,7 +258,7 @@ struct SoundTrackOrderTests {
                 frame: frame + 1, time: Double(frame) / Double(rate))
         }
         movie.finish()
-        #expect(movie.takeFailure() == nil, "0 標本の窓が書き損じになった")
+        #expect(movie.takeFailure() == nil, "0 標本のウィンドウが書き損じになった")
 
         let asset = AVURLAsset(url: URL(fileURLWithPath: path))
         let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)

@@ -69,7 +69,7 @@ struct ParameterEnumTests {
     }
 
     /// 「declare the choices and a knob appears」ではなく、候補から選ぶつまみが出る。
-    @Test("窓には候補から選ぶつまみが出る")
+    @Test("ウィンドウには候補から選ぶつまみが出る")
     func showsAChoiceKnob() throws {
         let palette = try declaration(Painter(), "palette")
         #expect(KnobKind.forDeclaration(palette) == .choice(["ember", "tide", "moss"]))
@@ -264,7 +264,7 @@ struct ParameterEnumStoreTests {
 
 /// 実数のスライダーの刻み (`step:`)。
 ///
-/// **刻みは窓のスライダーの動き方だけを決める。** 外からの書き込み・保存の復元・コードからの代入は
+/// **刻みはウィンドウのスライダーの動き方だけを決める。** 外からの書き込み・保存の復元・コードからの代入は
 /// 刻みへ丸めず、`clamped` は「宣言した範囲へ収めた」の意味のまま保つ。
 @Suite("実数のスライダーの刻み")
 @MainActor

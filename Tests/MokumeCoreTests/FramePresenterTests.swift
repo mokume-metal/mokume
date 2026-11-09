@@ -9,7 +9,7 @@ import Testing
 
 /// 画面へ差し出す経路の検査。GPU を要する。
 ///
-/// 窓そのものは機械で検められないが、**行き先だけを差し替えれば同じ経路が通る**ので、
+/// ウィンドウそのものは機械で検められないが、**行き先だけを差し替えれば同じ経路が通る**ので、
 /// 収まり方は画素で確かめられる。
 @Suite(
     "画面への収まり",
@@ -136,21 +136,21 @@ struct FramePresenterTests {
 
 /// 画面へ出すかどうかの判定。
 ///
-/// **GPU も窓も要らない。** 窓の状態は機械で作れないが、判定だけを純粋関数に切り出して
+/// **GPU もウィンドウも要らない。** ウィンドウの状態は機械で作れないが、判定だけを純粋関数に切り出して
 /// あるので、条件の組み合わせはここで固定できる。
 @Suite("画面へ出すかどうか")
 struct PresentDecisionTests {
-    @Test("窓が見えていれば出す")
+    @Test("ウィンドウが見えていれば出す")
     func presentsWhileVisible() {
         #expect(FramePresenter.shouldPresent(windowIsVisible: true, hasPresented: true))
     }
 
-    @Test("窓が見えていなければ出さない")
+    @Test("ウィンドウが見えていなければ出さない")
     func skipsWhileHidden() {
         #expect(!FramePresenter.shouldPresent(windowIsVisible: false, hasPresented: true))
     }
 
-    /// 見えているかの判定は窓が出てから更新されるので、それを待たずに描き終える
+    /// 見えているかの判定はウィンドウが出てから更新されるので、それを待たずに描き終える
     /// スケッチ (1 枚しか描かないもの) が永久に何も表示しないことになる。
     @Test("まだ 1 枚も出していなければ、見えていなくても出す")
     func alwaysPresentsTheFirstFrame() {

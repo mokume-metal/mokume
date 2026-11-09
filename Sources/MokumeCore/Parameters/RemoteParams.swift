@@ -18,7 +18,7 @@ import Observation
 /// `.mokume/params` の応答は、名前・型・いまの値・動ける幅・許した候補を**まとめて**
 /// 出す — 読み手が別の面を見に行かなくて済むように、そう決めてある ([ADR-0030] 決定 2)。
 /// だから読み手をもう 1 人増やすだけで足り、**新しい経路も新しい規約も作らない**
-/// ([ADR-0030] 決定 1 は変わらない — 変わるのは重ねる窓だけである)。
+/// ([ADR-0030] 決定 1 は変わらない — 変わるのは重ねるウィンドウだけである)。
 ///
 /// ## 正典は子
 ///
@@ -269,7 +269,7 @@ final class RemoteParams {
 /// 面越しの 1 つのつまみ。
 ///
 /// ``ParamBox`` と同じ顔 (``DeclaredParam``) をしているので、**つまみの絵は 1 つのまま**
-/// でよい — 走らせた窓と道具の窓で見た目が割れない ([ADR-0032] 決定 5)。
+/// でよい — 走らせたウィンドウと道具のウィンドウで見た目が割れない ([ADR-0032] 決定 5)。
 @Observable
 @MainActor
 final class RemoteParam: DeclaredParam {
@@ -295,7 +295,7 @@ final class RemoteParam: DeclaredParam {
         ParamDeclaration(name: name, value: value, range: range, choices: choices, step: step)
     }
 
-    /// **面越しのつまみは既定値を持たない。** 保存を持つのは子 (``ParamBox`` の側) で、窓の側は読まない。
+    /// **面越しのつまみは既定値を持たない。** 保存を持つのは子 (``ParamBox`` の側) で、ウィンドウの側は読まない。
     var defaultValue: ParamValue? { nil }
 
     /// つまみを動かされた。
@@ -309,7 +309,7 @@ final class RemoteParam: DeclaredParam {
         return .applied
     }
 
-    /// **聴かない。** 値を置くのも記録するのも子の側 (``ParamBox``) で、道具の窓のつまみは要求を置くだけである (#3570)。
+    /// **聴かない。** 値を置くのも記録するのも子の側 (``ParamBox``) で、道具のウィンドウのつまみは要求を置くだけである (#3570)。
     func observeWrites(_ observer: ((String, ParamValue) -> Void)?) {}
 
     /// 子が名乗った値へ合わせる。

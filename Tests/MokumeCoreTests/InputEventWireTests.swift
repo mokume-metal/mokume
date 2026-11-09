@@ -6,12 +6,12 @@ import Testing
 
 @testable import MokumeCore
 
-/// 道具の窓から子へ運ぶ 1 行。
+/// 道具のウィンドウから子へ運ぶ 1 行。
 ///
 /// **書く側と読む側が同じ綴りを使っているかを見る。** 割れると症状は「触っても効かない」
 /// としか出ない — 道具は書けたと思い、子は知らない鍵として捨てるので、どちらも何も
 /// 言わない ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 4)。
-@Suite("窓から子へ運ぶ 1 行")
+@Suite("ウィンドウから子へ運ぶ 1 行")
 struct InputEventWireTests {
     private func roundTrip(_ event: InputEvent) throws -> InputEvent? {
         let line = event.wireLine

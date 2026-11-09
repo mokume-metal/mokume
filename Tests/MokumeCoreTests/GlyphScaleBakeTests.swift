@@ -699,7 +699,7 @@ struct GlyphScaleBakeTests {
         }
     }
 
-    /// 窓に出しながら回すランタイム (`defersEnlargedGlyphBakes`) を組む。
+    /// ウィンドウに出しながら回すランタイム (`defersEnlargedGlyphBakes`) を組む。
     private func makeZoom(
         _ sketch: Zoom, onScreen: Bool = true, observer: URL? = nil, scaledBakesPerFrame: Int = 2
     ) throws -> SketchRuntime {
@@ -719,19 +719,19 @@ struct GlyphScaleBakeTests {
 
     private func scaledBakedCount(_ runtime: SketchRuntime) -> Int { scaledBakedCount(runtime.canvas) }
 
-    /// ランタイムが先送りを許すのは、窓に出しながら回していて、そのフレームの絵を次のフレームが描き直す
-    /// ときだけ。直に回す側 (窓の経路でない)・1 枚の書き出し・撮る係が居る (`mokume render`・`save()`・
+    /// ランタイムが先送りを許すのは、ウィンドウに出しながら回していて、そのフレームの絵を次のフレームが描き直す
+    /// ときだけ。直に回す側 (ウィンドウの経路でない)・1 枚の書き出し・撮る係が居る (`mokume render`・`save()`・
     /// `beginRecord()`)・観測が撮るフレームは、許さない。
     @Test("ランタイムは、次のフレームが描き直すフレームだけで先送りを許す")
     func theRuntimeAllowsDeferringOnlyForAFrameThatIsRedrawn() throws {
-        // 窓に出しながら回している間は許す
+        // ウィンドウに出しながら回している間は許す
         let live = Zoom()
         let runtime = try makeZoom(live)
         try runtime.advance()
         try runtime.advance()
         #expect(live.seen == [true, true])
 
-        // 窓の経路でない (直に回す・`mokume render`) ランタイムは許さない
+        // ウィンドウの経路でない (直に回す・`mokume render`) ランタイムは許さない
         let direct = Zoom()
         let plain = try makeZoom(direct, onScreen: false)
         try plain.advance()
@@ -780,10 +780,10 @@ struct GlyphScaleBakeTests {
     }
 
     /// 反証 2: `draw()` の後ろで `noLoop()` を呼ぶ形 (Processing の定番)。先に描いた字は先送りされて
-    /// いたが、止まるフレームの描き切りで払うので、窓・出口に残る絵は先送りしなかった絵と同じ。
+    /// いたが、止まるフレームの描き切りで払うので、ウィンドウ・出口に残る絵は先送りしなかった絵と同じ。
     @Test("draw() の後ろで noLoop() を呼ぶと、止めた絵は先送りしなかった絵と同じになる")
     func noLoopAfterTheTextPaysTheDeferredGlyphs() throws {
-        // 参照: 先送りしない (窓の経路でない)
+        // 参照: 先送りしない (ウィンドウの経路でない)
         let plain = try makeZoom(Zoom(), onScreen: false)
         try plain.advance()
         let reference = try plain.target.encodeForDisplay()

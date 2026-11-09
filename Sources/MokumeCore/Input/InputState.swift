@@ -5,12 +5,12 @@ import Foundation
 
 /// 入力の合流点。
 ///
-/// **窓からの実操作と、外から送られたものが、同じここへ入る。** 合流が 1 箇所なら、
+/// **ウィンドウからの実操作と、外から送られたものが、同じここへ入る。** 合流が 1 箇所なら、
 /// 送られた出来事が実操作と違う扱いを受けることが構造的に起こらない — 外から動かして
 /// 確かめたことが、人が触ったときにも同じように成り立つ。
 ///
-/// **例外は、道具の窓の出来事が通る線だけである** ([#2777](https://github.com/mokume-metal/mokume/issues/2777))。
-/// 道具の窓の出来事は 1 行にして子へ渡り、その線は有限でない値を 0 にする。窓の値は有限なので
+/// **例外は、道具のウィンドウの出来事が通る線だけである** ([#2777](https://github.com/mokume-metal/mokume/issues/2777))。
+/// 道具のウィンドウの出来事は 1 行にして子へ渡り、その線は有限でない値を 0 にする。ウィンドウの値は有限なので
 /// 届かない守りで、届けば、ここで捨てる (下の「有限である」) のとは違い (0, 0) として当たる。
 ///
 /// 溜めた出来事はフレームの頭で流し込まれ、**同じフレームの `draw()` から見える**。
@@ -26,13 +26,13 @@ import Foundation
 ///
 /// - **移動・スクロール・ピンチ** (`mouseMoved`・`mouseMovedBy`・`scrolled`・`pinched`) は、当てるとそうなるなら、
 ///   状態にも配りにも入れずに捨て、1 度だけ言う
-/// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。釦の
-///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすと釦が押されたまま残り
+/// - **押下と解放** (`mouseDown`・`mouseUp`) は、位置が有限でなければ**位置だけを捨てる**。ボタンの
+///   状態は当てて、呼び出しも配る — 位置は前の値のまま。落とすとボタンが押されたまま残り
 ///   (``enqueue(_:)`` の「どの種別も状態だけは残す」・#935 と同じ理由)、押下と解放の組も崩れる
 /// - **ファイルの落とし** (`fileDropped`) も、位置が有限でなければ位置だけを捨てる。落としたパスは
 ///   届き、`fileDropped(_:)` は 1 回呼ばれる ([#3061](https://github.com/mokume-metal/mokume/issues/3061))
 ///
-/// **範囲の外の位置は丸めない** — 極端でも有限に収まる値は、窓から来る値と同じに当てて配る。
+/// **範囲の外の位置は丸めない** — 極端でも有限に収まる値は、ウィンドウから来る値と同じに当てて配る。
 @MainActor
 public final class InputState {
     /// 溜める上限。描画が停滞しても際限なく伸びないようにする。
@@ -55,13 +55,13 @@ public final class InputState {
     /// 前のフレームでの位置。
     public private(set) var previousX: Float = 0
     public private(set) var previousY: Float = 0
-    /// どれかの釦が押されているか。
+    /// どれかのボタンが押されているか。
     public var isMouseDown: Bool { !pressedButtons.isEmpty }
-    /// 押されている釦。**釦ごとに持つ** — 1 つの真偽値で持っていた頃は、左を押したまま
+    /// 押されているボタン。**ボタンごとに持つ** — 1 つの真偽値で持っていた頃は、左を押したまま
     /// 右を押して離すと、左も離した扱いになった
     /// ([#2599](https://github.com/mokume-metal/mokume/issues/2599))。
     private(set) var pressedButtons: Set<MouseButton> = []
-    /// 最後に押されたか離された釦。まだ何も来ていなければ `nil`。
+    /// 最後に押されたか離されたボタン。まだ何も来ていなければ `nil`。
     public private(set) var button: MouseButton?
     /// 直近のスクロール量 (このフレームぶん)。
     public private(set) var scrollX: Float = 0
@@ -126,7 +126,7 @@ public final class InputState {
         /// 待っている ``SketchPart/selectInput(_:)`` が無いときに届いた結果を捨てた
         /// (``dispatchCallbacks(for:before:to:)``・[#3062](https://github.com/mokume-metal/mokume/issues/3062))。
         case unawaitedSelection
-        /// 位置が有限でない押下・解放の、位置だけを捨てた (釦の状態は当てた・``apply(_:)``・#2731)。
+        /// 位置が有限でない押下・解放の、位置だけを捨てた (ボタンの状態は当てた・``apply(_:)``・#2731)。
         case nonFinitePosition
     }
 
@@ -144,7 +144,7 @@ public final class InputState {
 
     public init() {}
 
-    /// 出来事を溜める。**窓からも外からも、入口はここ 1 つ。**
+    /// 出来事を溜める。**ウィンドウからも外からも、入口はここ 1 つ。**
     ///
     /// **溢れたら、捨てる前にその 1 件を状態へ当てる。** 落とすのは呼び出し
     /// (`mouseReleased` などの配り) であって状態ではない — そのまま捨てていた頃は、
@@ -160,7 +160,7 @@ public final class InputState {
     /// **溜めた移動とスクロールでも、当てると位置・差・和が有限でなくなるなら捨てる** ([#2731])。
     /// 数でない値や無限を載せたものと、極端な位置や量で差や和が `Float` に収まらなくなるものである。
     /// 捨てた出来事は状態を動かさず、コールバックも呼ばない。**押下と解放は捨てない** — 位置が有限で
-    /// なければ位置だけを捨て、釦の状態は当てて配る (上の「どの種別も状態だけは残す」)。どちらも、
+    /// なければ位置だけを捨て、ボタンの状態は当てて配る (上の「どの種別も状態だけは残す」)。どちらも、
     /// 最初の 1 件だけ警告で言う。決まるのは当てるとき (フレームの頭か、溢れて当てるとき) の状態なので、
     /// 溜めた時点では分からない。
     ///
@@ -191,7 +191,7 @@ public final class InputState {
     ///
     /// **畳みながら配る。** 1 件適用するごとに、その 1 件が生む呼び出しを `dispatch` へ
     /// 渡す。畳むだけにすると、1 フレームに `mouseDown` → `mouseUp` が収まったとき
-    /// 押されたことがどこにも残らない — 窓を人が触るぶんには押下と解放の間に数フレーム
+    /// 押されたことがどこにも残らない — ウィンドウを人が触るぶんには押下と解放の間に数フレーム
     /// 入るので滅多に踏まないが、外から送る経路では 1 回の要求がまとめて 1 フレームへ
     /// 入るので、**クリックを 1 件送るという最も素直な使い方が常に消える**
     /// ([#723](https://github.com/mokume-metal/mokume/issues/723))。
@@ -269,12 +269,12 @@ public final class InputState {
         case .mouseUp(_, _, let button):
             dispatch(.mouseReleased)
             // **押下を伴う解放だけがクリックになる。** 押していないところで離しても
-            // 解放は起きる (窓の外で押して中で離す・上限で押下が捨てられた、など)。
-            // 見るのは**その釦が**押されていたかで、ほかの釦の押下では数えない
+            // 解放は起きる (ウィンドウの外で押して中で離す・上限で押下が捨てられた、など)。
+            // 見るのは**そのボタンが**押されていたかで、ほかのボタンの押下では数えない
             if before.pressedButtons.contains(button) { dispatch(.mouseClicked) }
         case .mouseMoved(let x, let y):
-            // **窓にしか無い情報を使わずに、押下状態から導く。** 窓は押している間の
-            // 移動を `mouseDragged` として拾うが、合流点へは窓の出来事の区別が流れないので
+            // **ウィンドウにしか無い情報を使わずに、押下状態から導く。** ウィンドウは押している間の
+            // 移動を `mouseDragged` として拾うが、合流点へはウィンドウの出来事の区別が流れないので
             // (`SketchSurface` が `.mouseMoved` へ写す)、外から送れるものと同じ材料で
             // 分けられる。移動は押下状態を変えないので、当てる前と後で同じ
             //
@@ -298,7 +298,7 @@ public final class InputState {
             // **文字を生むキーだけが打鍵になる。** 矢印やファンクションキーでは呼ばない
             if Self.producesText(characters) { dispatch(.keyTyped) }
         case .keyUp(let code):
-            // **押されているキーが離されたときだけ呼ぶ。** 窓が退いて離した扱いにした後で
+            // **押されているキーが離されたときだけ呼ぶ。** ウィンドウが退いて離した扱いにした後で
             // 本物の解放が届いても、2 度は呼ばない
             guard !code.isModifier, before.keyWasPressed else { return }
             dispatch(.keyReleased)
@@ -314,7 +314,7 @@ public final class InputState {
             // ([#3062](https://github.com/mokume-metal/mokume/issues/3062))
             if let serial {
                 // **番号つきの結果は、いまの待ちの番号と同じときだけ配る。** 違うもの (前の待ちの古い答え・
-                // 待ちが終わった後の送り直し) は黙って捨てる — 道具の窓は頼みが残る間、落ちた結果を送り直すので、
+                // 待ちが終わった後の送り直し) は黙って捨てる — 道具のウィンドウは頼みが残る間、落ちた結果を送り直すので、
                 // 重なって届くのは正しい道で、警告にすると毎回言うことになる
                 guard selection.pending?.serial == serial else { return }
             } else if !selection.isAwaiting {
@@ -376,12 +376,12 @@ public final class InputState {
 
     /// 押下 1 件が、新しく押したことになるか。**押されていなかったキーか、リピートでない押下。**
     ///
-    /// 押されていなかったキーなら、リピートでも新しい押下として入る — 窓が退いて離した扱いに
+    /// 押されていなかったキーなら、リピートでも新しい押下として入る — ウィンドウが退いて離した扱いに
     /// した後で、押し続けていたキーのリピートが戻ってきた形である。
     ///
     /// 押されているはずのキーにリピートでない押下が届いたら、**解放を取りこぼした印**として
     /// 新しい押下に数える。集合に古い押下が残ったままだと、次に本当に押したときに
-    /// `keyPressed()` も `justPressed` も起きず、押下が 1 回無視される (窓が key のまま解放だけが
+    /// `keyPressed()` も `justPressed` も起きず、押下が 1 回無視される (ウィンドウが key のまま解放だけが
     /// 届かない経路は、すべては塞げない)。
     static func isFreshPress(wasPressed: Bool, isRepeat: Bool) -> Bool {
         !wasPressed || !isRepeat
@@ -394,7 +394,7 @@ public final class InputState {
     /// 1 件を当てる ``enqueue(_:)`` も、ここを通る。読み手 (``dragX``・``scrollY``・3 つの配り) ごとに
     /// 検めると、読み手が増えるたびに漏れうる。
     ///
-    /// **押下と解放は捨てない。** 捨てると、押下中に届いた解放なら釦が押されたまま残って後の移動が
+    /// **押下と解放は捨てない。** 捨てると、押下中に届いた解放ならボタンが押されたまま残って後の移動が
     /// 引きずりとして足し込まれ続け、押下なら後の解放が `mousePressed` も `mouseClicked` も伴わずに
     /// 配られる。#935 が溢れの経路で守った「落とすのは呼び出しであって状態ではない」と同じ向きで、
     /// ここでは呼び出しも落とさない (位置を捨てても、押した・離したことは本当に起きている)。
@@ -410,7 +410,7 @@ public final class InputState {
             applied = .mouseUp(x: self.x, y: self.y, button: button)
         case .fileDropped(let paths, _, _) where paths.isEmpty:
             // **パスが 1 本も無い落としは当てない。** 作例の `paths[0]` を落とすだけで、何も届けるものが無い。
-            // 窓 (`SketchSurface`) と外から送る線 (`RawInputEvent`) は入口で断るが、検めは当てる直前のここでも
+            // ウィンドウ (`SketchSurface`) と外から送る線 (`RawInputEvent`) は入口で断るが、検めは当てる直前のここでも
             // 持つ — 公開の ``enqueue(_:)`` へ直に積まれても、`fileDropped([])` は呼ばれない
             warnings.warnOnce(
                 .emptyFileDrop,
@@ -446,7 +446,7 @@ public final class InputState {
                 + "(later events like this are handled the same way without saying so again)")
     }
 
-    /// 注意に載せる出来事の綴り。**釦は名前で書く** — ``MouseButton`` は綴りを持たないので、
+    /// 注意に載せる出来事の綴り。**ボタンは名前で書く** — ``MouseButton`` は綴りを持たないので、
     /// 出来事をそのまま埋めると `MouseButton(rawValue: 0)` と出る。名前の無い番号は番号で書く。
     static func spelled(_ event: InputEvent) -> String {
         switch event {
@@ -464,7 +464,7 @@ public final class InputState {
         }
     }
 
-    /// 釦の綴り (`.left`・`.right`・`.center`。ほかは番号)。
+    /// ボタンの綴り (`.left`・`.right`・`.center`。ほかは番号)。
     static func spelled(_ button: MouseButton) -> String {
         switch button {
         case .left: ".left"
@@ -499,7 +499,7 @@ public final class InputState {
         case .fileSelected:
             break
         case .mouseMovedBy(let dx, let dy):
-            // **位置は動かさない** (#1144)。捕まえている間の窓は位置を名乗らないので、
+            // **位置は動かさない** (#1144)。捕まえている間のウィンドウは位置を名乗らないので、
             // ここで足し込むと mouseX が捕まえた点から離れていく
             accumulateMotion(deltaX: dx, deltaY: dy)
         case .scrolled(let dx, let dy):

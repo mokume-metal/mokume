@@ -369,7 +369,7 @@ struct ReplayRecordFormatTests {
         #expect(!text.contains("null"), "スキーマに無い null が入った")
     }
 
-    @Test("窓で回したかは 1 欄で残る")
+    @Test("ウィンドウで回したかは 1 欄で残る")
     func theRecordSaysWhetherItRanInAWindow() throws {
         let directory = try scratch()
         for window in [true, false] {
@@ -641,7 +641,7 @@ struct ReplayRecordingRuntimeTests {
         let runtime = try makeRuntime(sketch, to: destination, observer: FrameObserver(directory: facet))
         for frame in 1...20 {
             if frame == 5 {
-                // 窓のつまみも区画も `ParamBox.write` を通る。範囲の外は収めた値が載る
+                // ウィンドウのつまみも区画も `ParamBox.write` を通る。範囲の外は収めた値が載る
                 #expect(runtime.paramRegistry.write(.float(400), to: "radius") != nil)
             }
             if frame == 12 {
@@ -842,7 +842,7 @@ struct ReplayRecordingRuntimeTests {
         var report: SourceReport? { input.report }
     }
 
-    /// 音を鳴らす入り口 (窓では実時間で鳴る)。
+    /// 音を鳴らす入り口 (ウィンドウでは実時間で鳴る)。
     final class Chime: Inlet, RealtimeSound {
         func supply() {}
     }
@@ -905,12 +905,12 @@ struct ReplayRecordingRuntimeTests {
         #expect(third["unreproducible"] == nil)
     }
 
-    @Test("音を鳴らす入り口は、窓で録った記録にだけ名乗る (窓なしは数で進むので保証の内)")
+    @Test("音を鳴らす入り口は、ウィンドウで録った記録にだけ名乗る (ウィンドウなしは数で進むので保証の内)")
     func realtimeSoundIsNamedOnlyInAWindow() throws {
         let directory = try scratch()
         let headless = directory.appendingPathComponent("headless.json")
         let quiet = try run(try makeRuntime(Wired([Chime()]), to: headless), at: headless)
-        #expect(quiet["unreproducible"] == nil, "窓なしの音は数で進む")
+        #expect(quiet["unreproducible"] == nil, "ウィンドウなしの音は数で進む")
         #expect(quiet["window"] as? Bool == false)
 
         let windowed = directory.appendingPathComponent("windowed.json")
@@ -921,14 +921,14 @@ struct ReplayRecordingRuntimeTests {
             reasons(of: loud) == [ReplayRecorder.Reason.realtimeSound("Chime")], "\(reasons(of: loud))")
     }
 
-    @Test("記録している実行は、拡大した字の焼きを次のフレームへ送らない。記録を頼まない窓は送ったまま")
+    @Test("記録している実行は、拡大した字の焼きを次のフレームへ送らない。記録を頼まないウィンドウは送ったまま")
     func aRecordedRunDoesNotDeferGlyphBakes() throws {
         let directory = try scratch()
         let destination = directory.appendingPathComponent("take.json")
         let runtime = try SketchRuntime(
             sketch: Playground(), gpu: RenderDevice(), clock: .frameIndex(frameRate: 60), now: { 0 },
             onScreen: true, persistsParams: false)
-        runtime.defersEnlargedGlyphBakes = true  // 窓の経路が立てる
+        runtime.defersEnlargedGlyphBakes = true  // ウィンドウの経路が立てる
         runtime.startRecording(try #require(ReplayRequest(destination: destination.path)))
         #expect(!runtime.defersEnlargedGlyphBakes, "記録を始めたら切る")
         runtime.closePlugins()

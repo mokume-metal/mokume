@@ -8,13 +8,13 @@ import Testing
 
 @testable import MokumeCore
 
-/// 道具が出す 2 種類の窓。
+/// 道具が出す 2 種類のウィンドウ。
 ///
-/// **作品の窓に道具の都合が出ないことを、構造で見る。** 「載せないように気をつける」では
+/// **作品のウィンドウに道具の都合が出ないことを、構造で見る。** 「載せないように気をつける」では
 /// 検められないので、載せる場所そのものが無いことを見る
 /// ([ADR-0032](https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md) 決定 1)。
 @Suite(
-    "道具が出す窓",
+    "道具が出すウィンドウ",
     .enabled(
         if: RenderDevice.isAvailable,
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
@@ -66,47 +66,47 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **プレビューは作品の窓の子ではない。** 作品が窓を持たない日 (外へ流すだけの作品) に
+    /// **プレビューは作品のウィンドウの子ではない。** 作品がウィンドウを持たない日 (外へ流すだけの作品) に
     /// プレビューだけを出せる形かどうかは、片方だけを開いて確かめられる。
-    @Test("プレビューは、作品の窓を作らなくても開いて畳める")
+    @Test("プレビューは、作品のウィンドウを作らなくても開いて畳める")
     func previewStandsAlone() throws {
         try withFacet { facet in
             let title = "単体-\(UUID().uuidString)"
             func previewWindow() -> NSWindow? { NSApplication.shared.windows.first { $0.title == title } }
-            #expect(previewWindow() == nil, "開く前に窓がある")
+            #expect(previewWindow() == nil, "開く前にウィンドウがある")
 
             let preview = try SharedFramePreview(gpu: RenderDevice(), facet: facet, title: title)
             preview.open()
-            // 作品の窓 (`SharedFrameStage`) を作っていないのに、プレビューの窓だけが出ている
-            let window = try #require(previewWindow(), "開いたのに窓が出ていない")
+            // 作品のウィンドウ (`SharedFrameStage`) を作っていないのに、プレビューのウィンドウだけが出ている
+            let window = try #require(previewWindow(), "開いたのにウィンドウが出ていない")
             #expect(window.isVisible)
 
-            // 重ねる 1 行は、その窓の上に出る
+            // 重ねる 1 行は、そのウィンドウの上に出る
             preview.report("作っている…", spinning: true)
             let notice = try #require(
                 window.contentView?.subviews.compactMap { $0 as? NoticeOverlay }.first,
-                "重ねる面が窓の上に無い")
+                "重ねる面がウィンドウの上に無い")
             #expect(notice.line == "作っている…")
             #expect(notice.isSpinning)
 
             preview.close()
-            #expect(!window.isVisible, "畳んだのに窓が残っている")
+            #expect(!window.isVisible, "畳んだのにウィンドウが残っている")
         }
     }
 
-    /// **覚えている枠が無いときに、プレビューは作品の窓の真下に並ぶ。**
+    /// **覚えている枠が無いときに、プレビューは作品のウィンドウの真下に並ぶ。**
     ///
-    /// どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が完全に重なり、窓が 1 つしか
+    /// どちらも同じ大きさで中央へ出るので、ずらさないと 2 枚が完全に重なり、ウィンドウが 1 つしか
     /// 無いように見える (実測)。**その場限りの覚え名で開く** — 覚えた枠が残っている機械では
     /// 中央へ出ないので、それでは初めての 1 回を見たことにならない。
     ///
     /// **見るのは「枠が違う」ではなく「真下に並ぶ」である** ([#964])。`nudge` は
-    /// `SharedFramePreview.defaultSize` の丈から出る前計算なので、作品の窓の既定だけが
+    /// `SharedFramePreview.defaultSize` の丈から出る前計算なので、作品のウィンドウの既定だけが
     /// 大きくなると足りなくなり、2 枚は重なる — そのとき枠は違うので、`!=` では通って
     /// しまう。**大きさは本番の定数から取る** (`look()` の doc)。
     ///
     /// [#964]: https://github.com/mokume-metal/mokume/issues/964
-    @Test("初めて開くとき、プレビューは作品の窓の真下に並ぶ")
+    @Test("初めて開くとき、プレビューは作品のウィンドウの真下に並ぶ")
     func freshWindowsDoNotOverlap() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
@@ -125,9 +125,9 @@ struct SharedFrameStageTests {
             #expect(
                 below.maxY <= above.minY,
                 """
-                プレビューが作品の窓の真下に並んでいない (\(below.maxY - above.minY)pt 重なっている)。
+                プレビューが作品のウィンドウの真下に並んでいない (\(below.maxY - above.minY)pt 重なっている)。
 
-                作品の窓 \(above) / プレビュー \(below)
+                作品のウィンドウ \(above) / プレビュー \(below)
 
                 SharedFrameWindow.defaultSize \(SharedFrameWindow.defaultSize) と
                 SharedFramePreview.defaultSize \(SharedFramePreview.defaultSize) が
@@ -141,7 +141,7 @@ struct SharedFrameStageTests {
     ///
     /// 上の「真下に並ぶ」だけでは片方向しか捕まらない — プレビュー側を大きくすると
     /// `nudge` も一緒に伸びるので、重ならない関係は保たれてしまう。だが `defaultSize` の
-    /// doc が名乗っている契約は「作品の窓と揃える」であって「重ならない」ではない。
+    /// doc が名乗っている契約は「作品のウィンドウと揃える」であって「重ならない」ではない。
     ///
     /// **既定値は `setFrameUsingName` が false のときだけ効く**ので、覚えた枠を持つ機械
     /// では割れても一度も現れない。目に見える症状があっても、気付く経路が無い
@@ -149,15 +149,15 @@ struct SharedFrameStageTests {
     /// 決定 6 — 写しのままにして、割れても直せる形を置く)。
     ///
     /// [#964]: https://github.com/mokume-metal/mokume/issues/964
-    @Test("作品の窓とプレビューは、同じ既定の大きさで開く")
+    @Test("作品のウィンドウとプレビューは、同じ既定の大きさで開く")
     func defaultSizesAgree() {
         #expect(
             SharedFrameWindow.defaultSize == SharedFramePreview.defaultSize,
             """
-            作品の窓 \(SharedFrameWindow.defaultSize) とプレビュー \
+            作品のウィンドウ \(SharedFrameWindow.defaultSize) とプレビュー \
             \(SharedFramePreview.defaultSize) の既定が割れている。
 
-            既定のスケッチ (960x540・windowScale 0.5) の窓は 480x270 で開くので、作品の窓の
+            既定のスケッチ (960x540・windowScale 0.5) のウィンドウは 480x270 で開くので、作品のウィンドウの
             既定はそれと、プレビューの既定はそれと揃えてある。同じ 480x270 は 3 つ目があり
             (SketchApplication の 描く大きさ × windowScale)、
             寄せる先が無いので写しのまま残している — 詳しくは SharedFrameWindow.defaultSize の
@@ -170,9 +170,9 @@ struct SharedFrameStageTests {
 
     /// **拾った 1 件は、合流点と運び先の両方へ行く。**
     ///
-    /// 道具の窓では絵を描いているのが別のプロセスなので、運ばないと何も起きない
-    /// ([ADR-0032] 決定 4)。運ぶだけにすると、こんどは窓の側の合流点が空になる。
-    @Test("窓が拾った出来事は、合流点へも運び先へも行く")
+    /// 道具のウィンドウでは絵を描いているのが別のプロセスなので、運ばないと何も起きない
+    /// ([ADR-0032] 決定 4)。運ぶだけにすると、こんどはウィンドウの側の合流点が空になる。
+    @Test("ウィンドウが拾った出来事は、合流点へも運び先へも行く")
     func deliveredEventsGoBothWays() throws {
         let gpu = try RenderDevice()
         let state = InputState()
@@ -187,18 +187,18 @@ struct SharedFrameStageTests {
         #expect(lines == [InputEvent.mouseMoved(x: 3, y: 4).wireLine])
     }
 
-    /// **キーは、窓へ送っても運び先まで行く。**
+    /// **キーは、ウィンドウへ送っても運び先まで行く。**
     ///
-    /// 上の検査は面を直に組んで `deliver` を叩くので、**窓 → 第一応答者 → 面**という区間を
-    /// 1 度も通らない。そこはキーだけが無音で落ちるところで、実際 [#963] は「道具が出す窓
+    /// 上の検査は面を直に組んで `deliver` を叩くので、**ウィンドウ → 第一応答者 → 面**という区間を
+    /// 1 度も通らない。そこはキーだけが無音で落ちるところで、実際 [#963] は「道具が出すウィンドウ
     /// では届いていないのではないか」を疑った (実測では届いていた — 落ちていないことを
     /// 覆うものが無かった)。
     ///
-    /// だから**台に窓を出させ、本物の `NSEvent` をその窓へ送る**。面が第一応答者に据わって
+    /// だから**台にウィンドウを出させ、本物の `NSEvent` をそのウィンドウへ送る**。面が第一応答者に据わって
     /// いなければ `keyDown` は 1 度も呼ばれず、運び先は空のままになる。
     ///
     /// [#963]: https://github.com/mokume-metal/mokume/issues/963
-    @Test("道具の窓へ送ったキーは、運び先へ行く")
+    @Test("道具のウィンドウへ送ったキーは、運び先へ行く")
     func keysReachTheRelayThroughTheWindow() throws {
         try withFacet { facet in
             let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look("keys"))
@@ -219,12 +219,12 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **道具の窓へ落としたファイルは、運び先 (子の標準入力へ書く 1 行) へ行く。**
+    /// **道具のウィンドウへ落としたファイルは、運び先 (子の標準入力へ書く 1 行) へ行く。**
     ///
-    /// 窓は `SketchSurface` で、落としの受けはそこに 1 か所だけある。道具の窓の面が別の型になれば、
-    /// 受けが片方だけ抜けるので、窓から取り出した面に直に落としを渡して運び先まで見る
+    /// ウィンドウは `SketchSurface` で、落としの受けはそこに 1 か所だけある。道具のウィンドウの面が別の型になれば、
+    /// 受けが片方だけ抜けるので、ウィンドウから取り出した面に直に落としを渡して運び先まで見る
     /// ([#3061](https://github.com/mokume-metal/mokume/issues/3061))。本物のドラッグの身振りは人の手。
-    @Test("道具の窓へ落としたファイルは、運び先へ行く")
+    @Test("道具のウィンドウへ落としたファイルは、運び先へ行く")
     func droppedFilesReachTheRelayThroughTheWindow() throws {
         try withFacet { facet in
             let stage = try SharedFrameStage(gpu: RenderDevice(), facet: facet, look: look("drop"))
@@ -253,12 +253,12 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **ファイルを選ばせる頼みは、作品の窓が 1 度だけ出し、結果は子への 1 行になる** ([#3062])。
+    /// **ファイルを選ばせる頼みは、作品のウィンドウが 1 度だけ出し、結果は子への 1 行になる** ([#3062])。
     /// 頼みは子が絵と一緒に面の属性へ載せる。同じ頼み (子の番号と通し番号) の次の枚では出し直さず、
     /// 別の頼みに変わったら前のダイアログは結果ごと捨てて閉じる。プレビューは出さない (パネルが 2 枚出る)。
     ///
     /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
-    @Test("作品の窓は面に載った選ばせる頼みを 1 度だけ出し、結果を子への 1 行にする。別の頼みで前のを閉じる")
+    @Test("作品のウィンドウは面に載った選ばせる頼みを 1 度だけ出し、結果を子への 1 行にする。別の頼みで前のを閉じる")
     func theArtworkWindowShowsASelectionOnce() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
@@ -393,7 +393,7 @@ struct SharedFrameStageTests {
     }
 
     /// **ファイルのシートが付いている間も、× は閉じる問いへ進む** ([#3062])。付いたシートがあると
-    /// `windowShouldClose` は黙って false を返し、× が効かない窓になっていた。
+    /// `windowShouldClose` は黙って false を返し、× が効かないウィンドウになっていた。
     ///
     /// [#3062]: https://github.com/mokume-metal/mokume/issues/3062
     @Test("ファイルを選ぶシートが付いていても、× は問いへ進み、ダイアログは取り消しとして子へ渡る")
@@ -417,7 +417,7 @@ struct SharedFrameStageTests {
                 child, frame: 2, gpu: gpu, selection: SelectionBroker.Request(serial: 4, prompt: "pick"))
             stage.displayLinkFired()
             try #require(picker.shown.count == 1)
-            // 本物のシートが窓に付いた状態にする (ファイルのシートの代わり)
+            // 本物のシートがウィンドウに付いた状態にする (ファイルのシートの代わり)
             let window = try #require(stage.window)
             let sheet = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 80, height: 40), styleMask: [.titled],
@@ -487,7 +487,7 @@ struct SharedFrameStageTests {
 
     /// **つまみはプレビューにだけ出る** ([ADR-0032] 決定 5)。見張りから本番を回している
     /// 間、つまみが本番の画面に出てはならない。
-    @Test("宣言があればプレビューにつまみが出て、作品の窓には出ない")
+    @Test("宣言があればプレビューにつまみが出て、作品のウィンドウには出ない")
     func knobsGoToThePreviewOnly() throws {
         try withFacet { facet in
             let params = facet.appendingPathComponent("params", isDirectory: true)
@@ -516,7 +516,7 @@ struct SharedFrameStageTests {
     }
 
     /// つまみが宣言から出るのは変わらない (ADR-0030 決定 8)。**速さは宣言ではない**ので、
-    /// 宣言が 1 つも無くても読み出しの面は出る — ここは道具の窓である (ADR-0032 決定 1)。
+    /// 宣言が 1 つも無くても読み出しの面は出る — ここは道具のウィンドウである (ADR-0032 決定 1)。
     @Test("宣言が 1 つも無ければ、つまみは足さない (速さの面は出る)")
     func addsNoKnobsWithoutDeclarations() throws {
         try withFacet { facet in
@@ -545,7 +545,7 @@ struct SharedFrameStageTests {
     }
 
     /// 2 枚が同じ名前で位置を覚えると、互いを上書きして重なって開く。
-    @Test("作品の窓とプレビューは、別の名前で位置を覚える")
+    @Test("作品のウィンドウとプレビューは、別の名前で位置を覚える")
     func placementNamesDiffer() {
         #expect(WindowPlacement.autosaveName != WindowPlacement.previewAutosaveName)
     }
@@ -577,9 +577,9 @@ struct SharedFrameStageTests {
 
     // MARK: - 閉じようとしたとき
 
-    /// 窓に据えられた受け口へ、「閉じてよいか」を訊く。
+    /// ウィンドウに据えられた受け口へ、「閉じてよいか」を訊く。
     ///
-    /// **台を直に呼ばない。** 窓が持っているのは中継なので (#738 と同じ形)、そこまで
+    /// **台を直に呼ばない。** ウィンドウが持っているのは中継なので (#738 と同じ形)、そこまで
     /// 含めて訊かないと配線が外れたことに気付けない。
     private func asksToClose(_ stage: SharedFrameStage) throws -> Bool {
         let window = try #require(stage.window)
@@ -592,8 +592,8 @@ struct SharedFrameStageTests {
         .init(message: "終えますか？", detail: "止まります。", confirm: "終える", cancel: "続ける")
     }
 
-    /// **問いを持たない窓の × は、いままでどおり通る。** 窓を持つ側が終わり方を決めて
-    /// いないのに、閉じられない窓を作る理由が無い。
+    /// **問いを持たないウィンドウの × は、いままでどおり通る。** ウィンドウを持つ側が終わり方を決めて
+    /// いないのに、閉じられないウィンドウを作る理由が無い。
     @Test("問いを繋がなければ、× はそのまま閉じる")
     func closesWithoutAQuestion() throws {
         try withFacet { facet in
@@ -602,7 +602,7 @@ struct SharedFrameStageTests {
             stage.open()
             defer { stage.close() }
             #expect(!stage.asksBeforeClosing)
-            #expect(try asksToClose(stage), "問いを持たない窓が閉じられない")
+            #expect(try asksToClose(stage), "問いを持たないウィンドウが閉じられない")
         }
     }
 
@@ -743,7 +743,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **乗り換えの合図が来ない 2 つの形は、道具の窓だけが知る** ([#2928])。目録が読めない・目録は読めたが
+    /// **乗り換えの合図が来ない 2 つの形は、道具のウィンドウだけが知る** ([#2928])。目録が読めない・目録は読めたが
     /// 番号の面を引けない — どちらも子は知らないので、台が知らせないと前の世代が残る。
     /// 読み直しても繰り返さず、差し出し元は変えない (直前の絵を出したまま)。
     ///
@@ -778,7 +778,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// 目録がファイルとして読めない (置き場がディレクトリ) 形も、道具の窓だけが知る。版の形とは関係が無いので、
+    /// 目録がファイルとして読めない (置き場がディレクトリ) 形も、道具のウィンドウだけが知る。版の形とは関係が無いので、
     /// 受け取る側が版の案内を付けないよう、別の種類で知らせる ([#2928])。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
@@ -807,7 +807,7 @@ struct SharedFrameStageTests {
 
     /// **前の世代を畳んでも、台は前の世代の頼みと寸法を持ち続けない** ([#2928])。見張りが新しい世代へ乗り
     /// 換えたとみなして前の世代を畳むと、前の世代はもう絵を書かないので、カーソルの頼みを読み直す契機が
-    /// 来ず、窓は捕まえたまま・隠したままになる。入力を受けるのは新しい子なので、読めた目録の寸法へ
+    /// 来ず、ウィンドウは捕まえたまま・隠したままになる。入力を受けるのは新しい子なので、読めた目録の寸法へ
     /// 入力の写しを追随させる。
     ///
     /// [#2928]: https://github.com/mokume-metal/mokume/issues/2928
@@ -886,7 +886,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **子が言った警告は、道具の窓が控えて出す** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// **子が言った警告は、道具のウィンドウが控えて出す** ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
     /// 速さと違い古くならない (``RemoteTempo`` の鮮度の外) ので、次の世代の絵が来るまで残り、
     /// 新しい世代が何も言っていなければ消える。
     @Test("子が言った警告は台が控え、新しい世代の絵が来て何も言っていなければ消える")
@@ -955,7 +955,7 @@ struct SharedFrameStageTests {
     func promotionAndAbandonmentDropTheOldWarnings() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
-            // 窓を開かない台: 乗り換えても 1 枚目の合図は鳴らず、直前の世代を持ち続ける
+            // ウィンドウを開かない台: 乗り換えても 1 枚目の合図は鳴らず、直前の世代を持ち続ける
             let previous = try publish(in: facet, gpu: gpu, pid: 100, frames: 0, pointerLock: false)
             var spoken = SharedFrameSurfaceTests.numbers(frame: 1)
             spoken.warningCount = 3
@@ -1189,7 +1189,7 @@ struct SharedFrameStageTests {
     func anAbandonedPromotedGenerationReturnsToThePreviousOne() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
-            // 窓を開かない台: 乗り換えても描画は見送られ、1 枚目の合図は鳴らない
+            // ウィンドウを開かない台: 乗り換えても描画は見送られ、1 枚目の合図は鳴らない
             let previous = try publish(in: facet, gpu: gpu, pid: 100, frames: 1, pointerLock: true)
             let stage = try SharedFrameStage(gpu: gpu, facet: facet, look: look("abandon-promoted"))
             defer { stage.close() }
@@ -1568,9 +1568,9 @@ struct SharedFrameStageTests {
 
     // MARK: - 捕まえの要求 (#1144)
 
-    /// 捕まえるのは道具の窓で、要求は子が面の属性に載せる。**保存で子が入れ替わったら、新しい
-    /// 子の面で判定し直す** — 要求していない子なら外れる。窓を開かずに、台が読んだ値を見る
-    /// (窓を開いて捕まえるのは手で確かめる)。
+    /// 捕まえるのは道具のウィンドウで、要求は子が面の属性に載せる。**保存で子が入れ替わったら、新しい
+    /// 子の面で判定し直す** — 要求していない子なら外れる。ウィンドウを開かずに、台が読んだ値を見る
+    /// (ウィンドウを開いて捕まえるのは手で確かめる)。
     @Test("子の捕まえの要求を面から読み、入れ替わった後は新しい世代の面で読み直す")
     func readsThePointerLockRequestPerGeneration() throws {
         try withFacet { facet in
@@ -1603,9 +1603,9 @@ struct SharedFrameStageTests {
 
     // MARK: - 矢印を隠す要求 (#2439)
 
-    /// 隠すのは道具の窓で、要求は子が面の属性に載せる。**窓は自分が映す世代の頼みに従う** — 保存で
+    /// 隠すのは道具のウィンドウで、要求は子が面の属性に載せる。**ウィンドウは自分が映す世代の頼みに従う** — 保存で
     /// 子が入れ替わったら、新しい子の面で判定し直す (`noCursor()` を呼ばない子なら戻る)。捕まえの要求と
-    /// 別の属性なので、片方だけを頼む子も読み分けられる。窓を開かずに、台が読んだ値を見る。
+    /// 別の属性なので、片方だけを頼む子も読み分けられる。ウィンドウを開かずに、台が読んだ値を見る。
     @Test("子の矢印を隠す要求を面から読み、入れ替わった後は新しい世代の面で読み直す")
     func readsTheCursorHidingRequestPerGeneration() throws {
         try withFacet { facet in
@@ -1639,12 +1639,12 @@ struct SharedFrameStageTests {
 
     // MARK: - 開く大きさ (#1624)
 
-    /// **作品の窓は、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
+    /// **作品のウィンドウは、直に走らせたときと同じ大きさで見える** ([ADR-0032] 決定 1)。差し出し元が
     /// 名乗る倍率に合わせ、名乗りが変わらない入れ替えでは手で変えた大きさを残す (#679)。
     /// プレビューは従わない。
     ///
     /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
-    @Test("作品の窓は差し出し元の倍率に合わせ、倍率が変わらない入れ替えでは手で変えた大きさを残す")
+    @Test("作品のウィンドウは差し出し元の倍率に合わせ、倍率が変わらない入れ替えでは手で変えた大きさを残す")
     func artworkWindowFollowsTheRequestedSize() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
@@ -1678,7 +1678,7 @@ struct SharedFrameStageTests {
             artwork.window?.setContentSize(resized)
             arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 4)
             artwork.displayLinkFired()
-            #expect(artwork.window?.contentLayoutRect.size == resized, "保存で窓が戻った")
+            #expect(artwork.window?.contentLayoutRect.size == resized, "保存でウィンドウが戻った")
 
             // 倍率を変えて保存した
             arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1, windowScale: 2)
@@ -1696,12 +1696,12 @@ struct SharedFrameStageTests {
 
     // MARK: - 1 枚目の前の層 (#2876)
 
-    /// **絵が来るまでの層は、不透明な黒で塗る。** 窓は 1 枚目の前に出るので、一度も present していない層の
-    /// 透明か不定の中身が見える。層を作るのは `SketchSurface` で、道具の窓も直に走らせる窓も同じ
-    /// 面を使う — 起こし方ごとに塗らず、作る所 1 か所で塗る。直に走らせる窓の層は
-    /// `LaunchedByToolTests` (窓で開く・窓へ倒れた)・`FullScreenTests` (全画面) が、起こした窓の層を同じ判定
+    /// **絵が来るまでの層は、不透明な黒で塗る。** ウィンドウは 1 枚目の前に出るので、一度も present していない層の
+    /// 透明か不定の中身が見える。層を作るのは `SketchSurface` で、道具のウィンドウも直に走らせるウィンドウも同じ
+    /// 面を使う — 起こし方ごとに塗らず、作る所 1 か所で塗る。直に走らせるウィンドウの層は
+    /// `LaunchedByToolTests` (ウィンドウで開く・ウィンドウへ倒れた)・`FullScreenTests` (全画面) が、起こしたウィンドウの層を同じ判定
     /// (``OpaqueBlackLayer``) に掛ける。
-    @Test("層を作る所が不透明な黒を置き、道具の窓の層も不透明な黒である")
+    @Test("層を作る所が不透明な黒を置き、道具のウィンドウの層も不透明な黒である")
     func theLayerIsPaintedBlackBeforeTheFirstPicture() throws {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let surface = SketchSurface(
@@ -1715,7 +1715,7 @@ struct SharedFrameStageTests {
             stage.open()
             defer { stage.close() }
             #expect(
-                OpaqueBlackLayer.problem(with: stage.window?.contentView?.layer) == nil, "道具の窓の層")
+                OpaqueBlackLayer.problem(with: stage.window?.contentView?.layer) == nil, "道具のウィンドウの層")
         }
     }
 
@@ -1727,7 +1727,7 @@ struct SharedFrameStageTests {
         var left: [NSWindow] = []
         /// いま全画面か。
         var isFullScreen = false
-        /// 窓がいる画面の識別子。既定は頼まれた画面とは別の画面 (窓を移す道を通す)。
+        /// ウィンドウがいる画面の識別子。既定は頼まれた画面とは別の画面 (ウィンドウを移す道を通す)。
         var windowScreenID: UInt32? = 999
         /// 引ける画面の識別子。**機械の画面は 1 枚でよい** — 引ける識別子には同じ画面を返し、引き方だけを検査する。
         var known: Set<UInt32> = [7, 8]
@@ -1747,7 +1747,7 @@ struct SharedFrameStageTests {
     private static let wall = SharedFrameSurface.FullScreenDisplay(
         number: 3, name: "Wall", screenID: 8)
 
-    /// 全画面の口を差し替えた作品の窓を開いて、`body` へ渡す。
+    /// 全画面の口を差し替えた作品のウィンドウを開いて、`body` へ渡す。
     private func withFullScreenStage(
         followsRequestedSize: Bool = true,
         _ body: (SharedFrameStage, FullScreenLog, URL, RenderDevice) throws -> Void
@@ -1775,7 +1775,7 @@ struct SharedFrameStageTests {
     @Test("全画面の頼みは、頼まれた画面へ置いて 1 度だけ当て、同じ頼みの世代では当て直さず、変わったら当てる")
     func fullScreenIsAskedOnceUntilTheRequestChanges() throws {
         try withFullScreenStage { stage, log, facet, gpu in
-            // 窓が画面の外にいる (別の画面を模す) — 当てると頼まれた画面の使える範囲に収まる
+            // ウィンドウが画面の外にいる (別の画面を模す) — 当てると頼まれた画面の使える範囲に収まる
             let screen = try #require(NSScreen.main ?? NSScreen.screens.first)
             stage.window?.setFrameOrigin(NSPoint(x: -20000, y: -20000))
 
@@ -1789,7 +1789,7 @@ struct SharedFrameStageTests {
             let frame = try #require(stage.window?.frame)
             #expect(
                 screen.visibleFrame.contains(frame),
-                "窓を頼まれた画面へ移していない (窓 \(frame) / 画面 \(screen.visibleFrame))")
+                "ウィンドウを頼まれた画面へ移していない (ウィンドウ \(frame) / 画面 \(screen.visibleFrame))")
             #expect(stage.window?.collectionBehavior.contains(.fullScreenPrimary) == true)
 
             // 保存して子が入れ替わった。同じ頼み
@@ -1827,7 +1827,7 @@ struct SharedFrameStageTests {
             stage.displayLinkFired()
             #expect(log.entered.count == 1)
 
-            // 全画面をやめた作品 (窓で開く宣言) に変えて保存した。全画面はそのままにする
+            // 全画面をやめた作品 (ウィンドウで開く宣言) に変えて保存した。全画面はそのままにする
             log.isFullScreen = true
             arriving = try makeSurface(in: facet, gpu: gpu, drawing: 1)
             stage.displayLinkFired()
@@ -1845,7 +1845,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    @Test("頼まれた画面が引けなければ窓のままにして 1 行言い、覚えずに、次の世代で引ければ当てる")
+    @Test("頼まれた画面が引けなければウィンドウのままにして 1 行言い、覚えずに、次の世代で引ければ当てる")
     func anUnknownDisplayLeavesTheWindowAndSaysSo() throws {
         try withFullScreenStage { stage, log, facet, gpu in
             var said: [String] = []
@@ -1870,7 +1870,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    @Test("プレビュー (大きさの頼みに従わない窓) は、全画面の頼みにも従わない")
+    @Test("プレビュー (大きさの頼みに従わないウィンドウ) は、全画面の頼みにも従わない")
     func aWindowThatDoesNotFollowTheRequestIgnoresFullScreen() throws {
         try withFullScreenStage(followsRequestedSize: false) { stage, log, facet, gpu in
             let arriving = try makeSurface(
@@ -1882,7 +1882,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **全画面の窓は動かせない** — 別の画面へ頼みが変わったときは、抜けてから移して入り直す。手で抜けたときは戻さない。
+    /// **全画面のウィンドウは動かせない** — 別の画面へ頼みが変わったときは、抜けてから移して入り直す。手で抜けたときは戻さない。
     @Test("全画面のまま別の画面へ頼みが変わったら、抜け終わってから移して入り直し、手で抜けたときは入らない")
     func movingAFullScreenWindowLeavesFirst() throws {
         try withFullScreenStage { stage, log, facet, gpu in
@@ -1893,7 +1893,7 @@ struct SharedFrameStageTests {
 
             // 手で抜けた。頼みは持っていないので、抜け終わっても入らない
             stage.didExitFullScreen()
-            #expect(log.entered.count == 1, "手で抜けた窓へ入り直した")
+            #expect(log.entered.count == 1, "手で抜けたウィンドウへ入り直した")
 
             // 全画面に戻って (いまは頼まれた画面とは別の画面にいる)、3 枚目 (8) へ変えて保存した
             log.isFullScreen = true
@@ -1918,7 +1918,7 @@ struct SharedFrameStageTests {
     @Test("頼まれた画面の全画面にもういるなら、抜けも入りもしない")
     func alreadyFullScreenOnTheRequestedDisplay() throws {
         try withFullScreenStage { stage, log, facet, gpu in
-            // 引ける画面は機械の画面 1 枚 (``FullScreenLog/access(screen:)``)。窓がそこの全画面にいる
+            // 引ける画面は機械の画面 1 枚 (``FullScreenLog/access(screen:)``)。ウィンドウがそこの全画面にいる
             let screen = try #require(NSScreen.main ?? NSScreen.screens.first)
             log.isFullScreen = true
             log.windowScreenID = screen.screenID
@@ -1932,7 +1932,7 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// 作品の窓とプレビューを開き、差し出し元を 1 つ来させる。
+    /// 作品のウィンドウとプレビューを開き、差し出し元を 1 つ来させる。
     private func openPair(
         facet: URL, gpu: RenderDevice, defaults: UserDefaults, width: Int, height: Int,
         windowScale: Float
@@ -1957,9 +1957,9 @@ struct SharedFrameStageTests {
         return (artwork, preview, surface)
     }
 
-    /// **作品の窓が高いスケッチでも、プレビューはその真下に並ぶ。** 既定の 480x270 を前提に
-    /// した初めの位置のままだと、作品の窓が描く大きさ × 倍率で開いたときに 2 枚が重なる (#1624)。
-    @Test("作品の窓が頼まれた大きさで置き直されると、プレビューはその真下へ置き直す")
+    /// **作品のウィンドウが高いスケッチでも、プレビューはその真下に並ぶ。** 既定の 480x270 を前提に
+    /// した初めの位置のままだと、作品のウィンドウが描く大きさ × 倍率で開いたときに 2 枚が重なる (#1624)。
+    @Test("作品のウィンドウが頼まれた大きさで置き直されると、プレビューはその真下へ置き直す")
     func previewMovesBeneathAResizedArtworkWindow() throws {
         try withFacet { facet in
             let gpu = try RenderDevice()
@@ -1978,7 +1978,7 @@ struct SharedFrameStageTests {
             #expect(artwork.window?.contentLayoutRect.size == NSSize(width: 640, height: 320))
             #expect(
                 below.maxY <= above.minY,
-                "プレビューが作品の窓に \(below.maxY - above.minY)pt 重なっている (作品の窓 \(above) / プレビュー \(below))")
+                "プレビューが作品のウィンドウに \(below.maxY - above.minY)pt 重なっている (作品のウィンドウ \(above) / プレビュー \(below))")
             #expect(abs(below.midX - above.midX) <= 1, "横の中央が揃っていない")
             // 大きさは変えない
             #expect(preview.window?.contentLayoutRect.size == SharedFramePreview.defaultSize)
@@ -2013,7 +2013,7 @@ struct SharedFrameStageTests {
     // MARK: - 手放したときの常駐
 
     // 下の 2 本は、差し替えのときは面を常駐から外すが、持ち主ごと手放したときは外して
-    // いなかった形を見る ([#795])。どちらも `RenderDevice` を渡して持つので、窓や面を
+    // いなかった形を見る ([#795])。どちらも `RenderDevice` を渡して持つので、ウィンドウや面を
     // 畳んでも土台が生きていれば面が残り続けていた。
     //
     // [#795]: https://github.com/mokume-metal/mokume/issues/795
@@ -2081,7 +2081,7 @@ struct SharedFrameStageTests {
 
     /// **差し出しの投入を GPU が打ち切ったら、枚数が進むのを待たずに同じ枚を出し直す。** 台は投入の
     /// 直後に「出した」と記すので、記しを戻さないと、書き手が書くのをやめたとき (子の終了・異常終了・
-    /// 詰まり) 窓は打ち切られる前の絵のままになる
+    /// 詰まり) ウィンドウは打ち切られる前の絵のままになる
     /// ([#2735](https://github.com/mokume-metal/mokume/issues/2735))。
     ///
     /// 打ち切りは GPU を止めずに作る (`dropsNextSubmissionForTesting` は結末の記録だけを打ち切りに
@@ -2213,7 +2213,7 @@ struct SharedFrameStageTests {
         return surface
     }
 
-    /// **関所が弾いた目録は採らない。採る世代は普段どおり乗り換える。** 作品の窓が試聴の子の目録を採らない形。
+    /// **関所が弾いた目録は採らない。採る世代は普段どおり乗り換える。** 作品のウィンドウが試聴の子の目録を採らない形。
     @Test("関所が弾いた世代の目録は採らず、映している世代も控えも動かない。採る世代へは乗り換える")
     func theGateKeepsAGenerationOut() throws {
         try withFacet { facet in
@@ -2378,8 +2378,8 @@ struct SharedFrameStageTests {
         }
     }
 
-    /// **完了条件 9。** 試聴中に試聴の版が大きさ・全画面の頼みを変えて保存しても、作品の窓へは当てない。
-    @Test("作品の窓の台は、試聴の子の目録の大きさ・全画面の頼みを当てない。本番の目録の頼みは当てる")
+    /// **完了条件 9。** 試聴中に試聴の版が大きさ・全画面の頼みを変えて保存しても、作品のウィンドウへは当てない。
+    @Test("作品のウィンドウの台は、試聴の子の目録の大きさ・全画面の頼みを当てない。本番の目録の頼みは当てる")
     func requestsOfAnAuditionedGenerationDoNotReachTheArtworkWindow() throws {
         try withFullScreenStage { stage, log, facet, gpu in
             var kept: [SharedFrameSurface] = []
@@ -2396,8 +2396,8 @@ struct SharedFrameStageTests {
                     pid: 200, in: facet, gpu: gpu, windowScale: 1, fullScreenDisplay: Self.projector))
             stage.displayLinkFired()
             #expect(stage.displayedPID == 100, "試聴の子の目録を採った")
-            #expect(stage.window?.contentLayoutRect.size == before, "作品の窓の大きさが変わった")
-            #expect(log.entered.isEmpty && stage.appliedFullScreen == nil, "作品の窓が全画面になった")
+            #expect(stage.window?.contentLayoutRect.size == before, "作品のウィンドウの大きさが変わった")
+            #expect(log.entered.isEmpty && stage.appliedFullScreen == nil, "作品のウィンドウが全画面になった")
 
             // 本番の頼みは当たる (弾くのは試聴の子だけ)
             kept.append(

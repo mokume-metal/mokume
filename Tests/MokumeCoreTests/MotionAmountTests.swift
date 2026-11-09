@@ -8,12 +8,12 @@ import Testing
 @testable import MokumeCore
 
 /// 動いた量 — フレーム合計 (``InputState/movedX``) と、1 件ぶん (`mouseMoved(deltaX:deltaY:)`) —
-/// と、位置を持たない移動 (`mouseMovedBy`)。窓も GPU も使わない
+/// と、位置を持たない移動 (`mouseMovedBy`)。ウィンドウも GPU も使わない
 /// ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
 ///
-/// 捕まえている間の窓は位置ではなく量を送るので、合流点は「位置の差」だけで量を作れない。
+/// 捕まえている間のウィンドウは位置ではなく量を送るので、合流点は「位置の差」だけで量を作れない。
 /// 量の約束は、捕まえているかによらず同じ 1 つ (描く解像度の画素・縦軸は下向き・押下は移動
-/// ではない) で、ここではそれを窓の外から固める。
+/// ではない) で、ここではそれをウィンドウの外から固める。
 @Suite("動いた量")
 struct MotionAmountTests {
     /// 溜めて 1 フレームぶん流し込み、配られた呼び出しの並びを返す。

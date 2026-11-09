@@ -89,7 +89,7 @@ struct CommandFaultLogTests {
 
         let failure = RenderDevice.waitFailure(faults: log)
         #expect(failure == .workDropped(reason: Self.pageFault))
-        #expect(failure.headline.contains(Self.pageFault), "窓に出る 1 行に理由が載っていない")
+        #expect(failure.headline.contains(Self.pageFault), "ウィンドウに出る 1 行に理由が載っていない")
         #expect(!failure.description.contains("drawing too much"))
     }
 

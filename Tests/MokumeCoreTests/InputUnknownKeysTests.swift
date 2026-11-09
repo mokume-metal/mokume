@@ -57,7 +57,7 @@ struct InputUnknownKeysTests {
 
     /// `amount` は pinched で、`clickCount` は mouseDown でだけ読む ([#2762](https://github.com/mokume-metal/mokume/issues/2762))。
     /// ほかの種別に付いていたら、足す前と同じく読まない鍵として名乗り、その 1 件は通す。
-    /// 型違いの値でも、その 1 件を `ignored` にしない — `mouseUp` が落ちると釦が押されたまま残る。
+    /// 型違いの値でも、その 1 件を `ignored` にしない — `mouseUp` が落ちるとボタンが押されたまま残る。
     @Test("clickCount・amount は読む種別でだけ読む。ほかの種別では読まない鍵として名乗り、1 件は通す")
     func namesTheKeysOnlyOneTypeReads() throws {
         let facet = try makeFacet()
@@ -73,7 +73,7 @@ struct InputUnknownKeysTests {
         #expect(report.accepted == 4, "型違いの clickCount が付いた mouseUp が落ちた")
         #expect(report.ignored == 0)
         state.beginFrame()
-        #expect(state.pressedButtons.isEmpty, "mouseUp が届かず、釦が押されたまま残った")
+        #expect(state.pressedButtons.isEmpty, "mouseUp が届かず、ボタンが押されたまま残った")
         #expect(state.pinch == 0.2)
 
         let warnings = try #require(report.warnings)

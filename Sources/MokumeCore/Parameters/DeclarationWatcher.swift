@@ -27,7 +27,7 @@ import Synchronization
 /// (``takeDeclarationChange()``) である。
 ///
 /// かつては知らせを `Task { @MainActor … }` で main actor へ積み、それが走ったときに扱って
-/// いた。main actor を譲らずに ``SketchRuntime/advance()`` を回すループ (窓を出さない書き出しや
+/// いた。main actor を譲らずに ``SketchRuntime/advance()`` を回すループ (ウィンドウを出さない書き出しや
 /// 検査) では積んだ `Task` が 1 本も走らず、`draw` の中で変えた値が**保存にも区画にも
 /// 届かなかった** ([#1704](https://github.com/mokume-metal/mokume/issues/1704))。誰が
 /// `advance()` を叩くかは外側の話 (``SketchRuntime`` の説明) なので、叩き方で届き方が

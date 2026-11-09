@@ -17,7 +17,7 @@ extension Canvas {
     /// **座標の大きさは `width` × `height` のまま、画素は書き出しの倍率 (`outputScale`) を掛けて刻む**
     /// ([#3453])。本体の面と同じ組み立て (`init(output:gpu:pixelDensity:upscale:outputScale:)`) の 1 本を通るので、
     /// 線の太さ・効果の半径・切り抜き・断片・字の焼き場の鍵は、本体の面と同じ読みで倍率を掛ける。作る側が
-    /// 描き場所なら、その倍率を引き継ぐ。倍率 1 (窓・`--scale` の無い書き出し) では、これまでと同じ大きさ・同じ経路。
+    /// 描き場所なら、その倍率を引き継ぐ。倍率 1 (ウィンドウ・`--scale` の無い書き出し) では、これまでと同じ大きさ・同じ経路。
     ///
     /// [#3453]: https://github.com/mokume-metal/mokume/issues/3453
     public func createGraphics(_ width: Int, _ height: Int) throws(RenderFailure) -> Canvas {

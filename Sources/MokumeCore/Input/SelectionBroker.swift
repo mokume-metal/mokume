@@ -11,8 +11,8 @@ import Foundation
 ///
 /// ## 頼みと結果の道
 ///
-/// ダイアログを出すのは窓を持つ側である — 自前の窓では ``SketchApplication``、`mokume watch` の道具の窓では
-/// ``SharedFrameStage`` ([ADR-0032] 決定 1)。ここは**頼みを通し番号つきで控える**だけで、窓を持つ側が
+/// ダイアログを出すのはウィンドウを持つ側である — 自前のウィンドウでは ``SketchApplication``、`mokume watch` の道具のウィンドウでは
+/// ``SharedFrameStage`` ([ADR-0032] 決定 1)。ここは**頼みを通し番号つきで控える**だけで、ウィンドウを持つ側が
 /// ``pending`` を読んでパネルを出す。結果は入力の出来事 (``InputEvent/fileSelected(path:serial:)``) として
 /// 合流点へ届き、フレームの頭で ``resolve(_:serial:)`` が待ちを終える。**待ちが終わる時刻はフレームの頭であり、
 /// `await` が戻る時刻がどのフレームの境界かは [#2760](https://github.com/mokume-metal/mokume/issues/2760)
@@ -20,9 +20,9 @@ import Foundation
 ///
 /// ## 結果は、どの頼みへの答えかを名乗れる
 ///
-/// 窓を持つ側が子へ送る結果には、頼みの通し番号 (``Request/serial``) を載せる。**番号つきの結果は、いまの待ちと
+/// ウィンドウを持つ側が子へ送る結果には、頼みの通し番号 (``Request/serial``) を載せる。**番号つきの結果は、いまの待ちと
 /// 番号が同じときだけ待ちを終える** — 待ちの最中に頼み直したとき、前の頼みへの古い答えが管や溜まりに残って
-/// いても、新しい待ちは終わらない。番号があるので、窓を持つ側は頼みが残っている間、落ちた結果を送り直せる
+/// いても、新しい待ちは終わらない。番号があるので、ウィンドウを持つ側は頼みが残っている間、落ちた結果を送り直せる
 /// (送り直しが重なっても、待ちを終えるのは 1 度)。外から番号なしで送る結果は、いまの待ちへ届く。
 ///
 /// 合流点 (``InputState``) が持つ。結果は合流点を通って届くので、待っているかを外から送る入口
@@ -31,7 +31,7 @@ import Foundation
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
 @MainActor
 final class SelectionBroker {
-    /// 窓を持つ側へ渡す頼み。通し番号は 1 から数え、頼むたびに進む。
+    /// ウィンドウを持つ側へ渡す頼み。通し番号は 1 から数え、頼むたびに進む。
     struct Request: Equatable, Sendable {
         let serial: Int
         let prompt: String

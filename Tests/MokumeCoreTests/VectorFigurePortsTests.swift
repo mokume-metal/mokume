@@ -27,7 +27,7 @@ import Testing
         "この世代のコマンド構造に対応した GPU が無い実行環境ではスキップする")
 )
 struct VectorFigurePortsTests {
-    /// 控えるのは `draw()` の窓の中なので、Canvas を 1 つ作って窓を開く。
+    /// 控えるのは `draw()` のウィンドウの中なので、Canvas を 1 つ作ってウィンドウを開く。
     private func makeCanvas() throws -> Canvas {
         try CanvasFixture.make(gpu: RenderDevice(), width: 100, height: 100)
     }
@@ -171,7 +171,7 @@ struct VectorFigurePortsTests {
         #expect(try handled(canvas) { $0.shape(solid, at: positions, layout: .position) } == 1)
         #expect(try handled(canvas) { $0.shape(shape, at: positions, layout: .position) } == 0)
         #expect(try handled(canvas) { $0.set(1, 1, .linear(red: 1, green: 0, blue: 0)) } == 1)
-        // 画素の窓 (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
+        // 画素のビュー (`pixels`) からの書き込みも、`set` と同じく数える。種類は「読み取り」だが、
         // `VECTOR_ALSO` が「図形」の口と同じに見る (#3139)
         #expect(try handled(canvas) { $0.pixels[1, 1] = .linear(red: 1, green: 0, blue: 0) } == 1)
         #expect(try handled(canvas) { $0.pixels.fill(.linear(red: 0, green: 1, blue: 0)) } == 1)

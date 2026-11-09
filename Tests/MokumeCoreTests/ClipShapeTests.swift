@@ -7,10 +7,10 @@ import simd
 
 @testable import MokumeCore
 
-/// **形で切り抜く `clip { }`** ([#2431])。閉包の中で描いた 2D の塗りが窓になり、型板の下位 7 ビットに入れ子の段数
+/// **形で切り抜く `clip { }`** ([#2431])。閉包の中で描いた 2D の塗りが切り抜きになり、型板の下位 7 ビットに入れ子の段数
 /// として描かれる。GPU を要する。
 ///
-/// 面は 400×400 の黒地で、`fill(255, 0, 0); rect(0, 0, 400, 400)` を描いた赤い画素で窓を読む。円の窓は多角形に
+/// 面は 400×400 の黒地で、`fill(255, 0, 0); rect(0, 0, 400, 400)` を描いた赤い画素で切り抜きを読む。円の切り抜きは多角形に
 /// 刻むので (許容 0.25 画素)、縁の ±1.5 画素は判定の外に置く。
 ///
 /// [#2431]: https://github.com/mokume-metal/mokume/issues/2431
@@ -46,7 +46,7 @@ struct ClipShapeTests {
 
     private static func isRed(_ pixels: PixelBuffer, _ x: Int, _ y: Int) -> Bool { pixels[x, y].red > 0.5 }
 
-    /// 円の窓の内と外を、縁の帯を除いて全画素で確かめる。`inside` は窓に入るはずの画素の条件 (円の内に足す条件)。
+    /// 円の切り抜きの内と外を、縁の帯を除いて全画素で確かめる。`inside` は切り抜きに入るはずの画素の条件 (円の内に足す条件)。
     private func expectDisc(
         _ pixels: PixelBuffer, center: SIMD2<Float>, radius: Float,
         also inside: (Int, Int) -> Bool = { _, _ in true }, _ comment: Comment? = nil
@@ -65,8 +65,8 @@ struct ClipShapeTests {
                 }
             }
         }
-        #expect(wrongInside == 0, "窓の内で赤くない画素 \(wrongInside) \(comment.map { "\($0)" } ?? "")")
-        #expect(wrongOutside == 0, "窓の外で赤い画素 \(wrongOutside) \(comment.map { "\($0)" } ?? "")")
+        #expect(wrongInside == 0, "切り抜きの内で赤くない画素 \(wrongInside) \(comment.map { "\($0)" } ?? "")")
+        #expect(wrongOutside == 0, "切り抜きの外で赤い画素 \(wrongOutside) \(comment.map { "\($0)" } ?? "")")
     }
 
     private func redCount(_ pixels: PixelBuffer) -> Int {
@@ -84,7 +84,7 @@ struct ClipShapeTests {
         }
     }
 
-    // MARK: - 条件 1・2: 円の窓と変換
+    // MARK: - 条件 1・2: 円の切り抜きと変換
 
     @Test("clip { circle(200, 200, 200) } の後の赤い面は、中心から半径 100 の内側だけが赤い")
     func circleWindow() throws {
@@ -97,14 +97,14 @@ struct ClipShapeTests {
         #expect(clipWarnings(result.canvas) == 0, "既定の線が効いていても警告しない")
     }
 
-    /// 窓で切られる側の列の経路。`rect` は基本図形の列 (距離関数) を通るので、三角形の列・貼る絵の列・立体の列も
+    /// 切り抜きで切られる側の列の経路。`rect` は基本図形の列 (距離関数) を通るので、三角形の列・貼る絵の列・立体の列も
     /// 別に確かめる (どれも型板を試す奥行きの扱いへ替わる)。
     enum Route: String, CaseIterable, CustomTestStringConvertible {
         case form, triangles, image, solid
         var testDescription: String { rawValue }
     }
 
-    @Test("どの経路の列も窓で切る (基本図形・三角形・画像・立体)", arguments: Route.allCases)
+    @Test("どの経路の列も切り抜きで切る (基本図形・三角形・画像・立体)", arguments: Route.allCases)
     func everyRouteIsClipped(_ route: Route) throws {
         var failure: (any Error)?
         let result = try render { canvas in
@@ -132,8 +132,8 @@ struct ClipShapeTests {
             }
         }
         if let failure { throw failure }
-        #expect(Self.isRed(result.pixels, 200, 200), "窓の中")
-        #expect(!Self.isRed(result.pixels, 20, 20) && !Self.isRed(result.pixels, 380, 380), "窓の外")
+        #expect(Self.isRed(result.pixels, 200, 200), "切り抜きの中")
+        #expect(!Self.isRed(result.pixels, 20, 20) && !Self.isRed(result.pixels, 380, 380), "切り抜きの外")
     }
 
     @Test("線の設定は読まない — strokeWeight(40) の円も、塗りの範囲 (半径 100) で切る")
@@ -148,7 +148,7 @@ struct ClipShapeTests {
         #expect(clipWarnings(result.canvas) == 0)
     }
 
-    @Test("translate(100, 0) の後で書くと、窓も右へ 100 動く。閉包の後の変換は窓を動かさない")
+    @Test("translate(100, 0) の後で書くと、切り抜きも右へ 100 動く。閉包の後の変換は切り抜きを動かさない")
     func windowReadsTheTransformAtTheCall() throws {
         let result = try render { canvas in
             canvas.translate(100, 0)
@@ -179,7 +179,7 @@ struct ClipShapeTests {
 
     // MARK: - 条件 3: 入れ子は交わる・1 つの閉包の中は和
 
-    @Test("入れ子の窓は交わる: 円の後に右半分の矩形を書くと、円の右半分だけが赤い")
+    @Test("入れ子の切り抜きは交わる: 円の後に右半分の矩形を書くと、円の右半分だけが赤い")
     func nestedWindowsIntersect() throws {
         let result = try render { canvas in
             canvas.clip { canvas.circle(200, 200, 200) }
@@ -190,7 +190,7 @@ struct ClipShapeTests {
         #expect(!Self.isRed(result.pixels, 150, 200), "円の左半分は落とす")
     }
 
-    @Test("1 つの閉包の中の形は和になり、重なりも窓に入る。穴 (beginContour) は窓の外")
+    @Test("1 つの閉包の中の形は和になり、重なりも切り抜きに入る。穴 (beginContour) は切り抜きの外")
     func shapesInOneBlockUnite() throws {
         let result = try render { canvas in
             canvas.clip {
@@ -221,7 +221,7 @@ struct ClipShapeTests {
 
     // MARK: - 条件 5: 戻し方
 
-    @Test("push / pop と pushStyle / popStyle は窓を戻し、pushMatrix / popMatrix は戻さない")
+    @Test("push / pop と pushStyle / popStyle は切り抜きを戻し、pushMatrix / popMatrix は戻さない")
     func stacksRestoreTheWindow() throws {
         for (name, push, pop, restores) in [
             ("push", { (c: Canvas) in c.push() }, { (c: Canvas) in c.pop() }, true),
@@ -239,7 +239,7 @@ struct ClipShapeTests {
         }
     }
 
-    @Test("窓はフレームを越えない — 次のフレームは窓なしで始まる")
+    @Test("切り抜きはフレームを越えない — 次のフレームは切り抜きなしで始まる")
     func windowEndsWithTheFrame() throws {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: Self.size, height: Self.size)
         try canvas.draw {
@@ -292,7 +292,7 @@ struct ClipShapeTests {
 
     // MARK: - 条件 9: 型板に描くのは 2D の塗りだけ
 
-    @Test("塗りの無い閉包 (線・点・noFill の形・空) は 1 度警告し、窓は空になる")
+    @Test("塗りの無い閉包 (線・点・noFill の形・空) は 1 度警告し、切り抜きは空になる")
     func blocksWithoutFillMakeAnEmptyWindow() throws {
         let blocks: [(String, (Canvas) -> Void, Bool)] = [
             ("line", { $0.stroke(255); $0.line(0, 0, 100, 100) }, true),
@@ -308,7 +308,7 @@ struct ClipShapeTests {
                 canvas.clip { block(canvas) }
                 Self.paintAll(canvas)
             }
-            #expect(redCount(result.pixels) == 0, "\(name): 窓が空でない")
+            #expect(redCount(result.pixels) == 0, "\(name): 切り抜きが空でない")
             #expect(result.canvas.warnings.hasWarned(.insideClip(.noFill)) == warns, "\(name)")
             #expect(clipWarnings(result.canvas) == (warns ? 1 : 0), "\(name)")
         }
@@ -347,7 +347,7 @@ struct ClipShapeTests {
         #expect(clipWarnings(path.canvas) == 0)
     }
 
-    @Test("字・画像・立体・断片・保持した形は、それぞれ 1 度警告して窓に入れない。同じ閉包の円は窓になる")
+    @Test("字・画像・立体・断片・保持した形は、それぞれ 1 度警告して切り抜きに入れない。同じ閉包の円は切り抜きになる")
     func refusedKindsAreNamedOnce() throws {
         let gpu = try RenderDevice()
         let probe = try CanvasFixture.make(gpu: gpu, width: 8, height: 8)
@@ -381,11 +381,11 @@ struct ClipShapeTests {
             #expect(result.canvas.warnings.hasWarned(.insideClip(refusal)), "\(refusal)")
             #expect(clipWarnings(result.canvas) == 1, "\(refusal)")
             #expect(Self.isRed(result.pixels, 300, 300), "\(refusal): 同じ閉包の円")
-            #expect(!Self.isRed(result.pixels, 20, 20), "\(refusal): 断ったものは窓に入らない")
+            #expect(!Self.isRed(result.pixels, 20, 20), "\(refusal): 断ったものは切り抜きに入らない")
         }
     }
 
-    @Test("閉包の中の clip()・clip { }・noClip() は効かずに警告し、外の窓はそのまま")
+    @Test("閉包の中の clip()・clip { }・noClip() は効かずに警告し、外の切り抜きはそのまま")
     func clipsInsideTheBlockAreRefused() throws {
         let result = try render { canvas in
             canvas.clip {
@@ -403,7 +403,7 @@ struct ClipShapeTests {
 
     // MARK: - 条件 10: 形の組み立ての中
 
-    @Test("createShape { } の中の clip { } は断って警告し、外の窓は変わらない")
+    @Test("createShape { } の中の clip { } は断って警告し、外の切り抜きは変わらない")
     func clipInsideCreateShapeIsRefused() throws {
         var ran = false
         let result = try render { canvas in
@@ -450,7 +450,7 @@ struct ClipShapeTests {
 
     // MARK: - 型板の描き直し
 
-    @Test("違う窓を交互に描く列は、型板を外して描き直す (外す段が残らない)")
+    @Test("違う切り抜きを交互に描く列は、型板を外して描き直す (外す段が残らない)")
     func alternatingWindowsRemoveLayers() throws {
         let result = try render { canvas in
             canvas.fill(255, 0, 0)
@@ -469,20 +469,20 @@ struct ClipShapeTests {
             canvas.fill(0, 0, 255)
             canvas.rect(0, 0, 400, 400)
             canvas.pop()
-            // 窓なしの列は面全体に描ける
+            // 切り抜きなしの列は面全体に描ける
             canvas.fill(255, 255, 255)
             canvas.rect(0, 0, 400, 10)
         }
         let pixels = result.pixels
-        #expect(pixels[100, 100].red > 0.5 && pixels[100, 100].green < 0.5, "1 つ目の窓は赤")
-        #expect(pixels[300, 300].green > 0.5 && pixels[300, 300].red < 0.5, "2 つ目の窓は緑")
+        #expect(pixels[100, 100].red > 0.5 && pixels[100, 100].green < 0.5, "1 つ目の切り抜きは赤")
+        #expect(pixels[300, 300].green > 0.5 && pixels[300, 300].red < 0.5, "2 つ目の切り抜きは緑")
         #expect(pixels[150, 300].blue > 0.5, "3 つ目の交わり")
         #expect(pixels[50, 300].blue < 0.5, "3 つ目の外の段だけの所")
-        #expect(pixels[300, 100].red < 0.5 && pixels[300, 100].green < 0.5, "どの窓の外")
-        #expect(pixels[300, 5].red > 0.5 && pixels[300, 5].green > 0.5 && pixels[300, 5].blue > 0.5, "窓なし")
+        #expect(pixels[300, 100].red < 0.5 && pixels[300, 100].green < 0.5, "どの切り抜きの外")
+        #expect(pixels[300, 5].red > 0.5 && pixels[300, 5].green > 0.5 && pixels[300, 5].blue > 0.5, "切り抜きなし")
     }
 
-    @Test("窓の中の background() は窓の中だけを置き換える")
+    @Test("切り抜きの中の background() は切り抜きの中だけを置き換える")
     func backgroundInsideTheWindow() throws {
         let result = try render { canvas in
             canvas.background(0, 0, 255)
@@ -493,7 +493,7 @@ struct ClipShapeTests {
         #expect(result.pixels[10, 10].blue > 0.5)
     }
 
-    @Test("途中の描き切り (loadPixels) の後も、次のパスの頭で型板を描き直して窓が効く")
+    @Test("途中の描き切り (loadPixels) の後も、次のパスの頭で型板を描き直して切り抜きが効く")
     func windowSurvivesAMidFrameDrawOut() throws {
         let result = try render { canvas in
             canvas.clip { canvas.circle(200, 200, 200) }
@@ -503,7 +503,7 @@ struct ClipShapeTests {
         expectDisc(result.pixels, center: SIMD2(200, 200), radius: 100)
     }
 
-    @Test("描き場所 (createGraphics) と細かさ 0.5 の面でも窓が効く")
+    @Test("描き場所 (createGraphics) と細かさ 0.5 の面でも切り抜きが効く")
     func windowOnOtherSurfaces() throws {
         let gpu = try RenderDevice()
         let output = try RenderTarget(gpu: gpu, width: Self.size, height: Self.size)
@@ -534,7 +534,7 @@ struct ClipShapeTests {
 
     // MARK: - 半透明の線の型板と組む ([ADR-0046])
 
-    @Test("窓の中の自分と交わる半透明の線は、交点も 1 回だけ混ぜ、窓の外には出ない")
+    @Test("切り抜きの中の自分と交わる半透明の線は、交点も 1 回だけ混ぜ、切り抜きの外には出ない")
     func translucentStrokeInsideTheWindowMixesOnce() throws {
         let result = try render(width: 160, height: 160) { canvas in
             canvas.clip { canvas.rect(0, 0, 100, 160) }
@@ -553,10 +553,10 @@ struct ClipShapeTests {
         #expect(abs(pixels[80, 80].red - 0.413) <= 0.01, "交点: \(pixels[80, 80].red)")
         var outside = 0
         for y in 0..<160 { for x in 101..<160 where pixels[x, y].red > 0.01 { outside += 1 } }
-        #expect(outside == 0, "窓の外に塗られた画素 \(outside)")
+        #expect(outside == 0, "切り抜きの外に塗られた画素 \(outside)")
     }
 
-    @Test("窓の外では立体の線の消し描きが奥行きを残さず、後に置く立体を隠さない")
+    @Test("切り抜きの外では立体の線の消し描きが奥行きを残さず、後に置く立体を隠さない")
     func clippedSolidStrokeLeavesNoDepthOutside() throws {
         func scene(clipped: Bool) throws -> PixelBuffer {
             try render(width: 160, height: 160) { canvas in
@@ -583,12 +583,12 @@ struct ClipShapeTests {
         let plain = try scene(clipped: false)
         var differing = 0
         for y in 0..<160 { for x in 82..<160 where clipped[x, y] != plain[x, y] { differing += 1 } }
-        #expect(differing == 0, "窓の外で後の立体が隠れた画素 \(differing)")
+        #expect(differing == 0, "切り抜きの外で後の立体が隠れた画素 \(differing)")
     }
 
     // MARK: - ベクター
 
-    @Test("窓のある間の図形は、ベクターへ書かずに切り抜きとして名乗る")
+    @Test("切り抜きのある間の図形は、ベクターへ書かずに切り抜きとして名乗る")
     func vectorExportNamesTheClip() throws {
         let canvas = try CanvasFixture.make(gpu: RenderDevice(), width: 100, height: 100)
         try canvas.draw {

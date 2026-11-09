@@ -7,7 +7,7 @@ import Testing
 
 @testable import MokumeCore
 
-/// 窓でもフレームの時計で回せる設定 (`SketchSettings(clock: .frames)`) と、処理落ちを見えるようにする
+/// ウィンドウでもフレームの時計で回せる設定 (`SketchSettings(clock: .frames)`) と、処理落ちを見えるようにする
 /// 仕組み ([#2601](https://github.com/mokume-metal/mokume/issues/2601))。
 ///
 /// 時計 (`FrameTiming`) と入力の合流点 (`InputState`) を直に回すので、GPU を要さない。
@@ -16,9 +16,9 @@ import Testing
 struct FrameClockTests {
     private let step = 1.0 / 60
 
-    // MARK: - 窓の時計を設定から選ぶ (完了条件 1)
+    // MARK: - ウィンドウの時計を設定から選ぶ (完了条件 1)
 
-    @Test("窓の経路は、設定が .frames なら宣言の fps のフレーム番号、既定は実時間")
+    @Test("ウィンドウの経路は、設定が .frames なら宣言の fps のフレーム番号、既定は実時間")
     func theWindowClockFollowsTheSetting() {
         #expect(Clock.launching(.frames, frameRate: 60) == .frameIndex(frameRate: 60))
         #expect(Clock.launching(.frames, frameRate: 30) == .frameIndex(frameRate: 30))
@@ -134,7 +134,7 @@ struct FrameClockTests {
 
     @Test("最初の枚の起点も、表示の予定の時刻へ寄せる。time は 0・deltaTime は目標の 1 フレームぶん")
     func theFirstFrameStartsAtTheDisplayTime() {
-        // 時計を作ってから最初の枚まで 5 秒かかった (起動・窓・setup())
+        // 時計を作ってから最初の枚まで 5 秒かかった (起動・ウィンドウ・setup())
         var now = 100.0
         let timing = FrameTiming(clock: .wallClock, frameRate: 60, now: { now })
         now = 105
@@ -146,7 +146,7 @@ struct FrameClockTests {
         #expect(timing.deltaTime == Float(step))
     }
 
-    /// **#2413 の約束は、予定の時刻が `setup()` の前に決まっていても守る** ([#2390])。窓の経路では、予定の時刻は
+    /// **#2413 の約束は、予定の時刻が `setup()` の前に決まっていても守る** ([#2390])。ウィンドウの経路では、予定の時刻は
     /// コールバックの時点で決まり、`setup()` はその後に走る。時計を作ってから最初の枚までに 5 秒かかり、
     /// 予定の時刻がその最中に過ぎていても、2 枚目の経過に 5 秒が戻らない。
     ///
@@ -476,13 +476,13 @@ struct FrameClockTests {
     @Test("音を数で進めるのは、フレームの時計で画面へ出していないときだけ")
     func soundIsPacedByFramesOnlyOffScreen() {
         #expect(Clock.frameIndex(frameRate: 30).soundFrameRate(onScreen: false) == 30)
-        #expect(Clock.frameIndex(frameRate: 60).soundFrameRate(onScreen: true) == nil, "フレームの時計の窓は鳴らす")
+        #expect(Clock.frameIndex(frameRate: 60).soundFrameRate(onScreen: true) == nil, "フレームの時計のウィンドウは鳴らす")
         #expect(Clock.wallClock.soundFrameRate(onScreen: true) == nil)
         #expect(Clock.wallClock.soundFrameRate(onScreen: false) == nil)
     }
 }
 
-/// フレームの時計を、実際のスケッチと窓の経路で回す (#2601)。走っているスケッチの中で回すので GPU を要する。
+/// フレームの時計を、実際のスケッチとウィンドウの経路で回す (#2601)。走っているスケッチの中で回すので GPU を要する。
 @Suite(
     "フレームの時計 (スケッチから)",
     .serialized,
@@ -504,7 +504,7 @@ struct SketchFrameClockTests {
         }
     }
 
-    @Test("設定が .frames なら、窓の経路は宣言の fps のフレーム番号の時計で、画面へ出す扱いになる")
+    @Test("設定が .frames なら、ウィンドウの経路は宣言の fps のフレーム番号の時計で、画面へ出す扱いになる")
     func theWindowPathHonoursTheSetting() throws {
         let sketch = Probe()
         sketch.settings = SketchSettings(width: 8, height: 4, frameRate: 30, clock: .frames)
@@ -530,7 +530,7 @@ struct SketchFrameClockTests {
         #expect(!application.isOnScreen)
     }
 
-    @Test("窓を持たずに直に回す実行は、画面へ出さない扱い (音を数で進める)")
+    @Test("ウィンドウを持たずに直に回す実行は、画面へ出さない扱い (音を数で進める)")
     func aBareRuntimeIsOffScreen() throws {
         let runtime = try SketchRuntime(sketch: Probe(), gpu: RenderDevice())
         #expect(!runtime.isOnScreen)
@@ -538,7 +538,7 @@ struct SketchFrameClockTests {
         #expect(wall.isOnScreen, "実時間の時計は今までどおり鳴らす")
     }
 
-    @Test("draw() の中で 30 ms かかったフレームが、窓の数字に予算超過として出る")
+    @Test("draw() の中で 30 ms かかったフレームが、ウィンドウの数字に予算超過として出る")
     func aSlowDrawShowsInTheNumbers() throws {
         var now = 0.0
         let sketch = Probe()

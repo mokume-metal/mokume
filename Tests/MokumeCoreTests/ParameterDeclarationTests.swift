@@ -89,7 +89,7 @@ struct ParameterDeclarationTests {
     @Test("値が変わったことが、登録も通知も書かずに伝わる")
     func observes() {
         // 変更追跡は Observation に載せ、自前の通知機構を持たない (ADR-0013 決定 1)。
-        // 窓の更新はこの経路で成立するので、ここが切れると窓が動かなくなる。
+        // ウィンドウの更新はこの経路で成立するので、ここが切れるとウィンドウが動かなくなる。
         let sketch = Knobbed()
         let notified = Notice()
         withObservationTracking {
@@ -133,7 +133,7 @@ struct ParameterDeclarationTests {
         #expect(box.value == 2)
     }
 
-    /// 面 (窓のつまみ・外からの書き込み) から来た値も、同じ経路で伝わる ([#1782])。
+    /// 面 (ウィンドウのつまみ・外からの書き込み) から来た値も、同じ経路で伝わる ([#1782])。
     @Test("面から書き込んだ値も、見ている側へ伝わる")
     func observesSurfaceWrites() {
         let box = ParamBox(name: "radius", value: 1.0, range: ParamRange(0...10))
@@ -163,7 +163,7 @@ struct ParameterDeclarationTests {
     @Test("基底と派生で同じ名前を宣言すると、先に宣言した基底が勝ち、名指しで知らせる")
     func overlappingNamesKeepTheFirstAndWarn() {
         // 知らせは標準エラーへ直に出るので、口を差し替えて受け取る。``Sketch/params`` も
-        // 窓も面も、この 1 つの集め方を通る
+        // ウィンドウも面も、この 1 つの集め方を通る
         var warnings: [String] = []
         let entries = ParamCatalog.indexed(from: Overlapping()) { warnings.append($0) }
 

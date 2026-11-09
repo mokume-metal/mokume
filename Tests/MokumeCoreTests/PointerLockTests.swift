@@ -10,7 +10,7 @@ import Testing
 ///
 /// **OS の口を記録するだけの口へ差し替えて回す。** 本番の口 (`NSCursor.hide()` と
 /// `CGAssociateMouseAndMouseCursorPosition`) を呼ぶと、検査を走らせている人のカーソルを奪う。
-/// 実際に捕まって手の動きが届くかは、窓で手で確かめる (#1144 の手順)。
+/// 実際に捕まって手の動きが届くかは、ウィンドウで手で確かめる (#1144 の手順)。
 @Suite("カーソルを捕まえる")
 @MainActor
 struct PointerLockTests {
@@ -32,7 +32,7 @@ struct PointerLockTests {
         }
     }
 
-    /// 前に出ていて、ポインタが面の上にある窓。
+    /// 前に出ていて、ポインタが面の上にあるウィンドウ。
     private let ready = PointerLock.Situation(isKeyWindow: true, pointerIsInside: true)
 
     private func make(_ fake: FakeSystem, arbiter: PointerLock.Arbiter = .init()) -> PointerLock {
@@ -69,7 +69,7 @@ struct PointerLockTests {
         #expect(fake.calls == [.capture])
     }
 
-    @Test("窓が前に無い・ポインタが面の外なら、要求と押しが揃っても捕まえない")
+    @Test("ウィンドウが前に無い・ポインタが面の外なら、要求と押しが揃っても捕まえない")
     func capturesOnlyInAReadyWindow() {
         let unready = [
             PointerLock.Situation(isKeyWindow: false, pointerIsInside: true),
@@ -85,7 +85,7 @@ struct PointerLockTests {
             #expect(!lock.isLocked, "\(situation) で捕まえた")
             #expect(fake.calls.isEmpty)
 
-            // 窓が前に出て、ポインタが面の上に来れば、押し直さずに捕まえる
+            // ウィンドウが前に出て、ポインタが面の上に来れば、押し直さずに捕まえる
             lock.update(requested: true, in: ready)
             #expect(lock.isLocked, "\(situation) の後、揃っても捕まえない")
         }
@@ -123,9 +123,9 @@ struct PointerLockTests {
         #expect(fake.calls == [.capture, .release, .capture])
     }
 
-    /// 窓が退いた知らせ (``SketchSurface`` の `didResignKey`) を取りこぼしても、次のリフレッシュで
+    /// ウィンドウが退いた知らせ (``SketchSurface`` の `didResignKey`) を取りこぼしても、次のリフレッシュで
     /// 外す。外れ方は利用者が外したときと同じで、戻っても押すまで掛け直さない。
-    @Test("窓が前から退いたら外れ、前に戻っても押すまで掛け直さない")
+    @Test("ウィンドウが前から退いたら外れ、前に戻っても押すまで掛け直さない")
     func losingKeyReleasesUntilAPress() {
         let fake = FakeSystem()
         let lock = make(fake)
@@ -171,7 +171,7 @@ struct PointerLockTests {
         #expect(!lock.isLocked)
     }
 
-    @Test("窓が畳まれたら外れる")
+    @Test("ウィンドウが畳まれたら外れる")
     func tearDownReleases() {
         let fake = FakeSystem()
         let lock = make(fake)
@@ -182,7 +182,7 @@ struct PointerLockTests {
         #expect(fake.calls == [.capture, .release])
     }
 
-    /// 窓が閉じる知らせを取りこぼしても、面ごと手放せば放す。
+    /// ウィンドウが閉じる知らせを取りこぼしても、面ごと手放せば放す。
     @Test("手放されたら、捕まえていたカーソルを放す")
     func deinitReleases() {
         let fake = FakeSystem()
@@ -225,10 +225,10 @@ struct PointerLockTests {
         #expect(lock.isLocked)
     }
 
-    // MARK: - 窓が 2 つ (条件 13)
+    // MARK: - ウィンドウが 2 つ (条件 13)
 
-    /// 道具は作品の窓とプレビューを出す。**押された窓が捕まえ、2 つが同時に捕まえることは
-    /// ない** — 鍵を持つ窓は 1 つなので普通は起きないが、通知の順に頼らずに構造で守る。
+    /// 道具は作品のウィンドウとプレビューを出す。**押されたウィンドウが捕まえ、2 つが同時に捕まえることは
+    /// ない** — 鍵を持つウィンドウは 1 つなので普通は起きないが、通知の順に頼らずに構造で守る。
     @Test("同じプロセスの 2 つの面は、同時に捕まえない")
     func twoSurfacesNeverHoldAtOnce() {
         let fake = FakeSystem()
@@ -251,8 +251,8 @@ struct PointerLockTests {
         #expect(!artwork.isLocked)
     }
 
-    /// 押さずに前へ出しただけの窓 (窓の切り替えのキーで前へ出した、など) は捕まえない。
-    @Test("押された窓だけが捕まえ、押さずに前へ出た窓は捕まえない")
+    /// 押さずに前へ出しただけのウィンドウ (ウィンドウの切り替えのキーで前へ出した、など) は捕まえない。
+    @Test("押されたウィンドウだけが捕まえ、押さずに前へ出たウィンドウは捕まえない")
     func onlyThePressedSurfaceCaptures() {
         let fake = FakeSystem()
         let arbiter = PointerLock.Arbiter()
@@ -265,15 +265,15 @@ struct PointerLockTests {
         #expect(preview.isLocked)
         #expect(!artwork.isLocked)
 
-        // 押さずに作品の窓を前へ出した。プレビューは退いたので外れる
+        // 押さずに作品のウィンドウを前へ出した。プレビューは退いたので外れる
         preview.releaseByUser()
         artwork.update(requested: true, in: ready)
-        #expect(!artwork.isLocked, "押していない窓が捕まえた")
+        #expect(!artwork.isLocked, "押していないウィンドウが捕まえた")
         #expect(!preview.isLocked)
     }
 }
 
-/// 窓が移動 1 件を何として流すか ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
+/// ウィンドウが移動 1 件を何として流すか ([#1144](https://github.com/mokume-metal/mokume/issues/1144))。
 @Suite("捕まえている間の移動")
 @MainActor
 struct LockedMotionTests {

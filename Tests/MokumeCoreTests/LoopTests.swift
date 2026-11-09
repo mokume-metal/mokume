@@ -455,9 +455,9 @@ struct LoopTests {
 
     /// 止めているスケッチに、描き直しをどこから頼むか。
     enum RedrawRoute: String, CaseIterable, CustomTestStringConvertible {
-        /// 押下のコールバックの中から。窓で作者のコードが実際に通る経路
+        /// 押下のコールバックの中から。ウィンドウで作者のコードが実際に通る経路
         case fromCallback
-        /// 呼び出しの外から (窓では断られるので、いまは検査からしか通らない)
+        /// 呼び出しの外から (ウィンドウでは断られるので、いまは検査からしか通らない)
         case fromOutside
         /// 外の `pause()` 中に頼み、`resume()` した後
         case whilePausedThenResumed
@@ -467,7 +467,7 @@ struct LoopTests {
     /// 実時間の時計で `setup()` から止め、`stoppedAt` 秒まで止めてから `route` で描き直しを頼む。
     ///
     /// 最初の 1 枚を 0 秒に描き、そこが時刻の起点になる。止めている間にも 1 度進めて、描かずに
-    /// 過ぎるフレームを挟む (窓では止めている間も駆動源が呼んでくる)。
+    /// 過ぎるフレームを挟む (ウィンドウでは止めている間も駆動源が呼んでくる)。
     private func redrawAfterStop(
         _ sketch: Lines, route: RedrawRoute, stoppedAt: Double
     ) throws {

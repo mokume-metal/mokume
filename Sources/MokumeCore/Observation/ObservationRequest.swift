@@ -23,7 +23,7 @@ import Foundation
 /// (動画の再生位置・録った音の起点) と、同じ枚で配る入力のコールバックの `time` は作者の時計の秒で、
 /// 観測の秒を状態として積まない。コールバックの `jumpTime(time + 0.25)` が作者の時計を観測の秒へ
 /// 飛ばさず、流している動画が観測の後も作者の時計に沿って流れる
-/// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。映すコマ・読む窓は観測の秒で決まる。
+/// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。映すコマ・読むウィンドウは観測の秒で決まる。
 /// noLoopは停止を保つ。外部pause、録画中、count/everyが1以外なら理由を返す。
 /// 指定フレーム内でのbeginRecordも断る。通常観測はtimeを省く。
 /// 応答にappliedTimeがあり、目録と同じ秒かを必ず確認する。旧版はtimeを無視することがある。
@@ -58,7 +58,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     public static let maximumEvery = 60
     /// 撮れる枚数の下限。0 枚の列は撮り終わりが来ない。
     ///
-    /// `package` に開くのは、MCP の窓口が範囲を名乗るときに手で書かず、ここから引くため
+    /// `package` に開くのは、MCP サーバが範囲を名乗るときに手で書かず、ここから引くため
     /// (上限の定数と同じく、写した数は動かした日に古びる)。
     package static let minimumCount = 1
     /// 間隔の下限 (フレーム)。毎フレーム撮るより詰めることはできない。
@@ -114,7 +114,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 切るのは要求を解いた後の別の段にしてある — 要求そのものは書き手が置いたままの
     /// 値を保ち、応答の `id` と並べて「何を頼み、何が返ったか」を突き合わせられる。
     /// **頼みの範囲を見るのはここ 1 か所である。** 撮る側 (`SketchRuntime`) は丸めた値
-    /// だけを使う。MCP の窓口も、待つ長さを見積もるのにこれを呼び、範囲を写さない
+    /// だけを使う。MCP サーバも、待つ長さを見積もるのにこれを呼び、範囲を写さない
     /// (`package` に開くのはそのため。[#2045])。
     ///
     /// [#1699]: https://github.com/mokume-metal/mokume/issues/1699
@@ -169,7 +169,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
     /// 整数の鍵を読む。**範囲を越えた大きな数は、符号の側の端へ寄せる** (#2805)。
     ///
     /// `1e19` も 30 桁の整数も `Int.max` も「上限より大きい」ことに変わりはなく、読み終えた後の
-    /// ``clamped()`` が範囲へ丸めて警告で名乗る (スキーマの約束。MCP の窓口 `Tools.seriesArgument` が
+    /// ``clamped()`` が範囲へ丸めて警告で名乗る (スキーマの約束。MCP サーバ `Tools.seriesArgument` が
     /// 同じ値を同じ端へ寄せるのと揃える)。読めない要求にして鍵と理由を名乗るのは、`2.5` のような
     /// **整数でない数**だけである。理由に数の字面は写さない — 桁が多いほど応答の 1 行が伸びてしまう。
     private nonisolated static func integer(
@@ -249,7 +249,7 @@ public struct ObservationRequest: ExchangeRequest, Equatable, Sendable {
         } catch let error as DecodingError {
             throw Self.annotated(error, naming: unknownKeys)
         }
-        // **`null` は省略と同じ「時刻なし」** (#2392)。窓口の側は #2393 で揃える。型が違う値は、
+        // **`null` は省略と同じ「時刻なし」** (#2392)。MCP サーバの側は #2393 で揃える。型が違う値は、
         // 「時刻なし」として成功させない。NaNは内部の拒否用で応答には書かない。
         let timeIsGiven = try container.contains(.time) && !container.decodeNil(forKey: .time)
         self.time = timeIsGiven ? (try? container.decode(Double.self, forKey: .time)) ?? .nan : nil
