@@ -729,11 +729,19 @@ enum RunPurpose {
 ///   - receiver: 語彙を呼んだ `self` (語彙のツールが渡す)。**評価するのは、差している実行が無いときだけ。**
 ///     フレームの中の呼び出しには負担を足さない。
 ///
+/// **呼ぶ所へ展開する** ([#3082])。描画の API は 1 回ごとにここを通るので、関数の境界を越えて実行を返すと、返す値の
+/// 保持と解放が 1 対増える。実行は弱い参照 (``SeamHomes`` など) を受けているので、その保持と解放は参照数の遅い道
+/// (side table) を通り、`rect` 1 回の費用の大半を占めていた。別のパッケージから release で `rect`・`circle` を 2 万・
+/// 10 万個置くと、``SketchPart/liveCanvas(_:_:)`` まで展開したときに 1 個あたり約 117 ns → 約 80 ns になった。
+/// 展開する本体はフレームの中の 1 本の読み取りだけで、フレームの外の引き方は ``activeRunOutsideFrame(from:)`` に残す。
+///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
+/// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
 /// [#3802]: https://github.com/mokume-metal/mokume/issues/3802
 /// [#3846]: https://github.com/mokume-metal/mokume/issues/3846
 /// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
 @MainActor
+@inline(__always)
 func activeRun(
     for purpose: RunPurpose, from receiver: @autoclosure () -> (any SketchPart)? = nil
 ) -> SketchRuntime? {
@@ -744,9 +752,29 @@ func activeRun(
         return SeamHomes.runtime(of: seam) ?? runningSketch
     case .read, .make:
         if let runtime = runningSketch { return runtime }
-        if let sketch = receiver() as? any Sketch { return SketchHomes.runtime(of: sketch) }
-        return OutsideRun.log.solePresented
+        return activeRunOutsideFrame(from: receiver)
     }
+}
+
+/// ``activeRun(for:from:)`` のうち、差している実行が無いときの読み取り・リソースの API の引き方。**展開しない** — フレームの
+/// 外でしか通らないので、呼ぶ所ごとに複製しても速くならず、コードが増えるだけである ([#3082])。
+///
+/// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
+@MainActor
+@inline(never)
+private func activeRunOutsideFrame(from receiver: () -> (any SketchPart)?) -> SketchRuntime? {
+    if let sketch = receiver() as? any Sketch { return SketchHomes.runtime(of: sketch) }
+    return OutsideRun.log.solePresented
+}
+
+/// 走っている実行の外から呼ばれた API を、API ごとに 1 度だけ知らせる (``SketchPart/liveRuntime(_:_:)``)。**展開しない** —
+/// 呼ぶ所へ展開される ``SketchPart/liveRuntime(_:_:)`` の中で、外でしか通らない枝を 1 本の呼び出しに留める ([#3082])。
+///
+/// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
+@MainActor
+@inline(never)
+func warnOutsideRun(_ call: String, _ use: OutsideRun.Use) {
+    OutsideRun.log.warn(call, use)
 }
 
 /// 実行中のランタイムの描画先を、その中で起動された `Task` へ持ち越すもの。
@@ -1019,16 +1047,23 @@ extension SketchPart {
     /// [#2265]: https://github.com/mokume-metal/mokume/issues/2265
     /// [#3847]: https://github.com/mokume-metal/mokume/issues/3847
     @MainActor
+    @inline(__always)
     func liveRuntime(_ use: OutsideRun.Use = .act, _ call: String = #function) -> SketchRuntime? {
         guard let runtime = activeRun(for: use.purpose, from: self) else {
-            OutsideRun.log.warn(call, use)
+            warnOutsideRun(call, use)
             return nil
         }
         return runtime
     }
 
     /// 実行中の描画先。外から呼ばれたときの扱いは ``liveRuntime(_:_:)`` と同じ。
+    ///
+    /// **呼ぶ所へ展開する** ([#3082])。描画の API は `guard let canvas = liveCanvas() else { return }` の形で 1 回ごとに
+    /// ここを通る。展開すると、``activeRun(for:from:)`` が返す実行の保持と解放 (参照数の遅い道) を最適化が外せる。
+    ///
+    /// [#3082]: https://github.com/mokume-metal/mokume/issues/3082
     @MainActor
+    @inline(__always)
     func liveCanvas(_ use: OutsideRun.Use = .act, _ call: String = #function) -> Canvas? {
         liveRuntime(use, call)?.activeCanvas
     }
