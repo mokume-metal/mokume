@@ -468,7 +468,7 @@ public nonisolated struct Rect: Sendable, Hashable, Codable {
     private var hasArea: Bool { width > 0 && height > 0 }
 }
 
-/// 値型の `draw()` が描く先。走っている実行の面で、外から呼ばれたら 1 度だけ警告して `nil` を返す。
+/// 値型の `draw()` が描く先。実行中の描画先で、外から呼ばれたら 1 度だけ警告して `nil` を返す。
 ///
 /// 語彙 (``SketchPart``) が使う ``SketchPart/liveCanvas(_:_:)`` と同じ扱いである。値型は
 /// `SketchPart` を名乗らないので、同じ控えへ自分の名前で言う。

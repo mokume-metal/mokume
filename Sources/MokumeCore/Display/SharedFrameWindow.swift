@@ -3,23 +3,23 @@
 
 import AppKit
 
-/// 別のプロセスが差し出している絵を、**作品のウィンドウ**として出す。
+/// 別のプロセスが差し出しているフレームを、**スケッチのウィンドウ**として出す。
 ///
-/// ## なぜ道具がウィンドウを持つのか
+/// ## なぜツールがウィンドウを持つのか
 ///
-/// 見張り (`watch`) は保存のたびに子を入れ替えるので、**子がウィンドウを持つ限りウィンドウは死ぬ**。
-/// 全画面と、どの画面に置いたかはウィンドウの寿命に紐づいているので、作り直しのたびに一緒に
-/// 失われる — 位置を覚えて開き直しても戻らない。見張りから起こした作品も本番になりうる
+/// `mokume watch` は保存のたびに子プロセスを入れ替えるので、**子プロセスがウィンドウを持つ限りウィンドウは消える**。
+/// 全画面と、どの画面に置いたかはウィンドウの寿命に紐づいているので、再ビルドのたびに一緒に
+/// 失われる — 位置を覚えて開き直しても戻らない。`mokume watch` から起動したスケッチも本番になりうる
 /// 以上、これは**本番の見え方が保存のたびに壊れる**ということである
 /// ([ADR-0032] 決定 1)。
 ///
-/// ## ここに道具の都合を出さない
+/// ## ここにツールの都合を出さない
 ///
-/// つまみも、作り直しの状態も、回っている印も載せない — 見張りから本番を回している間、
+/// ノブも、再ビルドの状態も、スピナーも載せない — `mokume watch` から本番を実行している間、
 /// 開発の都合が本番の画面に出てはならない ([ADR-0032] 決定 1・6)。それらは
 /// ``SharedFramePreview`` の仕事である。
 ///
-/// **守り方は「載せないように気をつける」ではない。** 重ねる面を台へ渡さないので、
+/// **守り方は「載せないように気をつける」ではない。** オーバーレイをステージへ渡さないので、
 /// 載せる場所そのものが無い。
 ///
 /// [ADR-0032]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0032-window-ownership.md
@@ -56,7 +56,7 @@ public final class SharedFrameWindow {
     let stage: SharedFrameStage
 
     /// - Parameters:
-    ///   - facet: 差し出し元の番号が置かれる区画 (`.mokume/viewport`)。
+    ///   - facet: 差し出し元の PID が置かれるディレクトリ (`.mokume/viewport`)。
     ///   - title: ウィンドウの名前。
     public init(gpu: RenderDevice, facet: URL, title: String) throws(RenderFailure) {
         self.stage = try SharedFrameStage(
@@ -67,7 +67,7 @@ public final class SharedFrameWindow {
                 showsSelectionDialogs: true))
     }
 
-    /// 作品のウィンドウが拾った出来事の行き先。**渡ってくるのはそのまま子の標準入力へ書ける 1 行**で、
+    /// スケッチのウィンドウが拾ったイベントの送り先。**渡ってくるのはそのまま子プロセスの標準入力へ書ける 1 行**で、
     /// 受け取る側は中身を見ずに転送するだけでよい ([ADR-0032] 決定 4)。
     ///
     /// 繋がなければ、触っても何も起きない。
@@ -76,60 +76,60 @@ public final class SharedFrameWindow {
         set { stage.onInput = newValue }
     }
 
-    /// 出す世代が入れ替わったことの知らせ。
+    /// 表示する世代が切り替わったことの通知。
     ///
-    /// **入れ替わるのは、新しい世代が最初のフレームを焼いたときである** — 目録に現れた
+    /// **切り替わるのは、新しい世代が最初のフレームを描画したときである** — マニフェストに現れた
     /// 瞬間ではない ([#1142](https://github.com/mokume-metal/mokume/issues/1142))。受け取る側は
-    /// これを合図に、前の世代を走らせていた子を止められる。**引数は乗り換えた世代の子の番号**
-    /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))で、番号を名乗らない子 (古いライブラリ) なら `nil`。
+    /// これをきっかけに、前の世代を実行していた子プロセスを止められる。**引数は切り替わった先の世代の子プロセスの PID**
+    /// ([#2982](https://github.com/mokume-metal/mokume/issues/2982))で、PID を報告しない子プロセス (古いライブラリ) なら `nil`。
     public var onGenerationPromoted: ((Int32?) -> Void)? {
         get { stage.onGenerationPromoted }
         set { stage.onGenerationPromoted = newValue }
     }
 
-    /// この台が、控えた世代の絵を受け取れないことの知らせ ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
+    /// このステージが、待機中の世代のフレームを受け取れないことの通知 ([#2928](https://github.com/mokume-metal/mokume/issues/2928))。
     ///
-    /// **乗り換えの知らせが来ない形のうち、道具だけが知るもの** (``UndeliverableGeneration``) である。
-    /// 受け取る側は、乗り換えを待っている世代のぶんだけ、前の世代を畳める。**2 つ目の引数は、読めた目録が
-    /// 名乗った子の番号**で、読めない目録・番号を名乗らない子なら `nil` (#2982)。
+    /// **切り替えの通知が来ない形のうち、ツールだけが知るもの** (``UndeliverableGeneration``) である。
+    /// 受け取る側は、切り替えを待っている世代のぶんだけ、前の世代を終了できる。**2 つ目の引数は、読めたマニフェストが
+    /// 報告した子プロセスの PID**で、読めないマニフェスト・PID を報告しない子プロセスなら `nil` (#2982)。
     public var onGenerationUndeliverable: ((UndeliverableGeneration, Int32?) -> Void)? {
         get { stage.onGenerationUndeliverable }
         set { stage.onGenerationUndeliverable = newValue }
     }
 
-    /// 見張りが、いま映している世代を手放したと伝える ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
+    /// `mokume watch` が、いま映している世代を手放したと伝える ([#2983](https://github.com/mokume-metal/mokume/issues/2983))。
     ///
-    /// 畳んだ世代のカーソルの頼み (捕まえる・隠す) を下ろし、その世代の頼みを次の乗り換えまで読まない。
-    /// **最後の絵と入力の写しの寸法は残す。**
-    /// 受け取れない世代の知らせ (``onGenerationUndeliverable``) は台が自分で気付くが、倒れた子・子の離脱・
-    /// 合図の来ないまま次の保存が来た回は台を通らないので、道具が伝える。**畳む・居なくなったと決めた世代に
-    /// ついてだけ呼ぶ** — 生きて書き続ける世代へ当たると、その世代は次の乗り換えまでカーソルを頼めない。
+    /// 終了した世代のカーソルの要求 (捕まえる・隠す) を取り下げ、その世代の要求を次の切り替えまで読まない。
+    /// **最後のフレームと入力のコピーの寸法は残す。**
+    /// 受け取れない世代の通知 (``onGenerationUndeliverable``) はステージが自分で気付くが、クラッシュした子プロセス・子プロセスの離脱・
+    /// 通知の来ないまま次の保存が来た回はステージを通らないので、ツールが伝える。**終了した・居なくなったと決めた世代に
+    /// ついてだけ呼ぶ** — 生きてフレームを書き続ける世代へ当たると、その世代は次の切り替えまでカーソルを要求できない。
     ///
-    /// - Parameter pids: 手放す世代の子の番号 ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
-    ///   映っている世代の目録が名乗る番号と照合し、手放す世代でなければ当てない。まだ採っていない目録も、
-    ///   手放した番号のものは生まれたときから手放した扱いにする。番号を名乗らない世代 (古いライブラリ) は
+    /// - Parameter pids: 手放す世代の子プロセスの PID ([#2982](https://github.com/mokume-metal/mokume/issues/2982))。
+    ///   映っている世代のマニフェストが報告する PID と照合し、手放す世代でなければ当てない。まだ採用していないマニフェストも、
+    ///   手放した PID のものは生成時から手放した扱いにする。PID を報告しない世代 (古いライブラリ) は
     ///   照合できないので手放す。
     public func relinquishGeneration(pids: [Int32]) {
         stage.relinquishSource(pids: pids)
     }
 
-    /// 見張りが、控えている世代へ乗り換えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// `mokume watch` が、待機中の世代へ切り替えないと決めた ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// 起動に失敗した新しい版を捨てて前の版を現役に戻した回に呼ぶ。失敗した子の目録が控えにあれば捨て、
-    /// 後から来ても採らない。**既に乗り換えて映している世代がその子なら、前の版へ映し直す** — 子が 1 枚書いて
-    /// 乗り換えた後、描画が見送られた拍に死ぬと、1 枚目の合図は鳴らない。
+    /// 起動に失敗した新しいビルドを捨てて前のビルドを現行に戻した回に呼ぶ。失敗した子プロセスのマニフェストが待機中にあれば破棄し、
+    /// 後から来ても採用しない。**既に切り替えて映している世代がその子プロセスなら、前のビルドへ映し直す** — 子プロセスが 1 フレーム書いて
+    /// 切り替わった後、描画が見送られたティックで終了すると、最初のフレームの通知は発火しない。
     ///
-    /// - Parameter pids: 乗り換えない世代の子の番号。
+    /// - Parameter pids: 切り替えない世代の子プロセスの PID。
     public func abandonGeneration(pids: [Int32]) {
         stage.abandonIncoming(pids: pids)
     }
 
-    /// 見張りが新しい子を起こした ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// `mokume watch` が新しい子プロセスを起動した ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
     ///
-    /// その番号を、乗り換えないと決めた世代と手放した世代の覚えから外す。番号は使い回されるので、残すと同じ番号の
-    /// 新しい子の目録を黙って捨て、その子の頼みを読まない。
+    /// その PID を、切り替えないと決めた世代と手放した世代の記録から外す。PID は使い回されるので、残すと同じ PID の
+    /// 新しい子プロセスのマニフェストを黙って破棄し、その子プロセスの要求を読まない。
     ///
-    /// - Parameter pids: 起こした子の番号。
+    /// - Parameter pids: 起動した子プロセスの PID。
     public func expectGeneration(pids: [Int32]) {
         stage.expectGeneration(pids: pids)
     }
@@ -160,25 +160,25 @@ public final class SharedFrameWindow {
         stage.returnToGeneration(pid: pid)
     }
 
-    /// 出す世代の最初の 1 枚を画面へ出したことの知らせ。
+    /// 表示する世代の最初のフレームを画面へ出したことの通知。
     ///
-    /// **入れ替わりの知らせより遅いことがある。** 最初の世代は絵が来る前に採用されるので、
-    /// 「絵が見えるようになった」を待つ側はこちらを使う
+    /// **切り替えの通知より遅いことがある。** 最初の世代はフレームが来る前に採用されるので、
+    /// 「フレームが見えるようになった」を待つ側はこちらを使う
     /// ([#2875](https://github.com/mokume-metal/mokume/issues/2875))。
     ///
-    /// **引数は、1 枚目を出した世代の目録が名乗った子の番号** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
-    /// 名乗らない子 (古いライブラリ) は `nil`。見張りは、その子が絵を出す前に終わったかを、これで読む。
+    /// **引数は、最初のフレームを出した世代のマニフェストが報告した子プロセスの PID** ([#3172](https://github.com/mokume-metal/mokume/issues/3172))。
+    /// PID を報告しない子プロセス (古いライブラリ) は `nil`。`mokume watch` は、その子プロセスがフレームを出す前に終わったかを、これで読む。
     public var onGenerationShown: ((Int32?) -> Void)? {
         get { stage.onGenerationShown }
         set { stage.onGenerationShown = newValue }
     }
 
-    /// × と `⌘W` を押されたときに確かめ、確定したら知らせる。
+    /// × と `⌘W` を押されたときに確認し、確定したら通知する。
     ///
-    /// **確かめている間は閉じない。** 繋がなければ AppKit の既定で閉じるので、絵の出口
+    /// **確認している間は閉じない。** 繋がなければ AppKit の既定で閉じるので、表示
     /// だけが消えて誰も止まらない ([#826](https://github.com/mokume-metal/mokume/issues/826))。
     ///
-    /// **ウィンドウを畳むのはここではない** — 受け取った側が後始末の順で畳む。
+    /// **ウィンドウを閉じるのはここではない** — 受け取った側が終了処理の順で閉じる。
     ///
     /// - Parameters:
     ///   - message: 見出し。
@@ -195,12 +195,12 @@ public final class SharedFrameWindow {
             then: confirmed)
     }
 
-    /// ウィンドウを出し、区画を見張り始める。
+    /// ウィンドウを出し、ディレクトリの監視を始める。
     public func open() {
         stage.open()
     }
 
-    /// 畳む。
+    /// 閉じる。
     public func close() {
         stage.close()
     }
