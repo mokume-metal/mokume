@@ -21,7 +21,7 @@ SPDX-License-Identifier: MIT
 | --- | --- | --- |
 | スケッチを書く人 | `final class Game: Sketch` と `draw()` | Processing に対応した面 (トップレベル関数・`Image`・`Font`・`Shape`・`Scene` …) |
 | SwiftUI に埋め込む人 | `@main struct …: App` と `SketchView(Game())` | `SketchView` と、その引数に要る型 |
-| 道具・外のパッケージ・検査 | 窓を出さずにスケッチを走らせ、画素を読み、入力を注入する | 実行の土台 (`SketchRuntime` など) |
+| 道具・外のパッケージ・検査 | ウィンドウを出さずにスケッチを走らせ、画素を読み、入力を注入する | 実行の土台 (`SketchRuntime` など) |
 
 1 つの入口がこの 3 者に同じものを読ませるので、次の 2 つが起きていた ([#3814](https://github.com/mokume-metal/mokume/issues/3814))。
 
@@ -44,7 +44,7 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
 
 `SketchRuntime`・`SketchApplication`・`SharedFrameWindow`・`InputState`・`ObservationReport` などは `public` である。[ADR-0027](0027-readable-surfaces.md) 決定 5 は、これらを参照の面 (DocC) から外したうえで「`public` は 1 つも動かさない」と決めた。道具・エージェント・外のパッケージが使えるようにするためである。そのため、文書には出ないが補完には並ぶ。
 
-外のパッケージは実際に使っている。2026-11-08 に手元の clone を数えると、mokume-syphon・mokumesh・probes が `SketchRuntime` を窓なし実行の入口にしていた。3 つに共通する使い方は、起動 (`SketchRuntime(sketch:gpu:)`)・進める (`advance()`)・画素を読む (`target.encodeForDisplay()`)・後始末 (`closePlugins()`) の 4 つで、probes はさらに入力の注入 (`input.enqueue`) と窓の経路 (`SketchApplication(...).run()`) を使う。全員が後始末を手で呼び、内部の部品 `target` を経由して画素を読んでいる。生の部品が、そのまま外への口になっていた。
+外のパッケージは実際に使っている。2026-11-08 に手元の clone を数えると、mokume-syphon・mokumesh・probes が `SketchRuntime` をウィンドウなし実行の入口にしていた。3 つに共通する使い方は、起動 (`SketchRuntime(sketch:gpu:)`)・進める (`advance()`)・画素を読む (`target.encodeForDisplay()`)・後始末 (`closePlugins()`) の 4 つで、probes はさらに入力の注入 (`input.enqueue`) とウィンドウの経路 (`SketchApplication(...).run()`) を使う。全員が後始末を手で呼び、内部の部品 `target` を経由して画素を読んでいる。生の部品が、そのまま外への口になっていた。
 
 ## 決定
 
@@ -54,7 +54,7 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
 | --- | --- | --- |
 | スケッチを書く人 | `import mokume` | いまの面。Processing に対応した名前を手本に寄せて持つ |
 | SwiftUI に埋め込む人 | `import MokumeUI` | `SketchView` と、埋め込みに要る型だけ (決定 2) |
-| 道具・外のパッケージ・検査 | `import MokumeHost` | 窓を出さずにスケッチを走らせる口 (決定 3) |
+| 道具・外のパッケージ・検査 | `import MokumeHost` | ウィンドウを出さずにスケッチを走らせる口 (決定 3) |
 | 本体の中 | なし | 実行の土台の生の部品。`package` に下げる |
 
 **どの読み手にも、要らないものを読ませない。** 入口を分ける基準は、内部の層の割り方 (ADR-0016 決定 1) ではなく、読み手である。読み手ごとの入口は、それぞれ 1 行の import で足りる。ADR-0016 決定 2 の「内部の割り方が書き味に漏れない」は、そのまま保たれる。
@@ -78,22 +78,22 @@ mokume は SwiftUI と同じ名前の型を公開している: `Canvas`・`Circl
 - **寿命は口が持つ。** 抜けたら資源が閉じる形 (`HeadlessRun.with(Game()) { run in … }` など) にし、利用者に後始末を呼ばせない
 - **画素は値で渡す。** 内部の描画先を経由させない
 - **入力は注入の口で受ける**
-- **下限は、外の 3 リポに共通する使い方 (起動・進める・画素・後始末)**。窓を開いて走らせる口まで持つかは、probes の使い方を見て実装の段 ([#3870](https://github.com/mokume-metal/mokume/issues/3870)) で決める
+- **下限は、外の 3 リポに共通する使い方 (起動・進める・画素・後始末)**。ウィンドウを開いて走らせる口まで持つかは、probes の使い方を見て実装の段 ([#3870](https://github.com/mokume-metal/mokume/issues/3870)) で決める
 
 生の部品 (`SketchRuntime` など) は `package` に下げる ([#3871](https://github.com/mokume-metal/mokume/issues/3871))。外のパッケージが `MokumeHost` へ移った後に下げる。
 
-#### 改訂 (2026-11-08) — 窓を開いて走らせる口は持たない ([#3870](https://github.com/mokume-metal/mokume/issues/3870))
+#### 改訂 (2026-11-08) — ウィンドウを開いて走らせる口は持たない ([#3870](https://github.com/mokume-metal/mokume/issues/3870))
 
-**当初の決定は、窓を開いて走らせる口まで `MokumeHost` に持たせるかを、実装の段で probes の使い方を見て決めるとしていた。** 持たせない。`MokumeHost` が持つのは、窓を出さずに走らせる口 `HeadlessRun` だけである。
+**当初の決定は、ウィンドウを開いて走らせる口まで `MokumeHost` に持たせるかを、実装の段で probes の使い方を見て決めるとしていた。** 持たせない。`MokumeHost` が持つのは、ウィンドウを出さずに走らせる口 `HeadlessRun` だけである。
 
-probes が窓の経路 (`SketchApplication(sketch:gpu:).run()`) を使う 5 か所の目的は、既定の入口・2 つ目の窓を開く書き方の再現・`MOKUME_RENDER` を立てた書き出しの再現だった。どれもスケッチを窓で走らせることそのもので、窓の経路の組み方を変えたいわけではない。だから、スケッチを書く人の入口 `Sketch.main()` (`Game.main()`) で書ける。違いは起動に失敗したときの扱い (`SketchApplication(...)` は投げ、`Sketch.main()` は名乗って終わる) だけで、再現の判定には効かない。
+probes がウィンドウの経路 (`SketchApplication(sketch:gpu:).run()`) を使う 5 か所の目的は、既定の入口・2 つ目のウィンドウを開く書き方の再現・`MOKUME_RENDER` を立てた書き出しの再現だった。どれもスケッチをウィンドウで走らせることそのもので、ウィンドウの経路の組み方を変えたいわけではない。だから、スケッチを書く人の入口 `Sketch.main()` (`Game.main()`) で書ける。違いは起動に失敗したときの扱い (`SketchApplication(...)` は投げ、`Sketch.main()` は名乗って終わる) だけで、再現の判定には効かない。
 
-持たせると、窓の外枠を macOS 専用のターゲットに割る決定 ([#3804](https://github.com/mokume-metal/mokume/issues/3804)) の後に、窓なしの道具の入口が AppKit に依存する。`Sketch.main()` はその後も `import mokume` から届く。
+持たせると、ウィンドウの外枠を macOS 専用のターゲットに割る決定 ([#3804](https://github.com/mokume-metal/mokume/issues/3804)) の後に、ウィンドウなしの道具の入口が AppKit に依存する。`Sketch.main()` はその後も `import mokume` から届く。
 
 | probes の箇所 | 移し先 |
 | --- | --- |
 | 既定の入口 (Tumble) | `Tumble.main()` の既定。引数の振り分けは別の `@main` に分ける |
-| 2 つ目の窓の再現 (Imprint) | `First.main()`・`Second.main()`。`Sketch.main()` も 2 つ目を同じく断る |
+| 2 つ目のウィンドウの再現 (Imprint) | `First.main()`・`Second.main()`。`Sketch.main()` も 2 つ目を同じく断る |
 | `MOKUME_RENDER` の再現 (Imprint 2・Clause 1) | `Scene.main()` |
 
 `HeadlessRun.send(_:)` が受ける `InputEvent` は、`MokumeHost` の口の署名に出るので、参照の面に戻した ([ADR-0027](0027-readable-surfaces.md) 決定 5 の表から外す)。差込口と同じく、外のパッケージが読む面がほかに無いためである。

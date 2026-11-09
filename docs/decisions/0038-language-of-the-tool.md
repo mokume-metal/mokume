@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT
 
 ## 文脈
 
-`mokume-cli` の help・エラー・`doctor`・`watch` の進捗と確認ダイアログ・エージェントの窓口が返す説明文、そしてスケッチ実行時に窓へ描かれる速さの名乗り・診断の警告・メニューバーの名乗り・起動失敗の告知は、**すべて日本語で書かれている**。
+`mokume-cli` の help・エラー・`doctor`・`watch` の進捗と確認ダイアログ・エージェントの MCP サーバが返す説明文、そしてスケッチ実行時にウィンドウへ描かれる速さの名乗り・診断の警告・メニューバーの名乗り・起動失敗の告知は、**すべて日本語で書かれている**。
 
 一方で mokume は「スケッチを書いて絵を出す」道具であり、**それを使って作品を作る人は日本語話者に限らない**。道具が日本語しか話さないことは、利用者を言語で選別している。
 
@@ -122,7 +122,7 @@ SPDX-License-Identifier: MIT
 - **文言に依存している検査 118 件が英語の綴りへ動く。** 内訳は `Tests/MokumeCLITests/` が 101、`Tests/MokumeCoreTests/` が 24 (うち偽陽性 7)
 - **`scripts/check-param-declarations.sh` が `grep -qF` で握っている 2 つの綴りは、macro の診断と同じ PR で動かす。** 順序を違えると `make ci-check` と専用機の `render` が落ち、**描画 PR が merge できなくなる**
 - `README.md`・[ADR-0029](0029-post-run-surfaces.md)・`changelog.d/` 4 本に転写された `doctor` の出力例が動く。**断片は消さない** (リリースノートの材料なので中身だけ直す)
-- `Sources/MokumeCore/` は `scripts/drawing-paths.txt` に載っているので、Core の文言を触る変更は描画 PR として扱われる。窓に描かれる文言 (速さの名乗り・メニューバー) は**実際に絵が動く**ので証跡が要り、標準エラーだけに出る文言は `no-visual-change` になる
+- `Sources/MokumeCore/` は `scripts/drawing-paths.txt` に載っているので、Core の文言を触る変更は描画 PR として扱われる。ウィンドウに描かれる文言 (速さの名乗り・メニューバー) は**実際に絵が動く**ので証跡が要り、標準エラーだけに出る文言は `no-visual-change` になる
 - ADR-0027 決定 4 の側にも線を書く (決定 2 が課した「なぜ違うかは両方の場所に書く」の条件)
 - **[ADR-0001](0001-founding-principles.md) 原則 10 は動かさない。** あれはメンテナの実践であって、道具の表示の話ではない
 - 工程は [#1104](https://github.com/mokume-metal/mokume/issues/1104) の sub-issue 9 本に割る。**面ごとに段を分けるので、途中の main には言語が混ざった状態が残る**
