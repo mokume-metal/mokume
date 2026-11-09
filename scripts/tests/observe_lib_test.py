@@ -221,7 +221,7 @@ class PlaceAndAnswerTest(unittest.TestCase):
         calls = iter(range(10**6))
         report = self.observe / "report.json"
         # 応答は 0.05 秒後に置き、待ちの期限は 5 秒 — 100 倍の余裕があり、置くのが遅れても
-        # 期限の内側に収まる (固定の窓に頼る揺れにはならない・#2396)
+        # 期限の内側に収まる (固定のウィンドウに頼る揺れにはならない・#2396)
         later = threading.Timer(0.05, lambda: report.write_text(json.dumps({"id": "a"})))
         later.start()
         self.addCleanup(later.join)
@@ -432,7 +432,7 @@ class RoundtripTest(unittest.TestCase):
         # 応答そのものは返っている — 分けて読めることが要点
         self.assertIn("ok 観測 2/2", proc.stdout)
 
-    # 圧をかける側に渡す窓。検査が 2 件目を見て止めるので、窓が閉じるのを待つことは無い
+    # 圧をかける側に渡すウィンドウ。検査が 2 件目を見て止めるので、ウィンドウが閉じるのを待つことは無い
     PRESSURE_WINDOW_SECONDS = "60"
     # 2 件目が置かれるのを待つ側の期限。越えたら圧をかける側を殺して赤にする
     PLACED_DEADLINE_SECONDS = 15
@@ -440,10 +440,10 @@ class RoundtripTest(unittest.TestCase):
     def test_pressure_keeps_placing_requests(self):
         """識別子を変えながら**続けて**置いていること (1 回で終わっていない) を見る。
 
-        **窓の長さに頼らない** (#2396)。固定の窓 (`limit`) の中で 2 件目が置かれることに頼ると、
-        偽スケッチの応答が窓より遅れただけで赤になる (#1857 で窓を広げても形は残っていた)。
-        圧をかける側には長い窓を渡し、待つ側が期限付きで 2 件目を待ってから止める。応答が
-        1.6 秒遅れる回 (旧来の窓 1.5 秒を越える) も同じ検査で固定する。
+        **ウィンドウの長さに頼らない** (#2396)。固定のウィンドウ (`limit`) の中で 2 件目が置かれることに頼ると、
+        偽スケッチの応答がウィンドウより遅れただけで赤になる (#1857 でウィンドウを広げても形は残っていた)。
+        圧をかける側には長いウィンドウを渡し、待つ側が期限付きで 2 件目を待ってから止める。応答が
+        1.6 秒遅れる回 (旧来のウィンドウ 1.5 秒を越える) も同じ検査で固定する。
         """
         for delay in (0.0, 1.6):
             with self.subTest(answer_delay=delay):
@@ -491,19 +491,19 @@ class RoundtripTest(unittest.TestCase):
             _, stderr = proc.communicate(timeout=10)
         return pressing, elapsed, stderr
 
-    # 短い窓。圧をかける側は窓が閉じたら、いま待っている 1 往復を終えて戻る
+    # 短いウィンドウ。圧をかける側はウィンドウが閉じたら、いま待っている 1 往復を終えて戻る
     SHORT_WINDOW_SECONDS = 0.3
-    # 窓で戻ることを待つ側の期限 (窓の 60 倍余り)。越えたら殺して赤にする。窓を守らない
-    # 退行 (1 往復ごとに期限を延ばす・秒を取り違えて 1000 倍の窓にする) はここで捕まる。
-    # これより細かい比例 (窓の数倍で戻る) は見ない — 混んだ機械の起動の遅れで揺れるため
+    # ウィンドウで戻ることを待つ側の期限 (ウィンドウの 60 倍余り)。越えたら殺して赤にする。ウィンドウを守らない
+    # 退行 (1 往復ごとに期限を延ばす・秒を取り違えて 1000 倍のウィンドウにする) はここで捕まる。
+    # これより細かい比例 (ウィンドウの数倍で戻る) は見ない — 混んだ機械の起動の遅れで揺れるため
     SHORT_WINDOW_DEADLINE_SECONDS = 20
 
     def test_pressure_returns_when_its_window_closes(self):
         """`limit` 秒で戻る口 (`measure-frame-rate.sh` が使う) は、応答を受けながら置き続けても
-        窓を守り、0 で戻る (#2396 の反証)。
+        ウィンドウを守り、0 で戻る (#2396 の反証)。
 
-        偽スケッチはすぐ応答するので、窓の間は識別子を変えながら置き続け、窓が閉じると戻る。
-        **置かれた数の下限は見ない** — 窓の中で何件置けるかは機械の速さで決まり、それに頼ると
+        偽スケッチはすぐ応答するので、ウィンドウの間は識別子を変えながら置き続け、ウィンドウが閉じると戻る。
+        **置かれた数の下限は見ない** — ウィンドウの中で何件置けるかは機械の速さで決まり、それに頼ると
         #2396 の揺れに戻る (続けて置くことは `test_pressure_keeps_placing_requests` が見る)。
         見るのは、期限の内に戻ること・終了コード・置いた識別子が m1 から 1 つずつ変わることである。
         """
@@ -523,7 +523,7 @@ class RoundtripTest(unittest.TestCase):
                 )
             except subprocess.TimeoutExpired as expired:
                 self.fail(
-                    f"窓 {self.SHORT_WINDOW_SECONDS} 秒の圧が {self.SHORT_WINDOW_DEADLINE_SECONDS} 秒で"
+                    f"ウィンドウ {self.SHORT_WINDOW_SECONDS} 秒の圧が {self.SHORT_WINDOW_DEADLINE_SECONDS} 秒で"
                     f"戻らなかった (殺した。置かれた要求 {len(sketch.placed)} 件)\n{expired.stderr}"
                 )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -531,7 +531,7 @@ class RoundtripTest(unittest.TestCase):
         self.assertEqual(sketch.placed, [f"m{i}" for i in range(1, len(sketch.placed) + 1)])
 
     def test_pressure_with_a_closed_window_places_nothing(self):
-        """窓が 0 秒なら 1 件も置かずに 0 で戻る。"""
+        """ウィンドウが 0 秒なら 1 件も置かずに 0 で戻る。"""
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS / "frame_rate_observe.py"), "pressure", str(self.observe), "0"],
             capture_output=True,

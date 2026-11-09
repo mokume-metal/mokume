@@ -8,7 +8,7 @@
 //
 // 使い方:
 //   swift run reference-sketches            一覧
-//   swift run reference-sketches <名前>      窓を開いて走らせる
+//   swift run reference-sketches <名前>      ウィンドウを開いて走らせる
 //   swift run reference-sketches --render <置き場>              1 枚ずつ書き出す
 //   swift run reference-sketches --render <置き場> --frames 150  連番で書き出す (動きの証跡用)
 //
@@ -18,8 +18,8 @@
 //   面の差し替え・ゲームパッドは150枚、周囲の3種類は300枚。各例の冒頭に見る区間がある。
 // - --render は外部接続を除く全例を出す。名前で1例に絞る入口ではないため、枚数を増やすと
 //   全例ぶんの描画時間・PNG保存量が増える。確認したい切り替わりの直後までに留める。
-// - キー・マウス操作、非同期読込の成功後は名前を指定して窓で見る。連番の枚数を増やしても
-//   main actor に読み込み完了を受け取る番は回らない。窓で待つ実時間は固定の入力ではない。
+// - キー・マウス操作、非同期読込の成功後は名前を指定してウィンドウで見る。連番の枚数を増やしても
+//   main actor に読み込み完了を受け取る番は回らない。ウィンドウで待つ実時間は固定の入力ではない。
 // この案内は手動確認用。台帳の45枚目を遅らせたり、新しい必須検査を設けたりはしない。
 
 import AppKit
@@ -58,7 +58,7 @@ if arguments.first == "--render" {
     do {
         let directory = URL(fileURLWithPath: options.directory)
         // 連番で出すのは**動きの証跡のため**。立体は静止画だと向きが読めないことがある。
-        // 観測の経路でも動きは撮れる (#312) が、あちらは走っている窓を外から覗くので間隔が
+        // 観測の経路でも動きは撮れる (#312) が、あちらは走っているウィンドウを外から覗くので間隔が
         // 揃わない。ここは既に決定論でフレームを進めているので、同じ経路から連番を出せば
         // **撮り直しても 1 枚ずつ同じ絵になる** — 参照スケッチの証跡はこちらで採る
         let frames = options.frames
@@ -96,7 +96,7 @@ if arguments.first == "--render" {
 guard let name = arguments.first, let entry = catalogue.first(where: { $0.name == name }) else {
     print("参照スケッチ:")
     for entry in catalogue { print("  \(entry.name)") }
-    print("\n窓を開く: swift run reference-sketches <名前>")
+    print("\nウィンドウを開く: swift run reference-sketches <名前>")
     print("書き出す: swift run reference-sketches --render <置き場> [--frames <枚数>]")
     exit(arguments.isEmpty ? 0 : 2)
 }

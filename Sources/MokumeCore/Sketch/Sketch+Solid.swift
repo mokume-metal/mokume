@@ -14,11 +14,11 @@ extension SketchPart {
     /// func draw() {
     ///     background(20, 23, 31)
     ///     fill(242, 115, 76)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     rotateY(0.6)
-    ///     box(120)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         rotateY(0.6)
+    ///         box(120)
+    ///     }
     /// }
     /// ```
     ///
@@ -197,9 +197,8 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// - Note: 同じ形は ``push(fileID:line:)`` / ``scale(_:_:_:)`` / ``sphere(_:detail:)`` / ``pop(fileID:line:)``
-    ///   でも作れるが、そちらは**置き場所の変換を動かす**ので、後続へ残さないよう
-    ///   挟む必要がある。`ellipsoid` は形の側が半径を持つので変換は汚れない。
+    /// - Note: 同じ形は ``scale(_:_:_:)`` と ``sphere(_:detail:)`` でも作れるが、そちらは**置き場所の変換を動かす**ので、
+    ///   後続へ残さないよう ``push(_:)`` の閉包で包む必要がある。`ellipsoid` は形の側が半径を持つので変換は汚れない。
     ///
     /// - Parameters:
     ///   - x: 横の半径 (画素)。

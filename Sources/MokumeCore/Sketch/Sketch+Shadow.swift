@@ -14,15 +14,15 @@ extension SketchPart {
     ///     shadows(true)
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
-    ///     push()
-    ///     translate(width / 2, height * 0.8, 0)
-    ///     box(400, 10, 400)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height * 0.8, 0)
+    ///         box(400, 10, 400)
+    ///     }
     ///     castShadow(true)
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     sphere(80)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         sphere(80)
+    ///     }
     /// }
     /// ```
     ///
@@ -71,16 +71,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -92,7 +92,7 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
-    // shot: 1 snippet=1a72b4f9
+    // shot: 1 snippet=bf04d9b0 image=a9cb98156acb92ed
     public func shadows(_ enabled: Bool) { liveCanvas()?.shadows(enabled) }
 
     /// 影を焼き付ける範囲の一辺 (世界の長さ)。
@@ -124,16 +124,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -144,7 +144,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=10cc6754
+    // shot: 1 snippet=43739575 image=623cb5aed45c4033
     public func shadowRange(_ size: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let size = size.asFloat
@@ -178,16 +178,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -199,7 +199,7 @@ extension SketchPart {
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。毎フレーム
     ///   同じ数を書いても焼き付け先は作り直さないので、繰り返しの負担にはならない。
-    // shot: 1 snippet=6803da11
+    // shot: 1 snippet=b96fdb99 image=2b60dd163540d495
     public func shadowDetail(_ size: Int) { liveCanvas()?.shadowDetail(size) }
 
     /// 影の縁の破綻を抑える量。既定は `0.0025`。
@@ -225,16 +225,16 @@ extension SketchPart {
     ///     // 床は受けるだけにしておく (自分の影が自分に出ない)
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     castShadow(true)
     ///     fill(242, 115, 64)
-    ///     push()
-    ///     translate(180, 120, 20)
-    ///     sphere(75)
-    ///     pop()
+    ///     push {
+    ///         translate(180, 120, 20)
+    ///         sphere(75)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -245,7 +245,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=704ae6de
+    // shot: 1 snippet=0e1f79e7 image=f1fae51318cac318
     public func shadowBias(_ amount: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let amount = amount.asFloat
@@ -270,18 +270,18 @@ extension SketchPart {
     ///     noStroke()
     ///     castShadow(false)
     ///     fill(191, 191, 199)
-    ///     push()
-    ///     translate(200, 250, -20)
-    ///     box(400, 8, 300)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 250, -20)
+    ///         box(400, 8, 300)
+    ///     }
     ///     // 左の球だけが影を落とす
     ///     fill(242, 115, 64)
     ///     for (index, casts) in [true, false].enumerated() {
     ///         castShadow(casts)
-    ///         push()
-    ///         translate(130 + Float(index) * 145, 120, 20)
-    ///         sphere(60)
-    ///         pop()
+    ///         push {
+    ///             translate(130 + Float(index) * 145, 120, 20)
+    ///             sphere(60)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -293,7 +293,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=95162799
+    // shot: 1 snippet=9655f2ff image=285835f143b26b0e
     public func castShadow(_ enabled: Bool) { liveCanvas()?.castShadow(enabled) }
 
     /// これから置く形が、影を受ける側か。既定は受ける。
@@ -314,20 +314,20 @@ extension SketchPart {
     ///     fill(191, 191, 199)
     ///     for (index, receives) in [true, false].enumerated() {
     ///         receiveShadow(receives)
-    ///         push()
-    ///         translate(102 + Float(index) * 196, 250, -20)
-    ///         box(188, 8, 300)
-    ///         pop()
+    ///         push {
+    ///             translate(102 + Float(index) * 196, 250, -20)
+    ///             box(188, 8, 300)
+    ///         }
     ///     }
     ///     receiveShadow(true)
     ///     // 球は 2 つとも同じように落とす
     ///     castShadow(true)
     ///     fill(242, 115, 64)
     ///     for index in 0..<2 {
-    ///         push()
-    ///         translate(135 + Float(index) * 145, 120, 20)
-    ///         sphere(60)
-    ///         pop()
+    ///         push {
+    ///             translate(135 + Float(index) * 145, 120, 20)
+    ///             sphere(60)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -339,6 +339,6 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 影は**フレームを越えない**。`draw()` の中で毎フレーム書く。
-    // shot: 1 snippet=86dc1877
+    // shot: 1 snippet=2200c66c image=af7451af594f9721
     public func receiveShadow(_ enabled: Bool) { liveCanvas()?.receiveShadow(enabled) }
 }

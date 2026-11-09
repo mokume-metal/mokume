@@ -55,20 +55,20 @@ final class AlphaAndLayers: Sketch {
                     fill(235)
                     text("alpha \(alpha) | \(reverse == 0 ? "A > B" : "B > A")", left + 20, top + 12)
                     for column in 0..<2 {
-                        push()
-                        translate(left + (column == 0 ? 20 : 210), top + 18)
-                        backing(backgroundIndex)
-                        if column == 0 {
-                            content(alpha, reverse: reverse == 1)
-                        } else if let pad {
-                            draw(into: pad) {
-                                background(0, 0)
+                        push {
+                            translate(left + (column == 0 ? 20 : 210), top + 18)
+                            backing(backgroundIndex)
+                            if column == 0 {
                                 content(alpha, reverse: reverse == 1)
+                            } else if let pad {
+                                draw(into: pad) {
+                                    background(0, 0)
+                                    content(alpha, reverse: reverse == 1)
+                                }
+                                noTint()
+                                image(pad, 0, 0)
                             }
-                            noTint()
-                            image(pad, 0, 0)
                         }
-                        pop()
                     }
                 }
             }

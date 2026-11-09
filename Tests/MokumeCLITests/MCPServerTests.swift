@@ -8,9 +8,9 @@ import mokume
 
 @testable import MokumeCLI
 
-@Suite("エージェントの窓口")
+@Suite("エージェントの MCP サーバ")
 struct MCPServerTests {
-    /// やりとりを記録する窓口を組む。
+    /// やりとりを記録する MCP サーバを組む。
     ///
     /// 待ちの上限は短くしてある。道具を走らせてしまう誤り (#2317) を、検査が既定の
     /// 5 秒を待たずに見られるようにするため。
@@ -23,7 +23,7 @@ struct MCPServerTests {
         return (server, recorder)
     }
 
-    /// 窓口の読みは別の手で走る (#2355) ので、読みと書きは鍵の内側に置く。
+    /// MCP サーバの読みは別の手で走る (#2355) ので、読みと書きは鍵の内側に置く。
     nonisolated final class Recorder: @unchecked Sendable {
         private let lock = NSLock()
         private var lines: [String]
@@ -74,13 +74,13 @@ struct MCPServerTests {
         let result = try decode(try #require(recorder.written.first))["result"] as? [String: Any]
         #expect(result?["protocolVersion"] as? String == MCPServer.protocolVersion)
         #expect((result?["capabilities"] as? [String: Any])?["tools"] != nil)
-        // 繋いだ側が「古い窓口に繋がっている」と気付ける唯一の手掛かり (#634)
+        // 繋いだ側が「古い MCP サーバに繋がっている」と気付ける唯一の手掛かり (#634)
         let info = result?["serverInfo"] as? [String: Any]
         #expect(info?["version"] as? String == ToolVersion.describe())
         #expect(info?["version"] as? String != "0")
     }
 
-    /// `initialize` を 1 回送った応えの `result` と、窓口が書いた行の数。
+    /// `initialize` を 1 回送った応えの `result` と、MCP サーバが書いた行の数。
     private func initialize(
         package: URL, beforeServing: () throws -> Void = {}
     ) throws -> (result: [String: Any], lines: Int) {
@@ -95,7 +95,7 @@ struct MCPServerTests {
         return (try #require(result), recorder.written.count)
     }
 
-    @Test("スケッチでない場所で立てた窓口は、挨拶の `instructions` で場所と起こし直す手を名乗る")
+    @Test("スケッチでない場所で立てた MCP サーバは、挨拶の `instructions` で場所と起こし直す手を名乗る")
     func introducesItselfOutsideASketch() throws {
         let place = try makePlace(sketch: false)
         defer { try? FileManager.default.removeItem(at: place) }
@@ -109,7 +109,7 @@ struct MCPServerTests {
         #expect(lines == 1)
     }
 
-    @Test("スケッチの場所で立てた窓口は、挨拶の `instructions` で場所だけを名乗る")
+    @Test("スケッチの場所で立てた MCP サーバは、挨拶の `instructions` で場所だけを名乗る")
     func introducesItselfInsideASketch() throws {
         let place = try makeSketch()
         defer { try? FileManager.default.removeItem(at: place) }
@@ -127,7 +127,7 @@ struct MCPServerTests {
     }
 
     /// **名乗る事実は組んだ時点の ``InterfacePlace`` で、後から追わない** (#2797・#2487)。
-    @Test("窓口を立てた後に `Package.swift` が置かれても、名乗りは立てた時点のまま")
+    @Test("MCP サーバを立てた後に `Package.swift` が置かれても、名乗りは立てた時点のまま")
     func introductionDoesNotFollowLaterChanges() throws {
         let place = try makePlace(sketch: false)
         defer { try? FileManager.default.removeItem(at: place) }
@@ -154,7 +154,7 @@ struct MCPServerTests {
         #expect(tools.allSatisfy { ($0["description"] as? String)?.isEmpty == false })
     }
 
-    /// 取り消しは窓口の待ちだけを切り、置いた列はスケッチが撮り終えるまで区画を塞ぐ (#3030・ADR-0018 決定 3)。
+    /// 取り消しは MCP サーバの待ちだけを切り、置いた列はスケッチが撮り終えるまで区画を塞ぐ (#3030・ADR-0018 決定 3)。
     /// 呼び手が取り消してよいかを決める道具の説明に、その決まりが書かれていること。
     @Test("observe の説明は、取り消しが待ちだけを切り、次の呼び出しが撮り終えた後ろで待つことを名乗る")
     func observeDescriptionSaysCancellationOnlyEndsTheWait() {
@@ -362,7 +362,7 @@ struct MCPServerTests {
         let (server, recorder) = makeServer(
             directory: try makeDirectory(),
             input: [
-                // 窓口は自分から要求を出さないので、届く応答は残らず余分なもの。誤りを返すと、
+                // MCP サーバは自分から要求を出さないので、届く応答は残らず余分なもの。誤りを返すと、
                 // 相手の id の空間に別の答えが紛れうる (JSON-RPC 2.0 は応答に答えない)
                 #"{"jsonrpc":"2.0","id":1,"result":{}}"#,
                 #"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"no"}}"#,
@@ -480,7 +480,7 @@ struct MCPServerTests {
         #expect(idOf(answers[2]) == "3")
     }
 
-    @Test("id のある tools/call は、窓口越しに道具を走らせ、その id で結果を返す")
+    @Test("id のある tools/call は、MCP サーバ越しに道具を走らせ、その id で結果を返す")
     func runsAToolForACall() throws {
         let directory = try makeDirectory()
         // スケッチ側の応答を待たずに済む道具を選ぶ (作り直しの記録を読むだけ)
@@ -629,7 +629,7 @@ struct MCPServerTests {
 
     @Test("区画の基準が割れているときの手も、どちらの案内にも出る")
     func namesTheFacetBaseInBothAnswers() throws {
-        // #380 の着手条件 2 — watch と窓口で MOKUME_WORK_DIR が食い違うと、両者は別の区画を
+        // #380 の着手条件 2 — watch と MCP サーバで MOKUME_WORK_DIR が食い違うと、両者は別の区画を
         // 見る。症状は上の 2 本と同じ「誰も応えない」でしかないのに、**起動し直しても直らない**。
         // 手元で踏むと、案内どおり起動し直した先で「まだ立ち上がっていない」と言われる
         // (watch は走っているのに、である)。だから基準は両方の案内に出す
@@ -646,7 +646,7 @@ struct MCPServerTests {
                 packageDirectory: split, makeID: { "fixed" })
             let outcome = tools.call("observe", arguments: [:])
             #expect(outcome.isError)
-            // 窓口が見ている基準そのもの — watch が名乗る 1 行と突き合わせられる
+            // MCP サーバが見ている基準そのもの — watch が名乗る 1 行と突き合わせられる
             #expect(outcome.text.contains(directory.path))
             // 何がそれを決めたか。これが無いと、どちらを直せばよいか分からない
             #expect(outcome.text.contains("MOKUME_WORK_DIR"))
@@ -654,9 +654,9 @@ struct MCPServerTests {
             #expect(outcome.text.contains("Restarting will not fix that one"))
             // 一覧への辿り口 (読む時点ごとに文面を書き足す形にしない)
             #expect(outcome.text.contains(Tools.startupDocument))
-            // **MOKUME_WORK_DIR があれば、窓口をどこで立てたかは応えない原因にならない** (#2487)。
+            // **MOKUME_WORK_DIR があれば、MCP サーバをどこで立てたかは応えない原因にならない** (#2487)。
             // パッケージの場所 (`split`) に Package.swift は無いが、区画の基準は場所に依らないので、
-            // 4 つ目 (スケッチでない場所) も、2 の「窓口をスケッチの場所で起こす」手も出さない
+            // 4 つ目 (スケッチでない場所) も、2 の「MCP サーバをスケッチの場所で起こす」手も出さない
             #expect(outcome.text.contains("three possibilities"), "\(outcome.text)")
             #expect(!outcome.text.contains("4. "), "\(outcome.text)")
             #expect(!outcome.text.contains(InterfacePlace.notASketchHeading))
@@ -706,9 +706,9 @@ struct MCPServerTests {
         #expect(!outcome.text.contains(".mokume/observe"))
     }
 
-    // MARK: - スケッチでない場所で立てた窓口 (#2487)
+    // MARK: - スケッチでない場所で立てた MCP サーバ (#2487)
 
-    /// 窓口を立てる場所。`sketch` なら中身の無い `Package.swift` を置く。
+    /// MCP サーバを立てる場所。`sketch` なら中身の無い `Package.swift` を置く。
     private func makePlace(sketch: Bool) throws -> URL {
         let place = try makeDirectory()
         if sketch {
@@ -725,7 +725,7 @@ struct MCPServerTests {
 
     /// 区画へ往復する道具 (`roundTrip` を通る口のすべて) を、誰も走っていない区画で呼ぶ。
     ///
-    /// **区画の基準 (`base`) と窓口を立てた場所 (`package`) を別々に渡せる** — 判定がどちらの
+    /// **区画の基準 (`base`) と MCP サーバを立てた場所 (`package`) を別々に渡せる** — 判定がどちらの
     /// 軸を見ているかを、検査が固定できるようにする。
     private func callUnanswered(
         _ tool: String, base: URL, package: URL, given: Bool = false, facetExisted: Bool = false
@@ -743,17 +743,17 @@ struct MCPServerTests {
         return tools.call(tool, arguments: arguments)
     }
 
-    /// **スケッチでない場所で立てた窓口は、応えないときにそのことと起こし直す手を言う**
+    /// **スケッチでない場所で立てた MCP サーバは、応えないときにそのことと起こし直す手を言う**
     /// ([#2487](https://github.com/mokume-metal/mokume/issues/2487))。`claude mcp add mokume -- mokume mcp`
     /// は打った場所で起こすので、`Package.swift` の無い場所でも立つ (#2321 の決定で受ける)。
     /// そこでは区画の基準もその場所になり、自分の場所で走るスケッチとは噛み合わない。
     ///
     /// 区画は今どおり作る (案 B)。組み上げた実行ファイルをこの場所から起こした使い方は正しく
     /// 繋がるので、断らずに 4 つ目の可能性として足す。**答えの中の 1・2 も同じ事実から組む** —
-    /// 「窓口の場所 = スケッチの場所」のまま 1 行だけ足すと、1 (起動し直せば区画を拾う) と
+    /// 「MCP サーバの場所 = スケッチの場所」のまま 1 行だけ足すと、1 (起動し直せば区画を拾う) と
     /// 基準の 1 行 (スケッチの場所を使っている) が 4 と食い違う。
     @Test(
-        "スケッチでない場所で立てた窓口は、応えないとき Package.swift が無いことと mcp <sketch directory> の手を答え、1・2 もその場所の話として言う",
+        "スケッチでない場所で立てた MCP サーバは、応えないとき Package.swift が無いことと mcp <sketch directory> の手を答え、1・2 もその場所の話として言う",
         arguments: ["observe", "input"], [false, true])
     func tellsWhenStartedOutsideASketch(tool: String, facetExisted: Bool) throws {
         let place = try makePlace(sketch: false)
@@ -768,7 +768,7 @@ struct MCPServerTests {
         #expect(text.contains("4. \(InterfacePlace.notASketchHeading)"), "\(text)")
         #expect(text.contains("There is no Package.swift in \(place.path)"), "\(text)")
         #expect(text.contains("\(Command.name) mcp <sketch directory>"), "\(text)")
-        // 1 — 窓口の場所の話として言う。スケッチの場所の言い方 (起動し直せば拾う) を言わない
+        // 1 — MCP サーバの場所の話として言う。スケッチの場所の言い方 (起動し直せば拾う) を言わない
         if facetExisted {
             #expect(text.contains("1. Nothing started from this interface's directory is running"))
             #expect(!text.contains("1. Nothing is running yet"))
@@ -780,7 +780,7 @@ struct MCPServerTests {
             // 区画を作った回は、作ったことを名乗る (当初の完了条件 2 の「作ったことを名乗る」)
             #expect(text.contains("this call created it"))
         }
-        // 2 — 基準の 1 行は「スケッチの場所」と言い切らない。窓口をスケッチの場所で起こす手を載せる
+        // 2 — 基準の 1 行は「スケッチの場所」と言い切らない。MCP サーバをスケッチの場所で起こす手を載せる
         #expect(text.contains("2. The interface and the sketch disagree on the facet base"))
         #expect(!text.contains("sketch's own directory"), "\(text)")
         #expect(text.contains("using the directory it was started for"))
@@ -789,12 +789,12 @@ struct MCPServerTests {
         #expect(text.contains("3. The mokume the sketch depends on"))
     }
 
-    /// 裏側。**スケッチの場所で立てた窓口では、4 つ目を出さず、1 はスケッチの言い方のまま。**
-    /// 2 の「窓口をスケッチの場所で起こす」手は、`MOKUME_WORK_DIR` が無ければここでも載る —
-    /// 本当の条件は区画の基準が割れていることで、別のスケッチの場所で立った窓口も同じ形で
+    /// 裏側。**スケッチの場所で立てた MCP サーバでは、4 つ目を出さず、1 はスケッチの言い方のまま。**
+    /// 2 の「MCP サーバをスケッチの場所で起こす」手は、`MOKUME_WORK_DIR` が無ければここでも載る —
+    /// 本当の条件は区画の基準が割れていることで、別のスケッチの場所で立った MCP サーバも同じ形で
     /// 割れるため (`Package.swift` の有無はその代理でしかない)。
     @Test(
-        "スケッチの場所で立てた窓口の案内は、従来どおりの 3 つで、4 つ目を足さない",
+        "スケッチの場所で立てた MCP サーバの案内は、従来どおりの 3 つで、4 つ目を足さない",
         arguments: ["observe", "input"], [false, true])
     func keepsTheThreePossibilitiesInASketch(tool: String, facetExisted: Bool) throws {
         let place = try makeSketch()
@@ -817,10 +817,10 @@ struct MCPServerTests {
         #expect(text.contains("\(Command.name) mcp <sketch directory>"))
     }
 
-    /// **`MOKUME_WORK_DIR` があれば、窓口をどこで立てたかは応えない原因にならない** — 区画の
+    /// **`MOKUME_WORK_DIR` があれば、MCP サーバをどこで立てたかは応えない原因にならない** — 区画の
     /// 基準が場所に依らないので、4 つ目も 2 の場所の手も出さず、1 はスケッチの言い方のまま。
     @Test(
-        "MOKUME_WORK_DIR があれば、スケッチでない場所で立てた窓口でも 4 つ目を出さない",
+        "MOKUME_WORK_DIR があれば、スケッチでない場所で立てた MCP サーバでも 4 つ目を出さない",
         arguments: ["observe", "input"])
     func noFourthWhenTheWorkDirectoryIsGiven(tool: String) throws {
         let base = try makeDirectory()
@@ -841,10 +841,10 @@ struct MCPServerTests {
         #expect(text.contains("pointed at by MOKUME_WORK_DIR"))
     }
 
-    /// **判定は「窓口を立てた場所」の軸で見る。区画の基準の軸ではない** (#2487 の反証 5)。
+    /// **判定は「MCP サーバを立てた場所」の軸で見る。区画の基準の軸ではない** (#2487 の反証 5)。
     /// 本番では `MOKUME_WORK_DIR` が無ければ 2 つは同じ場所に重なるので、重ねたままの検査では
     /// 区画の基準を見る誤りも緑になる。ここは軸を固定するために、あえて 2 つをずらして組む。
-    @Test("スケッチかどうかは、区画の基準ではなく窓口を立てた場所で決まる")
+    @Test("スケッチかどうかは、区画の基準ではなく MCP サーバを立てた場所で決まる")
     func judgesThePlaceWhereTheInterfaceWasStarted() throws {
         let sketch = try makeSketch()
         let elsewhere = try makePlace(sketch: false)
@@ -852,10 +852,10 @@ struct MCPServerTests {
             try? FileManager.default.removeItem(at: sketch)
             try? FileManager.default.removeItem(at: elsewhere)
         }
-        // 区画の基準はスケッチ、窓口を立てた場所はスケッチでない → 4 つ目が出る
+        // 区画の基準はスケッチ、MCP サーバを立てた場所はスケッチでない → 4 つ目が出る
         let outside = try callUnanswered("observe", base: sketch, package: elsewhere)
         #expect(outside.text.contains("There is no Package.swift in \(elsewhere.path)"), "\(outside.text)")
-        // 区画の基準はスケッチでない、窓口を立てた場所はスケッチ → 出ない
+        // 区画の基準はスケッチでない、MCP サーバを立てた場所はスケッチ → 出ない
         let inside = try callUnanswered("observe", base: elsewhere, package: sketch)
         #expect(!inside.text.contains(InterfacePlace.notASketchHeading), "\(inside.text)")
 
@@ -876,7 +876,7 @@ struct MCPServerTests {
     /// 言うと、走っている `watch` を探しに行かせる。**ただし組み上げた実行ファイルをその場所から
     /// 起こす使い方では作り直しが無いので、そう言い分ける** (反証 8)。`MOKUME_WORK_DIR` があれば
     /// 記録の在処は場所に依らないので添えない。
-    @Test("スケッチでない場所で立てた窓口は、作り直しの記録が無いときも、起こし直す手を添える")
+    @Test("スケッチでない場所で立てた MCP サーバは、作り直しの記録が無いときも、起こし直す手を添える")
     func buildStatusTellsWhenStartedOutsideASketch() throws {
         for (sketch, given, expected) in [(false, false, true), (true, false, false), (false, true, false)] {
             let place = try makePlace(sketch: sketch)
@@ -900,7 +900,7 @@ struct MCPServerTests {
     /// `Package.resolved` も無いので版は引けないが、その理由を「パスで mokume を指しているとき」
     /// とだけ言うと、原因を取り違えさせる。**取りに行けない回は場所のせいではないので添えない**
     /// (反証 9)。
-    @Test("スケッチでない場所で立てた窓口は、公開 API の一覧の版が引けないときだけ、起こし直す手を添える")
+    @Test("スケッチでない場所で立てた MCP サーバは、公開 API の一覧の版が引けないときだけ、起こし直す手を添える")
     func apiReferenceTellsWhenStartedOutsideASketch() throws {
         for sketch in [false, true] {
             let place = try makePlace(sketch: sketch)
@@ -931,10 +931,10 @@ struct MCPServerTests {
         #expect(!outcome.text.contains(InterfacePlace.notASketchHeading), "\(outcome.text)")
     }
 
-    /// 兄弟 — **区画を置けなかった回も、場所の手を添える** (反証 1)。窓口は在る場所なら受けるので、
+    /// 兄弟 — **区画を置けなかった回も、場所の手を添える** (反証 1)。MCP サーバは在る場所なら受けるので、
     /// 読み取り専用の場所でも立つ。書き込めるか・容量・`MOKUME_WORK_DIR` だけを言うと、場所を
     /// 渡す手が抜ける。スケッチの場所なら、従来どおりの答えのまま。
-    @Test("スケッチでない書けない場所で立てた窓口は、置けなかったときも起こし直す手を添える")
+    @Test("スケッチでない書けない場所で立てた MCP サーバは、置けなかったときも起こし直す手を添える")
     func unwritablePlaceTellsWhenStartedOutsideASketch() throws {
         for sketch in [false, true] {
             let place = try makePlace(sketch: sketch)
@@ -984,8 +984,8 @@ struct MCPServerTests {
         #expect(request["scale"] as? Double == 0.5)
     }
 
-    /// スキーマの外の組は窓口の外から届きうる (エージェントがスキーマを守るとは限らない)。
-    /// 丸めずに掛けると Int が溢れ、窓口のプロセスごと落ちる (#2045)。
+    /// スキーマの外の組は MCP サーバの外から届きうる (エージェントがスキーマを守るとは限らない)。
+    /// 丸めずに掛けると Int が溢れ、MCP サーバのプロセスごと落ちる (#2045)。
     @Test("スキーマの外の枚数・間隔でも、待ちの見積もりは撮る側が丸めた組で数えて溢れない")
     func extraWaitClampsLikeTheShootingSide() {
         let (top, step) = (ObservationRequest.maximumCount, ObservationRequest.maximumEvery)
@@ -1274,7 +1274,7 @@ struct MCPServerTests {
         #expect(found?.path == consumer.schemas.path)
     }
 
-    /// **`schemasMissing` が勧める `run` / `watch` の産物を、窓口が見つけられる** (#3419)。
+    /// **`schemasMissing` が勧める `run` / `watch` の産物を、MCP サーバが見つけられる** (#3419)。
     /// 共有の置き場 (`<根>/swiftlang-*/<版>`) に `workspace-state.json` があれば、スケッチ直下に
     /// `.build/` が無くても仕様を引ける。
     @Test("共有の置き場でビルドしたスケッチの仕様を、スケッチ直下に .build が無くても読む")
@@ -1413,7 +1413,7 @@ struct MCPServerTests {
 
     // ---------------------------------------------------------- 基準ディレクトリ
 
-    /// **場所は在るものを渡す** — 窓口は在らない場所を断る (#2321)。区画の基準
+    /// **場所は在るものを渡す** — MCP サーバは在らない場所を断る (#2321)。区画の基準
     /// (`elsewhere`) は在らなくてよい: スケッチが書くときに作る。
     @Test("区画は環境変数が決め、パッケージの場所は引数が決める")
     func splitsTheFacetBaseFromThePackageDirectory() throws {
@@ -1500,8 +1500,8 @@ struct MCPServerTests {
 
     // ---------------------------------------------------------- 引数の解き方 (#2321)
 
-    /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。窓口だけが
-    /// 最初の引数をそのまま場所にしていて、`mcp --help` は `--help` という場所の窓口として
+    /// **引数を取る口は、共有の解き手を通す** (`Arguments.parse`・#680・#814)。MCP サーバだけが
+    /// 最初の引数をそのまま場所にしていて、`mcp --help` は `--help` という場所の MCP サーバとして
     /// 標準入力を待っていた ([#2321](https://github.com/mokume-metal/mokume/issues/2321))。
     /// 断る文面は `run --version` と同じ形 (`Unknown option: …`。全体の使い方は付けない・#3425)。
     /// `--help` / `-h` は断らず、ヘルプの頼みとして止まる (下の `helpIsAskedNotRefused`)。
@@ -1519,7 +1519,7 @@ struct MCPServerTests {
         #expect(text == "Unknown option: \(option)", "知らない選択肢を名指していない: \(text)")
     }
 
-    /// **`--help` / `-h` は誤りではなく、ヘルプの頼み** (#3425)。窓口を回す前に止まる。
+    /// **`--help` / `-h` は誤りではなく、ヘルプの頼み** (#3425)。MCP サーバを回す前に止まる。
     @Test("--help と -h は、ヘルプの頼みとして止まる", arguments: ["--help", "-h"])
     func helpIsAskedNotRefused(option: String) throws {
         let root = try makeDirectory()
@@ -1589,12 +1589,12 @@ struct MCPServerTests {
         #expect(typedHere.package.path == root.path)
     }
 
-    /// **口そのものが、窓口を回す (標準入力を読む) 前に止まる。** 回す手続きを差し替えて、
+    /// **口そのものが、MCP サーバを回す (標準入力を読む) 前に止まる。** 回す手続きを差し替えて、
     /// 回されたかを見る — 本物を回すと、検査が標準入力を待って固まる。
     ///
     /// **掃除の置き場も差し替える** (#3298)。既定の共有の一時の場所は、他のプロセスや過去の実行が
     /// 積んだ項目の全体 (数万になりうる) を走査する。ここは引数の検査で、その中身に左右されない。
-    @Test("引数の誤りでは、口は窓口を回さずに止まる")
+    @Test("引数の誤りでは、口は MCP サーバを回さずに止まる")
     func theDoorStopsBeforeServing() throws {
         let root = try makeDirectory()
         let scratch = try makeDirectory()
@@ -1607,7 +1607,7 @@ struct MCPServerTests {
             #expect(throws: CommandFailure.self, "\(arguments) で止まらなかった") {
                 try MCPCommand.run(arguments, scratch: scratch) { _ in served = true }
             }
-            #expect(!served, "\(arguments) で窓口を回した")
+            #expect(!served, "\(arguments) で MCP サーバを回した")
         }
         // 裏側: 在る場所なら回す
         var served = false
@@ -1617,8 +1617,8 @@ struct MCPServerTests {
 
     /// **回収の保証は、口が持つ** (#3298・条件 3)。`sweepStale` 単体の検査 (`ObservationCopyTests`) は、
     /// 口がそれを呼ぶことまでは見ない — 口から掃除を外しても緑のままだった。渡した置き場の中の
-    /// 古い置き場だけを、口が窓口を回す前に消す。
-    @Test("窓口が立つときに、渡した置き場の持ち主の居ない古い写しの置き場を掃く")
+    /// 古い置き場だけを、口が MCP サーバを回す前に消す。
+    @Test("MCP サーバが立つときに、渡した置き場の持ち主の居ない古い写しの置き場を掃く")
     func theDoorSweepsTheGivenScratchBeforeServing() throws {
         let root = try makeDirectory()
         let scratch = try makeDirectory()
@@ -1636,7 +1636,7 @@ struct MCPServerTests {
         try MCPCommand.run([root.path], scratch: scratch) { _ in
             sweptBeforeServing = !FileManager.default.fileExists(atPath: dead.path)
         }
-        #expect(sweptBeforeServing == true, "窓口を回す前に、持ち主の居ない置き場を掃かなかった")
+        #expect(sweptBeforeServing == true, "MCP サーバを回す前に、持ち主の居ない置き場を掃かなかった")
         #expect(FileManager.default.fileExists(atPath: mine.path), "生きている持ち主の置き場を消した")
         #expect(FileManager.default.fileExists(atPath: unrelated.path), "写しの置き場でない項目を消した")
     }
@@ -1655,7 +1655,7 @@ struct MCPServerTests {
         #expect(MCPCommand.scratchToSweep(given: given) == given)
     }
 
-    /// 引数の誤りでは、掃除まで進まない (在らない場所に窓口を立てる前に断る)。
+    /// 引数の誤りでは、掃除まで進まない (在らない場所に MCP サーバを立てる前に断る)。
     @Test("引数の誤りでは、置き場を掃かない")
     func aWrongArgumentSweepsNothing() throws {
         let scratch = try makeDirectory()
@@ -2600,7 +2600,7 @@ struct MCPServerTests {
         func advance(_ seconds: TimeInterval) { date = date.addingTimeInterval(seconds) }
     }
 
-    /// 反証 2: 覚えた失敗には期限がある。リリース直後は資産が数分 404 になるので、その窓で引いた失敗を
+    /// 反証 2: 覚えた失敗には期限がある。リリース直後は資産が数分 404 になるので、そのウィンドウで引いた失敗を
     /// 寿命の間ずっと覚えると、資産が付いた後も 404 のままになる。
     @Test("覚えた詳細の失敗は、期限の前は打ち直さず、期限が過ぎたら取りに行く")
     func forgetsADetailsFailureAfterTheLimit() throws {
@@ -2940,12 +2940,12 @@ struct MCPServerTests {
     }
 }
 
-/// 区画へ置けなかったときに、窓口が何を返すか。
+/// 区画へ置けなかったときに、MCP サーバが何を返すか。
 ///
-/// `Facets.exchange` は untyped `throws` だったので、窓口は `\(error)` をそのまま
+/// `Facets.exchange` は untyped `throws` だったので、MCP サーバは `\(error)` をそのまま
 /// 返していた — `NSCocoaErrorDomain Code=513 …` がエージェントへ届いていたということで、
 /// `CommandFailure` が「**どの失敗にも次に何をすればよいかを書く**」と宣言している
-/// のに、窓口の 2 箇所だけがその規律の外だった ([#994](https://github.com/mokume-metal/mokume/issues/994) の 6)。
+/// のに、MCP サーバの 2 箇所だけがその規律の外だった ([#994](https://github.com/mokume-metal/mokume/issues/994) の 6)。
 @Suite("区画へ置けなかったとき")
 struct FacetExchangeFailureTests {
     /// 親がファイルなので、区画のディレクトリを作れない置き場。
@@ -2976,7 +2976,7 @@ struct FacetExchangeFailureTests {
         #expect(!failure.message.hasPrefix("Error Domain="))
     }
 
-    @Test("窓口の答えにも、打つ手が出る")
+    @Test("MCP サーバの答えにも、打つ手が出る")
     func theWindowPassesTheAdviceOn() throws {
         let tools = Tools(facets: Facets(directory: try blockedPlace()), makeID: { "x" })
         let outcome = tools.call("observe", arguments: [:])

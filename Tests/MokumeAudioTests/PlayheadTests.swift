@@ -8,7 +8,7 @@ import Testing
 /// 再生位置の移り変わり (#1979)。純粋な型なので、機材も GPU も要らない。
 @Suite("再生位置")
 nonisolated struct PlayheadTests {
-    /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本の窓 (古い順)。止まっていれば全部 0。標本の決まりは
+    /// 区切りの中で `played` 標本鳴ったところで終わる、`size` 標本のウィンドウ (古い順)。止まっていれば全部 0。標本の決まりは
     /// ``Playhead/sample(at:in:)`` — 区間 (``Playhead/span(of:from:after:)``) と同じ。
     private func windowOf(_ head: Playhead, after played: Int, size: Int) -> [Float] {
         guard head.isPlaying else { return [Float](repeating: 0, count: size) }
@@ -16,8 +16,8 @@ nonisolated struct PlayheadTests {
         return (0..<size).map { head.sample(at: end - size + $0, in: indices) }
     }
 
-    /// 標本の値が「位置 + 1」になる列 (1, 2, 3, …)。窓を見れば、どこを切り出したかが読める。
-    /// 0 を含めないので、窓の 0 は「鳴っていない」としか読めない。
+    /// 標本の値が「位置 + 1」になる列 (1, 2, 3, …)。ウィンドウを見れば、どこを切り出したかが読める。
+    /// 0 を含めないので、ウィンドウの 0 は「鳴っていない」としか読めない。
     private let indices: [Float] = (0..<2000).map { Float($0 + 1) }
 
     @Test("1 度だけ鳴らすと、鳴った数だけ進み、終わりまで鳴ったら止まって頭へ戻る")
@@ -92,7 +92,7 @@ nonisolated struct PlayheadTests {
         #expect(head.position(after: 1700) == 0)
     }
 
-    @Test("窓は鳴ったところで終わり、区切りの前は 0。ループの継ぎ目では終わりと頭が並ぶ")
+    @Test("ウィンドウは鳴ったところで終わり、区切りの前は 0。ループの継ぎ目では終わりと頭が並ぶ")
     func windowEndsWherePlayed() {
         var head = Playhead(length: 2000)
         // 止まっている間は全部 0
@@ -108,7 +108,7 @@ nonisolated struct PlayheadTests {
         head.play(looping: true)
         #expect(windowOf(head, after: 2002, size: 4) == [1999, 2000, 1, 2])
 
-        // 途中から鳴らし直すと、窓は止めた位置から始まる区切りで切る
+        // 途中から鳴らし直すと、ウィンドウは止めた位置から始まる区切りで切る
         head.pause(after: 2700)
         head.play(looping: true)
         #expect(head.start == 700)
@@ -198,7 +198,7 @@ nonisolated struct PlayheadTests {
         head.jump(to: 1000)
         #expect(head.isPlaying)
         #expect(head.position(after: 0) == 1000)
-        // 飛び先で終わる窓 (1000 標本目の手前 4 つ)
+        // 飛び先で終わるウィンドウ (1000 標本目の手前 4 つ)
         #expect(windowOf(head, after: 0, size: 4) == [997, 998, 999, 1000])
         #expect(windowOf(head, after: 2, size: 4) == [999, 1000, 1001, 1002])
 
@@ -225,13 +225,13 @@ nonisolated struct PlayheadTests {
         // 番号は、始め直す前と同じ
         #expect(head.number(after: 0) == 4600)
         #expect(head.number(after: 1000) == before.number(after: 5600))
-        // 区間 (番号・標本) が、始め直さなかったときと一致する。始まりより前の窓の頭も前の周の音で埋まる
+        // 区間 (番号・標本) が、始め直さなかったときと一致する。始まりより前のウィンドウの頭も前の周の音で埋まる
         for played in [0, 300, 1000, 2500] {
             #expect(
                 head.span(of: indices, from: 4000, after: played)
                     == before.span(of: indices, from: 4000, after: 4600 + played), "鳴った数 \(played)")
         }
-        // 位置の側へ番号を戻すと、窓の格子 (hop) が (周回数 × 長さ) mod hop だけずれる: 4000 mod 512 = 416
+        // 位置の側へ番号を戻すと、ウィンドウの格子 (hop) が (周回数 × 長さ) mod hop だけずれる: 4000 mod 512 = 416
         var renumbered = before
         renumbered.jump(to: 600)
         #expect(renumbered.number(after: 0) == 600)

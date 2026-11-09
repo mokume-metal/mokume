@@ -143,7 +143,7 @@ struct AudioInTests {
         return (received, openedAt)
     }
 
-    // MARK: - フレームの時刻の窓 (水準 2)
+    // MARK: - フレームの時刻のウィンドウ (水準 2)
 
     @Test("標本列の解析は、固定の時計の 60・30・24・144 fps で、前のフレームの ⌊N·sr/fps⌋ から今の ⌊N·sr/fps⌋ までの区間の値になる。標本が進まない最初のフレームは無音")
     func samplesFollowTheFrameWindows() throws {
@@ -174,7 +174,7 @@ struct AudioInTests {
     }
 
     /// 時刻を指定した観測の枚で、``SketchPart/time`` は観測の秒になる。標本列の入り口は、観測の枚には指定の秒で終わる
-    /// 1 フレームぶんの区間の値を見せ (映すコマと音の窓だけが指定の秒で決まる)、通常の続きは作者の時計の枚の番号で
+    /// 1 フレームぶんの区間の値を見せ (映すコマと音のウィンドウだけが指定の秒で決まる)、通常の続きは作者の時計の枚の番号で
     /// 数える。観測の枚の後の通常の枚は、観測の無い回と同じ値になる。
     @Test("時刻を指定した観測の枚は、指定の秒で終わる 1 フレームぶんの区間の値を見せ、その後の通常の枚の値は観測の有無で変わらない")
     func anObservedFrameShowsTheIntervalEndingAtTheRequestedTime() throws {
@@ -222,7 +222,7 @@ struct AudioInTests {
     }
 
     /// 観測の枚の `draw()` で作った入り口の起点が、観測の秒 (5 秒) になって残っていた。起点は作者の時計の秒
-    /// (観測の枚の作者の時計 = 3/60 秒) で、次の枚が読む窓は、その起点から 1 枚ぶん進んだところで終わる
+    /// (観測の枚の作者の時計 = 3/60 秒) で、次の枚が読むウィンドウは、その起点から 1 枚ぶん進んだところで終わる
     /// ([#2357](https://github.com/mokume-metal/mokume/issues/2357))。
     @Test("観測の枚の draw() で作った標本列の入り口は、作者の時計の秒を起点にする")
     func anInputMadeOnAnObservedFrameStartsOnTheAuthorsClock() throws {
@@ -381,7 +381,7 @@ struct AudioInTests {
         let second = try record(frames: 8) { try $0.createAudioIn(file: url.path) }.received
         #expect(first.count == 8)
         #expect(first == second)
-        // ファイルは標本列と同じ窓を通る (読み込みで値が変わらない)
+        // ファイルは標本列と同じウィンドウを通る (読み込みで値が変わらない)
         let samples = try record(frames: 8) {
             try $0.createAudioIn(samples: chord, sampleRate: 48_000)
         }.received
@@ -413,7 +413,7 @@ struct AudioInTests {
         return received
     }
 
-    @Test("外して足し直した音の入り口は、外さずに回したときと同じ窓を、足し直した後のフレームで解析する (時刻どおり・#3152)")
+    @Test("外して足し直した音の入り口は、外さずに回したときと同じウィンドウを、足し直した後のフレームで解析する (時刻どおり・#3152)")
     func reattachedAudioKeepsTheTimeline() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -427,9 +427,9 @@ struct AudioInTests {
             // 外していた間 (3・4 フレーム目) は無音で、足し直した後 (5 フレーム目から) は外さない実行と同じ値
             #expect(reattached[2].level == 0 && reattached[3].level == 0, "\(name)")
             #expect(Array(reattached[4...]) == Array(straight[4...]), "\(name): 足し直した後のフレームの値が違う")
-            // 例が意味を持つ: 窓ごとに値が違い、頭の窓へ戻っていない
+            // 例が意味を持つ: ウィンドウごとに値が違い、頭のウィンドウへ戻っていない
             #expect(Set(straight[4...].map(\.level)).count > 3, "\(name)")
-            #expect(reattached[4].level != straight[1].level, "\(name): 頭の窓へ戻った")
+            #expect(reattached[4].level != straight[1].level, "\(name): 頭のウィンドウへ戻った")
         }
     }
 
@@ -468,7 +468,7 @@ struct AudioInTests {
                 levels.append(audio?.level ?? -1)
                 if sketch.frameCount == 2 { audio?.stop() }
             })
-        // 1 は開いた時刻 (0 秒) で終わる窓なので、まだ鳴る前の無音。2 は鳴っている
+        // 1 は開いた時刻 (0 秒) で終わるウィンドウなので、まだ鳴る前の無音。2 は鳴っている
         #expect(levels[0] == 0 && levels[1] > 0.9, "\(levels)")
         #expect(levels[2] == 0 && levels[3] == 0)
         #expect(audio?.state == .stopped)

@@ -11,12 +11,12 @@ import mokume
 /// 別の PNG を `requestImage` で待たずに読んだ絵で、3 枚が同じ色で並べば読み込みの
 /// 色の扱いが書き込みと揃っている。`requestImage` は届くまで `Image.fill` で埋めた
 /// 仮の絵を置くので、届く前も後も段は崩れない。**書き出した絵は届く前の姿である** —
-/// 書き出しはフレームを続けて進めるだけで、待っている仕事に番を回さないため。窓で
+/// 書き出しはフレームを続けて進めるだけで、待っている仕事に番を回さないため。ウィンドウで
 /// 走らせると 3 枚目も同じ絵に替わる。
 ///
 /// その右は、`imageMode(.center)` で白い点を中心に置いた**左上の切り出し** (引数 9 つの
 /// `image`)、`Image.get` で絵の 1 画素を読んだ色の円、`+` で葉と茎を 1 つに畳んだ形。
-/// 確認: `swift run reference-sketches type-and-imagery` で窓を開き、下段右の仮の絵が
+/// 確認: `swift run reference-sketches type-and-imagery` でウィンドウを開き、下段右の仮の絵が
 /// 左・中央と同じ色の絵へ替わることを見る。到着の実時間は固定しない。
 /// `--render` は枚数を増やしても未到着の像を撮る。失敗と未到着の区別は資源の診断も要る。
 ///
@@ -57,11 +57,11 @@ final class TypeAndImagery: Sketch {
         cluster = Shape.group(
             (0..<9).map { index in
                 createShape {
-                    push()
-                    translate(Float(index % 3) * 46, Float(index / 3) * 46)
-                    rotate(Float(index) * 0.4)
-                    shape(leaf)
-                    pop()
+                    push {
+                        translate(Float(index % 3) * 46, Float(index / 3) * 46)
+                        rotate(Float(index) * 0.4)
+                        shape(leaf)
+                    }
                 }
             })
 
@@ -170,18 +170,18 @@ final class TypeAndImagery: Sketch {
             56, 170, 364, 130)
 
         // 字の輪郭を図形として扱う
-        push()
-        translate(48, 380)
-        stroke(242, 153, 76)
-        strokeWeight(2)
-        noFill()
-        textSize(72)
-        for contour in textOutline("outline", 0, 60) {
-            beginShape()
-            for point in contour.points { vertex(point.x, point.y) }
-            endShape(.close)
+        push {
+            translate(48, 380)
+            stroke(242, 153, 76)
+            strokeWeight(2)
+            noFill()
+            textSize(72)
+            for contour in textOutline("outline", 0, 60) {
+                beginShape()
+                for point in contour.points { vertex(point.x, point.y) }
+                endShape(.close)
+            }
         }
-        pop()
 
         // 自分の色を持つ字形。**塗りの色は掛からない** ので、同じ 1 行の中で
         // 単色の字は塗りの色で出て、絵文字だけが自分の色で出る
@@ -199,12 +199,12 @@ final class TypeAndImagery: Sketch {
         }
 
         // 保持した形 — 1 枚ずつと、組にしたもの
-        push()
-        translate(560, 360)
-        for index in 0..<4 {
-            shape(leaf, index * 52, 0)
+        push {
+            translate(560, 360)
+            for index in 0..<4 {
+                shape(leaf, index * 52, 0)
+            }
         }
-        pop()
         shape(cluster, 790, 340)
 
         // 同じ絵を 3 つの道で — 直に書いた・読み終わるまで待って読んだ・待たずに読んだ

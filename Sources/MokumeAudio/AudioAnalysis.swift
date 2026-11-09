@@ -15,7 +15,7 @@ nonisolated struct AudioLevels: Equatable, Sendable {
     /// 区間の標本の絶対値の最大 (振幅の生の値。全振幅の正弦波で約 1)。
     var peak: Float
     /// 帯域ごとの大きさ (振幅の単位。帯域の真ん中にある全振幅の正弦波で 1)。区間に終わりが入る
-    /// 格子の窓の平均。
+    /// 格子のウィンドウの平均。
     var spectrum: [Float]
     /// ``spectrum`` を帯域ごとに dB にして 0〜1 へ写したもの。
     var spectrumLevels: [Float]
@@ -30,7 +30,7 @@ nonisolated struct AudioLevels: Equatable, Sendable {
 /// 解析する区間と、それを覆うのに要る標本。**音源の標本 0 からの通し番号**で持つ。
 ///
 /// 区間は ``from`` (含む) から ``to`` (含まない) まで — 前のフレームの区間の終わりから、このフレームの
-/// 区間の終わりまで。標本は区間の前の履歴 (最初の窓の頭まで) も含み、``base`` から ``to`` までを並べる。
+/// 区間の終わりまで。標本は区間の前の履歴 (最初のウィンドウの頭まで) も含み、``base`` から ``to`` までを並べる。
 /// 始まりの 0 より前と ``base`` より前は 0 として読む。
 nonisolated struct AudioSpan: Equatable, Sendable {
     /// `samples[0]` の通し番号。
@@ -91,17 +91,17 @@ nonisolated struct AudioSpan: Equatable, Sendable {
 /// ## 解析するのは、前のフレームの区間の終わりから、このフレームの区間の終わりまでの全標本
 ///
 /// 入力は区間 (``AudioSpan``) で、各音源が自分の標本 0 からの通し番号で渡す ([ADR-0042] 決定 6 の改訂
-/// 〔2026-10-23〕・[#3136])。1 フレームに 1 窓だけを見ると、24 fps なら 2000 標本のうち半分が、どの窓にも
+/// 〔2026-10-23〕・[#3136])。1 フレームに 1 ウィンドウだけを見ると、24 fps なら 2000 標本のうち半分が、どのウィンドウにも
 /// 入らない。
 ///
 /// - ``AudioLevels/rms``・``AudioLevels/decibels``・``AudioLevels/level``・``AudioLevels/peak`` は、
-///   窓を介さず**区間の標本から直に**求める
-/// - ``AudioLevels/spectrum`` は、**音源の標本 0 から ``hop`` ごとに置いた固定の格子**の窓 (長さ
-///   ``windowSize``。窓 `k` は標本 `[hop·k − windowSize, hop·k)`) のうち、**終わりが区間に入る窓**の平均。
-///   連続するフレームの区間は継ぎ目なく並ぶので、どの窓も 1 度ずつ、どれかのフレームの区間に入る。格子は
+///   ウィンドウを介さず**区間の標本から直に**求める
+/// - ``AudioLevels/spectrum`` は、**音源の標本 0 から ``hop`` ごとに置いた固定の格子**のウィンドウ (長さ
+///   ``windowSize``。ウィンドウ `k` は標本 `[hop·k − windowSize, hop·k)`) のうち、**終わりが区間に入るウィンドウ**の平均。
+///   連続するフレームの区間は継ぎ目なく並ぶので、どのウィンドウも 1 度ずつ、どれかのフレームの区間に入る。格子は
 ///   音源の標本の数え方だけで決まり、供給の単位 (届くチャンクの長さ・fps) に依らない
-/// - 終わりが入る窓が 0 本のフレーム (区間が ``hop`` より短い。48 kHz で 93.75 fps より速い) は、区間の
-///   終わりまでに終わった最後の窓を使う。まだ 1 本も終わっていなければ 0
+/// - 終わりが入るウィンドウが 0 本のフレーム (区間が ``hop`` より短い。48 kHz で 93.75 fps より速い) は、区間の
+///   終わりまでに終わった最後のウィンドウを使う。まだ 1 本も終わっていなければ 0
 ///
 /// 長く止まった後は、区間の終わりから ``maxSpan`` 標本までに切る。
 ///
@@ -117,15 +117,15 @@ nonisolated struct AudioSpan: Equatable, Sendable {
 /// [ADR-0025]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0025-determinism-levels.md
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated enum AudioAnalysis {
-    /// 窓の長さ (標本)。
+    /// ウィンドウの長さ (標本)。
     static let windowSize = 1024
-    /// 格子の窓を並べる間隔 (標本)。窓の長さの半分。
+    /// 格子のウィンドウを並べる間隔 (標本)。ウィンドウの長さの半分。
     static let hop = windowSize / 2
-    /// 帯域の数。窓の長さの半分で、帯域 k の真ん中は `k × 標本化率 ÷ windowSize` Hz。
+    /// 帯域の数。ウィンドウの長さの半分で、帯域 k の真ん中は `k × 標本化率 ÷ windowSize` Hz。
     static let bandCount = windowSize / 2
     /// 1 回の解析が覆う区間の長さの上限 (標本)。長く止まった後は、区間の終わりからこれだけに切る。
     ///
-    /// 区間の前の履歴 (最初の窓の頭まで。最大 `windowSize + hop - 1`) を足しても、合成の計器
+    /// 区間の前の履歴 (最初のウィンドウの頭まで。最大 `windowSize + hop - 1`) を足しても、合成の計器
     /// (``SynthRack/meterCapacity``) とマイクの環に収まる。48 kHz で約 0.128 秒 — 7.8 fps より遅いと、
     /// 区間の頭は解析されない。
     static let maxSpan = windowSize * 6
@@ -138,7 +138,7 @@ nonisolated enum AudioAnalysis {
     private static let hann = vDSP.window(
         ofType: Float.self, usingSequence: .hanningDenormalized, count: windowSize,
         isHalfWindow: false)
-    /// 窓の重みの和。大きさを振幅の単位へ戻すのに使う。
+    /// ウィンドウの重みの和。大きさを振幅の単位へ戻すのに使う。
     private static let hannSum = vDSP.sum(hann)
 
     // MARK: - 区間の取り方 (供給する側が使う)
@@ -150,7 +150,7 @@ nonisolated enum AudioAnalysis {
 
     /// 区間が `from` から始まるとき、解析が読む最初の標本の通し番号 (0 より前は 0 に寄せる)。
     ///
-    /// 区間に終わりが入る最初の窓の頭か、窓が 0 本のときに使う最後の窓の頭の、早いほう。
+    /// 区間に終わりが入る最初のウィンドウの頭か、ウィンドウが 0 本のときに使う最後のウィンドウの頭の、早いほう。
     static func firstNeeded(from: Int) -> Int {
         max(0, max(from, 0) / hop * hop - windowSize)
     }
@@ -159,7 +159,7 @@ nonisolated enum AudioAnalysis {
 
     /// 区間を解析する。
     ///
-    /// **呼ぶたびに変換の setup を作る** (11〜12 µs。窓 1 本の 4 分の 3)。純粋な参照の形で、
+    /// **呼ぶたびに変換の setup を作る** (11〜12 µs。ウィンドウ 1 本の 4 分の 3)。純粋な参照の形で、
     /// 検査が「製品の経路の値」と突き合わせる相手でもある。繰り返し解析する側 (``AudioIn``・
     /// ``SoundFile``・``SynthSound``) は ``AudioAnalyzer`` を通る ([#2379])。
     ///
@@ -168,7 +168,7 @@ nonisolated enum AudioAnalysis {
         analyze(span, using: makeTransform())
     }
 
-    /// 窓の長さの前向きの変換を作る。作るのに時間が掛かるので、繰り返す側は 1 度作って使い回す
+    /// ウィンドウの長さの前向きの変換を作る。作るのに時間が掛かるので、繰り返す側は 1 度作って使い回す
     /// (``AudioAnalyzer``)。作れなければ `nil` で、帯域は 0 のまま返る。
     static func makeTransform() -> vDSP.DiscreteFourierTransform<Float>? {
         try? vDSP.DiscreteFourierTransform(
@@ -178,8 +178,8 @@ nonisolated enum AudioAnalysis {
 
     /// 変換の入出力に使う作業領域。**値は持ち越さない** — 呼ぶたびに全部書き直してから読む。
     ///
-    /// 窓の長さの配列を 5 本 (切り出した窓・窓に重みを掛けた入力・虚部の 0・変換の出力の実部と虚部)
-    /// と、帯域の数の配列を 1 本 (窓ごとの大きさの和) 持つ。解析した結果
+    /// ウィンドウの長さの配列を 5 本 (切り出したウィンドウ・ウィンドウに重みを掛けた入力・虚部の 0・変換の出力の実部と虚部)
+    /// と、帯域の数の配列を 1 本 (ウィンドウごとの大きさの和) 持つ。解析した結果
     /// (``AudioLevels/spectrum``・``AudioLevels/spectrumLevels``) はここに置かず、呼ぶたびに新しい
     /// 配列を作って返すので、利用者が保存した値は後の解析で書き換わらない。
     struct Scratch {
@@ -189,7 +189,7 @@ nonisolated enum AudioAnalysis {
         let imaginary = [Float](repeating: 0, count: windowSize)
         var outputReal = [Float](repeating: 0, count: windowSize)
         var outputImaginary = [Float](repeating: 0, count: windowSize)
-        /// 窓ごとの帯域の大きさ (重みを戻す前) の和。
+        /// ウィンドウごとの帯域の大きさ (重みを戻す前) の和。
         var accumulated = [Float](repeating: 0, count: bandCount)
     }
 
@@ -205,7 +205,7 @@ nonisolated enum AudioAnalysis {
     /// (値はビット一致する)。繰り返し解析する側 (``AudioAnalyzer``) が、作業領域を使い回すために呼ぶ。
     ///
     /// 区間が空 (``AudioSpan/isEmpty``) なら、`rms`・`peak` は 0 (無音)、`spectrum` は区間の終わりまでに
-    /// 終わった最後の窓。
+    /// 終わった最後のウィンドウ。
     static func analyze(
         _ span: AudioSpan, using transform: vDSP.DiscreteFourierTransform<Float>?,
         scratch: inout Scratch
@@ -213,25 +213,25 @@ nonisolated enum AudioAnalysis {
         let to = span.to
         let from = min(max(span.from, to - maxSpan, span.base), to)
         let interval = span.samples[(from - span.base)..<(to - span.base)]
-        // 終わりが入る窓が 0 本なら、区間の終わりまでに終わった最後の窓 (まだ 1 本も終わっていなければ無し)
+        // 終わりが入るウィンドウが 0 本なら、区間の終わりまでに終わった最後のウィンドウ (まだ 1 本も終わっていなければ無し)
         let last = to / hop
         let windows = windowsEnding(from: from, to: to) ?? (last >= 1 ? last...last : nil)
         return levels(
             interval: interval, windows: windows, in: span, using: transform, scratch: &scratch)
     }
 
-    /// 区間 `[from, to)` に終わりが入る格子の窓の番号。入る窓が無ければ `nil`。
+    /// 区間 `[from, to)` に終わりが入る格子のウィンドウの番号。入るウィンドウが無ければ `nil`。
     ///
-    /// 窓 `k` は標本 `[hop·k − windowSize, hop·k)`。終わり `hop·k` が区間に入るのは、`k` が `from / hop + 1` から
-    /// `to / hop` まで。連続する区間で数えると、どの窓も 1 度ずつ、どれかの区間に入る。
+    /// ウィンドウ `k` は標本 `[hop·k − windowSize, hop·k)`。終わり `hop·k` が区間に入るのは、`k` が `from / hop + 1` から
+    /// `to / hop` まで。連続する区間で数えると、どのウィンドウも 1 度ずつ、どれかの区間に入る。
     static func windowsEnding(from: Int, to: Int) -> ClosedRange<Int>? {
         let first = from / hop + 1
         let last = to / hop
         return first <= last ? first...last : nil
     }
 
-    /// 窓 1 つ (``windowSize`` 標本。足りなければ前を 0 で埋める) を解析する。窓の全体が区間。
-    /// 検査が、窓 1 本の値を参照にするのに使う。製品の経路は使わない。
+    /// ウィンドウ 1 つ (``windowSize`` 標本。足りなければ前を 0 で埋める) を解析する。ウィンドウの全体が区間。
+    /// 検査が、ウィンドウ 1 本の値を参照にするのに使う。製品の経路は使わない。
     static func analyze(_ window: [Float]) -> AudioLevels {
         let samples = padded(window)
         var scratch = Scratch()
@@ -241,7 +241,7 @@ nonisolated enum AudioAnalysis {
             scratch: &scratch)
     }
 
-    /// 区間の値と、`windows` (窓の番号) の平均のスペクトルから、値を組み立てる。
+    /// 区間の値と、`windows` (ウィンドウの番号) の平均のスペクトルから、値を組み立てる。
     private static func levels(
         interval: ArraySlice<Float>, windows: ClosedRange<Int>?, in span: AudioSpan,
         using transform: vDSP.DiscreteFourierTransform<Float>?, scratch: inout Scratch
@@ -267,7 +267,7 @@ nonisolated enum AudioAnalysis {
             spectrumLevels: spectrum.map { level(Self.decibels($0)) })
     }
 
-    /// 標本 `end - windowSize ..< end` の窓の帯域ごとの大きさを、作業領域の和へ足す。
+    /// 標本 `end - windowSize ..< end` のウィンドウの帯域ごとの大きさを、作業領域の和へ足す。
     private static func accumulate(
         windowEnding end: Int, in span: AudioSpan,
         using transform: vDSP.DiscreteFourierTransform<Float>, scratch: inout Scratch

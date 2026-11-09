@@ -29,7 +29,7 @@ enum SchemasLocator {
             .first { WorkDirectory.directoryExists(at: $0) }
     }
 
-    /// 探す場所。**見つからなかったときに並べて返す** — 窓口の失敗は、次の一手を含む形にする。
+    /// 探す場所。**見つからなかったときに並べて返す** — MCP サーバの失敗は、次の一手を含む形にする。
     static func candidates(
         workDirectory: URL,
         executable: URL = URL(fileURLWithPath: CommandLine.arguments.first ?? "")
@@ -67,7 +67,7 @@ enum SchemasLocator {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     ) -> URL? {
-        // 置き場の根が解けないのは、作業ディレクトリが読めない回の相対の値だけ。窓口を立てる前に
+        // 置き場の根が解けないのは、作業ディレクトリが読めない回の相対の値だけ。MCP サーバを立てる前に
         // 断っている (``MCPCommand/directories(arguments:environment:currentDirectory:)``) ので、
         // ここへ来るのは検査から直に呼ばれたときだけ
         guard let root = try? BuildDirectory.root(environment: environment, home: home) else {

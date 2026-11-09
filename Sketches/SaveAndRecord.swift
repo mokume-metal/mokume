@@ -12,7 +12,7 @@ import mokume
 ///
 /// ## 起動方法
 ///
-/// 窓を開いて走らせる (`swift run reference-sketches save-and-record`)。
+/// ウィンドウを開いて走らせる (`swift run reference-sketches save-and-record`)。
 ///
 /// ## 操作
 ///

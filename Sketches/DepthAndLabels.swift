@@ -48,24 +48,27 @@ final class DepthAndLabels: Sketch {
         perspective(Float.pi / 3, width / height, 10, 2000)
         lights()
         noStroke()
-        push()
-        translate(cx, cy, 0)
-        fill(255)
-        texture(checker)
-        box(180, 140, 12)
-        noTexture()
-        pop()
+        push {
+            translate(cx, cy, 0)
+            fill(255)
+            texture(checker)
+            box(180, 140, 12)
+            noTexture()
+        }
 
         let z = 120 * cos(time * 2)
-        push()
-        translate(cx + 55 * sin(time * 2), cy, z)
-        fill(255, 150, 45)
-        shininess(80)
-        metalness(0.3)
-        sphere(26)
-        let labelX = screenX(0, -42, 0)
-        let labelY = screenY(0, -42, 0)
-        pop()
+        // 名札の位置は球を置いた変換の中で読み、閉包の外で使う
+        var labelX: Float = 0
+        var labelY: Float = 0
+        push {
+            translate(cx + 55 * sin(time * 2), cy, z)
+            fill(255, 150, 45)
+            shininess(80)
+            metalness(0.3)
+            sphere(26)
+            labelX = screenX(0, -42, 0)
+            labelY = screenY(0, -42, 0)
+        }
 
         // 名札は投影した位置。HUDは固定の位置。どちらも2Dなので深度で隠さない。
         resetMatrix()

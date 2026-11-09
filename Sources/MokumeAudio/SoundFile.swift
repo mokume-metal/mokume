@@ -590,7 +590,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
             mixer?.register(file: self)
             if let flow = mixer?.flow { joinTrack(flow) }
         } else {
-            // 画面へ出している経路は、時計によらず鳴らす (フレームの時計の窓も・#2601)
+            // 画面へ出している経路は、時計によらず鳴らす (フレームの時計のウィンドウも・#2601)
             speak(through: .speakers)
         }
         // 鳴らさないと決まったなら、器は要らない (鳴らすなら player が持っている)
@@ -709,12 +709,12 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         pace = .routed
         feed = Feed(stage: stage, node: node)
         if wasPlaying {
-            // いまの位置から区切りを始め直す。窓は、始まりより前もファイルの標本で埋める (``Playhead/carry(after:)``)
+            // いまの位置から区切りを始め直す。ウィンドウは、始まりより前もファイルの標本で埋める (``Playhead/carry(after:)``)
             // ので、解析の値は途切れない。鳴らし始めるのは、入力に選ばれてから (``nodeIsConnected()``)
             playhead.carry(after: playedNow)
             lastPlayed = 0
             // 前の区間の続きから (``beginSegment()`` が始まりの位置へ戻さない)。標本の流れは続く (飛んだのではない)
-            // ので、**区間の番号も続ける** — 番号を位置の側へ付け直すと、ループで何周かした後は窓の格子が
+            // ので、**区間の番号も続ける** — 番号を位置の側へ付け直すと、ループで何周かした後はウィンドウの格子が
             // ずれて、通さないときと別の値になる (#3268)。番号が続くので、拍の状態にも伝えなくてよい (履歴は捨てられない)
             continuedCoverage = covered
             feed?.waitsForInput = true
@@ -840,7 +840,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         pace = .speaker(player)
         if wasPlaying {
             // 同じ音が続くので、区間の番号も続ける (``Playhead/carry(after:)``)。位置の側へ付け直すと、ループで何周かした後は
-            // 窓の格子がずれて、載せないときと別の値になる (#3268)
+            // ウィンドウの格子がずれて、載せないときと別の値になる (#3268)
             playhead.carry(after: playedNow)
             continuedCoverage = covered
             beginSegment()
@@ -928,7 +928,7 @@ public final class SoundFile: Inlet, EffectInput, RealtimeSound {
         switch pace {
         case .frames(let frameRate, let origin):
             // 絶対のフレーム番号から掛けて割った位置の差。秒を足し込まないので、何フレーム目でも丸めがずれず、
-            // 窓の継ぎ目 (``FrameSamples``) とも揃う
+            // ウィンドウの継ぎ目 (``FrameSamples``) とも揃う
             return FrameSamples.count(
                 from: origin, to: frame, perSecond: frameRate, sampleRate: Double(sampleRate))
         case .realTime(let origin):

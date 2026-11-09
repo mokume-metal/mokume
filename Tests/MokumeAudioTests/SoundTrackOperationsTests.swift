@@ -9,7 +9,7 @@ import Testing
 @testable import MokumeAudio
 @testable import MokumeCore
 
-/// 書き出しの `.mov` に載る音の、操作が効く窓と、形のいろいろ (#3125・#3245)。走っているスケッチの中で回して
+/// 書き出しの `.mov` に載る音の、操作が効くウィンドウと、形のいろいろ (#3125・#3245)。走っているスケッチの中で回して
 /// 書き出し、符号化を通った実物を読み戻すので GPU を要する。
 @Suite(
     "書き出しの音声トラック (操作と形)",
@@ -65,8 +65,8 @@ struct SoundTrackOperationsTests {
             right: (0..<frames).map { interleaved[2 * $0 + 1] })
     }
 
-    /// 走らせて閉じる。`draw` は `frameCount - 1` (フレームの番号) を受ける。フレーム 0 から `frames - 1` の窓までを録る
-    /// (`frames` 枚目の `draw()` で止めるので、窓は `frames - 1` 個)。
+    /// 走らせて閉じる。`draw` は `frameCount - 1` (フレームの番号) を受ける。フレーム 0 から `frames - 1` のウィンドウまでを録る
+    /// (`frames` 枚目の `draw()` で止めるので、ウィンドウは `frames - 1` 個)。
     private func record(
         to url: URL, fps: Int = 60, frames: Int, setup: @escaping (SoundSketch) throws -> Void,
         draw: @escaping (SoundSketch, Int) -> Void
@@ -87,7 +87,7 @@ struct SoundTrackOperationsTests {
         samples[(index * count)..<((index + 1) * count)]
     }
 
-    /// 窓 `index` が `expected(k)` (窓の中の k 番目) と 1e-6 以内で一致するか。`nil` は無音。
+    /// ウィンドウ `index` が `expected(k)` (ウィンドウの中の k 番目) と 1e-6 以内で一致するか。`nil` は無音。
     private func matches(
         _ samples: [Float], window index: Int, count: Int = 800, expected: (Int) -> Float?
     ) -> Bool {
@@ -96,10 +96,10 @@ struct SoundTrackOperationsTests {
         }
     }
 
-    // MARK: - 操作が効く窓
+    // MARK: - 操作が効くウィンドウ
 
-    /// ADR-0042 の「操作が効く時刻」の表そのもの: 鳴らす・止める・音量は窓 N の先頭から、飛ぶは窓 N + 1 の先頭から。
-    @Test("SoundFile の操作が効く窓: play・pause・stop・amp はフレーム N の窓の先頭から、鳴っている間の jump は窓 N+1 の先頭から")
+    /// ADR-0042 の「操作が効く時刻」の表そのもの: 鳴らす・止める・音量はウィンドウ N の先頭から、飛ぶはウィンドウ N + 1 の先頭から。
+    @Test("SoundFile の操作が効くウィンドウ: play・pause・stop・amp はフレーム N のウィンドウの先頭から、鳴っている間の jump はウィンドウ N+1 の先頭から")
     func eachOperationTakesEffectAtItsWindow() async throws {
         let wav = try writeWAV((0..<48_000).map(Self.value), sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -125,43 +125,43 @@ struct SoundTrackOperationsTests {
         try #require(heard.tracks == 1 && heard.left.count == 25 * 800, "\(heard.left.count) 標本")
         let left = heard.left
         // 鳴らす前は無音
-        for index in 0..<3 { #expect(matches(left, window: index) { _ in nil }, "窓 \(index)") }
-        // 窓 3 から鳴る (鳴らしたフレームの窓の先頭から)。窓 6 から音量が半分へ (音量も窓の先頭から)
+        for index in 0..<3 { #expect(matches(left, window: index) { _ in nil }, "ウィンドウ \(index)") }
+        // ウィンドウ 3 から鳴る (鳴らしたフレームのウィンドウの先頭から)。ウィンドウ 6 から音量が半分へ (音量もウィンドウの先頭から)
         for index in 3..<6 {
-            #expect(matches(left, window: index) { Self.value((index - 3) * 800 + $0) }, "窓 \(index) の play")
+            #expect(matches(left, window: index) { Self.value((index - 3) * 800 + $0) }, "ウィンドウ \(index) の play")
         }
-        // 音量は窓 6 で変わる。約束は「窓 6 より前は前の音量 (上の 3..<6)・窓 6 の終わりには新しい音量・その間は一方向」
-        // だけで、変わり方の形 (直線か曲線か) と長さ (窓の何標本かけるか) は OS の実装に依るので決め打ちしない
+        // 音量はウィンドウ 6 で変わる。約束は「ウィンドウ 6 より前は前の音量 (上の 3..<6)・ウィンドウ 6 の終わりには新しい音量・その間は一方向」
+        // だけで、変わり方の形 (直線か曲線か) と長さ (ウィンドウの何標本かけるか) は OS の実装に依るので決め打ちしない
         let ratios = (0..<800).map { left[6 * 800 + $0] / Self.value(3 * 800 + $0) }
-        #expect(ratios.allSatisfy { $0 > 0.5 - 1e-3 && $0 < 1 + 1e-3 }, "窓 6 の音量は 1 倍と 0.5 倍の間にある")
+        #expect(ratios.allSatisfy { $0 > 0.5 - 1e-3 && $0 < 1 + 1e-3 }, "ウィンドウ 6 の音量は 1 倍と 0.5 倍の間にある")
         #expect(zip(ratios, ratios.dropFirst()).allSatisfy { $0 >= $1 - 1e-6 }, "音量は一方向に変わる")
-        #expect(abs(ratios[799] - 0.5) < 1e-6, "窓 6 の終わりには新しい音量に着いている (\(ratios[799]))")
+        #expect(abs(ratios[799] - 0.5) < 1e-6, "ウィンドウ 6 の終わりには新しい音量に着いている (\(ratios[799]))")
         for index in 7..<9 {
-            #expect(matches(left, window: index) { 0.5 * Self.value((index - 3) * 800 + $0) }, "窓 \(index) の amp")
+            #expect(matches(left, window: index) { 0.5 * Self.value((index - 3) * 800 + $0) }, "ウィンドウ \(index) の amp")
         }
-        // 窓 9 から止まる (止めたフレームの窓から無音)
-        for index in 9..<12 { #expect(matches(left, window: index) { _ in nil }, "窓 \(index) の pause") }
-        // 窓 12 から、止めた位置 (6 窓ぶん進んだ 4800) から鳴る
+        // ウィンドウ 9 から止まる (止めたフレームのウィンドウから無音)
+        for index in 9..<12 { #expect(matches(left, window: index) { _ in nil }, "ウィンドウ \(index) の pause") }
+        // ウィンドウ 12 から、止めた位置 (6 ウィンドウぶん進んだ 4800) から鳴る
         for index in 12..<16 {
             #expect(
                 matches(left, window: index) { 0.5 * Self.value(4_800 + (index - 12) * 800 + $0) },
-                "窓 \(index) の play (止めた位置から)")
+                "ウィンドウ \(index) の play (止めた位置から)")
         }
-        // 飛ぶのは窓 16 から。頼んだフレーム 15 の窓は、飛ぶ前の位置のまま (上の 12..<16 に入っている)
+        // 飛ぶのはウィンドウ 16 から。頼んだフレーム 15 のウィンドウは、飛ぶ前の位置のまま (上の 12..<16 に入っている)
         for index in 16..<18 {
             #expect(
                 matches(left, window: index) { 0.5 * Self.value(20_000 + (index - 16) * 800 + $0) },
-                "窓 \(index) の jump (頼んだ次のフレームの窓から)")
+                "ウィンドウ \(index) の jump (頼んだ次のフレームのウィンドウから)")
         }
-        // 窓 18 から止まり (止めたフレームの窓から無音)、窓 21 から頭から鳴る
-        for index in 18..<21 { #expect(matches(left, window: index) { _ in nil }, "窓 \(index) の stop") }
+        // ウィンドウ 18 から止まり (止めたフレームのウィンドウから無音)、ウィンドウ 21 から頭から鳴る
+        for index in 18..<21 { #expect(matches(left, window: index) { _ in nil }, "ウィンドウ \(index) の stop") }
         for index in 21..<25 {
-            #expect(matches(left, window: index) { 0.5 * Self.value((index - 21) * 800 + $0) }, "窓 \(index) の play (頭から)")
+            #expect(matches(left, window: index) { 0.5 * Self.value((index - 21) * 800 + $0) }, "ウィンドウ \(index) の play (頭から)")
         }
         #expect(heard.left == heard.right)
     }
 
-    @Test("loop() の折り返しが標本に出る: 2.5 窓の長さの音を鳴らし続けると、窓の途中で頭へ戻る")
+    @Test("loop() の折り返しが標本に出る: 2.5 ウィンドウの長さの音を鳴らし続けると、ウィンドウの途中で頭へ戻る")
     func loopWrapsInsideAWindow() async throws {
         let wav = try writeWAV((0..<2_000).map(Self.value), sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -178,13 +178,13 @@ struct SoundTrackOperationsTests {
         for index in 2..<12 {
             #expect(
                 matches(heard.left, window: index) { Self.value(((index - 2) * 800 + $0) % 2_000) },
-                "窓 \(index) (折り返しの前後)")
+                "ウィンドウ \(index) (折り返しの前後)")
         }
     }
 
-    /// 合成の変更も窓 N の先頭から効く: 音量を変える操作を窓 8 の頼みにした回と、変えない回で、窓 8 の途中までは
-    /// 同じ標本で、窓 8 のうちに違い始める。
-    @Test("合成した音の変更 (amp) は、頼んだフレームの窓の先頭から効く")
+    /// 合成の変更もウィンドウ N の先頭から効く: 音量を変える操作をウィンドウ 8 の頼みにした回と、変えない回で、ウィンドウ 8 の途中までは
+    /// 同じ標本で、ウィンドウ 8 のうちに違い始める。
+    @Test("合成した音の変更 (amp) は、頼んだフレームのウィンドウの先頭から効く")
     func aSynthChangeTakesEffectInItsOwnWindow() async throws {
         func once(change: Bool) async throws -> [Float] {
             let url = temporaryMovie()
@@ -203,7 +203,7 @@ struct SoundTrackOperationsTests {
         let changed = try await once(change: true)
         try #require(plain.count == 14 * 800 && changed.count == plain.count)
         let first = try #require(plain.indices.first { plain[$0] != changed[$0] })
-        #expect(first >= 8 * 800 && first < 9 * 800, "違い始めたのは標本 \(first) (窓 8 は 6400〜7199)")
+        #expect(first >= 8 * 800 && first < 9 * 800, "違い始めたのは標本 \(first) (ウィンドウ 8 は 6400〜7199)")
         #expect(plain[(2 * 800)..<(8 * 800)].contains { abs($0) > 0.1 })
     }
 
@@ -263,7 +263,7 @@ struct SoundTrackOperationsTests {
         #expect(heardMono.left[0..<(2 * 800)].allSatisfy { $0 == 0 })
     }
 
-    @Test("44.1 kHz の音声ファイルも載る: 窓の位置から鳴り、位置と解析の値は録らない回と全フレームで一致する")
+    @Test("44.1 kHz の音声ファイルも載る: ウィンドウの位置から鳴り、位置と解析の値は録らない回と全フレームで一致する")
     func a44100HzFileIsCarried() async throws {
         let kick = (0..<11_025).map { $0 < 441 ? Float(0.5) : 0 }
         let wav = try writeWAV(kick, sampleRate: 44_100)
@@ -294,9 +294,9 @@ struct SoundTrackOperationsTests {
         }
         let heard = recorded.heard
         try #require(heard.left.count == 39 * 800, "\(heard.left.count) 標本")
-        // 立ち上がりは窓 4 の先頭 (3200)。変換の前後の揺れ (数標本) を許す
+        // 立ち上がりはウィンドウ 4 の先頭 (3200)。変換の前後の揺れ (数標本) を許す
         let onset = try #require(heard.left.firstIndex { abs($0) > 0.01 })
-        #expect(abs(onset - 4 * 800) < 16, "立ち上がりが標本 \(onset) (窓 4 の先頭は 3200)")
+        #expect(abs(onset - 4 * 800) < 16, "立ち上がりが標本 \(onset) (ウィンドウ 4 の先頭は 3200)")
         let peak = heard.left.map { abs($0) }.max() ?? 0
         #expect(peak > 0.4 && peak < 0.65, "音の大きさ \(peak)")
     }
@@ -321,7 +321,7 @@ struct SoundTrackOperationsTests {
                 if let sound {
                     seen.append([Float(sound.samplePosition), sound.level, sound.peak, sound.rms])
                 }
-                // 割り切れない fps では、録りを頼むフレームが窓の継ぎ目の途中にある
+                // 割り切れない fps では、録りを頼むフレームがウィンドウの継ぎ目の途中にある
                 if recording, sketch.frameCount == 11 { sketch.beginRecord(url.path) }
                 if recording, sketch.frameCount == 31 { sketch.endRecord() }
                 if sketch.frameCount == 20 { sound?.jump(0.2) }

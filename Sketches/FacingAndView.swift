@@ -91,14 +91,14 @@ final class FacingAndView: Sketch {
     /// 3 つの向きの欄で、同じ形を同じ回し方で並べる。
     private func drawBoxes(y: Float, size: Float, spin: Float) {
         for (index, painter) in painters.enumerated() {
-            push()
-            translate(width * (0.2 + 0.3 * Float(index)), y, 0)
-            rotateX(spin * 0.7)
-            rotateY(spin)
-            if let painter { shader(painter) }
-            box(size)
-            resetShader()
-            pop()
+            push {
+                translate(width * (0.2 + 0.3 * Float(index)), y, 0)
+                rotateX(spin * 0.7)
+                rotateY(spin)
+                if let painter { shader(painter) }
+                box(size)
+                resetShader()
+            }
         }
     }
 }

@@ -19,11 +19,11 @@ extension SketchPart {
     ///     background(23, 26, 31)
     ///     guard let logo else { return }
     ///     shape(logo, 40, 40)
-    ///     push()
-    ///     translate(200, 40)
-    ///     scale(3, 3)
-    ///     shape(logo)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 40)
+    ///         scale(3, 3)
+    ///         shape(logo)
+    ///     }
     ///     shape(logo, at: [Placement(x: 40, y: 220, fill: color(255, 140, 60))])
     /// }
     /// ```
@@ -152,11 +152,11 @@ extension SketchPart {
     ///     func draw() {
     ///         background(23, 26, 31)
     ///         guard let mark else { return }
-    ///         push()
-    ///         translate(40, 40)
-    ///         scale(3, 3)
-    ///         shape(mark)
-    ///         pop()
+    ///         push {
+    ///             translate(40, 40)
+    ///             scale(3, 3)
+    ///             shape(mark)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -300,7 +300,7 @@ extension SketchPart {
     /// [#3031]: https://github.com/mokume-metal/mokume/issues/3031
     // shot: 1 snippet=0a647cc6
     // shot: 2 snippet=2487b4f6
-    // shot: 3 snippet=847c2a54
+    // shot: 3 snippet=00572852 image=f055521d170c0498
     // shot: 4 snippet=114b62b5
     public func loadShape(_ path: String) throws(DataFailure) -> Shape {
         noticeBlockingLoad("loadShape(_:)", instead: "requestShape(_:)")

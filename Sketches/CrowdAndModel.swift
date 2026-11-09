@@ -20,7 +20,7 @@ import mokume
 ///
 /// **波打つ板は書き出しの絵には出ない。** 書き出しはフレームを続けて進めるだけで、読み
 /// 終わりを受け取る番が回らないので、届く前の姿 (「読み込み中…」の説明だけ) が撮れる。
-/// 窓で走らせれば、起動して間もなく現れる。
+/// ウィンドウで走らせれば、起動して間もなく現れる。
 ///
 /// **読み込んだモデルには、作者が書いた展開どおりに絵が乗る。** 検体は上下の錐を絵の
 /// 上半分・下半分へ割り当ててあるので、面ごとに縦の帯が並ぶ — 囲みの箱から作る位置に
@@ -135,43 +135,43 @@ final class CrowdAndModel: Sketch {
         // 番号で指す — 番号が無ければ 60 個置くことになる。**共有した点は向きも 1 つ**
         // なので、隣の面と向きが均され、角の立たない丸い形に光が乗る
         fill(120, 200, 170)
-        push()
-        translate(width / 2 - 400, height / 2 + 150, 0)
-        rotateY(time * 0.5)
-        rotateX(0.4)
-        beginShape(.triangles)
-        for point in Self.icosahedronPoints {
-            vertex(point.x * 58, point.y * 58, point.z * 58)
+        push {
+            translate(width / 2 - 400, height / 2 + 150, 0)
+            rotateY(time * 0.5)
+            rotateX(0.4)
+            beginShape(.triangles)
+            for point in Self.icosahedronPoints {
+                vertex(point.x * 58, point.y * 58, point.z * 58)
+            }
+            for face in Self.icosahedronFaces {
+                index(face.0)
+                index(face.1)
+                index(face.2)
+            }
+            endShape()
         }
-        for face in Self.icosahedronFaces {
-            index(face.0)
-            index(face.1)
-            index(face.2)
-        }
-        endShape()
-        pop()
 
         // **頂点を並べた自由な立体。** 穴も立体で効き、面の向きは形から求まる
         fill(242, 153, 71)
-        push()
-        translate(width / 2 - 400, height / 2 - 110, 0)
-        rotateY(time * 0.6)
-        beginShape()
-        // 向きを書く口 (`normal`)。平らな面なので、書かなくても形から求まる向きと同じ
-        // (どちらの側から見ても光を受けるので、符号によらず同じ明るさで出る)
-        normal(0, 0, 1)
-        for step in 0..<6 {
-            let around = Float(step) / 6 * 2 * .pi
-            vertex(cos(around) * 84, sin(around) * 84, 0)
+        push {
+            translate(width / 2 - 400, height / 2 - 110, 0)
+            rotateY(time * 0.6)
+            beginShape()
+            // 向きを書く口 (`normal`)。平らな面なので、書かなくても形から求まる向きと同じ
+            // (どちらの側から見ても光を受けるので、符号によらず同じ明るさで出る)
+            normal(0, 0, 1)
+            for step in 0..<6 {
+                let around = Float(step) / 6 * 2 * .pi
+                vertex(cos(around) * 84, sin(around) * 84, 0)
+            }
+            beginContour()
+            for step in 0..<6 {
+                let around = -Float(step) / 6 * 2 * .pi
+                vertex(cos(around) * 37, sin(around) * 37, 0)
+            }
+            endContour()
+            endShape(.close)
         }
-        beginContour()
-        for step in 0..<6 {
-            let around = -Float(step) / 6 * 2 * .pi
-            vertex(cos(around) * 37, sin(around) * 37, 0)
-        }
-        endContour()
-        endShape(.close)
-        pop()
 
         // モデルの説明を置く場所。立体の下の点を画面の座標へ落として集め、最後に 2D で書く
         var captions: [(title: String, detail: String, x: Float, y: Float)] = []
@@ -180,19 +180,19 @@ final class CrowdAndModel: Sketch {
         if let gem {
             // **貼る絵は塗りに掛かる**ので、模様をそのまま見せるために白で塗る
             fill(255, 255, 255)
-            push()
-            // **貼る絵は描き方なので push / pop で積める。** ここを抜ければ元へ戻る
-            if let pattern { texture(pattern) }
-            translate(width / 2 + 360, height / 2 - 110, 0)
-            captions.append(
-                ("loadModel", Self.describe(gem), screenX(0, 125, 0), screenY(0, 125, 0)))
-            // **傾けてから回す。** 真横から見ると上下の錐が重なって板に見える
-            rotateZ(0.25)
-            rotateX(0.3)
-            rotateY(time * 0.9)
-            scale(0.6, 0.6, 0.6)
-            model(gem)
-            pop()
+            push {
+                // **貼る絵は描き方なので push / pop で積める。** ここを抜ければ元へ戻る
+                if let pattern { texture(pattern) }
+                translate(width / 2 + 360, height / 2 - 110, 0)
+                captions.append(
+                    ("loadModel", Self.describe(gem), screenX(0, 125, 0), screenY(0, 125, 0)))
+                // **傾けてから回す。** 真横から見ると上下の錐が重なって板に見える
+                rotateZ(0.25)
+                rotateX(0.3)
+                rotateY(time * 0.9)
+                scale(0.6, 0.6, 0.6)
+                model(gem)
+            }
         }
 
         // **整えずに読んだモデル。** 大きさはファイルの単位のまま (高さ 2.6) なので、画素へ
@@ -201,35 +201,35 @@ final class CrowdAndModel: Sketch {
         // 貼る絵の読み取り位置は整え方に依らないので、帯は上と同じに乗る
         if let rawGem {
             fill(255, 255, 255)
-            push()
-            if let pattern { texture(pattern) }
-            translate(width / 2 + 360, height / 2 + 150, 0)
-            captions.append(
-                ("loadModel(…, normalize: false)", Self.describe(rawGem), screenX(0, 100, 0),
-                 screenY(0, 100, 0)))
-            rotateZ(0.25)
-            rotateX(0.3)
-            rotateY(time * 0.9)
-            scale(55, 55, 55)
-            model(rawGem)
-            pop()
+            push {
+                if let pattern { texture(pattern) }
+                translate(width / 2 + 360, height / 2 + 150, 0)
+                captions.append(
+                    ("loadModel(…, normalize: false)", Self.describe(rawGem), screenX(0, 100, 0),
+                     screenY(0, 100, 0)))
+                rotateZ(0.25)
+                rotateX(0.3)
+                rotateY(time * 0.9)
+                scale(55, 55, 55)
+                model(rawGem)
+            }
         }
 
         // **止めずに読んだモデル。** 届くまでは何も置かず、説明だけ「読み込み中」を出す
-        push()
-        translate(width / 2, height / 2 - 170, 0)
-        let rippleAt = (x: screenX(0, 90, 0), y: screenY(0, 90, 0))
-        if let ripple {
-            fill(170, 150, 235)
-            rotateX(0.5)
-            rotateY(time * 0.4)
-            scale(0.55, 0.55, 0.55)
-            model(ripple)
-            captions.append(("requestModel", Self.describe(ripple), rippleAt.x, rippleAt.y))
-        } else {
-            captions.append(("requestModel", rippleFailure ?? "読み込み中…", rippleAt.x, rippleAt.y))
+        push {
+            translate(width / 2, height / 2 - 170, 0)
+            let rippleAt = (x: screenX(0, 90, 0), y: screenY(0, 90, 0))
+            if let ripple {
+                fill(170, 150, 235)
+                rotateX(0.5)
+                rotateY(time * 0.4)
+                scale(0.55, 0.55, 0.55)
+                model(ripple)
+                captions.append(("requestModel", Self.describe(ripple), rippleAt.x, rippleAt.y))
+            } else {
+                captions.append(("requestModel", rippleFailure ?? "読み込み中…", rippleAt.x, rippleAt.y))
+            }
         }
-        pop()
 
         // **画面の同じ場所に留めた立体。** 画面の右上の点を、注視点と同じ奥行きの面へ
         // 引き戻して置く。奥行きは `screenZ` で取った値をそのまま渡す (0 が手前・1 が奥)
@@ -239,10 +239,10 @@ final class CrowdAndModel: Sketch {
         fill(230, 230, 220)
         stroke(40, 44, 56)
         strokeWeight(1)
-        push()
-        translate(pinned.x, pinned.y, pinned.z)
-        box(44)
-        pop()
+        push {
+            translate(pinned.x, pinned.y, pinned.z)
+            box(44)
+        }
         noStroke()
 
         // 説明。**2D の文字も視点を通る**ので、視点を既定へ戻してから、落とした画面の座標へ書く

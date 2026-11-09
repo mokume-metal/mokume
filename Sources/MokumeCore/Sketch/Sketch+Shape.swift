@@ -28,11 +28,11 @@ extension SketchPart {
     ///     func draw() {
     ///         background(23, 26, 31)
     ///         for i in 0..<18 {
-    ///             push()
-    ///             translate(45 + Float(i % 6) * 62, 60 + Float(i / 6) * 90)
-    ///             rotate(Float(i) * 0.35)
-    ///             shape(leaf)
-    ///             pop()
+    ///             push {
+    ///                 translate(45 + Float(i % 6) * 62, 60 + Float(i / 6) * 90)
+    ///                 rotate(Float(i) * 0.35)
+    ///                 shape(leaf)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -244,11 +244,11 @@ extension SketchPart {
     /// let cluster = Shape.group(
     ///     (0..<9).map { index in
     ///         createShape {
-    ///             push()
-    ///             translate(Float(index % 3) * 46, Float(index / 3) * 46)
-    ///             rotate(Float(index) * 0.4)
-    ///             shape(leaf)
-    ///             pop()
+    ///             push {
+    ///                 translate(Float(index % 3) * 46, Float(index / 3) * 46)
+    ///                 rotate(Float(index) * 0.4)
+    ///                 shape(leaf)
+    ///             }
     ///         }
     ///     })
     /// ```
@@ -264,7 +264,7 @@ extension SketchPart {
     /// (初期化子の中・後片付けの後・`Task` の中) で呼ぶと、落ちずに空の形 (``Shape/empty``) を返し、
     /// 1 度だけ警告する。中身は呼ばれ、中の語彙も何もせずに警告する
     /// ([#2683](https://github.com/mokume-metal/mokume/issues/2683))。
-    // shot: 1 snippet=2caf9b37
+    // shot: 1 snippet=f93591b4 image=a2f9a1aa7a52630e
     // shot: 2 snippet=77b00113
     public func createShape(_ body: () -> Void) -> Shape {
         // 走っていなければ、形を記録する面が無い。投げない口なので止めずに空の形を返し、1 度だけ
@@ -306,14 +306,14 @@ extension SketchPart {
     /// shape(grain, at: places)
     /// ```
     ///
-    /// **1 つずつ置いたときと同じ絵になる。** `push()` / `translate()` / `pop()` の
+    /// **1 つずつ置いたときと同じ絵になる。** `push { translate(…) }` の
     /// 繰り返しで書いても、まとめて渡しても、経路は 1 本しかない。
     ///
     /// ``Placement/fill`` を渡すと、その置き場所の色に**掛かる** (渡さなければ何も
     /// 掛からない)。
     ///
     /// 下は、白で記録した葉を、位置・回転・大きさの違う 5 か所に置いたもの。上の段は
-    /// まとめて渡し、中の段は `push()` / `translate()` / `rotate()` / `scale()` / `pop()` で
+    /// まとめて渡し、中の段は `push { }` の中で `translate()` / `rotate()` / `scale()` して
     /// 1 つずつ置いている。2 つの段は同じ絵になる。下の段は、中の段と同じ置き場所に ``Placement/fill``
     /// を渡したもので、白に掛かって色がつく。5 つ目だけは塗りを渡していないので、記録した白のまま出る。
     ///
@@ -353,12 +353,12 @@ extension SketchPart {
     ///         shape(leaf, at: tinted)         // 下の段: 塗りも渡す
     ///
     ///         for i in 0..<5 {                // 中の段: 1 つずつ
-    ///             push()
-    ///             translate(50 + Float(i) * 75, 150)
-    ///             rotate(Float(i) * 0.5)
-    ///             scale(0.8 + Float(i) * 0.2, 0.8 + Float(i) * 0.2)
-    ///             shape(leaf)
-    ///             pop()
+    ///             push {
+    ///                 translate(50 + Float(i) * 75, 150)
+    ///                 rotate(Float(i) * 0.5)
+    ///                 scale(0.8 + Float(i) * 0.2, 0.8 + Float(i) * 0.2)
+    ///                 shape(leaf)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -369,8 +369,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=276142f3
-    // shot: 後で撮る
+    // shot: 1 snippet=b621476e image=48bbd111f44404a3
     public func shape(_ shape: Shape, at placements: [Placement]) {
         guard let canvas = liveCanvas() else { return }
         canvas.shape(shape, at: placements)

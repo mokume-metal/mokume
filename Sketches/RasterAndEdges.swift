@@ -59,15 +59,15 @@ final class RasterAndEdges: Sketch {
                 text("w\(weight)", left + 5, top + 15)
                 for (column, offset) in [Float(0), 0.25, 0.5, 0.75].enumerated() {
                     for (moving, y) in [Float(0), 90].enumerated() {
-                        push()
-                        let shift = offset + (moving == 1 ? drift : 0)
-                        translate(left + 65 + Float(column * 80) + shift, top + y + shift)
-                        if path == 1, let solid { shader(solid) }
-                        if path == 2, let white { texture(white) }
-                        sample(weight)
-                        noTexture()
-                        resetShader()
-                        pop()
+                        push {
+                            let shift = offset + (moving == 1 ? drift : 0)
+                            translate(left + 65 + Float(column * 80) + shift, top + y + shift)
+                            if path == 1, let solid { shader(solid) }
+                            if path == 2, let white { texture(white) }
+                            sample(weight)
+                            noTexture()
+                            resetShader()
+                        }
                     }
                 }
             }

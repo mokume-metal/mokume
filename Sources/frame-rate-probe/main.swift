@@ -45,7 +45,7 @@ let seconds = options.seconds
 let minimizeAfter = options.minimizeAfter
 let allowsDisplaySleep = options.allowsDisplaySleep
 
-// 描画の土台と窓を作れなければ、裸の `try` で Swift ランタイムの既定処理 (trap) へ落とさず、
+// 描画の土台とウィンドウを作れなければ、裸の `try` で Swift ランタイムの既定処理 (trap) へ落とさず、
 // 何が足りないかを名乗って落ちる (#2541)。文面は ProbeStartup.swift
 let application: SketchApplication
 do {
@@ -60,7 +60,7 @@ if let minimizeAfter {
     Timer.scheduledTimer(withTimeInterval: minimizeAfter, repeats: false) { _ in
         MainActor.assumeIsolated {
             NSApp.windows.first?.miniaturize(nil)
-            print("窓を畳んだ")
+            print("ウィンドウを畳んだ")
             fflush(stdout)
         }
     }

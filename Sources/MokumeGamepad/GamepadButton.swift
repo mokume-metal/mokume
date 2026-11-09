@@ -45,7 +45,7 @@ public nonisolated struct GamepadButton: Sendable, Hashable {
 // 宣言する静的な定数は既定の隔離 (main actor) に載る。
 //
 // 値は GameController 自身の定数から取る。手で綴った表を持たないので、綴りが 1 つずれて
-// 「その釦だけ効かない」ことが起きない (ADR-0034 決定 3 が検査で塞いだ穴を、ここでは表を
+// 「そのボタンだけ効かない」ことが起きない (ADR-0034 決定 3 が検査で塞いだ穴を、ここでは表を
 // 持たないことで塞ぐ)。
 nonisolated extension GamepadButton {
     /// フェイスボタンの下 (Xbox の A・PlayStation の ×)。

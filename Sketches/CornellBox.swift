@@ -26,7 +26,7 @@ final class CornellBox: Sketch {
         SketchSettings(width: 640, height: 640, title: "cornell box")
     }
 
-    /// 部屋の一辺。中心は窓の真ん中にあり、壁は中心から半辺ずつ離れる。
+    /// 部屋の一辺。中心はウィンドウの真ん中にあり、壁は中心から半辺ずつ離れる。
     private let side: Float = 300
 
     /// 白い面の色。奥・床・天井と 2 つの箱で同じものを使う。
@@ -38,7 +38,7 @@ final class CornellBox: Sketch {
         let center = (x: width / 2, y: height / 2)
         let half = side / 2
 
-        // 開いた手前の面から正面に覗く。画角は部屋が窓の 7 割ほどに収まる大きさ
+        // 開いた手前の面から正面に覗く。画角は部屋がウィンドウの 7 割ほどに収まる大きさ
         camera(center.x, center.y, 760, center.x, center.y, 0, 0, 1, 0)
         perspective(Float.pi / 4.6, width / height, 10, 3000)
 
@@ -67,35 +67,35 @@ final class CornellBox: Sketch {
         wall(center.x + half, center.y, 0) { $0.rotateY(-Float.pi / 2) }
 
         // 天井の灯りの印。天井の面にわずかに埋めて、上から見ても浮かないようにする
-        push()
-        emissive(.linear(red: 1, green: 0.95, blue: 0.85))
-        fill(255)
-        translate(center.x, center.y - half + 1, 0)
-        box(80, 2, 80)
-        emissive(.linear(red: 0, green: 0, blue: 0))
-        pop()
+        push {
+            emissive(.linear(red: 1, green: 0.95, blue: 0.85))
+            fill(255)
+            translate(center.x, center.y - half + 1, 0)
+            box(80, 2, 80)
+            emissive(.linear(red: 0, green: 0, blue: 0))
+        }
 
         // 箱 2 つ。床 (`center.y + half`) に底を付けるので、中心は高さの半分だけ上へ上げる
         castShadow(true)
         fill(white.red, white.green, white.blue)
-        push()
-        translate(center.x + 55, center.y + half - 45, 40)
-        rotateY(-0.3)
-        box(90, 90, 90)
-        pop()
-        push()
-        translate(center.x - 50, center.y + half - 90, -50)
-        rotateY(0.3)
-        box(90, 180, 90)
-        pop()
+        push {
+            translate(center.x + 55, center.y + half - 45, 40)
+            rotateY(-0.3)
+            box(90, 90, 90)
+        }
+        push {
+            translate(center.x - 50, center.y + half - 90, -50)
+            rotateY(0.3)
+            box(90, 180, 90)
+        }
     }
 
     /// 部屋の一辺の正方形の壁を 1 枚、`(x, y, z)` を中心に置く。`orient` で向きを変える。
     private func wall(_ x: Float, _ y: Float, _ z: Float, orient: (CornellBox) -> Void) {
-        push()
-        translate(x, y, z)
-        orient(self)
-        plane(side, side)
-        pop()
+        push {
+            translate(x, y, z)
+            orient(self)
+            plane(side, side)
+        }
     }
 }

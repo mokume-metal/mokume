@@ -36,15 +36,15 @@
    読めず、Bug は反証の節を要るので、着手の前に目に入る必要がある (#1998)。Type の無い
    Issue は `[-]`。**番号・分類の位置は動かさない** — 既存の読み手は先頭の 2 語を読む
 11. **bot の追記だけでは「まだ動いている」にならない** (#2660)。updatedAt だけが新しい着手印と
-   open な家族は、窓の中の timeline に人の手があるかを読む。Bot のコメントと参照だけなら静か。
-   人の手・作者の分からない項目・本文の編集・窓に収まらない項目は動いているとみなす。読むのは
+   open な家族は、ウィンドウの中の timeline に人の手があるかを読む。Bot のコメントと参照だけなら静か。
+   人の手・作者の分からない項目・本文の編集・ウィンドウに収まらない項目は動いているとみなす。読むのは
    そういう着手印 / 家族があるときだけで、読めなければ従来どおり updatedAt で測ってそう名乗る
 
 gh と git は PATH の先頭に置いた偽物へ差し替える。偽物は **--jq を実際に適用する**ので、
 検査は判定そのものを踏む。親の印 (labels) は本物と同じく問い合わせが欄を求めたときだけ
 返すので、問い合わせから欄が落ちれば Design の根の検査が赤くなる (#2228)。人の手の問い合わせ
 (#2660) には、本物と同じく問い合わせの `since:` より前の項目を落とし、問い合わせた番号の分だけを
-返す — 窓の境目を渡し損ねれば検査が赤くなる。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
+返す — ウィンドウの境目を渡し損ねれば検査が赤くなる。書き込み系の呼び出しは偽物が知らないので、打とうとすれば
 落ちる (1 は呼び出しログと終了コードの両方で見る)。
 
 実行は make ci-check (CI もこれを呼ぶ)。
@@ -91,8 +91,8 @@ if [ "$1" = "api" ]; then
   case "$2" in
     # merge queue の並び (#1266)。既定は空
     graphql) [[ "$*" == *"mergeQueue{"* ]] && { printf '%s\\n' ${QUEUED_PRS:-}; exit 0; }
-      # 窓の中の人の手 (#2660)。本物と同じく since より前の項目を落とし (filteredCount は
-      # 落とした後の件数 + 窓に収まらなかった hidden。本物も since を反映する — 実物で確かめた
+      # ウィンドウの中の人の手 (#2660)。本物と同じく since より前の項目を落とし (filteredCount は
+      # 落とした後の件数 + ウィンドウに収まらなかった hidden。本物も since を反映する — 実物で確かめた
       # 値は ready-queue.sh の read_hands の頭)、問い合わせた番号の分だけを返す。
       # FAIL_HANDS で読み取りを失敗させる
       if [[ "$*" == *"timelineItems(since:"* ]]; then
@@ -296,9 +296,9 @@ def human_comment(minutes_ago):
 
 
 def hands_response(hands):
-    """{番号: {"nodes": [...], "edited": 時刻か None, "hidden": 窓に収まらなかった件数}} から応答を組む。
+    """{番号: {"nodes": [...], "edited": 時刻か None, "hidden": ウィンドウに収まらなかった件数}} から応答を組む。
 
-    nodes は窓の外も含めて渡す (落とすのは偽 gh が問い合わせの since で行う)
+    nodes はウィンドウの外も含めて渡す (落とすのは偽 gh が問い合わせの since で行う)
     """
     return {
         "data": {
@@ -608,11 +608,11 @@ class ReadyQueueTest(unittest.TestCase):
                 ]
             },
             "本文の編集": {"nodes": [bot_comment(30)], "edited": ago(40)},
-            "窓に収まらない項目": {"nodes": [bot_comment(30)], "hidden": 1},
+            "ウィンドウに収まらない項目": {"nodes": [bot_comment(30)], "hidden": 1},
             # timeline に出ない動き (既存のコメントの編集・子の close による親の更新など) が
             # updatedAt を動かしたとき。新しさを bot の手だと説明できないので静かとは言えない
-            "空の窓": {"nodes": []},
-            "窓の外の人のコメントだけ": {"nodes": [human_comment(300)]},
+            "空のウィンドウ": {"nodes": []},
+            "ウィンドウの外の人のコメントだけ": {"nodes": [human_comment(300)]},
         }
         for name, hand in cases.items():
             with self.subTest(name):
@@ -679,7 +679,7 @@ class ReadyQueueTest(unittest.TestCase):
                             "actor": {"__typename": "Bot", "login": "github-actions"},
                         }
                     ],
-                    "edited": ago(600),  # 窓の外の編集は数えない
+                    "edited": ago(600),  # ウィンドウの外の編集は数えない
                 }
             },
         )
@@ -711,14 +711,14 @@ class ReadyQueueTest(unittest.TestCase):
         seen = self.lines_by_number(done.stdout)
         self.assertEqual(seen[1352][0], "dropped", "家族の bot の追記で生きていると読んでいる")
 
-        # 家族の窓が空なら、新しさを bot の手と説明できないので動いている側
+        # 家族のウィンドウが空なら、新しさを bot の手と説明できないので動いている側
         done, _ = self.run_queue(
             [issue(1352, labels=["status: in progress"])],
             families={1352: {"parent": member(1350), "siblings": [member(1357, updated=ago(30))]}},
             hands={1357: {"nodes": []}},
         )
         seen = self.lines_by_number(done.stdout)
-        self.assertEqual(seen[1352][0], "busy", "空の窓の家族を静かと読んでいる")
+        self.assertEqual(seen[1352][0], "busy", "空のウィンドウの家族を静かと読んでいる")
         self.assertIn("家族 #1357 がまだ動いている", seen[1352][1])
 
     def test_hands_are_read_only_where_recency_is_the_only_evidence(self):
@@ -1017,15 +1017,15 @@ class ReadyQueueTest(unittest.TestCase):
         self.assertEqual(seen[10][0], "busy")
         self.assertEqual(seen[11][0], "dropped", "家族を通じた busy を、さらに証拠に数えている")
 
-    # 閾値 3 日 (DROPPED_MINUTES=4320) では、家族の静けさの窓も 3 日に伸びる (#3366)。意図した結合:
-    # 家族 (親・兄弟・子) は同じ着手の続きのことがあり (#1391)、窓を分けると「着手印は 3 日静か・
+    # 閾値 3 日 (DROPPED_MINUTES=4320) では、家族の静けさのウィンドウも 3 日に伸びる (#3366)。意図した結合:
+    # 家族 (親・兄弟・子) は同じ着手の続きのことがあり (#1391)、ウィンドウを分けると「着手印は 3 日静か・
     # 家族は 2 時間静か」の組を落ちたと読んでしまう。代償は、家族が動き続けている間は、落ちた着手が
     # その最後の動きから 3 日隠れること (ADR-0036 決定 5 の改訂に書いた)
     def test_family_window_follows_the_threshold(self):
         three_days = 3 * 24 * 60
         for name, family_age, expected in (
-            ("家族が 2 日前に人の手 (窓の中)", 2 * 24 * 60, "busy"),
-            ("家族が 4 日前に人の手 (窓の外)", 4 * 24 * 60, "dropped"),
+            ("家族が 2 日前に人の手 (ウィンドウの中)", 2 * 24 * 60, "busy"),
+            ("家族が 4 日前に人の手 (ウィンドウの外)", 4 * 24 * 60, "dropped"),
         ):
             with self.subTest(name):
                 done, _ = self.run_queue(

@@ -12,7 +12,7 @@ import Testing
 /// `setup()` と `draw()` で、検査が渡した手続きを走らせるスケッチ。フレームレートを選べる。
 final class MovieSketch: Sketch {
     nonisolated(unsafe) static var frameRate = 30
-    /// 窓で回すときの時計の選び方 (`onScreen` で回す検査だけが読む)。
+    /// ウィンドウで回すときの時計の選び方 (`onScreen` で回す検査だけが読む)。
     nonisolated(unsafe) static var clockMode = SketchSettings.ClockMode.wallClock
     nonisolated(unsafe) static var onSetup: (MovieSketch) throws -> Void = { _ in }
     nonisolated(unsafe) static var onDraw: (MovieSketch) -> Void = { _ in }
@@ -242,7 +242,7 @@ struct MovieTests {
         }
     }
 
-    @Test("フレームの時計 (固定の時計・clock: .frames の窓) では先読みを使わず、ループと jump を混ぜた 300 フレームに位置のコマが出る")
+    @Test("フレームの時計 (固定の時計・clock: .frames のウィンドウ) では先読みを使わず、ループと jump を混ぜた 300 フレームに位置のコマが出る")
     func frameClocksReadSynchronously() async throws {
         let url = try await keyFramedMovie()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -270,7 +270,7 @@ struct MovieTests {
                 default: break
                 }
             }
-            // 窓の経路は時計を作品の設定 (clock: .frames) から決める
+            // ウィンドウの経路は時計を作品の設定 (clock: .frames) から決める
             let runtime =
                 onScreen
                 ? try SketchRuntime(sketch: MovieSketch(), gpu: try RenderDevice(), clock: nil, now: { 0 }, onScreen: true)
@@ -282,7 +282,7 @@ struct MovieTests {
             #expect(rows.count == 300)
             for row in rows {
                 let index = min(89, Int((Double(row.time) * 30 + 0.03).rounded(.down)))
-                #expect(row.pixels == expected[index], "\(onScreen ? "窓" : "固定") の \(row.frame) 枚目 (\(row.time) 秒)")
+                #expect(row.pixels == expected[index], "\(onScreen ? "ウィンドウ" : "固定") の \(row.frame) 枚目 (\(row.time) 秒)")
             }
         }
     }

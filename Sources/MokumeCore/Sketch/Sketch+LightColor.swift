@@ -20,10 +20,10 @@ extension SketchPart {
     ///     for (index, red) in [40, 140, 255].enumerated() {
     ///         noLights()
     ///         ambientLight(red, 90, 90)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -45,22 +45,22 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     noLights()
     ///     ambientLight(0.52, 0.52, 0.53)
-    ///     push()
-    ///     translate(70, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(70, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     noLights()
     ///     ambientLight(133, 133, 135)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     noLights()
     ///     ambientLight(.display(red: 0.52, green: 0.52, blue: 0.53))
-    ///     push()
-    ///     translate(330, 150, 0)
-    ///     sphere(55)
-    ///     pop()
+    ///     push {
+    ///         translate(330, 150, 0)
+    ///         sphere(55)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -71,8 +71,8 @@ extension SketchPart {
     /// }
     ///
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    // shot: 1 snippet=35d60dbe
-    // shot: 2 snippet=674eb169
+    // shot: 1 snippet=1467a310 image=29e34ddd8c4a9057
+    // shot: 2 snippet=0d01890b image=302161609412bfd8
     public func ambientLight(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
@@ -94,10 +94,10 @@ extension SketchPart {
     ///     for (index, gray) in [40, 110, 230].enumerated() {
     ///         noLights()
     ///         ambientLight(gray)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -107,7 +107,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=463f0c89
+    // shot: 1 snippet=35ac2b1c image=7db556c8559ef0e0
     public func ambientLight(_ gray: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let gray = gray.asFloat
@@ -134,10 +134,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(30)
     ///         directionalLight(255, 255, blue, 0.4, 0.5, -0.6)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -163,7 +163,7 @@ extension SketchPart {
     /// [ADR-0011]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0011-color-model.md
     /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
     /// [ADR-0033]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0033-color-specification-surface.md
-    // shot: 1 snippet=746cf48b
+    // shot: 1 snippet=e6c8a608 image=c32f2ca5ec3f64ac
     public func directionalLight(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
     ) {
@@ -191,10 +191,10 @@ extension SketchPart {
     ///         noLights()
     ///         ambientLight(30)
     ///         pointLight(level, level, level, x - 50, 90, 120)
-    ///         push()
-    ///         translate(x, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(x, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -204,7 +204,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=b0b4f19a
+    // shot: 1 snippet=5e38458d image=a92e50b2e0a36f88
     public func pointLight(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible, _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible
     ) {
@@ -233,10 +233,10 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     spotLight(255, 255, 255, 160, 120, 200, 0, 0, -1, angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -254,10 +254,10 @@ extension SketchPart {
     ///     fill(242, 115, 64)
     ///     ambientLight(.linear(red: 0.12, green: 0.12, blue: 0.12))
     ///     spotLight(120, 120, 120, 160, 120, 200, 0, 0, -1, angle: Float.pi / 12)
-    ///     push()
-    ///     translate(200, 150, 0)
-    ///     plane(360, 260)
-    ///     pop()
+    ///     push {
+    ///         translate(200, 150, 0)
+    ///         plane(360, 260)
+    ///     }
     ///     ```
     ///   }
     ///   @Column {
@@ -266,8 +266,8 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=86836e88
-    // shot: 2 snippet=c1634f5d
+    // shot: 1 snippet=2e481696 image=52b145fedf42f3eb
+    // shot: 2 snippet=cae1a1b5 image=65edee0651302095
     public func spotLight(
         _ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible,
         _ x: some ScalarConvertible, _ y: some ScalarConvertible, _ z: some ScalarConvertible,
@@ -295,10 +295,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, red) in [255, 128, 25].enumerated() {
     ///         ambient(red, 255, 255)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -308,7 +308,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=7a515c10
+    // shot: 1 snippet=01a77770 image=12ad937c1bcee029
     public func ambient(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
@@ -328,10 +328,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, gray) in [255, 128, 25].enumerated() {
     ///         ambient(gray)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -341,7 +341,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=56ca5230
+    // shot: 1 snippet=51ca2ed0 image=86fbe4e8b2b61b6f
     public func ambient(_ gray: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let gray = gray.asFloat
@@ -363,10 +363,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, blue) in [0, 60, 160].enumerated() {
     ///         emissive(0, 0, blue)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -376,7 +376,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=438a495e
+    // shot: 1 snippet=78e14b96 image=452d335cbbbe6c69
     public func emissive(_ red: some ScalarConvertible, _ green: some ScalarConvertible, _ blue: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let (red, green, blue) = (red.asFloat, green.asFloat, blue.asFloat)
@@ -396,10 +396,10 @@ extension SketchPart {
     ///     noStroke()
     ///     for (index, glow) in [0, 110, 200].enumerated() {
     ///         emissive(glow)
-    ///         push()
-    ///         translate(70 + Float(index) * 130, 150, 0)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(70 + Float(index) * 130, 150, 0)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -409,7 +409,7 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=53bc89e9
+    // shot: 1 snippet=c4c73a68 image=349b86d6d5cb6cbb
     public func emissive(_ gray: some ScalarConvertible) {
         guard let canvas = liveCanvas() else { return }
         let gray = gray.asFloat

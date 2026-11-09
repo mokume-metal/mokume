@@ -156,7 +156,7 @@ nonisolated final class CannedHTTP: URLProtocol, @unchecked Sendable {
 
 /// 公開 API の一覧を取ってくる手 (`APIListLocator.download`) の期限 (#2407)。
 ///
-/// 窓口は同期で答えるので、取ってくる間は MCP の応答ごと固まる。`fetchLimit` が約束する
+/// MCP サーバは同期で答えるので、取ってくる間は MCP の応答ごと固まる。`fetchLimit` が約束する
 /// 「10 秒で諦める」は、**呼んでから返るまでの総時間**で数えなければ守れない。
 /// `URLRequest.timeoutInterval` は音沙汰の無い間の期限で、データが届くたびに数え直すので、
 /// 少しずつ返し続ける応答には切れない。

@@ -3,7 +3,7 @@
 
 import mokume
 
-/// 参照スケッチ 1 本。名前は窓を開く・書き出す・台帳の行の 3 つで同じものを使う。
+/// 参照スケッチ 1 本。名前はウィンドウを開く・書き出す・台帳の行の 3 つで同じものを使う。
 ///
 /// **`main.swift` の外に置く。** あちらの global は top-level のコードが走る順に初期化
 /// されるので、そのコードが走らない検査のプロセスから読むと、初期化される前の値を読む。
@@ -14,7 +14,7 @@ nonisolated struct ReferenceSketch: Sendable, CustomStringConvertible {
     ///
     /// 外から届いた値が絵に入りうるので、同じフレームが同じ絵になる約束 (台帳の指紋) を名乗れない
     /// ([ADR-0028] 決定 7 — 受け口を持つシーンを台帳に入れるのは、注入の道で回すときだけ)。
-    /// 窓を開いて走らせることはできる。書けることはビルドが、受け口の正しさは検査が見る。
+    /// ウィンドウを開いて走らせることはできる。書けることはビルドが、受け口の正しさは検査が見る。
     ///
     /// [ADR-0028]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0028-external-inputs.md
     let reachesOutside: Bool
@@ -72,7 +72,7 @@ nonisolated let catalogue: [ReferenceSketch] = [
     ReferenceSketch(name: "gamepad-and-players") { GamepadAndPlayers() },
     ReferenceSketch(name: "midi-and-hue") { MIDIAndHue() },
     ReferenceSketch(name: "midi-and-beat") { MIDIAndBeat() },
-    // 実物のポートを開く。窓で走らせるだけで、書き出しと台帳には入れない
+    // 実物のポートを開く。ウィンドウで走らせるだけで、書き出しと台帳には入れない
     ReferenceSketch(name: "osc-and-reply", reachesOutside: true) { OSCAndReply() },
     ReferenceSketch(name: "net-and-reply", reachesOutside: true) { NetAndReply() },
     ReferenceSketch(name: "serial-and-knob", reachesOutside: true) { SerialAndKnob() },

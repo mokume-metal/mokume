@@ -4,7 +4,7 @@
 import Foundation
 import mokume
 
-/// 窓口が差し出す道具立て。
+/// MCP サーバが差し出す道具立て。
 ///
 /// **面を増やすのではなく、既にある区画の往復を包むだけ。** ここに無い能力は
 /// 区画を直に読み書きすれば同じように使えるし、逆にここが増えても面は増えない。
@@ -14,7 +14,7 @@ struct Tools {
     /// 起動の瞬間に決まるものの一覧を指す名前。
     ///
     /// **道具を増やさず、既にある入口の責務を広げる** (ADR-0008 決定 5)。応えないときの
-    /// 案内はここを名指すので、一覧へ辿り着く経路が窓口の中で閉じる (#380)。
+    /// 案内はここを名指すので、一覧へ辿り着く経路が MCP サーバの中で閉じる (#380)。
     static let startupDocument = "startup"
 
     /// スケッチとやりとりする区画。基準は `MOKUME_WORK_DIR` が決める (#331)。
@@ -28,7 +28,7 @@ struct Tools {
     var makeID: () -> String = { UUID().uuidString.prefix(8).lowercased() }
     /// 取り消して区画に置いたままにした要求 (``AbandonedRequests``)。道具を走らせる手だけが触る。
     let abandoned = AbandonedRequests()
-    /// 呼び手へ渡す観測の絵の写し (``ObservationCopies``)。窓口 1 つにつき 1 つの置き場。
+    /// 呼び手へ渡す観測の絵の写し (``ObservationCopies``)。MCP サーバ 1 つにつき 1 つの置き場。
     var copies = ObservationCopies()
 
     /// 既定では 2 つの軸は重なる (区画の基準がパッケージの場所と同じ)。
@@ -37,8 +37,8 @@ struct Tools {
         makeID: @escaping () -> String = { UUID().uuidString.prefix(8).lowercased() }
     ) {
         let package = packageDirectory ?? facets.directory
-        // **窓口を立てた場所の事実は、組む時点で決める** (#2487)。立てる口 (`MCPCommand.run`) は
-        // 自分で渡す。渡されなければパッケージの場所を見て埋める — 検査が組む窓口も、
+        // **MCP サーバを立てた場所の事実は、組む時点で決める** (#2487)。立てる口 (`MCPCommand.run`) は
+        // 自分で渡す。渡されなければパッケージの場所を見て埋める — 検査が組む MCP サーバも、
         // 本物と同じく場所の事実を持つ
         var facets = facets
         if facets.place == nil { facets.place = .at(package) }
@@ -170,7 +170,7 @@ struct Tools {
     /// 道具を呼ぶ。
     ///
     /// - Parameter cancellation: 立てられたら、区画を待つ道具は待ちを切って戻る
-    ///   ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。戻った答えは窓口が書かない。
+    ///   ([#2355](https://github.com/mokume-metal/mokume/issues/2355))。戻った答えは MCP サーバが書かない。
     func call(
         _ name: String, arguments: [String: Any], cancellation: Cancellation? = nil
     ) -> (text: String, isError: Bool) {
@@ -217,7 +217,7 @@ struct Tools {
         // **数でない縮尺は断る。** 黙って落とすと等倍の頼みに化け、撮る側の警告にも載らない。
         // 真偽値は `NSNumber` 経由で 1 に読めてしまうので、型で見分ける (`time` と揃える・#2319)。
         // 有限でない数も断る — 通すと区画を作った後で書けずに、置き場所のせいにした案内が
-        // 返る。窓口の入口 (`JSONRPC.parse`) が、木に残った `-1e400` (`-inf` と読まれる) を行ごと
+        // 返る。MCP サーバの入口 (`JSONRPC.parse`) が、木に残った `-1e400` (`-inf` と読まれる) を行ごと
         // 断るので、ここへは通常来ない。**多層防御として残す** — 入口が見るのは読んだ木で、
         // 同じキーを 2 度書いた行の後ろの値のように木から落ちた数は見ないが、落ちた数は
         // ここへも届かない。`Tools` を直に呼ぶ口 (検査・将来の呼び元) のためにも判定は持つ。
@@ -341,7 +341,7 @@ struct Tools {
 
     /// 応答の `image` と `frames[].image` を、返す場所の絶対の綴りに書き換える (#2992)。
     ///
-    /// 応答の名前は区画からの相対で、窓口が渡す絵は区画の外の写しにある。**本文の JSON だけが区画を
+    /// 応答の名前は区画からの相対で、MCP サーバが渡す絵は区画の外の写しにある。**本文の JSON だけが区画を
     /// 基準にしたままだと、読み手が組み立てた場所は上書きされうる区画の中を指す。**
     static func namingPlaces(_ report: [String: Any], under location: URL) -> [String: Any] {
         func place(_ name: Any?) -> Any? {
@@ -422,7 +422,7 @@ struct Tools {
     /// **撮る側が丸めた値で見積もる** (#2045)。範囲の外の頼みは撮る側が端へ丸めて撮るので、
     /// 丸め方は撮る側の `ObservationRequest.clamped()` をそのまま使い、範囲を写さない。
     /// 丸めずに掛けると、スキーマの外の値 (`every = Int.max` など) で Int が溢れ、
-    /// 窓口のプロセスごと落ちる。
+    /// MCP サーバのプロセスごと落ちる。
     static func extraWait(count: Int?, every: Int?) -> TimeInterval {
         let limits = ObservationRequest(id: "", count: count ?? 1, every: every ?? 1).clamped()
         return Double((limits.count - 1) * limits.every + 1) / 30
@@ -463,7 +463,7 @@ struct Tools {
                 or it has not built anything so far.
                 """
             // **記録を書くのは `watch` で、書く先は `watch` の区画の基準** (スケッチの場所)。
-            // 窓口の区画の基準がスケッチでない場所に落ちていれば、走っている `watch` の記録は
+            // MCP サーバの区画の基準がスケッチでない場所に落ちていれば、走っている `watch` の記録は
             // ここからは読めない (#2487)。その場所から組み上げた実行ファイルを起こす使い方では
             // 作り直しがそもそも無いので、そう言い分ける — 一手を勧めるのは前者に対してだけである
             guard facets.facetsOutsideSketch, let place = facets.place else { return (missing, true) }
@@ -533,7 +533,7 @@ struct Tools {
                 // **置いた後に切った要求は、スケッチが撮り終えるまで区画を塞ぎうる** (#3030)。覚えて
                 // おき、次の呼び出しが時間切れになったときに「応えない」と取り違えない
                 if placed { abandoned.abandon(facet: facet, id: id) }
-                // 窓口は取り消された要求に答えを書かない。この文は呼ぶ側にだけ届く
+                // MCP サーバは取り消された要求に答えを書かない。この文は呼ぶ側にだけ届く
                 return .refused("The call was cancelled")
             case .contested:
                 return .refused(facets.contested(entry, repeatable: repeatable))
@@ -553,7 +553,7 @@ struct Tools {
                         : facets.notRunning(entry, existed: existed))
             }
         } catch {
-            // **置けなかった回も、場所の手を添える** (#2487)。窓口は在る場所なら受けるので、
+            // **置けなかった回も、場所の手を添える** (#2487)。MCP サーバは在る場所なら受けるので、
             // `/` や読み取り専用の場所でも立つ。区画の基準がそこに落ちていれば、書き込めるか・
             // 容量・`MOKUME_WORK_DIR` だけを言うと、場所を渡す手が抜ける
             guard facets.facetsOutsideSketch, let place = facets.place else {

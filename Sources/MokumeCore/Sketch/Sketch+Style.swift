@@ -748,22 +748,23 @@ extension SketchPart {
     /// 閉包の中で描いた形の内側で、以後の描画を切り抜く。円の切り抜きから絵を覗く、字の形に切り抜く、といった
     /// 定番に使う。手本は p5.js 2.x の `clip(callback)` である。
     ///
-    /// 閉包の中で描いたものは画面には出ず、**塗りの範囲**が切り抜きになる。切り抜きは ``pop(fileID:line:)`` か ``noClip()`` まで効く。
+    /// 閉包の中で描いたものは画面には出ず、**塗りの範囲**が切り抜きになる。切り抜きは、包んだ ``push(_:)`` を抜けるまでか ``noClip()`` まで効く
+    /// (``pop(fileID:line:)`` でも戻る)。
     ///
     /// @Row {
     ///   @Column(size: 3) {
     ///     ```swift
     ///     background(23, 26, 31)
-    ///     push()
-    ///     clip { circle(200, 150, 220) }
-    ///     // 縞を面いっぱいに描いても、円の切り抜きの中だけが見える
-    ///     noStroke()
-    ///     for x in stride(from: 0, to: 400, by: 20) {
-    ///         fill(x % 40 == 0 ? 242 : 89, 115, 64)
-    ///         rect(x, 0, 10, 300)
-    ///     }
-    ///     pop()  // 切り抜きもスタイルとして戻る
-    ///     // 切り抜きの縁の輪は、pop() の後なので切られない
+    ///     push {
+    ///         clip { circle(200, 150, 220) }
+    ///         // 縞を面いっぱいに描いても、円の切り抜きの中だけが見える
+    ///         noStroke()
+    ///         for x in stride(from: 0, to: 400, by: 20) {
+    ///             fill(x % 40 == 0 ? 242 : 89, 115, 64)
+    ///             rect(x, 0, 10, 300)
+    ///         }
+    ///     }  // 切り抜きもスタイルとして戻る
+    ///     // 切り抜きの縁の輪は、push { } を抜けた後なので切られない
     ///     noFill()
     ///     stroke(255, 180)
     ///     circle(200, 150, 220)
@@ -827,7 +828,7 @@ extension SketchPart {
     /// - Note: 切り抜きは**フレームを越えない**。`draw()` の中で毎フレーム書く。初期化のときや、止まっている間の
     ///   入力のコールバックで書いた切り抜きはどのフレームにも属さないので、警告して無視される。``createShape(_:)``
     ///   の中でも、形は切り抜きを持てないので警告して無視される。
-    // shot: 1 snippet=fe65f8ec image=7dce5531afccccd4
+    // shot: 1 snippet=3ce7aaee image=7dce5531afccccd4
     // shot: 2 snippet=f3a4fad0 image=e65c50c9e67da342
     public func clip(_ body: () -> Void) {
         guard let canvas = liveCanvas() else { return }
@@ -1148,7 +1149,8 @@ extension SketchPart {
     // shot: 3 snippet=6ea17290
     public func strokeJoin(_ join: StrokeJoin) { liveCanvas()?.strokeJoin(join) }
 
-    /// いまのスタイルを積んでおく。積むのは次の設定である。
+    /// いまのスタイルを積んでおく。部品の早期 `return` で対が崩れやすいときは、閉包で戻す ``push(_:)`` を使う
+    /// (変換とスタイルの両方を、閉包を抜けると戻す)。積むのは次の設定である。
     ///
     /// - 塗りと線: 色・線の太さ・端 (``strokeCap(_:)``) と折れ目 (``strokeJoin(_:)``) の形・破線 (``strokeDash(_:_:)``)・塗らない / 引かない指定
     /// - 座標の読み方: ``rectMode(_:)`` / ``ellipseMode(_:)`` / ``imageMode(_:)``

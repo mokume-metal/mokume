@@ -36,7 +36,7 @@
 ///
 /// [ADR-0042]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0042-camera-and-audio-standard.md
 nonisolated struct BeatTracker {
-    /// ブロックの長さ (標本)。窓の格子の hop と同じ。
+    /// ブロックの長さ (標本)。ウィンドウの格子の hop と同じ。
     static let block = AudioAnalysis.hop
     /// 平均を取る直近のブロックの数。
     static let historyBlocks = 94

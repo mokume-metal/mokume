@@ -47,53 +47,53 @@ final class GradientsAndState: Sketch {
         noTint()
         noClip()
         for index in 0..<2 {
-            push()
-            translate(30 + index * 500, 45)
-            stroke(245)
-            strokeWeight(2)
-            if index == 0 { fill(ramp(from: [0, 0], to: [300, 0])) }
-            else {
-                fill(.radialGradient((color(255, 130, 45), 0), (color(60, 210, 230), 0.5),
-                                     (color(160, 65, 230), 1), center: [150, 22], radius: 150))
-            }
-            rect(0, 0, 300, 45)
-            circle(45, 100, 65)
-            textSize(30)
-            text("Gradient", 100, 112)
-            noStroke()
-            fill(235)
-            textSize(16)
-            text(index == 0 ? "linear + white stroke" : "radial + white stroke", 0, -15)
-            for (i, position) in [Float(0), 150, 300].enumerated() {
-                let x = index == 0 ? position : 150 + position / 2
-                stroke(220)
-                line(x, 140, x, 148)
+            push {
+                translate(30 + index * 500, 45)
+                stroke(245)
+                strokeWeight(2)
+                if index == 0 { fill(ramp(from: [0, 0], to: [300, 0])) }
+                else {
+                    fill(.radialGradient((color(255, 130, 45), 0), (color(60, 210, 230), 0.5),
+                                         (color(160, 65, 230), 1), center: [150, 22], radius: 150))
+                }
+                rect(0, 0, 300, 45)
+                circle(45, 100, 65)
+                textSize(30)
+                text("Gradient", 100, 112)
                 noStroke()
-                text(["0", "0.5", "1"][i], x, 168)
+                fill(235)
+                textSize(16)
+                text(index == 0 ? "linear + white stroke" : "radial + white stroke", 0, -15)
+                for (i, position) in [Float(0), 150, 300].enumerated() {
+                    let x = index == 0 ? position : 150 + position / 2
+                    stroke(220)
+                    line(x, 140, x, 148)
+                    noStroke()
+                    text(["0", "0.5", "1"][i], x, 168)
+                }
             }
-            pop()
         }
 
         let angle = sin(time * 2) * 0.4
-        push()
-        translate(50, 300)
-        rotate(angle)
-        noStroke()
-        fill(ramp(from: [0, 0], to: [180, 0]))
-        rect(0, -40, 180, 80)
-        pop()
-        push()
-        fill(ramp(from: [360, 300], to: [540, 300]))
-        translate(360, 300)
-        rotate(angle)
-        noStroke()
-        rect(0, -40, 180, 80)
-        pop()
-        push()
-        translate(800, 300)
-        rotate(time)
-        shape(retained)
-        pop()
+        push {
+            translate(50, 300)
+            rotate(angle)
+            noStroke()
+            fill(ramp(from: [0, 0], to: [180, 0]))
+            rect(0, -40, 180, 80)
+        }
+        push {
+            fill(ramp(from: [360, 300], to: [540, 300]))
+            translate(360, 300)
+            rotate(angle)
+            noStroke()
+            rect(0, -40, 180, 80)
+        }
+        push {
+            translate(800, 300)
+            rotate(time)
+            shape(retained)
+        }
         label("transform > fill", 30, 390)
         label("fill > transform", 350, 390)
         label("retained gradient rotates", 690, 390)
@@ -101,16 +101,16 @@ final class GradientsAndState: Sketch {
         noStroke()
         fill(ramp(from: [0, 440], to: [0, 550]))
         baseline(90)
-        push()
-        fill(255, 0, 0)
-        fill(.radialGradient((color(255), 0), (color(255, 0, 0), 1), center: [300, 495], radius: 60))
-        tint(255, 0, 0)
-        clip(260, 455, 75, 70)
-        shader(red)
-        translate(300, 495)
-        rotate(0.4)
-        circle(0, 0, 100)
-        pop()
+        push {
+            fill(255, 0, 0)
+            fill(.radialGradient((color(255), 0), (color(255, 0, 0), 1), center: [300, 495], radius: 60))
+            tint(255, 0, 0)
+            clip(260, 455, 75, 70)
+            shader(red)
+            translate(300, 495)
+            rotate(0.4)
+            circle(0, 0, 100)
+        }
         resetShader() // shaderはpush/popの保存対象外。塗り・tint・clip・変換はpopで戻る。
         baseline(490)
         // popでclipも戻る。この印は上の枠の外にある。
@@ -141,11 +141,11 @@ final class GradientsAndState: Sketch {
     }
 
     private func label(_ caption: String, _ x: Float, _ y: Float) {
-        pushStyle()
-        noStroke()
-        fill(235)
-        textSize(16)
-        text(caption, x, y)
-        popStyle()
+        push {
+            noStroke()
+            fill(235)
+            textSize(16)
+            text(caption, x, y)
+        }
     }
 }

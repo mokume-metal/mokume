@@ -52,7 +52,7 @@ struct GamepadTests {
         #expect(try record() == record())
     }
 
-    @Test("nil のフレームは抜かれていて、押していた釦は離れ、傾きは 0 に戻る。次の入力で戻る")
+    @Test("nil のフレームは抜かれていて、押していたボタンは離れ、傾きは 0 に戻る。次の入力で戻る")
     func nilIsUnplugged() throws {
         let inputs: [GamepadInput?] = [
             GamepadInput(leftStick: [1, 0], pressed: [.a]), nil, nil, GamepadInput(leftStick: [0, 1]),
@@ -63,9 +63,9 @@ struct GamepadTests {
         #expect(seen.map(\.tilt) == [[1, 0], [0, 0], [0, 0], [0, 1]])
     }
 
-    @Test("外して足し直した (close の後に open が来る) パッドは、また入力を受け、押している釦も当て直す (#3122)")
+    @Test("外して足し直した (close の後に open が来る) パッドは、また入力を受け、押しているボタンも当て直す (#3122)")
     func reopenedPadReceivesInputAgain() throws {
-        // 同じ釦を押し続ける列。外すと押した記憶は消えるので、足し直した後の最初のフレームで押し直さないと A が戻らない
+        // 同じボタンを押し続ける列。外すと押した記憶は消えるので、足し直した後の最初のフレームで押し直さないと A が戻らない
         let device = try pad([GamepadInput(leftStick: [1, 0], pressed: [.a]), GamepadInput(leftStick: [1, 0], pressed: [.a])])
         device.supply()
         #expect(device.isPressed(.a))
@@ -85,7 +85,7 @@ struct GamepadTests {
         #expect(device.state == .running)
     }
 
-    @Test("外して足し直したパッドは、外す前に溜まっていた釦と傾きを当てず、押されたままにならない (#3122)")
+    @Test("外して足し直したパッドは、外す前に溜まっていたボタンと傾きを当てず、押されたままにならない (#3122)")
     func reopenedPadDoesNotApplyWhatWaitedBeforeClose() throws {
         // 空の列は何も入れない。外す前に届いて取り出されていない分だけを、受け取り口へ直に入れる
         let device = try pad([])
@@ -95,7 +95,7 @@ struct GamepadTests {
 
         try device.open()
         device.supply()
-        #expect(!device.isPressed(.a), "外す前に押された釦が、足し直した最初のフレームで押されたままになる")
+        #expect(!device.isPressed(.a), "外す前に押されたボタンが、足し直した最初のフレームで押されたままになる")
         #expect(device.leftStick.simd == [0, 0])
 
         device.inbox.changes.send(.pressed(.b))
@@ -122,7 +122,7 @@ struct GamepadTests {
         #expect(device.isClosed)
     }
 
-    @Test("抜かれる前に押していた釦は、挿し直した後に押していなければ押されていない")
+    @Test("抜かれる前に押していたボタンは、挿し直した後に押していなければ押されていない")
     func unpluggedPressDoesNotLinger() throws {
         // 押したまま抜け、挿し直した後は押していない。抜けたことを当てずにいると A が残る
         let seen = frames(try pad([GamepadInput(pressed: [.a]), nil, GamepadInput()]), 3)
@@ -140,7 +140,7 @@ struct GamepadTests {
         #expect(!pad.isPressed(.a))
         #expect(pad.isPressed(.b))
 
-        // 抜けて挿し直すまでが 1 フレームに収まっても、抜く前の釦は残らない
+        // 抜けて挿し直すまでが 1 フレームに収まっても、抜く前のボタンは残らない
         pad.inbox.changes.send(.releasedAll)
         pad.inbox.changes.send(.pressed(.x))
         pad.supply()
@@ -190,7 +190,7 @@ struct GamepadTests {
         #expect(pad.report?.lastArrival != nil)
     }
 
-    @Test("名前の付いた釦は GameController の名前を包み、知らない名前も表せる")
+    @Test("名前の付いたボタンは GameController の名前を包み、知らない名前も表せる")
     func buttonsWrapGameControllerNames() {
         #expect(GamepadButton.a.rawValue == "Button A")
         #expect(GamepadButton.b.rawValue == "Button B")

@@ -12,11 +12,11 @@ extension SketchPart {
     /// }
     /// func draw() {
     ///     lights()
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     rotateY(time * 0.5)
-    ///     if let head { model(head) }
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         rotateY(time * 0.5)
+    ///         if let head { model(head) }
+    ///     }
     /// }
     /// ```
     ///
@@ -102,11 +102,11 @@ extension SketchPart {
     ///         noStroke()
     ///         fill(242, 115, 64)
     ///         for (index, pyramid) in pyramids.enumerated() {
-    ///             push()
-    ///             translate(110 + index * 180, 150, 0)
-    ///             rotateY(0.6)
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(110 + index * 180, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -153,11 +153,11 @@ extension SketchPart {
     ///         noStroke()
     ///         fill(242, 115, 64)
     ///         for (index, pyramid) in pyramids.enumerated() {
-    ///             push()
-    ///             translate(110 + index * 180, 150, 0)
-    ///             rotateY(0.6)
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(110 + index * 180, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -198,8 +198,8 @@ extension SketchPart {
     ///   形式のときに ``ModelFailure``。
     ///   `setup()`・`draw()`・入力のコールバックの外 (初期化子の中・後片付けの後・`Task` の中) で呼ぶと
     ///   ``ModelFailure/notRunning(call:)`` (プロセスは落ちない)。
-    // shot: 1 snippet=b9a89f4b
-    // shot: 2 snippet=d6a2a289
+    // shot: 1 snippet=15a796b3 image=172473c3a049fd1c
+    // shot: 2 snippet=8e989fd9 image=a0443fbf8215c644
     public func loadModel(_ path: String, normalize: Bool = true) throws(ModelFailure) -> Model {
         noticeBlockingLoad("loadModel(_:normalize:)", instead: "requestModel(_:normalize:)")
         return try resourceCanvas(ModelFailure.self).loadModel(path, normalize: normalize)
@@ -291,15 +291,15 @@ extension SketchPart {
     ///         lights()
     ///         strokeWeight(2)
     ///         for column in 0..<3 {
-    ///             push()
-    ///             translate(75 + column * 125, 150, 0)
-    ///             rotateY(0.6)
-    ///             rotateX(0.6)
-    ///             scale(0.5, 0.5, 0.5)
-    ///             if column == 2 { noFill() } else { fill(242, 115, 64) }
-    ///             if column == 0 { noStroke() } else { stroke(255) }
-    ///             model(pyramid)
-    ///             pop()
+    ///             push {
+    ///                 translate(75 + column * 125, 150, 0)
+    ///                 rotateY(0.6)
+    ///                 rotateX(0.6)
+    ///                 scale(0.5, 0.5, 0.5)
+    ///                 if column == 2 { noFill() } else { fill(242, 115, 64) }
+    ///                 if column == 0 { noStroke() } else { stroke(255) }
+    ///                 model(pyramid)
+    ///             }
     ///         }
     ///     }
     ///     ```
@@ -310,6 +310,6 @@ extension SketchPart {
     ///     <!-- /shot -->
     ///   }
     /// }
-    // shot: 1 snippet=bbd93d4a
+    // shot: 1 snippet=64b4eaac image=dade448ce712c53f
     public func model(_ model: Model) { liveCanvas()?.model(model) }
 }

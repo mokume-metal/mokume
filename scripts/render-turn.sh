@@ -66,7 +66,7 @@
 # 先端は matching-refs の API (contents: read) で引く。権限は actions: read のまま広げない。
 # 読めない・branch が無い・環境変数が無いときは比べずに通す。
 #
-# **窓を縮めるだけで、ゼロにはならない。** 比べるのは出口の 1 回だけなので、出口から旧 head の
+# **ウィンドウを縮めるだけで、ゼロにはならない。** 比べるのは出口の 1 回だけなので、出口から旧 head の
 # render-pr が群に入るまでの遅れが、新しい push の門番の所要を超えれば、旧 head が新 head を取り消す向きは
 # 残る (権限を広げない決定の下では、根まで消せない)。見送られた run も、新しい push の run が立たなければ
 # (`[skip ci]`・GITHUB_TOKEN による push・main との衝突) 誰も render-pr を走らせないが、render-pr は

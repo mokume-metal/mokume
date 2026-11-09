@@ -9,9 +9,9 @@ import mokume
 @testable import MokumeCLI
 
 /// `mokume watch` の試聴 (#3565): 区画 `watch` の要求で入る・出る。入っている間、保存はプレビューだけを新しい版にし、
-/// 作品の窓が映す本番の子は止まらない。
+/// 作品のウィンドウが映す本番の子は止まらない。
 ///
-/// **GPU も窓も使わない。** 台は作らず、台の側の約束 (目録を採る・採らない) は ``WatchAuditionStageTests`` と
+/// **GPU もウィンドウも使わない。** 台は作らず、台の側の約束 (目録を採る・採らない) は ``WatchAuditionStageTests`` と
 /// `SharedFrameStageTests` が見る。ここは見張りの判断 — どの子を起こし、どの子を止め、何を名乗り、
 /// 台へ何を伝えるか — を、本物の子 (`/bin/sh`) で見る。
 @Suite("試聴に入ると、保存は試聴の子だけを起こし、本番の子は止まらない", .signalStateKept)
@@ -32,7 +32,7 @@ struct WatchAuditionTests {
         var relinquished: [[Int32]] = []
         /// 台が戻れるか (番号ごと)。既定は戻れる。
         var canReturn: (Int32) -> Bool = { _ in true }
-        /// 作品の窓が映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
+        /// 作品のウィンドウが映している世代の番号。既定は、いま走っている本番 (映っている前の世代があればそれ)。
         var windowShows: (() -> Int32?)?
         /// 立てると、次の作り直しは ``releaseRebuild()`` まで終わらない。
         var holdRebuild = false
@@ -139,7 +139,7 @@ struct WatchAuditionTests {
             stampCount += 1
             let before = gens.count
             await beat()
-            // 窓の台が新しい本番に乗り換えたことを演じる (この検査は台を作らない)。**乗り換えを待つ間を調べる検査は
+            // ウィンドウの台が新しい本番に乗り換えたことを演じる (この検査は台を作らない)。**乗り換えを待つ間を調べる検査は
             // `autoPromote` を下ろす** — 試聴の子は、本番が乗り換えを待つ間は起こされない
             if gens.count > before, autoPromote, let last = gens.last, session.child === last {
                 await session.generationPromoted(pid: last.processIdentifier)
@@ -228,7 +228,7 @@ struct WatchAuditionTests {
         #expect(noProduction["reason"] as? String == "noProduction")
         #expect(noProduction["accepted"] as? Bool == false && !empty.session.isAuditioning)
 
-        // プレビューが無い (窓を出せなかった見張り)
+        // プレビューが無い (ウィンドウを出せなかった見張り)
         let windowless = try Harness(overlapsGenerations: false)
         _ = await windowless.save()
         let noPreview = try await windowless.ask("audition")
@@ -396,7 +396,7 @@ struct WatchAuditionTests {
 
     // MARK: - 出る (完了条件 5)
 
-    @Test("出る要求で試聴の子が止まり、プレビューは本番へ戻される。次の保存は両方の窓を入れ替える")
+    @Test("出る要求で試聴の子が止まり、プレビューは本番へ戻される。次の保存は両方のウィンドウを入れ替える")
     func leavingStopsTheAuditionAndReturnsThePreview() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
@@ -414,12 +414,12 @@ struct WatchAuditionTests {
         #expect(harness.held == [[production.processIdentifier], []], "留めた本番を外していない")
         #expect(harness.relinquished.contains([audition.processIdentifier]))
         #expect(!harness.session.isAuditioning && harness.session.auditionChild == nil)
-        // 出た後、試聴の子の目録は、どちらの窓にも採られない
+        // 出た後、試聴の子の目録は、どちらのウィンドウにも採られない
         #expect(!harness.session.previewAccepts(pid: audition.processIdentifier))
         #expect(!harness.session.windowAccepts(pid: audition.processIdentifier))
         #expect(harness.session.previewAccepts(pid: production.processIdentifier))
 
-        // 次の保存は、これまでどおり両方の窓を入れ替える
+        // 次の保存は、これまでどおり両方のウィンドウを入れ替える
         harness.autoPromote = false
         let next = try #require(await harness.save())
         #expect(harness.session.child === next && harness.session.outgoing === production)
@@ -458,7 +458,7 @@ struct WatchAuditionTests {
 
     // MARK: - 試聴中に本番が自分で消えた回 (完了条件 10)
 
-    @Test("試聴中に本番が自分で消えたら、作品の窓は最後の絵のまま、試聴は続き、試聴中の言葉で名乗る")
+    @Test("試聴中に本番が自分で消えたら、作品のウィンドウは最後の絵のまま、試聴は続き、試聴中の言葉で名乗る")
     func productionDepartingDuringAuditionKeepsTheAudition() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
@@ -474,7 +474,7 @@ struct WatchAuditionTests {
         #expect(line.contains("work's window"), "\(line)")
         #expect(line.contains("audition goes on"), "\(line)")
         #expect(!line.contains("Save and it gets rebuilt"), "保存しても本番は起きないのに、起こし直すと言った")
-        #expect(harness.relinquished.contains { $0.contains(production.processIdentifier) }, "窓の頼みを下ろしていない")
+        #expect(harness.relinquished.contains { $0.contains(production.processIdentifier) }, "ウィンドウの頼みを下ろしていない")
 
         // 以後の保存も試聴の子を起こす
         let next = try #require(await harness.save())
@@ -485,7 +485,7 @@ struct WatchAuditionTests {
 
     // MARK: - 入力の宛先 (完了条件 7)
 
-    @Test("試聴中、プレビューで触った出来事は試聴の子へ、作品の窓で触った出来事は本番の子へ届く")
+    @Test("試聴中、プレビューで触った出来事は試聴の子へ、作品のウィンドウで触った出来事は本番の子へ届く")
     func inputGoesToTheGenerationEachWindowShows() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
@@ -498,10 +498,10 @@ struct WatchAuditionTests {
         #expect(!audition.isRunning, "プレビューで触った出来事が試聴の子へ届かない")
         #expect(production.isRunning, "プレビューで触った出来事が本番へ届いた")
 
-        // 作品の窓 (引数なし) は本番
+        // 作品のウィンドウ (引数なし) は本番
         harness.session.send("touch\n")
         harness.wait(production)
-        #expect(!production.isRunning, "作品の窓で触った出来事が本番へ届かない")
+        #expect(!production.isRunning, "作品のウィンドウで触った出来事が本番へ届かない")
     }
 
     @Test("試聴の子を起こすまでプレビューは本番を映しているので、その出来事は本番へ届く。映す世代が消えていれば、どこへも届かない")
@@ -542,7 +542,7 @@ struct WatchAuditionTests {
 
     // MARK: - 台に採らせる目録の選び方 (完了条件 8・9 の見張りの側)
 
-    @Test("作品の窓は試聴の子の番号の目録を採らず、プレビューは試聴の子を起こした後はその目録だけを採る")
+    @Test("作品のウィンドウは試聴の子の番号の目録を採らず、プレビューは試聴の子を起こした後はその目録だけを採る")
     func theGatesFollowTheRolesByPid() async throws {
         let harness = try Harness()
         let production = try #require(await harness.save())
@@ -558,11 +558,11 @@ struct WatchAuditionTests {
         let audition = try #require(await harness.save())
         let a = audition.processIdentifier
         let p = production.processIdentifier
-        #expect(!session.windowAccepts(pid: a), "作品の窓が試聴の子の目録を採る")
+        #expect(!session.windowAccepts(pid: a), "作品のウィンドウが試聴の子の目録を採る")
         #expect(session.windowAccepts(pid: p))
         #expect(session.previewAccepts(pid: a))
         #expect(!session.previewAccepts(pid: p), "試聴中にプレビューが本番の目録を採る")
-        // 番号を名乗らない目録は、試聴の間はどちらの窓も採らない (試聴に入れるのは番号を名乗る本番だけで、
+        // 番号を名乗らない目録は、試聴の間はどちらのウィンドウも採らない (試聴に入れるのは番号を名乗る本番だけで、
         // 名乗らない目録は試聴の子のもの)
         #expect(!session.windowAccepts(pid: nil) && !session.previewAccepts(pid: nil))
 

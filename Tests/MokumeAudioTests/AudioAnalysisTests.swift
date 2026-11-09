@@ -62,7 +62,7 @@ struct AudioAnalysisTests {
         #expect(abs(half / loud - 0.5) < 1e-3)
     }
 
-    @Test("短い窓は前を 0 で埋め、長い窓は最後の 1024 を使う")
+    @Test("短いウィンドウは前を 0 で埋め、長いウィンドウは最後の 1024 を使う")
     func windowLength() {
         let short = Array(sine(band: 8).suffix(100))
         let padded = Array(repeating: Float(0), count: AudioAnalysis.windowSize - 100) + short
@@ -87,7 +87,7 @@ struct AudioAnalysisTests {
     // MARK: - 遅らせた解析と、使い回す変換 (#2379)
 
     /// 解析の入力にする区間。無音・正弦波・インパルス・固定乱数 (種が決まっているので何度作っても同じ)。
-    /// 区間の始まりも、窓の格子の境界の上・途中・履歴が標本 0 に届かない所を混ぜる。
+    /// 区間の始まりも、ウィンドウの格子の境界の上・途中・履歴が標本 0 に届かない所を混ぜる。
     static var probeSpans: [(name: String, span: AudioSpan)] {
         var state: UInt32 = 20_261_022
         let noise = (0..<3000).map { _ -> Float in

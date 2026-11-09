@@ -701,13 +701,13 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 
 ### 変換とスタイルの push / pop
 
+- ``SketchPart/push(_:)``
 - ``SketchPart/pushMatrix(fileID:line:)``
 - ``SketchPart/popMatrix(fileID:line:)``
 - ``SketchPart/pushStyle(fileID:line:)``
 - ``SketchPart/popStyle(fileID:line:)``
 - ``SketchPart/push(fileID:line:)``
 - ``SketchPart/pop(fileID:line:)``
-- ``SketchPart/push(_:)``
 
 ### 切り抜く
 
@@ -1195,7 +1195,7 @@ Processing・p5.js の形のまま書くとコンパイルは通るが、一度�
 - ``RenderTarget``
 - ``RenderFailure``
 
-### 窓を出さずにスケッチを走らせる
+### ウィンドウを出さずにスケッチを走らせる
 
 道具・外のパッケージ・検査のための口で、`import MokumeHost` で使う。スケッチを 1 フレームずつ進め、
 描いた絵を値で読み、入力を注入する。後始末は口が持つ。

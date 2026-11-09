@@ -27,10 +27,10 @@ extension SketchPart {
     ///     background(20, 23, 31)
     ///     orbitControl()
     ///     lights()
-    ///     push()
-    ///     translate(width / 2, height / 2, 0)
-    ///     box(140)
-    ///     pop()
+    ///     push {
+    ///         translate(width / 2, height / 2, 0)
+    ///         box(140)
+    ///     }
     /// }
     /// ```
     ///

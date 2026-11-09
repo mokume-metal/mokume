@@ -505,18 +505,18 @@ extension SketchPart {
     ///
     ///         rect(20, 100, 100, 100)
     ///
-    ///         push()
-    ///         translate(200, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(90)
-    ///         pop()
+    ///         push {
+    ///             translate(200, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(90)
+    ///         }
     ///
-    ///         push()
-    ///         translate(330, 150, 0)
-    ///         rotateY(-0.6)
-    ///         sphere(55)
-    ///         pop()
+    ///         push {
+    ///             translate(330, 150, 0)
+    ///             rotateY(-0.6)
+    ///             sphere(55)
+    ///         }
     ///     }
     ///     ```
     ///   }
@@ -612,7 +612,7 @@ extension SketchPart {
     ///
     /// **描き方なのでフレームを越える** — 塗りや線と同じく、一度書けば
     /// ``noTexture()`` を呼ぶまで続き、``push(fileID:line:)`` / ``pop(fileID:line:)`` で積める。
-    // shot: 1 snippet=ae1a14cd
+    // shot: 1 snippet=56054e65 image=592a9bcf077af6ce
     // shot: 2 snippet=8457adaf
     // shot: 3 snippet=17433594
     public func texture(_ image: Image) { liveCanvas()?.texture(image) }
@@ -645,18 +645,18 @@ extension SketchPart {
     ///
     ///         rect(30, 90, 120, 120)
     ///
-    ///         push()
-    ///         translate(290, 150, 0)
-    ///         rotateX(-0.5)
-    ///         rotateY(0.6)
-    ///         box(100)
-    ///         pop()
+    ///         push {
+    ///             translate(290, 150, 0)
+    ///             rotateX(-0.5)
+    ///             rotateY(0.6)
+    ///             box(100)
+    ///         }
     ///     }
     ///     ```
     ///   }
     ///   @Column {
     ///     <!-- shot: 左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある -->
-    ///     ![左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある](https://i.gyazo.com/0b363f8077db4c7b85d97381ed5aac4c.png)
+    ///     ![左の四角と右の箱の面に、青灰色の地に橙色の円を描いた同じ描き場所が貼られている。箱は陰影が付き、面ごとに円がある](https://i.gyazo.com/fbf158869e8ae93c6d64d9288cab0770.png)
     ///     <!-- /shot -->
     ///   }
     /// }
@@ -704,7 +704,7 @@ extension SketchPart {
     /// }
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
-    // shot: 1 snippet=b95f51a7
+    // shot: 1 snippet=f7249143 image=74746e0b7fc5a93d
     // shot: 2 snippet=a78d202e
     public func texture(_ graphics: Canvas) { liveCanvas()?.texture(graphics) }
 
@@ -747,9 +747,9 @@ extension SketchPart {
     ///   }
     /// }
     ///
-    /// 貼る絵は ``push(fileID:line:)`` / ``pop(fileID:line:)`` で積めるので、`push()` の中で呼んだ `noTexture()` は
-    /// `pop()` で元に戻る。下の絵は、貼ったまま 3 つ目の四角を置くとき、2 つ目だけを
-    /// `push()` と `pop()` で挟んで絵を外している。
+    /// 貼る絵はスタイルとして積まれるので、``push(_:)`` の閉包の中で呼んだ `noTexture()` は
+    /// 閉包を抜けると元に戻る (``push(fileID:line:)`` / ``pop(fileID:line:)`` の対でも同じ)。下の絵は、
+    /// 貼ったまま 3 つ目の四角を置くとき、2 つ目だけを `push { }` で包んで絵を外している。
     ///
     /// @Row {
     ///   @Column(size: 3) {
@@ -771,11 +771,11 @@ extension SketchPart {
     ///         texture(tile)
     ///         rect(20, 100, 100, 100)
     ///
-    ///         push()
-    ///         noTexture()
-    ///         fill(242, 115, 64)
-    ///         rect(150, 100, 100, 100)
-    ///         pop()
+    ///         push {
+    ///             noTexture()
+    ///             fill(242, 115, 64)
+    ///             rect(150, 100, 100, 100)
+    ///         }
     ///
     ///         rect(280, 100, 100, 100)
     ///     }
@@ -790,7 +790,7 @@ extension SketchPart {
     ///
     /// - Note: 貼る絵は**フレームを越える**。一度書けば、書き換えるまで残る。
     // shot: 1 snippet=3d8912c0
-    // shot: 2 snippet=03298d4c
+    // shot: 2 snippet=cd9091a0 image=6f8d871270ab0592
     public func noTexture() { liveCanvas()?.noTexture() }
 }
 

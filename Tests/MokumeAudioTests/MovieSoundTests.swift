@@ -435,7 +435,7 @@ struct MovieSoundRenderTests {
     }
 
     /// 書き出しの `fps`・`play()` を呼ぶ場面・録りの始め方・音を鳴らす遅れ (フレーム) ごとの、音の頭と映像の頭の差
-    /// (窓の数。負なら音が早い)。
+    /// (ウィンドウの数。負なら音が早い)。
     struct HeadCase: CustomTestStringConvertible, Sendable {
         var fps: Int
         var at: Where
@@ -478,7 +478,7 @@ struct MovieSoundRenderTests {
         // 書き出す長さは、元の映像が次の明るさへ変わるまで (1/30 秒) を越えて、6 枚が見える長さ
         let recorded = item.fps / 30 * 8
         SoundSketch.onDraw = { sketch in
-            // 映像は、映したコマを窓いっぱいに描いて書き出しへ載せる
+            // 映像は、映したコマをウィンドウいっぱいに描いて書き出しへ載せる
             if let clip { sketch.image(clip.image, 0, 0, 8, 8) }
             if sketch.frameCount == 1 {
                 if item.recording == .inDraw { sketch.beginRecord(out.path) }
@@ -500,8 +500,8 @@ struct MovieSoundRenderTests {
 
         let heard = try await watch(out, frames: recorded)
         try #require(heard.levels.count == recorded, "映像 \(heard.levels.count) 枚")
-        // 音の頭: 立ち上がりの標本がいちばん近い窓の番号 (1 窓 = 48000 ÷ fps 標本)。窓の境界から離れた
-        // 窓の中ほどで判定するため、四捨五入する
+        // 音の頭: 立ち上がりの標本がいちばん近いウィンドウの番号 (1 ウィンドウ = 48000 ÷ fps 標本)。ウィンドウの境界から離れた
+        // ウィンドウの中ほどで判定するため、四捨五入する
         let window = Fixture.sampleRate / item.fps
         let onset = try #require(heard.audio.firstIndex { abs($0) > 0.01 })
         let audioHead = (onset + window / 2) / window
@@ -511,7 +511,7 @@ struct MovieSoundRenderTests {
         let videoHead = change - item.fps / 30
         #expect(
             audioHead - videoHead == item.expected,
-            "音の頭 \(audioHead) 窓・映像の頭 \(videoHead) 枚 (明るさ \(heard.levels)・立ち上がり \(onset) 標本)")
+            "音の頭 \(audioHead) ウィンドウ・映像の頭 \(videoHead) 枚 (明るさ \(heard.levels)・立ち上がり \(onset) 標本)")
     }
 
     // MARK: - jump で合わせた後のずれ

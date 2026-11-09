@@ -143,7 +143,7 @@ struct SoundFileTests {
         AudioAnalysis.analyze(span(of: samples, from: previous, to: played, loops: loops))
     }
 
-    // MARK: - 書き出し (固定の時計) の窓
+    // MARK: - 書き出し (固定の時計) のウィンドウ
 
     @Test("固定の時計で 2 度書き出すと同じ値になり、前のフレームから鳴らし始めてからの経過までの区間の値になる")
     func exportIsRepeatable() throws {
@@ -172,7 +172,7 @@ struct SoundFileTests {
         #expect(Set(first.map(\.level)).count > 1)
     }
 
-    @Test("実時間の速さで鳴らした再生は、書き出しと同じ時刻の窓から同じ値を取り、鳴った音もその位置にある")
+    @Test("実時間の速さで鳴らした再生は、書き出しと同じ時刻のウィンドウから同じ値を取り、鳴った音もその位置にある")
     func playbackMatchesExport() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -213,11 +213,11 @@ struct SoundFileTests {
     }
 
     /// **区間の境界は、絶対のフレーム番号の式 ⌊N·sr/fps⌋ の差で数える** ([#3136] の条件 8・ADR-0042 の「時刻の対応」)。
-    /// 鳴らし始めたフレームからの差で数えると、48000 Hz・144 fps (1 フレーム 333.33 標本) では、載せる窓の
+    /// 鳴らし始めたフレームからの差で数えると、48000 Hz・144 fps (1 フレーム 333.33 標本) では、載せるウィンドウの
     /// 継ぎ目と最大 1 標本ずれる。
     ///
     /// [#3136]: https://github.com/mokume-metal/mokume/issues/3136
-    @Test("途中のフレームから鳴らし始めた位置は、絶対のフレーム番号の窓の継ぎ目と揃う (48000 Hz・144 fps)")
+    @Test("途中のフレームから鳴らし始めた位置は、絶対のフレーム番号のウィンドウの継ぎ目と揃う (48000 Hz・144 fps)")
     func positionLinesUpWithTheAbsoluteWindows() throws {
         let url = try writeWAV(chord, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: url) }
@@ -226,9 +226,9 @@ struct SoundFileTests {
             { try $0.loadSound(url.path) },
             act: { sound, frameCount in if frameCount == 5 { sound.play() } })
         #expect(heard.count == 40)
-        // draw() の frameCount 5 (フレーム 4) で呼んだ play() が、窓 4 の先頭から鳴らす
+        // draw() の frameCount 5 (フレーム 4) で呼んだ play() が、ウィンドウ 4 の先頭から鳴らす
         for (index, frame) in heard.enumerated() where index >= 5 {
-            let expected = index * 48_000 / 144 - 4 * 48_000 / 144  // 整数で独立に数えた絶対の窓の先頭の差
+            let expected = index * 48_000 / 144 - 4 * 48_000 / 144  // 整数で独立に数えた絶対のウィンドウの先頭の差
             #expect(frame.position == expected, "frame \(index)")
         }
         #expect(heard[6].position == 667, "旧式 ⌊(N - origin)·sr/fps⌋ なら 666")
@@ -285,7 +285,7 @@ struct SoundFileTests {
         // 止まっている間は無音で、鳴っている間は音がある (頭のフレームは鳴らし始めた瞬間で、まだ無音)
         #expect(heard[3].level == 0 && heard[4].level == 0 && heard[7].level == 0)
         #expect(heard[1].level > 0 && heard[5].level > 0 && heard[8].level > 0)
-        // 続きから鳴らした区間は、止めた位置から始まる区切りで切る。止めた位置より前の窓の部分は、
+        // 続きから鳴らした区間は、止めた位置から始まる区切りで切る。止めた位置より前のウィンドウの部分は、
         // 止めていた間は鳴っていないので 0
         let resumed = span(from: 1600, to: 2400) { $0 < 1600 ? 0 : chord[$0] }
         #expect(heard[5].spectrum == AudioAnalysis.analyze(resumed).spectrum)
@@ -353,7 +353,7 @@ struct SoundFileTests {
         }
         #expect(looped.allSatisfy { $0.isPlaying })
         #expect(looped.map(\.position) == [0, 800, 1600, 400, 1200, 0])
-        // 継ぎ目を越えた区間 (1600..<2400) は、終わりの後に頭が続く。窓の格子はファイルの位置を戻さずに数える
+        // 継ぎ目を越えた区間 (1600..<2400) は、終わりの後に頭が続く。ウィンドウの格子はファイルの位置を戻さずに数える
         let seam = expected(short, previous: 1600, played: 2400, loops: true)
         #expect(looped[3].spectrum == seam.spectrum)
         #expect(looped[3].peak == seam.peak)
@@ -430,7 +430,7 @@ struct SoundFileTests {
         #expect(heard.last?.position == 0)
     }
 
-    /// 1 フレームより短い一発音は、鳴り終わったフレームの区間 (鳴り始めてから終わりまで) に入る。窓の終わりで見ていたときは、
+    /// 1 フレームより短い一発音は、鳴り終わったフレームの区間 (鳴り始めてから終わりまで) に入る。ウィンドウの終わりで見ていたときは、
     /// 鳴り終わったフレームを無音に戻して、peak が一度も出なかった。
     @Test("24 fps で 20 ミリ秒の一発音を鳴らすと、鳴り終わったフレームの peak に出て、次のフレームから無音になる")
     func aOneShotShorterThanAFrameIsSeen() throws {
@@ -529,7 +529,7 @@ struct SoundFileTests {
         #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames - 1, "解析は共有の解析器を通る")
     }
 
-    /// **音量はフレームの頭の値で窓に掛かる。** 読む前に `amp()` で変えても、そのフレームの値は
+    /// **音量はフレームの頭の値でウィンドウに掛かる。** 読む前に `amp()` で変えても、そのフレームの値は
     /// 変える前の音量のもので、変えた音量は次のフレームから効く (毎フレーム解析していたときと同じ)。
     @Test("読む前に音量を変えても、そのフレームの値はフレームの頭の音量のもので、次のフレームから効く")
     func aVolumeChangedBeforeTheReadTakesEffectNextFrame() throws {
@@ -818,7 +818,7 @@ struct SoundFileTests {
         let oldTail = AudioAnalysis.analyze(span(of: Self.tenSeconds, from: 1600, to: 2400))
         #expect(seen[3].level == oldTail.level && seen[3].spectrum == oldTail.spectrum)
         #expect(seen[2].level > 0 && seen[3].level != seen[2].level)
-        // 次のフレームの区間は飛び先から始まる。窓の前の部分は、飛ぶ前からそこまで鳴っていたのと同じく、
+        // 次のフレームの区間は飛び先から始まる。ウィンドウの前の部分は、飛ぶ前からそこまで鳴っていたのと同じく、
         // ファイルの標本で埋める (飛び先の前の標本は 0 でない)
         let landing = AudioAnalysis.analyze(
             span(of: Self.tenSeconds, from: 240_000, to: 240_800))

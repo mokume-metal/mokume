@@ -12,7 +12,7 @@ import mokume
 ///
 /// `--render /tmp/parts --frames 150` で更新→停止→再開を見る (全例の連番を出力する)。
 /// 0始まりの60〜119フレームは面を描き直さず、59の内容を保つ。120で3枚とも更新へ戻る。
-/// 本体の部品は停止中も動く。180フレーム周期で繰り返すので、窓でも追える。
+/// 本体の部品は停止中も動く。180フレーム周期で繰り返すので、ウィンドウでも追える。
 /// 同じフレーム内の「置く→面を書き換える→別の位置へ置く」は EffectsAndCustom が担当する。
 /// あちらの6枚は同じ面を再利用しても、先に置いた絵が後の効果へ変わらないことを示す。
 final class PartsAndSurfaces: Sketch {
@@ -43,10 +43,10 @@ final class PartsAndSurfaces: Sketch {
         fill(230)
         textSize(16)
         text("SketchPart on main canvas", 20, 30)
-        push()
-        translate(20, 50)
-        part.paint()
-        pop()
+        push {
+            translate(20, 50)
+            part.paint()
+        }
 
         let step = (frameCount - 1) % 180
         let paused = (60..<120).contains(step)
@@ -70,12 +70,12 @@ final class PartsAndSurfaces: Sketch {
         noTint()
         fill(255)
         image(pad, 20, 290)
-        push()
-        translate(350, 290)
-        texture(pad)
-        rect(0, 0, 240, 140)
-        noTexture()
-        pop()
+        push {
+            translate(350, 290)
+            texture(pad)
+            rect(0, 0, 240, 140)
+            noTexture()
+        }
         shape(retained, 680, 290)
 
         fill(230)

@@ -3,14 +3,14 @@
 
 import MokumeCore
 
-/// 釦の押し離し 1 件。落とさない列 (``ExternalQueue``) に届いた順で入る。
+/// ボタンの押し離し 1 件。落とさない列 (``ExternalQueue``) に届いた順で入る。
 nonisolated enum GamepadChange: Sendable, Equatable {
     case pressed(GamepadButton)
     case released(GamepadButton)
-    /// 抜かれた。押していた釦をすべて離したことにする。
+    /// 抜かれた。押していたボタンをすべて離したことにする。
     ///
     /// **列に入れて順に当てる。** 抜いた瞬間の状態をフレームの側で消すと、抜いて挿し直すまでが
-    /// 1 フレームに収まったとき、抜く前に押していた釦が押されたまま残る。
+    /// 1 フレームに収まったとき、抜く前に押していたボタンが押されたまま残る。
     case releasedAll
 }
 
@@ -19,7 +19,7 @@ nonisolated enum GamepadChange: Sendable, Equatable {
 /// - スティックの傾きは最新の 1 つ (``ExternalInput``)。1 台で毎秒数百件届き、要るのは
 ///   フレームの頭のいまの値だけである。列に溜めると、読まない間に上限で捨てた知らせが意味の
 ///   無いところで出る
-/// - 釦の押し離しは落とさない列 (``ExternalQueue``)。1 フレームに押して離したものも、届いた順に
+/// - ボタンの押し離しは落とさない列 (``ExternalQueue``)。1 フレームに押して離したものも、届いた順に
 ///   全部当てる
 ///
 /// 状態は 2 つに同じものを置く。読むのは列の側である。
@@ -42,7 +42,7 @@ nonisolated final class GamepadInbox: Sendable {
         changes.setState(state)
     }
 
-    /// まだ取り出されていない傾きと釦の押し離しを、読まずに捨てる (``Gamepad/close()``)。
+    /// まだ取り出されていない傾きとボタンの押し離しを、読まずに捨てる (``Gamepad/close()``)。
     func discardWaiting() {
         stick.discardWaiting()
         changes.discardWaiting()
@@ -51,7 +51,7 @@ nonisolated final class GamepadInbox: Sendable {
     /// 出どころの状態。
     var state: SourceState { changes.state }
 
-    /// 抜かれた。傾きを 0 に戻し、押していた釦を離したことにして、抜かれたと名乗る。
+    /// 抜かれた。傾きを 0 に戻し、押していたボタンを離したことにして、抜かれたと名乗る。
     /// 実機の係 (``GamepadHub``) も記録の再生も、抜かれたときはこの形で入れる。
     func unplug() {
         stick.send(.zero)
@@ -92,7 +92,7 @@ protocol GamepadSource: AnyObject {
 /// **外して足し直しても、フレームの数え方は変わらない** (時刻どおり・[#3152])。外していた間も
 /// フレームは進んでいたものとして、足し直したときに列の位置をその数だけ進める (外していた間の入力は届かない)。
 ///
-/// 実機と同じ入れ物を通すため、釦は前のフレームとの差を押し離しの出来事にして列へ入れ、
+/// 実機と同じ入れ物を通すため、ボタンは前のフレームとの差を押し離しの出来事にして列へ入れ、
 /// `nil` (抜かれている) は実機が抜かれたときと同じ形で入れる。
 ///
 /// [#3152]: https://github.com/mokume-metal/mokume/issues/3152
@@ -100,7 +100,7 @@ protocol GamepadSource: AnyObject {
 final class RecordedGamepadSource: GamepadSource {
     private let inputs: [GamepadInput?]
     private var next = 0
-    /// 前のフレームで押されていた釦。抜かれていれば空。
+    /// 前のフレームで押されていたボタン。抜かれていれば空。
     private var held: Set<GamepadButton> = []
     private var stopped = false
     private var detached: DetachedFrames
@@ -113,8 +113,8 @@ final class RecordedGamepadSource: GamepadSource {
 
     func start(into inbox: GamepadInbox) {
         // 足し直し (``stop()`` の後の 2 度目) で戻る。列の位置は、外していた間に進んだフレームの数だけ進め
-        // (時刻どおり・#3152)、押していた釦の記憶は捨てる
-        // (パッドの側は外すときに押した記憶を消すので、同じ釦を押し続ける列は押し直しとして届ける)
+        // (時刻どおり・#3152)、押していたボタンの記憶は捨てる
+        // (パッドの側は外すときに押した記憶を消すので、同じボタンを押し続ける列は押し直しとして届ける)
         stopped = false
         held = []
         if !inputs.isEmpty { next = (next + detached.reopen()) % inputs.count }

@@ -91,7 +91,7 @@ struct MicrophoneConfigurationChangeTests {
     /// たまってから列を流し、処理し終えた持ち主を返す。`first` に渡す手続きは、列の上から別のエンジンの
     /// 知らせを送る (`first` の後に処理される)。
     ///
-    /// 窓で起きるのは、知らせを受けた糸が先に走って、列が後から追い付く形である。
+    /// ウィンドウで起きるのは、知らせを受けた糸が先に走って、列が後から追い付く形である。
     private func run(
         _ holder: Holder = Holder(),
         first: (@Sendable (_ notice: (FakeEngine) -> Void) -> Void)? = nil,

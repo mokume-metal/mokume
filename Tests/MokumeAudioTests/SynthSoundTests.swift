@@ -195,9 +195,9 @@ struct SynthSoundTests {
         }
     }
 
-    // MARK: - 書き出し (固定の時計) の窓
+    // MARK: - 書き出し (固定の時計) のウィンドウ
 
-    @Test("固定の時計で回すと、鳴らし始めてからの標本で終わる窓が解析され、帯域は周波数のところにある")
+    @Test("固定の時計で回すと、鳴らし始めてからの標本で終わるウィンドウが解析され、帯域は周波数のところにある")
     func exportAnalyzesTheRenderedWindow() throws {
         let heard = try record(frames: 8, sine)
         #expect(heard.count == 8)
@@ -235,7 +235,7 @@ struct SynthSoundTests {
         #expect(first.last?.level ?? 0 > 0)
     }
 
-    @Test("周波数をスケッチから変えると、窓の帯域がそれに追いつく (マウスの位置で音程を動かす形)")
+    @Test("周波数をスケッチから変えると、ウィンドウの帯域がそれに追いつく (マウスの位置で音程を動かす形)")
     func frequencyFollowsTheSketch() throws {
         let heard = try record(
             frames: 24, sine,
@@ -355,7 +355,7 @@ struct SynthSoundTests {
         #expect(heard[0].level == 0 && heard[1].level == 0)
         #expect(heard[3].level > 0.5)
         #expect(heard[4].level > 0.5)
-        // 形が終わってから窓 (約 21 ミリ秒) が過ぎた後は無音
+        // 形が終わってからウィンドウ (約 21 ミリ秒) が過ぎた後は無音
         #expect(heard[10].level == 0 && heard[11].level == 0)
     }
 
@@ -606,7 +606,7 @@ struct SynthSoundTests {
     // MARK: - 解析は読まれたときだけ (#2379)
 
     /// **値を読まない音は解析されず、読む音は 1 フレームに 1 回だけ解析される。** 鳴らした音は止めた後も
-    /// 毎フレーム窓を切るが、解くのは読まれたときだけである ([#2379])。解析は共有の解析器
+    /// 毎フレームウィンドウを切るが、解くのは読まれたときだけである ([#2379])。解析は共有の解析器
     /// (``AudioAnalyzer``) を通る。
     ///
     /// [#2379]: https://github.com/mokume-metal/mokume/issues/2379
@@ -641,9 +641,9 @@ struct SynthSoundTests {
         #expect(AudioAnalyzer.shared.analyses - analyzerBefore == frames - 1, "解析は共有の解析器を通る")
     }
 
-    /// **遅らせた解析は、フレームの頭の窓を解く。** 読む前に音だけが先へ進んでも (実時間の再生では
+    /// **遅らせた解析は、フレームの頭のウィンドウを解く。** 読む前に音だけが先へ進んでも (実時間の再生では
     /// 音の側が先へ進む)、値は毎フレーム解析していたときと同じで、進んだ分の標本は拾わない。
-    @Test("読む前に音が先へ進んでも、値はフレームの頭の窓のものでビット一致する")
+    @Test("読む前に音が先へ進んでも、値はフレームの頭のウィンドウのものでビット一致する")
     func aLateReadStillSolvesTheWindowFromTheStartOfTheFrame() throws {
         let frames = 6
         var sound: SynthSound?

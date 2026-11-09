@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 mokume-metal
 # SPDX-License-Identifier: MIT
 #
-# 窓を出して走らせているスケッチへ、観測と入力の要求を続けて置き、すべてに応答が返るか
+# ウィンドウを出して走らせているスケッチへ、観測と入力の要求を続けて置き、すべてに応答が返るか
 # 数える。フレーム番号が進み続けていることも同時に見る。
 #
-# #221 の受け入れ条件そのもの。区画のファイルを直に叩くので、道具 (窓口・見張り) を
-# 挟まずに面だけを測る — 面の能力が窓口の実装に閉じ込められていないことは ADR-0018
+# #221 の受け入れ条件そのもの。区画のファイルを直に叩くので、道具 (MCP サーバ・見張り) を
+# 挟まずに面だけを測る — 面の能力が MCP サーバの実装に閉じ込められていないことは ADR-0018
 # 決定 1 の前提でもある。
 #
 # **画面と GPU が要るので `make ci-check` には入れない** (#180)。手元で確かめる手順を
@@ -17,7 +17,7 @@
 #   scripts/check-observation-roundtrip.sh --minimized [回数] [待ちの上限]
 #   scripts/check-observation-roundtrip.sh --display-asleep [回数] [待ちの上限]
 #
-# --minimized は #223 の受け入れ条件。窓を畳んでも面が応答し続けることを見る。
+# --minimized は #223 の受け入れ条件。ウィンドウを畳んでも面が応答し続けることを見る。
 #
 # --display-asleep は #874 の受け入れ条件。**打つと画面が実際に消える** — 他の条件と
 # 違って、測っている間じゅう打った人の画面が暗いままになる (終わると戻る)。ディスプレイ
@@ -25,7 +25,7 @@
 # `caffeinate -u` で行う。測る側は --allow-display-sleep で断りを外して走らせる —
 # 断ったまま測ると「スリープを作れなかったのに緑」という嘘が出る。
 #
-# **GPU の検査と同時には走らない** (#2052)。窓つきで挙動を測る実行なので、GPU の枠を全部取って
+# **GPU の検査と同時には走らない** (#2052)。ウィンドウつきで挙動を測る実行なので、GPU の枠を全部取って
 # から走る (scripts/gpu-slot.py の冒頭「## ウィンドウつきの計測」)。既定の条件はひな形のスケッチを組み
 # 上げるところから枠の内側で行うので、その間も検査は待つ。
 set -euo pipefail
@@ -68,7 +68,7 @@ trap cleanup EXIT
 if [ "$DISPLAY_ASLEEP" = 1 ]; then
   # **測る側の断りを外す。** 外さないと `pmset displaysleepnow` を打っても
   # すぐ戻ってしまい、測っていないのに緑になる (#874)
-  echo "== 測るための窓を出す (この後に画面を消す) =="
+  echo "== 測るためのウィンドウを出す (この後に画面を消す) =="
   swift build >/dev/null
   FACETS="$WORK"
   mkdir -p "$FACETS/.mokume/observe" "$FACETS/.mokume/input"
@@ -80,10 +80,10 @@ if [ "$DISPLAY_ASLEEP" = 1 ]; then
   pmset displaysleepnow
   sleep 3
 elif [ "$MINIMIZED" = 1 ]; then
-  # **測る側に自分で畳ませる。** よそのプロセスの窓を osascript から畳むには
+  # **測る側に自分で畳ませる。** よそのプロセスのウィンドウを osascript から畳むには
   # アクセシビリティの許可が要り、許可の無い環境では「面が応答しなかった」と
-  # 「窓を畳めなかった」を区別できない (#223)
-  echo "== 測るための窓を出す (3 秒後に自分で畳む) =="
+  # 「ウィンドウを畳めなかった」を区別できない (#223)
+  echo "== 測るためのウィンドウを出す (3 秒後に自分で畳む) =="
   swift build >/dev/null
   FACETS="$WORK"
   mkdir -p "$FACETS/.mokume/observe" "$FACETS/.mokume/input"
@@ -98,7 +98,7 @@ else
   swift run mokume-cli new roundtrip --path "$WORK" --local "$REPO" >/dev/null
 
   SKETCH="$WORK/roundtrip"
-  echo "== 作って走らせる (窓が出る) =="
+  echo "== 作って走らせる (ウィンドウが出る) =="
   (cd "$SKETCH" && swift build >/dev/null)
   FACETS="$SKETCH"
   mkdir -p "$FACETS/.mokume/observe" "$FACETS/.mokume/input"
