@@ -31,13 +31,13 @@
 enum SelfTest {
     /// mokume の検査の束の名前。`Package.swift` の `testTarget` と、パッケージ名 (`mokume`) から
     /// SwiftPM が付けるまとめた束の名前。
-    static let bundleNames = ["mokumePackageTests", "MokumeCoreTests", "MokumeCLITests"]
+    nonisolated static let bundleNames = ["mokumePackageTests", "MokumeCoreTests", "MokumeCLITests"]
 
     /// 起動の引数から 1 度だけ判定する。引数は走っている間に変わらない。
     static let isRunning: Bool = isRunning(arguments: CommandLine.arguments)
 
     /// 引数の並びが、mokume の検査の束の実行ファイルを含むか。
-    static func isRunning(arguments: [String]) -> Bool {
+    nonisolated static func isRunning(arguments: [String]) -> Bool {
         arguments.contains { argument in
             bundleNames.contains { argument.contains("/\($0).xctest/") }
         }

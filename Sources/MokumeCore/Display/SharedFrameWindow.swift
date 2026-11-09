@@ -140,6 +140,13 @@ public final class SharedFrameWindow {
     /// ときは `nil`。
     package var displayedPID: Int32? { stage.displayedPID }
 
+    /// 映している世代の子が載せた名乗りの中身を、新しい絵から読むたびの知らせ (``SharedFrameStage/onFrameShareRead``)。
+    /// `nil` は断っている。見張りが目録への名乗りを付け外しする ([#3919](https://github.com/mokume-metal/mokume/issues/3919))。
+    package var onFrameShareRead: ((FrameShare?) -> Void)? {
+        get { stage.onFrameShareRead }
+        set { stage.onFrameShareRead = newValue }
+    }
+
     /// このウィンドウが採る目録の関所 ([#3565](https://github.com/mokume-metal/mokume/issues/3565))。
     ///
     /// 引数は目録が名乗る子の番号で、名乗らない子は `nil`。`false` を返した目録は採らない。試聴の間、作品のウィンドウは
