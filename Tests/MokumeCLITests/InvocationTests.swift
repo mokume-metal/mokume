@@ -125,13 +125,50 @@ struct InvocationTests {
         #expect(throws: CommandFailure.self) { try Invocation.parse(["--scratch-path"]) }
     }
 
-    /// **名乗りと実体は同じ値から出す。** 選ばれていなければ道具立ての既定に任せ、
-    /// 名乗りだけ既定の名前を使う。
-    @Test("選ばれていなければ、道具立てに任せて既定の名前を名乗る")
+    /// **名乗りと実体は同じ値から出す。** 既定を渡さない口 (`render` など) は、選ばれていなければ
+    /// 道具立てに任せ、名乗りだけ debug を使う。
+    @Test("既定を渡さない口は、選ばれていなければ道具立てに任せて debug を名乗る")
     func leavesTheDefaultToTheToolchain() throws {
         let invocation = try Invocation.parse([])
         #expect(invocation.configuration == nil)
-        #expect(invocation.configurationName == RunCommand.defaultConfigurationName)
+        #expect(invocation.configurationName == RunCommand.toolchainDefaultConfigurationName)
+        #expect(RunCommand.configurationArguments(invocation.configuration).isEmpty)
+    }
+
+    /// **#3079: `run` と `watch` は構成の指定が無ければ release で組む。** 渡す引数と名乗りが
+    /// 同じ定数から出る。
+    @Test("run と watch の既定は release で、渡す引数も名乗りも release になる")
+    func runAndWatchDefaultToRelease() throws {
+        let (invocation, _) = try Invocation.parse(
+            [], adding: [], defaultConfiguration: RunCommand.defaultConfiguration)
+        #expect(RunCommand.defaultConfiguration == "release")
+        #expect(invocation.configuration == "release")
+        #expect(invocation.configurationName == "release")
+        #expect(RunCommand.configurationArguments(invocation.configuration) == ["-c", "release"])
+        // 道具立てへ渡す全体の引数にも載る
+        let context = BuildContext(
+            configuration: invocation.configuration, place: .inPackage(.unreadableManifest),
+            product: nil)
+        #expect(context.arguments.starts(with: ["-c", "release"]))
+        #expect(context.configurationName == "release")
+    }
+
+    @Test("明示の -c debug は既定に勝ち、debug で組んで debug を名乗る")
+    func anExplicitDebugBeatsTheRunDefault() throws {
+        let (invocation, _) = try Invocation.parse(
+            ["-c", "debug"], adding: [], defaultConfiguration: RunCommand.defaultConfiguration)
+        #expect(invocation.configuration == "debug")
+        #expect(invocation.configurationName == "debug")
+        #expect(RunCommand.configurationArguments(invocation.configuration) == ["-c", "debug"])
+    }
+
+    /// 他の口 (`render`) は既定を渡さないので、これまでどおり。
+    @Test("render の既定は変わらない")
+    func renderKeepsTheToolchainDefault() throws {
+        let (invocation, _) = try Invocation.parse(["--fps", "30"], adding: [
+            Arguments.Option(["--fps"]) { "\($0) needs a number" }
+        ])
+        #expect(invocation.configuration == nil)
         #expect(RunCommand.configurationArguments(invocation.configuration).isEmpty)
     }
 

@@ -53,12 +53,26 @@ enum RunCommand {
         return action
     }
 
-    /// 構成を渡さないときの名乗り。**道具立てへ渡す引数は変えない** — ここで名乗るのは
-    /// 「この数字がどの土俵のものか」だけで、`BuildReport.configuration` と同じ言葉を使う。
-    nonisolated static let defaultConfigurationName = "debug"
+    /// `run` と `watch` が、構成を指定されなかったときに選ぶ構成。**道具立てへ渡す引数
+    /// (`-c release`) と報告で名乗る構成名は、どちらもこの 1 つの値から出る。**
+    ///
+    /// 解く場所は ``Invocation/parse(_:adding:defaultConfiguration:from:environment:)`` の
+    /// 1 か所で、`run` と `watch` だけがこれを渡す。`render`・`doctor` は渡さないので、
+    /// 道具立ての既定のまま変わらない。`bundle` は ``BundleCommand/configuration`` で
+    /// 別に release を選ぶ。
+    ///
+    /// **名乗りの文字列だけを変えても、ビルド設定は変わらない。** 引数を渡す側 (``Invocation/configuration``)
+    /// がこの値で埋まるので、片方だけを書き換える形にはならない ([#3079](https://github.com/mokume-metal/mokume/issues/3079))。
+    nonisolated static let defaultConfiguration = "release"
+
+    /// 構成が選ばれていない呼び出し (`render` など、``defaultConfiguration`` を渡さない口) が
+    /// 名乗る構成名。**道具立てへ渡す引数は変えない** — 道具立てが何も渡されないときに選ぶ構成
+    /// (debug) を、`BuildReport.configuration` と同じ言葉で名乗るだけである。
+    nonisolated static let toolchainDefaultConfigurationName = "debug"
 
     static func run(_ arguments: [String]) throws(CommandFailure) {
-        let (invocation, values) = try Invocation.parse(arguments, adding: RecordOption.options)
+        let (invocation, values) = try Invocation.parse(
+            arguments, adding: RecordOption.options, defaultConfiguration: defaultConfiguration)
         // **ビルドの前に解く。** 行き先の誤りを、数分のビルドの後で知らせない (#3570)
         let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)
         let directory = try invocation.directory

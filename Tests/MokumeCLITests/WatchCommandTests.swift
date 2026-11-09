@@ -149,6 +149,26 @@ struct WatchCommandTests {
         #expect(handedOver?.lastReport == nil)
     }
 
+    /// **#3079: `watch` は構成の指定が無ければ release で組み、`-c debug` で戻せる。**
+    /// 作り直しは巡回に渡した見張りの文脈を使い回すので、ここの構成が再ビルドの構成になる。
+    @Test("構成の指定が無ければ release を見張りの文脈に持ち、-c debug で debug に戻る")
+    func watchDefaultsToRelease() throws {
+        let kept = SignalState.current()
+        defer { kept.restore() }
+        let root = try makeDirectory()
+        try Data(#"// swift-tools-version: 6.2"#.utf8)
+            .write(to: root.appendingPathComponent("Package.swift"))
+        var plain: WatchSession?
+        try WatchCommand.run([root.path], watching: { session, _ in plain = session })
+        #expect(plain?.context.configuration == "release")
+        #expect(plain?.context.configurationName == "release")
+        #expect(plain?.context.arguments.starts(with: ["-c", "release"]) == true)
+        var debug: WatchSession?
+        try WatchCommand.run([root.path, "-c", "debug"], watching: { session, _ in debug = session })
+        #expect(debug?.context.configuration == "debug")
+        #expect(debug?.context.arguments.starts(with: ["-c", "debug"]) == true)
+    }
+
     /// **最初の拍は、巡回に入った直後に来る** ([#1789])。
     ///
     /// 最初の発火を「作った時刻 + 間隔」にすると、初回の作り直しが 1 拍ぶん無駄に待つ。
