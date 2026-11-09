@@ -149,12 +149,13 @@ final class ShapesAndStyle: Sketch {
 
         // 斜め変形・行列を直接掛ける・変換を捨てる
         noStroke()
-        push {
-            translate(630, 585)
-            shearX(radians(25))
-            fill(102, 217, 128)
-            rect(0, 0, 50, 70)
-        }
+        // 変換とスタイルの両方を積む対の口 (`push()` / `pop()`)。ほかは閉包で戻す `push { }` で書く
+        push()
+        translate(630, 585)
+        shearX(radians(25))
+        fill(102, 217, 128)
+        rect(0, 0, 50, 70)
+        pop()
         push {
             translate(700, 575)
             shearY(radians(20))
