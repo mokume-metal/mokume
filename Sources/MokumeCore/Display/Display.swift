@@ -9,12 +9,12 @@ import AppKit
 /// ## 番号の振り方
 ///
 /// **1 はメニューバーのある画面。2 から先は、配置の左から** (システム設定 › ディスプレイ で
-/// 並べた位置。左端が揃っていれば上から)。手本 (Processing の `fullScreen(display)`) と同じく
+/// 並べた位置。左端が揃っていれば上から)。Processing の `fullScreen(display)` と同じく
 /// 1 から数える。
 ///
 /// 繋いだ順では振らない。macOS は配置をディスプレイごとに覚えて戻すので、**同じ顔ぶれなら、
 /// 抜き差しの順によらず同じ番号になる。** 代わりに、**間の 1 台が欠けると後ろの番号が 1 つずつ
-/// 詰まる** — 画面ごとに 1 本ずつ起こす展示では、欠けた 1 台に出すはずの作品が隣の画面へ出うる。
+/// 詰まる** — 画面ごとに 1 つずつスケッチを起動する展示では、欠けた 1 台に出すはずのスケッチが隣の画面へ出うる。
 /// 数や名前を確かめてから選ぶ形は ``SketchSettings/fullScreen(_:)`` の例にある。
 ///
 /// ## 大きさ
@@ -29,7 +29,7 @@ import AppKit
 public nonisolated struct Display: Equatable, Sendable, CustomStringConvertible {
     /// 番号。1 から数える (上の「番号の振り方」)。
     public let number: Int
-    /// OS が名乗る名前 (`Built-in Retina Display` など)。**同じ型番の機材は同じ名前になる。**
+    /// OS が報告する名前 (`Built-in Retina Display` など)。**同じ型番のデバイスは同じ名前になる。**
     public let name: String
     /// 全画面にしたときに描く幅 (画素)。
     public let width: Int
@@ -157,9 +157,9 @@ extension SketchPart {
     /// for display in displays { print(display) }   // 1: Built-in Retina Display (3600×2260) …
     /// ```
     ///
-    /// **読むたびにいまの顔ぶれを返し、決して落ちない** — 画面の無い実行環境では空になる。
+    /// **読むたびにいまの顔ぶれを返し、決してクラッシュしない** — 画面の無い実行環境では空になる。
     /// ``Sketch/settings`` の中から読めるので、繋がっているかどうかで開き方を選べる
-    /// (``SketchSettings/fullScreen(_:)`` の例)。走っている間に抜き差しすれば、次に読んだときの
+    /// (``SketchSettings/fullScreen(_:)`` の例)。実行中に抜き差しすれば、次に読んだときの
     /// 一覧が変わる。描く大きさと全画面にした画面は、起動のときに決まったまま変わらない。
     public var displays: [Display] { Display.connected }
 }
