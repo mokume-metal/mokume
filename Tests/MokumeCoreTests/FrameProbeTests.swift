@@ -210,6 +210,51 @@ struct FrameProbeTests {
         }
     }
 
+    /// 16x16 の画像 A・B を原寸のまま格子に N 枚並べる場面 (#3417)。`alternating` なら A・B を交互に、
+    /// そうでなければ A だけを置く。位置は `frameCount` で毎フレームずらす。
+    final class Images: Sketch {
+        var count = 0
+        var alternating = false
+        var a: Image?
+        var b: Image?
+        init() {}
+        convenience init(count: Int, alternating: Bool) {
+            self.init()
+            self.count = count
+            self.alternating = alternating
+        }
+        var settings: SketchSettings { SketchSettings(width: 1024, height: 768) }
+        func setup() throws {
+            a = try createImage(16, 16)
+            b = try createImage(16, 16)
+        }
+        func draw() {
+            background(.display(red: 0.05, green: 0.05, blue: 0.08))
+            guard let a, let b else { return }
+            let shift = Float(frameCount % 8)
+            for index in 0..<count {
+                let x = Float(index % 64) * 16 + shift
+                let y = Float((index / 64) % 48) * 16 + shift * 0.5
+                image(alternating && !index.isMultiple(of: 2) ? b : a, x, y)
+            }
+        }
+    }
+
+    /// 固定の 40 字 × 50 行 (2,000 字) を毎フレーム同じ位置へ置く HUD の場面 (#3417)。
+    final class TextHUD: Sketch {
+        init() {}
+        var settings: SketchSettings { SketchSettings(width: 1024, height: 768) }
+        func draw() {
+            background(.display(red: 0.05, green: 0.05, blue: 0.08))
+            fill(.display(red: 0.9, green: 0.9, blue: 0.9))
+            textSize(12)
+            let line = String(repeating: "mokume HUD 0123456789 ", count: 2).prefix(40)
+            for row in 0..<50 {
+                text(String(line), 8, Float(row) * 15 + 14)
+            }
+        }
+    }
+
     /// プロセスの最大の物理フットプリント (バイト)。読めなければ nil。
     private static func footprintPeak() -> UInt64? {
         var info = task_vm_info_data_t()
@@ -239,14 +284,15 @@ struct FrameProbeTests {
         defer { gpu.settleQuietly(orWarn: "計測の後片付けで GPU を待てなかった") }
 
         var cpu: [Double] = []
+        var first = Double.nan
         for index in 0..<(Self.warmup + Self.measured) {
             let started = ContinuousClock.now
             try runtime.advance()
             let elapsed = ContinuousClock.now - started
-            if index >= Self.warmup {
-                let parts = elapsed.components
-                cpu.append((Double(parts.seconds) + Double(parts.attoseconds) * 1e-18) * 1000)
-            }
+            let parts = elapsed.components
+            let milliseconds = (Double(parts.seconds) + Double(parts.attoseconds) * 1e-18) * 1000
+            if index == 0 { first = milliseconds }  // 初回 (字の焼き場・画像の準備を含む)
+            if index >= Self.warmup { cpu.append(milliseconds) }
         }
         // 最後のフレームの結末まで揃えてから読む (検査の側で待つ。GPU の側の待ちを足さない)
         let deadline = ContinuousClock.now + .seconds(10)
@@ -258,6 +304,7 @@ struct FrameProbeTests {
         let measuredFrom = Self.warmup + 1
         let gpuMs = times.filter { $0.frame >= measuredFrom }.map(\.milliseconds)
 
+        Self.emit(scene, "cpu.first", first, "ms")
         Self.emit(scene, "cpu.median", Self.quantile(cpu, 0.5), "ms")
         Self.emit(scene, "cpu.p90", Self.quantile(cpu, 0.9), "ms")
         Self.emit(scene, "gpu.median", Self.quantile(gpuMs, 0.5), "ms")
@@ -331,4 +378,36 @@ struct FrameProbeTests {
         try probe(
             "moving.3d-normal.60000", sketch: MovingTriangles(triangles: 20_000, hasDepth: true, writesNormal: true))
     }
+
+    // 画像・字 (#3417)。同じ画像の連続 (images.same) と A・B の交互 (images.alternating) で、
+    // 6 頂点の積みとテクスチャの切り替えによる列の分断を分ける
+
+    @Test("同じ画像 1,000 枚")
+    func imagesSame1k() throws { try probe("images.same.1000", sketch: Images(count: 1_000, alternating: false)) }
+
+    @Test("同じ画像 1 万枚")
+    func imagesSame10k() throws { try probe("images.same.10000", sketch: Images(count: 10_000, alternating: false)) }
+
+    @Test("同じ画像 10 万枚")
+    func imagesSame100k() throws {
+        try probe("images.same.100000", sketch: Images(count: 100_000, alternating: false))
+    }
+
+    @Test("画像 A・B を交互に 1,000 枚")
+    func imagesAlternating1k() throws {
+        try probe("images.alternating.1000", sketch: Images(count: 1_000, alternating: true))
+    }
+
+    @Test("画像 A・B を交互に 1 万枚")
+    func imagesAlternating10k() throws {
+        try probe("images.alternating.10000", sketch: Images(count: 10_000, alternating: true))
+    }
+
+    @Test("画像 A・B を交互に 10 万枚")
+    func imagesAlternating100k() throws {
+        try probe("images.alternating.100000", sketch: Images(count: 100_000, alternating: true))
+    }
+
+    @Test("固定の HUD 2,000 字")
+    func textHUD() throws { try probe("text.hud", sketch: TextHUD()) }
 }
