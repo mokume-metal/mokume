@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+#
+# 使い捨て (#3900)。hosted の macOS と専用機で、bootstrap の名前空間に送り手が check_in した
+# 名前を受け手が look_up でき、mach port で受け手の port と面を渡せるかを測る。merge しない。
+name: probe-3900
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths: [.github/workflows/probe-3900.yml, .github/probe-3900/**]
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ['"macos-26"', '["self-hosted","mokume-render"]']
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/probe-3900
+      - name: 環境
+        run: |
+          echo "runner=$RUNNER_NAME uid=$(id -u) os=$(sw_vers -productVersion)"
+          echo "managername=$(launchctl managername)"
+          launchctl print "gui/$(id -u)" >/dev/null 2>&1 && echo "gui domain: あり" || echo "gui domain: なし"
+          launchctl print "user/$(id -u)" >/dev/null 2>&1 && echo "user domain: あり" || echo "user domain: なし"
+          stat -f 'console owner=%Su' /dev/console
+      - name: 組む
+        run: xcrun swiftc -O .github/probe-3900/probe.swift -o "$RUNNER_TEMP/probe"
+      - name: 親子 (検査のプロセスが受け手を子として起こす形)
+        run: '"$RUNNER_TEMP/probe" pair'
+      - name: 兄弟 (別々に起こした 2 つのプロセス)
+        run: |
+          N="dev.mokume.probe3900.sib.$$"
+          "$RUNNER_TEMP/probe" sketch "$N" & SP=$!
+          end=$((SECONDS + 10)); until [ -e "/tmp/$N.ready" ] || [ "$SECONDS" -ge "$end" ]; do sleep 0.05; done
+          "$RUNNER_TEMP/probe" viewer "$N"; V=$?
+          wait "$SP"; S=$?
+          rm -f "/tmp/$N.ready"
+          echo "viewer=$V sketch=$S"; [ "$V" -eq 0 ] && [ "$S" -eq 0 ]
