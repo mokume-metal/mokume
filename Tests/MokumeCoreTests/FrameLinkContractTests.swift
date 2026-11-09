@@ -1,0 +1,282 @@
+// SPDX-FileCopyrightText: 2026 mokume-metal
+// SPDX-License-Identifier: MIT
+
+import Darwin
+import Foundation
+import MokumeTestSupport
+import Testing
+
+@testable import MokumeCore
+
+/// 本体の中の最小の受け手 (`frame-receiver`) を子として起こす ([ADR-0049] 決定 7・[#3922])。
+///
+/// [ADR-0049]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0049-share-frames-to-other-processes.md
+/// [#3922]: https://github.com/mokume-metal/mokume/issues/3922
+nonisolated final class FrameReceiverProcess: @unchecked Sendable {
+    /// 組んだ受け手の実行ファイル。検査の束の隣にある (`ReplayRecordProcess.executable` と同じ探し方)。
+    static let executable: URL? = {
+        final class Anchor {}
+        var candidates = [Bundle(for: Anchor.self).bundleURL.deletingLastPathComponent()]
+        candidates += Bundle.allBundles.filter { $0.bundleURL.pathExtension == "xctest" }
+            .map { $0.bundleURL.deletingLastPathComponent() }
+        for directory in candidates {
+            let url = directory.appendingPathComponent("frame-receiver")
+            if FileManager.default.isExecutableFile(atPath: url.path) { return url }
+        }
+        return nil
+    }()
+
+    let process = Process()
+    private let input = Pipe()
+    private let output = Pipe()
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var collected: [[String: Any]] = []
+
+    init(arguments: [String]) throws {
+        process.executableURL = try #require(Self.executable)
+        process.arguments = arguments
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            self?.take(handle.availableData)
+        }
+        try process.run()
+    }
+
+    private func take(_ data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        buffer += data
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let line = buffer[buffer.startIndex..<newline]
+            buffer = Data(buffer[buffer.index(after: newline)...])
+            if let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] {
+                collected.append(object)
+            }
+        }
+    }
+
+    /// これまでに出た出来事。
+    var events: [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+
+    func events(named name: String) -> [[String: Any]] {
+        events.filter { $0["event"] as? String == name }
+    }
+
+    /// 受け手に終わるよう言う (標準入力に 1 行)。
+    func stop() {
+        try? input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
+    }
+
+    /// 条件が立つまで待つ。**期限で諦める** (`body` は待つ間に回す仕事)。
+    @MainActor @discardableResult
+    func wait(upTo seconds: Double, doing body: () -> Void = {}, until condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            body()
+            if condition() { return true }
+            usleep(2_000)
+        }
+        return condition()
+    }
+
+    deinit {
+        output.fileHandleForReading.readabilityHandler = nil
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+    }
+}
+
+/// 名乗り・目録・引く・繋ぐ・どちらかが消えたら相手が知る。**GPU を使わない** — hosted の runner でも走る
+/// (GPU の要る段は ``FrameLinkContractGPUTests``)。
+@Suite(
+    "約束: 別のプロセスの受け手と名乗り・繋ぎ・別れを往復する",
+    .serialized,
+    .enabled(if: FrameReceiverProcess.executable != nil, "組んだ frame-receiver が要る")
+)
+@MainActor
+struct FrameLinkContractTests {
+    private func announce(in directory: URL) throws -> FrameAnnouncement {
+        try #require(
+            FrameAnnouncement.announce(
+                sketch: "Contract", identity: "/work/Contract", title: "Contract", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+    }
+
+    /// 名乗りの port に届いた connect を 1 通受ける (期限つき)。
+    private func receiveConnect(on port: mach_port_t) -> FrameLink.Received? {
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            if let received = FrameLink.receive(on: port, timeout: 100),
+                received.kind == FrameLink.Kind.connect.rawValue
+            {
+                return received
+            }
+        }
+        return nil
+    }
+
+    @Test("名乗ると目録に載り、別のプロセスの受け手が名前を引いて繋ぎ、名乗りを下ろすと受け手が dead-name で知る")
+    func theReceiverLearnsTheSenderWentAway() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        // 1. 名乗る
+        let announcement = try announce(in: directory)
+        // 2. 一覧に出る
+        #expect(FrameListing.entries(in: directory) == [announcement.entry])
+
+        // 3. 別のプロセスが名前を引いて繋ぐ
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8", "--name", "contract",
+        ])
+        let connect = try #require(receiveConnect(on: announcement.receivePort), "繋ぐ 1 通が届かない")
+        #expect(connect.ports.count == 1 + 3, "受け手の port と面 3 枚が届いていない")
+        var reader = connect.payload.reader
+        #expect(reader.uint32() == FrameLink.version)
+        #expect(reader.string(limit: FrameLink.nameLimit) == "contract")
+        for name in connect.ports { FrameLink.releaseName(name) }
+
+        // 6. 送り手が消えると、受け手が dead-name で知る
+        announcement.withdraw()
+        let told = receiver.wait(upTo: 20) { !receiver.events(named: "senderGone").isEmpty }
+        #expect(told, "受け手が送り手の消えたことを知らない: \(receiver.events)")
+        #expect(receiver.events(named: "lookupFailed").isEmpty)
+    }
+
+    @Test("受け手のプロセスが終わると、送り手が頼んだ dead-name の知らせが届く")
+    func theSenderLearnsTheReceiverWentAway() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let announcement = try announce(in: directory)
+        defer { announcement.withdraw() }
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8",
+        ])
+        let connect = try #require(receiveConnect(on: announcement.receivePort), "繋ぐ 1 通が届かない")
+        let reply = try #require(connect.ports.first)
+        for name in connect.ports.dropFirst() { FrameLink.releaseName(name) }
+        defer { FrameLink.releaseName(reply) }
+        var previous: mach_port_t = 0
+        #expect(
+            mach_port_request_notification(
+                mach_task_self_, reply, MACH_NOTIFY_DEAD_NAME, 0, announcement.receivePort,
+                mach_msg_type_name_t(MACH_MSG_TYPE_MAKE_SEND_ONCE), &previous) == KERN_SUCCESS)
+
+        // 7. 受け手が終わる
+        receiver.stop()
+        var dead: mach_port_t?
+        let deadline = Date().addingTimeInterval(20)
+        while dead == nil, Date() < deadline {
+            if let received = FrameLink.receive(on: announcement.receivePort, timeout: 100),
+                received.kind == FrameLink.deadNameID
+            {
+                dead = FrameLink.deadName(in: received)
+            }
+        }
+        #expect(dead == reply, "受け手が終わったことが送り手に届かない")
+    }
+
+    /// 目録の 1 件は約束 (`Schemas/frame-listing.schema.json`) の形で書く。鍵を足す・改名するなら Schema と版を同じ PR で直す。
+    @Test("目録の 1 件の鍵は、Schema の properties と required にそろう")
+    func theEntryMatchesTheSchema() throws {
+        let schemaURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Schemas/frame-listing.schema.json")
+        let schema = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: schemaURL)) as? [String: Any])
+        let properties = Set((schema["properties"] as? [String: Any] ?? [:]).keys)
+        let required = Set(schema["required"] as? [String] ?? [])
+        let entry = FrameListing.Entry(
+            sketch: "S", identity: "/s", title: "S", pid: 1, startedAt: 1, serviceName: "org.mokume.frames.1.ab.main")
+        let written = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+        #expect(Set(written.keys) == properties)
+        #expect(Set(written.keys) == required)
+        let version = (schema["properties"] as? [String: Any])?["schemaVersion"] as? [String: Any]
+        #expect(version?["const"] as? Int == FrameListing.schemaVersion)
+        #expect(Int(FrameLink.version) == FrameListing.schemaVersion, "目録と手順の版がずれた")
+    }
+}
+
+/// 面を送り、番号と画素と属性が届き、受け手が去れば送り手が外す ([#3922])。GPU が要るので専用機で走る。
+///
+/// [#3922]: https://github.com/mokume-metal/mokume/issues/3922
+@Suite(
+    "約束: 別のプロセスの受け手へ絵を渡す",
+    .serialized,
+    .enabled(
+        if: RenderDevice.isAvailable && FrameReceiverProcess.executable != nil,
+        "この世代のコマンド構造に対応した GPU と、組んだ frame-receiver が要る")
+)
+@MainActor
+struct FrameLinkContractGPUTests {
+    @Test("受け手が 3 枚で繋ぐと、番号が 1 ずつ進み、画面と同じ値と属性が届き、受け手が去ると送り手が外す")
+    func handsFramesToAnotherProcess() throws {
+        let directory = try TestScratch.directory("mokume-frames")
+        let gpu = try RenderDevice()
+        let announcement = try #require(
+            FrameAnnouncement.announce(
+                sketch: "Contract", identity: "/work/Contract", title: "Contract", in: directory,
+                warn: { Issue.record("名乗れなかった: \($0)") }))
+        defer { announcement.withdraw() }
+        let sender = try #require(announcement.startSending(gpu: gpu, width: 16, height: 8, startsListening: false))
+        sender.warn = { _ in }
+        let source = try RenderTarget(gpu: gpu, width: 16, height: 8)
+        try source.fill(with: .linear(red: 2, green: 0.5, blue: 0.25))
+        let presenter = try FramePresenter(gpu: gpu, pixelFormat: RenderTarget.pixelFormat)
+
+        let receiver = try FrameReceiverProcess(arguments: [
+            "--service", announcement.entry.serviceName, "--width", "16", "--height", "8", "--surfaces", "3",
+            "--exit-after", "5",
+        ])
+        // 4. 面が届く (繋がる) まで待つ
+        let connected = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 1 }
+        try #require(connected, "受け手が繋がらない: \(receiver.events)")
+
+        // 5. 1 枚ずつ書いて、受け手が受けて返すのを待ってから次へ (番号が飛ばないよう歩調を合わせる)
+        for frame in Int64(1)...5 {
+            func deliver() throws {
+                try sender.deliver(width: 16, height: 8, frameCount: frame, hostTime: UInt64(frame)) {
+                    texture throws(RenderFailure) in
+                    try presenter.draw(source, into: texture)
+                }
+            }
+            try deliver()
+            _ = gpu.droppedWork(after: 0, through: gpu.submissionCount)
+            let delivered = receiver.wait(
+                upTo: 20,
+                doing: {
+                    sender.drain()
+                    try? deliver()  // 同じ番号は書かず、結末の届いた焼きを知らせる
+                }
+            ) { receiver.events(named: "frame").count >= Int(frame) }
+            try #require(delivered, "\(frame) 枚目が届かない: \(receiver.events)")
+        }
+        let frames = receiver.events(named: "frame")
+        #expect(frames.compactMap { ($0["frameCount"] as? NSNumber)?.int64Value } == [1, 2, 3, 4, 5])
+        #expect(frames.compactMap { ($0["writes"] as? NSNumber)?.int64Value } == [1, 2, 3, 4, 5])
+
+        let ordinary = try RenderTarget(gpu: gpu, width: 16, height: 8)
+        try presenter.draw(source, into: ordinary.texture)
+        let expected = try ordinary.readPixels()[8, 4]
+        for frame in frames {
+            let pixel = (frame["pixel"] as? [NSNumber])?.map(\.floatValue)
+            #expect(pixel == [expected.red, expected.green, expected.blue, expected.alpha], "画素: \(frame)")
+            let attributes = frame["attributes"] as? [String: Any] ?? [:]
+            #expect(
+                (attributes["frameCount"] as? NSNumber)?.int64Value
+                    == (frame["frameCount"] as? NSNumber)?.int64Value, "面の属性に番号が無い: \(attributes)")
+            #expect((attributes["frame"] as? NSNumber)?.int64Value == (frame["writes"] as? NSNumber)?.int64Value)
+            #expect(attributes["hostTime"] is NSNumber)
+            #expect(attributes["colorSpace"] as? String == "kCGColorSpaceExtendedLinearDisplayP3")
+            #expect(attributes["alpha"] as? String == "premultiplied")
+        }
+
+        // 7. 受け手が去ると (5 枚で自分から終わる)、送り手が外す
+        let removed = receiver.wait(upTo: 20, doing: { sender.drain() }) { sender.receiverCount == 0 }
+        #expect(removed, "去った受け手を外していない")
+    }
+}

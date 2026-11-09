@@ -1,0 +1,79 @@
+<!--
+SPDX-FileCopyrightText: 2026 mokume-metal
+SPDX-License-Identifier: MIT
+-->
+
+# Receiving a running sketch's frames
+
+How another app on the same Mac connects to a running sketch and receives its frames ([ADR-0049](../docs/decisions/0049-share-frames-to-other-processes.md)). The list of running sketches is [frame-listing.schema.json](frame-listing.schema.json). The messages and surface attributes below are not JSON, so they are described here. Both share one version: `schemaVersion` in the list, and the version number in the connect message.
+
+The sketch never waits for a receiver. The receiver provides the surfaces, and the sketch writes into them only while the receiver is connected.
+
+## Connecting
+
+1. Pick an entry from the list and look its `serviceName` up with `bootstrap_look_up` (reach it through `dlsym` if your SDK does not expose `servers/bootstrap.h`). You get a send right to the sketch's port.
+2. Ask for a dead-name notification on that send right (`mach_port_request_notification` with `MACH_NOTIFY_DEAD_NAME`) on a port of your own. This is how you learn that the sketch went away.
+3. Create 2 to 8 surfaces (IOSurface) that are half-float RGBA (`'RGhA'`, 8 bytes per pixel) and exactly the entry's drawing size (the size comes back in `accepted`; if you guessed wrong, the sketch refuses with `surfaceSize`). A global surface is not needed.
+4. Send `connect` to the sketch's port.
+
+The sketch answers `accepted` or `refused`. From then on, it sends `frame` each time it has written a surface. Return each surface with `release` when you have read it. A surface you have not returned is never written to again, and when every surface is held the sketch skips frames instead of waiting.
+
+## Messages
+
+Every message is a Mach message whose `msgh_id` is the kind below. Numbers are little-endian and follow the 24-byte header directly, in the order listed (`connect` has a body and port descriptors first). Messages are padded with zeros to a multiple of 4 bytes.
+
+| id | kind | from → to | inline data |
+| --- | --- | --- | --- |
+| 1 | connect | receiver → sketch | `UInt32` version (1), then optionally the receiver's name: `UInt32` byte count and UTF-8 bytes (at most 128). Complex message whose port descriptors are, in order: the receiver's own port (`MACH_MSG_TYPE_MAKE_SEND`), then one per surface (`IOSurfaceCreateMachPort`, `MACH_MSG_TYPE_MOVE_SEND`) |
+| 2 | accepted | sketch → receiver | `UInt32` receiver id, `UInt32` width, `UInt32` height |
+| 3 | refused | sketch → receiver | `UInt32` reason (below) |
+| 4 | frame | sketch → receiver | `UInt32` receiver id, `UInt32` surface index (order of the connect descriptors, from 0), `Int64` frame number, `Int64` write count, `UInt64` host time |
+| 5 | release | receiver → sketch | `UInt32` receiver id, `UInt32` surface index |
+| 6 | resized | sketch → receiver | `UInt32` width, `UInt32` height. The surfaces you sent are dropped: make new ones and send `connect` again from the same port, which keeps your receiver id |
+| 7 | disconnect | receiver → sketch | `UInt32` receiver id |
+
+The sketch sends with a timeout of zero. If your port's queue is full because you are not reading it, the message is dropped and the surface it was about counts as not written. Read your port promptly.
+
+A receiver without a name (or with an empty or too long one) is called `a receiver`. The name is shown in the sketch's menu bar presence and in its diagnostics while you are connected.
+
+### Refusal reasons
+
+| reason | meaning |
+| --- | --- |
+| 1 | the version is not 1 |
+| 2 | fewer than 2 or more than 8 surfaces |
+| 3 | a surface is not `'RGhA'`, or cannot be used |
+| 4 | a surface is not the drawing size |
+| 5 | 4 receivers are already connected |
+| 6 | the request is malformed |
+
+## What a surface holds
+
+The values the screen receives: linear, half-float, and free to exceed 1.0 (no transfer function, no quantization yet). Colour is premultiplied by alpha. Before sending `frame`, the sketch puts these attributes on the surface (`IOSurfaceCopyValue`):
+
+| attribute | type | meaning |
+| --- | --- | --- |
+| `mokume.frameCount` | number | the frame number, the same as `frame` in the message and `frameCount` in the sketch |
+| `mokume.frame` | number | how many times this receiver has been written to. Differs from the frame number when frames were skipped |
+| `mokume.hostTime` | number | when the frame was drawn, in `mach_absolute_time` units |
+| `mokume.colorSpace` | string | the `CGColorSpace` name the values are in. Today `kCGColorSpaceExtendedLinearDisplayP3` |
+| `mokume.alpha` | string | `premultiplied` |
+
+The sketch writes only after the GPU has finished the frame, so a surface named by `frame` is complete. A frame that the GPU dropped is not announced.
+
+The sketch keeps writing while its window is minimized, covered, or on another Space.
+
+## Going away
+
+- When the sketch stops (or crashes), its port dies and you get the dead-name notification you asked for in step 2. Drop its surfaces.
+- When you stop (or crash), your port dies. The sketch asked for a dead-name notification on it when it accepted you, so it stops writing and lets go of your surfaces. Sending `disconnect` first is polite but not required.
+
+No timeouts are involved on either side.
+
+## Under `mokume watch`
+
+`mokume watch` restarts the sketch every time its source is saved. The tool, not the sketch, owns the window and lists itself, so a receiver stays connected across saves: frame numbers come from the tool and keep counting up, and the colour attributes are copied from the sketch's own surfaces. If the new sketch sets `sharesFrames = false`, the tool takes its entry down and the receiver gets the dead-name notification.
+
+## Versions
+
+The version is raised as [ADR-0018](../docs/decisions/0018-observation-and-control-surface.md) decision 5 says: adding something a receiver may ignore keeps it, anything a receiver must understand (a renamed or removed field, a changed meaning, a new required message) raises it. A sketch refuses a `connect` that names another version with reason 1.
