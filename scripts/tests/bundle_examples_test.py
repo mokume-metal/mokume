@@ -240,7 +240,7 @@ class 束(unittest.TestCase):
 
     # ---- スケッチ 1 本
 
-    def test_スケッチは_main_と差し込み口を持ち_窓の大きさと題を宣言する(self):
+    def test_スケッチは_main_と差し込み口を持ち_ウィンドウの大きさと題を宣言する(self):
         entries, _ = self.作る()
         source = next(entry for entry in entries if entry.heading == "triangle(_:_:_:_:)").source
         lines = source.split("\n")

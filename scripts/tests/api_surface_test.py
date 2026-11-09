@@ -1006,10 +1006,10 @@ class 公開の口の種類(unittest.TestCase):
         self.assertEqual(api.check_port_kinds(symbols, "", {}), [])
 
     def test_図形でない種類の口も_VECTOR_ALSO_なら_SVG_の検査に名前を求める(self):
-        """`pixels` は「読み取り」だが、窓への書き込みが画素を置く。種類で絞ると黙って見られない (#3139 の反証)。"""
+        """`pixels` は「読み取り」だが、ビューへの書き込みが画素を置く。種類で絞ると黙って見られない (#3139 の反証)。"""
         symbols = [symbol("pixels", owner="Canvas"), symbol("pixels", owner="Sketch")]
         kinds = {"pixels": api.READING}
-        also = {"pixels": "窓への書き込みが画素を置く"}
+        also = {"pixels": "ビューへの書き込みが画素を置く"}
         problems = api.check_vector_ports(symbols, "", kinds, {}, also)
         self.assertEqual(len(problems), 1)
         self.assertIn("pixels", problems[0])

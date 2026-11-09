@@ -30,7 +30,7 @@
 // 名指しの境界は手本に置く — Processing / p5 が持つ三角関数はこの 7 本ちょうどで、
 // mokume は既に radians を採っている (`rotate(_ radians: Float)`) ので単位の齟齬が無い。
 //
-// **角度の単位変換・写像・補間・締め・窓は、ここではなく自前で書いた** (#883・#1281・
+// **角度の単位変換・写像・補間・締め・`smoothstep` は、ここではなく自前で書いた** (#883・#1281・
 // #1283)。`radians` / `degrees` / `map` / `lerp` / `constrain` / `norm` / `smoothstep` に
 // 対応する関数は Darwin に無いので、名指しで通せる先が最初から無い。**simd の
 // `smoothstep` は形が違う** — ベクトルだけを受け、`x` を先に取る (`smoothstep(_:edge0:edge1:)`)

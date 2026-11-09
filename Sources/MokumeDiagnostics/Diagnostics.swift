@@ -60,7 +60,7 @@ public nonisolated enum Diagnostics {
 
     /// このプロセスが言った警告の数と最後の 1 行。**読んでも空にならない** (``takeUnreported()`` とは別)。
     ///
-    /// 子が絵と同じ面へ載せ、道具の窓が件数と最後の 1 行を出す ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
+    /// 子が絵と同じ面へ載せ、道具のウィンドウが件数と最後の 1 行を出す ([#3087](https://github.com/mokume-metal/mokume/issues/3087))。
     package static func warningSummary() -> (count: Int, last: String?) {
         (digest ?? sharedDigest).summary()
     }

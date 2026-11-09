@@ -649,7 +649,7 @@ class StallWatchTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
 
     def test_閾値は判定へそのまま渡す(self):
-        """DROPPED_MINUTES が静けさの境目と bot の手を読む窓の両方を決める。渡さないと既定の 120 分で
+        """DROPPED_MINUTES が静けさの境目と bot の手を読むウィンドウの両方を決める。渡さないと既定の 120 分で
         判定され、2 日前に人が触れた着手まで名乗る。"""
         self.watch()
         self.assertEqual((self.queue_dir / "seen-minutes").read_text(encoding="utf-8"), "4320")

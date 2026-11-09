@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 """観測と入力の要求を続けて置き、すべてに応答が返るか数える (#817)。
 
-`scripts/check-observation-roundtrip.sh` が窓を出した後に呼ぶ口。#221 / #223 の
+`scripts/check-observation-roundtrip.sh` がウィンドウを出した後に呼ぶ口。#221 / #223 の
 受け入れ条件そのものを測る。
 
 **shell の heredoc から出してある。** 埋まったままでは lint も Python の道具も見ず、

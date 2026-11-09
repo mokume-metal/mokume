@@ -31,7 +31,7 @@ struct ProbeStartupTests {
 
     /// `main.swift` が文面の組み立てへ繋がっていること。
     ///
-    /// **原文をテキストとして読む。** 最上位は走らせると窓を開くので、呼んで確かめる道が無い
+    /// **原文をテキストとして読む。** 最上位は走らせるとウィンドウを開くので、呼んで確かめる道が無い
     /// (`Tests/MokumeCoreTests/StartupFailureTests.swift` の `theReferenceSketchCatchesItsFailures`
     /// と同じ形・#600)。裸の `try` へ戻すと上の検査は緑のままなので、ここで見る。
     @Test("入口に裸の try が残らず、失敗は名乗って exit(1) に至る")

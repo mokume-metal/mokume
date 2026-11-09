@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 mokume-metal
 SPDX-License-Identifier: MIT
 -->
 
-道具・外のパッケージ・検査のための入口 `MokumeHost` を足し、スケッチを窓を出さずに走らせる `HeadlessRun` を置いた。`HeadlessRun.with(Game()) { run in … }` の中でフレームを進め、描いた絵を値で読み (`readPixels()`・`displayImage()`・`writePNG(to:)`)、入力を注入できる (`send(_:)`)。抜けると差込口が閉じるので、後始末を書かなくてよい。スケッチのプロパティに持ち続けるなら `HeadlessRun(Game())` で作り、参照を手放したときに閉じる。
+道具・外のパッケージ・検査のための入口 `MokumeHost` を足し、スケッチをウィンドウを出さずに走らせる `HeadlessRun` を置いた。`HeadlessRun.with(Game()) { run in … }` の中でフレームを進め、描いた絵を値で読み (`readPixels()`・`displayImage()`・`writePNG(to:)`)、入力を注入できる (`send(_:)`)。抜けると差込口が閉じるので、後始末を書かなくてよい。スケッチのプロパティに持ち続けるなら `HeadlessRun(Game())` で作り、参照を手放したときに閉じる。
 
 `MokumeHost` は `import mokume` からは見えず、スケッチを書く人の補完には並ばない。使うターゲットの依存に `.product(name: "MokumeHost", package: "mokume")` を足し、走らせるファイルで `import MokumeHost` する (スケッチは別のファイルで `import mokume` して書く)。
 
@@ -18,4 +18,4 @@ SPDX-License-Identifier: MIT
 | `renderFrame(to:)` | `advance()` の後に `writePNG(to:)` |
 | `frameCount`・`time`・`deltaTime` | 同じ名前 |
 
-窓を開いて走らせる (`SketchApplication(sketch:gpu:).run()`) なら、スケッチの入口 `Game.main()` を使う。
+ウィンドウを開いて走らせる (`SketchApplication(sketch:gpu:).run()`) なら、スケッチの入口 `Game.main()` を使う。

@@ -157,7 +157,7 @@ jobs:
           # 専用機で並走させる merge_group の render の数 (#3319)。runner の数に合わせて
           # リポジトリの変数で切り替える。未設定なら 1 (scripts/render-turn.sh の「並走の数」)
           RENDER_TURN_SLOTS: ${{ vars.RENDER_TURN_SLOTS }}
-          # render-pr の旧い head が群に入る窓を縮める (#3551)。pull_request の yield だけが読む。
+          # render-pr の旧い head が群に入るウィンドウを縮める (#3551)。pull_request の yield だけが読む。
           # branch の名前は環境変数で渡す (run: の中に展開しない)
           RENDER_TURN_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RENDER_TURN_HEAD_REF: ${{ github.event.pull_request.head.ref }}
@@ -179,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # 検査を走らせられる環境かを先に数秒で見る (#2588)。表の GUI セッションが替わると
-      # runner から画面が 0 枚に見え、make は 14 分走ってから窓の検査で落ちる (#2507)。
+      # runner から画面が 0 枚に見え、make は 14 分走ってからウィンドウの検査で落ちる (#2507)。
       # 落ちたら理由を job の出力へ上げ、render-environment-report が発信する
       - id: preflight
         run: bash scripts/runner-preflight.sh
@@ -258,9 +258,9 @@ jobs:
     # 同じ PR へ push し直したら、古い実行は捨てる。専用機は 1 台なので、古い木の検査で
     # 塞がないようにする。**GitHub は後から群に入った job を残す**ので、群に入る順が push の順と
     # 逆になると (旧 head の門番が遅れたとき)、旧 head の job が走っている新 head の job を取り消す。
-    # 古い head は、ここへ入る前に門番 (render-turn の yield) が見送って窓を縮める (#3551)。比べるのは
+    # 古い head は、ここへ入る前に門番 (render-turn の yield) が見送ってウィンドウを縮める (#3551)。比べるのは
     # 門番の出口の 1 回だけで、出口から群に入るまでの遅れが新しい push の門番の所要を超えれば、
-    # 逆向きは残る — 窓を縮めるだけでゼロにはならない (権限を広げない決定の下では根まで消せない)
+    # 逆向きは残る — ウィンドウを縮めるだけでゼロにはならない (権限を広げない決定の下では根まで消せない)
     concurrency:
       group: render-pr-${{ github.ref }}
       cancel-in-progress: true

@@ -9,7 +9,7 @@
 - 待つ側が期限を持つ
 - 子の終了コードをそのまま返す
 - 起動元 (親プロセスの連鎖・エージェントの出所) を、再起動で消えない記録に残す (#2059)
-- 窓つきの計測 (`--exclusive`) は、GPU の検査と同時に走らない (#2052)
+- ウィンドウつきの計測 (`--exclusive`) は、GPU の検査と同時に走らない (#2052)
 - GPU の待ちが期限を越えた記録があれば、次の検査・計測は名乗って始めずに止まる (#2235)
 
 Swift も GPU も要らない。子には、合図のファイルを待つだけの小さな Python を走らせる。
@@ -159,7 +159,7 @@ class SlotHarness(unittest.TestCase):
     def _start(self, name, code=0, exclusive=False, **options):
         """包みを通して子を走らせる。子が始まった印と、子を終わらせる合図のファイルを返す。
 
-        `exclusive` は窓つきの計測の口 (`--exclusive`) を通す。"""
+        `exclusive` はウィンドウつきの計測の口 (`--exclusive`) を通す。"""
         started = self.root / f"{name}.started"
         release = self.root / f"{name}.release"
         mode = ["--exclusive"] if exclusive else []
@@ -434,7 +434,7 @@ class GpuSlotTest(SlotHarness):
 
 
 class ExclusiveTest(SlotHarness):
-    """窓つきの計測は、GPU の検査と同時に走らない (#2052 の完了条件 2)。
+    """ウィンドウつきの計測は、GPU の検査と同時に走らない (#2052 の完了条件 2)。
 
     計測は `--exclusive` で枠を全部取ってから走る。検査が 1 本でも枠を握っていれば計測が待ち、
     計測が走っている間は検査が待つ。どちらの待ちも期限を持ち、待つ間は相手を名乗る。
@@ -462,14 +462,14 @@ class ExclusiveTest(SlotHarness):
         test, test_started, test_release = self._start("test")
         said = _Said(test)
         # 検査の子が、走っている計測を見て待ちに入った (名乗った) のを待ってから、計測を終わらせる
-        self._assert_waiting(said, test_started, "窓つきの計測が GPU の枠を全部使う", "計測が走っているのに、検査が走った")
+        self._assert_waiting(said, test_started, "ウィンドウつきの計測が GPU の枠を全部使う", "計測が走っているのに、検査が走った")
         measure_release.touch()
         self.assertEqual(measure.wait(timeout=10), 0)
         self.assertTrue(_wait_for(test_started.exists), "計測が終わっても検査が走らない")
         test_release.touch()
         error = said.finish()
         self.assertEqual(test.returncode, 0, error)
-        self.assertIn("窓つきの計測", error)
+        self.assertIn("ウィンドウつきの計測", error)
         self.assertIn(_holder_mark(measure.pid), error)
 
     def _gate_is_held(self):
@@ -497,7 +497,7 @@ class ExclusiveTest(SlotHarness):
         self.assertTrue(_wait_for(self._gate_is_held), "計測が順番待ちの印を取らない")
         late, late_started, late_release = self._start("late")
         late_said = _Said(late)
-        waiting = "窓つきの計測が GPU の枠を全部使う"
+        waiting = "ウィンドウつきの計測が GPU の枠を全部使う"
         # 後から来た検査が、計測の順番待ちの印を見て待ちに入ってから、枠を空ける (入る前に空けると、
         # 待っている検査が空いた枠を取るかを見る検査が、来たばかりの検査が取るかを見る検査に変わる)
         self._assert_waiting(late_said, late_started, waiting, "計測が順番を待っているのに、後から来た検査が走った")
@@ -542,7 +542,7 @@ class ExclusiveTest(SlotHarness):
         _, error = test.communicate(timeout=10)
         self.assertEqual(test.returncode, 75, error)
         self.assertFalse(test_started.exists())
-        self.assertIn("窓つきの計測", error)
+        self.assertIn("ウィンドウつきの計測", error)
         # 持ち主は、期限で抜ける文面の後ろに探す (待つ間の名乗りも同じ持ち主を名乗る。#2343)
         self.assertTrue(_names_after(error, "空かなかったので", measure.pid), error)
 
@@ -889,10 +889,10 @@ class MakefileWiringTest(unittest.TestCase):
 
 
 class MeasurementWiringTest(unittest.TestCase):
-    """窓つきの計測のスクリプトが、窓を出す前に `--exclusive` の内側へ入り直すこと (#2052)。"""
+    """ウィンドウつきの計測のスクリプトが、ウィンドウを出す前に `--exclusive` の内側へ入り直すこと (#2052)。"""
 
     SCRIPTS = ("measure-frame-rate.sh", "check-observation-roundtrip.sh")
-    # 窓を出すスケッチを起こす行
+    # ウィンドウを出すスケッチを起こす行
     LAUNCHES = ("frame-rate-probe", "./.build/debug/", "swift run ")
 
     def test_windowed_runs_happen_inside_the_exclusive(self):
@@ -915,8 +915,8 @@ class MeasurementWiringTest(unittest.TestCase):
                     index for index, line in enumerate(lines)
                     if any(launch in line for launch in self.LAUNCHES)
                 ]
-                self.assertTrue(launches, f"{name} に窓を出す行が無い")
-                self.assertLess(entries[0], min(launches), f"{name} が --exclusive の外で窓を出している")
+                self.assertTrue(launches, f"{name} にウィンドウを出す行が無い")
+                self.assertLess(entries[0], min(launches), f"{name} が --exclusive の外でウィンドウを出している")
 
 
 if __name__ == "__main__":

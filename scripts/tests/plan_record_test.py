@@ -58,7 +58,7 @@ for arg in "$@"; do
   [ "$prev" = "--jq" ] && query=$arg
   prev=$arg
 done
-# 窓から押し出しのあった Issue / PR のコメントを、新しい順にページで遡る (#2660 —
+# ウィンドウから押し出しのあった Issue / PR のコメントを、新しい順にページで遡る (#2660 —
 # scripts/bot-hand.sh の recent_comments)。FAKE_GH_PAGES_<番号> に全コメント (古い順の配列) を
 # 置くと、本物と同じく last: size・before: cursor の 1 ページを返す (カーソルは添字の文字列)。
 # 無ければ引けなかったことにする。引いたページは FAKE_GH_PAGE_LOG へ残す
@@ -159,8 +159,8 @@ def issue_state(in_progress=False, plans=(), sources=(), comments=None, total=No
     いる Issue / PR の (番号, state, [plan_comment(...)]) の並びで、4 つ目に全件数
     (totalCount) を置ける。
 
-    comments を渡すと plans の代わりにそれを窓のコメントとし、total はその全件数
-    (totalCount — 窓から押し出しがあれば窓の件数より大きい。#2660)。省くと欄ごと返さない
+    comments を渡すと plans の代わりにそれをウィンドウのコメントとし、total はその全件数
+    (totalCount — ウィンドウから押し出しがあればウィンドウの件数より大きい。#2660)。省くと欄ごと返さない
     (既存の検査の応答はこの形)。
 
     in_progress は「ラベルが在っても名乗らない」ことを見るために残してある
@@ -1276,7 +1276,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
     def test_capture_lists_both_for_the_case_left_in_the_records(self):
         """手元の記録に残っていた 2 例目 — PR #652 が閉じるのは #647、対象は #648。"""
         result = self.capture(
-            "# #648 窓口の道具は、いまは足さない\n\n本文。\n",
+            "# #648 MCP サーバの道具は、いまは足さない\n\n本文。\n",
             FAKE_GH_PR_JSON=pr_json(652, [647]),
             FAKE_GH_ISSUE="1",
         )
@@ -1571,9 +1571,9 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         )
         self.assertNotIn("二重着手", result.stderr)
 
-    # --- 窓から押し出されたプラン (#2660) ----------------------------------------
+    # --- ウィンドウから押し出されたプラン (#2660) ----------------------------------------
     # 定期の検査・前検査の赤は、同じ題の open な Issue へ github-actions が追記する (#2658)。
-    # 追記が積もると、着手時のプランが comments(last: N) の窓の外へ押し出される。
+    # 追記が積もると、着手時のプランが comments(last: N) のウィンドウの外へ押し出される。
 
     BOT = {"__typename": "Bot", "login": "github-actions"}
 
@@ -1608,7 +1608,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            # GraphQL の窓 (last: 100) は bot の追記だけで埋まり、プランは外にある
+            # GraphQL のウィンドウ (last: 100) は bot の追記だけで埋まり、プランは外にある
             FAKE_GH_GRAPHQL=issue_state(comments=bots[-100:], total=121),
             FAKE_GH_PAGES_123=json.dumps([plan] + bots),
             FAKE_GH_PAGE_LOG=str(self.page_log()),
@@ -1679,7 +1679,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         """bot の追記に目印の綴りが混じっても、プランと読まない (#2660 の反証 3)。
 
         bot の追記は検査の出力の抜粋を載せるので、この検査自身の目印が混じりうる。
-        「bot の手か」は scripts/bot-hand.sh の 1 か所が答え、窓でも遡った先でも同じ定義が効く。
+        「bot の手か」は scripts/bot-hand.sh の 1 か所が答え、ウィンドウでも遡った先でも同じ定義が効く。
         """
         excerpt = (
             "## 検査の出力\n\n```text\n"
@@ -1690,7 +1690,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
             "url": "https://example.invalid/bot/window",
             "author": {"__typename": "Bot", "login": "github-actions"},
         }
-        with self.subTest("窓 (GraphQL)"):
+        with self.subTest("ウィンドウ (GraphQL)"):
             result = self.capture(
                 "計画。\n",
                 FAKE_GH_ISSUE="123",
@@ -1767,7 +1767,7 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         self.assertNotIn("二重着手", result.stderr)
 
     def test_capture_finds_a_source_plan_pushed_out_by_bot_comments(self):
-        """参照元の窓 (last: 50) から押し出されたプランも、まとめ先を名乗っていれば名乗る。"""
+        """参照元のウィンドウ (last: 50) から押し出されたプランも、まとめ先を名乗っていれば名乗る。"""
         plan = plan_comment(
             self.OTHER, "https://example.invalid/c/912", "# #912 (+ #1082): 線の載り方\n\n### #1082\n"
         )
@@ -1786,9 +1786,9 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
         )
 
     def test_capture_does_not_page_when_the_window_holds_everything(self):
-        """窓に収まっていれば遡らない (呼び出しも取得量も #642 のときと同じ)。
+        """ウィンドウに収まっていれば遡らない (呼び出しも取得量も #642 のときと同じ)。
 
-        溢れていても、窓の中の人の手が 100 件あれば範囲は窓で尽きるので遡らない
+        溢れていても、ウィンドウの中の人の手が 100 件あれば範囲はウィンドウで尽きるので遡らない
         """
         plan = plan_comment(self.OTHER, "https://example.invalid/c/1")
         humans = [self.human_comment(i) for i in range(99)]
@@ -1805,14 +1805,14 @@ class PlanRecordTestCase(HookFixture, unittest.TestCase):
                     FAKE_GH_PAGE_LOG=str(self.page_log()),
                 )
                 self.assertIn("別のセッションのプランが 1 件載っている", result.stderr)
-                self.assertEqual(self.pages_called(), [], "窓で足りるのに遡っている")
+                self.assertEqual(self.pages_called(), [], "ウィンドウで足りるのに遡っている")
 
     def test_capture_falls_back_to_the_window_when_paging_fails(self):
-        """遡れなければ、窓の分だけで判定する (従来どおり。黙って何も見なくはならない)。"""
+        """遡れなければ、ウィンドウの分だけで判定する (従来どおり。黙って何も見なくはならない)。"""
         result = self.capture(
             "計画。\n",
             FAKE_GH_ISSUE="123",
-            # 窓にもプランが 1 件ある。ページの応答は置かない = 引けない
+            # ウィンドウにもプランが 1 件ある。ページの応答は置かない = 引けない
             FAKE_GH_GRAPHQL=issue_state(
                 comments=[plan_comment(self.OTHER, "https://example.invalid/c/1")], total=150
             ),

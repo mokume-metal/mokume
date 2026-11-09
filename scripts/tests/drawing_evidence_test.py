@@ -254,7 +254,7 @@ class DrawingEvidenceTest(unittest.TestCase):
         r = self.run_script(body="絵は変わらない", labels=["no-visual-change"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("見て分かるもの", r.stdout)
-        r = self.run_script(body="![窓](https://i.gyazo.com/a.png)", labels=["no-visual-change"])
+        r = self.run_script(body="![ウィンドウ](https://i.gyazo.com/a.png)", labels=["no-visual-change"])
         self.assertNotIn("見て分かるもの", r.stdout)
 
     def test_描画に触れないPRは絵が無くても通る(self):

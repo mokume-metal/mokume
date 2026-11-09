@@ -13,7 +13,7 @@ import Synchronization
 ///
 /// ## 待ち行列は作らない
 ///
-/// 接続の知らせ (`GCControllerDidConnect` / `DidDisconnect`) は main で受ける。釦とスティックの
+/// 接続の知らせ (`GCControllerDidConnect` / `DidDisconnect`) は main で受ける。ボタンとスティックの
 /// handler は、GameController の既定どおり main の待ち行列で呼ばれる (`handlerQueue` を変えない)。
 /// 新しい待ち行列は持たない ([ADR-0010] 決定 4)。
 ///
@@ -79,7 +79,7 @@ final class GamepadHub {
 
     /// 繋がった。識別子を振り、handler を中継へ繋ぎ、いまの値を入れる。
     func connected(_ controller: GCController) {
-        // 読めるのは `extendedGamepad` の左スティックと釦だけ。持たない機材は席を振らない。
+        // 読めるのは `extendedGamepad` の左スティックとボタンだけ。持たない機材は席を振らない。
         // 実機 (Xbox360 互換の USB パッド) は、挿し直した直後に別名の汎用 HID (`RETRO GAMEPAD`・
         // `extendedGamepad` なし) を 0.2 秒だけ通知してから、本来のパッドを新しい機材として
         // 通知する。席を振ると、持ち主のいない席が列に残る (#2295)
@@ -95,7 +95,7 @@ final class GamepadHub {
         Self.sendCurrent(of: controller, to: feed.inboxes)
     }
 
-    /// 抜かれた。押していた釦を離したことにして、抜かれたと名乗る。
+    /// 抜かれた。押していたボタンを離したことにして、抜かれたと名乗る。
     func disconnected(_ controller: GCController) {
         guard let (_, id) = bound.removeValue(forKey: ObjectIdentifier(controller)) else { return }
         slots.disconnect(id)
@@ -136,9 +136,9 @@ final class GamepadHub {
         return controller.productCategory
     }
 
-    /// 釦ごとに、押し離しを中継へ入れる handler を付ける。左スティックには傾きを入れる handler を付ける。
+    /// ボタンごとに、押し離しを中継へ入れる handler を付ける。左スティックには傾きを入れる handler を付ける。
     ///
-    /// **1 つの釦が複数の名前を持つ** (`buttons` は名前から要素への表で、別名も並ぶ)。handler は
+    /// **1 つのボタンが複数の名前を持つ** (`buttons` は名前から要素への表で、別名も並ぶ)。handler は
     /// 要素に 1 つしか付かないので、要素ごとにまとめ、その要素の名前すべての押し離しを入れる。
     private static func wire(_ controller: GCController, to feed: GamepadFeed) {
         let profile = controller.physicalInputProfile
@@ -162,7 +162,7 @@ final class GamepadHub {
         profile.dpads[GCInputLeftThumbstick]?.valueChangedHandler = nil
     }
 
-    /// いま押されている釦と、いまの傾きを入れる。挿したときと、後から入り口が繋がったときに使う
+    /// いま押されているボタンと、いまの傾きを入れる。挿したときと、後から入り口が繋がったときに使う
     /// (handler は変わったときにしか呼ばれない)。
     private static func sendCurrent(of controller: GCController, to inboxes: [GamepadInbox]) {
         let profile = controller.physicalInputProfile

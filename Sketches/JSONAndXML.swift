@@ -18,7 +18,7 @@ import mokume
 /// **天気は setup の中で同期版で読む。** 待たない版 (`requestJSONObject`) の結果は、書き出しの
 /// 絵では受け取る番が回らない (`table-and-text` の「読み直している…」と同じ)。色と理由を
 /// 書き出しと台帳の絵に残すため、ここは同期版にした。待たない版 2 本は、下の 1 行で同じ
-/// URL とファイルを読み直す (窓で走らせれば、起動して間もなく結果に変わる)。
+/// URL とファイルを読み直す (ウィンドウで走らせれば、起動して間もなく結果に変わる)。
 ///
 /// [#2070]: https://github.com/mokume-metal/mokume/issues/2070
 final class JSONAndXML: Sketch {
@@ -167,7 +167,7 @@ final class JSONAndXML: Sketch {
     }
 
     /// 読むファイルの場所。**普通のスケッチには要らない** — `loadXML("data/constellation.xml")`
-    /// と書けば、作業ディレクトリと束ねた資材から探す。参照スケッチは窓・書き出し・台帳の検査の
+    /// と書けば、作業ディレクトリと束ねた資材から探す。参照スケッチはウィンドウ・書き出し・台帳の検査の
     /// 3 つの入口から走り、作業ディレクトリが入口ごとに違うので、このファイルの隣を名指しする
     /// (`table-and-text` と同じ)。
     private static func data(_ name: String) -> String {

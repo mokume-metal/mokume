@@ -1392,9 +1392,9 @@ class DestinationNoticeTest(unittest.TestCase):
         self.assertNotIn("コメントはまだ無い", proc.stderr)
 
     def test_human_comment_pushed_out_of_the_window_is_still_named(self):
-        """#2660: bot の追記で窓 (100 件) が溢れても、人の最新のコメントまで遡って名乗る。
+        """#2660: bot の追記でウィンドウ (100 件) が溢れても、人の最新のコメントまで遡って名乗る。
 
-        窓の中だけを見ると「人のコメントは無い」になり、#1327 の約束 (直前の人の判断を
+        ウィンドウの中だけを見ると「人のコメントは無い」になり、#1327 の約束 (直前の人の判断を
         名乗る) が再び破れる
         """
         comments = [

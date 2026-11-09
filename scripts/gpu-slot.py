@@ -249,7 +249,7 @@ EXPIRY_NAME = "wait-expired.json"
 EXPIRY_VARIABLE = "MOKUME_GPU_SLOT_EXPIRY_RECORD"
 WRAPPER_VARIABLE = "MOKUME_GPU_SLOT_PID"
 
-# 窓つきの計測 (上の「## ウィンドウつきの計測」)。順番待ちの印のファイル名と、子へ渡す「内側で走っている」の印
+# ウィンドウつきの計測 (上の「## ウィンドウつきの計測」)。順番待ちの印のファイル名と、子へ渡す「内側で走っている」の印
 GATE_NAME = "exclusive.lock"
 EXCLUSIVE_VARIABLE = "MOKUME_GPU_SLOT_EXCLUSIVE"
 # 印に書く計測のコマンドの長さ。待つ側が名乗るためのもので、全文は起動元の記録にある
@@ -430,8 +430,8 @@ def _gate_holder(gate):
         return None  # まだ誰も計測していない (印のファイルが無い)
     if len(record) == 4 and record[2].isdigit():
         minutes = int((time.time() - int(record[2])) // 60)
-        return f"  - 窓つきの計測 ({GATE_NAME}): pid {record[0]} · {record[1]} · {minutes} 分前から · {record[3]}"
-    return f"  - 窓つきの計測 ({GATE_NAME}): 持ち主を読めない"
+        return f"  - ウィンドウつきの計測 ({GATE_NAME}): pid {record[0]} · {record[1]} · {minutes} 分前から · {record[3]}"
+    return f"  - ウィンドウつきの計測 ({GATE_NAME}): 持ち主を読めない"
 
 
 def _holders(paths):
@@ -473,7 +473,7 @@ def _give_up(what, subject, wait_seconds, started, now, busy, origin):
 def _acquire(slots, wait_seconds, poll, report_every, origin):
     """枠を 1 つ取る。取れた枠を返す。置き場を使えなければ None を返す。期限を越えたら抜ける。
 
-    **窓つきの計測が順番待ちの印を握っている間は、空いた枠があっても取らない** (上の「## ウィンドウ
+    **ウィンドウつきの計測が順番待ちの印を握っている間は、空いた枠があっても取らない** (上の「## ウィンドウ
     つきの計測」)。取ると、検査が途切れない限り計測に順番が回ってこない。"""
     directory = _slot_dir()
     try:
@@ -500,7 +500,7 @@ def _acquire(slots, wait_seconds, poll, report_every, origin):
                 last_report = now
                 if measuring:
                     _say(
-                        f"窓つきの計測が GPU の枠を全部使う (取るのを待っている) 間は、検査を始めずに待つ — "
+                        f"ウィンドウつきの計測が GPU の枠を全部使う (取るのを待っている) 間は、検査を始めずに待つ — "
                         f"{_span(now - started)}経過 (期限 {_span(wait_seconds)})。相手:"
                     )
                 else:
@@ -517,7 +517,7 @@ def _acquire(slots, wait_seconds, poll, report_every, origin):
 
 
 def _acquire_all(slots, wait_seconds, poll, report_every, origin, command):
-    """窓つきの計測のために、順番待ちの印と枠を全部取る。(印, [枠…]) を返す。置き場を使えなければ
+    """ウィンドウつきの計測のために、順番待ちの印と枠を全部取る。(印, [枠…]) を返す。置き場を使えなければ
     None を返す。期限を越えたら抜ける (取りかけた枠は、抜けたときに OS が外す)。
 
     **先に印を取る。** 取った後は普段の検査が新しく枠を取らないので、走っている検査が終わるのを
@@ -553,7 +553,7 @@ def _acquire_all(slots, wait_seconds, poll, report_every, origin, command):
                 _give_up(f"GPU の枠 ({slots}) の全部", "計測", wait_seconds, started, now, busy, origin)
             if now - last_report >= report_every:
                 last_report = now
-                waiting_for = "別の窓つきの計測" if gate is None else "GPU の検査"
+                waiting_for = "別のウィンドウつきの計測" if gate is None else "GPU の検査"
                 _say(
                     f"{waiting_for}が枠を握っているので、計測を始めずに待っている — "
                     f"{_span(now - started)}経過 (期限 {_span(wait_seconds)})。相手:"
@@ -711,7 +711,7 @@ def main(argv):
         found = _read_expiry()
         if found:
             return _refuse_for_expiry(found, "計測の内側の" + ("計測" if exclusive else "検査"))
-        _say(f"既に窓つきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
+        _say(f"既にウィンドウつきの計測の内側 (pid {os.environ[EXCLUSIVE_VARIABLE]} が枠を全部握っている) なので、そのまま走らせる")
         return _run(command, exclusive=exclusive, own=False)
     slots = _number("MOKUME_GPU_SLOTS", DEFAULT_SLOTS, integer=True)
     wait_seconds = _number("MOKUME_GPU_SLOT_WAIT", DEFAULT_WAIT_SECONDS, integer=False)

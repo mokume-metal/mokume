@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 //
-// frame-rate-probe が測り始める前の準備 (描画の土台と窓を作る) に失敗したときの名乗り。
+// frame-rate-probe が測り始める前の準備 (描画の土台とウィンドウを作る) に失敗したときの名乗り。
 //
 // **裸の `try` に任せない** (#2541)。main.swift の最上位で投げられた失敗は Swift ランタイム
 // の既定処理へ落ち、`Fatal error: Error raised at top level: …` の形で内部の姿をそのまま
@@ -10,7 +10,7 @@
 // `exitReporting`) を、ここにも通す。
 //
 // 名乗る文面だけをここへ出して検査から呼べるようにしてある (main.swift の最上位は走らせると
-// 窓を開いてしまう。FrameRateProbeTests)。
+// ウィンドウを開いてしまう。FrameRateProbeTests)。
 
 import Foundation
 
