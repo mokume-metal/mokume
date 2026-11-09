@@ -6,13 +6,17 @@
 # gh CLI に sub-issue コマンドが無いための補い (ADR-0002 / #23)。
 #
 # 使い方:
-#   sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--test]
+#   sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--blocked-by 前提]... [--test]
 #   sub-issue.sh <親番号> --attach <番号>
+#   sub-issue.sh <番号> --blocked-by <前提> [--blocked-by <前提>]...
 #   --type   : 親から継ぐ型を上書きする (ADR-0004 の 5 型: Bug/Feature/Task/Design/Docs)
 #   --test   : 使い捨て検証用。タイトルに test: を補い、verify: triaged を付け、
 #              本文が無ければ検証用のテンプレートを入れる (確認後に close する前提)
 #   --with   : 一緒に作った別のエージェント・モデルを署名に併記する (#3149)
 #   --attach : 作らずに、既にある Issue を親の下へ繋ぐ (#1661)。型は継がない
+#   --blocked-by : 前提の Issue を GitHub の依存関係 (blocked by) で繋ぐ (#3936)。何本でも並べられる。
+#              タイトルの代わりに置くと、作らずに既にある Issue 同士を繋ぐ (先頭の番号は親ではなく、
+#              待つ側の Issue)
 #
 # エージェントが実行したときは、作る Issue の本文の末尾にエージェントの署名を付ける (#3149。
 # 署名の名前の決まり方は scripts/agent-signature.sh)。人の実行には付けない。
@@ -32,6 +36,21 @@
 # いた群から子が消え、どちらの群が正しいかを誰も判断しないまま決まってしまう。
 #
 # 作った子を探すときは、検索に parent-issue:mokume-metal/mokume#<親番号> を使う。
+#
+# ## --blocked-by (#3936)
+#
+# 「印は前の段 (#N) の merge の後に付ける」と本文に書いただけの無印の段は、前の段が閉じても
+# どこにも出てこず、2026-11-10 の棚卸し (#3933) で 11 本が 10 日間残っていた。前提を GitHub の
+# 依存関係で繋いでおけば、`scripts/ready-queue.sh` が前提の閉じた無印の段を unblocked の行に出す。
+# 前提を持つ段を作るときは、本文に書くのに加えてここで繋ぐ。
+#
+# 中は `gh issue edit <番号> --add-blocked-by <前提>` を前提ごとに 1 回打つだけである (gh 2.94.0 から)。
+# 1 本ずつ打つのは、断られた前提を番号で名乗るため。**外す口は持たない** — 繋ぎ間違いは
+# `gh issue edit <番号> --remove-blocked-by <前提>` で外す。
+#
+# **断られたら止まる。** 既に繋いである組 (`has already been taken`) と自分自身は GitHub が
+# 断る (2026-11-10 に確かめた) ので、その出力をそのまま出して 1 で終える。作る口で断られたときは、Issue は作られて親にも
+# 繋がっているので、作り直さずに繋ぐだけの口で残りを繋ぐ (番号は出力に出す)。
 set -euo pipefail
 
 # リポジトリの owner/repo。**literal は scripts/repo-slug.sh の 1 箇所だけ** (#818)
@@ -42,8 +61,9 @@ REPO="$(this_repo)"
 # shellcheck source=scripts/agent-signature.sh
 . "$(dirname "${BASH_SOURCE[0]}")/agent-signature.sh"
 
-USAGE='使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--test]
-        sub-issue.sh <親番号> --attach <番号>'
+USAGE='使い方: sub-issue.sh <親番号> <タイトル> [--body-file F | --body TEXT] [--label L]... [--type T] [--with 名乗り]... [--blocked-by 前提]... [--test]
+        sub-issue.sh <親番号> --attach <番号>
+        sub-issue.sh <番号> --blocked-by <前提> [--blocked-by <前提>]...'
 
 # usage は 64 (sysexits の EX_USAGE) で揃える (#820)。**使い方も出す** —
 # 終了コードだけ揃えても、読む人はその場で直せない
@@ -65,6 +85,24 @@ link_to_parent() { # $1=子の番号
     printf '%s\n' "$out" >&2
     return 1
   fi
+}
+
+# 前提を blocked by で繋ぐ。作る口と繋ぐだけの口が同じ gh を通る (冒頭の「--blocked-by」)。
+# 断られた前提で止まり、どれが繋がっていないかを名乗る
+link_blockers() { # $1=待つ側の番号 $2...=前提の番号
+  local issue=$1 b
+  shift
+  for b in "$@"; do
+    if ! gh issue edit "$issue" -R "$REPO" --add-blocked-by "$b" >/dev/null; then
+      echo "#$issue を前提 #$b に繋げなかった (理由は上の gh の出力)。" >&2
+      return 1
+    fi
+  done
+}
+
+# 前提の番号は、打つ前に形を見る。作る口では、作った後に断られると Issue だけが残る
+blocker_number() { # $1=前提の番号
+  case "$1" in '' | *[!0-9]*) usage_error "--blocked-by には前提の Issue の番号が要る: '$1'" ;; esac
 }
 
 PARENT="${1:?親 Issue 番号が必要}"; shift
@@ -90,11 +128,26 @@ if [ "${1:-}" = --attach ]; then
   exit 0
 fi
 
+# 既に在る Issue 同士を前提で繋ぐ口 (冒頭の「--blocked-by」)。作成は通らず、先頭の番号は待つ側
+if [ "${1:-}" = --blocked-by ]; then
+  ISSUE=$PARENT
+  case "$ISSUE" in *[!0-9]*) usage_error "--blocked-by で繋ぐ Issue の番号が要る: '$ISSUE'" ;; esac
+  BLOCKERS=()
+  while [ $# -gt 0 ]; do
+    [ "$1" = --blocked-by ] || usage_error "--blocked-by で繋ぐだけのときは他の引数と併せない: $1"
+    blocker_number "${2:-}"
+    BLOCKERS+=("$2"); shift 2
+  done
+  link_blockers "$ISSUE" "${BLOCKERS[@]}" || exit 1
+  echo "#$ISSUE を前提 $(printf '#%s ' "${BLOCKERS[@]}")に繋いだ (blocked by)"
+  exit 0
+fi
+
 TITLE="${1:?タイトルが必要}"; shift
 case "$TITLE" in -*) usage_error "タイトルは - で始まる値を読まない: $TITLE" ;; esac
 
 BODY="" BODY_FILE="" TYPE="" IS_TEST=false
-LABELS=() WITH=()
+LABELS=() WITH=() BLOCKERS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --body-file) BODY_FILE="$2"; shift 2 ;;
@@ -102,6 +155,7 @@ while [ $# -gt 0 ]; do
     --label)     LABELS+=("$2"); shift 2 ;;
     --type)      TYPE="$2"; shift 2 ;;
     --with)      WITH+=(--with "$2"); shift 2 ;;
+    --blocked-by) blocker_number "${2:-}"; BLOCKERS+=("$2"); shift 2 ;;
     --test)      IS_TEST=true; shift ;;
     *)           usage_error "不明な引数: $1" ;;
   esac
@@ -163,3 +217,14 @@ num="${url##*/}"
 link_to_parent "$num"
 
 echo "sub-issue #$num を #$PARENT の下に作成した: $url"
+
+# 前提を繋ぐ (冒頭の「--blocked-by」)。作った後なので、断られても Issue は残る — 番号を名乗って
+# 繋ぐだけの口へ渡す
+if [ ${#BLOCKERS[@]} -gt 0 ]; then
+  if ! link_blockers "$num" "${BLOCKERS[@]}"; then
+    echo "#$num は作って #$PARENT の下に繋いである。作り直さず、残りの前提は次で繋ぐ:" >&2
+    echo "  bash scripts/sub-issue.sh $num --blocked-by <前提>" >&2
+    exit 1
+  fi
+  echo "#$num を前提 $(printf '#%s ' "${BLOCKERS[@]}")に繋いだ (blocked by)"
+fi
