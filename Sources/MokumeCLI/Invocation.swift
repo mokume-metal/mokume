@@ -24,7 +24,8 @@ import mokume
 nonisolated struct Invocation: Equatable {
     /// スケッチの場所。渡されなければ、いまいるところ。
     var place: String?
-    /// 選ばれた構成。渡されなければ道具立ての既定に任せる。
+    /// 選ばれた構成。**`run` と `watch` は、選ばれなければ ``RunCommand/defaultConfiguration`` (release) が
+    /// 入る**ので、`nil` にならない。既定を渡さない口 (`render` など) は `nil` のまま道具立ての既定に任せる。
     var configuration: String?
     /// 指定されたビルドの置き場。渡されなければ ``BuildDirectory`` が決める。
     ///

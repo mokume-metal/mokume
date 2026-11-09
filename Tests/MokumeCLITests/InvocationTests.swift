@@ -139,8 +139,8 @@ struct InvocationTests {
     /// 同じ定数から出る。
     @Test("run と watch の既定は release で、渡す引数も名乗りも release になる")
     func runAndWatchDefaultToRelease() throws {
-        let (invocation, _) = try Invocation.parse(
-            [], adding: [], defaultConfiguration: RunCommand.defaultConfiguration)
+        // run の実際の入口が解く形で見る (既定を渡さなくなれば赤になる)
+        let (invocation, _) = try RunCommand.parseArguments([])
         #expect(RunCommand.defaultConfiguration == "release")
         #expect(invocation.configuration == "release")
         #expect(invocation.configurationName == "release")
@@ -155,8 +155,7 @@ struct InvocationTests {
 
     @Test("明示の -c debug は既定に勝ち、debug で組んで debug を名乗る")
     func anExplicitDebugBeatsTheRunDefault() throws {
-        let (invocation, _) = try Invocation.parse(
-            ["-c", "debug"], adding: [], defaultConfiguration: RunCommand.defaultConfiguration)
+        let (invocation, _) = try RunCommand.parseArguments(["-c", "debug"])
         #expect(invocation.configuration == "debug")
         #expect(invocation.configurationName == "debug")
         #expect(RunCommand.configurationArguments(invocation.configuration) == ["-c", "debug"])

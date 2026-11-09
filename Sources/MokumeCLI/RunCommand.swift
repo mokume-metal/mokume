@@ -70,9 +70,18 @@ enum RunCommand {
     /// (debug) を、`BuildReport.configuration` と同じ言葉で名乗るだけである。
     nonisolated static let toolchainDefaultConfigurationName = "debug"
 
-    static func run(_ arguments: [String]) throws(CommandFailure) {
-        let (invocation, values) = try Invocation.parse(
+    /// `run` の引数を解く。**既定の構成を渡すのはここ 1 か所** — 入口が既定を渡さなくなると
+    /// 検査 (`InvocationTests`) が赤になる。
+    @MainActor
+    static func parseArguments(_ arguments: [String]) throws(CommandFailure)
+        -> (invocation: Invocation, values: [String: String])
+    {
+        try Invocation.parse(
             arguments, adding: RecordOption.options, defaultConfiguration: defaultConfiguration)
+    }
+
+    static func run(_ arguments: [String]) throws(CommandFailure) {
+        let (invocation, values) = try parseArguments(arguments)
         // **ビルドの前に解く。** 行き先の誤りを、数分のビルドの後で知らせない (#3570)
         let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)
         let directory = try invocation.directory
