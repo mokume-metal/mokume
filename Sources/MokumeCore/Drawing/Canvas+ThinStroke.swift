@@ -1029,11 +1029,18 @@ extension Canvas {
         // 細い帯は列 (行) が帯を切る長さで広げる (#2172) ので、向きごとに形が違う。点 1 つの周も描く
         // 画素の軸に沿って置く。鍵は 2x2 そのもの — 回して置き続ける形は、向きごとに組み直す
         //
-        // **開いた端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A。丸い端も #3748 から)。端を描く画素の
+        // **開いた端を持つ輪郭は、副画素の位相も鍵に足す** (#3745 の決定 A)。端を描く画素の
         // 列 (行) の境目で切る (``ThinEndCut``) ので、置き場所の平行移動の端数で片が変わる。整数の画素だけずれた
-        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す
+        // 置き場所は同じ片になる。閉じた輪郭は、これまでどおり 2x2 だけで使い回す。
+        //
+        // **十分に長い丸い端の線は足さない** (#3864・``ThinStrokeRecipe/endsAreFreeOfPhase(drawnBy:)``)。平らな延長の片は
+        // 平行移動しても面積が変わらず、光の量は位相によらない。位相ごとに組み直すと、100 個の形を副画素ずつ動かす場面で
+        // 毎フレーム 100 回組み直して 5.5 ms、使い回せば 0.9 ms (release)。代償は、端の画素の濃さがその場で引いた線と最大 0.2
+        // ほど違い、端が列の境目ごとに 1 画素跳ねること。**境目を丸い端に引いたのは、#3864 が #3748 の決定 A (丸い端も
+        // 位相ごとに組み直す) を戻す件だからである。** `.square`・`.project` は平らな延長で同じ理屈が当てはまるが、その
+        // 「その場で引いた線と同じ絵」は #3745 の決定 A の約束で、手放すかは別の判断になる (#3903)
         var phase = SIMD2<Float>(0, 0)
-        if recipe.cutsEndsAtColumns {
+        if recipe.cutsEndsAtColumns && !(recipe.cap == .round && recipe.endsAreFreeOfPhase(drawnBy: linear)) {
             let origin = drawnOrigin(of: combined)
             phase = origin - origin.rounded(.down)
         }
@@ -1128,10 +1135,58 @@ struct ThinStrokeRecipe {
     let carvesWhenTinted: Bool
 
     /// 置いた後に細くなれば、開いた端を描く画素の列 (行) の境目で切る輪郭か (``ThinEndCut``・#3745)。開いた周の
-    /// もので、端の形は問わない (丸い端も切る・#3748)。組み直した片が置き場所の副画素の位相で変わる。
+    /// もので、端の形は問わない (丸い端も切る・#3748)。組み直した片が置き場所の副画素の位相で変わる。ただし
+    /// 控えの鍵に位相を足すのは丸くない端だけ (#3864)。
     var cutsEndsAtColumns: Bool {
         !outline.isClosed && !outline.isDashPiece && outline.points.count >= 2
     }
+
+    /// 丸い端の片が、置き場所の副画素の位相で変わらないとみなせるか (#3864)。**端を切るかどうか** (``Canvas/thinEnds(_:outline:thin:offset:)``
+    /// の、端の列の中で線が曲がるか・両端の片が重なるか) は位相で変わり、控えはそれを作った位相の判定のまま使い回す。判定が
+    /// 食い違っても動くのは端の近くの光の量だけなので、線が描く画素で十分に長く (``phaseFreeMinimumLength``)、両端の片が
+    /// どの位相でも重ならない (``phaseFreeMinimumGap``) なら、全体の ±25% (#3859) に収まる。**短い線と、端点が近い (ほぼ閉じた)
+    /// 線は、位相ごとに組み直す**。短い折れ線 (描く画素で 1.8 の線分 2 本・約 100° の曲がり) は、控えを使い回すと光の量が
+    /// その場で組んだ値の ×1.26〜×1.30 になった。
+    ///
+    /// 長さと距離は、記録したときの刻みの周 (`outline.points`) で測る。組むときは置いた後の大きさで周を刻み直す
+    /// (``outline(atScale:)``) ので測った周と組む周は違いうるが、刻みが粗いほど曲線の長さは短く見積もられ、端点は刻み直しても
+    /// 動かない。食い違いは位相を残す (組み直す) 側にしか倒れない。
+    ///
+    /// `linear` は置き場所の描く画素へ写す 2x2。丸くない端は平らな延長でも位相ごとに組み直す (#3745 の決定 A) ので、この判断は
+    /// 丸い端にだけ使う。
+    func endsAreFreeOfPhase(drawnBy linear: simd_float2x2) -> Bool {
+        let points = outline.points
+        guard points.count >= 2 else { return false }
+        guard simd_length(linear * (points[points.count - 1] - points[0])) >= Self.phaseFreeMinimumGap else { return false }
+        // 置くたびに呼ぶので、長さが足りた所で数えるのをやめる
+        var length: Float = 0
+        for index in 1..<points.count {
+            length += simd_length(linear * (points[index] - points[index - 1]))
+            if length >= Self.phaseFreeMinimumLength { return true }
+        }
+        return false
+    }
+
+    /// 位相ごとに組み直さなくてよい線の長さ (描く画素)。
+    ///
+    /// **見積もり**: 端を切るかどうかが控えと置いた位相で食い違うと、端 1 つで動く光の量は、端の列の片 (主軸に幅 1 の列を
+    /// 覆い、光は太さ ÷ 主軸の成分 ≦ √2 × 太さ) と、片が覆って消す後の片の分である。線の長さに直すと端 1 つで 2√2 ≒ 2.8、
+    /// 両端で 5.7 画素までで、±25% には長さ 23 が要る。
+    ///
+    /// **実測** (#3864。長さによらず使い回させ、控えを作る位相と置く位相・太さ 0.3〜1・細かさ 0.4〜1・向き・回す前の
+    /// 非等方の拡大を振った 22,600 通り。形は直線・ヘアピン・端だけ短く曲がる折れ線・小さい半径の弧・ジグザグ・U ターン・
+    /// `curveVertex`): 光の量の動きの最悪は線の長さに直して 4.1 画素 (端だけ 0.14 画素で曲がる長さ 5.4 の折れ線)。長さ 16〜18 の
+    /// 最悪は ×1.14 で、16 では見積もりの最悪 (5.7 / 16 = 36%) に余裕が無い。32 以上の最悪は ×0.94〜×1.07。
+    ///
+    /// 見積もりの最悪でも ±18% に収まる 32 にする。
+    static let phaseFreeMinimumLength: Float = 32
+    /// 両端の距離 (描く画素)。これより近いと、両端の片が重なるか (``ThinEndCut/overlaps(_:)``) が位相で変わる。
+    ///
+    /// 端の列の片の囲みは、主軸に列の幅 1、横に延ばした端点から 2 まで (帯の傾き ≦ 1 × 列の幅 1 と、帯を切る列の数の半分 ≦ 1) に
+    /// 収まる。2 つの囲みが重なるのは、延ばした端点どうしが、主軸が同じなら (主軸 1・横 4) 未満、違えば (3・3) 未満ずれた
+    /// ときだけで、距離は 3√2 ≒ 4.24 未満である。端点は丸い端で太さ × π / 8 (< 0.4) ずつ外へ延びるので、端点の距離が
+    /// 5.03 以上ならどの位相でも重ならない。余裕を足して 6 にする。
+    static let phaseFreeMinimumGap: Float = 6
 
     /// 置いた後の拡大で刻み直す余地があるか。周が楕円・弧の周か、円板を置く輪郭。
     var mayRescale: Bool { outline.ring != nil || discSegments > 0 }
@@ -1178,8 +1233,8 @@ final class ThinStrokeCache {
     private var entries: [Int: [Key: Built?]] = [:]
     static let capacity = 8
 
-    /// 組み直した輪郭の控えの鍵。描く画素へ写す 2x2 と、開いた端を列の境目で切る輪郭だけが持つ副画素の位相
-    /// (``ThinStrokeRecipe/cutsEndsAtColumns``・#3745。ほかの輪郭は 0)。
+    /// 組み直した輪郭の控えの鍵。描く画素へ写す 2x2 と、開いた四角い端を列の境目で切る輪郭だけが持つ副画素の位相
+    /// (``ThinStrokeRecipe/cutsEndsAtColumns``・#3745。丸い端とほかの輪郭は 0)。
     struct Key: Hashable {
         var linear: SIMD4<Float>
         var phase: SIMD2<Float>
