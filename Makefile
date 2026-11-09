@@ -85,7 +85,7 @@ CI_CHECK_SKIP ?=
 CI_STATIC_STEPS := schemas tool-language isolated-deinit runtime-math attach-result entry-check example-shots-check no-binaries file-modes reuse-encoding-check reuse-lint github-yaml-lint workflows-lint publish-trigger rulesets-shape changelog-lint docs-links adrs agents-md-size drawing-evidence
 CI_CHECK_HOST ?=
 
-# **手元で回す段は、触ったものから選ぶ。** AGENTS.md「コミット・PR の規約」の「触った範囲の段」は
+# **手元で回す段は、触ったものから選ぶ。** AGENTS.md「PR」の「触った範囲のターゲット」は
 # ここを指す (#2133)。段の名前からは「触ったもの → 回す段」が引けず、取り違えた PR が queue で
 # 赤になった。**取り違えて実害が出た 3 つだけをここに置く** — 置いていないものは、下の並びの
 # 段名と、各段の定義の直前の注釈 (何を見るか) から選ぶ。全段を通すときは make ci-check。

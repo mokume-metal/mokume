@@ -73,7 +73,7 @@ Issue は、たいてい本当に読めない — 埋めずに、**確かめら�
 
 ## 3. 型を確かめる
 
-Issue Type は 5 型 (`Bug` / `Feature` / `Task` / `Design` / `Docs`。選び方は AGENTS.md「Issue の分類」)。
+Issue Type は 5 型 (`Bug` / `Feature` / `Task` / `Design` / `Docs`。選び方は AGENTS.md「Issue」)。
 付いていなければ付ける (ラベルではなく Issue Type。理由:
 [ADR-0004](../../../docs/decisions/0004-issue-classification-by-issue-type.md))。
 
@@ -85,7 +85,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 
 書き方は 1 つ — **いまのコードで確かめられる言い方にする。** 「〜が改善されている」ではなく
 「〜を実行すると〜が出る」「〜というテストがある」。読む人が着手時に突き合わせられなければ、
-着手時の再チェック (AGENTS.md「進め方」3。理由: [ADR-0031](../../../docs/decisions/0031-triage-as-the-single-gate.md) 決定 4) が働かない。
+着手時の再チェック (AGENTS.md「着手」2。理由: [ADR-0031](../../../docs/decisions/0031-triage-as-the-single-gate.md) 決定 4) が働かない。
 
 **起票時の記述がずれていたら、消さずに直す。** ADR の改訂と同じ作法で「**当初は〜と書かれていた**」
 を残す — 何が変わったのかが読めなくなると、次に同じ調査をやり直すことになる。
@@ -121,7 +121,7 @@ gh issue edit <番号> -R mokume-metal/mokume --type <型>
 
 ### 既存の採択で進められるかを確かめる
 
-AGENTS.md「説明と報告」に照らし (理由: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 8)、
+AGENTS.md「判断の分担」に照らし (理由: [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 8)、
 仕様・移行・保証範囲・権限の新たな選択があるかを見る。既に選ばれた範囲なら、根拠の Issue / ADR
 を添える。未合意なら入力/操作と以前/以後、移行方法・提供時期、選択肢・推奨を Issue に示す。
 「条件を書けた」ことを採択に代えず、人に残った判断と、それに依存する作業の範囲を明記する。
@@ -168,7 +168,7 @@ bash scripts/sub-issue.sh <根の番号> --attach <番号>
 
 **`verify: triaged` を付けない。** ここで手が止まるのが正しい。
 
-> 例外は AGENTS.md「進め方」2 の「**自分で起票し、本文に完了条件を書けた Issue**」だけで、
+> 例外は AGENTS.md「着手」1 の「**自分で起票し、本文に完了条件を書けた Issue**」だけで、
 > それは作業中に踏んでその場で起票したものを指す
 > (理由: [ADR-0002](../../../docs/decisions/0002-issue-lifecycle-and-merge-approval.md) 決定 1 追補・
 > [ADR-0036](../../../docs/decisions/0036-unattended-issue-processing.md) 決定 6)。
