@@ -87,7 +87,8 @@ enum WatchCommand {
         watching: (WatchSession, Viewer?) -> Void = { watch($0, viewer: $1) },
         claiming: (URL) throws(CommandFailure) -> WatchPlaceLock = { try WatchPlaceLock.claim(under: $0) }
     ) throws(CommandFailure) {
-        let (invocation, values) = try Invocation.parse(arguments, adding: options)
+        let (invocation, values) = try Invocation.parse(
+            arguments, adding: options, defaultConfiguration: RunCommand.defaultConfiguration)
         let keepsTime = values[keepTimeFlag] != nil
         // **ビルドの前に解く** (#3570)。作り直すたびに世代の番号つきの行き先を子へ渡す
         let recording = try RecordOption.destination(in: values, from: invocation.currentDirectory)

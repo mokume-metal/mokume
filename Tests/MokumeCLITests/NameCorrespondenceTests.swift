@@ -85,7 +85,7 @@ struct NameCorrespondenceTests {
                 "\n  new <name> [--from <example>] [--path <directory>] [--local <library path>]\n"))
         #expect(
             usage.contains(
-                "\n      -c takes debug or release (defaults to whatever the toolchain uses).\n"))
+                "\n      -c takes debug or release (defaults to release; -c debug builds faster).\n"))
     }
 
     // ------------------------------------------------------------ 差し出す道具

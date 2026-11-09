@@ -244,7 +244,7 @@ $ lldb -n Ball
 
 **調べている間は `mokume watch` を使わない。** `watch` は `.swift` を保存するたびに新しいプロセスを起動して入れ替える (上の「再起動の後に残るもの」)。アタッチしていたデバッガーは古いプロセスに残る。保存すると、古いプロセスは `lldb` の中で `stop reason = signal SIGTERM` のまま止まり、しばらくして `watch` が `Killed a sketch that would not stop` と表示して強制終了する。新しいプロセスにデバッガーはアタッチされておらず (`lldb` は古いプロセスの終了とともに終わる)、ブレークポイントも引き継がれないので、アタッチし直しになる。止めて調べるときは `mokume run -c debug` を使い、直したら再起動する。`.metal` のシェーダを保存したときは、プロセスが替わらない (上の「再起動の後に残るもの」)。
 
-**速さを測るときは release を使う。** debug の数字を根拠にしない。`mokume run -c release` で起動する。
+**速さを測るときは release を使う。** debug の数字を根拠にしない。構成を指定しない `mokume run` / `mokume watch` は release で組むので、そのまま起動する (`-c debug` を付けたときは測らない)。
 
 ### 同じ時刻の絵を比較する
 

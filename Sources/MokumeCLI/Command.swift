@@ -96,7 +96,7 @@ enum Command {
                     "run [<directory>] [-c <configuration>] [--scratch-path <directory>] [--record <path>]",
                     """
                     Build a sketch and run it. Defaults to the current directory.
-                    -c takes debug or release (defaults to whatever the toolchain uses).
+                    -c takes debug or release (defaults to release; -c debug builds faster).
                     Build products are shared per version by default. Pass --scratch-path
                     to put them in a directory of your own instead (doctor reports where they are).
                     Relative paths start from where you run this, --scratch-path included
@@ -119,6 +119,7 @@ enum Command {
                     """,
                     """
                     Rebuild the sketch and swap it in whenever you save.
+                    -c takes debug or release (defaults to release, as run does; -c debug builds faster).
                     Pass --record to write each build's run, from its first frame to its end, into a file
                     that can be replayed. Every rebuild starts a new record, a cut between two files:
                     --record take.json writes take-1.json, take-2.json and so on, one per build,

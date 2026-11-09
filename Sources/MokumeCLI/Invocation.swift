@@ -14,9 +14,9 @@ import mokume
 ///
 /// ## 構成は「選ばれたか」と「名乗る名前」を分ける
 ///
-/// 選ばれなければ道具立ての既定に任せる — こちらが `-c debug` と書き固めると、道具立てが
-/// 既定を変えた日に黙ってずれる。一方で**名乗りには名前が要る**ので、選ばれていないときは
-/// 既定の名前を名乗る。同じ値から両方が出るので、名乗りと実体が食い違わない。
+/// 選ばれなければ、`run` と `watch` は ``RunCommand/defaultConfiguration`` (release) を入れる。
+/// 渡す側と名乗る側は同じ ``configuration`` から出るので、食い違わない。それ以外の口
+/// (`render` など) は道具立ての既定に任せ、**名乗りには名前が要る**ので debug を名乗る。
 ///
 /// **main actor には置かない。** 見張りの作り直しは巡回とは別の糸から進むので、
 /// そこから辿るものが隔離されていると待ちが main actor へ戻ってしまう
@@ -24,7 +24,8 @@ import mokume
 nonisolated struct Invocation: Equatable {
     /// スケッチの場所。渡されなければ、いまいるところ。
     var place: String?
-    /// 選ばれた構成。渡されなければ道具立ての既定に任せる。
+    /// 選ばれた構成。**`run` と `watch` は、選ばれなければ ``RunCommand/defaultConfiguration`` (release) が
+    /// 入る**ので、`nil` にならない。既定を渡さない口 (`render` など) は `nil` のまま道具立ての既定に任せる。
     var configuration: String?
     /// 指定されたビルドの置き場。渡されなければ ``BuildDirectory`` が決める。
     ///
@@ -63,7 +64,7 @@ nonisolated struct Invocation: Equatable {
     }
 
     /// 名乗るときの構成の名前。
-    var configurationName: String { configuration ?? RunCommand.defaultConfigurationName }
+    var configurationName: String { configuration ?? RunCommand.toolchainDefaultConfigurationName }
 
     /// 区画の基準。**スケッチの場所とは別の軸である。**
     ///
@@ -149,6 +150,10 @@ nonisolated struct Invocation: Equatable {
     /// [#680] のように片方だけが選択肢を受ける状態が戻る。足した選択肢は `run` / `watch` へは
     /// 届かない — 知らない選択肢として断られる。
     ///
+    /// - Parameter defaultConfiguration: 構成が選ばれなかったときに入れる構成。**`run` と `watch` だけが
+    ///   渡す** ([#3079](https://github.com/mokume-metal/mokume/issues/3079))。入れた値は選ばれた構成と同じ
+    ///   ``configuration`` に載るので、道具立てへ渡す引数と名乗りが同じ値から出る。明示の `-c` が勝つ。
+    ///   渡さない口は、道具立ての既定に任せる。
     /// - Parameter currentDirectory: 相対パスを解く基準 (走らせた場所)。足した選択肢に場所を
     ///   取るものがあれば、口は同じ基準で解く — `render` の `--out` と `--scratch-path` が
     ///   別の基準で解かれていた ([#2320](https://github.com/mokume-metal/mokume/issues/2320))。
@@ -156,6 +161,7 @@ nonisolated struct Invocation: Equatable {
     @MainActor
     static func parse(
         _ arguments: [String], adding extra: [Arguments.Option],
+        defaultConfiguration: String? = nil,
         from currentDirectory: URL? = GivenPath.currentDirectory,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws(CommandFailure) -> (invocation: Invocation, values: [String: String]) {
@@ -171,7 +177,7 @@ nonisolated struct Invocation: Equatable {
                     + " spells them: \(configuration)")
         }
         let invocation = Invocation(
-            place: parsed.positional, configuration: configuration,
+            place: parsed.positional, configuration: configuration ?? defaultConfiguration,
             scratchPath: parsed.values[scratchPathFlags[0]], currentDirectory: currentDirectory)
         // **受け取った時点で解く** (#2323)。走らせた場所が読めない回に相対の場所・置き場を
         // 受けたら、ビルドの道具を起こす前にここで止まる — 後で使う側が解くと、
