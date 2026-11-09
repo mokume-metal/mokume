@@ -80,16 +80,16 @@ nonisolated enum NumberValues {
 /// rotate(PI / 4)
 /// ```
 ///
-/// **`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` は手本 (Processing・p5.js) の綴りのまま**
-/// で、Swift の命名 (lowerCamelCase) からは外れる。関数の層は手本で書けることを優先する
-/// ためで、理由は [ADR-0020] 決定 1 の 2026-10-14 改訂にある。`tau` と綴る案は、手本の綴りで
+/// **`PI`・`HALF_PI`・`QUARTER_PI`・`TWO_PI`・`TAU` は Processing・p5.js の表記のまま**
+/// で、Swift の命名 (lowerCamelCase) からは外れる。関数の層は Processing で書けることを優先する
+/// ためで、理由は [ADR-0020] 決定 1 の 2026-10-14 改訂にある。`tau` と綴る案は、Processing の表記で
 /// 探せず、AI が書く `TWO_PI` が赤いままになるので採らなかった。
 ///
-/// **総称の受け口へそのまま渡せる。** 描く口と数の口は `some ScalarConvertible` で受けるので、
+/// **総称の引数へそのまま渡せる。** 描く API と数の API は `some ScalarConvertible` で受けるので、
 /// `.pi` だけでは `Float` と `Double` のどちらか決まらず、`rotate(.pi / 2)` は
 /// `ambiguous use of 'pi'` で赤くなる ([ADR-0035] 決定 6-a)。これらの定数は具体の `Float`
-/// なので、`rotate(HALF_PI)` も `map(i, 0, n, 0, TWO_PI)` も型を名乗らずに通る。
-/// `Float.pi` も正しい綴りで、書き換えは要らない。
+/// なので、`rotate(HALF_PI)` も `map(i, 0, n, 0, TWO_PI)` も型を明示せずに通る。
+/// `Float.pi` も正しい表記で、書き換えは要らない。
 ///
 /// **遮れる。** 自分で `let PI = 3.14` と宣言すれば、その範囲では自分の宣言が勝つ。
 ///
@@ -135,7 +135,7 @@ public nonisolated let QUARTER_PI: Float = .pi / 4
 /// arc(0, 0, 100, 100, 0, TWO_PI)
 /// ```
 ///
-/// 範囲を 1 周へ写すときにも使う — `map(i, 0, n, 0, TWO_PI)`。``TAU`` と同じ値。
+/// 範囲を 1 周へ対応づけるときにも使う — `map(i, 0, n, 0, TWO_PI)`。``TAU`` と同じ値。
 public nonisolated let TWO_PI: Float = .pi * 2
 
 /// 1 周 (2π)。``TWO_PI`` と同じ値。
@@ -155,8 +155,8 @@ public nonisolated let TAU: Float = .pi * 2
 /// rotate(radians(45))
 /// ```
 ///
-/// **このパッケージが角度を受け取る口は、すべてラジアンで名乗っている**
-/// (``SketchPart/rotate(_:)`` の引数名が `radians`)。度で考えたい絵 — 円を 12 等分する、
+/// **このパッケージが角度を受け取る API は、すべてラジアンで宣言している**
+/// (``SketchPart/rotate(_:)`` の引数名が `radians`)。度で考えたい描画 — 円を 12 等分する、
 /// 30 度ずつ回す — は、ここを通してから渡す。
 ///
 /// **単位を切り替える状態は持たない。** `angleMode()` は無く、単位は呼んだ 1 行から
@@ -172,21 +172,21 @@ public nonisolated func radians(_ degrees: some ScalarConvertible) -> Float { de
 /// ```
 ///
 /// 角度を**読みたい**ときのためにある — 画面に出す、度で書かれた表と突き合わせる、
-/// といった用途である。描く口へ渡す値は直さなくてよい。
+/// といった用途である。描く API へ渡す値は直さなくてよい。
 public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { radians.asFloat * 180 / .pi }
 
 // MARK: - 値を別の範囲へ写す
 
-/// ある範囲の値を、別の範囲の値へ写す。
+/// ある範囲の値を、別の範囲の値へ対応づける。
 ///
 /// ```swift
 /// let pointCount = map(mouseX, 0, width, 6, 60)
 /// ```
 ///
-/// 引数は写す値・元の範囲の下端と上端・写した先の下端と上端の順 (手本と同じ並び)。
+/// 引数は対応づける値・元の範囲の下端と上端・対応づけた先の下端と上端の順 (Processing と同じ並び)。
 ///
-/// **元の範囲の端は、写した先の端へちょうど写る** — `inLow` を写せば `outLow` が、`inHigh`
-/// を写せば `outHigh` が返る。元の範囲の中の値は、写した先の両端の間の有限の値になる。
+/// **元の範囲の端は、対応づけた先の端へちょうど対応する** — `inLow` を渡せば `outLow` が、`inHigh`
+/// を渡せば `outHigh` が返る。元の範囲の中の値は、対応づけた先の両端の間の有限の値になる。
 /// どちらも、範囲の幅が `Float` で表せないほど広くても変わらない (`map(0.5, 0, 1, -3e38, 3e38)`
 /// は 0 を返す)。
 ///
@@ -194,14 +194,14 @@ public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { ra
 /// は 20 を返す。締めたいときは呼ぶ側で締める。伸びた先が `Float` の範囲を越えたら ±∞ を
 /// 返す (数でない値は返さない)。
 ///
-/// **元の幅が 0 のとき、数でない値・無限の値が混じったときは、写した先の下端を返す。**
-/// 手本は ±∞ や NaN を返すが、``Sketch/draw()`` から毎フレーム呼ばれる口が数でない値を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **元の幅が 0 のとき、数でない値・無限の値が混じったときは、対応づけた先の下端を返す。**
+/// Processing は ±∞ や NaN を返すが、``Sketch/draw()`` から毎フレーム呼ばれる API が数でない値を
+/// 返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// **値だけを扱うので、`nonisolated` の文脈からも呼べる** ([#2389])。数と色の関数 (`map`・`lerp`・
 /// `constrain`・`norm`・`smoothstep`・`color`・`lerpColor` ほか) は、スケッチの状態を読まないので、
 /// 画素を計算するループを `DispatchQueue.concurrentPerform` や TaskGroup で分けて回せる。
-/// **これは明示的に選ぶ人向けの道で、スケッチを書くだけなら要らない** ([ADR-0001] 原則 1) —
+/// **これは明示的に選ぶ人向けの手段で、スケッチを書くだけなら要らない** ([ADR-0001] 原則 1) —
 /// 並行性の注釈を書かなくても、いつもどおり書ける。
 ///
 /// ```swift
@@ -212,16 +212,16 @@ public nonisolated func degrees(_ radians: some ScalarConvertible) -> Float { ra
 /// }
 /// ```
 ///
-/// 分けた先の閉包は `@Sendable` で、**スケッチの状態 (`width`・`fill` など) は読めない**。
-/// 読みたい値は、分ける前に変数へ取り出しておく。スケッチの口 (`circle` など) を呼ぶ閉包を
-/// `DispatchQueue` へ渡すと、main actor の閉包なので、実行時の隔離の検査で落ちる (SE-0423)。
+/// 分けた先のクロージャは `@Sendable` で、**スケッチの状態 (`width`・`fill` など) は読めない**。
+/// 読みたい値は、分ける前に変数へ取り出しておく。スケッチの API (`circle` など) を呼ぶクロージャを
+/// `DispatchQueue` へ渡すと、main actor のクロージャなので、実行時の隔離のチェックで落ちる (SE-0423)。
 /// 描くのは分けた先ではなく、結果を持ち帰ってからにする。
 ///
 /// **表や JSON・XML の読み出し (``TableRow/getFloat(_:)-(String)`` ほか) も、分けた先では呼べない。**
 /// ``Table``・``JSONObject``・``JSONArray``・``XML`` の読み出しは main actor の上にあり
-/// ([ADR-0010] 決定 1)、分けた先の閉包で呼ぶと、スケッチの口と同じく実行時の隔離の検査で落ちる
-/// (`@Sendable` の閉包なら、組む時点で誤りになる)。分ける前に、main で読みたい値を `[Float]` などへ
-/// 写しておく。欠けた列の知らせも、写すときに列ごとに 1 度だけ出る。
+/// ([ADR-0010] 決定 1)、分けた先のクロージャで呼ぶと、スケッチの API と同じく実行時の隔離のチェックで落ちる
+/// (`@Sendable` のクロージャなら、コンパイル時点で誤りになる)。分ける前に、main で読みたい値を `[Float]` などへ
+/// コピーしておく。欠けた列の警告も、コピーするときに列ごとに 1 度だけ出る。
 ///
 /// <!-- example: 文脈 var table: Table! -->
 /// ```swift
@@ -263,7 +263,7 @@ public nonisolated func map(
 /// ``smoothstep(_:_:_:)`` が共有する。**注意は言わない** — 中で他の口を呼ぶと、呼んだ先の名で
 /// 注意が鳴る ([#1283])。値と端は有限で、幅は 0 でないこと。
 ///
-/// 範囲の幅が有限なら `(value - low) / (high - low)` そのもので、断片 (MSL) の `smoothstep` が
+/// 範囲の幅が有限なら `(value - low) / (high - low)` そのもので、シェーダ (MSL) の `smoothstep` が
 /// 書く式と 1 字も違わない。**幅が `Float` で溢れる組だけ、端と値を半分にしてから比を取る**
 /// ([#1476])。半分どうしの差は溢れず、端は大きいので半分にしても丸まらない — 値が端ちょうど
 /// なら、比も 0 と 1 ちょうどになる。有限の値から数でない値は返らない (値が範囲から遠く
@@ -286,19 +286,19 @@ private nonisolated func proportion(_ value: Float, _ low: Float, _ high: Float)
 /// let x = lerp(20, width - 20, 0.25)
 /// ```
 ///
-/// 引数は始まり・終わり・その間のどこか、の順 (手本と同じ並び)。`amount` が 0 なら
+/// 引数は始まり・終わり・その間のどこか、の順 (Processing と同じ並び)。`amount` が 0 なら
 /// `start`、1 なら `stop` が**ちょうど**返る。
 ///
 /// **端が有限で `amount` が 0…1 なら、返る値は有限で、端の間に収まる。** 端の差が `Float` で
 /// 表せないほど離れていても変わらない (`lerp(-3e38, 3e38, 0.5)` は 0 を返す)。
 ///
 /// **0…1 の外は締めない。** `lerp(0, 10, 2)` は 20 を、`lerp(0, 10, -1)` は -10 を返す
-/// (手本と同じで、``map(_:_:_:_:_:)`` の外挿と揃う)。締めたいときは ``constrain(_:_:_:)``
+/// (Processing と同じで、``map(_:_:_:_:_:)`` の外挿と揃う)。締めたいときは ``constrain(_:_:_:)``
 /// を通す。伸びた先が `Float` の範囲を越えたら ±∞ を返す (数でない値は返さない) —
 /// `lerp(1e38, 2e38, 10)` は ∞ になる。
 ///
-/// **数でない値・無限の値が混じったときは `start` を返す。** 毎フレーム呼ばれる口が
-/// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **数でない値・無限の値が混じったときは `start` を返す。** 毎フレーム呼ばれる API が
+/// 数でない値を返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func lerp(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
@@ -351,14 +351,14 @@ nonisolated func interpolate(_ start: Float, _ stop: Float, _ amount: Float) -> 
 /// let radius = constrain(mouseX / 4, 4, 120)
 /// ```
 ///
-/// 引数は締める値・下端・上端の順 (手本と同じ並び)。範囲の中の値はそのまま返る。
+/// 引数は締める値・下端・上端の順 (Processing と同じ並び)。範囲の中の値はそのまま返る。
 ///
 /// **上下が逆に渡されたら入れ替えて締める。** `constrain(5, 10, 0)` は `constrain(5, 0, 10)`
 /// と同じ 5 を返す — 逆向きの範囲を受け取る ``map(_:_:_:_:_:)`` と揃う。
 ///
-/// **数でない値・無限の値が混じったときは、範囲の端へ倒す** — 両端とも有限なら下端を、
-/// 片側だけ有限ならその端を、どちらも数でなければ 0 を返す。毎フレーム呼ばれる口が
-/// 数でない値を返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **数でない値・無限の値が混じったときは、範囲の端へ寄せる** — 両端とも有限なら下端を、
+/// 片側だけ有限ならその端を、どちらも数でなければ 0 を返す。毎フレーム呼ばれる API が
+/// 数でない値を返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func constrain(_ value: some ScalarConvertible, _ low: some ScalarConvertible, _ high: some ScalarConvertible) -> Float {
@@ -385,17 +385,17 @@ public nonisolated func constrain(_ value: some ScalarConvertible, _ low: some S
 /// let progress = norm(time, 2, 6)
 /// ```
 ///
-/// 引数は値・範囲の始まりと終わりの順 (手本と同じ並び)。写した先を 0…1 にした
+/// 引数は値・範囲の始まりと終わりの順 (Processing と同じ並び)。対応づけた先を 0…1 にした
 /// ``map(_:_:_:_:_:)`` と同じ値を返す — `start` なら 0、`stop` なら 1 がちょうど返り、逆向きの
 /// 範囲も受ける (`norm(20, 80, 0)` は 0.75)。
 ///
 /// **範囲の外は締めない。** `norm(120, 0, 80)` は 1.5 を、`norm(-40, 0, 80)` は -0.5 を返す
-/// (手本と同じ)。0…1 に収めたいときは ``constrain(_:_:_:)`` を通すか、ウィンドウ・締め・曲線を 1 本で
+/// (Processing と同じ)。0…1 に収めたいときは ``constrain(_:_:_:)`` を通すか、ウィンドウ・締め・曲線を 1 本で
 /// 済ませる ``smoothstep(_:_:_:)`` を使う。
 ///
-/// **範囲の幅が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 手本は ±∞ や NaN を
-/// 返すが、``Sketch/draw()`` から毎フレーム呼ばれる口が数でない値を返すと、**絵が黙って消える**
-/// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` が写した先の下端を返すのと揃えてある。注意は 1 度だけ
+/// **範囲の幅が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** Processing は ±∞ や NaN を
+/// 返すが、``Sketch/draw()`` から毎フレーム呼ばれる API が数でない値を返すと、**描画が警告なしに消える**
+/// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` が対応づけた先の下端を返すのと揃えてある。注意は 1 度だけ
 /// 言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -423,24 +423,24 @@ public nonisolated func norm(_ value: some ScalarConvertible, _ start: some Scal
 /// let fade = smoothstep(2.4, 5.4, time)
 /// ```
 ///
-/// **断片 (MSL) の `smoothstep` と同じ名前・同じ引数の並び・同じ式である。** ウィンドウの中の割合を
+/// **シェーダ (MSL) の `smoothstep` と同じ名前・同じ引数の並び・同じ式である。** ウィンドウの中の割合を
 /// 0…1 に締めて `t` とし、`t * t * (3 - 2 * t)` を返す。シェーダに書いた式を、そのまま Swift の
 /// 側へ写せる。
 ///
 /// - **ウィンドウの外は締める。** 縁を含めて `edge0` の側の外では 0、`edge1` の側の外では 1 を返す —
 ///   `smoothstep(2, 6, 1)` は 0、`smoothstep(2, 6, 9)` は 1
 /// - **逆向きのウィンドウ (`edge0 > edge1`) は入れ替えず、下り坂になる。** `smoothstep(6, 2, 3)` は
-///   `1 - smoothstep(2, 6, 3)` と同じ 0.84375。断片の式も場合分けせずに同じ値を出す
-/// - **幅 0 のウィンドウ (`edge0 == edge1`) は段になる** — `x` が縁より下なら 0、縁から上は 1 (断片の
-///   `step(edge, x)` と同じ)。注意は言わない。縁の外では断片の式と同じ値で、縁ちょうどは断片の
-///   式では決まらない (0 ÷ 0)。締める口には段という答えがあるので、幅 0 で 0 を返して注意を
+///   `1 - smoothstep(2, 6, 3)` と同じ 0.84375。シェーダの式も場合分けせずに同じ値を出す
+/// - **幅 0 のウィンドウ (`edge0 == edge1`) は段になる** — `x` が縁より下なら 0、縁から上は 1 (シェーダの
+///   `step(edge, x)` と同じ)。注意は言わない。縁の外ではシェーダの式と同じ値で、縁ちょうどはシェーダの
+///   式では決まらない (0 ÷ 0)。締める API には段という答えがあるので、幅 0 で 0 を返して注意を
 ///   言う ``norm(_:_:_:)`` / ``map(_:_:_:_:_:)`` とはここが違う
 ///
-/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。**ここだけは断片の
-/// `smoothstep` と値が違いうる** — 断片が無限や数でない値に何を返すかには揃えない。幅が `Float`
+/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる API が数でない値を
+/// 返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。**ここだけはシェーダの
+/// `smoothstep` と値が違いうる** — シェーダが無限や数でない値に何を返すかには揃えない。幅が `Float`
 /// で溢れるウィンドウ (`smoothstep(-3e38, 3e38, 0)`) も、ここはウィンドウの中の割合どおりの値 (0.5) を返す。
-/// 同じ名前でも、画素まで揃えることは約束しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。
+/// 同じ名前でも、画素まで揃えることは保証しない ([ADR-0020] 決定 1 の 2026-09-09 改訂)。
 ///
 /// 曲線を通さずに、ウィンドウの中の割合だけが欲しいなら ``norm(_:_:_:)`` を使う (こちらは締めない)。
 ///
@@ -498,15 +498,15 @@ public nonisolated func smoothstep(_ edge0: some ScalarConvertible, _ edge1: som
 /// ```
 ///
 /// **`deltaTime` を渡すと、積分で作った状態になる。** 実時計で動くウィンドウでは、フレームの長さが
-/// 実行ごとに違うので、同じ時刻の絵が実行ごとに揃わない ([ADR-0025] 決定 6 の「揃わない」側)。
+/// 実行ごとに違うので、同じ時刻の描画が実行ごとに揃わない ([ADR-0025] 決定 6 の「揃わない」側)。
 /// フレームの時計 (`mokume render`・設定の `clock: .frames`) では、`deltaTime` が毎回同じなので
-/// 揃う。時刻から絵が決まる作りにしたいなら、``damp(_:_:_:_:)`` ではなく ``smoothstep(_:_:_:)`` などで
+/// 揃う。時刻から描画が決まる作りにしたいなら、``damp(_:_:_:_:)`` ではなく ``smoothstep(_:_:_:)`` などで
 /// `time` から直に値を出す。
 ///
-/// **名前と並びは three.js に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
+/// **名前と並びは three.js に倣った** (Processing・p5 に無い API。[ADR-0020] 決定 1)。
 ///
 /// **負の `lambda`・負の `dt` は、動かさずに今の値を返す。** 式のまま通すと目標から遠ざかり、
-/// 毎フレーム重ねると指数で発散して、絵が黙って消える。`dt` が 0 なら動かない (今の値が
+/// 毎フレーム重ねると指数で発散して、描画が警告なしに消える。`dt` が 0 なら動かない (今の値が
 /// そのまま返る)。0 は負ではないので知らせない。注意は 1 度だけ言う。
 ///
 /// **数でない値・無限の値が混じったときは、今の値を返す** (今の値が有限でなければ 0)。
@@ -552,11 +552,11 @@ public nonisolated func damp(
 /// **`length` が負なら、0 から負の側へ往復する** — 返る値は `length` 以上 0 以下になる。
 ///
 /// **`length` が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 幅の無い往復は
-/// 定まらず、毎フレーム呼ばれる口が数でない値を返すと**絵が黙って消える**
+/// 定まらず、毎フレーム呼ばれる API が数でない値を返すと**描画が警告なしに消える**
 /// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
 ///
-/// **名前と並びは three.js に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
-/// 時刻を 0 以上 1 未満へ巡らせる口は別にある。
+/// **名前と並びは three.js に倣った** (Processing・p5 に無い API。[ADR-0020] 決定 1)。
+/// 時刻を 0 以上 1 未満へ巡らせる API は別にある。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some ScalarConvertible) -> Float {
@@ -594,8 +594,8 @@ public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some Sca
 /// `lerp(3, -3, 0.5)` は 0 を返すが、`lerpAngle(3, -3, 0.5)` は ±π の近く (約 3.14) を返す。
 ///
 /// **`amount` が 0 なら `start` が、1 なら `stop` と同じ向きがちょうど返る。** 返す値は
-/// `start` から短いほうへ進めた値で、**±π に畳まない** (`lerpAngle(3, -3, 1)` は -3 ではなく
-/// -3 + 2π を返す)。同じ向きなので描く口へそのまま渡せ、`atan2` の返す ±π の外へ
+/// `start` から短いほうへ進めた値で、**±π にラップしない** (`lerpAngle(3, -3, 1)` は -3 ではなく
+/// -3 + 2π を返す)。同じ向きなので描く API へそのまま渡せ、`atan2` の返す ±π の外へ
 /// 出ても、次のフレームの `start` にしてよい。2 つの向きがちょうど反対 (差が π) のときは、
 /// `stop - start` の符号の側へ回る。
 ///
@@ -605,7 +605,7 @@ public nonisolated func pingpong(_ t: some ScalarConvertible, _ length: some Sca
 /// **数でない値・無限の値が混じったときは `start` を返す** (`start` が有限でなければ 0)。
 /// ``lerp(_:_:_:)`` と同じく、注意は 1 度だけ言う ([ADR-0020] 決定 5)。
 ///
-/// **名前と並びは Unity・Godot に倣った** (手本 Processing・p5 に無い口。[ADR-0020] 決定 1)。
+/// **名前と並びは Unity・Godot に倣った** (Processing・p5 に無い API。[ADR-0020] 決定 1)。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some ScalarConvertible, _ amount: some ScalarConvertible) -> Float {
@@ -632,7 +632,7 @@ public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some 
 /// let reach = dist(mouseX, mouseY, width / 2, height / 2)
 /// ```
 ///
-/// 引数は 1 つ目の点の x・y、2 つ目の点の x・y の順 (手本と同じ並び)。広がる波の格子 —
+/// 引数は 1 つ目の点の x・y、2 つ目の点の x・y の順 (Processing と同じ並び)。広がる波の格子 —
 /// 中心からの距離で明るさを決め、波は 3 秒で一巡する。
 ///
 /// ```swift
@@ -650,15 +650,15 @@ public nonisolated func lerpAngle(_ start: some ScalarConvertible, _ stop: some 
 /// }
 /// ```
 ///
-/// **これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。値型 `Vector2` の側は
-/// `length` と名乗る — 関数の ``dist(_:_:_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と
+/// **これは関数の層の API で、Processing の名前のまま** (ADR-0020 決定 1)。値型 `Vector2` の側は
+/// `length` という名前を持つ — 関数の ``dist(_:_:_:_:)`` と `Vector2` の長さが並ぶのは、`circle()` と
 /// `Circle` の使い分けと同じである。ここは平面の 2 点で、空間の 2 点は ``dist(_:_:_:_:_:_:)``。
 ///
 /// **2 乗が `Float` で溢れる距離でも、距離は有限で返る** (`dist(0, 0, 3e19, 4e19)` は 5e19)。
 /// 結果そのものが `Float` の範囲を越えるときだけ ∞ を返す (数でない値は返さない)。
 ///
-/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **数でない値・無限の値が混じったときは 0 を返す。** 毎フレーム呼ばれる API が数でない値を
+/// 返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func dist(
@@ -680,8 +680,8 @@ public nonisolated func dist(
 /// let speed = mag(mouseX - pmouseX, mouseY - pmouseY)
 /// ```
 ///
-/// `mag(3, 4)` は 5 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
-/// 値型 `Vector2` の側は `length` と名乗る。ここは平面の 2 成分で、空間の 3 成分は ``mag(_:_:_:)``。
+/// `mag(3, 4)` は 5 を返す。**これは関数の層の API で、Processing の名前のまま** (ADR-0020 決定 1)。
+/// 値型 `Vector2` の側は `length` という名前を持つ。ここは平面の 2 成分で、空間の 3 成分は ``mag(_:_:_:)``。
 ///
 /// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
 /// 返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
@@ -702,12 +702,12 @@ public nonisolated func mag(_ x: some ScalarConvertible, _ y: some ScalarConvert
 /// let reach = dist(0, 0, 0, 30, 40, 120)  // 130
 /// ```
 ///
-/// 引数は 1 つ目の点の x・y・z、2 つ目の点の x・y・z の順 (手本と同じ並び)。`Float`・`Double`・`Int` を
+/// 引数は 1 つ目の点の x・y・z、2 つ目の点の x・y・z の順 (Processing と同じ並び)。`Float`・`Double`・`Int` を
 /// そのまま渡せて、返すのは `Float`。奥行き (z) の向きは ``SketchPart/translate(_:_:_:)`` などと同じ
 /// (視点に向かって手前が正) で、距離は向きを見ないので符号は結果に効かない。
 ///
-/// **これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。値型 `Vector3` の側は
-/// `length` と名乗る。
+/// **これは関数の層の API で、Processing の名前のまま** (ADR-0020 決定 1)。値型 `Vector3` の側は
+/// `length` という名前を持つ。
 ///
 /// **2 乗が `Float` で溢れる距離でも、距離は有限で返り** (`dist(0, 0, 0, 3e19, 4e19, 0)` は 5e19)、
 /// **数でない値・無限の値が混じったときは 0 を返す** (``dist(_:_:_:_:)`` と同じ)。注意は 1 度だけ言う。
@@ -760,8 +760,8 @@ public nonisolated func dist(_ a: Vector3, _ b: Vector3) -> Float {
 /// let reach = mag(100, 150, 200)
 /// ```
 ///
-/// `mag(2, 3, 6)` は 7 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
-/// 値型 `Vector3` の側は `length` と名乗る。
+/// `mag(2, 3, 6)` は 7 を返す。**これは関数の層の API で、Processing の名前のまま** (ADR-0020 決定 1)。
+/// 値型 `Vector3` の側は `length` という名前を持つ。
 ///
 /// **2 乗が `Float` で溢れても距離は有限で返り、数でない値・無限の値が混じったときは 0 を
 /// 返す** (``mag(_:_:)`` と同じ)。注意は 1 度だけ言う。
@@ -797,12 +797,12 @@ private nonisolated func euclideanLength(_ dx: Float, _ dy: Float) -> Float {
 /// let area = sq(radius) * Float.pi
 /// ```
 ///
-/// `sq(-3)` は 9 を返す。**これは関数の層の口で、手本の名前のまま** (ADR-0020 決定 1)。
+/// `sq(-3)` は 9 を返す。**これは関数の層の API で、Processing の名前のまま** (ADR-0020 決定 1)。
 /// 結果が `Float` の範囲を越えたら ∞ を返す (``map(_:_:_:_:_:)`` の外挿と同じ。数でない値は
 /// 返さない)。
 ///
-/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる API が数でない値を
+/// 返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func sq(_ value: some ScalarConvertible) -> Float {
@@ -824,16 +824,16 @@ public nonisolated func sq(_ value: some ScalarConvertible) -> Float {
 /// let phase = fract(time / 3)
 /// ```
 ///
-/// **負の値も 0 以上に畳む** — `fract(-0.25)` は 0.75 (整数部分は床で、0 へ向けた切り捨て
-/// ではない)。断片 (GLSL・MSL) の `fract` と同じ名前・同じ定義で、シェーダに書いた式を
+/// **負の値も 0 以上にラップする** — `fract(-0.25)` は 0.75 (整数部分は床で、0 へ向けた切り捨て
+/// ではない)。シェーダ (GLSL・MSL) の `fract` と同じ名前・同じ定義で、シェーダに書いた式を
 /// そのまま写せる。周期の位相を出すときに、負の時刻でも巡る。
 ///
 /// **返る値は 1 にならない。** 絶対値が 3e-8 ほどより小さい負の値は、`1 + x` が `Float` で 1 に
-/// 丸まる。1 周ぶんずれた 1 が返らないよう、その値は 0 へ畳む (周期の上では 0 と 1 は同じ
-/// 位相で、0 のほうが元の値に近い)。``mod(_:_:)`` と同じ畳み方である。
+/// 丸まる。1 周ぶんずれた 1 が返らないよう、その値は 0 にする (周期の上では 0 と 1 は同じ
+/// 位相で、0 のほうが元の値に近い)。``mod(_:_:)`` と同じラップの仕方である。
 ///
-/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる口が数でない値を
-/// 返すと、**絵が黙って消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
+/// **数でない値・無限の値が渡されたときは 0 を返す。** 毎フレーム呼ばれる API が数でない値を
+/// 返すと、**描画が警告なしに消える** ([ADR-0020] 決定 5)。注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
 public nonisolated func fract(_ value: some ScalarConvertible) -> Float {
@@ -854,20 +854,20 @@ public nonisolated func fract(_ value: some ScalarConvertible) -> Float {
 /// let hue = mod(time * 90 - 30, 360)  // 負の角度も 0…360 へ畳む
 /// ```
 ///
-/// `mod(7, 4)` は 3、`mod(-1, 4)` も 3 を返す。**負の値も 0 以上に畳む** — 手本の `%` は負の数
+/// `mod(7, 4)` は 3、`mod(-1, 4)` も 3 を返す。**負の値も 0 以上にラップする** — Processing の `%` は負の数
 /// に負を返すので、巡る値を書くたびに足して引き直す書き方になっていた (小数にも使える)。
-/// 断片 (GLSL) の `mod` と同じ定義である (MSL の `fmod` は C と同じく負を返す)。手本に名前の
-/// 無い口で、断片と同じ綴りを採った。
+/// シェーダ (GLSL) の `mod` と同じ定義である (MSL の `fmod` は C と同じく負を返す)。Processing に名前の
+/// 無い API で、シェーダと同じ表記を採った。
 ///
 /// **返る値は `divisor` にならない。** 絶対値が小さい負の値に `divisor` を足すと、`Float` では
 /// `divisor` ちょうどに丸まる — `mod(-1e-6, 360)` がその例で、360 を返すと 1 周ぶんずれて読まれる。
-/// そうなる値は 0 へ畳む (色相の巻き戻しが #1533 で踏んだ境界と同じ手当て)。
+/// そうなる値は 0 にする (色相の巻き戻しが #1533 で踏んだ境界と同じ手当て)。
 ///
 /// **`divisor` が負なら、符号が `divisor` に従う** — 結果は `divisor` より大きく 0 以下になる
 /// (`mod(1, -4)` は -3)。
 ///
 /// **`divisor` が 0 のとき、数でない値・無限の値が混じったときは 0 を返す。** 0 で割った余りは
-/// 定まらず、手本は NaN を返すが、毎フレーム呼ばれる口が数でない値を返すと、**絵が黙って消える**
+/// 定まらず、Processing は NaN を返すが、毎フレーム呼ばれる API が数でない値を返すと、**描画が警告なしに消える**
 /// ([ADR-0020] 決定 5)。``map(_:_:_:_:_:)`` の幅 0 と同じく、注意は 1 度だけ言う。
 ///
 /// [ADR-0020]: https://github.com/mokume-metal/mokume/blob/main/docs/decisions/0020-api-naming-and-surface.md
@@ -892,7 +892,7 @@ public nonisolated func mod(_ value: some ScalarConvertible, _ divisor: some Sca
 ///
 /// **切り捨ての剰余は使わない。** `truncatingRemainder` は負の入力に負を返すので、符号が
 /// `divisor` と食い違うときだけ `divisor` を足す。余りそのものは正確 (丸めない)。足した結果が
-/// `divisor` ちょうどに丸まったら 0 へ畳む — 半開区間を外れた値を返さない。
+/// `divisor` ちょうどに丸まったら 0 にする — 半開区間を外れた値を返さない。
 /// `HueSaturationBrightness.wrapped` が #1533 で踏んだ境界と同じである。
 nonisolated func foldedIntoPeriod(_ value: Float, by divisor: Float) -> Float {
     let remainder = value.truncatingRemainder(dividingBy: divisor)
