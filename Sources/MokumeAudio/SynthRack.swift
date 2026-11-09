@@ -113,8 +113,8 @@ nonisolated final class SynthRack: @unchecked Sendable {
     static let capacity = 64
     /// 1 度に作る標本の数の上限。これより長い区切りは分けて作る。
     static let chunk = 512
-    /// 出口の標本の写しの長さ (標本)。解析の窓 (1024) の 8 倍で、解析の区間の上限 (``AudioAnalysis/maxSpan``) と、
-    /// その前の履歴 (最初の窓の頭まで。最大 1535 標本) が収まる。48 kHz で約 0.17 秒。
+    /// 出口の標本の写しの長さ (標本)。解析のウィンドウ (1024) の 8 倍で、解析の区間の上限 (``AudioAnalysis/maxSpan``) と、
+    /// その前の履歴 (最初のウィンドウの頭まで。最大 1535 標本) が収まる。48 kHz で約 0.17 秒。
     static let meterCapacity = AudioAnalysis.windowSize * 8
     /// 先の位置を待つ予約の操作の数の上限 (``SynthCommand/at``)。`Env.play` 1 回が 6 個 (値 4・包絡・鳴らす)、
     /// 音の高さなどを決めて鳴らす口が 5 個 (値 4・鳴らす) を使うので、包絡だけの音ならおよそ 340 回、高さも並べた

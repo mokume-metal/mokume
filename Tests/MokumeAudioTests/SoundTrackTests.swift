@@ -136,7 +136,7 @@ struct SoundTrackTests {
         #expect(heard.left == heard.right)
     }
 
-    @Test("144 fps・48000 Hz で 144 フレーム録ると、音声は 48000 標本ちょうど (窓の長さを丸めて足すと 47952)。同じスケッチを 2 回書くと標本が全部一致する")
+    @Test("144 fps・48000 Hz で 144 フレーム録ると、音声は 48000 標本ちょうど (ウィンドウの長さを丸めて足すと 47952)。同じスケッチを 2 回書くと標本が全部一致する")
     func windowsAreExactAndRepeatable() async throws {
         let wav = try writeWAV(Self.kick, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -148,14 +148,14 @@ struct SoundTrackTests {
                 to: url, fps: 144, ends: 145,
                 setup: { sound = try $0.loadSound(wav.path) },
                 draw: { sketch in
-                    // 窓の継ぎ目の途中 (⌊N·48000/144⌋ が整数にならないフレーム) で鳴らす
+                    // ウィンドウの継ぎ目の途中 (⌊N·48000/144⌋ が整数にならないフレーム) で鳴らす
                     if sketch.frameCount == 7 || sketch.frameCount == 80 { sound?.play() }
                 })
             return try await hear(url)
         }
         let first = try await once()
         #expect(first.left.count == 48_000, "\(first.left.count) 標本")
-        // 立ち上がりは、窓の先頭 ⌊N·48000/144⌋ (N = 6・79) の標本にある
+        // 立ち上がりは、ウィンドウの先頭 ⌊N·48000/144⌋ (N = 6・79) の標本にある
         let expected = [6, 79].map { Int((Double($0) * 48_000 / 144).rounded(.down)) }
         #expect(onsets(first.left) == expected, "\(onsets(first.left)) 対 \(expected)")
         let second = try await once()
@@ -164,7 +164,7 @@ struct SoundTrackTests {
 
     // MARK: - 合成した音
 
-    @Test("合成した音 (オシレータ・包絡) も載る。鳴らした操作は、その窓の先頭から効く")
+    @Test("合成した音 (オシレータ・包絡) も載る。鳴らした操作は、そのウィンドウの先頭から効く")
     func synthesizedSoundIsCarried() async throws {
         let url = temporaryMovie()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -210,8 +210,8 @@ struct SoundTrackTests {
     }
 
     /// `mokume render` は最初のフレームより前に撮り始め (`runtime.beginRecord`)、決めた枚数を回して閉じる。
-    /// 頼んだ番号は 0 で、トラックは窓 0 から始まり、窓の数は絵の数と同じ。
-    @Test("最初のフレームより前に録り始める (mokume render と同じ形) と、トラックは標本 0 から、窓の数は絵の数と同じ")
+    /// 頼んだ番号は 0 で、トラックはウィンドウ 0 から始まり、ウィンドウの数は絵の数と同じ。
+    @Test("最初のフレームより前に録り始める (mokume render と同じ形) と、トラックは標本 0 から、ウィンドウの数は絵の数と同じ")
     func renderStyleRecordingStartsAtFrameZero() async throws {
         let wav = try writeWAV(Self.kick, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -298,7 +298,7 @@ struct SoundTrackTests {
         }
     }
 
-    // MARK: - 窓の割り方・配りの遅れに依らない
+    // MARK: - ウィンドウの割り方・配りの遅れに依らない
 
     /// 配りを遅らせても結果は変わらない: 何もしない出口を付け、1 フレーム目に `save()` した回と、何もしない回で、
     /// トラックの有無も標本も同じ。
@@ -333,7 +333,7 @@ struct SoundTrackTests {
         let busy = try await once(busy: true)
         #expect(plain.tracks == 1 && busy.tracks == 1)
         #expect(plain.left.count == 40 * 800 && busy.left == plain.left && busy.right == plain.right)
-        // 10 フレーム目 (番号 9) で鳴らす。録りは番号 2 から: 窓 7 つ後 = 標本 5600 から
+        // 10 フレーム目 (番号 9) で鳴らす。録りは番号 2 から: ウィンドウ 7 つ後 = 標本 5600 から
         #expect(onsets(plain.left) == [(9 - 2) * 800])
     }
 
@@ -365,9 +365,9 @@ struct SoundTrackTests {
         #expect(abs(heard.left[24_000] - 0.25) < 1e-6)
     }
 
-    /// 窓ごとに描いても、一括で描いても同じ標本: 144 fps (窓の長さが 333・334 標本と揺れる) の窓で描いた流れと、
+    /// ウィンドウごとに描いても、一括で描いても同じ標本: 144 fps (ウィンドウの長さが 333・334 標本と揺れる) のウィンドウで描いた流れと、
     /// 同じ操作を一括で描いた流れが、全標本一致する。機材にも許可にも GPU にも触れない。
-    @Test("機材に出さない流れは、窓ごとに描いても一括で描いても全標本が一致する (144 fps の窓)")
+    @Test("機材に出さない流れは、ウィンドウごとに描いても一括で描いても全標本が一致する (144 fps のウィンドウ)")
     func windowedRenderingEqualsOneShot() throws {
         let wav = try writeWAV(Self.kick, sampleRate: 48_000)
         defer { try? FileManager.default.removeItem(at: wav) }
@@ -413,7 +413,7 @@ struct SoundTrackTests {
         runtime.closePlugins()
     }
 
-    /// 音源が 1 つも流れへ入れなかったとき (読み直せるファイルが無い) も、窓は描け、音声トラックは無音で付く。
+    /// 音源が 1 つも流れへ入れなかったとき (読み直せるファイルが無い) も、ウィンドウは描け、音声トラックは無音で付く。
     /// 機材に出さない流れは、節が 1 つも無いと描けずに落ちるので、無音の節を繋いである。
     @Test("読み直せない音声ファイルだけでも、落ちずに音声トラック (無音) が付き、載せられなかったことを 1 度だけ知らせる")
     func aFileThatCannotBeReadAgainLeavesASilentTrack() async throws {

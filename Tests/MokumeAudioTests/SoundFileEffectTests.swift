@@ -431,7 +431,7 @@ struct SoundFileEffectTests {
             case .afterOneLap: "1 周した後"
             case .afterTwoLaps: "2 周した後"
             case .afterManyLaps: "5 周した後"
-            case .nearTheSeam: "ちょうど 2 周した継ぎ目 (窓の頭が前の周に掛かる)"
+            case .nearTheSeam: "ちょうど 2 周した継ぎ目 (ウィンドウの頭が前の周に掛かる)"
             case .firstLap: "1 周目"
             case .playedOnce: "ループしない"
             case .afterJump: "jump の後 (ループ)"
@@ -615,7 +615,7 @@ struct SoundFileEffectTests {
             between: { _ in heard = try renderStereo(flow, 50_000) })
         runtime.closePlugins()
 
-        // 440 Hz は 48000 Hz の窓では帯域 9 (中心 421.9 Hz) に当たる
+        // 440 Hz は 48000 Hz のウィンドウでは帯域 9 (中心 421.9 Hz) に当たる
         let middle = Array(heard.left[20_000..<(20_000 + AudioAnalysis.windowSize)])
         let spectrum = AudioAnalysis.analyze(middle).spectrum
         effectBand = spectrum.indices.max { spectrum[$0] < spectrum[$1] } ?? -1

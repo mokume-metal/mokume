@@ -66,7 +66,7 @@ nonisolated struct SynthKernelTests {
 
     @Test("帯域の真ん中の周波数で鳴らすと、倍音の強さが波形の形どおりに並ぶ")
     func harmonicsFollowTheShape() {
-        // 375 Hz は 1 周期が 128 標本で、1024 標本の窓にちょうど 8 周期入る。帯域 8k が k 次の倍音の真ん中
+        // 375 Hz は 1 周期が 128 標本で、1024 標本のウィンドウにちょうど 8 周期入る。帯域 8k が k 次の倍音の真ん中
         func bands(_ waveform: Waveform) -> [Float] {
             AudioAnalysis.analyze(wave(waveform, 375, count: 1024)).spectrum
         }
@@ -147,10 +147,10 @@ nonisolated struct SynthKernelTests {
 
     @Test("オクターブごとの強さは、白色雑音では倍々に増え、ピンクノイズでは揃う")
     func noiseColorsHaveTheirSlopes() {
-        /// 帯域の範囲 (帯域番号) ごとの平均のパワーを、窓 400 枚で平均して返す。
+        /// 帯域の範囲 (帯域番号) ごとの平均のパワーを、ウィンドウ 400 枚で平均して返す。
         func octavePowers(_ color: NoiseColor) -> [Float] {
             var kernel = NoiseKernel(seed: 3)
-            // 帯域 4 (約 190 Hz) から上を見る。それより下は窓 (1024 標本) の幅に隠れる
+            // 帯域 4 (約 190 Hz) から上を見る。それより下はウィンドウ (1024 標本) の幅に隠れる
             let ranges = [(4, 8), (8, 16), (16, 32), (32, 64), (64, 128), (128, 256)]
             var sums = [Float](repeating: 0, count: ranges.count)
             for _ in 0..<400 {

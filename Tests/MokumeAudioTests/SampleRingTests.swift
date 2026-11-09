@@ -11,7 +11,7 @@ import Testing
 /// 標本の環と、realtime スレッドでの畳み込み (ADR-0042 決定 7)。機材は要らない。
 @Suite("標本の環")
 struct SampleRingTests {
-    @Test("最新の窓は、まだ書かれていない分を前の 0 で埋める")
+    @Test("最新のウィンドウは、まだ書かれていない分を前の 0 で埋める")
     func latestBeforeFull() {
         let ring = SampleRing(capacity: 16)
         ring.write(count: 3, hostTime: 7) { Float($0 + 1) }
@@ -20,7 +20,7 @@ struct SampleRingTests {
         #expect(ring.snapshot(5).hostTime == 7)
     }
 
-    @Test("一周した後も、最新の窓が古い順に並ぶ")
+    @Test("一周した後も、最新のウィンドウが古い順に並ぶ")
     func latestAfterWrapping() {
         let ring = SampleRing(capacity: 8)
         var next: Float = 0
@@ -78,7 +78,7 @@ struct SampleRingTests {
 }
 
 extension SampleRingTests {
-    @Test("読み手が窓を持ったまま止まっても、書き手は周回し、持っていた窓は変わらない")
+    @Test("読み手がウィンドウを持ったまま止まっても、書き手は周回し、持っていたウィンドウは変わらない")
     func heldSnapshotSurvivesWrapping() {
         let ring = SampleRing(capacity: 8)
         ring.write(count: 8, hostTime: 8) { Float($0) }
@@ -97,7 +97,7 @@ extension SampleRingTests {
         #expect(newest.samples == (8000..<8008).map(Float.init))
         #expect(newest.total == 8008)
         #expect(newest.hostTime == 8008)
-        // 新しい公開がなければ、読み終わった古い窓へ戻らない。
+        // 新しい公開がなければ、読み終わった古いウィンドウへ戻らない。
         #expect(ring.latest(8) == newest.samples)
     }
 
@@ -149,7 +149,7 @@ extension SampleRingTests {
         #expect(span.isEmpty)
     }
 
-    @Test("単一書き手/読み手の並行中も、標本・総数・時刻は同じ連続窓を指す")
+    @Test("単一書き手/読み手の並行中も、標本・総数・時刻は同じ連続ウィンドウを指す")
     func concurrentSnapshots() async {
         let valid = await Task.detached { Self.stressSnapshots() }.value
         #expect(valid)

@@ -7,7 +7,7 @@ import Testing
 @testable import MokumeAudio
 @testable import MokumeCore
 
-/// 解析が前のフレーム以後の全標本を覆うこと (#3136)。音源の標本 0 から 512 ごとの格子の窓・区間の値・
+/// 解析が前のフレーム以後の全標本を覆うこと (#3136)。音源の標本 0 から 512 ごとの格子のウィンドウ・区間の値・
 /// 供給の単位に依らないこと・長く止まった後の上限を、**機材も GPU も使わずに**見る。
 @Suite("音の解析: 前のフレーム以後の区間")
 struct AudioIntervalTests {
@@ -26,13 +26,13 @@ struct AudioIntervalTests {
 
     // MARK: - 区間の値
 
-    @Test("区間の値は、窓を介さない rms・peak と、終わりが区間に入る格子の窓の平均になる")
+    @Test("区間の値は、ウィンドウを介さない rms・peak と、終わりが区間に入る格子のウィンドウの平均になる")
     func spanMatchesAWindowByWindowBruteForce() {
         let stream = Self.noise(count: 9000)
-        // 区間の始まりと終わりを、格子の境界の上・途中・窓の長さより短い所に振る
+        // 区間の始まりと終わりを、格子の境界の上・途中・ウィンドウの長さより短い所に振る
         let intervals = [
             (0, 800), (700, 1500), (1024, 2048), (1500, 1600), (3000, 7900), (2047, 2049),
-            (1100, 1200),  // 窓が 0 本 (終わりが入る窓が無い) → 区間の終わりまでに終わった最後の窓
+            (1100, 1200),  // ウィンドウが 0 本 (終わりが入るウィンドウが無い) → 区間の終わりまでに終わった最後のウィンドウ
             (100, 200),  // まだ 1 本も終わっていない → 0
         ]
         for (from, to) in intervals {
@@ -43,7 +43,7 @@ struct AudioIntervalTests {
             #expect(abs(levels.rms - rms) < 1e-6, "rms [\(from), \(to))")
             #expect(levels.peak == interval.map { abs($0) }.max(), "peak [\(from), \(to))")
 
-            // 窓 k は標本 [512k - 1024, 512k)。終わりが [from, to) に入るのは k = from/512 + 1 ... to/512
+            // ウィンドウ k は標本 [512k - 1024, 512k)。終わりが [from, to) に入るのは k = from/512 + 1 ... to/512
             let firstWindow = from / 512 + 1
             let lastWindow = to / 512
             let windows =
@@ -66,21 +66,21 @@ struct AudioIntervalTests {
         }
     }
 
-    @Test("窓 1 本ぶんの区間 (窓の終わりの 512 標本) の値は、窓 1 本の解析と、rms・peak 以外で一致する")
+    @Test("ウィンドウ 1 本ぶんの区間 (ウィンドウの終わりの 512 標本) の値は、ウィンドウ 1 本の解析と、rms・peak 以外で一致する")
     func oneWindowOfSpanIsTheOldWindowAnalysis() {
         let stream = Self.noise(count: 4000)
-        // 窓 k = 4 は標本 [1024, 2048)。終わりがこの区間に入る窓はそれだけ
+        // ウィンドウ k = 4 は標本 [1024, 2048)。終わりがこの区間に入るウィンドウはそれだけ
         let levels = AudioAnalysis.analyze(span(of: stream, from: 1536, to: 2048))
         let window = AudioAnalysis.analyze(Array(stream[1024..<2048]))
-        #expect(levels.spectrum == window.spectrum, "窓 1 本ならビット一致")
+        #expect(levels.spectrum == window.spectrum, "ウィンドウ 1 本ならビット一致")
         #expect(levels.spectrumLevels == window.spectrumLevels)
     }
 
-    @Test("連続するフレームの区間では、終わりが入る格子の窓が重ならず欠けず並ぶ (24・30・60・144 fps)")
+    @Test("連続するフレームの区間では、終わりが入る格子のウィンドウが重ならず欠けず並ぶ (24・30・60・144 fps)")
     func everyGridWindowBelongsToExactlyOneFrame() {
         for fps in [24, 30, 60, 144] {
-            // フレーム f の区間は、独立に整数で数えた [(f-1)·48000/fps, f·48000/fps)。窓の番号は実装が選ぶ
-            var next = 1  // 次のフレームが持つはずの最初の窓の番号 (窓 0 は終わりが標本 0 で、どの区間にも入らない)
+            // フレーム f の区間は、独立に整数で数えた [(f-1)·48000/fps, f·48000/fps)。ウィンドウの番号は実装が選ぶ
+            var next = 1  // 次のフレームが持つはずの最初のウィンドウの番号 (ウィンドウ 0 は終わりが標本 0 で、どの区間にも入らない)
             var framesWithoutWindows = 0
             for frame in 1...(fps * 2) {
                 let from = (frame - 1) * 48_000 / fps
@@ -92,19 +92,19 @@ struct AudioIntervalTests {
                 #expect(windows.lowerBound == next, "\(fps) fps frame \(frame): 前のフレームの続きから (重ならず欠けず)")
                 next = windows.upperBound + 1
             }
-            // 最後の窓は、最後の区間の終わり 2 秒ぶんの格子の窓まで来ている
+            // 最後のウィンドウは、最後の区間の終わり 2 秒ぶんの格子のウィンドウまで来ている
             #expect(next - 1 == 2 * 48_000 / AudioAnalysis.hop, "\(fps) fps")
-            // 144 fps だけ、窓が 0 本のフレームがある (1 フレーム 333 標本が hop 512 より短い)
-            #expect((framesWithoutWindows > 0) == (fps == 144), "\(fps) fps: 窓が 0 本のフレーム \(framesWithoutWindows)")
+            // 144 fps だけ、ウィンドウが 0 本のフレームがある (1 フレーム 333 標本が hop 512 より短い)
+            #expect((framesWithoutWindows > 0) == (fps == 144), "\(fps) fps: ウィンドウが 0 本のフレーム \(framesWithoutWindows)")
         }
     }
 
-    @Test("区間が空なら rms・peak は 0 で、spectrum は区間の終わりまでに終わった最後の窓")
+    @Test("区間が空なら rms・peak は 0 で、spectrum は区間の終わりまでに終わった最後のウィンドウ")
     func emptySpanIsSilentExceptTheLastWindow() {
         let stream = Self.noise(count: 3000)
         let empty = AudioAnalysis.analyze(span(of: stream, from: 1300, to: 1300))
         #expect(empty.rms == 0 && empty.peak == 0 && empty.level == 0)
-        let last = AudioAnalysis.analyze(Array(stream[0..<1024]))  // 窓 2 = [0, 1024) (1300 / 512 = 2)
+        let last = AudioAnalysis.analyze(Array(stream[0..<1024]))  // ウィンドウ 2 = [0, 1024) (1300 / 512 = 2)
         #expect(empty.spectrum == last.spectrum)
         #expect(AudioAnalysis.analyze(span(of: stream, from: 0, to: 0)) == .silence)
     }
@@ -112,7 +112,7 @@ struct AudioIntervalTests {
     // MARK: - 例 (条件 1): 24 fps でもクリックを見落とさない
 
     /// 48 kHz・24 fps の固定の時計で、各フレームの区間のどこかに 10 ms のクリックを置いた標本列を、標本列の
-    /// 出どころ (``RecordedSource``) から解析する。1 フレーム 2000 標本で、区間の終わりの 1024 標本の窓には
+    /// 出どころ (``RecordedSource``) から解析する。1 フレーム 2000 標本で、区間の終わりの 1024 標本のウィンドウには
     /// クリックが入らないフレームがある。
     @Test("24 fps で、各フレームの区間のどこかに置いた 10 ms のクリックは、すべてのフレームで peak に出る")
     func aClickAnywhereInTheIntervalIsNeverMissed() {
@@ -127,8 +127,8 @@ struct AudioIntervalTests {
             if position + 480 <= frame * perFrame - AudioAnalysis.windowSize { outsideTheLastWindow += 1 }
             for index in position..<(position + 480) { stream[index] = 0.5 }
         }
-        // 例が意味を持つ: 区間の終わりの窓 (1024 標本) の外に落ちるクリックがある
-        #expect(outsideTheLastWindow > 5, "窓の外に落ちたクリック: \(outsideTheLastWindow)")
+        // 例が意味を持つ: 区間の終わりのウィンドウ (1024 標本) の外に落ちるクリックがある
+        #expect(outsideTheLastWindow > 5, "ウィンドウの外に落ちたクリック: \(outsideTheLastWindow)")
 
         let source = RecordedSource(samples: stream, sampleRate: 48_000)
         let input = ExternalInput<AudioSpan>(name: "samples", state: .running)
@@ -247,7 +247,7 @@ struct AudioIntervalTests {
         }
     }
 
-    @Test("fps を変えても窓の格子は同じ: 30 fps の 1 フレームは、60 fps の連続する 2 フレームを合わせたもの")
+    @Test("fps を変えてもウィンドウの格子は同じ: 30 fps の 1 フレームは、60 fps の連続する 2 フレームを合わせたもの")
     func gridDoesNotDependOnTheFrameRate() throws {
         let stream = Self.noise(count: 24_000)
         let fast = try listen(to: stream, chunk: 800, fps: 60)
@@ -258,7 +258,7 @@ struct AudioIntervalTests {
             #expect(frame.levels.peak == max(a.levels.peak, b.levels.peak))
             let squares = a.levels.rms * a.levels.rms * 800 + b.levels.rms * b.levels.rms * 800
             #expect(abs(frame.levels.rms - (squares / 1600).squareRoot()) < 1e-6)
-            // 窓の本数で重みを付けた平均が一致する (どちらの 60 fps のフレームにも窓が 1 本以上ある)
+            // ウィンドウの本数で重みを付けた平均が一致する (どちらの 60 fps のフレームにもウィンドウが 1 本以上ある)
             let windows = { (from: Int, to: Int) in Float(to / 512 - from / 512) }
             let (na, nb) = (windows(a.from, a.to), windows(b.from, b.to))
             let combined = zip(a.levels.spectrum, b.levels.spectrum).map { ($0 * na + $1 * nb) / (na + nb) }
@@ -374,7 +374,7 @@ struct AudioIntervalTests {
 
     // MARK: - 区間が hop より短いフレーム (条件 4)
 
-    @Test("144 fps (1 フレーム 333 標本) では、窓が 0 本のフレームは前の窓の spectrum のまま。まだ 1 本も終わっていなければ 0")
+    @Test("144 fps (1 フレーム 333 標本) では、ウィンドウが 0 本のフレームは前のウィンドウの spectrum のまま。まだ 1 本も終わっていなければ 0")
     func framesShorterThanTheHop() {
         let stream = Self.noise(count: 48_000)
         let analyzer = AudioAnalyzer()
@@ -390,7 +390,7 @@ struct AudioIntervalTests {
                 if end < 512 {
                     #expect(levels.spectrum.allSatisfy { $0 == 0 }, "frame \(frame): まだ 1 本も終わっていない")
                 } else {
-                    #expect(levels.spectrum == previous?.spectrum, "frame \(frame): 前の窓のまま")
+                    #expect(levels.spectrum == previous?.spectrum, "frame \(frame): 前のウィンドウのまま")
                     #expect(levels.spectrum.contains { $0 > 0 })
                 }
             }
@@ -399,8 +399,8 @@ struct AudioIntervalTests {
             covered = end
             previous = levels
         }
-        // 333 標本のフレームは、3 フレームのうち 1 つほどが窓 0 本になる
-        #expect(zeroWindowFrames > 40, "窓が 0 本のフレーム: \(zeroWindowFrames)")
+        // 333 標本のフレームは、3 フレームのうち 1 つほどがウィンドウ 0 本になる
+        #expect(zeroWindowFrames > 40, "ウィンドウが 0 本のフレーム: \(zeroWindowFrames)")
     }
 
     // MARK: - ファイルの再生の区間
@@ -415,7 +415,7 @@ struct AudioIntervalTests {
         #expect(first.from == 0 && first.to == 800 && first.base == 0)
         #expect(first.samples == Array(file[0..<800]))
 
-        // 途中の位置から鳴らし始める (止めた位置から): 区間の前の窓の部分は鳴っていないので 0
+        // 途中の位置から鳴らし始める (止めた位置から): 区間の前のウィンドウの部分は鳴っていないので 0
         var resumed = Playhead(length: file.count)
         resumed.jump(to: 1200)
         resumed.play(looping: false)
@@ -525,7 +525,7 @@ struct AudioIntervalTests {
 
     // MARK: - 固定の時計の区間の境界 (条件 8)
 
-    @Test("途中のフレームから始めたステージの標本は、絶対のフレーム番号の窓の継ぎ目に揃う (48000 Hz・144 fps)")
+    @Test("途中のフレームから始めたステージの標本は、絶対のフレーム番号のウィンドウの継ぎ目に揃う (48000 Hz・144 fps)")
     func stagePositionsLineUpWithTheAbsoluteWindows() {
         let origin = 5
         let stage = makeStage(fps: 144, origin: origin)
@@ -535,7 +535,7 @@ struct AudioIntervalTests {
         for frame in origin...(origin + 150) {
             stage.frame = frame
             stage.supply()
-            // 始めた位置 (標本 base) + ラックが作った標本の数 = フレーム N の窓の先頭 ⌊N·sr/fps⌋ (整数で独立に数える)
+            // 始めた位置 (標本 base) + ラックが作った標本の数 = フレーム N のウィンドウの先頭 ⌊N·sr/fps⌋ (整数で独立に数える)
             #expect(base + stage.rack.rendered == frame * 48_000 / 144, "frame \(frame)")
         }
         stage.close()
@@ -544,7 +544,7 @@ struct AudioIntervalTests {
         #expect(144 * Int(48_000.0 / 144) == 47_952)
     }
 
-    @Test("フレームの差から数える式は、origin が窓の継ぎ目の途中にあるとき、絶対の窓の継ぎ目と 1 標本ずれる")
+    @Test("フレームの差から数える式は、origin がウィンドウの継ぎ目の途中にあるとき、絶対のウィンドウの継ぎ目と 1 標本ずれる")
     func countingFromTheDifferenceOfFramesDrifts() {
         // 反例: 差から数える旧式 ⌊(N - origin)·sr/fps⌋ は、絶対の式の差と食い違うフレームがある
         let origin = 5
