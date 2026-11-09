@@ -545,18 +545,11 @@ extension Canvas {
 
     /// 輪郭を実線で引く。破線の片 1 つも、ここで引く (``strokeDashedPieces(_:discSegments:)``)。
     func strokeSolidOutline(_ outline: Outline, discSegments: Int? = nil) {
-        // 丸い周は線に垂直に広げる (``isRoundThinRing(radii:drawn:)``・#3863)
-        let acrossTheLine =
-            thinStrokeMatrix.flatMap { matrix in
-                outline.ring.map {
-                    abs($0.sweep) >= 2 * .pi
-                        && Self.isRoundThinRing(radii: SIMD2($0.radiusX, $0.radiusY), drawn: drawnLinear(matrix))
-                }
-            } ?? false
+        // 丸い周は線に垂直に広げる (``widensAcrossTheLine(_:placedBy:)``・#3863)
         guard let matrix = thinStrokeMatrix,
             let thin = thinOutline(
                 outline, weight: style.strokeWeight, placedBy: matrix, snapped: !buildingFlatTemplate,
-                acrossTheLine: acrossTheLine)
+                acrossTheLine: widensAcrossTheLine(outline, placedBy: matrix))
         else { return strokeOutlineAsStyled(outline, discSegments: discSegments) }
         // 相似な置き場所の矩形は、重ならない額縁の片で組む。畳んだ雛形 (頂点段で広げ直す) と同じ積み方に
         // 揃え、畳むかどうかで頂点の数も絵も変えない (#3733・``thinRectFrame(_:placedBy:)``)

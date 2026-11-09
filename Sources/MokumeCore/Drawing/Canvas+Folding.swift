@@ -471,9 +471,9 @@ extension Canvas {
     /// `drawn` で写した楕円の短い径と長い径の比が ``ringFoldMinimumAspect`` 以上、短い径 (直径) が
     /// ``ringFoldMinimumDiameter`` 以上のもの。
     ///
-    /// **丸い周は、畳むかどうかによらず線に垂直に広げる** (``thinOutline(_:weight:placedBy:snapped:acrossTheLine:)``)。
-    /// 線に垂直な広げ方は向きによらないので、雛形を回して置いても広げ方が変わらず、回転だけが違う置き場所を 1 つの雛形に
-    /// 畳める (``foldsThinRingAcrossTurns(_:drawn:)``)。畳む道と畳まない道で絵も変わらない (#3555 の許容 0)。
+    /// **丸い周は、畳むかどうかによらず線に垂直に広げる** (``widensAcrossTheLine(_:placedBy:)``)。保持した形を置くときも
+    /// 同じである。線に垂直な広げ方は向きによらないので、雛形を回して置いても広げ方が変わらず、回転だけが違う置き場所を
+    /// 1 つの雛形に畳める (``foldsThinRingAcrossTurns(_:drawn:)``)。畳む道と畳まない道で絵も変わらない (#3555 の許容 0)。
     ///
     /// 線に垂直に広げた帯は、45° で置く位置により光の量が ×0.71〜×1.41 振れる (#2172)。周に沿って向きが変わる丸い周は
     /// その振れが均されて ±25% (#3859) に収まるが、直線に近い部分が長い形 (細長い楕円・扇の半径・角丸の辺) と、描く画素で
@@ -491,13 +491,30 @@ extension Canvas {
         return minor >= ringFoldMinimumAspect * major && 2 * minor >= ringFoldMinimumDiameter
     }
 
+    /// 輪郭 `outline` を `matrix` で置くとき、細い帯を線に垂直に広げる丸い周か (#3863)。一周の楕円・弧の周
+    /// (``Outline/ring``) で、``isRoundThinRing(radii:drawn:)`` が真のもの。
+    ///
+    /// **細い輪郭を組む道はどれもこれで決める** — 直に引く線と畳む雛形 (``strokeSolidOutline(_:discSegments:)``) と、
+    /// 保持した形を置くとき (``thinVertices(_:placedBy:cache:stroke:)``)。道ごとに決めると、同じ円が描き方で違う
+    /// 広げ方になる。細い輪郭を三角形で組むのは距離関数の経路を使えない図形 (``formAllowed(fills:)`` が偽: `shader()` を
+    /// 当てた図形・勾配の `fill()` や `texture()` の塗りを持つ図形) と、それを記録した保持した形で、どれもここを通る。
+    /// 畳んで回転をまたぐ (``foldsThinRingAcrossTurns(_:drawn:)``) のは、そのうち畳める図形だけである (貼る絵と輪郭が同居する
+    /// 図形・保持した形・破線は畳まない)。
+    func widensAcrossTheLine(_ outline: Outline, placedBy matrix: simd_float4x4) -> Bool {
+        guard let ring = outline.ring, abs(ring.sweep) >= 2 * .pi else { return false }
+        return Self.isRoundThinRing(radii: SIMD2(ring.radiusX, ring.radiusY), drawn: drawnLinear(matrix))
+    }
+
     /// 回転をまたいで畳む楕円の、描く画素での短い径と長い径の比の下限 (#3863)。
     ///
     /// 境目は実測で決めた。雛形を線に垂直に広げ、1 つ目を [0, π/2) の乱数の向き、2 つ目を 3 回に 1 回は 45°・残りは乱数の
     /// 向きに回して置き、光の量 / 期待 (周 × 太さ) を測った (太さ 0.07〜1・細かさ 0.25〜1・ずらし [0, 2)²)。短い径が
     /// 描く画素で 8 以上なら、縦横比 0.2〜1 のどれも ×0.85〜×1.21 に収まる (各 120〜800 件)。比を 0.5 に置いたのは、
     /// 比が小さいほど直線に近い長い辺が 45° で格子に揃い、#2172 の振れ (×0.71〜×1.41) に近づくからで、測った範囲より
-    /// 内側に余裕を取った。境目の内側の最悪は ×0.848・×1.193 (縦横比 0.5〜1・短い径 8〜9 の 4,800 件)
+    /// 内側に余裕を取った。境目の内側の最悪は ×0.848・×1.193 (縦横比 0.5〜1・短い径 8〜9 の 4,800 件)。測り直し (#3863 の
+    /// 反証 4) で、回転の内側に縦の倍率 0.5〜1 を掛け、短い径 8〜40 まで広げた 10,400 件の最悪は ×0.846・×1.226 だった
+    /// (×1.226 は短い径 8.26・縦横比 0.67・縦の倍率 0.84・45°)。生成の検査 (`DensityInvarianceTests` の
+    /// `diagonalFoldedRing`) が同じ範囲を振る
     static let ringFoldMinimumAspect: Float = 0.5
     /// 回転をまたいで畳む楕円の、描く画素での短い径 (直径) の下限 (#3863)。測り方は ``ringFoldMinimumAspect`` と同じ。
     /// 短い径 4 の円は ×0.795〜×1.273 で ±25% を越え (向きごとに畳むいまの作りは ×0.84〜×1.07)、6 で ×0.826〜×1.170、
